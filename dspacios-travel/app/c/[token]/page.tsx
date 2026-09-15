@@ -8,6 +8,7 @@ import type { Tenant } from "@/lib/tenant";
 import { tituloDocumento } from "@/lib/utils/tituloDocumento";
 import { resolverCondicionesContrato } from "@/lib/contrato/condicionesContrato";
 import { habitacionesBernaloDeContrato } from "@/lib/reservar/alojamientoBernaloDocumento";
+import { condicionesTarifaParaRender } from "@/lib/calc/condicionesTarifa";
 
 export const dynamic = "force-dynamic";
 
@@ -79,7 +80,9 @@ export default async function ContratoPublicoPage({
     (s, a) => s + (a.valor_abono ?? 0),
     0
   );
-  const hotelesConNota = adjuntarNotaRegimen(hoteles ?? [], planes ?? []);
+  const hotelesConNota = adjuntarNotaRegimen(hoteles ?? [], planes ?? []).map((h) => ({
+    ...h, condiciones_tarifa: condicionesTarifaParaRender(h.condiciones_tarifa),
+  }));
   const condicionesResueltas = resolverCondicionesContrato(
     (contratoCondiciones ?? []) as unknown as Parameters<typeof resolverCondicionesContrato>[0],
     (overridesCondiciones ?? []) as unknown as Parameters<typeof resolverCondicionesContrato>[1],

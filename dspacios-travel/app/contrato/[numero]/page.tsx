@@ -10,6 +10,7 @@ import { tituloDocumento } from "@/lib/utils/tituloDocumento";
 import { Eye } from "lucide-react";
 import { resolverCondicionesContrato } from "@/lib/contrato/condicionesContrato";
 import { habitacionesBernaloDeContrato } from "@/lib/reservar/alojamientoBernaloDocumento";
+import { condicionesTarifaParaRender } from "@/lib/calc/condicionesTarifa";
 
 // ¿Quien mira puede ver el contrato COMPLETO, o solo la parte comercial?
 // Un asesor consultando el contrato de un colega de su agencia recibe el
@@ -110,7 +111,9 @@ export default async function ContratoImprimiblePage({
     (s, a) => s + Number(("valor_abono" in a ? a.valor_abono : a.total_pagado) ?? 0),
     0
   );
-  const hotelesConNota = adjuntarNotaRegimen(hoteles ?? [], planes ?? []);
+  const hotelesConNota = adjuntarNotaRegimen(hoteles ?? [], planes ?? []).map((h) => ({
+    ...h, condiciones_tarifa: condicionesTarifaParaRender(h.condiciones_tarifa),
+  }));
   const condicionesResueltas = resolverCondicionesContrato(
     (contratoCondiciones ?? []) as unknown as Parameters<typeof resolverCondicionesContrato>[0],
     (overridesCondiciones ?? []) as unknown as Parameters<typeof resolverCondicionesContrato>[1],

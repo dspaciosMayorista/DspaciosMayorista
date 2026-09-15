@@ -21,8 +21,54 @@ import type {
   Agencia,
 } from "@/types/database";
 import type { CondicionesContratoResueltas } from "@/lib/contrato/condicionesContrato";
+import type { CondicionTarifaAplicada } from "@/lib/calc/condicionesTarifa";
 
-type HotelConNota = ContratoHotel & { nota_regimen?: string | null; foto_url?: string | null };
+// `condiciones_tarifa` opcional (ausente = cotizaciones/contratos anteriores
+// a esta ronda, o hoteles Bernalo que nunca pasan por `computarReserva`) —
+// nunca se asume presente. Ver lib/calc/condicionesTarifa.ts.
+type HotelConNota = ContratoHotel & {
+  nota_regimen?: string | null; foto_url?: string | null;
+  condiciones_tarifa?: CondicionTarifaAplicada[] | null;
+};
+
+// Agrupa condiciones IDÉNTICAS en texto (de temporadas distintas) en una
+// sola línea con la lista de temporadas — nunca pierde identidad (las
+// temporadas se conservan, solo se colapsa el texto repetido). Ver "puede
+// mostrarse una sola condición indicando las temporadas correspondientes,
+// siempre que no se pierda identidad" en el encargo de esta ronda.
+function agruparCondicionesPorTexto(condiciones: CondicionTarifaAplicada[]): { texto: string; temporadas: string[] }[] {
+  const porTexto = new Map<string, string[]>();
+  for (const c of condiciones) {
+    const temporadas = porTexto.get(c.texto) ?? [];
+    if (!temporadas.includes(c.temporada)) temporadas.push(c.temporada);
+    porTexto.set(c.texto, temporadas);
+  }
+  return [...porTexto.entries()].map(([texto, temporadas]) => ({ texto, temporadas }));
+}
+
+// Sección sobria "Condiciones de la tarifa" — SOLO texto de
+// `tarifa_hotel.notas` realmente aplicado (nunca costos/netos/comisión/
+// proveedor/IDs internos). Se omite por completo si no hay condiciones. La
+// temporada de cada línea solo se muestra cuando el hotel tiene condiciones
+// de MÁS de una temporada (evita ruido cuando es trivialmente una sola).
+function CondicionesTarifaSection({ condiciones }: { condiciones: CondicionTarifaAplicada[] }) {
+  if (!condiciones.length) return null;
+  const grupos = agruparCondicionesPorTexto(condiciones);
+  const multiTemporada = new Set(condiciones.map((c) => c.temporada)).size > 1;
+  return (
+    <div className="mt-1 rounded bg-gray-50 px-2 py-1 text-xs text-gray-600">
+      <span className="font-semibold">Condiciones de la tarifa:</span>
+      <ul className="mt-0.5 list-disc space-y-0.5 pl-4">
+        {grupos.map((g, i) => (
+          <li key={i}>
+            {g.texto}
+            {multiTemporada && <span className="text-gray-400"> ({g.temporadas.join(", ")})</span>}
+          </li>
+        ))}
+      </ul>
+    </div>
+  );
+}
 
 type Props = {
   // Subconjunto sin columnas financieras: lo alimenta tanto `ventas` como
@@ -366,6 +412,9 @@ export function ContratoDocumento({
                     <div className="mt-1 rounded bg-gray-50 px-2 py-1 text-xs text-gray-600">
                       <span className="font-semibold">Nota especial del plan:</span> {h.nota_regimen}
                     </div>
+                  )}
+                  {h.condiciones_tarifa && h.condiciones_tarifa.length > 0 && (
+                    <CondicionesTarifaSection condiciones={h.condiciones_tarifa} />
                   )}
                   <div className="mt-1 text-xs text-gray-500">
                     {formatFechaLarga(h.fecha_ingreso)} →{" "}

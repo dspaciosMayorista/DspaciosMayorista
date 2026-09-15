@@ -25,6 +25,7 @@ import {
   type FilaTarifaHotelEdadCruda,
   type ReglaEdadGeneralParcial,
 } from "@/lib/calc/reglaEdadTarifa";
+import { extraerCondicionesTarifa, type CondicionTarifaAplicada } from "@/lib/calc/condicionesTarifa";
 import {
   ACOM_ROOMS,
   PAX_TARIFA_DEFAULT,
@@ -145,6 +146,14 @@ export type ComputoReserva = {
   notaNino: string | null;     // anotación informativa (ej. "debe pagar seguro hotelero obligatorio")
   cargoMascota: { total: number; descripcion: string | null } | null; // cargo de mascota (0 = gratis), ya incluido en precioVenta
   notaMascota: string | null;  // anotación informativa (ej. "máximo 1 mascota por habitación")
+  // Condiciones de tarifa/promoción REALMENTE APLICADAS (texto libre de
+  // `tarifa_hotel.notas`, ej. "No reembolsable") — solo de las filas que
+  // liquidaron las acomodaciones seleccionadas, ver
+  // `lib/calc/condicionesTarifa.ts`. SIEMPRE un arreglo (vacío si no hay
+  // condiciones o si el módulo `!esServicios`/sin service-role no llegó a
+  // resolverlas) — nunca `null`/`undefined`, para que el llamador (checkout)
+  // pueda persistirlo tal cual en el snapshot de la cotización.
+  condicionesTarifa: CondicionTarifaAplicada[];
 };
 
 // Expande `habitaciones: {doble: 2, triple: 1}` (conteo por tipo, la única
@@ -313,6 +322,7 @@ export async function computarReserva(
   let petCostoNeto = 0;
   let petCostoDesc: string | null = null;
   let petNotaTxt: string | null = null;
+  let condicionesTarifa: CondicionTarifaAplicada[] = [];
 
   const usarFechas =
     input.modulo !== "bloqueo" && input.modulo !== "dinamico" && !!input.fechaIda && !!input.fechaRegreso && !!process.env.SUPABASE_SERVICE_ROLE_KEY;
@@ -387,7 +397,7 @@ export async function computarReserva(
     if (temporadasSeleccionadasF.size) {
       const { data: tarEdad, error: tarEdadErr } = await admin
         .from("tarifa_hotel")
-        .select("tipo_habitacion, alimentacion, temporada, edad_infante_min, edad_infante_max, edad_nino_min, edad_nino_max")
+        .select("tipo_habitacion, alimentacion, temporada, edad_infante_min, edad_infante_max, edad_nino_min, edad_nino_max, notas")
         .eq("hotel_id", input.hotelId)
         .eq("tipo_habitacion", input.categoria)
         .eq("alimentacion", input.regimen)
@@ -399,6 +409,13 @@ export async function computarReserva(
       });
       if (!rEdadF.ok) return { ok: false, error: rEdadF.error };
       reglaEdadF = rEdadF.regla;
+      // Condiciones de tarifa/promoción realmente aplicadas — reusa las
+      // MISMAS filas y el MISMO conjunto de temporadas que la regla de edad,
+      // nunca una resolución paralela (ver lib/calc/condicionesTarifa.ts).
+      condicionesTarifa = extraerCondicionesTarifa({
+        filas: (tarEdad ?? []) as { tipo_habitacion?: string | null; alimentacion?: string | null; temporada: string | null; notas?: string | null }[],
+        categoria: input.categoria, regimen: input.regimen, temporadasUsadas: temporadasSeleccionadasF,
+      });
     }
 
     // Reclasifica ninos/ninos2/infantes desde la edad real de cada menor
@@ -528,7 +545,7 @@ export async function computarReserva(
     let numNochesVig = 0;
     let temporadasVig: TemporadaRango[] = [];
     let tarRowsVig: FilaTarifaHotelEdadCruda[] = [];
-    type TarRow = FilaTarifaHotelEdadCruda & { neto_sencilla: number | null; neto_doble: number | null; neto_triple: number | null; neto_multiple: number | null; neto_nino: number | null; neto_nino2: number | null; neto_infante: number | null };
+    type TarRow = FilaTarifaHotelEdadCruda & { neto_sencilla: number | null; neto_doble: number | null; neto_triple: number | null; neto_multiple: number | null; neto_nino: number | null; neto_nino2: number | null; neto_infante: number | null; notas: string | null };
     const colDe: Record<string, keyof TarRow> = { sencilla: "neto_sencilla", doble: "neto_doble", triple: "neto_triple", multiple: "neto_multiple", nino: "neto_nino", nino2: "neto_nino2", infante: "neto_infante" };
     const netoPorTemporadaDe = (rows: TarRow[], acom: string): Record<string, number | null> => {
       const col = colDe[acom]; const m: Record<string, number | null> = {};
@@ -542,7 +559,7 @@ export async function computarReserva(
       numNochesVig = noches(meta.fecha_ida!, meta.fecha_regreso!);
       const [{ data: temps, error: tempsErr }, { data: tarRows, error: tarRowsErr }] = await Promise.all([
         admin.from("hotel_temporadas").select("nombre, fecha_inicio, fecha_fin, prioridad, compra_inicio, compra_fin, tipo, descuento_valor, rangos, blackouts, min_noches, regimen_restringido").eq("hotel_id", input.hotelId),
-        admin.from("tarifa_hotel").select("tipo_habitacion, alimentacion, temporada, neto_sencilla, neto_doble, neto_triple, neto_multiple, neto_nino, neto_nino2, neto_infante, edad_infante_min, edad_infante_max, edad_nino_min, edad_nino_max").eq("hotel_id", input.hotelId).eq("tipo_habitacion", input.categoria).eq("alimentacion", input.regimen),
+        admin.from("tarifa_hotel").select("tipo_habitacion, alimentacion, temporada, neto_sencilla, neto_doble, neto_triple, neto_multiple, neto_nino, neto_nino2, neto_infante, edad_infante_min, edad_infante_max, edad_nino_min, edad_nino_max, notas").eq("hotel_id", input.hotelId).eq("tipo_habitacion", input.categoria).eq("alimentacion", input.regimen),
       ]);
       if (tempsErr) return { ok: false, error: `No se pudo validar la vigencia de temporadas del hotel: ${tempsErr.message}` };
       if (tarRowsErr) return { ok: false, error: `No se pudo validar la tarifa neta del hotel: ${tarRowsErr.message}` };
@@ -567,6 +584,14 @@ export async function computarReserva(
       });
       if (!rEdad.ok) return { ok: false, error: rEdad.error };
       reglaEdad = rEdad.regla;
+      // Condiciones de tarifa/promoción realmente aplicadas — reusa las
+      // MISMAS filas (`tarRowsVig`) y el MISMO conjunto de temporadas
+      // (`temporadasEstadia`, construido arriba SOLO de `lineasHab`, ya
+      // filtrado a las acomodaciones seleccionadas) que la regla de edad,
+      // nunca una resolución paralela (ver lib/calc/condicionesTarifa.ts).
+      condicionesTarifa = extraerCondicionesTarifa({
+        filas: tarRowsVig, categoria: input.categoria, regimen: input.regimen, temporadasUsadas: temporadasEstadia,
+      });
     }
 
     if (input.edadesMenores !== undefined) {
@@ -873,6 +898,6 @@ export async function computarReserva(
 
   return {
     ok: true,
-    data: { origen, meta, pvpPorAcom, netoPorAcom, precioVenta, paxConSilla, totalPax, numNinos, numNinos2, numInfantes, distribucionMenores, edadesMenoresUsadas, lineasHab, serviciosItems, serviciosIncluidos, impuestoTotal, monedaReserva, notaNino: ninoNotaTxt, cargoMascota, notaMascota: petNotaTxt },
+    data: { origen, meta, pvpPorAcom, netoPorAcom, precioVenta, paxConSilla, totalPax, numNinos, numNinos2, numInfantes, distribucionMenores, edadesMenoresUsadas, lineasHab, serviciosItems, serviciosIncluidos, impuestoTotal, monedaReserva, notaNino: ninoNotaTxt, cargoMascota, notaMascota: petNotaTxt, condicionesTarifa },
   };
 }
