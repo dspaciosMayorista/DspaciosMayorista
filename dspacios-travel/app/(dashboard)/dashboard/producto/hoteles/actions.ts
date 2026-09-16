@@ -848,22 +848,25 @@ export async function generarTarifasCalculadora(
     ? filasBase.map((f) => ({ ...f, neto_nino: null, neto_nino2: null, neto_infante: null, nota_infante: null }))
     : filasBase;
 
-  if (modo === "reemplazar") {
-    await sb.from("tarifa_hotel").delete().eq("hotel_id", hotelId);
-  } else {
-    // Solo borra las tarifas de los regímenes generados (evita duplicados y
-    // respeta los demás regímenes ya cargados).
-    const regimenes = [...new Set(filas.map((f) => f.alimentacion).filter(Boolean))];
-    if (regimenes.length) {
-      await sb.from("tarifa_hotel").delete().eq("hotel_id", hotelId).in("alimentacion", regimenes);
-    }
-  }
-  const { error } = await sb
-    .from("tarifa_hotel")
-    .insert(filas.map((f) => ({ ...f, hotel_id: hotelId })));
+  // Reemplazo TRANSACCIONAL real (migración 179, RPC
+  // `reemplazar_tarifas_hotel_calculadora`): delete + insert corren dentro de
+  // la MISMA función de Postgres, así que ante cualquier fallo (constraint,
+  // tipo, lo que sea) TODO se revierte automáticamente — las filas anteriores
+  // quedan EXACTAMENTE iguales, ids incluidos. Ya NO se hace select→delete→
+  // insert→"restaurar si falla" en varias llamadas HTTP sueltas desde el
+  // servidor: eso nunca fue atómico (una caída de red a mitad de camino
+  // dejaba el hotel sin tarifas) y, aun cuando "funcionaba", la restauración
+  // reinsertaba con ids NUEVOS, nunca los originales.
+  const regimenes = modo === "reemplazar" ? null : [...new Set(filas.map((f) => f.alimentacion).filter(Boolean))];
+  const { data: resultado, error } = await sb.rpc("reemplazar_tarifas_hotel_calculadora", {
+    p_hotel_id: hotelId,
+    p_regimenes: regimenes,
+    p_filas: filas as unknown as Json,
+  });
   if (error) return { ok: false, error: error.message };
 
   revalidatePath(`/dashboard/producto/hoteles/${hotelId}`);
   await regenerarTarifariosDeHotel(hotelId);
-  return { ok: true, generadas: filas.length };
+  const insertadas = (resultado as { insertadas?: number } | null)?.insertadas ?? filas.length;
+  return { ok: true, generadas: insertadas };
 }

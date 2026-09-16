@@ -13,6 +13,7 @@ import type {
   ContratoItem,
 } from "@/types/database";
 import type { ComposicionBernaloDocumento, HabitacionBernaloDocumento } from "@/lib/reservar/alojamientoBernaloDocumento";
+import { condicionesTarifaParaRender } from "@/lib/calc/condicionesTarifa";
 import { tituloDocumento } from "@/lib/utils/tituloDocumento";
 
 export async function generateMetadata({
@@ -152,7 +153,7 @@ export default async function CotizacionImprimiblePage({
           <ContratoDocumento
             venta={d.venta}
             pasajeros={d.pasajeros ?? []}
-            hoteles={d.hoteles ?? []}
+            hoteles={(d.hoteles ?? []).map((h) => ({ ...h, condiciones_tarifa: condicionesTarifaParaRender(h.condiciones_tarifa) }))}
             vuelos={d.vuelos ?? []}
             items={d.items ?? []}
             habitacionesBernalo={d.habitacionesBernalo ?? []}

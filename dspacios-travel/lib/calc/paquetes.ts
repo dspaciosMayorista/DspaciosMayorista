@@ -276,22 +276,72 @@ export function resolverNetoNocheDetallado(
   temporadas: TemporadaRango[],
   netoPorTemporada: Record<string, number | null | undefined>,
   hoy: string,
-  regimen?: string
-): { neto: number; temporadaTarifa: string } | null {
+  regimen?: string,
+  // Nombres de temporada cuya fila de `tarifa_hotel` es PRECIO FINAL
+  // AUTORITATIVO — típicamente una promoción Dubai generada por
+  // `generarTarifasDubai` (`tarifa_hotel.precio_final_autoritativo`, ver
+  // migración 179), que ya trae el descuento, el suplemento propio y los
+  // modificadores de acomodación HORNEADOS en el neto. Cuando la temporada
+  // ganadora (`top`) está en este set y tiene neto cargado para el combo
+  // categoría/régimen actual, se usa DIRECTO — nunca se vuelve a aplicar el
+  // descuento de la vigencia (`top.descuento_valor`) sobre la tarifa-base,
+  // que duplicaría el descuento y descartaría el suplemento/edades propios de
+  // la promoción. Compatibilidad: `undefined` (el default, cuando el llamador
+  // no lo pasa) o un set vacío deja el comportamiento IDÉNTICO al histórico —
+  // ninguna vigencia `descuento_pct`/`descuento_monto` existente cambia de
+  // semántica solo por esta migración/parámetro nuevo.
+  precioFinalTemporadas?: ReadonlySet<string>
+): {
+  neto: number;
+  /** Nombre de la fila de `tarifa_hotel` que aportó el NETO — puede ser la
+   * BASE (en el camino legacy de recomputar un descuento). Fuente para
+   * resolver edad/condiciones de tarifa (ver `liquidarHotelNochesConTemporadas`). */
+  temporadaTarifa: string;
+  /** Nombre de la VIGENCIA que realmente GANÓ esta noche por prioridad
+   * (`entradasNoche(...)[0]`) — SIEMPRE la promo/descuento cuando aplica,
+   * nunca la base, ni siquiera en el camino legacy. Es la identidad correcta
+   * para "qué temporada produjo este precio" de cara al usuario/auditoría
+   * (persistida en `tarifario_resultado.temporada_ganadora`). */
+  temporadaGanadora: string;
+  /** `true` si la vigencia ganadora es de tipo distinto a 'tarifa' (cualquier
+   * descuento_pct/descuento_monto/promo_noche_gratis, generado por Dubai o
+   * creado a mano) — clasificación GENERAL, independiente de
+   * `precioFinalAutoritativo` (ver lib/tarifario/identidadTemporada.ts, que
+   * reusa este mismo criterio). */
+  esPromocion: boolean;
+  /** `true` si la fila que aportó el neto está marcada
+   * `tarifa_hotel.precio_final_autoritativo` (migración 179) — detalle
+   * técnico de trazabilidad, NUNCA usar para decidir "es promoción" en UI. */
+  precioFinalAutoritativo: boolean;
+} | null {
   // 'promo_noche_gratis' no es un precio por noche (ver promoNocheGratisFactor):
   // se excluye de la resolución por-noche para que nunca "gane" un slot aquí.
   const ents = entradasNoche(t0, temporadas, hoy, regimen).filter((t) => (t.tipo ?? "tarifa") !== "promo_noche_gratis");
   if (!ents.length) return null;
   const top = ents[0];
   const tipoTop = top.tipo ?? "tarifa";
+  const temporadaGanadora = top.nombre;
+  const esPromocion = tipoTop !== "tarifa";
+
+  if (esPromocion && precioFinalTemporadas?.has(top.nombre)) {
+    const vFinal = netoPorTemporada[top.nombre];
+    // Tiene neto cargado para ESTE combo categoría/régimen → esa fila es la
+    // autoridad, se usa tal cual (identidad = `top.nombre`, así que edades y
+    // condiciones de tarifa se resuelven después contra la fila de la
+    // promoción, no contra su base). Si no tiene neto para este combo
+    // (p. ej. la promo no generó este régimen), cae al comportamiento legacy
+    // de abajo — nunca bloquea la noche por esto.
+    if (vFinal != null) return { neto: vFinal, temporadaTarifa: top.nombre, temporadaGanadora, esPromocion, precioFinalAutoritativo: true };
+  }
+
   if (tipoTop === "tarifa") {
     const v = netoPorTemporada[top.nombre];
-    if (v != null) return { neto: v, temporadaTarifa: top.nombre };
+    if (v != null) return { neto: v, temporadaTarifa: top.nombre, temporadaGanadora, esPromocion, precioFinalAutoritativo: false };
     // La temporada de mayor prioridad NO tiene neto para ESTE combo (categoría/
     // régimen) — p. ej. "BAJA" es de PAM y este combo es PC. Cae a la 'tarifa' de
     // mayor prioridad que cubra la fecha Y tenga neto para este combo ("BAJA PC").
     const baseT = ents.find((t) => (t.tipo ?? "tarifa") === "tarifa" && netoPorTemporada[t.nombre] != null);
-    return baseT ? { neto: netoPorTemporada[baseT.nombre] as number, temporadaTarifa: baseT.nombre } : null;
+    return baseT ? { neto: netoPorTemporada[baseT.nombre] as number, temporadaTarifa: baseT.nombre, temporadaGanadora: baseT.nombre, esPromocion: false, precioFinalAutoritativo: false } : null;
   }
   // Descuento: necesita una tarifa-base por debajo, con neto cargado.
   const base = ents.find((t) => (t.tipo ?? "tarifa") === "tarifa" && netoPorTemporada[t.nombre] != null);
@@ -301,7 +351,13 @@ export function resolverNetoNocheDetallado(
   const neto = tipoTop === "descuento_pct"
     ? Math.round(baseNeto * (1 - val / 100))
     : Math.max(0, Math.round(baseNeto - val)); // descuento_monto (por pax)
-  return { neto, temporadaTarifa: base.nombre };
+  // Identidad de la FILA = la base (así resuelven edades/condiciones, como
+  // siempre); identidad de la VIGENCIA GANADORA = la promo (`temporadaGanadora`,
+  // top.nombre) — NUNCA la base, aunque el camino legacy haya recalculado
+  // desde su neto. Este es exactamente el defecto que se corrige para
+  // procedencia pública: antes solo existía `temporadaTarifa` (=base.nombre
+  // acá), que un consumidor podía confundir con "la temporada que ganó".
+  return { neto, temporadaTarifa: base.nombre, temporadaGanadora, esPromocion, precioFinalAutoritativo: false };
 }
 
 export function netoNoche(
@@ -309,22 +365,59 @@ export function netoNoche(
   temporadas: TemporadaRango[],
   netoPorTemporada: Record<string, number | null | undefined>,
   hoy: string,
-  regimen?: string
+  regimen?: string,
+  precioFinalTemporadas?: ReadonlySet<string>
 ): number | null {
-  const r = resolverNetoNocheDetallado(t0, temporadas, netoPorTemporada, hoy, regimen);
+  const r = resolverNetoNocheDetallado(t0, temporadas, netoPorTemporada, hoy, regimen, precioFinalTemporadas);
   return r ? r.neto : null;
 }
 
 /**
- * ¿Aplica una promo "N noches, 1 gratis" para esta estadía? A diferencia de
- * tarifa/descuento_pct/descuento_monto (que se resuelven NOCHE POR NOCHE), esta
- * promo depende del TOTAL de noches de la estadía — no cabe en `netoNoche`.
- * Se ancla a la NOCHE DE ENTRADA (igual criterio que `minNochesAplicable`):
- * si hay una vigencia tipo 'promo_noche_gratis' que cubre esa noche, está en
- * vigencia de compra, coincide el régimen (si está restringida) y la estadía
- * tiene al menos `min_noches` noches, se regala EXACTAMENTE 1 noche — sin
- * importar si la estadía tiene 3, 4 o 10 noches. Devuelve el factor a aplicar
- * sobre el total (1 = sin promo; (N-1)/N = 1 noche gratis de N).
+ * Resolución DETALLADA y determinista de "N noches, 1 gratis" para una
+ * estadía — a diferencia de tarifa/descuento_pct/descuento_monto (resueltas
+ * NOCHE POR NOCHE), esta promo depende del TOTAL de noches de la estadía, así
+ * que no cabe en `resolverNetoNocheDetallado`/`netoNoche`. Se ancla a la
+ * NOCHE DE ENTRADA (igual criterio que `minNochesAplicable`): entre las
+ * vigencias que cubren esa noche, están en vigencia de compra y coinciden en
+ * régimen (si están restringidas) — el MISMO orden de prioridad que usa
+ * `entradasNoche` en todo el resto del motor — toma la primera de tipo
+ * 'promo_noche_gratis' cuya estadía cumpla su `min_noches`. Si aplica, se
+ * regala EXACTAMENTE 1 noche sin importar si la estadía tiene 3, 4 o 10
+ * (`factor = (N-1)/N`). `procedencia` ya viene con la forma exacta que exige
+ * la agregación de `ProcedenciaNoche` (`esPromocion: true` — es una promo —,
+ * `precioFinalAutoritativo: false` — no aporta una fila de neto propia, solo
+ * descuenta el total ya liquidado) para que ningún llamador tenga que
+ * reconstruirla ni pueda hacerlo distinto. Única fuente de verdad: TODOS los
+ * liquidadores (`liquidarHotelNoches`/`liquidarHotelNochesConTemporadas`/
+ * `liquidarHotelMasBarato`/`liquidarHotelMasBaratoConTemporada`) llaman a
+ * ESTA función — nunca reimplementan el criterio de selección — así que
+ * cálculo y procedencia nunca pueden divergir. `null` = no aplica ninguna
+ * promo "N noches, 1 gratis" (estadía de 1 noche, sin vigencia que la cubra,
+ * o ninguna cumple `min_noches`).
+ */
+export function resolverNocheGratisDetallado(
+  temporadas: TemporadaRango[],
+  fechaIda: string,
+  numNoches: number,
+  hoy: string = hoyISO(),
+  regimen?: string
+): { factor: number; procedencia: ProcedenciaNoche } | null {
+  if (numNoches <= 1) return null;
+  const t0 = new Date(`${fechaIda}T00:00:00`).getTime();
+  if (Number.isNaN(t0)) return null;
+  const top = entradasNoche(t0, temporadas, hoy, regimen)
+    .find((t) => (t.tipo ?? "tarifa") === "promo_noche_gratis" && numNoches >= (t.min_noches ?? 1));
+  if (!top) return null;
+  return {
+    factor: (numNoches - 1) / numNoches,
+    procedencia: { temporadaGanadora: top.nombre, esPromocion: true, precioFinalAutoritativo: false },
+  };
+}
+
+/**
+ * ¿Aplica una promo "N noches, 1 gratis" para esta estadía? Envoltorio
+ * delgado sobre `resolverNocheGratisDetallado` — SOLO el factor, sin
+ * identidad. Devuelve 1 = sin promo; (N-1)/N = 1 noche gratis de N.
  */
 export function promoNocheGratisFactor(
   temporadas: TemporadaRango[],
@@ -333,12 +426,7 @@ export function promoNocheGratisFactor(
   hoy: string = hoyISO(),
   regimen?: string
 ): number {
-  if (numNoches <= 1) return 1;
-  const t0 = new Date(`${fechaIda}T00:00:00`).getTime();
-  if (Number.isNaN(t0)) return 1;
-  const aplica = entradasNoche(t0, temporadas, hoy, regimen)
-    .some((t) => (t.tipo ?? "tarifa") === "promo_noche_gratis" && numNoches >= (t.min_noches ?? 1));
-  return aplica ? (numNoches - 1) / numNoches : 1;
+  return resolverNocheGratisDetallado(temporadas, fechaIda, numNoches, hoy, regimen)?.factor ?? 1;
 }
 
 /**
@@ -356,6 +444,7 @@ export function liquidarHotelNoches(args: {
   netoPorTemporada: Record<string, number | null | undefined>;
   hoy?: string;
   regimen?: string;
+  precioFinalTemporadas?: ReadonlySet<string>;
 }): number | null {
   if (args.numNoches <= 0) return null;
   const base = new Date(`${args.fechaIda}T00:00:00`).getTime();
@@ -363,20 +452,70 @@ export function liquidarHotelNoches(args: {
   const hoy = args.hoy ?? hoyISO();
   let total = 0;
   for (let n = 0; n < args.numNoches; n++) {
-    const neto = netoNoche(base + n * MS_DIA, args.temporadas, args.netoPorTemporada, hoy, args.regimen);
+    const neto = netoNoche(base + n * MS_DIA, args.temporadas, args.netoPorTemporada, hoy, args.regimen, args.precioFinalTemporadas);
     if (neto == null) return null;
     total += neto;
   }
-  const factor = promoNocheGratisFactor(args.temporadas, args.fechaIda, args.numNoches, hoy, args.regimen);
-  return factor === 1 ? total : total * factor;
+  const nocheGratis = resolverNocheGratisDetallado(args.temporadas, args.fechaIda, args.numNoches, hoy, args.regimen);
+  return nocheGratis ? total * nocheGratis.factor : total;
+}
+
+/** Identidad de la vigencia que ganó UNA noche — temporada, si es promoción
+ * (`hotel_temporadas.tipo !== 'tarifa'`) y si esa fila está marcada precio
+ * final autoritativo (migración 179). Unidad de agregación de `procedencia`
+ * (ver `liquidarHotelNochesConTemporadas`/`liquidarHotelMasBaratoConTemporada`). */
+export type ProcedenciaNoche = {
+  temporadaGanadora: string;
+  esPromocion: boolean;
+  precioFinalAutoritativo: boolean;
+};
+
+/** Deduplica una lista de identidades de noche por la TUPLA completa
+ * `[temporadaGanadora, esPromocion, precioFinalAutoritativo]` — nunca solo
+ * por nombre (dos entradas con el mismo nombre pero booleanos distintos, ej.
+ * por un dato mal cargado, no deben colapsar en una sola silenciosamente) ni
+ * por concatenación de string (`"${a}|${b}"` es ambigua: un nombre de
+ * temporada con "|" literal podría colisionar con otro). La clave es un mapa
+ * anidado real (temporada → esPromocion → Set de precioFinalAutoritativo) —
+ * comparación estructural determinista, sin construir ningún string.
+ * Conserva el orden de PRIMERA aparición (cronológico: noche 1 antes que
+ * noche 2), para que el resultado sea determinista y legible sin depender
+ * del orden de iteración de un Map/Set. */
+function deduplicarProcedencia(entradas: ProcedenciaNoche[]): ProcedenciaNoche[] {
+  const vistos = new Map<string, Map<boolean, Set<boolean>>>();
+  const out: ProcedenciaNoche[] = [];
+  for (const e of entradas) {
+    let porPromocion = vistos.get(e.temporadaGanadora);
+    if (!porPromocion) {
+      porPromocion = new Map<boolean, Set<boolean>>();
+      vistos.set(e.temporadaGanadora, porPromocion);
+    }
+    let porAutoritativo = porPromocion.get(e.esPromocion);
+    if (!porAutoritativo) {
+      porAutoritativo = new Set<boolean>();
+      porPromocion.set(e.esPromocion, porAutoritativo);
+    }
+    if (porAutoritativo.has(e.precioFinalAutoritativo)) continue;
+    porAutoritativo.add(e.precioFinalAutoritativo);
+    out.push(e);
+  }
+  return out;
 }
 
 /**
- * Igual que `liquidarHotelNoches`, pero además devuelve el nombre de CADA
- * temporada 'tarifa' que aportó neto/precio a alguna noche de la estadía
- * (sin duplicados). Sirve para resolver, después, la regla de edad efectiva
- * de la estadía a partir de las filas de `tarifa_hotel` que realmente se
- * usaron — nunca hay que volver a consultar ni inferir desde el total.
+ * Igual que `liquidarHotelNoches`, pero además devuelve:
+ *  - el nombre de CADA temporada 'tarifa' que aportó neto/precio a alguna
+ *    noche de la estadía (`temporadasTarifa`, sin duplicados) — para
+ *    resolver, después, la regla de edad efectiva a partir de las filas de
+ *    `tarifa_hotel` que realmente se usaron;
+ *  - `procedencia`: la identidad REAL de TODAS las noches que aportaron al
+ *    total, deduplicada por temporada — NUNCA solo la de la noche de
+ *    entrada (defecto corregido: una estadía fija que cruza temporadas, ej.
+ *    noche 1 tarifa base + noche 2 promoción, reportaba antes SOLO la
+ *    identidad del checkin, aunque el total ya sumara ambas). Si la estadía
+ *    completa resolvió una única temporada, `procedencia` trae UN solo
+ *    elemento (identidad "uniforme" para quien la consuma); si cruzó más de
+ *    una, trae varios — nunca se elige arbitrariamente una sola.
  * Devuelve `null` en los mismos casos que `liquidarHotelNoches`.
  */
 export function liquidarHotelNochesConTemporadas(args: {
@@ -386,21 +525,37 @@ export function liquidarHotelNochesConTemporadas(args: {
   netoPorTemporada: Record<string, number | null | undefined>;
   hoy?: string;
   regimen?: string;
-}): { total: number; temporadasTarifa: string[] } | null {
+  precioFinalTemporadas?: ReadonlySet<string>;
+}): {
+  total: number;
+  temporadasTarifa: string[];
+  procedencia: ProcedenciaNoche[];
+} | null {
   if (args.numNoches <= 0) return null;
   const base = new Date(`${args.fechaIda}T00:00:00`).getTime();
   if (Number.isNaN(base)) return null;
   const hoy = args.hoy ?? hoyISO();
   let total = 0;
   const vistas = new Set<string>();
+  const procedenciaCruda: ProcedenciaNoche[] = [];
   for (let n = 0; n < args.numNoches; n++) {
-    const r = resolverNetoNocheDetallado(base + n * MS_DIA, args.temporadas, args.netoPorTemporada, hoy, args.regimen);
+    const r = resolverNetoNocheDetallado(base + n * MS_DIA, args.temporadas, args.netoPorTemporada, hoy, args.regimen, args.precioFinalTemporadas);
     if (r == null) return null;
     total += r.neto;
     vistas.add(r.temporadaTarifa);
+    procedenciaCruda.push({ temporadaGanadora: r.temporadaGanadora, esPromocion: r.esPromocion, precioFinalAutoritativo: r.precioFinalAutoritativo });
   }
-  const factor = promoNocheGratisFactor(args.temporadas, args.fechaIda, args.numNoches, hoy, args.regimen);
-  return { total: factor === 1 ? total : total * factor, temporadasTarifa: Array.from(vistas) };
+  // "N noches, 1 gratis" no aporta neto propio (descuenta el total ya
+  // liquidado noche por noche), pero SÍ es procedencia real de la estadía —
+  // sin esto, una estadía toda en tarifa base con noche gratis se mostraría
+  // como "Tarifa base" ocultando que una noche completa salió gratis.
+  const nocheGratis = resolverNocheGratisDetallado(args.temporadas, args.fechaIda, args.numNoches, hoy, args.regimen);
+  if (nocheGratis) procedenciaCruda.push(nocheGratis.procedencia);
+  return {
+    total: nocheGratis ? total * nocheGratis.factor : total,
+    temporadasTarifa: Array.from(vistas),
+    procedencia: deduplicarProcedencia(procedenciaCruda),
+  };
 }
 
 /**
@@ -411,7 +566,7 @@ export function liquidarHotelNochesConTemporadas(args: {
  * disponible (baja/promo) sin atarse a un mes; al reservar se re-liquida por la
  * fecha real. Devuelve `null` si ninguna noche de la ventana tiene tarifa.
  */
-export function liquidarHotelMasBarato(args: {
+type ArgsMasBarato = {
   desde: string;
   hasta: string;
   numNoches: number;
@@ -419,22 +574,89 @@ export function liquidarHotelMasBarato(args: {
   netoPorTemporada: Record<string, number | null | undefined>;
   hoy?: string;
   regimen?: string;
-}): number | null {
+  precioFinalTemporadas?: ReadonlySet<string>;
+};
+
+/**
+ * Busca, noche por noche en [desde, hasta], la de MENOR neto — devuelve su
+ * resolución DETALLADA completa (no solo el número), para que tanto el total
+ * como la IDENTIDAD (qué vigencia ganó esa noche puntual, no la de `desde`)
+ * salgan de la MISMA búsqueda. Única implementación del recorrido — usada por
+ * `liquidarHotelMasBarato` (solo el número, compatibilidad) y por
+ * `liquidarHotelMasBaratoConTemporada` (número + procedencia).
+ */
+function buscarNocheMasBarata(args: ArgsMasBarato): NonNullable<ReturnType<typeof resolverNetoNocheDetallado>> | null {
   if (args.numNoches <= 0) return null;
   const lo = new Date(`${args.desde}T00:00:00`).getTime();
   const hi = new Date(`${args.hasta}T00:00:00`).getTime();
   if (Number.isNaN(lo) || Number.isNaN(hi) || hi < lo) return null;
   const hoy = args.hoy ?? hoyISO();
-  let min: number | null = null;
+  let mejor: NonNullable<ReturnType<typeof resolverNetoNocheDetallado>> | null = null;
   for (let t0 = lo; t0 <= hi; t0 += MS_DIA) {
-    const n = netoNoche(t0, args.temporadas, args.netoPorTemporada, hoy, args.regimen);
-    if (n != null && (min == null || n < min)) min = n;
+    const r = resolverNetoNocheDetallado(t0, args.temporadas, args.netoPorTemporada, hoy, args.regimen, args.precioFinalTemporadas);
+    if (r != null && (mejor == null || r.neto < mejor.neto)) mejor = r;
   }
-  if (min == null) return null;
+  return mejor;
+}
+
+/**
+ * Costo del hotel para el TARIFARIO ("desde"): la opción más económica.
+ * Recorre noche por noche la ventana de viaje [desde, hasta] (resolviendo
+ * prioridad, vigencia de compra y promos por día) y toma el menor neto/noche;
+ * lo multiplica por `numNoches`. Así el tarifario publica la tarifa más baja
+ * disponible (baja/promo) sin atarse a un mes; al reservar se re-liquida por la
+ * fecha real. Devuelve `null` si ninguna noche de la ventana tiene tarifa.
+ */
+export function liquidarHotelMasBarato(args: ArgsMasBarato): number | null {
+  const mejor = buscarNocheMasBarata(args);
+  if (mejor == null) return null;
+  const hoy = args.hoy ?? hoyISO();
   // Ancla la promo "N noches, 1 gratis" a `desde` (fecha de entrada de la
   // ventana): es el precio "desde" publicado, se re-liquida real al reservar.
-  const factor = promoNocheGratisFactor(args.temporadas, args.desde, args.numNoches, hoy, args.regimen);
-  return min * args.numNoches * factor;
+  const nocheGratis = resolverNocheGratisDetallado(args.temporadas, args.desde, args.numNoches, hoy, args.regimen);
+  const factor = nocheGratis ? nocheGratis.factor : 1;
+  return mejor.neto * args.numNoches * factor;
+}
+
+/**
+ * Igual que `liquidarHotelMasBarato`, pero además devuelve la IDENTIDAD de la
+ * noche que realmente ganó dentro de la ventana [desde, hasta] — que puede
+ * ser CUALQUIER fecha del rango, no necesariamente `desde`. Defecto que
+ * corrige: antes solo se conocía el TOTAL; un consumidor que quisiera mostrar
+ * "Base"/"Promoción" no tenía forma de saberlo sin adivinar (y adivinar con
+ * `fecha_ida` es Exactamente el error confirmado — el precio ganador puede
+ * venir de una fecha posterior promocional, o al revés).
+ *
+ * A diferencia de `liquidarHotelNochesConTemporadas` (que suma TODAS las
+ * noches reales de una estadía fija y por eso puede cruzar varias
+ * temporadas), acá el "desde" publicado es el precio de UNA sola noche
+ * representativa (la más barata) multiplicado por `numNoches` — nunca la
+ * suma de noches distintas — así que `procedencia` trae la identidad exacta
+ * de esa noche mínima, MÁS la de "N noches, 1 gratis" si aplica (misma
+ * fuente que el factor que ya multiplica el total — nunca puede divergir).
+ * Sin noche gratis, sigue trayendo exactamente 1 elemento; con ella, 2 (o 1
+ * si por coincidencia comparten la misma tupla). Mismo tipo de retorno
+ * (`procedencia: ProcedenciaNoche[]`) que la variante de fechas fijas, para
+ * que el llamador (`paquetes/actions.ts`) use un único camino de
+ * persistencia sin importar el módulo.
+ */
+export function liquidarHotelMasBaratoConTemporada(args: ArgsMasBarato): {
+  total: number;
+  procedencia: ProcedenciaNoche[];
+} | null {
+  const mejor = buscarNocheMasBarata(args);
+  if (mejor == null) return null;
+  const hoy = args.hoy ?? hoyISO();
+  const nocheGratis = resolverNocheGratisDetallado(args.temporadas, args.desde, args.numNoches, hoy, args.regimen);
+  const factor = nocheGratis ? nocheGratis.factor : 1;
+  const procedenciaCruda: ProcedenciaNoche[] = [
+    { temporadaGanadora: mejor.temporadaGanadora, esPromocion: mejor.esPromocion, precioFinalAutoritativo: mejor.precioFinalAutoritativo },
+  ];
+  if (nocheGratis) procedenciaCruda.push(nocheGratis.procedencia);
+  return {
+    total: mejor.neto * args.numNoches * factor,
+    procedencia: deduplicarProcedencia(procedenciaCruda),
+  };
 }
 
 /** Marca un costo con el margen del paquete: costo / (1 - %mk). */

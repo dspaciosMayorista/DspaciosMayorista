@@ -2,11 +2,12 @@
 
 import { createClient } from "@/lib/supabase/server";
 import { revalidatePath } from "next/cache";
-import type { Database } from "@/types/database";
+import type { Database, Json } from "@/types/database";
+import { columnasProcedencia } from "@/lib/tarifario/procedenciaTarifario";
 import {
   noches as calcNoches,
-  liquidarHotelNoches,
-  liquidarHotelMasBarato,
+  liquidarHotelNochesConTemporadas,
+  liquidarHotelMasBaratoConTemporada,
   marcar,
   aporteVuelo,
   componerTarifa,
@@ -781,6 +782,12 @@ export async function generarTarifario(paqueteId: number): Promise<Result> {
         // Filtro de la ventana del hotel (null/vacío = todas)
         if (filtroCat && filtroCat.length && !filtroCat.includes(categoria)) continue;
         if (filtroReg && filtroReg.length && !filtroReg.includes(regimen)) continue;
+        // Temporadas de este combo marcadas como PRECIO FINAL AUTORITATIVO
+        // (migración 179) — evita que una promoción Dubai con descuento/
+        // suplemento propio se recalcule desde su temporada base al congelar
+        // el PVP del tarifario. Vacío en combos legacy/sin promociones.
+        const precioFinalTemporadas = new Set<string>();
+        for (const [temp, row] of tempMap) if (row.precio_final_autoritativo === true) precioFinalTemporadas.add(temp);
         for (const acom of ACOMODACIONES) {
           const col = COL_NETO[acom];
           const netoPorTemporada: Record<string, number | null> = {};
@@ -788,9 +795,18 @@ export async function generarTarifario(paqueteId: number): Promise<Result> {
             const v = row[col];
             netoPorTemporada[temp] = v == null ? null : Number(v);
           }
-          const costoHotel = masBarato
-            ? liquidarHotelMasBarato({ desde: fechaIda, hasta: fechaRegreso ?? fechaIda, numNoches, temporadas, netoPorTemporada, regimen })
-            : liquidarHotelNoches({ fechaIda, numNoches, temporadas, netoPorTemporada, regimen });
+          // Procedencia REAL del precio ganador (migración 180) — SIEMPRE
+          // sale de la MISMA búsqueda que produce el total, nunca se infiere
+          // después de `fecha_ida` (en `masBarato` el precio ganador puede
+          // venir de CUALQUIER noche de la ventana, no necesariamente la de
+          // entrada — ese era exactamente el defecto confirmado).
+          const resultado = masBarato
+            ? liquidarHotelMasBaratoConTemporada({ desde: fechaIda, hasta: fechaRegreso ?? fechaIda, numNoches, temporadas, netoPorTemporada, regimen, precioFinalTemporadas })
+            : liquidarHotelNochesConTemporadas({ fechaIda, numNoches, temporadas, netoPorTemporada, regimen, precioFinalTemporadas });
+          const costoHotel = resultado?.total ?? null;
+          // Procedencia deduplicada de TODAS las noches que aportaron al
+          // total (nunca solo el checkin) — ver lib/tarifario/procedenciaTarifario.ts.
+          const procedencia = columnasProcedencia(resultado?.procedencia);
           // null = no aplica (no se publica). En HABITACIONES, 0 también es "no
           // aplica" (no es gratis); en niños e infante el 0 sí es válido (gratis).
           const esRoom = acom !== "nino" && acom !== "nino2" && acom !== "infante";
@@ -827,6 +843,11 @@ export async function generarTarifario(paqueteId: number): Promise<Result> {
             precio_pvp: t.pvp,
             moneda: monedaHotel,
             salida_id: salidaId,
+            temporada_ganadora: procedencia.temporada_ganadora,
+            es_promocion: procedencia.es_promocion,
+            precio_final_autoritativo: procedencia.precio_final_autoritativo,
+            procedencia_temporadas: procedencia.procedencia_temporadas as unknown as Json,
+            procedencia_mixta: procedencia.procedencia_mixta,
           });
         }
       }
@@ -1101,10 +1122,29 @@ export async function regenerarTarifariosDeHotel(hotelId: number): Promise<void>
       .map((p) => p.paquete_id))];
     // En paralelo: son independientes (cada uno solo toca sus propias filas de
     // tarifario_resultado) y un hotel usado en muchos paquetes tardaba segundos
-    // regenerando uno por uno.
-    await Promise.allSettled(ids.map((id) => generarTarifario(id)));
-  } catch {
-    /* el auto-recálculo es best-effort; nunca bloquea la edición */
+    // regenerando uno por uno. Sigue siendo best-effort (nunca bloquea la
+    // edición del hotel), pero un paquete que falla YA NO desaparece en
+    // silencio: se loguea con su id y el motivo — antes `Promise.allSettled`
+    // descartaba el array de resultados completo, así que un tarifario
+    // desactualizado por un fallo técnico no dejaba ningún rastro. Dos formas
+    // de fallo, ambas se detectan: la promesa RECHAZADA (excepción/error de
+    // red) Y la promesa CUMPLIDA con `{ ok: false, error }` — `generarTarifario`
+    // nunca lanza por un error de negocio, lo devuelve como valor resuelto, así
+    // que un `status === "rejected"` a secas se lo pierde por completo.
+    const resultados = await Promise.allSettled(ids.map((id) => generarTarifario(id)));
+    resultados.forEach((r, i) => {
+      if (r.status === "rejected") {
+        console.error(`regenerarTarifariosDeHotel: falló generarTarifario(paquete_id=${ids[i]}) para hotel_id=${hotelId}:`, r.reason);
+      } else if (!r.value.ok) {
+        console.error(`regenerarTarifariosDeHotel: generarTarifario(paquete_id=${ids[i]}) para hotel_id=${hotelId} devolvió ok:false: ${r.value.error}`);
+      }
+    });
+  } catch (err) {
+    // Sigue siendo best-effort (nunca bloquea la edición del hotel), pero ya
+    // no absorbe el error en silencio total — un fallo ANTES de llegar al
+    // Promise.allSettled (ej. la consulta a armado_hoteles) quedaba sin
+    // ningún rastro, igual que el hallazgo ya corregido dentro del try.
+    console.error(`regenerarTarifariosDeHotel: fallo técnico para hotel_id=${hotelId}:`, err);
   }
 }
 

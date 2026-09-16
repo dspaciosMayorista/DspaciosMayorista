@@ -67,6 +67,24 @@ export type ComboCotizado = {
   // `lib/calc/reglaEdadTarifa.ts`) — nunca volver a consultar ni inferir
   // desde el total agregado.
   temporadasTarifaPorAcom?: Record<string, string[]>;
+  // Defecto real corregido (investigación "diagnóstico real de producción",
+  // sep-2026): una vigencia de tipo descuento/promoción (`hotel_temporadas.
+  // tipo !== 'tarifa'`, SIN `precio_final_autoritativo`) gana la noche por
+  // PRIORIDAD, pero `resolverNetoNocheDetallado` (lib/calc/paquetes.ts)
+  // reporta `temporadaTarifa = base.nombre` (la tarifa base usada para el
+  // cálculo aritmético del descuento) — por diseño, así resuelve la regla de
+  // EDAD (`temporadasTarifaPorAcom`, arriba). Si esa promoción tiene su
+  // PROPIA fila en `tarifa_hotel` con `notas` (ej. "No reembolsable"), esa
+  // nota se perdía por completo: `extraerCondicionesTarifa` solo miraba
+  // `temporadasTarifaPorAcom`, que nunca incluía el nombre de la promoción
+  // en este camino (SÍ lo incluye en el camino con `precio_final_
+  // autoritativo=true`, donde `temporadaTarifa === temporadaGanadora`).
+  // `temporadasCondicionPorAcom` es la unión de `temporadaTarifa` (la base)
+  // Y `temporadaGanadora` de CADA noche (`procedencia`, ya deduplicada por
+  // `liquidarHotelNochesConTemporadas`) — nunca reemplaza a
+  // `temporadasTarifaPorAcom` (la regla de edad sigue exactamente igual),
+  // solo amplía el conjunto que se usa para buscar condiciones de tarifa.
+  temporadasCondicionPorAcom?: Record<string, string[]>;
 };
 
 // ── Datos crudos, YA CONSULTADOS por el llamador (una sola vez por hotel/
@@ -209,6 +227,14 @@ export function evaluarHotelPorFechas(
     const precios: Record<string, number> = {};
     const netos: Record<string, number> = {};
     const temporadasTarifaPorAcom: Record<string, string[]> = {};
+    const temporadasCondicionPorAcom: Record<string, string[]> = {};
+    // Filas de esta combinación categoría/régimen marcadas como PRECIO FINAL
+    // AUTORITATIVO (migración 179 — promoción Dubai con su descuento/
+    // suplemento/edades propios ya horneados) — se pasa a los dos liquidadores
+    // de abajo para que nunca recalculen el descuento desde la base. Vacío en
+    // filas legacy/base (comportamiento histórico sin cambios).
+    const precioFinalTemporadas = new Set<string>();
+    for (const [temp, row] of tempMap) if (row.precio_final_autoritativo === true) precioFinalTemporadas.add(temp);
     for (const acom of ACOM_ALL) {
       const col = COL_NETO[acom];
       const netoPorTemporada: Record<string, number | null> = {};
@@ -216,26 +242,34 @@ export function evaluarHotelPorFechas(
       const esRoom = acom !== "nino" && acom !== "nino2" && acom !== "infante";
       let costoHotel: number | null;
       let temporadasAcom: string[] = [];
+      let temporadasCondicionAcom: string[] = [];
       if (esRoom) {
-        const r = liquidarHotelNochesConTemporadas({ fechaIda, numNoches, temporadas, netoPorTemporada, regimen });
+        const r = liquidarHotelNochesConTemporadas({ fechaIda, numNoches, temporadas, netoPorTemporada, regimen, precioFinalTemporadas });
         costoHotel = r?.total ?? null;
-        if (r) temporadasAcom = r.temporadasTarifa;
+        if (r) {
+          temporadasAcom = r.temporadasTarifa;
+          // Unión de la identidad de EDAD (temporadaTarifa/base) con la
+          // identidad de la VIGENCIA GANADORA de cada noche (temporadaGanadora,
+          // vía `procedencia`, ya deduplicada) — ver el comentario largo en
+          // `ComboCotizado.temporadasCondicionPorAcom` (arriba en este archivo).
+          temporadasCondicionAcom = [...new Set([...r.temporadasTarifa, ...r.procedencia.map((p) => p.temporadaGanadora)])];
+        }
       } else {
-        costoHotel = liquidarHotelNoches({ fechaIda, numNoches, temporadas, netoPorTemporada, regimen });
+        costoHotel = liquidarHotelNoches({ fechaIda, numNoches, temporadas, netoPorTemporada, regimen, precioFinalTemporadas });
       }
       if (costoHotel == null) continue;
       if (esRoom && costoHotel <= 0) continue;
       const t = componerTarifa({ aporteHotel: marcar(costoHotel, pctMk), aporteServicios: aporteServ, aporteVuelo: 0, impuesto, moneda: monedaHotel });
       precios[acom] = t.pvp;
       netos[acom] = costoHotel;
-      if (esRoom) temporadasTarifaPorAcom[acom] = temporadasAcom;
+      if (esRoom) { temporadasTarifaPorAcom[acom] = temporadasAcom; temporadasCondicionPorAcom[acom] = temporadasCondicionAcom; }
     }
-    if (Object.keys(precios).length) combos.push({ categoria, regimen, precios, netos, temporadasTarifaPorAcom });
+    if (Object.keys(precios).length) combos.push({ categoria, regimen, precios, netos, temporadasTarifaPorAcom, temporadasCondicionPorAcom });
   }
   if (reglasCierre.length) {
     for (const c of combos) {
       for (const a of Object.keys(c.precios)) {
-        if (estaCerrada(c.categoria, a)) { delete c.precios[a]; delete c.netos?.[a]; delete c.temporadasTarifaPorAcom?.[a]; }
+        if (estaCerrada(c.categoria, a)) { delete c.precios[a]; delete c.netos?.[a]; delete c.temporadasTarifaPorAcom?.[a]; delete c.temporadasCondicionPorAcom?.[a]; }
       }
     }
   }

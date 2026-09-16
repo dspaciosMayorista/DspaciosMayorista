@@ -50,6 +50,16 @@ type Tarifa = {
   neto_sencilla: number | null; neto_doble: number | null; neto_triple: number | null;
   neto_multiple: number | null; neto_nino: number | null; neto_nino2: number | null;
   neto_infante: number | null; nota_infante: string | null;
+  // Migración 179 — identidad Base/Promoción de ESTA fila (no de la
+  // temporada/vigencia en `hotel_temporadas`, que es otra tabla). `notas` es
+  // la "condición de la tarifa" (texto libre, ej. "No reembolsable.") — no
+  // confundir con la condición de PAGO (`condicion_pago_*` de
+  // `hotel_temporadas`, otro concepto: cuánto/cuándo se paga, no restricciones
+  // de la tarifa). Opcionales: filas de hoteles todavía sin la migración 179
+  // corrida en su entorno no traen estas columnas del `select("*")`.
+  precio_final_autoritativo?: boolean;
+  temporada_base?: string | null;
+  notas?: string | null;
 };
 
 const lbl = "mb-1 block text-xs font-medium text-gray-600";
@@ -483,7 +493,28 @@ function TarifasBox({ hotelId, categorias, regimenes, temporadas, tarifas, venci
     <tr key={t.id} className="border-t border-gray-50">
       <td className="px-3 py-2 text-gray-700">{t.tipo_habitacion ?? "—"}</td>
       <td className="px-3 py-2 text-gray-500">{t.alimentacion ?? "—"}</td>
-      <td className="px-3 py-2 text-gray-500">{t.temporada ?? "—"}</td>
+      <td className="px-3 py-2 text-gray-500">
+        <div className="flex items-center gap-1.5">
+          <span>{t.temporada ?? "—"}</span>
+          {t.precio_final_autoritativo ? (
+            <span
+              className="rounded-full bg-[var(--brand-accent)]/15 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-[var(--brand-accent)]"
+              title={t.temporada_base ? `Promoción derivada de la temporada base "${t.temporada_base}" — precio final ya calculado, no se recalcula.` : "Promoción — precio final ya calculado, no se recalcula."}
+            >
+              Promoción
+            </span>
+          ) : (
+            <span className="rounded-full bg-gray-100 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-gray-500">Base</span>
+          )}
+        </div>
+        {/* Condición de la TARIFA (ej. "No reembolsable.") — distinta de la
+            condición de PAGO de la temporada (cuánto/cuándo se paga). */}
+        {t.notas?.trim() && (
+          <div className="mt-0.5 max-w-[220px] truncate text-[10px] text-amber-600" title={t.notas}>
+            {t.notas}
+          </div>
+        )}
+      </td>
       <td className="px-3 py-2 text-right tabular-nums">{celda(t.neto_sencilla, cfg)}</td>
       <td className="px-3 py-2 text-right tabular-nums">{celda(t.neto_doble, cfg)}</td>
       <td className="px-3 py-2 text-right tabular-nums">{celda(t.neto_triple, cfg)}</td>
