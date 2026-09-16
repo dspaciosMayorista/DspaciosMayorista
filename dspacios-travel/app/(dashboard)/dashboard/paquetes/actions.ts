@@ -1017,6 +1017,16 @@ export async function generarTarifario(paqueteId: number): Promise<Result> {
       impuesto: 0,
       moneda: monedaSrv,
       descripcion: srv.descripcion ?? null,
+      // Procedencia (migración 180): las filas de servicio no vienen de
+      // `columnasProcedencia()` como las de hotel — sin esto, el insert
+      // masivo manda `procedencia_mixta` NULL (viola el NOT NULL) porque el
+      // DEFAULT de la columna no aplica cuando la propiedad simplemente está
+      // ausente del objeto en un insert de filas heterogéneas.
+      temporada_ganadora: null,
+      es_promocion: null,
+      precio_final_autoritativo: null,
+      procedencia_temporadas: null,
+      procedencia_mixta: false,
     };
     if (modo === "grupo") {
       for (const g of gruposPorServicio.get(s.servicio_id) ?? []) {
