@@ -24,6 +24,7 @@ function itemPersona(over: Partial<ItemHotelPersonaAddons> = {}): ItemHotelPerso
   return {
     tipo: "hotel",
     modeloTarifario: undefined,
+    paqueteId: 10,
     destino: "CARTAGENA",
     fechaIda: "2026-12-01",
     fechaRegreso: "2026-12-04",
@@ -36,6 +37,7 @@ function itemUnidadSinVuelo(over: Partial<ItemHotelUnidadAddons> = {}): ItemHote
   return {
     tipo: "hotel",
     modeloTarifario: "unidad",
+    paqueteId: 20,
     destino: "CARTAGENA",
     salida: { tipo: "sin_vuelo", fechaIda: "2026-12-01", fechaRegreso: "2026-12-04" },
     habitaciones: [{ adultos: 2, edadesMenores: [] }],
@@ -46,7 +48,7 @@ function itemUnidadSinVuelo(over: Partial<ItemHotelUnidadAddons> = {}): ItemHote
 describe("construirAddonsIntentDesdeItem — hotel PERSONA conserva el comportamiento actual", () => {
   test("destino/fechaIda/fechaRegreso/pax se conservan tal cual (nunca precio ni datos financieros)", () => {
     const intent = construirAddonsIntentDesdeItem(itemPersona());
-    assert.deepEqual(intent, { destino: "CARTAGENA", fechaIda: "2026-12-01", fechaRegreso: "2026-12-04", pax: 2 });
+    assert.deepEqual(intent, { paqueteId: 10, destino: "CARTAGENA", fechaIda: "2026-12-01", fechaRegreso: "2026-12-04", pax: 2 });
   });
 
   test("sin destino, sin fechas o con pax inválido (0/negativo/decimal) → null (referencia no utilizable)", () => {
@@ -58,6 +60,26 @@ describe("construirAddonsIntentDesdeItem — hotel PERSONA conserva el comportam
     assert.equal(construirAddonsIntentDesdeItem(itemPersona({ pax: -1 })), null);
     assert.equal(construirAddonsIntentDesdeItem(itemPersona({ pax: 2.5 })), null);
   });
+
+  // ── Requisito 1/3 del fix "add-ons propios reemplazados por el catálogo
+  // general del destino": el intent transporta paqueteId, normalizado como
+  // entero positivo en la frontera pública (item.paqueteId llega `unknown`,
+  // como cualquier otro campo persistido en localStorage). ──────────────────
+  test("PAQUETE ID: se conserva tal cual cuando es un entero positivo real", () => {
+    const intent = construirAddonsIntentDesdeItem(itemPersona({ paqueteId: 77 }));
+    assert.equal(intent!.paqueteId, 77);
+  });
+
+  test("PAQUETE ID inválido (0, negativo, decimal, string, null, undefined, NaN, objeto) → el ítem completo se descarta como referencia (null)", () => {
+    const invalidos: unknown[] = [0, -1, 2.5, "10", null, undefined, NaN, Infinity, {}, [10]];
+    for (const paqueteId of invalidos) {
+      assert.equal(
+        construirAddonsIntentDesdeItem(itemPersona({ paqueteId })),
+        null,
+        `paqueteId=${JSON.stringify(paqueteId)} debería descartar el ítem`
+      );
+    }
+  });
 });
 
 describe("construirAddonsIntentDesdeItem — hotel UNIDAD (sin_vuelo) construye destino/fechas/pax correctamente", () => {
@@ -68,7 +90,7 @@ describe("construirAddonsIntentDesdeItem — hotel UNIDAD (sin_vuelo) construye 
         { adultos: 1, edadesMenores: [7] },
       ],
     }));
-    assert.deepEqual(intent, { destino: "CARTAGENA", fechaIda: "2026-12-01", fechaRegreso: "2026-12-04", pax: 4 });
+    assert.deepEqual(intent, { paqueteId: 20, destino: "CARTAGENA", fechaIda: "2026-12-01", fechaRegreso: "2026-12-04", pax: 4 });
   });
 
   test("DOS adultos + UN menor de 8 años → pax 3, NUNCA 8 (no confunde la edad del menor con un conteo)", () => {
@@ -109,6 +131,23 @@ describe("construirAddonsIntentDesdeItem — hotel UNIDAD (sin_vuelo) construye 
   test("sin destino → null", () => {
     assert.equal(construirAddonsIntentDesdeItem(itemUnidadSinVuelo({ destino: null })), null);
   });
+
+  // ── Requisito 1/2/3: hotel UNIDAD también transporta/valida paqueteId ──────
+  test("PAQUETE ID: se conserva tal cual cuando es un entero positivo real", () => {
+    const intent = construirAddonsIntentDesdeItem(itemUnidadSinVuelo({ paqueteId: 88 }));
+    assert.equal(intent!.paqueteId, 88);
+  });
+
+  test("PAQUETE ID inválido (0, negativo, decimal, string, null, undefined, NaN, objeto) → el ítem completo se descarta como referencia (null), igual que persona", () => {
+    const invalidos: unknown[] = [0, -1, 2.5, "20", null, undefined, NaN, Infinity, {}, [20]];
+    for (const paqueteId of invalidos) {
+      assert.equal(
+        construirAddonsIntentDesdeItem(itemUnidadSinVuelo({ paqueteId })),
+        null,
+        `paqueteId=${JSON.stringify(paqueteId)} debería descartar el ítem`
+      );
+    }
+  });
 });
 
 describe("construirAddonsIntentDesdeItem — salida bloqueo/empaquetado NUNCA inventa fechas (falla cerrado)", () => {
@@ -133,7 +172,7 @@ describe("construirAddonsIntentDesdeCarrito — elige el hotel MÁS RECIENTE com
   test("hotel unidad como ÚNICO hotel del carrito funciona (el defecto real: antes quedaba undefined)", () => {
     const carrito: ItemCarritoAddons[] = [itemUnidadSinVuelo({ destino: "CARTAGENA" })];
     const intent = construirAddonsIntentDesdeCarrito(carrito);
-    assert.deepEqual(intent, { destino: "CARTAGENA", fechaIda: "2026-12-01", fechaRegreso: "2026-12-04", pax: 2 });
+    assert.deepEqual(intent, { paqueteId: 20, destino: "CARTAGENA", fechaIda: "2026-12-01", fechaRegreso: "2026-12-04", pax: 2 });
   });
 
   test("con varios hoteles usa el MÁS RECIENTE (último del arreglo) compatible — persona más reciente que unidad", () => {
@@ -164,6 +203,27 @@ describe("construirAddonsIntentDesdeCarrito — elige el hotel MÁS RECIENTE com
     const intent = construirAddonsIntentDesdeCarrito(carrito);
     assert.equal(intent!.destino, "SANTA MARTA");
     assert.equal(intent!.pax, 4);
+  });
+
+  // ── Requisito "paquete A y paquete B del mismo destino no mezclan
+  // servicios": a nivel de intent, esto significa que el paqueteId elegido es
+  // SIEMPRE el del hotel que realmente ganó la referencia — nunca el de otro
+  // ítem del mismo carrito, aunque compartan destino. ────────────────────────
+  test("dos hoteles del MISMO destino pero de paquetes DISTINTOS (A y B) — el intent lleva el paqueteId del hotel elegido, nunca el del otro", () => {
+    const carritoAGana: ItemCarritoAddons[] = [
+      itemPersona({ paqueteId: 111, destino: "CARTAGENA", pax: 2 }), // paquete A, más antiguo
+      itemPersona({ paqueteId: 222, destino: "CARTAGENA", pax: 3 }), // paquete B, más reciente → gana
+    ];
+    const intentB = construirAddonsIntentDesdeCarrito(carritoAGana);
+    assert.equal(intentB!.paqueteId, 222);
+    assert.notEqual(intentB!.paqueteId, 111);
+
+    const carritoBIncompatible: ItemCarritoAddons[] = [
+      itemPersona({ paqueteId: 111, destino: "CARTAGENA", pax: 2 }), // paquete A, único compatible
+      itemUnidadSinVuelo({ paqueteId: 222, destino: "CARTAGENA", salida: { tipo: "bloqueo", id: 9 } }), // paquete B, más reciente pero SIN fechas
+    ];
+    const intentA = construirAddonsIntentDesdeCarrito(carritoBIncompatible);
+    assert.equal(intentA!.paqueteId, 111); // cae al paquete A, nunca inventa/mezcla con el 222 descartado
   });
 
   test("tours en el carrito nunca participan como referencia, ni siendo los más recientes", () => {

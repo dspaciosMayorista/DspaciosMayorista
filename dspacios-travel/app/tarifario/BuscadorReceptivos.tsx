@@ -13,13 +13,19 @@ import type { TourCartItem } from "@/lib/cart/CartContext";
 // vuelve a correr si el usuario ya estaba en Receptivos y hace clic de
 // nuevo, o desde otro hotel). Mismo patrón que `sugerenciaPedida` en
 // `BuscadorBooking.tsx`.
-export type ReceptivosPrefill = { destino: string | null; fechaIda: string | null; fechaRegreso: string | null; pax: number; nonce: number };
+//
+// `paqueteId` (fix "add-ons propios reemplazados por el catálogo general del
+// destino"): identidad del paquete de origen — cuando llega, la búsqueda
+// queda ACOTADA a los servicios opcionales de ESE paquete (ver
+// `lib/cart/addonsIntent.ts`). Siempre un entero positivo real: un ítem del
+// carrito sin paquete válido nunca produce un `AddonsIntent`.
+export type ReceptivosPrefill = { paqueteId: number; destino: string | null; fechaIda: string | null; fechaRegreso: string | null; pax: number; nonce: number };
 
 // Motor de búsqueda de receptivos: destino + fechas + pax → liquida EN VIVO
 // cada tour publicado (temporada de la fecha elegida, tarifa por persona o
 // por grupo según el pax) — mismo criterio que el buscador de porción terrestre.
 export function BuscadorReceptivos({
-  destinos = [], fotosPorServicio = {}, onVerDetalle, initial = null, onConsumedInitial, onAgregar,
+  destinos = [], fotosPorServicio = {}, onVerDetalle, initial = null, onConsumedInitial, onAgregar, onModoAcotado,
 }: {
   destinos?: string[];
   fotosPorServicio?: Record<number, string>;
@@ -29,26 +35,98 @@ export function BuscadorReceptivos({
   initial?: ReceptivosPrefill | null;
   onConsumedInitial?: () => void;
   onAgregar?: (item: Omit<TourCartItem, "id">) => void;
+  // Notifica al padre (VistaBooking) el MODO ACOTADO vigente — un `paqueteId`
+  // cuando la búsqueda quedó atada al paquete de origen, `null` cuando se
+  // abandona ese alcance ("Limpiar resultados") o nunca se entró por el
+  // carrito (entrada directa a Receptivos, comportamiento general de
+  // siempre). El padre lo usa para no mostrar debajo el catálogo estático
+  // general como si formara parte de los resultados del paquete.
+  onModoAcotado?: (paqueteId: number | null) => void;
 }) {
   const hoy = new Date().toISOString().slice(0, 10);
   const [fIda, setFIda] = useState(initial?.fechaIda ?? "");
   const [fReg, setFReg] = useState(initial?.fechaRegreso ?? "");
   const [pax, setPax] = useState(initial?.pax ? String(initial.pax) : "2");
   const [destino, setDestino] = useState(initial?.destino ?? "");
+  // Alcance de paquete vigente: `null` = búsqueda general (comportamiento de
+  // siempre). Se activa al consumir un intent del carrito y se abandona
+  // EXPLÍCITAMENTE con "Limpiar resultados" — nunca por editar un campo del
+  // formulario a mano (mientras esté activo, "Buscar receptivos" lo conserva).
+  const [paqueteAcotado, setPaqueteAcotado] = useState<number | null>(initial?.paqueteId ?? null);
   const [pending, start] = useTransition();
   const [err, setErr] = useState("");
   const [resultados, setResultados] = useState<ResultadoServicio[] | null>(null);
 
-  function buscar(destinoQ = destino, fIdaQ = fIda, fRegQ = fReg, paxQ = pax) {
+  // Generación de solicitud: protección REAL contra respuestas fuera de orden
+  // — mismo patrón que `generacionBusquedaRef` en `BuscadorBooking.tsx`. Cada
+  // `buscar()` captura su propia generación (`miGeneracion`) de forma
+  // SÍNCRONA al arrancar; al resolver, solo publica si
+  // `generacionBusquedaRef.current` sigue siendo exactamente esa generación.
+  // Sin esto, una búsqueda del paquete A que tarda más que una búsqueda
+  // posterior del paquete B podía resolver DESPUÉS y sobrescribir los
+  // resultados de B con los de A — el usuario vería servicios de otro
+  // paquete bajo el alcance visible equivocado. Toda invalidación pasa por
+  // acá: `buscar()` incrementa la suya al iniciar (éxito o fallo de
+  // validación, igual criterio que BuscadorBooking) y `limpiarTodo()` (botón
+  // "Limpiar resultados") también incrementa, para que una respuesta en
+  // vuelo nunca "resucite" tras limpiar sin volver a buscar.
+  const generacionBusquedaRef = useRef(0);
+
+  // El componente se desmontó (cambio de pestaña/submódulo) mientras una
+  // búsqueda estaba en vuelo — `setResultados`/`setErr` seguirían siendo
+  // llamadas válidas (funciones de este mismo componente, no lanzan por sí
+  // solas) pero resucitarían un resultado que ya no corresponde a lo que el
+  // usuario está viendo. Se marca en el cleanup del efecto y se revisa antes
+  // de publicar cualquier respuesta asíncrona.
+  const montadoRef = useRef(true);
+  // El setup RESTABLECE `true` (no basta con inicializar el ref en `true` una
+  // sola vez): en React Strict Mode (desarrollo) un componente se monta,
+  // desmonta y vuelve a montar de inmediato para exponer efectos no
+  // idempotentes — la secuencia real es setup → cleanup → setup. Sin este
+  // restablecimiento, el cleanup del primer ciclo deja `montadoRef.current`
+  // en `false` para SIEMPRE (nada lo vuelve a poner en `true`), así que el
+  // segundo montaje (el que el usuario realmente ve) descartaría toda
+  // respuesta como si el componente nunca hubiera estado montado.
+  useEffect(() => {
+    montadoRef.current = true;
+    return () => { montadoRef.current = false; };
+  }, []);
+
+  function buscar(destinoQ = destino, fIdaQ = fIda, fRegQ = fReg, paxQ = pax, paqueteIdQ = paqueteAcotado) {
+    // Invalida SINCRÓNICAMENTE cualquier búsqueda anterior en vuelo — antes
+    // de pedir nada, no después de que la nueva resuelva. `miGeneracion` es
+    // la que esta búsqueda concreta debe seguir viendo intacta para poder
+    // publicar (ver el chequeo tras el `await`).
+    const miGeneracion = (generacionBusquedaRef.current += 1);
     setErr(""); setResultados(null);
     if (!fIdaQ || !fRegQ) { setErr("Indica fecha de ida y de regreso."); return; }
     const paxNum = Number(paxQ) || 0;
     if (paxNum <= 0) { setErr("Indica cuántos pax."); return; }
     start(async () => {
-      const r = await buscarReceptivos({ fechaIda: fIdaQ, fechaRegreso: fRegQ, pax: paxNum, destino: destinoQ });
+      const r = await buscarReceptivos({ fechaIda: fIdaQ, fechaRegreso: fRegQ, pax: paxNum, destino: destinoQ, paqueteId: paqueteIdQ ?? undefined });
+      // Esta búsqueda quedó obsoleta (otra búsqueda más nueva arrancó, o se
+      // pulsó "Limpiar resultados") — no importa si eso ocurrió antes o
+      // después de que ESTA respuesta llegara: solo la ÚLTIMA búsqueda
+      // iniciada está autorizada a publicar.
+      if (generacionBusquedaRef.current !== miGeneracion) return;
+      if (!montadoRef.current) return;
       if (r.ok) setResultados(r.resultados);
       else setErr(r.error);
     });
+  }
+
+  // Salir del modo acotado / limpiar la búsqueda vigente — SIEMPRE la misma
+  // decisión completa, sin importar si lo que hay pintado es un resultado
+  // real o un error: invalida cualquier solicitud en vuelo ANTES de tocar
+  // estado (si no, una respuesta tardía con la generación vieja quedaría
+  // "vigente" y podría publicarse igual), borra resultados y error, y suelta
+  // el alcance de paquete avisando al padre.
+  function limpiarTodo() {
+    generacionBusquedaRef.current += 1;
+    setResultados(null);
+    setErr("");
+    setPaqueteAcotado(null);
+    onModoAcotado?.(null);
   }
 
   // Aplica un intent: actualiza los campos visibles y dispara la búsqueda.
@@ -63,7 +141,9 @@ export function BuscadorReceptivos({
     setFIda(p.fechaIda ?? "");
     setFReg(p.fechaRegreso ?? "");
     setPax(p.pax ? String(p.pax) : "2");
-    if (p.fechaIda && p.fechaRegreso) buscar(p.destino ?? "", p.fechaIda, p.fechaRegreso, String(p.pax || 2));
+    setPaqueteAcotado(p.paqueteId);
+    onModoAcotado?.(p.paqueteId);
+    if (p.fechaIda && p.fechaRegreso) buscar(p.destino ?? "", p.fechaIda, p.fechaRegreso, String(p.pax || 2), p.paqueteId);
     onConsumedInitial?.();
   }
   // `aplicarPrefill` se re-crea en cada render (no es un `useCallback`, y no
@@ -130,8 +210,26 @@ export function BuscadorReceptivos({
             className="rounded-lg px-5 py-2.5 text-sm font-semibold text-white disabled:opacity-50" style={{ backgroundColor: "var(--brand-primary)" }}>
             {pending ? "Buscando…" : "Buscar receptivos"}
           </button>
-          {resultados && <button type="button" onClick={() => setResultados(null)} className="text-xs text-gray-400 hover:text-gray-700">Limpiar resultados</button>}
+          {/* Visible con resultados O con el modo acotado activo (aunque la
+              búsqueda haya fallado): si `buscarReceptivos` devuelve error
+              mientras `paqueteAcotado` sigue activo, el usuario debe poder
+              salir igual — de lo contrario queda atrapado sin el botón,
+              con el catálogo general oculto (ver VistaBooking). */}
+          {(resultados != null || paqueteAcotado != null) && (
+            <button
+              type="button"
+              onClick={limpiarTodo}
+              className="text-xs text-gray-400 hover:text-gray-700"
+            >
+              Limpiar resultados
+            </button>
+          )}
         </div>
+        {paqueteAcotado != null && (
+          <p className="mt-2 text-xs font-medium" style={{ color: "var(--brand-accent)" }}>
+            Mostrando solo los servicios opcionales de tu paquete. Usa &quot;Limpiar resultados&quot; para ver el catálogo general del destino.
+          </p>
+        )}
         {err && <p className="mt-2 text-sm text-red-600">{err}</p>}
       </div>
 
