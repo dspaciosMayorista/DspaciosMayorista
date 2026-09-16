@@ -738,3 +738,50 @@ describe("Guarda de regresión — procedencia Base/Promoción solo en administr
     assert.doesNotMatch(vistaBookingSrc, /"Tarifa base"/, "VistaBooking.tsx no debe mostrar el texto público 'Tarifa base'");
   });
 });
+
+// ─────────────────────────────────────────────────────────────────────────
+// HOTFIX — `null value in column "procedencia_mixta" ... violates not-null
+// constraint` en producción. Causa: el `.insert(filas)` de generarTarifario
+// es UN SOLO lote heterogéneo (filas de hotel + filas de servicio). Las
+// filas de hotel llenan las 5 columnas de procedencia desde
+// `columnasProcedencia(...)`, pero el objeto `comun` de las filas de
+// servicio no las declaraba — en Postgres, una columna AUSENTE en una fila
+// de un insert multi-fila no cae al DEFAULT de la tabla (eso solo aplica
+// col-por-col cuando el INSERT no la menciona en absoluto para NINGUNA
+// fila); con otras filas del mismo INSERT sí mencionándola, PostgREST la
+// serializa como NULL para las filas que no la traen. La migración 180 puso
+// `procedencia_mixta` NOT NULL — nunca se pensó para un insert heterogéneo
+// hotel+servicio en el mismo lote.
+// ─────────────────────────────────────────────────────────────────────────
+describe("HOTFIX — filas de servicio en generarTarifario declaran las 5 columnas de procedencia (nunca ausentes en el insert heterogéneo)", () => {
+  test("el objeto `comun` de las filas de servicio fija explícitamente las 5 columnas (procedencia_mixta: false; las otras 4 en null)", () => {
+    const posComun = paquetesActions.indexOf("const comun = {");
+    assert.notEqual(posComun, -1, "no se encontró el objeto `comun` de las filas de servicio");
+    const posCierre = paquetesActions.indexOf("};", posComun);
+    const cuerpoComun = paquetesActions.slice(posComun, posCierre);
+    assert.match(cuerpoComun, /temporada_ganadora: null,/);
+    assert.match(cuerpoComun, /es_promocion: null,/);
+    assert.match(cuerpoComun, /precio_final_autoritativo: null,/);
+    assert.match(cuerpoComun, /procedencia_temporadas: null,/);
+    assert.match(cuerpoComun, /procedencia_mixta: false,/);
+  });
+
+  test("las dos filas de servicio (`filas.push({ ...comun, ... })`, modo grupo y modo persona) heredan las 5 columnas por spread de `comun` — ninguna las sobreescribe", () => {
+    const pushesServicio = paquetesActions.match(/filas\.push\(\{ \.\.\.comun,[^}]*\}\);/g) ?? [];
+    assert.equal(pushesServicio.length, 2, "deben existir exactamente 2 `filas.push({ ...comun, ... })` (modo grupo y modo persona)");
+    for (const push of pushesServicio) {
+      for (const col of ["temporada_ganadora", "es_promocion", "precio_final_autoritativo", "procedencia_temporadas", "procedencia_mixta"]) {
+        assert.doesNotMatch(push, new RegExp(`\\b${col}\\s*:`), `el push de servicio no debe sobreescribir ${col} (debe heredarlo tal cual de \`comun\`)`);
+      }
+    }
+  });
+
+  test("la fila de hotel (`filas.push({ ... })` fuera del spread de comun) sigue llenando las 5 columnas desde `columnasProcedencia`, no desde un literal fijo", () => {
+    const posPushHotel = paquetesActions.indexOf("filas.push({", paquetesActions.indexOf("procedencia = columnasProcedencia"));
+    assert.notEqual(posPushHotel, -1, "no se encontró el push de la fila de hotel");
+    const posCierre = paquetesActions.indexOf("});", posPushHotel);
+    const cuerpoPush = paquetesActions.slice(posPushHotel, posCierre);
+    assert.match(cuerpoPush, /temporada_ganadora: procedencia\.temporada_ganadora,/);
+    assert.match(cuerpoPush, /procedencia_mixta: procedencia\.procedencia_mixta,/);
+  });
+});
