@@ -209,6 +209,13 @@ export function evaluarHotelPorFechas(
     const precios: Record<string, number> = {};
     const netos: Record<string, number> = {};
     const temporadasTarifaPorAcom: Record<string, string[]> = {};
+    // Filas de esta combinación categoría/régimen marcadas como PRECIO FINAL
+    // AUTORITATIVO (migración 179 — promoción Dubai con su descuento/
+    // suplemento/edades propios ya horneados) — se pasa a los dos liquidadores
+    // de abajo para que nunca recalculen el descuento desde la base. Vacío en
+    // filas legacy/base (comportamiento histórico sin cambios).
+    const precioFinalTemporadas = new Set<string>();
+    for (const [temp, row] of tempMap) if (row.precio_final_autoritativo === true) precioFinalTemporadas.add(temp);
     for (const acom of ACOM_ALL) {
       const col = COL_NETO[acom];
       const netoPorTemporada: Record<string, number | null> = {};
@@ -217,11 +224,11 @@ export function evaluarHotelPorFechas(
       let costoHotel: number | null;
       let temporadasAcom: string[] = [];
       if (esRoom) {
-        const r = liquidarHotelNochesConTemporadas({ fechaIda, numNoches, temporadas, netoPorTemporada, regimen });
+        const r = liquidarHotelNochesConTemporadas({ fechaIda, numNoches, temporadas, netoPorTemporada, regimen, precioFinalTemporadas });
         costoHotel = r?.total ?? null;
         if (r) temporadasAcom = r.temporadasTarifa;
       } else {
-        costoHotel = liquidarHotelNoches({ fechaIda, numNoches, temporadas, netoPorTemporada, regimen });
+        costoHotel = liquidarHotelNoches({ fechaIda, numNoches, temporadas, netoPorTemporada, regimen, precioFinalTemporadas });
       }
       if (costoHotel == null) continue;
       if (esRoom && costoHotel <= 0) continue;

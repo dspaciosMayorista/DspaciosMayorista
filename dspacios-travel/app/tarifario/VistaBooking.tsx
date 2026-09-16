@@ -1900,6 +1900,34 @@ function Selector({
     return m;
   }, [opcion, catEff, regEff]);
 
+  // Procedencia REAL persistida (migración 180) para esta combinación
+  // categoría + alimentación — DOS ejes de mezcla posibles, nunca
+  // confundidos entre sí:
+  //  1) MEZCLA DENTRO de una estadía (una sola acomodación cruzó temporadas,
+  //     ej. noche 1 base + noche 2 promoción): `f.procedencia_mixta`,
+  //     persistido por la MISMA liquidación que sumó el total — nunca se
+  //     reconstruye acá. Prioridad MÁXIMA: si CUALQUIER fila del combo está
+  //     marcada así, ninguna identidad "uniforme" de otra fila puede
+  //     disimularlo — se avisa "Varias tarifas durante la estadía".
+  //  2) MEZCLA ENTRE acomodaciones (cada una internamente uniforme, pero
+  //     Doble liquidó desde una temporada distinta a Triple): se detecta
+  //     comparando las identidades uniformes de las filas del combo — nunca
+  //     se toma "la primera fila" como si representara a todas. Se avisa
+  //     "Varias tarifas según acomodación".
+  // Si ninguna fila tiene procedencia resuelta (ruta vieja o sin regenerar),
+  // no se muestra nada — nunca se asume "Base" por ausencia.
+  const identidad = useMemo((): IdentidadBadgeProps | null => {
+    const filas = opcion.filas.filter(
+      (f) => f.categoria === catEff && f.regimen === regEff && (f.temporada_ganadora != null || f.procedencia_mixta)
+    );
+    if (!filas.length) return null;
+    if (filas.some((f) => f.procedencia_mixta)) return { tipo: "mixta_estadia" };
+    const claves = new Set(filas.map((f) => `${f.temporada_ganadora}|${!!f.es_promocion}`));
+    if (claves.size > 1) return { tipo: "mixta_acomodacion" };
+    const f0 = filas[0];
+    return { tipo: "uniforme", temporada: f0.temporada_ganadora as string, esPromocion: !!f0.es_promocion };
+  }, [opcion, catEff, regEff]);
+
   const selCls = "rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm";
 
   const agregarItem = (habitaciones: Record<string, number>, ninos: number, ninos2: number, infantes: number, pax: number, precio: number, edadesMenores: number[]) =>
@@ -1932,10 +1960,72 @@ function Selector({
             </div>
           )}
         </div>
+        {identidad && (
+          <div className="flex items-end">
+            <IdentidadTemporadaBadge {...identidad} />
+          </div>
+        )}
       </div>
 
       <EditorPax pvp={pvp} acomConfig={cap.acom} paxMin={cap.paxMin} paxMax={cap.paxMax} moneda={hotel.moneda} edadesNota={textoEdadesHotel(hotel)} edadInfanteMax={hotel.infMax} edadNinoMax={hotel.ninoMax} nota={!puedeReservar ? "El valor es una estimación con tarifas publicadas; el precio final se confirma al generar la cotización." : undefined} onAgregar={agregarItem} />
     </div>
+  );
+}
+
+// Badge "Tarifa base" / "Promoción · <temporada>" / "Varias tarifas durante
+// la estadía" / "Varias tarifas según acomodación" — lee EXCLUSIVAMENTE la
+// procedencia ya persistida en `tarifario_resultado` (migración 180,
+// congelada por `generarTarifario()` al calcular el precio, nunca inferida
+// en el cliente a partir de `fecha_ida`). Los DOS casos de mezcla son
+// conceptos DISTINTOS, nunca se combinan en un mismo texto:
+//  - "mixta_estadia": UNA acomodación cruzó temporadas dentro de su propia
+//    estadía (ej. noche 1 base + noche 2 promoción) — `procedencia_mixta`
+//    de esa fila, persistido por la liquidación misma.
+//  - "mixta_acomodacion": cada acomodación es internamente uniforme, pero
+//    Doble y Triple liquidaron desde temporadas distintas entre sí.
+// `esPromocion` (caso "uniforme") es la clasificación GENERAL por
+// `hotel_temporadas.tipo` de la vigencia ganadora — NUNCA por
+// `precio_final_autoritativo`: una promoción legacy (descuento_pct/monto
+// creada a mano, sin marca de la calculadora Dubai) es "Promoción" igual que
+// una generada. Informativo, sin costo neto.
+type IdentidadBadgeProps =
+  | { tipo: "mixta_estadia" }
+  | { tipo: "mixta_acomodacion" }
+  | { tipo: "uniforme"; esPromocion: boolean; temporada: string };
+
+function IdentidadTemporadaBadge(props: IdentidadBadgeProps) {
+  if (props.tipo === "mixta_estadia") {
+    return (
+      <span
+        className="rounded-full bg-amber-50 px-2 py-1 text-[11px] font-semibold uppercase tracking-wide text-amber-600"
+        title="Esta estadía cruza más de una temporada (ej. una noche en tarifa base y otra en promoción) — el total ya suma ambas."
+      >
+        Varias tarifas durante la estadía
+      </span>
+    );
+  }
+  if (props.tipo === "mixta_acomodacion") {
+    return (
+      <span
+        className="rounded-full bg-amber-50 px-2 py-1 text-[11px] font-semibold uppercase tracking-wide text-amber-600"
+        title="Las distintas acomodaciones de esta combinación no comparten la misma temporada ganadora."
+      >
+        Varias tarifas según acomodación
+      </span>
+    );
+  }
+  const { esPromocion, temporada } = props;
+  return (
+    <span
+      className={`rounded-full px-2 py-1 text-[11px] font-semibold uppercase tracking-wide ${
+        esPromocion
+          ? "bg-[var(--brand-accent)]/15 text-[var(--brand-accent)]"
+          : "bg-gray-100 text-gray-500"
+      }`}
+      title={esPromocion ? `Promoción — temporada "${temporada}"` : `Tarifa base — temporada "${temporada}"`}
+    >
+      {esPromocion ? `Promoción · ${temporada}` : "Tarifa base"}
+    </span>
   );
 }
 

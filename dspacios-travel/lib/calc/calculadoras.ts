@@ -99,6 +99,17 @@ export type TarifaGenerada = {
   edad_infante_max?: number | null;
   edad_nino_min?: number | null;
   edad_nino_max?: number | null;
+  // Identidad de precio final — migración 179 (PROPUESTA, no aplicada). SOLO
+  // `generarTarifasDubai` la enciende, y SOLO en las filas que genera para
+  // `promos[]`: el neto de esa fila YA tiene el descuento, el suplemento
+  // propio (o general) y los modificadores de acomodación HORNEADOS — es el
+  // precio final que se debe cobrar, no una vigencia genérica que el motor
+  // deba recalcular desde la base. `temporada_base` es la temporada de la
+  // que se derivó (identidad para auditoría, `promos[].temporadaBase`).
+  // `undefined` en filas de BASE y en Mixta/Corporativa → columnas quedan en
+  // su default (`false`/`null`), comportamiento histórico sin cambios.
+  precio_final_autoritativo?: boolean;
+  temporada_base?: string | null;
 };
 
 // ── Calculadora "DUBAI" ────────────────────────────────────────────────────
@@ -139,6 +150,13 @@ export type DubaiBase = {
   // contexto de "promoción" que justifique cargo sobre su propio régimen).
   usarSuplementosPropios?: boolean;
   suplementosPropios?: DubaiSuplementoRegimen[];
+  // Condición propia de ESTA base (texto libre, ej. "Tarifa temporada baja,
+  // no incluye impuestos hoteleros.") — se escribe en `notas` de TODAS las
+  // filas que genera esta base (todas sus filas por régimen). Independiente
+  // de `DubaiPromo.condicionesPropias`: una promoción NUNCA hereda la
+  // condición de su base — cada fila lleva SOLO la condición de quien la
+  // generó (ver el bucle de `bases[]`/`promos[]` en `generarTarifasDubai`).
+  condicionesPropias?: string;
 };
 
 export type DubaiPromo = {
@@ -271,6 +289,10 @@ export function generarTarifasDubai(p: DubaiParams): TarifaGenerada[] {
     const base = Number(b.precio) || 0;
     if (base <= 0 || !b.categoria?.trim() || !b.temporada?.trim()) continue;
     const edades = edadesDeBase(b);
+    // Condición propia de ESTA base — nunca la de otra base ni la de ninguna
+    // promoción (esas se calculan aparte, en el bucle de `promos[]` de abajo,
+    // con SU PROPIO `notasPromo` derivado únicamente de `promo.condicionesPropias`).
+    const notasBase = b.condicionesPropias?.trim() || undefined;
 
     for (const r of regimenesGeneral) {
       const sup = suplementoEfectivoBase(b, r.regimen);
@@ -287,6 +309,7 @@ export function generarTarifasDubai(p: DubaiParams): TarifaGenerada[] {
         neto_nino2: d.nino2,
         neto_infante: d.infante,
         nota_infante: notaInfante,
+        notas: notasBase,
         edad_infante_min: edades?.infanteMin ?? null,
         edad_infante_max: edades?.infanteMax ?? null,
         edad_nino_min: edades?.ninoMin ?? null,
@@ -333,6 +356,8 @@ export function generarTarifasDubai(p: DubaiParams): TarifaGenerada[] {
         edad_infante_max: edades?.infanteMax ?? null,
         edad_nino_min: edades?.ninoMin ?? null,
         edad_nino_max: edades?.ninoMax ?? null,
+        precio_final_autoritativo: true,
+        temporada_base: temporadaBase,
       });
     }
   }

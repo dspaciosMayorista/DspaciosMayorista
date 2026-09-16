@@ -545,7 +545,7 @@ export async function computarReserva(
     let numNochesVig = 0;
     let temporadasVig: TemporadaRango[] = [];
     let tarRowsVig: FilaTarifaHotelEdadCruda[] = [];
-    type TarRow = FilaTarifaHotelEdadCruda & { neto_sencilla: number | null; neto_doble: number | null; neto_triple: number | null; neto_multiple: number | null; neto_nino: number | null; neto_nino2: number | null; neto_infante: number | null; notas: string | null };
+    type TarRow = FilaTarifaHotelEdadCruda & { neto_sencilla: number | null; neto_doble: number | null; neto_triple: number | null; neto_multiple: number | null; neto_nino: number | null; neto_nino2: number | null; neto_infante: number | null; notas: string | null; precio_final_autoritativo: boolean | null };
     const colDe: Record<string, keyof TarRow> = { sencilla: "neto_sencilla", doble: "neto_doble", triple: "neto_triple", multiple: "neto_multiple", nino: "neto_nino", nino2: "neto_nino2", infante: "neto_infante" };
     const netoPorTemporadaDe = (rows: TarRow[], acom: string): Record<string, number | null> => {
       const col = colDe[acom]; const m: Record<string, number | null> = {};
@@ -553,13 +553,24 @@ export async function computarReserva(
       for (const r of rows) if (r.temporada) m[r.temporada] = r[col] as number | null;
       return m;
     };
+    // Temporadas marcadas como PRECIO FINAL AUTORITATIVO (migración 179,
+    // `tarifa_hotel.precio_final_autoritativo`) dentro de las filas YA
+    // filtradas por categoría/régimen — se pasa a los liquidadores de abajo
+    // para que una promoción Dubai con descuento/suplemento/edades propios
+    // nunca se recalcule desde su temporada base. Vacío = comportamiento
+    // legacy sin cambios (ninguna fila marcada).
+    const precioFinalTemporadasDe = (rows: TarRow[]): Set<string> => {
+      const s = new Set<string>();
+      for (const r of rows) if (r.temporada && r.precio_final_autoritativo) s.add(r.temporada);
+      return s;
+    };
     const conServiceRole = !!process.env.SUPABASE_SERVICE_ROLE_KEY && !!meta.fecha_ida && !!meta.fecha_regreso;
     if (conServiceRole) {
       const admin = createAdminClient();
       numNochesVig = noches(meta.fecha_ida!, meta.fecha_regreso!);
       const [{ data: temps, error: tempsErr }, { data: tarRows, error: tarRowsErr }] = await Promise.all([
         admin.from("hotel_temporadas").select("nombre, fecha_inicio, fecha_fin, prioridad, compra_inicio, compra_fin, tipo, descuento_valor, rangos, blackouts, min_noches, regimen_restringido").eq("hotel_id", input.hotelId),
-        admin.from("tarifa_hotel").select("tipo_habitacion, alimentacion, temporada, neto_sencilla, neto_doble, neto_triple, neto_multiple, neto_nino, neto_nino2, neto_infante, edad_infante_min, edad_infante_max, edad_nino_min, edad_nino_max, notas").eq("hotel_id", input.hotelId).eq("tipo_habitacion", input.categoria).eq("alimentacion", input.regimen),
+        admin.from("tarifa_hotel").select("tipo_habitacion, alimentacion, temporada, neto_sencilla, neto_doble, neto_triple, neto_multiple, neto_nino, neto_nino2, neto_infante, edad_infante_min, edad_infante_max, edad_nino_min, edad_nino_max, notas, precio_final_autoritativo").eq("hotel_id", input.hotelId).eq("tipo_habitacion", input.categoria).eq("alimentacion", input.regimen),
       ]);
       if (tempsErr) return { ok: false, error: `No se pudo validar la vigencia de temporadas del hotel: ${tempsErr.message}` };
       if (tarRowsErr) return { ok: false, error: `No se pudo validar la tarifa neta del hotel: ${tarRowsErr.message}` };
@@ -571,9 +582,10 @@ export async function computarReserva(
       // sencilla/doble/triple/multiple: una reserva de solo "doble" no debe
       // verse afectada por que "triple" (no pedida) haya usado otra temporada.
       const temporadasEstadia = new Set<string>();
+      const precioFinalTemporadasVig = precioFinalTemporadasDe(tarRowsVig as TarRow[]);
       for (const l of lineasHab) {
         const netoPorTemporada = netoPorTemporadaDe(tarRowsVig as TarRow[], l.acom);
-        const r = liquidarHotelNochesConTemporadas({ fechaIda: meta.fecha_ida!, numNoches: numNochesVig, temporadas: temporadasVig, netoPorTemporada, regimen: input.regimen });
+        const r = liquidarHotelNochesConTemporadas({ fechaIda: meta.fecha_ida!, numNoches: numNochesVig, temporadas: temporadasVig, netoPorTemporada, regimen: input.regimen, precioFinalTemporadas: precioFinalTemporadasVig });
         if (r == null) return { ok: false, error: TARIFA_VENCIDA };
         netoPorAcom[l.acom] = r.total;
         for (const t of r.temporadasTarifa) temporadasEstadia.add(t);
@@ -608,13 +620,14 @@ export async function computarReserva(
     if (paxConSilla <= 0) return { ok: false, error: "Indica al menos una habitación (cantidad por tipo)." };
 
     if (conServiceRole) {
+      const precioFinalTemporadasMenores = precioFinalTemporadasDe(tarRowsVig as TarRow[]);
       if (numNinos > 0) {
-        const per = liquidarHotelNoches({ fechaIda: meta.fecha_ida!, numNoches: numNochesVig, temporadas: temporadasVig, netoPorTemporada: netoPorTemporadaDe(tarRowsVig as TarRow[], "nino"), regimen: input.regimen });
+        const per = liquidarHotelNoches({ fechaIda: meta.fecha_ida!, numNoches: numNochesVig, temporadas: temporadasVig, netoPorTemporada: netoPorTemporadaDe(tarRowsVig as TarRow[], "nino"), regimen: input.regimen, precioFinalTemporadas: precioFinalTemporadasMenores });
         if (per == null) return { ok: false, error: TARIFA_VENCIDA };
         netoPorAcom["nino"] = per;
       }
       if (numNinos2 > 0) {
-        const per = liquidarHotelNoches({ fechaIda: meta.fecha_ida!, numNoches: numNochesVig, temporadas: temporadasVig, netoPorTemporada: netoPorTemporadaDe(tarRowsVig as TarRow[], "nino2"), regimen: input.regimen });
+        const per = liquidarHotelNoches({ fechaIda: meta.fecha_ida!, numNoches: numNochesVig, temporadas: temporadasVig, netoPorTemporada: netoPorTemporadaDe(tarRowsVig as TarRow[], "nino2"), regimen: input.regimen, precioFinalTemporadas: precioFinalTemporadasMenores });
         if (per == null) return { ok: false, error: TARIFA_VENCIDA };
         netoPorAcom["nino2"] = per;
       }
@@ -622,7 +635,7 @@ export async function computarReserva(
       // reserva (queda gratis) — evita romper reservas de hoteles que todavía
       // no han cargado su tarifa de infante en tarifa_hotel.
       if (numInfantes > 0) {
-        netoPorAcom["infante"] = liquidarHotelNoches({ fechaIda: meta.fecha_ida!, numNoches: numNochesVig, temporadas: temporadasVig, netoPorTemporada: netoPorTemporadaDe(tarRowsVig as TarRow[], "infante"), regimen: input.regimen }) ?? 0;
+        netoPorAcom["infante"] = liquidarHotelNoches({ fechaIda: meta.fecha_ida!, numNoches: numNochesVig, temporadas: temporadasVig, netoPorTemporada: netoPorTemporadaDe(tarRowsVig as TarRow[], "infante"), regimen: input.regimen, precioFinalTemporadas: precioFinalTemporadasMenores }) ?? 0;
       }
     }
 

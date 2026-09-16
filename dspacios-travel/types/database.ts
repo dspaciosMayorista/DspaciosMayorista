@@ -2100,6 +2100,15 @@ export type Database = {
           // NULL = fallback histórico — ver lib/calc/reglaEdadTarifa.ts.
           edad_infante_min: number | null; edad_infante_max: number | null;
           edad_nino_min: number | null; edad_nino_max: number | null;
+          // Migración 179 (PROPUESTA — no aplicada todavía en ningún entorno;
+          // ver supabase/migrations/20260601000179_*). SOLO `true` en filas
+          // generadas por `generarTarifasDubai` para `promos[]` — su neto ya
+          // trae el descuento/suplemento/modificadores horneados, así que el
+          // motor la usa DIRECTO en vez de recalcular el descuento desde su
+          // temporada base. `temporada_base` es la temporada de la que se
+          // derivó (solo auditoría, nunca se usa en el motor de liquidación).
+          precio_final_autoritativo: boolean;
+          temporada_base: string | null;
         };
         Insert: {
           id?: number; hotel_id: number; tipo_habitacion?: string | null; alimentacion?: string | null;
@@ -2109,6 +2118,7 @@ export type Database = {
           notas?: string | null; created_at?: string;
           edad_infante_min?: number | null; edad_infante_max?: number | null;
           edad_nino_min?: number | null; edad_nino_max?: number | null;
+          precio_final_autoritativo?: boolean; temporada_base?: string | null;
         };
         Update: Partial<Database["public"]["Tables"]["tarifa_hotel"]["Insert"]>;
         Relationships: [];
@@ -2311,6 +2321,24 @@ export type Database = {
           moneda: string;
           salida_id: number | null;
           created_at: string;
+          // Migración 180 (PROPUESTA — no aplicada todavía en ningún
+          // entorno). Procedencia REAL del precio publicado — NUNCA se
+          // reconstruye desde `fecha_ida` (en `masBarato` puede venir de
+          // cualquier fecha de la ventana). NULL = fila generada antes de la
+          // migración o de un código anterior, sin procedencia calculada.
+          temporada_ganadora: string | null;
+          es_promocion: boolean | null;
+          precio_final_autoritativo: boolean | null;
+          // Ampliación de la migración 180 (PROPUESTA — no aplicada):
+          // procedencia deduplicada de TODAS las noches que aportaron al
+          // total (nunca solo el checkin) — jsonb array de
+          // `{temporada, es_promocion, precio_final_autoritativo}` (ver
+          // lib/tarifario/procedenciaTarifario.ts). `temporada_ganadora`/
+          // `es_promocion`/`precio_final_autoritativo` de arriba solo se
+          // pueblan cuando hay UNA sola identidad (`procedencia_mixta =
+          // false`); con 2+ quedan NULL y `procedencia_mixta = true`.
+          procedencia_temporadas: Json | null;
+          procedencia_mixta: boolean;
         };
         Insert: {
           id?: number;
@@ -2344,6 +2372,11 @@ export type Database = {
           descripcion?: string | null;
           recargo_individual?: number | null;
           created_at?: string;
+          temporada_ganadora?: string | null;
+          es_promocion?: boolean | null;
+          precio_final_autoritativo?: boolean | null;
+          procedencia_temporadas?: Json | null;
+          procedencia_mixta?: boolean;
         };
         Update: Partial<Database["public"]["Tables"]["tarifario_resultado"]["Insert"]>;
         Relationships: [];
@@ -3301,6 +3334,18 @@ export type Database = {
       fn_fusionar_destino: {
         Args: { p_origen: number; p_destino: number };
         Returns: undefined;
+      };
+      // Migración 179 (PROPUESTA — no aplicada todavía). Reemplazo
+      // TRANSACCIONAL de las tarifas de `tarifa_hotel` generadas por la
+      // calculadora de un hotel (delete + insert en una sola función de
+      // Postgres — ante cualquier fallo, todo se revierte y las filas
+      // anteriores quedan exactamente iguales, ids incluidos). SECURITY
+      // DEFINER con candado de rol propio (mismo set que la policy RLS de
+      // `tarifa_hotel`). `p_regimenes: null` = modo "reemplazar" (borra todo
+      // el hotel); con valores = modo "agregar" (borra solo esos regímenes).
+      reemplazar_tarifas_hotel_calculadora: {
+        Args: { p_hotel_id: number; p_regimenes: string[] | null; p_filas: Json };
+        Returns: Json;
       };
       // Migración 164. RPC de dinero de los pagos previos de una cotización.
       // Solo otorgados a `service_role`; vuelven a validar rol/tenant/estado con

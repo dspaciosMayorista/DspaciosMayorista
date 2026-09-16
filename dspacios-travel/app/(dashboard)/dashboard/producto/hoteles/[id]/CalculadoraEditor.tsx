@@ -96,6 +96,7 @@ function DubaiForm({
     basesExtraInicial[`${b.categoria}|${b.temporada}`] = {
       usarEdadesPropias: b.usarEdadesPropias, edadesPropias: b.edadesPropias,
       usarSuplementosPropios: b.usarSuplementosPropios, suplementosPropios: b.suplementosPropios,
+      condicionesPropias: b.condicionesPropias,
     };
   }
   const [bases, setBases] = useState<Record<string, string>>(baseInicial);
@@ -349,6 +350,15 @@ function DubaiForm({
                       })}
                     </div>
                   )}
+
+                  <div className="mt-2 pl-5">
+                    <label className="text-[10px] text-gray-400">Condición de esta tarifa (opcional, texto libre)</label>
+                    <Input
+                      value={b.condicionesPropias ?? ""}
+                      onChange={(e) => setBaseExtra(clave, { condicionesPropias: e.target.value })}
+                      placeholder='Ej. "Tarifa temporada baja, sujeta a disponibilidad."'
+                    />
+                  </div>
 
                   {errores.length > 0 && (
                     <ul className="mt-2 list-disc space-y-0.5 pl-5 text-[11px] text-red-600">
