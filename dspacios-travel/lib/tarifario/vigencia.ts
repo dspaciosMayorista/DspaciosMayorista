@@ -26,14 +26,6 @@ export type TempRow = {
 export type TarRow = {
   hotel_id: number; tipo_habitacion: string | null; alimentacion: string | null; temporada: string | null;
   neto_sencilla: number | null; neto_doble: number | null; neto_triple: number | null; neto_multiple: number | null;
-  // Migración 179 — sin esta columna, una promoción Dubai con suplemento/
-  // edades propios que el camino LEGACY (recalcular desde la base) no
-  // resuelve como vigente (p. ej. la base no tiene neto para esta columna, o
-  // la recomposición da 0/negativo) hacía que `filtrarTarifarioVencidas`
-  // ocultara el hotel del tarifario público aunque su precio final SÍ fuera
-  // válido. `precio_final_autoritativo` ausente/false en TODA fila legacy —
-  // ese camino queda idéntico al histórico.
-  precio_final_autoritativo: boolean | null;
 };
 
 const ROOM_COLS: (keyof TarRow)[] = ["neto_sencilla", "neto_doble", "neto_triple", "neto_multiple"];
@@ -62,18 +54,6 @@ function buildVigenciaChecker(temps: TempRow[], tarifas: TarRow[]) {
     for (const [temp, row] of tempMap) { const v = row[col]; out[temp] = v == null ? null : Number(v); }
     return out;
   };
-  // Temporadas de ESTE combo marcadas como PRECIO FINAL AUTORITATIVO
-  // (migración 179) — mismo criterio que `lib/reservar/liquidacionHotel.ts`/
-  // `paquetes/actions.ts`: se pasa a los liquidadores para que una promoción
-  // Dubai con suplemento/edades propios nunca se recalcule desde su base, y
-  // para que el hotel siga visible aunque el camino legacy (recalcular desde
-  // la base) no resuelva un precio válido para esa columna. Vacío en combos
-  // sin ninguna fila marcada — el camino legacy queda intacto.
-  const precioFinalDe = (tempMap: Map<string, TarRow>): Set<string> => {
-    const s = new Set<string>();
-    for (const [temp, row] of tempMap) if (row.precio_final_autoritativo) s.add(temp);
-    return s;
-  };
   return {
     bloqueo(hotelId: number, categoria: string | null, regimen: string | null, fechaIda: string, numNoches: number): boolean {
       const ck = `b|${hotelId}|${categoria ?? ""}|${regimen ?? ""}|${fechaIda}|${numNoches}`;
@@ -82,9 +62,8 @@ function buildVigenciaChecker(temps: TempRow[], tarifas: TarRow[]) {
       const tempMap = grupos.get(`${hotelId}|||${categoria ?? ""}|||${regimen ?? ""}`);
       let ok = false;
       if (tempMap && temporadas.length && numNoches > 0) {
-        const precioFinalTemporadas = precioFinalDe(tempMap);
         for (const col of ROOM_COLS) {
-          const c = liquidarHotelNoches({ fechaIda, numNoches, temporadas, netoPorTemporada: netoMap(tempMap, col), regimen: regimen ?? undefined, precioFinalTemporadas });
+          const c = liquidarHotelNoches({ fechaIda, numNoches, temporadas, netoPorTemporada: netoMap(tempMap, col), regimen: regimen ?? undefined });
           if (c != null && c > 0) { ok = true; break; }
         }
       }
@@ -97,9 +76,8 @@ function buildVigenciaChecker(temps: TempRow[], tarifas: TarRow[]) {
       const tempMap = grupos.get(`${hotelId}|||${categoria ?? ""}|||${regimen ?? ""}`);
       let ok = false;
       if (tempMap && temporadas.length && numNoches > 0) {
-        const precioFinalTemporadas = precioFinalDe(tempMap);
         for (const col of ROOM_COLS) {
-          const c = liquidarHotelMasBarato({ desde, hasta, numNoches, temporadas, netoPorTemporada: netoMap(tempMap, col), regimen: regimen ?? undefined, precioFinalTemporadas });
+          const c = liquidarHotelMasBarato({ desde, hasta, numNoches, temporadas, netoPorTemporada: netoMap(tempMap, col), regimen: regimen ?? undefined });
           if (c != null && c > 0) { ok = true; break; }
         }
       }
@@ -161,7 +139,7 @@ export async function filtrarTarifarioVencidas<T extends FilaConVigencia>(
 
   const [{ data: temps, error: e1 }, { data: tars, error: e2 }] = await Promise.all([
     admin.from("hotel_temporadas").select("hotel_id, nombre, fecha_inicio, fecha_fin, prioridad, compra_inicio, compra_fin, tipo, descuento_valor, rangos, blackouts, min_noches, regimen_restringido").in("hotel_id", hIds),
-    admin.from("tarifa_hotel").select("hotel_id, tipo_habitacion, alimentacion, temporada, neto_sencilla, neto_doble, neto_triple, neto_multiple, precio_final_autoritativo").in("hotel_id", hIds),
+    admin.from("tarifa_hotel").select("hotel_id, tipo_habitacion, alimentacion, temporada, neto_sencilla, neto_doble, neto_triple, neto_multiple").in("hotel_id", hIds),
   ]);
   if (e1 || e2) {
     // Fallo cerrado EXPLÍCITO: no se puede verificar vigencia → se ocultan
