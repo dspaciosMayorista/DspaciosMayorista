@@ -24,10 +24,6 @@ const preflight180 = readFileSync(join(raiz, "supabase/scripts/preflight_180_tar
 const postcheck179 = readFileSync(join(raiz, "supabase/scripts/postcheck_179_tarifa_hotel_precio_final_autoritativo.sql"), "utf8");
 const postcheck180 = readFileSync(join(raiz, "supabase/scripts/postcheck_180_tarifario_resultado_procedencia.sql"), "utf8");
 const rollback180 = readFileSync(join(raiz, "supabase/scripts/rollback_180_tarifario_resultado_procedencia.sql"), "utf8");
-const vigencia = readFileSync(join(raiz, "lib/tarifario/vigencia.ts"), "utf8");
-const detalleActions = readFileSync(join(raiz, "app/tarifario/detalle-actions.ts"), "utf8");
-const vistaBooking = readFileSync(join(raiz, "app/tarifario/VistaBooking.tsx"), "utf8");
-const tarifarioPublicTsx = readFileSync(join(raiz, "app/tarifario/TarifarioPublic.tsx"), "utf8");
 const calculadoraEditor = readFileSync(join(raiz, "app/(dashboard)/dashboard/producto/hoteles/[id]/CalculadoraEditor.tsx"), "utf8");
 const calculadorasTs = readFileSync(join(raiz, "lib/calc/calculadoras.ts"), "utf8");
 const paquetesTs = readFileSync(join(raiz, "lib/calc/paquetes.ts"), "utf8");
@@ -344,25 +340,6 @@ describe("HotelDetalleClient.tsx — UI distingue Base/Promoción y muestra la c
   });
 });
 
-describe("lib/tarifario/vigencia.ts (público) — selecciona y usa precio_final_autoritativo por combinación", () => {
-  test("el select de tarifa_hotel incluye precio_final_autoritativo", () => {
-    const anclaSelect = 'admin.from("tarifa_hotel").select("hotel_id, tipo_habitacion, alimentacion, temporada, neto_sencilla';
-    const posSelect = vigencia.indexOf(anclaSelect);
-    assert.notEqual(posSelect, -1);
-    const posCierre = vigencia.indexOf('")', posSelect + anclaSelect.length);
-    assert.match(vigencia.slice(posSelect, posCierre), /precio_final_autoritativo/);
-  });
-
-  test("construye precioFinalDe(tempMap) filtrando row.precio_final_autoritativo, y lo pasa a AMBOS liquidadores (bloqueo y rango)", () => {
-    assert.match(vigencia, /const precioFinalDe = \(tempMap: Map<string, TarRow>\): Set<string> => \{/);
-    assert.match(vigencia, /if \(row\.precio_final_autoritativo\) s\.add\(temp\)/);
-    const ocurrencias = vigencia.match(/precioFinalTemporadas = precioFinalDe\(tempMap\)/g) ?? [];
-    assert.equal(ocurrencias.length, 2, "bloqueo() y rango() deben construir el set");
-    assert.match(vigencia, /liquidarHotelNoches\(\{[^}]*precioFinalTemporadas \}\)/);
-    assert.match(vigencia, /liquidarHotelMasBarato\(\{[^}]*precioFinalTemporadas \}\)/);
-  });
-});
-
 describe("Hallazgo 1 corregido — paquetes/actions.ts (filasHoteles) persiste la procedencia EXACTA en tarifario_resultado", () => {
   test("importa liquidarHotelMasBaratoConTemporada/liquidarHotelNochesConTemporadas — nunca solo las variantes sin identidad para el insert", () => {
     assert.match(paquetesActions, /liquidarHotelMasBaratoConTemporada,/);
@@ -653,123 +630,6 @@ describe("types/database.ts — tarifario_resultado declara temporada_ganadora/e
   });
 });
 
-describe("Hallazgo 1 corregido — detalle-actions.ts YA NO recalcula identidad desde fecha_ida (recompute cosmético eliminado)", () => {
-  test("COLUMNAS_DETALLE selecciona temporada_ganadora/es_promocion/procedencia_mixta directo de tarifario_resultado — sin query adicional", () => {
-    assert.match(detalleActions, /temporada_ganadora, es_promocion/);
-    assert.match(detalleActions, /procedencia_mixta/);
-  });
-
-  test("COLUMNAS_DETALLE NO expone procedencia_temporadas (jsonb completo) en el payload público — minimización de datos", () => {
-    const posColumnas = detalleActions.indexOf("COLUMNAS_DETALLE");
-    const posFinLista = detalleActions.indexOf(";", posColumnas);
-    const bloque = detalleActions.slice(posColumnas, posFinLista);
-    assert.doesNotMatch(bloque, /procedencia_temporadas/);
-  });
-
-  test("HALLAZGO CORREGIDO: ya NO existe conIdentidadTemporada ni ninguna consulta a hotel_temporadas para recalcular identidad", () => {
-    assert.doesNotMatch(detalleActions, /conIdentidadTemporada/);
-    assert.doesNotMatch(detalleActions, /from\("hotel_temporadas"\)/);
-    assert.doesNotMatch(detalleActions, /identidadTemporadaGanadora/);
-    assert.doesNotMatch(detalleActions, /toTemporadaRango/);
-  });
-
-  test("obtenerDetalleHotel devuelve el resultado de cargarDetalleAcotado tal cual — sin post-procesar filas", () => {
-    assert.match(detalleActions, /export async function obtenerDetalleHotel\(inputRaw: unknown\): Promise<ResultadoDetalle> \{/);
-    const posFn = detalleActions.indexOf("export async function obtenerDetalleHotel(");
-    const posSiguiente = detalleActions.indexOf("\nexport async function", posFn + 10);
-    const cuerpoFn = detalleActions.slice(posFn, posSiguiente);
-    assert.match(cuerpoFn, /return cargarDetalleAcotado\(/);
-    // `.map(` sí aparece legítimamente para armar bloqueoIds/paqueteIds (hint
-    // de la consulta SQL) — lo que NO debe existir es un post-procesamiento
-    // de las FILAS ya cargadas (el patrón `filas: await ...` de la vieja
-    // función `conIdentidadTemporada`, o cualquier `.then(` sobre el
-    // resultado de `cargarDetalleAcotado`).
-    assert.doesNotMatch(cuerpoFn, /filas: await/);
-    assert.doesNotMatch(cuerpoFn, /cargarDetalleAcotado\([^;]*\)\.then\(/);
-  });
-});
-
-describe("FilaTarifario (app/tarifario/TarifarioPublic.tsx) — campos de procedencia snake_case (igual que el resto de columnas de tarifario_resultado), opcionales, nunca asumidos", () => {
-  test("declara temporada_ganadora/es_promocion/procedencia_mixta como opcionales, snake_case", () => {
-    assert.match(tarifarioPublicTsx, /temporada_ganadora\?: string \| null;/);
-    assert.match(tarifarioPublicTsx, /es_promocion\?: boolean \| null;/);
-    assert.match(tarifarioPublicTsx, /procedencia_mixta\?: boolean \| null;/);
-  });
-
-  test("ya no quedan los nombres camelCase de la ronda anterior (cosmética, eliminada)", () => {
-    assert.doesNotMatch(tarifarioPublicTsx, /temporadaGanadora\?:/);
-    assert.doesNotMatch(tarifarioPublicTsx, /esPromocion\?:/);
-  });
-});
-
-describe("Identidad visual pública (VistaBooking.tsx, Selector del detalle 'Ver opciones') — lee EXCLUSIVAMENTE la procedencia persistida, distingue MEZCLA-DENTRO-DE-LA-ESTADÍA de MEZCLA-ENTRE-ACOMODACIONES (nunca se combinan)", () => {
-  test("el Selector filtra opcion.filas del combo (categoría+régimen) considerando TODAS las filas con procedencia resuelta (temporada_ganadora != null O procedencia_mixta) — nunca toma 'la primera fila' como representante de todas", () => {
-    assert.match(vistaBooking, /const filas = opcion\.filas\.filter\(\s*\n\s*\(f\) => f\.categoria === catEff && f\.regimen === regEff && \(f\.temporada_ganadora != null \|\| f\.procedencia_mixta\)\s*\n\s*\);/);
-    assert.doesNotMatch(vistaBooking, /opcion\.filas\.find\(\(f\) => f\.categoria === catEff && f\.regimen === regEff/, "no debe usar .find() — debe considerar TODAS las filas del combo, no la primera que calce");
-  });
-
-  test("HALLAZGO CORREGIDO (mezcla DENTRO de una estadía) — si CUALQUIER fila del combo trae procedencia_mixta=true (una acomodación cruzó temporadas en su propia estadía), el Selector devuelve 'mixta_estadia' de inmediato, con PRIORIDAD sobre la comparación entre acomodaciones", () => {
-    const posFn = vistaBooking.indexOf("const identidad = useMemo(");
-    assert.notEqual(posFn, -1);
-    const posClaves = vistaBooking.indexOf("const claves = new Set", posFn);
-    const cuerpoAntesDeClaves = vistaBooking.slice(posFn, posClaves);
-    assert.match(cuerpoAntesDeClaves, /if \(filas\.some\(\(f\) => f\.procedencia_mixta\)\) return \{ tipo: "mixta_estadia" \};/, "la revisión de procedencia_mixta por fila debe ir ANTES de comparar claves entre acomodaciones");
-  });
-
-  test("HALLAZGO CORREGIDO (mezcla ENTRE acomodaciones) — solo si NINGUNA fila individual está mezclada, pero las acomodaciones (Doble/Triple/etc.) no comparten la misma temporada+es_promocion, devuelve 'mixta_acomodacion' — nunca se confunde con mixta_estadia", () => {
-    assert.match(vistaBooking, /const claves = new Set\(filas\.map\(\(f\) => `\$\{f\.temporada_ganadora\}\|\$\{!!f\.es_promocion\}`\)\);/);
-    assert.match(vistaBooking, /if \(claves\.size > 1\) return \{ tipo: "mixta_acomodacion" \};/);
-  });
-
-  test("caso uniforme: solo cuando ninguna fila está mezclada Y todas comparten la misma clave temporada+es_promocion, arma { tipo: 'uniforme', temporada, esPromocion } desde la primera fila (ya se probó que son todas iguales)", () => {
-    assert.match(vistaBooking, /const f0 = filas\[0\];/);
-    assert.match(vistaBooking, /return \{ tipo: "uniforme", temporada: f0\.temporada_ganadora as string, esPromocion: !!f0\.es_promocion \};/);
-  });
-
-  test("IdentidadBadgeProps es una unión discriminada de 3 ramas — mixta_estadia y mixta_acomodacion son variantes DISTINTAS (nunca un solo booleano 'mixta' genérico)", () => {
-    assert.match(vistaBooking, /type IdentidadBadgeProps =\s*\n\s*\| \{ tipo: "mixta_estadia" \}\s*\n\s*\| \{ tipo: "mixta_acomodacion" \}\s*\n\s*\| \{ tipo: "uniforme"; esPromocion: boolean; temporada: string \};/);
-  });
-
-  test("IdentidadTemporadaBadge distingue los 4 textos (Tarifa base / Promoción · <temporada> / Varias tarifas durante la estadía / Varias tarifas según acomodación) — cada texto corresponde a UNA sola rama del discriminante `tipo`, nunca dos casos comparten el mismo mensaje", () => {
-    const posFn = vistaBooking.indexOf("function IdentidadTemporadaBadge(");
-    assert.notEqual(posFn, -1);
-    const cuerpoFn = vistaBooking.slice(posFn, posFn + 1600);
-    assert.match(cuerpoFn, /if \(props\.tipo === "mixta_estadia"\) \{/);
-    assert.match(cuerpoFn, /Varias tarifas durante la estadía/);
-    assert.match(cuerpoFn, /if \(props\.tipo === "mixta_acomodacion"\) \{/);
-    assert.match(cuerpoFn, /Varias tarifas según acomodación/);
-    assert.match(cuerpoFn, /esPromocion \? `Promoción · \$\{temporada\}` : "Tarifa base"/);
-  });
-
-  test("el CÓDIGO del badge/Selector nunca referencia precio_final_autoritativo — la clasificación pública es por procedencia persistida (es_promocion/procedencia_mixta), no por el flag técnico del motor (los comentarios sí lo mencionan, para documentar la distinción)", () => {
-    const posSelectorLlave = vistaBooking.indexOf("{", vistaBooking.indexOf(")", vistaBooking.indexOf("function Selector({")));
-    const posBadgeFn = vistaBooking.indexOf("function IdentidadTemporadaBadge(");
-    const posBadgeLlave = vistaBooking.indexOf("{", vistaBooking.indexOf(")", posBadgeFn));
-    const posBadgeEnd = vistaBooking.indexOf("\n}", posBadgeFn + 10);
-    const posComentarioBadge = vistaBooking.lastIndexOf("// Badge", posBadgeFn);
-    const cuerpoSelector = vistaBooking.slice(posSelectorLlave, posComentarioBadge);
-    const cuerpoBadge = vistaBooking.slice(posBadgeLlave, posBadgeEnd);
-    assert.doesNotMatch(cuerpoSelector, /precio_final_autoritativo/);
-    assert.doesNotMatch(cuerpoBadge, /precio_final_autoritativo/);
-  });
-
-  test("una tarjeta por hotel se conserva — no se tocó el agrupamiento por hotelId (HotelCard/HotelUnidadCard), solo el contenido del Selector dentro del modal ya existente", () => {
-    assert.match(vistaBooking, /type Tarjeta =\s*\| \{ tipo: "persona"; key: string; card: HotelCard \}/);
-  });
-
-  test("Superficie EXACTA (ítem 5): el badge de identidad aparece UNA vez por combinación categoría+régimen dentro del Selector — nunca uno por acomodación (sencilla/doble/triple/multiple/niño no se presentan como 'promociones' independientes)", () => {
-    // El badge vive junto a los selectores de Categoría/Alimentación, FUERA
-    // de EditorPax (que renderiza las cantidades por acomodación) — un solo
-    // <IdentidadTemporadaBadge> por combo, nunca dentro del bucle de
-    // acomodaciones.
-    const posEditorPax = vistaBooking.indexOf("function EditorPax(");
-    assert.notEqual(posEditorPax, -1);
-    const posEditorPaxEnd = vistaBooking.indexOf("\nfunction ", posEditorPax + 10);
-    const cuerpoEditorPax = vistaBooking.slice(posEditorPax, posEditorPaxEnd);
-    assert.doesNotMatch(cuerpoEditorPax, /IdentidadTemporadaBadge/, "EditorPax (la tabla de acomodaciones) no debe renderizar el badge de identidad por fila");
-  });
-});
-
 describe("Condiciones de BASE (DubaiBase) — motor + UI del editor de calculadora", () => {
   test("lib/calc/calculadoras.ts: DubaiBase declara condicionesPropias, y el bucle de bases[] lo escribe en `notas` de cada fila (notasBase, independiente de notasPromo)", () => {
     assert.match(calculadorasTs, /condicionesPropias\?: string;/);
@@ -827,5 +687,54 @@ describe("Hallazgo 2 corregido — postcheck_179: rechazo de usuarios NO autoriz
   test("ambas secciones (6 y 7) terminan en ROLLBACK — ninguna deja datos ni configuración de sesión modificados", () => {
     const ocurrenciasRollback = postcheck179.match(/^rollback;$/gm) ?? [];
     assert.ok(ocurrenciasRollback.length >= 3, `se esperaban al menos 3 ROLLBACK (secciones 5, 6, 7) — encontrados: ${ocurrenciasRollback.length}`);
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────
+// GUARDA DE REGRESIÓN — alcance de PR #302 recortado a lo acordado (fix/pr302-
+// scope-cleanup): la procedencia Base/Promoción (migración 180) SOLO vive en
+// administración (ArmadoClient.tsx/paquetes/actions.ts) y en persistencia
+// (tarifario_resultado) — nunca en el tarifario público. Si alguien vuelve a
+// agregar `precio_final_autoritativo`/`precioFinalTemporadas` a vigencia.ts, o
+// reintroduce las 3 columnas de procedencia en COLUMNAS_DETALLE/FilaTarifario/
+// VistaBooking (el badge público de identidad que se retiró), esta prueba
+// debe fallar — es la única guarda dedicada a que ese alcance no reaparezca
+// por accidente en un merge futuro.
+// ─────────────────────────────────────────────────────────────────────────
+describe("Guarda de regresión — procedencia Base/Promoción solo en administración, nunca en vigencia/tarifario público", () => {
+  const vigenciaSrc = readFileSync(join(raiz, "lib/tarifario/vigencia.ts"), "utf8");
+  const detalleActionsSrc = readFileSync(join(raiz, "app/tarifario/detalle-actions.ts"), "utf8");
+  const tarifarioPublicSrc = readFileSync(join(raiz, "app/tarifario/TarifarioPublic.tsx"), "utf8");
+  const vistaBookingSrc = readFileSync(join(raiz, "app/tarifario/VistaBooking.tsx"), "utf8");
+
+  test("lib/tarifario/vigencia.ts no vuelve a filtrar por precio_final_autoritativo/precioFinalTemporadas", () => {
+    assert.doesNotMatch(vigenciaSrc, /precio_final_autoritativo/, "vigencia.ts (público) no debe seleccionar ni usar precio_final_autoritativo");
+    assert.doesNotMatch(vigenciaSrc, /precioFinalTemporadas/, "vigencia.ts (público) no debe construir ni propagar precioFinalTemporadas");
+  });
+
+  test("COLUMNAS_DETALLE (app/tarifario/detalle-actions.ts) no vuelve a exponer temporada_ganadora/es_promocion/procedencia_mixta", () => {
+    const posColumnas = detalleActionsSrc.indexOf("COLUMNAS_DETALLE");
+    assert.notEqual(posColumnas, -1, "no se encontró COLUMNAS_DETALLE");
+    const posFinLista = detalleActionsSrc.indexOf(";", posColumnas);
+    const bloque = detalleActionsSrc.slice(posColumnas, posFinLista);
+    assert.doesNotMatch(bloque, /temporada_ganadora/, "COLUMNAS_DETALLE no debe seleccionar temporada_ganadora");
+    assert.doesNotMatch(bloque, /es_promocion/, "COLUMNAS_DETALLE no debe seleccionar es_promocion");
+    assert.doesNotMatch(bloque, /procedencia_mixta/, "COLUMNAS_DETALLE no debe seleccionar procedencia_mixta");
+  });
+
+  test("FilaTarifario (app/tarifario/TarifarioPublic.tsx) no vuelve a declarar temporada_ganadora/es_promocion/procedencia_mixta", () => {
+    assert.doesNotMatch(tarifarioPublicSrc, /temporada_ganadora\?:/, "FilaTarifario no debe declarar temporada_ganadora");
+    assert.doesNotMatch(tarifarioPublicSrc, /es_promocion\?:/, "FilaTarifario no debe declarar es_promocion");
+    assert.doesNotMatch(tarifarioPublicSrc, /procedencia_mixta\?:/, "FilaTarifario no debe declarar procedencia_mixta");
+  });
+
+  test("VistaBooking.tsx no vuelve a traer el badge público de identidad (IdentidadTemporadaBadge/mixta_estadia/mixta_acomodacion/textos)", () => {
+    assert.doesNotMatch(vistaBookingSrc, /IdentidadTemporadaBadge/, "VistaBooking.tsx no debe declarar/renderizar IdentidadTemporadaBadge");
+    assert.doesNotMatch(vistaBookingSrc, /mixta_estadia/, "VistaBooking.tsx no debe distinguir el caso mixta_estadia");
+    assert.doesNotMatch(vistaBookingSrc, /mixta_acomodacion/, "VistaBooking.tsx no debe distinguir el caso mixta_acomodacion");
+    assert.doesNotMatch(vistaBookingSrc, /Varias tarifas durante la estadía/, "VistaBooking.tsx no debe mostrar el texto público de mezcla dentro de la estadía");
+    assert.doesNotMatch(vistaBookingSrc, /Varias tarifas según acomodación/, "VistaBooking.tsx no debe mostrar el texto público de mezcla entre acomodaciones");
+    assert.doesNotMatch(vistaBookingSrc, /Promoción · \$\{temporada\}/, "VistaBooking.tsx no debe mostrar el texto público 'Promoción · <temporada>'");
+    assert.doesNotMatch(vistaBookingSrc, /"Tarifa base"/, "VistaBooking.tsx no debe mostrar el texto público 'Tarifa base'");
   });
 });

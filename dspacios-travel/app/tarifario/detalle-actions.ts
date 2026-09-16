@@ -67,7 +67,7 @@ const MSG_ERROR_DETALLE = "No fue posible cargar el detalle en este momento. Int
 const FLUJO = "tarifario_detalle_bajo_demanda";
 
 const COLUMNAS_DETALLE =
-  "modulo, bloqueo_label, bloqueo_id, empaquetado_id, salida_id, paquete_id, hotel_id, servicio_id, servicio_nombre, tipo_tarifa, pax_desde, pax_hasta, fecha_ida, fecha_regreso, noches, destino_nombre, paquete_nombre, hotel_nombre, categoria, regimen, acomodacion, precio_pvp, descripcion, recargo_individual, moneda, temporada_ganadora, es_promocion, procedencia_mixta";
+  "modulo, bloqueo_label, bloqueo_id, empaquetado_id, salida_id, paquete_id, hotel_id, servicio_id, servicio_nombre, tipo_tarifa, pax_desde, pax_hasta, fecha_ida, fecha_regreso, noches, destino_nombre, paquete_nombre, hotel_nombre, categoria, regimen, acomodacion, precio_pvp, descripcion, recargo_individual, moneda";
 
 export type ResultadoDetalle = { ok: true; filas: FilaTarifario[] } | { ok: false; error: string };
 
@@ -166,16 +166,6 @@ export async function obtenerDetalleHotel(inputRaw: unknown): Promise<ResultadoD
   // como fallback (eso rompería el alcance que el usuario ve).
   if (v.combos.length === 0) return alcanceVacio("hotel");
 
-  // Identidad Base/Promoción (migración 180): viene DIRECTO de
-  // `tarifario_resultado.temporada_ganadora`/`es_promocion`, ya congelada por
-  // `generarTarifario()` en el momento exacto en que se calculó el precio
-  // ganador (incluida la búsqueda "más barato" de porción terrestre, que
-  // puede recorrer cualquier fecha de la ventana). Esta acción NUNCA vuelve a
-  // recalcular identidad desde `fecha_ida` — hacerlo sería, en el mejor caso,
-  // una coincidencia (la fecha publicada no es necesariamente la fecha
-  // ganadora dentro de la ventana `masBarato`) y en el peor, una etiqueta
-  // falsa. `COLUMNAS_DETALLE` ya trae ambas columnas por `select`, sin query
-  // adicional.
   if (v.modulo === "bloqueo") {
     const bloqueoIds = [...new Set(v.combos.map((c) => c.bloqueo_id).filter((x): x is number => x != null))];
     return cargarDetalleAcotado(

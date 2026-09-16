@@ -55,21 +55,6 @@ export type FilaTarifario = {
   descripcion?: string | null;
   recargo_individual?: number | null;
   moneda?: string | null;
-  // Procedencia REAL del precio ganador — migración 180, congelada por
-  // `generarTarifario()` en el momento exacto en que se calculó el precio
-  // (incluida la búsqueda "más barato" de porción terrestre, que puede
-  // recorrer cualquier fecha de la ventana de viaje — nunca se reconstruye
-  // después a partir de `fecha_ida`, que puede no ser la fecha ganadora).
-  // `temporada_ganadora`/`es_promocion` SOLO se pueblan cuando TODA la
-  // estadía de esta fila resolvió una única temporada (`procedencia_mixta`
-  // false) — si cruzó más de una (ej. noche 1 base, noche 2 promoción),
-  // ambos quedan `null` y `procedencia_mixta` es `true`: nunca se elige una
-  // identidad arbitraria para representar una estadía mixta.
-  // `undefined`/`null` = fila generada antes de la migración/sin identidad
-  // resuelta — nunca se asume "Base" por ausencia.
-  temporada_ganadora?: string | null;
-  es_promocion?: boolean | null;
-  procedencia_mixta?: boolean | null;
 };
 
 const MODULOS: { key: FilaTarifario["modulo"]; label: string }[] = [

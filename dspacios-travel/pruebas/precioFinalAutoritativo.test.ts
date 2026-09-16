@@ -1,7 +1,5 @@
 import { test, describe } from "node:test";
 import assert from "node:assert/strict";
-import type { SupabaseClient } from "@supabase/supabase-js";
-import type { Database } from "../types/database.ts";
 import {
   resolverNetoNocheDetallado, liquidarHotelNoches, liquidarHotelNochesConTemporadas,
   liquidarHotelMasBarato, liquidarHotelMasBaratoConTemporada, resolverNocheGratisDetallado,
@@ -12,7 +10,6 @@ import {
   resolverReglaEdadEstadiaSegura, normalizarReglaEdadGeneral, type FilaTarifaHotelEdadCruda,
 } from "../lib/calc/reglaEdadTarifa.ts";
 import { extraerCondicionesTarifa } from "../lib/calc/condicionesTarifa.ts";
-import { filtrarTarifarioVencidas } from "../lib/tarifario/vigencia.ts";
 import { columnasProcedencia } from "../lib/tarifario/procedenciaTarifario.ts";
 
 // ─────────────────────────────────────────────────────────────────────────
@@ -282,80 +279,11 @@ describe("Integración pura — edades y condiciones de tarifa resuelven contra 
 //     6 (requiere Postgres real); acá, lo que SÍ es puro y ejecutable es que
 //     el wrapper JS ya no reimplementa ningún select→delete→insert→restaurar
 //     (pruebas/precioFinalAutoritativoWiring.test.ts).
-//  3) lib/tarifario/vigencia.ts (público) debía usar precio_final_autoritativo
-//     por combinación — probado abajo con `filtrarTarifarioVencidas` real.
-//  4) Identidad visual pública (Base/Promoción + temporada ganadora) — motor
-//     puro `identidadTemporadaGanadora` probado abajo; el cableado a
-//     VistaBooking/detalle-actions en el wiring test.
-//  5) Condiciones de BASE (DubaiBase.condicionesPropias) — probado abajo.
+//  3) Clasificador general Base/Promoción (temporada ganadora + es_promocion),
+//     usado para persistir procedencia en `tarifario_resultado` (administración/
+//     cálculo) — motor puro probado abajo.
+//  4) Condiciones de BASE (DubaiBase.condicionesPropias) — probado abajo.
 // ─────────────────────────────────────────────────────────────────────────
-
-type FilaVig = {
-  modulo: string; hotel_id?: number | null; categoria?: string | null; regimen?: string | null;
-  fecha_ida?: string | null; fecha_regreso?: string | null; noches?: number | null; id: number;
-};
-
-function clienteFalsoVigencia(opts: { temporadas: unknown[]; tarifas: unknown[] }) {
-  const sb = {
-    from(tabla: string) {
-      return {
-        select() { return this; },
-        in() {
-          if (tabla === "hotel_temporadas") return Promise.resolve({ data: opts.temporadas, error: null });
-          if (tabla === "tarifa_hotel") return Promise.resolve({ data: opts.tarifas, error: null });
-          throw new Error(`tabla inesperada: ${tabla}`);
-        },
-      };
-    },
-  };
-  return sb as unknown as SupabaseClient<Database>;
-}
-
-describe("lib/tarifario/vigencia.ts (público) — usa precio_final_autoritativo por combinación", () => {
-  // Escenario: BAJA (base, neto_doble=100000) y PROMO (vigencia
-  // descuento_pct=120% — deliberadamente "rota" desde hotel_temporadas, para
-  // que el camino LEGACY de recalcular desde la base dé NEGATIVO y el hotel
-  // se oculte). La fila de tarifa_hotel de PROMO trae su PROPIO precio final
-  // (45000, válido) marcado `precio_final_autoritativo: true`.
-  const temporadas = [{
-    hotel_id: 10, nombre: "BAJA", fecha_inicio: "2026-01-01", fecha_fin: "2026-12-31",
-    prioridad: 1, compra_inicio: null, compra_fin: null, tipo: "tarifa", descuento_valor: null,
-    rangos: null, blackouts: null, min_noches: 1, regimen_restringido: null,
-  }, {
-    hotel_id: 10, nombre: "PROMO", fecha_inicio: "2026-01-01", fecha_fin: "2026-12-31",
-    prioridad: 2, compra_inicio: null, compra_fin: null, tipo: "descuento_pct", descuento_valor: 120,
-    rangos: null, blackouts: null, min_noches: 1, regimen_restringido: null,
-  }];
-  const filaHotel = (id: number): FilaVig => ({
-    modulo: "bloqueo", hotel_id: 10, categoria: "Estandar", regimen: "PC",
-    fecha_ida: "2026-06-01", noches: 2, id,
-  });
-
-  test("promo autoritativa VÁLIDA mantiene el hotel visible aunque el camino legacy (recalcular desde la base) dé negativo", async () => {
-    const tarifas = [
-      { hotel_id: 10, tipo_habitacion: "Estandar", alimentacion: "PC", temporada: "BAJA", neto_sencilla: 100000, neto_doble: 100000, neto_triple: 100000, neto_multiple: 100000, precio_final_autoritativo: false },
-      { hotel_id: 10, tipo_habitacion: "Estandar", alimentacion: "PC", temporada: "PROMO", neto_sencilla: 45000, neto_doble: 45000, neto_triple: 45000, neto_multiple: 45000, precio_final_autoritativo: true },
-    ];
-    const sb = clienteFalsoVigencia({ temporadas, tarifas });
-    const r = await filtrarTarifarioVencidas(sb, [filaHotel(1)]);
-    assert.equal(r.error, null);
-    assert.deepEqual(r.filas, [filaHotel(1)], "el hotel debe seguir visible: la promo autoritativa SÍ tiene precio válido");
-  });
-
-  test("misma vigencia rota, promoción LEGACY (sin fila marcada) — el hotel se oculta, comportamiento histórico sin cambios", async () => {
-    // Solo existe la fila BASE — ninguna fila de tarifa_hotel para "PROMO"
-    // (así vivía el sistema antes de que la calculadora Dubai generara filas
-    // de promoción propias). El camino de recálculo desde la base da
-    // negativo → el hotel debe ocultarse, IGUAL que siempre.
-    const tarifas = [
-      { hotel_id: 10, tipo_habitacion: "Estandar", alimentacion: "PC", temporada: "BAJA", neto_sencilla: 100000, neto_doble: 100000, neto_triple: 100000, neto_multiple: 100000, precio_final_autoritativo: false },
-    ];
-    const sb = clienteFalsoVigencia({ temporadas, tarifas });
-    const r = await filtrarTarifarioVencidas(sb, [filaHotel(1)]);
-    assert.equal(r.error, null);
-    assert.deepEqual(r.filas, [], "sin fila autoritativa, el camino legacy sigue dando negativo — el hotel se oculta como siempre");
-  });
-});
 
 describe("resolverNetoNocheDetallado — temporadaGanadora/esPromocion: clasificador GENERAL Base/Promoción (NUNCA por precio_final_autoritativo)", () => {
   test("temporada tipo 'tarifa' → esPromocion:false, temporadaGanadora = su propio nombre", () => {
