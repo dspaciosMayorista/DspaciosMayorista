@@ -1,17 +1,17 @@
 # CURRENT_GOAL.md
 
-Objetivo actual: **Diagnosticar el cache/identidad de los add-ons del paquete** — ver si primero aparecen los add-ons propios del paquete y luego son reemplazados por el catalogo general del destino.
+Objetivo actual: **Evitar snapshots desactualizados durante la recalculacion** — que no se publiquen ni sirvan snapshots antiguos mientras se recalculan paquetes.
 
 Alcance:
-- Reproducir el comportamiento real: mostrar los add-ons del paquete y luego su reemplazo por el catalogo general del destino.
-- Trazar identidad y cache de los add-ons (fuente, clave de cache, orden de carga y de render).
-- Documentar hallazgos en TASKS.md.
+- Identificar donde y cuando se recalcula un paquete y donde se sirve su snapshot.
+- No publicar ni servir snapshots antiguos mientras el recalculo esta en curso.
+- Cubrir fallos parciales, concurrencia e invalidacion segura del snapshot.
 
 Fuera de alcance:
-- Implementar correcciones todavia; solo diagnosticar y trazar.
-- Tocar el flujo `+ Agregar servicios` ya conectado desde hoteles persona y unidad.
+- No iniciar implementacion todavia: primero trazar el flujo de calculo/invalidacion.
+- No tocar los demas pendientes de la cola.
 
-Proximos pasos:
-- [ ] Reproducir el descarte/sustitucion de los add-ons del paquete por el catalogo general del destino.
-- [ ] Trazar identidad y cache en el flujo de add-ons (hoteles persona y unidad).
-- [ ] Registrar hallazgos y decidir si pasa a implementacion.
+Proximos pasos / criterio de cierre:
+- [ ] Trazar el flujo: cuando se recalcula un paquete y donde se sirve el snapshot.
+- [ ] Definir la estrategia de invalidacion segura (fallos parciales y concurrencia).
+- [ ] Documentar los escenarios de fallo/concurrencia y proponer una estrategia de invalidacion segura, con archivos y pruebas que requeriria la futura implementacion.

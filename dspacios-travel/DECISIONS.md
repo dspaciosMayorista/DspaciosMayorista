@@ -55,3 +55,15 @@ Registro de decisiones (ADL). Cada entrada: decisión, motivo, alternativas desc
 - Motivo: los agentes no tocan credenciales ni despliegues; los secretos no salen del entorno del usuario.
 - Alternativas descartadas: agentes con acceso directo al SQL Editor o a git remoto.
 - Fecha: 2026-09-16.
+
+## ADL-010 — Add-ons acotados al paquete de origen
+- Decisión: los add-ons abiertos desde un hotel del carrito (`+ Agregar servicios / tours`) conservan `paqueteId` y la consulta se acota en servidor (`buscarReceptivos`); el catálogo general solo reaparece mediante una salida explícita (`Limpiar resultados`).
+- Motivo: identidad del paquete de origen; evita que el catálogo general del destino (ej. 112 servicios) reemplace los add-ons propios del paquete (ej. 14).
+- Alternativas descartadas: búsqueda general por destino desde el carrito; filtrar solo en cliente.
+- Fecha: 2026-09-16 (PR #306, `fca2e834`).
+
+## ADL-011 — Respuestas asíncronas obsoletas no reemplazan la búsqueda vigente
+- Decisión: una respuesta asíncrona obsoleta nunca puede reemplazar la búsqueda vigente.
+- Motivo: toda invalidación incrementa la generación de forma síncrona (`buscar()` al iniciar y `limpiarTodo()`); cada búsqueda solo publica si la generación sigue intacta al resolver, y `montadoRef` cubre el desmontaje.
+- Alternativas descartadas: confiar en el orden de resolución de las promesas.
+- Fecha: 2026-09-16 (PR #306, `fca2e834`).

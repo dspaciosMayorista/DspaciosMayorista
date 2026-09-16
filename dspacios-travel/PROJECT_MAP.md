@@ -23,7 +23,8 @@ Mapa del proyecto. Última actualización: 2026-09-16
 | Cotización interna | `app/cotizacion/[id]/page.tsx` | Autenticada (panel) |
 | Contrato público | `app/c/[token]/page.tsx` (token imposible de adivinar; `/c/` en `RUTAS_PUBLICAS`) | Sin login |
 | Contrato interno | `app/contrato/[numero]/page.tsx` (vista autenticada) | Autenticada |
-| Add-ons (a investigar) | Tarjetas públicas `app/tarifario/TarifarioPublic.tsx` / `VistaBooking.tsx` y resumen en `lib/reservar/serviciosPaquete.ts` (incluidos/opcionales) | — |
+| Add-ons (modo acotado por paquete) | `app/tarifario/CartDrawer.tsx` (`irAAgregarTours`, intent en `lib/cart/addonsIntent.ts` + `addonsNonce.ts`) → `app/tarifario/BuscadorReceptivos.tsx` (dentro de `VistaBooking.tsx`) → `buscarReceptivos` (`lib/reservar/cotizar.ts`) acota por `paqueteId` en servidor | Carrito |
+| Add-ons (catálogo general) | Entrada directa a `BuscadorReceptivos` sin `paqueteId` (búsqueda general por destino); el modo acotado solo se abandona con `Limpiar resultados` | Sin alcance de paquete |
 
 ## Reglas del repo
 Ver `AGENTS.md` (raíz del repo). Fuente de verdad de diseño: `CLAUDE.md` (no releer salvo petición explícita).
