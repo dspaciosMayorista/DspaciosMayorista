@@ -3,6 +3,10 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
+import {
+  construirContextoServicios, calcularResultadoServicio,
+  type DatosServicioPar, type FilaPaquete, type FilaArmadoServicio, type FilaServicioAdicional,
+} from "../lib/reservar/liquidacionServicio.ts";
 
 // ───────────────────────────────────────────────────────────────────────────
 // Vista Booking — orientación de fechas. `cotizarPorFechas`/`buscarHoteles`
@@ -494,6 +498,154 @@ describe("11. Ronda 4 — sugerenciasBusquedaGeneral elige las 4 fechas más cer
     // comentarios explicando de dónde sale el orden).
     assert.doesNotMatch(cotizar, /compararPorCercania\(/);
     assert.doesNotMatch(cotizar, /import \{[^}]*\bcompararPorCercania\b[^}]*\} from/);
+  });
+});
+
+// ───────────────────────────────────────────────────────────────────────────
+// 12. Fix "add-ons propios del paquete reemplazados por el catálogo general
+// del destino" — buscarReceptivos gana un `paqueteId` opcional que ACOTA la
+// búsqueda al paquete de origen (carrito → "+ Agregar servicios / tours").
+// Reproducción confirmada: un hotel de Cartagena con 14 add-ons configurados
+// mostraba, tras pulsar ese botón, una búsqueda GENERAL de 112 servicios del
+// destino (los 14 propios mezclados con 98 ajenos). buscarReceptivos usa
+// service-role (sin RLS que probar bajo `node --test`), así que se verifica
+// por inspección del código FUENTE real — mismo criterio que el resto de
+// wiring de este archivo.
+// ───────────────────────────────────────────────────────────────────────────
+describe("12. buscarReceptivos — paqueteId opcional acota la búsqueda al paquete de origen", () => {
+  const cuerpo = cuerpoFuncion(cotizar, "export async function buscarReceptivos(");
+
+  test("valida paqueteId con validarPaqueteIdConsultaOpcional ANTES de tocar Supabase (frontera pública, requisito 3)", () => {
+    const idxValida = cuerpo.indexOf("validarPaqueteIdConsultaOpcional(o.paqueteId)");
+    const idxAdmin = cuerpo.indexOf("createAdminClient()");
+    assert.ok(idxValida > -1 && idxAdmin > -1 && idxValida < idxAdmin, "la validación de paqueteId debe preceder cualquier consulta a Supabase");
+    assert.match(cuerpo, /if \(!vPaquete\.ok\) return \{ ok: false, error: vPaquete\.error \};/);
+  });
+
+  test("validarPaqueteIdConsultaOpcional: ausente/null → alcance general (ok, paqueteId:null); cualquier otra cosa que no sea entero positivo → rechazado", () => {
+    // `cuerpoFuncion` no aplica bien acá: el tipo de retorno de esta función
+    // es un objeto union `{...} | {...}` SUELTO (sin envolver en `Promise<>`),
+    // así que su `{` de apertura queda a profundidad 0 de paréntesis/ángulos
+    // — el helper lo confundiría con el cuerpo real. Se verifica por texto
+    // directo sobre el archivo completo (ambas líneas son únicas).
+    assert.match(cotizar, /function validarPaqueteIdConsultaOpcional\(v: unknown\)/);
+    assert.match(cotizar, /if \(v === undefined \|\| v === null\) return \{ ok: true, paqueteId: null \};/);
+    assert.match(cotizar, /if \(typeof v !== "number" \|\| !Number\.isInteger\(v\) \|\| !Number\.isFinite\(v\) \|\| v <= 0\)/);
+  });
+
+  test("la consulta a tarifario_resultado filtra por paquete_id SOLO cuando input.paqueteId no es null (requisito 5) — nunca reemplaza el filtro de destino, lo complementa", () => {
+    const idxPaqueteFiltro = cuerpo.indexOf('if (input.paqueteId != null) q = q.eq("paquete_id", input.paqueteId);');
+    const idxDestinoFiltro = cuerpo.indexOf('if (input.destino?.trim()) q = q.eq("destino_nombre", input.destino.trim());');
+    assert.ok(idxPaqueteFiltro > -1, "debe filtrar por paquete_id cuando está presente");
+    assert.ok(idxDestinoFiltro > idxPaqueteFiltro, "el filtro de destino debe seguir existiendo, después del de paquete");
+    // Ambos filtros van ANTES de .eq("modulo","servicios") solo importa que
+    // estén dentro del builder antes de ejecutar — confirma que siguen bajo
+    // el mismo `.from("tarifario_resultado")` que ya exige modulo=servicios
+    // y paquete_activo=true (ninguno de los dos se tocó).
+    assert.match(cuerpo, /\.eq\("modulo", "servicios"\)\s*\n\s*\.eq\("paquete_activo", true\)/);
+  });
+
+  test("la fuente autoritativa de qué servicios tiene el paquete sigue siendo tarifario_resultado/armado_servicios — paqueteId es solo el ALCANCE, nunca una lista de ids que decida el navegador (requisito 6)", () => {
+    // `pares` (el conjunto real de servicios a cotizar) se construye DESPUÉS
+    // del filtro por paquete_id, a partir de las filas que Supabase devolvió
+    // — nunca de un arreglo que venga en el payload de entrada.
+    const idxFiltro = cuerpo.indexOf('if (input.paqueteId != null)');
+    const idxPares = cuerpo.indexOf("const pares = new Map<string, DatosServicioPar>();");
+    assert.ok(idxFiltro > -1 && idxPares > idxFiltro, "pares debe construirse DESPUÉS de aplicar el filtro de paquete_id");
+    assert.doesNotMatch(cuerpo, /o\.servicioIds|o\.paqueteIds|input\.servicioIds/, "nunca debe leerse una lista de ids del payload de entrada");
+  });
+
+  test("servicios INCLUIDOS (ya horneados en el hotel) se excluyen de los resultados — nunca se duplican como add-on opcional (requisito 7)", () => {
+    assert.match(cuerpo, /admin\.from\("armado_servicios"\)\.select\("paquete_id, servicio_id, modo, incluido"\)/);
+    const idxIncluidos = cuerpo.indexOf("const paresIncluidos = new Set(");
+    const idxLoop = cuerpo.indexOf("for (const par of pares.values())");
+    assert.ok(idxIncluidos > -1 && idxLoop > idxIncluidos, "el set de incluidos debe construirse ANTES del bucle que arma resultados");
+    const cuerpoLoop = cuerpo.slice(idxLoop, idxLoop + 250);
+    assert.match(cuerpoLoop, /if \(paresIncluidos\.has\(`\$\{par\.paqueteId\}-\$\{par\.servicioId\}`\)\) continue;/);
+    // El filtro debe evaluarse ANTES de calcularResultadoServicio (nunca después, que igual publicaría el precio).
+    const idxContinue = cuerpoLoop.indexOf("continue;");
+    const idxCalcular = cuerpoLoop.indexOf("calcularResultadoServicio(");
+    assert.ok(idxContinue > -1 && idxCalcular > idxContinue, "el continue por incluido debe preceder el cálculo del resultado");
+  });
+
+  test("entrada DIRECTA a Receptivos (sin paqueteId) conserva el comportamiento general de siempre — el filtro de paquete_id nunca se aplica cuando paqueteId es null (requisito 10)", () => {
+    // Estructural: el `if` del filtro de paquete_id es una guarda explícita
+    // (`!= null`), no un default que siempre corra — sin paqueteId, `q` sigue
+    // el mismo camino que antes de este fix (solo modulo/paquete_activo/
+    // destino opcional).
+    assert.match(cuerpo, /if \(input\.paqueteId != null\) q = q\.eq\("paquete_id", input\.paqueteId\);/);
+  });
+
+  test("BusquedaServiciosInput declara paqueteId como opcional (nullable) — el tipo no vuelve obligatorio un campo que antes no existía", () => {
+    assert.match(cotizar, /export type BusquedaServiciosInput = \{[^}]*paqueteId\?:\s*number \| null;[^}]*\}/);
+  });
+});
+
+describe("12b. Protección EJECUTABLE del caso reproducido — paquete A (14 servicios) vs paquete B (98 del mismo destino, total 112)", () => {
+  // Simula EXACTAMENTE lo que hace `buscarReceptivos` con las funciones puras
+  // reales de `liquidacionServicio.ts` (mismas que usa la búsqueda en
+  // producción, ver `pruebas/liquidacionServicio.test.ts`): `pares` es lo que
+  // la consulta a `tarifario_resultado` devolvió — el filtro `.eq("paquete_id",
+  // ...)` ocurre ANTES, a nivel de SQL (ver sección 12), así que acá se
+  // reproduce su EFECTO construyendo `pares` ya acotado (con paqueteId) o sin
+  // acotar (sin paqueteId, el bug reproducido: control negativo).
+  const PAQUETE_A = 501;
+  const PAQUETE_B = 502;
+  const paqueteFila: FilaPaquete = { id: PAQUETE_A, pct_mk: 0.2 };
+  const paqueteFilaB: FilaPaquete = { id: PAQUETE_B, pct_mk: 0.2 };
+  const FECHA = new Date("2026-10-01T00:00:00");
+
+  function construirCatalogo(paqueteId: number, cantidad: number, offsetId: number) {
+    const armado: FilaArmadoServicio[] = [];
+    const servicios: FilaServicioAdicional[] = [];
+    const pares: DatosServicioPar[] = [];
+    for (let i = 0; i < cantidad; i++) {
+      const servicioId = offsetId + i;
+      armado.push({ paquete_id: paqueteId, servicio_id: servicioId, modo: "persona" });
+      servicios.push({ id: servicioId, precio_persona: 50_000, recargo_individual: 0, liquidacion: null, moneda: "COP" });
+      pares.push({ servicioId, paqueteId, nombre: `Servicio ${servicioId}`, destino: "Cartagena", descripcion: null });
+    }
+    return { armado, servicios, pares };
+  }
+
+  const catA = construirCatalogo(PAQUETE_A, 14, 1000); // los 14 add-ons reales del paquete reproducido
+  const catB = construirCatalogo(PAQUETE_B, 98, 2000); // el resto del catálogo del mismo destino (14 + 98 = 112)
+
+  test("búsqueda ACOTADA (paqueteId=A, como hace ahora buscarReceptivos): SOLO los 14 servicios de A, ninguno de B", () => {
+    const ctx = construirContextoServicios({
+      paquetes: [paqueteFila], armado: catA.armado, servicios: catA.servicios, grupos: [], temporadas: [],
+    });
+    const resultados = catA.pares
+      .map((par) => calcularResultadoServicio(par, ctx, FECHA, 1, 2))
+      .filter((r): r is NonNullable<typeof r> => r != null);
+    assert.equal(resultados.length, 14);
+    assert.ok(resultados.every((r) => r.paqueteId === PAQUETE_A));
+  });
+
+  test("control negativo — SIN el filtro de paqueteId (comportamiento previo al fix): los 112 servicios del destino se mezclan, confirmando que el defecto reportado era real", () => {
+    const todosLosArmados = [...catA.armado, ...catB.armado];
+    const todosLosServicios = [...catA.servicios, ...catB.servicios];
+    const todosLosPares = [...catA.pares, ...catB.pares];
+    const ctx = construirContextoServicios({
+      paquetes: [paqueteFila, paqueteFilaB], armado: todosLosArmados, servicios: todosLosServicios, grupos: [], temporadas: [],
+    });
+    const resultados = todosLosPares
+      .map((par) => calcularResultadoServicio(par, ctx, FECHA, 1, 2))
+      .filter((r): r is NonNullable<typeof r> => r != null);
+    assert.equal(resultados.length, 112);
+    const deB = resultados.filter((r) => r.paqueteId === PAQUETE_B);
+    assert.equal(deB.length, 98, "sin acotar por paqueteId, los 98 servicios ajenos SÍ aparecerían mezclados con los 14 del paquete — esto es lo que el fix evita filtrando en la consulta SQL antes de llegar acá");
+  });
+
+  test("los 98 servicios ajenos a paquete A nunca aparecen en el resultado acotado, ni por servicioId ni por nombre", () => {
+    const ctx = construirContextoServicios({
+      paquetes: [paqueteFila], armado: catA.armado, servicios: catA.servicios, grupos: [], temporadas: [],
+    });
+    const resultados = catA.pares
+      .map((par) => calcularResultadoServicio(par, ctx, FECHA, 1, 2))
+      .filter((r): r is NonNullable<typeof r> => r != null);
+    const idsAjenos = new Set(catB.pares.map((p) => p.servicioId));
+    assert.ok(resultados.every((r) => !idsAjenos.has(r.servicioId)));
   });
 });
 

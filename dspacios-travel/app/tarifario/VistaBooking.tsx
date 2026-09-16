@@ -389,6 +389,16 @@ export function VistaBooking({
   // (ver `sugerenciaPedida` en `BuscadorBooking`).
   const [sugerenciaPedida, setSugerenciaPedida] = useState<(SugerenciaFecha & { nonce: number }) | null>(null);
 
+  // MODO ACOTADO de Receptivos (fix "add-ons propios reemplazados por el
+  // catálogo general del destino"): `paqueteId` cuando la búsqueda de
+  // `BuscadorReceptivos` quedó atada al paquete de origen (abierta desde
+  // "+ Agregar servicios / tours" del carrito), `null` en cualquier otro caso
+  // (entrada directa a Receptivos, o tras "Limpiar resultados"). Solo se usa
+  // para decidir si se muestra debajo la vitrina estática "O explora todos
+  // los receptivos" — nunca para filtrar nada por su cuenta (el filtrado real
+  // vive en el servidor, ver `buscarReceptivos`/`lib/reservar/cotizar.ts`).
+  const [receptivosAcotado, setReceptivosAcotado] = useState<number | null>(null);
+
   // Hallazgo confirmado (auditoría independiente): `BuscadorBooking` se
   // desmonta al abandonar Porción terrestre (solo se renderiza cuando
   // `sub === "porcion_terrestre"`, más abajo), pero `busquedaPorcion`/
@@ -411,6 +421,16 @@ export function VistaBooking({
     if (sub === "porcion_terrestre" && next !== "porcion_terrestre") {
       setBusquedaPorcion(null);
       setSugerenciaPedida(null);
+    }
+    // `BuscadorReceptivos` se desmonta al salir de "receptivos" (solo se
+    // renderiza cuando `sub === "receptivos"`, más abajo) — su estado local
+    // (incl. `paqueteAcotado`) se pierde con él. `receptivosAcotado` vive ACÁ
+    // (en el padre, que no se desmonta) para poder ocultar la vitrina general
+    // mientras dura el modo acotado — se limpia al salir de la pestaña para
+    // que un regreso posterior sin un intent nuevo no arrastre un acotado ya
+    // huérfano (su fuente real ya no existe).
+    if (sub === "receptivos" && next !== "receptivos") {
+      setReceptivosAcotado(null);
     }
     setSub(next);
   }
@@ -916,6 +936,7 @@ export function VistaBooking({
           fotosPorServicio={fotosPorServicio}
           initial={addonsIntent}
           onConsumedInitial={() => setAddonsIntent(null)}
+          onModoAcotado={setReceptivosAcotado}
           onAgregar={(item) => { add(item); openDrawer(); }}
           onVerDetalle={(r) => setReceptivoAbierto({
             nombre: r.nombre, destino: r.destino, descripcion: r.descripcion,
@@ -924,53 +945,62 @@ export function VistaBooking({
             paqueteId: r.paqueteId ?? null,
           })}
         />
-        {receptivosPorDestino.length === 0 ? (
-          <p className="py-12 text-center text-sm text-gray-400">No hay receptivos publicados.</p>
-        ) : (
-          <div className="space-y-8">
-            <p className="text-xs font-semibold uppercase tracking-wide text-gray-400">O explora todos los receptivos</p>
-            {receptivosPorDestino.map(([destino, items]) => (
-              <div key={destino}>
-                <p className="mb-3 text-xs font-semibold uppercase tracking-wide text-gray-400">
-                  {destino} <span className="ml-1 font-normal normal-case text-gray-400">({items.length})</span>
-                </p>
-                <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
-                  {items.map((r, i) => (
-                    <button
-                      key={i}
-                      type="button"
-                      onClick={() => setReceptivoAbierto({ nombre: r.nombre, destino: r.destino, descripcion: r.descripcion, foto: r.foto, precio: r.desde, moneda: r.moneda, notaPrecio: "desde · por persona", paqueteId: r.paqueteId })}
-                      className="group flex flex-col overflow-hidden rounded-2xl border border-gray-200 bg-white text-left transition-all hover:-translate-y-1 hover:shadow-[0_20px_48px_rgba(0,0,0,0.14)] hover:border-[var(--brand-accent)]"
-                    >
-                      <div className="relative aspect-[16/10] w-full bg-gray-100">
-                        {r.foto ? (
-                          <Image src={r.foto} alt={r.nombre} fill sizes="(max-width:1024px) 50vw, 33vw" className="object-cover transition-transform group-hover:scale-[1.03]" unoptimized />
-                        ) : (
-                          <div className="flex h-full w-full items-center justify-center text-sm text-gray-300">Sin foto</div>
-                        )}
-                      </div>
-                      <div className="flex flex-1 flex-col p-4">
-                        <div className="font-semibold text-gray-800">{r.nombre}</div>
-                        {r.descripcion?.trim() && (
-                          <p className="mt-1 line-clamp-2 text-xs text-gray-400">{r.descripcion}</p>
-                        )}
-                        <div className="mt-3 flex items-end justify-between">
-                          <div>
-                            <div className="text-[10px] uppercase tracking-wide text-gray-400">desde</div>
-                            <div className="text-lg font-bold" style={{ color: "var(--brand-primary)" }}>{formatMoneda(r.desde, r.moneda)}</div>
-                            <div className="text-[10px] text-gray-400">por persona</div>
-                          </div>
-                          <span className="rounded-lg px-3 py-1.5 text-xs font-semibold text-white transition-opacity hover:opacity-90" style={{ backgroundColor: "var(--brand-accent)" }}>
-                            Ver más →
-                          </span>
+        {/* Modo acotado (abierto desde "+ Agregar servicios / tours" con un
+            paquete de origen): la vitrina general del destino NO se muestra
+            debajo — mostrarla ahí se leía como si esos ~100 servicios también
+            fueran parte del paquete (la causa raíz del defecto reportado).
+            Vuelve a aparecer solo tras "Limpiar resultados" (ver
+            `BuscadorReceptivos`/`receptivosAcotado`) o en entrada directa a
+            Receptivos, donde nunca estuvo acotada. */}
+        {receptivosAcotado == null && (
+          receptivosPorDestino.length === 0 ? (
+            <p className="py-12 text-center text-sm text-gray-400">No hay receptivos publicados.</p>
+          ) : (
+            <div className="space-y-8">
+              <p className="text-xs font-semibold uppercase tracking-wide text-gray-400">O explora todos los receptivos</p>
+              {receptivosPorDestino.map(([destino, items]) => (
+                <div key={destino}>
+                  <p className="mb-3 text-xs font-semibold uppercase tracking-wide text-gray-400">
+                    {destino} <span className="ml-1 font-normal normal-case text-gray-400">({items.length})</span>
+                  </p>
+                  <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
+                    {items.map((r, i) => (
+                      <button
+                        key={i}
+                        type="button"
+                        onClick={() => setReceptivoAbierto({ nombre: r.nombre, destino: r.destino, descripcion: r.descripcion, foto: r.foto, precio: r.desde, moneda: r.moneda, notaPrecio: "desde · por persona", paqueteId: r.paqueteId })}
+                        className="group flex flex-col overflow-hidden rounded-2xl border border-gray-200 bg-white text-left transition-all hover:-translate-y-1 hover:shadow-[0_20px_48px_rgba(0,0,0,0.14)] hover:border-[var(--brand-accent)]"
+                      >
+                        <div className="relative aspect-[16/10] w-full bg-gray-100">
+                          {r.foto ? (
+                            <Image src={r.foto} alt={r.nombre} fill sizes="(max-width:1024px) 50vw, 33vw" className="object-cover transition-transform group-hover:scale-[1.03]" unoptimized />
+                          ) : (
+                            <div className="flex h-full w-full items-center justify-center text-sm text-gray-300">Sin foto</div>
+                          )}
                         </div>
-                      </div>
-                    </button>
-                  ))}
+                        <div className="flex flex-1 flex-col p-4">
+                          <div className="font-semibold text-gray-800">{r.nombre}</div>
+                          {r.descripcion?.trim() && (
+                            <p className="mt-1 line-clamp-2 text-xs text-gray-400">{r.descripcion}</p>
+                          )}
+                          <div className="mt-3 flex items-end justify-between">
+                            <div>
+                              <div className="text-[10px] uppercase tracking-wide text-gray-400">desde</div>
+                              <div className="text-lg font-bold" style={{ color: "var(--brand-primary)" }}>{formatMoneda(r.desde, r.moneda)}</div>
+                              <div className="text-[10px] text-gray-400">por persona</div>
+                            </div>
+                            <span className="rounded-lg px-3 py-1.5 text-xs font-semibold text-white transition-opacity hover:opacity-90" style={{ backgroundColor: "var(--brand-accent)" }}>
+                              Ver más →
+                            </span>
+                          </div>
+                        </div>
+                      </button>
+                    ))}
+                  </div>
                 </div>
-              </div>
-            ))}
-          </div>
+              ))}
+            </div>
+          )
         )}
         </>
       ) : (

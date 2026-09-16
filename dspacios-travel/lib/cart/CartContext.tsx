@@ -147,7 +147,13 @@ type DistributiveOmit<T, K extends PropertyKey> = T extends unknown ? Omit<T, K>
 // disparar la búsqueda dos veces ni perder los resultados cuando el intent
 // se limpia después de consumirse. Mismo patrón que `sugerenciaPedida` en
 // `BuscadorBooking.tsx`.
-export type AddonsIntent = { destino: string | null; fechaIda: string | null; fechaRegreso: string | null; pax: number; nonce: number };
+// `paqueteId` conserva la identidad del paquete de origen (fix "add-ons
+// propios reemplazados por el catálogo general del destino") — ver la
+// cabecera de `lib/cart/addonsIntent.ts`. Siempre presente cuando el intent
+// se construyó con éxito (AddonsIntentBase.paqueteId es obligatorio, nunca
+// null): un ítem del carrito sin paqueteId válido se descarta como
+// referencia ANTES de llegar acá, nunca produce un intent con este campo vacío.
+export type AddonsIntent = { paqueteId: number; destino: string | null; fechaIda: string | null; fechaRegreso: string | null; pax: number; nonce: number };
 
 type CartCtx = {
   items: CartItem[];

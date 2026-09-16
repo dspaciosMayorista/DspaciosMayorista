@@ -785,8 +785,27 @@ export type BusquedaServiciosInput = {
   fechaRegreso: string;
   pax: number;
   destino?: string; // vacío = todos
+  // Alcance opcional: "+ Agregar servicios / tours" desde el carrito conserva
+  // la identidad del paquete de origen (ver `AddonsIntentBase.paqueteId`,
+  // lib/cart/addonsIntent.ts) — cuando llega, la búsqueda queda ACOTADA a los
+  // servicios opcionales de ESE paquete. `null`/ausente = búsqueda general por
+  // destino (comportamiento de siempre, entrada directa a Receptivos).
+  paqueteId?: number | null;
 };
 export type { ResultadoServicio, RespuestaPublicaServicioPuntual };
+
+// Frontera pública para `paqueteId`: NUNCA se confía en lo que mande el
+// navegador. Ausente/null = búsqueda general (válido); presente debe ser un
+// entero positivo real — cualquier otra cosa (decimal, negativo, cero,
+// string, NaN/Infinity) se rechaza, nunca se normaliza en silencio a "sin
+// paquete" (eso ampliaría el alcance sin que el usuario lo haya pedido).
+function validarPaqueteIdConsultaOpcional(v: unknown): { ok: true; paqueteId: number | null } | { ok: false; error: string } {
+  if (v === undefined || v === null) return { ok: true, paqueteId: null };
+  if (typeof v !== "number" || !Number.isInteger(v) || !Number.isFinite(v) || v <= 0) {
+    return { ok: false, error: "El identificador del paquete no es válido." };
+  }
+  return { ok: true, paqueteId: v };
+}
 
 // Mensaje público ÚNICO para cualquier fallo técnico de esta búsqueda
 // (ronda 7) — nunca revela configuración interna (antes: "falta
@@ -835,9 +854,12 @@ export async function buscarReceptivos(inputRaw: unknown): Promise<{ ok: true; r
   if (!vDestino.ok) return { ok: false, error: vDestino.error };
   const vPax = validarPaxServicioConsulta(o.pax);
   if (!vPax.ok) return { ok: false, error: vPax.error };
+  const vPaquete = validarPaqueteIdConsultaOpcional(o.paqueteId);
+  if (!vPaquete.ok) return { ok: false, error: vPaquete.error };
 
   const input: BusquedaServiciosInput = {
     fechaIda: vRango.fechaIda, fechaRegreso: vRango.fechaRegreso, pax: vPax.pax, destino: vDestino.destino || undefined,
+    paqueteId: vPaquete.paqueteId,
   };
 
   const numNoches = vRango.noches;
@@ -858,6 +880,14 @@ export async function buscarReceptivos(inputRaw: unknown): Promise<{ ok: true; r
       .eq("modulo", "servicios")
       .eq("paquete_activo", true)
       .not("servicio_id", "is", null);
+    // Alcance acotado (carrito → "+ Agregar servicios / tours"): filtra por
+    // el `paquete_id` de origen ANTES de traer ninguna fila — la fuente
+    // autoritativa de "qué servicios tiene este paquete" es esta misma
+    // consulta a `tarifario_resultado`/`armado_servicios`, nunca una lista de
+    // ids que mande el navegador (`paqueteId` es solo el ALCANCE, no el
+    // catálogo). Sin paqueteId, se conserva el filtro de destino de siempre
+    // (búsqueda general, entrada directa a Receptivos).
+    if (input.paqueteId != null) q = q.eq("paquete_id", input.paqueteId);
     if (input.destino?.trim()) q = q.eq("destino_nombre", input.destino.trim());
     return q.order("id").range(from, hasta);
   });
@@ -890,7 +920,7 @@ export async function buscarReceptivos(inputRaw: unknown): Promise<{ ok: true; r
     { data: temporadas, error: temporadasErr },
   ] = await Promise.all([
     admin.from("armado_paquetes").select("id, pct_mk").in("id", paqueteIds),
-    admin.from("armado_servicios").select("paquete_id, servicio_id, modo").in("paquete_id", paqueteIds).in("servicio_id", servicioIds),
+    admin.from("armado_servicios").select("paquete_id, servicio_id, modo, incluido").in("paquete_id", paqueteIds).in("servicio_id", servicioIds),
     admin.from("servicios_adicionales").select("id, precio_persona, recargo_individual, liquidacion, moneda, categoria, proveedor_id").in("id", servicioIds),
     admin.from("servicio_tarifa_pax").select("servicio_id, pax_desde, pax_hasta, precio, temporada").in("servicio_id", servicioIds),
     admin.from("servicio_temporadas").select("servicio_id, nombre, fecha_inicio, fecha_fin, compra_inicio, compra_fin, prioridad, precio_persona, recargo_individual").in("servicio_id", servicioIds),
@@ -916,9 +946,20 @@ export async function buscarReceptivos(inputRaw: unknown): Promise<{ ok: true; r
     paquetes: paquetes ?? [], armado: armado ?? [], servicios: servicios ?? [], grupos: grupos ?? [], temporadas: temporadas ?? [],
   });
 
+  // Un servicio INCLUIDO (`armado_servicios.incluido = true`) ya se hornea en
+  // el PVP del hotel (ver lib/reservar/serviciosPaquete.ts) — nunca debe
+  // ofrecerse también como add-on opcional, o el cliente lo pagaría dos veces
+  // (una horneada, otra "opcional"). Esta búsqueda solo publica servicios
+  // OPCIONALES: se excluye cualquier par marcado incluido en el catálogo real
+  // (nunca una lista del navegador — `armado` sale de la consulta de arriba).
+  const paresIncluidos = new Set(
+    (armado ?? []).filter((a) => a.incluido === true).map((a) => `${a.paquete_id}-${a.servicio_id}`)
+  );
+
   const fechaIdaDate = new Date(`${input.fechaIda}T00:00:00`);
   const resultados: ResultadoServicio[] = [];
   for (const par of pares.values()) {
+    if (paresIncluidos.has(`${par.paqueteId}-${par.servicioId}`)) continue;
     const r = calcularResultadoServicio(par, ctx, fechaIdaDate, numNoches, pax);
     if (r) resultados.push(r);
   }

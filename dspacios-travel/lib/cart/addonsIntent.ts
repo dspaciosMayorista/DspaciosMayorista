@@ -22,6 +22,18 @@
 //     servidor) — construir una fecha acá sería INVENTAR un dato. Se
 //     descarta este ítem como referencia (fail-closed), nunca se inventa.
 //
+// Identidad del paquete (fix "add-ons propios reemplazados por el catálogo
+// general del destino"): el intent TAMBIÉN transporta `paqueteId` — el mismo
+// paquete cuyos 14 add-ons ya se veían bien en el modal del hotel. Sin esto,
+// Receptivos solo tenía destino/fechas/pax y ejecutaba una búsqueda GENERAL
+// por destino (todos los paquetes), mezclando servicios de otros paquetes del
+// mismo destino con los del paquete de origen. `paqueteId` llega `unknown`
+// desde el ítem (persistido en `localStorage`, nunca se confía en su forma) y
+// se valida como entero positivo — un ítem con `paqueteId` inválido/ausente
+// se descarta COMPLETO como referencia (fail-closed, igual criterio que
+// destino/fechas/pax): nunca se construye un intent sin paquete de origen
+// como si fuera uno con paquete, ni se cae en silencio a alcance general.
+//
 // Recorre el carrito del más reciente al más antiguo y usa el PRIMER hotel
 // (persona o unidad, sin preferencia por modelo) del que pueda construirse un
 // intent válido — un tour existente en el carrito nunca participa como
@@ -56,6 +68,7 @@ export type HabitacionItemUnidad = {
 export type ItemHotelPersonaAddons = {
   tipo: "hotel";
   modeloTarifario?: undefined;
+  paqueteId: unknown;
   destino: string | null;
   fechaIda: string | null;
   fechaRegreso: string | null;
@@ -68,6 +81,7 @@ export type ItemHotelPersonaAddons = {
 export type ItemHotelUnidadAddons = {
   tipo: "hotel";
   modeloTarifario: "unidad";
+  paqueteId: unknown;
   destino: string | null;
   salida: SalidaItemUnidad;
   habitaciones: readonly HabitacionItemUnidad[];
@@ -81,6 +95,7 @@ export type ItemCarritoAddons = ItemHotelPersonaAddons | ItemHotelUnidadAddons |
 /** Intent construido — SIN `nonce` (esa identidad la agrega el llamador,
  * `CartDrawer`, una por cada clic; ver `AddonsIntent` en `CartContext.tsx`). */
 export type AddonsIntentBase = {
+  paqueteId: number;
   destino: string;
   fechaIda: string;
   fechaRegreso: string;
@@ -120,6 +135,7 @@ export function construirAddonsIntentDesdeItem(item: ItemCarritoAddons): AddonsI
   if (item.tipo !== "hotel") return null; // tours nunca participan como referencia
 
   if (item.modeloTarifario === "unidad") {
+    if (!esEnteroPositivo(item.paqueteId)) return null;
     // Solo "sin_vuelo" trae fechas propias en el ítem del carrito — bloqueo/
     // empaquetado solo traen `id` (las fechas reales viven en el servidor).
     // Inventar una fecha acá sería fabricar un dato: se descarta el ítem,
@@ -130,16 +146,17 @@ export function construirAddonsIntentDesdeItem(item: ItemCarritoAddons): AddonsI
     if (!esTextoNoVacio(item.destino)) return null;
     const pax = paxTotalHabitacionesUnidad(item.habitaciones);
     if (pax <= 0) return null;
-    return { destino: item.destino, fechaIda, fechaRegreso, pax };
+    return { paqueteId: item.paqueteId, destino: item.destino, fechaIda, fechaRegreso, pax };
   }
 
   // Persona: los campos ya se validaron al construir el ítem (Vista Booking/
   // BuscadorBooking) — se revalida su FORMA igual, nunca se confía a ciegas
   // en lo que haya quedado persistido en `localStorage`.
+  if (!esEnteroPositivo(item.paqueteId)) return null;
   if (!esTextoNoVacio(item.destino)) return null;
   if (!esTextoNoVacio(item.fechaIda) || !esTextoNoVacio(item.fechaRegreso)) return null;
   if (!esEnteroPositivo(item.pax)) return null;
-  return { destino: item.destino, fechaIda: item.fechaIda, fechaRegreso: item.fechaRegreso, pax: item.pax };
+  return { paqueteId: item.paqueteId, destino: item.destino, fechaIda: item.fechaIda, fechaRegreso: item.fechaRegreso, pax: item.pax };
 }
 
 /**
