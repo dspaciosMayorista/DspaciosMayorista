@@ -259,6 +259,11 @@ describe("15. La edad llega intacta a cálculo, snapshot y creación de la reser
   const checkout = leer("app/tarifario/checkout/actions.ts");
   const checkoutPage = leer("app/tarifario/checkout/page.tsx");
   const cart = leer("lib/cart/CartContext.tsx");
+  // `edades_menores`/`distribucion_menores` del snapshot (rama persona) se
+  // extrajeron a `construirHotelSnapPersona()` (lib/reservar/
+  // hotelSnapPersona.ts, función PURA) — checkout/actions.ts ahora solo pasa
+  // `edadesMenoresConfirmadas`/`comp.data` como argumentos.
+  const hotelSnapPersona = leer("lib/reservar/hotelSnapPersona.ts");
 
   test("computo.ts recalcula desde edadesMenores con el helper real, nunca confía en ninos/ninos2/infantes del cliente cuando vienen edades", () => {
     assert.match(computo, /from "@\/lib\/reservar\/edadesMenores"/);
@@ -284,11 +289,15 @@ describe("15. La edad llega intacta a cálculo, snapshot y creación de la reser
     // (copia de comp.data.edadesMenoresUsadas) — nunca `edadesMenoresUsadas`
     // directo (evita compartir referencia mutable) ni `?? it.edadesMenores`
     // (el fallback que existía antes de esta ronda).
-    assert.match(checkout, /edades_menores: edadesMenoresConfirmadas/);
+    // La construcción del snapshot (`edades_menores: edadesMenoresConfirmadas`)
+    // vive en `construirHotelSnapPersona()` — checkout/actions.ts pasa la
+    // variable `edadesMenoresConfirmadas` como argumento (shorthand).
+    assert.match(checkout, /edadesMenoresConfirmadas,/);
+    assert.match(hotelSnapPersona, /edades_menores: edadesMenoresConfirmadas,/);
     assert.match(checkout, /edadesMenores: edadesMenoresConfirmadas/);
     assert.doesNotMatch(checkout, /edades_menores: it\.edadesMenores/);
     assert.doesNotMatch(checkout, /edadesMenoresUsadas \?\? it\.edadesMenores/);
-    assert.doesNotMatch(checkout, /edades_menores: edadesMenoresUsadas[,\s]/); // nunca la referencia cruda de comp.data sin clonar
+    assert.doesNotMatch(hotelSnapPersona, /edades_menores: edadesMenoresUsadas[,\s]/); // nunca la referencia cruda de comp.data sin clonar
     // Si `comp.data.edadesMenoresUsadas` viene null/undefined, aborta la
     // cotización — nunca completa en silencio con el ítem crudo.
     assert.match(checkout, /if \(edadesMenoresUsadas == null\)/);
@@ -296,8 +305,9 @@ describe("15. La edad llega intacta a cálculo, snapshot y creación de la reser
     assert.match(checkout, /validarSolicitudItem/);
     assert.match(checkout, /export async function crearSolicitudReserva\(inputRaw: unknown\)/);
   });
-  test("checkout/actions.ts persiste la distribución por habitación en el snapshot (autoritativa, de comp.data)", () => {
-    assert.match(checkout, /distribucion_menores: distribucionMenores/);
+  test("checkout/actions.ts persiste la distribución por habitación en el snapshot (autoritativa, de comp.data) — vía construirHotelSnapPersona()", () => {
+    assert.match(checkout, /comp: comp\.data,/, "checkout debe pasar comp.data COMPLETO (incluye distribucionMenores) a construirHotelSnapPersona");
+    assert.match(hotelSnapPersona, /distribucion_menores: distribucionMenores,/);
   });
   test("checkout/page.tsx normaliza carritos viejos y manda cantidadMenores derivado de edadesMenores", () => {
     assert.match(checkoutPage, /normalizarEdadesMenoresCarrito/);
@@ -491,12 +501,17 @@ describe("20. Wiring — Vista Booking usa el helper real, no una copia/aproxima
 
 describe("21. Wiring — snapshot usa edades y distribución validadas por el servidor", () => {
   const checkout = leer("app/tarifario/checkout/actions.ts");
+  // `distribucion_menores`/`menores_clasificados` del snapshot (rama persona)
+  // se extrajeron a `construirHotelSnapPersona()` — checkout/actions.ts pasa
+  // `comp.data` COMPLETO (incluye distribucionMenores) a esa función pura.
+  const hotelSnapPersona = leer("lib/reservar/hotelSnapPersona.ts");
   test("hotelesSnap toma la distribución de comp.data (servidor), no del ítem crudo del cliente", () => {
-    assert.match(checkout, /distribucionMenores, edadesMenoresUsadas, serviciosIncluidos, condicionesTarifa \} = comp\.data/);
-    assert.match(checkout, /distribucion_menores: distribucionMenores/);
+    assert.match(checkout, /edadesMenoresUsadas, serviciosIncluidos \} = comp\.data/);
+    assert.match(checkout, /comp: comp\.data,/, "checkout pasa comp.data COMPLETO (con distribucionMenores adentro) a construirHotelSnapPersona");
+    assert.match(hotelSnapPersona, /distribucion_menores: distribucionMenores,/);
   });
   test("hotelesSnap toma la clasificación agregada (numNinos\\/numNinos2\\/numInfantes) de comp.data", () => {
-    assert.match(checkout, /menores_clasificados: \{ infantes: numInfantes, nino: numNinos, nino2: numNinos2 \}/);
+    assert.match(hotelSnapPersona, /menores_clasificados: \{ infantes: numInfantes, nino: numNinos, nino2: numNinos2 \}/);
   });
 });
 

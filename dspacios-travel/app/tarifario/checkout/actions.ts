@@ -7,6 +7,7 @@ import { computarReserva, type ReservaInput } from "@/lib/reservar/computo";
 import { computarReservaBernalo, type SalidaResueltaBernalo } from "@/lib/reservar/computoReservaBernalo";
 import { parseRuta, ciudadIata } from "@/lib/iata";
 import { ACOM_ROOM_LABEL, type AcomRoom } from "@/lib/acomodaciones";
+import { construirHotelSnapPersona } from "@/lib/reservar/hotelSnapPersona";
 import { formatMoneda } from "@/lib/utils";
 import { comisionDefault } from "@/lib/b2b";
 import {
@@ -629,7 +630,7 @@ async function crearCotizacionCarrito(input: {
     };
     const comp = await computarReserva(sb, reserva);
     if (!comp.ok) return { ok: false, error: `No se pudo cotizar ${it.hotelNombre}: ${comp.error}` };
-    const { meta, precioVenta, monedaReserva, lineasHab, pvpPorAcom, numNinos, numNinos2, numInfantes, totalPax, distribucionMenores, edadesMenoresUsadas, serviciosIncluidos, condicionesTarifa } = comp.data;
+    const { meta, precioVenta, monedaReserva, lineasHab, pvpPorAcom, numNinos, numNinos2, numInfantes, totalPax, edadesMenoresUsadas, serviciosIncluidos } = comp.data;
     incluidosSnap.push(...serviciosIncluidos.map((s) => ({ ...s, paqueteId: it.paqueteId })));
 
     if (monedaPrincipal && monedaReserva !== monedaPrincipal) {
@@ -657,35 +658,16 @@ async function crearCotizacionCarrito(input: {
     const { data: fotos } = await sb.from("hotel_fotos").select("url, es_portada, orden").eq("hotel_id", it.hotelId).order("orden");
     for (const f of fotos ?? []) { if (fotoUrl == null) fotoUrl = f.url; if (f.es_portada) fotoUrl = f.url; }
 
-    const partes = lineasHab.map((l) => `${l.habitaciones} hab ${ACOM_ROOM_LABEL[l.acom]} (${l.pax} pax)`);
-    if (numNinos > 0) partes.push(`${numNinos} Niño 1`);
-    if (numNinos2 > 0) partes.push(`${numNinos2} Niño 2`);
-    if (numInfantes > 0) partes.push(`${numInfantes} Infante(s)`);
-
+    // `construirHotelSnapPersona` (lib/reservar/hotelSnapPersona.ts) — función
+    // PURA extraída de este mismo bloque, compartida con
+    // pruebas/reservaOrquestadorE2E.test.ts, para que la prueba de ejecución
+    // real de `computarReserva` nunca fabrique `condiciones_tarifa` a mano:
+    // usa la MISMA función que produce este snapshot en producción.
     hIdx++;
-    hotelesSnap.push({
-      id: hIdx, ref, nombre: meta.hotel_nombre ?? it.hotelNombre, categoria: it.categoria, ciudad: meta.destino_nombre ?? it.destino,
-      proveedor: null, alimentacion: it.regimen, acomodacion: it.categoria, detalle_acomodacion: partes.join(", "),
-      fecha_ingreso: meta.fecha_ida, fecha_salida: meta.fecha_regreso, nota_regimen: null, foto_url: fotoUrl,
-      // Edad exacta de cada menor tal como se cotizó y clasificación/reparto
-      // resultantes — todo autoritativo del servidor (`comp.data`), nunca lo
-      // que haya mandado el navegador. `distribucion_menores` es la
-      // asignación POR HABITACIÓN (quién paga Niño 1/Niño 2/infante en cada
-      // una) — estructura estable de `distribuirPorHabitaciones()` (ver
-      // lib/reservar/distribucionHabitaciones.ts), útil para auditar cómo se
-      // llegó a `menores_clasificados` sin tener que recalcularlo.
-      edades_menores: edadesMenoresConfirmadas,
-      menores_clasificados: { infantes: numInfantes, nino: numNinos, nino2: numNinos2 },
-      distribucion_menores: distribucionMenores,
-      // Condiciones de tarifa/promoción REALMENTE aplicadas (texto libre de
-      // `tarifa_hotel.notas`) — snapshot autoritativo del servidor
-      // (`comp.data.condicionesTarifa`, ver lib/calc/condicionesTarifa.ts),
-      // atado a ESTE hotel/ítem exacto (misma entrada de `hotelesSnap` que ya
-      // carga categoria/alimentacion/fechas). Solo hoteles "persona" — el
-      // bloque Bernalo (arriba) nunca pasa por `computarReserva` y nunca
-      // toca este campo, así que no recibe condiciones Dubai por accidente.
-      condiciones_tarifa: condicionesTarifa,
-    });
+    hotelesSnap.push(construirHotelSnapPersona({
+      id: hIdx, ref, comp: comp.data, categoria: it.categoria, regimen: it.regimen,
+      destinoFallback: it.destino, hotelNombreFallback: it.hotelNombre, fotoUrl, edadesMenoresConfirmadas,
+    }));
 
     if (it.modulo === "bloqueo" && it.bloqueoId) {
       const { data: bq } = await sb

@@ -35,11 +35,35 @@ type Resultado = {
   servicio_nombre: string | null; tipo_tarifa: string | null; pax_desde: number | null; pax_hasta: number | null;
   categoria: string | null; regimen: string | null; acomodacion: string | null; noches: number | null;
   base_comisionable: number; impuesto: number; precio_pvp: number;
+  // Migración 180 — procedencia REAL del precio (ver
+  // lib/tarifario/procedenciaTarifario.ts::columnasProcedencia, que las
+  // escribe). NUNCA se deduce por precio/nombre/notas: `temporada_ganadora`/
+  // `es_promocion`/`procedencia_mixta` null+false = fila histórica generada
+  // ANTES de que estas columnas existieran (sin procedencia calculada).
+  temporada_ganadora: string | null;
+  es_promocion: boolean | null;
+  precio_final_autoritativo: boolean | null;
+  procedencia_temporadas: unknown;
+  procedencia_mixta: boolean;
 };
 
 const ACOM_LBL: Record<string, string> = {
   sencilla: "Sencilla", doble: "Doble", triple: "Triple", multiple: "Múltiple", nino: "Niño",
 };
+
+// Etiqueta de procedencia del tarifario administrativo (defecto 2, sep-2026):
+// lee EXCLUSIVAMENTE `temporada_ganadora`/`es_promocion`/`procedencia_mixta`
+// (columnas de la migración 180, ya escritas por `generarTarifario` vía
+// `lib/tarifario/procedenciaTarifario.ts`) — nunca se infiere por precio,
+// nombre o notas. Mismo criterio de clasificación que `IdentidadTemporadaBadge`
+// (app/tarifario/VistaBooking.tsx, carrito público): `es_promocion` es la
+// clasificación GENERAL por `hotel_temporadas.tipo`, independiente de
+// `precio_final_autoritativo` (detalle técnico interno, nunca decide el texto).
+function procedenciaLabel(r: Resultado): string | null {
+  if (r.procedencia_mixta) return "Tarifa mixta";
+  if (r.temporada_ganadora == null) return null; // fila histórica sin procedencia calculada — no se afirma nada
+  return r.es_promocion ? `Promoción · ${r.temporada_ganadora}` : `Base · ${r.temporada_ganadora}`;
+}
 
 export function ArmadoClient(props: {
   paqueteId: number;
@@ -926,6 +950,7 @@ function ResultadoTabla({ filas }: { filas: Resultado[] }) {
                   <tr className="border-t border-gray-100">
                     <th className="px-3 py-1.5 text-left">Categoría</th>
                     <th className="px-3 py-1.5 text-left">Régimen</th>
+                    <th className="px-3 py-1.5 text-left">Procedencia</th>
                     <th className="px-3 py-1.5 text-left">Acom.</th>
                     <th className="px-3 py-1.5 text-right">Noches</th>
                     <th className="px-3 py-1.5 text-right">Base com.</th>
@@ -934,19 +959,40 @@ function ResultadoTabla({ filas }: { filas: Resultado[] }) {
                   </tr>
                 </thead>
                 <tbody>
-                  {rows.map((r) => (
-                    <tr key={r.id} className="border-t border-gray-50">
-                      <td className="px-3 py-1.5">{r.categoria ?? "—"}</td>
-                      <td className="px-3 py-1.5">{r.regimen ?? "—"}</td>
-                      <td className="px-3 py-1.5">{ACOM_LBL[r.acomodacion ?? ""] ?? r.acomodacion}</td>
-                      <td className="px-3 py-1.5 text-right tabular-nums">{r.noches}</td>
-                      <td className="px-3 py-1.5 text-right tabular-nums text-gray-500">{formatCOP(r.base_comisionable)}</td>
-                      <td className="px-3 py-1.5 text-right tabular-nums text-gray-500">{formatCOP(r.impuesto)}</td>
-                      <td className="px-3 py-1.5 text-right tabular-nums font-semibold" style={{ color: "var(--brand-primary)" }}>
-                        {formatCOP(r.precio_pvp)}
-                      </td>
-                    </tr>
-                  ))}
+                  {rows.map((r) => {
+                    const procedencia = procedenciaLabel(r);
+                    return (
+                      <tr key={r.id} className="border-t border-gray-50">
+                        <td className="px-3 py-1.5">{r.categoria ?? "—"}</td>
+                        <td className="px-3 py-1.5">{r.regimen ?? "—"}</td>
+                        <td className="px-3 py-1.5">
+                          {procedencia == null ? (
+                            <span className="text-gray-300">—</span>
+                          ) : (
+                            <span
+                              className="rounded-full px-2 py-0.5 text-[11px] font-semibold uppercase tracking-wide"
+                              style={
+                                r.procedencia_mixta
+                                  ? { backgroundColor: "#fffbeb", color: "#d97706" }
+                                  : r.es_promocion
+                                  ? { backgroundColor: "#ecfdf5", color: "#059669" }
+                                  : { backgroundColor: "#eff6ff", color: "#2563eb" }
+                              }
+                            >
+                              {procedencia}
+                            </span>
+                          )}
+                        </td>
+                        <td className="px-3 py-1.5">{ACOM_LBL[r.acomodacion ?? ""] ?? r.acomodacion}</td>
+                        <td className="px-3 py-1.5 text-right tabular-nums">{r.noches}</td>
+                        <td className="px-3 py-1.5 text-right tabular-nums text-gray-500">{formatCOP(r.base_comisionable)}</td>
+                        <td className="px-3 py-1.5 text-right tabular-nums text-gray-500">{formatCOP(r.impuesto)}</td>
+                        <td className="px-3 py-1.5 text-right tabular-nums font-semibold" style={{ color: "var(--brand-primary)" }}>
+                          {formatCOP(r.precio_pvp)}
+                        </td>
+                      </tr>
+                    );
+                  })}
                 </tbody>
               </table>
             </div>

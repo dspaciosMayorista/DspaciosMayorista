@@ -394,6 +394,16 @@ export async function computarReserva(
     const acomsSeleccionadasF = ACOM_ROOMS.filter((a) => Math.max(0, Math.trunc(Number(input.habitaciones?.[a]) || 0)) > 0);
     const temporadasSeleccionadasF = new Set<string>();
     for (const a of acomsSeleccionadasF) for (const t of combo.temporadasTarifaPorAcom?.[a] ?? []) temporadasSeleccionadasF.add(t);
+    // Defecto real corregido (diagnóstico de producción, sep-2026): una
+    // promoción de tipo descuento (SIN `precio_final_autoritativo`) gana la
+    // noche por prioridad, pero la regla de edad sigue resolviendo contra la
+    // tarifa BASE (`temporadasSeleccionadasF`, sin cambios) — así que las
+    // CONDICIONES de tarifa necesitan un conjunto más amplio, que además
+    // incluya la vigencia GANADORA de cada noche (`temporadasCondicionPorAcom`,
+    // ver lib/reservar/liquidacionHotel.ts), para no perder la nota propia de
+    // la promoción cuando su fila de `tarifa_hotel` la trae.
+    const temporadasCondicionesF = new Set<string>(temporadasSeleccionadasF);
+    for (const a of acomsSeleccionadasF) for (const t of combo.temporadasCondicionPorAcom?.[a] ?? []) temporadasCondicionesF.add(t);
     if (temporadasSeleccionadasF.size) {
       const { data: tarEdad, error: tarEdadErr } = await admin
         .from("tarifa_hotel")
@@ -401,7 +411,7 @@ export async function computarReserva(
         .eq("hotel_id", input.hotelId)
         .eq("tipo_habitacion", input.categoria)
         .eq("alimentacion", input.regimen)
-        .in("temporada", [...temporadasSeleccionadasF]);
+        .in("temporada", [...temporadasCondicionesF]);
       if (tarEdadErr) return { ok: false, error: `No se pudo validar la regla de edad de la tarifa: ${tarEdadErr.message}` };
       const rEdadF = resolverReglaEdadEstadiaSegura({
         filas: (tarEdad ?? []) as FilaTarifaHotelEdadCruda[], categoria: input.categoria, regimen: input.regimen,
@@ -409,12 +419,12 @@ export async function computarReserva(
       });
       if (!rEdadF.ok) return { ok: false, error: rEdadF.error };
       reglaEdadF = rEdadF.regla;
-      // Condiciones de tarifa/promoción realmente aplicadas — reusa las
-      // MISMAS filas y el MISMO conjunto de temporadas que la regla de edad,
-      // nunca una resolución paralela (ver lib/calc/condicionesTarifa.ts).
+      // Condiciones de tarifa/promoción realmente aplicadas — mismas filas ya
+      // cargadas (ampliadas arriba para incluir la vigencia ganadora), nunca
+      // una consulta ni resolución paralela (ver lib/calc/condicionesTarifa.ts).
       condicionesTarifa = extraerCondicionesTarifa({
         filas: (tarEdad ?? []) as { tipo_habitacion?: string | null; alimentacion?: string | null; temporada: string | null; notas?: string | null }[],
-        categoria: input.categoria, regimen: input.regimen, temporadasUsadas: temporadasSeleccionadasF,
+        categoria: input.categoria, regimen: input.regimen, temporadasUsadas: temporadasCondicionesF,
       });
     }
 
@@ -582,13 +592,25 @@ export async function computarReserva(
       // sencilla/doble/triple/multiple: una reserva de solo "doble" no debe
       // verse afectada por que "triple" (no pedida) haya usado otra temporada.
       const temporadasEstadia = new Set<string>();
+      // Defecto real corregido (diagnóstico de producción, sep-2026): además
+      // de `temporadaTarifa` (la base, para la regla de EDAD — sin cambios),
+      // se acumula `temporadaGanadora` de cada noche (`r.procedencia`, ya
+      // deduplicada) — una promoción de tipo descuento (sin `precio_final_
+      // autoritativo`) gana la noche por prioridad pero `temporadaTarifa`
+      // apunta a la base, así que su propia nota en `tarifa_hotel.notas` se
+      // perdía. `tarRowsVig` ya trae TODAS las temporadas del combo (sin
+      // filtro `.in("temporada", …)`, ver la consulta arriba), así que no
+      // hace falta una consulta adicional — solo ampliar el set que se le
+      // pasa a `extraerCondicionesTarifa`.
+      const temporadasCondiciones = new Set<string>();
       const precioFinalTemporadasVig = precioFinalTemporadasDe(tarRowsVig as TarRow[]);
       for (const l of lineasHab) {
         const netoPorTemporada = netoPorTemporadaDe(tarRowsVig as TarRow[], l.acom);
         const r = liquidarHotelNochesConTemporadas({ fechaIda: meta.fecha_ida!, numNoches: numNochesVig, temporadas: temporadasVig, netoPorTemporada, regimen: input.regimen, precioFinalTemporadas: precioFinalTemporadasVig });
         if (r == null) return { ok: false, error: TARIFA_VENCIDA };
         netoPorAcom[l.acom] = r.total;
-        for (const t of r.temporadasTarifa) temporadasEstadia.add(t);
+        for (const t of r.temporadasTarifa) { temporadasEstadia.add(t); temporadasCondiciones.add(t); }
+        for (const p of r.procedencia) temporadasCondiciones.add(p.temporadaGanadora);
       }
       const rEdad = resolverReglaEdadEstadiaSegura({
         filas: tarRowsVig, categoria: input.categoria, regimen: input.regimen,
@@ -596,13 +618,12 @@ export async function computarReserva(
       });
       if (!rEdad.ok) return { ok: false, error: rEdad.error };
       reglaEdad = rEdad.regla;
-      // Condiciones de tarifa/promoción realmente aplicadas — reusa las
-      // MISMAS filas (`tarRowsVig`) y el MISMO conjunto de temporadas
-      // (`temporadasEstadia`, construido arriba SOLO de `lineasHab`, ya
-      // filtrado a las acomodaciones seleccionadas) que la regla de edad,
-      // nunca una resolución paralela (ver lib/calc/condicionesTarifa.ts).
+      // Condiciones de tarifa/promoción realmente aplicadas — mismas filas
+      // (`tarRowsVig`), conjunto de temporadas AMPLIADO (`temporadasCondiciones`,
+      // ver comentario arriba) — nunca una consulta ni resolución paralela
+      // (ver lib/calc/condicionesTarifa.ts).
       condicionesTarifa = extraerCondicionesTarifa({
-        filas: tarRowsVig, categoria: input.categoria, regimen: input.regimen, temporadasUsadas: temporadasEstadia,
+        filas: tarRowsVig, categoria: input.categoria, regimen: input.regimen, temporadasUsadas: temporadasCondiciones,
       });
     }
 

@@ -212,3 +212,23 @@ export function condicionesTarifaParaRender(valor: unknown): CondicionTarifaApli
   const r = normalizarCondicionesTarifaJSON(valor);
   return r.ok ? r.condiciones : [];
 }
+
+/**
+ * Agrupa condiciones IDÉNTICAS en texto (de temporadas distintas) en una
+ * sola línea con la lista de temporadas — nunca pierde identidad (las
+ * temporadas se conservan, solo se colapsa el texto repetido). Usada por
+ * `ContratoDocumento.tsx` (sección "Condiciones de la tarifa") — extraída a
+ * este módulo puro (sin JSX) para que sea ejecutable con `node --test`
+ * (este repo no tiene testing-library para renderizar componentes React).
+ */
+export function agruparCondicionesTarifaPorTexto(
+  condiciones: CondicionTarifaAplicada[]
+): { texto: string; temporadas: string[] }[] {
+  const porTexto = new Map<string, string[]>();
+  for (const c of condiciones) {
+    const temporadas = porTexto.get(c.texto) ?? [];
+    if (!temporadas.includes(c.temporada)) temporadas.push(c.temporada);
+    porTexto.set(c.texto, temporadas);
+  }
+  return [...porTexto.entries()].map(([texto, temporadas]) => ({ texto, temporadas }));
+}

@@ -21,6 +21,7 @@ const contratoPage = readFileSync(join(raiz, "app/contrato/[numero]/page.tsx"), 
 const cTokenPage = readFileSync(join(raiz, "app/c/[token]/page.tsx"), "utf8");
 const reservarActions = readFileSync(join(raiz, "app/(dashboard)/dashboard/reservar/actions.ts"), "utf8");
 const types = readFileSync(join(raiz, "types/database.ts"), "utf8");
+const hotelSnapPersona = readFileSync(join(raiz, "lib/reservar/hotelSnapPersona.ts"), "utf8");
 
 describe("computo.ts — reusa temporadasTarifaPorAcom, nunca una resolución paralela", () => {
   test("ambas ramas seleccionan 'notas' de tarifa_hotel junto con las columnas de edad (mismo query, sin consulta extra)", () => {
@@ -35,22 +36,27 @@ describe("computo.ts — reusa temporadasTarifaPorAcom, nunca una resolución pa
     }
   });
 
-  test("extraerCondicionesTarifa se invoca exactamente 2 veces (una por rama), reusando temporadasSeleccionadasF/temporadasEstadia — los MISMOS sets que resolverReglaEdadEstadiaSegura", () => {
+  test("extraerCondicionesTarifa se invoca exactamente 2 veces (una por rama) — el conjunto de temporadas AMPLIADO (defecto real corregido, sep-2026: una promoción de tipo descuento sin precio_final_autoritativo perdía su propia nota) sigue derivándose del MISMO set que la regla de edad, nunca de una resolución paralela desde cero", () => {
     const usos = computo.match(/extraerCondicionesTarifa\(/g) ?? [];
     assert.equal(usos.length, 2);
-    // Rama usarFechas: mismo set `temporadasSeleccionadasF` en ambas llamadas.
+    // Rama usarFechas: `temporadasCondicionesF` se construye como
+    // `new Set(temporadasSeleccionadasF)` + `combo.temporadasCondicionPorAcom`
+    // — nunca desde cero.
     const posRamaF = computo.indexOf("resolverReglaEdadEstadiaSegura({");
     const posCondF = computo.indexOf("extraerCondicionesTarifa({", posRamaF);
     const bloqueF = computo.slice(posRamaF, posCondF + 300);
-    const ocurrenciasSetF = bloqueF.match(/temporadasSeleccionadasF/g) ?? [];
-    assert.ok(ocurrenciasSetF.length >= 2, "ambas llamadas (edad y condiciones) deben reusar temporadasSeleccionadasF en la rama usarFechas");
+    assert.match(bloqueF, /temporadasUsadas: temporadasCondicionesF/, "la llamada de condiciones en la rama usarFechas debe usar temporadasCondicionesF");
+    assert.ok(computo.indexOf("const temporadasCondicionesF = new Set<string>(temporadasSeleccionadasF)") !== -1, "temporadasCondicionesF debe partir del MISMO set que usa la regla de edad (temporadasSeleccionadasF), nunca de una resolución paralela");
 
-    // Rama tarifario_resultado: mismo set `temporadasEstadia`.
+    // Rama tarifario_resultado: `temporadasCondiciones` acumula `r.temporadasTarifa`
+    // (el mismo aporte que `temporadasEstadia`) MÁS `r.procedencia` — nunca un
+    // conjunto no relacionado.
     const posRamaB = computo.indexOf("resolverReglaEdadEstadiaSegura({", posCondF);
     const posCondB = computo.indexOf("extraerCondicionesTarifa({", posRamaB);
     const bloqueB = computo.slice(posRamaB, posCondB + 300);
-    const ocurrenciasSetB = bloqueB.match(/temporadasEstadia/g) ?? [];
-    assert.ok(ocurrenciasSetB.length >= 2, "ambas llamadas (edad y condiciones) deben reusar temporadasEstadia en la rama tarifario_resultado");
+    assert.match(bloqueB, /temporadasUsadas: temporadasCondiciones,/, "la llamada de condiciones en la rama tarifario_resultado debe usar temporadasCondiciones");
+    assert.match(computo, /for \(const t of r\.temporadasTarifa\) \{ temporadasEstadia\.add\(t\); temporadasCondiciones\.add\(t\); \}/, "temporadasCondiciones debe acumular TODO lo que acumula temporadasEstadia (edad), nunca menos");
+    assert.match(computo, /for \(const p of r\.procedencia\) temporadasCondiciones\.add\(p\.temporadaGanadora\);/, "temporadasCondiciones debe además incluir la vigencia GANADORA de cada noche (temporadaGanadora), que es exactamente lo que rescata la nota de una promoción de tipo descuento");
   });
 
   test("ComputoReserva.condicionesTarifa es SIEMPRE un arreglo (tipo sin '?' ni '| null' en la declaración del campo)", () => {
@@ -64,8 +70,22 @@ describe("computo.ts — reusa temporadasTarifaPorAcom, nunca una resolución pa
   });
 });
 
-function posicionesHotelesSnapPush(): number[] {
-  return [...checkout.matchAll(/hotelesSnap\.push\(\{/g)].map((m) => m.index as number);
+// El bloque PERSONA de `hotelesSnap.push(...)` (rama que pasa por
+// `computarReserva`) se extrajo a `construirHotelSnapPersona()`
+// (lib/reservar/hotelSnapPersona.ts, función PURA compartida con
+// pruebas/reservaOrquestadorE2E.test.ts) — checkout/actions.ts ahora solo
+// LLAMA `hotelesSnap.push(construirHotelSnapPersona({...}))`, ya no arma el
+// objeto inline. El bloque Bernalo NO se tocó (sigue con su propio
+// `hotelesSnap.push({...})` literal, sin condiciones Dubai).
+function posBernaloPush(): number {
+  const m = checkout.match(/hotelesSnap\.push\(\{/);
+  assert.ok(m && m.index != null, "debe existir el hotelesSnap.push({...}) literal (Bernalo)");
+  return m!.index as number;
+}
+function posPersonaPushCall(): number {
+  const idx = checkout.indexOf("hotelesSnap.push(construirHotelSnapPersona({");
+  assert.notEqual(idx, -1, "debe existir hotelesSnap.push(construirHotelSnapPersona({...})) (persona)");
+  return idx;
 }
 
 describe("checkout/actions.ts (crearCotizacionCarrito) — referencia estable server-side, NUNCA confiada del navegador", () => {
@@ -82,11 +102,16 @@ describe("checkout/actions.ts (crearCotizacionCarrito) — referencia estable se
   });
 
   test("ambos hotelesSnap.push(...) (Bernalo y persona) incluyen `ref` — misma referencia disponible en detalle.hoteles[] para ambos modelos", () => {
-    const [posBernaloPush, posPersonaPush] = posicionesHotelesSnapPush();
-    const posCierreBernalo = checkout.indexOf("});", posBernaloPush);
-    const posCierrePersona = checkout.indexOf("});", posPersonaPush);
-    assert.match(checkout.slice(posBernaloPush, posCierreBernalo), /id: hIdx, ref,/);
-    assert.match(checkout.slice(posPersonaPush, posCierrePersona), /id: hIdx, ref,/);
+    const posB = posBernaloPush();
+    const posCierreBernalo = checkout.indexOf("});", posB);
+    assert.match(checkout.slice(posB, posCierreBernalo), /id: hIdx, ref,/, "Bernalo sigue armando el objeto inline con id/ref");
+
+    // Persona: `ref` viaja como argumento de `construirHotelSnapPersona`, y
+    // la función real lo coloca en el campo `ref` del objeto devuelto.
+    const posP = posPersonaPushCall();
+    const posCierrePersona = checkout.indexOf("}));", posP);
+    assert.match(checkout.slice(posP, posCierrePersona), /id: hIdx, ref,/, "la llamada debe pasar id/ref a construirHotelSnapPersona");
+    assert.match(hotelSnapPersona, /id, ref, nombre:/, "construirHotelSnapPersona debe devolver el objeto con id/ref");
   });
 
   test("itemsOk/itemsBernaloOk (payload.items) también llevan `ref` — la MISMA referencia en ambas superficies del snapshot (detalle.hoteles[] y payload.items[])", () => {
@@ -96,33 +121,35 @@ describe("checkout/actions.ts (crearCotizacionCarrito) — referencia estable se
 });
 
 describe("checkout/actions.ts (crearCotizacionCarrito) — condiciones solo en hoteles PERSONA, nunca Bernalo", () => {
-  test("hay exactamente 2 hotelesSnap.push(...) en el archivo (Bernalo y persona)", () => {
-    assert.equal(posicionesHotelesSnapPush().length, 2);
+  test("hay exactamente 2 puntos de hotelesSnap.push(...) en el archivo (Bernalo literal + persona vía construirHotelSnapPersona)", () => {
+    const ocurrencias = checkout.match(/hotelesSnap\.push\(/g) ?? [];
+    assert.equal(ocurrencias.length, 2);
   });
 
-  test("el bloque Bernalo (primer hotelesSnap.push, modeloTarifario === 'unidad') NUNCA escribe condiciones_tarifa", () => {
-    const [posBernaloPush] = posicionesHotelesSnapPush();
-    const posCierre = checkout.indexOf("});", posBernaloPush);
-    const bloqueBernalo = checkout.slice(posBernaloPush, posCierre);
+  test("el bloque Bernalo (hotelesSnap.push literal, modeloTarifario === 'unidad') NUNCA escribe condiciones_tarifa", () => {
+    const posB = posBernaloPush();
+    const posCierre = checkout.indexOf("});", posB);
+    const bloqueBernalo = checkout.slice(posB, posCierre);
     assert.match(bloqueBernalo, /resultadoBernalo\.hotelNombre/, "confirma que este es en efecto el bloque Bernalo");
     assert.doesNotMatch(bloqueBernalo, /condiciones_tarifa/, "Bernalo no debe recibir condiciones Dubai por accidente");
   });
 
-  test("el bloque PERSONA (segundo hotelesSnap.push) sí escribe condiciones_tarifa, tomado de comp.data.condicionesTarifa (destructurado de computarReserva)", () => {
-    assert.match(checkout, /const \{ meta, precioVenta, monedaReserva, lineasHab, pvpPorAcom, numNinos, numNinos2, numInfantes, totalPax, distribucionMenores, edadesMenoresUsadas, serviciosIncluidos, condicionesTarifa \} = comp\.data;/);
-    const [, posPersonaPush] = posicionesHotelesSnapPush();
-    const posCierre = checkout.indexOf("});", posPersonaPush);
-    const bloquePersona = checkout.slice(posPersonaPush, posCierre);
-    assert.match(bloquePersona, /meta\.hotel_nombre/, "confirma que este es en efecto el bloque persona");
-    assert.match(bloquePersona, /condiciones_tarifa: condicionesTarifa,/);
+  test("checkout/actions.ts pasa comp.data COMPLETO (con condicionesTarifa adentro) a construirHotelSnapPersona — y esa función REAL (lib/reservar/hotelSnapPersona.ts) es la que escribe condiciones_tarifa: comp.condicionesTarifa", () => {
+    // `comp.data` ya NO se destructura para extraer `condicionesTarifa` aparte
+    // en checkout/actions.ts — se pasa el objeto completo, la función pura
+    // hace su propio destructure.
+    const posP = posPersonaPushCall();
+    const posCierre = checkout.indexOf("}));", posP);
+    const bloquePersona = checkout.slice(posP, posCierre);
+    assert.match(bloquePersona, /comp: comp\.data,/, "debe pasar comp.data completo (nunca un subconjunto armado a mano)");
+
+    assert.match(hotelSnapPersona, /const \{ meta, lineasHab, numNinos, numNinos2, numInfantes, distribucionMenores, condicionesTarifa \} = comp;/, "construirHotelSnapPersona debe destructurar condicionesTarifa de comp");
+    assert.match(hotelSnapPersona, /condiciones_tarifa: condicionesTarifa,/, "y escribirlo en el campo condiciones_tarifa del objeto devuelto");
   });
 
-  test("condiciones_tarifa NUNCA aparece junto a un campo de costo/neto/comisión/proveedor en la misma entrada de hotelesSnap (sin fuga de datos privados)", () => {
-    const [, posPersonaPush] = posicionesHotelesSnapPush();
-    const posCierre = checkout.indexOf("});", posPersonaPush);
-    const bloquePersona = checkout.slice(posPersonaPush, posCierre);
+  test("condiciones_tarifa NUNCA aparece junto a un campo de costo/neto/comisión/proveedor en el objeto que construye construirHotelSnapPersona (sin fuga de datos privados)", () => {
     for (const campoProhibido of ["costo", "neto", "comision", "comisión", "proveedor_id"]) {
-      assert.doesNotMatch(bloquePersona.toLowerCase(), new RegExp(campoProhibido.toLowerCase()), `hotelesSnap (persona) no debe exponer '${campoProhibido}'`);
+      assert.doesNotMatch(hotelSnapPersona.toLowerCase(), new RegExp(campoProhibido.toLowerCase()), `hotelSnapPersona.ts no debe exponer '${campoProhibido}'`);
     }
   });
 });
@@ -145,8 +172,12 @@ describe("ContratoDocumento.tsx — sección sobria, solo cuando hay condiciones
     }
   });
 
-  test("agrupa por texto sin perder identidad de temporadas (agruparCondicionesPorTexto conserva un arreglo de temporadas por grupo)", () => {
-    assert.match(contratoDoc, /function agruparCondicionesPorTexto\(condiciones: CondicionTarifaAplicada\[\]\): \{ texto: string; temporadas: string\[\] \}\[\]/);
+  test("agrupa por texto sin perder identidad de temporadas — usa agruparCondicionesTarifaPorTexto (extraída a lib/calc/condicionesTarifa.ts, módulo puro sin JSX, para que sea ejecutable con node --test; ver pruebas/reservaOrquestadorE2E.test.ts)", () => {
+    assert.match(contratoDoc, /import \{ agruparCondicionesTarifaPorTexto, type CondicionTarifaAplicada \} from "@\/lib\/calc\/condicionesTarifa";/);
+    assert.match(contratoDoc, /const grupos = agruparCondicionesTarifaPorTexto\(condiciones\);/);
+    // La función en sí (código real, con ejecución real) vive en el módulo puro.
+    const condicionesTarifaSrc = readFileSync(join(raiz, "lib/calc/condicionesTarifa.ts"), "utf8");
+    assert.match(condicionesTarifaSrc, /export function agruparCondicionesTarifaPorTexto\(\s*condiciones: CondicionTarifaAplicada\[\]\s*\): \{ texto: string; temporadas: string\[\] \}\[\]/);
   });
 
   test("solo muestra la etiqueta de temporada cuando hay MÁS de una temporada distinta (evita ruido en el caso trivial)", () => {

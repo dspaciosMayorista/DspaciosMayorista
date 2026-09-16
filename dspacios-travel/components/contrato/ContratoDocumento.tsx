@@ -21,7 +21,7 @@ import type {
   Agencia,
 } from "@/types/database";
 import type { CondicionesContratoResueltas } from "@/lib/contrato/condicionesContrato";
-import type { CondicionTarifaAplicada } from "@/lib/calc/condicionesTarifa";
+import { agruparCondicionesTarifaPorTexto, type CondicionTarifaAplicada } from "@/lib/calc/condicionesTarifa";
 
 // `condiciones_tarifa` opcional (ausente = cotizaciones/contratos anteriores
 // a esta ronda, o hoteles Bernalo que nunca pasan por `computarReserva`) —
@@ -36,16 +36,6 @@ type HotelConNota = ContratoHotel & {
 // temporadas se conservan, solo se colapsa el texto repetido). Ver "puede
 // mostrarse una sola condición indicando las temporadas correspondientes,
 // siempre que no se pierda identidad" en el encargo de esta ronda.
-function agruparCondicionesPorTexto(condiciones: CondicionTarifaAplicada[]): { texto: string; temporadas: string[] }[] {
-  const porTexto = new Map<string, string[]>();
-  for (const c of condiciones) {
-    const temporadas = porTexto.get(c.texto) ?? [];
-    if (!temporadas.includes(c.temporada)) temporadas.push(c.temporada);
-    porTexto.set(c.texto, temporadas);
-  }
-  return [...porTexto.entries()].map(([texto, temporadas]) => ({ texto, temporadas }));
-}
-
 // Sección sobria "Condiciones de la tarifa" — SOLO texto de
 // `tarifa_hotel.notas` realmente aplicado (nunca costos/netos/comisión/
 // proveedor/IDs internos). Se omite por completo si no hay condiciones. La
@@ -53,7 +43,7 @@ function agruparCondicionesPorTexto(condiciones: CondicionTarifaAplicada[]): { t
 // de MÁS de una temporada (evita ruido cuando es trivialmente una sola).
 function CondicionesTarifaSection({ condiciones }: { condiciones: CondicionTarifaAplicada[] }) {
   if (!condiciones.length) return null;
-  const grupos = agruparCondicionesPorTexto(condiciones);
+  const grupos = agruparCondicionesTarifaPorTexto(condiciones);
   const multiTemporada = new Set(condiciones.map((c) => c.temporada)).size > 1;
   return (
     <div className="mt-1 rounded bg-gray-50 px-2 py-1 text-xs text-gray-600">
