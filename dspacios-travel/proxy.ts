@@ -17,10 +17,12 @@ const MINORISTA_OCULTAS = [
 
 // `/auth` debe ser pública: el callback de OAuth (/auth/callback) corre ANTES de
 // que exista la sesión; si el middleware lo bloquea, el login con Google falla.
+// `/cot` es la cotización B2C compartida por token; `/c` es el contrato
+// compartido por token. Ambos documentos deben abrir sin sesión.
 // `/portal` y `/pagar` son públicas: el portal B2B muestra ingresar/registrarse
 // sin sesión, y /pagar es el link de pago.
 // `/sitio_web` es la web pública de marketing (route group app/sitio_web): toda pública.
-const RUTAS_PUBLICAS = ["/tarifario", "/login", "/c/", "/auth", "/portal", "/pagar", "/sitio_web"];
+const RUTAS_PUBLICAS = ["/tarifario", "/login", "/c/", "/cot/", "/auth", "/portal", "/pagar", "/sitio_web"];
 
 // Vercel invoca estos endpoints sin una sesión de usuario. Cada ruta valida
 // `Authorization: Bearer ${CRON_SECRET}` por su cuenta; el proxy solo debe
