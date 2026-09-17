@@ -239,7 +239,17 @@ describe("VistaBooking.tsx — Vista Booking unificada: persona y unidad en UNA 
   });
 
   test("abre HotelBernaloCotizarModal (con TODAS las ofertas del hotel agrupado), que renderiza EditorPax con modeloTarifario=\"unidad\"", () => {
-    assert.match(codigoVista, /<HotelBernaloCotizarModal hotelGrupo=\{modalBernalo\}/);
+    assert.match(codigoVista, /<HotelBernaloCotizarModal\s*\n\s*hotelGrupo=\{modalBernalo\}/);
+    // Tarjeta completa (fix): el modal recibe el MISMO enriquecimiento
+    // (foto/estrellas/descripción/ubicación/Incluye/add-ons) que ya recibe
+    // `HotelModal` — antes solo recibía `hotelGrupo`/`onClose`.
+    const idxLlamada = codigoVista.indexOf("<HotelBernaloCotizarModal");
+    const idxFinLlamada = codigoVista.indexOf("/>", idxLlamada);
+    const propsLlamada = codigoVista.slice(idxLlamada, idxFinLlamada);
+    assert.match(propsLlamada, /foto=\{fotosPorHotel\[modalBernalo\.hotelId\] \?\? null\}/);
+    assert.match(propsLlamada, /info=\{infoPorHotel\[modalBernalo\.hotelId\]\}/);
+    assert.match(propsLlamada, /descripcionPorPaquete=\{descripcionPorPaquete\}/);
+    assert.match(propsLlamada, /addonsPorPaquete=\{addonsPorPaquete\}/);
     const cuerpoModal = cuerpoFuncion(fuenteVista, "function HotelBernaloCotizarModal({");
     assert.match(cuerpoModal, /modeloTarifario="unidad"/);
     assert.match(cuerpoModal, /hotelId=\{hotel\.hotelId\}/);
@@ -266,6 +276,81 @@ describe("VistaBooking.tsx — Vista Booking unificada: persona y unidad en UNA 
     const cuerpoModal = cuerpoFuncion(fuenteVista, "function HotelBernaloCotizarModal({");
     assert.match(cuerpoModal, /paqueteId: hotel\.paqueteId,/);
     assert.match(cuerpoModal, /key=\{hotel\.paqueteId\}/, "EditorPax debe remontarse (key=paqueteId) al cambiar de oferta, para no arrastrar estado de la oferta anterior");
+  });
+});
+
+// Conservar tarjeta completa en el motor externo (CURRENT_GOAL.md): antes de
+// esta corrección, `HotelBernaloCotizarModal` solo recibía `hotelGrupo`/
+// `onClose` y perdía foto/video, categoría, Adults Only/Pet friendly, badge
+// de condición, descripción, ubicación, Incluye/No incluye y add-ons — todo
+// contenido que `HotelModal` (su contraparte persona) sí muestra. La fuente
+// de precio/disponibilidad (EditorPax/cotizarAlojamientoBernaloPublico) no
+// se toca en ningún punto de estas pruebas.
+describe("HotelBernaloCotizarModal — tarjeta completa: mismo contenido comercial que HotelModal, precio/disponibilidad intactos", () => {
+  const cuerpoModal = cuerpoFuncion(fuenteVista, "function HotelBernaloCotizarModal({");
+
+  test("la firma recibe foto/info/descripcionPorPaquete/addonsPorPaquete — mismos props (tipos) que ya usa HotelModal, nunca datos inventados", () => {
+    const idxFirma = cuerpoModal.indexOf("hotelGrupo, foto, info, descripcionPorPaquete, addonsPorPaquete, onClose,");
+    assert.notEqual(idxFirma, -1, "la firma debe declarar los 4 props nuevos, en este orden, junto a hotelGrupo/onClose");
+    assert.match(cuerpoModal, /descripcionPorPaquete: Record<number, DescripcionPaqueteRaw>;/);
+    assert.match(cuerpoModal, /addonsPorPaquete: Map<number, Receptivo\[\]>;/);
+  });
+
+  test("header: foto/video, Categoria (estrellas/clasificación), EtiquetasHotel (Adults Only/Pet friendly) y CondicionCompacta — igual que HotelModal, por hotelId físico (info/foto), nunca por oferta", () => {
+    assert.match(cuerpoModal, /info\?\.video_url \? \(/);
+    assert.match(cuerpoModal, /<BackgroundVideo url=\{info\.video_url\} overlay=\{0\} \/>/);
+    assert.match(cuerpoModal, /<Image src=\{foto\} alt=\{hotelGrupo\.hotelNombre\}/);
+    assert.match(cuerpoModal, /<Categoria estrellas=\{info\?\.estrellas \?\? null\} clasificacion=\{info\?\.clasificacion \?\? null\}/);
+    assert.match(cuerpoModal, /<EtiquetasHotel adultsOnly=\{info\?\.adultsOnly \?\? false\} petFriendly=\{info\?\.petFriendly \?\? false\}/);
+    assert.match(cuerpoModal, /info\?\.tieneCondicion !== undefined && <CondicionCompacta activo=\{info\.tieneCondicion\}/);
+    assert.match(cuerpoModal, /info\?\.descripcion\?\.trim\(\)/);
+  });
+
+  test("ubicación: mismo bloque de Google Maps que HotelModal (link + iframe embed), gateado a que info.ubicacion tenga contenido", () => {
+    assert.match(cuerpoModal, /info\?\.ubicacion\?\.trim\(\) && \(/);
+    assert.match(cuerpoModal, /https:\/\/www\.google\.com\/maps\?q=\$\{encodeURIComponent\(info\.ubicacion\)\}/);
+    assert.match(cuerpoModal, /output=embed/);
+  });
+
+  test("Incluye/No incluye y add-ons dependen de LA OFERTA elegida (hotel.paqueteId), nunca de un paqueteId fijo ni de precio/disponibilidad", () => {
+    assert.match(cuerpoModal, /const secciones = hotel \? seccionesDescripcion\(descripcionPorPaquete\[hotel\.paqueteId\]\) : \[\];/);
+    assert.match(cuerpoModal, /const addons: Receptivo\[\] = hotel \? \(addonsPorPaquete\.get\(hotel\.paqueteId\) \?\? \[\]\) : \[\];/);
+    // Mismo criterio de "sección omitida si no tiene contenido" que HotelModal.
+    assert.match(cuerpoModal, /\{secciones\.length > 0 && \(/);
+    assert.match(cuerpoModal, /\{addons\.length > 0 && \(/);
+  });
+
+  test("los add-on abren el mismo ReceptivoModal (solo información, sin fuente de precio alterna) — estado propio addonAbierto", () => {
+    assert.match(cuerpoModal, /const \[addonAbierto, setAddonAbierto\] = useState<ReceptivoModalInfo \| null>\(null\);/);
+    assert.match(cuerpoModal, /<ReceptivoModal receptivo=\{addonAbierto\} onClose=\{\(\) => setAddonAbierto\(null\)\} \/>/);
+  });
+
+  test("orden dentro del modal: header/ubicación -> elegir oferta -> EditorPax (motor externo) -> Incluye -> add-ons — EditorPax/cotización nunca se desplaza", () => {
+    const idxUbicacion = cuerpoModal.indexOf("info?.ubicacion?.trim() && (");
+    const idxOferta = cuerpoModal.indexOf("ofertas.length > 1 &&");
+    const idxEditor = cuerpoModal.indexOf("<EditorPax");
+    const idxIncluye = cuerpoModal.indexOf("{secciones.length > 0 && (");
+    const idxAddon = cuerpoModal.indexOf("{addons.length > 0 && (");
+    assert.notEqual(idxUbicacion, -1);
+    assert.notEqual(idxOferta, -1);
+    assert.notEqual(idxEditor, -1);
+    assert.notEqual(idxIncluye, -1);
+    assert.notEqual(idxAddon, -1);
+    assert.ok(idxUbicacion < idxOferta);
+    assert.ok(idxOferta < idxEditor);
+    assert.ok(idxEditor < idxIncluye);
+    assert.ok(idxIncluye < idxAddon);
+  });
+
+  test("precio/disponibilidad de Bernalo siguen siendo EXCLUSIVOS de EditorPax/cotizarAlojamientoBernaloPublico — los props nuevos son puramente informativos, nunca tocan agregarBernalo/cotizarBernalo", () => {
+    assert.doesNotMatch(cuerpoModal, /foto\.precio|info\.precio|info\.moneda/, "foto/info no deben usarse como fuente de precio");
+    assert.match(cuerpoModal, /onAgregarBernalo=\{agregarBernalo\}/);
+    // agregarBernalo sigue construyendo el ítem SOLO con datos de `hotel` (la
+    // oferta) y del payload que ya cotizó EditorPax — nunca con `foto`/`info`.
+    const idxAgregarBernalo = cuerpoModal.indexOf("function agregarBernalo(item:");
+    const idxFinAgregarBernalo = cuerpoModal.indexOf("return (", idxAgregarBernalo);
+    const cuerpoAgregarBernalo = cuerpoModal.slice(idxAgregarBernalo, idxFinAgregarBernalo);
+    assert.doesNotMatch(cuerpoAgregarBernalo, /\bfoto\b|\binfo\b/);
   });
 });
 
@@ -478,8 +563,14 @@ describe("TarifarioPublic.tsx / page.tsx — hilo completo de props hasta VistaB
   // metadata que sí llegó bien, y viceversa.
   test("P2/P5: el merge de fotosPorHotel/infoPorHotel es incondicional — un fallo en una consulta (fotos o metadata) nunca descarta la otra que sí resolvió", () => {
     assert.doesNotMatch(fuentePage, /resultadoInfoBernalo\.ok/);
-    const idxCall = fuentePage.indexOf("const resultadoInfoBernalo = await cargarInfoHotelesBernalo(");
+    // Auditoría posterior: `cargarInfoHotelesBernalo` ahora se lanza junto a
+    // `cargarDescripcionPaquetesBernalo` en un único `Promise.all` (ver
+    // pruebas/descripcionPaquetesBernaloWiring.test.ts, guarda de
+    // concurrencia) — el ancla de arranque del bloque es esa desestructuración.
+    const idxCall = fuentePage.indexOf("const [resultadoInfoBernalo, resultadoDescripcionBernalo] = await Promise.all([");
     const idxFin = fuentePage.indexOf("const infoPorHotel =", idxCall);
+    assert.notEqual(idxCall, -1);
+    assert.notEqual(idxFin, -1);
     const bloque = fuentePage.slice(idxCall, idxFin);
     assert.match(bloque, /if \(resultadoInfoBernalo\.errorFotos\)/);
     assert.match(bloque, /if \(resultadoInfoBernalo\.errorInfo\)/);

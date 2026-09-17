@@ -415,3 +415,90 @@ describe("ArmadoClient.tsx — el aviso de hoteles Bernalo excluidos se muestra 
     assert.match(armadoClient, /r\.aviso \? ` \$\{r\.aviso\}` : ""/);
   });
 });
+
+// ─────────────────────────────────────────────────────────────────────────
+// Guarda focalizada (auditoría posterior a la tarjeta completa/descripción
+// Bernalo): `generarTarifario` no es ejecutable bajo `node --test` (`"use
+// server"`, `createClient()`/`next/headers` sin inyección — igual criterio
+// que el resto de este archivo), así que la afirmación "construye filas de
+// servicios para un paquete unidad válido, aunque no genere filas de hotel
+// persona" se verifica por inspección ESTRUCTURAL del código fuente real,
+// no por ejecución. Esto es justo lo que las pruebas de `filasAddon` en
+// pruebas/tarifarioResumen.test.ts/filtrosPostCarga.test.ts NO cubren: esas
+// arrancan de una fila de `tarifario_resumen` ya generada (aguas abajo de
+// `generarTarifario`) — nunca reproducen el generador en sí. Esta guarda
+// cierra ese hueco confirmando el ORIGEN de esa fila.
+// ─────────────────────────────────────────────────────────────────────────
+describe("paquetes/actions.ts (generarTarifario) — guarda focalizada: el loop de servicios opcionales es INCONDICIONAL (nunca depende de hotelIds/tipo)", () => {
+  const cuerpo = cuerpoFuncion(paqueteActions, "export async function generarTarifario(paqueteId: number): Promise<Result> {");
+
+  // Hay DOS ocurrencias literales de "for (const s of servicios) {" en el
+  // archivo: la de `aporteServiciosIncluidos` (servicios INCLUIDOS, horneados
+  // en la tarifa del hotel — no es esta) y la real (servicios OPCIONALES,
+  // los add-on que interesan acá, justo después del comentario "SERVICIOS:
+  // se publican siempre"). Se ancla explícitamente en la segunda.
+  const idxComentario = cuerpo.indexOf("SERVICIOS: se publican siempre");
+  const idxLoop = cuerpo.indexOf("for (const s of servicios) {", idxComentario);
+
+  test("el loop real de servicios opcionales (el que hace filas.push) existe justo después del comentario 'se publican siempre... sin importar el tipo'", () => {
+    assert.notEqual(idxComentario, -1, "falta el comentario ancla");
+    assert.notEqual(idxLoop, -1, "falta el loop de servicios opcionales");
+    assert.ok(idxLoop - idxComentario < 250, "el loop debe estar inmediatamente después del comentario, sin ningún `if` intercalado que lo condicione");
+    assert.match(cuerpo.slice(idxComentario, idxLoop), /sin importar el tipo\./);
+  });
+
+  test("el loop NUNCA está anidado dentro de `if (tipo === ...)`/`if (hotelIds.length ...)` — es un statement de nivel superior, alcanzable para CUALQUIER tipo de paquete y CUALQUIER cantidad de hoteles persona", () => {
+    // El if/else-if de generación de hotel por tipo ('bloqueo'/'porcion_
+    // terrestre'/'dinamico') TERMINA antes del comentario ancla — se prueba
+    // ubicando el cierre de esa cadena (el bloque 'dinamico', el último de
+    // los tres) y confirmando que el comentario/loop vienen DESPUÉS de que
+    // esa cadena cerró, nunca dentro de una de sus ramas.
+    const idxCadenaTipo = cuerpo.indexOf('if (tipo === "bloqueo") {');
+    const idxFinCadenaDinamico = cuerpo.indexOf('} else if (tipo === "dinamico") {');
+    assert.notEqual(idxCadenaTipo, -1);
+    assert.notEqual(idxFinCadenaDinamico, -1);
+    assert.ok(idxFinCadenaDinamico < idxComentario, "el comentario/loop de servicios debe venir DESPUÉS de toda la cadena if/else-if de tipo de paquete");
+    // Ningún `if (hotelIds.length` ni `if (tipo ===` aparece entre el fin de
+    // esa cadena y el loop — la única condición que sí vive ahí (permitida)
+    // es el ajuste de `nochesPaq` para bloqueo, que NO envuelve el loop (se
+    // cierra con su propio `}` antes del comentario ancla).
+    const idxNochesPaq = cuerpo.indexOf("let nochesPaq", idxFinCadenaDinamico);
+    assert.notEqual(idxNochesPaq, -1);
+    assert.ok(idxNochesPaq < idxComentario);
+    const idxCierreNochesPaq = cuerpo.indexOf("}", cuerpo.indexOf("if (tipo === \"bloqueo\" && vuelos.length) {", idxNochesPaq));
+    assert.ok(idxCierreNochesPaq < idxComentario, "el único `if` entre la cadena de tipo y el loop de servicios (ajuste de nochesPaq) debe cerrarse ANTES del comentario ancla — nunca envolver el loop");
+    assert.doesNotMatch(cuerpo.slice(idxCierreNochesPaq, idxComentario), /\bif \(/, "no debe quedar ninguna condición abierta entre nochesPaq y el loop de servicios");
+  });
+
+  test("el CUERPO del loop nunca referencia hotelIds/hotelesBernaloFilas — no distingue si el paquete tiene hoteles persona, Bernalo, o ninguno de los dos", () => {
+    assert.notEqual(idxLoop, -1);
+    let profundidad = 0;
+    const idxLlave = cuerpo.indexOf("{", idxLoop);
+    let idxCierre = -1;
+    for (let i = idxLlave; i < cuerpo.length; i++) {
+      if (cuerpo[i] === "{") profundidad++;
+      else if (cuerpo[i] === "}") { profundidad--; if (profundidad === 0) { idxCierre = i; break; } }
+    }
+    assert.notEqual(idxCierre, -1, "no se pudo balancear el cierre del loop de servicios");
+    const cuerpoLoop = cuerpo.slice(idxLoop, idxCierre + 1);
+    assert.doesNotMatch(cuerpoLoop, /\bhotelIds\b/, "el loop de servicios opcionales no debe depender de cuántos hoteles persona tiene el paquete");
+    assert.doesNotMatch(cuerpoLoop, /\bhotelesBernaloFilas\b/, "tampoco debe depender de la lista de hoteles Bernalo — servicios y hospedaje son independientes");
+    // Sí debe seguir empujando a `filas` (la misma variable que publica
+    // `publicar_tarifario_resultado`) — confirma que esas filas SÍ llegan al
+    // snapshot, no a un array descartado.
+    assert.match(cuerpoLoop, /filas\.push\(/);
+  });
+
+  test("combinado con la guarda existente (hotelesBernaloValidos.length===0 es la ÚNICA condición de error para filas.length=0): un paquete 'bloqueo'/'porcion_terrestre' con hotel Bernalo VÁLIDO y AL MENOS un servicio opcional configurado nunca puede fallar por 'No se generaron tarifas' — el loop incondicional garantiza filas.length>0 sin ayuda de ningún hotel persona", () => {
+    const idxError = cuerpo.indexOf("No se generaron tarifas");
+    const idxIfError = cuerpo.lastIndexOf("if (!filas.length", idxError);
+    assert.notEqual(idxIfError, -1);
+    const condicionError = cuerpo.slice(idxIfError, cuerpo.indexOf("{", idxIfError) + 1);
+    // La condición de error exige `!filas.length` — con el loop de servicios
+    // incondicional (probado arriba) empujando al menos una fila, esa parte
+    // de la condición ya es falsa, así que el `if` completo no dispara sin
+    // importar `hotelesBernaloValidos`.
+    assert.match(condicionError, /!filas\.length/);
+    assert.match(condicionError, /hotelesBernaloValidos\.length === 0/);
+  });
+});

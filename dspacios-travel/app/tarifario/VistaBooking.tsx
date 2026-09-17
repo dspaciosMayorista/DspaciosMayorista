@@ -1227,7 +1227,14 @@ export function VistaBooking({
       )}
 
       {modalBernalo && (
-        <HotelBernaloCotizarModal hotelGrupo={modalBernalo} onClose={() => setModalBernalo(null)} />
+        <HotelBernaloCotizarModal
+          hotelGrupo={modalBernalo}
+          foto={fotosPorHotel[modalBernalo.hotelId] ?? null}
+          info={infoPorHotel[modalBernalo.hotelId]}
+          descripcionPorPaquete={descripcionPorPaquete}
+          addonsPorPaquete={addonsPorPaquete}
+          onClose={() => setModalBernalo(null)}
+        />
       )}
 
       {receptivoAbierto && (
@@ -1791,8 +1798,27 @@ function TarjetaUnidadBusqueda({
 // ÚNICA fuente de `paqueteId`/categorías/alimentaciones/salidas que ve
 // `EditorPax` — cotizar y agregar al carrito usan SIEMPRE el `paqueteId` de
 // la oferta elegida.
-function HotelBernaloCotizarModal({ hotelGrupo, onClose }: { hotelGrupo: HotelUnidadCard; onClose: () => void }) {
+// Contenido comercial de la tarjeta completa (foto/video, categoría,
+// etiquetas Adults Only/Pet friendly, badge de condición, descripción,
+// ubicación) para el mismo hotel FÍSICO que ya recibe `TarjetaHotelCard` y
+// `HotelModal` (`fotosPorHotel`/`infoPorHotel`, por `hotelId`) — antes este
+// modal solo recibía `hotelGrupo`/`onClose` y perdía todo esto, dejando una
+// tarjeta genérica sin foto ni descripción mientras el motor interno sí la
+// mostraba completa. Precio y disponibilidad siguen siendo EXCLUSIVAMENTE de
+// `EditorPax`/`cotizarAlojamientoBernaloPublico` — estos props son solo
+// contenido informativo, nunca una fuente alternativa de tarifa.
+function HotelBernaloCotizarModal({
+  hotelGrupo, foto, info, descripcionPorPaquete, addonsPorPaquete, onClose,
+}: {
+  hotelGrupo: HotelUnidadCard;
+  foto: string | null;
+  info?: { estrellas: number | null; clasificacion: string | null; descripcion: string | null; ubicacion: string | null; video_url?: string | null; adultsOnly?: boolean; petFriendly?: boolean; tieneCondicion?: boolean };
+  descripcionPorPaquete: Record<number, DescripcionPaqueteRaw>;
+  addonsPorPaquete: Map<number, Receptivo[]>;
+  onClose: () => void;
+}) {
   const { ofertas } = hotelGrupo;
+  const [addonAbierto, setAddonAbierto] = useState<ReceptivoModalInfo | null>(null);
   // Identidad ESTABLE de la oferta elegida: `paqueteId`, nunca un índice de
   // arreglo — dos ofertas pueden compartir nombre de paquete (o incluso
   // rehacerse el orden si `hotelesBernalo` se recarga), pero `paqueteId` es
@@ -1807,6 +1833,12 @@ function HotelBernaloCotizarModal({ hotelGrupo, onClose }: { hotelGrupo: HotelUn
   // deje adivinar la clasificación.
   const configuracionIncompleta = !!hotel && (hotel.categorias.length === 0 || hotel.regimenes.length === 0);
   const { add, openDrawer } = useCart();
+
+  // Incluye/No incluye y add-ons son del PAQUETE (`armado_paquetes.id` real,
+  // igual identidad que usa `HotelModal`), no del hotel en abstracto — solo
+  // se conocen una vez que hay una oferta elegida (`hotel`).
+  const secciones = hotel ? seccionesDescripcion(descripcionPorPaquete[hotel.paqueteId]) : [];
+  const addons: Receptivo[] = hotel ? (addonsPorPaquete.get(hotel.paqueteId) ?? []) : [];
 
   // Fase 3F-4A: EditorPax ya cotizó en vivo (resultadoCotizacion.ok) y reporta
   // SOLO las decisiones + el PVP/moneda que mostró — la identidad del
@@ -1839,21 +1871,60 @@ function HotelBernaloCotizarModal({ hotelGrupo, onClose }: { hotelGrupo: HotelUn
     onClose();
   }
   return (
+    <>
     <div className="fixed inset-0 z-50 flex items-end justify-center bg-black/40 p-0 sm:items-center sm:p-4" onClick={onClose}>
       <div
         className="max-h-[92vh] w-full max-w-2xl overflow-y-auto rounded-t-2xl bg-white sm:rounded-2xl"
         onClick={(e) => e.stopPropagation()}
       >
-        <div className="flex items-center justify-between border-b border-gray-100 p-5">
-          <div>
-            <div className="font-semibold text-gray-800">{hotelGrupo.hotelNombre}</div>
-            <div className="text-xs text-gray-500">{(hotel ?? ofertas[0])?.destinoNombre ?? ""}</div>
-          </div>
-          <button type="button" onClick={onClose} className="rounded-full bg-gray-100 px-3 py-1 text-sm font-medium text-gray-700">
+        {/* Identidad y contenido comercial del hotel FÍSICO — mismo bloque
+            que `HotelModal` (foto/video, categoría, Adults Only/Pet friendly,
+            descripción, ubicación); nunca fuente de precio/disponibilidad. */}
+        <div className="relative aspect-[16/9] w-full bg-gray-100">
+          {info?.video_url ? (
+            <BackgroundVideo url={info.video_url} overlay={0} />
+          ) : foto ? (
+            <Image src={foto} alt={hotelGrupo.hotelNombre} fill sizes="640px" className="object-cover" unoptimized />
+          ) : (
+            <div className="flex h-full w-full items-center justify-center text-gray-300">Sin foto</div>
+          )}
+          <button type="button" onClick={onClose} className="absolute right-3 top-3 rounded-full bg-white/90 px-3 py-1 text-sm font-medium text-gray-700 shadow">
             Cerrar ✕
           </button>
         </div>
-        <div className="space-y-4 p-5">
+
+        <div className="space-y-5 p-5">
+          <div>
+            <div className="flex flex-wrap items-center gap-2">
+              <h2 className="text-xl font-semibold text-gray-900">{hotelGrupo.hotelNombre}</h2>
+              <Categoria estrellas={info?.estrellas ?? null} clasificacion={info?.clasificacion ?? null} className="text-base" />
+              <EtiquetasHotel adultsOnly={info?.adultsOnly ?? false} petFriendly={info?.petFriendly ?? false} />
+              {info?.tieneCondicion !== undefined && <CondicionCompacta activo={info.tieneCondicion} />}
+            </div>
+            <p className="text-sm text-gray-500">{(hotel ?? ofertas[0])?.destinoNombre ?? ""}</p>
+            {info?.descripcion?.trim() && (
+              <p className="mt-2 text-sm text-gray-600">{info.descripcion}</p>
+            )}
+          </div>
+
+          {info?.ubicacion?.trim() && (
+            <div>
+              <div className="mb-1 flex items-center justify-between">
+                <span className="text-xs font-semibold uppercase tracking-wide text-gray-400">Ubicación</span>
+                <a href={`https://www.google.com/maps?q=${encodeURIComponent(info.ubicacion)}`} target="_blank" rel="noopener noreferrer" className="text-xs font-medium" style={{ color: "var(--brand-accent)" }}>
+                  Ver en Google Maps →
+                </a>
+              </div>
+              <iframe
+                title={`Mapa ${hotelGrupo.hotelNombre}`}
+                src={`https://www.google.com/maps?q=${encodeURIComponent(info.ubicacion)}&output=embed`}
+                className="h-56 w-full rounded-lg border border-gray-200"
+                loading="lazy"
+                referrerPolicy="no-referrer-when-downgrade"
+              />
+            </div>
+          )}
+
           {ofertas.length > 1 && (
             <div>
               <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-gray-400">Elige la oferta</p>
@@ -1900,9 +1971,57 @@ function HotelBernaloCotizarModal({ hotelGrupo, onClose }: { hotelGrupo: HotelUn
               onAgregarBernalo={agregarBernalo}
             />
           )}
+
+          {/* Descripción manual del paquete: mismo criterio que `HotelModal`
+              (encabezados fijos, un ítem por línea no vacía, sección omitida
+              por completo si no tiene contenido) — depende de la oferta
+              elegida, nunca de precio/disponibilidad. */}
+          {secciones.length > 0 && (
+            <div className="space-y-3">
+              {secciones.map((s) => (
+                <div key={s.titulo} className="rounded-lg border border-gray-100 bg-gray-50 p-3">
+                  <p className="mb-1.5 text-xs font-semibold uppercase tracking-wide text-gray-400">{s.titulo}</p>
+                  <ul className="space-y-1">
+                    {s.items.map((it, i) => (
+                      <li key={i} className="flex items-center gap-1.5 text-sm text-gray-700">
+                        <IconoSeccion titulo={s.titulo} />
+                        {it}
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              ))}
+            </div>
+          )}
+
+          {/* Servicios opcionales (add-on) del MISMO paquete — nunca de otro
+              destino; solo vista de información (mismo `ReceptivoModal` que
+              `HotelModal`, sin agregar directo al carrito desde acá). */}
+          {addons.length > 0 && (
+            <div>
+              <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-gray-400">Servicios opcionales (add-on)</p>
+              <div className="flex flex-wrap gap-2">
+                {addons.map((a, i) => (
+                  <button
+                    key={i}
+                    type="button"
+                    onClick={() => setAddonAbierto({ nombre: a.nombre, destino: a.destino, descripcion: a.descripcion, foto: a.foto, precio: a.desde, moneda: a.moneda, notaPrecio: "desde · por persona", paqueteId: a.paqueteId })}
+                    className="rounded-lg border border-gray-200 px-3 py-2 text-left text-sm transition-colors hover:border-[var(--brand-accent)]"
+                  >
+                    <span className="block font-medium text-gray-800">{a.nombre}</span>
+                    <span className="block text-xs" style={{ color: "var(--brand-primary)" }}>desde {formatMoneda(a.desde, a.moneda)}</span>
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
         </div>
       </div>
     </div>
+    {addonAbierto && (
+      <ReceptivoModal receptivo={addonAbierto} onClose={() => setAddonAbierto(null)} />
+    )}
+    </>
   );
 }
 
