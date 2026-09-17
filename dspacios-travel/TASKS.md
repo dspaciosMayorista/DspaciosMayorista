@@ -1,18 +1,14 @@
 # TASKS.md - Dspacios Mayorista
 
-Fuente unica y priorizada de pendientes. Ultima actualizacion: 2026-09-16.
+Fuente unica y priorizada de pendientes. Ultima actualizacion: 2026-09-17.
 
 ## Cola priorizada
 
-### 1. Ordenar el contenido interno de las tarjetas
-
-- [ ] Mostrar el contenido en este orden: Salidas -> Motor interno -> Incluye -> Servicios add-on.
-
-### 2. Conservar tarjetas completas en el motor externo
+### 1. Conservar tarjetas completas en el motor externo
 
 - [ ] Mantener la tarjeta completa y cambiar solamente la fuente de precio y disponibilidad.
 
-### 3. Compactar el flujo Codex, Sonnet y OpenCode
+### 2. Compactar el flujo Codex, Sonnet y OpenCode
 
 - [ ] Preparar prompts breves que lean solo `PROJECT_MAP.md`, `CURRENT_GOAL.md`, `DECISIONS.md`, `TASKS.md`, `git status` y el diff relevante.
 - [ ] Codex coordina, revisa riesgos y valida antes del commit.
@@ -23,78 +19,78 @@ Fuente unica y priorizada de pendientes. Ultima actualizacion: 2026-09-16.
 - [ ] Ejecutar una sola suite completa por entrega; durante la implementacion, usar pruebas focalizadas.
 - [ ] No delegar simultaneamente el mismo problema a varios agentes.
 
-### 4. Recalcular paquetes al editar tarifas o promociones
+### 3. Recalcular paquetes al editar tarifas o promociones
 
 - [ ] Recalcular automaticamente todos los paquetes que usan un hotel cuando se guarda, edita o elimina una tarifa/promocion.
 - [ ] Respetar promociones restringidas por alimentacion sin borrar tarifas base validas de otros planes.
 - [ ] Cubrir edicion, eliminacion y relaciones entre hotel, tarifa, promocion y paquete.
 
-### 5. Hoteles recomendados
+### 4. Hoteles recomendados
 
 - [ ] Permitir un maximo de 6 hoteles recomendados con prioridad manual de 1 a 6.
 - [ ] Mostrar despues el resto del inventario con un orden definido por precio, estrellas/localizacion y etiquetas.
 
-### 6. Smoke financiero posterior al PR #294
+### 5. Smoke financiero posterior al PR #294
 
 - [ ] Crear un caso real con servicio incluido por grupo y comparar vitrina, carrito, cotizacion y contrato.
 - [ ] Confirmar una sola CxP por servicio, costos correctos y margen correcto.
 - [ ] Confirmar en Vercel `/api/cron/reconciliar-financiero` y su ejecucion con `CRON_SECRET`.
 
-### 7. Soporte unidad para paquetes dinamicos
+### 6. Soporte unidad para paquetes dinamicos
 
 - [ ] Implementar soporte real de `salidas_dinamicas` y cotizacion antes de anunciar hoteles unidad de paquetes `dinamico`.
 - [ ] Mantenerlos excluidos o marcados como no compatibles hasta completar la integracion.
 
-### 8. Soporte unidad para paquetes de servicios
+### 7. Soporte unidad para paquetes de servicios
 
 - [ ] Implementar soporte real de hoteles unidad en paquetes `servicios` antes de anunciarlos como cotizables.
 - [ ] Mantenerlos excluidos o marcados como no compatibles hasta completar la integracion.
 
-### 9. Corregir los 15 fallos preexistentes de pruebas
+### 8. Corregir los 15 fallos preexistentes de pruebas
 
 - [ ] Inventariar cada fallo por nombre, causa y propietario.
 - [ ] Separar defectos reales de pruebas de wiring obsoletas.
 - [ ] Corregirlos por grupos para dejar de aceptar una linea base roja como normal.
 
-### 10. Smoke visual de condiciones y restricciones
+### 9. Smoke visual de condiciones y restricciones
 
 - [ ] Validar en produccion badges y condiciones en Booking y carrito de los PR #286/#287.
 - [ ] Confirmar que el contenido sea consistente en escritorio, movil e impresion cuando aplique.
 
-### 11. Smoke de excepcion comercial
+### 10. Smoke de excepcion comercial
 
 - [ ] Probar con superadmin y contrato restringido el formulario, la autorizacion y la trazabilidad.
 - [ ] Mantener como deuda no bloqueante la reutilizacion de la consulta de vigencia para evitar una segunda consulta O(1) a `hotel_temporadas`.
 
-### 12. Mostrar conteos por destino
+### 11. Mostrar conteos por destino
 
 - [ ] Mostrar receptivos junto al conteo de hoteles, por ejemplo: `0 hoteles · 1 receptivo`.
 
-### 13. Explicar bloqueos al eliminar destinos
+### 12. Explicar bloqueos al eliminar destinos
 
 - [ ] Mostrar en el modal por que un destino no puede eliminarse cuando tiene contenido asociado.
 
-### 14. Integrar hoteles unidad en empaquetados
+### 13. Integrar hoteles unidad en empaquetados
 
 - [ ] Integrar y validar hoteles `modelo_tarifario = "unidad"` dentro de productos empaquetados.
 
-### 15. Integrar hoteles unidad con vuelos y bloqueos
+### 14. Integrar hoteles unidad con vuelos y bloqueos
 
 - [ ] Integrar y validar hoteles `modelo_tarifario = "unidad"` con vuelos, salidas y bloqueos.
 
-### 16. Investigar hotel 217 ausente en Vista Booking
+### 15. Investigar hotel 217 ausente en Vista Booking
 
 - [ ] Diagnosticar por que el hotel 217 no aparece en Porcion terrestre sin destino o buscando `odair`.
 - [ ] Trazar en Vercel Preview: `tarifario_resumen` -> filtros post-carga -> `TarifarioPublic` -> `VistaBooking` -> tarjetas.
 - [ ] No cambiar generacion, vigencia ni identidad categoria/regimen sin reproducir primero el descarte real.
 - [ ] Fixture confirmado de produccion: hotel 217, paquete 50 activo, modelo persona, SAN ANDRES, 28 filas en `tarifario_resultado`, 4 filas en `tarifario_resumen`, 2 noches, Estandar/Superior, PAE/FULL y procedencia Promocion.
 
-### 17. Separar Preview y Produccion
+### 16. Separar Preview y Produccion
 
 - [ ] Usar entornos y bases de datos independientes.
 - [ ] Documentar el orden de migraciones y las variables por ambiente.
 
-### 18. Desarrollo posterior del negocio
+### 17. Desarrollo posterior del negocio
 
 - [ ] Desarrollo integral B2B/B2C.
 - [ ] Marketing y redes sociales.
@@ -102,6 +98,7 @@ Fuente unica y priorizada de pendientes. Ultima actualizacion: 2026-09-16.
 
 ## Cerrado recientemente
 
+- [x] Orden de secciones en `HotelModal` del motor interno (2026-09-17, commit `70263e3d`): Salidas -> Motor interno -> Incluye -> Servicios add-on. Traslado de JSX sin cambios de logica, props, precios, disponibilidad, acciones ni fuentes; prueba de regresion agregada (`pruebas/hotelModalOrdenSecciones.test.ts`) y flujo visual validado por el usuario. Las variantes externas/Bernalo no fueron modificadas.
 - [x] Integracion principal Bernalo/unidad para Porcion terrestre: editor, busqueda, carrito, menores y add-ons.
 - [x] PR #298: persistencia versionada, adaptador y migracion 173 de Bernalo.
 - [x] Dubai: edades y suplementos propios por base/promocion; migracion 177 aplicada y validada.
