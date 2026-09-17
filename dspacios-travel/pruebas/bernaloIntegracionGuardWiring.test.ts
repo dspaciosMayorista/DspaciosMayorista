@@ -183,7 +183,12 @@ describe("paquetes/actions.ts (generarTarifario) — hoteles 'unidad' se EXCLUYE
   });
 
   test("P1-3: un error técnico consultando hotel_tarifas_unidad se propaga (fail-closed) — nunca se disfraza de catálogo Bernalo vacío", () => {
-    assert.match(cuerpo, /if \(eTarifasBernalo\) return \{ ok: false, error: eTarifasBernalo\.message \};/);
+    // Migración 181 (ronda de auditoría, hallazgo P2): ya no retorna directo
+    // ni pasa por `fallar()` — es un `.message` CRUDO de Supabase, así que
+    // va por `fallarTecnico()` (marca el intento como fallido con un mensaje
+    // SANEADO/estable, nunca el texto crudo de Postgres, y registra el
+    // detalle real solo server-side). El caller sigue recibiendo `ok:false`.
+    assert.match(cuerpo, /if \(eTarifasBernalo\) return await fallarTecnico\(eTarifasBernalo\.message\);/);
   });
 
   // P2 (hallazgo confirmado, validación final): el motor Bernalo no soporta
@@ -204,7 +209,11 @@ describe("paquetes/actions.ts (generarTarifario) — hoteles 'unidad' se EXCLUYE
     assert.notEqual(idxDinamico, -1);
     const idxLlave = cuerpo.indexOf("{", idxDinamico);
     const bloque = cuerpo.slice(idxLlave, cuerpo.indexOf("}", idxLlave) + 1);
-    assert.match(bloque, /ok: false/);
+    // Migración 181: el `return { ok: false, error: ... }` literal se
+    // reemplazó por `return await fallar(...)` — sigue siendo un `ok:false`
+    // para el caller (fallar() lo arma), pero el texto `ok: false` ya no
+    // aparece literal dentro del bloque.
+    assert.match(bloque, /return await fallar\(/);
     assert.match(bloque, /no soporta salidas dinámicas/);
   });
 
@@ -235,40 +244,45 @@ describe("paquetes/actions.ts (generarTarifario) — hallazgo confirmado: filas.
   test('el error legacy "No se generaron tarifas" solo se devuelve si hotelesBernaloValidos.length === 0 (nunca cuando SÍ hay hoteles Bernalo con tarifa publicada compatible)', () => {
     const idxError = cuerpo.indexOf("No se generaron tarifas");
     assert.notEqual(idxError, -1);
-    // La condición completa del `else if` que envuelve el error legacy debe
+    // Migración 181: el error legacy ya no vive en un `} else if (...)`
+    // encadenado al insert — es un `if` independiente que corta ANTES de
+    // publicar (`return await fallar(...)`). La condición completa debe
     // incluir explícitamente `hotelesBernaloValidos.length === 0` — nunca
     // solo `tipo === "bloqueo" || tipo === "porcion_terrestre"` a secas, y
     // NUNCA `hotelesBernaloExcluidos` (que sobre-cuenta hoteles sin publicar,
     // P1-3).
-    const idxElseIf = cuerpo.lastIndexOf("} else if (", idxError);
-    assert.notEqual(idxElseIf, -1);
-    const condicion = cuerpo.slice(idxElseIf, cuerpo.indexOf("{", idxElseIf) + 1);
+    const idxIf = cuerpo.lastIndexOf("if (!filas.length", idxError);
+    assert.notEqual(idxIf, -1);
+    const condicion = cuerpo.slice(idxIf, cuerpo.indexOf("{", idxIf) + 1);
     assert.match(condicion, /hotelesBernaloValidos\.length === 0/, `la condición del error legacy debe excluir el caso Bernalo VÁLIDO: "${condicion}"`);
   });
 
-  test("un paquete SOLO Bernalo con tarifa publicada compatible (filas.length=0, hotelesBernaloValidos.length>0) llega al return final ok:true — nunca al return de error", () => {
+  test("un paquete SOLO Bernalo con tarifa publicada compatible (filas.length=0, hotelesBernaloValidos.length>0) llega a la publicación (nunca al return de error)", () => {
     const idxErrorReturn = cuerpo.indexOf("No se generaron tarifas");
-    const idxElseIf = cuerpo.lastIndexOf("} else if (", idxErrorReturn);
-    const condicion = cuerpo.slice(idxElseIf, cuerpo.indexOf("{", idxElseIf) + 1);
-    // Simula la evaluación: con hotelesBernaloValidos.length>0 la
-    // condición completa (que exige === 0) debe evaluar false, así que el
-    // `else if` no dispara y el control cae al return final.
+    const idxIf = cuerpo.lastIndexOf("if (!filas.length", idxErrorReturn);
+    const condicion = cuerpo.slice(idxIf, cuerpo.indexOf("{", idxIf) + 1);
+    // Simula la evaluación: con hotelesBernaloValidos.length>0 la condición
+    // completa (que exige === 0) debe evaluar false, así que el `if` no
+    // dispara y el control sigue de largo hacia `publicar_tarifario_resultado`.
     assert.match(condicion, /&&/, "la condición debe combinar el tipo Y la ausencia de Bernalo válidos (AND), no evaluarlos por separado");
   });
 
   test("un paquete con hoteles Bernalo EXCLUIDOS pero SIN tarifa publicada (hotelesBernaloValidos.length===0, hotelesBernaloExcluidos.length>0) SÍ cae en el error legacy — 'excluido de tarifario_resultado' no implica 'disponible en Vista Booking'", () => {
     const idxError = cuerpo.indexOf("No se generaron tarifas");
-    const idxElseIf = cuerpo.lastIndexOf("} else if (", idxError);
-    const condicion = cuerpo.slice(idxElseIf, cuerpo.indexOf("{", idxElseIf) + 1);
+    const idxIf = cuerpo.lastIndexOf("if (!filas.length", idxError);
+    const condicion = cuerpo.slice(idxIf, cuerpo.indexOf("{", idxIf) + 1);
     assert.doesNotMatch(condicion, /hotelesBernaloExcluidos\.length === 0/, "la guardia nunca debe leer 'sin publicar' como 'disponible'");
   });
 
-  test("nunca se insertan filas ficticias en tarifario_resultado para Bernalo — el insert solo corre si filas.length es verdadero", () => {
-    const idxIf = cuerpo.indexOf("if (filas.length) {");
-    const idxInsert = cuerpo.indexOf('.from("tarifario_resultado").insert(filas)');
-    assert.notEqual(idxIf, -1);
-    assert.notEqual(idxInsert, -1);
-    assert.ok(idxIf < idxInsert && idxInsert < idxIf + 150, "el insert debe estar DENTRO del if (filas.length), nunca fuera ni con un array rellenado a mano");
+  test("nunca se insertan filas ficticias en tarifario_resultado para Bernalo — se publica exactamente el array `filas` calculado, nunca uno rellenado a mano", () => {
+    // Migración 181: ya no hay un `if (filas.length) { insert } else if { error }`
+    // — el array `filas` (0 o más elementos) se pasa TAL CUAL al RPC
+    // `publicar_tarifario_resultado`; el único caso que corta ANTES de
+    // publicar es el error legacy explícito (probado en el test siguiente).
+    const idxPublicar = cuerpo.indexOf('sb.rpc("publicar_tarifario_resultado"');
+    assert.notEqual(idxPublicar, -1, "debe existir la llamada al RPC de publicación atómica");
+    const bloque = cuerpo.slice(idxPublicar, idxPublicar + 400);
+    assert.match(bloque, /p_filas: filas as unknown as Json/, "el payload publicado debe ser el array `filas` calculado tal cual, nunca uno fabricado a mano");
   });
 
   test("el return final sigue devolviendo id: filas.length (0 para un paquete solo Bernalo) y el aviso Bernalo (basado en hotelesBernaloValidos), sin cambios", () => {
@@ -276,21 +290,23 @@ describe("paquetes/actions.ts (generarTarifario) — hallazgo confirmado: filas.
     assert.match(cuerpo, /const avisoValidos = hotelesBernaloValidos\.length[\s\S]{0,40}\?/);
   });
 
-  test("paquete mixto (persona + Bernalo): filas.length>0 sigue insertando SOLO las filas persona — el aviso Bernalo (avisoValidos/avisoSinPublicar) no depende de si hubo filas persona", () => {
-    // El `if (filas.length)` inserta sin mirar hotelesBernaloValidos/
-    // hotelesBernaloExcluidos — las dos ramas (insertar filas persona, armar
-    // el aviso Bernalo) son independientes entre sí, así que un paquete
-    // mixto hace ambas cosas.
-    const idxIf = cuerpo.indexOf("if (filas.length) {");
+  test("paquete mixto (persona + Bernalo): la publicación atómica se dispara sin mirar hotelesBernaloValidos/Excluidos — el aviso Bernalo (avisoValidos/avisoSinPublicar) se arma DESPUÉS, sin depender de si hubo filas persona", () => {
+    // Migración 181: ya no hay un `if (filas.length) { insert } else if { ... }`
+    // — `sb.rpc("publicar_tarifario_resultado", ...)` se llama con el array
+    // `filas` (0 o más) sin mirar hotelesBernaloValidos/hotelesBernaloExcluidos;
+    // esa llamada y el armado del aviso Bernalo son pasos INDEPENDIENTES y
+    // SECUENCIALES — un paquete mixto pasa por los dos.
+    const idxPublicar = cuerpo.indexOf('sb.rpc("publicar_tarifario_resultado"');
     const idxAvisoValidos = cuerpo.indexOf("const avisoValidos = hotelesBernaloValidos.length");
-    assert.notEqual(idxIf, -1);
+    assert.notEqual(idxPublicar, -1);
     assert.notEqual(idxAvisoValidos, -1);
-    assert.ok(idxIf < idxAvisoValidos, "el insert de filas persona y el armado del aviso Bernalo deben ser ramas independientes, ambas alcanzables en el mismo llamado");
-    // El aviso se construye SIEMPRE (nunca detrás de un `if (filas.length)`
-    // ni de un `if (!filas.length)`) — es información del paquete completo,
-    // no condicionada a si hubo filas persona.
-    const idxCierreIf = cuerpo.indexOf("\n  }", idxIf);
-    assert.ok(idxAvisoValidos > idxCierreIf, "el aviso debe calcularse DESPUÉS de cerrar el bloque if/else-if de inserción, no adentro de él");
+    assert.ok(idxPublicar < idxAvisoValidos, "la publicación y el armado del aviso Bernalo deben ser pasos secuenciales, ambos alcanzables en el mismo llamado");
+    // El aviso se construye SIEMPRE DESPUÉS de que `publicado` se confirmó
+    // `true` (nunca condicionado a cuántas filas persona había) — el `if
+    // (!publicado)` de rechazo por generación/revisión debe quedar ANTES.
+    const idxNoPublicado = cuerpo.indexOf("if (!publicado)", idxPublicar);
+    assert.notEqual(idxNoPublicado, -1);
+    assert.ok(idxNoPublicado < idxAvisoValidos, "el aviso debe calcularse DESPUÉS del chequeo de publicación descartada, no antes ni adentro de él");
   });
 });
 
@@ -312,7 +328,10 @@ describe("paquetes/actions.ts (generarTarifario) — P3: prevalidación de diná
     const idxGuardia = cuerpo.indexOf('if (tipo === "dinamico" && hotelIds.length === 0 && hotelesBernaloFilas.length > 0) {');
     assert.notEqual(idxGuardia, -1);
     const bloque = cuerpo.slice(idxGuardia, cuerpo.indexOf("}", idxGuardia) + 1);
-    assert.match(bloque, /ok: false/);
+    // Migración 181: `return { ok: false, error: ... }` literal -> `return
+    // await fallar(...)` — sigue siendo ok:false para el caller, el texto
+    // literal cambia.
+    assert.match(bloque, /return await fallar\(/);
     assert.match(bloque, /no soporta salidas dinámicas/);
     // Nunca debe estar precedida por un `} else if (` — sería parte de la
     // cadena de inserción (que SÍ depende de filas.length), no una
@@ -337,20 +356,36 @@ describe("paquetes/actions.ts (generarTarifario) — P3: prevalidación de diná
     assert.ok(idxGuardia < idxServicios, "la guardia debe correr antes de publicar servicios opcionales");
   });
 
-  test("la guardia corre ANTES del delete de tarifario_resultado — nunca borra un snapshot previo válido al rechazar", () => {
+  test("la guardia corre ANTES de la publicación atómica (RPC) de tarifario_resultado — nunca borra/reemplaza un snapshot previo válido al rechazar", () => {
+    // Migración 181: el delete+insert directo se reemplazó por UNA llamada
+    // RPC (`publicar_tarifario_resultado`, transaccional) — la garantía es
+    // la misma (un rechazo nunca debe tocar el snapshot previo), solo cambia
+    // el ancla textual que prueba "antes de qué" corre la guardia.
     const idxGuardia = cuerpo.indexOf('if (tipo === "dinamico" && hotelIds.length === 0 && hotelesBernaloFilas.length > 0) {');
-    const idxDelete = cuerpo.indexOf('.from("tarifario_resultado").delete().eq("paquete_id", paqueteId)');
+    const idxPublicar = cuerpo.indexOf('sb.rpc("publicar_tarifario_resultado"');
     assert.notEqual(idxGuardia, -1);
-    assert.notEqual(idxDelete, -1);
-    assert.ok(idxGuardia < idxDelete, "la guardia debe correr antes del delete — un rechazo nunca debe borrar el snapshot previo");
+    assert.notEqual(idxPublicar, -1);
+    assert.ok(idxGuardia < idxPublicar, "la guardia debe correr antes de la publicación atómica — un rechazo nunca debe tocar tarifario_resultado");
   });
 
-  test("la guardia corre ANTES del insert de tarifario_resultado — nunca inserta filas para un paquete dinámico 100% unidad", () => {
+  test("la guardia corre DESPUÉS de pedir la generación (iniciar_generacion_tarifario) — es una validación AUTORITATIVA sobre hotelIds fresco, y usa fallar() para no dejar el intento colgado", () => {
+    // Migración 181, segunda ronda de auditoría (hallazgo P1 "la revisión se
+    // captura demasiado tarde"): `hotelIds`/`hotelesBernaloFilas` se derivan
+    // de la lectura de `armado_hoteles` — una fuente AUTORITATIVA que ahora
+    // se lee DESPUÉS de capturar el token (nunca antes, para que ningún
+    // cambio concurrente pueda colarse con datos viejos bajo una revisión
+    // nueva). Por eso esta guardia se movió DESPUÉS de
+    // `iniciar_generacion_tarifario` — usa `fallar()` (que marca el intento
+    // como fallido) en vez de `return` directo, precisamente porque ya existe
+    // un intento de generación en curso que no puede quedar colgado en
+    // 'recalculando'.
     const idxGuardia = cuerpo.indexOf('if (tipo === "dinamico" && hotelIds.length === 0 && hotelesBernaloFilas.length > 0) {');
-    const idxInsert = cuerpo.indexOf('.from("tarifario_resultado").insert(filas)');
+    const idxIniciar = cuerpo.indexOf('sb.rpc("iniciar_generacion_tarifario"');
     assert.notEqual(idxGuardia, -1);
-    assert.notEqual(idxInsert, -1);
-    assert.ok(idxGuardia < idxInsert, "la guardia debe correr antes del insert");
+    assert.notEqual(idxIniciar, -1);
+    assert.ok(idxIniciar < idxGuardia, "la guardia debe correr DESPUÉS de iniciar_generacion_tarifario (usa hotelIds autoritativo)");
+    const bloque = cuerpo.slice(idxGuardia, cuerpo.indexOf("}", idxGuardia) + 1);
+    assert.match(bloque, /return await fallar\(/, "al rechazar DESPUÉS del token, debe marcar el intento como fallido vía fallar()");
   });
 
   test("la condición exige hotelIds.length === 0 (CERO hoteles persona) — un dinámico con AL MENOS un hotel persona nunca entra aquí, sigue el flujo normal", () => {

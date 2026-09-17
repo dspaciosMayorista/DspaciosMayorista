@@ -2238,6 +2238,18 @@ export type Database = {
           programa_no_incluye: string | null;
           programa_tarifas_especiales: string | null;
           programa_condiciones_comerciales: string | null;
+          // Migración 181 — publicación atómica del tarifario. Ver el
+          // comentario largo en la migración para el contrato completo de
+          // cada columna; ningún lector público las consulta todavía (fase 1
+          // es solo infraestructura de escritura).
+          tarifario_revision_fuente: number;
+          tarifario_revision_publicada: number | null;
+          tarifario_generacion: number;
+          tarifario_generacion_publicada: number | null;
+          tarifario_estado: string;
+          tarifario_error: string | null;
+          tarifario_actualizado_en: string | null;
+          tarifario_snapshot_publicable: boolean;
         };
         Insert: {
           id?: number;
@@ -2266,6 +2278,17 @@ export type Database = {
           programa_no_incluye?: string | null;
           programa_tarifas_especiales?: string | null;
           programa_condiciones_comerciales?: string | null;
+          // Migración 181 — normalmente nunca se insertan a mano (los
+          // escriben los triggers/RPC); se declaran opcionales solo para que
+          // el tipo compile si algún día hace falta un insert de prueba.
+          tarifario_revision_fuente?: number;
+          tarifario_revision_publicada?: number | null;
+          tarifario_generacion?: number;
+          tarifario_generacion_publicada?: number | null;
+          tarifario_estado?: string;
+          tarifario_error?: string | null;
+          tarifario_actualizado_en?: string | null;
+          tarifario_snapshot_publicable?: boolean;
         };
         Update: Partial<Database["public"]["Tables"]["armado_paquetes"]["Insert"]>;
         Relationships: [];
@@ -3346,6 +3369,50 @@ export type Database = {
       reemplazar_tarifas_hotel_calculadora: {
         Args: { p_hotel_id: number; p_regimenes: string[] | null; p_filas: Json };
         Returns: Json;
+      };
+      // Migración 181. Publicación atómica del tarifario — paso 1: pide un
+      // número de generación nuevo y devuelve, en la misma fila, la revisión
+      // de fuente VIGENTE (armado_paquetes.tarifario_revision_fuente) en ese
+      // instante. El caller debe capturar AMBOS valores ANTES de calcular
+      // `filas` — se vuelven a pasar tal cual a publicar_tarifario_resultado.
+      // SECURITY INVOKER, sujeta a la policy de escritura de armado_paquetes.
+      iniciar_generacion_tarifario: {
+        Args: { p_paquete_id: number };
+        Returns: { generacion: number; revision_capturada: number }[];
+      };
+      // Migración 181. Publicación atómica del tarifario — paso 2: reemplaza
+      // (delete+insert) TODAS las filas de tarifario_resultado de un paquete
+      // en una sola transacción, pero SOLO si p_generacion y
+      // p_revision_capturada siguen coincidiendo con el estado actual de
+      // armado_paquetes — de lo contrario devuelve `false` sin tocar
+      // tarifario_resultado (una generación o revisión más nueva ya existe).
+      // `p_filas` son las mismas columnas de tarifario_resultado.Insert menos
+      // id/created_at (nunca se leen del payload) y menos paquete_id (siempre
+      // se usa p_paquete_id). `p_moneda` ('COP'|'USD') es la moneda
+      // AUTORITATIVA resuelta con las mismas lecturas que produjeron
+      // `p_filas` — se persiste en armado_paquetes.moneda en la MISMA
+      // transacción (auditoría de Fase 1, ronda 3: moneda es un dato
+      // DERIVADO del cálculo, no una fuente independiente que se escriba
+      // antes de capturar el token). SECURITY DEFINER con candado de rol
+      // propio.
+      publicar_tarifario_resultado: {
+        Args: {
+          p_paquete_id: number;
+          p_generacion: number;
+          p_revision_capturada: number;
+          p_moneda: string;
+          p_filas: Json;
+        };
+        Returns: boolean;
+      };
+      // Migración 181. Publicación atómica del tarifario — marca el intento
+      // vigente (mismos p_generacion Y p_revision_capturada) como fallido con
+      // un mensaje SANEADO (nunca el texto crudo de Postgres/Supabase); nunca
+      // pisa una generación o revisión más nueva ni rehabilita
+      // tarifario_snapshot_publicable. SECURITY INVOKER.
+      marcar_generacion_fallida: {
+        Args: { p_paquete_id: number; p_generacion: number; p_revision_capturada: number; p_error: string };
+        Returns: undefined;
       };
       // Migración 164. RPC de dinero de los pagos previos de una cotización.
       // Solo otorgados a `service_role`; vuelven a validar rol/tenant/estado con

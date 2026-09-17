@@ -293,12 +293,22 @@ describe("HALLAZGO CORREGIDO — caso real generarTarifario() → Promise resuel
     assert.match(paquetesActions, /export async function generarTarifario\(paqueteId: number\): Promise<Result>/);
   });
 
-  test("generarTarifario tiene múltiples caminos `return { ok: false, error:`, todos por `return`, ninguno por `throw`", () => {
+  test("generarTarifario tiene múltiples caminos ok:false, todos por `return` (literal o vía fallar()/fallarTecnico()), ninguno por `throw`", () => {
     const posFn = paquetesActions.indexOf("export async function generarTarifario(paqueteId: number): Promise<Result>");
     const posSiguiente = paquetesActions.indexOf("\nexport async function", posFn + 10);
     const cuerpoFn = paquetesActions.slice(posFn, posSiguiente);
-    const returnsFalse = (cuerpoFn.match(/return \{ ok: false, error:/g) ?? []).length;
-    assert.ok(returnsFalse >= 5, `generarTarifario debe tener varios caminos ok:false por return (encontrados: ${returnsFalse})`);
+    // Auditoría de Fase 1 (rondas 2-3): la mayoría de los `return { ok:
+    // false, error: ... }` literales se reemplazaron por `return await
+    // fallar(...)`/`return await fallarTecnico(...)` (que internamente SÍ
+    // resuelven con `{ ok: false, error }`, nunca lanzan) para poder marcar
+    // el intento de generación como fallido antes de reportar el error. El
+    // conteo debe sumar las 3 formas para seguir reflejando la MISMA
+    // garantía: múltiples caminos, todos por `return`, ninguno por `throw`.
+    const returnsLiteral = (cuerpoFn.match(/return \{ ok: false, error:/g) ?? []).length;
+    const returnsFallar = (cuerpoFn.match(/return await fallar\(/g) ?? []).length;
+    const returnsFallarTecnico = (cuerpoFn.match(/return await fallarTecnico\(/g) ?? []).length;
+    const totalCaminos = returnsLiteral + returnsFallar + returnsFallarTecnico;
+    assert.ok(totalCaminos >= 5, `generarTarifario debe tener varios caminos ok:false por return (literal=${returnsLiteral}, fallar=${returnsFallar}, fallarTecnico=${returnsFallarTecnico}, total=${totalCaminos})`);
     assert.doesNotMatch(cuerpoFn, /\bthrow\b/, "generarTarifario no debe lanzar por errores de negocio — siempre resuelve {ok:false}");
   });
 
