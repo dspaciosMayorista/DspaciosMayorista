@@ -1460,6 +1460,39 @@ function HotelModal({
                 </p>
               )}
 
+              {/* Motor interno: selector de categoría/régimen/habitaciones y
+                  cálculo del precio — antes de Incluye/add-on, justo después
+                  de elegir la salida. */}
+              {opcion.modulo === "porcion_terrestre" ? (
+                <SelectorPorFechas
+                  key={opcion.key}
+                  opcion={opcion}
+                  hotel={hotel}
+                  ventana={ventanaPorPaquete[opcion.paqueteId] ?? { min: null, max: null }}
+                  planesInfo={planesInfo}
+                  cap={cap}
+                  onAgregar={(item) => {
+                    add(item);
+                    openDrawer();
+                    onClose();
+                  }}
+                />
+              ) : (
+                <Selector
+                  key={opcion.key}
+                  opcion={opcion}
+                  hotel={hotel}
+                  puedeReservar={puedeReservar}
+                  planesInfo={planesInfo}
+                  cap={cap}
+                  onAgregar={(item) => {
+                    add(item);
+                    openDrawer();
+                    onClose();
+                  }}
+                />
+              )}
+
               {/* Descripción manual del paquete: encabezados fijos, un ítem de
                   lista por línea no vacía. Sección omitida por completo si no
                   tiene contenido (nunca un encabezado con lista vacía). */}
@@ -1499,36 +1532,6 @@ function HotelModal({
                     ))}
                   </div>
                 </div>
-              )}
-
-              {opcion.modulo === "porcion_terrestre" ? (
-                <SelectorPorFechas
-                  key={opcion.key}
-                  opcion={opcion}
-                  hotel={hotel}
-                  ventana={ventanaPorPaquete[opcion.paqueteId] ?? { min: null, max: null }}
-                  planesInfo={planesInfo}
-                  cap={cap}
-                  onAgregar={(item) => {
-                    add(item);
-                    openDrawer();
-                    onClose();
-                  }}
-                />
-              ) : (
-                <Selector
-                  key={opcion.key}
-                  opcion={opcion}
-                  hotel={hotel}
-                  puedeReservar={puedeReservar}
-                  planesInfo={planesInfo}
-                  cap={cap}
-                  onAgregar={(item) => {
-                    add(item);
-                    openDrawer();
-                    onClose();
-                  }}
-                />
               )}
             </>
           )}
