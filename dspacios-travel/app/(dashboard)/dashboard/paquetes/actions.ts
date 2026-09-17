@@ -484,28 +484,112 @@ export async function setServicio(
 }
 
 // ── GENERAR TARIFARIO: liquida el paquete y reescribe tarifario_resultado ───
+// Auditoría de Fase 1 (ronda 3, hallazgo P2): mensaje FIJO para cualquier
+// error TÉCNICO de `generarTarifario` — el `.message` crudo de Postgres/
+// Supabase (puede exponer nombres de tabla/columna/constraint) NUNCA se
+// persiste en `tarifario_error` ni se devuelve al caller; el detalle real se
+// registra SOLO server-side (console.error). Módulo-level porque se usa
+// tanto ANTES de que exista un token (fallo de `iniciar_generacion_tarifario`
+// mismo) como después (vía `fallarTecnico`, dentro de la función).
+const MENSAJE_ERROR_TECNICO_TARIFARIO =
+  "No se pudo generar el tarifario por un error técnico. Se registró el detalle en los registros del servidor para revisión.";
+
 export async function generarTarifario(paqueteId: number): Promise<Result> {
   const sb = await createClient();
 
+  // ── Publicación atómica (migración 181) — token de generación capturado
+  // como PRIMERA operación de toda la función, antes de leer CUALQUIER
+  // fuente ────────────────────────────────────────────────────────────────
+  // Auditoría de Fase 1 (ronda 3, hallazgo P1 "carrera entre moneda
+  // preliminar y autoritativa"): la versión anterior leía/escribía una
+  // moneda "preliminar" ANTES de este punto para evitar que escribirla
+  // después invalidara el snapshot recién publicado — pero esa escritura
+  // preliminar podía quedar desactualizada si una fuente cambiaba justo
+  // entre esa lectura y la captura del token (la revisión capturada ya
+  // reflejaría el cambio, así que la publicación no se rechazaba, pero la
+  // CACHÉ de moneda seguía con el valor viejo). La corrección: moneda pasó a
+  // ser un dato DERIVADO del mismo cálculo que produce `filas` — se resuelve
+  // una sola vez, con las lecturas AUTORITATIVAS de más abajo, y se persiste
+  // dentro de `publicar_tarifario_resultado` (mismo commit que las filas).
+  // Por eso ya no hace falta ninguna lectura antes de este punto: el token
+  // es literalmente la primera operación de la función.
+  const { data: genRows, error: eGen } = await sb.rpc("iniciar_generacion_tarifario", { p_paquete_id: paqueteId });
+  if (eGen || !genRows || !genRows.length) {
+    // Todavía NO existe ningún token/generación — `marcar_generacion_fallida`
+    // no aplica (no hay nada que marcar). El `.message` crudo (incluido el
+    // caso "paquete no encontrado", que sale del mismo `raise exception` de
+    // la función) nunca se devuelve ni se persiste — solo se registra.
+    if (eGen) console.error(`generarTarifario: iniciar_generacion_tarifario falló (paquete_id=${paqueteId}): ${eGen.message}`);
+    return { ok: false, error: MENSAJE_ERROR_TECNICO_TARIFARIO };
+  }
+  const generacion = genRows[0].generacion;
+  const revisionCapturada = genRows[0].revision_capturada;
+  // Best-effort: si marcar el fallo en armado_paquetes también falla, nunca
+  // debe ocultar ni reemplazar el error de negocio/técnico real que la
+  // función ya está por reportar — solo se registra server-side. `sb.rpc()`
+  // normalmente DEVUELVE el error en `{ data, error }` (PostgREST), nunca lo
+  // lanza — por eso se revisa `error` explícitamente, no solo un try/catch
+  // (que sigue ahí para el caso, más raro, de que el cliente sí lance).
+  // `p_revision_capturada` (auditoría de Fase 1, segundo hallazgo P1): si la
+  // revisión de fuente ya avanzó cuando este intento falla, el RPC se
+  // abstiene de tocar `tarifario_estado`/`tarifario_error` — un fallo VIEJO
+  // nunca debe pisar el estado de un intento más nuevo.
+  const marcarFallo = async (mensajePersistido: string) => {
+    try {
+      const { error: eMarcar } = await sb.rpc("marcar_generacion_fallida", {
+        p_paquete_id: paqueteId,
+        p_generacion: generacion,
+        p_revision_capturada: revisionCapturada,
+        p_error: mensajePersistido.slice(0, 2000),
+      });
+      if (eMarcar) {
+        console.error(
+          `generarTarifario: marcar_generacion_fallida falló (paquete_id=${paqueteId}, generacion=${generacion}): ${eMarcar.message}`
+        );
+      }
+    } catch (err) {
+      console.error(
+        `generarTarifario: marcar_generacion_fallida lanzó una excepción (paquete_id=${paqueteId}, generacion=${generacion}):`,
+        err
+      );
+    }
+  };
+  // Errores de NEGOCIO: mensajes ya escritos por ESTE archivo (nunca texto
+  // crudo de Postgres/Supabase) — estables y seguros por construcción, se
+  // persisten en `tarifario_error` y se devuelven al caller tal cual.
+  const fallar = async (mensaje: string): Promise<Result> => {
+    await marcarFallo(mensaje);
+    return { ok: false, error: mensaje };
+  };
+  // Errores TÉCNICOS: el `.message` crudo de una consulta/RPC de Supabase se
+  // registra SOLO server-side; lo que se guarda/devuelve es el mensaje FIJO
+  // de módulo (ver arriba) — nunca el texto interno de Postgres.
+  const fallarTecnico = async (detalleCrudo: string): Promise<Result> => {
+    console.error(`generarTarifario: error técnico (paquete_id=${paqueteId}, generacion=${generacion}): ${detalleCrudo}`);
+    await marcarFallo(MENSAJE_ERROR_TECNICO_TARIFARIO);
+    return { ok: false, error: MENSAJE_ERROR_TECNICO_TARIFARIO };
+  };
+
+  // ── FASE AUTORITATIVA — TODO se lee fresco, DESPUÉS del token ──────────
   const { data: pq, error: ePq } = await sb
     .from("armado_paquetes")
     .select("*, destinos(nombre)")
     .eq("id", paqueteId)
     .single();
-  if (ePq || !pq) return { ok: false, error: ePq?.message ?? "Paquete no encontrado." };
+  if (ePq) return await fallarTecnico(ePq.message);
+  if (!pq) return await fallar("Paquete no encontrado.");
 
   const pctMk = Number(pq.pct_mk) || 0;
   const paqueteNombre = pq.nombre;
   const paqueteActivo = pq.activo;
   const paqueteDestinoId = pq.destino_id;
   const destinoNombre = (pq.destinos as unknown as { nombre: string } | null)?.nombre ?? null;
-  // Movido arriba (antes vivía justo antes de las validaciones por tipo, más
-  // abajo) — la clasificación de hoteles Bernalo (P2, ver más abajo) necesita
-  // saber el tipo del paquete ANTES de decidir si sus ofertas por unidad son
+  // La clasificación de hoteles Bernalo (P2, ver más abajo) necesita saber
+  // el tipo del paquete ANTES de decidir si sus ofertas por unidad son
   // compatibles con Vista Booking.
   const tipo = (pq.tipo ?? "bloqueo") as "bloqueo" | "porcion_terrestre" | "servicios" | "dinamico";
 
-  const [{ data: vuelosSel }, { data: empaquetadosSel }, { data: hotelesSel }, { data: serviciosSel }] = await Promise.all([
+  const [{ data: vuelosSel, error: eVuelosSel }, { data: empaquetadosSel, error: eEmpaquetadosSel }, { data: hotelesSel, error: eHotelesSel }, { data: serviciosSel, error: eServiciosSel }] = await Promise.all([
     sb
       .from("armado_vuelos")
       .select("bloqueo_id, aplica_mk, ta, bloqueos_vuelo(id, record, ruta, fecha_ida, fecha_regreso, tarifa_para_empaquetar)")
@@ -525,6 +609,10 @@ export async function generarTarifario(paqueteId: number): Promise<Result> {
       .select("servicio_id, modo, incluido, servicios_adicionales(nombre, precio_persona, liquidacion, descripcion, recargo_individual, moneda)")
       .eq("paquete_id", paqueteId),
   ]);
+  if (eVuelosSel) return await fallarTecnico(eVuelosSel.message);
+  if (eEmpaquetadosSel) return await fallarTecnico(eEmpaquetadosSel.message);
+  if (eHotelesSel) return await fallarTecnico(eHotelesSel.message);
+  if (eServiciosSel) return await fallarTecnico(eServiciosSel.message);
 
   // Rangos de grupo de los servicios seleccionados
   const servicioIds = (serviciosSel ?? []).map((s) => s.servicio_id);
@@ -532,11 +620,12 @@ export async function generarTarifario(paqueteId: number): Promise<Result> {
   if (servicioIds.length) {
     // El snapshot del tarifario usa la tarifa BASE (GENERAL); las temporadas se
     // aplican al reservar (re-escala por fecha del viaje).
-    const { data: gr } = await sb
+    const { data: gr, error: eGrupos } = await sb
       .from("servicio_tarifa_pax")
       .select("servicio_id, pax_desde, pax_hasta, precio")
       .eq("temporada", "GENERAL")
       .in("servicio_id", servicioIds);
+    if (eGrupos) return await fallarTecnico(eGrupos.message);
     for (const g of gr ?? []) {
       const arr = gruposPorServicio.get(g.servicio_id) ?? [];
       arr.push({ pax_desde: g.pax_desde, pax_hasta: g.pax_hasta, precio: g.precio });
@@ -547,9 +636,11 @@ export async function generarTarifario(paqueteId: number): Promise<Result> {
   const hoteles = hotelesSel ?? [];
   const servicios = serviciosSel ?? [];
 
-  // ── Consistencia de moneda (CERO mezcla) ───────────────────────────────
+  // ── Consistencia de moneda (CERO mezcla) — validación AUTORITATIVA ─────
   // Un paquete es de UNA sola moneda. Todos los hoteles Y todos los servicios
-  // (incluidos u opcionales) deben coincidir; si no, el PVP mezclaría COP y USD.
+  // (incluidos u opcionales) deben coincidir; si no, el PVP mezclaría COP y
+  // USD. `paqueteMoneda` acá es SOLO para el mensaje de error — la moneda ya
+  // se guardó en la fase preliminar de arriba, no se vuelve a escribir.
   const monedaDe = (m: string | null | undefined) => (m === "USD" ? "USD" : "COP");
   const svcMoneda = (s: { servicios_adicionales: unknown }) =>
     monedaDe((s.servicios_adicionales as { moneda?: string | null } | null)?.moneda);
@@ -557,7 +648,7 @@ export async function generarTarifario(paqueteId: number): Promise<Result> {
     new Set(hoteles.map((h) => monedaDe((h.hoteles as unknown as { moneda?: string | null } | null)?.moneda)))
   );
   if (monedasHotel.length > 1)
-    return { ok: false, error: "Los hoteles del paquete tienen monedas distintas (COP y USD). Un paquete debe ser de una sola moneda." };
+    return await fallar("Los hoteles del paquete tienen monedas distintas (COP y USD). Un paquete debe ser de una sola moneda.");
   const monedasServicio = Array.from(new Set(servicios.map(svcMoneda)));
 
   let paqueteMoneda: "COP" | "USD";
@@ -565,11 +656,11 @@ export async function generarTarifario(paqueteId: number): Promise<Result> {
     // La moneda la fija el hotel; cualquier servicio en otra moneda se rechaza.
     paqueteMoneda = monedasHotel[0];
     if (monedasServicio.some((m) => m !== paqueteMoneda))
-      return { ok: false, error: `El paquete está en ${paqueteMoneda} (por el hotel) pero hay servicios en otra moneda. Todo el paquete debe estar en ${paqueteMoneda}.` };
+      return await fallar(`El paquete está en ${paqueteMoneda} (por el hotel) pero hay servicios en otra moneda. Todo el paquete debe estar en ${paqueteMoneda}.`);
   } else {
     // Paquete de solo servicios: todos deben compartir moneda.
     if (monedasServicio.length > 1)
-      return { ok: false, error: "Los servicios del paquete tienen monedas distintas (COP y USD). Un paquete debe ser de una sola moneda." };
+      return await fallar("Los servicios del paquete tienen monedas distintas (COP y USD). Un paquete debe ser de una sola moneda.");
     paqueteMoneda = monedasServicio[0] ?? "COP";
   }
 
@@ -620,11 +711,9 @@ export async function generarTarifario(paqueteId: number): Promise<Result> {
   // hoteles Bernalo tenga además — sigue su flujo normal. Bloqueo y porción
   // terrestre no se tocan (la condición exige `tipo === "dinamico"`).
   if (tipo === "dinamico" && hotelIds.length === 0 && hotelesBernaloFilas.length > 0) {
-    return {
-      ok: false,
-      error:
-        "Dinámico: el modelo tarifario por unidad todavía no está integrado con paquetes dinámicos (el motor de cotización Bernalo no soporta salidas dinámicas). Usa un hotel con modelo por persona, o cambia este paquete a Bloqueo/Porción terrestre.",
-    };
+    return await fallar(
+      "Dinámico: el modelo tarifario por unidad todavía no está integrado con paquetes dinámicos (el motor de cotización Bernalo no soporta salidas dinámicas). Usa un hotel con modelo por persona, o cambia este paquete a Bloqueo/Porción terrestre."
+    );
   }
 
   // P4 (hallazgo confirmado, validación final): TODA la clasificación de
@@ -669,7 +758,7 @@ export async function generarTarifario(paqueteId: number): Promise<Result> {
     // Un error TÉCNICO acá no debe hacer que el paquete parezca "sin
     // hoteles Bernalo disponibles" en silencio — se propaga como cualquier
     // otro error de esta función.
-    if (eTarifasBernalo) return { ok: false, error: eTarifasBernalo.message };
+    if (eTarifasBernalo) return await fallarTecnico(eTarifasBernalo.message);
     const filasPorHotelBernalo = new Map<number, { categoria: string | null; alimentacion: string | null }[]>();
     for (const t of tarifasPublicadasBernalo ?? []) {
       const arr = filasPorHotelBernalo.get(t.hotel_id) ?? [];
@@ -918,15 +1007,15 @@ export async function generarTarifario(paqueteId: number): Promise<Result> {
   // dedicado (`salidas_dinamicas`, deliberadamente no fusionado con
   // Empaquetados — ver la migración 156).
   if (tipo === "bloqueo" && !vuelos.length && !empaquetadosVuelos.length)
-    return { ok: false, error: "Bloqueo: selecciona al menos un vuelo o un empaquetado." };
+    return await fallar("Bloqueo: selecciona al menos un vuelo o un empaquetado.");
   if (tipo === "porcion_terrestre" && (!pq.fecha_viaje_inicio || !pq.fecha_viaje_fin))
-    return { ok: false, error: "Porción terrestre: define el rango de viaje (fechas) en la Configuración inicial." };
+    return await fallar("Porción terrestre: define el rango de viaje (fechas) en la Configuración inicial.");
   if (tipo === "dinamico" && !salidas.length)
-    return { ok: false, error: "Dinámico: agrega al menos una salida (vuelo por sistema)." };
+    return await fallar("Dinámico: agrega al menos una salida (vuelo por sistema).");
   if ((tipo === "bloqueo" || tipo === "porcion_terrestre" || tipo === "dinamico") && !hoteles.length)
-    return { ok: false, error: "Agrega al menos un hotel." };
+    return await fallar("Agrega al menos un hotel.");
   if (tipo === "servicios" && !servicios.length)
-    return { ok: false, error: "Agrega al menos un servicio." };
+    return await fallar("Agrega al menos un servicio.");
 
   if (tipo === "bloqueo") {
     // MÓDULO BLOQUEOS: una liquidación por ciclo aéreo negociado
@@ -1044,40 +1133,60 @@ export async function generarTarifario(paqueteId: number): Promise<Result> {
     }
   }
 
-  // Reescribe el resultado del paquete
-  const del = await sb.from("tarifario_resultado").delete().eq("paquete_id", paqueteId);
-  if (del.error) return { ok: false, error: del.error.message };
-  if (filas.length) {
-    const ins = await sb.from("tarifario_resultado").insert(filas);
-    if (ins.error) return { ok: false, error: ins.error.message };
-  } else if ((tipo === "bloqueo" || tipo === "porcion_terrestre") && hotelesBernaloValidos.length === 0) {
-    // Hallazgo confirmado: un paquete cuyos hoteles son TODOS Bernalo
-    // (`modelo_tarifario = 'unidad'`) queda con `hotelIds` vacío arriba —
-    // nunca genera ninguna fila legacy de `tarifario_resultado` (correcto:
-    // ese modelo no vive ahí, ver el comentario de `hotelesBernaloExcluidos`
-    // más arriba), así que `filas.length` cae en 0 igual que un paquete
-    // realmente roto (sin temporadas/tarifas). Sin este chequeo, un paquete
-    // Bernalo VÁLIDO (con sus tarifas por unidad bien cargadas y publicadas
-    // en `hotel_tarifas_unidad`) nunca podía guardarse. P1-3 (hallazgo
-    // confirmado): la condición usa `hotelesBernaloValidos` (con tarifa
-    // publicada compatible), no `hotelesBernaloExcluidos` (todo hotel
-    // unidad, publicado o no) — un paquete cuyos hoteles Bernalo existen
-    // pero NINGUNO tiene tarifa publicada compatible sigue sin nada que
-    // ofrecer en Vista Booking, así que el error legacy sigue aplicando.
+  // Hallazgo confirmado: un paquete cuyos hoteles son TODOS Bernalo
+  // (`modelo_tarifario = 'unidad'`) queda con `hotelIds` vacío arriba —
+  // nunca genera ninguna fila legacy de `tarifario_resultado` (correcto:
+  // ese modelo no vive ahí, ver el comentario de `hotelesBernaloExcluidos`
+  // más arriba), así que `filas.length` cae en 0 igual que un paquete
+  // realmente roto (sin temporadas/tarifas). Sin este chequeo, un paquete
+  // Bernalo VÁLIDO (con sus tarifas por unidad bien cargadas y publicadas
+  // en `hotel_tarifas_unidad`) nunca podía guardarse. P1-3 (hallazgo
+  // confirmado): la condición usa `hotelesBernaloValidos` (con tarifa
+  // publicada compatible), no `hotelesBernaloExcluidos` (todo hotel
+  // unidad, publicado o no) — un paquete cuyos hoteles Bernalo existen
+  // pero NINGUNO tiene tarifa publicada compatible sigue sin nada que
+  // ofrecer en Vista Booking, así que el error legacy sigue aplicando.
+  // El caso "dinamico 100% Bernalo" ya se rechazó ARRIBA, antes de pedir la
+  // generación (ver el comentario junto a `hotelIds`/`hotelesBernaloFilas`
+  // al inicio de la función) — nunca puede llegar aquí.
+  if (!filas.length && (tipo === "bloqueo" || tipo === "porcion_terrestre") && hotelesBernaloValidos.length === 0) {
+    return await fallar(
+      "No se generaron tarifas. Revisa que el hotel tenga temporadas y tarifas netas que cubran el rango de fechas del viaje."
+    );
+  }
+
+  // ── Publicación atómica (migración 181) ───────────────────────────────
+  // Reemplaza el `delete`+`insert` directo de antes: UNA sola llamada RPC,
+  // dentro de una transacción, que solo toca `tarifario_resultado` si la
+  // generación Y la revisión de fuente capturadas al principio siguen
+  // vigentes. El cálculo de `filas` de arriba no cambió en absoluto — la
+  // matemática es idéntica a la versión anterior de esta función.
+  const { data: publicado, error: ePublicar } = await sb.rpc("publicar_tarifario_resultado", {
+    p_paquete_id: paqueteId,
+    p_generacion: generacion,
+    p_revision_capturada: revisionCapturada,
+    p_moneda: paqueteMoneda,
+    p_filas: filas as unknown as Json,
+  });
+  if (ePublicar) return await fallarTecnico(ePublicar.message);
+  if (!publicado) {
+    // Generación o revisión de fuente superadas DURANTE este cálculo — NUNCA
+    // se trata como éxito engañoso: alguien más ya pidió (o ya publicó) una
+    // versión más reciente de este mismo paquete mientras estas ~10
+    // consultas corrían. No es un "fallo" propio (el intento vigente ya no
+    // es este, `marcar_generacion_fallida` no aplica) ni hace falta
+    // reintentar desde acá — la mutación que invalidó ya disparó su propio
+    // recálculo automático por su cuenta (ver `regenerarTarifariosDe*`).
     return {
       ok: false,
       error:
-        "No se generaron tarifas. Revisa que el hotel tenga temporadas y tarifas netas que cubran el rango de fechas del viaje.",
+        "Se descartó este cálculo: los datos del paquete cambiaron mientras se generaba el tarifario (ya hay una versión más reciente en curso o publicada).",
     };
-    // El caso "dinamico 100% Bernalo" ya se rechazó ARRIBA, antes de tocar
-    // servicios/delete/insert (ver el comentario junto a `hotelIds`/
-    // `hotelesBernaloFilas` al inicio de la función) — nunca puede llegar
-    // aquí, así que no hace falta (ni debe) repetirse un `else if` para ese
-    // caso en este punto.
   }
 
-  // Guarda la moneda resuelta en el paquete (la usan reservar/vitrina como pista).
-  await sb.from("armado_paquetes").update({ moneda: paqueteMoneda }).eq("id", paqueteId);
+  // La moneda ya quedó guardada DENTRO de `publicar_tarifario_resultado`
+  // (mismo commit que las filas, con el valor autoritativo `paqueteMoneda`)
+  // — no hay ninguna escritura aparte que hacer acá.
 
   revalidatePath(`/dashboard/paquetes/${paqueteId}`);
   revalidatePath("/tarifario");

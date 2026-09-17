@@ -554,7 +554,7 @@ export async function buscarHoteles(inputRaw: unknown): Promise<
     paquete_id: number; hotel_id: number | null; destino_nombre: string | null;
   }>((from, hasta) => {
     let q = admin
-      .from("tarifario_resultado")
+      .from("tarifario_resultado_publicable")
       .select("paquete_id, hotel_id, destino_nombre")
       .eq("modulo", "porcion_terrestre")
       .eq("paquete_activo", true);
@@ -875,7 +875,7 @@ export async function buscarReceptivos(inputRaw: unknown): Promise<{ ok: true; r
     paquete_id: number; servicio_id: number; servicio_nombre: string | null; destino_nombre: string | null; descripcion: string | null;
   }>((from, hasta) => {
     let q = admin
-      .from("tarifario_resultado")
+      .from("tarifario_resultado_publicable")
       .select("paquete_id, servicio_id, servicio_nombre, destino_nombre, descripcion")
       .eq("modulo", "servicios")
       .eq("paquete_activo", true)
@@ -1010,7 +1010,7 @@ export async function liquidarServicioPuntual(input: {
 
   const admin = createAdminClient();
   const { data: fila, error: filaErr } = await admin
-    .from("tarifario_resultado")
+    .from("tarifario_resultado_publicable")
     .select("servicio_nombre, destino_nombre, descripcion")
     .eq("modulo", "servicios")
     .eq("paquete_activo", true)

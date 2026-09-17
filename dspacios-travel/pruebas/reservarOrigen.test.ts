@@ -152,7 +152,7 @@ describe("computo.ts: el filtro de tarifario_resultado exige paquete_id + hotel_
   const computoSrc = leer("lib/reservar/computo.ts");
 
   test("la query encadena los 4 filtros de contexto antes del filtro de origen", () => {
-    const inicio = computoSrc.indexOf('.from("tarifario_resultado")');
+    const inicio = computoSrc.indexOf('.from("tarifario_resultado_publicable")');
     const bloque = computoSrc.slice(inicio, inicio + 1100);
     assert.match(bloque, /\.eq\("paquete_id", input\.paqueteId\)/);
     assert.match(bloque, /\.eq\("hotel_id", input\.hotelId\)/);

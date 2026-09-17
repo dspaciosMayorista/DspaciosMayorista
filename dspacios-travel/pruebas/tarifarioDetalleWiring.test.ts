@@ -32,11 +32,11 @@ describe("detalle-actions.ts — seguridad de la lectura pública", () => {
     }
   });
 
-  test("las 4 acciones leen tarifario_resultado con `sb` (createClient, RLS/anon), nunca con el admin/service-role", () => {
-    // El ÚNICO `.from("tarifario_resultado")` de todo el archivo debe colgar
-    // de `sb`, no de `ad`/`admin()` — grep de la línea completa.
-    const lineasConsulta = detalleActions.split("\n").filter((l) => l.includes('.from("tarifario_resultado")'));
-    assert.ok(lineasConsulta.length >= 4, "cada una de las 4 acciones debe consultar tarifario_resultado");
+  test("las 4 acciones leen tarifario_resultado_publicable con `sb` (createClient, RLS/anon), nunca con el admin/service-role, y NUNCA tarifario_resultado directo (Fase 2, migración 182)", () => {
+    // El ÚNICO `.from("tarifario_resultado_publicable")` de todo el archivo
+    // debe colgar de `sb`, no de `ad`/`admin()` — grep de la línea completa.
+    const lineasConsulta = detalleActions.split("\n").filter((l) => l.includes('.from("tarifario_resultado_publicable")'));
+    assert.ok(lineasConsulta.length >= 4, "cada una de las 4 acciones debe consultar tarifario_resultado_publicable");
     for (const linea of lineasConsulta) {
       // `obtenerDetalleHotel` (ronda 6) construye el query builder en una
       // variable `q` (para poder condicionar el `.in(...)` según haya o no
@@ -44,10 +44,18 @@ describe("detalle-actions.ts — seguridad de la lectura pública", () => {
       // cliente admin), solo un estilo de línea distinto al resto.
       assert.ok(
         linea.trim().startsWith("sb.from") || linea.includes("await sb.from") || linea.includes("(sb) =>") || linea.includes("= sb.from"),
-        `una consulta a tarifario_resultado no cuelga de "sb": ${linea}`
+        `una consulta a tarifario_resultado_publicable no cuelga de "sb": ${linea}`
       );
-      assert.doesNotMatch(linea, /\bad\.from|\badmin\(\)\.from/, `tarifario_resultado se leyó con el cliente admin/service-role, no con sb: ${linea}`);
+      assert.doesNotMatch(linea, /\bad\.from|\badmin\(\)\.from/, `tarifario_resultado_publicable se leyó con el cliente admin/service-role, no con sb: ${linea}`);
     }
+    // Fase 2 (migración 182): ningún acceso directo por ID debe poder leer
+    // `tarifario_resultado` sin el filtro de publicabilidad — el archivo NO
+    // debe declarar ninguna consulta a la tabla cruda.
+    assert.doesNotMatch(
+      detalleActions,
+      /\.from\("tarifario_resultado"\)/,
+      "detalle-actions.ts no debe leer tarifario_resultado directo — debe usar tarifario_resultado_publicable (Fase 2, migración 182)"
+    );
   });
 
   test("cada acción valida el input ANTES de llamar a cargarDetalleAcotado/crear el cliente", () => {

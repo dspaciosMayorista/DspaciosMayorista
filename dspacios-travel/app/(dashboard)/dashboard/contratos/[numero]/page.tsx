@@ -186,7 +186,7 @@ export default async function ContratoDetallePage({
   let seleccionServicios: number[] = [];
   if (venta.estado === "pendiente" && venta.paquete_armado_id) {
     const [{ data: servFilas }, { data: itemsServ }] = await Promise.all([
-      sb.from("tarifario_resultado").select("servicio_id, servicio_nombre, tipo_tarifa, pax_desde, pax_hasta, precio_pvp").eq("paquete_id", venta.paquete_armado_id).eq("modulo", "servicios"),
+      sb.from("tarifario_resultado_publicable").select("servicio_id, servicio_nombre, tipo_tarifa, pax_desde, pax_hasta, precio_pvp").eq("paquete_id", venta.paquete_armado_id).eq("modulo", "servicios"),
       sb.from("contrato_items").select("descripcion").eq("numero_contrato", numero),
     ]);
     const map = new Map<number, ServicioDispContrato>();
