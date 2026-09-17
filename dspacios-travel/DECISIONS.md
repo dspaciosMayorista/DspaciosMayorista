@@ -67,3 +67,27 @@ Registro de decisiones (ADL). Cada entrada: decisión, motivo, alternativas desc
 - Motivo: toda invalidación incrementa la generación de forma síncrona (`buscar()` al iniciar y `limpiarTodo()`); cada búsqueda solo publica si la generación sigue intacta al resolver, y `montadoRef` cubre el desmontaje.
 - Alternativas descartadas: confiar en el orden de resolución de las promesas.
 - Fecha: 2026-09-16 (PR #306, `fca2e834`).
+
+## ADL-012 — Publicación atómica del snapshot
+- Decisión: el snapshot se publica de forma atómica (delete+insert+cambio de estado en UNA transacción, `publicar_tarifario_resultado`) y solo una revisión/generación vigente puede reemplazarlo; si el token quedo obsoleto, la publicacion se rechaza sin tocar el snapshot anterior.
+- Motivo: una publicacion con generacion/revision vencida pisaria un calculo mas nuevo; la atomicidad evita estados parciales visibles.
+- Alternativas descartadas: escribir el snapshot fuera de transaccion; aceptar generaciones/revisiones antiguas.
+- Fecha: 2026-09-17 (PR #308, `8a2b5985`, migracion 181).
+
+## ADL-013 — Publicabilidad gobernada por paquete
+- Decisión: `tarifario_snapshot_publicable` y el estado activo real del paquete (`armado_paquetes.activo`) gobiernan si el snapshot puede servirse.
+- Motivo: un snapshot viejo de un paquete inactivo o invalidado (fuente cambiada) no debe servirse como si fuera vigente.
+- Alternativas descartadas: servir el snapshot solo por existencia de filas.
+- Fecha: 2026-09-17 (PR #308, `8a2b5985`, migraciones 181/182).
+
+## ADL-014 — Lectores en vivo vs. tabla cruda
+- Decisión: los lectores en vivo (Vista Booking, cotizacion, reserva) usan `tarifario_resultado_publicable` (vista con join autoritativo a `armado_paquetes`); la tabla cruda `tarifario_resultado` queda solo para diagnostico administrativo autorizado.
+- Motivo: un solo punto de filtrado server-side que bloquea snapshots no publicables/inactivos sin duplicar la regla en cada reader.
+- Alternativas descartadas: cada lector replicando el filtro; exposicion publica de la tabla cruda.
+- Fecha: 2026-09-17 (PR #308, `8a2b5985`, migracion 182).
+
+## ADL-015 — Históricos y Bernalo fuera del bloqueo
+- Decisión: los contratos/cotizaciones congelados (historica) y Bernalo/hoteles por unidad (cotizan en vivo) quedan fuera de ese bloqueo.
+- Motivo: los documentos congelados no dependen del snapshot actual; Bernalo no usa el snapshot-persona y no debe bloquearse por el.
+- Alternativas descartadas: aplicar el bloqueo tambien a historicos o a la cotizacion en vivo de Bernalo.
+- Fecha: 2026-09-17 (PR #308, `8a2b5985`, migraciones 181/182).

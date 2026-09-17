@@ -1,17 +1,16 @@
 # CURRENT_GOAL.md
 
-Objetivo actual: **Evitar snapshots desactualizados durante la recalculacion** — que no se publiquen ni sirvan snapshots antiguos mientras se recalculan paquetes.
+Objetivo actual: **Ordenar el contenido interno de las tarjetas** — mostrar el contenido en este orden: Salidas -> Motor interno -> Incluye -> Servicios add-on.
 
 Alcance:
-- Identificar donde y cuando se recalcula un paquete y donde se sirve su snapshot.
-- No publicar ni servir snapshots antiguos mientras el recalculo esta en curso.
-- Cubrir fallos parciales, concurrencia e invalidacion segura del snapshot.
+- Localizar las variantes de tarjeta y determinar si comparten componente o duplican estructura.
+- Preservar precio, disponibilidad, acciones, responsive y fuentes de datos.
+- Inventariar donde el motor externo reutiliza la tarjeta (sin tocarlo).
 
 Fuera de alcance:
-- No iniciar implementacion todavia: primero trazar el flujo de calculo/invalidacion.
-- No tocar los demas pendientes de la cola.
+- No implementar todavia en esta rama documental.
+- No tocar el motor externo salvo para inventariar donde reutiliza la tarjeta.
+- No abordar otros puntos de TASKS.md.
 
-Proximos pasos / criterio de cierre:
-- [ ] Trazar el flujo: cuando se recalcula un paquete y donde se sirve el snapshot.
-- [ ] Definir la estrategia de invalidacion segura (fallos parciales y concurrencia).
-- [ ] Documentar los escenarios de fallo/concurrencia y proponer una estrategia de invalidacion segura, con archivos y pruebas que requeriria la futura implementacion.
+Criterio de cierre futuro:
+- Orden consistente (Salidas -> Motor interno -> Incluye -> Servicios add-on) en todas las tarjetas aplicables, sin perdida de contenido ni regresion movil/escritorio.
