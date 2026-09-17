@@ -41,7 +41,9 @@ function clienteFalso(tablas: Record<string, Fila>, datasetTarifario: FilaTarifa
       order() { return this; },
       range(from: number, to: number) { rangeArgs = [from, to]; return this; },
       then(resolve: (v: { data: unknown; error: unknown }) => void) {
-        if (tabla === "tarifario_resultado") {
+        // Fase 2 (migración 182): cargarFilasTarifarioPaginado ahora lee
+        // tarifario_resultado_publicable, nunca tarifario_resultado directo.
+        if (tabla === "tarifario_resultado_publicable") {
           const [from, to] = rangeArgs ?? [0, 999];
           resolve({ data: datasetTarifario.slice(from, to + 1), error: null });
         } else {
@@ -403,7 +405,7 @@ describe("cargarDatosTarifario() — error crítico de paginación: aborta con {
   test("un error en la paginación de tarifario_resultado propaga ok:false con el mensaje público fijo", async () => {
     const sbConError = {
       from(tabla: string) {
-        if (tabla !== "tarifario_resultado") return { select() { return this; }, eq() { return this; }, in() { return this; }, order() { return this; }, then(r: (v: unknown) => void) { r({ data: [], error: null }); } };
+        if (tabla !== "tarifario_resultado_publicable") return { select() { return this; }, eq() { return this; }, in() { return this; }, order() { return this; }, then(r: (v: unknown) => void) { r({ data: [], error: null }); } };
         return {
           select() { return this; },
           eq() { return this; },

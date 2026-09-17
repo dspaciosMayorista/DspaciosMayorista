@@ -27,7 +27,7 @@ export default async function NuevaReservaPage({
 
   if (!esServicios) {
     let q = sb
-      .from("tarifario_resultado")
+      .from("tarifario_resultado_publicable")
       .select("categoria, regimen, acomodacion, precio_pvp, hotel_nombre, destino_nombre, fecha_ida, fecha_regreso, noches, bloqueo_label, moneda")
       .eq("paquete_id", paqueteId)
       .eq("hotel_id", hotelId);
@@ -93,7 +93,7 @@ export default async function NuevaReservaPage({
     acomConfigs = (acoms ?? []) as AcomConfig[];
   } else {
     const { data: m } = await sb
-      .from("tarifario_resultado")
+      .from("tarifario_resultado_publicable")
       .select("paquete_nombre, destino_nombre, moneda")
       .eq("paquete_id", paqueteId)
       .eq("modulo", "servicios")
@@ -112,7 +112,7 @@ export default async function NuevaReservaPage({
 
   // Servicios del paquete (PVP publicado) → add-ons en la reserva
   const { data: servFilas } = await sb
-    .from("tarifario_resultado")
+    .from("tarifario_resultado_publicable")
     .select("servicio_id, servicio_nombre, tipo_tarifa, pax_desde, pax_hasta, precio_pvp")
     .eq("paquete_id", paqueteId)
     .eq("modulo", "servicios");

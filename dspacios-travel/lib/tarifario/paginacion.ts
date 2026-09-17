@@ -54,11 +54,18 @@ export type ResultadoPaginado<T> =
     };
 
 /**
- * Carga TODAS las filas de `tarifario_resultado` (`paquete_activo = true`)
- * para el set de columnas dado, paginando de a 1000. `columnas` es el mismo
- * string que antes se pasaba directo a `.select(...)` en cada copia del
- * bucle — sin cambios de comportamiento en el caso de éxito, solo sin
+ * Carga TODAS las filas de `tarifario_resultado_publicable` (`paquete_activo
+ * = true`) para el set de columnas dado, paginando de a 1000. `columnas` es
+ * el mismo string que antes se pasaba directo a `.select(...)` en cada copia
+ * del bucle — sin cambios de comportamiento en el caso de éxito, solo sin
  * duplicar el bucle y con manejo explícito de error (ver arriba).
+ *
+ * Desde la migración 182 (Fase 2 de snapshots atómicos) lee
+ * `tarifario_resultado_publicable` (filtrada por
+ * `armado_paquetes.tarifario_snapshot_publicable = true`) en vez de
+ * `tarifario_resultado` directo — un paquete bloqueado (fallido/pendiente/
+ * inactivo) no debe servir su snapshot viejo aunque siga marcado
+ * `paquete_activo = true` en la fila cacheada.
  *
  * Nota de conteo: si el total de filas es un múltiplo EXACTO de 1000 (ej.
  * 1000, 2000), el bucle hace UN round-trip extra que vuelve vacío para
@@ -74,7 +81,7 @@ export async function cargarFilasTarifarioPaginado<T>(
   let paginasConsultadas = 0;
   for (let from = 0; ; from += PAGE) {
     const { data: page, error } = await sb
-      .from("tarifario_resultado")
+      .from("tarifario_resultado_publicable")
       .select(columnas)
       .eq("paquete_activo", true)
       .order("destino_nombre")

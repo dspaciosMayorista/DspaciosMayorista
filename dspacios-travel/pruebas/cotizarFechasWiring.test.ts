@@ -540,8 +540,9 @@ describe("12. buscarReceptivos — paqueteId opcional acota la búsqueda al paqu
     assert.ok(idxDestinoFiltro > idxPaqueteFiltro, "el filtro de destino debe seguir existiendo, después del de paquete");
     // Ambos filtros van ANTES de .eq("modulo","servicios") solo importa que
     // estén dentro del builder antes de ejecutar — confirma que siguen bajo
-    // el mismo `.from("tarifario_resultado")` que ya exige modulo=servicios
-    // y paquete_activo=true (ninguno de los dos se tocó).
+    // el mismo `.from("tarifario_resultado_publicable")` (Fase 2, migración
+    // 182) que ya exige modulo=servicios y paquete_activo=true (ninguno de
+    // los dos se tocó).
     assert.match(cuerpo, /\.eq\("modulo", "servicios"\)\s*\n\s*\.eq\("paquete_activo", true\)/);
   });
 

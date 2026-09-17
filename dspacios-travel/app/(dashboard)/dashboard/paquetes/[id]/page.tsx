@@ -93,6 +93,14 @@ export default async function PaqueteDetallePage({ params }: { params: Promise<{
   const monedaPaquete = (hotelesDisp ?? []).some((h) => (h as { moneda?: string | null }).moneda === "USD") ? "USD" : "COP";
 
   // El resultado puede superar el tope de 1000 filas de PostgREST; paginamos.
+  //
+  // ⚠️ Excepción deliberada (Fase 2 de snapshots atómicos, migración 182):
+  // esta pantalla es el EDITOR/diagnóstico del paquete en administración —
+  // a diferencia de los lectores públicos/de cotización/reserva, necesita ver
+  // el snapshot REAL tal como quedó (incluido uno bloqueado por
+  // `armado_paquetes.tarifario_snapshot_publicable = false`) para poder
+  // diagnosticar por qué está bloqueado. Sigue leyendo `tarifario_resultado`
+  // directo, nunca `tarifario_resultado_publicable`.
   const resultado: Record<string, unknown>[] = [];
   const PAGE = 1000;
   for (let from = 0; ; from += PAGE) {

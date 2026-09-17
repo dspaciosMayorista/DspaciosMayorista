@@ -473,7 +473,7 @@ export async function computarReserva(
     }
   } else if (!esServicios) {
     let q = sb
-      .from("tarifario_resultado")
+      .from("tarifario_resultado_publicable")
       .select("acomodacion, precio_pvp, hotel_nombre, destino_nombre, fecha_ida, fecha_regreso, moneda")
       .eq("paquete_id", input.paqueteId)
       .eq("hotel_id", input.hotelId)
@@ -684,7 +684,7 @@ export async function computarReserva(
     }
   } else {
     const { data: m } = await sb
-      .from("tarifario_resultado")
+      .from("tarifario_resultado_publicable")
       .select("destino_nombre, paquete_nombre")
       .eq("paquete_id", input.paqueteId)
       .eq("modulo", "servicios")
@@ -711,7 +711,7 @@ export async function computarReserva(
   const serviciosItems: { servicioId: number; nombre: string; precio: number; categoria: CategoriaServicio; proveedorId: number | null }[] = [];
   if (input.servicios?.length) {
     const { data: srvRows, error: srvRowsErr } = await sb
-      .from("tarifario_resultado")
+      .from("tarifario_resultado_publicable")
       .select("servicio_id, servicio_nombre, tipo_tarifa, pax_desde, pax_hasta, precio_pvp, recargo_individual")
       .eq("paquete_id", input.paqueteId)
       .eq("modulo", "servicios")

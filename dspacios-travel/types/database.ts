@@ -3213,10 +3213,23 @@ export type Database = {
         Row: { numero_contrato: string; total_pagado: number };
         Relationships: [];
       };
-      // Migración 162: resumen agregado de `tarifario_resultado` (una fila
-      // por combinación módulo/paquete/bloqueo/hotel/servicio, magnitud
-      // cercana a hoteles/salidas, no a tarifas) — carga inicial liviana del
-      // tarifario en dos niveles. Ver lib/tarifario/resumen.ts.
+      // Migración 182 (Fase 2 de snapshots atómicos): mismas columnas que
+      // tarifario_resultado, filtradas por
+      // armado_paquetes.tarifario_snapshot_publicable = true — el join de
+      // autorización ocurre DENTRO de la vista (sin security_invoker), nunca
+      // como una consulta separada. Todo lector que sirva el tarifario en
+      // vivo (público, búsqueda, cotización, reserva) debe usar esta vista en
+      // vez de tarifario_resultado directo.
+      tarifario_resultado_publicable: {
+        Row: Database["public"]["Tables"]["tarifario_resultado"]["Row"];
+        Relationships: [];
+      };
+      // Migración 162: resumen agregado de `tarifario_resultado_publicable`
+      // (una fila por combinación módulo/paquete/bloqueo/hotel/servicio,
+      // magnitud cercana a hoteles/salidas, no a tarifas) — carga inicial
+      // liviana del tarifario en dos niveles. Ver lib/tarifario/resumen.ts.
+      // Desde la migración 182, hereda el bloqueo de snapshots no
+      // publicables a través de su fuente (ver tarifario_resultado_publicable).
       tarifario_resumen: {
         Row: {
           modulo: Database["public"]["Enums"]["tarifario_modulo"];

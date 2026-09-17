@@ -79,7 +79,7 @@ describe("computo.ts (computarReserva) — guardia modelo_tarifario ANTES de lee
     const posGuardia = cuerpo.indexOf('modeloRow?.modelo_tarifario === "unidad"');
     const posUsarFechas = cuerpo.indexOf("const usarFechas =");
     const posLiquidar = cuerpo.indexOf("liquidarHotelPaquete(");
-    const posTarifarioResultado = cuerpo.indexOf('.from("tarifario_resultado")\r\n      .select("acomodacion, precio_pvp');
+    const posTarifarioResultado = cuerpo.indexOf('.from("tarifario_resultado_publicable")\r\n      .select("acomodacion, precio_pvp');
     assert.notEqual(posGuardia, -1);
     assert.notEqual(posUsarFechas, -1);
     assert.notEqual(posLiquidar, -1);

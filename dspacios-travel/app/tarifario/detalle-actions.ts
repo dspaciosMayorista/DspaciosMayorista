@@ -22,9 +22,17 @@ import { generarFlujoId, registrarEtapa, registrarDatoPagina, registrarErrorTecn
 // el catálogo completo.
 //
 // Seguridad (mismo criterio que ya usaba `cargarFilasTarifarioPaginado`):
-//   · `tarifario_resultado` se lee con el cliente `sb` (RLS/anon respetada,
-//     su policy ya es "for select using (true)" — público) — NUNCA con
-//     service-role para servir estos datos públicos.
+//   · Desde la migración 182 (Fase 2 de snapshots atómicos), las 4 acciones
+//     leen `tarifario_resultado_publicable` (vista filtrada por
+//     `armado_paquetes.tarifario_snapshot_publicable = true`), NUNCA
+//     `tarifario_resultado` directo — estas acciones aceptan
+//     hotelId/bloqueoId/salidaId/paqueteId DIRECTO del navegador, así que un
+//     acceso "por ID" a un paquete bloqueado (fallido/pendiente/inactivo)
+//     debe rechazarse igual que si nunca hubiera existido, no solo ocultarse
+//     en el resumen de Tier 1.
+//   · Se lee con el cliente `sb` (RLS/anon respetada, la vista tiene el mismo
+//     "for select using (true)" que ya tenía `tarifario_resultado`) — NUNCA
+//     con service-role para servir estos datos públicos.
 //   · El service-role (`admin`, opcional según `SUPABASE_SERVICE_ROLE_KEY`,
 //     igual patrón que `cargarDatosTarifario`/`cargarResumenTarifario`) solo
 //     se usa para las verificaciones INTERNAS que ya usaba el resumen
@@ -171,7 +179,7 @@ export async function obtenerDetalleHotel(inputRaw: unknown): Promise<ResultadoD
     return cargarDetalleAcotado(
       "hotel",
       (sb) => {
-        let q = sb.from("tarifario_resultado").select(COLUMNAS_DETALLE)
+        let q = sb.from("tarifario_resultado_publicable").select(COLUMNAS_DETALLE)
           .eq("paquete_activo", true).eq("modulo", "bloqueo").eq("hotel_id", v.hotelId);
         if (bloqueoIds.length) q = q.in("bloqueo_id", bloqueoIds);
         return q;
@@ -183,7 +191,7 @@ export async function obtenerDetalleHotel(inputRaw: unknown): Promise<ResultadoD
   return cargarDetalleAcotado(
     "hotel",
     (sb) => {
-      let q = sb.from("tarifario_resultado").select(COLUMNAS_DETALLE)
+      let q = sb.from("tarifario_resultado_publicable").select(COLUMNAS_DETALLE)
         .eq("paquete_activo", true).eq("modulo", "porcion_terrestre").eq("hotel_id", v.hotelId);
       if (paqueteIds.length) q = q.in("paquete_id", paqueteIds);
       return q;
@@ -208,14 +216,14 @@ export async function obtenerDetalleSalida(inputRaw: unknown): Promise<Resultado
   if (v.modulo === "bloqueo") {
     return cargarDetalleAcotado(
       "salida_bloqueo",
-      (sb) => sb.from("tarifario_resultado").select(COLUMNAS_DETALLE)
+      (sb) => sb.from("tarifario_resultado_publicable").select(COLUMNAS_DETALLE)
         .eq("paquete_activo", true).eq("modulo", "bloqueo").eq("bloqueo_id", v.bloqueoId),
       v.combos
     );
   }
   return cargarDetalleAcotado(
     "salida_dinamica",
-    (sb) => sb.from("tarifario_resultado").select(COLUMNAS_DETALLE)
+    (sb) => sb.from("tarifario_resultado_publicable").select(COLUMNAS_DETALLE)
       .eq("paquete_activo", true).eq("modulo", "dinamico").eq("salida_id", v.salidaId),
     v.combos
   );
@@ -233,7 +241,7 @@ export async function obtenerDetallePaquete(inputRaw: unknown): Promise<Resultad
 
   return cargarDetalleAcotado(
     "paquete_porcion",
-    (sb) => sb.from("tarifario_resultado").select(COLUMNAS_DETALLE)
+    (sb) => sb.from("tarifario_resultado_publicable").select(COLUMNAS_DETALLE)
       .eq("paquete_activo", true).eq("modulo", "porcion_terrestre").eq("paquete_id", v.paqueteId),
     v.combos
   );
@@ -261,7 +269,7 @@ export async function obtenerDetalleServicios(): Promise<ResultadoDetalle> {
   // fuera de la pestaña "Servicios" del tarifario público sin ningún aviso.
   // Ver lib/tarifario/paginacion.ts (`ejecutarConsultaPaginada`).
   const { data, error } = await ejecutarConsultaPaginada<FilaTarifario>((from, hasta) =>
-    sb.from("tarifario_resultado").select(COLUMNAS_DETALLE)
+    sb.from("tarifario_resultado_publicable").select(COLUMNAS_DETALLE)
       .eq("paquete_activo", true).eq("modulo", "servicios")
       .order("id").range(from, hasta)
   );

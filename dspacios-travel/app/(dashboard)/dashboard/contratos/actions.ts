@@ -1070,7 +1070,7 @@ export async function actualizarServiciosContrato(
 
   // Servicios disponibles del paquete (PVP) desde el tarifario.
   const { data: servFilas } = await sb
-    .from("tarifario_resultado")
+    .from("tarifario_resultado_publicable")
     .select("servicio_id, servicio_nombre, tipo_tarifa, pax_desde, pax_hasta, precio_pvp")
     .eq("paquete_id", venta.paquete_armado_id)
     .eq("modulo", "servicios");
