@@ -91,3 +91,11 @@ Registro de decisiones (ADL). Cada entrada: decisión, motivo, alternativas desc
 - Motivo: los documentos congelados no dependen del snapshot actual; Bernalo no usa el snapshot-persona y no debe bloquearse por el.
 - Alternativas descartadas: aplicar el bloqueo tambien a historicos o a la cotizacion en vivo de Bernalo.
 - Fecha: 2026-09-17 (PR #308, `8a2b5985`, migraciones 181/182).
+
+## ADL-016 — Orden de secciones en la tarjeta del motor interno
+- Decisión: la tarjeta del motor interno (`HotelModal` en `app/tarifario/VistaBooking.tsx`) conserva el orden Salidas → Motor interno → Incluye → Servicios add-on.
+- Motivo: presentar primero la elección y configuración cotizable, y después la información incluida y los extras.
+- Alternativas descartadas: mantener Incluye/add-ons antes del motor interno; reordenar también las variantes externas/Bernalo.
+- Referencia: commit `70263e3d`.
+- Alcance: esta decisión no implica que el motor externo ya tenga tarjeta completa; conservarla completa en el motor externo permanece como siguiente objetivo (ver `CURRENT_GOAL.md`).
+- Fecha: 2026-09-17.

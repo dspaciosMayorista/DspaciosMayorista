@@ -27,6 +27,8 @@ Mapa del proyecto. Última actualización: 2026-09-17
 | Add-ons (catálogo general) | Entrada directa a `BuscadorReceptivos` sin `paqueteId` (búsqueda general por destino); el modo acotado solo se abandona con `Limpiar resultados` | Sin alcance de paquete |
 | Snapshot tarifario (vivo) | La 181 invalida por fuentes; `iniciar_generacion_tarifario` captura revisión/generación y `publicar_tarifario_resultado` reemplaza el snapshot atómicamente si el token sigue vigente (migración `supabase/migrations/...181`). La 182 expone `tarifario_resultado_publicable` (join autoritativo con `armado_paquetes`, security_barrier). Lectores en vivo: `lib/tarifario/paginacion.ts`, `app/tarifario/detalle-actions.ts`, `lib/reservar/cotizar.ts`, `lib/reservar/computo.ts` | Vista publicable |
 | Snapshot tarifario (diagnóstico) | Administración lee `tarifario_resultado` crudo para diagnóstico; históricos (contratos/cotizaciones congelados) y Bernalo/unidad no dependen del snapshot actual | Autorizado |
+| Tarjeta interna (cuatro secciones) | `HotelModal` en `app/tarifario/VistaBooking.tsx` — orden confirmado: Salidas → Motor interno → Incluye → Servicios add-on (commit `70263e3d`, solo traslado de JSX; lógica, props, precios y fuentes intactas) | Vista Booking |
+| Tarjetas externas/Bernalo (independientes) | `TarjetaUnidadBusqueda` y `HotelBernaloCotizarModal` en `app/tarifario/VistaBooking.tsx` — variantes separadas del motor externo; `70263e3d` no las modificó; conservar la tarjeta completa en el motor externo sigue pendiente (ver `CURRENT_GOAL.md`) | Vista Booking |
 
 ## Reglas del repo
 Ver `AGENTS.md` (raíz del repo). Fuente de verdad de diseño: `CLAUDE.md` (no releer salvo petición explícita).
