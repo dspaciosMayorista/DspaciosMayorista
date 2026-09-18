@@ -341,12 +341,22 @@ describe("HotelDetalleClient.tsx — UI distingue Base/Promoción y muestra la c
     // Una sola <tr> por fila de datos (filaTarifa), con las 7 acomodaciones
     // como <td> dentro de esa misma fila — confirma que no se propuso (ni se
     // implementó) una fila por acomodación.
-    const posFn = hotelDetalle.indexOf("const filaTarifa = (t: Tarifa) => {");
+    const posFn = hotelDetalle.indexOf("const filaTarifa = (t: Tarifa) => (");
     assert.notEqual(posFn, -1);
     const posCierre = hotelDetalle.indexOf("const tablaTarifas = (rows: Tarifa[])", posFn);
     const cuerpoFila = hotelDetalle.slice(posFn, posCierre);
     const trAbre = (cuerpoFila.match(/<tr /g) ?? []).length;
     assert.equal(trAbre, 1, "filaTarifa debe renderizar exactamente UNA <tr> por combinación categoría/alimentación/temporada");
+  });
+
+  test("regla definitiva (corrección posterior): NO recalcula ni muestra un segundo valor derivado de descuento_valor — la fila materializada es el único precio", () => {
+    // Antes, `conDescuento` aplicaba `base × (1 − descuento_valor/100)` sobre
+    // CUALQUIER fila cuya temporada coincidiera con una vigencia de
+    // descuento — incluida la propia fila YA materializada de una promoción
+    // (ej. mostrar "180.000 (162.000)" sobre una fila que YA es 180.000
+    // final). Retirado por completo: una vigencia nunca deriva un precio.
+    assert.doesNotMatch(hotelDetalle, /conDescuento/, "no debe quedar ninguna función que recalcule un precio desde descuento_valor");
+    assert.doesNotMatch(hotelDetalle, /cfgTemporada/, "no debe quedar código que busque la vigencia de una fila para derivar su precio");
   });
 });
 

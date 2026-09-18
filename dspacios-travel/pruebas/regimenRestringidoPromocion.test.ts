@@ -29,17 +29,21 @@ function temporada(overrides: Partial<Parameters<typeof toTemporadaRango>[0]>): 
 }
 
 describe("descuento_pct restringido a PC modifica PC y conserva PAM base intacta", () => {
-  test("régimen PC: la promo del 10% SÍ se aplica", () => {
+  // Regla definitiva (corrección posterior): una vigencia de descuento solo
+  // gana si tiene fila MATERIALIZADA para el combo — `PROMO_PC` trae su
+  // propio neto en `netoPorTemporada` (180.000/2 noches = 90.000/noche, el
+  // equivalente materializado de "100.000 × 0,90"), nunca se recalcula desde
+  // `descuento_valor`.
+  test("régimen PC: la promo del 10% (materializada) SÍ se aplica", () => {
     const base = temporada({ nombre: "ALTA", prioridad: 1 });
     const promoPc: TemporadaRango = temporada({
       nombre: "PROMO_PC", prioridad: 2, tipo: "descuento_pct", descuento_valor: 10,
       regimen_restringido: "PC",
     });
     const temporadas = [base, promoPc];
-    const netoPorTemporada = { ALTA: 100_000 };
+    const netoPorTemporada = { ALTA: 100_000, PROMO_PC: 90_000 };
     const total = liquidarHotelNoches({ fechaIda: "2026-09-05", numNoches: 2, temporadas, netoPorTemporada, hoy: HOY, regimen: "PC" });
-    // 100000 * 0.9 = 90000 por noche × 2 = 180000.
-    assert.equal(total, 180_000);
+    assert.equal(total, 180_000); // 90.000 × 2 — la fila materializada, tal cual
   });
 
   test("régimen PAM: la MISMA promo (restringida a PC) NO se aplica — base intacta", () => {
@@ -49,9 +53,9 @@ describe("descuento_pct restringido a PC modifica PC y conserva PAM base intacta
       regimen_restringido: "PC",
     });
     const temporadas = [base, promoPc];
-    const netoPorTemporada = { ALTA: 120_000 }; // neto propio de PAM, distinto al de PC
+    const netoPorTemporada = { ALTA: 120_000, PROMO_PC: 90_000 }; // neto propio de PAM, distinto al de PC
     const total = liquidarHotelNoches({ fechaIda: "2026-09-05", numNoches: 2, temporadas, netoPorTemporada, hoy: HOY, regimen: "PAM" });
-    // Sin descuento: 120000 × 2 = 240000 — la promo de PC nunca compite por PAM.
+    // 120000 × 2 = 240000 — la promo de PC nunca compite por PAM (regimen_restringido la excluye por completo).
     assert.equal(total, 240_000);
   });
 });

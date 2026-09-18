@@ -124,8 +124,17 @@ describe("Caso C — promoción con suplemento propio: gana sobre el de la base 
   });
 });
 
-describe("Caso D — Paridad: promoción SIN fila materializada (motor automático) vs. CON fila materializada (calculadora)", () => {
+describe("Caso D — regla definitiva: la fila materializada gana igual, con o sin pasar precioFinalTemporadas", () => {
   // Misma configuración que el Caso B (FULL, suplemento general 100.000).
+  //
+  // Corrección posterior a esta ronda: `precioFinalTemporadas` YA NO decide
+  // si una vigencia puede ganar (eso lo decide únicamente tener neto
+  // materializado en `netoPorTemporada`) — solo alimenta el detalle
+  // `precioFinalAutoritativo` de auditoría. El viejo "camino automático" que
+  // recalculaba `base × (1 − descuento_valor/100)` para una promoción SIN
+  // fila propia quedó RETIRADO (ver pruebas/vigenciaNuncaDerivaPrecio.test.ts
+  // para la cobertura completa de esa regla). Por eso esta "paridad" ahora es
+  // entre pasar o no pasar el set, nunca entre "con fila" y "sin fila".
   const paramsCalc: DubaiParams = {
     regimen_base: "PAE",
     modificadores: { sencilla_pct: 50, pax3_pct: -20, pax4_pct: -20, nino_pct: -50, infante_pct: -100 },
@@ -143,49 +152,49 @@ describe("Caso D — Paridad: promoción SIN fila materializada (motor automáti
     assert.equal(filaFullMaterializada.temporada_base, "ALTA");
   });
 
-  test("camino AUTOMÁTICO (sin fila materializada de promo, solo la vigencia descuento_pct + la base FULL que ya generó Dubai) da el MISMO neto", () => {
-    // Vigencia de la promo creada a mano en hotel_temporadas (tipo
-    // descuento_pct) — SIN pasar precioFinalTemporadas: simula el escenario
-    // "promoción sin fila materializada" del camino automático/legacy.
+  test("con o SIN pasar precioFinalTemporadas, el neto es el MISMO — la elegibilidad depende solo de la fila materializada", () => {
     const base = temporada({ nombre: "ALTA", prioridad: 1 });
     const promoDescuento = temporada({ nombre: "ALTA_PROMO_FULL", prioridad: 2, tipo: "descuento_pct", descuento_valor: 10 });
     const temporadas = [base, promoDescuento];
-    // netoPorTemporada para el combo FULL: la base "ALTA" YA trae el
-    // suplemento horneado (400.000) — es la fila que generó el bucle de
-    // `bases[]` de Dubai (`filaBaseFull.neto_doble`), no un valor inventado.
-    const netoPorTemporada = { ALTA: filaBaseFull.neto_doble };
-    const total = liquidarHotelNoches({ fechaIda: "2026-09-05", numNoches: 1, temporadas, netoPorTemporada, hoy: HOY, regimen: "FULL" });
-    assert.equal(total, 360_000);
-    assert.equal(total, filaFullMaterializada.neto_doble, "el automático y el materializado deben dar el MISMO neto");
-  });
+    // netoPorTemporada trae AMBAS filas materializadas: la base FULL que
+    // generó Dubai (400.000, con suplemento horneado) y la promo FULL
+    // (360.000). Nunca un valor inventado.
+    const netoPorTemporada = { ALTA: filaBaseFull.neto_doble, ALTA_PROMO_FULL: filaFullMaterializada.neto_doble };
 
-  test("procedencia: ambos caminos conservan el nombre de la promoción GANADORA (ALTA_PROMO_FULL)", () => {
-    const base = temporada({ nombre: "ALTA", prioridad: 1 });
-    const promoDescuento = temporada({ nombre: "ALTA_PROMO_FULL", prioridad: 2, tipo: "descuento_pct", descuento_valor: 10 });
-    const temporadas = [base, promoDescuento];
-
-    // Automático (sin precioFinalTemporadas).
-    const netoPorTemporadaAuto = { ALTA: filaBaseFull.neto_doble };
-    const rAuto = liquidarHotelNochesConTemporadas({ fechaIda: "2026-09-05", numNoches: 1, temporadas, netoPorTemporada: netoPorTemporadaAuto, hoy: HOY, regimen: "FULL" });
-    assert.ok(rAuto);
-    assert.equal(rAuto!.procedencia[0].temporadaGanadora, "ALTA_PROMO_FULL");
-
-    // Materializado (con precioFinalTemporadas apuntando a la fila de la promo).
-    const netoPorTemporadaMat = { ALTA_PROMO_FULL: filaFullMaterializada.neto_doble };
-    const rMat = liquidarHotelNochesConTemporadas({
-      fechaIda: "2026-09-05", numNoches: 1, temporadas, netoPorTemporada: netoPorTemporadaMat, hoy: HOY, regimen: "FULL",
+    const sinFlag = liquidarHotelNoches({ fechaIda: "2026-09-05", numNoches: 1, temporadas, netoPorTemporada, hoy: HOY, regimen: "FULL" });
+    const conFlag = liquidarHotelNoches({
+      fechaIda: "2026-09-05", numNoches: 1, temporadas, netoPorTemporada, hoy: HOY, regimen: "FULL",
       precioFinalTemporadas: new Set(["ALTA_PROMO_FULL"]),
     });
-    assert.ok(rMat);
-    assert.equal(rMat!.procedencia[0].temporadaGanadora, "ALTA_PROMO_FULL");
-    assert.equal(rMat!.total, rAuto!.total, "mismo neto total en ambos caminos");
+    assert.equal(sinFlag, 360_000);
+    assert.equal(conFlag, 360_000);
+    assert.equal(sinFlag, conFlag, "el flag no debe cambiar el neto — solo el detalle de auditoría");
   });
 
-  test("PVP tras el margen del paquete (10%) coincide en ambos caminos: 360.000 / 0,90 = 400.000", () => {
-    const pvpAuto = marcar(360_000, 0.10);
+  test("procedencia: la vigencia ganadora es 'ALTA_PROMO_FULL' con o sin el flag", () => {
+    const base = temporada({ nombre: "ALTA", prioridad: 1 });
+    const promoDescuento = temporada({ nombre: "ALTA_PROMO_FULL", prioridad: 2, tipo: "descuento_pct", descuento_valor: 10 });
+    const temporadas = [base, promoDescuento];
+    const netoPorTemporada = { ALTA: filaBaseFull.neto_doble, ALTA_PROMO_FULL: filaFullMaterializada.neto_doble };
+
+    const rSinFlag = liquidarHotelNochesConTemporadas({ fechaIda: "2026-09-05", numNoches: 1, temporadas, netoPorTemporada, hoy: HOY, regimen: "FULL" });
+    assert.ok(rSinFlag);
+    assert.equal(rSinFlag!.procedencia[0].temporadaGanadora, "ALTA_PROMO_FULL");
+    assert.equal(rSinFlag!.procedencia[0].precioFinalAutoritativo, false, "sin el flag, el detalle de auditoría sale false — pero el neto/identidad no cambian");
+
+    const rConFlag = liquidarHotelNochesConTemporadas({
+      fechaIda: "2026-09-05", numNoches: 1, temporadas, netoPorTemporada, hoy: HOY, regimen: "FULL",
+      precioFinalTemporadas: new Set(["ALTA_PROMO_FULL"]),
+    });
+    assert.ok(rConFlag);
+    assert.equal(rConFlag!.procedencia[0].temporadaGanadora, "ALTA_PROMO_FULL");
+    assert.equal(rConFlag!.procedencia[0].precioFinalAutoritativo, true);
+    assert.equal(rConFlag!.total, rSinFlag!.total, "mismo neto total en ambos casos");
+  });
+
+  test("PVP tras el margen del paquete (10%): 360.000 / 0,90 = 400.000", () => {
     const pvpMaterializado = marcar(filaFullMaterializada.neto_doble, 0.10);
-    assert.equal(Math.round(pvpAuto), 400_000);
-    assert.equal(Math.round(pvpAuto), Math.round(pvpMaterializado));
+    assert.equal(Math.round(pvpMaterializado), 400_000);
   });
 });
 

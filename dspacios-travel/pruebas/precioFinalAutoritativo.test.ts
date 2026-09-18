@@ -137,21 +137,19 @@ describe("generarTarifasDubai — identidad de precio final (migración 179)", (
   });
 });
 
-describe("resolverNetoNocheDetallado — ANTES del fix (sin precioFinalTemporadas): reproduce el defecto confirmado", () => {
-  test("con la promoción vigente y prioritaria, ignora la fila de la promo, recalcula desde la BASE con el descuento de hotel_temporadas y devuelve identidad = BASE, no la promo", () => {
+describe("resolverNetoNocheDetallado — sin pasar precioFinalTemporadas: la fila materializada de la promo IGUAL gana (el flag ya no gobierna elegibilidad)", () => {
+  test("con la promoción vigente y prioritaria Y con neto materializado en netoPorTemporada, gana la promo aunque no se pase precioFinalTemporadas", () => {
     const { temporadas, netoPorTemporada } = escenarioPromo();
     const t0 = new Date("2026-06-01T00:00:00").getTime();
-    // Llamada SIN el 6º argumento — exactamente como se llamaba en todo el
-    // motor antes de esta ronda (paso positional, comportamiento legacy).
+    // Llamada SIN el 6º argumento — la eligibilidad depende SOLO de tener
+    // neto materializado para este combo (netoPorTemporada.PROMO10 = 94500),
+    // nunca del flag `precioFinalTemporadas` (que ahora únicamente alimenta
+    // el detalle `precioFinalAutoritativo`, ver la corrección posterior).
     const r = resolverNetoNocheDetallado(t0, temporadas, netoPorTemporada, hoy, "PC");
     assert.ok(r);
-    // 100000 × (1 − 10%) = 90000 — el descuento SE VOLVIÓ A APLICAR sobre la
-    // base, perdiendo el suplemento propio de 5000 (el precio real de la
-    // promo es 94500, ver la prueba de generarTarifasDubai arriba).
-    assert.equal(r!.neto, 90000);
-    // Identidad = la BASE, nunca la promo — por esto la condición/edades
-    // propias de la promoción nunca llegaban a cotización/contrato.
-    assert.equal(r!.temporadaTarifa, "BAJA");
+    assert.equal(r!.neto, 94500);
+    assert.equal(r!.temporadaTarifa, "PROMO10");
+    assert.equal(r!.precioFinalAutoritativo, false, "sin el set, el detalle de auditoría sale false — pero el neto/identidad no cambian");
   });
 });
 
@@ -201,29 +199,33 @@ describe("resolverNetoNocheDetallado — DESPUÉS del fix (con precioFinalTempor
     assert.equal(r!.temporadaTarifa, "BAJA");
   });
 
-  test("si la promo está marcada pero no tiene neto para ESTE combo (categoría/régimen distinto), cae al comportamiento legacy sin bloquear la noche", () => {
+  test("si la promo NO tiene neto materializado para ESTE combo (categoría/régimen distinto), se IGNORA — usa la base con su propio neto, SIN descontar", () => {
     const { temporadas, precioFinalTemporadas } = escenarioPromo();
-    // netoPorTemporada de OTRO combo: la promo no generó fila para él (simulado
-    // dejando su entrada en null), solo la base tiene neto.
+    // netoPorTemporada de OTRO combo: la promo no generó fila para él (su
+    // entrada queda en null) — solo la base tiene neto.
     const netoOtroCombo: Record<string, number | null> = { BAJA: 120000, PROMO10: null };
     const t0 = new Date("2026-06-01T00:00:00").getTime();
     const r = resolverNetoNocheDetallado(t0, temporadas, netoOtroCombo, hoy, "PC", precioFinalTemporadas);
     assert.ok(r);
-    // Recalcula desde la base con el descuento de hotel_temporadas (10%) — el
-    // único camino posible, ya que la promo no tiene precio propio acá.
-    assert.equal(r!.neto, Math.round(120000 * 0.9));
+    // Regla definitiva: una vigencia sin fila materializada para este combo
+    // se ignora por completo — NUNCA recalcula desde la base con
+    // `descuento_valor`. La base gana con su PROPIO neto, sin descontar.
+    assert.equal(r!.neto, 120000);
     assert.equal(r!.temporadaTarifa, "BAJA");
+    assert.equal(r!.esPromocion, false, "la promo quedó fuera de la resolución — la BASE es quien gana");
   });
 });
 
-describe("Compatibilidad — promoción LEGACY sin marca conserva el comportamiento histórico", () => {
-  test("una temporada descuento_pct creada a mano (sin fila propia en tarifa_hotel, sin precio_final_autoritativo) sigue recalculando desde la base, con precioFinalTemporadas vacío o ausente", () => {
+describe("Regla definitiva — una vigencia SIN fila materializada nunca calcula nada, con o sin precioFinalTemporadas", () => {
+  test("una temporada descuento_pct creada a mano (sin fila propia en tarifa_hotel) se ignora: la base gana con su neto SIN descontar", () => {
     const temporadas: TemporadaRango[] = [
       { nombre: "BAJA", fecha_inicio: "2026-01-01", fecha_fin: "2026-12-31", prioridad: 1, tipo: "tarifa" },
       { nombre: "PROMO_LEGACY", fecha_inicio: "2026-01-01", fecha_fin: "2026-12-31", prioridad: 2, tipo: "descuento_pct", descuento_valor: 15 },
     ];
-    // Solo existe la fila BASE en tarifa_hotel — la promo legacy nunca tuvo
-    // fila propia (así funcionaba TODO el sistema antes de esta ronda).
+    // Solo existe la fila BASE en tarifa_hotel — "PROMO_LEGACY" nunca tuvo
+    // fila propia. El camino "legacy" que recalculaba desde la base con
+    // `descuento_valor` quedó RETIRADO en esta ronda: cambiar
+    // `descuento_valor` sin regenerar tarifas ya no cambia ningún precio.
     const netoPorTemporada: Record<string, number | null> = { BAJA: 100000 };
     const t0 = new Date("2026-06-01T00:00:00").getTime();
 
@@ -231,9 +233,31 @@ describe("Compatibilidad — promoción LEGACY sin marca conserva el comportamie
     const conSetVacio = resolverNetoNocheDetallado(t0, temporadas, netoPorTemporada, hoy, "PC", new Set());
     for (const r of [sinSet, conSetVacio]) {
       assert.ok(r);
-      assert.equal(r!.neto, Math.round(100000 * 0.85));
+      assert.equal(r!.neto, 100000); // SIN descuento — antes: Math.round(100000 * 0.85) = 85000
       assert.equal(r!.temporadaTarifa, "BAJA");
+      assert.equal(r!.temporadaGanadora, "BAJA", "la base gana directamente — la vigencia ignorada nunca queda como 'ganadora'");
+      assert.equal(r!.esPromocion, false);
     }
+  });
+
+  test("cambiar descuento_valor de 10 a 20 sin regenerar tarifas NO cambia el precio publicado (la vigencia sin fila propia es puramente decorativa)", () => {
+    const netoPorTemporada: Record<string, number | null> = { BASE_FULL: 400000 };
+    const t0 = new Date("2026-06-01T00:00:00").getTime();
+    const conDiez: TemporadaRango[] = [
+      { nombre: "BASE_FULL", fecha_inicio: "2026-01-01", fecha_fin: "2026-12-31", prioridad: 1, tipo: "tarifa" },
+      { nombre: "PROMOCION", fecha_inicio: "2026-01-01", fecha_fin: "2026-12-31", prioridad: 2, tipo: "descuento_pct", descuento_valor: 10 },
+    ];
+    const conVeinte: TemporadaRango[] = [
+      { nombre: "BASE_FULL", fecha_inicio: "2026-01-01", fecha_fin: "2026-12-31", prioridad: 1, tipo: "tarifa" },
+      { nombre: "PROMOCION", fecha_inicio: "2026-01-01", fecha_fin: "2026-12-31", prioridad: 2, tipo: "descuento_pct", descuento_valor: 20 },
+    ];
+    const r10 = resolverNetoNocheDetallado(t0, conDiez, netoPorTemporada, hoy, "FULL");
+    const r20 = resolverNetoNocheDetallado(t0, conVeinte, netoPorTemporada, hoy, "FULL");
+    assert.ok(r10);
+    assert.ok(r20);
+    assert.equal(r10!.neto, 400000);
+    assert.equal(r20!.neto, 400000);
+    assert.equal(r10!.neto, r20!.neto, "editar descuento_valor de una vigencia sin fila propia nunca debe cambiar el precio publicado");
   });
 });
 
@@ -299,18 +323,35 @@ describe("resolverNetoNocheDetallado — temporadaGanadora/esPromocion: clasific
     assert.equal(r!.esPromocion, false);
   });
 
-  test("temporada descuento_pct LEGACY (sin ninguna fila de tarifa_hotel marcada) → esPromocion:true, temporadaGanadora = la PROMO, NUNCA la base — aunque `temporadaTarifa` (la fila que aportó el neto) sí sea la base", () => {
+  test("temporada descuento_pct SIN fila materializada → se ignora: gana la BASE, esPromocion:false, temporadaGanadora = la base", () => {
     const temporadas: TemporadaRango[] = [
       { nombre: "BAJA", fecha_inicio: "2026-01-01", fecha_fin: "2026-12-31", prioridad: 1, tipo: "tarifa" },
-      { nombre: "PROMO_LEGACY", fecha_inicio: "2026-01-01", fecha_fin: "2026-12-31", prioridad: 2, tipo: "descuento_pct", descuento_valor: 15 },
+      { nombre: "PROMO_SIN_FILA", fecha_inicio: "2026-01-01", fecha_fin: "2026-12-31", prioridad: 2, tipo: "descuento_pct", descuento_valor: 15 },
     ];
     const t0 = new Date("2026-06-01T00:00:00").getTime();
+    // Sin entrada para "PROMO_SIN_FILA" en netoPorTemporada — nunca se
+    // materializó. Regla definitiva: se ignora, la BASE gana directo.
     const r = resolverNetoNocheDetallado(t0, temporadas, { BAJA: 100000 }, "2026-01-01");
     assert.ok(r);
-    assert.equal(r!.temporadaGanadora, "PROMO_LEGACY");
-    assert.equal(r!.esPromocion, true);
-    assert.equal(r!.temporadaTarifa, "BAJA", "la identidad de la FILA que aportó el neto sigue siendo la base (para edades/condiciones) — distinta de temporadaGanadora");
+    assert.equal(r!.temporadaGanadora, "BAJA");
+    assert.equal(r!.esPromocion, false);
+    assert.equal(r!.temporadaTarifa, "BAJA");
+    assert.equal(r!.neto, 100000, "sin descuento — la vigencia sin fila propia nunca aporta ni modifica el precio");
     assert.equal(r!.precioFinalAutoritativo, false);
+  });
+
+  test("temporada descuento_pct CON fila materializada → esPromocion:true, temporadaGanadora = la promo (misma identidad que temporadaTarifa)", () => {
+    const temporadas: TemporadaRango[] = [
+      { nombre: "BAJA", fecha_inicio: "2026-01-01", fecha_fin: "2026-12-31", prioridad: 1, tipo: "tarifa" },
+      { nombre: "PROMO_CON_FILA", fecha_inicio: "2026-01-01", fecha_fin: "2026-12-31", prioridad: 2, tipo: "descuento_pct", descuento_valor: 15 },
+    ];
+    const t0 = new Date("2026-06-01T00:00:00").getTime();
+    const r = resolverNetoNocheDetallado(t0, temporadas, { BAJA: 100000, PROMO_CON_FILA: 85000 }, "2026-01-01");
+    assert.ok(r);
+    assert.equal(r!.temporadaGanadora, "PROMO_CON_FILA");
+    assert.equal(r!.esPromocion, true);
+    assert.equal(r!.temporadaTarifa, "PROMO_CON_FILA", "ahora SIEMPRE es la misma identidad que temporadaGanadora — ya no hay camino que recalcule desde una base distinta");
+    assert.equal(r!.neto, 85000, "el neto materializado, tal cual — nunca 85000 recalculado desde 100000×0,85 de forma implícita");
   });
 
   test("sin ninguna vigencia cubriendo la fecha → null (nunca se inventa 'Base' por defecto)", () => {
@@ -336,13 +377,15 @@ describe("liquidarHotelMasBaratoConTemporada — procedencia EXACTA, nunca recon
       // Solo cubre el TRAMO FINAL de la ventana — nunca la fecha `desde`.
       { nombre: "PROMO_TARDIA", fecha_inicio: "2026-06-08", fecha_fin: "2026-06-10", prioridad: 2, tipo: "descuento_pct", descuento_valor: 80 },
     ];
-    const netoPorTemporada = { BASE_TOTAL: 100000 };
+    // PROMO_TARDIA con su fila MATERIALIZADA (20000) — regla definitiva: sin
+    // esta fila propia, la vigencia se ignoraría por completo.
+    const netoPorTemporada = { BASE_TOTAL: 100000, PROMO_TARDIA: 20000 };
     const r = liquidarHotelMasBaratoConTemporada({
       desde: "2026-06-01", hasta: "2026-06-10", numNoches: 3, temporadas, netoPorTemporada, hoy: "2026-01-01",
     });
     assert.ok(r);
-    // 100000 × (1 − 80%) = 20000, muy por debajo de los 100000 de la base —
-    // la noche más barata de la ventana SOLO puede venir de PROMO_TARDIA.
+    // 20000, muy por debajo de los 100000 de la base — la noche más barata
+    // de la ventana SOLO puede venir de PROMO_TARDIA.
     assert.equal(r!.procedencia.length, 1, "masBarato siempre reporta UNA sola noche representativa");
     assert.equal(r!.procedencia[0].temporadaGanadora, "PROMO_TARDIA");
     assert.equal(r!.procedencia[0].esPromocion, true);
@@ -360,12 +403,13 @@ describe("liquidarHotelMasBaratoConTemporada — procedencia EXACTA, nunca recon
       // Temporada BASE distinta, mucho más barata, cubre el resto de la ventana.
       { nombre: "BASE_BAJA", fecha_inicio: "2026-06-04", fecha_fin: "2026-06-10", prioridad: 1, tipo: "tarifa" },
     ];
-    const netoPorTemporada = { BASE_ALTA: 200000, BASE_BAJA: 90000 };
+    // PROMO_MODESTA con su fila materializada (180000).
+    const netoPorTemporada = { BASE_ALTA: 200000, PROMO_MODESTA: 180000, BASE_BAJA: 90000 };
     const r = liquidarHotelMasBaratoConTemporada({
       desde: "2026-06-01", hasta: "2026-06-10", numNoches: 3, temporadas, netoPorTemporada, hoy: "2026-01-01",
     });
     assert.ok(r);
-    // PROMO_MODESTA en 06-01..06-03: 200000×0.9 = 180000. BASE_BAJA en
+    // PROMO_MODESTA en 06-01..06-03: 180000 (materializado). BASE_BAJA en
     // 06-04..06-10: 90000 — mucho más barata. La noche ganadora es BASE_BAJA
     // pese a que `desde` (fecha_ida) cae en la temporada PROMOCIONAL.
     assert.equal(r!.procedencia.length, 1);
@@ -383,17 +427,18 @@ describe("liquidarHotelMasBaratoConTemporada — procedencia EXACTA, nunca recon
       { nombre: "PROMO_ALTA", fecha_inicio: "2026-06-01", fecha_fin: "2026-06-03", prioridad: 2, tipo: "descuento_pct", descuento_valor: 10 },
       { nombre: "BASE_BAJA", fecha_inicio: "2026-06-04", fecha_fin: "2026-06-10", prioridad: 1, tipo: "tarifa" },
     ];
-    // Acomodación "doble": BASE_BAJA sí tiene neto cargado → gana ella (Base).
+    // Acomodación "doble": BASE_BAJA sí tiene neto cargado y es más barata
+    // que la promo materializada (180000) → gana ella (Base).
     const rDoble = liquidarHotelMasBaratoConTemporada({
       desde: "2026-06-01", hasta: "2026-06-10", numNoches: 3, temporadas,
-      netoPorTemporada: { BASE_ALTA: 200000, BASE_BAJA: 90000 }, hoy: "2026-01-01",
+      netoPorTemporada: { BASE_ALTA: 200000, PROMO_ALTA: 180000, BASE_BAJA: 90000 }, hoy: "2026-01-01",
     });
     // Acomodación "triple": el hotel NUNCA cargó tarifa de BASE_BAJA para
     // triple (no hay entrada en el mapa) — la única opción disponible en
-    // toda la ventana es la promo del tramo inicial.
+    // toda la ventana es la promo del tramo inicial, con su fila materializada.
     const rTriple = liquidarHotelMasBaratoConTemporada({
       desde: "2026-06-01", hasta: "2026-06-10", numNoches: 3, temporadas,
-      netoPorTemporada: { BASE_ALTA: 200000 }, hoy: "2026-01-01",
+      netoPorTemporada: { BASE_ALTA: 200000, PROMO_ALTA: 180000 }, hoy: "2026-01-01",
     });
     assert.ok(rDoble);
     assert.ok(rTriple);
@@ -483,7 +528,9 @@ describe("liquidarHotelNochesConTemporadas — procedencia agregada de TODAS las
       { nombre: "PROMO", fecha_inicio: diaPromo, fecha_fin: diaPromo, prioridad: 2, tipo: "descuento_pct", descuento_valor: 50 },
     ];
   }
-  const netoPorTemporada = { BAJA: 100000 };
+  // PROMO con su fila materializada (50000) — regla definitiva: sin ella la
+  // vigencia se ignoraría y la noche seguiría en BAJA (100000).
+  const netoPorTemporada = { BAJA: 100000, PROMO: 50000 };
 
   test("estadía fija BASE → PROMOCIÓN (noche 1 base, noche 2 promoción) — el total suma ambas Y la procedencia reporta las DOS, en orden cronológico", () => {
     const r = liquidarHotelNochesConTemporadas({
@@ -513,8 +560,10 @@ describe("liquidarHotelNochesConTemporadas — procedencia agregada de TODAS las
       { nombre: "PROMO_A", fecha_inicio: "2026-06-01", fecha_fin: "2026-06-01", prioridad: 2, tipo: "descuento_pct", descuento_valor: 20 },
       { nombre: "PROMO_B", fecha_inicio: "2026-06-02", fecha_fin: "2026-06-02", prioridad: 2, tipo: "descuento_monto", descuento_valor: 15000 },
     ];
+    // PROMO_A y PROMO_B con sus filas materializadas (80000 y 85000).
+    const netoDosPromos = { BAJA: 100000, PROMO_A: 80000, PROMO_B: 85000 };
     const r = liquidarHotelNochesConTemporadas({
-      fechaIda: "2026-06-01", numNoches: 2, temporadas: temporadasDosPromos, netoPorTemporada, hoy: "2026-01-01",
+      fechaIda: "2026-06-01", numNoches: 2, temporadas: temporadasDosPromos, netoPorTemporada: netoDosPromos, hoy: "2026-01-01",
     });
     assert.ok(r);
     // PROMO_A: 100000×0.8 = 80000. PROMO_B: 100000−15000 = 85000.
@@ -540,11 +589,13 @@ describe("liquidarHotelNochesConTemporadas — procedencia agregada de TODAS las
       { nombre: "BAJA", fecha_inicio: "2026-06-01", fecha_fin: "2026-06-10", prioridad: 1, tipo: "tarifa" },
       { nombre: "PROMO", fecha_inicio: "2026-06-01", fecha_fin: "2026-06-10", prioridad: 2, tipo: "descuento_pct", descuento_valor: 30 },
     ];
+    // PROMO con su fila materializada (70000).
+    const netoSoloPromo = { BAJA: 100000, PROMO: 70000 };
     const r = liquidarHotelNochesConTemporadas({
-      fechaIda: "2026-06-01", numNoches: 3, temporadas: soloPromo, netoPorTemporada, hoy: "2026-01-01",
+      fechaIda: "2026-06-01", numNoches: 3, temporadas: soloPromo, netoPorTemporada: netoSoloPromo, hoy: "2026-01-01",
     });
     assert.ok(r);
-    assert.equal(r!.total, Math.round(100000 * 0.7) * 3);
+    assert.equal(r!.total, 70000 * 3);
     assert.deepEqual(r!.procedencia, [{ temporadaGanadora: "PROMO", esPromocion: true, precioFinalAutoritativo: false }]);
   });
 });
@@ -576,7 +627,8 @@ describe("promo_noche_gratis — forma parte de la procedencia (nunca solo reduc
       { nombre: "PROMO50", fecha_inicio: "2026-06-02", fecha_fin: "2026-06-02", prioridad: 2, tipo: "descuento_pct", descuento_valor: 50 },
       { nombre: "2X1", fecha_inicio: "2026-06-01", fecha_fin: "2026-06-10", prioridad: 1, tipo: "promo_noche_gratis", min_noches: 2 },
     ];
-    const netoPorTemporada = { BAJA: 100000 };
+    // PROMO50 con su fila materializada (50000).
+    const netoPorTemporada = { BAJA: 100000, PROMO50: 50000 };
     const r = liquidarHotelNochesConTemporadas({
       fechaIda: "2026-06-01", numNoches: 2, temporadas, netoPorTemporada, hoy: hoyRef,
     });
