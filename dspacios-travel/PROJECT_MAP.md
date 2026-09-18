@@ -1,6 +1,6 @@
 # PROJECT_MAP.md
 
-Mapa del proyecto. Última actualización: 2026-09-17
+Mapa del proyecto. Última actualización: 2026-09-18
 
 ## Stack
 - App activa: `dspacios-travel/` — Next.js 16.x, React 19, TypeScript, Tailwind v4, pnpm
@@ -27,6 +27,7 @@ Mapa del proyecto. Última actualización: 2026-09-17
 | Add-ons (catálogo general) | Entrada directa a `BuscadorReceptivos` sin `paqueteId` (búsqueda general por destino); el modo acotado solo se abandona con `Limpiar resultados` | Sin alcance de paquete |
 | Snapshot tarifario (vivo) | La 181 invalida por fuentes; `iniciar_generacion_tarifario` captura revisión/generación y `publicar_tarifario_resultado` reemplaza el snapshot atómicamente si el token sigue vigente (migración `supabase/migrations/...181`). La 182 expone `tarifario_resultado_publicable` (join autoritativo con `armado_paquetes`, security_barrier). Lectores en vivo: `lib/tarifario/paginacion.ts`, `app/tarifario/detalle-actions.ts`, `lib/reservar/cotizar.ts`, `lib/reservar/computo.ts` | Vista publicable |
 | Snapshot tarifario (diagnóstico) | Administración lee `tarifario_resultado` crudo para diagnóstico; históricos (contratos/cotizaciones congelados) y Bernalo/unidad no dependen del snapshot actual | Autorizado |
+| Fuente autoritativa y recálculo de tarifas | `tarifa_hotel` materializada es la fuente autoritativa del precio; la vigencia es metadata y no deriva precios. Crear/editar/eliminar tarifas o temporadas regenera los paquetes asociados por el `hotel_id` autoritativo de la fila; una promoción solo gana si existe su fila materializada; sin ella gana la siguiente tarifa materializada válida; prioridad de suplemento promoción > base > general (PR #316, squash `ff9507da`) | Panel |
 | Tarjeta completa (exploración) | `HotelModal` en `app/tarifario/VistaBooking.tsx` — cuatro secciones, orden Salidas → Motor interno → Incluye → Servicios add-on | Vista Booking |
 | Tarjeta completa (resultados "Buscar alojamiento") | Dos variantes reales: `Resultado` en `app/tarifario/BuscadorBooking.tsx` (hotel persona) y `TarjetaUnidadBusqueda` en `app/tarifario/VistaBooking.tsx` (unidad/Bernalo) | Vista Booking |
 | Piezas compartidas de tarjeta | `app/tarifario/tarjetaHotelCompartida.tsx` (`Categoria`, `EtiquetasHotel`, `DescripcionHotelExpandible`, `UbicacionHotel`, `SeccionesIncluye`, `AddonsPaquete`, `ReceptivoModal`), reutilizado por `VistaBooking.tsx` y `BuscadorBooking.tsx` (archivo propio para evitar ciclo de módulos) | Vista Booking |

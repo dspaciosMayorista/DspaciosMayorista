@@ -1,19 +1,17 @@
 # CURRENT_GOAL.md
 
-Objetivo actual: **Recalcular paquetes al editar tarifas o promociones** — mantener coherentes los paquetes que usan un hotel cuando cambian sus tarifas o promociones.
+Objetivo actual: **Hoteles recomendados** — permitir un maximo de 6 hoteles recomendados con prioridad manual de 1 a 6 y mostrar despues el resto del inventario con un orden definido por precio, estrellas/localizacion y etiquetas.
 
 Alcance:
-- Recalcular automaticamente todos los paquetes que usan un hotel cuando se guarda, edita o elimina una tarifa o promocion.
-- Respetar promociones restringidas por alimentacion sin borrar tarifas base validas de otros planes.
-- Cubrir edicion, eliminacion y relaciones entre hotel, tarifa, promocion y paquete.
+- Permitir un maximo de 6 hoteles recomendados con prioridad manual de 1 a 6.
+- Mostrar despues el resto del inventario con un orden definido por precio, estrellas/localizacion y etiquetas.
 
 Fuera de alcance:
 - No implementar ni diagnosticar codigo todavia en esta rama documental.
-- No tocar el flujo de tarjetas/motor externo ya cerrado ni migraciones no relacionadas.
-- No abordar otros pendientes de `TASKS.md`.
+- No abordar la deuda del metadata de la vigencia promocional (ver `TASKS.md`).
+- No tocar otros pendientes de `TASKS.md`.
 
 Criterio de cierre:
-- Guardar, editar o eliminar una tarifa/promocion recalcula los paquetes afectados.
-- Las promociones restringidas por alimentacion no borran tarifas base validas de otros planes.
-- Cobertura de edicion, eliminacion y relaciones hotel-tarifa-promocion-paquete.
+- Maximo de 6 recomendados con prioridad manual aplicada.
+- Resto del inventario ordenado por precio, estrellas/localizacion y etiquetas.
 - Pruebas y validacion del usuario segun el flujo acordado.
