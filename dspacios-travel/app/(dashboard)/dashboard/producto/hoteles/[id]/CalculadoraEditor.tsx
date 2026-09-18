@@ -372,7 +372,7 @@ function DubaiForm({
         </div>
       )}
       <div>
-        <p className={lbl}>Promociones <span className="font-normal text-gray-400">(descuento % SOLO sobre la base, el suplemento de régimen nunca se descuenta)</span></p>
+        <p className={lbl}>Promociones <span className="font-normal text-gray-400">(el descuento % se aplica sobre la tarifa completa del régimen ya resuelta, incluido el suplemento efectivo)</span></p>
         <p className="mb-2 text-[11px] text-gray-500">
           La <b>temporada promo</b> debe existir como vigencia del hotel (créala arriba en Temporadas, con su propia fecha/vigencia de compra).
           Cada promo aplica <b>solo al régimen elegido</b>, aunque el hotel tenga varios.

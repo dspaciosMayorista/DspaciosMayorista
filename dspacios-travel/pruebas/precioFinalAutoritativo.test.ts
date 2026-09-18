@@ -105,9 +105,13 @@ describe("generarTarifasDubai — identidad de precio final (migración 179)", (
     const base = filas.find((f) => f.temporada === "BAJA" && f.tipo_habitacion === "estandar" && f.alimentacion === "PC")!;
     const promo = filas.find((f) => f.temporada === "PROMO10" && f.tipo_habitacion === "estandar" && f.alimentacion === "PC")!;
     assert.equal(base.neto_doble, 100000); // base × 1, sin suplemento (régimen base)
-    // 100000 × (1 − 10%) = 90000 + suplemento propio 5000 = 95000 — NUNCA 90000
-    // (que sería ignorar el suplemento propio, el error que corrige esta ronda).
-    assert.equal(promo.neto_doble, 95000);
+    // Regla comercial (corrección posterior): (100000 + 5000) × (1 − 10%) = 94500
+    // — el suplemento propio (5000) entra al valor COMPLETO del régimen ANTES
+    // del descuento, y el descuento lo cubre también. NUNCA 90000 (que sería
+    // ignorar el suplemento propio por completo) ni 95000 (que sería sumar el
+    // suplemento DESPUÉS del descuento, sin descontarlo — el error original
+    // de esta ronda, corregido en `generarTarifasDubai`).
+    assert.equal(promo.neto_doble, 94500);
   });
 
   test("la promo lleva su condición propia en `notas`; la base no lleva notas", () => {
@@ -143,7 +147,7 @@ describe("resolverNetoNocheDetallado — ANTES del fix (sin precioFinalTemporada
     assert.ok(r);
     // 100000 × (1 − 10%) = 90000 — el descuento SE VOLVIÓ A APLICAR sobre la
     // base, perdiendo el suplemento propio de 5000 (el precio real de la
-    // promo es 95000, ver la prueba de generarTarifasDubai arriba).
+    // promo es 94500, ver la prueba de generarTarifasDubai arriba).
     assert.equal(r!.neto, 90000);
     // Identidad = la BASE, nunca la promo — por esto la condición/edades
     // propias de la promoción nunca llegaban a cotización/contrato.
@@ -152,12 +156,12 @@ describe("resolverNetoNocheDetallado — ANTES del fix (sin precioFinalTemporada
 });
 
 describe("resolverNetoNocheDetallado — DESPUÉS del fix (con precioFinalTemporadas): usa el precio final una sola vez", () => {
-  test("usa EXACTAMENTE el neto de la fila de la promo (95.000, con su suplemento propio) y devuelve su propia identidad", () => {
+  test("usa EXACTAMENTE el neto de la fila de la promo (94.500, con su suplemento propio ya descontado junto con la base) y devuelve su propia identidad", () => {
     const { temporadas, netoPorTemporada, precioFinalTemporadas } = escenarioPromo();
     const t0 = new Date("2026-06-01T00:00:00").getTime();
     const r = resolverNetoNocheDetallado(t0, temporadas, netoPorTemporada, hoy, "PC", precioFinalTemporadas);
     assert.ok(r);
-    assert.equal(r!.neto, 95000);
+    assert.equal(r!.neto, 94500);
     assert.equal(r!.temporadaTarifa, "PROMO10");
   });
 
@@ -166,7 +170,7 @@ describe("resolverNetoNocheDetallado — DESPUÉS del fix (con precioFinalTempor
     const total = liquidarHotelNoches({
       fechaIda: "2026-06-01", numNoches: 3, temporadas, netoPorTemporada, hoy, regimen: "PC", precioFinalTemporadas,
     });
-    assert.equal(total, 95000 * 3);
+    assert.equal(total, 94500 * 3);
   });
 
   test("liquidarHotelMasBarato (ventana 'desde') también usa el precio final de la promo", () => {
@@ -174,7 +178,7 @@ describe("resolverNetoNocheDetallado — DESPUÉS del fix (con precioFinalTempor
     const total = liquidarHotelMasBarato({
       desde: "2026-06-01", hasta: "2026-06-05", numNoches: 3, temporadas, netoPorTemporada, hoy, regimen: "PC", precioFinalTemporadas,
     });
-    assert.equal(total, 95000 * 3);
+    assert.equal(total, 94500 * 3);
   });
 
   test("liquidarHotelNochesConTemporadas devuelve `temporadasTarifa` con el nombre de la PROMO, no de la base", () => {

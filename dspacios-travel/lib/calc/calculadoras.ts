@@ -121,8 +121,13 @@ export type TarifaGenerada = {
 //   múltiple = (base×2 + base×(1+3erPax%) + base×(1+4toPax%)) / 4
 //   niño     = base × (1 + niño%)
 // Luego cada régimen suma un monto fijo por persona (el base suma 0).
-// Promoción de temporada: descuento % sobre la BASE (antes de sumar el
-// suplemento de régimen) — el suplemento NUNCA se descuenta. Genera una
+// Promoción de temporada (regla comercial, corregida — antes el descuento
+// se aplicaba SOLO a la base y el suplemento se sumaba después intacto):
+// el % de descuento se aplica sobre la tarifa COMPLETA del régimen
+// promocionado — base + suplemento efectivo (propio de la promo, si no el
+// propio de la base, si no el general) — así que el suplemento SÍ queda
+// descontado junto con la base. El régimen base nunca suma suplemento
+// (salvo que la propia promoción fuerce uno con su override). Genera una
 // temporada NUEVA (`temporadaPromo`, debe existir como vigencia de `hotel_temporadas`
 // con su propia vigencia de compra/fechas) a partir de una base ya cargada
 // (`temporadaBase`), y SOLO para el régimen elegido (aunque el hotel tenga
@@ -259,30 +264,45 @@ export function generarTarifasDubai(p: DubaiParams): TarifaGenerada[] {
     return suplementoGeneralDe(regimen);
   };
 
-  /** Suplemento EFECTIVO de una PROMO para su propio régimen: si activó
-   * suplemento propio, ESE valor exclusivo (incluso si es el régimen base
-   * — una promo sí puede justificarlo); si no, el general. */
-  const suplementoEfectivoPromo = (promo: DubaiPromo, regimen: string): number => {
+  /** Suplemento EFECTIVO de una PROMO para su propio régimen — prioridad
+   * (regla comercial, corrección de esta ronda):
+   *   1) suplemento propio de LA PROMOCIÓN, si lo activó (incluso sobre el
+   *      régimen base — una promo sí puede justificarlo, a diferencia de una
+   *      base);
+   *   2) si no, el suplemento propio de SU BASE (`suplementoEfectivoBase`,
+   *      que YA resuelve "propio de la base, si no general" — antes esta
+   *      función saltaba directo al general, ignorando por completo si la
+   *      base referenciada había activado `usarSuplementosPropios`);
+   *   3) el régimen base nunca lleva suplemento (ni por la promo por
+   *      defecto ni por la base) salvo que la PROMOCIÓN lo fuerce con su
+   *      propio override (paso 1). */
+  const suplementoEfectivoPromo = (promo: DubaiPromo, regimen: string, baseRef: DubaiBase): number => {
     if (promo.usarSuplementoPropio) return Number(promo.suplementoPropioMonto) || 0;
-    return regimen === regimenBase ? 0 : suplementoGeneralDe(regimen);
+    if (regimen === regimenBase) return 0;
+    return suplementoEfectivoBase(baseRef, regimen);
   };
 
   // Deriva sencilla/triple/múltiple/niño/niño2/infante a partir de una base +
-  // su suplemento — igual fórmula para tarifa normal y para promo (la promo
-  // solo cambia `base` y, si tiene suplemento propio, `sup`). ORDEN
-  // FINANCIERO: (1) descuento de promoción sobre `base` [ya aplicado por el
-  // llamador ANTES de invocar `derivar`], (2) modificador de acomodación/
-  // niño/niño2/infante sobre esa base ya descontada, (3) suplemento efectivo
-  // SUMADO AL FINAL — nunca recibe descuento ni modificador. Un solo
-  // `Math.round()` por valor final, sin redondeos intermedios.
-  const derivar = (base: number, sup: number) => ({
-    sencilla: Math.round(base * f(m.sencilla_pct) + sup),
-    doble: Math.round(base + sup),
-    triple: Math.round((base * 2 + base * f(m.pax3_pct)) / 3 + sup),
-    multiple: Math.round((base * 2 + base * f(m.pax3_pct) + base * f(m.pax4_pct)) / 4 + sup),
-    nino: Math.round(base * f(m.nino_pct) + sup),
-    nino2: tieneNino2 ? Math.round(base * f(m.nino2_pct as number) + sup) : null,
-    infante: Math.max(0, Math.round(base * f(infantePct) + sup)),
+  // su suplemento, con un `factor` multiplicativo opcional (descuento de
+  // promoción). ORDEN FINANCIERO (regla comercial, corrección de esta
+  // ronda): (1) se construye el valor COMPLETO del régimen —
+  // modificador de acomodación/niño/niño2/infante sobre la base CRUDA (sin
+  // descontar) + el suplemento efectivo, SUMADO; (2) el `factor` (1 si es
+  // tarifa regular, `1 - descuentoPct/100` si es promoción) se aplica sobre
+  // ese valor YA COMPLETO — el suplemento SÍ queda descontado junto con la
+  // base, nunca aparte. Antes, para promociones, se descontaba solo `base`
+  // (el modificador ya operaba sobre la base descontada) y el suplemento se
+  // sumaba DESPUÉS, intacto — eso ignoraba que el descuento debe aplicar
+  // sobre la tarifa completa del régimen, no solo sobre la porción PAE. Un
+  // solo `Math.round()` por valor final, sin redondeos intermedios.
+  const derivar = (base: number, sup: number, factor = 1) => ({
+    sencilla: Math.round((base * f(m.sencilla_pct) + sup) * factor),
+    doble: Math.round((base + sup) * factor),
+    triple: Math.round(((base * 2 + base * f(m.pax3_pct)) / 3 + sup) * factor),
+    multiple: Math.round(((base * 2 + base * f(m.pax3_pct) + base * f(m.pax4_pct)) / 4 + sup) * factor),
+    nino: Math.round((base * f(m.nino_pct) + sup) * factor),
+    nino2: tieneNino2 ? Math.round((base * f(m.nino2_pct as number) + sup) * factor) : null,
+    infante: Math.max(0, Math.round((base * f(infantePct) + sup) * factor)),
   });
 
   for (const b of p.bases ?? []) {
@@ -318,14 +338,20 @@ export function generarTarifasDubai(p: DubaiParams): TarifaGenerada[] {
     }
   }
 
-  // Promociones: % de descuento SOLO sobre la base, por régimen elegido.
+  // Promociones: regla comercial (corrección de esta ronda) — el % de
+  // descuento se aplica sobre la tarifa COMPLETA del régimen (base +
+  // suplemento efectivo), nunca solo sobre la base. El suplemento efectivo
+  // se elige por prioridad: propio de la promoción > propio de la base
+  // referenciada > general del régimen (`suplementoEfectivoPromo`). El
+  // régimen base (PAE/PC/lo que sea `regimen_base`) nunca suma suplemento,
+  // salvo que la propia promoción lo fuerce con su override.
   for (const promo of p.promos ?? []) {
     const regimen = promo.regimen?.trim();
     const temporadaPromo = promo.temporadaPromo?.trim();
     const temporadaBase = promo.temporadaBase?.trim();
     const pct = Number(promo.descuentoPct) || 0;
     if (!regimen || !temporadaPromo || pct <= 0) continue;
-    const sup = suplementoEfectivoPromo(promo, regimen);
+    const factor = 1 - pct / 100;
     // Condición propia de ESTA promo — nunca se mezcla con la de otra
     // promo/base (cada fila generada acá lleva SOLO la de `promo`).
     const notasPromo = promo.condicionesPropias?.trim() || undefined;
@@ -333,11 +359,16 @@ export function generarTarifasDubai(p: DubaiParams): TarifaGenerada[] {
       if (b.temporada?.trim() !== temporadaBase) continue;
       const base = Number(b.precio) || 0;
       if (base <= 0 || !b.categoria?.trim()) continue;
-      // (1) Descuento de promoción SOLO sobre la base — el suplemento (3)
-      // se calcula/suma aparte, nunca se ve afectado por este descuento.
-      const basePromo = base * (1 - pct / 100);
-      // (2) Modificadores de acomodación/niño sobre la base ya descontada.
-      const d = derivar(basePromo, sup);
+      // El suplemento depende de LA BASE referenciada (su propio override,
+      // si lo activó) — se resuelve aquí, dentro del bucle de bases, porque
+      // antes de esta corrección se resolvía una sola vez ANTES del bucle
+      // (sin acceso a `b`), lo que hacía imposible consultar el suplemento
+      // propio de la base.
+      const sup = suplementoEfectivoPromo(promo, regimen, b);
+      // Valor completo del régimen (base + suplemento, por acomodación) con
+      // el descuento aplicado sobre el TOTAL — el suplemento queda
+      // descontado igual que la base, un solo redondeo final por valor.
+      const d = derivar(base, sup, factor);
       const edades = edadesDePromo(promo, b);
       out.push({
         tipo_habitacion: b.categoria.trim(),
