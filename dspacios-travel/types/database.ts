@@ -2300,8 +2300,10 @@ export type Database = {
         Relationships: [];
       };
       armado_hoteles: {
-        Row: { id: number; paquete_id: number; hotel_id: number; categorias: string[] | null; regimenes: string[] | null };
-        Insert: { id?: number; paquete_id: number; hotel_id: number; categorias?: string[] | null; regimenes?: string[] | null };
+        // `prioridad` (migración 183): null = no recomendado; 1-6 = recomendado
+        // con esa prioridad DENTRO de este paquete (nunca global al hotel).
+        Row: { id: number; paquete_id: number; hotel_id: number; categorias: string[] | null; regimenes: string[] | null; prioridad: number | null };
+        Insert: { id?: number; paquete_id: number; hotel_id: number; categorias?: string[] | null; regimenes?: string[] | null; prioridad?: number | null };
         Update: Partial<Database["public"]["Tables"]["armado_hoteles"]["Insert"]>;
         Relationships: [];
       };

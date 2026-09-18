@@ -17,6 +17,7 @@ import {
   type Receptivo, type ReceptivoModalInfo,
 } from "./tarjetaHotelCompartida";
 import type { DescripcionPaqueteRaw } from "@/lib/tarifario/descripcionPaquete";
+import { EtiquetaOferta } from "./EtiquetaOferta";
 
 // Veredicto POSITIVO del servidor sobre un hotel por unidad para las fechas y
 // la ocupación declaradas (`buscarAlojamientosUnidadPorFechas`). Se deriva del
@@ -495,8 +496,12 @@ export function BuscadorBooking({
 // COMPLETO de `infoPorHotel` (ubicación/video/condición incluidos, no solo un
 // subconjunto) y `descripcionPorPaquete`/`addonsPorPaquete` llegan iguales
 // que a los modales de exploración — nunca una fuente nueva de datos.
-export function Resultado({ r, foto, info, descripcionPorPaquete, addonsPorPaquete }: {
+export function Resultado({ r, recomendada = false, foto, info, descripcionPorPaquete, addonsPorPaquete }: {
   r: BusquedaResultado;
+  /** ¿Esta oferta es una de las recomendadas del paquete coincidente? Solo
+   * cambia la etiqueta de la tarjeta ("Recomendado · <paquete>" vs
+   * "<paquete>") — nunca qué se muestra ni qué se cobra. */
+  recomendada?: boolean;
   foto: string | null;
   info?: {
     estrellas: number | null; clasificacion: string | null; descripcion?: string | null;
@@ -557,6 +562,12 @@ export function Resultado({ r, foto, info, descripcionPorPaquete, addonsPorPaque
         ) : (
           <div className="flex h-full w-full items-center justify-center text-sm text-gray-300">Sin foto</div>
         )}
+        {/* Etiqueta de OFERTA (hallazgo 2): `r.paqueteId` es FIJO para este
+            resultado (una fila = un par hotel+paquete), así que el nombre del
+            paquete es cierto para toda la tarjeta — y va SIEMPRE, recomendada
+            o no, porque el mismo hotel puede venir en dos paquetes distintos
+            (ej. normal + 3x2) y cada tarjeta debe leerse como una oferta. */}
+        <EtiquetaOferta paqueteNombre={r.paqueteNombre} recomendada={recomendada} />
       </div>
       <div className="flex flex-1 flex-col gap-3 p-4">
         <div>

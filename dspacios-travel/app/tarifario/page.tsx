@@ -5,7 +5,7 @@ import { getProgramasResumen } from "@/lib/programas";
 import { Logo } from "@/components/Logo";
 import { BackgroundVideo } from "@/components/BackgroundVideo";
 import { cargarResumenTarifario, MSG_ERROR_CARGAR_TARIFARIO } from "@/lib/tarifario/resumen";
-import { cargarHotelesBernaloDescubiertos, cargarInfoHotelesBernalo, cargarDescripcionPaquetesBernalo } from "@/lib/tarifario/datosBernalo";
+import { cargarHotelesBernaloDescubiertos, cargarInfoHotelesBernalo, cargarDescripcionPaquetesBernalo, cargarPrioridadesRecomendadosBernalo } from "@/lib/tarifario/datosBernalo";
 import { idsPaqueteBernaloFaltantes, fusionarDescripcionPaquete } from "@/lib/tarifario/descripcionPaquete";
 import { orquestarCargaPublica } from "@/lib/tarifario/orquestacion";
 import {
@@ -141,6 +141,7 @@ export default async function TarifarioPublicoPage() {
   const {
     filasVisibles, filasAddon, cuposPorBloqueo, origenPorBloqueo, fotosPorHotel: fotosPorHotelLegacy, fotosPorServicio,
     infoPorHotel: infoPorHotelLegacy, capPorHotel, planesInfo, ventanaPorPaquete, descripcionPorPaquete: descripcionPorPaqueteLegacy,
+    prioridadesRecomendados,
   } = resDatos.datos;
 
   // P2 (hallazgo confirmado): las tarjetas de hoteles por unidad mostraban
@@ -168,6 +169,16 @@ export default async function TarifarioPublicoPage() {
   // round-trips secuenciales sin necesidad.
   const hotelIdsBernalo = [...new Set(hotelesBernalo.map((h) => h.hotelId))];
   const paqueteIdsBernaloFaltantes = idsPaqueteBernaloFaltantes(hotelesBernalo, descripcionPorPaqueteLegacy);
+  // Hoteles recomendados (migración 183) — prioridades de paquetes UNIDAD
+  // (ver la cabecera de `cargarPrioridadesRecomendadosBernalo`). Se LANZA
+  // acá (sin `await` todavía) para correr EN PARALELO con el `Promise.all`
+  // de abajo — nunca en serie después de él — y se resuelve más abajo. No
+  // se sumó como tercer elemento del `Promise.all` existente a propósito:
+  // `pruebas/descripcionPaquetesBernaloWiring.test.ts` fija ese bloque
+  // EXACTO (dos elementos) como guarda de regresión de concurrencia; un
+  // tercer elemento ahí lo habría roto sin necesidad.
+  const paqueteIdsBernaloTodos = [...new Set(hotelesBernalo.map((h) => h.paqueteId))];
+  const prioridadesBernaloPromise = cargarPrioridadesRecomendadosBernalo(paqueteIdsBernaloTodos);
   // ⚠️ Guarda de concurrencia (regresión ya corregida una vez): las DOS
   // cargas siguientes DEBEN lanzarse juntas en este `Promise.all` — nunca
   // `await cargarInfoHotelesBernalo(...)` seguido de un `await
@@ -178,6 +189,15 @@ export default async function TarifarioPublicoPage() {
     cargarInfoHotelesBernalo(hotelIdsBernalo),
     cargarDescripcionPaquetesBernalo(paqueteIdsBernaloFaltantes),
   ]);
+  const resultadoPrioridadesBernalo = await prioridadesBernaloPromise;
+  if (resultadoPrioridadesBernalo.error) {
+    registrarErrorTecnico(FLUJO, flujoId, "datos_auxiliares_pagina", "error_prioridades_recomendados_bernalo", resultadoPrioridadesBernalo.error);
+  }
+  // Fusión con las prioridades del flujo persona — misma clave
+  // (`claveOferta`, hotelId+paqueteId) en ambos conjuntos, así que combinan
+  // sin colisión (un hotel no puede ser persona y unidad para el mismo
+  // paquete a la vez).
+  const prioridadesRecomendadasCombinadas = { ...prioridadesRecomendados, ...resultadoPrioridadesBernalo.prioridades };
 
   // P5 (hallazgo confirmado, validación final): `cargarInfoHotelesBernalo`
   // ya NO devuelve un único `ok` para las DOS consultas (fotos/hoteles) —
@@ -288,7 +308,7 @@ export default async function TarifarioPublicoPage() {
         {!filasVisibles.length && !programas.length && !hotelesBernalo.length ? (
           <p className="py-20 text-center text-gray-400">Tarifario en preparación.</p>
         ) : (
-          <TarifarioPublic filas={filasVisibles} programas={programas} puedeReservar={puedeReservar} cuposPorBloqueo={cuposPorBloqueo} origenPorBloqueo={origenPorBloqueo} fotosPorHotel={fotosPorHotel} fotosPorServicio={fotosPorServicio} ventanaPorPaquete={ventanaPorPaquete} infoPorHotel={infoPorHotel} planesInfo={planesInfo} capPorHotel={capPorHotel} descripcionPorPaquete={descripcionPorPaquete} filasAddon={filasAddon} hotelesBernalo={hotelesBernalo} hotelIdsUnidadAutoritativos={hotelIdsUnidadAutoritativos} />
+          <TarifarioPublic filas={filasVisibles} programas={programas} puedeReservar={puedeReservar} cuposPorBloqueo={cuposPorBloqueo} origenPorBloqueo={origenPorBloqueo} fotosPorHotel={fotosPorHotel} fotosPorServicio={fotosPorServicio} ventanaPorPaquete={ventanaPorPaquete} infoPorHotel={infoPorHotel} planesInfo={planesInfo} capPorHotel={capPorHotel} descripcionPorPaquete={descripcionPorPaquete} filasAddon={filasAddon} hotelesBernalo={hotelesBernalo} hotelIdsUnidadAutoritativos={hotelIdsUnidadAutoritativos} prioridadesRecomendados={prioridadesRecomendadasCombinadas} />
         )}
       </main>
     </div>

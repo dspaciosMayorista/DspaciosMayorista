@@ -61,17 +61,19 @@ const cuerpoTarjetas = cuerpoFuncion(fuenteVista, "const tarjetas = useMemo<Tarj
 describe("Guarda — variantes que Vista Booking renderiza en modo búsqueda (Buscar alojamiento)", () => {
   test("con una búsqueda vigente (enBusquedaPorcion && busquedaPorcion), `tarjetas` SOLO produce tipo:'busqueda' (persona) y tipo:'unidad' CON opcionesBusqueda — nunca tipo:'persona' de exploración ni unidad sin opcionesBusqueda", () => {
     const idxRamaBusqueda = cuerpoTarjetas.indexOf("if (enBusquedaPorcion && busquedaPorcion) {");
-    const idxFinRamaBusqueda = cuerpoTarjetas.indexOf("const a: Tarjeta[] = hoteles");
+    const idxFinRamaBusqueda = cuerpoTarjetas.indexOf("const cardsPersona = hoteles.filter");
     assert.notEqual(idxRamaBusqueda, -1, "no se encontró la rama de modo búsqueda");
     assert.notEqual(idxFinRamaBusqueda, -1);
     const ramaBusqueda = cuerpoTarjetas.slice(idxRamaBusqueda, idxFinRamaBusqueda);
-    // La rama de búsqueda tiene su propio `return [...busca, ...unidad]...`
-    // — nunca cae a la rama de exploración (`a`/`b`) de abajo.
-    assert.match(ramaBusqueda, /return \[\.\.\.busca, \.\.\.unidad\]\.sort/);
+    // La rama de búsqueda tiene su propio return — recomendadas (migración
+    // 183) primero, resto después; nunca cae a la rama de exploración de abajo.
+    assert.match(ramaBusqueda, /return \[\.\.\.tarjetasRecomendadas, \.\.\.resto\];/);
     // Toda entrada tipo:"unidad" en la rama de búsqueda declara
-    // `opcionesBusqueda: u.opciones` explícitamente — nunca queda undefined
-    // (a diferencia de la rama de exploración, donde no se declara).
-    assert.match(ramaBusqueda, /tipo: "unidad" as const,[\s\S]*opcionesBusqueda: u\.opciones,/);
+    // `opcionesBusqueda: g.opciones` explícitamente — nunca queda undefined
+    // (a diferencia de la rama de exploración, donde no se declara). `g` es la
+    // oferta agrupada por (hotelId,paqueteId): sus opciones son SOLO las de
+    // ese paquete, nunca una mezcla de paquetes.
+    assert.match(ramaBusqueda, /tipo: "unidad" as const,[\s\S]*opcionesBusqueda: g\.opciones,/);
   });
 
   test("el JSX renderiza tipo:'busqueda' con <Resultado> y tipo:'unidad' con opcionesBusqueda con <TarjetaUnidadBusqueda> — el resto de ramas (persona/unidad de exploración) son inalcanzables durante una búsqueda", () => {

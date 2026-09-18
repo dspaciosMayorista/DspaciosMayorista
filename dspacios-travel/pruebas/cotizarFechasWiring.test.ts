@@ -174,8 +174,13 @@ describe("3. buscarHoteles — misma frontera saneada + carga cada par UNA sola 
     assert.ok(idxIf > -1 && idxPares > idxIf);
   });
   test("el bucle principal usa cargarDatosHotelPaquete + evaluarHotelPorFechas (nunca liquidarHotelPaquete, que oculta el motivo del fallo)", () => {
-    const idxFor = cuerpo.indexOf("for (const { paquete, hotel } of pares.values())");
+    // El bucle itera el par (paquete, hotel) y también lleva el nombre del
+    // paquete (`paqueteNombre`) que aporta la misma fila del tarifario — ver
+    // hallazgo 2 (etiqueta de oferta en VistaBooking).
+    const idxFor = cuerpo.indexOf("for (const { paquete, hotel, paqueteNombre } of pares.values())");
     const idxAcomCfg = cuerpo.indexOf("hotel_acomodaciones", idxFor);
+    assert.ok(idxFor > -1, "no se encontró el bucle principal sobre `pares`");
+    assert.ok(idxAcomCfg > idxFor);
     const bucleInicio = cuerpo.slice(idxFor, idxAcomCfg);
     assert.match(bucleInicio, /cargarDatosHotelPaquete\(admin, paquete, hotel\)/);
     assert.match(bucleInicio, /evaluarHotelPorFechas\(datos, input\.fechaIda, numNoches\)/);

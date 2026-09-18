@@ -36,6 +36,7 @@ import { createAdminClient } from "../supabase/admin.ts";
 import { empaquetadoVigente, hoyBogota } from "../reservar/origen.ts";
 import { construirSetParesPublicados, todosLosParesConfiguradosPublicados } from "../calc/paresPublicadosUnidad.ts";
 import { filasArmadoPaqueteADescripcionPorPaquete, type DescripcionPaqueteRaw, type FilaArmadoPaqueteDescripcion } from "./descripcionPaquete.ts";
+import { claveOferta } from "./recomendados.ts";
 
 // Identidad discriminada de una salida aérea real — nunca un índice `[0]`.
 // El servidor de cotización vuelve a validar que el id/tipo elegido
@@ -474,6 +475,39 @@ export async function cargarInfoHotelesBernalo(hotelIds: readonly number[]): Pro
     }
   }
   return { fotosPorHotel, infoPorHotel, errorFotos: eFotos?.message ?? null, errorInfo: eHoteles?.message ?? null };
+}
+
+// ── Hoteles recomendados (migración 183) — prioridades de paquetes UNIDAD ──
+// `lib/tarifario/resumen.ts::cargarResumenTarifario` solo consulta
+// `armado_hoteles.prioridad` para `paqIdsConHotel` (paquetes con fila
+// persona en `tarifario_resumen`) — un paquete cuyo ÚNICO hotel es
+// `modelo_tarifario = 'unidad'` nunca aparece ahí (mismo hallazgo que
+// `descripcionPorPaquete` arriba), así que sus prioridades quedarían
+// invisibles para VistaBooking. Este loader cierra ese hueco: consulta
+// `armado_hoteles.prioridad` para los `paqueteId` de `hotelesBernalo`
+// (descubrimiento paralelo), y el llamador (`page.tsx`) fusiona el
+// resultado con `prioridadesRecomendados` de la carga persona — la MISMA
+// clave (`claveOferta`, hotelId+paqueteId) en ambos, así que combinan sin
+// colisión (un paquete no puede ser persona Y unidad para el mismo hotel).
+// Best-effort: un error acá deja esa parte vacía (los hoteles recomendados
+// de paquetes unidad simplemente no aparecen como recomendados esa carga),
+// nunca bloquea la página — mismo criterio que el resto de este archivo.
+export async function cargarPrioridadesRecomendadosBernalo(
+  paqueteIds: readonly number[]
+): Promise<{ prioridades: Record<string, number>; error: string | null }> {
+  if (!paqueteIds.length) return { prioridades: {}, error: null };
+  const admin = createAdminClient();
+  const { data, error } = await admin
+    .from("armado_hoteles")
+    .select("paquete_id, hotel_id, prioridad")
+    .in("paquete_id", paqueteIds)
+    .not("prioridad", "is", null);
+  if (error) return { prioridades: {}, error: error.message };
+  const prioridades: Record<string, number> = {};
+  for (const f of data ?? []) {
+    if (f.prioridad != null) prioridades[claveOferta(f.hotel_id, f.paquete_id)] = f.prioridad;
+  }
+  return { prioridades, error: null };
 }
 
 // ── Hallazgo confirmado (auditoría posterior a la tarjeta completa) ────────

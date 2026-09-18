@@ -9,7 +9,7 @@ import { ConfigForm } from "../ConfigForm";
 import { SalidasDinamicasEditor, type SalidaDinamica } from "./SalidasDinamicasEditor";
 import {
   setVuelo, setTodosVuelos, setHotel, setTodosHoteles, setServicio, generarTarifario,
-  getTarifasHotel, setHotelFiltros, type TarifaHotelPreview, type TarifaUnidadPreview,
+  getTarifasHotel, setHotelFiltros, setHotelPrioridad, type TarifaHotelPreview, type TarifaUnidadPreview,
 } from "../actions";
 import { setEmpaquetado, setTodosEmpaquetados } from "../../vuelos/empaquetados-actions";
 
@@ -29,7 +29,7 @@ type Servicio = { id: number; nombre: string; precio_persona: number | null; des
 type SelServicio = { servicio_id: number; modo: string; incluido: boolean };
 type SelVuelo = { bloqueo_id: number; aplica_mk: boolean; ta: number };
 type SelEmpaquetado = { empaquetado_id: number; aplica_mk: boolean; ta: number };
-type SelHotel = { hotel_id: number; categorias: string[] | null; regimenes: string[] | null };
+type SelHotel = { hotel_id: number; categorias: string[] | null; regimenes: string[] | null; prioridad: number | null };
 type Resultado = {
   id: number; modulo: string; bloqueo_label: string | null; hotel_nombre: string | null;
   servicio_nombre: string | null; tipo_tarifa: string | null; pax_desde: number | null; pax_hasta: number | null;
@@ -92,6 +92,15 @@ export function ArmadoClient(props: {
   const empaquetadoSel = new Map(props.selEmpaquetados.map((e) => [e.empaquetado_id, e]));
   const hotelSel = new Map(props.selHoteles.map((h) => [h.hotel_id, h]));
   const servSel = new Map(props.selServicios.map((s) => [s.servicio_id, s]));
+  // Prioridades 1-6 YA tomadas por otros hoteles de ESTE paquete — para
+  // deshabilitar esas opciones en el selector de cada hotel (mensaje
+  // comprensible ANTES de guardar; el CHECK/índice único de la base es la
+  // garantía real, esto es solo UX). `hotel_id -> prioridad` completo (no
+  // excluye ninguno todavía); cada `HotelRow` excluye la SUYA propia al armar
+  // sus opciones disponibles.
+  const prioridadesOcupadas = new Map(
+    props.selHoteles.filter((h) => h.prioridad != null).map((h) => [h.hotel_id, h.prioridad as number])
+  );
 
   function refrescar() {
     router.refresh();
@@ -260,6 +269,7 @@ export function ArmadoClient(props: {
                   hotel={h}
                   sel={hotelSel.get(h.id)}
                   paqueteId={props.paqueteId}
+                  prioridadesOcupadas={prioridadesOcupadas}
                   onDone={refrescar}
                 />
               ))}
@@ -463,13 +473,17 @@ function EmpaquetadoRow({
   );
 }
 
+const PRIORIDADES = [1, 2, 3, 4, 5, 6] as const;
+
 function HotelRow({
-  hotel, sel, paqueteId, onDone,
+  hotel, sel, paqueteId, prioridadesOcupadas, onDone,
 }: {
-  hotel: Hotel; sel: SelHotel | undefined; paqueteId: number; onDone: () => void;
+  hotel: Hotel; sel: SelHotel | undefined; paqueteId: number;
+  prioridadesOcupadas: Map<number, number>; onDone: () => void;
 }) {
   const [, start] = useTransition();
   const [openModal, setOpenModal] = useState(false);
+  const [errPrioridad, setErrPrioridad] = useState("");
   const checked = !!sel;
 
   const resumen = !checked
@@ -478,9 +492,27 @@ function HotelRow({
       ? `${sel!.categorias?.length ?? "todas las"} categorías · ${sel!.regimenes?.length ?? "todos los"} regímenes`
       : "todas las categorías y regímenes";
 
+  // Prioridades tomadas por OTROS hoteles de este paquete (excluye la propia,
+  // si tiene una) — se muestran deshabilitadas en el selector, con mensaje
+  // comprensible en vez de dejar que el usuario intente y solo vea el error
+  // de la base después de guardar.
+  const ocupadasPorOtros = new Set(
+    [...prioridadesOcupadas.entries()].filter(([hId]) => hId !== hotel.id).map(([, p]) => p)
+  );
+
+  function cambiarPrioridad(valor: string) {
+    const prioridad = valor === "" ? null : Number(valor);
+    setErrPrioridad("");
+    start(async () => {
+      const r = await setHotelPrioridad(paqueteId, hotel.id, prioridad);
+      if (!r.ok) { setErrPrioridad(r.error); return; }
+      onDone();
+    });
+  }
+
   return (
     <li className="py-2.5">
-      <div className="flex items-center gap-3">
+      <div className="flex flex-wrap items-center gap-3">
         <input
           type="checkbox"
           checked={checked}
@@ -491,7 +523,7 @@ function HotelRow({
             })
           }
         />
-        <div className="flex-1">
+        <div className="min-w-0 flex-1">
           <button
             type="button"
             onClick={() => setOpenModal(true)}
@@ -504,6 +536,27 @@ function HotelRow({
             {checked ? resumen : "clic en el nombre para ver tarifas y elegir categorías/regímenes"}
           </p>
         </div>
+        {checked && (
+          <div className="flex flex-col items-end gap-1">
+            <label className="flex items-center gap-1.5 text-xs text-gray-600">
+              Recomendado
+              <select
+                value={sel!.prioridad ?? ""}
+                onChange={(e) => cambiarPrioridad(e.target.value)}
+                className="rounded-lg border border-gray-300 bg-white px-2 py-1 text-xs"
+                aria-label={`Prioridad de recomendación de ${hotel.nombre} en este paquete`}
+              >
+                <option value="">No recomendado</option>
+                {PRIORIDADES.map((p) => (
+                  <option key={p} value={p} disabled={ocupadasPorOtros.has(p)}>
+                    {p}{ocupadasPorOtros.has(p) ? " (ocupada)" : ""}
+                  </option>
+                ))}
+              </select>
+            </label>
+            {errPrioridad && <p className="max-w-[220px] text-right text-[11px] text-red-600">{errPrioridad}</p>}
+          </div>
+        )}
       </div>
       {openModal && (
         <HotelModal
