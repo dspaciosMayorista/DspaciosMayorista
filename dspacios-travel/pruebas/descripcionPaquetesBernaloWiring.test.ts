@@ -82,7 +82,7 @@ describe("lib/tarifario/datosBernalo.ts — cargarDescripcionPaquetesBernalo: so
 
 describe("app/tarifario/page.tsx — hilo completo: consulta SQL delegada, Promise.all combinado, propagación a TarifarioPublic", () => {
   test("importa cargarDescripcionPaquetesBernalo desde lib/tarifario/datosBernalo y los helpers puros desde lib/tarifario/descripcionPaquete", () => {
-    assert.match(fuentePage, /import \{ cargarHotelesBernaloDescubiertos, cargarInfoHotelesBernalo, cargarDescripcionPaquetesBernalo \} from "@\/lib\/tarifario\/datosBernalo";/);
+    assert.match(fuentePage, /import \{ cargarHotelesBernaloDescubiertos, cargarInfoHotelesBernalo, cargarDescripcionPaquetesBernalo, cargarPrioridadesRecomendadosBernalo \} from "@\/lib\/tarifario\/datosBernalo";/);
     assert.match(fuentePage, /import \{ idsPaqueteBernaloFaltantes, fusionarDescripcionPaquete \} from "@\/lib\/tarifario\/descripcionPaquete";/);
   });
 

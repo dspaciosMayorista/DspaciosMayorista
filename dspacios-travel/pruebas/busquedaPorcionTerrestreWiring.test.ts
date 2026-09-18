@@ -104,12 +104,16 @@ describe("Una sola lista de resultados — persona + unidad en la MISMA grilla",
     assert.doesNotMatch(codigoBuscador, /resumenResultados/, "el resumen/contador único vive en VistaBooking");
   });
 
-  test("VistaBooking tiene UNA sola grilla, UN solo contador y UN solo resultado por hotel", () => {
+  test("VistaBooking tiene UNA sola grilla, UN solo contador y UN solo resultado por OFERTA (hotelId+paqueteId)", () => {
     assert.equal([...codigoVista.matchAll(/\{tarjetas\.map\(\(t\) =>/g)].length, 1, "una sola grilla de tarjetas");
     assert.equal([...codigoVista.matchAll(/<Resultado\b/g)].length, 1, "la fila persona se pinta en un solo lugar");
     assert.equal([...codigoVista.matchAll(/\(\{tarjetas\.length\}\)/g)].length, 1, "un solo contador, y sale de la MISMA colección que se pinta");
-    // Ninguna lista paralela debajo (la grilla unidad tenía su propio `.map`).
-    assert.doesNotMatch(codigoVista, /hotelesUnidadVisibles\.map\(/);
+    // Ninguna lista paralela debajo (la grilla unidad tenía su propio `.map`
+    // JSX). El chequeo se acota al `.map` dentro de un contenedor JSX
+    // (`{hotelesUnidadVisibles.map(`): desde hoteles recomendados (migración
+    // 183) esa colección SÍ se recorre para derivar DATOS (el set de
+    // paqueteId coincidentes), y eso no es una lista paralela pintada.
+    assert.doesNotMatch(codigoVista, /\{hotelesUnidadVisibles\.map\(/);
     assert.doesNotMatch(codigoVista, /hotelesUnidadVisibles\.length/);
   });
 
@@ -121,10 +125,13 @@ describe("Una sola lista de resultados — persona + unidad en la MISMA grilla",
 
   test("persona y unidad entran a la MISMA colección `tarjetas` (una sola fuente, un solo orden)", () => {
     const posRama = cuerpoTarjetas.indexOf("if (enBusquedaPorcion && busquedaPorcion) {");
-    const posReturn = cuerpoTarjetas.indexOf("return [...busca, ...unidad].sort(");
-    // La grilla de exploración (persona `a` + unidad `b`) se arma DESPUÉS del
-    // return: son ramas excluyentes, nunca se suman.
-    const posGrillaExploracion = cuerpoTarjetas.indexOf("const a: Tarjeta[] = hoteles");
+    // El ensamblado antepone las recomendadas (en su propio orden de
+    // prioridad, migración 183) al resto ya alfabetizado — persona y unidad
+    // pasan por el MISMO return.
+    const posReturn = cuerpoTarjetas.indexOf("return [...tarjetasRecomendadas, ...resto];");
+    // La grilla de exploración (persona `cardsPersona` + unidad) se arma
+    // DESPUÉS del return: son ramas excluyentes, nunca se suman.
+    const posGrillaExploracion = cuerpoTarjetas.indexOf("const cardsPersona = hoteles.filter");
     assert.ok(posRama > -1, "falta la rama de modo búsqueda");
     assert.ok(posReturn > posRama, "la rama de búsqueda debe retornar su propia lista");
     assert.ok(posGrillaExploracion > posReturn, "el catálogo de exploración se arma sólo si NO hay búsqueda vigente");
@@ -148,19 +155,18 @@ describe("Una sola lista de resultados — persona + unidad en la MISMA grilla",
 
 describe("Disponibilidad REAL: la lista de búsqueda no se completa con el catálogo", () => {
   test("un hotel persona RECHAZADO por el motor no puede reaparecer desde la grilla precargada", () => {
-    // El filtro de destino de la grilla de exploración
-    // (`f.destino_nombre !== destinoPorcionEfectivo`) sigue existiendo para
-    // EXPLORAR, pero la rama de búsqueda retorna ANTES de que esa grilla se
-    // arme, así que en modo búsqueda no puede llegar a participar.
-    assert.match(codigoVista, /if \(mod === "porcion_terrestre" && destinoPorcionEfectivo && \(f\.destino_nombre \?\? ""\) !== destinoPorcionEfectivo\) return false;/);
-    const posReturn = cuerpoTarjetas.indexOf("return [...busca, ...unidad].sort(");
-    const posExploracion = cuerpoTarjetas.indexOf("const a: Tarjeta[] = hoteles");
+    // El filtro de destino de la grilla de exploración sigue existiendo, pero
+    // SOLO se activa con una búsqueda EJECUTADA (`destinoPorcionBusqueda`) —
+    // hallazgo 1: ya no cae al selector de exploración (que además se eliminó).
+    assert.match(codigoVista, /if \(mod === "porcion_terrestre" && destinoPorcionBusqueda && \(f\.destino_nombre \?\? ""\) !== destinoPorcionBusqueda\) return false;/);
+    const posReturn = cuerpoTarjetas.indexOf("return [...tarjetasRecomendadas, ...resto];");
+    const posExploracion = cuerpoTarjetas.indexOf("const cardsPersona = hoteles.filter");
     assert.ok(posReturn > -1, "falta el return de la lista de búsqueda");
     assert.ok(posExploracion > posReturn, "la grilla precargada se arma sólo si NO hay búsqueda vigente");
     // La fila persona del modo búsqueda sale EXCLUSIVAMENTE de la respuesta del motor.
     const ramaBusqueda = cuerpoTarjetas.slice(cuerpoTarjetas.indexOf("if (enBusquedaPorcion && busquedaPorcion) {"), posReturn);
     assert.match(ramaBusqueda, /for \(const r of busquedaPorcion\.resultados\) \{/);
-    assert.match(ramaBusqueda, /const busca: Tarjeta\[\] = \[\];/);
+    assert.match(ramaBusqueda, /const resultadosPersona: BusquedaResultado\[\] = \[\];/);
     assert.doesNotMatch(ramaBusqueda, /\bhoteles\b/, "la lista persona de la búsqueda no se completa con el catálogo precargado");
     assert.doesNotMatch(ramaBusqueda, /hotelesUnidadVisibles/, "la unidad de la búsqueda no se completa con la exploración");
   });
@@ -197,9 +203,12 @@ describe("Disponibilidad REAL: la lista de búsqueda no se completa con el catá
 
   test("fuera del modo búsqueda la exploración sigue funcionando normalmente", () => {
     assert.match(codigoVista, /const enBusquedaPorcion = sub === "porcion_terrestre" && busquedaPorcion != null;/);
-    assert.match(cuerpoTarjetas, /const a: Tarjeta\[\] = hoteles/);
-    assert.match(cuerpoTarjetas, /const b: Tarjeta\[\] = \[\.\.\.gruposUnidad\.entries\(\)\]\.map\(/);
-    assert.match(codigoVista, /value=\{destinoPorcionSel\}/, "el selector de destino de exploración sigue existiendo");
+    assert.match(cuerpoTarjetas, /const cardsPersona = hoteles\.filter/);
+    assert.match(cuerpoTarjetas, /const restoUnidad: Tarjeta\[\] = hotelesUnidadVisibles\s*\n\s*\.filter\(\(h\) => !esRecomendada\(h\.hotelId, h\.paqueteId\)\)/);
+    // El selector de destino de exploración se ELIMINÓ (era inerte): la
+    // exploración de Porción no tiene ningún control de destino propio — quien
+    // elige destino es el buscador real de arriba.
+    assert.doesNotMatch(codigoVista, /destinoPorcionSel/, "no debe quedar el estado del selector de exploración eliminado");
   });
 });
 
@@ -473,17 +482,19 @@ describe("VistaBooking — modo búsqueda (requisito A)", () => {
 
   test("el modo búsqueda SOLO existe en Porción terrestre: Bloqueo y Receptivos quedan intactos (requisito E)", () => {
     assert.match(codigoVista, /const enBusquedaPorcion = sub === "porcion_terrestre" && busquedaPorcion != null;/);
-    // Los DOS usos de `destinoPorcionEfectivo` están gateados por la pestaña
+    // Los DOS usos de `destinoPorcionBusqueda` están gateados por la pestaña
     // de Porción terrestre — nunca aplican a Bloqueo ni a Receptivos.
-    const gateados = [...codigoVista.matchAll(/if \(\w+ === "porcion_terrestre" && destinoPorcionEfectivo/g)].length;
+    const gateados = [...codigoVista.matchAll(/if \(\w+ === "porcion_terrestre" && destinoPorcionBusqueda/g)].length;
     assert.equal(gateados, 2, "persona + unidad: los dos filtros de destino deben estar gateados por la pestaña");
-    // Ninguna COMPARACIÓN contra el destino efectivo puede quedar fuera de
-    // esos dos filtros gateados.
+    // Ninguna COMPARACIÓN contra el destino de la búsqueda puede quedar fuera
+    // de esos dos filtros gateados. La derivación del valor
+    // (`const destinoPorcionBusqueda = ...`) no compara destinos: solo lee
+    // `busquedaPorcion.destino`.
     const comparaciones = codigoVista
       .split(/\r?\n/)
-      .filter((l) => /destinoPorcionEfectivo/.test(l) && /!==|===/.test(l));
+      .filter((l) => /destinoPorcionBusqueda/.test(l) && /!==|===/.test(l));
     for (const l of comparaciones) {
-      assert.match(l, /"porcion_terrestre" && destinoPorcionEfectivo/, `comparación sin gate de pestaña: ${l.trim()}`);
+      assert.match(l, /"porcion_terrestre" && destinoPorcionBusqueda/, `comparación sin gate de pestaña: ${l.trim()}`);
     }
     assert.equal(comparaciones.length, 2);
   });
@@ -506,9 +517,30 @@ describe("VistaBooking — modo búsqueda (requisito A)", () => {
     assert.match(codigoVista, /<span className="ml-2 font-normal normal-case text-gray-400">\(\{tarjetas\.length\}\)<\/span>/);
   });
 
-  test("el selector de destino de EXPLORACIÓN sigue existiendo, pero se oculta mientras la búsqueda manda el destino", () => {
-    assert.match(codigoVista, /value=\{destinoPorcionSel\}/);
-    assert.match(codigoVista, /sub === "porcion_terrestre" && !enBusquedaPorcion && destinosPorcion\.length > 0 && \(/);
+  test("el selector de destino de EXPLORACIÓN se eliminó: no queda ningún control de destino sobre la grilla de Porción (el único es el buscador real)", () => {
+    // Era un `<select>` que ya no podía acotar nada sin romper la regla del
+    // estado global inicial (top 2 de CADA paquete antes de buscar) — un
+    // control que modifica estado sin producir efecto se elimina, no se deja
+    // inerte. El buscador real (`BuscadorBooking`) sigue siendo quien elige
+    // destino y ejecuta la búsqueda.
+    assert.doesNotMatch(codigoVista, /destinoPorcionSel/, "no debe quedar el estado ni el select de exploración");
+    assert.doesNotMatch(codigoVista, /setDestinoPorcionSel/, "no debe quedar ningún setter de ese estado");
+    assert.match(codigoVista, /<BuscadorBooking destinos=\{destinosPorcion\} onBusqueda=\{setBusquedaPorcion\}/, "el buscador real sigue recibiendo la lista de destinos");
+  });
+
+  test("la barra de exploración de Porción no tiene NINGÚN control que modifique estado sin producir efecto", () => {
+    // La barra que sigue al encabezado (la de los checkboxes) es la única
+    // zona de filtros de exploración. Antes tenía un `<select>` de destino que
+    // ya no acotaba nada: se eliminó. Los únicos controles que quedan son los
+    // dos checkboxes, que sí cambian la lista (Pet friendly / Adults Only).
+    const marca = '<div className="flex flex-wrap items-center gap-3 text-xs text-gray-600">';
+    const idx = codigoVista.indexOf(marca);
+    assert.ok(idx > -1, "no se encontró la barra de filtros de exploración");
+    const barra = codigoVista.slice(idx, idx + 600);
+    assert.doesNotMatch(barra, /<select/, "no debe quedar ningún desplegable en la barra de exploración");
+    assert.doesNotMatch(barra, /Destino<\/span>/, "no debe quedar el control de destino eliminado");
+    assert.match(barra, /checked=\{soloPetFriendly\}/);
+    assert.match(barra, /checked=\{soloAdultsOnly\}/);
   });
 
   test("con la búsqueda vigente hay UN solo estado vacío (el de la grilla unificada) — el de exploración no se pinta", () => {
@@ -555,21 +587,49 @@ describe("VistaBooking — modo búsqueda (requisito A)", () => {
 });
 
 describe("VistaBooking — resultado CERRADO por destino, persona y unidad por el mismo criterio (requisito B)", () => {
-  test("destinoPorcionEfectivo es el ÚNICO punto de sustitución: búsqueda si la hay, selector de exploración si no", () => {
-    assert.match(codigoVista, /const destinoPorcionEfectivo = busquedaPorcion \? busquedaPorcion\.destino : destinoPorcionSel;/);
+  test("destinoPorcionBusqueda es el ÚNICO punto de sustitución, y es SOLO la búsqueda ejecutada — nunca el selector de exploración (hallazgo 1)", () => {
+    assert.match(codigoVista, /const destinoPorcionBusqueda = busquedaPorcion \? busquedaPorcion\.destino : "";/);
+    const derivaciones = [...codigoVista.matchAll(/const destinoPorcionBusqueda =/g)];
+    assert.equal(derivaciones.length, 1, "una sola derivación del destino que acota la búsqueda");
+    // El valor NO puede mencionar el selector: si vuelve a depender de
+    // `destinoPorcionSel`, elegir un destino sin buscar volvería a recortar el
+    // universo (paquetes de otros destinos desaparecerían antes de buscar).
+    const linea = codigoVista.slice(codigoVista.indexOf("const destinoPorcionBusqueda ="), codigoVista.indexOf(";", codigoVista.indexOf("const destinoPorcionBusqueda =")));
+    assert.doesNotMatch(linea, /destinoPorcionSel/, "el acotamiento por destino no puede salir del selector de exploración");
   });
 
-  test("la grilla de hoteles PERSONA se cierra al destino efectivo", () => {
-    assert.match(codigoVista, /if \(mod === "porcion_terrestre" && destinoPorcionEfectivo && \(f\.destino_nombre \?\? ""\) !== destinoPorcionEfectivo\) return false;/);
+  test("el selector de exploración de Porción NO acota NINGÚN candidato: ni `hoteles` (persona) ni `hotelesUnidadVisibles` (unidad) lo mencionan", () => {
+    // Hallazgo 1 — la regla del universo: antes de ejecutar Buscar, el estado
+    // global muestra el top 2 de CADA paquete; elegir o escribir un destino en
+    // el selector NO puede cambiar ese conjunto. Este test falla si alguno de
+    // los dos memos de candidatos vuelve a filtrar por el selector.
+    const memoHoteles = cuerpoFuncion(codigoVista, "const hoteles = useMemo<HotelCard[]>(() => {");
+    const memoUnidad = cuerpoFuncion(codigoVista, "const hotelesUnidadVisibles = useMemo(() => {");
+    assert.ok(memoHoteles.length > 0 && memoUnidad.length > 0, "no se encontraron los dos memos de candidatos");
+    assert.doesNotMatch(memoHoteles, /destinoPorcionSel/, "los candidatos persona no pueden acotarse por el selector de exploración");
+    assert.doesNotMatch(memoUnidad, /destinoPorcionSel/, "los candidatos unidad no pueden acotarse por el selector de exploración");
+    // Y el único destino que sí acota en Porción terrestre es el de la
+    // búsqueda ejecutada (más la rama de Bloqueo, que no se toca).
+    assert.match(memoHoteles, /if \(mod === "porcion_terrestre" && destinoPorcionBusqueda &&/);
+    assert.match(memoUnidad, /if \(sub === "porcion_terrestre" && destinoPorcionBusqueda\)/);
   });
 
-  test("la grilla de hoteles UNIDAD se cierra con el MISMO destino efectivo (no queda relegada a la grilla general)", () => {
-    assert.match(codigoVista, /if \(sub === "porcion_terrestre" && destinoPorcionEfectivo\) arr = arr\.filter\(\(h\) => \(h\.destinoNombre \?\? ""\) === destinoPorcionEfectivo\);/);
+  test("la grilla de hoteles PERSONA se cierra al destino BUSCADO (y solo entonces)", () => {
+    assert.match(codigoVista, /if \(mod === "porcion_terrestre" && destinoPorcionBusqueda && \(f\.destino_nombre \?\? ""\) !== destinoPorcionBusqueda\) return false;/);
   });
 
-  test("los dos memos dependen de destinoPorcionEfectivo (persona y unidad se recalculan juntos, nunca con criterios distintos)", () => {
-    assert.match(codigoVista, /\}, \[filas, fotosPorHotel, infoPorHotel, sub, cuposPorBloqueo, origenPorBloqueo, origenSel, destinoSel, destinoPorcionEfectivo, salidaSel, soloAcom, soloPetFriendly, soloAdultsOnly\]\);/);
-    assert.match(codigoVista, /\}, \[hotelesBernalo, sub, destinoSel, destinoPorcionEfectivo, soloPetFriendly, soloAdultsOnly, infoPorHotel\]\);/);
+  test("la grilla de hoteles UNIDAD se cierra con el MISMO destino buscado (no queda relegada a la grilla general)", () => {
+    assert.match(codigoVista, /if \(sub === "porcion_terrestre" && destinoPorcionBusqueda\) arr = arr\.filter\(\(h\) => \(h\.destinoNombre \?\? ""\) === destinoPorcionBusqueda\);/);
+  });
+
+  test("los dos memos dependen de destinoPorcionBusqueda (persona y unidad se recalculan juntos, nunca con criterios distintos)", () => {
+    // Memo de cards persona (`hoteles`).
+    assert.match(codigoVista, /\}, \[filas, fotosPorHotel, infoPorHotel, sub, cuposPorBloqueo, origenPorBloqueo, origenSel, destinoSel, destinoPorcionBusqueda, salidaSel, soloAcom, soloPetFriendly, soloAdultsOnly\]\);/);
+    assert.match(codigoVista, /\}, \[hotelesBernalo, sub, destinoSel, destinoPorcionBusqueda, soloPetFriendly, soloAdultsOnly, infoPorHotel\]\);/);
+    // Memo de la grilla unificada (`tarjetas`) — hoteles recomendados
+    // (migración 183) le suman `destinoActivoSub` (el gatillo A/B: destino
+    // activo ≠ destino meramente elegido) y `prioridadesRecomendados`.
+    assert.match(codigoVista, /\}, \[hoteles, hotelesUnidadVisibles, hotelIdsUnidadAutoritativos, enBusquedaPorcion, busquedaPorcion, infoPorHotel, soloPetFriendly, soloAdultsOnly, destinoActivoSub, prioridadesRecomendados\]\);/);
   });
 
   test("se conserva hotelIdsUnidadAutoritativos: sin filas duplicadas cuando el hotel tiene una fila persona obsoleta", () => {
@@ -580,29 +640,44 @@ describe("VistaBooking — resultado CERRADO por destino, persona y unidad por e
     assert.match(cuerpoTarjetas, /if \(idsUnidadAutoritativa\.has\(r\.hotelId\) \|\| !porFiltros\(r\.hotelId\)\) continue;/);
   });
 
-  test("sin duplicados: un hotel en dos paquetes del destino es UNA sola tarjeta (la del total más bajo)", () => {
-    // `buscarHoteles` devuelve una fila por (paquete, hotel) — sin este
-    // recorte la MISMA tarjeta aparecería repetida y el contador del
-    // encabezado mentiría sobre cuántos alojamientos hay.
-    const rama = cuerpoTarjetas.slice(cuerpoTarjetas.indexOf("if (enBusquedaPorcion && busquedaPorcion) {"), cuerpoTarjetas.indexOf("return [...busca, ...unidad].sort("));
-    assert.match(rama, /const vistos = new Set<number>\(\);/);
-    assert.match(rama, /if \(vistos\.has\(r\.hotelId\)\) continue;/);
-    assert.match(rama, /vistos\.add\(r\.hotelId\);/);
-    // El orden del motor (`resultados.sort((a,b) => a.total - b.total)`) es la
-    // razón por la que quedarse con la primera fila = quedarse con la más
-    // barata; si ese orden cambia, este recorte elige otra fila sin avisar.
-    assert.match(fuenteVista, /\/\/ .*ordenado por total ascendente/);
-    // La unidad ya viene agrupada por hotel (una oferta por paquete, una
-    // tarjeta por hotel) — nunca se mapea una tarjeta por oferta. La key
-    // arranca por `u-${u.hotelId}-` (una sola tarjeta por hotel) y agrega la
-    // identidad de la búsqueda (ver `claveBusquedaUnidad`).
-    assert.match(rama, /\.map\(\(u\) => \(\{/);
-    assert.equal([...rama.matchAll(/key: `u-\$\{u\.hotelId\}-/g)].length, 1);
+  test("sin duplicados REALES: la deduplicación es por OFERTA (hotelId+paqueteId) — un hotel en dos paquetes del destino son DOS tarjetas distintas, nunca una", () => {
+    // Antes esta prueba exigía "una sola tarjeta por hotelId" (`Set<number>`):
+    // quedarse con la primera fila de cada hotel descartaba ofertas reales del
+    // MISMO hotel en otro paquete (ej. tarifa normal + paquete 3x2), y además
+    // impedía que "hoteles recomendados" —que son POR PAQUETE, migración
+    // 183— tratara cada oferta como independiente. Ahora la identidad es
+    // siempre el par, y el dedup (defensivo: `buscarHoteles` ya entrega como
+    // máximo una fila por par) es por par.
+    const rama = cuerpoTarjetas.slice(cuerpoTarjetas.indexOf("if (enBusquedaPorcion && busquedaPorcion) {"), cuerpoTarjetas.indexOf("return [...tarjetasRecomendadas, ...resto];"));
+    assert.match(rama, /const vistasPersona = new Set<string>\(\);/);
+    assert.match(rama, /const clave = claveOferta\(r\.hotelId, r\.paqueteId\);/);
+    assert.match(rama, /if \(vistasPersona\.has\(clave\)\) continue;/);
+    assert.match(rama, /vistasPersona\.add\(clave\);/);
+    // Ningún dedup por hotelId a secas: no queda ningún `Set` de hoteles
+    // "vistos" (el `Set<number>` que existía antes) ni una comparación de
+    // deduplicación contra `r.hotelId`. La única mención de `r.hotelId` que
+    // sobrevive es la exclusión por canal autoritativo (`idsUnidadAutoritativa`
+    // — la caché persona obsoleta de un hotel que hoy es unidad), que no es
+    // deduplicación.
+    assert.doesNotMatch(rama, /vistos/, "no debe quedar ningún `vistos` por hotelId en la rama de búsqueda");
+    assert.doesNotMatch(rama, /new Set<number>\(\)/, "no debe quedar ningún Set vacío por hotelId (el Set que queda es de claves de oferta, tipado Set<string>)");
+    assert.match(rama, /const vistasPersona = new Set<string>\(\);/);
+    // La unidad también se identifica por par: la key de cada tarjeta lleva
+    // hotelId Y paqueteId (antes `u-${hotelId}-...` colisionaba para el mismo
+    // hotel en dos paquetes).
+    assert.match(rama, /key: `u-\$\{g\.hotelId\}-\$\{g\.paqueteId\}-\$\{claveBusquedaUnidad\(g\.opciones\)\}`,/);
+    assert.equal([...rama.matchAll(/key: `u-\$\{g\.hotelId\}-\$\{g\.paqueteId\}-/g)].length, 1);
+    // Y las tarjetas de la búsqueda se arman por grupo, no mapeando una lista
+    // plana por hotel.
+    assert.match(rama, /gruposUnidadBusqueda\.filter\(\(g\) => !clavesRecomendadasBusqueda\.has/);
   });
 
   test("los filtros del usuario (Pet friendly / Adults Only) siguen aplicando a las dos mitades de la lista", () => {
     assert.match(cuerpoTarjetas, /const porFiltros = \(hotelId: number\) => \{/);
-    assert.match(cuerpoTarjetas, /busquedaPorcion\.unidad\s*\n\s*\.filter\(\(u\) => porFiltros\(u\.hotelId\)\)/);
+    // El filtro se sigue aplicando a la unidad de la búsqueda — ahora sobre la
+    // entrada por hotel ANTES de repartir sus opciones por oferta (el reparto
+    // en sí vive en la función pura `agruparOpcionesUnidadPorOferta`).
+    assert.match(cuerpoTarjetas, /agruparOpcionesUnidadPorOferta\(\s*\n\s*busquedaPorcion\.unidad\.filter\(\(u\) => porFiltros\(u\.hotelId\)\)\.flatMap\(\(u\) => u\.opciones\)/);
   });
 });
 
@@ -859,9 +934,10 @@ describe("TarjetaUnidadBusqueda — selectores + precio + agregar al carrito INL
   test("HotelUnidadCard.opcionesBusqueda es el gate: presente → tarjeta inline; ausente (exploración) → sigue abriendo el modal de siempre", () => {
     assert.match(codigoVista, /opcionesBusqueda\?: OpcionUnidadConfirmada\[\];/);
     // El único punto que arma tarjetas de búsqueda SIEMPRE lo asigna (no es
-    // opcional en ese camino) — viene DIRECTO de `busquedaPorcion.unidad`,
-    // que ya filtró a `estado === "disponible"` en `BuscadorBooking`.
-    assert.match(codigoVista, /opcionesBusqueda: u\.opciones,/);
+    // opcional en ese camino) — viene DIRECTO de `busquedaPorcion.unidad` (ya
+    // filtrado a `estado === "disponible"` en `BuscadorBooking`), repartido por
+    // oferta hotel+paquete: `g.opciones` son SOLO las opciones de ESE paquete.
+    assert.match(codigoVista, /opcionesBusqueda: g\.opciones,/);
     // El render de la grilla ramifica por esa misma propiedad — nunca por
     // `enBusquedaPorcion` a secas (una tarjeta de exploración no debe activar
     // la rama inline solo porque hay una búsqueda vigente en otro hotel).
@@ -1004,8 +1080,8 @@ describe('TarjetaUnidadBusqueda — "Agregar al carrito" revalida en servidor (n
 describe("TarjetaUnidadBusqueda — identidad de búsqueda (key) e identidad de carrito (enCarrito)", () => {
   const cuerpoTarjetaUnidad = cuerpoFuncion(fuenteVista, "function TarjetaUnidadBusqueda({");
 
-  test("la key de React de una tarjeta de búsqueda incluye la identidad de la BÚSQUEDA vigente (claveBusquedaUnidad), no solo hotelId — una nueva búsqueda del mismo hotel remonta y resetea el estado", () => {
-    assert.match(codigoVista, /key: `u-\$\{u\.hotelId\}-\$\{claveBusquedaUnidad\(u\.opciones\)\}`,/);
+  test("la key de React de una tarjeta de búsqueda incluye la OFERTA (hotelId+paqueteId) y la identidad de la BÚSQUEDA vigente (claveBusquedaUnidad) — una nueva búsqueda del mismo hotel remonta y resetea el estado, y el mismo hotel en dos paquetes nunca colisiona", () => {
+    assert.match(codigoVista, /key: `u-\$\{g\.hotelId\}-\$\{g\.paqueteId\}-\$\{claveBusquedaUnidad\(g\.opciones\)\}`,/);
     // No queda un `useEffect` frágil sincronizando cat/alim/precioActualizado
     // con la búsqueda — el remonte por key es el ÚNICO mecanismo de reset.
     assert.doesNotMatch(cuerpoTarjetaUnidad, /useEffect\([^)]*setCat|useEffect\([^)]*setAlim|useEffect\([^)]*setPrecioActualizado/);

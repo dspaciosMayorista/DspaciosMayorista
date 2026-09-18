@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState, useTransition } from "react";
+import { useEffect, useMemo, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -9,9 +9,12 @@ import { ConfigForm } from "../ConfigForm";
 import { SalidasDinamicasEditor, type SalidaDinamica } from "./SalidasDinamicasEditor";
 import {
   setVuelo, setTodosVuelos, setHotel, setTodosHoteles, setServicio, generarTarifario,
-  getTarifasHotel, setHotelFiltros, type TarifaHotelPreview, type TarifaUnidadPreview,
+  getTarifasHotel, setHotelFiltros, setHotelPrioridad, type TarifaHotelPreview, type TarifaUnidadPreview,
 } from "../actions";
 import { setEmpaquetado, setTodosEmpaquetados } from "../../vuelos/empaquetados-actions";
+import {
+  conPrioridadOptimista, sinPrioridadOptimista, reconciliarPrioridades, prioridadEfectivaDe, prioridadesOcupadasDe,
+} from "@/lib/tarifario/prioridadOptimista";
 
 type Opt = { id: number; nombre: string; codigo_iata?: string | null };
 type Vuelo = {
@@ -29,7 +32,7 @@ type Servicio = { id: number; nombre: string; precio_persona: number | null; des
 type SelServicio = { servicio_id: number; modo: string; incluido: boolean };
 type SelVuelo = { bloqueo_id: number; aplica_mk: boolean; ta: number };
 type SelEmpaquetado = { empaquetado_id: number; aplica_mk: boolean; ta: number };
-type SelHotel = { hotel_id: number; categorias: string[] | null; regimenes: string[] | null };
+type SelHotel = { hotel_id: number; categorias: string[] | null; regimenes: string[] | null; prioridad: number | null };
 type Resultado = {
   id: number; modulo: string; bloqueo_label: string | null; hotel_nombre: string | null;
   servicio_nombre: string | null; tipo_tarifa: string | null; pax_desde: number | null; pax_hasta: number | null;
@@ -92,6 +95,54 @@ export function ArmadoClient(props: {
   const empaquetadoSel = new Map(props.selEmpaquetados.map((e) => [e.empaquetado_id, e]));
   const hotelSel = new Map(props.selHoteles.map((h) => [h.hotel_id, h]));
   const servSel = new Map(props.selServicios.map((s) => [s.servicio_id, s]));
+  // Autosave OPTIMISTA de prioridad (defecto 4): `hotelId -> prioridad` recién
+  // elegida, aplicada POR ENCIMA de lo que trajo el servidor. Un guardado
+  // exitoso de prioridad NO recarga el editor (`router.refresh()` re-renderiza
+  // todo el paquete y tardaba varios segundos); este mapa es lo que mantiene el
+  // número elegido visible sin recarga. Sobrevive a los `router.refresh()` de
+  // las DEMÁS operaciones del editor (activar/desactivar un hotel, generar
+  // tarifario…), que siguen refrescando como siempre.
+  //
+  // La reconciliación vive en `lib/tarifario/prioridadOptimista.ts` (puro y
+  // probado): un override se descarta en cuanto el servidor trae ESE valor
+  // (reconocido) o en cuanto la fila desaparece de las props (hotel
+  // desasociado). Así el mapa no acumula overrides viejos para siempre, el
+  // dato fresco del servidor vuelve a mandar, y volver a asociar un hotel no
+  // resucita una prioridad local anterior.
+  const [prioridadesOptimistas, setPrioridadesOptimistas] = useState<Map<number, number | null>>(new Map());
+  const filasServidorPrioridad = useMemo(
+    () => props.selHoteles.map((h) => ({ hotel_id: h.hotel_id, prioridad: h.prioridad })),
+    [props.selHoteles]
+  );
+  // Reconciliación SIN efectos: patrón oficial de React ("ajustar estado cuando
+  // cambian las props"). Se compara la identidad del arreglo derivado de las
+  // props — cambia exactamente cuando el servidor entrega datos nuevos — y, si
+  // cambió, se reconcilia DURANTE el render. React re-ejecuta el render de
+  // inmediato sin pintar el intermedio, así que no hay parpadeo, y NO se usa
+  // `useEffect` (la regla `react-hooks/set-state-in-effect` lo prohíbe, y con
+  // razón: un efecto acá provocaría un segundo render con estado viejo).
+  const [generacionPrioridad, setGeneracionPrioridad] = useState(filasServidorPrioridad);
+  if (generacionPrioridad !== filasServidorPrioridad) {
+    setGeneracionPrioridad(filasServidorPrioridad);
+    setPrioridadesOptimistas((prev) => reconciliarPrioridades(prev, filasServidorPrioridad));
+  }
+  const prioridadEfectiva = (hotelId: number): number | null =>
+    prioridadEfectivaDe(prioridadesOptimistas, hotelId, hotelSel.get(hotelId)?.prioridad ?? null);
+  const setPrioridadOptimista = (hotelId: number, prioridad: number | null) =>
+    setPrioridadesOptimistas((prev) => conPrioridadOptimista(prev, hotelId, prioridad));
+  // Camino de FALLO: se ELIMINA el override (nunca se deja uno con el valor
+  // "de reversión"), para que el dato autoritativo del servidor no quede tapado.
+  const descartarPrioridadOptimista = (hotelId: number) =>
+    setPrioridadesOptimistas((prev) => sinPrioridadOptimista(prev, hotelId));
+  // Prioridades 1-6 YA tomadas por otros hoteles de ESTE paquete — para
+  // deshabilitar esas opciones en el selector de cada hotel (mensaje
+  // comprensible ANTES de guardar; el CHECK/índice único de la base es la
+  // garantía real, esto es solo UX). Se calcula con los valores EFECTIVOS, así
+  // que la prioridad recién elegida en una fila queda ocupada de inmediato en
+  // las demás sin esperar a un refresh. `hotel_id -> prioridad` completo (no
+  // excluye ninguno todavía); cada `HotelRow` excluye la SUYA propia al armar
+  // sus opciones disponibles.
+  const prioridadesOcupadas = prioridadesOcupadasDe(prioridadesOptimistas, filasServidorPrioridad);
 
   function refrescar() {
     router.refresh();
@@ -260,6 +311,10 @@ export function ArmadoClient(props: {
                   hotel={h}
                   sel={hotelSel.get(h.id)}
                   paqueteId={props.paqueteId}
+                  prioridad={prioridadEfectiva(h.id)}
+                  prioridadesOcupadas={prioridadesOcupadas}
+                  onPrioridadLocal={setPrioridadOptimista}
+                  onPrioridadDescartar={descartarPrioridadOptimista}
                   onDone={refrescar}
                 />
               ))}
@@ -463,13 +518,27 @@ function EmpaquetadoRow({
   );
 }
 
+const PRIORIDADES = [1, 2, 3, 4, 5, 6] as const;
+
 function HotelRow({
-  hotel, sel, paqueteId, onDone,
+  hotel, sel, paqueteId, prioridad, prioridadesOcupadas, onPrioridadLocal, onPrioridadDescartar, onDone,
 }: {
-  hotel: Hotel; sel: SelHotel | undefined; paqueteId: number; onDone: () => void;
+  hotel: Hotel; sel: SelHotel | undefined; paqueteId: number;
+  /** Prioridad EFECTIVA (servidor u optimista) de este hotel en este paquete. */
+  prioridad: number | null;
+  prioridadesOcupadas: Map<number, number>;
+  /** Aplica el valor optimista en el padre — sin recargar el editor. */
+  onPrioridadLocal: (hotelId: number, prioridad: number | null) => void;
+  /** ELIMINA el override del hotel (camino de fallo), sin recargar. */
+  onPrioridadDescartar: (hotelId: number) => void;
+  onDone: () => void;
 }) {
   const [, start] = useTransition();
   const [openModal, setOpenModal] = useState(false);
+  const [errPrioridad, setErrPrioridad] = useState("");
+  // Petición de prioridad EN VUELO para ESTA fila: bloquea envíos concurrentes
+  // (defecto 4) sin bloquear las demás filas.
+  const [guardandoPrioridad, setGuardandoPrioridad] = useState(false);
   const checked = !!sel;
 
   const resumen = !checked
@@ -478,9 +547,48 @@ function HotelRow({
       ? `${sel!.categorias?.length ?? "todas las"} categorías · ${sel!.regimenes?.length ?? "todos los"} regímenes`
       : "todas las categorías y regímenes";
 
+  // Prioridades tomadas por OTROS hoteles de este paquete (excluye la propia,
+  // si tiene una) — se muestran deshabilitadas en el selector, con mensaje
+  // comprensible en vez de dejar que el usuario intente y solo vea el error
+  // de la base después de guardar.
+  const ocupadasPorOtros = new Set(
+    [...prioridadesOcupadas.entries()].filter(([hId]) => hId !== hotel.id).map(([, p]) => p)
+  );
+
+  // Autosave OPTIMISTA (defecto 4): el número elegido se refleja al instante —
+  // el padre guarda el valor local y lo muestra esta misma fila — y la opción
+  // queda ocupada de inmediato en los demás hoteles del paquete. Si el guardado
+  // FALLA, se ELIMINA el override y se pide el dato autoritativo al servidor
+  // (`onDone()`); nunca se deja un valor local "de reversión", porque un
+  // override con el valor viejo es indistinguible de un guardado en vuelo y
+  // podría tapar el dato fresco de forma indefinida. Sigue siendo autosave (no
+  // hay botón Guardar) y el camino EXITOSO no llama a `onDone()`: recargar todo
+  // el editor era justamente lo que tardaba varios segundos, y no hace falta —
+  // el estado optimista ya es el correcto.
+  async function cambiarPrioridad(valor: string) {
+    if (guardandoPrioridad) return; // petición en vuelo de esta fila: no encimar otra
+    const elegida = valor === "" ? null : Number(valor);
+    if (elegida === prioridad) return; // elegir el mismo valor no dispara nada
+    setErrPrioridad("");
+    setGuardandoPrioridad(true);
+    onPrioridadLocal(hotel.id, elegida); // optimista
+    let r: { ok: boolean; error?: string };
+    try {
+      r = await setHotelPrioridad(paqueteId, hotel.id, elegida);
+    } catch {
+      r = { ok: false, error: "No fue posible guardar la prioridad. Intenta de nuevo." };
+    }
+    setGuardandoPrioridad(false);
+    if (!r.ok) {
+      setErrPrioridad(r.error ?? "No fue posible guardar la prioridad. Intenta de nuevo.");
+      onPrioridadDescartar(hotel.id); // se elimina el override
+      onDone();                       // y se recupera la fuente autoritativa
+    }
+  }
+
   return (
     <li className="py-2.5">
-      <div className="flex items-center gap-3">
+      <div className="flex flex-wrap items-center gap-3">
         <input
           type="checkbox"
           checked={checked}
@@ -491,7 +599,7 @@ function HotelRow({
             })
           }
         />
-        <div className="flex-1">
+        <div className="min-w-0 flex-1">
           <button
             type="button"
             onClick={() => setOpenModal(true)}
@@ -504,6 +612,28 @@ function HotelRow({
             {checked ? resumen : "clic en el nombre para ver tarifas y elegir categorías/regímenes"}
           </p>
         </div>
+        {checked && (
+          <div className="flex flex-col items-end gap-1">
+            <label className="flex items-center gap-1.5 text-xs text-gray-600">
+              Recomendado
+              <select
+                value={prioridad ?? ""}
+                onChange={(e) => cambiarPrioridad(e.target.value)}
+                disabled={guardandoPrioridad}
+                className="rounded-lg border border-gray-300 bg-white px-2 py-1 text-xs disabled:cursor-wait disabled:opacity-60"
+                aria-label={`Prioridad de recomendación de ${hotel.nombre} en este paquete`}
+              >
+                <option value="">No recomendado</option>
+                {PRIORIDADES.map((p) => (
+                  <option key={p} value={p} disabled={ocupadasPorOtros.has(p)}>
+                    {p}{ocupadasPorOtros.has(p) ? " (ocupada)" : ""}
+                  </option>
+                ))}
+              </select>
+            </label>
+            {errPrioridad && <p className="max-w-[220px] text-right text-[11px] text-red-600">{errPrioridad}</p>}
+          </div>
+        )}
       </div>
       {openModal && (
         <HotelModal

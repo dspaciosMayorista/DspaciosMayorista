@@ -9,6 +9,7 @@ import type { InfoHotelDato, CapHotelDato } from "./datos.ts";
 import type { DescripcionPaqueteRaw } from "./descripcionPaquete.ts";
 import { condicionHotelFechas, type FilaTemporadaHotelRaw } from "../reservar/liquidacionHotel.ts";
 import { esNeutra } from "../cotizacion/condicionPago.ts";
+import { claveOferta } from "./recomendados.ts";
 
 // ── Resumen del tarifario: carga inicial LIVIANA (dos niveles) ─────────────
 //
@@ -197,6 +198,9 @@ export type DatosResumenTarifario = {
   planesInfo: Record<string, { nombre: string | null; descripcion: string | null; nota_especial: string | null }>;
   ventanaPorPaquete: Record<number, { min: string | null; max: string | null }>;
   descripcionPorPaquete: Record<number, DescripcionPaqueteRaw>;
+  // Hoteles recomendados (migración 183) — `claveOferta(hotelId, paqueteId)`
+  // -> prioridad (1-6). SOLO ofertas con prioridad configurada (no nula).
+  prioridadesRecomendados: Record<string, number>;
 };
 
 export const MSG_ERROR_CARGAR_TARIFARIO = "No fue posible cargar el tarifario en este momento. Intenta nuevamente en unos segundos.";
@@ -537,6 +541,31 @@ export async function cargarResumenTarifario(
     }
   }
 
+  // Hoteles recomendados (migración 183) — `armado_hoteles.prioridad`, POR
+  // OFERTA hotel+paquete (nunca por hotel global): se consulta acotado a
+  // `paqIdsConHotel` (los paquetes con módulo bloqueo/porción ya presentes en
+  // `filasVisibles`), scope idéntico al resto de estas consultas auxiliares.
+  // Falla igual de silenciosa/no-bloqueante que fotos/planes/ventana arriba
+  // (un error acá nunca tumba el tarifario, solo deja sin sección de
+  // recomendados). Clave = `claveOferta(hotelId, paqueteId)` — la lectura
+  // (VistaBooking) NUNCA debe indexar esto por hotelId solo.
+  const prioridadesRecomendados: Record<string, number> = {};
+  if (paqIdsConHotel.length) {
+    const { data: filasPrioridad, error: ePrioridad } = await sb
+      .from("armado_hoteles")
+      .select("paquete_id, hotel_id, prioridad")
+      .in("paquete_id", paqIdsConHotel)
+      .not("prioridad", "is", null);
+    if (ePrioridad) {
+      _huboErrorAux = true;
+      registrarErrorTecnico(flujo, flujoId, "datos_auxiliares", "error_armado_hoteles_prioridad", ePrioridad);
+    } else {
+      for (const f of filasPrioridad ?? []) {
+        if (f.prioridad != null) prioridadesRecomendados[claveOferta(f.hotel_id, f.paquete_id)] = f.prioridad;
+      }
+    }
+  }
+
   const msAux = performance.now() - _tAux0;
   registrarEtapa(flujo, flujoId, "datos_auxiliares", Math.round(msAux), _huboErrorAux ? "error" : "ok");
   registrarDatoPagina(flujo, flujoId, "datos_auxiliares", `filas_visibles=${filasVisibles.length} filas_addon=${filasAddon.length}`);
@@ -556,6 +585,7 @@ export async function cargarResumenTarifario(
       filasVisibles, filasAddon,
       cuposPorBloqueo, origenPorBloqueo, fotosPorHotel, fotosPorServicio,
       infoPorHotel, capPorHotel, planesInfo, ventanaPorPaquete, descripcionPorPaquete,
+      prioridadesRecomendados,
     },
   };
 }

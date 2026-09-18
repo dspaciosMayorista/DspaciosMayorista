@@ -373,6 +373,12 @@ export type BusquedaInput = {
 export type BusquedaResultado = {
   hotelId: number; hotelNombre: string | null; destino: string | null;
   paqueteId: number; categoria: string; regimen: string;
+  // Nombre del paquete de ESTA oferta (hallazgo 2) — sale de
+  // `tarifario_resultado.paquete_nombre`, denormalizado por paquete, de la
+  // MISMA fila que ya aporta `paquete_id`/`hotel_id`. Es la fuente autoritativa
+  // para etiquetar la tarjeta cuando el mismo hotel aparece en dos paquetes
+  // (ej. normal + 3x2); nunca se deriva por `hotelId` ni se inventa un texto.
+  paqueteNombre: string | null;
   total: number; noches: number; fechaIda: string; fechaRegreso: string;
   habitaciones: Record<string, number>;
   menores: ClasificacionMenores; // totales de la distribución por habitación, para ESTE hotel
@@ -551,11 +557,11 @@ export async function buscarHoteles(inputRaw: unknown): Promise<
   // `.range()` lo trunca EN SILENCIO (sin `error`). Ver
   // lib/tarifario/paginacion.ts (`ejecutarConsultaPaginada`).
   const { data: filas, error: filasErr } = await ejecutarConsultaPaginada<{
-    paquete_id: number; hotel_id: number | null; destino_nombre: string | null;
+    paquete_id: number; hotel_id: number | null; destino_nombre: string | null; paquete_nombre: string | null;
   }>((from, hasta) => {
     let q = admin
       .from("tarifario_resultado_publicable")
-      .select("paquete_id, hotel_id, destino_nombre")
+      .select("paquete_id, hotel_id, destino_nombre, paquete_nombre")
       .eq("modulo", "porcion_terrestre")
       .eq("paquete_activo", true);
     if (input.destino?.trim()) q = q.eq("destino_nombre", input.destino.trim());
@@ -565,8 +571,18 @@ export async function buscarHoteles(inputRaw: unknown): Promise<
     console.error(`[buscarHoteles] etapa=tarifario_resultado detalle=${filasErr instanceof Error ? filasErr.message : JSON.stringify(filasErr)}`);
     return { ok: false, error: MENSAJE_BUSQUEDA_HOTELES_NO_DISPONIBLE };
   }
-  const pares = new Map<string, { paquete: number; hotel: number }>();
-  for (const f of filas ?? []) if (f.paquete_id != null && f.hotel_id != null) pares.set(`${f.paquete_id}-${f.hotel_id}`, { paquete: f.paquete_id, hotel: f.hotel_id });
+  const pares = new Map<string, { paquete: number; hotel: number; paqueteNombre: string | null }>();
+  for (const f of filas ?? []) {
+    if (f.paquete_id == null || f.hotel_id == null) continue;
+    const clave = `${f.paquete_id}-${f.hotel_id}`;
+    // `paquete_nombre` es denormalizado por paquete: todas las filas del mismo
+    // paquete traen el mismo valor. Aun así, una fila con el nombre en blanco
+    // no debe pisar el nombre REAL ya visto para ese par (nunca se degrada un
+    // dato autoritativo con uno vacío).
+    const previo = pares.get(clave);
+    if (previo && (previo.paqueteNombre != null || f.paquete_nombre == null)) continue;
+    pares.set(clave, { paquete: f.paquete_id, hotel: f.hotel_id, paqueteNombre: f.paquete_nombre });
+  }
 
   // Composición agregada por acomodación (nº de habitaciones por tipo, para
   // el precio de cada combo). La LISTA en orden de captura (`input.habitaciones`)
@@ -592,7 +608,7 @@ export async function buscarHoteles(inputRaw: unknown): Promise<
   // motivo de fechas (ver el cierre de la función).
   const datosSinTarifaParaFecha: { paquete: number; hotel: number; datos: DatosHotelPaquete }[] = [];
 
-  for (const { paquete, hotel } of pares.values()) {
+  for (const { paquete, hotel, paqueteNombre } of pares.values()) {
     const carga = await cargarDatosHotelPaquete(admin, paquete, hotel);
     if (!carga.ok) {
       if (carga.motivo === "error_consulta") {
@@ -732,7 +748,7 @@ export async function buscarHoteles(inputRaw: unknown): Promise<
       const condicion = condicionHotelFechas(datos.temporadas, { fechaIda: input.fechaIda, fechaRegreso: input.fechaRegreso });
       resultados.push({
         hotelId: hotel, hotelNombre: res.hotelNombre, destino: res.destinoNombre,
-        paqueteId: paquete, categoria: mejor.categoria, regimen: mejor.regimen,
+        paqueteId: paquete, paqueteNombre, categoria: mejor.categoria, regimen: mejor.regimen,
         total: mejor.total, noches: numNoches, fechaIda: input.fechaIda, fechaRegreso: input.fechaRegreso,
         habitaciones: habitacionesOut, menores: mejor.menores, edadesMenores: edades, pax: mejor.pax,
         combos: combosValidos, condicion,

@@ -304,6 +304,7 @@ export function TarifarioPublic({
   filasAddon = [],
   hotelesBernalo = [],
   hotelIdsUnidadAutoritativos = [],
+  prioridadesRecomendados = {},
 }: {
   // Carga inicial (Tier 1) — resumen, SIN expansión sintética (ver
   // lib/tarifario/resumen.ts). `FilaTarifario` (matriz completa por
@@ -336,6 +337,10 @@ export function TarifarioPublic({
   // excluir tarjetas persona obsoletas — nunca decide qué tarjeta unidad
   // mostrar.
   hotelIdsUnidadAutoritativos?: number[];
+  // Hoteles recomendados (migración 183) — `claveOferta(hotelId,paqueteId) ->
+  // prioridad`. Se pasa tal cual hasta VistaBooking, que decide la selección
+  // (lib/tarifario/recomendados.ts) — este componente no la interpreta.
+  prioridadesRecomendados?: Record<string, number>;
 }) {
   const [vista, setVista] = useState<"tabla" | "booking" | "programas">("booking");
   const [q, setQ] = useState("");
@@ -460,7 +465,7 @@ export function TarifarioPublic({
       {vista === "programas" ? (
         <PorProgramas programas={programas} puedeReservar={puedeReservar} />
       ) : vista === "booking" ? (
-        <VistaBooking filas={filasFiltradas} fotosPorHotel={fotosPorHotel} fotosPorServicio={fotosPorServicio} cuposPorBloqueo={cuposPorBloqueo} origenPorBloqueo={origenPorBloqueo} puedeReservar={puedeReservar} ventanaPorPaquete={ventanaPorPaquete} infoPorHotel={infoPorHotel} planesInfo={planesInfo} capPorHotel={capPorHotel} soloAcom={fAcom || null} descripcionPorPaquete={descripcionPorPaquete} filasAddon={filasAddon} hotelesBernalo={fAcom ? [] : hotelesBernaloFiltrados} hotelIdsUnidadAutoritativos={hotelIdsUnidadAutoritativos} />
+        <VistaBooking filas={filasFiltradas} fotosPorHotel={fotosPorHotel} fotosPorServicio={fotosPorServicio} cuposPorBloqueo={cuposPorBloqueo} origenPorBloqueo={origenPorBloqueo} puedeReservar={puedeReservar} ventanaPorPaquete={ventanaPorPaquete} infoPorHotel={infoPorHotel} planesInfo={planesInfo} capPorHotel={capPorHotel} soloAcom={fAcom || null} descripcionPorPaquete={descripcionPorPaquete} filasAddon={filasAddon} hotelesBernalo={fAcom ? [] : hotelesBernaloFiltrados} hotelIdsUnidadAutoritativos={hotelIdsUnidadAutoritativos} prioridadesRecomendados={prioridadesRecomendados} />
       ) : (
         <>
           {/* Tabs de módulos */}

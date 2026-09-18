@@ -222,6 +222,37 @@ export async function setHotel(paqueteId: number, hotelId: number, checked: bool
   return { ok: true };
 }
 
+// ── Hoteles recomendados (prioridad 1-6 DENTRO del paquete, migración 183) ──
+// La recomendación pertenece a la OFERTA hotel+paquete (`armado_hoteles`),
+// nunca al hotel físico global — este `update` solo toca la fila de ESE
+// paquete, nunca `hoteles` ni las filas de otros paquetes que usen el mismo
+// hotel_id. `null` = no recomendado; 1-6 = prioridad manual. El rango (1-6) y
+// la unicidad por paquete (nunca global) los garantiza la base (CHECK +
+// índice único parcial, migración 183) — este `update` nunca valida el rango
+// ni la duplicidad en JS de antemano: confía en que la base rechace lo
+// inválido y traduce el código de error a un mensaje comprensible. Así la
+// garantía real vive en la base (resiste dos guardados concurrentes desde dos
+// pestañas), no solo en la validación del cliente.
+export async function setHotelPrioridad(paqueteId: number, hotelId: number, prioridad: number | null): Promise<Result> {
+  const sb = await createClient();
+  const { error } = await sb
+    .from("armado_hoteles")
+    .update({ prioridad })
+    .eq("paquete_id", paqueteId)
+    .eq("hotel_id", hotelId);
+  if (error) {
+    if (error.code === "23505") {
+      return { ok: false, error: `Ya hay otro hotel con la prioridad ${prioridad} en este paquete. Elige otra prioridad o quítasela primero al que ya la tiene.` };
+    }
+    if (error.code === "23514") {
+      return { ok: false, error: "La prioridad debe ser un número entre 1 y 6, o vacía para quitar la recomendación." };
+    }
+    return { ok: false, error: error.message };
+  }
+  revalidatePath(`/dashboard/paquetes/${paqueteId}`);
+  return { ok: true };
+}
+
 // Seleccionar/quitar TODOS los hoteles disponibles (con todas las categorías y
 // regímenes por defecto; luego se afina cada uno desde su ventana).
 export async function setTodosHoteles(paqueteId: number, hotelIds: number[], checked: boolean): Promise<Result> {

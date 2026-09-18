@@ -51,6 +51,12 @@ import type { FilaResumen } from "@/lib/tarifario/resumen";
 import { minRoomPvpResumen, tieneAcomodacionResumen } from "@/lib/tarifario/resumenCliente";
 import type { DescripcionPaqueteRaw } from "@/lib/tarifario/descripcionPaquete";
 import { destinosPorcionPublica } from "@/lib/tarifario/destinosPorcion";
+import { EtiquetaOferta } from "./EtiquetaOferta";
+import {
+  seleccionarRecomendadosGlobalInicial, seleccionarRecomendadosPorDestino, claveOferta,
+  agruparOpcionesUnidadPorOferta, ofertasConPrioridad,
+  type OfertaPrioridad, type GrupoOfertaUnidad,
+} from "@/lib/tarifario/recomendados";
 
 const CAP_VACIA = { paxMin: null as number | null, paxMax: null as number | null, acom: [] as AcomConfig[] };
 
@@ -83,23 +89,36 @@ type HotelCard = {
   tieneCondicion: boolean;
   filas: FilaResumen[];
   moneda?: string | null;
+  // Identidad de OFERTA (hotel+paquete) — siempre presentes: `filas` queda
+  // acotada a ESE paquete (nunca un merge entre paquetes), así que
+  // "Incluye/No incluye"/add-ons/condiciones de esta card son siempre del
+  // paquete correcto, y el nombre del paquete se puede etiquetar en la
+  // tarjeta aunque la oferta NO sea recomendada. El estado de recomendación
+  // (`recomendada`, una MARCA BOOLEANA) vive en la `Tarjeta`, no acá: es una
+  // propiedad de la SELECCIÓN, no de la card. Nunca un consecutivo: la
+  // prioridad es un namespace por paquete y su valor autoritativo es el de
+  // `armado_hoteles` para el par (paqueteId, hotelId).
+  paqueteId?: number;
+  paqueteNombre?: string | null;
 };
 
-// P1-2 (hallazgo confirmado): un mismo hotel `modelo_tarifario = "unidad"`
-// puede estar vinculado a VARIOS paquetes activos a la vez (igual que un
-// hotel persona puede aparecer en varias salidas/paquetes) — antes cada
-// combinación (hotelId, paqueteId) generaba su PROPIA tarjeta, así que el
-// mismo hotel aparecía repetido en la grilla. Ahora se agrupa por
-// `hotelId`: UNA tarjeta por hotel, con TODAS sus ofertas (una por
-// paqueteId) conservadas — nunca se elige la primera arbitrariamente ni se
-// descartan las demás.
+// Corrección posterior (auditoría): antes se agrupaba SIEMPRE por `hotelId`
+// (P1-2 original) — un mismo hotel unidad en dos paquetes distintos
+// terminaba en UNA sola tarjeta con `ofertas` mezclando ambos paquetes, lo
+// que impedía que "hoteles recomendados" (por paquete, migración 183)
+// tratara cada oferta como independiente. Ahora `HotelUnidadCard` es, igual
+// que `HotelCard`, UNA tarjeta por (hotelId, paqueteId) — `ofertas` sigue
+// siendo un arreglo (compatibilidad con `HotelBernaloCotizarModal`, que ya
+// soporta `ofertas.length === 1`) pero en la práctica trae SIEMPRE una sola
+// entrada: la de ESE paquete. `paqueteId`/`paqueteNombre` espejan
+// `HotelCard` — mismo criterio de identidad, misma etiqueta de oferta.
 type HotelUnidadCard = {
   hotelId: number;
   hotelNombre: string;
-  /** Destino de la PRIMERA oferta, solo para mostrar en la tarjeta antes de
-   * abrir el modal — dentro del modal cada oferta muestra su propio destino. */
   destino: string | null;
   ofertas: HotelBernaloDescubierto[];
+  paqueteId?: number;
+  paqueteNombre?: string | null;
   // Cierre de UX de la tarjeta unidad en modo búsqueda: SOLO presente ahí —
   // TODAS las combinaciones que el servidor CONFIRMÓ disponibles
   // (`buscarAlojamientosUnidadPorFechas`), ordenadas (la más barata primero,
@@ -126,9 +145,17 @@ type HotelUnidadCard = {
 // y esta vista volvía a pintar la suya DEBAJO — dos listas para una sola
 // búsqueda. Ahora hay una sola colección y un solo lugar donde se pinta.
 type Tarjeta =
-  | { tipo: "persona"; key: string; card: HotelCard }
-  | { tipo: "unidad"; key: string; hotel: HotelUnidadCard }
-  | { tipo: "busqueda"; key: string; r: BusquedaResultado };
+  | { tipo: "persona"; key: string; card: HotelCard; recomendada?: boolean }
+  | { tipo: "unidad"; key: string; hotel: HotelUnidadCard; recomendada?: boolean }
+  | { tipo: "busqueda"; key: string; r: BusquedaResultado; recomendada?: boolean };
+
+// Marca de recomendación que reciben los builders de tarjeta. Va en un OBJETO a
+// propósito: un `.map(tarjetaPersona)` accidental le pasaría el ÍNDICE como
+// segundo argumento, y con un objeto la marca queda `undefined` (falsa) en vez
+// de convertirse en "recomendado" por el número. La prioridad autoritativa es
+// la de `armado_hoteles` para el par (paqueteId, hotelId) — acá solo viaja el
+// booleano de si ESA oferta quedó seleccionada.
+type MarcaOferta = { recomendada?: boolean };
 
 // Nombre visible de una tarjeta, sin importar de cuál de las tres fuentes
 // venga — lo necesita el orden alfabético de la colección única.
@@ -255,6 +282,7 @@ export function VistaBooking({
   filasAddon = [],
   hotelesBernalo = [],
   hotelIdsUnidadAutoritativos = [],
+  prioridadesRecomendados = {},
 }: {
   filas: FilaResumen[];
   fotosPorHotel?: Record<number, string>;
@@ -288,6 +316,13 @@ export function VistaBooking({
   // más abajo) — nunca para decidir qué tarjeta unidad mostrar (eso lo
   // sigue haciendo `hotelesUnidadVisibles`, derivado de `hotelesBernalo`).
   hotelIdsUnidadAutoritativos?: number[];
+  // Hoteles recomendados (migración 183) — `claveOferta(hotelId,paqueteId) ->
+  // prioridad`. Cubre las DOS fuentes de oferta: hoteles persona (carga de
+  // `lib/tarifario/resumen.ts`) y hoteles unidad/Bernalo (carga de
+  // `cargarPrioridadesRecomendadosBernalo`, fusionada en `page.tsx` — mismo
+  // espacio de claves, así que combinan sin colisión). Decide la sección de
+  // recomendados del estado global inicial y de la búsqueda por destino.
+  prioridadesRecomendados?: Record<string, number>;
 }) {
   // Submódulos de la vista Booking.
   const [sub, setSub] = useState<"bloqueo" | "porcion_terrestre" | "receptivos">("bloqueo");
@@ -298,16 +333,12 @@ export function VistaBooking({
   const [origenSel, setOrigenSel] = useState("");
   const [destinoSel, setDestinoSel] = useState("");
   const [salidaSel, setSalidaSel] = useState<number | "">("");
-  // Filtro de destino de la grilla de Porción terrestre — ESTADO
-  // INDEPENDIENTE de `destinoSel` (el de Bloqueo). Residual confirmado
-  // (validación real, ronda 3): Porción terrestre no tenía NINGÚN selector
-  // de destino sobre su propia grilla — los destinos unidad `tipo:
-  // "porcion_terrestre"` quedaban fuera de cualquier filtro real.
-  // Reutilizar `destinoSel` habría hecho que una selección de Bloqueo
-  // persistiera (incorrectamente) al cambiar de pestaña, o viceversa — de ahí
-  // el estado propio. Es una de las dos entradas de `destinosPorcion`, que
-  // ahora alimenta tanto este selector como el del motor de búsqueda.
-  const [destinoPorcionSel, setDestinoPorcionSel] = useState("");
+  // El filtro de destino de la grilla de Porción terrestre se ELIMINÓ: era un
+  // `<select>` de exploración que solo podía OCULTAR tarjetas, y con hoteles
+  // recomendados por paquete eso contradecía la regla del estado global
+  // inicial (top 2 de CADA paquete antes de buscar). Quien elige destino en
+  // Porción terrestre es el BUSCADOR (`BuscadorBooking`), que ejecuta una
+  // búsqueda real y acota el universo a lo que el motor devolvió.
   // MODO BÚSQUEDA de Porción terrestre: lo que el buscador (`BuscadorBooking`)
   // comunica hacia arriba cuando ejecuta una búsqueda con éxito, y `null`
   // cuando la limpia o cuando los criterios mostrados dejan de corresponder a
@@ -318,12 +349,20 @@ export function VistaBooking({
   // hoteles de otros destinos, por debajo de los resultados (ver el informe
   // de la tarea).
   const [busquedaPorcion, setBusquedaPorcion] = useState<EstadoBusquedaPorcion | null>(null);
-  // Destino EFECTIVO de la grilla de Porción terrestre: el de la búsqueda
-  // cuando hay una vigente, y si no el del selector de exploración de siempre
-  // (`destinoPorcionSel`, que no se toca). Es el ÚNICO punto de sustitución:
-  // los memos de abajo consumen este valor, así que persona y unidad quedan
-  // cerradas por el mismo criterio y en el mismo lugar.
-  const destinoPorcionEfectivo = busquedaPorcion ? busquedaPorcion.destino : destinoPorcionSel;
+  // Destino que ACOTA la grilla de Porción terrestre: **solo el de una
+  // búsqueda EJECUTADA** (`busquedaPorcion`), "" si no hay ninguna.
+  //
+  // Hallazgo 1 (corrección): antes este valor era "efectivo" — caía a un
+  // selector de exploración local cuando no había búsqueda, y los dos memos de
+  // candidatos (persona y unidad) filtraban por él. Eso hacía que ELEGIR un
+  // destino sin pulsar Buscar ya recortara el universo: los recomendados de
+  // paquetes de otros destinos desaparecían antes de que existiera una
+  // búsqueda, justo lo contrario de la regla del estado global inicial (top 2
+  // recomendados de CADA paquete). Ese selector se ELIMINÓ (ya no quedaba
+  // ningún control honesto que pudiera hacer): el universo de candidatos solo
+  // cambia al ejecutar una búsqueda (estado B) o al limpiarla (vuelve al
+  // estado A). Quien elige destino es el buscador real (`BuscadorBooking`).
+  const destinoPorcionBusqueda = busquedaPorcion ? busquedaPorcion.destino : "";
   const enBusquedaPorcion = sub === "porcion_terrestre" && busquedaPorcion != null;
   // Sugerencia de fecha pedida por el usuario desde los chips del estado vacío
   // (que ahora viven acá, junto a la lista unificada). El `nonce` se
@@ -459,7 +498,36 @@ export function VistaBooking({
     [salidasBloqueo, origenSel, destinoSel]
   );
 
-  // Tarjetas de hotel del submódulo activo (bloqueo o porción).
+  // Destino/búsqueda EFECTIVOS del submódulo activo — gobiernan el estado A
+  // (global inicial) vs B (después de buscar) de "hoteles recomendados".
+  //   · Bloqueo no tiene un paso de "ejecutar búsqueda" separado — el
+  //     selector de destino ES la única interacción, así que sigue siendo el
+  //     gatillo (sin cambios respecto a la ronda anterior).
+  //   · Porción terrestre SÍ lo tiene (`BuscadorBooking`/`busquedaPorcion`) —
+  //     el gatillo es `busquedaPorcion` en sí (una búsqueda REALMENTE
+  //     ejecutada y vigente). Mientras no exista, sigue siendo estado A
+  //     (top 2 de cada paquete, sin resto) sin importar qué tenga el selector
+  //     de exploración, que ya no acota nada (ver hallazgo 1 arriba). Limpiar
+  //     resultados (`setBusquedaPorcion(null)`, ver `BuscadorBooking`) vuelve
+  //     a dejar esto vacío → estado A de nuevo.
+  const destinoActivoSub = sub === "bloqueo"
+    ? destinoSel
+    : sub === "porcion_terrestre"
+      ? destinoPorcionBusqueda
+      : "";
+
+  // Tarjetas CANDIDATAS de hotel persona del submódulo activo — SIEMPRE UNA
+  // por (hotelId, paqueteId), NUNCA fusionadas por hotel_id.
+  //
+  // Corrección posterior (auditoría): la versión anterior fusionaba el
+  // "resto del inventario" por `hotel_id` (un mismo hotel en dos paquetes
+  // distintos terminaba en UNA sola tarjeta, con "desde"/Incluye/add-ons de
+  // AMBOS paquetes mezclados) — la identidad hotelId+paqueteId solo se
+  // preservaba para las recomendadas. Ahora TODA oferta persona (recomendada
+  // o no) es una tarjeta independiente por (hotelId, paqueteId) — la
+  // selección de CUÁLES son recomendadas y CUÁLES son "resto" (y la
+  // combinación con hoteles unidad/Bernalo, hallazgo 3) se resuelve en
+  // `tarjetas` más abajo, que es quien conoce ambas fuentes.
   const hoteles = useMemo<HotelCard[]>(() => {
     const mod = sub === "receptivos" ? null : sub;
     const conHotel = filas.filter((f) => {
@@ -471,13 +539,16 @@ export function VistaBooking({
         if (destinoSel && (f.destino_nombre ?? "") !== destinoSel) return false;
         if (salidaSel !== "" && f.bloqueo_id !== salidaSel) return false;
       }
-      if (mod === "porcion_terrestre" && destinoPorcionEfectivo && (f.destino_nombre ?? "") !== destinoPorcionEfectivo) return false;
+      if (mod === "porcion_terrestre" && destinoPorcionBusqueda && (f.destino_nombre ?? "") !== destinoPorcionBusqueda) return false;
       return true;
     });
-    const map = new Map<number, HotelCard>();
+
+    const porOferta = new Map<string, HotelCard>();
     for (const f of conHotel) {
       const id = f.hotel_id as number;
-      let c = map.get(id);
+      const paqueteId = f.paquete_id as number;
+      const clave = claveOferta(id, paqueteId);
+      let c = porOferta.get(clave);
       if (!c) {
         const info = infoPorHotel[id];
         c = {
@@ -489,12 +560,13 @@ export function VistaBooking({
           adultsOnly: info?.adultsOnly ?? false, petFriendly: info?.petFriendly ?? false,
           tieneCondicion: info?.tieneCondicion ?? false,
           filas: [], moneda: f.moneda ?? "COP",
+          paqueteId, paqueteNombre: f.paquete_nombre ?? null,
         };
-        map.set(id, c);
+        porOferta.set(clave, c);
       }
       c.filas.push(f);
     }
-    let arr = [...map.values()];
+    let arr = [...porOferta.values()];
     // Filtro de acomodación (de la barra superior): el hotel se muestra solo si
     // tiene tarifa para esa acomodación. Incluye Chd1/Chd2 (revisión
     // posterior, defecto "los filtros Chd1/Chd2 no devolvían los mismos
@@ -505,17 +577,19 @@ export function VistaBooking({
     if (soloPetFriendly) arr = arr.filter((c) => c.petFriendly);
     if (soloAdultsOnly) arr = arr.filter((c) => c.adultsOnly);
     for (const c of arr) c.desde = minRoomPvp(c.filas);
-    return arr.sort((a, b) => a.hotelNombre.localeCompare(b.hotelNombre));
-  }, [filas, fotosPorHotel, infoPorHotel, sub, cuposPorBloqueo, origenPorBloqueo, origenSel, destinoSel, destinoPorcionEfectivo, salidaSel, soloAcom, soloPetFriendly, soloAdultsOnly]);
+    return arr;
+  }, [filas, fotosPorHotel, infoPorHotel, sub, cuposPorBloqueo, origenPorBloqueo, origenSel, destinoSel, destinoPorcionBusqueda, salidaSel, soloAcom, soloPetFriendly, soloAdultsOnly]);
 
   // Hoteles por unidad (Bernalo) visibles en el submódulo/filtros ACTIVOS —
   // para el cliente son hoteles normales, así que responden a la misma
   // pestaña (Paquetes/Porción terrestre, por `h.tipo`, el tipo real del
-  // paquete al que pertenecen) y al filtro de destino de su propia pestaña
-  // (`destinoSel` en Bloqueo, `destinoPorcionSel` en Porción terrestre —
-  // residual confirmado, validación real ronda 3: antes Porción terrestre no
-  // filtraba por destino en absoluto, ni para persona ni para unidad). Nunca
-  // aparecen en Receptivos (no son un servicio).
+  // paquete al que pertenecen) y al destino de su propia pestaña
+  // (`destinoSel` en Bloqueo — el selector que SÍ acota, porque en Bloqueo
+  // elegir un destino es la única interacción; `destinoPorcionBusqueda` en
+  // Porción terrestre, que solo existe cuando hay una búsqueda EJECUTADA y es
+  // "" mientras no la haya — hallazgo 1: en Porción terrestre NO existe ningún
+  // control de destino sobre la grilla; el único es el buscador real).
+  // Nunca aparecen en Receptivos (no son un servicio).
   //
   // P2 (hallazgo confirmado): Pet friendly/Adults Only antes ocultaban TODOS
   // los hoteles unidad incondicionalmente ("no están configurados hoy para
@@ -531,19 +605,25 @@ export function VistaBooking({
     if (sub === "receptivos") return [];
     let arr = hotelesBernalo.filter((h) => h.tipo === sub);
     if (sub === "bloqueo" && destinoSel) arr = arr.filter((h) => (h.destinoNombre ?? "") === destinoSel);
-    if (sub === "porcion_terrestre" && destinoPorcionEfectivo) arr = arr.filter((h) => (h.destinoNombre ?? "") === destinoPorcionEfectivo);
+    if (sub === "porcion_terrestre" && destinoPorcionBusqueda) arr = arr.filter((h) => (h.destinoNombre ?? "") === destinoPorcionBusqueda);
     if (soloPetFriendly) arr = arr.filter((h) => infoPorHotel[h.hotelId]?.petFriendly === true);
     if (soloAdultsOnly) arr = arr.filter((h) => infoPorHotel[h.hotelId]?.adultsOnly === true);
     return arr;
-  }, [hotelesBernalo, sub, destinoSel, destinoPorcionEfectivo, soloPetFriendly, soloAdultsOnly, infoPorHotel]);
+  }, [hotelesBernalo, sub, destinoSel, destinoPorcionBusqueda, soloPetFriendly, soloAdultsOnly, infoPorHotel]);
 
   // Una sola colección para la grilla — persona y unidad mezclados, sin
   // sección aparte (el usuario ve hoteles, no "modelos de cálculo"). Clave
-  // estable por tipo+hotel.
+  // estable por tipo + OFERTA (hotelId + paqueteId).
   //
-  // P1-2: las ofertas unidad se AGRUPAN por `hotelId` (una tarjeta por
-  // hotel, con TODAS sus ofertas — una por `paqueteId` — conservadas; ver
-  // `HotelUnidadCard`).
+  // P1-2 quedó SUPERADO por el hallazgo 3 de la auditoría: la versión vieja
+  // agrupaba las ofertas unidad por `hotelId` (una tarjeta por hotel con
+  // TODAS sus ofertas) — justamente lo que impedía tratar cada oferta
+  // hotel+paquete como independiente, que es lo que exige "hoteles
+  // recomendados" (migración 183, la recomendación es POR PAQUETE). Ahora cada
+  // entrada de `hotelesUnidadVisibles` (que ya es una oferta, un row por
+  // hotel+paquete) arma su PROPIA tarjeta, y `ofertas` queda con ESE único
+  // elemento (compatibilidad con `HotelBernaloCotizarModal`, que ya soporta
+  // `ofertas.length === 1`) — ver `HotelUnidadCard`.
   //
   // P1 (hallazgo confirmado, validación final): `modelo_tarifario` es
   // exclusivo por hotel — un hotel NO puede ser persona y unidad a la vez.
@@ -570,6 +650,12 @@ export function VistaBooking({
   // acá) — la única fuente correcta para esta exclusión.
   const tarjetas = useMemo<Tarjeta[]>(() => {
     const idsUnidadAutoritativa = new Set(hotelIdsUnidadAutoritativos);
+    const porFiltros = (hotelId: number) => {
+      const info = infoPorHotel[hotelId];
+      if (soloPetFriendly && !info?.petFriendly) return false;
+      if (soloAdultsOnly && !info?.adultsOnly) return false;
+      return true;
+    };
 
     // ── Modo búsqueda: UNA sola lista, la de la búsqueda ──────────────────
     // Cuando hay una búsqueda vigente, la grilla deja de ser el catálogo de
@@ -588,80 +674,174 @@ export function VistaBooking({
     // Igual que en exploración, la fila persona de un hotel que hoy es unidad
     // se excluye por el canal autoritativo: sería la caché obsoleta de
     // `tarifario_resultado`, no una oferta vigente.
+    //
+    // Corrección posterior (auditoría) — hoteles recomendados TAMBIÉN
+    // ordenan los resultados REALES de la búsqueda: hasta 6 por paquete
+    // coincidente (prioridad 1→6), después el resto de lo que el motor
+    // devolvió — NUNCA se reintroduce una oferta que la búsqueda rechazó (la
+    // selección de recomendados se construye ÚNICAMENTE a partir de
+    // `resultadosPersona`/`gruposUnidadBusqueda`, ambos ya acotados a lo que
+    // el motor confirmó). Identidad SIEMPRE (hotelId, paqueteId): antes se
+    // deduplicaba persona por `hotelId` a secas (`vistos.has(r.hotelId)`),
+    // descartando ofertas reales del mismo hotel en un paquete distinto
+    // (ej. paquete normal + paquete 3x2) — ya no hay ningún dedup por
+    // hotelId, solo por (hotelId,paqueteId), defensivo (`buscarHoteles` ya
+    // entrega como máximo una fila por esa combinación).
     if (enBusquedaPorcion && busquedaPorcion) {
-      const porFiltros = (hotelId: number) => {
-        const info = infoPorHotel[hotelId];
-        if (soloPetFriendly && !info?.petFriendly) return false;
-        if (soloAdultsOnly && !info?.adultsOnly) return false;
-        return true;
-      };
-      // Un hotel = una tarjeta, igual que en exploración (que arma una sola
-      // tarjeta persona por hotel). `buscarHoteles` devuelve una fila por
-      // (paquete, hotel), así que el MISMO hotel puede venir varias veces si
-      // el destino lo tiene armado en más de un paquete — sin este recorte la
-      // grilla mostraría la misma tarjeta repetida (y un contador inflado).
-      // El motor ya devuelve `resultados` ordenado por total ascendente
-      // (`resultados.sort((a, b) => a.total - b.total)` en `cotizar.ts`), así
-      // que quedarse con la PRIMERA fila de cada hotel es quedarse con la más
-      // barata — el mismo criterio con el que el motor elige el `combos[0]`.
-      const vistos = new Set<number>();
-      const busca: Tarjeta[] = [];
+      const vistasPersona = new Set<string>();
+      const resultadosPersona: BusquedaResultado[] = [];
       for (const r of busquedaPorcion.resultados) {
-        if (vistos.has(r.hotelId)) continue;
-        vistos.add(r.hotelId);
         if (idsUnidadAutoritativa.has(r.hotelId) || !porFiltros(r.hotelId)) continue;
-        busca.push({ tipo: "busqueda" as const, key: `b-${r.paqueteId}-${r.hotelId}`, r });
+        const clave = claveOferta(r.hotelId, r.paqueteId);
+        if (vistasPersona.has(clave)) continue;
+        vistasPersona.add(clave);
+        resultadosPersona.push(r);
       }
-      // Cierre de UX de la tarjeta unidad: antes `u.oferta` (singular) era
-      // solo la IDENTIDAD del primer combo que confirmaba, y la tarjeta
-      // tenía que abrir un modal para poder cotizar/mostrar precio — el
-      // usuario repetía fechas/ocupación que el buscador ya tenía. Ahora
-      // `u.opciones` trae TODAS las combinaciones confirmadas, cada una con
-      // su precio público ya saneado — la tarjeta las pinta INLINE
+
+      // Unidad: `busquedaPorcion.unidad` trae UNA entrada por hotelId con
+      // TODAS sus opciones confirmadas — que pueden pertenecer a paquetes
+      // DISTINTOS. `agruparOpcionesUnidadPorOferta` (función pura, probada en
+      // pruebas/recomendados.test.ts) las reparte por (hotelId,paqueteId):
+      // cada grupo conserva EXCLUSIVAMENTE las opciones cotizadas de ESE
+      // paquete, nunca las de otro (antes una sola tarjeta mezclaba
+      // categorías/alimentaciones de paquetes distintos bajo el mismo hotel).
+      // La fuente de precio/disponibilidad (`opcionSel.precioVenta`, ya
+      // confirmado por `computarReservaBernalo`) NO cambia — solo se reparte el
+      // MISMO arreglo `opciones`, ya autoritativo, por paquete.
+      const gruposUnidadBusqueda = agruparOpcionesUnidadPorOferta(
+        busquedaPorcion.unidad.filter((u) => porFiltros(u.hotelId)).flatMap((u) => u.opciones)
+      );
+      const gruposUnidadPorClave = new Map(
+        gruposUnidadBusqueda.map((g) => [claveOferta(g.hotelId, g.paqueteId), g])
+      );
+
+      const ofertasPersonaBusqueda = ofertasConPrioridad(resultadosPersona, prioridadesRecomendados);
+      const ofertasUnidadBusqueda = ofertasConPrioridad(gruposUnidadBusqueda, prioridadesRecomendados);
+      // Una búsqueda siempre está acotada a UN destino — regla de "hasta 6"
+      // (nunca la de "top 2", esa es exclusiva del estado global sin búsqueda).
+      const paqueteIdsBusqueda = new Set<number>([
+        ...resultadosPersona.map((r) => r.paqueteId),
+        ...gruposUnidadBusqueda.map((g) => g.paqueteId),
+      ]);
+      const recomendadasBusqueda = seleccionarRecomendadosPorDestino(
+        [...ofertasPersonaBusqueda, ...ofertasUnidadBusqueda],
+        paqueteIdsBusqueda
+      );
+      const clavesRecomendadasBusqueda = new Set(recomendadasBusqueda.map((o) => claveOferta(o.hotelId, o.paqueteId)));
+
+      const tarjetaPersona = (r: BusquedaResultado, marca: MarcaOferta = {}): Tarjeta =>
+        ({ tipo: "busqueda" as const, key: `b-${r.paqueteId}-${r.hotelId}`, r, recomendada: marca.recomendada });
+      // Cierre de UX de la tarjeta unidad: `g.opciones` trae TODAS las
+      // combinaciones confirmadas DE ESE PAQUETE (nunca de otro), cada una
+      // con su precio público ya saneado — la tarjeta las pinta INLINE
       // (`opcionesBusqueda`, ver `TarjetaUnidadBusqueda`) sin abrir ningún
       // modal ni volver a pedir nada. `ofertas` queda vacío a propósito: esa
-      // lista solo la usa el modal de EXPLORACIÓN, que esta tarjeta nunca
-      // abre.
-      const unidad: Tarjeta[] = busquedaPorcion.unidad
-        .filter((u) => porFiltros(u.hotelId))
-        .map((u) => ({
-          tipo: "unidad" as const,
-          // La `key` incluye la identidad de la BÚSQUEDA vigente (fechas +
-          // ocupación + combinaciones confirmadas), no solo `hotelId`: una
-          // nueva búsqueda del MISMO hotel con fechas u ocupación distintas
-          // cambia la clave → React remonta `TarjetaUnidadBusqueda` y su
-          // estado local (cat/alim/precioActualizado/errorAgregar/agregando)
-          // nace de cero, sin ningún `useEffect` de sincronización frágil. Una
-          // búsqueda idéntica conserva la clave (no remonta sin motivo). Ver
-          // `claveBusquedaUnidad`.
-          key: `u-${u.hotelId}-${claveBusquedaUnidad(u.opciones)}`,
-          hotel: {
-            hotelId: u.hotelId,
-            hotelNombre: u.opciones[0].hotelNombre,
-            destino: u.opciones[0].destinoNombre,
-            ofertas: [],
-            opcionesBusqueda: u.opciones,
-          },
-        }));
-      return [...busca, ...unidad].sort((x, y) => nombreTarjeta(x).localeCompare(nombreTarjeta(y)));
+      // lista solo la usa el modal de EXPLORACIÓN, que esta tarjeta nunca abre.
+      const tarjetaUnidad = (g: GrupoOfertaUnidad<OpcionUnidadConfirmada>, marca: MarcaOferta = {}): Tarjeta => ({
+        tipo: "unidad" as const,
+        recomendada: marca.recomendada,
+        // La `key` incluye paqueteId + la identidad de la BÚSQUEDA vigente
+        // (fechas + ocupación + combinaciones confirmadas) — nunca solo
+        // `hotelId`: dos ofertas del mismo hotel en paquetes distintos deben
+        // tener claves DISTINTAS (antes colisionaban en `u-${hotelId}-...`,
+        // aunque en la práctica solo existía una tarjeta por hotel).
+        key: `u-${g.hotelId}-${g.paqueteId}-${claveBusquedaUnidad(g.opciones)}`,
+        hotel: {
+          hotelId: g.hotelId, hotelNombre: g.opciones[0].hotelNombre, destino: g.opciones[0].destinoNombre,
+          ofertas: [], opcionesBusqueda: g.opciones, paqueteId: g.paqueteId, paqueteNombre: g.opciones[0].paqueteNombre,
+        },
+      });
+
+      const tarjetasRecomendadas: Tarjeta[] = [];
+      for (const o of recomendadasBusqueda) {
+        const clave = claveOferta(o.hotelId, o.paqueteId);
+        const r = resultadosPersona.find((x) => x.hotelId === o.hotelId && x.paqueteId === o.paqueteId);
+        if (r) { tarjetasRecomendadas.push(tarjetaPersona(r, { recomendada: true })); continue; }
+        const g = gruposUnidadPorClave.get(clave);
+        if (g) tarjetasRecomendadas.push(tarjetaUnidad(g, { recomendada: true }));
+      }
+      // ⚠️ Defecto 2 (corregido): estas dos líneas pasaban la FUNCIÓN directo a
+      // `Array.map` (`.map(tarjetaPersona)`), así que JS le entregaba
+      // `(elemento, índice, arreglo)` y el ÍNDICE entraba como la marca de
+      // recomendación — TODA oferta del resto quedaba marcada como recomendada
+      // ("Recomendado · paquete") sin estarlo. Los callbacks explícitos pasan UN
+      // solo argumento: la marca `recomendada` solo se pone en el bucle de
+      // arriba, y solo a las ofertas que realmente están en
+      // `recomendadasBusqueda`. Además la marca ahora viaja en un OBJETO
+      // (`{ recomendada: true }`), así que un `.map(fn)` accidental pasaría el
+      // índice como ese objeto y la marca seguiría quedando falsa — el índice
+      // ya no puede convertirse en "recomendado" ni por accidente.
+      const resto: Tarjeta[] = [
+        ...resultadosPersona.filter((r) => !clavesRecomendadasBusqueda.has(claveOferta(r.hotelId, r.paqueteId))).map((r) => tarjetaPersona(r)),
+        ...gruposUnidadBusqueda.filter((g) => !clavesRecomendadasBusqueda.has(claveOferta(g.hotelId, g.paqueteId))).map((g) => tarjetaUnidad(g)),
+      ].sort((x, y) => nombreTarjeta(x).localeCompare(nombreTarjeta(y)));
+      return [...tarjetasRecomendadas, ...resto];
     }
 
-    const a: Tarjeta[] = hoteles
-      .filter((c) => !idsUnidadAutoritativa.has(c.hotelId))
-      .map((c) => ({ tipo: "persona" as const, key: `p-${c.hotelId}`, card: c }));
-    const gruposUnidad = new Map<number, HotelBernaloDescubierto[]>();
-    for (const h of hotelesUnidadVisibles) {
-      const arr = gruposUnidad.get(h.hotelId) ?? [];
-      arr.push(h);
-      gruposUnidad.set(h.hotelId, arr);
+    // ── Exploración (sin búsqueda vigente): recomendados (persona + unidad
+    // combinados, hallazgo 3) + resto ──────────────────────────────────────
+    const cardsPersona = hoteles.filter((c) => !idsUnidadAutoritativa.has(c.hotelId));
+    const claveCardPersona = (c: HotelCard) => `p-${c.hotelId}-${c.paqueteId}`;
+    const claveCardUnidad = (h: HotelBernaloDescubierto) => `u-${h.hotelId}-${h.paqueteId}`;
+
+    const ofertasPersona = ofertasConPrioridad(cardsPersona, prioridadesRecomendados);
+    const ofertasUnidad = ofertasConPrioridad(hotelesUnidadVisibles, prioridadesRecomendados);
+    const recomendadas: OfertaPrioridad[] = destinoActivoSub
+      ? seleccionarRecomendadosPorDestino(
+          [...ofertasPersona, ...ofertasUnidad],
+          new Set([...cardsPersona.map((c) => c.paqueteId).filter((p): p is number => p != null), ...hotelesUnidadVisibles.map((h) => h.paqueteId)])
+        )
+      : seleccionarRecomendadosGlobalInicial([...ofertasPersona, ...ofertasUnidad]);
+    const clavesRecomendadas = new Set(recomendadas.map((o) => claveOferta(o.hotelId, o.paqueteId)));
+    const esRecomendada = (hotelId: number, paqueteId: number | undefined | null) =>
+      paqueteId != null && clavesRecomendadas.has(claveOferta(hotelId, paqueteId));
+
+    const tarjetasRecomendadas: Tarjeta[] = [];
+    for (const o of recomendadas) {
+      const cPersona = cardsPersona.find((c) => c.hotelId === o.hotelId && c.paqueteId === o.paqueteId);
+      if (cPersona) {
+        tarjetasRecomendadas.push({
+          tipo: "persona" as const, key: claveCardPersona(cPersona), card: cPersona,
+          recomendada: true,
+        });
+        continue;
+      }
+      const hUnidad = hotelesUnidadVisibles.find((h) => h.hotelId === o.hotelId && h.paqueteId === o.paqueteId);
+      if (hUnidad) {
+        tarjetasRecomendadas.push({
+          tipo: "unidad" as const,
+          key: claveCardUnidad(hUnidad),
+          recomendada: true,
+          hotel: {
+            hotelId: hUnidad.hotelId, hotelNombre: hUnidad.hotelNombre, destino: hUnidad.destinoNombre,
+            ofertas: [hUnidad], paqueteId: hUnidad.paqueteId, paqueteNombre: hUnidad.paqueteNombre,
+          },
+        });
+      }
     }
-    const b: Tarjeta[] = [...gruposUnidad.entries()].map(([hotelId, ofertas]) => ({
-      tipo: "unidad" as const,
-      key: `u-${hotelId}`,
-      hotel: { hotelId, hotelNombre: ofertas[0].hotelNombre, destino: ofertas[0].destinoNombre, ofertas },
-    }));
-    return [...a, ...b].sort((x, y) => nombreTarjeta(x).localeCompare(nombreTarjeta(y)));
-  }, [hoteles, hotelesUnidadVisibles, hotelIdsUnidadAutoritativos, enBusquedaPorcion, busquedaPorcion, infoPorHotel, soloPetFriendly, soloAdultsOnly]);
+
+    // Estado global inicial (A): SIN búsqueda/destino activo, el resto del
+    // inventario NO se muestra — solo recomendados (si hay). Con destino/
+    // búsqueda (B): recomendados + resto (persona Y unidad, cada oferta por
+    // su propia identidad hotelId+paqueteId — nunca fusionada), excluyendo
+    // cualquier oferta ya mostrada como recomendada, alfabetizado (criterio
+    // histórico sin cambios).
+    let resto: Tarjeta[] = [];
+    if (destinoActivoSub) {
+      const restoPersona: Tarjeta[] = cardsPersona
+        .filter((c) => !esRecomendada(c.hotelId, c.paqueteId))
+        .map((c) => ({ tipo: "persona" as const, key: claveCardPersona(c), card: c }));
+      const restoUnidad: Tarjeta[] = hotelesUnidadVisibles
+        .filter((h) => !esRecomendada(h.hotelId, h.paqueteId))
+        .map((h) => ({
+          tipo: "unidad" as const,
+          key: claveCardUnidad(h),
+          hotel: { hotelId: h.hotelId, hotelNombre: h.hotelNombre, destino: h.destinoNombre, ofertas: [h], paqueteId: h.paqueteId, paqueteNombre: h.paqueteNombre },
+        }));
+      resto = [...restoPersona, ...restoUnidad].sort((x, y) => nombreTarjeta(x).localeCompare(nombreTarjeta(y)));
+    }
+    return [...tarjetasRecomendadas, ...resto];
+  }, [hoteles, hotelesUnidadVisibles, hotelIdsUnidadAutoritativos, enBusquedaPorcion, busquedaPorcion, infoPorHotel, soloPetFriendly, soloAdultsOnly, destinoActivoSub, prioridadesRecomendados]);
 
   const [abierto, setAbierto] = useState<HotelCard | null>(null);
   const [detalleHotel, setDetalleHotel] = useState<EstadoDetalle<FilaTarifario> | null>(null);
@@ -987,30 +1167,6 @@ export function VistaBooking({
           <span className="ml-2 font-normal normal-case text-gray-400">({tarjetas.length})</span>
         </p>
         <div className="flex flex-wrap items-center gap-3 text-xs text-gray-600">
-          {/* Filtro de destino de "O explora todos los alojamientos"
-              (Porción terrestre) — residual confirmado, validación real
-              ronda 3: control DISTINTO del mini-motor BuscadorBooking de
-              arriba (ese busca por fechas contra el motor legacy; este
-              filtra en el cliente la grilla unificada persona+unidad que ya
-              está pintada, sin ninguna consulta nueva). En modo búsqueda se
-              oculta: el destino lo manda la búsqueda vigente, y ofrecer un
-              selector que compite con ella invitaría a creer que cambiarlo
-              re-ejecuta la búsqueda (no lo haría — solo movería el filtro
-              de la grilla por debajo de un encabezado que dice otra cosa).
-              Para volver a explorar está "Limpiar resultados". */}
-          {sub === "porcion_terrestre" && !enBusquedaPorcion && destinosPorcion.length > 0 && (
-            <label className="flex items-center gap-1.5">
-              <span>Destino</span>
-              <select
-                value={destinoPorcionSel}
-                onChange={(e) => setDestinoPorcionSel(e.target.value)}
-                className="rounded-lg border border-gray-300 bg-white px-2 py-1 text-xs"
-              >
-                <option value="">Todos</option>
-                {destinosPorcion.map((d) => <option key={d.nombre} value={d.nombre}>{d.nombre}</option>)}
-              </select>
-            </label>
-          )}
           <label className="flex items-center gap-1.5">
             <input type="checkbox" checked={soloPetFriendly} onChange={(e) => setSoloPetFriendly(e.target.checked)} />
             Pet friendly
@@ -1080,6 +1236,7 @@ export function VistaBooking({
             <Resultado
               key={t.key}
               r={t.r}
+              recomendada={t.recomendada === true}
               foto={fotosPorHotel[t.r.hotelId] ?? null}
               info={infoPorHotel[t.r.hotelId]}
               descripcionPorPaquete={descripcionPorPaquete}
@@ -1105,11 +1262,21 @@ export function VistaBooking({
                 const ids = [...new Set(t.card.filas.filter((f) => f.bloqueo_id != null).map((f) => f.bloqueo_id as number))];
                 const vals = ids.map((id) => cuposPorBloqueo[id]).filter((c): c is number => c != null && c > 0);
                 const min = vals.length ? Math.min(...vals) : null;
-                return min !== null ? (
-                  <span className="absolute bottom-2 right-2 rounded-full px-2 py-0.5 text-[10px] font-semibold text-white transition-opacity hover:opacity-90" style={{ backgroundColor: "rgba(0,0,0,0.55)" }}>
-                    {min} cupo{min !== 1 ? "s" : ""}
-                  </span>
-                ) : null;
+                return (
+                  <>
+                    {/* Etiqueta de OFERTA (hallazgo 2): el nombre del paquete
+                        va SIEMPRE — recomendada o no — porque el mismo hotel
+                        puede estar en dos paquetes (normal + 3x2) y cada
+                        tarjeta debe leerse como una oferta distinta. La
+                        recomendación solo cambia el prefijo y el color. */}
+                    <EtiquetaOferta paqueteNombre={t.card.paqueteNombre} recomendada={t.recomendada === true} />
+                    {min !== null && (
+                      <span className="absolute bottom-2 right-2 rounded-full px-2 py-0.5 text-[10px] font-semibold text-white transition-opacity hover:opacity-90" style={{ backgroundColor: "rgba(0,0,0,0.55)" }}>
+                        {min} cupo{min !== 1 ? "s" : ""}
+                      </span>
+                    )}
+                  </>
+                );
               })()}
             />
           ) : t.hotel.opcionesBusqueda ? (
@@ -1124,6 +1291,7 @@ export function VistaBooking({
               key={t.key}
               hotel={{ hotelId: t.hotel.hotelId, hotelNombre: t.hotel.hotelNombre, destino: t.hotel.destino }}
               opciones={t.hotel.opcionesBusqueda}
+              recomendada={t.recomendada === true}
               foto={fotosPorHotel[t.hotel.hotelId] ?? null}
               videoUrl={infoPorHotel[t.hotel.hotelId]?.video_url ?? null}
               estrellas={infoPorHotel[t.hotel.hotelId]?.estrellas ?? null}
@@ -1163,6 +1331,14 @@ export function VistaBooking({
               tieneCondicion={infoPorHotel[t.hotel.hotelId]?.tieneCondicion}
               descripcion={infoPorHotel[t.hotel.hotelId]?.descripcion ?? null}
               desde={null}
+              badgeEsquina={
+                // Etiqueta de OFERTA (hallazgo 2) — mismo criterio que la
+                // tarjeta persona: el nombre del paquete va SIEMPRE, para que
+                // el mismo hotel unidad repetido en dos paquetes se lea como
+                // dos ofertas distintas. `TarjetaHotelCard` ya envuelve el
+                // badge en el contenedor relativo de la foto.
+                <EtiquetaOferta paqueteNombre={t.hotel.paqueteNombre} recomendada={t.recomendada === true} />
+              }
             />
           )
         )}
@@ -1440,11 +1616,15 @@ function HotelModal({
 // precio/disponibilidad: eso sigue siendo EXCLUSIVO de `opcionSel.precioVenta`/
 // `cotizarAlojamientoBernaloPublico` (revalidado en `agregar()`).
 function TarjetaUnidadBusqueda({
-  hotel, opciones, foto, videoUrl, estrellas, clasificacion, adultsOnly, petFriendly, tieneCondicion, descripcion, ubicacion,
+  hotel, opciones, recomendada = false, foto, videoUrl, estrellas, clasificacion, adultsOnly, petFriendly, tieneCondicion, descripcion, ubicacion,
   descripcionPorPaquete, addonsPorPaquete,
 }: {
   hotel: { hotelId: number; hotelNombre: string; destino: string | null };
   opciones: OpcionUnidadConfirmada[];
+  /** ¿Esta oferta es una de las recomendadas del paquete coincidente? Solo
+   * cambia la etiqueta de la tarjeta ("Recomendado · <paquete>" vs
+   * "<paquete>") — nunca qué se muestra ni qué se cobra. */
+  recomendada?: boolean;
   foto: string | null;
   videoUrl?: string | null;
   estrellas: number | null;
@@ -1608,6 +1788,11 @@ function TarjetaUnidadBusqueda({
         ) : (
           <div className="flex h-full w-full items-center justify-center text-sm text-gray-300">Sin foto</div>
         )}
+        {/* Etiqueta de OFERTA (hallazgo 2) — el nombre del paquete va SIEMPRE,
+            recomendada o no: `opcionesBusqueda` son solo las de ESTE paquete
+            (la tarjeta es una oferta hotel+paquete), así que el nombre es
+            cierto para toda la tarjeta. */}
+        <EtiquetaOferta paqueteNombre={opcionSel.paqueteNombre} recomendada={recomendada} />
         <span
           className="absolute bottom-2 right-2 rounded-full px-2 py-0.5 text-[10px] font-semibold text-white"
           style={{ backgroundColor: "var(--brand-success)" }}

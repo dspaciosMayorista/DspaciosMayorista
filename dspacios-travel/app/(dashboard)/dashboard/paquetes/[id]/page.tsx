@@ -81,7 +81,7 @@ export default async function PaqueteDetallePage({ params }: { params: Promise<{
     qServicios,
     sb.from("armado_vuelos").select("bloqueo_id, aplica_mk, ta").eq("paquete_id", paqueteId),
     sb.from("armado_empaquetados").select("empaquetado_id, aplica_mk, ta").eq("paquete_id", paqueteId),
-    sb.from("armado_hoteles").select("hotel_id, categorias, regimenes").eq("paquete_id", paqueteId),
+    sb.from("armado_hoteles").select("hotel_id, categorias, regimenes, prioridad").eq("paquete_id", paqueteId),
     sb.from("armado_servicios").select("servicio_id, modo, incluido").eq("paquete_id", paqueteId),
   ]);
 
