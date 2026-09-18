@@ -750,9 +750,17 @@ export function VistaBooking({
         const g = gruposUnidadPorClave.get(clave);
         if (g) tarjetasRecomendadas.push(tarjetaUnidad(g, tarjetasRecomendadas.length));
       }
+      // ⚠️ Defecto 2 (corregido): estas dos líneas pasaban la FUNCIÓN directo a
+      // `Array.map` (`.map(tarjetaPersona)`), así que React le entregaba
+      // `(elemento, índice, arreglo)` y el ÍNDICE entraba como
+      // `ordenRecomendado` — TODA oferta del resto quedaba marcada como
+      // recomendada ("Recomendado · paquete") sin estarlo. Los callbacks
+      // explícitos pasan UN solo argumento: `ordenRecomendado` solo se asigna
+      // en el bucle de arriba, y solo a las ofertas que realmente están en
+      // `recomendadasBusqueda`.
       const resto: Tarjeta[] = [
-        ...resultadosPersona.filter((r) => !clavesRecomendadasBusqueda.has(claveOferta(r.hotelId, r.paqueteId))).map(tarjetaPersona),
-        ...gruposUnidadBusqueda.filter((g) => !clavesRecomendadasBusqueda.has(claveOferta(g.hotelId, g.paqueteId))).map(tarjetaUnidad),
+        ...resultadosPersona.filter((r) => !clavesRecomendadasBusqueda.has(claveOferta(r.hotelId, r.paqueteId))).map((r) => tarjetaPersona(r)),
+        ...gruposUnidadBusqueda.filter((g) => !clavesRecomendadasBusqueda.has(claveOferta(g.hotelId, g.paqueteId))).map((g) => tarjetaUnidad(g)),
       ].sort((x, y) => nombreTarjeta(x).localeCompare(nombreTarjeta(y)));
       return [...tarjetasRecomendadas, ...resto];
     }

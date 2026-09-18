@@ -81,6 +81,111 @@ describe("Admin — setHotelPrioridad (server-side, no toca el registro global d
   });
 });
 
+// ─────────────────────────────────────────────────────────────────────────
+// Defecto 4 (P2): elegir prioridad tardaba varios segundos porque el
+// autosave guardaba y después hacía `router.refresh()` (re-render de todo el
+// editor). Se conserva el autosave, ahora OPTIMISTA.
+// ─────────────────────────────────────────────────────────────────────────
+describe("Autosave optimista de prioridad (defecto 4)", () => {
+  const cuerpoCambiar = (() => {
+    const inicio = armadoClient.indexOf("async function cambiarPrioridad(");
+    assert.ok(inicio >= 0, "no se encontró cambiarPrioridad");
+    const fin = armadoClient.indexOf("\n  }", inicio);
+    assert.ok(fin > inicio);
+    return armadoClient.slice(inicio, fin);
+  })();
+
+  test("aplica el valor local ANTES de esperar la respuesta, y pide el guardado con el valor elegido", () => {
+    const idxOptimista = cuerpoCambiar.indexOf("onPrioridadLocal(hotel.id, elegida)");
+    const idxAwait = cuerpoCambiar.indexOf("await setHotelPrioridad(");
+    assert.ok(idxOptimista > -1 && idxAwait > -1);
+    assert.ok(idxOptimista < idxAwait, "el estado optimista debe aplicarse ANTES del await (es lo que hace instantáneo el selector)");
+    assert.match(cuerpoCambiar, /r = await setHotelPrioridad\(paqueteId, hotel\.id, elegida\);/);
+  });
+
+  test("un guardado EXITOSO no recarga el editor: onDone/router.refresh aparecen SOLO en la rama de fallo", () => {
+    // El camino exitoso no puede recargar nada (era el defecto: `router.refresh()`
+    // re-renderizaba todo el editor). `onDone()` sí se usa, pero únicamente en el
+    // fallo, para recuperar el dato autoritativo.
+    const idxFallo = cuerpoCambiar.indexOf("if (!r.ok) {");
+    assert.ok(idxFallo > 0, "falta la rama de fallo");
+    const caminoExitoso = cuerpoCambiar.slice(0, idxFallo);
+    assert.doesNotMatch(caminoExitoso, /onDone\(/, "el éxito no debe llamar onDone");
+    assert.doesNotMatch(caminoExitoso, /refrescar\(\)|router\.refresh\(\)/);
+    assert.match(cuerpoCambiar.slice(idxFallo), /onDone\(\);/);
+  });
+
+  test("si falla, ELIMINA el override y recupera el dato autoritativo (nunca deja un valor local de reversión)", () => {
+    assert.match(cuerpoCambiar, /if \(!r\.ok\) \{/);
+    assert.match(cuerpoCambiar, /setErrPrioridad\(r\.error/);
+    // Se elimina el override (no se "revierte" a un valor local: un override
+    // con el valor viejo nunca se reconocería y taparía el dato fresco).
+    assert.match(cuerpoCambiar, /onPrioridadDescartar\(hotel\.id\)/, "el fallo debe ELIMINAR el override del hotel");
+    assert.doesNotMatch(cuerpoCambiar, /onPrioridadLocal\(hotel\.id, previa\)/, "no puede dejar un override 'de reversión'");
+    assert.doesNotMatch(cuerpoCambiar, /const previa = prioridad;/);
+    // Y después pide la fuente autoritativa.
+    const idxFallo = cuerpoCambiar.indexOf("if (!r.ok) {");
+    const bloqueFallo = cuerpoCambiar.slice(idxFallo);
+    assert.match(bloqueFallo, /onDone\(\);/, "tras el fallo hay que recuperar el dato del servidor");
+  });
+
+  test("el descarte del override es una función pura del módulo (sin mutar el Map)", () => {
+    const fuente = leer("lib/tarifario/prioridadOptimista.ts");
+    assert.match(fuente, /export function sinPrioridadOptimista\(/);
+    assert.match(fuente, /const siguiente = new Map\(previos\);\s*\n\s*siguiente\.delete\(hotelId\);/);
+    assert.match(armadoClient, /setPrioridadesOptimistas\(\(prev\) => sinPrioridadOptimista\(prev, hotelId\)\)/);
+  });
+
+  test("evita envíos concurrentes de la MISMA fila mientras hay una petición en vuelo", () => {
+    assert.match(cuerpoCambiar, /if \(guardandoPrioridad\) return;/);
+    assert.match(cuerpoCambiar, /setGuardandoPrioridad\(true\);/);
+    assert.match(cuerpoCambiar, /setGuardandoPrioridad\(false\);/);
+    // Y el control queda deshabilitado mientras tanto (feedback real de "en curso").
+    assert.match(armadoClient, /disabled=\{guardandoPrioridad\}/);
+  });
+
+  test("el selector refleja el valor EFECTIVO (optimista o del servidor) y sigue sin botón Guardar", () => {
+    assert.match(armadoClient, /value=\{prioridad \?\? ""\}/, "el select no puede leer `sel.prioridad` directo: tiene que ver el valor optimista");
+    assert.doesNotMatch(armadoClient, /Guardar prioridad|Guardar recomendad/i, "el autosave no lleva botón Guardar");
+  });
+
+  test("el valor optimista vive en el padre y alimenta las prioridades ocupadas (sin esperar refresh)", () => {
+    assert.match(armadoClient, /const \[prioridadesOptimistas, setPrioridadesOptimistas\] = useState<Map<number, number \| null>>\(new Map\(\)\);/);
+    assert.match(armadoClient, /const prioridadEfectiva = \(hotelId: number\): number \| null =>\s*\n\s*prioridadEfectivaDe\(/);
+    assert.match(armadoClient, /prioridad=\{prioridadEfectiva\(h\.id\)\}/);
+    assert.match(armadoClient, /onPrioridadLocal=\{setPrioridadOptimista\}/);
+    // `prioridadesOcupadas` se arma con los valores EFECTIVOS: por eso elegir una
+    // prioridad la marca ocupada de inmediato en los demás hoteles.
+    assert.match(armadoClient, /const prioridadesOcupadas = prioridadesOcupadasDe\(prioridadesOptimistas, filasServidorPrioridad\);/);
+  });
+
+  test("la reconciliación es PURA y se cablea sin efectos: descarta overrides reconocidos y filas desaparecidas", () => {
+    // La lógica vive en el módulo puro (probado con ejecución real en
+    // pruebas/prioridadOptimista.test.ts) — el componente solo la aplica.
+    assert.match(armadoClient, /import\s*\{[\s\S]*reconciliarPrioridades[\s\S]*\}\s*from\s*"@\/lib\/tarifario\/prioridadOptimista";/);
+    assert.match(armadoClient, /const filasServidorPrioridad = useMemo\(/);
+    // Reconciliación en RENDER (patrón oficial de React): comparar la
+    // generación derivada de las props y ajustar el estado ahí mismo.
+    assert.match(armadoClient, /const \[generacionPrioridad, setGeneracionPrioridad\] = useState\(filasServidorPrioridad\);/);
+    assert.match(armadoClient, /if \(generacionPrioridad !== filasServidorPrioridad\) \{/);
+    assert.match(armadoClient, /setPrioridadesOptimistas\(\(prev\) => reconciliarPrioridades\(prev, filasServidorPrioridad\)\);/);
+    // Y NADA de `useEffect` para reconciliar: la regla
+    // `react-hooks/set-state-in-effect` lo prohíbe (verificado con ESLint).
+    assert.doesNotMatch(armadoClient, /useEffect\(\(\) => \{\s*\n\s*setPrioridadesOptimistas/, "la reconciliación no puede ir en un efecto");
+  });
+
+  test("las DEMÁS operaciones del editor siguen refrescando igual que antes", () => {
+    // El checkbox de asociar/desasociar sigue llamando `onDone()` (recarga),
+    // que es el comportamiento que NO se cambia.
+    const idxCheckbox = armadoClient.indexOf("await setHotel(paqueteId, hotel.id, e.target.checked);");
+    assert.ok(idxCheckbox > -1);
+    assert.match(armadoClient.slice(idxCheckbox, idxCheckbox + 120), /onDone\(\);/);
+    // Y `refrescar` (el `router.refresh` del editor) sigue existiendo y usado.
+    assert.match(armadoClient, /function refrescar\(\) \{\s*\n\s*router\.refresh\(\);/);
+    assert.match(armadoClient, /onDone=\{refrescar\}/);
+  });
+});
+
 describe("Lectura — identidad compuesta hotelId+paqueteId, nunca solo hotelId, para la sección de recomendados", () => {
   test("lib/tarifario/resumen.ts construye prioridadesRecomendados con claveOferta(hotel_id, paquete_id), scoped a paqIdsConHotel", () => {
     assert.match(resumen, /import\s*\{\s*claveOferta\s*\}\s*from\s*"\.\/recomendados\.ts"/);
@@ -389,5 +494,61 @@ describe("Incluye/No incluye, add-ons, precio y disponibilidad siguen ligados al
 
   test("unidad en búsqueda: el precio sigue siendo el de la opción confirmada (`opcionSel.precioVenta`), no uno recalculado por la etiqueta", () => {
     assert.match(vistaBooking, /const precioMostrado = precioActualizado\?\.combo === claveCombo \? precioActualizado\.precio : opcionSel\.precioVenta;/);
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────
+// Defecto 2 (P1): el "resto" de la búsqueda pasaba la FUNCIÓN suelta a
+// `Array.map`, así que JS le entregaba `(elemento, índice, arreglo)` y el
+// ÍNDICE entraba como `ordenRecomendado` — TODAS las ofertas específicas se
+// pintaban como "Recomendado · paquete". Estos tests fallan con el código viejo.
+// ─────────────────────────────────────────────────────────────────────────
+describe("Defecto 2 — el índice de Array.map nunca se filtra como ordenRecomendado", () => {
+  // El código SIN comentarios: los comentarios de esta corrección nombran a
+  // propósito el patrón viejo (`.map(tarjetaPersona)`) para documentarlo, y lo
+  // que se verifica acá es el CÓDIGO.
+  const codigoVista = vistaBooking
+    .split(/\r?\n/)
+    .filter((l) => !/^\s*(\/\/|\*|\/\*)/.test(l))
+    .join("\n");
+
+  test("ningún builder de tarjetas se pasa 'suelto' a .map (siempre con callback explícito)", () => {
+    assert.doesNotMatch(codigoVista, /\.map\(tarjetaPersona\)/, "`.map(tarjetaPersona)` filtra el índice como ordenRecomendado");
+    assert.doesNotMatch(codigoVista, /\.map\(tarjetaUnidad\)/, "`.map(tarjetaUnidad)` filtra el índice como ordenRecomendado");
+    assert.match(codigoVista, /\.map\(\(r\) => tarjetaPersona\(r\)\)/);
+    assert.match(codigoVista, /\.map\(\(g\) => tarjetaUnidad\(g\)\)/);
+  });
+
+  test("solo las ofertas de `recomendadasBusqueda` reciben ordenRecomendado: en el resto los dos callbacks pasan UN SOLO argumento", () => {
+    const inicio = vistaBooking.indexOf("const resto: Tarjeta[] = [");
+    assert.ok(inicio > -1, "no se encontró el ensamblado del resto");
+    const fin = vistaBooking.indexOf("return [...tarjetasRecomendadas, ...resto];", inicio);
+    const bloque = vistaBooking.slice(inicio, fin);
+    // El único lugar que asigna `ordenRecomendado` es el bucle de recomendadas,
+    // y lo hace con el contador explícito — no desde un `.map`.
+    assert.doesNotMatch(bloque, /ordenRecomendado/, "el resto no puede llevar ordenRecomendado por ningún camino");
+    assert.doesNotMatch(bloque, /\.map\(tarjeta/, "el resto no puede mapear con el builder suelto (el índice se colaría)");
+    assert.equal([...vistaBooking.matchAll(/tarjetasRecomendadas\.length\)/g)].length, 2, "las recomendadas se numeran con el contador del bucle, una vez por tipo");
+  });
+
+  test("por qué importa (semántica de JS real): pasar la función suelta entrega el índice como 2º argumento; el callback explícito no", () => {
+    // Réplica del patrón exacto de `tarjetaPersona`/`tarjetaUnidad` (segundo
+    // parámetro opcional = posición de recomendado). Esto es lo que hacía el
+    // código viejo, y es la razón por la que el callback explícito es
+    // obligatorio — no una preferencia de estilo.
+    const builder = (item: { id: number }, ordenRecomendado?: number) => ({ id: item.id, ordenRecomendado });
+    const items = [{ id: 1 }, { id: 2 }, { id: 3 }];
+    // ❌ `ref` suelta → JS pasa (elemento, índice, arreglo): el índice se cuela.
+    assert.deepEqual(items.map(builder), [
+      { id: 1, ordenRecomendado: 0 },
+      { id: 2, ordenRecomendado: 1 },
+      { id: 3, ordenRecomendado: 2 },
+    ]);
+    // ✅ callback explícito → un solo argumento: `ordenRecomendado` queda undefined.
+    assert.deepEqual(items.map((r) => builder(r)), [
+      { id: 1, ordenRecomendado: undefined },
+      { id: 2, ordenRecomendado: undefined },
+      { id: 3, ordenRecomendado: undefined },
+    ]);
   });
 });

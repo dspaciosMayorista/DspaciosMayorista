@@ -121,7 +121,8 @@ function agruparPorPaquete(ofertas: readonly OfertaPrioridad[]): Map<number, Ofe
   // Desempate determinista: dentro de cada paquete, por prioridad ascendente
   // (1 antes que 2); si dos ofertas tuvieran la MISMA prioridad (no debería
   // pasar — la base lo impide por paquete — pero un dataset inconsistente no
-  // debe producir un orden aleatorio), por hotelId ascendente.
+  // debe producir un orden aleatorio), por hotelId ascendente. Este orden es
+  // el que decide QUÉ ofertas entran en los cupos por paquete (top 2 / top 6).
   for (const arr of porPaquete.values()) {
     arr.sort((a, b) => a.prioridad - b.prioridad || a.hotelId - b.hotelId);
   }
@@ -129,31 +130,54 @@ function agruparPorPaquete(ofertas: readonly OfertaPrioridad[]): Map<number, Ofe
 }
 
 /**
+ * Orden VISIBLE global de las ofertas ya seleccionadas (defecto 3).
+ *
+ * La numeración es del NEGOCIO, no del paquete: "prioridad 1" significa
+ * "primero" para el cliente, y antes el resultado se concatenaba paquete por
+ * paquete (A/1, A/2, B/1, …), así que un A/2 podía verse ANTES que un B/1.
+ * Ahora, después de aplicar los cupos por paquete, el orden es:
+ *   1. prioridad ascendente (1 → 6);
+ *   2. desempate determinista: `paqueteId` ascendente;
+ *   3. y luego `hotelId` ascendente.
+ * El desempate por `paqueteId`/`hotelId` es lo único que hace el orden estable
+ * y reproducible cuando dos ofertas comparten prioridad (legítimo: la unicidad
+ * es POR paquete).
+ */
+function ordenarGlobalmente(ofertas: readonly OfertaPrioridad[]): OfertaPrioridad[] {
+  return [...ofertas].sort(
+    (a, b) => a.prioridad - b.prioridad || a.paqueteId - b.paqueteId || a.hotelId - b.hotelId
+  );
+}
+
+/**
  * Estado global inicial (sin búsqueda por destino): como máximo los 2
  * PRIMEROS recomendados de CADA paquete (prioridad 1 antes que 2). Un
  * paquete con un solo recomendado muestra uno; sin recomendados, no aparece.
- * Nunca se muestran las prioridades 3-6 en este estado. Orden final:
- * agrupado por paquete (paqueteId ascendente, desempate determinista),
- * prioridad ascendente dentro de cada paquete — el llamador puede reordenar
- * visualmente por otro criterio (ej. nombre) si lo necesita, pero la
- * SELECCIÓN (cuáles entran) ya quedó resuelta acá, antes de paginar/limitar.
+ * Nunca se muestran las prioridades 3-6 en este estado.
+ *
+ * El CUPO es por paquete (2), pero el ORDEN VISIBLE es global por prioridad
+ * (ver `ordenarGlobalmente`): A/prioridad 2 nunca queda antes que B/prioridad 1.
  */
 export function seleccionarRecomendadosGlobalInicial(ofertas: readonly OfertaPrioridad[]): OfertaPrioridad[] {
   const porPaquete = agruparPorPaquete(ofertas);
   const paqueteIds = [...porPaquete.keys()].sort((a, b) => a - b);
-  const resultado: OfertaPrioridad[] = [];
+  const seleccion: OfertaPrioridad[] = [];
   for (const pid of paqueteIds) {
-    resultado.push(...(porPaquete.get(pid) as OfertaPrioridad[]).slice(0, 2));
+    seleccion.push(...(porPaquete.get(pid) as OfertaPrioridad[]).slice(0, 2));
   }
-  return resultado;
+  return ordenarGlobalmente(seleccion);
 }
 
 /**
  * Después de ejecutar una búsqueda por destino: para cada paquete
  * coincidente con el destino (`paqueteIdsCoincidentes`), TODOS sus
- * recomendados configurados, hasta 6, ordenados 1→6 dentro del paquete.
+ * recomendados configurados, hasta 6 — el cupo sigue siendo POR PAQUETE.
  * Paquetes fuera de `paqueteIdsCoincidentes` no aportan ninguna oferta
  * (ni siquiera si tienen recomendados) — el destino ya filtró el universo.
+ *
+ * Igual que el estado global inicial, el ORDEN VISIBLE es global por
+ * prioridad (ver `ordenarGlobalmente`): un A/prioridad 6 no puede quedar antes
+ * que un B/prioridad 1.
  */
 export function seleccionarRecomendadosPorDestino(
   ofertas: readonly OfertaPrioridad[],
@@ -161,11 +185,11 @@ export function seleccionarRecomendadosPorDestino(
 ): OfertaPrioridad[] {
   const porPaquete = agruparPorPaquete(ofertas.filter((o) => paqueteIdsCoincidentes.has(o.paqueteId)));
   const paqueteIds = [...porPaquete.keys()].sort((a, b) => a - b);
-  const resultado: OfertaPrioridad[] = [];
+  const seleccion: OfertaPrioridad[] = [];
   for (const pid of paqueteIds) {
-    resultado.push(...(porPaquete.get(pid) as OfertaPrioridad[]).slice(0, 6));
+    seleccion.push(...(porPaquete.get(pid) as OfertaPrioridad[]).slice(0, 6));
   }
-  return resultado;
+  return ordenarGlobalmente(seleccion);
 }
 
 /**
