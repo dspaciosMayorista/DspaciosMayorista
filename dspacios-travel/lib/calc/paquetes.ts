@@ -255,21 +255,28 @@ export function temporadaVigenteParaFecha(
 }
 
 /**
- * Neto efectivo de UNA noche, resolviendo por prioridad + vigencia de compra:
- *  - gana la entrada de mayor prioridad que cubra la fecha y esté en vigencia de compra;
- *  - si es 'tarifa', usa su neto cargado;
- *  - si es un descuento, lo aplica sobre la tarifa-base (la 'tarifa' de mayor
- *    prioridad por debajo, con neto cargado).
- * Devuelve null si no hay tarifa aplicable (no se publica esa noche).
- */
-/**
- * Resolución detallada de una noche: además del neto, identifica el NOMBRE de
- * la temporada 'tarifa' que realmente aportó el precio (la fila de `tarifa_hotel`
- * cuyo neto se usó) — sea porque ganó directo, o porque es la tarifa-base de un
- * descuento. Es la única fuente de verdad para saber "qué fila de tarifa_hotel
- * priceó esta noche" (p. ej. para resolver de ahí la regla de edad efectiva).
- * `netoNoche` es un envoltorio delgado sobre esta función — mismo comportamiento,
- * sin exponer la identidad.
+ * Neto efectivo de UNA noche, resolviendo por prioridad + vigencia de compra.
+ *
+ * Regla definitiva (corrección de esta ronda): una vigencia de
+ * `hotel_temporadas` NUNCA genera, deriva ni modifica precios — solo define
+ * nombre, fechas, prioridad, restricciones y clasificación. El ÚNICO precio
+ * válido es una fila materializada en `tarifa_hotel` (`netoPorTemporada[nombre]
+ * != null` para el combo categoría/régimen/acomodación actual). Por eso se
+ * recorren las vigencias candidatas EN ORDEN DE PRIORIDAD y se usa la
+ * PRIMERA que tenga neto materializado para este combo — sea de tipo
+ * 'tarifa' (la base) o una promoción (`descuento_pct`/`descuento_monto`) con
+ * su propia fila (típicamente generada por `generarTarifasDubai`, ver
+ * migración 179). Una vigencia de tipo descuento SIN fila materializada para
+ * este combo NUNCA calcula nada desde una base — se ignora por completo y la
+ * resolución sigue bajando por prioridad hasta encontrar una que sí tenga
+ * precio (puede ser la base, u otra promoción de menor prioridad). Si
+ * ninguna vigencia candidata tiene neto materializado, devuelve `null` (no
+ * se publica esa noche) — nunca se inventa un precio.
+ *
+ * Antes existía un camino "legacy" que, para una promoción sin fila propia,
+ * recalculaba `baseNeto × (1 − descuento_valor/100)` desde la tarifa-base —
+ * quedó RETIRADO explícitamente: cambiar `descuento_valor` de una vigencia
+ * sin regenerar tarifas ya NO cambia ningún precio publicado.
  */
 export function resolverNetoNocheDetallado(
   t0: number,
@@ -280,28 +287,23 @@ export function resolverNetoNocheDetallado(
   // Nombres de temporada cuya fila de `tarifa_hotel` es PRECIO FINAL
   // AUTORITATIVO — típicamente una promoción Dubai generada por
   // `generarTarifasDubai` (`tarifa_hotel.precio_final_autoritativo`, ver
-  // migración 179), que ya trae el descuento, el suplemento propio y los
-  // modificadores de acomodación HORNEADOS en el neto. Cuando la temporada
-  // ganadora (`top`) está en este set y tiene neto cargado para el combo
-  // categoría/régimen actual, se usa DIRECTO — nunca se vuelve a aplicar el
-  // descuento de la vigencia (`top.descuento_valor`) sobre la tarifa-base,
-  // que duplicaría el descuento y descartaría el suplemento/edades propios de
-  // la promoción. Compatibilidad: `undefined` (el default, cuando el llamador
-  // no lo pasa) o un set vacío deja el comportamiento IDÉNTICO al histórico —
-  // ninguna vigencia `descuento_pct`/`descuento_monto` existente cambia de
-  // semántica solo por esta migración/parámetro nuevo.
+  // migración 179). Ya NO decide si una vigencia puede ganar (eso lo decide
+  // únicamente tener neto materializado, ver arriba) — solo alimenta el
+  // detalle `precioFinalAutoritativo` del resultado (trazabilidad/auditoría,
+  // persistido en `tarifario_resultado`, nunca usado para el cálculo).
+  // `undefined`/set vacío → `precioFinalAutoritativo` sale `false` siempre.
   precioFinalTemporadas?: ReadonlySet<string>
 ): {
   neto: number;
-  /** Nombre de la fila de `tarifa_hotel` que aportó el NETO — puede ser la
-   * BASE (en el camino legacy de recomputar un descuento). Fuente para
-   * resolver edad/condiciones de tarifa (ver `liquidarHotelNochesConTemporadas`). */
+  /** Nombre de la fila de `tarifa_hotel` que aportó el NETO — SIEMPRE la
+   * MISMA vigencia que `temporadaGanadora` (ya no hay camino que recalcule
+   * desde una base distinta a la que ganó). Fuente para resolver edad/
+   * condiciones de tarifa (ver `liquidarHotelNochesConTemporadas`). */
   temporadaTarifa: string;
-  /** Nombre de la VIGENCIA que realmente GANÓ esta noche por prioridad
-   * (`entradasNoche(...)[0]`) — SIEMPRE la promo/descuento cuando aplica,
-   * nunca la base, ni siquiera en el camino legacy. Es la identidad correcta
-   * para "qué temporada produjo este precio" de cara al usuario/auditoría
-   * (persistida en `tarifario_resultado.temporada_ganadora`). */
+  /** Nombre de la vigencia que ganó esta noche — la primera, por prioridad,
+   * que tuviera neto materializado para este combo. Idéntico a
+   * `temporadaTarifa` (se conservan ambos campos por compatibilidad con los
+   * llamadores existentes). */
   temporadaGanadora: string;
   /** `true` si la vigencia ganadora es de tipo distinto a 'tarifa' (cualquier
    * descuento_pct/descuento_monto/promo_noche_gratis, generado por Dubai o
@@ -317,47 +319,22 @@ export function resolverNetoNocheDetallado(
   // 'promo_noche_gratis' no es un precio por noche (ver promoNocheGratisFactor):
   // se excluye de la resolución por-noche para que nunca "gane" un slot aquí.
   const ents = entradasNoche(t0, temporadas, hoy, regimen).filter((t) => (t.tipo ?? "tarifa") !== "promo_noche_gratis");
-  if (!ents.length) return null;
-  const top = ents[0];
-  const tipoTop = top.tipo ?? "tarifa";
-  const temporadaGanadora = top.nombre;
-  const esPromocion = tipoTop !== "tarifa";
-
-  if (esPromocion && precioFinalTemporadas?.has(top.nombre)) {
-    const vFinal = netoPorTemporada[top.nombre];
-    // Tiene neto cargado para ESTE combo categoría/régimen → esa fila es la
-    // autoridad, se usa tal cual (identidad = `top.nombre`, así que edades y
-    // condiciones de tarifa se resuelven después contra la fila de la
-    // promoción, no contra su base). Si no tiene neto para este combo
-    // (p. ej. la promo no generó este régimen), cae al comportamiento legacy
-    // de abajo — nunca bloquea la noche por esto.
-    if (vFinal != null) return { neto: vFinal, temporadaTarifa: top.nombre, temporadaGanadora, esPromocion, precioFinalAutoritativo: true };
+  for (const entry of ents) {
+    const neto = netoPorTemporada[entry.nombre];
+    // Sin fila materializada para ESTE combo → esta vigencia no puede
+    // aportar un precio (ni recalculado, ni de ningún tipo) — se ignora y se
+    // sigue bajando por prioridad a la siguiente candidata.
+    if (neto == null) continue;
+    const esPromocion = (entry.tipo ?? "tarifa") !== "tarifa";
+    return {
+      neto,
+      temporadaTarifa: entry.nombre,
+      temporadaGanadora: entry.nombre,
+      esPromocion,
+      precioFinalAutoritativo: esPromocion && !!precioFinalTemporadas?.has(entry.nombre),
+    };
   }
-
-  if (tipoTop === "tarifa") {
-    const v = netoPorTemporada[top.nombre];
-    if (v != null) return { neto: v, temporadaTarifa: top.nombre, temporadaGanadora, esPromocion, precioFinalAutoritativo: false };
-    // La temporada de mayor prioridad NO tiene neto para ESTE combo (categoría/
-    // régimen) — p. ej. "BAJA" es de PAM y este combo es PC. Cae a la 'tarifa' de
-    // mayor prioridad que cubra la fecha Y tenga neto para este combo ("BAJA PC").
-    const baseT = ents.find((t) => (t.tipo ?? "tarifa") === "tarifa" && netoPorTemporada[t.nombre] != null);
-    return baseT ? { neto: netoPorTemporada[baseT.nombre] as number, temporadaTarifa: baseT.nombre, temporadaGanadora: baseT.nombre, esPromocion: false, precioFinalAutoritativo: false } : null;
-  }
-  // Descuento: necesita una tarifa-base por debajo, con neto cargado.
-  const base = ents.find((t) => (t.tipo ?? "tarifa") === "tarifa" && netoPorTemporada[t.nombre] != null);
-  if (!base) return null;
-  const baseNeto = netoPorTemporada[base.nombre] as number;
-  const val = Number(top.descuento_valor) || 0;
-  const neto = tipoTop === "descuento_pct"
-    ? Math.round(baseNeto * (1 - val / 100))
-    : Math.max(0, Math.round(baseNeto - val)); // descuento_monto (por pax)
-  // Identidad de la FILA = la base (así resuelven edades/condiciones, como
-  // siempre); identidad de la VIGENCIA GANADORA = la promo (`temporadaGanadora`,
-  // top.nombre) — NUNCA la base, aunque el camino legacy haya recalculado
-  // desde su neto. Este es exactamente el defecto que se corrige para
-  // procedencia pública: antes solo existía `temporadaTarifa` (=base.nombre
-  // acá), que un consumidor podía confundir con "la temporada que ganó".
-  return { neto, temporadaTarifa: base.nombre, temporadaGanadora, esPromocion, precioFinalAutoritativo: false };
+  return null;
 }
 
 export function netoNoche(

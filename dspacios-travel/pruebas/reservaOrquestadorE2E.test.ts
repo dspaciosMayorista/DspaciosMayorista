@@ -13,11 +13,17 @@ import { crearClienteFalso, type TablasFalsas } from "./support/fakeSupabase.ts"
 // Datos EXACTOS de producción (diagnóstico del dueño, consultado en
 // Supabase el 2026-09-16): hotel 217, paquete 50 activo/porcion_terrestre,
 // categoría/régimen "Estándar"/"PAE", temporadas "Prueba d" (base) y
-// "Promoción" (ganadora), fecha 2026-09-17→2026-09-18, `tarifa_hotel`
-// Promoción/Estándar/PAE con `notas="No rembolsable prueba"` y
-// `precio_final_autoritativo=false` (NO es el camino "autoritativo" de la
-// migración 179 — es una promoción de tipo descuento/vigencia normal, que
-// gana por PRIORIDAD, camino "legacy" de `resolverNetoNocheDetallado`).
+// "Promoción" (vigencia de descuento_pct 23%, SIN fila materializada para
+// este combo — su fila en `tarifa_hotel` existe pero con TODOS los
+// `neto_*` en null, solo trae `notas="No rembolsable prueba"`).
+//
+// ESTE es el caso real que confirmó el hallazgo de la corrección posterior:
+// el motor calculaba 231.000 (300.000 × 0,77) recalculando desde la base
+// con el `descuento_valor` de la vigencia, y publicaba la nota de una fila
+// que NUNCA tuvo precio propio. Regla definitiva: una vigencia sin fila
+// materializada para el combo se IGNORA por completo — precio Y condición.
+// Con estos mismos datos, ahora la BASE ("Prueba d", sin nota) es quien
+// gana: PVP = 300.000, `condicionesTarifa` queda vacío.
 //
 // Por qué hace falta un loader + mock.module (y por qué NO existían antes en
 // este repo): `computo.ts` importa con el alias `@/…` (`@/lib/supabase/
@@ -184,22 +190,24 @@ const INPUT = {
 
 const RESULTADO = await computarReserva(sb as unknown as Parameters<typeof computarReserva>[0], INPUT);
 
-describe("computarReserva() — ejecución REAL del orquestador (lib/reservar/computo.ts), con datos EXACTOS de producción (hotel 217, paquete 50, temporadas 'Prueba d'/'Promoción', precio_final_autoritativo=false)", () => {
+describe("computarReserva() — ejecución REAL del orquestador (lib/reservar/computo.ts), con datos EXACTOS de producción (hotel 217, paquete 50, temporadas 'Prueba d'/'Promoción' SIN fila materializada)", () => {
   test("caso real: ok:true", () => {
     assert.equal(RESULTADO.ok, true, RESULTADO.ok ? "" : `computarReserva falló: ${(RESULTADO as { ok: false; error: string }).error}`);
   });
 
-  test("la Promoción gana por PRIORIDAD (camino legacy, sin precio_final_autoritativo) — el precio es el descontado, no el de la base", () => {
+  test("la Promoción (SIN fila materializada) se ignora — gana la BASE con su propio neto, SIN descontar", () => {
     assert.ok(RESULTADO.ok);
     if (!RESULTADO.ok) return;
-    // base 300.000, descuento 23% → 231.000/persona.
-    assert.equal(RESULTADO.data.pvpPorAcom["doble"], 231000);
+    // Regla definitiva: "Promoción" no tiene neto_doble cargado para este
+    // combo — se ignora por completo. La base ("Prueba d") gana con
+    // 300.000, tal cual, nunca 231.000 (300.000×0,77 recalculado).
+    assert.equal(RESULTADO.data.pvpPorAcom["doble"], 300000);
   });
 
-  test("comp.data.condicionesTarifa trae la nota de la Promoción — la que REALMENTE ganó, con ejecución real del orquestador (no un array fabricado a mano)", () => {
+  test("comp.data.condicionesTarifa queda VACÍO — la nota de 'Promoción' nunca se propaga porque esa vigencia nunca gana (sin fila materializada)", () => {
     assert.ok(RESULTADO.ok);
     if (!RESULTADO.ok) return;
-    assert.deepEqual(RESULTADO.data.condicionesTarifa, [{ temporada: "Promoción", texto: NOTA }]);
+    assert.deepEqual(RESULTADO.data.condicionesTarifa, []);
   });
 });
 
@@ -216,28 +224,28 @@ describe("construirHotelSnapPersona() (lib/reservar/hotelSnapPersona.ts, funció
       fotoUrl: null, edadesMenoresConfirmadas: [],
     });
 
-    test("el snapshot construido por la función REAL conserva la condición de la Promoción", () => {
-      assert.deepEqual(snap.condiciones_tarifa, [{ temporada: "Promoción", texto: NOTA }]);
+    test("el snapshot construido por la función REAL queda SIN condiciones — la Promoción sin fila materializada nunca gana", () => {
+      assert.deepEqual(snap.condiciones_tarifa, []);
     });
 
     type HotelSnap = { ref?: unknown; condiciones_tarifa?: unknown };
     const detalleHotelesSnapCotizacion: HotelSnap[] = [snap];
 
-    test("resolverCondicionesTarifaParaConversion() (función REAL que usa convertirCotizacionCarrito, reservar/actions.ts línea ~2197) resuelve la MISMA condición por `ref`", () => {
+    test("resolverCondicionesTarifaParaConversion() (función REAL que usa convertirCotizacionCarrito, reservar/actions.ts línea ~2197) resuelve el mismo resultado VACÍO por `ref`", () => {
       const rConv = resolverCondicionesTarifaParaConversion(detalleHotelesSnapCotizacion, REF);
       assert.equal(rConv.ok, true);
-      if (rConv.ok) assert.deepEqual(rConv.condiciones, [{ temporada: "Promoción", texto: NOTA }]);
+      if (rConv.ok) assert.deepEqual(rConv.condiciones, []);
     });
 
-    test("contrato_hoteles.condiciones_tarifa (jsonb persistido) → condicionesTarifaParaRender() (función REAL de las 4 páginas de documento) → agruparCondicionesTarifaPorTexto() (función REAL de ContratoDocumento.tsx): la nota llega intacta hasta el render", () => {
+    test("contrato_hoteles.condiciones_tarifa (jsonb persistido) → condicionesTarifaParaRender() (función REAL de las 4 páginas de documento) → agruparCondicionesTarifaPorTexto() (función REAL de ContratoDocumento.tsx): sigue vacío hasta el render — nunca aparece la nota de una vigencia sin precio propio", () => {
       const rConv = resolverCondicionesTarifaParaConversion(detalleHotelesSnapCotizacion, REF);
       assert.equal(rConv.ok, true);
       if (!rConv.ok) return;
       const jsonbPersistido: unknown = rConv.condiciones; // lo que contrato_hoteles.insert({condiciones_tarifa: rCondiciones.condiciones}) guarda
       const paraRender = condicionesTarifaParaRender(jsonbPersistido);
-      assert.deepEqual(paraRender, [{ temporada: "Promoción", texto: NOTA }]);
+      assert.deepEqual(paraRender, []);
       const grupos = agruparCondicionesTarifaPorTexto(paraRender);
-      assert.deepEqual(grupos, [{ texto: NOTA, temporadas: ["Promoción"] }]);
+      assert.deepEqual(grupos, []);
     });
   }
 });

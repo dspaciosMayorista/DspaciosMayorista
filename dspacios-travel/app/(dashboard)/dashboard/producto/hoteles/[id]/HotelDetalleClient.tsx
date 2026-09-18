@@ -411,18 +411,17 @@ function TarifasBox({ hotelId, categorias, regimenes, temporadas, tarifas, venci
   const num = (s: string) => (s === "" ? null : Number(s));
   const str = (n: number | null) => (n == null ? "" : String(n));
 
-  // Temporadas de tipo "promo" (descuento_pct/descuento_monto): el valor cargado
-  // en la fila es la tarifa de referencia; el descuento de esa temporada se le
-  // aplica encima para mostrar el valor final (mismo % que ya aplica el motor
-  // en vivo al liquidar, ver lib/calc/paquetes.ts `netoNoche`).
-  const cfgTemporada = (nombre: string | null) => temporadas.find((tm) => tm.nombre === nombre);
-  const conDescuento = (base: number | null, cfg?: Temporada): number | null => {
-    if (base == null || !cfg?.tipo || cfg.tipo === "tarifa") return null;
-    const val = Number(cfg.descuento_valor) || 0;
-    if (cfg.tipo === "descuento_pct") return Math.round(base * (1 - val / 100));
-    if (cfg.tipo === "descuento_monto") return Math.max(0, Math.round(base - val));
-    return null; // promo_noche_gratis no es un % por acomodación
-  };
+  // Una vigencia de `hotel_temporadas` (tipo/`descuento_valor`) NUNCA deriva
+  // un precio: el único precio válido es el que está cargado en la propia
+  // fila de `tarifa_hotel` (ver lib/calc/paquetes.ts `resolverNetoNocheDetallado`
+  // — regla definitiva, corregida en esta ronda). Antes esta vista mostraba
+  // un segundo valor entre paréntesis "recalculando" `base × (1 − %)` sobre
+  // CUALQUIER fila cuya temporada coincidiera con una vigencia de descuento
+  // — incluida la propia fila YA materializada de la promoción, mostrando
+  // p. ej. "180.000 (162.000)" como si el motor fuera a descontarla otra
+  // vez. Eso era engañoso: si la fila existe en `tarifa_hotel`, ESE es el
+  // precio que se cobra, sin importar qué diga `descuento_valor` — por eso
+  // se retiró por completo (nunca se reemplazó por otro cálculo derivado).
 
   function resetForm() {
     setTipo(""); setAlim(""); setTemp("");
@@ -476,20 +475,9 @@ function TarifasBox({ hotelId, categorias, regimenes, temporadas, tarifas, venci
   const activas = tarifas.filter((t) => !esHistorica(t));
   const historicas = tarifas.filter((t) => esHistorica(t));
 
-  const celda = (base: number | null, cfg?: Temporada) => {
-    const desc = conDescuento(base, cfg);
-    return (
-      <>
-        {base ? formatCOP(base) : "—"}
-        {desc != null && <div className="text-[10px] font-normal text-[var(--brand-accent)]">({formatCOP(desc)})</div>}
-      </>
-    );
-  };
+  const celda = (base: number | null) => (base ? formatCOP(base) : "—");
 
-  const filaTarifa = (t: Tarifa) => {
-    const cfg = cfgTemporada(t.temporada);
-    const descInfante = conDescuento(t.neto_infante, cfg);
-    return (
+  const filaTarifa = (t: Tarifa) => (
     <tr key={t.id} className="border-t border-gray-50">
       <td className="px-3 py-2 text-gray-700">{t.tipo_habitacion ?? "—"}</td>
       <td className="px-3 py-2 text-gray-500">{t.alimentacion ?? "—"}</td>
@@ -515,17 +503,16 @@ function TarifasBox({ hotelId, categorias, regimenes, temporadas, tarifas, venci
           </div>
         )}
       </td>
-      <td className="px-3 py-2 text-right tabular-nums">{celda(t.neto_sencilla, cfg)}</td>
-      <td className="px-3 py-2 text-right tabular-nums">{celda(t.neto_doble, cfg)}</td>
-      <td className="px-3 py-2 text-right tabular-nums">{celda(t.neto_triple, cfg)}</td>
-      <td className="px-3 py-2 text-right tabular-nums">{celda(t.neto_multiple, cfg)}</td>
+      <td className="px-3 py-2 text-right tabular-nums">{celda(t.neto_sencilla)}</td>
+      <td className="px-3 py-2 text-right tabular-nums">{celda(t.neto_doble)}</td>
+      <td className="px-3 py-2 text-right tabular-nums">{celda(t.neto_triple)}</td>
+      <td className="px-3 py-2 text-right tabular-nums">{celda(t.neto_multiple)}</td>
       {!adultsOnly && (
         <>
-          <td className="px-3 py-2 text-right tabular-nums">{celda(t.neto_nino, cfg)}</td>
-          <td className="px-3 py-2 text-right tabular-nums">{celda(t.neto_nino2, cfg)}</td>
+          <td className="px-3 py-2 text-right tabular-nums">{celda(t.neto_nino)}</td>
+          <td className="px-3 py-2 text-right tabular-nums">{celda(t.neto_nino2)}</td>
           <td className="px-3 py-2 text-right tabular-nums" title={t.nota_infante ?? undefined}>
             {t.neto_infante != null ? formatCOP(t.neto_infante) : "—"}
-            {descInfante != null && <div className="text-[10px] font-normal text-[var(--brand-accent)]">({formatCOP(descInfante)})</div>}
             {t.nota_infante && <span className="ml-1 text-amber-500" title={t.nota_infante}>*</span>}
           </td>
         </>
@@ -537,8 +524,7 @@ function TarifasBox({ hotelId, categorias, regimenes, temporadas, tarifas, venci
         </div>
       </td>
     </tr>
-    );
-  };
+  );
 
   const tablaTarifas = (rows: Tarifa[]) => (
     <div className="overflow-x-auto rounded-xl border border-gray-200 bg-white">

@@ -386,10 +386,26 @@ export async function crearTemporada(input: TemporadaInput): Promise<Result> {
   return { ok: true };
 }
 
-export async function eliminarTemporada(id: number, hotelId: number): Promise<Result> {
+// `_hotelIdSolicitado` (segundo parámetro histórico, la UI sigue mandándolo
+// — no se toca la UI en esta corrección) NUNCA es la autoridad: un hotelId
+// suministrado por el llamador podía divergir del hotel REAL de la fila
+// (ej. un origen del clic desincronizado del hotel actual de la página). El
+// `hotel_id` real sale de la MISMA fila que se borra (`.delete().select()`,
+// autoritativo por construcción) — revalidación y regeneración usan
+// SIEMPRE ese valor, nunca el parámetro. Si la fila ya no existe, falla
+// explícito: nunca se regenera un hotel inventado.
+export async function eliminarTemporada(id: number, _hotelIdSolicitado: number): Promise<Result> {
+  void _hotelIdSolicitado; // deliberadamente sin usar — ver la nota arriba
   const sb = await createClient();
-  const { error } = await sb.from("hotel_temporadas").delete().eq("id", id);
+  const { data: borrada, error } = await sb
+    .from("hotel_temporadas")
+    .delete()
+    .eq("id", id)
+    .select("hotel_id")
+    .maybeSingle();
   if (error) return { ok: false, error: error.message };
+  if (!borrada) return { ok: false, error: "No se encontró la temporada a eliminar (0 filas afectadas)." };
+  const hotelId = borrada.hotel_id;
   revalidatePath(`/dashboard/producto/hoteles/${hotelId}`);
   await regenerarTarifariosDeHotel(hotelId);
   return { ok: true };
@@ -429,6 +445,20 @@ export async function copiarTemporadasDesdeHotel(
 // matchear en tarifario/reservar, obligando a recargarla) y, si el hotel tiene
 // calculadora configurada, la próxima vez que se generen tarifas se vuelve a
 // escribir el nombre viejo (el bug reaparece).
+//
+// ⚠️ RIESGO RESIDUAL (documentado, NO resuelto en esta ronda): esta función
+// NO es transaccional. Hace 3 operaciones de escritura separadas (update de
+// `tarifa_hotel`, select + update opcional de `hotel_calculadora`) y algunas
+// de las llamadas que la rodean (`regenerarTarifariosDeHotel` en particular)
+// son best-effort por diseño. Un fallo a mitad de camino (ej. se renombran
+// las tarifas pero falla el update de la calculadora, o el proceso muere
+// entre pasos) puede dejar el hotel en un estado parcialmente renombrado sin
+// que el llamador se entere más allá del `aviso`/log puntual de ese paso. La
+// solución correcta requeriría diseñar una operación atómica separada (ej.
+// una función de Postgres que agrupe las 3 escrituras en una sola
+// transacción, al estilo de `reemplazar_tarifas_hotel_calculadora` de la
+// migración 179) — deliberadamente fuera de alcance aquí: no se improvisa una
+// migración nueva en esta ronda.
 async function renombrarTemporadaEnDatos(
   sb: Awaited<ReturnType<typeof createClient>>,
   hotelId: number,
@@ -474,21 +504,53 @@ async function renombrarTemporadaEnDatos(
   return { tarifasRenombradas, calculadoraActualizada };
 }
 
+// `input.hotelId` (el hotel de la página desde la que se editó) NUNCA es la
+// autoridad para la cascada de renombre ni para la regeneración. La autoridad
+// sale de una LECTURA previa a la fila (`nombre, hotel_id`, con su propio
+// `error` capturado explícitamente) — si esa lectura falla o la fila no
+// existe, se retorna ANTES de tocar el `update`. El `hotel_id` leído ahí se
+// usa además para ACOTAR el propio `update` (`.eq("id", id).eq("hotel_id",
+// hotelId)`, no solo `.eq("id", id)`), y se vuelve a pedir de vuelta en el
+// `.select("hotel_id")` del update para confirmar explícitamente que la fila
+// que se acaba de actualizar sigue perteneciendo al mismo hotel que la
+// lectura previa — si algo movió la fila de hotel entre la lectura y el
+// update, el filtro hace que el update afecte 0 filas y esta función falla
+// explícito en vez de regenerar el hotel equivocado. `input.hotelId` se sigue
+// usando para `validarTemporada`/`payloadTemporada` (no lo leen) y se
+// mantiene en el tipo compartido con `crearTemporada` (ahí sí es autoritativo:
+// es un INSERT, no hay fila previa de la que discrepar) — no se amplía el
+// alcance tocando ese tipo ni el formulario que lo llena.
 export async function actualizarTemporada(id: number, input: TemporadaInput): Promise<Result> {
   const v = validarTemporada(input);
   if (!v.ok) return v;
   const sb = await createClient();
-  const { data: actual } = await sb.from("hotel_temporadas").select("nombre").eq("id", id).maybeSingle();
-  const nombreViejo = actual?.nombre?.trim() ?? "";
-  const { error } = await sb.from("hotel_temporadas")
+  const { data: actual, error: eActual } = await sb
+    .from("hotel_temporadas")
+    .select("nombre, hotel_id")
+    .eq("id", id)
+    .maybeSingle();
+  if (eActual) return { ok: false, error: eActual.message };
+  if (!actual) return { ok: false, error: "No se encontró la temporada a actualizar." };
+  const hotelId = actual.hotel_id;
+  const nombreViejo = actual.nombre?.trim() ?? "";
+
+  const { data: actualizada, error } = await sb.from("hotel_temporadas")
     .update(payloadTemporada(input, v.rangos, v.blackouts, v.condicion))
-    .eq("id", id);
+    .eq("id", id)
+    .eq("hotel_id", hotelId)
+    .select("hotel_id")
+    .maybeSingle();
   if (error) return { ok: false, error: error.message };
+  if (!actualizada) return { ok: false, error: "No se encontró la temporada a actualizar (0 filas afectadas)." };
+  if (actualizada.hotel_id !== hotelId) {
+    console.error(`actualizarTemporada: hotel_id divergente entre la lectura (${hotelId}) y el update (${actualizada.hotel_id}) para temporada id=${id}`);
+    return { ok: false, error: "La temporada cambió de hotel durante la operación; vuelve a intentarlo." };
+  }
 
   let aviso: string | undefined;
   const nombreNuevo = input.nombre.trim();
   if (nombreViejo && nombreNuevo && nombreViejo !== nombreNuevo) {
-    const r = await renombrarTemporadaEnDatos(sb, input.hotelId, nombreViejo, nombreNuevo);
+    const r = await renombrarTemporadaEnDatos(sb, hotelId, nombreViejo, nombreNuevo);
     if (r.tarifasRenombradas > 0 || r.calculadoraActualizada) {
       const partes = [
         r.tarifasRenombradas > 0 ? `${r.tarifasRenombradas} tarifa(s) ya cargadas` : null,
@@ -498,8 +560,8 @@ export async function actualizarTemporada(id: number, input: TemporadaInput): Pr
     }
   }
 
-  revalidatePath(`/dashboard/producto/hoteles/${input.hotelId}`);
-  await regenerarTarifariosDeHotel(input.hotelId);
+  revalidatePath(`/dashboard/producto/hoteles/${hotelId}`);
+  await regenerarTarifariosDeHotel(hotelId);
   return { ok: true, aviso };
 }
 
@@ -539,9 +601,13 @@ export async function crearTarifa(input: {
   return { ok: true };
 }
 
+// `_hotelIdSolicitado` (segundo parámetro histórico, la UI sigue mandándolo
+// — no se toca la UI en esta corrección) NUNCA es la autoridad — mismo
+// criterio que `eliminarTemporada`/`actualizarTemporada`: el `hotel_id` real
+// sale de la fila efectivamente actualizada (`.update().select()`).
 export async function actualizarTarifa(
   id: number,
-  hotelId: number,
+  _hotelIdSolicitado: number,
   input: {
     tipoHabitacion: string;
     alimentacion: string;
@@ -556,8 +622,9 @@ export async function actualizarTarifa(
     notaInfante?: string | null;
   }
 ): Promise<Result> {
+  void _hotelIdSolicitado; // deliberadamente sin usar — ver la nota arriba
   const sb = await createClient();
-  const { error } = await sb
+  const { data: actualizada, error } = await sb
     .from("tarifa_hotel")
     .update({
       tipo_habitacion: oNull(input.tipoHabitacion),
@@ -572,17 +639,30 @@ export async function actualizarTarifa(
       neto_infante: input.netoInfante ?? null,
       nota_infante: oNull(input.notaInfante ?? ""),
     })
-    .eq("id", id);
+    .eq("id", id)
+    .select("hotel_id")
+    .maybeSingle();
   if (error) return { ok: false, error: error.message };
+  if (!actualizada) return { ok: false, error: "No se encontró la tarifa a actualizar (0 filas afectadas)." };
+  const hotelId = actualizada.hotel_id;
   revalidatePath(`/dashboard/producto/hoteles/${hotelId}`);
   await regenerarTarifariosDeHotel(hotelId);
   return { ok: true };
 }
 
-export async function eliminarTarifa(id: number, hotelId: number): Promise<Result> {
+// `_hotelIdSolicitado`: ver la nota de `actualizarTarifa` arriba — mismo criterio.
+export async function eliminarTarifa(id: number, _hotelIdSolicitado: number): Promise<Result> {
+  void _hotelIdSolicitado; // deliberadamente sin usar — ver la nota arriba
   const sb = await createClient();
-  const { error } = await sb.from("tarifa_hotel").delete().eq("id", id);
+  const { data: borrada, error } = await sb
+    .from("tarifa_hotel")
+    .delete()
+    .eq("id", id)
+    .select("hotel_id")
+    .maybeSingle();
   if (error) return { ok: false, error: error.message };
+  if (!borrada) return { ok: false, error: "No se encontró la tarifa a eliminar (0 filas afectadas)." };
+  const hotelId = borrada.hotel_id;
   revalidatePath(`/dashboard/producto/hoteles/${hotelId}`);
   await regenerarTarifariosDeHotel(hotelId);
   return { ok: true };

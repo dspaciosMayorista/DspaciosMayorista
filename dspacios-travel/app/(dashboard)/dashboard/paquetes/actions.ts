@@ -1232,10 +1232,24 @@ export async function regenerarTarifariosDeHotel(hotelId: number): Promise<void>
   if (!hotelId) return;
   try {
     const sb = await createClient();
-    const { data: pkgs } = await sb
+    const { data: pkgs, error: ePkgs } = await sb
       .from("armado_hoteles")
       .select("paquete_id, armado_paquetes!inner(activo)")
       .eq("hotel_id", hotelId);
+    // Hallazgo confirmado: Supabase NUNCA lanza por un error de consulta (lo
+    // devuelve como `{ data: null, error }`) — sin este chequeo, `pkgs` caía
+    // en `null` y `ids` quedaba vacío SIN NINGÚN rastro, indistinguible de
+    // "este hotel no está en ningún paquete". Un fallo técnico (RLS, red,
+    // columna renombrada) se disfrazaba de "nada que regenerar" — exactamente
+    // el silencio que el resto de esta función ya corrigió para
+    // `Promise.allSettled` (ver el comentario de abajo). Mensaje SANEADO
+    // (nunca el error crudo) con `hotelId` — mismo criterio de logging que el
+    // resto de la función. Sigue siendo best-effort: se retorna sin lanzar,
+    // nunca bloquea la edición de la tarifa/temporada que disparó esta llamada.
+    if (ePkgs) {
+      console.error(`regenerarTarifariosDeHotel: no se pudo consultar armado_hoteles para hotel_id=${hotelId}: ${ePkgs.message}`);
+      return;
+    }
     const ids = [...new Set((pkgs ?? [])
       .filter((p) => (p.armado_paquetes as unknown as { activo: boolean } | null)?.activo)
       .map((p) => p.paquete_id))];

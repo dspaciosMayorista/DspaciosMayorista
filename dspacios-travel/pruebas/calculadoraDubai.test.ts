@@ -63,12 +63,14 @@ describe("Registro histórico SIN los campos nuevos sigue funcionando (compatibi
     }
   });
 
-  test("una promo SIN ninguno de los campos nuevos (dato histórico) genera igual que antes: suplemento general, notas/edades ausentes", () => {
+  test("una promo SIN ninguno de los campos nuevos (dato histórico): suplemento general, pero el descuento aplica sobre TODA la tarifa (base + suplemento) — corrección de esta ronda", () => {
     const promo: DubaiPromo = { temporadaBase: "ALTA", temporadaPromo: "PROMO26", regimen: "PAM", descuentoPct: 10 };
     const filas = generarTarifasDubai(paramsBase({ promos: [promo] }));
     const filaPromo = filas.find((f) => f.temporada === "PROMO26")!;
-    const basePromo = 500_000 * 0.9;
-    assert.equal(filaPromo.neto_doble, Math.round(basePromo + 45_000));
+    // Antes: Math.round(500_000*0.9 + 45_000) = 495_000 (el suplemento general
+    // se sumaba DESPUÉS del descuento, sin descontarse). Ahora el descuento se
+    // aplica sobre la tarifa completa (base + suplemento efectivo).
+    assert.equal(filaPromo.neto_doble, Math.round((500_000 + 45_000) * 0.9));
     assert.equal(filaPromo.notas, undefined);
     assert.equal(filaPromo.neto_nino2, null);
     assert.equal(filaPromo.edad_infante_min, null);
@@ -208,16 +210,17 @@ describe("Suplementos propios de BASE (fallback general vs propios, sin duplicar
 });
 
 describe("Suplemento propio de PROMOCIÓN — un único valor atado a promo.regimen, incluido el régimen base", () => {
-  test("promo CON usarSuplementoPropio usa EXCLUSIVAMENTE su monto — nunca el general", () => {
+  test("promo CON usarSuplementoPropio usa EXCLUSIVAMENTE su monto — nunca el general, y el descuento cubre base+suplemento", () => {
     const promo: DubaiPromo = {
       temporadaBase: "ALTA", temporadaPromo: "PROMO26", regimen: "PAM", descuentoPct: 10,
       usarSuplementoPropio: true, suplementoPropioMonto: 20_000,
     };
     const filas = generarTarifasDubai(paramsBase({ promos: [promo] }));
     const fila = filas.find((f) => f.temporada === "PROMO26")!;
-    const basePromo = 500_000 * 0.9;
-    assert.equal(fila.neto_doble, Math.round(basePromo + 20_000));
-    assert.notEqual(fila.neto_doble, Math.round(basePromo + 45_000));
+    // (500_000 + 20_000) × 0.9 = 468_000 — el suplemento propio de la promo
+    // (20_000) entra al valor completo ANTES del descuento, no se suma después.
+    assert.equal(fila.neto_doble, Math.round((500_000 + 20_000) * 0.9));
+    assert.notEqual(fila.neto_doble, Math.round((500_000 + 45_000) * 0.9)); // nunca el general
   });
 
   test("suplemento propio de promoción en RÉGIMEN BASE (a diferencia de una base, la promo SÍ puede tener cargo sobre el régimen base)", () => {
@@ -227,8 +230,8 @@ describe("Suplemento propio de PROMOCIÓN — un único valor atado a promo.regi
     };
     const filas = generarTarifasDubai(paramsBase({ promos: [promo] }));
     const fila = filas.find((f) => f.temporada === "PROMO_BASE")!;
-    const basePromo = 500_000 * 0.9;
-    assert.equal(fila.neto_doble, Math.round(basePromo + 15_000)); // SÍ se suma, aunque sea el régimen base
+    // (500_000 + 15_000) × 0.9 = 463_500 — SÍ se suma y SÍ se descuenta, aunque sea el régimen base.
+    assert.equal(fila.neto_doble, Math.round((500_000 + 15_000) * 0.9));
   });
 
   test("cero explícito (0) es un suplemento propio VÁLIDO, distinto de 'sin configurar'", () => {
@@ -238,18 +241,33 @@ describe("Suplemento propio de PROMOCIÓN — un único valor atado a promo.regi
     };
     const filas = generarTarifasDubai(paramsBase({ promos: [promo] }));
     const fila = filas.find((f) => f.temporada === "PROMO26")!;
-    const basePromo = 500_000 * 0.9;
-    assert.equal(fila.neto_doble, Math.round(basePromo)); // +0, nunca +45000 del general
+    assert.equal(fila.neto_doble, Math.round((500_000 + 0) * 0.9)); // +0, nunca +45000 del general
   });
 
-  test("suplemento se suma DESPUÉS del descuento y NUNCA lo recibe", () => {
+  test("el suplemento efectivo SÍ recibe el descuento (regla comercial corregida — antes se sumaba después, sin descontarse)", () => {
     const promo: DubaiPromo = {
       temporadaBase: "ALTA", temporadaPromo: "PROMO26", regimen: "PAM", descuentoPct: 50,
       usarSuplementoPropio: true, suplementoPropioMonto: 20_000,
     };
     const filas = generarTarifasDubai(paramsBase({ promos: [promo] }));
     const fila = filas.find((f) => f.temporada === "PROMO26")!;
-    assert.equal(fila.neto_doble, Math.round(500_000 * 0.5 + 20_000));
+    // (500_000 + 20_000) × 0.5 = 260_000 — el suplemento (20_000) SÍ se
+    // reduce a la mitad junto con la base, nunca se suma completo después.
+    assert.equal(fila.neto_doble, Math.round((500_000 + 20_000) * 0.5));
+    assert.notEqual(fila.neto_doble, Math.round(500_000 * 0.5 + 20_000)); // el cálculo viejo (bug)
+  });
+
+  test("promo sin suplemento propio hereda el propio de SU BASE referenciada (antes se ignoraba, siempre caía al general)", () => {
+    const baseConSuplementoPropio: DubaiBase = {
+      categoria: "Estandar", temporada: "ALTA", precio: 200_000,
+      usarSuplementosPropios: true, suplementosPropios: [{ regimen: "FULL", monto: 200_000 }],
+    };
+    const promo: DubaiPromo = { temporadaBase: "ALTA", temporadaPromo: "PROMO_FULL", regimen: "FULL", descuentoPct: 10 };
+    const filas = generarTarifasDubai(paramsBase({ bases: [baseConSuplementoPropio], promos: [promo] }));
+    const fila = filas.find((f) => f.temporada === "PROMO_FULL")!;
+    // (200_000 + 200_000) × 0.9 = 360_000 — usa el suplemento PROPIO de la
+    // base (200_000), no el general del hotel (45_000 en PAM, ni aplica a FULL).
+    assert.equal(fila.neto_doble, Math.round((200_000 + 200_000) * 0.9));
   });
 });
 

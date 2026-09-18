@@ -70,8 +70,8 @@ describe("2. Multitemporada — mezcla noche por noche", () => {
   });
 });
 
-describe("3. Descuento sobre una tarifa-base — la identidad reportada es la de la BASE", () => {
-  test("descuento_pct: temporadasTarifa reporta el nombre de la tarifa-base, no el de la vigencia de descuento", () => {
+describe("3. Vigencia de descuento — regla definitiva: solo gana si tiene fila materializada en tarifa_hotel", () => {
+  test("descuento_pct SIN fila materializada: se ignora por completo, la BASE gana con su propio neto SIN descontar", () => {
     const base = temporada({ nombre: "ALTA", prioridad: 1 });
     const promo: TemporadaRango = toTemporadaRango({
       nombre: "PROMO_VERANO", fecha_inicio: "2026-09-01", fecha_fin: "2026-09-30",
@@ -79,15 +79,34 @@ describe("3. Descuento sobre una tarifa-base — la identidad reportada es la de
       rangos: [], blackouts: [], min_noches: 1, regimen_restringido: null,
     });
     const temporadas = [base, promo];
+    // Sin entrada para "PROMO_VERANO" — nunca se materializó una fila de
+    // tarifa_hotel para ese combo. Una vigencia NUNCA deriva un precio: se
+    // ignora y la resolución sigue bajando por prioridad hasta la BASE.
     const netoPorTemporada = { ALTA: 100_000 };
     const r = liquidarHotelNochesConTemporadas({ fechaIda: "2026-09-05", numNoches: 2, temporadas, netoPorTemporada, hoy: HOY });
     assert.ok(r);
-    // 100000 * 0.9 = 90000 por noche × 2 noches = 180000.
-    assert.equal(r!.total, 180_000);
-    // La identidad es la de la fila 'tarifa' (ALTA) que realmente tiene el
-    // neto cargado — nunca "PROMO_VERANO" (que no tiene fila propia en
-    // tarifa_hotel, solo un % de descuento).
+    // 100000 × 2 noches = 200000 — SIN descuento (antes: 90000×2=180000, el
+    // camino "legacy" retirado en esta ronda).
+    assert.equal(r!.total, 200_000);
     assert.deepEqual(r!.temporadasTarifa, ["ALTA"]);
+  });
+
+  test("descuento_pct CON fila materializada: usa EXACTAMENTE esa fila, nunca recalcula desde la base", () => {
+    const base = temporada({ nombre: "ALTA", prioridad: 1 });
+    const promo: TemporadaRango = toTemporadaRango({
+      nombre: "PROMO_VERANO", fecha_inicio: "2026-09-01", fecha_fin: "2026-09-30",
+      prioridad: 2, compra_inicio: null, compra_fin: null, tipo: "descuento_pct", descuento_valor: 10,
+      rangos: [], blackouts: [], min_noches: 1, regimen_restringido: null,
+    });
+    const temporadas = [base, promo];
+    // Fila materializada para "PROMO_VERANO" (típicamente generada por la
+    // calculadora) — el valor exacto que hay que usar, sin importar
+    // `descuento_valor` de la vigencia.
+    const netoPorTemporada = { ALTA: 100_000, PROMO_VERANO: 90_000 };
+    const r = liquidarHotelNochesConTemporadas({ fechaIda: "2026-09-05", numNoches: 2, temporadas, netoPorTemporada, hoy: HOY });
+    assert.ok(r);
+    assert.equal(r!.total, 180_000); // 90.000 × 2 — la fila materializada, tal cual
+    assert.deepEqual(r!.temporadasTarifa, ["PROMO_VERANO"]);
   });
 });
 
