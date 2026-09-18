@@ -1,26 +1,22 @@
 # CURRENT_GOAL.md
 
-Objetivo actual: **Conservar tarjetas completas en el motor externo** — mantener la tarjeta completa y cambiar solamente la fuente de precio y disponibilidad.
+Objetivo actual: **Compactar el flujo Codex, Sonnet y OpenCode** — reducir el costo y la ambigüedad de cada entrega con prompts breves y roles claros.
 
-Primera etapa (diagnóstico, sin implementar):
-- Localizar las tarjetas y modales del motor externo/Bernalo.
-- Comparar su anatomía con la tarjeta completa del motor interno (`HotelModal` de `app/tarifario/VistaBooking.tsx`).
-- Identificar exactamente qué contenido se pierde o reemplaza actualmente.
-- Trazar dónde se sustituyen precio y disponibilidad.
-- Determinar si existe componente compartido o composición reutilizable.
+Alcance:
+- Preparar prompts breves que lean solo `PROJECT_MAP.md`, `CURRENT_GOAL.md`, `DECISIONS.md`, `TASKS.md`, `git status` y el diff relevante.
+- Codex coordina, revisa riesgos y valida antes del commit.
+- Sonnet se usa para UI compleja o revision independiente de alto riesgo.
+- OpenCode/Antigravity/modelos gratuitos se prueban con tareas pequenas, mecanicas y bien delimitadas.
+- DeepSeek queda para implementaciones puntuales cuando haga falta.
+- El usuario ejecuta Git, SQL remoto y validacion visual en Vercel Preview.
+- Ejecutar una sola suite completa por entrega; durante la implementacion, usar pruebas focalizadas.
 
-Reglas del objetivo:
-- Mantener contenido, secciones, acciones y navegación de la tarjeta.
-- Cambiar únicamente la fuente de precio y disponibilidad cuando sea motor externo.
-- No mezclar datos internos con disponibilidad/precio Bernalo.
-- Preservar responsive móvil/escritorio.
-- No implementar todavía en esta rama documental.
-- No abordar soporte unidad para dinámicos, servicios, empaquetados, vuelos o bloqueos.
+Fuera de alcance:
+- No delegar simultaneamente el mismo problema a varios agentes.
+- No implementar todavia codigo funcional en esta rama documental.
 - No tocar otros pendientes de `TASKS.md`.
 
-Criterio de cierre futuro:
-- Tarjeta externa visualmente completa.
-- Precio y disponibilidad provenientes únicamente de la fuente externa.
-- Sin pérdida de Incluye, acciones o información comercial aplicable.
-- Sin regresión en tarjeta interna.
-- Pruebas y validación visual móvil/escritorio.
+Criterio de cierre:
+- Prompts breves definidos y reutilizables por agente.
+- Roles y limites de cada agente documentados y aplicados.
+- Una sola revision por entrega y una sola suite completa por entrega.

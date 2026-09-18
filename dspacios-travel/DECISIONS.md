@@ -99,3 +99,12 @@ Registro de decisiones (ADL). Cada entrada: decisión, motivo, alternativas desc
 - Referencia: commit `70263e3d`.
 - Alcance: esta decisión no implica que el motor externo ya tenga tarjeta completa; conservarla completa en el motor externo permanece como siguiente objetivo (ver `CURRENT_GOAL.md`).
 - Fecha: 2026-09-17.
+
+## ADL-017 — Tarjeta completa en el motor externo, precio/disponibilidad por fuente
+- Decisión: las tarjetas del motor externo (`Resultado` en `app/tarifario/BuscadorBooking.tsx` y `TarjetaUnidadBusqueda` en `app/tarifario/VistaBooking.tsx`) conservan el contenido comercial completo para hotel persona y unidad, pero precio y disponibilidad mantienen su fuente autoritativa correspondiente: persona conserva el precio interno existente; unidad/Bernalo usa precio y disponibilidad Bernalo en vivo.
+- Decisión: Incluye y add-ons se resuelven por el paquete de la oferta seleccionada (`paqueteId`), nunca por el hotel de forma genérica.
+- Decisión: descripción compacta con Ver más/Ver menos medido por desborde real, y servicios adicionales colapsados con contador.
+- Motivo: evitar mezclar datos internos con disponibilidad/precio Bernalo, y unificar la presentación reutilizable sin perder información comercial.
+- Alternativas descartadas: duplicar la JSX de la tarjeta en cada variante; indexar Incluye/add-ons por hotel en vez de por paquete.
+- Deuda no cerrada: mejorar la presentación de servicios adicionales expandidos (evitar que la tarjeta expandida alargue toda la fila) sigue pendiente en `TASKS.md`; no es una decisión cerrada.
+- Referencia: PR #312, squash `ba78c77d` (2026-09-17).
