@@ -206,89 +206,124 @@ describe("Estado A → B → A: el tope de 2 y el de 6 conviven sin pisarse", ()
   });
 });
 
-describe("Orden VISIBLE global — la numeración manda entre paquetes (defecto 3)", () => {
-  test("OBLIGATORIO: A/prioridad 2 nunca aparece antes que B/prioridad 1 (estado global inicial)", () => {
+describe("Prioridad por BLOQUES de paquete — la numeración es un namespace por paquete, nunca global", () => {
+  // Atajo legible: cada oferta se escribe [paqueteId, prioridad] y el resultado
+  // se compara en ese mismo formato.
+  const par = (o: OfertaPrioridad): [number, number] => [o.paqueteId, o.prioridad];
+  const pares = (r: OfertaPrioridad[]) => r.map(par);
+
+  test("OBLIGATORIO: A1, A2, B1, B2 ⇒ el orden visible es A1, A2, B1, B2 (NUNCA A1, B1, A2, B2)", () => {
     const r = seleccionarRecomendadosGlobalInicial([
-      oferta(10, 1, 2), // paquete 1, prioridad 2
-      oferta(20, 2, 1), // paquete 2, prioridad 1
+      oferta(10, 1, 1), oferta(11, 1, 2),
+      oferta(20, 2, 1), oferta(21, 2, 2),
     ]);
-    assert.deepEqual(r.map((o) => [o.paqueteId, o.prioridad]), [[2, 1], [1, 2]]);
-    assert.equal(r[0].prioridad, 1, "la prioridad 1 de CUALQUIER paquete va primero");
+    assert.deepEqual(pares(r), [[1, 1], [1, 2], [2, 1], [2, 2]]);
+    // El A2 (paquete 1) va ANTES del B1 (paquete 2): dentro de cada paquete la
+    // numeración es propia, y las prioridades de paquetes distintos no se
+    // comparan.
+    assert.deepEqual(r.map((o) => o.paqueteId), [1, 1, 2, 2]);
   });
 
-  test("OBLIGATORIO: A/prioridad 6 nunca aparece antes que B/prioridad 1 (después de buscar)", () => {
+  test("OBLIGATORIO: A1, A2, B3, B4 ⇒ el global muestra SOLO A1 y A2; B no aporta ninguna tarjeta", () => {
+    const r = seleccionarRecomendadosGlobalInicial([
+      oferta(10, 1, 1), oferta(11, 1, 2),
+      oferta(20, 2, 3), oferta(21, 2, 4),
+    ]);
+    assert.deepEqual(pares(r), [[1, 1], [1, 2]]);
+    assert.ok(!r.some((o) => o.paqueteId === 2), "una prioridad 3/4 NO se convierte en 'primera o segunda disponible'");
+  });
+
+  test("A1 y B1 ⇒ A1, B1 (una sola posición cada paquete)", () => {
+    const r = seleccionarRecomendadosGlobalInicial([oferta(10, 1, 1), oferta(20, 2, 1)]);
+    assert.deepEqual(pares(r), [[1, 1], [2, 1]]);
+  });
+
+  test("B1 sin B2 ⇒ B aporta una sola tarjeta", () => {
+    const r = seleccionarRecomendadosGlobalInicial([oferta(10, 1, 1), oferta(11, 1, 2), oferta(20, 2, 1)]);
+    assert.deepEqual(pares(r), [[1, 1], [1, 2], [2, 1]]);
+    assert.equal(r.filter((o) => o.paqueteId === 2).length, 1, "sin posición 2, el paquete 2 aporta solo la 1");
+  });
+
+  test("B2 sin B1 ⇒ B2 SÍ aparece (es la posición literal 2 de ese paquete); el hueco de la 1 no se rellena con otra", () => {
+    // Comportamiento explícito pedido: la selección es por VALOR literal, no por
+    // "las dos primeras disponibles". Con solo la posición 2 configurada, esa
+    // posición se muestra y no queda ninguna tarjeta en el lugar de la 1 (no hay
+    // ninguna prioridad 1 que mostrar).
+    const r = seleccionarRecomendadosGlobalInicial([oferta(20, 2, 2), oferta(21, 2, 3)]);
+    assert.deepEqual(pares(r), [[2, 2]], "solo la posición 2 del paquete 2");
+    assert.ok(!r.some((o) => o.prioridad === 3), "la 3 nunca sustituye a la 1 ni a la 2");
+  });
+
+  test("B3 nunca sustituye a B1/B2, ni siquiera cuando B no tiene ninguna de las dos", () => {
+    const r = seleccionarRecomendadosGlobalInicial([oferta(10, 1, 1), oferta(20, 2, 3), oferta(21, 2, 5)]);
+    assert.deepEqual(pares(r), [[1, 1]], "el paquete 2 (solo 3 y 5) no aporta nada");
+  });
+
+  test("DESPUÉS DE BUSCAR: A1…A6 y luego B1…B6 — bloques completos, cada uno 1→6", () => {
+    const ofertas = [
+      ...[1, 2, 3, 4, 5, 6].map((p) => oferta(100 + p, 1, p)),
+      ...[1, 2, 3, 4, 5, 6].map((p) => oferta(200 + p, 2, p)),
+    ];
+    const r = seleccionarRecomendadosPorDestino(ofertas, new Set([1, 2]));
+    assert.deepEqual(r.map((o) => o.paqueteId), [1, 1, 1, 1, 1, 1, 2, 2, 2, 2, 2, 2]);
+    assert.deepEqual(r.map((o) => o.prioridad), [1, 2, 3, 4, 5, 6, 1, 2, 3, 4, 5, 6]);
+  });
+
+  test("después de buscar, las prioridades propias de cada paquete valen 1→6 aunque empiecen en la 3", () => {
     const r = seleccionarRecomendadosPorDestino(
-      [oferta(10, 1, 6), oferta(20, 2, 1)],
+      [oferta(10, 1, 3), oferta(11, 1, 4), oferta(20, 2, 1)],
       new Set([1, 2])
     );
-    assert.deepEqual(r.map((o) => [o.paqueteId, o.prioridad]), [[2, 1], [1, 6]]);
+    assert.deepEqual(pares(r), [[1, 3], [1, 4], [2, 1]], "en la búsqueda cada paquete aporta lo que tiene, en su propio orden");
   });
 
-  test("prioridades cruzadas con varios paquetes: el orden visible es 1,1,2,2 (no paquete por paquete)", () => {
+  test("el límite de 6 es por paquete y en bloques (7 configuradas ⇒ salen 6)", () => {
     const ofertas = [
-      oferta(10, 1, 1), oferta(11, 1, 2), oferta(12, 1, 3),
-      oferta(20, 2, 1), oferta(21, 2, 2),
-    ];
-    const r = seleccionarRecomendadosGlobalInicial(ofertas);
-    // El cupo por paquete deja fuera la prioridad 3 del paquete 1; entre las
-    // que quedan, el orden es por prioridad y desempata por paqueteId.
-    assert.deepEqual(r.map((o) => o.prioridad), [1, 1, 2, 2]);
-    assert.deepEqual(r.map((o) => o.paqueteId), [1, 2, 1, 2]);
-  });
-
-  test("el cupo por paquete se conserva: top 2 en el estado global aunque el orden sea global", () => {
-    const ofertas = [
-      oferta(10, 1, 1), oferta(11, 1, 2), oferta(12, 1, 3), // paquete 1: 3 recomendados
-      oferta(20, 2, 4), oferta(21, 2, 5),                   // paquete 2: 2 recomendados
-    ];
-    const r = seleccionarRecomendadosGlobalInicial(ofertas);
-    assert.equal(r.length, 4, "2 por paquete, no 5");
-    assert.ok(!r.some((o) => o.hotelId === 12), "la prioridad 3 del paquete 1 queda fuera del top 2");
-    assert.deepEqual(r.map((o) => o.prioridad), [1, 2, 4, 5]);
-  });
-
-  test("el cupo de 6 por paquete también se conserva, y el orden sigue siendo global", () => {
-    const ofertas = [
-      ...[1, 2, 3, 4, 5, 6, 7].map((p) => oferta(100 + p, 1, p)),   // paquete 1: 7 (la 7 sale)
-      ...[1, 2].map((p) => oferta(200 + p, 2, p)),                  // paquete 2: 2
+      ...[1, 2, 3, 4, 5, 6, 7].map((p) => oferta(100 + p, 1, p)),
+      ...[1, 2].map((p) => oferta(200 + p, 2, p)),
     ];
     const r = seleccionarRecomendadosPorDestino(ofertas, new Set([1, 2]));
     assert.equal(r.length, 8, "6 del paquete 1 + 2 del paquete 2");
-    assert.deepEqual(r.map((o) => o.prioridad), [1, 1, 2, 2, 3, 4, 5, 6]);
-    assert.deepEqual(r.map((o) => o.paqueteId), [1, 2, 1, 2, 1, 1, 1, 1]);
+    assert.deepEqual(r.map((o) => o.paqueteId), [1, 1, 1, 1, 1, 1, 2, 2]);
+    assert.deepEqual(r.map((o) => o.prioridad), [1, 2, 3, 4, 5, 6, 1, 2]);
   });
 
-  test("empate de prioridad entre paquetes: desempata por paqueteId ascendente", () => {
+  test("los paquetes salen en orden determinista (paqueteId ascendente), sin importar el orden de entrada", () => {
     const r = seleccionarRecomendadosGlobalInicial([oferta(99, 7, 1), oferta(50, 3, 1)]);
     assert.deepEqual(r.map((o) => o.paqueteId), [3, 7]);
   });
 
-  test("misma prioridad y mismo paquete: desempata por hotelId ascendente (determinista)", () => {
+  test("dos ofertas con la MISMA prioridad en el mismo paquete: desempata por hotelId (determinista)", () => {
+    // La base lo impide (`unique (paquete_id, prioridad)`), pero un dataset
+    // inconsistente no debe producir un orden aleatorio.
     const r = seleccionarRecomendadosGlobalInicial([oferta(9, 1, 1), oferta(4, 1, 1)]);
     assert.deepEqual(r.map((o) => o.hotelId), [4, 9]);
   });
 
-  test("el orden es determinista: el mismo conjunto en cualquier orden de entrada da el mismo resultado", () => {
+  test("el resultado es determinista: el mismo conjunto en cualquier orden de entrada da lo mismo", () => {
     const base = [
       oferta(10, 1, 2), oferta(20, 2, 1), oferta(30, 3, 1),
       oferta(11, 1, 1), oferta(21, 2, 3),
     ];
-    const esperado = seleccionarRecomendadosGlobalInicial(base);
+    const esperadoA = seleccionarRecomendadosGlobalInicial(base);
+    const esperadoB = seleccionarRecomendadosPorDestino(base, new Set([1, 2, 3]));
     const permutaciones = [
       [...base].reverse(),
       [...base].sort((a, b) => a.hotelId - b.hotelId),
       [...base].sort((a, b) => b.prioridad - a.prioridad),
     ];
     for (const p of permutaciones) {
-      assert.deepEqual(seleccionarRecomendadosGlobalInicial(p), esperado);
-      assert.deepEqual(seleccionarRecomendadosPorDestino(p, new Set([1, 2, 3])), seleccionarRecomendadosPorDestino(base, new Set([1, 2, 3])));
+      assert.deepEqual(seleccionarRecomendadosGlobalInicial(p), esperadoA);
+      assert.deepEqual(seleccionarRecomendadosPorDestino(p, new Set([1, 2, 3])), esperadoB);
     }
   });
 
-  test("un paquete fuera del destino no aporta, y el orden de los coincidentes sigue siendo global por prioridad", () => {
+  test("un paquete fuera del destino no aporta; los coincidentes salen en bloques, sin comparar prioridades entre ellos", () => {
     const ofertas = [oferta(10, 1, 3), oferta(20, 2, 1), oferta(30, 3, 2)];
     const r = seleccionarRecomendadosPorDestino(ofertas, new Set([1, 3]));
-    assert.deepEqual(r.map((o) => [o.paqueteId, o.prioridad]), [[3, 2], [1, 3]]);
+    // El paquete 2 queda fuera por destino; la prioridad 3 del paquete 1 NO se
+    // reordena contra la 2 del paquete 3.
+    assert.deepEqual(pares(r), [[1, 3], [3, 2]]);
   });
 });
 

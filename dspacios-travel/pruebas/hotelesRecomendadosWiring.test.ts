@@ -186,6 +186,33 @@ describe("Autosave optimista de prioridad (defecto 4)", () => {
   });
 });
 
+describe("Prioridad por bloques de paquete — el motor no compara prioridades entre paquetes", () => {
+  test("el motor NO ordena globalmente por prioridad: `ordenarGlobalmente` ya no existe", () => {
+    assert.doesNotMatch(recomendadosFuente, /ordenarGlobalmente/, "la prioridad es un namespace por paquete: no puede haber un orden global por prioridad");
+    // Tampoco queda ningún comparador que mezcle `prioridad` con `paqueteId`
+    // (el desempate cruzado que producía A1, B1, A2, B2).
+    assert.doesNotMatch(recomendadosFuente, /a\.prioridad - b\.prioridad \|\| a\.paqueteId/);
+    // El único comparador por prioridad es DENTRO del paquete, con desempate
+    // por hotelId.
+    assert.match(recomendadosFuente, /arr\.sort\(\(a, b\) => a\.prioridad - b\.prioridad \|\| a\.hotelId - b\.hotelId\);/);
+  });
+
+  test("los comentarios del motor ya no afirman que la prioridad sea global", () => {
+    assert.doesNotMatch(recomendadosFuente, /nunca queda antes que B\/prioridad/i);
+    assert.doesNotMatch(recomendadosFuente, /ORDEN VISIBLE es global/i);
+    assert.match(recomendadosFuente, /namespace INDEPENDIENTE POR PAQUETE/);
+  });
+
+  test("la selección inicial acepta SOLO las posiciones literales 1 y 2 (nunca `slice(0, 2)`)", () => {
+    const inicio = recomendadosFuente.indexOf("export function seleccionarRecomendadosGlobalInicial");
+    const fin = recomendadosFuente.indexOf("\n}", inicio);
+    const cuerpo = recomendadosFuente.slice(inicio, fin);
+    assert.match(cuerpo, /filter\(\(o\) => o\.prioridad === 1 \|\| o\.prioridad === 2\)/, "la selección es por VALOR literal, no por posición en un arreglo ordenado");
+    assert.doesNotMatch(cuerpo, /slice\(0, 2\)/, "un slice dejaría que una prioridad 3 o 4 ocupara el lugar de la 1/2");
+    assert.doesNotMatch(cuerpo, /\.sort\(/, "el orden ya lo da el bloque por paquete, no un sort");
+  });
+});
+
 describe("Lectura — identidad compuesta hotelId+paqueteId, nunca solo hotelId, para la sección de recomendados", () => {
   test("lib/tarifario/resumen.ts construye prioridadesRecomendados con claveOferta(hotel_id, paquete_id), scoped a paqIdsConHotel", () => {
     assert.match(resumen, /import\s*\{\s*claveOferta\s*\}\s*from\s*"\.\/recomendados\.ts"/);
@@ -248,15 +275,15 @@ describe("Lectura — identidad compuesta hotelId+paqueteId, nunca solo hotelId,
     assert.match(vistaBooking, /import \{ EtiquetaOferta \} from "\.\/EtiquetaOferta";/);
     assert.match(buscadorBooking, /import \{ EtiquetaOferta \} from "\.\/EtiquetaOferta";/);
     // Persona exploración + unidad exploración (las dos ramas de la grilla).
-    assert.match(vistaBooking, /<EtiquetaOferta paqueteNombre=\{t\.card\.paqueteNombre\} recomendada=\{t\.ordenRecomendado != null\} \/>/);
-    assert.match(vistaBooking, /<EtiquetaOferta paqueteNombre=\{t\.hotel\.paqueteNombre\} recomendada=\{t\.ordenRecomendado != null\} \/>/);
+    assert.match(vistaBooking, /<EtiquetaOferta paqueteNombre=\{t\.card\.paqueteNombre\} recomendada=\{t\.recomendada === true\} \/>/);
+    assert.match(vistaBooking, /<EtiquetaOferta paqueteNombre=\{t\.hotel\.paqueteNombre\} recomendada=\{t\.recomendada === true\} \/>/);
     // Persona búsqueda (`Resultado`) y unidad búsqueda (`TarjetaUnidadBusqueda`).
     assert.match(buscadorBooking, /<EtiquetaOferta paqueteNombre=\{r\.paqueteNombre\} recomendada=\{recomendada\} \/>/);
     assert.match(vistaBooking, /<EtiquetaOferta paqueteNombre=\{opcionSel\.paqueteNombre\} recomendada=\{recomendada\} \/>/);
     // Y las dos tarjetas de búsqueda RECIBEN el estado de recomendación —
     // nunca lo deducen por su cuenta.
-    assert.match(vistaBooking, /recomendada=\{t\.ordenRecomendado != null\}\s*\n\s*foto=\{fotosPorHotel\[t\.r\.hotelId\]/);
-    assert.match(vistaBooking, /opciones=\{t\.hotel\.opcionesBusqueda\}\s*\n\s*recomendada=\{t\.ordenRecomendado != null\}/);
+    assert.match(vistaBooking, /recomendada=\{t\.recomendada === true\}\s*\n\s*foto=\{fotosPorHotel\[t\.r\.hotelId\]/);
+    assert.match(vistaBooking, /opciones=\{t\.hotel\.opcionesBusqueda\}\s*\n\s*recomendada=\{t\.recomendada === true\}/);
   });
 
   test("la etiqueta dice SIEMPRE el paquete y delega el TEXTO en la función pura (probada con ejecución en recomendados.test.ts)", () => {
@@ -443,9 +470,9 @@ describe("Nombre del paquete — fuente real y trazable, nunca derivada por hote
     // Ningún `ordenRecomendado != null &&` puede envolver la etiqueta — si
     // vuelve a condicionarse, las ofertas NO recomendadas del mismo hotel
     // quedarían sin distinguirse otra vez.
-    assert.doesNotMatch(vistaBooking, /ordenRecomendado != null &&\s*<EtiquetaOferta/);
+    assert.doesNotMatch(vistaBooking, /recomendada === true &&\s*<EtiquetaOferta/);
     assert.doesNotMatch(buscadorBooking, /recomendada\s*&&\s*<EtiquetaOferta/);
-    assert.match(vistaBooking, /<EtiquetaOferta paqueteNombre=\{t\.card\.paqueteNombre\} recomendada=\{t\.ordenRecomendado != null\} \/>/);
+    assert.match(vistaBooking, /<EtiquetaOferta paqueteNombre=\{t\.card\.paqueteNombre\} recomendada=\{t\.recomendada === true\} \/>/);
     assert.match(buscadorBooking, /<EtiquetaOferta paqueteNombre=\{r\.paqueteNombre\} recomendada=\{recomendada\} \/>/);
   });
 
@@ -500,10 +527,12 @@ describe("Incluye/No incluye, add-ons, precio y disponibilidad siguen ligados al
 // ─────────────────────────────────────────────────────────────────────────
 // Defecto 2 (P1): el "resto" de la búsqueda pasaba la FUNCIÓN suelta a
 // `Array.map`, así que JS le entregaba `(elemento, índice, arreglo)` y el
-// ÍNDICE entraba como `ordenRecomendado` — TODAS las ofertas específicas se
-// pintaban como "Recomendado · paquete". Estos tests fallan con el código viejo.
+// ÍNDICE entraba como el segundo argumento del builder — TODAS las ofertas
+// específicas se pintaban como "Recomendado · paquete". Estos tests fallan con
+// el código viejo. Además, la marca ahora viaja en un OBJETO, así que un
+// `.map(fn)` accidental ya no puede convertir el índice en "recomendado".
 // ─────────────────────────────────────────────────────────────────────────
-describe("Defecto 2 — el índice de Array.map nunca se filtra como ordenRecomendado", () => {
+describe("Defecto 2 — el índice de Array.map nunca se filtra como recomendación", () => {
   // El código SIN comentarios: los comentarios de esta corrección nombran a
   // propósito el patrón viejo (`.map(tarjetaPersona)`) para documentarlo, y lo
   // que se verifica acá es el CÓDIGO.
@@ -513,42 +542,44 @@ describe("Defecto 2 — el índice de Array.map nunca se filtra como ordenRecome
     .join("\n");
 
   test("ningún builder de tarjetas se pasa 'suelto' a .map (siempre con callback explícito)", () => {
-    assert.doesNotMatch(codigoVista, /\.map\(tarjetaPersona\)/, "`.map(tarjetaPersona)` filtra el índice como ordenRecomendado");
-    assert.doesNotMatch(codigoVista, /\.map\(tarjetaUnidad\)/, "`.map(tarjetaUnidad)` filtra el índice como ordenRecomendado");
+    assert.doesNotMatch(codigoVista, /\.map\(tarjetaPersona\)/, "`.map(tarjetaPersona)` filtra el índice como 2º argumento");
+    assert.doesNotMatch(codigoVista, /\.map\(tarjetaUnidad\)/, "`.map(tarjetaUnidad)` filtra el índice como 2º argumento");
     assert.match(codigoVista, /\.map\(\(r\) => tarjetaPersona\(r\)\)/);
     assert.match(codigoVista, /\.map\(\(g\) => tarjetaUnidad\(g\)\)/);
   });
 
-  test("solo las ofertas de `recomendadasBusqueda` reciben ordenRecomendado: en el resto los dos callbacks pasan UN SOLO argumento", () => {
+  test("solo las ofertas de `recomendadasBusqueda` llevan la marca: el resto no la asigna por ningún camino", () => {
     const inicio = vistaBooking.indexOf("const resto: Tarjeta[] = [");
     assert.ok(inicio > -1, "no se encontró el ensamblado del resto");
     const fin = vistaBooking.indexOf("return [...tarjetasRecomendadas, ...resto];", inicio);
     const bloque = vistaBooking.slice(inicio, fin);
-    // El único lugar que asigna `ordenRecomendado` es el bucle de recomendadas,
-    // y lo hace con el contador explícito — no desde un `.map`.
-    assert.doesNotMatch(bloque, /ordenRecomendado/, "el resto no puede llevar ordenRecomendado por ningún camino");
+    // La única marca de recomendación la pone el bucle de recomendadas.
+    assert.doesNotMatch(bloque, /recomendada: true/, "el resto no puede llevar la marca de recomendación");
     assert.doesNotMatch(bloque, /\.map\(tarjeta/, "el resto no puede mapear con el builder suelto (el índice se colaría)");
-    assert.equal([...vistaBooking.matchAll(/tarjetasRecomendadas\.length\)/g)].length, 2, "las recomendadas se numeran con el contador del bucle, una vez por tipo");
+    // Y la marca NO se deriva de un consecutivo: `tarjetasRecomendadas.length`
+    // ya no existe como fuente de prioridad en ninguna parte del archivo.
+    assert.equal([...vistaBooking.matchAll(/tarjetasRecomendadas\.length/g)].length, 0, "ninguna prioridad puede salir del contador del arreglo");
+    assert.doesNotMatch(codigoVista, /ordenRecomendado/, "ya no existe el consecutivo `ordenRecomendado`");
   });
 
-  test("por qué importa (semántica de JS real): pasar la función suelta entrega el índice como 2º argumento; el callback explícito no", () => {
-    // Réplica del patrón exacto de `tarjetaPersona`/`tarjetaUnidad` (segundo
-    // parámetro opcional = posición de recomendado). Esto es lo que hacía el
-    // código viejo, y es la razón por la que el callback explícito es
-    // obligatorio — no una preferencia de estilo.
-    const builder = (item: { id: number }, ordenRecomendado?: number) => ({ id: item.id, ordenRecomendado });
+  test("por qué el 2º parámetro es un OBJETO y no un número: el índice de un .map accidental nunca puede activar la marca", () => {
     const items = [{ id: 1 }, { id: 2 }, { id: 3 }];
-    // ❌ `ref` suelta → JS pasa (elemento, índice, arreglo): el índice se cuela.
-    assert.deepEqual(items.map(builder), [
-      { id: 1, ordenRecomendado: 0 },
-      { id: 2, ordenRecomendado: 1 },
-      { id: 3, ordenRecomendado: 2 },
-    ]);
-    // ✅ callback explícito → un solo argumento: `ordenRecomendado` queda undefined.
-    assert.deepEqual(items.map((r) => builder(r)), [
-      { id: 1, ordenRecomendado: undefined },
-      { id: 2, ordenRecomendado: undefined },
-      { id: 3, ordenRecomendado: undefined },
-    ]);
+
+    // 1) El patrón VIEJO (`2º parámetro = número`) sí se activa con el índice:
+    //    es exactamente el defecto que se corrigió.
+    const builderNumerico = (item: { id: number }, n?: number) => ({ id: item.id, activa: n != null });
+    assert.deepEqual(items.map(builderNumerico).map((t) => t.activa), [true, true, true], "el índice convertía TODA oferta en recomendada");
+
+    // 2) El patrón NUEVO (`2º parámetro = objeto`) no puede activarse así.
+    //    Además de que TypeScript rechaza `items.map(builder)` (el índice no es
+    //    un `{ recomendada?: boolean }`), en runtime la marca solo se enciende
+    //    si el objeto lo dice explícitamente.
+    type Marca = { recomendada?: boolean };
+    const builder = (item: { id: number }, marca: Marca = {}) => ({ id: item.id, activa: marca.recomendada === true });
+    assert.deepEqual(items.map((r) => builder(r)).map((t) => t.activa), [false, false, false], "sin marca, ninguna oferta es recomendada");
+    assert.deepEqual(items.map((r) => builder(r, {})).map((t) => t.activa), [false, false, false], "un objeto vacío tampoco marca");
+    assert.deepEqual(items.map((r) => builder(r, { recomendada: true })).map((t) => t.activa), [true, true, true], "solo el bucle de recomendadas marca");
+    // Y el valor real de la prioridad solo se lee como booleano: nada de números.
+    assert.deepEqual(items.map((r) => builder(r, { recomendada: undefined })).map((t) => t.activa), [false, false, false]);
   });
 });

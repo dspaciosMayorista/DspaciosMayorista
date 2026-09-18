@@ -1,8 +1,16 @@
 // Motor puro de "hoteles recomendados" — decide QUÉ ofertas (hotel+paquete)
 // se muestran como recomendadas y en qué orden, en los dos estados del motor
 // global (VistaBooking):
-//   A) estado global inicial (sin búsqueda por destino): top 2 por paquete;
-//   B) después de buscar por destino: top 1-6 por paquete coincidente.
+//   A) estado global inicial (sin búsqueda por destino): las posiciones
+//      LITERALES 1 y 2 de cada paquete;
+//   B) después de buscar por destino: las prioridades propias 1→6 de cada
+//      paquete coincidente.
+//
+// ⚠️ La prioridad es un namespace INDEPENDIENTE POR PAQUETE: cada paquete
+// numera sus recomendados 1–6 por su cuenta (la unicidad de la base es
+// `unique (paquete_id, prioridad)`), y ese número NUNCA se compara entre
+// paquetes. El resultado son BLOQUES por paquete — A1, A2, B1, B2 — jamás un
+// orden entrelazado por prioridad (A1, B1, A2, B2).
 //
 // La recomendación pertenece a la OFERTA hotel+paquete (`armado_hoteles.
 // prioridad`, migración 183), NUNCA al hotel físico global — por eso la
@@ -118,78 +126,69 @@ function agruparPorPaquete(ofertas: readonly OfertaPrioridad[]): Map<number, Ofe
     if (arr) arr.push(o);
     else porPaquete.set(o.paqueteId, [o]);
   }
-  // Desempate determinista: dentro de cada paquete, por prioridad ascendente
-  // (1 antes que 2); si dos ofertas tuvieran la MISMA prioridad (no debería
-  // pasar — la base lo impide por paquete — pero un dataset inconsistente no
-  // debe producir un orden aleatorio), por hotelId ascendente. Este orden es
-  // el que decide QUÉ ofertas entran en los cupos por paquete (top 2 / top 6).
+  // Dentro de cada paquete, orden 1→6. Si dos ofertas tuvieran la MISMA
+  // prioridad (no debería pasar —la base lo impide POR PAQUETE—, pero un
+  // dataset inconsistente no debe producir un orden aleatorio), desempata por
+  // `hotelId` ascendente.
   for (const arr of porPaquete.values()) {
     arr.sort((a, b) => a.prioridad - b.prioridad || a.hotelId - b.hotelId);
   }
   return porPaquete;
 }
 
-/**
- * Orden VISIBLE global de las ofertas ya seleccionadas (defecto 3).
- *
- * La numeración es del NEGOCIO, no del paquete: "prioridad 1" significa
- * "primero" para el cliente, y antes el resultado se concatenaba paquete por
- * paquete (A/1, A/2, B/1, …), así que un A/2 podía verse ANTES que un B/1.
- * Ahora, después de aplicar los cupos por paquete, el orden es:
- *   1. prioridad ascendente (1 → 6);
- *   2. desempate determinista: `paqueteId` ascendente;
- *   3. y luego `hotelId` ascendente.
- * El desempate por `paqueteId`/`hotelId` es lo único que hace el orden estable
- * y reproducible cuando dos ofertas comparten prioridad (legítimo: la unicidad
- * es POR paquete).
- */
-function ordenarGlobalmente(ofertas: readonly OfertaPrioridad[]): OfertaPrioridad[] {
-  return [...ofertas].sort(
-    (a, b) => a.prioridad - b.prioridad || a.paqueteId - b.paqueteId || a.hotelId - b.hotelId
-  );
+/** Bloques de paquete en orden determinista (`paqueteId` ascendente) — el
+ * orden en el que se emiten las ofertas seleccionadas. */
+function paquetesEnOrden(porPaquete: Map<number, OfertaPrioridad[]>): number[] {
+  return [...porPaquete.keys()].sort((a, b) => a - b);
 }
 
 /**
- * Estado global inicial (sin búsqueda por destino): como máximo los 2
- * PRIMEROS recomendados de CADA paquete (prioridad 1 antes que 2). Un
- * paquete con un solo recomendado muestra uno; sin recomendados, no aparece.
- * Nunca se muestran las prioridades 3-6 en este estado.
+ * Estado global inicial (sin búsqueda por destino): SOLO las POSICIONES
+ * LITERALES 1 y 2 de cada paquete — nunca "las dos primeras disponibles".
  *
- * El CUPO es por paquete (2), pero el ORDEN VISIBLE es global por prioridad
- * (ver `ordenarGlobalmente`): A/prioridad 2 nunca queda antes que B/prioridad 1.
+ * ⚠️ La prioridad es un namespace INDEPENDIENTE POR PAQUETE: cada paquete
+ * numera sus recomendados 1–6 por su cuenta, y el número no se compara entre
+ * paquetes. Por eso la selección es por VALOR (`prioridad === 1 | 2`), no por
+ * posición en un arreglo ordenado: un paquete cuyas únicas prioridades son 3 y
+ * 4 NO aporta nada acá (la 3 no se convierte en "primera disponible").
+ *
+ * Orden visible: BLOQUES por paquete (A1, A2, B1, B2) — nunca entrelazado por
+ * prioridad (nada de A1, B1, A2, B2). Un paquete con solo la posición 1 aporta
+ * una tarjeta; sin posiciones 1 ni 2, no aporta ninguna.
  */
 export function seleccionarRecomendadosGlobalInicial(ofertas: readonly OfertaPrioridad[]): OfertaPrioridad[] {
   const porPaquete = agruparPorPaquete(ofertas);
-  const paqueteIds = [...porPaquete.keys()].sort((a, b) => a - b);
   const seleccion: OfertaPrioridad[] = [];
-  for (const pid of paqueteIds) {
-    seleccion.push(...(porPaquete.get(pid) as OfertaPrioridad[]).slice(0, 2));
+  for (const pid of paquetesEnOrden(porPaquete)) {
+    const delPaquete = (porPaquete.get(pid) as OfertaPrioridad[]).filter((o) => o.prioridad === 1 || o.prioridad === 2);
+    for (const prioridad of [1, 2] as const) {
+      seleccion.push(...delPaquete.filter((o) => o.prioridad === prioridad));
+    }
   }
-  return ordenarGlobalmente(seleccion);
+  return seleccion;
 }
 
 /**
- * Después de ejecutar una búsqueda por destino: para cada paquete
- * coincidente con el destino (`paqueteIdsCoincidentes`), TODOS sus
- * recomendados configurados, hasta 6 — el cupo sigue siendo POR PAQUETE.
- * Paquetes fuera de `paqueteIdsCoincidentes` no aportan ninguna oferta
- * (ni siquiera si tienen recomendados) — el destino ya filtró el universo.
+ * Después de ejecutar una búsqueda por destino: para cada paquete coincidente
+ * con el destino (`paqueteIdsCoincidentes`), TODAS sus prioridades propias
+ * configuradas, hasta 6, tal como las numeró ESE paquete. Paquetes fuera de
+ * `paqueteIdsCoincidentes` no aportan ninguna oferta (ni siquiera si tienen
+ * recomendados) — el destino ya filtró el universo.
  *
- * Igual que el estado global inicial, el ORDEN VISIBLE es global por
- * prioridad (ver `ordenarGlobalmente`): un A/prioridad 6 no puede quedar antes
- * que un B/prioridad 1.
+ * ⚠️ Igual que el estado global inicial, la prioridad NO se compara entre
+ * paquetes: el resultado son BLOQUES por paquete (A1…A6, luego B1…B6), cada uno
+ * en su propio orden 1→6. Nunca A1, B1, A2, B2.
  */
 export function seleccionarRecomendadosPorDestino(
   ofertas: readonly OfertaPrioridad[],
   paqueteIdsCoincidentes: ReadonlySet<number>
 ): OfertaPrioridad[] {
   const porPaquete = agruparPorPaquete(ofertas.filter((o) => paqueteIdsCoincidentes.has(o.paqueteId)));
-  const paqueteIds = [...porPaquete.keys()].sort((a, b) => a - b);
   const seleccion: OfertaPrioridad[] = [];
-  for (const pid of paqueteIds) {
+  for (const pid of paquetesEnOrden(porPaquete)) {
     seleccion.push(...(porPaquete.get(pid) as OfertaPrioridad[]).slice(0, 6));
   }
-  return ordenarGlobalmente(seleccion);
+  return seleccion;
 }
 
 /**

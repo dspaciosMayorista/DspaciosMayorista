@@ -94,8 +94,10 @@ type HotelCard = {
   // "Incluye/No incluye"/add-ons/condiciones de esta card son siempre del
   // paquete correcto, y el nombre del paquete se puede etiquetar en la
   // tarjeta aunque la oferta NO sea recomendada. El estado de recomendación
-  // (`ordenRecomendado`) vive en la `Tarjeta`, no acá: es una propiedad de la
-  // SELECCIÓN, no de la card.
+  // (`recomendada`, una MARCA BOOLEANA) vive en la `Tarjeta`, no acá: es una
+  // propiedad de la SELECCIÓN, no de la card. Nunca un consecutivo: la
+  // prioridad es un namespace por paquete y su valor autoritativo es el de
+  // `armado_hoteles` para el par (paqueteId, hotelId).
   paqueteId?: number;
   paqueteNombre?: string | null;
 };
@@ -143,9 +145,17 @@ type HotelUnidadCard = {
 // y esta vista volvía a pintar la suya DEBAJO — dos listas para una sola
 // búsqueda. Ahora hay una sola colección y un solo lugar donde se pinta.
 type Tarjeta =
-  | { tipo: "persona"; key: string; card: HotelCard; ordenRecomendado?: number }
-  | { tipo: "unidad"; key: string; hotel: HotelUnidadCard; ordenRecomendado?: number }
-  | { tipo: "busqueda"; key: string; r: BusquedaResultado; ordenRecomendado?: number };
+  | { tipo: "persona"; key: string; card: HotelCard; recomendada?: boolean }
+  | { tipo: "unidad"; key: string; hotel: HotelUnidadCard; recomendada?: boolean }
+  | { tipo: "busqueda"; key: string; r: BusquedaResultado; recomendada?: boolean };
+
+// Marca de recomendación que reciben los builders de tarjeta. Va en un OBJETO a
+// propósito: un `.map(tarjetaPersona)` accidental le pasaría el ÍNDICE como
+// segundo argumento, y con un objeto la marca queda `undefined` (falsa) en vez
+// de convertirse en "recomendado" por el número. La prioridad autoritativa es
+// la de `armado_hoteles` para el par (paqueteId, hotelId) — acá solo viaja el
+// booleano de si ESA oferta quedó seleccionada.
+type MarcaOferta = { recomendada?: boolean };
 
 // Nombre visible de una tarjeta, sin importar de cuál de las tres fuentes
 // venga — lo necesita el orden alfabético de la colección única.
@@ -719,17 +729,17 @@ export function VistaBooking({
       );
       const clavesRecomendadasBusqueda = new Set(recomendadasBusqueda.map((o) => claveOferta(o.hotelId, o.paqueteId)));
 
-      const tarjetaPersona = (r: BusquedaResultado, ordenRecomendado?: number): Tarjeta =>
-        ({ tipo: "busqueda" as const, key: `b-${r.paqueteId}-${r.hotelId}`, r, ordenRecomendado });
+      const tarjetaPersona = (r: BusquedaResultado, marca: MarcaOferta = {}): Tarjeta =>
+        ({ tipo: "busqueda" as const, key: `b-${r.paqueteId}-${r.hotelId}`, r, recomendada: marca.recomendada });
       // Cierre de UX de la tarjeta unidad: `g.opciones` trae TODAS las
       // combinaciones confirmadas DE ESE PAQUETE (nunca de otro), cada una
       // con su precio público ya saneado — la tarjeta las pinta INLINE
       // (`opcionesBusqueda`, ver `TarjetaUnidadBusqueda`) sin abrir ningún
       // modal ni volver a pedir nada. `ofertas` queda vacío a propósito: esa
       // lista solo la usa el modal de EXPLORACIÓN, que esta tarjeta nunca abre.
-      const tarjetaUnidad = (g: GrupoOfertaUnidad<OpcionUnidadConfirmada>, ordenRecomendado?: number): Tarjeta => ({
+      const tarjetaUnidad = (g: GrupoOfertaUnidad<OpcionUnidadConfirmada>, marca: MarcaOferta = {}): Tarjeta => ({
         tipo: "unidad" as const,
-        ordenRecomendado,
+        recomendada: marca.recomendada,
         // La `key` incluye paqueteId + la identidad de la BÚSQUEDA vigente
         // (fechas + ocupación + combinaciones confirmadas) — nunca solo
         // `hotelId`: dos ofertas del mismo hotel en paquetes distintos deben
@@ -746,18 +756,21 @@ export function VistaBooking({
       for (const o of recomendadasBusqueda) {
         const clave = claveOferta(o.hotelId, o.paqueteId);
         const r = resultadosPersona.find((x) => x.hotelId === o.hotelId && x.paqueteId === o.paqueteId);
-        if (r) { tarjetasRecomendadas.push(tarjetaPersona(r, tarjetasRecomendadas.length)); continue; }
+        if (r) { tarjetasRecomendadas.push(tarjetaPersona(r, { recomendada: true })); continue; }
         const g = gruposUnidadPorClave.get(clave);
-        if (g) tarjetasRecomendadas.push(tarjetaUnidad(g, tarjetasRecomendadas.length));
+        if (g) tarjetasRecomendadas.push(tarjetaUnidad(g, { recomendada: true }));
       }
       // ⚠️ Defecto 2 (corregido): estas dos líneas pasaban la FUNCIÓN directo a
-      // `Array.map` (`.map(tarjetaPersona)`), así que React le entregaba
-      // `(elemento, índice, arreglo)` y el ÍNDICE entraba como
-      // `ordenRecomendado` — TODA oferta del resto quedaba marcada como
-      // recomendada ("Recomendado · paquete") sin estarlo. Los callbacks
-      // explícitos pasan UN solo argumento: `ordenRecomendado` solo se asigna
-      // en el bucle de arriba, y solo a las ofertas que realmente están en
-      // `recomendadasBusqueda`.
+      // `Array.map` (`.map(tarjetaPersona)`), así que JS le entregaba
+      // `(elemento, índice, arreglo)` y el ÍNDICE entraba como la marca de
+      // recomendación — TODA oferta del resto quedaba marcada como recomendada
+      // ("Recomendado · paquete") sin estarlo. Los callbacks explícitos pasan UN
+      // solo argumento: la marca `recomendada` solo se pone en el bucle de
+      // arriba, y solo a las ofertas que realmente están en
+      // `recomendadasBusqueda`. Además la marca ahora viaja en un OBJETO
+      // (`{ recomendada: true }`), así que un `.map(fn)` accidental pasaría el
+      // índice como ese objeto y la marca seguiría quedando falsa — el índice
+      // ya no puede convertirse en "recomendado" ni por accidente.
       const resto: Tarjeta[] = [
         ...resultadosPersona.filter((r) => !clavesRecomendadasBusqueda.has(claveOferta(r.hotelId, r.paqueteId))).map((r) => tarjetaPersona(r)),
         ...gruposUnidadBusqueda.filter((g) => !clavesRecomendadasBusqueda.has(claveOferta(g.hotelId, g.paqueteId))).map((g) => tarjetaUnidad(g)),
@@ -789,7 +802,7 @@ export function VistaBooking({
       if (cPersona) {
         tarjetasRecomendadas.push({
           tipo: "persona" as const, key: claveCardPersona(cPersona), card: cPersona,
-          ordenRecomendado: tarjetasRecomendadas.length,
+          recomendada: true,
         });
         continue;
       }
@@ -798,7 +811,7 @@ export function VistaBooking({
         tarjetasRecomendadas.push({
           tipo: "unidad" as const,
           key: claveCardUnidad(hUnidad),
-          ordenRecomendado: tarjetasRecomendadas.length,
+          recomendada: true,
           hotel: {
             hotelId: hUnidad.hotelId, hotelNombre: hUnidad.hotelNombre, destino: hUnidad.destinoNombre,
             ofertas: [hUnidad], paqueteId: hUnidad.paqueteId, paqueteNombre: hUnidad.paqueteNombre,
@@ -1223,7 +1236,7 @@ export function VistaBooking({
             <Resultado
               key={t.key}
               r={t.r}
-              recomendada={t.ordenRecomendado != null}
+              recomendada={t.recomendada === true}
               foto={fotosPorHotel[t.r.hotelId] ?? null}
               info={infoPorHotel[t.r.hotelId]}
               descripcionPorPaquete={descripcionPorPaquete}
@@ -1256,7 +1269,7 @@ export function VistaBooking({
                         puede estar en dos paquetes (normal + 3x2) y cada
                         tarjeta debe leerse como una oferta distinta. La
                         recomendación solo cambia el prefijo y el color. */}
-                    <EtiquetaOferta paqueteNombre={t.card.paqueteNombre} recomendada={t.ordenRecomendado != null} />
+                    <EtiquetaOferta paqueteNombre={t.card.paqueteNombre} recomendada={t.recomendada === true} />
                     {min !== null && (
                       <span className="absolute bottom-2 right-2 rounded-full px-2 py-0.5 text-[10px] font-semibold text-white transition-opacity hover:opacity-90" style={{ backgroundColor: "rgba(0,0,0,0.55)" }}>
                         {min} cupo{min !== 1 ? "s" : ""}
@@ -1278,7 +1291,7 @@ export function VistaBooking({
               key={t.key}
               hotel={{ hotelId: t.hotel.hotelId, hotelNombre: t.hotel.hotelNombre, destino: t.hotel.destino }}
               opciones={t.hotel.opcionesBusqueda}
-              recomendada={t.ordenRecomendado != null}
+              recomendada={t.recomendada === true}
               foto={fotosPorHotel[t.hotel.hotelId] ?? null}
               videoUrl={infoPorHotel[t.hotel.hotelId]?.video_url ?? null}
               estrellas={infoPorHotel[t.hotel.hotelId]?.estrellas ?? null}
@@ -1324,7 +1337,7 @@ export function VistaBooking({
                 // el mismo hotel unidad repetido en dos paquetes se lea como
                 // dos ofertas distintas. `TarjetaHotelCard` ya envuelve el
                 // badge en el contenedor relativo de la foto.
-                <EtiquetaOferta paqueteNombre={t.hotel.paqueteNombre} recomendada={t.ordenRecomendado != null} />
+                <EtiquetaOferta paqueteNombre={t.hotel.paqueteNombre} recomendada={t.recomendada === true} />
               }
             />
           )
