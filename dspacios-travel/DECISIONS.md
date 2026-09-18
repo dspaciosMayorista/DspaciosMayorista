@@ -126,3 +126,12 @@ Registro de decisiones (ADL). Cada entrada: decisión, motivo, alternativas desc
 - Decisión: crear, editar o eliminar tarifas/temporadas regenera los paquetes asociados por el `hotel_id` autoritativo de la fila; los errores al buscar paquetes asociados no quedan silenciosos y la regeneración conserva independencia entre paquetes.
 - Deuda no cerrada: el metadata de la vigencia promocional resulta engañoso en la UI y debe aclararse, renombrarse u ocultarse; registrado en `TASKS.md` como pendiente, sin objetivo activo.
 - Referencia: PR #316, squash `ff9507da` (2026-09-18).
+
+## ADL-020 — Hoteles recomendados por paquete
+- Decisión: la prioridad recomendada es por oferta `(paquete_id, hotel_id)`, con namespace propio 1-6 de cada paquete; el mismo hotel puede tener prioridad y etiqueta distintas en paquetes diferentes.
+- Decisión: sin búsqueda se muestran únicamente las posiciones literales 1-2 de cada paquete en bloques (no sustituye ausentes con 3-6); con búsqueda por destino cada paquete coincidente aporta sus prioridades 1-6 y el resto corresponde solo a resultados reales del motor.
+- Decisión: la identidad de la tarjeta es compuesta `(hotelId, paqueteId)`; "Recomendado" aparece solo en ofertas seleccionadas, todas conservan el nombre del paquete, y precio/disponibilidad/Incluye/add-ons siguen ligados al paquete de la oferta.
+- Decisión: el selector administrativo usa autosave optimista (respuesta inmediata, sin refresh en éxito, rollback y refresh autoritativo en error).
+- Decisión: la prioridad es presentación fuera del snapshot; la migración 183 agrega `armado_hoteles.prioridad` (rango 1-6, unicidad parcial por paquete) y la 184 hace que un cambio exclusivo de prioridad no invalide el snapshot, mientras que cambios reales de armado sí lo invalidan.
+- Deuda no cerrada: el orden del resto del inventario (precio, estrellas/localización, etiquetas) sigue pendiente en `TASKS.md` (#1).
+- Referencia: PR #318, squash `a2bcbf2a` (2026-09-18).

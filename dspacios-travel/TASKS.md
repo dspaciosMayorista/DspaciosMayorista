@@ -4,10 +4,10 @@ Fuente unica y priorizada de pendientes. Ultima actualizacion: 2026-09-18.
 
 ## Cola priorizada
 
-### 1. Hoteles recomendados
+### 1. Ordenar el resto del inventario hotelero
 
-- [ ] Permitir un maximo de 6 hoteles recomendados con prioridad manual de 1 a 6.
-- [ ] Mostrar despues el resto del inventario con un orden definido por precio, estrellas/localizacion y etiquetas.
+- [ ] Mostrar/ordenar el resto del inventario por precio, estrellas/localizacion y etiquetas.
+- [ ] Respetar la identidad de oferta `(hotel_id, paquete_id)`, sin mezclar datos entre ofertas, y no alterar las prioridades 1-6 ya cerradas.
 
 ### 2. Smoke financiero posterior al PR #294
 
@@ -88,6 +88,7 @@ Fuente unica y priorizada de pendientes. Ultima actualizacion: 2026-09-18.
 
 ## Cerrado recientemente
 
+- [x] PR #318 (squash `a2bcbf2a`, 2026-09-18): hoteles recomendados por paquete. Prioridad manual 1-6 por oferta `(paquete_id, hotel_id)` con namespace propio por paquete; el mismo hotel puede aparecer en paquetes distintos con prioridad y etiqueta diferentes. Sin búsqueda se muestran solo las posiciones literales 1 y 2 de cada paquete (bloques A1/A2/B1/B2), sin sustituir ausentes con prioridades 3-6; con búsqueda por destino cada paquete coincidente aporta sus prioridades 1-6, conservando bloques por paquete y mostrando solo resultados reales del motor. Las tarjetas se identifican por oferta `(hotelId, paqueteId)`; solo las ofertas seleccionadas muestran "Recomendado" y todas conservan el nombre del paquete. Precio, disponibilidad, Incluye/No incluye y add-ons siguen ligados al paquete. Selector administrativo con autosave optimista: respuesta inmediata, sin refresh en exito, rollback y refresh autoritativo en error. Migración 183: `armado_hoteles.prioridad` rango 1-6 con unicidad parcial por paquete. Migración 184: un cambio exclusivo de prioridad no invalida el snapshot; cambios reales de armado sí; aplicada en Supabase remoto con preflight/postcheck `ok: true`, bloque mutante sobre datos reales y rollback sin residuos. Paquetes 33 y 36 regenerados/publicados nuevamente. Preview validado por el usuario con San Andres, Cartagena y Santa Marta; pruebas focalizadas 126/126; merge con tres commits internos y `Co-authored-by: Odair`. Pendiente del orden del resto del inventario conservado como #1.
 - [x] PR #316 (squash `ff9507da`, 2026-09-18): recalculo automatico por hotel endurecido. Crear, editar o eliminar tarifas/temporadas regenera los paquetes asociados usando el `hotel_id` autoritativo de la fila; los errores al buscar paquetes asociados no quedan silenciosos; la regeneracion conserva independencia entre paquetes. La calculadora descuenta promociones sobre la tarifa completa, incluido el suplemento efectivo; prioridad de suplemento: promocion > base > general. Una vigencia por si sola no genera ni modifica precios. Una promocion solo gana para un combo si existe su fila materializada en `tarifa_hotel`; sin fila promocional gana la siguiente tarifa materializada valida. Preview validado: PAE promocional 600.000 y FULL sin fila promocional BASE · Prueba d, ~1.334.000; cambiar la vigencia despues del despliegue disparo y publico el nuevo snapshot; se retiraron los valores secundarios enganosos entre parentesis en la tabla de tarifas. Nota: los snapshots ya desplegados no se regeneran solos al desplegar; requieren un evento posterior de edicion/regeneracion.
 - [x] PR #314 (squash `11589a0f`, 2026-09-17): flujo de agentes modularizado. Router universal (`AGENTS.md`) con enrutamiento por rol; archivos por rol en `docs/agents/` (`CODEX.md`, `SONNET.md`, `OPENCODE.md`, `DEEPSEEK.md`); plantillas compactas en `PROMPTS.md`; lectura minima por situacion (tarea nueva, correccion en la misma conversacion, post-merge); validacion incremental. Auditado por Codex y aprobado por el usuario.
 - [x] PR #312 (squash `ba78c77d`, 2026-09-17): tarjetas completas de "Buscar alojamiento" para hoteles persona y unidad/Bernalo. Muestran foto/video, informacion del hotel, ubicacion/mapa, Incluye/No incluye y add-ons; Incluye/add-ons respetan el paquete de la oferta; precio y disponibilidad conservan sus motores originales; descripcion con Ver mas/Ver menos; servicios adicionales colapsados con contador. Flujo validado en Vercel Preview.

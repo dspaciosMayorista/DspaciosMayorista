@@ -1,17 +1,21 @@
 # CURRENT_GOAL.md
 
-Objetivo actual: **Hoteles recomendados** — permitir un maximo de 6 hoteles recomendados con prioridad manual de 1 a 6 y mostrar despues el resto del inventario con un orden definido por precio, estrellas/localizacion y etiquetas.
+Objetivo actual: **Ordenar el resto del inventario hotelero** — definir y aplicar el orden del inventario no recomendado manteniendo los recomendados y la identidad por oferta.
 
 Alcance:
-- Permitir un maximo de 6 hoteles recomendados con prioridad manual de 1 a 6.
-- Mostrar despues el resto del inventario con un orden definido por precio, estrellas/localizacion y etiquetas.
+- Definir y aplicar el orden del inventario no recomendado.
+- Considerar precio, estrellas/localizacion y etiquetas.
+- Respetar la oferta `(hotelId, paqueteId)`.
+- No alterar las prioridades 1-6 ya cerradas.
 
 Fuera de alcance:
-- No implementar ni diagnosticar codigo todavia en esta rama documental.
-- No abordar la deuda del metadata de la vigencia promocional (ver `TASKS.md`).
-- No tocar otros pendientes de `TASKS.md`.
+- No rediseñar tarjetas.
+- No cambiar precios, disponibilidad, Incluye/add-ons ni fuentes autoritativas.
+- No tocar las migraciones 183/184.
+- No abordar otros pendientes de `TASKS.md`.
 
 Criterio de cierre:
-- Maximo de 6 recomendados con prioridad manual aplicada.
-- Resto del inventario ordenado por precio, estrellas/localizacion y etiquetas.
-- Pruebas y validacion del usuario segun el flujo acordado.
+- Orden determinista acordado.
+- Los recomendados permanecen primero segun sus reglas.
+- Resto ordenado sin mezclar identidad, precio ni contenido entre ofertas.
+- Pruebas y validacion visual.
