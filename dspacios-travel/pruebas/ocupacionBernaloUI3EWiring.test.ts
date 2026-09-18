@@ -306,18 +306,24 @@ describe("HotelBernaloCotizarModal — tarjeta completa: mismo contenido comerci
     assert.match(cuerpoModal, /info\?\.descripcion\?\.trim\(\)/);
   });
 
-  test("ubicación: mismo bloque de Google Maps que HotelModal (link + iframe embed), gateado a que info.ubicacion tenga contenido", () => {
-    assert.match(cuerpoModal, /info\?\.ubicacion\?\.trim\(\) && \(/);
-    assert.match(cuerpoModal, /https:\/\/www\.google\.com\/maps\?q=\$\{encodeURIComponent\(info\.ubicacion\)\}/);
-    assert.match(cuerpoModal, /output=embed/);
+  // Auditoría de "tarjeta completa en el motor externo" (ronda posterior):
+  // ubicación/Incluye/add-ons se extrajeron a componentes compartidos
+  // (`UbicacionHotel`/`SeccionesIncluye`/`AddonsPaquete`,
+  // app/tarifario/tarjetaHotelCompartida.tsx) — reutilizados también por
+  // `Resultado`/`TarjetaUnidadBusqueda` (resultados de "Buscar alojamiento").
+  // El comportamiento (gateado a contenido real, sin precio/disponibilidad)
+  // se prueba UNA vez ahí (pruebas/tarjetaHotelCompartida.test.ts); acá solo
+  // se verifica el WIRING: que HotelBernaloCotizarModal los invoca con los
+  // datos correctos.
+  test("ubicación: usa el componente compartido UbicacionHotel, con info?.ubicacion del hotel FÍSICO (nunca de la oferta)", () => {
+    assert.match(cuerpoModal, /<UbicacionHotel hotelNombre=\{hotelGrupo\.hotelNombre\} ubicacion=\{info\?\.ubicacion\} \/>/);
   });
 
-  test("Incluye/No incluye y add-ons dependen de LA OFERTA elegida (hotel.paqueteId), nunca de un paqueteId fijo ni de precio/disponibilidad", () => {
-    assert.match(cuerpoModal, /const secciones = hotel \? seccionesDescripcion\(descripcionPorPaquete\[hotel\.paqueteId\]\) : \[\];/);
+  test("Incluye/No incluye y add-ons dependen de LA OFERTA elegida (hotel.paqueteId), nunca de un paqueteId fijo ni de precio/disponibilidad — usan los componentes compartidos SeccionesIncluye/AddonsPaquete", () => {
+    assert.match(cuerpoModal, /const descripcionOferta = hotel \? descripcionPorPaquete\[hotel\.paqueteId\] : undefined;/);
     assert.match(cuerpoModal, /const addons: Receptivo\[\] = hotel \? \(addonsPorPaquete\.get\(hotel\.paqueteId\) \?\? \[\]\) : \[\];/);
-    // Mismo criterio de "sección omitida si no tiene contenido" que HotelModal.
-    assert.match(cuerpoModal, /\{secciones\.length > 0 && \(/);
-    assert.match(cuerpoModal, /\{addons\.length > 0 && \(/);
+    assert.match(cuerpoModal, /<SeccionesIncluye descripcion=\{descripcionOferta\} \/>/);
+    assert.match(cuerpoModal, /<AddonsPaquete addons=\{addons\} onAbrir=\{setAddonAbierto\} \/>/);
   });
 
   test("los add-on abren el mismo ReceptivoModal (solo información, sin fuente de precio alterna) — estado propio addonAbierto", () => {
@@ -326,11 +332,11 @@ describe("HotelBernaloCotizarModal — tarjeta completa: mismo contenido comerci
   });
 
   test("orden dentro del modal: header/ubicación -> elegir oferta -> EditorPax (motor externo) -> Incluye -> add-ons — EditorPax/cotización nunca se desplaza", () => {
-    const idxUbicacion = cuerpoModal.indexOf("info?.ubicacion?.trim() && (");
+    const idxUbicacion = cuerpoModal.indexOf("<UbicacionHotel");
     const idxOferta = cuerpoModal.indexOf("ofertas.length > 1 &&");
     const idxEditor = cuerpoModal.indexOf("<EditorPax");
-    const idxIncluye = cuerpoModal.indexOf("{secciones.length > 0 && (");
-    const idxAddon = cuerpoModal.indexOf("{addons.length > 0 && (");
+    const idxIncluye = cuerpoModal.indexOf("<SeccionesIncluye");
+    const idxAddon = cuerpoModal.indexOf("<AddonsPaquete");
     assert.notEqual(idxUbicacion, -1);
     assert.notEqual(idxOferta, -1);
     assert.notEqual(idxEditor, -1);

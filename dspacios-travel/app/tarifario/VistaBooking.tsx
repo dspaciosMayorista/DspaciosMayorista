@@ -2,8 +2,11 @@
 
 import { useEffect, useId, useMemo, useRef, useState, useTransition, type ReactNode } from "react";
 import Image from "next/image";
-import { Star, Check, X, Info } from "lucide-react";
 import { formatMoneda } from "@/lib/utils";
+import {
+  Categoria, EtiquetasHotel, UbicacionHotel, SeccionesIncluye, AddonsPaquete, ReceptivoModal,
+  type Receptivo, type ReceptivoModalInfo,
+} from "./tarjetaHotelCompartida";
 import { ACOM_ROOMS, ACOM_ROOM_LABEL, defaultAcomConfig, textoEdadesHotel, type AcomRoom, type AcomConfig } from "@/lib/acomodaciones";
 import { useCart, type HotelCartItemPersona } from "@/lib/cart/CartContext";
 import { cotizarPorFechas } from "@/app/(dashboard)/dashboard/reservar/actions";
@@ -46,7 +49,7 @@ import { BackgroundVideo } from "@/components/BackgroundVideo";
 import type { FilaTarifario, CapHotel } from "./TarifarioPublic";
 import type { FilaResumen } from "@/lib/tarifario/resumen";
 import { minRoomPvpResumen, tieneAcomodacionResumen } from "@/lib/tarifario/resumenCliente";
-import { seccionesDescripcion, type DescripcionPaqueteRaw } from "@/lib/tarifario/descripcionPaquete";
+import type { DescripcionPaqueteRaw } from "@/lib/tarifario/descripcionPaquete";
 import { destinosPorcionPublica } from "@/lib/tarifario/destinosPorcion";
 
 const CAP_VACIA = { paxMin: null as number | null, paxMax: null as number | null, acom: [] as AcomConfig[] };
@@ -133,67 +136,6 @@ function nombreTarjeta(t: Tarjeta): string {
   if (t.tipo === "persona") return t.card.hotelNombre;
   if (t.tipo === "unidad") return t.hotel.hotelNombre;
   return t.r.hotelNombre ?? "—";
-}
-
-type Receptivo = {
-  servicioId: number | null;
-  paqueteId: number | null;
-  nombre: string;
-  destino: string | null;
-  descripcion: string | null;
-  foto: string | null;
-  desde: number;
-  moneda?: string | null;
-};
-
-// Info que necesita el modal de detalle de un receptivo, sea de la vitrina
-// estática ("desde", por persona) o de un resultado ya liquidado por fechas/
-// pax (total real de esa búsqueda). `paqueteId` habilita el botón Reservar →
-// (deep-link al flujo de reservar servicios, que pregunta pax/fechas él solo).
-type ReceptivoModalInfo = {
-  nombre: string;
-  destino: string | null;
-  descripcion: string | null;
-  foto: string | null;
-  precio: number;
-  moneda?: string | null;
-  notaPrecio: string;
-  paqueteId: number | null;
-};
-
-// Estrellas (★) o, si no maneja, la clasificación (Boutique/Luxury…) como chip.
-function Categoria({ estrellas, clasificacion, className = "" }: { estrellas: number | null; clasificacion: string | null; className?: string }) {
-  if (estrellas && estrellas > 0) {
-    return (
-      <span className={`inline-flex align-middle text-amber-400 ${className}`} title={`${estrellas} estrellas`}>
-        {Array.from({ length: estrellas }).map((_, i) => <Star key={i} size={12} fill="currentColor" strokeWidth={0} />)}
-      </span>
-    );
-  }
-  if (clasificacion?.trim()) {
-    return <span className={`rounded-full bg-gray-100 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-gray-600 ${className}`}>{clasificacion}</span>;
-  }
-  return null;
-}
-
-// Adults Only / Pet friendly — mismos criterios que el tarifario público (tarifas
-// horizontales): informativos, sin exponer costo neto.
-function EtiquetasHotel({ adultsOnly, petFriendly, className = "" }: { adultsOnly: boolean; petFriendly: boolean; className?: string }) {
-  if (!adultsOnly && !petFriendly) return null;
-  return (
-    <>
-      {adultsOnly && (
-        <span className={`rounded-full bg-gray-800 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-white ${className}`} title="Este hotel no acepta niños ni infantes">
-          Adults Only
-        </span>
-      )}
-      {petFriendly && (
-        <span className={`rounded-full bg-[var(--brand-success)]/15 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-[var(--brand-success)] ${className}`} title="Este hotel acepta mascotas">
-          Pet friendly
-        </span>
-      )}
-    </>
-  );
 }
 
 // P2 (hallazgo confirmado): tarjeta ÚNICA compartida por hoteles persona y
@@ -1140,6 +1082,8 @@ export function VistaBooking({
               r={t.r}
               foto={fotosPorHotel[t.r.hotelId] ?? null}
               info={infoPorHotel[t.r.hotelId]}
+              descripcionPorPaquete={descripcionPorPaquete}
+              addonsPorPaquete={addonsPorPaquete}
             />
           ) : t.tipo === "persona" ? (
             <TarjetaHotelCard
@@ -1181,12 +1125,16 @@ export function VistaBooking({
               hotel={{ hotelId: t.hotel.hotelId, hotelNombre: t.hotel.hotelNombre, destino: t.hotel.destino }}
               opciones={t.hotel.opcionesBusqueda}
               foto={fotosPorHotel[t.hotel.hotelId] ?? null}
+              videoUrl={infoPorHotel[t.hotel.hotelId]?.video_url ?? null}
               estrellas={infoPorHotel[t.hotel.hotelId]?.estrellas ?? null}
               clasificacion={infoPorHotel[t.hotel.hotelId]?.clasificacion ?? null}
               adultsOnly={infoPorHotel[t.hotel.hotelId]?.adultsOnly ?? false}
               petFriendly={infoPorHotel[t.hotel.hotelId]?.petFriendly ?? false}
               tieneCondicion={infoPorHotel[t.hotel.hotelId]?.tieneCondicion}
               descripcion={infoPorHotel[t.hotel.hotelId]?.descripcion ?? null}
+              ubicacion={infoPorHotel[t.hotel.hotelId]?.ubicacion ?? null}
+              descripcionPorPaquete={descripcionPorPaquete}
+              addonsPorPaquete={addonsPorPaquete}
             />
           ) : (
             // P2 (hallazgo confirmado): hotel por unidad (Bernalo) EN
@@ -1242,49 +1190,6 @@ export function VistaBooking({
       )}
     </div>
   );
-}
-
-// ── Modal de detalle de un receptivo (tour): solo foto + descripción + precio.
-//    Sin botón de reservar directo — agregar al carrito se hace desde la
-//    tarjeta del resultado (o desde el listado de add-ons del hotel), nunca
-//    saltando el flujo de carrito → cotización. ────────────────────────────
-function ReceptivoModal({ receptivo, onClose }: { receptivo: ReceptivoModalInfo; onClose: () => void }) {
-  return (
-    <div className="fixed inset-0 z-50 flex items-end justify-center bg-black/40 p-0 sm:items-center sm:p-4" onClick={onClose}>
-      <div className="max-h-[92vh] w-full max-w-lg overflow-y-auto rounded-t-2xl bg-white sm:rounded-2xl" onClick={(e) => e.stopPropagation()}>
-        <div className="relative aspect-[16/9] w-full bg-gray-100">
-          {receptivo.foto ? (
-            <Image src={receptivo.foto} alt={receptivo.nombre} fill sizes="500px" className="object-cover" unoptimized />
-          ) : (
-            <div className="flex h-full w-full items-center justify-center text-sm text-gray-300">Sin foto</div>
-          )}
-          <button type="button" onClick={onClose} className="absolute right-3 top-3 rounded-full bg-white/90 px-3 py-1 text-sm font-medium text-gray-700 shadow">
-            Cerrar ✕
-          </button>
-        </div>
-        <div className="p-5">
-          <div className="text-lg font-semibold text-gray-800">{receptivo.nombre}</div>
-          {receptivo.destino && <div className="text-sm text-gray-500">{receptivo.destino}</div>}
-          {receptivo.descripcion?.trim() && (
-            <p className="mt-3 whitespace-pre-line text-sm text-gray-600">{receptivo.descripcion}</p>
-          )}
-          <div className="mt-4">
-            <div className="text-[10px] uppercase tracking-wide text-gray-400">{receptivo.notaPrecio}</div>
-            <div className="text-xl font-bold" style={{ color: "var(--brand-primary)" }}>{formatMoneda(receptivo.precio, receptivo.moneda)}</div>
-          </div>
-        </div>
-      </div>
-    </div>
-  );
-}
-
-// Ícono por sección de la descripción manual del paquete — nunca un emoji
-// (regla de marca): check para "Incluye", tache para "No incluye", un ícono
-// informativo neutro para el resto (tarifas especiales/condiciones).
-function IconoSeccion({ titulo }: { titulo: string }) {
-  if (titulo === "El programa incluye") return <Check size={14} className="shrink-0" style={{ color: "var(--brand-success)" }} />;
-  if (titulo === "El programa no incluye") return <X size={14} className="shrink-0 text-gray-400" />;
-  return <Info size={14} className="shrink-0 text-gray-400" />;
 }
 
 // ── Modal de detalle: elige opción (salida/paquete), categoría/régimen y
@@ -1360,7 +1265,8 @@ function HotelModal({
   // tarifas especiales/condiciones comerciales — texto libre configurado UNA
   // sola vez en el paquete y compartido por TODOS sus hoteles/opciones (nunca
   // varía por `hotel`, a diferencia de la vieja línea "Hospedaje en <hotel>").
-  const secciones = opcion ? seccionesDescripcion(descripcionPorPaquete[opcion.paqueteId]) : [];
+  // Renderizado con `SeccionesIncluye` (helper compartido).
+  const descripcionOpcion = opcion ? descripcionPorPaquete[opcion.paqueteId] : undefined;
   // Servicios opcionales (add-on) de ESTE paquete puntual — nunca los de otro
   // destino (a diferencia de irse a la pestaña Receptivos general).
   const addons: Receptivo[] = opcion ? (addonsPorPaquete.get(opcion.paqueteId) ?? []) : [];
@@ -1398,23 +1304,7 @@ function HotelModal({
             )}
           </div>
 
-          {hotel.ubicacion?.trim() && (
-            <div>
-              <div className="mb-1 flex items-center justify-between">
-                <span className="text-xs font-semibold uppercase tracking-wide text-gray-400">Ubicación</span>
-                <a href={`https://www.google.com/maps?q=${encodeURIComponent(hotel.ubicacion)}`} target="_blank" rel="noopener noreferrer" className="text-xs font-medium" style={{ color: "var(--brand-accent)" }}>
-                  Ver en Google Maps →
-                </a>
-              </div>
-              <iframe
-                title={`Mapa ${hotel.hotelNombre}`}
-                src={`https://www.google.com/maps?q=${encodeURIComponent(hotel.ubicacion)}&output=embed`}
-                className="h-56 w-full rounded-lg border border-gray-200"
-                loading="lazy"
-                referrerPolicy="no-referrer-when-downgrade"
-              />
-            </div>
-          )}
+          <UbicacionHotel hotelNombre={hotel.hotelNombre} ubicacion={hotel.ubicacion} />
 
           {detalle === null || detalle.estado === "cargando" ? (
             <p className="py-4 text-center text-sm text-gray-400">Cargando opciones…</p>
@@ -1503,43 +1393,10 @@ function HotelModal({
               {/* Descripción manual del paquete: encabezados fijos, un ítem de
                   lista por línea no vacía. Sección omitida por completo si no
                   tiene contenido (nunca un encabezado con lista vacía). */}
-              {secciones.length > 0 && (
-                <div className="space-y-3">
-                  {secciones.map((s) => (
-                    <div key={s.titulo} className="rounded-lg border border-gray-100 bg-gray-50 p-3">
-                      <p className="mb-1.5 text-xs font-semibold uppercase tracking-wide text-gray-400">{s.titulo}</p>
-                      <ul className="space-y-1">
-                        {s.items.map((it, i) => (
-                          <li key={i} className="flex items-center gap-1.5 text-sm text-gray-700">
-                            <IconoSeccion titulo={s.titulo} />
-                            {it}
-                          </li>
-                        ))}
-                      </ul>
-                    </div>
-                  ))}
-                </div>
-              )}
+              <SeccionesIncluye descripcion={descripcionOpcion} />
 
               {/* Servicios opcionales (add-on) del MISMO paquete — nunca de otro destino */}
-              {addons.length > 0 && (
-                <div>
-                  <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-gray-400">Servicios opcionales (add-on)</p>
-                  <div className="flex flex-wrap gap-2">
-                    {addons.map((a, i) => (
-                      <button
-                        key={i}
-                        type="button"
-                        onClick={() => setAddonAbierto({ nombre: a.nombre, destino: a.destino, descripcion: a.descripcion, foto: a.foto, precio: a.desde, moneda: a.moneda, notaPrecio: "desde · por persona", paqueteId: a.paqueteId })}
-                        className="rounded-lg border border-gray-200 px-3 py-2 text-left text-sm transition-colors hover:border-[var(--brand-accent)]"
-                      >
-                        <span className="block font-medium text-gray-800">{a.nombre}</span>
-                        <span className="block text-xs" style={{ color: "var(--brand-primary)" }}>desde {formatMoneda(a.desde, a.moneda)}</span>
-                      </button>
-                    ))}
-                  </div>
-                </div>
-              )}
+              <AddonsPaquete addons={addons} onAbrir={setAddonAbierto} />
             </>
           )}
         </div>
@@ -1575,20 +1432,35 @@ function HotelModal({
 // obsoleto. Esta revalidación es una llamada de servidor más, invisible para
 // el usuario (estado de carga en el botón) — nunca una segunda pantalla de
 // búsqueda ni un "Cotizar" aparte.
+// Tarjeta completa (auditoría de alcance): recibe además `videoUrl`/
+// `ubicacion` (mismo enriquecimiento por `hotelId` que ya usa `TarjetaHotelCard`/
+// `HotelBernaloCotizarModal`, ver `infoPorHotel`) y `descripcionPorPaquete`/
+// `addonsPorPaquete` — antes solo tenía foto/categoría/etiquetas/descripción,
+// perdiendo ubicación/mapa e Incluye/No incluye/add-on aunque el resultado
+// SÍ tenga un `paqueteId` inequívoco (`opcionSel.paqueteId`, la oferta
+// confirmada por el combo categoría/alimentación elegido). Nunca fuente de
+// precio/disponibilidad: eso sigue siendo EXCLUSIVO de `opcionSel.precioVenta`/
+// `cotizarAlojamientoBernaloPublico` (revalidado en `agregar()`).
 function TarjetaUnidadBusqueda({
-  hotel, opciones, foto, estrellas, clasificacion, adultsOnly, petFriendly, tieneCondicion, descripcion,
+  hotel, opciones, foto, videoUrl, estrellas, clasificacion, adultsOnly, petFriendly, tieneCondicion, descripcion, ubicacion,
+  descripcionPorPaquete, addonsPorPaquete,
 }: {
   hotel: { hotelId: number; hotelNombre: string; destino: string | null };
   opciones: OpcionUnidadConfirmada[];
   foto: string | null;
+  videoUrl?: string | null;
   estrellas: number | null;
   clasificacion: string | null;
   adultsOnly: boolean;
   petFriendly: boolean;
   tieneCondicion?: boolean;
   descripcion?: string | null;
+  ubicacion?: string | null;
+  descripcionPorPaquete: Record<number, DescripcionPaqueteRaw>;
+  addonsPorPaquete: Map<number, Receptivo[]>;
 }) {
   const { items, add, remove, openDrawer } = useCart();
+  const [addonAbierto, setAddonAbierto] = useState<ReceptivoModalInfo | null>(null);
 
   const categorias = useMemo(() => [...new Set(opciones.map((o) => o.categoria))], [opciones]);
   const [cat, setCat] = useState(opciones[0]?.categoria ?? "");
@@ -1603,6 +1475,15 @@ function TarjetaUnidadBusqueda({
   // categoría anterior.
   const alimEff = alimentaciones.includes(alim) ? alim : (alimentaciones[0] ?? "");
   const opcionSel = opciones.find((o) => o.categoria === catEff && o.alimentacion === alimEff) ?? opciones[0];
+
+  // Incluye/No incluye y add-ons son del PAQUETE de la oferta SELECCIONADA
+  // (`opcionSel.paqueteId`) — nunca un paqueteId fijo. Dos ofertas del mismo
+  // hotel pueden pertenecer a paquetes DISTINTOS (categorías/alimentaciones
+  // repartidas entre varios `armado_hoteles`); cambiar de categoría/
+  // alimentación puede cambiar de paqueteId, y este contenido debe cambiar
+  // con él — nunca mezclar Incluye/add-on de una oferta con el precio de otra.
+  const descripcionOpcion = descripcionPorPaquete[opcionSel.paqueteId];
+  const addons: Receptivo[] = addonsPorPaquete.get(opcionSel.paqueteId) ?? [];
 
   // Precio EN VIVO local: nace del resultado ya calculado por el buscador
   // (`opcionSel.precioVenta`, ver el módulo puro) — cambiar de selector NUNCA
@@ -1719,9 +1600,12 @@ function TarjetaUnidadBusqueda({
   const selCls = "rounded-lg border border-gray-300 bg-white px-2 py-1 text-xs";
 
   return (
+    <>
     <div className="flex flex-col overflow-hidden rounded-2xl border border-gray-200 bg-white">
       <div className="relative aspect-[16/10] w-full bg-gray-100">
-        {foto ? (
+        {videoUrl ? (
+          <BackgroundVideo url={videoUrl} overlay={0} />
+        ) : foto ? (
           <Image src={foto} alt={hotel.hotelNombre} fill sizes="(max-width:1024px) 50vw, 33vw" className="object-cover" unoptimized />
         ) : (
           <div className="flex h-full w-full items-center justify-center text-sm text-gray-300">Sin foto</div>
@@ -1733,19 +1617,23 @@ function TarjetaUnidadBusqueda({
           Disponible para tus fechas
         </span>
       </div>
-      <div className="flex flex-1 flex-col p-4">
-        <div className="flex flex-wrap items-center gap-2">
-          <span className="font-semibold text-gray-800">{hotel.hotelNombre}</span>
-          <Categoria estrellas={estrellas} clasificacion={clasificacion} className="text-sm" />
-          <EtiquetasHotel adultsOnly={adultsOnly} petFriendly={petFriendly} />
-          {tieneCondicion !== undefined && <CondicionCompacta activo={tieneCondicion} />}
+      <div className="flex flex-1 flex-col gap-3 p-4">
+        <div>
+          <div className="flex flex-wrap items-center gap-2">
+            <span className="font-semibold text-gray-800">{hotel.hotelNombre}</span>
+            <Categoria estrellas={estrellas} clasificacion={clasificacion} className="text-sm" />
+            <EtiquetasHotel adultsOnly={adultsOnly} petFriendly={petFriendly} />
+            {tieneCondicion !== undefined && <CondicionCompacta activo={tieneCondicion} />}
+          </div>
+          <div className="mt-0.5 text-xs text-gray-500">{hotel.destino ?? ""}</div>
+          {descripcion?.trim() && (
+            <p className="mt-1 line-clamp-2 text-xs text-gray-400">{descripcion}</p>
+          )}
         </div>
-        <div className="mt-0.5 text-xs text-gray-500">{hotel.destino ?? ""}</div>
-        {descripcion?.trim() && (
-          <p className="mt-1 line-clamp-2 text-xs text-gray-400">{descripcion}</p>
-        )}
 
-        <div className="mt-3 grid grid-cols-1 gap-2">
+        <UbicacionHotel hotelNombre={hotel.hotelNombre} ubicacion={ubicacion} />
+
+        <div className="grid grid-cols-1 gap-2">
           <label className="flex items-center gap-2 text-xs text-gray-500">
             <span className="w-20 shrink-0">Categoría</span>
             <select value={catEff} onChange={(e) => setCat(e.target.value)} className={`${selCls} flex-1`}>
@@ -1760,9 +1648,9 @@ function TarjetaUnidadBusqueda({
           </label>
         </div>
 
-        {errorAgregar && <p className="mt-2 text-xs text-red-600">{errorAgregar}</p>}
+        {errorAgregar && <p className="text-xs text-red-600">{errorAgregar}</p>}
 
-        <div className="mt-3 flex items-end justify-between">
+        <div className="flex items-end justify-between">
           <div>
             <div className="text-[10px] uppercase tracking-wide text-gray-400">total {opcionSel.paxTotal} pax</div>
             <div className="text-lg font-bold" style={{ color: "var(--brand-primary)" }}>{formatMoneda(precioMostrado, monedaMostrada)}</div>
@@ -1777,8 +1665,18 @@ function TarjetaUnidadBusqueda({
             {agregando ? "Confirmando…" : enCarrito ? "✓ En el carrito · quitar" : "Agregar al carrito"}
           </button>
         </div>
+
+        {/* Incluye/No incluye y add-on de la OFERTA seleccionada — nunca
+            fuente de precio/disponibilidad (eso sigue siendo exclusivo de
+            opcionSel.precioVenta/cotizarAlojamientoBernaloPublico arriba). */}
+        <SeccionesIncluye descripcion={descripcionOpcion} />
+        <AddonsPaquete addons={addons} onAbrir={setAddonAbierto} />
       </div>
     </div>
+    {addonAbierto && (
+      <ReceptivoModal receptivo={addonAbierto} onClose={() => setAddonAbierto(null)} />
+    )}
+    </>
   );
 }
 
@@ -1836,8 +1734,9 @@ function HotelBernaloCotizarModal({
 
   // Incluye/No incluye y add-ons son del PAQUETE (`armado_paquetes.id` real,
   // igual identidad que usa `HotelModal`), no del hotel en abstracto — solo
-  // se conocen una vez que hay una oferta elegida (`hotel`).
-  const secciones = hotel ? seccionesDescripcion(descripcionPorPaquete[hotel.paqueteId]) : [];
+  // se conocen una vez que hay una oferta elegida (`hotel`). Renderizado con
+  // `SeccionesIncluye`/`AddonsPaquete` (helpers compartidos).
+  const descripcionOferta = hotel ? descripcionPorPaquete[hotel.paqueteId] : undefined;
   const addons: Receptivo[] = hotel ? (addonsPorPaquete.get(hotel.paqueteId) ?? []) : [];
 
   // Fase 3F-4A: EditorPax ya cotizó en vivo (resultadoCotizacion.ok) y reporta
@@ -1907,23 +1806,7 @@ function HotelBernaloCotizarModal({
             )}
           </div>
 
-          {info?.ubicacion?.trim() && (
-            <div>
-              <div className="mb-1 flex items-center justify-between">
-                <span className="text-xs font-semibold uppercase tracking-wide text-gray-400">Ubicación</span>
-                <a href={`https://www.google.com/maps?q=${encodeURIComponent(info.ubicacion)}`} target="_blank" rel="noopener noreferrer" className="text-xs font-medium" style={{ color: "var(--brand-accent)" }}>
-                  Ver en Google Maps →
-                </a>
-              </div>
-              <iframe
-                title={`Mapa ${hotelGrupo.hotelNombre}`}
-                src={`https://www.google.com/maps?q=${encodeURIComponent(info.ubicacion)}&output=embed`}
-                className="h-56 w-full rounded-lg border border-gray-200"
-                loading="lazy"
-                referrerPolicy="no-referrer-when-downgrade"
-              />
-            </div>
-          )}
+          <UbicacionHotel hotelNombre={hotelGrupo.hotelNombre} ubicacion={info?.ubicacion} />
 
           {ofertas.length > 1 && (
             <div>
@@ -1976,45 +1859,12 @@ function HotelBernaloCotizarModal({
               (encabezados fijos, un ítem por línea no vacía, sección omitida
               por completo si no tiene contenido) — depende de la oferta
               elegida, nunca de precio/disponibilidad. */}
-          {secciones.length > 0 && (
-            <div className="space-y-3">
-              {secciones.map((s) => (
-                <div key={s.titulo} className="rounded-lg border border-gray-100 bg-gray-50 p-3">
-                  <p className="mb-1.5 text-xs font-semibold uppercase tracking-wide text-gray-400">{s.titulo}</p>
-                  <ul className="space-y-1">
-                    {s.items.map((it, i) => (
-                      <li key={i} className="flex items-center gap-1.5 text-sm text-gray-700">
-                        <IconoSeccion titulo={s.titulo} />
-                        {it}
-                      </li>
-                    ))}
-                  </ul>
-                </div>
-              ))}
-            </div>
-          )}
+          <SeccionesIncluye descripcion={descripcionOferta} />
 
           {/* Servicios opcionales (add-on) del MISMO paquete — nunca de otro
               destino; solo vista de información (mismo `ReceptivoModal` que
               `HotelModal`, sin agregar directo al carrito desde acá). */}
-          {addons.length > 0 && (
-            <div>
-              <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-gray-400">Servicios opcionales (add-on)</p>
-              <div className="flex flex-wrap gap-2">
-                {addons.map((a, i) => (
-                  <button
-                    key={i}
-                    type="button"
-                    onClick={() => setAddonAbierto({ nombre: a.nombre, destino: a.destino, descripcion: a.descripcion, foto: a.foto, precio: a.desde, moneda: a.moneda, notaPrecio: "desde · por persona", paqueteId: a.paqueteId })}
-                    className="rounded-lg border border-gray-200 px-3 py-2 text-left text-sm transition-colors hover:border-[var(--brand-accent)]"
-                  >
-                    <span className="block font-medium text-gray-800">{a.nombre}</span>
-                    <span className="block text-xs" style={{ color: "var(--brand-primary)" }}>desde {formatMoneda(a.desde, a.moneda)}</span>
-                  </button>
-                ))}
-              </div>
-            </div>
-          )}
+          <AddonsPaquete addons={addons} onAbrir={setAddonAbierto} />
         </div>
       </div>
     </div>
