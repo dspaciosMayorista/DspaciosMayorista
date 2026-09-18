@@ -303,7 +303,9 @@ describe("HotelBernaloCotizarModal — tarjeta completa: mismo contenido comerci
     assert.match(cuerpoModal, /<Categoria estrellas=\{info\?\.estrellas \?\? null\} clasificacion=\{info\?\.clasificacion \?\? null\}/);
     assert.match(cuerpoModal, /<EtiquetasHotel adultsOnly=\{info\?\.adultsOnly \?\? false\} petFriendly=\{info\?\.petFriendly \?\? false\}/);
     assert.match(cuerpoModal, /info\?\.tieneCondicion !== undefined && <CondicionCompacta activo=\{info\.tieneCondicion\}/);
-    assert.match(cuerpoModal, /info\?\.descripcion\?\.trim\(\)/);
+    // Corrección visual (Vercel Preview): la descripción ya no se renderiza
+    // inline — usa el componente compartido expandible.
+    assert.match(cuerpoModal, /<DescripcionHotelExpandible texto=\{info\?\.descripcion\} \/>/);
   });
 
   // Auditoría de "tarjeta completa en el motor externo" (ronda posterior):
@@ -323,7 +325,10 @@ describe("HotelBernaloCotizarModal — tarjeta completa: mismo contenido comerci
     assert.match(cuerpoModal, /const descripcionOferta = hotel \? descripcionPorPaquete\[hotel\.paqueteId\] : undefined;/);
     assert.match(cuerpoModal, /const addons: Receptivo\[\] = hotel \? \(addonsPorPaquete\.get\(hotel\.paqueteId\) \?\? \[\]\) : \[\];/);
     assert.match(cuerpoModal, /<SeccionesIncluye descripcion=\{descripcionOferta\} \/>/);
-    assert.match(cuerpoModal, /<AddonsPaquete addons=\{addons\} onAbrir=\{setAddonAbierto\} \/>/);
+    // Corrección visual (Vercel Preview): AddonsPaquete recibe además
+    // `paqueteId={hotel?.paqueteId ?? null}` — cierra la lista sola si se
+    // elige otra oferta (mismo hotel, paquete distinto).
+    assert.match(cuerpoModal, /<AddonsPaquete addons=\{addons\} onAbrir=\{setAddonAbierto\} paqueteId=\{hotel\?\.paqueteId \?\? null\} \/>/);
   });
 
   test("los add-on abren el mismo ReceptivoModal (solo información, sin fuente de precio alterna) — estado propio addonAbierto", () => {

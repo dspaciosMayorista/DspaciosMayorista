@@ -13,7 +13,7 @@ import { EDAD_MENOR_MAX, MAX_MENORES_POR_CONSULTA, ajustarCantidadEdades, parseE
 import type { DestinoPorcionOpcion } from "@/lib/tarifario/destinosPorcion";
 import { BackgroundVideo } from "@/components/BackgroundVideo";
 import {
-  Categoria, EtiquetasHotel, UbicacionHotel, SeccionesIncluye, AddonsPaquete, ReceptivoModal,
+  Categoria, EtiquetasHotel, DescripcionHotelExpandible, UbicacionHotel, SeccionesIncluye, AddonsPaquete, ReceptivoModal,
   type Receptivo, type ReceptivoModalInfo,
 } from "./tarjetaHotelCompartida";
 import type { DescripcionPaqueteRaw } from "@/lib/tarifario/descripcionPaquete";
@@ -567,9 +567,7 @@ export function Resultado({ r, foto, info, descripcionPorPaquete, addonsPorPaque
           </div>
           <div className="mt-1"><CondicionHotelBadges condicion={r.condicion} /></div>
           <div className="text-xs text-gray-500">{r.destino ?? ""} · {r.noches}N</div>
-          {info?.descripcion?.trim() && (
-            <p className="mt-1 line-clamp-2 text-xs text-gray-400">{info.descripcion}</p>
-          )}
+          <DescripcionHotelExpandible texto={info?.descripcion} className="mt-1" textClassName="text-xs text-gray-400" />
         </div>
 
         <UbicacionHotel hotelNombre={r.hotelNombre ?? ""} ubicacion={info?.ubicacion} />
@@ -605,7 +603,7 @@ export function Resultado({ r, foto, info, descripcionPorPaquete, addonsPorPaque
             fuente de precio/disponibilidad (eso sigue siendo `combo.total`,
             resuelto por `buscarHoteles` arriba). */}
         <SeccionesIncluye descripcion={descripcionPaquete} />
-        <AddonsPaquete addons={addons} onAbrir={setAddonAbierto} />
+        <AddonsPaquete addons={addons} onAbrir={setAddonAbierto} paqueteId={r.paqueteId} />
       </div>
     </div>
     {addonAbierto && (

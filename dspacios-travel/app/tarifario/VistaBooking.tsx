@@ -4,7 +4,7 @@ import { useEffect, useId, useMemo, useRef, useState, useTransition, type ReactN
 import Image from "next/image";
 import { formatMoneda } from "@/lib/utils";
 import {
-  Categoria, EtiquetasHotel, UbicacionHotel, SeccionesIncluye, AddonsPaquete, ReceptivoModal,
+  Categoria, EtiquetasHotel, DescripcionHotelExpandible, UbicacionHotel, SeccionesIncluye, AddonsPaquete, ReceptivoModal,
   type Receptivo, type ReceptivoModalInfo,
 } from "./tarjetaHotelCompartida";
 import { ACOM_ROOMS, ACOM_ROOM_LABEL, defaultAcomConfig, textoEdadesHotel, type AcomRoom, type AcomConfig } from "@/lib/acomodaciones";
@@ -1299,9 +1299,7 @@ function HotelModal({
               <EtiquetasHotel adultsOnly={hotel.adultsOnly} petFriendly={hotel.petFriendly} />
             </div>
             <p className="text-sm text-gray-500">{hotel.destino ?? ""}</p>
-            {hotel.descripcion?.trim() && (
-              <p className="mt-2 text-sm text-gray-600">{hotel.descripcion}</p>
-            )}
+            <DescripcionHotelExpandible texto={hotel.descripcion} />
           </div>
 
           <UbicacionHotel hotelNombre={hotel.hotelNombre} ubicacion={hotel.ubicacion} />
@@ -1396,7 +1394,7 @@ function HotelModal({
               <SeccionesIncluye descripcion={descripcionOpcion} />
 
               {/* Servicios opcionales (add-on) del MISMO paquete — nunca de otro destino */}
-              <AddonsPaquete addons={addons} onAbrir={setAddonAbierto} />
+              <AddonsPaquete addons={addons} onAbrir={setAddonAbierto} paqueteId={opcion.paqueteId} />
             </>
           )}
         </div>
@@ -1626,9 +1624,7 @@ function TarjetaUnidadBusqueda({
             {tieneCondicion !== undefined && <CondicionCompacta activo={tieneCondicion} />}
           </div>
           <div className="mt-0.5 text-xs text-gray-500">{hotel.destino ?? ""}</div>
-          {descripcion?.trim() && (
-            <p className="mt-1 line-clamp-2 text-xs text-gray-400">{descripcion}</p>
-          )}
+          <DescripcionHotelExpandible texto={descripcion} className="mt-1" textClassName="text-xs text-gray-400" />
         </div>
 
         <UbicacionHotel hotelNombre={hotel.hotelNombre} ubicacion={ubicacion} />
@@ -1670,7 +1666,7 @@ function TarjetaUnidadBusqueda({
             fuente de precio/disponibilidad (eso sigue siendo exclusivo de
             opcionSel.precioVenta/cotizarAlojamientoBernaloPublico arriba). */}
         <SeccionesIncluye descripcion={descripcionOpcion} />
-        <AddonsPaquete addons={addons} onAbrir={setAddonAbierto} />
+        <AddonsPaquete addons={addons} onAbrir={setAddonAbierto} paqueteId={opcionSel.paqueteId} />
       </div>
     </div>
     {addonAbierto && (
@@ -1801,9 +1797,7 @@ function HotelBernaloCotizarModal({
               {info?.tieneCondicion !== undefined && <CondicionCompacta activo={info.tieneCondicion} />}
             </div>
             <p className="text-sm text-gray-500">{(hotel ?? ofertas[0])?.destinoNombre ?? ""}</p>
-            {info?.descripcion?.trim() && (
-              <p className="mt-2 text-sm text-gray-600">{info.descripcion}</p>
-            )}
+            <DescripcionHotelExpandible texto={info?.descripcion} />
           </div>
 
           <UbicacionHotel hotelNombre={hotelGrupo.hotelNombre} ubicacion={info?.ubicacion} />
@@ -1864,7 +1858,7 @@ function HotelBernaloCotizarModal({
           {/* Servicios opcionales (add-on) del MISMO paquete — nunca de otro
               destino; solo vista de información (mismo `ReceptivoModal` que
               `HotelModal`, sin agregar directo al carrito desde acá). */}
-          <AddonsPaquete addons={addons} onAbrir={setAddonAbierto} />
+          <AddonsPaquete addons={addons} onAbrir={setAddonAbierto} paqueteId={hotel?.paqueteId ?? null} />
         </div>
       </div>
     </div>

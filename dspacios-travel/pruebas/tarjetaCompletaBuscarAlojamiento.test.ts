@@ -96,7 +96,9 @@ describe("Resultado (BuscadorBooking.tsx) — tarjeta completa para hotel person
     assert.match(cuerpoResultado, /<Categoria estrellas=\{info\?\.estrellas \?\? null\} clasificacion=\{info\?\.clasificacion \?\? null\}/);
     assert.match(cuerpoResultado, /<EtiquetasHotel adultsOnly=\{info\?\.adultsOnly \?\? false\} petFriendly=\{info\?\.petFriendly \?\? false\}/);
     assert.match(cuerpoResultado, /<CondicionHotelBadges condicion=\{r\.condicion\}/, "debe conservar el badge de condición COMPLETO (no el compacto) — ya era más rico que HotelModal");
-    assert.match(cuerpoResultado, /info\?\.descripcion\?\.trim\(\)/);
+    // Corrección visual (Vercel Preview): la descripción ya no se renderiza
+    // inline con <p> — usa el componente compartido expandible.
+    assert.match(cuerpoResultado, /<DescripcionHotelExpandible texto=\{info\?\.descripcion\} className="mt-1" textClassName="text-xs text-gray-400" \/>/);
   });
 
   test("conserva ubicación/mapa vía el componente compartido UbicacionHotel", () => {
@@ -107,7 +109,11 @@ describe("Resultado (BuscadorBooking.tsx) — tarjeta completa para hotel person
     assert.match(cuerpoResultado, /const descripcionPaquete = descripcionPorPaquete\[r\.paqueteId\];/);
     assert.match(cuerpoResultado, /const addons: Receptivo\[\] = addonsPorPaquete\.get\(r\.paqueteId\) \?\? \[\];/);
     assert.match(cuerpoResultado, /<SeccionesIncluye descripcion=\{descripcionPaquete\} \/>/);
-    assert.match(cuerpoResultado, /<AddonsPaquete addons=\{addons\} onAbrir=\{setAddonAbierto\} \/>/);
+    // AddonsPaquete recibe paqueteId={r.paqueteId} — aunque acá es fijo (no
+    // cambia con la selección, a diferencia de la tarjeta unidad), se pasa
+    // igual para que el componente compartido tenga SIEMPRE la identidad
+    // real del paquete, nunca un valor omitido.
+    assert.match(cuerpoResultado, /<AddonsPaquete addons=\{addons\} onAbrir=\{setAddonAbierto\} paqueteId=\{r\.paqueteId\} \/>/);
   });
 
   test("los add-on abren ReceptivoModal — mismo componente compartido, sin fuente de precio alterna", () => {
@@ -133,7 +139,7 @@ describe("TarjetaUnidadBusqueda (VistaBooking.tsx) — tarjeta completa para hot
     assert.match(cuerpoTarjetaUnidadBusqueda, /<Categoria estrellas=\{estrellas\} clasificacion=\{clasificacion\}/);
     assert.match(cuerpoTarjetaUnidadBusqueda, /<EtiquetasHotel adultsOnly=\{adultsOnly\} petFriendly=\{petFriendly\}/);
     assert.match(cuerpoTarjetaUnidadBusqueda, /tieneCondicion !== undefined && <CondicionCompacta activo=\{tieneCondicion\}/);
-    assert.match(cuerpoTarjetaUnidadBusqueda, /descripcion\?\.trim\(\)/);
+    assert.match(cuerpoTarjetaUnidadBusqueda, /<DescripcionHotelExpandible texto=\{descripcion\} className="mt-1" textClassName="text-xs text-gray-400" \/>/);
   });
 
   test("conserva ubicación/mapa vía el componente compartido UbicacionHotel", () => {
@@ -144,7 +150,10 @@ describe("TarjetaUnidadBusqueda (VistaBooking.tsx) — tarjeta completa para hot
     assert.match(cuerpoTarjetaUnidadBusqueda, /const descripcionOpcion = descripcionPorPaquete\[opcionSel\.paqueteId\];/);
     assert.match(cuerpoTarjetaUnidadBusqueda, /const addons: Receptivo\[\] = addonsPorPaquete\.get\(opcionSel\.paqueteId\) \?\? \[\];/);
     assert.match(cuerpoTarjetaUnidadBusqueda, /<SeccionesIncluye descripcion=\{descripcionOpcion\} \/>/);
-    assert.match(cuerpoTarjetaUnidadBusqueda, /<AddonsPaquete addons=\{addons\} onAbrir=\{setAddonAbierto\} \/>/);
+    // paqueteId={opcionSel.paqueteId}: mismo identificador reactivo — al
+    // cambiar de combo, AddonsPaquete cierra su lista sola (ver el test
+    // dedicado de cierre automático más abajo).
+    assert.match(cuerpoTarjetaUnidadBusqueda, /<AddonsPaquete addons=\{addons\} onAbrir=\{setAddonAbierto\} paqueteId=\{opcionSel\.paqueteId\} \/>/);
   });
 
   // Requisito explícito: "dos paquetes que comparten hotel no mezclan

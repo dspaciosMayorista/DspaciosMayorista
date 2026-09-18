@@ -20,6 +20,7 @@
 // importa de ninguno de los dos, así que ambos lo importan sin ciclo.
 // ─────────────────────────────────────────────────────────────────────────
 
+import { useEffect, useId, useRef, useState } from "react";
 import Image from "next/image";
 import { Check, Info, Star, X } from "lucide-react";
 import { formatMoneda } from "@/lib/utils";
@@ -84,6 +85,72 @@ export function EtiquetasHotel({ adultsOnly, petFriendly, className = "" }: { ad
         </span>
       )}
     </>
+  );
+}
+
+// ── Descripción del hotel, expandible (corrección visual — Vercel Preview) ──
+// La tarjeta completa podía crecer demasiado por una descripción larga. Se
+// muestra contraída a 2 líneas (`line-clamp-2`) y solo aparece "Ver más"
+// cuando el texto REALMENTE desborda esas 2 líneas — nunca por una cantidad
+// arbitraria de caracteres, sino midiendo el elemento renderizado
+// (`scrollHeight` vs `clientHeight`, técnica estándar para line-clamp) con
+// `ResizeObserver` para recalcular si cambia el ancho disponible (la tarjeta
+// puede cambiar de tamaño por el layout responsive, sin que el texto cambie).
+// Estado (`expandido`/`desborda`) vive en el propio componente — cada
+// instancia (cada tarjeta) es independiente por diseño de React, sin
+// necesidad de una llave externa.
+export function DescripcionHotelExpandible({
+  texto, className = "mt-2", textClassName = "text-sm text-gray-600",
+}: {
+  texto: string | null | undefined;
+  /** Clases del contenedor (margen respecto al bloque anterior, etc.). */
+  className?: string;
+  /** Clases del texto (tamaño/color) — cada llamador conserva el estilo que
+   * ya tenía antes de esta corrección (el modal usa `text-sm`, las tarjetas
+   * compactas de resultado usan `text-xs`). */
+  textClassName?: string;
+}) {
+  const [expandido, setExpandido] = useState(false);
+  const [desborda, setDesborda] = useState(false);
+  const refTexto = useRef<HTMLParagraphElement>(null);
+  const idTexto = useId();
+
+  useEffect(() => {
+    const el = refTexto.current;
+    if (!el) return;
+    // El `line-clamp-2` solo está aplicado mientras `expandido` es false —
+    // mientras el texto está expandido no hay nada que medir (el elemento
+    // nunca desborda su propio contenido); el último `desborda` conocido
+    // (de cuando SÍ estaba contraído) se conserva, así el botón "Ver menos"
+    // sigue disponible para volver a contraer.
+    if (expandido) return;
+    const medir = () => setDesborda(el.scrollHeight - el.clientHeight > 1);
+    medir();
+    if (typeof ResizeObserver === "undefined") return;
+    const ro = new ResizeObserver(medir);
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, [texto, expandido]);
+
+  if (!texto?.trim()) return null;
+  return (
+    <div className={className}>
+      <p id={idTexto} ref={refTexto} className={expandido ? textClassName : `line-clamp-2 ${textClassName}`}>
+        {texto}
+      </p>
+      {desborda && (
+        <button
+          type="button"
+          aria-expanded={expandido}
+          aria-controls={idTexto}
+          onClick={() => setExpandido((v) => !v)}
+          className="mt-0.5 text-xs font-medium"
+          style={{ color: "var(--brand-accent)" }}
+        >
+          {expandido ? "Ver menos" : "Ver más"}
+        </button>
+      )}
+    </div>
   );
 }
 
@@ -152,24 +219,75 @@ export function SeccionesIncluye({ descripcion }: { descripcion: DescripcionPaqu
 // general ni de otro paquete que comparta el mismo hotel. Solo vista de
 // información (abre `ReceptivoModal`); agregar al carrito sigue siendo un
 // paso aparte del flujo de servicios, igual en los lugares que la usan.
-export function AddonsPaquete({ addons, onAbrir }: { addons: Receptivo[]; onAbrir: (info: ReceptivoModalInfo) => void }) {
+//
+// Corrección visual (Vercel Preview): la lista completa de add-ons podía
+// alargar demasiado la tarjeta. Ahora arranca CONTRAÍDA (un solo control
+// "Ver servicios adicionales (N)") y solo se expande DENTRO de la tarjeta —
+// nunca un modal nuevo para la lista general (el modal de detalle de CADA
+// servicio, `ReceptivoModal`, sigue igual, sin tocar).
+//
+// `paqueteId` es la identidad del paquete AL QUE PERTENECEN `addons` — no se
+// usa para filtrar (`addons` ya llega acotado por el llamador, ver
+// `HotelModal`/`HotelBernaloCotizarModal`/`Resultado`/`TarjetaUnidadBusqueda`),
+// solo para CERRAR la lista automáticamente si cambia (ej. el usuario elige
+// otra categoría/alimentación en `TarjetaUnidadBusqueda` y esa combinación
+// pertenece a otro paquete): sin este cierre, la lista podría quedar abierta
+// mostrando —por una fracción de segundo, hasta que este mismo componente
+// reciba el `addons` nuevo— los add-ons del paquete ANTERIOR bajo el rótulo
+// del nuevo. Mismo componente para persona y unidad — nunca dos copias.
+export function AddonsPaquete({ addons, onAbrir, paqueteId }: {
+  addons: Receptivo[];
+  onAbrir: (info: ReceptivoModalInfo) => void;
+  /** Paquete al que pertenecen `addons` — cambiar este valor cierra la
+   * lista si estaba abierta. `undefined`/`null` cuando el llamador no tiene
+   * (todavía) un paquete elegido — nunca dispara el cierre por sí solo. */
+  paqueteId?: number | null;
+}) {
+  const [abierto, setAbierto] = useState(false);
+  const idLista = useId();
+
+  // Cierre automático al cambiar de paquete (regla explícita del encargo) —
+  // nunca deja la lista abierta mostrando add-ons de un paquete que ya no es
+  // el vigente, ni siquiera momentáneamente. Ajuste de estado DURANTE el
+  // render (patrón documentado de React para "resetear estado cuando cambia
+  // una prop") en vez de un `useEffect`: evita el render en cascada de
+  // llamar `setState` dentro de un efecto — React aplica este cambio antes
+  // de pintar, así que nunca se alcanza a mostrar un frame con la lista
+  // abierta y el `addons` del paquete nuevo a la vez.
+  const [paqueteIdAnterior, setPaqueteIdAnterior] = useState(paqueteId);
+  if (paqueteId !== paqueteIdAnterior) {
+    setPaqueteIdAnterior(paqueteId);
+    setAbierto(false);
+  }
+
   if (!addons.length) return null;
   return (
     <div>
-      <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-gray-400">Servicios opcionales (add-on)</p>
-      <div className="flex flex-wrap gap-2">
-        {addons.map((a, i) => (
-          <button
-            key={i}
-            type="button"
-            onClick={() => onAbrir({ nombre: a.nombre, destino: a.destino, descripcion: a.descripcion, foto: a.foto, precio: a.desde, moneda: a.moneda, notaPrecio: "desde · por persona", paqueteId: a.paqueteId })}
-            className="rounded-lg border border-gray-200 px-3 py-2 text-left text-sm transition-colors hover:border-[var(--brand-accent)]"
-          >
-            <span className="block font-medium text-gray-800">{a.nombre}</span>
-            <span className="block text-xs" style={{ color: "var(--brand-primary)" }}>desde {formatMoneda(a.desde, a.moneda)}</span>
-          </button>
-        ))}
-      </div>
+      <button
+        type="button"
+        aria-expanded={abierto}
+        aria-controls={idLista}
+        onClick={() => setAbierto((v) => !v)}
+        className="text-xs font-medium"
+        style={{ color: "var(--brand-accent)" }}
+      >
+        {abierto ? "Ocultar servicios adicionales" : `Ver servicios adicionales (${addons.length})`}
+      </button>
+      {abierto && (
+        <div id={idLista} className="mt-2 flex flex-wrap gap-2">
+          {addons.map((a, i) => (
+            <button
+              key={i}
+              type="button"
+              onClick={() => onAbrir({ nombre: a.nombre, destino: a.destino, descripcion: a.descripcion, foto: a.foto, precio: a.desde, moneda: a.moneda, notaPrecio: "desde · por persona", paqueteId: a.paqueteId })}
+              className="rounded-lg border border-gray-200 px-3 py-2 text-left text-sm transition-colors hover:border-[var(--brand-accent)]"
+            >
+              <span className="block font-medium text-gray-800">{a.nombre}</span>
+              <span className="block text-xs" style={{ color: "var(--brand-primary)" }}>desde {formatMoneda(a.desde, a.moneda)}</span>
+            </button>
+          ))}
+        </div>
+      )}
     </div>
   );
 }
