@@ -108,3 +108,13 @@ Registro de decisiones (ADL). Cada entrada: decisión, motivo, alternativas desc
 - Alternativas descartadas: duplicar la JSX de la tarjeta en cada variante; indexar Incluye/add-ons por hotel en vez de por paquete.
 - Deuda no cerrada: mejorar la presentación de servicios adicionales expandidos (evitar que la tarjeta expandida alargue toda la fila) sigue pendiente en `TASKS.md`; no es una decisión cerrada.
 - Referencia: PR #312, squash `ba78c77d` (2026-09-17).
+
+## ADL-018 — Documentación modular por rol y lectura mínima
+- Decisión: la coordinación se divide en un router universal (`AGENTS.md`) y archivos de rol en `docs/agents/` (`CODEX.md`, `SONNET.md`, `OPENCODE.md`, `DEEPSEEK.md`), con las plantillas de usuario aisladas en `PROMPTS.md`.
+- Decisión: la lectura mínima depende de la situación: tarea nueva (router, `CURRENT_GOAL.md`, archivo del rol, `git status` y diff), corrección en la misma conversación (solo archivos afectados, diff nuevo y pruebas relacionadas) y post-merge (router, `OPENCODE.md`, `TASKS.md`, `CURRENT_GOAL.md`, `git status` y diff mínimo del merge).
+- Decisión: las correcciones de la misma conversación no releen coordinación; solo lo hacen si cambió la rama, cambió el objetivo o apareció una contradicción.
+- Decisión: un solo implementador por problema y validación incremental (pruebas focalizadas durante el trabajo; una sola suite completa por entrega cuando corresponda).
+- Motivo: reducir tokens y ambigüedad, evitar duplicación de reglas y que cada rol lea solo lo que necesita.
+- Alternativas descartadas: obligar a leer los cinco documentos en cada ronda; duplicar reglas en varios archivos.
+- Fuera de alcance: el usuario sigue siendo el único responsable de Git remoto (staging/commit/push), SQL remoto y validación en Vercel.
+- Referencia: rama `docs/compact-agent-workflow` (2026-09-17).

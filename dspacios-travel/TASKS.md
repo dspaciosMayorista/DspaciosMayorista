@@ -6,10 +6,13 @@ Fuente unica y priorizada de pendientes. Ultima actualizacion: 2026-09-17.
 
 ### 1. Compactar el flujo Codex, Sonnet y OpenCode
 
-- [ ] Preparar prompts breves que lean solo `PROJECT_MAP.md`, `CURRENT_GOAL.md`, `DECISIONS.md`, `TASKS.md`, `git status` y el diff relevante.
+- [x] Crear documentacion modular por rol en `docs/agents/`: `CODEX.md`, `SONNET.md`, `OPENCODE.md`, `DEEPSEEK.md` y `PROMPTS.md`.
+- [x] Convertir `AGENTS.md` en router universal con enrutamiento por rol y lectura minima (tarea nueva, correccion en la misma conversacion, post-merge).
+- [ ] Validar en auditoria (Codex) que cada rol opera leyendo solo su archivo y sin reglas duplicadas.
+- [ ] Confirmar con el usuario las plantillas de `PROMPTS.md`.
 - [ ] Codex coordina, revisa riesgos y valida antes del commit.
 - [ ] Sonnet se usa para UI compleja o revision independiente de alto riesgo.
-- [ ] OpenCode/Antigravity/modelos gratuitos se prueban con tareas pequenas, mecanicas y bien delimitadas.
+- [ ] OpenCode se usa en documentacion y tareas pequenas, mecanicas y bien delimitadas.
 - [ ] DeepSeek queda para implementaciones puntuales cuando haga falta.
 - [ ] El usuario ejecuta Git, SQL remoto y validacion visual en Vercel Preview.
 - [ ] Ejecutar una sola suite completa por entrega; durante la implementacion, usar pruebas focalizadas.

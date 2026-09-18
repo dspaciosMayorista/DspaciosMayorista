@@ -33,5 +33,15 @@ Mapa del proyecto. Última actualización: 2026-09-17
 | Precio/disponibilidad y contenido por variante | Persona: precio interno existente. Unidad/Bernalo: precio y disponibilidad Bernalo en vivo. Incluye/add-ons se resuelven por el `paqueteId` de la oferta seleccionada, nunca por el hotel | Vista Booking |
 | Deuda visual: add-ons expandidos | Al expandir servicios adicionales la fila puede crecer y dejar espacios vacíos; mejora pendiente (modal/panel lateral o superficie compacta), no resuelta | Pendiente |
 
+## Coordinación de agentes
+| Archivo | Propósito |
+| --- | --- |
+| `../AGENTS.md` | Router universal: reglas universales, enrutamiento por rol y lectura mínima por situación |
+| `docs/agents/CODEX.md` | Auditor y coordinador: revisión contra diff, veredicto y comandos de Git tras aprobar |
+| `docs/agents/SONNET.md` | UI compleja, refactors amplios y cambios de riesgo alto |
+| `docs/agents/OPENCODE.md` | Documentación, tareas mecánicas y coordinación post-merge |
+| `docs/agents/DEEPSEEK.md` | Implementaciones puntuales y segunda revisión técnica expresa |
+| `docs/agents/PROMPTS.md` | Plantillas de usuario (no la leen los agentes) |
+
 ## Reglas del repo
 Ver `AGENTS.md` (raíz del repo). Fuente de verdad de diseño: `CLAUDE.md` (no releer salvo petición explícita).
