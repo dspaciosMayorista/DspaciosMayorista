@@ -5,7 +5,8 @@ import { getProgramasResumen } from "@/lib/programas";
 import { Logo } from "@/components/Logo";
 import { BackgroundVideo } from "@/components/BackgroundVideo";
 import { cargarResumenTarifario, MSG_ERROR_CARGAR_TARIFARIO } from "@/lib/tarifario/resumen";
-import { cargarHotelesBernaloDescubiertos, cargarInfoHotelesBernalo } from "@/lib/tarifario/datosBernalo";
+import { cargarHotelesBernaloDescubiertos, cargarInfoHotelesBernalo, cargarDescripcionPaquetesBernalo } from "@/lib/tarifario/datosBernalo";
+import { idsPaqueteBernaloFaltantes, fusionarDescripcionPaquete } from "@/lib/tarifario/descripcionPaquete";
 import { orquestarCargaPublica } from "@/lib/tarifario/orquestacion";
 import {
   generarFlujoId, registrarEtapa, registrarDatoPagina, registrarErrorTecnico,
@@ -139,7 +140,7 @@ export default async function TarifarioPublicoPage() {
   }
   const {
     filasVisibles, filasAddon, cuposPorBloqueo, origenPorBloqueo, fotosPorHotel: fotosPorHotelLegacy, fotosPorServicio,
-    infoPorHotel: infoPorHotelLegacy, capPorHotel, planesInfo, ventanaPorPaquete, descripcionPorPaquete,
+    infoPorHotel: infoPorHotelLegacy, capPorHotel, planesInfo, ventanaPorPaquete, descripcionPorPaquete: descripcionPorPaqueteLegacy,
   } = resDatos.datos;
 
   // P2 (hallazgo confirmado): las tarjetas de hoteles por unidad mostraban
@@ -150,6 +151,34 @@ export default async function TarifarioPublicoPage() {
   // y se combina en un solo mapa — best-effort: un fallo acá es decorativo
   // (la tarjeta unidad queda sin foto/badges) y NUNCA bloquea la página.
   //
+  // Hallazgo confirmado (auditoría posterior): `descripcionPorPaqueteLegacy`
+  // solo cubre paquetes con fila persona (bloqueo/porción terrestre) en
+  // `tarifario_resumen` — un paquete cuyo único hotel es `modelo_tarifario =
+  // 'unidad'` queda sin Incluye/No incluye aunque SÍ tenga contenido
+  // configurado. `idsPaqueteBernaloFaltantes` (helper puro, lib/tarifario/
+  // descripcionPaquete.ts) calcula los `paqueteId` REALES de `hotelesBernalo`
+  // que YA no tienen descripción cargada por el flujo persona (regla 4: nunca
+  // sobrescribe) — nunca el catálogo completo de paquetes (regla 6).
+  //
+  // Ambos conjuntos de IDs se calculan ANTES de disparar ninguna consulta,
+  // para poder lanzar las DOS cargas Bernalo (fotos/info de hotel y
+  // descripción de paquete) en el MISMO `Promise.all` — son independientes
+  // entre sí (una consulta `hoteles`, la otra `armado_paquetes`) y antes
+  // corrían en serie (`await` uno, luego `await` el otro), pagando dos
+  // round-trips secuenciales sin necesidad.
+  const hotelIdsBernalo = [...new Set(hotelesBernalo.map((h) => h.hotelId))];
+  const paqueteIdsBernaloFaltantes = idsPaqueteBernaloFaltantes(hotelesBernalo, descripcionPorPaqueteLegacy);
+  // ⚠️ Guarda de concurrencia (regresión ya corregida una vez): las DOS
+  // cargas siguientes DEBEN lanzarse juntas en este `Promise.all` — nunca
+  // `await cargarInfoHotelesBernalo(...)` seguido de un `await
+  // cargarDescripcionPaquetesBernalo(...)` por separado (eso las serializa
+  // de nuevo). `pruebas/descripcionPaquetesBernaloWiring.test.ts` falla si
+  // alguna de las dos vuelve a aparecer fuera de este arreglo.
+  const [resultadoInfoBernalo, resultadoDescripcionBernalo] = await Promise.all([
+    cargarInfoHotelesBernalo(hotelIdsBernalo),
+    cargarDescripcionPaquetesBernalo(paqueteIdsBernaloFaltantes),
+  ]);
+
   // P5 (hallazgo confirmado, validación final): `cargarInfoHotelesBernalo`
   // ya NO devuelve un único `ok` para las DOS consultas (fotos/hoteles) —
   // cada una es independiente (`errorFotos`/`errorInfo`), así que un fallo
@@ -157,8 +186,6 @@ export default async function TarifarioPublicoPage() {
   // sí se resolvieron bien (y viceversa). El merge con lo legacy es
   // incondicional: `resultadoInfoBernalo.fotosPorHotel`/`infoPorHotel` ya
   // vienen vacíos (no ausentes) cuando su propia consulta falló.
-  const hotelIdsBernalo = [...new Set(hotelesBernalo.map((h) => h.hotelId))];
-  const resultadoInfoBernalo = await cargarInfoHotelesBernalo(hotelIdsBernalo);
   if (resultadoInfoBernalo.errorFotos) {
     registrarErrorTecnico(FLUJO, flujoId, "datos_auxiliares_pagina", "error_fotos_hoteles_bernalo", resultadoInfoBernalo.errorFotos);
   }
@@ -167,6 +194,18 @@ export default async function TarifarioPublicoPage() {
   }
   const fotosPorHotel = { ...fotosPorHotelLegacy, ...resultadoInfoBernalo.fotosPorHotel };
   const infoPorHotel = { ...infoPorHotelLegacy, ...resultadoInfoBernalo.infoPorHotel };
+
+  // Best-effort (mismo criterio que fotos/info arriba): un fallo acá deja
+  // esos paquetes sin Incluye/No incluye — nunca toca precio ni
+  // disponibilidad Bernalo, que siguen siendo exclusivos de EditorPax/
+  // cotizarAlojamientoBernaloPublico. La fusión (`fusionarDescripcionPaquete`,
+  // helper puro) deja SIEMPRE ganando lo cargado por el flujo persona, sin
+  // mutar ninguno de los dos objetos de entrada.
+  if (resultadoDescripcionBernalo.error) {
+    registrarErrorTecnico(FLUJO, flujoId, "datos_auxiliares_pagina", "error_descripcion_paquetes_bernalo", resultadoDescripcionBernalo.error);
+  }
+  const descripcionPorPaquete = fusionarDescripcionPaquete(resultadoDescripcionBernalo.descripcionPorPaquete, descripcionPorPaqueteLegacy);
+
   if (resProgramas.error) {
     registrarErrorTecnico(FLUJO, flujoId, "programas_resumen", "error_getProgramasResumen", resProgramas.error);
   }

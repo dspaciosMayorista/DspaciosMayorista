@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useId, useMemo, useRef, useState, useTransition } from "react";
+import Image from "next/image";
 import { formatCOP } from "@/lib/utils";
 import { ACOM_ROOMS, ACOM_ROOM_LABEL, type AcomRoom } from "@/lib/acomodaciones";
 import { useCart, type HotelCartItemPersona } from "@/lib/cart/CartContext";
@@ -10,6 +11,12 @@ import { type BusquedaResultado, type SugerenciaFecha } from "@/lib/reservar/cot
 import { CondicionHotelBadges } from "@/components/cotizacion/CondicionHotelBadges";
 import { EDAD_MENOR_MAX, MAX_MENORES_POR_CONSULTA, ajustarCantidadEdades, parseEdadMenor } from "@/lib/reservar/edadesMenores";
 import type { DestinoPorcionOpcion } from "@/lib/tarifario/destinosPorcion";
+import { BackgroundVideo } from "@/components/BackgroundVideo";
+import {
+  Categoria, EtiquetasHotel, DescripcionHotelExpandible, UbicacionHotel, SeccionesIncluye, AddonsPaquete, ReceptivoModal,
+  type Receptivo, type ReceptivoModalInfo,
+} from "./tarjetaHotelCompartida";
+import type { DescripcionPaqueteRaw } from "@/lib/tarifario/descripcionPaquete";
 
 // Veredicto POSITIVO del servidor sobre un hotel por unidad para las fechas y
 // la ocupación declaradas (`buscarAlojamientosUnidadPorFechas`). Se deriva del
@@ -478,8 +485,35 @@ export function BuscadorBooking({
 // acá (y no en `VistaBooking`) porque es la única que conoce el carrito por
 // `HotelCartItemPersona`; `VistaBooking` la importa para pintar la rama
 // `tipo: "busqueda"` de la lista unificada.
-export function Resultado({ r, foto, info }: { r: BusquedaResultado; foto: string | null; info?: { estrellas: number | null; clasificacion: string | null; descripcion?: string | null; adultsOnly?: boolean; petFriendly?: boolean } }) {
+//
+// Tarjeta completa (auditoría de alcance): antes solo mostraba foto, nombre,
+// etiquetas, descripción, categoría/alimentación, precio y botón — perdiendo
+// video, ubicación/mapa e Incluye/No incluye/add-on aunque `r.paqueteId` sea
+// un `paqueteId` ÚNICO Y CIERTO para este resultado (`buscarHoteles` agrupa
+// por par hotel+paquete — `lib/reservar/cotizar.ts` — nunca mezcla combos de
+// paquetes distintos bajo el mismo resultado). `info` ahora recibe el shape
+// COMPLETO de `infoPorHotel` (ubicación/video/condición incluidos, no solo un
+// subconjunto) y `descripcionPorPaquete`/`addonsPorPaquete` llegan iguales
+// que a los modales de exploración — nunca una fuente nueva de datos.
+export function Resultado({ r, foto, info, descripcionPorPaquete, addonsPorPaquete }: {
+  r: BusquedaResultado;
+  foto: string | null;
+  info?: {
+    estrellas: number | null; clasificacion: string | null; descripcion?: string | null;
+    ubicacion?: string | null; video_url?: string | null;
+    adultsOnly?: boolean; petFriendly?: boolean; tieneCondicion?: boolean;
+  };
+  descripcionPorPaquete: Record<number, DescripcionPaqueteRaw>;
+  addonsPorPaquete: Map<number, Receptivo[]>;
+}) {
   const { items, add, remove } = useCart();
+  const [addonAbierto, setAddonAbierto] = useState<ReceptivoModalInfo | null>(null);
+  // `r.paqueteId` es FIJO para este resultado (una fila = un par hotel+
+  // paquete) — nunca cambia con la categoría/alimentación elegida, a
+  // diferencia de la tarjeta unidad (`TarjetaUnidadBusqueda`), donde distintos
+  // combos SÍ pueden pertenecer a paquetes distintos.
+  const descripcionPaquete = descripcionPorPaquete[r.paqueteId];
+  const addons: Receptivo[] = addonsPorPaquete.get(r.paqueteId) ?? [];
 
   // Combos disponibles → selectores de categoría y alimentación (el más barato
   // viene por defecto). El precio y lo que va al carrito siguen al combo elegido.
@@ -511,35 +545,35 @@ export function Resultado({ r, foto, info }: { r: BusquedaResultado; foto: strin
     i.tipo === "hotel" && i.modeloTarifario !== "unidad" && i.hotelId === item.hotelId && i.paqueteId === item.paqueteId &&
     i.fechaIda === item.fechaIda && i.fechaRegreso === item.fechaRegreso &&
     i.categoria === item.categoria && i.regimen === item.regimen);
-  const estrellas = info?.estrellas && info.estrellas > 0 ? "★".repeat(info.estrellas) : "";
   const selCls = "rounded-lg border border-gray-300 bg-white px-2 py-1 text-xs";
   return (
+    <>
     <div className="flex flex-col overflow-hidden rounded-2xl border border-gray-200 bg-white">
-      <div className="aspect-[16/10] w-full bg-gray-100">
-        {foto ? (
-          // eslint-disable-next-line @next/next/no-img-element
-          <img src={foto} alt={r.hotelNombre ?? ""} className="h-full w-full object-cover" />
-        ) : null}
-      </div>
-      <div className="flex flex-1 flex-col p-4">
-        <div className="flex flex-wrap items-center gap-2">
-          <span className="font-semibold text-gray-800">{r.hotelNombre}</span>
-          {estrellas && <span className="text-sm text-amber-400">{estrellas}</span>}
-          {info?.adultsOnly && (
-            <span className="rounded-full bg-gray-800 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-white" title="Este hotel no acepta niños ni infantes">Adults Only</span>
-          )}
-          {info?.petFriendly && (
-            <span className="rounded-full bg-[var(--brand-success)]/15 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-[var(--brand-success)]" title="Este hotel acepta mascotas">Pet friendly</span>
-          )}
-        </div>
-        <div className="mt-1"><CondicionHotelBadges condicion={r.condicion} /></div>
-        <div className="text-xs text-gray-500">{r.destino ?? ""} · {r.noches}N</div>
-        {info?.descripcion?.trim() && (
-          <p className="mt-1 line-clamp-2 text-xs text-gray-400">{info.descripcion}</p>
+      <div className="relative aspect-[16/10] w-full bg-gray-100">
+        {info?.video_url ? (
+          <BackgroundVideo url={info.video_url} overlay={0} />
+        ) : foto ? (
+          <Image src={foto} alt={r.hotelNombre ?? ""} fill sizes="(max-width:1024px) 50vw, 33vw" className="object-cover" unoptimized />
+        ) : (
+          <div className="flex h-full w-full items-center justify-center text-sm text-gray-300">Sin foto</div>
         )}
+      </div>
+      <div className="flex flex-1 flex-col gap-3 p-4">
+        <div>
+          <div className="flex flex-wrap items-center gap-2">
+            <span className="font-semibold text-gray-800">{r.hotelNombre}</span>
+            <Categoria estrellas={info?.estrellas ?? null} clasificacion={info?.clasificacion ?? null} className="text-sm" />
+            <EtiquetasHotel adultsOnly={info?.adultsOnly ?? false} petFriendly={info?.petFriendly ?? false} />
+          </div>
+          <div className="mt-1"><CondicionHotelBadges condicion={r.condicion} /></div>
+          <div className="text-xs text-gray-500">{r.destino ?? ""} · {r.noches}N</div>
+          <DescripcionHotelExpandible texto={info?.descripcion} className="mt-1" textClassName="text-xs text-gray-400" />
+        </div>
+
+        <UbicacionHotel hotelNombre={r.hotelNombre ?? ""} ubicacion={info?.ubicacion} />
 
         {/* Selectores de categoría y alimentación */}
-        <div className="mt-3 grid grid-cols-1 gap-2">
+        <div className="grid grid-cols-1 gap-2">
           <label className="flex items-center gap-2 text-xs text-gray-500">
             <span className="w-20 shrink-0">Categoría</span>
             <select value={cat} onChange={(e) => setCat(e.target.value)} className={`${selCls} flex-1`}>
@@ -554,7 +588,7 @@ export function Resultado({ r, foto, info }: { r: BusquedaResultado; foto: strin
           </label>
         </div>
 
-        <div className="mt-3 flex items-end justify-between">
+        <div className="flex items-end justify-between">
           <div>
             <div className="text-[10px] uppercase tracking-wide text-gray-400">total {combo.pax} pax</div>
             <div className="text-lg font-bold" style={{ color: "var(--brand-primary)" }}>{formatCOP(combo.total)}</div>
@@ -564,7 +598,17 @@ export function Resultado({ r, foto, info }: { r: BusquedaResultado; foto: strin
             {enCarrito ? "✓ En el carrito · quitar" : "Agregar al carrito"}
           </button>
         </div>
+
+        {/* Incluye/No incluye y add-on del paquete de ESTE resultado — nunca
+            fuente de precio/disponibilidad (eso sigue siendo `combo.total`,
+            resuelto por `buscarHoteles` arriba). */}
+        <SeccionesIncluye descripcion={descripcionPaquete} />
+        <AddonsPaquete addons={addons} onAbrir={setAddonAbierto} paqueteId={r.paqueteId} />
       </div>
     </div>
+    {addonAbierto && (
+      <ReceptivoModal receptivo={addonAbierto} onClose={() => setAddonAbierto(null)} />
+    )}
+    </>
   );
 }

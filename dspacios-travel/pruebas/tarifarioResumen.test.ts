@@ -432,6 +432,63 @@ describe("cargarResumenTarifario() — consulta la vista de resumen, entrega Fil
     assert.equal(r.datos.filasVisibles[0].desde_general, 90000);
   });
 
+  // ── Auditoría add-ons de un paquete EXCLUSIVAMENTE unidad (Bernalo) ──────
+  // ⚠️ NO es una prueba E2E: arranca de una fila `tarifario_resumen` YA
+  // GENERADA (la fixture `resumen` de abajo), no reproduce `generarTarifario`
+  // (app/(dashboard)/dashboard/paquetes/actions.ts) — ese generador no es
+  // ejecutable bajo `node --test` (Server Action con `createClient()`/
+  // `next/headers` sin inyección). El ORIGEN de esa fila (que
+  // `generarTarifario` SÍ construye filas de servicios para un paquete
+  // unidad válido, aunque no genere filas de hotel persona) se verifica por
+  // separado, con una guarda de inspección de código enfocada en el
+  // generador mismo: `pruebas/bernaloIntegracionGuardWiring.test.ts`
+  // ("guarda focalizada: el loop de servicios opcionales es INCONDICIONAL").
+  //
+  // Lo que ESTA prueba sí ejecuta de verdad: un hotel `modelo_tarifario=
+  // 'unidad'` nunca genera filas `bloqueo`/`porcion_terrestre` en
+  // `tarifario_resumen` (ese modelo no vive en `tarifario_resultado`) — así
+  // que un paquete cuyo ÚNICO hotel es unidad llega a `cargarResumenTarifario`
+  // con CERO filas de esos dos módulos, pero SÍ puede traer una fila
+  // `modulo="servicios"` (su add-on opcional), porque `tarifario_resumen`
+  // (migración 162) no filtra por `hotel_id is not null`. Esta prueba
+  // confirma con ejecución real de `cargarResumenTarifario` (cliente
+  // Supabase falso) que, a partir de esa fila ya generada, el pipeline de
+  // vigencia/empaquetados/servicios de esta función la deja llegar intacta a
+  // `filasAddon`:
+  test("paquete EXCLUSIVAMENTE unidad (sin ninguna fila bloqueo/porcion_terrestre): su fila de servicios (add-on), YA GENERADA en el fixture, SÍ llega a filasAddon — descripcionPorPaquete queda sin ese id (paqIdsConHotel, gap corregido en app/tarifario/page.tsx con cargarDescripcionPaquetesBernalo, no en esta función)", async () => {
+    const resumen = [
+      resumenBase({
+        modulo: "servicios", hotel_id: null, servicio_id: 77, servicio_nombre: "Traslado aeropuerto",
+        categoria: null, regimen: null, desde_general: 45000, paquete_id: 501,
+      }),
+    ];
+    // Catálogo de `armado_paquetes` de tipo "servicios" VACÍO (el paquete 501
+    // es de tipo "bloqueo"/"porcion_terrestre" — un paquete con hotel Bernalo
+    // real — nunca del tipo standalone "Servicios"; la query real de
+    // `resumen.ts` es `.eq("tipo","servicios")`, así que un paquete que no es
+    // de ese tipo simplemente no aparece en esa consulta): la fila NO debe
+    // colarse en `filasVisibles` (esa restricción sigue intacta, sin tocar),
+    // pero SÍ debe sobrevivir en `filasAddon` (que nunca depende de
+    // `armado_paquetes.tipo` ni de `paqIdsConHotel`).
+    const tablas = tablasBase({ armado_paquetes: { data: [], error: null } });
+    const sb = clienteFalso(tablas, resumen);
+    const admin = sb;
+    const r = await cargarResumenTarifario(sb, "test", "flujo1", admin);
+    assert.equal(r.ok, true);
+    if (!r.ok) return;
+    assert.equal(
+      r.datos.filasVisibles.length, 0,
+      "el paquete 501 no es tipo 'servicios' (es un paquete de hotel Bernalo) — su fila no aparece en la pestaña Servicios, correcto"
+    );
+    assert.equal(r.datos.filasAddon.length, 1, "la fila SÍ debe llegar a filasAddon, sin importar el tipo del paquete ni si tiene filas de hotel");
+    assert.equal(r.datos.filasAddon[0].paquete_id, 501);
+    assert.equal(r.datos.filasAddon[0].servicio_id, 77);
+    assert.equal(
+      r.datos.descripcionPorPaquete[501], undefined,
+      "confirma el hallazgo: paqIdsConHotel (derivado de filas bloqueo/porcion_terrestre) no incluye 501 — esta función NO debe cargar su descripción (eso se corrige en app/tarifario/page.tsx con cargarDescripcionPaquetesBernalo, nunca acá)"
+    );
+  });
+
   test("⚠️ ronda 6, ítem 3 — REPRODUCCIÓN del defecto (antes de esta ronda daba ok:true): un error TÉCNICO de vigencia ahora hace fallar TODA la función, no solo oculta la fila afectada", async () => {
     const resumen = [resumenBase({ hotel_id: 12 })];
     const tablas = tablasBase({ hotel_temporadas: { data: null, error: { message: "timeout" } } });

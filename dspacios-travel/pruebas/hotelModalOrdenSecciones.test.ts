@@ -23,8 +23,16 @@ describe("HotelModal — orden Salidas -> Motor interno -> Incluye -> Servicios 
 
   const idxSalidas = cuerpo.indexOf("Elige tu salida");
   const idxMotorInterno = cuerpo.indexOf("Motor interno:");
-  const idxIncluye = cuerpo.indexOf("{secciones.length > 0 && (");
-  const idxAddon = cuerpo.indexOf("{addons.length > 0 && (");
+  // Auditoría de "tarjeta completa en el motor externo" (ronda posterior):
+  // el render inline de Incluye/add-on se extrajo a `<SeccionesIncluye>`/
+  // `<AddonsPaquete>` (app/tarifario/tarjetaHotelCompartida.tsx), reutilizado
+  // también por Resultado/TarjetaUnidadBusqueda — mismo orden, solo cambia
+  // el ancla textual (ya no hay un `{secciones.length > 0 && (` literal acá).
+  const idxIncluye = cuerpo.indexOf("<SeccionesIncluye descripcion={descripcionOpcion} />");
+  // Corrección visual (Vercel Preview): AddonsPaquete ahora recibe además
+  // `paqueteId` (cierre automático de la lista al cambiar de paquete) — el
+  // ancla ya no puede ser el literal exacto de antes.
+  const idxAddon = cuerpo.indexOf("<AddonsPaquete addons={addons} onAbrir={setAddonAbierto} paqueteId={opcion.paqueteId} />");
 
   test("las 4 secciones existen dentro de HotelModal", () => {
     assert.notEqual(idxSalidas, -1, "falta el bloque de Salidas ('Elige tu salida')");

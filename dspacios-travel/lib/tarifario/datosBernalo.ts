@@ -35,6 +35,7 @@
 import { createAdminClient } from "../supabase/admin.ts";
 import { empaquetadoVigente, hoyBogota } from "../reservar/origen.ts";
 import { construirSetParesPublicados, todosLosParesConfiguradosPublicados } from "../calc/paresPublicadosUnidad.ts";
+import { filasArmadoPaqueteADescripcionPorPaquete, type DescripcionPaqueteRaw, type FilaArmadoPaqueteDescripcion } from "./descripcionPaquete.ts";
 
 // Identidad discriminada de una salida aérea real — nunca un índice `[0]`.
 // El servidor de cotización vuelve a validar que el id/tipo elegido
@@ -473,4 +474,47 @@ export async function cargarInfoHotelesBernalo(hotelIds: readonly number[]): Pro
     }
   }
   return { fotosPorHotel, infoPorHotel, errorFotos: eFotos?.message ?? null, errorInfo: eHoteles?.message ?? null };
+}
+
+// ── Hallazgo confirmado (auditoría posterior a la tarjeta completa) ────────
+// `descripcionPorPaquete` (lib/tarifario/resumen.ts) se carga SOLO para
+// `paqIdsConHotel` — paquetes con al menos una fila `bloqueo`/`porcion_
+// terrestre` en `tarifario_resumen`. Un paquete cuyo ÚNICO hotel es
+// `modelo_tarifario = 'unidad'` nunca genera esas filas (ese modelo no vive
+// en `tarifario_resultado`, ver el comentario de `hotelesBernaloExcluidos`
+// en `app/(dashboard)/dashboard/paquetes/actions.ts`), así que su
+// `paqueteId` puede estar en `hotelesBernalo` sin estar nunca en
+// `descripcionPorPaquete` — Incluye/No incluye queda vacío aunque el
+// paquete SÍ tenga contenido configurado en `armado_paquetes`.
+//
+// Este loader completa EXACTAMENTE esos huecos: el llamador (`app/tarifario/
+// page.tsx`) calcula qué `paqueteId` de `hotelesBernalo` YA tienen
+// descripción cargada por el flujo persona y pasa acá SOLO los que faltan —
+// nunca el catálogo completo de paquetes (regla 6 del encargo). Mismas 4
+// columnas exactas que ya lee `resumen.ts` (`armado_paquetes.programa_*`),
+// mismo shape (`DescripcionPaqueteRaw`), para que el resultado se pueda
+// fusionar (spread) sin transformar nada. Puro I/O, best-effort (mismo
+// criterio que `cargarInfoHotelesBernalo`): un fallo aquí es puramente
+// decorativo (el paquete queda sin Incluye/No incluye, nunca sin precio ni
+// disponibilidad) — el llamador decide si registrar observabilidad, pero
+// nunca debe bloquear la página ni inventar contenido.
+export type ResultadoDescripcionPaquetesBernalo = {
+  descripcionPorPaquete: Record<number, DescripcionPaqueteRaw>;
+  error: string | null;
+};
+
+export async function cargarDescripcionPaquetesBernalo(
+  paqueteIds: readonly number[]
+): Promise<ResultadoDescripcionPaquetesBernalo> {
+  if (!paqueteIds.length) return { descripcionPorPaquete: {}, error: null };
+  const admin = createAdminClient();
+  const { data, error } = await admin
+    .from("armado_paquetes")
+    .select("id, programa_incluye, programa_no_incluye, programa_tarifas_especiales, programa_condiciones_comerciales")
+    .in("id", paqueteIds);
+  if (error) return { descripcionPorPaquete: {}, error: error.message };
+  // Mapeo delegado al helper PURO compartido (probado con ejecución real en
+  // pruebas/descripcionPaquete.test.ts) — este archivo queda como I/O puro:
+  // consulta y devuelve, sin repetir la transformación fila→shape.
+  return { descripcionPorPaquete: filasArmadoPaqueteADescripcionPorPaquete((data ?? []) as unknown as FilaArmadoPaqueteDescripcion[]), error: null };
 }

@@ -110,6 +110,29 @@ describe("aplicarFiltrosPostCarga() — vigencia por hotel+categoría+régimen (
   });
 });
 
+// Auditoría add-ons de un paquete EXCLUSIVAMENTE unidad (Bernalo): sin
+// ninguna fila `bloqueo`/`porcion_terrestre` (hotel_id null en TODAS las
+// filas), el filtro de vigencia (`filtrarTarifarioVencidas`) nunca llega a
+// consultar `hotel_temporadas`/`tarifa_hotel` — `hIds` (los hotel_id
+// VERIFICABLES) queda vacío y la función devuelve las filas intactas por la
+// salida temprana (`if (!hIds.length) return { filas, error: null };`,
+// lib/tarifario/vigencia.ts). Con un `admin` real pero SIN NINGÚN catálogo
+// de vigencia cargado (mismo estado que tendría un tenant sin hoteles
+// persona todavía), la fila de servicios de un paquete 100% unidad debe
+// sobrevivir — nunca ocultarse por "vigencia no configurada" (ese fail-closed
+// solo aplica a filas de HOTEL verificables).
+describe("aplicarFiltrosPostCarga() — paquete EXCLUSIVAMENTE unidad (Bernalo): la fila de servicios sobrevive aunque el catálogo de vigencia esté vacío", () => {
+  test("admin presente, hotel_temporadas/tarifa_hotel vacíos, filas SOLO de servicios (hotel_id null): sobreviven sin tocar hotel_temporadas/tarifa_hotel", async () => {
+    const admin = clienteFalso({}); // catálogo de vigencia vacío a propósito
+    const filas = [
+      { modulo: "servicios", hotel_id: null, categoria: null, regimen: null, fecha_ida: null, fecha_regreso: null, noches: null, empaquetado_id: null },
+    ];
+    const r = await aplicarFiltrosPostCarga(admin, filas);
+    assert.equal(r.filas.length, 1, "la fila de servicios de un paquete 100% unidad nunca debe caer por el fail-closed de vigencia de HOTEL");
+    assert.equal(r.errorVigencia, null);
+  });
+});
+
 describe("aplicarFiltrosPostCarga() — combinación de los 3 filtros a la vez", () => {
   test("una fila que sobrevive los 3 filtros llega intacta al final", async () => {
     const admin = clienteFalso({

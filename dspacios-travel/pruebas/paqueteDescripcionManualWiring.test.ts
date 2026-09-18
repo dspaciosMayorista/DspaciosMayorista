@@ -12,6 +12,7 @@ function leer(ruta: string): string {
 }
 
 const RUTA_VISTA = "app/tarifario/VistaBooking.tsx";
+const RUTA_COMPARTIDA = "app/tarifario/tarjetaHotelCompartida.tsx";
 const RUTA_DATOS = "lib/tarifario/datos.ts";
 const RUTA_RESUMEN = "lib/tarifario/resumen.ts";
 const RUTA_CONFIG_FORM = "app/(dashboard)/dashboard/paquetes/ConfigForm.tsx";
@@ -20,6 +21,14 @@ const RUTA_ID_PAGE = "app/(dashboard)/dashboard/paquetes/[id]/page.tsx";
 
 describe("VistaBooking.tsx — la superficie que mostraba 'Incluye' ya no lo genera solo", () => {
   const src = leer(RUTA_VISTA);
+  // Auditoría de "tarjeta completa en el motor externo" (ronda posterior):
+  // el render de Incluye/No incluye se extrajo a `SeccionesIncluye`
+  // (app/tarifario/tarjetaHotelCompartida.tsx) para que las tarjetas de
+  // RESULTADO de "Buscar alojamiento" (Resultado/TarjetaUnidadBusqueda)
+  // también lo reutilicen, en vez de duplicar la JSX — `seccionesDescripcion`
+  // y el render en sí ahora viven en ese archivo, nunca reimplementados en
+  // VistaBooking.tsx.
+  const srcCompartida = leer(RUTA_COMPARTIDA);
 
   test("ya no arma la lista automática (nada de 'Tiquete aéreo'/'Hospedaje en' hardcodeados como ítems de Incluye)", () => {
     assert.doesNotMatch(src, /\["Tiquete aéreo"\]/);
@@ -30,29 +39,37 @@ describe("VistaBooking.tsx — la superficie que mostraba 'Incluye' ya no lo gen
     assert.doesNotMatch(src, /incluidosPorPaquete/);
   });
 
-  test("importa seccionesDescripcion de lib/tarifario/descripcionPaquete — nunca reimplementa el parseo de líneas inline", () => {
-    assert.match(src, /import \{ seccionesDescripcion, type DescripcionPaqueteRaw \} from "@\/lib\/tarifario\/descripcionPaquete";/);
+  test("VistaBooking.tsx importa SeccionesIncluye (helper compartido) en vez de reimplementar seccionesDescripcion inline", () => {
+    assert.match(src, /SeccionesIncluye/);
+    assert.match(src, /from "\.\/tarjetaHotelCompartida";/);
+    assert.doesNotMatch(src, /\bseccionesDescripcion\(/, "seccionesDescripcion() ya no se invoca directamente en VistaBooking.tsx — vive en tarjetaHotelCompartida.tsx");
   });
 
-  test("HotelModal recibe descripcionPorPaquete y deriva `secciones` con seccionesDescripcion(...) indexado por paqueteId", () => {
+  test("tarjetaHotelCompartida.tsx importa seccionesDescripcion de lib/tarifario/descripcionPaquete — nunca reimplementa el parseo de líneas inline", () => {
+    assert.match(srcCompartida, /import \{ seccionesDescripcion, type DescripcionPaqueteRaw \} from "@\/lib\/tarifario\/descripcionPaquete";/);
+  });
+
+  test("HotelModal recibe descripcionPorPaquete y arma `descripcionOpcion` indexado por paqueteId, para pasarlo a <SeccionesIncluye descripcion={...} />", () => {
     assert.match(src, /descripcionPorPaquete: Record<number, DescripcionPaqueteRaw>/);
-    const inicio = src.indexOf("const secciones =");
-    assert.ok(inicio > -1, "no calcula `secciones`");
+    const inicio = src.indexOf("const descripcionOpcion =");
+    assert.ok(inicio > -1, "no calcula `descripcionOpcion`");
     const linea = src.slice(inicio, inicio + 150);
-    assert.match(linea, /seccionesDescripcion\(descripcionPorPaquete\[opcion\.paqueteId\]\)/);
+    assert.match(linea, /opcion \? descripcionPorPaquete\[opcion\.paqueteId\] : undefined/);
+    assert.match(src, /<SeccionesIncluye descripcion=\{descripcionOpcion\} \/>/);
   });
 
-  test("el render de las secciones usa encabezado fijo (s.titulo) + un <li> por ítem (s.items.map) — nunca dangerouslySetInnerHTML", () => {
-    const inicio = src.indexOf("{secciones.length > 0 && (");
-    assert.ok(inicio > -1, "no renderiza `secciones`");
-    const bloque = src.slice(inicio, inicio + 700);
+  test("SeccionesIncluye (tarjetaHotelCompartida.tsx) renderiza con encabezado fijo (s.titulo) + un <li> por ítem (s.items.map) — nunca dangerouslySetInnerHTML", () => {
+    const inicio = srcCompartida.indexOf("export function SeccionesIncluye(");
+    assert.ok(inicio > -1, "no existe SeccionesIncluye");
+    const bloque = srcCompartida.slice(inicio, inicio + 900);
     assert.match(bloque, /secciones\.map\(\(s\) =>/);
     assert.match(bloque, /\{s\.titulo\}/);
     assert.match(bloque, /s\.items\.map\(/);
   });
 
-  test("nunca usa dangerouslySetInnerHTML en todo el archivo", () => {
+  test("nunca usa dangerouslySetInnerHTML en VistaBooking.tsx ni en tarjetaHotelCompartida.tsx", () => {
     assert.doesNotMatch(src, /dangerouslySetInnerHTML/);
+    assert.doesNotMatch(srcCompartida, /dangerouslySetInnerHTML/);
   });
 });
 
