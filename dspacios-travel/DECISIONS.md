@@ -118,3 +118,11 @@ Registro de decisiones (ADL). Cada entrada: decisión, motivo, alternativas desc
 - Alternativas descartadas: obligar a leer los cinco documentos en cada ronda; duplicar reglas en varios archivos.
 - Fuera de alcance: el usuario sigue siendo el único responsable de Git remoto (staging/commit/push), SQL remoto y validación en Vercel.
 - Referencia: PR #314, squash `11589a0f` (2026-09-17).
+
+## ADL-019 — Fuente materializada, promociones y recalculo por hotel
+- Decisión: la fuente autoritativa del precio es `tarifa_hotel` materializada; una vigencia por sí sola no genera ni modifica precios (el porcentaje/monto guardado en la vigencia promocional queda como metadata).
+- Decisión: una promoción solo gana para un combo si existe su fila materializada en `tarifa_hotel`; sin fila promocional gana la siguiente tarifa materializada válida.
+- Decisión: la calculadora descuenta la promoción sobre la tarifa completa, incluido el suplemento efectivo; prioridad de suplemento: promoción > base > general.
+- Decisión: crear, editar o eliminar tarifas/temporadas regenera los paquetes asociados por el `hotel_id` autoritativo de la fila; los errores al buscar paquetes asociados no quedan silenciosos y la regeneración conserva independencia entre paquetes.
+- Deuda no cerrada: el metadata de la vigencia promocional resulta engañoso en la UI y debe aclararse, renombrarse u ocultarse; registrado en `TASKS.md` como pendiente, sin objetivo activo.
+- Referencia: PR #316, squash `ff9507da` (2026-09-18).
