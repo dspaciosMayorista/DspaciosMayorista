@@ -117,4 +117,4 @@ Registro de decisiones (ADL). Cada entrada: decisión, motivo, alternativas desc
 - Motivo: reducir tokens y ambigüedad, evitar duplicación de reglas y que cada rol lea solo lo que necesita.
 - Alternativas descartadas: obligar a leer los cinco documentos en cada ronda; duplicar reglas en varios archivos.
 - Fuera de alcance: el usuario sigue siendo el único responsable de Git remoto (staging/commit/push), SQL remoto y validación en Vercel.
-- Referencia: rama `docs/compact-agent-workflow` (2026-09-17).
+- Referencia: PR #314, squash `11589a0f` (2026-09-17).

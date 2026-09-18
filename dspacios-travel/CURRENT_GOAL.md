@@ -1,22 +1,19 @@
 # CURRENT_GOAL.md
 
-Objetivo actual: **Compactar el flujo Codex, Sonnet y OpenCode** — reducir el costo y la ambigüedad de cada entrega con documentación modular por rol y lectura mínima.
+Objetivo actual: **Recalcular paquetes al editar tarifas o promociones** — mantener coherentes los paquetes que usan un hotel cuando cambian sus tarifas o promociones.
 
-Estado: estructura modular implementada en esta rama. **No cerrado**: se cierra después de la auditoría de Codex y la validación del usuario.
-
-Implementado:
-- Router universal en `AGENTS.md` (raíz del repo).
-- Archivos de rol en `docs/agents/`: `CODEX.md`, `SONNET.md`, `OPENCODE.md`, `DEEPSEEK.md` y `PROMPTS.md`.
-- Lectura mínima por situación: tarea nueva, corrección en la misma conversación y actualización posterior a merge.
-
-Criterios pendientes de validación (auditoría Codex + usuario):
-- Rutas y enlaces entre documentos correctos.
-- Sin reglas contradictorias ni duplicadas.
-- Cada agente puede operar leyendo solo su archivo de rol.
-- Un solo implementador por problema y una sola suite completa por entrega cuando corresponda.
-- Plantillas de `PROMPTS.md` confirmadas por el usuario.
+Alcance:
+- Recalcular automaticamente todos los paquetes que usan un hotel cuando se guarda, edita o elimina una tarifa o promocion.
+- Respetar promociones restringidas por alimentacion sin borrar tarifas base validas de otros planes.
+- Cubrir edicion, eliminacion y relaciones entre hotel, tarifa, promocion y paquete.
 
 Fuera de alcance:
-- No cerrar el objetivo hasta la auditoría y validación.
-- No implementar código funcional.
-- No tocar otros pendientes de `TASKS.md`.
+- No implementar ni diagnosticar codigo todavia en esta rama documental.
+- No tocar el flujo de tarjetas/motor externo ya cerrado ni migraciones no relacionadas.
+- No abordar otros pendientes de `TASKS.md`.
+
+Criterio de cierre:
+- Guardar, editar o eliminar una tarifa/promocion recalcula los paquetes afectados.
+- Las promociones restringidas por alimentacion no borran tarifas base validas de otros planes.
+- Cobertura de edicion, eliminacion y relaciones hotel-tarifa-promocion-paquete.
+- Pruebas y validacion del usuario segun el flujo acordado.

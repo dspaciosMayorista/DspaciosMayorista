@@ -4,97 +4,83 @@ Fuente unica y priorizada de pendientes. Ultima actualizacion: 2026-09-17.
 
 ## Cola priorizada
 
-### 1. Compactar el flujo Codex, Sonnet y OpenCode
-
-- [x] Crear documentacion modular por rol en `docs/agents/`: `CODEX.md`, `SONNET.md`, `OPENCODE.md`, `DEEPSEEK.md` y `PROMPTS.md`.
-- [x] Convertir `AGENTS.md` en router universal con enrutamiento por rol y lectura minima (tarea nueva, correccion en la misma conversacion, post-merge).
-- [ ] Validar en auditoria (Codex) que cada rol opera leyendo solo su archivo y sin reglas duplicadas.
-- [ ] Confirmar con el usuario las plantillas de `PROMPTS.md`.
-- [ ] Codex coordina, revisa riesgos y valida antes del commit.
-- [ ] Sonnet se usa para UI compleja o revision independiente de alto riesgo.
-- [ ] OpenCode se usa en documentacion y tareas pequenas, mecanicas y bien delimitadas.
-- [ ] DeepSeek queda para implementaciones puntuales cuando haga falta.
-- [ ] El usuario ejecuta Git, SQL remoto y validacion visual en Vercel Preview.
-- [ ] Ejecutar una sola suite completa por entrega; durante la implementacion, usar pruebas focalizadas.
-- [ ] No delegar simultaneamente el mismo problema a varios agentes.
-
-### 2. Recalcular paquetes al editar tarifas o promociones
+### 1. Recalcular paquetes al editar tarifas o promociones
 
 - [ ] Recalcular automaticamente todos los paquetes que usan un hotel cuando se guarda, edita o elimina una tarifa/promocion.
 - [ ] Respetar promociones restringidas por alimentacion sin borrar tarifas base validas de otros planes.
 - [ ] Cubrir edicion, eliminacion y relaciones entre hotel, tarifa, promocion y paquete.
 
-### 3. Hoteles recomendados
+### 2. Hoteles recomendados
 
 - [ ] Permitir un maximo de 6 hoteles recomendados con prioridad manual de 1 a 6.
 - [ ] Mostrar despues el resto del inventario con un orden definido por precio, estrellas/localizacion y etiquetas.
 
-### 4. Smoke financiero posterior al PR #294
+### 3. Smoke financiero posterior al PR #294
 
 - [ ] Crear un caso real con servicio incluido por grupo y comparar vitrina, carrito, cotizacion y contrato.
 - [ ] Confirmar una sola CxP por servicio, costos correctos y margen correcto.
 - [ ] Confirmar en Vercel `/api/cron/reconciliar-financiero` y su ejecucion con `CRON_SECRET`.
 
-### 5. Soporte unidad para paquetes dinamicos
+### 4. Soporte unidad para paquetes dinamicos
 
 - [ ] Implementar soporte real de `salidas_dinamicas` y cotizacion antes de anunciar hoteles unidad de paquetes `dinamico`.
 - [ ] Mantenerlos excluidos o marcados como no compatibles hasta completar la integracion.
 
-### 6. Soporte unidad para paquetes de servicios
+### 5. Soporte unidad para paquetes de servicios
 
 - [ ] Implementar soporte real de hoteles unidad en paquetes `servicios` antes de anunciarlos como cotizables.
 - [ ] Mantenerlos excluidos o marcados como no compatibles hasta completar la integracion.
 
-### 7. Corregir los 15 fallos preexistentes de pruebas
+### 6. Corregir los 15 fallos preexistentes de pruebas
 
 - [ ] Inventariar cada fallo por nombre, causa y propietario.
 - [ ] Separar defectos reales de pruebas de wiring obsoletas.
 - [ ] Corregirlos por grupos para dejar de aceptar una linea base roja como normal.
 
-### 8. Smoke visual de condiciones y restricciones
+### 7. Smoke visual de condiciones y restricciones
 
 - [ ] Validar en produccion badges y condiciones en Booking y carrito de los PR #286/#287.
 - [ ] Confirmar que el contenido sea consistente en escritorio, movil e impresion cuando aplique.
 
-### 9. Smoke de excepcion comercial
+### 8. Smoke de excepcion comercial
 
 - [ ] Probar con superadmin y contrato restringido el formulario, la autorizacion y la trazabilidad.
 - [ ] Mantener como deuda no bloqueante la reutilizacion de la consulta de vigencia para evitar una segunda consulta O(1) a `hotel_temporadas`.
 
-### 10. Mostrar conteos por destino
+### 9. Mostrar conteos por destino
 
 - [ ] Mostrar receptivos junto al conteo de hoteles, por ejemplo: `0 hoteles · 1 receptivo`.
 
-### 11. Explicar bloqueos al eliminar destinos
+### 10. Explicar bloqueos al eliminar destinos
 
 - [ ] Mostrar en el modal por que un destino no puede eliminarse cuando tiene contenido asociado.
 
-### 12. Mejorar la presentacion de servicios adicionales expandidos en las tarjetas
+### 11. Mejorar la presentacion de servicios adicionales expandidos en las tarjetas
 
 - [ ] Evitar que una tarjeta expandida aumente la altura de toda la fila y deje grandes espacios vacios.
 - [ ] Evaluar modal/panel lateral o una superficie compacta equivalente, conservando identidad de paquete y detalle de cada servicio.
 
-### 13. Integrar hoteles unidad en empaquetados
+### 12. Integrar hoteles unidad en empaquetados
 
 - [ ] Integrar y validar hoteles `modelo_tarifario = "unidad"` dentro de productos empaquetados.
 
-### 14. Integrar hoteles unidad con vuelos y bloqueos
+### 13. Integrar hoteles unidad con vuelos y bloqueos
 
 - [ ] Integrar y validar hoteles `modelo_tarifario = "unidad"` con vuelos, salidas y bloqueos.
 
-### 15. Investigar hotel 217 ausente en Vista Booking
+### 14. Investigar hotel 217 ausente en Vista Booking
 
 - [ ] Diagnosticar por que el hotel 217 no aparece en Porcion terrestre sin destino o buscando `odair`.
 - [ ] Trazar en Vercel Preview: `tarifario_resumen` -> filtros post-carga -> `TarifarioPublic` -> `VistaBooking` -> tarjetas.
 - [ ] No cambiar generacion, vigencia ni identidad categoria/regimen sin reproducir primero el descarte real.
 - [ ] Fixture confirmado de produccion: hotel 217, paquete 50 activo, modelo persona, SAN ANDRES, 28 filas en `tarifario_resultado`, 4 filas en `tarifario_resumen`, 2 noches, Estandar/Superior, PAE/FULL y procedencia Promocion.
 
-### 16. Separar Preview y Produccion
+### 15. Separar Preview y Produccion
 
 - [ ] Usar entornos y bases de datos independientes.
 - [ ] Documentar el orden de migraciones y las variables por ambiente.
 
-### 17. Desarrollo posterior del negocio
+### 16. Desarrollo posterior del negocio
 
 - [ ] Desarrollo integral B2B/B2C.
 - [ ] Marketing y redes sociales.
@@ -102,6 +88,7 @@ Fuente unica y priorizada de pendientes. Ultima actualizacion: 2026-09-17.
 
 ## Cerrado recientemente
 
+- [x] PR #314 (squash `11589a0f`, 2026-09-17): flujo de agentes modularizado. Router universal (`AGENTS.md`) con enrutamiento por rol; archivos por rol en `docs/agents/` (`CODEX.md`, `SONNET.md`, `OPENCODE.md`, `DEEPSEEK.md`); plantillas compactas en `PROMPTS.md`; lectura minima por situacion (tarea nueva, correccion en la misma conversacion, post-merge); validacion incremental. Auditado por Codex y aprobado por el usuario.
 - [x] PR #312 (squash `ba78c77d`, 2026-09-17): tarjetas completas de "Buscar alojamiento" para hoteles persona y unidad/Bernalo. Muestran foto/video, informacion del hotel, ubicacion/mapa, Incluye/No incluye y add-ons; Incluye/add-ons respetan el paquete de la oferta; precio y disponibilidad conservan sus motores originales; descripcion con Ver mas/Ver menos; servicios adicionales colapsados con contador. Flujo validado en Vercel Preview.
 - [x] Orden de secciones en `HotelModal` del motor interno (2026-09-17, commit `70263e3d`): Salidas -> Motor interno -> Incluye -> Servicios add-on. Traslado de JSX sin cambios de logica, props, precios, disponibilidad, acciones ni fuentes; prueba de regresion agregada (`pruebas/hotelModalOrdenSecciones.test.ts`) y flujo visual validado por el usuario. Las variantes externas/Bernalo no fueron modificadas.
 - [x] Integracion principal Bernalo/unidad para Porcion terrestre: editor, busqueda, carrito, menores y add-ons.
