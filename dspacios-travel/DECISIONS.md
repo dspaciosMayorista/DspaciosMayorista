@@ -133,5 +133,13 @@ Registro de decisiones (ADL). Cada entrada: decisión, motivo, alternativas desc
 - Decisión: la identidad de la tarjeta es compuesta `(hotelId, paqueteId)`; "Recomendado" aparece solo en ofertas seleccionadas, todas conservan el nombre del paquete, y precio/disponibilidad/Incluye/add-ons siguen ligados al paquete de la oferta.
 - Decisión: el selector administrativo usa autosave optimista (respuesta inmediata, sin refresh en éxito, rollback y refresh autoritativo en error).
 - Decisión: la prioridad es presentación fuera del snapshot; la migración 183 agrega `armado_hoteles.prioridad` (rango 1-6, unicidad parcial por paquete) y la 184 hace que un cambio exclusivo de prioridad no invalide el snapshot, mientras que cambios reales de armado sí lo invalidan.
+- Decisión: guardar o quitar `armado_hoteles.prioridad` con éxito revalida el editor y `/tarifario` sin regenerar el snapshot, publicar uno nuevo ni alterar su estado; ambas superficies releen `armado_hoteles`.
 - Deuda no cerrada: el orden del resto del inventario (precio, estrellas/localización, etiquetas) sigue pendiente en `TASKS.md` (#1).
-- Referencia: PR #318, squash `a2bcbf2a` (2026-09-18).
+- Referencia: PR #318, squash `a2bcbf2a` (2026-09-18); ampliada con el PR #320, squash `7d8cf7ec` (2026-09-19).
+
+## ADL-021 — Lecturas auxiliares de vigencia con paginación completa
+- Decisión: las lecturas auxiliares de vigencia cuya cardinalidad puede superar el "Max Rows" de PostgREST (`hotel_temporadas` y `tarifa_hotel` en `filtrarTarifarioVencidas`) se paginan por completo con `ejecutarConsultaPaginada`: orden total y determinista por `id`, avance por la cantidad real de filas recibidas y término únicamente con una página vacía.
+- Decisión: un error en cualquier página aborta la verificación con el mismo fail-closed explícito de siempre: sin verificación de vigencia, se ocultan las filas hoteleras verificables; no se relaja la vigencia ni se sintetizan tarifas desde temporadas.
+- Motivo: PostgREST trunca en silencio (sin `error`) por el "Max Rows" del proyecto; las filas faltantes se interpretaban como tarifas no materializadas y el caso real TAMACÁ BEACH RESORT (paquete 53 / hotel 57) perdía PA/PC en el modal (solo mostraba PAM) porque esas filas quedaban fuera del primer bloque no paginado.
+- Alternativas descartadas: consultas únicas sin `.range()`; lecturas paginadas sin orden total; término por `page.length < 1000`.
+- Referencia: PR #320, squash `7d8cf7ec` (2026-09-19).
