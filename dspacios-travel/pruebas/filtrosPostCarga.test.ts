@@ -16,11 +16,20 @@ import { hoyISO } from "../lib/calc/paquetes.ts";
 type Fila = { data: unknown[] | null; error: unknown };
 function clienteFalso(tablas: Record<string, Fila>) {
   function builder(tabla: string) {
+    // `order`/`range` existen porque `filtrarTarifarioVencidas` pagina
+    // `hotel_temporadas`/`tarifa_hotel` (corrección del caso Tamacá), y el
+    // `.range()` debe HONRARSE como en PostgREST: un doble que devuelve
+    // siempre el fixture completo deja sin avanzar al bucle paginado.
+    let rangeArgs: [number, number] | null = null;
     return {
       select() { return this; }, eq() { return this; }, in() { return this; },
+      order() { return this; },
+      range(from: number, to: number) { rangeArgs = [from, to]; return this; },
       then(resolve: (v: { data: unknown; error: unknown }) => void) {
         const cfg = tablas[tabla] ?? { data: [], error: null };
-        resolve({ data: cfg.data, error: cfg.error });
+        const [from, to] = rangeArgs ?? [0, Number.MAX_SAFE_INTEGER];
+        const data = Array.isArray(cfg.data) ? cfg.data.slice(from, to + 1) : cfg.data;
+        resolve({ data, error: cfg.error });
       },
     };
   }

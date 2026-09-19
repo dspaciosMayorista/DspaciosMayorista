@@ -9,6 +9,11 @@ import type { Database } from "@/types/database";
 // de build — pero deja este archivo testeable con ejecución real, mismo
 // patrón que ya usan otros módulos puros de este directorio.
 import { liquidarHotelNoches, liquidarHotelMasBarato, toTemporadaRango, type TemporadaRango } from "../calc/paquetes.ts";
+// Import RELATIVO por la misma razón que el de arriba: `@/` no resuelve bajo
+// `node --test` plano. `paginacion.ts` solo tiene imports de TIPO (se borran
+// con `--experimental-strip-types`), así que el relativo es equivalente en
+// build y deja este archivo testeable con ejecución real.
+import { ejecutarConsultaPaginada } from "./paginacion.ts";
 
 // Oculta del tarifario las tarifas de HOTEL cuya vigencia de COMPRA ya venció.
 // El tarifario_resultado es un snapshot congelado: el PVP no cambia, pero la
@@ -137,18 +142,48 @@ export async function filtrarTarifarioVencidas<T extends FilaConVigencia>(
   const hIds = [...new Set(hotelFilas.map((f) => f.hotel_id as number))];
   if (!hIds.length) return { filas, error: null };
 
-  const [{ data: temps, error: e1 }, { data: tars, error: e2 }] = await Promise.all([
-    admin.from("hotel_temporadas").select("hotel_id, nombre, fecha_inicio, fecha_fin, prioridad, compra_inicio, compra_fin, tipo, descuento_valor, rangos, blackouts, min_noches, regimen_restringido").in("hotel_id", hIds),
-    admin.from("tarifa_hotel").select("hotel_id, tipo_habitacion, alimentacion, temporada, neto_sencilla, neto_doble, neto_triple, neto_multiple").in("hotel_id", hIds),
+  // ⚠️ Ronda posterior — defecto "TAMACÁ pierde PA/PC en Ver opciones"
+  // (confirmado con SQL real): las DOS consultas se hacían con UN solo
+  // `.select()` SIN `.range()`. PostgREST aplica el "Max Rows" del proyecto
+  // (Settings → API) y **trunca en silencio** (sin `error`): con un catálogo
+  // que ya supera las 1.000 filas, si las tarifas de PA/PC de un hotel caen
+  // fuera del primer bloque y la de PAM entra, `buildVigenciaChecker` no
+  // encuentra tarifa materializada para PA/PC (no liquidan) y este filtro las
+  // elimina — el resumen quedaba sin PA/PC y el modal de "Ver opciones" solo
+  // podía ofrecer PAM. Ahora las dos lecturas usan el paginador robusto
+  // (`ejecutarConsultaPaginada`, mismo algoritmo que el resto del tarifario):
+  // orden TOTAL y determinista por `id` (ambas tablas tienen `id bigserial`),
+  // avance por la cantidad REAL de filas recibidas, término SOLO con una página
+  // vacía (nunca por `page.length < 1000`: el servidor puede imponer un límite
+  // menor) y revisión de `error` en CADA página — un fallo en cualquier página
+  // aborta con el mismo fail-closed explícito de siempre.
+  const [resTemps, resTars] = await Promise.all([
+    ejecutarConsultaPaginada<TempRow>((from, hasta) =>
+      admin
+        .from("hotel_temporadas")
+        .select("hotel_id, nombre, fecha_inicio, fecha_fin, prioridad, compra_inicio, compra_fin, tipo, descuento_valor, rangos, blackouts, min_noches, regimen_restringido")
+        .in("hotel_id", hIds)
+        .order("id")
+        .range(from, hasta)
+    ),
+    ejecutarConsultaPaginada<TarRow>((from, hasta) =>
+      admin
+        .from("tarifa_hotel")
+        .select("hotel_id, tipo_habitacion, alimentacion, temporada, neto_sencilla, neto_doble, neto_triple, neto_multiple")
+        .in("hotel_id", hIds)
+        .order("id")
+        .range(from, hasta)
+    ),
   ]);
-  if (e1 || e2) {
+  const errorLectura = resTemps.error ?? resTars.error;
+  if (errorLectura) {
     // Fallo cerrado EXPLÍCITO: no se puede verificar vigencia → se ocultan
     // las filas de hotel verificables (mismo criterio que ya usaba el
     // camino "sin vigencia real", ahora sin depender de que `?? []` lo
     // produzca por accidente).
-    return { filas: filas.filter((f) => !esFilaHotelVerificable(f)), error: e1 ?? e2 };
+    return { filas: filas.filter((f) => !esFilaHotelVerificable(f)), error: errorLectura };
   }
-  const chk = buildVigenciaChecker((temps ?? []) as TempRow[], (tars ?? []) as TarRow[]);
+  const chk = buildVigenciaChecker(resTemps.data ?? [], resTars.data ?? []);
 
   const filtradas = filas.filter((f) => {
     if (f.hotel_id == null || !f.fecha_ida) return true;
