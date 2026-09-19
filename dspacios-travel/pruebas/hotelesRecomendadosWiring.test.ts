@@ -69,6 +69,28 @@ describe("Admin — setHotelPrioridad (server-side, no toca el registro global d
     assert.match(cuerpo, /error\.code === "23514"/);
   });
 
+  test("revalida el editor y el tarifario público DESPUÉS del error, sin regenerar ni tocar el snapshot (migración 184)", () => {
+    const inicio = paquetesActions.indexOf("export async function setHotelPrioridad(");
+    const siguiente = paquetesActions.indexOf("\nexport async function ", inicio + 1);
+    const cuerpo = paquetesActions.slice(inicio, siguiente);
+
+    // Ambas superficies que muestran la recomendación se revalidan.
+    assert.match(cuerpo, /revalidatePath\(`\/dashboard\/paquetes\/\$\{paqueteId\}`\);/);
+    assert.match(cuerpo, /revalidatePath\("\/tarifario"\);/);
+
+    // Y las dos van después del retorno del error genérico: ningún camino de
+    // fallo (23505 / 23514 / genérico) revalida.
+    const posFallo = cuerpo.lastIndexOf("return { ok: false, error: error.message };");
+    assert.ok(posFallo > -1, "no se encontró el return del error genérico");
+    assert.ok(cuerpo.indexOf("revalidatePath(`/dashboard/paquetes/${paqueteId}`);") > posFallo);
+    assert.ok(cuerpo.indexOf('revalidatePath("/tarifario");') > posFallo);
+
+    // La prioridad es metadata de presentación: no se regenera el tarifario,
+    // no se publica y no se toca el estado del snapshot.
+    assert.doesNotMatch(cuerpo, /generarTarifario|regenerarTarifario|publicarTarifario|publicar_tarifario/);
+    assert.doesNotMatch(cuerpo, /tarifario_revision_fuente|tarifario_estado|tarifario_snapshot_publicable/);
+  });
+
   test("ArmadoClient.tsx: el selector de prioridad llama setHotelPrioridad y muestra las prioridades ocupadas por OTROS hoteles del paquete", () => {
     assert.match(armadoClient, /import\s*\{[^}]*setHotelPrioridad[^}]*\}\s*from\s*"\.\.\/actions"/);
     assert.match(armadoClient, /cambiarPrioridad\(/);
