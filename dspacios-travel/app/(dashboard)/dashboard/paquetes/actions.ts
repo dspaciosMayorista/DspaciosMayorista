@@ -249,7 +249,10 @@ export async function setHotelPrioridad(paqueteId: number, hotelId: number, prio
     }
     return { ok: false, error: error.message };
   }
+  // La prioridad es metadata de presentación (migración 184): no regenera
+  // el snapshot, pero ambas superficies deben releer armado_hoteles.
   revalidatePath(`/dashboard/paquetes/${paqueteId}`);
+  revalidatePath("/tarifario");
   return { ok: true };
 }
 

@@ -48,7 +48,13 @@ function clienteFalso(tablas: Record<string, Fila>, datasetTarifario: FilaTarifa
           resolve({ data: datasetTarifario.slice(from, to + 1), error: null });
         } else {
           const cfg = tablas[tabla] ?? { data: [], error: null };
-          resolve({ data: cfg.data, error: cfg.error });
+          // ⚠️ PostgREST honra `.range()`: el doble también. Devolver siempre
+          // el fixture completo ignorando el rango deja sin avanzar a un bucle
+          // paginado (que solo termina con una página vacía) —
+          // `filtrarTarifarioVencidas` pagina `hotel_temporadas`/`tarifa_hotel`.
+          const [from, to] = rangeArgs ?? [0, Number.MAX_SAFE_INTEGER];
+          const data = Array.isArray(cfg.data) ? cfg.data.slice(from, to + 1) : cfg.data;
+          resolve({ data, error: cfg.error });
         }
       },
     };

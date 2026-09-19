@@ -289,7 +289,14 @@ function clienteFalso(tablas: Record<string, Fila>, datasetResumen: FilaResumen[
           resolve({ data: datasetResumen.slice(from, to + 1), error: null });
         } else {
           const cfg = tablas[tabla] ?? { data: [], error: null };
-          resolve({ data: cfg.data, error: cfg.error });
+          // ⚠️ PostgREST honra `.range()`: el doble también debe hacerlo. Si
+          // devuelve SIEMPRE el fixture completo ignorando el rango, un bucle
+          // paginado (que solo termina con una página VACÍA) nunca avanza y
+          // agota su límite defensivo — `filtrarTarifarioVencidas` pagina
+          // `hotel_temporadas`/`tarifa_hotel` desde la corrección de Tamacá.
+          const [from, to] = rangeArgs ?? [0, Number.MAX_SAFE_INTEGER];
+          const data = Array.isArray(cfg.data) ? cfg.data.slice(from, to + 1) : cfg.data;
+          resolve({ data, error: cfg.error });
         }
       },
     };
