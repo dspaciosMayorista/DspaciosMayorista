@@ -611,9 +611,24 @@ export async function cargarResumenTarifario(
   // (un error acá nunca tumba el tarifario, solo deja sin sección de
   // recomendados). Clave = `claveOferta(hotelId, paqueteId)` — la lectura
   // (VistaBooking) NUNCA debe indexar esto por hotelId solo.
+  // ⚠️ CORRECCIÓN (regresión Preview): `armado_hoteles` tiene RLS de solo
+  // lectura INTERNA (migración 018, policy "armado_hoteles: interno" —
+  // `mi_rol() in (superadmin,gerencia,administracion,operaciones)`). El
+  // tarifario público lo consulta como visitante anónimo, así que hacerlo con
+  // `sb` (cliente de la request, sujeto a esa RLS) siempre devuelve 0 filas
+  // SIN error (RLS filtra, no falla) — `prioridadesRecomendados` quedaba
+  // `{}` en todo request público, por eso no aparecía NINGÚN recomendado, en
+  // ambos modos (global y por destino), ya que ambos parten del mismo mapa.
+  // `cargarPrioridadesRecomendadosBernalo` (datosBernalo.ts) ya usaba `admin`
+  // correctamente — de ahí que el síntoma pareciera aleatorio. Se usa `admin`
+  // (service-role, bypassa RLS) igual que el resto de estas consultas
+  // auxiliares en este archivo (cupos, hotel_acomodaciones, tarifa_hotel,
+  // armado_paquetes más abajo); sin exponer nada sensible (solo el orden de
+  // recomendación, ya público en la propia vitrina).
   const prioridadesRecomendados: Record<string, number> = {};
-  if (paqIdsConHotel.length) {
-    const { data: filasPrioridad, error: ePrioridad } = await sb
+  let _filasArmadoHotelesLeidas = 0;
+  if (paqIdsConHotel.length && admin) {
+    const { data: filasPrioridad, error: ePrioridad } = await admin
       .from("armado_hoteles")
       .select("paquete_id, hotel_id, prioridad")
       .in("paquete_id", paqIdsConHotel)
@@ -622,11 +637,21 @@ export async function cargarResumenTarifario(
       _huboErrorAux = true;
       registrarErrorTecnico(flujo, flujoId, "datos_auxiliares", "error_armado_hoteles_prioridad", ePrioridad);
     } else {
+      _filasArmadoHotelesLeidas = filasPrioridad?.length ?? 0;
       for (const f of filasPrioridad ?? []) {
         if (f.prioridad != null) prioridadesRecomendados[claveOferta(f.hotel_id, f.paquete_id)] = f.prioridad;
       }
     }
   }
+  // TEMP diagnóstico (regresión "no aparece ningún recomendado" — remover
+  // cuando se confirme resuelto en Preview): (a) filas leídas de
+  // armado_hoteles, (b) claves resultantes en el mapa persona. Sin datos
+  // sensibles (solo conteos). `admin_disponible=false` sería otra causa
+  // posible del mismo síntoma (falta `SUPABASE_SERVICE_ROLE_KEY` en el entorno).
+  registrarDatoPagina(
+    flujo, flujoId, "hoteles_recomendados",
+    `admin_disponible=${admin != null} paquetes_candidatos=${paqIdsConHotel.length} armado_hoteles_filas=${_filasArmadoHotelesLeidas} claves_prioridad_persona=${Object.keys(prioridadesRecomendados).length}`
+  );
 
   // Condición de pago / política comercial POR OFERTA (hotelId,paqueteId) —
   // filtros "Con/Sin condiciones" y "Flexible/No reembolsable" de Vista
