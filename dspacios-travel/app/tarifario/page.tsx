@@ -198,34 +198,6 @@ export default async function TarifarioPublicoPage() {
   // sin colisión (un hotel no puede ser persona y unidad para el mismo
   // paquete a la vez).
   const prioridadesRecomendadasCombinadas = { ...prioridadesRecomendados, ...resultadoPrioridadesBernalo.prioridades };
-  // TEMP diagnóstico (regresión "no aparece ningún recomendado" — remover
-  // cuando se confirme resuelto en Preview): (c) claves Bernalo, (d) claves
-  // combinadas, (e) primeras claves saneadas "hotelId:paqueteId", (f) cuántas
-  // OFERTAS CANDIDATAS visibles (persona: filasVisibles con módulo bloqueo/
-  // porcion_terrestre; unidad: hotelesBernalo) tienen coincidencia real en el
-  // mapa combinado — si (d) > 0 pero (f) = 0, el defecto está en la
-  // construcción de la CLAVE del lado candidato (formato/orden), no en la
-  // carga de prioridades. Sin datos sensibles (solo conteos + ids numéricos
-  // ya públicos en la propia vitrina).
-  {
-    const clavesCombinadas = Object.keys(prioridadesRecomendadasCombinadas);
-    const clavesCandidatasPersona = new Set(
-      filasVisibles
-        .filter((f) => (f.modulo === "bloqueo" || f.modulo === "porcion_terrestre") && f.hotel_id != null && f.paquete_id != null)
-        .map((f) => `${f.hotel_id}:${f.paquete_id}`)
-    );
-    const clavesCandidatasUnidad = new Set(hotelesBernalo.map((h) => `${h.hotelId}:${h.paqueteId}`));
-    const clavesCandidatas = new Set([...clavesCandidatasPersona, ...clavesCandidatasUnidad]);
-    const coincidencias = clavesCombinadas.filter((c) => clavesCandidatas.has(c));
-    registrarDatoPagina(
-      FLUJO, flujoId, "hoteles_recomendados_combinado",
-      `claves_bernalo=${Object.keys(resultadoPrioridadesBernalo.prioridades).length} ` +
-      `claves_combinadas=${clavesCombinadas.length} ` +
-      `claves_candidatas_persona=${clavesCandidatasPersona.size} claves_candidatas_unidad=${clavesCandidatasUnidad.size} ` +
-      `coincidencias_ofertasConPrioridad=${coincidencias.length} ` +
-      `primeras_claves=[${clavesCombinadas.slice(0, 5).join(", ")}]`
-    );
-  }
 
   // P5 (hallazgo confirmado, validación final): `cargarInfoHotelesBernalo`
   // ya NO devuelve un único `ok` para las DOS consultas (fotos/hoteles) —
