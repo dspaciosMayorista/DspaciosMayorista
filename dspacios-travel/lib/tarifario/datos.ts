@@ -31,6 +31,10 @@ export type InfoHotelDato = {
   // `condicionHotelFechas`, PR #286); opcional para no exigirlo en
   // `cargarDatosTarifario()` (esta misma carga completa no lo necesita hoy).
   tieneCondicion?: boolean;
+  // `hoteles.zona` (filtro "Zona" de Vista Booking) — mismo criterio que
+  // `tieneCondicion`: solo `resumen.ts`/`datosBernalo.ts` lo llenan hoy,
+  // opcional para no exigirlo en `cargarDatosTarifario()`.
+  zona?: string | null;
 };
 export type CapHotelDato = { paxMin: number | null; paxMax: number | null; acom: AcomConfig[] };
 

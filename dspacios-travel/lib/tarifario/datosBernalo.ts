@@ -389,6 +389,9 @@ export type InfoHotelBernaloDato = {
   clasificacion: string | null;
   descripcion: string | null;
   ubicacion: string | null;
+  // `hoteles.zona` (filtro "Zona" de Vista Booking) — mismo criterio de
+  // enriquecimiento que el resto de este tipo (espejo de `InfoHotelDato`).
+  zona: string | null;
   video_url: string | null;
   ninoMin: number | null;
   ninoMax: number | null;
@@ -430,7 +433,7 @@ export async function cargarInfoHotelesBernalo(hotelIds: readonly number[]): Pro
     admin
       .from("hoteles")
       .select(
-        "id, estrellas, clasificacion, descripcion, ubicacion, video_url, edad_nino_min, edad_nino_max, edad_infante_min, edad_infante_max, nino_nota, adults_only, pet_friendly, pet_costo_neto, pet_costo_desc, pet_nota"
+        "id, estrellas, clasificacion, descripcion, ubicacion, zona, video_url, edad_nino_min, edad_nino_max, edad_infante_min, edad_infante_max, nino_nota, adults_only, pet_friendly, pet_costo_neto, pet_costo_desc, pet_nota"
       )
       .in("id", hotelIds),
   ]);
@@ -454,6 +457,7 @@ export async function cargarInfoHotelesBernalo(hotelIds: readonly number[]): Pro
         clasificacion: h.clasificacion,
         descripcion: h.descripcion,
         ubicacion: h.ubicacion,
+        zona: h.zona,
         video_url: h.video_url,
         ninoMin: h.edad_nino_min,
         ninoMax: h.edad_nino_max,

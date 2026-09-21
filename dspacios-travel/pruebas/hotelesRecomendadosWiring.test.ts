@@ -268,22 +268,32 @@ describe("Lectura — identidad compuesta hotelId+paqueteId, nunca solo hotelId,
   test("estado global inicial (sin destino activo): el resto del inventario queda vacío — solo la sección de recomendados", () => {
     // `resto` solo se puebla dentro del bloque `if (destinoActivoSub) { ... }`
     // de la rama de exploración; sin destino activo queda como `[]`.
-    assert.match(vistaBooking, /let resto: Tarjeta\[\] = \[\];\s*\n\s*if \(destinoActivoSub\) \{/);
+    assert.match(vistaBooking, /let itemsRestoCandidatos: ItemResto\[\] = \[\];\s*\n\s*const tarjetaPorClaveResto = new Map<string, Tarjeta>\(\);\s*\n\s*if \(destinoActivoSub\) \{/);
   });
 
-  test("las tarjetas recomendadas NUNCA se reordenan alfabéticamente en el ensamblado final — solo el resto", () => {
-    const inicio = vistaBooking.indexOf("const cardsPersona = hoteles.filter");
-    assert.ok(inicio >= 0);
-    const siguiente = vistaBooking.indexOf("}, [hoteles, hotelesUnidadVisibles", inicio);
-    const cuerpo = vistaBooking.slice(inicio, siguiente);
-    // El `.sort(...localeCompare...)` alfabético debe aplicarse SOLO a `resto`
-    // (tarjetasRecomendadas ya viene resuelto antes de ese punto, en orden de
-    // prioridad, y nunca se reordena después).
-    const posSortAlfabetico = cuerpo.indexOf(".sort((x, y) => nombreTarjeta(x).localeCompare(nombreTarjeta(y)))");
-    const posRecomendadas = cuerpo.indexOf("const recomendadas:");
-    assert.ok(posSortAlfabetico > 0 && posRecomendadas > 0, "faltan los bloques de recomendadas/sort alfabético esperados");
-    assert.ok(posSortAlfabetico > posRecomendadas, "el sort alfabético debe aparecer DESPUÉS de resolver recomendadas (aplicado solo a resto)");
-    assert.match(cuerpo, /return \[\.\.\.tarjetasRecomendadas, \.\.\.resto\];/, "el ensamblado final debe anteponer las recomendadas, en su propio orden, al resto ya ordenado");
+  test("las tarjetas recomendadas NUNCA se reordenan por el motor de orden/filtro — solo el resto", () => {
+    // `datosBase` (candidatos crudos, persona+unidad, exploración Y búsqueda)
+    // JAMÁS llama `ordenarYFiltrarResto` — ese motor es EXCLUSIVO del `tarjetas`
+    // final, y ahí solo se aplica a `itemsRestoCandidatos`.
+    const inicioDatosBase = vistaBooking.indexOf("const datosBase = useMemo<{");
+    const finDatosBase = vistaBooking.indexOf("const zonasRestoDisponibles", inicioDatosBase);
+    assert.ok(inicioDatosBase > -1 && finDatosBase > inicioDatosBase, "no se encontró el useMemo datosBase");
+    const cuerpoDatosBase = vistaBooking.slice(inicioDatosBase, finDatosBase);
+    assert.doesNotMatch(cuerpoDatosBase, /ordenarYFiltrarResto\(/, "datosBase (recomendados + resto candidatos) nunca debe ordenar nada");
+
+    // El `tarjetas` final: los recomendados pasan por `filtrarPorFiltros`
+    // (NUNCA reordena, conserva el arreglo de entrada) y el resto por
+    // `ordenarYFiltrarResto` — en ese orden textual, y el ensamblado
+    // antepone recomendadas al resto.
+    const inicioTarjetas = vistaBooking.indexOf("const tarjetas = useMemo<Tarjeta[]>(() => {");
+    const finTarjetas = vistaBooking.indexOf("}, [datosBase, ordenResto, filtrosVistaEfectivos]);", inicioTarjetas);
+    assert.ok(inicioTarjetas > -1 && finTarjetas > inicioTarjetas, "no se encontró el useMemo final de tarjetas");
+    const cuerpo = vistaBooking.slice(inicioTarjetas, finTarjetas);
+    const posFiltrarPorFiltros = cuerpo.indexOf("filtrarPorFiltros(datosBase.itemsRecomendados");
+    const posOrdenResto = cuerpo.indexOf("ordenarYFiltrarResto(datosBase.itemsRestoCandidatos");
+    assert.ok(posFiltrarPorFiltros > -1 && posOrdenResto > posFiltrarPorFiltros, "los recomendados se filtran (sin ordenar) ANTES de ordenar el resto");
+    assert.doesNotMatch(cuerpo.slice(0, posOrdenResto), /ordenarYFiltrarResto\(/, "los recomendados nunca pasan por ordenarYFiltrarResto");
+    assert.match(cuerpo, /return \[\.\.\.recomendadasFiltradas, \.\.\.restoOrdenado\];/, "el ensamblado final debe anteponer las recomendadas filtradas (en su propio orden) al resto ya ordenado");
   });
 
   test("las cards recomendadas usan una clave de React por hotel+paquete (nunca colisiona con otra oferta del mismo hotel)", () => {
@@ -331,7 +341,7 @@ describe("Lectura — identidad compuesta hotelId+paqueteId, nunca solo hotelId,
 
 describe("Props threading — page.tsx -> TarifarioPublic -> VistaBooking", () => {
   test("page.tsx destructura prioridadesRecomendados (persona) y lo combina con las de unidad/Bernalo (hallazgo 3) antes de pasarlo a TarifarioPublic", () => {
-    assert.match(tarifarioPage, /prioridadesRecomendados,?\s*\n?\s*\}\s*=\s*resDatos\.datos/);
+    assert.match(tarifarioPage, /prioridadesRecomendados, condicionPorOferta, politicaPorOferta, restriccionPorPaquete,\s*\n\s*\}\s*=\s*resDatos\.datos/);
     assert.match(tarifarioPage, /cargarPrioridadesRecomendadosBernalo/);
     assert.match(tarifarioPage, /const prioridadesRecomendadasCombinadas = \{ \.\.\.prioridadesRecomendados, \.\.\.resultadoPrioridadesBernalo\.prioridades \};/);
     assert.match(tarifarioPage, /prioridadesRecomendados=\{prioridadesRecomendadasCombinadas\}/);
@@ -343,7 +353,7 @@ describe("Props threading — page.tsx -> TarifarioPublic -> VistaBooking", () =
   });
 
   test("VistaBooking declara prioridadesRecomendados como prop con default {}", () => {
-    assert.match(vistaBooking, /prioridadesRecomendados = \{\},?\s*\n?\}:\s*\{/);
+    assert.match(vistaBooking, /prioridadesRecomendados = \{\},\s*\n\s*condicionPorOferta = \{\},\s*\n\s*politicaPorOferta = \{\},\s*\n\s*restriccionPorPaquete = \{\},\s*\n\}:\s*\{/);
   });
 });
 
@@ -389,7 +399,7 @@ describe("Estados A/B — el gatillo es la búsqueda EJECUTADA, nunca el destino
   });
 
   test("en el estado global inicial el resto del inventario queda VACÍO: `resto` solo se puebla dentro del if (destinoActivoSub)", () => {
-    assert.match(vistaBooking, /let resto: Tarjeta\[\] = \[\];\s*\n\s*if \(destinoActivoSub\) \{/);
+    assert.match(vistaBooking, /let itemsRestoCandidatos: ItemResto\[\] = \[\];\s*\n\s*const tarjetaPorClaveResto = new Map<string, Tarjeta>\(\);\s*\n\s*if \(destinoActivoSub\) \{/);
   });
 
   test("con una búsqueda vigente SIEMPRE se usa la regla de destino (hasta 6), nunca la global (top 2)", () => {
@@ -405,17 +415,17 @@ describe("Estados A/B — el gatillo es la búsqueda EJECUTADA, nunca el destino
     const inicio = vistaBooking.indexOf("if (enBusquedaPorcion && busquedaPorcion) {");
     const fin = vistaBooking.indexOf("const cardsPersona = hoteles.filter");
     const rama = vistaBooking.slice(inicio, fin);
-    assert.match(rama, /\.\.\.resultadosPersona\.filter\(\(r\) => !clavesRecomendadasBusqueda\.has\(claveOferta\(r\.hotelId, r\.paqueteId\)\)\)/);
-    assert.match(rama, /\.\.\.gruposUnidadBusqueda\.filter\(\(g\) => !clavesRecomendadasBusqueda\.has\(claveOferta\(g\.hotelId, g\.paqueteId\)\)\)/);
+    assert.match(rama, /const restoPersonaCandidatas = resultadosPersona\.filter\(\(r\) => !clavesRecomendadasBusqueda\.has\(claveOferta\(r\.hotelId, r\.paqueteId\)\)\);/);
+    assert.match(rama, /const restoUnidadCandidatas = gruposUnidadBusqueda\.filter\(\(g\) => !clavesRecomendadasBusqueda\.has\(claveOferta\(g\.hotelId, g\.paqueteId\)\)\);/);
     assert.doesNotMatch(rama, /cardsPersona|hotelesUnidadVisibles/, "la lista de la búsqueda no se completa con la exploración");
   });
 });
 
 describe("Ofertas — la unidad nunca mezcla opciones de paquetes distintos", () => {
-  test("VistaBooking usa la función pura agruparOpcionesUnidadPorOferta sobre las opciones confirmadas (ya filtradas por Pet friendly/Adults Only)", () => {
+  test("VistaBooking usa la función pura agruparOpcionesUnidadPorOferta sobre TODAS las opciones confirmadas (Pet friendly/Adults Only ya NO filtran acá — se aplican después, vía FiltrosResto)", () => {
     assert.match(
       vistaBooking,
-      /const gruposUnidadBusqueda = agruparOpcionesUnidadPorOferta\(\s*\n\s*busquedaPorcion\.unidad\.filter\(\(u\) => porFiltros\(u\.hotelId\)\)\.flatMap\(\(u\) => u\.opciones\)\s*\n\s*\);/
+      /const gruposUnidadBusqueda = agruparOpcionesUnidadPorOferta\(\s*\n\s*busquedaPorcion\.unidad\.flatMap\(\(u\) => u\.opciones\)\s*\n\s*\);/
     );
     assert.match(vistaBooking, /import\s*\{[\s\S]*agruparOpcionesUnidadPorOferta[\s\S]*\}\s*from\s*"@\/lib\/tarifario\/recomendados"/);
   });
@@ -474,9 +484,9 @@ describe("Precio y disponibilidad mantienen sus fuentes actuales (la recomendaci
   });
 
   test("la sección de recomendados no filtra por disponibilidad ni cupos: no consulta cuposPorBloqueo ni el motor de cotización", () => {
-    assert.match(vistaBooking, /const tarjetasRecomendadas: Tarjeta\[\] = \[\];/);
-    const inicio = vistaBooking.indexOf("const tarjetasRecomendadas: Tarjeta[] = [];");
-    const fin = vistaBooking.indexOf("return [...tarjetasRecomendadas, ...resto];", inicio);
+    assert.match(vistaBooking, /const itemsRecomendados: ItemResto\[\] = \[\];/);
+    const inicio = vistaBooking.indexOf("const itemsRecomendados: ItemResto[] = [];");
+    const fin = vistaBooking.indexOf("return { itemsRecomendados, tarjetaPorClaveRecomendada, itemsRestoCandidatos, tarjetaPorClaveResto };", inicio);
     assert.ok(inicio >= 0 && fin > inicio);
     const bloque = vistaBooking.slice(inicio, fin);
     assert.doesNotMatch(bloque, /cuposPorBloqueo|computarReservaBernalo|cotizarAlojamiento/);
@@ -566,14 +576,17 @@ describe("Defecto 2 — el índice de Array.map nunca se filtra como recomendaci
   test("ningún builder de tarjetas se pasa 'suelto' a .map (siempre con callback explícito)", () => {
     assert.doesNotMatch(codigoVista, /\.map\(tarjetaPersona\)/, "`.map(tarjetaPersona)` filtra el índice como 2º argumento");
     assert.doesNotMatch(codigoVista, /\.map\(tarjetaUnidad\)/, "`.map(tarjetaUnidad)` filtra el índice como 2º argumento");
-    assert.match(codigoVista, /\.map\(\(r\) => tarjetaPersona\(r\)\)/);
-    assert.match(codigoVista, /\.map\(\(g\) => tarjetaUnidad\(g\)\)/);
+    // El ensamblado del resto de búsqueda ya no usa `.map` (arma un Map por
+    // clave de oferta para poder reordenar/filtrar con `ordenarYFiltrarResto`
+    // después) — el llamado explícito sigue siendo de UN solo argumento.
+    assert.match(codigoVista, /tarjetaPorClaveResto\.set\(claveOferta\(r\.hotelId, r\.paqueteId\), tarjetaPersona\(r\)\);/);
+    assert.match(codigoVista, /tarjetaPorClaveResto\.set\(claveOferta\(g\.hotelId, g\.paqueteId\), tarjetaUnidad\(g\)\);/);
   });
 
   test("solo las ofertas de `recomendadasBusqueda` llevan la marca: el resto no la asigna por ningún camino", () => {
-    const inicio = vistaBooking.indexOf("const resto: Tarjeta[] = [");
+    const inicio = vistaBooking.indexOf("const restoPersonaCandidatas = resultadosPersona.filter");
     assert.ok(inicio > -1, "no se encontró el ensamblado del resto");
-    const fin = vistaBooking.indexOf("return [...tarjetasRecomendadas, ...resto];", inicio);
+    const fin = vistaBooking.indexOf("return { itemsRecomendados, tarjetaPorClaveRecomendada, itemsRestoCandidatos, tarjetaPorClaveResto };", inicio);
     const bloque = vistaBooking.slice(inicio, fin);
     // La única marca de recomendación la pone el bucle de recomendadas.
     assert.doesNotMatch(bloque, /recomendada: true/, "el resto no puede llevar la marca de recomendación");

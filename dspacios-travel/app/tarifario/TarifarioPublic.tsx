@@ -120,7 +120,7 @@ function pivotar(filas: FilaTarifario[]): Pivotada[] {
 
 type ModuloKey = FilaTarifario["modulo"] | "programas";
 
-type InfoHotel = Record<number, { estrellas: number | null; clasificacion: string | null; descripcion: string | null; ubicacion: string | null; ninoMin?: number | null; ninoMax?: number | null; infMin?: number | null; infMax?: number | null; infanteCargo?: boolean; infanteNota?: string | null; ninoNota?: string | null; adultsOnly?: boolean; petFriendly?: boolean; petCargo?: boolean; petCostoDesc?: string | null; petNota?: string | null }>;
+type InfoHotel = Record<number, { estrellas: number | null; clasificacion: string | null; descripcion: string | null; ubicacion: string | null; zona?: string | null; ninoMin?: number | null; ninoMax?: number | null; infMin?: number | null; infMax?: number | null; infanteCargo?: boolean; infanteNota?: string | null; ninoNota?: string | null; adultsOnly?: boolean; petFriendly?: boolean; petCargo?: boolean; petCostoDesc?: string | null; petNota?: string | null }>;
 
 // Texto de rango de edad de niño/infante (helper centralizado en lib).
 // Tolera `info` undefined (hoteles sin config) devolviendo null.
@@ -305,6 +305,9 @@ export function TarifarioPublic({
   hotelesBernalo = [],
   hotelIdsUnidadAutoritativos = [],
   prioridadesRecomendados = {},
+  condicionPorOferta = {},
+  politicaPorOferta = {},
+  restriccionPorPaquete = {},
 }: {
   // Carga inicial (Tier 1) — resumen, SIN expansión sintética (ver
   // lib/tarifario/resumen.ts). `FilaTarifario` (matriz completa por
@@ -341,6 +344,18 @@ export function TarifarioPublic({
   // prioridad`. Se pasa tal cual hasta VistaBooking, que decide la selección
   // (lib/tarifario/recomendados.ts) — este componente no la interpreta.
   prioridadesRecomendados?: Record<string, number>;
+  // Condición de pago / política comercial POR OFERTA (hotelId,paqueteId) —
+  // filtros "Con/Sin condiciones" y "Flexible/No reembolsable" de Vista
+  // Booking (lib/tarifario/resumen.ts). Clave = claveOferta(hotelId,
+  // paqueteId); sin entrada = desconocido (nunca se infiere). Se pasa tal
+  // cual hasta VistaBooking, este componente no la interpreta.
+  condicionPorOferta?: Record<string, "con" | "sin">;
+  politicaPorOferta?: Record<string, "flexible" | "no_reembolsable">;
+  // Condición/restricción SOLO del paquete (clave paqueteId) — VistaBooking
+  // la combina en modo búsqueda con `BusquedaResultado.condicion` (fecha
+  // exacta buscada), nunca con `condicionPorOferta`/`politicaPorOferta`
+  // (que reflejan el rango genérico de exploración).
+  restriccionPorPaquete?: Record<number, { condicionNoNeutra: boolean; restriccionNoNeutra: boolean }>;
 }) {
   const [vista, setVista] = useState<"tabla" | "booking" | "programas">("booking");
   const [q, setQ] = useState("");
@@ -465,7 +480,7 @@ export function TarifarioPublic({
       {vista === "programas" ? (
         <PorProgramas programas={programas} puedeReservar={puedeReservar} />
       ) : vista === "booking" ? (
-        <VistaBooking filas={filasFiltradas} fotosPorHotel={fotosPorHotel} fotosPorServicio={fotosPorServicio} cuposPorBloqueo={cuposPorBloqueo} origenPorBloqueo={origenPorBloqueo} puedeReservar={puedeReservar} ventanaPorPaquete={ventanaPorPaquete} infoPorHotel={infoPorHotel} planesInfo={planesInfo} capPorHotel={capPorHotel} soloAcom={fAcom || null} descripcionPorPaquete={descripcionPorPaquete} filasAddon={filasAddon} hotelesBernalo={fAcom ? [] : hotelesBernaloFiltrados} hotelIdsUnidadAutoritativos={hotelIdsUnidadAutoritativos} prioridadesRecomendados={prioridadesRecomendados} />
+        <VistaBooking filas={filasFiltradas} fotosPorHotel={fotosPorHotel} fotosPorServicio={fotosPorServicio} cuposPorBloqueo={cuposPorBloqueo} origenPorBloqueo={origenPorBloqueo} puedeReservar={puedeReservar} ventanaPorPaquete={ventanaPorPaquete} infoPorHotel={infoPorHotel} planesInfo={planesInfo} capPorHotel={capPorHotel} soloAcom={fAcom || null} descripcionPorPaquete={descripcionPorPaquete} filasAddon={filasAddon} hotelesBernalo={fAcom ? [] : hotelesBernaloFiltrados} hotelIdsUnidadAutoritativos={hotelIdsUnidadAutoritativos} prioridadesRecomendados={prioridadesRecomendados} condicionPorOferta={condicionPorOferta} politicaPorOferta={politicaPorOferta} restriccionPorPaquete={restriccionPorPaquete} />
       ) : (
         <>
           {/* Tabs de módulos */}

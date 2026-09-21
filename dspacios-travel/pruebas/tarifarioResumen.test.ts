@@ -628,6 +628,156 @@ describe("Badge compacto 'Con condiciones' de la tarjeta de exploración — inf
     const r = await cargarResumenTarifario(sb, "test", "flujo1", sb);
     assert.equal(r.ok, false, "hotel_temporadas también alimenta el filtro de vigencia real — su error ya fallaba cerrado antes de este cambio, y sigue igual");
   });
+
+  // ── PR #320 / hotfix "vigencia paginada" — hotel_temporadas también debe
+  // usar `ejecutarConsultaPaginada` (orden total por `id` + avance por rango
+  // REAL + fin solo con página vacía) para el cálculo de condicionPorOferta/
+  // tieneCondicion, exactamente igual que `filtrarTarifarioVencidas` ya la
+  // pagina para el filtro de vigencia. Sin esto, un catálogo de
+  // `hotel_temporadas` que supere el límite "Max Rows" del proyecto Supabase
+  // pierde en silencio las condiciones de los hoteles cuyas filas caen fuera
+  // de la primera página — exactamente el defecto real ("TAMACÁ pierde PA/PC").
+  test("⚠️ hotel_temporadas NO se trunca con Max Rows: un servidor que recorta a 2 filas por pedido entrega igual la condición de TODOS los hoteles (más de una página)", async () => {
+    const HOTELES = 5; // > 2 (el límite simulado del servidor) -> exige varias páginas
+    const resumen = Array.from({ length: HOTELES }, (_, i) =>
+      resumenBase({ hotel_id: 10 + i, hotel_nombre: `Hotel ${i}`, fecha_ida: MANIANA, fecha_regreso: fechaEnBogota(3) })
+    );
+    const hoteles = Array.from({ length: HOTELES }, (_, i) => hotelFixture(10 + i));
+    const temporadas = Array.from({ length: HOTELES }, (_, i) => temporadaConCondicion(10 + i, "pago_total"));
+    const tarifas = Array.from({ length: HOTELES }, (_, i) => tarifaVigente(10 + i, "Estandar", "PC"));
+
+    // Servidor simulado: para `hotel_temporadas` SIEMPRE recorta a 2 filas por
+    // pedido, sin importar cuántas se pidieron por `.range()` — reproduce el
+    // límite "Max Rows" real; las demás tablas (incluida `tarifario_resumen`)
+    // siguen el comportamiento genérico de `clienteFalso` (honra `.range()`
+    // tal cual se pide, sin recorte adicional).
+    function builder(tabla: string) {
+      let rangeArgs: [number, number] | null = null;
+      const base = clienteFalso(
+        tablasBase({ hoteles: { data: hoteles, error: null }, hotel_temporadas: { data: temporadas, error: null }, tarifa_hotel: { data: tarifas, error: null } }),
+        resumen
+      );
+      if (tabla !== "hotel_temporadas") return (base.from as (t: string) => unknown)(tabla);
+      return {
+        select() { return this; },
+        in() { return this; },
+        order() { return this; },
+        range(from: number, to: number) { rangeArgs = [from, to]; return this; },
+        then(resolve: (v: { data: unknown; error: unknown }) => void) {
+          const [from] = rangeArgs ?? [0, 999];
+          const pedida = temporadas.slice(from);
+          resolve({ data: pedida.slice(0, 2), error: null }); // Max Rows: nunca más de 2, sin importar lo pedido
+        },
+      };
+    }
+    const sb = { from: builder } as unknown as SupabaseClient<Database>;
+    const r = await cargarResumenTarifario(sb, "test", "flujo1", sb);
+    assert.equal(r.ok, true);
+    if (!r.ok) return;
+    for (let i = 0; i < HOTELES; i++) {
+      assert.equal(
+        r.datos.infoPorHotel[10 + i]?.tieneCondicion, true,
+        `hotel ${10 + i} (posición ${i} de ${HOTELES}, más allá de la primera página de 2) debe conservar su condición — Max Rows no debe truncarla`
+      );
+    }
+  });
+});
+
+// ── Combinación TERNARIA hotel+paquete para condicionPorOferta/politicaPorOferta ──
+//
+// La regla pura (`combinarTernario`, lib/tarifario/condicionOferta.ts) ya
+// está probada exhaustivamente con ejecución real en
+// pruebas/condicionOferta.test.ts. Este describe prueba la INTEGRACIÓN real
+// contra `cargarResumenTarifario()`: que el lado PAQUETE (armado_paquetes)
+// realmente llegue combinado con el lado HOTEL (hotel_temporadas) tal como
+// la regla exige — nunca una reimplementación divergente en resumen.ts.
+describe("condicionPorOferta/politicaPorOferta — combinación ternaria real hotel+paquete (ejecución, no regex)", () => {
+  function hotelFixture(id: number) {
+    return {
+      id, estrellas: null, clasificacion: null, descripcion: null, ubicacion: null, video_url: null,
+      pax_min: null, pax_max: null, edad_nino_min: null, edad_nino_max: null, edad_infante_min: null, edad_infante_max: null,
+      nino_nota: null, adults_only: false, pet_friendly: false, pet_costo_neto: null, pet_costo_desc: null, pet_nota: null,
+    };
+  }
+  function temporadaConCondicion(hotelId: number, condicionPagoTipo: string) {
+    return { ...temporadaVigente(hotelId), id: hotelId * 100 + 1, condicion_pago_tipo: condicionPagoTipo, condicion_pago_pct_inicial: null, condicion_pago_dias_saldo: null };
+  }
+  function armadoPaqueteFixture(id: number, condicionPagoTipo: string, restriccionComercial: string) {
+    return {
+      id, programa_incluye: null, programa_no_incluye: null, programa_tarifas_especiales: null, programa_condiciones_comerciales: null,
+      condicion_pago_tipo: condicionPagoTipo, restriccion_comercial: restriccionComercial,
+    };
+  }
+
+  test("paquete NEUTRO + hotel DESCONOCIDO -> sin entrada (desconocido) — un paquete neutro nunca demuestra que el hotel sea flexible", async () => {
+    const resumen = [resumenBase({ hotel_id: 40, paquete_id: 40, fecha_ida: MANIANA, fecha_regreso: fechaEnBogota(3) })];
+    const tablas = tablasBase({
+      hoteles: { data: [hotelFixture(40)], error: null },
+      tarifa_hotel: { data: [tarifaVigente(40, "Estandar", "PC")], error: null },
+      // hotel_temporadas SIN columnas de condición (hotel nunca configuró la
+      // migración 164) -> lado hotel queda DESCONOCIDO, nunca neutro.
+      hotel_temporadas: { data: [temporadaVigente(40)], error: null },
+      armado_paquetes: { data: [armadoPaqueteFixture(40, "normal", "normal")], error: null },
+    });
+    const sb = clienteFalso(tablas, resumen);
+    const r = await cargarResumenTarifario(sb, "test", "flujo1", sb);
+    assert.equal(r.ok, true);
+    if (!r.ok) return;
+    const clave = "40:40";
+    assert.equal(r.datos.condicionPorOferta[clave], undefined, "paquete neutro + hotel desconocido nunca debe resolver a 'sin' (sería inventar neutralidad del hotel)");
+    assert.equal(r.datos.politicaPorOferta[clave], undefined, "mismo criterio para política/restricción");
+  });
+
+  test("paquete RESTRINGIDO + hotel DESCONOCIDO -> 'con'/'no_reembolsable' — el paquete SÍ puede demostrar la condición aunque el hotel sea desconocido", async () => {
+    const resumen = [resumenBase({ hotel_id: 41, paquete_id: 41, fecha_ida: MANIANA, fecha_regreso: fechaEnBogota(3) })];
+    const tablas = tablasBase({
+      hoteles: { data: [hotelFixture(41)], error: null },
+      tarifa_hotel: { data: [tarifaVigente(41, "Estandar", "PC")], error: null },
+      hotel_temporadas: { data: [temporadaVigente(41)], error: null }, // sin columnas de condición -> hotel desconocido
+      armado_paquetes: { data: [armadoPaqueteFixture(41, "pago_total", "promocional_no_reembolsable_no_endosable")], error: null },
+    });
+    const sb = clienteFalso(tablas, resumen);
+    const r = await cargarResumenTarifario(sb, "test", "flujo1", sb);
+    assert.equal(r.ok, true);
+    if (!r.ok) return;
+    const clave = "41:41";
+    assert.equal(r.datos.condicionPorOferta[clave], "con", "el paquete restringido debe imponer 'con' aunque el hotel sea desconocido");
+    assert.equal(r.datos.politicaPorOferta[clave], "no_reembolsable");
+  });
+
+  test("hotel POSITIVO + paquete NEUTRO -> 'con' (la evidencia positiva del hotel nunca se anula por un paquete neutro)", async () => {
+    const resumen = [resumenBase({ hotel_id: 42, paquete_id: 42, fecha_ida: MANIANA, fecha_regreso: fechaEnBogota(3) })];
+    const tablas = tablasBase({
+      hoteles: { data: [hotelFixture(42)], error: null },
+      tarifa_hotel: { data: [tarifaVigente(42, "Estandar", "PC")], error: null },
+      hotel_temporadas: { data: [temporadaConCondicion(42, "pago_total")], error: null },
+      armado_paquetes: { data: [armadoPaqueteFixture(42, "normal", "normal")], error: null },
+    });
+    const sb = clienteFalso(tablas, resumen);
+    const r = await cargarResumenTarifario(sb, "test", "flujo1", sb);
+    assert.equal(r.ok, true);
+    if (!r.ok) return;
+    const clave = "42:42";
+    assert.equal(r.datos.condicionPorOferta[clave], "con");
+    assert.equal(r.datos.politicaPorOferta[clave], "no_reembolsable");
+  });
+
+  test("hotel CONOCIDO neutro + paquete CONOCIDO neutro -> 'sin'/'flexible' (los DOS lados confirman neutralidad)", async () => {
+    const resumen = [resumenBase({ hotel_id: 43, paquete_id: 43, fecha_ida: MANIANA, fecha_regreso: fechaEnBogota(3) })];
+    const tablas = tablasBase({
+      hoteles: { data: [hotelFixture(43)], error: null },
+      tarifa_hotel: { data: [tarifaVigente(43, "Estandar", "PC")], error: null },
+      hotel_temporadas: { data: [temporadaConCondicion(43, "sin_condicion")], error: null },
+      armado_paquetes: { data: [armadoPaqueteFixture(43, "normal", "normal")], error: null },
+    });
+    const sb = clienteFalso(tablas, resumen);
+    const r = await cargarResumenTarifario(sb, "test", "flujo1", sb);
+    assert.equal(r.ok, true);
+    if (!r.ok) return;
+    const clave = "43:43";
+    assert.equal(r.datos.condicionPorOferta[clave], "sin");
+    assert.equal(r.datos.politicaPorOferta[clave], "flexible");
+  });
 });
 
 // ── Ronda 6, Item 1 — paginación robusta de `cargarFilasResumenPaginado()` ──

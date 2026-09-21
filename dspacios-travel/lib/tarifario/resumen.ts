@@ -8,8 +8,10 @@ import { registrarEtapa, registrarDatoPagina, registrarErrorTecnico, medirPayloa
 import type { InfoHotelDato, CapHotelDato } from "./datos.ts";
 import type { DescripcionPaqueteRaw } from "./descripcionPaquete.ts";
 import { condicionHotelFechas, type FilaTemporadaHotelRaw } from "../reservar/liquidacionHotel.ts";
-import { esNeutra } from "../cotizacion/condicionPago.ts";
+import { esNeutra, esRestriccionComercial, type RestriccionComercial } from "../cotizacion/condicionPago.ts";
 import { claveOferta } from "./recomendados.ts";
+import { ejecutarConsultaPaginada } from "./paginacion.ts";
+import { combinarTernario, etiquetaCondicion, etiquetaPolitica, type EvidenciaTernaria } from "./condicionOferta.ts";
 
 // ── Resumen del tarifario: carga inicial LIVIANA (dos niveles) ─────────────
 //
@@ -186,6 +188,19 @@ export async function cargarFilasResumenPaginado(
   return { ok: true, filas, paginasConsultadas };
 }
 
+// Fila de `hotel_temporadas` para el cálculo de condición/badge — paginada
+// vía `ejecutarConsultaPaginada` (ver el comentario donde se usa).
+type FilaCondicionHotelPaginada = {
+  hotel_id: number;
+  id: number;
+  nombre: string;
+  fecha_inicio: string | null;
+  fecha_fin: string | null;
+  condicion_pago_tipo: string | null;
+  condicion_pago_pct_inicial: number | null;
+  condicion_pago_dias_saldo: number | null;
+};
+
 export type DatosResumenTarifario = {
   filasVisibles: FilaResumen[];
   filasAddon: FilaResumen[];
@@ -201,6 +216,18 @@ export type DatosResumenTarifario = {
   // Hoteles recomendados (migración 183) — `claveOferta(hotelId, paqueteId)`
   // -> prioridad (1-6). SOLO ofertas con prioridad configurada (no nula).
   prioridadesRecomendados: Record<string, number>;
+  // Condición de pago / política comercial POR OFERTA (hotelId,paqueteId) —
+  // filtros "Con/Sin condiciones"/"Flexible/No reembolsable" de Vista
+  // Booking. Sin entrada = desconocido (nunca inferido) — ver el bloque de
+  // cálculo más abajo para la fuente exacta.
+  condicionPorOferta: Record<string, "con" | "sin">;
+  politicaPorOferta: Record<string, "flexible" | "no_reembolsable">;
+  // Condición/restricción SOLO del paquete (nunca combinada con el hotel) —
+  // clave `paqueteId`. La usa VistaBooking en modo búsqueda para combinar con
+  // `BusquedaResultado.condicion` (la condición del hotel de la fecha exacta
+  // buscada) sin recurrir a `condicionPorOferta` (que en exploración agrega
+  // rangos genéricos del paquete, no la fecha exacta de una búsqueda real).
+  restriccionPorPaquete: Record<number, { condicionNoNeutra: boolean; restriccionNoNeutra: boolean }>;
 };
 
 export const MSG_ERROR_CARGAR_TARIFARIO = "No fue posible cargar el tarifario en este momento. Intenta nuevamente en unos segundos.";
@@ -358,6 +385,17 @@ export async function cargarResumenTarifario(
   const planesInfo: Record<string, { nombre: string | null; descripcion: string | null; nota_especial: string | null }> = {};
   const ventanaPorPaquete: Record<number, { min: string | null; max: string | null }> = {};
   const descripcionPorPaquete: Record<number, DescripcionPaqueteRaw> = {};
+  // Condición/restricción del PAQUETE (migración 164, `armado_paquetes`) —
+  // alimenta `condicionPorOferta`/`politicaPorOferta` más abajo, combinada
+  // con la del hotel (`temporadasPorHotel`). Nunca se lee sola: el paquete no
+  // conoce fechas de estadía, así que solo aporta su propia condición/
+  // restricción de catálogo (uniforme para todos los hoteles de ESE paquete).
+  const restriccionPorPaquete = new Map<number, { condicionNoNeutra: boolean; restriccionNoNeutra: boolean }>();
+  // Vigencias de `hotel_temporadas` por hotel — hoisted fuera del bloque de
+  // `resCondicionHotel` (que solo calcula el badge `tieneCondicion` POR
+  // HOTEL) para reutilizarlas en el cálculo POR OFERTA (hotelId+paqueteId)
+  // de más abajo, sin una segunda consulta.
+  const temporadasPorHotel = new Map<number, FilaTemporadaHotelRaw[]>();
 
   const [
     resFotosHotel, resHoteles, resAcomInfante, resFotosServicio, resPlanes, resVentana, resDescripcion, resCondicionHotel,
@@ -366,7 +404,7 @@ export async function cargarResumenTarifario(
       ? sb.from("hotel_fotos").select("hotel_id, url, es_portada, orden").in("hotel_id", hotelIds).order("orden")
       : null,
     hotelIds.length
-      ? sb.from("hoteles").select("id, estrellas, clasificacion, descripcion, ubicacion, video_url, pax_min, pax_max, edad_nino_min, edad_nino_max, edad_infante_min, edad_infante_max, nino_nota, adults_only, pet_friendly, pet_costo_neto, pet_costo_desc, pet_nota").in("id", hotelIds)
+      ? sb.from("hoteles").select("id, estrellas, clasificacion, descripcion, ubicacion, zona, video_url, pax_min, pax_max, edad_nino_min, edad_nino_max, edad_infante_min, edad_infante_max, nino_nota, adults_only, pet_friendly, pet_costo_neto, pet_costo_desc, pet_nota").in("id", hotelIds)
       : null,
     hotelIds.length && admin
       ? (async () => {
@@ -385,16 +423,37 @@ export async function cargarResumenTarifario(
       ? admin.from("armado_paquetes").select("id, fecha_viaje_inicio, fecha_viaje_fin").in("id", paqIdsPorcion)
       : null,
     // Descripción manual del paquete (migración 169) — ver lib/tarifario/datos.ts.
+    // `condicion_pago_tipo`/`restriccion_comercial` (migración 164) — filtro
+    // "Con/Sin condiciones"/"Flexible/No reembolsable" de Vista Booking, ver
+    // `restriccionPorPaquete` más abajo. Misma consulta que ya trae la
+    // descripción manual del paquete: no agrega un round-trip nuevo.
     paqIdsConHotel.length && admin
-      ? admin.from("armado_paquetes").select("id, programa_incluye, programa_no_incluye, programa_tarifas_especiales, programa_condiciones_comerciales").in("id", paqIdsConHotel)
+      ? admin.from("armado_paquetes").select("id, programa_incluye, programa_no_incluye, programa_tarifas_especiales, programa_condiciones_comerciales, condicion_pago_tipo, restriccion_comercial").in("id", paqIdsConHotel)
       : null,
     // Badge compacto "Con condiciones" de la tarjeta de exploración (migración
     // 164/165) — hotel_temporadas exige rol interno por RLS (migración 016),
     // de ahí `admin`. Puramente decorativo/informativo: un error acá NUNCA
     // bloquea el tarifario (mismo criterio que fotos/planes/ventana arriba),
     // solo deja el hotel sin el badge.
+    //
+    // ⚠️ Paginado con `ejecutarConsultaPaginada` (mismo algoritmo que
+    // `filtrarTarifarioVencidas` en vigencia.ts, PR #320/hotfix "TAMACÁ pierde
+    // PA/PC"): un `.select()` sin `.range()` sobre esta tabla queda expuesto
+    // al "Max Rows" del proyecto (Settings → API) — con un catálogo que ya
+    // supere ese límite, la respuesta se trunca EN SILENCIO (sin `error`) y un
+    // hotel con muchas temporadas puede perder condiciones/vigencias reales
+    // sin que nada lo reporte. Orden TOTAL por `id` (bigserial, sin empates) +
+    // avance por la cantidad REAL de filas recibidas + fin SOLO con página
+    // vacía + `error` revisado en CADA página (fail-closed explícito).
     hotelIds.length && admin
-      ? admin.from("hotel_temporadas").select("hotel_id, id, nombre, fecha_inicio, fecha_fin, condicion_pago_tipo, condicion_pago_pct_inicial, condicion_pago_dias_saldo").in("hotel_id", hotelIds)
+      ? ejecutarConsultaPaginada<FilaCondicionHotelPaginada>((from, hasta) =>
+          admin
+            .from("hotel_temporadas")
+            .select("hotel_id, id, nombre, fecha_inicio, fecha_fin, condicion_pago_tipo, condicion_pago_pct_inicial, condicion_pago_dias_saldo")
+            .in("hotel_id", hotelIds)
+            .order("id")
+            .range(from, hasta)
+        )
       : null,
   ]);
 
@@ -416,7 +475,7 @@ export async function cargarResumenTarifario(
       registrarErrorTecnico(flujo, flujoId, "datos_auxiliares", "error_hoteles", resHoteles.error);
     } else {
       for (const h of resHoteles.data ?? []) {
-        infoPorHotel[h.id] = { estrellas: h.estrellas, clasificacion: h.clasificacion, descripcion: h.descripcion, ubicacion: h.ubicacion, video_url: h.video_url, ninoMin: h.edad_nino_min, ninoMax: h.edad_nino_max, infMin: h.edad_infante_min, infMax: h.edad_infante_max, infanteCargo: false, infanteNota: null, ninoNota: h.nino_nota, adultsOnly: h.adults_only ?? false, petFriendly: h.pet_friendly ?? false, petCargo: (Number(h.pet_costo_neto) || 0) > 0, petCostoDesc: h.pet_costo_desc, petNota: h.pet_nota };
+        infoPorHotel[h.id] = { estrellas: h.estrellas, clasificacion: h.clasificacion, descripcion: h.descripcion, ubicacion: h.ubicacion, zona: h.zona, video_url: h.video_url, ninoMin: h.edad_nino_min, ninoMax: h.edad_nino_max, infMin: h.edad_infante_min, infMax: h.edad_infante_max, infanteCargo: false, infanteNota: null, ninoNota: h.nino_nota, adultsOnly: h.adults_only ?? false, petFriendly: h.pet_friendly ?? false, petCargo: (Number(h.pet_costo_neto) || 0) > 0, petCostoDesc: h.pet_costo_desc, petNota: h.pet_nota };
         capPorHotel[h.id] = { paxMin: h.pax_min, paxMax: h.pax_max, acom: [] };
       }
     }
@@ -465,7 +524,6 @@ export async function cargarResumenTarifario(
       _huboErrorAux = true;
       registrarErrorTecnico(flujo, flujoId, "datos_auxiliares", "error_hotel_temporadas_condicion", resCondicionHotel.error);
     } else {
-      const temporadasPorHotel = new Map<number, FilaTemporadaHotelRaw[]>();
       for (const t of resCondicionHotel.data ?? []) {
         const arr = temporadasPorHotel.get(t.hotel_id) ?? [];
         arr.push({
@@ -537,6 +595,10 @@ export async function cargarResumenTarifario(
           tarifasEspeciales: p.programa_tarifas_especiales,
           condicionesComerciales: p.programa_condiciones_comerciales,
         };
+        restriccionPorPaquete.set(p.id as number, {
+          condicionNoNeutra: ((p.condicion_pago_tipo as string | null) ?? "normal") !== "normal",
+          restriccionNoNeutra: esRestriccionComercial(((p.restriccion_comercial as string | null) ?? "normal") as RestriccionComercial),
+        });
       }
     }
   }
@@ -549,9 +611,16 @@ export async function cargarResumenTarifario(
   // (un error acá nunca tumba el tarifario, solo deja sin sección de
   // recomendados). Clave = `claveOferta(hotelId, paqueteId)` — la lectura
   // (VistaBooking) NUNCA debe indexar esto por hotelId solo.
+  // ⚠️ Usa `admin` (nunca `sb`): `armado_hoteles` tiene RLS de solo lectura
+  // INTERNA (migración 018, policy "armado_hoteles: interno"), así que un
+  // visitante público consultando con `sb` recibe siempre 0 filas SIN error
+  // (RLS filtra, no falla) — dejaba `prioridadesRecomendados` en `{}` para
+  // todo request público (regresión ya corregida). `admin` es el mismo
+  // cliente service-role que ya usan las demás consultas auxiliares de este
+  // archivo (cupos, hotel_acomodaciones, tarifa_hotel, armado_paquetes).
   const prioridadesRecomendados: Record<string, number> = {};
-  if (paqIdsConHotel.length) {
-    const { data: filasPrioridad, error: ePrioridad } = await sb
+  if (paqIdsConHotel.length && admin) {
+    const { data: filasPrioridad, error: ePrioridad } = await admin
       .from("armado_hoteles")
       .select("paquete_id, hotel_id, prioridad")
       .in("paquete_id", paqIdsConHotel)
@@ -565,6 +634,83 @@ export async function cargarResumenTarifario(
       }
     }
   }
+
+  // Condición de pago / política comercial POR OFERTA (hotelId,paqueteId) —
+  // filtros "Con/Sin condiciones" y "Flexible/No reembolsable" de Vista
+  // Booking. SEPARADA a propósito del badge `tieneCondicion` de arriba (que
+  // sigue siendo por hotel físico agregando TODAS las fechas del hotel sin
+  // distinguir paquete — se deja intacto para no tocar la tarjeta): acá cada
+  // (hotelId,paqueteId) resuelve su PROPIO rango de fechas (las salidas
+  // reales del bloqueo, o la ventana de viaje del paquete en porción
+  // terrestre) contra las vigencias reales del hotel + la condición/
+  // restricción propia de ESE paquete — el mismo hotel en dos paquetes puede
+  // salir "con condición" en uno y "sin condición" en el otro, nunca se
+  // mezclan. Sin entrada en el Record = desconocido (nunca se inventa) —
+  // incluye SIEMPRE los hoteles por unidad (Bernalo), que no pasan por este
+  // cálculo en absoluto.
+  const condicionPorOferta: Record<string, "con" | "sin"> = {};
+  const politicaPorOferta: Record<string, "flexible" | "no_reembolsable"> = {};
+  if (paqIdsConHotel.length) {
+    const fechasPorOferta = new Map<string, Set<string>>();
+    for (const f of filasVisibles) {
+      if (f.hotel_id == null || f.paquete_id == null) continue;
+      const clave = claveOferta(f.hotel_id, f.paquete_id);
+      if (f.modulo === "bloqueo" && f.fecha_ida && f.fecha_regreso) {
+        const set = fechasPorOferta.get(clave) ?? new Set<string>();
+        set.add(`${f.fecha_ida}|${f.fecha_regreso}`);
+        fechasPorOferta.set(clave, set);
+      } else if (f.modulo === "porcion_terrestre") {
+        const ventana = ventanaPorPaquete[f.paquete_id];
+        if (ventana?.min && ventana?.max) {
+          const set = fechasPorOferta.get(clave) ?? new Set<string>();
+          set.add(`${ventana.min}|${ventana.max}`);
+          fechasPorOferta.set(clave, set);
+        }
+      }
+    }
+    for (const [clave, rangos] of fechasPorOferta) {
+      const separador = clave.indexOf(":");
+      const hotelId = Number(clave.slice(0, separador));
+      const paqueteId = Number(clave.slice(separador + 1));
+      const temporadas = temporadasPorHotel.get(hotelId);
+      const paquete = restriccionPorPaquete.get(paqueteId);
+      // Evidencia TERNARIA del lado hotel — `null` mientras ninguna
+      // temporada resuelva una condición real (nunca configuró la 164, o el
+      // rango de fechas no cruza ninguna vigencia con datos completos).
+      // Combinación con el lado paquete vía `combinarTernario`
+      // (lib/tarifario/condicionOferta.ts): evidencia POSITIVA de cualquier
+      // lado gana siempre; "sin condición"/"flexible" exige que los DOS
+      // lados confirmen neutralidad — un paquete neutro nunca convierte un
+      // hotel desconocido en "sin condición" ni viceversa.
+      let hotelCondTri: EvidenciaTernaria = null;
+      let hotelRestrTri: EvidenciaTernaria = null;
+      if (temporadas) {
+        for (const rango of rangos) {
+          const [fechaIda, fechaRegreso] = rango.split("|");
+          const cond = condicionHotelFechas(temporadas, { fechaIda, fechaRegreso });
+          if (!cond) continue;
+          hotelCondTri = (hotelCondTri ?? false) || !esNeutra(cond.condicionPagoTipo);
+          hotelRestrTri = (hotelRestrTri ?? false) || cond.restringido;
+        }
+      }
+      const paqueteCondTri: EvidenciaTernaria = paquete ? paquete.condicionNoNeutra : null;
+      const paqueteRestrTri: EvidenciaTernaria = paquete ? paquete.restriccionNoNeutra : null;
+      const condicionTri = combinarTernario(hotelCondTri, paqueteCondTri);
+      const politicaTri = combinarTernario(hotelRestrTri, paqueteRestrTri);
+      if (condicionTri != null) condicionPorOferta[clave] = etiquetaCondicion(condicionTri) as "con" | "sin";
+      if (politicaTri != null) politicaPorOferta[clave] = etiquetaPolitica(politicaTri) as "flexible" | "no_reembolsable";
+    }
+  }
+
+  // `restriccionPorPaquete` viaja también SOLO (nunca combinada con el hotel)
+  // — el cliente (VistaBooking, modo búsqueda) la necesita AISLADA para
+  // combinarla con `BusquedaResultado.condicion` (la condición del hotel
+  // calculada para las fechas EXACTAS buscadas, no el rango genérico de
+  // exploración) sin contaminarla con otras salidas/fechas del mismo paquete.
+  // Serializada a Record (plain object) porque un `Map` no sobrevive el paso
+  // por props de un Server Component a uno de cliente.
+  const restriccionPorPaqueteRecord: Record<number, { condicionNoNeutra: boolean; restriccionNoNeutra: boolean }> = {};
+  for (const [paqueteId, valor] of restriccionPorPaquete) restriccionPorPaqueteRecord[paqueteId] = valor;
 
   const msAux = performance.now() - _tAux0;
   registrarEtapa(flujo, flujoId, "datos_auxiliares", Math.round(msAux), _huboErrorAux ? "error" : "ok");
@@ -585,7 +731,7 @@ export async function cargarResumenTarifario(
       filasVisibles, filasAddon,
       cuposPorBloqueo, origenPorBloqueo, fotosPorHotel, fotosPorServicio,
       infoPorHotel, capPorHotel, planesInfo, ventanaPorPaquete, descripcionPorPaquete,
-      prioridadesRecomendados,
+      prioridadesRecomendados, condicionPorOferta, politicaPorOferta, restriccionPorPaquete: restriccionPorPaqueteRecord,
     },
   };
 }

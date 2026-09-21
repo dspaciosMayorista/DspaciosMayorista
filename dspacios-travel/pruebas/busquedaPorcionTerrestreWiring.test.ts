@@ -87,7 +87,19 @@ function cuerpoFuncion(fuenteCompleta: string, ancla: string): string {
 const cuerpoBuscar = cuerpoFuncion(fuenteBuscador, "function buscar(overrideIda?");
 const cuerpoLimpiar = cuerpoFuncion(fuenteBuscador, "function limpiarResultados()");
 const cuerpoEvaluarHotel = cuerpoFuncion(codigoEval, "export async function evaluarDisponibilidadHotelUnidad(");
-const cuerpoTarjetas = cuerpoFuncion(codigoVista, "const tarjetas = useMemo<Tarjeta[]>(() => {");
+// `cuerpoFuncion` (brace-balancer) no sirve para este useMemo: su firma
+// `useMemo<{...}>(() => {` tiene profundidad de paréntesis > 0 en el "{" real
+// del cuerpo (el `()` de la función flecha nunca vuelve a 0 mientras el
+// `useMemo(` externo sigue abierto), así que el balanceador nunca lo
+// reconoce como inicio. Se acota manualmente con el marcador de cierre
+// conocido (mismo criterio que pruebas/ocupacionBernaloUI3EWiring.test.ts).
+// El armado de candidatos (recomendados + resto, exploración/búsqueda) vive
+// en `datosBase` (useMemo separado del `tarjetas` final que solo filtra/
+// ordena) — `cuerpoTarjetas` abarca AMBOS useMemo (datosBase + tarjetas),
+// hasta el mismo marcador de cierre de siempre.
+const idxInicioTarjetas = codigoVista.indexOf("const datosBase = useMemo<{");
+const idxFinTarjetasCuerpo = codigoVista.indexOf("const [abierto, setAbierto] = useState<HotelCard | null>(null);", idxInicioTarjetas);
+const cuerpoTarjetas = codigoVista.slice(idxInicioTarjetas, idxFinTarjetasCuerpo);
 
 // ── 1) UNA SOLA LISTA DE RESULTADOS ───────────────────────────────────────
 //
@@ -128,7 +140,7 @@ describe("Una sola lista de resultados — persona + unidad en la MISMA grilla",
     // El ensamblado antepone las recomendadas (en su propio orden de
     // prioridad, migración 183) al resto ya alfabetizado — persona y unidad
     // pasan por el MISMO return.
-    const posReturn = cuerpoTarjetas.indexOf("return [...tarjetasRecomendadas, ...resto];");
+    const posReturn = cuerpoTarjetas.indexOf("return { itemsRecomendados, tarjetaPorClaveRecomendada, itemsRestoCandidatos, tarjetaPorClaveResto };");
     // La grilla de exploración (persona `cardsPersona` + unidad) se arma
     // DESPUÉS del return: son ramas excluyentes, nunca se suman.
     const posGrillaExploracion = cuerpoTarjetas.indexOf("const cardsPersona = hoteles.filter");
@@ -159,7 +171,7 @@ describe("Disponibilidad REAL: la lista de búsqueda no se completa con el catá
     // SOLO se activa con una búsqueda EJECUTADA (`destinoPorcionBusqueda`) —
     // hallazgo 1: ya no cae al selector de exploración (que además se eliminó).
     assert.match(codigoVista, /if \(mod === "porcion_terrestre" && destinoPorcionBusqueda && \(f\.destino_nombre \?\? ""\) !== destinoPorcionBusqueda\) return false;/);
-    const posReturn = cuerpoTarjetas.indexOf("return [...tarjetasRecomendadas, ...resto];");
+    const posReturn = cuerpoTarjetas.indexOf("return { itemsRecomendados, tarjetaPorClaveRecomendada, itemsRestoCandidatos, tarjetaPorClaveResto };");
     const posExploracion = cuerpoTarjetas.indexOf("const cardsPersona = hoteles.filter");
     assert.ok(posReturn > -1, "falta el return de la lista de búsqueda");
     assert.ok(posExploracion > posReturn, "la grilla precargada se arma sólo si NO hay búsqueda vigente");
@@ -204,7 +216,7 @@ describe("Disponibilidad REAL: la lista de búsqueda no se completa con el catá
   test("fuera del modo búsqueda la exploración sigue funcionando normalmente", () => {
     assert.match(codigoVista, /const enBusquedaPorcion = sub === "porcion_terrestre" && busquedaPorcion != null;/);
     assert.match(cuerpoTarjetas, /const cardsPersona = hoteles\.filter/);
-    assert.match(cuerpoTarjetas, /const restoUnidad: Tarjeta\[\] = hotelesUnidadVisibles\s*\n\s*\.filter\(\(h\) => !esRecomendada\(h\.hotelId, h\.paqueteId\)\)/);
+    assert.match(cuerpoTarjetas, /const restoUnidadCandidatas = hotelesUnidadVisibles\.filter\(\(h\) => !esRecomendada\(h\.hotelId, h\.paqueteId\)\);/);
     // El selector de destino de exploración se ELIMINÓ (era inerte): la
     // exploración de Porción no tiene ningún control de destino propio — quien
     // elige destino es el buscador real de arriba.
@@ -474,10 +486,11 @@ describe("BuscadorBooking — una sola llamada por búsqueda, nunca una por tarj
 // ── B) VISTA BOOKING: modo búsqueda, destino y estado vacío ───────────────
 
 describe("VistaBooking — modo búsqueda (requisito A)", () => {
-  test("recibe el canal del buscador (setter directo, referencia estable para el efecto de invalidación)", () => {
+  test("recibe el canal del buscador vía confirmarBusquedaPorcion (envuelve setBusquedaPorcion para podar zona/estrellas al confirmar/limpiar — nunca el setter crudo)", () => {
     assert.match(codigoVista, /import \{ BuscadorBooking, Resultado, type EstadoBusquedaPorcion \} from "\.\/BuscadorBooking";/);
     assert.match(codigoVista, /const \[busquedaPorcion, setBusquedaPorcion\] = useState<EstadoBusquedaPorcion \| null>\(null\);/);
-    assert.match(codigoVista, /<BuscadorBooking [^>]*onBusqueda=\{setBusquedaPorcion\}/);
+    assert.match(codigoVista, /<BuscadorBooking [^>]*onBusqueda=\{confirmarBusquedaPorcion\}/);
+    assert.match(codigoVista, /function confirmarBusquedaPorcion\(resultado: EstadoBusquedaPorcion \| null\) \{\s*\n\s*setBusquedaPorcion\(resultado\);/, "confirmarBusquedaPorcion debe seguir llamando setBusquedaPorcion internamente");
   });
 
   test("el modo búsqueda SOLO existe en Porción terrestre: Bloqueo y Receptivos quedan intactos (requisito E)", () => {
@@ -525,22 +538,21 @@ describe("VistaBooking — modo búsqueda (requisito A)", () => {
     // destino y ejecuta la búsqueda.
     assert.doesNotMatch(codigoVista, /destinoPorcionSel/, "no debe quedar el estado ni el select de exploración");
     assert.doesNotMatch(codigoVista, /setDestinoPorcionSel/, "no debe quedar ningún setter de ese estado");
-    assert.match(codigoVista, /<BuscadorBooking destinos=\{destinosPorcion\} onBusqueda=\{setBusquedaPorcion\}/, "el buscador real sigue recibiendo la lista de destinos");
+    assert.match(codigoVista, /<BuscadorBooking destinos=\{destinosPorcion\} onBusqueda=\{confirmarBusquedaPorcion\}/, "el buscador real sigue recibiendo la lista de destinos");
   });
 
-  test("la barra de exploración de Porción no tiene NINGÚN control que modifique estado sin producir efecto", () => {
-    // La barra que sigue al encabezado (la de los checkboxes) es la única
-    // zona de filtros de exploración. Antes tenía un `<select>` de destino que
-    // ya no acotaba nada: se eliminó. Los únicos controles que quedan son los
-    // dos checkboxes, que sí cambian la lista (Pet friendly / Adults Only).
-    const marca = '<div className="flex flex-wrap items-center gap-3 text-xs text-gray-600">';
-    const idx = codigoVista.indexOf(marca);
-    assert.ok(idx > -1, "no se encontró la barra de filtros de exploración");
-    const barra = codigoVista.slice(idx, idx + 600);
-    assert.doesNotMatch(barra, /<select/, "no debe quedar ningún desplegable en la barra de exploración");
-    assert.doesNotMatch(barra, /Destino<\/span>/, "no debe quedar el control de destino eliminado");
-    assert.match(barra, /checked=\{soloPetFriendly\}/);
-    assert.match(barra, /checked=\{soloAdultsOnly\}/);
+  test("la barra de exploración de Porción no tiene NINGÚN control de destino: Pet friendly/Adults Only viven en PanelFiltrosResto", () => {
+    // Los checkboxes de exploración (Pet friendly/Adults Only) se movieron a
+    // un panel compacto reutilizable (`PanelFiltrosResto`, orden/filtro del
+    // resto) — ya no hay ningún `<select>` de destino de exploración en
+    // ninguna parte de la barra, y el panel es el ÚNICO lugar donde viven
+    // esos dos checkboxes (regla: no dejar controles duplicados).
+    assert.doesNotMatch(codigoVista, /Destino<\/span>/, "no debe quedar el control de destino eliminado");
+    const cuerpoPanel = cuerpoFuncion(codigoVista, "function PanelFiltrosResto({");
+    assert.match(cuerpoPanel, /checked=\{soloPetFriendly\}/);
+    assert.match(cuerpoPanel, /checked=\{soloAdultsOnly\}/);
+    assert.equal([...codigoVista.matchAll(/checked=\{soloPetFriendly\}/g)].length, 1, "un solo control de Pet friendly, sin duplicar");
+    assert.equal([...codigoVista.matchAll(/checked=\{soloAdultsOnly\}/g)].length, 1, "un solo control de Adults Only, sin duplicar");
   });
 
   test("con la búsqueda vigente hay UN solo estado vacío (el de la grilla unificada) — el de exploración no se pinta", () => {
@@ -623,13 +635,19 @@ describe("VistaBooking — resultado CERRADO por destino, persona y unidad por e
   });
 
   test("los dos memos dependen de destinoPorcionBusqueda (persona y unidad se recalculan juntos, nunca con criterios distintos)", () => {
-    // Memo de cards persona (`hoteles`).
-    assert.match(codigoVista, /\}, \[filas, fotosPorHotel, infoPorHotel, sub, cuposPorBloqueo, origenPorBloqueo, origenSel, destinoSel, destinoPorcionBusqueda, salidaSel, soloAcom, soloPetFriendly, soloAdultsOnly\]\);/);
-    assert.match(codigoVista, /\}, \[hotelesBernalo, sub, destinoSel, destinoPorcionBusqueda, soloPetFriendly, soloAdultsOnly, infoPorHotel\]\);/);
-    // Memo de la grilla unificada (`tarjetas`) — hoteles recomendados
-    // (migración 183) le suman `destinoActivoSub` (el gatillo A/B: destino
-    // activo ≠ destino meramente elegido) y `prioridadesRecomendados`.
-    assert.match(codigoVista, /\}, \[hoteles, hotelesUnidadVisibles, hotelIdsUnidadAutoritativos, enBusquedaPorcion, busquedaPorcion, infoPorHotel, soloPetFriendly, soloAdultsOnly, destinoActivoSub, prioridadesRecomendados\]\);/);
+    // Memo de cards persona (`hoteles`) — Pet friendly/Adults Only ya NO
+    // filtran acá (se movieron a FiltrosResto, aplicados después de elegir
+    // recomendados), así que salieron de sus dependencias.
+    assert.match(codigoVista, /\}, \[filas, fotosPorHotel, infoPorHotel, sub, cuposPorBloqueo, origenPorBloqueo, origenSel, destinoSel, destinoPorcionBusqueda, salidaSel, soloAcom\]\);/);
+    assert.match(codigoVista, /\}, \[hotelesBernalo, sub, destinoSel, destinoPorcionBusqueda\]\);/);
+    // Memo de candidatos (`datosBase`) — hoteles recomendados (migración 183)
+    // le suman `destinoActivoSub` (el gatillo A/B: destino activo ≠ destino
+    // meramente elegido) y `prioridadesRecomendados`; tampoco depende de
+    // soloPetFriendly/soloAdultsOnly (mismo motivo).
+    assert.match(
+      codigoVista,
+      /\}, \[\s*\n\s*hoteles, hotelesUnidadVisibles, hotelIdsUnidadAutoritativos, enBusquedaPorcion, busquedaPorcion, infoPorHotel,\s*\n\s*destinoActivoSub, prioridadesRecomendados, condicionPorOferta, politicaPorOferta,\s*\n\s*restriccionPorPaquete,\s*\n\s*\]\);/
+    );
   });
 
   test("se conserva hotelIdsUnidadAutoritativos: sin filas duplicadas cuando el hotel tiene una fila persona obsoleta", () => {
@@ -637,7 +655,9 @@ describe("VistaBooking — resultado CERRADO por destino, persona y unidad por e
     assert.match(codigoVista, /const idsUnidadAutoritativa = new Set\(hotelIdsUnidadAutoritativos\);/);
     // En modo búsqueda la exclusión también se aplica: la fila persona de un
     // hotel que hoy es unidad sería la caché obsoleta de `tarifario_resultado`.
-    assert.match(cuerpoTarjetas, /if \(idsUnidadAutoritativa\.has\(r\.hotelId\) \|\| !porFiltros\(r\.hotelId\)\) continue;/);
+    // `porFiltros` (Pet/Adults) se ELIMINÓ de este punto — ya no acota antes
+    // de elegir recomendados (ver describe de más abajo).
+    assert.match(cuerpoTarjetas, /if \(idsUnidadAutoritativa\.has\(r\.hotelId\)\) continue;/);
   });
 
   test("sin duplicados REALES: la deduplicación es por OFERTA (hotelId+paqueteId) — un hotel en dos paquetes del destino son DOS tarjetas distintas, nunca una", () => {
@@ -648,7 +668,7 @@ describe("VistaBooking — resultado CERRADO por destino, persona y unidad por e
     // 183— tratara cada oferta como independiente. Ahora la identidad es
     // siempre el par, y el dedup (defensivo: `buscarHoteles` ya entrega como
     // máximo una fila por par) es por par.
-    const rama = cuerpoTarjetas.slice(cuerpoTarjetas.indexOf("if (enBusquedaPorcion && busquedaPorcion) {"), cuerpoTarjetas.indexOf("return [...tarjetasRecomendadas, ...resto];"));
+    const rama = cuerpoTarjetas.slice(cuerpoTarjetas.indexOf("if (enBusquedaPorcion && busquedaPorcion) {"), cuerpoTarjetas.indexOf("return { itemsRecomendados, tarjetaPorClaveRecomendada, itemsRestoCandidatos, tarjetaPorClaveResto };"));
     assert.match(rama, /const vistasPersona = new Set<string>\(\);/);
     assert.match(rama, /const clave = claveOferta\(r\.hotelId, r\.paqueteId\);/);
     assert.match(rama, /if \(vistasPersona\.has\(clave\)\) continue;/);
@@ -672,12 +692,15 @@ describe("VistaBooking — resultado CERRADO por destino, persona y unidad por e
     assert.match(rama, /gruposUnidadBusqueda\.filter\(\(g\) => !clavesRecomendadasBusqueda\.has/);
   });
 
-  test("los filtros del usuario (Pet friendly / Adults Only) siguen aplicando a las dos mitades de la lista", () => {
-    assert.match(cuerpoTarjetas, /const porFiltros = \(hotelId: number\) => \{/);
-    // El filtro se sigue aplicando a la unidad de la búsqueda — ahora sobre la
-    // entrada por hotel ANTES de repartir sus opciones por oferta (el reparto
-    // en sí vive en la función pura `agruparOpcionesUnidadPorOferta`).
-    assert.match(cuerpoTarjetas, /agruparOpcionesUnidadPorOferta\(\s*\n\s*busquedaPorcion\.unidad\.filter\(\(u\) => porFiltros\(u\.hotelId\)\)\.flatMap\(\(u\) => u\.opciones\)/);
+  test("los filtros del usuario (Pet friendly / Adults Only) YA NO acotan la lista de candidatos de búsqueda (porFiltros eliminado) — se aplican DESPUÉS, vía FiltrosResto, a las dos mitades por igual", () => {
+    assert.doesNotMatch(cuerpoTarjetas, /const porFiltros/, "porFiltros debe eliminarse por completo");
+    // Unidad: se agrupan TODAS las opciones confirmadas, sin filtrar por
+    // hotelId antes de repartir por oferta (el reparto en sí sigue viviendo
+    // en la función pura `agruparOpcionesUnidadPorOferta`).
+    assert.match(cuerpoTarjetas, /agruparOpcionesUnidadPorOferta\(\s*\n\s*busquedaPorcion\.unidad\.flatMap\(\(u\) => u\.opciones\)\s*\n\s*\);/);
+    // El filtro real vive en el `tarjetas` final: mismo predicado
+    // (`filtrosVistaEfectivos.petFriendly`/`.adultsOnly`) para persona y
+    // unidad, recomendados y resto — ver pruebas/filtrosVistaBookingWiring.test.ts.
   });
 });
 
