@@ -55,7 +55,15 @@ function cuerpoFuncion(fuenteCompleta: string, ancla: string): string {
 
 const cuerpoResultado = cuerpoFuncion(fuenteBuscador, "export function Resultado({");
 const cuerpoTarjetaUnidadBusqueda = cuerpoFuncion(fuenteVista, "function TarjetaUnidadBusqueda({");
-const cuerpoTarjetas = cuerpoFuncion(fuenteVista, "const tarjetas = useMemo<Tarjeta[]>(() => {");
+// `cuerpoFuncion` (brace-balancer) no sirve para este useMemo: su firma
+// `useMemo<{...}>(() => {` tiene una profundidad de paréntesis > 0 en el "{"
+// real del cuerpo (el `()` de la función flecha nunca vuelve a 0 mientras el
+// `useMemo(` externo sigue abierto), así que el balanceador nunca lo
+// reconoce como inicio. Se acota manualmente con el marcador de cierre
+// conocido (mismo criterio que pruebas/ocupacionBernaloUI3EWiring.test.ts).
+const idxInicioTarjetas = fuenteVista.indexOf("const datosBase = useMemo<{");
+const idxFinTarjetas = fuenteVista.indexOf("const [abierto, setAbierto] = useState<HotelCard | null>(null);", idxInicioTarjetas);
+const cuerpoTarjetas = fuenteVista.slice(idxInicioTarjetas, idxFinTarjetas);
 
 // ── Guarda: enumera TODAS las variantes que "Buscar alojamiento" renderiza ─
 describe("Guarda — variantes que Vista Booking renderiza en modo búsqueda (Buscar alojamiento)", () => {
@@ -67,7 +75,7 @@ describe("Guarda — variantes que Vista Booking renderiza en modo búsqueda (Bu
     const ramaBusqueda = cuerpoTarjetas.slice(idxRamaBusqueda, idxFinRamaBusqueda);
     // La rama de búsqueda tiene su propio return — recomendadas (migración
     // 183) primero, resto después; nunca cae a la rama de exploración de abajo.
-    assert.match(ramaBusqueda, /return \[\.\.\.tarjetasRecomendadas, \.\.\.resto\];/);
+    assert.match(ramaBusqueda, /return \{ itemsRecomendados, tarjetaPorClaveRecomendada, itemsRestoCandidatos, tarjetaPorClaveResto \};/);
     // Toda entrada tipo:"unidad" en la rama de búsqueda declara
     // `opcionesBusqueda: g.opciones` explícitamente — nunca queda undefined
     // (a diferencia de la rama de exploración, donde no se declara). `g` es la

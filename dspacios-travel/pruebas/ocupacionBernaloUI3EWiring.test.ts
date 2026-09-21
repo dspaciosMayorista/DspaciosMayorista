@@ -64,20 +64,24 @@ describe("VistaBooking.tsx — Vista Booking unificada: persona y unidad en UNA 
   const idxUnidadVisibles = fuenteVista.indexOf("const hotelesUnidadVisibles = useMemo(() => {");
   const idxFinUnidadVisibles = fuenteVista.indexOf("// Una sola colección para la grilla", idxUnidadVisibles);
   const cuerpoUnidadVisibles = fuenteVista.slice(idxUnidadVisibles, idxFinUnidadVisibles);
-  const idxTarjetas = fuenteVista.indexOf("const tarjetas = useMemo<Tarjeta[]>(() => {");
+  // El armado de candidatos (recomendados + resto) vive en `datosBase`
+  // (useMemo separado del `tarjetas` final, que solo filtra/ordena) —
+  // `cuerpoTarjetas` abarca AMBOS, hasta el marcador de cierre de siempre.
+  const idxTarjetas = fuenteVista.indexOf("const datosBase = useMemo<{");
   const idxFinTarjetas = fuenteVista.indexOf("const [abierto, setAbierto] = useState<HotelCard | null>(null);", idxTarjetas);
   const cuerpoTarjetas = fuenteVista.slice(idxTarjetas, idxFinTarjetas);
 
   test("existe una única colección `tarjetas` que combina hoteles persona y unidad, ordenada junta", () => {
-    assert.match(codigoVista, /const tarjetas = useMemo<Tarjeta\[\]>\(\(\) => \{/);
+    assert.match(codigoVista, /const datosBase = useMemo<\{/);
     assert.match(cuerpoTarjetas, /tipo: "persona" as const/);
     assert.match(cuerpoTarjetas, /tipo: "unidad" as const/);
     // Hoteles recomendados (auditoría, hallazgo 3): las recomendadas
     // (persona + unidad combinadas) van PRIMERO, en su propio orden de
-    // prioridad, sin reordenar — el resto (persona sin recomendar + unidad
-    // sin recomendar) se alfabetiza como siempre, en un `resto` propio.
-    assert.match(cuerpoTarjetas, /resto = \[\.\.\.restoPersona, \.\.\.restoUnidad\]\.sort\(\(x, y\) => nombreTarjeta\(x\)\.localeCompare\(nombreTarjeta\(y\)\)\);/);
-    assert.match(cuerpoTarjetas, /return \[\.\.\.tarjetasRecomendadas, \.\.\.resto\];/);
+    // prioridad, sin reordenar (`filtrarPorFiltros`) — el resto (persona sin
+    // recomendar + unidad sin recomendar) se ordena/filtra con el motor puro
+    // de `lib/tarifario/inventarioResto.ts` (`ordenarYFiltrarResto`).
+    assert.match(cuerpoTarjetas, /const restoOrdenado = ordenarYFiltrarResto\(datosBase\.itemsRestoCandidatos, \{ orden: ordenResto, filtros: filtrosVistaEfectivos \}\)/);
+    assert.match(cuerpoTarjetas, /return \[\.\.\.recomendadasFiltradas, \.\.\.restoOrdenado\];/);
   });
 
   test("ya NO existe la sección separada 'Alojamientos con tarifa personalizada' ni un bloque de renderizado JSX aparte para hotelesBernalo", () => {
@@ -564,10 +568,14 @@ describe("TarifarioPublic.tsx / page.tsx — hilo completo de props hasta VistaB
   // hoteles unidad incondicionalmente ("no están configurados hoy para este
   // modelo") — un texto falso, porque esos son atributos REALES del hotel
   // (`hoteles.pet_friendly`/`adults_only`), no del modelo tarifario.
-  test("P2: los filtros Pet friendly/Adults Only para hoteles unidad usan el valor REAL de infoPorHotel — nunca ocultan el catálogo unidad completo por defecto", () => {
+  test("P2 (superado): Pet friendly/Adults Only para hoteles unidad YA NO filtran en hotelesUnidadVisibles — se aplican DESPUÉS, vía FiltrosResto, con el valor REAL de infoPorHotel (nunca ocultan el catálogo por defecto)", () => {
     assert.doesNotMatch(codigoVista, /no están configurados hoy para este modelo/);
-    assert.match(codigoVista, /if \(soloPetFriendly\) arr = arr\.filter\(\(h\) => infoPorHotel\[h\.hotelId\]\?\.petFriendly === true\);/);
-    assert.match(codigoVista, /if \(soloAdultsOnly\) arr = arr\.filter\(\(h\) => infoPorHotel\[h\.hotelId\]\?\.adultsOnly === true\);/);
+    const inicio = codigoVista.indexOf("const hotelesUnidadVisibles = useMemo(() => {");
+    const fin = codigoVista.indexOf("const idsUnidadAutoritativa = new Set(hotelIdsUnidadAutoritativos);", inicio);
+    assert.doesNotMatch(codigoVista.slice(inicio, fin), /soloPetFriendly|soloAdultsOnly/, "porFiltros se eliminó del armado de candidatos — el filtro real vive en itemDeUnidadExploracion + filtrosVistaEfectivos");
+    // El valor REAL de infoPorHotel sigue viajando al ItemResto (nunca se
+    // asume false por defecto salvo ausencia real del dato).
+    assert.match(codigoVista, /petFriendly: info\?\.petFriendly \?\? false, adultsOnly: info\?\.adultsOnly \?\? false,/);
   });
 
   // P2 (hallazgo confirmado): `fotosPorHotel`/`infoPorHotel` solo se
@@ -648,7 +656,7 @@ describe("VistaBooking.tsx — P3: destinos de hoteles unidad SOLO en el filtro 
     // ningún punto de `filas`/`hoteles` (persona) — nunca queda vacía por
     // depender de datos legacy que no existen para ese destino.
     const idxDecl = fuenteVista.indexOf("const hotelesUnidadVisibles = useMemo(() => {");
-    const idxFin = fuenteVista.indexOf("}, [hotelesBernalo, sub, destinoSel, destinoPorcionBusqueda, soloPetFriendly, soloAdultsOnly, infoPorHotel]);", idxDecl);
+    const idxFin = fuenteVista.indexOf("}, [hotelesBernalo, sub, destinoSel, destinoPorcionBusqueda]);", idxDecl);
     assert.notEqual(idxDecl, -1);
     assert.notEqual(idxFin, -1);
     const cuerpo = fuenteVista.slice(idxDecl, idxFin);
@@ -673,7 +681,7 @@ describe("VistaBooking.tsx — P3: destinos de hoteles unidad SOLO en el filtro 
     // alternativas que ofrece en el estado vacío se vuelven a pedir desde acá).
     assert.match(
       fuenteVista,
-      /<BuscadorBooking destinos=\{destinosPorcion\} onBusqueda=\{setBusquedaPorcion\} sugerenciaPedida=\{sugerenciaPedida\} \/>/
+      /<BuscadorBooking destinos=\{destinosPorcion\} onBusqueda=\{confirmarBusquedaPorcion\} sugerenciaPedida=\{sugerenciaPedida\} \/>/
     );
     // Ya no debe existir ninguna variable `destinos` (el nombre viejo,
     // ambiguo sobre si mezclaba o no unidad) — solo `destinosBloqueo`/
@@ -733,18 +741,19 @@ describe("VistaBooking.tsx — P3: destinos de hoteles unidad SOLO en el filtro 
       assert.doesNotMatch(cuerpo, /new Set/);
       // La lista alimenta el selector REAL: el del buscador de Porción
       // terrestre, que es quien ejecuta la búsqueda.
-      assert.match(fuenteVista, /<BuscadorBooking destinos=\{destinosPorcion\} onBusqueda=\{setBusquedaPorcion\}/);
+      assert.match(fuenteVista, /<BuscadorBooking destinos=\{destinosPorcion\} onBusqueda=\{confirmarBusquedaPorcion\}/);
     });
 
-    test("el selector de exploración de destino se eliminó por completo: sin estado, sin setter y sin control en la barra", () => {
+    test("el selector de exploración de destino se eliminó por completo: sin estado, sin setter y sin control de destino en el panel de filtros", () => {
       assert.doesNotMatch(fuenteVista, /destinoPorcionSel/, "no queda el estado del selector eliminado");
       assert.doesNotMatch(fuenteVista, /setDestinoPorcionSel/, "no queda su setter");
-      // Un `useState` con ese rol tampoco puede sobrevivir con otro nombre: la
-      // barra de exploración de Porción no tiene ningún desplegable de destino.
-      const idxBarra = codigoVista.indexOf('flex flex-wrap items-center gap-3 text-xs text-gray-600');
-      assert.ok(idxBarra > -1);
-      const barra = codigoVista.slice(idxBarra, idxBarra + 600);
-      assert.doesNotMatch(barra, /<select/, "la barra de exploración no puede tener desplegables");
+      // Un `useState` con ese rol tampoco puede sobrevivir con otro nombre: el
+      // único `<select>` del panel de filtros del resto (`PanelFiltrosResto`)
+      // es el de "Ordenar por" (precio/estrellas/nombre) — nunca uno de
+      // destino, que solo existe en la barra de Bloqueo (`destinoSel`, sin tocar).
+      const cuerpoPanel = cuerpoFuncion(codigoVista, "function PanelFiltrosResto({");
+      assert.equal([...cuerpoPanel.matchAll(/<select/g)].length, 1, "el panel tiene exactamente un select: 'Ordenar por'");
+      assert.match(cuerpoPanel, /<select\s*\n\s*value=\{ordenResto\}/);
       // El estado de Bloqueo queda intacto (no se tocó esa pestaña).
       assert.match(codigoVista, /<select value=\{destinoSel\}/);
     });
@@ -769,7 +778,7 @@ describe("VistaBooking.tsx — P3: destinos de hoteles unidad SOLO en el filtro 
       // verifica acá es el CÓDIGO.
       const idxHoteles = codigoVista.indexOf("const hoteles = useMemo<HotelCard[]>(() => {");
       const idxFinHoteles = codigoVista.indexOf("const hotelesUnidadVisibles = useMemo(() => {", idxHoteles);
-      const idxFinUnidad = codigoVista.indexOf("}, [hotelesBernalo, sub, destinoSel, destinoPorcionBusqueda, soloPetFriendly, soloAdultsOnly, infoPorHotel]);", idxFinHoteles);
+      const idxFinUnidad = codigoVista.indexOf("}, [hotelesBernalo, sub, destinoSel, destinoPorcionBusqueda]);", idxFinHoteles);
       assert.ok(idxHoteles > -1 && idxFinHoteles > idxHoteles && idxFinUnidad > idxFinHoteles, "no se encontraron los dos memos de candidatos");
       const memoHoteles = codigoVista.slice(idxHoteles, idxFinHoteles);
       const memoUnidad = codigoVista.slice(idxFinHoteles, idxFinUnidad);
@@ -783,7 +792,7 @@ describe("VistaBooking.tsx — P3: destinos de hoteles unidad SOLO en el filtro 
 
     test("hotelesUnidadVisibles filtra por el destino BUSCADO solo cuando sub === 'porcion_terrestre' — igual patrón que destinoSel/bloqueo", () => {
       const idxDecl = fuenteVista.indexOf("const hotelesUnidadVisibles = useMemo(() => {");
-      const idxFin = fuenteVista.indexOf("}, [hotelesBernalo, sub, destinoSel, destinoPorcionBusqueda, soloPetFriendly, soloAdultsOnly, infoPorHotel]);", idxDecl);
+      const idxFin = fuenteVista.indexOf("}, [hotelesBernalo, sub, destinoSel, destinoPorcionBusqueda]);", idxDecl);
       assert.notEqual(idxDecl, -1);
       assert.notEqual(idxFin, -1);
       const cuerpo = fuenteVista.slice(idxDecl, idxFin);
@@ -825,7 +834,7 @@ describe("VistaBooking.tsx — P3: destinos de hoteles unidad SOLO en el filtro 
 
     test("un destino exclusivamente unidad entra al universo de la búsqueda: el filtro de hotelesUnidadVisibles compara SOLO h.destinoNombre (de hotelesBernalo), nunca contra `hoteles`/`filas` (persona)", () => {
       const idxDecl = fuenteVista.indexOf("const hotelesUnidadVisibles = useMemo(() => {");
-      const idxFin = fuenteVista.indexOf("}, [hotelesBernalo, sub, destinoSel, destinoPorcionBusqueda, soloPetFriendly, soloAdultsOnly, infoPorHotel]);", idxDecl);
+      const idxFin = fuenteVista.indexOf("}, [hotelesBernalo, sub, destinoSel, destinoPorcionBusqueda]);", idxDecl);
       const cuerpo = fuenteVista.slice(idxDecl, idxFin);
       assert.match(cuerpo, /let arr = hotelesBernalo\.filter\(\(h\) => h\.tipo === sub\);/);
       assert.match(cuerpo, /if \(sub === "porcion_terrestre" && destinoPorcionBusqueda\) arr = arr\.filter\(\(h\) => \(h\.destinoNombre \?\? ""\) === destinoPorcionBusqueda\);/);

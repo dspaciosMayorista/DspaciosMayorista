@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useId, useMemo, useRef, useState, useTransition, type ReactNode } from "react";
+import { useEffect, useId, useMemo, useRef, useState, useTransition, type ReactNode, type CSSProperties } from "react";
 import Image from "next/image";
 import { formatMoneda } from "@/lib/utils";
 import {
@@ -57,6 +57,16 @@ import {
   agruparOpcionesUnidadPorOferta, ofertasConPrioridad,
   type OfertaPrioridad, type GrupoOfertaUnidad,
 } from "@/lib/tarifario/recomendados";
+import {
+  ordenarYFiltrarResto, filtrarPorFiltros, filtrosVacios, filtrosEfectivos, restablecerFiltrosOcultos,
+  zonasDisponibles, estrellasDisponibles,
+  contarFiltrosActivos,
+  type ItemResto, type OrdenResto, type FiltrosResto,
+} from "@/lib/tarifario/inventarioResto";
+import { esNeutra } from "@/lib/cotizacion/condicionPago";
+import type { CondicionHotelFechas } from "@/lib/reservar/liquidacionHotel";
+import { combinarTernario, etiquetaCondicion, etiquetaPolitica, type EvidenciaTernaria } from "@/lib/tarifario/condicionOferta";
+import { ArrowUpDown, SlidersHorizontal, X, PawPrint, BadgeCheck } from "lucide-react";
 
 const CAP_VACIA = { paxMin: null as number | null, paxMax: null as number | null, acom: [] as AcomConfig[] };
 
@@ -79,6 +89,9 @@ type HotelCard = {
   clasificacion: string | null;
   descripcion: string | null;
   ubicacion: string | null;
+  // `hoteles.zona` (filtro "Zona" del panel del resto) — texto libre, sin
+  // normalizar aquí (ver `normalizarZonaClave` en `inventarioResto.ts`).
+  zona: string | null;
   video_url: string | null;
   ninoMin: number | null; ninoMax: number | null; infMin: number | null; infMax: number | null;
   adultsOnly: boolean;
@@ -157,12 +170,199 @@ type Tarjeta =
 // booleano de si ESA oferta quedó seleccionada.
 type MarcaOferta = { recomendada?: boolean };
 
-// Nombre visible de una tarjeta, sin importar de cuál de las tres fuentes
-// venga — lo necesita el orden alfabético de la colección única.
-function nombreTarjeta(t: Tarjeta): string {
-  if (t.tipo === "persona") return t.card.hotelNombre;
-  if (t.tipo === "unidad") return t.hotel.hotelNombre;
-  return t.r.hotelNombre ?? "—";
+// ── Panel de orden/filtro del RESTO del inventario ──────────────────────────
+// Superficie compacta (una barra + panel colapsable) que agrupa TODOS los
+// controles de orden/filtro de Vista Booking — reutiliza Pet friendly/Adults
+// Only (mismo estado que ya existía, `soloPetFriendly`/`soloAdultsOnly`, que
+// afecta a TODA la grilla incluidos los recomendados) para no dejar dos
+// controles duplicados. Los controles de zona/estrellas/condición/política
+// (que sí son EXCLUSIVOS del resto — nunca reordenan/filtran los
+// recomendados, ver `lib/tarifario/inventarioResto.ts`) solo se muestran
+// cuando el resto puede aparecer (`mostrarControlesResto`).
+function PanelFiltrosResto({
+  ordenResto, onOrdenChange, filtros, onFiltrosChange, zonas, estrellas,
+  soloPetFriendly, onSoloPetFriendlyChange, soloAdultsOnly, onSoloAdultsOnlyChange,
+  mostrarControlesResto,
+}: {
+  ordenResto: OrdenResto;
+  onOrdenChange: (o: OrdenResto) => void;
+  filtros: FiltrosResto;
+  onFiltrosChange: (f: FiltrosResto) => void;
+  zonas: { clave: string; etiqueta: string }[];
+  estrellas: (number | "sin_clasificar")[];
+  soloPetFriendly: boolean;
+  onSoloPetFriendlyChange: (v: boolean) => void;
+  soloAdultsOnly: boolean;
+  onSoloAdultsOnlyChange: (v: boolean) => void;
+  mostrarControlesResto: boolean;
+}) {
+  // Nombre deliberadamente DISTINTO del `abierto`/`setAbierto` del hotel
+  // (estado del modal, en VistaBooking) — mismo patrón textual habría
+  // confundido a los tests de wiring que buscan `setAbierto(` en TODO el
+  // archivo para garantizar que la tarjeta abre por `abrirHotel`, nunca
+  // directo.
+  const [panelAbierto, setPanelAbierto] = useState(false);
+  const activos = contarFiltrosActivos(filtros) + (soloPetFriendly ? 1 : 0) + (soloAdultsOnly ? 1 : 0);
+
+  function limpiar() {
+    onFiltrosChange(filtrosVacios());
+    onSoloPetFriendlyChange(false);
+    onSoloAdultsOnlyChange(false);
+  }
+  function toggleZona(clave: string) {
+    const siguiente = new Set(filtros.zonas);
+    if (siguiente.has(clave)) siguiente.delete(clave);
+    else siguiente.add(clave);
+    onFiltrosChange({ ...filtros, zonas: siguiente });
+  }
+  function toggleEstrella(valor: number | "sin_clasificar") {
+    const siguiente = new Set(filtros.estrellas);
+    if (siguiente.has(valor)) siguiente.delete(valor);
+    else siguiente.add(valor);
+    onFiltrosChange({ ...filtros, estrellas: siguiente });
+  }
+
+  const segmentoBtn = (activo: boolean): CSSProperties =>
+    activo
+      ? { backgroundColor: "var(--brand-primary)", color: "white" }
+      : { backgroundColor: "white", color: "#4b5563" };
+
+  return (
+    <div className="mb-4 flex flex-col gap-2">
+      <div className="flex flex-wrap items-center gap-2">
+        {mostrarControlesResto && (
+          <label className="flex items-center gap-1.5 text-xs text-gray-600">
+            <ArrowUpDown className="h-3.5 w-3.5 text-gray-400" aria-hidden />
+            <select
+              value={ordenResto}
+              onChange={(e) => onOrdenChange(e.target.value as OrdenResto)}
+              className="rounded-lg border border-gray-200 bg-white px-2 py-1.5 text-xs text-gray-700"
+            >
+              <option value="predeterminado">Ordenar por: Predeterminado</option>
+              <option value="precio_asc">Precio: menor a mayor</option>
+              <option value="precio_desc">Precio: mayor a menor</option>
+              <option value="estrellas_desc">Estrellas: mayor a menor</option>
+              <option value="estrellas_asc">Estrellas: menor a mayor</option>
+              <option value="nombre_asc">Nombre: A-Z</option>
+              <option value="nombre_desc">Nombre: Z-A</option>
+            </select>
+          </label>
+        )}
+        <button
+          type="button"
+          onClick={() => setPanelAbierto((v) => !v)}
+          className="flex items-center gap-1.5 rounded-full border border-gray-200 bg-white px-3 py-1.5 text-xs font-medium text-gray-600"
+        >
+          <SlidersHorizontal className="h-3.5 w-3.5" aria-hidden />
+          Filtros
+          {activos > 0 && (
+            <span
+              className="rounded-full px-1.5 py-0.5 text-[10px] font-semibold leading-none text-white"
+              style={{ backgroundColor: "var(--brand-accent)" }}
+            >
+              {activos}
+            </span>
+          )}
+        </button>
+        {activos > 0 && (
+          <button type="button" onClick={limpiar} className="flex items-center gap-1 text-xs text-gray-400 hover:text-gray-600">
+            <X className="h-3 w-3" aria-hidden />
+            Limpiar filtros
+          </button>
+        )}
+      </div>
+
+      {panelAbierto && (
+        <div className="flex flex-col gap-4 rounded-xl border border-gray-200 bg-white p-3 text-xs text-gray-600 sm:flex-row sm:flex-wrap sm:gap-6">
+          <label className="flex items-center gap-1.5">
+            <input type="checkbox" checked={soloPetFriendly} onChange={(e) => onSoloPetFriendlyChange(e.target.checked)} />
+            <PawPrint className="h-3.5 w-3.5" aria-hidden />
+            Pet friendly
+          </label>
+          <label className="flex items-center gap-1.5">
+            <input type="checkbox" checked={soloAdultsOnly} onChange={(e) => onSoloAdultsOnlyChange(e.target.checked)} />
+            <BadgeCheck className="h-3.5 w-3.5" aria-hidden />
+            Adults Only
+          </label>
+
+          {mostrarControlesResto && (
+            <>
+              {zonas.length > 0 && (
+                <div className="flex flex-col gap-1.5">
+                  <span className="font-semibold uppercase tracking-wide text-gray-400">Zona</span>
+                  <div className="flex max-w-[220px] flex-wrap gap-x-3 gap-y-1">
+                    {zonas.map((z) => (
+                      <label key={z.clave} className="flex items-center gap-1">
+                        <input type="checkbox" checked={filtros.zonas.has(z.clave)} onChange={() => toggleZona(z.clave)} />
+                        {z.etiqueta}
+                      </label>
+                    ))}
+                  </div>
+                </div>
+              )}
+              {estrellas.length > 0 && (
+                <div className="flex flex-col gap-1.5">
+                  <span className="font-semibold uppercase tracking-wide text-gray-400">Estrellas</span>
+                  <div className="flex flex-wrap gap-x-3 gap-y-1">
+                    {estrellas.map((e) => (
+                      <label key={String(e)} className="flex items-center gap-1">
+                        <input type="checkbox" checked={filtros.estrellas.has(e)} onChange={() => toggleEstrella(e)} />
+                        {e === "sin_clasificar" ? "Sin clasificar" : `${e}★`}
+                      </label>
+                    ))}
+                  </div>
+                </div>
+              )}
+              <div className="flex flex-col gap-1.5">
+                <span className="font-semibold uppercase tracking-wide text-gray-400">Condiciones de pago</span>
+                <div className="flex overflow-hidden rounded-lg border border-gray-200">
+                  {(
+                    [
+                      ["todas", "Todas"],
+                      ["con", "Con condiciones"],
+                      ["sin", "Sin condiciones"],
+                    ] as const
+                  ).map(([v, l]) => (
+                    <button
+                      key={v}
+                      type="button"
+                      onClick={() => onFiltrosChange({ ...filtros, condicion: v })}
+                      className="whitespace-nowrap px-2.5 py-1.5"
+                      style={segmentoBtn(filtros.condicion === v)}
+                    >
+                      {l}
+                    </button>
+                  ))}
+                </div>
+              </div>
+              <div className="flex flex-col gap-1.5">
+                <span className="font-semibold uppercase tracking-wide text-gray-400">Política</span>
+                <div className="flex overflow-hidden rounded-lg border border-gray-200">
+                  {(
+                    [
+                      ["todas", "Todas"],
+                      ["flexible", "Flexible"],
+                      ["no_reembolsable", "No reembolsable"],
+                    ] as const
+                  ).map(([v, l]) => (
+                    <button
+                      key={v}
+                      type="button"
+                      onClick={() => onFiltrosChange({ ...filtros, politica: v })}
+                      className="whitespace-nowrap px-2.5 py-1.5"
+                      style={segmentoBtn(filtros.politica === v)}
+                    >
+                      {l}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            </>
+          )}
+        </div>
+      )}
+    </div>
+  );
 }
 
 // P2 (hallazgo confirmado): tarjeta ÚNICA compartida por hoteles persona y
@@ -283,6 +483,9 @@ export function VistaBooking({
   hotelesBernalo = [],
   hotelIdsUnidadAutoritativos = [],
   prioridadesRecomendados = {},
+  condicionPorOferta = {},
+  politicaPorOferta = {},
+  restriccionPorPaquete = {},
 }: {
   filas: FilaResumen[];
   fotosPorHotel?: Record<number, string>;
@@ -291,7 +494,7 @@ export function VistaBooking({
   origenPorBloqueo?: Record<number, string>;
   puedeReservar?: boolean;
   ventanaPorPaquete?: Record<number, { min: string | null; max: string | null }>;
-  infoPorHotel?: Record<number, { estrellas: number | null; clasificacion: string | null; descripcion: string | null; ubicacion: string | null; video_url?: string | null; ninoMin?: number | null; ninoMax?: number | null; infMin?: number | null; infMax?: number | null; adultsOnly?: boolean; petFriendly?: boolean; tieneCondicion?: boolean }>;
+  infoPorHotel?: Record<number, { estrellas: number | null; clasificacion: string | null; descripcion: string | null; ubicacion: string | null; zona?: string | null; video_url?: string | null; ninoMin?: number | null; ninoMax?: number | null; infMin?: number | null; infMax?: number | null; adultsOnly?: boolean; petFriendly?: boolean; tieneCondicion?: boolean }>;
   planesInfo?: PlanesInfo;
   capPorHotel?: CapHotel;
   soloAcom?: string | null;
@@ -323,6 +526,19 @@ export function VistaBooking({
   // espacio de claves, así que combinan sin colisión). Decide la sección de
   // recomendados del estado global inicial y de la búsqueda por destino.
   prioridadesRecomendados?: Record<string, number>;
+  // Condición de pago / política comercial POR OFERTA (hotelId,paqueteId,
+  // ver `lib/tarifario/resumen.ts`) — filtros "Con/Sin condiciones" y
+  // "Flexible/No reembolsable" del panel de filtros del resto. Sin entrada =
+  // desconocido (nunca se infiere) — cubre SIEMPRE persona; unidad/Bernalo
+  // queda desconocido por diseño (su fuente no está conectada a este cálculo).
+  condicionPorOferta?: Record<string, "con" | "sin">;
+  politicaPorOferta?: Record<string, "flexible" | "no_reembolsable">;
+  // Condición/restricción SOLO del paquete (clave paqueteId, ver
+  // `lib/tarifario/resumen.ts`) — se combina en modo BÚSQUEDA con
+  // `BusquedaResultado.condicion` (la condición del hotel para la fecha
+  // EXACTA buscada, nunca el rango genérico de exploración que usa
+  // `condicionPorOferta`).
+  restriccionPorPaquete?: Record<number, { condicionNoNeutra: boolean; restriccionNoNeutra: boolean }>;
 }) {
   // Submódulos de la vista Booking.
   const [sub, setSub] = useState<"bloqueo" | "porcion_terrestre" | "receptivos">("bloqueo");
@@ -349,6 +565,13 @@ export function VistaBooking({
   // hoteles de otros destinos, por debajo de los resultados (ver el informe
   // de la tarea).
   const [busquedaPorcion, setBusquedaPorcion] = useState<EstadoBusquedaPorcion | null>(null);
+  // Orden/filtro del RESTO del inventario (nunca de los recomendados, que
+  // nunca se reordenan por estos controles — ver `lib/tarifario/
+  // inventarioResto.ts`). Solo tiene efecto cuando el resto se muestra
+  // (destino/búsqueda activos); en el estado global inicial el resto sigue
+  // vacío y estos controles ni se pintan.
+  const [ordenResto, setOrdenResto] = useState<OrdenResto>("predeterminado");
+  const [filtrosResto, setFiltrosResto] = useState<FiltrosResto>(filtrosVacios());
   // Destino que ACOTA la grilla de Porción terrestre: **solo el de una
   // búsqueda EJECUTADA** (`busquedaPorcion`), "" si no hay ninguna.
   //
@@ -413,7 +636,85 @@ export function VistaBooking({
     if (sub === "receptivos" && next !== "receptivos") {
       setReceptivosAcotado(null);
     }
+    // Poda/reseteo de zona/estrellas/condición/política al cambiar de
+    // pestaña — aunque el ORIGEN sea Bloqueo (antes solo se hacía al salir de
+    // Porción terrestre, dejando que una zona elegida en Bloqueo siguiera
+    // filtrando en silencio el estado global de Porción terrestre). Se
+    // evalúa el destino REAL de la pestaña `next`, nunca la que se abandona:
+    //   · "bloqueo": global solo si NO hay `destinoSel` ya elegido (si lo hay,
+    //     es EL MISMO destino de Bloqueo, así que sus zonas/estrellas siguen
+    //     siendo válidas — se podan contra ESE destino, no se resetean).
+    //   · "porcion_terrestre": SIEMPRE global al llegar (la búsqueda se
+    //     limpia al salir de esta pestaña, arriba — nunca puede haber una
+    //     búsqueda vigente esperando en otra pestaña).
+    //   · "receptivos": no hay inventario de hoteles que filtrar por zona/
+    //     estrellas ahí — global trivial.
+    if (next !== sub) {
+      if (next === "bloqueo" && destinoSel) {
+        podarZonasEstrellas(candidatosDeBloqueo(destinoSel));
+      } else {
+        restablecerControlesOcultos();
+      }
+    }
     setSub(next);
+  }
+
+  // ── Poda/reseteo de zona/estrellas/condición/política al cambiar contexto ──
+  // Regla cerrada: una zona/estrella que deja de existir en el destino
+  // siguiente NO debe revivir sola si un destino posterior la vuelve a
+  // ofrecer — así que el estado CRUDO (`filtrosResto`) se recorta de verdad
+  // acá, en el mismo handler síncrono que confirma/limpia el destino/
+  // búsqueda/pestaña (nunca en un `useEffect` reaccionando al cambio).
+  // `candidatos` es la lista de hotelId/zona/estrellas del destino QUE VA A
+  // QUEDAR activo.
+  function podarZonasEstrellas(candidatos: { zona: string | null; estrellas: number | null }[]) {
+    setFiltrosResto((prev) => filtrosEfectivos(prev, zonasDisponibles(candidatos), estrellasDisponibles(candidatos)));
+  }
+  // Estado GLOBAL (sin destino/búsqueda activo): el panel no muestra zona/
+  // estrellas/condición/política ahí (`mostrarControlesResto` en falso), así
+  // que esos cuatro se restablecen a su valor vacío — nunca quedan
+  // "escondidos pero activos" filtrando en silencio la próxima vez que el
+  // panel los muestre. Pet friendly/Adults Only NO se tocan: sus controles
+  // SÍ están visibles en global (siempre, ver PanelFiltrosResto).
+  function restablecerControlesOcultos() {
+    setFiltrosResto(restablecerFiltrosOcultos);
+  }
+  function candidatosDe(hotelIds: Iterable<number>): { zona: string | null; estrellas: number | null }[] {
+    return [...new Set(hotelIds)].map((id) => ({ zona: infoPorHotel[id]?.zona ?? null, estrellas: infoPorHotel[id]?.estrellas ?? null }));
+  }
+  // Candidatos de Bloqueo para UN destino dado: hoteles persona (`filas`,
+  // módulo bloqueo) + hoteles unidad (`hotelesBernalo`, tipo bloqueo) de ese
+  // destino — reutilizado por `confirmarDestinoBloqueo` y por `cambiarSub`
+  // (al volver a Bloqueo con un `destinoSel` ya elegido).
+  function candidatosDeBloqueo(destino: string): { zona: string | null; estrellas: number | null }[] {
+    const idsPersona = filas
+      .filter((f) => f.modulo === "bloqueo" && f.hotel_id != null && (f.destino_nombre ?? "") === destino)
+      .map((f) => f.hotel_id as number);
+    const idsUnidad = hotelesBernalo
+      .filter((h) => h.tipo === "bloqueo" && (h.destinoNombre ?? "") === destino)
+      .map((h) => h.hotelId);
+    return candidatosDe([...idsPersona, ...idsUnidad]);
+  }
+  // Destino de Bloqueo: `""` (limpiar/"Todos") es el estado GLOBAL de esa
+  // pestaña — restablece zona/estrellas/condición/política; un destino real
+  // solo poda zona/estrellas contra sus candidatos (condición/política
+  // siguen siendo controles visibles ahí, no se tocan).
+  function confirmarDestinoBloqueo(nuevoDestino: string) {
+    setDestinoSel(nuevoDestino);
+    setSalidaSel("");
+    if (!nuevoDestino) { restablecerControlesOcultos(); return; }
+    podarZonasEstrellas(candidatosDeBloqueo(nuevoDestino));
+  }
+  // Búsqueda de Porción terrestre: `null` (limpiar) es el estado GLOBAL de
+  // esa pestaña — restablece zona/estrellas/condición/política; una búsqueda
+  // real solo poda zona/estrellas contra EXACTAMENTE lo que el motor
+  // confirmó (persona + unidad).
+  function confirmarBusquedaPorcion(resultado: EstadoBusquedaPorcion | null) {
+    setBusquedaPorcion(resultado);
+    if (!resultado) { restablecerControlesOcultos(); return; }
+    const idsPersona = resultado.resultados.map((r) => r.hotelId);
+    const idsUnidad = resultado.unidad.map((u) => u.hotelId);
+    podarZonasEstrellas(candidatosDe([...idsPersona, ...idsUnidad]));
   }
 
   // Filtros de la grilla de hoteles: pet friendly / adults only.
@@ -555,7 +856,7 @@ export function VistaBooking({
           hotelId: id, hotelNombre: f.hotel_nombre ?? "—", destino: f.destino_nombre,
           foto: fotosPorHotel[id] ?? null, desde: null,
           estrellas: info?.estrellas ?? null, clasificacion: info?.clasificacion ?? null, descripcion: info?.descripcion ?? null,
-          ubicacion: info?.ubicacion ?? null, video_url: info?.video_url ?? null,
+          ubicacion: info?.ubicacion ?? null, zona: info?.zona ?? null, video_url: info?.video_url ?? null,
           ninoMin: info?.ninoMin ?? null, ninoMax: info?.ninoMax ?? null, infMin: info?.infMin ?? null, infMax: info?.infMax ?? null,
           adultsOnly: info?.adultsOnly ?? false, petFriendly: info?.petFriendly ?? false,
           tieneCondicion: info?.tieneCondicion ?? false,
@@ -573,12 +874,16 @@ export function VistaBooking({
     // hoteles que antes" — el resumen ahora trae precio_nino/precio_nino2
     // por combo, así que este filtro ya no depende de una expansión
     // sintética que nunca incluía niños).
+    // Pet friendly / Adults Only YA NO filtran acá (defecto corregido: excluir
+    // antes de elegir recomendados podía dejar que otra prioridad ascendiera
+    // al lugar de la excluida). Ahora son filtros de `FiltrosResto`
+    // (`filtrosVistaEfectivos.petFriendly`/`.adultsOnly`, mezclados desde
+    // `soloPetFriendly`/`soloAdultsOnly`) aplicados DESPUÉS de seleccionar
+    // recomendados, en el `tarjetas` final — ver más abajo.
     if (soloAcom) arr = arr.filter((c) => c.filas.some((f) => tieneAcomodacionResumen(f, soloAcom)));
-    if (soloPetFriendly) arr = arr.filter((c) => c.petFriendly);
-    if (soloAdultsOnly) arr = arr.filter((c) => c.adultsOnly);
     for (const c of arr) c.desde = minRoomPvp(c.filas);
     return arr;
-  }, [filas, fotosPorHotel, infoPorHotel, sub, cuposPorBloqueo, origenPorBloqueo, origenSel, destinoSel, destinoPorcionBusqueda, salidaSel, soloAcom, soloPetFriendly, soloAdultsOnly]);
+  }, [filas, fotosPorHotel, infoPorHotel, sub, cuposPorBloqueo, origenPorBloqueo, origenSel, destinoSel, destinoPorcionBusqueda, salidaSel, soloAcom]);
 
   // Hoteles por unidad (Bernalo) visibles en el submódulo/filtros ACTIVOS —
   // para el cliente son hoteles normales, así que responden a la misma
@@ -591,25 +896,17 @@ export function VistaBooking({
   // control de destino sobre la grilla; el único es el buscador real).
   // Nunca aparecen en Receptivos (no son un servicio).
   //
-  // P2 (hallazgo confirmado): Pet friendly/Adults Only antes ocultaban TODOS
-  // los hoteles unidad incondicionalmente ("no están configurados hoy para
-  // este modelo") — pero SÍ están configurados: son atributos del HOTEL
-  // (`hoteles.pet_friendly`/`adults_only`), no del modelo tarifario, y ya
-  // llegan enriquecidos en `infoPorHotel` (ver `page.tsx`, que ahora
-  // consulta `hoteles` también para los hotelId unidad). Se filtra con el
-  // valor REAL — nunca se afirma "no cumple" por falta de dato: si
-  // `infoPorHotel[h.hotelId]` no llegó a cargar, el hotel queda fuera del
-  // filtro activo (mismo criterio conservador que persona, que también
-  // exige `=== true`, ver `hoteles` arriba).
+  // P2 (hallazgo confirmado, superado por la corrección de Pet/Adults post-
+  // recomendados): Pet friendly/Adults Only YA NO filtran acá tampoco —
+  // mismo criterio que `hoteles` arriba, se aplican DESPUÉS de seleccionar
+  // recomendados vía `FiltrosResto` en el `tarjetas` final.
   const hotelesUnidadVisibles = useMemo(() => {
     if (sub === "receptivos") return [];
     let arr = hotelesBernalo.filter((h) => h.tipo === sub);
     if (sub === "bloqueo" && destinoSel) arr = arr.filter((h) => (h.destinoNombre ?? "") === destinoSel);
     if (sub === "porcion_terrestre" && destinoPorcionBusqueda) arr = arr.filter((h) => (h.destinoNombre ?? "") === destinoPorcionBusqueda);
-    if (soloPetFriendly) arr = arr.filter((h) => infoPorHotel[h.hotelId]?.petFriendly === true);
-    if (soloAdultsOnly) arr = arr.filter((h) => infoPorHotel[h.hotelId]?.adultsOnly === true);
     return arr;
-  }, [hotelesBernalo, sub, destinoSel, destinoPorcionBusqueda, soloPetFriendly, soloAdultsOnly, infoPorHotel]);
+  }, [hotelesBernalo, sub, destinoSel, destinoPorcionBusqueda]);
 
   // Una sola colección para la grilla — persona y unidad mezclados, sin
   // sección aparte (el usuario ve hoteles, no "modelos de cálculo"). Clave
@@ -648,13 +945,121 @@ export function VistaBooking({
   // canal aparte que viaja SIN pasar por ningún filtro de visibilidad
   // (`lib/tarifario/datosBernalo.ts` → `page.tsx` → `TarifarioPublic.tsx` →
   // acá) — la única fuente correcta para esta exclusión.
-  const tarjetas = useMemo<Tarjeta[]>(() => {
+  // `itemsRestoCandidatos` viaja junto a `tarjetas` (mismo useMemo, mismas
+  // dependencias) para que el panel de filtros del resto (fuera de este
+  // useMemo, ver más abajo) conozca las zonas/estrellas REALMENTE disponibles
+  // ahora mismo sin recalcular la lógica de bloqueo búsqueda/exploración por
+  // segunda vez. Vacío cuando el resto no se muestra (estado global inicial).
+  // `datosBase` — candidatos crudos (recomendados + resto), SIN aplicar
+  // orden/filtro del panel. Deliberadamente separado del useMemo `tarjetas`
+  // (más abajo) para que NO se recalcule solo porque el usuario tocó
+  // `ordenResto`/`filtrosResto` — así `zonasRestoDisponibles`/
+  // `estrellasRestoDisponibles` (que dependen de `datosBase`) se mantienen
+  // referencialmente estables mientras destino/búsqueda no cambien de
+  // verdad, lo que a su vez deja que "filtro fantasma"/reseteo de selección
+  // se resuelva SOLO por intersección en cada lectura (`filtrosEfectivos`),
+  // sin useEffect ni handlers de sincronización dedicados (ver más abajo).
+  const datosBase = useMemo<{
+    itemsRecomendados: ItemResto[];
+    tarjetaPorClaveRecomendada: Map<string, Tarjeta>;
+    itemsRestoCandidatos: ItemResto[];
+    tarjetaPorClaveResto: Map<string, Tarjeta>;
+  }>(() => {
     const idsUnidadAutoritativa = new Set(hotelIdsUnidadAutoritativos);
-    const porFiltros = (hotelId: number) => {
-      const info = infoPorHotel[hotelId];
-      if (soloPetFriendly && !info?.petFriendly) return false;
-      if (soloAdultsOnly && !info?.adultsOnly) return false;
-      return true;
+
+    // ── Constructores de ItemResto (lib/tarifario/inventarioResto.ts) ────
+    // Traducen cada fuente de oferta (persona/unidad, exploración/búsqueda,
+    // recomendada o no) al DTO plano que consume el motor puro de orden/
+    // filtro — NUNCA el motor de recomendados, que sigue trabajando sobre
+    // las fuentes reales. En EXPLORACIÓN, condición/política salen del rango
+    // genérico por oferta (`condicionPorOferta`/`politicaPorOferta`, ver
+    // resumen.ts) — sin entrada = "desconocido" (nunca se infiere).
+    const condicionDe = (hotelId: number, paqueteId: number): ItemResto["condicion"] =>
+      condicionPorOferta[claveOferta(hotelId, paqueteId)] ?? "desconocido";
+    const politicaDe = (hotelId: number, paqueteId: number): ItemResto["politica"] =>
+      politicaPorOferta[claveOferta(hotelId, paqueteId)] ?? "desconocido";
+    // En BÚSQUEDA, el lado HOTEL usa `BusquedaResultado.condicion` — ya
+    // calculado por el motor para la fecha EXACTA buscada (nunca el rango
+    // genérico de exploración) — combinado con la restricción UNIFORME del
+    // paquete (`restriccionPorPaquete`, un valor de catálogo sin fecha, así
+    // que jamás se contamina con otras salidas/fechas del mismo paquete).
+    // Sin ninguna de las dos fuentes → desconocido (nunca se inventa).
+    const condicionPoliticaBusqueda = (
+      condicionHotel: CondicionHotelFechas | null | undefined,
+      paqueteId: number
+    ): { condicion: ItemResto["condicion"]; politica: ItemResto["politica"] } => {
+      const paquete = restriccionPorPaquete[paqueteId];
+      // Combinación TERNARIA (lib/tarifario/condicionOferta.ts): evidencia
+      // POSITIVA de cualquier lado gana siempre (un paquete restringido SÍ
+      // se puede conocer aunque el hotel sea desconocido, típico de Bernalo);
+      // "sin condición"/"flexible" exige que los DOS lados confirmen
+      // neutralidad — un paquete neutro NUNCA convierte un hotel desconocido
+      // en flexible, ni viceversa.
+      const hotelCondTri: EvidenciaTernaria = condicionHotel ? !esNeutra(condicionHotel.condicionPagoTipo) : null;
+      const hotelRestrTri: EvidenciaTernaria = condicionHotel ? condicionHotel.restringido : null;
+      const paqueteCondTri: EvidenciaTernaria = paquete ? paquete.condicionNoNeutra : null;
+      const paqueteRestrTri: EvidenciaTernaria = paquete ? paquete.restriccionNoNeutra : null;
+      return {
+        condicion: etiquetaCondicion(combinarTernario(hotelCondTri, paqueteCondTri)),
+        politica: etiquetaPolitica(combinarTernario(hotelRestrTri, paqueteRestrTri)),
+      };
+    };
+    const itemDePersona = (c: HotelCard): ItemResto => ({
+      hotelId: c.hotelId, paqueteId: c.paqueteId as number, nombre: c.hotelNombre,
+      precio: c.desde, estrellas: c.estrellas, zona: c.zona,
+      petFriendly: c.petFriendly, adultsOnly: c.adultsOnly,
+      condicion: condicionDe(c.hotelId, c.paqueteId as number),
+      politica: politicaDe(c.hotelId, c.paqueteId as number),
+    });
+    // Unidad en EXPLORACIÓN nunca tiene precio precargado (regla: no se
+    // cotiza en background solo para poder ordenar) y su condición/política
+    // no está conectada a ningún cálculo — siempre "desconocido".
+    // Unidad en EXPLORACIÓN: el lado HOTEL sigue siempre desconocido (Bernalo
+    // no tiene `condicionHotelFechas` calculada para ningún rango), pero el
+    // lado PAQUETE SÍ es determinable (`restriccionPorPaquete`, un valor de
+    // catálogo sin fecha) — misma combinación ternaria que la búsqueda
+    // (`condicionPoliticaBusqueda(undefined, h.paqueteId)`), nunca
+    // "desconocido" fijo. Un paquete restringido demuestra "con"/
+    // "no_reembolsable" aunque el hotel sea desconocido; un paquete neutro
+    // deja el resultado en "desconocido" (nunca inventa que el hotel sea
+    // flexible). Se aplica igual a la unidad recomendada y a la no
+    // recomendada — ambas pasan por este mismo constructor.
+    const itemDeUnidadExploracion = (h: HotelBernaloDescubierto): ItemResto => {
+      const info = infoPorHotel[h.hotelId];
+      const { condicion, politica } = condicionPoliticaBusqueda(undefined, h.paqueteId);
+      return {
+        hotelId: h.hotelId, paqueteId: h.paqueteId, nombre: h.hotelNombre,
+        precio: null, estrellas: info?.estrellas ?? null, zona: info?.zona ?? null,
+        petFriendly: info?.petFriendly ?? false, adultsOnly: info?.adultsOnly ?? false,
+        condicion, politica,
+      };
+    };
+    const itemDeBusquedaPersona = (r: BusquedaResultado): ItemResto => {
+      const info = infoPorHotel[r.hotelId];
+      const { condicion, politica } = condicionPoliticaBusqueda(r.condicion, r.paqueteId);
+      return {
+        hotelId: r.hotelId, paqueteId: r.paqueteId, nombre: r.hotelNombre ?? "—",
+        precio: r.total, estrellas: info?.estrellas ?? null, zona: info?.zona ?? null,
+        petFriendly: info?.petFriendly ?? false, adultsOnly: info?.adultsOnly ?? false,
+        condicion, politica,
+      };
+    };
+    // Unidad en BÚSQUEDA sí trae precio confirmado por el motor (nunca se
+    // recalcula acá): el mínimo entre sus combinaciones confirmadas. El lado
+    // HOTEL de condición/política queda siempre desconocido (Bernalo no
+    // tiene `condicionHotelFechas` calculada para ninguna fecha) — solo
+    // aporta el paquete, si su restricción es determinable.
+    const itemDeBusquedaUnidad = (g: GrupoOfertaUnidad<OpcionUnidadConfirmada>): ItemResto => {
+      const info = infoPorHotel[g.hotelId];
+      const precios = g.opciones.map((o) => o.precioVenta).filter((v): v is number => v != null && v > 0);
+      const { condicion, politica } = condicionPoliticaBusqueda(undefined, g.paqueteId);
+      return {
+        hotelId: g.hotelId, paqueteId: g.paqueteId, nombre: g.opciones[0]?.hotelNombre ?? "—",
+        precio: precios.length ? Math.min(...precios) : null,
+        estrellas: info?.estrellas ?? null, zona: info?.zona ?? null,
+        petFriendly: info?.petFriendly ?? false, adultsOnly: info?.adultsOnly ?? false,
+        condicion, politica,
+      };
     };
 
     // ── Modo búsqueda: UNA sola lista, la de la búsqueda ──────────────────
@@ -690,8 +1095,12 @@ export function VistaBooking({
     if (enBusquedaPorcion && busquedaPorcion) {
       const vistasPersona = new Set<string>();
       const resultadosPersona: BusquedaResultado[] = [];
+      // Pet friendly/Adults Only YA NO acotan este candidato inicial (mismo
+      // criterio que exploración): se aplican DESPUÉS de elegir recomendados,
+      // vía FiltrosResto en el `tarjetas` final — así una prioridad 1
+      // incompatible desaparece sin promover la 3 al lugar de la 2.
       for (const r of busquedaPorcion.resultados) {
-        if (idsUnidadAutoritativa.has(r.hotelId) || !porFiltros(r.hotelId)) continue;
+        if (idsUnidadAutoritativa.has(r.hotelId)) continue;
         const clave = claveOferta(r.hotelId, r.paqueteId);
         if (vistasPersona.has(clave)) continue;
         vistasPersona.add(clave);
@@ -709,7 +1118,7 @@ export function VistaBooking({
       // confirmado por `computarReservaBernalo`) NO cambia — solo se reparte el
       // MISMO arreglo `opciones`, ya autoritativo, por paquete.
       const gruposUnidadBusqueda = agruparOpcionesUnidadPorOferta(
-        busquedaPorcion.unidad.filter((u) => porFiltros(u.hotelId)).flatMap((u) => u.opciones)
+        busquedaPorcion.unidad.flatMap((u) => u.opciones)
       );
       const gruposUnidadPorClave = new Map(
         gruposUnidadBusqueda.map((g) => [claveOferta(g.hotelId, g.paqueteId), g])
@@ -752,30 +1161,36 @@ export function VistaBooking({
         },
       });
 
-      const tarjetasRecomendadas: Tarjeta[] = [];
+      // ⚠️ Defecto 2 (corregido, sigue vigente): un builder pasado SUELTO a
+      // `.map` recibiría el ÍNDICE como 2º argumento y lo confundiría con la
+      // marca de recomendación — por eso todo builder se llama con un
+      // callback explícito de UN solo argumento, nunca `.map(tarjetaPersona)`.
+      const itemsRecomendados: ItemResto[] = [];
+      const tarjetaPorClaveRecomendada = new Map<string, Tarjeta>();
       for (const o of recomendadasBusqueda) {
         const clave = claveOferta(o.hotelId, o.paqueteId);
         const r = resultadosPersona.find((x) => x.hotelId === o.hotelId && x.paqueteId === o.paqueteId);
-        if (r) { tarjetasRecomendadas.push(tarjetaPersona(r, { recomendada: true })); continue; }
+        if (r) {
+          tarjetaPorClaveRecomendada.set(clave, tarjetaPersona(r, { recomendada: true }));
+          itemsRecomendados.push(itemDeBusquedaPersona(r));
+          continue;
+        }
         const g = gruposUnidadPorClave.get(clave);
-        if (g) tarjetasRecomendadas.push(tarjetaUnidad(g, { recomendada: true }));
+        if (g) {
+          tarjetaPorClaveRecomendada.set(clave, tarjetaUnidad(g, { recomendada: true }));
+          itemsRecomendados.push(itemDeBusquedaUnidad(g));
+        }
       }
-      // ⚠️ Defecto 2 (corregido): estas dos líneas pasaban la FUNCIÓN directo a
-      // `Array.map` (`.map(tarjetaPersona)`), así que JS le entregaba
-      // `(elemento, índice, arreglo)` y el ÍNDICE entraba como la marca de
-      // recomendación — TODA oferta del resto quedaba marcada como recomendada
-      // ("Recomendado · paquete") sin estarlo. Los callbacks explícitos pasan UN
-      // solo argumento: la marca `recomendada` solo se pone en el bucle de
-      // arriba, y solo a las ofertas que realmente están en
-      // `recomendadasBusqueda`. Además la marca ahora viaja en un OBJETO
-      // (`{ recomendada: true }`), así que un `.map(fn)` accidental pasaría el
-      // índice como ese objeto y la marca seguiría quedando falsa — el índice
-      // ya no puede convertirse en "recomendado" ni por accidente.
-      const resto: Tarjeta[] = [
-        ...resultadosPersona.filter((r) => !clavesRecomendadasBusqueda.has(claveOferta(r.hotelId, r.paqueteId))).map((r) => tarjetaPersona(r)),
-        ...gruposUnidadBusqueda.filter((g) => !clavesRecomendadasBusqueda.has(claveOferta(g.hotelId, g.paqueteId))).map((g) => tarjetaUnidad(g)),
-      ].sort((x, y) => nombreTarjeta(x).localeCompare(nombreTarjeta(y)));
-      return [...tarjetasRecomendadas, ...resto];
+      const restoPersonaCandidatas = resultadosPersona.filter((r) => !clavesRecomendadasBusqueda.has(claveOferta(r.hotelId, r.paqueteId)));
+      const restoUnidadCandidatas = gruposUnidadBusqueda.filter((g) => !clavesRecomendadasBusqueda.has(claveOferta(g.hotelId, g.paqueteId)));
+      const tarjetaPorClaveResto = new Map<string, Tarjeta>();
+      for (const r of restoPersonaCandidatas) tarjetaPorClaveResto.set(claveOferta(r.hotelId, r.paqueteId), tarjetaPersona(r));
+      for (const g of restoUnidadCandidatas) tarjetaPorClaveResto.set(claveOferta(g.hotelId, g.paqueteId), tarjetaUnidad(g));
+      const itemsRestoCandidatos: ItemResto[] = [
+        ...restoPersonaCandidatas.map(itemDeBusquedaPersona),
+        ...restoUnidadCandidatas.map(itemDeBusquedaUnidad),
+      ];
+      return { itemsRecomendados, tarjetaPorClaveRecomendada, itemsRestoCandidatos, tarjetaPorClaveResto };
     }
 
     // ── Exploración (sin búsqueda vigente): recomendados (persona + unidad
@@ -796,19 +1211,19 @@ export function VistaBooking({
     const esRecomendada = (hotelId: number, paqueteId: number | undefined | null) =>
       paqueteId != null && clavesRecomendadas.has(claveOferta(hotelId, paqueteId));
 
-    const tarjetasRecomendadas: Tarjeta[] = [];
+    const itemsRecomendados: ItemResto[] = [];
+    const tarjetaPorClaveRecomendada = new Map<string, Tarjeta>();
     for (const o of recomendadas) {
+      const clave = claveOferta(o.hotelId, o.paqueteId);
       const cPersona = cardsPersona.find((c) => c.hotelId === o.hotelId && c.paqueteId === o.paqueteId);
       if (cPersona) {
-        tarjetasRecomendadas.push({
-          tipo: "persona" as const, key: claveCardPersona(cPersona), card: cPersona,
-          recomendada: true,
-        });
+        tarjetaPorClaveRecomendada.set(clave, { tipo: "persona" as const, key: claveCardPersona(cPersona), card: cPersona, recomendada: true });
+        itemsRecomendados.push(itemDePersona(cPersona));
         continue;
       }
       const hUnidad = hotelesUnidadVisibles.find((h) => h.hotelId === o.hotelId && h.paqueteId === o.paqueteId);
       if (hUnidad) {
-        tarjetasRecomendadas.push({
+        tarjetaPorClaveRecomendada.set(clave, {
           tipo: "unidad" as const,
           key: claveCardUnidad(hUnidad),
           recomendada: true,
@@ -817,31 +1232,101 @@ export function VistaBooking({
             ofertas: [hUnidad], paqueteId: hUnidad.paqueteId, paqueteNombre: hUnidad.paqueteNombre,
           },
         });
+        itemsRecomendados.push(itemDeUnidadExploracion(hUnidad));
       }
     }
 
     // Estado global inicial (A): SIN búsqueda/destino activo, el resto del
     // inventario NO se muestra — solo recomendados (si hay). Con destino/
-    // búsqueda (B): recomendados + resto (persona Y unidad, cada oferta por
-    // su propia identidad hotelId+paqueteId — nunca fusionada), excluyendo
-    // cualquier oferta ya mostrada como recomendada, alfabetizado (criterio
-    // histórico sin cambios).
-    let resto: Tarjeta[] = [];
+    // búsqueda (B): resto (persona Y unidad, cada oferta por su propia
+    // identidad hotelId+paqueteId — nunca fusionada), excluyendo cualquier
+    // oferta ya mostrada como recomendada. El orden/filtro real se aplica
+    // más abajo (`tarjetas`), nunca acá.
+    let itemsRestoCandidatos: ItemResto[] = [];
+    const tarjetaPorClaveResto = new Map<string, Tarjeta>();
     if (destinoActivoSub) {
-      const restoPersona: Tarjeta[] = cardsPersona
-        .filter((c) => !esRecomendada(c.hotelId, c.paqueteId))
-        .map((c) => ({ tipo: "persona" as const, key: claveCardPersona(c), card: c }));
-      const restoUnidad: Tarjeta[] = hotelesUnidadVisibles
-        .filter((h) => !esRecomendada(h.hotelId, h.paqueteId))
-        .map((h) => ({
+      const restoPersonaCandidatas = cardsPersona.filter((c) => !esRecomendada(c.hotelId, c.paqueteId));
+      const restoUnidadCandidatas = hotelesUnidadVisibles.filter((h) => !esRecomendada(h.hotelId, h.paqueteId));
+      for (const c of restoPersonaCandidatas) {
+        tarjetaPorClaveResto.set(claveOferta(c.hotelId, c.paqueteId as number), { tipo: "persona" as const, key: claveCardPersona(c), card: c });
+      }
+      for (const h of restoUnidadCandidatas) {
+        tarjetaPorClaveResto.set(claveOferta(h.hotelId, h.paqueteId), {
           tipo: "unidad" as const,
           key: claveCardUnidad(h),
           hotel: { hotelId: h.hotelId, hotelNombre: h.hotelNombre, destino: h.destinoNombre, ofertas: [h], paqueteId: h.paqueteId, paqueteNombre: h.paqueteNombre },
-        }));
-      resto = [...restoPersona, ...restoUnidad].sort((x, y) => nombreTarjeta(x).localeCompare(nombreTarjeta(y)));
+        });
+      }
+      itemsRestoCandidatos = [
+        ...restoPersonaCandidatas.map(itemDePersona),
+        ...restoUnidadCandidatas.map(itemDeUnidadExploracion),
+      ];
     }
-    return [...tarjetasRecomendadas, ...resto];
-  }, [hoteles, hotelesUnidadVisibles, hotelIdsUnidadAutoritativos, enBusquedaPorcion, busquedaPorcion, infoPorHotel, soloPetFriendly, soloAdultsOnly, destinoActivoSub, prioridadesRecomendados]);
+    return { itemsRecomendados, tarjetaPorClaveRecomendada, itemsRestoCandidatos, tarjetaPorClaveResto };
+  }, [
+    hoteles, hotelesUnidadVisibles, hotelIdsUnidadAutoritativos, enBusquedaPorcion, busquedaPorcion, infoPorHotel,
+    destinoActivoSub, prioridadesRecomendados, condicionPorOferta, politicaPorOferta,
+    restriccionPorPaquete,
+  ]);
+
+  // Opciones REALES del panel de filtros — nunca una lista global inventada
+  // (regla: sin destino, no hay zonas que ofrecer). Incluyen TANTO
+  // recomendados como resto (regla cerrada 1: los filtros aplican a TODAS
+  // las ofertas visibles) y se derivan de `datosBase` — referencialmente
+  // estables mientras destino/búsqueda no cambien de verdad, así que tocar
+  // un filtro/orden nunca las recalcula ni las "resetea".
+  const universoFiltrable = useMemo(
+    () => [...datosBase.itemsRecomendados, ...datosBase.itemsRestoCandidatos],
+    [datosBase]
+  );
+  const zonasRestoDisponibles = useMemo(() => zonasDisponibles(universoFiltrable), [universoFiltrable]);
+  const estrellasRestoDisponibles = useMemo(() => estrellasDisponibles(universoFiltrable), [universoFiltrable]);
+  // `filtrosResto` (estado crudo) SÍ se poda/restablece de verdad —
+  // `podarZonasEstrellas`/`restablecerControlesOcultos` (ver `cambiarSub`,
+  // `confirmarDestinoBloqueo`, `confirmarBusquedaPorcion` más arriba) lo
+  // recortan en el mismo handler síncrono que confirma/limpia destino/
+  // búsqueda/pestaña — nunca con un `useEffect` reaccionando al cambio, y
+  // nunca dejando que una zona/estrella/condición/política elegida en un
+  // contexto (ej. Bloqueo) siga filtrando en silencio otro contexto (ej. el
+  // estado global de Porción terrestre). `filtrosVistaEfectivos` sigue
+  // intersectando zona/estrellas contra lo disponible AHORA como una defensa
+  // adicional (nunca hace daño, cubre cualquier caso donde la poda del
+  // handler no alcanzara a correr todavía en este mismo render) — pero el
+  // contrato real es que, tras cualquier cambio de contexto, `filtrosResto`
+  // YA queda correcto por sí solo, sin depender de esta intersección.
+  // Pet friendly/Adults Only se mezclan AQUÍ (nunca antes de seleccionar
+  // recomendados, ver `datosBase` más arriba) — mismo estado reutilizado
+  // (`soloPetFriendly`/`soloAdultsOnly`, un solo control, sin duplicar) pero
+  // ahora aplicado como filtro POSTERIOR, igual que zona/estrellas/condición/
+  // política: excluye ofertas incompatibles sin promover ninguna otra.
+  const filtrosVistaEfectivos = useMemo(
+    () => ({
+      ...filtrosEfectivos(filtrosResto, zonasRestoDisponibles, estrellasRestoDisponibles),
+      petFriendly: soloPetFriendly,
+      adultsOnly: soloAdultsOnly,
+    }),
+    [filtrosResto, zonasRestoDisponibles, estrellasRestoDisponibles, soloPetFriendly, soloAdultsOnly]
+  );
+
+  // `tarjetas` — filtra TODO (recomendados + resto) por los mismos filtros;
+  // los recomendados que sobreviven conservan su prioridad/bloque exactos
+  // (`filtrarPorFiltros`, sin reordenar); el resto pasa además por el orden
+  // elegido (`ordenarYFiltrarResto`) — el selector de orden NUNCA toca los
+  // recomendados.
+  const tarjetas = useMemo<Tarjeta[]>(() => {
+    const recomendadasFiltradas = filtrarPorFiltros(datosBase.itemsRecomendados, filtrosVistaEfectivos)
+      .map((it) => datosBase.tarjetaPorClaveRecomendada.get(claveOferta(it.hotelId, it.paqueteId)))
+      .filter((t): t is Tarjeta => t != null);
+    const restoOrdenado = ordenarYFiltrarResto(datosBase.itemsRestoCandidatos, { orden: ordenResto, filtros: filtrosVistaEfectivos })
+      .map((it) => datosBase.tarjetaPorClaveResto.get(claveOferta(it.hotelId, it.paqueteId)))
+      .filter((t): t is Tarjeta => t != null);
+    return [...recomendadasFiltradas, ...restoOrdenado];
+  }, [datosBase, ordenResto, filtrosVistaEfectivos]);
+
+  // El panel de orden/zona/estrellas/condición/política del RESTO solo tiene
+  // sentido cuando el resto puede mostrarse (regla cerrada 1: en el estado
+  // global inicial, sin destino/búsqueda, el resto sigue vacío siempre).
+  const mostrarControlesResto = destinoActivoSub !== "" || enBusquedaPorcion;
 
   const [abierto, setAbierto] = useState<HotelCard | null>(null);
   const [detalleHotel, setDetalleHotel] = useState<EstadoDetalle<FilaTarifario> | null>(null);
@@ -1023,14 +1508,14 @@ export function VistaBooking({
           <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
             <div>
               <label className="mb-1 block text-xs font-medium text-gray-600">Origen</label>
-              <select value={origenSel} onChange={(e) => { setOrigenSel(e.target.value); setDestinoSel(""); setSalidaSel(""); }} className="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm">
+              <select value={origenSel} onChange={(e) => { setOrigenSel(e.target.value); confirmarDestinoBloqueo(""); }} className="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm">
                 <option value="">Todos</option>
                 {origenes.map((o) => <option key={o} value={o}>{o}</option>)}
               </select>
             </div>
             <div>
               <label className="mb-1 block text-xs font-medium text-gray-600">Destino</label>
-              <select value={destinoSel} onChange={(e) => { setDestinoSel(e.target.value); setSalidaSel(""); }} className="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm">
+              <select value={destinoSel} onChange={(e) => confirmarDestinoBloqueo(e.target.value)} className="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm">
                 <option value="">Todos</option>
                 {destinosBloqueo.map((d) => <option key={d} value={d}>{d}</option>)}
               </select>
@@ -1132,7 +1617,7 @@ export function VistaBooking({
           lista propia: el motor resuelve las dos mitades, así que su selector
           tiene que ofrecer exactamente lo que el motor puede devolver. */}
       {sub === "porcion_terrestre" && (
-        <BuscadorBooking destinos={destinosPorcion} onBusqueda={setBusquedaPorcion} sugerenciaPedida={sugerenciaPedida} />
+        <BuscadorBooking destinos={destinosPorcion} onBusqueda={confirmarBusquedaPorcion} sugerenciaPedida={sugerenciaPedida} />
       )}
 
       {/* Aviso NO bloqueante: la mitad "unidad" de la búsqueda vigente no se
@@ -1166,17 +1651,20 @@ export function VistaBooking({
           )}
           <span className="ml-2 font-normal normal-case text-gray-400">({tarjetas.length})</span>
         </p>
-        <div className="flex flex-wrap items-center gap-3 text-xs text-gray-600">
-          <label className="flex items-center gap-1.5">
-            <input type="checkbox" checked={soloPetFriendly} onChange={(e) => setSoloPetFriendly(e.target.checked)} />
-            Pet friendly
-          </label>
-          <label className="flex items-center gap-1.5">
-            <input type="checkbox" checked={soloAdultsOnly} onChange={(e) => setSoloAdultsOnly(e.target.checked)} />
-            Adults Only
-          </label>
-        </div>
       </div>
+      <PanelFiltrosResto
+        ordenResto={ordenResto}
+        onOrdenChange={setOrdenResto}
+        filtros={filtrosVistaEfectivos}
+        onFiltrosChange={setFiltrosResto}
+        zonas={zonasRestoDisponibles}
+        estrellas={estrellasRestoDisponibles}
+        soloPetFriendly={soloPetFriendly}
+        onSoloPetFriendlyChange={setSoloPetFriendly}
+        soloAdultsOnly={soloAdultsOnly}
+        onSoloAdultsOnlyChange={setSoloAdultsOnly}
+        mostrarControlesResto={mostrarControlesResto}
+      />
       {/* Estado vacío de la GRILLA (exploración). En modo búsqueda NO se
           pinta: hay un estado vacío ÚNICO de búsqueda más abajo, junto a la
           lista unificada — dos mensajes vacíos para la misma grilla dirían lo

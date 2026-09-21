@@ -56,7 +56,12 @@ test("VistaBooking.tsx (tarjeta de exploración — 'O explora todos los alojami
 test("lib/tarifario/resumen.ts: calcula tieneCondicion por hotel reutilizando condicionHotelFechas (mismo resolver de PR #286)", () => {
   const src = leer("lib/tarifario/resumen.ts");
   assert.match(src, /import \{ condicionHotelFechas, type FilaTemporadaHotelRaw \} from "\.\.\/reservar\/liquidacionHotel\.ts"/, "no importa el resolver de condición");
-  assert.match(src, /hotel_temporadas.*condicion_pago_tipo, condicion_pago_pct_inicial, condicion_pago_dias_saldo/, "no selecciona las columnas de condición de hotel_temporadas");
+  assert.match(src, /hotel_temporadas[\s\S]*condicion_pago_tipo, condicion_pago_pct_inicial, condicion_pago_dias_saldo/, "no selecciona las columnas de condición de hotel_temporadas");
+  // Paginado con `ejecutarConsultaPaginada` (PR #320/hotfix vigencia paginada
+  // "TAMACÁ") — orden total por `id` y avance por rango, para no truncar en
+  // silencio ante el límite "Max Rows" del proyecto.
+  assert.match(src, /ejecutarConsultaPaginada<FilaCondicionHotelPaginada>\(\(from, hasta\) =>/, "no pagina la consulta a hotel_temporadas");
+  assert.match(src, /\.from\("hotel_temporadas"\)\s*\n\s*\.select\("hotel_id, id, nombre, fecha_inicio, fecha_fin, condicion_pago_tipo, condicion_pago_pct_inicial, condicion_pago_dias_saldo"\)\s*\n\s*\.in\("hotel_id", hotelIds\)\s*\n\s*\.order\("id"\)\s*\n\s*\.range\(from, hasta\)/, "la consulta paginada no tiene orden total por id ni .range()");
   assert.match(src, /slot\.tieneCondicion = true;/, "no marca tieneCondicion en infoPorHotel");
 });
 
