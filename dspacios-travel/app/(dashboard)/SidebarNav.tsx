@@ -31,15 +31,10 @@ const ICONS: Record<string, LucideIcon> = {
 };
 
 // Colores por estilo inline, nunca por clases utilitarias de color de
-// Tailwind: esas clases son exactamente las que styles/globals.css
-// intercepta por selector legacy para los temas "verde"/"web"/"blueprint"
-// dentro del `<aside>` (ver auditoría). Los tokens --dash-*/--nav-*
-// son variables CSS: heredan el valor del tema activo sin depender de esos
-// selectores. `--nav-fg`/`--nav-subfg` ya existían como hook de tema (los
-// definen los temas "verde"/"web" en globals.css); el resto de temas y el
-// default caen al fallback --dash-ink-muted (superficie clara).
-const ITEM_INACTIVO = "var(--nav-fg, var(--dash-ink-muted))";
-const SUBITEM_INACTIVO = "var(--nav-subfg, var(--dash-ink-muted))";
+// Tailwind — los tokens --dash-* son variables CSS scoped al shell del
+// Dashboard (ver DashboardShell.module.css).
+const ITEM_INACTIVO = "var(--dash-ink-muted)";
+const SUBITEM_INACTIVO = "var(--dash-ink-muted)";
 
 export function SidebarNav({ items, collapsed }: { items: NavItem[]; collapsed?: boolean }) {
   const pathname = usePathname();

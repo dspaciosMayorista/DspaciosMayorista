@@ -289,39 +289,9 @@ describe("Contraste canvas/tarjeta — --dash-bg, --dash-surface y --dash-kpi-su
     assert.match(home, /<section className="mt-5 rounded-lg border p-4" style=\{\{ backgroundColor: "var\(--dash-surface\)"/);
   });
 
-  // Extrae SOLO el primer bloque de declaraciones de un tema (desde su
-  // "html[data-theme=...] {" inicial hasta el "}" que lo cierra) — nunca una
-  // ventana de caracteres arbitraria, que puede cruzar sin querer hacia otra
-  // regla más adelante en el archivo (ej. la clase .dark, que también trae
-  // --card) y dar un falso positivo/negativo.
-  function bloqueTema(nombreTema: string): string {
-    const selector = `html[data-theme="${nombreTema}"] {`;
-    const inicio = globals.indexOf(selector);
-    assert.notEqual(inicio, -1, `debe existir el bloque de declaraciones de data-theme="${nombreTema}"`);
-    const fin = globals.indexOf("\n}", inicio);
-    return globals.slice(inicio, fin);
-  }
-
-  test("en los 4 temas reales del repo (marca/verde/web/blueprint), --muted y --card quedan definidos y son distintos entre sí", () => {
-    // Tema por defecto ("marca", :root): --card blanco, --muted gris muy claro.
-    const raiz = globals.slice(globals.indexOf(":root {"), globals.indexOf("\n}", globals.indexOf(":root {")));
-    assert.match(raiz, /--card: oklch\(1 0 0\);/);
-    assert.match(raiz, /--muted: oklch\(0\.97 0 0\);/);
-
-    // verde: ambos redefinidos dentro de SU PROPIO bloque, y distintos entre sí.
-    const verde = bloqueTema("verde");
-    assert.match(verde, /--card: #0c100e;/);
-    assert.match(verde, /--muted: #141a17;/);
-
-    // web y blueprint: redefinen --muted (canvas) dentro de su propio bloque y
-    // NUNCA pisan --card ahí (queda en el blanco por defecto) — igual de
-    // válido, siguen siendo valores distintos.
-    const web = bloqueTema("web");
-    assert.match(web, /--muted:\s*#eef1f8;/);
-    assert.doesNotMatch(web, /--card:/);
-    const blueprint = bloqueTema("blueprint");
-    assert.match(blueprint, /--muted:\s*#efe8da;/);
-    assert.doesNotMatch(blueprint, /--card:/);
+  test("UI única: globals.css no define ningún bloque de tema alternativo (data-theme) — solo :root y .dark", () => {
+    assert.doesNotMatch(globals, /data-theme/);
+    assert.doesNotMatch(globals, /html\[data-theme/);
   });
 });
 

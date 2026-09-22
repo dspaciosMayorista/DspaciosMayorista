@@ -258,9 +258,11 @@ describe("Estilo y proporciones — tokens aislados, sin globals, marco/columnas
   });
 });
 
-describe("ThemeSwitcher y layout sin cambios de alcance", () => {
-  test("ThemeSwitcher sigue montado en el layout raíz", () => {
-    assert.match(rootLayout, /<ThemeSwitcher \/>/);
+describe("Layout raíz — sin selector de temas (UI única)", () => {
+  test("app/layout.tsx no monta ningún selector de temas ni script de inicialización de data-theme", () => {
+    assert.doesNotMatch(rootLayout, /ThemeSwitcher/);
+    assert.doesNotMatch(rootLayout, /data-theme/);
+    assert.doesNotMatch(rootLayout, /dsp-theme/);
   });
 
   test("app/(auth)/layout.tsx sigue siendo un pass-through simple", () => {

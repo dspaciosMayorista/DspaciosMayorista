@@ -2,29 +2,26 @@
    No tocan styles/globals.css ni sus rutas hermanas (Tarifario, Login,
    Portal B2B) — se aíslan bajo .dashRoot.
 
-   Los tokens --dash-* DERIVAN de los tokens de marca/semánticos que YA
-   cambian por tema en styles/globals.css (--brand-primary/accent/success/
-   highlight, --muted/--card/--border/--foreground/--muted-foreground/
-   --destructive). Al ser variables CSS (no clases), heredan el valor del
-   tema activo automáticamente sin depender de los selectores legacy que
-   styles/globals.css usa para re-pintar el Dashboard hoy (aside.bg-white,
-   .text-gray-*, .app-bg, .home-clasica/.home-blueprint) — ninguno de esos
-   selectores aparece en este archivo ni en los componentes que lo consumen.
-   --dash-bg usa --muted (no --background) a propósito: en el tema por
-   defecto --background y --card son AMBOS blancos, así que canvas y
-   tarjeta quedarían idénticos; --muted es un gris/azul muy claro distinto
-   de --card (blanco), dando el contraste canvas/tarjeta que pide Stitch.
+   Los tokens --dash-* DERIVAN de los tokens de marca/semánticos base de
+   styles/globals.css (--brand-primary/accent/success/highlight,
+   --muted/--card/--border/--foreground/--muted-foreground/--destructive).
+   Al ser variables CSS (no clases), no dependen de los selectores legacy
+   que styles/globals.css usa para pintar algunas superficies (aside.bg-white,
+   .text-gray-*, .app-bg) — ninguno de esos selectores aparece en este
+   archivo ni en los componentes que lo consumen.
+   --dash-bg usa --muted (no --background) a propósito: --background y --card
+   son AMBOS blancos, así que canvas y tarjeta quedarían idénticos; --muted es
+   un gris/azul muy claro distinto de --card (blanco), dando el contraste
+   canvas/tarjeta que pide Stitch.
 
    --dash-bg/--dash-border/--dash-kpi-surface usan color-mix() para sumarle
    un matiz azul sutil a esos tokens semánticos (mismo patrón que ya usaba
    este archivo antes de existir — el `tint()` de dashboard/page.tsx hacía
    exactamente esto en JS). Nunca se fija un hex plano: el resultado sigue
-   derivando 100% de tokens que cambian por tema (--muted/--card/--border +
-   --brand-accent), así que un tema oscuro (ej. "verde") sigue recibiendo SU
-   propio matiz correcto en vez de un azul roto sobre fondo negro. El texto
-   (--dash-ink/--dash-ink-muted) NO se toca — sigue en --foreground/
-   --muted-foreground sin mezcla, así que el contraste AA no se ve afectado
-   por este ajuste (solo se tocan fondos/bordes, nunca texto). */
+   derivando 100% de tokens semánticos (--muted/--card/--border +
+   --brand-accent). El texto (--dash-ink/--dash-ink-muted) NO se toca — sigue
+   en --foreground/--muted-foreground sin mezcla, así que el contraste AA no
+   se ve afectado por este ajuste (solo se tocan fondos/bordes, nunca texto). */
 .dashRoot {
   --dash-primary: var(--brand-primary);
   --dash-accent: var(--brand-accent);
