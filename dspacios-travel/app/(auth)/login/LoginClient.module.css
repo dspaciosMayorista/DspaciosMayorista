@@ -1,0 +1,60 @@
+/* Tokens y estructura EXCLUSIVOS de /login. No tocan tipografía ni tokens
+   globales (styles/globals.css) — se aíslan bajo .root para que el resto de
+   la app (Dashboard, Vista Booking) no se vea afectado por este rediseño. */
+.root {
+  --login-bg: #0a141d;
+  --login-ocean: #10495e;
+  --login-primary: #1d7c9a;
+  --login-cyan: #26bbd9;
+  --login-green: #66b596;
+  --login-lime: #aef44a;
+
+  --login-ink: #101828;
+  --login-ink-muted: #55606e;
+  --login-ink-soft: #8a94a1;
+
+  --login-surface: #ffffff;
+  --login-field-bg: #f7f9fb;
+  --login-field-border: #dde3e9;
+
+  --login-context: #0d3244;
+  --login-context-border: rgba(255, 255, 255, 0.14);
+  --login-context-ink: #eaf4f7;
+  --login-context-muted: #a9c2cb;
+
+  --login-danger-bg: #fdecec;
+  --login-danger-border: #f3b9b7;
+  --login-danger-ink: #a3231f;
+
+  --login-warn-bg: #fdf3e0;
+  --login-warn-border: #f0d79a;
+  --login-warn-ink: #7a4c05;
+
+  /* Track del segmented control (selector de tipo de cuenta) — gris azulado
+     claro, la opción activa se recorta en --login-surface (blanco). */
+  --login-selector-bg: #eef2f6;
+
+  min-height: 100dvh;
+  background-color: var(--login-bg);
+}
+
+/* Disclosure nativo "Acceso de pruebas": quita el triángulo por defecto en
+   navegadores WebKit/Blink; Firefox respeta list-style vía la clase Tailwind
+   `list-none` ya aplicada en el JSX. */
+.summaryReset::-webkit-details-marker {
+  display: none;
+}
+
+/* Respeta prefers-reduced-motion sin tocar styles/globals.css: apaga
+   animaciones/transiciones (el punto de estado con animate-ping, las
+   transiciones de hover/focus) solo dentro de /login. */
+@media (prefers-reduced-motion: reduce) {
+  .root *,
+  .root *::before,
+  .root *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}
