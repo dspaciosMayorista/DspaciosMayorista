@@ -43,6 +43,10 @@
   --dash-ink-muted: var(--muted-foreground);
   --dash-muted-surface: var(--muted);
   --dash-danger: var(--destructive);
+  /* Advertencia: ámbar derivado (no hex suelto) mezclando el realce de marca
+     con el token de peligro — reservado para estados reales de riesgo
+     (ej. inventario a punto de agotarse), nunca para umbrales inventados. */
+  --dash-warning: color-mix(in srgb, var(--brand-highlight) 55%, var(--destructive) 45%);
 
   font-family: var(--dash-font-body), ui-sans-serif, system-ui, sans-serif;
   background-color: var(--dash-bg);
@@ -63,6 +67,22 @@
 }
 .scrollNoBar::-webkit-scrollbar {
   display: none;
+}
+
+/* Barra de progreso delgada de los KPI (X de Y + %) — solo se monta cuando
+   dashboard/page.tsx calculó un numerador/denominador real; el color de
+   .barFill llega por prop (acento por defecto, advertencia/crítico solo
+   ante estados reales ya calculados en el servidor). */
+.barTrack {
+  height: 5px;
+  border-radius: 999px;
+  overflow: hidden;
+  background-color: var(--dash-border);
+}
+.barFill {
+  height: 100%;
+  border-radius: 999px;
+  transition: width 0.3s ease;
 }
 
 @media (prefers-reduced-motion: reduce) {

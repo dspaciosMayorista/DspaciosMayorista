@@ -1,9 +1,46 @@
 "use server";
 
 import { createClient } from "@/lib/supabase/server";
+import { getTenant } from "@/lib/tenant.server";
 import { revalidatePath } from "next/cache";
 
 type Result = { ok: true } | { ok: false; error: string };
+
+// ── Meta general de ventas (punto de equilibrio del mes, por tenant) ───────
+// Meta de la AGENCIA — nunca la suma de `asesores.meta_mensual` (esa es una
+// cuota individual para comisiones, otro concepto). RLS en
+// meta_ventas_mensual ya exige superadmin/gerencia/administracion + tenant
+// propio para insert/update; este gate en la Server Action es defensa en
+// profundidad, no la única barrera.
+export async function guardarMetaVentas(input: { periodo: string; valor: number; moneda?: string }): Promise<Result> {
+  if (!/^\d{4}-\d{2}$/.test(input.periodo)) return { ok: false, error: "Periodo inválido (formato YYYY-MM)." };
+  if (!Number.isFinite(input.valor) || input.valor <= 0) return { ok: false, error: "La meta debe ser un valor mayor que cero." };
+  const moneda = input.moneda ?? "COP";
+
+  const sb = await createClient();
+  const { data: { user } } = await sb.auth.getUser();
+  const { data: perfil } = user ? await sb.from("usuarios").select("rol").eq("id", user.id).single() : { data: null };
+  if (!["superadmin", "gerencia", "administracion"].includes(perfil?.rol ?? "")) {
+    return { ok: false, error: "Solo superadmin, gerencia o administración pueden fijar la meta general." };
+  }
+
+  const tenant = await getTenant();
+  const { error } = await sb.from("meta_ventas_mensual").upsert(
+    {
+      tenant,
+      periodo: input.periodo,
+      moneda,
+      valor: input.valor,
+      actualizado_por: user?.email ?? null,
+      updated_at: new Date().toISOString(),
+    },
+    { onConflict: "tenant,periodo,moneda" }
+  );
+  if (error) return { ok: false, error: error.message };
+  revalidatePath("/dashboard/configuracion");
+  revalidatePath("/dashboard");
+  return { ok: true };
+}
 
 // ── Rangos de edad (catálogo) ──────────────────────────────────────────────
 export async function crearRangoEdad(input: {

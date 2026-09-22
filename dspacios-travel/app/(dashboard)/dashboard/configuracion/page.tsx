@@ -1,5 +1,7 @@
 import { createClient } from "@/lib/supabase/server";
+import { getTenant } from "@/lib/tenant.server";
 import { ConfigClient } from "./ConfigClient";
+import { MetaVentasConfig } from "./MetaVentasConfig";
 import { EscalasComisionConfig } from "./EscalasComisionConfig";
 import { SolicitudesConfig } from "./SolicitudesConfig";
 import { CobrosConfig } from "./CobrosConfig";
@@ -27,7 +29,8 @@ export default async function ConfiguracionPage() {
     );
   }
 
-  const [{ data: parametros }, { data: rangos }, { data: formasPago }, { data: escalas }, { data: escalaRangos }, { data: vendedores }, { data: configSolicitudes }, { data: configCobros }, { data: configNotif }] = await Promise.all([
+  const tenant = await getTenant();
+  const [{ data: parametros }, { data: rangos }, { data: formasPago }, { data: escalas }, { data: escalaRangos }, { data: vendedores }, { data: configSolicitudes }, { data: configCobros }, { data: configNotif }, { data: metaVentas }] = await Promise.all([
     sb.from("parametros_tributarios").select("parametro, valor, descripcion").order("parametro"),
     sb.from("rangos_edad").select("id, denominacion, edad_min, edad_max").order("edad_min"),
     sb.from("formas_pago").select("id, nombre").order("orden"),
@@ -37,6 +40,7 @@ export default async function ConfiguracionPage() {
     sb.from("config_solicitudes").select("whatsapp, emails, mensaje_extra").eq("id", 1).maybeSingle(),
     sb.from("config_cobros").select("tipo_paquete, pct_abono").order("tipo_paquete"),
     sb.from("config_notificaciones").select("remitente, destinatarios, dias_anticipacion, alerta_cxp, alerta_cuotas, alerta_bloqueos, activo").eq("id", 1).maybeSingle(),
+    sb.from("meta_ventas_mensual").select("periodo, moneda, valor, actualizado_por").eq("tenant", tenant).order("periodo", { ascending: false }),
   ]);
 
   const { data: configSitio } = await sb.from("config_sitio").select("video_fondo_url, link_pago").eq("id", 1).maybeSingle();
@@ -68,6 +72,9 @@ export default async function ConfiguracionPage() {
       </div>
       <div className="mt-8">
         <SitioConfig config={configSitio ?? null} />
+      </div>
+      <div className="mt-8">
+        <MetaVentasConfig historial={(metaVentas ?? []).map((m) => ({ periodo: m.periodo, moneda: m.moneda, valor: Number(m.valor), actualizado_por: m.actualizado_por }))} />
       </div>
     </div>
   );
