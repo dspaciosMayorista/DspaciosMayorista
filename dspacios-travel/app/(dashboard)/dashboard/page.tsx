@@ -5,12 +5,12 @@ import { formatCOP } from "@/lib/utils";
 import {
   Tags, FileText, Ticket, FileSignature, Plane, LineChart, ArrowRight,
   Package, Armchair, Wallet, HandCoins, Receipt, Settings, Boxes, ChevronRight,
-  Clock, PlaneTakeoff, AlertTriangle, type LucideIcon,
+  PlaneTakeoff, AlertTriangle, type LucideIcon,
 } from "lucide-react";
+import styles from "../DashboardShell.module.css";
 
 export const dynamic = "force-dynamic";
 
-const tint = (v: string) => `color-mix(in srgb, ${v} 12%, white)`;
 const addDays = (n: number) => new Date(Date.now() + n * 86_400_000).toISOString().slice(0, 10);
 
 export default async function DashboardPage() {
@@ -54,85 +54,88 @@ export default async function DashboardPage() {
   const OCULTOS_MINORISTA = new Set(["/dashboard/tarifario", "/dashboard/reservar", "/dashboard/producto", "/dashboard/paquetes", "/dashboard/vuelos"]);
   const modulos = MODULOS.filter((m) => (!m.interno || interno) && !(esMinorista && OCULTOS_MINORISTA.has(m.href)));
 
+  // Métricas reales, en el orden pedido (contratos, ventas, cartera, cupos,
+  // paquetes, salidas próximas, pagos por vencer) — cada una SOLO si ya
+  // estaba permitida por rol/tenant en el cálculo de arriba (sin excepciones
+  // nuevas). El badge de "pendientes de firma" en Contratos reutiliza
+  // `nPendientes`, ya calculado (antes solo se mostraba como alerta aparte).
+  const metricas: { icon: LucideIcon; label: string; value: string; sub?: string }[] = [
+    { icon: FileSignature, label: "Contratos", value: String(nActivos), sub: nPendientes > 0 ? `${nPendientes} pendiente(s) de firma` : "Sin pendientes de firma" },
+    ...(interno ? [{ icon: Wallet, label: "Ventas del mes", value: formatCOP(ventaMes), sub: hoy.split(",")[0] }] : []),
+    ...(interno ? [{ icon: HandCoins, label: "Cartera por cobrar", value: formatCOP(cartera) }] : []),
+    ...(!esMinorista ? [{ icon: Armchair, label: "Cupos disponibles", value: String(cuposDisponibles) }] : []),
+    ...(!esMinorista ? [{ icon: Package, label: "Paquetes activos", value: String(nPaquetes ?? 0) }] : []),
+    ...(!esMinorista ? [{ icon: PlaneTakeoff, label: "Salidas próximas (14d)", value: String(nSalidas ?? 0) }] : []),
+    ...(interno ? [{ icon: Receipt, label: "Pagos por vencer (15d)", value: String(nPagos ?? 0) }] : []),
+  ];
+
+  // Alertas: SOLO cupos críticos y pagos por vencer (sin aerolíneas ni datos
+  // inventados) — ambas ya calculadas arriba, mismo gating que sus métricas.
+  const alertas: { icon: LucideIcon; label: string; n: number; href: string }[] = [
+    ...(!esMinorista ? [{ icon: AlertTriangle, label: "Cupos críticos", n: cuposCriticos, href: "/dashboard/vuelos" }] : []),
+    ...(interno ? [{ icon: Receipt, label: "Pagos por vencer (15d)", n: nPagos ?? 0, href: "/dashboard/pagos" }] : []),
+  ];
+
   return (
-    <>
-      {/* ════════ OPCIÓN 1 · CLÁSICA (Travel Ops) ════════ */}
-      <div className="home-clasica p-4 md:p-7">
-        <header className="bg-brand-gradient relative overflow-hidden rounded-xl px-6 py-7 text-white">
-          <div className="pointer-events-none absolute inset-0 opacity-60" style={{ backgroundImage: "radial-gradient(rgba(255,255,255,0.09) 1px, transparent 1.4px)", backgroundSize: "22px 22px" }} />
-          <div className="relative z-10">
-            <p className="text-[11px] font-medium uppercase tracking-[0.2em] text-white/75">{hoy}</p>
-            <h1 className="mt-1.5 text-2xl font-bold capitalize md:text-[28px]">Hola, {nombre}</h1>
-            <span className="mt-3 inline-block rounded-md px-2.5 py-1 text-[11px] font-bold uppercase tracking-wide" style={{ backgroundColor: "var(--brand-highlight)", color: "var(--brand-primary)" }}>
-              {perfil?.rol ?? "—"}
-            </span>
-          </div>
-        </header>
-
-        <section className="mt-5 grid grid-cols-2 gap-3 md:grid-cols-4">
-          <Metric icon={FileSignature} label="Contratos" value={String(nActivos)} color="var(--brand-primary)" />
-          {!esMinorista && <Metric icon={Package} label="Paquetes activos" value={String(nPaquetes ?? 0)} color="var(--brand-accent)" />}
-          {!esMinorista && <Metric icon={Armchair} label="Cupos disponibles" value={String(cuposDisponibles)} color="var(--brand-success)" />}
-          {interno && <Metric icon={Wallet} label="Ventas del mes" value={formatCOP(ventaMes)} color="var(--brand-primary)" sub={hoy.split(",")[0]} highlight />}
-        </section>
-
-        <h2 className="mb-3 mt-8 text-xs font-semibold uppercase tracking-wider text-gray-400">Módulos</h2>
-        <ModulosGrid modulos={modulos} />
-      </div>
-
-      {/* ════════ OPCIÓN 2 · BLUEPRINT (centro de control) ════════ */}
-      <div className="home-blueprint p-4 md:p-7">
-        <header className="flex flex-wrap items-end justify-between gap-3 border-b border-gray-200 pb-4">
-          <div>
-            <p className="text-[11px] font-medium uppercase tracking-[0.18em] text-gray-400">Centro de operación · {hoy}</p>
-            <h1 className="mt-1 text-2xl font-bold capitalize text-gray-900 md:text-[26px]">Hola, {nombre}</h1>
-          </div>
-          <span className="rounded-md px-2.5 py-1 text-[11px] font-bold uppercase tracking-wide" style={{ backgroundColor: "var(--brand-highlight)", color: "var(--brand-primary)" }}>
+    <div className="p-4 md:p-7">
+      {/* 1. Cabecera operativa — saludo real, fecha, rol, texto factual. */}
+      <header className="rounded-lg border p-6" style={{ backgroundColor: "var(--dash-surface)", borderColor: "var(--dash-border)" }}>
+        <p className="text-[11px] font-medium uppercase tracking-[0.18em]" style={{ color: "var(--dash-ink-muted)" }}>{hoy}</p>
+        <h1 className={`${styles.heading} mt-1.5 text-2xl font-bold capitalize md:text-[28px]`} style={{ color: "var(--dash-ink)" }}>
+          Hola, {nombre}
+        </h1>
+        <div className="mt-2 flex flex-wrap items-center gap-2">
+          <span className="rounded-md px-2.5 py-1 text-[11px] font-bold uppercase tracking-wide capitalize" style={{ backgroundColor: "var(--dash-highlight)", color: "var(--dash-primary)" }}>
             {perfil?.rol ?? "—"}
           </span>
-        </header>
+          <span className="text-sm" style={{ color: "var(--dash-ink-muted)" }}>
+            Resumen de contratos, ventas, cupos y pagos según tu perfil.
+          </span>
+        </div>
+      </header>
 
-        <section className="mt-6">
-          <h2 className="mb-3 text-xs font-semibold uppercase tracking-wider text-gray-400">Mapa operativo</h2>
-          <div className="rounded-lg border border-gray-200 bg-white p-4">
-            <div className="flex flex-wrap items-stretch gap-y-3">
-              {FLUJO.map((m, i) => (
-                <div key={m.href} className="flex items-center">
-                  <Link href={m.href} prefetch={false} className="group flex w-[104px] flex-col items-center gap-1.5 rounded-md border border-gray-200 px-2 py-3 text-center transition-colors hover:border-[color:var(--brand-primary)] hover:bg-gray-50">
-                    <span className="grid h-9 w-9 place-items-center rounded-md border" style={{ borderColor: "color-mix(in srgb, var(--brand-primary) 30%, white)", backgroundColor: tint("var(--brand-primary)"), color: "var(--brand-primary)" }}>
-                      <m.icon size={17} strokeWidth={2} />
-                    </span>
-                    <span className="text-[11px] font-semibold leading-tight text-gray-700">{m.label}</span>
-                  </Link>
-                  {i < FLUJO.length - 1 && <ArrowRight size={16} className="mx-1 shrink-0 text-[color:var(--brand-connector,#B9785F)]" />}
-                </div>
-              ))}
+      {/* 2. Flujo operativo — mismos pasos de siempre (FLUJO), sin contadores. */}
+      <section className="mt-5 rounded-lg border p-4" style={{ backgroundColor: "var(--dash-surface)", borderColor: "var(--dash-border)" }}>
+        <h2 className="mb-3 text-xs font-semibold uppercase tracking-wider" style={{ color: "var(--dash-ink-muted)" }}>Flujo operativo</h2>
+        <div className="flex flex-wrap items-stretch gap-y-3">
+          {FLUJO.map((m, i) => (
+            <div key={m.href} className="flex items-center">
+              <Link
+                href={m.href}
+                prefetch={false}
+                className="group flex w-[104px] flex-col items-center gap-1.5 rounded-md border px-2 py-3 text-center transition-colors hover:bg-[var(--dash-muted-surface)]"
+                style={{ borderColor: "var(--dash-border)" }}
+              >
+                <span className="grid h-9 w-9 place-items-center rounded-md" style={{ backgroundColor: "var(--dash-muted-surface)", color: "var(--dash-primary)" }}>
+                  <m.icon size={17} strokeWidth={2} />
+                </span>
+                <span className="text-[11px] font-semibold leading-tight" style={{ color: "var(--dash-ink)" }}>{m.label}</span>
+              </Link>
+              {i < FLUJO.length - 1 && <ArrowRight size={16} className="mx-1 shrink-0" style={{ color: "var(--dash-ink-muted)" }} />}
             </div>
-          </div>
-        </section>
+          ))}
+        </div>
+      </section>
 
-        <section className="mt-6 grid grid-cols-2 gap-3 md:grid-cols-4">
-          <Kpi icon={FileSignature} label="Contratos activos" value={String(nActivos)} />
-          {!esMinorista && <Kpi icon={Armchair} label="Cupos disponibles" value={String(cuposDisponibles)} />}
-          {interno && <Kpi icon={Wallet} label="Ventas del mes" value={formatCOP(ventaMes)} sub={hoy.split(",")[0]} />}
-          {interno && <Kpi icon={HandCoins} label="Cartera por cobrar" value={formatCOP(cartera)} />}
-          {!interno && !esMinorista && <Kpi icon={Package} label="Paquetes" value={String(nPaquetes ?? 0)} />}
-        </section>
+      {/* 3. Métricas reales */}
+      <section className="mt-5 grid grid-cols-2 gap-3 md:grid-cols-4">
+        {metricas.map((m) => <MetricCard key={m.label} {...m} />)}
+      </section>
 
+      {/* 4. Alertas reales (solo si hay al menos una aplicable) */}
+      {alertas.length > 0 && (
         <section className="mt-5">
-          <h2 className="mb-2 text-xs font-semibold uppercase tracking-wider text-gray-400">Alertas operativas</h2>
+          <h2 className="mb-2 text-xs font-semibold uppercase tracking-wider" style={{ color: "var(--dash-ink-muted)" }}>Alertas</h2>
           <div className="flex flex-wrap gap-2">
-            <Alerta icon={Clock} label="Contratos pendientes" n={nPendientes} href="/dashboard/contratos" tone="warn" />
-            {!esMinorista && <Alerta icon={PlaneTakeoff} label="Salidas próximas (14d)" n={nSalidas ?? 0} href="/dashboard/vuelos" tone="info" />}
-            {!esMinorista && <Alerta icon={AlertTriangle} label="Cupos críticos" n={cuposCriticos} href="/dashboard/vuelos" tone="crit" />}
-            {interno && <Alerta icon={Receipt} label="Pagos por vencer (15d)" n={nPagos ?? 0} href="/dashboard/pagos" tone="warn" />}
+            {alertas.map((a) => <AlertChip key={a.label} {...a} />)}
           </div>
         </section>
+      )}
 
-        <h2 className="mb-3 mt-7 text-xs font-semibold uppercase tracking-wider text-gray-400">Módulos</h2>
-        <ModulosGrid modulos={modulos} />
-      </div>
-    </>
+      {/* 5. Módulos — mismo catálogo y gating de siempre (MODULOS). */}
+      <h2 className="mb-3 mt-7 text-xs font-semibold uppercase tracking-wider" style={{ color: "var(--dash-ink-muted)" }}>Módulos</h2>
+      <ModulosGrid modulos={modulos} />
+    </div>
   );
 }
 
@@ -140,74 +143,63 @@ function ModulosGrid({ modulos }: { modulos: typeof MODULOS }) {
   return (
     <section className="grid grid-cols-1 gap-2.5 sm:grid-cols-2 lg:grid-cols-3">
       {modulos.map((m) => (
-        <Link key={m.href} href={m.href} prefetch={false} className="group flex items-center gap-3 rounded-lg border border-gray-200 bg-white p-3.5 transition-colors hover:border-[color:var(--brand-primary)] hover:bg-gray-50/70">
-          <span className="grid h-10 w-10 shrink-0 place-items-center rounded-md border" style={{ borderColor: "color-mix(in srgb, " + m.color + " 28%, white)", backgroundColor: tint(m.color), color: m.color }}>
+        <Link
+          key={m.href}
+          href={m.href}
+          prefetch={false}
+          className="group flex items-center gap-3 rounded-lg border p-3.5 transition-colors hover:bg-[var(--dash-muted-surface)]"
+          style={{ backgroundColor: "var(--dash-surface)", borderColor: "var(--dash-border)" }}
+        >
+          <span className="grid h-10 w-10 shrink-0 place-items-center rounded-md" style={{ backgroundColor: "var(--dash-muted-surface)", color: `var(${m.color})` }}>
             <m.icon size={18} strokeWidth={2} />
           </span>
           <div className="min-w-0 flex-1">
-            <div className="truncate text-sm font-semibold text-gray-800">{m.label}</div>
-            <div className="truncate text-xs text-gray-400">{m.desc}</div>
+            <div className="truncate text-sm font-semibold" style={{ color: "var(--dash-ink)" }}>{m.label}</div>
+            <div className="truncate text-xs" style={{ color: "var(--dash-ink-muted)" }}>{m.desc}</div>
           </div>
-          <ChevronRight size={16} className="shrink-0 text-gray-300 transition-colors group-hover:text-[color:var(--brand-primary)]" />
+          <ChevronRight size={16} className="shrink-0 transition-colors" style={{ color: "var(--dash-ink-muted)" }} />
         </Link>
       ))}
     </section>
   );
 }
 
-function Metric({ icon: Icon, label, value, color, sub, highlight }: { icon: LucideIcon; label: string; value: string; color: string; sub?: string; highlight?: boolean }) {
-  if (highlight) {
-    return (
-      <div className="bg-brand-gradient rounded-[10px] p-4 text-white">
-        <div className="flex items-center gap-2.5">
-          <span className="grid h-9 w-9 place-items-center rounded-lg bg-white/15"><Icon size={18} strokeWidth={2} /></span>
-          <span className="text-xs font-medium text-white/80">{label}</span>
-        </div>
-        <div className="mt-3 text-xl font-bold tabular-nums">{value}</div>
-        {sub && <div className="mt-0.5 text-[11px] capitalize text-white/60">{sub}</div>}
-      </div>
-    );
-  }
+function MetricCard({ icon: Icon, label, value, sub }: { icon: LucideIcon; label: string; value: string; sub?: string }) {
   return (
-    <div className="rounded-[10px] border border-gray-200 bg-white p-4">
+    <div className="rounded-lg border p-4" style={{ backgroundColor: "var(--dash-surface)", borderColor: "var(--dash-border)" }}>
       <div className="flex items-center gap-2.5">
-        <span className="grid h-9 w-9 place-items-center rounded-lg" style={{ backgroundColor: tint(color), color }}><Icon size={18} strokeWidth={2} /></span>
-        <span className="text-xs font-medium text-gray-500">{label}</span>
+        <span className="grid h-9 w-9 place-items-center rounded-lg" style={{ backgroundColor: "var(--dash-muted-surface)", color: "var(--dash-primary)" }}>
+          <Icon size={18} strokeWidth={2} />
+        </span>
+        <span className="text-xs font-medium" style={{ color: "var(--dash-ink-muted)" }}>{label}</span>
       </div>
-      <div className="mt-3 text-2xl font-semibold tabular-nums text-gray-900">{value}</div>
-      {sub && <div className="mt-0.5 text-[11px] capitalize text-gray-400">{sub}</div>}
+      <div className={`${styles.heading} mt-3 text-2xl font-semibold tabular-nums`} style={{ color: "var(--dash-ink)" }}>{value}</div>
+      {sub && <div className="mt-0.5 text-[11px] capitalize" style={{ color: "var(--dash-ink-muted)" }}>{sub}</div>}
     </div>
   );
 }
 
-function Kpi({ icon: Icon, label, value, sub }: { icon: LucideIcon; label: string; value: string; sub?: string }) {
-  return (
-    <div className="rounded-lg border border-gray-200 bg-white p-4">
-      <div className="flex items-center justify-between">
-        <span className="text-[11px] font-semibold uppercase tracking-wide text-gray-500">{label}</span>
-        <Icon size={15} className="text-gray-400" />
-      </div>
-      <div className="mt-2 text-2xl font-bold tabular-nums text-gray-900">{value}</div>
-      {sub && <div className="mt-0.5 text-[11px] capitalize text-gray-400">{sub}</div>}
-    </div>
-  );
-}
-
-const TONOS: Record<string, { bg: string; fg: string; bd: string }> = {
-  warn: { bg: "#FFF7ED", fg: "#B9785F", bd: "#F3D9C7" },
-  info: { bg: "#EFF4F8", fg: "#08233F", bd: "#D5E0EA" },
-  crit: { bg: "#FEF2F2", fg: "#B42318", bd: "#FCD9D6" },
-};
-
-function Alerta({ icon: Icon, label, n, href, tone }: { icon: LucideIcon; label: string; n: number; href: string; tone: keyof typeof TONOS }) {
-  const t = TONOS[tone];
+function AlertChip({ icon: Icon, label, n, href }: { icon: LucideIcon; label: string; n: number; href: string }) {
   const apagada = n === 0;
   return (
-    <Link href={href} prefetch={false} className="inline-flex items-center gap-2 rounded-md border px-3 py-2 text-xs font-medium transition-colors"
-      style={apagada ? { borderColor: "#E4E7EF", color: "#98A2B3", backgroundColor: "white" } : { borderColor: t.bd, color: t.fg, backgroundColor: t.bg }}>
+    <Link
+      href={href}
+      prefetch={false}
+      className="inline-flex items-center gap-2 rounded-md border px-3 py-2 text-xs font-medium transition-colors"
+      style={
+        apagada
+          ? { borderColor: "var(--dash-border)", color: "var(--dash-ink-muted)", backgroundColor: "var(--dash-surface)" }
+          : { borderColor: "var(--dash-danger)", color: "var(--dash-danger)", backgroundColor: "var(--dash-muted-surface)" }
+      }
+    >
       <Icon size={15} />
       <span>{label}</span>
-      <span className="rounded px-1.5 py-0.5 text-[11px] font-bold tabular-nums" style={apagada ? { backgroundColor: "#F2F4F7", color: "#98A2B3" } : { backgroundColor: t.fg, color: "white" }}>{n}</span>
+      <span
+        className="rounded px-1.5 py-0.5 text-[11px] font-bold tabular-nums"
+        style={apagada ? { backgroundColor: "var(--dash-border)", color: "var(--dash-ink-muted)" } : { backgroundColor: "var(--dash-danger)", color: "white" }}
+      >
+        {n}
+      </span>
     </Link>
   );
 }
@@ -221,15 +213,15 @@ const FLUJO: { href: string; icon: LucideIcon; label: string }[] = [
   { href: "/dashboard/rentabilidad", icon: LineChart, label: "Finanzas" },
 ];
 
-const MODULOS: { href: string; icon: LucideIcon; label: string; desc: string; color: string; interno: boolean }[] = [
-  { href: "/dashboard/tarifario", icon: Tags, label: "Tarifario", desc: "Hoteles y precios", color: "var(--brand-accent)", interno: false },
-  { href: "/dashboard/reservar", icon: Ticket, label: "Reservar", desc: "Generar contrato", color: "var(--brand-primary)", interno: false },
-  { href: "/dashboard/producto", icon: Boxes, label: "Producto", desc: "Hoteles, vuelos, programas", color: "var(--brand-success)", interno: true },
-  { href: "/dashboard/paquetes", icon: Package, label: "Paquetes", desc: "Armado y margen", color: "var(--brand-accent)", interno: true },
-  { href: "/dashboard/contratos", icon: FileSignature, label: "Contratos", desc: "Ventas y estados", color: "var(--brand-primary)", interno: false },
-  { href: "/dashboard/vuelos", icon: Plane, label: "Vuelos", desc: "Bloqueos y sillas", color: "var(--brand-accent)", interno: true },
-  { href: "/dashboard/cartera", icon: HandCoins, label: "Cartera", desc: "Por cobrar / abonos", color: "var(--brand-success)", interno: true },
-  { href: "/dashboard/pagos", icon: Receipt, label: "Pagos", desc: "Por pagar a proveedores", color: "var(--brand-primary)", interno: true },
-  { href: "/dashboard/finanzas", icon: LineChart, label: "Finanzas", desc: "Relación de utilidades", color: "var(--brand-accent)", interno: true },
-  { href: "/dashboard/configuracion", icon: Settings, label: "Configuración", desc: "Asesores y parámetros", color: "var(--brand-success)", interno: true },
+const MODULOS: { href: string; icon: LucideIcon; label: string; desc: string; color: "--dash-accent" | "--dash-primary" | "--dash-success"; interno: boolean }[] = [
+  { href: "/dashboard/tarifario", icon: Tags, label: "Tarifario", desc: "Hoteles y precios", color: "--dash-accent", interno: false },
+  { href: "/dashboard/reservar", icon: Ticket, label: "Reservar", desc: "Generar contrato", color: "--dash-primary", interno: false },
+  { href: "/dashboard/producto", icon: Boxes, label: "Producto", desc: "Hoteles, vuelos, programas", color: "--dash-success", interno: true },
+  { href: "/dashboard/paquetes", icon: Package, label: "Paquetes", desc: "Armado y margen", color: "--dash-accent", interno: true },
+  { href: "/dashboard/contratos", icon: FileSignature, label: "Contratos", desc: "Ventas y estados", color: "--dash-primary", interno: false },
+  { href: "/dashboard/vuelos", icon: Plane, label: "Vuelos", desc: "Bloqueos y sillas", color: "--dash-accent", interno: true },
+  { href: "/dashboard/cartera", icon: HandCoins, label: "Cartera", desc: "Por cobrar / abonos", color: "--dash-success", interno: true },
+  { href: "/dashboard/pagos", icon: Receipt, label: "Pagos", desc: "Por pagar a proveedores", color: "--dash-primary", interno: true },
+  { href: "/dashboard/finanzas", icon: LineChart, label: "Finanzas", desc: "Relación de utilidades", color: "--dash-accent", interno: true },
+  { href: "/dashboard/configuracion", icon: Settings, label: "Configuración", desc: "Asesores y parámetros", color: "--dash-success", interno: true },
 ];

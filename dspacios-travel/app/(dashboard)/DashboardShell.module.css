@@ -1,0 +1,60 @@
+/* Tokens y estructura EXCLUSIVOS del shell del Dashboard (app/(dashboard)/**).
+   No tocan styles/globals.css ni sus rutas hermanas (Tarifario, Login,
+   Portal B2B) — se aíslan bajo .dashRoot.
+
+   Los tokens --dash-* DERIVAN de los tokens de marca/semánticos que YA
+   cambian por tema en styles/globals.css (--brand-primary/accent/success/
+   highlight, --muted/--card/--border/--foreground/--muted-foreground/
+   --destructive). Al ser variables CSS (no clases), heredan el valor del
+   tema activo automáticamente sin depender de los selectores legacy que
+   styles/globals.css usa para re-pintar el Dashboard hoy (aside.bg-white,
+   .text-gray-*, .app-bg, .home-clasica/.home-blueprint) — ninguno de esos
+   selectores aparece en este archivo ni en los componentes que lo consumen.
+   --dash-bg usa --muted (no --background) a propósito: en el tema por
+   defecto --background y --card son AMBOS blancos, así que canvas y
+   tarjeta quedarían idénticos; --muted es un gris/azul muy claro distinto
+   de --card (blanco), dando el contraste canvas/tarjeta que pide Stitch. */
+.dashRoot {
+  --dash-primary: var(--brand-primary);
+  --dash-accent: var(--brand-accent);
+  --dash-success: var(--brand-success);
+  --dash-highlight: var(--brand-highlight);
+
+  --dash-bg: var(--muted);
+  --dash-surface: var(--card);
+  --dash-border: var(--border);
+  --dash-ink: var(--foreground);
+  --dash-ink-muted: var(--muted-foreground);
+  --dash-muted-surface: var(--muted);
+  --dash-danger: var(--destructive);
+
+  font-family: var(--dash-font-body), ui-sans-serif, system-ui, sans-serif;
+  background-color: var(--dash-bg);
+  color: var(--dash-ink);
+  min-height: 100dvh;
+}
+
+/* Outfit para títulos y cifras principales; Plus Jakarta Sans (heredado del
+   body de .dashRoot) para navegación/cuerpo/controles. */
+.heading {
+  font-family: var(--dash-font-heading), ui-sans-serif, system-ui, sans-serif;
+}
+
+/* Oculta la barra nativa de scroll horizontal de la navegación móvil sin
+   perder la funcionalidad (sigue siendo desplazable con el dedo/rueda). */
+.scrollNoBar {
+  scrollbar-width: none;
+}
+.scrollNoBar::-webkit-scrollbar {
+  display: none;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .dashRoot *,
+  .dashRoot *::before,
+  .dashRoot *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}

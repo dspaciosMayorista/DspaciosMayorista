@@ -30,6 +30,17 @@ const ICONS: Record<string, LucideIcon> = {
   cms: Globe, crm: Contact, auditoria: History, contabilidad: Calculator, importar: Upload,
 };
 
+// Colores por estilo inline, nunca por clases utilitarias de color de
+// Tailwind: esas clases son exactamente las que styles/globals.css
+// intercepta por selector legacy para los temas "verde"/"web"/"blueprint"
+// dentro del `<aside>` (ver auditoría). Los tokens --dash-*/--nav-*
+// son variables CSS: heredan el valor del tema activo sin depender de esos
+// selectores. `--nav-fg`/`--nav-subfg` ya existían como hook de tema (los
+// definen los temas "verde"/"web" en globals.css); el resto de temas y el
+// default caen al fallback --dash-ink-muted (superficie clara).
+const ITEM_INACTIVO = "var(--nav-fg, var(--dash-ink-muted))";
+const SUBITEM_INACTIVO = "var(--nav-subfg, var(--dash-ink-muted))";
+
 export function SidebarNav({ items, collapsed }: { items: NavItem[]; collapsed?: boolean }) {
   const pathname = usePathname();
 
@@ -46,8 +57,8 @@ export function SidebarNav({ items, collapsed }: { items: NavItem[]; collapsed?:
               prefetch={false}
               aria-current={active ? "page" : undefined}
               title={it.label}
-              className="mx-auto grid h-10 w-10 place-items-center rounded-lg transition-colors hover:bg-gray-50"
-              style={active ? { backgroundColor: "var(--brand-primary)", color: "white" } : { color: "var(--nav-fg, #4b5563)" }}
+              className="mx-auto grid h-10 w-10 place-items-center rounded-lg transition-colors hover:bg-[var(--dash-muted-surface)]"
+              style={active ? { backgroundColor: "var(--dash-primary)", color: "white" } : { color: ITEM_INACTIVO }}
             >
               {Icon ? <Icon size={18} strokeWidth={2} /> : <span className="text-xs font-bold">{it.label.charAt(0)}</span>}
             </Link>
@@ -62,11 +73,11 @@ export function SidebarNav({ items, collapsed }: { items: NavItem[]; collapsed?:
       {items.map((it) => (
         <div key={it.href}>
           {it.grupo ? (
-            <p className="mb-1 mt-4 px-3 text-[10px] font-semibold uppercase tracking-wider" style={{ color: "var(--nav-subfg, #9ca3af)" }}>
+            <p className="mb-1 mt-4 px-3 text-[10px] font-semibold uppercase tracking-wider" style={{ color: "var(--dash-ink-muted)" }}>
               {it.grupo}
             </p>
           ) : it.separadorAntes ? (
-            <div className="my-2 border-t border-gray-100" />
+            <div className="my-2 border-t" style={{ borderColor: "var(--dash-border)" }} />
           ) : null}
           <Group item={it} pathname={pathname} />
         </div>
@@ -89,11 +100,11 @@ function Group({ item, pathname }: { item: NavItem; pathname: string }) {
           href={item.href}
           prefetch={false}
           aria-current={active ? "page" : undefined}
-          className="flex flex-1 items-center gap-2.5 rounded-lg px-3 py-2 text-sm font-medium transition-colors hover:bg-gray-50"
+          className="flex flex-1 items-center gap-2.5 rounded-lg px-3 py-2 text-sm font-medium transition-colors hover:bg-[var(--dash-muted-surface)]"
           style={
             active
-              ? { backgroundColor: "var(--brand-primary)", color: "white", fontWeight: 600 }
-              : { color: "var(--nav-fg, #4b5563)" }
+              ? { backgroundColor: "var(--dash-primary)", color: "white", fontWeight: 600 }
+              : { color: ITEM_INACTIVO }
           }
         >
           {Icon ? <Icon size={17} strokeWidth={2} className="shrink-0 opacity-90" /> : <span className="w-[17px]" />}
@@ -104,7 +115,8 @@ function Group({ item, pathname }: { item: NavItem; pathname: string }) {
             type="button"
             aria-label="Desplegar"
             onClick={() => setManual(!open)}
-            className="px-2 py-2 text-gray-400 hover:text-gray-700"
+            className="px-2 py-2 transition-colors hover:opacity-70"
+            style={{ color: "var(--dash-ink-muted)" }}
           >
             {open ? <ChevronDown size={15} /> : <ChevronRight size={15} />}
           </button>
@@ -112,7 +124,7 @@ function Group({ item, pathname }: { item: NavItem; pathname: string }) {
       </div>
 
       {hasChildren && open && (
-        <div className="ml-[22px] mt-0.5 space-y-0.5 border-l border-gray-100 pl-2">
+        <div className="ml-[22px] mt-0.5 space-y-0.5 border-l pl-2" style={{ borderColor: "var(--dash-border)" }}>
           {item.children!.map((c) => {
             const cActive = pathname === c.href;
             return (
@@ -121,8 +133,8 @@ function Group({ item, pathname }: { item: NavItem; pathname: string }) {
                 href={c.href}
                 prefetch={false}
                 aria-current={cActive ? "page" : undefined}
-                className="flex items-center gap-2 rounded-lg px-3 py-1.5 text-sm transition-colors hover:bg-gray-50"
-                style={cActive ? { color: "var(--brand-accent)", fontWeight: 600 } : { color: "var(--nav-subfg, #6b7280)" }}
+                className="flex items-center gap-2 rounded-lg px-3 py-1.5 text-sm transition-colors hover:bg-[var(--dash-muted-surface)]"
+                style={cActive ? { color: "var(--dash-accent)", fontWeight: 600 } : { color: SUBITEM_INACTIVO }}
               >
                 <Circle size={5} className="shrink-0" fill="currentColor" strokeWidth={0} />
                 <span className="truncate">{c.label}</span>
