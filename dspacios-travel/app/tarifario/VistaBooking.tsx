@@ -67,7 +67,7 @@ import {
 import { esNeutra } from "@/lib/cotizacion/condicionPago";
 import type { CondicionHotelFechas } from "@/lib/reservar/liquidacionHotel";
 import { combinarTernario, etiquetaCondicion, etiquetaPolitica, type EvidenciaTernaria } from "@/lib/tarifario/condicionOferta";
-import { ArrowUpDown, SlidersHorizontal, X, PawPrint, BadgeCheck } from "lucide-react";
+import { ArrowUpDown, SlidersHorizontal, X, PawPrint, BadgeCheck, PlaneTakeoff, PlaneLanding, CalendarClock } from "lucide-react";
 
 const CAP_VACIA = { paxMin: null as number | null, paxMax: null as number | null, acom: [] as AcomConfig[] };
 
@@ -223,10 +223,14 @@ function PanelFiltrosResto({
     onFiltrosChange({ ...filtros, estrellas: siguiente });
   }
 
+  // Sin `backgroundColor` explícito en el estado inactivo (a diferencia de
+  // antes): un inline style SIEMPRE gana sobre `:hover` por CSS, así que
+  // ponerlo en blanco fijo bloqueaba cualquier hover de Tailwind en ese
+  // botón. El fondo blanco del contenedor ya se ve igual sin declararlo acá.
   const segmentoBtn = (activo: boolean): CSSProperties =>
     activo
       ? { backgroundColor: "var(--brand-primary)", color: "white" }
-      : { backgroundColor: "white", color: "#4b5563" };
+      : { color: "#4b5563" };
 
   return (
     <div className="mb-4 flex flex-col gap-2">
@@ -252,19 +256,22 @@ function PanelFiltrosResto({
         <button
           type="button"
           onClick={() => setPanelAbierto((v) => !v)}
-          className="flex items-center gap-1.5 rounded-full border border-gray-200 bg-white px-3 py-1.5 text-xs font-medium text-gray-600"
+          className={`flex items-center gap-1.5 rounded-full border px-3 py-1.5 text-xs font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--brand-accent)] ${activos > 0 ? "border-[var(--brand-success)] bg-[var(--brand-success)]/10 text-slate-900" : "border-gray-200 bg-white text-gray-600 hover:bg-gray-50"}`}
         >
           {/* Etiqueta "Más filtros" a propósito, DISTINTA del disparador
               "Buscar" de TarifarioPublic (nombre/categoría/alimentación/
               acomodación) — este panel es orden/zona/estrellas/Pet friendly/
               Adults Only, un control aparte. El usuario los confundía por
-              compartir el mismo texto "Filtros". */}
-          <SlidersHorizontal className="h-3.5 w-3.5" aria-hidden />
+              compartir el mismo texto "Filtros". Con filtros activos el
+              borde/ícono se pone verde (acento de "filtro activo"), igual
+              criterio que el disparador "Buscar" — reconocible con el panel
+              cerrado, no solo por el contador. */}
+          <SlidersHorizontal className={`h-3.5 w-3.5 ${activos > 0 ? "text-[var(--brand-success)]" : ""}`} aria-hidden />
           Más filtros
           {activos > 0 && (
             <span
               className="rounded-full px-1.5 py-0.5 text-[10px] font-semibold leading-none text-white"
-              style={{ backgroundColor: "var(--brand-accent)" }}
+              style={{ backgroundColor: "var(--brand-success)" }}
             >
               {activos}
             </span>
@@ -279,14 +286,14 @@ function PanelFiltrosResto({
       </div>
 
       {panelAbierto && (
-        <div className="flex flex-col gap-4 rounded-xl border border-gray-200 bg-white p-3 text-xs text-gray-600 sm:flex-row sm:flex-wrap sm:gap-6">
+        <div className="flex flex-col gap-4 rounded-2xl border border-gray-200 bg-white p-3 text-xs text-gray-600 sm:flex-row sm:flex-wrap sm:gap-6">
           <label className="flex items-center gap-1.5">
-            <input type="checkbox" checked={soloPetFriendly} onChange={(e) => onSoloPetFriendlyChange(e.target.checked)} />
+            <input type="checkbox" checked={soloPetFriendly} onChange={(e) => onSoloPetFriendlyChange(e.target.checked)} className="accent-[var(--brand-success)]" />
             <PawPrint className="h-3.5 w-3.5" aria-hidden />
             Pet friendly
           </label>
           <label className="flex items-center gap-1.5">
-            <input type="checkbox" checked={soloAdultsOnly} onChange={(e) => onSoloAdultsOnlyChange(e.target.checked)} />
+            <input type="checkbox" checked={soloAdultsOnly} onChange={(e) => onSoloAdultsOnlyChange(e.target.checked)} className="accent-[var(--brand-success)]" />
             <BadgeCheck className="h-3.5 w-3.5" aria-hidden />
             Adults Only
           </label>
@@ -299,7 +306,7 @@ function PanelFiltrosResto({
                   <div className="flex max-w-[220px] flex-wrap gap-x-3 gap-y-1">
                     {zonas.map((z) => (
                       <label key={z.clave} className="flex items-center gap-1">
-                        <input type="checkbox" checked={filtros.zonas.has(z.clave)} onChange={() => toggleZona(z.clave)} />
+                        <input type="checkbox" checked={filtros.zonas.has(z.clave)} onChange={() => toggleZona(z.clave)} className="accent-[var(--brand-success)]" />
                         {z.etiqueta}
                       </label>
                     ))}
@@ -312,7 +319,7 @@ function PanelFiltrosResto({
                   <div className="flex flex-wrap gap-x-3 gap-y-1">
                     {estrellas.map((e) => (
                       <label key={String(e)} className="flex items-center gap-1">
-                        <input type="checkbox" checked={filtros.estrellas.has(e)} onChange={() => toggleEstrella(e)} />
+                        <input type="checkbox" checked={filtros.estrellas.has(e)} onChange={() => toggleEstrella(e)} className="accent-[var(--brand-success)]" />
                         {e === "sin_clasificar" ? "Sin clasificar" : `${e}★`}
                       </label>
                     ))}
@@ -333,7 +340,7 @@ function PanelFiltrosResto({
                       key={v}
                       type="button"
                       onClick={() => onFiltrosChange({ ...filtros, condicion: v })}
-                      className="whitespace-nowrap px-2.5 py-1.5"
+                      className="whitespace-nowrap px-2.5 py-1.5 transition-colors hover:bg-gray-50 focus-visible:relative focus-visible:z-10 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--brand-accent)]"
                       style={segmentoBtn(filtros.condicion === v)}
                     >
                       {l}
@@ -355,7 +362,7 @@ function PanelFiltrosResto({
                       key={v}
                       type="button"
                       onClick={() => onFiltrosChange({ ...filtros, politica: v })}
-                      className="whitespace-nowrap px-2.5 py-1.5"
+                      className="whitespace-nowrap px-2.5 py-1.5 transition-colors hover:bg-gray-50 focus-visible:relative focus-visible:z-10 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--brand-accent)]"
                       style={segmentoBtn(filtros.politica === v)}
                     >
                       {l}
@@ -1518,13 +1525,13 @@ export function VistaBooking({
   // fila en el lugar equivocado: las pestañas aparecen directamente en su
   // posición final (el slot), sin una parada intermedia que después salte.
   const subtabsBotones = (
-    <div className="inline-flex items-center gap-1 rounded-lg border border-slate-200 bg-white p-1 shadow-sm">
+    <div className="inline-flex items-center gap-1 rounded-xl border border-slate-200 bg-white p-1 shadow-sm">
       {SUBTABS.map((t) => (
         <button
           key={t.key}
           type="button"
           onClick={() => cambiarSub(t.key)}
-          className="rounded-md px-3 py-1.5 text-xs font-semibold transition-colors sm:text-sm"
+          className="rounded-lg px-3 py-1.5 text-xs font-semibold transition-colors hover:bg-slate-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--brand-accent)] sm:text-sm"
           style={sub === t.key
             ? { backgroundColor: "var(--brand-primary)", color: "white" }
             : { color: "#475569" }}
@@ -1535,39 +1542,56 @@ export function VistaBooking({
     </div>
   );
 
+  // Mismo criterio de color que TarifarioPublic (azul = estructura, verde =
+  // valor concreto elegido en vez del placeholder "Todos"/"Todas las
+  // salidas"): se reutiliza para Origen/Destino/Salida de Bloqueo, la única
+  // búsqueda de esta vista que no vive en un componente `Buscador*` aparte.
+  const campoBloqueoCls = (activo: boolean) =>
+    `w-full rounded-lg border py-2 pl-8 pr-3 text-xs font-medium transition-colors focus:outline-none focus:ring-2 focus:ring-[var(--brand-accent)] ${activo ? "border-[var(--brand-success)] bg-[var(--brand-success)]/10 text-slate-900 font-semibold" : "border-slate-200 bg-slate-50 text-slate-800"}`;
+  const iconoBloqueoCls = (activo: boolean) => `pointer-events-none absolute left-2.5 top-1/2 h-4 w-4 -translate-y-1/2 ${activo ? "text-[var(--brand-success)]" : "text-slate-400"}`;
+
   return (
     <div>
       {subtabsSlot && createPortal(subtabsBotones, subtabsSlot)}
 
       {/* Buscador de BLOQUEOS: origen → destino → salida (vuelo) */}
       {sub === "bloqueo" && (
-        <div className="mb-4 rounded-lg border border-slate-200/80 bg-white p-4 shadow-[0_10px_25px_-5px_rgba(29,124,154,0.08),0_8px_10px_-6px_rgba(29,124,154,0.04)] sm:p-5">
+        <div className="mb-4 rounded-2xl border border-slate-200/80 bg-white p-4 shadow-[0_10px_25px_-5px_rgba(29,124,154,0.08),0_8px_10px_-6px_rgba(29,124,154,0.04)] sm:p-5">
           <p className="mb-3 text-sm font-bold text-slate-900">Buscar vuelo + hotel (paquete)</p>
           <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
             <div>
               <label className="mb-1 block text-xs font-semibold text-slate-700">Origen</label>
-              <select value={origenSel} onChange={(e) => { setOrigenSel(e.target.value); confirmarDestinoBloqueo(""); }} className="w-full rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-xs font-medium text-slate-800 focus:border-[var(--brand-accent)] focus:outline-none focus:ring-2 focus:ring-[var(--brand-accent)]">
-                <option value="">Todos</option>
-                {origenes.map((o) => <option key={o} value={o}>{o}</option>)}
-              </select>
+              <div className="relative">
+                <PlaneTakeoff className={iconoBloqueoCls(!!origenSel)} aria-hidden />
+                <select value={origenSel} onChange={(e) => { setOrigenSel(e.target.value); confirmarDestinoBloqueo(""); }} className={campoBloqueoCls(!!origenSel)}>
+                  <option value="">Todos</option>
+                  {origenes.map((o) => <option key={o} value={o}>{o}</option>)}
+                </select>
+              </div>
             </div>
             <div>
               <label className="mb-1 block text-xs font-semibold text-slate-700">Destino</label>
-              <select value={destinoSel} onChange={(e) => confirmarDestinoBloqueo(e.target.value)} className="w-full rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-xs font-medium text-slate-800 focus:border-[var(--brand-accent)] focus:outline-none focus:ring-2 focus:ring-[var(--brand-accent)]">
-                <option value="">Todos</option>
-                {destinosBloqueo.map((d) => <option key={d} value={d}>{d}</option>)}
-              </select>
+              <div className="relative">
+                <PlaneLanding className={iconoBloqueoCls(!!destinoSel)} aria-hidden />
+                <select value={destinoSel} onChange={(e) => confirmarDestinoBloqueo(e.target.value)} className={campoBloqueoCls(!!destinoSel)}>
+                  <option value="">Todos</option>
+                  {destinosBloqueo.map((d) => <option key={d} value={d}>{d}</option>)}
+                </select>
+              </div>
             </div>
             <div>
               <label className="mb-1 block text-xs font-semibold text-slate-700">Salida (vuelo)</label>
-              <select value={salidaSel} onChange={(e) => setSalidaSel(e.target.value === "" ? "" : Number(e.target.value))} className="w-full rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-xs font-medium text-slate-800 focus:border-[var(--brand-accent)] focus:outline-none focus:ring-2 focus:ring-[var(--brand-accent)]">
-                <option value="">Todas las salidas</option>
-                {salidasFiltradas.map((s) => (
-                  <option key={s.id} value={s.id}>
-                    {s.origen} → {s.destino} · {fmtFecha(s.fechaIda)}–{fmtFecha(s.fechaRegreso)}{s.noches ? ` (${s.noches}N)` : ""} · {s.cupos} cupos
-                  </option>
-                ))}
-              </select>
+              <div className="relative">
+                <CalendarClock className={iconoBloqueoCls(salidaSel !== "")} aria-hidden />
+                <select value={salidaSel} onChange={(e) => setSalidaSel(e.target.value === "" ? "" : Number(e.target.value))} className={campoBloqueoCls(salidaSel !== "")}>
+                  <option value="">Todas las salidas</option>
+                  {salidasFiltradas.map((s) => (
+                    <option key={s.id} value={s.id}>
+                      {s.origen} → {s.destino} · {fmtFecha(s.fechaIda)}–{fmtFecha(s.fechaRegreso)}{s.noches ? ` (${s.noches}N)` : ""} · {s.cupos} cupos
+                    </option>
+                  ))}
+                </select>
+              </div>
             </div>
           </div>
           <p className="mt-2 text-[11px] text-slate-400">Elige el origen y el destino; las fechas salen del vuelo (no son libres). El resto (habitaciones y acomodación) se elige en cada hotel.</p>

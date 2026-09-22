@@ -3,7 +3,6 @@ import { TarifarioPublic } from "./TarifarioPublic";
 import { CartDrawer } from "./CartDrawer";
 import { getProgramasResumen } from "@/lib/programas";
 import { Logo } from "@/components/Logo";
-import { BackgroundVideo } from "@/components/BackgroundVideo";
 import { cargarResumenTarifario, MSG_ERROR_CARGAR_TARIFARIO } from "@/lib/tarifario/resumen";
 import { cargarHotelesBernaloDescubiertos, cargarInfoHotelesBernalo, cargarDescripcionPaquetesBernalo, cargarPrioridadesRecomendadosBernalo } from "@/lib/tarifario/datosBernalo";
 import { idsPaqueteBernaloFaltantes, fusionarDescripcionPaquete } from "@/lib/tarifario/descripcionPaquete";
@@ -231,13 +230,15 @@ export default async function TarifarioPublicoPage() {
   }
   const programas = resProgramas.programas;
 
-  // Video de fondo del tarifario (global, opcional). Un error aquí es
-  // puramente cosmético (el fondo queda sin video) — best-effort, pero
-  // registrado como error técnico si ocurrió, nunca silencioso.
+  // `config_sitio` ya no alimenta el header público (ver más abajo: el
+  // rediseño quitó el `BackgroundVideo` de ahí — mostraba el video propio del
+  // sitio, tapando el degradado de marca acordado). Se conserva el chequeo de
+  // error/instrumentación tal cual (best-effort, nunca silencioso) porque
+  // sigue siendo la misma consulta autoritativa; solo se dejó de leer
+  // `video_fondo_url` del resultado.
   if (cfgSitio.error) {
     registrarErrorTecnico(FLUJO, flujoId, "datos_auxiliares_pagina", "error_config_sitio", cfgSitio.error);
   }
-  const videoFondo = cfgSitio.data?.video_fondo_url ?? null;
   registrarDatoPagina(FLUJO, flujoId, "datos_auxiliares_pagina", `consultas=1 detalle=config_sitio ${cfgSitio.error ? "resultado=error" : "resultado=ok"}`);
 
   // Costo de la propia instrumentación (revisión posterior, defecto "COSTO
@@ -262,18 +263,23 @@ export default async function TarifarioPublicoPage() {
 
   return (
     <div className="app-bg min-h-screen">
-      {/* Header compacto de marca (Fase 1 del rediseño — antes: hero de 60vh
-          con video/foto a pantalla completa). El video de fondo configurable
-          (`config_sitio.video_fondo_url`) se conserva como textura sutil
-          detrás del degradado, nunca como protagonista de la composición. */}
-      <header className="relative overflow-hidden bg-brand-gradient px-4 py-3 text-white shadow-md sm:px-6">
-        <BackgroundVideo url={videoFondo} overlay={0.72} />
+      {/* Header de marca — más presencia que la fase anterior (más alto,
+          logo más grande) y SIN el video de fondo configurable: ese video es
+          contenido propio del sitio (playa), no del shell de Vista Booking,
+          y tapaba el degradado de marca acordado. `bg-brand-gradient`
+          (azul→turquesa→verde, `styles/globals.css`) queda como fondo único
+          y limpio, ya con los dos colores de marca pedidos — no hace falta
+          uno nuevo. */}
+      <header className="relative overflow-hidden bg-brand-gradient px-4 py-5 text-white shadow-md sm:px-6 sm:py-6">
         <div className="relative mx-auto flex w-full max-w-[1700px] flex-wrap items-center justify-between gap-3">
           <div className="flex items-center gap-3">
-            <Logo variant="white" height={40} priority className="h-9 w-auto md:h-10" />
+            {/* Logo oficial sin reconstruir: misma imagen (`components/Logo.tsx`,
+                variant="white"), solo más grande y con su proporción intacta
+                (`w-auto` + `height` del componente calculan el ancho real). */}
+            <Logo variant="white" height={72} priority className="h-14 w-auto sm:h-16 md:h-20" />
             <span className="hidden text-xs font-medium uppercase tracking-wide opacity-80 sm:inline">Tarifario 2026</span>
           </div>
-          <div className="flex flex-wrap items-center gap-3">
+          <div className="flex flex-wrap items-center gap-2 sm:gap-3">
             {esAgencia && (
               <span className="rounded-full bg-white/15 px-3 py-1.5 text-xs font-medium">Modo agencia</span>
             )}

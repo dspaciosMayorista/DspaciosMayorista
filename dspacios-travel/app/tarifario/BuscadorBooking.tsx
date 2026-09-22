@@ -2,6 +2,7 @@
 
 import { useEffect, useId, useMemo, useRef, useState, useTransition } from "react";
 import Image from "next/image";
+import { MapPin, CalendarDays, Users, Baby, BedDouble } from "lucide-react";
 import { formatCOP } from "@/lib/utils";
 import { ACOM_ROOMS, ACOM_ROOM_LABEL, type AcomRoom } from "@/lib/acomodaciones";
 import { useCart, type HotelCartItemPersona } from "@/lib/cart/CartContext";
@@ -381,12 +382,20 @@ export function BuscadorBooking({
     aplicarSugerenciaRef.current(sugerenciaPedida);
   }, [sugerenciaPedida]);
 
-  const sel = "w-full rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-xs font-medium text-slate-800 focus:border-[var(--brand-accent)] focus:outline-none focus:ring-2 focus:ring-[var(--brand-accent)]";
+  const sel = "w-full rounded-lg border border-slate-200 bg-slate-50 py-2 pl-8 pr-3 text-xs font-medium text-slate-800 focus:border-[var(--brand-accent)] focus:outline-none focus:ring-2 focus:ring-[var(--brand-accent)]";
   const lbl = "mb-1 block text-xs font-semibold text-slate-700";
+  const iconoCls = "pointer-events-none absolute left-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400";
+  // Destino sí tiene un estado neutro real ("Selecciona un destino",
+  // placeholder deshabilitado) — al elegir uno, el control se pone verde
+  // (mismo acento de "valor concreto elegido" que el resto del shell). Los
+  // demás campos de esta fila (fechas/adultos/menores/habitaciones) son
+  // obligatorios sin equivalente a "Todos", así que solo llevan ícono.
+  const selDestino = `w-full rounded-lg border py-2 pl-8 pr-3 text-xs font-medium transition-colors focus:outline-none focus:ring-2 focus:ring-[var(--brand-accent)] ${destino ? "border-[var(--brand-success)] bg-[var(--brand-success)]/10 text-slate-900 font-semibold" : "border-slate-200 bg-slate-50 text-slate-800"}`;
+  const iconoDestinoCls = `pointer-events-none absolute left-2.5 top-1/2 h-4 w-4 -translate-y-1/2 ${destino ? "text-[var(--brand-success)]" : "text-slate-400"}`;
 
   return (
     <div className="mb-6">
-      <div className="rounded-lg border border-slate-200/80 bg-white p-4 shadow-[0_10px_25px_-5px_rgba(29,124,154,0.08),0_8px_10px_-6px_rgba(29,124,154,0.04)] sm:p-5">
+      <div className="rounded-2xl border border-slate-200/80 bg-white p-4 shadow-[0_10px_25px_-5px_rgba(29,124,154,0.08),0_8px_10px_-6px_rgba(29,124,154,0.04)] sm:p-5">
         <p className="mb-3 text-sm font-bold text-slate-900">Buscar alojamiento</p>
         <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-6">
           {/* El selector se pinta SIEMPRE (aunque el catálogo esté vacío) y su
@@ -394,35 +403,59 @@ export function BuscadorBooking({
               obligatorio para buscar, así que una opción "sin destino" elegible
               sólo ofrecería el valor que el motor rechaza. */}
           <div className="col-span-2 sm:col-span-1"><label className={lbl}>Destino</label>
-            <select
-              value={destino}
-              onChange={(e) => {
-                const nombre = e.target.value;
-                // El id viaja junto al nombre elegido — se busca en la MISMA
-                // lista que armó las opciones, nunca se adivina ni se vuelve
-                // a resolver por texto en otro lugar.
-                const opcion = destinos.find((d) => d.nombre === nombre);
-                setDestino(nombre);
-                setDestinoId(opcion?.id ?? null);
-                limpiarResultados();
-              }}
-              className={sel}
-            >
-              <option value="" disabled>Selecciona un destino</option>
-              {destinos.map((d) => <option key={d.nombre} value={d.nombre}>{d.nombre}</option>)}
-            </select>
+            <div className="relative">
+              <MapPin className={iconoDestinoCls} aria-hidden />
+              <select
+                value={destino}
+                onChange={(e) => {
+                  const nombre = e.target.value;
+                  // El id viaja junto al nombre elegido — se busca en la MISMA
+                  // lista que armó las opciones, nunca se adivina ni se vuelve
+                  // a resolver por texto en otro lugar.
+                  const opcion = destinos.find((d) => d.nombre === nombre);
+                  setDestino(nombre);
+                  setDestinoId(opcion?.id ?? null);
+                  limpiarResultados();
+                }}
+                className={selDestino}
+              >
+                <option value="" disabled>Selecciona un destino</option>
+                {destinos.map((d) => <option key={d.nombre} value={d.nombre}>{d.nombre}</option>)}
+              </select>
+            </div>
           </div>
-          <div><label className={lbl}>Ida</label><input type="date" min={hoy} value={fIda} onChange={(e) => { const nueva = e.target.value; limpiarResultados(); setFIda(nueva); if (fReg && fReg <= nueva) setFReg(""); }} className={sel} /></div>
-          <div><label className={lbl}>Regreso</label><input type="date" min={fIda} value={fReg} onChange={(e) => { limpiarResultados(); setFReg(e.target.value); }} className={sel} /></div>
+          <div><label className={lbl}>Ida</label>
+            <div className="relative">
+              <CalendarDays className={iconoCls} aria-hidden />
+              <input type="date" min={hoy} value={fIda} onChange={(e) => { const nueva = e.target.value; limpiarResultados(); setFIda(nueva); if (fReg && fReg <= nueva) setFReg(""); }} className={sel} />
+            </div>
+          </div>
+          <div><label className={lbl}>Regreso</label>
+            <div className="relative">
+              <CalendarDays className={iconoCls} aria-hidden />
+              <input type="date" min={fIda} value={fReg} onChange={(e) => { limpiarResultados(); setFReg(e.target.value); }} className={sel} />
+            </div>
+          </div>
           <div><label className={lbl}>Adultos (12+)</label>
-            <input type="number" min={1} value={adultos} onChange={(e) => { limpiarResultados(); setAdultos(e.target.value); }}
-              className={`${sel} ${!adultosValido ? "border-red-400" : ""}`} aria-invalid={!adultosValido ? true : undefined} />
+            <div className="relative">
+              <Users className={iconoCls} aria-hidden />
+              <input type="number" min={1} value={adultos} onChange={(e) => { limpiarResultados(); setAdultos(e.target.value); }}
+                className={`${sel} ${!adultosValido ? "border-red-400" : ""}`} aria-invalid={!adultosValido ? true : undefined} />
+            </div>
           </div>
           <div><label htmlFor={`${idBase}-cant`} className={lbl}>Cantidad de menores</label>
-            <input id={`${idBase}-cant`} type="number" inputMode="numeric" min={0} max={MAX_MENORES_POR_CONSULTA} value={cantidadMenores}
-              onChange={(e) => setCantidadMenores(Number(e.target.value))} className={sel} />
+            <div className="relative">
+              <Baby className={iconoCls} aria-hidden />
+              <input id={`${idBase}-cant`} type="number" inputMode="numeric" min={0} max={MAX_MENORES_POR_CONSULTA} value={cantidadMenores}
+                onChange={(e) => setCantidadMenores(Number(e.target.value))} className={sel} />
+            </div>
           </div>
-          <div><label className={lbl}>Habitaciones</label><input type="number" min={1} max={8} value={nHab} onChange={(e) => setCantidad(Number(e.target.value))} className={sel} /></div>
+          <div><label className={lbl}>Habitaciones</label>
+            <div className="relative">
+              <BedDouble className={iconoCls} aria-hidden />
+              <input type="number" min={1} max={8} value={nHab} onChange={(e) => setCantidad(Number(e.target.value))} className={sel} />
+            </div>
+          </div>
         </div>
 
         {/* Una fila por habitación: solo el tipo de acomodación (los menores se
@@ -431,9 +464,12 @@ export function BuscadorBooking({
           {habs.map((acom, i) => (
             <div key={i} className="flex flex-wrap items-center gap-2 text-sm">
               <span className="w-24 text-slate-500">Habitación {i + 1}</span>
-              <select value={acom} onChange={(e) => setHab(i, e.target.value as AcomRoom)} className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-xs font-medium text-slate-800 focus:border-[var(--brand-accent)] focus:outline-none focus:ring-2 focus:ring-[var(--brand-accent)]">
-                {ACOM_ROOMS.map((a) => <option key={a} value={a}>{ACOM_ROOM_LABEL[a]}</option>)}
-              </select>
+              <div className="relative">
+                <BedDouble className={iconoCls} aria-hidden />
+                <select value={acom} onChange={(e) => setHab(i, e.target.value as AcomRoom)} className="rounded-lg border border-slate-200 bg-slate-50 py-2 pl-8 pr-3 text-xs font-medium text-slate-800 focus:border-[var(--brand-accent)] focus:outline-none focus:ring-2 focus:ring-[var(--brand-accent)]">
+                  {ACOM_ROOMS.map((a) => <option key={a} value={a}>{ACOM_ROOM_LABEL[a]}</option>)}
+                </select>
+              </div>
             </div>
           ))}
         </div>
@@ -471,7 +507,7 @@ export function BuscadorBooking({
         )}
 
         <div className="mt-4 flex flex-wrap items-center gap-3 border-t border-slate-100 pt-3">
-          <button type="button" onClick={() => buscar()} disabled={pending || !menoresListos || !adultosValido} className="rounded-lg bg-[var(--brand-primary)] px-5 py-2.5 text-xs font-bold uppercase tracking-wide text-white shadow-sm transition hover:brightness-110 disabled:opacity-50">
+          <button type="button" onClick={() => buscar()} disabled={pending || !menoresListos || !adultosValido} className="rounded-lg bg-[var(--brand-primary)] px-5 py-2.5 text-xs font-bold uppercase tracking-wide text-white shadow-sm transition hover:brightness-110 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-[var(--brand-accent)] disabled:opacity-50">
             {pending ? "Buscando…" : "Buscar hoteles"}
           </button>
           {huellaBuscada !== null && <button type="button" onClick={limpiarResultados} className="text-xs font-semibold text-slate-400 hover:text-slate-700">Limpiar resultados</button>}

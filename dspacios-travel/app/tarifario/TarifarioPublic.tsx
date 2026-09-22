@@ -2,7 +2,7 @@
 
 import { Fragment, useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
-import { Star, Plane, Bus, Search, X } from "lucide-react";
+import { Star, Plane, Bus, Search, X, UtensilsCrossed, BedDouble, Tag } from "lucide-react";
 import { formatMoneda } from "@/lib/utils";
 import { VistaBooking } from "./VistaBooking";
 import { RegimenInfo, type PlanesInfo } from "./RegimenInfo";
@@ -432,7 +432,16 @@ export function TarifarioPublic({
   // Si el módulo activo se queda sin resultados por el filtro, salta al primero con datos.
   const modulo = tabs.some((t) => t.key === moduloSel) ? moduloSel : (tabs[0]?.key ?? "bloqueo");
 
-  const selCls = "w-full rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-xs font-medium text-slate-800 focus:border-[var(--brand-accent)] focus:outline-none focus:ring-2 focus:ring-[var(--brand-accent)]";
+  // Dos variantes de control (estructura vs. valor concreto elegido): azul
+  // (borde/foco) es el estado neutro de estructura; verde es el acento de
+  // "esto SÍ está filtrando algo" — el propio control lo comunica con color,
+  // no solo el contador del disparador móvil. `campoCls`/`iconCls` los arma
+  // una sola vez para los 4 campos de abajo (mismo criterio que
+  // BuscadorBooking/BuscadorReceptivos/VistaBooking).
+  const selBase = "w-full rounded-lg border py-2 pl-8 pr-3 text-xs font-medium transition-colors focus:outline-none focus:ring-2 focus:ring-[var(--brand-accent)]";
+  const campoCls = (activo: boolean) =>
+    `${selBase} ${activo ? "border-[var(--brand-success)] bg-[var(--brand-success)]/10 text-slate-900 font-semibold" : "border-slate-200 bg-slate-50 text-slate-800"}`;
+  const iconCls = (activo: boolean) => `pointer-events-none absolute left-2.5 top-1/2 h-4 w-4 -translate-y-1/2 ${activo ? "text-[var(--brand-success)]" : "text-slate-400"}`;
   const contadorFiltros = [q.trim(), fCat, fReg, fAcom].filter(Boolean).length;
 
   // Controles de filtro (mismos 4 de siempre) — UN SOLO render: en `sm:` y
@@ -444,34 +453,46 @@ export function TarifarioPublic({
     <div className={`${filtrosAbiertos ? "grid" : "hidden"} grid-cols-2 gap-2 sm:grid sm:grid-cols-4 sm:gap-3`}>
       <div className="col-span-2 sm:col-span-1">
         <label htmlFor="tarifario-buscar-hotel" className="mb-1 block text-xs font-semibold text-slate-700">Buscar hotel</label>
-        <input
-          id="tarifario-buscar-hotel"
-          value={q}
-          onChange={(e) => setQ(e.target.value)}
-          placeholder="Nombre del hotel…"
-          className={selCls}
-        />
+        <div className="relative">
+          <Search className={iconCls(!!q.trim())} aria-hidden />
+          <input
+            id="tarifario-buscar-hotel"
+            value={q}
+            onChange={(e) => setQ(e.target.value)}
+            placeholder="Nombre del hotel…"
+            className={campoCls(!!q.trim())}
+          />
+        </div>
       </div>
       <div>
         <label className="mb-1 block text-xs font-semibold text-slate-700">Categoría</label>
-        <select value={fCat} onChange={(e) => setFCat(e.target.value)} className={selCls} aria-label="Categoría de habitación">
-          <option value="">Todas</option>
-          {cats.map((c) => <option key={c} value={c}>{c}</option>)}
-        </select>
+        <div className="relative">
+          <Tag className={iconCls(!!fCat)} aria-hidden />
+          <select value={fCat} onChange={(e) => setFCat(e.target.value)} className={campoCls(!!fCat)} aria-label="Categoría de habitación">
+            <option value="">Todas</option>
+            {cats.map((c) => <option key={c} value={c}>{c}</option>)}
+          </select>
+        </div>
       </div>
       <div>
         <label className="mb-1 block text-xs font-semibold text-slate-700">Alimentación</label>
-        <select value={fReg} onChange={(e) => setFReg(e.target.value)} className={selCls} aria-label="Alimentación / régimen">
-          <option value="">Todas</option>
-          {regs.map((r) => <option key={r} value={r}>{r}</option>)}
-        </select>
+        <div className="relative">
+          <UtensilsCrossed className={iconCls(!!fReg)} aria-hidden />
+          <select value={fReg} onChange={(e) => setFReg(e.target.value)} className={campoCls(!!fReg)} aria-label="Alimentación / régimen">
+            <option value="">Todas</option>
+            {regs.map((r) => <option key={r} value={r}>{r}</option>)}
+          </select>
+        </div>
       </div>
       <div>
         <label className="mb-1 block text-xs font-semibold text-slate-700">Acomodación</label>
-        <select value={fAcom} onChange={(e) => setFAcom(e.target.value)} className={selCls} aria-label="Acomodación">
-          <option value="">Todas</option>
-          {ACOM_OPCIONES.map(([k, label]) => <option key={k} value={k}>{label}</option>)}
-        </select>
+        <div className="relative">
+          <BedDouble className={iconCls(!!fAcom)} aria-hidden />
+          <select value={fAcom} onChange={(e) => setFAcom(e.target.value)} className={campoCls(!!fAcom)} aria-label="Acomodación">
+            <option value="">Todas</option>
+            {ACOM_OPCIONES.map(([k, label]) => <option key={k} value={k}>{label}</option>)}
+          </select>
+        </div>
       </div>
     </div>
   );
@@ -486,13 +507,13 @@ export function TarifarioPublic({
       <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
         <div ref={setSubtabsSlot} className="flex flex-wrap items-center gap-2" />
         <div className="flex flex-wrap items-center gap-2">
-          <div className="inline-flex items-center gap-1 rounded-lg border border-slate-200 bg-white p-1 shadow-sm">
+          <div className="inline-flex items-center gap-1 rounded-xl border border-slate-200 bg-white p-1 shadow-sm">
             {([...(puedeReservar ? [["tabla", "Vista tabla"] as const] : []), ["booking", "Vista Booking"], ...(programas.length ? [["programas", "Programas"] as const] : [])] as const).map(([v, label]) => (
               <button
                 key={v}
                 type="button"
                 onClick={() => setVista(v)}
-                className="rounded-md px-3 py-1.5 text-xs font-semibold transition-colors sm:text-sm"
+                className="rounded-lg px-3 py-1.5 text-xs font-semibold transition-colors hover:bg-slate-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--brand-accent)] sm:text-sm"
                 style={vista === v
                   ? { backgroundColor: "var(--brand-primary)", color: "white" }
                   : { color: "#475569" }}
@@ -507,14 +528,17 @@ export function TarifarioPublic({
               así que este botón sobraría. Etiqueta "Buscar" a propósito,
               DISTINTA de "Más filtros" (PanelFiltrosResto, dentro de
               VistaBooking: orden/zona/estrellas/Pet friendly/Adults Only) —
-              son dos paneles distintos y el usuario los confundía. */}
+              son dos paneles distintos y el usuario los confundía. Con
+              filtros activos, el borde/ícono se pone verde (acento de
+              "filtro activo") para que siga siendo reconocible con el panel
+              cerrado — no solo el número entre paréntesis. */}
           {vista !== "programas" && (
             <button
               type="button"
               onClick={() => setFiltrosAbiertos((v) => !v)}
-              className="inline-flex items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 shadow-sm sm:hidden"
+              className={`inline-flex items-center gap-1.5 rounded-lg border px-3 py-1.5 text-xs font-semibold shadow-sm transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--brand-accent)] sm:hidden ${contadorFiltros > 0 ? "border-[var(--brand-success)] bg-[var(--brand-success)]/10 text-slate-900" : "border-slate-200 bg-white text-slate-700"}`}
             >
-              {filtrosAbiertos ? <X className="h-3.5 w-3.5" /> : <Search className="h-3.5 w-3.5" />}
+              {filtrosAbiertos ? <X className="h-3.5 w-3.5" /> : <Search className={`h-3.5 w-3.5 ${contadorFiltros > 0 ? "text-[var(--brand-success)]" : ""}`} />}
               Buscar{contadorFiltros > 0 && ` (${contadorFiltros})`}
             </button>
           )}
@@ -526,7 +550,7 @@ export function TarifarioPublic({
           aparece al abrir "Filtros" (arriba), para no interponer un segundo
           panel completo antes del buscador del modo activo. */}
       {vista !== "programas" && (
-        <div className={filtrosAbiertos ? "mb-3 rounded-lg border border-slate-200 bg-white p-3 sm:border-0 sm:bg-transparent sm:p-0" : "mb-3 hidden sm:block"}>
+        <div className={filtrosAbiertos ? "mb-3 rounded-2xl border border-slate-200 bg-white p-3 sm:border-0 sm:bg-transparent sm:p-0" : "mb-3 hidden sm:block"}>
           {panelFiltros}
           {hayFiltro && (
             <div className="mt-2 flex justify-end sm:mt-1">
