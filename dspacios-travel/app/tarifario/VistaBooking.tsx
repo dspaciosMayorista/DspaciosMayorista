@@ -1525,15 +1525,20 @@ export function VistaBooking({
   // fila en el lugar equivocado: las pestañas aparecen directamente en su
   // posición final (el slot), sin una parada intermedia que después salte.
   const subtabsBotones = (
-    <div className="inline-flex items-center gap-1 rounded-xl border border-slate-200 bg-white p-1 shadow-sm">
+    <div className="inline-flex items-center gap-1 rounded-xl border border-slate-200 bg-white p-1.5 shadow-sm">
       {SUBTABS.map((t) => (
         <button
           key={t.key}
           type="button"
           onClick={() => cambiarSub(t.key)}
-          className="rounded-lg px-3 py-1.5 text-xs font-semibold transition-colors hover:bg-slate-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--brand-accent)] sm:text-sm"
+          className="rounded-lg border border-transparent px-3.5 py-2 text-[13px] font-semibold transition-colors hover:bg-slate-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--brand-accent)] sm:text-sm"
+          // Seleccionada = verde D'Spacios (texto oscuro legible + fondo
+          // pálido + borde sutil, derivadas de --brand-success en
+          // globals.css) — mismo criterio que el selector de vista de
+          // TarifarioPublic (Vista tabla/Booking/Programas), nunca texto
+          // verde sobre un fondo azul sólido.
           style={sub === t.key
-            ? { backgroundColor: "var(--brand-primary)", color: "white" }
+            ? { backgroundColor: "var(--brand-success-bg)", color: "var(--brand-success-dark)", borderColor: "var(--brand-success)" }
             : { color: "#475569" }}
         >
           {t.label}

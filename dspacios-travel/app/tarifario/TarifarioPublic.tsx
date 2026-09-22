@@ -507,15 +507,21 @@ export function TarifarioPublic({
       <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
         <div ref={setSubtabsSlot} className="flex flex-wrap items-center gap-2" />
         <div className="flex flex-wrap items-center gap-2">
-          <div className="inline-flex items-center gap-1 rounded-xl border border-slate-200 bg-white p-1 shadow-sm">
+          <div className="inline-flex items-center gap-1 rounded-xl border border-slate-200 bg-white p-1.5 shadow-sm">
             {([...(puedeReservar ? [["tabla", "Vista tabla"] as const] : []), ["booking", "Vista Booking"], ...(programas.length ? [["programas", "Programas"] as const] : [])] as const).map(([v, label]) => (
               <button
                 key={v}
                 type="button"
                 onClick={() => setVista(v)}
-                className="rounded-lg px-3 py-1.5 text-xs font-semibold transition-colors hover:bg-slate-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--brand-accent)] sm:text-sm"
+                className="rounded-lg border border-transparent px-3.5 py-2 text-[13px] font-semibold transition-colors hover:bg-slate-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--brand-accent)] sm:text-sm"
+                // Seleccionada = verde D'Spacios (texto oscuro legible +
+                // fondo pálido + borde sutil, las tres derivadas de
+                // --brand-success en globals.css) — mismo criterio que las
+                // pestañas de producto de VistaBooking (Paquetes/Porción
+                // terrestre/Receptivos), nunca texto verde sobre un fondo
+                // azul sólido.
                 style={vista === v
-                  ? { backgroundColor: "var(--brand-primary)", color: "white" }
+                  ? { backgroundColor: "var(--brand-success-bg)", color: "var(--brand-success-dark)", borderColor: "var(--brand-success)" }
                   : { color: "#475569" }}
               >
                 {label}
