@@ -29,6 +29,7 @@ const constants = leer("lib/constants.ts");
 const proxy = leer("proxy.ts");
 const tenantServer = leer("lib/tenant.server.ts");
 const tenantActions = leer("app/(dashboard)/tenant-actions.ts");
+const tenantSwitcher = leer("app/(dashboard)/TenantSwitcher.tsx");
 
 describe("NAV — sigue filtrándose por módulo, rol y tenant (sin lógica nueva)", () => {
   test("la función de filtrado conserva las 4 reglas exactas: minorista oculto, solo minorista, solo superadmin, roles permitidos, módulo", () => {
@@ -85,6 +86,54 @@ describe("Colapso del sidebar — misma clave de localStorage, mismo comportamie
   });
 });
 
+describe("TenantSwitcher — selector personalizado, mismo comportamiento y persistencia", () => {
+  test("ya no renderiza un <select> nativo — usa @base-ui/react/select (dependencia ya instalada, sin librería nueva)", () => {
+    assert.doesNotMatch(tenantSwitcher, /<select/);
+    assert.match(tenantSwitcher, /import \{ Select as SelectPrimitive \} from "@base-ui\/react\/select";/);
+  });
+
+  test("conserva el guard de solo-lectura (sin permiso o con un solo tenant permitido) con el mismo texto/etiqueta de siempre", () => {
+    assert.match(tenantSwitcher, /if \(!puedeCambiar \|\| permitidos\.length < 2\) \{/);
+    assert.match(tenantSwitcher, /<span className=\{base\} style=\{style\} title="Agencia activa">/);
+  });
+
+  test("el valor, el cambio y la persistencia son exactamente los mismos: value/onValueChange controlados, cambiarTenant + recarga completa", () => {
+    assert.match(tenantSwitcher, /items=\{permitidos\.map\(\(t\) => \(\{ value: t, label: TENANT_LABEL\[t\] \}\)\)\}/);
+    assert.match(tenantSwitcher, /value=\{tenant\}/);
+    assert.match(tenantSwitcher, /onValueChange=\{onValueChange\}/);
+    assert.match(tenantSwitcher, /await cambiarTenant\(value\);/);
+    assert.match(tenantSwitcher, /window\.location\.reload\(\);/);
+    assert.match(tenantSwitcher, /disabled=\{pending\}/);
+  });
+
+  test("el trigger conserva estados hover/focus-visible/abierto/disabled y es operable por teclado (listbox nativo de Base UI: sin handlers de tecla propios)", () => {
+    assert.match(tenantSwitcher, /hover:brightness-95/);
+    assert.match(tenantSwitcher, /focus-visible:ring-2 focus-visible:ring-\[var\(--dash-accent\)\]/);
+    assert.match(tenantSwitcher, /data-\[popup-open\]:ring-2/);
+    assert.match(tenantSwitcher, /disabled:cursor-not-allowed disabled:opacity-60/);
+    assert.doesNotMatch(tenantSwitcher, /onKeyDown|addEventListener\("keydown"/);
+  });
+
+  test("la opción activa se marca con el color de marca y un indicador visual (check)", () => {
+    assert.match(tenantSwitcher, /color: t === tenant \? "var\(--brand-primary\)" : "var\(--foreground\)"/);
+    assert.match(tenantSwitcher, /<SelectPrimitive\.ItemIndicator/);
+    assert.match(tenantSwitcher, /<Check size=\{14\}/);
+  });
+
+  test("el menú (Portal) usa tokens semánticos globales, nunca --dash-* (el Portal queda fuera del scope de .dashRoot)", () => {
+    const idxPortal = tenantSwitcher.indexOf("<SelectPrimitive.Portal>");
+    const bloquePortal = tenantSwitcher.slice(idxPortal);
+    assert.doesNotMatch(bloquePortal, /--dash-/);
+    assert.match(bloquePortal, /var\(--card\)/);
+    assert.match(bloquePortal, /var\(--border\)/);
+  });
+
+  test("radio máximo de 8px en el menú (rounded-lg) y sombra discreta (shadow-sm, no shadow-md/lg/xl)", () => {
+    assert.match(tenantSwitcher, /rounded-lg border py-1 text-sm shadow-sm/);
+    assert.doesNotMatch(tenantSwitcher, /shadow-(md|lg|xl|2xl)/);
+  });
+});
+
 describe("Home (/dashboard) — mismas consultas y cálculos, sin datos nuevos", () => {
   test("las 6 consultas reales siguen siendo exactamente las mismas tablas/filtros", () => {
     assert.match(home, /supabase\.from\("paquetes"\)\.select\("id", \{ count: "exact", head: true \}\)/);
@@ -129,7 +178,7 @@ describe("Home (/dashboard) — mismas consultas y cálculos, sin datos nuevos",
 });
 
 describe("Superficie visual — sin .app-bg ni .home-clasica/.home-blueprint, sin selectores legacy", () => {
-  const archivos = { layout, sidebar, nav, topbar, home };
+  const archivos = { layout, sidebar, nav, topbar, home, tenantSwitcher };
 
   for (const [nombre, contenido] of Object.entries(archivos)) {
     test(`${nombre}: no usa la clase .app-bg (es compartida con Tarifario)`, () => {
@@ -192,10 +241,27 @@ describe("Tipografía — Outfit/Plus Jakarta Sans cargadas y scoped SOLO al Das
   });
 });
 
-describe("Contraste canvas/tarjeta — --dash-bg y --dash-surface derivan de tokens distintos", () => {
-  test("--dash-bg usa --muted (canvas) y --dash-surface usa --card (tarjeta) — nunca el mismo token", () => {
-    assert.match(css, /--dash-bg:\s*var\(--muted\);/);
+describe("Contraste canvas/tarjeta — --dash-bg, --dash-surface y --dash-kpi-surface derivan de tokens distintos", () => {
+  test("--dash-bg (canvas), --dash-border y --dash-kpi-surface aplican un matiz azul con color-mix() sobre tokens semánticos reales (--muted/--card/--border + --brand-accent) — nunca un hex fijo", () => {
+    assert.match(css, /--dash-bg:\s*color-mix\(in srgb, var\(--muted\) 85%, var\(--brand-accent\) 15%\);/);
     assert.match(css, /--dash-surface:\s*var\(--card\);/);
+    assert.match(css, /--dash-kpi-surface:\s*color-mix\(in srgb, var\(--card\) 92%, var\(--brand-accent\) 8%\);/);
+    assert.match(css, /--dash-border:\s*color-mix\(in srgb, var\(--border\) 82%, var\(--brand-accent\) 18%\);/);
+    // Nunca un color fijo tipo #f2f8fc: siempre var(--muted)/var(--card)/var(--border) como base.
+    assert.doesNotMatch(css, /--dash-(bg|surface|kpi-surface|border):\s*#[0-9a-fA-F]{3,6}/);
+  });
+
+  test("el texto (--dash-ink/--dash-ink-muted) NO se mezcla con el matiz azul — el contraste AA no cambia con este ajuste", () => {
+    assert.match(css, /--dash-ink:\s*var\(--foreground\);/);
+    assert.match(css, /--dash-ink-muted:\s*var\(--muted-foreground\);/);
+    assert.doesNotMatch(css, /--dash-ink[^:]*:\s*color-mix/);
+  });
+
+  test("solo la tarjeta de métrica (MetricCard) usa --dash-kpi-surface; el resto de superficies principales (header, flujo, módulos, sidebar, topbar) sigue en --dash-surface blanco", () => {
+    assert.equal((home.match(/var\(--dash-kpi-surface\)/g) ?? []).length, 1, "--dash-kpi-surface debe usarse en un único punto: el fondo de MetricCard");
+    // La cabecera operativa y la sección "Flujo operativo" siguen blancas.
+    assert.match(home, /<header className="rounded-lg border p-6" style=\{\{ backgroundColor: "var\(--dash-surface\)"/);
+    assert.match(home, /<section className="mt-5 rounded-lg border p-4" style=\{\{ backgroundColor: "var\(--dash-surface\)"/);
   });
 
   // Extrae SOLO el primer bloque de declaraciones de un tema (desde su
@@ -235,7 +301,7 @@ describe("Contraste canvas/tarjeta — --dash-bg y --dash-surface derivan de tok
 });
 
 describe("Sin afirmaciones inventadas (mismo criterio auditado que el login)", () => {
-  const todo = layout + sidebar + nav + topbar + home + css;
+  const todo = layout + sidebar + nav + topbar + home + css + tenantSwitcher;
   const prohibido: [RegExp, string][] = [
     [/Sabre|Amadeus/i, "Sabre/Amadeus"],
     [/\bGDS\b|\bNDC\b/, "GDS/NDC"],

@@ -166,9 +166,9 @@ function ModulosGrid({ modulos }: { modulos: typeof MODULOS }) {
 
 function MetricCard({ icon: Icon, label, value, sub }: { icon: LucideIcon; label: string; value: string; sub?: string }) {
   return (
-    <div className="rounded-lg border p-4" style={{ backgroundColor: "var(--dash-surface)", borderColor: "var(--dash-border)" }}>
+    <div className="rounded-lg border p-4" style={{ backgroundColor: "var(--dash-kpi-surface)", borderColor: "var(--dash-border)" }}>
       <div className="flex items-center gap-2.5">
-        <span className="grid h-9 w-9 place-items-center rounded-lg" style={{ backgroundColor: "var(--dash-muted-surface)", color: "var(--dash-primary)" }}>
+        <span className="grid h-9 w-9 place-items-center rounded-lg" style={{ backgroundColor: "var(--dash-surface)", color: "var(--dash-primary)" }}>
           <Icon size={18} strokeWidth={2} />
         </span>
         <span className="text-xs font-medium" style={{ color: "var(--dash-ink-muted)" }}>{label}</span>

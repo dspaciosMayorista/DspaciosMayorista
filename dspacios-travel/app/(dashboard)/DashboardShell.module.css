@@ -13,16 +13,32 @@
    --dash-bg usa --muted (no --background) a propósito: en el tema por
    defecto --background y --card son AMBOS blancos, así que canvas y
    tarjeta quedarían idénticos; --muted es un gris/azul muy claro distinto
-   de --card (blanco), dando el contraste canvas/tarjeta que pide Stitch. */
+   de --card (blanco), dando el contraste canvas/tarjeta que pide Stitch.
+
+   --dash-bg/--dash-border/--dash-kpi-surface usan color-mix() para sumarle
+   un matiz azul sutil a esos tokens semánticos (mismo patrón que ya usaba
+   este archivo antes de existir — el `tint()` de dashboard/page.tsx hacía
+   exactamente esto en JS). Nunca se fija un hex plano: el resultado sigue
+   derivando 100% de tokens que cambian por tema (--muted/--card/--border +
+   --brand-accent), así que un tema oscuro (ej. "verde") sigue recibiendo SU
+   propio matiz correcto en vez de un azul roto sobre fondo negro. El texto
+   (--dash-ink/--dash-ink-muted) NO se toca — sigue en --foreground/
+   --muted-foreground sin mezcla, así que el contraste AA no se ve afectado
+   por este ajuste (solo se tocan fondos/bordes, nunca texto). */
 .dashRoot {
   --dash-primary: var(--brand-primary);
   --dash-accent: var(--brand-accent);
   --dash-success: var(--brand-success);
   --dash-highlight: var(--brand-highlight);
 
-  --dash-bg: var(--muted);
+  /* Canvas: azul grisáceo muy claro (≈ #f2f8fc en el tema por defecto). */
+  --dash-bg: color-mix(in srgb, var(--muted) 85%, var(--brand-accent) 15%);
+  /* Superficies principales (sidebar, topbar, tarjetas de módulos/flujo): blancas. */
   --dash-surface: var(--card);
-  --dash-border: var(--border);
+  /* Tarjetas de resumen/KPI: azul muy suave, perceptible pero sobrio —
+     distinto tanto del canvas como de una superficie blanca lisa. */
+  --dash-kpi-surface: color-mix(in srgb, var(--card) 92%, var(--brand-accent) 8%);
+  --dash-border: color-mix(in srgb, var(--border) 82%, var(--brand-accent) 18%);
   --dash-ink: var(--foreground);
   --dash-ink-muted: var(--muted-foreground);
   --dash-muted-surface: var(--muted);
