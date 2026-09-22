@@ -1,6 +1,6 @@
 # PROJECT_MAP.md
 
-Mapa del proyecto. Última actualización: 2026-09-21
+Mapa del proyecto. Última actualización: 2026-09-22
 
 ## Stack
 - App activa: `dspacios-travel/` — Next.js 16.x, React 19, TypeScript, Tailwind v4, pnpm
@@ -23,6 +23,7 @@ Mapa del proyecto. Última actualización: 2026-09-21
 | Cotización interna | `app/cotizacion/[id]/page.tsx` | Autenticada (panel) |
 | Contrato público | `app/c/[token]/page.tsx` (token imposible de adivinar; `/c/` en `RUTAS_PUBLICAS`) | Sin login |
 | Contrato interno | `app/contrato/[numero]/page.tsx` (vista autenticada) | Autenticada |
+| Login (único acceso a los portales) | `app/(auth)/login/page.tsx` (Server Component: resuelve `QUICK_LOGIN_ENABLED` y `inactivoInicial` en servidor) → `app/(auth)/login/LoginClient.tsx` (selector visual Portal B2B/Portal Admin, solo presentación; el destino real depende de `usuarios.rol` vía `actions.ts`/`supabase.auth`) con tokens aislados en `app/(auth)/login/LoginClient.module.css`. Pruebas: `pruebas/loginWiring.test.ts`. Enlazado desde `/tarifario` (botón único "Ingreso al Portal" → `/login`, sin acceso directo a `/portal/b2b` para visitantes públicos) y desde `proxy.ts` (rebote de sesión inactiva con `?inactivo=1`) | Sin login (pública) |
 | Add-ons (modo acotado por paquete) | `app/tarifario/CartDrawer.tsx` (`irAAgregarTours`, intent en `lib/cart/addonsIntent.ts` + `addonsNonce.ts`) → `app/tarifario/BuscadorReceptivos.tsx` (dentro de `VistaBooking.tsx`) → `buscarReceptivos` (`lib/reservar/cotizar.ts`) acota por `paqueteId` en servidor | Carrito |
 | Add-ons (catálogo general) | Entrada directa a `BuscadorReceptivos` sin `paqueteId` (búsqueda general por destino); el modo acotado solo se abandona con `Limpiar resultados` | Sin alcance de paquete |
 | Snapshot tarifario (vivo) | La 181 invalida por fuentes; `iniciar_generacion_tarifario` captura revisión/generación y `publicar_tarifario_resultado` reemplaza el snapshot atómicamente si el token sigue vigente (migración `supabase/migrations/...181`). La 182 expone `tarifario_resultado_publicable` (join autoritativo con `armado_paquetes`, security_barrier). Lectores en vivo: `lib/tarifario/paginacion.ts`, `app/tarifario/detalle-actions.ts`, `lib/reservar/cotizar.ts`, `lib/reservar/computo.ts` | Vista publicable |
