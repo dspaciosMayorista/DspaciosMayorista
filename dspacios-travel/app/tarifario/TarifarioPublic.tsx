@@ -2,7 +2,7 @@
 
 import { Fragment, useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
-import { Star, Plane, Bus } from "lucide-react";
+import { Star, Plane, Bus, Search, X } from "lucide-react";
 import { formatMoneda } from "@/lib/utils";
 import { VistaBooking } from "./VistaBooking";
 import { RegimenInfo, type PlanesInfo } from "./RegimenInfo";
@@ -362,6 +362,20 @@ export function TarifarioPublic({
   const [fCat, setFCat] = useState("");
   const [fReg, setFReg] = useState("");
   const [fAcom, setFAcom] = useState("");
+  // Estado de UI puro (no de filtro): visibilidad del panel compacto de
+  // "Filtros" en móvil. Los valores q/fCat/fReg/fAcom de arriba siguen siendo
+  // la ÚNICA fuente — este booleano solo decide si el bloque se ve o no en
+  // pantallas angostas (en `sm:` en adelante el panel se ve siempre, ver
+  // clases responsive más abajo).
+  const [filtrosAbiertos, setFiltrosAbiertos] = useState(false);
+  // Slot DOM donde `VistaBooking` porta sus propias pestañas de producto
+  // (Paquetes/Porción terrestre/Receptivos) para que compartan la misma fila
+  // que el selector de vista — sin mover el estado `sub` fuera de
+  // `VistaBooking` (sigue siendo el único dueño de esa pestaña y de todo lo
+  // que dispara al cambiarla). Si `VistaBooking` aún no montó el nodo (o no
+  // está montado porque `vista !== "booking"`), queda `null` y no pasa nada:
+  // el slot vacío no ocupa espacio visible.
+  const [subtabsSlot, setSubtabsSlot] = useState<HTMLDivElement | null>(null);
 
   // Opciones únicas para los selects (de toda la base, ordenadas). Incluyen
   // las categorías/alimentaciones de los hoteles por unidad (Bernalo) —
@@ -418,69 +432,120 @@ export function TarifarioPublic({
   // Si el módulo activo se queda sin resultados por el filtro, salta al primero con datos.
   const modulo = tabs.some((t) => t.key === moduloSel) ? moduloSel : (tabs[0]?.key ?? "bloqueo");
 
-  const selCls = "rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm text-gray-700";
+  const selCls = "w-full rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-xs font-medium text-slate-800 focus:border-[var(--brand-accent)] focus:outline-none focus:ring-2 focus:ring-[var(--brand-accent)]";
+  const contadorFiltros = [q.trim(), fCat, fReg, fAcom].filter(Boolean).length;
+
+  // Controles de filtro (mismos 4 de siempre) — UN SOLO render: en `sm:` y
+  // superior van siempre visibles (columna de acceso rápido, aprovechando el
+  // ancho); en móvil el mismo bloque queda oculto por defecto y solo se ve
+  // si `filtrosAbiertos` está en true (botón "Filtros" de abajo). No hay dos
+  // copias del formulario — es el mismo JSX, la visibilidad la decide CSS.
+  const panelFiltros = (
+    <div className={`${filtrosAbiertos ? "grid" : "hidden"} grid-cols-2 gap-2 sm:grid sm:grid-cols-4 sm:gap-3`}>
+      <div className="col-span-2 sm:col-span-1">
+        <label htmlFor="tarifario-buscar-hotel" className="mb-1 block text-xs font-semibold text-slate-700">Buscar hotel</label>
+        <input
+          id="tarifario-buscar-hotel"
+          value={q}
+          onChange={(e) => setQ(e.target.value)}
+          placeholder="Nombre del hotel…"
+          className={selCls}
+        />
+      </div>
+      <div>
+        <label className="mb-1 block text-xs font-semibold text-slate-700">Categoría</label>
+        <select value={fCat} onChange={(e) => setFCat(e.target.value)} className={selCls} aria-label="Categoría de habitación">
+          <option value="">Todas</option>
+          {cats.map((c) => <option key={c} value={c}>{c}</option>)}
+        </select>
+      </div>
+      <div>
+        <label className="mb-1 block text-xs font-semibold text-slate-700">Alimentación</label>
+        <select value={fReg} onChange={(e) => setFReg(e.target.value)} className={selCls} aria-label="Alimentación / régimen">
+          <option value="">Todas</option>
+          {regs.map((r) => <option key={r} value={r}>{r}</option>)}
+        </select>
+      </div>
+      <div>
+        <label className="mb-1 block text-xs font-semibold text-slate-700">Acomodación</label>
+        <select value={fAcom} onChange={(e) => setFAcom(e.target.value)} className={selCls} aria-label="Acomodación">
+          <option value="">Todas</option>
+          {ACOM_OPCIONES.map(([k, label]) => <option key={k} value={k}>{label}</option>)}
+        </select>
+      </div>
+    </div>
+  );
 
   return (
     <div className="relative">
-      {/* Card flotante que solapa el borde inferior del header */}
-      <div className="-mt-10 mb-6 relative z-10 px-0">
-        <div className="rounded-2xl border border-gray-100 bg-white p-3 shadow-[0_6px_32px_rgba(0,0,0,0.12)]">
-          <div className="flex flex-wrap items-center gap-2">
-            {/* Toggle de vista: tabla (estático, solo usuarios registrados) · Booking (dinámico) · Programas (circuitos) */}
-            <div className="inline-flex rounded-full border border-gray-200 bg-gray-50 p-1">
-              {([...(puedeReservar ? [["tabla", "Vista tabla"] as const] : []), ["booking", "Vista Booking"], ...(programas.length ? [["programas", "Programas"] as const] : [])] as const).map(([v, label]) => (
-                <button
-                  key={v}
-                  type="button"
-                  onClick={() => setVista(v)}
-                  className="rounded-full px-4 py-1.5 text-sm font-medium transition-colors"
-                  style={vista === v ? { backgroundColor: "var(--brand-primary)", color: "white" } : { color: "#4b5563" }}
-                >
-                  {label}
-                </button>
-              ))}
-            </div>
-
-            {/* Filtros inline (solo para hoteles: tabla/booking) */}
-            {vista !== "programas" && (
-              <>
-                <input
-                  value={q}
-                  onChange={(e) => setQ(e.target.value)}
-                  placeholder="Buscar hotel por nombre…"
-                  className="min-w-[160px] flex-1 rounded-lg border border-gray-300 px-3 py-2 text-sm"
-                />
-                <select value={fCat} onChange={(e) => setFCat(e.target.value)} className={selCls} aria-label="Categoría de habitación">
-                  <option value="">Categoría: todas</option>
-                  {cats.map((c) => <option key={c} value={c}>{c}</option>)}
-                </select>
-                <select value={fReg} onChange={(e) => setFReg(e.target.value)} className={selCls} aria-label="Alimentación / régimen">
-                  <option value="">Alimentación: todas</option>
-                  {regs.map((r) => <option key={r} value={r}>{r}</option>)}
-                </select>
-                <select value={fAcom} onChange={(e) => setFAcom(e.target.value)} className={selCls} aria-label="Acomodación">
-                  <option value="">Acomodación: todas</option>
-                  {ACOM_OPCIONES.map(([k, label]) => <option key={k} value={k}>{label}</option>)}
-                </select>
-                {hayFiltro && (
-                  <button
-                    type="button"
-                    onClick={() => { setQ(""); setFCat(""); setFReg(""); setFAcom(""); }}
-                    className="text-xs font-medium text-gray-500 hover:text-gray-800"
-                  >
-                    Limpiar
-                  </button>
-                )}
-              </>
-            )}
+      {/* Franja de navegación única: pestañas de producto (portadas por
+          VistaBooking al slot de abajo cuando vista==="booking") + selector
+          de vista (tabla/Booking/programas), en la misma fila — igual
+          jerarquía que la referencia. El slot queda vacío (sin tamaño) si
+          VistaBooking no está montado. */}
+      <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
+        <div ref={setSubtabsSlot} className="flex flex-wrap items-center gap-2" />
+        <div className="flex flex-wrap items-center gap-2">
+          <div className="inline-flex items-center gap-1 rounded-lg border border-slate-200 bg-white p-1 shadow-sm">
+            {([...(puedeReservar ? [["tabla", "Vista tabla"] as const] : []), ["booking", "Vista Booking"], ...(programas.length ? [["programas", "Programas"] as const] : [])] as const).map(([v, label]) => (
+              <button
+                key={v}
+                type="button"
+                onClick={() => setVista(v)}
+                className="rounded-md px-3 py-1.5 text-xs font-semibold transition-colors sm:text-sm"
+                style={vista === v
+                  ? { backgroundColor: "var(--brand-primary)", color: "white" }
+                  : { color: "#475569" }}
+              >
+                {label}
+              </button>
+            ))}
           </div>
+          {/* Disparador del buscador general (nombre/categoría/alimentación/
+              acomodación) — SOLO visible en móvil (`sm:hidden`): en
+              escritorio el panel ya va abierto a la derecha (ver más abajo),
+              así que este botón sobraría. Etiqueta "Buscar" a propósito,
+              DISTINTA de "Más filtros" (PanelFiltrosResto, dentro de
+              VistaBooking: orden/zona/estrellas/Pet friendly/Adults Only) —
+              son dos paneles distintos y el usuario los confundía. */}
+          {vista !== "programas" && (
+            <button
+              type="button"
+              onClick={() => setFiltrosAbiertos((v) => !v)}
+              className="inline-flex items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 shadow-sm sm:hidden"
+            >
+              {filtrosAbiertos ? <X className="h-3.5 w-3.5" /> : <Search className="h-3.5 w-3.5" />}
+              Buscar{contadorFiltros > 0 && ` (${contadorFiltros})`}
+            </button>
+          )}
         </div>
       </div>
+
+      {/* Panel de filtros generales — en escritorio (`sm:` en adelante) va
+          siempre visible como fila compacta de acceso rápido; en móvil solo
+          aparece al abrir "Filtros" (arriba), para no interponer un segundo
+          panel completo antes del buscador del modo activo. */}
+      {vista !== "programas" && (
+        <div className={filtrosAbiertos ? "mb-3 rounded-lg border border-slate-200 bg-white p-3 sm:border-0 sm:bg-transparent sm:p-0" : "mb-3 hidden sm:block"}>
+          {panelFiltros}
+          {hayFiltro && (
+            <div className="mt-2 flex justify-end sm:mt-1">
+              <button
+                type="button"
+                onClick={() => { setQ(""); setFCat(""); setFReg(""); setFAcom(""); }}
+                className="text-xs font-semibold text-slate-500 hover:text-slate-800"
+              >
+                Limpiar filtros
+              </button>
+            </div>
+          )}
+        </div>
+      )}
 
       {vista === "programas" ? (
         <PorProgramas programas={programas} puedeReservar={puedeReservar} />
       ) : vista === "booking" ? (
-        <VistaBooking filas={filasFiltradas} fotosPorHotel={fotosPorHotel} fotosPorServicio={fotosPorServicio} cuposPorBloqueo={cuposPorBloqueo} origenPorBloqueo={origenPorBloqueo} puedeReservar={puedeReservar} ventanaPorPaquete={ventanaPorPaquete} infoPorHotel={infoPorHotel} planesInfo={planesInfo} capPorHotel={capPorHotel} soloAcom={fAcom || null} descripcionPorPaquete={descripcionPorPaquete} filasAddon={filasAddon} hotelesBernalo={fAcom ? [] : hotelesBernaloFiltrados} hotelIdsUnidadAutoritativos={hotelIdsUnidadAutoritativos} prioridadesRecomendados={prioridadesRecomendados} condicionPorOferta={condicionPorOferta} politicaPorOferta={politicaPorOferta} restriccionPorPaquete={restriccionPorPaquete} />
+        <VistaBooking filas={filasFiltradas} subtabsSlot={subtabsSlot} fotosPorHotel={fotosPorHotel} fotosPorServicio={fotosPorServicio} cuposPorBloqueo={cuposPorBloqueo} origenPorBloqueo={origenPorBloqueo} puedeReservar={puedeReservar} ventanaPorPaquete={ventanaPorPaquete} infoPorHotel={infoPorHotel} planesInfo={planesInfo} capPorHotel={capPorHotel} soloAcom={fAcom || null} descripcionPorPaquete={descripcionPorPaquete} filasAddon={filasAddon} hotelesBernalo={fAcom ? [] : hotelesBernaloFiltrados} hotelIdsUnidadAutoritativos={hotelIdsUnidadAutoritativos} prioridadesRecomendados={prioridadesRecomendados} condicionPorOferta={condicionPorOferta} politicaPorOferta={politicaPorOferta} restriccionPorPaquete={restriccionPorPaquete} />
       ) : (
         <>
           {/* Tabs de módulos */}

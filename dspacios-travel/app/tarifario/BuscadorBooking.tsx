@@ -381,18 +381,19 @@ export function BuscadorBooking({
     aplicarSugerenciaRef.current(sugerenciaPedida);
   }, [sugerenciaPedida]);
 
-  const sel = "rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm";
+  const sel = "w-full rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-xs font-medium text-slate-800 focus:border-[var(--brand-accent)] focus:outline-none focus:ring-2 focus:ring-[var(--brand-accent)]";
+  const lbl = "mb-1 block text-xs font-semibold text-slate-700";
 
   return (
     <div className="mb-6">
-      <div className="rounded-2xl border border-gray-200 bg-white p-4">
-        <p className="mb-3 text-sm font-semibold" style={{ color: "var(--brand-primary)" }}>Buscar alojamiento</p>
-        <div className="flex flex-wrap items-end gap-3">
+      <div className="rounded-lg border border-slate-200/80 bg-white p-4 shadow-[0_10px_25px_-5px_rgba(29,124,154,0.08),0_8px_10px_-6px_rgba(29,124,154,0.04)] sm:p-5">
+        <p className="mb-3 text-sm font-bold text-slate-900">Buscar alojamiento</p>
+        <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-6">
           {/* El selector se pinta SIEMPRE (aunque el catálogo esté vacío) y su
               opción inicial es un placeholder DESHABILITADO: el destino es
               obligatorio para buscar, así que una opción "sin destino" elegible
               sólo ofrecería el valor que el motor rechaza. */}
-          <div><label className="mb-1 block text-xs text-gray-500">Destino</label>
+          <div className="col-span-2 sm:col-span-1"><label className={lbl}>Destino</label>
             <select
               value={destino}
               onChange={(e) => {
@@ -411,17 +412,17 @@ export function BuscadorBooking({
               {destinos.map((d) => <option key={d.nombre} value={d.nombre}>{d.nombre}</option>)}
             </select>
           </div>
-          <div><label className="mb-1 block text-xs text-gray-500">Ida</label><input type="date" min={hoy} value={fIda} onChange={(e) => { const nueva = e.target.value; limpiarResultados(); setFIda(nueva); if (fReg && fReg <= nueva) setFReg(""); }} className={sel} /></div>
-          <div><label className="mb-1 block text-xs text-gray-500">Regreso</label><input type="date" min={fIda} value={fReg} onChange={(e) => { limpiarResultados(); setFReg(e.target.value); }} className={sel} /></div>
-          <div><label className="mb-1 block text-xs text-gray-500">Adultos (12+)</label>
+          <div><label className={lbl}>Ida</label><input type="date" min={hoy} value={fIda} onChange={(e) => { const nueva = e.target.value; limpiarResultados(); setFIda(nueva); if (fReg && fReg <= nueva) setFReg(""); }} className={sel} /></div>
+          <div><label className={lbl}>Regreso</label><input type="date" min={fIda} value={fReg} onChange={(e) => { limpiarResultados(); setFReg(e.target.value); }} className={sel} /></div>
+          <div><label className={lbl}>Adultos (12+)</label>
             <input type="number" min={1} value={adultos} onChange={(e) => { limpiarResultados(); setAdultos(e.target.value); }}
-              className={`${sel} w-20 ${!adultosValido ? "border-red-400" : ""}`} aria-invalid={!adultosValido ? true : undefined} />
+              className={`${sel} ${!adultosValido ? "border-red-400" : ""}`} aria-invalid={!adultosValido ? true : undefined} />
           </div>
-          <div><label htmlFor={`${idBase}-cant`} className="mb-1 block text-xs text-gray-500">Cantidad de menores</label>
+          <div><label htmlFor={`${idBase}-cant`} className={lbl}>Cantidad de menores</label>
             <input id={`${idBase}-cant`} type="number" inputMode="numeric" min={0} max={MAX_MENORES_POR_CONSULTA} value={cantidadMenores}
-              onChange={(e) => setCantidadMenores(Number(e.target.value))} className={`${sel} w-20`} />
+              onChange={(e) => setCantidadMenores(Number(e.target.value))} className={sel} />
           </div>
-          <div><label className="mb-1 block text-xs text-gray-500">Habitaciones</label><input type="number" min={1} max={8} value={nHab} onChange={(e) => setCantidad(Number(e.target.value))} className={`${sel} w-20`} /></div>
+          <div><label className={lbl}>Habitaciones</label><input type="number" min={1} max={8} value={nHab} onChange={(e) => setCantidad(Number(e.target.value))} className={sel} /></div>
         </div>
 
         {/* Una fila por habitación: solo el tipo de acomodación (los menores se
@@ -429,8 +430,8 @@ export function BuscadorBooking({
         <div className="mt-3 space-y-2">
           {habs.map((acom, i) => (
             <div key={i} className="flex flex-wrap items-center gap-2 text-sm">
-              <span className="w-24 text-gray-500">Habitación {i + 1}</span>
-              <select value={acom} onChange={(e) => setHab(i, e.target.value as AcomRoom)} className={sel}>
+              <span className="w-24 text-slate-500">Habitación {i + 1}</span>
+              <select value={acom} onChange={(e) => setHab(i, e.target.value as AcomRoom)} className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-xs font-medium text-slate-800 focus:border-[var(--brand-accent)] focus:outline-none focus:ring-2 focus:ring-[var(--brand-accent)]">
                 {ACOM_ROOMS.map((a) => <option key={a} value={a}>{ACOM_ROOM_LABEL[a]}</option>)}
               </select>
             </div>
@@ -439,14 +440,14 @@ export function BuscadorBooking({
 
         {cantidadMenores > 0 && (
           <div className="mt-3">
-            <p className="mb-1 text-xs font-semibold uppercase tracking-wide text-gray-400">Edad de cada menor</p>
+            <p className="mb-1 text-xs font-semibold uppercase tracking-wide text-slate-400">Edad de cada menor</p>
             <div className="flex flex-wrap gap-3">
               {edadesTxt.map((v, i) => {
                 const errP = edadesParsed[i]?.error;
                 const mostrarError = v.trim() !== "" && errP;
                 return (
                   <div key={i}>
-                    <label htmlFor={`${idBase}-edad-${i}`} className="mb-1 block text-xs text-gray-500">Edad menor {i + 1}</label>
+                    <label htmlFor={`${idBase}-edad-${i}`} className="mb-1 block text-xs text-slate-500">Edad menor {i + 1}</label>
                     <input
                       id={`${idBase}-edad-${i}`}
                       type="number"
@@ -455,7 +456,7 @@ export function BuscadorBooking({
                       max={EDAD_MENOR_MAX}
                       value={v}
                       onChange={(e) => setEdadAt(i, e.target.value)}
-                      className={`w-16 rounded-lg border px-2 py-2 text-sm text-center focus:outline-none focus:ring-2 focus:ring-[var(--brand-accent)] ${mostrarError ? "border-red-400" : "border-gray-300"}`}
+                      className={`w-16 rounded-lg border px-2 py-2 text-sm text-center focus:outline-none focus:ring-2 focus:ring-[var(--brand-accent)] ${mostrarError ? "border-red-400" : "border-slate-200 bg-slate-50"}`}
                       aria-invalid={mostrarError ? true : undefined}
                     />
                     {mostrarError && <p className="mt-0.5 text-[10px] text-red-600">{errP}</p>}
@@ -469,11 +470,11 @@ export function BuscadorBooking({
           </div>
         )}
 
-        <div className="mt-3 flex items-center gap-3">
-          <button type="button" onClick={() => buscar()} disabled={pending || !menoresListos || !adultosValido} className="rounded-lg px-5 py-2.5 text-sm font-semibold text-white disabled:opacity-50" style={{ backgroundColor: "var(--brand-primary)" }}>
+        <div className="mt-4 flex flex-wrap items-center gap-3 border-t border-slate-100 pt-3">
+          <button type="button" onClick={() => buscar()} disabled={pending || !menoresListos || !adultosValido} className="rounded-lg bg-[var(--brand-primary)] px-5 py-2.5 text-xs font-bold uppercase tracking-wide text-white shadow-sm transition hover:brightness-110 disabled:opacity-50">
             {pending ? "Buscando…" : "Buscar hoteles"}
           </button>
-          {huellaBuscada !== null && <button type="button" onClick={limpiarResultados} className="text-xs text-gray-400 hover:text-gray-700">Limpiar resultados</button>}
+          {huellaBuscada !== null && <button type="button" onClick={limpiarResultados} className="text-xs font-semibold text-slate-400 hover:text-slate-700">Limpiar resultados</button>}
         </div>
         {avisoHab && <p className="mt-2 rounded-lg bg-amber-50 px-3 py-2 text-sm text-amber-700">{avisoHab}</p>}
         {err && <p className="mt-2 text-sm text-red-600">{err}</p>}

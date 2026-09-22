@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useId, useMemo, useRef, useState, useTransition, type ReactNode, type CSSProperties } from "react";
+import { createPortal } from "react-dom";
 import Image from "next/image";
 import { formatMoneda } from "@/lib/utils";
 import {
@@ -253,8 +254,13 @@ function PanelFiltrosResto({
           onClick={() => setPanelAbierto((v) => !v)}
           className="flex items-center gap-1.5 rounded-full border border-gray-200 bg-white px-3 py-1.5 text-xs font-medium text-gray-600"
         >
+          {/* Etiqueta "Más filtros" a propósito, DISTINTA del disparador
+              "Buscar" de TarifarioPublic (nombre/categoría/alimentación/
+              acomodación) — este panel es orden/zona/estrellas/Pet friendly/
+              Adults Only, un control aparte. El usuario los confundía por
+              compartir el mismo texto "Filtros". */}
           <SlidersHorizontal className="h-3.5 w-3.5" aria-hidden />
-          Filtros
+          Más filtros
           {activos > 0 && (
             <span
               className="rounded-full px-1.5 py-0.5 text-[10px] font-semibold leading-none text-white"
@@ -468,6 +474,7 @@ const minRoomPvp = minRoomPvpResumen;
 
 export function VistaBooking({
   filas,
+  subtabsSlot = null,
   fotosPorHotel = {},
   fotosPorServicio = {},
   cuposPorBloqueo = {},
@@ -488,6 +495,16 @@ export function VistaBooking({
   restriccionPorPaquete = {},
 }: {
   filas: FilaResumen[];
+  // Nodo DOM (portado por `TarifarioPublic`, en la misma fila que su
+  // selector de vista) donde se pintan las pestañas de producto (Paquetes/
+  // Porción terrestre/Receptivos) de abajo — `sub` sigue viviendo acá, esto
+  // solo mueve DÓNDE se ve el botón, vía `createPortal`. `null` (valor por
+  // defecto, y durante SSR/el primer render de hidratación, antes de que el
+  // ref-callback de `TarifarioPublic` confirme el nodo) hace que las
+  // pestañas simplemente no se pinten todavía — nunca en una posición
+  // "provisional" que después salte a la definitiva (ver el comentario junto
+  // a `subtabsBotones`, más abajo).
+  subtabsSlot?: HTMLDivElement | null;
   fotosPorHotel?: Record<number, string>;
   fotosPorServicio?: Record<number, string>;
   cuposPorBloqueo?: Record<number, number>;
@@ -1482,47 +1499,68 @@ export function VistaBooking({
     [filas]
   );
 
+  // Submódulos: Bloqueos · Porción terrestre · Receptivos — pestañas de tipo
+  // de producto, mismo patrón segmentado que el resto del shell. `sub` sigue
+  // siendo el único estado (acá mismo); esto solo decide DÓNDE se pintan los
+  // botones: se portan al slot que monta `TarifarioPublic` (misma fila que
+  // su selector de vista).
+  //
+  // Corrección (verificación en navegador, hallazgo confirmado con CPU
+  // throttling 4x): un fallback inline "mientras el slot no está listo"
+  // parecía prudente, pero el slot SIEMPRE llega null en el primer render
+  // (SSR y primera pasada de hidratación no tienen DOM todavía) — así que ese
+  // fallback SIEMPRE se pintaba primero, en SU posición (una fila propia,
+  // debajo de la franja superior), y saltaba a la posición final del slot en
+  // cuanto el ref-callback confirmaba el nodo. El salto era real (~50px) y
+  // perceptible, no una duda teórica. Nunca hay DOS copias visibles a la vez
+  // (esto sigue siendo un solo render condicional), pero la posición sí
+  // cambiaba. `null` mientras el slot no está listo evita la reserva de una
+  // fila en el lugar equivocado: las pestañas aparecen directamente en su
+  // posición final (el slot), sin una parada intermedia que después salte.
+  const subtabsBotones = (
+    <div className="inline-flex items-center gap-1 rounded-lg border border-slate-200 bg-white p-1 shadow-sm">
+      {SUBTABS.map((t) => (
+        <button
+          key={t.key}
+          type="button"
+          onClick={() => cambiarSub(t.key)}
+          className="rounded-md px-3 py-1.5 text-xs font-semibold transition-colors sm:text-sm"
+          style={sub === t.key
+            ? { backgroundColor: "var(--brand-primary)", color: "white" }
+            : { color: "#475569" }}
+        >
+          {t.label}
+        </button>
+      ))}
+    </div>
+  );
+
   return (
     <div>
-      {/* Submódulos: Bloqueos · Porción terrestre · Receptivos */}
-      <div className="mb-5 flex flex-wrap gap-2">
-        {SUBTABS.map((t) => (
-          <button
-            key={t.key}
-            type="button"
-            onClick={() => cambiarSub(t.key)}
-            className="rounded-full px-4 py-1.5 text-sm font-medium transition-colors"
-            style={sub === t.key
-              ? { backgroundColor: "var(--brand-primary)", color: "white" }
-              : { backgroundColor: "white", color: "#4b5563", border: "1px solid #e5e7eb" }}
-          >
-            {t.label}
-          </button>
-        ))}
-      </div>
+      {subtabsSlot && createPortal(subtabsBotones, subtabsSlot)}
 
       {/* Buscador de BLOQUEOS: origen → destino → salida (vuelo) */}
       {sub === "bloqueo" && (
-        <div className="mb-5 rounded-2xl border border-gray-200 bg-white p-4">
-          <p className="mb-3 text-sm font-semibold" style={{ color: "var(--brand-primary)" }}>Buscar vuelo + hotel (paquete)</p>
+        <div className="mb-4 rounded-lg border border-slate-200/80 bg-white p-4 shadow-[0_10px_25px_-5px_rgba(29,124,154,0.08),0_8px_10px_-6px_rgba(29,124,154,0.04)] sm:p-5">
+          <p className="mb-3 text-sm font-bold text-slate-900">Buscar vuelo + hotel (paquete)</p>
           <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
             <div>
-              <label className="mb-1 block text-xs font-medium text-gray-600">Origen</label>
-              <select value={origenSel} onChange={(e) => { setOrigenSel(e.target.value); confirmarDestinoBloqueo(""); }} className="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm">
+              <label className="mb-1 block text-xs font-semibold text-slate-700">Origen</label>
+              <select value={origenSel} onChange={(e) => { setOrigenSel(e.target.value); confirmarDestinoBloqueo(""); }} className="w-full rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-xs font-medium text-slate-800 focus:border-[var(--brand-accent)] focus:outline-none focus:ring-2 focus:ring-[var(--brand-accent)]">
                 <option value="">Todos</option>
                 {origenes.map((o) => <option key={o} value={o}>{o}</option>)}
               </select>
             </div>
             <div>
-              <label className="mb-1 block text-xs font-medium text-gray-600">Destino</label>
-              <select value={destinoSel} onChange={(e) => confirmarDestinoBloqueo(e.target.value)} className="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm">
+              <label className="mb-1 block text-xs font-semibold text-slate-700">Destino</label>
+              <select value={destinoSel} onChange={(e) => confirmarDestinoBloqueo(e.target.value)} className="w-full rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-xs font-medium text-slate-800 focus:border-[var(--brand-accent)] focus:outline-none focus:ring-2 focus:ring-[var(--brand-accent)]">
                 <option value="">Todos</option>
                 {destinosBloqueo.map((d) => <option key={d} value={d}>{d}</option>)}
               </select>
             </div>
             <div>
-              <label className="mb-1 block text-xs font-medium text-gray-600">Salida (vuelo)</label>
-              <select value={salidaSel} onChange={(e) => setSalidaSel(e.target.value === "" ? "" : Number(e.target.value))} className="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm">
+              <label className="mb-1 block text-xs font-semibold text-slate-700">Salida (vuelo)</label>
+              <select value={salidaSel} onChange={(e) => setSalidaSel(e.target.value === "" ? "" : Number(e.target.value))} className="w-full rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-xs font-medium text-slate-800 focus:border-[var(--brand-accent)] focus:outline-none focus:ring-2 focus:ring-[var(--brand-accent)]">
                 <option value="">Todas las salidas</option>
                 {salidasFiltradas.map((s) => (
                   <option key={s.id} value={s.id}>
@@ -1532,7 +1570,7 @@ export function VistaBooking({
               </select>
             </div>
           </div>
-          <p className="mt-2 text-[11px] text-gray-400">Elige el origen y el destino; las fechas salen del vuelo (no son libres). El resto (habitaciones y acomodación) se elige en cada hotel.</p>
+          <p className="mt-2 text-[11px] text-slate-400">Elige el origen y el destino; las fechas salen del vuelo (no son libres). El resto (habitaciones y acomodación) se elige en cada hotel.</p>
         </div>
       )}
 

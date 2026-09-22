@@ -131,7 +131,7 @@ export default async function TarifarioPublicoPage() {
     // falló — eso afirmaría algo falso. El detalle técnico ya quedó
     // saneado en el log dentro de cargarResumenTarifario() (registrarErrorTecnico).
     return (
-      <div className="app-bg min-h-screen bg-gray-50">
+      <div className="app-bg min-h-screen">
         <main className="mx-auto max-w-[1700px] px-4 py-20 md:px-6">
           <p className="text-center text-red-500">{MSG_ERROR_CARGAR_TARIFARIO}</p>
         </main>
@@ -261,41 +261,37 @@ export default async function TarifarioPublicoPage() {
   registrarEtapa(FLUJO, flujoId, "preparacion_servidor", _cronoPrep(), "ok");
 
   return (
-    <div className="app-bg min-h-screen bg-gray-50">
-      <header className={`relative overflow-hidden bg-brand-gradient px-6 pt-8 pb-16 text-white ${videoFondo ? "flex min-h-[60vh] flex-col justify-end" : "min-h-[200px] flex flex-col justify-end"}`}>
-        <BackgroundVideo url={videoFondo} overlay={0.4} />
-        {!videoFondo && (
-          <div
-            className="absolute inset-0 bg-cover bg-center opacity-15"
-            style={{ backgroundImage: "url('https://images.unsplash.com/photo-1507525428034-b723cf961d3e?w=1920&fit=crop&auto=format')" }}
-          />
-        )}
-        <div className="relative mx-auto flex w-full max-w-[1700px] flex-wrap items-end justify-between gap-4">
-          <div>
-            <Logo variant="white" height={56} priority className="h-12 w-auto md:h-14" />
-            <p className="mt-2 text-sm opacity-90">Tarifario 2026</p>
+    <div className="app-bg min-h-screen">
+      {/* Header compacto de marca (Fase 1 del rediseño — antes: hero de 60vh
+          con video/foto a pantalla completa). El video de fondo configurable
+          (`config_sitio.video_fondo_url`) se conserva como textura sutil
+          detrás del degradado, nunca como protagonista de la composición. */}
+      <header className="relative overflow-hidden bg-brand-gradient px-4 py-3 text-white shadow-md sm:px-6">
+        <BackgroundVideo url={videoFondo} overlay={0.72} />
+        <div className="relative mx-auto flex w-full max-w-[1700px] flex-wrap items-center justify-between gap-3">
+          <div className="flex items-center gap-3">
+            <Logo variant="white" height={40} priority className="h-9 w-auto md:h-10" />
+            <span className="hidden text-xs font-medium uppercase tracking-wide opacity-80 sm:inline">Tarifario 2026</span>
           </div>
-          <div className="flex flex-col items-end gap-2">
-            <div className="flex items-center gap-3">
-              {esAgencia && (
-                <span className="rounded-full bg-white/20 px-3 py-1.5 text-xs font-medium">Modo agencia</span>
-              )}
-              {user ? (
-                <a href="/dashboard" className="rounded-lg bg-white px-4 py-2 text-sm font-medium" style={{ color: "var(--brand-primary)" }}>
-                  Ir al panel →
-                </a>
-              ) : (
-                <a href="/login" className="rounded-lg border border-white/60 px-4 py-2 text-sm font-medium text-white hover:bg-white/10">
-                  Ingreso al Portal
-                </a>
-              )}
-            </div>
+          <div className="flex flex-wrap items-center gap-3">
+            {esAgencia && (
+              <span className="rounded-full bg-white/15 px-3 py-1.5 text-xs font-medium">Modo agencia</span>
+            )}
+            {user ? (
+              <a href="/dashboard" className="rounded-lg bg-white px-4 py-2 text-sm font-medium" style={{ color: "var(--brand-primary)" }}>
+                Ir al panel →
+              </a>
+            ) : (
+              <a href="/login" className="rounded-lg border border-white/60 px-4 py-2 text-sm font-medium text-white hover:bg-white/10">
+                Ingreso al Portal
+              </a>
+            )}
             <CartDrawer checkoutHabilitado fotosPorHotel={fotosPorHotel} />
           </div>
         </div>
       </header>
 
-      <main className="mx-auto max-w-[1700px] px-4 pt-0 pb-8 md:px-6">
+      <main className="mx-auto max-w-[1700px] px-4 pt-5 pb-8 md:px-6">
         {/* P1-1: un catálogo con SOLO hoteles por unidad (sin ninguna fila
             legacy ni programa) es un catálogo válido — nunca "en
             preparación". `hotelesBernalo` es la tercera fuente que puede
