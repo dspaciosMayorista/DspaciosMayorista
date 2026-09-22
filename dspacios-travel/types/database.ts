@@ -762,6 +762,30 @@ export type Database = {
         Update: Partial<Database["public"]["Tables"]["retenciones_cxp"]["Insert"]>;
         Relationships: [];
       };
+      meta_ventas_mensual: {
+        Row: {
+          id: number;
+          tenant: string;
+          periodo: string;
+          moneda: string;
+          valor: number;
+          actualizado_por: string | null;
+          created_at: string;
+          updated_at: string;
+        };
+        Insert: {
+          id?: number;
+          tenant?: string;
+          periodo: string;
+          moneda?: string;
+          valor: number;
+          actualizado_por?: string | null;
+          created_at?: string;
+          updated_at?: string;
+        };
+        Update: Partial<Database["public"]["Tables"]["meta_ventas_mensual"]["Insert"]>;
+        Relationships: [];
+      };
       cxp_pagos: {
         Row: {
           id: number;
@@ -3727,6 +3751,35 @@ export type Database = {
           p_tenant: string;
         };
         Returns: undefined;
+      };
+      // Migración 186 — Dashboard: agregados en base (evita descargar filas
+      // completas de ventas/abonos/cupos/CxP/retenciones solo para sumarlas
+      // o contarlas en el cliente). Las 6 son SECURITY INVOKER (respetan RLS
+      // tal cual), reciben `p_tenant` explícito y devuelven un resultado
+      // pequeño — ver supabase/migrations/20260601000186_dashboard_agregados.sql.
+      fn_dashboard_contratos_por_estado: {
+        Args: { p_tenant: string };
+        Returns: { estado: string; n: number }[];
+      };
+      fn_dashboard_cupos_resumen: {
+        Args: Record<PropertyKey, never>;
+        Returns: { capacidad: number; ocupados: number; disponibles: number; criticos: number }[];
+      };
+      fn_dashboard_retenciones_mes: {
+        Args: { p_tenant: string; p_periodo: string };
+        Returns: number;
+      };
+      fn_dashboard_cxp_resumen: {
+        Args: { p_tenant: string; p_desde: string; p_hasta: string };
+        Returns: { total: number; pagadas: number }[];
+      };
+      fn_dashboard_cartera_por_moneda: {
+        Args: { p_tenant: string; p_hoy: string };
+        Returns: { moneda: string; al_dia: number; vencida: number; sin_fecha: number; sin_fecha_count: number }[];
+      };
+      fn_dashboard_ventas_mes: {
+        Args: { p_tenant: string; p_periodo: string };
+        Returns: { moneda: string; total: number }[];
       };
     };
     Enums: {

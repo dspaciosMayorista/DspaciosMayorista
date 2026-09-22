@@ -1,13 +1,34 @@
 import { redirect } from "next/navigation";
+import { Outfit, Plus_Jakarta_Sans } from "next/font/google";
 import { createClient } from "@/lib/supabase/server";
 import { LogoutButton } from "./LogoutButton";
 import { type NavItem } from "./SidebarNav";
 import { DesktopSidebar } from "./DesktopSidebar";
+import { Topbar } from "./Topbar";
 import { Logo } from "@/components/Logo";
 import { modulosConsultables, miRol } from "@/lib/roles";
 import { tenantContext } from "@/lib/tenant.server";
 import { TenantSwitcher } from "./TenantSwitcher";
 import { POWERED_BY } from "@/lib/contrato/plantilla";
+import styles from "./DashboardShell.module.css";
+
+// Tipografía del Dashboard — Outfit (títulos/cifras) + Plus Jakarta Sans
+// (navegación/cuerpo/controles), cargadas SOLO acá y expuestas como variables
+// CSS scoped al wrapper `.dashRoot` (DashboardShell.module.css). El root
+// layout (app/layout.tsx) sigue con Jost/font-sans sin cambios: Login,
+// Tarifario y Portal B2B no llevan `.dashRoot`, así que no heredan nada de esto.
+const outfit = Outfit({
+  subsets: ["latin"],
+  weight: ["500", "600", "700"],
+  variable: "--dash-font-heading",
+  display: "swap",
+});
+const plusJakartaSans = Plus_Jakarta_Sans({
+  subsets: ["latin"],
+  weight: ["400", "500", "600", "700"],
+  variable: "--dash-font-body",
+  display: "swap",
+});
 
 const NAV: NavItem[] = [
   // Comercial / venta
@@ -147,44 +168,64 @@ export default async function DashboardLayout({
     return !n.modulo || permitidos.has(n.modulo);
   });
 
+  // Correo real del usuario autenticado (ya disponible por auth.getUser(),
+  // sin consultas nuevas) — el Topbar/header móvil lo usan como identidad.
+  const userLabel = (user.email ?? "").split("@")[0];
+  // Misma fecha (zona Colombia) que ya usa dashboard/page.tsx — cálculo puro
+  // del servidor, sin consulta ni reloj en vivo actualizándose en el cliente.
+  const fecha = new Date().toLocaleDateString("es-CO", { weekday: "long", day: "numeric", month: "long", timeZone: "America/Bogota" });
+
+  const switcher = <TenantSwitcher tenant={tenant} permitidos={tenantsPermitidos} puedeCambiar={puedeCambiar} />;
+
   return (
-    <div className="font-sitio flex min-h-screen flex-col bg-gray-50 md:flex-row">
-      {/* Barra superior (solo celular) */}
+    <div className={`${outfit.variable} ${plusJakartaSans.variable} ${styles.dashRoot} flex min-h-screen flex-col md:flex-row`}>
+      {/* Barra superior (solo celular): identidad + rol + acciones reales. */}
       <header
-        className="flex flex-col gap-2 border-b border-gray-200 bg-white px-4 py-3 md:hidden"
-        style={{ borderTop: `4px solid var(--brand-primary)` }}
+        className="flex flex-col gap-2 border-b px-4 py-3 md:hidden"
+        style={{ backgroundColor: "var(--dash-surface)", borderColor: "var(--dash-border)", borderTop: "4px solid var(--dash-primary)" }}
       >
         <div className="flex items-center justify-between">
           <a href="/dashboard" aria-label="D'spacios Travel — inicio">
             <Logo variant="full" height={32} className="h-7 w-auto" priority tenant={tenant} />
           </a>
           <div className="flex items-center gap-2">
-            <TenantSwitcher tenant={tenant} permitidos={tenantsPermitidos} puedeCambiar={puedeCambiar} />
-            <LogoutButton className="text-xs text-gray-500 hover:text-gray-800" />
+            {rol && (
+              <span className="rounded-md px-2 py-1 text-[11px] font-semibold capitalize" style={{ backgroundColor: "var(--dash-muted-surface)", color: "var(--dash-accent)" }}>
+                {rol}
+              </span>
+            )}
+            {switcher}
+            <LogoutButton className="text-xs" />
           </div>
         </div>
-        <nav className="-mx-1 flex gap-1 overflow-x-auto pb-1">
+        <nav className={`${styles.scrollNoBar} -mx-1 flex gap-1 overflow-x-auto pb-1`}>
           {nav.map((n) => (
             <a
               key={n.href}
               href={n.href}
-              className="whitespace-nowrap rounded-lg px-3 py-1.5 text-sm text-gray-600 hover:bg-gray-100"
+              className="whitespace-nowrap rounded-md px-3 py-1.5 text-sm"
+              style={{ color: "var(--dash-ink-muted)" }}
             >
               {n.label}
             </a>
           ))}
         </nav>
-        <div className="text-center text-[9px] text-gray-300">{POWERED_BY}</div>
+        <div className="text-center text-[9px]" style={{ color: "var(--dash-ink-muted)", opacity: 0.6 }}>{POWERED_BY}</div>
       </header>
 
-      {/* Sidebar (escritorio) — recogible */}
-      <DesktopSidebar nav={nav} tenant={tenant} switcher={<TenantSwitcher tenant={tenant} permitidos={tenantsPermitidos} puedeCambiar={puedeCambiar} />} />
+      {/* Sidebar (escritorio) — recogible. El switcher de agencia vive en el
+          Topbar (evita mostrar el mismo control dos veces a la vez). */}
+      <DesktopSidebar nav={nav} tenant={tenant} />
 
-      {/* Contenido: la página entera hace scroll (un solo scrollbar); el menú
-          queda fijo (sticky). Sin scroll interno propio. */}
-      <main className="app-bg min-w-0 flex-1 overflow-x-hidden">
-        {children}
-      </main>
+      {/* Columna derecha: topbar real (escritorio) + contenido. La página
+          entera hace scroll (un solo scrollbar); sidebar y topbar quedan
+          fijos (sticky). Sin scroll interno propio. */}
+      <div className="flex min-w-0 flex-1 flex-col">
+        <Topbar userLabel={userLabel} rol={rol} fecha={fecha} switcher={switcher} logout={<LogoutButton />} />
+        <main className="min-w-0 flex-1 overflow-x-hidden" style={{ backgroundColor: "var(--dash-bg)" }}>
+          {children}
+        </main>
+      </div>
     </div>
   );
 }

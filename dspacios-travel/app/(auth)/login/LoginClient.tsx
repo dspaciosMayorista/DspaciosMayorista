@@ -12,14 +12,10 @@ import { loginConCodigo } from "./actions";
 import styles from "./LoginClient.module.css";
 
 // Estilo forzado a mano (no via className) en los campos reales de texto:
-// el tema "verde" (styles/globals.css) sobrescribe `input, select, textarea`
-// por SELECTOR DE ETIQUETA, sin `!important` — ninguna clase (Tailwind o de
-// este módulo) le gana en especificidad, pero un `style` inline sí. Sin este
-// resguardo, un visitante con ese tema guardado en su navegador vería los
-// campos de ESTE login (pensado para verse siempre igual, ver alcance de la
-// tarea) en fondo casi negro con texto claro en vez del diseño claro
-// pretendido — no ilegible, pero sí inconsistente; se fija así para que /login
-// no dependa del `data-theme` global mientras ese sistema no se rediseñe.
+// usa los tokens propios de /login (LoginClient.module.css) en vez de
+// clases utilitarias, para que el color de fondo/texto/borde de los campos
+// quede fijado explícitamente aquí, sin depender de qué reglas globales
+// existan en styles/globals.css.
 const CAMPO_ESTILO: React.CSSProperties = {
   backgroundColor: "var(--login-field-bg)",
   color: "var(--login-ink)",
@@ -377,7 +373,7 @@ export function LoginClient({
               de interpretación corregido en esta ronda. Oculta debajo de
               `lg`: en móvil/tablet estrecha el selector de la izquierda ya
               comunica B2B/Admin, así que no hace falta duplicarlo, y evita
-              competir con ThemeSwitcher o alargar la pantalla. */}
+              alargar la pantalla. */}
           <section className="hidden flex-col justify-between gap-7 bg-[var(--login-context)] px-8 py-10 lg:flex">
             <div className="space-y-6">
               <div className="flex items-center gap-2">
