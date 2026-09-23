@@ -67,6 +67,7 @@ import {
 import { esNeutra } from "@/lib/cotizacion/condicionPago";
 import type { CondicionHotelFechas } from "@/lib/reservar/liquidacionHotel";
 import { combinarTernario, etiquetaCondicion, etiquetaPolitica, type EvidenciaTernaria } from "@/lib/tarifario/condicionOferta";
+import { personaCoincideFiltros, unidadCoincideFiltros, type FiltrosBusquedaBooking, type ComboPersonaElegido } from "@/lib/tarifario/filtrosBusqueda";
 import { ArrowUpDown, SlidersHorizontal, X, PawPrint, BadgeCheck, PlaneTakeoff, PlaneLanding, CalendarClock } from "lucide-react";
 
 const CAP_VACIA = { paxMin: null as number | null, paxMax: null as number | null, acom: [] as AcomConfig[] };
@@ -145,6 +146,19 @@ type HotelUnidadCard = {
   // carrito" revalida con `cotizarAlojamientoBernaloPublico` antes de
   // agregar (ver `TarjetaUnidadBusqueda`).
   opcionesBusqueda?: OpcionUnidadConfirmada[];
+  // Combo forzado por los filtros generales de arriba (Categoría/
+  // Alimentación) cuando el combo por defecto (el más barato) no los cumple
+  // pero otro sí — ver `lib/tarifario/filtrosBusqueda.ts::unidadCoincideFiltros`.
+  // `null`/ausente = sin filtro activo o el combo por defecto ya cumple; la
+  // tarjeta preselecciona la opción más barata como siempre.
+  catForzada?: string | null;
+  regForzada?: string | null;
+  // Contrato explícito: Categoría/Alimentación no solo deciden qué hoteles
+  // aparecen — cuando están activos, ACOTAN qué opciones puede ofrecer el
+  // selector interno de la tarjeta (`opcionesRestringidas`). `null`/ausente =
+  // sin filtro activo, el selector sigue mostrando TODAS las `opcionesBusqueda`
+  // (comportamiento de siempre) — nunca dos copias de la misma regla.
+  opcionesRestringidas?: OpcionUnidadConfirmada[] | null;
 };
 
 // Una sola lista visible en la grilla — para el cliente, un hotel por unidad
@@ -161,15 +175,31 @@ type HotelUnidadCard = {
 type Tarjeta =
   | { tipo: "persona"; key: string; card: HotelCard; recomendada?: boolean }
   | { tipo: "unidad"; key: string; hotel: HotelUnidadCard; recomendada?: boolean }
-  | { tipo: "busqueda"; key: string; r: BusquedaResultado; recomendada?: boolean };
+  | {
+      tipo: "busqueda"; key: string; r: BusquedaResultado; recomendada?: boolean;
+      catForzada?: string | null; regForzada?: string | null;
+      // Ver el comentario junto a `opcionesRestringidas` en `HotelUnidadCard`
+      // — mismo contrato, versión persona.
+      combosRestringidos?: ComboPersonaElegido[] | null;
+    };
 
-// Marca de recomendación que reciben los builders de tarjeta. Va en un OBJETO a
-// propósito: un `.map(tarjetaPersona)` accidental le pasaría el ÍNDICE como
-// segundo argumento, y con un objeto la marca queda `undefined` (falsa) en vez
-// de convertirse en "recomendado" por el número. La prioridad autoritativa es
-// la de `armado_hoteles` para el par (paqueteId, hotelId) — acá solo viaja el
-// booleano de si ESA oferta quedó seleccionada.
-type MarcaOferta = { recomendada?: boolean };
+// Marca de recomendación (+ combo forzado/restringido por los filtros
+// generales, ver `lib/tarifario/filtrosBusqueda.ts`) que reciben los
+// builders de tarjeta. Va en un OBJETO a propósito: un `.map(tarjetaPersona)`
+// accidental le pasaría el ÍNDICE como segundo argumento, y con un objeto la
+// marca queda `undefined` (falsa) en vez de convertirse en "recomendado" por
+// el número. La prioridad autoritativa es la de `armado_hoteles` para el par
+// (paqueteId, hotelId) — acá solo viaja el booleano de si ESA oferta quedó
+// seleccionada, y —desde este ajuste— cuál combo mostrar/permitir si los
+// filtros generales fuerzan/restringen uno distinto del más barato por
+// defecto.
+type MarcaOferta = {
+  recomendada?: boolean;
+  catForzada?: string | null;
+  regForzada?: string | null;
+  combosRestringidos?: ComboPersonaElegido[] | null;
+  opcionesRestringidas?: OpcionUnidadConfirmada[] | null;
+};
 
 // ── Panel de orden/filtro del RESTO del inventario ──────────────────────────
 // Superficie compacta (una barra + panel colapsable) que agrupa TODOS los
@@ -492,6 +522,9 @@ export function VistaBooking({
   planesInfo = {},
   capPorHotel = {},
   soloAcom = null,
+  filtroTexto = "",
+  filtroCategoria = "",
+  filtroRegimen = "",
   descripcionPorPaquete = {},
   filasAddon = [],
   hotelesBernalo = [],
@@ -522,6 +555,16 @@ export function VistaBooking({
   planesInfo?: PlanesInfo;
   capPorHotel?: CapHotel;
   soloAcom?: string | null;
+  // Los 3 filtros generales de arriba (`TarifarioPublic`: Buscar hotel/
+  // Categoría/Alimentación) — antes SOLO se aplicaban filtrando `filas`
+  // (exploración); en MODO BÚSQUEDA (`EstadoBusquedaPorcion`) esta vista
+  // arma sus tarjetas desde otro array por completo (`resultados`/`unidad`,
+  // el motor de liquidación en vivo), que nunca pasaba por ese filtrado.
+  // Estos 3 props cierran ese hueco — ver `lib/tarifario/filtrosBusqueda.ts`
+  // y el uso junto a `soloAcom` (que ya existía) en `datosBase` más abajo.
+  filtroTexto?: string;
+  filtroCategoria?: string;
+  filtroRegimen?: string;
   // Descripción manual del paquete (migración 169): incluye/no incluye/
   // tarifas especiales/condiciones comerciales — texto libre configurado UNA
   // sola vez en el paquete y compartido por todos sus hoteles/opciones.
@@ -1058,12 +1101,17 @@ export function VistaBooking({
         condicion, politica,
       };
     };
-    const itemDeBusquedaPersona = (r: BusquedaResultado): ItemResto => {
+    // `precioForzado`: cuando un filtro general (Categoría/Alimentación/
+    // Niño 1/Niño 2) obliga a un combo distinto del más barato por defecto,
+    // el precio que ordena/pinta el panel del resto debe ser el del combo
+    // REALMENTE mostrado en la tarjeta — nunca el de un combo que el usuario
+    // ya descartó al elegir el filtro (ver `personaCoincideFiltros`).
+    const itemDeBusquedaPersona = (r: BusquedaResultado, precioForzado?: number): ItemResto => {
       const info = infoPorHotel[r.hotelId];
       const { condicion, politica } = condicionPoliticaBusqueda(r.condicion, r.paqueteId);
       return {
         hotelId: r.hotelId, paqueteId: r.paqueteId, nombre: r.hotelNombre ?? "—",
-        precio: r.total, estrellas: info?.estrellas ?? null, zona: info?.zona ?? null,
+        precio: precioForzado ?? r.total, estrellas: info?.estrellas ?? null, zona: info?.zona ?? null,
         petFriendly: info?.petFriendly ?? false, adultsOnly: info?.adultsOnly ?? false,
         condicion, politica,
       };
@@ -1073,13 +1121,17 @@ export function VistaBooking({
     // HOTEL de condición/política queda siempre desconocido (Bernalo no
     // tiene `condicionHotelFechas` calculada para ninguna fecha) — solo
     // aporta el paquete, si su restricción es determinable.
-    const itemDeBusquedaUnidad = (g: GrupoOfertaUnidad<OpcionUnidadConfirmada>): ItemResto => {
+    // `precioForzado`: mismo criterio que la versión persona de arriba — si
+    // un filtro general obliga a una opción distinta de la más barata, el
+    // precio que ordena/pinta el panel del resto es el de ESA opción, no el
+    // mínimo de todo el grupo (que podría ni ser la que se está mostrando).
+    const itemDeBusquedaUnidad = (g: GrupoOfertaUnidad<OpcionUnidadConfirmada>, precioForzado?: number): ItemResto => {
       const info = infoPorHotel[g.hotelId];
       const precios = g.opciones.map((o) => o.precioVenta).filter((v): v is number => v != null && v > 0);
       const { condicion, politica } = condicionPoliticaBusqueda(undefined, g.paqueteId);
       return {
         hotelId: g.hotelId, paqueteId: g.paqueteId, nombre: g.opciones[0]?.hotelNombre ?? "—",
-        precio: precios.length ? Math.min(...precios) : null,
+        precio: precioForzado ?? (precios.length ? Math.min(...precios) : null),
         estrellas: info?.estrellas ?? null, zona: info?.zona ?? null,
         petFriendly: info?.petFriendly ?? false, adultsOnly: info?.adultsOnly ?? false,
         condicion, politica,
@@ -1098,8 +1150,19 @@ export function VistaBooking({
     //     (`busquedaPorcion.unidad`, ya filtrado a `estado === "disponible"`).
     //     Un `sin_disponibilidad` no es un resultado disponible y no llega
     //     hasta acá; un estado desconocido por error técnico tampoco.
-    // Los filtros de Pet friendly / Adults Only SÍ aplican (son del usuario);
-    // `soloAcom` no — la búsqueda ya resolvió la composición que se pidió.
+    // Los filtros de Pet friendly / Adults Only SÍ aplican (son del usuario).
+    // Buscar hotel/Categoría/Alimentación/Acomodación (`filtroTexto`/
+    // `filtroCategoria`/`filtroRegimen`/`soloAcom`) TAMBIÉN aplican desde
+    // este ajuste — hallazgo corregido: antes `soloAcom` se ignoraba acá
+    // ("la búsqueda ya resolvió la composición que se pidió", cierto para
+    // Acomodación por HABITACIÓN, ver la auditoría en
+    // `lib/tarifario/filtrosBusqueda.ts`) y los otros tres ni siquiera
+    // llegaban como prop — la búsqueda por destino usa
+    // `busquedaPorcion.resultados`/`.unidad` (este bloque), un array
+    // completamente distinto del `filas` que `TarifarioPublic` sí filtraba.
+    // Se aplican MÁS ABAJO, después de elegir recomendados (mismo criterio
+    // que Pet friendly/Adults Only: una prioridad 1 incompatible desaparece
+    // sin promover la 3 al lugar de la 2 — nunca se reordena la selección).
     // Igual que en exploración, la fila persona de un hotel que hoy es unidad
     // se excluye por el canal autoritativo: sería la caché obsoleta de
     // `tarifario_resultado`, no una oferta vigente.
@@ -1162,8 +1225,19 @@ export function VistaBooking({
       );
       const clavesRecomendadasBusqueda = new Set(recomendadasBusqueda.map((o) => claveOferta(o.hotelId, o.paqueteId)));
 
-      const tarjetaPersona = (r: BusquedaResultado, marca: MarcaOferta = {}): Tarjeta =>
-        ({ tipo: "busqueda" as const, key: `b-${r.paqueteId}-${r.hotelId}`, r, recomendada: marca.recomendada });
+      const tarjetaPersona = (r: BusquedaResultado, marca: MarcaOferta = {}): Tarjeta => ({
+        tipo: "busqueda" as const,
+        // La key incluye el combo forzado: si el usuario cambia el filtro
+        // de Categoría/Alimentación mientras la tarjeta ya está montada, un
+        // `key` distinto fuerza un remount limpio (la tarjeta reinicia su
+        // selector interno al nuevo combo elegido) en vez de quedarse
+        // pegada a la selección manual que tenía antes de cambiar el
+        // filtro — mismo criterio que el resto del archivo: nunca un
+        // `useEffect` reaccionando al cambio, siempre el remount/handler.
+        key: `b-${r.paqueteId}-${r.hotelId}-${marca.catForzada ?? ""}-${marca.regForzada ?? ""}`,
+        r, recomendada: marca.recomendada, catForzada: marca.catForzada, regForzada: marca.regForzada,
+        combosRestringidos: marca.combosRestringidos,
+      });
       // Cierre de UX de la tarjeta unidad: `g.opciones` trae TODAS las
       // combinaciones confirmadas DE ESE PAQUETE (nunca de otro), cada una
       // con su precio público ya saneado — la tarjeta las pinta INLINE
@@ -1174,46 +1248,86 @@ export function VistaBooking({
         tipo: "unidad" as const,
         recomendada: marca.recomendada,
         // La `key` incluye paqueteId + la identidad de la BÚSQUEDA vigente
-        // (fechas + ocupación + combinaciones confirmadas) — nunca solo
+        // (fechas + ocupación + combinaciones confirmadas) + el combo
+        // forzado (mismo motivo que la tarjeta persona, arriba) — nunca solo
         // `hotelId`: dos ofertas del mismo hotel en paquetes distintos deben
         // tener claves DISTINTAS (antes colisionaban en `u-${hotelId}-...`,
         // aunque en la práctica solo existía una tarjeta por hotel).
-        key: `u-${g.hotelId}-${g.paqueteId}-${claveBusquedaUnidad(g.opciones)}`,
+        key: `u-${g.hotelId}-${g.paqueteId}-${claveBusquedaUnidad(g.opciones)}-${marca.catForzada ?? ""}-${marca.regForzada ?? ""}`,
         hotel: {
           hotelId: g.hotelId, hotelNombre: g.opciones[0].hotelNombre, destino: g.opciones[0].destinoNombre,
           ofertas: [], opcionesBusqueda: g.opciones, paqueteId: g.paqueteId, paqueteNombre: g.opciones[0].paqueteNombre,
+          catForzada: marca.catForzada, regForzada: marca.regForzada, opcionesRestringidas: marca.opcionesRestringidas,
         },
       });
+
+      // Buscar hotel/Categoría/Alimentación/Acomodación — ver
+      // `lib/tarifario/filtrosBusqueda.ts`. Un solo objeto estable para las
+      // dos funciones puras de abajo (persona/unidad).
+      const filtrosBusqueda: FiltrosBusquedaBooking = {
+        texto: filtroTexto, categoria: filtroCategoria, regimen: filtroRegimen, acomodacion: soloAcom,
+      };
 
       // ⚠️ Defecto 2 (corregido, sigue vigente): un builder pasado SUELTO a
       // `.map` recibiría el ÍNDICE como 2º argumento y lo confundiría con la
       // marca de recomendación — por eso todo builder se llama con un
       // callback explícito de UN solo argumento, nunca `.map(tarjetaPersona)`.
+      //
+      // `recomendadasBusqueda` (arriba) se calculó con el universo COMPLETO,
+      // sin filtrar — los filtros generales solo deciden, acá, si la oferta
+      // YA elegida como recomendada se pinta o no. Una recomendada que no
+      // cumple simplemente no entra a `itemsRecomendados`/
+      // `tarjetaPorClaveRecomendada`: deja un hueco (una prioridad 1 menos en
+      // pantalla), nunca promueve la prioridad 2/3 a su lugar — mismo
+      // criterio que Pet friendly/Adults Only, ya establecido arriba.
       const itemsRecomendados: ItemResto[] = [];
       const tarjetaPorClaveRecomendada = new Map<string, Tarjeta>();
       for (const o of recomendadasBusqueda) {
         const clave = claveOferta(o.hotelId, o.paqueteId);
         const r = resultadosPersona.find((x) => x.hotelId === o.hotelId && x.paqueteId === o.paqueteId);
         if (r) {
-          tarjetaPorClaveRecomendada.set(clave, tarjetaPersona(r, { recomendada: true }));
-          itemsRecomendados.push(itemDeBusquedaPersona(r));
+          const m = personaCoincideFiltros(r, filtrosBusqueda);
+          if (!m.coincide) continue;
+          const catForzada = m.comboForzado?.categoria ?? null;
+          const regForzada = m.comboForzado?.regimen ?? null;
+          tarjetaPorClaveRecomendada.set(clave, tarjetaPersona(r, { recomendada: true, catForzada, regForzada, combosRestringidos: m.combosRestringidos }));
+          itemsRecomendados.push(itemDeBusquedaPersona(r, m.comboForzado?.total));
           continue;
         }
         const g = gruposUnidadPorClave.get(clave);
         if (g) {
-          tarjetaPorClaveRecomendada.set(clave, tarjetaUnidad(g, { recomendada: true }));
-          itemsRecomendados.push(itemDeBusquedaUnidad(g));
+          const m = unidadCoincideFiltros(g, filtrosBusqueda);
+          if (!m.coincide) continue;
+          const catForzada = m.opcionForzada?.categoria ?? null;
+          const regForzada = m.opcionForzada?.alimentacion ?? null;
+          tarjetaPorClaveRecomendada.set(clave, tarjetaUnidad(g, { recomendada: true, catForzada, regForzada, opcionesRestringidas: m.opcionesRestringidas }));
+          itemsRecomendados.push(itemDeBusquedaUnidad(g, m.opcionForzada?.precioVenta));
         }
       }
       const restoPersonaCandidatas = resultadosPersona.filter((r) => !clavesRecomendadasBusqueda.has(claveOferta(r.hotelId, r.paqueteId)));
       const restoUnidadCandidatas = gruposUnidadBusqueda.filter((g) => !clavesRecomendadasBusqueda.has(claveOferta(g.hotelId, g.paqueteId)));
+      // El resto SÍ es una lista filtrada de entrada (a diferencia de los
+      // recomendados, no hay ninguna prioridad que proteger acá): un hotel
+      // que no cumple los filtros generales simplemente no aparece en la
+      // grilla de "resto del inventario".
       const tarjetaPorClaveResto = new Map<string, Tarjeta>();
-      for (const r of restoPersonaCandidatas) tarjetaPorClaveResto.set(claveOferta(r.hotelId, r.paqueteId), tarjetaPersona(r));
-      for (const g of restoUnidadCandidatas) tarjetaPorClaveResto.set(claveOferta(g.hotelId, g.paqueteId), tarjetaUnidad(g));
-      const itemsRestoCandidatos: ItemResto[] = [
-        ...restoPersonaCandidatas.map(itemDeBusquedaPersona),
-        ...restoUnidadCandidatas.map(itemDeBusquedaUnidad),
-      ];
+      const itemsRestoCandidatos: ItemResto[] = [];
+      for (const r of restoPersonaCandidatas) {
+        const m = personaCoincideFiltros(r, filtrosBusqueda);
+        if (!m.coincide) continue;
+        const catForzada = m.comboForzado?.categoria ?? null;
+        const regForzada = m.comboForzado?.regimen ?? null;
+        tarjetaPorClaveResto.set(claveOferta(r.hotelId, r.paqueteId), tarjetaPersona(r, { catForzada, regForzada, combosRestringidos: m.combosRestringidos }));
+        itemsRestoCandidatos.push(itemDeBusquedaPersona(r, m.comboForzado?.total));
+      }
+      for (const g of restoUnidadCandidatas) {
+        const m = unidadCoincideFiltros(g, filtrosBusqueda);
+        if (!m.coincide) continue;
+        const catForzada = m.opcionForzada?.categoria ?? null;
+        const regForzada = m.opcionForzada?.alimentacion ?? null;
+        tarjetaPorClaveResto.set(claveOferta(g.hotelId, g.paqueteId), tarjetaUnidad(g, { catForzada, regForzada, opcionesRestringidas: m.opcionesRestringidas }));
+        itemsRestoCandidatos.push(itemDeBusquedaUnidad(g, m.opcionForzada?.precioVenta));
+      }
       return { itemsRecomendados, tarjetaPorClaveRecomendada, itemsRestoCandidatos, tarjetaPorClaveResto };
     }
 
@@ -1290,7 +1404,7 @@ export function VistaBooking({
   }, [
     hoteles, hotelesUnidadVisibles, hotelIdsUnidadAutoritativos, enBusquedaPorcion, busquedaPorcion, infoPorHotel,
     destinoActivoSub, prioridadesRecomendados, condicionPorOferta, politicaPorOferta,
-    restriccionPorPaquete,
+    restriccionPorPaquete, filtroTexto, filtroCategoria, filtroRegimen, soloAcom,
   ]);
 
   // Opciones REALES del panel de filtros — nunca una lista global inventada
@@ -1796,6 +1910,9 @@ export function VistaBooking({
               info={infoPorHotel[t.r.hotelId]}
               descripcionPorPaquete={descripcionPorPaquete}
               addonsPorPaquete={addonsPorPaquete}
+              catInicial={t.catForzada ?? undefined}
+              regInicial={t.regForzada ?? undefined}
+              combosPermitidos={t.combosRestringidos ?? undefined}
             />
           ) : t.tipo === "persona" ? (
             <TarjetaHotelCard
@@ -1858,6 +1975,9 @@ export function VistaBooking({
               ubicacion={infoPorHotel[t.hotel.hotelId]?.ubicacion ?? null}
               descripcionPorPaquete={descripcionPorPaquete}
               addonsPorPaquete={addonsPorPaquete}
+              catInicial={t.hotel.catForzada ?? undefined}
+              alimInicial={t.hotel.regForzada ?? undefined}
+              opcionesPermitidas={t.hotel.opcionesRestringidas ?? undefined}
             />
           ) : (
             // P2 (hallazgo confirmado): hotel por unidad (Bernalo) EN
@@ -2172,7 +2292,7 @@ function HotelModal({
 // `cotizarAlojamientoBernaloPublico` (revalidado en `agregar()`).
 function TarjetaUnidadBusqueda({
   hotel, opciones, recomendada = false, foto, videoUrl, estrellas, clasificacion, adultsOnly, petFriendly, tieneCondicion, descripcion, ubicacion,
-  descripcionPorPaquete, addonsPorPaquete,
+  descripcionPorPaquete, addonsPorPaquete, catInicial, alimInicial, opcionesPermitidas,
 }: {
   hotel: { hotelId: number; hotelNombre: string; destino: string | null };
   opciones: OpcionUnidadConfirmada[];
@@ -2191,23 +2311,44 @@ function TarjetaUnidadBusqueda({
   ubicacion?: string | null;
   descripcionPorPaquete: Record<number, DescripcionPaqueteRaw>;
   addonsPorPaquete: Map<number, Receptivo[]>;
+  /** Preselección forzada por los filtros generales de arriba (Categoría/
+   * Alimentación, `lib/tarifario/filtrosBusqueda.ts`) cuando la opción más
+   * barata (default) no los cumple pero otra sí. `undefined` = sin filtro
+   * activo o el default ya cumple — se preselecciona la más barata, como
+   * siempre. */
+  catInicial?: string;
+  alimInicial?: string;
+  /** Contrato explícito (decisión de diseño): con Categoría/Alimentación
+   * activos, estos filtros no solo deciden qué hoteles aparecen — también
+   * ACOTAN qué puede ofrecer el selector interno de la tarjeta. Presente =
+   * el usuario NO puede, dentro de la tarjeta, volver a una opción que el
+   * filtro de arriba ya descartó (sería una contradicción visual: filtro
+   * "Superior" arriba, "Estándar" seleccionable adentro). `undefined` = sin
+   * filtro activo, el selector sigue ofreciendo TODAS las `opciones`
+   * (comportamiento de siempre, el usuario elige libremente). */
+  opcionesPermitidas?: OpcionUnidadConfirmada[];
 }) {
   const { items, add, remove, openDrawer } = useCart();
   const [addonAbierto, setAddonAbierto] = useState<ReceptivoModalInfo | null>(null);
 
-  const categorias = useMemo(() => [...new Set(opciones.map((o) => o.categoria))], [opciones]);
-  const [cat, setCat] = useState(opciones[0]?.categoria ?? "");
+  // `opcionesEfectivas`: la fuente ÚNICA de la que salen categorías/
+  // alimentaciones/precio/carrito cuando hay un filtro general activo — el
+  // resto del componente no vuelve a leer `opciones` directamente para nada
+  // que el usuario pueda cambiar con los selectores.
+  const opcionesEfectivas = opcionesPermitidas ?? opciones;
+  const categorias = useMemo(() => [...new Set(opcionesEfectivas.map((o) => o.categoria))], [opcionesEfectivas]);
+  const [cat, setCat] = useState(catInicial ?? opciones[0]?.categoria ?? "");
   const catEff = categorias.includes(cat) ? cat : (categorias[0] ?? "");
   const alimentaciones = useMemo(
-    () => [...new Set(opciones.filter((o) => o.categoria === catEff).map((o) => o.alimentacion))],
-    [opciones, catEff]
+    () => [...new Set(opcionesEfectivas.filter((o) => o.categoria === catEff).map((o) => o.alimentacion))],
+    [opcionesEfectivas, catEff]
   );
-  const [alim, setAlim] = useState(opciones[0]?.alimentacion ?? "");
+  const [alim, setAlim] = useState(alimInicial ?? opciones[0]?.alimentacion ?? "");
   // La alimentación efectiva cae a la primera válida de la categoría actual
   // en cuanto la elegida deja de estarlo — nunca queda "colgada" de una
   // categoría anterior.
   const alimEff = alimentaciones.includes(alim) ? alim : (alimentaciones[0] ?? "");
-  const opcionSel = opciones.find((o) => o.categoria === catEff && o.alimentacion === alimEff) ?? opciones[0];
+  const opcionSel = opcionesEfectivas.find((o) => o.categoria === catEff && o.alimentacion === alimEff) ?? opcionesEfectivas[0];
 
   // Incluye/No incluye y add-ons son del PAQUETE de la oferta SELECCIONADA
   // (`opcionSel.paqueteId`) — nunca un paqueteId fijo. Dos ofertas del mismo
