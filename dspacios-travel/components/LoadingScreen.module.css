@@ -1,0 +1,77 @@
+.wrap {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 0.75rem;
+}
+
+/* Pantalla/vista completa: cubre el contenedor más cercano con posición
+   relativa (o el viewport si se usa en la raíz de una ruta vía loading.tsx,
+   donde no hay nada posicionado por encima). No es un modal: no atrapa foco
+   ni bloquea scroll — solo ocupa el espacio mientras no hay contenido real
+   que mostrar. */
+.fullScreen {
+  position: fixed;
+  inset: 0;
+  z-index: 40;
+  background: var(--loading-bg, rgba(255, 255, 255, 0.92));
+}
+
+/* Variante para usarla dentro de una sección (no toda la pantalla) —
+   ocupa el alto disponible del contenedor padre en vez del viewport. */
+.contained {
+  position: absolute;
+  inset: 0;
+  background: var(--loading-bg, rgba(255, 255, 255, 0.92));
+}
+
+.markBox {
+  position: relative;
+  width: clamp(48px, 14vw, 96px);
+  aspect-ratio: 1 / 1;
+}
+
+.mark {
+  object-fit: contain;
+  animation: dspacios-loading-pulse 1.6s ease-in-out infinite;
+}
+
+.label {
+  /* Visualmente oculto pero disponible para lectores de pantalla — el
+     anuncio real de "cargando" lo hace el `role="status"` del contenedor;
+     esto es el texto que un lector de pantalla narra. */
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+@keyframes dspacios-loading-pulse {
+  0%,
+  100% {
+    transform: scale(0.94);
+    opacity: 0.55;
+  }
+  50% {
+    transform: scale(1);
+    opacity: 1;
+  }
+}
+
+/* Movimiento reducido: SIN animación, ni de escala ni de opacidad. Una
+   respiración infinita (aunque sea solo opacidad) sigue siendo movimiento
+   continuo no esencial — exactamente lo que `prefers-reduced-motion: reduce`
+   pide evitar. El isotipo queda estático y a opacidad completa; el `role`
+   `status`/`aria-live` del contenedor (`LoadingScreen.tsx`) ya comunica el
+   estado de carga a lectores de pantalla sin necesidad de movimiento. */
+@media (prefers-reduced-motion: reduce) {
+  .mark {
+    animation: none;
+  }
+}
