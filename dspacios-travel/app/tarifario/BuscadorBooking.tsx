@@ -453,7 +453,38 @@ export function BuscadorBooking({
                   <SelectItem
                     key={d.nombre}
                     value={d.nombre}
-                    className="data-[highlighted]:bg-[var(--brand-accent)]/10 data-[highlighted]:text-[var(--brand-primary)] data-[selected]:text-[var(--brand-success-dark)] data-[selected]:font-semibold"
+                    // Contraste de la opción resaltada (fix): el componente
+                    // compartido (components/ui/select.tsx) ya trae
+                    // `focus:bg-accent focus:text-accent-foreground` — y
+                    // Base UI mueve el foco DOM real al ítem resaltado tanto
+                    // con mouse como con teclado (`focusItemOnHover` en
+                    // `SelectRoot`), así que ese `:focus` (mismo elemento,
+                    // misma propiedad `background-color`) compite con
+                    // `data-[highlighted]:bg-*` de acá — misma especificidad,
+                    // así que gana el que Tailwind emita último en la hoja
+                    // (no depende del orden en que se escriben las clases).
+                    // Con `--accent`/`--accent-foreground` de esta marca
+                    // (Scooter pálido + texto casi blanco) el resultado,
+                    // cuando ganaba `focus:*`, era texto blanco sobre azul
+                    // pálido, casi ilegible. Fix LOCAL (sin tocar el Select
+                    // compartido): pisar el fondo de `focus:*` con `!`
+                    // (fuerza `!important`, gana SIEMPRE sin depender del
+                    // orden) usando azul D'Spacios oscuro (--brand-primary,
+                    // ya usado con texto blanco en los botones principales
+                    // de la marca, ~4.8:1 de contraste — cumple AA). El
+                    // texto en sí no hace falta forzarlo por esta vía: el
+                    // propio `focus:**:text-accent-foreground` del Select
+                    // compartido YA pinta el texto (casi) blanco en todos
+                    // los descendientes durante el foco — resultado
+                    // legible por accidente feliz, reforzado acá con
+                    // `data-[highlighted]:text-white` explícito por si ese
+                    // detalle interno cambia. "Seleccionada" sigue en verde
+                    // (--brand-success-dark) en su estado normal; se apaga
+                    // SOLO mientras además está resaltada (verde oscuro
+                    // sobre azul oscuro sería igual de ilegible) — el check
+                    // ✓ (hereda el color de texto) sigue marcando cuál es
+                    // la opción elegida en ese instante.
+                    className="data-[highlighted]:bg-[var(--brand-primary)] data-[highlighted]:text-white focus:!bg-[var(--brand-primary)] data-[selected]:not-data-[highlighted]:text-[var(--brand-success-dark)] data-[selected]:not-data-[highlighted]:font-semibold"
                   >
                     {d.nombre}
                   </SelectItem>
