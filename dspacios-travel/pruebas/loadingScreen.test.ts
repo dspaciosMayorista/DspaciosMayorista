@@ -5,18 +5,21 @@
 // que el resto de la suite para componentes React de este proyecto (ver
 // `pruebas/tarjetaHotelExpandible.test.ts`).
 //
-// Cubre, además del componente: los TRES puntos donde se monta hoy
+// Cubre, además del componente: los CINCO puntos donde se monta hoy
 // (`app/loading.tsx` raíz, `app/(dashboard)/loading.tsx`, `app/tarifario/
-// loading.tsx`), el guard de `prefers-reduced-motion` en el módulo CSS, y el
-// alcance real de cada fallback (para que una regresión futura — ej. volver
-// a poner una animación infinita bajo reduced-motion, que un `loading.tsx`
-// deje de renderizar el componente, o que alguien vuelva a afirmar que un
+// loading.tsx`, `app/(dashboard)/dashboard/reservar/loading.tsx`,
+// `app/(dashboard)/dashboard/tarifario/loading.tsx`), el guard de
+// `prefers-reduced-motion` en el módulo CSS, y el alcance real de cada
+// fallback (para que una regresión futura — ej. volver a poner una animación
+// infinita bajo reduced-motion, que un `loading.tsx` deje de renderizar el
+// componente, que un fallback dentro del dashboard vuelva a apilar el
+// isotipo sobre el sidebar/topbar, o que alguien vuelva a afirmar que un
 // `loading.tsx` cubre algo que no demostró cubrir — falle la suite en vez de
 // pasar desapercibida).
 // ─────────────────────────────────────────────────────────────────────────
 import { test, describe } from "node:test";
 import assert from "node:assert/strict";
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, readFileSync, readdirSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
 
@@ -30,6 +33,8 @@ const fuenteRootLayout = leer("app/layout.tsx");
 const fuenteDashboardLoading = leer("app/(dashboard)/loading.tsx");
 const fuenteDashboardLayout = leer("app/(dashboard)/layout.tsx");
 const fuenteTarifarioLoading = leer("app/tarifario/loading.tsx");
+const fuenteReservarLoading = leer("app/(dashboard)/dashboard/reservar/loading.tsx");
+const fuenteTarifarioInternoLoading = leer("app/(dashboard)/dashboard/tarifario/loading.tsx");
 
 describe("LoadingScreen — accesibilidad y contrato del componente", () => {
   test("el contenedor anuncia el estado de carga a lectores de pantalla (role=status + aria-live=polite)", () => {
@@ -95,7 +100,7 @@ describe("LoadingScreen.module.css — prefers-reduced-motion deja el isotipo ES
   });
 });
 
-describe("Puntos de montaje — los tres fallbacks de pantalla/vista completa (raíz, Dashboard, Tarifario público)", () => {
+describe("Puntos de montaje — los cinco fallbacks de pantalla/vista completa (raíz, Dashboard, Tarifario público, Reservar, Tarifario interno)", () => {
   test("app/loading.tsx (raíz) importa y renderiza <LoadingScreen /> sin props (fullScreen por defecto)", () => {
     assert.match(fuenteRootLoading, /import \{ LoadingScreen \} from "@\/components\/LoadingScreen";/);
     assert.match(fuenteRootLoading, /return <LoadingScreen \/>;/);
@@ -110,6 +115,39 @@ describe("Puntos de montaje — los tres fallbacks de pantalla/vista completa (r
   test("app/tarifario/loading.tsx importa y renderiza <LoadingScreen /> sin props (sigue fullScreen: su layout no tiene chrome propio que proteger)", () => {
     assert.match(fuenteTarifarioLoading, /import \{ LoadingScreen \} from "@\/components\/LoadingScreen";/);
     assert.match(fuenteTarifarioLoading, /return <LoadingScreen \/>;/);
+  });
+
+  test("dashboard/reservar/loading.tsx: LoadingScreen con fullScreen={false} — ya NO el esqueleto gris de barras, y nunca vuelve a la variante fullScreen (taparía sidebar/topbar)", () => {
+    assert.match(fuenteReservarLoading, /import \{ LoadingScreen \} from "@\/components\/LoadingScreen";/);
+    assert.match(fuenteReservarLoading, /return <LoadingScreen fullScreen=\{false\} \/>;/);
+    assert.doesNotMatch(fuenteReservarLoading, /animate-pulse/, "ya no debe quedar el esqueleto gris de barras");
+    assert.doesNotMatch(fuenteReservarLoading, /return <LoadingScreen \/>;/, "no debe usar la variante fullScreen dentro del dashboard");
+  });
+
+  test("dashboard/tarifario/loading.tsx (interno): LoadingScreen con fullScreen={false} — ya NO el esqueleto gris de barras, y nunca vuelve a la variante fullScreen", () => {
+    assert.match(fuenteTarifarioInternoLoading, /import \{ LoadingScreen \} from "@\/components\/LoadingScreen";/);
+    assert.match(fuenteTarifarioInternoLoading, /return <LoadingScreen fullScreen=\{false\} \/>;/);
+    assert.doesNotMatch(fuenteTarifarioInternoLoading, /animate-pulse/, "ya no debe quedar el esqueleto gris de barras");
+    assert.doesNotMatch(fuenteTarifarioInternoLoading, /return <LoadingScreen \/>;/, "no debe usar la variante fullScreen dentro del dashboard");
+  });
+
+  test("ningún loading.tsx bajo app/(dashboard)/dashboard/** usa la variante fullScreen (evita apilar el isotipo sobre sidebar/topbar en cualquier ruta interna, no solo las dos revisadas a mano)", () => {
+    const dashboardDir = join(raiz, "app/(dashboard)/dashboard");
+    const archivos: string[] = [];
+    const recorrer = (dir: string) => {
+      for (const entrada of readdirSync(dir, { withFileTypes: true })) {
+        const ruta = join(dir, entrada.name);
+        if (entrada.isDirectory()) recorrer(ruta);
+        else if (entrada.name === "loading.tsx") archivos.push(ruta);
+      }
+    };
+    recorrer(dashboardDir);
+    assert.ok(archivos.length >= 2, "deben existir al menos los dos loading.tsx conocidos (reservar, tarifario)");
+    for (const archivo of archivos) {
+      const fuente = readFileSync(archivo, "utf8");
+      assert.match(fuente, /LoadingScreen fullScreen=\{false\}/, `${archivo} debe usar fullScreen={false} (vive dentro del chrome del dashboard)`);
+      assert.doesNotMatch(fuente, /animate-pulse/, `${archivo} no debe usar el esqueleto gris de barras`);
+    }
   });
 
   test("<main> de (dashboard)/layout.tsx es position:relative — condición para que el overlay fullScreen={false} de (dashboard)/loading.tsx quede acotado al área de contenido y no se escape al viewport", () => {
