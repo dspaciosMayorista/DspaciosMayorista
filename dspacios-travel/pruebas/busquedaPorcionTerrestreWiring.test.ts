@@ -381,10 +381,17 @@ describe("BuscadorBooking — canal de búsqueda hacia VistaBooking (requisito A
   });
 
   test("el destino es OBLIGATORIO para buscar: placeholder deshabilitado en la UI y rechazo con espacios en el cliente", () => {
-    // El `<select>` se pinta siempre y su opción inicial no es elegible: no hay
-    // forma de buscar "todos los destinos" desde la UI.
-    assert.match(codigoBuscador, /<option value="" disabled>Selecciona un destino<\/option>/);
-    assert.match(codigoBuscador, /\{destinos\.map\(\(d\) => <option key=\{d\.nombre\} value=\{d\.nombre\}>\{d\.nombre\}<\/option>\)\}/);
+    // El campo Destino usa el Select accesible (Base UI, `components/ui/select.tsx`)
+    // en vez del `<select>` nativo (ver pruebas/filtrosBusquedaVistaBookingWiring.test.ts
+    // para el cableado completo) — el placeholder vive en `SelectValue`, nunca
+    // como un ítem elegible de la lista: no hay forma de "elegir" un destino
+    // vacío ni de buscar "todos los destinos" desde la UI.
+    assert.match(codigoBuscador, /<SelectValue placeholder="Selecciona un destino" \/>/);
+    assert.match(codigoBuscador, /\{destinos\.map\(\(d\) => \(/);
+    assert.match(codigoBuscador, /<SelectItem/);
+    assert.match(codigoBuscador, /key=\{d\.nombre\}/);
+    assert.match(codigoBuscador, /value=\{d\.nombre\}/);
+    assert.doesNotMatch(codigoBuscador, /value=""/, "ningún ítem del listbox puede tener un valor vacío elegible");
     assert.doesNotMatch(codigoBuscador, /<option value="">Todos<\/option>/);
     assert.doesNotMatch(codigoBuscador, /destinos\.length > 0 && \(/);
     // Y aun con un body manipulado, el motor general rechaza el destino vacío
@@ -646,7 +653,7 @@ describe("VistaBooking — resultado CERRADO por destino, persona y unidad por e
     // soloPetFriendly/soloAdultsOnly (mismo motivo).
     assert.match(
       codigoVista,
-      /\}, \[\s*\n\s*hoteles, hotelesUnidadVisibles, hotelIdsUnidadAutoritativos, enBusquedaPorcion, busquedaPorcion, infoPorHotel,\s*\n\s*destinoActivoSub, prioridadesRecomendados, condicionPorOferta, politicaPorOferta,\s*\n\s*restriccionPorPaquete,\s*\n\s*\]\);/
+      /\}, \[\s*\n\s*hoteles, hotelesUnidadVisibles, hotelIdsUnidadAutoritativos, enBusquedaPorcion, busquedaPorcion, infoPorHotel,\s*\n\s*destinoActivoSub, prioridadesRecomendados, condicionPorOferta, politicaPorOferta,\s*\n\s*restriccionPorPaquete, filtroTexto, filtroCategoria, filtroRegimen, soloAcom,\s*\n\s*\]\);/
     );
   });
 
@@ -684,8 +691,12 @@ describe("VistaBooking — resultado CERRADO por destino, persona y unidad por e
     assert.match(rama, /const vistasPersona = new Set<string>\(\);/);
     // La unidad también se identifica por par: la key de cada tarjeta lleva
     // hotelId Y paqueteId (antes `u-${hotelId}-...` colisionaba para el mismo
-    // hotel en dos paquetes).
-    assert.match(rama, /key: `u-\$\{g\.hotelId\}-\$\{g\.paqueteId\}-\$\{claveBusquedaUnidad\(g\.opciones\)\}`,/);
+    // hotel en dos paquetes). Desde el ajuste de filtros generales, la key
+    // también incluye el combo forzado (catForzada/regForzada) — cambiar el
+    // filtro de Categoría/Alimentación fuerza un remount limpio en vez de
+    // dejar la tarjeta pegada a una selección manual anterior (ver
+    // pruebas/filtrosBusquedaVistaBookingWiring.test.ts).
+    assert.match(rama, /key: `u-\$\{g\.hotelId\}-\$\{g\.paqueteId\}-\$\{claveBusquedaUnidad\(g\.opciones\)\}-\$\{marca\.catForzada \?\? ""\}-\$\{marca\.regForzada \?\? ""\}`,/);
     assert.equal([...rama.matchAll(/key: `u-\$\{g\.hotelId\}-\$\{g\.paqueteId\}-/g)].length, 1);
     // Y las tarjetas de la búsqueda se arman por grupo, no mapeando una lista
     // plana por hotel.
@@ -975,13 +986,28 @@ describe("TarjetaUnidadBusqueda — selectores + precio + agregar al carrito INL
   });
 
   test("preselecciona la opción por defecto (opciones[0], ya ordenada por precio ascendente) — categoría y alimentación nacen de ahí, nunca vacías", () => {
-    assert.match(cuerpoTarjetaUnidad, /const \[cat, setCat\] = useState\(opciones\[0\]\?\.categoria \?\? ""\);/);
-    assert.match(cuerpoTarjetaUnidad, /const \[alim, setAlim\] = useState\(opciones\[0\]\?\.alimentacion \?\? ""\);/);
+    // Desde el ajuste de filtros generales: si Categoría/Alimentación
+    // (TarifarioPublic) fuerzan una combinación distinta de la más barata,
+    // `catInicial`/`alimInicial` la traen ya resuelta (ver
+    // `lib/tarifario/filtrosBusqueda.ts::unidadCoincideFiltros` y el cableado
+    // en pruebas/filtrosBusquedaVistaBookingWiring.test.ts) — sin filtro
+    // activo (`undefined`), el `??` cae exactamente al mismo default de
+    // siempre (`opciones[0]`), nunca vacío.
+    assert.match(cuerpoTarjetaUnidad, /const \[cat, setCat\] = useState\(catInicial \?\? opciones\[0\]\?\.categoria \?\? ""\);/);
+    assert.match(cuerpoTarjetaUnidad, /const \[alim, setAlim\] = useState\(alimInicial \?\? opciones\[0\]\?\.alimentacion \?\? ""\);/);
   });
 
-  test("los selectores muestran ÚNICAMENTE combinaciones confirmadas (derivadas de `opciones`, nunca un catálogo aparte ni el cartesiano completo)", () => {
-    assert.match(cuerpoTarjetaUnidad, /const categorias = useMemo\(\(\) => \[\.\.\.new Set\(opciones\.map\(\(o\) => o\.categoria\)\)\], \[opciones\]\);/);
-    assert.match(cuerpoTarjetaUnidad, /const alimentaciones = useMemo\(\s*\n\s*\(\) => \[\.\.\.new Set\(opciones\.filter\(\(o\) => o\.categoria === catEff\)\.map\(\(o\) => o\.alimentacion\)\)\],\s*\n\s*\[opciones, catEff\]\s*\n\s*\);/);
+  test("los selectores muestran ÚNICAMENTE combinaciones confirmadas (derivadas de `opcionesEfectivas`, nunca un catálogo aparte ni el cartesiano completo)", () => {
+    // Desde el ajuste de filtros generales: `opcionesEfectivas` (=
+    // `opcionesPermitidas ?? opciones`) es la fuente ÚNICA — sin filtro
+    // activo cae exactamente a `opciones` (mismo comportamiento de siempre);
+    // con Categoría/Alimentación activos, el selector queda limitado a las
+    // opciones que el filtro ya validó (ver
+    // pruebas/filtrosBusquedaVistaBookingWiring.test.ts para el contrato
+    // completo de "no dejar seleccionable un combo incompatible").
+    assert.match(cuerpoTarjetaUnidad, /const opcionesEfectivas = opcionesPermitidas \?\? opciones;/);
+    assert.match(cuerpoTarjetaUnidad, /const categorias = useMemo\(\(\) => \[\.\.\.new Set\(opcionesEfectivas\.map\(\(o\) => o\.categoria\)\)\], \[opcionesEfectivas\]\);/);
+    assert.match(cuerpoTarjetaUnidad, /const alimentaciones = useMemo\(\s*\n\s*\(\) => \[\.\.\.new Set\(opcionesEfectivas\.filter\(\(o\) => o\.categoria === catEff\)\.map\(\(o\) => o\.alimentacion\)\)\],\s*\n\s*\[opcionesEfectivas, catEff\]\s*\n\s*\);/);
   });
 
   test("cambiar categoría limita las alimentaciones a las válidas para esa categoría — y si la alimentación elegida deja de ser válida, cae automáticamente a la primera que sí lo sea", () => {
@@ -990,8 +1016,8 @@ describe("TarjetaUnidadBusqueda — selectores + precio + agregar al carrito INL
     assert.equal([...cuerpoTarjetaUnidad.matchAll(/const alimEff =/g)].length, 1);
   });
 
-  test("el precio/pax se leen de `opciones` (ya calculadas por el buscador) — cambiar de selector NUNCA dispara una consulta nueva", () => {
-    assert.match(cuerpoTarjetaUnidad, /const opcionSel = opciones\.find\(\(o\) => o\.categoria === catEff && o\.alimentacion === alimEff\) \?\? opciones\[0\];/);
+  test("el precio/pax se leen de `opcionesEfectivas` (ya calculadas por el buscador, y ya recortadas al filtro si aplica) — cambiar de selector NUNCA dispara una consulta nueva", () => {
+    assert.match(cuerpoTarjetaUnidad, /const opcionSel = opcionesEfectivas\.find\(\(o\) => o\.categoria === catEff && o\.alimentacion === alimEff\) \?\? opcionesEfectivas\[0\];/);
     assert.doesNotMatch(cuerpoTarjetaUnidad, /buscarAlojamientosUnidadPorFechas/, "cambiar de selector no debe volver a buscar");
     // El ÚNICO useEffect de la tarjeta es el cleanup de `montadoRef` (deps
     // vacías, solo marca desmontaje — no toca datos ni reacciona a selectores).
@@ -1104,7 +1130,11 @@ describe("TarjetaUnidadBusqueda — identidad de búsqueda (key) e identidad de 
   const cuerpoTarjetaUnidad = cuerpoFuncion(fuenteVista, "function TarjetaUnidadBusqueda({");
 
   test("la key de React de una tarjeta de búsqueda incluye la OFERTA (hotelId+paqueteId) y la identidad de la BÚSQUEDA vigente (claveBusquedaUnidad) — una nueva búsqueda del mismo hotel remonta y resetea el estado, y el mismo hotel en dos paquetes nunca colisiona", () => {
-    assert.match(codigoVista, /key: `u-\$\{g\.hotelId\}-\$\{g\.paqueteId\}-\$\{claveBusquedaUnidad\(g\.opciones\)\}`,/);
+    // También incluye el combo forzado por los filtros generales
+    // (catForzada/regForzada) — cambiar Categoría/Alimentación remonta la
+    // tarjeta igual que una nueva búsqueda (ver
+    // pruebas/filtrosBusquedaVistaBookingWiring.test.ts).
+    assert.match(codigoVista, /key: `u-\$\{g\.hotelId\}-\$\{g\.paqueteId\}-\$\{claveBusquedaUnidad\(g\.opciones\)\}-\$\{marca\.catForzada \?\? ""\}-\$\{marca\.regForzada \?\? ""\}`,/);
     // No queda un `useEffect` frágil sincronizando cat/alim/precioActualizado
     // con la búsqueda — el remonte por key es el ÚNICO mecanismo de reset.
     assert.doesNotMatch(cuerpoTarjetaUnidad, /useEffect\([^)]*setCat|useEffect\([^)]*setAlim|useEffect\([^)]*setPrecioActualizado/);

@@ -3,7 +3,6 @@ import { TarifarioPublic } from "./TarifarioPublic";
 import { CartDrawer } from "./CartDrawer";
 import { getProgramasResumen } from "@/lib/programas";
 import { Logo } from "@/components/Logo";
-import { BackgroundVideo } from "@/components/BackgroundVideo";
 import { cargarResumenTarifario, MSG_ERROR_CARGAR_TARIFARIO } from "@/lib/tarifario/resumen";
 import { cargarHotelesBernaloDescubiertos, cargarInfoHotelesBernalo, cargarDescripcionPaquetesBernalo, cargarPrioridadesRecomendadosBernalo } from "@/lib/tarifario/datosBernalo";
 import { idsPaqueteBernaloFaltantes, fusionarDescripcionPaquete } from "@/lib/tarifario/descripcionPaquete";
@@ -131,7 +130,7 @@ export default async function TarifarioPublicoPage() {
     // falló — eso afirmaría algo falso. El detalle técnico ya quedó
     // saneado en el log dentro de cargarResumenTarifario() (registrarErrorTecnico).
     return (
-      <div className="app-bg min-h-screen bg-gray-50">
+      <div className="app-bg min-h-screen">
         <main className="mx-auto max-w-[1700px] px-4 py-20 md:px-6">
           <p className="text-center text-red-500">{MSG_ERROR_CARGAR_TARIFARIO}</p>
         </main>
@@ -231,13 +230,15 @@ export default async function TarifarioPublicoPage() {
   }
   const programas = resProgramas.programas;
 
-  // Video de fondo del tarifario (global, opcional). Un error aquí es
-  // puramente cosmético (el fondo queda sin video) — best-effort, pero
-  // registrado como error técnico si ocurrió, nunca silencioso.
+  // `config_sitio` ya no alimenta el header público (ver más abajo: el
+  // rediseño quitó el `BackgroundVideo` de ahí — mostraba el video propio del
+  // sitio, tapando el degradado de marca acordado). Se conserva el chequeo de
+  // error/instrumentación tal cual (best-effort, nunca silencioso) porque
+  // sigue siendo la misma consulta autoritativa; solo se dejó de leer
+  // `video_fondo_url` del resultado.
   if (cfgSitio.error) {
     registrarErrorTecnico(FLUJO, flujoId, "datos_auxiliares_pagina", "error_config_sitio", cfgSitio.error);
   }
-  const videoFondo = cfgSitio.data?.video_fondo_url ?? null;
   registrarDatoPagina(FLUJO, flujoId, "datos_auxiliares_pagina", `consultas=1 detalle=config_sitio ${cfgSitio.error ? "resultado=error" : "resultado=ok"}`);
 
   // Costo de la propia instrumentación (revisión posterior, defecto "COSTO
@@ -261,41 +262,42 @@ export default async function TarifarioPublicoPage() {
   registrarEtapa(FLUJO, flujoId, "preparacion_servidor", _cronoPrep(), "ok");
 
   return (
-    <div className="app-bg min-h-screen bg-gray-50">
-      <header className={`relative overflow-hidden bg-brand-gradient px-6 pt-8 pb-16 text-white ${videoFondo ? "flex min-h-[60vh] flex-col justify-end" : "min-h-[200px] flex flex-col justify-end"}`}>
-        <BackgroundVideo url={videoFondo} overlay={0.4} />
-        {!videoFondo && (
-          <div
-            className="absolute inset-0 bg-cover bg-center opacity-15"
-            style={{ backgroundImage: "url('https://images.unsplash.com/photo-1507525428034-b723cf961d3e?w=1920&fit=crop&auto=format')" }}
-          />
-        )}
-        <div className="relative mx-auto flex w-full max-w-[1700px] flex-wrap items-end justify-between gap-4">
-          <div>
-            <Logo variant="white" height={56} priority className="h-12 w-auto md:h-14" />
-            <p className="mt-2 text-sm opacity-90">Tarifario 2026</p>
+    <div className="app-bg min-h-screen">
+      {/* Header de marca — más presencia que la fase anterior (más alto,
+          logo más grande) y SIN el video de fondo configurable: ese video es
+          contenido propio del sitio (playa), no del shell de Vista Booking,
+          y tapaba el degradado de marca acordado. `bg-brand-gradient`
+          (azul→turquesa→verde, `styles/globals.css`) queda como fondo único
+          y limpio, ya con los dos colores de marca pedidos — no hace falta
+          uno nuevo. */}
+      <header className="relative overflow-hidden bg-brand-gradient px-4 py-5 text-white shadow-md sm:px-6 sm:py-6">
+        <div className="relative mx-auto flex w-full max-w-[1700px] flex-wrap items-center justify-between gap-3">
+          <div className="flex items-center gap-3">
+            {/* Logo oficial sin reconstruir: misma imagen (`components/Logo.tsx`,
+                variant="white"), solo más grande y con su proporción intacta
+                (`w-auto` + `height` del componente calculan el ancho real). */}
+            <Logo variant="white" height={72} priority className="h-14 w-auto sm:h-16 md:h-20" />
+            <span className="hidden text-xs font-medium uppercase tracking-wide opacity-80 sm:inline">Tarifario 2026</span>
           </div>
-          <div className="flex flex-col items-end gap-2">
-            <div className="flex items-center gap-3">
-              {esAgencia && (
-                <span className="rounded-full bg-white/20 px-3 py-1.5 text-xs font-medium">Modo agencia</span>
-              )}
-              {user ? (
-                <a href="/dashboard" className="rounded-lg bg-white px-4 py-2 text-sm font-medium" style={{ color: "var(--brand-primary)" }}>
-                  Ir al panel →
-                </a>
-              ) : (
-                <a href="/login" className="rounded-lg border border-white/60 px-4 py-2 text-sm font-medium text-white hover:bg-white/10">
-                  Ingreso al Portal
-                </a>
-              )}
-            </div>
+          <div className="flex flex-wrap items-center gap-2 sm:gap-3">
+            {esAgencia && (
+              <span className="rounded-full bg-white/15 px-3 py-1.5 text-xs font-medium">Modo agencia</span>
+            )}
+            {user ? (
+              <a href="/dashboard" className="rounded-lg bg-white px-4 py-2 text-sm font-medium" style={{ color: "var(--brand-primary)" }}>
+                Ir al panel →
+              </a>
+            ) : (
+              <a href="/login" className="rounded-lg border border-white/60 px-4 py-2 text-sm font-medium text-white hover:bg-white/10">
+                Ingreso al Portal
+              </a>
+            )}
             <CartDrawer checkoutHabilitado fotosPorHotel={fotosPorHotel} />
           </div>
         </div>
       </header>
 
-      <main className="mx-auto max-w-[1700px] px-4 pt-0 pb-8 md:px-6">
+      <main className="mx-auto max-w-[1700px] px-4 pt-5 pb-8 md:px-6">
         {/* P1-1: un catálogo con SOLO hoteles por unidad (sin ninguna fila
             legacy ni programa) es un catálogo válido — nunca "en
             preparación". `hotelesBernalo` es la tercera fuente que puede

@@ -2,6 +2,8 @@
 
 import { useEffect, useId, useMemo, useRef, useState, useTransition } from "react";
 import Image from "next/image";
+import { MapPin, CalendarDays, Users, Baby, BedDouble } from "lucide-react";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { formatCOP } from "@/lib/utils";
 import { ACOM_ROOMS, ACOM_ROOM_LABEL, type AcomRoom } from "@/lib/acomodaciones";
 import { useCart, type HotelCartItemPersona } from "@/lib/cart/CartContext";
@@ -11,6 +13,7 @@ import { type BusquedaResultado, type SugerenciaFecha } from "@/lib/reservar/cot
 import { CondicionHotelBadges } from "@/components/cotizacion/CondicionHotelBadges";
 import { EDAD_MENOR_MAX, MAX_MENORES_POR_CONSULTA, ajustarCantidadEdades, parseEdadMenor } from "@/lib/reservar/edadesMenores";
 import type { DestinoPorcionOpcion } from "@/lib/tarifario/destinosPorcion";
+import type { ComboPersonaElegido } from "@/lib/tarifario/filtrosBusqueda";
 import { BackgroundVideo } from "@/components/BackgroundVideo";
 import {
   Categoria, EtiquetasHotel, DescripcionHotelExpandible, UbicacionHotel, SeccionesIncluye, AddonsPaquete, ReceptivoModal,
@@ -381,22 +384,54 @@ export function BuscadorBooking({
     aplicarSugerenciaRef.current(sugerenciaPedida);
   }, [sugerenciaPedida]);
 
-  const sel = "rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm";
+  const sel = "w-full rounded-lg border border-slate-200 bg-slate-50 py-2 pl-8 pr-3 text-xs font-medium text-slate-800 focus:border-[var(--brand-accent)] focus:outline-none focus:ring-2 focus:ring-[var(--brand-accent)]";
+  const lbl = "mb-1 block text-xs font-semibold text-slate-700";
+  const iconoCls = "pointer-events-none absolute left-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400";
+  // Destino sí tiene un estado neutro real ("Selecciona un destino",
+  // placeholder del Select accesible) — al elegir uno, el control se pone
+  // verde (mismo acento de "valor concreto elegido" que el resto del shell,
+  // ver el <Select> más abajo). Los demás campos de esta fila (fechas/
+  // adultos/menores/habitaciones) son obligatorios sin equivalente a
+  // "Todos", así que solo llevan ícono.
 
   return (
     <div className="mb-6">
-      <div className="rounded-2xl border border-gray-200 bg-white p-4">
-        <p className="mb-3 text-sm font-semibold" style={{ color: "var(--brand-primary)" }}>Buscar alojamiento</p>
-        <div className="flex flex-wrap items-end gap-3">
+      <div className="rounded-2xl border border-slate-200/80 bg-white p-4 shadow-[0_10px_25px_-5px_rgba(29,124,154,0.08),0_8px_10px_-6px_rgba(29,124,154,0.04)] sm:p-5">
+        <p className="mb-3 text-sm font-bold text-slate-900">Buscar alojamiento</p>
+        <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-6">
           {/* El selector se pinta SIEMPRE (aunque el catálogo esté vacío) y su
               opción inicial es un placeholder DESHABILITADO: el destino es
               obligatorio para buscar, así que una opción "sin destino" elegible
               sólo ofrecería el valor que el motor rechaza. */}
-          <div><label className="mb-1 block text-xs text-gray-500">Destino</label>
-            <select
-              value={destino}
-              onChange={(e) => {
-                const nombre = e.target.value;
+          <div className="col-span-2 sm:col-span-1"><label id={`${idBase}-destino-label`} className={lbl}>Destino</label>
+            {/* Base UI (`components/ui/select.tsx`) en vez del `<select>`
+                nativo — el menú del navegador (con su franja azul de
+                sistema operativo) no se podía llevar a los colores de marca.
+                Mismo comportamiento: `value`/`onValueChange` controlado
+                (equivalente a `value`/`onChange`), sin ítem "Selecciona un
+                destino" en la lista (es un placeholder real vía `SelectValue`,
+                nunca una opción elegible que pudiera devolver "" por
+                accidente) y teclado completo (Base UI trae roving
+                focus/typeahead de fábrica).
+                Cierre de accesibilidad: el <label> "Destino" quedaba
+                huérfano — `SelectTrigger` renderiza un <button role=
+                "combobox"> cuyo nombre accesible, sin nada más, sale del
+                placeholder/valor mostrado (`SelectValue`), nunca del
+                <label> visual de arriba. Se asocian explícitamente con
+                `aria-labelledby` (el id del <label>, generado con el mismo
+                `idBase` del resto del formulario): el propio `SelectTrigger`
+                (`components/ui/select.tsx`) ya intenta resolver un
+                `aria-labelledby` interno desde contexto de Field/Select-label
+                (vacío acá, no se usa esa API) — el nuestro se pasa como
+                prop de elemento y gana en el merge de props de Base UI
+                (el último valor no-manejador escribe encima), así que el
+                nombre accesible del trigger queda en, exactamente,
+                "Destino". */}
+            <Select
+              items={destinos.map((d) => ({ value: d.nombre, label: d.nombre }))}
+              value={destino || null}
+              onValueChange={(nombre) => {
+                if (!nombre) return;
                 // El id viaja junto al nombre elegido — se busca en la MISMA
                 // lista que armó las opciones, nunca se adivina ni se vuelve
                 // a resolver por texto en otro lugar.
@@ -405,23 +440,90 @@ export function BuscadorBooking({
                 setDestinoId(opcion?.id ?? null);
                 limpiarResultados();
               }}
-              className={sel}
             >
-              <option value="" disabled>Selecciona un destino</option>
-              {destinos.map((d) => <option key={d.nombre} value={d.nombre}>{d.nombre}</option>)}
-            </select>
+              <SelectTrigger
+                aria-labelledby={`${idBase}-destino-label`}
+                className={`h-auto w-full justify-start gap-2 rounded-lg border py-2 pl-3 pr-3 text-xs font-medium transition-colors focus-visible:ring-2 focus-visible:ring-[var(--brand-accent)] data-[popup-open]:ring-2 data-[popup-open]:ring-[var(--brand-accent)] ${destino ? "border-[var(--brand-success)] bg-[var(--brand-success)]/10 text-slate-900 font-semibold" : "border-slate-200 bg-slate-50 text-slate-800"}`}
+              >
+                <MapPin className={`h-4 w-4 shrink-0 ${destino ? "text-[var(--brand-success)]" : "text-slate-400"}`} aria-hidden />
+                <SelectValue placeholder="Selecciona un destino" />
+              </SelectTrigger>
+              <SelectContent>
+                {destinos.map((d) => (
+                  <SelectItem
+                    key={d.nombre}
+                    value={d.nombre}
+                    // Contraste de la opción resaltada (fix): el componente
+                    // compartido (components/ui/select.tsx) ya trae
+                    // `focus:bg-accent focus:text-accent-foreground` — y
+                    // Base UI mueve el foco DOM real al ítem resaltado tanto
+                    // con mouse como con teclado (`focusItemOnHover` en
+                    // `SelectRoot`), así que ese `:focus` (mismo elemento,
+                    // misma propiedad `background-color`) compite con
+                    // `data-[highlighted]:bg-*` de acá — misma especificidad,
+                    // así que gana el que Tailwind emita último en la hoja
+                    // (no depende del orden en que se escriben las clases).
+                    // Con `--accent`/`--accent-foreground` de esta marca
+                    // (Scooter pálido + texto casi blanco) el resultado,
+                    // cuando ganaba `focus:*`, era texto blanco sobre azul
+                    // pálido, casi ilegible. Fix LOCAL (sin tocar el Select
+                    // compartido): pisar el fondo de `focus:*` con `!`
+                    // (fuerza `!important`, gana SIEMPRE sin depender del
+                    // orden) usando azul D'Spacios oscuro (--brand-primary,
+                    // ya usado con texto blanco en los botones principales
+                    // de la marca, ~4.8:1 de contraste — cumple AA). El
+                    // texto en sí no hace falta forzarlo por esta vía: el
+                    // propio `focus:**:text-accent-foreground` del Select
+                    // compartido YA pinta el texto (casi) blanco en todos
+                    // los descendientes durante el foco — resultado
+                    // legible por accidente feliz, reforzado acá con
+                    // `data-[highlighted]:text-white` explícito por si ese
+                    // detalle interno cambia. "Seleccionada" sigue en verde
+                    // (--brand-success-dark) en su estado normal; se apaga
+                    // SOLO mientras además está resaltada (verde oscuro
+                    // sobre azul oscuro sería igual de ilegible) — el check
+                    // ✓ (hereda el color de texto) sigue marcando cuál es
+                    // la opción elegida en ese instante.
+                    className="data-[highlighted]:bg-[var(--brand-primary)] data-[highlighted]:text-white focus:!bg-[var(--brand-primary)] data-[selected]:not-data-[highlighted]:text-[var(--brand-success-dark)] data-[selected]:not-data-[highlighted]:font-semibold"
+                  >
+                    {d.nombre}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
           </div>
-          <div><label className="mb-1 block text-xs text-gray-500">Ida</label><input type="date" min={hoy} value={fIda} onChange={(e) => { const nueva = e.target.value; limpiarResultados(); setFIda(nueva); if (fReg && fReg <= nueva) setFReg(""); }} className={sel} /></div>
-          <div><label className="mb-1 block text-xs text-gray-500">Regreso</label><input type="date" min={fIda} value={fReg} onChange={(e) => { limpiarResultados(); setFReg(e.target.value); }} className={sel} /></div>
-          <div><label className="mb-1 block text-xs text-gray-500">Adultos (12+)</label>
-            <input type="number" min={1} value={adultos} onChange={(e) => { limpiarResultados(); setAdultos(e.target.value); }}
-              className={`${sel} w-20 ${!adultosValido ? "border-red-400" : ""}`} aria-invalid={!adultosValido ? true : undefined} />
+          <div><label className={lbl}>Ida</label>
+            <div className="relative">
+              <CalendarDays className={iconoCls} aria-hidden />
+              <input type="date" min={hoy} value={fIda} onChange={(e) => { const nueva = e.target.value; limpiarResultados(); setFIda(nueva); if (fReg && fReg <= nueva) setFReg(""); }} className={sel} />
+            </div>
           </div>
-          <div><label htmlFor={`${idBase}-cant`} className="mb-1 block text-xs text-gray-500">Cantidad de menores</label>
-            <input id={`${idBase}-cant`} type="number" inputMode="numeric" min={0} max={MAX_MENORES_POR_CONSULTA} value={cantidadMenores}
-              onChange={(e) => setCantidadMenores(Number(e.target.value))} className={`${sel} w-20`} />
+          <div><label className={lbl}>Regreso</label>
+            <div className="relative">
+              <CalendarDays className={iconoCls} aria-hidden />
+              <input type="date" min={fIda} value={fReg} onChange={(e) => { limpiarResultados(); setFReg(e.target.value); }} className={sel} />
+            </div>
           </div>
-          <div><label className="mb-1 block text-xs text-gray-500">Habitaciones</label><input type="number" min={1} max={8} value={nHab} onChange={(e) => setCantidad(Number(e.target.value))} className={`${sel} w-20`} /></div>
+          <div><label className={lbl}>Adultos (12+)</label>
+            <div className="relative">
+              <Users className={iconoCls} aria-hidden />
+              <input type="number" min={1} value={adultos} onChange={(e) => { limpiarResultados(); setAdultos(e.target.value); }}
+                className={`${sel} ${!adultosValido ? "border-red-400" : ""}`} aria-invalid={!adultosValido ? true : undefined} />
+            </div>
+          </div>
+          <div><label htmlFor={`${idBase}-cant`} className={lbl}>Cantidad de menores</label>
+            <div className="relative">
+              <Baby className={iconoCls} aria-hidden />
+              <input id={`${idBase}-cant`} type="number" inputMode="numeric" min={0} max={MAX_MENORES_POR_CONSULTA} value={cantidadMenores}
+                onChange={(e) => setCantidadMenores(Number(e.target.value))} className={sel} />
+            </div>
+          </div>
+          <div><label className={lbl}>Habitaciones</label>
+            <div className="relative">
+              <BedDouble className={iconoCls} aria-hidden />
+              <input type="number" min={1} max={8} value={nHab} onChange={(e) => setCantidad(Number(e.target.value))} className={sel} />
+            </div>
+          </div>
         </div>
 
         {/* Una fila por habitación: solo el tipo de acomodación (los menores se
@@ -429,24 +531,27 @@ export function BuscadorBooking({
         <div className="mt-3 space-y-2">
           {habs.map((acom, i) => (
             <div key={i} className="flex flex-wrap items-center gap-2 text-sm">
-              <span className="w-24 text-gray-500">Habitación {i + 1}</span>
-              <select value={acom} onChange={(e) => setHab(i, e.target.value as AcomRoom)} className={sel}>
-                {ACOM_ROOMS.map((a) => <option key={a} value={a}>{ACOM_ROOM_LABEL[a]}</option>)}
-              </select>
+              <span className="w-24 text-slate-500">Habitación {i + 1}</span>
+              <div className="relative">
+                <BedDouble className={iconoCls} aria-hidden />
+                <select value={acom} onChange={(e) => setHab(i, e.target.value as AcomRoom)} className="rounded-lg border border-slate-200 bg-slate-50 py-2 pl-8 pr-3 text-xs font-medium text-slate-800 focus:border-[var(--brand-accent)] focus:outline-none focus:ring-2 focus:ring-[var(--brand-accent)]">
+                  {ACOM_ROOMS.map((a) => <option key={a} value={a}>{ACOM_ROOM_LABEL[a]}</option>)}
+                </select>
+              </div>
             </div>
           ))}
         </div>
 
         {cantidadMenores > 0 && (
           <div className="mt-3">
-            <p className="mb-1 text-xs font-semibold uppercase tracking-wide text-gray-400">Edad de cada menor</p>
+            <p className="mb-1 text-xs font-semibold uppercase tracking-wide text-slate-400">Edad de cada menor</p>
             <div className="flex flex-wrap gap-3">
               {edadesTxt.map((v, i) => {
                 const errP = edadesParsed[i]?.error;
                 const mostrarError = v.trim() !== "" && errP;
                 return (
                   <div key={i}>
-                    <label htmlFor={`${idBase}-edad-${i}`} className="mb-1 block text-xs text-gray-500">Edad menor {i + 1}</label>
+                    <label htmlFor={`${idBase}-edad-${i}`} className="mb-1 block text-xs text-slate-500">Edad menor {i + 1}</label>
                     <input
                       id={`${idBase}-edad-${i}`}
                       type="number"
@@ -455,7 +560,7 @@ export function BuscadorBooking({
                       max={EDAD_MENOR_MAX}
                       value={v}
                       onChange={(e) => setEdadAt(i, e.target.value)}
-                      className={`w-16 rounded-lg border px-2 py-2 text-sm text-center focus:outline-none focus:ring-2 focus:ring-[var(--brand-accent)] ${mostrarError ? "border-red-400" : "border-gray-300"}`}
+                      className={`w-16 rounded-lg border px-2 py-2 text-sm text-center focus:outline-none focus:ring-2 focus:ring-[var(--brand-accent)] ${mostrarError ? "border-red-400" : "border-slate-200 bg-slate-50"}`}
                       aria-invalid={mostrarError ? true : undefined}
                     />
                     {mostrarError && <p className="mt-0.5 text-[10px] text-red-600">{errP}</p>}
@@ -469,11 +574,11 @@ export function BuscadorBooking({
           </div>
         )}
 
-        <div className="mt-3 flex items-center gap-3">
-          <button type="button" onClick={() => buscar()} disabled={pending || !menoresListos || !adultosValido} className="rounded-lg px-5 py-2.5 text-sm font-semibold text-white disabled:opacity-50" style={{ backgroundColor: "var(--brand-primary)" }}>
+        <div className="mt-4 flex flex-wrap items-center gap-3 border-t border-slate-100 pt-3">
+          <button type="button" onClick={() => buscar()} disabled={pending || !menoresListos || !adultosValido} className="rounded-lg bg-[var(--brand-primary)] px-5 py-2.5 text-xs font-bold uppercase tracking-wide text-white shadow-sm transition hover:brightness-110 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-[var(--brand-accent)] disabled:opacity-50">
             {pending ? "Buscando…" : "Buscar hoteles"}
           </button>
-          {huellaBuscada !== null && <button type="button" onClick={limpiarResultados} className="text-xs text-gray-400 hover:text-gray-700">Limpiar resultados</button>}
+          {huellaBuscada !== null && <button type="button" onClick={limpiarResultados} className="text-xs font-semibold text-slate-400 hover:text-slate-700">Limpiar resultados</button>}
         </div>
         {avisoHab && <p className="mt-2 rounded-lg bg-amber-50 px-3 py-2 text-sm text-amber-700">{avisoHab}</p>}
         {err && <p className="mt-2 text-sm text-red-600">{err}</p>}
@@ -496,7 +601,7 @@ export function BuscadorBooking({
 // COMPLETO de `infoPorHotel` (ubicación/video/condición incluidos, no solo un
 // subconjunto) y `descripcionPorPaquete`/`addonsPorPaquete` llegan iguales
 // que a los modales de exploración — nunca una fuente nueva de datos.
-export function Resultado({ r, recomendada = false, foto, info, descripcionPorPaquete, addonsPorPaquete }: {
+export function Resultado({ r, recomendada = false, foto, info, descripcionPorPaquete, addonsPorPaquete, catInicial, regInicial, combosPermitidos }: {
   r: BusquedaResultado;
   /** ¿Esta oferta es una de las recomendadas del paquete coincidente? Solo
    * cambia la etiqueta de la tarjeta ("Recomendado · <paquete>" vs
@@ -510,6 +615,23 @@ export function Resultado({ r, recomendada = false, foto, info, descripcionPorPa
   };
   descripcionPorPaquete: Record<number, DescripcionPaqueteRaw>;
   addonsPorPaquete: Map<number, Receptivo[]>;
+  /** Preselección forzada por los filtros generales de arriba (Categoría/
+   * Alimentación, `lib/tarifario/filtrosBusqueda.ts`, aplicado en
+   * `VistaBooking.tsx`) cuando el combo más barato (default, `r.categoria`/
+   * `r.regimen`) no los cumple pero otro sí. `undefined` = sin filtro activo
+   * o el default ya cumple — se preselecciona el más barato, como siempre. */
+  catInicial?: string;
+  regInicial?: string;
+  /** Contrato explícito (decisión de diseño): con Categoría/Alimentación
+   * activos, estos filtros no solo deciden qué hoteles aparecen — también
+   * ACOTAN qué puede ofrecer el selector interno de la tarjeta. Presente =
+   * el usuario NO puede, dentro de la tarjeta, volver a un combo que el
+   * filtro de arriba ya descartó (sería una contradicción visual: filtro
+   * "Superior" arriba, "Estándar" seleccionable adentro — y el precio/
+   * carrito resultante quedarían fuera de lo que el filtro pidió).
+   * `undefined` = sin filtro activo, el selector sigue ofreciendo TODOS los
+   * `r.combos` (comportamiento de siempre, el usuario elige libremente). */
+  combosPermitidos?: ComboPersonaElegido[];
 }) {
   const { items, add, remove } = useCart();
   const [addonAbierto, setAddonAbierto] = useState<ReceptivoModalInfo | null>(null);
@@ -520,18 +642,39 @@ export function Resultado({ r, recomendada = false, foto, info, descripcionPorPa
   const descripcionPaquete = descripcionPorPaquete[r.paqueteId];
   const addons: Receptivo[] = addonsPorPaquete.get(r.paqueteId) ?? [];
 
-  // Combos disponibles → selectores de categoría y alimentación (el más barato
-  // viene por defecto). El precio y lo que va al carrito siguen al combo elegido.
-  const categorias = useMemo(() => [...new Set(r.combos.map((c) => c.categoria))], [r.combos]);
-  const [cat, setCat] = useState(r.categoria);
-  const [reg, setReg] = useState(r.regimen);
+  // `combosEfectivos`: la fuente ÚNICA de la que salen categorías/
+  // regímenes/precio/carrito cuando hay un filtro general activo — el resto
+  // del componente no vuelve a leer `r.combos` directamente para nada que el
+  // usuario pueda cambiar con los selectores de abajo (el más barato de ESTE
+  // subconjunto viene por defecto, igual criterio que sin filtro).
+  const combosEfectivos = combosPermitidos ?? r.combos;
+  const categorias = useMemo(() => [...new Set(combosEfectivos.map((c) => c.categoria))], [combosEfectivos]);
+  const [cat, setCat] = useState(catInicial ?? r.categoria);
+  const [reg, setReg] = useState(regInicial ?? r.regimen);
+  // Si la categoría elegida (manual o de un montaje previo) queda fuera del
+  // subconjunto vigente — ej. el usuario eligió "Superior" a mano y luego un
+  // filtro nuevo (Niño 1/Niño 2) deja SOLO "Estandar" como permitida — cae a
+  // la primera categoría que sigue siendo válida. Sin este fallback, `cat`
+  // quedaba apuntando a un valor sin <option> correspondiente: el <select>
+  // mostraba un valor fantasma y `regimenes` (filtrado por esa `cat` obsoleta)
+  // podía quedar vacío, arrastrando a `combo` a caer en `r.combos[0]` — que
+  // puede ser justo el combo que el filtro de arriba ya excluyó. Mismo
+  // patrón que ya usa `TarjetaUnidadBusqueda` (VistaBooking.tsx) para su
+  // propia categoría/alimentación.
+  const catEff = categorias.includes(cat) ? cat : (categorias[0] ?? cat);
   const regimenes = useMemo(
-    () => [...new Set(r.combos.filter((c) => c.categoria === cat).map((c) => c.regimen))],
-    [r.combos, cat]
+    () => [...new Set(combosEfectivos.filter((c) => c.categoria === catEff).map((c) => c.regimen))],
+    [combosEfectivos, catEff]
   );
   // Si el régimen elegido no aplica a la categoría, cae al más barato de esa categoría.
   const regEff = regimenes.includes(reg) ? reg : (regimenes[0] ?? reg);
-  const combo = r.combos.find((c) => c.categoria === cat && c.regimen === regEff) ?? r.combos[0];
+  // La búsqueda del combo completo (con `pax`/`menores`, que `combosEfectivos`
+  // no lleva — es solo la vista recortada de categoría/régimen/total para el
+  // selector) sigue viviendo en `r.combos`: `catEff`/`regEff` solo pueden
+  // tomar valores presentes en `categorias`/`regimenes` (derivados de
+  // `combosEfectivos`, un subconjunto REAL de `r.combos`), así que el combo
+  // encontrado aquí es siempre uno de los permitidos — nunca uno excluido.
+  const combo = r.combos.find((c) => c.categoria === catEff && c.regimen === regEff) ?? r.combos[0];
 
   // La clasificación (infante/Niño 1/Niño 2) ya viene resuelta por edad real
   // desde la búsqueda (misma para todos los combos de este hotel — depende
@@ -587,7 +730,7 @@ export function Resultado({ r, recomendada = false, foto, info, descripcionPorPa
         <div className="grid grid-cols-1 gap-2">
           <label className="flex items-center gap-2 text-xs text-gray-500">
             <span className="w-20 shrink-0">Categoría</span>
-            <select value={cat} onChange={(e) => setCat(e.target.value)} className={`${selCls} flex-1`}>
+            <select value={catEff} onChange={(e) => setCat(e.target.value)} className={`${selCls} flex-1`}>
               {categorias.map((c) => <option key={c} value={c}>{c}</option>)}
             </select>
           </label>

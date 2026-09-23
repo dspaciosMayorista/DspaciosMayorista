@@ -61,6 +61,13 @@
   --brand-success:   #66B596;  /* Piper */
   --brand-highlight: #AEF44A;  /* Conifer / Lima */
 
+  /* Piper (--brand-success) como TEXTO sobre fondos claros no cumple
+     contraste AA (≈2.5:1) — estas dos derivadas son solo para eso: texto
+     verde legible ("pestaña seleccionada") y su fondo pálido a juego. Mismo
+     matiz de marca, nunca un verde distinto. */
+  --brand-success-dark: #1F5D42; /* ≈7.8:1 sobre blanco — texto verde legible */
+  --brand-success-bg:   #E8F4EF; /* Piper mezclado ~15% sobre blanco */
+
   /* Degradado de marca (azul → turquesa → verde): encabezados/hero */
   --brand-gradient: linear-gradient(110deg, #1D7C9A 0%, #1F8CA8 35%, #26BBD9 72%, #5FCBA8 100%);
 
@@ -99,17 +106,14 @@
   --sidebar-ring: #1D7C9A;
 }
 
-/* ── Fondo de pantalla con imagen de PLAYA (portal + tarifario público) ──────
-   Imagen fija tipo wallpaper con un wash claro encima para legibilidad; las
-   tarjetas blancas flotan sobre la playa. Se aplica con la clase .app-bg. */
+/* ── Canvas del tarifario público (rediseño de Vista Booking) ────────────────
+   Antes: foto de playa a pantalla completa como wallpaper. La composición
+   acordada (referencia Stitch) usa un azul muy pálido UNIFORME — sin
+   degradado —, más cercano al tono de un panel B2B que a un fondo de
+   marketing. Se aplica con la misma clase .app-bg (único punto de uso:
+   app/tarifario/page.tsx). */
 .app-bg {
-  background-image:
-    linear-gradient(180deg, rgba(244, 247, 251, 0.60) 0%, rgba(244, 247, 251, 0.82) 44%, rgba(244, 247, 251, 0.93) 100%),
-    url("https://images.unsplash.com/photo-1507525428034-b723cf961d3e?auto=format&fit=crop&w=1920&q=80");
-  background-size: cover;
-  background-position: center;
-  background-attachment: fixed;
-  background-repeat: no-repeat;
+  background-color: #f4f9fc;
 }
 
 /* Tipografía del sitio (Inter) — para el tarifario público, así su “letra”

@@ -111,7 +111,13 @@ export function CartDrawer({ checkoutHabilitado = false, fotosPorHotel = {} }: {
         className="flex items-center gap-2 rounded-lg bg-white px-4 py-2 text-sm font-medium shadow-sm"
         style={{ color: "var(--brand-primary)" }}
       >
-        <ShoppingCart size={16} /> Carrito
+        <ShoppingCart size={16} />
+        {/* Texto oculto en móvil angosto (el header público comparte fila con
+            "Modo agencia"/CTA de ingreso y las tres juntas no caben — ver
+            app/tarifario/page.tsx): el ícono + el contador siguen bastando
+            para identificar el carrito, mismo criterio que el resto del
+            header. El drawer/carrito en sí no cambia, solo esta etiqueta. */}
+        <span className="hidden sm:inline">Carrito</span>
         {count > 0 && (
           <span className="ml-1 rounded-full px-2 py-0.5 text-xs font-bold text-white" style={{ backgroundColor: "var(--brand-primary)" }}>
             {count}

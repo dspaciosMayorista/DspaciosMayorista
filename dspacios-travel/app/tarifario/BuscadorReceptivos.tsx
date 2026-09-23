@@ -2,6 +2,7 @@
 
 import { useEffect, useRef, useState, useTransition } from "react";
 import Image from "next/image";
+import { MapPin, CalendarDays, Users } from "lucide-react";
 import { formatMoneda } from "@/lib/utils";
 import { buscarReceptivos } from "@/app/(dashboard)/dashboard/reservar/actions";
 import type { ResultadoServicio } from "@/lib/reservar/cotizar";
@@ -176,38 +177,59 @@ export function BuscadorReceptivos({
     aplicarPrefillRef.current(initial);
   }, [initial]);
 
-  const sel = "rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm";
+  const sel = "w-full rounded-lg border border-slate-200 bg-slate-50 py-2 pl-8 pr-3 text-xs font-medium text-slate-800 focus:border-[var(--brand-accent)] focus:outline-none focus:ring-2 focus:ring-[var(--brand-accent)]";
+  const iconoCls = "pointer-events-none absolute left-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400";
+  // Destino sí tiene un estado neutro real ("Todos") — al elegir uno
+  // concreto, el control se pone verde (mismo acento de "valor elegido" que
+  // el resto del shell). Ida/Regreso/Pax son obligatorios sin equivalente a
+  // "Todos", así que solo llevan ícono.
+  const selDestino = `w-full rounded-lg border py-2 pl-8 pr-3 text-xs font-medium transition-colors focus:outline-none focus:ring-2 focus:ring-[var(--brand-accent)] ${destino ? "border-[var(--brand-success)] bg-[var(--brand-success)]/10 text-slate-900 font-semibold" : "border-slate-200 bg-slate-50 text-slate-800"}`;
+  const iconoDestinoCls = `pointer-events-none absolute left-2.5 top-1/2 h-4 w-4 -translate-y-1/2 ${destino ? "text-[var(--brand-success)]" : "text-slate-400"}`;
 
   return (
     <div className="mb-6">
-      <div className="rounded-2xl border border-gray-200 bg-white p-4">
-        <p className="mb-3 text-sm font-semibold" style={{ color: "var(--brand-primary)" }}>Buscar receptivo</p>
-        <div className="flex flex-wrap items-end gap-3">
+      <div className="rounded-2xl border border-slate-200/80 bg-white p-4 shadow-[0_10px_25px_-5px_rgba(29,124,154,0.08),0_8px_10px_-6px_rgba(29,124,154,0.04)] sm:p-5">
+        <p className="mb-3 text-sm font-bold text-slate-900">Buscar receptivo</p>
+        <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
           {destinos.length > 0 && (
             <div>
-              <label className="mb-1 block text-xs text-gray-500">Destino</label>
-              <select value={destino} onChange={(e) => setDestino(e.target.value)} className={sel}>
-                <option value="">Todos</option>
-                {destinos.map((d) => <option key={d} value={d}>{d}</option>)}
-              </select>
+              <label className="mb-1 block text-xs font-semibold text-slate-700">Destino</label>
+              <div className="relative">
+                <MapPin className={iconoDestinoCls} aria-hidden />
+                <select value={destino} onChange={(e) => setDestino(e.target.value)} className={selDestino}>
+                  <option value="">Todos</option>
+                  {destinos.map((d) => <option key={d} value={d}>{d}</option>)}
+                </select>
+              </div>
             </div>
           )}
           <div>
-            <label className="mb-1 block text-xs text-gray-500">Ida</label>
-            <input type="date" min={hoy} value={fIda}
-              onChange={(e) => { const nueva = e.target.value; setFIda(nueva); if (fReg && fReg <= nueva) setFReg(""); }}
-              className={sel} />
+            <label className="mb-1 block text-xs font-semibold text-slate-700">Ida</label>
+            <div className="relative">
+              <CalendarDays className={iconoCls} aria-hidden />
+              <input type="date" min={hoy} value={fIda}
+                onChange={(e) => { const nueva = e.target.value; setFIda(nueva); if (fReg && fReg <= nueva) setFReg(""); }}
+                className={sel} />
+            </div>
           </div>
           <div>
-            <label className="mb-1 block text-xs text-gray-500">Regreso</label>
-            <input type="date" min={fIda || hoy} value={fReg} onChange={(e) => setFReg(e.target.value)} className={sel} />
+            <label className="mb-1 block text-xs font-semibold text-slate-700">Regreso</label>
+            <div className="relative">
+              <CalendarDays className={iconoCls} aria-hidden />
+              <input type="date" min={fIda || hoy} value={fReg} onChange={(e) => setFReg(e.target.value)} className={sel} />
+            </div>
           </div>
           <div>
-            <label className="mb-1 block text-xs text-gray-500">Pax</label>
-            <input type="number" min={1} value={pax} onChange={(e) => setPax(e.target.value)} className={`${sel} w-20`} />
+            <label className="mb-1 block text-xs font-semibold text-slate-700">Pax</label>
+            <div className="relative">
+              <Users className={iconoCls} aria-hidden />
+              <input type="number" min={1} value={pax} onChange={(e) => setPax(e.target.value)} className={sel} />
+            </div>
           </div>
+        </div>
+        <div className="mt-4 flex flex-wrap items-center gap-3 border-t border-slate-100 pt-3">
           <button type="button" onClick={() => buscar()} disabled={pending}
-            className="rounded-lg px-5 py-2.5 text-sm font-semibold text-white disabled:opacity-50" style={{ backgroundColor: "var(--brand-primary)" }}>
+            className="rounded-lg bg-[var(--brand-primary)] px-5 py-2.5 text-xs font-bold uppercase tracking-wide text-white shadow-sm transition hover:brightness-110 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-[var(--brand-accent)] disabled:opacity-50">
             {pending ? "Buscando…" : "Buscar receptivos"}
           </button>
           {/* Visible con resultados O con el modo acotado activo (aunque la
@@ -219,7 +241,7 @@ export function BuscadorReceptivos({
             <button
               type="button"
               onClick={limpiarTodo}
-              className="text-xs text-gray-400 hover:text-gray-700"
+              className="text-xs font-semibold text-slate-400 hover:text-slate-700"
             >
               Limpiar resultados
             </button>
