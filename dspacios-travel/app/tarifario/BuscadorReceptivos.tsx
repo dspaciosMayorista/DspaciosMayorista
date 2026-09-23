@@ -7,6 +7,7 @@ import { formatMoneda } from "@/lib/utils";
 import { buscarReceptivos } from "@/app/(dashboard)/dashboard/reservar/actions";
 import type { ResultadoServicio } from "@/lib/reservar/cotizar";
 import type { TourCartItem } from "@/lib/cart/CartContext";
+import { LoadingScreen } from "@/components/LoadingScreen";
 
 // `nonce` identifica CADA vez que el carrito pide precargar (un clic en
 // "+ Agregar servicios / tours") — necesario para consumir el intent aunque
@@ -54,7 +55,16 @@ export function BuscadorReceptivos({
   // EXPLÍCITAMENTE con "Limpiar resultados" — nunca por editar un campo del
   // formulario a mano (mientras esté activo, "Buscar receptivos" lo conserva).
   const [paqueteAcotado, setPaqueteAcotado] = useState<number | null>(initial?.paqueteId ?? null);
-  const [pending, start] = useTransition();
+  const [, start] = useTransition();
+  // `buscando`: señal de "hay una búsqueda en curso" que gobierna el isotipo
+  // de carga sobre el área de resultados. Deliberadamente NO es el
+  // `pending`/`isPending` de `useTransition` (mismo criterio que
+  // `BuscadorBooking.tsx`): ese solo se apaga cuando la promesa en vuelo se
+  // ASIENTA, y no hay forma de cancelarla desde afuera — "Limpiar resultados"
+  // pulsado mientras una búsqueda sigue en curso debe apagar esta señal DE
+  // INMEDIATO (ver `limpiarTodo`), sin esperar la respuesta obsoleta. La
+  // protección real contra publicarla sigue siendo `generacionBusquedaRef`.
+  const [buscando, setBuscando] = useState(false);
   const [err, setErr] = useState("");
   const [resultados, setResultados] = useState<ResultadoServicio[] | null>(null);
 
@@ -103,6 +113,7 @@ export function BuscadorReceptivos({
     if (!fIdaQ || !fRegQ) { setErr("Indica fecha de ida y de regreso."); return; }
     const paxNum = Number(paxQ) || 0;
     if (paxNum <= 0) { setErr("Indica cuántos pax."); return; }
+    setBuscando(true);
     start(async () => {
       const r = await buscarReceptivos({ fechaIda: fIdaQ, fechaRegreso: fRegQ, pax: paxNum, destino: destinoQ, paqueteId: paqueteIdQ ?? undefined });
       // Esta búsqueda quedó obsoleta (otra búsqueda más nueva arrancó, o se
@@ -111,6 +122,9 @@ export function BuscadorReceptivos({
       // iniciada está autorizada a publicar.
       if (generacionBusquedaRef.current !== miGeneracion) return;
       if (!montadoRef.current) return;
+      // Respuesta autoritativa — la búsqueda terminó, con éxito o con error;
+      // cualquiera de los dos retira el isotipo.
+      setBuscando(false);
       if (r.ok) setResultados(r.resultados);
       else setErr(r.error);
     });
@@ -126,6 +140,9 @@ export function BuscadorReceptivos({
     generacionBusquedaRef.current += 1;
     setResultados(null);
     setErr("");
+    // Apaga el isotipo YA, sin esperar a que una búsqueda invalidada arriba
+    // se asiente (ver la nota junto a `buscando`).
+    setBuscando(false);
     setPaqueteAcotado(null);
     onModoAcotado?.(null);
   }
@@ -228,9 +245,9 @@ export function BuscadorReceptivos({
           </div>
         </div>
         <div className="mt-4 flex flex-wrap items-center gap-3 border-t border-slate-100 pt-3">
-          <button type="button" onClick={() => buscar()} disabled={pending}
+          <button type="button" onClick={() => buscar()} disabled={buscando}
             className="rounded-lg bg-[var(--brand-primary)] px-5 py-2.5 text-xs font-bold uppercase tracking-wide text-white shadow-sm transition hover:brightness-110 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-[var(--brand-accent)] disabled:opacity-50">
-            {pending ? "Buscando…" : "Buscar receptivos"}
+            {buscando ? "Buscando…" : "Buscar receptivos"}
           </button>
           {/* Visible con resultados O con el modo acotado activo (aunque la
               búsqueda haya fallado): si `buscarReceptivos` devuelve error
@@ -254,6 +271,12 @@ export function BuscadorReceptivos({
         )}
         {err && <p className="mt-2 text-sm text-red-600">{err}</p>}
       </div>
+
+      {buscando && (
+        <div className="relative mt-4 min-h-[240px]">
+          <LoadingScreen fullScreen={false} label="Buscando receptivos…" />
+        </div>
+      )}
 
       {resultados && (
         <div className="mt-4">

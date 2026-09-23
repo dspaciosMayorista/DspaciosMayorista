@@ -23,6 +23,15 @@ export async function buscarHoteles(input) {
 export async function cotizarPorFechas() {
   throw new Error("cotizarPorFechas: no implementado en el stub de pruebas");
 }
-export async function buscarReceptivos() {
-  throw new Error("buscarReceptivos: no implementado en el stub de pruebas");
+// CONFIGURABLE (`__setBuscarReceptivos`) — mismo criterio que
+// `buscarHoteles`: por defecto lanza; la prueba de interacción de
+// `BuscadorReceptivos` instala una implementación antes de ejercitar su
+// botón "Buscar receptivos".
+let implBuscarReceptivos = null;
+export function __setBuscarReceptivos(fn) {
+  implBuscarReceptivos = fn;
+}
+export async function buscarReceptivos(input) {
+  if (implBuscarReceptivos) return implBuscarReceptivos(input);
+  throw new Error("buscarReceptivos: no implementado en el stub de pruebas — instala una implementación con __setBuscarReceptivos si tu prueba SÍ ejercita el buscador");
 }

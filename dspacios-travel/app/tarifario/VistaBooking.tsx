@@ -47,6 +47,7 @@ import type { OpcionUnidadConfirmada } from "./busquedaUnidadActions";
 import { claveBusquedaUnidad, claveReservaUnidad, revalidarReservaUnidad } from "@/lib/tarifario/identidadReservaUnidad";
 import { BuscadorReceptivos } from "./BuscadorReceptivos";
 import { BackgroundVideo } from "@/components/BackgroundVideo";
+import { LoadingScreen } from "@/components/LoadingScreen";
 import type { FilaTarifario, CapHotel } from "./TarifarioPublic";
 import type { FilaResumen } from "@/lib/tarifario/resumen";
 import { minRoomPvpResumen, tieneAcomodacionResumen } from "@/lib/tarifario/resumenCliente";
@@ -632,6 +633,17 @@ export function VistaBooking({
   // hoteles de otros destinos, por debajo de los resultados (ver el informe
   // de la tarea).
   const [busquedaPorcion, setBusquedaPorcion] = useState<EstadoBusquedaPorcion | null>(null);
+  // Búsqueda de Porción terrestre EN CURSO (`BuscadorBooking.onPendingChange`)
+  // — distinto de `busquedaPorcion == null`: eso es "no hay búsqueda vigente"
+  // (nunca se ejecutó, o se limpió/quedó obsoleta) y hace que la grilla caiga
+  // al catálogo de exploración; esta bandera es "hay una EN VUELO ahora
+  // mismo" y evita esa caída — mientras esté activa se muestra el isotipo de
+  // carga en el área de resultados en vez del catálogo (ver `enBusquedaPorcion`
+  // más abajo). Sin esto, pulsar "Buscar hoteles" mostraba el catálogo de
+  // exploración completo durante toda la búsqueda (bug reportado en Preview):
+  // `onBusqueda(null)` limpia `busquedaPorcion` de inmediato al arrancar, y sin
+  // esta señal nada distinguía "sin búsqueda" de "buscando".
+  const [buscandoPorcion, setBuscandoPorcion] = useState(false);
   // Orden/filtro del RESTO del inventario (nunca de los recomendados, que
   // nunca se reordenan por estos controles — ver `lib/tarifario/
   // inventarioResto.ts`). Solo tiene efecto cuando el resto se muestra
@@ -692,6 +704,7 @@ export function VistaBooking({
     if (sub === "porcion_terrestre" && next !== "porcion_terrestre") {
       setBusquedaPorcion(null);
       setSugerenciaPedida(null);
+      setBuscandoPorcion(false);
     }
     // `BuscadorReceptivos` se desmonta al salir de "receptivos" (solo se
     // renderiza cuando `sub === "receptivos"`, más abajo) — su estado local
@@ -1798,7 +1811,7 @@ export function VistaBooking({
           lista propia: el motor resuelve las dos mitades, así que su selector
           tiene que ofrecer exactamente lo que el motor puede devolver. */}
       {sub === "porcion_terrestre" && (
-        <BuscadorBooking destinos={destinosPorcion} onBusqueda={confirmarBusquedaPorcion} sugerenciaPedida={sugerenciaPedida} />
+        <BuscadorBooking destinos={destinosPorcion} onBusqueda={confirmarBusquedaPorcion} sugerenciaPedida={sugerenciaPedida} onPendingChange={setBuscandoPorcion} />
       )}
 
       {/* Aviso NO bloqueante: la mitad "unidad" de la búsqueda vigente no se
@@ -1812,6 +1825,20 @@ export function VistaBooking({
         </div>
       )}
 
+      {sub === "porcion_terrestre" && buscandoPorcion ? (
+        // Búsqueda de Porción terrestre EN VUELO: `onBusqueda(null)` ya limpió
+        // `busquedaPorcion` de forma síncrona al arrancar (ver `buscar()` en
+        // BuscadorBooking.tsx), así que sin esta rama la grilla de abajo caía
+        // al catálogo de exploración — visible como si fuera el resultado
+        // nuevo (bug reportado en Preview). En su lugar, el isotipo ocupa
+        // TODO el área de resultados (título/filtros/grilla no se pintan
+        // mientras dura) — `min-h` evita un salto de layout cuando la sección
+        // todavía no tiene la altura real de una grilla con tarjetas.
+        <div className="relative min-h-[360px]">
+          <LoadingScreen fullScreen={false} label="Buscando hoteles…" />
+        </div>
+      ) : (
+      <>
       <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
         <p className="text-xs font-semibold uppercase tracking-wide text-gray-400">
           {sub === "bloqueo" ? (
@@ -2018,6 +2045,8 @@ export function VistaBooking({
           )
         )}
       </div>
+      </>
+      )}
       </>
       )}
 

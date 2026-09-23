@@ -40,8 +40,17 @@ const STUB_NEXT_IMAGE = pathToFileURL(join(AQUI, "stubs", "nextImageStub.mjs")).
 // verdad, para no silenciar en falso un uso real inesperado.
 const STUB_RESERVAR_ACTIONS = pathToFileURL(join(AQUI, "stubs", "reservarActionsStub.mjs")).href;
 const STUB_BUSQUEDA_UNIDAD_ACTIONS = pathToFileURL(join(AQUI, "stubs", "busquedaUnidadActionsStub.mjs")).href;
+// Módulos CSS ("*.module.css", o cualquier ".css") — ver cssModuleStub.mjs.
+// Se revisa ANTES que la resolución genérica de "@/*" de abajo: esa
+// resolución probaría el candidato "tal cual" (extensión "") y encontraría
+// el archivo .css REAL en disco, delegando a `nextLoad` un archivo que no es
+// JS válido.
+const STUB_CSS = pathToFileURL(join(AQUI, "stubs", "cssModuleStub.mjs")).href;
 
 export async function resolve(specifier, context, nextResolve) {
+  if (specifier.endsWith(".css")) {
+    return { url: STUB_CSS, shortCircuit: true };
+  }
   if (specifier === "next/image") {
     return { url: STUB_NEXT_IMAGE, shortCircuit: true };
   }
