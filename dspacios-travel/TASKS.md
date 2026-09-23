@@ -1,10 +1,23 @@
 # TASKS.md - Dspacios Mayorista
 
-Fuente unica y priorizada de pendientes. Ultima actualizacion: 2026-09-22.
+Fuente unica y priorizada de pendientes. Ultima actualizacion: 2026-09-23.
 
 ## Cola priorizada
 
-### 1. Rediseno de Vista Booking
+### 1. Auditoria y reutilizacion de pasajeros en Minorista/Mayorista
+
+- [ ] Auditar como se capturan y almacenan pasajeros hoy en ambos tenants (contrato manual minorista, reservar/tarifario mayorista, sillas de vuelos) antes de tocar codigo: campos, duplicacion de formularios, fuentes de verdad.
+- [ ] Identificar pasajeros repetidos entre contratos (mismo cliente/titular que viaja varias veces) y evaluar un mecanismo de reutilizacion (buscar y reusar en vez de recapturar) sin mezclar datos entre tenants ni saltarse RLS.
+- [ ] No cambiar autenticacion, precios ni el modelo de sillas/vuelos existente — el alcance es capturar/reutilizar datos de pasajero, no reabrir el motor de reservas.
+- [ ] Registrar hallazgos y plan de fases antes de implementar.
+
+### 2. Catalogos compartidos con selectores que permitan escribir y buscar
+
+- [ ] Inventariar los catalogos hoy sin selector buscable (proveedores, aliados, hoteles, aerolineas, destinos, etc. — ver que ya usa el patron de `ComboDestino`/`ComboCiudad`) y cuales todavia son `<select>`/`<datalist>` planos o texto libre sin autocompletar.
+- [ ] Definir un componente combobox reutilizable (escribir para filtrar + elegir de la lista, sin perder texto libre donde el catalogo lo permite hoy) en vez de repetir el patron por pantalla.
+- [ ] Aplicarlo primero donde ya hay mas friccion conocida (formularios largos con muchos proveedores/hoteles) y extender por fases; conservar la logica de negocio y permisos de escritura por rol existentes (`lib/roles.ts`).
+
+### 3. Rediseno de Vista Booking
 
 - [ ] Auditar Vista Booking real (`app/tarifario/VistaBooking.tsx` y componentes asociados) antes de modificar codigo: pantallas, tarjetas, filtros y permisos existentes.
 - [ ] Conservar el logo, el nombre D'Spacios Travel y el tratamiento de marca vigente (mismo criterio que Login y Dashboard).
@@ -12,66 +25,66 @@ Fuente unica y priorizada de pendientes. Ultima actualizacion: 2026-09-22.
 - [ ] Redefinir estructura y sistema visual sin inventar datos, estados en vivo ni metricas que no existan realmente.
 - [ ] Implementacion NO iniciada: este pendiente queda registrado como siguiente objetivo tras cerrar el Dashboard administrativo; la auditoria y el plan de fases van antes de tocar codigo.
 
-### 2. Smoke financiero posterior al PR #294
+### 4. Smoke financiero posterior al PR #294
 
 - [ ] Crear un caso real con servicio incluido por grupo y comparar vitrina, carrito, cotizacion y contrato.
 - [ ] Confirmar una sola CxP por servicio, costos correctos y margen correcto.
 - [ ] Confirmar en Vercel `/api/cron/reconciliar-financiero` y su ejecucion con `CRON_SECRET`.
 
-### 3. Soporte unidad para paquetes dinamicos
+### 5. Soporte unidad para paquetes dinamicos
 
 - [ ] Implementar soporte real de `salidas_dinamicas` y cotizacion antes de anunciar hoteles unidad de paquetes `dinamico`.
 - [ ] Mantenerlos excluidos o marcados como no compatibles hasta completar la integracion.
 
-### 4. Soporte unidad para paquetes de servicios
+### 6. Soporte unidad para paquetes de servicios
 
 - [ ] Implementar soporte real de hoteles unidad en paquetes `servicios` antes de anunciarlos como cotizables.
 - [ ] Mantenerlos excluidos o marcados como no compatibles hasta completar la integracion.
 
-### 5. Corregir los 15 fallos preexistentes de pruebas
+### 7. Corregir los 15 fallos preexistentes de pruebas
 
 - [ ] Inventariar cada fallo por nombre, causa y propietario.
 - [ ] Separar defectos reales de pruebas de wiring obsoletas.
 - [ ] Corregirlos por grupos para dejar de aceptar una linea base roja como normal.
 
-### 6. Smoke visual de condiciones y restricciones
+### 8. Smoke visual de condiciones y restricciones
 
 - [ ] Validar en produccion badges y condiciones en Booking y carrito de los PR #286/#287.
 - [ ] Confirmar que el contenido sea consistente en escritorio, movil e impresion cuando aplique.
 
-### 7. Smoke de excepcion comercial
+### 9. Smoke de excepcion comercial
 
 - [ ] Probar con superadmin y contrato restringido el formulario, la autorizacion y la trazabilidad.
 - [ ] Mantener como deuda no bloqueante la reutilizacion de la consulta de vigencia para evitar una segunda consulta O(1) a `hotel_temporadas`.
 
-### 8. Mostrar conteos por destino
+### 10. Mostrar conteos por destino
 
 - [ ] Mostrar receptivos junto al conteo de hoteles, por ejemplo: `0 hoteles · 1 receptivo`.
 
-### 9. Explicar bloqueos al eliminar destinos
+### 11. Explicar bloqueos al eliminar destinos
 
 - [ ] Mostrar en el modal por que un destino no puede eliminarse cuando tiene contenido asociado.
 
-### 10. Mejorar la presentacion de servicios adicionales expandidos en las tarjetas
+### 12. Mejorar la presentacion de servicios adicionales expandidos en las tarjetas
 
 - [ ] Evitar que una tarjeta expandida aumente la altura de toda la fila y deje grandes espacios vacios.
 - [ ] Evaluar modal/panel lateral o una superficie compacta equivalente, conservando identidad de paquete y detalle de cada servicio.
 
-### 11. Aclarar, renombrar u ocultar el metadata de las vigencias promocionales
+### 13. Aclarar, renombrar u ocultar el metadata de las vigencias promocionales
 
 - [ ] El porcentaje/monto guardado en una vigencia promocional quedo como metadata y resulta enganoso en la UI.
 - [ ] La vigencia no genera ni modifica precios: la fuente autoritativa del precio es `tarifa_hotel`.
 - [ ] Aclarar, renombrar u ocultar ese valor en el editor y listado de vigencias promocionales.
 
-### 12. Integrar hoteles unidad en empaquetados
+### 14. Integrar hoteles unidad en empaquetados
 
 - [ ] Integrar y validar hoteles `modelo_tarifario = "unidad"` dentro de productos empaquetados.
 
-### 13. Integrar hoteles unidad con vuelos y bloqueos
+### 15. Integrar hoteles unidad con vuelos y bloqueos
 
 - [ ] Integrar y validar hoteles `modelo_tarifario = "unidad"` con vuelos, salidas y bloqueos.
 
-### 14. Investigar hotel 217 ausente en Vista Booking
+### 16. Investigar hotel 217 ausente en Vista Booking
 
 - [ ] Diagnosticar por que el hotel 217 no aparece en Porcion terrestre sin destino o buscando `odair`.
 - [ ] Trazar en Vercel Preview: `tarifario_resumen` -> filtros post-carga -> `TarifarioPublic` -> `VistaBooking` -> tarjetas.
@@ -79,12 +92,12 @@ Fuente unica y priorizada de pendientes. Ultima actualizacion: 2026-09-22.
 - [ ] Fixture confirmado de produccion: hotel 217, paquete 50 activo, modelo persona, SAN ANDRES, 28 filas en `tarifario_resultado`, 4 filas en `tarifario_resumen`, 2 noches, Estandar/Superior, PAE/FULL y procedencia Promocion.
 - Nota (PR #322, diagnostico de datos, no defecto): el mismo hotel 217 "Odair Dubai prueba" pertenece a SAN ANDRES pero `hoteles.zona` = "Bocagrande" (zona real de Cartagena); el filtro de Zona reflejo correctamente el dato almacenado y no se modifico la base. Ver `DECISIONS.md` ADL-024. No cierra ni sustituye este pendiente (la ausencia en Porcion terrestre sigue sin diagnosticar).
 
-### 15. Separar Preview y Produccion
+### 17. Separar Preview y Produccion
 
 - [ ] Usar entornos y bases de datos independientes.
 - [ ] Documentar el orden de migraciones y las variables por ambiente.
 
-### 16. Desarrollo posterior del negocio
+### 18. Desarrollo posterior del negocio
 
 - [ ] Desarrollo integral B2B/B2C.
 - [ ] Marketing y redes sociales.

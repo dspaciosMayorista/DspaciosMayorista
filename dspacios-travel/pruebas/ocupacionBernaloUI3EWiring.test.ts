@@ -681,7 +681,7 @@ describe("VistaBooking.tsx — P3: destinos de hoteles unidad SOLO en el filtro 
     // alternativas que ofrece en el estado vacío se vuelven a pedir desde acá).
     assert.match(
       fuenteVista,
-      /<BuscadorBooking destinos=\{destinosPorcion\} onBusqueda=\{confirmarBusquedaPorcion\} sugerenciaPedida=\{sugerenciaPedida\} \/>/
+      /<BuscadorBooking destinos=\{destinosPorcion\} onBusqueda=\{confirmarBusquedaPorcion\} sugerenciaPedida=\{sugerenciaPedida\} onPendingChange=\{setBuscandoPorcion\} \/>/
     );
     // Ya no debe existir ninguna variable `destinos` (el nombre viejo,
     // ambiguo sobre si mezclaba o no unidad) — solo `destinosBloqueo`/

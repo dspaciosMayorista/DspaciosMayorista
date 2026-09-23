@@ -86,7 +86,7 @@ function huellaBusqueda(a: {
 }
 
 export function BuscadorBooking({
-  destinos = [], onBusqueda, sugerenciaPedida = null,
+  destinos = [], onBusqueda, sugerenciaPedida = null, onPendingChange,
 }: {
   /** Destinos ofrecibles: la UNIÓN real de Porción terrestre (persona +
    * unidad, deduplicada y ordenada — `destinosPorcionPublica`). Es la lista
@@ -108,6 +108,12 @@ export function BuscadorBooking({
    * `nonce` que se incrementa en cada clic: el efecto de abajo aplica la fecha
    * y repite la búsqueda UNA vez por clic, nunca en cada render. */
   sugerenciaPedida?: (SugerenciaFecha & { nonce: number }) | null;
+  /** Notifica a `VistaBooking` cada vez que `buscando` cambia — así puede
+   * mostrar el isotipo de carga sobre el área de resultados en vez de dejar
+   * visible la grilla de exploración mientras esta búsqueda está en curso.
+   * Puramente de presentación: nunca decide qué respuesta se publica (eso
+   * sigue siendo `generacionBusquedaRef`, ver la nota junto a `buscando`). */
+  onPendingChange?: (buscando: boolean) => void;
 }) {
   const idBase = useId();
   const hoy = new Date().toISOString().slice(0, 10);
@@ -126,7 +132,18 @@ export function BuscadorBooking({
   const [habs, setHabs] = useState<AcomRoom[]>(["doble"]);
   const [cantidadMenores, setCantidadMenoresState] = useState(0);
   const [edadesTxt, setEdadesTxt] = useState<string[]>([]);
-  const [pending, start] = useTransition();
+  const [, start] = useTransition();
+  // `buscando`: señal de "hay una búsqueda en curso" que gobierna el
+  // isotipo de carga en `VistaBooking` (via `onPendingChange`). Deliberadamente
+  // NO es el `pending`/`isPending` de `useTransition`: ese solo se apaga
+  // cuando la promesa en vuelo se ASIENTA (resuelve o rechaza), y no hay forma
+  // de cancelarla desde afuera — si el usuario cambia un criterio o pulsa
+  // "Limpiar resultados" mientras una búsqueda sigue en curso, esta señal debe
+  // apagarse DE INMEDIATO (ver `limpiarResultados`), sin esperar a que la
+  // respuesta obsoleta llegue. La protección real contra publicar esa
+  // respuesta tardía sigue siendo `generacionBusquedaRef` — esta bandera es
+  // solo de presentación, nunca decide qué se publica.
+  const [buscando, setBuscando] = useState(false);
   const [err, setErr] = useState("");
   const [avisoHab, setAvisoHab] = useState("");
   // Huella de los criterios con los que se ejecutó la ÚLTIMA búsqueda (`null`
@@ -169,6 +186,30 @@ export function BuscadorBooking({
   const montadoRef = useRef(true);
   useEffect(() => () => { montadoRef.current = false; }, []);
 
+  // Sube `buscando` al padre en cada cambio. Efecto SEPARADO del de abajo (no
+  // "cleanup" del mismo useEffect): el cleanup de un efecto corre en TODA
+  // reejecución por cambio de dependencia, no solo al desmontar — ponerlo ahí
+  // dispararía un `onPendingChange(false)` espurio en CADA transición
+  // false→true (el cleanup de la ejecución anterior, con `buscando` todavía
+  // false, se dispara antes de la nueva con `buscando` true). Inofensivo en
+  // producción (mismo valor, React lo descarta sin re-render) pero hace
+  // ruido innecesario y una prueba de interacción que cuenta invocaciones sí
+  // lo nota.
+  useEffect(() => {
+    onPendingChange?.(buscando);
+  }, [buscando, onPendingChange]);
+
+  // Señal de desmontaje aparte, vía ref para no depender de la identidad de
+  // `onPendingChange` (evita que este efecto de solo-montaje/desmontaje
+  // tuviera que declarar esa dependencia): el usuario cambió de sub-pestaña
+  // con una búsqueda en curso — sin esto, `VistaBooking` seguiría mostrando
+  // el isotipo con el buscador ya desaparecido, hasta que su propio efecto
+  // de limpieza de `cambiarSub` corra (que ya lo hace, pero esta notificación
+  // es la señal directa e inmediata del propio componente que se retira).
+  const onPendingChangeRef = useRef(onPendingChange);
+  useEffect(() => { onPendingChangeRef.current = onPendingChange; });
+  useEffect(() => () => onPendingChangeRef.current?.(false), []);
+
   // Salir del modo búsqueda desde este componente: limpiar es UNA sola
   // decisión (deja de haber búsqueda vigente y los resultados unificados de
   // `VistaBooking` se retiran), nunca dos actualizaciones que puedan quedar
@@ -189,6 +230,10 @@ export function BuscadorBooking({
     generacionBusquedaRef.current += 1;
     setHuellaBuscada(null);
     onBusqueda?.(null);
+    // Apaga el isotipo YA, sin esperar a que la búsqueda invalidada arriba
+    // se asiente — cambiar un criterio o pulsar "Limpiar resultados" debe
+    // retirar la señal de carga de inmediato (ver la nota en `buscando`).
+    setBuscando(false);
   }
 
   // Ajusta el nº de filas de habitación (tope de 8; 9+ requiere asesor).
@@ -272,6 +317,7 @@ export function BuscadorBooking({
     // invalidar: eso ya lo hace `miGeneracion` de forma síncrona.
     const huella = huellaBusqueda({ destino, destinoId, fIda: idaUsada, fReg: regresoUsada, adultos, habs, cantidadMenores, edadesTxt });
     setHuellaBuscada(huella);
+    setBuscando(true);
     start(async () => {
       // DOS llamadas por búsqueda, SIEMPRE en paralelo y NUNCA una por
       // tarjeta: `buscarHoteles` (las filas persona, que son la mitad persona
@@ -315,6 +361,10 @@ export function BuscadorBooking({
       // respuesta que ya no corresponde a lo que el usuario está viendo — se
       // ignora por completo.
       if (!montadoRef.current) return;
+      // Respuesta autoritativa (ni obsoleta ni post-desmontaje) — la búsqueda
+      // terminó, con éxito o con error; cualquiera de los dos retira el
+      // isotipo.
+      setBuscando(false);
       if (!r.ok) { setErr(r.error); onBusqueda?.(null); return; }
       // Solo lo CONFIRMADO disponible entra al resultado: `sin_disponibilidad`
       // no es un resultado disponible (y un hotel sobre el que el servidor no
@@ -575,8 +625,8 @@ export function BuscadorBooking({
         )}
 
         <div className="mt-4 flex flex-wrap items-center gap-3 border-t border-slate-100 pt-3">
-          <button type="button" onClick={() => buscar()} disabled={pending || !menoresListos || !adultosValido} className="rounded-lg bg-[var(--brand-primary)] px-5 py-2.5 text-xs font-bold uppercase tracking-wide text-white shadow-sm transition hover:brightness-110 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-[var(--brand-accent)] disabled:opacity-50">
-            {pending ? "Buscando…" : "Buscar hoteles"}
+          <button type="button" onClick={() => buscar()} disabled={buscando || !menoresListos || !adultosValido} className="rounded-lg bg-[var(--brand-primary)] px-5 py-2.5 text-xs font-bold uppercase tracking-wide text-white shadow-sm transition hover:brightness-110 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-[var(--brand-accent)] disabled:opacity-50">
+            {buscando ? "Buscando…" : "Buscar hoteles"}
           </button>
           {huellaBuscada !== null && <button type="button" onClick={limpiarResultados} className="text-xs font-semibold text-slate-400 hover:text-slate-700">Limpiar resultados</button>}
         </div>

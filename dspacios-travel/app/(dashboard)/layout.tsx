@@ -222,7 +222,11 @@ export default async function DashboardLayout({
           fijos (sticky). Sin scroll interno propio. */}
       <div className="flex min-w-0 flex-1 flex-col">
         <Topbar userLabel={userLabel} rol={rol} fecha={fecha} switcher={switcher} logout={<LogoutButton />} />
-        <main className="min-w-0 flex-1 overflow-x-hidden" style={{ backgroundColor: "var(--dash-bg)" }}>
+        {/* `relative`: contenedor de posicionamiento para el `LoadingScreen`
+            no-fullscreen de `(dashboard)/loading.tsx` — así su overlay cubre
+            solo esta área de contenido (no vuelve a tapar el sidebar/topbar
+            que ya se renderizaron). Puramente de layout, no toca sesión/rol. */}
+        <main data-dashboard-main className="relative min-w-0 flex-1 overflow-x-hidden" style={{ backgroundColor: "var(--dash-bg)" }}>
           {children}
         </main>
       </div>
