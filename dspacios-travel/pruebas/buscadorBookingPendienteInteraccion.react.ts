@@ -1,3 +1,4 @@
+// Se ejecuta con npm run test:react (loader TSX), no con test:unit.
 // Prueba de INTERACCIÓN REACT (renderizado real, eventos DOM reales) para el
 // fix de Preview "el botón dice BUSCANDO… pero la grilla anterior sigue
 // visible": `BuscadorBooking` ahora expone `onPendingChange` (`buscando`,

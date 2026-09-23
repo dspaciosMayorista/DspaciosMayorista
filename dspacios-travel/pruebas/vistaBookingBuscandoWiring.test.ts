@@ -3,7 +3,7 @@
 // criterio que pruebas/filtrosVistaBookingWiring.test.ts). El comportamiento
 // EJECUTABLE del componente que alimenta este cableado (`onPendingChange` de
 // `BuscadorBooking`) ya está probado con render real en
-// pruebas/buscadorBookingPendienteInteraccion.test.ts; esto confirma que
+// pruebas/buscadorBookingPendienteInteraccion.react.ts; esto confirma que
 // VistaBooking lo conecta correctamente.
 //
 // Corrección (Preview): al pulsar "Buscar hoteles" en Porción terrestre, el

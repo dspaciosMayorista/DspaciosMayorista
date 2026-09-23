@@ -226,7 +226,7 @@ export default async function DashboardLayout({
             no-fullscreen de `(dashboard)/loading.tsx` — así su overlay cubre
             solo esta área de contenido (no vuelve a tapar el sidebar/topbar
             que ya se renderizaron). Puramente de layout, no toca sesión/rol. */}
-        <main className="relative min-w-0 flex-1 overflow-x-hidden" style={{ backgroundColor: "var(--dash-bg)" }}>
+        <main data-dashboard-main className="relative min-w-0 flex-1 overflow-x-hidden" style={{ backgroundColor: "var(--dash-bg)" }}>
           {children}
         </main>
       </div>

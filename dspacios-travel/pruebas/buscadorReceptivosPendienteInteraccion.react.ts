@@ -1,5 +1,6 @@
+// Se ejecuta con npm run test:react (loader TSX), no con test:unit.
 // Prueba de INTERACCIÓN REACT (renderizado real, eventos DOM reales) —
-// mismo criterio que pruebas/buscadorBookingPendienteInteraccion.test.ts,
+// mismo criterio que pruebas/buscadorBookingPendienteInteraccion.react.ts,
 // para `BuscadorReceptivos` (self-contained: pinta su propio isotipo, no
 // necesita `onPendingChange` hacia un padre). Se controla el momento exacto
 // en que la Server Action resuelve (promesas "diferidas" propias) para

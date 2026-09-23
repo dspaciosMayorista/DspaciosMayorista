@@ -4,10 +4,9 @@
 // de router del App Router, que este repo no simula en jsdom para ningún
 // componente todavía — por eso el mecanismo (mismo hook, mismo debounce,
 // mismo componente `IsotipoMini`) se verificó por separado, en NAVEGADOR
-// REAL, con una réplica fiel del hook contra rutas públicas reales (grabado
-// en video con Playwright; evidencia entregada aparte, no en este archivo).
-// Esto solo confirma que el CABLEADO de producción coincide con lo que esa
-// verificación probó.
+// REAL, con una réplica del hook contra rutas públicas. El overlay centrado
+// nuevo queda cubierto aquí solo a nivel de cableado; falta verlo en Preview
+// con sesión real y navegación real del Dashboard.
 //
 // Corrección (Preview): al pulsar Ventas/Contratos/Contabilidad/Producto en
 // el sidebar, la pantalla anterior quedaba inmóvil 1-2s sin ninguna señal
@@ -87,6 +86,18 @@ describe("SidebarNav.tsx — useLinkStatus + retraso de aparición, sin temporiz
   test("el isotipo reutiliza LA MISMA animación/estático-por-reduced-motion que components/LoadingScreen.tsx (markStyles.mark), en vez de declarar una segunda animación paralela", () => {
     assert.match(fuente, /import markStyles from "@\/components\/LoadingScreen\.module\.css";/);
     assert.match(fuente, /className=\{markStyles\.mark\}/);
+  });
+
+  test("la misma señal pendiente monta el isotipo centrado en el área principal, sin cubrir sidebar ni topbar", () => {
+    const layout = leer("app/(dashboard)/layout.tsx");
+    assert.match(layout, /<main data-dashboard-main className="relative/);
+    assert.match(fuente, /document\.querySelector\("\[data-dashboard-main\]"\)/);
+    assert.match(fuente, /createPortal\(/);
+    assert.match(fuente, /<LoadingScreen fullScreen=\{false\} label="Cargando página" \/>/);
+    assert.match(fuente, /className="fixed z-30"/);
+    assert.match(fuente, /main\.getBoundingClientRect\(\)/, "debe centrarse en el área visible aunque la página sea larga");
+    assert.match(cuerpoFuncion(fuente, "function NavIcon("), /<IndicadorNavegacion mostrar=\{mostrar\} \/>/);
+    assert.match(cuerpoFuncion(fuente, "function NavBullet()"), /<IndicadorNavegacion mostrar=\{mostrar\} \/>/);
   });
 
   test("la señal es puramente de presentación: no aparece en el <Link> con prefetch distinto de false, ni cambia href/navegación/permisos (los 3 <Link> siguen con prefetch={false} y el mismo href de siempre)", () => {

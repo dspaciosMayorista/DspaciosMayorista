@@ -4,12 +4,14 @@ import Link, { useLinkStatus } from "next/link";
 import Image from "next/image";
 import { usePathname } from "next/navigation";
 import { useEffect, useState } from "react";
+import { createPortal } from "react-dom";
 import {
   Tags, Ticket, FileText, ShoppingBag, FileSignature, Plane, Package, Boxes,
   Wallet, Users, UserCheck, Settings, Globe, Contact, ChevronDown, ChevronRight,
   Circle, History, Calculator, Upload, type LucideIcon,
 } from "lucide-react";
 import markStyles from "@/components/LoadingScreen.module.css";
+import { LoadingScreen } from "@/components/LoadingScreen";
 
 export type NavItem = {
   href: string;
@@ -87,40 +89,69 @@ function IsotipoMini({ size }: { size: number }) {
   );
 }
 
+function IndicadorNavegacion({ mostrar }: { mostrar: boolean }) {
+  if (!mostrar || typeof document === "undefined") return null;
+  const main = document.querySelector("[data-dashboard-main]");
+  if (!main) return null;
+  const rect = main.getBoundingClientRect();
+  return createPortal(
+    <div
+      className="fixed z-30"
+      style={{
+        top: Math.max(0, rect.top),
+        right: Math.max(0, window.innerWidth - rect.right),
+        bottom: Math.max(0, window.innerHeight - rect.bottom),
+        left: Math.max(0, rect.left),
+      }}
+    >
+      <LoadingScreen fullScreen={false} label="Cargando página" />
+    </div>,
+    main,
+  );
+}
+
 // DEBE ser hijo directo de un componente Link — `useLinkStatus` lee el
 // contexto que ese Link provee (ver next/link); llamarlo más arriba (en
 // `Group`, que solo RENDERIZA el Link, no vive dentro de él) siempre
 // devolvería el estado inicial. Sustituye el ícono normal por el isotipo
-// mientras esa navegación puntual está pendiente — nunca oculta la etiqueta
-// junto a él.
+// mientras esa navegación puntual está pendiente y muestra el indicador
+// principal en el contenido, sin ocultar la etiqueta del enlace.
 function NavIcon({ icon: Icon, size, letra }: { icon?: LucideIcon; size: number; letra?: string }) {
   const mostrar = usePendienteConRetraso();
-  if (mostrar) {
-    return (
-      <span role="status" aria-live="polite" className="inline-flex shrink-0 items-center justify-center" style={{ width: size, height: size }}>
-        <IsotipoMini size={size} />
-        <span className="sr-only">Cargando…</span>
-      </span>
-    );
-  }
-  if (Icon) return <Icon size={size} strokeWidth={2} className="shrink-0 opacity-90" />;
-  if (letra) return <span className="text-xs font-bold">{letra}</span>;
-  return <span className="w-[17px]" />;
+  return (
+    <>
+      {mostrar ? (
+        <span aria-hidden className="inline-flex shrink-0 items-center justify-center" style={{ width: size, height: size }}>
+          <IsotipoMini size={size} />
+        </span>
+      ) : Icon ? (
+        <Icon size={size} strokeWidth={2} className="shrink-0 opacity-90" />
+      ) : letra ? (
+        <span className="text-xs font-bold">{letra}</span>
+      ) : (
+        <span className="w-[17px]" />
+      )}
+      <IndicadorNavegacion mostrar={mostrar} />
+    </>
+  );
 }
 
 // Mismo contrato que `NavIcon`, para los enlaces hijos (que muestran un
 // bullet en vez de un ícono lucide).
 function NavBullet() {
   const mostrar = usePendienteConRetraso();
-  if (mostrar) {
-    return (
-      <span role="status" aria-live="polite" className="inline-flex shrink-0 items-center justify-center" style={{ width: 12, height: 12 }}>
-        <IsotipoMini size={12} />
-        <span className="sr-only">Cargando…</span>
-      </span>
-    );
-  }
-  return <Circle size={5} className="shrink-0" fill="currentColor" strokeWidth={0} />;
+  return (
+    <>
+      {mostrar ? (
+        <span aria-hidden className="inline-flex shrink-0 items-center justify-center" style={{ width: 12, height: 12 }}>
+          <IsotipoMini size={12} />
+        </span>
+      ) : (
+        <Circle size={5} className="shrink-0" fill="currentColor" strokeWidth={0} />
+      )}
+      <IndicadorNavegacion mostrar={mostrar} />
+    </>
+  );
 }
 
 export function SidebarNav({ items, collapsed }: { items: NavItem[]; collapsed?: boolean }) {
