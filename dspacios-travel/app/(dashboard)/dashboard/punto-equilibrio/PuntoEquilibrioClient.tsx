@@ -3,6 +3,7 @@
 import { useMemo, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { Scale, Users, BookText, FileText, Upload, Pencil, Trash2, ChevronDown, ChevronRight } from "lucide-react";
+import { ResponsiveTableShell } from "@/components/ui/ResponsiveTableShell";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { formatCOP } from "@/lib/utils";
@@ -205,7 +206,7 @@ function EmpleadosSection({ empleados, totNomina }: { empleados: EmpRow[]; totNo
         <Button onClick={() => setEditor("nuevo")} style={{ backgroundColor: "var(--brand-primary)" }}>+ Agregar</Button>
       </div>
       {editor && <EmpleadoEditor row={editor === "nuevo" ? null : editor} onClose={() => setEditor(null)} />}
-      <div className="mt-3 overflow-x-auto">
+      <ResponsiveTableShell minWidth={760} className="mt-3 overflow-x-auto">
         <table className="w-full min-w-[760px] text-sm">
           <thead>
             <tr className="border-b border-gray-100 text-left text-xs uppercase tracking-wide text-gray-400">
@@ -223,11 +224,10 @@ function EmpleadosSection({ empleados, totNomina }: { empleados: EmpRow[]; totNo
           <tfoot>
             <tr className="border-t-2 border-gray-200 font-semibold">
               <td className="px-3 py-2" colSpan={6}>Total nómina mensual</td>
-              <td className="px-3 py-2 text-right tabular-nums">{formatCOP(totNomina)}</td><td />
-            </tr>
+              <td className="px-3 py-2 text-right tabular-nums" data-label="Costo total">{formatCOP(totNomina)}</td><td data-label="" /></tr>
           </tfoot>
         </table>
-      </div>
+      </ResponsiveTableShell>
     </section>
   );
 }
@@ -264,7 +264,7 @@ function EmpleadoFila({ e, onEdit }: { e: EmpRow; onEdit: () => void }) {
   return (
     <>
     <tr className="border-b border-gray-50">
-      <td className="px-3 py-2.5 font-medium text-gray-800">
+      <td className="px-3 py-2.5 font-medium text-gray-800" data-label="Nombre">
         {l.det && (
           <button onClick={() => setAbierto((v) => !v)} className="mr-1 align-middle text-gray-400 hover:text-gray-700" title="Ver discriminado">
             {abierto ? <ChevronDown size={14} className="inline" /> : <ChevronRight size={14} className="inline" />}
@@ -273,16 +273,16 @@ function EmpleadoFila({ e, onEdit }: { e: EmpRow; onEdit: () => void }) {
         {e.nombre}
         {err && <span className="ml-2 text-[11px] text-red-500">{err}</span>}
       </td>
-      <td className="px-3 py-2.5 text-gray-500">
+      <td className="px-3 py-2.5 text-gray-500" data-label="Tipo">
         {e.tipo === "servicios" ? "Prestación de servicios" : "Empleado"}
         {l.det?.exonerado && <span className="ml-1 rounded bg-[rgba(102,181,150,0.18)] px-1 text-[10px] text-[#3d7a63]">exo</span>}
       </td>
-      <td className="px-3 py-2.5 text-right tabular-nums text-gray-600">{formatCOP(e.salario)}</td>
-      <td className="px-3 py-2.5 text-right tabular-nums text-gray-500">{l.auxilio > 0 ? formatCOP(l.auxilio) : "—"}</td>
-      <td className="px-3 py-2.5 text-right tabular-nums text-gray-500">{e.tipo === "empleado" ? formatCOP(l.segSocial) : "—"}</td>
-      <td className="px-3 py-2.5 text-right tabular-nums text-gray-500">{e.tipo === "empleado" ? formatCOP(l.prestaciones) : "—"}</td>
-      <td className="px-3 py-2.5 text-right font-semibold tabular-nums">{formatCOP(l.costoTotal)}</td>
-      <td className="px-3 py-2.5">
+      <td className="px-3 py-2.5 text-right tabular-nums text-gray-600" data-label="Salario">{formatCOP(e.salario)}</td>
+      <td className="px-3 py-2.5 text-right tabular-nums text-gray-500" data-label="Aux">{l.auxilio > 0 ? formatCOP(l.auxilio) : "—"}</td>
+      <td className="px-3 py-2.5 text-right tabular-nums text-gray-500" data-label="Seg. social">{e.tipo === "empleado" ? formatCOP(l.segSocial) : "—"}</td>
+      <td className="px-3 py-2.5 text-right tabular-nums text-gray-500" data-label="Prestaciones">{e.tipo === "empleado" ? formatCOP(l.prestaciones) : "—"}</td>
+      <td className="px-3 py-2.5 text-right font-semibold tabular-nums" data-label="Costo total">{formatCOP(l.costoTotal)}</td>
+      <td className="px-3 py-2.5" data-label="Acción">
         <div className="flex items-center justify-center gap-2">
           {e.contratoPath ? (
             <button onClick={verContrato} title={e.contratoNombre ?? "Ver contrato"} className="inline-flex items-center gap-1 text-xs text-[#1D7C9A] hover:underline"><FileText size={14} /> Contrato</button>
@@ -416,7 +416,7 @@ function CostosSection({ costos, totFijos, totVariables }: { costos: CostoRow[];
         <Button onClick={() => setEditor("nuevo")} style={{ backgroundColor: "var(--brand-primary)" }}>+ Agregar</Button>
       </div>
       {editor && <CostoEditor row={editor === "nuevo" ? null : editor} onClose={() => setEditor(null)} />}
-      <div className="mt-3 overflow-x-auto">
+      <ResponsiveTableShell minWidth={640} className="mt-3 overflow-x-auto">
         <table className="w-full min-w-[640px] text-sm">
           <thead>
             <tr className="border-b border-gray-100 text-left text-xs uppercase tracking-wide text-gray-400">
@@ -433,11 +433,10 @@ function CostosSection({ costos, totFijos, totVariables }: { costos: CostoRow[];
           <tfoot>
             <tr className="border-t-2 border-gray-200 font-semibold">
               <td className="px-3 py-2" colSpan={3}>Fijos {formatCOP(totFijos)} · Variables {formatCOP(totVariables)}</td>
-              <td className="px-3 py-2 text-right tabular-nums">{formatCOP(totFijos + totVariables)}</td><td />
-            </tr>
+              <td className="px-3 py-2 text-right tabular-nums" data-label="Valor mensual">{formatCOP(totFijos + totVariables)}</td><td data-label="" /></tr>
           </tfoot>
         </table>
-      </div>
+      </ResponsiveTableShell>
     </section>
   );
 }
@@ -446,15 +445,15 @@ function CostoFila({ c, onEdit }: { c: CostoRow; onEdit: () => void }) {
   const [pending, start] = useTransition();
   return (
     <tr className="border-b border-gray-50">
-      <td className="px-3 py-2.5 font-medium text-gray-800">{c.concepto}</td>
-      <td className="px-3 py-2.5 text-gray-500">{c.categoria || "—"}</td>
-      <td className="px-3 py-2.5">
+      <td className="px-3 py-2.5 font-medium text-gray-800" data-label="Concepto">{c.concepto}</td>
+      <td className="px-3 py-2.5 text-gray-500" data-label="Categoría">{c.categoria || "—"}</td>
+      <td className="px-3 py-2.5" data-label="Clasificación">
         <span className={`rounded-full px-2 py-0.5 text-xs font-medium ${c.clasificacion === "fijo" ? "bg-[rgba(102,181,150,0.15)] text-[#3d7a63]" : "bg-amber-50 text-amber-700"}`}>
           {c.clasificacion === "fijo" ? "Fijo" : "Variable"}
         </span>
       </td>
-      <td className="px-3 py-2.5 text-right tabular-nums text-gray-700">{formatCOP(c.valor)}</td>
-      <td className="px-3 py-2.5">
+      <td className="px-3 py-2.5 text-right tabular-nums text-gray-700" data-label="Valor mensual">{formatCOP(c.valor)}</td>
+      <td className="px-3 py-2.5" data-label="Acción">
         <div className="flex items-center justify-center gap-2">
           <button onClick={onEdit} className="text-gray-400 hover:text-gray-700" title="Editar"><Pencil size={15} /></button>
           <button disabled={pending} onClick={() => start(async () => { await eliminarCosto(c.id); router.refresh(); })} className="text-gray-400 hover:text-red-500" title="Eliminar"><Trash2 size={15} /></button>

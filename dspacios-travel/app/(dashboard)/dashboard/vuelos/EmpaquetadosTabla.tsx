@@ -5,6 +5,7 @@ import Link from "next/link";
 import { Pencil, Plus } from "lucide-react";
 import { formatFechaLarga } from "@/lib/utils";
 import { EstadoBadge } from "@/components/EstadoBadge";
+import { ResponsiveTableShell } from "@/components/ui/ResponsiveTableShell";
 import {
   ESTADO_EMISION_LABEL, ESTADO_PAGO_LABEL, POR_CONFIRMAR,
   labelEstadoEmision, labelEstadoPago, tonoEstadoEmision, tonoEstadoPago,
@@ -147,7 +148,17 @@ export function EmpaquetadosTabla({
         <span className="ml-auto text-xs text-gray-400">{vis.length} empaquetado(s)</span>
       </div>
 
-      <div className="overflow-x-auto rounded-xl border border-gray-200 bg-white">
+      {/* min-w-1120px: la más ancha de las tablas auditadas — justo el caso
+          que expuso el defecto del mecanismo anterior (un `@media` de
+          VIEWPORT): a 1280-1366px de viewport el sidebar (256px) + el
+          padding del contenido pueden dejar menos de 1120px reales
+          disponibles, y la tabla se salía de su contenedor aunque "cupiera"
+          en el viewport. `ResponsiveTableShell` mide el ancho REAL del
+          contenedor (ResizeObserver) y apila en tarjetas cuando no alcanza
+          — cero scroll, las 12 columnas completas, sin fusionar/quitar
+          ninguna (pedido explícito). `overflow-x-auto` queda solo como red
+          de seguridad para un valor puntual excepcionalmente ancho. */}
+      <ResponsiveTableShell minWidth={1120} className="overflow-x-auto rounded-xl border border-gray-200 bg-white">
         <table className="w-full min-w-[1120px] text-sm">
           <thead>
             <tr className="bg-gray-50 text-left text-xs uppercase text-gray-400">
@@ -172,12 +183,12 @@ export function EmpaquetadosTabla({
           <tbody>
             {vis.map((f) => (
               <tr key={f.id} className="border-t border-gray-50">
-                <td className="px-3 py-2">
+                <td className="px-3 py-2" data-label="Origen">
                   {f.origen === "contrato"
                     ? <EstadoBadge estado="Contrato" tono="info" />
                     : <EstadoBadge estado="Promoción" tono="neutral" />}
                 </td>
-                <td className="px-3 py-2">
+                <td className="px-3 py-2" data-label="Record">
                   {f.origen === "contrato" ? (
                     // PNR real (contrato_vuelos.record) o "Sin PNR" — nunca cae
                     // al número de contrato: eso ahora vive en su propia columna.
@@ -191,7 +202,7 @@ export function EmpaquetadosTabla({
                     </Link>
                   )}
                 </td>
-                <td className="px-3 py-2">
+                <td className="px-3 py-2" data-label="Contrato">
                   {f.origen !== "contrato" ? (
                     <span className="text-gray-300">—</span>
                   ) : !puedeVerContrato ? (
@@ -204,19 +215,19 @@ export function EmpaquetadosTabla({
                     </Link>
                   )}
                 </td>
-                <td className="px-3 py-2 text-gray-600">{f.aerolinea ?? "—"}</td>
-                <td className="px-3 py-2 text-gray-600">{f.ruta ?? "—"}</td>
-                <td className="px-3 py-2 text-xs text-gray-500">{formatFechaLarga(f.fecha_ida)}{f.vuelo_ida ? ` · ${f.vuelo_ida}` : ""}</td>
-                <td className="px-3 py-2 text-xs text-gray-500">{formatFechaLarga(f.fecha_regreso)}{f.vuelo_regreso ? ` · ${f.vuelo_regreso}` : ""}</td>
-                <td className="px-3 py-2 text-gray-700">{f.tarifa_para_empaquetar ? `$${f.tarifa_para_empaquetar.toLocaleString("es-CO")}` : "—"}</td>
-                <td className="px-3 py-2"><EstadoBadge estado={labelEstadoEmision(f.estado_emision)} tono={tonoEstadoEmision(f.estado_emision)} /></td>
-                <td className="px-3 py-2"><EstadoBadge estado={labelEstadoPago(f.estado_pago)} tono={tonoEstadoPago(f.estado_pago)} /></td>
-                <td className="px-3 py-2">
+                <td className="px-3 py-2 text-gray-600" data-label="Aerolínea">{f.aerolinea ?? "—"}</td>
+                <td className="px-3 py-2 text-gray-600" data-label="Ruta">{f.ruta ?? "—"}</td>
+                <td className="px-3 py-2 text-xs text-gray-500" data-label="Ida">{formatFechaLarga(f.fecha_ida)}{f.vuelo_ida ? ` · ${f.vuelo_ida}` : ""}</td>
+                <td className="px-3 py-2 text-xs text-gray-500" data-label="Regreso">{formatFechaLarga(f.fecha_regreso)}{f.vuelo_regreso ? ` · ${f.vuelo_regreso}` : ""}</td>
+                <td className="px-3 py-2 text-gray-700" data-label="Tarifa empaquetar">{f.tarifa_para_empaquetar ? `$${f.tarifa_para_empaquetar.toLocaleString("es-CO")}` : "—"}</td>
+                <td className="px-3 py-2" data-label="Emisión"><EstadoBadge estado={labelEstadoEmision(f.estado_emision)} tono={tonoEstadoEmision(f.estado_emision)} /></td>
+                <td className="px-3 py-2" data-label="Pago"><EstadoBadge estado={labelEstadoPago(f.estado_pago)} tono={tonoEstadoPago(f.estado_pago)} /></td>
+                <td className="px-3 py-2" data-label="Estado">
                   {f.activo
                     ? <EstadoBadge estado="Activo" tono="ok" />
                     : <EstadoBadge estado="Inactivo" tono="neutral" />}
                 </td>
-                <td className="px-3 py-2">
+                <td className="px-3 py-2" data-label="Acciones">
                   {f.origen !== "contrato" || !puedeEditarVuelo ? (
                     <span className="text-gray-300">—</span>
                   ) : tieneVueloEstructurado(f) ? (
@@ -241,7 +252,7 @@ export function EmpaquetadosTabla({
             ))}
           </tbody>
         </table>
-      </div>
+      </ResponsiveTableShell>
       {!vis.length && (
         <p className="mt-4 text-center text-sm text-gray-400">No hay empaquetados que coincidan con los filtros.</p>
       )}

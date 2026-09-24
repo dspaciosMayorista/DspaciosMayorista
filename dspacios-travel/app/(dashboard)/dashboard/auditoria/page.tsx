@@ -3,6 +3,7 @@ import { getTenant } from "@/lib/tenant.server";
 import { miRol } from "@/lib/roles";
 import { redirect } from "next/navigation";
 import Link from "next/link";
+import { ResponsiveTableShell } from "@/components/ui/ResponsiveTableShell";
 
 export const dynamic = "force-dynamic";
 
@@ -139,7 +140,7 @@ export default async function AuditoriaPage({
 
       {/* Tabla */}
       <div className="mt-5 overflow-hidden rounded-xl border border-gray-200 bg-white">
-        <div className="overflow-x-auto">
+        <ResponsiveTableShell minWidth={820} className="overflow-x-auto">
           <table className="w-full min-w-[820px] text-sm">
             <thead>
               <tr className="bg-gray-50 text-left text-xs uppercase text-gray-400">
@@ -157,17 +158,17 @@ export default async function AuditoriaPage({
                 const nClaves = cambios ? Object.keys(cambios).length : 0;
                 return (
                   <tr key={f.id} className="border-t border-gray-50 align-top">
-                    <td className="whitespace-nowrap px-4 py-2 text-gray-500">{fechaHora(f.creado_en)}</td>
-                    <td className="px-4 py-2">
+                    <td className="whitespace-nowrap px-4 py-2 text-gray-500" data-label="Fecha">{fechaHora(f.creado_en)}</td>
+                    <td className="px-4 py-2" data-label="Usuario">
                       <div className="font-medium text-gray-800">{f.actor_nombre || f.actor_email || "Sistema"}</div>
                       {f.actor_rol && <div className="text-[11px] text-gray-400">{f.actor_rol}</div>}
                     </td>
-                    <td className="px-4 py-2">
+                    <td className="px-4 py-2" data-label="Acción">
                       <span className={`rounded-full px-2 py-0.5 text-xs font-medium ${acc.clase}`}>{acc.verbo}</span>
                       <div className="mt-1 text-xs text-gray-500">{TABLA_LABEL[f.tabla] ?? f.tabla}</div>
                     </td>
-                    <td className="px-4 py-2 font-mono text-xs text-gray-700">{f.registro_id || "—"}</td>
-                    <td className="px-4 py-2">
+                    <td className="px-4 py-2 font-mono text-xs text-gray-700" data-label="Registro">{f.registro_id || "—"}</td>
+                    <td className="px-4 py-2" data-label="Detalle">
                       {f.accion === "UPDATE" && cambios ? (
                         <details>
                           <summary className="cursor-pointer text-xs text-[#1D7C9A] hover:underline">{nClaves} campo{nClaves === 1 ? "" : "s"} cambiado{nClaves === 1 ? "" : "s"}</summary>
@@ -206,7 +207,7 @@ export default async function AuditoriaPage({
               )}
             </tbody>
           </table>
-        </div>
+        </ResponsiveTableShell>
       </div>
 
       {/* Paginación */}

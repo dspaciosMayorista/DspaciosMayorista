@@ -9,6 +9,7 @@ import { EnlaceEditarContrato } from "@/components/vuelos/EnlaceEditarContrato";
 import { InfanteVueloForm } from "@/components/vuelos/InfanteVueloForm";
 import type { EnlaceContratoInfo } from "@/lib/vuelos/enlaceContrato";
 import type { Tenant } from "@/lib/tenant";
+import { ResponsiveTableShell } from "@/components/ui/ResponsiveTableShell";
 
 export type PasajeroFila = {
   id: string; // clave de fila estable — puede no venir de una silla (infantes)
@@ -115,7 +116,7 @@ export function PasajerosBuscador({
         <span className="ml-auto text-xs text-gray-400">{totalVisible} pasajero(s)</span>
       </div>
 
-      <div className="overflow-x-auto rounded-xl border border-gray-200 bg-white">
+      <ResponsiveTableShell minWidth={1100} className="overflow-x-auto rounded-xl border border-gray-200 bg-white">
         <table className="w-full min-w-[1100px] text-sm">
           <thead>
             <tr className="bg-gray-50 text-left text-xs uppercase text-gray-400">
@@ -138,21 +139,21 @@ export function PasajerosBuscador({
             ) : vis.map((p) => (
               <Fragment key={p.id}>
                 <tr className="border-t border-gray-50">
-                  <td className="px-3 py-2 font-medium text-gray-800">{`${p.nombres} ${p.apellidos}`.trim()}</td>
-                  <td className="px-3 py-2 text-gray-600">{p.tipoDoc} {p.numeroDoc}</td>
-                  <td className="px-3 py-2 text-gray-600">{p.contrato || "—"}</td>
-                  <td className="px-3 py-2">
+                  <td className="px-3 py-2 font-medium text-gray-800" data-label="Pasajero">{`${p.nombres} ${p.apellidos}`.trim()}</td>
+                  <td className="px-3 py-2 text-gray-600" data-label="Documento">{p.tipoDoc} {p.numeroDoc}</td>
+                  <td className="px-3 py-2 text-gray-600" data-label="Contrato">{p.contrato || "—"}</td>
+                  <td className="px-3 py-2" data-label="Record">
                     {p.bloqueoId
                       ? <Link href={`/dashboard/vuelos/${p.bloqueoId}`} className="font-mono font-semibold text-[#1D7C9A] hover:underline">{p.record}</Link>
                       : <span className="font-mono">{p.record}</span>}
                   </td>
-                  <td className="px-3 py-2 text-gray-600">{p.ruta || "—"}</td>
-                  <td className="px-3 py-2 text-xs text-gray-500">{formatFechaLarga(p.fechaIda)}{p.vueloIda ? ` · ${p.vueloIda}` : ""}</td>
-                  <td className="px-3 py-2 text-xs text-gray-500">{formatFechaLarga(p.fechaRegreso)}{p.vueloRegreso ? ` · ${p.vueloRegreso}` : ""}</td>
-                  <td className="px-3 py-2 text-xs text-gray-600">{ESTADO_LABEL[p.estado] ?? p.estado}</td>
-                  <td className="px-3 py-2 text-gray-600">{p.hotel || "—"}</td>
-                  <td className="px-3 py-2 text-gray-600">{p.asesor || "—"}</td>
-                  <td className="px-3 py-2 text-xs">
+                  <td className="px-3 py-2 text-gray-600" data-label="Ruta">{p.ruta || "—"}</td>
+                  <td className="px-3 py-2 text-xs text-gray-500" data-label="Ida">{formatFechaLarga(p.fechaIda)}{p.vueloIda ? ` · ${p.vueloIda}` : ""}</td>
+                  <td className="px-3 py-2 text-xs text-gray-500" data-label="Regreso">{formatFechaLarga(p.fechaRegreso)}{p.vueloRegreso ? ` · ${p.vueloRegreso}` : ""}</td>
+                  <td className="px-3 py-2 text-xs text-gray-600" data-label="Estado">{ESTADO_LABEL[p.estado] ?? p.estado}</td>
+                  <td className="px-3 py-2 text-gray-600" data-label="Hotel">{p.hotel || "—"}</td>
+                  <td className="px-3 py-2 text-gray-600" data-label="Asesor">{p.asesor || "—"}</td>
+                  <td className="px-3 py-2 text-xs" data-label="Acciones">
                     {p.sillaId != null && p.bloqueoId != null && p.tipoDoc && p.numeroDoc && (
                       <InfanteVueloForm
                         bloqueoId={p.bloqueoId}
@@ -204,7 +205,7 @@ export function PasajerosBuscador({
             ))}
           </tbody>
         </table>
-      </div>
+      </ResponsiveTableShell>
 
       {advertenciasInfantes.length > 0 && (
         <div className="mt-3 flex items-start gap-2 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800">

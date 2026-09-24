@@ -23,7 +23,11 @@ export default async function ContratosPage() {
     .order("numero_contrato", { ascending: false });
 
   return (
-    <div className="mx-auto max-w-5xl p-4 md:p-8">
+    // max-w-7xl (antes max-w-5xl/1024px): con el sidebar de escritorio ya
+    // visible desde md (768px, 256px de ancho), 1024px de contenido máximo
+    // dejaba la tabla sin margen real — ver el comentario de ContratosList.tsx
+    // sobre el breakpoint xl para tabla vs. tarjetas.
+    <div className="mx-auto max-w-7xl p-4 md:p-8">
       <div className="mb-8 flex flex-wrap items-center justify-between gap-3">
         <div>
           <h1 className="text-2xl font-semibold text-gray-900">Contratos</h1>

@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { formatCOP, formatFechaLarga } from "@/lib/utils";
+import { ResponsiveTableShell } from "@/components/ui/ResponsiveTableShell";
 import {
   crearTemporada, actualizarTemporada, eliminarTemporada, copiarTemporadasDesdeHotel,
   crearTarifa, actualizarTarifa, eliminarTarifa,
@@ -479,9 +480,9 @@ function TarifasBox({ hotelId, categorias, regimenes, temporadas, tarifas, venci
 
   const filaTarifa = (t: Tarifa) => (
     <tr key={t.id} className="border-t border-gray-50">
-      <td className="px-3 py-2 text-gray-700">{t.tipo_habitacion ?? "—"}</td>
-      <td className="px-3 py-2 text-gray-500">{t.alimentacion ?? "—"}</td>
-      <td className="px-3 py-2 text-gray-500">
+      <td className="px-3 py-2 text-gray-700" data-label="Categoría">{t.tipo_habitacion ?? "—"}</td>
+      <td className="px-3 py-2 text-gray-500" data-label="Régimen">{t.alimentacion ?? "—"}</td>
+      <td className="px-3 py-2 text-gray-500" data-label="Temporada">
         <div className="flex items-center gap-1.5">
           <span>{t.temporada ?? "—"}</span>
           {t.precio_final_autoritativo ? (
@@ -503,21 +504,21 @@ function TarifasBox({ hotelId, categorias, regimenes, temporadas, tarifas, venci
           </div>
         )}
       </td>
-      <td className="px-3 py-2 text-right tabular-nums">{celda(t.neto_sencilla)}</td>
-      <td className="px-3 py-2 text-right tabular-nums">{celda(t.neto_doble)}</td>
-      <td className="px-3 py-2 text-right tabular-nums">{celda(t.neto_triple)}</td>
-      <td className="px-3 py-2 text-right tabular-nums">{celda(t.neto_multiple)}</td>
+      <td className="px-3 py-2 text-right tabular-nums" data-label="Sencilla">{celda(t.neto_sencilla)}</td>
+      <td className="px-3 py-2 text-right tabular-nums" data-label="Doble">{celda(t.neto_doble)}</td>
+      <td className="px-3 py-2 text-right tabular-nums" data-label="Triple">{celda(t.neto_triple)}</td>
+      <td className="px-3 py-2 text-right tabular-nums" data-label="Múltiple">{celda(t.neto_multiple)}</td>
       {!adultsOnly && (
         <>
-          <td className="px-3 py-2 text-right tabular-nums">{celda(t.neto_nino)}</td>
-          <td className="px-3 py-2 text-right tabular-nums">{celda(t.neto_nino2)}</td>
-          <td className="px-3 py-2 text-right tabular-nums" title={t.nota_infante ?? undefined}>
+          <td className="px-3 py-2 text-right tabular-nums" data-label="Niño 1">{celda(t.neto_nino)}</td>
+          <td className="px-3 py-2 text-right tabular-nums" data-label="Niño 2">{celda(t.neto_nino2)}</td>
+          <td className="px-3 py-2 text-right tabular-nums" title={t.nota_infante ?? undefined} data-label="Infante">
             {t.neto_infante != null ? formatCOP(t.neto_infante) : "—"}
             {t.nota_infante && <span className="ml-1 text-amber-500" title={t.nota_infante}>*</span>}
           </td>
         </>
       )}
-      <td className="px-3 py-2 text-right">
+      <td className="px-3 py-2 text-right" data-label="">
         <div className="flex items-center justify-end gap-3">
           <button type="button" onClick={() => startEdit(t)} className="text-xs text-[var(--brand-accent)] hover:underline">Editar</button>
           <DelBtn onDel={() => eliminarTarifa(t.id, hotelId)} />
@@ -527,7 +528,7 @@ function TarifasBox({ hotelId, categorias, regimenes, temporadas, tarifas, venci
   );
 
   const tablaTarifas = (rows: Tarifa[]) => (
-    <div className="overflow-x-auto rounded-xl border border-gray-200 bg-white">
+    <ResponsiveTableShell minWidth={760} className="overflow-x-auto rounded-xl border border-gray-200 bg-white">
       <table className="w-full min-w-[760px] text-sm">
         <thead><tr className="bg-gray-50 text-left text-xs uppercase text-gray-400">
           <th className="px-3 py-2">Categoría</th><th className="px-3 py-2">Régimen</th><th className="px-3 py-2">Temporada</th>
@@ -543,7 +544,7 @@ function TarifasBox({ hotelId, categorias, regimenes, temporadas, tarifas, venci
         </tr></thead>
         <tbody>{rows.map((t) => filaTarifa(t))}</tbody>
       </table>
-    </div>
+    </ResponsiveTableShell>
   );
 
   return (

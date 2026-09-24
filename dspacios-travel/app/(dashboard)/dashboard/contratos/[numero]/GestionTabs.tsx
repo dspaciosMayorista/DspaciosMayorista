@@ -25,6 +25,7 @@ import {
 } from "./gestion-actions";
 import { registrarPagoProveedor, deshacerUltimoPago } from "../../pagos/actions";
 import { actualizarAbono, eliminarAbono } from "../actions";
+import { ResponsiveTableShell } from "@/components/ui/ResponsiveTableShell";
 
 type Abono = { id: number; valor_abono: number; forma_pago: string | null; referencia: string | null; fecha_abono: string; trm: number | null; monto_cop: number | null };
 type PagoCxP = { id: number; fecha: string; valor: number; trm: number | null };
@@ -224,7 +225,7 @@ function CarteraTab({ numero, abonos, totalPagado, total, formasPago, cuotas, mo
         </div>
       )}
       {abonos.length > 0 && (
-        <div className="overflow-x-auto rounded-xl border border-gray-200 bg-white">
+        <ResponsiveTableShell minWidth={560} className="overflow-x-auto rounded-xl border border-gray-200 bg-white">
           <div className="flex items-center justify-between border-b border-gray-100 px-4 py-2">
             <span className="text-xs font-semibold uppercase text-gray-400">Pagos registrados</span>
             <Link href={`/estado-cuenta/${encodeURIComponent(numero)}`} target="_blank" className="text-xs font-medium text-[#1D7C9A] hover:underline">
@@ -237,13 +238,13 @@ function CarteraTab({ numero, abonos, totalPagado, total, formasPago, cuotas, mo
               {esUSD && <th className="px-4 py-2 text-right">TRM</th>}
               {esUSD && <th className="px-4 py-2 text-right">Pagado (COP)</th>}
               <th className="px-4 py-2">Forma</th><th className="px-4 py-2">Referencia</th>
-              <th className="px-4 py-2 text-right">Recibo</th><th className="px-4 py-2"></th>
+              <th className="px-4 py-2 text-right">Recibo</th><th className="px-4 py-2">Acciones</th>
             </tr></thead>
             <tbody>{abonos.map((a) => (
               <FilaAbono key={a.id} a={a} numero={numero} esUSD={esUSD} moneda={moneda} formasPago={formasPago} puedeEditar={puedeEditar} />
             ))}</tbody>
           </table>
-        </div>
+        </ResponsiveTableShell>
       )}
     </div>
   );
@@ -302,16 +303,16 @@ function FilaAbono({ a, numero, esUSD, moneda, formasPago, puedeEditar = true }:
 
   return (
     <tr className="border-t border-gray-50">
-      <td className="px-4 py-2 text-gray-500">{a.fecha_abono}</td>
-      <td className="px-4 py-2 text-right tabular-nums">{fmt(a.valor_abono)}</td>
-      {esUSD && <td className="px-4 py-2 text-right tabular-nums text-gray-500">{a.trm ? formatCOP(a.trm) : "—"}</td>}
-      {esUSD && <td className="px-4 py-2 text-right tabular-nums text-gray-500">{a.monto_cop ? formatCOP(a.monto_cop) : "—"}</td>}
-      <td className="px-4 py-2 text-gray-500">{a.forma_pago ?? "—"}</td>
-      <td className="px-4 py-2 text-gray-500">{a.referencia ?? "—"}</td>
-      <td className="px-4 py-2 text-right">
+      <td className="px-4 py-2 text-gray-500" data-label="Fecha">{a.fecha_abono}</td>
+      <td className="px-4 py-2 text-right tabular-nums" data-label="Valor">{fmt(a.valor_abono)}</td>
+      {esUSD && <td className="px-4 py-2 text-right tabular-nums text-gray-500" data-label="TRM">{a.trm ? formatCOP(a.trm) : "—"}</td>}
+      {esUSD && <td className="px-4 py-2 text-right tabular-nums text-gray-500" data-label="Pagado (COP)">{a.monto_cop ? formatCOP(a.monto_cop) : "—"}</td>}
+      <td className="px-4 py-2 text-gray-500" data-label="Forma">{a.forma_pago ?? "—"}</td>
+      <td className="px-4 py-2 text-gray-500" data-label="Referencia">{a.referencia ?? "—"}</td>
+      <td className="px-4 py-2 text-right" data-label="Recibo">
         <Link href={`/recibo/${a.id}`} target="_blank" className="text-xs font-medium text-[#1D7C9A] hover:underline">Recibo ↗</Link>
       </td>
-      <td className="px-4 py-2 text-right whitespace-nowrap">
+      <td className="px-4 py-2 text-right whitespace-nowrap" data-label="Acciones">
         {puedeEditar ? (
           <>
             <button type="button" onClick={() => setEditar(true)} className="mr-3 text-xs font-medium hover:underline" style={{ color: "var(--brand-accent)" }}>Editar</button>
@@ -431,7 +432,7 @@ function ProveedoresTab({ numero, filas, catalogo }: { numero: string; filas: Cx
         </div>
       </div>
       {filas.length > 0 && (
-        <div className="overflow-x-auto rounded-xl border border-gray-300 bg-white shadow-sm">
+        <ResponsiveTableShell minWidth={800} className="overflow-x-auto rounded-xl border border-gray-300 bg-white shadow-sm">
           <table className="w-full table-fixed text-xs sm:text-sm">
             <colgroup>
               <col className="w-[16%]" /><col className="w-[26%]" />
@@ -443,17 +444,16 @@ function ProveedoresTab({ numero, filas, catalogo }: { numero: string; filas: Cx
               <th className="px-2 py-2 sm:px-4">Proveedor</th><th className="px-2 py-2 sm:px-4">Servicio</th>
               <th className="px-2 py-2 text-right sm:px-4">Costo</th><th className="px-2 py-2 text-right sm:px-4">IVA desc.</th>
               <th className="px-2 py-2 text-right sm:px-4">Valor</th><th className="px-2 py-2 sm:px-4">Vence</th>
-              <th className="px-2 py-2 sm:px-4">Estado</th><th className="px-2 py-2 sm:px-4"></th>
+              <th className="px-2 py-2 sm:px-4">Estado</th><th className="px-2 py-2 sm:px-4">Acciones</th>
             </tr></thead>
             <tbody>{filas.map((f) => <FilaCxP key={f.id} f={f} numero={numero} />)}</tbody>
             {/* Nota: la fila editable reutiliza el mismo datalist "proveedores-{numero}" declarado arriba. */}
             <tfoot><tr className="border-t border-gray-200 font-medium">
               <td className="px-2 py-2 sm:px-4" colSpan={3}>Total por pagar</td>
-              <td className="px-2 py-2 text-right tabular-nums text-gray-500 sm:px-4">{totalIva > 0 ? formatCOP(totalIva) : "—"}</td>
-              <td className="px-2 py-2 text-right tabular-nums sm:px-4">{formatCOP(totalCxP)}</td><td colSpan={3} />
-            </tr></tfoot>
+              <td className="px-2 py-2 text-right tabular-nums text-gray-500 sm:px-4" data-label="IVA desc.">{totalIva > 0 ? formatCOP(totalIva) : "—"}</td>
+              <td className="px-2 py-2 text-right tabular-nums sm:px-4" data-label="Valor">{formatCOP(totalCxP)}</td><td colSpan={3} data-label="" /></tr></tfoot>
           </table>
-        </div>
+        </ResponsiveTableShell>
       )}
     </div>
   );
@@ -513,13 +513,13 @@ function FilaCxP({ f, numero }: { f: CxP; numero: string }) {
   return (
     <>
       <tr className="border-t border-gray-50">
-        <td className="break-words px-2 py-2 text-gray-700 sm:px-4">{f.proveedor ?? "—"}</td>
-        <td className="break-words px-2 py-2 text-gray-500 sm:px-4">{f.servicio ?? "—"}</td>
-        <td className="px-2 py-2 text-right tabular-nums text-gray-600 sm:px-4">{formatCOP(costoF)}</td>
-        <td className="px-2 py-2 text-right tabular-nums text-gray-500 sm:px-4">{ivaF > 0 ? formatCOP(ivaF) : "—"}</td>
-        <td className="px-2 py-2 text-right tabular-nums sm:px-4">{formatCOP(f.valor_total)}</td>
-        <td className="px-2 py-2 text-gray-500 sm:px-4">{f.fecha_vencimiento ?? "—"}</td>
-        <td className="px-2 py-2 sm:px-4">
+        <td className="break-words px-2 py-2 text-gray-700 sm:px-4" data-label="Proveedor">{f.proveedor ?? "—"}</td>
+        <td className="break-words px-2 py-2 text-gray-500 sm:px-4" data-label="Servicio">{f.servicio ?? "—"}</td>
+        <td className="px-2 py-2 text-right tabular-nums text-gray-600 sm:px-4" data-label="Costo">{formatCOP(costoF)}</td>
+        <td className="px-2 py-2 text-right tabular-nums text-gray-500 sm:px-4" data-label="IVA desc.">{ivaF > 0 ? formatCOP(ivaF) : "—"}</td>
+        <td className="px-2 py-2 text-right tabular-nums sm:px-4" data-label="Valor">{formatCOP(f.valor_total)}</td>
+        <td className="px-2 py-2 text-gray-500 sm:px-4" data-label="Vence">{f.fecha_vencimiento ?? "—"}</td>
+        <td className="px-2 py-2 sm:px-4" data-label="Estado">
           <button
             type="button"
             onClick={() => setVerPago((v) => !v)}
@@ -531,7 +531,7 @@ function FilaCxP({ f, numero }: { f: CxP; numero: string }) {
             {estaPagada ? "Pagado" : `Pendiente · ${formatMoneda(saldo, f.moneda ?? "COP")}`}
           </button>
         </td>
-        <td className="px-2 py-2 text-right sm:px-4">
+        <td className="px-2 py-2 text-right sm:px-4" data-label="Acciones">
           <button type="button" onClick={() => setEditar(true)} className="mr-1 text-[10px] font-medium hover:underline sm:mr-3 sm:text-xs" style={{ color: "var(--brand-accent)" }}>Editar</button>
           <DeleteBtn onClick={() => eliminarCuentaPorPagar(f.id, numero)} />
         </td>
@@ -741,28 +741,27 @@ function ComisionesTab({ numero, precioVenta, filas, comB2BTotal, aliadosCatalog
       </div>
 
       {filas.length > 0 && (
-        <div className="overflow-x-auto rounded-xl border border-gray-200 bg-white">
+        <ResponsiveTableShell minWidth={520} className="overflow-x-auto rounded-xl border border-gray-200 bg-white">
           <table className="w-full min-w-[520px] text-sm">
             <thead><tr className="bg-gray-50 text-left text-xs uppercase text-gray-400">
               <th className="px-4 py-2">Aliado</th><th className="px-4 py-2 text-right">% Com.</th>
-              <th className="px-4 py-2 text-right">A pagar</th><th className="px-4 py-2"></th>
+              <th className="px-4 py-2 text-right">A pagar</th><th className="px-4 py-2">Acciones</th>
             </tr></thead>
             <tbody>{filas.map((b) => {
               const c = calcComisionB2B({ precioVenta: b.precio_venta, baseComisionable: b.base_comision, pctComision: b.pct_comision, recobroTotal: b.recobro_total, pctRecobroAliado: b.pct_recobro_aliado, aplicaRetencion: b.aplica_retencion, pctRetencion: b.pct_retencion });
               return (
                 <tr key={b.id} className="border-t border-gray-50">
-                  <td className="px-4 py-2 text-gray-700">{b.aliado ?? "—"}</td>
-                  <td className="px-4 py-2 text-right">{(b.pct_comision * 100).toFixed(1)}%</td>
-                  <td className="px-4 py-2 text-right tabular-nums">{formatCOP(c.totalPagar)}</td>
-                  <td className="px-4 py-2 text-right"><DeleteBtn onClick={() => eliminarComisionB2B(b.id, numero)} /></td>
+                  <td className="px-4 py-2 text-gray-700" data-label="Aliado">{b.aliado ?? "—"}</td>
+                  <td className="px-4 py-2 text-right" data-label="% Com.">{(b.pct_comision * 100).toFixed(1)}%</td>
+                  <td className="px-4 py-2 text-right tabular-nums" data-label="A pagar">{formatCOP(c.totalPagar)}</td>
+                  <td className="px-4 py-2 text-right" data-label="Acciones"><DeleteBtn onClick={() => eliminarComisionB2B(b.id, numero)} /></td>
                 </tr>);
             })}</tbody>
             <tfoot><tr className="border-t border-gray-200 font-medium">
               <td className="px-4 py-2" colSpan={2}>Total comisiones B2B</td>
-              <td className="px-4 py-2 text-right tabular-nums">{formatCOP(comB2BTotal)}</td><td />
-            </tr></tfoot>
+              <td className="px-4 py-2 text-right tabular-nums" data-label="A pagar">{formatCOP(comB2BTotal)}</td><td data-label="" /></tr></tfoot>
           </table>
-        </div>
+        </ResponsiveTableShell>
       )}
     </div>
   );
@@ -915,21 +914,23 @@ function FacturacionTab({ numero, filas, ivaGenerado, ivaPct, clienteNombre, cli
                   <DeleteBtn onClick={() => eliminarFactura(f.id, numero)} />
                 </div>
                 {f.items.length > 0 && (
-                  <table className="w-full text-sm">
-                    <tbody>
-                      {f.items.map((it, i) => (
-                        <tr key={i} className="border-t border-gray-50">
-                          <td className="py-1.5 text-gray-600">{it.descripcion ?? "—"}</td>
-                          <td className="py-1.5 text-center">
-                            <span className={`rounded-full px-2 py-0.5 text-xs ${it.gravable ? "bg-sky-100 text-sky-700" : "bg-gray-100 text-gray-500"}`}>
-                              {it.gravable ? "Gravable" : "No gravable"}
-                            </span>
-                          </td>
-                          <td className="py-1.5 text-right tabular-nums text-gray-700">{formatCOP(it.valor)}</td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
+                  <ResponsiveTableShell minWidth={420}>
+                    <table className="w-full min-w-[420px] text-sm">
+                      <tbody>
+                        {f.items.map((it, i) => (
+                          <tr key={i} className="border-t border-gray-50">
+                            <td className="py-1.5 text-gray-600" data-label="Ítem">{it.descripcion ?? "—"}</td>
+                            <td className="py-1.5 text-center" data-label="Tipo">
+                              <span className={`rounded-full px-2 py-0.5 text-xs ${it.gravable ? "bg-sky-100 text-sky-700" : "bg-gray-100 text-gray-500"}`}>
+                                {it.gravable ? "Gravable" : "No gravable"}
+                              </span>
+                            </td>
+                            <td className="py-1.5 text-right tabular-nums text-gray-700" data-label="Valor">{formatCOP(it.valor)}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </ResponsiveTableShell>
                 )}
                 <div className="mt-2 flex flex-wrap justify-end gap-x-4 gap-y-1 border-t border-gray-100 pt-2 text-xs text-gray-500">
                   <span>Gravable: {formatCOP(f.base_gravable)}</span>

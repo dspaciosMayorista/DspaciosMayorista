@@ -3737,6 +3737,30 @@ export type Database = {
           orden: number;
         }[];
       };
+      // Migración 188 (rama "CRM pasajeros de contratos", renumerada desde
+      // 187 porque esa migración 187 real —búsqueda de pasajero por
+      // documento, otra rama— ya se aplicó en staging) — lectura
+      // paginada de contrato_pasajeros para el CRM, separada de
+      // crm_contactos. Solo lectura; filtra por rol interno +
+      // puede_ver_contrato/soy_asesor_del_contrato dentro de la propia
+      // función. NUNCA devuelve responsable_id/es_infante.
+      crm_pasajeros_contrato_buscar: {
+        Args: {
+          p_busqueda: string | null;
+          p_pagina: number;
+          p_tam_pagina: number;
+        };
+        Returns: {
+          pasajero_id: number;
+          numero_contrato: string;
+          tenant: string;
+          nombre: string;
+          tipo_id: string | null;
+          identificacion: string | null;
+          fecha_nacimiento: string | null;
+          total_filas: number;
+        }[];
+      };
       // Migración 187 — búsqueda interna de pasajero por documento EXACTO
       // (reutilización de identidad entre contratos). Solo lectura; filtra
       // por rol interno + puede_ver_contrato/soy_asesor_del_contrato dentro

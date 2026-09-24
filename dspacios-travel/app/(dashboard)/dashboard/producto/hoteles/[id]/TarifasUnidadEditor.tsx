@@ -50,6 +50,7 @@ import {
   inactivarTarifaUnidad,
   publicarTarifaUnidad,
 } from "./tarifasUnidadActions";
+import { ResponsiveTableShell } from "@/components/ui/ResponsiveTableShell";
 
 export type FilaTarifaUnidadUI = {
   id: number;
@@ -600,7 +601,7 @@ export function TarifasUnidadEditor({
         {msg && <p className="mt-2 rounded-lg bg-[var(--brand-accent)]/10 px-3 py-2 text-xs text-[var(--brand-primary)]">{msg}</p>}
       </div>
 
-      <div className="mt-4 overflow-x-auto rounded-xl border border-gray-200 bg-white">
+      <ResponsiveTableShell minWidth={900} className="mt-4 overflow-x-auto rounded-xl border border-gray-200 bg-white">
         <table className="w-full min-w-[900px] text-sm">
           <thead>
             <tr className="bg-gray-50 text-left text-xs uppercase text-gray-400">
@@ -612,26 +613,26 @@ export function TarifasUnidadEditor({
               <th className="px-3 py-2 text-right">Comisión</th>
               <th className="px-3 py-2">Capacidad</th>
               <th className="px-3 py-2">Estado</th>
-              <th className="px-3 py-2"></th>
+              <th className="px-3 py-2">Acciones</th>
             </tr>
           </thead>
           <tbody>
             {filasOrdenadas.map((f) => (
               <Fragment key={f.id}>
                 <tr className="border-t border-gray-50">
-                  <td className="px-3 py-2 text-gray-700">{f.tarifa.temporada ?? "—"}</td>
-                  <td className="px-3 py-2 text-gray-500">{f.tarifa.categoria ?? "—"}</td>
-                  <td className="px-3 py-2 text-gray-500">{f.tarifa.alimentacion ?? "—"}</td>
-                  <td className="px-3 py-2 text-gray-500">{UNIDADES.find((u) => u.value === f.tarifa.unidadCobro)?.label ?? f.tarifa.unidadCobro}</td>
-                  <td className="px-3 py-2 text-right tabular-nums">{fmt(f.tarifa.valores.adulto)}</td>
-                  <td className="px-3 py-2 text-right tabular-nums">{f.tarifa.comisionPct}%</td>
-                  <td className="px-3 py-2 text-gray-500">
+                  <td className="px-3 py-2 text-gray-700" data-label="Temporada">{f.tarifa.temporada ?? "—"}</td>
+                  <td className="px-3 py-2 text-gray-500" data-label="Categoría">{f.tarifa.categoria ?? "—"}</td>
+                  <td className="px-3 py-2 text-gray-500" data-label="Alimentación">{f.tarifa.alimentacion ?? "—"}</td>
+                  <td className="px-3 py-2 text-gray-500" data-label="Cobro">{UNIDADES.find((u) => u.value === f.tarifa.unidadCobro)?.label ?? f.tarifa.unidadCobro}</td>
+                  <td className="px-3 py-2 text-right tabular-nums" data-label="Valor base">{fmt(f.tarifa.valores.adulto)}</td>
+                  <td className="px-3 py-2 text-right tabular-nums" data-label="Comisión">{f.tarifa.comisionPct}%</td>
+                  <td className="px-3 py-2 text-gray-500" data-label="Capacidad">
                     {f.tarifa.capacidad.minPax}–{f.tarifa.capacidad.maxPax ?? "∞"} <span className="text-gray-400">({f.tarifa.capacidad.paxIncluidos} incl.)</span>
                   </td>
-                  <td className="px-3 py-2">
+                  <td className="px-3 py-2" data-label="Estado">
                     <span className={`rounded-full px-2 py-0.5 text-[10px] font-medium ${ESTADO_BADGE[f.estado]}`}>{ESTADO_LABEL[f.estado]}</span>
                   </td>
-                  <td className="px-3 py-2 text-right">
+                  <td className="px-3 py-2 text-right" data-label="Acciones">
                     <div className="flex flex-wrap items-center justify-end gap-3">
                       <button type="button" onClick={() => setDetalleId(detalleId === f.id ? null : f.id)} className="text-xs text-gray-500 hover:underline">
                         {detalleId === f.id ? "Ocultar detalle" : "Ver detalle"}
@@ -660,7 +661,7 @@ export function TarifasUnidadEditor({
             )}
           </tbody>
         </table>
-      </div>
+      </ResponsiveTableShell>
     </section>
   );
 }

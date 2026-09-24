@@ -1,0 +1,131 @@
+/*
+ * Patrón responsive REUTILIZABLE para tablas del Dashboard — técnica de
+ * "tabla que se apila" (cada <tr> se convierte en un bloque tipo tarjeta y
+ * cada <td> se apila con su etiqueta de columna, tomada de `data-label` que
+ * cada tabla debe declarar en sus <td> — nunca se oculta ninguna columna,
+ * solo cambia de layout horizontal a vertical). Esta hoja SOLO define las
+ * reglas visuales de "apilado" bajo la clase `.stacked`; QUIÉN decide si se
+ * aplica vive en `useStackTabla.ts` / `ResponsiveTableShell.tsx` — no aquí.
+ *
+ * ⚠️ Historia: la primera versión de este archivo decidía apilar con un
+ * `@media (max-width: 1279px)` sobre el VIEWPORT. Eso falla en dashboards con
+ * sidebar: a 1280-1366px de viewport, el sidebar (256px) + el padding del
+ * contenido pueden dejar MENOS ancho real disponible que el `min-width` de
+ * una tabla ancha (ej. EmpaquetadosTabla 1120px, RentabilidadList 1040px) —
+ * la tabla queda "no apilada" mientras cabe en el viewport pero se sale de
+ * su contenedor real. Un media query de viewport nunca se entera de cuánto
+ * ancho le queda de verdad a un hijo de un layout con sidebar/grid/flex.
+ * Se reemplazó por medición real del contenedor vía `ResizeObserver`
+ * (`useStackTabla`), que compara el ancho DISPONIBLE del wrapper contra el
+ * `min-width` real de la tabla — funciona igual para una tabla de primer
+ * nivel que para una embebida en una columna angosta de un grid (el caso que
+ * antes cubría la variante `.stackAlways`, ahora fusionada en el mismo
+ * mecanismo: si el contenedor es angosto, se apila; si hay espacio, es tabla
+ * normal — ya no hay que elegir a mano cuál de las dos variantes usar).
+ *
+ * Uso: envolver el <table> con `<ResponsiveTableShell minWidth={N}>` (N =
+ * el mismo número que ya lleva `min-w-[Npx]` en el <table>) y agregar
+ * `data-label="Nombre de columna"` a cada <td> DIRECTO (no a los <th>, que
+ * se ocultan visualmente cuando está apilada — su texto se re-muestra vía
+ * data-label en cada celda).
+ *
+ * ⚠️ Selectores con `>` (hijo directo), a propósito: varias tablas del
+ * Dashboard meten una tabla SECUNDARIA dentro de una celda (p. ej. el
+ * detalle "N campos cambiados" de Auditoría, o el desglose de abonos de
+ * Cartera). Sin el `>`, las reglas de abajo cascadarían también a los
+ * <td>/<tr> de esa tabla anidada y romperían su layout normal. Si una tabla
+ * `.stacked` tiene ADENTRO otra tabla `.stacked` (cada una con su propio
+ * `ResponsiveTableShell`/`ResizeObserver`), las reglas de cada una solo
+ * tocan a su propia tabla directa — nunca se pisan entre sí.
+ */
+
+.stacked > table {
+  display: block;
+  width: 100% !important;
+  min-width: 0 !important;
+}
+
+.stacked > table > thead {
+  position: absolute;
+  width: 1px !important;
+  height: 1px !important;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+  padding: 0;
+  margin: -1px;
+}
+
+.stacked > table > tbody,
+.stacked > table > tfoot {
+  display: block;
+  width: 100%;
+}
+
+.stacked > table > tbody > tr,
+.stacked > table > tfoot > tr {
+  display: block;
+  width: 100%;
+  border: 1px solid var(--dash-border, #e5e7eb);
+  border-radius: 0.75rem;
+  margin-bottom: 0.75rem;
+  padding: 0.5rem 0.75rem;
+  background: #fff;
+}
+
+.stacked > table > tfoot > tr {
+  background: #f9fafb;
+  font-weight: 600;
+}
+
+.stacked > table > tbody > tr:last-child,
+.stacked > table > tfoot > tr:last-child {
+  margin-bottom: 0;
+}
+
+.stacked > table > tbody > tr > td,
+.stacked > table > tfoot > tr > td {
+  display: flex;
+  width: 100%;
+  justify-content: space-between;
+  align-items: center;
+  gap: 0.75rem;
+  text-align: right;
+  padding: 0.4rem 0;
+  border: 0;
+  border-bottom: 1px solid #f3f4f6;
+  white-space: normal;
+}
+
+.stacked > table > tbody > tr > td:last-child,
+.stacked > table > tfoot > tr > td:last-child {
+  border-bottom: 0;
+}
+
+.stacked > table > tbody > tr > td[data-label]::before,
+.stacked > table > tfoot > tr > td[data-label]::before {
+  content: attr(data-label);
+  flex-shrink: 0;
+  text-align: left;
+  font-size: 0.6875rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  color: #9ca3af;
+}
+
+.stacked > table > tbody > tr > td[data-label=""]::before,
+.stacked > table > tfoot > tr > td[data-label=""]::before {
+  content: none;
+}
+
+.stacked > table > tbody > tr > td[colspan],
+.stacked > table > tfoot > tr > td[colspan] {
+  display: block;
+  text-align: left;
+}
+.stacked > table > tbody > tr > td[colspan]::before,
+.stacked > table > tfoot > tr > td[colspan]::before {
+  content: none;
+}

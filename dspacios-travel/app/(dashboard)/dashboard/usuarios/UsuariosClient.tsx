@@ -5,6 +5,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { ROLES, type Rol } from "@/lib/constants";
 import { crearUsuario, cambiarRol, cambiarActivo, setComisionUsuario } from "./actions";
+import { ResponsiveTableShell } from "@/components/ui/ResponsiveTableShell";
 
 type Usuario = { id: string; email: string; nombre: string; rol: string; activo: boolean; pct_comision: number | null };
 
@@ -47,7 +48,7 @@ export function UsuariosClient({ usuarios }: { usuarios: Usuario[] }) {
       </div>
 
       {usuarios.length > 0 && (
-        <div className="overflow-x-auto rounded-xl border border-gray-200 bg-white">
+        <ResponsiveTableShell minWidth={560} className="overflow-x-auto rounded-xl border border-gray-200 bg-white">
           <table className="w-full min-w-[560px] text-sm">
             <thead><tr className="bg-gray-50 text-left text-xs uppercase text-gray-400">
               <th className="px-4 py-2">Nombre</th><th className="px-4 py-2">Email</th>
@@ -55,7 +56,7 @@ export function UsuariosClient({ usuarios }: { usuarios: Usuario[] }) {
             </tr></thead>
             <tbody>{usuarios.map((u) => <UsuarioRow key={u.id} u={u} />)}</tbody>
           </table>
-        </div>
+        </ResponsiveTableShell>
       )}
     </div>
   );
@@ -67,16 +68,16 @@ function UsuarioRow({ u }: { u: Usuario }) {
   const pctDefault = u.pct_comision != null ? Math.round(u.pct_comision * 1000) / 10 : (u.rol === "agencia" ? 12 : u.rol === "freelance" ? 11 : 0);
   return (
     <tr className="border-t border-gray-50">
-      <td className="px-4 py-2 text-gray-700">{u.nombre}</td>
-      <td className="px-4 py-2 text-gray-500">{u.email}</td>
-      <td className="px-4 py-2">
+      <td className="px-4 py-2 text-gray-700" data-label="Nombre">{u.nombre}</td>
+      <td className="px-4 py-2 text-gray-500" data-label="Email">{u.email}</td>
+      <td className="px-4 py-2" data-label="Rol">
         <select defaultValue={u.rol} disabled={pending}
           onChange={(e) => start(() => { void cambiarRol(u.id, e.target.value as Rol); })}
           className="rounded border border-gray-300 bg-white px-2 py-1 text-xs">
           {ROLES.map((r) => <option key={r} value={r}>{r}</option>)}
         </select>
       </td>
-      <td className="px-4 py-2">
+      <td className="px-4 py-2" data-label="Comisión">
         {esB2B ? (
           <div className="flex items-center gap-1">
             <input type="number" step="0.5" min={0} max={100} defaultValue={pctDefault} disabled={pending}
@@ -86,7 +87,7 @@ function UsuarioRow({ u }: { u: Usuario }) {
           </div>
         ) : <span className="text-xs text-gray-300">—</span>}
       </td>
-      <td className="px-4 py-2">
+      <td className="px-4 py-2" data-label="Estado">
         <button type="button" disabled={pending}
           onClick={() => start(() => { void cambiarActivo(u.id, !u.activo); })}
           className={`rounded-full px-2 py-0.5 text-xs ${u.activo ? "bg-green-100 text-green-700" : "bg-gray-200 text-gray-500"}`}>

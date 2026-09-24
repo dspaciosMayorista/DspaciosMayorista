@@ -2,6 +2,7 @@ import Link from "next/link";
 import { createClient } from "@/lib/supabase/server";
 import { formatCOP } from "@/lib/utils";
 import { calcularEstadosFinancieros } from "@/lib/finanzas/estadoResultados";
+import { ResponsiveTableShell } from "@/components/ui/ResponsiveTableShell";
 
 export const dynamic = "force-dynamic";
 const ROLES = ["superadmin", "gerencia", "administracion"];
@@ -58,7 +59,7 @@ export default async function EstadosFinancierosPage({ searchParams }: { searchP
               <b> subvalorado</b> hasta que cada contrato tenga su facturación (ingreso propio) y todos sus proveedores
               marcados (Costo + base gravable / IRT).
             </p>
-            <div className="mt-2 overflow-x-auto">
+            <ResponsiveTableShell minWidth={560} className="mt-2 overflow-x-auto">
               <table className="w-full min-w-[560px] text-xs">
                 <thead><tr className="text-left text-gray-400">
                   <th className="py-1 pr-3">Contrato</th><th className="py-1 pr-3">Cliente</th>
@@ -67,16 +68,16 @@ export default async function EstadosFinancierosPage({ searchParams }: { searchP
                 <tbody>
                   {ef.validador.contratos.filter((c) => !c.completo).map((c) => (
                     <tr key={c.numero_contrato} className="border-t border-amber-200/60">
-                      <td className="py-1 pr-3"><Link href={`/dashboard/contratos/${encodeURIComponent(c.numero_contrato)}`} className="font-mono text-[#1D7C9A] hover:underline">{c.numero_contrato}</Link></td>
-                      <td className="py-1 pr-3 text-gray-600">{c.cliente ?? "—"}</td>
-                      <td className="py-1 pr-3">{c.facturacionOk ? "✓" : <span className="text-amber-700">falta</span>}</td>
-                      <td className="py-1 pr-3 text-gray-600">{c.proveedoresConfig}/{c.totalProveedores}</td>
-                      <td className="py-1 text-amber-700">incompleto</td>
+                      <td className="py-1 pr-3" data-label="Contrato"><Link href={`/dashboard/contratos/${encodeURIComponent(c.numero_contrato)}`} className="font-mono text-[#1D7C9A] hover:underline">{c.numero_contrato}</Link></td>
+                      <td className="py-1 pr-3 text-gray-600" data-label="Cliente">{c.cliente ?? "—"}</td>
+                      <td className="py-1 pr-3" data-label="Facturación">{c.facturacionOk ? "✓" : <span className="text-amber-700">falta</span>}</td>
+                      <td className="py-1 pr-3 text-gray-600" data-label="Proveedores">{c.proveedoresConfig}/{c.totalProveedores}</td>
+                      <td className="py-1 text-amber-700" data-label="Estado">incompleto</td>
                     </tr>
                   ))}
                 </tbody>
               </table>
-            </div>
+            </ResponsiveTableShell>
           </>
         )}
       </div>

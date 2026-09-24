@@ -4,6 +4,7 @@ import { useMemo, useState } from "react";
 import Link from "next/link";
 import { formatFechaLarga } from "@/lib/utils";
 import { EstadoBadge } from "@/components/EstadoBadge";
+import { ResponsiveTableShell } from "@/components/ui/ResponsiveTableShell";
 import {
   MODALIDAD_LABEL, MODALIDAD_CONTROL_LABEL, ESTADO_EMISION_LABEL, ESTADO_PAGO_LABEL, SIN_DEFINIR, POR_CONFIRMAR,
   labelModalidadControl, labelEstadoEmision, labelEstadoPago,
@@ -117,7 +118,7 @@ export function ControlVuelosTabla({ filas }: { filas: ControlFila[] }) {
         <span className="ml-auto text-xs text-gray-400">{vis.length} record(s)</span>
       </div>
 
-      <div className="overflow-x-auto rounded-xl border border-gray-200 bg-white">
+      <ResponsiveTableShell minWidth={1080} className="overflow-x-auto rounded-xl border border-gray-200 bg-white">
         <table className="w-full min-w-[1080px] text-sm">
           <thead>
             <tr className="bg-gray-50 text-left text-xs uppercase text-gray-400">
@@ -135,24 +136,24 @@ export function ControlVuelosTabla({ filas }: { filas: ControlFila[] }) {
           <tbody>
             {vis.map((b) => (
               <tr key={b.id} className="border-t border-gray-50">
-                <td className="px-3 py-2">
+                <td className="px-3 py-2" data-label="Record">
                   <Link href={hrefDetalle(b)} className="font-mono text-sm font-semibold text-[#1D7C9A] hover:underline">
                     {b.record ?? "Sin record"}
                   </Link>
                 </td>
-                <td className="px-3 py-2 text-gray-600">{b.aerolinea ?? "—"}</td>
-                <td className="px-3 py-2 text-gray-600">{b.ruta ?? "—"}</td>
-                <td className="px-3 py-2 text-xs text-gray-500">{formatFechaLarga(b.fecha_ida)}{b.vuelo_ida ? ` · ${b.vuelo_ida}` : ""}</td>
-                <td className="px-3 py-2 text-xs text-gray-500">{formatFechaLarga(b.fecha_regreso)}{b.vuelo_regreso ? ` · ${b.vuelo_regreso}` : ""}</td>
-                <td className="px-3 py-2 text-xs text-gray-500">{b.origen === "bloqueo" ? formatFechaLarga(b.fecha_emision) : "—"}</td>
-                <td className="px-3 py-2"><EstadoBadge estado={labelModalidadControl(b.modalidad)} tono={tonoModalidadControl(b.modalidad)} /></td>
-                <td className="px-3 py-2"><EstadoBadge estado={labelEstadoEmision(b.estado_emision)} tono={tonoEstadoEmision(b.estado_emision)} /></td>
-                <td className="px-3 py-2"><EstadoBadge estado={labelEstadoPago(b.estado_pago)} tono={tonoEstadoPago(b.estado_pago)} /></td>
+                <td className="px-3 py-2 text-gray-600" data-label="Aerolínea">{b.aerolinea ?? "—"}</td>
+                <td className="px-3 py-2 text-gray-600" data-label="Ruta">{b.ruta ?? "—"}</td>
+                <td className="px-3 py-2 text-xs text-gray-500" data-label="Ida">{formatFechaLarga(b.fecha_ida)}{b.vuelo_ida ? ` · ${b.vuelo_ida}` : ""}</td>
+                <td className="px-3 py-2 text-xs text-gray-500" data-label="Regreso">{formatFechaLarga(b.fecha_regreso)}{b.vuelo_regreso ? ` · ${b.vuelo_regreso}` : ""}</td>
+                <td className="px-3 py-2 text-xs text-gray-500" data-label="F. límite emisión">{b.origen === "bloqueo" ? formatFechaLarga(b.fecha_emision) : "—"}</td>
+                <td className="px-3 py-2" data-label="Modalidad"><EstadoBadge estado={labelModalidadControl(b.modalidad)} tono={tonoModalidadControl(b.modalidad)} /></td>
+                <td className="px-3 py-2" data-label="Emisión"><EstadoBadge estado={labelEstadoEmision(b.estado_emision)} tono={tonoEstadoEmision(b.estado_emision)} /></td>
+                <td className="px-3 py-2" data-label="Pago"><EstadoBadge estado={labelEstadoPago(b.estado_pago)} tono={tonoEstadoPago(b.estado_pago)} /></td>
               </tr>
             ))}
           </tbody>
         </table>
-      </div>
+      </ResponsiveTableShell>
     </div>
   );
 }

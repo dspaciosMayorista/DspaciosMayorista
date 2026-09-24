@@ -3,6 +3,7 @@ import { CornerDownRight, TriangleAlert } from "lucide-react";
 import { createClient } from "@/lib/supabase/server";
 import { notFound } from "next/navigation";
 import Link from "next/link";
+import { ResponsiveTableShell } from "@/components/ui/ResponsiveTableShell";
 import { formatCOP, formatFechaLarga, calcularEdad } from "@/lib/utils";
 import { CambiarSillasForm } from "./CambiarSillasForm";
 import { SillaEstado } from "./SillaEstado";
@@ -241,7 +242,7 @@ export default async function BloqueoDetallePage({
         }
         pasajeros={
           <>
-            <div className="overflow-x-auto rounded-xl border border-gray-200 bg-white">
+            <ResponsiveTableShell minWidth={1000} className="overflow-x-auto rounded-xl border border-gray-200 bg-white">
               <table className="w-full min-w-[1000px] text-sm">
                 <thead>
                   <tr className="bg-gray-50 text-left text-xs uppercase text-gray-400">
@@ -264,29 +265,29 @@ export default async function BloqueoDetallePage({
                   {(sillas ?? []).map((s) => (
                     <Fragment key={s.id}>
                       <tr className="border-t border-gray-100">
-                        <td className="px-3 py-2 font-semibold text-gray-700">
+                        <td className="px-3 py-2 font-semibold text-gray-700" data-label="#">
                           <span className="inline-flex items-center gap-1.5">
                             <span className="inline-block h-2.5 w-2.5 rounded-full" style={{ backgroundColor: ESTADO_COLOR[s.estado] ?? "#ccc" }} />
                             {s.numero_silla}
                           </span>
                         </td>
-                        <td className="px-3 py-2 text-gray-700">{s.pasajero_nombres || "—"}</td>
-                        <td className="px-3 py-2 text-gray-700">{s.pasajero_apellidos || "—"}</td>
-                        <td className="px-3 py-2 text-gray-500">{s.tipo_doc || "—"}</td>
-                        <td className="px-3 py-2 text-gray-500">{s.numero_doc || "—"}</td>
-                        <td className="px-3 py-2 text-xs text-gray-500">{s.nacimiento ? formatFechaLarga(s.nacimiento) : "—"}</td>
-                        <td className="px-3 py-2">
+                        <td className="px-3 py-2 text-gray-700" data-label="Nombres">{s.pasajero_nombres || "—"}</td>
+                        <td className="px-3 py-2 text-gray-700" data-label="Apellidos">{s.pasajero_apellidos || "—"}</td>
+                        <td className="px-3 py-2 text-gray-500" data-label="Tipo doc">{s.tipo_doc || "—"}</td>
+                        <td className="px-3 py-2 text-gray-500" data-label="Número">{s.numero_doc || "—"}</td>
+                        <td className="px-3 py-2 text-xs text-gray-500" data-label="Nacimiento">{s.nacimiento ? formatFechaLarga(s.nacimiento) : "—"}</td>
+                        <td className="px-3 py-2" data-label="Contrato">
                           <SillaContrato sillaId={s.id} bloqueoId={bloqueoId} estado={s.estado} numeroContrato={s.numero_contrato} contratoManual={contratoManualPorSilla.get(s.id) ?? null} />
                         </td>
-                        <td className="px-3 py-2 text-gray-500">{s.asesor || "—"}</td>
-                        <td className="px-3 py-2 text-gray-500">{s.hotel || "—"}</td>
-                        <td className="px-3 py-2 text-gray-500">{s.acomodacion || "—"}</td>
-                        <td className="px-3 py-2 text-xs text-gray-500">{s.plazo ? formatFechaLarga(s.plazo) : "—"}</td>
-                        <td className="px-3 py-2">
+                        <td className="px-3 py-2 text-gray-500" data-label="Asesor">{s.asesor || "—"}</td>
+                        <td className="px-3 py-2 text-gray-500" data-label="Hotel">{s.hotel || "—"}</td>
+                        <td className="px-3 py-2 text-gray-500" data-label="Acomodación">{s.acomodacion || "—"}</td>
+                        <td className="px-3 py-2 text-xs text-gray-500" data-label="Plazo">{s.plazo ? formatFechaLarga(s.plazo) : "—"}</td>
+                        <td className="px-3 py-2" data-label="Estado">
                           <SillaEstado sillaId={s.id} estado={s.estado} bloqueoId={bloqueoId}
                             bloqueada={s.estado === "cambio"} />
                         </td>
-                        <td className="px-3 py-2">
+                        <td className="px-3 py-2" data-label="Acciones">
                           <div className="flex flex-col items-start gap-1">
                             <PasajeroAcciones
                               sillaId={s.id}
@@ -364,7 +365,7 @@ export default async function BloqueoDetallePage({
                   ))}
                 </tbody>
               </table>
-            </div>
+            </ResponsiveTableShell>
             {!sillas?.length && <p className="mt-4 text-sm text-gray-400">Este bloqueo no tiene sillas generadas.</p>}
             <p className="mt-2 text-xs text-gray-400">Para registrar una venta externa, usa “+ Contrato manual” en un cupo disponible. Para quitar un cupo libre, usa “eliminar cupo”.</p>
 

@@ -6,6 +6,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { formatMoneda, formatFechaLarga } from "@/lib/utils";
 import { registrarAbonoCartera, actualizarAbonoCartera, eliminarAbonoCartera } from "./actions";
+import { ResponsiveTableShell } from "@/components/ui/ResponsiveTableShell";
 
 export type CarteraRow = {
   numero_contrato: string;
@@ -105,7 +106,7 @@ export function CarteraList({ rows, formasPago }: { rows: CarteraRow[]; formasPa
       </div>
 
       {/* Tabla */}
-      <div className="overflow-x-auto rounded-xl border border-gray-200 bg-white">
+      <ResponsiveTableShell minWidth={760} className="overflow-x-auto rounded-xl border border-gray-200 bg-white">
         <table className="w-full min-w-[760px] text-sm">
           <thead>
             <tr className="border-b border-gray-100 bg-gray-50 text-left text-xs uppercase tracking-wide text-gray-400">
@@ -115,7 +116,7 @@ export function CarteraList({ rows, formasPago }: { rows: CarteraRow[]; formasPa
               <th className="px-4 py-3 text-right">Valor</th>
               <th className="px-4 py-3 text-right">Abonado</th>
               <th className="px-4 py-3 text-right">Saldo</th>
-              <th className="px-4 py-3"></th>
+              <th className="px-4 py-3">Detalle</th>
             </tr>
           </thead>
           <tbody>
@@ -139,7 +140,7 @@ export function CarteraList({ rows, formasPago }: { rows: CarteraRow[]; formasPa
             ))}
           </tbody>
         </table>
-      </div>
+      </ResponsiveTableShell>
     </div>
   );
 }
@@ -162,25 +163,28 @@ function FilaCartera({
         className="cursor-pointer border-b border-gray-50 hover:bg-gray-50"
         onClick={onToggle}
       >
-        <td className="px-4 py-3 font-mono font-medium text-gray-800">{row.numero_contrato}</td>
-        <td className="px-4 py-3 text-gray-700">{row.cliente ?? "—"}</td>
-        <td className="px-4 py-3 text-gray-500">{formatFechaLarga(row.fecha_salida)}</td>
-        <td className="px-4 py-3 text-right tabular-nums text-gray-700">
+        <td className="px-4 py-3 font-mono font-medium text-gray-800" data-label="Contrato">{row.numero_contrato}</td>
+        <td className="px-4 py-3 text-gray-700" data-label="Cliente">{row.cliente ?? "—"}</td>
+        <td className="px-4 py-3 text-gray-500" data-label="Salida">{formatFechaLarga(row.fecha_salida)}</td>
+        <td className="px-4 py-3 text-right tabular-nums text-gray-700" data-label="Valor">
           {formatMoneda(row.precio_venta, row.moneda)}
         </td>
-        <td className="px-4 py-3 text-right tabular-nums text-gray-600">
+        <td className="px-4 py-3 text-right tabular-nums text-gray-600" data-label="Abonado">
           {formatMoneda(row.pagado, row.moneda)}
         </td>
         <td
           className="px-4 py-3 text-right font-semibold tabular-nums"
           style={{ color: pagadoTotal ? "var(--brand-success)" : "var(--brand-primary)" }}
+          data-label="Saldo"
         >
           {pagadoTotal ? "Pagado" : formatMoneda(row.saldo, row.moneda)}
         </td>
-        <td className="px-4 py-3 text-right text-gray-400">{abierto ? "▾" : "▸"}</td>
+        <td className="px-4 py-3 text-right text-gray-400" data-label="">{abierto ? "▾ Ocultar" : "▸ Ver detalle"}</td>
       </tr>
       {abierto && (
         <tr className="bg-gray-50/60">
+          {/* colSpan → el CSS de ResponsiveTable la deja en bloque de ancho
+              completo, sin partirla en etiqueta+valor (ver su comentario). */}
           <td colSpan={7} className="px-4 py-4">
             <EstadoCuenta row={row} formasPago={formasPago} />
           </td>
@@ -216,8 +220,11 @@ function EstadoCuenta({ row, formasPago }: { row: CarteraRow; formasPago: string
         {row.abonos.length === 0 ? (
           <p className="text-sm text-gray-400">Sin abonos registrados.</p>
         ) : (
-          <div className="overflow-hidden rounded-lg border border-gray-200 bg-white">
-            <table className="w-full text-sm">
+          // Esta tabla vive dentro de una columna de un grid a 2 columnas —
+          // ResponsiveTableShell mide el ancho REAL de esa columna (no el
+          // viewport) y apila en tarjetas cuando no alcanza el min-width.
+          <ResponsiveTableShell minWidth={600} className="overflow-hidden rounded-lg border border-gray-200 bg-white">
+            <table className="w-full min-w-[600px] text-sm">
               <thead>
                 <tr className="bg-gray-50 text-left text-xs uppercase tracking-wide text-gray-400">
                   <th className="px-3 py-2">Fecha</th>
@@ -225,7 +232,7 @@ function EstadoCuenta({ row, formasPago }: { row: CarteraRow; formasPago: string
                   <th className="px-3 py-2">Referencia</th>
                   <th className="px-3 py-2 text-right">Valor</th>
                   <th className="px-3 py-2 text-right">Recibo</th>
-                  <th className="px-3 py-2"></th>
+                  <th className="px-3 py-2">Acciones</th>
                 </tr>
               </thead>
               <tbody>
@@ -238,14 +245,14 @@ function EstadoCuenta({ row, formasPago }: { row: CarteraRow; formasPago: string
                   <td className="px-3 py-2 text-gray-600" colSpan={3}>
                     Saldo por cobrar
                   </td>
-                  <td className="px-3 py-2 text-right tabular-nums" style={{ color: "var(--brand-primary)" }}>
+                  <td className="px-3 py-2 text-right tabular-nums" style={{ color: "var(--brand-primary)" }} data-label="Saldo por cobrar">
                     {formatMoneda(row.saldo, row.moneda)}
                   </td>
-                  <td className="px-3 py-2"></td>
+                  <td className="px-3 py-2" data-label=""></td>
                 </tr>
               </tfoot>
             </table>
-          </div>
+          </ResponsiveTableShell>
         )}
       </div>
 
@@ -321,14 +328,14 @@ function FilaAbonoCartera({
 
   return (
     <tr className="border-t border-gray-50">
-      <td className="px-3 py-2 text-gray-600">{formatFechaLarga(a.fecha_abono)}</td>
-      <td className="px-3 py-2 text-gray-600">{a.forma_pago ?? "—"}</td>
-      <td className="px-3 py-2 text-gray-500">{a.referencia ?? "—"}</td>
-      <td className="px-3 py-2 text-right tabular-nums text-gray-700">{formatMoneda(a.valor_abono, moneda)}</td>
-      <td className="px-3 py-2 text-right">
+      <td className="px-3 py-2 text-gray-600" data-label="Fecha">{formatFechaLarga(a.fecha_abono)}</td>
+      <td className="px-3 py-2 text-gray-600" data-label="Forma">{a.forma_pago ?? "—"}</td>
+      <td className="px-3 py-2 text-gray-500" data-label="Referencia">{a.referencia ?? "—"}</td>
+      <td className="px-3 py-2 text-right tabular-nums text-gray-700" data-label="Valor">{formatMoneda(a.valor_abono, moneda)}</td>
+      <td className="px-3 py-2 text-right" data-label="Recibo">
         <Link href={`/recibo/${a.id}`} target="_blank" className="text-xs font-medium text-[#1D7C9A] hover:underline">Recibo ↗</Link>
       </td>
-      <td className="px-3 py-2 text-right whitespace-nowrap">
+      <td className="px-3 py-2 text-right whitespace-nowrap" data-label="Acciones">
         <button type="button" onClick={() => setEditar(true)} className="mr-3 text-xs font-medium hover:underline" style={{ color: "var(--brand-accent)" }}>Editar</button>
         <button
           type="button"

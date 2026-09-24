@@ -4,6 +4,7 @@ import { useMemo, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import Link from "next/link";
 import { formatMoneda } from "@/lib/utils";
+import { ResponsiveTableShell } from "@/components/ui/ResponsiveTableShell";
 
 export type VentaRow = {
   numero_contrato: string;
@@ -118,7 +119,10 @@ export function VentasTable({ rows }: { rows: VentaRow[] }) {
         </Link>
       </div>
 
-      <div className="overflow-x-auto rounded-xl border border-gray-200 bg-white">
+      {/* Responsive: por debajo de 1024px cada fila se apila como tarjeta
+          (ver ResponsiveTable.module.css) — ninguna columna se oculta, el
+          `overflow-x-auto` queda solo como red de seguridad. */}
+      <ResponsiveTableShell minWidth={820} className="overflow-x-auto rounded-xl border border-gray-200 bg-white">
         <table className="w-full min-w-[820px] text-sm">
           <thead>
             <tr className="border-b border-gray-100 bg-gray-50 text-left text-xs uppercase tracking-wide text-gray-400">
@@ -130,7 +134,7 @@ export function VentasTable({ rows }: { rows: VentaRow[] }) {
               <th className="px-4 py-3">Estado viaje</th>
               <th className="px-4 py-3 text-right">Precio venta</th>
               <th className="px-4 py-3">Estado</th>
-              <th className="px-4 py-3"></th>
+              <th className="px-4 py-3">Acción</th>
             </tr>
           </thead>
           <tbody>
@@ -138,17 +142,17 @@ export function VentasTable({ rows }: { rows: VentaRow[] }) {
               const ev = estadoViaje(v.fecha_salida, v.fecha_regreso);
               return (
                 <tr key={v.numero_contrato} className="border-b border-gray-50 hover:bg-gray-50">
-                  <td className="px-4 py-3 font-mono font-medium text-gray-800">{v.numero_contrato}</td>
-                  <td className="px-4 py-3 text-gray-700">{v.cliente ?? "—"}</td>
-                  <td className="px-4 py-3 text-gray-500">{v.asesor ?? "—"}</td>
-                  <td className="px-4 py-3 text-gray-500">{v.destino ?? "—"}</td>
-                  <td className="px-4 py-3 text-gray-500">{v.fecha_salida ? mesLabel(ym(v.fecha_salida)) : "—"}</td>
-                  <td className="px-4 py-3"><span className={`rounded-full px-2 py-0.5 text-xs ${ev.cls}`}>{ev.label}</span></td>
-                  <td className="px-4 py-3 text-right tabular-nums text-gray-700">{formatMoneda(v.precio_venta, v.moneda ?? "COP")}</td>
-                  <td className="px-4 py-3">
+                  <td className="px-4 py-3 font-mono font-medium text-gray-800" data-label="Contrato">{v.numero_contrato}</td>
+                  <td className="px-4 py-3 text-gray-700" data-label="Cliente">{v.cliente ?? "—"}</td>
+                  <td className="px-4 py-3 text-gray-500" data-label="Asesor">{v.asesor ?? "—"}</td>
+                  <td className="px-4 py-3 text-gray-500" data-label="Destino">{v.destino ?? "—"}</td>
+                  <td className="px-4 py-3 text-gray-500" data-label="Mes viaje">{v.fecha_salida ? mesLabel(ym(v.fecha_salida)) : "—"}</td>
+                  <td className="px-4 py-3" data-label="Estado viaje"><span className={`rounded-full px-2 py-0.5 text-xs ${ev.cls}`}>{ev.label}</span></td>
+                  <td className="px-4 py-3 text-right tabular-nums text-gray-700" data-label="Precio venta">{formatMoneda(v.precio_venta, v.moneda ?? "COP")}</td>
+                  <td className="px-4 py-3" data-label="Estado">
                     <span className={`rounded-full px-2 py-0.5 text-xs ${estadoCls[v.estado ?? ""] ?? "bg-gray-100 text-gray-600"}`}>{v.estado ?? "—"}</span>
                   </td>
-                  <td className="px-4 py-3 text-right">
+                  <td className="px-4 py-3 text-right" data-label="Acción">
                     <Link href={`/dashboard/contratos/${encodeURIComponent(v.numero_contrato)}`} className="text-xs font-medium hover:underline" style={{ color: "var(--brand-accent)" }}>Ver →</Link>
                   </td>
                 </tr>
@@ -159,7 +163,7 @@ export function VentasTable({ rows }: { rows: VentaRow[] }) {
             )}
           </tbody>
         </table>
-      </div>
+      </ResponsiveTableShell>
       <p className="mt-2 text-xs text-gray-400">{filtradas.length} venta(s)</p>
     </div>
   );

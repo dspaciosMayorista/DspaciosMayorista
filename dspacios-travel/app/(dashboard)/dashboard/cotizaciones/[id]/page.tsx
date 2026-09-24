@@ -3,6 +3,7 @@ import { contextoCotizacion, autorizaTenant } from "@/lib/cotizacion/acceso";
 import { notFound } from "next/navigation";
 import Link from "next/link";
 import { Button } from "@/components/ui/button";
+import { ResponsiveTableShell } from "@/components/ui/ResponsiveTableShell";
 import { formatMoneda, formatFechaLarga } from "@/lib/utils";
 import CondicionesPanel from "@/components/cotizacion/CondicionesPanel";
 import { condicionesParaUI, type FilaCondicionRowUI } from "@/lib/cotizacion/condicionesParaUI";
@@ -194,7 +195,7 @@ export default async function CotizacionDetallePage({
       {esManual && (
         <div className="mt-6 overflow-hidden rounded-xl border border-gray-200 bg-white">
           <div className="border-b border-gray-100 px-5 py-3 text-sm font-semibold text-gray-700">Servicios cotizados</div>
-          <div className="overflow-x-auto">
+          <ResponsiveTableShell minWidth={640} className="overflow-x-auto">
             <table className="w-full min-w-[640px] text-sm">
               <thead><tr className="bg-gray-50 text-left text-xs uppercase text-gray-400">
                 <th className="px-4 py-2">Tipo</th><th className="px-4 py-2">Plataforma</th><th className="px-4 py-2">Servicio</th>
@@ -203,11 +204,11 @@ export default async function CotizacionDetallePage({
               <tbody>
                 {(serviciosManual ?? []).map((s) => (
                   <tr key={s.id} className="border-t border-gray-50">
-                    <td className="px-4 py-2 text-gray-700">{TIPO_SERV_LABEL[s.tipo_servicio] ?? s.tipo_servicio}</td>
-                    <td className="px-4 py-2 text-gray-500">{s.plataforma ?? "—"}</td>
-                    <td className="px-4 py-2 text-gray-500">{s.nombre_servicio ?? "—"}</td>
-                    <td className="px-4 py-2 text-gray-500">{s.proveedor ?? "—"}</td>
-                    <td className="px-4 py-2 text-right tabular-nums text-gray-700">{formatMoneda(s.valor ?? 0, moneda)}</td>
+                    <td className="px-4 py-2 text-gray-700" data-label="Tipo">{TIPO_SERV_LABEL[s.tipo_servicio] ?? s.tipo_servicio}</td>
+                    <td className="px-4 py-2 text-gray-500" data-label="Plataforma">{s.plataforma ?? "—"}</td>
+                    <td className="px-4 py-2 text-gray-500" data-label="Servicio">{s.nombre_servicio ?? "—"}</td>
+                    <td className="px-4 py-2 text-gray-500" data-label="Proveedor">{s.proveedor ?? "—"}</td>
+                    <td className="px-4 py-2 text-right tabular-nums text-gray-700" data-label="Valor">{formatMoneda(s.valor ?? 0, moneda)}</td>
                   </tr>
                 ))}
                 {!serviciosManual?.length && <tr><td colSpan={5} className="px-4 py-4 text-center text-gray-400">Sin servicios.</td></tr>}
@@ -215,12 +216,12 @@ export default async function CotizacionDetallePage({
               <tfoot className="text-sm">
                 <tr className="border-t border-gray-100 text-gray-500">
                   <td className="px-4 py-2" colSpan={4}>Subtotal servicios</td>
-                  <td className="px-4 py-2 text-right tabular-nums">{formatMoneda(serviciosSubtotal, moneda)}</td>
+                  <td className="px-4 py-2 text-right tabular-nums" data-label="Valor">{formatMoneda(serviciosSubtotal, moneda)}</td>
                 </tr>
                 {numNinos > 0 && (
                   <tr className="text-gray-500">
                     <td className="px-4 py-2" colSpan={4}>Niños ({numNinos})</td>
-                    <td className="px-4 py-2 text-right tabular-nums">{formatMoneda(ninosSubtotal, moneda)}</td>
+                    <td className="px-4 py-2 text-right tabular-nums" data-label="Valor">{formatMoneda(ninosSubtotal, moneda)}</td>
                   </tr>
                 )}
                 {recobroTotal > 0 && (
@@ -228,16 +229,16 @@ export default async function CotizacionDetallePage({
                     <td className="px-4 py-2" colSpan={4}>
                       Recobro <span className="text-[11px] text-amber-600">(oculto al cliente · empresa {formatMoneda(recobroEmpresa, moneda)}{recobroAliado > 0 ? ` · aliado ${formatMoneda(recobroAliado, moneda)}` : ""})</span>
                     </td>
-                    <td className="px-4 py-2 text-right tabular-nums">{formatMoneda(recobroTotal, moneda)}</td>
+                    <td className="px-4 py-2 text-right tabular-nums" data-label="Valor">{formatMoneda(recobroTotal, moneda)}</td>
                   </tr>
                 )}
                 <tr className="border-t border-gray-200 font-medium">
                   <td className="px-4 py-2" colSpan={4}>Total</td>
-                  <td className="px-4 py-2 text-right tabular-nums">{formatMoneda(c.precio_venta ?? 0, moneda)}</td>
+                  <td className="px-4 py-2 text-right tabular-nums" data-label="Valor">{formatMoneda(c.precio_venta ?? 0, moneda)}</td>
                 </tr>
               </tfoot>
             </table>
-          </div>
+          </ResponsiveTableShell>
         </div>
       )}
 

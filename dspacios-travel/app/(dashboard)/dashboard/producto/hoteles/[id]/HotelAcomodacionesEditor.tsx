@@ -6,6 +6,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { ACOM_ROOMS, ACOM_ROOM_LABEL, defaultAcomConfig, type AcomConfig, type AcomRoom } from "@/lib/acomodaciones";
 import { actualizarHotelAcomodaciones } from "../actions";
+import { ResponsiveTableShell } from "@/components/ui/ResponsiveTableShell";
 
 const lbl = "mb-1 block text-xs font-medium text-gray-600";
 
@@ -77,7 +78,7 @@ export function HotelAcomodacionesEditor({
             <div><label className={lbl}>Pax máx. del hotel</label><Input type="number" min={0} value={pMax} onChange={(e) => setPMax(e.target.value)} placeholder="—" /></div>
           </div>
 
-          <div className="overflow-x-auto">
+          <ResponsiveTableShell minWidth={640} className="overflow-x-auto">
             <table className="w-full min-w-[640px] text-sm">
               <thead>
                 <tr className="text-left text-xs text-gray-500">
@@ -95,20 +96,20 @@ export function HotelAcomodacionesEditor({
               <tbody>
                 {ACOM_ROOMS.map((a) => (
                   <tr key={a} className="border-t border-gray-100">
-                    <td className="py-2 pr-3 font-medium text-gray-700">{ACOM_ROOM_LABEL[a]}</td>
-                    <td className="px-2">{numCell(a, "pax_tarifa")}</td>
-                    <td className="px-2">{numCell(a, "pax_max")}</td>
-                    <td className="px-2">{numCell(a, "adt_min")}</td>
-                    <td className="px-2">{numCell(a, "adt_max")}</td>
-                    <td className="px-2">{numCell(a, "chd_min")}</td>
-                    <td className="px-2">{numCell(a, "chd_max")}</td>
-                    <td className="px-2">{numCell(a, "inf_min")}</td>
-                    <td className="px-2">{numCell(a, "inf_max")}</td>
+                    <td className="py-2 pr-3 font-medium text-gray-700" data-label="Acomodación">{ACOM_ROOM_LABEL[a]}</td>
+                    <td className="px-2" data-label="Pax tarifa">{numCell(a, "pax_tarifa")}</td>
+                    <td className="px-2" data-label="Pax máx.">{numCell(a, "pax_max")}</td>
+                    <td className="px-2" data-label="Adt mín.">{numCell(a, "adt_min")}</td>
+                    <td className="px-2" data-label="Adt máx.">{numCell(a, "adt_max")}</td>
+                    <td className="px-2" data-label="Niño mín.">{numCell(a, "chd_min")}</td>
+                    <td className="px-2" data-label="Niño máx.">{numCell(a, "chd_max")}</td>
+                    <td className="px-2" data-label="Inf. mín.">{numCell(a, "inf_min")}</td>
+                    <td className="px-2" data-label="Inf. máx.">{numCell(a, "inf_max")}</td>
                   </tr>
                 ))}
               </tbody>
             </table>
-          </div>
+          </ResponsiveTableShell>
           <p className="text-xs text-gray-400">
             <b>Pax tarifa</b>: pax que cubre la tarifa por persona de una habitación (1 hab Doble = tarifa doble × 2).
             Los mín./máx. de adultos, niños e infantes validan que los pasajeros cuadren con las habitaciones elegidas.

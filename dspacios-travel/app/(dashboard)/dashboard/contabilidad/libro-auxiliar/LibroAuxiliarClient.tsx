@@ -5,6 +5,7 @@ import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { formatCOP } from "@/lib/utils";
 import { obtenerAuxiliar, type Auxiliar } from "./actions";
+import { ResponsiveTableShell } from "@/components/ui/ResponsiveTableShell";
 
 type CuentaOpt = { id: number; codigo: string; nombre: string };
 
@@ -53,7 +54,7 @@ export function LibroAuxiliarClient({ cuentas }: { cuentas: CuentaOpt[] }) {
             <span className="font-semibold text-gray-700">{datos.cuenta.codigo} · {datos.cuenta.nombre}</span>
             <span className="text-xs text-gray-400">Naturaleza: {datos.cuenta.naturaleza === "debito" ? "Débito" : "Crédito"} · Saldo inicial: {formatCOP(datos.saldoInicial)}</span>
           </div>
-          <div className="overflow-x-auto rounded-lg border border-gray-100">
+          <ResponsiveTableShell minWidth={640} className="overflow-x-auto rounded-lg border border-gray-100">
             <table className="w-full min-w-[640px] text-xs">
               <thead className="bg-gray-50 text-left text-gray-400">
                 <tr>
@@ -66,12 +67,12 @@ export function LibroAuxiliarClient({ cuentas }: { cuentas: CuentaOpt[] }) {
                   <tr><td colSpan={6} className="px-3 py-6 text-center text-gray-400">Sin movimientos en este rango.</td></tr>
                 ) : datos.lineas.map((l) => (
                   <tr key={l.id} className="border-t border-gray-50">
-                    <td className="px-2 py-1 text-gray-500">{l.fecha}</td>
-                    <td className="px-2 py-1 text-gray-700">#{l.numeroAsiento} · {l.descripcionAsiento}{l.descripcionLinea ? ` — ${l.descripcionLinea}` : ""}</td>
-                    <td className="px-2 py-1 text-gray-500">{l.tercero ?? "—"}</td>
-                    <td className="px-2 py-1 text-right tabular-nums">{l.debe > 0 ? formatCOP(l.debe) : ""}</td>
-                    <td className="px-2 py-1 text-right tabular-nums">{l.haber > 0 ? formatCOP(l.haber) : ""}</td>
-                    <td className="px-2 py-1 text-right font-medium tabular-nums">{formatCOP(l.saldo)}</td>
+                    <td className="px-2 py-1 text-gray-500" data-label="Fecha">{l.fecha}</td>
+                    <td className="px-2 py-1 text-gray-700" data-label="Asiento">#{l.numeroAsiento} · {l.descripcionAsiento}{l.descripcionLinea ? ` — ${l.descripcionLinea}` : ""}</td>
+                    <td className="px-2 py-1 text-gray-500" data-label="Tercero">{l.tercero ?? "—"}</td>
+                    <td className="px-2 py-1 text-right tabular-nums" data-label="Débito">{l.debe > 0 ? formatCOP(l.debe) : ""}</td>
+                    <td className="px-2 py-1 text-right tabular-nums" data-label="Crédito">{l.haber > 0 ? formatCOP(l.haber) : ""}</td>
+                    <td className="px-2 py-1 text-right font-medium tabular-nums" data-label="Saldo">{formatCOP(l.saldo)}</td>
                   </tr>
                 ))}
               </tbody>
@@ -79,14 +80,14 @@ export function LibroAuxiliarClient({ cuentas }: { cuentas: CuentaOpt[] }) {
                 <tfoot>
                   <tr className="border-t border-gray-200 font-medium text-gray-700">
                     <td className="px-2 py-1" colSpan={3}>Total del período</td>
-                    <td className="px-2 py-1 text-right tabular-nums">{formatCOP(datos.totalDebe)}</td>
-                    <td className="px-2 py-1 text-right tabular-nums">{formatCOP(datos.totalHaber)}</td>
-                    <td className="px-2 py-1 text-right tabular-nums">{formatCOP(datos.saldoFinal)}</td>
+                    <td className="px-2 py-1 text-right tabular-nums" data-label="Débito">{formatCOP(datos.totalDebe)}</td>
+                    <td className="px-2 py-1 text-right tabular-nums" data-label="Crédito">{formatCOP(datos.totalHaber)}</td>
+                    <td className="px-2 py-1 text-right tabular-nums" data-label="Saldo">{formatCOP(datos.saldoFinal)}</td>
                   </tr>
                 </tfoot>
               )}
             </table>
-          </div>
+          </ResponsiveTableShell>
         </div>
       )}
     </div>

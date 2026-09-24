@@ -7,6 +7,7 @@ import { Button } from "@/components/ui/button";
 import { Pencil, Trash2, ArrowDownLeft, ArrowUpRight } from "lucide-react";
 import { formatCOP } from "@/lib/utils";
 import { guardarMovimiento, eliminarMovimiento } from "./actions";
+import { ResponsiveTableShell } from "@/components/ui/ResponsiveTableShell";
 
 export type MovRow = {
   id: number; fecha: string; tipo: "ingreso" | "egreso"; concepto: string;
@@ -62,7 +63,7 @@ export function MovimientosClient({ rows }: { rows: MovRow[] }) {
 
       {editor && <Editor row={editor === "nuevo" ? null : editor} onClose={() => setEditor(null)} />}
 
-      <div className="overflow-x-auto rounded-xl border border-gray-200 bg-white">
+      <ResponsiveTableShell minWidth={760} className="overflow-x-auto rounded-xl border border-gray-200 bg-white">
         <table className="w-full min-w-[760px] text-sm">
           <thead>
             <tr className="border-b border-gray-100 bg-gray-50 text-left text-xs uppercase tracking-wide text-gray-400">
@@ -78,7 +79,7 @@ export function MovimientosClient({ rows }: { rows: MovRow[] }) {
             ) : visibles.map((r) => <Fila key={r.id} r={r} onEdit={() => setEditor(r)} />)}
           </tbody>
         </table>
-      </div>
+      </ResponsiveTableShell>
     </div>
   );
 }
@@ -89,20 +90,20 @@ function Fila({ r, onEdit }: { r: MovRow; onEdit: () => void }) {
   const esIng = r.tipo === "ingreso";
   return (
     <tr className="border-b border-gray-50">
-      <td className="px-3 py-2.5 text-gray-500">{r.fecha}</td>
-      <td className="px-3 py-2.5 font-medium text-gray-800">
+      <td className="px-3 py-2.5 text-gray-500" data-label="Fecha">{r.fecha}</td>
+      <td className="px-3 py-2.5 font-medium text-gray-800" data-label="Concepto">
         <span className="mr-1 inline-flex align-middle" style={{ color: esIng ? "var(--brand-success)" : "#C0392B" }}>
           {esIng ? <ArrowDownLeft size={14} /> : <ArrowUpRight size={14} />}
         </span>
         {r.concepto}
       </td>
-      <td className="px-3 py-2.5 text-gray-500">{r.tercero || "—"}</td>
-      <td className="px-3 py-2.5 text-gray-500">{r.categoria || "—"}</td>
-      <td className="px-3 py-2.5 text-gray-500">{r.medioPago || "—"}</td>
-      <td className="px-3 py-2.5 text-right font-semibold tabular-nums" style={{ color: esIng ? "var(--brand-success)" : "#C0392B" }}>
+      <td className="px-3 py-2.5 text-gray-500" data-label="Tercero">{r.tercero || "—"}</td>
+      <td className="px-3 py-2.5 text-gray-500" data-label="Categoría">{r.categoria || "—"}</td>
+      <td className="px-3 py-2.5 text-gray-500" data-label="Medio">{r.medioPago || "—"}</td>
+      <td className="px-3 py-2.5 text-right font-semibold tabular-nums" style={{ color: esIng ? "var(--brand-success)" : "#C0392B" }} data-label="Valor">
         {esIng ? "+" : "−"} {formatCOP(r.valor)}
       </td>
-      <td className="px-3 py-2.5">
+      <td className="px-3 py-2.5" data-label="Acción">
         <div className="flex items-center justify-center gap-2">
           <button onClick={onEdit} className="text-gray-400 hover:text-gray-700" title="Editar"><Pencil size={15} /></button>
           <button disabled={pending} onClick={() => start(async () => { await eliminarMovimiento(r.id); router.refresh(); })} className="text-gray-400 hover:text-red-500" title="Eliminar"><Trash2 size={15} /></button>
