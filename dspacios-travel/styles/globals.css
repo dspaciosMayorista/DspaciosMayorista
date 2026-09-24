@@ -1,6 +1,12 @@
+/* El import de Google Fonts va PRIMERO: `@import "tailwindcss"` expande
+   inline miles de líneas de CSS generado, y un `@import` de URL después de
+   eso queda "después de otras reglas" en el CSS final — inválido por spec
+   (@import debe preceder cualquier regla que no sea @charset/@layer) y
+   Turbopack (next dev) lo trata como error duro, no solo advertencia (el
+   build de producción solo avisaba). Reordenar no cambia qué se carga. */
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800;900&display=swap');
 @import "tailwindcss";
 @import "tw-animate-css";
-@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800;900&display=swap');
 
 @custom-variant dark (&:is(.dark *));
 

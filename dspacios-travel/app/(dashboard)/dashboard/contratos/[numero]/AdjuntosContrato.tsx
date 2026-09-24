@@ -6,6 +6,7 @@ import { createClient } from "@/lib/supabase/client";
 import { Lock } from "lucide-react";
 import { registrarAdjunto, urlFirmadaAdjunto, eliminarAdjunto } from "./adjuntos-actions";
 import { subirYRegistrar } from "@/lib/adjuntos/operaciones";
+import { ResponsiveTableShell } from "@/components/ui/ResponsiveTableShell";
 
 export type Adjunto = {
   id: number; tipo: string; nombre: string | null; path: string;
@@ -92,15 +93,15 @@ export function AdjuntosContrato({ numeroContrato, adjuntos, puedeEditar = true 
       {err && <p className="mb-3 text-sm text-red-600">{err}</p>}
 
       {adjuntos.length > 0 ? (
-        <div className="overflow-x-auto rounded-lg border border-gray-200">
+        <ResponsiveTableShell minWidth={560} className="overflow-x-auto rounded-lg border border-gray-200">
           <table className="w-full min-w-[560px] text-sm">
             <thead><tr className="bg-gray-50 text-left text-xs uppercase text-gray-400">
               <th className="px-3 py-2">Tipo</th><th className="px-3 py-2">Archivo</th>
-              <th className="px-3 py-2">Tamaño</th><th className="px-3 py-2">Subido por</th><th className="px-3 py-2">Fecha</th><th className="px-3 py-2"></th>
+              <th className="px-3 py-2">Tamaño</th><th className="px-3 py-2">Subido por</th><th className="px-3 py-2">Fecha</th><th className="px-3 py-2">Acciones</th>
             </tr></thead>
             <tbody>{adjuntos.map((a) => <Fila key={a.id} a={a} puedeEditar={puedeEditar} />)}</tbody>
           </table>
-        </div>
+        </ResponsiveTableShell>
       ) : puedeEditar ? (
         <p className="rounded-lg border-2 border-dashed border-gray-200 py-6 text-center text-sm text-gray-400">Aún no hay adjuntos.</p>
       ) : (
@@ -158,12 +159,12 @@ function Fila({ a, puedeEditar }: { a: Adjunto; puedeEditar: boolean }) {
 
   return (
     <tr className="border-t border-gray-50">
-      <td className="px-3 py-2"><span className="rounded-full bg-gray-100 px-2 py-0.5 text-xs text-gray-600">{TIPO_LABEL[a.tipo] ?? a.tipo}</span></td>
-      <td className="px-3 py-2 text-gray-700">{a.nombre ?? a.path.split("/").pop()}</td>
-      <td className="px-3 py-2 text-gray-500">{fmtBytes(a.size_bytes)}</td>
-      <td className="px-3 py-2 text-gray-500">{a.subido_por ?? "—"}</td>
-      <td className="px-3 py-2 text-gray-500">{a.created_at.slice(0, 10)}</td>
-      <td className="px-3 py-2 text-right whitespace-nowrap">
+      <td className="px-3 py-2" data-label="Tipo"><span className="rounded-full bg-gray-100 px-2 py-0.5 text-xs text-gray-600">{TIPO_LABEL[a.tipo] ?? a.tipo}</span></td>
+      <td className="px-3 py-2 text-gray-700" data-label="Archivo">{a.nombre ?? a.path.split("/").pop()}</td>
+      <td className="px-3 py-2 text-gray-500" data-label="Tamaño">{fmtBytes(a.size_bytes)}</td>
+      <td className="px-3 py-2 text-gray-500" data-label="Subido por">{a.subido_por ?? "—"}</td>
+      <td className="px-3 py-2 text-gray-500" data-label="Fecha">{a.created_at.slice(0, 10)}</td>
+      <td className="px-3 py-2 text-right whitespace-nowrap" data-label="Acciones">
         <button type="button" onClick={descargar} disabled={busy} className="mr-3 text-xs font-medium hover:underline" style={{ color: "var(--brand-accent)" }}>
           {busy ? "…" : "Descargar"}
         </button>

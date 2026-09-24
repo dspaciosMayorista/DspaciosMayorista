@@ -8,6 +8,7 @@ import { formatCOP } from "@/lib/utils";
 import { calcComisionB2B } from "@/lib/calc/finanzas";
 import { registrarPagoComisionB2B, deshacerUltimoPagoComisionB2B, actualizarComisionB2B } from "./actions";
 import { ChevronDown, ChevronRight } from "lucide-react";
+import { ResponsiveTableShell } from "@/components/ui/ResponsiveTableShell";
 
 export type ComB2BRow = {
   id: number;
@@ -91,7 +92,7 @@ export function ComisionesList({ rows }: { rows: ComB2BRow[] }) {
       </div>
 
       {/* Tabla */}
-      <div className="overflow-x-auto rounded-xl border border-gray-200 bg-white">
+      <ResponsiveTableShell minWidth={820} className="overflow-x-auto rounded-xl border border-gray-200 bg-white">
         <table className="w-full min-w-[820px] text-sm">
           <thead>
             <tr className="border-b border-gray-100 bg-gray-50 text-left text-xs uppercase tracking-wide text-gray-400">
@@ -101,7 +102,7 @@ export function ComisionesList({ rows }: { rows: ComB2BRow[] }) {
               <th className="px-4 py-3 text-right">% Com.</th>
               <th className="px-4 py-3 text-right">A pagar</th>
               <th className="px-4 py-3">Estado</th>
-              <th className="px-4 py-3"></th>
+              <th className="px-4 py-3">Acciones</th>
             </tr>
           </thead>
           <tbody>
@@ -111,7 +112,7 @@ export function ComisionesList({ rows }: { rows: ComB2BRow[] }) {
             {visibles.map((r) => <Fila key={r.id} row={r} />)}
           </tbody>
         </table>
-      </div>
+      </ResponsiveTableShell>
     </div>
   );
 }
@@ -133,13 +134,13 @@ function Fila({ row }: { row: ComB2BRow }) {
   if (row.sinComision) {
     return (
       <tr className="border-b border-gray-50 hover:bg-gray-50">
-        <td className="px-4 py-3">{linkContrato}</td>
-        <td className="px-4 py-3 text-gray-700">{row.aliado ?? "—"}</td>
-        <td className="px-4 py-3 text-gray-500">{row.cliente ?? "—"}</td>
-        <td className="px-4 py-3 text-right text-gray-300">—</td>
-        <td className="px-4 py-3 text-right text-gray-400">Por definir</td>
-        <td className="px-4 py-3"><span className="rounded-full bg-gray-100 px-2 py-0.5 text-xs text-gray-500">Sin definir</span></td>
-        <td className="px-4 py-3 text-right">
+        <td className="px-4 py-3" data-label="Contrato">{linkContrato}</td>
+        <td className="px-4 py-3 text-gray-700" data-label="Aliado">{row.aliado ?? "—"}</td>
+        <td className="px-4 py-3 text-gray-500" data-label="Cliente">{row.cliente ?? "—"}</td>
+        <td className="px-4 py-3 text-right text-gray-300" data-label="% Com.">—</td>
+        <td className="px-4 py-3 text-right text-gray-400" data-label="A pagar">Por definir</td>
+        <td className="px-4 py-3" data-label="Estado"><span className="rounded-full bg-gray-100 px-2 py-0.5 text-xs text-gray-500">Sin definir</span></td>
+        <td className="px-4 py-3 text-right" data-label="Acciones">
           <Link href={`/dashboard/contratos/${encodeURIComponent(row.numero_contrato)}`} className="text-xs font-medium hover:underline" style={{ color: "var(--brand-primary)" }}>
             Definir comisión →
           </Link>
@@ -151,17 +152,17 @@ function Fila({ row }: { row: ComB2BRow }) {
   return (
     <>
       <tr className="border-b border-gray-50 hover:bg-gray-50">
-        <td className="px-4 py-3">
+        <td className="px-4 py-3" data-label="Contrato">
           <button type="button" onClick={() => setAbierto((o) => !o)} className="mr-1 align-middle text-gray-400 hover:text-gray-600">
             {abierto ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
           </button>
           {linkContrato}
         </td>
-        <td className="px-4 py-3 text-gray-700">{row.aliado ?? "—"}</td>
-        <td className="px-4 py-3 text-gray-500">{row.cliente ?? "—"}</td>
-        <td className="px-4 py-3 text-right tabular-nums text-gray-600">{((row.pct_comision ?? 0) * 100).toFixed(1)}%</td>
-        <td className="px-4 py-3 text-right font-semibold tabular-nums" style={{ color: "var(--brand-primary)" }}>{formatCOP(row.totalPagar ?? 0)}</td>
-        <td className="px-4 py-3">
+        <td className="px-4 py-3 text-gray-700" data-label="Aliado">{row.aliado ?? "—"}</td>
+        <td className="px-4 py-3 text-gray-500" data-label="Cliente">{row.cliente ?? "—"}</td>
+        <td className="px-4 py-3 text-right tabular-nums text-gray-600" data-label="% Com.">{((row.pct_comision ?? 0) * 100).toFixed(1)}%</td>
+        <td className="px-4 py-3 text-right font-semibold tabular-nums" style={{ color: "var(--brand-primary)" }} data-label="A pagar">{formatCOP(row.totalPagar ?? 0)}</td>
+        <td className="px-4 py-3" data-label="Estado">
           {pagada ? (
             <span className="rounded-full bg-green-100 px-2 py-0.5 text-xs text-green-700">Pagada{row.fecha_pago ? ` · ${row.fecha_pago}` : ""}</span>
           ) : parcial ? (
@@ -170,7 +171,7 @@ function Fila({ row }: { row: ComB2BRow }) {
             <span className="rounded-full bg-amber-100 px-2 py-0.5 text-xs text-amber-700">Pendiente</span>
           )}
         </td>
-        <td className="px-4 py-3 text-right">
+        <td className="px-4 py-3 text-right" data-label="Acciones">
           <div className="flex items-center justify-end gap-3">
             {row.tipoAliado !== "agencia" && (
               <Link

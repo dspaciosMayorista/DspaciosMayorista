@@ -3,6 +3,7 @@ import { contextoCotizacion } from "@/lib/cotizacion/acceso";
 import Link from "next/link";
 import { Button } from "@/components/ui/button";
 import { formatMoneda, formatFechaLarga } from "@/lib/utils";
+import { ResponsiveTableShell } from "@/components/ui/ResponsiveTableShell";
 
 export const dynamic = "force-dynamic";
 
@@ -51,7 +52,7 @@ export default async function CotizacionesPage() {
           <p className="mt-1 text-sm">Crea la primera desde el tarifario (Reservar).</p>
         </div>
       ) : (
-        <div className="overflow-x-auto rounded-xl border border-gray-200 bg-white">
+        <ResponsiveTableShell minWidth={720} className="overflow-x-auto rounded-xl border border-gray-200 bg-white">
           <table className="w-full min-w-[720px] text-sm">
             <thead>
               <tr className="border-b border-gray-100 bg-gray-50 text-left text-xs uppercase tracking-wide text-gray-400">
@@ -61,13 +62,13 @@ export default async function CotizacionesPage() {
                 <th className="px-4 py-3">Salida</th>
                 <th className="px-4 py-3 text-right">Valor</th>
                 <th className="px-4 py-3">Estado</th>
-                <th className="px-4 py-3"></th>
+                <th className="px-4 py-3">Acciones</th>
               </tr>
             </thead>
             <tbody>
               {cots.map((c) => (
                 <tr key={c.id} className="border-b border-gray-50 hover:bg-gray-50">
-                  <td className="px-4 py-3 font-mono font-medium text-gray-800">
+                  <td className="px-4 py-3 font-mono font-medium text-gray-800" data-label="Cotización">
                     {c.codigo}
                     {c.tipo === "manual" && (
                       <span className="ml-1.5 rounded bg-[color:var(--brand-accent)]/15 px-1.5 py-0.5 align-middle font-sans text-[9px] font-semibold uppercase tracking-wide" style={{ color: "var(--brand-primary)" }}>Dinámica</span>
@@ -79,16 +80,16 @@ export default async function CotizacionesPage() {
                       <span className="ml-1 text-[10px] font-normal text-gray-400">→ {c.numero_contrato}</span>
                     )}
                   </td>
-                  <td className="px-4 py-3 text-gray-700">{c.cliente ?? "—"}</td>
-                  <td className="px-4 py-3 text-gray-500">{c.destino ?? "—"}</td>
-                  <td className="px-4 py-3 text-gray-500">{formatFechaLarga(c.fecha_salida)}</td>
-                  <td className="px-4 py-3 text-right tabular-nums text-gray-700">{formatMoneda(c.precio_venta ?? 0, c.moneda)}</td>
-                  <td className="px-4 py-3">
+                  <td className="px-4 py-3 text-gray-700" data-label="Cliente">{c.cliente ?? "—"}</td>
+                  <td className="px-4 py-3 text-gray-500" data-label="Destino">{c.destino ?? "—"}</td>
+                  <td className="px-4 py-3 text-gray-500" data-label="Salida">{formatFechaLarga(c.fecha_salida)}</td>
+                  <td className="px-4 py-3 text-right tabular-nums text-gray-700" data-label="Valor">{formatMoneda(c.precio_venta ?? 0, c.moneda)}</td>
+                  <td className="px-4 py-3" data-label="Estado">
                     <span className={`rounded-full px-2 py-0.5 text-xs ${ESTADO_BADGE[c.estado] ?? "bg-gray-100 text-gray-600"}`}>
                       {c.estado}
                     </span>
                   </td>
-                  <td className="px-4 py-3 text-right">
+                  <td className="px-4 py-3 text-right" data-label="Acciones">
                     <Link href={`/dashboard/cotizaciones/${c.id}`} className="text-xs font-medium text-[#1D7C9A] hover:underline">
                       Ver →
                     </Link>
@@ -97,7 +98,7 @@ export default async function CotizacionesPage() {
               ))}
             </tbody>
           </table>
-        </div>
+        </ResponsiveTableShell>
       )}
     </div>
   );

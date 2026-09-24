@@ -5,6 +5,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { formatCOP } from "@/lib/utils";
 import { crearEscala, eliminarEscala, guardarRangosEscala, actualizarEscalaUsuario } from "./actions";
+import { ResponsiveTableShell } from "@/components/ui/ResponsiveTableShell";
 
 type Rango = { pvp_desde: number; pvp_hasta: number | null; pct: number };
 type Escala = { id: number; nombre: string; rangos: Rango[] };
@@ -101,23 +102,23 @@ function EscalaEditor({ escala }: { escala: Escala }) {
         <p className="text-sm font-semibold text-gray-700">{escala.nombre}</p>
         <DelBtn onDel={() => eliminarEscala(escala.id)} label="Eliminar escala" />
       </div>
-      <div className="overflow-x-auto">
+      <ResponsiveTableShell minWidth={460} className="overflow-x-auto">
         <table className="min-w-[460px] text-sm">
           <thead><tr className="text-left text-xs text-gray-400">
-            <th className="px-2 py-1">PVP desde</th><th className="px-2 py-1">PVP hasta (vacío = abierto)</th><th className="px-2 py-1">% comisión</th><th></th>
+            <th className="px-2 py-1">PVP desde</th><th className="px-2 py-1">PVP hasta (vacío = abierto)</th><th className="px-2 py-1">% comisión</th><th>Quitar</th>
           </tr></thead>
           <tbody>
             {rangos.map((r, i) => (
               <tr key={i}>
-                <td className="px-1 py-1"><Input type="number" min={0} className="w-32" value={r.desde} onChange={(e) => set(i, "desde", e.target.value)} /></td>
-                <td className="px-1 py-1"><Input type="number" min={0} className="w-32" value={r.hasta} onChange={(e) => set(i, "hasta", e.target.value)} placeholder="abierto" /></td>
-                <td className="px-1 py-1"><Input type="number" min={0} step="0.01" className="w-24" value={r.pct} onChange={(e) => set(i, "pct", e.target.value)} placeholder="0.5" /></td>
-                <td className="px-1 py-1"><button type="button" onClick={() => delRango(i)} className="text-xs text-gray-400 hover:text-red-500">✕</button></td>
+                <td className="px-1 py-1" data-label="PVP desde"><Input type="number" min={0} className="w-32" value={r.desde} onChange={(e) => set(i, "desde", e.target.value)} /></td>
+                <td className="px-1 py-1" data-label="PVP hasta"><Input type="number" min={0} className="w-32" value={r.hasta} onChange={(e) => set(i, "hasta", e.target.value)} placeholder="abierto" /></td>
+                <td className="px-1 py-1" data-label="% comisión"><Input type="number" min={0} step="0.01" className="w-24" value={r.pct} onChange={(e) => set(i, "pct", e.target.value)} placeholder="0.5" /></td>
+                <td className="px-1 py-1" data-label=""><button type="button" onClick={() => delRango(i)} className="text-xs text-gray-400 hover:text-red-500">✕</button></td>
               </tr>
             ))}
           </tbody>
         </table>
-      </div>
+      </ResponsiveTableShell>
       <div className="mt-2 flex items-center gap-3">
         <button type="button" onClick={addRango} className="text-xs font-medium text-[var(--brand-accent)]">+ Agregar rango</button>
         <Button onClick={guardar} disabled={pending} className="h-8" style={{ backgroundColor: "var(--brand-primary)" }}>{pending ? "…" : "Guardar rangos"}</Button>

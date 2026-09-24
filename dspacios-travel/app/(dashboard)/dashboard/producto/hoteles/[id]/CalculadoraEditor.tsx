@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { formatCOP } from "@/lib/utils";
+import { ResponsiveTableShell } from "@/components/ui/ResponsiveTableShell";
 import {
   generarTarifasDubai, validarDubaiParams, type DubaiParams, type DubaiPromo, type DubaiBase, type DubaiSuplementoRegimen,
   generarTarifasMixta, type MixtaParams, type MixtaAcom, MIXTA_ACOMS, type CalcTipo,
@@ -281,21 +282,21 @@ function DubaiForm({
       </div>
       <div>
         <p className={lbl}>Base por persona (doble, {regimenBase}) — por categoría y temporada</p>
-        <div className="overflow-x-auto">
+        <ResponsiveTableShell minWidth={420} className="overflow-x-auto">
           <table className="min-w-[420px] border-collapse text-sm">
             <thead><tr className="text-left text-xs text-gray-400"><th className="px-2 py-1">Categoría \ Temporada</th>{temporadas.map((t) => <th key={t} className="px-2 py-1">{t}</th>)}</tr></thead>
             <tbody>
               {categorias.map((c) => (
                 <tr key={c} className="border-t border-gray-100">
-                  <td className="px-2 py-1 font-medium text-gray-700">{c}</td>
+                  <td className="px-2 py-1 font-medium text-gray-700" data-label="Categoría">{c}</td>
                   {temporadas.map((t) => (
-                    <td key={t} className="px-1 py-1"><Input type="number" className="w-28" value={bases[`${c}|${t}`] ?? ""} onChange={(e) => setBase(c, t, e.target.value)} placeholder="0" /></td>
+                    <td key={t} className="px-1 py-1" data-label={t}><Input type="number" className="w-28" value={bases[`${c}|${t}`] ?? ""} onChange={(e) => setBase(c, t, e.target.value)} placeholder="0" /></td>
                   ))}
                 </tr>
               ))}
             </tbody>
           </table>
-        </div>
+        </ResponsiveTableShell>
       </div>
       {!adultsOnly && basesList.length > 0 && (
         <div>
@@ -481,6 +482,7 @@ type AcomCfg = Record<MixtaAcom, { modo: "hab" | "pax"; iva: boolean }>;
 const ACOM_LABEL: Record<MixtaAcom, string> = { sencilla: "Sencilla", doble: "Doble", triple: "Triple", multiple: "Múltiple" };
 const CAMPOS = ["sencilla", "doble", "triple", "multiple", "nino", "nino2", "infante"] as const;
 type Campo = (typeof CAMPOS)[number];
+const CAMPO_LABEL: Record<Campo, string> = { sencilla: "Sencilla", doble: "Doble", triple: "Triple", multiple: "Múltiple", nino: "Niño 1", nino2: "Niño 2", infante: "Infante" };
 
 function MixtaForm({
   hotelId, categorias, temporadas, regimenes, inicial, adultsOnly,
@@ -619,7 +621,7 @@ function MixtaForm({
       {/* Valores por categoría × temporada */}
       <div>
         <p className={lbl}>Valores por categoría y temporada (según el modo de cada acomodación)</p>
-        <div className="overflow-x-auto rounded-lg border border-gray-200">
+        <ResponsiveTableShell minWidth={860} className="overflow-x-auto rounded-lg border border-gray-200">
           <table className="min-w-[860px] border-collapse text-sm">
             <thead>
               <tr className="bg-gray-50 text-left text-xs text-gray-400">
@@ -631,15 +633,15 @@ function MixtaForm({
             <tbody>
               {categorias.flatMap((c) => temporadas.map((t) => (
                 <tr key={`${c}|${t}`} className="border-t border-gray-100">
-                  <td className="px-2 py-1 text-xs font-medium text-gray-700">{c} · {t}</td>
+                  <td className="px-2 py-1 text-xs font-medium text-gray-700" data-label="Categoría · Temporada">{c} · {t}</td>
                   {(adultsOnly ? CAMPOS.filter((campo) => !["nino", "nino2", "infante"].includes(campo)) : CAMPOS).map((campo) => (
-                    <td key={campo} className="px-1 py-1"><Input type="number" className="w-24" value={vals[`${c}|${t}|${campo}`] ?? ""} onChange={(e) => setVal(c, t, campo, e.target.value)} placeholder="0" /></td>
+                    <td key={campo} className="px-1 py-1" data-label={CAMPO_LABEL[campo]}><Input type="number" className="w-24" value={vals[`${c}|${t}|${campo}`] ?? ""} onChange={(e) => setVal(c, t, campo, e.target.value)} placeholder="0" /></td>
                   ))}
                 </tr>
               )))}
             </tbody>
           </table>
-        </div>
+        </ResponsiveTableShell>
       </div>
 
       {preview.length > 0 && <PreviewTabla titulo="Vista previa — tarifa por persona resultante" filas={preview} ocultarNinos={adultsOnly} />}
@@ -761,21 +763,21 @@ function CorporativaForm({
       </div>
       <div>
         <p className={lbl}>Tarifa de habitación SGL/DBL ({regimenBase || "régimen base"}) — por categoría y temporada</p>
-        <div className="overflow-x-auto">
+        <ResponsiveTableShell minWidth={420} className="overflow-x-auto">
           <table className="min-w-[420px] border-collapse text-sm">
             <thead><tr className="text-left text-xs text-gray-400"><th className="px-2 py-1">Categoría \ Temporada</th>{temporadas.map((t) => <th key={t} className="px-2 py-1">{t}</th>)}</tr></thead>
             <tbody>
               {categorias.map((c) => (
                 <tr key={c} className="border-t border-gray-100">
-                  <td className="px-2 py-1 font-medium text-gray-700">{c}</td>
+                  <td className="px-2 py-1 font-medium text-gray-700" data-label="Categoría">{c}</td>
                   {temporadas.map((t) => (
-                    <td key={t} className="px-1 py-1"><Input type="number" className="w-28" value={bases[`${c}|${t}`] ?? ""} onChange={(e) => setBase(c, t, e.target.value)} placeholder="0" /></td>
+                    <td key={t} className="px-1 py-1" data-label={t}><Input type="number" className="w-28" value={bases[`${c}|${t}`] ?? ""} onChange={(e) => setBase(c, t, e.target.value)} placeholder="0" /></td>
                   ))}
                 </tr>
               ))}
             </tbody>
           </table>
-        </div>
+        </ResponsiveTableShell>
       </div>
       {preview.length > 0 && <PreviewTabla titulo={`Vista previa (${regimenBase})`} filas={preview} ocultarNinos={adultsOnly} />}
       <BotonesGuardar pending={pending} msg={msg} onGuardar={() => guardar("solo")} onAgregar={() => guardar("agregar")} onReemplazar={() => guardar("reemplazar")} />
@@ -793,7 +795,7 @@ function PreviewTabla({ titulo, filas, ocultarNinos = false }: { titulo: string;
   return (
     <div>
       <p className={lbl}>{titulo}</p>
-      <div className="overflow-x-auto rounded-lg border border-gray-200">
+      <ResponsiveTableShell minWidth={620} className="overflow-x-auto rounded-lg border border-gray-200">
         <table className="w-full min-w-[620px] text-xs">
           <thead><tr className="bg-gray-50 text-left text-gray-400">
             <th className="px-2 py-1">Categoría</th><th className="px-2 py-1">Temporada</th>
@@ -804,24 +806,24 @@ function PreviewTabla({ titulo, filas, ocultarNinos = false }: { titulo: string;
           <tbody>
             {filas.map((f, i) => (
               <tr key={i} className="border-t border-gray-50">
-                <td className="px-2 py-1 text-gray-700">{f.tipo_habitacion}</td>
-                <td className="px-2 py-1 text-gray-500">{f.temporada}</td>
-                <td className="px-2 py-1 text-right tabular-nums">{formatCOP(f.neto_sencilla)}</td>
-                <td className="px-2 py-1 text-right tabular-nums">{formatCOP(f.neto_doble)}</td>
-                <td className="px-2 py-1 text-right tabular-nums">{formatCOP(f.neto_triple)}</td>
-                <td className="px-2 py-1 text-right tabular-nums">{formatCOP(f.neto_multiple)}</td>
+                <td className="px-2 py-1 text-gray-700" data-label="Categoría">{f.tipo_habitacion}</td>
+                <td className="px-2 py-1 text-gray-500" data-label="Temporada">{f.temporada}</td>
+                <td className="px-2 py-1 text-right tabular-nums" data-label="Sencilla">{formatCOP(f.neto_sencilla)}</td>
+                <td className="px-2 py-1 text-right tabular-nums" data-label="Doble">{formatCOP(f.neto_doble)}</td>
+                <td className="px-2 py-1 text-right tabular-nums" data-label="Triple">{formatCOP(f.neto_triple)}</td>
+                <td className="px-2 py-1 text-right tabular-nums" data-label="Múltiple">{formatCOP(f.neto_multiple)}</td>
                 {!ocultarNinos && (
                   <>
-                    <td className="px-2 py-1 text-right tabular-nums">{formatCOP(f.neto_nino)}</td>
-                    <td className="px-2 py-1 text-right tabular-nums">{f.neto_nino2 != null ? formatCOP(f.neto_nino2) : "—"}</td>
-                    <td className="px-2 py-1 text-right tabular-nums">{f.neto_infante != null ? formatCOP(f.neto_infante) : "—"}</td>
+                    <td className="px-2 py-1 text-right tabular-nums" data-label="Niño 1">{formatCOP(f.neto_nino)}</td>
+                    <td className="px-2 py-1 text-right tabular-nums" data-label="Niño 2">{f.neto_nino2 != null ? formatCOP(f.neto_nino2) : "—"}</td>
+                    <td className="px-2 py-1 text-right tabular-nums" data-label="Infante">{f.neto_infante != null ? formatCOP(f.neto_infante) : "—"}</td>
                   </>
                 )}
               </tr>
             ))}
           </tbody>
         </table>
-      </div>
+      </ResponsiveTableShell>
     </div>
   );
 }

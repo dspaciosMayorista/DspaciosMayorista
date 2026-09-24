@@ -4,6 +4,7 @@ import { useState, useTransition } from "react";
 import { formatCOP } from "@/lib/utils";
 import { agregarDescuentoLiquidacion, eliminarDescuentoLiquidacion } from "./actions";
 import { ChevronDown, ChevronRight } from "lucide-react";
+import { ResponsiveTableShell } from "@/components/ui/ResponsiveTableShell";
 
 export type DescuentoRow = { id: number; valor: number; descripcion: string | null; numero_contrato: string | null };
 
@@ -37,7 +38,7 @@ export function LiquidacionTable({ filas, mes }: { filas: FilaLiquidacion[]; mes
   );
 
   return (
-    <div className="overflow-x-auto rounded-xl border border-gray-200 bg-white">
+    <ResponsiveTableShell minWidth={900} className="overflow-x-auto rounded-xl border border-gray-200 bg-white">
       <table className="w-full min-w-[900px] text-sm">
         <thead>
           <tr className="bg-gray-50 text-left text-xs uppercase text-gray-400">
@@ -62,20 +63,20 @@ export function LiquidacionTable({ filas, mes }: { filas: FilaLiquidacion[]; mes
           <tfoot>
             <tr className="border-t-2 border-gray-200 bg-gray-50 font-semibold">
               <td className="px-3 py-2" colSpan={2}>Totales</td>
-              <td className="px-3 py-2 text-right tabular-nums">{formatCOP(tot.pvp)}</td>
-              <td className="px-3 py-2 text-right tabular-nums">{formatCOP(tot.base)}</td>
-              <td />
-              <td className="px-3 py-2 text-right tabular-nums">{formatCOP(tot.bruta)}</td>
-              <td />
-              <td className="px-3 py-2 text-right tabular-nums text-red-500">
+              <td className="px-3 py-2 text-right tabular-nums" data-label="Σ PVP mes">{formatCOP(tot.pvp)}</td>
+              <td className="px-3 py-2 text-right tabular-nums" data-label="Σ Base comis.">{formatCOP(tot.base)}</td>
+              <td data-label="" />
+              <td className="px-3 py-2 text-right tabular-nums" data-label="Comisión bruta">{formatCOP(tot.bruta)}</td>
+              <td data-label="" />
+              <td className="px-3 py-2 text-right tabular-nums text-red-500" data-label="Descuentos">
                 {tot.descuentos > 0 ? `− ${formatCOP(tot.descuentos)}` : "—"}
               </td>
-              <td className="px-3 py-2 text-right tabular-nums" style={{ color: "var(--brand-primary)" }}>{formatCOP(tot.netaFinal)}</td>
+              <td className="px-3 py-2 text-right tabular-nums" style={{ color: "var(--brand-primary)" }} data-label="Neta a pagar">{formatCOP(tot.netaFinal)}</td>
             </tr>
           </tfoot>
         )}
       </table>
-    </div>
+    </ResponsiveTableShell>
   );
 }
 
@@ -87,20 +88,20 @@ function FilaAsesor({ f, mes }: { f: FilaLiquidacion; mes: string }) {
   return (
     <>
       <tr className="border-t border-gray-50">
-        <td className="px-3 py-2 text-gray-700">
+        <td className="px-3 py-2 text-gray-700" data-label="Asesor">
           <button type="button" onClick={() => setAbierto((o) => !o)} className="mr-1 align-middle text-gray-400 hover:text-gray-600">
             {abierto ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
           </button>
           {f.nombre}
           {f.sinEscala && <span className="ml-2 rounded-full bg-amber-50 px-2 py-0.5 text-[10px] text-amber-600">sin escala</span>}
         </td>
-        <td className="px-3 py-2 text-center tabular-nums text-gray-500">{f.contratos}</td>
-        <td className="px-3 py-2 text-right tabular-nums">{formatCOP(f.pvp)}</td>
-        <td className="px-3 py-2 text-right tabular-nums">{formatCOP(f.base)}</td>
-        <td className="px-3 py-2 text-right tabular-nums">{f.pct}%</td>
-        <td className="px-3 py-2 text-right tabular-nums">{formatCOP(f.bruta)}</td>
-        <td className="px-3 py-2 text-right tabular-nums text-gray-500">{formatCOP(f.retencion)}</td>
-        <td className="px-3 py-2 text-right tabular-nums">
+        <td className="px-3 py-2 text-center tabular-nums text-gray-500" data-label="Contratos">{f.contratos}</td>
+        <td className="px-3 py-2 text-right tabular-nums" data-label="Σ PVP mes">{formatCOP(f.pvp)}</td>
+        <td className="px-3 py-2 text-right tabular-nums" data-label="Σ Base comis.">{formatCOP(f.base)}</td>
+        <td className="px-3 py-2 text-right tabular-nums" data-label="%">{f.pct}%</td>
+        <td className="px-3 py-2 text-right tabular-nums" data-label="Comisión bruta">{formatCOP(f.bruta)}</td>
+        <td className="px-3 py-2 text-right tabular-nums text-gray-500" data-label="Retención">{formatCOP(f.retencion)}</td>
+        <td className="px-3 py-2 text-right tabular-nums" data-label="Descuentos">
           {totalDescuentos > 0 ? (
             <button type="button" onClick={() => setAbierto(true)} className="text-red-500 hover:underline">
               − {formatCOP(totalDescuentos)}
@@ -111,7 +112,7 @@ function FilaAsesor({ f, mes }: { f: FilaLiquidacion; mes: string }) {
             </button>
           )}
         </td>
-        <td className="px-3 py-2 text-right font-semibold tabular-nums" style={{ color: "var(--brand-primary)" }}>{formatCOP(netaFinal)}</td>
+        <td className="px-3 py-2 text-right font-semibold tabular-nums" style={{ color: "var(--brand-primary)" }} data-label="Neta a pagar">{formatCOP(netaFinal)}</td>
       </tr>
       {abierto && (
         <tr className="border-t border-gray-100 bg-gray-50/60">

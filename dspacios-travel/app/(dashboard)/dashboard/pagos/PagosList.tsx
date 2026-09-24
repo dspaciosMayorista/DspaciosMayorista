@@ -6,6 +6,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { formatMoneda, formatFechaLarga, formatCOP } from "@/lib/utils";
 import { registrarPagoProveedor, deshacerUltimoPago, asignarProveedorCuentaPorPagar, configurarFacturaProveedor } from "./actions";
+import { ResponsiveTableShell } from "@/components/ui/ResponsiveTableShell";
 
 export type PagoRow = {
   id: number;
@@ -146,7 +147,7 @@ export function PagosList({ rows, proveedores, catalogo = [], ivaPct = 0.19 }: {
       </div>
 
       {/* Tabla */}
-      <div className="overflow-x-auto rounded-xl border border-gray-200 bg-white">
+      <ResponsiveTableShell minWidth={860} className="overflow-x-auto rounded-xl border border-gray-200 bg-white">
         <table className="w-full min-w-[860px] text-sm">
           <thead>
             <tr className="border-b border-gray-100 bg-gray-50 text-left text-xs uppercase tracking-wide text-gray-400">
@@ -157,7 +158,7 @@ export function PagosList({ rows, proveedores, catalogo = [], ivaPct = 0.19 }: {
               <th className="px-4 py-3 text-right">Valor</th>
               <th className="px-4 py-3 text-right">Pagado</th>
               <th className="px-4 py-3 text-right">Saldo</th>
-              <th className="px-4 py-3"></th>
+              <th className="px-4 py-3">Detalle</th>
             </tr>
           </thead>
           <tbody>
@@ -180,7 +181,7 @@ export function PagosList({ rows, proveedores, catalogo = [], ivaPct = 0.19 }: {
             ))}
           </tbody>
         </table>
-      </div>
+      </ResponsiveTableShell>
     </div>
   );
 }
@@ -212,7 +213,7 @@ function FilaPago({
   return (
     <>
       <tr className="cursor-pointer border-b border-gray-50 hover:bg-gray-50" onClick={onToggle}>
-        <td className="px-4 py-3 text-gray-800">
+        <td className="px-4 py-3 text-gray-800" data-label="Proveedor">
           <span
             className="mr-2 inline-block h-2.5 w-2.5 shrink-0 rounded-full align-middle"
             style={{ backgroundColor: configurada ? "var(--brand-success)" : "#dc2626" }}
@@ -231,9 +232,9 @@ function FilaPago({
             </span>
           )}
         </td>
-        <td className="px-4 py-3 text-gray-600">{row.servicio ?? "—"}</td>
-        <td className="px-4 py-3 font-mono text-gray-700">{row.numero_contrato}</td>
-        <td className="px-4 py-3 text-gray-500">
+        <td className="px-4 py-3 text-gray-600" data-label="Servicio">{row.servicio ?? "—"}</td>
+        <td className="px-4 py-3 font-mono text-gray-700" data-label="Contrato">{row.numero_contrato}</td>
+        <td className="px-4 py-3 text-gray-500" data-label="Vence">
           {row.fecha_vencimiento ? (
             <span style={atrasada ? { color: "#dc2626", fontWeight: 600 } : undefined}>
               {formatFechaLarga(row.fecha_vencimiento)}
@@ -243,15 +244,16 @@ function FilaPago({
             "—"
           )}
         </td>
-        <td className="px-4 py-3 text-right tabular-nums text-gray-700">{formatMoneda(row.valor_total, row.moneda)}</td>
-        <td className="px-4 py-3 text-right tabular-nums text-gray-600">{formatMoneda(row.pagado, row.moneda)}</td>
+        <td className="px-4 py-3 text-right tabular-nums text-gray-700" data-label="Valor">{formatMoneda(row.valor_total, row.moneda)}</td>
+        <td className="px-4 py-3 text-right tabular-nums text-gray-600" data-label="Pagado">{formatMoneda(row.pagado, row.moneda)}</td>
         <td
           className="px-4 py-3 text-right font-semibold tabular-nums"
           style={{ color: pagada ? "var(--brand-success)" : "var(--brand-primary)" }}
+          data-label="Saldo"
         >
           {pagada ? "Pagado" : formatMoneda(row.saldo, row.moneda)}
         </td>
-        <td className="px-4 py-3 text-right text-gray-400">{abierto ? "▾" : "▸"}</td>
+        <td className="px-4 py-3 text-right text-gray-400" data-label="">{abierto ? "▾ Ocultar" : "▸ Ver detalle"}</td>
       </tr>
       {abierto && (
         <tr className="bg-gray-50/60">

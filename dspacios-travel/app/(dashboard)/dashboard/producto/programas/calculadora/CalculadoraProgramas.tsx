@@ -5,6 +5,7 @@ import { Input } from "@/components/ui/input";
 import { formatMoneda } from "@/lib/utils";
 import { calcularNetoPrograma, type ModoBaseComisionable } from "@/lib/calc/programaPrecio";
 import { pvpPrograma } from "@/lib/programas";
+import { ResponsiveTableShell } from "@/components/ui/ResponsiveTableShell";
 
 const lbl = "mb-1 block text-xs font-medium text-gray-600";
 const sel = "w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm";
@@ -97,7 +98,7 @@ export function CalculadoraProgramas() {
       {/* Tarifas → neto */}
       <section className="rounded-xl border border-gray-200 bg-white p-5">
         <h2 className="mb-3 text-sm font-semibold text-gray-700">Tarifas del proveedor</h2>
-        <div className="overflow-x-auto">
+        <ResponsiveTableShell minWidth={640} className="overflow-x-auto">
           <table className="w-full min-w-[640px] text-sm">
             <thead>
               <tr className="border-b border-gray-100 text-left text-xs uppercase tracking-wide text-gray-400">
@@ -107,7 +108,7 @@ export function CalculadoraProgramas() {
                 <th className="px-2 py-2 text-right">Comisión</th>
                 <th className="px-2 py-2 text-right">Neto (a montar)</th>
                 {verPvp && <th className="px-2 py-2 text-right">PVP final</th>}
-                <th className="px-2 py-2"></th>
+                <th className="px-2 py-2">Quitar</th>
               </tr>
             </thead>
             <tbody>
@@ -115,17 +116,17 @@ export function CalculadoraProgramas() {
                 const r = calc(f.tarifa);
                 return (
                   <tr key={i} className="border-b border-gray-50">
-                    <td className="px-2 py-1.5">
+                    <td className="px-2 py-1.5" data-label="Etiqueta">
                       <Input value={f.etiqueta} onChange={(e) => upd(i, "etiqueta", e.target.value)} placeholder="Hotel / categoría" className="w-44" />
                     </td>
-                    <td className="px-2 py-1.5 text-right">
+                    <td className="px-2 py-1.5 text-right" data-label="Tarifa">
                       <Input type="number" value={f.tarifa} onChange={(e) => upd(i, "tarifa", e.target.value)} placeholder="0" className="w-28 text-right" />
                     </td>
-                    <td className="px-2 py-1.5 text-right tabular-nums text-gray-500">{r ? formatMoneda(r.baseComisionable, moneda) : "—"}</td>
-                    <td className="px-2 py-1.5 text-right tabular-nums text-gray-500">{r ? formatMoneda(r.comision, moneda) : "—"}</td>
-                    <td className="px-2 py-1.5 text-right font-semibold tabular-nums" style={{ color: "var(--brand-primary)" }}>{r ? formatMoneda(r.neto, moneda) : "—"}</td>
-                    {verPvp && <td className="px-2 py-1.5 text-right font-semibold tabular-nums" style={{ color: "var(--brand-success)" }}>{r?.pvp != null ? formatMoneda(r.pvp, moneda) : "—"}</td>}
-                    <td className="px-2 py-1.5 text-right">
+                    <td className="px-2 py-1.5 text-right tabular-nums text-gray-500" data-label="Base comis.">{r ? formatMoneda(r.baseComisionable, moneda) : "—"}</td>
+                    <td className="px-2 py-1.5 text-right tabular-nums text-gray-500" data-label="Comisión">{r ? formatMoneda(r.comision, moneda) : "—"}</td>
+                    <td className="px-2 py-1.5 text-right font-semibold tabular-nums" style={{ color: "var(--brand-primary)" }} data-label="Neto">{r ? formatMoneda(r.neto, moneda) : "—"}</td>
+                    {verPvp && <td className="px-2 py-1.5 text-right font-semibold tabular-nums" style={{ color: "var(--brand-success)" }} data-label="PVP final">{r?.pvp != null ? formatMoneda(r.pvp, moneda) : "—"}</td>}
+                    <td className="px-2 py-1.5 text-right" data-label="">
                       <button type="button" onClick={() => setFilas((p) => p.filter((_, j) => j !== i))} className="text-gray-400 hover:text-red-500" aria-label="Quitar">✕</button>
                     </td>
                   </tr>
@@ -133,7 +134,7 @@ export function CalculadoraProgramas() {
               })}
             </tbody>
           </table>
-        </div>
+        </ResponsiveTableShell>
         <div className="mt-3">
           <button type="button" onClick={() => setFilas((p) => [...p, { etiqueta: "", tarifa: "" }])} className="text-sm font-medium text-[#1D7C9A] hover:underline">
             + Agregar tarifa

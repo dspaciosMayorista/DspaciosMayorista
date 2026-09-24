@@ -225,8 +225,20 @@ export default async function DashboardLayout({
         {/* `relative`: contenedor de posicionamiento para el `LoadingScreen`
             no-fullscreen de `(dashboard)/loading.tsx` — así su overlay cubre
             solo esta área de contenido (no vuelve a tapar el sidebar/topbar
-            que ya se renderizaron). Puramente de layout, no toca sesión/rol. */}
-        <main data-dashboard-main className="relative min-w-0 flex-1 overflow-x-hidden" style={{ backgroundColor: "var(--dash-bg)" }}>
+            que ya se renderizaron). Puramente de layout, no toca sesión/rol.
+            `min-w-0` (sin `overflow-x-hidden`): un `<main>` flex-1 dentro de
+            un flex row, sin `min-w-0`, no puede encogerse por debajo del
+            ancho intrínseco de su contenido — eso ya evita que un hijo
+            demasiado ancho fuerce scroll de PÁGINA. `overflow-x-hidden`
+            hacía algo distinto y más dañino: en vez de dejar que un
+            contenedor interno (cada tabla ya trae su propio
+            `overflow-x-auto`) mostrara SU scroll, recortaba en silencio
+            cualquier cosa que se saliera del `<main>` — sin aviso, sin
+            forma de alcanzarlo. Quitarlo no reabre scroll de página (eso lo
+            sigue evitando `min-w-0`); lo que sí puede exponer es contenido
+            que antes se recortaba sin que nadie lo notara — que es
+            exactamente el bug que había que encontrar, no tapar. */}
+        <main data-dashboard-main className="relative min-w-0 flex-1" style={{ backgroundColor: "var(--dash-bg)" }}>
           {children}
         </main>
       </div>

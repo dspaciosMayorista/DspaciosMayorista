@@ -4,6 +4,7 @@ import { useState, useTransition } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { actualizarParametro, crearRangoEdad, eliminarRangoEdad, crearFormaPago, eliminarFormaPago } from "./actions";
+import { ResponsiveTableShell } from "@/components/ui/ResponsiveTableShell";
 
 type Param = { parametro: string; valor: number; descripcion: string | null };
 type Rango = { id: number; denominacion: string; edad_min: number; edad_max: number };
@@ -133,14 +134,14 @@ function ParametrosAdmin({ parametros }: { parametros: Param[] }) {
   return (
     <section>
       <h2 className="mb-3 text-sm font-semibold text-gray-700">Parámetros tributarios</h2>
-      <div className="overflow-x-auto rounded-xl border border-gray-200 bg-white">
+      <ResponsiveTableShell minWidth={480} className="overflow-x-auto rounded-xl border border-gray-200 bg-white">
         <table className="w-full min-w-[480px] text-sm">
           <thead><tr className="bg-gray-50 text-left text-xs uppercase text-gray-400">
             <th className="px-4 py-2">Parámetro</th><th className="px-4 py-2">Descripción</th><th className="px-4 py-2">Valor (%)</th>
           </tr></thead>
           <tbody>{parametros.map((p) => <ParamRow key={p.parametro} p={p} />)}</tbody>
         </table>
-      </div>
+      </ResponsiveTableShell>
       <p className="mt-2 text-xs text-gray-400">El valor se guarda como fracción (ej. 0.01 = 1%). Aquí se edita en %.</p>
     </section>
   );
@@ -151,9 +152,9 @@ function ParamRow({ p }: { p: Param }) {
   const [pending, start] = useTransition();
   return (
     <tr className="border-t border-gray-50">
-      <td className="px-4 py-2 font-medium text-gray-700">{p.parametro}</td>
-      <td className="px-4 py-2 text-gray-500">{p.descripcion ?? "—"}</td>
-      <td className="px-4 py-2">
+      <td className="px-4 py-2 font-medium text-gray-700" data-label="Parámetro">{p.parametro}</td>
+      <td className="px-4 py-2 text-gray-500" data-label="Descripción">{p.descripcion ?? "—"}</td>
+      <td className="px-4 py-2" data-label="Valor (%)">
         <div className="flex items-center gap-1">
           <Input type="number" className="w-24" value={val} onChange={(e) => setVal(e.target.value)} disabled={pending}
             onBlur={() => start(() => { void actualizarParametro(p.parametro, Number(val) / 100 || 0); })} />

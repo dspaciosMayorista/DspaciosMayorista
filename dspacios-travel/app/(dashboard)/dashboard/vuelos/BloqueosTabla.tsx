@@ -5,6 +5,7 @@ import Link from "next/link";
 import { formatFechaLarga } from "@/lib/utils";
 import { EliminarBloqueoBtn } from "./EliminarBloqueoBtn";
 import { mesKey, mesLabel } from "@/lib/vuelos/filtros";
+import { ResponsiveTableShell } from "@/components/ui/ResponsiveTableShell";
 
 // Tabla de INVENTARIO: sillas y ocupación por record. El control de
 // modalidad/emisión/pago vive en su propia pestaña — ver `ControlVuelosTabla`.
@@ -76,7 +77,7 @@ export function BloqueosTabla({ filas }: { filas: BloqueoFila[] }) {
         <span className="ml-auto text-xs text-gray-400">{vis.length} bloque(s)</span>
       </div>
 
-      <div className="overflow-x-auto rounded-xl border border-gray-200 bg-white">
+      <ResponsiveTableShell minWidth={1020} className="overflow-x-auto rounded-xl border border-gray-200 bg-white">
         <table className="w-full min-w-[1020px] text-sm">
           <thead>
             <tr className="bg-gray-50 text-left text-xs uppercase text-gray-400">
@@ -93,7 +94,7 @@ export function BloqueosTabla({ filas }: { filas: BloqueoFila[] }) {
               <th className="px-3 py-2 text-center">Total</th>
               <th className="px-3 py-2 text-center">Ocup.</th>
               <th className="px-3 py-2">F. Dev.</th>
-              <th className="px-3 py-2"></th>
+              <th className="px-3 py-2">Acción</th>
             </tr>
           </thead>
           <tbody>
@@ -102,22 +103,22 @@ export function BloqueosTabla({ filas }: { filas: BloqueoFila[] }) {
               const ocup = total > 0 ? Math.round(((b.plazo + b.conf) / total) * 100) : 0;
               return (
                 <tr key={b.id} className="border-t border-gray-50">
-                  <td className="px-3 py-2">
+                  <td className="px-3 py-2" data-label="Record">
                     <Link href={`/dashboard/vuelos/${b.id}`} className="font-mono text-sm font-semibold text-[#1D7C9A] hover:underline">{b.record}</Link>
                   </td>
-                  <td className="px-3 py-2 text-gray-600">{b.aerolinea ?? "—"}</td>
-                  <td className="px-3 py-2 text-gray-600">{b.ruta ?? "—"}</td>
-                  <td className="px-3 py-2 text-xs text-gray-500">{formatFechaLarga(b.fecha_ida)}{b.vuelo_ida ? ` · ${b.vuelo_ida}` : ""}</td>
-                  <td className="px-3 py-2 text-xs text-gray-500">{formatFechaLarga(b.fecha_regreso)}{b.vuelo_regreso ? ` · ${b.vuelo_regreso}` : ""}</td>
-                  <td className="px-3 py-2 text-center font-semibold tabular-nums" style={{ color: "var(--brand-success)" }}>{b.disp}</td>
-                  <td className="px-3 py-2 text-center tabular-nums" style={{ color: "#C99A2E" }}>{b.plazo}</td>
-                  <td className="px-3 py-2 text-center tabular-nums" style={{ color: "var(--brand-accent)" }}>{b.conf}</td>
-                  <td className="px-3 py-2 text-center tabular-nums text-red-600">{b.dev}</td>
-                  <td className="px-3 py-2 text-center tabular-nums text-gray-400">{b.nven}</td>
-                  <td className="px-3 py-2 text-center font-semibold tabular-nums">{total}</td>
-                  <td className="px-3 py-2 text-center tabular-nums text-gray-500">{ocup}%</td>
-                  <td className="px-3 py-2 text-xs text-gray-400">{formatFechaLarga(b.fecha_devolucion)}</td>
-                  <td className="px-3 py-2 text-right"><EliminarBloqueoBtn id={b.id} record={b.record} /></td>
+                  <td className="px-3 py-2 text-gray-600" data-label="Aerolínea">{b.aerolinea ?? "—"}</td>
+                  <td className="px-3 py-2 text-gray-600" data-label="Ruta">{b.ruta ?? "—"}</td>
+                  <td className="px-3 py-2 text-xs text-gray-500" data-label="Ida">{formatFechaLarga(b.fecha_ida)}{b.vuelo_ida ? ` · ${b.vuelo_ida}` : ""}</td>
+                  <td className="px-3 py-2 text-xs text-gray-500" data-label="Regreso">{formatFechaLarga(b.fecha_regreso)}{b.vuelo_regreso ? ` · ${b.vuelo_regreso}` : ""}</td>
+                  <td className="px-3 py-2 text-center font-semibold tabular-nums" style={{ color: "var(--brand-success)" }} data-label="Disponibles">{b.disp}</td>
+                  <td className="px-3 py-2 text-center tabular-nums" style={{ color: "#C99A2E" }} data-label="En plazo">{b.plazo}</td>
+                  <td className="px-3 py-2 text-center tabular-nums" style={{ color: "var(--brand-accent)" }} data-label="Confirmadas">{b.conf}</td>
+                  <td className="px-3 py-2 text-center tabular-nums text-red-600" data-label="Devueltas">{b.dev}</td>
+                  <td className="px-3 py-2 text-center tabular-nums text-gray-400" data-label="No vendidas">{b.nven}</td>
+                  <td className="px-3 py-2 text-center font-semibold tabular-nums" data-label="Total">{total}</td>
+                  <td className="px-3 py-2 text-center tabular-nums text-gray-500" data-label="Ocupación">{ocup}%</td>
+                  <td className="px-3 py-2 text-xs text-gray-400" data-label="F. devolución">{formatFechaLarga(b.fecha_devolucion)}</td>
+                  <td className="px-3 py-2 text-right" data-label=""><EliminarBloqueoBtn id={b.id} record={b.record} /></td>
                 </tr>
               );
             })}
@@ -125,18 +126,18 @@ export function BloqueosTabla({ filas }: { filas: BloqueoFila[] }) {
           <tfoot>
             <tr className="border-t-2 border-gray-200 bg-gray-50 font-semibold">
               <td className="px-3 py-2" colSpan={5}>TOTAL ({vis.length} bloques)</td>
-              <td className="px-3 py-2 text-center tabular-nums" style={{ color: "var(--brand-success)" }}>{tot.disp}</td>
-              <td className="px-3 py-2 text-center tabular-nums" style={{ color: "#C99A2E" }}>{tot.plazo}</td>
-              <td className="px-3 py-2 text-center tabular-nums" style={{ color: "var(--brand-accent)" }}>{tot.conf}</td>
-              <td className="px-3 py-2 text-center tabular-nums text-red-600">{tot.dev}</td>
-              <td className="px-3 py-2 text-center tabular-nums text-gray-400">{tot.nven}</td>
-              <td className="px-3 py-2 text-center tabular-nums">{tot.total}</td>
-              <td className="px-3 py-2 text-center tabular-nums text-gray-500">{ocupProm}%</td>
+              <td className="px-3 py-2 text-center tabular-nums" style={{ color: "var(--brand-success)" }} data-label="Disponibles">{tot.disp}</td>
+              <td className="px-3 py-2 text-center tabular-nums" style={{ color: "#C99A2E" }} data-label="En plazo">{tot.plazo}</td>
+              <td className="px-3 py-2 text-center tabular-nums" style={{ color: "var(--brand-accent)" }} data-label="Confirmadas">{tot.conf}</td>
+              <td className="px-3 py-2 text-center tabular-nums text-red-600" data-label="Devueltas">{tot.dev}</td>
+              <td className="px-3 py-2 text-center tabular-nums text-gray-400" data-label="No vendidas">{tot.nven}</td>
+              <td className="px-3 py-2 text-center tabular-nums" data-label="Total">{tot.total}</td>
+              <td className="px-3 py-2 text-center tabular-nums text-gray-500" data-label="Ocupación">{ocupProm}%</td>
               <td className="px-3 py-2" colSpan={2}></td>
             </tr>
           </tfoot>
         </table>
-      </div>
+      </ResponsiveTableShell>
     </div>
   );
 }

@@ -32,6 +32,8 @@ const EXTENSIONES = [".tsx", ".ts", ".mts", ""];
 // entienden) — se redirige a un stub trivial. Nunca se instancia de verdad
 // en la prueba (los fixtures usan `foto: null`), solo debe poder importarse.
 const STUB_NEXT_IMAGE = pathToFileURL(join(AQUI, "stubs", "nextImageStub.mjs")).href;
+// "next/link" — mismo problema, mismo criterio (ver el comentario del stub).
+const STUB_NEXT_LINK = pathToFileURL(join(AQUI, "stubs", "nextLinkStub.mjs")).href;
 // `BuscadorBooking.tsx` importa dos Server Actions reales ("use server") que
 // nunca ejecuta `Resultado` (son del formulario de búsqueda) pero que sí se
 // EVALÚAN al cargar el módulo — y ambas terminan importando `next/headers`
@@ -40,6 +42,11 @@ const STUB_NEXT_IMAGE = pathToFileURL(join(AQUI, "stubs", "nextImageStub.mjs")).
 // verdad, para no silenciar en falso un uso real inesperado.
 const STUB_RESERVAR_ACTIONS = pathToFileURL(join(AQUI, "stubs", "reservarActionsStub.mjs")).href;
 const STUB_BUSQUEDA_UNIDAD_ACTIONS = pathToFileURL(join(AQUI, "stubs", "busquedaUnidadActionsStub.mjs")).href;
+// `PasajerosContratoClient.tsx` (migración 188, CRM) importa su Server
+// Action real "./actions" (relativa, dentro de su propia carpeta) — "use
+// server" que termina en "next/headers". Se redirige solo cuando el import
+// parte de ESE archivo (mismo patrón que busquedaUnidadActions arriba).
+const STUB_PASAJEROS_CONTRATO_ACTIONS = pathToFileURL(join(AQUI, "stubs", "pasajerosContratoActionsStub.mjs")).href;
 // Módulos CSS ("*.module.css", o cualquier ".css") — ver cssModuleStub.mjs.
 // Se revisa ANTES que la resolución genérica de "@/*" de abajo: esa
 // resolución probaría el candidato "tal cual" (extensión "") y encontraría
@@ -54,11 +61,17 @@ export async function resolve(specifier, context, nextResolve) {
   if (specifier === "next/image") {
     return { url: STUB_NEXT_IMAGE, shortCircuit: true };
   }
+  if (specifier === "next/link") {
+    return { url: STUB_NEXT_LINK, shortCircuit: true };
+  }
   if (specifier === "@/app/(dashboard)/dashboard/reservar/actions") {
     return { url: STUB_RESERVAR_ACTIONS, shortCircuit: true };
   }
   if (specifier === "./busquedaUnidadActions" && context.parentURL?.endsWith("BuscadorBooking.tsx")) {
     return { url: STUB_BUSQUEDA_UNIDAD_ACTIONS, shortCircuit: true };
+  }
+  if (specifier === "./actions" && context.parentURL?.endsWith("PasajerosContratoClient.tsx")) {
+    return { url: STUB_PASAJEROS_CONTRATO_ACTIONS, shortCircuit: true };
   }
   if (specifier.startsWith("@/")) {
     const rel = specifier.slice(2);

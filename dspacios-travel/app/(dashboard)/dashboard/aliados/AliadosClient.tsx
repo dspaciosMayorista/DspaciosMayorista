@@ -5,6 +5,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { crearAliado, actualizarAliado, eliminarAliado } from "./actions";
 import { ChevronDown, ChevronRight } from "lucide-react";
+import { ResponsiveTableShell } from "@/components/ui/ResponsiveTableShell";
 
 type Aliado = {
   id: number; nombre: string; tipo: string | null; nit: string | null; tipo_documento: string | null;
@@ -105,16 +106,16 @@ export function AliadosClient({
       </div>
 
       {aliados.length > 0 && (
-        <div className="overflow-x-auto rounded-xl border border-gray-200 bg-white">
+        <ResponsiveTableShell minWidth={720} className="overflow-x-auto rounded-xl border border-gray-200 bg-white">
           <table className="w-full min-w-[720px] text-sm">
             <thead><tr className="bg-gray-50 text-left text-xs uppercase text-gray-400">
               <th className="px-3 py-2">Tipo</th><th className="px-3 py-2">Nombre</th><th className="px-3 py-2">Documento</th>
               <th className="px-3 py-2 text-right">% comisión</th><th className="px-3 py-2 text-center">Retención</th>
-              <th className="px-3 py-2 text-right">% ret.</th><th className="px-3 py-2"></th>
+              <th className="px-3 py-2 text-right">% ret.</th><th className="px-3 py-2">Acciones</th>
             </tr></thead>
             <tbody>{aliados.map((a) => <Row key={a.id} a={a} defAgencia={defAgencia} defFreelance={defFreelance} />)}</tbody>
           </table>
-        </div>
+        </ResponsiveTableShell>
       )}
     </div>
   );
@@ -131,27 +132,27 @@ function Row({ a, defAgencia, defFreelance }: { a: Aliado; defAgencia: number; d
   return (
     <>
       <tr className="border-t border-gray-50">
-        <td className="px-3 py-2">
+        <td className="px-3 py-2" data-label="Tipo">
           <button type="button" onClick={() => setAbierto((o) => !o)} className="mr-1 align-middle text-gray-400 hover:text-gray-600">
             {abierto ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
           </button>
           <span className="rounded-full bg-gray-100 px-2 py-0.5 text-xs text-gray-600">{a.tipo ?? "agencia"}</span>
         </td>
-        <td className="px-3 py-2 text-gray-700">{a.nombre}</td>
-        <td className="px-3 py-2 text-gray-500">{a.nit ? `${a.tipo_documento ?? "NIT"} ${a.nit}` : "—"}</td>
-        <td className="px-3 py-2 text-right">
+        <td className="px-3 py-2 text-gray-700" data-label="Nombre">{a.nombre}</td>
+        <td className="px-3 py-2 text-gray-500" data-label="Documento">{a.nit ? `${a.tipo_documento ?? "NIT"} ${a.nit}` : "—"}</td>
+        <td className="px-3 py-2 text-right" data-label="% comisión">
           <Input type="number" step="0.1" className="w-20" value={pct} placeholder={`def ${def.toFixed(1)}`}
             onChange={(e) => setPct(e.target.value)}
             onBlur={() => save({ pctComision: pct.trim() === "" ? null : Number(pct) / 100 })} />
         </td>
-        <td className="px-3 py-2 text-center">
+        <td className="px-3 py-2 text-center" data-label="Retención">
           <input type="checkbox" checked={ret} onChange={(e) => { setRet(e.target.checked); save({ aplicaRetencion: e.target.checked }); }} />
         </td>
-        <td className="px-3 py-2 text-right">
+        <td className="px-3 py-2 text-right" data-label="% ret.">
           <Input type="number" className="w-16" value={pctRet} onChange={(e) => setPctRet(e.target.value)}
             onBlur={() => save({ pctRetencion: Number(pctRet) / 100 || 0 })} />
         </td>
-        <td className="px-3 py-2 text-right">
+        <td className="px-3 py-2 text-right" data-label="Acciones">
           <button type="button" disabled={pending} onClick={() => { if (confirm(`¿Eliminar ${a.nombre}?`)) start(() => { void eliminarAliado(a.id); }); }}
             className="text-xs text-gray-400 hover:text-red-500">Eliminar</button>
         </td>
