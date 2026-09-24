@@ -12,7 +12,7 @@
     "start": "next start",
     "lint": "eslint",
     "test:unit": "node --test --experimental-strip-types --experimental-test-module-mocks --experimental-loader ./pruebas/support/aliasLoader.mjs \"pruebas/**/*.test.ts\"",
-    "test:react": "node --experimental-test-module-mocks --experimental-loader ./pruebas/support/reactLoader.mjs --test pruebas/resultadoInteraccion.test.ts pruebas/buscadorBookingDestinoInteraccion.test.ts pruebas/buscadorBookingPendienteInteraccion.react.ts pruebas/buscadorReceptivosPendienteInteraccion.react.ts pruebas/pasajerosContratoInteraccion.react.ts"
+    "test:react": "node --experimental-test-module-mocks --experimental-loader ./pruebas/support/reactLoader.mjs --test pruebas/resultadoInteraccion.test.ts pruebas/buscadorBookingDestinoInteraccion.test.ts pruebas/buscadorBookingPendienteInteraccion.react.ts pruebas/buscadorReceptivosPendienteInteraccion.react.ts pruebas/pasajerosContratoInteraccion.react.ts pruebas/buscarPasajeroDocumentoInteraccion.react.ts"
   },
   "dependencies": {
     "@base-ui/react": "^1.5.0",

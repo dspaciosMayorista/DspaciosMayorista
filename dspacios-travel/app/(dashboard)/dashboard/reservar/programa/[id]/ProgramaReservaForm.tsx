@@ -8,6 +8,7 @@ import { formatMoneda, calcularEdad } from "@/lib/utils";
 import { paxDeAcomodacion, textoEdadesHotel } from "@/lib/acomodaciones";
 import { esInfantePorEdad } from "@/lib/reservar/pasajeros";
 import { truncarPasajeros, recalcularVinculosPorEdad } from "@/lib/reservar/pasajerosFilas";
+import { BuscarPasajeroDocumento } from "@/components/pasajeros/BuscarPasajeroDocumento";
 import { reservarPrograma } from "../../actions";
 
 // Pax que cubre 1 habitación (Doble=2, Triple=3, Cuádruple=4, Sencilla=1).
@@ -178,6 +179,7 @@ export function ProgramaReservaForm({
         })),
       });
       if (!res.ok) return setError(res.error);
+      if (res.advertencias?.length) window.alert(`Contrato creado, pero con avisos:\n\n${res.advertencias.join("\n")}`);
       router.push(`/dashboard/contratos/${encodeURIComponent(res.numero)}`);
     });
   }
@@ -306,9 +308,33 @@ export function ProgramaReservaForm({
                     <Input value={p.nombres} onChange={(e) => updPasajero(i, "nombres", e.target.value)} placeholder="Nombres" />
                     <Input value={p.apellidos} onChange={(e) => updPasajero(i, "apellidos", e.target.value)} placeholder="Apellidos" />
                     <select value={p.tipoDoc} onChange={(e) => updPasajero(i, "tipoDoc", e.target.value)} className={sel}>
-                      <option>CC</option><option>CE</option><option>PASAPORTE</option><option>TI</option>
+                      {/* value="PAS" (no "PASAPORTE"): el núcleo atómico de la
+                          migración 167 compara literalmente contra 'PAS' para
+                          eximir del chequeo "solo dígitos" (un pasaporte real
+                          puede traer letras) — mismo valor que usan los otros
+                          4 formularios que capturan pasajeros. Con
+                          "PASAPORTE" ese chequeo SIEMPRE se aplicaba (bug
+                          preexistente, corregido aquí) y además la búsqueda
+                          por documento (migración 187) nunca cruzaba con un
+                          pasaporte cargado desde otro formulario. */}
+                      <option value="CC">CC</option><option value="CE">CE</option><option value="PAS">Pasaporte</option><option value="TI">TI</option>
                     </select>
-                    <Input value={p.numeroDoc} onChange={(e) => updPasajero(i, "numeroDoc", e.target.value)} placeholder="Documento" />
+                    <div className="flex items-center gap-1">
+                      <Input value={p.numeroDoc} onChange={(e) => updPasajero(i, "numeroDoc", e.target.value)} placeholder="Documento" />
+                      <BuscarPasajeroDocumento
+                        tipoId={p.tipoDoc}
+                        identificacion={p.numeroDoc}
+                        onAplicar={(datos) => {
+                          if (datos.fechaNacimiento) updPasajero(i, "fechaNacimiento", datos.fechaNacimiento);
+                          if (datos.nacionalidad) updPasajero(i, "nacionalidad", datos.nacionalidad);
+                          // nombres/apellidos SOLO si la fila encontrada ya
+                          // los trae estructurados (migración 187) — nunca se
+                          // parte `nombreHistorico` por heurística.
+                          if (datos.nombres) updPasajero(i, "nombres", datos.nombres);
+                          if (datos.apellidos) updPasajero(i, "apellidos", datos.apellidos);
+                        }}
+                      />
+                    </div>
                     <Input type="date" value={p.fechaNacimiento} onChange={(e) => updPasajero(i, "fechaNacimiento", e.target.value)} />
                     <Input value={p.nacionalidad} onChange={(e) => updPasajero(i, "nacionalidad", e.target.value)} placeholder="Nacionalidad" />
                   </div>

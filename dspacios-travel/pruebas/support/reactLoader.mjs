@@ -47,6 +47,10 @@ const STUB_BUSQUEDA_UNIDAD_ACTIONS = pathToFileURL(join(AQUI, "stubs", "busqueda
 // server" que termina en "next/headers". Se redirige solo cuando el import
 // parte de ESE archivo (mismo patrón que busquedaUnidadActions arriba).
 const STUB_PASAJEROS_CONTRATO_ACTIONS = pathToFileURL(join(AQUI, "stubs", "pasajerosContratoActionsStub.mjs")).href;
+// `BuscarPasajeroDocumento.tsx` (migración 187) importa la Server Action
+// real "@/lib/reservar/buscarPasajero" — mismo problema que las de arriba
+// (termina en "next/headers"). Mismo criterio de stub configurable.
+const STUB_BUSCAR_PASAJERO = pathToFileURL(join(AQUI, "stubs", "buscarPasajeroStub.mjs")).href;
 // Módulos CSS ("*.module.css", o cualquier ".css") — ver cssModuleStub.mjs.
 // Se revisa ANTES que la resolución genérica de "@/*" de abajo: esa
 // resolución probaría el candidato "tal cual" (extensión "") y encontraría
@@ -66,6 +70,9 @@ export async function resolve(specifier, context, nextResolve) {
   }
   if (specifier === "@/app/(dashboard)/dashboard/reservar/actions") {
     return { url: STUB_RESERVAR_ACTIONS, shortCircuit: true };
+  }
+  if (specifier === "@/lib/reservar/buscarPasajero") {
+    return { url: STUB_BUSCAR_PASAJERO, shortCircuit: true };
   }
   if (specifier === "./busquedaUnidadActions" && context.parentURL?.endsWith("BuscadorBooking.tsx")) {
     return { url: STUB_BUSQUEDA_UNIDAD_ACTIONS, shortCircuit: true };
