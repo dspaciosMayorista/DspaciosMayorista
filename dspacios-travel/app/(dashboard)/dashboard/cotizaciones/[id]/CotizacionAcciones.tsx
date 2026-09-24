@@ -7,6 +7,7 @@ import { Input } from "@/components/ui/input";
 import { calcularEdad } from "@/lib/utils";
 import { convertirCotizacion, descartarCotizacion } from "../../reservar/actions";
 import { type PasajeroReserva } from "@/lib/reservar/computo";
+import { BuscarPasajeroDocumento } from "@/components/pasajeros/BuscarPasajeroDocumento";
 
 type ClientePrefill = { nombres: string; apellidos: string; tipoDoc: string; numeroDoc: string };
 
@@ -48,8 +49,10 @@ export function CotizacionAcciones({
     setErr("");
     start(async () => {
       const r = await convertirCotizacion(id);
-      if (r.ok) router.push(`/dashboard/contratos/${r.numero}`);
-      else setErr(r.error);
+      if (r.ok) {
+        if (r.advertencias?.length) window.alert(`Contrato creado, pero con avisos:\n\n${r.advertencias.join("\n")}`);
+        router.push(`/dashboard/contratos/${r.numero}`);
+      } else setErr(r.error);
     });
   }
 
@@ -75,8 +78,10 @@ export function CotizacionAcciones({
     setErr("");
     start(async () => {
       const r = await convertirCotizacion(id, paxRows, false, asesorSel);
-      if (r.ok) router.push(`/dashboard/contratos/${r.numero}`);
-      else setErr(r.error);
+      if (r.ok) {
+        if (r.advertencias?.length) window.alert(`Contrato creado, pero con avisos:\n\n${r.advertencias.join("\n")}`);
+        router.push(`/dashboard/contratos/${r.numero}`);
+      } else setErr(r.error);
     });
   }
 
@@ -144,7 +149,25 @@ export function CotizacionAcciones({
                   {TIPOS_DOC.map((t) => <option key={t} value={t}>{t}</option>)}
                 </select>
               </div>
-              <div className="w-28"><label className="text-[11px] text-gray-500">N° doc</label><Input value={p.numeroDoc} onChange={(e) => setRow(i, "numeroDoc", e.target.value)} /></div>
+              <div className="w-28">
+                <label className="text-[11px] text-gray-500">N° doc</label>
+                <div className="flex items-center gap-1">
+                  <Input value={p.numeroDoc} onChange={(e) => setRow(i, "numeroDoc", e.target.value)} />
+                  <BuscarPasajeroDocumento
+                    tipoId={p.tipoDoc}
+                    identificacion={p.numeroDoc}
+                    onAplicar={(datos) => {
+                      if (datos.fechaNacimiento) setRow(i, "fechaNacimiento", datos.fechaNacimiento);
+                      if (datos.nacionalidad) setRow(i, "nacionalidad", datos.nacionalidad);
+                      // nombres/apellidos SOLO si la fila encontrada ya los
+                      // trae estructurados (migración 187) — nunca se parte
+                      // `nombreHistorico` por heurística.
+                      if (datos.nombres) setRow(i, "nombres", datos.nombres);
+                      if (datos.apellidos) setRow(i, "apellidos", datos.apellidos);
+                    }}
+                  />
+                </div>
+              </div>
               <div className="w-44"><label className="text-[11px] text-gray-500">Nacimiento</label><Input type="date" className="w-full" value={p.fechaNacimiento} onChange={(e) => setRow(i, "fechaNacimiento", e.target.value)} /></div>
               <div className="w-32"><label className="text-[11px] text-gray-500">Nacionalidad</label><Input value={p.nacionalidad} onChange={(e) => setRow(i, "nacionalidad", e.target.value)} /></div>
             </div>

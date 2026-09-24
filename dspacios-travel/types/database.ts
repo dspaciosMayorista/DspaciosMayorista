@@ -1637,6 +1637,11 @@ export type Database = {
           id: number;
           numero_contrato: string;
           nombre: string;
+          // Migración 187 — solo para pasajeros creados desde la 187 en
+          // adelante (UPDATE best-effort posterior a la creación, mismo split
+          // que ya capturaba el formulario). Null en filas históricas.
+          nombres: string | null;
+          apellidos: string | null;
           tipo_id: string | null;
           identificacion: string | null;
           fecha_nacimiento: string | null;
@@ -1649,6 +1654,8 @@ export type Database = {
           id?: number;
           numero_contrato: string;
           nombre: string;
+          nombres?: string | null;
+          apellidos?: string | null;
           tipo_id?: string | null;
           identificacion?: string | null;
           fecha_nacimiento?: string | null;
@@ -3728,6 +3735,27 @@ export type Database = {
           es_infante: boolean;
           responsable_id: number | null;
           orden: number;
+        }[];
+      };
+      // Migración 187 — búsqueda interna de pasajero por documento EXACTO
+      // (reutilización de identidad entre contratos). Solo lectura; filtra
+      // por rol interno + puede_ver_contrato/soy_asesor_del_contrato dentro
+      // de la propia función. NUNCA devuelve id/responsable_id/es_infante —
+      // esos son atributos del contrato de origen, no de la persona.
+      buscar_pasajero_por_documento: {
+        Args: {
+          p_tipo_id: string;
+          p_identificacion: string;
+        };
+        Returns: {
+          nombre: string;
+          nombres: string | null;
+          apellidos: string | null;
+          fecha_nacimiento: string | null;
+          nacionalidad: string | null;
+          veces_visto: number;
+          ultimo_contrato: string | null;
+          ultima_fecha: string | null;
         }[];
       };
       // Migración 171 — escritura financiera atómica del contrato. Solo

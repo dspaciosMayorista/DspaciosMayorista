@@ -10,6 +10,7 @@ import type { DestinoOpt } from "@/components/ComboDestino";
 import { ciudadIata } from "@/lib/iata";
 import { esInfantePorEdad } from "@/lib/reservar/pasajeros";
 import { quitarPasajero, recalcularVinculosPorEdad } from "@/lib/reservar/pasajerosFilas";
+import { BuscarPasajeroDocumento } from "@/components/pasajeros/BuscarPasajeroDocumento";
 import {
   crearContrato,
   type PasajeroInput,
@@ -291,6 +292,12 @@ export function NuevoContratoForm({
           forzarMargen,
         });
         if (res.ok) {
+          // El contrato SÍ se creó bien — esto es solo un dato demográfico
+          // secundario (nombres/apellidos estructurados) que no se pudo
+          // guardar; nunca se oculta ni se llama "cosmético".
+          if (res.advertencias?.length) {
+            window.alert(`Contrato creado, pero con avisos:\n\n${res.advertencias.join("\n")}`);
+          }
           router.push(`/dashboard/contratos/${encodeURIComponent(res.numero)}`);
         } else if (res.margenInsuficiente && puedeForzarMargen) {
           setAdvertenciaMargen(res.error);
@@ -777,7 +784,21 @@ export function NuevoContratoForm({
                 <Input placeholder="Nombres" value={p.nombres} onChange={(e) => setPasajero(i, { nombres: e.target.value })} />
                 <Input placeholder="Apellidos" value={p.apellidos} onChange={(e) => setPasajero(i, { apellidos: e.target.value })} />
                 <Input placeholder="Tipo ID" value={p.tipoId} onChange={(e) => setPasajero(i, { tipoId: e.target.value })} />
-                <Input placeholder="Identificación" value={p.identificacion} onChange={(e) => setPasajero(i, { identificacion: e.target.value })} />
+                <div className="flex items-center gap-1">
+                  <Input placeholder="Identificación" value={p.identificacion} onChange={(e) => setPasajero(i, { identificacion: e.target.value })} />
+                  <BuscarPasajeroDocumento
+                    tipoId={p.tipoId}
+                    identificacion={p.identificacion}
+                    onAplicar={(datos) => {
+                      if (datos.fechaNacimiento) setPasajero(i, { fechaNacimiento: datos.fechaNacimiento });
+                      // nombres/apellidos SOLO si la fila encontrada ya los
+                      // trae estructurados (migración 187) — nunca se parte
+                      // `nombreHistorico` por heurística.
+                      if (datos.nombres) setPasajero(i, { nombres: datos.nombres });
+                      if (datos.apellidos) setPasajero(i, { apellidos: datos.apellidos });
+                    }}
+                  />
+                </div>
                 <Input type="date" value={p.fechaNacimiento} onChange={(e) => setPasajero(i, { fechaNacimiento: e.target.value })} />
                 <div className="flex items-center justify-between gap-2">
                   <span className="text-xs text-gray-500">

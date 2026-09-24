@@ -11,6 +11,7 @@ import { precioServicio } from "@/lib/calc/paquetes";
 import { ACOM_ROOMS, ACOM_ROOM_LABEL, paxTarifaDe, clasificarPorEdad, validarReservaHabitaciones, type AcomConfig, type AcomRoom } from "@/lib/acomodaciones";
 import { esInfantePorEdad } from "@/lib/reservar/pasajeros";
 import { recalcularVinculosPorEdad } from "@/lib/reservar/pasajerosFilas";
+import { BuscarPasajeroDocumento } from "@/components/pasajeros/BuscarPasajeroDocumento";
 import { hoyBogota, vigenciaInicial } from "@/lib/cotizacion/vigencia";
 
 // Suma N noches a una fecha YYYY-MM-DD y devuelve YYYY-MM-DD.
@@ -577,7 +578,25 @@ export function ReservaForm({
                           <option value="CC">CC</option><option value="CE">CE</option><option value="PAS">Pasaporte</option><option value="TI">TI</option><option value="RC">RC</option>
                         </select>
                       </div>
-                      <div><label className={lbl}>Número doc</label><Input value={p.numeroDoc} onChange={(e) => setPaxField(i, "numeroDoc", e.target.value)} /></div>
+                      <div>
+                        <label className={lbl}>Número doc</label>
+                        <div className="flex items-center gap-1">
+                          <Input value={p.numeroDoc} onChange={(e) => setPaxField(i, "numeroDoc", e.target.value)} />
+                          <BuscarPasajeroDocumento
+                            tipoId={p.tipoDoc}
+                            identificacion={p.numeroDoc}
+                            onAplicar={(datos) => {
+                              if (datos.fechaNacimiento) setPaxField(i, "fechaNacimiento", datos.fechaNacimiento);
+                              if (datos.nacionalidad) setPaxField(i, "nacionalidad", datos.nacionalidad);
+                              // nombres/apellidos SOLO si la fila encontrada ya
+                              // los trae estructurados (migración 187) — nunca
+                              // se parte `nombreHistorico` por heurística.
+                              if (datos.nombres) setPaxField(i, "nombres", datos.nombres);
+                              if (datos.apellidos) setPaxField(i, "apellidos", datos.apellidos);
+                            }}
+                          />
+                        </div>
+                      </div>
                       <div><label className={lbl}>Fecha nacimiento</label><Input type="date" value={p.fechaNacimiento} onChange={(e) => setPaxField(i, "fechaNacimiento", e.target.value)} /></div>
                       <div><label className={lbl}>Nacionalidad</label><Input value={p.nacionalidad} onChange={(e) => setPaxField(i, "nacionalidad", e.target.value)} /></div>
                     </div>

@@ -183,8 +183,14 @@ export type ContratoInput = {
 
 const oNull = (s: string) => (s && s.trim() !== "" ? s.trim() : null);
 
+// `advertencias`: fallas NO bloqueantes que sí se reportan honestamente
+// (nunca se tragan en silencio) — hoy solo las usa el guardado best-effort
+// de nombres/apellidos estructurados (migración 187): el contrato y sus
+// sillas quedan completos y correctos de todas formas, pero si ese UPDATE
+// posterior falla, la creación SIGUE siendo un éxito (`ok: true`) y el
+// detalle real de Supabase viaja aquí para que la UI lo muestre.
 export type CrearContratoResult =
-  | { ok: true; numero: string }
+  | { ok: true; numero: string; advertencias?: string[] }
   | { ok: false; error: string; margenInsuficiente?: true; margenActual?: number; pvpMinimo?: number };
 
 // Flujo real (revisión posterior — corrección de observabilidad): la Server
@@ -234,6 +240,11 @@ async function crearContratoInterno(
   medir: Medidor,
   estado: EstadoFlujo
 ): Promise<CrearContratoResult> {
+  // Fallas NO bloqueantes que SÍ se reportan (ver el comentario de
+  // CrearContratoResult) — hoy solo las llena el guardado best-effort de
+  // nombres/apellidos estructurados, más abajo.
+  const advertencias: string[] = [];
+
   // Contexto fail-closed: sesión + activo=true + rol con permiso real de
   // escritura sobre `ventas` (revisión posterior al PR #274 — antes se
   // resolvía el tenant con la cookie de agencia a secas, sin sesión ni rol
@@ -554,13 +565,39 @@ async function crearContratoInterno(
         responsableIndex: p.responsableIndex ?? null,
       }))
     );
-    const { error: pasajerosErr } = await admin.rpc("crear_pasajeros_contrato", {
+    const { data: pasajerosCreados, error: pasajerosErr } = await admin.rpc("crear_pasajeros_contrato", {
       p_numero_contrato: numero,
       p_pasajeros: payloadPasajeros as unknown as Json,
       p_holders_min: holdersMinPiso,
       p_usuario_id: actorPasajeros.id,
     });
     if (pasajerosErr) return _errorHijas("pasajeros_y_sillas", pasajerosErr);
+
+    // nombres/apellidos ESTRUCTURADOS — POSTERIOR al RPC atómico (no forman
+    // parte de v_claves_validas de _reemplazar_pasajeros_nucleo, migración
+    // 167; ver el comentario de la migración 187). Un fallo NO revierte el
+    // contrato (ya quedó completo y correcto por el RPC de arriba), pero SÍ
+    // se revisa `{ error }` de cada UPDATE y se reporta honestamente en
+    // `advertencias` — a diferencia del snapshot de `sillas.pasajero_*` de
+    // más abajo (que de verdad es solo cosmético para un listado operativo),
+    // nombres/apellidos son el dato real que el asesor capturó.
+    const filasPasajerosCreados = (pasajerosCreados ?? []).slice().sort((a, b) => a.orden - b.orden);
+    await Promise.all(
+      filasPasajerosCreados.map(async (f, i) => {
+        const p = input.pasajeros[i];
+        const patch: { nombres?: string; apellidos?: string } = {};
+        const nom = oNull(p?.nombres);
+        const ape = oNull(p?.apellidos);
+        if (nom) patch.nombres = nom;
+        if (ape) patch.apellidos = ape;
+        if (Object.keys(patch).length === 0) return;
+        const { error: errDemografico } = await admin.from("contrato_pasajeros").update(patch).eq("id", f.id);
+        if (errDemografico) {
+          const etiqueta = `${p?.nombres ?? ""} ${p?.apellidos ?? ""}`.trim() || `pasajero #${i + 1}`;
+          advertencias.push(`No se pudo guardar nombres/apellidos estructurados de ${etiqueta}: ${errDemografico.message}`);
+        }
+      })
+    );
 
     // Snapshot cosmético de nombre/documento sobre las sillas YA asignadas
     // atómicamente arriba — solo para que `sillas.pasajero_*` (listados
@@ -853,7 +890,7 @@ async function crearContratoInterno(
   }
 
   revalidatePath("/dashboard/contratos");
-  return { ok: true, numero };
+  return { ok: true, numero, ...(advertencias.length ? { advertencias } : {}) };
 }
 
 export type VentaEditInput = {

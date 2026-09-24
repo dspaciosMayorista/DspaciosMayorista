@@ -157,7 +157,16 @@ export async function buscarReceptivos(input: unknown): Promise<{ ok: true; resu
   return buscarReceptivosImpl(input);
 }
 
-export type ReservaResult = { ok: true; numero: string } | { ok: false; error: string };
+// `advertencias`: fallas NO bloqueantes que sí se reportan honestamente al
+// caller (nunca se tragan en silencio) — hoy solo las usa el guardado
+// best-effort de nombres/apellidos/nacionalidad (migración 187): el
+// contrato y sus sillas quedan completos y correctos de todas formas, pero
+// si ese UPDATE posterior falla, la reserva SIGUE siendo un éxito (`ok:
+// true`) y el detalle del error real de Supabase viaja aquí para que la UI
+// lo muestre — nunca se asume éxito sin comprobar `{ error }`.
+export type ReservaResult =
+  | { ok: true; numero: string; advertencias?: string[] }
+  | { ok: false; error: string };
 
 // NO EXPORTADA a propósito (defecto reportado en la revisión de PR #267): una
 // Server Action exportada es alcanzable por el navegador con CUALQUIER
@@ -167,6 +176,11 @@ export type ReservaResult = { ok: true; numero: string } | { ok: false; error: s
 // — el tenant llega aquí siempre ya autorizado, nunca desde el navegador.
 async function reservarDesdeTarifarioInterno(input: ReservaInput, tenant: Tenant): Promise<ReservaResult> {
   const sb = await createClient();
+
+  // Fallas NO bloqueantes que SÍ se reportan (ver el comentario de
+  // ReservaResult) — hoy solo las llena el guardado best-effort de
+  // nombres/apellidos/nacionalidad, más abajo.
+  const advertencias: string[] = [];
 
   if (!`${input.cliente.nombres ?? ""}${input.cliente.apellidos ?? ""}`.trim()) return { ok: false, error: "El nombre del cliente es obligatorio." };
 
@@ -422,13 +436,44 @@ async function reservarDesdeTarifarioInterno(input: ReservaInput, tenant: Tenant
         responsableIndex: p.responsableIndex ?? null,
       }))
     );
-    const { error: pasajerosErr } = await admin.rpc("crear_pasajeros_contrato", {
+    const { data: pasajerosCreados, error: pasajerosErr } = await admin.rpc("crear_pasajeros_contrato", {
       p_numero_contrato: numero,
       p_pasajeros: payloadPasajeros as unknown as Json,
       p_holders_min: paxConSilla,
       p_usuario_id: actorPasajeros.id,
     });
     if (pasajerosErr) return fallarYRevertir(pasajerosErr.message);
+
+    // nombres/apellidos/nacionalidad — POSTERIOR al RPC atómico (que no los
+    // conoce: no forman parte de v_claves_validas de
+    // _reemplazar_pasajeros_nucleo, migración 167 — ver el comentario de la
+    // migración 187). Es best-effort en el sentido de que un fallo NO
+    // revierte la reserva (el pasajero y su silla ya quedaron completos y
+    // correctos por el RPC atómico de arriba) — pero a diferencia del
+    // snapshot de sillas.pasajero_* de más abajo, aquí SÍ se revisa
+    // `{ error }` de cada UPDATE y se reporta honestamente en
+    // `advertencias`: nunca se asume éxito sin comprobarlo, y nunca se llama
+    // "cosmético" (nombres/apellidos/nacionalidad SÍ son el dato real que el
+    // asesor capturó, no un adorno). Empareja por `orden` (0-based, mismo
+    // orden en que se armó el payload).
+    const filasPasajerosCreados = (pasajerosCreados ?? []).slice().sort((a, b) => a.orden - b.orden);
+    const escriturasDemograficas = filasPasajerosCreados.map(async (f, i) => {
+      const p = input.pasajeros[i];
+      const patch: { nacionalidad?: string; nombres?: string; apellidos?: string } = {};
+      const nac = oNull(p?.nacionalidad);
+      const nom = oNull(p?.nombres);
+      const ape = oNull(p?.apellidos);
+      if (nac) patch.nacionalidad = nac;
+      if (nom) patch.nombres = nom;
+      if (ape) patch.apellidos = ape;
+      if (Object.keys(patch).length === 0) return;
+      const { error: errDemografico } = await admin.from("contrato_pasajeros").update(patch).eq("id", f.id);
+      if (errDemografico) {
+        const etiqueta = `${p?.nombres ?? ""} ${p?.apellidos ?? ""}`.trim() || `pasajero #${i + 1}`;
+        advertencias.push(`No se pudo guardar nacionalidad/nombres estructurados de ${etiqueta}: ${errDemografico.message}`);
+      }
+    });
+    await Promise.all(escriturasDemograficas);
 
     if (origen.tipo === "bloqueo") {
       const { data: sillasAsignadas } = await admin
@@ -912,7 +957,7 @@ async function reservarDesdeTarifarioInterno(input: ReservaInput, tenant: Tenant
   if (!fin.ok) return { ok: false, error: fin.error };
 
   revalidatePath("/dashboard/contratos");
-  return { ok: true, numero };
+  return { ok: true, numero, ...(advertencias.length ? { advertencias } : {}) };
 }
 
 // ── COTIZACIONES: presupuesto SIN número de contrato ───────────────────────
@@ -1177,7 +1222,9 @@ export async function convertirCotizacion(id: number, pasajeros?: PasajeroReserv
   revalidatePath("/dashboard/cotizaciones");
   revalidatePath(`/dashboard/cotizaciones/${id}`);
   revalidatePath("/dashboard/contratos");
-  return { ok: true, numero: res.numero };
+  // Reenvía `advertencias` de reservarDesdeTarifarioInterno — no
+  // reconstruir el resultado a mano descartándolas en silencio.
+  return { ok: true, numero: res.numero, ...(res.advertencias?.length ? { advertencias: res.advertencias } : {}) };
 }
 
 // ── Fase 3: convertir una cotización COMBINADA del carrito en contrato(s) ──
@@ -1453,6 +1500,9 @@ async function validarBernaloParaConversion(
 }
 
 
+// `advertencias` en el retorno: mismo criterio que ReservaResult (ver su
+// comentario) — hoy solo las llena el guardado best-effort de
+// nombres/apellidos/nacionalidad.
 export async function convertirCotizacionCarrito(
   id: number,
   opts: {
@@ -1467,7 +1517,7 @@ export async function convertirCotizacionCarrito(
     // explícita, nunca heredan en silencio los pasajeros del hotel ni todos.
     asignacionesTours: number[][];
   }
-): Promise<{ ok: true; numeros: string[] } | { ok: false; error: string }> {
+): Promise<{ ok: true; numeros: string[]; advertencias?: string[] } | { ok: false; error: string }> {
   const sb = await createClient();
   const { data: cot } = await sb
     .from("cotizaciones")
@@ -1664,6 +1714,9 @@ export async function convertirCotizacionCarrito(
   const contratosPorGrupo: Record<string, string> = { ...contratosPorGrupoExistente };
   const detalleBase = (cot.detalle ?? {}) as Record<string, unknown>;
   const numeros: string[] = [];
+  // Fallas NO bloqueantes acumuladas de TODOS los grupos/contratos de este
+  // carrito — mismo criterio que ReservaResult, ver su comentario.
+  const advertencias: string[] = [];
   for (const grupo of grupos) {
     const numeroExistente = contratosPorGrupo[claveDeGrupo(grupo)];
     if (numeroExistente) numeros.push(numeroExistente);
@@ -2138,10 +2191,38 @@ export async function convertirCotizacionCarrito(
     // `esInfantePorEdad` en este archivo) — se usa más abajo para el
     // backfill cosmético de nombre/documento sobre las sillas de cada
     // bloqueo (best-effort, igual que en los otros 3 flujos de creación).
-    const esInfanteRealGrupo = (filasPasajerosMulti ?? [])
+    const filasPasajerosMultiOrdenadas = (filasPasajerosMulti ?? [])
       .slice()
-      .sort((a, b) => a.orden - b.orden)
-      .map((f) => f.es_infante);
+      .sort((a, b) => a.orden - b.orden);
+    const esInfanteRealGrupo = filasPasajerosMultiOrdenadas.map((f) => f.es_infante);
+
+    // nombres/apellidos/nacionalidad — mismo criterio que
+    // reservarDesdeTarifarioInterno/reservarProgramaInterno: POSTERIOR al
+    // RPC atómico (no forman parte de v_claves_validas de
+    // _reemplazar_pasajeros_nucleo, migración 167), un fallo NO revierte
+    // este contrato del carrito, pero SÍ se revisa `{ error }` de cada
+    // UPDATE y se reporta honestamente en `advertencias` (acumulada de
+    // todos los grupos) — nunca se asume éxito sin comprobarlo. Empareja
+    // por `orden` con `pasajerosLocal` (la MISMA fuente que armó
+    // payloadPasajerosMulti, arriba).
+    await Promise.all(
+      filasPasajerosMultiOrdenadas.map(async (f, i) => {
+        const p = pasajerosLocal[i];
+        const patch: { nacionalidad?: string; nombres?: string; apellidos?: string } = {};
+        const nac = oNull(p?.nacionalidad);
+        const nom = oNull(p?.nombres);
+        const ape = oNull(p?.apellidos);
+        if (nac) patch.nacionalidad = nac;
+        if (nom) patch.nombres = nom;
+        if (ape) patch.apellidos = ape;
+        if (Object.keys(patch).length === 0) return;
+        const { error: errDemografico } = await admin.from("contrato_pasajeros").update(patch).eq("id", f.id);
+        if (errDemografico) {
+          const etiqueta = `${p?.nombres ?? ""} ${p?.apellidos ?? ""}`.trim() || `pasajero #${i + 1}`;
+          advertencias.push(`Contrato ${numero}: no se pudo guardar nacionalidad/nombres estructurados de ${etiqueta}: ${errDemografico.message}`);
+        }
+      })
+    );
 
     type ProvFact = { nombre: string | null; aplica_retencion: boolean | null; pct_retencion: number | null } | null;
     // `numero_contrato`/`tenant` los pone la transacción financiera
@@ -2628,7 +2709,7 @@ export async function convertirCotizacionCarrito(
   revalidatePath("/dashboard/cotizaciones");
   revalidatePath(`/dashboard/cotizaciones/${id}`);
   revalidatePath("/dashboard/contratos");
-  return { ok: true, numeros };
+  return { ok: true, numeros, ...(advertencias.length ? { advertencias } : {}) };
 }
 
 export async function actualizarVigenciaCotizacion(id: number, vigenciaHasta: string): Promise<{ ok: boolean; error?: string }> {
@@ -2960,6 +3041,11 @@ async function reservarProgramaInterno(
   // (barato, pero innecesario) que nunca se llegaba a usar.
   const { tenant, sb } = ctx;
 
+  // Fallas NO bloqueantes que SÍ se reportan (ver el comentario de
+  // ReservaResult) — hoy solo las llena el guardado best-effort de
+  // nombres/apellidos/nacionalidad, más abajo.
+  const advertencias: string[] = [];
+
   // Etapa "validacion_programa": programa + vigencia + blackouts + precios +
   // habitaciones/pax + validación de edades — varias validaciones con
   // retorno anticipado; el cierre se loguea justo antes de generar el
@@ -3279,13 +3365,39 @@ async function reservarProgramaInterno(
         responsableIndex: p.responsableIndex ?? null,
       }))
     );
-    const { error } = await admin.rpc("crear_pasajeros_contrato", {
+    const { data: pasajerosCreadosPrograma, error } = await admin.rpc("crear_pasajeros_contrato", {
       p_numero_contrato: numero,
       p_pasajeros: payloadPasajeros as unknown as Json,
       p_holders_min: 0,
       p_usuario_id: actorPasajeros.id,
     });
     if (error) return _errorHijas("pasajeros", error);
+
+    // nombres/apellidos/nacionalidad — mismo criterio que
+    // reservarDesdeTarifarioInterno: POSTERIOR al RPC atómico (no forman
+    // parte de v_claves_validas de _reemplazar_pasajeros_nucleo, migración
+    // 167), un fallo NO revierte la reserva, pero SÍ se revisa `{ error }`
+    // de cada UPDATE y se reporta honestamente en `advertencias` — nunca se
+    // asume éxito sin comprobarlo.
+    const filasPasajerosCreadosPrograma = (pasajerosCreadosPrograma ?? []).slice().sort((a, b) => a.orden - b.orden);
+    await Promise.all(
+      filasPasajerosCreadosPrograma.map(async (f, i) => {
+        const p = input.pasajeros[i];
+        const patch: { nacionalidad?: string; nombres?: string; apellidos?: string } = {};
+        const nac = oNull(p?.nacionalidad);
+        const nom = oNull(p?.nombres);
+        const ape = oNull(p?.apellidos);
+        if (nac) patch.nacionalidad = nac;
+        if (nom) patch.nombres = nom;
+        if (ape) patch.apellidos = ape;
+        if (Object.keys(patch).length === 0) return;
+        const { error: errDemografico } = await admin.from("contrato_pasajeros").update(patch).eq("id", f.id);
+        if (errDemografico) {
+          const etiqueta = `${p?.nombres ?? ""} ${p?.apellidos ?? ""}`.trim() || `pasajero #${i + 1}`;
+          advertencias.push(`No se pudo guardar nacionalidad/nombres estructurados de ${etiqueta}: ${errDemografico.message}`);
+        }
+      })
+    );
   }
 
   // 7) Ítems (líneas por acomodación)
@@ -3393,5 +3505,5 @@ async function reservarProgramaInterno(
   }
 
   revalidatePath("/dashboard/contratos");
-  return { ok: true, numero };
+  return { ok: true, numero, ...(advertencias.length ? { advertencias } : {}) };
 }
