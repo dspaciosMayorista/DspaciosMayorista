@@ -1,5 +1,6 @@
 "use client";
 
+import { DateInput } from "@/components/ui/DateInput";
 import { useMemo, useState, useTransition } from "react";
 import Link from "next/link";
 import { Button } from "@/components/ui/button";
@@ -537,10 +538,10 @@ function PagoInline({
         )}
         <div>
           <label className="mb-1 block text-xs font-medium text-gray-600">Fecha del pago</label>
-          <Input
+          <DateInput aria-label="Fecha del pago"
             type="date"
             value={fecha}
-            onChange={(e) => setFecha(e.target.value)}
+            onValueChange={(dateValue) => setFecha(dateValue)}
             className="w-44"
           />
         </div>

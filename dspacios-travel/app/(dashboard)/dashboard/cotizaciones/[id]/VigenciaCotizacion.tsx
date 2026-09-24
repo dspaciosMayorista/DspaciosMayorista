@@ -1,8 +1,8 @@
 "use client";
 
+import { DateInput } from "@/components/ui/DateInput";
 import { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
-import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { formatFechaLarga } from "@/lib/utils";
 import { actualizarVigenciaCotizacion } from "../../reservar/actions";
@@ -40,7 +40,7 @@ export function VigenciaCotizacion({ id, vigencia, fechaSalida, editable }: { id
         </div>
       ) : (
         <div className="mt-1 flex flex-wrap items-center gap-2">
-          <Input type="date" value={valor} min={hoyBogota()} max={fechaSalida ?? undefined} onChange={(e) => setValor(e.target.value)} className="w-40" />
+          <DateInput aria-label="Fecha" type="date" value={valor} min={hoyBogota()} max={fechaSalida ?? undefined} onValueChange={(dateValue) => setValor(dateValue)} className="w-40" />
           <Button onClick={guardar} disabled={pending} style={{ backgroundColor: "var(--brand-primary)" }}>
             {pending ? "…" : "Guardar"}
           </Button>

@@ -1,5 +1,6 @@
 "use client";
 
+import { DateInput } from "@/components/ui/DateInput";
 import { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { Button } from "@/components/ui/button";
@@ -149,7 +150,7 @@ export function EditarAsesorPasajeros({
                 </select>
               </div>
               <div className="w-28"><label className="text-[11px] text-gray-500">N° doc *</label><Input value={p.identificacion} onChange={(e) => setRow(i, { identificacion: e.target.value })} /></div>
-              <div className="w-44"><label className="text-[11px] text-gray-500">Nacimiento *</label><Input type="date" className="w-full" value={p.fechaNacimiento} onChange={(e) => setRow(i, { fechaNacimiento: e.target.value })} /></div>
+              <div className="w-44"><label className="text-[11px] text-gray-500">Nacimiento *</label><DateInput aria-label="Nacimiento" type="date" className="w-full" value={p.fechaNacimiento} onValueChange={(dateValue) => setRow(i, { fechaNacimiento: dateValue })} /></div>
               {(() => {
                 const edad = calcularEdad(p.fechaNacimiento, fechaSalida);
                 if (edad == null) return <span className="pb-2 text-[11px] text-gray-300">—</span>;

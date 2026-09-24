@@ -1,5 +1,6 @@
 "use client";
 
+import { DateInput } from "@/components/ui/DateInput";
 import { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { Button } from "@/components/ui/button";
@@ -54,8 +55,8 @@ export function HotelBlackouts({ hotelId, blackouts, categorias = [] }: { hotelI
         <div className="space-y-4 border-t border-gray-100 p-4">
           <p className="text-xs text-gray-500">Cierra la venta del hotel en esas noches, por encima de cualquier vigencia. Cierre total o por acomodaciones.</p>
           <div className="flex flex-wrap items-end gap-3">
-            <div><label className="mb-1 block text-xs text-gray-600">Desde (noche)</label><Input type="date" value={ini} onChange={(e) => setIni(e.target.value)} /></div>
-            <div><label className="mb-1 block text-xs text-gray-600">Hasta (noche)</label><Input type="date" value={fin} min={ini || undefined} onChange={(e) => setFin(e.target.value)} /></div>
+            <div><label className="mb-1 block text-xs text-gray-600">Desde (noche)</label><DateInput aria-label="Desde (noche)" type="date" value={ini} onValueChange={(dateValue) => setIni(dateValue)} /></div>
+            <div><label className="mb-1 block text-xs text-gray-600">Hasta (noche)</label><DateInput aria-label="Hasta (noche)" type="date" value={fin} min={ini || undefined} onValueChange={(dateValue) => setFin(dateValue)} /></div>
             <label className="flex items-center gap-2 pb-2 text-sm text-gray-600"><input type="checkbox" checked={total} onChange={(e) => setTotal(e.target.checked)} /> Cierre total (todas las habitaciones)</label>
           </div>
           {!total && (

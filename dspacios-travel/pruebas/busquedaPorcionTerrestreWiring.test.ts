@@ -359,8 +359,8 @@ describe("BuscadorBooking — canal de búsqueda hacia VistaBooking (requisito A
     // sigue terminando en `limpiarResultados();` como los demás.
     assert.match(codigoBuscador, /const opcion = destinos\.find\(\(d\) => d\.nombre === nombre\);\s*\n\s*setDestino\(nombre\);\s*\n\s*setDestinoId\(opcion\?\.id \?\? null\);\s*\n\s*limpiarResultados\(\);/);
     for (const control of [
-      "onChange={(e) => { const nueva = e.target.value; limpiarResultados(); setFIda(nueva);",
-      "onChange={(e) => { limpiarResultados(); setFReg(e.target.value); }}",
+      "onValueChange={(dateValue) => { const nueva = dateValue; limpiarResultados(); setFIda(nueva);",
+      "onValueChange={(dateValue) => { limpiarResultados(); setFReg(dateValue); }}",
       "onChange={(e) => { limpiarResultados(); setAdultos(e.target.value); }}",
     ]) {
       assert.ok(codigoBuscador.includes(control), `un control de criterio no invalida los resultados: ${control}`);

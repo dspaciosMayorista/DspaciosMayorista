@@ -1,5 +1,6 @@
 "use client";
 
+import { DateInput } from "@/components/ui/DateInput";
 import { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { Button } from "@/components/ui/button";
@@ -105,7 +106,7 @@ export function NuevoBloqueoForm({ proveedores = [], destinos = [], rangos = [] 
           <div><label className={lbl}>Cupos totales</label><Input type="number" min={0} value={f.cuposTotal} onChange={set("cuposTotal")} /></div>
           <div><label className={lbl}>Tarifa neta (pago aerolínea)</label><Input type="number" min={0} value={f.tarifaNeta} onChange={set("tarifaNeta")} placeholder="200000" /></div>
           <div><label className={lbl}>Tarifa empaquetar (reventa)</label><Input type="number" min={0} value={f.tarifaParaEmpaquetar} onChange={set("tarifaParaEmpaquetar")} placeholder="242022" /></div>
-          <div><label className={lbl}>Fecha devolución</label><Input type="date" value={f.fechaDevolucion} onChange={set("fechaDevolucion")} /></div>
+          <div><label className={lbl}>Fecha devolución</label><DateInput aria-label="Fecha devolución" type="date" value={f.fechaDevolucion} onValueChange={(dateValue) => setF({ ...f, ["fechaDevolucion"]: dateValue })} /></div>
         </div>
         <RangosEdadPicker rangos={rangos} seleccionados={rangosSel} onChange={setRangosSel} label="Rangos de edad del vuelo (infante/niño)" />
       </section>
@@ -114,7 +115,7 @@ export function NuevoBloqueoForm({ proveedores = [], destinos = [], rangos = [] 
         <p className="text-sm font-semibold" style={{ color: "var(--brand-primary)" }}>Vuelo de ida</p>
         <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
           <div><label className={lbl}># Vuelo</label><Input value={f.vueloIda} onChange={set("vueloIda")} placeholder="5410" /></div>
-          <div><label className={lbl}>Fecha ida</label><Input type="date" value={f.fechaIda} onChange={set("fechaIda")} /></div>
+          <div><label className={lbl}>Fecha ida</label><DateInput aria-label="Fecha ida" type="date" value={f.fechaIda} onValueChange={(dateValue) => setF({ ...f, ["fechaIda"]: dateValue })} /></div>
           <div><label className={lbl}>Hora salida</label><Input type="time" value={f.horaSalidaIda} onChange={set("horaSalidaIda")} /></div>
           <div><label className={lbl}>Hora llegada</label><Input type="time" value={f.horaLlegadaIda} onChange={set("horaLlegadaIda")} /></div>
         </div>
@@ -124,12 +125,12 @@ export function NuevoBloqueoForm({ proveedores = [], destinos = [], rangos = [] 
         <p className="text-sm font-semibold" style={{ color: "var(--brand-primary)" }}>Vuelo de regreso</p>
         <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
           <div><label className={lbl}># Vuelo</label><Input value={f.vueloRegreso} onChange={set("vueloRegreso")} placeholder="5414" /></div>
-          <div><label className={lbl}>Fecha regreso</label><Input type="date" value={f.fechaRegreso} onChange={set("fechaRegreso")} /></div>
+          <div><label className={lbl}>Fecha regreso</label><DateInput aria-label="Fecha regreso" type="date" value={f.fechaRegreso} onValueChange={(dateValue) => setF({ ...f, ["fechaRegreso"]: dateValue })} /></div>
           <div><label className={lbl}>Hora salida</label><Input type="time" value={f.horaSalidaReg} onChange={set("horaSalidaReg")} /></div>
           <div><label className={lbl}>Hora llegada</label><Input type="time" value={f.horaLlegadaReg} onChange={set("horaLlegadaReg")} /></div>
         </div>
         <div className="grid grid-cols-2 gap-3">
-          <div><label className={lbl}>Fecha límite de emisión</label><Input type="date" value={f.fechaEmision} onChange={set("fechaEmision")} /></div>
+          <div><label className={lbl}>Fecha límite de emisión</label><DateInput aria-label="Fecha límite de emisión" type="date" value={f.fechaEmision} onValueChange={(dateValue) => setF({ ...f, ["fechaEmision"]: dateValue })} /></div>
           <div><label className={lbl}>Notas</label><Input value={f.notas} onChange={set("notas")} /></div>
         </div>
       </section>

@@ -1,5 +1,6 @@
 "use client";
 
+import { DateInput } from "@/components/ui/DateInput";
 import { useMemo, useState, useTransition } from "react";
 import Link from "next/link";
 import { Button } from "@/components/ui/button";
@@ -439,7 +440,7 @@ function PagoComisionPanel({ row }: { row: ComB2BRow }) {
             </div>
             <div>
               <label className="block text-[11px] text-gray-500">Fecha</label>
-              <Input type="date" value={fecha} onChange={(e) => setFecha(e.target.value)} className="w-40" />
+              <DateInput aria-label="Fecha" type="date" value={fecha} onValueChange={(dateValue) => setFecha(dateValue)} className="w-40" />
             </div>
             <Button type="button" onClick={registrar} disabled={pending} className="h-9" style={{ backgroundColor: "var(--brand-primary)" }}>
               {pending ? "…" : "Registrar abono"}

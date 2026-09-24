@@ -1,5 +1,6 @@
 "use client";
 
+import { DateInput } from "@/components/ui/DateInput";
 import { useMemo, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { Button } from "@/components/ui/button";
@@ -223,7 +224,7 @@ function MaterialForm({ hoteles, destinoOpts, inicial, onClose }: { hoteles: Hot
         <div><label className={lbl}>Fuente</label><Input value={f.fuente} onChange={(e) => set("fuente", e.target.value)} placeholder="Material del hotel / propio…" /></div>
         <div><label className={lbl}>Estado</label><select value={f.estado} onChange={(e) => set("estado", e.target.value)} className={sel}>{ESTADOS_MATERIAL.map((o) => <option key={o.v} value={o.v}>{o.label}</option>)}</select></div>
         <div><label className={lbl}>Prioridad</label><select value={f.prioridad} onChange={(e) => set("prioridad", e.target.value)} className={sel}>{PRIORIDADES.map((o) => <option key={o.v} value={o.v}>{o.label}</option>)}</select></div>
-        <div><label className={lbl}>Fecha del material</label><Input type="date" value={f.fechaMaterial} onChange={(e) => set("fechaMaterial", e.target.value)} /></div>
+        <div><label className={lbl}>Fecha del material</label><DateInput aria-label="Fecha del material" type="date" value={f.fechaMaterial} onValueChange={(dateValue) => set("fechaMaterial", dateValue)} /></div>
         <div><label className={lbl}>Link del archivo</label><Input value={f.linkArchivo} onChange={(e) => set("linkArchivo", e.target.value)} placeholder="https://…" /></div>
         <div className="sm:col-span-3"><label className={lbl}>Observaciones</label><Input value={f.observaciones} onChange={(e) => set("observaciones", e.target.value)} /></div>
       </div>
@@ -304,7 +305,7 @@ function EnvioForm({ materiales, destinoOpts, prefill, onClose }: { materiales: 
           </select></div>
         <div><label className={lbl}>Destino</label><input list="dif-destinos-env" value={f.destino} onChange={(e) => set("destino", e.target.value)} className={sel} /><datalist id="dif-destinos-env">{destinoOpts.map((d) => <option key={d} value={d} />)}</datalist></div>
         <div><label className={lbl}>Hotel / Producto *</label><Input value={f.hotelProducto} onChange={(e) => set("hotelProducto", e.target.value)} /></div>
-        <div><label className={lbl}>Fecha de envío *</label><Input type="date" value={f.fechaEnvio} onChange={(e) => set("fechaEnvio", e.target.value)} /></div>
+        <div><label className={lbl}>Fecha de envío *</label><DateInput aria-label="Fecha de envío" type="date" value={f.fechaEnvio} onValueChange={(dateValue) => set("fechaEnvio", dateValue)} /></div>
         <div><label className={lbl}>Tipo de material</label><select value={f.tipoMaterial} onChange={(e) => set("tipoMaterial", e.target.value)} className={sel}>{TIPOS_MATERIAL.map((o) => <option key={o.v} value={o.v}>{o.label}</option>)}</select></div>
         <div><label className={lbl}>Lista enviada</label><select value={f.listaEnviada} onChange={(e) => set("listaEnviada", e.target.value)} className={sel}>{LISTAS.map((o) => <option key={o.v} value={o.v}>{o.label}</option>)}</select></div>
         <div><label className={lbl}>Canal</label><select value={f.canal} onChange={(e) => set("canal", e.target.value)} className={sel}>{CANALES.map((o) => <option key={o.v} value={o.v}>{o.label}</option>)}</select></div>
@@ -406,7 +407,7 @@ function PlanForm({ materiales, destinoOpts, hoy, onClose, editando }: { materia
     <div className="mb-4 rounded-xl border border-gray-200 bg-white p-4">
       <p className="mb-3 text-sm font-semibold text-gray-700">{editando ? "Editar programación" : "Programar envío"}</p>
       <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
-        <div><label className={lbl}>Fecha *</label><Input type="date" value={f.fechaProgramada} onChange={(e) => set("fechaProgramada", e.target.value)} /></div>
+        <div><label className={lbl}>Fecha *</label><DateInput aria-label="Fecha programada" type="date" value={f.fechaProgramada} onValueChange={(dateValue) => set("fechaProgramada", dateValue)} /></div>
         <div><label className={lbl}>Material del inventario</label><select value={f.materialId ?? ""} onChange={(e) => elegirMaterial(e.target.value)} className={sel}><option value="">— Suelto —</option>{materiales.map((m) => <option key={m.id} value={m.id}>{m.hotel_producto}</option>)}</select></div>
         <div><label className={lbl}>Hotel / Producto</label><Input value={f.hotelProducto} onChange={(e) => set("hotelProducto", e.target.value)} /></div>
         <div><label className={lbl}>Destino</label><input list="dif-destinos-plan" value={f.destino} onChange={(e) => set("destino", e.target.value)} className={sel} /><datalist id="dif-destinos-plan">{destinoOpts.map((d) => <option key={d} value={d} />)}</datalist></div>
@@ -416,7 +417,7 @@ function PlanForm({ materiales, destinoOpts, hoy, onClose, editando }: { materia
         <div><label className={lbl}>Estado</label><select value={f.estado} onChange={(e) => set("estado", e.target.value)} className={sel}>{ESTADOS_PLAN.map((o) => <option key={o.v} value={o.v}>{o.label}</option>)}</select></div>
         <div>
           <label className={lbl}>Vigente hasta <span className="font-normal text-gray-400">(vencimiento de la promo/tarifa)</span></label>
-          <Input type="date" value={f.vigenciaHasta} onChange={(e) => set("vigenciaHasta", e.target.value)} />
+          <DateInput aria-label="Vigente hasta" type="date" value={f.vigenciaHasta} onValueChange={(dateValue) => set("vigenciaHasta", dateValue)} />
         </div>
         <div className="sm:col-span-3"><label className={lbl}>Enfoque comercial</label><Input value={f.enfoque} onChange={(e) => set("enfoque", e.target.value)} /></div>
       </div>

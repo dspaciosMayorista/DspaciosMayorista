@@ -1,5 +1,6 @@
 "use client";
 
+import { DateInput } from "@/components/ui/DateInput";
 import { useState, useTransition } from "react";
 import Link from "next/link";
 import { Button } from "@/components/ui/button";
@@ -283,7 +284,7 @@ function FilaAbono({ a, numero, esUSD, moneda, formasPago, puedeEditar = true }:
           <div className="flex flex-wrap items-end gap-2">
             <div><label className="block text-[11px] text-gray-500">Valor{esUSD ? " pagado (COP)" : ""}</label><Input type="number" value={valor} onChange={(e) => setValor(e.target.value)} className="w-32" /></div>
             {esUSD && <div><label className="block text-[11px] text-gray-500">TRM</label><Input type="number" value={trm} onChange={(e) => setTrm(e.target.value)} className="w-28" /></div>}
-            <div><label className="block text-[11px] text-gray-500">Fecha</label><Input type="date" value={fecha} onChange={(e) => setFecha(e.target.value)} className="w-40" /></div>
+            <div><label className="block text-[11px] text-gray-500">Fecha</label><DateInput aria-label="Fecha" type="date" value={fecha} onValueChange={(dateValue) => setFecha(dateValue)} className="w-40" /></div>
             <div>
               <label className="block text-[11px] text-gray-500">Forma</label>
               <select value={forma} onChange={(e) => setForma(e.target.value)} className="h-8 rounded-lg border border-gray-300 bg-white px-2 text-sm">
@@ -396,7 +397,7 @@ function ProveedoresTab({ numero, filas, catalogo }: { numero: string; filas: Cx
           <Input placeholder="Tipo (hotel, aéreo…)" value={tipo} onChange={(e) => setTipo(e.target.value)} />
           <Input placeholder="Servicio" value={servicio} onChange={(e) => setServicio(e.target.value)} />
           <Input type="number" min={0} placeholder="Valor total" value={valor} onChange={(e) => setValor(e.target.value)} />
-          <Input type="date" value={venc} onChange={(e) => setVenc(e.target.value)} />
+          <DateInput aria-label="Retención" type="date" value={venc} onValueChange={(dateValue) => setVenc(dateValue)} />
           <label className="flex items-center gap-2 text-sm text-gray-600">
             <input type="checkbox" checked={ret} onChange={(e) => setRet(e.target.checked)} /> Retención
             {ret && <Input type="number" className="w-20" placeholder="%" value={pctRet} onChange={(e) => setPctRet(e.target.value)} />}
@@ -499,7 +500,7 @@ function FilaCxP({ f, numero }: { f: CxP; numero: string }) {
             <div><label className="block text-[11px] text-gray-500">Servicio</label><Input value={servicio} onChange={(e) => setServicio(e.target.value)} className="w-44" /></div>
             <div><label className="block text-[11px] text-gray-500">Valor total</label><Input type="number" value={valor} onChange={(e) => setValor(e.target.value)} className="w-32" /></div>
             <div><label className="block text-[11px] text-gray-500">IVA descontable</label><Input type="number" value={iva} onChange={(e) => setIva(e.target.value)} className="w-32" placeholder="0" /></div>
-            <div><label className="block text-[11px] text-gray-500">Vence</label><Input type="date" value={venc} onChange={(e) => setVenc(e.target.value)} className="w-40" /></div>
+            <div><label className="block text-[11px] text-gray-500">Vence</label><DateInput aria-label="Vence" type="date" value={venc} onValueChange={(dateValue) => setVenc(dateValue)} className="w-40" /></div>
             <span className="pb-2 text-xs text-gray-500">Costo: <b className="text-gray-700">{formatCOP(costoEd)}</b></span>
             <Button onClick={guardar} disabled={pending} className="h-9" style={{ backgroundColor: "var(--brand-primary)" }}>{pending ? "…" : "Guardar"}</Button>
             <button type="button" onClick={() => setEditar(false)} className="pb-2 text-xs text-gray-400 hover:text-gray-700">Cancelar</button>
@@ -627,7 +628,7 @@ function PagoProveedorPanel({ f, pagado, saldo }: { f: CxP; pagado: number; sald
             )}
             <div>
               <label className="block text-[11px] text-gray-500">Fecha del pago</label>
-              <Input type="date" value={fecha} onChange={(e) => setFecha(e.target.value)} className="w-40" />
+              <DateInput aria-label="Fecha del pago" type="date" value={fecha} onValueChange={(dateValue) => setFecha(dateValue)} className="w-40" />
             </div>
             <Button onClick={registrar} disabled={pending} className="h-9" style={{ backgroundColor: "var(--brand-primary)" }}>{pending ? "…" : "Registrar pago"}</Button>
             <button type="button" onClick={() => setValor(String(saldo))} className="pb-2 text-xs font-medium hover:underline" style={{ color: "var(--brand-primary)" }}>
@@ -845,7 +846,7 @@ function FacturacionTab({ numero, filas, ivaGenerado, ivaPct, clienteNombre, cli
         </div>
         <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
           <Input placeholder="N° factura" value={num} onChange={(e) => setNum(e.target.value)} />
-          <Input type="date" value={fecha} onChange={(e) => setFecha(e.target.value)} />
+          <DateInput aria-label="Fecha" type="date" value={fecha} onValueChange={(dateValue) => setFecha(dateValue)} />
           <Input placeholder="Cliente" value={cliente} onChange={(e) => setCliente(e.target.value)} />
           <Input placeholder="NIT/CC cliente" value={nit} onChange={(e) => setNit(e.target.value)} />
         </div>

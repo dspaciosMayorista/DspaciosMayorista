@@ -1,5 +1,6 @@
 "use client";
 
+import { DateInput } from "@/components/ui/DateInput";
 import { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { Button } from "@/components/ui/button";
@@ -978,9 +979,9 @@ function SalidasEditor({
           <div key={i} className="rounded-lg border border-gray-200 bg-white p-3">
             <div className="mb-2 flex flex-wrap items-center gap-2">
               <Input value={r.etiqueta} onChange={(e) => upd(i, "etiqueta", e.target.value)} placeholder="Etiqueta (ej. MAY 29 AL 01 JUN)" className="w-56" />
-              <Input type="date" value={r.fechaDesde} onChange={(e) => upd(i, "fechaDesde", e.target.value)} className="w-40" title="Fecha desde" />
+              <DateInput aria-label="Fecha desde" type="date" value={r.fechaDesde} onValueChange={(dateValue) => upd(i, "fechaDesde", dateValue)} className="w-40" title="Fecha desde" />
               <span className="text-gray-300">→</span>
-              <Input type="date" value={r.fechaHasta} onChange={(e) => upd(i, "fechaHasta", e.target.value)} className="w-40" title="Fecha hasta" />
+              <DateInput aria-label="Fecha hasta" type="date" value={r.fechaHasta} onValueChange={(dateValue) => upd(i, "fechaHasta", dateValue)} className="w-40" title="Fecha hasta" />
               <Input type="number" value={r.noches} onChange={(e) => upd(i, "noches", e.target.value)} placeholder="Noches" className="w-24" />
               <Input value={r.columna} onChange={(e) => upd(i, "columna", e.target.value)} placeholder="Columna/hotel (opcional)" className="w-48" />
               <button type="button" onClick={() => dup(i)} className="text-xs font-medium text-[#1D7C9A] hover:underline" title="Duplica esta salida con los mismos precios; cambia solo el hotel">
@@ -1250,9 +1251,9 @@ function BlackoutsEditor({ programaId, blackouts }: { programaId: number; blacko
       <div className="space-y-2">
         {rows.map((r, i) => (
           <div key={i} className="flex flex-wrap items-center gap-2">
-            <Input type="date" value={r.fechaInicio} onChange={(e) => upd(i, "fechaInicio", e.target.value)} className="w-44" />
+            <DateInput aria-label="Fecha de inicio" type="date" value={r.fechaInicio} onValueChange={(dateValue) => upd(i, "fechaInicio", dateValue)} className="w-44" />
             <span className="text-gray-400">→</span>
-            <Input type="date" value={r.fechaFin} onChange={(e) => upd(i, "fechaFin", e.target.value)} className="w-44" />
+            <DateInput aria-label="Fecha de fin" type="date" value={r.fechaFin} onValueChange={(dateValue) => upd(i, "fechaFin", dateValue)} className="w-44" />
             <Input value={r.motivo} onChange={(e) => upd(i, "motivo", e.target.value)} placeholder="Motivo" className="min-w-[12rem] flex-1" />
             <DelBtn onClick={() => setRows((p) => p.filter((_, j) => j !== i))} />
           </div>

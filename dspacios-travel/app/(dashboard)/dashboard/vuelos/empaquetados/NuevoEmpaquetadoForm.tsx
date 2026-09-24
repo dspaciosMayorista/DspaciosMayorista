@@ -1,5 +1,6 @@
 "use client";
 
+import { DateInput } from "@/components/ui/DateInput";
 import { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { Button } from "@/components/ui/button";
@@ -97,7 +98,7 @@ export function NuevoEmpaquetadoForm({ proveedores = [], destinos = [] }: { prov
         <p className="text-sm font-semibold" style={{ color: "var(--brand-primary)" }}>Vuelo de ida</p>
         <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
           <div><label className={lbl}># Vuelo</label><Input value={f.vueloIda} onChange={set("vueloIda")} placeholder="5410" /></div>
-          <div><label className={lbl}>Fecha ida *</label><Input type="date" value={f.fechaIda} onChange={set("fechaIda")} /></div>
+          <div><label className={lbl}>Fecha ida *</label><DateInput aria-label="Fecha ida" type="date" value={f.fechaIda} onValueChange={(dateValue) => setF({ ...f, ["fechaIda"]: dateValue })} /></div>
           <div><label className={lbl}>Hora salida</label><Input type="time" value={f.horaSalidaIda} onChange={set("horaSalidaIda")} /></div>
           <div><label className={lbl}>Hora llegada</label><Input type="time" value={f.horaLlegadaIda} onChange={set("horaLlegadaIda")} /></div>
         </div>
@@ -107,7 +108,7 @@ export function NuevoEmpaquetadoForm({ proveedores = [], destinos = [] }: { prov
         <p className="text-sm font-semibold" style={{ color: "var(--brand-primary)" }}>Vuelo de regreso</p>
         <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
           <div><label className={lbl}># Vuelo</label><Input value={f.vueloRegreso} onChange={set("vueloRegreso")} placeholder="5414" /></div>
-          <div><label className={lbl}>Fecha regreso</label><Input type="date" value={f.fechaRegreso} onChange={set("fechaRegreso")} /></div>
+          <div><label className={lbl}>Fecha regreso</label><DateInput aria-label="Fecha regreso" type="date" value={f.fechaRegreso} onValueChange={(dateValue) => setF({ ...f, ["fechaRegreso"]: dateValue })} /></div>
           <div><label className={lbl}>Hora salida</label><Input type="time" value={f.horaSalidaReg} onChange={set("horaSalidaReg")} /></div>
           <div><label className={lbl}>Hora llegada</label><Input type="time" value={f.horaLlegadaReg} onChange={set("horaLlegadaReg")} /></div>
         </div>
@@ -119,8 +120,8 @@ export function NuevoEmpaquetadoForm({ proveedores = [], destinos = [] }: { prov
           <div><label className={lbl}>Tarifa proveedor/sistema (neto)</label><Input type="number" min={0} value={f.tarifaProveedor} onChange={set("tarifaProveedor")} placeholder="200000" /></div>
           <div><label className={lbl}>Tarifa para empaquetar (reventa)</label><Input type="number" min={0} value={f.tarifaParaEmpaquetar} onChange={set("tarifaParaEmpaquetar")} placeholder="242022" /></div>
           <div><label className={lbl}>Fee infante</label><Input type="number" min={0} value={f.feeInfante} onChange={set("feeInfante")} /></div>
-          <div><label className={lbl}>Vigencia de compra: desde</label><Input type="date" value={f.compraInicio} onChange={set("compraInicio")} /></div>
-          <div><label className={lbl}>Vigencia de compra: hasta</label><Input type="date" value={f.compraFin} onChange={set("compraFin")} /></div>
+          <div><label className={lbl}>Vigencia de compra: desde</label><DateInput aria-label="Vigencia de compra: desde" type="date" value={f.compraInicio} onValueChange={(dateValue) => setF({ ...f, ["compraInicio"]: dateValue })} /></div>
+          <div><label className={lbl}>Vigencia de compra: hasta</label><DateInput aria-label="Vigencia de compra: hasta" type="date" value={f.compraFin} onValueChange={(dateValue) => setF({ ...f, ["compraFin"]: dateValue })} /></div>
         </div>
       </section>
 

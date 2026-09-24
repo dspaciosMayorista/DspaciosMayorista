@@ -1,5 +1,6 @@
 "use client";
 
+import { DateInput } from "@/components/ui/DateInput";
 import { useMemo, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { Button } from "@/components/ui/button";
@@ -218,7 +219,7 @@ export function ProgramaReservaForm({
           </div>
           <div>
             <label className={lbl}>Fecha de salida</label>
-            <Input type="date" value={fechaIda} min={vigenciaDesde ?? undefined} max={vigenciaHasta ?? undefined} onChange={(e) => cambiarFechaIda(e.target.value)} />
+            <DateInput aria-label="Fecha de salida" type="date" value={fechaIda} min={vigenciaDesde ?? undefined} max={vigenciaHasta ?? undefined} onValueChange={(dateValue) => cambiarFechaIda(dateValue)} />
             {dias ? (
               <p className="mt-1 text-xs text-gray-400">Regreso estimado a {dias} días de la salida.</p>
             ) : null}
@@ -335,7 +336,7 @@ export function ProgramaReservaForm({
                         }}
                       />
                     </div>
-                    <Input type="date" value={p.fechaNacimiento} onChange={(e) => updPasajero(i, "fechaNacimiento", e.target.value)} />
+                    <DateInput aria-label="Fecha de nacimiento" type="date" value={p.fechaNacimiento} onValueChange={(dateValue) => updPasajero(i, "fechaNacimiento", dateValue)} />
                     <Input value={p.nacionalidad} onChange={(e) => updPasajero(i, "nacionalidad", e.target.value)} placeholder="Nacionalidad" />
                   </div>
                   {esInfanteRealRow[i] && (
@@ -394,7 +395,7 @@ export function ProgramaReservaForm({
         )}
         <div className="mt-3">
           <label className={lbl}>Plazo de pago (opcional)</label>
-          <Input type="date" value={plazo} onChange={(e) => setPlazo(e.target.value)} className="w-48" />
+          <DateInput aria-label="Plazo de pago (opcional)" type="date" value={plazo} onValueChange={(dateValue) => setPlazo(dateValue)} className="w-48" />
         </div>
       </fieldset>
 

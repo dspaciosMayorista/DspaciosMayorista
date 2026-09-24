@@ -1,5 +1,6 @@
 "use client";
 
+import { DateInput } from "@/components/ui/DateInput";
 import { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { Button } from "@/components/ui/button";
@@ -308,7 +309,7 @@ export function ConvertirCarritoBtn({
                       />
                     </div>
                   </div>
-                  <div className="w-44"><label className="text-[11px] text-gray-500">Nacimiento</label><Input type="date" className="w-full" value={p.fechaNacimiento} onChange={(e) => setRow(i, "fechaNacimiento", e.target.value)} /></div>
+                  <div className="w-44"><label className="text-[11px] text-gray-500">Nacimiento</label><DateInput aria-label="Nacimiento" type="date" className="w-full" value={p.fechaNacimiento} onValueChange={(dateValue) => setRow(i, "fechaNacimiento", dateValue)} /></div>
                   <div className="w-32"><label className="text-[11px] text-gray-500">Nacionalidad</label><Input value={p.nacionalidad} onChange={(e) => setRow(i, "nacionalidad", e.target.value)} /></div>
                   <span className="pb-2 text-[11px] text-gray-400">
                     {edadesReales[i] == null ? "—" : `${esInfanteRealRow[i] ? "Infante" : edadesReales[i]! < 12 ? "Niño" : "Adulto"} · ${edadesReales[i]}a`}

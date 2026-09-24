@@ -1,5 +1,6 @@
 "use client";
 
+import { DateInput } from "@/components/ui/DateInput";
 import { useMemo, useState, useTransition } from "react";
 import { editarPasajeroSilla, borrarPasajeroSilla, moverPasajeroSilla, guardarInfanteVuelo, type PasajeroSillaInput } from "../actions";
 import { esInfantePorEdad, sillaTieneDatosDePasajero } from "@/lib/vuelos/infanteVuelo";
@@ -151,7 +152,7 @@ export function PasajeroAcciones({
                     <input className={inp} value={form.numero_doc} onChange={(e) => set("numero_doc", e.target.value)} />
                   </label>
                   <label className="text-xs text-gray-500">Nacimiento
-                    <input type="date" className={inp} value={form.nacimiento} onChange={(e) => set("nacimiento", e.target.value)} />
+                    <DateInput aria-label="Fecha de nacimiento" type="date" className={inp} value={form.nacimiento} onValueChange={(dateValue) => set("nacimiento", dateValue)} />
                   </label>
                   {!esInfante && (
                     <>
@@ -165,7 +166,7 @@ export function PasajeroAcciones({
                         <input className={inp} value={form.acomodacion} onChange={(e) => set("acomodacion", e.target.value)} />
                       </label>
                       <label className="text-xs text-gray-500">Plazo
-                        <input type="date" className={inp} value={form.plazo} onChange={(e) => set("plazo", e.target.value)} />
+                        <DateInput aria-label="Plazo de pago" type="date" className={inp} value={form.plazo} onValueChange={(dateValue) => set("plazo", dateValue)} />
                       </label>
                     </>
                   )}

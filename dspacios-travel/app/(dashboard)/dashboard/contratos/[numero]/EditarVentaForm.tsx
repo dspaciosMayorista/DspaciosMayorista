@@ -1,5 +1,6 @@
 "use client";
 
+import { DateInput } from "@/components/ui/DateInput";
 import { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { Button } from "@/components/ui/button";
@@ -43,9 +44,9 @@ export function EditarVentaForm({ numero, inicial, destinos = [] }: { numero: st
             <div><label className={lbl}>Email</label><Input value={f.clienteEmail} onChange={set("clienteEmail")} /></div>
             <div><label className={lbl}>Dirección</label><Input value={f.clienteDireccion} onChange={set("clienteDireccion")} /></div>
             <div><label className={lbl}>Destino</label><ComboCiudad destinos={destinos} value={f.destino} onChange={(v) => setF({ ...f, destino: v })} modo="nombre" permitirLibre placeholder="Destino…" /></div>
-            <div><label className={lbl}>Fecha salida</label><Input type="date" value={f.fechaSalida} onChange={set("fechaSalida")} /></div>
-            <div><label className={lbl}>Fecha regreso</label><Input type="date" value={f.fechaRegreso} onChange={set("fechaRegreso")} /></div>
-            <div><label className={lbl}>Plazo</label><Input type="date" value={f.plazo} onChange={set("plazo")} /></div>
+            <div><label className={lbl}>Fecha salida</label><DateInput aria-label="Fecha salida" type="date" value={f.fechaSalida} onValueChange={(dateValue) => setF({ ...f, ["fechaSalida"]: dateValue })} /></div>
+            <div><label className={lbl}>Fecha regreso</label><DateInput aria-label="Fecha regreso" type="date" value={f.fechaRegreso} onValueChange={(dateValue) => setF({ ...f, ["fechaRegreso"]: dateValue })} /></div>
+            <div><label className={lbl}>Plazo</label><DateInput aria-label="Plazo" type="date" value={f.plazo} onValueChange={(dateValue) => setF({ ...f, ["plazo"]: dateValue })} /></div>
             <div><label className={lbl}>Plan</label><Input value={f.planNombre} onChange={set("planNombre")} /></div>
             <div><label className={lbl}>Precio de venta (total)</label><Input type="number" min={0} value={f.precioVenta} onChange={set("precioVenta")} /></div>
             <div><label className={lbl}>Cantidad de pasajeros</label><Input type="number" min={1} value={f.pax} onChange={set("pax")} /></div>

@@ -1,5 +1,6 @@
 "use client";
 
+import { DateInput } from "@/components/ui/DateInput";
 import { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { Button } from "@/components/ui/button";
@@ -141,7 +142,7 @@ export function TramosEditor({ numeroContrato, tramosIniciales }: { numeroContra
             <div><label className={lbl}>N.° de vuelo</label><Input value={v.numeroVuelo} onChange={(e) => set(i, { numeroVuelo: e.target.value })} maxLength={15} /></div>
             <div><label className={lbl}>Origen (IATA)</label><Input value={v.origenCodigo} onChange={(e) => setOrigen(i, e.target.value)} maxLength={3} /></div>
             <div><label className={lbl}>Destino (IATA)</label><Input value={v.destinoCodigo} onChange={(e) => setDestino(i, e.target.value)} maxLength={3} /></div>
-            <div><label className={lbl}>Fecha</label><Input type="date" value={v.fecha} onChange={(e) => set(i, { fecha: e.target.value })} /></div>
+            <div><label className={lbl}>Fecha</label><DateInput aria-label="Fecha" type="date" value={v.fecha} onValueChange={(dateValue) => set(i, { fecha: dateValue })} /></div>
             <div><label className={lbl}>Hora salida</label><Input value={v.horaSalida} onChange={(e) => set(i, { horaSalida: e.target.value })} maxLength={5} /></div>
             <div><label className={lbl}>Hora llegada</label><Input value={v.horaLlegada} onChange={(e) => set(i, { horaLlegada: e.target.value })} maxLength={5} /></div>
             <div className="md:col-span-2"><label className={lbl}>Equipaje / servicios</label><Input value={v.servicios} onChange={(e) => set(i, { servicios: e.target.value })} maxLength={500} /></div>

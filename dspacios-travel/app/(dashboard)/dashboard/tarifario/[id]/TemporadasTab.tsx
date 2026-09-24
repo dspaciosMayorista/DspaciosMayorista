@@ -1,5 +1,6 @@
 "use client";
 
+import { DateInput } from "@/components/ui/DateInput";
 import { useState, useTransition } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -76,12 +77,12 @@ export function TemporadasTab({ destinoId, temporadas }: { destinoId: number; te
                 </div>
                 {fechas.map((f, i) => (
                   <div key={i} className="flex gap-2 mb-2 items-center">
-                    <Input type="date" value={f.inicio} onChange={(e) => {
-                      const nf = [...fechas]; nf[i].inicio = e.target.value; setFechas(nf);
+                    <DateInput aria-label="Inicio de temporada" type="date" value={f.inicio} onValueChange={(dateValue) => {
+                      const nf = [...fechas]; nf[i].inicio = dateValue; setFechas(nf);
                     }} className="text-sm" />
                     <span className="text-gray-400 text-sm">→</span>
-                    <Input type="date" value={f.fin} onChange={(e) => {
-                      const nf = [...fechas]; nf[i].fin = e.target.value; setFechas(nf);
+                    <DateInput aria-label="Fin de temporada" type="date" value={f.fin} onValueChange={(dateValue) => {
+                      const nf = [...fechas]; nf[i].fin = dateValue; setFechas(nf);
                     }} className="text-sm" />
                     {fechas.length > 1 && (
                       <button type="button" onClick={() => setFechas(fechas.filter((_, j) => j !== i))}

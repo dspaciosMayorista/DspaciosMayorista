@@ -1,5 +1,6 @@
 "use client";
 
+import { DateInput } from "@/components/ui/DateInput";
 import { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { Button } from "@/components/ui/button";
@@ -414,11 +415,11 @@ function CamposTemporada({ value, onChange }: { value: TemporadaServicioInput; o
     <div className="space-y-3">
       <div className="grid grid-cols-2 gap-2 md:grid-cols-4">
         <div className="col-span-2 md:col-span-1"><label className={lbl}>Nombre</label><Input value={value.nombre} onChange={(e) => set("nombre", e.target.value)} placeholder="ALTA, NAVIDAD…" /></div>
-        <div><label className={lbl}>Viaje desde</label><Input type="date" value={value.fechaInicio} onChange={(e) => set("fechaInicio", e.target.value)} /></div>
-        <div><label className={lbl}>Viaje hasta</label><Input type="date" value={value.fechaFin} onChange={(e) => set("fechaFin", e.target.value)} /></div>
+        <div><label className={lbl}>Viaje desde</label><DateInput aria-label="Viaje desde" type="date" value={value.fechaInicio} onValueChange={(dateValue) => set("fechaInicio", dateValue)} /></div>
+        <div><label className={lbl}>Viaje hasta</label><DateInput aria-label="Viaje hasta" type="date" value={value.fechaFin} onValueChange={(dateValue) => set("fechaFin", dateValue)} /></div>
         <div><label className={lbl}>Precio por persona</label><Input type="number" min={0} value={value.precioPersona ?? ""} onChange={(e) => set("precioPersona", e.target.value === "" ? null : Number(e.target.value))} /></div>
-        <div><label className={lbl}>Compra desde</label><Input type="date" value={value.compraInicio} onChange={(e) => set("compraInicio", e.target.value)} /></div>
-        <div><label className={lbl}>Compra hasta</label><Input type="date" value={value.compraFin} onChange={(e) => set("compraFin", e.target.value)} /></div>
+        <div><label className={lbl}>Compra desde</label><DateInput aria-label="Compra desde" type="date" value={value.compraInicio} onValueChange={(dateValue) => set("compraInicio", dateValue)} /></div>
+        <div><label className={lbl}>Compra hasta</label><DateInput aria-label="Compra hasta" type="date" value={value.compraFin} onValueChange={(dateValue) => set("compraFin", dateValue)} /></div>
         <div><label className={lbl}>Prioridad</label><Input type="number" min={1} value={value.prioridad} onChange={(e) => set("prioridad", Number(e.target.value) || 1)} /></div>
         <div>
           <label className={lbl}>Recargo individual (1 pax)</label>

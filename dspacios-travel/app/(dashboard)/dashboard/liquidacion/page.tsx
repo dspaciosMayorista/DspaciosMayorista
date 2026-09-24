@@ -1,3 +1,4 @@
+import { DateInput } from "@/components/ui/DateInput";
 import { createClient } from "@/lib/supabase/server";
 import Link from "next/link";
 import { comisionMes, type EscalaRango } from "@/lib/calc/escalas";
@@ -96,7 +97,7 @@ export default async function LiquidacionPage({ searchParams }: { searchParams: 
       <form method="get" className="mb-5 flex items-end gap-2">
         <div>
           <label className="mb-1 block text-xs font-medium text-gray-600">Mes</label>
-          <input type="month" name="mes" defaultValue={mes} className="rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm" />
+          <DateInput aria-label="Mes" type="month" name="mes" defaultValue={mes} className="rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm" />
         </div>
         <button type="submit" className="rounded-lg px-4 py-2 text-sm font-medium text-white" style={{ backgroundColor: "var(--brand-primary)" }}>Ver mes</button>
       </form>

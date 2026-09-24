@@ -1,5 +1,6 @@
 "use client";
 
+import { DateInput } from "@/components/ui/DateInput";
 import { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { Button } from "@/components/ui/button";
@@ -99,15 +100,15 @@ export function EditarBloqueoForm({
             <div><label className={lbl}>Tarifa neta (pago aerolínea)</label><Input type="number" min={0} value={f.tarifaNeta} onChange={set("tarifaNeta")} /></div>
             <div><label className={lbl}>Tarifa empaquetar (reventa)</label><Input type="number" min={0} value={f.tarifaParaEmpaquetar} onChange={set("tarifaParaEmpaquetar")} /></div>
             <div><label className={lbl}># Vuelo ida</label><Input value={f.vueloIda} onChange={set("vueloIda")} /></div>
-            <div><label className={lbl}>Fecha ida</label><Input type="date" value={f.fechaIda} onChange={set("fechaIda")} /></div>
+            <div><label className={lbl}>Fecha ida</label><DateInput aria-label="Fecha ida" type="date" value={f.fechaIda} onValueChange={(dateValue) => setF({ ...f, ["fechaIda"]: dateValue })} /></div>
             <div><label className={lbl}>Hora salida ida</label><Input type="time" value={f.horaSalidaIda} onChange={set("horaSalidaIda")} /></div>
             <div><label className={lbl}>Hora llegada ida</label><Input type="time" value={f.horaLlegadaIda} onChange={set("horaLlegadaIda")} /></div>
             <div><label className={lbl}># Vuelo regreso</label><Input value={f.vueloRegreso} onChange={set("vueloRegreso")} /></div>
-            <div><label className={lbl}>Fecha regreso</label><Input type="date" value={f.fechaRegreso} onChange={set("fechaRegreso")} /></div>
+            <div><label className={lbl}>Fecha regreso</label><DateInput aria-label="Fecha regreso" type="date" value={f.fechaRegreso} onValueChange={(dateValue) => setF({ ...f, ["fechaRegreso"]: dateValue })} /></div>
             <div><label className={lbl}>Hora salida reg.</label><Input type="time" value={f.horaSalidaReg} onChange={set("horaSalidaReg")} /></div>
             <div><label className={lbl}>Hora llegada reg.</label><Input type="time" value={f.horaLlegadaReg} onChange={set("horaLlegadaReg")} /></div>
-            <div><label className={lbl}>Fecha devolución</label><Input type="date" value={f.fechaDevolucion} onChange={set("fechaDevolucion")} /></div>
-            <div><label className={lbl}>Fecha límite de emisión</label><Input type="date" value={f.fechaEmision} onChange={set("fechaEmision")} /></div>
+            <div><label className={lbl}>Fecha devolución</label><DateInput aria-label="Fecha devolución" type="date" value={f.fechaDevolucion} onValueChange={(dateValue) => setF({ ...f, ["fechaDevolucion"]: dateValue })} /></div>
+            <div><label className={lbl}>Fecha límite de emisión</label><DateInput aria-label="Fecha límite de emisión" type="date" value={f.fechaEmision} onValueChange={(dateValue) => setF({ ...f, ["fechaEmision"]: dateValue })} /></div>
             <div className="col-span-2 md:col-span-3"><label className={lbl}>Notas</label><Input value={f.notas} onChange={set("notas")} /></div>
           </div>
           <RangosEdadPicker rangos={rangos} seleccionados={rangosSel} onChange={setRangosSel} label="Rangos de edad del vuelo" />

@@ -1,5 +1,6 @@
 "use client";
 
+import { DateInput } from "@/components/ui/DateInput";
 import { useMemo, useState, useTransition } from "react";
 import Link from "next/link";
 import { Button } from "@/components/ui/button";
@@ -213,7 +214,7 @@ function ContactoForm({ inicial, subcats = [], onDone }: { inicial?: Contacto; s
         <div><label className={lbl}>Email</label><Input value={v.email} onChange={set("email")} /></div>
         <div><label className={lbl}>Teléfono</label><Input value={v.telefono} onChange={set("telefono")} /></div>
         <div><label className={lbl}>Ciudad</label><Input value={v.ciudad} onChange={set("ciudad")} /></div>
-        <div><label className={lbl}>Fecha nacimiento</label><Input type="date" value={v.fechaNacimiento} onChange={set("fechaNacimiento")} /></div>
+        <div><label className={lbl}>Fecha nacimiento</label><DateInput aria-label="Fecha nacimiento" type="date" value={v.fechaNacimiento} onValueChange={(dateValue) => setV((s) => ({ ...s, ["fechaNacimiento"]: dateValue }))} /></div>
         <div>
           <label className={lbl}>Género</label>
           <select value={v.genero} onChange={(e) => setV((s) => ({ ...s, genero: e.target.value }))} className="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm">

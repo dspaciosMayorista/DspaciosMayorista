@@ -1,5 +1,6 @@
 "use client";
 
+import { DateInput } from "@/components/ui/DateInput";
 import { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { Button } from "@/components/ui/button";
@@ -66,7 +67,7 @@ export function TitularEditor({ id, inicial }: { id: number; inicial: TitularInp
               </select>
             </div>
             <div><label className={lbl}>N° documento</label><Input value={t.numeroDoc} onChange={(e) => set("numeroDoc", e.target.value)} /></div>
-            <div><label className={lbl}>Fecha de nacimiento</label><Input type="date" value={t.nacimiento} onChange={(e) => set("nacimiento", e.target.value)} /></div>
+            <div><label className={lbl}>Fecha de nacimiento</label><DateInput aria-label="Fecha de nacimiento" type="date" value={t.nacimiento} onValueChange={(dateValue) => set("nacimiento", dateValue)} /></div>
             <div><label className={lbl}>Teléfono</label><Input value={t.telefono} onChange={(e) => set("telefono", e.target.value)} /></div>
             <div className="md:col-span-2"><label className={lbl}>Email</label><Input value={t.email} onChange={(e) => set("email", e.target.value)} /></div>
           </div>

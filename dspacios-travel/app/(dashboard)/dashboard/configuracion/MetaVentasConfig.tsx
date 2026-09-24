@@ -1,5 +1,6 @@
 "use client";
 
+import { DateInput } from "@/components/ui/DateInput";
 import { useState, useTransition } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -51,7 +52,7 @@ export function MetaVentasConfig({ historial }: { historial: Fila[] }) {
       <div className="flex flex-wrap items-center gap-3">
         <label className="text-sm text-gray-700">
           Mes
-          <Input type="month" className="mt-1 w-40" value={periodo} onChange={(e) => setPeriodo(e.target.value)} />
+          <DateInput aria-label="Periodo" type="month" className="mt-1 w-40" value={periodo} onValueChange={(dateValue) => setPeriodo(dateValue)} />
         </label>
         <label className="text-sm text-gray-700">
           Meta general (COP)

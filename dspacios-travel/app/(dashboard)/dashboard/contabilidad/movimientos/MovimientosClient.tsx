@@ -1,5 +1,6 @@
 "use client";
 
+import { DateInput } from "@/components/ui/DateInput";
 import { useMemo, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { Input } from "@/components/ui/input";
@@ -138,7 +139,7 @@ function Editor({ row, onClose }: { row: MovRow | null; onClose: () => void }) {
   return (
     <div className="rounded-lg border border-gray-200 bg-gray-50 p-4">
       <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
-        <div><label className={lbl}>Fecha</label><Input type="date" value={fecha} onChange={(e) => setFecha(e.target.value)} /></div>
+        <div><label className={lbl}>Fecha</label><DateInput aria-label="Fecha" type="date" value={fecha} onValueChange={(dateValue) => setFecha(dateValue)} /></div>
         <div>
           <label className={lbl}>Tipo</label>
           <select value={tipo} onChange={(e) => setTipo(e.target.value as "ingreso" | "egreso")} className="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm">

@@ -1,5 +1,6 @@
 "use client";
 
+import { DateInput } from "@/components/ui/DateInput";
 import { useMemo, useState, useTransition } from "react";
 import Link from "next/link";
 import { Button } from "@/components/ui/button";
@@ -308,7 +309,7 @@ function FilaAbonoCartera({
           <div className="flex flex-wrap items-end gap-2">
             <div><label className="block text-[11px] text-gray-500">Valor{esUSD ? " pagado (COP)" : ""}</label><Input type="number" value={valor} onChange={(e) => setValor(e.target.value)} className="w-32" /></div>
             {esUSD && <div><label className="block text-[11px] text-gray-500">TRM</label><Input type="number" value={trm} onChange={(e) => setTrm(e.target.value)} className="w-28" /></div>}
-            <div><label className="block text-[11px] text-gray-500">Fecha</label><Input type="date" value={fecha} onChange={(e) => setFecha(e.target.value)} className="w-40" /></div>
+            <div><label className="block text-[11px] text-gray-500">Fecha</label><DateInput aria-label="Fecha" type="date" value={fecha} onValueChange={(dateValue) => setFecha(dateValue)} className="w-40" /></div>
             <div>
               <label className="block text-[11px] text-gray-500">Forma</label>
               <select value={forma} onChange={(e) => setForma(e.target.value)} className="h-8 rounded-lg border border-gray-300 bg-white px-2 text-sm">
@@ -443,7 +444,7 @@ function AbonoInline({
         </div>
         <div>
           <label className="mb-1 block text-xs font-medium text-gray-600">Fecha del abono</label>
-          <Input type="date" value={fecha} onChange={(e) => setFecha(e.target.value)} className="w-40" />
+          <DateInput aria-label="Fecha del abono" type="date" value={fecha} onValueChange={(dateValue) => setFecha(dateValue)} className="w-40" />
         </div>
         <Button type="submit" disabled={pending} style={{ backgroundColor: "var(--brand-primary)" }}>
           {pending ? "Guardando…" : "Registrar abono"}
