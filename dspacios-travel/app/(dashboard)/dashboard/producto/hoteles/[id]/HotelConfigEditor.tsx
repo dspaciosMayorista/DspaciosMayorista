@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { RangosEdadPicker, type RangoEdad } from "@/components/RangosEdadPicker";
+import { ComboProveedor, type ProveedorOpt } from "@/components/ComboProveedor";
 import { actualizarHotelConfig } from "../actions";
 
 const lbl = "mb-1 block text-xs font-medium text-gray-600";
@@ -15,7 +16,7 @@ export function HotelConfigEditor({
   hotelId: number;
   rangos: RangoEdad[];
   destinos?: { id: number; nombre: string }[];
-  proveedores?: { id: number; nombre: string }[];
+  proveedores?: ProveedorOpt[];
   inicial: {
     nombre: string;
     destinoId: number | null;
@@ -113,10 +114,7 @@ export function HotelConfigEditor({
             </div>
             <div>
               <label className={lbl}>Proveedor hotelero</label>
-              <select value={proveedorId} onChange={(e) => setProveedorId(e.target.value === "" ? "" : Number(e.target.value))} className="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm">
-                <option value="">- Sin asignar -</option>
-                {proveedores.map((p) => <option key={p.id} value={p.id}>{p.nombre}</option>)}
-              </select>
+              <ComboProveedor proveedores={proveedores ?? []} value={proveedorId} onChange={setProveedorId} placeholder="Selecciona proveedor…" />
             </div>
             <div><label className={lbl}>Zona</label><Input value={zona} onChange={(e) => setZona(e.target.value)} /></div>
           </div>

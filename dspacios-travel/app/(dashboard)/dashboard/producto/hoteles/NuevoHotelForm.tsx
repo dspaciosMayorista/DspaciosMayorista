@@ -7,6 +7,7 @@ import { Input } from "@/components/ui/input";
 import { crearHotel } from "./actions";
 import { RangosEdadPicker, type RangoEdad } from "@/components/RangosEdadPicker";
 import { ComboDestino, type DestinoOpt } from "@/components/ComboDestino";
+import { ComboProveedor, type ProveedorOpt } from "@/components/ComboProveedor";
 
 type Opt = { id: number; nombre: string };
 type Regimen = { id: number; codigo: string; nombre: string };
@@ -17,7 +18,7 @@ const selCls = "w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text
 
 export function NuevoHotelForm({
   destinos, proveedores, categorias, regimenes, rangos = [],
-}: { destinos: DestinoOpt[]; proveedores: Opt[]; categorias: Opt[]; regimenes: Regimen[]; rangos?: RangoEdad[] }) {
+}: { destinos: DestinoOpt[]; proveedores: ProveedorOpt[]; categorias: Opt[]; regimenes: Regimen[]; rangos?: RangoEdad[] }) {
   const router = useRouter();
   const [pending, start] = useTransition();
   const [err, setErr] = useState("");
@@ -89,10 +90,7 @@ export function NuevoHotelForm({
           </div>
           <div>
             <label className={lbl}>Proveedor hotelero</label>
-            <select value={proveedorId} onChange={(e) => setProveedorId(Number(e.target.value) || "")} className={selCls}>
-              <option value="">— (sin asignar)</option>
-              {proveedores.map((p) => <option key={p.id} value={p.id}>{p.nombre}</option>)}
-            </select>
+            <ComboProveedor proveedores={proveedores} value={proveedorId} onChange={setProveedorId} placeholder="Selecciona proveedor…" />
           </div>
           <div><label className={lbl}>Teléfono de contacto (reservas del hotel)</label><Input value={contactoTel} onChange={(e) => setContactoTel(e.target.value)} placeholder="+57 ..." /></div>
           <div><label className={lbl}>Correo comercial (solicitudes de reserva)</label><Input type="email" value={emailCom} onChange={(e) => setEmailCom(e.target.value)} placeholder="reservas@hotel.com" /></div>
