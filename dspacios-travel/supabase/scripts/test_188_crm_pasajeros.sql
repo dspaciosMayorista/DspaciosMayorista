@@ -27,7 +27,7 @@
 --   9) usuario externo ACTIVO (rol agencia) → excepción explícita.
 --  10) Sin sesión (anon) → excepción.
 --  11) Paginación: tam_pagina=1 devuelve EXACTAMENTE 1 fila y total_filas
---      refleja el conteo real visible (no el total global de la tabla).
+--      refleja el conteo real visible del fixture (no el total global).
 --  12) Búsqueda por texto (ILIKE) encuentra la fila esperada Y sigue
 --      respetando el filtro de permiso (no se puede usar p_busqueda para
 --      ver más de lo que el rol ya podría listar).
@@ -38,6 +38,9 @@
 -- distinto da 'INCOMPLETO'. 'OMITIDO' nunca cuenta como aprobado. Una
 -- corrida que no produjo NINGUNA fila (fallo catastrófico) también da
 -- 'FALLA' explícito — nunca 'OK' por defecto.
+-- Los casos positivos buscan solo TEST188CRM: la RPC limita cada página
+-- a 100 filas aunque se soliciten 500, y el histórico real puede dejar
+-- fuera de la primera página los contratos creados por este fixture.
 -- ─────────────────────────────────────────────────────────────────────────
 
 begin;
@@ -91,7 +94,7 @@ begin
   perform set_config('request.jwt.claims', json_build_object('sub', v_actor_id, 'role', 'authenticated')::text, true);
   select bool_or(nombre = 'TEST188CRM PASAJERO A'), bool_or(nombre = 'TEST188CRM PASAJERO B')
     into v_ve_a, v_ve_b
-    from public.crm_pasajeros_contrato_buscar(null, 1, 500);
+    from public.crm_pasajeros_contrato_buscar('TEST188CRM', 1, 500);
   insert into _t188crm_sec values ('1-superadmin-ambas-agencias', case when coalesce(v_ve_a,false) and coalesce(v_ve_b,false) then 'OK' else 'FALLA' end, format('ve_a=%s ve_b=%s', v_ve_a, v_ve_b));
   reset role;
   perform set_config('request.jwt.claims', null, true);
@@ -102,7 +105,7 @@ begin
   perform set_config('request.jwt.claims', json_build_object('sub', v_actor_id, 'role', 'authenticated')::text, true);
   select bool_or(nombre = 'TEST188CRM PASAJERO A'), bool_or(nombre = 'TEST188CRM PASAJERO B')
     into v_ve_a, v_ve_b
-    from public.crm_pasajeros_contrato_buscar(null, 1, 500);
+    from public.crm_pasajeros_contrato_buscar('TEST188CRM', 1, 500);
   insert into _t188crm_sec values ('2-gerencia-ambas-agencias', case when coalesce(v_ve_a,false) and coalesce(v_ve_b,false) then 'OK' else 'FALLA' end, format('ve_a=%s ve_b=%s', v_ve_a, v_ve_b));
   reset role;
   perform set_config('request.jwt.claims', null, true);
@@ -113,7 +116,7 @@ begin
   perform set_config('request.jwt.claims', json_build_object('sub', v_actor_id, 'role', 'authenticated')::text, true);
   select bool_or(nombre = 'TEST188CRM PASAJERO A'), bool_or(nombre = 'TEST188CRM PASAJERO B')
     into v_ve_a, v_ve_b
-    from public.crm_pasajeros_contrato_buscar(null, 1, 500);
+    from public.crm_pasajeros_contrato_buscar('TEST188CRM', 1, 500);
   insert into _t188crm_sec values ('3-administracion-agencia-a', case when coalesce(v_ve_a,false) and not coalesce(v_ve_b,false) then 'OK' else 'FALLA' end, format('ve_a=%s ve_b=%s (esperado true/false)', v_ve_a, v_ve_b));
   reset role;
   perform set_config('request.jwt.claims', null, true);
@@ -124,7 +127,7 @@ begin
   perform set_config('request.jwt.claims', json_build_object('sub', v_actor_id, 'role', 'authenticated')::text, true);
   select bool_or(nombre = 'TEST188CRM PASAJERO A'), bool_or(nombre = 'TEST188CRM PASAJERO B')
     into v_ve_a, v_ve_b
-    from public.crm_pasajeros_contrato_buscar(null, 1, 500);
+    from public.crm_pasajeros_contrato_buscar('TEST188CRM', 1, 500);
   insert into _t188crm_sec values ('4-operaciones-agencia-b', case when coalesce(v_ve_b,false) and not coalesce(v_ve_a,false) then 'OK' else 'FALLA' end, format('ve_a=%s ve_b=%s (esperado false/true)', v_ve_a, v_ve_b));
   reset role;
   perform set_config('request.jwt.claims', null, true);
@@ -138,14 +141,14 @@ begin
     bool_or(nombre = 'TEST188CRM PASAJERO B'),
     bool_or(nombre = 'TEST188CRM PASAJERO C')
     into v_ve_a, v_ve_b, v_ve_c
-    from public.crm_pasajeros_contrato_buscar(null, 1, 500);
+    from public.crm_pasajeros_contrato_buscar('TEST188CRM', 1, 500);
   insert into _t188crm_sec values ('5-venta-contrato-propio', case when coalesce(v_ve_a,false) then 'OK' else 'FALLA' end, 'Debe ver su propio contrato (A).');
   insert into _t188crm_sec values ('6-venta-contrato-ajeno-misma-agencia', case when not coalesce(v_ve_c,false) then 'OK' else 'FALLA (FUGA)' end, 'NO debe ver un contrato de la MISMA agencia asignado a otro asesor (C).');
   insert into _t188crm_sec values ('7-venta-otra-agencia', case when not coalesce(v_ve_b,false) then 'OK' else 'FALLA (FUGA cross-tenant)' end, 'NO debe ver un contrato de la OTRA agencia (B).');
 
-  -- ── 11) Paginación: tam_pagina=1 → exactamente 1 fila, total_filas real.
-  select count(*), max(total_filas) into v_n, v_total from public.crm_pasajeros_contrato_buscar(null, 1, 1);
-  insert into _t188crm_sec values ('11-paginacion-tam-1', case when v_n = 1 and v_total >= 1 then 'OK' else 'FALLA' end, format('filas=%s total_filas=%s (esperado filas=1, total_filas>=1)', v_n, v_total));
+  -- ── 11) Paginación: venta solo ve A en el fixture filtrado.
+  select count(*), max(total_filas) into v_n, v_total from public.crm_pasajeros_contrato_buscar('TEST188CRM', 1, 1);
+  insert into _t188crm_sec values ('11-paginacion-tam-1', case when v_n = 1 and v_total = 1 then 'OK' else 'FALLA' end, format('filas=%s total_filas=%s (esperado filas=1, total_filas=1)', v_n, v_total));
 
   -- ── 12) Búsqueda por texto: encuentra A, sigue sin ver B/C.
   select
@@ -202,8 +205,6 @@ exception when others then
   reset role;
   insert into _t188crm_sec values ('EXCEPCION-NO-CAPTURADA', 'FALLA', sqlerrm);
 end $$;
-
-select * from _t188crm_sec order by caso;
 
 select jsonb_build_object(
   'veredicto',
