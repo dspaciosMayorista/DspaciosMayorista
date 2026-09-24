@@ -1,5 +1,6 @@
 "use client";
 
+import { DateInput } from "@/components/ui/DateInput";
 import { useEffect, useState, useTransition } from "react";
 import Link from "next/link";
 import { Search, Trash2, Landmark, FileBarChart } from "lucide-react";
@@ -490,11 +491,11 @@ function FormRetencion({ cuenta, onDone }: { cuenta: CuentaContrato; onDone: () 
       <div className="mt-3 flex flex-wrap items-end gap-3">
         <div>
           <label className="mb-1 block text-xs text-gray-500">Fecha en que se practicó</label>
-          <Input type="date" value={fechaPractica} onChange={(e) => setFechaPractica(e.target.value)} className="w-40" />
+          <DateInput aria-label="Fecha en que se practicó" type="date" value={fechaPractica} onValueChange={(dateValue) => setFechaPractica(dateValue)} className="w-40" />
         </div>
         <div>
           <label className="mb-1 block text-xs text-gray-500">Mes a declarar (DIAN)</label>
-          <Input type="month" value={mesDeclaracion} onChange={(e) => setMesDeclaracion(e.target.value)} className="w-36" />
+          <DateInput aria-label="Mes a declarar (DIAN)" type="month" value={mesDeclaracion} onValueChange={(dateValue) => setMesDeclaracion(dateValue)} className="w-36" />
         </div>
         <div className="flex-1">
           <label className="mb-1 block text-xs text-gray-500">Observaciones (opcional)</label>

@@ -1,5 +1,6 @@
 "use client";
 
+import { DateInput } from "@/components/ui/DateInput";
 import { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { Button } from "@/components/ui/button";
@@ -148,11 +149,11 @@ export function CabeceraForm({
       <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
         <div>
           <label className={lbl}>Vigencia desde</label>
-          <Input type="date" value={f.vigenciaDesde} onChange={(e) => set("vigenciaDesde", e.target.value)} />
+          <DateInput aria-label="Vigencia desde" type="date" value={f.vigenciaDesde} onValueChange={(dateValue) => set("vigenciaDesde", dateValue)} />
         </div>
         <div>
           <label className={lbl}>Vigencia hasta</label>
-          <Input type="date" value={f.vigenciaHasta} onChange={(e) => set("vigenciaHasta", e.target.value)} />
+          <DateInput aria-label="Vigencia hasta" type="date" value={f.vigenciaHasta} onValueChange={(dateValue) => set("vigenciaHasta", dateValue)} />
         </div>
         <div>
           <label className={lbl}>Mín. pax</label>

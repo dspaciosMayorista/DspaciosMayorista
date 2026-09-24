@@ -1,5 +1,6 @@
 "use client";
 
+import { DateInput } from "@/components/ui/DateInput";
 import { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { Button } from "@/components/ui/button";
@@ -206,8 +207,8 @@ export function ContenidoContratoEditor({ numero, moneda, precioVenta, items, ho
               <div><label className={lblCls}>Ciudad</label><Input value={h.ciudad} onChange={(e) => setFHoteles((a) => a.map((x, j) => j === i ? { ...x, ciudad: e.target.value } : x))} /></div>
               <div><label className={lblCls}>Alimentación</label><Input value={h.alimentacion} onChange={(e) => setFHoteles((a) => a.map((x, j) => j === i ? { ...x, alimentacion: e.target.value } : x))} /></div>
               <div><label className={lblCls}>Acomodación</label><Input value={h.acomodacion} onChange={(e) => setFHoteles((a) => a.map((x, j) => j === i ? { ...x, acomodacion: e.target.value } : x))} /></div>
-              <div><label className={lblCls}>Ingreso</label><Input type="date" value={h.fechaIngreso} onChange={(e) => setFHoteles((a) => a.map((x, j) => j === i ? { ...x, fechaIngreso: e.target.value } : x))} /></div>
-              <div><label className={lblCls}>Salida</label><Input type="date" value={h.fechaSalida} onChange={(e) => setFHoteles((a) => a.map((x, j) => j === i ? { ...x, fechaSalida: e.target.value } : x))} /></div>
+              <div><label className={lblCls}>Ingreso</label><DateInput aria-label="Ingreso" type="date" value={h.fechaIngreso} onValueChange={(dateValue) => setFHoteles((a) => a.map((x, j) => j === i ? { ...x, fechaIngreso: dateValue } : x))} /></div>
+              <div><label className={lblCls}>Salida</label><DateInput aria-label="Salida" type="date" value={h.fechaSalida} onValueChange={(dateValue) => setFHoteles((a) => a.map((x, j) => j === i ? { ...x, fechaSalida: dateValue } : x))} /></div>
               <div className="md:col-span-3"><label className={lblCls}>Detalle acomodación</label><Input value={h.detalleAcomodacion} onChange={(e) => setFHoteles((a) => a.map((x, j) => j === i ? { ...x, detalleAcomodacion: e.target.value } : x))} /></div>
               <div className="flex items-end">
                 <button type="button" className="pb-2 text-xs text-gray-400 hover:text-red-500" onClick={() => setFHoteles((a) => a.filter((_, j) => j !== i))}>Quitar</button>
@@ -244,7 +245,7 @@ export function ContenidoContratoEditor({ numero, moneda, precioVenta, items, ho
               <div><label className={lblCls}>N.° de vuelo</label><Input value={v.numeroVuelo} onChange={(e) => setFVuelos((a) => a.map((x, j) => j === i ? { ...x, numeroVuelo: e.target.value } : x))} /></div>
               <div><label className={lblCls}>Origen (IATA)</label><Input value={v.origenCodigo} onChange={(e) => setFVuelos((a) => a.map((x, j) => j === i ? { ...x, origenCodigo: e.target.value.toUpperCase() } : x))} /></div>
               <div><label className={lblCls}>Destino (IATA)</label><Input value={v.destinoCodigo} onChange={(e) => setFVuelos((a) => a.map((x, j) => j === i ? { ...x, destinoCodigo: e.target.value.toUpperCase() } : x))} /></div>
-              <div><label className={lblCls}>Fecha</label><Input type="date" value={v.fecha} onChange={(e) => setFVuelos((a) => a.map((x, j) => j === i ? { ...x, fecha: e.target.value } : x))} /></div>
+              <div><label className={lblCls}>Fecha</label><DateInput aria-label="Fecha" type="date" value={v.fecha} onValueChange={(dateValue) => setFVuelos((a) => a.map((x, j) => j === i ? { ...x, fecha: dateValue } : x))} /></div>
               <div><label className={lblCls}>Hora salida</label><Input value={v.horaSalida} onChange={(e) => setFVuelos((a) => a.map((x, j) => j === i ? { ...x, horaSalida: e.target.value } : x))} /></div>
               <div><label className={lblCls}>Hora llegada</label><Input value={v.horaLlegada} onChange={(e) => setFVuelos((a) => a.map((x, j) => j === i ? { ...x, horaLlegada: e.target.value } : x))} /></div>
               <div className="md:col-span-2"><label className={lblCls}>Equipaje / servicios</label><Input value={v.servicios} onChange={(e) => setFVuelos((a) => a.map((x, j) => j === i ? { ...x, servicios: e.target.value } : x))} /></div>

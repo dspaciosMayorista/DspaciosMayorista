@@ -1,5 +1,6 @@
 "use client";
 
+import { DateInput } from "@/components/ui/DateInput";
 import { useState, useTransition } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -84,7 +85,7 @@ export function AbonoForm({ numeroContrato, formasPago = [], moneda = "COP" }: {
       </div>
       <div>
         <label className="mb-1 block text-xs font-medium text-gray-600">Fecha del abono</label>
-        <Input type="date" value={fecha} onChange={(e) => setFecha(e.target.value)} className="w-40" />
+        <DateInput aria-label="Fecha del abono" type="date" value={fecha} onValueChange={(dateValue) => setFecha(dateValue)} className="w-40" />
       </div>
       <Button
         type="submit"

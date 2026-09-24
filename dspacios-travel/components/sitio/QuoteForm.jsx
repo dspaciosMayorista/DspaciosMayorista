@@ -1,5 +1,6 @@
 "use client";
 
+import { DateInput } from "@/components/ui/DateInput";
 import React, { useState } from 'react';
 import { Send, Users, Plane, DollarSign, CheckCircle2 } from 'lucide-react';
 import { Button } from '@/components/sitio/ui/button';
@@ -218,21 +219,21 @@ const QuoteForm = () => {
               <div className="grid grid-cols-2 gap-4">
                 <div className="space-y-2">
                   <label className="text-sm font-medium text-gray-700">Ida</label>
-                  <input
+                  <DateInput aria-label="Ida"
                     type="date"
                     name="departureDate"
                     value={formData.departureDate}
-                    onChange={handleInputChange}
+                    onValueChange={(dateValue) => setFormData(prev => ({ ...prev, departureDate: dateValue }))}
                     className="w-full px-4 py-2.5 rounded-xl border border-gray-200 focus:ring-2 focus:ring-[#120573] focus:border-transparent outline-none bg-gray-50"
                   />
                 </div>
                 <div className="space-y-2">
                   <label className="text-sm font-medium text-gray-700">Regreso</label>
-                  <input
+                  <DateInput aria-label="Regreso"
                     type="date"
                     name="returnDate"
                     value={formData.returnDate}
-                    onChange={handleInputChange}
+                    onValueChange={(dateValue) => setFormData(prev => ({ ...prev, returnDate: dateValue }))}
                     className="w-full px-4 py-2.5 rounded-xl border border-gray-200 focus:ring-2 focus:ring-[#120573] focus:border-transparent outline-none bg-gray-50"
                   />
                 </div>

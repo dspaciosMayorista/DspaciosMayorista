@@ -1,5 +1,6 @@
 "use client";
 
+import { DateInput } from "@/components/ui/DateInput";
 import { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { Button } from "@/components/ui/button";
@@ -244,15 +245,15 @@ function TemporadasBox({ hotelId, temporadas, otrosHoteles, hoy, regimenes }: { 
         {editando && <p className="mb-2 text-xs font-medium text-[var(--brand-accent)]">Editando: {nombre || "temporada"}</p>}
         <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
           <div className="col-span-2 sm:col-span-1"><label className={lbl}>Nombre</label><Input placeholder="ALTA, BAJA, PROMO JULIO…" value={nombre} onChange={(e) => setNombre(e.target.value)} /></div>
-          <div><label className={lbl}>Viaje desde</label><Input type="date" value={ini} onChange={(e) => setIni(e.target.value)} /></div>
-          <div><label className={lbl}>Viaje hasta</label><Input type="date" value={fin} onChange={(e) => setFin(e.target.value)} /></div>
+          <div><label className={lbl}>Viaje desde</label><DateInput aria-label="Viaje desde" type="date" value={ini} onValueChange={(dateValue) => setIni(dateValue)} /></div>
+          <div><label className={lbl}>Viaje hasta</label><DateInput aria-label="Viaje hasta" type="date" value={fin} onValueChange={(dateValue) => setFin(dateValue)} /></div>
           <div><label className={lbl}>Prioridad</label><Input type="number" min={1} value={prioridad} onChange={(e) => setPrioridad(e.target.value)} /></div>
           <div>
             <label className={lbl}>{esNocheGratis ? "Noches mín. para la promo" : "Mín. noches"}</label>
             <Input type="number" min={1} value={minNoches} onChange={(e) => setMinNoches(e.target.value)} />
           </div>
-          <div><label className={lbl}>Compra desde</label><Input type="date" value={compraIni} onChange={(e) => setCompraIni(e.target.value)} /></div>
-          <div><label className={lbl}>Compra hasta</label><Input type="date" value={compraFin} onChange={(e) => setCompraFin(e.target.value)} /></div>
+          <div><label className={lbl}>Compra desde</label><DateInput aria-label="Compra desde" type="date" value={compraIni} onValueChange={(dateValue) => setCompraIni(dateValue)} /></div>
+          <div><label className={lbl}>Compra hasta</label><DateInput aria-label="Compra hasta" type="date" value={compraFin} onValueChange={(dateValue) => setCompraFin(dateValue)} /></div>
           <div className="col-span-2 sm:col-span-1">
             <label className={lbl}>Tipo</label>
             <select value={tipo} onChange={(e) => setTipo(e.target.value)} className={`${sel} w-full`}>
@@ -381,8 +382,8 @@ function ListaRangos({ titulo, items, onChange }: { titulo: string; items: Rango
       <div className="space-y-2">
         {items.map((r, i) => (
           <div key={i} className="flex items-end gap-2">
-            <div className="flex-1"><label className="block text-[10px] text-gray-400">Desde</label><Input type="date" value={r.fecha_inicio} onChange={(e) => set(i, "fecha_inicio", e.target.value)} /></div>
-            <div className="flex-1"><label className="block text-[10px] text-gray-400">Hasta</label><Input type="date" value={r.fecha_fin} onChange={(e) => set(i, "fecha_fin", e.target.value)} /></div>
+            <div className="flex-1"><label className="block text-[10px] text-gray-400">Desde</label><DateInput aria-label="Desde" type="date" value={r.fecha_inicio} onValueChange={(dateValue) => set(i, "fecha_inicio", dateValue)} /></div>
+            <div className="flex-1"><label className="block text-[10px] text-gray-400">Hasta</label><DateInput aria-label="Hasta" type="date" value={r.fecha_fin} onValueChange={(dateValue) => set(i, "fecha_fin", dateValue)} /></div>
             <button type="button" onClick={() => onChange(items.filter((_, idx) => idx !== i))} className="pb-2 text-xs text-gray-400 hover:text-red-500">Quitar</button>
           </div>
         ))}

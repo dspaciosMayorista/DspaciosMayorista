@@ -1,5 +1,6 @@
 "use client";
 
+import { DateInput } from "@/components/ui/DateInput";
 import { useMemo, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { Input } from "@/components/ui/input";
@@ -152,7 +153,7 @@ function NuevoAsientoForm({
         {cuentas.map((c) => <option key={c.id} value={`${c.codigo} · ${c.nombre}`} />)}
       </datalist>
       <div className="flex flex-wrap items-end gap-3">
-        <div><label className="block text-[11px] text-gray-500">Fecha</label><Input type="date" value={fecha} onChange={(e) => setFecha(e.target.value)} className="w-40" /></div>
+        <div><label className="block text-[11px] text-gray-500">Fecha</label><DateInput aria-label="Fecha" type="date" value={fecha} onValueChange={(dateValue) => setFecha(dateValue)} className="w-40" /></div>
         <div className="flex-1 min-w-[220px]"><label className="block text-[11px] text-gray-500">Descripción del asiento</label><Input value={descripcion} onChange={(e) => setDescripcion(e.target.value)} placeholder="ej. Depósito parcial de abono en efectivo" /></div>
         <div><label className="block text-[11px] text-gray-500">Referencia (opcional)</label><Input value={referencia} onChange={(e) => setReferencia(e.target.value)} placeholder="N° contrato, etc." className="w-40" /></div>
       </div>

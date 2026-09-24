@@ -1,5 +1,6 @@
 "use client";
 
+import { DateInput } from "@/components/ui/DateInput";
 import { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { Button } from "@/components/ui/button";
@@ -47,11 +48,11 @@ export function CambioOperacionalForm({
           </p>
           <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
             <div><label className={lbl}># Vuelo ida</label><Input value={f.vueloIda} onChange={set("vueloIda")} /></div>
-            <div><label className={lbl}>Fecha ida</label><Input type="date" value={f.fechaIda} onChange={set("fechaIda")} /></div>
+            <div><label className={lbl}>Fecha ida</label><DateInput aria-label="Fecha ida" type="date" value={f.fechaIda} onValueChange={(dateValue) => setF({ ...f, ["fechaIda"]: dateValue })} /></div>
             <div><label className={lbl}>Hora salida ida</label><Input type="time" value={f.horaSalidaIda} onChange={set("horaSalidaIda")} /></div>
             <div><label className={lbl}>Hora llegada ida</label><Input type="time" value={f.horaLlegadaIda} onChange={set("horaLlegadaIda")} /></div>
             <div><label className={lbl}># Vuelo regreso</label><Input value={f.vueloRegreso} onChange={set("vueloRegreso")} /></div>
-            <div><label className={lbl}>Fecha regreso</label><Input type="date" value={f.fechaRegreso} onChange={set("fechaRegreso")} /></div>
+            <div><label className={lbl}>Fecha regreso</label><DateInput aria-label="Fecha regreso" type="date" value={f.fechaRegreso} onValueChange={(dateValue) => setF({ ...f, ["fechaRegreso"]: dateValue })} /></div>
             <div><label className={lbl}>Hora salida reg.</label><Input type="time" value={f.horaSalidaReg} onChange={set("horaSalidaReg")} /></div>
             <div><label className={lbl}>Hora llegada reg.</label><Input type="time" value={f.horaLlegadaReg} onChange={set("horaLlegadaReg")} /></div>
           </div>

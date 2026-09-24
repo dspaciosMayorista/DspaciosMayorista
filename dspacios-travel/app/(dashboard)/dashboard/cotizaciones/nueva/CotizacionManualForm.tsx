@@ -1,5 +1,6 @@
 "use client";
 
+import { DateInput } from "@/components/ui/DateInput";
 import { useEffect, useMemo, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { Button } from "@/components/ui/button";
@@ -139,7 +140,7 @@ export function CotizacionManualForm({ asesores, aliados, miNombre, miRolVenta, 
             </select>
           </div>
           <div><label className={lbl}>N° documento</label><Input value={cli.numeroDoc} onChange={(e) => setCli({ ...cli, numeroDoc: e.target.value })} /></div>
-          <div><label className={lbl}>Fecha de nacimiento</label><Input type="date" value={cli.nacimiento} onChange={(e) => setCli({ ...cli, nacimiento: e.target.value })} /></div>
+          <div><label className={lbl}>Fecha de nacimiento</label><DateInput aria-label="Fecha de nacimiento" type="date" value={cli.nacimiento} onValueChange={(dateValue) => setCli({ ...cli, nacimiento: dateValue })} /></div>
           <div><label className={lbl}>Teléfono</label><Input value={cli.telefono} onChange={(e) => setCli({ ...cli, telefono: e.target.value })} /></div>
           <div><label className={lbl}>Email</label><Input value={cli.email} onChange={(e) => setCli({ ...cli, email: e.target.value })} /></div>
         </div>
@@ -151,8 +152,8 @@ export function CotizacionManualForm({ asesores, aliados, miNombre, miRolVenta, 
         <h2 className="mb-3 text-sm font-semibold text-gray-700">Datos del viaje</h2>
         <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
           <div className="col-span-2 md:col-span-2"><label className={lbl}>Destino</label><Input value={destino} onChange={(e) => setDestino(e.target.value)} placeholder="Ej. San Andrés" /></div>
-          <div><label className={lbl}>Fecha ida</label><Input type="date" value={fechaIda} min={hoy} onChange={(e) => { const v = e.target.value; setFechaIda(v); if (v && vigencia > v) setVigencia(v); }} /></div>
-          <div><label className={lbl}>Fecha regreso</label><Input type="date" value={fechaRegreso} min={fechaIda || hoy} onChange={(e) => setFechaRegreso(e.target.value)} /></div>
+          <div><label className={lbl}>Fecha ida</label><DateInput aria-label="Fecha ida" type="date" value={fechaIda} min={hoy} onValueChange={(dateValue) => { const v = dateValue; setFechaIda(v); if (v && vigencia > v) setVigencia(v); }} /></div>
+          <div><label className={lbl}>Fecha regreso</label><DateInput aria-label="Fecha regreso" type="date" value={fechaRegreso} min={fechaIda || hoy} onValueChange={(dateValue) => setFechaRegreso(dateValue)} /></div>
           <div><label className={lbl}>Adultos</label><Input type="number" min={1} value={pax} onChange={(e) => setPax(e.target.value)} /></div>
           <div><label className={lbl}>Niños</label><Input type="number" min={0} value={numNinos} onChange={(e) => setNumNinos(e.target.value)} /></div>
           {Number(numNinos) > 0 && (
@@ -165,7 +166,7 @@ export function CotizacionManualForm({ asesores, aliados, miNombre, miRolVenta, 
             </select>
           </div>
           <div><label className={lbl}>Plazo de pago</label><Input value={plazo} onChange={(e) => setPlazo(e.target.value)} placeholder="Inmediato / 7 días…" /></div>
-          <div><label className={lbl}>Vigencia hasta</label><Input type="date" value={vigencia} min={hoy} max={fechaIda || undefined} onChange={(e) => setVigencia(e.target.value)} /></div>
+          <div><label className={lbl}>Vigencia hasta</label><DateInput aria-label="Vigencia hasta" type="date" value={vigencia} min={hoy} max={fechaIda || undefined} onValueChange={(dateValue) => setVigencia(dateValue)} /></div>
         </div>
 
         {/* Canal */}

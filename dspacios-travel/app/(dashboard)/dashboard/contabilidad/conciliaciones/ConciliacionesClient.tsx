@@ -1,5 +1,6 @@
 "use client";
 
+import { DateInput } from "@/components/ui/DateInput";
 import { useEffect, useMemo, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { Input } from "@/components/ui/input";
@@ -639,9 +640,9 @@ function FiltrosColumna({
   return (
     <div className="mb-2 space-y-1.5 rounded-lg border border-gray-100 bg-gray-50/60 p-2">
       <div className="flex flex-wrap items-center gap-1.5">
-        <Input type="date" value={desde} onChange={(e) => setDesde(e.target.value)} className="h-7 w-[8.5rem] text-xs" title="Desde (día)" />
+        <DateInput aria-label="Desde (día)" type="date" value={desde} onValueChange={(dateValue) => setDesde(dateValue)} className="h-7 w-[8.5rem] text-xs" title="Desde (día)" />
         <span className="text-xs text-gray-300">–</span>
-        <Input type="date" value={hasta} onChange={(e) => setHasta(e.target.value)} className="h-7 w-[8.5rem] text-xs" title="Hasta (día)" />
+        <DateInput aria-label="Hasta (día)" type="date" value={hasta} onValueChange={(dateValue) => setHasta(dateValue)} className="h-7 w-[8.5rem] text-xs" title="Hasta (día)" />
         <Input value={valorMin} onChange={(e) => setValorMin(e.target.value)} placeholder="Valor mín" inputMode="numeric" className="h-7 w-20 text-xs" />
         <Input value={valorMax} onChange={(e) => setValorMax(e.target.value)} placeholder="Valor máx" inputMode="numeric" className="h-7 w-20 text-xs" />
         {hayFiltro && (

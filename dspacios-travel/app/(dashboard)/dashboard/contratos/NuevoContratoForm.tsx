@@ -1,5 +1,6 @@
 "use client";
 
+import { DateInput } from "@/components/ui/DateInput";
 import { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { Button } from "@/components/ui/button";
@@ -483,8 +484,8 @@ export function NuevoContratoForm({
           </div>
           <div>
             <label className={labelCls}>Fecha de salida (viaje)</label>
-            <Input type="date" value={fechaSalida} onChange={(e) => {
-              const nueva = e.target.value;
+            <DateInput aria-label="Fecha de salida (viaje)" type="date" value={fechaSalida} onValueChange={(dateValue) => {
+              const nueva = dateValue;
               setFechaSalida(nueva);
               // La fecha de salida es la referencia de edad de TODOS los
               // pasajeros — cambiarla puede mover a cualquiera entre
@@ -495,11 +496,11 @@ export function NuevoContratoForm({
           </div>
           <div>
             <label className={labelCls}>Fecha de regreso</label>
-            <Input type="date" value={fechaRegreso} onChange={(e) => setFechaRegreso(e.target.value)} />
+            <DateInput aria-label="Fecha de regreso" type="date" value={fechaRegreso} onValueChange={(dateValue) => setFechaRegreso(dateValue)} />
           </div>
           <div>
             <label className={labelCls}>Fecha de emisión</label>
-            <Input type="date" value={fechaEmision} onChange={(e) => setFechaEmision(e.target.value)} />
+            <DateInput aria-label="Fecha de emisión" type="date" value={fechaEmision} onValueChange={(dateValue) => setFechaEmision(dateValue)} />
           </div>
           <div>
             <label className={labelCls}>Plan / Servicio</label>
@@ -562,7 +563,7 @@ export function NuevoContratoForm({
             <ComboCiudad destinos={destinos} value={v.destinoCodigo} onChange={(val) => setVuelo(i, { destinoCodigo: val })} modo="iata" permitirLibre placeholder="Destino (cód)" />
             <ComboCiudad destinos={destinos} value={v.origenCiudad} onChange={(val) => setVuelo(i, { origenCiudad: val })} modo="nombre" permitirLibre placeholder="Origen (ciudad)" />
             <ComboCiudad destinos={destinos} value={v.destinoCiudad} onChange={(val) => setVuelo(i, { destinoCiudad: val })} modo="nombre" permitirLibre placeholder="Destino (ciudad)" />
-            <Input type="date" value={v.fecha} onChange={(e) => setVuelo(i, { fecha: e.target.value })} title="Fecha de este tramo" />
+            <DateInput aria-label="Fecha de este tramo" type="date" value={v.fecha} onValueChange={(dateValue) => setVuelo(i, { fecha: dateValue })} title="Fecha de este tramo" />
             <Input placeholder="Hora salida" value={v.horaSalida} onChange={(e) => setVuelo(i, { horaSalida: e.target.value })} />
             <Input placeholder="Hora llegada" value={v.horaLlegada} onChange={(e) => setVuelo(i, { horaLlegada: e.target.value })} />
             <Input className="md:col-span-2" placeholder="Servicios (equipaje…)" value={v.servicios} onChange={(e) => setVuelo(i, { servicios: e.target.value })} />
@@ -710,8 +711,8 @@ export function NuevoContratoForm({
             {!esNegociado && (
               <Input type="number" min={0} placeholder={`Costo neto (${monedaEfectiva})`} value={h.costo ?? ""} onChange={(e) => setHotel(i, { costo: Number(e.target.value) || 0 })} title="Costo neto del hotel (interno)" />
             )}
-            <Input type="date" value={h.fechaIngreso} onChange={(e) => setHotel(i, { fechaIngreso: e.target.value })} />
-            <Input type="date" value={h.fechaSalida} onChange={(e) => setHotel(i, { fechaSalida: e.target.value })} />
+            <DateInput aria-label="Ingreso al hotel" type="date" value={h.fechaIngreso} onValueChange={(dateValue) => setHotel(i, { fechaIngreso: dateValue })} />
+            <DateInput aria-label="Fecha de salida" type="date" value={h.fechaSalida} onValueChange={(dateValue) => setHotel(i, { fechaSalida: dateValue })} />
             <button type="button" className="text-xs text-gray-400 hover:text-red-500 md:col-span-4 md:text-right" onClick={() => setHoteles((a) => a.filter((_, j) => j !== i))}>
               Quitar
             </button>
@@ -799,7 +800,7 @@ export function NuevoContratoForm({
                     }}
                   />
                 </div>
-                <Input type="date" value={p.fechaNacimiento} onChange={(e) => setPasajero(i, { fechaNacimiento: e.target.value })} />
+                <DateInput aria-label="Fecha de nacimiento" type="date" value={p.fechaNacimiento} onValueChange={(dateValue) => setPasajero(i, { fechaNacimiento: dateValue })} />
                 <div className="flex items-center justify-between gap-2">
                   <span className="text-xs text-gray-500">
                     {edadesReales[i] == null

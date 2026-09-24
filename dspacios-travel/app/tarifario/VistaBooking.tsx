@@ -1,5 +1,6 @@
 "use client";
 
+import { DateInput } from "@/components/ui/DateInput";
 import { useEffect, useId, useMemo, useRef, useState, useTransition, type ReactNode, type CSSProperties } from "react";
 import { createPortal } from "react-dom";
 import Image from "next/image";
@@ -3208,14 +3209,14 @@ function EditorPax({
                 <>
                   <div>
                     <label htmlFor={`${idBase}-fecha-ida`} className="mb-1 block text-xs font-medium text-gray-600">Entrada</label>
-                    <input id={`${idBase}-fecha-ida`} type="date" value={fechaIdaBernalo}
-                      onChange={(e) => { setFechaIdaBernalo(e.target.value); setResultadoCotizacion(null); }}
+                    <DateInput aria-label="Entrada" id={`${idBase}-fecha-ida`} type="date" value={fechaIdaBernalo}
+                      onValueChange={(dateValue) => { setFechaIdaBernalo(dateValue); setResultadoCotizacion(null); }}
                       className="rounded-lg border border-gray-300 px-2 py-1.5 text-sm" />
                   </div>
                   <div>
                     <label htmlFor={`${idBase}-fecha-regreso`} className="mb-1 block text-xs font-medium text-gray-600">Salida</label>
-                    <input id={`${idBase}-fecha-regreso`} type="date" value={fechaRegresoBernalo}
-                      onChange={(e) => { setFechaRegresoBernalo(e.target.value); setResultadoCotizacion(null); }}
+                    <DateInput aria-label="Salida" id={`${idBase}-fecha-regreso`} type="date" value={fechaRegresoBernalo}
+                      onValueChange={(dateValue) => { setFechaRegresoBernalo(dateValue); setResultadoCotizacion(null); }}
                       className="rounded-lg border border-gray-300 px-2 py-1.5 text-sm" />
                   </div>
                 </>
@@ -3524,9 +3525,9 @@ function SelectorPorFechas({
         <div className="flex flex-wrap items-end gap-3">
           <div>
             <label className="mb-1 block text-xs font-medium text-gray-600">Ida</label>
-            <input type="date" value={fIda} min={minIda} max={ventana.max ?? undefined}
-              onChange={(e) => {
-                const nueva = e.target.value;
+            <DateInput aria-label="Ida" type="date" value={fIda} min={minIda} max={ventana.max ?? undefined}
+              onValueChange={(dateValue) => {
+                const nueva = dateValue;
                 setFIda(nueva);
                 // Sin auto-relleno de regreso: si deja de ser posterior a la
                 // nueva ida, se limpia (el usuario elige la fecha real).
@@ -3537,8 +3538,8 @@ function SelectorPorFechas({
           </div>
           <div>
             <label className="mb-1 block text-xs font-medium text-gray-600">Regreso</label>
-            <input type="date" value={fReg} min={fIda || minIda} max={ventana.max ?? undefined}
-              onChange={(e) => { setFReg(e.target.value); setCombos(null); setCondicion(null); setSugerencias([]); setViaSugerencia(false); }}
+            <DateInput aria-label="Regreso" type="date" value={fReg} min={fIda || minIda} max={ventana.max ?? undefined}
+              onValueChange={(dateValue) => { setFReg(dateValue); setCombos(null); setCondicion(null); setSugerencias([]); setViaSugerencia(false); }}
               className={dateCls} />
           </div>
           <button type="button" onClick={() => cotizar()} disabled={pending || !fIda || !fReg}

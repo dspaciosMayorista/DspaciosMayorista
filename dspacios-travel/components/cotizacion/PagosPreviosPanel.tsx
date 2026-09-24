@@ -12,6 +12,7 @@
 // El padre (page.tsx) decide si renderizarlo: solo para cotizaciones ABIERTAS
 // y para un rol con permiso; aquí no hay lógica de autorización.
 // ─────────────────────────────────────────────────────────────────────────
+import { DateInput } from "@/components/ui/DateInput";
 import { useRouter } from "next/navigation";
 import { useRef, useState, useTransition } from "react";
 import { Loader2, Banknote, RotateCcw } from "lucide-react";
@@ -251,10 +252,10 @@ export default function PagosPreviosPanel({
             )}
             <label className="block">
               <span className="text-[11px] font-semibold uppercase tracking-wide text-gray-400">Fecha</span>
-              <input
+              <DateInput aria-label="Fecha"
                 type="date"
                 value={fecha}
-                onChange={(e) => setFecha(e.target.value)}
+                onValueChange={(dateValue) => setFecha(dateValue)}
                 className="mt-1 w-full rounded-md border border-gray-200 px-3 py-1.5 text-sm"
               />
             </label>

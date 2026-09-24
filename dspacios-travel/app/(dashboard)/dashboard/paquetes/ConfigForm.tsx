@@ -1,5 +1,6 @@
 "use client";
 
+import { DateInput } from "@/components/ui/DateInput";
 import { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { Button } from "@/components/ui/button";
@@ -158,20 +159,20 @@ export function ConfigForm({
 
         <div>
           <label className={lbl}>Vigencia de compra — desde</label>
-          <Input type="date" value={compraIni} onChange={(e) => setCompraIni(e.target.value)} />
+          <DateInput aria-label="Vigencia de compra — desde" type="date" value={compraIni} onValueChange={(dateValue) => setCompraIni(dateValue)} />
         </div>
         <div>
           <label className={lbl}>Vigencia de compra — hasta</label>
-          <Input type="date" value={compraFin} onChange={(e) => setCompraFin(e.target.value)} />
+          <DateInput aria-label="Vigencia de compra — hasta" type="date" value={compraFin} onValueChange={(dateValue) => setCompraFin(dateValue)} />
         </div>
 
         <div>
           <label className={lbl}>Rango de viaje — desde</label>
-          <Input type="date" value={viajeIni} onChange={(e) => setViajeIni(e.target.value)} />
+          <DateInput aria-label="Rango de viaje — desde" type="date" value={viajeIni} onValueChange={(dateValue) => setViajeIni(dateValue)} />
         </div>
         <div>
           <label className={lbl}>Rango de viaje — hasta</label>
-          <Input type="date" value={viajeFin} onChange={(e) => setViajeFin(e.target.value)} />
+          <DateInput aria-label="Rango de viaje — hasta" type="date" value={viajeFin} onValueChange={(dateValue) => setViajeFin(dateValue)} />
         </div>
 
         <div>

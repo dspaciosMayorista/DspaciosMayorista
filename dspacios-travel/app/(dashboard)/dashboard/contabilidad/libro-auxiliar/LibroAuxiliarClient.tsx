@@ -1,5 +1,6 @@
 "use client";
 
+import { DateInput } from "@/components/ui/DateInput";
 import { useState, useTransition } from "react";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
@@ -40,8 +41,8 @@ export function LibroAuxiliarClient({ cuentas }: { cuentas: CuentaOpt[] }) {
           <label className="mb-1 block text-xs font-medium text-gray-600">Cuenta</label>
           <Input list="cuentas-libro-auxiliar" value={cuentaTexto} onChange={(e) => setCuentaTexto(e.target.value)} placeholder="Busca por código o nombre…" />
         </div>
-        <div><label className="mb-1 block text-xs font-medium text-gray-600">Desde</label><Input type="date" value={desde} onChange={(e) => setDesde(e.target.value)} className="w-36" /></div>
-        <div><label className="mb-1 block text-xs font-medium text-gray-600">Hasta</label><Input type="date" value={hasta} onChange={(e) => setHasta(e.target.value)} className="w-36" /></div>
+        <div><label className="mb-1 block text-xs font-medium text-gray-600">Desde</label><DateInput aria-label="Desde" type="date" value={desde} onValueChange={(dateValue) => setDesde(dateValue)} className="w-36" /></div>
+        <div><label className="mb-1 block text-xs font-medium text-gray-600">Hasta</label><DateInput aria-label="Hasta" type="date" value={hasta} onValueChange={(dateValue) => setHasta(dateValue)} className="w-36" /></div>
         <Button onClick={consultar} disabled={pending || !cuentaTexto.trim()} style={{ backgroundColor: "var(--brand-primary)" }}>
           {pending ? "…" : "Consultar"}
         </Button>

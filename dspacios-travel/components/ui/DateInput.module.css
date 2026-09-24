@@ -1,0 +1,42 @@
+.field:focus-within { border-color: var(--brand-primary, #1d7c9a); box-shadow: 0 0 0 2px #1d7c9a25; }
+.field[data-disabled] { opacity: 0.5; cursor: not-allowed; }
+.field[data-invalid] { height: auto; border-color: #a11b35; }
+.input { flex: 1 1 0; width: 0; min-width: 0; padding: 0; border: 0; background: transparent; color: inherit; font: inherit; outline: none; }
+.input::placeholder { color: #718096; }
+.trigger { flex: 0 0 1.5rem; height: 1.5rem; display: grid; place-items: center; border-radius: 4px; color: var(--brand-primary, #1d7c9a); cursor: pointer; }
+.trigger:hover { background: #edf7fa; }
+.trigger:focus-visible, .navButton:focus-visible, .footer button:focus-visible, .monthGrid button:focus-visible { outline: 2px solid var(--brand-primary, #1d7c9a); outline-offset: 2px; }
+.trigger:disabled { cursor: not-allowed; }
+.error { flex-basis: 100%; padding: 2px 4px; border-radius: 4px; background: #fff1f2; color: #a11b35; font-size: 11px; line-height: 1.3; }
+.positioner { z-index: 1000; }
+.popup { width: min(310px, calc(100vw - 24px)); max-height: var(--available-height); overflow-y: auto; padding: 12px; border: 1px solid #c9dfe8; border-radius: 8px; color: #183548; background: white; box-shadow: 0 12px 32px #123a4d24; }
+.title { margin: 0 0 10px; color: var(--brand-primary, #1d7c9a); font-size: 12px; font-weight: 600; }
+.navigation { display: flex; align-items: center; justify-content: space-between; gap: 4px; padding-bottom: 10px; }
+.navButton { flex-shrink: 0; display: grid; place-items: center; width: 30px; height: 30px; border-radius: 6px; color: var(--brand-primary, #1d7c9a); cursor: pointer; }
+.navButton:hover { background: #edf7fa; }
+.navButton:disabled, .footer button:disabled, .monthGrid button:disabled { opacity: 0.35; cursor: not-allowed; }
+.selectTrigger { display: flex; align-items: center; justify-content: space-between; gap: 4px; min-width: 0; padding: 6px; font-size: 13px; font-weight: 600; border-radius: 6px; background: #f1f7fa; color: #1d637c; text-transform: capitalize; cursor: pointer; }
+.selectTrigger:focus-visible { outline: 2px solid #1d7c9a; outline-offset: 2px; }
+.selectPositioner { z-index: 1100; }
+.selectPopup { max-height: min(240px, var(--available-height)); min-width: var(--anchor-width); overflow-y: auto; padding: 4px; border-radius: 8px; border: 1px solid #c9dfe8; background: white; color: #183548; box-shadow: 0 6px 20px #123a4d20; }
+.selectItem { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 6px 10px; border-radius: 4px; font-size: 13px; text-transform: capitalize; cursor: pointer; }
+.selectItem[data-highlighted] { background: #e8f4ef; color: #1f5d42; outline: none; }
+.selectItem[data-selected] { color: #1f5d42; font-weight: 600; }
+.calendar { --rdp-accent-color: #1f5d42; --rdp-accent-background-color: #e8f4ef; --rdp-day-width: 38px; --rdp-day-height: 36px; --rdp-day_button-width: 36px; --rdp-day_button-height: 34px; --rdp-day_button-border-radius: 6px; margin: 0; font-size: 13px; }
+.hiddenCaption { display: none; }
+.calendar :global(.rdp-months), .calendar :global(.rdp-month), .calendar :global(.rdp-month_grid) { width: 100%; max-width: none; }
+.calendar :global(.rdp-month_grid) { table-layout: fixed; }
+.calendar :global(.rdp-weekday) { padding: 6px 0; color: #607d8b; font-size: 11px; font-weight: 500; text-transform: uppercase; }
+.calendar :global(.rdp-day_button) { width: 100%; max-width: 36px; margin: auto; color: inherit; font: inherit; }
+.calendar :global(.rdp-day_button):hover { background: #e8f4ef; color: #1f5d42; }
+.calendar :global(.rdp-selected) { font-size: 13px; }
+.calendar :global(.rdp-selected .rdp-day_button) { border: 1px solid #1f5d42; background: #1f5d42; color: white; font-weight: 600; }
+.calendar :global(.rdp-today:not(.rdp-selected) .rdp-day_button) { color: #1d7c9a; box-shadow: inset 0 0 0 1px #1d7c9a; }
+.calendar :global(.rdp-day_button):focus-visible { outline: 2px solid #1d7c9a; outline-offset: 1px; }
+.monthGrid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 6px; }
+.monthGrid button { min-height: 38px; border-radius: 6px; padding: 4px; font-size: 12px; text-transform: capitalize; cursor: pointer; }
+.monthGrid button:hover { background: #e8f4ef; color: #1f5d42; }
+.monthGrid button[aria-pressed="true"] { background: #1f5d42; color: white; font-weight: 600; }
+.footer { display: flex; justify-content: space-between; gap: 8px; margin-top: 10px; padding-top: 10px; border-top: 1px solid #e1edf2; }
+.footer button { padding: 4px 8px; border-radius: 4px; color: #1d7c9a; font-size: 12px; font-weight: 600; cursor: pointer; }
+.footer button:hover { background: #edf7fa; }

@@ -229,10 +229,9 @@ describe("BuscadorBooking.tsx — Destino usa el Select accesible (Base UI), no 
     assert.match(cuerpo, /bg-\[var\(--brand-success\)\]\/10/);
   });
 
-  test("las demás fechas/pasajeros/habitaciones NO se tocaron (siguen siendo <input>/<select> nativos, fuera de alcance de este ajuste)", () => {
-    // "Ida"/"Regreso" (inputs de fecha) y el <select> nativo de Habitación N
-    // deben seguir existiendo tal cual — esta corrección es SOLO Destino.
-    assert.match(buscadorBooking, /<input type="date" min=\{hoy\} value=\{fIda\}/);
+  test("las fechas conservan sus límites con DateInput y la habitación conserva su selección", () => {
+    assert.match(buscadorBooking, /<DateInput aria-label="Ida" type="date" min=\{hoy\} value=\{fIda\}/);
+    assert.match(buscadorBooking, /<DateInput aria-label="Regreso" type="date" min=\{fIda\} value=\{fReg\}/);
     assert.match(buscadorBooking, /<select value=\{acom\} onChange=\{\(e\) => setHab\(i, e\.target\.value as AcomRoom\)\}/);
   });
 

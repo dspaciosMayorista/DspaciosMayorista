@@ -1,5 +1,6 @@
 "use client";
 
+import { DateInput } from "@/components/ui/DateInput";
 import { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { Button } from "@/components/ui/button";
@@ -129,8 +130,8 @@ function CamposSalida({ value, onChange }: { value: SalidaDinamicaInput; onChang
         <div><label className={lbl}>Ruta (IATA)</label><Input value={value.ruta} onChange={(e) => set("ruta", e.target.value)} placeholder="MDE - MIA - MDE" /></div>
         <div><label className={lbl}>Origen (IATA)</label><Input value={value.origen} onChange={(e) => set("origen", e.target.value)} placeholder="MDE" /></div>
         <div></div>
-        <div><label className={lbl}>Fecha ida *</label><Input type="date" value={value.fechaIda} onChange={(e) => set("fechaIda", e.target.value)} /></div>
-        <div><label className={lbl}>Fecha regreso</label><Input type="date" value={value.fechaRegreso} onChange={(e) => set("fechaRegreso", e.target.value)} /></div>
+        <div><label className={lbl}>Fecha ida *</label><DateInput aria-label="Fecha ida" type="date" value={value.fechaIda} onValueChange={(dateValue) => set("fechaIda", dateValue)} /></div>
+        <div><label className={lbl}>Fecha regreso</label><DateInput aria-label="Fecha regreso" type="date" value={value.fechaRegreso} onValueChange={(dateValue) => set("fechaRegreso", dateValue)} /></div>
         <div><label className={lbl}>Hora salida ida</label><Input value={value.horaSalidaIda} onChange={(e) => set("horaSalidaIda", e.target.value)} placeholder="08:30" /></div>
         <div><label className={lbl}>Hora llegada ida</label><Input value={value.horaLlegadaIda} onChange={(e) => set("horaLlegadaIda", e.target.value)} placeholder="11:00" /></div>
         <div><label className={lbl}>Hora salida regreso</label><Input value={value.horaSalidaReg} onChange={(e) => set("horaSalidaReg", e.target.value)} placeholder="18:00" /></div>
@@ -151,8 +152,8 @@ function CamposSalida({ value, onChange }: { value: SalidaDinamicaInput; onChang
         <div><label className={lbl}>Fee infante (0–1.99)</label><Input type="number" min={0} value={value.feeInfante || ""} onChange={(e) => set("feeInfante", Number(e.target.value) || 0)} placeholder="0" /></div>
       </div>
       <div className="grid grid-cols-2 gap-2 md:grid-cols-4">
-        <div><label className={lbl}>Vigencia compra desde</label><Input type="date" value={value.compraInicio} onChange={(e) => set("compraInicio", e.target.value)} /></div>
-        <div><label className={lbl}>Vigencia compra hasta</label><Input type="date" value={value.compraFin} onChange={(e) => set("compraFin", e.target.value)} /></div>
+        <div><label className={lbl}>Vigencia compra desde</label><DateInput aria-label="Vigencia compra desde" type="date" value={value.compraInicio} onValueChange={(dateValue) => set("compraInicio", dateValue)} /></div>
+        <div><label className={lbl}>Vigencia compra hasta</label><DateInput aria-label="Vigencia compra hasta" type="date" value={value.compraFin} onValueChange={(dateValue) => set("compraFin", dateValue)} /></div>
         <div className="md:col-span-2"><label className={lbl}>Notas</label><Input value={value.notas} onChange={(e) => set("notas", e.target.value)} /></div>
       </div>
     </div>

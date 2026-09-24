@@ -9,6 +9,7 @@
 // El server relee TODO (fecha_ida, contrato, responsable): este formulario
 // solo adelanta mensajes (clasificación INF/CHD en vivo, forma de los
 // datos) para no hacer esperar al asesor un viaje de red por un error obvio.
+import { DateInput } from "@/components/ui/DateInput";
 import { useMemo, useState, useTransition } from "react";
 import { Baby } from "lucide-react";
 import { calcularEdad } from "@/lib/utils";
@@ -117,7 +118,7 @@ export function InfanteVueloForm({
                 <input className={inp} value={form.numeroDoc} onChange={(e) => set("numeroDoc", e.target.value)} />
               </label>
               <label className="col-span-2 text-xs text-gray-500">Fecha de nacimiento
-                <input type="date" className={inp} value={form.fechaNacimiento} onChange={(e) => set("fechaNacimiento", e.target.value)} />
+                <DateInput aria-label="Fecha de nacimiento" type="date" className={inp} value={form.fechaNacimiento} onValueChange={(dateValue) => set("fechaNacimiento", dateValue)} />
               </label>
             </div>
             {aviso && <p className="mt-2 text-xs text-amber-700">{aviso}</p>}

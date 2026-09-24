@@ -1,5 +1,6 @@
 "use client";
 
+import { DateInput } from "@/components/ui/DateInput";
 import { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { Button } from "@/components/ui/button";
@@ -128,12 +129,12 @@ function VoucherCard({ numero, v, destinos }: { numero: string; v: VoucherRow; d
             {v.tipo === "servicios" ? (
               <div>
                 <label className={lbl}>Fecha del servicio</label>
-                <Input
+                <DateInput aria-label="Fecha del servicio"
                   type="date"
                   value={c.fechaIngreso?.slice(0, 10) ?? ""}
                   min={c.fechaSalidaViaje ?? undefined}
                   max={c.fechaRegresoViaje ?? undefined}
-                  onChange={(e) => set("fechaIngreso", e.target.value)}
+                  onValueChange={(dateValue) => set("fechaIngreso", dateValue)}
                 />
               </div>
             ) : (

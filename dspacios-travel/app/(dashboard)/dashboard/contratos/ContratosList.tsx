@@ -1,5 +1,6 @@
 "use client";
 
+import { DateInput } from "@/components/ui/DateInput";
 import { useMemo, useState } from "react";
 import Link from "next/link";
 import { formatMoneda, formatFechaLarga } from "@/lib/utils";
@@ -99,11 +100,11 @@ export function ContratosList({ ventas }: { ventas: VentaRow[] }) {
         </div>
         <div className="w-36">
           <label className={lbl}>Salida desde</label>
-          <input type="date" className={inp} value={fSalidaDesde} onChange={(e) => setFSalidaDesde(e.target.value)} />
+          <DateInput aria-label="Salida desde" type="date" className={inp} value={fSalidaDesde} onValueChange={(dateValue) => setFSalidaDesde(dateValue)} />
         </div>
         <div className="w-36">
           <label className={lbl}>Salida hasta</label>
-          <input type="date" className={inp} value={fSalidaHasta} onChange={(e) => setFSalidaHasta(e.target.value)} />
+          <DateInput aria-label="Salida hasta" type="date" className={inp} value={fSalidaHasta} onValueChange={(dateValue) => setFSalidaHasta(dateValue)} />
         </div>
         <div className="w-24">
           <label className={lbl}>Valor mín.</label>

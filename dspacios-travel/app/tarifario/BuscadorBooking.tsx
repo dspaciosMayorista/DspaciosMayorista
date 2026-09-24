@@ -1,8 +1,9 @@
 "use client";
 
+import { DateInput } from "@/components/ui/DateInput";
 import { useEffect, useId, useMemo, useRef, useState, useTransition } from "react";
 import Image from "next/image";
-import { MapPin, CalendarDays, Users, Baby, BedDouble } from "lucide-react";
+import { MapPin, Users, Baby, BedDouble } from "lucide-react";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { formatCOP } from "@/lib/utils";
 import { ACOM_ROOMS, ACOM_ROOM_LABEL, type AcomRoom } from "@/lib/acomodaciones";
@@ -544,14 +545,12 @@ export function BuscadorBooking({
           </div>
           <div><label className={lbl}>Ida</label>
             <div className="relative">
-              <CalendarDays className={iconoCls} aria-hidden />
-              <input type="date" min={hoy} value={fIda} onChange={(e) => { const nueva = e.target.value; limpiarResultados(); setFIda(nueva); if (fReg && fReg <= nueva) setFReg(""); }} className={sel} />
+              <DateInput aria-label="Ida" type="date" min={hoy} value={fIda} onValueChange={(dateValue) => { const nueva = dateValue; limpiarResultados(); setFIda(nueva); if (fReg && fReg <= nueva) setFReg(""); }} className={`${sel} pl-3`} />
             </div>
           </div>
           <div><label className={lbl}>Regreso</label>
             <div className="relative">
-              <CalendarDays className={iconoCls} aria-hidden />
-              <input type="date" min={fIda} value={fReg} onChange={(e) => { limpiarResultados(); setFReg(e.target.value); }} className={sel} />
+              <DateInput aria-label="Regreso" type="date" min={fIda} value={fReg} onValueChange={(dateValue) => { limpiarResultados(); setFReg(dateValue); }} className={`${sel} pl-3`} />
             </div>
           </div>
           <div><label className={lbl}>Adultos (12+)</label>

@@ -1,8 +1,9 @@
 "use client";
 
+import { DateInput } from "@/components/ui/DateInput";
 import { useEffect, useRef, useState, useTransition } from "react";
 import Image from "next/image";
-import { MapPin, CalendarDays, Users } from "lucide-react";
+import { MapPin, Users } from "lucide-react";
 import { formatMoneda } from "@/lib/utils";
 import { buscarReceptivos } from "@/app/(dashboard)/dashboard/reservar/actions";
 import type { ResultadoServicio } from "@/lib/reservar/cotizar";
@@ -223,17 +224,15 @@ export function BuscadorReceptivos({
           <div>
             <label className="mb-1 block text-xs font-semibold text-slate-700">Ida</label>
             <div className="relative">
-              <CalendarDays className={iconoCls} aria-hidden />
-              <input type="date" min={hoy} value={fIda}
-                onChange={(e) => { const nueva = e.target.value; setFIda(nueva); if (fReg && fReg <= nueva) setFReg(""); }}
-                className={sel} />
+              <DateInput aria-label="Ida" type="date" min={hoy} value={fIda}
+                onValueChange={(dateValue) => { const nueva = dateValue; setFIda(nueva); if (fReg && fReg <= nueva) setFReg(""); }}
+                className={`${sel} pl-3`} />
             </div>
           </div>
           <div>
             <label className="mb-1 block text-xs font-semibold text-slate-700">Regreso</label>
             <div className="relative">
-              <CalendarDays className={iconoCls} aria-hidden />
-              <input type="date" min={fIda || hoy} value={fReg} onChange={(e) => setFReg(e.target.value)} className={sel} />
+              <DateInput aria-label="Regreso" type="date" min={fIda || hoy} value={fReg} onValueChange={(dateValue) => setFReg(dateValue)} className={`${sel} pl-3`} />
             </div>
           </div>
           <div>

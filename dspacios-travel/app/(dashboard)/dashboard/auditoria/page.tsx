@@ -1,3 +1,4 @@
+import { DateInput } from "@/components/ui/DateInput";
 import { createClient } from "@/lib/supabase/server";
 import { getTenant } from "@/lib/tenant.server";
 import { miRol } from "@/lib/roles";
@@ -130,8 +131,8 @@ export default async function AuditoriaPage({
         </select>
         <input name="q" defaultValue={fReg} placeholder="N° contrato / record / id" className={inputCls} />
         <input name="actor" defaultValue={fActor} placeholder="Usuario (nombre/email)" className={inputCls} />
-        <input type="date" name="desde" defaultValue={fDesde} className={inputCls} />
-        <input type="date" name="hasta" defaultValue={fHasta} className={inputCls} />
+        <DateInput aria-label="Desde" type="date" name="desde" defaultValue={fDesde} className={inputCls} />
+        <DateInput aria-label="Hasta" type="date" name="hasta" defaultValue={fHasta} className={inputCls} />
         <div className="col-span-2 flex gap-2 md:col-span-6">
           <button type="submit" className="rounded-lg px-4 py-2 text-sm font-medium text-white" style={{ backgroundColor: "var(--brand-primary)" }}>Filtrar</button>
           <Link href="/dashboard/auditoria" className="rounded-lg px-4 py-2 text-sm text-gray-500 hover:text-gray-800">Limpiar</Link>

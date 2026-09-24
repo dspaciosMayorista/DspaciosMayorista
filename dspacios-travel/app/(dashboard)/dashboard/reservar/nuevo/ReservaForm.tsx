@@ -1,5 +1,6 @@
 "use client";
 
+import { DateInput } from "@/components/ui/DateInput";
 import { useMemo, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { Button } from "@/components/ui/button";
@@ -326,8 +327,8 @@ export function ReservaForm({
             <p className="mb-3 text-xs text-gray-400">Ventana permitida del paquete: {meta.fechaIda} → {meta.fechaRegreso} (no es la duración de la estadía).</p>
           )}
           <div className="flex flex-wrap items-end gap-3">
-            <div><label className={lbl}>Fecha de ida</label><Input type="date" value={fIda} min={meta.fechaIda ?? undefined} max={meta.fechaRegreso ?? undefined} onChange={(e) => cambiarFIda(e.target.value)} /></div>
-            <div><label className={lbl}>Fecha de regreso</label><Input type="date" value={fReg} min={fIda || (meta.fechaIda ?? undefined)} max={meta.fechaRegreso ?? undefined} onChange={(e) => setFReg(e.target.value)} /></div>
+            <div><label className={lbl}>Fecha de ida</label><DateInput aria-label="Fecha de ida" type="date" value={fIda} min={meta.fechaIda ?? undefined} max={meta.fechaRegreso ?? undefined} onValueChange={(dateValue) => cambiarFIda(dateValue)} /></div>
+            <div><label className={lbl}>Fecha de regreso</label><DateInput aria-label="Fecha de regreso" type="date" value={fReg} min={fIda || (meta.fechaIda ?? undefined)} max={meta.fechaRegreso ?? undefined} onValueChange={(dateValue) => setFReg(dateValue)} /></div>
             <Button type="button" onClick={cotizar} disabled={cotPend || !fIda || !fReg} style={{ backgroundColor: "var(--brand-accent)" }}>
               {cotPend ? "Cotizando…" : "Ver tarifas para estas fechas"}
             </Button>
@@ -511,7 +512,7 @@ export function ReservaForm({
               </select>
             </div>
           )}
-          <div><label className={lbl}>Plazo para confirmar</label><Input type="date" value={plazo} onChange={(e) => setPlazo(e.target.value)} /></div>
+          <div><label className={lbl}>Plazo para confirmar</label><DateInput aria-label="Plazo para confirmar" type="date" value={plazo} onValueChange={(dateValue) => setPlazo(dateValue)} /></div>
         </div>
         {tipoAsesor !== "interno" && (
           <>
@@ -597,7 +598,7 @@ export function ReservaForm({
                           />
                         </div>
                       </div>
-                      <div><label className={lbl}>Fecha nacimiento</label><Input type="date" value={p.fechaNacimiento} onChange={(e) => setPaxField(i, "fechaNacimiento", e.target.value)} /></div>
+                      <div><label className={lbl}>Fecha nacimiento</label><DateInput aria-label="Fecha nacimiento" type="date" value={p.fechaNacimiento} onValueChange={(dateValue) => setPaxField(i, "fechaNacimiento", dateValue)} /></div>
                       <div><label className={lbl}>Nacionalidad</label><Input value={p.nacionalidad} onChange={(e) => setPaxField(i, "nacionalidad", e.target.value)} /></div>
                     </div>
                     {esInfanteReal && (
@@ -643,7 +644,7 @@ export function ReservaForm({
       <div className="flex flex-wrap items-end justify-between gap-3">
         <div>
           <label className={lbl}>Cotización válida hasta</label>
-          <Input type="date" value={vigencia} min={hoy} max={fechaSalidaCotizacion ?? undefined} onChange={(e) => setVigencia(e.target.value)} className="w-44" />
+          <DateInput aria-label="Cotización válida hasta" type="date" value={vigencia} min={hoy} max={fechaSalidaCotizacion ?? undefined} onValueChange={(dateValue) => setVigencia(dateValue)} className="w-44" />
           <p className="mt-1 text-xs text-gray-400">Por defecto, 24 horas; nunca después de la salida.</p>
         </div>
         <Button onClick={guardar} disabled={pending || bloquear} style={{ backgroundColor: "var(--brand-primary)" }}>
