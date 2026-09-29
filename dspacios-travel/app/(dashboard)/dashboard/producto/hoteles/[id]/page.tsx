@@ -24,7 +24,7 @@ export default async function HotelDetallePage({ params }: { params: Promise<{ i
   const sb = await createClient();
 
   const [{ data: hotel }, { data: cats }, { data: regs }, { data: temporadas }, { data: tarifas }, { data: rangos }, { data: acoms }, { data: calc }, { data: todasCats }, { data: todosRegs }, { data: documentos }, { data: otrosHoteles }, { data: fotos }, { data: blackouts }, { data: destinos }, { data: proveedores }, { data: tarifasUnidad }] = await Promise.all([
-    sb.from("hoteles").select("*, destinos(nombre), proveedores(nombre, politica_reservas)").eq("id", hotelId).single(),
+    sb.from("hoteles").select("*, destinos(nombre), proveedores(nombre)").eq("id", hotelId).single(),
     sb.from("hotel_categorias").select("categoria_id, categorias_habitacion(nombre)").eq("hotel_id", hotelId),
     sb.from("hotel_regimenes").select("plan_id, planes_alimentacion(codigo)").eq("hotel_id", hotelId),
     sb.from("hotel_temporadas").select("id, nombre, fecha_inicio, fecha_fin, prioridad, compra_inicio, compra_fin, tipo, descuento_valor, rangos, blackouts, min_noches, regimen_restringido, condicion_pago_tipo, condicion_pago_pct_inicial, condicion_pago_dias_saldo").eq("hotel_id", hotelId).order("prioridad", { ascending: false }).order("orden"),
@@ -62,8 +62,16 @@ export default async function HotelDetallePage({ params }: { params: Promise<{ i
     pet_nota: string | null;
     modelo_tarifario: ModeloTarifario | null;
     destinos: { nombre: string } | null;
-    proveedores: { nombre: string; politica_reservas: string | null } | null;
+    proveedores: { nombre: string } | null;
   };
+  const { data: politica, error: politicaError } = h.proveedor_id == null
+    ? { data: null, error: null }
+    : await sb.from("proveedores_datos_sensibles")
+      .select("politica_reservas")
+      .eq("proveedor_id", h.proveedor_id)
+      .eq("tenant", "mayorista")
+      .maybeSingle();
+  if (politicaError) throw new Error("No se pudo cargar la política del proveedor.");
   const acomConfigs = (acoms ?? []) as AcomConfig[];
   const catsRows = (cats ?? []) as unknown as { categoria_id: number; categorias_habitacion: { nombre: string } | null }[];
   const regsRows = (regs ?? []) as unknown as { plan_id: number; planes_alimentacion: { codigo: string } | null }[];
@@ -121,12 +129,12 @@ export default async function HotelDetallePage({ params }: { params: Promise<{ i
         {categorias.length > 0 && <> · Categorías: {categorias.join(", ")}</>}
         {regimenes.length > 0 && <> · Régimen: {regimenes.join(", ")}</>}
       </p>
-      {h.proveedores?.politica_reservas && (
+      {politica?.politica_reservas && (
         <details className="mt-3 rounded-lg border border-gray-200 bg-gray-50 p-3 text-sm">
           <summary className="cursor-pointer select-none text-xs font-medium text-gray-500">
             Política de reservas del proveedor <span className="font-normal text-gray-400">(interno · clic para ver/ocultar)</span>
           </summary>
-          <p className="mt-2 whitespace-pre-wrap text-gray-700">{h.proveedores.politica_reservas}</p>
+          <p className="mt-2 whitespace-pre-wrap text-gray-700">{politica.politica_reservas}</p>
         </details>
       )}
 

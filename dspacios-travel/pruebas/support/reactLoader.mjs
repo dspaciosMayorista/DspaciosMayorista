@@ -47,10 +47,35 @@ const STUB_BUSQUEDA_UNIDAD_ACTIONS = pathToFileURL(join(AQUI, "stubs", "busqueda
 // server" que termina en "next/headers". Se redirige solo cuando el import
 // parte de ESE archivo (mismo patrón que busquedaUnidadActions arriba).
 const STUB_PASAJEROS_CONTRATO_ACTIONS = pathToFileURL(join(AQUI, "stubs", "pasajerosContratoActionsStub.mjs")).href;
+// `EliminarDestinoBtn.tsx` (tarifario) importa su Server Action real "./actions"
+// (termina en "next/headers") — se redirige solo cuando el import parte de ESE
+// archivo (mismo patrón que pasajerosContratoActions arriba).
+const STUB_ELIMINAR_DESTINO_ACTIONS = pathToFileURL(join(AQUI, "stubs", "eliminarDestinoActionsStub.mjs")).href;
+// Server Actions de pagos / proveedores / difusión, importadas por su alias
+// "@/..." — mismas razones que las anteriores (terminan en "next/headers").
+const STUB_PAGOS_ACTIONS = pathToFileURL(join(AQUI, "stubs", "pagosActionsStub.mjs")).href;
+const STUB_PROVEEDORES_ACTIONS = pathToFileURL(join(AQUI, "stubs", "proveedoresActionsStub.mjs")).href;
+const STUB_DIFUSION_ACTIONS = pathToFileURL(join(AQUI, "stubs", "difusionActionsStub.mjs")).href;
+// `DateInput.tsx` arrastra "react-day-picker" (no instalado en el entorno de
+// pruebas) — se reemplaza por un <input> controlado en los componentes que lo
+// montan pero no lo prueban (DifusionClient, PagosList). Sin esto, esos
+// archivos ni siquiera cargan.
+const STUB_DATE_INPUT = pathToFileURL(join(AQUI, "stubs", "dateInputStub.mjs")).href;
+// `DifusionClient.tsx` usa useRouter de "next/navigation"; fuera del servidor
+// de Next no hay contexto. Se sustituye por un router falso.
+const STUB_NEXT_NAVIGATION = pathToFileURL(join(AQUI, "stubs", "nextNavigationStub.mjs")).href;
 // `BuscarPasajeroDocumento.tsx` (migración 187) importa la Server Action
 // real "@/lib/reservar/buscarPasajero" — mismo problema que las de arriba
 // (termina en "next/headers"). Mismo criterio de stub configurable.
 const STUB_BUSCAR_PASAJERO = pathToFileURL(join(AQUI, "stubs", "buscarPasajeroStub.mjs")).href;
+// Dependencias externas de la Server Action REAL `dashboard/pagos/actions.ts`
+// (pruebas/asignarProveedorAction.react.ts): el supabase server (next/headers),
+// "next/cache" y `@/lib/contabilidad/asientos` (server-only + cliente admin).
+// Se redirigen SOLO cuando el import parte de ESE archivo; la action se ejecuta
+// de verdad contra un cliente simulado configurado en la prueba.
+const STUB_SUPABASE_SERVER = pathToFileURL(join(AQUI, "stubs", "supabaseServerStub.mjs")).href;
+const STUB_NEXT_CACHE = pathToFileURL(join(AQUI, "stubs", "nextCacheStub.mjs")).href;
+const STUB_ASIENTOS = pathToFileURL(join(AQUI, "stubs", "asientosStub.mjs")).href;
 // Módulos CSS ("*.module.css", o cualquier ".css") — ver cssModuleStub.mjs.
 // Se revisa ANTES que la resolución genérica de "@/*" de abajo: esa
 // resolución probaría el candidato "tal cual" (extensión "") y encontraría
@@ -79,6 +104,40 @@ export async function resolve(specifier, context, nextResolve) {
   }
   if (specifier === "./actions" && context.parentURL?.endsWith("PasajerosContratoClient.tsx")) {
     return { url: STUB_PASAJEROS_CONTRATO_ACTIONS, shortCircuit: true };
+  }
+  if (specifier === "./actions" && context.parentURL?.endsWith("EliminarDestinoBtn.tsx")) {
+    return { url: STUB_ELIMINAR_DESTINO_ACTIONS, shortCircuit: true };
+  }
+  if (specifier === "./actions" && context.parentURL?.endsWith("ProveedoresClient.tsx")) {
+    return { url: STUB_PROVEEDORES_ACTIONS, shortCircuit: true };
+  }
+  if (specifier === "./actions" && context.parentURL?.endsWith("DifusionClient.tsx")) {
+    return { url: STUB_DIFUSION_ACTIONS, shortCircuit: true };
+  }
+  if (specifier === "./actions" && context.parentURL?.endsWith("PagosList.tsx")) {
+    return { url: STUB_PAGOS_ACTIONS, shortCircuit: true };
+  }
+  if (
+    specifier === "@/components/ui/DateInput" &&
+    (context.parentURL?.endsWith("DifusionClient.tsx") || context.parentURL?.endsWith("PagosList.tsx"))
+  ) {
+    return { url: STUB_DATE_INPUT, shortCircuit: true };
+  }
+  if (specifier === "next/navigation" && context.parentURL?.endsWith("DifusionClient.tsx")) {
+    return { url: STUB_NEXT_NAVIGATION, shortCircuit: true };
+  }
+  if (specifier === "@/lib/supabase/server" &&
+      (context.parentURL?.endsWith("dashboard/pagos/actions.ts") ||
+       context.parentURL?.endsWith("dashboard/producto/proveedores/actions.ts"))) {
+    return { url: STUB_SUPABASE_SERVER, shortCircuit: true };
+  }
+  if (specifier === "next/cache" &&
+      (context.parentURL?.endsWith("dashboard/pagos/actions.ts") ||
+       context.parentURL?.endsWith("dashboard/producto/proveedores/actions.ts"))) {
+    return { url: STUB_NEXT_CACHE, shortCircuit: true };
+  }
+  if (specifier === "@/lib/contabilidad/asientos" && context.parentURL?.endsWith("dashboard/pagos/actions.ts")) {
+    return { url: STUB_ASIENTOS, shortCircuit: true };
   }
   if (specifier.startsWith("@/")) {
     const rel = specifier.slice(2);

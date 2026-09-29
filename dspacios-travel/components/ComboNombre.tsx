@@ -2,20 +2,24 @@
 
 import { useEffect, useId, useMemo, useRef, useState } from "react";
 
-export type ProveedorOpt = { id: number; nombre: string };
-
 const norm = (s: string) => s.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "");
 
-/** Selector de proveedor con buscador: escribe y filtra la lista, luego eliges. No crea proveedores. */
-export function ComboProveedor({
-  proveedores, value, onChange, placeholder = "Escribe el proveedor…",
+/**
+ * Selector de opción con buscador por NOMBRE (devuelve el string tal cual, sin
+ * id). A diferencia de `ComboProveedor`/`ComboHotel`/`ComboDestino` (que
+ * devuelven `number | ""`), éste trabaja con texto plano: sirve para contratos
+ * donde el valor persistido es el NOMBRE (p. ej. el proveedor de una CxP).
+ * No crea opciones: solo se pueden elegir las de la lista dada.
+ */
+export function ComboNombre({
+  opciones, value, onChange, placeholder = "Escribe para buscar…",
 }: {
-  proveedores: ProveedorOpt[];
-  value: number | "";
-  onChange: (id: number | "") => void;
+  opciones: string[];
+  value: string;
+  onChange: (nombre: string) => void;
   placeholder?: string;
 }) {
-  const sel = proveedores.find((p) => p.id === value) ?? null;
+  const sel = opciones.find((o) => o === value) ?? "";
   const [q, setQ] = useState("");
   const [open, setOpen] = useState(false);
   const [act, setAct] = useState(0);
@@ -26,25 +30,25 @@ export function ComboProveedor({
 
   const filtradas = useMemo(() => {
     const t = norm(q.trim());
-    const list = !t ? proveedores : proveedores.filter((p) => norm(p.nombre).includes(t));
+    const list = !t ? opciones : opciones.filter((o) => norm(o).includes(t));
     return list.slice(0, 50);
-  }, [proveedores, q]);
+  }, [opciones, q]);
 
   const actClamped = Math.min(Math.max(act, 0), filtradas.length - 1);
-  const actId = open && filtradas.length > 0 && actClamped >= 0 ? `${uid}-opt-${filtradas[actClamped].id}` : undefined;
+  const actId = open && filtradas.length > 0 && actClamped >= 0 ? `${uid}-opt-${actClamped}` : undefined;
 
   useEffect(() => {
     listRef.current?.querySelector<HTMLElement>(`[data-idx="${actClamped}"]`)?.scrollIntoView({ block: "nearest" });
   }, [actClamped]);
 
-  function elegir(p: ProveedorOpt) {
-    onChange(p.id);
+  function elegir(nombre: string) {
+    onChange(nombre);
     setOpen(false);
     setAct(0);
   }
 
   function actDesdeSeleccion() {
-    const i = proveedores.slice(0, 50).findIndex((p) => p.id === value);
+    const i = opciones.slice(0, 50).findIndex((o) => o === value);
     return i >= 0 ? i : 0;
   }
 
@@ -88,7 +92,7 @@ export function ComboProveedor({
         aria-haspopup="listbox"
         aria-controls={popupId}
         aria-activedescendant={actId}
-        value={open ? q : (sel ? sel.nombre : "")}
+        value={open ? q : sel}
         placeholder={placeholder}
         onFocus={() => { setOpen(true); setQ(""); setAct(actDesdeSeleccion()); }}
         onChange={(e) => { setQ(e.target.value); setOpen(true); setAct(0); if (value !== "") onChange(""); }}
@@ -102,19 +106,19 @@ export function ComboProveedor({
         <div ref={listRef} id={popupId} role="listbox" className="absolute z-20 mt-1 max-h-64 w-full overflow-y-auto rounded-lg border border-gray-200 bg-white shadow-lg">
           {filtradas.length === 0 ? (
             <div className="px-3 py-2 text-sm text-gray-400">Sin coincidencias</div>
-          ) : filtradas.map((p, i) => (
+          ) : filtradas.map((o, i) => (
             <button
-              key={p.id}
+              key={`${uid}-${o}`}
               type="button"
-              id={`${uid}-opt-${p.id}`}
+              id={`${uid}-opt-${i}`}
               role="option"
               tabIndex={-1}
-              aria-selected={p.id === value}
+              aria-selected={o === value}
               data-idx={i}
-              onMouseDown={(e) => { e.preventDefault(); elegir(p); }}
-              className={`flex w-full items-center justify-between px-3 py-2 text-left text-sm hover:bg-gray-50 ${i === actClamped ? "bg-gray-100" : p.id === value ? "bg-[rgba(29,124,154,0.06)]" : ""}`}
+              onMouseDown={(e) => { e.preventDefault(); elegir(o); }}
+              className={`flex w-full items-center justify-between px-3 py-2 text-left text-sm hover:bg-gray-50 ${i === actClamped ? "bg-gray-100" : o === value ? "bg-[rgba(29,124,154,0.06)]" : ""}`}
             >
-              <span className="text-gray-700">{p.nombre}</span>
+              <span className="text-gray-700">{o}</span>
             </button>
           ))}
         </div>

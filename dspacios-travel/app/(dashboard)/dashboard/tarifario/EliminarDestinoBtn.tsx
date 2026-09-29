@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useTransition } from "react";
+import { ComboDestino } from "@/components/ComboDestino";
 import { eliminarDestino } from "./actions";
 
 type DestOpt = { id: number; nombre: string };
@@ -60,14 +61,12 @@ export function EliminarDestinoBtn({
                 <p className="mb-1 text-xs text-amber-700">
                   Tiene <b>{hoteles}</b> hotel(es). Se moverán (junto con sus tarifas, servicios y paquetes) al destino que elijas:
                 </p>
-                <select
+                <ComboDestino
+                  destinos={otros}
                   value={target}
-                  onChange={(e) => setTarget(e.target.value === "" ? "" : Number(e.target.value))}
-                  className="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm"
-                >
-                  <option value="">— Elige el destino de llegada —</option>
-                  {otros.map((d) => <option key={d.id} value={d.id}>{d.nombre?.toUpperCase()}</option>)}
-                </select>
+                  onChange={setTarget}
+                  placeholder="Busca el destino de llegada…"
+                />
               </div>
             ) : (
               <p className="mt-2 text-xs text-gray-500">No tiene hoteles; se eliminará directamente.</p>

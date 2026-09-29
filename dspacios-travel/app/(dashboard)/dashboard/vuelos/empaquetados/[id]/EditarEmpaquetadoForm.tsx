@@ -7,12 +7,11 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { actualizarEmpaquetado, eliminarEmpaquetado, type EmpaquetadoInputGeneral } from "../../empaquetados-actions";
 import { ComboDestino, type DestinoOpt } from "@/components/ComboDestino";
+import { ComboProveedor, type ProveedorOpt } from "@/components/ComboProveedor";
 
 const lbl = "mb-1 block text-xs font-medium text-gray-600";
 const card = "rounded-xl border border-gray-200 bg-white p-5 space-y-4";
 const selCls = "w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm";
-
-type ProvOpt = { id: number; nombre: string };
 
 export function EditarEmpaquetadoForm({
   empaquetadoId,
@@ -21,7 +20,7 @@ export function EditarEmpaquetadoForm({
   inicial,
 }: {
   empaquetadoId: number;
-  proveedores?: ProvOpt[];
+  proveedores?: ProveedorOpt[];
   destinos?: DestinoOpt[];
   // record/estadoEmision/estadoPago NO viven aquí — son campos operativos,
   // editados aparte por ControlEmpaquetadoForm (defectos 7/8, revisión de
@@ -92,10 +91,7 @@ export function EditarEmpaquetadoForm({
           <div><label className={lbl}>Aerolínea</label><Input value={f.aerolinea} onChange={set("aerolinea")} /></div>
           <div>
             <label className={lbl}>Proveedor / plataforma</label>
-            <select value={proveedorId} onChange={(e) => setProveedorId(Number(e.target.value) || "")} className={selCls}>
-              <option value="">—</option>
-              {proveedores.map((p) => <option key={p.id} value={p.id}>{p.nombre}</option>)}
-            </select>
+            <ComboProveedor proveedores={proveedores} value={proveedorId} onChange={setProveedorId} placeholder="Selecciona proveedor…" />
           </div>
           <div>
             <label className={lbl}>Origen</label>

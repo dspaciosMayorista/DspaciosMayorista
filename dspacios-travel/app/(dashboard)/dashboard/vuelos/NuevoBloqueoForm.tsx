@@ -8,14 +8,13 @@ import { Input } from "@/components/ui/input";
 import { crearBloqueo } from "./actions";
 import { RangosEdadPicker, type RangoEdad } from "@/components/RangosEdadPicker";
 import { ComboDestino, type DestinoOpt } from "@/components/ComboDestino";
+import { ComboProveedor, type ProveedorOpt } from "@/components/ComboProveedor";
 import { MODALIDADES_EMISION, MODALIDAD_LABEL, type ModalidadEmision } from "@/lib/vuelos/control";
 
 const lbl = "mb-1 block text-xs font-medium text-gray-600";
 const card = "rounded-xl border border-gray-200 bg-white p-5 space-y-4";
 
-type ProvOpt = { id: number; nombre: string };
-
-export function NuevoBloqueoForm({ proveedores = [], destinos = [], rangos = [] }: { proveedores?: ProvOpt[]; destinos?: DestinoOpt[]; rangos?: RangoEdad[] }) {
+export function NuevoBloqueoForm({ proveedores = [], destinos = [], rangos = [] }: { proveedores?: ProveedorOpt[]; destinos?: DestinoOpt[]; rangos?: RangoEdad[] }) {
   const router = useRouter();
   const [pending, start] = useTransition();
   const [err, setErr] = useState("");
@@ -74,11 +73,7 @@ export function NuevoBloqueoForm({ proveedores = [], destinos = [], rangos = [] 
           <div><label className={lbl}>Aerolínea</label><Input value={f.aerolinea} onChange={set("aerolinea")} placeholder="JETSMART" /></div>
           <div>
             <label className={lbl}>Proveedor aéreo</label>
-            <select value={proveedorId} onChange={(e) => setProveedorId(Number(e.target.value) || "")}
-              className="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm">
-              <option value="">—</option>
-              {proveedores.map((p) => <option key={p.id} value={p.id}>{p.nombre}</option>)}
-            </select>
+            <ComboProveedor proveedores={proveedores} value={proveedorId} onChange={setProveedorId} placeholder="Selecciona proveedor…" />
           </div>
           <div>
             <label className={lbl}>Origen</label>

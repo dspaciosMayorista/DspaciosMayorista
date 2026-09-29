@@ -14,9 +14,9 @@ import {
 import { RangosEdadPicker, type RangoEdad } from "@/components/RangosEdadPicker";
 import { Paginador } from "@/components/Paginador";
 import { ComboDestino, type DestinoOpt } from "@/components/ComboDestino";
+import { ComboProveedor, type ProveedorOpt } from "@/components/ComboProveedor";
 import { ServicioFotoCell } from "./ServicioFotoCell";
 
-type Opt = { id: number; nombre: string };
 type Tier = { pax_desde: number; pax_hasta: number; precio: number; temporada?: string | null };
 export type TemporadaServicio = {
   id: number; servicio_id: number; nombre: string;
@@ -51,7 +51,7 @@ const sel = "w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm
 type TierForm = { paxDesde: string; paxHasta: string; precio: string };
 const tierVacio = (): TierForm => ({ paxDesde: "1", paxHasta: "4", precio: "" });
 
-export function ServiciosClient({ servicios, proveedores, destinos, rangos, temporadas }: { servicios: Servicio[]; proveedores: Opt[]; destinos: DestinoOpt[]; rangos: RangoEdad[]; temporadas: Record<number, TemporadaServicio[]> }) {
+export function ServiciosClient({ servicios, proveedores, destinos, rangos, temporadas }: { servicios: Servicio[]; proveedores: ProveedorOpt[]; destinos: DestinoOpt[]; rangos: RangoEdad[]; temporadas: Record<number, TemporadaServicio[]> }) {
   const [nombre, setNombre] = useState("");
   const [provId, setProvId] = useState<number | "">("");
   const [destId, setDestId] = useState<number | "">("");
@@ -144,10 +144,7 @@ export function ServiciosClient({ servicios, proveedores, destinos, rangos, temp
           <div><label className={lbl}>Nombre *</label><Input value={nombre} onChange={(e) => setNombre(e.target.value)} placeholder="Tour Playa Blanca, traslado…" /></div>
           <div>
             <label className={lbl}>Proveedor</label>
-            <select value={provId} onChange={(e) => setProvId(Number(e.target.value) || "")} className={sel}>
-              <option value="">—</option>
-              {proveedores.map((p) => <option key={p.id} value={p.id}>{p.nombre}</option>)}
-            </select>
+            <ComboProveedor proveedores={proveedores} value={provId} onChange={setProvId} placeholder="Escribe el proveedor…" />
           </div>
           <div>
             <label className={lbl}>Destino / cobertura</label>

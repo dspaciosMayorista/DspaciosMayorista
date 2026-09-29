@@ -7,6 +7,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { formatCOP, formatFechaLarga } from "@/lib/utils";
 import { ResponsiveTableShell } from "@/components/ui/ResponsiveTableShell";
+import { ComboHotel } from "@/components/ComboHotel";
 import {
   crearTemporada, actualizarTemporada, eliminarTemporada, copiarTemporadasDesdeHotel,
   crearTarifa, actualizarTarifa, eliminarTarifa,
@@ -362,10 +363,9 @@ function CopiarDeHotel({ hotelId, otrosHoteles }: { hotelId: number; otrosHotele
   return (
     <div className="mb-3 flex flex-wrap items-center gap-2 rounded-xl border border-dashed border-gray-200 bg-gray-50 p-3">
       <span className="text-xs font-medium text-gray-600">Traer vigencias de otro hotel:</span>
-      <select value={origen} onChange={(e) => setOrigen(Number(e.target.value) || "")} className={`${sel} max-w-xs`}>
-        <option value="">— Elegir hotel origen —</option>
-        {otrosHoteles.map((h) => <option key={h.id} value={h.id}>{h.nombre}</option>)}
-      </select>
+      <div className="w-full max-w-xs">
+        <ComboHotel hoteles={otrosHoteles} value={origen} onChange={setOrigen} placeholder="Elige hotel origen…" />
+      </div>
       <Button variant="outline" onClick={copiar} disabled={pending}>{pending ? "Copiando…" : "Traer"}</Button>
       {msg && <span className={msg.startsWith("✓") ? "text-sm text-green-600" : "text-sm text-red-600"}>{msg}</span>}
     </div>

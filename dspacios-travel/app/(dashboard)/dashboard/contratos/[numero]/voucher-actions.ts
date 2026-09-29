@@ -104,17 +104,33 @@ export async function generarVouchersServicios(numero: string): Promise<Result> 
     // ── TARIFARIO: servicios del paquete agrupados por proveedor ─────────────
     const { data: arm } = await sb
       .from("armado_servicios")
-      .select("incluido, servicios_adicionales(nombre, categoria, proveedores(nombre, voucher_contacto, contacto))")
+      .select("incluido, servicios_adicionales(nombre, categoria, proveedores(id, nombre, contacto))")
       .eq("paquete_id", venta.paquete_armado_id);
+    type ServicioConProveedor = {
+      nombre: string | null;
+      categoria: string | null;
+      proveedores: { id: number; nombre: string; contacto: string | null } | null;
+    };
+    const ids = [...new Set((arm ?? [])
+      .map((a) => (a.servicios_adicionales as unknown as ServicioConProveedor | null)?.proveedores?.id)
+      .filter((id): id is number => id != null))];
+    const { data: contactos, error: contactosError } = ids.length
+      ? await sb.from("proveedores_datos_sensibles")
+        .select("proveedor_id, voucher_contacto")
+        .eq("tenant", "mayorista")
+        .in("proveedor_id", ids)
+      : { data: [], error: null };
+    if (contactosError) return { ok: false, error: "No se pudo cargar el contacto de los proveedores." };
+    const voucherContactoPorId = new Map((contactos ?? []).map((p) => [p.proveedor_id, p.voucher_contacto]));
     for (const a of arm ?? []) {
-      const s = a.servicios_adicionales as unknown as { nombre: string | null; categoria: string | null; proveedores: { nombre: string; voucher_contacto: string | null; contacto: string | null } | null } | null;
+      const s = a.servicios_adicionales as unknown as ServicioConProveedor | null;
       if (!s?.nombre) continue;
       const nombre = s.nombre.trim();
       const incluido = (a as { incluido?: boolean | null }).incluido === true;
       if (!incluido && !addonNames.has(nombre)) continue;
       const prov = s.proveedores;
       const key = prov?.nombre ?? "Sin proveedor";
-      const contacto = prov?.voucher_contacto ?? prov?.contacto ?? null;
+      const contacto = (prov ? voucherContactoPorId.get(prov.id) : null) ?? prov?.contacto ?? null;
       const g = porProveedor.get(key) ?? { contacto, servicios: [], categorias: new Set<string>() };
       if (!g.contacto && contacto) g.contacto = contacto;
       if (!g.servicios.includes(nombre)) g.servicios.push(nombre);

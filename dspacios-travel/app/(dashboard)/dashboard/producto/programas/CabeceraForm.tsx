@@ -5,6 +5,7 @@ import { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { ComboProveedor, type ProveedorOpt } from "@/components/ComboProveedor";
 import type { CabeceraInput } from "./actions";
 
 type Result = { ok: true; id?: number } | { ok: false; error: string };
@@ -20,7 +21,7 @@ export function CabeceraForm({
   redirectOnCreate = false,
 }: {
   initial?: Partial<CabeceraInput>;
-  proveedores: { id: number; nombre: string }[];
+  proveedores: ProveedorOpt[];
   onSubmit: (input: CabeceraInput) => Promise<Result>;
   submitLabel: string;
   redirectOnCreate?: boolean;
@@ -132,18 +133,7 @@ export function CabeceraForm({
 
       <div>
         <label className={lbl}>Proveedor</label>
-        <select
-          value={f.proveedorId ?? ""}
-          onChange={(e) => set("proveedorId", e.target.value === "" ? null : Number(e.target.value))}
-          className={sel}
-        >
-          <option value="">— (sin asignar)</option>
-          {proveedores.map((p) => (
-            <option key={p.id} value={p.id}>
-              {p.nombre}
-            </option>
-          ))}
-        </select>
+        <ComboProveedor proveedores={proveedores} value={f.proveedorId ?? ""} onChange={(id) => set("proveedorId", id === "" ? null : id)} placeholder="Selecciona proveedor…" />
       </div>
 
       <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">

@@ -3,11 +3,11 @@
 import { useState, useTransition, useEffect, useRef } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { ComboHotel, type HotelOpt } from "@/components/ComboHotel";
 import { guardarTarifa, eliminarTarifa, type PrecioAcomodacion } from "../actions";
 import { calcPrecioDesdeProducto, calcPreciosTarifa, calcMargenEfectivo } from "@/lib/calc/tarifario";
 import { formatCOP } from "@/lib/utils";
 
-type Hotel = { id: number; nombre: string; zona: string | null };
 type Temporada = { id: number; nombre: string; anio: number };
 type Plan = { id: number; codigo: string; nombre: string };
 
@@ -40,7 +40,7 @@ export function ProductoTab({
   destinoId, hoteles, temporadas, planes, tarifas,
 }: {
   destinoId: number;
-  hoteles: Hotel[];
+  hoteles: HotelOpt[];
   temporadas: Temporada[];
   planes: Plan[];
   tarifas: TarifaExistente[];
@@ -66,6 +66,7 @@ export function ProductoTab({
   const [precios, setPrecios] = useState<Record<string, string>>({});
   const [pending, startTransition] = useTransition();
   const [saved,   setSaved]   = useState(false);
+  const [err,     setErr]     = useState("");
 
   const costoTotal =
     (Number(costoHotel)      || 0) +
@@ -94,7 +95,7 @@ export function ProductoTab({
     setHotelId(""); setPlanId(""); setTemporadaId(""); setNoches(3);
     setComisionable(true); setImpuesto(0); setNotas("");
     setCostoHotel(""); setCostoReceptivo(""); setCostoAsistencia(""); setCostoOtros("");
-    setPctMargen(""); setPrecios({});
+    setPctMargen(""); setPrecios({}); setErr("");
   }
 
   function cargarParaEditar(t: TarifaExistente) {
@@ -115,7 +116,9 @@ export function ProductoTab({
 
   function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
-    if (!hotelId || !planId || !temporadaId) return;
+    setErr("");
+    if (!hotelId) { setErr("Selecciona un hotel para guardar la tarifa."); return; }
+    if (!planId || !temporadaId) return;
 
     const preciosArr: PrecioAcomodacion[] = ACOMODACIONES
       .filter(({ key }) => precios[key] && Number(precios[key]) > 0)
@@ -169,11 +172,7 @@ export function ProductoTab({
           <div className="grid grid-cols-2 gap-3">
             <div>
               <label className="text-sm font-medium text-gray-700 block mb-1">Hotel *</label>
-              <select value={hotelId} onChange={(e) => setHotelId(Number(e.target.value) || "")}
-                className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm bg-white" required>
-                <option value="">Selecciona hotel</option>
-                {hoteles.map((h) => <option key={h.id} value={h.id}>{h.nombre}{h.zona ? ` (${h.zona})` : ""}</option>)}
-              </select>
+              <ComboHotel hoteles={hoteles} value={hotelId} onChange={setHotelId} placeholder="Escribe el hotel…" />
             </div>
             <div>
               <label className="text-sm font-medium text-gray-700 block mb-1">Plan *</label>
@@ -306,11 +305,12 @@ export function ProductoTab({
         </div>
 
         <div className="flex items-center gap-3">
-          <Button type="submit" disabled={pending || !hotelId || !planId || !temporadaId}
+          <Button type="submit" disabled={pending || !planId || !temporadaId}
             style={{ backgroundColor: "var(--brand-primary)" }}>
             {pending ? "Guardando..." : editId ? "Actualizar tarifa" : "Guardar tarifa"}
           </Button>
           {saved && <span className="text-sm font-medium" style={{ color: "var(--brand-success)" }}>✓ Tarifa guardada</span>}
+          {err && <span className="text-sm text-red-600">{err}</span>}
         </div>
       </form>
 

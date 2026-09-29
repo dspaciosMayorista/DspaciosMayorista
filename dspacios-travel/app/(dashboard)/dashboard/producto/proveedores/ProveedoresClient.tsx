@@ -5,6 +5,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { crearProveedor, actualizarProveedor, eliminarProveedor, type TipoProveedor, type ProveedorInput } from "./actions";
 import { ComboCiudad } from "@/components/ComboCiudad";
+import { ComboProveedor } from "@/components/ComboProveedor";
 import type { DestinoOpt } from "@/components/ComboDestino";
 
 type Proveedor = {
@@ -151,11 +152,14 @@ export function ProveedoresClient({ proveedores, destinos }: { proveedores: Prov
             {conPolitica.length > 0 && (
               <div className="mt-2 flex flex-wrap items-center gap-2">
                 <span className="text-xs text-gray-500">Traer política de otro proveedor:</span>
-                <select value={origenPol} onChange={(e) => setOrigenPol(e.target.value === "" ? "" : Number(e.target.value))}
-                  className="rounded-lg border border-gray-300 bg-white px-2 py-1 text-sm">
-                  <option value="">— Elegir proveedor —</option>
-                  {conPolitica.map((p) => <option key={p.id} value={p.id}>{p.nombre}</option>)}
-                </select>
+                <div className="w-64">
+                  <ComboProveedor
+                    proveedores={conPolitica.map((p) => ({ id: p.id, nombre: p.nombre }))}
+                    value={origenPol}
+                    onChange={setOrigenPol}
+                    placeholder="Busca el proveedor con política…"
+                  />
+                </div>
                 <Button type="button" variant="outline" onClick={traerPolitica} disabled={origenPol === ""}>Traer</Button>
               </div>
             )}

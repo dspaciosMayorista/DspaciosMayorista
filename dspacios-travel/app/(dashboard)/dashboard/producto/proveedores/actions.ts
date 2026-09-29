@@ -47,7 +47,7 @@ function toRow(input: ProveedorInput) {
 export async function crearProveedor(input: ProveedorInput): Promise<Result> {
   const sb = await createClient();
   if (!input.nombre.trim()) return { ok: false, error: "El nombre es obligatorio." };
-  const { error } = await sb.from("proveedores").insert(toRow(input));
+  const { error } = await sb.rpc("guardar_proveedor", { p_proveedor: toRow(input) });
   if (error) return { ok: false, error: error.message };
   revalidatePath("/dashboard/producto/proveedores");
   return { ok: true };
@@ -56,7 +56,7 @@ export async function crearProveedor(input: ProveedorInput): Promise<Result> {
 export async function actualizarProveedor(id: number, input: ProveedorInput): Promise<Result> {
   const sb = await createClient();
   if (!input.nombre.trim()) return { ok: false, error: "El nombre es obligatorio." };
-  const { error } = await sb.from("proveedores").update(toRow(input)).eq("id", id);
+  const { error } = await sb.rpc("guardar_proveedor", { p_proveedor: toRow(input), p_id: id });
   if (error) return { ok: false, error: error.message };
   revalidatePath("/dashboard/producto/proveedores");
   return { ok: true };
@@ -100,7 +100,7 @@ export async function cargarProveedoresMasivo(
     if (!tipo) { errores.push(`Fila ${linea} (${nombre}): tipo "${r.tipo ?? ""}" inválido (hotelero/aereo/servicios/programa).`); continue; }
     const pct = Number((r.pct_retencion || "").replace(",", ".").replace(/[^\d.]/g, "")) || 0;
     const aplicaRet = toBool(r.aplica_retencion) || pct > 0;
-    const { error } = await sb.from("proveedores").insert({
+    const { error } = await sb.rpc("guardar_proveedor", { p_proveedor: {
       tipo,
       nombre,
       razon_social: oNull(r.razon_social || ""),
@@ -113,7 +113,7 @@ export async function cargarProveedoresMasivo(
       politica_reservas: oNull(r.politica_reservas || ""),
       aplica_retencion: aplicaRet,
       pct_retencion: pct / 100,
-    });
+    } });
     if (error) { errores.push(`Fila ${linea} (${nombre}): ${error.message}`); continue; }
     insertados++;
   }

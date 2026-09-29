@@ -91,13 +91,17 @@ export async function asignarProveedorCuentaPorPagar(
     .eq("nombre", proveedorNombre)
     .maybeSingle();
 
+  // El catálogo es la única fuente: no se asigna (ni crea de facto) un
+  // proveedor que no exista en `proveedores`.
+  if (!prov) return { ok: false, error: "Ese proveedor no está en el catálogo." };
+
   const { error } = await sb
     .from("cuentas_por_pagar")
     .update({
-      proveedor: prov?.nombre ?? proveedorNombre,
-      ...(prov?.tipo ? { tipo_proveedor: prov.tipo } : {}),
-      ...(prov?.aplica_retencion != null ? { aplica_retencion: prov.aplica_retencion } : {}),
-      ...(prov?.pct_retencion != null ? { pct_retencion: prov.pct_retencion } : {}),
+      proveedor: prov.nombre,
+      ...(prov.tipo ? { tipo_proveedor: prov.tipo } : {}),
+      ...(prov.aplica_retencion != null ? { aplica_retencion: prov.aplica_retencion } : {}),
+      ...(prov.pct_retencion != null ? { pct_retencion: prov.pct_retencion } : {}),
     })
     .eq("id", id);
   if (error) return { ok: false, error: error.message };

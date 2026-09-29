@@ -1,6 +1,7 @@
 "use client";
 
 import { DateInput } from "@/components/ui/DateInput";
+import { ComboNombre } from "@/components/ComboNombre";
 import { useMemo, useState, useTransition } from "react";
 import Link from "next/link";
 import { Button } from "@/components/ui/button";
@@ -455,16 +456,14 @@ function AsignarProveedor({ id, actual, catalogo }: { id: number; actual: string
       <span className="text-xs font-medium text-gray-500">
         {actual ? "Cambiar proveedor:" : "Asignar proveedor del catálogo:"}
       </span>
-      <input
-        list={`prov-cat-${id}`}
-        value={sel}
-        onChange={(e) => setSel(e.target.value)}
-        placeholder="Escribe para buscar…"
-        className="min-w-[16rem] rounded-lg border border-gray-300 bg-white px-3 py-1.5 text-sm"
-      />
-      <datalist id={`prov-cat-${id}`}>
-        {catalogo.map((p) => <option key={p} value={p} />)}
-      </datalist>
+      <div className="w-72">
+        <ComboNombre
+          opciones={catalogo}
+          value={sel}
+          onChange={setSel}
+          placeholder="Busca y elige del catálogo…"
+        />
+      </div>
       <Button type="button" onClick={guardar} disabled={pending || sel === (actual ?? "")} style={{ backgroundColor: "var(--brand-primary)" }}>
         {pending ? "Guardando…" : "Asignar"}
       </Button>

@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { RangosEdadPicker, type RangoEdad } from "@/components/RangosEdadPicker";
+import { ComboDestino } from "@/components/ComboDestino";
 import { ComboProveedor, type ProveedorOpt } from "@/components/ComboProveedor";
 import { actualizarHotelConfig } from "../actions";
 
@@ -107,10 +108,7 @@ export function HotelConfigEditor({
           <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
             <div>
               <label className={lbl}>Destino <span className="font-normal text-gray-400">(si lo asignaste mal, cámbialo aquí)</span></label>
-              <select value={destinoId} onChange={(e) => setDestinoId(e.target.value === "" ? "" : Number(e.target.value))} className="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm">
-                <option value="">— Elige un destino —</option>
-                {destinos.map((d) => <option key={d.id} value={d.id}>{d.nombre?.toUpperCase()}</option>)}
-              </select>
+              <ComboDestino destinos={destinos} value={destinoId} onChange={setDestinoId} placeholder="Selecciona destino…" />
             </div>
             <div>
               <label className={lbl}>Proveedor hotelero</label>

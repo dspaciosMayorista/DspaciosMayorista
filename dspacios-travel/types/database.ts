@@ -193,6 +193,42 @@ export type Database = {
         Update: Partial<Database["public"]["Tables"]["proveedores"]["Insert"]>;
         Relationships: [];
       };
+      proveedores_datos_sensibles: {
+        Row: {
+          proveedor_id: number;
+          tenant: string;
+          nit: string | null;
+          razon_social: string | null;
+          datos_pago: string | null;
+          banco: string | null;
+          tipo_cuenta: string | null;
+          numero_cuenta: string | null;
+          politica_reservas: string | null;
+          voucher_contacto: string | null;
+        };
+        Insert: {
+          proveedor_id: number;
+          tenant: string;
+          nit?: string | null;
+          razon_social?: string | null;
+          datos_pago?: string | null;
+          banco?: string | null;
+          tipo_cuenta?: string | null;
+          numero_cuenta?: string | null;
+          politica_reservas?: string | null;
+          voucher_contacto?: string | null;
+        };
+        Update: Partial<Database["public"]["Tables"]["proveedores_datos_sensibles"]["Insert"]>;
+        Relationships: [
+          {
+            foreignKeyName: "proveedores_datos_sensibles_proveedor_id_fkey";
+            columns: ["proveedor_id"];
+            isOneToOne: false;
+            referencedRelation: "proveedores";
+            referencedColumns: ["id"];
+          },
+        ];
+      };
       aliados: {
         Row: {
           id: number;
@@ -3387,6 +3423,10 @@ export type Database = {
       };
     };
     Functions: {
+      guardar_proveedor: {
+        Args: { p_proveedor: Json; p_id?: number | null };
+        Returns: number;
+      };
       // Migración 142. La misma función que usan las policies para decidir si
       // un contrato es del asesor que pregunta. Es SECURITY DEFINER y devuelve
       // solo un booleano sobre uno mismo, así que se puede llamar por RPC sin

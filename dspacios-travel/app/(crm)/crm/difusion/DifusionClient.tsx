@@ -1,6 +1,7 @@
 "use client";
 
 import { DateInput } from "@/components/ui/DateInput";
+import { ComboHotel } from "@/components/ComboHotel";
 import { useMemo, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { Button } from "@/components/ui/button";
@@ -209,10 +210,12 @@ function MaterialForm({ hoteles, destinoOpts, inicial, onClose }: { hoteles: Hot
       <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
         <div>
           <label className={lbl}>Desde el tarifario <span className="font-normal text-gray-400">(opcional)</span></label>
-          <select value={f.hotelId ?? ""} onChange={(e) => elegirHotel(e.target.value)} className={sel}>
-            <option value="">— Manual —</option>
-            {hoteles.map((h) => <option key={h.id} value={h.id}>{h.nombre}{h.destino ? ` · ${h.destino}` : ""}</option>)}
-          </select>
+          <ComboHotel
+            hoteles={hoteles.map((h) => ({ id: h.id, nombre: h.nombre, zona: h.destino }))}
+            value={f.hotelId ?? ""}
+            onChange={(id) => elegirHotel(id === "" ? "" : String(id))}
+            placeholder="Busca el hotel del tarifario…"
+          />
         </div>
         <div>
           <label className={lbl}>Destino</label>

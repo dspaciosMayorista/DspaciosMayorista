@@ -23,11 +23,21 @@ const COLS_PROVEEDORES = [
 
 export default async function ProveedoresPage() {
   const sb = await createClient();
-  const { data: proveedores } = await sb
-    .from("proveedores")
-    .select("id, tipo, nombre, razon_social, nit, ciudad, contacto, datos_pago, banco, tipo_cuenta, numero_cuenta, politica_reservas, voucher_contacto, aplica_retencion, pct_retencion, clasificacion")
-    .order("tipo")
-    .order("nombre");
+  const [{ data: base, error: baseError }, { data: sensibles, error: sensiblesError }] = await Promise.all([
+    sb.from("proveedores")
+      .select("id, tipo, nombre, ciudad, contacto, aplica_retencion, pct_retencion, clasificacion")
+      .order("tipo")
+      .order("nombre"),
+    sb.from("proveedores_datos_sensibles")
+      .select("proveedor_id, nit, razon_social, datos_pago, banco, tipo_cuenta, numero_cuenta, politica_reservas, voucher_contacto")
+      .eq("tenant", "mayorista"),
+  ]);
+  if (baseError || sensiblesError) throw new Error("No se pudieron cargar los proveedores.");
+  const sensiblesPorId = new Map((sensibles ?? []).map((s) => [s.proveedor_id, s]));
+  if (base?.some((p) => !sensiblesPorId.has(p.id))) {
+    throw new Error("Faltan datos de proveedores; no se puede editar el catálogo.");
+  }
+  const proveedores = (base ?? []).map((p) => ({ ...p, ...sensiblesPorId.get(p.id)! }));
   const { data: destinos } = await sb.from("destinos").select("id, nombre, codigo_iata").order("nombre");
 
   return (
@@ -47,7 +57,7 @@ export default async function ProveedoresPage() {
         />
       </div>
 
-      <ProveedoresClient proveedores={proveedores ?? []} destinos={destinos ?? []} />
+      <ProveedoresClient proveedores={proveedores} destinos={destinos ?? []} />
     </div>
   );
 }
