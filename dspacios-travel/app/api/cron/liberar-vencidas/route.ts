@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { liberarVencidas } from "@/app/(dashboard)/dashboard/reservar/actions";
+import { liberarVencidas } from "@/lib/reservar/liberarVencidas";
 
 // Cron diario (Vercel): libera sillas de reservas con plazo vencido sin confirmar.
 export async function GET(req: Request) {

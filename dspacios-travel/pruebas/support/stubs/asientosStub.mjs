@@ -9,3 +9,11 @@ export async function postearAsientoPago() {
 export async function eliminarAsientoPago() {
   return { ok: true };
 }
+// gestion-actions.ts (completarProveedores) también los importa; no se invocan
+// en esa prueba.
+export async function postearAsientoCxP() {
+  return { ok: true };
+}
+export async function eliminarAsientoCxP() {
+  return { ok: true };
+}
