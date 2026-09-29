@@ -3,6 +3,7 @@
 import { useState, useTransition } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { Dialog, DialogClose, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
 import { crearProveedor, actualizarProveedor, eliminarProveedor, type TipoProveedor, type ProveedorInput } from "./actions";
 import { ComboCiudad } from "@/components/ComboCiudad";
 import { ComboProveedor } from "@/components/ComboProveedor";
@@ -253,7 +254,7 @@ function Row({ p, onEdit }: { p: Proveedor; onEdit: (p: Proveedor) => void }) {
       <td className="px-4 py-2 text-gray-500">{p.razon_social ?? "—"}</td>
       <td className="px-4 py-2 text-gray-500">{p.nit ?? "—"}</td>
       <td className="px-4 py-2 text-gray-500">{bancarioTexto(p)}</td>
-      <td className="px-4 py-2 text-gray-500"><span className="block max-w-[260px] whitespace-pre-wrap">{p.politica_reservas ?? "—"}</span></td>
+      <td className="px-4 py-2 text-gray-500"><PoliticaCelda nombre={p.nombre} politica={p.politica_reservas} /></td>
       <td className="px-4 py-2 text-right whitespace-nowrap">
         <button type="button" onClick={() => onEdit(p)} className="text-xs text-[var(--brand-accent)] hover:underline">Editar</button>
         <span className="mx-2 text-gray-300">·</span>
@@ -262,5 +263,35 @@ function Row({ p, onEdit }: { p: Proveedor; onEdit: (p: Proveedor) => void }) {
           className="text-xs text-gray-400 hover:text-red-500">Eliminar</button>
       </td>
     </tr>
+  );
+}
+
+// Resumen de la política en la fila (máx. 2 líneas) + "Ver más" que abre la
+// política completa en un diálogo con scroll propio. El diálogo va en un portal,
+// así que la fila no crece mientras está abierto.
+function PoliticaCelda({ nombre, politica }: { nombre: string; politica: string | null }) {
+  const texto = politica ?? "";
+  if (texto.trim() === "") return <span>—</span>;
+  return (
+    <div className="max-w-[260px]">
+      <p data-politica-resumen className="line-clamp-2 whitespace-pre-wrap break-words">{texto}</p>
+      <Dialog>
+        <DialogTrigger render={<button type="button" className="mt-0.5 text-xs text-[var(--brand-accent)] hover:underline" />}>
+          Ver más
+        </DialogTrigger>
+        <DialogContent className="sm:max-w-lg">
+          <DialogHeader>
+            <DialogTitle>Política de reservas</DialogTitle>
+            <DialogDescription>{nombre}</DialogDescription>
+          </DialogHeader>
+          <div data-politica-completa className="max-h-[60vh] overflow-y-auto whitespace-pre-wrap break-words text-gray-700">
+            {texto}
+          </div>
+          <DialogFooter>
+            <DialogClose render={<Button variant="outline" />}>Cerrar</DialogClose>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+    </div>
   );
 }
