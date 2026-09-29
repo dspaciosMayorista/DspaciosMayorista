@@ -52,6 +52,9 @@ function cuerpoFuncion(fuenteCompleta: string, firmaOAncla: string): string {
 
 const computo = leer("lib/reservar/computo.ts");
 const reservarActions = leer("app/(dashboard)/dashboard/reservar/actions.ts");
+// asegurarCuentasPorPagar se movió fuera del archivo "use server" (ya no es una
+// Server Action invocable); las aserciones R294-1 miran su cuerpo donde vive ahora.
+const asegurarCxp = leer("lib/reservar/asegurarCuentasPorPagar.ts");
 const checkoutActions = leer("app/tarifario/checkout/actions.ts");
 const contratosActions = leer("app/(dashboard)/dashboard/contratos/actions.ts");
 const cotizar = leer("lib/reservar/cotizar.ts");
@@ -215,12 +218,12 @@ describe("contratos/actions.ts (actualizarServiciosContrato) — editar opcional
 
 describe("R294-1 · asegurarCuentasPorPagar: cobertura por MONTO, nunca por existencia de etiqueta", () => {
   test("usa faltantesCxP y ya no existe la regla `yaTiene.has(tipo)`", () => {
-    const cuerpo = cuerpoFuncion(reservarActions, "export async function asegurarCuentasPorPagar(");
+    const cuerpo = cuerpoFuncion(asegurarCxp, "export async function asegurarCuentasPorPagar(");
     assert.match(cuerpo, /faltantesCxP\(/);
     assert.doesNotMatch(cuerpo, /yaTiene/, "volvió la regla por existencia de tipo_proveedor (duplicaba la CxP)");
   });
   test("lee `valor_total` de las CxP existentes (sin el monto no hay cobertura que medir)", () => {
-    const cuerpo = cuerpoFuncion(reservarActions, "export async function asegurarCuentasPorPagar(");
+    const cuerpo = cuerpoFuncion(asegurarCxp, "export async function asegurarCuentasPorPagar(");
     assert.match(cuerpo, /select\("tipo_proveedor, valor_total"\)/);
   });
 });

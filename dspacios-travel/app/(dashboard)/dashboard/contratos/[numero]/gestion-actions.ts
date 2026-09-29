@@ -2,7 +2,8 @@
 
 import { createClient } from "@/lib/supabase/server";
 import { revalidatePath } from "next/cache";
-import { asegurarCuentasPorPagar } from "../../reservar/actions";
+import { asegurarCuentasPorPagar } from "@/lib/reservar/asegurarCuentasPorPagar";
+import { autorizarCuentasPorPagarContrato, mensajeCxpDenegado } from "@/lib/contrato/accesoCuentasPorPagar";
 import { postearAsientoCxP, eliminarAsientoCxP } from "@/lib/contabilidad/asientos";
 
 type Result = { ok: true } | { ok: false; error: string };
@@ -14,9 +15,27 @@ function rev(numero: string) {
 // Completa las cuentas por pagar que falten (hotel/aéreo/servicios) a partir de
 // los costos del contrato. Útil cuando al reservar solo se generó parte (p. ej.
 // "solo el aéreo" porque el costo neto del hotel salió 0). No duplica.
+//
+// asegurarCuentasPorPagar escribe con service-role (se salta la RLS), así que
+// la autorización va AQUÍ y antes: sesión activa, rol que la RLS de
+// cuentas_por_pagar deja escribir, y el contrato visible para la sesión y de
+// su agencia (ver lib/contrato/accesoCuentasPorPagar.ts). Todo con el cliente
+// de sesión; service-role no se toca hasta que la decisión es "permitido".
 export async function completarProveedores(
   numeroContrato: string
 ): Promise<{ ok: boolean; creadas?: number; error?: string }> {
+  const sb = await createClient();
+  const { data: auth } = await sb.auth.getUser();
+  const userId = auth?.user?.id ?? null;
+  const { data: perfil } = userId
+    ? await sb.from("usuarios").select("rol, activo, tenant").eq("id", userId).maybeSingle()
+    : { data: null };
+  const { data: contrato } = perfil
+    ? await sb.from("ventas").select("tenant").eq("numero_contrato", numeroContrato).maybeSingle()
+    : { data: null };
+  const decision = autorizarCuentasPorPagarContrato(perfil ?? null, contrato ?? null);
+  if (!decision.permitido) return { ok: false, error: mensajeCxpDenegado(decision.motivo) };
+
   const r = await asegurarCuentasPorPagar(numeroContrato);
   if (!r.ok) return { ok: false, error: r.error ?? "No se pudieron completar los proveedores." };
   rev(numeroContrato);

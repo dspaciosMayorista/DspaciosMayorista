@@ -60,8 +60,9 @@ on conflict (id) do update set
   email=excluded.email, nombre=excluded.nombre, rol=excluded.rol,
   activo=excluded.activo, tenant=excluded.tenant;
 -- Proveedor del catálogo con retención (match por nombre).
-insert into public.proveedores (nombre, nit, tipo, ciudad, aplica_retencion, pct_retencion, clasificacion)
-values ('PROV HOTEL RET', '900000001', 'hotel', 'Cartagena', true, 0.035, 'hotel') on conflict do nothing;
+-- Sin nit: desde la migracion 191 los datos sensibles viven en proveedores_datos_sensibles.
+insert into public.proveedores (nombre, tipo, ciudad, aplica_retencion, pct_retencion, clasificacion)
+values ('PROV HOTEL RET', 'hotel', 'Cartagena', true, 0.035, 'hotel') on conflict do nothing;
 
 -- ── Ayudante: crea una cotización manual abierta + la CONGELA con el primer
 --    pago previo. Devuelve el id. Costos derivados de p_precio (aéreo 40%,

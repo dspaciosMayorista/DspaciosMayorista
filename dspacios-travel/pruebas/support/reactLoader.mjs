@@ -76,6 +76,7 @@ const STUB_BUSCAR_PASAJERO = pathToFileURL(join(AQUI, "stubs", "buscarPasajeroSt
 const STUB_SUPABASE_SERVER = pathToFileURL(join(AQUI, "stubs", "supabaseServerStub.mjs")).href;
 const STUB_NEXT_CACHE = pathToFileURL(join(AQUI, "stubs", "nextCacheStub.mjs")).href;
 const STUB_ASIENTOS = pathToFileURL(join(AQUI, "stubs", "asientosStub.mjs")).href;
+const STUB_ASEGURAR_CXP = pathToFileURL(join(AQUI, "stubs", "asegurarCxpStub.mjs")).href;
 // Módulos CSS ("*.module.css", o cualquier ".css") — ver cssModuleStub.mjs.
 // Se revisa ANTES que la resolución genérica de "@/*" de abajo: esa
 // resolución probaría el candidato "tal cual" (extensión "") y encontraría
@@ -128,16 +129,26 @@ export async function resolve(specifier, context, nextResolve) {
   }
   if (specifier === "@/lib/supabase/server" &&
       (context.parentURL?.endsWith("dashboard/pagos/actions.ts") ||
-       context.parentURL?.endsWith("dashboard/producto/proveedores/actions.ts"))) {
+       context.parentURL?.endsWith("dashboard/producto/proveedores/actions.ts") ||
+       context.parentURL?.endsWith("/voucher-actions.ts") ||
+       context.parentURL?.endsWith("/gestion-actions.ts"))) {
     return { url: STUB_SUPABASE_SERVER, shortCircuit: true };
   }
   if (specifier === "next/cache" &&
       (context.parentURL?.endsWith("dashboard/pagos/actions.ts") ||
-       context.parentURL?.endsWith("dashboard/producto/proveedores/actions.ts"))) {
+       context.parentURL?.endsWith("dashboard/producto/proveedores/actions.ts") ||
+       context.parentURL?.endsWith("/voucher-actions.ts") ||
+       context.parentURL?.endsWith("/gestion-actions.ts"))) {
     return { url: STUB_NEXT_CACHE, shortCircuit: true };
   }
-  if (specifier === "@/lib/contabilidad/asientos" && context.parentURL?.endsWith("dashboard/pagos/actions.ts")) {
+  if (specifier === "@/lib/contabilidad/asientos" &&
+      (context.parentURL?.endsWith("dashboard/pagos/actions.ts") || context.parentURL?.endsWith("/gestion-actions.ts"))) {
     return { url: STUB_ASIENTOS, shortCircuit: true };
+  }
+  // completarProveedores: la función real escribe con service-role; el stub
+  // registra si se invocó (las pruebas negativas exigen que NO).
+  if (specifier === "@/lib/reservar/asegurarCuentasPorPagar" && context.parentURL?.endsWith("/gestion-actions.ts")) {
+    return { url: STUB_ASEGURAR_CXP, shortCircuit: true };
   }
   if (specifier.startsWith("@/")) {
     const rel = specifier.slice(2);

@@ -5,7 +5,7 @@ import { CartProvider } from "@/lib/cart/CartContext";
 import { getProgramasResumen } from "@/lib/programas";
 import { cargarResumenTarifario, MSG_ERROR_CARGAR_TARIFARIO } from "@/lib/tarifario/resumen";
 import { orquestarCargaReservar } from "@/lib/tarifario/orquestacion";
-import { liberarVencidas } from "./actions";
+import { liberarVencidas } from "@/lib/reservar/liberarVencidas";
 import {
   generarFlujoId, registrarEtapa, registrarDatoPagina, registrarErrorTecnico,
   siguienteInvocacionProceso, medirPayloadSiHabilitado, textoEstimacionPayload, iniciarCronometro,
