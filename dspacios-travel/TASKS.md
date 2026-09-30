@@ -58,12 +58,14 @@ Pendiente:
 ### 9. Mostrar conteos por destino
 
 - [~] En la rama `ronda1-destinos-y-pruebas` (no integrada): receptivo = `servicios_adicionales` con categoria `tour_traslado` y `destino_id` del destino (sin servicios generales sin destino). Conteo sin agregados de PostgREST, por carga paginada que falla cerrado; solo los roles que leen `servicios_adicionales` ven la insignia (conteo desconocido nunca se muestra como 0). Tarjetas compactas: "N hoteles"/"N receptivos" abren un dialogo con busqueda; hoteles enlazan a `/dashboard/producto/hoteles/[id]`; receptivos sin enlace (no hay ruta de detalle). Listas de hasta 50 receptivos se precargan con la misma consulta del conteo (tope 1.000 nombres) y abren sin peticion; reabrir reutiliza la lista y "Actualizar lista" trae datos frescos.
-- [ ] Validar con datos reales en Preview (Montería 0 hoteles / 5 receptivos) e integrar a `main`.
+- Validacion (2026-09-30): el usuario probo en Vercel Preview los cambios de Destinos, incluida la apertura de receptivos, y aprobo el resultado. No confirmados por separado: roles sin acceso (`control_vuelo`), "Actualizar lista" con datos que cambiaron y destinos con mas de 50 receptivos.
+- [ ] Revisar e integrar a `main`.
 
 ### 10. Explicar bloqueos al eliminar destinos
 
 - [~] En la rama `ronda1-destinos-y-pruebas` (no integrada): el modal lista el contenido real de las 10 tablas con FK a `destinos` (guarda contra FKs nuevas) y solo afirma "sin contenido" para los roles que pueden borrar destinos (verificado contra las policies de las migraciones). Semantica de eliminar/fusionar, permisos y errores sin cambios.
-- [ ] Validar en Preview e integrar a `main`.
+- Validacion (2026-09-30): incluido en los cambios de Destinos que el usuario probo y aprobo en Vercel Preview; el texto del modal segun el rol no se confirmo por separado.
+- [ ] Revisar e integrar a `main`.
 - [ ] Otra queja del usuario sobre el modal de eliminacion queda pendiente de revisar por separado (no incluida en la rama).
 - [ ] Hallazgo sin corregir: un rol sin permiso de escritura sobre `destinos` recibe exito al eliminar (la RLS borra 0 filas sin error) y el destino sigue existiendo.
 

@@ -6,9 +6,11 @@ Estado al 2026-09-30.
 
 **Solo en la rama `ronda1-destinos-y-pruebas`** (commits `a5162cff`, `99599518`, `9bd81e35`; aún NO integrada a `main`): conteo de receptivos y modal de eliminación explicativo en Producto → Destinos, tarjetas compactas con listas de hoteles/receptivos en diálogo, apertura inmediata de listas pequeñas de receptivos (precarga limitada) y línea base de `test:unit` en verde (4.954/4.954, más `test:react` 167/167, TypeScript y build, ejecutados en la rama). Nada de esto está cerrado en `main` hasta su revisión y merge.
 
-Objetivo activo: **validar e integrar la rama `ronda1-destinos-y-pruebas`**.
+**Validación en Preview (2026-09-30):** el usuario probó en Vercel Preview los cambios de Destinos de esta rama, incluida la apertura de receptivos, y aprobó el resultado. No confirmó por separado: roles sin acceso (`control_vuelo` sin insignia de receptivos), "Actualizar lista" con datos que cambiaron, destinos con más de 50 receptivos y el texto del modal de eliminación según el rol.
 
-- Validar en Vercel Preview con datos reales: conteos y listas de receptivos (p. ej. Montería 0 hoteles / 5 receptivos), apertura inmediata y "Actualizar lista", roles sin acceso (`control_vuelo` sin insignia de receptivos) y modal de eliminación.
+Objetivo activo: **revisar e integrar la rama `ronda1-destinos-y-pruebas`** (la validación visual en Preview ya fue aprobada).
+
+- Opcional antes del merge, si el usuario lo decide: comprobar los casos no confirmados por separado, listados arriba.
 - Revisar el PR y decidir el merge; tras integrarlo, mover los pendientes #9, #10 y #6 de `TASKS.md` a "Cerrado recientemente" con su hash real.
 - No incluir en este objetivo la otra queja del usuario sobre el modal de eliminación (se verá por separado) ni el flujo de eliminación en sí.
 
