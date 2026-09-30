@@ -1,6 +1,6 @@
 import { test, describe } from "node:test";
 import assert from "node:assert/strict";
-import { fetchAllPaginado } from "../lib/supabase/fetchAllPaginado";
+import { fetchAllPaginado } from "../lib/supabase/fetchAllPaginado.ts";
 
 // ─────────────────────────────────────────────────────────────────────────
 // Prueba equivalente al defecto real ya documentado en CLAUDE.md ("límite de

@@ -4,11 +4,11 @@
 // de request de Next) — fuera de un servidor Next real eso no resuelve.
 //
 // `buscarHoteles` es CONFIGURABLE (`__setBuscarHoteles`): la prueba de
-// `Resultado` (pruebas/resultadoInteraccion.test.ts) nunca la llama —
+// `Resultado` (pruebas/resultadoInteraccion.react.ts) nunca la llama —
 // `Resultado` no ejercita el FORMULARIO de búsqueda, solo pinta una tarjeta
 // ya liquidada — así que por defecto sigue lanzando (si algo la invocara sin
 // querer, se nota). La prueba del formulario en sí
-// (pruebas/buscadorBookingDestinoInteraccion.test.ts) SÍ necesita observar
+// (pruebas/buscadorBookingDestinoInteraccion.react.ts) SÍ necesita observar
 // qué se le manda (destino/adultos/etc.) al hacer clic en "Buscar hoteles",
 // así que instala una implementación real (una spy que resuelve con un
 // fixture) antes de disparar esa búsqueda.

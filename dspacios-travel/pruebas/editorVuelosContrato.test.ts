@@ -74,8 +74,9 @@ describe("EmpaquetadosTabla.tsx — Record/Contrato separados + columna Acciones
   });
 
   test("Acciones nunca se ofrece para origen 'promocion' ni cuando !puedeEditarVuelo (guion, nunca un link muerto)", () => {
-    const cell = src.match(/<td className="px-3 py-2">\s*\{f\.origen !== "contrato" \|\| !puedeEditarVuelo[\s\S]*?<\/td>\s*<\/tr>/)?.[0] ?? "";
-    assert.match(cell, /f\.origen !== "contrato" \|\| !puedeEditarVuelo/);
+    // Desde #330 (fadb9a2e) la celda lleva `data-label="Acciones"` (tabla responsive).
+    const cell = src.match(/<td className="px-3 py-2" data-label="Acciones">\s*\{f\.origen !== "contrato" \|\| !puedeEditarVuelo[\s\S]*?<\/td>\s*<\/tr>/)?.[0] ?? "";
+    assert.match(cell, /f\.origen !== "contrato" \|\| !puedeEditarVuelo \? \(\s*<span className="text-gray-300">—<\/span>/, "el caso negado pinta el guion, no un link");
   });
 
   test("la columna Record de origen contrato es texto plano ('Sin PNR' si no hay) — nunca cae al número de contrato", () => {

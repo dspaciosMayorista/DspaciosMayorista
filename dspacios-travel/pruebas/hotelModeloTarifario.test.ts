@@ -237,7 +237,9 @@ describe("render condicional de los dos editores de tarifas", () => {
 describe("tabla de tarifas por unidad — prioriza columnas comerciales", () => {
   test("el encabezado es exactamente Temporada | Categoría | Alimentación | Cobro | Valor base | Comisión | Capacidad | Estado | acciones", () => {
     const encabezados = [...fuentes.tarifasUnidadEditor.matchAll(/<th className="[^"]*">([^<]*)<\/th>/g)].map((m) => m[1].trim());
-    assert.deepEqual(encabezados, ["Temporada", "Categoría", "Alimentación", "Cobro", "Valor base", "Comisión", "Capacidad", "Estado", ""]);
+    // La columna de acciones tenía el <th> vacío; desde #330 (fadb9a2e, tablas
+    // responsive) se rotula "Acciones". Sigue siendo la última y la lista exacta.
+    assert.deepEqual(encabezados, ["Temporada", "Categoría", "Alimentación", "Cobro", "Valor base", "Comisión", "Capacidad", "Estado", "Acciones"]);
   });
 
   test("el tarifa_id (identidad técnica) NO aparece como columna de la tabla principal — solo en el detalle", () => {

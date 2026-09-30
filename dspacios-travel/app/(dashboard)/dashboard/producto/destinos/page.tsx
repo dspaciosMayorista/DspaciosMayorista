@@ -3,15 +3,44 @@ import Link from "next/link";
 import { NuevoDestinoDialog } from "../../tarifario/NuevoDestinoDialog";
 import { CargarDestinosSugeridos } from "./CargarDestinosSugeridos";
 import { DestinosLista } from "./DestinosLista";
+import { CATEGORIAS_RECEPTIVO, cargarReceptivosSegunRol, contarReceptivosPorDestino } from "@/lib/producto/receptivos";
+import { puedeEscribir } from "@/lib/roles";
 
 export const dynamic = "force-dynamic";
 
 export default async function DestinosPage() {
   const sb = await createClient();
-  const { data: destinos } = await sb
-    .from("destinos")
-    .select("id, nombre, codigo_iata, pais, hoteles(id, nombre)")
-    .order("nombre");
+  // Receptivos = servicios_adicionales con categoría de receptivo
+  // (CATEGORIAS_RECEPTIVO, derivada en lib/producto/receptivos.ts) asignados a
+  // este destino (destino_id).
+  // Sin agregados de PostgREST: carga paginada de solo `destino_id`, contada
+  // aquí. Va en paralelo con el listado y NUNCA lo condiciona: cualquier
+  // resultado distinto de "ok" deja `receptivosPorDestino` en null (se omite
+  // la insignia; jamás un 0 no verificado).
+  // Primero se resuelve el rol: `servicios_adicionales` solo es legible por
+  // ESCRITURA.producto (policy "servicios_adicionales: interno"). Para otro
+  // rol que entra a Producto (control_vuelo) la RLS devolvería vacío SIN
+  // error, así que ni se consulta. Error al obtener el rol = no se consulta.
+  const [{ data: destinos }, receptivos] = await Promise.all([
+    sb.from("destinos").select("id, nombre, codigo_iata, pais, hoteles(id, nombre)").order("nombre"),
+    cargarReceptivosSegunRol({
+      obtenerRol: () => sb.rpc("mi_rol"),
+      puedeLeer: (rol) => puedeEscribir("producto", rol),
+      pedirPagina: (desde, hasta) =>
+        sb
+          .from("servicios_adicionales")
+          .select("destino_id")
+          .in("categoria", [...CATEGORIAS_RECEPTIVO])
+          .not("destino_id", "is", null)
+          .order("id")
+          .range(desde, hasta),
+    }),
+  ]);
+  if (receptivos.estado === "error_rol" || receptivos.estado === "error_consulta") {
+    console.error(`[producto/destinos] etapa=conteo_receptivos estado=${receptivos.estado} detalle=`, receptivos.error);
+  }
+  const receptivosPorDestino =
+    receptivos.estado === "ok" ? contarReceptivosPorDestino(receptivos.filas, (destinos ?? []).map((d) => d.id)) : null;
 
   return (
     <div className="mx-auto max-w-6xl p-4 md:p-8">
@@ -33,7 +62,7 @@ export default async function DestinosPage() {
           <p className="mt-1 text-sm">Crea el primero con “Nuevo destino”.</p>
         </div>
       ) : (
-        <DestinosLista destinos={destinos} />
+        <DestinosLista destinos={destinos} receptivosPorDestino={receptivosPorDestino} />
       )}
     </div>
   );

@@ -4,11 +4,21 @@ import { useState } from "react";
 import Link from "next/link";
 import { Input } from "@/components/ui/input";
 import { EliminarDestinoBtn } from "../../tarifario/EliminarDestinoBtn";
+import { etiquetaConteo } from "@/lib/producto/usoDestino";
 
 type HotelMini = { id: number; nombre: string };
 type Dest = { id: number; nombre: string; codigo_iata: string | null; pais: string | null; hoteles: HotelMini[] | null };
 
-export function DestinosLista({ destinos }: { destinos: Dest[] }) {
+// `receptivosPorDestino`: conteo de receptivos por id de destino (ver
+// page.tsx). `null` = no se pudo contar — se omite la insignia en vez de
+// afirmar un "0 receptivos" que no se verificó.
+export function DestinosLista({
+  destinos,
+  receptivosPorDestino = null,
+}: {
+  destinos: Dest[];
+  receptivosPorDestino?: Record<number, number> | null;
+}) {
   const [query, setQuery] = useState("");
 
   const q = query.trim().toLowerCase();
@@ -50,17 +60,23 @@ export function DestinosLista({ destinos }: { destinos: Dest[] }) {
               <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
                 {grupos.get(pais)!.map((d) => {
                   const hoteles = d.hoteles ?? [];
+                  const receptivos = receptivosPorDestino?.[d.id];
                   return (
                   <div key={d.id} className="group relative rounded-xl border border-gray-200 bg-white p-5">
-                    <div className="flex items-start justify-between">
-                      <h3 className="font-semibold text-gray-900">
+                    <div className="flex items-start justify-between gap-2">
+                      <h3 className="min-w-0 font-semibold text-gray-900">
                         {d.nombre?.toUpperCase()}
                         {d.codigo_iata && <span className="font-normal text-gray-400"> ({d.codigo_iata})</span>}
                       </h3>
-                      <div className="flex items-center gap-2">
+                      <div className="flex shrink-0 flex-wrap items-center justify-end gap-2">
                         <span className="rounded-full bg-gray-50 px-2 py-1 text-xs text-gray-500">
-                          {hoteles.length} {hoteles.length === 1 ? "hotel" : "hoteles"}
+                          {etiquetaConteo(hoteles.length, "hotel", "hoteles")}
                         </span>
+                        {typeof receptivos === "number" && (
+                          <span className="rounded-full bg-gray-50 px-2 py-1 text-xs text-gray-500">
+                            {etiquetaConteo(receptivos, "receptivo", "receptivos")}
+                          </span>
+                        )}
                         <EliminarDestinoBtn
                           id={d.id}
                           nombre={d.nombre}

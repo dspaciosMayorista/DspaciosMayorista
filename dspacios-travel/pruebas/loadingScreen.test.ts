@@ -151,7 +151,11 @@ describe("Puntos de montaje — los cinco fallbacks de pantalla/vista completa (
   });
 
   test("<main> de (dashboard)/layout.tsx es position:relative — condición para que el overlay fullScreen={false} de (dashboard)/loading.tsx quede acotado al área de contenido y no se escape al viewport", () => {
-    assert.match(fuenteDashboardLayout, /<main data-dashboard-main className="relative min-w-0 flex-1 overflow-x-hidden"/);
+    // #330 (fadb9a2e) quitó `overflow-x-hidden` a propósito (recortaba en
+    // silencio lo que se salía; `min-w-0` ya evita el scroll de página — ver el
+    // comentario en el layout). `relative` —lo que acota el overlay— se mantiene.
+    assert.match(fuenteDashboardLayout, /<main data-dashboard-main className="relative min-w-0 flex-1"/);
+    assert.doesNotMatch(fuenteDashboardLayout, /<main data-dashboard-main className="[^"]*overflow-x-hidden/);
   });
 
   test("app/layout.tsx (raíz) sigue siendo síncrono, sin await propio — es la premisa que justifica que app/loading.tsx cubra la resolución de layouts hijos async sin tocar auth", () => {

@@ -1,6 +1,6 @@
 import { test, describe } from "node:test";
 import assert from "node:assert/strict";
-import { pctOrNull, pctRawOrNull, clasificarContratos, clasificarCartera, fechaLimitePago } from "../lib/dashboard/metricas";
+import { pctOrNull, pctRawOrNull, clasificarContratos, clasificarCartera, fechaLimitePago } from "../lib/dashboard/metricas.ts";
 
 // ─────────────────────────────────────────────────────────────────────────
 // Pruebas EJECUTABLES (no solo inspección de fuente) de la lógica pura

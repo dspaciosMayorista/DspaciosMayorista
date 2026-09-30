@@ -20,13 +20,16 @@ import { dirname, join } from "node:path";
 // ─────────────────────────────────────────────────────────────────────────
 
 const raiz = join(dirname(fileURLToPath(import.meta.url)), "..");
-const fuenteEvaluar = readFileSync(join(raiz, "lib/tarifario/evaluarDisponibilidadUnidad.ts"), "utf8");
-const fuenteBusqueda = readFileSync(join(raiz, "app/tarifario/busquedaUnidadActions.ts"), "utf8");
-const fuenteCotizar = readFileSync(join(raiz, "app/tarifario/cotizacionBernaloActions.ts"), "utf8");
-const fuenteVista = readFileSync(join(raiz, "app/tarifario/VistaBooking.tsx"), "utf8");
-const fuenteDrawer = readFileSync(join(raiz, "app/tarifario/CartDrawer.tsx"), "utf8");
-const fuenteCartContext = readFileSync(join(raiz, "lib/cart/CartContext.tsx"), "utf8");
-const fuenteIdentidad = readFileSync(join(raiz, "lib/tarifario/identidadReservaUnidad.ts"), "utf8");
+// Fin de línea normalizado a LF al leer: la copia de trabajo puede venir en
+// CRLF (Windows, core.autocrlf) o en LF (Linux/CI). Lo que se verifica es el
+// código, no su fin de línea.
+const fuenteEvaluar = readFileSync(join(raiz, "lib/tarifario/evaluarDisponibilidadUnidad.ts"), "utf8").replace(/\r\n/g, "\n");
+const fuenteBusqueda = readFileSync(join(raiz, "app/tarifario/busquedaUnidadActions.ts"), "utf8").replace(/\r\n/g, "\n");
+const fuenteCotizar = readFileSync(join(raiz, "app/tarifario/cotizacionBernaloActions.ts"), "utf8").replace(/\r\n/g, "\n");
+const fuenteVista = readFileSync(join(raiz, "app/tarifario/VistaBooking.tsx"), "utf8").replace(/\r\n/g, "\n");
+const fuenteDrawer = readFileSync(join(raiz, "app/tarifario/CartDrawer.tsx"), "utf8").replace(/\r\n/g, "\n");
+const fuenteCartContext = readFileSync(join(raiz, "lib/cart/CartContext.tsx"), "utf8").replace(/\r\n/g, "\n");
+const fuenteIdentidad = readFileSync(join(raiz, "lib/tarifario/identidadReservaUnidad.ts"), "utf8").replace(/\r\n/g, "\n");
 
 function sinComentarios(fuente: string): string {
   return fuente.split(/\r?\n/).filter((l) => !/^\s*\/\//.test(l) && !/^\s*\*/.test(l)).join("\n");

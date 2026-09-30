@@ -34,10 +34,13 @@ import { dirname, join } from "node:path";
 // ─────────────────────────────────────────────────────────────────────────
 
 const raiz = join(dirname(fileURLToPath(import.meta.url)), "..");
-const fuenteBuscador = readFileSync(join(raiz, "app/tarifario/BuscadorBooking.tsx"), "utf8");
-const fuenteVista = readFileSync(join(raiz, "app/tarifario/VistaBooking.tsx"), "utf8");
-const fuenteAction = readFileSync(join(raiz, "app/tarifario/busquedaUnidadActions.ts"), "utf8");
-const fuenteDatos = readFileSync(join(raiz, "lib/tarifario/datosBernalo.ts"), "utf8");
+// Fin de línea normalizado a LF al leer: la copia de trabajo puede venir en
+// CRLF (Windows, core.autocrlf) o en LF (Linux/CI). Lo que se verifica es el
+// código, no su fin de línea.
+const fuenteBuscador = readFileSync(join(raiz, "app/tarifario/BuscadorBooking.tsx"), "utf8").replace(/\r\n/g, "\n");
+const fuenteVista = readFileSync(join(raiz, "app/tarifario/VistaBooking.tsx"), "utf8").replace(/\r\n/g, "\n");
+const fuenteAction = readFileSync(join(raiz, "app/tarifario/busquedaUnidadActions.ts"), "utf8").replace(/\r\n/g, "\n");
+const fuenteDatos = readFileSync(join(raiz, "lib/tarifario/datosBernalo.ts"), "utf8").replace(/\r\n/g, "\n");
 // La decisión por hotel (antes `evaluarHotel`, inline en la Server Action)
 // se extrajo a un módulo PURO e inyectable — cierre del hallazgo "Hotel
 // Prueba Odair no aparece" — para poder probarla con comportamiento REAL
@@ -45,7 +48,7 @@ const fuenteDatos = readFileSync(join(raiz, "lib/tarifario/datosBernalo.ts"), "u
 // fuente. Este archivo sigue verificando el CABLEADO (qué usa qué, en qué
 // orden, qué expone la Server Action) — la lógica de decisión en sí ya no se
 // verifica acá dos veces.
-const fuenteEval = readFileSync(join(raiz, "lib/tarifario/evaluarDisponibilidadUnidad.ts"), "utf8");
+const fuenteEval = readFileSync(join(raiz, "lib/tarifario/evaluarDisponibilidadUnidad.ts"), "utf8").replace(/\r\n/g, "\n");
 
 function sinComentarios(fuente: string): string {
   return fuente
@@ -288,11 +291,15 @@ describe("Sin truncamiento (verificado por inspección de fuente, NO ejecutado c
     assert.match(codigoEval, /const MOTIVOS_SIN_DISPONIBILIDAD = new Set<string>\(\["fechas_fuera_de_ventana", "no_cotizable"\]\);/);
     assert.match(codigoEval, /export type VeredictoHotelUnidad =/);
     assert.match(codigoEval, /tipo: "inconcluyente"; hotelId: number; motivo: string/);
-    // Un rechazo del reparto por CONFIGURACIÓN del hotel (no por la selección
-    // pedida) tampoco autoriza la afirmación — inconcluyente, no
-    // sin_disponibilidad.
-    assert.match(cuerpoEvaluarHotel, /if \(reparto\.tipo === "seleccion_invalida"\) \{/);
-    assert.match(cuerpoEvaluarHotel, /return \{ tipo: "inconcluyente", hotelId, motivo: `reparto_\$\{reparto\.tipo\}` \};/);
+    // Un rechazo del reparto por CONFIGURACIÓN (datos rotos) tampoco autoriza
+    // la afirmación — inconcluyente/parcial, no sin_disponibilidad.
+    // Desde 6214c614 el reparto es POR COMBINACIÓN con la capacidad real de su
+    // tarifa: "seleccion_invalida" = esa combinación no admite la ocupación
+    // (dato con fundamento, se prueba la siguiente); "configuracion_invalida"
+    // = datos rotos → código no clasificado, que impide afirmar
+    // sin_disponibilidad (ver el cierre de la función).
+    assert.match(cuerpoEvaluarHotel, /if \(reparto\.tipo === "configuracion_invalida"\) codigosNoClasificados\.add\(`distribucion_\$\{reparto\.tipo\}`\);/);
+    assert.match(cuerpoEvaluarHotel, /if \(codigosNoClasificados\.size === 0\) \{\s*return \{ tipo: "veredicto", valor: \{ hotelId, estado: "sin_disponibilidad" \} \};\s*\}\s*return \{ tipo: "inconcluyente", hotelId, motivo: `codigo_tecnico:/, "con algún código no clasificado y ningún éxito → inconcluyente, nunca sin_disponibilidad");
   });
 
   test("lo único acotado es la concurrencia, y no se exporta (un `export const` rompería el build de Next)", () => {
@@ -789,21 +796,58 @@ describe("busquedaUnidadActions.ts — frontera pública (requisitos C y D)", ()
   });
 
   test("una sola lectura por lote de las reglas de ocupación de TODOS los candidatos (nunca una consulta por hotel)", () => {
-    const lecturas = [...codigoAction.matchAll(/\.from\("(hotel_acomodaciones|hoteles)"\)/g)].length;
-    assert.equal(lecturas, 2, "exactamente hotel_acomodaciones + hoteles, en un solo lote");
-    assert.match(codigoAction, /\.in\("hotel_id", idsAevaluar\)/);
-    assert.match(codigoAction, /\.in\("id", idsAevaluar\)/);
+    // Desde 6214c614 las reglas de ocupación salen de la tarifa unidad
+    // PUBLICADA (hoteles + hotel_temporadas + hotel_tarifas_unidad), no de
+    // hotel_acomodaciones (modelo persona, causa del bug del hotel 216).
+    // Sigue siendo UN lote para todos los candidatos, nunca por hotel.
+    assert.doesNotMatch(codigoAction, /\.from\("hotel_acomodaciones"\)/, "hotel_acomodaciones ya no decide la capacidad unidad");
+    const lecturas = [...codigoAction.matchAll(/\.from\("(hoteles|hotel_temporadas|hotel_tarifas_unidad)"\)/g)].map((m) => m[1]);
+    assert.deepEqual(lecturas, ["hoteles", "hotel_temporadas", "hotel_tarifas_unidad"], "exactamente una lectura de cada tabla");
+    const idxLote = codigoAction.indexOf("await Promise.all([");
+    assert.ok(idxLote > -1);
+    const lote = codigoAction.slice(idxLote, codigoAction.indexOf("]);", idxLote));
+    for (const t of ["hoteles", "hotel_temporadas", "hotel_tarifas_unidad"]) assert.ok(lote.includes(`.from("${t}")`), `${t} fuera del lote`);
+    assert.match(lote, /\.in\("id", idsAevaluar\)/);
+    assert.equal([...lote.matchAll(/\.in\("hotel_id", idsAevaluar\)/g)].length, 2);
+    // Ninguna consulta dentro del trabajador por hotel.
+    const idxTrabajador = codigoAction.indexOf("const trabajador = async () => {");
+    assert.ok(idxTrabajador > idxLote);
+    assert.doesNotMatch(codigoAction.slice(idxTrabajador, codigoAction.indexOf("await Promise.all(", idxTrabajador)), /\.from\(/);
   });
 
   test("reutiliza el reparto autoritativo del motor persona y lo reenvía por la MISMA frontera de validación pública (módulo puro, cobertura real de ese reenvío en evaluarDisponibilidadUnidad.test.ts)", () => {
-    assert.match(codigoEval, /repartirMenoresEnHabitaciones\(\{/);
+    // Desde 6214c614 el reparto persona (repartirMenoresEnHabitaciones /
+    // hotel_acomodaciones) se reemplazó A PROPÓSITO por el reparto unidad con
+    // la capacidad REAL de cada combinación (cabecera de
+    // lib/tarifario/distribucionOcupacionUnidad.ts, bug del hotel 216). Lo que
+    // se mantiene: ese reparto se reenvía por la MISMA frontera pública.
+    assert.doesNotMatch(codigoEval, /repartirMenoresEnHabitaciones\(|hotel_acomodaciones|defaultAcomConfig/);
+    assert.match(cuerpoEvaluarHotel, /const resolucionCapacidad = resolverCapacidadTarifaUnidad\(\{/);
+    assert.match(cuerpoEvaluarHotel, /const reparto = distribuirOcupacionUnidad\(\{ habitacionesConsultadas, adultosDeclarados, edadesMenores, capacidad \}\);/);
     assert.match(codigoEval, /const vOcupacion = validarHabitacionesOcupacion\(entradaOcupacion\);/);
+    const idxReparto = cuerpoEvaluarHotel.indexOf("const reparto = distribuirOcupacionUnidad(");
+    const idxValidar = cuerpoEvaluarHotel.indexOf("const vOcupacion = validarHabitacionesOcupacion(");
+    const idxComputar = cuerpoEvaluarHotel.indexOf("const resultado = await computar({");
+    assert.ok(idxReparto > -1 && idxValidar > idxReparto && idxComputar > idxValidar, "reparto → frontera pública → motor, en ese orden");
   });
 
   test("reutiliza computarReservaBernalo como única fuente del cálculo (no cambia el cálculo financiero) — la Server Action inyecta la función REAL, el módulo puro solo conoce su firma", () => {
     assert.match(codigoAction, /computar: computarReservaBernalo,/);
     assert.match(codigoEval, /const resultado = await computar\(\{/);
-    assert.doesNotMatch(codigoAction, /snapshot|totalNeto|valorComision|comision|proveedor|costo/i);
+    // Desde 6214c614 la acción lee la fila de tarifa unidad COMPLETA para
+    // resolver la capacidad real: `adaptarTarifaAlojamientoPersistida` exige
+    // `comision_pct` (obligatoria; sin ella rechaza la fila, nunca la toma
+    // como 0%) y `payload`. Es la MISMA forma de fila que la frontera de
+    // reservas (COLUMNAS_HOTEL_TARIFAS_UNIDAD). La única mención financiera
+    // permitida es esa lista de columnas: nada la usa como dato fuera del
+    // adaptador, ni la acción ni el módulo puro calculan nada financiero.
+    const COLUMNAS_TARIFA = "id, hotel_id, tarifa_id, version_tarifario, temporada, categoria, alimentacion, estado, fuente_documento, fuente_pagina, comision_pct, payload";
+    const fuenteColumnasCompartidas = readFileSync(join(raiz, "lib/reservar/resolverTarifaAlojamientoBernalo.ts"), "utf8").replace(/\r\n/g, "\n");
+    assert.ok(fuenteColumnasCompartidas.includes(`const COLUMNAS_HOTEL_TARIFAS_UNIDAD =\n  "${COLUMNAS_TARIFA}";`), "la forma de fila compartida cambió — revisar esta prueba");
+    assert.equal(codigoAction.split(`.select("${COLUMNAS_TARIFA}")`).length, 2, "la acción pide exactamente esas columnas, una vez");
+    const accionSinListaColumnas = codigoAction.replace(`.select("${COLUMNAS_TARIFA}")`, "");
+    assert.doesNotMatch(accionSinListaColumnas, /snapshot|totalNeto|valorComision|comision|proveedor|costo/i);
+    assert.doesNotMatch(codigoAction, /\.comision_pct|\.payload\b|\["comision_pct"\]|\["payload"\]/, "la acción nunca lee esas columnas como dato");
     assert.doesNotMatch(codigoEval, /snapshot|totalNeto|valorComision|comision|proveedor|costo/i);
   });
 
@@ -871,8 +915,10 @@ describe("busquedaUnidadActions.ts — frontera pública (requisitos C y D)", ()
   test("un fallo del descubrimiento o de las reglas de ocupación ahora es un error TÉCNICO explícito (ok:false) — fallo estructural corregido: antes se disfrazaba de 'cero hoteles' (ver la cabecera del archivo)", () => {
     assert.match(codigoAction, /if \(!descubrimiento\.ok\) \{/);
     assert.match(codigoAction, /return \{ ok: false, error: "No se pudo consultar la disponibilidad de alojamientos por unidad\." \};/);
-    assert.match(codigoAction, /if \(eAcom \|\| eHoteles\) \{/);
-    assert.match(codigoAction, /return \{ ok: false, error: "No se pudieron consultar las reglas de ocupación de los hoteles\." \};/);
+    // Desde 6214c614 el lote es hoteles + temporadas + tarifas unidad; un error
+    // en CUALQUIERA de las tres sigue siendo un error técnico explícito.
+    assert.match(codigoAction, /if \(eHoteles \|\| eTemporadas \|\| eTarifas\) \{/);
+    assert.match(codigoAction, /return \{ ok: false, error: "No se pudieron consultar las tarifas\/temporadas de los hoteles\." \};/);
     // Solo el caso LEGÍTIMO (no hay ningún hotel unidad en este destino, sin
     // ningún error) sigue devolviendo una lista vacía — nunca un error.
     assert.match(codigoAction, /if \(!ofertasPorHotel\.size\) return \{ ok: true, disponibilidad: \[\], incompleto: false \};/);
@@ -901,7 +947,7 @@ describe("datosBernalo.ts — descubrimiento acotado por destino (base de datos,
   test("acepta un destino opcional (nombre y/o id) sin cambiar el comportamiento por defecto (page.tsx sigue llamando sin argumentos)", () => {
     assert.match(codigoDatos, /export type OpcionesDescubrimientoBernalo = \{ destino\?: string \| null; destinoId\?: number \| null \};/);
     assert.match(codigoDatos, /export async function cargarHotelesBernaloDescubiertos\(\s*\n\s*opciones\?: OpcionesDescubrimientoBernalo\s*\n\)/);
-    const fuentePagina = sinComentarios(readFileSync(join(raiz, "app/tarifario/page.tsx"), "utf8"));
+    const fuentePagina = sinComentarios(readFileSync(join(raiz, "app/tarifario/page.tsx"), "utf8").replace(/\r\n/g, "\n"));
     assert.match(fuentePagina, /cargarHotelesBernaloDescubiertos\(\)/, "la vitrina completa sigue llamando sin opciones");
     assert.doesNotMatch(fuentePagina, /cargarHotelesBernaloDescubiertos\(\{/);
   });
@@ -1363,7 +1409,7 @@ describe("Carrera residual de solicitudes — generacionBusquedaRef (invalidaci�
     // paréntesis de la llamada sigue ABIERTO en el "{" del cuerpo, así que
     // ese algoritmo saltaría de largo hasta un "{" de otra parte del
     // archivo. Acá se recortan los dos límites literales conocidos.
-    const posInicioNonce = fuenteBuscador.indexOf("useEffect(() => {\r\n    if (!sugerenciaPedida) return;");
+    const posInicioNonce = fuenteBuscador.indexOf("useEffect(() => {\n    if (!sugerenciaPedida) return;");
     assert.ok(posInicioNonce > -1, "no se encontró el efecto de la sugerencia de fecha");
     const posFinNonce = fuenteBuscador.indexOf("}, [sugerenciaPedida]);", posInicioNonce);
     assert.ok(posFinNonce > -1, "no se encontró el cierre del efecto de la sugerencia de fecha");

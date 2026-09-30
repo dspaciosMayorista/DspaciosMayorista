@@ -10,8 +10,11 @@ import { test, describe } from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 
+// Fin de línea normalizado a LF al leer: la copia de trabajo puede venir en
+// CRLF (Windows, core.autocrlf) o en LF (Linux/CI). Lo que se verifica es el
+// código, no su fin de línea.
 function leer(ruta: string): string {
-  return readFileSync(new URL(`../${ruta}`, import.meta.url), "utf8");
+  return readFileSync(new URL(`../${ruta}`, import.meta.url), "utf8").replace(/\r\n/g, "\n");
 }
 
 const RUTA_ACTIONS = "app/(dashboard)/dashboard/vuelos/actions.ts";

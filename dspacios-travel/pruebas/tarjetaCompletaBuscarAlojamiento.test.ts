@@ -176,7 +176,12 @@ describe("TarjetaUnidadBusqueda (VistaBooking.tsx) — tarjeta completa para hot
     assert.doesNotMatch(cuerpoTarjetaUnidadBusqueda, /descripcionPorPaquete\[hotel\.hotelId\]/, "el hotelId nunca debe usarse como paqueteId");
     // `opcionSel` se deriva de catEff/alimEff (el combo elegido por el
     // usuario) — confirma que SÍ cambia con la selección.
-    assert.match(cuerpoTarjetaUnidadBusqueda, /const opcionSel = opciones\.find\(\(o\) => o\.categoria === catEff && o\.alimentacion === alimEff\) \?\? opciones\[0\];/);
+    // Con los filtros generales (#327): `opcionesEfectivas = opcionesPermitidas
+    // ?? opciones` (subconjunto del MISMO grupo, ver filtrosBusqueda.ts) — el
+    // contenido sigue a la opción elegida, nunca a una fija.
+    assert.match(cuerpoTarjetaUnidadBusqueda, /const opcionesEfectivas = opcionesPermitidas \?\? opciones;/);
+    assert.match(cuerpoTarjetaUnidadBusqueda, /const opcionSel = opcionesEfectivas\.find\(\(o\) => o\.categoria === catEff && o\.alimentacion === alimEff\) \?\? opcionesEfectivas\[0\];/);
+    assert.doesNotMatch(cuerpoTarjetaUnidadBusqueda, /descripcionPorPaquete\[opcionesEfectivas\[0\]\.paqueteId\]/);
     // La declaración de descripcionOpcion/addons debe estar DESPUÉS de
     // opcionSel (depende de él, no al revés).
     const idxOpcionSel = cuerpoTarjetaUnidadBusqueda.indexOf("const opcionSel =");
