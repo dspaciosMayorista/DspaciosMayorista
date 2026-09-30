@@ -1,31 +1,17 @@
 # CURRENT_GOAL.md
 
-Cerrado (PR #324, squash `b673f9cb`, 2026-09-22): **Rediseño del login** (`/login`) — etapa preparatoria del rediseño integral de UI. Selector visual Portal B2B/Portal Admin sin autoridad sobre permisos, panel informativo con capacidades reales, logo oficial, acceso rápido server-gated, y único acceso público al portal desde el tarifario (`/login`, sin el botón antiguo `/portal/b2b`). Ver `TASKS.md` (sección "Cerrado recientemente") y `DECISIONS.md` (ADL-025) para el detalle completo.
+Estado al 2026-09-30.
 
-Cerrado (PR #326, squash `412de253`, 2026-09-22): **Rediseño del Dashboard administrativo**. Shell visual sobre tokens propios `--dash-*`, TenantSwitcher accesible, KPI reales con barra de progreso solo cuando hay numerador/denominador reales (Contratos, Cupos, Cartera por moneda, Pagos por vencer, Conciliaciones, DIAN y Retenciones — estas tres últimas gateadas a roles contables), meta general mensual persistida (`meta_ventas_mensual`, migración 185) comparada solo contra ventas efectivas (`confirmado`/`activo`, nunca `pendiente`/`cancelado`), agregación en base vía 6 funciones `SECURITY INVOKER` (migración 186) en vez de descargar filas completas, y eliminación completa del sistema de cambio de temas (UI única en Dashboard, Tarifario/Vista Booking y Login). Ver `TASKS.md` (sección "Cerrado recientemente") y `DECISIONS.md` (ADL-026, ADL-027) para el detalle completo.
+**En `main`** (además de lo registrado al 2026-09-24): selectores buscables de catálogo en el panel (`27fa9402`, `eb274b5b`), resumen de política de reservas con "Ver más" (PR #332) y separación de los datos sensibles de proveedores cerrada con la migración 191 (PR #333, `92b3c51e`). Las migraciones 189 y 190 son prerrequisito de la 191; el usuario reporta la 191 aplicada en producción (no verificado desde el repositorio).
 
----
+**Solo en la rama `ronda1-destinos-y-pruebas`** (commits `a5162cff`, `99599518`, `9bd81e35`; aún NO integrada a `main`): conteo de receptivos y modal de eliminación explicativo en Producto → Destinos, tarjetas compactas con listas de hoteles/receptivos en diálogo, apertura inmediata de listas pequeñas de receptivos (precarga limitada) y línea base de `test:unit` en verde (4.954/4.954, más `test:react` 167/167, TypeScript y build, ejecutados en la rama). Nada de esto está cerrado en `main` hasta su revisión y merge.
 
-Objetivo actual: **Rediseño de Vista Booking**.
+Objetivo activo: **validar e integrar la rama `ronda1-destinos-y-pruebas`**.
 
-Etapa inicial (auditoría, aún no iniciada):
-- Auditar Vista Booking real (`app/tarifario/VistaBooking.tsx` y componentes asociados — `BuscadorBooking.tsx`, `tarjetaHotelCompartida.tsx`, `HotelModal`, tarjetas persona/unidad-Bernalo) antes de modificar código.
-- Identificar qué pantallas/componentes existen hoy, qué permisos gobiernan el acceso público/autenticado y qué consultas/operaciones reales alimentan cada vista (precio, disponibilidad, Incluye/add-ons por paquete).
+- Validar en Vercel Preview con datos reales: conteos y listas de receptivos (p. ej. Montería 0 hoteles / 5 receptivos), apertura inmediata y "Actualizar lista", roles sin acceso (`control_vuelo` sin insignia de receptivos) y modal de eliminación.
+- Revisar el PR y decidir el merge; tras integrarlo, mover los pendientes #9, #10 y #6 de `TASKS.md` a "Cerrado recientemente" con su hash real.
+- No incluir en este objetivo la otra queja del usuario sobre el modal de eliminación (se verá por separado) ni el flujo de eliminación en sí.
 
-Alcance:
-- Conservar el logo, el nombre D'Spacios Travel y el tratamiento de marca vigente (mismo criterio que Login y Dashboard: `components/Logo.tsx`, sin reconstruir el isotipo).
-- Mantener intacta la lógica funcional, precios, disponibilidad, fuentes autoritativas y motores de cálculo existentes de Vista Booking — el rediseño es visual, no funcional.
-- Redefinir estructura y sistema visual a partir de una referencia acordada, sin inventar módulos, métricas ni estados en vivo que no existan realmente.
-- Único sistema visual de la app: no introducir variantes ni mecanismos de cambio de tema (ver `DECISIONS.md` ADL-027).
+Después: validar el flujo de proveedor nuevo y el comportamiento con datos reales de ambas agencias (pendiente #1 de `TASKS.md`), y luego las tarjetas de Vista Booking (pendiente #2). Ver `TASKS.md` y `PROJECT_MAP.md`.
 
-Fuera de alcance:
-- No tocar precios, reservas, disponibilidad, fuentes autoritativas ni motores de cálculo.
-- No modificar SQL, migraciones ni configuración de roles/permisos.
-- No reabrir el login (PR #324) ni el Dashboard administrativo ya cerrados (PR #326).
-- No abordar otros pendientes de `TASKS.md` bajo este objetivo.
-- Implementación NO iniciada: este documento registra el objetivo siguiente, la auditoría y el plan de fases van antes de tocar código.
-
-Criterio de cierre de la etapa de auditoría:
-- Inventario real de Vista Booking (pantallas, componentes, permisos, consultas) documentado.
-- Alcance visual acordado: qué se redefine y qué se conserva.
-- Plan de implementación por fases que aísle el frente visual del funcional, listo para pasar a una etapa de construcción.
+Trabajar en el repositorio normal `C:\Users\Asus\Documents\DspaciosMayorista` (app en `dspacios-travel`), comprobando raíz, rama, estado y remoto antes de editar. No usar un clon/worktree alterno salvo petición expresa. Las propuestas de `docs/futuro/` son borradores documentales: no autorizan implementarlas ni incorporarlas a la cola. No hacer commit, push ni merge sin instrucción del usuario.
