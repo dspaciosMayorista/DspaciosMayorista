@@ -76,6 +76,9 @@ const STUB_BUSCAR_PASAJERO = pathToFileURL(join(AQUI, "stubs", "buscarPasajeroSt
 // Producto → Destinos: la Server Action real de la lista de receptivos
 // (`./actions` desde DestinosLista.tsx) -> stub configurable.
 const STUB_DESTINOS_ACTIONS = pathToFileURL(join(AQUI, "stubs", "destinosActionsStub.mjs")).href;
+// Vuelos → detalle del bloqueo: `EditarBloqueoForm.tsx` importa la Server
+// Action real "../actions" (termina en "next/headers") -> stub configurable.
+const STUB_VUELOS_ACTIONS = pathToFileURL(join(AQUI, "stubs", "vuelosActionsStub.mjs")).href;
 const STUB_SUPABASE_SERVER = pathToFileURL(join(AQUI, "stubs", "supabaseServerStub.mjs")).href;
 const STUB_NEXT_CACHE = pathToFileURL(join(AQUI, "stubs", "nextCacheStub.mjs")).href;
 const STUB_ASIENTOS = pathToFileURL(join(AQUI, "stubs", "asientosStub.mjs")).href;
@@ -133,13 +136,21 @@ export async function resolve(specifier, context, nextResolve) {
   if (specifier === "./actions" && context.parentURL?.endsWith("PagosList.tsx")) {
     return { url: STUB_PAGOS_ACTIONS, shortCircuit: true };
   }
+  if (specifier === "../actions" && context.parentURL?.endsWith("/EditarBloqueoForm.tsx")) {
+    return { url: STUB_VUELOS_ACTIONS, shortCircuit: true };
+  }
   if (
     specifier === "@/components/ui/DateInput" &&
-    (context.parentURL?.endsWith("DifusionClient.tsx") || context.parentURL?.endsWith("PagosList.tsx"))
+    (context.parentURL?.endsWith("DifusionClient.tsx") ||
+      context.parentURL?.endsWith("PagosList.tsx") ||
+      context.parentURL?.endsWith("EditarBloqueoForm.tsx"))
   ) {
     return { url: STUB_DATE_INPUT, shortCircuit: true };
   }
-  if (specifier === "next/navigation" && context.parentURL?.endsWith("DifusionClient.tsx")) {
+  if (
+    specifier === "next/navigation" &&
+    (context.parentURL?.endsWith("DifusionClient.tsx") || context.parentURL?.endsWith("EditarBloqueoForm.tsx"))
+  ) {
     return { url: STUB_NEXT_NAVIGATION, shortCircuit: true };
   }
   if (specifier === "@/lib/supabase/server" &&
