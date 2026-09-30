@@ -142,3 +142,65 @@ export function filaNombreReceptivoDe(destinoId: number): (f: unknown) => boolea
     return !!r && typeof r.id === "number" && Number.isInteger(r.id) && typeof r.nombre === "string" && r.destino_id === destinoId;
   };
 }
+
+// ── Precarga limitada de nombres (apertura inmediata de listas pequeñas) ──
+// La página YA recorre todas las filas de receptivos para contarlos; pidiendo
+// además `id`/`nombre` en esa MISMA consulta (mismas páginas, cero viajes
+// extra) las listas pequeñas se entregan ya armadas y el diálogo abre sin
+// ninguna petición. Topes para no trasladar un costo desmedido a la carga
+// inicial: solo destinos con hasta LIMITE_PRECARGA_POR_DESTINO receptivos, y
+// como máximo LIMITE_PRECARGA_TOTAL nombres en toda la página (se priorizan
+// los destinos más chicos). Lo que no entra se sigue pidiendo al abrir.
+export const LIMITE_PRECARGA_POR_DESTINO = 50;
+export const LIMITE_PRECARGA_TOTAL = 1000;
+
+/** Fila de la consulta de la página: `id` y `destino_id` enteros, `nombre` texto. */
+export function filaReceptivoConNombre(f: unknown): boolean {
+  const r = f as { id?: unknown; nombre?: unknown; destino_id?: unknown } | null;
+  return !!r && typeof r.id === "number" && Number.isInteger(r.id) && typeof r.nombre === "string" && filaValida(f);
+}
+
+export type ReceptivosAgrupados = {
+  /** Conteo por destino (todos los de `destinoIds`; 0 verificado si no tiene). */
+  conteos: Record<number, number>;
+  /** Listas completas ya armadas, SOLO de los destinos que entraron en la precarga. */
+  precargados: Record<number, ReceptivoDeDestino[]>;
+};
+
+/**
+ * Agrupa las filas `{ id, nombre, destino_id }` (el conjunto COMPLETO, ya
+ * paginado) por destino: conteo de todos y lista precargada de los chicos.
+ * Conserva el orden de llegada (la consulta ordena por nombre, id — el mismo
+ * orden que la carga bajo demanda). Cualquier fila con forma inesperada →
+ * `null` (conteo y listas desconocidos, nunca 0). Filas de un destino que no
+ * está en `destinoIds` se ignoran. Un destino precargado trae su lista
+ * COMPLETA (nunca recortada): si no cabe, no se precarga.
+ */
+export function agruparReceptivosPorDestino(
+  filas: unknown,
+  destinoIds: readonly number[],
+  limites: { porDestino: number; total: number } = { porDestino: LIMITE_PRECARGA_POR_DESTINO, total: LIMITE_PRECARGA_TOTAL }
+): ReceptivosAgrupados | null {
+  if (!Array.isArray(filas)) return null;
+  const listas = new Map<number, ReceptivoDeDestino[]>();
+  for (const id of destinoIds) listas.set(id, []);
+  for (const f of filas) {
+    if (!filaReceptivoConNombre(f)) return null;
+    const r = f as { id: number; nombre: string; destino_id: number };
+    listas.get(r.destino_id)?.push({ id: r.id, nombre: r.nombre });
+  }
+  const conteos: Record<number, number> = {};
+  for (const [id, lista] of listas) conteos[id] = lista.length;
+
+  const precargados: Record<number, ReceptivoDeDestino[]> = {};
+  let usados = 0;
+  const candidatos = [...listas]
+    .filter(([, l]) => l.length > 0 && l.length <= limites.porDestino)
+    .sort((a, b) => a[1].length - b[1].length || a[0] - b[0]);
+  for (const [id, lista] of candidatos) {
+    if (usados + lista.length > limites.total) break;
+    precargados[id] = lista;
+    usados += lista.length;
+  }
+  return { conteos, precargados };
+}

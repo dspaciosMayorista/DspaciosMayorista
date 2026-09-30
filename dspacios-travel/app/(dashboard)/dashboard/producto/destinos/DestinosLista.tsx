@@ -17,12 +17,17 @@ type Dest = { id: number; nombre: string; codigo_iata: string | null; pais: stri
 // `receptivosPorDestino`: conteo de receptivos por id de destino (ver
 // page.tsx). `null` = no se pudo contar — se omite la insignia en vez de
 // afirmar un "0 receptivos" que no se verificó.
+// `receptivosPrecargados`: listas COMPLETAS ya armadas de los destinos chicos
+// (mismas filas que el conteo, ver agruparReceptivosPorDestino) — su diálogo
+// abre sin petición. Los destinos que no están aquí cargan al abrir.
 export function DestinosLista({
   destinos,
   receptivosPorDestino = null,
+  receptivosPrecargados = null,
 }: {
   destinos: Dest[];
   receptivosPorDestino?: Record<number, number> | null;
+  receptivosPrecargados?: Record<number, ReceptivoDeDestino[]> | null;
 }) {
   const [query, setQuery] = useState("");
 
@@ -90,7 +95,7 @@ export function DestinosLista({
                     <div className="mt-3 flex flex-wrap items-center gap-2">
                       <HotelesInsignia destino={d.nombre} hoteles={hoteles} />
                       {typeof receptivos === "number" && (
-                        <ReceptivosInsignia destinoId={d.id} destino={d.nombre} conteo={receptivos} />
+                        <ReceptivosInsignia destinoId={d.id} destino={d.nombre} conteo={receptivos} precargados={receptivosPrecargados?.[d.id]} />
                       )}
                     </div>
                   </div>
@@ -149,15 +154,24 @@ function HotelesInsignia({ destino, hoteles }: { destino: string; hoteles: Hotel
   );
 }
 
-// Estado de la lista de receptivos: se pide SOLO al abrir el diálogo (nunca
-// para todas las tarjetas de entrada). "sin_permiso"/"error" nunca se pintan
-// como una lista vacía: una lista vacía solo aparece si el servidor la
-// confirmó (`ok` con 0 filas).
-type EstadoLista = { estado: "cargando" } | ResultadoReceptivosDestino;
+// Estado de la lista de receptivos:
+//   · precargada (destino chico): nace "ok" — el diálogo abre sin petición;
+//   · si no: "inactivo" hasta la primera apertura, que la pide UNA vez;
+//   · una lista "ok" (precargada o ya pedida) se reutiliza al reabrir — solo
+//     "Actualizar" vuelve a pedirla (datos que cambiaron tras cargar la página);
+//   · "sin_permiso"/"error" nunca se pintan como lista vacía: una lista vacía
+//     solo aparece si el servidor la confirmó (`ok` con 0 filas).
+type EstadoLista = { estado: "inactivo" } | { estado: "cargando" } | ResultadoReceptivosDestino;
 
-function ReceptivosInsignia({ destinoId, destino, conteo }: { destinoId: number; destino: string; conteo: number }) {
+function ReceptivosInsignia({
+  destinoId, destino, conteo, precargados,
+}: {
+  destinoId: number; destino: string; conteo: number; precargados?: ReceptivoDeDestino[];
+}) {
   const texto = etiquetaConteo(conteo, "receptivo", "receptivos");
-  const [lista, setLista] = useState<EstadoLista>({ estado: "cargando" });
+  const [lista, setLista] = useState<EstadoLista>(
+    precargados ? { estado: "ok", receptivos: precargados } : { estado: "inactivo" }
+  );
   // Cada apertura/reintento invalida la carga anterior: una respuesta tardía
   // nunca pisa la vigente.
   const revision = useRef(0);
@@ -173,7 +187,14 @@ function ReceptivosInsignia({ destinoId, destino, conteo }: { destinoId: number;
 
   if (conteo === 0) return <InsigniaFija texto={texto} />;
   return (
-    <Dialog onOpenChange={(abierto) => { if (abierto) cargar(); else revision.current++; }}>
+    <Dialog
+      onOpenChange={(abierto) => {
+        if (abierto) { if (lista.estado !== "ok") cargar(); }
+        // Cerrar en medio de una carga la descarta (revisión nueva); la
+        // próxima apertura la vuelve a pedir porque el estado no quedó "ok".
+        else revision.current++;
+      }}
+    >
       <DialogTrigger
         render={<button type="button" data-insignia className={CLASE_INSIGNIA_BOTON} aria-label={`Ver ${texto} de ${destino.toUpperCase()}`} />}
       >
@@ -217,6 +238,7 @@ function ReceptivosInsignia({ destinoId, destino, conteo }: { destinoId: number;
                 // (Producto → Servicios es solo el listado).
                 render={(r) => <span className="block break-words px-2 py-1.5 text-sm text-gray-700">{r.nombre}</span>}
               />
+              <Button variant="outline" size="sm" className="mt-2" onClick={cargar}>Actualizar lista</Button>
             </>
           )}
         </div>

@@ -8,9 +8,10 @@
 //     y el foco vuelve a la insignia.
 //   - Con 0 elementos la insignia es texto fijo, no botón.
 //   - Hoteles: enlace real a /dashboard/producto/hoteles/[id].
-//   - Receptivos: nombres pedidos SOLO al abrir (stub de la Server Action),
-//     sin enlace (no hay ruta de detalle), y "sin permiso"/"error" nunca se
-//     muestran como una lista vacía.
+//   - Receptivos: listas chicas PRECARGADAS por la página abren sin petición;
+//     las demás se piden al abrir (stub de la Server Action) y se reutilizan
+//     al reabrir; "Actualizar lista" vuelve a pedir. Sin enlace (no hay ruta de
+//     detalle), y "sin permiso"/"error" nunca se muestran como lista vacía.
 import { test, afterEach, after } from "node:test";
 import assert from "node:assert/strict";
 import { JSDOM } from "jsdom";
@@ -60,12 +61,15 @@ const RECEPTIVOS_MONTERIA = ["City tour Montería", "Traslado aeropuerto", "Río
 let root: ReturnType<typeof createRoot> | undefined;
 let container: HTMLDivElement;
 
-async function render(receptivosPorDestino: Record<number, number> | null = { 1: 0, 2: 12, 3: 5, 4: 0 }) {
+async function render(
+  receptivosPorDestino: Record<number, number> | null = { 1: 0, 2: 12, 3: 5, 4: 0 },
+  receptivosPrecargados: Record<number, { id: number; nombre: string }[]> | null = null
+) {
   container = document.createElement("div");
   document.body.append(container);
   root = createRoot(container);
   llamadas.length = 0;
-  await act(async () => root!.render(h(DestinosLista, { destinos: DESTINOS, receptivosPorDestino })));
+  await act(async () => root!.render(h(DestinosLista, { destinos: DESTINOS, receptivosPorDestino, receptivosPrecargados })));
 }
 
 const esperar = (ms = 20) => act(async () => { await new Promise((r) => setTimeout(r, ms)); });
@@ -297,4 +301,87 @@ test("Escape en el diálogo de receptivos devuelve el foco a su insignia", async
   await escape();
   assert.equal(dialogo(), null);
   assert.equal(document.activeElement, b);
+});
+
+// ── Precarga limitada y reutilización ────────────────────────────────────
+const estadoReceptivos = () => dialogo()!.querySelector("[data-receptivos-estado]")!.getAttribute("data-receptivos-estado");
+async function cerrar() {
+  await act(async () => botonEn(dialogo()!, "Cerrar")!.click());
+  await esperar();
+  assert.equal(dialogo(), null);
+}
+
+test("1 receptivo precargado: abre YA con su nombre, sin 'Cargando' ni petición; reabrir tampoco pide", async () => {
+  await render({ 1: 1, 2: 12, 3: 5, 4: 0 }, { 1: [{ id: 900, nombre: "Islas del Rosario" }] });
+  await abrir(1, "1 receptivo");
+  assert.equal(estadoReceptivos(), "ok");
+  assert.doesNotMatch(dialogo()!.textContent!, /Cargando/);
+  assert.deepEqual(itemsLista(), ["Islas del Rosario"]);
+  assert.deepEqual(llamadas, [], "ninguna petición");
+  await cerrar();
+  await abrir(1, "1 receptivo");
+  assert.deepEqual(itemsLista(), ["Islas del Rosario"]);
+  assert.deepEqual(llamadas, [], "reabrir reutiliza la lista");
+});
+
+test("5 receptivos precargados (Montería): abren al instante, búsqueda funciona, lista = insignia", async () => {
+  await render(undefined, { 3: RECEPTIVOS_MONTERIA });
+  await abrir(3, "5 receptivos");
+  assert.equal(estadoReceptivos(), "ok");
+  assert.equal(itemsLista().length, 5);
+  assert.doesNotMatch(dialogo()!.textContent!, /Los datos cambiaron/);
+  await escribirBusqueda("lorica");
+  assert.deepEqual(itemsLista(), ["Visita a Lorica"]);
+  assert.deepEqual(llamadas, []);
+});
+
+test("más de 1.000 (sin precarga): la 1ª apertura pide y muestra todo; reabrir NO repite; 'Actualizar lista' sí", async () => {
+  const mil = Array.from({ length: 1201 }, (_, k) => ({ id: 10_000 + k, nombre: `Receptivo ${k + 1}` }));
+  impl = async () => ({ estado: "ok", receptivos: mil });
+  await render({ 1: 0, 2: 1201, 3: 5, 4: 0 }, { 3: RECEPTIVOS_MONTERIA });
+  await abrir(2, "1201 receptivos");
+  assert.equal(itemsLista().length, 1201);
+  assert.deepEqual(llamadas, [2]);
+  await cerrar();
+  await abrir(2, "1201 receptivos");
+  assert.equal(itemsLista().length, 1201);
+  assert.deepEqual(llamadas, [2], "la lista ya cargada se reutiliza");
+  await act(async () => botonEn(dialogo()!, "Actualizar lista")!.click());
+  await esperar();
+  assert.deepEqual(llamadas, [2, 2], "solo 'Actualizar' vuelve a pedir");
+  assert.equal(itemsLista().length, 1201);
+});
+
+test("datos que cambiaron tras cargar la página: 'Actualizar lista' trae la lista fresca y avisa la diferencia con la insignia", async () => {
+  impl = async () => ({ estado: "ok", receptivos: [...RECEPTIVOS_MONTERIA, { id: 999, nombre: "Nuevo receptivo" }] });
+  await render(undefined, { 3: RECEPTIVOS_MONTERIA });
+  await abrir(3, "5 receptivos");
+  assert.doesNotMatch(dialogo()!.textContent!, /Los datos cambiaron/);
+  await act(async () => botonEn(dialogo()!, "Actualizar lista")!.click());
+  await esperar();
+  assert.equal(itemsLista().length, 6);
+  assert.match(dialogo()!.textContent!, /La lista trae 6 receptivos; el conteo de la tarjeta decía 5\./);
+});
+
+test("'Actualizar lista' con error: dice el error (no deja la lista vieja como si fuera la vigente) y ofrece reintentar", async () => {
+  impl = async () => ({ estado: "error" });
+  await render(undefined, { 3: RECEPTIVOS_MONTERIA });
+  await abrir(3, "5 receptivos");
+  await act(async () => botonEn(dialogo()!, "Actualizar lista")!.click());
+  await esperar();
+  assert.match(dialogo()!.textContent!, /No se pudo cargar la lista de receptivos\./);
+  assert.equal(dialogo()!.querySelector("[data-lista]"), null);
+  assert.ok(botonEn(dialogo()!, "Reintentar"));
+});
+
+test("un error en la carga bajo demanda se reintenta solo al reabrir (no queda 'pegado')", async () => {
+  impl = async () => ({ estado: "error" });
+  await render();
+  await abrir(3, "5 receptivos");
+  assert.match(dialogo()!.textContent!, /No se pudo cargar/);
+  await cerrar();
+  impl = async () => ({ estado: "ok", receptivos: RECEPTIVOS_MONTERIA });
+  await abrir(3, "5 receptivos");
+  assert.equal(itemsLista().length, 5);
+  assert.deepEqual(llamadas, [3, 3]);
 });

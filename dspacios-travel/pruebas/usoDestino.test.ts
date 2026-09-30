@@ -25,6 +25,10 @@ import {
   cargarReceptivosSegunRol,
   contarReceptivosPorDestino,
   filaNombreReceptivoDe,
+  agruparReceptivosPorDestino,
+  filaReceptivoConNombre,
+  LIMITE_PRECARGA_POR_DESTINO,
+  LIMITE_PRECARGA_TOTAL,
 } from "../lib/producto/receptivos.ts";
 import { ejecutarConsultaPaginada } from "../lib/tarifario/paginacion.ts";
 import { tipoProveedorCxpServicio, normalizarCategoriaServicio } from "../lib/reservar/serviciosPaquete.ts";
@@ -417,10 +421,13 @@ describe("cableado — listado de destinos y Server Action de uso", () => {
   test("la página no usa agregados de PostgREST: carga paginada de destino_id de los receptivos, en paralelo con el listado", () => {
     assert.doesNotMatch(pagina, /\(count\)|count\(\)/, "nada de count embebido/agregado");
     assert.match(pagina, /pedirPagina: \(desde, hasta\) =>/);
-    assert.match(pagina, /\.from\("servicios_adicionales"\)\s*\.select\("destino_id"\)/, "solo la columna destino_id");
+    // Desde la precarga limitada la MISMA consulta trae también id y nombre
+    // (cero viajes extra) — nunca columnas de costo.
+    assert.match(pagina, /\.from\("servicios_adicionales"\)\s*\.select\("id, nombre, destino_id"\)/, "solo id, nombre y destino_id");
+    assert.match(pagina, /filaValida: filaReceptivoConNombre,/, "cada fila se valida con su forma completa");
     assert.match(pagina, /\.in\("categoria", \[\.\.\.CATEGORIAS_RECEPTIVO\]\)/);
     assert.match(pagina, /\.not\("destino_id", "is", null\)/);
-    assert.match(pagina, /\.order\("id"\)\s*\.range\(desde, hasta\)/, "orden total para paginar sin huecos");
+    assert.match(pagina, /\.order\("nombre"\)\s*\.order\("id"\)\s*\.range\(desde, hasta\)/, "orden total (nombre, id) para paginar sin huecos — el mismo que la carga bajo demanda");
     assert.match(pagina, /await Promise\.all\(\[/);
     assert.doesNotMatch(pagina, /tour_traslado/, "la categoría no se repite como literal");
   });
@@ -433,8 +440,10 @@ describe("cableado — listado de destinos y Server Action de uso", () => {
   });
 
   test("cualquier estado distinto de 'ok' → null (insignia omitida), nunca 0; el listado se renderiza igual", () => {
-    assert.match(pagina, /receptivos\.estado === "ok" \? contarReceptivosPorDestino\(receptivos\.filas, [^\n]*\) : null;/);
-    assert.match(pagina, /<DestinosLista destinos=\{destinos\} receptivosPorDestino=\{receptivosPorDestino\} \/>/);
+    assert.match(pagina, /receptivos\.estado === "ok" \? agruparReceptivosPorDestino\(receptivos\.filas, [^\n]*\) : null;/);
+    // Conteos y precargas salen de la MISMA agrupación: ambos null si no es "ok".
+    assert.match(pagina, /receptivosPorDestino=\{agrupados\?\.conteos \?\? null\}/);
+    assert.match(pagina, /receptivosPrecargados=\{agrupados\?\.precargados \?\? null\}/);
   });
 
   test("usoDestino cuenta con head:true (Prefer count=exact, no es agregado), marca el alcance por rol y no escribe nada", () => {
@@ -483,14 +492,71 @@ describe("lista de receptivos de un destino (diálogo) — mismo criterio que el
     assert.match(accion, /\.map\(\(f\) => \(\{ id: f\.id, nombre: f\.nombre \}\)\)/);
   });
 
-  test("el listado no carga nombres de receptivos de entrada: solo el diálogo, al abrirse", () => {
+  test("la página no hace consultas EXTRA para nombres: van en la del conteo (con tope); el resto se pide al abrir, una vez", () => {
     const lista = leer("app/(dashboard)/dashboard/producto/destinos/DestinosLista.tsx");
     const pagina = leer("app/(dashboard)/dashboard/producto/destinos/page.tsx");
-    assert.doesNotMatch(pagina, /listarReceptivosDestino/, "la página no pide la lista de nombres");
-    // La única consulta de servicios en la página es el conteo: solo destino_id, nunca nombres.
+    assert.doesNotMatch(pagina, /listarReceptivosDestino/, "la página no llama a la carga bajo demanda");
+    // Una sola consulta de servicios en la página: conteo + nombres a la vez.
     assert.equal([...pagina.matchAll(/\.from\("servicios_adicionales"\)/g)].length, 1);
-    assert.match(pagina, /\.from\("servicios_adicionales"\)\s*\.select\("destino_id"\)/);
-    assert.match(lista, /<Dialog onOpenChange=\{\(abierto\) => \{ if \(abierto\) cargar\(\); else revision\.current\+\+; \}\}>/);
+    // El diálogo pide solo si su lista no está ya "ok" (precargada o pedida antes).
+    assert.match(lista, /if \(abierto\) \{ if \(lista\.estado !== "ok"\) cargar\(\); \}/);
+    assert.match(lista, /precargados \? \{ estado: "ok", receptivos: precargados \} : \{ estado: "inactivo" \}/);
     assert.equal([...lista.matchAll(/listarReceptivosDestino\(/g)].length, 1, "una sola llamada, dentro de cargar()");
+  });
+});
+
+describe("precarga limitada de receptivos (agruparReceptivosPorDestino)", () => {
+  const r = (id: number, destino_id: number, nombre = `R${id}`) => ({ id, nombre, destino_id });
+  const repetir = (n: number, destino: number, desde = 0) => Array.from({ length: n }, (_, k) => r(desde + k + 1, destino));
+
+  test("topes vigentes: 50 por destino y 1.000 nombres en total", () => {
+    assert.equal(LIMITE_PRECARGA_POR_DESTINO, 50);
+    assert.equal(LIMITE_PRECARGA_TOTAL, 1000);
+  });
+
+  test("conteos de TODOS los destinos (0 verificado) y listas completas solo de los chicos, en el orden recibido", () => {
+    const g = agruparReceptivosPorDestino([r(2, 1, "B"), r(1, 1, "A"), r(9, 3, "Z")], [1, 2, 3]);
+    assert.deepEqual(g, {
+      conteos: { 1: 2, 2: 0, 3: 1 },
+      precargados: { 1: [{ id: 2, nombre: "B" }, { id: 1, nombre: "A" }], 3: [{ id: 9, nombre: "Z" }] },
+    });
+  });
+
+  test("1, 5 y 50 se precargan; 51 y más de 1.000 solo cuentan (se piden al abrir)", () => {
+    const filas = [...repetir(1, 1), ...repetir(5, 2, 100), ...repetir(50, 3, 200), ...repetir(51, 4, 300), ...repetir(1201, 5, 1000)];
+    const g = agruparReceptivosPorDestino(filas, [1, 2, 3, 4, 5])!;
+    assert.deepEqual(g.conteos, { 1: 1, 2: 5, 3: 50, 4: 51, 5: 1201 });
+    assert.deepEqual(Object.keys(g.precargados).map(Number).sort((a, b) => a - b), [1, 2, 3]);
+    assert.equal(g.precargados[3].length, 50, "una lista precargada va COMPLETA, nunca recortada");
+  });
+
+  test("tope total: prioriza los destinos más chicos y nunca recorta una lista", () => {
+    const filas = [...repetir(3, 1), ...repetir(40, 2, 100), ...repetir(10, 3, 200)];
+    const g = agruparReceptivosPorDestino(filas, [1, 2, 3], { porDestino: 50, total: 20 })!;
+    assert.deepEqual(Object.keys(g.precargados).map(Number).sort((a, b) => a - b), [1, 3], "3 + 10 = 13 ≤ 20; el de 40 no cabe");
+    assert.equal(g.precargados[3].length, 10);
+    assert.deepEqual(g.conteos, { 1: 3, 2: 40, 3: 10 }, "los conteos no dependen de la precarga");
+  });
+
+  test("con el tope real, el total precargado nunca pasa de LIMITE_PRECARGA_TOTAL", () => {
+    const filas = Array.from({ length: 60 }, (_, d) => repetir(45, d + 1, d * 100)).flat();
+    const g = agruparReceptivosPorDestino(filas, Array.from({ length: 60 }, (_, d) => d + 1))!;
+    const total = Object.values(g.precargados).reduce((n, l) => n + l.length, 0);
+    assert.ok(total <= LIMITE_PRECARGA_TOTAL, `precargados ${total}`);
+    assert.equal(total, 22 * 45, "22 destinos de 45 = 990 ≤ 1.000; el 23º no cabe");
+    assert.equal(Object.keys(g.conteos).length, 60, "todos siguen contados");
+  });
+
+  test("forma inesperada → null (conteo y listas desconocidos, nunca 0 ni listas vacías)", () => {
+    for (const filas of [null, {}, "x"]) assert.equal(agruparReceptivosPorDestino(filas, [1]), null);
+    for (const f of [{ destino_id: 1 }, { id: 1, destino_id: 1 }, { id: 1, nombre: "X", destino_id: null }, { id: "1", nombre: "X", destino_id: 1 }]) {
+      assert.equal(agruparReceptivosPorDestino([r(1, 1), f], [1]), null, JSON.stringify(f));
+      assert.equal(filaReceptivoConNombre(f), false);
+    }
+  });
+
+  test("filas de destinos que no están en el listado se ignoran (ni cuentan ni se precargan)", () => {
+    const g = agruparReceptivosPorDestino([r(1, 1), r(2, 99)], [1])!;
+    assert.deepEqual(g, { conteos: { 1: 1 }, precargados: { 1: [{ id: 1, nombre: "R1" }] } });
   });
 });
