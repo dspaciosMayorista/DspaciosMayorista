@@ -42,9 +42,10 @@ async function render(receptivosPorDestino?: Record<number, number> | null) {
 
 // Insignias (pills) de la tarjeta de un destino, en orden.
 function insignias(nombre: string): string[] {
-  const tarjeta = [...container.querySelectorAll("h3")].find((el) => el.textContent?.startsWith(nombre))?.parentElement;
+  const tarjeta = [...container.querySelectorAll("h3")].find((el) => el.textContent?.startsWith(nombre))?.closest("[data-destino-tarjeta]");
   assert.ok(tarjeta, `no se encontró la tarjeta de ${nombre}`);
-  return [...tarjeta!.querySelectorAll("span.rounded-full")].map((s) => s.textContent?.trim() ?? "");
+  // Botón (con elementos) o texto fijo (con 0): ambos llevan `data-insignia`.
+  return [...tarjeta!.querySelectorAll("[data-insignia]")].map((s) => s.textContent?.trim() ?? "");
 }
 
 afterEach(async () => {

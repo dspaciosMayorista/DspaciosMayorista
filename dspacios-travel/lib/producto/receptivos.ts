@@ -62,7 +62,11 @@ export type PedirPaginaReceptivos = (desde: number, hasta: number) => PromiseLik
  * cierra la carga. Nunca lanza: devuelve `ok: false` con el error real.
  */
 export async function cargarFilasReceptivos(
-  pedirPagina: PedirPaginaReceptivos
+  pedirPagina: PedirPaginaReceptivos,
+  // Predicado de fila: por defecto `{ destino_id }` entero (conteo). La lista
+  // de nombres de un destino pasa el suyo (`filaNombreReceptivoDe`) — misma
+  // validación de página, mismo fallo cerrado.
+  filaEsValida: (f: unknown) => boolean = filaValida
 ): Promise<{ ok: true; filas: unknown[] } | { ok: false; error: unknown }> {
   const paginaValidada = async (desde: number, hasta: number): Promise<{ data: unknown[] | null; error: unknown }> => {
     const resp = (await pedirPagina(desde, hasta)) as { data?: unknown; error?: unknown } | null | undefined;
@@ -74,7 +78,7 @@ export async function cargarFilasReceptivos(
     if (resp.data.length > hasta - desde + 1) {
       return { data: null, error: new Error(`página ${desde}-${hasta}: ${resp.data.length} filas, más de las pedidas`) };
     }
-    if (!resp.data.every(filaValida)) return { data: null, error: new Error(`página ${desde}-${hasta}: fila sin destino_id entero`) };
+    if (!resp.data.every(filaEsValida)) return { data: null, error: new Error(`página ${desde}-${hasta}: fila con forma inesperada`) };
     return { data: resp.data, error: null };
   };
   try {
@@ -107,6 +111,8 @@ export async function cargarReceptivosSegunRol(opts: {
   obtenerRol: () => PromiseLike<{ data: unknown; error: unknown }>;
   puedeLeer: (rol: string | null) => boolean;
   pedirPagina: PedirPaginaReceptivos;
+  /** Predicado de fila (ver `cargarFilasReceptivos`); por defecto `{ destino_id }` entero. */
+  filaValida?: (f: unknown) => boolean;
 }): Promise<EstadoReceptivos> {
   let rol: string | null;
   try {
@@ -117,6 +123,22 @@ export async function cargarReceptivosSegunRol(opts: {
     return { estado: "error_rol", error };
   }
   if (!opts.puedeLeer(rol)) return { estado: "sin_permiso" };
-  const f = await cargarFilasReceptivos(opts.pedirPagina);
+  const f = await cargarFilasReceptivos(opts.pedirPagina, opts.filaValida);
   return f.ok ? { estado: "ok", filas: f.filas } : { estado: "error_consulta", error: f.error };
+}
+
+/** Un receptivo tal como lo muestra la lista de un destino (sin datos de costo). */
+export type ReceptivoDeDestino = { id: number; nombre: string };
+
+/**
+ * Predicado de fila para la LISTA de receptivos de UN destino: `id` entero,
+ * `nombre` texto y `destino_id` EXACTAMENTE ese destino — una fila de otro
+ * destino (o sin destino, p. ej. un servicio general) invalida la carga en
+ * vez de colarse en la lista.
+ */
+export function filaNombreReceptivoDe(destinoId: number): (f: unknown) => boolean {
+  return (f) => {
+    const r = f as { id?: unknown; nombre?: unknown; destino_id?: unknown } | null;
+    return !!r && typeof r.id === "number" && Number.isInteger(r.id) && typeof r.nombre === "string" && r.destino_id === destinoId;
+  };
 }

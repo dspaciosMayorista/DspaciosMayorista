@@ -24,6 +24,7 @@ import {
   cargarFilasReceptivos,
   cargarReceptivosSegunRol,
   contarReceptivosPorDestino,
+  filaNombreReceptivoDe,
 } from "../lib/producto/receptivos.ts";
 import { ejecutarConsultaPaginada } from "../lib/tarifario/paginacion.ts";
 import { tipoProveedorCxpServicio, normalizarCategoriaServicio } from "../lib/reservar/serviciosPaquete.ts";
@@ -447,5 +448,49 @@ describe("cableado — listado de destinos y Server Action de uso", () => {
     assert.match(cuerpo, /alcanceCompleto: puedeEscribir\("producto", rol\)/);
     assert.match(cuerpo, /const rol = rolRes\.error \? null :/, "rol no resuelto = alcance incompleto");
     assert.doesNotMatch(cuerpo, /\.delete\(|\.update\(|\.insert\(|\.upsert\(|revalidatePath|fn_fusionar_destino/);
+  });
+});
+
+describe("lista de receptivos de un destino (diálogo) — mismo criterio que el conteo", () => {
+  test("filaNombreReceptivoDe: exige id entero, nombre texto y EXACTAMENTE ese destino", () => {
+    const valida = filaNombreReceptivoDe(3);
+    assert.equal(valida({ id: 1, nombre: "City tour", destino_id: 3 }), true);
+    for (const f of [
+      null, {}, { id: 1, nombre: "X", destino_id: 4 }, { id: 1, nombre: "X", destino_id: null },
+      { id: 1, nombre: "X" }, { id: "1", nombre: "X", destino_id: 3 }, { id: 1.5, nombre: "X", destino_id: 3 },
+      { id: 1, nombre: null, destino_id: 3 }, { id: 1, destino_id: 3 },
+    ]) assert.equal(valida(f), false, JSON.stringify(f));
+  });
+
+  test("la acción de la lista y el conteo de la página filtran igual (categoría derivada + destino), así el número y la lista coinciden", () => {
+    const accion = leer("app/(dashboard)/dashboard/producto/destinos/actions.ts");
+    const pagina = leer("app/(dashboard)/dashboard/producto/destinos/page.tsx");
+    for (const src of [accion, pagina]) {
+      assert.match(src, /\.from\("servicios_adicionales"\)/);
+      assert.match(src, /\.in\("categoria", \[\.\.\.CATEGORIAS_RECEPTIVO\]\)/);
+      assert.doesNotMatch(src, /tour_traslado/, "la categoría nunca se repite como literal");
+    }
+    // Conteo: todos los receptivos CON destino, agrupados por destino_id.
+    assert.match(pagina, /\.not\("destino_id", "is", null\)/);
+    // Lista: exactamente ESE destino (nunca servicios generales sin destino).
+    assert.match(accion, /\.eq\("destino_id", destinoId\)/);
+    assert.match(accion, /filaValida: filaNombreReceptivoDe\(destinoId\),/);
+    // Misma compuerta de rol que el conteo.
+    assert.match(accion, /cargarReceptivosSegunRol\(\{/);
+    assert.match(accion, /puedeLeer: \(rol\) => puedeEscribir\("producto", rol\),/);
+    // Solo id y nombre salen del servidor.
+    assert.match(accion, /\.select\("id, nombre, destino_id"\)/);
+    assert.match(accion, /\.map\(\(f\) => \(\{ id: f\.id, nombre: f\.nombre \}\)\)/);
+  });
+
+  test("el listado no carga nombres de receptivos de entrada: solo el diálogo, al abrirse", () => {
+    const lista = leer("app/(dashboard)/dashboard/producto/destinos/DestinosLista.tsx");
+    const pagina = leer("app/(dashboard)/dashboard/producto/destinos/page.tsx");
+    assert.doesNotMatch(pagina, /listarReceptivosDestino/, "la página no pide la lista de nombres");
+    // La única consulta de servicios en la página es el conteo: solo destino_id, nunca nombres.
+    assert.equal([...pagina.matchAll(/\.from\("servicios_adicionales"\)/g)].length, 1);
+    assert.match(pagina, /\.from\("servicios_adicionales"\)\s*\.select\("destino_id"\)/);
+    assert.match(lista, /<Dialog onOpenChange=\{\(abierto\) => \{ if \(abierto\) cargar\(\); else revision\.current\+\+; \}\}>/);
+    assert.equal([...lista.matchAll(/listarReceptivosDestino\(/g)].length, 1, "una sola llamada, dentro de cargar()");
   });
 });
