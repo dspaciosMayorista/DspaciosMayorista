@@ -3,29 +3,25 @@
 import { useRef, useState, useTransition } from "react";
 import { Loader2, X } from "lucide-react";
 import { ComboDestino } from "@/components/ComboDestino";
-import { resumirUsoDestino, type ResumenUsoDestino } from "@/lib/producto/usoDestino";
+import { modoEliminacion, resumirUsoDestino, type ModoEliminacion, type UsoDestino } from "@/lib/producto/usoDestino";
 import { eliminarDestino, usoDestino } from "./actions";
 
 type DestOpt = { id: number; nombre: string };
 
-// Estado de la revisión de contenido asociado (solo INFORMATIVA: qué se
-// muestra al usuario). Nunca decide el flujo — el combo obligatorio sigue
-// dependiendo de `hoteles`, igual que antes, y la base de datos tiene la
-// última palabra al borrar.
-type Uso =
-  | { estado: "cargando" }
-  | { estado: "error" }
-  | { estado: "listo"; resumen: ResumenUsoDestino; alcanceCompleto: boolean };
+// Revisión del contenido asociado. Es la que DECIDE qué ofrece el modal
+// (`modoEliminacion`), nunca la cantidad de hoteles: un destino con 0 hoteles
+// y 5 receptivos también debe moverse a otro antes de eliminarse. La base de
+// datos sigue teniendo la última palabra (FK 23503, RLS y la propia
+// `fn_fusionar_destino`).
+type Uso = { estado: "cargando" } | { estado: "error" } | { estado: "listo"; uso: UsoDestino };
 
 export function EliminarDestinoBtn({
   id,
   nombre,
-  hoteles = 0,
   destinos = [],
 }: {
   id: number;
   nombre: string;
-  hoteles?: number;
   destinos?: DestOpt[];
 }) {
   const [open, setOpen] = useState(false);
@@ -33,44 +29,60 @@ export function EliminarDestinoBtn({
   const [err, setErr] = useState("");
   const [uso, setUso] = useState<Uso>({ estado: "cargando" });
   const [pending, start] = useTransition();
-  // Cada apertura invalida la revisión anterior: una respuesta tardía de una
-  // apertura previa nunca pisa la actual.
+  // Cada revisión invalida la anterior: una respuesta tardía nunca pisa la vigente.
   const revision = useRef(0);
 
   const otros = destinos.filter((d) => d.id !== id);
+
+  function verificar() {
+    setUso({ estado: "cargando" });
+    const mia = ++revision.current;
+    usoDestino(id).then(
+      (r) => { if (revision.current === mia) setUso({ estado: "listo", uso: r }); },
+      () => { if (revision.current === mia) setUso({ estado: "error" }); }
+    );
+  }
 
   function abrir() {
     setOpen(true);
     setErr("");
     setTarget("");
-    setUso({ estado: "cargando" });
-    const mia = ++revision.current;
-    usoDestino(id).then(
-      (r) => { if (revision.current === mia) setUso({ estado: "listo", resumen: resumirUsoDestino(r.conteos), alcanceCompleto: r.alcanceCompleto }); },
-      () => { if (revision.current === mia) setUso({ estado: "error" }); }
-    );
+    verificar();
   }
+
+  // "cargando" mientras se revisa; un error de revisión es "no_verificado"
+  // (nunca se presenta como vacío ni habilita el borrado directo).
+  const modo: ModoEliminacion | "cargando" =
+    uso.estado === "cargando" ? "cargando" : uso.estado === "error" ? "no_verificado" : modoEliminacion(uso.uso);
+  const resumen = uso.estado === "listo" ? resumirUsoDestino(uso.uso.conteos) : null;
+  const permiso = uso.estado === "listo" ? uso.uso.permiso : "desconocido";
+  const requiereDestino = modo === "fusion" || modo === "no_verificado";
+  const sePuedeReintentar = uso.estado === "error" || modo === "no_verificado";
 
   function eliminar() {
     setErr("");
-    // Con hoteles, exige elegir a dónde moverlos.
-    if (hoteles > 0 && target === "") {
-      setErr(`Tiene ${hoteles} hotel(es): elige a qué destino moverlos.`);
+    if (modo === "cargando" || modo === "sin_permiso") return;
+    if (requiereDestino && target === "") {
+      setErr(
+        modo === "fusion"
+          ? "Tiene contenido asociado: elige a qué destino moverlo."
+          : "No se pudo confirmar si tiene contenido: elige a qué destino moverlo o reintenta la verificación."
+      );
       return;
     }
+    // Borrado directo SOLO si está verificado sin contenido; si no, fusión.
+    const reasignarA = modo === "borrado_directo" ? undefined : Number(target);
     start(async () => {
-      const r = await eliminarDestino(id, target === "" ? undefined : Number(target));
+      const r = await eliminarDestino(id, reasignarA);
       if (r.ok) setOpen(false);
-      else setErr(r.error);
+      else {
+        setErr(r.error);
+        // Lo que el servidor rechazó puede deberse a datos que cambiaron:
+        // se vuelve a verificar para que el modal muestre el estado real.
+        verificar();
+      }
     });
   }
-
-  const resumen = uso.estado === "listo" ? uso.resumen : null;
-  // Solo roles que leen TODAS las filas (los que pueden borrar destinos) —
-  // para cualquier otro, un 0 puede ser RLS y no ausencia.
-  const alcanceCompleto = uso.estado === "listo" && uso.alcanceCompleto;
-  const nadaVisible = !!resumen && resumen.total === 0 && resumen.sinVerificar.length === 0;
-  const verificadoSinUso = nadaVisible && alcanceCompleto;
 
   return (
     <>
@@ -91,7 +103,7 @@ export function EliminarDestinoBtn({
               Vas a eliminar <b>{nombre?.toUpperCase()}</b>.
             </p>
 
-            <div className="mt-3" data-uso-destino={uso.estado}>
+            <div className="mt-3" data-uso-destino={uso.estado} data-modo-eliminacion={modo}>
               {uso.estado === "cargando" && (
                 <p className="flex items-center gap-1.5 text-xs text-gray-500">
                   <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden />
@@ -111,18 +123,31 @@ export function EliminarDestinoBtn({
                   </ul>
                 </>
               )}
-              {resumen && resumen.items.length > 0 && !alcanceCompleto && (
+              {resumen && resumen.items.length > 0 && permiso !== "si" && (
                 <p className="mt-1 text-xs text-gray-500">Solo se muestra lo que tu rol puede ver; puede haber más.</p>
               )}
               {resumen && resumen.sinVerificar.length > 0 && (
                 <p className="mt-1 text-xs text-gray-500">No se pudo verificar: {resumen.sinVerificar.join(", ")}.</p>
               )}
+              {sePuedeReintentar && (
+                <button type="button" onClick={verificar} disabled={pending} className="mt-1 text-xs text-[var(--brand-accent)] hover:underline disabled:opacity-60">
+                  Reintentar verificación
+                </button>
+              )}
             </div>
 
-            {hoteles > 0 ? (
+            {modo === "sin_permiso" && (
+              <p className="mt-2 text-xs text-gray-500">Tu rol no tiene permiso para eliminar destinos.</p>
+            )}
+            {modo === "borrado_directo" && (
+              <p className="mt-2 text-xs text-gray-500">No tiene contenido asociado; se eliminará directamente.</p>
+            )}
+            {requiereDestino && (
               <div className="mt-3">
                 <p className="mb-1 text-xs text-amber-700">
-                  Tiene <b>{hoteles}</b> hotel(es): no se puede eliminar sin mover su contenido. Todo lo que apunta a este destino pasará al destino que elijas; las tarifas y temporadas de cada hotel siguen con su hotel:
+                  {modo === "fusion"
+                    ? "Tiene contenido asociado: no se puede eliminar sin moverlo. Todo lo que apunta a este destino pasará al destino que elijas; las tarifas y temporadas de cada hotel siguen con su hotel:"
+                    : "No se pudo confirmar si tiene contenido asociado, así que no se ofrece el borrado directo. Puedes mover lo que tenga al destino que elijas y eliminarlo:"}
                 </p>
                 <ComboDestino
                   destinos={otros}
@@ -132,25 +157,19 @@ export function EliminarDestinoBtn({
                 />
                 <p className="mt-1 text-xs text-gray-500">Los contratos, ventas y cotizaciones ya creados no se modifican.</p>
               </div>
-            ) : verificadoSinUso ? (
-              <p className="mt-2 text-xs text-gray-500">No tiene contenido asociado; se eliminará directamente.</p>
-            ) : resumen && resumen.total > 0 ? (
-              <p className="mt-2 text-xs text-amber-700">
-                No tiene hoteles, pero el contenido de arriba lo usa: mientras exista, la base de datos rechazará la eliminación. Este cuadro solo ofrece mover el contenido a otro destino cuando el destino tiene hoteles.
-              </p>
-            ) : nadaVisible ? (
-              <p className="mt-2 text-xs text-gray-500">
-                No se encontró contenido asociado entre lo que tu rol puede ver; con tu rol no es posible confirmar que no haya más.
-              </p>
-            ) : null}
+            )}
 
             {err && <p className="mt-3 text-sm text-red-600">{err}</p>}
 
             <div className="mt-5 flex justify-end gap-2">
-              <button onClick={() => setOpen(false)} disabled={pending} className="rounded-lg border border-gray-300 px-3 py-1.5 text-sm text-gray-600">Cancelar</button>
-              <button onClick={eliminar} disabled={pending} className="rounded-lg bg-red-500 px-3 py-1.5 text-sm font-medium text-white disabled:opacity-60">
-                {pending ? "Eliminando…" : hoteles > 0 ? "Mover y eliminar" : "Eliminar"}
+              <button onClick={() => setOpen(false)} disabled={pending} className="rounded-lg border border-gray-300 px-3 py-1.5 text-sm text-gray-600">
+                {modo === "sin_permiso" ? "Cerrar" : "Cancelar"}
               </button>
+              {modo !== "sin_permiso" && (
+                <button onClick={eliminar} disabled={pending || modo === "cargando"} className="rounded-lg bg-red-500 px-3 py-1.5 text-sm font-medium text-white disabled:opacity-60">
+                  {pending ? "Eliminando…" : requiereDestino ? "Mover y eliminar" : "Eliminar"}
+                </button>
+              )}
             </div>
           </div>
         </div>
