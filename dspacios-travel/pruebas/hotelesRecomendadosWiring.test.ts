@@ -21,6 +21,7 @@ const leer = (rel: string) => readFileSync(join(raiz, rel), "utf8");
 const vistaBooking = leer("app/tarifario/VistaBooking.tsx");
 const buscadorBooking = leer("app/tarifario/BuscadorBooking.tsx");
 const recomendadosFuente = leer("lib/tarifario/recomendados.ts");
+const filtrosBusquedaFuente = leer("lib/tarifario/filtrosBusqueda.ts");
 const tarifarioPublic = leer("app/tarifario/TarifarioPublic.tsx");
 const tarifarioPage = leer("app/tarifario/page.tsx");
 const resumen = leer("lib/tarifario/resumen.ts");
@@ -524,7 +525,10 @@ describe("Nombre del paquete — fuente real y trazable, nunca derivada por hote
   test("la tarjeta persona de búsqueda se identifica por (hotelId, paqueteId): mismo hotel en dos paquetes = dos tarjetas con nombre distinto", () => {
     // La key incluye el paqueteId — dos ofertas del mismo hotel no colisionan
     // en React ni se pisan entre sí.
-    assert.match(vistaBooking, /key: `b-\$\{r\.paqueteId\}-\$\{r\.hotelId\}`/);
+    // Desde los filtros generales (#327) la key agrega el combo forzado como
+    // SUFIJO (remount limpio al cambiar el filtro); el prefijo sigue siendo
+    // paqueteId + hotelId.
+    assert.match(vistaBooking, /key: `b-\$\{r\.paqueteId\}-\$\{r\.hotelId\}-\$\{marca\.catForzada \?\? ""\}-\$\{marca\.regForzada \?\? ""\}`/);
     // Y el nombre que se pinta sale de ESE resultado (una fila = un par).
     assert.match(vistaBooking, /<Resultado[\s\S]{0,120}r=\{t\.r\}/);
   });
@@ -534,7 +538,15 @@ describe("Nombre del paquete — fuente real y trazable, nunca derivada por hote
     // `opcionSel` pertenece al grupo (hotelId,paqueteId) de esa tarjeta: todas
     // sus opciones comparten paquete, así que el nombre es cierto para toda la
     // tarjeta y no cambia al mover categoría/alimentación.
-    assert.match(vistaBooking, /const opcionSel = opciones\.find\(\(o\) => o\.categoria === catEff && o\.alimentacion === alimEff\) \?\? opciones\[0\];/);
+    // Con los filtros generales (#327) `opcionSel` sale de `opcionesEfectivas`
+    // (= `opcionesPermitidas ?? opciones`), y `opcionesPermitidas` solo puede
+    // ser un SUBCONJUNTO del mismo grupo (`g.opciones.filter(...)` en
+    // lib/tarifario/filtrosBusqueda.ts) — nunca opciones de otro paquete.
+    assert.match(vistaBooking, /const opcionesEfectivas = opcionesPermitidas \?\? opciones;/);
+    assert.match(vistaBooking, /const opcionSel = opcionesEfectivas\.find\(\(o\) => o\.categoria === catEff && o\.alimentacion === alimEff\) \?\? opcionesEfectivas\[0\];/);
+    assert.match(vistaBooking, /opcionesPermitidas=\{t\.hotel\.opcionesRestringidas \?\? undefined\}/);
+    assert.match(filtrosBusquedaFuente, /const validas = g\.opciones\.filter\(/);
+    assert.match(filtrosBusquedaFuente, /opcionesRestringidas: validas \}/);
   });
 });
 
@@ -579,8 +591,16 @@ describe("Defecto 2 — el índice de Array.map nunca se filtra como recomendaci
     // El ensamblado del resto de búsqueda ya no usa `.map` (arma un Map por
     // clave de oferta para poder reordenar/filtrar con `ordenarYFiltrarResto`
     // después) — el llamado explícito sigue siendo de UN solo argumento.
-    assert.match(codigoVista, /tarjetaPorClaveResto\.set\(claveOferta\(r\.hotelId, r\.paqueteId\), tarjetaPersona\(r\)\);/);
-    assert.match(codigoVista, /tarjetaPorClaveResto\.set\(claveOferta\(g\.hotelId, g\.paqueteId\), tarjetaUnidad\(g\)\);/);
+    // Desde los filtros generales (#327) el 2º argumento es un objeto LITERAL
+    // explícito (`MarcaOferta`: combo forzado/restringido), nunca un número —
+    // y en el resto ese objeto no lleva `recomendada`.
+    assert.match(codigoVista, /const tarjetaPersona = \(r: BusquedaResultado, marca: MarcaOferta = \{\}\): Tarjeta =>/);
+    assert.match(codigoVista, /const tarjetaUnidad = \(g: GrupoOfertaUnidad<OpcionUnidadConfirmada>, marca: MarcaOferta = \{\}\): Tarjeta =>/);
+    assert.match(codigoVista, /tarjetaPorClaveResto\.set\(claveOferta\(r\.hotelId, r\.paqueteId\), tarjetaPersona\(r, \{ catForzada, regForzada, combosRestringidos: m\.combosRestringidos \}\)\);/);
+    assert.match(codigoVista, /tarjetaPorClaveResto\.set\(claveOferta\(g\.hotelId, g\.paqueteId\), tarjetaUnidad\(g, \{ catForzada, regForzada, opcionesRestringidas: m\.opcionesRestringidas \}\)\);/);
+    const llamadasResto = [...codigoVista.matchAll(/tarjetaPorClaveResto\.set\([^\n]*\);/g)].map((m) => m[0]);
+    assert.ok(llamadasResto.length >= 2);
+    for (const l of llamadasResto) assert.doesNotMatch(l, /recomendada/, "el resto nunca marca recomendada");
   });
 
   test("solo las ofertas de `recomendadasBusqueda` llevan la marca: el resto no la asigna por ningún camino", () => {

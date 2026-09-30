@@ -181,7 +181,7 @@ describe("Resultado (BuscadorBooking.tsx) / TarjetaUnidadBusqueda (VistaBooking.
     // `cat` apuntando a un valor sin <option>, y `combo` podía terminar
     // resolviendo a `r.combos[0]` — el default sin pasar por el filtro
     // vigente, potencialmente el combo ya excluido (ver
-    // pruebas/resultadoInteraccion.test.ts, describe "cambiar filtros con la
+    // pruebas/resultadoInteraccion.react.ts, describe "cambiar filtros con la
     // tarjeta YA montada").
     assert.match(buscadorBookingSinComentarios, /const catEff = categorias\.includes\(cat\) \? cat : \(categorias\[0\] \?\? cat\);/);
     // El <select> de Categoría y el lookup final de `combo` deben leer
@@ -240,7 +240,7 @@ describe("BuscadorBooking.tsx — Destino usa el Select accesible (Base UI), no 
     // "combobox"> — sin esto, un lector de pantalla anuncia el placeholder/
     // valor elegido, nunca el <label> visual "Destino" (huérfano, sin
     // htmlFor/aria-labelledby que lo asocie). Guarda de regresión de la
-    // prueba de interacción real: pruebas/buscadorBookingDestinoInteraccion.test.ts.
+    // prueba de interacción real: pruebas/buscadorBookingDestinoInteraccion.react.ts.
     assert.match(buscadorBookingSinComentarios, /<label id=\{`\$\{idBase\}-destino-label`\} className=\{lbl\}>Destino<\/label>/);
     const cuerpo = cuerpoEntre(buscadorBookingSinComentarios, '<label id={`${idBase}-destino-label`} className={lbl}>Destino</label>', "</Select>");
     assert.match(cuerpo, /<SelectTrigger\s*\n\s*aria-labelledby=\{`\$\{idBase\}-destino-label`\}/, "el SelectTrigger debe llevar aria-labelledby apuntando al mismo idBase del <label>");

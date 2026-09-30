@@ -50,7 +50,21 @@ test("VistaBooking.tsx (tarjeta de exploración — 'O explora todos los alojami
   const src = leer("app/tarifario/VistaBooking.tsx");
   assert.match(src, /tieneCondicion: boolean;/, "HotelCard no declara tieneCondicion");
   assert.match(src, /tieneCondicion: info\?\.tieneCondicion \?\? false,/, "el useMemo de hoteles no toma tieneCondicion de infoPorHotel");
-  assert.match(src, /<CondicionCompacta activo=\{h\.tieneCondicion\} \/>/, "la tarjeta de exploración no renderiza el badge compacto");
+  // Desde 4d599919 la tarjeta de exploración es el componente compartido
+  // `TarjetaHotelCard` (persona y unidad): pinta el badge con su prop, y la
+  // tarjeta persona le pasa el `tieneCondicion` del HotelCard de arriba —
+  // siempre booleano, así que la guarda `!== undefined` nunca lo oculta.
+  const idxTarjeta = src.indexOf("function TarjetaHotelCard(");
+  assert.ok(idxTarjeta > -1, "no existe TarjetaHotelCard");
+  const cuerpoTarjeta = src.slice(idxTarjeta, src.indexOf("\nfunction ", idxTarjeta + 1));
+  assert.match(cuerpoTarjeta, /tieneCondicion\?: boolean;/);
+  assert.match(cuerpoTarjeta, /\{tieneCondicion !== undefined && <CondicionCompacta activo=\{tieneCondicion\} \/>\}/, "la tarjeta de exploración no renderiza el badge compacto");
+  // Cada uso `<TarjetaHotelCard … />` completo (sus props incluyen `=>`, así
+  // que se recorta hasta el cierre `/>` en vez de usar `[^>]`).
+  const usos = src.split("<TarjetaHotelCard").slice(1).map((resto) => resto.slice(0, resto.indexOf("/>")));
+  const usoPersona = usos.find((u) => /onClick=\{\(\) => abrirHotel\(t\.card\)\}/.test(u));
+  assert.ok(usoPersona, "no se encontró la tarjeta persona de exploración");
+  assert.match(usoPersona!, /tieneCondicion=\{t\.card\.tieneCondicion\}/, "la tarjeta persona de exploración no le pasa tieneCondicion del HotelCard");
 });
 
 test("lib/tarifario/resumen.ts: calcula tieneCondicion por hotel reutilizando condicionHotelFechas (mismo resolver de PR #286)", () => {

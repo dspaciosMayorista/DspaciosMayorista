@@ -23,7 +23,10 @@ import { dirname, join } from "node:path";
 // ─────────────────────────────────────────────────────────────────────────
 
 const raiz = join(dirname(fileURLToPath(import.meta.url)), "..");
-const leer = (rel: string) => readFileSync(join(raiz, rel), "utf8");
+// Fin de línea normalizado a LF al leer: la copia de trabajo puede venir en
+// CRLF (Windows, core.autocrlf) o en LF (Linux/CI). Lo que se verifica es el
+// código, no su fin de línea.
+const leer = (rel: string) => readFileSync(join(raiz, rel), "utf8").replace(/\r\n/g, "\n");
 
 // Extrae el cuerpo de una función balanceando llaves reales (ignora las que
 // aparecen dentro de paréntesis/genéricos de la firma) — mismo criterio que
@@ -79,7 +82,7 @@ describe("computo.ts (computarReserva) — guardia modelo_tarifario ANTES de lee
     const posGuardia = cuerpo.indexOf('modeloRow?.modelo_tarifario === "unidad"');
     const posUsarFechas = cuerpo.indexOf("const usarFechas =");
     const posLiquidar = cuerpo.indexOf("liquidarHotelPaquete(");
-    const posTarifarioResultado = cuerpo.indexOf('.from("tarifario_resultado_publicable")\r\n      .select("acomodacion, precio_pvp');
+    const posTarifarioResultado = cuerpo.indexOf('.from("tarifario_resultado_publicable")\n      .select("acomodacion, precio_pvp');
     assert.notEqual(posGuardia, -1);
     assert.notEqual(posUsarFechas, -1);
     assert.notEqual(posLiquidar, -1);

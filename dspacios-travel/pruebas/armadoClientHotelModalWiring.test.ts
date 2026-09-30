@@ -307,19 +307,42 @@ describe("Aislamiento de alcance: la validación CARTESIANA del servidor (setHot
   // volvió a una validación por columnas independientes.
   const fuenteActions = leer("app/(dashboard)/dashboard/paquetes/actions.ts");
   const codigoActions = sinComentarios(fuenteActions);
+  // Desde 4d599919 la regla de pares vive en un helper PURO compartido
+  // (`lib/calc/paresPublicadosUnidad.ts`, con pruebas de ejecución propias en
+  // pruebas/paresPublicadosUnidad.test.ts) y setHotelFiltros lo invoca. El
+  // contrato se sigue verificando en los dos extremos: el helper decide por
+  // PARES y el cartesiano completo; setHotelFiltros lo usa ANTES de guardar.
+  const codigoHelper = sinComentarios(leer("lib/calc/paresPublicadosUnidad.ts"));
+  const idxSetFiltros = codigoActions.indexOf("export async function setHotelFiltros(");
+  const cuerpoSetFiltros = codigoActions.slice(idxSetFiltros, codigoActions.indexOf("\nexport ", idxSetFiltros + 1));
 
   test("setHotelFiltros sigue construyendo un Set de PARES publicados (JSON.stringify([categoria, alimentacion])), no dos Sets independientes", () => {
-    assert.match(codigoActions, /const paresPublicados = new Set\(/);
-    assert.match(codigoActions, /JSON\.stringify\(\[f\.categoria, f\.alimentacion\]\)/);
+    assert.notEqual(idxSetFiltros, -1);
+    // setHotelFiltros lee los pares reales publicados y arma el Set con el helper…
+    assert.match(cuerpoSetFiltros, /\.from\("hotel_tarifas_unidad"\)\s*\.select\("categoria, alimentacion"\)[\s\S]*?\.eq\("estado", "publicada"\)/);
+    assert.match(cuerpoSetFiltros, /const paresPublicados = construirSetParesPublicados\(filas \?\? \[\]\);/);
+    // …y el helper codifica el PAR completo, nunca columnas sueltas.
+    assert.match(codigoHelper, /export function construirSetParesPublicados\([\s\S]*?return new Set\(/);
+    assert.match(codigoHelper, /JSON\.stringify\(\[f\.categoria, f\.alimentacion\]\)/);
     assert.doesNotMatch(codigoActions, /categoriasPublicadas|alimentacionesPublicadas/);
+    assert.doesNotMatch(codigoHelper, /categoriasPublicadas|alimentacionesPublicadas/);
   });
 
   test("sigue verificando el producto cartesiano completo categorias × regimenes contra los pares publicados (doble for anidado, rechaza si falta una combinación)", () => {
-    const idxDobleFor = codigoActions.indexOf("for (const c of categorias) {");
+    // El doble for anidado vive en el helper…
+    const idxTodos = codigoHelper.indexOf("export function todosLosParesConfiguradosPublicados(");
+    assert.notEqual(idxTodos, -1);
+    const cuerpoTodos = codigoHelper.slice(idxTodos, codigoHelper.indexOf("\nexport ", idxTodos + 1));
+    const idxDobleFor = cuerpoTodos.indexOf("for (const c of categorias) {");
     assert.notEqual(idxDobleFor, -1);
-    const bloque = codigoActions.slice(idxDobleFor, idxDobleFor + 300);
+    const bloque = cuerpoTodos.slice(idxDobleFor, idxDobleFor + 300);
     assert.match(bloque, /for \(const r of regimenes\) \{/);
-    assert.match(bloque, /if \(!paresPublicados\.has\(JSON\.stringify\(\[c, r\]\)\)\) \{/);
+    assert.match(bloque, /if \(!paresPublicados\.has\(JSON\.stringify\(\[c, r\]\)\)\) return false;/);
+    // …y setHotelFiltros rechaza con él ANTES del upsert, con el mensaje de la combinación faltante.
+    const idxGuarda = cuerpoSetFiltros.indexOf("if (!todosLosParesConfiguradosPublicados(categorias, regimenes, paresPublicados)) {");
+    const idxUpsert = cuerpoSetFiltros.indexOf('.from("armado_hoteles").upsert(');
+    assert.ok(idxGuarda > -1 && idxUpsert > idxGuarda, "la guarda cartesiana corre antes de guardar");
+    assert.match(cuerpoSetFiltros.slice(idxGuarda, idxUpsert), /return \{\s*ok: false,/);
     assert.match(codigoActions, /No hay ninguna tarifa publicada para la combinación/);
   });
 });

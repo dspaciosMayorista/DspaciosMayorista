@@ -1,5 +1,5 @@
 // Loader ESM SOLO para la prueba de interacción React
-// (pruebas/resultadoInteraccion.test.ts) — NO se usa en el resto de la
+// (pruebas/resultadoInteraccion.react.ts) — NO se usa en el resto de la
 // batería (`aliasLoader.mjs` sigue siendo el loader de siempre para las
 // pruebas puras/de wiring, sin tocarlo).
 //
@@ -73,6 +73,9 @@ const STUB_BUSCAR_PASAJERO = pathToFileURL(join(AQUI, "stubs", "buscarPasajeroSt
 // "next/cache" y `@/lib/contabilidad/asientos` (server-only + cliente admin).
 // Se redirigen SOLO cuando el import parte de ESE archivo; la action se ejecuta
 // de verdad contra un cliente simulado configurado en la prueba.
+// Producto → Destinos: la Server Action real de la lista de receptivos
+// (`./actions` desde DestinosLista.tsx) -> stub configurable.
+const STUB_DESTINOS_ACTIONS = pathToFileURL(join(AQUI, "stubs", "destinosActionsStub.mjs")).href;
 const STUB_SUPABASE_SERVER = pathToFileURL(join(AQUI, "stubs", "supabaseServerStub.mjs")).href;
 const STUB_NEXT_CACHE = pathToFileURL(join(AQUI, "stubs", "nextCacheStub.mjs")).href;
 const STUB_ASIENTOS = pathToFileURL(join(AQUI, "stubs", "asientosStub.mjs")).href;
@@ -106,6 +109,18 @@ export async function resolve(specifier, context, nextResolve) {
   if (specifier === "./actions" && context.parentURL?.endsWith("PasajerosContratoClient.tsx")) {
     return { url: STUB_PASAJEROS_CONTRATO_ACTIONS, shortCircuit: true };
   }
+  // Página Producto → Destinos (pruebas/destinosPageReceptivos.react.ts): los
+  // dos botones de la cabecera importan Server Actions reales del tarifario
+  // ("use server" -> next/headers); se sirven desde el mismo stub de destinos.
+  if (
+    (specifier === "./actions" && context.parentURL?.endsWith("NuevoDestinoDialog.tsx")) ||
+    (specifier === "../../tarifario/actions" && context.parentURL?.endsWith("CargarDestinosSugeridos.tsx"))
+  ) {
+    return { url: STUB_ELIMINAR_DESTINO_ACTIONS, shortCircuit: true };
+  }
+  if (specifier === "./actions" && context.parentURL?.endsWith("/producto/destinos/DestinosLista.tsx")) {
+    return { url: STUB_DESTINOS_ACTIONS, shortCircuit: true };
+  }
   if (specifier === "./actions" && context.parentURL?.endsWith("EliminarDestinoBtn.tsx")) {
     return { url: STUB_ELIMINAR_DESTINO_ACTIONS, shortCircuit: true };
   }
@@ -131,7 +146,12 @@ export async function resolve(specifier, context, nextResolve) {
       (context.parentURL?.endsWith("dashboard/pagos/actions.ts") ||
        context.parentURL?.endsWith("dashboard/producto/proveedores/actions.ts") ||
        context.parentURL?.endsWith("/voucher-actions.ts") ||
-       context.parentURL?.endsWith("/gestion-actions.ts"))) {
+       context.parentURL?.endsWith("/gestion-actions.ts") ||
+       // Página Producto → Destinos y el predicado real de roles que usa.
+       context.parentURL?.endsWith("/producto/destinos/page.tsx") ||
+       // La Server Action de la lista de receptivos (pruebas/destinosReceptivosAction.react.ts).
+       context.parentURL?.endsWith("/producto/destinos/actions.ts") ||
+       context.parentURL?.endsWith("/lib/roles.ts"))) {
     return { url: STUB_SUPABASE_SERVER, shortCircuit: true };
   }
   if (specifier === "next/cache" &&

@@ -199,3 +199,39 @@ Registro de decisiones (ADL). Cada entrada: decisión, motivo, alternativas desc
 - Alternativas descartadas: dejar el componente sin montar pero en el repo (código muerto real); mantener alguna variante como "modo alternativo" oficial.
 - Verificación: búsqueda `rg` en cero para `ThemeSwitcher`, `data-theme`, `dsp-theme` y los nombres de tema alternativos fuera de pruebas que confirman su ausencia y del changelog histórico de `TASKS.md` (entrada de un PR ya cerrado, no se reescribe).
 - Referencia: PR #326, squash `412de253` (2026-09-22).
+
+## ADL-028 — Pasajeros de contratos: búsqueda y CRM separados de contactos comerciales
+- Decisión: `contrato_pasajeros` es la fuente para buscar por documento y reutilizar datos de pasajeros existentes (migración 187, PR #329). Los nombres históricos combinados se muestran sin partirlos; `nombres`/`apellidos` estructurados se guardan solo en registros nuevos. La migración 187 no crea ni elimina `nacionalidad`, que ya existía. No se altera el núcleo atómico de pasajeros/sillas de la 167.
+- Decisión: CRM ofrece una consulta de solo lectura de pasajeros de contratos (migración 188, PR #330), separada de `crm_contactos`; aparecer en esa vista no implica autorización de marketing ni inclusión en campañas.
+- Permisos: superadmin/gerencia conservan el alcance heredado de ambas agencias; administración/operaciones respetan su agencia asignada; venta solo sus contratos. La cookie visual de agencia activa no restringe estas RPC. No ampliar lectura o escritura entre tenants por analogía con este caso.
+- Verificación remota reportada: preflight/postcheck y pruebas SQL de la 187 y 188 con resultado OK.
+- Referencias: PR #329 `67154391` y PR #330 `fadb9a2e` (2026-09-23).
+
+## ADL-029 — Tablas por ancho disponible y calendarios propios
+- Decisión: las tablas extensas del Dashboard/CRM cambian de tabla a presentación apilada según el ancho real de su contenedor (`ResponsiveTableShell` y `useStackTabla`), no un breakpoint de viewport ni recorte silencioso con `overflow-x-hidden`.
+- Decisión: las fechas visibles usan el control compartido `DateInput` (React DayPicker/Base UI) y la conversión de `lib/calendarValue.ts`, conservando el valor y la validación de cada flujo. Guía: `docs/calendarios-personalizados.md`.
+- Referencias: PR #330 `fadb9a2e` (2026-09-23) y PR #331 `970d9c67` (2026-09-24).
+
+## ADL-030 — Proveedores: catálogo interno compartido y datos sensibles separados
+- Estado: integrado en `main` (PR #333, squash `92b3c51e`, 2026-09-29; preparación en `eb274b5b`, migraciones 189/190). La 191 figura como no aplicada en el mensaje del commit; el usuario reporta después que ya está aplicada en producción (no verificable desde el repositorio).
+- Decisión: el catálogo base `proveedores` es de uso interno: lo leen solo usuarios internos activos de Mayorista y Minorista; agencia, freelance y cliente_final no lo leen en ningún tenant (los flujos B2B de reservar lo consultan en el servidor con service-role). La escritura sigue restringida a Mayorista autorizada.
+- Decisión: los ocho datos sensibles (`nit`, `razon_social`, `datos_pago`, `banco`, `tipo_cuenta`, `numero_cuenta`, `politica_reservas`, `voucher_contacto`) viven en `proveedores_datos_sensibles`, por `(proveedor_id, tenant)`: lectura para superadmin/gerencia y, en Mayorista, para los demás roles internos; escritura solo en Mayorista. La 191 retira las columnas antiguas sin CASCADE tras verificar paridad fila a fila.
+- Decisión: guardar un proveedor pasa por la RPC `guardar_proveedor` (una transacción, `SECURITY INVOKER`); `datos_pago` nunca se escribe desde la RPC (se conserva al editar). El voucher usa solo `voucher_contacto`, nunca `proveedores.contacto` (puede ser un número interno).
+- Decisión: las Server Actions que usan service-role autorizan antes de tocarlo (`completarProveedores`); `asegurarCuentasPorPagar` y `liberarVencidas` salen del archivo "use server" a `lib/` (server-only).
+- Pendiente: validar el flujo con un proveedor nuevo y con datos reales de ambas agencias (`TASKS.md` #1).
+
+## ADL-031 — Destinos: receptivos, listas en diálogo y eliminación explicativa
+- Estado: implementado y verificado solo en la rama `ronda1-destinos-y-pruebas` (`a5162cff`, `99599518`, `9bd81e35`); NO integrado a `main`. El 2026-09-30 el usuario lo probó en Vercel Preview, incluida la apertura de receptivos, y aprobó el resultado; no confirmó por separado roles sin acceso (`control_vuelo` sin insignia de receptivos), "Actualizar lista" con datos que cambiaron, destinos con más de 50 receptivos y el texto del modal de eliminación según el rol. Pendiente: revisión y merge.
+- Decisión: receptivo = `servicios_adicionales` con categoría de receptivo, derivada de `tipoProveedorCxpServicio` (hoy `tour_traslado`), asignado por `destino_id`; nunca servicios generales sin destino ni otras categorías.
+- Decisión: sin funciones de agregado de PostgREST (deshabilitadas por defecto y no habilitadas en este repo): el conteo sale de una carga paginada que valida cada página y falla cerrado (`data: null`, respuesta ausente, filas de más o mal formadas, excepciones). Un conteo desconocido nunca se muestra como 0. El paginador compartido `ejecutarConsultaPaginada` no se modifica.
+- Decisión: primero se resuelve el rol; solo los roles que leen `servicios_adicionales` (los de `ESCRITURA.producto`, verificado contra las migraciones) consultan receptivos. Para otro rol (p. ej. `control_vuelo`) la RLS devolvería vacío sin error, así que ni se consulta ni se muestra conteo.
+- Decisión: la misma consulta del conteo trae `id` y `nombre` y precarga las listas de hasta 50 receptivos por destino (tope 1.000 nombres por página, los destinos más chicos primero; una lista nunca se recorta). El resto se pide al abrir el diálogo y se reutiliza al reabrir; "Actualizar lista" pide datos frescos. Motivo: antes cada apertura hacía la Server Action más 3 viajes secuenciales a Supabase incluso con un receptivo (medido con la acción real e instrumentación local).
+- Decisión: el modal de eliminación enumera las 10 tablas con FK a `destinos` (guarda que falla ante una FK nueva) y solo afirma "sin contenido" para los roles que pueden borrar destinos, que son los únicos cuya RLS permite leer todas esas filas. Eliminar, fusionar, permisos y errores no cambian.
+- Alternativas descartadas: conteo embebido `tabla(count)` (depende de agregados); una consulta de conteo por destino (N viajes); cargar todos los nombres sin tope; modificar el paginador compartido.
+
+## ADL-032 — Suites de prueba independientes del sistema operativo
+- Estado: solo en la rama `ronda1-destinos-y-pruebas`; NO integrado a `main`.
+- Decisión: las pruebas de interacción que necesitan `reactLoader` se nombran `*.react.ts` y se listan explícitamente en `test:react`; `test:unit` solo recoge `*.test.ts`. La guarda `pruebas/suitesPruebas.test.ts` falla si una `*.react.ts` queda fuera de toda suite o si un archivo listado no existe.
+- Decisión: las pruebas que leen código fuente normalizan CRLF→LF al leer; ningún literal de prueba asume un fin de línea. Motivo: la copia de trabajo en Windows (`core.autocrlf`) trae CRLF mientras el índice guarda LF, y 8 pruebas dependían de uno u otro.
+- Decisión: las pruebas de cableado que quedaron obsoletas se actualizan trazando dónde vive hoy cada comportamiento, sin borrar casos ni debilitar el contrato; si aparece un defecto real de producto se documenta en lugar de ajustar la prueba.
+

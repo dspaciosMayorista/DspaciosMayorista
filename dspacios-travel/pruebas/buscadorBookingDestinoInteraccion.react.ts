@@ -22,7 +22,7 @@
 //
 // Alcance deliberadamente angosto: SOLO se toca/prueba el selector Destino
 // de `BuscadorBooking` — ninguna tarjeta (`Resultado`/`TarjetaUnidadBusqueda`,
-// ya cubiertas por pruebas/resultadoInteraccion.test.ts) ni ningún otro
+// ya cubiertas por pruebas/resultadoInteraccion.react.ts) ni ningún otro
 // selector del formulario.
 
 import { test, describe, before, after } from "node:test";
@@ -30,13 +30,13 @@ import assert from "node:assert/strict";
 import { JSDOM } from "jsdom";
 import type { EstadoBusquedaPorcion } from "../app/tarifario/BuscadorBooking.tsx";
 
-// ── Entorno DOM — igual que pruebas/resultadoInteraccion.test.ts, MÁS los
+// ── Entorno DOM — igual que pruebas/resultadoInteraccion.react.ts, MÁS los
 // polyfills que el Select real de Base UI necesita para abrir su popup
 // flotante en jsdom: `ResizeObserver`/`Node`/`getComputedStyle` (Floating UI
 // los usa para calcular la posición del menú) y un `getBoundingClientRect`
 // fijo (jsdom no calcula layout real, así que sin esto Floating UI ve todo
 // en 0×0 y algunas de sus cuentas internas fallan). Ninguno de estos hace
-// falta en resultadoInteraccion.test.ts porque ahí no se abre ningún popup.
+// falta en resultadoInteraccion.react.ts porque ahí no se abre ningún popup.
 const dom = new JSDOM("<!doctype html><html><body></body></html>", { url: "http://localhost/" });
 // @ts-expect-error -- asignación deliberada de globals de jsdom.
 global.window = dom.window;

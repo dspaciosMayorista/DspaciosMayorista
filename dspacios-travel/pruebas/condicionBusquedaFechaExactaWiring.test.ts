@@ -76,17 +76,19 @@ describe("Persona en BÚSQUEDA usa BusquedaResultado.condicion (fecha exacta), N
   });
 
   test("itemDeBusquedaPersona combina r.condicion con restriccionPorPaquete[r.paqueteId] — nunca condicionDe/politicaDe (el cálculo genérico de exploración)", () => {
-    const inicio = vistaBooking.indexOf("const itemDeBusquedaPersona = (r: BusquedaResultado): ItemResto => {");
+    // Desde #327 (5f21a147) recibe `precioForzado?` — solo cambia `precio`, nunca la condición.
+    const inicio = vistaBooking.indexOf("const itemDeBusquedaPersona = (r: BusquedaResultado, precioForzado?: number): ItemResto => {");
     assert.ok(inicio > -1, "no se encontró itemDeBusquedaPersona");
     const fin = vistaBooking.indexOf("const itemDeBusquedaUnidad", inicio);
     const cuerpo = vistaBooking.slice(inicio, fin);
     assert.match(cuerpo, /const \{ condicion, politica \} = condicionPoliticaBusqueda\(r\.condicion, r\.paqueteId\);/);
     assert.doesNotMatch(cuerpo, /condicionDe\(r\.hotelId/, "la persona en búsqueda no debe usar el rango genérico de exploración para el hotel");
     assert.doesNotMatch(cuerpo, /politicaDe\(r\.hotelId/, "la persona en búsqueda no debe usar el rango genérico de exploración para el hotel");
+    assert.doesNotMatch(cuerpo, /condicionPoliticaBusqueda\([^)]*precioForzado/, "precioForzado nunca alimenta la condición/política");
   });
 
   test("itemDeBusquedaUnidad combina SOLO el paquete (hotel siempre desconocido para Bernalo) — nunca inventa condición de hotel", () => {
-    const inicio = vistaBooking.indexOf("const itemDeBusquedaUnidad = (g: GrupoOfertaUnidad<OpcionUnidadConfirmada>): ItemResto => {");
+    const inicio = vistaBooking.indexOf("const itemDeBusquedaUnidad = (g: GrupoOfertaUnidad<OpcionUnidadConfirmada>, precioForzado?: number): ItemResto => {");
     assert.ok(inicio > -1, "no se encontró itemDeBusquedaUnidad");
     const fin = vistaBooking.indexOf("// ── Modo búsqueda:", inicio);
     const cuerpo = vistaBooking.slice(inicio, fin);

@@ -17,7 +17,10 @@ import {
 import { aporteVuelo } from "../lib/calc/paquetes.ts";
 
 const raiz = join(dirname(fileURLToPath(import.meta.url)), "..");
-const leer = (rel: string) => readFileSync(join(raiz, rel), "utf8");
+// Fin de línea normalizado a LF al leer: la copia de trabajo puede venir en
+// CRLF (Windows, core.autocrlf) o en LF (Linux/CI). Lo que se verifica es el
+// código, no su fin de línea.
+const leer = (rel: string) => readFileSync(join(raiz, rel), "utf8").replace(/\r\n/g, "\n");
 
 // ───────────────────────────────────────────────────────────────────────────
 // PR A (+ revisión de PR #268) — modalidad serie/grupo/sistema + inventario

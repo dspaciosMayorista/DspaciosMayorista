@@ -7,7 +7,7 @@ import {
   clasificarContratos, clasificarContratosDesdeConteos,
   clasificarCartera, carteraPorMonedaDesdeAgregado, fechaLimitePago,
   ventasMesPorMoneda, ventasMesPorMonedaDesdeAgregado, BALDE_MONEDA_DESCONOCIDA, cuposResumenDesdeAgregado,
-} from "../lib/dashboard/metricas";
+} from "../lib/dashboard/metricas.ts";
 
 // ─────────────────────────────────────────────────────────────────────────
 // Ronda "costo de las consultas": el Dashboard dejó de descargar filas

@@ -2,6 +2,8 @@
 
 import { createClient } from "@/lib/supabase/server";
 import { revalidatePath } from "next/cache";
+import { REFERENCIAS_DESTINO, type UsoDestino } from "@/lib/producto/usoDestino";
+import { puedeEscribir } from "@/lib/roles";
 
 // ─── Destinos ──────────────────────────────────────────────────────
 export async function crearDestino(nombre: string, codigoIata?: string, pais?: string) {
@@ -65,6 +67,43 @@ export async function eliminarDestino(
   revalidatePath("/dashboard/tarifario");
   revalidatePath("/dashboard/producto/destinos");
   return { ok: true };
+}
+
+// Solo LECTURA, para el modal de eliminación: cuántas filas de cada tabla con
+// FK a destinos (REFERENCIAS_DESTINO) apuntan a este destino. Un `count` por
+// tabla con `head: true` (encabezado Prefer: count=exact, sin traer filas y
+// sin funciones de agregado), con el cliente de sesión — bajo RLS.
+//
+// `alcanceCompleto`: solo los roles que pueden borrar destinos (policy
+// "destinos: escritura admin", el mismo set que ESCRITURA.producto) leen
+// TODAS las filas de esas 10 tablas (sus policies solo miran el rol; ver
+// pruebas/usoDestino.test.ts, que lo verifica contra las migraciones). Para
+// cualquier otro rol (ej. control_vuelo, que entra a Producto pero no lee
+// servicios_adicionales ni armado_paquetes) un 0 puede ser RLS, no ausencia:
+// el modal no puede afirmar "sin contenido". Un rol que no se pudo resolver
+// cuenta como alcance incompleto.
+//
+// No decide nada: el borrado y la fusión siguen siendo `eliminarDestino`/
+// `fn_fusionar_destino`, y la base de datos tiene la última palabra (23503).
+// Una tabla que no se pudo contar vuelve como `null`, nunca como 0.
+export async function usoDestino(id: number): Promise<UsoDestino> {
+  const sb = await createClient();
+  const [rolRes, ...resultados] = await Promise.all([
+    Promise.resolve(sb.rpc("mi_rol")).then(
+      (r) => r,
+      () => ({ data: null, error: new Error("mi_rol no disponible") })
+    ),
+    ...REFERENCIAS_DESTINO.map(async ({ tabla }) => {
+      const { count, error } = await sb.from(tabla).select("*", { count: "exact", head: true }).eq("destino_id", id);
+      if (error) console.error(`[usoDestino] destino=${id} tabla=${tabla} detalle=${error.message}`);
+      return [tabla, error || count == null ? null : count] as const;
+    }),
+  ]);
+  const rol = rolRes.error ? null : (rolRes.data as string | null);
+  return {
+    conteos: Object.fromEntries(resultados) as UsoDestino["conteos"],
+    alcanceCompleto: puedeEscribir("producto", rol),
+  };
 }
 
 // Lista curada de destinos turísticos famosos (nombre + IATA) para cargar de una.

@@ -1,90 +1,94 @@
 # TASKS.md - Dspacios Mayorista
 
-Fuente unica y priorizada de pendientes. Ultima actualizacion: 2026-09-23.
+Fuente unica y priorizada de pendientes. Ultima actualizacion: 2026-09-30.
+
+Convencion: `[x]` integrado en `main`; `[~]` implementado solo en una rama sin integrar (no cuenta como cerrado); `[ ]` pendiente.
 
 ## Cola priorizada
 
-### 1. Auditoria y reutilizacion de pasajeros en Minorista/Mayorista
+### 1. Catalogos compartidos y selectores buscables: validar lo integrado
 
-- [ ] Auditar como se capturan y almacenan pasajeros hoy en ambos tenants (contrato manual minorista, reservar/tarifario mayorista, sillas de vuelos) antes de tocar codigo: campos, duplicacion de formularios, fuentes de verdad.
-- [ ] Identificar pasajeros repetidos entre contratos (mismo cliente/titular que viaja varias veces) y evaluar un mecanismo de reutilizacion (buscar y reusar en vez de recapturar) sin mezclar datos entre tenants ni saltarse RLS.
-- [ ] No cambiar autenticacion, precios ni el modelo de sillas/vuelos existente — el alcance es capturar/reutilizar datos de pasajero, no reabrir el motor de reservas.
-- [ ] Registrar hallazgos y plan de fases antes de implementar.
+Hecho en `main` (no reabrir):
+- [x] Selectores buscables `ComboDestino`, `ComboProveedor`, `ComboHotel` y `ComboNombre` (`components/`) integrados en 19 formularios del panel y del CRM: hoteles, servicios, programas, paquetes, contratos, vouchers, pagos, CRM difusion, vuelos/bloqueos y empaquetados (`27fa9402`, `eb274b5b`, con pruebas de interaccion `pruebas/combo*Interaccion.react.ts`). Los `<select>` nativos que quedan con "destino" son de records de vuelo o del tarifario publico, no del catalogo.
+- [x] Proveedores: catalogo base (`proveedores`) legible por personal interno activo de ambas agencias; escritura solo Mayorista autorizada; agencia/freelance/cliente_final sin lectura. Ocho datos sensibles (`nit`, `razon_social`, `datos_pago`, `banco`, `tipo_cuenta`, `numero_cuenta`, `politica_reservas`, `voucher_contacto`) movidos a `proveedores_datos_sensibles` (solo Mayorista; superadmin/gerencia leen ambas). Escritura por la RPC transaccional `guardar_proveedor`. El voucher usa solo `voucher_contacto`. Migraciones 189/190/191 (PR #333); la 191 aplicada en produccion segun el usuario.
 
-### 2. Catalogos compartidos con selectores que permitan escribir y buscar
+Pendiente:
+- [ ] Validar en produccion el flujo con un proveedor NUEVO: crear con datos sensibles, editar, usarlo en hotel/servicio/CxP/voucher y comprobar que Minorista ve el catalogo base pero no los datos sensibles.
+- [ ] Validar con datos reales de ambas agencias el comportamiento del catalogo y de los selectores (coincidencias, duplicados, texto libre).
+- [ ] Documentar la matriz de lectura/escritura resultante por catalogo (no existe todavia un documento en el repo). No ampliar acceso entre tenants por inferencia ni ejecutar SQL remoto sin autorizacion.
 
-- [ ] Inventariar los catalogos hoy sin selector buscable (proveedores, aliados, hoteles, aerolineas, destinos, etc. — ver que ya usa el patron de `ComboDestino`/`ComboCiudad`) y cuales todavia son `<select>`/`<datalist>` planos o texto libre sin autocompletar.
-- [ ] Definir un componente combobox reutilizable (escribir para filtrar + elegir de la lista, sin perder texto libre donde el catalogo lo permite hoy) en vez de repetir el patron por pantalla.
-- [ ] Aplicarlo primero donde ya hay mas friccion conocida (formularios largos con muchos proveedores/hoteles) y extender por fases; conservar la logica de negocio y permisos de escritura por rol existentes (`lib/roles.ts`).
+### 2. Tarjetas de Vista Booking y otras vistas
 
-### 3. Rediseno de Vista Booking
+- [ ] Rediseñar las tarjetas tras acordar el detalle visual con el usuario; el shell y los buscadores de la fase 1 ya están cerrados en PR #327.
+- [ ] Conservar precios, disponibilidad, lógica de filtros, identidad `(hotelId, paqueteId)` y fuentes de datos. Modal y carrito se revisan por separado; no asumir que la fase 1 los rediseñó.
+- [ ] Abordar las demás vistas después de cerrar el alcance de tarjetas.
 
-- [ ] Auditar Vista Booking real (`app/tarifario/VistaBooking.tsx` y componentes asociados) antes de modificar codigo: pantallas, tarjetas, filtros y permisos existentes.
-- [ ] Conservar el logo, el nombre D'Spacios Travel y el tratamiento de marca vigente (mismo criterio que Login y Dashboard).
-- [ ] Mantener intacta la logica funcional, precios, disponibilidad, fuentes autoritativas y motores de calculo existentes — el rediseno es visual, no funcional.
-- [ ] Redefinir estructura y sistema visual sin inventar datos, estados en vivo ni metricas que no existan realmente.
-- [ ] Implementacion NO iniciada: este pendiente queda registrado como siguiente objetivo tras cerrar el Dashboard administrativo; la auditoria y el plan de fases van antes de tocar codigo.
-
-### 4. Smoke financiero posterior al PR #294
+### 3. Smoke financiero posterior al PR #294
 
 - [ ] Crear un caso real con servicio incluido por grupo y comparar vitrina, carrito, cotizacion y contrato.
 - [ ] Confirmar una sola CxP por servicio, costos correctos y margen correcto.
 - [ ] Confirmar en Vercel `/api/cron/reconciliar-financiero` y su ejecucion con `CRON_SECRET`.
 
-### 5. Soporte unidad para paquetes dinamicos
+### 4. Soporte unidad para paquetes dinamicos
 
 - [ ] Implementar soporte real de `salidas_dinamicas` y cotizacion antes de anunciar hoteles unidad de paquetes `dinamico`.
 - [ ] Mantenerlos excluidos o marcados como no compatibles hasta completar la integracion.
 
-### 6. Soporte unidad para paquetes de servicios
+### 5. Soporte unidad para paquetes de servicios
 
 - [ ] Implementar soporte real de hoteles unidad en paquetes `servicios` antes de anunciarlos como cotizables.
 - [ ] Mantenerlos excluidos o marcados como no compatibles hasta completar la integracion.
 
-### 7. Corregir los 15 fallos preexistentes de pruebas
+### 6. Linea base de pruebas en verde
 
-- [ ] Inventariar cada fallo por nombre, causa y propietario.
-- [ ] Separar defectos reales de pruebas de wiring obsoletas.
-- [ ] Corregirlos por grupos para dejar de aceptar una linea base roja como normal.
+- [~] En la rama `ronda1-destinos-y-pruebas` (no integrada): `test:unit` pasa de 28 fallos a 0 (4.954/4.954 al 2026-09-30), sin defectos de producto encontrados. Grupos: imports relativos sin extension (3 archivos que nunca cargaban), dependencia de CRLF/LF (8 pruebas, ahora independientes del SO), 17 pruebas de cableado actualizadas a la implementacion vigente con trazabilidad, y 2 pruebas de interaccion renombradas a `*.react.ts` (siguen en `test:react`) con guarda `pruebas/suitesPruebas.test.ts`.
+- [ ] En `main` sigue roja hasta integrar la rama. Tras el merge, confirmar `test:unit` y `test:react` en `main`.
+- [ ] Deuda conocida, no bloqueante: `npm run lint` global tiene 223 problemas preexistentes en 35 archivos (ninguno en los cambios de esta rama).
 
-### 8. Smoke visual de condiciones y restricciones
+### 7. Smoke visual de condiciones y restricciones
 
 - [ ] Validar en produccion badges y condiciones en Booking y carrito de los PR #286/#287.
 - [ ] Confirmar que el contenido sea consistente en escritorio, movil e impresion cuando aplique.
 
-### 9. Smoke de excepcion comercial
+### 8. Smoke de excepcion comercial
 
 - [ ] Probar con superadmin y contrato restringido el formulario, la autorizacion y la trazabilidad.
 - [ ] Mantener como deuda no bloqueante la reutilizacion de la consulta de vigencia para evitar una segunda consulta O(1) a `hotel_temporadas`.
 
-### 10. Mostrar conteos por destino
+### 9. Mostrar conteos por destino
 
-- [ ] Mostrar receptivos junto al conteo de hoteles, por ejemplo: `0 hoteles · 1 receptivo`.
+- [~] En la rama `ronda1-destinos-y-pruebas` (no integrada): receptivo = `servicios_adicionales` con categoria `tour_traslado` y `destino_id` del destino (sin servicios generales sin destino). Conteo sin agregados de PostgREST, por carga paginada que falla cerrado; solo los roles que leen `servicios_adicionales` ven la insignia (conteo desconocido nunca se muestra como 0). Tarjetas compactas: "N hoteles"/"N receptivos" abren un dialogo con busqueda; hoteles enlazan a `/dashboard/producto/hoteles/[id]`; receptivos sin enlace (no hay ruta de detalle). Listas de hasta 50 receptivos se precargan con la misma consulta del conteo (tope 1.000 nombres) y abren sin peticion; reabrir reutiliza la lista y "Actualizar lista" trae datos frescos.
+- Validacion (2026-09-30): el usuario probo en Vercel Preview los cambios de Destinos, incluida la apertura de receptivos, y aprobo el resultado. No confirmados por separado: roles sin acceso (`control_vuelo`), "Actualizar lista" con datos que cambiaron y destinos con mas de 50 receptivos.
+- [ ] Revisar e integrar a `main`.
 
-### 11. Explicar bloqueos al eliminar destinos
+### 10. Explicar bloqueos al eliminar destinos
 
-- [ ] Mostrar en el modal por que un destino no puede eliminarse cuando tiene contenido asociado.
+- [~] En la rama `ronda1-destinos-y-pruebas` (no integrada): el modal lista el contenido real de las 10 tablas con FK a `destinos` (guarda contra FKs nuevas) y solo afirma "sin contenido" para los roles que pueden borrar destinos (verificado contra las policies de las migraciones). Semantica de eliminar/fusionar, permisos y errores sin cambios.
+- Validacion (2026-09-30): incluido en los cambios de Destinos que el usuario probo y aprobo en Vercel Preview; el texto del modal segun el rol no se confirmo por separado.
+- [ ] Revisar e integrar a `main`.
+- [ ] Otra queja del usuario sobre el modal de eliminacion queda pendiente de revisar por separado (no incluida en la rama).
+- [ ] Hallazgo sin corregir: un rol sin permiso de escritura sobre `destinos` recibe exito al eliminar (la RLS borra 0 filas sin error) y el destino sigue existiendo.
 
-### 12. Mejorar la presentacion de servicios adicionales expandidos en las tarjetas
+### 11. Mejorar la presentacion de servicios adicionales expandidos en las tarjetas
 
 - [ ] Evitar que una tarjeta expandida aumente la altura de toda la fila y deje grandes espacios vacios.
 - [ ] Evaluar modal/panel lateral o una superficie compacta equivalente, conservando identidad de paquete y detalle de cada servicio.
 
-### 13. Aclarar, renombrar u ocultar el metadata de las vigencias promocionales
+### 12. Aclarar, renombrar u ocultar el metadata de las vigencias promocionales
 
 - [ ] El porcentaje/monto guardado en una vigencia promocional quedo como metadata y resulta enganoso en la UI.
 - [ ] La vigencia no genera ni modifica precios: la fuente autoritativa del precio es `tarifa_hotel`.
 - [ ] Aclarar, renombrar u ocultar ese valor en el editor y listado de vigencias promocionales.
 
-### 14. Integrar hoteles unidad en empaquetados
+### 13. Integrar hoteles unidad en empaquetados
 
 - [ ] Integrar y validar hoteles `modelo_tarifario = "unidad"` dentro de productos empaquetados.
 
-### 15. Integrar hoteles unidad con vuelos y bloqueos
+### 14. Integrar hoteles unidad con vuelos y bloqueos
 
 - [ ] Integrar y validar hoteles `modelo_tarifario = "unidad"` con vuelos, salidas y bloqueos.
 
-### 16. Investigar hotel 217 ausente en Vista Booking
+### 15. Investigar hotel 217 ausente en Vista Booking
 
 - [ ] Diagnosticar por que el hotel 217 no aparece en Porcion terrestre sin destino o buscando `odair`.
 - [ ] Trazar en Vercel Preview: `tarifario_resumen` -> filtros post-carga -> `TarifarioPublic` -> `VistaBooking` -> tarjetas.
@@ -92,19 +96,34 @@ Fuente unica y priorizada de pendientes. Ultima actualizacion: 2026-09-23.
 - [ ] Fixture confirmado de produccion: hotel 217, paquete 50 activo, modelo persona, SAN ANDRES, 28 filas en `tarifario_resultado`, 4 filas en `tarifario_resumen`, 2 noches, Estandar/Superior, PAE/FULL y procedencia Promocion.
 - Nota (PR #322, diagnostico de datos, no defecto): el mismo hotel 217 "Odair Dubai prueba" pertenece a SAN ANDRES pero `hoteles.zona` = "Bocagrande" (zona real de Cartagena); el filtro de Zona reflejo correctamente el dato almacenado y no se modifico la base. Ver `DECISIONS.md` ADL-024. No cierra ni sustituye este pendiente (la ausencia en Porcion terrestre sigue sin diagnosticar).
 
-### 17. Separar Preview y Produccion
+### 16. Separar Preview y Produccion
 
 - [ ] Usar entornos y bases de datos independientes.
 - [ ] Documentar el orden de migraciones y las variables por ambiente.
 
-### 18. Desarrollo posterior del negocio
+### 17. Desarrollo posterior del negocio
 
 - [ ] Desarrollo integral B2B/B2C.
 - [ ] Marketing y redes sociales.
 - [ ] Automatizacion comercial y ventas.
 
+### 18. Presencia y actividad reciente para superadmin
+
+- [ ] Evaluar un mini informe en el dashboard de superadmin que muestre quien esta activo ahora y hace cuantos minutos se registro su ultima actividad o cambio.
+- [ ] Distinguir presencia en la app (senal con vencimiento) de cambios realmente auditados; no inferir "en linea" solo por el inicio de sesion ni llamar "cambio" a una simple visita.
+- [ ] Definir fuente de datos, alcance por tenant, permisos, frecuencia de actualizacion y retencion antes de implementar. Probar sesiones cerradas o inactivas y multiples pestanas sin exponer datos sensibles.
+
 ## Cerrado recientemente
 
+- [x] PR #333 (squash `92b3c51e`, 2026-09-29): cierre de la separacion de datos sensibles de proveedores (migracion 191: `guardar_proveedor` escribe en `proveedores` y `proveedores_datos_sensibles`, paridad verificada, retira triggers y las 8 columnas legacy sin CASCADE, lectura del catalogo base solo para personal interno activo, revoca TRUNCATE). Voucher solo con `voucher_contacto`. `completarProveedores` autoriza antes de usar service-role; `asegurarCuentasPorPagar` y `liberarVencidas` pasan a `lib/` (server-only). El commit indica la 191 preparada y no aplicada al momento del merge; el usuario reporta despues que ya esta aplicada. La validacion con un proveedor nuevo sigue pendiente (#1).
+- [x] PR #332 (squash `08f717a3`, 2026-09-29): politica de reservas de proveedores resumida a dos lineas con dialogo "Ver mas"; sin cambios de SQL ni datos.
+- [x] `eb274b5b` (2026-09-29): selectores buscables integrados en formularios del panel y preparacion de la separacion de datos sensibles de proveedores (migraciones 189/190).
+- [x] `27fa9402` (2026-09-24): selector buscable de proveedores en hoteles (`ComboProveedor`).
+- [x] PR #331 (squash `970d9c67`, 2026-09-24): calendarios propios en los formularios existentes. `components/ui/DateInput.tsx` y `lib/calendarValue.ts` reemplazan controles de fecha nativos sin cambiar el contrato de valores ni la lógica de negocio; referencia técnica en `docs/calendarios-personalizados.md`. Validado visualmente por el usuario antes del merge.
+- [x] PR #330 (squash `fadb9a2e`, 2026-09-23): tablas del Dashboard y CRM se adaptan al ancho real del contenedor, sin recorte horizontal silencioso. CRM agrega la vista de pasajeros de contratos de ambas agencias bajo permisos por rol/contrato mediante la migración 188; fuente separada de `crm_contactos`, sin añadir pasajeros a campañas. Preflight, postcheck y 12 casos de seguridad de la 188 reportados `OK`; el usuario confirmó que ya aparecen los pasajeros.
+- [x] PR #329 (squash `67154391`, 2026-09-23): búsqueda interna por documento para reutilizar pasajeros de contratos existentes en flujos de creación, migración 187. Conserva datos históricos sin partir nombres combinados ni modificar el núcleo atómico de la 167. Preflight, postcheck y pruebas SQL de seguridad/búsqueda reportados `OK`. La consulta/lista de pasajeros en CRM se añadió después, en PR #330; la edición de pasajeros en contratos ya creados no fue parte de este cierre.
+- [x] PR #328 (squash `53f1ed91`, 2026-09-23): isotipo oficial como indicador de carga para páginas, búsquedas y navegación según el alcance implementado; validado por el usuario.
+- [x] PR #327 (squash `5f21a147`, 2026-09-22): fase 1 del rediseño de Vista Booking (header, canvas, pestañas, buscadores y filtros). Ajustes de filtro en búsqueda por destino y selector de destino incluidos; tarjetas, modal y carrito visual pendientes de fase posterior.
 - [x] PR #326 (squash `412de253`, 2026-09-22): rediseño del Dashboard administrativo. Shell visual (`app/(dashboard)/**`) sobre tokens propios `--dash-*` derivados de los tokens semánticos base, sin clases legacy (`bg-white`, `text-gray-*`, `.app-bg`) dentro del shell; TenantSwitcher pasa a un selector accesible (`@base-ui/react/select`) sin librería nueva. KPI reales con barra de progreso solo cuando existe un numerador y un denominador reales y relacionados (`pctOrNull`/`pctRawOrNull`, `lib/dashboard/metricas.ts`): Contratos (confirmado/activo de vigentes), Cupos (ocupados de capacidad), Cartera al día/vencida por moneda, Pagos por vencer, Conciliaciones del mes, Facturación DIAN y Retención en la fuente — estas tres últimas visibles solo para roles contables (`superadmin`/`gerencia`/`administracion`). Meta general mensual persistida por tenant+periodo+moneda (`meta_ventas_mensual`, migración 185, configurable en `/dashboard/configuracion`) — nunca la suma de cuotas individuales de asesores ni el cálculo dinámico de Punto de equilibrio; solo `confirmado`/`activo` cuentan como venta efectiva contra la meta y en cartera, nunca `pendiente` ni `cancelado`. Los agregados pesados se resuelven en 6 funciones SQL `SECURITY INVOKER` (migración 186, `fn_dashboard_*`) en vez de descargar filas completas — cantidad de consultas fija por carga, `EXECUTE` revocado de `anon`, otorgado a `authenticated`/`service_role`; la vista `cupos_por_bloqueo` se corrige a `security_invoker = true`. `fetchAllPaginado` (protección genérica contra "Max Rows") se conserva como utilidad reutilizable. Eliminado por completo el sistema de cambio de temas (`ThemeSwitcher`, 4 variantes CSS `indigo`/`verde`/`web`/`blueprint`, `data-theme`, `localStorage` `dsp-theme`): la app queda con una sola UI oficial en Dashboard, Tarifario/Vista Booking y Login. Migraciones 185/186 aplicadas en Supabase remoto con preflight/postcheck `ok:true` (dos rondas de corrección de `GRANT`/`EXECUTE` documentadas). Ver `DECISIONS.md` ADL-026 y ADL-027. El objetivo activo pasa a ser el rediseño de Vista Booking (ver `CURRENT_GOAL.md`).
 - [x] PR #324 (squash `b673f9cb`, 2026-09-22): rediseño de `/login` con dos estados visuales, Portal B2B y Portal Admin. El selector (`role="tablist"`, dos `role="tab"`) cambia únicamente presentación — etiqueta, título, descripción, placeholder de correo y texto del CTA — y nunca tiene autoridad sobre permisos: el destino tras autenticar sigue dependiendo exclusivamente de `usuarios.rol` (agencia/freelance/cliente_final → `/portal/b2b`, personal interno → `/dashboard`), sin excepción aunque el selector visual no coincida con el rol real. Panel informativo (derecha, oculto en móvil) con eyebrow, titular, descripción y tres capacidades reales de la plataforma (Tarifario y oferta publicada, Reservas y seguimiento, Contratos y documentos), sin tarjetas de portal ni afirmaciones sin demostrar. Logo oficial (`components/Logo.tsx`, `variant="full"`) con mayor presencia, nunca reconstruido. `QUICK_LOGIN_ENABLED` se resuelve en el servidor (`page.tsx`, Server Component) y solo entonces se renderiza el disclosure de acceso rápido en el cliente — antes aparecía siempre aunque el servidor lo tuviera apagado. Cuenta inactiva (`?inactivo=1`, cierre de sesión si `perfil.activo === false`) e inicio con Google conservados sin cambios. Responsive validado en escritorio (1440×900), laptop (1024×768) y móvil (390×844) para ambos estados del selector, con esquinas redondeadas y borde delgado en el marco exterior, sin solapar `ThemeSwitcher`. En el tarifario público (`app/tarifario/page.tsx`) se elimina el botón antiguo "Portal B2B" (`/portal/b2b`) del encabezado para visitantes sin sesión; queda un único acceso público "Ingreso al Portal" → `/login` (el botón "Ir al panel →" de sesión activa no se tocó). Tokens visuales aislados en `LoginClient.module.css` (nunca en `styles/globals.css`). Pruebas: `pruebas/loginWiring.test.ts` (47/47) más validación visual manual en las tres resoluciones y ambos estados del selector. Ver `DECISIONS.md` ADL-025. El objetivo activo pasa a ser el rediseño del Dashboard administrativo (ver `CURRENT_GOAL.md`).
 - [x] PR #322 (squash `73339a1f`, 2026-09-21): ordena y filtra el resto del inventario hotelero. Dentro de cada bloque por paquete, el resto no recomendado se ordena de forma determinista: precio valido ascendente (nulo/no finito/<=0 siempre al final, en cualquier sentido de orden) -> estrellas descendente (sin clasificar al final) -> zona normalizada -> nombre (locale es) -> `hotelId` de desempate; los recomendados nunca se reordenan por este motor, solo el resto, y conservan su prioridad/bloque y aparecen primero. Identidad autoritativa siempre `(hotelId, paqueteId)`, nunca `hotelId` a secas. Selector "Ordenar por" (precio/estrellas/nombre, asc/desc) y panel de filtros: precio (via orden), estrellas (incluye "Sin clasificar"), zona, Pet Friendly, Adults Only, condiciones de pago (Con/Sin) y politica comercial (Flexible/No reembolsable); todos los filtros aplican tanto a recomendados como a resto sin promover una prioridad inferior al excluir una superior (una prioridad 1 que no cumple un filtro no asciende la 3 a su lugar). Zonas/estrellas disponibles en el selector se derivan exclusivamente del universo de ofertas candidatas ya acotado al destino/busqueda activa (recomendados + resto); el estado global sin destino puede mostrar la union completa; nunca una lista global inventada cuando hay destino activo. Condicion de pago/politica comercial se resuelven con combinacion ternaria (positivo/neutro-conocido/desconocido): una evidencia positiva en cualquier lado gana, y un lado neutro nunca convierte un lado desconocido en "flexible"/"sin condicion". En busqueda por destino, condicion/politica usan las fechas EXACTAS buscadas (`BusquedaResultado.condicion`) combinadas con la restriccion propia del paquete; exploracion conserva el calculo de rango generico. La lectura de `hotel_temporadas` para esa condicion se pagina por completo con `ejecutarConsultaPaginada` (mismo patron que el PR #320). Correccion de regresion en Preview: `armado_hoteles` tiene RLS de solo lectura interna, asi que la consulta de prioridades para el tarifario publico debe usar `admin` (service-role) en vez de `sb` (cliente de la request) — con `sb`, un visitante anonimo recibia siempre 0 filas sin error y ningun recomendado aparecia, ni en global ni en busqueda por destino, porque ambos modos parten del mismo mapa combinado; ver `DECISIONS.md` ADL-023. Diagnostico de datos, no defecto (ver `DECISIONS.md` ADL-024 y la nota en el pendiente #14 de este archivo): hotel 217 "Odair Dubai prueba" pertenece a SAN ANDRES pero `hoteles.zona` = "Bocagrande"; el filtro reflejo correctamente el dato almacenado y no se modifico la base. Preview validado por el usuario en estado global y en busqueda por destino. Sin migraciones ni regeneracion de tarifarios. El pendiente "Ordenar el resto del inventario hotelero" queda cerrado; el objetivo activo pasa a ser el rediseno integral de la interfaz (ver `CURRENT_GOAL.md`).
