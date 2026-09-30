@@ -18,6 +18,7 @@ import {
   REFERENCIAS_DESTINO,
   etiquetaConteo,
   resumirUsoDestino,
+  modoEliminacion,
 } from "../lib/producto/usoDestino.ts";
 import {
   CATEGORIAS_RECEPTIVO,
@@ -412,6 +413,16 @@ describe("RLS: los roles que pueden borrar destinos leen TODAS las filas de las 
     const producto = [...[...admin.matchAll(/"(\w+)"/g)].map((x) => x[1]), "operaciones"].sort();
     assert.deepEqual(producto, borradores);
   });
+
+  test("fn_fusionar_destino (112) exige EXACTAMENTE el mismo set de roles (la acción no amplía ni recorta sus permisos)", () => {
+    const fn = sinComentarios(leer("supabase/migrations/20260601000112_fusionar_destino.sql"));
+    const lista = fn.match(/if public\.mi_rol\(\) not in \(([^)]*)\) then/)?.[1] ?? "";
+    assert.deepEqual([...lista.matchAll(/'(\w+)'/g)].map((x) => x[1]).sort(), borradores);
+    // Semántica que la acción NO cambia: origen inexistente = return silencioso
+    // (por eso la acción comprueba antes y después), y borra el origen al final.
+    assert.match(fn, /if not exists \(select 1 from public\.destinos where id = p_origen\) then\s*return;/);
+    assert.match(fn, /delete from public\.destinos where id = p_origen;/);
+  });
 });
 
 describe("cableado — listado de destinos y Server Action de uso", () => {
@@ -454,8 +465,9 @@ describe("cableado — listado de destinos y Server Action de uso", () => {
     assert.match(cuerpo, /select\("\*", \{ count: "exact", head: true \}\)\.eq\("destino_id", id\)/);
     assert.match(cuerpo, /error \|\| count == null \? null : count/, "un error es null, nunca 0");
     assert.match(cuerpo, /sb\.rpc\("mi_rol"\)/);
-    assert.match(cuerpo, /alcanceCompleto: puedeEscribir\("producto", rol\)/);
-    assert.match(cuerpo, /const rol = rolRes\.error \? null :/, "rol no resuelto = alcance incompleto");
+    assert.match(cuerpo, /puedeEscribir\("producto", [^)]*\) \? "si" : "no"/);
+    assert.match(cuerpo, /const permiso: UsoDestino\["permiso"\] = rolRes\.error\s*\? "desconocido"/, "rol no resuelto = permiso desconocido");
+    assert.match(cuerpo, /alcanceCompleto: permiso === "si",/);
     assert.doesNotMatch(cuerpo, /\.delete\(|\.update\(|\.insert\(|\.upsert\(|revalidatePath|fn_fusionar_destino/);
   });
 });
@@ -558,5 +570,64 @@ describe("precarga limitada de receptivos (agruparReceptivosPorDestino)", () => 
   test("filas de destinos que no están en el listado se ignoran (ni cuentan ni se precargan)", () => {
     const g = agruparReceptivosPorDestino([r(1, 1), r(2, 99)], [1])!;
     assert.deepEqual(g, { conteos: { 1: 1 }, precargados: { 1: [{ id: 1, nombre: "R1" }] } });
+  });
+});
+
+describe("modoEliminacion — lo que ofrece el modal sale de lo VERIFICADO, nunca de la cantidad de hoteles", () => {
+  const cero = Object.fromEntries(REFERENCIAS_DESTINO.map((r) => [r.tabla, 0])) as Record<string, number | null>;
+  const uso = (conteos: Record<string, number | null>, permiso: "si" | "no" | "desconocido" = "si") =>
+    ({ conteos: { ...cero, ...conteos }, alcanceCompleto: permiso === "si", permiso }) as Parameters<typeof modoEliminacion>[0];
+
+  test("0 hoteles y 5 receptivos → fusión (hay contenido aunque no haya hoteles)", () => {
+    assert.equal(modoEliminacion(uso({ servicios_adicionales: 5 })), "fusion");
+  });
+  test("verificado sin contenido (rol autorizado, las 10 tablas contadas) → borrado directo", () => {
+    assert.equal(modoEliminacion(uso({})), "borrado_directo");
+  });
+  test("una tabla sin contar o rol no resuelto, sin contenido visto → no verificado (nunca borrado directo)", () => {
+    assert.equal(modoEliminacion(uso({ empaquetados: null })), "no_verificado");
+    assert.equal(modoEliminacion(uso({}, "desconocido")), "no_verificado");
+  });
+  test("contenido visto aunque falte verificar otra tabla → fusión", () => {
+    assert.equal(modoEliminacion(uso({ hoteles: 1, empaquetados: null })), "fusion");
+    assert.equal(modoEliminacion(uso({ bloqueos_vuelo: 2 }, "desconocido")), "fusion");
+  });
+  test("rol sin permiso → sin permiso, con o sin contenido", () => {
+    assert.equal(modoEliminacion(uso({}, "no")), "sin_permiso");
+    assert.equal(modoEliminacion(uso({ hoteles: 3 }, "no")), "sin_permiso");
+  });
+  test("inconsistencia alcanceCompleto=false con permiso 'si' → no verificado (nunca borrado directo)", () => {
+    assert.equal(modoEliminacion({ ...uso({}), alcanceCompleto: false }), "no_verificado");
+  });
+});
+
+describe("cableado — eliminarDestino nunca afirma un éxito que no ocurrió", () => {
+  const acciones = leer("app/(dashboard)/dashboard/tarifario/actions.ts");
+  const i = acciones.indexOf("export async function eliminarDestino(");
+  const cuerpo = acciones.slice(i, acciones.indexOf("\n}\n", i));
+  const modal = leer("app/(dashboard)/dashboard/tarifario/EliminarDestinoBtn.tsx");
+
+  test("permiso primero, origen existente, DELETE con filas devueltas y confirmación tras la fusión", () => {
+    assert.match(cuerpo, /if \(!puedeEscribir\("producto", rol\)\) return \{ ok: false,/);
+    const idxPermiso = cuerpo.indexOf('puedeEscribir("producto", rol)');
+    const idxExiste = cuerpo.indexOf("const antes = await existe();");
+    const idxRpc = cuerpo.indexOf('sb.rpc("fn_fusionar_destino"');
+    const idxDelete = cuerpo.indexOf('.from("destinos").delete()');
+    assert.ok(idxPermiso > -1 && idxExiste > idxPermiso && idxRpc > idxExiste && idxDelete > idxExiste, "orden: permiso → existencia → operación");
+    assert.match(cuerpo, /\.from\("destinos"\)\.delete\(\)\.eq\("id", id\)\.select\("id"\)/);
+    assert.match(cuerpo, /borrados\.length !== 1/);
+    assert.match(cuerpo, /const despues = await existe\(\);/);
+    assert.equal([...cuerpo.matchAll(/return \{ ok: true \};/g)].length, 2, "solo dos éxitos: fusión confirmada y borrado de una fila");
+  });
+
+  test("la fusión sigue siendo fn_fusionar_destino (112) con los mismos parámetros; nada toca contratos/ventas/cotizaciones", () => {
+    assert.match(cuerpo, /sb\.rpc\("fn_fusionar_destino", \{ p_origen: id, p_destino: reasignarA \}\)/);
+    assert.doesNotMatch(cuerpo, /ventas|contrato|cotizacion/i);
+  });
+
+  test("el modal decide por modoEliminacion, no por la cantidad de hoteles", () => {
+    assert.match(modal, /modoEliminacion\(uso\.uso\)/);
+    assert.doesNotMatch(modal, /hoteles > 0/);
+    assert.match(modal, /const reasignarA = modo === "borrado_directo" \? undefined : Number\(target\);/, "solo el borrado directo va sin destino");
   });
 });

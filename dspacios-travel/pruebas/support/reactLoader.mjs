@@ -151,6 +151,8 @@ export async function resolve(specifier, context, nextResolve) {
        context.parentURL?.endsWith("/producto/destinos/page.tsx") ||
        // La Server Action de la lista de receptivos (pruebas/destinosReceptivosAction.react.ts).
        context.parentURL?.endsWith("/producto/destinos/actions.ts") ||
+       // eliminarDestino/usoDestino reales (pruebas/eliminarDestinoAction.react.ts).
+       context.parentURL?.endsWith("/dashboard/tarifario/actions.ts") ||
        context.parentURL?.endsWith("/lib/roles.ts"))) {
     return { url: STUB_SUPABASE_SERVER, shortCircuit: true };
   }
@@ -158,7 +160,8 @@ export async function resolve(specifier, context, nextResolve) {
       (context.parentURL?.endsWith("dashboard/pagos/actions.ts") ||
        context.parentURL?.endsWith("dashboard/producto/proveedores/actions.ts") ||
        context.parentURL?.endsWith("/voucher-actions.ts") ||
-       context.parentURL?.endsWith("/gestion-actions.ts"))) {
+       context.parentURL?.endsWith("/gestion-actions.ts") ||
+       context.parentURL?.endsWith("/dashboard/tarifario/actions.ts"))) {
     return { url: STUB_NEXT_CACHE, shortCircuit: true };
   }
   if (specifier === "@/lib/contabilidad/asientos" &&

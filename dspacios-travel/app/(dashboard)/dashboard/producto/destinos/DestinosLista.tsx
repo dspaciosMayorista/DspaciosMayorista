@@ -88,7 +88,6 @@ export function DestinosLista({
                       <EliminarDestinoBtn
                         id={d.id}
                         nombre={d.nombre}
-                        hoteles={hoteles.length}
                         destinos={destinos.map((x) => ({ id: x.id, nombre: x.nombre }))}
                       />
                     </div>

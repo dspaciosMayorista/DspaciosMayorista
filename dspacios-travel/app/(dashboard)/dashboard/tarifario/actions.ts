@@ -30,17 +30,58 @@ export async function crearDestino(nombre: string, codigoIata?: string, pais?: s
 
 // Elimina un destino. Si `reasignarA` viene, primero MUEVE todo lo del destino
 // (hoteles, servicios, paquetes, tarifario…) al destino de llegada y luego lo
-// borra (fusión de duplicados). Sin reasignar, solo borra si no está en uso.
+// borra (fusión de duplicados, `fn_fusionar_destino`, migración 112 — sin
+// cambios). Sin reasignar, solo borra si no está en uso (la FK lo impide: 23503).
+//
+// Nunca afirma un éxito que no ocurrió:
+//   · permiso primero: mismo set que la policy de escritura de `destinos` y
+//     que la propia `fn_fusionar_destino` (ESCRITURA.producto; ver
+//     pruebas/usoDestino.test.ts). La base de datos sigue siendo la frontera
+//     real; esto solo evita el "éxito" silencioso de un DELETE que la RLS
+//     reduce a cero filas;
+//   · el origen debe existir antes de operar (la RPC hace `return` sin error
+//     si no existe, y eso no es un éxito);
+//   · borrado directo: se exige que el DELETE haya borrado exactamente esa
+//     fila (`.select("id")`); cero filas = error, nunca `{ ok: true }`;
+//   · fusión: tras la RPC se confirma que el origen ya no existe.
 export async function eliminarDestino(
   id: number,
   reasignarA?: number
 ): Promise<{ ok: true } | { ok: false; error: string }> {
+  const esId = (v: unknown) => typeof v === "number" && Number.isInteger(v) && v > 0;
+  if (!esId(id)) return { ok: false, error: "Destino inválido." };
+  if (reasignarA !== undefined && !esId(reasignarA)) return { ok: false, error: "El destino de llegada no es válido." };
+  if (reasignarA === id) return { ok: false, error: "Elige un destino distinto al que vas a eliminar." };
+
   const sb = await createClient();
 
-  if (reasignarA) {
-    if (reasignarA === id) return { ok: false, error: "Elige un destino distinto al que vas a eliminar." };
+  // 1) Permiso.
+  let rol: string | null = null;
+  try {
+    const r = await sb.rpc("mi_rol");
+    if (r.error) return { ok: false, error: "No se pudo verificar tu permiso para eliminar destinos. Intenta de nuevo." };
+    rol = typeof r.data === "string" ? r.data : null;
+  } catch {
+    return { ok: false, error: "No se pudo verificar tu permiso para eliminar destinos. Intenta de nuevo." };
+  }
+  if (!puedeEscribir("producto", rol)) return { ok: false, error: "Tu rol no tiene permiso para eliminar destinos." };
+
+  // 2) El origen existe (lectura pública de `destinos`).
+  const existe = async (): Promise<boolean | null> => {
+    const { data, error } = await sb.from("destinos").select("id").eq("id", id).maybeSingle();
+    return error ? null : !!data;
+  };
+  const antes = await existe();
+  if (antes === null) return { ok: false, error: "No se pudo comprobar el destino. Intenta de nuevo." };
+  if (!antes) return { ok: false, error: "El destino ya no existe (pudo eliminarse en otra sesión). Recarga la página." };
+
+  if (reasignarA !== undefined) {
     const { error } = await sb.rpc("fn_fusionar_destino", { p_origen: id, p_destino: reasignarA });
     if (error) return { ok: false, error: error.message };
+    // 3) La fusión termina borrando el origen: confirmarlo antes de afirmar éxito.
+    const despues = await existe();
+    if (despues === null) return { ok: false, error: "La fusión terminó, pero no se pudo confirmar que el destino se eliminó. Recarga la página y revisa." };
+    if (despues) return { ok: false, error: "La fusión no eliminó el destino. Recarga la página y revisa." };
     revalidatePath("/dashboard/tarifario");
     revalidatePath("/dashboard/producto/destinos");
     return { ok: true };
@@ -52,7 +93,7 @@ export async function eliminarDestino(
     .select("id", { count: "exact", head: true })
     .eq("destino_id", id);
 
-  const { error } = await sb.from("destinos").delete().eq("id", id);
+  const { data: borrados, error } = await sb.from("destinos").delete().eq("id", id).select("id");
   if (error) {
     // 23503 = llave foránea: el destino está en uso en otra tabla.
     if (error.code === "23503") {
@@ -63,6 +104,10 @@ export async function eliminarDestino(
       };
     }
     return { ok: false, error: error.message };
+  }
+  // Cero filas sin error = la RLS no dejó borrar o el destino ya no estaba.
+  if (!Array.isArray(borrados) || borrados.length !== 1) {
+    return { ok: false, error: "No se eliminó el destino: no tienes permiso para borrarlo o ya no existe." };
   }
   revalidatePath("/dashboard/tarifario");
   revalidatePath("/dashboard/producto/destinos");
@@ -99,10 +144,14 @@ export async function usoDestino(id: number): Promise<UsoDestino> {
       return [tabla, error || count == null ? null : count] as const;
     }),
   ]);
-  const rol = rolRes.error ? null : (rolRes.data as string | null);
+  // Rol no resuelto = permiso "desconocido" (nunca se asume "si" ni "no").
+  const permiso: UsoDestino["permiso"] = rolRes.error
+    ? "desconocido"
+    : puedeEscribir("producto", typeof rolRes.data === "string" ? rolRes.data : null) ? "si" : "no";
   return {
     conteos: Object.fromEntries(resultados) as UsoDestino["conteos"],
-    alcanceCompleto: puedeEscribir("producto", rol),
+    alcanceCompleto: permiso === "si",
+    permiso,
   };
 }
 

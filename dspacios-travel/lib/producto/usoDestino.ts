@@ -37,11 +37,19 @@ export type TablaReferenciaDestino = (typeof REFERENCIAS_DESTINO)[number]["tabla
 export type ConteosUsoDestino = Record<TablaReferenciaDestino, number | null>;
 
 /**
+ * ¿El rol del usuario puede eliminar/fusionar destinos? Mismo set que la
+ * policy de escritura de `destinos` y que `fn_fusionar_destino` (migración 112).
+ * "desconocido" = no se pudo resolver el rol: nunca se trata como "si" ni "no".
+ */
+export type PermisoDestino = "si" | "no" | "desconocido";
+
+/**
  * Respuesta de la Server Action `usoDestino`. `alcanceCompleto` = el rol del
  * usuario ve TODAS las filas de estas tablas (solo los roles que pueden
  * borrar destinos); si es false, un 0 puede deberse a RLS y no a ausencia.
+ * Equivale a `permiso === "si"`.
  */
-export type UsoDestino = { conteos: ConteosUsoDestino; alcanceCompleto: boolean };
+export type UsoDestino = { conteos: ConteosUsoDestino; alcanceCompleto: boolean; permiso: PermisoDestino };
 
 /** "1 hotel" / "0 hoteles" / "3 hoteles". */
 export function etiquetaConteo(n: number, singular: string, plural: string): string {
@@ -72,4 +80,26 @@ export function resumirUsoDestino(conteos: Partial<ConteosUsoDestino>): ResumenU
     total += n;
   }
   return { items, sinVerificar, total };
+}
+
+/**
+ * Qué ofrece el modal de eliminación, según lo VERIFICADO (nunca por la
+ * cantidad de hoteles):
+ *   · "sin_permiso"     — el rol no puede eliminar destinos: ninguna acción.
+ *   · "borrado_directo" — verificado sin contenido (rol autorizado, las 10
+ *                         tablas contadas, total 0).
+ *   · "fusion"          — tiene contenido (alguna tabla con filas): hay que
+ *                         elegir a qué destino moverlo (fn_fusionar_destino).
+ *   · "no_verificado"   — no se pudo verificar (rol desconocido o alguna
+ *                         tabla sin contar) y no se vio contenido: se ofrece
+ *                         la fusión, NUNCA un borrado basado en un 0 supuesto.
+ */
+export type ModoEliminacion = "sin_permiso" | "borrado_directo" | "fusion" | "no_verificado";
+
+export function modoEliminacion(uso: UsoDestino): ModoEliminacion {
+  if (uso.permiso === "no") return "sin_permiso";
+  const r = resumirUsoDestino(uso.conteos);
+  if (r.total > 0) return "fusion";
+  if (uso.permiso === "si" && uso.alcanceCompleto && r.sinVerificar.length === 0) return "borrado_directo";
+  return "no_verificado";
 }
