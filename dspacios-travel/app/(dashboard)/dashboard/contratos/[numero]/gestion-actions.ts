@@ -5,6 +5,7 @@ import { revalidatePath } from "next/cache";
 import { asegurarCuentasPorPagar } from "@/lib/reservar/asegurarCuentasPorPagar";
 import { autorizarCuentasPorPagarContrato, mensajeCxpDenegado } from "@/lib/contrato/accesoCuentasPorPagar";
 import { postearAsientoCxP, eliminarAsientoCxP } from "@/lib/contabilidad/asientos";
+import { fechaNegocio } from "@/lib/fechaNegocio";
 
 type Result = { ok: true } | { ok: false; error: string };
 
@@ -103,7 +104,7 @@ export async function crearCuentaPorPagar(input: {
   if (nueva) {
     await postearAsientoCxP({
       cuentaId: nueva.id, numeroContrato: input.numeroContrato, tipoProveedor: input.tipoProveedor, proveedor: input.proveedor,
-      servicio: input.servicio, valorTotal: input.valorTotal, fecha: new Date().toISOString().slice(0, 10),
+      servicio: input.servicio, valorTotal: input.valorTotal, fecha: fechaNegocio(),
     });
   }
   rev(input.numeroContrato);
@@ -139,7 +140,7 @@ export async function actualizarCuentaPorPagar(input: {
   if (error) return { ok: false, error: error.message };
   await postearAsientoCxP({
     cuentaId: input.id, numeroContrato: input.numeroContrato, tipoProveedor: actualizada?.tipo_proveedor ?? null, proveedor: input.proveedor,
-    servicio: input.servicio, valorTotal: input.valorTotal, fecha: new Date().toISOString().slice(0, 10),
+    servicio: input.servicio, valorTotal: input.valorTotal, fecha: fechaNegocio(),
   });
   rev(input.numeroContrato);
   revalidatePath("/dashboard/contabilidad/libro-diario");

@@ -7,6 +7,7 @@ import Link from "next/link";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { formatMoneda, formatFechaLarga, formatCOP } from "@/lib/utils";
+import { fechaNegocio } from "@/lib/fechaNegocio";
 import { registrarPagoProveedor, deshacerUltimoPago, asignarProveedorCuentaPorPagar, configurarFacturaProveedor } from "./actions";
 import { ResponsiveTableShell } from "@/components/ui/ResponsiveTableShell";
 
@@ -484,7 +485,7 @@ function PagoInline({
   puedeDeshacer: boolean;
 }) {
   const [valor, setValor] = useState("");
-  const [fecha, setFecha] = useState(new Date().toISOString().slice(0, 10));
+  const [fecha, setFecha] = useState(() => fechaNegocio());
   const [trm, setTrm] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [pending, startTransition] = useTransition();

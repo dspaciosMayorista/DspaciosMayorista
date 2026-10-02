@@ -7,6 +7,7 @@ import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { Pencil, Trash2, ArrowDownLeft, ArrowUpRight } from "lucide-react";
 import { formatCOP } from "@/lib/utils";
+import { fechaNegocio } from "@/lib/fechaNegocio";
 import { guardarMovimiento, eliminarMovimiento } from "./actions";
 import { ResponsiveTableShell } from "@/components/ui/ResponsiveTableShell";
 
@@ -116,7 +117,7 @@ function Fila({ r, onEdit }: { r: MovRow; onEdit: () => void }) {
 
 function Editor({ row, onClose }: { row: MovRow | null; onClose: () => void }) {
   const router = useRouter();
-  const [fecha, setFecha] = useState(row?.fecha ?? new Date().toISOString().slice(0, 10));
+  const [fecha, setFecha] = useState(() => row?.fecha ?? fechaNegocio());
   const [tipo, setTipo] = useState<"ingreso" | "egreso">(row?.tipo ?? "egreso");
   const [concepto, setConcepto] = useState(row?.concepto ?? "");
   const [tercero, setTercero] = useState(row?.tercero ?? "");

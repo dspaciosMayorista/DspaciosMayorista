@@ -8,6 +8,7 @@ import { normalizarCategoriaServicio, resumirServiciosContrato, tipoProveedorCxp
 import { planReconciliacionCxpServicios, type ServicioObjetivo } from "@/lib/reservar/cxpCobertura";
 import { asegurarCuentasPorPagar } from "@/lib/reservar/asegurarCuentasPorPagar";
 import { formatMoneda } from "@/lib/utils";
+import { fechaElegidaONegocio, fechaNegocio } from "@/lib/fechaNegocio";
 import { siguienteNumeroContrato } from "@/lib/contrato/numeracion";
 import { contextoCrearContrato } from "@/lib/contrato/contexto";
 import { reemplazarAsiento, cuentaDisponible, postearAsientoCxP, eliminarAsientoCxP, CUENTA } from "@/lib/contabilidad/asientos";
@@ -747,7 +748,7 @@ async function crearContratoInterno(
         registrarErrorTecnico("crear_contrato", flujoId, "cxp_automaticas", "error_consulta_proveedores", provsError);
       }
       const provMap = new Map((provs ?? []).map((p) => [p.nombre, p]));
-      const hoyCxP = oNull(input.fechaEmision) ?? new Date().toISOString().slice(0, 10);
+      const hoyCxP = fechaElegidaONegocio(input.fechaEmision);
       const { data: cxpCreadas, error: cxpInsertError } = await sb.from("cuentas_por_pagar").insert(
         cxpRows.map((r) => {
           const p = provMap.get(r.proveedor);
@@ -1014,7 +1015,7 @@ export async function registrarAbono(
   // El abono "vale" en la MONEDA DEL CONTRATO: USD = COP / TRM; COP = COP.
   const valorAbono = esUSD ? montoCop / trm : montoCop;
 
-  const fechaAbono = fecha || new Date().toISOString().slice(0, 10);
+  const fechaAbono = fechaElegidaONegocio(fecha);
   const { data: nuevoAbono, error } = await sb.from("abonos").insert({
     numero_contrato: numeroContrato,
     tenant: (venta as { tenant?: string } | null)?.tenant ?? "mayorista",
@@ -1052,7 +1053,7 @@ export async function actualizarAbono(
   const trm = esUSD ? (Number(input.trmInput) || 0) : 1;
   if (esUSD && trm <= 0) return { ok: false, error: "Indica la TRM del día (contrato en USD)." };
   const valorAbono = esUSD ? montoCop / trm : montoCop;
-  const fechaAbono = input.fecha || new Date().toISOString().slice(0, 10);
+  const fechaAbono = fechaElegidaONegocio(input.fecha);
 
   const { error } = await sb.from("abonos").update({
     valor_abono: valorAbono,
@@ -1291,7 +1292,7 @@ export async function actualizarServiciosContrato(
   // helpers que usa el resto del módulo (`cxp:{id}` como referencia).
   const { data: ventaTenant } = await admin.from("ventas").select("tenant, moneda, plazo, fecha_salida").eq("numero_contrato", numeroContrato).maybeSingle();
   const tenantCxp = (ventaTenant?.tenant as string | null) ?? "mayorista";
-  const hoyCxp = new Date().toISOString().slice(0, 10);
+  const hoyCxp = fechaNegocio();
   const OBS_EDIT = "Generado automáticamente al editar los servicios del contrato";
 
   for (const del of plan.eliminar) {

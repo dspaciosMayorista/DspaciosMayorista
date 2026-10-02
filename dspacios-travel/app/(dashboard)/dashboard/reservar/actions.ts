@@ -60,6 +60,7 @@ import {
 import { componenteDePrograma } from "@/lib/cotizacion/condicionDesdeCatalogo";
 import type { ComponenteSnapshot } from "@/lib/cotizacion/snapshotCondiciones";
 import { hoyBogota, resolverVigenciaCotizacion } from "@/lib/cotizacion/vigencia";
+import { fechaNegocio } from "@/lib/fechaNegocio";
 
 const oNull = (s: string | null | undefined) => (s && s.trim() !== "" ? s.trim() : null);
 
@@ -529,7 +530,7 @@ async function reservarDesdeTarifarioInterno(input: ReservaInput, tenant: Tenant
     const adminCond = createAdminClient();
     const { data: { user: usuarioCond } } = await sb.auth.getUser();
     if (usuarioCond) {
-      const fechaPagoCond = new Date().toISOString().slice(0, 10);
+      const fechaPagoCond = fechaNegocio();
       let componente: ComponenteSnapshot | null = null;
       if (!esServicios && meta.fecha_ida && meta.fecha_regreso) {
         componente = await componenteHotelReal(adminCond, {
@@ -690,7 +691,7 @@ async function reservarDesdeTarifarioInterno(input: ReservaInput, tenant: Tenant
   // tarifario: una por proveedor de aéreo, hotel y cada servicio. Se acumulan
   // en los pasos 9/10/11 (que ya leen los costos netos con service-role) y se
   // insertan en el paso 12. El proveedor (con su retención) se jala del catálogo.
-  const hoyISO = new Date().toISOString().slice(0, 10);
+  const hoyISO = fechaNegocio();
   const OBS_AUTO = "Generado automáticamente desde el tarifario";
   type ProvFact = { nombre: string | null; aplica_retencion: boolean | null; pct_retencion: number | null } | null;
   // `numero_contrato`/`tenant` NO van en la fila: los pone la propia
@@ -3195,7 +3196,7 @@ async function reservarProgramaInterno(
     const adminCond = createAdminClient();
     const { data: { user: usuarioCond } } = await sb.auth.getUser();
     if (usuarioCond) {
-      const fechaPagoCond = new Date().toISOString().slice(0, 10);
+      const fechaPagoCond = fechaNegocio();
       const componente = componenteDePrograma(prog, {
         id: `programa-${input.programaId}`,
         valor: precioVenta,
@@ -3354,7 +3355,7 @@ async function reservarProgramaInterno(
         _resultadoCxp = "parcial";
         registrarErrorTecnico("reservar_programa", flujoId, "cxp_programa", "error_update_costo", updateError);
       }
-      const fechaProg = new Date().toISOString().slice(0, 10);
+      const fechaProg = fechaNegocio();
       const { data: cProg, error: cProgError } = await admin.from("cuentas_por_pagar").insert({
         numero_contrato: numero,
         proveedor: pr?.nombre ?? null,

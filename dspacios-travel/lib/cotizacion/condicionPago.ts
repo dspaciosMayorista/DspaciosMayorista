@@ -27,6 +27,8 @@
 // sea determinista y no dependa de la zona horaria del servidor.
 // ─────────────────────────────────────────────────────────────────────────
 
+import { fechaNegocio } from "../fechaNegocio.ts";
+
 export type CondicionTipoHotel = "sin_condicion" | "pago_total" | "anticipo_saldo";
 export type CondicionTipoProducto = "normal" | "pago_total" | "anticipo_saldo";
 export type CondicionTipo = CondicionTipoHotel | CondicionTipoProducto;
@@ -108,9 +110,10 @@ function aDias(fecha: string): number {
   return Math.floor(Date.UTC(y, m - 1, d) / 86_400_000);
 }
 export function hoy() {
-  // Fecha local en UTC (texto puro). No se usa en el motor salvo como default;
-  // las acciones de servidor siempre pasan la fecha de pago explícita.
-  return new Date().toISOString().slice(0, 10);
+  // Día de negocio (America/Bogota), texto puro. Es el respaldo cuando no llega
+  // `fechaPago` (cotizar.ts y el resumen del tarifario lo omiten): en UTC, desde
+  // las 7 p. m. del día límite adelantaba el bump de cierre y exigía el 100%.
+  return fechaNegocio();
 }
 export function sumarDias(fecha: string, n: number): string {
   const { y, m, d } = partes(fecha);
