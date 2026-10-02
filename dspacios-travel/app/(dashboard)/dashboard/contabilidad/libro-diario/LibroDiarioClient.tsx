@@ -7,13 +7,14 @@ import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { Plus, Trash2, Undo2 } from "lucide-react";
 import { formatCOP } from "@/lib/utils";
+import { fechaNegocio } from "@/lib/fechaNegocio";
 import { crearAsiento, eliminarAsiento, type Asiento } from "./actions";
 
 type CuentaOpt = { id: number; codigo: string; nombre: string };
 type Linea = { cuentaTexto: string; tercero: string; descripcion: string; debe: string; haber: string };
 const LINEA_VACIA: Linea = { cuentaTexto: "", tercero: "", descripcion: "", debe: "", haber: "" };
 
-const hoy = () => new Date().toISOString().slice(0, 10);
+const hoy = () => fechaNegocio();
 
 export function LibroDiarioClient({ asientosIniciales, cuentas }: { asientosIniciales: Asiento[]; cuentas: CuentaOpt[] }) {
   const router = useRouter();

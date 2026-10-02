@@ -4,6 +4,7 @@ import { createAdminClient } from "@/lib/supabase/admin";
 import { revalidatePath } from "next/cache";
 import { postearAsientoCxP } from "@/lib/contabilidad/asientos";
 import { faltantesCxP, type CxpExistente } from "@/lib/reservar/cxpCobertura";
+import { fechaNegocio } from "@/lib/fechaNegocio";
 
 // NO es una Server Action (este archivo no lleva "use server"): antes vivía
 // exportada en app/(dashboard)/dashboard/reservar/actions.ts, y cualquier
@@ -39,7 +40,7 @@ export async function asegurarCuentasPorPagar(numeroContrato: string): Promise<{
   if (!v) return { ok: false, creadas: 0 };
   const tenant = (v.tenant as string | null) ?? "mayorista";
 
-  const hoy = new Date().toISOString().slice(0, 10);
+  const hoy = fechaNegocio();
   const vence = (v.plazo as string | null) ?? (v.fecha_salida as string | null) ?? null;
   const moneda = (v.moneda as string | null) ?? "COP";
   const hotelRow = (ch ?? [])[0] as { nombre: string | null; proveedor: string | null } | undefined;

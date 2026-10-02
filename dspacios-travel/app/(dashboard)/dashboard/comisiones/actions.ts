@@ -2,6 +2,7 @@
 
 import { createClient } from "@/lib/supabase/server";
 import { revalidatePath } from "next/cache";
+import { fechaElegidaONegocio } from "@/lib/fechaNegocio";
 
 type Result = { ok: true } | { ok: false; error: string };
 
@@ -20,7 +21,7 @@ export async function registrarPagoComisionB2B(aliadoB2bId: number, valor: numbe
   const { error } = await sb.from("comision_b2b_pagos").insert({
     aliado_b2b_id: aliadoB2bId,
     valor,
-    fecha: fecha || new Date().toISOString().slice(0, 10),
+    fecha: fechaElegidaONegocio(fecha),
     tenant: aliado?.tenant ?? "mayorista",
   });
   if (error) return { ok: false, error: error.message };

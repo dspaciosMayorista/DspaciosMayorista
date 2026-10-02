@@ -43,6 +43,7 @@ import { construirSnapshot } from "@/lib/cotizacion/snapshotCondiciones";
 import { componentesDeManual } from "@/lib/cotizacion/componentesManual";
 import type { ServicioManualCondicionable } from "@/lib/cotizacion/componentesManual";
 import type { Json } from "@/types/database";
+import { fechaElegidaONegocio } from "@/lib/fechaNegocio";
 import { revalidatePath } from "next/cache";
 
 // La misma lista que `_autorizado_pago_previo` en la migración 164:
@@ -126,7 +127,7 @@ export async function registrarPagoPrevio(
   const formaPago = String(input?.formaPago ?? "").trim();
   if (!formaPago) return { ok: false, error: "Indica la forma de pago." };
   const referencia = String(input?.referencia ?? "").trim();
-  const fechaPago = String(input?.fechaPago ?? "") || new Date().toISOString().slice(0, 10);
+  const fechaPago = fechaElegidaONegocio(String(input?.fechaPago ?? ""));
 
   const admin = createAdminClient();
 

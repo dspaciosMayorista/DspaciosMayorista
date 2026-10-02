@@ -4,6 +4,7 @@ import { createClient } from "@/lib/supabase/server";
 import { revalidatePath } from "next/cache";
 import { formatFechaLarga, calcularEdad } from "@/lib/utils";
 import type { Json } from "@/types/database";
+import { fechaNegocio } from "@/lib/fechaNegocio";
 
 // "Adultos" o "Adultos y niños" según las edades de los pasajeros.
 function tipoPaxDe(pasajeros: { fecha_nacimiento: string | null }[], fechaRef: string | null): string {
@@ -172,7 +173,7 @@ export async function generarVouchersServicios(numero: string): Promise<Result> 
   const h0 = (hoteles ?? [])[0];
   const ingreso = h0?.fecha_ingreso ?? venta.fecha_salida;
   const salida = h0?.fecha_salida ?? venta.fecha_regreso;
-  const hoy = new Date().toISOString().slice(0, 10);
+  const hoy = fechaNegocio();
   // Vendedor: agencia → asesor de la agencia; freelance → nombre del freelance;
   // B2C/interno → asesor interno que gestionó la reserva.
   const vendedor =
@@ -245,7 +246,7 @@ export async function generarVoucherHotel(numero: string): Promise<Result> {
     if (pagado < (venta.precio_venta ?? 0)) return { ok: false, error: "El contrato debe estar 100% pago (o pídelo a un superadmin)." };
   }
 
-  const hoy = new Date().toISOString().slice(0, 10);
+  const hoy = fechaNegocio();
   const vendedor =
     venta.tipo_asesor === "agencia" ? (venta.agencia_asesor ?? venta.agencia_nombre ?? "")
     : venta.tipo_asesor === "freelance" ? (venta.freelance_nombre ?? "")

@@ -21,6 +21,8 @@
 // por aquí no puede reintroducir el defecto silenciosamente.
 // ─────────────────────────────────────────────────────────────────────────
 
+import { fechaNegocio } from "../fechaNegocio.ts";
+
 export type OrigenVuelo =
   | { tipo: "bloqueo"; id: number }
   | { tipo: "empaquetado"; id: number }
@@ -99,7 +101,7 @@ export function resolverOrigenVuelo(
 // ─────────────────────────────────────────────────────────────────────────
 
 export function hoyBogota(ahora: Date): string {
-  return new Intl.DateTimeFormat("en-CA", { timeZone: "America/Bogota" }).format(ahora);
+  return fechaNegocio(ahora);
 }
 
 export function empaquetadoVigente(

@@ -3,6 +3,7 @@
 import { createClient } from "@/lib/supabase/server";
 import { revalidatePath } from "next/cache";
 import { postearAsiento, reversarYRegistrar, anticipoNetoDeContrato, CUENTA } from "@/lib/contabilidad/asientos";
+import { fechaNegocio } from "@/lib/fechaNegocio";
 
 type Result = { ok: true } | { ok: false; error: string };
 
@@ -31,7 +32,7 @@ async function postearAsientoFacturacion(numeroContrato: string, pvp: number, ir
       { cuentaCodigo: CUENTA.CLIENTES, tercero: numeroContrato, descripcion: "Aplicación de anticipo", debe: 0, haber: anticipoNeto },
     ] : []),
   ];
-  await postearAsiento({ fecha: new Date().toISOString().slice(0, 10), descripcion: `Factura ${numeroContrato}`, origen: "facturacion", referencia, lineas });
+  await postearAsiento({ fecha: fechaNegocio(), descripcion: `Factura ${numeroContrato}`, origen: "facturacion", referencia, lineas });
 }
 
 // Guarda (o actualiza) la configuración de facturación de un contrato:
@@ -82,7 +83,7 @@ export async function marcarDian(numeroContrato: string, emitida: boolean): Prom
     {
       numero_contrato: numeroContrato,
       dian_emitida: emitida,
-      dian_fecha: emitida ? new Date().toISOString().slice(0, 10) : null,
+      dian_fecha: emitida ? fechaNegocio() : null,
       updated_at: new Date().toISOString(),
     },
     { onConflict: "numero_contrato" }

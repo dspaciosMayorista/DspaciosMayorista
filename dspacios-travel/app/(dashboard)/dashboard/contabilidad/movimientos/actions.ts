@@ -3,6 +3,7 @@
 import { createClient } from "@/lib/supabase/server";
 import { revalidatePath } from "next/cache";
 import { getTenant } from "@/lib/tenant.server";
+import { fechaElegidaONegocio } from "@/lib/fechaNegocio";
 
 type Result = { ok: true } | { ok: false; error: string };
 
@@ -23,7 +24,7 @@ export async function guardarMovimiento(input: {
   if (!input.concepto.trim()) return { ok: false, error: "El concepto es obligatorio." };
   if (!(input.valor > 0)) return { ok: false, error: "El valor debe ser mayor a 0." };
   const row = {
-    fecha: input.fecha || new Date().toISOString().slice(0, 10),
+    fecha: fechaElegidaONegocio(input.fecha),
     tipo: input.tipo === "ingreso" ? "ingreso" : "egreso",
     concepto: input.concepto.trim(),
     tercero: input.tercero.trim() || null,

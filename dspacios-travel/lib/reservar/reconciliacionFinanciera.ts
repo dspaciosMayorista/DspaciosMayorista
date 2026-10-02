@@ -35,6 +35,7 @@
 // ─────────────────────────────────────────────────────────────────────────
 
 import { registrarFinancieroContrato, revertirContratoIncompleto, type DepsFinanciero, type CxPCreada } from "./financieroContrato.ts";
+import { fechaNegocio } from "../fechaNegocio.ts";
 
 export type PendienteAntiguo = { numeroContrato: string; tenant: string };
 
@@ -71,7 +72,7 @@ export async function reconciliarFinancieroPendiente(
         tenant: p.tenant,
         costos: payload.costos,
         cxp: payload.cxp as never,
-        fecha: new Date().toISOString().slice(0, 10),
+        fecha: fechaNegocio(), // inerte: la fecha de obligación viaja en cada CxP del payload
       });
       if (r.ok) {
         resultadosPendientes.push({ numeroContrato: p.numeroContrato, accion: "reintentado", ok: true });

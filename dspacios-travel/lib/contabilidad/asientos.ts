@@ -2,6 +2,7 @@ import "server-only";
 import { createClient } from "@/lib/supabase/server";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { getTenant } from "@/lib/tenant.server";
+import { fechaNegocio } from "@/lib/fechaNegocio";
 
 // ─────────────────────────────────────────────────────────────────────────
 // Posteo automático a Libro diario desde el resto de la app (abonos,
@@ -241,7 +242,7 @@ export async function reversarYRegistrar(origen: string, referencia: string, nue
       const numero = await siguienteNumero(sb, tenant);
       const usuarioEmail = await usuarioActual();
       const { data: rev } = await sb.from("asientos_contables").insert({
-        tenant, numero, fecha: nuevo?.fecha ?? new Date().toISOString().slice(0, 10),
+        tenant, numero, fecha: nuevo?.fecha ?? fechaNegocio(),
         descripcion: `Reversión — ${activo.descripcion}`, origen: `${origen}_reversion`, referencia, usuario_email: usuarioEmail,
       }).select("id").single();
       if (rev) {
