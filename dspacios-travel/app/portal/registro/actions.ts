@@ -58,10 +58,21 @@ export async function enviarSolicitudB2B(input: SolicitudB2BInput): Promise<Resu
 
   // El trigger crea el perfil; lo dejamos como aliado pendiente (inactivo) con
   // su comisión por defecto (12% agencia, 11% freelance).
-  await admin.from("usuarios").update({
+  //
+  // ⚠️ Falla CERRADO. Desde la migración 193 el trigger (`handle_new_user`)
+  // ya crea el perfil INACTIVO (sin intervalo activo); antes de la 193 lo
+  // creaba activo. Este update queda como segunda barrera y para fijar
+  // nombre/comisión: se exige que afecte exactamente la fila del usuario; si
+  // no, se borra la cuenta recién creada (la fila de `usuarios` cae en
+  // cascada) y no se deja nada a medias.
+  const { data: inactivado, error: ue } = await admin.from("usuarios").update({
     rol: tipo, activo: false, nombre: input.nombre.trim(),
     pct_comision: tipo === "agencia" ? 0.12 : 0.11,
-  }).eq("id", uid);
+  }).eq("id", uid).select("id");
+  if (ue || inactivado?.length !== 1) {
+    await admin.auth.admin.deleteUser(uid);
+    return { ok: false, error: "No se pudo registrar tu solicitud. Intenta de nuevo en unos minutos." };
+  }
 
   // Búsqueda de la ficha del catálogo por DOCUMENTO (migración 143). Es solo
   // una SUGERENCIA para quien aprueba: NO se enlaza aquí. Si se enlazara solo,
@@ -95,6 +106,12 @@ export async function enviarSolicitudB2B(input: SolicitudB2BInput): Promise<Resu
     estado: "pendiente",
     usuario_id: uid,
   });
-  if (error) return { ok: false, error: error.message };
+  if (error) {
+    // Sin solicitud, la cuenta (ya inactiva) nunca aparecería en
+    // /dashboard/usuarios/b2b para aprobarse, y el correo quedaría tomado
+    // ("Ya existe una cuenta con ese correo"). Se borra para poder reintentar.
+    await admin.auth.admin.deleteUser(uid);
+    return { ok: false, error: error.message };
+  }
   return { ok: true };
 }

@@ -92,6 +92,9 @@ export type Database = {
           // Migración 143: ficha del catálogo `aliados` a la que corresponde
           // este login B2B. Se escribe al APROBAR el registro, nunca solo.
           aliado_id: number | null;
+          // Migración 193: única puerta del respaldo legacy por NOMBRE. Nace
+          // false; solo se concede explícitamente (nunca al registrarse/aprobar).
+          acceso_legacy_nombre: boolean;
         };
         Insert: {
           id?: string;
@@ -106,6 +109,7 @@ export type Database = {
           pct_comision?: number | null;
           tenant?: string;
           aliado_id?: number | null;
+          acceso_legacy_nombre?: boolean;
         };
         Update: {
           id?: string;
@@ -118,6 +122,7 @@ export type Database = {
           pct_comision?: number | null;
           tenant?: string;
           aliado_id?: number | null;
+          acceso_legacy_nombre?: boolean;
         };
         Relationships: [];
       };
@@ -3410,6 +3415,15 @@ export type Database = {
       guardar_proveedor: {
         Args: { p_proveedor: Json; p_id?: number | null };
         Returns: number;
+      };
+      // Migración 193: aprobación/rechazo atómicos del registro B2B.
+      aprobar_solicitud_b2b: {
+        Args: { p_id: number; p_modo?: "sugerido" | "ficha" | "nueva" | "ninguno"; p_aliado_id?: number | null };
+        Returns: Json;
+      };
+      rechazar_solicitud_b2b: {
+        Args: { p_id: number };
+        Returns: undefined;
       };
       // Migración 142. La misma función que usan las policies para decidir si
       // un contrato es del asesor que pregunta. Es SECURITY DEFINER y devuelve
