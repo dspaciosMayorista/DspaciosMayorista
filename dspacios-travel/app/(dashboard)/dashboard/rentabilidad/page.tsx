@@ -27,7 +27,7 @@ export default async function RentabilidadPage() {
   const rows = filas as RentRow[];
 
   return (
-    <div className="mx-auto max-w-6xl p-4 md:p-8">
+    <div className="mx-auto max-w-7xl p-4 md:p-8">
       <div className="mb-6">
         <h1 className="text-2xl font-semibold text-gray-900">Rentabilidad</h1>
         <p className="mt-1 text-sm text-gray-500">
