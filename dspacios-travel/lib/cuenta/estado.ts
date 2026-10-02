@@ -1,6 +1,7 @@
 import { createClient } from "@/lib/supabase/server";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { accesoDocumentoContrato } from "@/lib/auth/accesoDocumentoContrato";
+import { verificarFichasComisionManual, consultarFichasSupabase, fichaDeContrato } from "@/lib/auth/fichaComisionManual";
 
 export type AbonoCuenta = {
   id: number;
@@ -44,7 +45,7 @@ export async function cargarEstadoCuenta(numero: string): Promise<EstadoCuenta |
   if (!user) return null;
   const { data: perfil } = await sb
     .from("usuarios")
-    .select("nombre, rol, tenant, activo, aliado_id")
+    .select("nombre, rol, tenant, activo, aliado_id, acceso_legacy_nombre")
     .eq("id", user.id)
     .maybeSingle();
 
@@ -59,6 +60,11 @@ export async function cargarEstadoCuenta(numero: string): Promise<EstadoCuenta |
   // La autorización de estas páginas NO la hace la RLS: se leen con
   // service-role. La decide `accesoDocumentoContrato`, compartida con la cuenta
   // de cobro para que las dos no vuelvan a divergir.
+  //
+  // Comisión manual con ficha (`aliados_b2b.aliado_id`): mismo verificador
+  // fail-closed que el portal B2B. Si no se puede verificar, queda null y el
+  // nombre no abre el documento.
+  const fichas = await verificarFichasComisionManual([numero], consultarFichasSupabase(admin));
   const acceso = accesoDocumentoContrato(
     perfil
       ? {
@@ -68,12 +74,14 @@ export async function cargarEstadoCuenta(numero: string): Promise<EstadoCuenta |
           nombre: perfil.nombre as string | null,
           activo: (perfil.activo as boolean | null) ?? null,
           aliadoId: (perfil.aliado_id as number | null) ?? null,
+          accesoLegacyNombre: (perfil.acceso_legacy_nombre as boolean | null) ?? null,
         }
       : null,
     {
       tenant: (v.tenant as string | null) ?? null,
       b2bUsuarioId: (v.b2b_usuario_id as string | null) ?? null,
       aliadoId: (v.aliado_id as number | null) ?? null,
+      comisionManualConFicha: fichaDeContrato(fichas, numero),
       nombreAliado: [v.agencia_nombre as string | null, v.freelance_nombre as string | null],
     }
   );

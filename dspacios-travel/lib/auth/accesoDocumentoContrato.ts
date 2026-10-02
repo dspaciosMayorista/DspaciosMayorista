@@ -54,6 +54,13 @@ export type PerfilAcceso = {
   activo: boolean | null;
   /** Ficha del catálogo `aliados` enlazada al usuario (migración 143). */
   aliadoId: number | null;
+  /**
+   * `usuarios.acceso_legacy_nombre` (migración 193). Única puerta del respaldo
+   * por NOMBRE. Nace en false para toda cuenta y la aprobación B2B la deja en
+   * false: solo se concede explícitamente (decisión de backfill para aliados
+   * que ya operaban), nunca por registrarse con un nombre que coincida.
+   */
+  accesoLegacyNombre: boolean | null;
 };
 
 export type ContratoAcceso = {
@@ -66,7 +73,29 @@ export type ContratoAcceso = {
    * resuelve cuál aplica y pasa el que haya.
    */
   aliadoId: number | null;
-  /** Solo para el respaldo legacy. Nunca se usa si hay algún id. */
+  /**
+   * ¿Alguna comisión manual (`aliados_b2b`) del contrato tiene `aliado_id`?
+   * Se obtiene SIEMPRE con `verificarFichasComisionManual` (fail-closed):
+   *   true  → hay vínculo por id: el nombre no cuenta.
+   *   false → verificado que no hay: el nombre puede contar (legacy).
+   *   null  → no se pudo verificar (error, respuesta parcial, límite de
+   *           filas…): se trata como "hay id" y el nombre NO abre nada.
+   * Es obligatorio a propósito: ningún llamador puede olvidarlo.
+   */
+  comisionManualConFicha: boolean | null;
+  /**
+   * Solo para el respaldo legacy. Nunca se usa si hay algún id. Quien llama
+   * debe pasar TODOS los ids que conozca del contrato (`ventas.aliado_id` y,
+   * en comisiones manuales, `aliados_b2b.aliado_id`) en `aliadoId`.
+   *
+   * ⚠️ SOLO los nombres de `ventas` (`agencia_nombre`, `freelance_nombre`). El
+   * texto libre `aliados_b2b.aliado` NO es evidencia de pertenencia (decisión
+   * de la migración 193): lo escribe a mano quien carga la comisión y no
+   * identifica a nadie. Así portal, estado de cuenta y cuenta de cobro miran la
+   * MISMA evidencia. Un contrato cuyo único rastro del aliado es ese texto se
+   * recupera ENLAZANDO por id (`aliados_b2b.aliado_id` / `ventas.aliado_id`),
+   * no ampliando el emparejamiento por nombre.
+   */
   nombreAliado: (string | null)[];
 };
 
@@ -85,6 +114,13 @@ export type Acceso = {
     | "nombre_legacy"
     | "denegado";
 };
+
+/**
+ * Roles que pueden usar el respaldo legacy por nombre. Solo aliados externos:
+ * un interno no debe entrar a un contrato de otra agencia porque su nombre
+ * coincida con el del aliado (su vía es el rol, dentro de su tenant).
+ */
+export const ROLES_LEGACY_NOMBRE = ["agencia", "freelance"] as const;
 
 const DENEGADO: Acceso = { permitido: false, esInterno: false, esDueno: false, via: "denegado" };
 
@@ -118,12 +154,18 @@ const igualNombre = (a: string | null | undefined, b: string | null | undefined)
  *      única forma de entrar a otra agencia, y exige que alguien haya hecho el
  *      enlace explícito.
  *   4. Rol interno **y el mismo tenant**. La comparación que faltaba.
- *   5. Nombre — solo si NO hay ningún id (ver abajo).
+ *   5. Nombre — solo si NO hay ningún id, la cuenta tiene concedido
+ *      `acceso_legacy_nombre`, y usuario y contrato tienen el MISMO tenant,
+ *      explícito (ver abajo).
  *
  * Los pasos 3/4 no se excluyen: quien sea interno de la agencia Y además el
  * aliado del contrato sale con las dos marcas en true.
  *
  * ⚠️ EL RESPALDO POR NOMBRE ES COMPATIBILIDAD, NO UN MECANISMO
+ *   Desde la migración 193 exige además TRES condiciones de la cuenta: rol
+ *   externo (agencia/freelance), activa, y `accesoLegacyNombre === true`. Una
+ *   cuenta nueva —incluida una aprobada "sin enlazar"— nunca la tiene, así que
+ *   registrarse con el nombre de un aliado antiguo no abre nada.
  *   Solo entra cuando `b2bUsuarioId` Y `aliadoId` son **los dos** null, es
  *   decir cuando el contrato es anterior a la migración 143 y nadie lo ha
  *   enlazado todavía. Emparejar dos cadenas de texto permite suplantación —hoy
@@ -173,8 +215,22 @@ export function accesoDocumentoContrato(
   }
 
   // ── Respaldo legacy: SOLO si no hay ningún id con el que decidir ───────
-  const hayAlgunId = contrato.b2bUsuarioId != null || contrato.aliadoId != null;
-  if (!hayAlgunId && contrato.nombreAliado.some((n) => igualNombre(n, perfil.nombre))) {
+  // Fail-closed: una comisión manual con ficha cuenta como id, y NO SABER si
+  // la hay (null) también — solo un "no" verificado deja mirar el nombre.
+  const hayAlgunId =
+    contrato.b2bUsuarioId != null ||
+    contrato.aliadoId != null ||
+    contrato.comisionManualConFicha !== false;
+  // Tenant EXPLÍCITO e igual: el nombre de un aliado de Mayorista no abre un
+  // contrato de Minorista (ni al revés), y un tenant nulo en cualquiera de los
+  // dos lados no es "igual". Los vínculos por id (arriba) no cambian: siguen
+  // cruzando agencias a propósito, porque alguien hizo el enlace explícito.
+  const mismoTenant = !!perfil.tenant && !!contrato.tenant && perfil.tenant === contrato.tenant;
+  const legacyConcedido =
+    perfil.accesoLegacyNombre === true &&
+    (ROLES_LEGACY_NOMBRE as readonly string[]).includes(perfil.rol) &&
+    mismoTenant;
+  if (legacyConcedido && !hayAlgunId && contrato.nombreAliado.some((n) => igualNombre(n, perfil.nombre))) {
     return { permitido: true, esInterno: false, esDueno: true, via: "nombre_legacy" };
   }
 

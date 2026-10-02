@@ -65,8 +65,19 @@ export async function cargarAgenciasB2B(
         if (error || !created?.user) {
           info.push(`Fila ${linea} (${nombre}): acceso no creado (${error?.message ?? "error"}).`);
         } else {
-          await admin.from("usuarios").update({ rol: tipo as "agencia" | "freelance", nombre }).eq("id", created.user.id);
-          info.push(`✓ Acceso ${tipo} para ${email} · contraseña temporal: ${pass}`);
+          // Acceso creado por administración (no auto-registro): rol y
+          // `activo` explícitos, porque desde la migración 193 el trigger
+          // crea todo perfil inactivo. Si no se confirma, se borra la cuenta.
+          const { data: perfil, error: pe } = await admin.from("usuarios")
+            .update({ rol: tipo as "agencia" | "freelance", nombre, activo: true })
+            .eq("id", created.user.id)
+            .select("id");
+          if (pe || perfil?.length !== 1) {
+            await admin.auth.admin.deleteUser(created.user.id);
+            info.push(`Fila ${linea} (${nombre}): acceso no creado (no se pudo guardar el perfil).`);
+          } else {
+            info.push(`✓ Acceso ${tipo} para ${email} · contraseña temporal: ${pass}`);
+          }
         }
       }
     }

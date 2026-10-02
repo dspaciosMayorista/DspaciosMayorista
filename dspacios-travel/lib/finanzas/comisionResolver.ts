@@ -2,6 +2,7 @@ import { createClient } from "@/lib/supabase/server";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { calcComisionB2B } from "@/lib/calc/finanzas";
 import { accesoDocumentoContrato } from "@/lib/auth/accesoDocumentoContrato";
+import { verificarFichasComisionManual, consultarFichasSupabase, fichaDeContrato } from "@/lib/auth/fichaComisionManual";
 import {
   resolverFichaAliado,
   explicarFicha,
@@ -73,7 +74,7 @@ export async function resolverComisionB2B(numero: string): Promise<ComisionResue
   if (!user) return null;
   const { data: perfil } = await sb
     .from("usuarios")
-    .select("nombre, rol, tenant, activo, aliado_id")
+    .select("nombre, rol, tenant, activo, aliado_id, acceso_legacy_nombre")
     .eq("id", user.id)
     .maybeSingle();
 
@@ -162,6 +163,12 @@ export async function resolverComisionB2B(numero: string): Promise<ComisionResue
     aliadoIdComisionManual: aliadoB2B?.aliadoId ?? null,
   });
 
+  // ¿ALGUNA comisión manual del contrato tiene ficha? No solo la más reciente
+  // (`aliadoB2B`): una fila vieja con `aliado_id` también es un vínculo por id.
+  // Mismo verificador fail-closed que el portal: si falla, null = no se abre
+  // por nombre.
+  const fichas = await verificarFichasComisionManual([numero], consultarFichasSupabase(admin));
+
   const acceso = accesoDocumentoContrato(
     perfil
       ? {
@@ -171,19 +178,19 @@ export async function resolverComisionB2B(numero: string): Promise<ComisionResue
           nombre: perfil.nombre as string | null,
           activo: (perfil.activo as boolean | null) ?? null,
           aliadoId: (perfil.aliado_id as number | null) ?? null,
+          accesoLegacyNombre: (perfil.acceso_legacy_nombre as boolean | null) ?? null,
         }
       : null,
     {
       tenant: (v.tenant as string | null) ?? null,
       b2bUsuarioId: (v.b2b_usuario_id as string | null) ?? null,
       aliadoId: aliadoIdContrato,
-      // En la vía 2 el nombre del aliado vive en `aliados_b2b.aliado`, no en
-      // `ventas`; se pasan los tres para que el respaldo legacy cubra ambas.
-      nombreAliado: [
-        v.agencia_nombre as string | null,
-        v.freelance_nombre as string | null,
-        aliadoNombre ?? null,
-      ],
+      comisionManualConFicha: fichaDeContrato(fichas, numero),
+      // SOLO los nombres de `ventas`, igual que el portal y el estado de
+      // cuenta (migración 193). `aliados_b2b.aliado` es texto libre: se sigue
+      // usando para MOSTRAR el nombre en la cuenta de cobro, nunca para
+      // decidir quién la abre.
+      nombreAliado: [v.agencia_nombre as string | null, v.freelance_nombre as string | null],
     }
   );
   if (!acceso.permitido) return null;

@@ -54,22 +54,29 @@ export async function crearUsuario(input: {
     if (dup) return { ok: false, error: "Ya existe un aliado (agencia/freelance) con ese nombre." };
   }
 
+  // El rol NO viaja en la metadata: desde la migración 193 el trigger ignora
+  // cualquier rol que no sea agencia/freelance y crea TODO perfil inactivo
+  // (la metadata la puede escribir cualquiera que se registre). El rol y el
+  // estado los fija esta acción, autorizada arriba, con service-role.
   const { data, error } = await admin.auth.admin.createUser({
     email: input.email.trim(),
     password: input.password,
     email_confirm: true,
-    user_metadata: { nombre: input.nombre.trim(), rol: input.rol },
+    user_metadata: { nombre: input.nombre.trim() },
   });
-  if (error) return { ok: false, error: error.message };
+  if (error || !data.user) return { ok: false, error: error?.message ?? "No se pudo crear la cuenta." };
 
-  // Asegurar el perfil con su rol (por si el trigger no tomó el metadato)
-  if (data.user) {
-    await admin.from("usuarios").upsert({
-      id: data.user.id,
-      email: input.email.trim(),
-      nombre: input.nombre.trim(),
-      rol: input.rol,
-    });
+  const { data: perfil, error: pe } = await admin.from("usuarios").upsert({
+    id: data.user.id,
+    email: input.email.trim(),
+    nombre: input.nombre.trim(),
+    rol: input.rol,
+    activo: true,
+  }).select("id");
+  if (pe || perfil?.length !== 1) {
+    // Sin perfil confirmado no se deja una cuenta a medias.
+    await admin.auth.admin.deleteUser(data.user.id);
+    return { ok: false, error: "No se pudo guardar el perfil del usuario. No se creó la cuenta." };
   }
   revalidatePath("/dashboard/usuarios");
   return { ok: true };

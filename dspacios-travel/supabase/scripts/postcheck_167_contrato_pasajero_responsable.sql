@@ -101,6 +101,9 @@ begin
   -- mano (colisionaría con lo que el trigger ya hizo).
   insert into auth.users (id, email, raw_user_meta_data)
     values (v_uid, 'postcheck167@test.local', jsonb_build_object('rol', 'superadmin', 'nombre', 'Postcheck 167'));
+  -- Migración 193: el trigger ya no toma el rol de la metadata (lo crea
+  -- 'cliente_final' inactivo). Se fija explícitamente, como crearUsuario.
+  update public.usuarios set rol = 'superadmin', activo = true where id = v_uid;
   perform set_config('request.jwt.claims', json_build_object('sub', v_uid::text)::text, true);
 
   -- Fixture 1: bloqueo con 2 sillas, una venta con bloqueo_ref_id estampado.
@@ -222,6 +225,7 @@ begin
   begin
     insert into auth.users (id, email, raw_user_meta_data)
       values (v_uid_b2b, 'postcheck167-b2b@test.local', jsonb_build_object('rol', 'agencia', 'nombre', 'Postcheck B2B'));
+    update public.usuarios set rol = 'agencia', activo = true where id = v_uid_b2b;  -- migración 193
     insert into public.ventas (numero_contrato, cliente, fecha_salida, pax, precio_venta, estado, tenant)
       values (v_num5, 'Cliente Postcheck 167 B2B', current_date + 30, 1, 70000, 'pendiente', 'mayorista');
     perform 1 from public.crear_pasajeros_contrato(v_num5, jsonb_build_array(
@@ -424,6 +428,7 @@ begin
   begin
     insert into auth.users (id, email, raw_user_meta_data)
       values (v_uid_creador, 'postcheck167-creador@test.local', jsonb_build_object('rol', 'venta', 'nombre', 'Postcheck Creador'));
+    update public.usuarios set rol = 'venta', activo = true where id = v_uid_creador;  -- migración 193
     perform 1 from public.crear_pasajeros_contrato(v_num4, jsonb_build_array(
       jsonb_build_object('nombre','Adulto Nuevo Post167','tipoId','CC','identificacion','1000167601','fechaNacimiento',(current_date - interval '33 years')::date::text),
       jsonb_build_object('nombre','Infante Nuevo Post167','tipoId','RC','identificacion','1000167602','fechaNacimiento',(current_date - interval '1 years')::date::text,'responsableOrden',1)

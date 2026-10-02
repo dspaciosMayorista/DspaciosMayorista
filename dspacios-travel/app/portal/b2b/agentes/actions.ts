@@ -34,8 +34,17 @@ export async function crearAgente(input: { nombre: string; email: string; passwo
       return { ok: false, error: "Ya existe una cuenta con ese correo." };
     return { ok: false, error: ce?.message ?? "No se pudo crear el agente." };
   }
-  // Agente: rol agencia, activo, vinculado a la agencia titular.
-  await admin.from("usuarios").update({ rol: "agencia", activo: true, nombre: input.nombre.trim(), agencia_id: titular.id }).eq("id", created.user.id);
+  // Agente: rol agencia, activo, vinculado a la agencia titular. Hay que
+  // confirmarlo: sin `agencia_id`, un perfil `agencia` es un TITULAR (puede
+  // crear agentes). Si no se confirma la fila, se borra la cuenta recién creada.
+  const { data: perfil, error: pe } = await admin.from("usuarios")
+    .update({ rol: "agencia", activo: true, nombre: input.nombre.trim(), agencia_id: titular.id })
+    .eq("id", created.user.id)
+    .select("id");
+  if (pe || perfil?.length !== 1) {
+    await admin.auth.admin.deleteUser(created.user.id);
+    return { ok: false, error: "No se pudo crear el agente. Intenta de nuevo." };
+  }
   revalidatePath("/portal/b2b/agentes");
   return { ok: true };
 }
