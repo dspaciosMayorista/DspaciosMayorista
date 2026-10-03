@@ -8,7 +8,8 @@ import { ControlVuelosTabla, type ControlFila } from "./ControlVuelosTabla";
 import { EmpaquetadosTabla } from "./EmpaquetadosTabla";
 import { VistaTabs, vistaDeParam } from "./VistaTabs";
 import { History } from "lucide-react";
-import { conteoPorBloqueo, sumarConteos, esPasado, ocupacionPct, conteoCero, type ConteoSillas } from "@/lib/vuelos/stats";
+import { conteoPorBloqueo, sumarConteos, esPasado, ocupacionPct, conteoCero, movimientosPorBloqueo, type ConteoSillas, type FilaMovimientoConteo } from "@/lib/vuelos/stats";
+import { fetchAllPaginado } from "@/lib/supabase/fetchAllPaginado";
 import { hoyISO } from "@/lib/calc/paquetes";
 import { normalizarModalidadLegible, type ModalidadControl } from "@/lib/vuelos/control";
 import { miRol, ROLES_CONTRATO_COMPLETO, ROLES_EDITOR_VUELOS_CONTRATO } from "@/lib/roles";
@@ -86,11 +87,17 @@ export default async function VuelosPage({ searchParams }: { searchParams: Promi
     estado_emision: string | null; estado_pago: string | null;
   };
 
-  const [{ data: bloqueos }, { data: sillas }, { data: empaquetadosData }, { data: dinamicosData, error: dinamicosError }, rol] = await Promise.all([
+  const [{ data: bloqueos }, { data: sillas }, movimientosConteo, { data: empaquetadosData }, { data: dinamicosData, error: dinamicosError }, rol] = await Promise.all([
     sb.from("bloqueos_vuelo").select("*").order("fecha_ida", { ascending: true }),
     vistaInventario
-      ? sb.from("sillas").select("bloqueo_id, estado")
+      // Paginado: un select simple se trunca en silencio al pasar el límite de
+      // filas de Supabase y las estadísticas saldrían cortas.
+      ? fetchAllPaginado<{ bloqueo_id: number; estado: string | null }>((d, h) => sb.from("sillas").select("bloqueo_id, estado").order("id").range(d, h)).then((data) => ({ data }))
       : Promise.resolve({ data: null as { bloqueo_id: number; estado: string | null }[] | null }),
+    // Movimientos históricos por record (trazabilidad; NO son cupos).
+    vistaInventario
+      ? fetchAllPaginado<FilaMovimientoConteo>((d, h) => sb.from("movimientos_silla").select("bloqueo_origen_id, bloqueo_destino_id").order("id").range(d, h))
+      : Promise.resolve([] as FilaMovimientoConteo[]),
     sb.from("empaquetados").select("*").order("fecha_ida", { ascending: true }),
     // Records/vuelos "por sistema" que YA existen como contratos reales,
     // dinámicos O reservados desde un Empaquetado (defecto 3 original +
@@ -151,6 +158,7 @@ export default async function VuelosPage({ searchParams }: { searchParams: Promi
   // Conteo de sillas por estado para cada bloqueo — solo tiene sentido (y solo
   // se calcula) en Inventario; Control Vuelos/Empaquetados no cuentan sillas.
   const conteo: Map<number, ConteoSillas> = vistaInventario ? conteoPorBloqueo(sillas) : new Map();
+  const movPorBloqueo = movimientosPorBloqueo(movimientosConteo);
   const cZero = conteoCero();
   const tot = vistaInventario ? sumarConteos(conteo, activos.map((b) => b.id)) : conteoCero();
   const ocup = vistaInventario ? ocupacionPct(tot) : 0;
@@ -333,6 +341,7 @@ export default async function VuelosPage({ searchParams }: { searchParams: Promi
                 fecha_ida: b.fecha_ida, vuelo_ida: b.vuelo_ida, fecha_regreso: b.fecha_regreso, vuelo_regreso: b.vuelo_regreso,
                 fecha_devolucion: b.fecha_devolucion, cupos_total: b.cupos_total ?? 0,
                 disp: c.disp, plazo: c.plazo, conf: c.conf, dev: c.dev, nven: c.nven,
+                movimientos: movPorBloqueo.get(b.id) ?? 0,
               };
             })}
           />

@@ -1,6 +1,6 @@
 "use client";
 
-import { useTransition } from "react";
+import { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { Button } from "@/components/ui/button";
 import { confirmarVenta } from "../../reservar/actions";
@@ -19,6 +19,7 @@ export function EstadoVenta({
 }) {
   const router = useRouter();
   const [pending, start] = useTransition();
+  const [err, setErr] = useState("");
 
   return (
     <div className="flex items-center gap-3">
@@ -31,12 +32,13 @@ export function EstadoVenta({
       {estado === "pendiente" && puedeConfirmar && (
         <Button
           disabled={pending}
-          onClick={() => start(async () => { await confirmarVenta(numero); router.refresh(); })}
+          onClick={() => start(async () => { setErr(""); const r = await confirmarVenta(numero); if (!r.ok) setErr(r.error ?? "No se pudo confirmar la venta."); router.refresh(); })}
           style={{ backgroundColor: "var(--brand-success)" }}
         >
           {pending ? "Confirmando…" : "Confirmar venta"}
         </Button>
       )}
+      {err && <span role="alert" className="text-xs text-red-600">{err}</span>}
     </div>
   );
 }

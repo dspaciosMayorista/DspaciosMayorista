@@ -1359,6 +1359,22 @@ export type Database = {
           motivo: string | null;
           fecha_movimiento: string;
           registrado_por: string | null;
+          // Migración 194: el historial distingue el tipo y guarda la foto del movimiento.
+          tipo: "legado" | "traslado_cupo" | "mover_datos" | "mover_con_cupo" | "retiro_cupo";
+          operacion_id: string | null;
+          silla_destino_id: number | null;
+          numero_silla_origen: number | null;
+          numero_silla_destino: number | null;
+          numero_contrato: string | null;
+          contrato_manual: string | null;
+          contrato_manual_clase: string | null;
+          contrato_manual_resuelto: string | null;
+          estado_silla: string | null;
+          cupos_origen_antes: number | null;
+          cupos_origen_despues: number | null;
+          cupos_destino_antes: number | null;
+          cupos_destino_despues: number | null;
+          registrado_por_id: string | null;
         };
         Insert: {
           id?: number;
@@ -3609,6 +3625,63 @@ export type Database = {
         };
         Returns: undefined;
       };
+      // Migración 194 (tareas 2 y 3): operaciones atómicas de Vuelos. Todas
+      // SECURITY DEFINER con autorización por rol/agencia/contrato dentro de la
+      // función; las que cambian cupos son idempotentes por p_operacion_id.
+      trasladar_cupos: {
+        Args: { p_origen: number; p_destino: number; p_cantidad: number; p_motivo: string | null; p_operacion_id: string };
+        Returns: Json;
+      };
+      mover_pasajero: {
+        Args: {
+          p_silla_id: number; p_destino: number; p_modo: "solo_datos" | "con_cupo";
+          p_acepta_tarifa_distinta: boolean; p_motivo: string | null; p_operacion_id: string;
+        };
+        Returns: Json;
+      };
+      retirar_cupo: {
+        Args: { p_silla_id: number; p_motivo: string | null; p_operacion_id: string };
+        Returns: Json;
+      };
+      cambiar_estado_silla: {
+        Args: { p_silla_id: number; p_estado: "disponible" | "no_vendida" | "devuelta"; p_motivo: string; p_devolucion_real: boolean };
+        Returns: Json;
+      };
+      asignar_contrato_manual: {
+        Args: { p_silla_id: number; p_referencia: string };
+        Returns: Json;
+      };
+      quitar_contrato_manual: {
+        Args: { p_silla_id: number };
+        Returns: Json;
+      };
+      liberar_silla: {
+        Args: { p_silla_id: number };
+        Returns: Json;
+      };
+      editar_pasajero_silla: {
+        Args: { p_silla_id: number; p_datos: Json };
+        Returns: Json;
+      };
+      // Migración 195 (fase B-bis): crear/eliminar un bloqueo de forma atómica.
+      crear_bloqueo: {
+        Args: { p_datos: Json; p_cupos: number };
+        Returns: Json;
+      };
+      eliminar_bloqueo: {
+        Args: { p_bloqueo_id: number };
+        Returns: Json;
+      };
+      // Migración 196: vence reservas pendientes con plazo < día de negocio (solo service_role).
+      liberar_vencidas: {
+        Args: { p_hoy?: string | null };
+        Returns: Json;
+      };
+      // Migración 197 (W7): confirma venta + sillas en una transacción (RLS de quien llama).
+      confirmar_venta: {
+        Args: { p_numero: string };
+        Returns: Json;
+      };
       // Migración 156. Mismo patrón que actualizar_control_bloqueo, para
       // empaquetados: actualiza record/estado_emision/estado_pago y registra
       // el cambio en empaquetado_cambios en una sola transacción.
@@ -3890,7 +3963,9 @@ export type Database = {
         | "devuelta"
         | "no_vendida"
         | "cambio"
-        | "cambio_entrante";
+        | "cambio_entrante"
+        // Migración 192: cupo retirado (ya no cuenta ni se vende; la fila queda como historial).
+        | "retirada";
       acomodacion_tipo:
         | "sencilla"
         | "doble"

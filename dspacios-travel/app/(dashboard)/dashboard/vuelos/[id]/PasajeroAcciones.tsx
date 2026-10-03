@@ -5,9 +5,19 @@ import { useMemo, useState, useTransition } from "react";
 import { editarPasajeroSilla, borrarPasajeroSilla, moverPasajeroSilla, guardarInfanteVuelo, type PasajeroSillaInput } from "../actions";
 import { esInfantePorEdad, sillaTieneDatosDePasajero } from "@/lib/vuelos/infanteVuelo";
 import { calcularEdad } from "@/lib/utils";
+import { nuevaOperacionId, type ModoMover } from "@/lib/vuelos/operaciones";
+import { AlertTriangle, ArrowRightLeft, Check, Info, UserRound } from "lucide-react";
 
 type Pasajero = PasajeroSillaInput;
-type RecordOpt = { id: number; record: string; fecha_ida: string | null };
+/**
+ * Record destino ya filtrado por la página a los COMPATIBLES (mismo destino,
+ * mismo proveedor, vuelo no salido). La base vuelve a validarlo todo.
+ */
+type RecordOpt = {
+  id: number; record: string; fecha_ida: string | null; libres: number; tarifaDistinta: boolean;
+  /** Misma fecha de ida y de regreso que este record (D3-c). */
+  mismasFechas: boolean;
+};
 type CandidatoResponsable = { sillaId: number; nombre: string };
 
 const inp = "w-full rounded border border-gray-300 px-2 py-1 text-sm";
@@ -20,6 +30,8 @@ export function PasajeroAcciones({
   bloqueada,
   fechaIdaBloqueo,
   candidatosResponsable,
+  libre,
+  contratoOrganico,
 }: {
   sillaId: number;
   bloqueoId: number;
@@ -30,10 +42,34 @@ export function PasajeroAcciones({
   fechaIdaBloqueo: string | null;
   /** Otros pasajeros del MISMO vuelo con documento propio (candidatos a "adulto responsable" si este resulta ser un infante). El server (guardar_infante_vuelo) revalida todo — esta lista solo alimenta el <select>. */
   candidatosResponsable: CandidatoResponsable[];
+  /**
+   * OBLIGATORIA. Silla libre de verdad (`esSillaLibre`, lib/vuelos/sillaLibre.ts):
+   * sin pasajero ni contrato. En ella "Mover" no se ofrece (no hay a quién
+   * mover; para cupos libres está "Trasladar cupos"). La protección real está
+   * en la base: `mover_pasajero` (migración 194) rechaza una silla libre
+   * aunque se llame la acción directamente.
+   */
+  libre: boolean;
+  /**
+   * OBLIGATORIA. La silla tiene numero_contrato (venta del sistema). D3-c:
+   * solo puede ir a un record con las mismas fechas de ida y regreso, y el
+   * vuelo del contrato se actualiza con el movimiento. Con contrato_manual
+   * (false) no aplica. La base lo vuelve a validar.
+   */
+  contratoOrganico: boolean;
 }) {
   const [modo, setModo] = useState<null | "editar" | "mover">(null);
   const [form, setForm] = useState<Pasajero>(inicial);
   const [destino, setDestino] = useState<number | "">("");
+  // Modo de recepción en el destino: SIN valor por defecto (decisión explícita).
+  const [modoMover, setModoMover] = useState<ModoMover | null>(null);
+  const [aceptaTarifa, setAceptaTarifa] = useState(false);
+  const [tarifaDetectada, setTarifaDetectada] = useState(false);
+  const [motivo, setMotivo] = useState("");
+  // Mismo id en cada reintento del mismo formulario: si la primera llamada sí
+  // se aplicó y solo se perdió la respuesta, la base no la aplica dos veces.
+  const [operacionId, setOperacionId] = useState("");
+  const [movido, setMovido] = useState<null | { movidas: number; repetida: boolean; contrato: string | null; avisoRecord: boolean; avisoTarifa: boolean; tramos: number }>(null);
   const [responsableId, setResponsableId] = useState<number | "">("");
   const [pending, start] = useTransition();
   const [err, setErr] = useState("");
@@ -106,17 +142,31 @@ export function PasajeroAcciones({
       else setErr(r.error);
     });
   }
+  const destinoSel = otros.find((o) => o.id === destino) ?? null;
+  const pideTarifa = !!destinoSel?.tarifaDistinta || tarifaDetectada;
+
+  function abrirMover() {
+    setErr(""); setDestino(""); setModoMover(null); setAceptaTarifa(false); setTarifaDetectada(false);
+    setMotivo(""); setMovido(null); setOperacionId(nuevaOperacionId()); setModo("mover");
+  }
   function mover() {
-    if (destino === "") return;
+    if (destino === "" || !modoMover) return;
+    if (pideTarifa && !aceptaTarifa) { setErr("Confirma que entiendes que la tarifa del record destino es distinta."); return; }
     setErr("");
     start(async () => {
-      const r = await moverPasajeroSilla(sillaId, bloqueoId, Number(destino));
-      if (r.ok) { setModo(null); setDestino(""); }
-      else setErr(r.error);
+      const r = await moverPasajeroSilla(sillaId, bloqueoId, Number(destino), {
+        modo: modoMover, aceptaTarifaDistinta: aceptaTarifa, motivo, operacionId,
+      });
+      if (r.ok) {
+        setMovido({ movidas: r.movidas, repetida: r.repetida, contrato: r.contrato, avisoRecord: r.avisoRecordContrato, avisoTarifa: r.avisoTarifaDistinta, tramos: r.tramosActualizados });
+      } else {
+        if (r.requiereConfirmarTarifa) setTarifaDetectada(true);
+        setErr(r.error);
+      }
     });
   }
   function borrar() {
-    if (!confirm("¿Borrar el pasajero y liberar la silla? Esta acción la deja 'disponible' y no toca el contrato.")) return;
+    if (!confirm("¿Borrar el pasajero y liberar la silla? La deja 'disponible' y quita de la silla la referencia de contrato (también la manual); no modifica el contrato en sí.")) return;
     setErr("");
     start(async () => {
       const r = await borrarPasajeroSilla(sillaId, bloqueoId);
@@ -128,7 +178,9 @@ export function PasajeroAcciones({
     <>
       <div className="flex items-center gap-2 text-xs">
         <button type="button" onClick={() => { setForm(inicial); setModo("editar"); }} className="text-[#1D7C9A] hover:underline">Editar</button>
-        <button type="button" onClick={() => setModo("mover")} className="text-[#1D7C9A] hover:underline">Mover</button>
+        {!libre && (
+          <button type="button" onClick={abrirMover} className="text-[#1D7C9A] hover:underline">Mover</button>
+        )}
         <button type="button" onClick={borrar} disabled={pending} className="text-red-500 hover:underline disabled:opacity-50">Borrar</button>
       </div>
 
@@ -211,17 +263,122 @@ export function PasajeroAcciones({
               </>
             ) : (
               <>
-                <h3 className="mb-1 text-sm font-semibold text-gray-800">Mover pasajero a otro record</h3>
-                <p className="mb-3 text-xs text-gray-500">Se copia con su contrato y estado al record elegido; la silla actual queda <b>disponible</b> y se registra el cambio.</p>
-                <select value={destino} onChange={(e) => setDestino(e.target.value === "" ? "" : Number(e.target.value))} className={inp}>
-                  <option value="">Elige el record destino…</option>
-                  {otros.map((o) => <option key={o.id} value={o.id}>{o.record}{o.fecha_ida ? ` · ${o.fecha_ida}` : ""}</option>)}
-                </select>
-                {err && <p className="mt-2 text-xs text-red-600">{err}</p>}
-                <div className="mt-4 flex justify-end gap-2">
-                  <button type="button" onClick={() => setModo(null)} className="rounded-lg px-3 py-1.5 text-sm text-gray-500 hover:bg-gray-100">Cancelar</button>
-                  <button type="button" onClick={mover} disabled={pending || destino === ""} className="rounded-lg px-4 py-1.5 text-sm font-semibold text-white disabled:opacity-50" style={{ backgroundColor: "var(--brand-primary)" }}>{pending ? "Moviendo…" : "Mover pasajero"}</button>
-                </div>
+                <h3 className="mb-1 flex items-center gap-1.5 text-sm font-semibold text-gray-800">
+                  <ArrowRightLeft className="h-4 w-4" style={{ color: "var(--brand-primary)" }} /> Mover pasajero a otro record
+                </h3>
+                {movido ? (
+                  <div role="status" className="mt-2 space-y-2">
+                    <p className="flex items-start gap-1.5 text-sm text-gray-700">
+                      <Check className="mt-0.5 h-4 w-4 shrink-0" style={{ color: "var(--brand-success)" }} />
+                      {movido.repetida
+                        ? "Esta operación ya se había aplicado; no se repitió."
+                        : `Listo: ${movido.movidas} silla(s) movida(s)${movido.contrato ? ` del contrato ${movido.contrato}` : ""}.`}
+                    </p>
+                    {movido.tramos > 0 && (
+                      <p className="flex items-start gap-1.5 text-xs text-gray-600">
+                        <Info className="mt-0.5 h-3.5 w-3.5 shrink-0" />
+                        Se actualizó el vuelo del contrato ({movido.tramos} tramo(s)): PNR, número de vuelo y horas del nuevo record.
+                      </p>
+                    )}
+                    {movido.avisoRecord && (
+                      <p className="flex items-start gap-1.5 rounded-lg border border-amber-200 bg-amber-50 p-2 text-xs text-amber-800">
+                        <Info className="mt-0.5 h-3.5 w-3.5 shrink-0" />
+                        Contrato manual: el vuelo de la venta a la que se refiere todavía muestra el PNR del record anterior. No se cambia solo; actualízalo en ese contrato si corresponde.
+                      </p>
+                    )}
+                    {movido.avisoTarifa && (
+                      <p className="flex items-start gap-1.5 rounded-lg border border-amber-200 bg-amber-50 p-2 text-xs text-amber-800">
+                        <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" />
+                        La tarifa neta del record destino es distinta. El costo del contrato y las cuentas por pagar NO se recalcularon.
+                      </p>
+                    )}
+                    <div className="flex justify-end">
+                      <button type="button" onClick={() => setModo(null)} className="rounded-lg px-4 py-1.5 text-sm font-semibold text-white" style={{ backgroundColor: "var(--brand-primary)" }}>Cerrar</button>
+                    </div>
+                  </div>
+                ) : (
+                  <>
+                    <p className="mb-3 text-xs text-gray-500">
+                      Si el pasajero tiene contrato, todas las sillas de ese contrato en este record se mueven juntas. Solo se
+                      listan records del mismo destino y proveedor que todavía no han salido.
+                    </p>
+                    {contratoOrganico && (
+                      <p className="mb-3 flex items-start gap-1.5 rounded-lg border border-gray-200 bg-gray-50 p-2 text-xs text-gray-600">
+                        <Info className="mt-0.5 h-3.5 w-3.5 shrink-0" />
+                        Contrato del sistema: solo a un record con las mismas fechas de ida y regreso. El vuelo del contrato (PNR, número de vuelo y horas) se actualiza en el mismo movimiento. Para cambiar de fecha, anula y vuelve a reservar.
+                      </p>
+                    )}
+                    <label className="text-xs text-gray-500">Record destino
+                      <select
+                        value={destino}
+                        onChange={(e) => { setDestino(e.target.value === "" ? "" : Number(e.target.value)); setAceptaTarifa(false); setTarifaDetectada(false); setErr(""); }}
+                        className={inp}
+                      >
+                        <option value="">Elige el record destino…</option>
+                        {otros.map((o) => (
+                          <option key={o.id} value={o.id} disabled={contratoOrganico && !o.mismasFechas}>
+                            {o.record}{o.fecha_ida ? ` · ${o.fecha_ida}` : ""} · {o.libres} libre(s){o.tarifaDistinta ? " · otra tarifa" : ""}
+                            {contratoOrganico && !o.mismasFechas ? " · otras fechas (no permitido para este contrato)" : ""}
+                          </option>
+                        ))}
+                      </select>
+                    </label>
+                    {otros.length === 0 && (
+                      <p className="mt-1 text-xs text-gray-500">No hay records compatibles (mismo destino y proveedor, sin salir).</p>
+                    )}
+
+                    <fieldset className="mt-3">
+                      <legend className="mb-1 text-xs font-semibold text-gray-700">¿Cómo lo recibe el record destino?</legend>
+                      <label className={`mb-2 flex cursor-pointer gap-2 rounded-lg border p-2 text-xs ${modoMover === "solo_datos" ? "border-[var(--brand-accent)] bg-gray-50" : "border-gray-200"}`}>
+                        <input type="radio" name={`modo-mover-${sillaId}`} value="solo_datos" checked={modoMover === "solo_datos"} onChange={() => { setModoMover("solo_datos"); setErr(""); }} className="mt-0.5" />
+                        <span>
+                          <span className="flex items-center gap-1 font-semibold text-gray-800"><UserRound className="h-3.5 w-3.5" /> Solo sus datos</span>
+                          <span className="text-gray-500">
+                            Ocupa un cupo libre que ya existe en el destino y esta silla queda libre. Los cupos de los dos records no cambian.
+                            {destinoSel ? ` Libres en ${destinoSel.record}: ${destinoSel.libres}.` : ""} Si no hay cupo libre, no se mueve.
+                          </span>
+                        </span>
+                      </label>
+                      <label className={`flex cursor-pointer gap-2 rounded-lg border p-2 text-xs ${modoMover === "con_cupo" ? "border-[var(--brand-accent)] bg-gray-50" : "border-gray-200"}`}>
+                        <input type="radio" name={`modo-mover-${sillaId}`} value="con_cupo" checked={modoMover === "con_cupo"} onChange={() => { setModoMover("con_cupo"); setErr(""); }} className="mt-0.5" />
+                        <span>
+                          <span className="flex items-center gap-1 font-semibold text-gray-800"><ArrowRightLeft className="h-3.5 w-3.5" /> Con su cupo</span>
+                          <span className="text-gray-500">
+                            La silla se traslada al destino: este record pierde un cupo y el destino gana uno. El total no cambia.
+                          </span>
+                        </span>
+                      </label>
+                    </fieldset>
+
+                    {pideTarifa && (
+                      <label className="mt-3 flex items-start gap-2 rounded-lg border border-amber-200 bg-amber-50 p-2 text-xs text-amber-800">
+                        <input type="checkbox" checked={aceptaTarifa} onChange={(e) => setAceptaTarifa(e.target.checked)} className="mt-0.5" />
+                        <span className="flex items-start gap-1">
+                          <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" />
+                          La tarifa neta del record destino es distinta. Entiendo que el costo del contrato y las cuentas por pagar no se recalculan.
+                        </span>
+                      </label>
+                    )}
+
+                    <label className="mt-3 block text-xs text-gray-500">Motivo (opcional)
+                      <input className={inp} value={motivo} onChange={(e) => setMotivo(e.target.value)} />
+                    </label>
+
+                    {err && <p role="alert" className="mt-2 text-xs text-red-600">{err}</p>}
+                    <div className="mt-4 flex justify-end gap-2">
+                      <button type="button" onClick={() => setModo(null)} className="rounded-lg px-3 py-1.5 text-sm text-gray-500 hover:bg-gray-100">Cancelar</button>
+                      <button
+                        type="button"
+                        onClick={mover}
+                        disabled={pending || destino === "" || !modoMover || (pideTarifa && !aceptaTarifa)}
+                        className="rounded-lg px-4 py-1.5 text-sm font-semibold text-white disabled:opacity-50"
+                        style={{ backgroundColor: "var(--brand-primary)" }}
+                      >
+                        {pending ? "Moviendo…" : "Mover pasajero"}
+                      </button>
+                    </div>
+                  </>
+                )}
               </>
             )}
           </div>
