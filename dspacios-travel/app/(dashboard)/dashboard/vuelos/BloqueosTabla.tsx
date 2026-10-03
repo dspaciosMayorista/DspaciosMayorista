@@ -21,6 +21,8 @@ export type BloqueoFila = {
   fecha_devolucion: string | null;
   cupos_total: number;
   disp: number; plazo: number; conf: number; dev: number; nven: number;
+  /** Movimientos históricos que tocan el record (trazabilidad; NO son cupos). */
+  movimientos: number;
 };
 
 export function BloqueosTabla({ filas }: { filas: BloqueoFila[] }) {
@@ -35,11 +37,9 @@ export function BloqueosTabla({ filas }: { filas: BloqueoFila[] }) {
     [filas, fRuta, fMes]
   );
 
-  // TOTAL real = sillas que pertenecen al record AHORA (todas menos las que
-  // salieron a otro record en estado 'cambio', que no se cuentan en ningún
-  // estado). Así el total y la ocupación quedan siempre consistentes con las
-  // sillas reales, aunque el campo cupos_total guardado se haya desfasado por
-  // cambios entre records.
+  // TOTAL = CUPOS ACTIVOS: sillas que pertenecen al record AHORA (sin las
+  // filas 'cambio' ni 'retirada', que son historial). Los movimientos
+  // históricos van en su propia columna y nunca se suman al total.
   const totalReal = (b: BloqueoFila) => b.disp + b.plazo + b.conf + b.dev + b.nven;
 
   const tot = vis.reduce(
@@ -77,8 +77,8 @@ export function BloqueosTabla({ filas }: { filas: BloqueoFila[] }) {
         <span className="ml-auto text-xs text-gray-400">{vis.length} bloque(s)</span>
       </div>
 
-      <ResponsiveTableShell minWidth={1020} className="overflow-x-auto rounded-xl border border-gray-200 bg-white">
-        <table className="w-full min-w-[1020px] text-sm">
+      <ResponsiveTableShell minWidth={1100} className="overflow-x-auto rounded-xl border border-gray-200 bg-white">
+        <table className="w-full min-w-[1100px] text-sm">
           <thead>
             <tr className="bg-gray-50 text-left text-xs uppercase text-gray-400">
               <th className="px-3 py-2">Record</th>
@@ -91,8 +91,9 @@ export function BloqueosTabla({ filas }: { filas: BloqueoFila[] }) {
               <th className="px-3 py-2 text-center">Conf</th>
               <th className="px-3 py-2 text-center">Dev</th>
               <th className="px-3 py-2 text-center">N.Ven</th>
-              <th className="px-3 py-2 text-center">Total</th>
+              <th className="px-3 py-2 text-center">Cupos activos</th>
               <th className="px-3 py-2 text-center">Ocup.</th>
+              <th className="px-3 py-2 text-center" title="Traslados, pasajeros movidos y cupos retirados. No son cupos.">Mov. hist.</th>
               <th className="px-3 py-2">F. Dev.</th>
               <th className="px-3 py-2">Acción</th>
             </tr>
@@ -115,8 +116,9 @@ export function BloqueosTabla({ filas }: { filas: BloqueoFila[] }) {
                   <td className="px-3 py-2 text-center tabular-nums" style={{ color: "var(--brand-accent)" }} data-label="Confirmadas">{b.conf}</td>
                   <td className="px-3 py-2 text-center tabular-nums text-red-600" data-label="Devueltas">{b.dev}</td>
                   <td className="px-3 py-2 text-center tabular-nums text-gray-400" data-label="No vendidas">{b.nven}</td>
-                  <td className="px-3 py-2 text-center font-semibold tabular-nums" data-label="Total">{total}</td>
+                  <td className="px-3 py-2 text-center font-semibold tabular-nums" data-label="Cupos activos">{total}</td>
                   <td className="px-3 py-2 text-center tabular-nums text-gray-500" data-label="Ocupación">{ocup}%</td>
+                  <td className="px-3 py-2 text-center tabular-nums text-gray-400" data-label="Movimientos históricos">{b.movimientos}</td>
                   <td className="px-3 py-2 text-xs text-gray-400" data-label="F. devolución">{formatFechaLarga(b.fecha_devolucion)}</td>
                   <td className="px-3 py-2 text-right" data-label=""><EliminarBloqueoBtn id={b.id} record={b.record} /></td>
                 </tr>
@@ -131,8 +133,10 @@ export function BloqueosTabla({ filas }: { filas: BloqueoFila[] }) {
               <td className="px-3 py-2 text-center tabular-nums" style={{ color: "var(--brand-accent)" }} data-label="Confirmadas">{tot.conf}</td>
               <td className="px-3 py-2 text-center tabular-nums text-red-600" data-label="Devueltas">{tot.dev}</td>
               <td className="px-3 py-2 text-center tabular-nums text-gray-400" data-label="No vendidas">{tot.nven}</td>
-              <td className="px-3 py-2 text-center tabular-nums" data-label="Total">{tot.total}</td>
+              <td className="px-3 py-2 text-center tabular-nums" data-label="Cupos activos">{tot.total}</td>
               <td className="px-3 py-2 text-center tabular-nums text-gray-500" data-label="Ocupación">{ocupProm}%</td>
+              {/* Sin total de movimientos: cada uno cuenta en su origen y en su destino, la suma lo duplicaría. */}
+              <td className="px-3 py-2" data-label="Movimientos históricos"></td>
               <td className="px-3 py-2" colSpan={2}></td>
             </tr>
           </tfoot>

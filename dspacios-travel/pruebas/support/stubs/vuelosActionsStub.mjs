@@ -4,12 +4,17 @@
 // "next/headers".
 //
 // CONFIGURABLE (`__setImpls`), mismo criterio que los demás stubs de Server
-// Actions del proyecto.
+// Actions del proyecto. Lo usan EditarBloqueoForm.tsx y PasajeroAcciones.tsx.
 let impls = {};
 export function __setImpls(next) {
   impls = { ...impls, ...next };
 }
-export async function actualizarBloqueo(id, input) {
-  if (impls.actualizarBloqueo) return impls.actualizarBloqueo(id, input);
-  throw new Error("actualizarBloqueo: no implementado en el stub de pruebas — usa __setImpls({ actualizarBloqueo })");
+function llamar(nombre, args) {
+  if (impls[nombre]) return impls[nombre](...args);
+  throw new Error(`${nombre}: no implementado en el stub de pruebas — usa __setImpls({ ${nombre} })`);
 }
+export async function actualizarBloqueo(...args) { return llamar("actualizarBloqueo", args); }
+export async function editarPasajeroSilla(...args) { return llamar("editarPasajeroSilla", args); }
+export async function borrarPasajeroSilla(...args) { return llamar("borrarPasajeroSilla", args); }
+export async function moverPasajeroSilla(...args) { return llamar("moverPasajeroSilla", args); }
+export async function guardarInfanteVuelo(...args) { return llamar("guardarInfanteVuelo", args); }

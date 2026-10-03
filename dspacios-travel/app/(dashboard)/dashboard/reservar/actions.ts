@@ -39,6 +39,7 @@ import { resolverCondicionesTarifaParaConversion, type HotelSnapConRef } from "@
 import { computarReservaBernalo, type ComputoReservaBernaloOk, type SalidaResueltaBernalo } from "@/lib/reservar/computoReservaBernalo";
 import type { HabitacionOcupacionValidada } from "@/lib/reservar/ocupacionPorHabitacion";
 import { asegurarCuentasPorPagar } from "@/lib/reservar/asegurarCuentasPorPagar";
+import { mensajeErrorRpc } from "@/lib/vuelos/operaciones";
 import {
   normalizarCategoriaServicio, resumirServiciosContrato, tipoProveedorCxpServicio,
   type ServicioEfectivo,
@@ -1701,7 +1702,14 @@ export async function convertirCotizacionCarrito(
     grupos = [...porDestino.entries()].map(([destino, g]) => ({ destino: destino === "—" ? null : destino, items: g.items, tours: g.tours }));
   }
 
-  const admin = process.env.SUPABASE_SERVICE_ROLE_KEY ? createAdminClient() : sb;
+  // W8 (§6.8): sin la clave de servicio no se puede crear la reserva. Antes
+  // había aquí un respaldo al cliente de SESIÓN que nunca llegaba a escribir
+  // (más abajo ya se cortaba con este mismo mensaje antes de la primera
+  // escritura); ahora el corte va primero y el cliente es siempre el admin.
+  if (!process.env.SUPABASE_SERVICE_ROLE_KEY) {
+    return { ok: false, error: "No se pudo crear la reserva (configuración del servidor incompleta)." };
+  }
+  const admin = createAdminClient();
 
   // Hallazgo confirmado (idempotencia, ronda 2): un grupo que YA generó su
   // contrato en un intento anterior se salta ANTES de reliquidar/validar sus
@@ -2787,28 +2795,15 @@ export async function descartarCotizacion(id: number): Promise<{ ok: boolean; er
 // ── Confirmar venta: sillas en_plazo -> confirmada ─────────────────────────
 export async function confirmarVenta(numeroContrato: string): Promise<{ ok: boolean; error?: string }> {
   const sb = await createClient();
-  // Migración 172 — candado real: un contrato con la escritura financiera
-  // incompleta (financiero_estado='pendiente') NUNCA se confirma. Antes de
-  // esto, `confirmarVenta` marcaba 'confirmado' sin mirar nada financiero —
-  // el único resguardo era `asegurarCuentasPorPagar`, un backfill best-effort
-  // que no bloquea nada. Default de la columna = 'completo' (migración 172):
-  // este chequeo NO afecta contratos manuales/de programa/importados —
-  // ninguno de ellos pasa nunca por 'pendiente'.
-  const { data: estadoFin, error: efErr } = await sb
-    .from("ventas").select("financiero_estado").eq("numero_contrato", numeroContrato).maybeSingle();
-  if (efErr) return { ok: false, error: efErr.message };
-  if (!estadoFin) return { ok: false, error: "Contrato no encontrado o sin acceso." };
-  if (estadoFin?.financiero_estado === "pendiente") {
-    return {
-      ok: false,
-      error: "Este contrato tiene el registro de costos/cuentas por pagar incompleto (fallo técnico al crearlo) — no se puede confirmar todavía. Un administrador debe reintentarlo antes de continuar.",
-    };
-  }
-  const { error } = await sb.from("ventas").update({ estado: "confirmado" }).eq("numero_contrato", numeroContrato);
-  if (error) return { ok: false, error: error.message };
-  // Sillas a confirmada (admin si hay service-role; si no, intento directo)
-  const client = process.env.SUPABASE_SERVICE_ROLE_KEY ? createAdminClient() : sb;
-  await client.from("sillas").update({ estado: "confirmada" }).eq("numero_contrato", numeroContrato).eq("estado", "en_plazo");
+  // W7 (§6.8), migración 197: la venta y sus sillas se confirman en UNA
+  // transacción de la base (`confirmar_venta`). La función corre con la RLS
+  // de quien llama (lee y actualiza `ventas` con su sesión, como antes) y
+  // aplica dentro el candado de la 172: un contrato con la escritura
+  // financiera incompleta (financiero_estado='pendiente') NUNCA se confirma.
+  // Si cualquier parte falla, no cambia nada. Ya no necesita la clave de
+  // servicio ni hay "compensación" en dos pasos.
+  const { error } = await sb.rpc("confirmar_venta", { p_numero: numeroContrato });
+  if (error) return { ok: false, error: mensajeErrorRpc(error).error };
   // Respaldo: si el contrato aún no tiene cuentas por pagar (p. ej. venía de
   // legacy o se creó manual), generarlas desde sus costos al confirmar. No debe
   // tumbar la confirmación si falla.
