@@ -89,6 +89,38 @@ test("las demás escrituras de sillas (copia de datos al reservar, W8) usan el c
   for (const rel of ["app/(dashboard)/dashboard/reservar/actions.ts", "app/(dashboard)/dashboard/contratos/actions.ts"]) {
     const src = leer(rel);
     assert.doesNotMatch(src, /\bsb\.from\("sillas"\)\s*\.update\(/, `${rel}: sin UPDATE de sillas con la sesión`);
-    assert.match(src, /admin\.from\("sillas"\)\.update\(/, `${rel}: la copia de datos va con admin`);
+    // Migración 201: la copia va DENTRO de la transacción que reserva las
+    // sillas (crear_pasajeros_contrato_con_sillas), con admin; nunca un UPDATE
+    // suelto ni una copia aparte que deje la silla del contrato vacía entre
+    // dos llamadas. Un fallo es el de pasajeros: corta y revierte el contrato.
+    assert.doesNotMatch(src, /\.from\("sillas"\)\.update\(/, `${rel}: sin UPDATE suelto de sillas (best-effort)`);
+    assert.doesNotMatch(src, /copiar_datos_sillas_contrato/, `${rel}: sin copia aparte de la reserva`);
+    assert.match(src, /const \{ data: pasajerosCreados, error: pasajerosErr \} = await admin\.rpc\("crear_pasajeros_contrato_con_sillas"/,
+      `${rel}: la reserva y la copia van en la misma RPC transaccional`);
+    assert.match(src, /p_datos_pasajeros:/, `${rel}: manda los datos de pasajero para las sillas`);
   }
+  // El carrito (varios records) usa la envoltura multi, con una copia por record.
+  assert.match(leer("app/(dashboard)/dashboard/reservar/actions.ts"), /admin\.rpc\("crear_pasajeros_contrato_multi_con_sillas"/);
+});
+
+test("la edición manual del pasajero manda el contrato que la pantalla mostraba (migración 201)", () => {
+  const c = cuerpo(vuelos, "export async function editarPasajeroSilla(");
+  assert.match(c, /esperado:\s*\{\s*numero_contrato:\s*visto\.numero_contrato/, "manda el estado esperado a la base");
+  assert.match(c, /if \(!visto\) return \{ ok: false/, "sin estado esperado no edita a ciegas");
+  assert.match(c, /updated_at: visto\.updated_at/, "y la versión de la silla que mostró la pantalla");
+  const pagina = leer("app/(dashboard)/dashboard/vuelos/[id]/page.tsx");
+  assert.match(pagina, /contratoVisto=\{\{ numero_contrato: s\.numero_contrato, contrato_manual: contratoManualPorSilla\.get\(s\.id\) \?\? null, updated_at: s\.updated_at \}\}/,
+    "la página pasa el contrato orgánico, el manual y la versión que está mostrando");
+});
+
+test("Borrar y asignar contrato manual usan SOLO las firmas con versión (las viejas quedan para compatibilidad de despliegue)", () => {
+  const borrar = cuerpo(vuelos, "export async function borrarPasajeroSilla(");
+  assert.match(borrar, /rpc\("liberar_silla", \{ p_silla_id: sillaId, p_esperado: \{ updated_at: version \} \}\)/);
+  const asignar = cuerpo(vuelos, "export async function asignarContratoManual(");
+  assert.match(asignar, /rpc\("asignar_contrato_manual", \{ p_silla_id: sillaId, p_referencia: contratoManual, p_esperado: \{ updated_at: version \} \}\)/);
+  assert.doesNotMatch(vuelos, /rpc\("liberar_silla", \{ p_silla_id: sillaId \}\)/, "ninguna llamada a la firma vieja sin versión");
+  const pagina = leer("app/(dashboard)/dashboard/vuelos/[id]/page.tsx");
+  assert.match(pagina, /<SillaContrato [^>]*version=\{s\.updated_at\}[^>]*\/>/, "la celda de contrato recibe la versión de la silla");
+  assert.match(leer("app/(dashboard)/dashboard/vuelos/[id]/PasajeroAcciones.tsx"),
+    /borrarPasajeroSilla\(sillaId, bloqueoId, contratoVisto\.updated_at\)/, "Borrar manda la versión vista");
 });

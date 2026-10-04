@@ -21,6 +21,24 @@ import {
   crearEstadoFlujo, elevarEstadoFlujo, resultadoTotal,
   type Medidor, type ResultadoEtapa, type EstadoFlujo,
 } from "@/lib/observabilidad/medicion";
+import { revertirContratoIncompleto } from "@/lib/reservar/financieroContrato";
+
+// Deshace un contrato manual que quedó a medias: borra la venta y sus hijas y
+// libera SOLO sus sillas (`revertir_contrato_incompleto`, migración 171). Es
+// la misma reversión de la reserva desde tarifario; necesita service_role.
+async function revertirContratoManual(numero: string, tenant: string): Promise<{ ok: boolean; error?: string }> {
+  if (!process.env.SUPABASE_SERVICE_ROLE_KEY) return { ok: false, error: "Falta la clave de servicio para revertir el contrato." };
+  const admin = createAdminClient();
+  return revertirContratoIncompleto({
+    rpc: async (_fn, args) => {
+      const { data, error } = await admin.rpc("revertir_contrato_incompleto", {
+        p_numero_contrato: String(args.p_numero_contrato ?? ""),
+        p_tenant: String(args.p_tenant ?? ""),
+      });
+      return { data: data as unknown, error: error ? { message: error.message } : null };
+    },
+  }, numero, tenant);
+}
 
 // Postea (o reemplaza) el asiento de un abono: Debe Caja/Bancos (según forma
 // de pago) / Haber Anticipos de clientes (280505) si el contrato AÚN no está
@@ -513,12 +531,19 @@ async function crearContratoInterno(
   // nunca al navegador — el `return` devuelve el mensaje público FIJO
   // `MSG_ERROR_GUARDAR_CONTRATO` (revisión posterior — ronda 3), no
   // `error.message` crudo de Supabase/Postgres.
+  // A partir de aquí la venta YA existe: un fallo de las hijas revierte el
+  // contrato entero (venta, hijas y sillas, `revertir_contrato_incompleto`)
+  // en vez de dejarlo numerado y a medias. Si la reversión misma falla, el
+  // mensaje lo dice con el número del contrato.
   const _tHijas0 = performance.now();
-  const _errorHijas = (detalle: string, error: unknown) => {
+  const _errorHijas = async (detalle: string, error: unknown) => {
     registrarEtapa("crear_contrato", flujoId, "insert_hijas", Math.round(performance.now() - _tHijas0), "error");
     registrarErrorTecnico("crear_contrato", flujoId, "insert_hijas", detalle, error);
     elevarEstadoFlujo(estado, "error");
-    return { ok: false as const, error: MSG_ERROR_GUARDAR_CONTRATO };
+    const rev = await revertirContratoManual(numero, tenant);
+    if (rev.ok) return { ok: false as const, error: MSG_ERROR_GUARDAR_CONTRATO };
+    registrarErrorTecnico("crear_contrato", flujoId, "insert_hijas", "reversion_fallida", rev.error);
+    return { ok: false as const, error: `${MSG_ERROR_GUARDAR_CONTRATO} El contrato ${numero} quedó creado a medias y no se pudo deshacer automáticamente: revísalo antes de volver a intentarlo.` };
   };
   // `es_infante` se recalcula SIEMPRE server-side desde la fecha de
   // nacimiento contra `input.fechaSalida` (la misma fecha ya guardada como
@@ -567,11 +592,26 @@ async function crearContratoInterno(
         responsableIndex: p.responsableIndex ?? null,
       }))
     );
-    const { data: pasajerosCreados, error: pasajerosErr } = await admin.rpc("crear_pasajeros_contrato", {
+    // Migración 201: la misma transacción reserva las sillas y les copia los
+    // datos del pasajero (`sillas.pasajero_*` es el manifiesto del vuelo); si
+    // la copia falla, se revierte todo y `_errorHijas` deshace el contrato.
+    const { data: pasajerosCreados, error: pasajerosErr } = await admin.rpc("crear_pasajeros_contrato_con_sillas", {
       p_numero_contrato: numero,
       p_pasajeros: payloadPasajeros as unknown as Json,
       p_holders_min: holdersMinPiso,
       p_usuario_id: actorPasajeros.id,
+      p_comun: {
+        asesor: oNull(input.asesorNombre),
+        hotel: input.hoteles[0]?.nombre ?? null,
+        acomodacion: input.hoteles[0]?.acomodacion ?? null,
+      },
+      p_datos_pasajeros: input.pasajeros.map((p) => ({
+        pasajero_nombres: oNull(p.nombres),
+        pasajero_apellidos: oNull(p.apellidos),
+        tipo_doc: oNull(p.tipoId),
+        numero_doc: oNull(p.identificacion),
+        nacimiento: oNull(p.fechaNacimiento),
+      })),
     });
     if (pasajerosErr) return _errorHijas("pasajeros_y_sillas", pasajerosErr);
 
@@ -600,38 +640,6 @@ async function crearContratoInterno(
         }
       })
     );
-
-    // Snapshot cosmético de nombre/documento sobre las sillas YA asignadas
-    // atómicamente arriba — solo para que `sillas.pasajero_*` (listados
-    // operativos de vuelos) muestre el nombre real; el inventario en sí ya
-    // quedó reservado de forma atómica, así que un fallo aquí es
-    // best-effort (nunca re-abre la condición de carrera ya resuelta).
-    if (esBloqueoConCupo) {
-      try {
-        const holders = input.pasajeros.filter((_, i) => pasajeroConsumeSilla(esInfanteReal[i]));
-        const { data: sillasAsignadas } = await admin
-          .from("sillas").select("id")
-          .eq("numero_contrato", numero).in("estado", ["en_plazo", "confirmada"])
-          .order("numero_silla");
-        await Promise.all(
-          (sillasAsignadas ?? []).map((s, i) => {
-            const p = holders[i];
-            return admin.from("sillas").update({
-              asesor: oNull(input.asesorNombre),
-              hotel: input.hoteles[0]?.nombre ?? null,
-              acomodacion: input.hoteles[0]?.acomodacion ?? null,
-              pasajero_nombres: oNull(p?.nombres),
-              pasajero_apellidos: oNull(p?.apellidos),
-              tipo_doc: oNull(p?.tipoId),
-              numero_doc: oNull(p?.identificacion),
-              nacimiento: oNull(p?.fechaNacimiento),
-            }).eq("id", s.id);
-          })
-        );
-      } catch {
-        // Best-effort — ver comentario arriba.
-      }
-    }
   }
 
   if (input.hoteles.length) {

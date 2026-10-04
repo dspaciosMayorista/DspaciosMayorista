@@ -344,7 +344,8 @@ update public.bloqueos_vuelo y set (tarifa_neta, fecha_ida, fecha_regreso, ruta,
   = (select tarifa_neta, fecha_ida, fecha_regreso, ruta, origen, aerolinea, vuelo_ida, hora_salida_ida, hora_llegada_ida, vuelo_regreso, hora_salida_reg, hora_llegada_reg from public.bloqueos_vuelo x where x.id = pg_temp.fx('X')) where y.id = pg_temp.fx('Y');
 
 -- Carga masiva de pasajeros (cargarPasajerosMasivo): elige sillas libres sin
--- pasajero ni contrato y escribe solo datos. Se replica su consulta.
+-- pasajero ni contrato y escribe solo datos. Se replica su consulta. Desde la
+-- 201 cada fila con pasajero lleva fecha de plazo (queda retenida en plazo).
 do $$
 declare v_ids bigint[]; v_id bigint; n integer;
 begin
@@ -356,7 +357,7 @@ begin
      order by numero_silla limit 2) t;
   foreach v_id in array v_ids loop
     n := pg_temp.filas(format($q$update public.sillas set pasajero_nombres = 'MASIVO', pasajero_apellidos = 'M', tipo_doc = 'CC',
-        numero_doc = %L, nacimiento = date '1980-05-05', updated_at = now() where id = %s$q$, 'M' || v_id, v_id));
+        numero_doc = %L, nacimiento = date '1980-05-05', plazo = current_date + 5, updated_at = now() where id = %s$q$, 'M' || v_id, v_id));
     perform pg_temp.ok(n = 1, format('carga masiva: silla %s (1 fila)', v_id));
   end loop;
   perform pg_temp.ser('postgres');
@@ -375,7 +376,10 @@ rollback to savepoint col_nueva;
 
 -- ═══ 7. Fallo a mitad de una sentencia: sin cambios parciales ══════════════
 select pg_temp.ser('cv');
-select pg_temp.falla(format('update public.sillas set hotel = %L where bloqueo_id = %s and numero_silla in (1, 2, 3)', 'PARCIAL', pg_temp.fx('Y')),
+-- Desde la 201 las sillas libres solo aceptan datos como retención válida
+-- (pasajero + plazo): se mandan, para que el fallo siga siendo el de la silla
+-- con contrato y no el de la regla de retención.
+select pg_temp.falla(format('update public.sillas set hotel = %L, pasajero_nombres = %L, plazo = current_date + 5 where bloqueo_id = %s and numero_silla in (1, 2, 3)', 'PARCIAL', 'PARCIAL', pg_temp.fx('Y')),
   'tiene contrato', 'UPDATE de 3 sillas donde una tiene contrato → falla');
 select pg_temp.ser('postgres');
 select pg_temp.ok((select count(*) from public.sillas where hotel = 'PARCIAL') = 0, 'rollback: ninguna de las 3 sillas quedó con el cambio (ni las libres)');

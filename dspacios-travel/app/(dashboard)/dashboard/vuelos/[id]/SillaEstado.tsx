@@ -17,8 +17,8 @@ const ETIQUETA: Record<string, string> = {
 /**
  * Estado de una silla ACTIVA. El cambio manual sigue la matriz DIR-1
  * (lib/vuelos/operaciones.ts, validada otra vez en la base):
- *  - solo en sillas libres (sin contrato ni pasajero); las ocupadas cambian
- *    con las acciones del contrato (reservar, confirmar, liberar);
+ *  - solo en sillas sin contrato; con pasajero y sin contrato se permite la
+ *    misma matriz manual, pero confirmar exige asignar un contrato;
  *  - Devuelta es definitiva; No vendida → Devuelta solo como devolución real;
  *  - siempre con motivo, que queda en el historial del bloqueo.
  */
@@ -26,13 +26,13 @@ export function SillaEstado({
   sillaId,
   estado,
   bloqueoId,
-  libre,
+  sinContrato,
 }: {
   sillaId: number;
   estado: string;
   bloqueoId: number;
-  /** Silla sin contrato ni pasajero (`esSillaLibre`). */
-  libre: boolean;
+  /** Silla sin contrato orgánico ni manual. */
+  sinContrato: boolean;
 }) {
   const [pending, start] = useTransition();
   const [destino, setDestino] = useState<OpcionEstado | null>(null);
@@ -41,9 +41,7 @@ export function SillaEstado({
   const [err, setErr] = useState("");
 
   const etiqueta = ETIQUETA[estado] ?? estado.replace("_", " ");
-  // no_vendida/devuelta pueden no ser "libres" por estado, pero sí sin contrato:
-  // la matriz se aplica a sillas sin contrato ni pasajero en cualquier estado manual.
-  const opciones = libre || estado === "no_vendida" || estado === "devuelta" ? transicionesManuales(estado) : [];
+  const opciones = sinContrato ? transicionesManuales(estado) : [];
 
   if (!opciones.length) {
     return <span className="text-[10px] uppercase text-gray-500" title={estado === "devuelta" ? "Una silla devuelta es definitiva." : undefined}>{etiqueta}</span>;

@@ -7,7 +7,8 @@ import { BloqueosTabla } from "./BloqueosTabla";
 import { ControlVuelosTabla, type ControlFila } from "./ControlVuelosTabla";
 import { EmpaquetadosTabla } from "./EmpaquetadosTabla";
 import { VistaTabs, vistaDeParam } from "./VistaTabs";
-import { History } from "lucide-react";
+import { History, TriangleAlert } from "lucide-react";
+import { fechaNegocio } from "@/lib/fechaNegocio";
 import { conteoPorBloqueo, sumarConteos, esPasado, ocupacionPct, conteoCero, movimientosPorBloqueo, type ConteoSillas, type FilaMovimientoConteo } from "@/lib/vuelos/stats";
 import { fetchAllPaginado } from "@/lib/supabase/fetchAllPaginado";
 import { hoyISO } from "@/lib/calc/paquetes";
@@ -119,6 +120,17 @@ export default async function VuelosPage({ searchParams }: { searchParams: Promi
     miRol(),
   ]);
 
+  // Retenciones en plazo SIN contrato ya vencidas (plazo < día de negocio de
+  // Bogotá; migración 201). Nada las libera solo: el aviso lleva al record,
+  // donde cada una tiene su acción Liberar. Con la RLS de `sillas`, un rol que
+  // no ve el inventario simplemente no ve el aviso.
+  const { data: retencionesVencidas } = await sb.from("sillas").select("bloqueo_id, numero_silla")
+    .eq("estado", "en_plazo").is("numero_contrato", null).is("contrato_manual", null)
+    .lt("plazo", fechaNegocio()).order("bloqueo_id").order("numero_silla");
+  const vencidasPorRecord = new Map<number, number>();
+  for (const r of retencionesVencidas ?? []) vencidasPorRecord.set(r.bloqueo_id, (vencidasPorRecord.get(r.bloqueo_id) ?? 0) + 1);
+  const totalRetencionesVencidas = retencionesVencidas?.length ?? 0;
+
   // Rol con acceso real a /dashboard/contratos/[numero] (hallazgo 2, ronda
   // siguiente, "ENLACE DE CONTRATO") — ver el comentario junto a
   // `ROLES_CONTRATO_COMPLETO` en lib/roles.ts.
@@ -201,6 +213,27 @@ export default async function VuelosPage({ searchParams }: { searchParams: Promi
 
   return (
     <div className="mx-auto max-w-[1500px] p-4 md:p-8">
+      {totalRetencionesVencidas > 0 && (
+        <div role="status" data-testid="aviso-retenciones-vencidas" className="mb-4 flex items-start gap-2 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900">
+          <TriangleAlert className="mt-0.5 h-4 w-4 shrink-0" />
+          <div>
+            <p className="font-semibold">
+              {totalRetencionesVencidas === 1 ? "1 silla retenida venció" : `${totalRetencionesVencidas} sillas retenidas vencieron`} sin contrato
+            </p>
+            <p className="text-xs">
+              Revísalas en su record: actualiza su plazo para poder asignarles contrato, o libéralas a mano.{" "}
+              {[...vencidasPorRecord].map(([id, n], i) => (
+                <span key={id}>
+                  {i > 0 && " · "}
+                  <Link href={`/dashboard/vuelos/${id}`} className="font-medium underline">
+                    {todos.find((b) => b.id === id)?.record ?? `record ${id}`}
+                  </Link>{" "}({n})
+                </span>
+              ))}
+            </p>
+          </div>
+        </div>
+      )}
       <div className="mb-6 flex flex-wrap items-center justify-between gap-3">
         <div>
           <h1 className="text-2xl font-semibold text-gray-900">{tituloVista}</h1>

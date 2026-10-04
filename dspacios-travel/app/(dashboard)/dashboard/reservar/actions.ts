@@ -210,13 +210,16 @@ async function reservarDesdeTarifarioInterno(input: ReservaInput, tenant: Tenant
     datosVuelo = rv.data;
 
     if (origen.tipo === "bloqueo") {
-      const { count, error: ce } = await admin
-        .from("sillas")
-        .select("id", { count: "exact", head: true })
-        .eq("bloqueo_id", origen.id)
-        .in("estado", ["disponible", "cambio_entrante"]);
+      // Misma definición de silla libre que usa el RPC al tomar las sillas
+      // (`_silla_libre`, migración 201): una silla con pasajero precargado sin
+      // contrato no cuenta como cupo.
+      const { data: cup, error: ce } = await admin
+        .from("cupos_por_bloqueo")
+        .select("cupos_disponibles")
+        .eq("id", origen.id)
+        .maybeSingle();
       if (ce) return { ok: false, error: `No se pudo validar los cupos del vuelo: ${ce.message}` };
-      const disponibles = count ?? 0;
+      const disponibles = Number(cup?.cupos_disponibles) || 0;
       if (disponibles < paxConSilla) {
         return { ok: false, error: `No hay cupos suficientes en este vuelo (disponibles: ${disponibles}, requeridos: ${paxConSilla}).` };
       }
@@ -422,8 +425,6 @@ async function reservarDesdeTarifarioInterno(input: ReservaInput, tenant: Tenant
   // `service_role` porque la reserva puede venir de un usuario B2B externo
   // (agencia/freelance), que nunca pasaría el candado de rol interno del
   // wrapper de edición — el RPC exige en cambio un usuario real y activo.
-  const holdersCreacion = input.pasajeros.filter((_, i) => pasajeroConsumeSilla(esInfanteReal[i]));
-  let sillaIdsAsignadas: number[] = [];
   {
     const { data: { user: actorPasajeros } } = await sb.auth.getUser();
     if (!actorPasajeros) return fallarYRevertir("Sesión inválida: no se pudo confirmar el usuario para crear la reserva.");
@@ -438,11 +439,30 @@ async function reservarDesdeTarifarioInterno(input: ReservaInput, tenant: Tenant
         responsableIndex: p.responsableIndex ?? null,
       }))
     );
-    const { data: pasajerosCreados, error: pasajerosErr } = await admin.rpc("crear_pasajeros_contrato", {
+    // Migración 201: la misma transacción reserva las sillas y les copia los
+    // datos del pasajero (`sillas.pasajero_*` es el manifiesto del vuelo). Sin
+    // copia aparte no hay un momento en que la silla sea del contrato y esté
+    // vacía, así que una edición manual no puede colarse ni hacer fallar la
+    // copia; si la copia falla, se revierte todo y se deshace el contrato.
+    // Quién ocupa silla lo decide la base, en el orden de este payload.
+    const { data: pasajerosCreados, error: pasajerosErr } = await admin.rpc("crear_pasajeros_contrato_con_sillas", {
       p_numero_contrato: numero,
       p_pasajeros: payloadPasajeros as unknown as Json,
       p_holders_min: paxConSilla,
       p_usuario_id: actorPasajeros.id,
+      p_comun: {
+        asesor: oNull(asesorNombre),
+        hotel: meta.hotel_nombre ?? null,
+        acomodacion: input.categoria,
+        plazo: oNull(input.plazo),
+      },
+      p_datos_pasajeros: input.pasajeros.map((p) => ({
+        pasajero_nombres: oNull(p.nombres),
+        pasajero_apellidos: oNull(p.apellidos),
+        tipo_doc: oNull(p.tipoDoc),
+        numero_doc: oNull(p.numeroDoc),
+        nacimiento: oNull(p.fechaNacimiento),
+      })),
     });
     if (pasajerosErr) return fallarYRevertir(pasajerosErr.message);
 
@@ -476,14 +496,6 @@ async function reservarDesdeTarifarioInterno(input: ReservaInput, tenant: Tenant
       }
     });
     await Promise.all(escriturasDemograficas);
-
-    if (origen.tipo === "bloqueo") {
-      const { data: sillasAsignadas } = await admin
-        .from("sillas").select("id")
-        .eq("numero_contrato", numero).in("estado", ["en_plazo", "confirmada"])
-        .order("numero_silla");
-      sillaIdsAsignadas = (sillasAsignadas ?? []).map((s) => s.id);
-    }
   }
 
   // 6) Hotel del contrato (no aplica en paquete tipo servicios)
@@ -722,38 +734,6 @@ async function reservarDesdeTarifarioInterno(input: ReservaInput, tenant: Tenant
   // `origen` es un discriminado único (defecto 1).
   if (datosVuelo) {
     pushCxP("aereo", `Aéreo ${datosVuelo.aerolinea ?? ""}`.trim(), costoAereo, datosVuelo.proveedor, datosVuelo.aerolinea);
-  }
-
-  // 9-bis) Snapshot cosmético de nombre/documento sobre las sillas YA
-  // asignadas atómicamente en el paso 5-bis (`sillaIdsAsignadas`) — esto es
-  // solo para que `sillas.pasajero_*` (usado en los listados operativos de
-  // vuelos) muestre el nombre real; el inventario en sí ya quedó reservado
-  // de forma atómica antes de crear los pasajeros, así que un fallo AQUÍ es
-  // best-effort (no re-lanza la condición de carrera del inventario, que ya
-  // se resolvió arriba) — nunca deja el inventario a medias, solo el
-  // nombre en pantalla desactualizado hasta la próxima edición.
-  if (sillaIdsAsignadas.length && process.env.SUPABASE_SERVICE_ROLE_KEY) {
-    try {
-      const admin = createAdminClient();
-      await Promise.all(
-        sillaIdsAsignadas.map((sillaId, i) => {
-          const p = holdersCreacion[i];
-          return admin.from("sillas").update({
-            asesor: oNull(asesorNombre),
-            hotel: meta.hotel_nombre,
-            acomodacion: input.categoria,
-            plazo: oNull(input.plazo),
-            pasajero_nombres: oNull(p?.nombres),
-            pasajero_apellidos: oNull(p?.apellidos),
-            tipo_doc: oNull(p?.tipoDoc),
-            numero_doc: oNull(p?.numeroDoc),
-            nacimiento: oNull(p?.fechaNacimiento),
-          }).eq("id", sillaId);
-        })
-      );
-    } catch {
-      // Best-effort — ver comentario arriba.
-    }
   }
 
   // 10) Costo neto del HOTEL y su cuenta por pagar. El neto YA se calculó en
@@ -1920,10 +1900,11 @@ export async function convertirCotizacionCarrito(
   // lectura y la escritura.
   if (demandaPorBloqueo.size) {
     const disponiblesPorBloqueo = new Map<number, number>();
+    // Misma definición de silla libre que el RPC (`_silla_libre`, migración 201).
     for (const bloqueoId of demandaPorBloqueo.keys()) {
-      const { count } = await admin.from("sillas").select("id", { count: "exact", head: true })
-        .eq("bloqueo_id", bloqueoId).in("estado", ["disponible", "cambio_entrante"]);
-      disponiblesPorBloqueo.set(bloqueoId, count ?? 0);
+      const { data: cup } = await admin.from("cupos_por_bloqueo").select("cupos_disponibles")
+        .eq("id", bloqueoId).maybeSingle();
+      disponiblesPorBloqueo.set(bloqueoId, Number(cup?.cupos_disponibles) || 0);
     }
     const faltante = faltanteDeCupos(demandaPorBloqueo, disponiblesPorBloqueo);
     if (faltante) {
@@ -2185,7 +2166,20 @@ export async function convertirCotizacionCarrito(
         responsableIndex: p.responsableIndex ?? null,
       }))
     );
-    const { data: filasPasajerosMulti, error: peMulti } = await admin.rpc("crear_pasajeros_contrato_multi", {
+    // Migración 201: la misma transacción reserva las sillas de cada record
+    // y les copia los datos del pasajero (manifiesto del vuelo). Una sola
+    // copia por record aunque dos ítems lo compartan (B14); quién ocupa silla
+    // lo decide la base con la fecha de ESE record (B19), igual que al
+    // reservarlas. Datos comunes del record: los del primer ítem que lo usa.
+    const comunPorBloqueo = new Map<number, { asesor: string | null; hotel: string | null; acomodacion: string | null; plazo: null }>();
+    for (const { item: it, comp } of validadosPersona) {
+      if (it.modulo === "bloqueo" && it.bloqueoId && !comunPorBloqueo.has(it.bloqueoId)) {
+        comunPorBloqueo.set(it.bloqueoId, {
+          asesor: oNull(opts.asesorInterno ?? null), hotel: comp.meta.hotel_nombre ?? null, acomodacion: it.categoria, plazo: null,
+        });
+      }
+    }
+    const { data: filasPasajerosMulti, error: peMulti } = await admin.rpc("crear_pasajeros_contrato_multi_con_sillas", {
       p_numero_contrato: numero,
       p_pasajeros: payloadPasajerosMulti as unknown as Json,
       p_reservas_sillas: reservasSillas as unknown as Json,
@@ -2194,16 +2188,16 @@ export async function convertirCotizacionCarrito(
       // resuelve solo (`fecha_salida` o su propio `current_date`), que es el
       // mismo valor que esta Server Action leyó en `hoyServidor` para
       // prevalidar. Inyectarla era lo que permitía elegirla.
+      p_comun_por_bloqueo: [...comunPorBloqueo].map(([bloqueoId, comun]) => ({ bloqueoId, comun })),
+      p_datos_pasajeros: pasajerosLocal.map((p) => ({
+        pasajero_nombres: oNull(p.nombres), pasajero_apellidos: oNull(p.apellidos),
+        tipo_doc: oNull(p.tipoDoc), numero_doc: oNull(p.numeroDoc), nacimiento: oNull(p.fechaNacimiento),
+      })),
     });
     if (peMulti) return fallarYRevertirGrupo(peMulti.message);
-    // Es_infante REAL, ya recalculado por el servidor (nunca por
-    // `esInfantePorEdad` en este archivo) — se usa más abajo para el
-    // backfill cosmético de nombre/documento sobre las sillas de cada
-    // bloqueo (best-effort, igual que en los otros 3 flujos de creación).
     const filasPasajerosMultiOrdenadas = (filasPasajerosMulti ?? [])
       .slice()
       .sort((a, b) => a.orden - b.orden);
-    const esInfanteRealGrupo = filasPasajerosMultiOrdenadas.map((f) => f.es_infante);
 
     // nombres/apellidos/nacionalidad — mismo criterio que
     // reservarDesdeTarifarioInterno/reservarProgramaInterno: POSTERIOR al
@@ -2342,45 +2336,9 @@ export async function convertirCotizacionCarrito(
           costoAereoTotal += costoAereo;
           pushCxP("aereo", `Aéreo ${bq.aerolinea ?? ""}`.trim(), costoAereo, bq.proveedores as unknown as ProvFact, bq.aerolinea);
 
-          // Las sillas de ESTE bloqueo ya quedaron reservadas atómicamente
-          // arriba (crear_pasajeros_contrato_multi, junto con pasajeros y
-          // vínculos, en la MISMA transacción) — aquí solo queda el snapshot
-          // COSMÉTICO de nombre/documento sobre esas sillas (igual patrón
-          // best-effort que los otros 3 flujos de creación, paso "9-bis"):
-          // un fallo aquí nunca re-lanza la condición de carrera del
-          // inventario, que ya se resolvió de forma atómica arriba.
-          // B11 (ronda 3): usa las posiciones EXPLÍCITAS asignadas a este
-          // ítem (nunca un prefijo por conteo) para el snapshot cosmético —
-          // mismo criterio que la reserva atómica de sillas de arriba.
-          // B13 (ronda 5): `esInfanteRealGrupo` está indexado por posición
-          // LOCAL (el `orden` que devuelve el RPC sigue el orden de
-          // `pasajerosLocal`, no el de `opts.pasajeros`) — `pos` aquí sigue
-          // siendo GLOBAL (viene de `it.__posiciones`), así que se traduce
-          // vía `mapaGlobalALocal` antes de indexar. El nombre/documento a
-          // mostrar sí se toma de `opts.pasajeros[pos - 1]` (GLOBAL): son
-          // los mismos datos de la persona, la reindexación solo afecta la
-          // posición dentro del contrato, no su identidad.
-          const holders = it.__posiciones
-            .filter((pos) => pasajeroConsumeSilla(esInfanteRealGrupo[mapaGlobalALocal.get(pos)!]))
-            .map((pos) => opts.pasajeros[pos - 1]);
-          try {
-            const { data: asignadas } = await admin.from("sillas").select("id")
-              .eq("numero_contrato", numero).eq("bloqueo_id", it.bloqueoId)
-              .in("estado", ["en_plazo", "confirmada"]).order("numero_silla");
-            if (asignadas && asignadas.length) {
-              await Promise.all(asignadas.map((s, i) => {
-                const p = holders[i];
-                return admin.from("sillas").update({
-                  asesor: oNull(opts.asesorInterno ?? null),
-                  hotel: meta.hotel_nombre, acomodacion: it.categoria, plazo: null,
-                  pasajero_nombres: oNull(p?.nombres), pasajero_apellidos: oNull(p?.apellidos),
-                  tipo_doc: oNull(p?.tipoDoc), numero_doc: oNull(p?.numeroDoc), nacimiento: oNull(p?.fechaNacimiento),
-                }).eq("id", s.id);
-              }));
-            }
-          } catch {
-            // Best-effort — ver comentario arriba.
-          }
+          // Las sillas de ESTE bloqueo y los datos del pasajero sobre ellas ya
+          // quedaron escritos arriba, en la MISMA transacción
+          // (crear_pasajeros_contrato_multi_con_sillas, migración 201).
         }
       }
 

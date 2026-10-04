@@ -22,8 +22,10 @@ import { readFileSync } from "node:fs";
 // No ejecuta el código (server-only, next/headers, Supabase) — es la misma
 // limitación ya documentada en este repo para estas dos Server Actions.
 
+// Normaliza CRLF: con core.autocrlf (Windows) la copia de trabajo trae \r\n y
+// las búsquedas con "\n" fallaban solo en esa máquina.
 function leer(rel: string): string {
-  return readFileSync(new URL(`../${rel}`, import.meta.url), "utf8");
+  return readFileSync(new URL(`../${rel}`, import.meta.url), "utf8").replace(/\r\n/g, "\n");
 }
 
 function cuerpoDeFuncion(src: string, nombre: string): string {

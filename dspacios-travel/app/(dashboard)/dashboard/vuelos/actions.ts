@@ -12,6 +12,8 @@ import {
   type EstadoPago,
 } from "@/lib/vuelos/control";
 import { validarInfanteVueloInput, type InfanteVueloInput } from "@/lib/vuelos/infanteVuelo";
+import { COLUMNAS_DATOS_SILLA, esSillaLibre, type SillaParaLibre } from "@/lib/vuelos/sillaLibre";
+import { fechaNegocio } from "@/lib/fechaNegocio";
 import {
   esEstadoManual,
   esIdPositivo,
@@ -455,24 +457,61 @@ export async function cambiarEstadoSilla(
 // Solo sobre un cupo libre; la silla queda CONFIRMADA. Si la referencia
 // corresponde a un contrato del sistema, se exige permiso sobre ese contrato
 // (un contrato de Minorista solo lo toca quien tenga acceso a él).
+// `version`: el `updated_at` de la silla que mostró la pantalla (migración
+// 201). Si la silla cambió entretanto (p. ej. otro usuario liberó la
+// retención), la base rechaza sin asignar nada.
 export async function asignarContratoManual(
   sillaId: number,
   contratoManual: string,
-  bloqueoId: number
+  bloqueoId: number,
+  version: string
 ): Promise<Result> {
   if (!esIdPositivo(sillaId)) return { ok: false, error: "Silla no válida." };
   if (!(contratoManual ?? "").trim()) return { ok: false, error: "Escribe el número de contrato manual." };
+  if (typeof version !== "string" || version.trim() === "") return { ok: false, error: "No se pudo confirmar la versión de la silla; recarga la página." };
   const sb = await createClient();
-  const { error } = await sb.rpc("asignar_contrato_manual", { p_silla_id: sillaId, p_referencia: contratoManual });
+  const { error } = await sb.rpc("asignar_contrato_manual", { p_silla_id: sillaId, p_referencia: contratoManual, p_esperado: { updated_at: version } });
   if (error) return { ok: false, error: mensajeErrorRpc(error).error };
   revalidarRecords(bloqueoId);
   return { ok: true };
 }
 
-export async function quitarContratoManual(sillaId: number, bloqueoId: number): Promise<Result> {
+// Quitar el contrato manual. Si el pasajero se queda en la silla, queda
+// RETENIDA en plazo y el plazo se pide en esta misma acción (`plazo`,
+// AAAA-MM-DD, hoy o futuro en Bogotá; la base lo vuelve a exigir). Sin
+// pasajero, `plazo` va en null y la silla queda disponible.
+export async function quitarContratoManual(
+  sillaId: number,
+  bloqueoId: number,
+  version: string,
+  plazo: string | null
+): Promise<Result> {
   if (!esIdPositivo(sillaId)) return { ok: false, error: "Silla no válida." };
+  if (typeof version !== "string" || version.trim() === "") return { ok: false, error: "No se pudo confirmar la versión de la silla; recarga la página." };
+  if (plazo !== null && !/^\d{4}-\d{2}-\d{2}$/.test(plazo)) return { ok: false, error: "Fecha de plazo inválida." };
   const sb = await createClient();
-  const { error } = await sb.rpc("quitar_contrato_manual", { p_silla_id: sillaId });
+  const { error } = await sb.rpc("quitar_contrato_manual", { p_silla_id: sillaId, p_plazo: plazo, p_esperado: { updated_at: version } });
+  if (error) return { ok: false, error: mensajeErrorRpc(error).error };
+  revalidarRecords(bloqueoId);
+  return { ok: true };
+}
+
+// Editar la referencia del contrato MANUAL: la reemplaza en una sola
+// operación, conservando pasajero, plazo y estado. La base valida la
+// referencia y los permisos como al asignarla, comprueba la versión vista y
+// deja "anterior → nueva" en el historial del record. Un contrato generado
+// por la aplicación no se edita aquí.
+export async function editarContratoManual(
+  sillaId: number,
+  contratoManual: string,
+  bloqueoId: number,
+  version: string
+): Promise<Result> {
+  if (!esIdPositivo(sillaId)) return { ok: false, error: "Silla no válida." };
+  if (!(contratoManual ?? "").trim()) return { ok: false, error: "Escribe el número de contrato manual." };
+  if (typeof version !== "string" || version.trim() === "") return { ok: false, error: "No se pudo confirmar la versión de la silla; recarga la página." };
+  const sb = await createClient();
+  const { error } = await sb.rpc("editar_contrato_manual", { p_silla_id: sillaId, p_referencia: contratoManual, p_esperado: { updated_at: version } });
   if (error) return { ok: false, error: mensajeErrorRpc(error).error };
   revalidarRecords(bloqueoId);
   return { ok: true };
@@ -530,12 +569,20 @@ export type PasajeroSillaInput = {
   asesor: string; hotel: string; acomodacion: string; plazo: string;
 };
 
+/**
+ * Lo que la pantalla mostraba de la silla al editar: su contrato (null = sin
+ * contrato) y su versión (`updated_at`). La base rechaza si cualquiera cambió.
+ */
+export type ContratoVistoSilla = { numero_contrato: string | null; contrato_manual: string | null; updated_at: string };
+
 export async function editarPasajeroSilla(
   sillaId: number,
   bloqueoId: number,
-  data: PasajeroSillaInput
+  data: PasajeroSillaInput,
+  visto: ContratoVistoSilla
 ): Promise<Result> {
   if (!esIdPositivo(sillaId)) return { ok: false, error: "Silla no válida." };
+  if (!visto) return { ok: false, error: "No se pudo confirmar el estado de la silla; recarga la página." };
   const sb = await createClient();
   const { error } = await sb.rpc("editar_pasajero_silla", {
     p_silla_id: sillaId,
@@ -549,6 +596,9 @@ export async function editarPasajeroSilla(
       hotel: data?.hotel ?? "",
       acomodacion: data?.acomodacion ?? "",
       plazo: data?.plazo ?? "",
+      // Migración 201: la base rechaza la edición si la silla cambió de
+      // contrato desde que se mostró (p. ej. una reserva la tomó entretanto).
+      esperado: { numero_contrato: visto.numero_contrato ?? null, contrato_manual: visto.contrato_manual ?? null, updated_at: visto.updated_at },
     },
   });
   if (error) return { ok: false, error: mensajeErrorRpc(error).error };
@@ -560,10 +610,29 @@ export async function editarPasajeroSilla(
 // también `contrato_manual`: una silla libre que conservara esa referencia
 // chocaría con el CHECK `sillas_contrato_unico` (migración 085) en cuanto una
 // reserva le asignara `numero_contrato`. No toca el contrato (la venta).
-export async function borrarPasajeroSilla(sillaId: number, bloqueoId: number): Promise<Result> {
+// `version`: el `updated_at` que mostró la pantalla (migración 201); si otro
+// usuario editó la silla entretanto, la base rechaza sin borrar nada.
+export async function borrarPasajeroSilla(sillaId: number, bloqueoId: number, version: string): Promise<Result> {
   if (!esIdPositivo(sillaId)) return { ok: false, error: "Silla no válida." };
+  if (typeof version !== "string" || version.trim() === "") return { ok: false, error: "No se pudo confirmar la versión de la silla; recarga la página." };
   const sb = await createClient();
-  const { error } = await sb.rpc("liberar_silla", { p_silla_id: sillaId });
+  const { error } = await sb.rpc("liberar_silla", { p_silla_id: sillaId, p_esperado: { updated_at: version } });
+  if (error) return { ok: false, error: mensajeErrorRpc(error).error };
+  revalidarRecords(bloqueoId);
+  return { ok: true };
+}
+
+// Libera a mano una retención en plazo SIN contrato ya vencida (migración 201,
+// decisión del dueño: nunca por cron). `version` es el `updated_at` que mostró
+// la pantalla: la base vuelve a comprobar bajo candado que la silla siga sin
+// contrato, vencida y sin cambios; si algo cambió no borra nada y lo dice.
+export async function liberarRetencionVencida(sillaId: number, bloqueoId: number, version: string): Promise<Result> {
+  if (!esIdPositivo(sillaId)) return { ok: false, error: "Silla no válida." };
+  if (typeof version !== "string" || version.trim() === "") {
+    return { ok: false, error: "No se pudo confirmar la versión de la silla; recarga la página." };
+  }
+  const sb = await createClient();
+  const { error } = await sb.rpc("liberar_retencion_vencida", { p_silla_id: sillaId, p_esperado: { updated_at: version } });
   if (error) return { ok: false, error: mensajeErrorRpc(error).error };
   revalidarRecords(bloqueoId);
   return { ok: true };
@@ -691,7 +760,10 @@ export async function cargarPasajerosMasivo(
     docRecords.set(doc, set);
   }
 
-  type Pas = { nombres: string; apellidos: string; tipoDoc: string; doc: string; nacimiento: string | null };
+  type Pas = { nombres: string; apellidos: string; tipoDoc: string; doc: string; nacimiento: string | null; plazo: string };
+  // Migración 201: una silla sin contrato con pasajero es una RETENCIÓN en plazo
+  // y exige fecha de plazo vigente (nunca queda "aparentemente disponible").
+  const hoyNegocio = fechaNegocio();
   const aCargarPorPnr = new Map<string, Pas[]>();
   const pnrInexistente = new Set<string>();
   let pnrInexistenteCount = 0;
@@ -708,8 +780,11 @@ export async function cargarPasajerosMasivo(
     const doc = (r.numero_doc || "").trim();
     const nacRaw = (r.nacimiento || "").trim();
     const nacimiento = reFecha.test(nacRaw) ? nacRaw : null;
+    const plazo = (r.plazo || "").trim();
 
     if (!pnr) { errores.push(`Fila ${linea}: sin PNR.`); continue; }
+    if (!reFecha.test(plazo)) { errores.push(`Fila ${linea}: sin fecha de plazo (AAAA-MM-DD); sin contrato, la silla queda retenida hasta esa fecha.`); continue; }
+    if (plazo < hoyNegocio) { errores.push(`Fila ${linea}: la fecha de plazo ${plazo} ya pasó (hoy es ${hoyNegocio} en Bogotá).`); continue; }
     if (!doc) { errores.push(`Fila ${linea}: sin número de documento.`); continue; }
     if (!nombres && !apellidos) { errores.push(`Fila ${linea}: sin nombre.`); continue; }
 
@@ -723,7 +798,7 @@ export async function cargarPasajerosMasivo(
 
     if (!recordToId.has(pnr)) { pnrInexistenteCount++; pnrInexistente.add(pnr); continue; }
     const arr = aCargarPorPnr.get(pnr) ?? [];
-    arr.push({ nombres, apellidos, tipoDoc, doc, nacimiento });
+    arr.push({ nombres, apellidos, tipoDoc, doc, nacimiento, plazo });
     aCargarPorPnr.set(pnr, arr);
   }
 
@@ -732,13 +807,16 @@ export async function cargarPasajerosMasivo(
   if (omitidos > 0)
     errores.push(`${omitidos} pasajero(s) omitido(s): ya estaban en el mismo PNR (documento repetido).`);
 
-  // Asignación a sillas libres por record.
+  // Asignación a sillas libres por record. "Libre" es `esSillaLibre`, la misma
+  // definición que `_silla_libre` en la base (migración 201): una silla con
+  // CUALQUIER dato precargado (no solo nombres) no se toca.
   let insertados = 0;
   for (const [pnr, pas] of aCargarPorPnr) {
     const bloqueoId = recordToId.get(pnr)!;
-    const { data: libres } = await sb
+    // Cast: los tipos generados aún no incluyen `contrato_manual` (migración 085).
+    const { data: candidatas } = await (sb
       .from("sillas")
-      .select("id")
+      .select("id, estado, numero_contrato, contrato_manual, pasajero_nombres, pasajero_apellidos, tipo_doc, numero_doc, nacimiento, asesor, hotel, acomodacion, plazo, agencia, inf_nombres, inf_apellidos, inf_tipo_doc, inf_numero, inf_nacimiento, responsable_menor")
       .eq("bloqueo_id", bloqueoId)
       .in("estado", ["disponible", "cambio_entrante"])
       .is("pasajero_nombres", null)
@@ -746,22 +824,31 @@ export async function cargarPasajerosMasivo(
       // una silla con contrato solo se editan por editar_pasajero_silla.
       .is("numero_contrato", null)
       .is("contrato_manual", null)
-      .order("numero_silla")
-      .limit(pas.length);
-    const ids = (libres ?? []).map((s) => s.id);
+      .order("numero_silla") as unknown as Promise<{ data: ({ id: number } & SillaParaLibre)[] | null }>);
+    const ids = (candidatas ?? []).filter(esSillaLibre).slice(0, pas.length).map((s) => s.id);
     if (ids.length < pas.length)
       errores.push(`PNR ${pnr}: faltaron ${pas.length - ids.length} cupo(s) libre(s) para ${pas.length} pasajero(s).`);
     for (let k = 0; k < ids.length && k < pas.length; k++) {
       const p = pas[k];
-      const { error } = await sb.from("sillas").update({
+      // El UPDATE vuelve a exigir que la silla siga libre: si otra operación la
+      // tomó o le cargó datos entretanto, no la pisa y lo reporta.
+      let escritura = sb.from("sillas").update({
         pasajero_nombres: p.nombres || null,
         pasajero_apellidos: p.apellidos || null,
         tipo_doc: p.tipoDoc || null,
         numero_doc: p.doc || null,
         nacimiento: p.nacimiento,
+        // Con pasajero y plazo la base la deja retenida (en_plazo).
+        plazo: p.plazo,
         updated_at: new Date().toISOString(),
-      }).eq("id", ids[k]);
+      }).eq("id", ids[k])
+        .in("estado", ["disponible", "cambio_entrante"])
+        .is("numero_contrato", null)
+        .is("contrato_manual", null);
+      for (const col of COLUMNAS_DATOS_SILLA) escritura = escritura.is(col, null);
+      const { data: escrita, error } = await escritura.select("id");
       if (error) errores.push(`PNR ${pnr}: ${error.message}`);
+      else if (!escrita?.length) errores.push(`PNR ${pnr}: una silla dejó de estar libre mientras se cargaba; ${[p.nombres, p.apellidos].filter(Boolean).join(" ") || "ese pasajero"} no se cargó.`);
       else insertados++;
     }
     revalidatePath(`/dashboard/vuelos/${bloqueoId}`);

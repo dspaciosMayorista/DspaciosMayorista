@@ -394,7 +394,7 @@ test("reservar/actions.ts: el tramo del contrato (paso 7) y la CxP aérea (paso 
   // `origen.tipo === "bloqueo"` para las sillas (el núcleo Postgres decide
   // por sí solo si hay bloqueo que reconciliar, vía ventas.bloqueo_ref_id).
   const paso5bis = reservarActionsSrc.slice(reservarActionsSrc.indexOf("// 5-bis) Pasajeros"), reservarActionsSrc.indexOf("// 6) Hotel del contrato"));
-  assert.match(paso5bis, /admin\.rpc\("crear_pasajeros_contrato"/, "debe llamar al RPC atómico de creación");
+  assert.match(paso5bis, /admin\.rpc\("crear_pasajeros_contrato_con_sillas"/, "debe llamar al RPC atómico de creación (con la copia a las sillas, migración 201)");
   assert.doesNotMatch(paso5bis, /input\.bloqueoId|input\.empaquetadoId|input\.salidaId/, "el paso de pasajeros+sillas ya no debe leer los campos crudos");
 });
 

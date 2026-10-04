@@ -485,7 +485,7 @@ describe("convertirCotizacionCarrito — hallazgo confirmado (e): idempotencia �
 
   test("nunca duplica sillas/CxP para un grupo ya completo: la exclusión ocurre en Paso 1 (gruposPendientes), ANTES de crear_pasajeros_contrato_multi/registrarFinancieroContrato", () => {
     const idxGruposPendientes = cuerpoConv.indexOf("const gruposPendientes = grupos.filter((g) => !contratosPorGrupo[claveDeGrupo(g)]);");
-    const idxMulti = cuerpoConv.indexOf('admin.rpc("crear_pasajeros_contrato_multi"');
+    const idxMulti = cuerpoConv.indexOf('admin.rpc("crear_pasajeros_contrato_multi_con_sillas"');
     const idxFinanciero = cuerpoConv.indexOf("await registrarFinancieroContrato(");
     assert.ok(idxGruposPendientes > -1 && idxGruposPendientes < idxMulti && idxGruposPendientes < idxFinanciero);
   });

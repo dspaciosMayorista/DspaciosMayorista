@@ -17,6 +17,8 @@ const PAS_COLS: Columna[] = [
   { key: "tipo_doc", label: "Tipo doc", ejemplo: "CC" },
   { key: "numero_doc", label: "Número doc", ejemplo: "15429812" },
   { key: "nacimiento", label: "Nacimiento (AAAA-MM-DD)", ejemplo: "1965-09-09" },
+  // Migración 201: sin contrato, la silla queda retenida en plazo hasta esta fecha.
+  { key: "plazo", label: "Plazo (AAAA-MM-DD)", ejemplo: "2026-12-15" },
 ];
 
 export default async function PasajerosPage() {
@@ -209,7 +211,8 @@ export default async function PasajerosPage() {
           nombreArchivo="plantilla_pasajeros"
           nota={
             <>
-              El <b>PNR</b> (record) debe existir en Vuelos. Repetidos por documento en el <b>mismo PNR</b> se omiten;
+              El <b>PNR</b> (record) debe existir en Vuelos. Cada pasajero queda <b>retenido en plazo</b> (sin contrato) hasta
+              su <b>fecha de plazo</b>, obligatoria y no anterior a hoy. Repetidos por documento en el <b>mismo PNR</b> se omiten;
               en <b>otro PNR</b> se avisan para revisar; y se reporta cuántos pasajeros traen un PNR que no existe.
             </>
           }

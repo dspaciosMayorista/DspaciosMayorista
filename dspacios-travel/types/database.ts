@@ -3647,16 +3647,30 @@ export type Database = {
         Args: { p_silla_id: number; p_estado: "disponible" | "no_vendida" | "devuelta"; p_motivo: string; p_devolucion_real: boolean };
         Returns: Json;
       };
+      // Migración 201: solo se tipa la firma CON la versión de la silla
+      // (`p_esperado.updated_at`). La firma vieja (p_silla_id, p_referencia)
+      // sigue en la base sin esa comprobación, solo para desplegar la migración
+      // antes que el código; el código nuevo no debe usarla.
       asignar_contrato_manual: {
-        Args: { p_silla_id: number; p_referencia: string };
+        Args: { p_silla_id: number; p_referencia: string; p_esperado: Json };
         Returns: Json;
       };
+      // Migración 201: con versión y con el plazo EN la misma acción (si el
+      // pasajero se queda, queda retenido en plazo). La firma vieja
+      // (p_silla_id) sigue en la base solo por compatibilidad y caduca.
       quitar_contrato_manual: {
-        Args: { p_silla_id: number };
+        Args: { p_silla_id: number; p_plazo: string | null; p_esperado: Json };
         Returns: Json;
       };
+      // Migración 201: reemplaza la referencia manual en una sola operación.
+      editar_contrato_manual: {
+        Args: { p_silla_id: number; p_referencia: string; p_esperado: Json };
+        Returns: Json;
+      };
+      // Migración 201: igual que asignar_contrato_manual — solo la firma con
+      // versión; liberar_silla(p_silla_id) (194) queda en la base sin ella.
       liberar_silla: {
-        Args: { p_silla_id: number };
+        Args: { p_silla_id: number; p_esperado: Json };
         Returns: Json;
       };
       editar_pasajero_silla: {
@@ -3808,6 +3822,58 @@ export type Database = {
       // sub-reservar sillas. Pasajeros + responsables + sillas se confirman
       // o revierten JUNTOS: un fallo de capacidad nunca deja ni pasajeros ni
       // sillas a medias (cierra B5).
+      // Migración 201: libera a mano una retención en plazo SIN contrato y
+      // vencida, solo si la silla sigue en la versión mostrada (updated_at).
+      liberar_retencion_vencida: {
+        Args: { p_silla_id: number; p_esperado: Json };
+        Returns: Json;
+      };
+      // Migración 201: crear_pasajeros_contrato + copia (todo o nada, nunca
+      // sobre una silla con datos) de los datos del pasajero a sus sillas, en
+      // UNA transacción. p_datos_pasajeros: un objeto por pasajero del payload,
+      // en el mismo orden. Solo service_role.
+      crear_pasajeros_contrato_con_sillas: {
+        Args: {
+          p_numero_contrato: string;
+          p_pasajeros: Json;
+          p_holders_min: number;
+          p_usuario_id: string;
+          p_comun: Json;
+          p_datos_pasajeros: Json;
+        };
+        Returns: {
+          id: number;
+          nombre: string;
+          tipo_id: string;
+          identificacion: string | null;
+          fecha_nacimiento: string | null;
+          es_infante: boolean;
+          responsable_id: number | null;
+          orden: number;
+        }[];
+      };
+      // Migración 201: crear_pasajeros_contrato_multi + copia por record en la
+      // misma transacción. p_comun_por_bloqueo: [{ bloqueoId, comun }].
+      crear_pasajeros_contrato_multi_con_sillas: {
+        Args: {
+          p_numero_contrato: string;
+          p_pasajeros: Json;
+          p_reservas_sillas: Json;
+          p_usuario_id: string;
+          p_comun_por_bloqueo: Json;
+          p_datos_pasajeros: Json;
+        };
+        Returns: {
+          id: number;
+          nombre: string;
+          tipo_id: string;
+          identificacion: string | null;
+          fecha_nacimiento: string | null;
+          es_infante: boolean;
+          responsable_id: number | null;
+          orden: number;
+        }[];
+      };
       crear_pasajeros_contrato: {
         Args: {
           p_numero_contrato: string;

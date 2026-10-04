@@ -50,6 +50,9 @@ export function mensajeErrorRpc(e: ErrorRpc): { error: string; tarifaDistinta: b
     };
   if (msg.startsWith("TARIFA_DISTINTA:"))
     return { error: msg.replace(/^TARIFA_DISTINTA:\s*/, ""), tarifaDistinta: true };
+  // Migración 201: guarda de la retención en plazo (silla sin contrato con datos).
+  if (msg.startsWith("RETENCION_INCOMPLETA:"))
+    return { error: msg.replace(/^RETENCION_INCOMPLETA:\s*/, "No se guardó nada: "), tarifaDistinta: false };
   return { error: msg || "No se pudo completar la operación.", tarifaDistinta: false };
 }
 
