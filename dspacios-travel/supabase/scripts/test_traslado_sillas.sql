@@ -33,6 +33,12 @@ create temp table fx (k text primary key, id bigint);
 create temp table res (k text primary key, r jsonb);
 grant select, insert on res to public;
 grant select on fx to public;
+-- La 201 deja la matriz manual (DIR-1) a toda silla SIN contrato, tenga o no datos
+-- de pasajero. Las aserciones de estados manuales se adaptan para que esta suite
+-- siga valiendo antes y después de la 201.
+create temp table v201 as select coalesce((select position('public._silla_con_datos(v_s)' in prosrc) = 0
+  from pg_proc where oid = to_regprocedure('public.cambiar_estado_silla(bigint,text,text,boolean)')), false) as aplicada;
+grant select on v201 to public;
 create function pg_temp.fx(p text) returns bigint language sql stable as $$ select id from fx where k = p $$;
 create function pg_temp.activas(p bigint) returns integer language sql stable as $$
   select count(*)::integer from public.sillas where bloqueo_id = p and estado::text not in ('cambio', 'retirada') $$;
@@ -328,14 +334,19 @@ select public.cambiar_estado_silla(pg_temp.e(1), 'devuelta', 'devuelta a la aero
 select pg_temp.falla(format('select public.cambiar_estado_silla(%s, %L, %L, false)', pg_temp.e(1), 'disponible', 'x'), 'definitiva', 'devuelta → disponible prohibido');
 select pg_temp.falla(format('select public.cambiar_estado_silla(%s, %L, %L, false)', pg_temp.e(1), 'no_vendida', 'x'), 'definitiva', 'devuelta → no vendida prohibido');
 select pg_temp.falla(format('select public.cambiar_estado_silla(%s, %L, %L, false)', pg_temp.e(2), 'confirmada', 'x'), 'no se hace a mano', 'disponible → confirmada no es manual');
-select pg_temp.falla(format('select public.cambiar_estado_silla(%s, %L, %L, false)', pg_temp.sy(2), 'disponible', 'x'), 'tiene contrato o pasajero', 'silla con contrato: no hay cambio manual');
+select pg_temp.falla(format('select public.cambiar_estado_silla(%s, %L, %L, false)', pg_temp.sy(2), 'disponible', 'x'), 'tiene contrato', 'silla con contrato: no hay cambio manual');
 select pg_temp.falla(format('select public.liberar_silla(%s)', pg_temp.e(1)), 'no se puede liberar', 'liberar no revive una devuelta');
 reset role;
 insert into fx select 'parcial', x.id from public.sillas x where x.bloqueo_id = pg_temp.fx('X') and public._silla_libre(x) and x.id not in (select id from e) order by x.numero_silla limit 1;
 update public.sillas set tipo_doc = 'CC' where id = pg_temp.fx('parcial');
 set local role authenticated;
 select pg_temp.como('00000000-0000-0000-0000-00000000a002');
-select pg_temp.falla(format('select public.cambiar_estado_silla(%s, %L, %L, false)', pg_temp.fx('parcial'), 'no_vendida', 'x'), 'tiene contrato o pasajero', 'silla con solo tipo de documento: tampoco es libre para el cambio manual');
+select case when (select aplicada from v201)
+  then pg_temp.ok((public.cambiar_estado_silla(pg_temp.fx('parcial'), 'no_vendida', 'x', false) ->> 'hacia') = 'no_vendida', '201: silla sin contrato con solo tipo de documento recibe la matriz manual')
+  else pg_temp.falla(format('select public.cambiar_estado_silla(%s, %L, %L, false)', pg_temp.fx('parcial'), 'no_vendida', 'x'), 'tiene contrato o pasajero', 'silla con solo tipo de documento: tampoco es libre para el cambio manual') end;
+select case when (select aplicada from v201)
+  then pg_temp.ok((public.cambiar_estado_silla(pg_temp.fx('parcial'), 'disponible', 'correccion', false) ->> 'hacia') = 'disponible'
+                  and (select tipo_doc from public.sillas where id = pg_temp.fx('parcial')) = 'CC', '201: y vuelve a disponible conservando el dato') end;
 reset role;
 update public.sillas set tipo_doc = null where id = pg_temp.fx('parcial');
 set local role authenticated;
@@ -344,7 +355,7 @@ select public.cambiar_estado_silla(pg_temp.e(2), 'no_vendida', 'cierre', false);
 select public.cambiar_estado_silla(pg_temp.e(2), 'disponible', 'error de marcado', false);
 reset role;
 select pg_temp.ok((select estado::text from public.sillas where id = pg_temp.e(1)) = 'devuelta' and (select estado::text from public.sillas where id = pg_temp.e(2)) = 'disponible', 'DIR-1: devuelta definitiva; no vendida → disponible permitido');
-select pg_temp.ok((select count(*) from public.bloqueo_cambios where bloqueo_id = pg_temp.fx('X') and nota is not null and detalle like 'Silla %') = 4, 'DIR-1: cada cambio deja motivo en bloqueo_cambios');
+select pg_temp.ok((select count(*) from public.bloqueo_cambios where bloqueo_id = pg_temp.fx('X') and nota is not null and detalle like 'Silla %') = 4 + case when (select aplicada from v201) then 2 else 0 end, 'DIR-1: cada cambio deja motivo en bloqueo_cambios');
 
 -- ═══ Contrato manual / liberar / editar (AUT-2, DIR-2) ═══════════════════
 create temp table m as select id from public.sillas s where s.bloqueo_id = pg_temp.fx('X') and public._silla_libre(s) order by numero_silla limit 3;
@@ -357,7 +368,10 @@ select pg_temp.falla(format('select public.asignar_contrato_manual(%s, %L)', pg_
 select public.asignar_contrato_manual(pg_temp.m(1), '  EXT-900  ');
 select pg_temp.falla(format('select public.editar_pasajero_silla(%s, %L::jsonb)', pg_temp.sy(7), '{"pasajero_nombres":"X"}'), 'Sin permiso sobre el contrato', 'editar datos de un contrato MINORISTA: denegado (DIR-2)');
 select pg_temp.falla(format('select public.liberar_silla(%s)', pg_temp.sy(7)), 'Sin permiso sobre el contrato', 'liberar una silla de contrato MINORISTA: denegado (DIR-2)');
-select public.editar_pasajero_silla(pg_temp.m(2), '{"pasajero_nombres":"NUEVO","nacimiento":"1990-02-03"}'::jsonb);
+-- 201: sin contrato, el pasajero queda como retención en plazo y exige la fecha de plazo.
+select public.editar_pasajero_silla(pg_temp.m(2), (case when (select aplicada from v201)
+  then '{"pasajero_nombres":"NUEVO","nacimiento":"1990-02-03","plazo":"2099-12-31"}'
+  else '{"pasajero_nombres":"NUEVO","nacimiento":"1990-02-03"}' end)::jsonb);
 select pg_temp.falla(format('select public.editar_pasajero_silla(%s, %L::jsonb)', pg_temp.m(2), '{"nacimiento":"03/02/1990"}'), 'Fecha de nacimiento inválida', 'fecha inválida');
 select pg_temp.como('00000000-0000-0000-0000-00000000a001');
 select public.asignar_contrato_manual(pg_temp.m(3), chr(9) || '00-0541' || chr(10));

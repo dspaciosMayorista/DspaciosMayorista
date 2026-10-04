@@ -39,10 +39,16 @@ export type SillaParaLibre = {
   responsable_menor?: string | null;
 };
 
-const OTROS_DATOS: readonly (keyof SillaParaLibre)[] = [
+const OTROS_DATOS = [
   "asesor", "hotel", "acomodacion", "plazo", "agencia",
   "inf_nombres", "inf_apellidos", "inf_tipo_doc", "inf_numero", "inf_nacimiento", "responsable_menor",
-];
+] as const satisfies readonly (keyof SillaParaLibre)[];
+
+/** Las 16 columnas de datos (grupo D) que `_silla_con_datos` revisa en la base. */
+export const COLUMNAS_DATOS_SILLA = [
+  "pasajero_nombres", "pasajero_apellidos", "tipo_doc", "numero_doc", "nacimiento",
+  ...OTROS_DATOS,
+] as const;
 
 export function esSillaLibre(s: SillaParaLibre): boolean {
   if (s.estado === null || !ESTADOS_SILLA_VENDIBLE.includes(s.estado)) return false;

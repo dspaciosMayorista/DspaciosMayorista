@@ -76,7 +76,7 @@ const STUB_BUSCAR_PASAJERO = pathToFileURL(join(AQUI, "stubs", "buscarPasajeroSt
 // Producto → Destinos: la Server Action real de la lista de receptivos
 // (`./actions` desde DestinosLista.tsx) -> stub configurable.
 const STUB_DESTINOS_ACTIONS = pathToFileURL(join(AQUI, "stubs", "destinosActionsStub.mjs")).href;
-// Vuelos → detalle del bloqueo: `EditarBloqueoForm.tsx` y `PasajeroAcciones.tsx`
+// Vuelos → componentes del detalle del bloqueo
 // importan la Server Action real "../actions" (termina en "next/headers") ->
 // stub configurable.
 const STUB_VUELOS_ACTIONS = pathToFileURL(join(AQUI, "stubs", "vuelosActionsStub.mjs")).href;
@@ -178,7 +178,9 @@ export async function resolve(specifier, context, nextResolve) {
     return { url: STUB_PAGOS_ACTIONS, shortCircuit: true };
   }
   if (specifier === "../actions" &&
-      (context.parentURL?.endsWith("/EditarBloqueoForm.tsx") || context.parentURL?.endsWith("/PasajeroAcciones.tsx"))) {
+      (context.parentURL?.endsWith("/EditarBloqueoForm.tsx") || context.parentURL?.endsWith("/PasajeroAcciones.tsx") ||
+       context.parentURL?.endsWith("/SillaContrato.tsx") || context.parentURL?.endsWith("/SillaEstado.tsx") ||
+       context.parentURL?.endsWith("/LiberarRetencion.tsx"))) {
     return { url: STUB_VUELOS_ACTIONS, shortCircuit: true };
   }
   if (

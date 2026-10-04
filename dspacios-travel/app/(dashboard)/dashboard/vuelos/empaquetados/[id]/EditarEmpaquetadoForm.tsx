@@ -8,6 +8,7 @@ import { Input } from "@/components/ui/input";
 import { actualizarEmpaquetado, eliminarEmpaquetado, type EmpaquetadoInputGeneral } from "../../empaquetados-actions";
 import { ComboDestino, type DestinoOpt } from "@/components/ComboDestino";
 import { ComboProveedor, type ProveedorOpt } from "@/components/ComboProveedor";
+import { ConfirmDialog } from "@/components/ui/ConfirmDialog";
 
 const lbl = "mb-1 block text-xs font-medium text-gray-600";
 const card = "rounded-xl border border-gray-200 bg-white p-5 space-y-4";
@@ -70,15 +71,6 @@ export function EditarEmpaquetadoForm({
         notas: f.notas, activo,
       });
       if (r.ok) { setMsg("Guardado."); router.refresh(); } else setErr(r.error);
-    });
-  }
-
-  function eliminar() {
-    if (!confirm("¿Eliminar este empaquetado? Se desvincula de cualquier paquete que lo use. Esta acción no se puede deshacer.")) return;
-    start(async () => {
-      const r = await eliminarEmpaquetado(empaquetadoId);
-      if (r.ok) router.push("/dashboard/vuelos?vista=empaquetados");
-      else setErr(r.error);
     });
   }
 
@@ -161,9 +153,15 @@ export function EditarEmpaquetadoForm({
         <Button type="submit" disabled={pending} style={{ backgroundColor: "var(--brand-primary)" }}>
           {pending ? "Guardando…" : "Guardar cambios"}
         </Button>
-        <Button type="button" variant="outline" disabled={pending} onClick={eliminar} className="border-red-200 text-red-600 hover:bg-red-50">
-          Eliminar
-        </Button>
+        <ConfirmDialog
+          title="¿Eliminar este empaquetado?"
+          description="Se desvincula de cualquier paquete que lo use. Esta acción no se puede deshacer."
+          confirmLabel="Eliminar empaquetado"
+          destructive
+          onConfirm={() => eliminarEmpaquetado(empaquetadoId)}
+          onDone={() => router.push("/dashboard/vuelos?vista=empaquetados")}
+          trigger={<Button type="button" variant="outline" disabled={pending} className="border-red-200 text-red-600 hover:bg-red-50">Eliminar</Button>}
+        />
         {msg && <span className="text-sm text-gray-600">{msg}</span>}
       </div>
     </form>

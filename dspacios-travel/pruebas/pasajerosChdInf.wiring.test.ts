@@ -65,7 +65,7 @@ for (const archivo of ARCHIVOS_ESCRITURA) {
     // contrato_pasajeros directamente (eso era, precisamente, el hueco que
     // dejaba colar infantes sin responsable) — pasa por crear_pasajeros_
     // contrato, que recalcula es_infante server-side en SQL.
-    assert.match(src, /admin\.rpc\(\s*["']crear_pasajeros_contrato["']/, "no llama al RPC atómico crear_pasajeros_contrato");
+    assert.match(src, /admin\.rpc\(\s*["']crear_pasajeros_contrato_con_sillas["']/, "no llama al RPC atómico crear_pasajeros_contrato");
   });
 
   test(`${archivo} decide sillas con pasajeroConsumeSilla, no con !esInfante/!p.esInfante inline`, () => {
@@ -146,7 +146,7 @@ test("reservar/actions.ts: convertirCotizacionCarrito crea pasajeros+responsable
   );
   assert.match(
     bloque,
-    /admin\.rpc\(\s*["']crear_pasajeros_contrato_multi["']/,
+    /admin\.rpc\(\s*["']crear_pasajeros_contrato_multi_con_sillas["']/,
     "no llama al RPC atómico multi-bloqueo crear_pasajeros_contrato_multi"
   );
   // El payload de reservas de sillas debe declarar cada bloqueoId EXPLÍCITO
@@ -198,7 +198,7 @@ test("reservar/actions.ts: convertirCotizacionCarrito normaliza responsableIndex
   const idxFechaRef = bloque.indexOf("fechaRefGrupo");
   const idxNormaliza = bloque.indexOf("normalizarResponsablesPorGrupo(opts.pasajeros, fechaRefGrupo)");
   const idxPayload = bloque.indexOf("payloadGuardarPasajeros(");
-  const idxRpcMulti = bloque.indexOf('admin.rpc("crear_pasajeros_contrato_multi"');
+  const idxRpcMulti = bloque.indexOf('admin.rpc("crear_pasajeros_contrato_multi_con_sillas"');
   assert.ok(idxFechaRef > 0, "no calcula fechaRefGrupo (la fecha real de este grupo)");
   assert.ok(idxNormaliza > 0, "no llama normalizarResponsablesPorGrupo con la fecha real de este grupo");
   assert.ok(idxNormaliza < idxPayload && idxPayload < idxRpcMulti, "la normalización debe ocurrir ANTES de armar el payload y ANTES de llamar al RPC");
@@ -619,7 +619,12 @@ test("vuelos/[id]/page.tsx NO inyecta infantes dentro de la tabla de sillas (evi
   // (migración 194) recorre `activas`: un FILTRO de `(sillas ?? [])` que
   // deja fuera las filas de historial (`cambio`/`retirada`).
   assert.match(src, /const activas = \(sillas \?\? \[\]\)\.filter\(/, "activas debe ser un filtro directo de `sillas`");
-  assert.match(src, /\{activas\.map\(\(s\) => \(/, "la tabla de sillas ya no mapea directo sobre las sillas activas");
+  // El índice del .map solo da el número VISIBLE consecutivo; la identidad de
+  // la silla sigue siendo la fila real (s.id) y su numero_silla histórico.
+  assert.match(src, /\{activas\.map\(\(s, indice\) => \(/, "la tabla de sillas ya no mapea directo sobre las sillas activas");
+  assert.match(src, /\{indice \+ 1\}/, "el número visible es la posición consecutiva");
+  assert.match(src, /title=\{`Silla histórica #\$\{s\.numero_silla\}`\}/, "numero_silla se conserva como identidad histórica visible");
+  assert.doesNotMatch(src, /sillaId=\{indice|key=\{indice|sillaId=\{s\.numero_silla/, "las acciones y las keys nunca usan la posición ni el número como identidad");
 });
 
 // ───────────────────────────────────────────────────────────────────────────
@@ -636,7 +641,7 @@ test("reservar/actions.ts: pasajeros+sillas en creación es UNA sola llamada at�
   const src = leer("app/(dashboard)/dashboard/reservar/actions.ts");
   const inicio = src.indexOf("async function reservarDesdeTarifarioInterno");
   const bloque = src.slice(inicio, src.indexOf("export async function crearCotizacion"));
-  assert.match(bloque, /admin\.rpc\(\s*["']crear_pasajeros_contrato["']/, "no llama al RPC atómico crear_pasajeros_contrato");
+  assert.match(bloque, /admin\.rpc\(\s*["']crear_pasajeros_contrato_con_sillas["']/, "no llama al RPC atómico crear_pasajeros_contrato");
   assert.match(bloque, /p_holders_min:\s*paxConSilla,/, "no usa paxConSilla como piso de sillas (necesario cuando la lista de pasajeros viene vacía)");
   assert.match(bloque, /p_usuario_id:\s*actorPasajeros\.id,/, "no pasa un usuario real y activo al RPC");
   // El defecto original exacto: pedir sillas con un `select`+`update` en
@@ -648,7 +653,7 @@ test("reservar/actions.ts: un fallo de crear_pasajeros_contrato detiene la reser
   const src = leer("app/(dashboard)/dashboard/reservar/actions.ts");
   const inicio = src.indexOf("async function reservarDesdeTarifarioInterno");
   const bloque = src.slice(inicio, src.indexOf("export async function crearCotizacion"));
-  const idxLlamada = bloque.indexOf('admin.rpc("crear_pasajeros_contrato"');
+  const idxLlamada = bloque.indexOf('admin.rpc("crear_pasajeros_contrato_con_sillas"');
   // B7: la salida temprana además REVIERTE el contrato ya insertado (antes
   // devolvía el error dejando un contrato fantasma sin pasajeros).
   const idxReturn = bloque.indexOf("if (pasajerosErr) return fallarYRevertir(pasajerosErr.message);");
@@ -657,7 +662,7 @@ test("reservar/actions.ts: un fallo de crear_pasajeros_contrato detiene la reser
 
 test("contratos/actions.ts: pasajeros+sillas en creación es UNA sola llamada atómica a crear_pasajeros_contrato — ya NO es best-effort dentro de negociado_admin", () => {
   const src = leer("app/(dashboard)/dashboard/contratos/actions.ts");
-  assert.match(src, /admin\.rpc\(\s*["']crear_pasajeros_contrato["']/, "no llama al RPC atómico crear_pasajeros_contrato");
+  assert.match(src, /admin\.rpc\(\s*["']crear_pasajeros_contrato_con_sillas["']/, "no llama al RPC atómico crear_pasajeros_contrato");
   assert.doesNotMatch(src, /admin\.rpc\(\s*["']asignar_sillas_creacion["']/, "volvió a usar el wrapper viejo, solo-sillas");
   // El defecto original exacto (B5): un fallo de sillas quedaba "parcial"
   // dentro del bloque best-effort `negociado_admin` (try/catch que nunca

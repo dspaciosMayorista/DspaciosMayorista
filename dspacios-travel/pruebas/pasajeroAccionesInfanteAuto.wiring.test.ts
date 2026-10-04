@@ -15,6 +15,8 @@ import { readFileSync } from "node:fs";
 function leer(ruta: string): string {
   return readFileSync(new URL(`../${ruta}`, import.meta.url), "utf8").replace(/\r\n/g, "\n");
 }
+// Inicio de la siguiente función del componente: delimita el cuerpo de guardar().
+const FIN_FUNCION = "\n  function ";
 
 const RUTA_COMPONENTE = "app/(dashboard)/dashboard/vuelos/[id]/PasajeroAcciones.tsx";
 const RUTA_BLOQUEO = "app/(dashboard)/dashboard/vuelos/[id]/page.tsx";
@@ -41,7 +43,9 @@ describe("PasajeroAcciones.tsx — detección en vivo de infante en el alta manu
   test("en modo infante NO llama a editarPasajeroSilla — nunca ocupa la silla que se está editando", () => {
     const inicio = src.indexOf("function guardar()");
     assert.ok(inicio > -1);
-    const bloque = src.slice(inicio, inicio + 1600);
+    // Hasta el final de guardar() (la siguiente función del componente), no
+    // una ventana fija de caracteres que se queda corta al crecer la función.
+    const bloque = src.slice(inicio, src.indexOf(FIN_FUNCION, inicio + 1));
     const idxSiInfante = bloque.indexOf("if (esInfante)");
     const idxReturn = bloque.indexOf("return;", idxSiInfante);
     const idxEditar = bloque.indexOf("editarPasajeroSilla(");
@@ -96,7 +100,7 @@ describe("PasajeroAcciones.tsx — detección en vivo de infante en el alta manu
 
   test("REQUERIDO: si la silla YA estaba ocupada y la fecha corregida clasifica INF, guardar() bloquea con mensaje ANTES de llegar a cualquier llamada de guardado — no inserta el infante ni toca la silla", () => {
     const inicio = src.indexOf("function guardar()");
-    const bloque = src.slice(inicio, inicio + 1500);
+    const bloque = src.slice(inicio, src.indexOf(FIN_FUNCION, inicio + 1));
     const idxSiInfante = bloque.indexOf("if (esInfante)");
     const idxBloqueo = bloque.indexOf("if (bloqueadaPorSillaOcupada)", idxSiInfante);
     const idxSetErrBloqueo = bloque.indexOf("setErr(", idxBloqueo);

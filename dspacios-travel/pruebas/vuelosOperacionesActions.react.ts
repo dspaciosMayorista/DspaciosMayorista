@@ -193,23 +193,47 @@ test("cambiarEstadoSilla: solo estados manuales de la matriz y con motivo", asyn
 });
 
 test("contrato manual, liberar y editar delegan en su RPC", async () => {
-  await acciones.asignarContratoManual(41, "\t00-0541\n", 3);
-  await acciones.quitarContratoManual(41, 3);
-  await acciones.borrarPasajeroSilla(41, 3);
+  await acciones.asignarContratoManual(41, "\t00-0541\n", 3, "V9");
+  await acciones.quitarContratoManual(41, 3, "V9", "2026-10-10");
+  await acciones.borrarPasajeroSilla(41, 3, "V9");
   await acciones.editarPasajeroSilla(41, 3, {
     pasajero_nombres: "ANA", pasajero_apellidos: "", tipo_doc: "CC", numero_doc: "1", nacimiento: "1990-01-02",
     asesor: "", hotel: "", acomodacion: "", plazo: "",
-  });
+  }, { numero_contrato: null, contrato_manual: "EXT-9", updated_at: "V9" });
   assert.deepEqual(rpcs.map((r) => r.fn), ["asignar_contrato_manual", "quitar_contrato_manual", "liberar_silla", "editar_pasajero_silla"]);
   assert.equal(rpcs[0]!.args.p_referencia, "\t00-0541\n", "el recorte y la resolución los hace la base");
-  assert.deepEqual(rpcs[2]!.args, { p_silla_id: 41 });
+  assert.deepEqual(rpcs[0]!.args.p_esperado, { updated_at: "V9" }, "201: asignar manda la versión vista (firma con versión)");
+  assert.deepEqual(rpcs[2]!.args, { p_silla_id: 41, p_esperado: { updated_at: "V9" } }, "201: liberar manda la versión vista (firma con versión)");
+  assert.deepEqual(rpcs[1]!.args, { p_silla_id: 41, p_plazo: "2026-10-10", p_esperado: { updated_at: "V9" } },
+    "201: quitar manda la versión vista y el plazo de la retención en la misma acción");
   assert.equal((rpcs[3]!.args.p_datos as Record<string, string>).nacimiento, "1990-01-02");
+  assert.deepEqual((rpcs[3]!.args.p_datos as Record<string, unknown>).esperado, { numero_contrato: null, contrato_manual: "EXT-9", updated_at: "V9" },
+    "201: la edición manda el contrato y la versión que la pantalla mostraba, para que la base rechace si cambió");
   assert.deepEqual(ops, []);
+});
+
+test("editarPasajeroSilla: sin el contrato visto no llega a la base; el rechazo por silla cambiada se devuelve tal cual", async () => {
+  const datos = { pasajero_nombres: "ANA", pasajero_apellidos: "", tipo_doc: "", numero_doc: "", nacimiento: "", asesor: "", hotel: "", acomodacion: "", plazo: "" };
+  const sinVisto = await (acciones.editarPasajeroSilla as (...a: unknown[]) => Promise<unknown>)(41, 3, datos);
+  assert.equal((sinVisto as { ok: boolean }).ok, false);
+  assert.deepEqual(rpcs, [], "sin estado esperado no se edita a ciegas");
+  rpcRespuesta = { data: null, error: { code: "P0001", message: "La silla cambió mientras la editabas: ahora es del contrato DTM-0451. No se guardó nada; recarga la página." } };
+  const r = await acciones.editarPasajeroSilla(41, 3, datos, { numero_contrato: null, contrato_manual: null, updated_at: "V9" });
+  assert.deepEqual(r, { ok: false, error: "La silla cambió mientras la editabas: ahora es del contrato DTM-0451. No se guardó nada; recarga la página." });
+  assert.deepEqual(__revalidadas(), []);
+});
+
+test("liberar y asignar sin la versión vista no llegan a la base (nunca a ciegas)", async () => {
+  const a = acciones as unknown as Record<string, (...x: unknown[]) => Promise<{ ok: boolean }>>;
+  assert.equal((await a.borrarPasajeroSilla(41, 3)).ok, false);
+  assert.equal((await a.asignarContratoManual(41, "EXT-1", 3)).ok, false);
+  assert.equal((await a.borrarPasajeroSilla(41, 3, "  ")).ok, false);
+  assert.deepEqual(rpcs, [], "sin versión no se llama a ninguna RPC");
 });
 
 test("un error al liberar se devuelve y no revalida", async () => {
   rpcRespuesta = { data: null, error: { code: "42501", message: "Sin permiso sobre el contrato de esta silla." } };
-  const r = await acciones.borrarPasajeroSilla(41, 3);
+  const r = await acciones.borrarPasajeroSilla(41, 3, "V9");
   assert.deepEqual(r, { ok: false, error: "Sin permiso sobre el contrato de esta silla." });
   assert.deepEqual(__revalidadas(), []);
 });
@@ -309,7 +333,7 @@ test("actions.ts ya no escribe sillas ni historial directamente en las operacion
     return src.slice(i, j < 0 ? undefined : j);
   };
   for (const n of ["cambiarSillas", "moverPasajeroSilla", "retirarCupo", "cambiarEstadoSilla", "asignarContratoManual",
-                   "quitarContratoManual", "borrarPasajeroSilla", "editarPasajeroSilla"]) {
+                   "quitarContratoManual", "editarContratoManual", "borrarPasajeroSilla", "editarPasajeroSilla"]) {
     const c = cuerpo(n);
     assert.doesNotMatch(c, /\.from\(/, `${n} no debe tocar tablas directamente`);
     assert.match(c, /sb\.rpc\("/, `${n} debe usar una RPC`);
@@ -323,4 +347,21 @@ test("actions.ts ya no escribe sillas ni historial directamente en las operacion
     assert.match(c, /sb\.rpc\("(crear_bloqueo|eliminar_bloqueo)"/, `${n} debe usar crear_bloqueo/eliminar_bloqueo`);
   }
   assert.ok(!("eliminarCupo" in acciones), "la acción de borrado duro de cupos ya no existe");
+});
+
+// Migración 201: quitar pide el plazo en la misma acción y editar reemplaza la
+// referencia manual en una sola RPC; ambas con la versión que vio la pantalla.
+test("quitar y editar el contrato manual: versión, plazo y referencia; validan antes de llamar a la base", async () => {
+  await acciones.quitarContratoManual(41, 3, "V9", null);
+  await acciones.editarContratoManual(41, " EXT-NUEVO ", 3, "V9");
+  assert.deepEqual(rpcs, [
+    { fn: "quitar_contrato_manual", args: { p_silla_id: 41, p_plazo: null, p_esperado: { updated_at: "V9" } } },
+    { fn: "editar_contrato_manual", args: { p_silla_id: 41, p_referencia: " EXT-NUEVO ", p_esperado: { updated_at: "V9" } } },
+  ]);
+  rpcs.length = 0;
+  assert.equal((await acciones.quitarContratoManual(41, 3, "", "2026-10-10")).ok, false, "sin versión");
+  assert.equal((await acciones.quitarContratoManual(41, 3, "V9", "10/10/2026")).ok, false, "plazo con formato inválido");
+  assert.equal((await acciones.editarContratoManual(41, "   ", 3, "V9")).ok, false, "referencia vacía");
+  assert.equal((await acciones.editarContratoManual(41, "EXT-1", 3, "")).ok, false, "sin versión");
+  assert.deepEqual(rpcs, [], "ninguna llamada a la base con datos inválidos");
 });

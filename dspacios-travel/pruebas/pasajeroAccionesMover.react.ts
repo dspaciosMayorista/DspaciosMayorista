@@ -7,7 +7,7 @@
 //     ("Solo sus datos" / "Con su cupo"), sin valor por defecto, y envía un
 //     identificador de operación que se conserva en los reintentos.
 //   - Tarifa distinta: exige confirmación antes de enviar.
-//   - Editar y Borrar no cambian; Borrar sigue llamando a borrarPasajeroSilla.
+//   - Borrar usa el dialogo de la app y solo llama a la accion tras confirmar.
 //   - `libre` es OBLIGATORIA: todos los usos del componente en el repo la pasan.
 //   - La página calcula `libre` con `esSillaLibre` y el contrato manual REAL de
 //     la silla (no se deduce solo de los datos de pasajero).
@@ -38,12 +38,12 @@ const { PasajeroAcciones } = await import("../app/(dashboard)/dashboard/vuelos/[
 const { __setImpls } = await import("./support/stubs/vuelosActionsStub.mjs");
 const { act, createElement: h } = React;
 
-const borrados: Array<[number, number]> = [];
+const borrados: Array<[number, number, string]> = [];
 type MoverOpc = { modo: string; aceptaTarifaDistinta?: boolean; motivo?: string; operacionId: string };
 const movidos: Array<[number, number, number, MoverOpc]> = [];
 let respuestasMover: unknown[] = [];
 __setImpls({
-  borrarPasajeroSilla: async (sillaId: number, bloqueoId: number) => { borrados.push([sillaId, bloqueoId]); return { ok: true }; },
+  borrarPasajeroSilla: async (sillaId: number, bloqueoId: number, version: string) => { borrados.push([sillaId, bloqueoId, version]); return { ok: true }; },
   moverPasajeroSilla: async (sillaId: number, origen: number, destino: number, opc: MoverOpc) => {
     movidos.push([sillaId, origen, destino, opc]);
     return respuestasMover.shift() ?? { ok: true, repetida: false, movidas: 1, contrato: null, avisoTarifaDistinta: false, avisoRecordContrato: false };
@@ -71,6 +71,7 @@ async function render(props: { libre: boolean; inicial?: typeof VACIO; contratoO
       bloqueada: false, fechaIdaBloqueo: "2026-12-01", candidatosResponsable: [],
       libre: props.libre,
       contratoOrganico: props.contratoOrganico ?? false,
+      contratoVisto: { numero_contrato: props.contratoOrganico ? "DTM-0001" : null, contrato_manual: null, updated_at: "V-7" },
     }))
   );
 }
@@ -231,19 +232,24 @@ test("contrato manual que resuelve a una venta: solo se avisa del PNR anterior",
   assert.ok(container.textContent?.includes("todavía muestra el PNR del record anterior"));
 });
 
-test("Borrar pide confirmación, avisa que quita la referencia de contrato y llama a borrarPasajeroSilla", async () => {
-  const mensajes: string[] = [];
-  (globalThis as unknown as { confirm: (m: string) => boolean }).confirm = (m: string) => { mensajes.push(m); return true; };
+test("Borrar muestra el dialogo de la app y solo ejecuta al confirmar", async () => {
   await render({ libre: false, inicial: OCUPADO });
   await click(boton("Borrar")!);
-  assert.deepEqual(borrados, [[7, 3]]);
-  assert.match(mensajes[0] ?? "", /quita de la silla la referencia de contrato \(también la manual\)/);
+  const dialogo = document.body.querySelector('[role="dialog"]') as HTMLElement;
+  assert.ok(dialogo, "abre un dialogo propio");
+  assert.match(dialogo.textContent ?? "", /pierde la referencia del contrato, también la manual/);
+  assert.deepEqual(borrados, []);
+  const confirmar = [...dialogo.querySelectorAll("button")].find((b) => b.textContent?.trim() === "Borrar pasajero");
+  await click(confirmar!);
+  assert.deepEqual(borrados, [[7, 3, "V-7"]], "Borrar manda la versión de la silla que mostró la pantalla");
 });
 
 test("Borrar cancelado no llama a la acción", async () => {
-  (globalThis as unknown as { confirm: () => boolean }).confirm = () => false;
   await render({ libre: false, inicial: OCUPADO });
   await click(boton("Borrar")!);
+  const dialogo = document.body.querySelector('[role="dialog"]') as HTMLElement;
+  const cancelar = [...dialogo.querySelectorAll("button")].find((b) => b.textContent?.trim() === "Cancelar");
+  await click(cancelar!);
   assert.deepEqual(borrados, []);
 });
 
@@ -292,5 +298,7 @@ test("la página calcula libre con esSillaLibre y el contrato manual real, y ofr
   assert.match(page, /const destinosCompatibles = describirDestinos\(b, compatibles, libresPorRecord\);/);
   const compat = readFileSync(new URL("../lib/vuelos/compatibles.ts", import.meta.url), "utf8");
   assert.match(compat, /mismasFechas: \(o\.fecha_ida \?\? null\) === \(origen\.fecha_ida \?\? null\) && \(o\.fecha_regreso \?\? null\) === \(origen\.fecha_regreso \?\? null\)/);
-  assert.match(page, /\{activas\.map\(\(s\) => \(/, "la tabla lista solo sillas activas (sin cambio ni retirada)");
+  assert.match(page, /\{activas\.map\(\(s, indice\) => \(/, "la tabla lista solo sillas activas (sin cambio ni retirada)");
+  assert.match(page, /\{indice \+ 1\}/, "el orden visible no reutiliza el numero historico de silla");
+  assert.match(page, /title=\{`Silla histórica #\$\{s\.numero_silla\}`\}/, "la identidad historica sigue disponible");
 });

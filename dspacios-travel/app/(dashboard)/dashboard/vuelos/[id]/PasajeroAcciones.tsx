@@ -2,11 +2,13 @@
 
 import { DateInput } from "@/components/ui/DateInput";
 import { useMemo, useState, useTransition } from "react";
-import { editarPasajeroSilla, borrarPasajeroSilla, moverPasajeroSilla, guardarInfanteVuelo, type PasajeroSillaInput } from "../actions";
+import { editarPasajeroSilla, borrarPasajeroSilla, moverPasajeroSilla, guardarInfanteVuelo, type PasajeroSillaInput, type ContratoVistoSilla } from "../actions";
 import { esInfantePorEdad, sillaTieneDatosDePasajero } from "@/lib/vuelos/infanteVuelo";
 import { calcularEdad } from "@/lib/utils";
 import { nuevaOperacionId, type ModoMover } from "@/lib/vuelos/operaciones";
+import { validarRetencion } from "@/lib/vuelos/retencion";
 import { AlertTriangle, ArrowRightLeft, Check, Info, UserRound } from "lucide-react";
+import { ConfirmDialog } from "@/components/ui/ConfirmDialog";
 
 type Pasajero = PasajeroSillaInput;
 /**
@@ -32,6 +34,7 @@ export function PasajeroAcciones({
   candidatosResponsable,
   libre,
   contratoOrganico,
+  contratoVisto,
 }: {
   sillaId: number;
   bloqueoId: number;
@@ -57,9 +60,17 @@ export function PasajeroAcciones({
    * (false) no aplica. La base lo vuelve a validar.
    */
   contratoOrganico: boolean;
+  /**
+   * OBLIGATORIA. El contrato (orgánico y manual) que esta pantalla muestra en
+   * la silla. Se manda al editar: si la silla cambió de contrato entretanto
+   * (una reserva la tomó), la base rechaza la edición en vez de escribirla
+   * sobre otro contrato (migración 201).
+   */
+  contratoVisto: ContratoVistoSilla;
 }) {
   const [modo, setModo] = useState<null | "editar" | "mover">(null);
   const [form, setForm] = useState<Pasajero>(inicial);
+  const sinContrato = contratoVisto.numero_contrato === null && contratoVisto.contrato_manual === null;
   const [destino, setDestino] = useState<number | "">("");
   // Modo de recepción en el destino: SIN valor por defecto (decisión explícita).
   const [modoMover, setModoMover] = useState<ModoMover | null>(null);
@@ -136,8 +147,15 @@ export function PasajeroAcciones({
       });
       return;
     }
+    // Sin contrato, la silla queda vacía o RETENIDA: pasajero y fecha de plazo
+    // (migración 201). Nunca se guarda una silla "aparentemente disponible"
+    // con datos; la base lo vuelve a validar.
+    if (sinContrato) {
+      const motivo = validarRetencion(form, inicial.plazo || null);
+      if (motivo) { setErr(motivo); return; }
+    }
     start(async () => {
-      const r = await editarPasajeroSilla(sillaId, bloqueoId, form);
+      const r = await editarPasajeroSilla(sillaId, bloqueoId, form, contratoVisto);
       if (r.ok) setModo(null);
       else setErr(r.error);
     });
@@ -165,15 +183,6 @@ export function PasajeroAcciones({
       }
     });
   }
-  function borrar() {
-    if (!confirm("¿Borrar el pasajero y liberar la silla? La deja 'disponible' y quita de la silla la referencia de contrato (también la manual); no modifica el contrato en sí.")) return;
-    setErr("");
-    start(async () => {
-      const r = await borrarPasajeroSilla(sillaId, bloqueoId);
-      if (!r.ok) setErr(r.error);
-    });
-  }
-
   return (
     <>
       <div className="flex items-center gap-2 text-xs">
@@ -181,7 +190,14 @@ export function PasajeroAcciones({
         {!libre && (
           <button type="button" onClick={abrirMover} className="text-[#1D7C9A] hover:underline">Mover</button>
         )}
-        <button type="button" onClick={borrar} disabled={pending} className="text-red-500 hover:underline disabled:opacity-50">Borrar</button>
+        <ConfirmDialog
+          title="¿Borrar el pasajero y liberar la silla?"
+          description="La silla queda disponible y pierde la referencia del contrato, también la manual. El contrato en sí no se modifica."
+          confirmLabel="Borrar pasajero"
+          destructive
+          onConfirm={() => borrarPasajeroSilla(sillaId, bloqueoId, contratoVisto.updated_at)}
+          trigger={<button type="button" disabled={pending} className="text-red-500 hover:underline disabled:opacity-50">Borrar</button>}
+        />
       </div>
 
       {modo && (
@@ -189,7 +205,7 @@ export function PasajeroAcciones({
           <div className="w-full max-w-lg rounded-2xl bg-white p-5 shadow-xl" onClick={(e) => e.stopPropagation()}>
             {modo === "editar" ? (
               <>
-                <h3 className="mb-3 text-sm font-semibold text-gray-800">Editar pasajero · silla #{sillaId}</h3>
+                <h3 className="mb-3 text-sm font-semibold text-gray-800">Editar pasajero</h3>
                 <div className="grid grid-cols-2 gap-3">
                   <label className="text-xs text-gray-500">Nombres
                     <input className={inp} value={form.pasajero_nombres} onChange={(e) => set("pasajero_nombres", e.target.value)} />
@@ -217,7 +233,7 @@ export function PasajeroAcciones({
                       <label className="text-xs text-gray-500">Acomodación
                         <input className={inp} value={form.acomodacion} onChange={(e) => set("acomodacion", e.target.value)} />
                       </label>
-                      <label className="text-xs text-gray-500">Plazo
+                      <label className="text-xs text-gray-500">{sinContrato ? "Plazo (obligatorio sin contrato)" : "Plazo"}
                         <DateInput aria-label="Plazo de pago" type="date" className={inp} value={form.plazo} onValueChange={(dateValue) => set("plazo", dateValue)} />
                       </label>
                     </>

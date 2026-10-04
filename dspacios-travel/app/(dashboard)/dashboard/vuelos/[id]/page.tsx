@@ -23,6 +23,9 @@ import { esSillaLibre } from "@/lib/vuelos/sillaLibre";
 import { filtrarCompatibles, describirDestinos } from "@/lib/vuelos/compatibles";
 import { agruparHistorial, describirEntrada, esSillaActiva, type MovimientoFila } from "@/lib/vuelos/historial";
 import { tenantContext } from "@/lib/tenant.server";
+import { fechaNegocio } from "@/lib/fechaNegocio";
+import { esRetencionVencida } from "@/lib/vuelos/retencion";
+import { LiberarRetencion } from "./LiberarRetencion";
 
 export const dynamic = "force-dynamic";
 
@@ -57,7 +60,7 @@ export default async function BloqueoDetallePage({
   const sb = await createClient();
   const [{ data: b }, { data: sillas }, { data: otros }, { data: destinos }, { data: proveedores }, { data: rangos }, { data: cambios }, { data: movimientos }] = await Promise.all([
     sb.from("bloqueos_vuelo").select("*").eq("id", bloqueoId).single(),
-    sb.from("sillas").select("id, numero_silla, estado, numero_contrato, pasajero_nombres, pasajero_apellidos, tipo_doc, numero_doc, nacimiento, asesor, hotel, acomodacion, plazo, agencia, inf_nombres, inf_apellidos, inf_tipo_doc, inf_numero, inf_nacimiento, responsable_menor").eq("bloqueo_id", bloqueoId).order("numero_silla"),
+    sb.from("sillas").select("id, numero_silla, estado, numero_contrato, pasajero_nombres, pasajero_apellidos, tipo_doc, numero_doc, nacimiento, asesor, hotel, acomodacion, plazo, agencia, inf_nombres, inf_apellidos, inf_tipo_doc, inf_numero, inf_nacimiento, responsable_menor, updated_at").eq("bloqueo_id", bloqueoId).order("numero_silla"),
     sb.from("bloqueos_vuelo").select("id, record, fecha_ida, fecha_regreso, destino_id, proveedor_id, tarifa_neta").neq("id", bloqueoId).order("fecha_ida"),
     sb.from("destinos").select("id, nombre, codigo_iata").order("nombre"),
     sb.from("proveedores").select("id, nombre").eq("tipo", "aereo").order("nombre"),
@@ -91,6 +94,14 @@ export default async function BloqueoDetallePage({
     return acc;
   }, {});
   const libreSilla = (s: (typeof activas)[number]) => esSillaLibre({ ...s, contrato_manual: contratoManualPorSilla.get(s.id) ?? null });
+  // Retenciones en plazo SIN contrato ya vencidas (plazo < día de negocio de
+  // Bogotá; migración 201). Se liberan solo a mano, desde esta tabla.
+  const hoyNegocio = fechaNegocio();
+  const retencionVencida = (s: (typeof activas)[number]) =>
+    esRetencionVencida({ ...s, contrato_manual: contratoManualPorSilla.get(s.id) ?? null }, hoyNegocio);
+  const vencidasRetenidas = activas
+    .map((s, i) => ({ s, posicion: i + 1 }))
+    .filter(({ s }) => retencionVencida(s));
   const disponibles = activas.filter(libreSilla).length;
   const totalReal = activas.length;
   const movimientosHistoricos = movimientos?.length ?? 0;
@@ -275,6 +286,21 @@ export default async function BloqueoDetallePage({
         }
         pasajeros={
           <>
+            {vencidasRetenidas.length > 0 && (
+              <div role="status" data-testid="aviso-retenciones-vencidas" className="mb-3 flex items-start gap-2 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900">
+                <TriangleAlert className="mt-0.5 h-4 w-4 shrink-0" />
+                <div>
+                  <p className="font-semibold">
+                    {vencidasRetenidas.length === 1 ? "1 silla retenida venció" : `${vencidasRetenidas.length} sillas retenidas vencieron`} sin contrato
+                  </p>
+                  <p className="text-xs">
+                    {vencidasRetenidas.map(({ s, posicion }) =>
+                      `silla ${posicion} (histórica #${s.numero_silla}) · ${`${s.pasajero_nombres ?? ""} ${s.pasajero_apellidos ?? ""}`.trim() || "sin nombre"} · plazo ${s.plazo}`).join(" — ")}
+                  </p>
+                  <p className="mt-1 text-xs text-amber-800">Para asignarles contrato, primero actualiza su plazo a hoy o a una fecha futura (Editar); o usa <b>Liberar</b> en su fila. Nada se libera solo.</p>
+                </div>
+              </div>
+            )}
             <ResponsiveTableShell minWidth={1000} className="overflow-x-auto rounded-xl border border-gray-200 bg-white">
               <table className="w-full min-w-[1000px] text-sm">
                 <thead>
@@ -295,13 +321,13 @@ export default async function BloqueoDetallePage({
                   </tr>
                 </thead>
                 <tbody>
-                  {activas.map((s) => (
+                  {activas.map((s, indice) => (
                     <Fragment key={s.id}>
                       <tr className="border-t border-gray-100">
-                        <td className="px-3 py-2 font-semibold text-gray-700" data-label="#">
+                        <td className="px-3 py-2 font-semibold text-gray-700" data-label="#" title={`Silla histórica #${s.numero_silla}`}>
                           <span className="inline-flex items-center gap-1.5">
                             <span className="inline-block h-2.5 w-2.5 rounded-full" style={{ backgroundColor: ESTADO_COLOR[s.estado] ?? "#ccc" }} />
-                            {s.numero_silla}
+                            {indice + 1}
                           </span>
                         </td>
                         <td className="px-3 py-2 text-gray-700" data-label="Nombres">{s.pasajero_nombres || "—"}</td>
@@ -310,17 +336,33 @@ export default async function BloqueoDetallePage({
                         <td className="px-3 py-2 text-gray-500" data-label="Número">{s.numero_doc || "—"}</td>
                         <td className="px-3 py-2 text-xs text-gray-500" data-label="Nacimiento">{s.nacimiento ? formatFechaLarga(s.nacimiento) : "—"}</td>
                         <td className="px-3 py-2" data-label="Contrato">
-                          <SillaContrato sillaId={s.id} bloqueoId={bloqueoId} numeroContrato={s.numero_contrato} contratoManual={contratoManualPorSilla.get(s.id) ?? null} libre={libreSilla(s)} />
+                          <SillaContrato sillaId={s.id} bloqueoId={bloqueoId} numeroContrato={s.numero_contrato} contratoManual={contratoManualPorSilla.get(s.id) ?? null} estado={s.estado} libre={libreSilla(s)} version={s.updated_at} vencida={retencionVencida(s)}
+                            pasajero={Boolean((s.pasajero_nombres ?? "").trim() || (s.pasajero_apellidos ?? "").trim())}
+                            plazo={s.plazo} hoy={hoyNegocio} />
                         </td>
                         <td className="px-3 py-2 text-gray-500" data-label="Asesor">{s.asesor || "—"}</td>
                         <td className="px-3 py-2 text-gray-500" data-label="Hotel">{s.hotel || "—"}</td>
                         <td className="px-3 py-2 text-gray-500" data-label="Acomodación">{s.acomodacion || "—"}</td>
                         <td className="px-3 py-2 text-xs text-gray-500" data-label="Plazo">{s.plazo ? formatFechaLarga(s.plazo) : "—"}</td>
                         <td className="px-3 py-2" data-label="Estado">
-                          <SillaEstado sillaId={s.id} estado={s.estado} bloqueoId={bloqueoId} libre={libreSilla(s)} />
+                          <SillaEstado sillaId={s.id} estado={s.estado} bloqueoId={bloqueoId} sinContrato={s.numero_contrato === null && (contratoManualPorSilla.get(s.id) ?? null) === null} />
+                          {retencionVencida(s) && (
+                            <span className="mt-0.5 block text-[10px] font-semibold uppercase text-amber-700" title={`Plazo ${s.plazo}; vence después del día del plazo (hora de Bogotá).`}>Vencida</span>
+                          )}
                         </td>
                         <td className="px-3 py-2" data-label="Acciones">
                           <div className="flex flex-col items-start gap-1">
+                            {retencionVencida(s) && (
+                              <LiberarRetencion
+                                sillaId={s.id}
+                                bloqueoId={bloqueoId}
+                                version={s.updated_at}
+                                numeroVisible={indice + 1}
+                                numeroHistorico={s.numero_silla}
+                                pasajero={`${s.pasajero_nombres ?? ""} ${s.pasajero_apellidos ?? ""}`.trim()}
+                                plazo={s.plazo ?? ""}
+                              />
+                            )}
                             <PasajeroAcciones
                               sillaId={s.id}
                               bloqueoId={bloqueoId}
@@ -335,6 +377,7 @@ export default async function BloqueoDetallePage({
                               }}
                               libre={libreSilla(s)}
                               contratoOrganico={!!s.numero_contrato}
+                              contratoVisto={{ numero_contrato: s.numero_contrato, contrato_manual: contratoManualPorSilla.get(s.id) ?? null, updated_at: s.updated_at }}
                             />
                             {/* Alta de infante SIN silla a cargo de este adulto — exige
                                 documento propio (es, a la vez, la autorización de

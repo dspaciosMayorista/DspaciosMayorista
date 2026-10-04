@@ -20,7 +20,8 @@ import { dirname, join, relative } from "node:path";
 // ─────────────────────────────────────────────────────────────────────────
 
 const raiz = join(dirname(fileURLToPath(import.meta.url)), "..");
-const leer = (rel: string) => readFileSync(join(raiz, rel), "utf8");
+// Normaliza CRLF (core.autocrlf en Windows): las búsquedas usan "\n".
+const leer = (rel: string) => readFileSync(join(raiz, rel), "utf8").replace(/\r\n/g, "\n");
 
 const LEGACY = [
   "nit", "razon_social", "datos_pago", "banco", "tipo_cuenta",

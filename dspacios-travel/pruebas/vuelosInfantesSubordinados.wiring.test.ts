@@ -32,10 +32,13 @@ describe("vuelos/[id]/page.tsx — infante subordinado a su silla responsable", 
     // recorre solo las sillas ACTIVAS (sin filas `cambio`/`retirada`, que
     // son historial — tareas 2 y 3, migración 194).
     const inicioTbody = src.indexOf("<tbody>");
-    const inicioMap = src.indexOf("activas.map((s) => (", inicioTbody);
+    // `indice` solo alimenta el número visible consecutivo; la silla se sigue
+    // identificando por s.id (y su numero_silla histórico).
+    const MAP_SILLAS = "activas.map((s, indice) => (";
+    const inicioMap = src.indexOf(MAP_SILLAS, inicioTbody);
     assert.ok(inicioMap > -1, "no encuentra el .map de sillas dentro de <tbody>");
     const inicioFragment = src.indexOf("<Fragment key={s.id}>", inicioMap);
-    assert.ok(inicioFragment > -1 && inicioFragment - inicioMap < 50, "cada silla debe envolverse en un <Fragment key={s.id}> para poder interpolar su(s) infante(s) justo debajo, sin romper la key de React");
+    assert.ok(inicioFragment > -1 && inicioFragment - (inicioMap + MAP_SILLAS.length) < 50, "cada silla debe envolverse en un <Fragment key={s.id}> para poder interpolar su(s) infante(s) justo debajo, sin romper la key de React");
     const inicioInfantes = src.indexOf("infantesPorSillaId.get(s.id)", inicioFragment);
     assert.ok(inicioInfantes > -1, "no interpola infantesPorSillaId.get(s.id) dentro del mismo Fragment que la silla");
     // El .map de infantes por silla debe venir DESPUÉS del </tr> de la

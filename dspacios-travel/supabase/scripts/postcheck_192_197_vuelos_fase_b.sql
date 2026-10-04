@@ -22,6 +22,11 @@
 -- Los md5 son los de los cuerpos de 194–197 tal como están en el repositorio
 -- (sin retornos de carro), medidos tras aplicar 183→200 en orden numérico en
 -- una base local desechable. Si una migración se edita, recalcularlos.
+-- Tras la 201, las funciones que sustituye (cambiar_estado_silla,
+-- asignar_contrato_manual, quitar_contrato_manual, editar_pasajero_silla y _ajustar_sillas_bloqueo_nucleo)
+-- aceptan también su huella nueva, y los predicados _silla_libre/_silla_con_datos
+-- pueden quedar ejecutables por authenticated (la vista invoker cupos_por_bloqueo los usa);
+-- el postcheck_201_flujo_vuelos.sql exige esa versión de forma estricta.
 -- ───────────────────────────────────────────────────────────────────────────
 with
 esperadas(firma, md5_esperado, definer, clase, migracion) as (values
@@ -57,7 +62,22 @@ esperadas(firma, md5_esperado, definer, clase, migracion) as (values
 ),
 fn as (
   select e.*, p.oid, p.prosecdef, coalesce(p.proconfig, '{}')::text as cfg,
-         md5(replace(p.prosrc, chr(13), '')) as md5_real
+         md5(replace(p.prosrc, chr(13), '')) as md5_real,
+         case e.firma
+           when 'public.cambiar_estado_silla(bigint,text,text,boolean)'
+             then array[e.md5_esperado, '49d46cf31a34b9ed6847da116db2169f']
+           when 'public.asignar_contrato_manual(bigint,text)'
+             then array[e.md5_esperado, '170dfb530a5564469657a843ee0fda8f']
+           when 'public._ajustar_sillas_bloqueo_nucleo(text,bigint,integer)'
+             then array[e.md5_esperado, '26e514bbbbb1fda58cb024cb85884ef2']
+           when 'public.editar_pasajero_silla(bigint,jsonb)'
+             then array[e.md5_esperado, '0cb298519f7f74c5e0b6a89c61ebe5a5']
+           when 'public.quitar_contrato_manual(bigint)'
+             then array[e.md5_esperado, '8313f296fdc0fb8244a884833045ba11']
+           when 'public.liberar_silla(bigint)'
+             then array[e.md5_esperado, '7dae462501f91621565c1ada8a6071cd']
+           else array[e.md5_esperado]
+         end as huellas_aceptadas
     from esperadas e left join pg_proc p on p.oid = to_regprocedure(e.firma)
 ),
 chk(orden, verificacion, ok, detalle) as (
@@ -71,8 +91,8 @@ chk(orden, verificacion, ok, detalle) as (
     from fn group by migracion
   union all
   select 20 + migracion - 194, format('%s: cuerpos = repositorio (md5)', migracion),
-         bool_and(md5_real = md5_esperado),
-         coalesce(string_agg(firma || ' = ' || coalesce(md5_real, 'falta'), '; ') filter (where md5_real is distinct from md5_esperado), 'todos coinciden')
+         bool_and(md5_real = any(huellas_aceptadas)),
+         coalesce(string_agg(firma || ' = ' || coalesce(md5_real, 'falta'), '; ') filter (where md5_real is null or not (md5_real = any(huellas_aceptadas))), 'todos coinciden')
     from fn group by migracion
   union all
   select 30, 'SECURITY DEFINER/INVOKER como se diseñó',
@@ -99,6 +119,8 @@ chk(orden, verificacion, ok, detalle) as (
          not bool_or(has_function_privilege('authenticated', oid, 'EXECUTE')),
          coalesce(string_agg(firma, '; ') filter (where has_function_privilege('authenticated', oid, 'EXECUTE')), 'ninguna')
     from fn where oid is not null and clase in ('privada', 'servicio')
+      and not (firma in ('public._silla_libre(public.sillas)', 'public._silla_con_datos(public.sillas)')
+               and to_regprocedure('public._copiar_datos_sillas_contrato(text,bigint,jsonb,jsonb)') is not null)
   union all
   select 35, 'servicio: service_role ejecuta (cron, reservas)',
          bool_and(has_function_privilege('service_role', oid, 'EXECUTE')),
