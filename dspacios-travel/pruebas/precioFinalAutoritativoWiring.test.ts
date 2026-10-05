@@ -223,11 +223,14 @@ describe("Migración 179 — CHECK de procedencia FORTALECIDO: exige temporada_b
 describe("Atomicidad real — generarTarifasCalculadora delega TODO el reemplazo al RPC transaccional (hoteles/actions.ts)", () => {
   const cuerpo = cuerpoFuncionPorSiguienteExport(hotelesActions, "export async function generarTarifasCalculadora(");
 
-  test("llama sb.rpc('reemplazar_tarifas_hotel_calculadora', ...) con hotel_id/regimenes/filas — nunca un select/delete/insert manual", () => {
-    assert.match(cuerpo, /sb\.rpc\("reemplazar_tarifas_hotel_calculadora", \{/);
+  // Migración 203 (pendiente #26): la RPC de la 179 borraba TODAS las filas
+  // del régimen; ahora se usa `generar_tarifas_hotel_calculadora`, acotada a
+  // las claves del lote. Detalle en pruebas/tarifasPromoMixtaPreservacion.test.ts.
+  test("llama sb.rpc('generar_tarifas_hotel_calculadora', ...) con hotel_id/filas/modo — nunca un select/delete/insert manual", () => {
+    assert.match(cuerpo, /sb\.rpc\("generar_tarifas_hotel_calculadora", \{/);
     assert.match(cuerpo, /p_hotel_id: hotelId,/);
-    assert.match(cuerpo, /p_regimenes: regimenes,/);
     assert.match(cuerpo, /p_filas: filas as unknown as Json,/);
+    assert.match(cuerpo, /p_reemplazar_todo: modo === "reemplazar",/);
   });
 
   test("YA NO reimplementa select→delete→insert→restaurar en JS — ese patrón (nunca atómico de verdad, IDs nuevos en la restauración) desapareció por completo", () => {
@@ -238,8 +241,8 @@ describe("Atomicidad real — generarTarifasCalculadora delega TODO el reemplazo
     assert.doesNotMatch(cuerpo, /TAMBIÉN falló/);
   });
 
-  test("modo 'reemplazar' pasa p_regimenes: null (borra todo el hotel); modo 'agregar' pasa el arreglo de regímenes generados", () => {
-    assert.match(cuerpo, /const regimenes = modo === "reemplazar" \? null : \[\.\.\.new Set\(filas\.map\(\(f\) => f\.alimentacion\)\.filter\(Boolean\)\)\];/);
+  test("ya no borra por régimen completo (p_regimenes desapareció)", () => {
+    assert.doesNotMatch(cuerpo, /p_regimenes/);
   });
 
   test("propaga el error del RPC tal cual (sin intentar ninguna recuperación en JS — la atomicidad ya la garantiza Postgres)", () => {
@@ -247,7 +250,10 @@ describe("Atomicidad real — generarTarifasCalculadora delega TODO el reemplazo
     const posIfError = cuerpo.indexOf("if (error)", posRpc);
     assert.notEqual(posIfError, -1);
     const bloque = cuerpo.slice(posIfError, posIfError + 100);
-    assert.match(bloque, /return \{ ok: false, error: error\.message \};/);
+    // Mismo mensaje del RPC; solo se quita el prefijo técnico (`mensajeRpc`).
+    assert.match(bloque, /return \{ ok: false, error: mensajeRpc\(error\.message\) \};/);
+    const archivo = readFileSync(new URL("../app/(dashboard)/dashboard/producto/hoteles/actions.ts", import.meta.url), "utf8");
+    assert.match(archivo, /const mensajeRpc = \(m: string\) => m\.replace\(\/\^generar_tarifas_hotel_calculadora:\\s\*\/, ""\);/);
   });
 });
 
@@ -326,9 +332,13 @@ describe("HotelDetalleClient.tsx — UI distingue Base/Promoción y muestra la c
     assert.match(hotelDetalle, /notas\?: string \| null;/);
   });
 
-  test("la fila muestra el badge 'Promoción' cuando precio_final_autoritativo, y 'Base' en caso contrario", () => {
-    assert.match(hotelDetalle, /t\.precio_final_autoritativo \? \(/);
-    assert.match(hotelDetalle, /\bPromoción\b/);
+  // Pendiente #15/#26: la etiqueta ya no depende solo de
+  // precio_final_autoritativo — una fila cargada a mano en una vigencia
+  // promocional tampoco debe decir "Base". La regla vive en
+  // `etiquetaFilaTarifa` (probada en tarifasPromoMixtaPreservacion.test.ts).
+  test("la fila muestra 'Promo' o 'Base' según etiquetaFilaTarifa (precio final o vigencia promocional)", () => {
+    assert.match(hotelDetalle, /etiquetaFilaTarifa\(t, temporadas\)/);
+    assert.match(hotelDetalle, /etiqueta === "PROMO" \? \(/);
     assert.match(hotelDetalle, />Base</);
   });
 

@@ -143,6 +143,7 @@ describe("hallazgo 3 — cobertura: los 10 puntos reales que escriben tarifa_hot
     "cargarTarifasMasivo",
     "cargarTemporadasMasivo",
     "generarTarifasCalculadora",
+    "sustituirPromoManualMixta",
   ];
 
   for (const nombre of PUNTOS_DE_ESCRITURA) {
@@ -162,11 +163,12 @@ describe("hallazgo 3 — cobertura: los 10 puntos reales que escriben tarifa_hot
       const escribeDirecto = /\.from\("tarifa_hotel"\)|\.from\("hotel_temporadas"\)/.test(cuerpo) &&
         /\.(insert|update|upsert|delete)\(/.test(cuerpo);
       // `generarTarifasCalculadora` escribe por RPC transaccional
-      // (`reemplazar_tarifas_hotel_calculadora`, migración 179) en vez de
+      // (`generar_tarifas_hotel_calculadora`, migración 203; antes
+      // `reemplazar_tarifas_hotel_calculadora`, 179) en vez de
       // `.from(...).insert/delete(...)` directo — mismo destino (tarifa_hotel),
       // otra forma de llegar. Se detecta aparte para que la guarda no dependa
       // de un patrón sintáctico que esa función no usa.
-      const escribePorRpc = /\.rpc\("reemplazar_tarifas_hotel_calculadora"/.test(cuerpo);
+      const escribePorRpc = /\.rpc\("(generar|reemplazar)_tarifas_hotel_calculadora"/.test(cuerpo);
       return escribeDirecto || escribePorRpc;
     });
     assert.deepEqual(

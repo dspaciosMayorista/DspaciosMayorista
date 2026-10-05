@@ -3,7 +3,13 @@
 import { createClient } from "@/lib/supabase/server";
 import { revalidatePath } from "next/cache";
 import { ACOM_ROOMS, type AcomRoom } from "@/lib/acomodaciones";
-import { generarTarifas, validarDubaiParams, type DubaiParams, type MixtaParams, type CorporativaParams } from "@/lib/calc/calculadoras";
+import {
+  generarTarifas, analizarMixta, clavePromoMixta, renombrarTemporadaEnParams, validarDubaiParams,
+  filaSustitucionMixta, aplicarAdultsOnly, valoresDeFila, CAMPOS_VALOR_TARIFA, fotoTarifas,
+  type DubaiParams, type MixtaParams, type CorporativaParams, type ValoresTarifa, type FotoTarifa,
+} from "@/lib/calc/calculadoras";
+import { separarFilasVencidas } from "@/lib/calc/promoCalculadora";
+import { contextoGeneracion } from "@/lib/hoteles/contextoGeneracionTarifas";
 import { regenerarTarifariosDeHotel } from "../../paquetes/actions";
 import type { Json } from "@/types/database";
 import { normalizarProveedorHotelId } from "@/lib/hoteles/proveedor";
@@ -477,23 +483,8 @@ async function renombrarTemporadaEnDatos(
   const { data: calc } = await sb.from("hotel_calculadora").select("tipo, params").eq("hotel_id", hotelId).maybeSingle();
   if (calc?.params) {
     const params = calc.params as Record<string, unknown>;
-    let cambio = false;
-    if (Array.isArray(params.bases)) {
-      for (const b of params.bases as unknown[]) {
-        if (b && typeof b === "object" && (b as Record<string, unknown>).temporada === nombreViejo) {
-          (b as Record<string, unknown>).temporada = nombreNuevo;
-          cambio = true;
-        }
-      }
-    }
-    if (calc.tipo === "dubai" && Array.isArray(params.promos)) {
-      for (const p of params.promos as unknown[]) {
-        if (!p || typeof p !== "object") continue;
-        const pr = p as Record<string, unknown>;
-        if (pr.temporadaBase === nombreViejo) { pr.temporadaBase = nombreNuevo; cambio = true; }
-        if (pr.temporadaPromo === nombreViejo) { pr.temporadaPromo = nombreNuevo; cambio = true; }
-      }
-    }
+    // Incluye `bases_por_regimen` (valores por régimen de Mixta, #26).
+    const cambio = renombrarTemporadaEnParams(calc.tipo, params, nombreViejo, nombreNuevo);
     if (cambio) {
       const { error } = await sb.from("hotel_calculadora")
         .update({ params: params as unknown as Json, updated_at: new Date().toISOString() })
@@ -903,50 +894,128 @@ export async function guardarCalculadora(
   return { ok: true };
 }
 
+const etiquetaBloqueo = (temporada: string, categoria: string, regimen: string) => `${temporada} · ${categoria} · ${regimen}`;
+// Los rechazos de la RPC ya vienen redactados para la persona; se quita el prefijo técnico.
+const mensajeRpc = (m: string) => m.replace(/^generar_tarifas_hotel_calculadora:\s*/, "");
+const SIN_FOTO = "Falta la foto de las tarifas cargadas. Recarga la página y vuelve a revisar la vista previa.";
+
 // Genera las filas de tarifa_hotel a partir de la calculadora del hotel.
-//  - modo "agregar" (por defecto): reemplaza SOLO las tarifas de los regímenes
-//    que se están generando (respeta las de otros regímenes ya cargados).
-//  - modo "reemplazar": borra TODAS las tarifas del hotel y deja solo las nuevas.
+//  - modo "agregar" (por defecto): reemplaza SOLO las filas que genera ahora
+//    (misma categoría + régimen + temporada). Otras temporadas del mismo
+//    régimen (p. ej. una promoción ya cargada), otros regímenes y filas
+//    manuales que no genera la calculadora quedan intactas (pendiente #26:
+//    antes borraba TODAS las filas del régimen).
+//  - modo "reemplazar": borra las tarifas VIGENTES del hotel y deja solo las
+//    nuevas. Las de vigencias con compra cerrada se conservan. Se NIEGA si hay
+//    promociones con valores escritos a mano (las borraría sin decisión).
+// En ambos modos las vigencias con compra cerrada no se reescriben ni se
+// recrean (histórico), las promociones escritas a mano no se tocan (se
+// sustituyen solo con `sustituirPromoManualMixta`), y cada fila reemplazada o
+// borrada queda en `tarifa_hotel_historial` (migración 203).
+// `previas` = las tarifas que el cliente tenía cargadas en la vista previa. La
+// RPC las compara con lo que hay AL ESCRIBIR, con el hotel bloqueado: si
+// alguien cambió algo entretanto, rechaza y pide recargar. Lo que se decide
+// aquí (qué promos quedan intactas) la RPC lo vuelve a exigir en SQL.
 export async function generarTarifasCalculadora(
   hotelId: number,
-  modo: "agregar" | "reemplazar" = "agregar",
-): Promise<{ ok: true; generadas: number } | { ok: false; error: string }> {
+  modo: "agregar" | "reemplazar",
+  previas: FotoTarifa[],
+): Promise<{ ok: true; generadas: number; vencidasConservadas: string[]; promosManualesIntactas: string[] } | { ok: false; error: string }> {
+  if (!Array.isArray(previas)) return { ok: false, error: SIN_FOTO };
   const sb = await createClient();
-  const [{ data: calc }, { data: hotel }] = await Promise.all([
-    sb.from("hotel_calculadora").select("tipo, params").eq("hotel_id", hotelId).maybeSingle(),
-    sb.from("hoteles").select("adults_only").eq("id", hotelId).maybeSingle(),
-  ]);
+  const { calc, adultsOnly, error: errCtx, ctx, hoy } = await contextoGeneracion(sb, hotelId);
   if (!calc) return { ok: false, error: "Este hotel no tiene calculadora configurada. Guárdala primero." };
+  if (errCtx) return { ok: false, error: errCtx };
 
-  const filasBase = generarTarifas(calc.tipo, calc.params);
-  if (!filasBase.length) return { ok: false, error: "No hay bases con precio para generar tarifas." };
+  const calculadas = generarTarifas(calc.tipo, calc.params, ctx);
+  const regimenMixta = calc.tipo === "mixta" ? ((calc.params as unknown as MixtaParams).regimen ?? "").trim() : "";
+  const promosManualesIntactas = calc.tipo === "mixta"
+    ? analizarMixta(calc.params as unknown as MixtaParams, ctx).promos
+        .flatMap((a) => (a.bloqueadas ?? []).map((b) => etiquetaBloqueo(a.temporada, b.categoria, regimenMixta)))
+    : [];
+  if (modo === "reemplazar" && promosManualesIntactas.length > 0) {
+    return {
+      ok: false,
+      error: `"Reemplazar TODAS" borraría promociones escritas a mano (${promosManualesIntactas.join("; ")}). ` +
+        "Decide primero si sustituirlas por el valor calculado, o usa \"Generar (agregar/actualizar)\", que no las toca.",
+    };
+  }
+  const { generables: filasBase, vencidas } = separarFilasVencidas(calculadas, ctx.vigencias, hoy);
+  if (!filasBase.length) {
+    return {
+      ok: false,
+      error: vencidas.length > 0
+        ? `No hay tarifas para generar: las temporadas con valores tienen la compra cerrada (${vencidas.join(", ")}) y se conservan sin cambios.`
+        : "No hay bases con precio para generar tarifas.",
+    };
+  }
+  const filas = aplicarAdultsOnly(filasBase, adultsOnly);
 
-  // Adults Only: la calculadora igual deriva un valor de niño/infante (son %
-  // sobre la base, nunca "vacíos"), pero este hotel no acepta niños -- se
-  // descarta antes de guardar, sin importar los parámetros configurados.
-  const filas: (Omit<(typeof filasBase)[number], "neto_nino"> & { neto_nino: number | null })[] = hotel?.adults_only
-    ? filasBase.map((f) => ({ ...f, neto_nino: null, neto_nino2: null, neto_infante: null, nota_infante: null }))
-    : filasBase;
-
-  // Reemplazo TRANSACCIONAL real (migración 179, RPC
-  // `reemplazar_tarifas_hotel_calculadora`): delete + insert corren dentro de
-  // la MISMA función de Postgres, así que ante cualquier fallo (constraint,
-  // tipo, lo que sea) TODO se revierte automáticamente — las filas anteriores
-  // quedan EXACTAMENTE iguales, ids incluidos. Ya NO se hace select→delete→
-  // insert→"restaurar si falla" en varias llamadas HTTP sueltas desde el
-  // servidor: eso nunca fue atómico (una caída de red a mitad de camino
-  // dejaba el hotel sin tarifas) y, aun cuando "funcionaba", la restauración
-  // reinsertaba con ids NUEVOS, nunca los originales.
-  const regimenes = modo === "reemplazar" ? null : [...new Set(filas.map((f) => f.alimentacion).filter(Boolean))];
-  const { data: resultado, error } = await sb.rpc("reemplazar_tarifas_hotel_calculadora", {
+  // Reemplazo TRANSACCIONAL y ACOTADO (migración 203,
+  // `generar_tarifas_hotel_calculadora`): bloqueo del hotel + comprobación +
+  // borrado + inserción en una sola función de Postgres. La función vuelve a
+  // calcular en servidor qué vigencias tienen la compra cerrada, rechaza si
+  // las filas cambiaron respecto de `previas`, nunca pisa una promo escrita a
+  // mano y nunca borra fuera de las claves del lote (salvo "reemplazar", que
+  // conserva las vencidas).
+  const { data: resultado, error } = await sb.rpc("generar_tarifas_hotel_calculadora", {
     p_hotel_id: hotelId,
-    p_regimenes: regimenes,
     p_filas: filas as unknown as Json,
+    p_previas: fotoTarifas(previas) as unknown as Json,
+    p_reemplazar_todo: modo === "reemplazar",
   });
-  if (error) return { ok: false, error: error.message };
+  if (error) return { ok: false, error: mensajeRpc(error.message) };
 
   revalidatePath(`/dashboard/producto/hoteles/${hotelId}`);
   await regenerarTarifariosDeHotel(hotelId);
   const insertadas = (resultado as { insertadas?: number } | null)?.insertadas ?? filas.length;
-  return { ok: true, generadas: insertadas };
+  return { ok: true, generadas: insertadas, vencidasConservadas: vencidas, promosManualesIntactas };
+}
+
+// Acción EXPLÍCITA (pendiente #15): sustituye los valores escritos a mano de
+// UNA promoción en UNA categoría y UN régimen por el valor calculado desde su
+// base (−% de la vigencia). Escribe solo esa fila (borrado acotado a su clave,
+// motivo `calculadora_sustituir_manual`, versión anterior al historial). El
+// cliente guarda antes la calculadora y envía lo que mostró la vista previa;
+// si el cálculo del servidor no coincide exactamente, no escribe nada. La RPC
+// exige además que la celda siga siendo la promo escrita a mano que se
+// confirmó (`previas`): si otra persona la cambió, rechaza.
+export async function sustituirPromoManualMixta(
+  hotelId: number,
+  objetivo: { temporada: string; regimen: string; categoria: string },
+  esperado: ValoresTarifa,
+  previas: FotoTarifa[],
+): Promise<{ ok: true; anterior: ValoresTarifa | null; nuevo: ValoresTarifa } | { ok: false; error: string }> {
+  if (!Array.isArray(previas)) return { ok: false, error: SIN_FOTO };
+  const sb = await createClient();
+  const { calc, adultsOnly, error: errCtx, ctx, hoy } = await contextoGeneracion(sb, hotelId);
+  if (!calc || calc.tipo !== "mixta") return { ok: false, error: "Este hotel no tiene calculadora Mixta guardada." };
+  if (errCtx) return { ok: false, error: errCtx };
+  const calculo = filaSustitucionMixta(calc.params as unknown as MixtaParams, ctx, objetivo);
+  if (!calculo.ok) return { ok: false, error: calculo.error };
+  if (separarFilasVencidas([calculo.fila], ctx.vigencias, hoy).generables.length === 0) {
+    return { ok: false, error: `"${objetivo.temporada}" tiene la compra cerrada: sus tarifas se conservan y no se sustituyen.` };
+  }
+  const [final] = aplicarAdultsOnly([calculo.fila], adultsOnly);
+  const clave = clavePromoMixta(objetivo.categoria, objetivo.regimen, objetivo.temporada);
+  const difiere = CAMPOS_VALOR_TARIFA.find((c) => (final[c] ?? null) !== (esperado[c] ?? null));
+  if (difiere) {
+    return { ok: false, error: "Lo calculado no coincide con la vista previa (¿cambió la calculadora o las vigencias?). Recarga la página y vuelve a revisar." };
+  }
+  const anterior = ctx.tarifasExistentes.find((t) =>
+    !!t.tipo_habitacion && !!t.alimentacion && !!t.temporada &&
+    clavePromoMixta(t.tipo_habitacion, t.alimentacion, t.temporada) === clave);
+
+  const { error } = await sb.rpc("generar_tarifas_hotel_calculadora", {
+    p_hotel_id: hotelId,
+    p_filas: [final] as unknown as Json,
+    p_previas: fotoTarifas(previas) as unknown as Json,
+    p_reemplazar_todo: false,
+    p_motivo: "calculadora_sustituir_manual",
+  });
+  if (error) return { ok: false, error: mensajeRpc(error.message) };
+
+  revalidatePath(`/dashboard/producto/hoteles/${hotelId}`);
+  await regenerarTarifariosDeHotel(hotelId);
+  return { ok: true, anterior: anterior ? valoresDeFila(anterior as ValoresTarifa) : null, nuevo: valoresDeFila(final) };
 }

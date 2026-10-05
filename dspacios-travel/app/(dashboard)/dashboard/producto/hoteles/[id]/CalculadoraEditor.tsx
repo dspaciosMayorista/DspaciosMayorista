@@ -8,17 +8,41 @@ import { formatCOP } from "@/lib/utils";
 import { ResponsiveTableShell } from "@/components/ui/ResponsiveTableShell";
 import {
   generarTarifasDubai, validarDubaiParams, type DubaiParams, type DubaiPromo, type DubaiBase, type DubaiSuplementoRegimen,
-  generarTarifasMixta, type MixtaParams, type MixtaAcom, MIXTA_ACOMS, type CalcTipo,
+  analizarMixta, filaSustitucionMixta, aplicarAdultsOnly, valoresDeFila, CAMPOS_VALOR_TARIFA, fotoTarifas,
+  type MixtaParams, type MixtaAcom, MIXTA_ACOMS, type CalcTipo, type TarifaGenerada, type TarifaExistente, type BloqueoPromoMixta,
   generarTarifasCorporativa, type CorporativaParams,
 } from "@/lib/calc/calculadoras";
+import {
+  CAMPOS_MIXTA, claveMixta, valoresPorRegimenIniciales, basesDesdeValores, basesPorRegimen, quitarValoresCelda,
+  type CampoMixta, type ValoresPorRegimen,
+} from "@/lib/calc/mixtaValores";
+import { separarFilasVencidas } from "@/lib/calc/promoCalculadora";
+import type { TemporadaRango } from "@/lib/calc/paquetes";
 import { REGLA_EDAD_DEFAULT, construirReglaEdadDesdeMaximos } from "@/lib/calc/reglaEdadTarifa";
 import { PAX_TARIFA_DEFAULT } from "@/lib/acomodaciones";
-import { guardarCalculadora, generarTarifasCalculadora } from "../actions";
+import { guardarCalculadora, generarTarifasCalculadora, sustituirPromoManualMixta } from "../actions";
 
 const lbl = "mb-1 block text-xs font-medium text-gray-600";
 
+const CONFIRMAR_REEMPLAZO =
+  "¿Reemplazar todas las tarifas VIGENTES de este hotel (todos los regímenes) por las generadas ahora? " +
+  "Las de vigencias con compra cerrada se conservan y cada fila reemplazada queda en el historial interno.";
+
+function mensajeGeneracion(
+  g: Awaited<ReturnType<typeof generarTarifasCalculadora>>,
+  modo: "agregar" | "reemplazar",
+): string {
+  if (!g.ok) return g.error;
+  const base = `✓ Generadas ${g.generadas} tarifas (${modo === "reemplazar" ? "reemplazaron las vigentes" : "agregadas/actualizadas solo en sus temporadas"}).`;
+  const partes = [base];
+  if (g.vencidasConservadas.length > 0) partes.push(`Sin tocar por compra cerrada: ${g.vencidasConservadas.join(", ")}.`);
+  if (g.promosManualesIntactas.length > 0) partes.push(`Promociones escritas a mano sin tocar: ${g.promosManualesIntactas.join("; ")}.`);
+  return partes.join(" ");
+}
+
 export function CalculadoraEditor({
   hotelId, categorias, temporadas, regimenes, tipoInicial, dubaiInicial, mixtaInicial, corporativaInicial, adultsOnly = false,
+  vigencias, hoy, tarifasExistentes,
 }: {
   hotelId: number;
   categorias: string[];
@@ -29,6 +53,12 @@ export function CalculadoraEditor({
   mixtaInicial: MixtaParams | null;
   corporativaInicial: CorporativaParams | null;
   adultsOnly?: boolean;
+  // Vigencias del hotel (`hotel_temporadas`) y hoy (Bogotá): para derivar
+  // promociones y no regenerar vigencias con compra cerrada.
+  vigencias: TemporadaRango[];
+  hoy: string;
+  // Filas actuales de `tarifa_hotel`: una promo escrita a mano no se pisa.
+  tarifasExistentes: TarifaExistente[];
 }) {
   const [open, setOpen] = useState(false);
   const [tipoCalc, setTipoCalc] = useState<CalcTipo>(tipoInicial ?? "dubai");
@@ -53,9 +83,9 @@ export function CalculadoraEditor({
               <option value="corporativa">Corporativa (tarifa por habitación + suplementos)</option>
             </select>
           </div>
-          {tipoCalc === "dubai" && <DubaiForm hotelId={hotelId} categorias={categorias} temporadas={temporadas} regimenes={regimenes} inicial={dubaiInicial} adultsOnly={adultsOnly} />}
-          {tipoCalc === "mixta" && <MixtaForm hotelId={hotelId} categorias={categorias} temporadas={temporadas} regimenes={regimenes} inicial={mixtaInicial} adultsOnly={adultsOnly} />}
-          {tipoCalc === "corporativa" && <CorporativaForm hotelId={hotelId} categorias={categorias} temporadas={temporadas} regimenes={regimenes} inicial={corporativaInicial} adultsOnly={adultsOnly} />}
+          {tipoCalc === "dubai" && <DubaiForm hotelId={hotelId} categorias={categorias} temporadas={temporadas} regimenes={regimenes} inicial={dubaiInicial} adultsOnly={adultsOnly} tarifasExistentes={tarifasExistentes} />}
+          {tipoCalc === "mixta" && <MixtaForm hotelId={hotelId} categorias={categorias} temporadas={temporadas} regimenes={regimenes} inicial={mixtaInicial} adultsOnly={adultsOnly} vigencias={vigencias} hoy={hoy} tarifasExistentes={tarifasExistentes} />}
+          {tipoCalc === "corporativa" && <CorporativaForm hotelId={hotelId} categorias={categorias} temporadas={temporadas} regimenes={regimenes} inicial={corporativaInicial} adultsOnly={adultsOnly} tarifasExistentes={tarifasExistentes} />}
         </div>
       )}
     </section>
@@ -64,8 +94,8 @@ export function CalculadoraEditor({
 
 // ── Formulario DUBAI ────────────────────────────────────────────────────
 function DubaiForm({
-  hotelId, categorias, temporadas, regimenes, inicial, adultsOnly,
-}: { hotelId: number; categorias: string[]; temporadas: string[]; regimenes: string[]; inicial: DubaiParams | null; adultsOnly: boolean }) {
+  hotelId, categorias, temporadas, regimenes, inicial, adultsOnly, tarifasExistentes,
+}: { hotelId: number; categorias: string[]; temporadas: string[]; regimenes: string[]; inicial: DubaiParams | null; adultsOnly: boolean; tarifasExistentes: TarifaExistente[] }) {
   const router = useRouter();
   const [pending, start] = useTransition();
   const [msg, setMsg] = useState("");
@@ -212,7 +242,7 @@ function DubaiForm({
   }, [params, promos]);
 
   function guardar(modo: "solo" | "agregar" | "reemplazar") {
-    if (modo === "reemplazar" && !confirm("¿Borrar TODAS las tarifas de este hotel y dejar solo las generadas ahora?")) return;
+    if (modo === "reemplazar" && !confirm(CONFIRMAR_REEMPLAZO)) return;
     // Fail-closed en el cliente (misma validación pura) para no esperar al
     // servidor con un config que ya se sabe inválido — el servidor
     // (`guardarCalculadora`) SIEMPRE vuelve a validar, nunca confía en esto.
@@ -222,8 +252,8 @@ function DubaiForm({
       const r = await guardarCalculadora(hotelId, "dubai", params);
       if (!r.ok) { setMsg(r.error); return; }
       if (modo === "solo") { setMsg("✓ Calculadora guardada."); router.refresh(); return; }
-      const g = await generarTarifasCalculadora(hotelId, modo);
-      setMsg(g.ok ? `✓ Generadas ${g.generadas} tarifas (${modo === "reemplazar" ? "reemplazaron todas" : "agregadas/actualizadas"}).` : g.error);
+      const g = await generarTarifasCalculadora(hotelId, modo, fotoTarifas(tarifasExistentes));
+      setMsg(mensajeGeneracion(g, modo));
       router.refresh();
     });
   }
@@ -480,13 +510,11 @@ function DubaiForm({
 // ── Formulario MIXTA (por hab/pax + IVA) ───────────────────────────────────
 type AcomCfg = Record<MixtaAcom, { modo: "hab" | "pax"; iva: boolean }>;
 const ACOM_LABEL: Record<MixtaAcom, string> = { sencilla: "Sencilla", doble: "Doble", triple: "Triple", multiple: "Múltiple" };
-const CAMPOS = ["sencilla", "doble", "triple", "multiple", "nino", "nino2", "infante"] as const;
-type Campo = (typeof CAMPOS)[number];
-const CAMPO_LABEL: Record<Campo, string> = { sencilla: "Sencilla", doble: "Doble", triple: "Triple", multiple: "Múltiple", nino: "Niño 1", nino2: "Niño 2", infante: "Infante" };
+const CAMPO_LABEL: Record<CampoMixta, string> = { sencilla: "Sencilla", doble: "Doble", triple: "Triple", multiple: "Múltiple", nino: "Niño 1", nino2: "Niño 2", infante: "Infante" };
 
 function MixtaForm({
-  hotelId, categorias, temporadas, regimenes, inicial, adultsOnly,
-}: { hotelId: number; categorias: string[]; temporadas: string[]; regimenes: string[]; inicial: MixtaParams | null; adultsOnly: boolean }) {
+  hotelId, categorias, temporadas, regimenes, inicial, adultsOnly, vigencias, hoy, tarifasExistentes,
+}: { hotelId: number; categorias: string[]; temporadas: string[]; regimenes: string[]; inicial: MixtaParams | null; adultsOnly: boolean; vigencias: TemporadaRango[]; hoy: string; tarifasExistentes: TarifaExistente[] }) {
   const router = useRouter();
   const [pending, start] = useTransition();
   const [msg, setMsg] = useState("");
@@ -512,23 +540,14 @@ function MixtaForm({
     return def;
   });
 
-  const valInicial: Record<string, string> = {};
-  for (const b of inicial?.bases ?? []) {
-    valInicial[`${b.categoria}|${b.temporada}|sencilla`] = String(b.sencilla ?? "");
-    valInicial[`${b.categoria}|${b.temporada}|doble`] = String(b.doble ?? "");
-    valInicial[`${b.categoria}|${b.temporada}|triple`] = String(b.triple ?? "");
-    valInicial[`${b.categoria}|${b.temporada}|multiple`] = String(b.multiple ?? "");
-    valInicial[`${b.categoria}|${b.temporada}|nino`] = String(b.nino ?? "");
-    if (b.nino2 != null) valInicial[`${b.categoria}|${b.temporada}|nino2`] = String(b.nino2);
-    if (b.infante != null) valInicial[`${b.categoria}|${b.temporada}|infante`] = String(b.infante);
-  }
-  const [vals, setVals] = useState<Record<string, string>>(valInicial);
-  const setVal = (c: string, t: string, campo: Campo, v: string) => setVals((s) => ({ ...s, [`${c}|${t}|${campo}`]: v }));
+  // Valores por RÉGIMEN: alternar de régimen ya no vacía lo cargado y guardar
+  // conserva los demás regímenes (`bases_por_regimen`).
+  const [valoresPorRegimen, setValoresPorRegimen] = useState<ValoresPorRegimen>(() => valoresPorRegimenIniciales(inicial));
+  const vals = useMemo(() => valoresPorRegimen[regimen] ?? {}, [valoresPorRegimen, regimen]);
+  const setVal = (c: string, t: string, campo: CampoMixta, v: string) =>
+    setValoresPorRegimen((s) => ({ ...s, [regimen]: { ...(s[regimen] ?? {}), [claveMixta(c, t, campo)]: v } }));
 
-  // Al cambiar de régimen, vaciar los valores: cada régimen se carga aparte
-  // (evita arrastrar/borrar a mano los del régimen anterior).
-  function cambiarRegimen(v: string) { setRegimen(v); setVals({}); setMsg(""); }
-  const num = (c: string, t: string, campo: Campo) => Number(vals[`${c}|${t}|${campo}`]) || 0;
+  function cambiarRegimen(v: string) { setRegimen(v); setMsg(""); }
 
   const setAcomCfg = (a: MixtaAcom, patch: Partial<{ modo: "hab" | "pax"; iva: boolean }>) =>
     setAcom((s) => ({ ...s, [a]: { ...s[a], ...patch } }));
@@ -539,27 +558,78 @@ function MixtaForm({
     acom,
     nino: { iva: ninoIva },
     pax: { sencilla: Number(pax.sencilla) || 1, doble: Number(pax.doble) || 2, triple: Number(pax.triple) || 3, multiple: Number(pax.multiple) || 4 },
-    bases: categorias.flatMap((c) => temporadas.map((t) => ({
-      categoria: c, temporada: t,
-      sencilla: num(c, t, "sencilla"), doble: num(c, t, "doble"), triple: num(c, t, "triple"), multiple: num(c, t, "multiple"),
-      nino: num(c, t, "nino"), nino2: vals[`${c}|${t}|nino2`] ? Number(vals[`${c}|${t}|nino2`]) : null,
-      infante: vals[`${c}|${t}|infante`] ? Number(vals[`${c}|${t}|infante`]) : null,
-    }))),
+    bases: basesDesdeValores(vals, categorias, temporadas),
+    bases_por_regimen: basesPorRegimen(valoresPorRegimen),
     infante_nota: infanteNota,
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }), [regimen, acom, ninoIva, pax, vals, categorias, temporadas, infanteNota]);
+  }), [regimen, acom, ninoIva, pax, vals, valoresPorRegimen, categorias, temporadas, infanteNota]);
 
-  const preview = useMemo(() => generarTarifasMixta(params), [params]);
+  const ctx = useMemo(() => ({ vigencias, hoy, tarifasExistentes }), [vigencias, hoy, tarifasExistentes]);
+  const analisis = useMemo(() => analizarMixta(params, ctx), [params, ctx]);
+  const { generables: preview, vencidas } = useMemo(() => separarFilasVencidas(analisis.filas, vigencias, hoy), [analisis, vigencias, hoy]);
+  const avisosPromo = analisis.promos.filter((a) => a.estado !== "no_aplica_regimen");
+  // Temporadas que son promociones % (se derivan, no se teclean).
+  const promosPct = useMemo(() => new Set(vigencias.filter((v) => v.tipo === "descuento_pct").map((v) => v.nombre.trim())), [vigencias]);
+  const avisoDe = (t: string) => analisis.promos.find((a) => a.temporada === t);
+  const derivadaDe = (c: string, t: string) => analisis.filas.find((f) => f.temporada === t && f.tipo_habitacion === c && f.precio_final_autoritativo);
+  const bloqueoDe = (c: string, t: string) => avisoDe(t)?.bloqueadas?.find((b) => b.categoria === c);
+
+  // Acción EXPLÍCITA: sustituir los valores escritos a mano de UNA promo en UNA
+  // categoría de ESTE régimen por el −% calculado desde su base. Guarda antes la
+  // calculadora (con esa celda limpia) y envía lo que muestra la vista previa;
+  // el servidor recalcula y no escribe nada si no coincide.
+  function sustituir(c: string, t: string, b: BloqueoPromoMixta) {
+    const aviso = avisoDe(t);
+    const fmt = (v: number | null | undefined) => (v == null ? "—" : formatCOP(v));
+    const campos = adultsOnly ? CAMPOS_VALOR_TARIFA.slice(0, 4) : CAMPOS_VALOR_TARIFA;
+    const etiquetas: Record<string, string> = {
+      neto_sencilla: "Sencilla", neto_doble: "Doble", neto_triple: "Triple", neto_multiple: "Múltiple",
+      neto_nino: "Niño 1", neto_nino2: "Niño 2", neto_infante: "Infante",
+    };
+    const lineas = campos.map((k) => `${etiquetas[k]}: ${fmt(b.actual[k])} → ${fmt(b.propuesta[k])}`).join("\n");
+    const origen = b.origen.includes("tarifa_guardada") ? "guardados en las tarifas" : "tecleados en la calculadora";
+    if (!confirm(
+      `Sustituir los valores ${origen} de "${t}" · ${c} · régimen ${regimen} por el −${aviso?.pct}% calculado desde ${aviso?.base}:\n\n${lineas}\n\n` +
+      "Solo cambia esta fila: otras categorías, regímenes y temporadas no se tocan. Antes se guarda la calculadora tal como la ves y la versión anterior queda en el historial interno.",
+    )) return;
+
+    const valsNuevos = quitarValoresCelda(vals, c, t);
+    const porRegimenNuevo = { ...valoresPorRegimen, [regimen]: valsNuevos };
+    const paramsNuevos: MixtaParams = {
+      ...params,
+      bases: basesDesdeValores(valsNuevos, categorias, temporadas),
+      bases_por_regimen: basesPorRegimen(porRegimenNuevo),
+    };
+    const calculo = filaSustitucionMixta(paramsNuevos, ctx, { temporada: t, regimen, categoria: c });
+    if (!calculo.ok) { setMsg(calculo.error); return; }
+    const [esperada] = aplicarAdultsOnly([calculo.fila], adultsOnly);
+    setMsg("");
+    start(async () => {
+      const r = await guardarCalculadora(hotelId, "mixta", paramsNuevos);
+      if (!r.ok) { setMsg(r.error); return; }
+      const res = await sustituirPromoManualMixta(hotelId, { temporada: t, regimen, categoria: c }, valoresDeFila(esperada), fotoTarifas(tarifasExistentes));
+      if (!res.ok) {
+        // No se sustituyó nada: se devuelve la calculadora a como estaba (con
+        // los valores tecleados de esa celda) para no perderlos.
+        const rev = await guardarCalculadora(hotelId, "mixta", params);
+        setMsg(rev.ok ? res.error : `${res.error} Además no se pudo restaurar la calculadora: ${rev.error}`);
+        router.refresh();
+        return;
+      }
+      setValoresPorRegimen(porRegimenNuevo);
+      setMsg(`✓ ${t} · ${c} (${regimen}) quedó con el valor calculado (−${aviso?.pct}% sobre ${aviso?.base}).`);
+      router.refresh();
+    });
+  }
 
   function guardar(modo: "solo" | "agregar" | "reemplazar") {
-    if (modo === "reemplazar" && !confirm("¿Borrar TODAS las tarifas de este hotel y dejar solo las generadas ahora?")) return;
+    if (modo === "reemplazar" && !confirm(CONFIRMAR_REEMPLAZO)) return;
     setMsg("");
     start(async () => {
       const r = await guardarCalculadora(hotelId, "mixta", params);
       if (!r.ok) { setMsg(r.error); return; }
       if (modo === "solo") { setMsg("✓ Calculadora guardada."); router.refresh(); return; }
-      const g = await generarTarifasCalculadora(hotelId, modo);
-      setMsg(g.ok ? `✓ Generadas ${g.generadas} tarifas (${modo === "reemplazar" ? "reemplazaron todas" : "agregadas/actualizadas"}).` : g.error);
+      const g = await generarTarifasCalculadora(hotelId, modo, fotoTarifas(tarifasExistentes));
+      setMsg(mensajeGeneracion(g, modo));
       router.refresh();
     });
   }
@@ -568,19 +638,21 @@ function MixtaForm({
     return <div className="rounded-lg bg-amber-50 p-3 text-xs text-amber-700">Primero define las <b>categorías</b> del hotel y sus <b>temporadas</b> (con fechas) más abajo. Luego vuelve aquí.</div>;
   }
 
+  const camposVisibles = adultsOnly ? CAMPOS_MIXTA.filter((campo) => !["nino", "nino2", "infante"].includes(campo)) : CAMPOS_MIXTA;
+
   return (
     <div className="space-y-5">
       <p className="text-xs text-gray-500">
         Por cada acomodación eliges si la tarifa es <b>por habitación</b> o <b>por persona</b> y si lleva <b>IVA (19%)</b>.
-        Las tarifas por habitación se dividen entre los pax para guardarlas por persona. Carga los valores por categoría y temporada.
-        <b> &quot;Generar tarifas&quot;</b> reemplaza las tarifas de este hotel.
+        Las tarifas por habitación se dividen entre los pax para guardarlas por persona. Carga los valores por categoría y temporada;
+        cada régimen conserva sus propios valores. Las promociones con descuento % se calculan solas desde su temporada base.
       </p>
 
       <div className="flex items-center gap-2 text-xs text-gray-600">
         <span>Régimen:</span>
         <select value={regimen} onChange={(e) => cambiarRegimen(e.target.value)} className="rounded-lg border border-gray-300 bg-white px-2 py-1 text-sm">
           {regimenes.length === 0 && <option value="PC">PC</option>}
-          {regimenes.map((r) => <option key={r} value={r}>{r}</option>)}
+          {regimenes.map((r) => <option key={r} value={r}>{r}{r !== regimen && Object.keys(valoresPorRegimen[r] ?? {}).length > 0 ? " · con valores" : ""}</option>)}
         </select>
       </div>
 
@@ -620,40 +692,106 @@ function MixtaForm({
 
       {/* Valores por categoría × temporada */}
       <div>
-        <p className={lbl}>Valores por categoría y temporada (según el modo de cada acomodación)</p>
+        <p className={lbl}>Valores por categoría y temporada · régimen {regimen} (según el modo de cada acomodación)</p>
         <ResponsiveTableShell minWidth={860} className="overflow-x-auto rounded-lg border border-gray-200">
           <table className="min-w-[860px] border-collapse text-sm">
             <thead>
               <tr className="bg-gray-50 text-left text-xs text-gray-400">
                 <th className="px-2 py-1">Categoría · Temporada</th>
-                <th className="px-2 py-1">Sencilla</th><th className="px-2 py-1">Doble</th><th className="px-2 py-1">Triple</th><th className="px-2 py-1">Múltiple</th>
-                {!adultsOnly && (<><th className="px-2 py-1">Niño 1</th><th className="px-2 py-1">Niño 2</th><th className="px-2 py-1">Infante</th></>)}
+                {camposVisibles.map((campo) => <th key={campo} className="px-2 py-1">{CAMPO_LABEL[campo]}</th>)}
               </tr>
             </thead>
             <tbody>
-              {categorias.flatMap((c) => temporadas.map((t) => (
-                <tr key={`${c}|${t}`} className="border-t border-gray-100">
-                  <td className="px-2 py-1 text-xs font-medium text-gray-700" data-label="Categoría · Temporada">{c} · {t}</td>
-                  {(adultsOnly ? CAMPOS.filter((campo) => !["nino", "nino2", "infante"].includes(campo)) : CAMPOS).map((campo) => (
-                    <td key={campo} className="px-1 py-1" data-label={CAMPO_LABEL[campo]}><Input type="number" className="w-24" value={vals[`${c}|${t}|${campo}`] ?? ""} onChange={(e) => setVal(c, t, campo, e.target.value)} placeholder="0" /></td>
-                  ))}
-                </tr>
-              )))}
+              {categorias.flatMap((c) => temporadas.map((t) => {
+                const esPromo = promosPct.has(t);
+                const aviso = esPromo ? avisoDe(t) : undefined;
+                const derivada = esPromo ? derivadaDe(c, t) : undefined;
+                const bloqueo = esPromo ? bloqueoDe(c, t) : undefined;
+                // Valores tecleados en una promo: se muestran (editables) si bloquean la
+                // derivación o si la promo no se puede calcular; nunca se ocultan.
+                const tecleada = !!bloqueo?.origen.includes("calculadora") ||
+                  (esPromo && !derivada && camposVisibles.some((campo) => (vals[claveMixta(c, t, campo)] ?? "") !== ""));
+                return (
+                  <tr key={`${c}|${t}`} className={`border-t border-gray-100 ${esPromo ? "bg-[var(--brand-accent)]/5" : ""}`}>
+                    <td className="px-2 py-1 text-xs font-medium text-gray-700" data-label="Categoría · Temporada">
+                      <span>{c} · {t}</span>
+                      {esPromo && <span className="ml-1.5 rounded-full bg-[var(--brand-accent)]/15 px-1.5 py-0.5 text-[10px] font-semibold uppercase text-[var(--brand-accent)]">Promo</span>}
+                      {derivada?.temporada_base && <div className="text-[10px] font-normal text-gray-400">−{aviso?.pct}% sobre {derivada.temporada_base}</div>}
+                      {bloqueo && (
+                        <div className="mt-1 space-y-1 text-[10px] font-normal">
+                          <div className="text-amber-700">
+                            Escrita a mano ({bloqueo.origen.map((o) => (o === "calculadora" ? "calculadora" : "tarifa guardada")).join(" y ")}): no se toca al generar.
+                          </div>
+                          <div className="text-gray-500">Calculada: doble {formatCOP(bloqueo.propuesta.neto_doble)} (−{aviso?.pct}% sobre {aviso?.base})</div>
+                          <button type="button" disabled={pending} onClick={() => sustituir(c, t, bloqueo)} className="text-[var(--brand-accent)] hover:underline disabled:opacity-50">
+                            Sustituir por −{aviso?.pct}% de {aviso?.base}
+                          </button>
+                        </div>
+                      )}
+                    </td>
+                    {esPromo && !tecleada ? (
+                      camposVisibles.map((campo) => {
+                        const v = bloqueo ? valorActual(bloqueo, campo) : derivada ? valorFila(derivada, campo) : null;
+                        return (
+                          <td key={campo} className="px-2 py-1 text-right text-xs tabular-nums text-gray-500" data-label={CAMPO_LABEL[campo]}>
+                            {v != null ? formatCOP(v) : "—"}
+                          </td>
+                        );
+                      })
+                    ) : (
+                      camposVisibles.map((campo) => (
+                        <td key={campo} className="px-1 py-1" data-label={CAMPO_LABEL[campo]}><Input type="number" className="w-24" value={vals[claveMixta(c, t, campo)] ?? ""} onChange={(e) => setVal(c, t, campo, e.target.value)} placeholder="0" /></td>
+                      ))
+                    )}
+                  </tr>
+                );
+              }))}
             </tbody>
           </table>
         </ResponsiveTableShell>
       </div>
 
-      {preview.length > 0 && <PreviewTabla titulo="Vista previa — tarifa por persona resultante" filas={preview} ocultarNinos={adultsOnly} />}
+      {avisosPromo.length > 0 && (
+        <ul className="space-y-1 rounded-lg border border-gray-200 bg-gray-50 p-3 text-xs">
+          {avisosPromo.map((a) => (
+            <li key={a.temporada} className={a.estado === "derivada" ? "text-gray-600" : "text-amber-700"}>
+              {a.mensaje}
+            </li>
+          ))}
+        </ul>
+      )}
+      {vencidas.length > 0 && (
+        <p className="text-[11px] text-gray-500">
+          Vigencias con compra cerrada (no se regeneran; sus tarifas guardadas se conservan como histórico): {vencidas.join(", ")}.
+        </p>
+      )}
+
+      {preview.length > 0 && <PreviewTabla titulo={`Vista previa — tarifa por persona resultante (${regimen})`} filas={preview} ocultarNinos={adultsOnly} />}
       <BotonesGuardar pending={pending} msg={msg} onGuardar={() => guardar("solo")} onAgregar={() => guardar("agregar")} onReemplazar={() => guardar("reemplazar")} />
     </div>
   );
 }
 
+function valorActual(b: BloqueoPromoMixta, campo: CampoMixta): number | null {
+  return b.actual[`neto_${campo}` as keyof BloqueoPromoMixta["actual"]];
+}
+
+function valorFila(f: TarifaGenerada, campo: CampoMixta): number | null {
+  switch (campo) {
+    case "sencilla": return f.neto_sencilla;
+    case "doble": return f.neto_doble;
+    case "triple": return f.neto_triple;
+    case "multiple": return f.neto_multiple;
+    case "nino": return f.neto_nino;
+    case "nino2": return f.neto_nino2;
+    case "infante": return f.neto_infante;
+  }
+}
+
 // ── Formulario CORPORATIVA (tarifa por habitación + suplementos) ──────────
 function CorporativaForm({
-  hotelId, categorias, temporadas, regimenes, inicial, adultsOnly,
-}: { hotelId: number; categorias: string[]; temporadas: string[]; regimenes: string[]; inicial: CorporativaParams | null; adultsOnly: boolean }) {
+  hotelId, categorias, temporadas, regimenes, inicial, adultsOnly, tarifasExistentes,
+}: { hotelId: number; categorias: string[]; temporadas: string[]; regimenes: string[]; inicial: CorporativaParams | null; adultsOnly: boolean; tarifasExistentes: TarifaExistente[] }) {
   const router = useRouter();
   const [pending, start] = useTransition();
   const [msg, setMsg] = useState("");
@@ -692,14 +830,14 @@ function CorporativaForm({
   const preview = useMemo(() => generarTarifasCorporativa(params).filter((f) => f.alimentacion === regimenBase), [params, regimenBase]);
 
   function guardar(modo: "solo" | "agregar" | "reemplazar") {
-    if (modo === "reemplazar" && !confirm("¿Borrar TODAS las tarifas de este hotel y dejar solo las generadas ahora?")) return;
+    if (modo === "reemplazar" && !confirm(CONFIRMAR_REEMPLAZO)) return;
     setMsg("");
     start(async () => {
       const r = await guardarCalculadora(hotelId, "corporativa", params);
       if (!r.ok) { setMsg(r.error); return; }
       if (modo === "solo") { setMsg("✓ Calculadora guardada."); router.refresh(); return; }
-      const g = await generarTarifasCalculadora(hotelId, modo);
-      setMsg(g.ok ? `✓ Generadas ${g.generadas} tarifas (${modo === "reemplazar" ? "reemplazaron todas" : "agregadas/actualizadas"}).` : g.error);
+      const g = await generarTarifasCalculadora(hotelId, modo, fotoTarifas(tarifasExistentes));
+      setMsg(mensajeGeneracion(g, modo));
       router.refresh();
     });
   }
@@ -790,6 +928,7 @@ type FilaPrev = {
   tipo_habitacion: string; temporada: string;
   neto_sencilla: number; neto_doble: number; neto_triple: number; neto_multiple: number;
   neto_nino: number; neto_nino2?: number | null; neto_infante?: number | null;
+  precio_final_autoritativo?: boolean; temporada_base?: string | null;
 };
 function PreviewTabla({ titulo, filas, ocultarNinos = false }: { titulo: string; filas: FilaPrev[]; ocultarNinos?: boolean }) {
   return (
@@ -807,7 +946,12 @@ function PreviewTabla({ titulo, filas, ocultarNinos = false }: { titulo: string;
             {filas.map((f, i) => (
               <tr key={i} className="border-t border-gray-50">
                 <td className="px-2 py-1 text-gray-700" data-label="Categoría">{f.tipo_habitacion}</td>
-                <td className="px-2 py-1 text-gray-500" data-label="Temporada">{f.temporada}</td>
+                <td className="px-2 py-1 text-gray-500" data-label="Temporada">
+                  {f.temporada}
+                  {f.precio_final_autoritativo && (
+                    <span className="ml-1.5 rounded-full bg-[var(--brand-accent)]/15 px-1.5 py-0.5 text-[10px] font-semibold uppercase text-[var(--brand-accent)]" title={f.temporada_base ? `Precio final calculado desde ${f.temporada_base}` : undefined}>Promo</span>
+                  )}
+                </td>
                 <td className="px-2 py-1 text-right tabular-nums" data-label="Sencilla">{formatCOP(f.neto_sencilla)}</td>
                 <td className="px-2 py-1 text-right tabular-nums" data-label="Doble">{formatCOP(f.neto_doble)}</td>
                 <td className="px-2 py-1 text-right tabular-nums" data-label="Triple">{formatCOP(f.neto_triple)}</td>
@@ -838,8 +982,10 @@ function BotonesGuardar({ pending, msg, onGuardar, onAgregar, onReemplazar }: { 
         {msg && <span className={msg.startsWith("✓") ? "text-sm text-green-600" : "text-sm text-red-600"}>{msg}</span>}
       </div>
       <p className="text-[11px] text-gray-400">
-        <b>Agregar/actualizar</b>: reemplaza solo las tarifas del régimen generado y conserva los demás. ·
-        <b> Reemplazar TODAS</b>: borra todas las tarifas del hotel y deja solo estas.
+        <b>Agregar/actualizar</b>: reemplaza solo las filas que genera ahora (misma categoría, régimen y temporada); conserva otras temporadas, regímenes y vigencias vencidas.
+        Para quitar una tarifa, elimínala en la tabla de abajo. ·
+        <b> Reemplazar TODAS</b>: borra las tarifas vigentes del hotel y deja solo estas (conserva las de vigencias vencidas).
+        Toda fila reemplazada o borrada queda en el historial interno.
       </p>
     </div>
   );

@@ -82,6 +82,14 @@ function cubreFecha(t: TemporadaRango, t0: number): boolean {
   return coberturaTemporada(t, t0) === "cubre";
 }
 
+/** ¿El rango de VIAJE de la temporada cubre la fecha (sin blackout)? Ignora
+ * vigencia de compra y régimen. Exportada para enlazar una promoción con su
+ * base en la calculadora (`lib/calc/promoCalculadora.ts`) con la MISMA regla
+ * de cobertura del motor. */
+export function temporadaCubreFecha(t: TemporadaRango, t0: number): boolean {
+  return cubreFecha(t, t0);
+}
+
 /** ¿La vigencia de compra cubre HOY? (sin rango = siempre disponible). */
 function compraVigente(t: TemporadaRango, hoy: string): boolean {
   if (t.compra_inicio && hoy < t.compra_inicio) return false;
