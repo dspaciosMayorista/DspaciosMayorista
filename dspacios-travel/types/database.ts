@@ -2195,6 +2195,36 @@ export type Database = {
         Update: Partial<Database["public"]["Tables"]["tarifa_hotel"]["Insert"]>;
         Relationships: [];
       };
+      // Migración 203 (PROPUESTA — no aplicada todavía en ningún entorno).
+      // Versiones anteriores de filas de `tarifa_hotel`, escritas SOLO por el
+      // trigger `trg_tarifa_hotel_historial`. Lectura interna; el motor de
+      // cotización/tarifario no la lee (nunca se publica).
+      tarifa_hotel_historial: {
+        Row: {
+          id: number; tarifa_id: number; hotel_id: number;
+          operacion: "UPDATE" | "DELETE"; motivo: string; datos: Json;
+          // Foto de la vigencia AL MOMENTO del cambio (no la actual).
+          vigencia: Json;
+          vigencia_fuente: "actual" | "historial" | "no_encontrada" | "auditoria" | "auditoria_previa";
+          autor_id: string | null; autor_email: string | null; registrado_en: string;
+          auditoria_id: number | null;
+        };
+        Insert: never;
+        Update: never;
+        Relationships: [];
+      };
+      // Migración 203 (PROPUESTA). Versiones anteriores de `hotel_temporadas`
+      // (trigger): permite saber cómo era una vigencia renombrada o eliminada.
+      hotel_temporadas_historial: {
+        Row: {
+          id: number; temporada_id: number; hotel_id: number;
+          operacion: "UPDATE" | "DELETE"; motivo: string; datos: Json;
+          autor_id: string | null; autor_email: string | null; registrado_en: string;
+        };
+        Insert: never;
+        Update: never;
+        Relationships: [];
+      };
       // Migración 173. Tabla SEPARADA de `tarifa_hotel` a propósito: esa modela el
       // cobro POR PERSONA con columnas fijas por acomodación y no puede expresar
       // "una pareja paga $550.000 por la unidad". Acá una fila = una tarifa, y el
@@ -3469,6 +3499,35 @@ export type Database = {
       reemplazar_tarifas_hotel_calculadora: {
         Args: { p_hotel_id: number; p_regimenes: string[] | null; p_filas: Json };
         Returns: Json;
+      };
+      // Migración 203 (PROPUESTA). Reemplazo transaccional ACOTADO: "agregar"
+      // solo reemplaza las claves (categoría, régimen, temporada) del lote;
+      // `p_reemplazar_todo` borra las vigentes y conserva las vigencias con
+      // compra cerrada. Rechaza filas de vigencias vencidas, promos escritas a
+      // mano (salvo sustituir) y cualquier cambio respecto de `p_previas` (foto
+      // de la vista previa), comprobado con el hotel bloqueado.
+      generar_tarifas_hotel_calculadora: {
+        Args: { p_hotel_id: number; p_filas: Json; p_previas: Json; p_reemplazar_todo?: boolean; p_motivo?: string | null };
+        Returns: Json;
+      };
+      // Migración 203 (PROPUESTA). Historial paginado por cursor y búsqueda en
+      // servidor; SECURITY INVOKER (RLS: solo roles internos).
+      consultar_historial_tarifas: {
+        Args: {
+          p_hotel_id: number; p_busqueda?: string | null;
+          p_cursor_registrado?: string | null; p_cursor_id?: number | null; p_limite?: number;
+        };
+        Returns: Json;
+      };
+      // Migración 203 (PROPUESTA). SOLO LECTURA: versiones de `tarifa_hotel`
+      // que conserva `auditoria` (antes de la 203), con la vigencia reconstruida.
+      reconstruir_tarifas_desde_auditoria: {
+        Args: { p_hotel_id?: number | null };
+        Returns: {
+          auditoria_id: number; registrado_en: string; operacion: string; hotel_id: number; tarifa_id: number;
+          autor_email: string | null; datos: Json; vigencia: Json; vigencia_fuente: string;
+          existe_fila_actual: boolean; capturado_por_historial: boolean; ya_incorporado: boolean;
+        }[];
       };
       // Migración 181. Publicación atómica del tarifario — paso 1: pide un
       // número de generación nuevo y devuelve, en la misma fila, la revisión

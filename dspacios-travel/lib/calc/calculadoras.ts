@@ -75,6 +75,8 @@ import {
   validarRangoReglaEdad,
   type ReglaEdadTarifa,
 } from "./reglaEdadTarifa.ts";
+import type { TemporadaRango } from "./paquetes.ts";
+import { resolverBasePromo, type MotivoSinBase } from "./promoCalculadora.ts";
 
 /** Fila de tarifa lista para insertar en `tarifa_hotel` (sin hotel_id). */
 export type TarifaGenerada = {
@@ -571,21 +573,125 @@ export function validarDubaiParams(p: DubaiParams): ErrorValidacionDubai[] {
 export type MixtaAcom = "sencilla" | "doble" | "triple" | "multiple";
 export const MIXTA_ACOMS: MixtaAcom[] = ["sencilla", "doble", "triple", "multiple"];
 
+export type MixtaBase = {
+  categoria: string; temporada: string;
+  sencilla: number; doble: number; triple: number; multiple: number;
+  nino: number; nino2: number | null; infante?: number | null;
+};
+
 export type MixtaParams = {
-  regimen: string;
+  regimen: string;                                    // régimen activo: el que se genera
   iva_pct: number;                                    // 19
   acom: Record<MixtaAcom, { modo: "hab" | "pax"; iva: boolean }>;
   nino: { iva: boolean };
   pax: Record<MixtaAcom, number>;                     // pax por habitación (1/2/3/4)
-  bases: {
-    categoria: string; temporada: string;
-    sencilla: number; doble: number; triple: number; multiple: number;
-    nino: number; nino2: number | null; infante?: number | null;
-  }[];
+  bases: MixtaBase[];                                 // valores del régimen activo
+  // Valores cargados de TODOS los regímenes (pendiente #26): alternar de
+  // régimen en el editor ya no los vacía y guardar no pisa los de otro
+  // régimen. Ausente en configuraciones guardadas antes de este cambio
+  // (entonces solo existe `bases` del régimen guardado).
+  bases_por_regimen?: Record<string, MixtaBase[]>;
   infante_nota?: string;                               // nota general (ej. "comparte cama con los padres")
 };
 
-export function generarTarifasMixta(p: MixtaParams): TarifaGenerada[] {
+/** Fila ya guardada en `tarifa_hotel` (solo lo que la calculadora necesita
+ * para no pisar valores escritos a mano). */
+export type TarifaExistente = {
+  tipo_habitacion: string | null; alimentacion: string | null; temporada: string | null;
+  precio_final_autoritativo?: boolean | null;
+  neto_sencilla: number | null; neto_doble: number | null; neto_triple: number | null; neto_multiple: number | null;
+  neto_nino: number | null; neto_nino2: number | null; neto_infante: number | null;
+};
+
+/** Foto de las tarifas que vio la vista previa (`p_previas`, migración 203):
+ * solo clave + precio final + los 7 valores. El servidor la compara, con el
+ * hotel bloqueado, contra lo que hay al escribir: si algo cambió, RECHAZA y
+ * pide recargar. Nunca autoriza nada. */
+export type FotoTarifa = TarifaExistente;
+export function fotoTarifas(filas: readonly TarifaExistente[]): FotoTarifa[] {
+  return filas.map((t) => ({
+    tipo_habitacion: t.tipo_habitacion, alimentacion: t.alimentacion, temporada: t.temporada,
+    precio_final_autoritativo: t.precio_final_autoritativo ?? false,
+    neto_sencilla: t.neto_sencilla, neto_doble: t.neto_doble, neto_triple: t.neto_triple, neto_multiple: t.neto_multiple,
+    neto_nino: t.neto_nino, neto_nino2: t.neto_nino2, neto_infante: t.neto_infante,
+  }));
+}
+
+/** Datos que la generación necesita para materializar promociones y respetar
+ * lo ya escrito. Sin contexto, Mixta se comporta como siempre.
+ *  · `tarifasExistentes`: filas actuales del hotel. Una fila de promoción que
+ *    NO es precio final calculado (cargada a mano o por una versión anterior)
+ *    bloquea esa categoría: nunca se sobrescribe sin aprobación explícita.
+ *  · `sustituir`: claves (`clavePromoMixta`) que la persona aprobó sustituir
+ *    por el valor calculado. Solo la acción "Sustituir" las envía. */
+export type ContextoCalculadora = {
+  vigencias: TemporadaRango[];
+  hoy: string;
+  tarifasExistentes?: TarifaExistente[];
+  sustituir?: ReadonlySet<string>;
+};
+
+export const clavePromoMixta = (categoria: string, regimen: string, temporada: string) =>
+  `${categoria.trim()}|${regimen.trim()}|${temporada.trim()}`;
+
+export type EstadoPromoMixta =
+  | "derivada"            // todas sus categorías se materializan desde la base
+  | "valores_manuales"    // alguna categoría tiene valores escritos a mano: esa no se toca
+  | "base_sin_valores"    // la base relacionada no tiene valores para ninguna categoría
+  | MotivoSinBase;
+
+export type ValoresTarifa = {
+  neto_sencilla: number | null; neto_doble: number | null; neto_triple: number | null; neto_multiple: number | null;
+  neto_nino: number | null; neto_nino2: number | null; neto_infante: number | null;
+};
+
+/** Categoría de una promo que NO se escribe porque ya tiene valores a mano. */
+export type BloqueoPromoMixta = {
+  categoria: string;
+  /** Dónde están los valores manuales: tecleados en la calculadora y/o ya
+   * guardados en `tarifa_hotel` sin ser precio final calculado. */
+  origen: ("calculadora" | "tarifa_guardada")[];
+  /** Valores actuales: los guardados si existen; si no, los tecleados. */
+  actual: ValoresTarifa;
+  /** Lo que quedaría al sustituir (−% sobre la base). */
+  propuesta: TarifaGenerada;
+};
+
+export type AvisoPromoMixta = {
+  temporada: string;
+  estado: EstadoPromoMixta;
+  mensaje: string;
+  base?: string;
+  pct?: number;
+  categorias?: string[];
+  bloqueadas?: BloqueoPromoMixta[];
+};
+
+const valorPositivo = (v: number | null | undefined) => (Number(v) || 0) > 0;
+const valores = (f: ValoresTarifa): ValoresTarifa => ({
+  neto_sencilla: f.neto_sencilla, neto_doble: f.neto_doble, neto_triple: f.neto_triple, neto_multiple: f.neto_multiple,
+  neto_nino: f.neto_nino, neto_nino2: f.neto_nino2, neto_infante: f.neto_infante,
+});
+
+/** Igual que `generarTarifasMixta`, pero además informa qué pasó con cada
+ * vigencia promocional `descuento_pct` del hotel (para la vista previa).
+ *
+ * Con `ctx`, cada vigencia `descuento_pct` que aplica al régimen se relaciona
+ * con su base (`resolverBasePromo`) y se materializa POR CATEGORÍA como fila de
+ * PRECIO FINAL: cada valor por persona de la base × (1 − %), un solo redondeo,
+ * con `precio_final_autoritativo = true` y `temporada_base`. El motor de
+ * cotización usa esa fila tal cual y nunca vuelve a aplicar el porcentaje.
+ *
+ * Una categoría con valores escritos a mano (tecleados en la calculadora o ya
+ * guardados en `tarifa_hotel` sin ser precio final) NO se escribe ni se borra:
+ * queda bloqueada con su propuesta, salvo que su clave venga en
+ * `ctx.sustituir` (aprobación explícita de la acción "Sustituir"). Las demás
+ * categorías de la misma promo se derivan normalmente.
+ *
+ * Regla comercial (#15, decidida por el dueño): adultos, Niño 1 y Niño 2
+ * reciben el MISMO % (ej. Niño 1 227.000 → 213.380 con −6 %). Infante NO se
+ * descuenta: conserva exactamente el valor de la base (fijo, 0 o vacío). */
+export function analizarMixta(p: MixtaParams, ctx?: ContextoCalculadora): { filas: TarifaGenerada[]; promos: AvisoPromoMixta[] } {
   const ivaPct = Number(p.iva_pct) || 19;
   const conIva = (v: number, iva: boolean) => (iva ? v * (1 + ivaPct / 100) : v);
   const notaInfante = p.infante_nota?.trim() || null;
@@ -604,30 +710,181 @@ export function generarTarifasMixta(p: MixtaParams): TarifaGenerada[] {
     if (v <= 0) return 0;
     return Math.round(conIva(v, p.nino?.iva ?? false));
   };
+  const regimen = (p.regimen || "").trim();
+  const fila = (b: MixtaBase): TarifaGenerada => ({
+    tipo_habitacion: b.categoria.trim(),
+    alimentacion: regimen,
+    temporada: b.temporada.trim(),
+    neto_sencilla: pp(b.sencilla, "sencilla"),
+    neto_doble: pp(b.doble, "doble"),
+    neto_triple: pp(b.triple, "triple"),
+    neto_multiple: pp(b.multiple, "multiple"),
+    neto_nino: ppNino(b.nino),
+    neto_nino2: b.nino2 != null ? ppNino(b.nino2) : null,
+    neto_infante: b.infante != null ? ppNino(b.infante) : null,
+    nota_infante: notaInfante,
+  });
+
+  // Vigencias promocionales con precio por noche que esta calculadora deriva.
+  const promosPct = ctx
+    ? [...new Set(ctx.vigencias.filter((v) => (v.tipo ?? "tarifa") === "descuento_pct").map((v) => v.nombre.trim()))].sort()
+    : [];
+  const esPromoPct = new Set(promosPct);
 
   const out: TarifaGenerada[] = [];
   for (const b of p.bases ?? []) {
     if (!b.categoria?.trim() || !b.temporada?.trim()) continue;
-    const sencilla = pp(b.sencilla, "sencilla");
-    const doble = pp(b.doble, "doble");
-    const triple = pp(b.triple, "triple");
-    const multiple = pp(b.multiple, "multiple");
-    if (sencilla + doble + triple + multiple <= 0) continue; // fila sin valores
-    out.push({
-      tipo_habitacion: b.categoria.trim(),
-      alimentacion: (p.regimen || "").trim(),
-      temporada: b.temporada.trim(),
-      neto_sencilla: sencilla,
-      neto_doble: doble,
-      neto_triple: triple,
-      neto_multiple: multiple,
-      neto_nino: ppNino(b.nino),
-      neto_nino2: b.nino2 != null ? ppNino(b.nino2) : null,
-      neto_infante: b.infante != null ? ppNino(b.infante) : null,
-      nota_infante: notaInfante,
-    });
+    if (esPromoPct.has(b.temporada.trim())) continue; // la promo se deriva abajo, nunca se copia tal cual
+    const f = fila(b);
+    if (f.neto_sencilla + f.neto_doble + f.neto_triple + f.neto_multiple <= 0) continue; // fila sin valores
+    out.push(f);
   }
-  return out;
+
+  const avisos: AvisoPromoMixta[] = [];
+  if (!ctx) return { filas: out, promos: avisos };
+
+  const existentes = new Map<string, TarifaExistente>();
+  for (const t of ctx.tarifasExistentes ?? []) {
+    if (!t.tipo_habitacion || !t.alimentacion || !t.temporada) continue;
+    existentes.set(clavePromoMixta(t.tipo_habitacion, t.alimentacion, t.temporada), t);
+  }
+
+  const filasBase = [...out];
+  for (const promo of promosPct) {
+    const res = resolverBasePromo(promo, ctx.vigencias, regimen);
+    if (!res.ok) {
+      avisos.push({ temporada: promo, estado: res.motivo, mensaje: res.mensaje });
+      continue;
+    }
+    const factor = 1 - res.pct / 100;
+    const desc = (v: number | null) => (v == null ? null : Math.round(v * factor));
+    const categorias: string[] = [];
+    const bloqueadas: BloqueoPromoMixta[] = [];
+    for (const f of filasBase.filter((x) => x.temporada === res.base)) {
+      const propuesta: TarifaGenerada = {
+        tipo_habitacion: f.tipo_habitacion,
+        alimentacion: regimen,
+        temporada: promo,
+        neto_sencilla: Math.round(f.neto_sencilla * factor),
+        neto_doble: Math.round(f.neto_doble * factor),
+        neto_triple: Math.round(f.neto_triple * factor),
+        neto_multiple: Math.round(f.neto_multiple * factor),
+        neto_nino: Math.round(f.neto_nino * factor),
+        neto_nino2: desc(f.neto_nino2),
+        // Infante NO se descuenta (decisión del dueño): se copia el valor de la
+        // base tal cual — un valor fijo se conserva, 0 sigue en 0 y vacío sigue
+        // vacío (no se inventa una tarifa de infante).
+        neto_infante: f.neto_infante,
+        nota_infante: f.nota_infante,
+        precio_final_autoritativo: true,
+        temporada_base: res.base,
+      };
+      const clave = clavePromoMixta(f.tipo_habitacion, regimen, promo);
+      const tecleada = (p.bases ?? []).find((b) =>
+        b.categoria?.trim() === f.tipo_habitacion && b.temporada?.trim() === promo &&
+        [b.sencilla, b.doble, b.triple, b.multiple, b.nino, b.nino2, b.infante].some(valorPositivo));
+      const guardada = existentes.get(clave);
+      const guardadaManual = !!guardada && !guardada.precio_final_autoritativo;
+      if ((tecleada || guardadaManual) && !ctx.sustituir?.has(clave)) {
+        const origen: BloqueoPromoMixta["origen"] = [];
+        if (tecleada) origen.push("calculadora");
+        if (guardadaManual) origen.push("tarifa_guardada");
+        bloqueadas.push({
+          categoria: f.tipo_habitacion,
+          origen,
+          actual: guardadaManual ? valores(guardada as ValoresTarifa) : valores(fila(tecleada!)),
+          propuesta,
+        });
+        continue;
+      }
+      categorias.push(f.tipo_habitacion);
+      out.push(propuesta);
+    }
+
+    if (categorias.length === 0 && bloqueadas.length === 0) {
+      avisos.push({ temporada: promo, estado: "base_sin_valores", base: res.base, pct: res.pct,
+        mensaje: `"${promo}" se calcula sobre ${res.base}, pero ${res.base} no tiene valores en el régimen ${regimen}.` });
+      continue;
+    }
+    const derivadas = categorias.length > 0 ? `−${res.pct}% sobre ${res.base} (${categorias.join(", ")})` : "";
+    avisos.push(bloqueadas.length > 0
+      ? { temporada: promo, estado: "valores_manuales", base: res.base, pct: res.pct, categorias, bloqueadas,
+          mensaje: `"${promo}" tiene valores escritos a mano en ${bloqueadas.map((x) => x.categoria).join(", ")} (${regimen}); esas filas no se tocan hasta que decidas sustituirlas.` +
+            (derivadas ? ` Se calcula ${derivadas}.` : "") }
+      : { temporada: promo, estado: "derivada", base: res.base, pct: res.pct, categorias,
+          mensaje: `"${promo}": ${derivadas}.` });
+  }
+  return { filas: out, promos: avisos };
+}
+
+export function generarTarifasMixta(p: MixtaParams, ctx?: ContextoCalculadora): TarifaGenerada[] {
+  return analizarMixta(p, ctx).filas;
+}
+
+/** Fila que dejaría la acción "Sustituir" para UNA promo/categoría/régimen:
+ * el −% calculado desde su base, aprobando solo esa clave. La usan la vista
+ * previa (cliente) y la Server Action, así que coinciden por construcción. */
+export function filaSustitucionMixta(
+  p: MixtaParams,
+  ctx: ContextoCalculadora,
+  objetivo: { temporada: string; regimen: string; categoria: string },
+): { ok: true; fila: TarifaGenerada } | { ok: false; error: string } {
+  if ((p.regimen ?? "").trim() !== objetivo.regimen.trim()) {
+    return { ok: false, error: `La calculadora está en el régimen ${p.regimen}; cámbiala a ${objetivo.regimen} para sustituir.` };
+  }
+  const clave = clavePromoMixta(objetivo.categoria, objetivo.regimen, objetivo.temporada);
+  const { filas, promos } = analizarMixta(p, { ...ctx, sustituir: new Set([clave]) });
+  const fila = filas.find((f) => f.precio_final_autoritativo && clavePromoMixta(f.tipo_habitacion, f.alimentacion, f.temporada) === clave);
+  if (fila) return { ok: true, fila };
+  const aviso = promos.find((a) => a.temporada === objetivo.temporada.trim());
+  return { ok: false, error: aviso?.mensaje ?? `No se pudo calcular "${objetivo.temporada}" para ${objetivo.categoria} (${objetivo.regimen}).` };
+}
+
+/** Hotel Adults Only: la calculadora deriva niño/infante (son % o valores
+ * cargados), pero el hotel no los acepta: se descartan antes de guardar. */
+export type FilaParaGuardar = Omit<TarifaGenerada, "neto_nino"> & { neto_nino: number | null };
+export function aplicarAdultsOnly(filas: TarifaGenerada[], adultsOnly: boolean): FilaParaGuardar[] {
+  return adultsOnly
+    ? filas.map((f) => ({ ...f, neto_nino: null, neto_nino2: null, neto_infante: null, nota_infante: null }))
+    : filas;
+}
+
+export const CAMPOS_VALOR_TARIFA = ["neto_sencilla", "neto_doble", "neto_triple", "neto_multiple", "neto_nino", "neto_nino2", "neto_infante"] as const;
+
+/** Solo los valores (para comparar vista previa y servidor, o mostrar antes → después). */
+export function valoresDeFila(f: ValoresTarifa): ValoresTarifa {
+  return Object.fromEntries(CAMPOS_VALOR_TARIFA.map((c) => [c, f[c] ?? null])) as ValoresTarifa;
+}
+
+/** Cascada de renombre de una temporada dentro de `hotel_calculadora.params`
+ * (no hay FK: se referencia por nombre). Muta `params` y dice si cambió algo.
+ * Cubre `bases`, los valores por régimen de Mixta (`bases_por_regimen`) y las
+ * promociones de Dubai. */
+export function renombrarTemporadaEnParams(tipo: string, params: Record<string, unknown>, viejo: string, nuevo: string): boolean {
+  let cambio = false;
+  const renombrarBases = (lista: unknown) => {
+    if (!Array.isArray(lista)) return;
+    for (const b of lista) {
+      if (b && typeof b === "object" && (b as Record<string, unknown>).temporada === viejo) {
+        (b as Record<string, unknown>).temporada = nuevo;
+        cambio = true;
+      }
+    }
+  };
+  renombrarBases(params.bases);
+  const porRegimen = params.bases_por_regimen;
+  if (porRegimen && typeof porRegimen === "object") {
+    for (const lista of Object.values(porRegimen as Record<string, unknown>)) renombrarBases(lista);
+  }
+  if (tipo === "dubai" && Array.isArray(params.promos)) {
+    for (const p of params.promos as unknown[]) {
+      if (!p || typeof p !== "object") continue;
+      const pr = p as Record<string, unknown>;
+      if (pr.temporadaBase === viejo) { pr.temporadaBase = nuevo; cambio = true; }
+      if (pr.temporadaPromo === viejo) { pr.temporadaPromo = nuevo; cambio = true; }
+    }
+  }
+  return cambio;
 }
 
 // ── Calculadora "CORPORATIVA" ──────────────────────────────────────────────
@@ -709,12 +966,12 @@ export function generarTarifasCorporativa(p: CorporativaParams): TarifaGenerada[
 // ── Registro de calculadoras ───────────────────────────────────────────────
 export type CalcTipo = "dubai" | "mixta" | "corporativa";
 
-export function generarTarifas(tipo: string, params: unknown): TarifaGenerada[] {
+export function generarTarifas(tipo: string, params: unknown, ctx?: ContextoCalculadora): TarifaGenerada[] {
   switch (tipo) {
     case "dubai":
       return generarTarifasDubai(params as DubaiParams);
     case "mixta":
-      return generarTarifasMixta(params as MixtaParams);
+      return generarTarifasMixta(params as MixtaParams, ctx);
     case "corporativa":
       return generarTarifasCorporativa(params as CorporativaParams);
     default:

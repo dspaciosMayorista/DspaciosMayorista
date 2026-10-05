@@ -3,8 +3,8 @@
 // quitar_contrato_manual(bigint) y la edición sin esperado.updated_at.
 // Reglas del dueño: (1) nunca bloquear el código viejo antes de confirmar el
 // despliegue nuevo; (2) nunca reabrir una firma que ya cerró; (3) el cierre se
-// activa tras el despliegue, dentro de la propia 201 (sin migración nueva:
-// 202/203/204 están reservadas), con verificación HUMANA en Vercel porque la
+// activa tras el despliegue, dentro de la propia 201 (sin migración nueva de
+// Vuelos; los números siguientes son de otros módulos), con verificación HUMANA en Vercel porque la
 // base no distingue Producción de un Preview; (4) el rollback total no deja
 // retenciones sin gestión ni ofrece "conservar"; (5) ante un defecto SQL tras el
 // cierre y antes de la 204: contener → hotfix fuera de banda → consolidar.
@@ -76,10 +76,70 @@ test("una firma cerrada NUNCA se reabre: trigger de solo-avance y rollback de la
   }
 });
 
-test("sin migración nueva: 202, 203 y 204 reservadas, y nada que presuponga una 205", () => {
-  const migraciones = readdirSync(new URL("../supabase/migrations/", import.meta.url));
-  assert.ok(!migraciones.some((f) => /^2026060100020[2-5]_/.test(f)), "nada en 202–205");
-  assert.ok(!migraciones.some((f) => /cierre.*firmas|firmas_antiguas|hotfix/i.test(f)));
+// ── Guardia por INTENCIÓN, no por número ──────────────────────────────────
+// Lo que se prohíbe es una migración NUEVA (posterior a la 201) que reabra o
+// altere el cierre de firmas de Vuelos: el cierre se activa con scripts dentro
+// de la 201 y un defecto se contiene y corrige fuera de banda. Las migraciones
+// de OTROS módulos (202 CRM, 203 Tarifas, 204 Contabilidad, 205 Comisiones…)
+// no se juzgan por su número.
+const M201_NOMBRE = "20260601000201_pasajero_antes_contrato_vuelos.sql";
+// Nombre: patrones específicos (ojo: "confirmar" contiene "firma").
+const NOMBRE_CIERRE_VUELOS = /cierre[_-]?(de[_-])?firmas|firmas?[_-](viejas|antiguas|sin[_-]version)|vuelos[_-]cierre[_-]firmas|reabrir[_-].*firmas|hotfix[_-].*(vuelos|201|firmas)|(vuelos|201|firmas).*[_-]hotfix/i;
+// Contenido: piezas del cierre creadas por la 201, o volver a dar EXECUTE a
+// una firma vieja (eso la reabriría).
+const PIEZAS_CIERRE = /vuelos_cierre_firmas_201|_firmas_antiguas_cerradas|_registrar_firma_antigua|_registrar_firma_nueva|programar_cierre_firmas_antiguas|cancelar_cierre_firmas_antiguas/i;
+const REABRE_FIRMA_VIEJA = /grant\s+execute\s+on\s+function\s+public\.(liberar_silla\s*\(\s*bigint\s*\)|asignar_contrato_manual\s*\(\s*bigint\s*,\s*text\s*\)|quitar_contrato_manual\s*\(\s*bigint\s*\))/i;
+const numeroMigracion = (f: string) => Number(/^(\d{14})_/.exec(f)?.[1] ?? NaN);
+
+/** Motivo por el que `nombre`/`contenido` sería una migración nueva que toca el
+ * cierre de firmas de Vuelos; `null` si no lo es. Solo juzga lo posterior a la 201. */
+function motivoMigracionCierreVuelos(nombre: string, contenido: string): string | null {
+  if (nombre === M201_NOMBRE || !(numeroMigracion(nombre) > numeroMigracion(M201_NOMBRE))) return null;
+  if (NOMBRE_CIERRE_VUELOS.test(nombre)) return "su nombre indica cierre/hotfix de firmas de Vuelos";
+  if (PIEZAS_CIERRE.test(contenido)) return "toca las piezas del cierre de firmas de la 201";
+  if (REABRE_FIRMA_VIEJA.test(contenido)) return "vuelve a dar EXECUTE a una firma vieja de Vuelos";
+  return null;
+}
+
+test("sin migración nueva que reabra o altere el cierre de firmas de Vuelos (guardia por intención, sobre el repo real)", () => {
+  const dir = new URL("../supabase/migrations/", import.meta.url);
+  const malas = readdirSync(dir)
+    .filter((f) => f.endsWith(".sql"))
+    .map((f) => [f, motivoMigracionCierreVuelos(f, readFileSync(new URL(f, dir), "utf8"))] as const)
+    .filter(([, motivo]) => motivo !== null);
+  assert.deepEqual(malas, [], "ninguna migración posterior a la 201 toca el cierre de firmas");
+});
+
+test("la guardia NO juzga por número: migraciones de otros módulos (202–205) pasan", () => {
+  const casos: [string, string][] = [
+    ["20260601000202_crm_leads.sql", "create table if not exists public.crm_leads (id bigserial primary key, nombre text);"],
+    ["20260601000203_tarifas_generacion_acotada_historial.sql", leer("supabase/migrations/20260601000203_tarifas_generacion_acotada_historial.sql")],
+    ["20260601000204_staging_dian_contable.sql", "create table if not exists public.documento_dian_staging (id bigserial primary key);"],
+    ["20260601000205_comisiones_b2b_base.sql", "alter table public.aliados_b2b add column if not exists base_comision_calculada numeric;"],
+    ["20260601000206_hotfix_contabilidad.sql", "create or replace function public.x() returns int language sql as $$ select 1 $$;"],
+    ["20260601000207_confirmar_venta_ajuste.sql", "select 1;"], // "confirmar" contiene "firma": no es del cierre
+  ];
+  for (const [nombre, contenido] of casos) {
+    assert.equal(motivoMigracionCierreVuelos(nombre, contenido), null, nombre);
+  }
+});
+
+test("la guardia SÍ rechaza una migración nueva de cierre de firmas de Vuelos (por nombre o por contenido)", () => {
+  const casos: [string, string][] = [
+    ["20260601000206_cierre_firmas_antiguas_vuelos.sql", "select 1;"],
+    ["20260601000206_reabrir_firmas_vuelos.sql", "select 1;"],
+    ["20260601000206_hotfix_vuelos_201.sql", "select 1;"],
+    ["20260601000206_vuelos_ajuste.sql", "update public.vuelos_cierre_firmas_201 set estado = 'abierto' where id = 1;"],
+    ["20260601000206_vuelos_ajuste.sql", "select public.cancelar_cierre_firmas_antiguas('motivo');"],
+    ["20260601000206_vuelos_permisos.sql", "grant execute on function public.liberar_silla(bigint) to authenticated;"],
+  ];
+  for (const [nombre, contenido] of casos) {
+    assert.notEqual(motivoMigracionCierreVuelos(nombre, contenido), null, `${nombre} :: ${contenido}`);
+  }
+  // La 201 y las anteriores (p. ej. la 194, que creó firmas viejas) no se juzgan.
+  assert.equal(motivoMigracionCierreVuelos(M201_NOMBRE, M201), null);
+  assert.equal(motivoMigracionCierreVuelos("20260601000194_traslado_sillas_atomico.sql",
+    "grant execute on function public.liberar_silla(bigint) to authenticated;"), null);
 });
 
 test("salida post-cierre sin la 204: contención (nunca firmas viejas) y hotfix con guarda de hash", () => {

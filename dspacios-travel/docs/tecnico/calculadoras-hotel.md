@@ -71,11 +71,20 @@ y pasarlo como prop a `<CalculadoraEditor>`.
 
 **El "marco" se reutiliza tal cual** (no hay que tocarlo): `guardarCalculadora` hace un
 `upsert` en `hotel_calculadora` (onConflict `hotel_id`); `generarTarifasCalculadora(hotelId,
-modo)` lee esa fila, llama `generarTarifas(tipo, params)`, y escribe en `tarifa_hotel`:
-- `modo: "agregar"` (default): borra solo las tarifas de los **regímenes** generados (`alimentacion
-  IN (...)`) y las reinserta — respeta tarifas de otros regímenes ya cargadas a mano o por otra
-  calculadora.
-- `modo: "reemplazar"`: borra **TODAS** las tarifas del hotel y deja solo las generadas ahora.
+modo)` lee esa fila y las vigencias del hotel, llama `generarTarifas(tipo, params, { vigencias,
+hoy })`, aparta las filas de vigencias con **compra cerrada** (`separarFilasVencidas`: son
+histórico, no se reescriben ni se recrean) y escribe con la RPC
+`generar_tarifas_hotel_calculadora` (migración 203, transaccional):
+- `modo: "agregar"` (default): reemplaza **solo las claves (categoría, régimen, temporada) que
+  genera ahora**. Otras temporadas del mismo régimen (p. ej. una promoción), otros regímenes y
+  filas manuales quedan intactas. Para quitar una fila hay que borrarla en la tabla (borrado
+  explícito). Antes de la 203 borraba TODAS las filas del régimen — así se perdieron las
+  promociones PC/PAM del hotel 59 (pendiente #26).
+- `modo: "reemplazar"`: borra las tarifas **vigentes** del hotel y deja solo las generadas;
+  conserva las de vigencias con compra cerrada.
+- Toda fila reemplazada, editada o borrada (por cualquier camino) queda versionada en
+  `tarifa_hotel_historial` (trigger), visible solo para roles internos en la ficha del hotel
+  ("Historial interno de tarifas"). El motor no lee esa tabla: nunca se cotiza ni se publica.
 - Al terminar, llama `regenerarTarifariosDeHotel(hotelId)` (en `paquetes/actions.ts`) para
   re-liquidar los paquetes activos que usan ese hotel.
 
@@ -115,9 +124,57 @@ acomodación. Por cada acomodación (sencilla/doble/triple/multiple) se elige:
 
 Niño/Niño2/Infante siempre son por persona, comparten un solo flag de IVA (`nino.iva`). Una
 fila con las 4 acomodaciones en 0 se descarta (`if sencilla+doble+triple+multiple <= 0: skip`).
-El régimen es **uno solo por corrida** (`regimen: string`, no un array como Dubai) — cambiar de
-régimen en la UI (`cambiarRegimen`) vacía los valores cargados (evita arrastrar/pisar a mano los
-del régimen anterior).
+El régimen es **uno solo por corrida** (`regimen: string`, no un array como Dubai): "Generar"
+escribe solo el régimen que está en pantalla. Desde los pendientes #15/#26 **cada régimen
+conserva sus valores**: el editor los guarda por régimen (`lib/calc/mixtaValores.ts`) y
+`params.bases_por_regimen` los persiste todos, así que alternar de régimen, guardar y recargar
+ya no borra los del otro. Configuraciones guardadas antes solo traen `bases` (del régimen
+guardado) y siguen cargando igual.
+
+**Promociones % (`analizarMixta`, con contexto de vigencias):** cada vigencia
+`descuento_pct` del hotel que aplica al régimen se relaciona con su base
+(`resolverBasePromo` en `lib/calc/promoCalculadora.ts`) y se materializa como fila de
+**precio final**: cada valor por persona de la base × (1 − %), un solo redondeo,
+`precio_final_autoritativo = true`, `temporada_base = <base>`. El motor de cotización usa esa
+fila tal cual (nunca reaplica `descuento_valor`). Regla de enlace: por cada noche de viaje de
+la promo, la base es la vigencia `tarifa` de mayor prioridad que aplica al régimen; solo se
+enlaza si TODAS las noches caen en una misma base y la promo tiene mayor prioridad. Si cruza
+varias bases, si alguna noche no tiene base, si dos bases empatan o si la promo tiene valores
+tecleados a mano, **no se genera** (aviso en la vista previa; falta la regla comercial). Una
+promo nunca se calcula desde el precio final de otra. `descuento_monto` y
+`promo_noche_gratis` no se derivan (sin regla definida).
+
+**Promos con valores escritos a mano (por categoría):** si una categoría de la promo tiene
+valores tecleados en la calculadora o una fila ya guardada en `tarifa_hotel` que no es precio
+final calculado (p. ej. SUNSALE1 guardada con los valores de la base), esa categoría **no se
+escribe ni se borra** al generar — el resto de categorías se deriva normal. "Reemplazar TODAS"
+se niega mientras exista alguna (las borraría). Para cambiarla hay una acción explícita por
+celda, **"Sustituir por −% de <base>"** (`sustituirPromoManualMixta`): muestra antes → después,
+pide confirmación, guarda la calculadora con esa celda limpia y escribe SOLO esa clave
+(motivo `calculadora_sustituir_manual`; la versión anterior queda en el historial). La vista
+previa y el servidor usan la misma función pura (`filaSustitucionMixta`); si el servidor no
+obtiene exactamente lo que mostró la vista previa, no escribe nada.
+
+**La regla vive también en SQL, bajo bloqueo (migración 203).** La app decide qué conservar,
+pero eso solo no alcanza: entre la vista previa y la escritura otra persona puede escribir a
+mano una promo. Por eso `generar_tarifas_hotel_calculadora` bloquea el hotel, sus vigencias y
+sus tarifas, y en la misma transacción (1) compara las filas actuales con `p_previas` — la foto
+que los tres editores mandan con lo que cargaron (`fotoTarifas`) — y rechaza pidiendo recargar
+si algo cambió, y (2) se niega a borrar una promo escrita a mano (Mixta, vigencia
+`descuento_pct`, fila sin precio final) en "Generar" y "Reemplazar TODAS", aunque la foto
+coincida. Solo `calculadora_sustituir_manual` la reemplaza, y únicamente con UNA fila marcada
+como precio final cuya `temporada_base` es una vigencia 'tarifa' del hotel, sobre una celda que
+hoy es promo escrita a mano. **SQL no recalcula los valores de esa fila**: el −% desde la base
+(y el infante intacto) lo verifica la Server Action `sustituirPromoManualMixta`, que recalcula
+con `filaSustitucionMixta` y compara con la vista previa antes de llamar. Las promos Dubai antiguas (sin `precio_final_autoritativo` porque la
+179 no hizo backfill) no entran en esa regla: Dubai sigue regenerándolas como siempre. Detalle
+y pruebas de carreras en [`historial-tarifas.md`](./historial-tarifas.md) §1.bis.
+
+**Regla de niños e infantes (decidida por el dueño, oct-2026):** el mismo % se aplica a
+adultos, **Niño 1 y Niño 2** (ej. Niño 1 227.000 → 213.380 con −6 %). **Infante no se
+descuenta**: la fila de la promo copia exactamente el infante de su base — un valor fijo se
+conserva, `0` sigue en `0` y vacío sigue vacío (no se inventa tarifa de infante). Rige igual
+en la vista previa, en "Generar" y en "Sustituir".
 
 ## 6. Calculadora "Corporativa" — tarifa por habitación + suplementos
 
