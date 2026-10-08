@@ -7,12 +7,18 @@
 > después de la 201 (probada sobre la cadena real 1–201). No depende de la 202 (reservada para
 > CRM) ni de la 204 (reservada para Contabilidad): puede aplicarse antes que ellas.
 >
-> **Cruce futuro con la 202:** si esa migración (u otra posterior) instala auditoría global
-> adjuntando `trg_auditoria` a las tablas de `public`, debe **excluir**
-> `tarifa_hotel_historial` y `hotel_temporadas_historial` (como la 087 excluye `auditoria` y
-> `tarifario_resultado`): ya son historial inmutable y auditarlas duplicaría cada versión en
-> `auditoria`. Ambas tablas lo dicen en su `comment on table`, y el postcheck de la 203 trae el
-> chequeo "historiales sin triggers propios" para re-correrlo después de esa migración.
+> **Cruce con la 202 — RESUELTO (2026-10-05):** el borrador de la 202 (CRM) recorría todas las
+> tablas de `public` y reinstalaba `trg_auditoria` en cada una, lo que sí habría colgado el
+> trigger de estos dos historiales. La 202 ya está corregida: instala `trg_auditoria`
+> **únicamente** en sus dos tablas del CRM (`crm_leads`, `crm_lead_actividades`), con dos
+> `create trigger` explícitos y sin el bucle sobre `pg_tables` de la 087. Verificado corriendo
+> el postcheck de la 203 después de aplicar la 202: la fila "historiales sin triggers propios
+> (ni trg_auditoria ni otro)" sigue dando `true`, y eso mismo comprueba el
+> `postcheck_202_crm_leads.sql`. La regla que queda para futuras migraciones es la de siempre:
+> una migración nueva audita sus propias tablas, no las de otras.
+>
+> La 203 tampoco debe tocar las del CRM: su postcheck comprueba que los historiales no tienen
+> triggers, pero no al revés.
 
 ## 1. Qué se guarda y dónde
 

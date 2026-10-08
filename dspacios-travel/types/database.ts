@@ -2095,6 +2095,43 @@ export type Database = {
         Update: Partial<Database["public"]["Tables"]["crm_contactos"]["Insert"]>;
         Relationships: [];
       };
+      // Migración 202: leads manuales. Entidad PROPIA, separada de
+      // `crm_contactos` a propósito: un lead no es un contacto y el MVP no
+      // los convierte. `*_norm` son columnas generadas por la BD (dedupe).
+      crm_leads: {
+        Row: {
+          id: number; tenant: string; etapa: string; canal: string; nombre: string;
+          telefono: string | null; email: string | null;
+          // Identidad documental = tipo + número (nunca el número solo). Ambos
+          // nulos o ambos presentes; catálogo en `CRM_LEAD_TIPOS_DOC`.
+          tipo_doc: string | null; documento: string | null;
+          telefono_norm: string | null; email_norm: string | null; documento_norm: string | null;
+          interes: string | null; origen_detalle: string | null; notas: string | null;
+          responsable_id: string | null; creado_por: string | null; proxima_accion_at: string | null;
+          cerrado_at: string | null; created_at: string; updated_at: string;
+        };
+        Insert: {
+          id?: number; tenant?: string; etapa?: string; canal: string; nombre: string;
+          telefono?: string | null; email?: string | null; tipo_doc?: string | null; documento?: string | null;
+          interes?: string | null; origen_detalle?: string | null; notas?: string | null;
+          responsable_id?: string | null; creado_por?: string | null; proxima_accion_at?: string | null;
+          cerrado_at?: string | null; created_at?: string; updated_at?: string;
+        };
+        Update: Partial<Database["public"]["Tables"]["crm_leads"]["Insert"]>;
+        Relationships: [];
+      };
+      crm_lead_actividades: {
+        Row: {
+          id: number; lead_id: number; tipo: string; cuerpo: string | null; proxima_accion_at: string | null;
+          actor_id: string | null; actor_email: string | null; created_at: string;
+        };
+        Insert: {
+          id?: number; lead_id: number; tipo: string; cuerpo?: string | null; proxima_accion_at?: string | null;
+          actor_id?: string | null; actor_email?: string | null; created_at?: string;
+        };
+        Update: Partial<Database["public"]["Tables"]["crm_lead_actividades"]["Insert"]>;
+        Relationships: [];
+      };
       crm_email_config: {
         Row: { id: number; proveedor: string; remitente_email: string | null; remitente_nombre: string | null; responder_a: string | null; api_key: string | null; firma_html: string | null; activo: boolean; updated_at: string };
         Insert: { id?: number; proveedor?: string; remitente_email?: string | null; remitente_nombre?: string | null; responder_a?: string | null; api_key?: string | null; firma_html?: string | null; activo?: boolean; updated_at?: string };
@@ -3461,6 +3498,36 @@ export type Database = {
       guardar_proveedor: {
         Args: { p_proveedor: Json; p_id?: number | null };
         Returns: number;
+      };
+      // Migración 202 (CRM leads). Las escrituras de negocio NO van por
+      // INSERT/UPDATE sueltos: cada RPC hace el cambio y su bitácora en la misma
+      // transacción y falla si su UPDATE afecta cero filas. `crm_lead_tomar`
+      // lleva la carrera entre dos asesores por el bloqueo de fila
+      // (`where responsable_id is null`). Son SECURITY DEFINER y validan al
+      // actor por su cuenta (`authenticated` solo lee las tablas). `crear` y
+      // `actualizar` devuelven `{ id, coincidencias }`: teléfono/correo/número
+      // con otro tipo compartidos, como aviso que no bloquea. Solo bloquea el
+      // mismo tenant + tipo + número (`crm_lead_duplicado:<id>`). Los helpers
+      // (`crm_lead_duplicado_id`, `crm_lead_coincidencias`, …) son internos.
+      crm_lead_crear: {
+        Args: { p_datos: Json };
+        Returns: Json;
+      };
+      crm_lead_actualizar: {
+        Args: { p_lead: number; p_datos: Json };
+        Returns: Json;
+      };
+      crm_lead_tomar: {
+        Args: { p_lead: number };
+        Returns: Json;
+      };
+      crm_lead_cambiar_etapa: {
+        Args: { p_lead: number; p_etapa: string };
+        Returns: Json;
+      };
+      crm_lead_registrar_actividad: {
+        Args: { p_lead: number; p_tipo: string; p_cuerpo: string; p_proxima_accion_at: string | null };
+        Returns: Json;
       };
       // Migración 193: aprobación/rechazo atómicos del registro B2B.
       aprobar_solicitud_b2b: {
