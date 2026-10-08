@@ -23,7 +23,7 @@ export default async function CrmLeadsPage() {
   const [{ data: leads }, { data: responsables }] = await Promise.all([
     sb
       .from("crm_leads")
-      .select("id, tenant, etapa, canal, nombre, telefono, email, documento, interes, origen_detalle, notas, responsable_id, proxima_accion_at, cerrado_at, created_at, updated_at")
+      .select("id, tenant, etapa, canal, nombre, telefono, email, tipo_doc, documento, interes, origen_detalle, notas, responsable_id, proxima_accion_at, cerrado_at, created_at, updated_at")
       .order("updated_at", { ascending: false })
       .limit(500),
     sb

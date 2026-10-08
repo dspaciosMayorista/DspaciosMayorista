@@ -1,9 +1,18 @@
 "use client";
 
 import { useMemo, useState, useTransition } from "react";
-import { CalendarClock, Check, MessageSquare, Save } from "lucide-react";
-import { agregarActividadLead, actualizarLead, cambiarEtapaLead } from "../actions";
-import { CRM_LEAD_CANAL_LABEL, CRM_LEAD_ETAPA_LABEL, CRM_LEAD_ETAPAS, type CrmLeadCanal, type CrmLeadEtapa } from "@/lib/crm/leads";
+import { useRouter } from "next/navigation";
+import { CalendarClock, Check, Hand, MessageSquare, Save } from "lucide-react";
+import { agregarActividadLead, actualizarLead, cambiarEtapaLead, tomarLead } from "../actions";
+import {
+  CRM_LEAD_CANAL_LABEL,
+  CRM_LEAD_ETAPA_LABEL,
+  CRM_LEAD_ETAPAS,
+  CRM_LEAD_TIPO_DOC_LABEL,
+  CRM_LEAD_TIPOS_DOC,
+  type CrmLeadCanal,
+  type CrmLeadEtapa,
+} from "@/lib/crm/leads";
 import { DateInput } from "@/components/ui/DateInput";
 
 export type LeadDetalle = {
@@ -14,6 +23,7 @@ export type LeadDetalle = {
   nombre: string;
   telefono: string | null;
   email: string | null;
+  tipo_doc: string | null;
   documento: string | null;
   interes: string | null;
   origen_detalle: string | null;
@@ -43,7 +53,6 @@ type Props = {
   actividades: ActividadRow[];
   responsables: ResponsableOpt[];
   puedeReasignar: boolean;
-  usuarioId: string;
 };
 
 function fechaParte(v: string | null) {
@@ -72,22 +81,27 @@ function fecha(v: string | null) {
   return new Intl.DateTimeFormat("es-CO", { dateStyle: "medium", timeStyle: "short" }).format(new Date(v));
 }
 
-export function LeadDetalleClient({ lead, actividades, responsables, puedeReasignar, usuarioId }: Props) {
-  const [estado, setEstado] = useState<{ ok: boolean; texto: string } | null>(null);
+export function LeadDetalleClient({ lead, actividades, responsables, puedeReasignar }: Props) {
+  const [estado, setEstado] = useState<{ ok: boolean; texto: string; aviso?: string | null } | null>(null);
   const [isPending, startTransition] = useTransition();
+  const router = useRouter();
   const responsablesPorId = useMemo(() => new Map(responsables.map((r) => [r.id, r])), [responsables]);
   const responsable = lead.responsable_id ? responsablesPorId.get(lead.responsable_id) : null;
 
   function guardar(formData: FormData) {
+    // Quien no puede reasignar NO manda un responsable: manda el que ya tiene,
+    // asi guardar no intenta quitarle el lead a otro ni tomarlo por sorpresa.
+    // Tomarlo es una accion explicita ("Tomar lead"), resuelta en SQL.
     const responsableId = puedeReasignar
       ? String(formData.get("responsableId") ?? "")
-      : lead.responsable_id ?? usuarioId;
+      : lead.responsable_id ?? "";
     startTransition(async () => {
       const r = await actualizarLead(lead.id, {
         nombre: String(formData.get("nombre") ?? ""),
         canal: String(formData.get("canal") ?? "whatsapp"),
         telefono: String(formData.get("telefono") ?? ""),
         email: String(formData.get("email") ?? ""),
+        tipoDoc: String(formData.get("tipoDoc") ?? ""),
         documento: String(formData.get("documento") ?? ""),
         interes: String(formData.get("interes") ?? ""),
         origenDetalle: String(formData.get("origenDetalle") ?? ""),
@@ -95,7 +109,15 @@ export function LeadDetalleClient({ lead, actividades, responsables, puedeReasig
         responsableId,
         proximaAccionAt: fechaHoraDeForm(formData),
       });
-      setEstado({ ok: r.ok, texto: r.ok ? "Lead actualizado." : r.error });
+      setEstado(r.ok ? { ok: true, texto: "Lead actualizado.", aviso: r.aviso } : { ok: false, texto: r.error });
+    });
+  }
+
+  function tomar() {
+    startTransition(async () => {
+      const r = await tomarLead(lead.id);
+      setEstado({ ok: r.ok, texto: r.ok ? "Lead tomado." : r.error });
+      if (r.ok) router.refresh();
     });
   }
 
@@ -103,6 +125,9 @@ export function LeadDetalleClient({ lead, actividades, responsables, puedeReasig
     startTransition(async () => {
       const r = await cambiarEtapaLead(lead.id, String(formData.get("etapa") ?? lead.etapa));
       setEstado({ ok: r.ok, texto: r.ok ? "Etapa actualizada." : r.error });
+      // La bitácora y la columna de la etapa llegan desde el servidor: sin este
+      // refresco la cabecera seguiría mostrando la etapa anterior.
+      if (r.ok) router.refresh();
     });
   }
 
@@ -114,6 +139,7 @@ export function LeadDetalleClient({ lead, actividades, responsables, puedeReasig
         proximaAccionAt: fechaHoraDeForm(formData),
       });
       setEstado({ ok: r.ok, texto: r.ok ? "Actividad registrada." : r.error });
+      if (r.ok) router.refresh();
     });
   }
 
@@ -126,6 +152,16 @@ export function LeadDetalleClient({ lead, actividades, responsables, puedeReasig
             <span className="rounded-md bg-cyan-50 px-2 py-1 text-xs font-medium text-cyan-800">{CRM_LEAD_CANAL_LABEL[lead.canal]}</span>
             <span className="rounded-md bg-emerald-50 px-2 py-1 text-xs font-medium text-emerald-800">{lead.tenant}</span>
             <span className="text-xs text-gray-500">Responsable: {responsable?.nombre ?? responsable?.email ?? "Sin responsable"}</span>
+            {!lead.responsable_id && !puedeReasignar && (
+              <button
+                type="button"
+                onClick={tomar}
+                disabled={isPending}
+                className="inline-flex items-center gap-1 rounded-md bg-cyan-50 px-2 py-1 text-xs font-medium text-cyan-800 disabled:opacity-60"
+              >
+                <Hand size={13} /> Tomar lead
+              </button>
+            )}
           </div>
 
           <form action={guardar} className="grid gap-3 md:grid-cols-2">
@@ -137,7 +173,14 @@ export function LeadDetalleClient({ lead, actividades, responsables, puedeReasig
             </select>
             <input name="telefono" defaultValue={lead.telefono ?? ""} placeholder="Teléfono" className="rounded-md border border-gray-200 px-3 py-2 text-sm" />
             <input name="email" defaultValue={lead.email ?? ""} placeholder="Correo" className="rounded-md border border-gray-200 px-3 py-2 text-sm" />
-            <input name="documento" defaultValue={lead.documento ?? ""} placeholder="Documento" className="rounded-md border border-gray-200 px-3 py-2 text-sm" />
+            {/* Tipo y número van juntos: sin tipo explícito no se guarda un número (no se asume CC). */}
+            <div className="grid grid-cols-[112px_1fr] gap-2">
+              <select name="tipoDoc" aria-label="Tipo de documento" defaultValue={lead.tipo_doc ?? ""} className="rounded-md border border-gray-200 px-2 py-2 text-sm">
+                <option value="">Tipo doc.</option>
+                {CRM_LEAD_TIPOS_DOC.map((t) => <option key={t} value={t} title={CRM_LEAD_TIPO_DOC_LABEL[t]}>{t}</option>)}
+              </select>
+              <input name="documento" aria-label="Número de documento" defaultValue={lead.documento ?? ""} placeholder="Número de documento" className="min-w-0 rounded-md border border-gray-200 px-3 py-2 text-sm" />
+            </div>
             {puedeReasignar ? (
               <select name="responsableId" defaultValue={lead.responsable_id ?? ""} className="rounded-md border border-gray-200 px-3 py-2 text-sm">
                 <option value="">Sin responsable</option>
@@ -218,8 +261,13 @@ export function LeadDetalleClient({ lead, actividades, responsables, puedeReasig
         </div>
 
         {estado && (
-          <p className={`rounded-md px-3 py-2 text-sm ${estado.ok ? "bg-emerald-50 text-emerald-700" : "bg-red-50 text-red-700"}`}>
+          <p role="status" className={`rounded-md px-3 py-2 text-sm ${estado.ok ? "bg-emerald-50 text-emerald-700" : "bg-red-50 text-red-700"}`}>
             {estado.texto}
+          </p>
+        )}
+        {estado?.ok && estado.aviso && (
+          <p data-testid="aviso-coincidencias" className="rounded-md bg-amber-50 px-3 py-2 text-sm text-amber-800">
+            {estado.aviso}
           </p>
         )}
       </aside>

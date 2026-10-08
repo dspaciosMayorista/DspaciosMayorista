@@ -6,22 +6,29 @@ import { tenantContext } from "@/lib/tenant.server";
 import {
   CRM_LEAD_ETAPAS,
   CRM_LEAD_ROLES,
-  CRM_LEAD_RESPONSABLE_ROLES,
-  esCanalLead,
+  avisoCoincidenciasLead,
   esEtapaLead,
-  normalizarDocumentoLead,
-  normalizarEmailLead,
-  normalizarTelefonoLead,
+  validarEntradaLead,
+  type CoincidenciaLead,
   type CrmLeadEtapa,
+  type EntradaLeadValidada,
+  type LeadCrearInput,
+  type LeadFormularioCompleto,
 } from "@/lib/crm/leads";
 
-type Result = { ok: true; id?: number } | { ok: false; error: string; id?: number };
+// `aviso` lleva las coincidencias que NO bloquean (telefono, correo o mismo
+// numero con otro tipo): el alta o la edicion ya quedaron hechas.
+type Result = { ok: true; id?: number; aviso?: string | null } | { ok: false; error: string; id?: number };
 type PerfilLead = { id: string; email: string | null; rol: string | null; tenant: string | null };
 
 const oNull = (s?: string | null) => {
   const v = (s ?? "").trim();
   return v ? v : null;
 };
+
+// Una Server Action recibe lo que mande el navegador: el id del lead tiene que
+// ser un entero positivo antes de llegar a ninguna RPC.
+const idValido = (id: unknown): id is number => typeof id === "number" && Number.isSafeInteger(id) && id > 0;
 
 async function perfilActual(): Promise<{ sb: Awaited<ReturnType<typeof createClient>>; perfil: PerfilLead | null }> {
   const sb = await createClient();
@@ -39,188 +46,122 @@ function autorizado(perfil: PerfilLead | null) {
   return CRM_LEAD_ROLES.includes((perfil?.rol ?? "") as never);
 }
 
-function puedeAsignar(perfil: PerfilLead | null) {
-  return ["superadmin", "gerencia", "administracion"].includes(perfil?.rol ?? "");
+// El mensaje de una RPC llega como "crm_lead_duplicado:<id>"; el id permite
+// decirle al usuario cuál lead ya existe. Solo hay un duplicado que bloquea:
+// mismo tenant + tipo + número de documento. El id viene vacío cuando ese lead
+// no es visible para quien escribe (es de otro asesor). La validación fuerte
+// (mismo tenant, rol comercial, activo) vive en SQL, no aquí.
+function mensajeRpc(error: { message: string } | null): Result {
+  const msg = error?.message ?? "No se pudo completar la operacion.";
+  const dup = /^crm_lead_duplicado:(\d*)/.exec(msg);
+  if (dup) {
+    return dup[1]
+      ? { ok: false, error: `Ya existe otro lead con ese tipo y numero de documento (#${dup[1]}).`, id: Number(dup[1]) }
+      : { ok: false, error: "Ya existe otro lead con ese tipo y numero de documento en esta agencia." };
+  }
+  // `crm_lead_actualizar` exige el formulario completo; la app siempre lo manda,
+  // asi que esto solo aparece si algo llamo a la RPC con un payload recortado.
+  const payload = /^crm_lead_payload_(?:incompleto|invalido): (.*)$/.exec(msg);
+  if (payload) return { ok: false, error: `Datos del lead incompletos o invalidos: ${payload[1]}` };
+  return { ok: false, error: msg };
 }
 
-async function buscarDuplicadoVisible(
-  sb: Awaited<ReturnType<typeof createClient>>,
-  tenant: string,
-  input: { telefono?: string; email?: string; documento?: string },
-) {
-  const telefono = normalizarTelefonoLead(input.telefono);
-  const email = normalizarEmailLead(input.email);
-  const documento = normalizarDocumentoLead(input.documento);
-  const consulta = () => sb.from("crm_leads").select("id").eq("tenant", tenant).limit(1);
-
-  if (telefono) {
-    const { data } = await consulta().eq("telefono_norm", telefono).maybeSingle();
-    if (data?.id) return data.id as number;
-  }
-  if (email) {
-    const { data } = await consulta().eq("email_norm", email).maybeSingle();
-    if (data?.id) return data.id as number;
-  }
-  if (documento) {
-    const { data } = await consulta().eq("documento_norm", documento).maybeSingle();
-    if (data?.id) return data.id as number;
-  }
-  return undefined;
+function avisoDe(data: unknown): string | null {
+  const coincidencias = (data as { coincidencias?: CoincidenciaLead[] } | null)?.coincidencias;
+  return avisoCoincidenciasLead(Array.isArray(coincidencias) ? coincidencias : null);
 }
 
-async function mensajeDuplicado(
-  sb: Awaited<ReturnType<typeof createClient>>,
-  tenant: string,
-  input: { telefono?: string; email?: string; documento?: string },
-): Promise<Result> {
-  const id = await buscarDuplicadoVisible(sb, tenant, input);
-  return { ok: false, error: id ? `Ya existe otro lead con esos datos (#${id}).` : "Ya existe otro lead con ese teléfono, correo o documento.", id };
+// Siempre las once claves: `crm_lead_actualizar` rechaza un payload parcial
+// (una clave ausente no significa "no tocar") y `crm_lead_crear` las acepta.
+function datosLead(input: EntradaLeadValidada, tenant?: string) {
+  return {
+    tenant,
+    canal: input.canal,
+    nombre: input.nombre,
+    telefono: input.telefono,
+    email: input.email,
+    tipo_doc: input.tipoDoc,
+    documento: input.documento,
+    interes: input.interes,
+    origen_detalle: input.origenDetalle,
+    notas: input.notas,
+    responsable_id: input.responsableId,
+    proxima_accion_at: input.proximaAccionAt,
+  };
 }
 
-export type LeadInput = {
-  nombre: string;
-  canal: string;
-  telefono?: string;
-  email?: string;
-  documento?: string;
-  interes?: string;
-  origenDetalle?: string;
-  notas?: string;
-  responsableId?: string | null;
-  proximaAccionAt?: string | null;
-};
-
-export async function crearLead(input: LeadInput): Promise<Result> {
+// Alta y edicion van por RPC (`crm_lead_crear` / `crm_lead_actualizar`): alli
+// viven, en la MISMA transaccion, el cambio de negocio y su bitacora, la regla
+// de responsable por tenant y la excepcion de "cero filas afectadas". Aqui solo
+// se filtran datos de entrada obviamente invalidos para no gastar un viaje.
+//
+// Alta: los campos opcionales se pueden omitir (se completan vacios).
+export async function crearLead(input: LeadCrearInput): Promise<Result> {
   const { sb, perfil } = await perfilActual();
   if (!autorizado(perfil)) return { ok: false, error: "Sin permiso para crear leads." };
-
-  const nombre = oNull(input.nombre);
-  if (!nombre) return { ok: false, error: "El nombre es obligatorio; usa 'Desconocido' si aún no lo tienes." };
-  if (!esCanalLead(input.canal)) return { ok: false, error: "Canal inválido." };
+  const entrada = validarEntradaLead(input, "crear");
+  if (!entrada.ok) return { ok: false, error: entrada.error };
 
   const { tenant } = await tenantContext();
-  const responsableId = oNull(input.responsableId);
-  if (responsableId && !puedeAsignar(perfil) && responsableId !== perfil?.id) {
-    return { ok: false, error: "Solo gerencia o administración pueden asignar a otra persona." };
-  }
+  const { data, error } = await sb.rpc("crm_lead_crear", { p_datos: datosLead(entrada.datos, tenant) });
+  if (error) return mensajeRpc(error);
 
-  const { data, error } = await sb
-    .from("crm_leads")
-    .insert({
-      tenant,
-      canal: input.canal,
-      nombre,
-      telefono: oNull(input.telefono),
-      email: oNull(input.email),
-      documento: oNull(input.documento),
-      interes: oNull(input.interes),
-      origen_detalle: oNull(input.origenDetalle),
-      notas: oNull(input.notas),
-      responsable_id: responsableId,
-      creado_por: perfil?.id,
-      proxima_accion_at: oNull(input.proximaAccionAt),
-    })
-    .select("id")
-    .single();
-
-  if (error) {
-    if (error.code === "23505") return mensajeDuplicado(sb, tenant, input);
-    return { ok: false, error: error.message };
-  }
-
-  const id = data.id as number;
-  const cuerpo = [
-    `Lead creado desde ${input.canal}.`,
-    input.notas?.trim() ? input.notas.trim() : "",
-  ].filter(Boolean).join("\n\n");
-
-  await sb.from("crm_lead_actividades").insert({
-    lead_id: id,
-    tipo: input.canal === "instagram" ? "instagram" : input.canal === "whatsapp" ? "whatsapp" : "nota",
-    cuerpo,
-    proxima_accion_at: oNull(input.proximaAccionAt),
-    actor_id: perfil?.id,
-    actor_email: perfil?.email,
-  });
-
+  const id = (data as { id?: number } | null)?.id;
   revalidatePath("/crm/leads");
-  return { ok: true, id };
+  return typeof id === "number" ? { ok: true, id, aviso: avisoDe(data) } : { ok: false, error: "No se pudo crear el lead." };
 }
 
-export async function actualizarLead(id: number, input: LeadInput): Promise<Result> {
+// Edicion: formulario COMPLETO. Una clave ausente se rechaza aqui, antes de
+// llamar a Supabase; rellenarla con "" la convertiria en "borrar ese dato" y la
+// RPC recibiria un formulario aparentemente completo. El tipo lo exige en
+// compilacion y `validarEntradaLead(..., "editar")` en runtime, porque una
+// Server Action recibe lo que mande el navegador.
+export async function actualizarLead(id: number, input: LeadFormularioCompleto): Promise<Result> {
   const { sb, perfil } = await perfilActual();
   if (!autorizado(perfil)) return { ok: false, error: "Sin permiso para actualizar leads." };
-  const nombre = oNull(input.nombre);
-  if (!nombre) return { ok: false, error: "El nombre es obligatorio." };
-  if (!esCanalLead(input.canal)) return { ok: false, error: "Canal inválido." };
+  if (!idValido(id)) return { ok: false, error: "Lead invalido." };
+  const entrada = validarEntradaLead(input, "editar");
+  if (!entrada.ok) return { ok: false, error: entrada.error };
 
-  const { data: actual } = await sb.from("crm_leads").select("tenant, responsable_id").eq("id", id).maybeSingle();
-  if (!actual) return { ok: false, error: "Lead no encontrado o sin permiso." };
-  const responsableId = oNull(input.responsableId);
-  if (responsableId !== actual.responsable_id && !puedeAsignar(perfil)) {
-    return { ok: false, error: "Solo gerencia o administración pueden reasignar leads." };
-  }
-
-  const { error } = await sb.from("crm_leads").update({
-    canal: input.canal,
-    nombre,
-    telefono: oNull(input.telefono),
-    email: oNull(input.email),
-    documento: oNull(input.documento),
-    interes: oNull(input.interes),
-    origen_detalle: oNull(input.origenDetalle),
-    notas: oNull(input.notas),
-    responsable_id: responsableId,
-    proxima_accion_at: oNull(input.proximaAccionAt),
-  }).eq("id", id);
-
-  if (error) {
-    if (error.code === "23505") return mensajeDuplicado(sb, actual.tenant, input);
-    return { ok: false, error: error.message };
-  }
-
-  if (responsableId !== actual.responsable_id) {
-    await sb.from("crm_lead_actividades").insert({
-      lead_id: id,
-      tipo: "reasignacion",
-      cuerpo: `Responsable actualizado.`,
-      actor_id: perfil?.id,
-      actor_email: perfil?.email,
-    });
-  }
+  const { data, error } = await sb.rpc("crm_lead_actualizar", {
+    p_lead: id,
+    p_datos: datosLead(entrada.datos),
+  });
+  if (error) return mensajeRpc(error);
 
   revalidatePath("/crm/leads");
   revalidatePath(`/crm/leads/${id}`);
-  return { ok: true, id };
+  return data ? { ok: true, id, aviso: avisoDe(data) } : { ok: false, error: "No se pudo actualizar el lead." };
+}
+
+// Toma para si un lead SIN responsable de su propio tenant. La condicion vive
+// en SQL (`where responsable_id is null`), asi que la carrera entre dos asesores
+// la resuelve el bloqueo de fila: uno gana y el otro recibe el error.
+export async function tomarLead(id: number): Promise<Result> {
+  const { sb, perfil } = await perfilActual();
+  if (!autorizado(perfil)) return { ok: false, error: "Sin permiso para tomar leads." };
+  if (!idValido(id)) return { ok: false, error: "Lead invalido." };
+
+  const { data, error } = await sb.rpc("crm_lead_tomar", { p_lead: id });
+  if (error) return mensajeRpc(error);
+
+  revalidatePath("/crm/leads");
+  revalidatePath(`/crm/leads/${id}`);
+  return data ? { ok: true, id } : { ok: false, error: "No se pudo tomar el lead." };
 }
 
 export async function cambiarEtapaLead(id: number, etapa: string): Promise<Result> {
   const { sb, perfil } = await perfilActual();
   if (!autorizado(perfil)) return { ok: false, error: "Sin permiso para cambiar etapa." };
-  if (!esEtapaLead(etapa)) return { ok: false, error: "Etapa inválida." };
+  if (!idValido(id)) return { ok: false, error: "Lead invalido." };
+  if (!esEtapaLead(etapa)) return { ok: false, error: "Etapa invalida." };
 
-  const cerrada = etapa === "descartado" || etapa === "archivado";
-  const { data: actual } = await sb.from("crm_leads").select("etapa").eq("id", id).maybeSingle();
-  if (!actual) return { ok: false, error: "Lead no encontrado o sin permiso." };
-  if (actual.etapa === etapa) return { ok: true, id };
-
-  const { error } = await sb.from("crm_leads").update({
-    etapa,
-    cerrado_at: cerrada ? new Date().toISOString() : null,
-  }).eq("id", id);
-  if (error) return { ok: false, error: error.message };
-
-  await sb.from("crm_lead_actividades").insert({
-    lead_id: id,
-    tipo: cerrada ? "cierre" : "cambio_etapa",
-    cuerpo: `Etapa: ${actual.etapa} -> ${etapa}.`,
-    actor_id: perfil?.id,
-    actor_email: perfil?.email,
-  });
+  const { data, error } = await sb.rpc("crm_lead_cambiar_etapa", { p_lead: id, p_etapa: etapa });
+  if (error) return mensajeRpc(error);
 
   revalidatePath("/crm/leads");
   revalidatePath(`/crm/leads/${id}`);
-  return { ok: true, id };
+  return data ? { ok: true, id } : { ok: false, error: "No se pudo cambiar la etapa." };
 }
 
 export async function agregarActividadLead(
@@ -229,31 +170,19 @@ export async function agregarActividadLead(
 ): Promise<Result> {
   const { sb, perfil } = await perfilActual();
   if (!autorizado(perfil)) return { ok: false, error: "Sin permiso para registrar actividad." };
-  const tipo = input.tipo || "nota";
-  const tiposPermitidos = ["nota", "llamada", "whatsapp", "instagram", "email", "reunion"];
-  if (!tiposPermitidos.includes(tipo)) return { ok: false, error: "Tipo de actividad inválido." };
-  const cuerpo = oNull(input.cuerpo);
-  if (!cuerpo) return { ok: false, error: "La actividad necesita una nota." };
+  if (!idValido(id)) return { ok: false, error: "Lead invalido." };
 
-  const proxima = oNull(input.proximaAccionAt);
-  const { error } = await sb.from("crm_lead_actividades").insert({
-    lead_id: id,
-    tipo,
-    cuerpo,
-    proxima_accion_at: proxima,
-    actor_id: perfil?.id,
-    actor_email: perfil?.email,
+  const { data, error } = await sb.rpc("crm_lead_registrar_actividad", {
+    p_lead: id,
+    p_tipo: input.tipo || "nota",
+    p_cuerpo: input.cuerpo ?? "",
+    p_proxima_accion_at: oNull(input.proximaAccionAt),
   });
-  if (error) return { ok: false, error: error.message };
-
-  if (proxima) {
-    const { error: updateError } = await sb.from("crm_leads").update({ proxima_accion_at: proxima }).eq("id", id);
-    if (updateError) return { ok: false, error: updateError.message };
-  }
+  if (error) return mensajeRpc(error);
 
   revalidatePath("/crm/leads");
   revalidatePath(`/crm/leads/${id}`);
-  return { ok: true, id };
+  return data ? { ok: true, id } : { ok: false, error: "No se pudo registrar la actividad." };
 }
 
 export async function proximasEtapas(): Promise<readonly CrmLeadEtapa[]> {
@@ -266,7 +195,7 @@ export async function responsablesLead() {
   const { data } = await sb
     .from("usuarios")
     .select("id, nombre, email, rol, tenant")
-    .in("rol", [...CRM_LEAD_RESPONSABLE_ROLES])
+    .in("rol", ["gerencia", "administracion", "venta"])
     .eq("activo", true)
     .order("nombre");
   return data ?? [];

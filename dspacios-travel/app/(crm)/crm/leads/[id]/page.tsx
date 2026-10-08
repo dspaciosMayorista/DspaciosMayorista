@@ -29,7 +29,7 @@ export default async function LeadDetallePage({ params }: { params: Promise<{ id
   const [{ data: lead }, { data: actividades }, { data: responsables }] = await Promise.all([
     sb
       .from("crm_leads")
-      .select("id, tenant, etapa, canal, nombre, telefono, email, documento, interes, origen_detalle, notas, responsable_id, proxima_accion_at, cerrado_at, created_at, updated_at")
+      .select("id, tenant, etapa, canal, nombre, telefono, email, tipo_doc, documento, interes, origen_detalle, notas, responsable_id, proxima_accion_at, cerrado_at, created_at, updated_at")
       .eq("id", leadId)
       .maybeSingle(),
     sb
@@ -59,7 +59,6 @@ export default async function LeadDetallePage({ params }: { params: Promise<{ id
         actividades={(actividades ?? []) as ActividadRow[]}
         responsables={(responsables ?? []) as ResponsableOpt[]}
         puedeReasignar={["superadmin", "gerencia", "administracion"].includes(perfil?.rol ?? "")}
-        usuarioId={perfil?.id ?? ""}
       />
     </div>
   );

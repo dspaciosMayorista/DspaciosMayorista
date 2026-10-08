@@ -4,7 +4,16 @@ import Link from "next/link";
 import { useMemo, useState, useTransition } from "react";
 import { AlertCircle, Check, Clock, Search, UserPlus } from "lucide-react";
 import { crearLead } from "./actions";
-import { CRM_LEAD_CANAL_LABEL, CRM_LEAD_ETAPA_LABEL, CRM_LEAD_ETAPAS, type CrmLeadCanal, type CrmLeadEtapa } from "@/lib/crm/leads";
+import {
+  CRM_LEAD_CANAL_LABEL,
+  CRM_LEAD_ETAPA_LABEL,
+  CRM_LEAD_ETAPAS,
+  CRM_LEAD_TIPO_DOC_LABEL,
+  CRM_LEAD_TIPOS_DOC,
+  textoDocumentoLead,
+  type CrmLeadCanal,
+  type CrmLeadEtapa,
+} from "@/lib/crm/leads";
 import { DateInput } from "@/components/ui/DateInput";
 
 export type LeadRow = {
@@ -15,6 +24,7 @@ export type LeadRow = {
   nombre: string;
   telefono: string | null;
   email: string | null;
+  tipo_doc: string | null;
   documento: string | null;
   interes: string | null;
   origen_detalle: string | null;
@@ -52,7 +62,7 @@ function fechaHoraDeForm(formData: FormData) {
 export function LeadsClient({ leads, responsables, puedeReasignar, usuarioId }: Props) {
   const [q, setQ] = useState("");
   const [etapa, setEtapa] = useState<"todos" | CrmLeadEtapa>("todos");
-  const [estado, setEstado] = useState<{ ok: boolean; texto: string } | null>(null);
+  const [estado, setEstado] = useState<{ ok: boolean; texto: string; aviso?: string | null } | null>(null);
   const [isPending, startTransition] = useTransition();
 
   const responsablesPorId = useMemo(() => new Map(responsables.map((r) => [r.id, r])), [responsables]);
@@ -61,7 +71,9 @@ export function LeadsClient({ leads, responsables, puedeReasignar, usuarioId }: 
     return leads.filter((lead) => {
       if (etapa !== "todos" && lead.etapa !== etapa) return false;
       if (!needle) return true;
-      return [lead.nombre, lead.telefono, lead.email, lead.documento, lead.interes, lead.origen_detalle]
+      // El número basta para EMPEZAR a buscar; la identidad la da tipo + número,
+      // por eso el resultado muestra los dos.
+      return [lead.nombre, lead.telefono, lead.email, lead.documento, textoDocumentoLead(lead.tipo_doc, lead.documento), lead.interes, lead.origen_detalle]
         .filter(Boolean)
         .some((v) => String(v).toLowerCase().includes(needle));
     });
@@ -79,6 +91,7 @@ export function LeadsClient({ leads, responsables, puedeReasignar, usuarioId }: 
         canal: String(formData.get("canal") ?? "whatsapp"),
         telefono: String(formData.get("telefono") ?? ""),
         email: String(formData.get("email") ?? ""),
+        tipoDoc: String(formData.get("tipoDoc") ?? ""),
         documento: String(formData.get("documento") ?? ""),
         interes: String(formData.get("interes") ?? ""),
         origenDetalle: String(formData.get("origenDetalle") ?? ""),
@@ -86,7 +99,7 @@ export function LeadsClient({ leads, responsables, puedeReasignar, usuarioId }: 
         responsableId,
         proximaAccionAt: fechaHoraDeForm(formData),
       });
-      setEstado({ ok: r.ok, texto: r.ok ? `Lead #${r.id} creado.` : r.error });
+      setEstado(r.ok ? { ok: true, texto: `Lead #${r.id} creado.`, aviso: r.aviso } : { ok: false, texto: r.error });
     });
   }
 
@@ -111,7 +124,7 @@ export function LeadsClient({ leads, responsables, puedeReasignar, usuarioId }: 
         <div className="mb-3 flex flex-wrap items-center gap-2 rounded-lg border border-white/70 bg-white/75 p-2">
           <div className="flex min-w-56 flex-1 items-center gap-2 rounded-md bg-white px-3 py-2 text-sm">
             <Search size={16} className="text-gray-400" />
-            <input className="w-full outline-none" placeholder="Buscar nombre, teléfono, correo, interés..." value={q} onChange={(e) => setQ(e.target.value)} />
+            <input className="w-full outline-none" placeholder="Buscar nombre, teléfono, correo, documento, interés..." value={q} onChange={(e) => setQ(e.target.value)} />
           </div>
           <select className="rounded-md border border-gray-200 bg-white px-3 py-2 text-sm" value={etapa} onChange={(e) => setEtapa(e.target.value as never)}>
             <option value="todos">Todas las etapas</option>
@@ -138,7 +151,7 @@ export function LeadsClient({ leads, responsables, puedeReasignar, usuarioId }: 
                   <tr key={lead.id} className="hover:bg-cyan-50/50">
                     <td className="px-3 py-3">
                       <Link href={`/crm/leads/${lead.id}`} className="font-semibold text-gray-900 hover:text-[var(--brand-primary)]">{lead.nombre}</Link>
-                      <div className="mt-1 text-xs text-gray-500">{lead.telefono || lead.email || lead.documento || "Sin identificador"}</div>
+                      <div className="mt-1 text-xs text-gray-500">{lead.telefono || lead.email || textoDocumentoLead(lead.tipo_doc, lead.documento) || "Sin identificador"}</div>
                     </td>
                     <td className="px-3 py-3">{CRM_LEAD_CANAL_LABEL[lead.canal] ?? lead.canal}</td>
                     <td className="px-3 py-3"><span className="rounded-md bg-gray-100 px-2 py-1 text-xs font-medium text-gray-700">{CRM_LEAD_ETAPA_LABEL[lead.etapa]}</span></td>
@@ -181,7 +194,14 @@ export function LeadsClient({ leads, responsables, puedeReasignar, usuarioId }: 
           </div>
           <input name="telefono" placeholder="Teléfono / WhatsApp" className="w-full rounded-md border border-gray-200 px-3 py-2 text-sm" />
           <input name="email" placeholder="Correo" className="w-full rounded-md border border-gray-200 px-3 py-2 text-sm" />
-          <input name="documento" placeholder="Documento" className="w-full rounded-md border border-gray-200 px-3 py-2 text-sm" />
+          {/* Tipo y número van juntos: sin tipo explícito no se guarda un número (no se asume CC). */}
+          <div className="grid grid-cols-[112px_1fr] gap-2">
+            <select name="tipoDoc" aria-label="Tipo de documento" defaultValue="" className="rounded-md border border-gray-200 px-2 py-2 text-sm">
+              <option value="">Tipo doc.</option>
+              {CRM_LEAD_TIPOS_DOC.map((t) => <option key={t} value={t} title={CRM_LEAD_TIPO_DOC_LABEL[t]}>{t}</option>)}
+            </select>
+            <input name="documento" aria-label="Número de documento" placeholder="Número de documento" className="w-full rounded-md border border-gray-200 px-3 py-2 text-sm" />
+          </div>
           <input name="interes" placeholder="Interés: destino, producto, fecha..." className="w-full rounded-md border border-gray-200 px-3 py-2 text-sm" />
           <input name="origenDetalle" placeholder="Contexto: historia, pauta, referido..." className="w-full rounded-md border border-gray-200 px-3 py-2 text-sm" />
           <div className="grid grid-cols-[1fr_112px] gap-2">
@@ -193,8 +213,13 @@ export function LeadsClient({ leads, responsables, puedeReasignar, usuarioId }: 
             <Check size={16} /> Guardar lead
           </button>
           {estado && (
-            <p className={`flex items-start gap-2 rounded-md px-3 py-2 text-sm ${estado.ok ? "bg-emerald-50 text-emerald-700" : "bg-red-50 text-red-700"}`}>
+            <p role="status" className={`flex items-start gap-2 rounded-md px-3 py-2 text-sm ${estado.ok ? "bg-emerald-50 text-emerald-700" : "bg-red-50 text-red-700"}`}>
               <AlertCircle size={16} className="mt-0.5" /> {estado.texto}
+            </p>
+          )}
+          {estado?.ok && estado.aviso && (
+            <p data-testid="aviso-coincidencias" className="flex items-start gap-2 rounded-md bg-amber-50 px-3 py-2 text-sm text-amber-800">
+              <AlertCircle size={16} className="mt-0.5" /> {estado.aviso}
             </p>
           )}
         </form>
