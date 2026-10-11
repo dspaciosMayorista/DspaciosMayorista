@@ -198,6 +198,107 @@ vez del layout de la cuenta de cobro. Link cruzado en ambos sentidos: la cuenta 
 "Estado de cuenta →" (solo si `aliadoB2bId` existe) y `/dashboard/comisiones` (`ComisionesList.tsx`)
 tiene el link directo junto a "Cuenta de cobro".
 
+### #38 — Integridad de comisiones B2B (migración 205, oct-2026)
+
+Reglas únicas en `lib/finanzas/comisionB2B.ts` (puras; espejo SQL en la 205:
+`comision_b2b_total()` / `comision_b2b_descontada()`). Toda pantalla lee una fila con
+`calcularComisionFila()` — Comisiones, pestaña del contrato, Rentabilidad y cuenta de cobro.
+
+- **Base de las comisiones nuevas** = `max(0, PVP − ventas.impuesto)` en las dos altas que
+  quedan: la pestaña Comisiones —PVP/impuesto leídos de la venta en la base; es también la vía
+  de los contratos manuales B2B, ver abajo— y reservar. Cada alta marca
+  `aliados_b2b.base_explicita = true` explícitamente (la columna NO tiene default): una base 0
+  se lee 0; NULL = "sin base definida" → PVP. Filas anteriores a la 205 —y las que inserte el
+  código viejo durante el despliegue— quedan NULL y conservan la lectura legado
+  (`base || PVP`): se cuadraron a mano ajustando el %, **no se recalculan**.
+- **Reservar** ya no inserta `aliados_b2b` con el cliente de la sesión (la RLS rechazaba a
+  `venta` y el error se descartaba): el aliado se exige y se lee ANTES de numerar
+  (`lib/reservar/comisionReserva.ts`) y la fila la crea `registrar_comision_b2b_reserva`
+  (SECURITY DEFINER: valida usuario, rol, tenant, aliado y venta **en curso** —
+  `financiero_estado = 'pendiente'` con menos de 5 minutos en `financiero_actualizado_en`, la
+  misma frontera de la reconciliación de la 172—, recalcula el importe y no duplica). Un
+  contrato histórico (`completo`) o uno atascado en `pendiente` no recibe comisión por aquí
+  (sin backfill; el preflight los cuenta, INFO 25). Si falla, la reserva se revierte completa.
+- **Contrato manual B2B** (decisión del dueño): ya NO genera comisión automática. Nace
+  **"Por definir"** (estado esperado, no error) y la comisión se registra a mano en la pestaña
+  Comisiones con `registrar_comision_b2b_manual` (SECURITY DEFINER): valida usuario, rol,
+  contrato y tenant; base = PVP − impuesto de la venta guardada; NETO se rechaza; enlazada a
+  un aliado del catálogo, el **tipo** (que decide si hay cuenta de cobro) es el del catálogo,
+  no el del formulario. El asesor
+  `venta` puede registrarla **solo en su propio contrato B2B, una vez, para el aliado del
+  contrato** (identidad y retención del catálogo). Después la **corrige** (base, % o valor
+  exacto, recobro) desde la misma pestaña **mientras no tenga abonos** (policy "edicion asesor"
+  + trigger: solo esos campos, nunca una NETO descontada). No la borra, no gestiona abonos y no
+  toca la de un colega.
+- **"Ingresar por valor"**: `comision_valor` guarda el importe al peso y manda sobre base × %;
+  `pct_comision` queda informativo (numeric(5,4) redondeaba: 3.250.000 × 9,23 % = 299.975).
+- **NETO** (`reservar` en modo neta): la fila nace con `descontada_en_precio = true`; las
+  anteriores se reconocen por `ventas.comision_estado='descontada'` + `estado='pagada'`. No es
+  saldo por pagar (estado `descontada` si no tiene abonos), no admite abonos (servidor +
+  trigger), no tiene cuenta de cobro ni estado de cuenta, y Rentabilidad no la resta (el
+  `ventas.precio_venta` guardado ya es PVP − comisión). Las NETO previas a la 131 conservan su
+  abono sintético y se muestran como siempre. **No se borra suelta**, ni sin abonos (API ni
+  service-role: trigger `trg_aliados_b2b_neto_no_borrar`, SECURITY INVOKER que decide por
+  `current_user`; la pestaña no ofrece Eliminar): solo se va con el contrato entero
+  (`eliminar_contrato`, `revertir_contrato_incompleto`). ⚠️ Presentación bruto/neto:
+  pendiente del contador.
+- **Abonos protegidos** (trigger + FK RESTRICT): no se borra una comisión con abonos ni se
+  cambia el total de una abonada o descontada — ni con service-role ni desde
+  `eliminar_contrato` (que ahora falla si la comisión tiene abonos).
+- **Permisos** (`permisosComisionContrato` + RLS): **ver** = superadmin, gerencia,
+  administración, operaciones y venta según su acceso al tenant (`puede_ver_tenant`);
+  **control_vuelo no ve comisiones**. **Registrar** = gestión operativa en contratos de su tenant,
+  o `venta` en el suyo (por la función de la base). **Corregir** = superadmin, gerencia,
+  administración según tenant, y `venta` en su contrato antes de abonos. **Borrar y abonar** =
+  superadmin, gerencia, administración según tenant (RLS + Server Action).
+- **Varias comisiones por contrato**: la cuenta de cobro ya no toma "la más reciente": con
+  varias cobrables pide elegir (`?id=`). Un aliado cobra **fila por fila** (`filasCobrables`):
+  una enlazada solo si es SU ficha; una **sin ficha** (`aliado_id` null) solo con evidencia de
+  PERTENENCIA: el documento de la fila (`aliados_b2b.nit`, normalizado: sin puntos ni el DV
+  tras el guion) igual al de SU ficha del catálogo; o, solo si abrió el contrato por el
+  respaldo legacy por nombre (193), el beneficiario igual a su nombre (`evidenciaSinFicha`).
+  El texto libre del beneficiario NO prueba nada —un homónimo escribe igual—, ni tampoco el
+  nombre de su ficha o de `ventas`, aunque el contrato se haya abierto por un id. Abrir el
+  contrato NO da todas sus filas: sin evidencia, falla cerrado (un interno la genera en su
+  nombre). **Contratos antiguos:** las filas que crearon los flujos automáticos viejos
+  (reservar, contrato manual) copiaban el NIT del catálogo, así que siguen siendo cobrables por
+  su aliado; las que no tienen documento (o tienen otro) ya no las cobra el aliado por URL ni
+  las ve en el portal — el preflight las cuenta (INFO 26/27).
+- **Contrato NETO** (`ventas.comision_estado = 'descontada'`, decisión del dueño 2026-10-09):
+  la comisión B2B del aliado ya está descontada del precio. **No corresponde una segunda
+  comisión B2B ni abonos B2B nuevos**:
+  - ninguna fila es cobrable, para nadie (`filasCobrables`): portal ("Descontada", sin enlace) y
+    cuenta de cobro (no abre) coinciden;
+  - ninguna fila B2B del contrato admite abonos nuevos ni **aumentos** de los existentes
+    (`admiteAbonosB2B` en `registrarPagoComisionB2B` + trigger `tg_comision_b2b_pagos_guardas`
+    de la 205 en INSERT y en TODO UPDATE: la policy de la 131 es FOR ALL para gestión, así que
+    un `UPDATE valor` era otro camino de pago). Corregir un abono a la baja o su fecha, y
+    "deshacer último abono", siguen permitidos;
+  - no se crea una segunda comisión B2B no descontada (`registrar_comision_b2b_manual` y el
+    trigger `trg_aliados_b2b_neto_sin_segunda` para la inserción directa). La firma legado
+    (`estado = 'pagada'`) sigue entrando: es como la crea el código viejo de reservar durante
+    el despliegue;
+  - una segunda fila que **ya exista** (histórica) no se borra, recalcula ni reinterpreta: en
+    Comisiones queda como **"NETO · revisión manual"** (`estadoComisionFila(..., enContratoNeto)`),
+    con su total y sus abonos tal cual, fuera del "pendiente por pagar" y sin formulario de abono.
+    Sin abonos, administración la puede retirar a mano; con abonos, la FK/trigger lo impide hasta
+    que alguien los deshaga. El preflight las cuenta (INFO 28; solo las de estado distinto de `'pagada'`), señala los contratos NETO con 2+ filas —[AMBIGUO] si tienen 2+ `'pagada'`: no se sabe cuál fue la descontada— (INFO 30/31) y las identifica (INFO 29: id de comisión, contrato y número de abonos, sin datos personales). Rentabilidad la sigue restando
+    como antes (no se reinterpreta).
+  - **La comisión del asesor interno es independiente** (`/dashboard/liquidacion`, solo lee
+    `ventas`: precio, impuesto, estado): sí aplica y sí cuenta para su meta en contratos NETO.
+    Nada de lo anterior la toca. Referidos: otra categoría futura, no implementada.
+- **Portal B2B** (`/portal/b2b`): la columna Comisión sale de `aliados_b2b` con la MISMA
+  lectura que la cuenta de cobro (`comisionesDelPortal` → `comisionVisibleAliado`): suma de sus
+  filas tras cualquier corrección, estado por sus abonos (131) y enlace a la cuenta de cobro solo
+  si hay algo suyo que cobrar. `ventas.comision_b2b` solo cuenta en contratos **sin ninguna fila
+  viva** (reservas anteriores); si hay filas pero ninguna es suya, ni el listado ni la cuenta de
+  cobro caen a `ventas`. Si la lectura falla, no muestra importe.
+- Despliegue, verificación y reversión: [`comisiones-205-despliegue.md`](./comisiones-205-despliegue.md).
+- Pruebas: `pruebas/comisionB2BReglas.test.ts`, `pruebas/comisionB2BAlta.react.ts`,
+  `pruebas/comisionReservaFlujo.react.ts`, `pruebas/comisionPortalB2B.react.ts`,
+  `pruebas/comisionPestanaPorRol.react.ts`, `pruebas/documentosLegacyNombre.react.ts`,
+  `supabase/scripts/test_205_*`.
+
 ### Recobro (migración 086)
 > RECOBRO = mayor valor cobrado que entra al total de la venta pero NO corresponde a ningún
 > servicio y NO se le muestra al cliente.

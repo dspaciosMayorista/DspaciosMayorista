@@ -1,5 +1,6 @@
 import { createClient } from "@/lib/supabase/server";
-import { calcComisionB2B, calcRentabilidad, fiscalFromParams } from "@/lib/calc/finanzas";
+import { calcRentabilidad, fiscalFromParams } from "@/lib/calc/finanzas";
+import { comisionParaRentabilidad, type FilaComisionB2B } from "@/lib/finanzas/comisionB2B";
 import { liquidarFacturacion } from "@/lib/contabilidad/facturacion";
 import { getTenant } from "@/lib/tenant.server";
 
@@ -48,8 +49,8 @@ export async function calcularRentabilidad(): Promise<{
   const sb = await createClient();
   const tenant = await getTenant();
   const [{ data: ventas }, { data: b2b }, { data: facturas }, { data: cxp }, { data: asesores }, { data: facturacionCfg }] = await Promise.all([
-    sb.from("ventas").select("numero_contrato, cliente, asesor, asesor_firma_nombre, destino, canal, fecha_venta, precio_venta, costo_hotel, costo_aereo, costo_receptivo, costo_asistencia, otros_costos, moneda, trm_contrato").eq("tenant", tenant).order("fecha_venta", { ascending: false }),
-    sb.from("aliados_b2b").select("numero_contrato, precio_venta, base_comision, pct_comision, recobro_total, pct_recobro_aliado, aplica_retencion, pct_retencion"),
+    sb.from("ventas").select("numero_contrato, cliente, asesor, asesor_firma_nombre, destino, canal, fecha_venta, precio_venta, costo_hotel, costo_aereo, costo_receptivo, costo_asistencia, otros_costos, moneda, trm_contrato, comision_estado").eq("tenant", tenant).order("fecha_venta", { ascending: false }),
+    sb.from("aliados_b2b").select("id, numero_contrato, precio_venta, base_comision, base_explicita, comision_valor, pct_comision, recobro_total, pct_recobro_aliado, aplica_retencion, pct_retencion, estado, descontada_en_precio"),
     sb.from("facturacion").select("numero_contrato, base_gravable, iva_descontable"),
     sb.from("cuentas_por_pagar").select("numero_contrato, iva_proveedor, clasificacion, valor_total"),
     sb.from("asesores").select("nombre, email, pct_comision_base"),
@@ -62,9 +63,12 @@ export async function calcularRentabilidad(): Promise<{
   const factorCop = (v: { moneda?: string | null; trm_contrato?: number | null }) =>
     (v.moneda ?? "COP") === "USD" ? (Number(v.trm_contrato) || trmReferencia || 0) : 1;
 
+  // Todas las comisiones del contrato (no solo una). Una comisión descontada
+  // en el precio (NETO) no resta: ventas.precio_venta ya se guardó neto de ella.
+  const comisionEstadoPorContrato = new Map((ventas ?? []).map((v) => [v.numero_contrato, v.comision_estado as string | null]));
   const b2bPorContrato = new Map<string, number>();
   for (const r of b2b ?? []) {
-    const c = calcComisionB2B({ precioVenta: r.precio_venta, baseComisionable: r.base_comision, pctComision: r.pct_comision, recobroTotal: r.recobro_total, pctRecobroAliado: r.pct_recobro_aliado, aplicaRetencion: r.aplica_retencion, pctRetencion: r.pct_retencion }).totalPagar;
+    const c = comisionParaRentabilidad(r as FilaComisionB2B, comisionEstadoPorContrato.get(r.numero_contrato));
     b2bPorContrato.set(r.numero_contrato, (b2bPorContrato.get(r.numero_contrato) ?? 0) + c);
   }
 

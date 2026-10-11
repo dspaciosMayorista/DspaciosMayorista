@@ -339,17 +339,17 @@ describe("ctx.tecnico (defecto 1) — un fallo TÉCNICO real de contexto (auth.g
 });
 
 describe("elevarEstadoFlujo(estado, \"parcial\") — pasos BEST-EFFORT caídos elevan 'parcial' (el contrato/reserva SÍ se creó, nunca bloquean, pero el TOTAL ya no dice 'ok' a ciegas)", () => {
-  test("crearContratoInterno: cxp_automaticas / negociado_admin / aliado_b2b", () => {
+  test("crearContratoInterno: cxp_automaticas / negociado_admin (sin etapa aliado_b2b: el manual ya no crea comisión)", () => {
     const cuerpo = cuerpoDeFuncion(leer(CONTRATOS_ARCHIVO), "crearContratoInterno");
     assert.match(cuerpo, /if\s*\(_resultadoCxp\s*!==\s*"ok"\)\s*elevarEstadoFlujo\(estado,\s*"parcial"\)/, "cxp_automaticas");
     const idxAdminBlock = cuerpo.indexOf("if (_huboBloqueAdmin) {");
     assert.ok(idxAdminBlock > -1, "no se encontró el bloque 'if (_huboBloqueAdmin)'");
     const cuerpoAdminBlock = cuerpo.slice(idxAdminBlock, cuerpo.indexOf("}", cuerpo.indexOf("elevarEstadoFlujo", idxAdminBlock)) + 1);
     assert.match(cuerpoAdminBlock, /if\s*\(_resultadoAdmin\s*!==\s*"ok"\)\s*elevarEstadoFlujo\(estado,\s*"parcial"\)/, "negociado_admin");
-    const idxAliadoBlock = cuerpo.indexOf("if (aliado) {\n    registrarEtapa(\"crear_contrato\", flujoId, \"aliado_b2b\"");
-    assert.ok(idxAliadoBlock > -1, "no se encontró el bloque 'if (aliado)' que registra la etapa aliado_b2b");
-    const cuerpoAliadoBlock = cuerpo.slice(idxAliadoBlock, cuerpo.indexOf("}", cuerpo.indexOf("elevarEstadoFlujo", idxAliadoBlock)) + 1);
-    assert.match(cuerpoAliadoBlock, /if\s*\(_resultadoAliado\s*!==\s*"ok"\)\s*elevarEstadoFlujo\(estado,\s*"parcial"\)/, "aliado_b2b");
+    // #38 (decisión del dueño): el contrato manual B2B nace "Por definir"; la
+    // comisión se registra a mano en la pestaña (registrar_comision_b2b_manual).
+    assert.doesNotMatch(cuerpo, /from\("aliados_b2b"\)/, "el contrato manual no debe autogenerar la comisión B2B");
+    assert.doesNotMatch(cuerpo, /"aliado_b2b"/, "ya no hay etapa aliado_b2b en el contrato manual");
   });
 
   test("reservarProgramaInterno: insert_hijas (hoteles, no bloqueante) / cxp_programa", () => {

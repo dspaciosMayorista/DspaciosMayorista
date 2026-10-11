@@ -149,7 +149,17 @@ test("reservar/actions.ts: las filas derivadas (aliados_b2b, CxP, asientos) here
   const start = src.indexOf("async function reservarDesdeTarifarioInterno");
   const end = src.indexOf("export async function crearCotizacion(");
   const fn = src.slice(start, end);
-  assert.match(fn, /aliados_b2b"\)\.insert\(\{\s*\n\s*numero_contrato:\s*numero,\s*\n\s*tenant,/, "el insert de aliados_b2b en reservarDesdeTarifarioInterno no estampa tenant");
+  // #38 (migración 205): la comisión ya no se inserta desde TypeScript; la
+  // crea `registrar_comision_b2b_reserva` copiando el tenant de la VENTA que
+  // esta función acaba de insertar con el tenant validado — mismo criterio
+  // que las CxP de abajo (no queda un tenant independiente que pueda divergir).
+  assert.match(fn, /from\("ventas"\)\.insert\(\{\s*\n\s*numero_contrato:\s*numero,[\s\S]{0,300}\n\s*tenant,/, "la venta de reservarDesdeTarifarioInterno no estampa el tenant validado");
+  assert.match(fn, /registrarComisionReserva\(sb, numero, aliadoB2B\)/, "la comisión B2B no cuelga de la venta recién creada");
+  assert.match(
+    leer("supabase/migrations/20260601000205_comisiones_b2b_integridad.sql"),
+    /\) values \(\s*\n\s*v\.numero_contrato, v\.tenant,/,
+    "registrar_comision_b2b_reserva no hereda el tenant de la venta"
+  );
   // Las filas de CxP ya no llevan `tenant` en TypeScript: desde la migración
   // 171 lo estampa la propia transacción financiera a partir del parámetro
   // `p_tenant`, que es el tenant YA validado que recibe esta función. Es una

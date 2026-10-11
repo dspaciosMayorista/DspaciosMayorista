@@ -5,6 +5,7 @@ import Link from "next/link";
 import { Button } from "@/components/ui/button";
 import { formatMoneda, formatFechaLarga } from "@/lib/utils";
 import { ShareButtons } from "./ShareButtons";
+import { permisosComisionContrato } from "@/lib/finanzas/comisionB2B";
 import { GestionTabs } from "./GestionTabs";
 import { EstadoVenta } from "./EstadoVenta";
 import { EditarVentaForm } from "./EditarVentaForm";
@@ -55,6 +56,10 @@ export default async function ContratoDetallePage({
   // migración 147) pero solo GESTIONA los suyos. Los roles administrativos
   // conservan su operación completa.
   const puedeEditar = verFinanzas || esAsesorDelContrato === true;
+  // Comisiones B2B (#38): las ven los roles con lectura por tenant (control_vuelo
+  // no); `venta` registra la de SU contrato; borrar solo gestión. La base lo
+  // vuelve a exigir (RLS + registrar_comision_b2b_manual).
+  const permisosComision = permisosComisionContrato(perfil?.rol, esAsesorDelContrato === true);
   const soloLectura = !puedeEditar;
 
   const [
@@ -409,6 +414,10 @@ export default async function ContratoDetallePage({
         totalPagado={totalPagado}
         cuentasPorPagar={cxpConRetencion}
         comisionesB2B={b2b ?? []}
+        comisionEstadoVenta={fin?.comision_estado ?? null}
+        permisosComision={permisosComision}
+        contratoB2B={venta.tipo_asesor === "agencia" || venta.tipo_asesor === "freelance"}
+        aliadoContratoId={(venta.aliado_id as number | null) ?? null}
         facturas={facturasConItems}
         formasPago={formasPago}
         moneda={(venta.moneda as string) ?? "COP"}

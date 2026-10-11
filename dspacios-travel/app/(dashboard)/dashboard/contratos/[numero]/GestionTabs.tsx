@@ -1,17 +1,17 @@
 "use client";
 
 import { DateInput } from "@/components/ui/DateInput";
-import { useState, useTransition } from "react";
+import { Fragment, useState, useTransition } from "react";
 import Link from "next/link";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { formatCOP, formatMoneda } from "@/lib/utils";
 import { fechaNegocio } from "@/lib/fechaNegocio";
 import {
-  calcComisionB2B,
   FISCAL_DEFAULT,
   type ParamsFiscales,
 } from "@/lib/calc/finanzas";
+import { calcularComisionFila, comisionParaRentabilidad, esComisionDescontada, esComisionEnContratoNeto, type FilaComisionB2B } from "@/lib/finanzas/comisionB2B";
 import { AbonoForm } from "./AbonoForm";
 import { PlanCobroPanel, type CuotaRow } from "./PlanCobroPanel";
 import {
@@ -28,6 +28,7 @@ import {
 import { registrarPagoProveedor, deshacerUltimoPago } from "../../pagos/actions";
 import { actualizarAbono, eliminarAbono } from "../actions";
 import { ResponsiveTableShell } from "@/components/ui/ResponsiveTableShell";
+import { EditorCamposComision } from "../../comisiones/ComisionesList";
 
 type Abono = { id: number; valor_abono: number; forma_pago: string | null; referencia: string | null; fecha_abono: string; trm: number | null; monto_cop: number | null };
 type PagoCxP = { id: number; fecha: string; valor: number; trm: number | null };
@@ -38,7 +39,7 @@ type CxP = {
   pagos: PagoCxP[];
   retenido: number;
 };
-type B2B = { id: number; aliado: string | null; precio_venta: number; base_comision: number; pct_comision: number; recobro_total: number; pct_recobro_aliado: number; aplica_retencion: boolean; pct_retencion: number };
+type B2B = FilaComisionB2B & { aliado: string | null };
 type FacturaItem = { descripcion: string | null; valor: number; gravable: boolean };
 type Factura = { id: number; numero_factura: string | null; fecha_factura: string | null; base_gravable: number; base_no_gravable: number; estado_dian: string | null; items: FacturaItem[] };
 
@@ -58,6 +59,15 @@ export type GestionProps = {
   totalPagado: number;
   cuentasPorPagar: CxP[];
   comisionesB2B: B2B[];
+  // ventas.comision_estado: 'descontada' = vendido en modo neta (comisión ya
+  // descontada del precio). Decide qué comisión resta y cuál es saldo.
+  comisionEstadoVenta?: string | null;
+  // Comisiones B2B por rol (permisosComisionContrato): ver / registrar / borrar.
+  permisosComision?: { ver: boolean; registrar: boolean; editar: boolean; borrar: boolean; soloAliadoDelContrato: boolean };
+  // Venta B2B (agencia/freelance) y su aliado del catálogo: sin comisión, el
+  // estado esperado es "Por definir"; `venta` solo la registra para ese aliado.
+  contratoB2B?: boolean;
+  aliadoContratoId?: number | null;
   facturas: Factura[];
   formasPago: string[];
   moneda?: string;       // moneda del contrato (USD muestra el estado de cuenta en dólares)
@@ -82,12 +92,10 @@ export function GestionTabs(p: GestionProps) {
     p.costos.costo_hotel + p.costos.costo_aereo + p.costos.costo_receptivo +
     p.costos.costo_asistencia + p.costos.otros_costos;
 
+  // Lo que las comisiones restan al flujo: todas las del contrato, salvo la
+  // descontada en el precio (el PVP guardado ya viene neto de ella).
   const comB2BTotal = p.comisionesB2B.reduce(
-    (s, b) => s + calcComisionB2B({
-      precioVenta: b.precio_venta, baseComisionable: b.base_comision, pctComision: b.pct_comision,
-      recobroTotal: b.recobro_total, pctRecobroAliado: b.pct_recobro_aliado,
-      aplicaRetencion: b.aplica_retencion, pctRetencion: b.pct_retencion,
-    }).totalPagar, 0
+    (s, b) => s + comisionParaRentabilidad(b, p.comisionEstadoVenta), 0
   );
 
   const fiscal = p.fiscal ?? FISCAL_DEFAULT;
@@ -100,6 +108,8 @@ export function GestionTabs(p: GestionProps) {
 
   const tabs: { value: string; label: string }[] = [
     { value: "cartera", label: "Cartera" },
+    // Comisiones: también la ve `venta` (lectura por tenant); control_vuelo no.
+    ...(!p.verFinanzas && p.permisosComision?.ver ? [{ value: "comisiones", label: "Comisiones" }] : []),
     ...(p.verFinanzas ? [
       { value: "costos", label: "Costos" },
       { value: "proveedores", label: "Proveedores" },
@@ -144,8 +154,10 @@ export function GestionTabs(p: GestionProps) {
         )}
         {p.verFinanzas && tab === "costos" && <CostosTab numero={p.numero} costos={p.costos} />}
         {p.verFinanzas && tab === "proveedores" && <ProveedoresTab numero={p.numero} filas={p.cuentasPorPagar} catalogo={p.proveedoresCatalogo ?? []} />}
-        {p.verFinanzas && tab === "comisiones" && (
-          <ComisionesTab numero={p.numero} precioVenta={p.precioVenta} filas={p.comisionesB2B} comB2BTotal={comB2BTotal} aliadosCatalogo={p.aliadosCatalogo ?? []} />
+        {p.permisosComision?.ver && tab === "comisiones" && (
+          <ComisionesTab numero={p.numero} filas={p.comisionesB2B} comB2BTotal={comB2BTotal} aliadosCatalogo={p.aliadosCatalogo ?? []}
+            comisionEstadoVenta={p.comisionEstadoVenta ?? null} permisos={p.permisosComision}
+            contratoB2B={p.contratoB2B === true} aliadoContratoId={p.aliadoContratoId ?? null} />
         )}
         {p.verFinanzas && tab === "facturacion" && (
           <FacturacionTab numero={p.numero} filas={p.facturas} ivaGenerado={ivaGenerado} ivaPct={fiscal.IVA}
@@ -646,9 +658,19 @@ function PagoProveedorPanel({ f, pagado, saldo }: { f: CxP; pagado: number; sald
 // ── COMISIONES (solo B2B) ──────────────────────────────────────────────
 // La comisión del asesor interno NO va aquí: se liquida en el global (módulo
 // Liquidación) si el asesor cumple su meta.
-function ComisionesTab({ numero, precioVenta, filas, comB2BTotal, aliadosCatalogo }: {
-  numero: string; precioVenta: number; filas: B2B[]; comB2BTotal: number; aliadosCatalogo: AliadoCat[];
+function ComisionesTab({ numero, filas, comB2BTotal, aliadosCatalogo, comisionEstadoVenta, permisos, contratoB2B, aliadoContratoId }: {
+  numero: string; filas: B2B[]; comB2BTotal: number; aliadosCatalogo: AliadoCat[];
+  comisionEstadoVenta: string | null; permisos: { ver: boolean; registrar: boolean; editar: boolean; borrar: boolean; soloAliadoDelContrato: boolean };
+  contratoB2B: boolean; aliadoContratoId: number | null;
 }) {
+  const vendidoNeto = comisionEstadoVenta === "descontada";
+  const puedeGestionar = permisos.borrar;
+  // Quien no es de gestión operativa (el asesor `venta`) registra solo UNA vez,
+  // para el aliado del contrato; la identidad y la retención salen del catálogo.
+  const esAsesor = permisos.soloAliadoDelContrato;
+  const aliadoDelContrato = aliadosCatalogo.find((a) => a.id === aliadoContratoId) ?? null;
+  // Fila abierta en el editor (base, % o valor exacto, recobro).
+  const [editando, setEditando] = useState<number | null>(null);
   const [aliadoId, setAliadoId] = useState("");
   const [aliado, setAliado] = useState("");
   const [nit, setNit] = useState("");
@@ -677,28 +699,65 @@ function ComisionesTab({ numero, precioVenta, filas, comB2BTotal, aliadosCatalog
   }
 
   function agregar() {
-    if (!aliado.trim() || !Number(pct)) return;
     setErr("");
+    // `venta`: el aliado es el del contrato (la base lo impone igual).
+    const nombre = esAsesor ? (aliadoDelContrato?.nombre ?? "") : aliado;
+    if (!nombre.trim()) { setErr("Indica el aliado."); return; }
+    // % vacío ≠ 0: vacío es "falta el dato"; 0 es una comisión solo de recobro.
+    if (pct.trim() === "") { setErr("Indica el % de comisión (escribe 0 si no hay comisión)."); return; }
     start(async () => {
       const r = await crearComisionB2B({
-        numeroContrato: numero, aliado, nit, tipoAliado,
-        aliadoId: aliadoId ? Number(aliadoId) : null,
-        precioVenta,
+        numeroContrato: numero,
+        aliado: nombre,
+        nit: esAsesor ? (aliadoDelContrato?.nit ?? "") : nit,
+        tipoAliado: esAsesor ? (aliadoDelContrato?.tipo ?? "") : tipoAliado,
+        aliadoId: esAsesor ? aliadoContratoId : (aliadoId ? Number(aliadoId) : null),
         pctComision: Number(pct) / 100, recobroTotal: Number(recobro) || 0,
-        pctRecobroAliado: Number(pctRec) / 100 || 0.5,
-        aplicaRetencion: ret, pctRetencion: Number(pctRet) / 100 || 0,
+        // % del recobro vacío = el 50 % por defecto del formulario; 0 se respeta.
+        pctRecobroAliado: pctRec.trim() === "" ? 0.5 : Number(pctRec) / 100,
+        aplicaRetencion: esAsesor ? false : ret, pctRetencion: esAsesor ? 0 : (Number(pctRet) / 100 || 0),
       });
       if (r.ok) { setAliadoId(""); setAliado(""); setNit(""); setTipoAliado("freelance"); setPct(""); setRecobro(""); setPctRec("50"); setRet(false); setPctRet(""); }
       else setErr(r.error);
     });
   }
 
+  // Qué alta se ofrece: gestión operativa, siempre (salvo NETO); `venta`, solo
+  // en su contrato B2B con aliado y mientras no tenga comisión.
+  const muestraAlta = permisos.registrar && !vendidoNeto
+    && (!esAsesor || (contratoB2B && aliadoContratoId != null && filas.length === 0));
+
   return (
     <div className="space-y-4">
-      {/* Comisiones B2B */}
+      {/* Contrato B2B sin comisión: "Por definir" es el estado esperado (el
+          contrato manual ya no la genera sola, #38). */}
+      {contratoB2B && filas.length === 0 && !vendidoNeto && (
+        <p className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-800">
+          Comisión B2B: <b>Por definir</b>. Este contrato B2B todavía no tiene comisión registrada.
+        </p>
+      )}
+      {vendidoNeto && (
+        <p className="rounded-lg border border-gray-200 bg-gray-50 px-3 py-2 text-xs text-gray-600">
+          Este contrato se vendió en modo neta: la comisión del aliado ya se descontó del precio de venta, así que no se registra como comisión por pagar.
+        </p>
+      )}
+      {esAsesor && filas.length > 0 && (
+        <p className="text-xs text-gray-500">
+          {permisos.editar
+            ? "Puedes corregir tu comisión (base, % o valor exacto) mientras no tenga abonos; después, solo administración."
+            : "Este contrato tiene comisión registrada. Solo su asesor o administración pueden corregirla."}
+        </p>
+      )}
+
+      {muestraAlta && (
       <div className={card}>
-        <p className={lbl}>Agregar comisión B2B (aliado)</p>
-        {aliadosCatalogo.length > 0 && (
+        <p className={lbl}>{esAsesor ? "Registrar la comisión de tu contrato" : "Agregar comisión B2B (aliado)"}</p>
+        {esAsesor ? (
+          <p className="mb-3 text-sm text-gray-700">
+            Aliado: <b>{aliadoDelContrato?.nombre ?? "—"}</b>
+            <span className="block text-xs text-gray-500">La identidad y la retención salen del catálogo; la base es el PVP menos el impuesto del contrato.</span>
+          </p>
+        ) : aliadosCatalogo.length > 0 && (
           <div className="mb-3">
             <label className="mb-1 block text-xs font-medium text-gray-600">Elegir aliado existente (opcional)</label>
             <select
@@ -714,33 +773,43 @@ function ComisionesTab({ numero, precioVenta, filas, comB2BTotal, aliadosCatalog
           </div>
         )}
         <div className="grid grid-cols-2 gap-3 md:grid-cols-3">
-          <Input placeholder="Aliado" value={aliado} onChange={(e) => { setAliado(e.target.value); setAliadoId(""); }} />
-          <Input placeholder="NIT" value={nit} onChange={(e) => setNit(e.target.value)} />
-          {/* Freelance (persona natural) genera cuenta de cobro; agencia (persona
-              jurídica) factura electrónicamente en su lugar — ver /portal/comision. */}
-          <select
-            value={tipoAliado}
-            onChange={(e) => setTipoAliado(e.target.value === "agencia" ? "agencia" : "freelance")}
-            className="rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm"
-          >
-            <option value="freelance">Freelance (persona natural)</option>
-            <option value="agencia">Agencia (persona jurídica)</option>
-          </select>
-          <Input type="number" placeholder="% comisión" value={pct} onChange={(e) => setPct(e.target.value)} />
+          {!esAsesor && (
+            <>
+              <Input placeholder="Aliado" value={aliado} onChange={(e) => { setAliado(e.target.value); setAliadoId(""); }} />
+              <Input placeholder="NIT" value={nit} onChange={(e) => setNit(e.target.value)} />
+              {/* Freelance (persona natural) genera cuenta de cobro; agencia (persona
+                  jurídica) factura electrónicamente en su lugar — ver /portal/comision.
+                  Con un aliado del catálogo el tipo es el suyo (la base lo impone). */}
+              <select
+                value={tipoAliado}
+                onChange={(e) => setTipoAliado(e.target.value === "agencia" ? "agencia" : "freelance")}
+                disabled={aliadoId !== ""}
+                title={aliadoId !== "" ? "Tipo del catálogo del aliado" : undefined}
+                className="rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm disabled:bg-gray-50 disabled:text-gray-500"
+              >
+                <option value="freelance">Freelance (persona natural)</option>
+                <option value="agencia">Agencia (persona jurídica)</option>
+              </select>
+            </>
+          )}
+          <Input type="number" placeholder="% comisión" aria-label="% comisión" value={pct} onChange={(e) => setPct(e.target.value)} />
           <Input type="number" placeholder="Recobro total" value={recobro} onChange={(e) => setRecobro(e.target.value)} />
           <Input type="number" placeholder="% recobro aliado" value={pctRec} onChange={(e) => setPctRec(e.target.value)} />
-          <label className="flex items-center gap-2 text-sm text-gray-600">
-            <input type="checkbox" checked={ret} onChange={(e) => setRet(e.target.checked)} /> Retención
-            {ret && <Input type="number" className="w-20" placeholder="%" value={pctRet} onChange={(e) => setPctRet(e.target.value)} />}
-          </label>
+          {!esAsesor && (
+            <label className="flex items-center gap-2 text-sm text-gray-600">
+              <input type="checkbox" checked={ret} onChange={(e) => setRet(e.target.checked)} /> Retención
+              {ret && <Input type="number" className="w-20" placeholder="%" value={pctRet} onChange={(e) => setPctRet(e.target.value)} />}
+            </label>
+          )}
         </div>
         <div className="mt-3 flex items-center gap-3">
           <Button onClick={agregar} disabled={pending} style={{ backgroundColor: "var(--brand-primary)" }}>
-            {pending ? "Guardando…" : "Agregar"}
+            {pending ? "Guardando…" : esAsesor ? "Registrar comisión" : "Agregar"}
           </Button>
-          {err && <span className="text-sm text-red-600">{err}</span>}
         </div>
       </div>
+      )}
+      {err && <p className="text-sm text-red-600">{err}</p>}
 
       {filas.length > 0 && (
         <ResponsiveTableShell minWidth={520} className="overflow-x-auto rounded-xl border border-gray-200 bg-white">
@@ -750,14 +819,48 @@ function ComisionesTab({ numero, precioVenta, filas, comB2BTotal, aliadosCatalog
               <th className="px-4 py-2 text-right">A pagar</th><th className="px-4 py-2">Acciones</th>
             </tr></thead>
             <tbody>{filas.map((b) => {
-              const c = calcComisionB2B({ precioVenta: b.precio_venta, baseComisionable: b.base_comision, pctComision: b.pct_comision, recobroTotal: b.recobro_total, pctRecobroAliado: b.pct_recobro_aliado, aplicaRetencion: b.aplica_retencion, pctRetencion: b.pct_retencion });
+              const c = calcularComisionFila(b);
+              const descontada = esComisionDescontada(b, comisionEstadoVenta);
+              const enNeto = esComisionEnContratoNeto(b, comisionEstadoVenta);
               return (
-                <tr key={b.id} className="border-t border-gray-50">
+                <Fragment key={b.id}>
+                <tr className="border-t border-gray-50">
                   <td className="px-4 py-2 text-gray-700" data-label="Aliado">{b.aliado ?? "—"}</td>
-                  <td className="px-4 py-2 text-right" data-label="% Com.">{(b.pct_comision * 100).toFixed(1)}%</td>
-                  <td className="px-4 py-2 text-right tabular-nums" data-label="A pagar">{formatCOP(c.totalPagar)}</td>
-                  <td className="px-4 py-2 text-right" data-label="Acciones"><DeleteBtn onClick={() => eliminarComisionB2B(b.id, numero)} /></td>
-                </tr>);
+                  <td className="px-4 py-2 text-right" data-label="% Com.">{((Number(b.pct_comision) || 0) * 100).toFixed(1)}%</td>
+                  <td className="px-4 py-2 text-right tabular-nums" data-label="A pagar">
+                    {descontada
+                      ? <span className="text-gray-400">{formatCOP(c.totalPagar)} · descontada en el precio</span>
+                      : enNeto
+                        ? <span className="text-amber-700">{formatCOP(c.totalPagar)} · contrato neto: revisión manual, sin abonos</span>
+                        : formatCOP(c.totalPagar)}
+                  </td>
+                  <td className="px-4 py-2 text-right" data-label="Acciones">
+                    <div className="flex items-center justify-end gap-3">
+                      {permisos.editar && !descontada && (
+                        <button type="button" onClick={() => setEditando((x) => (x === b.id ? null : b.id))}
+                          className="text-xs font-medium hover:underline" style={{ color: "var(--brand-primary)" }}>
+                          {editando === b.id ? "Cerrar" : "Editar"}
+                        </button>
+                      )}
+                      {puedeGestionar && !descontada && (
+                        <DeleteBtn onClick={async () => {
+                          const r = await eliminarComisionB2B(b.id, numero);
+                          if (!r.ok) setErr(r.error);
+                        }} />
+                      )}
+                    </div>
+                  </td>
+                </tr>
+                {editando === b.id && (
+                  <tr className="border-t border-gray-100 bg-gray-50/60">
+                    <td colSpan={4} className="px-4 py-3">
+                      {/* Abonos: la pestaña no los lee para `venta`; si los hay, el
+                          servidor (y el trigger de la 205) rechazan el cambio. */}
+                      <EditorCamposComision id={b.id} fila={b} conAbonos={false} descontada={descontada} aplicaRetencion={!!b.aplica_retencion} />
+                    </td>
+                  </tr>
+                )}
+                </Fragment>);
             })}</tbody>
             <tfoot><tr className="border-t border-gray-200 font-medium">
               <td className="px-4 py-2" colSpan={2}>Total comisiones B2B</td>

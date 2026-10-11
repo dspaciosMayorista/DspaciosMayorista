@@ -164,7 +164,8 @@ export function crearBD(semilla: Record<string, Fila[]> = {}, rpcs: Record<strin
       } else if (q.op === "delete") {
         const borrar = new Set(coinciden());
         tablas.set(tabla, filas(tabla).filter((f) => !borrar.has(f)));
-        data = [];
+        // Como PostgREST con .select(): devuelve las filas borradas.
+        data = [...borrar];
       } else {
         data = [...coinciden()];
         for (const [col, asc] of [...q.orden].reverse()) {
