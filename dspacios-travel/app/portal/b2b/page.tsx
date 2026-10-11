@@ -6,11 +6,13 @@ import { LogoutButton } from "@/app/(dashboard)/LogoutButton";
 import { formatMoneda, formatFechaLarga } from "@/lib/utils";
 import { comisionDefault, categoriaAliado } from "@/lib/b2b";
 import { contratosDelPortalB2B, consultasPortalSupabase, COLUMNAS_DECISION } from "@/lib/auth/contratosPortalB2B";
+import { comisionesDelPortal } from "@/lib/finanzas/comisionPortal";
 
 export const dynamic = "force-dynamic";
 
 const ESTADO_COMISION: Record<string, string> = {
   pendiente: "Pendiente", cuenta_cobro: "Cuenta de cobro", facturada: "Facturada", pagada: "Pagada",
+  parcial: "Abono parcial", descontada: "Descontada",
 };
 
 export default async function PortalB2BPage() {
@@ -96,7 +98,7 @@ export default async function PortalB2BPage() {
   // `consultasPortalSupabase`; la verificación de fichas en `aliados_b2b` es
   // fail-closed (`verificarFichasComisionManual`).
   const sel = `${COLUMNAS_DECISION}, cliente, destino, precio_venta, moneda, estado, modo_compra, comision_b2b, comision_estado, tipo_asesor`;
-  const { contratos, legacyNoVerificado } = await contratosDelPortalB2B(
+  const { contratos, via, legacyNoVerificado } = await contratosDelPortalB2B(
     perfil
       ? {
           id: user.id,
@@ -109,6 +111,16 @@ export default async function PortalB2BPage() {
         }
       : null,
     consultasPortalSupabase(admin, sel)
+  );
+
+  // Comisión visible (#38): sale de aliados_b2b, con la misma lectura que la
+  // cuenta de cobro (`comisionesDelPortal`). No decide pertenencia: usa la
+  // vía que ya resolvió `contratosDelPortalB2B`.
+  const comisionPorContrato = await comisionesDelPortal(
+    admin,
+    contratos as unknown as Parameters<typeof comisionesDelPortal>[1],
+    via,
+    { aliadoId: (perfil?.aliado_id as number | null) ?? null, nombre: nombre || null },
   );
 
   // Abonos para el saldo
@@ -249,7 +261,8 @@ export default async function PortalB2BPage() {
                 const moneda = (c.moneda as string) ?? "COP";
                 const valor = Number(c.precio_venta ?? 0);
                 const saldo = valor - (abonosPorContrato.get(num) ?? 0);
-                const com = c.comision_b2b != null ? Number(c.comision_b2b) : null;
+                const vis = comisionPorContrato.get(num) ?? null;
+                const com = vis?.total ?? null;
                 return (
                   <tr key={num} className="border-t border-gray-50">
                     <td className="px-3 py-2 font-mono font-semibold text-[#1D7C9A]">{num}</td>
@@ -262,13 +275,13 @@ export default async function PortalB2BPage() {
                     <td className="px-3 py-2 text-xs text-gray-500">{c.modo_compra === "comisionable" ? "Comisionable" : c.modo_compra === "neta" ? "Neta" : "—"}</td>
                     <td className="px-3 py-2 text-right text-xs tabular-nums">
                       {com != null && com > 0 ? `${formatMoneda(com, moneda)}` : "—"}
-                      {c.comision_estado ? <span className="block text-[10px] text-gray-400">{ESTADO_COMISION[c.comision_estado as string] ?? (c.comision_estado as string)}</span> : null}
+                      {vis?.estado ? <span className="block text-[10px] text-gray-400">{ESTADO_COMISION[vis.estado] ?? vis.estado}</span> : null}
                       {/* Cuenta de cobro: solo freelance (persona natural). Las agencias
                           (persona jurídica) deben enviar su factura electrónica. */}
-                      {c.tipo_asesor === "freelance" && c.modo_compra === "comisionable" && com != null && com > 0 && (
+                      {vis?.cobrable && vis.tipo === "freelance" && (
                         <Link href={`/portal/comision/${encodeURIComponent(num)}`} className="block text-[10px] font-medium" style={{ color: "var(--brand-accent)" }}>Cuenta de cobro →</Link>
                       )}
-                      {c.tipo_asesor === "agencia" && c.modo_compra === "comisionable" && com != null && com > 0 && (
+                      {vis?.cobrable && vis.tipo === "agencia" && (
                         <span className="block text-[10px] text-gray-400">Factura electrónica</span>
                       )}
                     </td>

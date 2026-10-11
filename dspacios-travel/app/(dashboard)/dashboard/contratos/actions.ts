@@ -427,13 +427,15 @@ async function crearContratoInterno(
   const canal = tipoVenta === "interno" ? "B2C" : "B2B";
   let agenciaNombre: string | null = null;
   let freelanceNombre: string | null = null;
-  let aliado: { nombre: string; nit: string | null; pct_comision: number | null; aplica_retencion: boolean; pct_retencion: number } | null = null;
+  // El aliado sigue siendo obligatorio y del catálogo (vínculo ventas.aliado_id),
+  // pero el contrato manual ya NO genera la comisión B2B (decisión del dueño,
+  // #38): nace "Por definir" y se registra a mano en la pestaña Comisiones
+  // (el asesor de su propio contrato, o administración).
   if (tipoVenta !== "interno") {
     if (!input.aliadoId) return _rechazarValidacion({ ok: false, error: `Selecciona la ${tipoVenta} del catálogo.` });
-    const { data, error: aliadoQueryError } = await sb.from("aliados").select("nombre, nit, pct_comision, aplica_retencion, pct_retencion").eq("id", input.aliadoId).maybeSingle();
+    const { data, error: aliadoQueryError } = await sb.from("aliados").select("nombre").eq("id", input.aliadoId).maybeSingle();
     if (aliadoQueryError) return _errorValidacion("error_consulta_aliados", aliadoQueryError);
     if (!data) return _rechazarValidacion({ ok: false, error: "La agencia/freelance seleccionada no existe." });
-    aliado = data;
     if (tipoVenta === "agencia") agenciaNombre = data.nombre; else freelanceNombre = data.nombre;
   }
   registrarEtapa("crear_contrato", flujoId, "validacion_negocio", Math.round(performance.now() - _tValidacion0), "ok");
@@ -865,38 +867,6 @@ async function crearContratoInterno(
     // Best-effort (oculto al asesor): un fallo aquí nunca bloquea el
     // contrato, pero SÍ debe elevar el TOTAL a "parcial" (nunca "ok" a ciegas).
     if (_resultadoAdmin !== "ok") elevarEstadoFlujo(estado, "parcial");
-  }
-
-  // Auto-comisión B2B: usa el % propio del aliado o, si no tiene, el default general.
-  const _tAliado0 = performance.now();
-  let _resultadoAliado: ResultadoEtapa = "ok";
-  if (aliado) {
-    const defParam = tipoVenta === "agencia" ? "COMISION_AGENCIA" : "COMISION_FREELANCE";
-    const { data: p } = await sb.from("parametros_tributarios").select("valor").eq("parametro", defParam).maybeSingle();
-    const pct = aliado.pct_comision ?? Number(p?.valor) ?? (tipoVenta === "agencia" ? 0.12 : 0.11);
-    const { error: aliadoError } = await sb.from("aliados_b2b").insert({
-      numero_contrato: numero,
-      tenant,
-      aliado: aliado.nombre,
-      nit: aliado.nit,
-      precio_venta: precioVenta,
-      base_comision: precioVenta,
-      pct_comision: pct,
-      recobro_total: 0,
-      pct_recobro_aliado: 0,
-      aplica_retencion: aliado.aplica_retencion,
-      pct_retencion: aliado.pct_retencion,
-      estado: "pendiente",
-    });
-    if (aliadoError) {
-      _resultadoAliado = "error";
-      registrarErrorTecnico("crear_contrato", flujoId, "aliado_b2b", "error_insert", aliadoError);
-    }
-  }
-  if (aliado) {
-    registrarEtapa("crear_contrato", flujoId, "aliado_b2b", Math.round(performance.now() - _tAliado0), _resultadoAliado);
-    // Best-effort: no bloquea la creación del contrato, pero eleva el TOTAL.
-    if (_resultadoAliado !== "ok") elevarEstadoFlujo(estado, "parcial");
   }
 
   revalidatePath("/dashboard/contratos");

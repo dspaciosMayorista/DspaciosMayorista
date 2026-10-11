@@ -8,19 +8,23 @@ import { agenciaDe } from "@/lib/tenant.server";
 import { esTenant } from "@/lib/tenant";
 import { resolverComisionB2B } from "@/lib/finanzas/comisionResolver";
 import { tituloDocumento } from "@/lib/utils/tituloDocumento";
+import { ElegirComision, idComisionDeQuery } from "./ElegirComision";
 
 export const dynamic = "force-dynamic";
 
-export async function generateMetadata({ params }: { params: Promise<{ numero: string }> }) {
+type Props = { params: Promise<{ numero: string }>; searchParams: Promise<{ id?: string | string[] }> };
+
+export async function generateMetadata({ params, searchParams }: Props) {
   const { numero } = await params;
-  const r = await resolverComisionB2B(numero);
-  return { title: { absolute: tituloDocumento("Cuenta de cobro", r?.numeroContrato ?? numero, r?.aliado) } };
+  const r = await resolverComisionB2B(numero, idComisionDeQuery((await searchParams).id));
+  return { title: { absolute: tituloDocumento("Cuenta de cobro", r?.numeroContrato ?? numero, r?.tipo === "comision" ? r.aliado : undefined) } };
 }
 
-export default async function CuentaCobroPage({ params }: { params: Promise<{ numero: string }> }) {
+export default async function CuentaCobroPage({ params, searchParams }: Props) {
   const { numero } = await params;
-  const r = await resolverComisionB2B(numero);
+  const r = await resolverComisionB2B(numero, idComisionDeQuery((await searchParams).id));
   if (!r) notFound();
+  if (r.tipo === "elegir") return <ElegirComision r={r} />;
 
   // Cuenta de cobro = documento de PERSONA NATURAL (freelance). Las agencias
   // (persona jurídica) deben facturar electrónicamente, no generan este documento.
@@ -54,7 +58,7 @@ export default async function CuentaCobroPage({ params }: { params: Promise<{ nu
         <Link href="/portal/b2b" className="text-sm text-gray-500 hover:text-gray-800">← Mis contratos</Link>
         <div className="flex items-center gap-3">
           {r.aliadoB2bId != null && (
-            <Link href={`/portal/comision/${encodeURIComponent(r.numeroContrato)}/estado-cuenta`} className="text-sm text-gray-500 hover:text-gray-800">
+            <Link href={`/portal/comision/${encodeURIComponent(r.numeroContrato)}/estado-cuenta?id=${r.aliadoB2bId}`} className="text-sm text-gray-500 hover:text-gray-800">
               Estado de cuenta →
             </Link>
           )}

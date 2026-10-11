@@ -157,7 +157,9 @@ export async function resolve(specifier, context, nextResolve) {
   // contra una base simulada en memoria.
   if ((specifier === "@/lib/supabase/server" || specifier === "@/lib/supabase/admin") &&
       (context.parentURL?.endsWith("/lib/cuenta/estado.ts") ||
-       context.parentURL?.endsWith("/lib/finanzas/comisionResolver.ts"))) {
+       context.parentURL?.endsWith("/lib/finanzas/comisionResolver.ts") ||
+       // Listado del portal B2B y su columna de comisión (#38, pruebas/comisionPortalB2B.react.ts).
+       context.parentURL?.endsWith("/portal/b2b/page.tsx"))) {
     return { url: specifier.endsWith("/admin") ? STUB_SUPABASE_ADMIN : STUB_SUPABASE_SERVER, shortCircuit: true };
   }
   // Registro/aprobación B2B (migración 193): acciones REALES de aprobación,
@@ -195,7 +197,9 @@ export async function resolve(specifier, context, nextResolve) {
   if (
     specifier === "next/navigation" &&
     (context.parentURL?.endsWith("DifusionClient.tsx") || context.parentURL?.endsWith("EditarBloqueoForm.tsx") ||
-      context.parentURL?.endsWith("/login/LoginClient.tsx"))
+      context.parentURL?.endsWith("/login/LoginClient.tsx") ||
+      // Botón de salir que importa el portal B2B (pruebas/comisionPortalB2B.react.ts).
+      context.parentURL?.endsWith("/LogoutButton.tsx"))
   ) {
     return { url: STUB_NEXT_NAVIGATION, shortCircuit: true };
   }

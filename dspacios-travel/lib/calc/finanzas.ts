@@ -43,8 +43,15 @@ export function fiscalFromParams(
 export type ComisionB2BInput = {
   precioVenta: number;
   // Base sobre la que se calcula la comisión (normalmente PVP − impuesto/BNC).
-  // Si no viene o es 0, cae al precio de venta completo (comportamiento legado).
-  baseComisionable?: number;
+  // Lectura LEGADO (baseExplicita falso/ausente, filas anteriores a la 205):
+  // si no viene o es 0, cae al precio de venta completo — se conserva tal cual.
+  // Con baseExplicita (filas nuevas): 0 es base 0; null/ausente = sin base
+  // definida y cae al PVP.
+  baseComisionable?: number | null;
+  baseExplicita?: boolean | null;
+  // "Ingresar por valor" (migración 205): la comisión base escrita en pesos.
+  // Si viene (≠ null), manda sobre base × % y se conserva al peso.
+  comisionValor?: number | null;
   pctComision: number; // ej 0.10
   recobroTotal?: number;
   pctRecobroAliado?: number; // def 0.5
@@ -60,14 +67,23 @@ export type ComisionB2B = {
   totalPagar: number;
 };
 
+// Base comisionable con la que NACE una comisión B2B nueva: PVP − impuesto/BNC
+// del contrato, nunca negativa. 0 es un valor válido (todo el PVP es no
+// comisionable) y se guarda tal cual: aquí no se reemplaza por el PVP.
+// Para que esa base 0 se LEA como 0, la fila nace con base_explicita = true
+// (migración 205); las filas antiguas (NULL) conservan la lectura legado.
+export function baseComisionableB2B(precioVenta: number, impuesto: number | null | undefined): number {
+  return Math.max(0, (Number(precioVenta) || 0) - (Number(impuesto) || 0));
+}
+
 export function calcComisionB2B(i: ComisionB2BInput): ComisionB2B {
   const pvp = i.precioVenta || 0;
-  const base = i.baseComisionable || pvp;
+  const base = i.baseExplicita ? (i.baseComisionable ?? pvp) : (i.baseComisionable || pvp);
   const pct = i.pctComision || 0;
   const rec = i.recobroTotal || 0;
   const prec = i.pctRecobroAliado ?? 0.5;
   const pret = i.aplicaRetencion ? i.pctRetencion || 0 : 0;
-  const comisionBase = base * pct;
+  const comisionBase = i.comisionValor != null ? Number(i.comisionValor) : base * pct;
   const recobroAliado = rec * prec;
   const totalComision = comisionBase + recobroAliado;
   const retencion = totalComision * pret;

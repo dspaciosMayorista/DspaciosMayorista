@@ -1,6 +1,6 @@
 import { createClient } from "@/lib/supabase/server";
 import { createAdminClient } from "@/lib/supabase/admin";
-import { calcComisionB2B } from "@/lib/calc/finanzas";
+import { calcularComisionFila, elegirFilaCobro, esComisionDescontada, evidenciaSinFicha, filasCobrables, type EvidenciaSinFicha, type FilaComisionB2B } from "@/lib/finanzas/comisionB2B";
 import { accesoDocumentoContrato } from "@/lib/auth/accesoDocumentoContrato";
 import { verificarFichasComisionManual, consultarFichasSupabase, fichaDeContrato } from "@/lib/auth/fichaComisionManual";
 import {
@@ -43,6 +43,7 @@ export type AliadoCatalogo = {
 };
 
 export type ComisionResuelta = {
+  tipo: "comision";
   numeroContrato: string;
   cliente: string | null;
   destino: string | null;
@@ -64,11 +65,33 @@ export type ComisionResuelta = {
 
 
 /**
+ * Un contrato con VARIAS comisiones cobrables para quien pregunta: la cuenta
+ * de cobro no elige en silencio la más reciente, pide escoger (`?id=`).
+ */
+export type ComisionesParaElegir = {
+  tipo: "elegir";
+  numeroContrato: string;
+  moneda: string;
+  opciones: { id: number; aliado: string | null; totalPagar: number }[];
+};
+
+type FilaResolver = FilaComisionB2B & { aliado: string | null; tipo_aliado: string | null };
+
+/**
  * Resuelve una comisión B2B por número de contrato, con control de acceso:
  * la ve un rol interno o el aliado dueño de la comisión. Comparte la lógica
  * entre la cuenta de cobro y el estado de cuenta de abonos.
+ *
+ * #38: el importe sale SIEMPRE de la fila de `aliados_b2b` (la misma lectura
+ * que Comisiones y Rentabilidad) cuando el contrato tiene una cobrable; el
+ * `ventas.comision_b2b` del flujo tarifario solo se usa si no hay ninguna. Una
+ * comisión descontada en el precio (modo neta) no se cobra: no hay documento.
+ * Con varias cobrables y sin `comisionId`, devuelve la lista para elegir.
  */
-export async function resolverComisionB2B(numero: string): Promise<ComisionResuelta | null> {
+export async function resolverComisionB2B(
+  numero: string,
+  comisionId?: number | null,
+): Promise<ComisionResuelta | ComisionesParaElegir | null> {
   const sb = await createClient();
   const { data: { user } } = await sb.auth.getUser();
   if (!user) return null;
@@ -81,74 +104,33 @@ export async function resolverComisionB2B(numero: string): Promise<ComisionResue
   const admin = createAdminClient();
   const { data: v } = await admin
     .from("ventas")
-    .select("numero_contrato, cliente, destino, fecha_salida, precio_venta, moneda, modo_compra, comision_b2b, b2b_usuario_id, aliado_id, agencia_nombre, freelance_nombre, tipo_asesor, tenant")
+    .select("numero_contrato, cliente, destino, fecha_salida, precio_venta, moneda, modo_compra, comision_b2b, comision_estado, b2b_usuario_id, aliado_id, agencia_nombre, freelance_nombre, tipo_asesor, tenant")
     .eq("numero_contrato", numero)
     .maybeSingle();
   if (!v) return null;
 
   // Vía 1: flujo tarifario/reservar B2B (solo mayorista) — la comisión ya
-  // queda en `ventas.comision_b2b`. Vía 2: comisión agregada a mano desde el
-  // contrato (`aliados_b2b`) — único camino en minorista (sin tarifario/
-  // reservar), también usado en mayorista para comisiones manuales.
+  // queda en `ventas.comision_b2b`. Vía 2: comisión registrada en
+  // `aliados_b2b` (manual, pestaña, o la que crea reservar) — único camino en
+  // minorista. TODAS las filas del contrato, no solo la más reciente.
   const esVentasB2B = v.modo_compra === "comisionable" && !!v.comision_b2b;
-  let aliadoB2B: { aliado: string | null; tipoAliado: string | null; aliadoId: number | null; id: number; detalle: DetalleComision } | null = null;
-  if (!esVentasB2B) {
-    const { data: b } = await admin
-      .from("aliados_b2b")
-      .select("id, aliado, tipo_aliado, aliado_id, base_comision, pct_comision, recobro_total, pct_recobro_aliado, aplica_retencion, pct_retencion")
-      .eq("numero_contrato", numero)
-      .order("id", { ascending: false })
-      .limit(1)
-      .maybeSingle();
-    if (b) {
-      const c = calcComisionB2B({
-        precioVenta: v.precio_venta ?? 0,
-        baseComisionable: b.base_comision,
-        pctComision: b.pct_comision,
-        recobroTotal: b.recobro_total,
-        pctRecobroAliado: b.pct_recobro_aliado,
-        aplicaRetencion: b.aplica_retencion,
-        pctRetencion: b.pct_retencion,
-      });
-      aliadoB2B = {
-        id: b.id,
-        aliado: b.aliado,
-        tipoAliado: b.tipo_aliado,
-        aliadoId: b.aliado_id,
-        detalle: {
-          pvp: v.precio_venta ?? 0,
-          baseComisionable: b.base_comision,
-          pctComision: b.pct_comision,
-          esPctEfectivo: false,
-          comisionBase: c.comisionBase,
-          recobroAliado: c.recobroAliado,
-          aplicaRetencion: b.aplica_retencion,
-          pctRetencion: b.pct_retencion,
-          retencion: c.retencion,
-          totalPagar: c.totalPagar,
-        },
-      };
-    }
-  }
-  if (!esVentasB2B && !aliadoB2B) return null;
+  const { data: filasRaw } = await admin
+    .from("aliados_b2b")
+    .select("id, numero_contrato, aliado, nit, tipo_aliado, aliado_id, precio_venta, base_comision, base_explicita, comision_valor, pct_comision, recobro_total, pct_recobro_aliado, aplica_retencion, pct_retencion, estado, descontada_en_precio")
+    .eq("numero_contrato", numero)
+    .order("id", { ascending: true });
+  const filas = (filasRaw ?? []) as FilaResolver[];
+  // La decisión de ACCESO al contrato no cambia: la vía 2 usa, como siempre,
+  // el aliado_id de la fila más reciente. Qué fila(s) se cobran se decide
+  // después, por aliado (filasCobrables).
+  const masReciente = filas.length > 0 ? filas[filas.length - 1] : null;
+  if (!esVentasB2B && !masReciente) return null;
 
-  const tipoAsesorEfectivo = esVentasB2B ? v.tipo_asesor : aliadoB2B!.tipoAliado;
-  const aliadoNombre = esVentasB2B ? (v.freelance_nombre || v.agencia_nombre) : aliadoB2B!.aliado;
-  const pvp = v.precio_venta ?? 0;
-  const detalle: DetalleComision = esVentasB2B
-    ? {
-        pvp,
-        baseComisionable: null,
-        pctComision: pvp > 0 ? Number(v.comision_b2b) / pvp : 0,
-        esPctEfectivo: true,
-        comisionBase: null,
-        recobroAliado: null,
-        aplicaRetencion: null,
-        pctRetencion: null,
-        retencion: null,
-        totalPagar: Number(v.comision_b2b),
-      }
-    : aliadoB2B!.detalle;
+  const aliadoIdContrato = resolverAliadoIdContrato({
+    esVentasB2B,
+    aliadoIdVentas: (v.aliado_id as number | null) ?? null,
+    aliadoIdComisionManual: esVentasB2B ? null : (masReciente?.aliado_id ?? null),
+  });
 
   // La autorización de esta página NO la hace la RLS: se lee con service-role.
   // La decide `accesoDocumentoContrato`, compartida con el estado de cuenta.
@@ -157,11 +139,6 @@ export async function resolverComisionB2B(numero: string): Promise<ComisionResue
   // tarifario B2B, o `aliados_b2b.aliado_id` en las comisiones cargadas a mano
   // (migración 133) — que es el único camino en minorista. Si ninguno de los
   // dos está puesto, queda null y solo entonces se mira el nombre.
-  const aliadoIdContrato = resolverAliadoIdContrato({
-    esVentasB2B,
-    aliadoIdVentas: (v.aliado_id as number | null) ?? null,
-    aliadoIdComisionManual: aliadoB2B?.aliadoId ?? null,
-  });
 
   // ¿ALGUNA comisión manual del contrato tiene ficha? No solo la más reciente
   // (`aliadoB2B`): una fila vieja con `aliado_id` también es un vínculo por id.
@@ -196,6 +173,95 @@ export async function resolverComisionB2B(numero: string): Promise<ComisionResue
   if (!acceso.permitido) return null;
   const esInterno = acceso.esInterno;
   const esDueno = acceso.esDueno;
+
+  // ── Qué comisión se cobra ───────────────────────────────────────────────
+  // Abrir el contrato no da derecho a TODAS sus filas: una fila sin ficha
+  // (aliado_id null) puede ser de otro beneficiario, y el texto libre del
+  // beneficiario no lo desmiente (un homónimo escribe igual). Un aliado solo
+  // cobra una fila sin ficha con el documento de SU ficha, o —solo si abrió el
+  // contrato por el respaldo legacy por nombre— a su nombre (#38,
+  // `filasCobrables` / `evidenciaSinFicha`; la misma regla que el portal).
+  const aliadoIdPerfil = (perfil?.aliado_id as number | null) ?? null;
+  let evidencia: EvidenciaSinFicha = { documento: null, nombreLegacy: null };
+  if (!esInterno) {
+    let documentoFicha: string | null = null;
+    if (aliadoIdPerfil != null) {
+      // Si la lectura falla, sin documento: falla cerrado.
+      const { data: ficha, error: eFicha } = await admin.from("aliados").select("nit").eq("id", aliadoIdPerfil).maybeSingle();
+      if (!eFicha) documentoFicha = (ficha as { nit: string | null } | null)?.nit ?? null;
+    }
+    evidencia = evidenciaSinFicha({ via: acceso.via, documentoFicha, nombreUsuario: (perfil?.nombre as string | null) ?? null });
+  }
+  const cobrables = filasCobrables(filas, v.comision_estado as string | null, {
+    esInterno,
+    aliadoId: aliadoIdPerfil,
+    ...evidencia,
+  });
+  let fila: FilaResolver | null = null;
+  if (cobrables.length > 0 || comisionId != null) {
+    const eleccion = elegirFilaCobro(cobrables, comisionId);
+    if (eleccion.tipo === "ninguna") return null;
+    if (eleccion.tipo === "elegir") {
+      return {
+        tipo: "elegir",
+        numeroContrato: v.numero_contrato,
+        moneda: v.moneda ?? "COP",
+        opciones: eleccion.filas.map((f) => ({ id: f.id, aliado: f.aliado, totalPagar: calcularComisionFila(f).totalPagar })),
+      };
+    }
+    fila = eleccion.fila;
+  } else if (!esVentasB2B || filas.some((f) => !esComisionDescontada(f, v.comision_estado as string | null))) {
+    // Solo hay comisiones descontadas en el precio (modo neta) o de otro
+    // aliado: nada que cobrar. Con filas vivas en aliados_b2b, ninguna suya,
+    // tampoco se cae a `ventas.comision_b2b`: la fila es la fuente y ese
+    // importe pudo corregirse después (#38; misma regla que el portal,
+    // `comisionVisibleAliado`).
+    return null;
+  }
+
+  const pvpVenta = v.precio_venta ?? 0;
+  let detalle: DetalleComision;
+  if (fila) {
+    const c = calcularComisionFila(fila);
+    detalle = {
+      pvp: Number(fila.precio_venta) || 0,
+      baseComisionable: c.baseUsada,
+      pctComision: Number(fila.pct_comision) || 0,
+      // Con "Ingresar por valor" el % guardado es solo informativo (redondeado).
+      esPctEfectivo: fila.comision_valor != null,
+      comisionBase: c.comisionBase,
+      recobroAliado: c.recobroAliado,
+      aplicaRetencion: fila.aplica_retencion,
+      pctRetencion: fila.pct_retencion,
+      retencion: c.retencion,
+      totalPagar: c.totalPagar,
+    };
+  } else {
+    detalle = {
+      pvp: pvpVenta,
+      baseComisionable: null,
+      pctComision: pvpVenta > 0 ? Number(v.comision_b2b) / pvpVenta : 0,
+      esPctEfectivo: true,
+      comisionBase: null,
+      recobroAliado: null,
+      aplicaRetencion: null,
+      pctRetencion: null,
+      retencion: null,
+      totalPagar: Number(v.comision_b2b),
+    };
+  }
+  const nombreVentas = (v.freelance_nombre as string | null) || (v.agencia_nombre as string | null);
+  const tipoAsesorEfectivo = fila
+    ? (fila.tipo_aliado ?? (esVentasB2B ? (v.tipo_asesor as string | null) : null))
+    : (v.tipo_asesor as string | null);
+  const aliadoNombre = fila ? (fila.aliado || (esVentasB2B ? nombreVentas : null)) : nombreVentas;
+  // Ficha bancaria: la de la comisión que se cobra (su aliado_id), con el
+  // mismo resolvedor de siempre.
+  const aliadoIdFicha = resolverAliadoIdContrato({
+    esVentasB2B: esVentasB2B && !fila,
+    aliadoIdVentas: (v.aliado_id as number | null) ?? null,
+    aliadoIdComisionManual: fila?.aliado_id ?? null,
+  });
 
   const aliado = aliadoNombre || perfil?.nombre || "";
 
@@ -239,15 +305,16 @@ export async function resolverComisionB2B(numero: string): Promise<ComisionResue
     },
   };
 
-  const eleccion = await resolverFichaAliado(deps, { aliadoIdContrato, nombre: aliadoNombre });
-  const aliadoInfo: AliadoCatalogo | null = eleccion.ficha;
+  const eleccionFicha = await resolverFichaAliado(deps, { aliadoIdContrato: aliadoIdFicha, nombre: aliadoNombre });
+  const aliadoInfo: AliadoCatalogo | null = eleccionFicha.ficha;
 
   // Evidencia para el servidor cuando NO se pudo resolver. No se expone al
   // cliente ni se sustituye por una ficha "parecida".
-  const aviso = explicarFicha(eleccion, aliadoNombre);
+  const aviso = explicarFicha(eleccionFicha, aliadoNombre);
   if (aviso) console.warn(`[cuenta de cobro ${v.numero_contrato}] ${aviso}`);
 
   return {
+    tipo: "comision",
     numeroContrato: v.numero_contrato,
     cliente: v.cliente,
     destino: v.destino,
@@ -260,6 +327,6 @@ export async function resolverComisionB2B(numero: string): Promise<ComisionResue
     detalle,
     esInterno,
     esDueno,
-    aliadoB2bId: esVentasB2B ? null : (aliadoB2B?.id ?? null),
+    aliadoB2bId: fila?.id ?? null,
   };
 }

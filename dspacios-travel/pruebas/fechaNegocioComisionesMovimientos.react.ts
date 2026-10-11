@@ -31,7 +31,12 @@ const COMISION = {
   id: 31, numero_contrato: "DTM-0451", cliente: "Cliente", aliado: "Agencia Uno", nit: null, tipoAliado: "agencia",
   pct_comision: 0.1, totalComision: 300_000, retencion: 0, totalPagar: 300_000, estado: "pendiente", fecha_pago: null, pagos: [],
 };
-const semillaComision = () => ({ aliados_b2b: [{ id: 31, tenant: "mayorista", numero_contrato: "DTM-0451" }] });
+// #38: abonar exige rol de gestión (superadmin/gerencia/administración) de la
+// agencia de la comisión, también en la Server Action: se siembra el usuario.
+const semillaComision = () => ({
+  aliados_b2b: [{ id: 31, tenant: "mayorista", numero_contrato: "DTM-0451" }],
+  usuarios: [{ id: "u-arnes", rol: "administracion", activo: true, tenant: "mayorista" }],
+});
 
 for (const [momento, instante] of MOMENTOS) {
   test(`comisión B2B a las ${momento}: el abono propone y guarda ${DIA_BOGOTA}`, async () => {

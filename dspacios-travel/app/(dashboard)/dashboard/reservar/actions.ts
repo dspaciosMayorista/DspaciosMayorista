@@ -62,6 +62,7 @@ import { componenteDePrograma } from "@/lib/cotizacion/condicionDesdeCatalogo";
 import type { ComponenteSnapshot } from "@/lib/cotizacion/snapshotCondiciones";
 import { hoyBogota, resolverVigenciaCotizacion } from "@/lib/cotizacion/vigencia";
 import { fechaNegocio } from "@/lib/fechaNegocio";
+import { resolverAliadoReserva, planComisionReserva, registrarComisionReserva, type PlanComisionReserva } from "@/lib/reservar/comisionReserva";
 
 const oNull = (s: string | null | undefined) => (s && s.trim() !== "" ? s.trim() : null);
 
@@ -232,6 +233,20 @@ async function reservarDesdeTarifarioInterno(input: ReservaInput, tenant: Tenant
   // (hallazgo de la revisión posterior al PR #268, punto 1 "COSTO FINANCIERO").
   const costoAereo = datosVuelo ? datosVuelo.costo_neto * paxConSilla + datosVuelo.fee_infante * infantesN : 0;
 
+  // 2d) Reserva B2B: el aliado es OBLIGATORIO y tiene que poder leerse ANTES
+  // de numerar o crear nada (#38). Antes, sin `aliadoId` o con la lectura
+  // fallida, el contrato nacía sin comisión y sin aviso.
+  let aliadoB2B: number | null = null;
+  let planB2B: PlanComisionReserva | null = null;
+  if (input.tipoAsesor !== "interno") {
+    const al = await resolverAliadoReserva(sb, input.tipoAsesor, input.aliadoId);
+    if (!al.ok) return { ok: false, error: al.error };
+    const plan = planComisionReserva({ modoCompra: input.modoCompra, precioVenta, impuesto: impuestoTotal, pct: al.pct });
+    if (!plan.ok) return { ok: false, error: plan.error };
+    aliadoB2B = al.aliadoId;
+    planB2B = plan.plan;
+  }
+
   // 3) Número de contrato — ya completo (DTM-#### / MIN-00-####), tenant
   // recibido como parámetro ya validado por el caller (nunca del navegador).
   const numRes = await siguienteNumeroContrato(tenant);
@@ -247,31 +262,14 @@ async function reservarDesdeTarifarioInterno(input: ReservaInput, tenant: Tenant
   //   base comisionable = PVP − impuesto (BNC) · comisión = base × % del aliado.
   //   · neta         → el aliado paga PVP − comisión (se descuenta).
   //   · comisionable → paga el PVP; la comisión se liquida aparte.
-  let precioFinal = precioVenta;
-  let baseComisB2B = 0;
-  let pctComB2B = 0;
-  let comisionB2B: number | null = null;
-  let modoCompra: string | null = null;
-  let comisionEstado: string | null = null;
+  // El plan (paso 2d) es puro y es el MISMO que recalcula la base al crear la
+  // fila de comisión: si no cuadran, la reserva se revierte.
+  const precioFinal = planB2B ? planB2B.precioFinal : precioVenta;
+  const comisionB2B: number | null = planB2B?.comision ?? null;
+  const modoCompra: string | null = planB2B?.modoCompra ?? null;
+  const comisionEstado: string | null = planB2B?.comisionEstado ?? null;
   let b2bUsuarioId: string | null = null;
-  if (input.tipoAsesor !== "interno" && input.modoCompra) {
-    baseComisB2B = Math.max(0, precioVenta - impuestoTotal);
-    let pct: number | null = null;
-    if (input.aliadoId) {
-      const { data: al } = await sb.from("aliados").select("pct_comision").eq("id", input.aliadoId).maybeSingle();
-      pct = al?.pct_comision ?? null;
-    }
-    if (pct == null) {
-      const defParam = input.tipoAsesor === "agencia" ? "COMISION_AGENCIA" : "COMISION_FREELANCE";
-      const { data: p } = await sb.from("parametros_tributarios").select("valor").eq("parametro", defParam).maybeSingle();
-      pct = Number(p?.valor) || (input.tipoAsesor === "agencia" ? 0.12 : 0.11);
-    }
-    pctComB2B = pct;
-    const comision = Math.round(baseComisB2B * pct);
-    modoCompra = input.modoCompra;
-    comisionB2B = comision;
-    if (modoCompra === "neta") { precioFinal = Math.max(0, precioVenta - comision); comisionEstado = "descontada"; }
-    else { comisionEstado = "pendiente"; }
+  if (planB2B?.modoCompra) {
     const { data: { user } } = await sb.auth.getUser();
     if (user) {
       const { data: perfil } = await sb.from("usuarios").select("rol").eq("id", user.id).maybeSingle();
@@ -333,7 +331,7 @@ async function reservarDesdeTarifarioInterno(input: ReservaInput, tenant: Tenant
     // resuelve la pertenencia por este id, no por el nombre en texto libre.
     // (`reservarPrograma` no lo lleva: su formulario no elige del catálogo,
     // así que esos contratos siguen dependiendo del respaldo por nombre.)
-    aliado_id: input.tipoAsesor !== "interno" ? input.aliadoId ?? null : null,
+    aliado_id: aliadoB2B,
     plazo: oNull(input.plazo),
     paquete_armado_id: input.paqueteId,
     // Trazabilidad del origen — se toma del `origen` YA VALIDADO (nunca de
@@ -363,33 +361,14 @@ async function reservarDesdeTarifarioInterno(input: ReservaInput, tenant: Tenant
     };
   };
 
-  // Auto-comisión B2B: si la venta es por agencia/freelance, crea la comisión con
-  // el % propio del aliado (o el default general de su tipo).
-  if (input.tipoAsesor !== "interno" && input.aliadoId) {
-    const { data: al } = await sb
-      .from("aliados")
-      .select("nombre, nit, pct_comision, aplica_retencion, pct_retencion")
-      .eq("id", input.aliadoId)
-      .maybeSingle();
-    if (al) {
-      const defParam = input.tipoAsesor === "agencia" ? "COMISION_AGENCIA" : "COMISION_FREELANCE";
-      const { data: p } = await sb.from("parametros_tributarios").select("valor").eq("parametro", defParam).maybeSingle();
-      const pct = pctComB2B || al.pct_comision || Number(p?.valor) || (input.tipoAsesor === "agencia" ? 0.12 : 0.11);
-      await sb.from("aliados_b2b").insert({
-        numero_contrato: numero,
-        tenant,
-        aliado: al.nombre,
-        nit: al.nit,
-        precio_venta: precioVenta,
-        base_comision: baseComisB2B || precioVenta,
-        pct_comision: pct,
-        recobro_total: 0,
-        pct_recobro_aliado: 0,
-        aplica_retencion: al.aplica_retencion,
-        pct_retencion: al.pct_retencion,
-        estado: comisionEstado === "descontada" ? "pagada" : "pendiente",
-      });
-    }
+  // Comisión B2B (#38): la crea la base (`registrar_comision_b2b_reserva`,
+  // migración 205), que valida usuario, rol, tenant, aliado y venta, recalcula
+  // el importe con la misma regla del plan y se niega a duplicar. Con el
+  // cliente de la sesión — nada de service-role. Si falla, la reserva se
+  // revierte completa: nunca queda un contrato B2B sin su comisión.
+  if (aliadoB2B != null) {
+    const com = await registrarComisionReserva(sb, numero, aliadoB2B);
+    if (!com.ok) return fallarYRevertir(com.error);
   }
 
   // 5) Pasajeros — `es_infante` se recalcula SIEMPRE server-side desde la

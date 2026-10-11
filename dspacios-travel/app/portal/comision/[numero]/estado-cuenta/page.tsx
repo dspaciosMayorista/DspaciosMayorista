@@ -7,19 +7,23 @@ import { POWERED_BY } from "@/lib/contrato/plantilla";
 import { formatMoneda, formatFechaLarga } from "@/lib/utils";
 import { resolverComisionB2B } from "@/lib/finanzas/comisionResolver";
 import { tituloDocumento } from "@/lib/utils/tituloDocumento";
+import { ElegirComision, idComisionDeQuery } from "../ElegirComision";
 
 export const dynamic = "force-dynamic";
 
-export async function generateMetadata({ params }: { params: Promise<{ numero: string }> }) {
+type Props = { params: Promise<{ numero: string }>; searchParams: Promise<{ id?: string | string[] }> };
+
+export async function generateMetadata({ params, searchParams }: Props) {
   const { numero } = await params;
-  const r = await resolverComisionB2B(numero);
-  return { title: { absolute: tituloDocumento("Estado de cuenta", r?.numeroContrato ?? numero, r?.aliado) } };
+  const r = await resolverComisionB2B(numero, idComisionDeQuery((await searchParams).id));
+  return { title: { absolute: tituloDocumento("Estado de cuenta", r?.numeroContrato ?? numero, r?.tipo === "comision" ? r.aliado : undefined) } };
 }
 
-export default async function EstadoCuentaComisionPage({ params }: { params: Promise<{ numero: string }> }) {
+export default async function EstadoCuentaComisionPage({ params, searchParams }: Props) {
   const { numero } = await params;
-  const r = await resolverComisionB2B(numero);
+  const r = await resolverComisionB2B(numero, idComisionDeQuery((await searchParams).id));
   if (!r) notFound();
+  if (r.tipo === "elegir") return <ElegirComision r={r} sufijo="/estado-cuenta" />;
   // El log de abonos (comision_b2b_pagos) solo existe para comisiones
   // agregadas a mano (aliados_b2b) — el flujo tarifario B2B de mayorista
   // (ventas.comision_b2b) no tiene abonos parciales, solo un total.
@@ -46,7 +50,7 @@ export default async function EstadoCuentaComisionPage({ params }: { params: Pro
   return (
     <div className="min-h-screen bg-gray-100 py-6">
       <div className="mx-auto mb-4 flex max-w-3xl items-center justify-between px-4 print:hidden">
-        <Link href={`/portal/comision/${encodeURIComponent(r.numeroContrato)}`} className="text-sm text-gray-500 hover:text-gray-800">← Cuenta de cobro</Link>
+        <Link href={`/portal/comision/${encodeURIComponent(r.numeroContrato)}?id=${r.aliadoB2bId}`} className="text-sm text-gray-500 hover:text-gray-800">← Cuenta de cobro</Link>
         <PrintButton />
       </div>
       <div className="mx-auto max-w-3xl px-4 print:max-w-none print:px-0">

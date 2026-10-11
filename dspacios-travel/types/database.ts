@@ -920,7 +920,13 @@ export type Database = {
           tipo_aliado: string | null;
           contacto: string | null;
           precio_venta: number;
-          base_comision: number;
+          base_comision: number | null;
+          // Migración 205: NULL = fila anterior (base 0/NULL cae al PVP); true = base_comision manda.
+          base_explicita: boolean | null;
+          // Migración 205: comisión base escrita en pesos ("Ingresar por valor"); manda sobre base × %.
+          comision_valor: number | null;
+          // Migración 205: la agencia ya la descontó del precio (reservar en modo neta).
+          descontada_en_precio: boolean;
           pct_comision: number;
           recobro_total: number;
           pct_recobro_aliado: number;
@@ -940,7 +946,10 @@ export type Database = {
           tipo_aliado?: string | null;
           contacto?: string | null;
           precio_venta?: number;
-          base_comision?: number;
+          base_comision?: number | null;
+          base_explicita?: boolean | null;
+          comision_valor?: number | null;
+          descontada_en_precio?: boolean;
           pct_comision?: number;
           recobro_total?: number;
           pct_recobro_aliado?: number;
@@ -4106,6 +4115,21 @@ export type Database = {
           p_tenant: string;
         };
         Returns: undefined;
+      };
+      // Migración 205: crea la comisión B2B de una reserva recién creada,
+      // validando usuario/rol/tenant/aliado/venta en la base. Devuelve el id.
+      registrar_comision_b2b_reserva: {
+        Args: { p_numero: string; p_aliado_id: number };
+        Returns: number;
+      };
+      // Migración 205: alta manual desde la pestaña Comisiones (venta: solo su
+      // contrato B2B y sin comisión previa). Valida rol/tenant/contrato en la base.
+      registrar_comision_b2b_manual: {
+        Args: {
+          p_numero: string; p_aliado: string; p_nit: string; p_tipo_aliado: string; p_aliado_id: number | null;
+          p_pct: number; p_recobro: number; p_pct_recobro: number; p_aplica_retencion: boolean; p_pct_retencion: number;
+        };
+        Returns: number;
       };
       // Migración 186 — Dashboard: agregados en base (evita descargar filas
       // completas de ventas/abonos/cupos/CxP/retenciones solo para sumarlas

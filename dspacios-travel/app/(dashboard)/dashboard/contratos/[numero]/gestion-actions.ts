@@ -6,6 +6,7 @@ import { asegurarCuentasPorPagar } from "@/lib/reservar/asegurarCuentasPorPagar"
 import { autorizarCuentasPorPagarContrato, mensajeCxpDenegado } from "@/lib/contrato/accesoCuentasPorPagar";
 import { postearAsientoCxP, eliminarAsientoCxP } from "@/lib/contabilidad/asientos";
 import { fechaNegocio } from "@/lib/fechaNegocio";
+import { ROLES_ALTA_COMISION, ROLES_GESTION_COMISION, autorizarComisionB2B, esComisionDescontada } from "@/lib/finanzas/comisionB2B";
 
 type Result = { ok: true } | { ok: false; error: string };
 
@@ -161,53 +162,88 @@ export async function eliminarCuentaPorPagar(
 }
 
 // ── Comisiones B2B (aliados) ─────────────────────────────────────────────
+async function perfilSesion(sb: Awaited<ReturnType<typeof createClient>>) {
+  const { data: { user } } = await sb.auth.getUser();
+  if (!user) return null;
+  const { data } = await sb.from("usuarios").select("rol, activo, tenant").eq("id", user.id).maybeSingle();
+  return data ?? null;
+}
+
+const fraccion = (n: number) => Number.isFinite(n) && n >= 0 && n <= 1;
+
 export async function crearComisionB2B(input: {
   numeroContrato: string;
   aliado: string;
   nit: string;
   tipoAliado?: string; // "freelance" | "agencia" — decide si genera cuenta de cobro (solo freelance)
   aliadoId?: number | null; // FK al catálogo (elegido del desplegable) — trae datos de pago a la cuenta de cobro
-  precioVenta: number;
   pctComision: number;
   recobroTotal: number;
   pctRecobroAliado: number;
   aplicaRetencion: boolean;
   pctRetencion: number;
 }): Promise<Result> {
+  // % 0 es legítimo (comisión solo de recobro); lo que no vale es un número roto.
+  if (!fraccion(input.pctComision)) return { ok: false, error: "El % de comisión debe estar entre 0 y 100." };
+  if (!(Number.isFinite(input.recobroTotal) && input.recobroTotal >= 0)) return { ok: false, error: "El recobro total debe ser un número ≥ 0." };
+  if (!fraccion(input.pctRecobroAliado)) return { ok: false, error: "El % del recobro para el aliado debe estar entre 0 y 100." };
+  if (input.aplicaRetencion && !fraccion(input.pctRetencion)) return { ok: false, error: "El % de retención debe estar entre 0 y 100." };
   const sb = await createClient();
-  // El tenant se toma del contrato mismo (no de la cookie de sesión activa) para
-  // que quede correcto incluso si un superadmin agrega la comisión mientras tiene
-  // otra agencia activa -- si queda mal (default 'mayorista'), la comisión existe
-  // en la BD pero desaparece de /dashboard/comisiones en la agencia real.
-  const { data: venta } = await sb.from("ventas").select("tenant").eq("numero_contrato", input.numeroContrato).maybeSingle();
-  const { error } = await sb.from("aliados_b2b").insert({
-    numero_contrato: input.numeroContrato,
-    tenant: venta?.tenant ?? "mayorista",
-    aliado: input.aliado || null,
-    nit: input.nit || null,
-    tipo_aliado: input.tipoAliado || null,
-    aliado_id: input.aliadoId ?? null,
-    precio_venta: input.precioVenta,
-    base_comision: input.precioVenta,
-    pct_comision: input.pctComision,
-    recobro_total: input.recobroTotal,
-    pct_recobro_aliado: input.pctRecobroAliado,
-    aplica_retencion: input.aplicaRetencion,
-    pct_retencion: input.pctRetencion,
-    estado: "pendiente",
-  });
+  const perfil = await perfilSesion(sb);
+  if (!perfil || perfil.activo !== true) return { ok: false, error: "Tu sesión no es válida. Vuelve a iniciar sesión." };
+  // Gestión operativa, o el asesor `venta` (la base exige que sea SU contrato).
+  if (!(ROLES_ALTA_COMISION as readonly string[]).includes(perfil.rol ?? "") && perfil.rol !== "venta") {
+    return { ok: false, error: "Tu rol no tiene permiso para registrar comisiones B2B." };
+  }
+  // Toda la validación de contrato/tenant/propiedad/NETO y el cálculo de la
+  // base (PVP − impuesto de la venta guardada, nunca del navegador) los hace
+  // registrar_comision_b2b_manual (migración 205). Un `venta` no lee `ventas`
+  // (144): por eso esta acción ya no lee la venta con su sesión.
+  let error: { message: string } | null = null;
+  try {
+    ({ error } = await sb.rpc("registrar_comision_b2b_manual", {
+    p_numero: input.numeroContrato,
+    p_aliado: input.aliado,
+    p_nit: input.nit,
+    p_tipo_aliado: input.tipoAliado ?? "",
+    p_aliado_id: input.aliadoId ?? null,
+    p_pct: input.pctComision,
+    p_recobro: input.recobroTotal,
+    p_pct_recobro: input.pctRecobroAliado,
+    p_aplica_retencion: input.aplicaRetencion,
+    p_pct_retencion: input.aplicaRetencion ? input.pctRetencion : 0,
+    }));
+  } catch (e) {
+    return { ok: false, error: e instanceof Error ? e.message : "No se pudo registrar la comisión." };
+  }
   if (error) return { ok: false, error: error.message };
   rev(input.numeroContrato);
   return { ok: true };
 }
 
+// Borrar una comisión: solo superadmin/gerencia/administración de su agencia,
+// nunca si tiene abonos (se perderían) ni si se descontó del precio (NETO: el
+// precio guardado sigue neto de ella; se va solo con el contrato entero). La
+// base también lo impide desde la 205; esto solo da un mensaje claro.
 export async function eliminarComisionB2B(
   id: number,
   numeroContrato: string
 ): Promise<Result> {
   const sb = await createClient();
-  const { error } = await sb.from("aliados_b2b").delete().eq("id", id);
+  const { data: fila } = await sb.from("aliados_b2b").select("id, tenant, numero_contrato, estado, descontada_en_precio").eq("id", id).maybeSingle();
+  const auth = autorizarComisionB2B(await perfilSesion(sb), fila?.tenant ?? null, ROLES_GESTION_COMISION);
+  if (!auth.permitido) return { ok: false, error: auth.error };
+  const { data: vComision } = await sb.from("ventas").select("comision_estado").eq("numero_contrato", fila?.numero_contrato ?? numeroContrato).maybeSingle();
+  if (fila && esComisionDescontada(fila, (vComision as { comision_estado: string | null } | null)?.comision_estado ?? null)) {
+    return { ok: false, error: "Esta comisión se descontó del precio de venta (modo neta): no se elimina suelta, solo con el contrato." };
+  }
+  const { data: unAbono } = await sb.from("comision_b2b_pagos").select("id").eq("aliado_b2b_id", id).limit(1);
+  if ((unAbono ?? []).length > 0) {
+    return { ok: false, error: "Esta comisión tiene abonos registrados: deshazlos en Comisiones antes de eliminarla." };
+  }
+  const { data, error } = await sb.from("aliados_b2b").delete().eq("id", id).select("id");
   if (error) return { ok: false, error: error.message };
+  if (!data || data.length === 0) return { ok: false, error: "No se pudo eliminar: comisión no encontrada o sin permiso." };
   rev(numeroContrato);
   return { ok: true };
 }

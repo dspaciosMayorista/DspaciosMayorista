@@ -120,6 +120,10 @@ test("modo normal: para cada cuenta, el listado coincide con estado de cuenta, p
     "u-inactivo": [],
     "u-min": ["C8-minorista"],                             // misma regla, del lado Minorista
   };
+  // #38 · la cuenta de cobro decide además FILA por fila: en C12 el contrato es
+  // suyo (ventas.freelance_nombre), pero su única comisión sin ficha es de
+  // "Otro Nombre". Abre el contrato, no esa comisión (un interno la genera).
+  const sinComisionPropia: Record<string, string[]> = { "u-antiguo": ["C12-freelance"] };
   for (const [uid, abiertos] of Object.entries(esperado)) {
     const { filas } = await decisiones(uid, BASE, tablasBase());
     for (const f of filas) {
@@ -127,7 +131,7 @@ test("modo normal: para cada cuenta, el listado coincide con estado de cuenta, p
       assert.equal(f.listado, debe, `${uid} listado ${f.numero}`);
       assert.equal(f.estado, debe, `${uid} estado de cuenta ${f.numero}`);
       assert.equal(f.plan, debe, `${uid} plan de cobro ${f.numero}`);
-      assert.equal(f.cobro, debe, `${uid} cuenta de cobro ${f.numero}`);
+      assert.equal(f.cobro, debe && !(sinComisionPropia[uid] ?? []).includes(f.numero), `${uid} cuenta de cobro ${f.numero}`);
     }
   }
   // Recibos: siguen al estado de cuenta.
@@ -152,6 +156,13 @@ test("DIVERGENCIA CONOCIDA (vínculo por id, NO legacy): si la comisión manual 
     const { filas: f } = await decisiones(uid, ["C3-ficha-manual"], t);
     assert.deepEqual(f[0], { numero: "C3-ficha-manual", listado: false, estado: false, plan: false, cobro: false }, uid);
   }
+});
+
+test("#38 · legacy: la comisión histórica sin ficha a SU nombre (normalizado) se sigue cobrando", async () => {
+  const t = tablasBase();
+  t.aliados_b2b = t.aliados_b2b.map((r) => (r.numero_contrato === "C12-freelance" ? { ...r, aliado: `  ${NOMBRE.toUpperCase()}  ` } : r));
+  const { filas } = await decisiones("u-antiguo", ["C12-freelance"], t);
+  assert.deepEqual(filas[0], { numero: "C12-freelance", listado: true, estado: true, plan: true, cobro: true });
 });
 
 test("DECISIÓN 193 · nombre de ventas nulo o distinto y solo aliados_b2b.aliado coincide, sin ids: NO se abre en ningún lado", async () => {
