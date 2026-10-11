@@ -52,6 +52,7 @@ import { esInfantePorEdad, pasajeroConsumeSilla } from "@/lib/reservar/pasajeros
 import { payloadGuardarPasajeros } from "@/lib/reservar/pasajerosEdicion";
 import { normalizarResponsablesPorGrupo } from "@/lib/reservar/pasajerosFilas";
 import { posicionesSinAsignar, posicionesUnicasDeGrupo, reindexarGrupoLocal, consolidarReservasSillasPorBloqueo, demandaSillasPorBloqueo, faltanteDeCupos, prevalidarResponsablesDeGrupo, mensajePrevalidacionGrupo, type ReservaSillasPorBloqueo } from "@/lib/reservar/carritoAsignaciones";
+import { armarGruposConversion, resolverVinculosCotizacion, validarPasajerosServiciosVinculados } from "@/lib/reservar/vinculoServiciosCheckout";
 import {
   componenteHotelReal,
   componentePaqueteReal,
@@ -1259,6 +1260,12 @@ export type TourCarritoPayload = {
   // `proveedorId` NO viaja acá (revisión PR #294): es un id interno y el
   // proveedor de la CxP se vuelve a resolver server-side contra el catálogo.
   servicioId?: number; paqueteId?: number; categoria?: string;
+  // Servicio elegido en la tarjeta de un hotel: `ref` server-side de ese
+  // hotel (`ItemCarritoPayload.ref`, generado en checkout/actions.ts — nunca
+  // el id de localStorage). Ausente/null = tour independiente o cotización
+  // anterior a este cambio (comportamiento de siempre). Ver
+  // lib/reservar/vinculoServiciosCheckout.ts.
+  hotelRef?: string | null;
 };
 
 // Un ítem del carrito con su asignación EXPLÍCITA de pasajeros — revisión de
@@ -1642,24 +1649,34 @@ export async function convertirCotizacionCarrito(
     return { ok: false, error: `El pasajero ${sinAsignar[0]} no está asignado a ninguna unidad del carrito (ni hotel ni tour). Márcalo en al menos una o quítalo del listado.` };
   }
 
+  // Servicios elegidos en la tarjeta de un hotel (`hotelRef` persistido por
+  // el checkout): el vínculo se valida ANTES de escribir nada — un vínculo
+  // inválido rechaza la conversión, nunca se adivina el hotel. Sus pasajeros
+  // deben viajar en ESE hotel (subconjunto, no solo la misma cantidad).
+  // Cotizaciones anteriores / tours de Receptivos: sin `hotelRef`, nada cambia.
+  const vVinculos = resolverVinculosCotizacion(tours, itemsCrudos);
+  if (!vVinculos.ok) return { ok: false, error: vVinculos.error };
+  const hotelDeTour = vVinculos.hotelDeTour;
+  const errPasajerosVinculados = validarPasajerosServiciosVinculados({
+    asignacionesItems: items.map((it) => it.__posiciones),
+    asignacionesTours: toursAsign.map((t) => t.__posiciones),
+    hotelDeTour,
+    nombresItems: items.map((it) => it.hotelNombre),
+    nombresTours: toursAsign.map((t) => t.nombre),
+  });
+  if (errPasajerosVinculados) return { ok: false, error: errPasajerosVinculados };
+
   type Grupo = { destino: string | null; items: ItemCarritoConAsignacion[]; tours: TourCarritoConAsignacion[] };
-  let grupos: Grupo[];
-  if (opts.agrupar === "todo") {
-    grupos = [{ destino: null, items, tours: toursAsign }];
-  } else {
-    // por_destino: agrupa por destino TANTO hoteles como tours — un destino
-    // que solo tenga tours forma su propio contrato (B17), nunca se cuelga
-    // en silencio del grupo del primer hotel.
-    const porDestino = new Map<string, { items: ItemCarritoConAsignacion[]; tours: TourCarritoConAsignacion[] }>();
-    const grupoDe = (k: string) => {
-      const g = porDestino.get(k) ?? { items: [], tours: [] };
-      porDestino.set(k, g);
-      return g;
-    };
-    for (const it of items) grupoDe(it.destino ?? "—").items.push(it);
-    for (const t of toursAsign) grupoDe(t.destino ?? "—").tours.push(t);
-    grupos = [...porDestino.entries()].map(([destino, g]) => ({ destino: destino === "—" ? null : destino, items: g.items, tours: g.tours }));
-  }
+  // "todo": un solo contrato. "por_destino": agrupa por destino TANTO
+  // hoteles como tours independientes — un destino que solo tenga tours
+  // forma su propio contrato (B17), nunca se cuelga en silencio del grupo
+  // del primer hotel. Un servicio VINCULADO va SIEMPRE al contrato de su
+  // hotel, aunque su texto de destino sea distinto (mayúsculas, tildes,
+  // null): nunca queda separado de su hotel. Misma función que usa la
+  // vista previa (ConvertirCarritoBtn).
+  const grupos: Grupo[] = armarGruposConversion<ItemCarritoConAsignacion, TourCarritoConAsignacion>({
+    modo: opts.agrupar, items, tours: toursAsign, hotelDeTour,
+  });
 
   // W8 (§6.8): sin la clave de servicio no se puede crear la reserva. Antes
   // había aquí un respaldo al cliente de SESIÓN que nunca llegaba a escribir

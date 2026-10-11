@@ -87,9 +87,14 @@ test("lib/tarifario/datos.ts: InfoHotelDato declara tieneCondicion como opcional
 test("CartContext.tsx: HotelCartItem tiene el campo condicion (opcional, no afecta el total)", () => {
   const src = leer("lib/cart/CartContext.tsx");
   assert.match(src, /condicion\?: \{/, "HotelCartItem no declara el campo condicion");
-  // El total del carrito se sigue sumando SOLO por `precio` — la condición
-  // nunca debe colarse en el cálculo del total.
-  assert.match(src, /const total = items\.reduce\(\(s, i\) => s \+ i\.precio, 0\);/);
+  // Los totales del carrito (por moneda, lib/cart/monedaCarrito.ts) se siguen
+  // sumando SOLO por `precio` — la condición nunca debe colarse en el cálculo.
+  assert.match(src, /const totales = resumirMonedas\(items\);/);
+  const moneda = leer("lib/cart/monedaCarrito.ts");
+  const resumir = moneda.slice(moneda.indexOf("export function resumirMonedas("), moneda.indexOf("export type ItemPrevision"));
+  assert.match(resumir, /s\.monto \+= it\.precio;/);
+  assert.match(resumir, /monto: it\.precio, items: 1/);
+  assert.doesNotMatch(resumir, /condicion/);
 });
 
 test("CartDrawer.tsx: cada línea de hotel muestra el badge de condición", () => {

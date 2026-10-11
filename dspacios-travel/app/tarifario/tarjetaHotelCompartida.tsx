@@ -22,7 +22,8 @@
 
 import { useEffect, useId, useRef, useState } from "react";
 import Image from "next/image";
-import { Check, Info, Star, X } from "lucide-react";
+import { Popover } from "@base-ui/react/popover";
+import { Check, ChevronDown, ChevronRight, Circle, CircleCheck, Info, Star, X } from "lucide-react";
 import { formatMoneda } from "@/lib/utils";
 import { seccionesDescripcion, type DescripcionPaqueteRaw } from "@/lib/tarifario/descripcionPaquete";
 
@@ -52,6 +53,9 @@ export type ReceptivoModalInfo = {
   moneda?: string | null;
   notaPrecio: string;
   paqueteId: number | null;
+  /** Identidad del servicio dentro del paquete — la usa la selección de la
+   * tarjeta del hotel (ver `ReceptivoModal`, prop `seleccion`). */
+  servicioId?: number | null;
 };
 
 // Estrellas (★) o, si no maneja, la clasificación (Boutique/Luxury…) como chip.
@@ -216,15 +220,16 @@ export function SeccionesIncluye({ descripcion }: { descripcion: DescripcionPaqu
 }
 
 // Servicios opcionales (add-on) de UN paquete puntual — nunca del catálogo
-// general ni de otro paquete que comparta el mismo hotel. Solo vista de
-// información (abre `ReceptivoModal`); agregar al carrito sigue siendo un
-// paso aparte del flujo de servicios, igual en los lugares que la usan.
+// general ni de otro paquete que comparta el mismo hotel. Cada servicio abre
+// `ReceptivoModal`, donde se SELECCIONA o deselecciona para el hotel de esta
+// tarjeta (subelección: nunca se agrega solo al carrito — viaja con el hotel).
 //
-// Corrección visual (Vercel Preview): la lista completa de add-ons podía
-// alargar demasiado la tarjeta. Ahora arranca CONTRAÍDA (un solo control
-// "Ver servicios adicionales (N)") y solo se expande DENTRO de la tarjeta —
-// nunca un modal nuevo para la lista general (el modal de detalle de CADA
-// servicio, `ReceptivoModal`, sigue igual, sin tocar).
+// Corrección visual (Vercel Preview): la lista ya NO se expande dentro de la
+// tarjeta. En la grilla de Vista Booking las tarjetas comparten fila, así
+// que cualquier contenido que creciera en una estiraba la fila completa y
+// dejaba huecos en las vecinas. Ahora la lista es un Popover (base-ui):
+// flota anclada al botón, no ocupa espacio en el flujo, maneja foco/Escape/
+// clic afuera y su alto está acotado con scroll propio.
 //
 // `paqueteId` es la identidad del paquete AL QUE PERTENECEN `addons` — no se
 // usa para filtrar (`addons` ya llega acotado por el llamador, ver
@@ -235,16 +240,19 @@ export function SeccionesIncluye({ descripcion }: { descripcion: DescripcionPaqu
 // mostrando —por una fracción de segundo, hasta que este mismo componente
 // reciba el `addons` nuevo— los add-ons del paquete ANTERIOR bajo el rótulo
 // del nuevo. Mismo componente para persona y unidad — nunca dos copias.
-export function AddonsPaquete({ addons, onAbrir, paqueteId }: {
+export function AddonsPaquete({ addons, onAbrir, paqueteId, seleccion = [] }: {
   addons: Receptivo[];
   onAbrir: (info: ReceptivoModalInfo) => void;
   /** Paquete al que pertenecen `addons` — cambiar este valor cierra la
    * lista si estaba abierta. `undefined`/`null` cuando el llamador no tiene
    * (todavía) un paquete elegido — nunca dispara el cierre por sí solo. */
   paqueteId?: number | null;
+  /** `servicioId` de los servicios ya seleccionados para el hotel (solo para
+   * marcarlos en la lista; la selección se cambia en el modal). */
+  seleccion?: readonly number[];
 }) {
   const [abierto, setAbierto] = useState(false);
-  const idLista = useId();
+  const idTitulo = useId();
 
   // Cierre automático al cambiar de paquete (regla explícita del encargo) —
   // nunca deja la lista abierta mostrando add-ons de un paquete que ya no es
@@ -261,65 +269,127 @@ export function AddonsPaquete({ addons, onAbrir, paqueteId }: {
   }
 
   if (!addons.length) return null;
+  const elegidos = addons.filter((a) => a.servicioId != null && seleccion.includes(a.servicioId)).length;
   return (
-    <div>
-      <button
-        type="button"
-        aria-expanded={abierto}
-        aria-controls={idLista}
-        onClick={() => setAbierto((v) => !v)}
-        className="text-xs font-medium"
+    <Popover.Root open={abierto} onOpenChange={setAbierto}>
+      <Popover.Trigger
+        className="inline-flex items-center gap-1 self-start rounded text-xs font-medium focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--brand-accent)]"
         style={{ color: "var(--brand-accent)" }}
       >
-        {abierto ? "Ocultar servicios adicionales" : `Ver servicios adicionales (${addons.length})`}
-      </button>
-      {abierto && (
-        <div id={idLista} className="mt-2 flex flex-wrap gap-2">
-          {addons.map((a, i) => (
-            <button
-              key={i}
-              type="button"
-              onClick={() => onAbrir({ nombre: a.nombre, destino: a.destino, descripcion: a.descripcion, foto: a.foto, precio: a.desde, moneda: a.moneda, notaPrecio: "desde · por persona", paqueteId: a.paqueteId })}
-              className="rounded-lg border border-gray-200 px-3 py-2 text-left text-sm transition-colors hover:border-[var(--brand-accent)]"
-            >
-              <span className="block font-medium text-gray-800">{a.nombre}</span>
-              <span className="block text-xs" style={{ color: "var(--brand-primary)" }}>desde {formatMoneda(a.desde, a.moneda)}</span>
-            </button>
-          ))}
-        </div>
-      )}
-    </div>
+        Servicios adicionales ({addons.length}){elegidos > 0 ? ` · ${elegidos} elegido${elegidos === 1 ? "" : "s"}` : ""}
+        <ChevronDown size={14} aria-hidden className={abierto ? "rotate-180 transition-transform" : "transition-transform"} />
+      </Popover.Trigger>
+      <Popover.Portal>
+        <Popover.Positioner side="bottom" align="start" sideOffset={6} collisionPadding={12} className="z-[60]">
+          <Popover.Popup
+            aria-labelledby={idTitulo}
+            className="flex max-h-[min(22rem,var(--available-height))] w-[min(20rem,calc(100vw-24px))] flex-col overflow-hidden rounded-xl border border-gray-200 bg-white shadow-xl outline-none"
+          >
+            <div className="flex items-center justify-between gap-2 border-b border-gray-100 px-3 py-2">
+              <Popover.Title id={idTitulo} className="text-xs font-semibold uppercase tracking-wide text-gray-500">
+                Servicios adicionales
+              </Popover.Title>
+              <Popover.Close aria-label="Cerrar lista de servicios" className="rounded p-0.5 text-gray-400 hover:text-gray-700">
+                <X size={14} aria-hidden />
+              </Popover.Close>
+            </div>
+            <ul className="overflow-y-auto py-1">
+              {addons.map((a, i) => {
+                const elegido = a.servicioId != null && seleccion.includes(a.servicioId);
+                return (
+                  <li key={a.servicioId ?? `n-${i}`}>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setAbierto(false);
+                        onAbrir({
+                          nombre: a.nombre, destino: a.destino, descripcion: a.descripcion, foto: a.foto, precio: a.desde, moneda: a.moneda,
+                          notaPrecio: "desde · por persona", paqueteId: a.paqueteId, servicioId: a.servicioId,
+                        });
+                      }}
+                      className="flex w-full items-center justify-between gap-3 px-3 py-2 text-left text-sm transition-colors hover:bg-gray-50 focus-visible:bg-gray-50 focus-visible:outline-none"
+                    >
+                      <span className="min-w-0">
+                        <span className="block truncate font-medium text-gray-800">{a.nombre}</span>
+                        <span className="block text-xs" style={{ color: "var(--brand-primary)" }}>desde {formatMoneda(a.desde, a.moneda)} · por persona</span>
+                        {elegido && (
+                          <span className="mt-0.5 inline-flex items-center gap-1 text-[11px] font-semibold" style={{ color: "var(--brand-success)" }}>
+                            <Check size={12} aria-hidden /> Seleccionado
+                          </span>
+                        )}
+                      </span>
+                      <ChevronRight size={16} aria-hidden className="shrink-0 text-gray-300" />
+                    </button>
+                  </li>
+                );
+              })}
+            </ul>
+          </Popover.Popup>
+        </Popover.Positioner>
+      </Popover.Portal>
+    </Popover.Root>
   );
 }
 
-// Modal de detalle de un receptivo (tour): solo foto + descripción + precio.
-// Sin botón de reservar directo — agregar al carrito se hace desde la
-// tarjeta del resultado (o desde el listado de add-ons del hotel), nunca
-// saltando el flujo de carrito → cotización.
-export function ReceptivoModal({ receptivo, onClose }: { receptivo: ReceptivoModalInfo; onClose: () => void }) {
+// Modal de detalle de un receptivo (tour): foto + descripción + precio
+// "desde". Abierto desde los add-ons de la tarjeta de un hotel, recibe
+// `seleccion`: el servicio se SELECCIONA o deselecciona para ese hotel — no
+// se agrega al carrito desde acá; la tarjeta lo cotiza con los datos del
+// hotel y lo agrega JUNTO con él. Sin `seleccion` (pestaña Receptivos) es
+// solo información.
+export function ReceptivoModal({ receptivo, onClose, seleccion }: {
+  receptivo: ReceptivoModalInfo;
+  onClose: () => void;
+  seleccion?: {
+    seleccionado: boolean;
+    onAlternar: () => void;
+    /** Si está presente, la selección no se puede cambiar y se explica por qué. */
+    motivoBloqueo?: string | null;
+  };
+}) {
   return (
     <div className="fixed inset-0 z-50 flex items-end justify-center bg-black/40 p-0 sm:items-center sm:p-4" onClick={onClose}>
-      <div className="max-h-[92vh] w-full max-w-lg overflow-y-auto rounded-t-2xl bg-white sm:rounded-2xl" onClick={(e) => e.stopPropagation()}>
+      <div role="dialog" aria-modal="true" aria-label={receptivo.nombre} className="max-h-[92vh] w-full max-w-lg overflow-y-auto rounded-t-2xl bg-white sm:rounded-2xl" onClick={(e) => e.stopPropagation()}>
         <div className="relative aspect-[16/9] w-full bg-gray-100">
           {receptivo.foto ? (
             <Image src={receptivo.foto} alt={receptivo.nombre} fill sizes="500px" className="object-cover" unoptimized />
           ) : (
             <div className="flex h-full w-full items-center justify-center text-sm text-gray-300">Sin foto</div>
           )}
-          <button type="button" onClick={onClose} className="absolute right-3 top-3 rounded-full bg-white/90 px-3 py-1 text-sm font-medium text-gray-700 shadow">
-            Cerrar ✕
+          <button type="button" onClick={onClose} className="absolute right-3 top-3 inline-flex items-center gap-1 rounded-full bg-white/90 px-3 py-1 text-sm font-medium text-gray-700 shadow">
+            Cerrar <X size={14} aria-hidden />
           </button>
         </div>
-        <div className="p-5">
+        <div className="space-y-4 p-5">
           <div className="text-lg font-semibold text-gray-800">{receptivo.nombre}</div>
           {receptivo.destino && <div className="text-sm text-gray-500">{receptivo.destino}</div>}
           {receptivo.descripcion?.trim() && (
-            <p className="mt-3 whitespace-pre-line text-sm text-gray-600">{receptivo.descripcion}</p>
+            <p className="whitespace-pre-line text-sm text-gray-600">{receptivo.descripcion}</p>
           )}
-          <div className="mt-4">
+          <div>
             <div className="text-[10px] uppercase tracking-wide text-gray-400">{receptivo.notaPrecio}</div>
             <div className="text-xl font-bold" style={{ color: "var(--brand-primary)" }}>{formatMoneda(receptivo.precio, receptivo.moneda)}</div>
           </div>
+          {seleccion && (
+            <section aria-label="Servicio adicional de este hotel" className="rounded-xl border border-gray-200 p-4">
+              <p className="text-sm font-semibold text-gray-800">Servicio adicional de este hotel</p>
+              <p className="mt-0.5 text-xs text-gray-500">
+                El precio «desde» es referencial. Al seleccionarlo se cotiza con las fechas y pasajeros que elegiste para el hotel,
+                y entra al carrito junto con el hotel cuando lo agregues.
+              </p>
+              {seleccion.motivoBloqueo ? (
+                <p className="mt-3 text-xs text-gray-500">{seleccion.motivoBloqueo}</p>
+              ) : (
+                <button type="button" aria-pressed={seleccion.seleccionado} onClick={seleccion.onAlternar}
+                  className="mt-3 inline-flex w-full items-center justify-center gap-1.5 rounded-lg px-4 py-2.5 text-sm font-semibold sm:w-auto"
+                  style={seleccion.seleccionado
+                    ? { border: "1px solid var(--brand-success)", color: "var(--brand-success)", backgroundColor: "white" }
+                    : { backgroundColor: "var(--brand-primary)", color: "white" }}>
+                  {seleccion.seleccionado ? <><CircleCheck size={16} aria-hidden /> Seleccionado · quitar</> : <><Circle size={16} aria-hidden /> Seleccionar para este hotel</>}
+                </button>
+              )}
+            </section>
+          )}
         </div>
       </div>
     </div>

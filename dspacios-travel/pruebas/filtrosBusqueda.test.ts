@@ -30,6 +30,7 @@ function resultado(over: Partial<BusquedaResultado> & { hotelId: number; paquete
     regimen: over.regimen ?? "Desayuno",
     paqueteNombre: over.paqueteNombre ?? `Paquete ${over.paqueteId}`,
     total: over.total ?? 500000,
+    moneda: over.moneda ?? "COP",
     noches: 3,
     fechaIda: "2026-10-15",
     fechaRegreso: "2026-10-18",

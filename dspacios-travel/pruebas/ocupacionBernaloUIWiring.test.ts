@@ -76,8 +76,10 @@ describe("EditorPax — hotel 'persona' conserva la salida anterior (regla 9)", 
   });
 
   test("el botón/lógica de 'Agregar al carrito' (onAgregar, flujo de precio legado) sigue intacto para !esBernalo", () => {
-    assert.match(cuerpoEditorPax, /onClick=\{agregar\}\s+disabled=\{!puede\}/);
-    assert.match(cuerpoEditorPax, /onAgregar\(habitaciones, ninos, ninos2, infantes, pax, precio, edades\)/);
+    // Mismo flujo legado; además bloqueado mientras los servicios seleccionados
+    // del hotel no estén cotizados, y los servicios viajan con el hotel.
+    assert.match(cuerpoEditorPax, /onClick=\{agregar\} disabled=\{!puede \|\| !evaluacionServicios\.listo\}/);
+    assert.match(cuerpoEditorPax, /onAgregar\(habitaciones, ninos, ninos2, infantes, pax, precio, edades, serviciosConjunto\(\)\)/);
   });
 });
 

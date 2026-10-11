@@ -347,12 +347,15 @@ describe("HotelBernaloCotizarModal — tarjeta completa: mismo contenido comerci
     // Corrección visual (Vercel Preview): AddonsPaquete recibe además
     // `paqueteId={hotel?.paqueteId ?? null}` — cierra la lista sola si se
     // elige otra oferta (mismo hotel, paquete distinto).
-    assert.match(cuerpoModal, /<AddonsPaquete addons=\{addons\} onAbrir=\{setAddonAbierto\} paqueteId=\{hotel\?\.paqueteId \?\? null\} \/>/);
+    assert.match(cuerpoModal, /<AddonsPaquete addons=\{addons\} onAbrir=\{setAddonAbierto\} paqueteId=\{hotel\?\.paqueteId \?\? null\} seleccion=\{seleccionServicios\.seleccion\} \/>/);
+    assert.match(cuerpoModal, /const seleccionServicios = useSeleccionServicios\(hotel\?\.paqueteId \?\? null\);/);
   });
 
   test("los add-on abren el mismo ReceptivoModal (solo información, sin fuente de precio alterna) — estado propio addonAbierto", () => {
     assert.match(cuerpoModal, /const \[addonAbierto, setAddonAbierto\] = useState<ReceptivoModalInfo \| null>\(null\);/);
-    assert.match(cuerpoModal, /<ReceptivoModal receptivo=\{addonAbierto\} onClose=\{\(\) => setAddonAbierto\(null\)\} \/>/);
+    assert.match(cuerpoModal, /<ReceptivoModal receptivo=\{addonAbierto\} onClose=\{\(\) => setAddonAbierto\(null\)\}\s+seleccion=\{seleccionParaModal\(/);
+    // El hotel Bernalo y sus servicios entran juntos al carrito.
+    assert.match(cuerpoModal, /\}, item\.servicios\);\s*\n\s*openDrawer\(\);/);
   });
 
   test("orden dentro del modal: header/ubicación -> elegir oferta -> EditorPax (motor externo) -> Incluye -> add-ons — EditorPax/cotización nunca se desplaza", () => {

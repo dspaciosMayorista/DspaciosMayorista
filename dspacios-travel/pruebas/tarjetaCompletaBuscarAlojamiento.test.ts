@@ -123,12 +123,22 @@ describe("Resultado (BuscadorBooking.tsx) — tarjeta completa para hotel person
     // cambia con la selección, a diferencia de la tarjeta unidad), se pasa
     // igual para que el componente compartido tenga SIEMPRE la identidad
     // real del paquete, nunca un valor omitido.
-    assert.match(cuerpoResultado, /<AddonsPaquete addons=\{addons\} onAbrir=\{setAddonAbierto\} paqueteId=\{r\.paqueteId\} \/>/);
+    assert.match(cuerpoResultado, /<AddonsPaquete addons=\{addons\} onAbrir=\{setAddonAbierto\} paqueteId=\{r\.paqueteId\} seleccion=\{seleccionServicios\.seleccion\} \/>/);
+    // Los servicios seleccionados se cotizan con los datos de ESTE resultado
+    // (paquete, fechas, pax y precio del combo elegido; categoría/régimen en la firma).
+    assert.match(cuerpoResultado, /paqueteId: r\.paqueteId, hotelNombre: r\.hotelNombre \?\? "", fechaIda: r\.fechaIda, fechaRegreso: r\.fechaRegreso,/);
+    // Pax del servicio = TODOS los viajeros del hotel (infantes incluidos), la base que exige el checkout.
+    // Moneda = la del hotel según el motor (`r.moneda`), nunca COP fijo.
+    assert.match(cuerpoResultado, /pax: combo\.pax \+ combo\.menores\.infantes, precio: combo\.total, moneda: r\.moneda,/);
+    assert.match(cuerpoResultado, /firma: JSON\.stringify\(\[combo\.categoria, combo\.regimen, r\.habitaciones, r\.edadesMenores\]\)/);
   });
 
   test("los add-on abren ReceptivoModal — mismo componente compartido, sin fuente de precio alterna", () => {
     assert.match(cuerpoResultado, /const \[addonAbierto, setAddonAbierto\] = useState<ReceptivoModalInfo \| null>\(null\);/);
-    assert.match(cuerpoResultado, /<ReceptivoModal receptivo=\{addonAbierto\} onClose=\{\(\) => setAddonAbierto\(null\)\} \/>/);
+    assert.match(cuerpoResultado, /<ReceptivoModal receptivo=\{addonAbierto\} onClose=\{\(\) => setAddonAbierto\(null\)\}\s+seleccion=\{seleccionParaModal\(addonAbierto\.servicioId, seleccionServicios, bloqueoSeleccion\)\} \/>/);
+    // El modal solo selecciona: el único que escribe en el carrito es el botón del hotel.
+    assert.match(cuerpoResultado, /addConjunto\(item, serviciosParaCarrito\(evaluacion, hotelServicios, fotosServicios\)\)/);
+    assert.match(cuerpoResultado, /disabled=\{!enCarrito && !evaluacion\.listo\}/);
   });
 
   test("precio/disponibilidad PERSONA siguen viniendo exclusivamente de `combo`/`r` (resultado de buscarHoteles) — descripcionPorPaquete/addonsPorPaquete/info NUNCA participan del precio ni de `item`/`enCarrito`", () => {
@@ -137,7 +147,7 @@ describe("Resultado (BuscadorBooking.tsx) — tarjeta completa para hotel person
     const bloqueItem = cuerpoResultado.slice(idxItem, idxFinItem);
     assert.match(bloqueItem, /precio: combo\.total,/, "el precio agregado al carrito debe seguir siendo combo.total");
     assert.doesNotMatch(bloqueItem, /descripcionPorPaquete|addonsPorPaquete|info\./, "el ítem del carrito nunca debe leer las props nuevas (decorativas)");
-    assert.match(cuerpoResultado, /\{formatCOP\(combo\.total\)\}/, "el precio mostrado sigue siendo combo.total, vía formatCOP (fuente interna, sin cambios)");
+    assert.match(cuerpoResultado, /\{formatMoneda\(combo\.total, r\.moneda\)\}/, "el precio mostrado sigue siendo combo.total, con la moneda del resultado (r.moneda), nunca COP fijo");
   });
 });
 
@@ -163,7 +173,9 @@ describe("TarjetaUnidadBusqueda (VistaBooking.tsx) — tarjeta completa para hot
     // paqueteId={opcionSel.paqueteId}: mismo identificador reactivo — al
     // cambiar de combo, AddonsPaquete cierra su lista sola (ver el test
     // dedicado de cierre automático más abajo).
-    assert.match(cuerpoTarjetaUnidadBusqueda, /<AddonsPaquete addons=\{addons\} onAbrir=\{setAddonAbierto\} paqueteId=\{opcionSel\.paqueteId\} \/>/);
+    assert.match(cuerpoTarjetaUnidadBusqueda, /<AddonsPaquete addons=\{addons\} onAbrir=\{setAddonAbierto\} paqueteId=\{opcionSel\.paqueteId\} seleccion=\{seleccionServicios\.seleccion\} \/>/);
+    assert.match(cuerpoTarjetaUnidadBusqueda, /fechaIda: opcionSel\.fechaIda, fechaRegreso: opcionSel\.fechaRegreso, pax: opcionSel\.paxTotal,/);
+    assert.match(cuerpoTarjetaUnidadBusqueda, /precio: precioMostrado, moneda: monedaMostrada,/);
   });
 
   // Requisito explícito: "dos paquetes que comparten hotel no mezclan
@@ -191,7 +203,11 @@ describe("TarjetaUnidadBusqueda (VistaBooking.tsx) — tarjeta completa para hot
 
   test("los add-on abren ReceptivoModal — mismo componente compartido, con estado propio addonAbierto (no comparte estado con Resultado)", () => {
     assert.match(cuerpoTarjetaUnidadBusqueda, /const \[addonAbierto, setAddonAbierto\] = useState<ReceptivoModalInfo \| null>\(null\);/);
-    assert.match(cuerpoTarjetaUnidadBusqueda, /<ReceptivoModal receptivo=\{addonAbierto\} onClose=\{\(\) => setAddonAbierto\(null\)\} \/>/);
+    assert.match(cuerpoTarjetaUnidadBusqueda, /<ReceptivoModal receptivo=\{addonAbierto\} onClose=\{\(\) => setAddonAbierto\(null\)\}\s+seleccion=\{seleccionParaModal\(addonAbierto\.servicioId, seleccionServicios, bloqueoSeleccion\)\} \/>/);
+    // Si la revalidación cambia el precio del hotel con servicios seleccionados,
+    // NO agrega: el conjunto se recotiza y el usuario confirma de nuevo.
+    assert.match(cuerpoTarjetaUnidadBusqueda, /if \(serviciosConjunto\.length\) \{\s*\n\s*setErrorAgregar\(/);
+    assert.match(cuerpoTarjetaUnidadBusqueda, /\}, serviciosConjunto\);\s*\n\s*openDrawer\(\);/);
   });
 
   test("precio/disponibilidad UNIDAD siguen viniendo EXCLUSIVAMENTE de Bernalo: precioMostrado/agregar() dependen de opcionSel.precioVenta y revalidan con cotizarAlojamientoBernaloPublico — las props nuevas (ubicacion/descripcionPorPaquete/addonsPorPaquete) nunca aparecen ahí", () => {

@@ -2,10 +2,12 @@
 
 import { useEffect, useState, useTransition } from "react";
 import Link from "next/link";
-import { formatCOP } from "@/lib/utils";
+import { formatMoneda } from "@/lib/utils";
 import { ACOM_ROOM_LABEL, type AcomRoom } from "@/lib/acomodaciones";
 import { useCart, type CartItem, type HotelCartItem, type HotelCartItemPersona, type HotelCartItemBernalo } from "@/lib/cart/CartContext";
 import { normalizarEdadesMenoresCarrito } from "@/lib/reservar/edadesMenores";
+import { comisionSobre, formatImporte, monedaDeItem, preverCotizacion } from "@/lib/cart/monedaCarrito";
+import { AvisoMonedas, TotalesPorMoneda } from "../totalesCarrito";
 import { crearSolicitudReserva, fotosPortada, getContextoB2B, type SolicitudResult, type ContextoB2B } from "./actions";
 
 function resumenHab(it: HotelCartItemPersona): string {
@@ -22,7 +24,7 @@ function resumenHabBernalo(it: { habitaciones: { acom: string; adultos: number }
 }
 
 export default function CheckoutPage() {
-  const { items, total, remove, clear, actualizarPrecioBernalo } = useCart();
+  const { items, totales, remove, clear, actualizarPrecioBernalo } = useCart();
   const hotelItems = items.filter((i): i is HotelCartItemPersona => i.tipo === "hotel" && i.modeloTarifario !== "unidad");
   // Fase 3F-4A: el checkout YA envía los ítems Bernalo — el servidor los
   // re-liquida directo con `computarReservaBernalo` (checkout/actions.ts),
@@ -54,8 +56,17 @@ export default function CheckoutPage() {
   }, []);
   const esB2B = !!ctx?.esB2B;
   const pct = ctx?.pctComision ?? 0;
-  const comision = Math.round(total * pct);
-  const totalNeto = total - comision;
+  // La comisión B2B (presentación) se calcula sobre UNA sola moneda: el total
+  // único del carrito o, si mezcla divisas, lo que se anticipa que entrará a
+  // la cotización (`preverCotizacion`). Si no se puede anticipar (ítems sin
+  // moneda registrada), no se muestra una cifra. El servidor la recalcula.
+  const prevision = preverCotizacion(items);
+  const baseComision = totales.unica
+    ?? (prevision.moneda && prevision.montoIncluido != null && !prevision.bloqueantes.length
+      ? { moneda: prevision.moneda, monto: prevision.montoIncluido }
+      : null);
+  const { comision, neto: totalNeto } = comisionSobre(baseComision?.monto ?? 0, pct);
+  const sobreParte = !totales.unica && baseComision != null;
 
   // Resuelve la portada actual por hotel (ítems del carrito sin fotoUrl).
   useEffect(() => {
@@ -104,6 +115,8 @@ export default function CheckoutPage() {
       const r = await crearSolicitudReserva({
         items: [
           ...itemsNormalizados.map(({ it, edadesMenores }) => ({
+            // `itemId`: solo para que sus servicios vinculados lo señalen.
+            itemId: it.id,
             modulo: it.modulo, paqueteId: it.paqueteId, hotelId: it.hotelId, bloqueoId: it.bloqueoId,
             hotelNombre: it.hotelNombre, destino: it.destino, categoria: it.categoria, regimen: it.regimen,
             fechaIda: it.fechaIda, fechaRegreso: it.fechaRegreso, noches: it.noches,
@@ -133,6 +146,9 @@ export default function CheckoutPage() {
         tours: tourItems.map((it) => ({
           servicioId: it.servicioId, paqueteId: it.paqueteId,
           fechaIda: it.fechaIda, fechaRegreso: it.fechaRegreso, pax: it.pax,
+          // Hotel al que pertenece (servicio elegido en su tarjeta) — el
+          // servidor lo valida y cotiza el conjunto completo o nada.
+          hotelItemId: it.hotelItemId ?? null,
         })),
         cliente: c,
         // `facturacion`/`pctComision` YA NO se envían: el servidor los
@@ -217,38 +233,47 @@ export default function CheckoutPage() {
                           <div className="text-xs text-gray-500">
                             {it.destino ?? ""}{it.fechaIda ? ` · ${it.fechaIda} → ${it.fechaRegreso ?? ""}` : ""}
                           </div>
-                          <div className="text-xs text-gray-400">{it.pax} pax</div>
+                          <div className="text-xs text-gray-400">
+                            {it.pax} pax
+                            {/* Vínculo con su hotel (solo presentación): quitar el
+                                hotel quita también este servicio — ver `remove`. */}
+                            {it.hotelItemId && (() => {
+                              const h = items.find((x) => x.id === it.hotelItemId);
+                              return h && h.tipo === "hotel" ? ` · con ${h.hotelNombre}` : "";
+                            })()}
+                          </div>
                         </>
                       )}
                     </div>
                     <div className="text-right">
-                      <div className="text-sm font-semibold" style={{ color: "var(--brand-primary)" }}>{formatCOP(it.precio)}</div>
+                      <div className="text-sm font-semibold" style={{ color: "var(--brand-primary)" }}>{formatImporte(it.precio, monedaDeItem(it))}</div>
                       <button type="button" onClick={() => remove(it.id)} className="text-xs text-gray-400 hover:text-red-500">Quitar</button>
                     </div>
                   </li>
                 ))}
               </ul>
-              <div className="mt-3 space-y-1 border-t border-gray-100 pt-3">
-                <div className="flex items-center justify-between">
-                  <span className="text-sm text-gray-500">Total{esB2B ? " (PVP)" : " estimado"}</span>
-                  <span className="text-lg font-bold" style={{ color: "var(--brand-primary)" }}>{formatCOP(total)}</span>
-                </div>
-                {esB2B && modo === "neta" && (
+              <div className="mt-3 space-y-2 border-t border-gray-100 pt-3">
+                <TotalesPorMoneda totales={totales} etiqueta={`Total${esB2B ? " (PVP)" : " estimado"}`} />
+                <AvisoMonedas totales={totales} prevision={prevision} />
+                {esB2B && !baseComision && (
+                  <p className="text-xs text-gray-500">La comisión se calculará sobre la cotización que se genere (una sola moneda).</p>
+                )}
+                {esB2B && baseComision && modo === "neta" && (
                   <>
                     <div className="flex items-center justify-between text-sm text-gray-500">
-                      <span>Comisión ({Math.round(pct * 100)}%)</span>
-                      <span>−{formatCOP(comision)}</span>
+                      <span>Comisión ({Math.round(pct * 100)}%){sobreParte ? ` sobre lo cotizado en ${baseComision.moneda}` : ""}</span>
+                      <span>−{formatMoneda(comision, baseComision.moneda)}</span>
                     </div>
                     <div className="flex items-center justify-between border-t border-gray-100 pt-1">
-                      <span className="text-sm font-semibold text-gray-700">Total neto a pagar</span>
-                      <span className="text-lg font-bold" style={{ color: "var(--brand-success)" }}>{formatCOP(totalNeto)}</span>
+                      <span className="text-sm font-semibold text-gray-700">Total neto a pagar{sobreParte ? " (estimado)" : ""}</span>
+                      <span className="text-lg font-bold" style={{ color: "var(--brand-success)" }}>{formatMoneda(totalNeto, baseComision.moneda)}</span>
                     </div>
                   </>
                 )}
-                {esB2B && modo === "comisionable" && (
+                {esB2B && baseComision && modo === "comisionable" && (
                   <div className="flex items-center justify-between text-sm text-gray-500">
-                    <span>Comisión a liquidar ({Math.round(pct * 100)}%)</span>
-                    <span style={{ color: "var(--brand-success)" }}>{formatCOP(comision)}</span>
+                    <span>Comisión a liquidar ({Math.round(pct * 100)}%){sobreParte ? ` sobre lo cotizado en ${baseComision.moneda}` : ""}</span>
+                    <span style={{ color: "var(--brand-success)" }}>{formatMoneda(comision, baseComision.moneda)}</span>
                   </div>
                 )}
               </div>

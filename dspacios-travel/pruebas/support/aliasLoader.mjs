@@ -21,6 +21,10 @@ const RAIZ = join(AQUI, "..", ".."); // raíz del repo (dos niveles arriba)
 const EXTENSIONES = [".ts", ".tsx", ".mts", ""];
 
 export async function resolve(specifier, context, nextResolve) {
+  // "next/headers" no tiene mapa de exports para ESM plano: se resuelve a su
+  // archivo real para que una prueba pueda reemplazarlo con `mock.module`
+  // (pruebas/checkoutVinculoServicios.test.ts). Nunca se ejecuta de verdad.
+  if (specifier === "next/headers") return nextResolve("next/headers.js", context);
   if (specifier.startsWith("@/")) {
     const rel = specifier.slice(2);
     const base = join(RAIZ, rel);

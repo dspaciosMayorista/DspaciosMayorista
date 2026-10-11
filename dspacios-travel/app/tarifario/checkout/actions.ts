@@ -22,6 +22,9 @@ import {
 } from "@/lib/reservar/solicitudAlojamientoBernalo";
 import type { HabitacionOcupacionEntrada, HabitacionOcupacionValidada } from "@/lib/reservar/ocupacionPorHabitacion";
 import { liquidarServicioPuntual } from "@/lib/reservar/cotizar";
+import {
+  errorHotelConServicios, errorServicioVinculado, validarServicioContraHotel, type HotelResueltoCheckout,
+} from "@/lib/reservar/vinculoServiciosCheckout";
 import { resumirServiciosContrato, type CategoriaServicio, type ServicioEfectivo } from "@/lib/reservar/serviciosPaquete";
 import { hoyBogota, resolverVigenciaCotizacion } from "@/lib/cotizacion/vigencia";
 import { calcularResidualServiciosIncluidosPorGrupo } from "@/lib/reservar/desglosePersonaCotizacion";
@@ -37,6 +40,9 @@ import type { Json } from "@/types/database";
 // de `computarReserva` — nunca de lo que mande el navegador.
 export type SolicitudItemPersona = {
   modeloTarifario?: undefined;
+  // `id` del ítem en el carrito — SOLO para que un servicio vinculado
+  // (`SolicitudTour.hotelItemId`) señale a este hotel; nunca autoriza ni calcula.
+  itemId?: string;
   modulo: "bloqueo" | "porcion_terrestre";
   paqueteId: number;
   hotelId: number;
@@ -149,6 +155,9 @@ type SolicitudItemBernaloComputado = {
 // descartan por completo en cuanto se re-liquida (ver `validarTourInput`).
 export type SolicitudTour = {
   servicioId: number | null; paqueteId: number;
+  // `itemId` del hotel al que pertenece (servicio elegido en su tarjeta);
+  // ausente/null = tour independiente (Receptivos). Ver vinculoServiciosCheckout.ts.
+  hotelItemId?: string | null;
   nombre: string; destino: string | null; fechaIda: string | null; fechaRegreso: string | null;
   pax: number; precio: number; moneda: string;
 };
@@ -157,6 +166,11 @@ export type SolicitudTour = {
 // que `buscarReceptivos`) — lo único que se usa para mensaje/snapshot.
 type SolicitudTourComputado = {
   servicioId: number; paqueteId: number;
+  // `ref` del hotel al que pertenece (el MISMO `ref` server-side del ítem en
+  // `payload.items[].ref`), o `null` si es un tour independiente. Lo genera
+  // el servidor por posición validada — nunca el id de localStorage. Ausente
+  // en cotizaciones anteriores (ver `vinculoTourCotizacion`).
+  hotelRef: string | null;
   nombre: string; destino: string | null; descripcion: string | null;
   fechaIda: string; fechaRegreso: string; noches: number;
   pax: number; precio: number; moneda: string;
@@ -415,11 +429,18 @@ function construirMensaje(
 // ronda 4: `notaExcluidos` en `crearSolicitudReserva` decía "por estar en
 // otra moneda" para CUALQUIER exclusión, incl. tours simplemente no
 // disponibles para esas fechas/pax).
+// Referencia ESTABLE de un ítem de hotel dentro de la cotización (por su
+// posición validada en la solicitud). La usan `payload.items[].ref`,
+// `detalle.hoteles[].ref` y el `hotelRef` de los tours vinculados — una sola
+// fórmula para que nunca diverjan.
+const refItemCotizacion = (posicion: number) => `item-${posicion}`;
+
 export type ItemExcluido = { etiqueta: string; motivo: "moneda" | "no_disponible" };
 
 async function crearCotizacionCarrito(input: {
   items: SolicitudItemVariante[];
   tours: SolicitudTourValidado[];
+  hotelDeTour: (number | null)[];
   cliente: SolicitudCliente;
 }): Promise<
   | { ok: true; id: number; codigo: string; url: string; moneda: string; itemsOk: SolicitudItemComputado[]; itemsBernaloOk: SolicitudItemBernaloComputado[]; toursOk: SolicitudTourComputado[]; excluidos: ItemExcluido[] }
@@ -456,6 +477,12 @@ async function crearCotizacionCarrito(input: {
   let monedaPrincipal: string | null = null;
   let total = 0;
   let hIdx = 0, vIdx = 0, iIdx = 0;
+  // Hoteles con servicios adicionales vinculados (posición en `input.items`):
+  // ese conjunto se cotiza COMPLETO o la solicitud falla — nunca parcial. Lo
+  // que el servidor resuelve para cada uno (fechas/pax/moneda) es contra lo
+  // que se valida cada servicio, nunca contra lo que declaró el carrito.
+  const hotelesConServicios = new Set(input.hotelDeTour.filter((h): h is number => h != null));
+  const hotelesResueltos = new Map<number, HotelResueltoCheckout>();
 
   for (let posOriginal = 0; posOriginal < input.items.length; posOriginal++) {
     const it = input.items[posOriginal];
@@ -467,7 +494,7 @@ async function crearCotizacionCarrito(input: {
     // `convertirCotizacionCarrito`. Se persiste en `payload.items[].ref` Y en
     // `detalle.hoteles[].ref` (ver más abajo), así ambas superficies pueden
     // correlacionarse sin ambigüedad aunque dos ítems compartan hotel/nombre.
-    const ref = `item-${posOriginal}`;
+    const ref = refItemCotizacion(posOriginal);
     // Fase 3F-4A: el ítem Bernalo se re-liquida DIRECTO con el servicio
     // interno autoritativo (`computarReservaBernalo`, Fase 3F-3) — el MISMO
     // que usa la cotización pública en vivo (`cotizarAlojamientoBernaloPublico`),
@@ -515,10 +542,17 @@ async function crearCotizacionCarrito(input: {
       }
 
       if (monedaPrincipal && resultadoBernalo.moneda !== monedaPrincipal) {
+        if (hotelesConServicios.has(posOriginal)) {
+          return { ok: false, error: errorHotelConServicios(resultadoBernalo.hotelNombre, `está en ${resultadoBernalo.moneda} y el resto del carrito en ${monedaPrincipal}`) };
+        }
         excluidos.push({ etiqueta: `${it.hotelNombre} (moneda ${resultadoBernalo.moneda})`, motivo: "moneda" });
         continue;
       }
       monedaPrincipal = monedaPrincipal ?? resultadoBernalo.moneda;
+      hotelesResueltos.set(posOriginal, {
+        nombre: resultadoBernalo.hotelNombre, moneda: resultadoBernalo.moneda, pax: resultadoBernalo.paxTotal,
+        fechaIda: resultadoBernalo.salida.fechaIda, fechaRegreso: resultadoBernalo.salida.fechaRegreso,
+      });
 
       // Regla C.13: SOLO la ocupación de ENTRADA de cada habitación (nunca
       // `.resultado`/`.snapshot`, que traen netos/comisión/fuente/tarifa) —
@@ -634,10 +668,17 @@ async function crearCotizacionCarrito(input: {
     incluidosSnap.push(...serviciosIncluidos.map((s) => ({ ...s, paqueteId: it.paqueteId })));
 
     if (monedaPrincipal && monedaReserva !== monedaPrincipal) {
+      if (hotelesConServicios.has(posOriginal)) {
+        return { ok: false, error: errorHotelConServicios(meta.hotel_nombre ?? it.hotelNombre, `está en ${monedaReserva} y el resto del carrito en ${monedaPrincipal}`) };
+      }
       excluidos.push({ etiqueta: `${it.hotelNombre} (moneda ${monedaReserva})`, motivo: "moneda" });
       continue;
     }
     monedaPrincipal = monedaPrincipal ?? monedaReserva;
+    hotelesResueltos.set(posOriginal, {
+      nombre: meta.hotel_nombre ?? it.hotelNombre, moneda: monedaReserva, pax: totalPax,
+      fechaIda: meta.fecha_ida, fechaRegreso: meta.fecha_regreso,
+    });
 
     // Las edades usadas para clasificar infante/Niño 1/Niño 2 SIEMPRE deben
     // salir de `comp.data` (única fuente autoritativa, ver
@@ -758,7 +799,18 @@ async function crearCotizacionCarrito(input: {
     itemsOk.push({ ...it, ref, edadesMenores: edadesMenoresConfirmadas, ninos: numNinos, ninos2: numNinos2, infantes: numInfantes, pax: totalPax, precio: precioVenta });
   }
 
-  for (const t of input.tours) {
+  for (let j = 0; j < input.tours.length; j++) {
+    const t = input.tours[j];
+    // Servicio vinculado a un hotel de esta solicitud: el hotel ya se resolvió
+    // arriba (si no se pudo incluir, la solicitud ya falló). Se valida contra
+    // lo que el SERVIDOR resolvió para ese hotel, antes de liquidar.
+    const posHotel = input.hotelDeTour[j] ?? null;
+    const hotelDelTour = posHotel != null ? hotelesResueltos.get(posHotel) : undefined;
+    if (posHotel != null) {
+      if (!hotelDelTour) return { ok: false, error: errorServicioVinculado(input.items[posHotel]?.hotelNombre ?? "el hotel", `#${t.servicioId}`, "no se pudo asociar a su hotel") };
+      const incompatible = validarServicioContraHotel(t, hotelDelTour);
+      if (incompatible) return { ok: false, error: errorServicioVinculado(hotelDelTour.nombre, `#${t.servicioId}`, incompatible) };
+    }
     // Re-liquida EN VIVO con la misma fórmula de `buscarReceptivos` — nunca
     // se usa nombre/precio/moneda/destino que haya mandado el navegador
     // (esos ni siquiera llegan hasta acá: `validarTourInput` no los lee).
@@ -779,6 +831,10 @@ async function crearCotizacionCarrito(input: {
     // Este bloque NUNCA debe leer un campo que no sea `.tipo`/`.codigo`/`.mensaje`.
     const resultado = await liquidarServicioPuntual(t);
     if (!resultado.ok) {
+      // Un servicio del conjunto de un hotel nunca se omite: el conjunto falla.
+      if (hotelDelTour) {
+        return { ok: false, error: errorServicioVinculado(hotelDelTour.nombre, `#${t.servicioId}`, `no se pudo cotizar (${resultado.mensaje})`) };
+      }
       if (resultado.tipo === "no_disponible") {
         excluidos.push({ etiqueta: `Servicio #${t.servicioId} (${resultado.mensaje})`, motivo: "no_disponible" });
         continue;
@@ -786,6 +842,9 @@ async function crearCotizacionCarrito(input: {
       return { ok: false, error: `No se pudo cotizar el servicio #${t.servicioId}: ${resultado.mensaje}` };
     }
     const tMoneda = resultado.resultado.moneda || "COP";
+    if (hotelDelTour && tMoneda !== hotelDelTour.moneda) {
+      return { ok: false, error: errorServicioVinculado(hotelDelTour.nombre, `«${resultado.resultado.nombre}»`, `está en ${tMoneda} y el hotel en ${hotelDelTour.moneda}`) };
+    }
     if (monedaPrincipal && tMoneda !== monedaPrincipal) {
       excluidos.push({ etiqueta: `${resultado.resultado.nombre} (moneda ${tMoneda})`, motivo: "moneda" });
       continue;
@@ -800,6 +859,7 @@ async function crearCotizacionCarrito(input: {
     total += resultado.resultado.total;
     toursOk.push({
       servicioId: resultado.resultado.servicioId, paqueteId: resultado.resultado.paqueteId,
+      hotelRef: posHotel != null ? refItemCotizacion(posHotel) : null,
       nombre: resultado.resultado.nombre, destino: resultado.resultado.destino, descripcion: resultado.resultado.descripcion,
       fechaIda: t.fechaIda, fechaRegreso: t.fechaRegreso, noches: resultado.resultado.noches,
       pax: resultado.resultado.pax, precio: resultado.resultado.total, moneda: resultado.resultado.moneda,
@@ -929,7 +989,7 @@ export async function crearSolicitudReserva(inputRaw: unknown): Promise<Solicitu
   if (!input.cliente.numeroDoc.trim()) return { ok: false, error: "El documento es obligatorio." };
   if (!input.cliente.telefono.trim()) return { ok: false, error: "El teléfono / WhatsApp es obligatorio." };
 
-  const cot = await crearCotizacionCarrito({ items: input.items, tours, cliente: input.cliente });
+  const cot = await crearCotizacionCarrito({ items: input.items, tours, hotelDeTour: input.hotelDeTour, cliente: input.cliente });
   if (!cot.ok) return cot;
 
   // Agrega el cliente a la base de contactos del CRM como B2C (cliente_final),

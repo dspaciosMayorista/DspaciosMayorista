@@ -5,9 +5,9 @@ import { useEffect, useId, useMemo, useRef, useState, useTransition } from "reac
 import Image from "next/image";
 import { MapPin, Users, Baby, BedDouble } from "lucide-react";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { formatCOP } from "@/lib/utils";
+import { formatMoneda } from "@/lib/utils";
 import { ACOM_ROOMS, ACOM_ROOM_LABEL, type AcomRoom } from "@/lib/acomodaciones";
-import { useCart, type HotelCartItemPersona } from "@/lib/cart/CartContext";
+import { useCart, type HotelCartItemPersona, type TourCartItem } from "@/lib/cart/CartContext";
 import { buscarHoteles } from "@/app/(dashboard)/dashboard/reservar/actions";
 import { buscarAlojamientosUnidadPorFechas, type DisponibilidadUnidadHotel, type ResultadoBusquedaUnidad } from "./busquedaUnidadActions";
 import { type BusquedaResultado, type SugerenciaFecha } from "@/lib/reservar/cotizar";
@@ -21,6 +21,11 @@ import {
   type Receptivo, type ReceptivoModalInfo,
 } from "./tarjetaHotelCompartida";
 import type { DescripcionPaqueteRaw } from "@/lib/tarifario/descripcionPaquete";
+import { serviciosParaCarrito, type HotelParaServicios } from "@/lib/tarifario/servicioAdicionalPaquete";
+import { serviciosDeHotel } from "@/lib/cart/vinculoServicios";
+import {
+  DesgloseServicios, ServiciosEnCarrito, etiquetaAgregarConjunto, seleccionParaModal, useCotizacionServicios, useSeleccionServicios,
+} from "./serviciosHotel";
 import { EtiquetaOferta } from "./EtiquetaOferta";
 
 // Veredicto POSITIVO del servidor sobre un hotel por unidad para las fechas y
@@ -682,7 +687,7 @@ export function Resultado({ r, recomendada = false, foto, info, descripcionPorPa
    * `r.combos` (comportamiento de siempre, el usuario elige libremente). */
   combosPermitidos?: ComboPersonaElegido[];
 }) {
-  const { items, add, remove } = useCart();
+  const { items, addConjunto, remove } = useCart();
   const [addonAbierto, setAddonAbierto] = useState<ReceptivoModalInfo | null>(null);
   // `r.paqueteId` es FIJO para este resultado (una fila = un par hotel+
   // paquete) — nunca cambia con la categoría/alimentación elegida, a
@@ -734,7 +739,7 @@ export function Resultado({ r, recomendada = false, foto, info, descripcionPorPa
     hotelNombre: r.hotelNombre ?? "", destino: r.destino, fotoUrl: foto,
     categoria: combo.categoria, regimen: combo.regimen, fechaIda: r.fechaIda, fechaRegreso: r.fechaRegreso, noches: r.noches,
     habitaciones: r.habitaciones, ninos: combo.menores.nino, ninos2: combo.menores.nino2, infantes: combo.menores.infantes,
-    pax: combo.pax, precio: combo.total, edadesMenores: r.edadesMenores, condicion: r.condicion,
+    pax: combo.pax, precio: combo.total, moneda: r.moneda, edadesMenores: r.edadesMenores, condicion: r.condicion,
   };
   // El estado del botón se deriva del carrito real: si se quita del carrito,
   // vuelve a estar disponible para agregar.
@@ -743,6 +748,27 @@ export function Resultado({ r, recomendada = false, foto, info, descripcionPorPa
     i.fechaIda === item.fechaIda && i.fechaRegreso === item.fechaRegreso &&
     i.categoria === item.categoria && i.regimen === item.regimen);
   const selCls = "rounded-lg border border-gray-300 bg-white px-2 py-1 text-xs";
+  // Servicios adicionales = subelección de ESTA tarjeta: se cotizan con las
+  // fechas/pax/precio del combo elegido (cambiar categoría/alimentación
+  // cambia la clave y obliga a recotizar) y entran al carrito SOLO con el
+  // botón del hotel, juntos (`addConjunto`). Moneda = la del hotel que
+  // resolvió el motor (`r.moneda`), la misma con la que se pinta el precio.
+  const seleccionServicios = useSeleccionServicios(r.paqueteId);
+  const hotelServicios: HotelParaServicios = {
+    paqueteId: r.paqueteId, hotelNombre: r.hotelNombre ?? "", fechaIda: r.fechaIda, fechaRegreso: r.fechaRegreso,
+    // Todos los viajeros del hotel, infantes incluidos — la misma base que
+    // exige el checkout para un servicio vinculado.
+    pax: combo.pax + combo.menores.infantes, precio: combo.total, moneda: r.moneda,
+    firma: JSON.stringify([combo.categoria, combo.regimen, r.habitaciones, r.edadesMenores]),
+  };
+  const { evaluacion, reintentar } = useCotizacionServicios(hotelServicios, seleccionServicios.seleccion, addons);
+  const serviciosVinculados = enCarrito ? serviciosDeHotel(items, enCarrito.id).filter((i): i is TourCartItem => i.tipo === "tour") : [];
+  const bloqueoSeleccion = enCarrito ? "Este hotel ya está en el carrito. Quítalo del carrito para cambiar sus servicios." : null;
+  const fotosServicios = Object.fromEntries(addons.filter((a) => a.servicioId != null).map((a) => [a.servicioId as number, a.foto]));
+  function agregarConjunto() {
+    if (enCarrito || !evaluacion.listo) return;
+    addConjunto(item, serviciosParaCarrito(evaluacion, hotelServicios, fotosServicios));
+  }
   return (
     <>
     <div className="flex flex-col overflow-hidden rounded-2xl border border-gray-200 bg-white">
@@ -794,23 +820,34 @@ export function Resultado({ r, recomendada = false, foto, info, descripcionPorPa
         <div className="flex items-end justify-between">
           <div>
             <div className="text-[10px] uppercase tracking-wide text-gray-400">total {combo.pax} pax</div>
-            <div className="text-lg font-bold" style={{ color: "var(--brand-primary)" }}>{formatCOP(combo.total)}</div>
+            <div className="text-lg font-bold" style={{ color: "var(--brand-primary)" }}>{formatMoneda(combo.total, r.moneda)}</div>
           </div>
-          <button type="button" onClick={() => (enCarrito ? remove(enCarrito.id) : add(item))}
-            className="rounded-lg px-3 py-1.5 text-xs font-semibold text-white" style={{ backgroundColor: enCarrito ? "var(--brand-success)" : "var(--brand-primary)" }}>
-            {enCarrito ? "✓ En el carrito · quitar" : "Agregar al carrito"}
+          <button type="button" onClick={() => (enCarrito ? remove(enCarrito.id) : agregarConjunto())}
+            disabled={!enCarrito && !evaluacion.listo}
+            className="rounded-lg px-3 py-1.5 text-xs font-semibold text-white disabled:opacity-50" style={{ backgroundColor: enCarrito ? "var(--brand-success)" : "var(--brand-primary)" }}>
+            {enCarrito
+              ? (serviciosVinculados.length ? "✓ En el carrito · quitar hotel y servicios" : "✓ En el carrito · quitar")
+              : etiquetaAgregarConjunto(evaluacion.servicios.length)}
           </button>
         </div>
+
+        {enCarrito ? (
+          <ServiciosEnCarrito servicios={serviciosVinculados} />
+        ) : (
+          <DesgloseServicios hotelNombre={r.hotelNombre ?? ""} precioHotel={combo.total} moneda={r.moneda} evaluacion={evaluacion}
+            onQuitar={seleccionServicios.quitar} onReintentar={reintentar} />
+        )}
 
         {/* Incluye/No incluye y add-on del paquete de ESTE resultado — nunca
             fuente de precio/disponibilidad (eso sigue siendo `combo.total`,
             resuelto por `buscarHoteles` arriba). */}
         <SeccionesIncluye descripcion={descripcionPaquete} />
-        <AddonsPaquete addons={addons} onAbrir={setAddonAbierto} paqueteId={r.paqueteId} />
+        <AddonsPaquete addons={addons} onAbrir={setAddonAbierto} paqueteId={r.paqueteId} seleccion={seleccionServicios.seleccion} />
       </div>
     </div>
     {addonAbierto && (
-      <ReceptivoModal receptivo={addonAbierto} onClose={() => setAddonAbierto(null)} />
+      <ReceptivoModal receptivo={addonAbierto} onClose={() => setAddonAbierto(null)}
+        seleccion={seleccionParaModal(addonAbierto.servicioId, seleccionServicios, bloqueoSeleccion)} />
     )}
     </>
   );

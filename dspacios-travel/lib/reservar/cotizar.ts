@@ -380,6 +380,10 @@ export type BusquedaResultado = {
   // (ej. normal + 3x2); nunca se deriva por `hotelId` ni se inventa un texto.
   paqueteNombre: string | null;
   total: number; noches: number; fechaIda: string; fechaRegreso: string;
+  // Moneda de `total`/`combos[].total`: la MISMA que resolvió el motor para
+  // este hotel (`evaluarHotelPorFechas` → `hoteles.moneda`, "USD" o "COP").
+  // Solo viaja para presentarla; nunca entra al cálculo de la liquidación.
+  moneda: string;
   habitaciones: Record<string, number>;
   menores: ClasificacionMenores; // totales de la distribución por habitación, para ESTE hotel
   edadesMenores: number[]; // las mismas edades de la búsqueda — para persistir en el carrito
@@ -749,7 +753,7 @@ export async function buscarHoteles(inputRaw: unknown): Promise<
       resultados.push({
         hotelId: hotel, hotelNombre: res.hotelNombre, destino: res.destinoNombre,
         paqueteId: paquete, paqueteNombre, categoria: mejor.categoria, regimen: mejor.regimen,
-        total: mejor.total, noches: numNoches, fechaIda: input.fechaIda, fechaRegreso: input.fechaRegreso,
+        total: mejor.total, noches: numNoches, fechaIda: input.fechaIda, fechaRegreso: input.fechaRegreso, moneda: res.moneda,
         habitaciones: habitacionesOut, menores: mejor.menores, edadesMenores: edades, pax: mejor.pax,
         combos: combosValidos, condicion,
       });

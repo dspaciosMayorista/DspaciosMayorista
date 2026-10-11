@@ -41,6 +41,9 @@ const STUB_NEXT_LINK = pathToFileURL(join(AQUI, "stubs", "nextLinkStub.mjs")).hr
 // redirigen a stubs que lanzan si alguna vez se llegaran a invocar de
 // verdad, para no silenciar en falso un uso real inesperado.
 const STUB_RESERVAR_ACTIONS = pathToFileURL(join(AQUI, "stubs", "reservarActionsStub.mjs")).href;
+// Server Actions del checkout público (app/tarifario/checkout/actions.ts),
+// importadas por checkout/page.tsx como "./actions" (pruebas/carritoMonedaCheckout.react.ts).
+const STUB_CHECKOUT_ACTIONS = pathToFileURL(join(AQUI, "stubs", "checkoutActionsStub.mjs")).href;
 const STUB_BUSQUEDA_UNIDAD_ACTIONS = pathToFileURL(join(AQUI, "stubs", "busquedaUnidadActionsStub.mjs")).href;
 // `PasajerosContratoClient.tsx` (migración 188, CRM) importa su Server
 // Action real "./actions" (relativa, dentro de su propia carpeta) — "use
@@ -116,11 +119,19 @@ export async function resolve(specifier, context, nextResolve) {
   if (specifier === "@/app/(dashboard)/dashboard/reservar/actions") {
     return { url: STUB_RESERVAR_ACTIONS, shortCircuit: true };
   }
+  // Vista previa de la conversión del carrito (pruebas/convertirCarritoVinculos.react.ts):
+  // importa la Server Action real por ruta RELATIVA -> mismo stub configurable.
+  if (specifier === "../../reservar/actions" && context.parentURL?.endsWith("/ConvertirCarritoBtn.tsx")) {
+    return { url: STUB_RESERVAR_ACTIONS, shortCircuit: true };
+  }
   if (specifier === "@/lib/reservar/buscarPasajero") {
     return { url: STUB_BUSCAR_PASAJERO, shortCircuit: true };
   }
   if (specifier === "./busquedaUnidadActions" && context.parentURL?.endsWith("BuscadorBooking.tsx")) {
     return { url: STUB_BUSQUEDA_UNIDAD_ACTIONS, shortCircuit: true };
+  }
+  if (specifier === "./actions" && context.parentURL?.endsWith("/tarifario/checkout/page.tsx")) {
+    return { url: STUB_CHECKOUT_ACTIONS, shortCircuit: true };
   }
   if (specifier === "./actions" && context.parentURL?.endsWith("PasajerosContratoClient.tsx")) {
     return { url: STUB_PASAJEROS_CONTRATO_ACTIONS, shortCircuit: true };
@@ -188,6 +199,7 @@ export async function resolve(specifier, context, nextResolve) {
   if (
     specifier === "@/components/ui/DateInput" &&
     (context.parentURL?.endsWith("DifusionClient.tsx") ||
+      context.parentURL?.endsWith("/ConvertirCarritoBtn.tsx") ||
       context.parentURL?.endsWith("PagosList.tsx") ||
       context.parentURL?.endsWith("EditarBloqueoForm.tsx") ||
       context.parentURL?.endsWith("PasajeroAcciones.tsx"))
@@ -199,7 +211,11 @@ export async function resolve(specifier, context, nextResolve) {
     (context.parentURL?.endsWith("DifusionClient.tsx") || context.parentURL?.endsWith("EditarBloqueoForm.tsx") ||
       context.parentURL?.endsWith("/login/LoginClient.tsx") ||
       // Botón de salir que importa el portal B2B (pruebas/comisionPortalB2B.react.ts).
-      context.parentURL?.endsWith("/LogoutButton.tsx"))
+      context.parentURL?.endsWith("/LogoutButton.tsx") ||
+      // Vista previa de la conversión del carrito (pruebas/convertirCarritoVinculos.react.ts).
+      context.parentURL?.endsWith("/ConvertirCarritoBtn.tsx") ||
+      // Panel del carrito (pruebas/carritoMonedaCheckout.react.ts).
+      context.parentURL?.endsWith("/tarifario/CartDrawer.tsx"))
   ) {
     return { url: STUB_NEXT_NAVIGATION, shortCircuit: true };
   }

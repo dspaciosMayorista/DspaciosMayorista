@@ -498,8 +498,11 @@ describe("convertirCotizacionCarrito — hallazgo confirmado: reintentar con un 
   test("detalleExistente declara agrupar?: string y el guard compara contra opts.agrupar ANTES de construir los grupos", () => {
     assert.match(codigo, /const detalleExistente = \(cot\.detalle \?\? \{\}\) as \{ contratos\?: unknown; contratosPorGrupo\?: Record<string, string>; agrupar\?: string \};/);
     const idxGuard = cuerpoConv.indexOf("detalleExistente.agrupar !== opts.agrupar");
-    const idxGrupos = cuerpoConv.indexOf("let grupos: Grupo[];");
+    // Los grupos se arman con `armarGruposConversion` (servicios vinculados
+    // van al contrato de su hotel) — el guard debe seguir yendo ANTES.
+    const idxGrupos = cuerpoConv.indexOf("const grupos: Grupo[] = armarGruposConversion");
     assert.notEqual(idxGuard, -1);
+    assert.notEqual(idxGrupos, -1, "debe existir la construcción de grupos con armarGruposConversion");
     assert.ok(idxGuard < idxGrupos, "el guard de modo de agrupación debe evaluarse ANTES de construir los grupos (que ya dependen de opts.agrupar)");
   });
 
