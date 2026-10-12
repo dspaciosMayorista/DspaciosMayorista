@@ -3,6 +3,7 @@
 import { createClient } from "@/lib/supabase/server";
 import { revalidatePath } from "next/cache";
 import { totalVisibleContratoItems } from "@/lib/contrato/valorContratoItem";
+import { esVentaNetoDescontada } from "@/lib/finanzas/netoB2B";
 
 // ─────────────────────────────────────────────────────────────────────────
 // Edición del CONTENIDO de un contrato — SOLO SUPERADMIN
@@ -213,6 +214,20 @@ export async function guardarServiciosContrato(numero: string, servicios: Servic
 export async function sincronizarPrecioVenta(numero: string): Promise<Result> {
   const guard = await soloSuperadmin();
   if (!guard.ok) return guard;
+  // #30: en un contrato NETO `precio_venta` es el total exigible (PVP − la
+  // comisión ya descontada al aliado) y los ítems están a PVP: igualarlos
+  // borraría el descuento y le cobraría el PVP completo a un comprador cuya
+  // comisión ya se descontó. Sin lectura no se iguala nada.
+  const { data: venta, error: ventaError } = await guard.sb
+    .from("ventas")
+    .select("comision_estado")
+    .eq("numero_contrato", numero)
+    .maybeSingle();
+  if (ventaError) return { ok: false, error: ventaError.message };
+  if (!venta) return { ok: false, error: "El contrato no existe." };
+  if (esVentaNetoDescontada(venta)) {
+    return { ok: false, error: "Contrato NETO: el precio de venta es el total exigible (PVP menos la comisión ya descontada al aliado) y no se iguala a la suma de ítems." };
+  }
   const { data: items, error } = await guard.sb
     .from("contrato_items")
     .select("modo_precio, valor_total, adultos, ninos, tarifa_adulto, tarifa_nino")

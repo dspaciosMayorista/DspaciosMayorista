@@ -9,6 +9,7 @@ import { tituloDocumento } from "@/lib/utils/tituloDocumento";
 import { resolverCondicionesContrato } from "@/lib/contrato/condicionesContrato";
 import { habitacionesBernaloDeContrato } from "@/lib/reservar/alojamientoBernaloDocumento";
 import { condicionesTarifaParaRender } from "@/lib/calc/condicionesTarifa";
+import { desgloseNetoB2B } from "@/lib/finanzas/netoB2B";
 
 export const dynamic = "force-dynamic";
 
@@ -107,6 +108,7 @@ export default async function ContratoPublicoPage({
             agencia={agencia}
             condiciones={condicionesResueltas}
             habitacionesBernalo={habitacionesBernalo}
+            netoTotalExigible={desgloseNetoB2B(venta)?.totalExigible ?? null}
           />
         </div>
       </div>

@@ -22,6 +22,8 @@ import { sumarRetencionesPorCuenta } from "@/lib/finanzas/retenciones";
 import CondicionesContratoPanel from "@/components/contrato/CondicionesContratoPanel";
 import { resolverCondicionesContrato } from "@/lib/contrato/condicionesContrato";
 import { OverrideRestriccionForm } from "./OverrideRestriccionForm";
+import { desgloseNetoB2B, esVentaNetoDescontada } from "@/lib/finanzas/netoB2B";
+import { netoTotalExigibleDeContrato } from "@/lib/contrato/netoContrato.server";
 
 export const dynamic = "force-dynamic";
 
@@ -185,6 +187,15 @@ export default async function ContratoDetallePage({
   const fin = verFinanzas
     ? (venta as Database["public"]["Tables"]["ventas"]["Row"])
     : null;
+  // #30: ¿contrato B2B vendido en NETO? Con acceso financiero sale de la fila;
+  // sin él (asesor `venta`, que lee `ventas_basica`), de la frontera
+  // service-role — solo cuando hace falta (editor de servicios visible) y
+  // después de que la RLS ya autorizó este contrato.
+  const esNeto = fin
+    ? esVentaNetoDescontada(fin)
+    : venta.estado === "pendiente" && puedeEditar
+      ? (await netoTotalExigibleDeContrato(numero)) != null
+      : false;
 
   // Servicios del paquete (para editar los add-ons de un contrato PENDIENTE).
   let serviciosDisp: ServicioDispContrato[] = [];
@@ -364,11 +375,18 @@ export default async function ContratoDetallePage({
             pax: String(venta.pax ?? 1),
           }}
           destinos={destinos ?? []}
+          modalidadNeto={esVentaNetoDescontada(fin)}
         />
       )}
 
       {/* Servicios adicionales (solo contrato pendiente, y solo quien gestiona) */}
-      {venta.estado === "pendiente" && puedeEditar && (
+      {venta.estado === "pendiente" && puedeEditar && esNeto && (
+        <section className="mt-5 rounded-xl border border-gray-200 bg-white px-4 py-3 text-sm text-gray-600">
+          Contrato vendido en NETO: los servicios no se cambian después de emitido, porque el precio quedaría
+          descuadrado de la comisión ya descontada al aliado.
+        </section>
+      )}
+      {venta.estado === "pendiente" && puedeEditar && !esNeto && (
         <ServiciosContratoEditor
           numero={venta.numero_contrato}
           pax={venta.pax ?? 0}
@@ -453,6 +471,7 @@ export default async function ContratoDetallePage({
           numero={numero}
           moneda={venta.moneda ?? "COP"}
           precioVenta={venta.precio_venta ?? 0}
+          descuentoNeto={desgloseNetoB2B(fin)?.descuentoComision ?? null}
           items={(itemsC ?? []).map((i) => ({
             descripcion: i.descripcion ?? "", adultos: i.adultos ?? 0, ninos: i.ninos ?? 0,
             tarifaAdulto: i.tarifa_adulto ?? 0, tarifaNino: i.tarifa_nino ?? 0,

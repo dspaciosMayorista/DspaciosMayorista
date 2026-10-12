@@ -11,6 +11,7 @@ import { Eye } from "lucide-react";
 import { resolverCondicionesContrato } from "@/lib/contrato/condicionesContrato";
 import { habitacionesBernaloDeContrato } from "@/lib/reservar/alojamientoBernaloDocumento";
 import { condicionesTarifaParaRender } from "@/lib/calc/condicionesTarifa";
+import { netoTotalExigibleDeContrato } from "@/lib/contrato/netoContrato.server";
 
 // ¿Quien mira puede ver el contrato COMPLETO, o solo la parte comercial?
 // Un asesor consultando el contrato de un colega de su agencia recibe el
@@ -105,7 +106,13 @@ export default async function ContratoImprimiblePage({
 
   if (!venta) notFound();
 
-  const agencia = await agenciaDe((venta.tenant as Tenant | null) ?? undefined);
+  // #30: la modalidad se pregunta DESPUÉS de que la RLS ya autorizó este
+  // contrato (la consulta de arriba). Solo vuelve el total exigible de un
+  // contrato NETO (o null), nunca la comisión del aliado.
+  const [agencia, netoTotalExigible] = await Promise.all([
+    agenciaDe((venta.tenant as Tenant | null) ?? undefined),
+    netoTotalExigibleDeContrato(numero),
+  ]);
 
   const totalPagado = (abonos ?? []).reduce(
     (s, a) => s + Number(("valor_abono" in a ? a.valor_abono : a.total_pagado) ?? 0),
@@ -166,6 +173,7 @@ export default async function ContratoImprimiblePage({
             agencia={agencia}
             condiciones={condicionesResueltas}
             habitacionesBernalo={habitacionesBernalo}
+            netoTotalExigible={netoTotalExigible}
           />
         </div>
       </div>

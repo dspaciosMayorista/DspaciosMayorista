@@ -11,6 +11,7 @@ import {
 import { formatMoneda, formatFechaLarga, calcularEdad } from "@/lib/utils";
 import { etiquetaIata, parseRuta } from "@/lib/iata";
 import { valorVisibleContratoItem, totalVisibleContratoItems } from "@/lib/contrato/valorContratoItem";
+import { presentacionValoresContrato } from "@/lib/contrato/presentacionValores";
 import type { ComposicionBernaloDocumento, HabitacionBernaloDocumento } from "@/lib/reservar/alojamientoBernaloDocumento";
 import type {
   VentaDocumento,
@@ -92,6 +93,12 @@ type Props = {
   // Composición pública de la tarifa Bernalo usada en cotizaciones previas:
   // líneas del motor (base/suplementos) sin netos, comisión ni snapshot.
   composicionBernalo?: ComposicionBernaloDocumento[];
+  // #30 — Total exigible de un contrato B2B vendido en NETO (`precio_venta`,
+  // PVP − comisión del aliado), resuelto por `netoTotalExigibleDeContrato`.
+  // null/ausente = no es NETO: el documento suma los ítems como siempre.
+  // Presente: total y saldo salen de aquí y se ocultan los valores por ítem
+  // (a PVP), que junto al total revelarían la comisión del aliado.
+  netoTotalExigible?: number | null;
 };
 
 // Marca por tenant: mayorista mantiene los colores/logo de siempre;
@@ -140,6 +147,7 @@ export function ContratoDocumento({
   condiciones,
   habitacionesBernalo = [],
   composicionBernalo = [],
+  netoTotalExigible = null,
 }: Props) {
   const moneda = (venta as { moneda?: string | null }).moneda ?? "COP";
   // Fase 3F-4B: helper ÚNICO (lib/contrato/valorContratoItem.ts) — lee
@@ -147,8 +155,13 @@ export function ContratoDocumento({
   // fórmula per-cápita de siempre para cualquier otra fila. Sin este cambio,
   // una línea Bernalo (adultos/ninos/tarifa_adulto/tarifa_nino en su default
   // 0) se mostraba en $0.
-  const total = totalVisibleContratoItems(items);
-  const saldo = Math.max(total - totalPagado, 0);
+  // #30: en NETO el total y el saldo son los del total exigible, no la suma
+  // de ítems a PVP (ver lib/contrato/presentacionValores.ts).
+  const { total, saldo, mostrarValoresItems } = presentacionValoresContrato({
+    totalItems: totalVisibleContratoItems(items),
+    totalPagado,
+    netoTotalExigible,
+  });
   // Separa servicios (línea propia: Servicio · Pax · Valor total) del alojamiento.
   const servicioItems = items.filter((it) => it.descripcion?.startsWith("Servicio · "));
   const alojItems = items.filter((it) => !it.descripcion?.startsWith("Servicio · "));
@@ -499,6 +512,11 @@ export function ContratoDocumento({
             <Pill label="Saldo pendiente" value={formatMoneda(saldo, moneda)} />
             <Pill label="Moneda" value={moneda} />
           </div>
+          {!mostrarValoresItems && (
+            <p className="mb-3 text-xs text-gray-500">
+              Valor total acordado para el paquete; los servicios incluidos se detallan sin valor por ítem.
+            </p>
+          )}
 
           {/* Hallazgo confirmado (cierre 3F-4B): una línea `modo_precio =
               "total"` (Bernalo) no tiene adultos/niños/tarifa por columna —
@@ -513,13 +531,15 @@ export function ContratoDocumento({
               {alojItemsTotal.map((it) => (
                 <div key={it.id} className="flex items-center justify-between rounded-lg bg-gray-50 px-3 py-2 text-xs">
                   <span className="text-gray-700">{it.descripcion}</span>
-                  <span className="font-semibold text-gray-800">{formatMoneda(valorVisibleContratoItem(it), moneda)}</span>
+                  {mostrarValoresItems && (
+                    <span className="font-semibold text-gray-800">{formatMoneda(valorVisibleContratoItem(it), moneda)}</span>
+                  )}
                 </div>
               ))}
             </div>
           )}
 
-          {composicionBernalo.length > 0 && (
+          {mostrarValoresItems && composicionBernalo.length > 0 && (
             <div className="mb-3 overflow-x-auto">
               <p className="mb-1 text-xs font-semibold text-gray-500">Composición tarifa Bernalo</p>
               <table className="w-full min-w-[560px] border-collapse text-xs">
@@ -557,15 +577,19 @@ export function ContratoDocumento({
                   <th className="border border-gray-200 px-2 py-1">Ítem</th>
                   <th className="border border-gray-200 px-2 py-1">Adultos</th>
                   <th className="border border-gray-200 px-2 py-1">Niños</th>
-                  <th className="border border-gray-200 px-2 py-1">
-                    Tarifa Adulto
-                  </th>
-                  <th className="border border-gray-200 px-2 py-1">
-                    Tarifa Niño
-                  </th>
-                  <th className="border border-gray-200 px-2 py-1">
-                    Valor total
-                  </th>
+                  {mostrarValoresItems && (
+                    <>
+                      <th className="border border-gray-200 px-2 py-1">
+                        Tarifa Adulto
+                      </th>
+                      <th className="border border-gray-200 px-2 py-1">
+                        Tarifa Niño
+                      </th>
+                      <th className="border border-gray-200 px-2 py-1">
+                        Valor total
+                      </th>
+                    </>
+                  )}
                 </tr>
               </thead>
               <tbody>
@@ -580,15 +604,19 @@ export function ContratoDocumento({
                     <td className="border border-gray-200 px-2 py-1">
                       {it.ninos}
                     </td>
-                    <td className="border border-gray-200 px-2 py-1">
-                      {formatMoneda(it.tarifa_adulto, moneda)}
-                    </td>
-                    <td className="border border-gray-200 px-2 py-1">
-                      {formatMoneda(it.tarifa_nino, moneda)}
-                    </td>
-                    <td className="border border-gray-200 px-2 py-1 font-medium">
-                      {formatMoneda(valorVisibleContratoItem(it), moneda)}
-                    </td>
+                    {mostrarValoresItems && (
+                      <>
+                        <td className="border border-gray-200 px-2 py-1">
+                          {formatMoneda(it.tarifa_adulto, moneda)}
+                        </td>
+                        <td className="border border-gray-200 px-2 py-1">
+                          {formatMoneda(it.tarifa_nino, moneda)}
+                        </td>
+                        <td className="border border-gray-200 px-2 py-1 font-medium">
+                          {formatMoneda(valorVisibleContratoItem(it), moneda)}
+                        </td>
+                      </>
+                    )}
                   </tr>
                 ))}
               </tbody>
@@ -638,7 +666,7 @@ export function ContratoDocumento({
                   <tr className="bg-gray-50 text-left text-gray-500">
                     <th className="border border-gray-200 px-2 py-1">Servicio</th>
                     <th className="border border-gray-200 px-2 py-1">Pax</th>
-                    <th className="border border-gray-200 px-2 py-1">Valor total</th>
+                    {mostrarValoresItems && <th className="border border-gray-200 px-2 py-1">Valor total</th>}
                   </tr>
                 </thead>
                 <tbody>
@@ -648,9 +676,11 @@ export function ContratoDocumento({
                         {it.descripcion.replace(/^Servicio · /, "")}
                       </td>
                       <td className="border border-gray-200 px-2 py-1">{venta.pax ?? "—"}</td>
-                      <td className="border border-gray-200 px-2 py-1 font-medium">
-                        {formatMoneda(valorVisibleContratoItem(it), moneda)}
-                      </td>
+                      {mostrarValoresItems && (
+                        <td className="border border-gray-200 px-2 py-1 font-medium">
+                          {formatMoneda(valorVisibleContratoItem(it), moneda)}
+                        </td>
+                      )}
                     </tr>
                   ))}
                 </tbody>
