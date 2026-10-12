@@ -22,6 +22,7 @@ import {
   type Medidor, type ResultadoEtapa, type EstadoFlujo,
 } from "@/lib/observabilidad/medicion";
 import { revertirContratoIncompleto } from "@/lib/reservar/financieroContrato";
+import { netoTotalExigibleDeContrato } from "@/lib/contrato/netoContrato.server";
 
 // Deshace un contrato manual que quedó a medias: borra la venta y sus hijas y
 // libera SOLO sus sillas (`revertir_contrato_incompleto`, migración 171). Es
@@ -904,6 +905,31 @@ export async function actualizarVenta(
   const pax = Math.trunc(Number(input.pax));
   if (!Number.isFinite(pax) || pax < 1) return { ok: false, error: "La cantidad de pasajeros debe ser al menos 1." };
   const sb = await createClient();
+  // #30: un contrato NETO no cambia de modalidad ni de importes después de
+  // emitido. Pasarlo a "interno" (B2C) dejaría un precio con la comisión del
+  // aliado descontada en una venta directa; mover `precio_venta` lo
+  // descuadraría de la comisión ya descontada (congelada en aliados_b2b por la
+  // 205): o se cobra de más al aliado o la comisión deja de corresponder. Una
+  // corrección de precio en NETO no se hace por este formulario.
+  // La lectura va por la vista que todos los roles internos pueden leer (desde
+  // la 144 `venta` no lee `ventas`), y la modalidad por la frontera
+  // service-role, después de confirmar el acceso.
+  const { data: actual, error: actualError } = await sb
+    .from("ventas_basica")
+    .select("tipo_asesor")
+    .eq("numero_contrato", numero)
+    .maybeSingle();
+  if (actualError) return { ok: false, error: actualError.message };
+  if (!actual) return { ok: false, error: "El contrato no existe o no tienes acceso." };
+  const netoExigible = await netoTotalExigibleDeContrato(numero);
+  if (netoExigible != null) {
+    if (oNull(input.tipoAsesor) !== (actual.tipo_asesor ?? null)) {
+      return { ok: false, error: "Contrato vendido en NETO: el tipo de venta (agencia/freelance) no se cambia después de emitido." };
+    }
+    if (Math.abs(precioVenta - netoExigible) > 0.005) {
+      return { ok: false, error: "Contrato vendido en NETO: el precio de venta es el total exigible (PVP menos la comisión ya descontada) y no se edita aquí." };
+    }
+  }
   const { error } = await sb
     .from("ventas")
     .update({
@@ -1084,10 +1110,16 @@ export async function actualizarServiciosContrato(
   const sb = await createClient();
   const { data: venta } = await sb
     .from("ventas")
-    .select("estado, pax, precio_venta, paquete_armado_id, fecha_salida, fecha_regreso")
+    .select("estado, pax, precio_venta, paquete_armado_id, fecha_salida, fecha_regreso, comision_estado")
     .eq("numero_contrato", numeroContrato)
     .maybeSingle();
   if (!venta) return { ok: false, error: "Contrato no encontrado." };
+  // #30: en NETO, agregar o quitar servicios movería `precio_venta` a PVP de
+  // esos servicios sin ajustar la comisión ya descontada (congelada por la
+  // 205): el total exigible dejaría de ser PVP − comisión.
+  if (venta.comision_estado === "descontada") {
+    return { ok: false, error: "Contrato vendido en NETO: los servicios no se cambian después de emitido (el precio quedaría descuadrado de la comisión descontada)." };
+  }
   if (venta.estado !== "pendiente") return { ok: false, error: "Solo se pueden editar servicios en contratos pendientes." };
   if (!venta.paquete_armado_id) return { ok: false, error: "El contrato no está enlazado a un paquete." };
 

@@ -28,6 +28,10 @@ type Props = {
   numero: string;
   moneda: string;
   precioVenta: number;
+  // #30: comisión del aliado ya descontada del precio (contrato NETO); null en
+  // cualquier otro contrato. En NETO los ítems quedan a PVP y `precio_venta`
+  // es el total exigible: cuadran cuando ítems − descuento = precio de venta.
+  descuentoNeto?: number | null;
   items: ItemContenido[];
   hoteles: HotelContenido[];
   vuelos: VueloContenido[];
@@ -40,7 +44,7 @@ type Seccion = "items" | "hoteles" | "vuelos" | "servicios";
 // contratos migrados del importador de histórico, que solo traen cabecera,
 // abonos y cuentas por pagar: sin esto no había forma de completarles hoteles,
 // vuelos, ítems ni servicios. Sirve igual para corregir cualquier contrato.
-export function ContenidoContratoEditor({ numero, moneda, precioVenta, items, hoteles, vuelos, servicios }: Props) {
+export function ContenidoContratoEditor({ numero, moneda, precioVenta, descuentoNeto = null, items, hoteles, vuelos, servicios }: Props) {
   const router = useRouter();
   const [abierto, setAbierto] = useState(false);
   const [seccion, setSeccion] = useState<Seccion>("items");
@@ -61,7 +65,8 @@ export function ContenidoContratoEditor({ numero, moneda, precioVenta, items, ho
       adultos: it.adultos, ninos: it.ninos, tarifa_adulto: it.tarifaAdulto, tarifa_nino: it.tarifaNino,
     }))
   );
-  const descuadre = Math.abs(totalItems - precioVenta) > 0.5;
+  const esNeto = descuentoNeto != null;
+  const descuadre = Math.abs(totalItems - (descuentoNeto ?? 0) - precioVenta) > 0.5;
   // Este editor (adultos/ninos/tarifa_adulto/tarifa_nino) no sabe editar ni
   // reenviar una línea Bernalo intacta — `guardarItemsContrato` la protege
   // en el servidor (rechaza el guardado completo), pero la UI avisa ANTES
@@ -170,11 +175,24 @@ export function ContenidoContratoEditor({ numero, moneda, precioVenta, items, ho
               <span className="text-gray-500">Suma de los ítems</span>
               <span className="font-semibold text-gray-800">{formatMoneda(totalItems, moneda)}</span>
             </div>
+            {esNeto && (
+              <div className="mt-1 flex flex-wrap items-center justify-between gap-2 text-sm">
+                <span className="text-gray-500">Comisión del aliado descontada (NETO)</span>
+                <span className="font-semibold text-gray-800">− {formatMoneda(descuentoNeto ?? 0, moneda)}</span>
+              </div>
+            )}
             <div className="mt-1 flex flex-wrap items-center justify-between gap-2 text-sm">
-              <span className="text-gray-500">Precio de venta del contrato</span>
+              <span className="text-gray-500">{esNeto ? "Total exigible (precio de venta NETO)" : "Precio de venta del contrato"}</span>
               <span className="font-semibold text-gray-800">{formatMoneda(precioVenta, moneda)}</span>
             </div>
-            {descuadre && (
+            {descuadre && esNeto && (
+              <div className="mt-2 rounded-lg bg-amber-50 px-3 py-2 text-xs text-amber-800">
+                No cuadran: los ítems menos la comisión descontada no dan el total exigible. En un contrato NETO
+                el precio de venta no se iguala a la suma de ítems (le cobraría el PVP completo al aliado); una
+                corrección la decide administración a mano.
+              </div>
+            )}
+            {descuadre && !esNeto && (
               <div className="mt-2 rounded-lg bg-amber-50 px-3 py-2 text-xs text-amber-800">
                 No cuadran. El documento muestra la suma de los ítems, pero la cartera, la rentabilidad y las
                 comisiones usan el precio de venta. Se dejan separados a propósito: cambiar el precio de venta

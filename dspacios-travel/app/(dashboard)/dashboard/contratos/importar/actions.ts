@@ -112,6 +112,25 @@ export async function importarHistorico(textoRelacion: string, textoResumen: str
       freelance_nombre: tieneVendedor ? p.asesor : null,
     };
   });
+  // #30: el upsert reescribe precio_venta y tipo_asesor del contrato que ya
+  // exista con ese número. Un contrato vendido en NETO (comisión del aliado ya
+  // descontada del precio) no se toca desde la hoja: se rechaza la importación
+  // completa ANTES de escribir nada, nombrando los contratos.
+  const numerosImportar = ventasPayload.map((v) => v.numero_contrato);
+  const netos: string[] = [];
+  for (const lote of lotes(numerosImportar, 400)) {
+    const { data: hallados, error: netoError } = await sb
+      .from("ventas")
+      .select("numero_contrato")
+      .in("numero_contrato", lote)
+      .eq("comision_estado", "descontada");
+    if (netoError) return { ok: false, error: `No se pudo verificar la modalidad de los contratos: ${netoError.message}` };
+    netos.push(...(hallados ?? []).map((h) => h.numero_contrato));
+  }
+  if (netos.length) {
+    return { ok: false, error: `Contratos vendidos en NETO no se reimportan (su precio es el total exigible con la comisión ya descontada): ${netos.slice(0, 40).join(", ")}${netos.length > 40 ? "…" : ""}` };
+  }
+
   let nVentas = 0;
   for (const lote of lotes(ventasPayload, 400)) {
     const { error } = await sb.from("ventas").upsert(lote, { onConflict: "numero_contrato" });

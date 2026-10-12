@@ -12,7 +12,10 @@ import type { DestinoOpt } from "@/components/ComboDestino";
 const lbl = "mb-1 block text-xs font-medium text-gray-600";
 const selCls = "w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm";
 
-export function EditarVentaForm({ numero, inicial, destinos = [] }: { numero: string; inicial: VentaEditInput; destinos?: DestinoOpt[] }) {
+// `modalidadNeto` (#30): contrato B2B vendido en NETO. El precio es el total
+// exigible (PVP − comisión ya descontada) y el tipo de venta fija la
+// modalidad: los dos quedan de solo lectura (el servidor también los rechaza).
+export function EditarVentaForm({ numero, inicial, destinos = [], modalidadNeto = false }: { numero: string; inicial: VentaEditInput; destinos?: DestinoOpt[]; modalidadNeto?: boolean }) {
   const router = useRouter();
   const [open, setOpen] = useState(false);
   const [f, setF] = useState(inicial);
@@ -48,11 +51,17 @@ export function EditarVentaForm({ numero, inicial, destinos = [] }: { numero: st
             <div><label className={lbl}>Fecha regreso</label><DateInput aria-label="Fecha regreso" type="date" value={f.fechaRegreso} onValueChange={(dateValue) => setF({ ...f, ["fechaRegreso"]: dateValue })} /></div>
             <div><label className={lbl}>Plazo</label><DateInput aria-label="Plazo" type="date" value={f.plazo} onValueChange={(dateValue) => setF({ ...f, ["plazo"]: dateValue })} /></div>
             <div><label className={lbl}>Plan</label><Input value={f.planNombre} onChange={set("planNombre")} /></div>
-            <div><label className={lbl}>Precio de venta (total)</label><Input type="number" min={0} value={f.precioVenta} onChange={set("precioVenta")} /></div>
+            <div>
+              <label className={lbl}>Precio de venta (total){modalidadNeto ? " · NETO" : ""}</label>
+              <Input type="number" min={0} value={f.precioVenta} onChange={set("precioVenta")} disabled={modalidadNeto} />
+              {modalidadNeto && (
+                <p className="mt-1 text-[11px] text-gray-500">Total exigible con la comisión del aliado ya descontada: no se edita.</p>
+              )}
+            </div>
             <div><label className={lbl}>Cantidad de pasajeros</label><Input type="number" min={1} value={f.pax} onChange={set("pax")} /></div>
             <div>
               <label className={lbl}>Tipo de venta</label>
-              <select value={f.tipoAsesor} onChange={set("tipoAsesor")} className={selCls}>
+              <select value={f.tipoAsesor} onChange={set("tipoAsesor")} className={selCls} disabled={modalidadNeto}>
                 <option value="interno">Asesor interno (B2C)</option>
                 <option value="agencia">Agencia (B2B)</option>
                 <option value="freelance">Freelance (B2B)</option>
