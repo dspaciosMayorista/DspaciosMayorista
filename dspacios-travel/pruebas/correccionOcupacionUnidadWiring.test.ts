@@ -134,8 +134,10 @@ describe("Objetivo 2 — VistaBooking.tsx pasa composicionHabitaciones al carrit
   test("agregarBernalo (modal de exploración): add({...}) incluye composicionHabitaciones: item.composicionHabitaciones", () => {
     const idx = fuenteVista.indexOf("function agregarBernalo(item:");
     assert.notEqual(idx, -1);
-    const cuerpo = fuenteVista.slice(idx, idx + 900);
+    const cuerpo = fuenteVista.slice(idx, idx + 1400);
     assert.match(cuerpo, /composicionHabitaciones:\s*item\.composicionHabitaciones/);
+    // El hotel Bernalo entra junto con sus servicios seleccionados.
+    assert.match(cuerpo, /addConjunto\(\{/);
   });
 
   test("agregarBernaloClick (EditorPax) pasa resultadoCotizacion.composicionHabitaciones a onAgregarBernalo", () => {

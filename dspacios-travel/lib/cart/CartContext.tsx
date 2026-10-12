@@ -4,6 +4,8 @@ import { createContext, useContext, useEffect, useRef, useState, useCallback, ty
 import { type CondicionTipo } from "@/lib/cotizacion/condicionPago";
 import type { SalidaSeleccionadaBernaloEntrada } from "@/lib/reservar/solicitudAlojamientoBernalo";
 import type { HabitacionOcupacionEntrada } from "@/lib/reservar/ocupacionPorHabitacion";
+import { crearActualizadorConjunto, normalizarVinculos, quitarConVinculos } from "@/lib/cart/vinculoServicios";
+import { resumirMonedas, type ResumenMonedas } from "@/lib/cart/monedaCarrito";
 
 // Ítem de HOTEL del carrito — unión discriminada real por `modeloTarifario`
 // (Fase 3F-1 Bernalo). `HotelCartItemPersona` es EXACTAMENTE el contrato de
@@ -41,6 +43,11 @@ export type HotelCartItemPersona = {
   infantes: number;
   pax: number;
   precio: number;
+  // Moneda de `precio` = la del hotel según el motor ("COP"/"USD"). Opcional:
+  // ítems guardados en localStorage antes de este cambio no la traen y se
+  // muestran "por confirmar" (lib/cart/monedaCarrito.ts) — nunca se asume COP.
+  // Solo presentación: el checkout no la envía y el servidor re-liquida.
+  moneda?: string | null;
   // Edad exacta de cada menor tal como se pidió en Vista Booking (misma
   // cantidad que ninos+ninos2+infantes), en el orden en que se capturó —
   // ver lib/reservar/edadesMenores.ts. Opcional: ítems del carrito
@@ -107,8 +114,10 @@ export type HotelCartItemBernalo = {
 
 export type HotelCartItem = HotelCartItemPersona | HotelCartItemBernalo;
 
-// Ítem de SERVICIO/TOUR (add-on de un paquete, agregado desde Receptivos —
-// siempre con fechas/pax reales de una búsqueda, nunca desde el "desde" genérico).
+// Ítem de SERVICIO/TOUR (add-on de un paquete) — siempre con fechas/pax
+// reales de una cotización, nunca con el "desde" genérico. Desde la pestaña
+// Receptivos entra suelto; desde la tarjeta de un hotel entra JUNTO con el
+// hotel (`addConjunto`) y queda vinculado a él por `hotelItemId`.
 export type TourCartItem = {
   id: string;
   tipo: "tour";
@@ -123,7 +132,14 @@ export type TourCartItem = {
   pax: number;
   precio: number;
   moneda?: string | null;
+  /** `id` del ítem de hotel al que pertenece (subelección de su tarjeta).
+   * Ausente = servicio independiente (Receptivos). Ver lib/cart/vinculoServicios.ts. */
+  hotelItemId?: string | null;
 };
+
+/** Servicio listo para entrar al carrito junto con su hotel (`addConjunto`
+ * le asigna `id` y `hotelItemId`). */
+export type TourSinVinculo = Omit<TourCartItem, "id" | "hotelItemId">;
 
 export type CartItem = HotelCartItem | TourCartItem;
 
@@ -158,6 +174,11 @@ export type AddonsIntent = { paqueteId: number; destino: string | null; fechaIda
 type CartCtx = {
   items: CartItem[];
   add: (item: DistributiveOmit<CartItem, "id">) => void;
+  // Hotel + sus servicios elegidos en la tarjeta, en UNA sola actualización
+  // del carrito (nunca queda un servicio sin su hotel). Devuelve el id del hotel.
+  addConjunto: (hotel: DistributiveOmit<HotelCartItem, "id">, servicios: readonly TourSinVinculo[]) => string;
+  // Quitar un hotel quita también sus servicios vinculados; quitar un
+  // servicio deja el hotel.
   remove: (id: string) => void;
   // Fase 3F-4A: cuando el checkout detecta que el PVP/moneda autoritativos de
   // un ítem Bernalo ya no coinciden con lo que el carrito mostraba
@@ -166,7 +187,9 @@ type CartCtx = {
   // corresponde a un ítem de hotel Bernalo (ej. ya se eliminó del carrito).
   actualizarPrecioBernalo: (id: string, precio: number, moneda: string | null) => void;
   clear: () => void;
-  total: number;
+  // Subtotales por moneda (nunca una suma de COP con USD). `totales.unica` es
+  // el total único solo si todo el carrito comparte una moneda conocida.
+  totales: ResumenMonedas;
   count: number;
   // El panel del carrito es controlable desde cualquier componente (ej. al
   // agregar un hotel, se abre solo — antes se quedaba pegado en la misma vista).
@@ -195,8 +218,10 @@ export function CartProvider({ children }: { children: ReactNode }) {
       // antes de que existiera "tipo" (solo hoteles) se migran a tipo:"hotel".
       if (raw) {
         const parsed = JSON.parse(raw) as Record<string, unknown>[];
+        // Un servicio vinculado cuyo hotel ya no está (carrito editado o de
+        // una versión anterior) se descarta: nunca queda suelto.
         // eslint-disable-next-line react-hooks/set-state-in-effect
-        setItems(parsed.map((i) => (i.tipo ? i : { ...i, tipo: "hotel" })) as CartItem[]);
+        setItems(normalizarVinculos(parsed.map((i) => (i.tipo ? i : { ...i, tipo: "hotel" })) as CartItem[]));
       }
     } catch { /* ignore */ }
     yaHidrato.current = true;
@@ -210,7 +235,18 @@ export function CartProvider({ children }: { children: ReactNode }) {
   const add = useCallback((item: DistributiveOmit<CartItem, "id">) => {
     setItems((prev) => [...prev, { ...item, id: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}` } as CartItem]);
   }, []);
-  const remove = useCallback((id: string) => setItems((prev) => prev.filter((i) => i.id !== id)), []);
+  const addConjunto = useCallback((hotel: DistributiveOmit<HotelCartItem, "id">, servicios: readonly TourSinVinculo[]) => {
+    const nuevoId = () => `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+    // Todos los ids se deciden AQUÍ, fuera del actualizador: así el
+    // actualizador es puro y, si React lo ejecuta más de una vez (modo
+    // estricto), produce exactamente los mismos ids y vínculos.
+    const ids = { hotel: nuevoId(), servicios: servicios.map(() => nuevoId()) };
+    setItems(crearActualizadorConjunto<CartItem>(
+      hotel as Omit<CartItem, "id">, servicios as unknown as Omit<CartItem, "id" | "hotelItemId">[], ids,
+    ));
+    return ids.hotel;
+  }, []);
+  const remove = useCallback((id: string) => setItems((prev) => quitarConVinculos(prev, id)), []);
   const actualizarPrecioBernalo = useCallback((id: string, precio: number, moneda: string | null) => {
     setItems((prev) => prev.map((i) => (i.id === id && i.tipo === "hotel" && i.modeloTarifario === "unidad" ? { ...i, precio, moneda } : i)));
   }, []);
@@ -218,11 +254,11 @@ export function CartProvider({ children }: { children: ReactNode }) {
   const openDrawer = useCallback(() => setDrawerOpen(true), []);
   const closeDrawer = useCallback(() => setDrawerOpen(false), []);
 
-  const total = items.reduce((s, i) => s + i.precio, 0);
+  const totales = resumirMonedas(items);
 
   return (
     <Ctx.Provider value={{
-      items, add, remove, actualizarPrecioBernalo, clear, total, count: items.length,
+      items, add, addConjunto, remove, actualizarPrecioBernalo, clear, totales, count: items.length,
       drawerOpen, openDrawer, closeDrawer, addonsIntent, setAddonsIntent,
     }}>
       {children}
@@ -235,7 +271,7 @@ export function useCart(): CartCtx {
   if (!c) {
     // Outside CartProvider: return safe no-ops.
     return {
-      items: [], add: () => {}, remove: () => {}, actualizarPrecioBernalo: () => {}, clear: () => {}, total: 0, count: 0,
+      items: [], add: () => {}, addConjunto: () => "", remove: () => {}, actualizarPrecioBernalo: () => {}, clear: () => {}, totales: resumirMonedas([]), count: 0,
       drawerOpen: false, openDrawer: () => {}, closeDrawer: () => {}, addonsIntent: null, setAddonsIntent: () => {},
     };
   }

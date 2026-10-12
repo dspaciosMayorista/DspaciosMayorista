@@ -11,8 +11,8 @@ import { type PasajeroReserva } from "@/lib/reservar/computo";
 import { esInfantePorEdad } from "@/lib/reservar/pasajeros";
 import { recalcularVinculosPorEdadPorFila } from "@/lib/reservar/pasajerosFilas";
 import { BuscarPasajeroDocumento } from "@/components/pasajeros/BuscarPasajeroDocumento";
+import { agruparUnidadesCarrito, validarPasajerosServiciosVinculados } from "@/lib/reservar/vinculoServiciosCheckout";
 import {
-  agruparIndicesPorDestino,
   agregarPosicionAUniverso,
   quitarPosicionDeUniverso,
   posicionesSinAsignar,
@@ -24,7 +24,10 @@ import {
 
 type ClientePrefill = { nombres: string; apellidos: string; numeroDoc: string };
 type ItemCarritoUI = { hotelNombre: string; destino: string | null; pax: number; fechaIda: string | null };
-type TourCarritoUI = { nombre: string; destino: string | null; pax: number; fechaIda: string | null };
+// `hotelIndice`: índice en `items` del hotel al que pertenece el servicio
+// (vínculo ya validado en page.tsx con `resolverVinculosCotizacion`), o
+// `null` si es independiente.
+type TourCarritoUI = { nombre: string; destino: string | null; pax: number; fechaIda: string | null; hotelIndice: number | null };
 
 const TIPOS_DOC = ["CC", "TI", "CE", "PAS", "RC"];
 
@@ -32,9 +35,12 @@ const TIPOS_DOC = ["CC", "TI", "CE", "PAS", "RC"];
 // pasajeros (igual que CotizacionAcciones) y, si el carrito trae 2+ destinos
 // distintos, deja elegir 1 contrato para todo o 1 contrato por destino.
 export function ConvertirCarritoBtn({
-  id, pax, items, tours, destinos, cliente, esSuperadmin, asesores, miNombre, miRolVenta,
+  id, pax, items, tours, destinos, cliente, esSuperadmin, asesores, miNombre, miRolVenta, vinculoError = null,
 }: {
   id: number; pax: number; items: ItemCarritoUI[]; tours: TourCarritoUI[]; destinos: string[]; cliente: ClientePrefill; esSuperadmin: boolean;
+  /** Vínculo hotel ↔ servicio inválido en esta cotización: la conversión se
+   * rechazaría en el servidor; se avisa y se bloquea desde ya. */
+  vinculoError?: string | null;
   asesores: { nombre: string; email: string | null }[];
   miNombre: string; miRolVenta: boolean;
 }) {
@@ -94,9 +100,14 @@ export function ConvertirCarritoBtn({
   // con el que el servidor arma los grupos). Agrupar por destino tanto
   // hoteles como tours (B17) hace que `comparteGrupo` y la fecha de contrato
   // por pasajero coincidan EXACTO con cómo el servidor reparte en contratos.
-  const unidadesDestinos = [...items.map((it) => it.destino), ...tours.map((t) => t.destino)];
   const unidadesFechas = [...items.map((it) => it.fechaIda), ...tours.map((t) => t.fechaIda)];
-  const gruposIndicesUnidades = agruparIndicesPorDestino(unidadesDestinos, agrupar);
+  // MISMA agrupación que el servidor (`armarGruposConversion`): un servicio
+  // vinculado queda en el grupo de su hotel aunque su destino se escriba distinto.
+  const hotelDeTour = tours.map((t) => t.hotelIndice);
+  const gruposUnidades = (modo: "todo" | "por_destino") => agruparUnidadesCarrito({
+    modo, destinosItems: items.map((it) => it.destino), destinosTours: tours.map((t) => t.destino), hotelDeTour,
+  }).map((g) => g.unidades);
+  const gruposIndicesUnidades = gruposUnidades(agrupar);
   // Posiciones (1-based) asignadas a cada unidad — ítems y tours por separado
   // (así se envían al servidor) y combinadas (para grupos/fechas/candidatos).
   const asignacionesPorItemPos = asignaciones.map((fila) => fila.map((v, i) => (v ? i + 1 : null)).filter((v): v is number => v != null));
@@ -137,7 +148,7 @@ export function ConvertirCarritoBtn({
   // otro contrato al separar por destino.
   const cambiarAgrupar = (v: "todo" | "por_destino") => {
     setAgrupar(v);
-    recomputarVinculosCon(asignaciones, asignacionesTours, agruparIndicesPorDestino(unidadesDestinos, v));
+    recomputarVinculosCon(asignaciones, asignacionesTours, gruposUnidades(v));
   };
 
   const agregarPasajero = () => {
@@ -176,6 +187,7 @@ export function ConvertirCarritoBtn({
   };
 
   function generar() {
+    if (vinculoError) { setErr(vinculoError); return; }
     const falta = paxRows.findIndex((p) => !p.nombres.trim() || !p.apellidos.trim());
     if (falta >= 0) { setErr(`Pasajero ${falta + 1}: nombres y apellidos son obligatorios.`); return; }
     const menorConCC = paxRows.findIndex((p, i) => {
@@ -208,6 +220,12 @@ export function ConvertirCarritoBtn({
       setErr(`El pasajero ${sinAsignar[0]} no está asignado a ninguna unidad (ni hotel ni tour). Márcalo en al menos una o quítalo del listado.`);
       return;
     }
+    // Servicio del hotel: solo pasajeros de ESE hotel (misma regla que el servidor).
+    const errVinculados = validarPasajerosServiciosVinculados({
+      asignacionesItems: asignacionesPorItemPos, asignacionesTours: asignacionesPorTourPos, hotelDeTour,
+      nombresItems: items.map((it) => it.hotelNombre), nombresTours: tours.map((t) => t.nombre),
+    });
+    if (errVinculados) { setErr(errVinculados); return; }
     setErr("");
     start(async () => {
       const r = await convertirCotizacionCarrito(id, { agrupar, pasajeros: paxRows, asesorInterno: asesorSel, asignaciones: asignacionesPorItemPos, asignacionesTours: asignacionesPorTourPos });
@@ -221,10 +239,11 @@ export function ConvertirCarritoBtn({
   return (
     <div className="space-y-3">
       <div className="flex flex-wrap gap-3">
-        <Button onClick={() => setCapturando((v) => !v)} disabled={pending} style={{ backgroundColor: "var(--brand-success)" }}>
+        <Button onClick={() => setCapturando((v) => !v)} disabled={pending || !!vinculoError} style={{ backgroundColor: "var(--brand-success)" }}>
           {pending ? "Procesando…" : "Confirmar → generar contrato(s)"}
         </Button>
       </div>
+      {vinculoError && <p role="alert" className="rounded-lg bg-red-50 px-3 py-2 text-sm text-red-700">{vinculoError}</p>}
 
       {capturando && (
         <div className="space-y-4 rounded-xl border border-gray-200 p-4">

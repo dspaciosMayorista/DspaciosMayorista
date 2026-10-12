@@ -3,9 +3,12 @@
 import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { Hotel, MapPin, ShoppingCart, X } from "lucide-react";
-import { formatCOP, formatMoneda } from "@/lib/utils";
+import { formatMoneda } from "@/lib/utils";
 import { ACOM_ROOM_LABEL, type AcomRoom } from "@/lib/acomodaciones";
-import { useCart, type CartItem, type HotelCartItem, type HotelCartItemPersona } from "@/lib/cart/CartContext";
+import { useCart, type CartItem, type HotelCartItem, type HotelCartItemPersona, type TourCartItem } from "@/lib/cart/CartContext";
+import { agruparCarrito } from "@/lib/cart/vinculoServicios";
+import { formatImporte, monedaDeItem, preverCotizacion } from "@/lib/cart/monedaCarrito";
+import { AvisoMonedas, TotalesPorMoneda } from "./totalesCarrito";
 import { construirAddonsIntentDesdeCarrito } from "@/lib/cart/addonsIntent";
 import { crearContadorAddonsNonce } from "@/lib/cart/addonsNonce";
 import { resumenHabitacionesBernalo } from "@/lib/cart/resumenHabitacionBernalo";
@@ -25,8 +28,38 @@ function resumenHabitaciones(it: HotelCartItemPersona): string {
   return partes.join(" · ");
 }
 
+function ServiciosDelHotel({ hotel, servicios, onQuitar }: { hotel: HotelCartItem; servicios: TourCartItem[]; onQuitar: (id: string) => void }) {
+  // Moneda REAL del hotel (persona o unidad); sin moneda registrada (carrito
+  // antiguo) no se muestra un subtotal que podría mezclar divisas.
+  const monedaHotel = monedaDeItem(hotel);
+  const mismaMoneda = monedaHotel != null && servicios.every((s) => monedaDeItem(s) === monedaHotel);
+  const subtotal = hotel.precio + servicios.reduce((t, s) => t + s.precio, 0);
+  return (
+    <div className="mt-2 border-t border-gray-100 pt-2">
+      <p className="text-[10px] font-semibold uppercase tracking-wide text-gray-400">Servicios con este hotel</p>
+      <ul className="mt-1 space-y-1">
+        {servicios.map((s) => (
+          <li key={s.id} className="flex items-center justify-between gap-2 text-xs">
+            <span className="min-w-0 truncate text-gray-700">{s.nombre} · {s.pax} pax</span>
+            <span className="flex shrink-0 items-center gap-2">
+              <span className="font-medium" style={{ color: "var(--brand-primary)" }}>{formatImporte(s.precio, monedaDeItem(s))}</span>
+              <button type="button" onClick={() => onQuitar(s.id)} className="text-gray-400 hover:text-red-500">Quitar</button>
+            </span>
+          </li>
+        ))}
+      </ul>
+      {mismaMoneda && (
+        <div className="mt-1 flex justify-between text-xs font-semibold text-gray-700">
+          <span>Hotel + servicios</span>
+          <span>{formatMoneda(subtotal, monedaHotel)}</span>
+        </div>
+      )}
+    </div>
+  );
+}
+
 export function CartDrawer({ checkoutHabilitado = false, fotosPorHotel = {} }: { checkoutHabilitado?: boolean; fotosPorHotel?: Record<number, string> }) {
-  const { items, remove, total, count, drawerOpen, openDrawer, closeDrawer, setAddonsIntent } = useCart();
+  const { items, remove, totales, count, drawerOpen, openDrawer, closeDrawer, setAddonsIntent } = useCart();
   const router = useRouter();
   // Resuelve la foto ACTUAL del hotel por id (los ítems viejos del carrito pueden
   // no traer fotoUrl si se agregaron antes de subir la portada).
@@ -140,8 +173,9 @@ export function CartDrawer({ checkoutHabilitado = false, fotosPorHotel = {} }: {
                 </div>
               ) : (
                 <ul className="space-y-3">
-                  {items.map((it: CartItem) => (
-                    <li key={it.id} className="flex gap-3 rounded-xl border border-gray-200 p-3">
+                  {agruparCarrito<CartItem>(items).map(({ item: it, servicios }) => (
+                    <li key={it.id} className="rounded-xl border border-gray-200 p-3">
+                    <div className="flex gap-3">
                       <div className="relative flex h-16 w-20 shrink-0 items-center justify-center overflow-hidden rounded-lg bg-gray-100 text-gray-300">
                         {(it.tipo === "hotel" ? fotoDe(it) : it.fotoUrl) ? (
                           // eslint-disable-next-line @next/next/no-img-element
@@ -184,11 +218,20 @@ export function CartDrawer({ checkoutHabilitado = false, fotosPorHotel = {} }: {
                         )}
                         <div className="mt-1 flex items-center justify-between">
                           <span className="text-sm font-semibold" style={{ color: "var(--brand-primary)" }}>
-                            {it.tipo === "tour" && it.moneda ? formatMoneda(it.precio, it.moneda) : formatCOP(it.precio)}
+                            {formatImporte(it.precio, monedaDeItem(it))}
                           </span>
-                          <button type="button" onClick={() => remove(it.id)} className="text-xs text-gray-400 hover:text-red-500">Quitar</button>
+                          <button type="button" onClick={() => remove(it.id)} className="text-xs text-gray-400 hover:text-red-500">
+                            {servicios.length ? "Quitar hotel y servicios" : "Quitar"}
+                          </button>
                         </div>
                       </div>
+                    </div>
+                    {servicios.length > 0 && (
+                      // Servicios elegidos en la tarjeta de ESTE hotel: viajan
+                      // con él. Quitar uno deja el hotel; quitar el hotel
+                      // (arriba) se los lleva a todos.
+                      <ServiciosDelHotel hotel={it as HotelCartItem} servicios={servicios as TourCartItem[]} onQuitar={remove} />
+                    )}
                     </li>
                   ))}
                 </ul>
@@ -196,9 +239,9 @@ export function CartDrawer({ checkoutHabilitado = false, fotosPorHotel = {} }: {
             </div>
 
             <div className="border-t border-gray-100 p-4">
-              <div className="mb-3 flex items-center justify-between">
-                <span className="text-sm text-gray-500">Total estimado</span>
-                <span className="text-lg font-bold" style={{ color: "var(--brand-primary)" }}>{formatCOP(total)}</span>
+              <div className="mb-3 space-y-2">
+                <TotalesPorMoneda totales={totales} etiqueta="Total estimado" />
+                <AvisoMonedas totales={totales} prevision={preverCotizacion(items)} />
               </div>
               {items.some((i) => i.tipo === "hotel") && (
                 <>

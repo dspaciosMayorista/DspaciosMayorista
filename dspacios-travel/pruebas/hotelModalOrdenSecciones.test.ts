@@ -29,10 +29,14 @@ describe("HotelModal — orden Salidas -> Motor interno -> Incluye -> Servicios 
   // también por Resultado/TarjetaUnidadBusqueda — mismo orden, solo cambia
   // el ancla textual (ya no hay un `{secciones.length > 0 && (` literal acá).
   const idxIncluye = cuerpo.indexOf("<SeccionesIncluye descripcion={descripcionOpcion} />");
-  // Corrección visual (Vercel Preview): AddonsPaquete ahora recibe además
-  // `paqueteId` (cierre automático de la lista al cambiar de paquete) — el
-  // ancla ya no puede ser el literal exacto de antes.
-  const idxAddon = cuerpo.indexOf("<AddonsPaquete addons={addons} onAbrir={setAddonAbierto} paqueteId={opcion.paqueteId} />");
+  // Corrección visual (Vercel Preview): AddonsPaquete recibe además
+  // `paqueteId` (cierre automático de la lista al cambiar de paquete) y
+  // `seleccion` (servicios elegidos para el hotel) — el ancla es la
+  // apertura del componente; el paqueteId se verifica aparte.
+  const idxAddon = cuerpo.indexOf("<AddonsPaquete");
+  test("AddonsPaquete de HotelModal usa el paqueteId de la opción elegida", () => {
+    assert.match(cuerpo, /<AddonsPaquete\s+addons=\{addons\}\s+onAbrir=\{setAddonAbierto\}\s+paqueteId=\{opcion\.paqueteId\}\s+/);
+  });
 
   test("las 4 secciones existen dentro de HotelModal", () => {
     assert.notEqual(idxSalidas, -1, "falta el bloque de Salidas ('Elige tu salida')");
@@ -55,6 +59,8 @@ describe("HotelModal — orden Salidas -> Motor interno -> Incluye -> Servicios 
     const bloqueMotor = cuerpo.slice(idxMotorInterno, idxIncluye);
     assert.match(bloqueMotor, /<SelectorPorFechas/);
     assert.match(bloqueMotor, /<Selector\b/);
-    assert.match(bloqueMotor, /onAgregar=\{\(item\) => \{/);
+    // Hotel + servicios seleccionados viajan juntos en UNA actualización.
+    assert.match(bloqueMotor, /onAgregar=\{\(item, servicios\) => \{\s*\n(?:\s*\/\/[^\n]*\n)*\s*addConjunto\(item, servicios\);/);
+    assert.doesNotMatch(bloqueMotor, /\badd\(item\)/, "nunca agrega el hotel solo cuando hay servicios seleccionados");
   });
 });

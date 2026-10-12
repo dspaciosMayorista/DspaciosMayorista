@@ -9,8 +9,13 @@ import {
   Categoria, EtiquetasHotel, DescripcionHotelExpandible, UbicacionHotel, SeccionesIncluye, AddonsPaquete, ReceptivoModal,
   type Receptivo, type ReceptivoModalInfo,
 } from "./tarjetaHotelCompartida";
+import { serviciosParaCarrito, type HotelParaServicios } from "@/lib/tarifario/servicioAdicionalPaquete";
+import { serviciosDeHotel } from "@/lib/cart/vinculoServicios";
+import {
+  DesgloseServicios, ServiciosEnCarrito, etiquetaAgregarConjunto, seleccionParaModal, useCotizacionServicios, useSeleccionServicios,
+} from "./serviciosHotel";
 import { ACOM_ROOMS, ACOM_ROOM_LABEL, defaultAcomConfig, textoEdadesHotel, type AcomRoom, type AcomConfig } from "@/lib/acomodaciones";
-import { useCart, type HotelCartItemPersona } from "@/lib/cart/CartContext";
+import { useCart, type HotelCartItemPersona, type TourCartItem, type TourSinVinculo } from "@/lib/cart/CartContext";
 import { cotizarPorFechas } from "@/app/(dashboard)/dashboard/reservar/actions";
 import { type BusquedaResultado, type ComboCotizado, type SugerenciaFecha } from "@/lib/reservar/cotizar";
 import { CondicionHotelBadges, CondicionCompacta, type CondicionHotelBadgeData } from "@/components/cotizacion/CondicionHotelBadges";
@@ -2075,6 +2080,25 @@ export function VistaBooking({
 
 // ── Modal de detalle: elige opción (salida/paquete), categoría/régimen y
 //    habitaciones; calcula el precio y agrega al carrito ─────────────────────
+// Servicios adicionales que una superficie (modal) le pasa al editor del
+// hotel: la selección vive en el modal (el modal de cada servicio la cambia)
+// y el editor la cotiza con SUS fechas/pax/precio (ver serviciosHotel.tsx).
+type ServiciosTarjeta = {
+  addons: Receptivo[];
+  seleccion: readonly number[];
+  quitar: (servicioId: number) => void;
+};
+type ServiciosEditor = ServiciosTarjeta & {
+  paqueteId: number;
+  hotelNombre: string;
+  fechaIda: string | null;
+  fechaRegreso: string | null;
+  /** Elecciones del hotel que invalidan la cotización de servicios si cambian. */
+  firma: string;
+};
+const SIN_SELECCION: readonly number[] = [];
+const SIN_ADDONS: Receptivo[] = [];
+
 function HotelModal({
   hotel, detalle, onReintentar, cuposPorBloqueo, origenPorBloqueo, puedeReservar, ventanaPorPaquete, planesInfo, cap, descripcionPorPaquete, addonsPorPaquete, onClose,
 }: {
@@ -2090,7 +2114,7 @@ function HotelModal({
   descripcionPorPaquete: Record<number, DescripcionPaqueteRaw>; addonsPorPaquete: Map<number, Receptivo[]>;
   onClose: () => void;
 }) {
-  const { add, openDrawer } = useCart();
+  const { addConjunto, openDrawer } = useCart();
   const [addonAbierto, setAddonAbierto] = useState<ReceptivoModalInfo | null>(null);
 
   const opciones = useMemo<Opcion[]>(() => {
@@ -2151,6 +2175,9 @@ function HotelModal({
   // Servicios opcionales (add-on) de ESTE paquete puntual — nunca los de otro
   // destino (a diferencia de irse a la pestaña Receptivos general).
   const addons: Receptivo[] = opcion ? (addonsPorPaquete.get(opcion.paqueteId) ?? []) : [];
+  // Subelección de servicios de ESTE paquete (se vacía si cambia el paquete).
+  const seleccionServicios = useSeleccionServicios(opcion?.paqueteId ?? null);
+  const serviciosTarjeta: ServiciosTarjeta = { addons, seleccion: seleccionServicios.seleccion, quitar: seleccionServicios.quitar };
 
   return (
     <>
@@ -2247,8 +2274,10 @@ function HotelModal({
                   ventana={ventanaPorPaquete[opcion.paqueteId] ?? { min: null, max: null }}
                   planesInfo={planesInfo}
                   cap={cap}
-                  onAgregar={(item) => {
-                    add(item);
+                  servicios={serviciosTarjeta}
+                  onAgregar={(item, servicios) => {
+                    // Hotel + servicios seleccionados en UNA sola actualización.
+                    addConjunto(item, servicios);
                     openDrawer();
                     onClose();
                   }}
@@ -2261,8 +2290,10 @@ function HotelModal({
                   puedeReservar={puedeReservar}
                   planesInfo={planesInfo}
                   cap={cap}
-                  onAgregar={(item) => {
-                    add(item);
+                  servicios={serviciosTarjeta}
+                  onAgregar={(item, servicios) => {
+                    // Hotel + servicios seleccionados en UNA sola actualización.
+                    addConjunto(item, servicios);
                     openDrawer();
                     onClose();
                   }}
@@ -2275,14 +2306,15 @@ function HotelModal({
               <SeccionesIncluye descripcion={descripcionOpcion} />
 
               {/* Servicios opcionales (add-on) del MISMO paquete — nunca de otro destino */}
-              <AddonsPaquete addons={addons} onAbrir={setAddonAbierto} paqueteId={opcion.paqueteId} />
+              <AddonsPaquete addons={addons} onAbrir={setAddonAbierto} paqueteId={opcion.paqueteId} seleccion={seleccionServicios.seleccion} />
             </>
           )}
         </div>
       </div>
     </div>
     {addonAbierto && (
-      <ReceptivoModal receptivo={addonAbierto} onClose={() => setAddonAbierto(null)} />
+      <ReceptivoModal receptivo={addonAbierto} onClose={() => setAddonAbierto(null)}
+        seleccion={seleccionParaModal(addonAbierto.servicioId, seleccionServicios, null)} />
     )}
     </>
   );
@@ -2358,7 +2390,7 @@ function TarjetaUnidadBusqueda({
    * (comportamiento de siempre, el usuario elige libremente). */
   opcionesPermitidas?: OpcionUnidadConfirmada[];
 }) {
-  const { items, add, remove, openDrawer } = useCart();
+  const { items, addConjunto, remove, openDrawer } = useCart();
   const [addonAbierto, setAddonAbierto] = useState<ReceptivoModalInfo | null>(null);
 
   // `opcionesEfectivas`: la fuente ÚNICA de la que salen categorías/
@@ -2439,8 +2471,29 @@ function TarjetaUnidadBusqueda({
       }) === claveReserva
   );
 
+  // Servicios adicionales = subelección de ESTA oferta: se cotizan con las
+  // fechas/pax/precio de `opcionSel` (cambiar de combo o de precio cambia la
+  // clave y obliga a recotizar) y viajan al carrito SOLO con el hotel.
+  const seleccionServicios = useSeleccionServicios(opcionSel.paqueteId);
+  const hotelServicios: HotelParaServicios = {
+    paqueteId: opcionSel.paqueteId, hotelNombre: hotel.hotelNombre,
+    fechaIda: opcionSel.fechaIda, fechaRegreso: opcionSel.fechaRegreso, pax: opcionSel.paxTotal,
+    precio: precioMostrado, moneda: monedaMostrada,
+    firma: JSON.stringify([opcionSel.categoria, opcionSel.alimentacion, opcionSel.ocupacion]),
+  };
+  const { evaluacion, reintentar } = useCotizacionServicios(hotelServicios, seleccionServicios.seleccion, addons);
+  const serviciosVinculados = enCarrito ? serviciosDeHotel(items, enCarrito.id).filter((i): i is TourCartItem => i.tipo === "tour") : [];
+  const bloqueoSeleccion = enCarrito
+    ? "Este hotel ya está en el carrito. Quítalo del carrito para cambiar sus servicios."
+    : agregando ? "Confirmando el hotel…" : null;
+  const fotosServicios = Object.fromEntries(addons.filter((a) => a.servicioId != null).map((a) => [a.servicioId as number, a.foto]));
+
   async function agregar() {
     if (agregando) return; // nunca doble envío mientras revalida
+    if (!evaluacion.listo) return; // servicios sin cotizar/sin precio: nunca un conjunto incompleto
+    // Foto del conjunto en el momento del clic: la selección queda bloqueada
+    // mientras se revalida (ver `bloqueoSeleccion`).
+    const serviciosConjunto = serviciosParaCarrito(evaluacion, hotelServicios, fotosServicios);
     setErrorAgregar(null);
     setAgregando(true);
     const habitaciones: HabitacionOcupacionEntrada[] = opcionSel.ocupacion.map((h) => ({
@@ -2481,8 +2534,15 @@ function TarjetaUnidadBusqueda({
       // actualiza con el precio REAL revalidado; el carrito usa este mismo
       // precio, nunca el que mostraba antes.
       setPrecioActualizado({ combo: claveCombo, precio: rev.precio, moneda: rev.moneda });
+      // Con servicios seleccionados, el conjunto mostrado ya no es el que se
+      // iba a agregar: se recotizan con el precio nuevo y el usuario confirma
+      // de nuevo. Sin servicios, se agrega como siempre con el precio real.
+      if (serviciosConjunto.length) {
+        setErrorAgregar("La tarifa del hotel cambió. Volvimos a cotizar los servicios con el precio actualizado: revisa el total y vuelve a agregar.");
+        return;
+      }
     }
-    add({
+    addConjunto({
       tipo: "hotel",
       modeloTarifario: "unidad",
       paqueteId: opcionSel.paqueteId,
@@ -2497,7 +2557,7 @@ function TarjetaUnidadBusqueda({
       precio: rev.precio,
       moneda: rev.moneda,
       composicionHabitaciones: rev.composicionHabitaciones,
-    });
+    }, serviciosConjunto);
     openDrawer();
   }
 
@@ -2564,24 +2624,36 @@ function TarjetaUnidadBusqueda({
           </div>
           <button
             type="button"
-            disabled={agregando}
+            disabled={agregando || (!enCarrito && !evaluacion.listo)}
             onClick={() => (enCarrito ? remove(enCarrito.id) : agregar())}
             className="rounded-lg px-3 py-1.5 text-xs font-semibold text-white disabled:opacity-60"
             style={{ backgroundColor: enCarrito ? "var(--brand-success)" : "var(--brand-primary)" }}
           >
-            {agregando ? "Confirmando…" : enCarrito ? "✓ En el carrito · quitar" : "Agregar al carrito"}
+            {agregando
+              ? "Confirmando…"
+              : enCarrito
+                ? (serviciosVinculados.length ? "✓ En el carrito · quitar hotel y servicios" : "✓ En el carrito · quitar")
+                : etiquetaAgregarConjunto(evaluacion.servicios.length)}
           </button>
         </div>
+
+        {enCarrito ? (
+          <ServiciosEnCarrito servicios={serviciosVinculados} />
+        ) : (
+          <DesgloseServicios hotelNombre={hotel.hotelNombre} precioHotel={precioMostrado} moneda={monedaMostrada} evaluacion={evaluacion}
+            onQuitar={seleccionServicios.quitar} onReintentar={reintentar} soloLectura={agregando} />
+        )}
 
         {/* Incluye/No incluye y add-on de la OFERTA seleccionada — nunca
             fuente de precio/disponibilidad (eso sigue siendo exclusivo de
             opcionSel.precioVenta/cotizarAlojamientoBernaloPublico arriba). */}
         <SeccionesIncluye descripcion={descripcionOpcion} />
-        <AddonsPaquete addons={addons} onAbrir={setAddonAbierto} paqueteId={opcionSel.paqueteId} />
+        <AddonsPaquete addons={addons} onAbrir={setAddonAbierto} paqueteId={opcionSel.paqueteId} seleccion={seleccionServicios.seleccion} />
       </div>
     </div>
     {addonAbierto && (
-      <ReceptivoModal receptivo={addonAbierto} onClose={() => setAddonAbierto(null)} />
+      <ReceptivoModal receptivo={addonAbierto} onClose={() => setAddonAbierto(null)}
+        seleccion={seleccionParaModal(addonAbierto.servicioId, seleccionServicios, bloqueoSeleccion)} />
     )}
     </>
   );
@@ -2637,7 +2709,7 @@ function HotelBernaloCotizarModal({
   // genérico de configuración incompleta, nunca texto libre ni un editor que
   // deje adivinar la clasificación.
   const configuracionIncompleta = !!hotel && (hotel.categorias.length === 0 || hotel.regimenes.length === 0);
-  const { add, openDrawer } = useCart();
+  const { addConjunto, openDrawer } = useCart();
 
   // Incluye/No incluye y add-ons son del PAQUETE (`armado_paquetes.id` real,
   // igual identidad que usa `HotelModal`), no del hotel en abstracto — solo
@@ -2645,6 +2717,8 @@ function HotelBernaloCotizarModal({
   // `SeccionesIncluye`/`AddonsPaquete` (helpers compartidos).
   const descripcionOferta = hotel ? descripcionPorPaquete[hotel.paqueteId] : undefined;
   const addons: Receptivo[] = hotel ? (addonsPorPaquete.get(hotel.paqueteId) ?? []) : [];
+  // Subelección de servicios de la OFERTA elegida (se vacía si cambia).
+  const seleccionServicios = useSeleccionServicios(hotel?.paqueteId ?? null);
 
   // Fase 3F-4A: EditorPax ya cotizó en vivo (resultadoCotizacion.ok) y reporta
   // SOLO las decisiones + el PVP/moneda que mostró — la identidad del
@@ -2655,9 +2729,11 @@ function HotelBernaloCotizarModal({
     categoria: string; alimentacion: string; salida: SalidaSeleccionadaBernaloEntrada;
     habitaciones: HabitacionOcupacionEntrada[]; precio: number; moneda: string;
     composicionHabitaciones: { habitacionId: string; adultos: number; ninos: number; infantes: number }[];
+    servicios: TourSinVinculo[];
   }) {
     if (!hotel) return;
-    add({
+    // Hotel + servicios seleccionados en UNA sola actualización.
+    addConjunto({
       tipo: "hotel",
       modeloTarifario: "unidad",
       paqueteId: hotel.paqueteId,
@@ -2672,7 +2748,7 @@ function HotelBernaloCotizarModal({
       precio: item.precio,
       moneda: item.moneda,
       composicionHabitaciones: item.composicionHabitaciones,
-    });
+    }, item.servicios);
     openDrawer();
     onClose();
   }
@@ -2755,6 +2831,12 @@ function HotelBernaloCotizarModal({
               categoriasDisponibles={hotel.categorias}
               alimentacionesDisponibles={hotel.regimenes}
               salidas={hotel.salidas}
+              servicios={{
+                addons, seleccion: seleccionServicios.seleccion, quitar: seleccionServicios.quitar,
+                paqueteId: hotel.paqueteId, hotelNombre: hotelGrupo.hotelNombre,
+                // Bernalo toma las fechas de la salida/estadía elegida dentro del editor.
+                fechaIda: null, fechaRegreso: null, firma: "",
+              }}
               onAgregar={() => {}}
               onAgregarBernalo={agregarBernalo}
             />
@@ -2767,25 +2849,27 @@ function HotelBernaloCotizarModal({
           <SeccionesIncluye descripcion={descripcionOferta} />
 
           {/* Servicios opcionales (add-on) del MISMO paquete — nunca de otro
-              destino; solo vista de información (mismo `ReceptivoModal` que
-              `HotelModal`, sin agregar directo al carrito desde acá). */}
-          <AddonsPaquete addons={addons} onAbrir={setAddonAbierto} paqueteId={hotel?.paqueteId ?? null} />
+              destino. Mismo `ReceptivoModal` que `HotelModal`: se seleccionan
+              para el hotel y se cotizan/agregan junto con él (EditorPax). */}
+          <AddonsPaquete addons={addons} onAbrir={setAddonAbierto} paqueteId={hotel?.paqueteId ?? null} seleccion={seleccionServicios.seleccion} />
         </div>
       </div>
     </div>
     {addonAbierto && (
-      <ReceptivoModal receptivo={addonAbierto} onClose={() => setAddonAbierto(null)} />
+      <ReceptivoModal receptivo={addonAbierto} onClose={() => setAddonAbierto(null)}
+        seleccion={seleccionParaModal(addonAbierto.servicioId, seleccionServicios, hotel ? null : "Elige una oferta del hotel para seleccionar servicios.")} />
     )}
     </>
   );
 }
 
 function Selector({
-  opcion, hotel, puedeReservar, planesInfo, cap, onAgregar,
+  opcion, hotel, puedeReservar, planesInfo, cap, onAgregar, servicios,
 }: {
   opcion: Opcion; hotel: HotelCard; puedeReservar: boolean; planesInfo: PlanesInfo;
   cap: { paxMin: number | null; paxMax: number | null; acom: AcomConfig[] };
-  onAgregar: (item: Omit<HotelCartItemPersona, "id">) => void;
+  onAgregar: (item: Omit<HotelCartItemPersona, "id">, servicios: TourSinVinculo[]) => void;
+  servicios?: ServiciosTarjeta;
 }) {
   const cats = useMemo(() => [...new Set(opcion.filas.map((f) => f.categoria).filter((x): x is string => !!x))], [opcion]);
   const [cat, setCat] = useState(cats[0] ?? "");
@@ -2809,7 +2893,7 @@ function Selector({
 
   const selCls = "rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm";
 
-  const agregarItem = (habitaciones: Record<string, number>, ninos: number, ninos2: number, infantes: number, pax: number, precio: number, edadesMenores: number[]) =>
+  const agregarItem = (habitaciones: Record<string, number>, ninos: number, ninos2: number, infantes: number, pax: number, precio: number, edadesMenores: number[], serviciosConjunto: TourSinVinculo[]) =>
     onAgregar({
       tipo: "hotel",
       modulo: opcion.modulo, paqueteId: opcion.paqueteId, hotelId: hotel.hotelId, bloqueoId: opcion.bloqueoId,
@@ -2817,7 +2901,9 @@ function Selector({
       categoria: catEff, regimen: regEff,
       fechaIda: opcion.fechaIda, fechaRegreso: opcion.fechaRegreso, noches: opcion.noches,
       habitaciones, ninos, ninos2, infantes, pax, precio, edadesMenores,
-    });
+      // Misma moneda con la que el editor mostró `precio` (null = COP, como la tarjeta).
+      moneda: hotel.moneda ?? "COP",
+    }, serviciosConjunto);
 
   return (
     <div className="space-y-4 rounded-xl border border-gray-200 p-4">
@@ -2841,7 +2927,13 @@ function Selector({
         </div>
       </div>
 
-      <EditorPax pvp={pvp} acomConfig={cap.acom} paxMin={cap.paxMin} paxMax={cap.paxMax} moneda={hotel.moneda} edadesNota={textoEdadesHotel(hotel)} edadInfanteMax={hotel.infMax} edadNinoMax={hotel.ninoMax} nota={!puedeReservar ? "El valor es una estimación con tarifas publicadas; el precio final se confirma al generar la cotización." : undefined} onAgregar={agregarItem} />
+      <EditorPax pvp={pvp} acomConfig={cap.acom} paxMin={cap.paxMin} paxMax={cap.paxMax} moneda={hotel.moneda} edadesNota={textoEdadesHotel(hotel)} edadInfanteMax={hotel.infMax} edadNinoMax={hotel.ninoMax} nota={!puedeReservar ? "El valor es una estimación con tarifas publicadas; el precio final se confirma al generar la cotización." : undefined} onAgregar={agregarItem}
+        servicios={servicios ? {
+          ...servicios, paqueteId: opcion.paqueteId, hotelNombre: hotel.hotelNombre,
+          // Bloqueo: las fechas son las del record (fijas).
+          fechaIda: opcion.fechaIda, fechaRegreso: opcion.fechaRegreso,
+          firma: JSON.stringify([opcion.key, catEff, regEff]),
+        } : undefined} />
     </div>
   );
 }
@@ -2855,7 +2947,7 @@ function Selector({
 function EditorPax({
   pvp, acomConfig = [], paxMin = null, paxMax = null, nota, edadesNota,
   edadInfanteMax, edadNinoMax, onAgregar, onAgregarBernalo, btnLabel = "Agregar al carrito", moneda = "COP",
-  modeloTarifario = null, hotelId, paqueteId, categoriasDisponibles = [], alimentacionesDisponibles = [], salidas = [],
+  modeloTarifario = null, hotelId, paqueteId, categoriasDisponibles = [], alimentacionesDisponibles = [], salidas = [], servicios,
 }: {
   pvp: Record<string, number>;
   acomConfig?: AcomConfig[];
@@ -2865,7 +2957,7 @@ function EditorPax({
   edadesNota?: string | null;
   edadInfanteMax?: number | null;
   edadNinoMax?: number | null;
-  onAgregar: (habitaciones: Record<string, number>, ninos: number, ninos2: number, infantes: number, pax: number, precio: number, edadesMenores: number[]) => void;
+  onAgregar: (habitaciones: Record<string, number>, ninos: number, ninos2: number, infantes: number, pax: number, precio: number, edadesMenores: number[], servicios: TourSinVinculo[]) => void;
   // Fase 3F-4A: SOLO se usa cuando `modeloTarifario === "unidad"` — forma
   // completamente distinta a `onAgregar` (persona) porque Bernalo no tiene
   // conteos por acomodación ni niños/infantes agregados, sino habitaciones
@@ -2875,6 +2967,7 @@ function EditorPax({
     categoria: string; alimentacion: string; salida: SalidaSeleccionadaBernaloEntrada;
     habitaciones: HabitacionOcupacionEntrada[]; precio: number; moneda: string;
     composicionHabitaciones: { habitacionId: string; adultos: number; ninos: number; infantes: number }[];
+    servicios: TourSinVinculo[];
   }) => void;
   btnLabel?: string;
   moneda?: string | null;
@@ -2900,6 +2993,10 @@ function EditorPax({
   // contra la ventana del paquete); una = se autoselecciona; varias = la UI
   // exige elegir explícitamente. Nunca se "toma la primera" en silencio.
   salidas?: SalidaAereaBernalo[];
+  // Servicios adicionales seleccionados para este hotel (subelección): se
+  // cotizan con las fechas/pax/precio de ESTE editor y viajan al carrito
+  // SOLO junto con el hotel. Ausente = editor sin servicios (como antes).
+  servicios?: ServiciosEditor;
 }) {
   const idBase = useId();
   const esBernalo = modeloTarifario === "unidad";
@@ -3048,10 +3145,10 @@ function EditorPax({
   const puede = adultosPrecio > 0 && errores.length === 0 && menoresListos;
 
   function agregar() {
-    if (!puede) return;
+    if (!puede || !evaluacionServicios.listo) return;
     const habitaciones: Record<string, number> = {};
     for (const a of ACOM_ROOMS) if ((habs[a] ?? 0) > 0) habitaciones[a] = habs[a];
-    onAgregar(habitaciones, ninos, ninos2, infantes, pax, precio, edades);
+    onAgregar(habitaciones, ninos, ninos2, infantes, pax, precio, edades, serviciosConjunto());
   }
 
   const inputCls = "w-16 rounded-lg border border-gray-300 px-2 py-1.5 text-sm";
@@ -3108,6 +3205,36 @@ function EditorPax({
   const bernaloListoParaCotizar =
     hayHabBernalo && !!hotelId && !!paqueteId && !!categoriaSel && !!alimentacionSel && !!salidaPayload;
 
+  // ── Servicios adicionales seleccionados: mandan los datos de ESTE hotel.
+  // Persona: fechas de la salida/cotización + pax/precio en vivo (solo si la
+  // ocupación es válida). Bernalo: fechas de la salida/estadía elegida +
+  // pax/precio de la cotización exitosa. Cualquier cambio de habitaciones,
+  // edades, categoría, régimen o salida cambia la `firma` → se recotiza.
+  const cotizacionHotelOk = resultadoCotizacion?.ok ? resultadoCotizacion : null;
+  const hotelServicios: HotelParaServicios = esBernalo
+    ? {
+        paqueteId: servicios?.paqueteId ?? null, hotelNombre: servicios?.hotelNombre ?? "",
+        fechaIda: salidaPayload?.tipo === "sin_vuelo" ? salidaPayload.fechaIda : (salidaElegida?.fechaIda ?? null),
+        fechaRegreso: salidaPayload?.tipo === "sin_vuelo" ? salidaPayload.fechaRegreso : (salidaElegida?.fechaRegreso ?? null),
+        pax: cotizacionHotelOk ? cotizacionHotelOk.paxTotal : null,
+        precio: cotizacionHotelOk ? cotizacionHotelOk.pvp : null,
+        moneda: cotizacionHotelOk ? cotizacionHotelOk.moneda : (moneda ?? null),
+        firma: JSON.stringify([categoriaSel, alimentacionSel, salidaElegidaKeyEfectiva, payloadBernalo]),
+      }
+    : {
+        paqueteId: servicios?.paqueteId ?? null, hotelNombre: servicios?.hotelNombre ?? "",
+        fechaIda: servicios?.fechaIda ?? null, fechaRegreso: servicios?.fechaRegreso ?? null,
+        // Todos los viajeros (infantes incluidos): misma base que exige el checkout.
+        pax: puede ? pax + infantes : null, precio: puede ? precio : null, moneda: moneda ?? null,
+        firma: JSON.stringify([servicios?.firma ?? "", habs, edades]),
+      };
+  const { evaluacion: evaluacionServicios, reintentar: reintentarServicios } =
+    useCotizacionServicios(hotelServicios, servicios?.seleccion ?? SIN_SELECCION, servicios?.addons ?? SIN_ADDONS);
+  const serviciosConjunto = (): TourSinVinculo[] => serviciosParaCarrito(
+    evaluacionServicios, hotelServicios,
+    Object.fromEntries((servicios?.addons ?? []).filter((a) => a.servicioId != null).map((a) => [a.servicioId as number, a.foto])),
+  );
+
   // Regla A.1: SOLO se habilita después de una cotización Bernalo exitosa.
   // `resultadoCotizacion` ya se limpia (null) ante cualquier cambio de
   // salida/clasificación/ocupación (ver setHab/cambiarCantidadMenoresHab/
@@ -3115,11 +3242,12 @@ function EditorPax({
   // así que este botón se deshabilita solo con recotizar pendiente —
   // ninguna lógica de invalidación nueva hace falta acá.
   function agregarBernaloClick() {
-    if (!onAgregarBernalo || !resultadoCotizacion?.ok || !salidaPayload) return;
+    if (!onAgregarBernalo || !resultadoCotizacion?.ok || !salidaPayload || !evaluacionServicios.listo) return;
     onAgregarBernalo({
       categoria: categoriaSel, alimentacion: alimentacionSel, salida: salidaPayload,
       habitaciones: payloadBernalo, precio: resultadoCotizacion.pvp, moneda: resultadoCotizacion.moneda,
       composicionHabitaciones: resultadoCotizacion.composicionHabitaciones,
+      servicios: serviciosConjunto(),
     });
   }
 
@@ -3207,13 +3335,13 @@ function EditorPax({
                 // las fechas SÍ las escribe el usuario, y el servidor las
                 // vuelve a validar contra la ventana de viaje del paquete.
                 <>
-                  <div>
+                  <div className="w-40 min-w-0">
                     <label htmlFor={`${idBase}-fecha-ida`} className="mb-1 block text-xs font-medium text-gray-600">Entrada</label>
                     <DateInput aria-label="Entrada" id={`${idBase}-fecha-ida`} type="date" value={fechaIdaBernalo}
                       onValueChange={(dateValue) => { setFechaIdaBernalo(dateValue); setResultadoCotizacion(null); }}
                       className="rounded-lg border border-gray-300 px-2 py-1.5 text-sm" />
                   </div>
-                  <div>
+                  <div className="w-40 min-w-0">
                     <label htmlFor={`${idBase}-fecha-regreso`} className="mb-1 block text-xs font-medium text-gray-600">Salida</label>
                     <DateInput aria-label="Salida" id={`${idBase}-fecha-regreso`} type="date" value={fechaRegresoBernalo}
                       onValueChange={(dateValue) => { setFechaRegresoBernalo(dateValue); setResultadoCotizacion(null); }}
@@ -3368,6 +3496,11 @@ function EditorPax({
         <p className="rounded-lg bg-red-50 px-3 py-2 text-xs text-red-600">{errores.join(" ")}</p>
       )}
 
+      {servicios && (
+        <DesgloseServicios hotelNombre={servicios.hotelNombre} precioHotel={hotelServicios.precio} moneda={hotelServicios.moneda}
+          evaluacion={evaluacionServicios} onQuitar={servicios.quitar} onReintentar={reintentarServicios} />
+      )}
+
       {esBernalo ? (
         // Fase 3F-4A: cotización dinámica real contra el servidor + "Agregar
         // al carrito" habilitado SOLO tras una cotización exitosa (regla
@@ -3398,10 +3531,10 @@ function EditorPax({
               {validando ? "Cotizando…" : resultadoCotizacion?.ok ? "Recotizar" : "Cotizar"}
             </button>
             {onAgregarBernalo && (
-              <button type="button" onClick={agregarBernaloClick} disabled={!resultadoCotizacion?.ok}
+              <button type="button" onClick={agregarBernaloClick} disabled={!resultadoCotizacion?.ok || !evaluacionServicios.listo}
                 className="rounded-lg px-4 py-2.5 text-sm font-semibold text-white disabled:opacity-40"
                 style={{ backgroundColor: "var(--brand-primary)" }}>
-                Agregar al carrito
+                {etiquetaAgregarConjunto(evaluacionServicios.servicios.length)}
               </button>
             )}
           </div>
@@ -3409,13 +3542,13 @@ function EditorPax({
       ) : (
         <div className="flex items-center justify-between border-t border-gray-100 pt-3">
           <div>
-            <div className="text-xs text-gray-400">Total estimado{pax > 0 ? ` · ${pax} pax` : ""}</div>
+            <div className="text-xs text-gray-400">{evaluacionServicios.servicios.length ? "Hotel" : "Total estimado"}{pax > 0 ? ` · ${pax} pax` : ""}</div>
             <div className="text-xl font-bold" style={{ color: "var(--brand-primary)" }}>{formatMoneda(precio, moneda)}</div>
           </div>
-          <button type="button" onClick={agregar} disabled={!puede}
+          <button type="button" onClick={agregar} disabled={!puede || !evaluacionServicios.listo}
             className="rounded-lg px-4 py-2.5 text-sm font-semibold text-white disabled:opacity-40"
             style={{ backgroundColor: "var(--brand-primary)" }}>
-            {btnLabel}
+            {etiquetaAgregarConjunto(evaluacionServicios.servicios.length, btnLabel)}
           </button>
         </div>
       )}
@@ -3427,11 +3560,12 @@ function EditorPax({
 // Motor por fechas (porción/dinámico): el usuario elige las fechas reales y se
 // liquida la tarifa noche por noche (cotizarPorFechas, service-role, solo PVP).
 function SelectorPorFechas({
-  opcion, hotel, ventana, planesInfo, cap, onAgregar,
+  opcion, hotel, ventana, planesInfo, cap, onAgregar, servicios,
 }: {
   opcion: Opcion; hotel: HotelCard; ventana: { min: string | null; max: string | null }; planesInfo: PlanesInfo;
   cap: { paxMin: number | null; paxMax: number | null; acom: AcomConfig[] };
-  onAgregar: (item: Omit<HotelCartItemPersona, "id">) => void;
+  onAgregar: (item: Omit<HotelCartItemPersona, "id">, servicios: TourSinVinculo[]) => void;
+  servicios?: ServiciosTarjeta;
 }) {
   // No se permite check-in en el pasado: el mínimo es HOY (o el inicio del rango
   // del paquete si es posterior). Si el paquete empieza antes de hoy, arranca hoy.
@@ -3508,7 +3642,7 @@ function SelectorPorFechas({
   const selCls = "rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm";
   const dateCls = "rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm";
 
-  const agregarItem = (habitaciones: Record<string, number>, ninos: number, ninos2: number, infantes: number, pax: number, precio: number, edadesMenores: number[]) =>
+  const agregarItem = (habitaciones: Record<string, number>, ninos: number, ninos2: number, infantes: number, pax: number, precio: number, edadesMenores: number[], serviciosConjunto: TourSinVinculo[]) =>
     onAgregar({
       tipo: "hotel",
       modulo: opcion.modulo, paqueteId: opcion.paqueteId, hotelId: hotel.hotelId, bloqueoId: null,
@@ -3516,14 +3650,16 @@ function SelectorPorFechas({
       categoria: catEff, regimen: regEff,
       fechaIda: fIda, fechaRegreso: fReg, noches: nochesCot ?? calcNoches(fIda, fReg),
       habitaciones, ninos, ninos2, infantes, pax, precio, edadesMenores, condicion,
-    });
+      // Misma moneda con la que el editor mostró `precio` (null = COP, como la tarjeta).
+      moneda: hotel.moneda ?? "COP",
+    }, serviciosConjunto);
 
   return (
     <div className="space-y-4 rounded-xl border border-gray-200 p-4">
       <div>
         <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-gray-400">Elige tus fechas</p>
-        <div className="flex flex-wrap items-end gap-3">
-          <div>
+        <div className="grid grid-cols-2 items-end gap-3 sm:flex sm:flex-wrap">
+          <div className="min-w-0 sm:w-44">
             <label className="mb-1 block text-xs font-medium text-gray-600">Ida</label>
             <DateInput aria-label="Ida" type="date" value={fIda} min={minIda} max={ventana.max ?? undefined}
               onValueChange={(dateValue) => {
@@ -3536,14 +3672,14 @@ function SelectorPorFechas({
               }}
               className={dateCls} />
           </div>
-          <div>
+          <div className="min-w-0 sm:w-44">
             <label className="mb-1 block text-xs font-medium text-gray-600">Regreso</label>
             <DateInput aria-label="Regreso" type="date" value={fReg} min={fIda || minIda} max={ventana.max ?? undefined}
               onValueChange={(dateValue) => { setFReg(dateValue); setCombos(null); setCondicion(null); setSugerencias([]); setViaSugerencia(false); }}
               className={dateCls} />
           </div>
           <button type="button" onClick={() => cotizar()} disabled={pending || !fIda || !fReg}
-            className="rounded-lg px-4 py-2.5 text-sm font-semibold text-white disabled:opacity-50" style={{ backgroundColor: "var(--brand-accent)" }}>
+            className="col-span-2 rounded-lg px-4 py-2.5 text-sm font-semibold text-white disabled:opacity-50" style={{ backgroundColor: "var(--brand-accent)" }}>
             {pending && !sugerenciaAplicando ? "Cotizando…" : "Cotizar"}
           </button>
         </div>
@@ -3604,7 +3740,14 @@ function SelectorPorFechas({
             {nochesCot != null && <div className="self-end pb-2 text-xs text-gray-400">{nochesCot} noche(s)</div>}
           </div>
           <div className="mt-1"><CondicionHotelBadges condicion={condicion} /></div>
-          <EditorPax pvp={pvp} acomConfig={cap.acom} paxMin={cap.paxMin} paxMax={cap.paxMax} moneda={hotel.moneda} edadesNota={textoEdadesHotel(hotel)} edadInfanteMax={hotel.infMax} edadNinoMax={hotel.ninoMax} onAgregar={agregarItem} />
+          <EditorPax pvp={pvp} acomConfig={cap.acom} paxMin={cap.paxMin} paxMax={cap.paxMax} moneda={hotel.moneda} edadesNota={textoEdadesHotel(hotel)} edadInfanteMax={hotel.infMax} edadNinoMax={hotel.ninoMax} onAgregar={agregarItem}
+            servicios={servicios ? {
+              ...servicios, paqueteId: opcion.paqueteId, hotelNombre: hotel.hotelNombre,
+              // Porción: las fechas son las COTIZADAS (si cambian, `combos`
+              // se limpia y este editor se desmonta hasta recotizar).
+              fechaIda: fIda, fechaRegreso: fReg,
+              firma: JSON.stringify([opcion.key, catEff, regEff, nochesCot]),
+            } : undefined} />
         </>
       )}
     </div>

@@ -15,6 +15,7 @@ import { TitularEditor } from "./TitularEditor";
 import { IncluyeEditor } from "./IncluyeEditor";
 import { RecobroNinosEditor } from "./RecobroNinosEditor";
 import { ConvertirCarritoBtn } from "./ConvertirCarritoBtn";
+import { resolverVinculosCotizacion } from "@/lib/reservar/vinculoServiciosCheckout";
 import { ROLES_CONTRATO_COMPLETO } from "@/lib/roles";
 import PagosPreviosPanel, { type PagoPrevioUI } from "@/components/cotizacion/PagosPreviosPanel";
 
@@ -125,15 +126,20 @@ export default async function CotizacionDetallePage({
   // Datos propios del carrito: pax máximo (para dimensionar la captura de
   // pasajeros) y destinos distintos (para ofrecer "1 contrato por destino").
   const payloadCarrito = (c.payload ?? {}) as {
-    items?: { destino: string | null; pax: number; fechaIda: string | null; hotelNombre: string }[];
-    tours?: { nombre?: string; destino: string | null; pax: number; fechaIda?: string | null }[];
+    items?: { destino: string | null; pax: number; fechaIda: string | null; hotelNombre: string; ref?: string; paqueteId?: number }[];
+    tours?: { nombre?: string; destino: string | null; pax: number; fechaIda?: string | null; paqueteId?: number; hotelRef?: string | null }[];
     cliente?: { nombres?: string; apellidos?: string; numeroDoc?: string };
   };
   const itemsCarrito = payloadCarrito.items ?? [];
   const toursCarrito = payloadCarrito.tours ?? [];
+  // Vínculo servicio ↔ hotel (`hotelRef` del checkout): misma validación que
+  // la conversión. Un servicio vinculado no aporta un destino propio — va en
+  // el contrato de su hotel. Cotizaciones anteriores: todos independientes.
+  const vinculosCarrito = resolverVinculosCotizacion(toursCarrito, itemsCarrito);
+  const hotelDeTourCarrito = vinculosCarrito.ok ? vinculosCarrito.hotelDeTour : toursCarrito.map(() => null);
   const destinosCarrito = [...new Set([
     ...itemsCarrito.map((i) => i.destino),
-    ...toursCarrito.map((t) => t.destino),
+    ...toursCarrito.filter((_, j) => hotelDeTourCarrito[j] == null).map((t) => t.destino),
   ].filter((d): d is string => !!d))];
   const paxCarrito = Math.max(1, ...itemsCarrito.map((i) => i.pax || 0), ...toursCarrito.map((t) => t.pax || 0));
   const clienteCarritoPre = {
@@ -325,7 +331,8 @@ export default async function CotizacionDetallePage({
                 id={c.id}
                 pax={paxCarrito}
                 items={itemsCarrito.map((i) => ({ hotelNombre: i.hotelNombre, destino: i.destino, pax: i.pax, fechaIda: i.fechaIda ?? null }))}
-                tours={toursCarrito.map((t) => ({ nombre: t.nombre ?? "Tour", destino: t.destino, pax: t.pax, fechaIda: t.fechaIda ?? null }))}
+                tours={toursCarrito.map((t, j) => ({ nombre: t.nombre ?? "Tour", destino: t.destino, pax: t.pax, fechaIda: t.fechaIda ?? null, hotelIndice: hotelDeTourCarrito[j] ?? null }))}
+                vinculoError={vinculosCarrito.ok ? null : vinculosCarrito.error}
                 destinos={destinosCarrito}
                 cliente={clienteCarritoPre}
                 esSuperadmin={esSuperadmin}

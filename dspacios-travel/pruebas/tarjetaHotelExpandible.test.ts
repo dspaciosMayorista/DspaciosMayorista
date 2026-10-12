@@ -101,47 +101,50 @@ describe("DescripcionHotelExpandible — estado inicial contraído a 2 líneas, 
   });
 });
 
-describe("AddonsPaquete — colapsado por defecto, cuenta real, expande DENTRO de la tarjeta (sin modal nuevo)", () => {
-  test("arranca colapsado: useState(false) para `abierto`", () => {
+describe("AddonsPaquete — lista compacta en Popover: no cambia la altura de la tarjeta ni de la fila", () => {
+  test("arranca cerrada: useState(false) para `abierto`", () => {
     assert.match(cuerpoAddons, /const \[abierto, setAbierto\] = useState\(false\);/);
   });
 
-  test("sin add-ons, no renderiza absolutamente nada (ni siquiera el control) — mismo guard que antes de esta corrección", () => {
+  test("sin add-ons, no renderiza absolutamente nada (ni siquiera el control)", () => {
     assert.match(cuerpoAddons, /if \(!addons\.length\) return null;/);
   });
 
-  test("el control muestra la cantidad REAL con addons.length (nunca un número fijo/estimado) y cambia de texto al expandir", () => {
-    const idxBoton = cuerpoAddons.indexOf("<button");
-    const bloqueBoton = cuerpoAddons.slice(idxBoton, cuerpoAddons.indexOf("</button>", idxBoton));
-    assert.match(bloqueBoton, /type="button"/);
-    assert.match(bloqueBoton, /aria-expanded=\{abierto\}/);
-    assert.match(bloqueBoton, /aria-controls=\{idLista\}/);
-    assert.match(bloqueBoton, /onClick=\{\(\) => setAbierto\(\(v\) => !v\)\}/);
-    assert.match(bloqueBoton, /\{abierto \? "Ocultar servicios adicionales" : `Ver servicios adicionales \(\$\{addons\.length\}\)`\}/);
+  test("la lista vive en un Popover con Portal (fuera del flujo de la tarjeta) — nunca un bloque expandido dentro de ella", () => {
+    assert.match(cuerpoAddons, /<Popover\.Root open=\{abierto\} onOpenChange=\{setAbierto\}>/);
+    assert.match(cuerpoAddons, /<Popover\.Portal>/);
+    assert.match(cuerpoAddons, /<Popover\.Positioner[^>]*collisionPadding=\{12\}[^>]*className="z-\[60\]"/, "debe quedar por encima de los modales (z-50) y respetar el borde en móvil");
+    assert.doesNotMatch(cuerpoAddons, /\{abierto && \(/, "ya no hay contenido condicionado dentro de la tarjeta");
   });
 
-  test("la lista completa (todos los add-ons del paquete actual) solo se renderiza cuando `abierto` es true — nunca antes, y `id` coincide con aria-controls del botón", () => {
-    const idxLista = cuerpoAddons.indexOf("{abierto && (");
-    assert.notEqual(idxLista, -1);
-    const bloqueLista = cuerpoAddons.slice(idxLista, idxLista + 700);
-    assert.match(bloqueLista, /<div id=\{idLista\}/);
-    assert.match(bloqueLista, /addons\.map\(\(a, i\) =>/, "debe mapear EXACTAMENTE `addons` — el prop ya acotado por el llamador, nunca un catálogo general");
+  test("alto y ancho acotados con scroll propio (escritorio y móvil)", () => {
+    assert.match(cuerpoAddons, /max-h-\[min\(22rem,var\(--available-height\)\)\]/);
+    assert.match(cuerpoAddons, /w-\[min\(20rem,calc\(100vw-24px\)\)\]/);
+    assert.match(cuerpoAddons, /<ul className="overflow-y-auto/);
   });
 
-  test("el detalle de cada add-on sigue abriendo ReceptivoModal vía onAbrir — no se agregó ningún modal nuevo para la lista general", () => {
-    assert.match(cuerpoAddons, /onClick=\{\(\) => onAbrir\(\{ nombre: a\.nombre, destino: a\.destino, descripcion: a\.descripcion, foto: a\.foto, precio: a\.desde, moneda: a\.moneda, notaPrecio: "desde · por persona", paqueteId: a\.paqueteId \}\)\}/);
-    // Ningún JSX de "fixed inset-0"/overlay propio dentro de AddonsPaquete —
-    // eso seguiría siendo exclusivo de ReceptivoModal (otro componente).
+  test("el control muestra la cantidad REAL (addons.length) y el Popover tiene título accesible y botón de cierre con ícono", () => {
+    assert.match(cuerpoAddons, /Servicios adicionales \(\{addons\.length\}\)/);
+    assert.match(cuerpoAddons, /aria-labelledby=\{idTitulo\}/);
+    assert.match(cuerpoAddons, /<Popover\.Title id=\{idTitulo\}/);
+    assert.match(cuerpoAddons, /<Popover\.Close aria-label="Cerrar lista de servicios"/);
+  });
+
+  test("mapea EXACTAMENTE `addons` (ya acotado por el llamador), marca los seleccionados y cada ítem abre ReceptivoModal vía onAbrir con su identidad", () => {
+    assert.match(cuerpoAddons, /addons\.map\(\(a, i\) =>/);
+    assert.match(cuerpoAddons, /setAbierto\(false\);\s*\n\s*onAbrir\(\{/);
+    assert.match(cuerpoAddons, /paqueteId: a\.paqueteId, servicioId: a\.servicioId,/);
+    assert.match(cuerpoAddons, /const elegido = a\.servicioId != null && seleccion\.includes\(a\.servicioId\);/);
     assert.doesNotMatch(cuerpoAddons, /fixed inset-0/);
   });
 
-  test("cierre automático al cambiar `paqueteId`: ajuste de estado DURANTE el render (nunca un useEffect con setState síncrono, que dispara el lint react-hooks/set-state-in-effect y permitiría un frame con la lista vieja abierta)", () => {
+  test("cierre automático al cambiar `paqueteId`: ajuste de estado DURANTE el render (nunca un useEffect con setState síncrono)", () => {
     assert.doesNotMatch(cuerpoAddons, /useEffect\(\(\) => \{ setAbierto\(false\); \}, \[paqueteId\]\);/);
     assert.match(cuerpoAddons, /const \[paqueteIdAnterior, setPaqueteIdAnterior\] = useState\(paqueteId\);/);
     assert.match(cuerpoAddons, /if \(paqueteId !== paqueteIdAnterior\) \{\s*\n\s*setPaqueteIdAnterior\(paqueteId\);\s*\n\s*setAbierto\(false\);\s*\n\s*\}/);
   });
 
-  test("el reset de `paqueteIdAnterior`/`setAbierto(false)` corre ANTES del guard `if (!addons.length)` — el cierre no depende de que sigan existiendo add-ons que mostrar", () => {
+  test("el reset de `paqueteIdAnterior`/`setAbierto(false)` corre ANTES del guard `if (!addons.length)`", () => {
     const idxReset = cuerpoAddons.indexOf("if (paqueteId !== paqueteIdAnterior)");
     const idxGuard = cuerpoAddons.indexOf("if (!addons.length) return null;");
     assert.notEqual(idxReset, -1);
@@ -149,8 +152,9 @@ describe("AddonsPaquete — colapsado por defecto, cuenta real, expande DENTRO d
     assert.ok(idxReset < idxGuard);
   });
 
-  test("estado independiente por tarjeta: abierto/paqueteIdAnterior/idLista son estado LOCAL (useState/useId) — nunca una variable de módulo compartida entre instancias", () => {
+  test("estado independiente por tarjeta: abierto/paqueteIdAnterior/idTitulo son estado LOCAL — nunca una variable de módulo compartida", () => {
     assert.doesNotMatch(fuenteCompartida.slice(0, fuenteCompartida.indexOf("export function AddonsPaquete")), /let abierto\b/);
+    assert.match(cuerpoAddons, /const idTitulo = useId\(\);/);
   });
 });
 
@@ -179,8 +183,8 @@ describe("Persona y unidad reutilizan los MISMOS componentes — ninguna lógica
   });
 
   test("las 4 superficies invocan <AddonsPaquete> con `paqueteId` — ni una omite el cierre automático ni reimplementa la lista a mano", () => {
-    const usosVista = [...fuenteVista.matchAll(/<AddonsPaquete addons=\{addons\} onAbrir=\{setAddonAbierto\} paqueteId=\{[^}]+\} \/>/g)];
-    const usosBuscador = [...fuenteBuscador.matchAll(/<AddonsPaquete addons=\{addons\} onAbrir=\{setAddonAbierto\} paqueteId=\{[^}]+\} \/>/g)];
+    const usosVista = [...fuenteVista.matchAll(/<AddonsPaquete addons=\{addons\} onAbrir=\{setAddonAbierto\} paqueteId=\{[^}]+\} seleccion=\{seleccionServicios\.seleccion\} \/>/g)];
+    const usosBuscador = [...fuenteBuscador.matchAll(/<AddonsPaquete addons=\{addons\} onAbrir=\{setAddonAbierto\} paqueteId=\{[^}]+\} seleccion=\{seleccionServicios\.seleccion\} \/>/g)];
     assert.equal(usosVista.length, 3, "HotelModal/HotelBernaloCotizarModal/TarjetaUnidadBusqueda deben pasar paqueteId");
     assert.equal(usosBuscador.length, 1, "Resultado debe pasar paqueteId");
   });
@@ -197,8 +201,11 @@ describe("No se toca lo que la corrección visual prohíbe modificar", () => {
     assert.match(cuerpoUbicacion, /<iframe/, "el mapa sigue siendo el iframe embebido de siempre");
   });
 
-  test("precio/carrito no aparecen en ninguno de los dos componentes nuevos — son puramente informativos/de layout", () => {
+  test("ni la lista de add-ons ni el modal del servicio escriben en el carrito — solo el botón del hotel (addConjunto)", () => {
     assert.doesNotMatch(cuerpoDescripcion, /useCart|precio|add\(/i);
-    assert.doesNotMatch(cuerpoAddons.replace(/precio: a\.desde/g, ""), /useCart|formatMoneda\(precio|add\(\{/i);
+    assert.doesNotMatch(cuerpoAddons.replace(/precio: a\.desde/g, ""), /useCart|buscarReceptivos|formatMoneda\(precio|add\(\{/i);
+    const cuerpoModal = cuerpoFuncion(fuenteCompartida, "export function ReceptivoModal({");
+    assert.doesNotMatch(cuerpoModal, /useCart|addConjunto|\badd\(|buscarReceptivos/);
+    assert.match(cuerpoModal, /aria-pressed=\{seleccion\.seleccionado\}/);
   });
 });

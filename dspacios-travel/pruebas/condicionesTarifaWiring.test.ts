@@ -95,8 +95,14 @@ describe("checkout/actions.ts (crearCotizacionCarrito) — referencia estable se
   });
 
   test("`ref` se deriva de posOriginal (posición ya validada por validarCrearSolicitudInput), NUNCA de un campo enviado por el navegador (it.ref/it.itemId)", () => {
-    const posRef = checkout.indexOf("const ref = `item-${posOriginal}`;");
-    assert.notEqual(posRef, -1, "debe existir la construcción `const ref = \\`item-${posOriginal}\\`;`");
+    // La fórmula vive en un solo helper (`refItemCotizacion`) que también usa
+    // el `hotelRef` de los servicios vinculados — ambos desde posiciones
+    // validadas por el servidor, nunca desde ids del navegador.
+    assert.match(checkout, /const refItemCotizacion = \(posicion: number\) => `item-\$\{posicion\}`;/);
+    const posRef = checkout.indexOf("const ref = refItemCotizacion(posOriginal);");
+    assert.notEqual(posRef, -1, "debe existir la construcción `const ref = refItemCotizacion(posOriginal);`");
+    assert.match(checkout, /hotelRef: posHotel != null \? refItemCotizacion\(posHotel\) : null,/);
+    assert.doesNotMatch(checkout, /hotelRef: [^,\n]*hotelItemId/);
     assert.doesNotMatch(checkout, /const ref = it\.ref/);
     assert.doesNotMatch(checkout, /const ref = it\.itemId/);
   });

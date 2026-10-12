@@ -64,6 +64,7 @@ import {
   validarHabitacionesOcupacion,
   type HabitacionOcupacionValidada,
 } from "./ocupacionPorHabitacion.ts";
+import { validarVinculosCarrito } from "./vinculoServiciosCheckout.ts";
 
 // ── Salida aérea SELECCIONADA (Fase 3E) — unión discriminada real ──────────
 // Identidad de la salida elegida por el usuario — NUNCA un índice `[0]`.
@@ -284,6 +285,10 @@ function validarItemVariante(v: unknown, indice: number): { ok: true; item: Soli
 export type CrearSolicitudInputValidado = {
   items: SolicitudItemVariante[];
   tours: SolicitudTourValidado[];
+  // Para cada tour, el índice en `items` del hotel al que pertenece (servicio
+  // elegido en la tarjeta de ese hotel) o `null` si es independiente — ya
+  // validado contra la propia solicitud (ver lib/reservar/vinculoServiciosCheckout.ts).
+  hotelDeTour: (number | null)[];
   cliente: SolicitudClienteValidado;
   modo?: "comisionable" | "neta";
 };
@@ -314,6 +319,10 @@ export function validarCrearSolicitudInput(v: unknown): { ok: true; input: Crear
       tours.push(r.tour);
     }
   }
+  // Vínculo hotel ↔ servicios: declaración del navegador, aceptada solo si es
+  // coherente con los ítems de ESTA solicitud (mismo paquete, hotel presente).
+  const vVinculos = validarVinculosCarrito({ itemsRaw: v.items, toursRaw: Array.isArray(toursRaw) ? toursRaw : [], items, tours });
+  if (!vVinculos.ok) return { ok: false, error: vVinculos.error };
   const vCliente = validarClienteInput(v.cliente);
   if (!vCliente.ok) return { ok: false, error: vCliente.error };
 
@@ -325,5 +334,5 @@ export function validarCrearSolicitudInput(v: unknown): { ok: true; input: Crear
     if (v.modo !== "comisionable" && v.modo !== "neta") return { ok: false, error: "La modalidad de compra es inválida." };
     modo = v.modo;
   }
-  return { ok: true, input: { items, tours, cliente: vCliente.cliente, modo } };
+  return { ok: true, input: { items, tours, hotelDeTour: vVinculos.vinculos.hotelDeTour, cliente: vCliente.cliente, modo } };
 }

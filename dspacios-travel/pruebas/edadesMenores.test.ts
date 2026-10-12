@@ -663,7 +663,7 @@ describe("25. Recálculo server-side — el precio nunca sale de lo que mandó e
     assert.ok(usos.length >= 3, "calcularPrecioConModoYMarkup debe usarse en su definición + calcularResultadoServicio + resolverLiquidacionServicioPuntual");
   });
   test("checkout/actions.ts re-liquida cada tour con liquidarServicioPuntual y usa SOLO resultado.resultado.* dentro del bucle de tours, nunca t.precio/t.nombre/t.moneda", () => {
-    const idxInicio = checkout.indexOf("for (const t of input.tours)");
+    const idxInicio = checkout.indexOf("for (let j = 0; j < input.tours.length; j++)");
     const idxFin = checkout.indexOf("\n  }\n", idxInicio);
     const bucle = checkout.slice(idxInicio, idxFin);
     assert.match(bucle, /liquidarServicioPuntual\(t\)/);
@@ -677,7 +677,7 @@ describe("25. Recálculo server-side — el precio nunca sale de lo que mandó e
     assert.doesNotMatch(bucle, /t\.moneda/);
   });
   test("solo 'no_disponible' excluye el tour del carrito — 'error_consulta'/'configuracion_invalida' abortan la cotización COMPLETA (ronda 4)", () => {
-    const idxInicio = checkout.indexOf("for (const t of input.tours)");
+    const idxInicio = checkout.indexOf("for (let j = 0; j < input.tours.length; j++)");
     const idxFin = checkout.indexOf("\n  }\n", idxInicio);
     const bucle = checkout.slice(idxInicio, idxFin);
     assert.match(bucle, /if \(!resultado\.ok\)/);
@@ -706,7 +706,7 @@ describe("36. Ronda 6: Wiring — checkout/actions.ts nunca reenvía el detalle 
     assert.match(cuerpo, /console\.error\(formatearLogLiquidacionServicioPuntual/);
   });
   test("el bucle de tours en checkout/actions.ts solo lee resultado.tipo/resultado.mensaje — nunca .error/.detalleInterno/.mensajePublico", () => {
-    const idxInicio = checkout.indexOf("for (const t of input.tours)");
+    const idxInicio = checkout.indexOf("for (let j = 0; j < input.tours.length; j++)");
     const idxFin = checkout.indexOf("\n  }\n", idxInicio);
     const bucle = checkout.slice(idxInicio, idxFin);
     assert.match(bucle, /resultado\.mensaje/);
@@ -1297,7 +1297,7 @@ describe("42. Ronda 7: Wiring — checkout/actions.ts nunca lee resultado.codigo
   const liquidacion = leer("lib/reservar/liquidacionServicio.ts");
 
   test("checkout/actions.ts (el bucle de tours) nunca referencia resultado.codigo", () => {
-    const idxInicio = checkout.indexOf("for (const t of input.tours)");
+    const idxInicio = checkout.indexOf("for (let j = 0; j < input.tours.length; j++)");
     const idxFin = checkout.indexOf("\n  }\n", idxInicio);
     const bucle = checkout.slice(idxInicio, idxFin);
     assert.doesNotMatch(bucle, /resultado\.codigo/);

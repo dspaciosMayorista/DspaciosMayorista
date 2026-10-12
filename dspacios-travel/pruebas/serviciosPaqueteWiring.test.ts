@@ -160,13 +160,12 @@ describe("reservar/actions.ts (convertirCotizacionCarrito) — el carrito ya no 
     assert.match(cuerpo, /asistencia_medica:\s*resumenGrupo\.asistenciaMedica/);
     assert.match(cuerpo, /tours_traslados:\s*resumenGrupo\.toursTraslados/);
   });
-  test("servicios incluidos se filtran por paqueteId del grupo (nunca se le atribuye a un contrato el incluido de OTRO paquete del carrito)", () => {
+  test("servicios incluidos: cada hotel del grupo aporta SOLO los suyos (nunca se le atribuye a un contrato el incluido de OTRO hotel/paquete del carrito)", () => {
     const cuerpo = cuerpoFuncion(reservarActions, "export async function convertirCotizacionCarrito(");
-    assert.match(cuerpo, /serviciosIncluidosCot\.filter\(/);
-    // Fase 3F-4B: además excluye explícitamente los paqueteId de ítems
-    // Bernalo (sus incluidos se re-liquidan frescos aparte — nunca se cuentan
-    // dos veces, ver convertirCotizacionCarritoBernaloWiring.test.ts).
-    assert.match(cuerpo, /grupo\.items\.some\(\(it\) => it\.modeloTarifario !== "unidad" && it\.paqueteId === s\.paqueteId\)/);
+    // PR #353: se validan por hotel (`ref` + paquete) contra lo cotizado y se
+    // recalculan en el servidor; el grupo junta los de SUS ítems persona.
+    assert.match(cuerpo, /item: \{ ref: it\.ref \?\? null, paqueteId: it\.paqueteId, pax: it\.pax \}/);
+    assert.match(cuerpo, /const incluidosGrupo = validadosPersona\.flatMap\(\(v\) => v\.incluidos\);/);
   });
   test("tours opcionales con servicioId/paqueteId generan CxP re-liquidando el costo NETO (nunca usa t.precio, que es PVP)", () => {
     const cuerpo = cuerpoFuncion(reservarActions, "export async function convertirCotizacionCarrito(");
@@ -186,9 +185,10 @@ describe("checkout/actions.ts (crearCotizacionCarrito) — el snapshot del carri
     assert.doesNotMatch(cuerpo, /asistencia_medica:\s*false/);
     assert.match(cuerpo, /resumirServiciosContrato\(/);
   });
-  test("persiste serviciosIncluidos en el payload de la cotización (antes se perdían al convertir)", () => {
+  test("persiste serviciosIncluidos en el payload de la cotización (antes se perdían al convertir) — sin costos ni proveedores", () => {
     const cuerpo = cuerpoFuncion(checkoutActions, "async function crearCotizacionCarrito(input: {");
-    assert.match(cuerpo, /serviciosIncluidos:\s*incluidosSnap/);
+    assert.match(cuerpo, /serviciosIncluidos:\s*incluidosPayload/);
+    assert.match(cuerpo, /incluidosPayload\.push\(\.\.\.incluidosParaPayload\(serviciosIncluidos, \{ ref, paqueteId: it\.paqueteId \}, claveHuella\)\);/);
   });
   test("los tours opcionales conservan la categoria de la re-liquidación server-side (nunca del cliente)", () => {
     const cuerpo = cuerpoFuncion(checkoutActions, "async function crearCotizacionCarrito(input: {");
@@ -289,7 +289,10 @@ describe("R294-4 · CxP de servicios: se estampa `servicio_id` (llave de reconci
     const cuerpo = cuerpoFuncion(reservarActions, "export async function convertirCotizacionCarrito(");
     assert.match(cuerpo, /servicio_id: servicioId \?\? null/);
     assert.match(cuerpo, /srv\?\.proveedores \?\? null, null, t\.servicioId\)/);
-    assert.match(cuerpo, /provPorId\.get\(s\.servicioId\) \?\? null, null, s\.servicioId\)/);
+    // Incluidos: el proveedor se exige resuelto del catálogo (PR #353) y la CxP
+    // sigue estampando `servicio_id`.
+    assert.match(cuerpo, /const prov = provPorId\.get\(s\.servicioId\);/);
+    assert.match(cuerpo, /pushCxP\(tipoProveedorCxpServicio\(s\.categoria\), s\.nombre, s\.costoNeto, prov, null, s\.servicioId\)/);
   });
 });
 

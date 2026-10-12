@@ -374,7 +374,7 @@ describe("app/tarifario/checkout/actions.ts — la cotización persiste detalle 
 describe("app/tarifario/checkout/actions.ts — hallazgo confirmado: la rama PERSONA de la cotización mostraba 'Adultos 1' con tarifa_adulto: precioVenta", () => {
   const cuerpoFn = cuerpoFuncion(fuenteCheckoutActions, "async function crearCotizacionCarrito(input: {");
   const idxRamaPersona = cuerpoFn.indexOf("const reserva: ReservaInput = {");
-  const idxFinRamaPersona = cuerpoFn.indexOf("for (const t of input.tours)");
+  const idxFinRamaPersona = cuerpoFn.indexOf("for (let j = 0; j < input.tours.length; j++)");
   const ramaPersona = cuerpoFn.slice(idxRamaPersona, idxFinRamaPersona);
   const ramaPersonaSinComentarios = sinComentarios(ramaPersona);
 
@@ -635,7 +635,8 @@ describe("lib/reservar/computo.ts — la guardia de Fase 3 sigue intacta (regla 
 describe("lib/cart/CartContext.tsx — actualizarPrecioBernalo (regla B.10, Fase 3F-4A)", () => {
   test("expuesto en CartCtx y en el valor del Provider", () => {
     assert.match(codigoCart, /actualizarPrecioBernalo: \(id: string, precio: number, moneda: string \| null\) => void;/);
-    assert.match(codigoCart, /items, add, remove, actualizarPrecioBernalo, clear, total, count: items\.length,/);
+    // `totales` (subtotales por moneda) reemplaza la suma `total`, que mezclaba COP y USD.
+    assert.match(codigoCart, /items, add, addConjunto, remove, actualizarPrecioBernalo, clear, totales, count: items\.length,/);
   });
 
   test("solo actualiza precio/moneda de un ítem Bernalo por id — nunca toca otros campos ni ítems persona/tour", () => {

@@ -829,9 +829,18 @@ export async function computarReserva(
   // siempre lo es en modo grupo) — acá SÍ se resuelve y se cobra, con el pax
   // REAL de esta reserva (algo que el motor de "desde" del catálogo público
   // nunca conoce), como un cargo aparte — mismo patrón que `cargoMascota`.
+  //
+  // Lectura con service-role (como `tarifa_hotel`/`hotel_temporadas` más
+  // arriba): `armado_servicios`, `servicios_adicionales` y
+  // `servicio_tarifa_pax` son catálogo INTERNO por RLS. Con la sesión de un
+  // usuario externo (checkout público/B2B) o de `venta`, la consulta devolvía
+  // 0 filas sin error: el incluido desaparecía del resumen del documento
+  // (asistencia "No"), de la CxP al convertir y, en modo grupo, del precio.
+  // Solo se lee; los permisos públicos no cambian.
   const serviciosIncluidos: ServicioEfectivo[] = [];
   if (!esServicios) {
-    const { data: incRows, error: incErr } = await sb
+    const catalogo = createAdminClient();
+    const { data: incRows, error: incErr } = await catalogo
       .from("armado_servicios")
       .select("servicio_id, modo, servicios_adicionales(nombre, categoria, precio_persona, liquidacion, proveedor_id)")
       .eq("paquete_id", input.paqueteId)
@@ -840,7 +849,7 @@ export async function computarReserva(
     if (incRows?.length) {
       const ids = incRows.map((r) => r.servicio_id).filter((id): id is number => id != null);
       const [{ data: gruposInc, error: gruposIncErr }] = await Promise.all([
-        sb.from("servicio_tarifa_pax").select("servicio_id, pax_desde, pax_hasta, precio, temporada").eq("temporada", "GENERAL").in("servicio_id", ids),
+        catalogo.from("servicio_tarifa_pax").select("servicio_id, pax_desde, pax_hasta, precio, temporada").eq("temporada", "GENERAL").in("servicio_id", ids),
       ]);
       if (gruposIncErr) return { ok: false, error: `No se pudieron consultar las tarifas por grupo de los servicios incluidos: ${gruposIncErr.message}` };
       const gruposPorServ = new Map<number, { pax_desde: number; pax_hasta: number; precio: number }[]>();

@@ -35,3 +35,13 @@ export async function buscarReceptivos(input) {
   if (implBuscarReceptivos) return implBuscarReceptivos(input);
   throw new Error("buscarReceptivos: no implementado en el stub de pruebas — instala una implementación con __setBuscarReceptivos si tu prueba SÍ ejercita el buscador");
 }
+// CONFIGURABLE (`__setConvertirCotizacionCarrito`) — la usa la vista previa
+// de la conversión del carrito (ConvertirCarritoBtn). Por defecto lanza.
+let implConvertirCotizacionCarrito = null;
+export function __setConvertirCotizacionCarrito(fn) {
+  implConvertirCotizacionCarrito = fn;
+}
+export async function convertirCotizacionCarrito(id, opts) {
+  if (implConvertirCotizacionCarrito) return implConvertirCotizacionCarrito(id, opts);
+  throw new Error("convertirCotizacionCarrito: no implementado en el stub de pruebas — instala una implementación con __setConvertirCotizacionCarrito");
+}

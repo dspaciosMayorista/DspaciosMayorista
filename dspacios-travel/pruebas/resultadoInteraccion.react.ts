@@ -71,7 +71,7 @@ function resultadoFixture() {
   return {
     hotelId: 1, hotelNombre: "Hotel Almirante", destino: "Cartagena",
     paqueteId: 10, categoria: "Estandar", regimen: "Desayuno",
-    paqueteNombre: "Paquete Caribe", total: 400000, noches: 3,
+    paqueteNombre: "Paquete Caribe", total: 400000, noches: 3, moneda: "COP",
     fechaIda: "2026-10-15", fechaRegreso: "2026-10-18",
     habitaciones: { doble: 1 },
     menores: { infantes: 0, nino: 0, nino2: 0 },

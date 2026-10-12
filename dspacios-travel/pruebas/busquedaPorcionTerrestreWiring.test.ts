@@ -1139,7 +1139,8 @@ describe('TarjetaUnidadBusqueda — "Agregar al carrito" revalida en servidor (n
     assert.match(cuerpoAgregar, /if \(rev\.estado !== "agregar"\) \{/);
     assert.match(cuerpoAgregar, /setErrorAgregar\(rev\.mensaje\);/);
     const idxRechazo = cuerpoAgregar.indexOf('if (rev.estado !== "agregar") {');
-    const idxAdd = cuerpoAgregar.indexOf("add({");
+    // Hotel + servicios seleccionados entran juntos (`addConjunto`).
+    const idxAdd = cuerpoAgregar.indexOf("addConjunto({");
     assert.ok(idxRechazo > -1 && idxAdd > idxRechazo, "el chequeo de no-agregar debe ir ANTES de agregar al carrito");
   });
 
@@ -1164,8 +1165,9 @@ describe('TarjetaUnidadBusqueda — "Agregar al carrito" revalida en servidor (n
     assert.match(cuerpoAgregar, /if \(!montadoRef\.current\) return;/);
     assert.match(cuerpoTarjetaUnidad, /const montadoRef = useRef\(true\);/);
     assert.match(cuerpoTarjetaUnidad, /useEffect\(\(\) => \(\) => \{ montadoRef\.current = false; \}, \[\]\);/);
-    assert.match(cuerpoTarjetaUnidad, /disabled=\{agregando\}/);
-    assert.match(cuerpoTarjetaUnidad, /\{agregando \? "Confirmando…" : /);
+    // Además bloqueado mientras los servicios seleccionados no estén cotizados.
+    assert.match(cuerpoTarjetaUnidad, /disabled=\{agregando \|\| \(!enCarrito && !evaluacion\.listo\)\}/);
+    assert.match(cuerpoTarjetaUnidad, /\{agregando\s*\?\s*"Confirmando…"\s*:/);
     // Nunca doble envío mientras revalida.
     assert.match(cuerpoAgregar, /if \(agregando\) return;/);
   });
