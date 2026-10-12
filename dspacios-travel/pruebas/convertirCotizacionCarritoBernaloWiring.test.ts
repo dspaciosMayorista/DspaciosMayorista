@@ -144,17 +144,18 @@ describe("convertirCotizacionCarrito — Paso 1: despacha por modeloTarifario, a
 
   test("persona (validadosPersona) conserva la construcción de ReservaInput EXACTA de siempre — regla A.16", () => {
     const idxReservaInput = cuerpoConv.indexOf("const reserva: ReservaInput = {");
-    const idxPush = cuerpoConv.indexOf("validadosPersona.push({ item: it, comp: comp.data });");
-    const bloque = cuerpoConv.slice(idxReservaInput, idxPush + 60);
+    const idxPush = cuerpoConv.indexOf("validadosPersona.push({ item: it, comp: comp.data, incluidos: vIncluidos.incluidos });");
+    const bloque = cuerpoConv.slice(idxReservaInput, idxPush + 120);
     assert.match(bloque, /paqueteId: it\.paqueteId, bloqueoId: it\.bloqueoId, modulo: it\.modulo, hotelId: it\.hotelId,/);
     assert.match(bloque, /const comp = await computarReserva\(sb, reserva\);/);
-    assert.match(bloque, /validadosPersona\.push\(\{ item: it, comp: comp\.data \}\);/);
+    // Además lleva los incluidos ya validados/recalculados en el servidor (PR #353).
+    assert.match(bloque, /validadosPersona\.push\(\{ item: it, comp: comp\.data, incluidos: vIncluidos\.incluidos \}\);/);
   });
 
   // ── Hallazgo confirmado P2-1: guarda de moneda también para ítems persona ──
   test("hallazgo confirmado (P2-1): compara comp.data.monedaReserva contra cot.moneda para ítems PERSONA — bloquea ANTES de acumular en validadosPersona si difieren", () => {
     const idxComp = cuerpoConv.indexOf("const comp = await computarReserva(sb, reserva);");
-    const idxPush = cuerpoConv.indexOf("validadosPersona.push({ item: it, comp: comp.data });");
+    const idxPush = cuerpoConv.indexOf("validadosPersona.push({ item: it, comp: comp.data, incluidos: vIncluidos.incluidos });");
     assert.ok(idxComp > -1 && idxComp < idxPush);
     const bloque = cuerpoConv.slice(idxComp, idxPush);
     assert.match(bloque, /if \(cot\.moneda && comp\.data\.monedaReserva !== cot\.moneda\)/, "falta la guarda de moneda para ítems persona");
@@ -302,8 +303,13 @@ describe("convertirCotizacionCarrito — Paso 2: creación de contrato Bernalo",
     }
   });
 
-  test("regla D.20: incluidosGrupo (snapshot persistido) EXCLUYE paqueteId de ítems Bernalo — nunca cuenta dos veces sus servicios incluidos", () => {
-    assert.match(codigo, /it\.modeloTarifario !== "unidad" && it\.paqueteId === s\.paqueteId/);
+  test("regla D.20: incluidosGrupo sale SOLO de los ítems persona validados — nunca de Bernalo (sus incluidos se re-liquidan aparte, no se cuentan dos veces)", () => {
+    assert.match(codigo, /const incluidosGrupo = validadosPersona\.flatMap\(\(v\) => v\.incluidos\);/);
+    assert.doesNotMatch(codigo, /incluidosGrupo = [^;]*validadosBernalo/);
+    // La validación vive en la rama persona (después del `continue` de Bernalo).
+    const idxBernalo = codigo.indexOf("validadosBernalo.push({ item: it, resultado: rBernalo.resultado");
+    const idxValidar = codigo.indexOf("const vIncluidos = validarIncluidosConversion({");
+    assert.ok(idxBernalo > -1 && idxValidar > idxBernalo);
   });
 });
 

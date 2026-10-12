@@ -53,6 +53,8 @@ import { payloadGuardarPasajeros } from "@/lib/reservar/pasajerosEdicion";
 import { normalizarResponsablesPorGrupo } from "@/lib/reservar/pasajerosFilas";
 import { posicionesSinAsignar, posicionesUnicasDeGrupo, reindexarGrupoLocal, consolidarReservasSillasPorBloqueo, demandaSillasPorBloqueo, faltanteDeCupos, prevalidarResponsablesDeGrupo, mensajePrevalidacionGrupo, type ReservaSillasPorBloqueo } from "@/lib/reservar/carritoAsignaciones";
 import { armarGruposConversion, resolverVinculosCotizacion, validarPasajerosServiciosVinculados } from "@/lib/reservar/vinculoServiciosCheckout";
+import { calcularResidualServiciosIncluidosPorGrupo } from "@/lib/reservar/desglosePersonaCotizacion";
+import { claveHuellaIncluidos, validarIncluidosConversion, type ServicioIncluidoGuardado } from "@/lib/reservar/incluidosCotizados";
 import {
   componenteHotelReal,
   componentePaqueteReal,
@@ -1542,7 +1544,9 @@ export async function convertirCotizacionCarrito(
     // Servicios INCLUIDOS de cada paquete de hotel del carrito, congelados al
     // crear la cotización (checkout/actions.ts) — ausente en cotizaciones
     // creadas antes de este cambio (queda `[]`, nunca se inventa contenido).
-    serviciosIncluidos?: ServicioEfectivo[];
+    // Formato nuevo: identidad + huella del costo, sin costos ni proveedores.
+    // Cotizaciones anteriores pueden traer `costoNeto` (solo se compara).
+    serviciosIncluidos?: ServicioIncluidoGuardado[];
     cliente?: { nombres: string; apellidos: string; numeroDoc: string; telefono: string; email: string };
   };
   const itemsCrudos = payload.items ?? [];
@@ -1721,11 +1725,11 @@ export async function convertirCotizacionCarrito(
   type ValidadoBernalo = { item: ItemCarritoBernaloConAsignacion; resultado: ComputoReservaBernaloOk; proveedoresServicios: Map<number, ProveedorFilaCatalogo> };
   const gruposValidados: {
     grupo: Grupo;
-    validadosPersona: { item: ItemCarritoPersonaConAsignacion; comp: ComputoReserva }[];
+    validadosPersona: { item: ItemCarritoPersonaConAsignacion; comp: ComputoReserva; incluidos: ServicioEfectivo[] }[];
     validadosBernalo: ValidadoBernalo[];
   }[] = [];
   for (const grupo of gruposPendientes) {
-    const validadosPersona: { item: ItemCarritoPersonaConAsignacion; comp: ComputoReserva }[] = [];
+    const validadosPersona: { item: ItemCarritoPersonaConAsignacion; comp: ComputoReserva; incluidos: ServicioEfectivo[] }[] = [];
     const validadosBernalo: ValidadoBernalo[] = [];
     for (const it of grupo.items) {
       // Regla A.1/A.2/A.8: SOLO las decisiones guardadas se reconstruyen —
@@ -1775,7 +1779,26 @@ export async function convertirCotizacionCarrito(
       // pero la demanda real consolidada es 4). Se valida la demanda
       // consolidada de TODA la operación en la pre-validación de más abajo,
       // antes de escribir nada.
-      validadosPersona.push({ item: it, comp: comp.data });
+      // Servicios INCLUIDOS del paquete: costo y proveedor se resuelven OTRA
+      // VEZ en el servidor (`comp.data.serviciosIncluidos`) y se validan
+      // contra lo cotizado — hotel (`ref`), paquete, fechas, pasajeros,
+      // conjunto de servicios y huella del costo — ANTES de escribir nada.
+      // Discrepancia o dato faltante → falla cerrado (nunca un costo del
+      // payload ni del navegador, nunca una sustitución silenciosa).
+      const hotelCotizado = detalleHotelesSnap.find((h) => it.ref != null && h.ref === it.ref) as { fecha_ingreso?: string | null; fecha_salida?: string | null } | undefined;
+      const vIncluidos = validarIncluidosConversion({
+        hotelNombre: it.hotelNombre,
+        item: { ref: it.ref ?? null, paqueteId: it.paqueteId, pax: it.pax },
+        fechasCotizadas: hotelCotizado ? { ida: hotelCotizado.fecha_ingreso ?? null, regreso: hotelCotizado.fecha_salida ?? null } : null,
+        recalculo: {
+          totalPax: comp.data.totalPax, fechaIda: comp.data.meta.fecha_ida, fechaRegreso: comp.data.meta.fecha_regreso,
+          incluidos: comp.data.serviciosIncluidos,
+        },
+        guardados: serviciosIncluidosCot,
+        clave: claveHuellaIncluidos(process.env.SUPABASE_SERVICE_ROLE_KEY),
+      });
+      if (!vIncluidos.ok) return { ok: false, error: vIncluidos.error };
+      validadosPersona.push({ item: it, comp: comp.data, incluidos: vIncluidos.incluidos });
     }
     gruposValidados.push({ grupo, validadosPersona, validadosBernalo });
   }
@@ -2008,20 +2031,17 @@ export async function convertirCotizacionCarrito(
     const paxTotal = pasajerosLocal.length;
 
     // Resumen ÚNICO de asistencia/tours de ESTE grupo (incluidos del paquete
-    // scoped por `paqueteId` de sus hoteles + opcionales del carrito), misma
-    // fuente compartida que `crearCotizacion`/`reservarDesdeTarifarioInterno`
-    // (lib/reservar/serviciosPaquete.ts) — así la cotización de carrito y el
-    // contrato resultante muestran exactamente el mismo resultado. Legados
-    // sin `servicioId` caen a "otro" vía `normalizarCategoriaServicio`
-    // (nunca se inventa asistencia/tour para un dato ausente).
-    // Regla A.6/25: excluye explícitamente los `paqueteId` de ítems Bernalo —
-    // sus servicios incluidos se re-liquidan FRESCOS más abajo
-    // (`resultado.serviciosIncluidos`, autoritativo de `computarReservaBernalo`)
-    // y generan su propia CxP con identidad `servicio_id`; usar también este
-    // snapshot persistido para el mismo paquete los contaría DOS veces.
-    const incluidosGrupo = serviciosIncluidosCot.filter(
-      (s) => s.paqueteId != null && grupo.items.some((it) => it.modeloTarifario !== "unidad" && it.paqueteId === s.paqueteId)
-    );
+    // de sus hoteles + opcionales del carrito), misma fuente compartida que
+    // `crearCotizacion`/`reservarDesdeTarifarioInterno`
+    // (lib/reservar/serviciosPaquete.ts). Legados sin `servicioId` caen a
+    // "otro" vía `normalizarCategoriaServicio` (nunca se inventa asistencia/
+    // tour para un dato ausente).
+    // Los incluidos son los VALIDADOS y RECALCULADOS en el servidor para cada
+    // hotel por persona de este grupo (pre-validación, `validarIncluidosConversion`).
+    // Regla A.6/25: Bernalo queda fuera — sus incluidos se re-liquidan FRESCOS
+    // más abajo (`resultado.serviciosIncluidos`) con su propia CxP; sumarlos
+    // aquí los contaría DOS veces.
+    const incluidosGrupo = validadosPersona.flatMap((v) => v.incluidos);
     const serviciosEfectivosGrupo: ServicioEfectivo[] = [
       ...incluidosGrupo,
       ...grupo.tours.map((t, i): ServicioEfectivo => ({
@@ -2338,7 +2358,7 @@ export async function convertirCotizacionCarrito(
         }
       }
 
-      const itemsHotel: { numero_contrato: string; descripcion: string; adultos: number; ninos: number; tarifa_adulto: number; tarifa_nino: number; orden: number }[] = [];
+      const itemsHotel: { numero_contrato: string; descripcion: string; adultos: number; ninos: number; tarifa_adulto: number; tarifa_nino: number; orden: number; modo_precio?: "total"; valor_total?: number }[] = [];
       lineasHab.forEach((l, i) => itemsHotel.push({
         numero_contrato: numero, descripcion: `${l.habitaciones} hab ${ACOM_ROOM_LABEL[l.acom]} (${l.pax} pax) · ${it.categoria} / ${it.regimen}`,
         adultos: l.pax, ninos: 0, tarifa_adulto: l.pvp, tarifa_nino: 0, orden: hIdx * 300 + i,
@@ -2347,6 +2367,25 @@ export async function convertirCotizacionCarrito(
       if (numNinos2 > 0 && pvpPorAcom["nino2"] != null) itemsHotel.push({ numero_contrato: numero, descripcion: `Niño 2 · ${it.categoria} / ${it.regimen}`, adultos: 0, ninos: numNinos2, tarifa_adulto: 0, tarifa_nino: pvpPorAcom["nino2"], orden: hIdx * 300 + 51 });
       const numInf = it.infantes || 0;
       if (numInf > 0 && pvpPorAcom["infante"] != null) itemsHotel.push({ numero_contrato: numero, descripcion: `Infante · ${it.categoria} / ${it.regimen}`, adultos: 0, ninos: numInf, tarifa_adulto: 0, tarifa_nino: pvpPorAcom["infante"], orden: hIdx * 300 + 52 });
+      // Servicios incluidos por GRUPO: su cargo (ya dentro de `comp.precioVenta`,
+      // una sola vez) no va en ninguna fila de habitación/menores. El total del
+      // documento del contrato es la suma de sus líneas, así que sin esta línea
+      // mostraba menos que `ventas.precio_venta` y que la cotización (que sí la
+      // tiene, checkout/actions.ts). Misma regla y mismo helper: fail-closed.
+      const rResidual = calcularResidualServiciosIncluidosPorGrupo({
+        precioVenta: comp.precioVenta, lineasHab,
+        numNinos, tarifaNino: pvpPorAcom["nino"],
+        numNinos2, tarifaNino2: pvpPorAcom["nino2"],
+        numInfantes: numInf, tarifaInfante: pvpPorAcom["infante"],
+      });
+      if (!rResidual.ok) return fallarYRevertirGrupo(`${meta.hotel_nombre ?? it.hotelNombre}: ${rResidual.error}`);
+      if (rResidual.residual > 0) {
+        itemsHotel.push({
+          numero_contrato: numero, descripcion: `${meta.hotel_nombre ?? it.hotelNombre} · Servicios incluidos por grupo`,
+          adultos: 0, ninos: 0, tarifa_adulto: 0, tarifa_nino: 0, orden: hIdx * 300 + 60,
+          modo_precio: "total", valor_total: rResidual.residual,
+        });
+      }
       if (itemsHotel.length) await sb.from("contrato_items").insert(itemsHotel);
 
       let costoHotel = 0;
@@ -2562,9 +2601,9 @@ export async function convertirCotizacionCarrito(
     }
 
     // Servicios INCLUIDOS del paquete que pertenecen a este grupo
-    // (`incluidosGrupo`, ver arriba) — su PVP ya está horneado en el
-    // snapshot del carrito (nunca se vuelve a sumar acá), solo se genera su
-    // CxP real. FALLA CERRADO (B7): el ingreso de ese servicio ya se le cobró
+    // (`incluidosGrupo`, ver arriba) — su PVP ya está en `comp.precioVenta`
+    // (nunca se vuelve a sumar acá), solo se genera su CxP real con el costo
+    // RECALCULADO y validado contra la huella de la cotización. FALLA CERRADO (B7): el ingreso de ese servicio ya se le cobró
     // al cliente, así que su costo/CxP no pueden faltar en silencio.
     if (incluidosGrupo.length) {
       try {
@@ -2577,7 +2616,11 @@ export async function convertirCotizacionCarrito(
         const provPorId = new Map((provRows ?? []).map((r) => [r.id, r.proveedores as unknown as ProvFact]));
         for (const s of incluidosGrupo) {
           if (s.costoNeto > 0) {
-            pushCxP(tipoProveedorCxpServicio(s.categoria), s.nombre, s.costoNeto, provPorId.get(s.servicioId) ?? null, null, s.servicioId);
+            // El proveedor ya se validó contra la cotización (huella); si el
+            // catálogo no lo devuelve, no se registra una CxP a nombre de nadie.
+            const prov = provPorId.get(s.servicioId);
+            if (!prov?.nombre) throw new Error(`el proveedor de «${s.nombre}» no se encontró en el catálogo`);
+            pushCxP(tipoProveedorCxpServicio(s.categoria), s.nombre, s.costoNeto, prov, null, s.servicioId);
           }
         }
       } catch (e) {

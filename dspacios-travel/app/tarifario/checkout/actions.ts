@@ -26,6 +26,7 @@ import {
   errorHotelConServicios, errorServicioVinculado, validarServicioContraHotel, type HotelResueltoCheckout,
 } from "@/lib/reservar/vinculoServiciosCheckout";
 import { resumirServiciosContrato, type CategoriaServicio, type ServicioEfectivo } from "@/lib/reservar/serviciosPaquete";
+import { claveHuellaIncluidos, incluidosParaPayload, type ServicioIncluidoCotizado } from "@/lib/reservar/incluidosCotizados";
 import { hoyBogota, resolverVigenciaCotizacion } from "@/lib/cotizacion/vigencia";
 import { calcularResidualServiciosIncluidosPorGrupo } from "@/lib/reservar/desglosePersonaCotizacion";
 import type { ComposicionBernaloDocumento } from "@/lib/reservar/alojamientoBernaloDocumento";
@@ -188,7 +189,14 @@ export type ContextoB2B = {
   agencia: Facturacion | null;
   pctComision: number; // fracción (0.10)
   categoria: string | null; // "Agencia Junior" / "Agencia Senior" / ...
+  // Fallo de configuración del servidor al cargar la facturación de un aliado
+  // ya verificado (falta la llave de servicio). Mensaje sin detalles internos;
+  // `null` en cualquier otro caso. Con error no se muestran datos parciales.
+  error?: string | null;
 };
+
+const ERROR_CONFIG_B2B = "No pudimos cargar los datos de facturación de tu agencia por un problema de configuración del servidor. Intenta más tarde o contacta a D'spacios Travel.";
+const ERROR_LECTURA_B2B = "No pudimos cargar los datos de facturación de tu agencia en este momento. Intenta de nuevo en unos minutos; no se generó ninguna cotización.";
 
 // Contexto del aliado logueado (para el checkout B2B): tipo, datos de
 // facturación de la agencia y su % de comisión.
@@ -228,21 +236,52 @@ export async function getContextoB2B(): Promise<ContextoB2B> {
     agenciaTitularErr = !!apErr;
   }
 
-  const agenciaUserId = agenciaId ?? user.id;
-  const { data: sols, error: solsErr } = await sb
-    .from("b2b_solicitudes")
-    .select("nombre, nit, email, telefono")
-    .eq("usuario_id", agenciaUserId)
-    .order("created_at", { ascending: false })
-    .limit(1);
-
-  const r = resolverContextoB2B({
+  const base = {
     usuarioAutenticado: true,
     perfil: perfil ?? null, perfilError: !!perfilErr,
     agenciaId, agenciaTitular, agenciaTitularError: agenciaTitularErr,
-    solicitud: sols?.[0] ?? null, solicitudError: !!solsErr,
     pctComisionDefault: def,
-  });
+  };
+  // Primero se verifica la identidad y la relación de agencia con las MISMAS
+  // reglas de siempre (usuario activo, rol B2B, titular activa). Solo si es
+  // B2B se leen sus datos de facturación.
+  if (!resolverContextoB2B({ ...base, solicitud: null, solicitudError: false }).esB2B) return DEFAULT;
+
+  // `b2b_solicitudes` solo la leen roles administrativos (RLS, migración
+  // 193): con la sesión del aliado la consulta devolvía 0 filas sin error y
+  // NIT/teléfono salían vacíos. Se lee con service-role, acotada a la cuenta
+  // ya verificada: `agenciaUserId` sale de `auth.getUser()` y de su propia
+  // fila `usuarios.agencia_id` — nunca de algo que mande el navegador — y
+  // solo los 4 campos de facturación. La RLS no se abre.
+  // Sin la llave de servicio NO se vuelve a la sesión (la RLS devolvería 0
+  // filas y la facturación saldría vacía en silencio): fallo explícito.
+  if (!process.env.SUPABASE_SERVICE_ROLE_KEY) {
+    console.error("[getContextoB2B] etapa=facturacion_b2b detalle=falta la llave de servicio en el entorno");
+    return { ...DEFAULT, error: ERROR_CONFIG_B2B };
+  }
+  const agenciaUserId = agenciaId ?? user.id;
+  // Un fallo de esta lectura NO convierte al aliado en B2C en silencio (sin
+  // facturación ni modo neto): error público genérico — sin el detalle
+  // técnico — y la solicitud se aborta antes de crear la cotización.
+  let sols: { nombre: string | null; nit: string | null; email: string | null; telefono: string | null }[] | null = null;
+  try {
+    const { data, error: solsErr } = await createAdminClient()
+      .from("b2b_solicitudes")
+      .select("nombre, nit, email, telefono")
+      .eq("usuario_id", agenciaUserId)
+      .order("created_at", { ascending: false })
+      .limit(1);
+    if (solsErr) {
+      console.error(`[getContextoB2B] etapa=facturacion_b2b codigo=${solsErr.code ?? "desconocido"}`);
+      return { ...DEFAULT, error: ERROR_LECTURA_B2B };
+    }
+    sols = data;
+  } catch {
+    console.error("[getContextoB2B] etapa=facturacion_b2b codigo=excepcion");
+    return { ...DEFAULT, error: ERROR_LECTURA_B2B };
+  }
+
+  const r = resolverContextoB2B({ ...base, solicitud: sols?.[0] ?? null, solicitudError: false });
   if (!r.esB2B) return DEFAULT;
   return { esB2B: true, tipo: r.tipo, agencia: r.agencia, pctComision: r.pctComision, categoria: r.categoria };
 }
@@ -472,7 +511,12 @@ async function crearCotizacionCarrito(input: {
   // `convertirCotizacionCarrito` reutiliza al crear la CxP del proveedor
   // real (nunca se vuelven a sumar al precio: ya vienen horneados en
   // `precioVenta` desde `computarReserva`).
+  // Incluidos de los hoteles ACEPTADOS: en memoria (con costo) solo para el
+  // resumen del documento; al payload va `incluidosPayload`, sin costos ni
+  // proveedores (lo lee el rol `venta`) — ver lib/reservar/incluidosCotizados.ts.
   const incluidosSnap: ServicioEfectivo[] = [];
+  const incluidosPayload: ServicioIncluidoCotizado[] = [];
+  const claveHuella = claveHuellaIncluidos(process.env.SUPABASE_SERVICE_ROLE_KEY);
   const excluidos: ItemExcluido[] = [];
   let monedaPrincipal: string | null = null;
   let total = 0;
@@ -665,8 +709,6 @@ async function crearCotizacionCarrito(input: {
     const comp = await computarReserva(sb, reserva);
     if (!comp.ok) return { ok: false, error: `No se pudo cotizar ${it.hotelNombre}: ${comp.error}` };
     const { meta, precioVenta, monedaReserva, lineasHab, pvpPorAcom, numNinos, numNinos2, numInfantes, totalPax, edadesMenoresUsadas, serviciosIncluidos } = comp.data;
-    incluidosSnap.push(...serviciosIncluidos.map((s) => ({ ...s, paqueteId: it.paqueteId })));
-
     if (monedaPrincipal && monedaReserva !== monedaPrincipal) {
       if (hotelesConServicios.has(posOriginal)) {
         return { ok: false, error: errorHotelConServicios(meta.hotel_nombre ?? it.hotelNombre, `está en ${monedaReserva} y el resto del carrito en ${monedaPrincipal}`) };
@@ -679,6 +721,19 @@ async function crearCotizacionCarrito(input: {
       nombre: meta.hotel_nombre ?? it.hotelNombre, moneda: monedaReserva, pax: totalPax,
       fechaIda: meta.fecha_ida, fechaRegreso: meta.fecha_regreso,
     });
+
+    // Incluidos del paquete: SOLO de un hotel que entra en la cotización (ya
+    // pasó la exclusión por moneda de arriba). Un hotel excluido no anuncia
+    // su asistencia/traslado ni deja nada para una CxP al convertir. Al
+    // payload: identidad + huella del costo, nunca el costo ni el proveedor.
+    if (serviciosIncluidos.length) {
+      if (!claveHuella) {
+        console.error("[crearCotizacionCarrito] etapa=incluidos detalle=falta la llave de servicio en el entorno");
+        return { ok: false, error: "No se pudo generar la cotización por un problema de configuración del servidor. Intenta más tarde." };
+      }
+      incluidosSnap.push(...serviciosIncluidos.map((s) => ({ ...s, proveedorId: null, paqueteId: it.paqueteId })));
+      incluidosPayload.push(...incluidosParaPayload(serviciosIncluidos, { ref, paqueteId: it.paqueteId }, claveHuella));
+    }
 
     // Las edades usadas para clasificar infante/Niño 1/Niño 2 SIEMPRE deben
     // salir de `comp.data` (única fuente autoritativa, ver
@@ -935,7 +990,7 @@ async function crearCotizacionCarrito(input: {
     // "unidad"` (ya presente en `SolicitudItemBernaloComputado`) para que
     // `convertirCotizacionCarrito` (3F-4B) lo detecte y bloquee la
     // conversión a contrato explícitamente, sin caer al flujo persona.
-    payload: { items: [...itemsOk, ...itemsBernaloOk], tours: toursOk, serviciosIncluidos: incluidosSnap, cliente: input.cliente } as unknown as Json,
+    payload: { items: [...itemsOk, ...itemsBernaloOk], tours: toursOk, serviciosIncluidos: incluidosPayload, cliente: input.cliente } as unknown as Json,
     detalle: detalle as unknown as Json,
     cliente: clienteNombre,
     cliente_documento: input.cliente.numeroDoc.trim() || null,
@@ -989,6 +1044,12 @@ export async function crearSolicitudReserva(inputRaw: unknown): Promise<Solicitu
   if (!input.cliente.numeroDoc.trim()) return { ok: false, error: "El documento es obligatorio." };
   if (!input.cliente.telefono.trim()) return { ok: false, error: "El teléfono / WhatsApp es obligatorio." };
 
+  // El contexto B2B se resuelve ANTES de crear la cotización: si la
+  // facturación de un aliado no se puede cargar (configuración), la solicitud
+  // falla sin dejar una cotización creada ni tratarlo como B2C en silencio.
+  const ctxB2B = await getContextoB2B();
+  if (ctxB2B.error) return { ok: false, error: ctxB2B.error };
+
   const cot = await crearCotizacionCarrito({ items: input.items, tours, hotelDeTour: input.hotelDeTour, cliente: input.cliente });
   if (!cot.ok) return cot;
 
@@ -1029,7 +1090,6 @@ export async function crearSolicitudReserva(inputRaw: unknown): Promise<Solicitu
   // `usuarios.pct_comision`/`b2b_solicitudes` — ninguno es un valor que el
   // navegador pueda mandar. Corrige un defecto real: antes `pctComision`
   // llegaba tal cual del cliente (podía mandar `1` = 100%/"gratis").
-  const ctxB2B = await getContextoB2B();
   const b2b = resolverB2BParaMensaje(ctxB2B, input.modo);
   // Si algo del carrito quedó fuera de la cotización, se avisa igual en el
   // mensaje para no perderlo silenciosamente — pero cada motivo se reporta

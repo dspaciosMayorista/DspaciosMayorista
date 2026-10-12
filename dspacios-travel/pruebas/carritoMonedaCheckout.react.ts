@@ -184,6 +184,60 @@ describe("Checkout B2B: importes, total y comisión en la moneda real", () => {
   });
 });
 
+describe("Checkout B2B: facturación a la agencia en contrato neto", () => {
+  after(() => stub.__setContextoB2B({ esB2B: false, pctComision: 0, agencia: null }));
+  async function abrirNeto(agencia: { nombre: string; nit: string; email: string; telefono: string }) {
+    stub.__setContextoB2B({ esB2B: true, pctComision: 0.11, agencia });
+    const v = await montar([persona("h1", "OZ HOTEL CARTAGENA", 621_000, "COP")], "checkout");
+    await act(async () => {
+      const b = [...v.container.querySelectorAll("button")].find((x) => x.textContent === "Contrato neto")!;
+      b.dispatchEvent(new window.MouseEvent("click", { bubbles: true }));
+      await espera();
+    });
+    const campo = (etiqueta: string) => {
+      const label = [...v.container.querySelectorAll("label")].find((l) => l.textContent === etiqueta)!;
+      return label.parentElement!.querySelector("input") as HTMLInputElement;
+    };
+    return { v, campo };
+  }
+
+  test("con NIT y teléfono registrados: se muestran, sin edición, junto a la comisión y el neto", async () => {
+    const { v, campo } = await abrirNeto({ nombre: "Agencia Uno SAS", nit: "900123456", email: "facturas@uno.test", telefono: "3001112233" });
+    assert.equal(campo("NIT").value, "900123456");
+    assert.equal(campo("Teléfono").value, "3001112233");
+    assert.equal(campo("NIT").disabled, true);
+    const t = sinEspacios(v.texto());
+    assert.match(t, /Comisión \(11%\)\s?−\$\s?68\.310/);
+    assert.match(t, /Total neto a pagar\s?\$\s?552\.690/);
+    assert.doesNotMatch(t, /Tu registro no tiene/);
+    v.desmontar();
+  });
+
+  test("sin NIT ni teléfono en el registro: «No registrado» y aviso de quién lo completa; ningún valor inventado", async () => {
+    const { v, campo } = await abrirNeto({ nombre: "Agencia Uno SAS", nit: "", email: "agencia@uno.test", telefono: "" });
+    assert.equal(campo("NIT").value, "");
+    assert.equal(campo("NIT").placeholder, "No registrado");
+    assert.equal(campo("Teléfono").value, "");
+    assert.equal(campo("Teléfono").placeholder, "No registrado");
+    assert.match(sinEspacios(v.texto()), /Tu registro no tiene NIT ni teléfono\. Puedes enviar la solicitud; D'spacios Travel lo completará antes de facturar\./);
+    v.desmontar();
+  });
+});
+
+describe("Checkout: fallo de configuración al cargar la facturación B2B", () => {
+  after(() => stub.__setContextoB2B({ esB2B: false, pctComision: 0, agencia: null }));
+  test("se muestra el error, no hay datos de facturación inventados y el envío queda deshabilitado", async () => {
+    stub.__setContextoB2B({ esB2B: false, pctComision: 0, agencia: null, error: "No pudimos cargar los datos de facturación de tu agencia por un problema de configuración del servidor. Intenta más tarde o contacta a D'spacios Travel." });
+    const v = await montar([persona("h1", "OZ HOTEL CARTAGENA", 621_000, "COP")], "checkout");
+    const t = sinEspacios(v.texto());
+    assert.match(t, /problema de configuración del servidor/);
+    assert.doesNotMatch(t, /Facturar a \(agencia\)|Modalidad del contrato/);
+    const enviar = [...v.container.querySelectorAll("button")].find((x) => /Generar cotización y enviar solicitud/.test(x.textContent ?? ""))!;
+    assert.equal(enviar.disabled, true);
+    v.desmontar();
+  });
+});
+
 describe("Checkout: la moneda es solo presentación — la solicitud al servidor no cambia", () => {
   before(() => {
     stub.__setContextoB2B({ esB2B: false, pctComision: 0, agencia: null });

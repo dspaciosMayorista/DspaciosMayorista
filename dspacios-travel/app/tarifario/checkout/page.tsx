@@ -55,6 +55,7 @@ export default function CheckoutPage() {
     }).catch(() => {});
   }, []);
   const esB2B = !!ctx?.esB2B;
+  const faltanFacturacion = [!fact.nit.trim() && "NIT", !fact.telefono.trim() && "teléfono"].filter((x): x is string => !!x);
   const pct = ctx?.pctComision ?? 0;
   // La comisión B2B (presentación) se calcula sobre UNA sola moneda: el total
   // único del carrito o, si mezcla divisas, lo que se anticipa que entrará a
@@ -308,13 +309,19 @@ export default function CheckoutPage() {
             {esB2B && modo === "neta" && (
               <section className="rounded-2xl border border-gray-200 bg-white p-5">
                 <h2 className="mb-1 text-sm font-semibold text-gray-700">Facturar a (agencia)</h2>
-                <p className="mb-3 text-xs text-gray-400">Datos registrados de tu agencia. Para corregirlos, actualiza tu perfil B2B.</p>
+                <p className="mb-3 text-xs text-gray-400">Datos registrados de tu agencia. No se editan aquí: para corregirlos, pídelo a D&apos;spacios Travel.</p>
                 <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-                  <div><label className={lbl}>Razón social / Nombre</label><input className={inp} value={fact.nombre} disabled readOnly /></div>
-                  <div><label className={lbl}>NIT</label><input className={inp} value={fact.nit} disabled readOnly /></div>
-                  <div><label className={lbl}>Teléfono</label><input className={inp} value={fact.telefono} disabled readOnly /></div>
-                  <div><label className={lbl}>Correo</label><input className={inp} value={fact.email} disabled readOnly /></div>
+                  <div><label className={lbl}>Razón social / Nombre</label><input className={inp} value={fact.nombre} placeholder="No registrado" disabled readOnly /></div>
+                  <div><label className={lbl}>NIT</label><input className={inp} value={fact.nit} placeholder="No registrado" disabled readOnly /></div>
+                  <div><label className={lbl}>Teléfono</label><input className={inp} value={fact.telefono} placeholder="No registrado" disabled readOnly /></div>
+                  <div><label className={lbl}>Correo</label><input className={inp} value={fact.email} placeholder="No registrado" disabled readOnly /></div>
                 </div>
+                {/* Sin dato de origen no se inventa ninguno: se dice qué falta y quién lo completa. */}
+                {faltanFacturacion.length > 0 && (
+                  <p role="status" className="mt-3 rounded-lg bg-amber-50 px-3 py-2 text-xs text-amber-800">
+                    Tu registro no tiene {faltanFacturacion.join(" ni ")}. Puedes enviar la solicitud; D&apos;spacios Travel lo completará antes de facturar.
+                  </p>
+                )}
               </section>
             )}
 
@@ -333,8 +340,9 @@ export default function CheckoutPage() {
                   {precioCambio.mensaje}
                 </p>
               )}
+              {ctx?.error && <p role="alert" className="mt-3 rounded-lg bg-red-50 px-3 py-2 text-sm text-red-600">{ctx.error}</p>}
               {err && <p className="mt-3 rounded-lg bg-red-50 px-3 py-2 text-sm text-red-600">{err}</p>}
-              <button type="button" onClick={enviar} disabled={pending}
+              <button type="button" onClick={enviar} disabled={pending || !!ctx?.error}
                 className="mt-4 w-full rounded-lg px-4 py-3 text-sm font-semibold text-white disabled:opacity-50" style={{ backgroundColor: "var(--brand-primary)" }}>
                 {pending ? "Generando…" : precioCambio ? "Confirmar con el nuevo precio y enviar" : "Generar cotización y enviar solicitud"}
               </button>
