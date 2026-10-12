@@ -255,7 +255,12 @@ async function convertir(nItems = 1) {
 const sinEscrituras = () => {
   assert.equal((db.ventas ?? []).length, 0, "no se creó ningún contrato");
   assert.equal(financieros.length, 0, "no se registró ninguna CxP");
+  for (const t of ["contrato_items", "contrato_hoteles", "contrato_vuelos"]) assert.equal((db[t] ?? []).length, 0, `nada en ${t}`);
+  assert.equal(db.cotizaciones[0].estado, "abierta", "la cotización sigue abierta");
 };
+// Mensaje seguro para cotizaciones con costo en el payload: sin datos internos.
+const FORMATO_ANTERIOR = /^Esta cotización se generó con un formato anterior que ya no se puede convertir de forma segura\. Genera una cotización nueva desde el tarifario antes de convertirla\.$/;
+const sinDatosInternos = (msg: string | undefined) => assert.doesNotMatch(msg ?? "", /costoNeto|proveedor|40\.?000|38\.?000|\$/);
 const ozCon = (incluidos: Incluido[]): HotelSim => ({ nombre: "OZ HOTEL CARTAGENA", moneda: "COP", pvp: 300_000, neto: 200_000, cargoGrupo: 0, incluidos });
 
 describe("conversión: el costo del incluido se resuelve en el servidor y se valida", () => {
@@ -301,39 +306,49 @@ describe("conversión: el costo del incluido se resuelve en el servidor y se val
     sinEscrituras();
   });
 
-  test("un costo puesto en el payload nunca se usa: la CxP sale del recálculo del servidor", async () => {
+  test("un costo agregado al payload NUEVO es anómalo: se rechaza antes de escribir, nunca se usa", async () => {
     HOTELES = { 1: ozCon([ASISTENCIA]) };
     const cot = await cotizar([item(1, 34)]);
-    // Alguien agrega un costo al payload nuevo: se ignora (la huella manda).
-    (cot.payload as { serviciosIncluidos: Fila[] }).serviciosIncluidos[0].costoNeto = 1;
+    (cot.payload as { serviciosIncluidos: Fila[] }).serviciosIncluidos[0].costoNeto = 40_000;
     const r = await convertir();
-    assert.equal(r.ok, true, r.error);
-    const asist = financieros[0].cxp.filter((c) => c.servicio_id === 9);
-    assert.deepEqual(asist.map((c) => c.valor_total), [40_000]);
+    assert.equal(r.ok, false);
+    assert.match(r.error ?? "", FORMATO_ANTERIOR);
+    sinEscrituras();
   });
 });
 
 describe("conversión de cotizaciones ANTERIORES (payload con costoNeto, sin huella)", () => {
   const legado = (costoNeto?: number) => [{ servicioId: 9, nombre: "ASISTENCIA MEDICA", categoria: "asistencia", incluido: true, proveedorId: 5, paqueteId: 34, ...(costoNeto !== undefined ? { costoNeto } : {}) }];
 
-  test("mismo costo que el recálculo: convierte y la CxP usa el valor recalculado", async () => {
+  test("costo IGUAL al recalculado: igual se rechaza, sin contrato ni CxP, con mensaje seguro", async () => {
     HOTELES = { 1: ozCon([ASISTENCIA]) };
     const cot = await cotizar([item(1, 34)]);
     (cot.payload as Fila).serviciosIncluidos = legado(40_000);
     const r = await convertir();
-    assert.equal(r.ok, true, r.error);
-    assert.equal(db.ventas[0].asistencia_medica, true);
-    assert.deepEqual(financieros[0].cxp.filter((c) => c.servicio_id === 9).map((c) => [c.valor_total, c.proveedor]), [[40_000, "Asistencias SA"]]);
+    assert.equal(r.ok, false);
+    assert.match(r.error ?? "", FORMATO_ANTERIOR);
+    sinDatosInternos(r.error);
+    sinEscrituras();
   });
 
-  test("costo distinto al recálculo: falla cerrado (cambio de tarifa explícito)", async () => {
+  test("costo DISTINTO al recalculado: se rechaza igual, sin contrato ni CxP", async () => {
     HOTELES = { 1: ozCon([ASISTENCIA]) };
     const cot = await cotizar([item(1, 34)]);
     (cot.payload as Fila).serviciosIncluidos = legado(38_000);
     const r = await convertir();
     assert.equal(r.ok, false);
-    assert.match(r.error ?? "", /cambió desde la cotización/);
+    assert.match(r.error ?? "", FORMATO_ANTERIOR);
+    sinDatosInternos(r.error);
     sinEscrituras();
+  });
+
+  test("el mismo escenario en formato NUEVO sí convierte (asistencia Sí, una CxP)", async () => {
+    HOTELES = { 1: ozCon([ASISTENCIA]) };
+    await cotizar([item(1, 34)]);
+    const r = await convertir();
+    assert.equal(r.ok, true, r.error);
+    assert.equal(db.ventas[0].asistencia_medica, true);
+    assert.deepEqual(financieros[0].cxp.filter((c) => c.servicio_id === 9).map((c) => [c.valor_total, c.proveedor]), [[40_000, "Asistencias SA"]]);
   });
 
   test("sin costo con qué comparar, o sin el incluido (cotización B2B afectada por el defecto): falla cerrado", async () => {
@@ -424,9 +439,48 @@ describe("conversión: proveedor y categoría del incluido, aunque el costo siga
       (cot.payload as Fila).serviciosIncluidos = viejo;
       const r = await convertir();
       assert.equal(r.ok, false);
-      assert.match(r.error ?? "", /proveedor|categoría/);
-      assert.match(r.error ?? "", /Genera una cotización nueva/);
+      // Traen `costoNeto`: se rechazan por formato anterior antes de comparar nada.
+      assert.match(r.error ?? "", FORMATO_ANTERIOR);
       sinEscrituras();
     }
+  });
+});
+
+describe("cotizaciones SIN incluidos: convierten como siempre y conservan sus guardas", () => {
+  const sinIncluidos = (): HotelSim => ({ nombre: "Hotel Almirante", moneda: "COP", pvp: 300_000, neto: 200_000, cargoGrupo: 0, incluidos: [] });
+
+  test("lista vacía o sin la clave `serviciosIncluidos` (cotización antigua): convierte, sin asistencia ni CxP de servicios", async () => {
+    for (const quitarClave of [false, true]) {
+      for (const k of Object.keys(db)) delete db[k];
+      financieros.length = 0;
+      HOTELES = { 1: sinIncluidos() };
+      const cot = await cotizar([item(1, 10)]);
+      if (quitarClave) delete (cot.payload as Fila).serviciosIncluidos;
+      const r = await convertir();
+      assert.equal(r.ok, true, r.error);
+      assert.equal(db.ventas[0].asistencia_medica, false);
+      assert.equal(db.ventas[0].precio_venta, 600_000);
+      assert.deepEqual(financieros[0].cxp.map((c) => c.tipo_proveedor), ["hotel"], "solo la CxP del hotel");
+    }
+  });
+
+  test("la guarda de asignación de pasajeros sigue rechazando antes de escribir", async () => {
+    HOTELES = { 1: sinIncluidos() };
+    await cotizar([item(1, 10)]);
+    usuario = { id: "u-admin", email: "admin@dspacios.test" };
+    const r = await convertirCotizacionCarrito(77, { agrupar: "todo", pasajeros, asesorInterno: "Asesor", asignaciones: [[1]], asignacionesTours: [] }) as { ok: boolean; error?: string };
+    assert.equal(r.ok, false);
+    assert.match(r.error ?? "", /la cantidad de pasajeros asignados \(1\) no coincide con la cantidad esperada \(2\)/);
+    sinEscrituras();
+  });
+
+  test("la guarda de moneda sigue rechazando antes de escribir", async () => {
+    HOTELES = { 1: sinIncluidos() };
+    await cotizar([item(1, 10)]);
+    HOTELES = { 1: { ...sinIncluidos(), moneda: "USD" } };
+    const r = await convertir();
+    assert.equal(r.ok, false);
+    assert.match(r.error ?? "", /la moneda cambió desde que se generó la cotización/);
+    sinEscrituras();
   });
 });

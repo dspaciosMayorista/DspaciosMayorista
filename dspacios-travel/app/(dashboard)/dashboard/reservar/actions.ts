@@ -1470,6 +1470,10 @@ async function validarBernaloParaConversion(
 }
 
 
+// Rechazo de cotizaciones con `costoNeto` en el payload (ver convertirCotizacionCarrito).
+const ERROR_COTIZACION_FORMATO_ANTERIOR =
+  "Esta cotización se generó con un formato anterior que ya no se puede convertir de forma segura. Genera una cotización nueva desde el tarifario antes de convertirla.";
+
 // `advertencias` en el retorno: mismo criterio que ReservaResult (ver su
 // comentario) — hoy solo las llena el guardado best-effort de
 // nombres/apellidos/nacionalidad.
@@ -1545,13 +1549,22 @@ export async function convertirCotizacionCarrito(
     // crear la cotización (checkout/actions.ts) — ausente en cotizaciones
     // creadas antes de este cambio (queda `[]`, nunca se inventa contenido).
     // Formato nuevo: identidad + huella del costo, sin costos ni proveedores.
-    // Cotizaciones anteriores pueden traer `costoNeto` (solo se compara).
+    // Cotizaciones anteriores pueden traer `costoNeto`: si aparece, la
+    // conversión se rechaza antes de escribir (ver más abajo), aunque coincida.
     serviciosIncluidos?: ServicioIncluidoGuardado[];
     cliente?: { nombres: string; apellidos: string; numeroDoc: string; telefono: string; email: string };
   };
   const itemsCrudos = payload.items ?? [];
   const tours = payload.tours ?? [];
   const serviciosIncluidosCot = payload.serviciosIncluidos ?? [];
+  // Formato anterior a PR #353: el payload guardaba el costo neto de los
+  // incluidos (legible por `venta`). Esas cotizaciones NO se convierten —
+  // aunque el costo coincida con el recalculado—: se rechazan aquí, antes de
+  // cualquier escritura, con un mensaje sin datos internos. Un `costoNeto`
+  // en el payload nuevo es igual de anómalo y corre la misma suerte.
+  if (Array.isArray(serviciosIncluidosCot) && serviciosIncluidosCot.some((s) => s != null && typeof s === "object" && "costoNeto" in s)) {
+    return { ok: false, error: ERROR_COTIZACION_FORMATO_ANTERIOR };
+  }
   // Snapshot `detalle.hoteles[]` — SOLO se usa para copiar condiciones de
   // tarifa Dubai por referencia estable (`ref`, ver
   // lib/calc/condicionesTarifa.ts::resolverCondicionesTarifaParaConversion).

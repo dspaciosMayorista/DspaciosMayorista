@@ -42,7 +42,15 @@ costo y proveedor en el servidor y verifica que coincidan con lo cotizado.
 
 ## 4. Validación al convertir
 
-Por cada hotel por persona del carrito, **antes de cualquier escritura**
+**Rechazo previo:** si alguna entrada de `payload.serviciosIncluidos` trae
+`costoNeto` (formato anterior, o un payload nuevo alterado), la conversión se
+rechaza de inmediato, antes de cualquier escritura y **aunque el costo
+coincida** con el recalculado, con un mensaje sin datos internos: "Esta
+cotización se generó con un formato anterior que ya no se puede convertir de
+forma segura. Genera una cotización nueva desde el tarifario antes de
+convertirla."
+
+Después, por cada hotel por persona del carrito, **antes de cualquier escritura**
 (`validarIncluidosConversion`). Si no hay incluidos cotizados ni recalculados,
 no se valida nada (la conversión sigue como siempre).
 
@@ -73,8 +81,8 @@ fuera: sus incluidos se re-liquidan aparte.
 | Cambia el **precio de venta** del hotel | **No se detecta**: el contrato usa el precio recalculado (comportamiento previo a #353). | Decisión de negocio pendiente. |
 | Se **rota** `SUPABASE_SERVICE_ROLE_KEY` (o cambia su valor, p. ej. al migrar a las llaves nuevas de Supabase) | Todas las cotizaciones abiertas **en formato nuevo con incluidos** dejan de convertirse. ⚠️ El mensaje dirá "el proveedor de «X» cambió" (primera huella que se compara), **aunque la causa sea la llave**. | Regenerarlas. Ver mejora propuesta abajo. |
 | Falta `SUPABASE_SERVICE_ROLE_KEY` en el servidor | No se generan cotizaciones con incluidos ni se convierten las existentes ("configuración del servidor incompleta"). | Configurar la variable. |
-| Cotización **anterior** con `costoNeto` y `proveedorId` iguales a los actuales | Convierte; la CxP usa el valor recalculado. | — |
-| Cotización anterior sin `costoNeto`/`proveedorId`, o con valores distintos | Se detiene ("no permite verificar…" o "cambió…"). | Regenerar. |
+| Cotización **anterior** con `costoNeto` (igual o distinto al actual) | Se rechaza antes de escribir, con el mensaje de formato anterior. | Regenerar. |
+| Cotización anterior sin `costoNeto` pero con incluidos | Se detiene ("no permite verificar…"). | Regenerar. |
 | Cotización anterior **sin incluidos guardados** cuyo paquete los tiene hoy (B2B) | Se detiene ("los servicios incluidos cambiaron"). | Regenerar. Medir con la consulta 2 de `conteo_payload_costos_incluidos.sql`. |
 
 **Rotación de la llave — mejora propuesta (no implementada):** guardar junto a
@@ -117,7 +125,10 @@ from objetivo o where c.id = o.id;
 -- postcheck en la misma transacción (debe dar 0) y luego COMMIT o ROLLBACK
 ```
 
-**Fase 3 — Abiertas.** Dos opciones; recomiendo **A** para vigentes y **B** para vencidas.
+**Fase 3 — Abiertas.** Con la regla de rechazo previo (§4), una cotización
+abierta con `costoNeto` ya **no se puede convertir** aunque no se sanee, así
+que sanear solo reduce la exposición a `venta`. Dos opciones; recomiendo **A**
+para vigentes y **B** para vencidas.
 
 - **A. Re-huellar (conserva la conversión).** Un script de servidor (Node, con la llave en el entorno del operador, nunca en el SQL ni en el log) que, por cotización abierta vigente:
   1. asocia cada entrada anterior a su hotel por `paqueteId` (si dos hoteles comparten paquete y no se puede decidir, la omite y queda para regenerar);
@@ -142,7 +153,7 @@ from objetivo o where c.id = o.id;
 
 - `conteo_incluidos_sin_proveedor.sql`: cada fila es un paquete con al menos un incluido con costo y sin proveedor, o con modo inválido. Esos paquetes no podrán convertir cotizaciones con #353 hasta completar el proveedor. "Costo" por grupo es aproximado: basta un rango GENERAL con precio > 0.
 - `conteo_payload_costos_incluidos.sql`:
-  - consulta 1: por agencia/estado/mes, cuántas exponen costo o proveedor, cuántas ya son formato nuevo, cuántas son anteriores no verificables y cuántas están vencidas;
+  - consulta 1: por agencia/estado/mes, cuántas exponen costo o proveedor, cuántas ya son formato nuevo, cuántas son anteriores no verificables y cuántas están vencidas. Con el rechazo previo de §4, **toda** cotización abierta contada en `con_costo_neto` es no convertible (además de las de `anterior_no_verificable`);
   - consulta 2: abiertas sin incluidos guardados cuyo paquete los tiene hoy (no convertirán).
 
 Las dos son de solo lectura, sin PII ni importes, y tienen guardas para no
