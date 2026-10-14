@@ -1,6 +1,7 @@
 "use server";
 
 import { createClient } from "@/lib/supabase/server";
+import { getTenant } from "@/lib/tenant.server";
 import { revalidatePath } from "next/cache";
 import type { Database } from "@/types/database";
 import { enviarEmail, type EmailConfig } from "@/lib/crm/email";
@@ -46,10 +47,18 @@ export type ContactoInput = {
   notas: string;
 };
 
+// Sin fila afectada = la RLS no deja ver ese contacto (otra agencia, sin
+// atribuir, o rol sin acceso). Sin este chequeo la acción respondía "ok".
+const SIN_ACCESO = "El contacto no existe o no tienes acceso a él.";
+
 export async function crearContacto(input: ContactoInput): Promise<Result> {
   if (!input.nombre.trim()) return { ok: false, error: "El nombre es obligatorio." };
   const sb = await createClient();
+  // Agencia ACTIVA (superadmin: la del selector; los demás: la suya). La RLS
+  // rechaza una agencia que el usuario no pueda ver.
+  const tenant = await getTenant();
   const { error } = await sb.from("crm_contactos").insert({
+    tenant,
     categoria: normCategoria(input.categoria),
     nombre: input.nombre.trim(),
     tipo_doc: oNull(input.tipoDoc),
@@ -77,7 +86,7 @@ export async function crearContacto(input: ContactoInput): Promise<Result> {
 export async function actualizarContacto(id: number, input: ContactoInput): Promise<Result> {
   if (!input.nombre.trim()) return { ok: false, error: "El nombre es obligatorio." };
   const sb = await createClient();
-  const { error } = await sb.from("crm_contactos").update({
+  const { data, error } = await sb.from("crm_contactos").update({
     categoria: normCategoria(input.categoria),
     nombre: input.nombre.trim(),
     tipo_doc: oNull(input.tipoDoc),
@@ -93,19 +102,21 @@ export async function actualizarContacto(id: number, input: ContactoInput): Prom
     acepta_publicidad: input.aceptaPublicidad,
     no_contactar: input.noContactar,
     notas: oNull(input.notas),
-  }).eq("id", id);
+  }).eq("id", id).select("id");
   if (error) {
     if (error.code === "23505") return { ok: false, error: "Ya existe un contacto con ese documento, teléfono o correo." };
     return { ok: false, error: error.message };
   }
+  if (!data?.length) return { ok: false, error: SIN_ACCESO };
   revalidatePath("/crm");
   return { ok: true };
 }
 
 export async function eliminarContacto(id: number): Promise<Result> {
   const sb = await createClient();
-  const { error } = await sb.from("crm_contactos").delete().eq("id", id);
+  const { data, error } = await sb.from("crm_contactos").delete().eq("id", id).select("id");
   if (error) return { ok: false, error: error.message };
+  if (!data?.length) return { ok: false, error: SIN_ACCESO };
   revalidatePath("/crm");
   return { ok: true };
 }
@@ -119,6 +130,7 @@ export async function cargarContactosMasivo(
   rows: Record<string, string>[]
 ): Promise<{ ok: boolean; insertados: number; errores: string[] }> {
   const sb = await createClient();
+  const tenant = await getTenant();
   const errores: string[] = [];
   let insertados = 0;
   const vistosDoc = new Set<string>(), vistosEmail = new Set<string>(), vistosTel = new Set<string>();
@@ -138,6 +150,7 @@ export async function cargarContactosMasivo(
     if (tel && vistosTel.has(tel)) { errores.push(`Fila ${linea} (${nombre}): teléfono repetido en el archivo.`); continue; }
 
     const fila: CrmInsert = {
+      tenant,
       categoria: normCategoria(r.categoria),
       nombre,
       tipo_doc: oNull(r.tipo_doc || ""),

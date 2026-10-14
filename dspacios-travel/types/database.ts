@@ -2093,6 +2093,9 @@ export type Database = {
           fecha_nacimiento: string | null; genero: string | null; origen: string | null; etiquetas: string[] | null;
           subcategoria: string | null;
           acepta_publicidad: boolean; no_contactar: boolean; notas: string | null; created_at: string; updated_at: string;
+          // Hotfix de acceso: agencia del contacto. NULL = histórico sin
+          // atribuir (solo superadmin/gerencia lo ven).
+          tenant: string | null;
         };
         Insert: {
           id?: number; categoria?: string; nombre: string; tipo_doc?: string | null; documento?: string | null;
@@ -2100,6 +2103,7 @@ export type Database = {
           fecha_nacimiento?: string | null; genero?: string | null; origen?: string | null; etiquetas?: string[] | null;
           subcategoria?: string | null;
           acepta_publicidad?: boolean; no_contactar?: boolean; notas?: string | null; created_at?: string; updated_at?: string;
+          tenant?: string | null;
         };
         Update: Partial<Database["public"]["Tables"]["crm_contactos"]["Insert"]>;
         Relationships: [];
