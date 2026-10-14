@@ -13,6 +13,7 @@ import { contextoGeneracion } from "@/lib/hoteles/contextoGeneracionTarifas";
 import { regenerarTarifariosDeHotel } from "../../paquetes/actions";
 import type { Json } from "@/types/database";
 import { normalizarProveedorHotelId } from "@/lib/hoteles/proveedor";
+import { eliminarHotelSeguro, type ResultadoEliminarHotel } from "@/lib/hoteles/eliminarHotel";
 import { validarCondicionPago, type CondicionPagoEntrada } from "@/lib/cotizacion/condicionPagoCatalogo";
 
 type Result = { ok: true; id?: number; aviso?: string } | { ok: false; error: string };
@@ -72,12 +73,12 @@ export async function crearHotel(input: {
   return { ok: true, id: hotel.id };
 }
 
-export async function eliminarHotel(id: number): Promise<Result> {
+// Nunca borra un hotel vinculado a paquetes (ver lib/hoteles/eliminarHotel.ts).
+export async function eliminarHotel(id: number): Promise<ResultadoEliminarHotel> {
   const sb = await createClient();
-  const { error } = await sb.from("hoteles").delete().eq("id", id);
-  if (error) return { ok: false, error: error.message };
-  revalidatePath("/dashboard/producto/hoteles");
-  return { ok: true };
+  const r = await eliminarHotelSeguro(sb, id);
+  if (r.ok) revalidatePath("/dashboard/producto/hoteles");
+  return r;
 }
 
 // Reemplaza las categorías de habitación y regímenes asignados a un hotel.
