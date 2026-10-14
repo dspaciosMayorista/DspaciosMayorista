@@ -125,10 +125,38 @@ describe("crm_contactos: migración de acceso", () => {
     assert.doesNotMatch(rec, /auth\.uid\(\)|\bto\s+(public|anon)\b|control_vuelo|'agencia'|'freelance'|cliente_final|grant /i);
   });
 
-  test("la atribución histórica arranca apagada y en ROLLBACK", () => {
-    assert.match(atribuir, /\('E1', false\)/);
-    assert.match(atribuir, /\('E2', false\)/);
-    assert.match(atribuir, /^rollback;$/m);
+  test("atribución B2C: apagada por defecto, confirmación local a su transacción", () => {
+    const sql = sinComentarios(atribuir);
+    // La confirmación solo existe comentada y está ligada al txid.
+    assert.match(atribuir, /^-- select set_config\('app\.atribuir_crm_b2c', 'ATRIBUIR_B2C_MAYORISTA:' \|\| txid_current\(\), true\);$/m);
+    assert.doesNotMatch(sql, /set_config\('app\.atribuir_crm_b2c'/);
+    assert.match(sql, /= 'ATRIBUIR_B2C_MAYORISTA:' \|\| txid_current\(\)/);
+    // Una sola transacción, con el LOCK antes de verificar y escribir.
+    const ini = sql.indexOf("begin;"), lock = sql.indexOf("lock table public.crm_contactos in share row exclusive mode");
+    const upd = sql.indexOf("update public.crm_contactos");
+    assert.ok(ini >= 0 && ini < lock && lock < upd && upd < sql.lastIndexOf("commit;"));
+    assert.equal((sql.match(/\bbegin;/g) ?? []).length, 1);
+  });
+
+  test("atribución B2C: solo el lote exacto, solo a mayorista, sin E1/E3/E5 ni inferencias", () => {
+    const sql = sinComentarios(atribuir);
+    assert.match(sql, /c_esperado_e2\s+constant int := 24;/);
+    assert.match(sql, /c_esperado_e4\s+constant int := 7;/);
+    assert.match(sql, /c\.tenant is null/);
+    assert.match(sql, /c\.origen = c_origen/);
+    assert.match(sql, /c_origen\s+constant text := 'Cotización tarifario \(B2C\)';/);
+    assert.match(sql, /c\.categoria = 'cliente_final'/);
+    assert.match(sql, /c\.tipo_doc = 'CC'/);
+    // Un único UPDATE, por el conjunto exacto de candidatos, y solo a mayorista.
+    assert.equal((sql.match(/update public\.crm_contactos/g) ?? []).length, 1);
+    assert.match(sql, /set tenant = 'mayorista'\s+where c\.id in \(select id from _atr_b2c\)\s+and c\.tenant is null;/);
+    assert.doesNotMatch(sql, /'minorista'/);
+    // Sin otras fuentes para inferir agencia.
+    assert.doesNotMatch(sql, /actor_rol|public\.usuarios|ventas|aliados|comision|asesor|cotizaciones|email/i);
+    // Exige filas afectadas = candidatos y huella intacta de los ajenos.
+    assert.match(sql, /if v_afectadas <> v_total then/);
+    assert.match(sql, /v_ajenas_despues <> v_ajenas_antes/);
+    assert.doesNotMatch(sql, /count\(\*\) from public\.crm_contactos\)\s*<>\s*31/);
   });
 });
 

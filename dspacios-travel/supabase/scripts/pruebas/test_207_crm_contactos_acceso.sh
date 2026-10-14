@@ -8,7 +8,7 @@
 #
 # Recorre: cadena vigente SIN la 207 (con la 209, sin 206/208) · siembra histórica con evidencia de auditoría ·
 # ANTES (fuga estructural) · preflight · migración · postcheck · matriz ·
-# default/atribución · matriz · recuperación · candado del rollback de último
+# default/atribución manual · matriz · recuperación · candado del rollback de último
 # recurso (confirmación solo en su transacción) · re-aplicación idempotente.
 #
 # Solo borra la base que ESTE runner creó (nombre crmacc_<dígitos>, verificada
@@ -208,21 +208,24 @@ if sqlv "$(como 05) insert into public.crm_contactos (nombre, tenant) values ('z
 if sqlv "$(como 05) insert into public.crm_contactos (nombre, tenant) values ('zz-N6', 'otra');" >/dev/null 2>&1; then
   fallo "aceptó un tenant fuera del catálogo"; else ok "tenant fuera de mayorista/minorista rechazado"; fi
 
-# ── Atribución (aprobando E1 y E2, como lo haría el dueño) ──────────────────
-sed -e "s/('E1', false)/('E1', true)/" -e "s/('E2', false)/('E2', true)/" -e 's/^rollback;$/commit;/' \
-  "$SCR/atribuir_207_crm_contactos_acceso.sql" > "$TMP/atribuir.sql"
-sql < "$TMP/atribuir.sql" > "$TMP/atr.txt"
+# ── Atribución MANUAL por gerencia (NULL → agencia, permitido por la policy)
+# Deja el mismo estado mezclado que usan las pruebas siguientes. El script de
+# atribución B2C (`atribuir_207_…`) se prueba aparte, con su lote exacto, en
+# `test_207_atribucion_b2c_local.sh`.
+for par in "zz-H1:mayorista" "zz-H2:minorista" "zz-H3:mayorista"; do
+  nom="${par%%:*}"; ten="${par#*:}"
+  sqlv "$(como 02) update public.crm_contactos set tenant = '$ten' where nombre = '$nom' and tenant is null;" >/dev/null
+done
 A=$(sqlv "select string_agg(nombre || '=' || coalesce(tenant, 'NULL'), ',' order by nombre) from public.crm_contactos where nombre like 'zz-H%';" | tail -1)
 if [ "$A" = "zz-H1=mayorista,zz-H2=minorista,zz-H3=mayorista,zz-H4=NULL,zz-H5=NULL,zz-H6=NULL" ]; then
-  ok "atribución: E1/E2 asignadas; E3 (superadmin), E4 (sin auditoría) y la tocada por dos agencias siguen NULL"
-else fallo "atribución inesperada: $A"; fi
-# Re-correrla no cambia nada (solo toca NULL con evidencia aprobada).
-sql < "$TMP/atribuir.sql" > /dev/null
-A2=$(sqlv "select string_agg(nombre || '=' || coalesce(tenant, 'NULL'), ',' order by nombre) from public.crm_contactos where nombre like 'zz-H%';" | tail -1)
-[ "$A2" = "$A" ] && ok "atribución idempotente" || fallo "la atribución cambió al re-correrla: $A2"
-# Con la versión SIN editar (todo en false + ROLLBACK) no escribe nada.
-sql < "$SCR/atribuir_207_crm_contactos_acceso.sql" > "$TMP/atr0.txt"
-grep -q 'quedan sin atribuir|' "$TMP/atr0.txt" && ok "atribución por defecto (todo false + ROLLBACK) no escribe" || fallo "atribución por defecto rara"
+  ok "atribución manual por gerencia (NULL → agencia): H1/H3 mayorista, H2 minorista; H4-H6 siguen NULL"
+else fallo "atribución manual inesperada: $A"; fi
+# El script B2C, tal cual en el repo (apagado), no escribe nada aquí.
+H0=$(sqlv "select md5(string_agg(to_jsonb(c)::text, '|' order by c.id)) from public.crm_contactos c;" | tail -1)
+if sql < "$SCR/atribuir_207_crm_contactos_acceso.sql" > "$TMP/atr0.txt" 2>&1; then fallo "atribución B2C apagada no abortó"
+elif [ "$(sqlv "select md5(string_agg(to_jsonb(c)::text, '|' order by c.id)) from public.crm_contactos c;" | tail -1)" = "$H0" ]; then
+  ok "atribución B2C tal cual en el repo (apagada/lote distinto): aborta sin escribir"
+else fallo "atribución B2C apagada cambió datos"; fi
 
 # ── Trigger: no se reasigna una fila ya atribuida, ni siquiera superadmin ───
 if sqlv "$(como 01) update public.crm_contactos set tenant = 'minorista' where nombre = 'zz-H1';" >/dev/null 2>&1; then
