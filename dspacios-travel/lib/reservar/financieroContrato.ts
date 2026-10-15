@@ -39,7 +39,14 @@
 //     escribir;
 //   · un reintento no duplica: el RPC reemplaza las CxP automáticas previas y
 //     devuelve sus ids para que acá se borren TAMBIÉN sus asientos contables
-//     (que viven fuera de la transacción, referenciados por `cxp:<id>`).
+//     (que viven fuera de la transacción, referenciados por `cxp:<id>`);
+//   · (migración 210, K15) la escritura financiera ocurre UNA vez: sobre un
+//     contrato que ya no está pendiente la RPC no hace nada y responde
+//     `ya_completo` — acá se reconoce como ÉXITO (nunca se confunde con "faltan
+//     CxP", nunca se borran ni se postean asientos, nunca se revierte), y la
+//     compensación (`revertir_contrato_incompleto`) tampoco borra un contrato
+//     que la RPC ya completó: si la respuesta de la RPC se perdió y otra sesión
+//     (o el mismo intento) lo completó, el contrato se conserva.
 // ─────────────────────────────────────────────────────────────────────────
 
 /** Fila de `cuentas_por_pagar` tal como la arman los flujos de creación. */
@@ -105,12 +112,12 @@ export type DepsFinanciero = {
 };
 
 export type ResultadoFinanciero =
-  | { ok: true; creadas: CxPCreada[]; avisos: string[] }
+  | { ok: true; creadas: CxPCreada[]; avisos: string[]; /** 210: la escritura ya estaba hecha; esta llamada no cambió nada. */ yaCompleto?: boolean }
   | { ok: false; error: string; revertido: boolean };
 
 /** Parsea la respuesta del RPC sin confiar en su forma (viene como jsonb). */
-function leerRespuesta(data: unknown): { creadas: CxPCreada[]; eliminadas: number[] } {
-  const raw = (data ?? {}) as { creadas?: unknown; eliminadas?: unknown };
+function leerRespuesta(data: unknown): { creadas: CxPCreada[]; eliminadas: number[]; yaCompleto: boolean } {
+  const raw = (data ?? {}) as { creadas?: unknown; eliminadas?: unknown; ya_completo?: unknown };
   const creadas: CxPCreada[] = [];
   for (const c of Array.isArray(raw.creadas) ? raw.creadas : []) {
     const f = (c ?? {}) as Record<string, unknown>;
@@ -127,7 +134,7 @@ function leerRespuesta(data: unknown): { creadas: CxPCreada[]; eliminadas: numbe
   const eliminadas = (Array.isArray(raw.eliminadas) ? raw.eliminadas : [])
     .map((x) => Number(x))
     .filter((x) => Number.isFinite(x));
-  return { creadas, eliminadas };
+  return { creadas, eliminadas, yaCompleto: raw.ya_completo === true };
 }
 
 /**
@@ -154,13 +161,18 @@ export async function revertirContratoIncompleto(
   deps: Pick<DepsFinanciero, "rpc">,
   numeroContrato: string,
   tenant: string
-): Promise<{ ok: boolean; error?: string }> {
+): Promise<{ ok: boolean; error?: string; /** 210: el contrato ya estaba completo; NO se borró. */ completado?: boolean }> {
   try {
-    const { error } = await deps.rpc("revertir_contrato_incompleto", {
+    const { data, error } = await deps.rpc("revertir_contrato_incompleto", {
       p_numero_contrato: numeroContrato,
       p_tenant: tenant,
     });
     if (error) return { ok: false, error: error.message };
+    // 210: la RPC devuelve {estado: revertido | no_existe | ya_completo}. Sin respuesta (versión 172, void)
+    // se mantiene el comportamiento de siempre: revertido.
+    if ((data as { estado?: unknown } | null)?.estado === "ya_completo") {
+      return { ok: false, completado: true, error: `el contrato ${numeroContrato} ya quedó completo (otra sesión lo registró); no se revirtió` };
+    }
     return { ok: true };
   } catch (e) {
     return { ok: false, error: e instanceof Error ? e.message : "error desconocido" };
@@ -182,6 +194,25 @@ function mensajeFallo(numeroContrato: string, motivo: string, rev: { ok: boolean
     error: `No se pudo registrar el costo ni las cuentas por pagar (${motivo}) y tampoco se pudo deshacer el contrato ${numeroContrato} automáticamente (${rev.error ?? "motivo desconocido"}). Revísalo antes de volver a intentarlo.`,
     revertido: false,
   };
+}
+
+/**
+ * Cierra un fallo de la escritura financiera: revierte el contrato (camino rápido)
+ * SALVO que la RPC ya lo haya completado — respuesta perdida, otra sesión, el
+ * reconciliador — en cuyo caso el contrato se CONSERVA y el resultado es éxito
+ * (con aviso): borrar un contrato completo por un error de transporte destruiría
+ * lo que sí se escribió. El asiento de sus CxP lo completa la reconciliación
+ * (`listarCxpSinAsiento`), que compara en vivo contra el libro.
+ */
+async function cerrarFallo(deps: Pick<DepsFinanciero, "rpc">, numeroContrato: string, tenant: string, motivo: string): Promise<ResultadoFinanciero> {
+  const rev = await revertirContratoIncompleto(deps, numeroContrato, tenant);
+  if (rev.completado) {
+    return {
+      ok: true, creadas: [], yaCompleto: true,
+      avisos: [`La escritura financiera del contrato ${numeroContrato} ya había quedado registrada (otra sesión, o una respuesta que no llegó): no se repitió ni se revirtió. Los asientos de sus cuentas por pagar los completa la reconciliación. Detalle del error recibido: ${motivo}.`],
+    };
+  }
+  return { ok: false, ...mensajeFallo(numeroContrato, motivo, rev) };
 }
 
 /**
@@ -208,8 +239,7 @@ export async function registrarFinancieroContrato(
   // que un fallo del RPC financiero (revierte de una).
   const pendiente = await deps.guardarPendiente({ numeroContrato, tenant, costos, cxp });
   if (!pendiente.ok) {
-    const rev = await revertirContratoIncompleto(deps, numeroContrato, tenant);
-    return { ok: false, ...mensajeFallo(numeroContrato, pendiente.error ?? "no se pudo registrar la intención de escritura financiera", rev) };
+    return cerrarFallo(deps, numeroContrato, tenant, pendiente.error ?? "no se pudo registrar la intención de escritura financiera");
   }
 
   let data: unknown;
@@ -220,27 +250,28 @@ export async function registrarFinancieroContrato(
       p_costos: costos,
       p_cxp: cxp,
     });
-    if (res.error) {
-      const rev = await revertirContratoIncompleto(deps, numeroContrato, tenant);
-      return { ok: false, ...mensajeFallo(numeroContrato, res.error.message, rev) };
-    }
+    if (res.error) return cerrarFallo(deps, numeroContrato, tenant, res.error.message);
     data = res.data;
   } catch (e) {
-    const motivo = e instanceof Error ? e.message : "error desconocido";
-    const rev = await revertirContratoIncompleto(deps, numeroContrato, tenant);
-    return { ok: false, ...mensajeFallo(numeroContrato, motivo, rev) };
+    return cerrarFallo(deps, numeroContrato, tenant, e instanceof Error ? e.message : "error desconocido");
   }
 
-  const { creadas, eliminadas } = leerRespuesta(data);
+  const { creadas, eliminadas, yaCompleto } = leerRespuesta(data);
+
+  // 210 (K15): el contrato ya no estaba pendiente — la RPC no tocó nada. No es un fallo ni una
+  // incoherencia: no se compara contra `cxp`, no se revierte y NO se mueve ningún asiento (ni se
+  // borran los de las CxP existentes ni se postean otros).
+  if (yaCompleto) {
+    return {
+      ok: true, creadas: [], yaCompleto: true,
+      avisos: [`La escritura financiera del contrato ${numeroContrato} ya estaba registrada: no se repitió.`],
+    };
+  }
 
   // Control de coherencia: el RPC tiene que haber creado UNA fila por cada
   // CxP enviada. Si no coinciden, no se reporta éxito a medias — se revierte.
   if (creadas.length !== cxp.length) {
-    const rev = await revertirContratoIncompleto(deps, numeroContrato, tenant);
-    return {
-      ok: false,
-      ...mensajeFallo(numeroContrato, `se esperaban ${cxp.length} cuentas por pagar y se registraron ${creadas.length}`, rev),
-    };
+    return cerrarFallo(deps, numeroContrato, tenant, `se esperaban ${cxp.length} cuentas por pagar y se registraron ${creadas.length}`);
   }
 
   const avisos: string[] = [];
