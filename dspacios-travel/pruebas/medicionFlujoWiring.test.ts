@@ -365,14 +365,18 @@ describe("elevarEstadoFlujo(estado, \"parcial\") — pasos BEST-EFFORT caídos e
 // ── Defecto 3 confirmado: validacion_negocio/validacion_programa solo
 // emitían su etapa cuando llegaban al final correctamente ──────────────────
 describe("validacion_negocio/validacion_programa registran 'rechazado' en CADA return de rechazo, sin duplicar el log de éxito ni reordenar nada", () => {
-  test("crearContratoInterno: 7 puntos de rechazo pasan por _rechazarValidacion(); el log de éxito ('ok') aparece UNA sola vez", () => {
+  // #30 (entrega B) agrega 6 rechazos del contrato manual NETO (modalidad
+  // inválida, venta directa, asesor ajeno, plan, comisión distinta a la
+  // mostrada y margen NETO < 6 %), todos antes de numerar y envueltos igual:
+  // 7 → 13.
+  test("crearContratoInterno: 13 puntos de rechazo pasan por _rechazarValidacion(); el log de éxito ('ok') aparece UNA sola vez", () => {
     const cuerpo = cuerpoDeFuncion(leer(CONTRATOS_ARCHIVO), "crearContratoInterno");
     const usos = [...cuerpo.matchAll(/return _rechazarValidacion\(/g)];
-    assert.equal(usos.length, 7, `se esperaban 7 puntos de rechazo envueltos, hubo ${usos.length}`);
+    assert.equal(usos.length, 13, `se esperaban 13 puntos de rechazo envueltos, hubo ${usos.length}`);
     const logsOk = [...cuerpo.matchAll(/registrarEtapa\("crear_contrato", flujoId, "validacion_negocio", Math\.round\(performance\.now\(\) - _tValidacion0\), "ok"\)/g)];
     assert.equal(logsOk.length, 1, "el log de éxito de validacion_negocio debe aparecer exactamente una vez (al final de la sección)");
     const logsRechazado = [...cuerpo.matchAll(/registrarEtapa\("crear_contrato", flujoId, "validacion_negocio", Math\.round\(performance\.now\(\) - _tValidacion0\), "rechazado"\)/g)];
-    assert.equal(logsRechazado.length, 1, "el log de rechazo debe estar UNA sola vez, dentro de la definición de _rechazarValidacion (reutilizada en los 7 returns)");
+    assert.equal(logsRechazado.length, 1, "el log de rechazo debe estar UNA sola vez, dentro de la definición de _rechazarValidacion (reutilizada en los 13 returns)");
   });
 
   test("reservarProgramaInterno: 14 puntos de rechazo pasan por _rechazarValidacionPrograma(); el log de éxito ('ok') aparece UNA sola vez", () => {

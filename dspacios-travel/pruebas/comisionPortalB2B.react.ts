@@ -4,6 +4,10 @@
 // comisión que ve el aliado sale de aliados_b2b —la misma lectura que la
 // cuenta de cobro— y no de ventas.comision_b2b. Tras corregir la comisión, el
 // listado y la cuenta de cobro a la que enlaza dan el mismo importe nuevo.
+// #30 B (decisión del dueño 2026-10-12): en PVP el listado muestra el SALDO de
+// su comisión (total − sus abonos); en NETO, lo descontado del precio, sin
+// segundo cobro; si los abonos no se pueden leer completos, ni importe ni
+// estado ni enlace.
 import { test, afterEach } from "node:test";
 import assert from "node:assert/strict";
 
@@ -77,7 +81,7 @@ function celdasComision(arbol: unknown): Map<string, Celda> {
     if (!n || typeof n !== "object") return;
     if (Array.isArray(n)) { n.forEach(visitar); return; }
     const el = n as { type?: unknown; key?: string | null; props?: { children?: unknown } };
-    if (el.type === "tr" && el.key && /^DTM-/.test(el.key)) {
+    if (el.type === "tr" && el.key && /^(DTM|MIN)-/.test(el.key)) {
       const tds = ([] as unknown[]).concat(el.props?.children ?? []).filter((t) => (t as { type?: unknown })?.type === "td");
       const celda = tds[8];
       out.set(el.key, { texto: texto(celda).replace(/\s+/g, " ").trim(), enlace: enlaces(celda, el.key) });
@@ -98,20 +102,23 @@ async function portal(t: Record<string, Fila[]>) {
 const cop = (n: number) => formatMoneda(n, "COP").replace(/\s+/g, " ");
 const tiene = (s: string, n: number) => s.includes(cop(n));
 
-test("PORTAL: el importe sale de aliados_b2b (solo la fila suya), no de ventas.comision_b2b", async () => {
+test("PORTAL: el importe sale de aliados_b2b (solo la fila suya), no de ventas.comision_b2b — y es el SALDO tras sus abonos", async () => {
   const c = await portal(tablas());
   assert.equal(c.size, 5, "lista los cinco contratos");
-  assert.ok(tiene(c.get("DTM-0470")!.texto, 80_000), c.get("DTM-0470")!.texto);
+  // Fila 51: 800.000 × 10 % = 80.000, con un abono de 40.000 → saldo 40.000.
+  assert.ok(tiene(c.get("DTM-0470")!.texto, 40_000), c.get("DTM-0470")!.texto);
+  assert.ok(!tiene(c.get("DTM-0470")!.texto, 80_000), "no muestra el total como si nada se hubiera pagado");
   assert.ok(!tiene(c.get("DTM-0470")!.texto, 120_000), "no suma la del referido");
   assert.match(c.get("DTM-0470")!.texto, /Abono parcial/, "estado por sus abonos (131), no ventas.comision_estado");
   assert.equal(c.get("DTM-0470")!.enlace, true);
 });
 
-test("PORTAL: corregida la comisión, el listado y la cuenta de cobro enlazada muestran el MISMO importe nuevo", async () => {
+test("PORTAL: corregida la comisión, el listado y la cuenta de cobro enlazada parten del MISMO importe nuevo", async () => {
   const t = tablas(0.125); // 800.000 × 12,5 % = 100.000 (ventas.comision_b2b sigue en 80.000)
   const c = await portal(t);
   const celda = c.get("DTM-0470")!;
-  assert.ok(tiene(celda.texto, 100_000), celda.texto);
+  // Saldo = 100.000 (lo que cobra la cuenta de cobro) − 40.000 abonados.
+  assert.ok(tiene(celda.texto, 60_000), celda.texto);
   assert.ok(!tiene(celda.texto, 80_000), "ya no muestra el importe viejo de ventas");
   assert.equal(celda.enlace, true, "sigue enlazando a la cuenta de cobro");
   const r = await resolverComisionB2B("DTM-0470");
@@ -166,4 +173,64 @@ test("PORTAL + DOCUMENTO: contrato NETO con una segunda fila no descontada — n
   assert.equal(await resolverComisionB2B("DTM-0474"), null);
   assert.equal(await resolverComisionB2B("DTM-0474", 56), null, "ni pidiéndola por id");
   assert.equal(await resolverComisionB2B("DTM-0474", 55), null, "la descontada, nunca");
+});
+
+// ═══ #30 B · PORT-1: saldo de la comisión propia ═══════════════════════════
+test("PORT-1 pagada del todo: sin saldo, estado 'Pagada' y sin enlace de cobro", async () => {
+  const t = tablas();
+  t.comision_b2b_pagos.push({ id: 2, aliado_b2b_id: 51, valor: 40_000, fecha: "2026-10-05" }); // 40.000 + 40.000 = 80.000
+  const celda = (await portal(t)).get("DTM-0470")!;
+  assert.match(celda.texto, /Pagada/, celda.texto);
+  assert.doesNotMatch(celda.texto, /\d/, `sin importe pendiente: ${celda.texto}`);
+  assert.equal(celda.enlace, false, "nada más que cobrar");
+});
+
+test("PORT-1 sin abonos: saldo = total y estado 'Pendiente'", async () => {
+  const t = tablas();
+  t.comision_b2b_pagos = [];
+  const celda = (await portal(t)).get("DTM-0470")!;
+  assert.ok(tiene(celda.texto, 80_000) && /Pendiente/.test(celda.texto), celda.texto);
+  assert.equal(celda.enlace, true);
+});
+
+test("PORT-1 abonos ilegibles: oculta importe, estado y cobro inciertos de las filas; NETO y vía ventas no dependen de abonos", async () => {
+  const t = tablas();
+  __setClient(supabaseEnMemoria(t, {}, UID));
+  __setAdmin(supabaseEnMemoria(t, { fallar: (q) => (q.tabla === "comision_b2b_pagos" ? "error" : null) }));
+  const c = celdasComision(await PortalB2BPage());
+  const fila = c.get("DTM-0470")!;
+  assert.equal(fila.texto, "—", `ni importe ni estado: ${fila.texto}`);
+  assert.equal(fila.enlace, false);
+  assert.ok(tiene(c.get("DTM-0473")!.texto, 80_000) && /Descontada/.test(c.get("DTM-0473")!.texto), "NETO: lo descontado");
+  assert.ok(tiene(c.get("DTM-0471")!.texto, 50_000), "vía ventas: su total");
+});
+
+test("PORT-1 NETO: lo descontado del precio, sin saldo ni cobro aunque haya abonos registrados por error", async () => {
+  const t = tablas();
+  t.comision_b2b_pagos.push({ id: 3, aliado_b2b_id: 54, valor: 30_000, fecha: "2026-10-05" });
+  const celda = (await portal(t)).get("DTM-0473")!;
+  assert.ok(tiene(celda.texto, 80_000) && /Descontada/.test(celda.texto), celda.texto);
+  assert.ok(!tiene(celda.texto, 50_000), "no resta abonos: no es un saldo");
+  assert.equal(celda.enlace, false);
+});
+
+test("PORT-1 aislamiento: ve su contrato asistido de Minorista (con su saldo) y nunca el de otro aliado", async () => {
+  const t = tablas();
+  t.ventas.push(
+    venta("MIN-00-0480", { tenant: "minorista", b2b_usuario_id: null }),       // asistido en minorista, enlazado a SU ficha
+    venta("DTM-0481", { b2b_usuario_id: null, aliado_id: 8 }),                 // de OTRO aliado
+    venta("MIN-00-0482", { tenant: "minorista", b2b_usuario_id: null, aliado_id: 8 }),
+  );
+  t.aliados_b2b.push(
+    comision(57, "MIN-00-0480", { tenant: "minorista" }),
+    comision(58, "DTM-0481", { aliado: "Aliado Ocho", aliado_id: 8, pct_comision: 0.09 }), // 72.000
+    comision(59, "MIN-00-0482", { tenant: "minorista", aliado: "Aliado Ocho", aliado_id: 8, pct_comision: 0.09 }),
+  );
+  t.comision_b2b_pagos.push({ id: 4, aliado_b2b_id: 57, valor: 20_000, fecha: "2026-10-05" });
+  const c = await portal(t);
+  const min = c.get("MIN-00-0480");
+  assert.ok(min && tiene(min.texto, 60_000) && /Abono parcial/.test(min.texto), `minorista: saldo 80.000 − 20.000: ${min?.texto}`);
+  assert.equal(c.has("DTM-0481"), false, "no lista el contrato de otro aliado (mayorista)");
+  assert.equal(c.has("MIN-00-0482"), false, "ni el de otro aliado en minorista");
+  for (const celda of c.values()) assert.ok(!tiene(celda.texto, 72_000), "ningún importe ajeno se filtra");
 });

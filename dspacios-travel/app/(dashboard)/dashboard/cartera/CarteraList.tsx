@@ -291,6 +291,7 @@ function FilaAbonoCartera({
   const [trm, setTrm] = useState(a.trm ? String(a.trm) : "");
   const [pending, start] = useTransition();
   const [err, setErr] = useState("");
+  const [errorEliminar, setErrorEliminar] = useState("");
 
   function guardar() {
     setErr("");
@@ -300,6 +301,19 @@ function FilaAbonoCartera({
         trmInput: esUSD ? Number(trm) || 0 : undefined,
       });
       if (r.ok) setEditar(false); else setErr(r.error ?? "Error");
+    });
+  }
+
+  function borrar() {
+    if (!confirm("¿Eliminar este abono?")) return;
+    setErrorEliminar("");
+    start(async () => {
+      try {
+        const r = await eliminarAbonoCartera(a.id, numeroContrato);
+        if (!r.ok) setErrorEliminar(r.error ?? "No se pudo eliminar el abono.");
+      } catch {
+        setErrorEliminar("No se pudo eliminar el abono.");
+      }
     });
   }
 
@@ -341,11 +355,13 @@ function FilaAbonoCartera({
         <button type="button" onClick={() => setEditar(true)} className="mr-3 text-xs font-medium hover:underline" style={{ color: "var(--brand-accent)" }}>Editar</button>
         <button
           type="button"
-          onClick={() => { if (confirm("¿Eliminar este abono?")) eliminarAbonoCartera(a.id, numeroContrato); }}
+          onClick={borrar}
+          disabled={pending}
           className="text-xs font-medium text-red-500 hover:underline"
         >
           Eliminar
         </button>
+        {errorEliminar && <p role="alert" className="mt-1 whitespace-normal text-xs text-red-600">{errorEliminar}</p>}
       </td>
     </tr>
   );

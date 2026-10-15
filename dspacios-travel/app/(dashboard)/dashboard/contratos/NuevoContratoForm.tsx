@@ -1,7 +1,7 @@
 "use client";
 
 import { DateInput } from "@/components/ui/DateInput";
-import { useState, useTransition } from "react";
+import { useEffect, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -13,8 +13,11 @@ import { ciudadIata } from "@/lib/iata";
 import { esInfantePorEdad } from "@/lib/reservar/pasajeros";
 import { quitarPasajero, recalcularVinculosPorEdad } from "@/lib/reservar/pasajerosFilas";
 import { BuscarPasajeroDocumento } from "@/components/pasajeros/BuscarPasajeroDocumento";
+import type { PlanNetoManual } from "@/lib/contrato/netoManual";
+import { evaluarMargenContrato, mensajeMargenInsuficiente } from "@/lib/contrato/margenContrato";
 import {
   crearContrato,
+  previsualizarNetoContrato,
   type PasajeroInput,
   type HotelInput,
   type VueloInput,
@@ -90,7 +93,10 @@ export function NuevoContratoForm({
   const router = useRouter();
   const [pending, startTransition] = useTransition();
   const [error, setError] = useState("");
-  const [advertenciaMargen, setAdvertenciaMargen] = useState("");
+  // Aviso de margen insuficiente (aprobación excepcional) junto con los números
+  // que lo produjeron: si cambian (aliado, PVP, BNC, costos, modalidad), el
+  // aviso deja de valer y no se puede aprobar un total distinto al mostrado.
+  const [avisoMargen, setAvisoMargen] = useState<{ mensaje: string; clave: string } | null>(null);
 
   // Tipo de paquete y producto negociado
   const [tipoPaquete, setTipoPaquete] = useState<TipoPaquete>("dinamico");
@@ -146,19 +152,25 @@ export function NuevoContratoForm({
   // Canal / asesor (todo contrato: asesor interno; B2B además agencia o freelance)
   const [tipoVenta, setTipoVenta] = useState<"interno" | "agencia" | "freelance">("interno");
   const [aliadoId, setAliadoId] = useState<number | "">("");
+  // #30 (entrega B): cómo compra el aliado B2B. PVP = paga el total y su
+  // comisión queda "Por definir" (como dejó #38); NETO = paga PVP − su
+  // comisión, ya descontada (la calcula el servidor; aquí solo se muestra).
+  const [modoCompra, setModoCompra] = useState<"pvp" | "neto">("pvp");
+  // Resultado de la última vista previa con la combinación que lo produjo: un
+  // plan calculado para otro aliado/PVP/BNC nunca se muestra ni se envía.
+  const [vistaNeto, setVistaNeto] = useState<{ clave: string; plan: PlanNetoManual | null; error: string } | null>(null);
 
   // BNC (Base No Comisionable)
   const [bncModo, setBncModo] = useState<"tiquetes" | "fijo">("tiquetes");
   const [valorTiquetes, setValorTiquetes] = useState("");
   const [bncFijo, setBncFijo] = useState("");
 
-  // Costos netos (solo manual) → validación de margen mínimo PVP ≥ costos/(1−20%).
-  const MARKUP_MIN = 0.20;
+  // Costos netos (solo manual) → margen mínimo (lib/contrato/margenContrato.ts):
+  // 20 % sobre el PVP; 6 % sobre el total exigible si el comprador compra en NETO.
   const totalCostos = esNegociado ? 0
     : hoteles.reduce((s, h) => s + Math.max(0, Number(h.costo) || 0), 0)
     + comprasAereas.reduce((s, c) => s + Math.max(0, Number(c.costo) || 0), 0)
     + servicios.reduce((s, x) => s + Math.max(0, Number(x.costo) || 0), 0);
-  const pvpMinimo = totalCostos > 0 ? totalCostos / (1 - MARKUP_MIN) : 0;
 
   const total = items.reduce(
     (s, it) => s + it.adultos * it.tarifaAdulto + it.ninos * it.tarifaNino,
@@ -166,6 +178,42 @@ export function NuevoContratoForm({
   );
   const bnc = bncModo === "fijo" ? Number(bncFijo) || 0 : Number(valorTiquetes) || 0;
   const baseComisionable = Math.max(0, total - bnc);
+
+  // Vista previa del NETO: el mismo cálculo que el servidor repite antes de
+  // numerar y la base al aplicarlo (si cambia entre tanto, se niegan).
+  const pideNeto = tipoVenta !== "interno" && modoCompra === "neto";
+  const claveNeto = `${tipoVenta}|${aliadoId}|${total}|${bnc}`;
+  const vistaVigente = pideNeto && vistaNeto?.clave === claveNeto ? vistaNeto : null;
+  const planNeto = vistaVigente?.plan ?? null;
+  const errorNeto = vistaVigente?.error ?? "";
+  // Margen que se mostrará y exigirá: en NETO, con el total del plan calculado
+  // por el servidor (el mismo que vuelve a validar antes de numerar).
+  const modoMargen = pideNeto ? "neto" : "pvp";
+  const ingresoMargen = pideNeto ? planNeto?.totalExigible ?? null : total;
+  const margenVista = evaluarMargenContrato({ modo: modoMargen, ingreso: ingresoMargen ?? 0, costos: totalCostos });
+  // En NETO no hay total ni margen que mostrar (ni contrato que generar) hasta
+  // que el servidor devuelve el plan; mientras calcula o si falla, nada se da
+  // por aprobado.
+  const estadoNeto: "pvp" | "listo" | "calculando" | "error" =
+    !pideNeto ? "pvp" : planNeto ? "listo" : errorNeto ? "error" : "calculando";
+  const netoListo = estadoNeto === "pvp" || estadoNeto === "listo";
+  const estadoMargen: "cumple" | "no_cumple" | "pendiente" =
+    ingresoMargen == null ? "pendiente" : margenVista.cumple ? "cumple" : "no_cumple";
+  const claveMargen = `${modoMargen}|${claveNeto}|${totalCostos}|${ingresoMargen ?? ""}`;
+  const advertenciaMargen = avisoMargen && avisoMargen.clave === claveMargen ? avisoMargen.mensaje : "";
+  useEffect(() => {
+    if (!pideNeto || aliadoId === "" || total <= 0) return;
+    let vigente = true;
+    const t = setTimeout(async () => {
+      try {
+        const r = await previsualizarNetoContrato({ tipoVenta, aliadoId: Number(aliadoId), precioVenta: total, impuesto: bnc });
+        if (vigente) setVistaNeto(r.ok ? { clave: claveNeto, plan: r.plan, error: "" } : { clave: claveNeto, plan: null, error: r.error });
+      } catch (e) {
+        if (vigente) setVistaNeto({ clave: claveNeto, plan: null, error: e instanceof Error ? e.message : "No se pudo calcular el total NETO." });
+      }
+    }, 400);
+    return () => { vigente = false; clearTimeout(t); };
+  }, [pideNeto, tipoVenta, aliadoId, total, bnc, claveNeto]);
 
   function setItem(i: number, patch: Partial<ItemInput>) {
     setItems((arr) => arr.map((it, j) => (j === i ? { ...it, ...patch } : it)));
@@ -289,6 +337,8 @@ export function NuevoContratoForm({
           bncFijo: Number(bncFijo) || 0,
           tipoVenta,
           aliadoId: aliadoId === "" ? null : Number(aliadoId),
+          modoCompra: tipoVenta === "interno" ? undefined : modoCompra,
+          comisionNetoEsperada: pideNeto ? planNeto?.comision ?? null : null,
           moneda: monedaEfectiva,
           forzarMargen,
         });
@@ -301,7 +351,7 @@ export function NuevoContratoForm({
           }
           router.push(`/dashboard/contratos/${encodeURIComponent(res.numero)}`);
         } else if (res.margenInsuficiente && puedeForzarMargen) {
-          setAdvertenciaMargen(res.error);
+          setAvisoMargen({ mensaje: res.error, clave: claveMargen });
         } else {
           setError(res.error);
         }
@@ -314,7 +364,7 @@ export function NuevoContratoForm({
   function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
     setError("");
-    setAdvertenciaMargen("");
+    setAvisoMargen(null);
     if (!cliente.trim()) {
       setError("El nombre del cliente es obligatorio.");
       return;
@@ -327,15 +377,15 @@ export function NuevoContratoForm({
       setError("La BNC no puede ser mayor al total del contrato (PVP).");
       return;
     }
-    if (totalCostos > 0 && total + 0.5 < pvpMinimo) {
-      const margenActual = total > 0 ? 1 - totalCostos / total : 0;
-      const mensaje = `El PVP (${fmt(total)}) no cubre el margen mínimo del ${MARKUP_MIN * 100}%. Con costos de ${fmt(totalCostos)}, el PVP mínimo es ${fmt(Math.ceil(pvpMinimo))} (margen actual: ${(margenActual * 100).toFixed(1)}%).`;
-      if (puedeForzarMargen) setAdvertenciaMargen(mensaje);
+    if (!asesorNombre.trim()) { setError("Selecciona el asesor interno."); return; }
+    if (tipoVenta !== "interno" && !aliadoId) { setError(`Selecciona la ${tipoVenta} del catálogo.`); return; }
+    if (pideNeto && !planNeto) { setError(errorNeto || "Espera a que se calcule el total NETO antes de generar el contrato."); return; }
+    if (!margenVista.cumple) {
+      const mensaje = mensajeMargenInsuficiente(margenVista, fmt);
+      if (puedeForzarMargen) setAvisoMargen({ mensaje, clave: claveMargen });
       else setError(mensaje);
       return;
     }
-    if (!asesorNombre.trim()) { setError("Selecciona el asesor interno."); return; }
-    if (tipoVenta !== "interno" && !aliadoId) { setError(`Selecciona la ${tipoVenta} del catálogo.`); return; }
     enviar(false);
   }
 
@@ -408,7 +458,7 @@ export function NuevoContratoForm({
           </div>
           <div>
             <label className={labelCls}>Tipo de venta *</label>
-            <select value={tipoVenta} onChange={(e) => { setTipoVenta(e.target.value as "interno" | "agencia" | "freelance"); setAliadoId(""); }}
+            <select value={tipoVenta} onChange={(e) => { setTipoVenta(e.target.value as "interno" | "agencia" | "freelance"); setAliadoId(""); setModoCompra("pvp"); }}
               className="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm">
               <option value="interno">Directa (B2C)</option>
               <option value="agencia">Agencia (B2B)</option>
@@ -437,9 +487,33 @@ export function NuevoContratoForm({
           )}
         </div>
         {tipoVenta !== "interno" && (
-          <p className="text-xs text-gray-400">
-            Si la {tipoVenta} no aparece, créala primero en <b>Finanzas → Agencias y freelance</b>. La comisión B2B se crea sola con su %.
-          </p>
+          <div className="space-y-2">
+            <p className={labelCls}>¿Cómo compra la {tipoVenta}? *</p>
+            <div className="flex flex-wrap gap-4 text-sm">
+              <label className="flex items-center gap-2">
+                <input type="radio" name="modoCompra" checked={modoCompra === "pvp"} onChange={() => setModoCompra("pvp")} />
+                PVP: paga el total; su comisión se liquida aparte (queda por definir)
+              </label>
+              <label className="flex items-center gap-2">
+                <input type="radio" name="modoCompra" checked={modoCompra === "neto"} onChange={() => setModoCompra("neto")} />
+                NETO: paga el PVP menos su comisión, ya descontada
+              </label>
+            </div>
+            {pideNeto && planNeto && (
+              <div className="flex flex-wrap gap-x-6 gap-y-1 rounded-lg bg-gray-50 px-3 py-2 text-sm">
+                <span className="text-gray-500">PVP: <b className="tabular-nums text-gray-700">{fmt(planNeto.pvp)}</b></span>
+                <span className="text-gray-500">Comisión ({Math.round(planNeto.pct * 10000) / 100}% sobre {fmt(planNeto.base)}): <b className="tabular-nums text-gray-700">− {fmt(planNeto.comision)}</b></span>
+                <span className="text-gray-500">Total a pagar (NETO): <b className="tabular-nums" style={{ color: "var(--brand-primary)" }}>{fmt(planNeto.totalExigible)}</b></span>
+              </div>
+            )}
+            {pideNeto && !planNeto && errorNeto && (
+              <p className="rounded-lg bg-red-50 px-3 py-2 text-xs text-red-600">{errorNeto}</p>
+            )}
+            <p className="text-xs text-gray-400">
+              Si la {tipoVenta} no aparece, créala primero en <b>Finanzas → Agencias y freelance</b>. En PVP la comisión B2B se
+              registra después en la pestaña Comisiones del contrato.
+            </p>
+          </div>
         )}
       </section>
 
@@ -889,14 +963,32 @@ export function NuevoContratoForm({
         <div className="flex flex-wrap items-center justify-end gap-x-6 gap-y-1 border-t pt-3">
           {totalCostos > 0 && (
             <span className="text-xs text-gray-500">
-              Costos: <b className="tabular-nums text-gray-700">{fmt(totalCostos)}</b> · PVP mínimo (margen {MARKUP_MIN * 100}%):{" "}
-              <b className="tabular-nums" style={{ color: total + 0.5 < pvpMinimo ? "#C0392B" : "var(--brand-success)" }}>{fmt(Math.ceil(pvpMinimo))}</b>
+              Costos: <b className="tabular-nums text-gray-700">{fmt(totalCostos)}</b> · {modoMargen === "neto" ? "Total NETO mínimo" : "PVP mínimo"} (margen {Math.round(margenVista.minimo * 100)}%):{" "}
+              <b
+                className="tabular-nums"
+                data-margen={estadoMargen}
+                style={{ color: estadoMargen === "no_cumple" ? "#C0392B" : estadoMargen === "cumple" ? "var(--brand-success)" : "#6B7280" }}
+              >
+                {fmt(Math.ceil(margenVista.ingresoMinimo))}
+              </b>
+              {estadoMargen === "pendiente" && <span> · pendiente del total NETO</span>}
             </span>
           )}
-          <span className="text-sm text-gray-500">Total del contrato:</span>
-          <span className="text-xl font-bold tabular-nums" style={{ color: "var(--brand-primary)" }}>
-            {fmt(total)}
-          </span>
+          {estadoNeto === "pvp" ? (
+            <>
+              <span className="text-sm text-gray-500">Total del contrato:</span>
+              <span className="text-xl font-bold tabular-nums" style={{ color: "var(--brand-primary)" }}>
+                {fmt(total)}
+              </span>
+            </>
+          ) : (
+            <>
+              <span className="text-sm text-gray-500">Total a pagar (NETO):</span>
+              <span data-total-neto={estadoNeto} className="text-xl font-bold tabular-nums" style={{ color: estadoNeto === "listo" ? "var(--brand-primary)" : "#6B7280" }}>
+                {estadoNeto === "listo" && planNeto ? fmt(planNeto.totalExigible) : estadoNeto === "error" ? "No disponible" : aliadoId === "" || total <= 0 ? "Pendiente" : "Calculando…"}
+              </span>
+            </>
+          )}
         </div>
       </section>
 
@@ -964,7 +1056,7 @@ export function NuevoContratoForm({
           <p>{advertenciaMargen}</p>
           <Button
             type="button"
-            disabled={pending}
+            disabled={pending || !netoListo}
             onClick={() => enviar(true)}
             style={{ backgroundColor: "#b45309" }}
           >
@@ -974,7 +1066,7 @@ export function NuevoContratoForm({
       )}
 
       <div className="flex items-center gap-3">
-        <Button type="submit" disabled={pending} style={{ backgroundColor: "var(--brand-primary)" }}>
+        <Button type="submit" disabled={pending || !netoListo} style={{ backgroundColor: "var(--brand-primary)" }}>
           {pending ? "Generando contrato…" : "Generar contrato"}
         </Button>
         <span className="text-xs text-gray-400">

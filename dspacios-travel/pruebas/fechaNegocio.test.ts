@@ -117,7 +117,6 @@ test("wiring: los flujos de abono, pago previo y asientos no calculan 'hoy' con 
     ["app/(dashboard)/dashboard/contratos/[numero]/AbonoForm.tsx", null],
     ["app/(dashboard)/dashboard/cartera/CarteraList.tsx", null],
     ["app/(dashboard)/dashboard/contratos/actions.ts", ["export async function registrarAbono(", "// ── Editar servicios adicionales"]],
-    ["app/(dashboard)/dashboard/contabilidad/facturacion/actions.ts", ["async function postearAsientoFacturacion(", "export async function guardarFacturacion("]],
     ["app/(dashboard)/dashboard/contabilidad/libro-diario/LibroDiarioClient.tsx", null],
     ["app/(dashboard)/dashboard/cotizaciones/pagos-actions.ts", null],
     ["components/cotizacion/PagosPreviosPanel.tsx", null],
@@ -131,7 +130,6 @@ test("wiring: los flujos de abono, pago previo y asientos no calculan 'hoy' con 
     ["app/(dashboard)/dashboard/comisiones/actions.ts", null],
     ["app/(dashboard)/dashboard/contabilidad/movimientos/MovimientosClient.tsx", null],
     ["app/(dashboard)/dashboard/contabilidad/movimientos/actions.ts", null],
-    ["app/(dashboard)/dashboard/contabilidad/facturacion/actions.ts", ["export async function marcarDian(", "export async function quitarFacturacion("]],
     ["app/(dashboard)/dashboard/contratos/[numero]/gestion-actions.ts", null],
     ["lib/reservar/asegurarCuentasPorPagar.ts", null],
     ["lib/reservar/reconciliacionFinanciera.ts", null],
@@ -149,6 +147,34 @@ test("wiring: los flujos de abono, pago previo y asientos no calculan 'hoy' con 
     }
     // Solo se prohíbe el "hoy" calendario; los timestamps completos (toISOString()) siguen permitidos.
     assert.doesNotMatch(src, /toISOString\(\)\.(slice|substring)\(0,\s*10\)|toISOString\(\)\.split\("T"\)/, f);
-    assert.match(src, /fechaNegocio|fechaElegidaONegocio/, `${f} usa la regla única`);
+    // 208: asientos.ts ya no fecha facturas ni abonos (lo hacen las RPC de SQL con fecha_negocio()); recibe la
+    // fecha de quien lo llama. Se sigue prohibiendo el "hoy" UTC; no se exige que importe fechaNegocio.
+    if (f !== "lib/contabilidad/asientos.ts") assert.match(src, /fechaNegocio|fechaElegidaONegocio/, `${f} usa la regla única`);
   }
+});
+
+// 208: la factura (asiento, reversa) y la marca DIAN se escriben en PostgreSQL por RPC atómicas;
+// la fecha de negocio ya no se calcula en TypeScript sino en SQL con `public.fecha_negocio()`
+// (America/Bogotá). La comprobación sigue en pie, en su nueva frontera:
+//   · las Server Actions de facturación no calculan "hoy" ni con toISOString() ni con new Date();
+//   · la migración 208 fecha el asiento, la reversa y dian_fecha con fecha_negocio() y no usa
+//     current_date / now()::date / CURRENT_DATE como día de negocio.
+// (El comportamiento real, antes y después de las 7 p. m., se prueba en Postgres: A1c, A8b2, A9b2, C8b2
+// de supabase/scripts/test_208_facturacion.sql.)
+test("wiring 208: la fecha de la factura, su reversa y la marca DIAN salen de fecha_negocio() en SQL, no del reloj de la app", () => {
+  const actions = readFileSync(new URL("../app/(dashboard)/dashboard/contabilidad/facturacion/actions.ts", import.meta.url), "utf8");
+  assert.doesNotMatch(actions, /toISOString\(\)\.(slice|substring)\(0,\s*10\)|toISOString\(\)\.split\("T"\)|new Date\(/, "la action no calcula el día");
+  assert.doesNotMatch(actions, /fecha_asiento|p_fecha\b/, "la action no manda fecha: la decide la base");
+  const sql = readFileSync(new URL("../supabase/migrations/20260601000208_facturacion_transaccional.sql", import.meta.url), "utf8");
+  const codigo = sql.split("\n").filter((l) => !l.trim().startsWith("--")).join("\n");
+  assert.doesNotMatch(codigo, /current_date|now\(\)::date|localtimestamp|current_timestamp::date/i, "ningún día de negocio sale de current_date");
+  const cuerpo = (nombre: string) => {
+    const i = codigo.indexOf(`function ${nombre}`);
+    assert.ok(i >= 0, `no se encontró ${nombre}`);
+    const j = codigo.indexOf("\n$$;", i);
+    return codigo.slice(i, j > i ? j : undefined);
+  };
+  assert.match(cuerpo("f208_priv.reversar("), /public\.fecha_negocio\(\)/, "fecha de la reversa");
+  assert.match(cuerpo("public.facturar_factura("), /public\.fecha_negocio\(\)/, "fecha del asiento de la factura");
+  assert.match(cuerpo("public.marcar_dian_factura("), /dian_fecha\s*=\s*public\.fecha_negocio\(\)/, "fecha de emisión DIAN");
 });

@@ -268,6 +268,7 @@ function CarteraTab({ numero, abonos, totalPagado, total, formasPago, cuotas, mo
 // tener que registrar un segundo abono para "cuadrar" el saldo) y eliminar.
 function FilaAbono({ a, numero, esUSD, moneda, formasPago, puedeEditar = true }: { a: Abono; numero: string; esUSD: boolean; moneda: string; formasPago: string[]; puedeEditar?: boolean }) {
   const [editar, setEditar] = useState(false);
+  const [errorEliminar, setErrorEliminar] = useState("");
   // El campo "Valor" edita lo PAGADO EN COP (mismo criterio de registrarAbono/
   // actualizarAbono); en USD eso es monto_cop, NO valor_abono (que está en USD).
   const [valor, setValor] = useState(String(esUSD ? (a.monto_cop ?? a.valor_abono) : a.valor_abono));
@@ -288,6 +289,16 @@ function FilaAbono({ a, numero, esUSD, moneda, formasPago, puedeEditar = true }:
       });
       if (r.ok) setEditar(false); else setErr(r.error ?? "Error");
     });
+  }
+
+  async function borrar() {
+    setErrorEliminar("");
+    try {
+      const r = await eliminarAbono(a.id, numero);
+      if (!r.ok) setErrorEliminar(r.error ?? "No se pudo eliminar el abono.");
+    } catch {
+      setErrorEliminar("No se pudo eliminar el abono.");
+    }
   }
 
   if (editar) {
@@ -330,7 +341,8 @@ function FilaAbono({ a, numero, esUSD, moneda, formasPago, puedeEditar = true }:
         {puedeEditar ? (
           <>
             <button type="button" onClick={() => setEditar(true)} className="mr-3 text-xs font-medium hover:underline" style={{ color: "var(--brand-accent)" }}>Editar</button>
-            <DeleteBtn onClick={() => eliminarAbono(a.id, numero)} />
+            <DeleteBtn onClick={borrar} />
+            {errorEliminar && <p role="alert" className="mt-1 whitespace-normal text-xs text-red-600">{errorEliminar}</p>}
           </>
         ) : null}
       </td>

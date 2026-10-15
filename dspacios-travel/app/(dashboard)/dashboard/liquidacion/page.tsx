@@ -2,6 +2,7 @@ import { DateInput } from "@/components/ui/DateInput";
 import { createClient } from "@/lib/supabase/server";
 import Link from "next/link";
 import { comisionMes, type EscalaRango } from "@/lib/calc/escalas";
+import { pvpAsesorInterno, baseAsesorInterno } from "@/lib/finanzas/liquidacionAsesor";
 import { LiquidacionTable, type FilaLiquidacion } from "./LiquidacionTable";
 
 export const dynamic = "force-dynamic";
@@ -38,7 +39,7 @@ export default async function LiquidacionPage({ searchParams }: { searchParams: 
   const { ini, fin } = rangoMes(mes);
 
   const [{ data: ventas }, { data: vendedores }, { data: rangos }, { data: params }, { data: descuentosRows }] = await Promise.all([
-    sb.from("ventas").select("asesor_firma_nombre, precio_venta, impuesto, estado, fecha_venta").gte("fecha_venta", ini).lt("fecha_venta", fin),
+    sb.from("ventas").select("asesor_firma_nombre, precio_venta, impuesto, comision_b2b, comision_estado, estado, fecha_venta").gte("fecha_venta", ini).lt("fecha_venta", fin),
     sb.from("usuarios").select("id, nombre, escala_id, aplica_retencion").eq("rol", "venta").order("nombre"),
     sb.from("escala_rangos").select("escala_id, pvp_desde, pvp_hasta, pct"),
     sb.from("parametros_tributarios").select("valor").eq("parametro", "RETENCION_HONORARIOS").maybeSingle(),
@@ -53,8 +54,12 @@ export default async function LiquidacionPage({ searchParams }: { searchParams: 
     if (!ESTADOS_VALIDOS.includes((v.estado ?? "").toLowerCase())) continue;
     const nombre = (v.asesor_firma_nombre ?? "").trim();
     if (!nombre) continue;
-    const pvp = Number(v.precio_venta) || 0;
-    const base = Math.max(0, pvp - (Number(v.impuesto) || 0));
+    // #30: en un contrato NETO `precio_venta` es lo que paga el aliado (PVP
+    // menos su comisión). El asesor interno liquida — rango y base — sobre el
+    // PVP ORIGINAL: el descuento del aliado no le baja la comisión ni la escala.
+    // Fuera de NETO devuelve el `precio_venta` de siempre.
+    const pvp = pvpAsesorInterno(v);
+    const base = baseAsesorInterno(v);
     const a = acum.get(nombre.toLowerCase()) ?? { pvp: 0, base: 0, n: 0 };
     a.pvp += pvp; a.base += base; a.n += 1;
     acum.set(nombre.toLowerCase(), a);

@@ -134,7 +134,11 @@ test("ASESOR INTERNO: el contrato NETO cuenta para su liquidación y su meta igu
   const con = await liquidacion(true);
   assert.deepEqual(con, sin, "las filas y abonos B2B no alteran la comisión del asesor");
   assert.equal(con.contratos, 2, "el contrato NETO cuenta para su meta");
-  assert.equal(con.pvp, 920_000 + 1_000_000);
-  assert.equal(con.base, 720_000 + 800_000);
-  assert.equal(con.bruta, Math.round(1_520_000 * 0.05));
+  // #30 (decisión del dueño, 2026-10-10): el asesor interno liquida sobre el
+  // PVP ORIGINAL también en NETO — 920.000 que paga el aliado + 80.000 de su
+  // comisión descontada = 1.000.000 —, no sobre el precio neto. Antes de #30
+  // esta prueba fijaba 920.000/720.000.
+  assert.equal(con.pvp, 1_000_000 + 1_000_000);
+  assert.equal(con.base, 800_000 + 800_000);
+  assert.equal(con.bruta, Math.round(1_600_000 * 0.05));
 });

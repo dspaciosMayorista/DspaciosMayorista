@@ -262,7 +262,9 @@ export default async function PortalB2BPage() {
                 const valor = Number(c.precio_venta ?? 0);
                 const saldo = valor - (abonosPorContrato.get(num) ?? 0);
                 const vis = comisionPorContrato.get(num) ?? null;
-                const com = vis?.total ?? null;
+                // #30 B: en PVP el saldo de SU comisión (total − abonos); en NETO
+                // lo descontado del precio; sin lectura completa, nada.
+                const com = vis?.importe ?? null;
                 return (
                   <tr key={num} className="border-t border-gray-50">
                     <td className="px-3 py-2 font-mono font-semibold text-[#1D7C9A]">{num}</td>
