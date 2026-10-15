@@ -2,6 +2,7 @@
 
 import { createClient } from "@/lib/supabase/server";
 import { createAdminClient } from "@/lib/supabase/admin";
+import { getTenant } from "@/lib/tenant.server";
 import { revalidatePath } from "next/cache";
 
 const ROLES = ["superadmin", "gerencia", "administracion"];
@@ -25,6 +26,8 @@ export async function cargarAgenciasB2B(
   if (!ROLES.includes(perfil?.rol ?? "")) return { ok: false, insertados: 0, errores: ["Solo administración/gerencia."] };
 
   const admin = process.env.SUPABASE_SERVICE_ROLE_KEY ? createAdminClient() : null;
+  // Agencia activa: el contacto del CRM nace atribuido a ella (hotfix de acceso).
+  const tenant = await getTenant();
   const info: string[] = [];
   let insertados = 0;
 
@@ -46,12 +49,19 @@ export async function cargarAgenciasB2B(
       aplica_retencion: aplicaRet, pct_retencion: pctRet / 100,
     });
 
-    // 2) Contacto en el CRM
-    await sb.from("crm_contactos").insert({
+    // 2) Contacto en el CRM. Con la sesión del usuario (nunca service-role):
+    // la RLS decide. Un rechazo ya no se traga en silencio.
+    const { error: errCrm } = await sb.from("crm_contactos").insert({
+      tenant,
       categoria: tipo, nombre,
       documento: oNull(r.nit), email: oNull(r.email), telefono: oNull(r.telefono),
       ciudad: oNull(r.ciudad), origen: "cargue B2B",
     });
+    if (errCrm) {
+      info.push(errCrm.code === "23505"
+        ? `Fila ${linea} (${nombre}): el contacto ya existía en el CRM (no se duplicó).`
+        : `Fila ${linea} (${nombre}): contacto CRM no creado (${errCrm.message}).`);
+    }
 
     // 3) Acceso B2B (usuario del portal)
     const email = (r.email || "").trim();

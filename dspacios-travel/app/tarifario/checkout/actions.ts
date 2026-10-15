@@ -1069,6 +1069,10 @@ export async function crearSolicitudReserva(inputRaw: unknown): Promise<Solicitu
         email: input.cliente.email.trim() || null,
         telefono: input.cliente.telefono.trim() || null,
         origen: "Cotización tarifario (B2C)",
+        // Misma agencia FIJA que la cotización de este checkout (arriba): el
+        // tarifario público es solo de mayorista. Service-role no tiene sesión,
+        // así que sin esto el contacto quedaría sin atribuir.
+        tenant: "mayorista",
       });
     }
   } catch { /* no bloquear la solicitud */ }
