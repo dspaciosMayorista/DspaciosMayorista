@@ -183,9 +183,9 @@ ANONKEY=$(node -e "console.log(JSON.parse(require('fs').readFileSync(process.arg
 i=0; until curl -s -o /dev/null "http://127.0.0.1:$PRESTO/" || [ $i -ge 60 ]; do sleep 1; i=$((i + 1)); done
 echo "== PostgREST y simulador arriba"
 
-sonda() { # $1 fase, $2 archivo de cuentas, $3 salida, [$4 totales "S / M / N"] → código de salida
+sonda() { # $1 fase, $2 archivo de cuentas, $3 salida, [$4 totales "S / M / N"], [$5 argumento extra] → código de salida
   ( cd "$APP" && NEXT_PUBLIC_SUPABASE_URL="http://127.0.0.1:$MPUERTO" NEXT_PUBLIC_SUPABASE_ANON_KEY="$ANONKEY" \
-      CRM_ACCESO_CUENTAS="$(nativo "$2")" node "$(nativo "$SONDA")" --fase="$1" ${4:+"--totales=$4"} > "$3" 2>&1 ) && return 0 || return $?
+      CRM_ACCESO_CUENTAS="$(nativo "$2")" node "$(nativo "$SONDA")" --fase="$1" ${4:+"--totales=$4"} ${5:+"$5"} > "$3" 2>&1 ) && return 0 || return $?
 }
 # Totales autorizados = fila 20 del postcheck (como los copia el usuario).
 totales_postcheck() {
@@ -301,9 +301,69 @@ RC=0; sonda post "$TMP/cuentas.json" "$TMP/post2.txt" "$(totales_postcheck)" || 
 if [ "$RC" = 0 ] && grep -q '== TODO OK' "$TMP/post2.txt"; then ok "tras re-aplicar la migración: post vuelve a TODO OK"
 else fallo "post tras re-aplicar (rc=$RC)"; cat "$TMP/post2.txt"; fi
 
+# ── Omisión explícita de interno_minorista (Producción hoy: 0 usuarios) ────
+FILA30() { sql < "$AQUI/../preflight_207_crm_contactos_acceso.sql" | grep '^D|usuarios internos activos' | awk -F'|' '{print $NF}'; }
+# JSON sin la cuenta interno_minorista.
+grep -v 'interno_minorista' "$TMP/cuentas.json" > "$TMP/cuentas_sin_min.json"
+CERO='administracion·mayorista=1, gerencia·mayorista=1, superadmin·mayorista=1, venta·mayorista=1'
+
+# 11) Preflight REAL de esta base (tiene internos de minorista): la omisión FALLA.
+F30=$(FILA30)
+RC=0; sonda post "$TMP/cuentas_sin_min.json" "$TMP/om_real.txt" "$TOTALES" "--sin-interno-minorista=$F30" || RC=$?
+if [ "$RC" = 1 ] && grep -q 'FALLO interno_minorista: el preflight cuenta usuarios internos de minorista' "$TMP/om_real.txt"; then
+  ok "omisión con el preflight real (hay internos de minorista): FALLA y exige sesión real"
+else fallo "omisión con internos de minorista no falló (rc=$RC)"; cat "$TMP/om_real.txt"; fi
+sin_datos "$TMP/om_real.txt"
+
+# 12) Preflight con 0 internos de minorista: omisión válida, dicha como NO PROBADO.
+RC=0; sonda post "$TMP/cuentas_sin_min.json" "$TMP/om_ok.txt" "$TOTALES" "--sin-interno-minorista=$CERO" || RC=$?
+if [ "$RC" = 0 ] && grep -q '^NO PROBADO interno_minorista' "$TMP/om_ok.txt" \
+   && grep -q '== TODO OK (con omisión explícita: interno_minorista NO PROBADO)' "$TMP/om_ok.txt" \
+   && ! grep -q '^OK    interno_minorista' "$TMP/om_ok.txt" \
+   && grep -q '^OK    b2b' "$TMP/om_ok.txt" && grep -q '^OK    gerencia' "$TMP/om_ok.txt" && grep -q '^OK    superadmin' "$TMP/om_ok.txt"; then
+  ok "omisión con 0 internos de minorista: exit 0, NO PROBADO explícito, sin 'OK interno_minorista', demás categorías probadas"
+else fallo "omisión válida (rc=$RC)"; cat "$TMP/om_ok.txt"; fi
+sin_datos "$TMP/om_ok.txt"
+
+# 13) Mismo caso con el preflight REAL de la base tras desactivar a los internos
+#     de minorista (el flujo de Producción: valor leído del preflight, no tecleado).
+sqlv "update public.usuarios set activo = false where tenant = 'minorista' and rol in ('administracion','operaciones','venta');" >/dev/null
+F30=$(FILA30)
+RC=0; sonda post "$TMP/cuentas_sin_min.json" "$TMP/om_real0.txt" "$TOTALES" "--sin-interno-minorista=$F30" || RC=$?
+sqlv "update public.usuarios set activo = true where id in ('00000000-0000-0000-0000-0000000d0003','00000000-0000-0000-0000-0000000d0006');" >/dev/null
+if [ "$RC" = 0 ] && grep -q '^NO PROBADO interno_minorista' "$TMP/om_real0.txt"; then
+  ok "omisión con el preflight real sin internos de minorista (activo=false): exit 0 y NO PROBADO"
+else fallo "omisión con preflight real en 0 (rc=$RC)"; cat "$TMP/om_real0.txt"; fi
+
+# 14) Valor ilegible → se niega (código 2); omisión + cuenta real → se niega (código 2).
+RC=0; sonda post "$TMP/cuentas_sin_min.json" "$TMP/om_mal.txt" "$TOTALES" "--sin-interno-minorista=cualquier cosa" || RC=$?
+[ "$RC" = 2 ] && grep -q 'no es la fila 30 del preflight' "$TMP/om_mal.txt" && ok "omisión con valor ilegible: se niega (código 2)" || { fallo "valor ilegible (rc=$RC)"; cat "$TMP/om_mal.txt"; }
+RC=0; sonda post "$TMP/cuentas.json" "$TMP/om_dup.txt" "$TOTALES" "--sin-interno-minorista=$CERO" || RC=$?
+[ "$RC" = 2 ] && grep -q 'elegir una sola' "$TMP/om_dup.txt" && ok "omisión + cuenta interno_minorista en el JSON: se niega (código 2)" || { fallo "omisión + cuenta (rc=$RC)"; cat "$TMP/om_dup.txt"; }
+
+# 15) La omisión NO relaja nada más: totales que no cuadran siguen dando PÉRDIDA;
+#     sin la sesión de superadmin sigue INCOMPLETA.
+RC=0; sonda post "$TMP/cuentas_sin_min.json" "$TMP/om_perd.txt" "3 / 2 / 2" "--sin-interno-minorista=$CERO" || RC=$?
+[ "$RC" = 1 ] && grep -q 'FALLO interno_mayorista: PÉRDIDA de acceso legítimo' "$TMP/om_perd.txt" && grep -q 'FALLO gerencia: PÉRDIDA' "$TMP/om_perd.txt" \
+  && ok "con omisión, la PÉRDIDA de acceso legítimo sigue fallando" || { fallo "omisión relajó la pérdida (rc=$RC)"; cat "$TMP/om_perd.txt"; }
+cat > "$TMP/cuentas_sin_min_ni_super.json" <<'JSON'
+[ {"categoria":"b2b","email":"zz-api-1@x.test","password":"p1"},
+  {"categoria":"interno_mayorista","email":"zz-api-2@x.test","password":"p2"},
+  {"categoria":"gerencia","email":"zz-api-4@x.test","password":"p4"} ]
+JSON
+RC=0; sonda post "$TMP/cuentas_sin_min_ni_super.json" "$TMP/om_inc.txt" "$TOTALES" "--sin-interno-minorista=$CERO" || RC=$?
+[ "$RC" = 1 ] && grep -q 'INCOMPLETA: faltan sesiones de superadmin' "$TMP/om_inc.txt" && ! grep -q 'faltan sesiones de.*interno_minorista' "$TMP/om_inc.txt" \
+  && ok "con omisión, falta de superadmin sigue INCOMPLETA (y minorista no se reclama)" || { fallo "omisión relajó la cobertura (rc=$RC)"; cat "$TMP/om_inc.txt"; }
+
+# 16) Sin el flag, la sesión interno_minorista sigue siendo obligatoria y se prueba de verdad.
+RC=0; sonda post "$TMP/cuentas_sin_min.json" "$TMP/sin_flag.txt" "$TOTALES" || RC=$?
+[ "$RC" = 1 ] && grep -q 'INCOMPLETA: faltan sesiones de interno_minorista' "$TMP/sin_flag.txt" && ok "sin el flag, falta interno_minorista: INCOMPLETA" || { fallo "sin flag (rc=$RC)"; cat "$TMP/sin_flag.txt"; }
+grep -q 'categoria=interno_minorista .*visibles=2 .*otra_agencia=0 .*sin_atribuir=0' "$TMP/post.txt" && grep -q '^OK    interno_minorista' "$TMP/post.txt" \
+  && ok "suite local: interno_minorista probado de verdad (ve 2 de su agencia, 0 de la otra, 0 sin atribuir)" || fallo "no hay prueba efectiva de interno_minorista en la suite local"
+
 # 10) La sonda no muta: el total de filas no cambió tras todas las corridas.
 TOT=$(sqlv "select count(*) from public.crm_contactos;" | tail -1)
-[ "$TOT" = 6 ] && ok "tras 9 corridas de la sonda la tabla sigue con 6 filas (sin escrituras)" || fallo "la tabla cambió: $TOT filas"
+[ "$TOT" = 6 ] && ok "tras todas las corridas de la sonda la tabla sigue con 6 filas (sin escrituras)" || fallo "la tabla cambió: $TOT filas"
 
 echo
 if [ "$FALLOS" -eq 0 ]; then echo "== TODO OK"; else echo "== $FALLOS FALLO(S)"; exit 1; fi

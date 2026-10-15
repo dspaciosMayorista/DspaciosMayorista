@@ -190,6 +190,23 @@ describe("crm_contactos: scripts para Producción son de solo lectura", () => {
     assert.match(sonda, /esperado = \{ propia: TOTALES\[perfil\.tenant\], otra: TOTALES\[otra\], sin: TOTALES\.null \}/);
   });
 
+  test("sonda API: única omisión = interno_minorista, atada al preflight y nunca 'superada'", () => {
+    assert.match(sonda, /--sin-interno-minorista=/);
+    // Solo esa categoría puede omitirse.
+    assert.match(sonda, /!\(OMITE_MINORISTA && k === "interno_minorista"\)/);
+    // Con usuarios internos de minorista en el preflight, FALLA (exit 1).
+    assert.match(sonda, /hay a quién probar\. Quitar --sin-interno-minorista/);
+    // Valor ilegible y omisión + cuenta real se niegan (exit 2).
+    assert.match(sonda, /no es la fila 30 del preflight/);
+    assert.match(sonda, /elegir una sola/);
+    // Salida explícita: NO PROBADO, nunca OK, y el resumen lo repite.
+    assert.match(sonda, /NO PROBADO interno_minorista/);
+    assert.match(sonda, /TODO OK\$\{nota\}/);
+    assert.match(sonda, /interno_minorista NO PROBADO/);
+    // No simula cuentas ni hay manera de marcar la categoría como cubierta.
+    assert.equal((sonda.match(/cubiertas\.add\(/g) ?? []).length, 1);
+  });
+
   test("sonda API: la fase pre no filtra por tenant y un error nunca cuenta como cero", () => {
     const pre = sonda.slice(sonda.indexOf('if (FASE === "pre")'), sonda.indexOf("// ── post ──"));
     assert.ok(pre.length > 0);

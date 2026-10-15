@@ -46,6 +46,23 @@
  *   ]
  *   `anon` se prueba siempre, sin cuenta. Si falta alguna categoría la sonda
  *   termina INCOMPLETA (código de salida distinto de 0).
+ *
+ *   ÚNICA OMISIÓN PERMITIDA: `interno_minorista`, solo si el preflight FRESCO
+ *   de solo lectura demuestra que no existe ningún usuario interno activo de
+ *   minorista (en Producción hoy hay 0: no hay a quién probar). Se declara con
+ *       --sin-interno-minorista="<valor de la fila 30 del preflight, tal cual>"
+ *   La sonda lee ese valor ("rol·agencia=n, ...") y:
+ *     · si hay ALGÚN administracion/operaciones/venta de minorista con n > 0,
+ *       FALLA (hay a quién probar: se vuelve a exigir una sesión real);
+ *     · si el valor no se puede interpretar, FALLA (nada de omisiones a ciegas);
+ *     · si además el JSON trae una cuenta interno_minorista, se niega (código
+ *       2): o se prueba la cuenta real o se omite, no ambas.
+ *   La omisión nunca cuenta como prueba superada: la salida dice "NO PROBADO",
+ *   el resumen final lo repite y las demás categorías siguen obligatorias.
+ *   El aislamiento de interno_minorista se prueba de verdad en la suite local
+ *   (test_207_api_crm_contactos_acceso.sh), con una cuenta real de esa base.
+ *   La frescura del preflight es responsabilidad de quien lo corre: pegar el
+ *   valor de la ejecución inmediatamente anterior a la sonda.
  *   interno_* = administracion, operaciones o venta ACTIVO de esa agencia.
  *   La categoría declarada se contrasta con el perfil real (rol/agencia/activo
  *   de la propia fila de `usuarios`, que la RLS deja leer); si no coincide,
@@ -70,6 +87,31 @@ const FASE = arg?.slice("--fase=".length);
 if (FASE !== "pre" && FASE !== "post") {
   console.error("Indica --fase=pre (antes de la migración) o --fase=post (después).");
   process.exit(2);
+}
+
+// Omisión explícita de interno_minorista (ver cabecera). Se valida contra el
+// valor de la fila 30 del preflight; sin el flag no cambia nada.
+const argOmision = process.argv.find((a) => a.startsWith("--sin-interno-minorista="));
+let OMITE_MINORISTA = false;
+if (argOmision) {
+  const valor = argOmision.slice("--sin-interno-minorista=".length).trim();
+  const INTERNOS_FILA = ["administracion", "operaciones", "venta"];
+  const sinDatos = valor === "(ninguno)";
+  const entradas = sinDatos ? [] : valor.split(",").map((x) => x.trim());
+  const formaOk = sinDatos || (entradas.length > 0 && entradas.every((x) => /^[a-z_]+·(mayorista|minorista)=\d+$/.test(x)));
+  if (!formaOk) {
+    console.error("--sin-interno-minorista: el valor no es la fila 30 del preflight (esperado: rol·agencia=n, …). No se omite nada.");
+    process.exit(2);
+  }
+  const hay = entradas
+    .map((x) => x.match(/^([a-z_]+)·(mayorista|minorista)=(\d+)$/))
+    .filter((m) => m && m[2] === "minorista" && INTERNOS_FILA.includes(m[1]) && Number(m[3]) > 0)
+    .map((m) => `${m[1]}=${m[3]}`);
+  if (hay.length) {
+    console.log(`FALLO interno_minorista: el preflight cuenta usuarios internos de minorista (${hay.join(", ")}); hay a quién probar. Quitar --sin-interno-minorista y aportar una sesión real.`);
+    process.exit(1);
+  }
+  OMITE_MINORISTA = true;
 }
 
 // Totales autorizados (solo post): "sin_atribuir / mayorista / minorista".
@@ -178,6 +220,11 @@ async function sondear(cat, sb, perfil) {
   console.log(`OK    ${cat}`);
 }
 
+if (OMITE_MINORISTA && cuentas.some((c) => c.categoria === "interno_minorista")) {
+  console.error("--sin-interno-minorista junto a una cuenta interno_minorista en el JSON: elegir una sola. No se prueba nada.");
+  process.exit(2);
+}
+
 console.log(`== Sonda crm_contactos · fase ${FASE} · solo HEAD/conteo`);
 
 // 1) anon (sin sesión).
@@ -205,7 +252,11 @@ for (const c of cuentas) {
   }
 }
 
-const faltan = CATEGORIAS.filter((k) => !cubiertas.has(k));
+if (OMITE_MINORISTA) {
+  console.log("NO PROBADO interno_minorista: el preflight cuenta 0 usuarios internos de minorista, no hay sesión real que probar. NO es una prueba superada; el aislamiento de esta categoría solo está probado en la suite local.");
+}
+const faltan = CATEGORIAS.filter((k) => !cubiertas.has(k) && !(OMITE_MINORISTA && k === "interno_minorista"));
 if (faltan.length) console.log(`INCOMPLETA: faltan sesiones de ${faltan.join(", ")}`);
-console.log(fallos || faltan.length ? `\n== ${fallos} FALLO(S)${faltan.length ? ", INCOMPLETA" : ""}` : "\n== TODO OK");
+const nota = OMITE_MINORISTA ? " (con omisión explícita: interno_minorista NO PROBADO)" : "";
+console.log(fallos || faltan.length ? `\n== ${fallos} FALLO(S)${faltan.length ? ", INCOMPLETA" : ""}` : `\n== TODO OK${nota}`);
 process.exit(fallos || faltan.length ? 1 : 0);
