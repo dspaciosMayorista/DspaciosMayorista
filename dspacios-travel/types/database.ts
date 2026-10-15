@@ -4126,6 +4126,13 @@ export type Database = {
         Args: { p_numero: string; p_aliado_id: number };
         Returns: number;
       };
+      // #30 (migración 206): aplica NETO a un contrato manual B2B
+      // recién creado — precio = PVP − comisión + fila aliados_b2b descontada,
+      // en una sola transacción. Se niega si la comisión no es la esperada.
+      aplicar_neto_contrato_manual: {
+        Args: { p_numero: string; p_aliado_id: number; p_comision_esperada: number };
+        Returns: number;
+      };
       // Migración 205: alta manual desde la pestaña Comisiones (venta: solo su
       // contrato B2B y sin comisión previa). Valida rol/tenant/contrato en la base.
       registrar_comision_b2b_manual: {

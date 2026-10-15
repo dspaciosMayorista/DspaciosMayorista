@@ -49,6 +49,7 @@ registerHooks({
   },
 });
 
+process.env.SUPABASE_SERVICE_ROLE_KEY ??= "clave-de-prueba";
 const dom = new JSDOM("<!doctype html><html><body></body></html>", { url: "http://localhost/" });
 Object.assign(globalThis, {
   window: dom.window, document: dom.window.document,
@@ -82,6 +83,12 @@ function from(tabla: string) {
     switch (tabla) {
       case "ventas":
         return ok(q.op === "select" ? db.venta : null);
+      // #30 B: la facturación verifica rol contable y toma el IRT de las CxP
+      // marcadas IRT del contrato (aquí 2.000.000, lo mismo que manda la prueba).
+      case "usuarios":
+        return ok({ rol: "administracion", activo: true });
+      case "cuentas_por_pagar":
+        return ok([{ valor_total: 2_000_000, clasificacion: "irt" }]);
       case "config_cobros":
         return ok(null);
       case "sillas":
@@ -116,6 +123,11 @@ function from(tabla: string) {
             q.eq.id != null ? a.id !== q.eq.id : !(a.origen === q.eq.origen && a.referencia === q.eq.referencia));
           return ok(null);
         }
+        // #30 B: asientos vigentes por agencia (`asientosActivosPorTenant`).
+        if ("referencia" in q.eq && !("origen" in q.eq) && q.in.length) {
+          return ok(db.asientos.filter((a) => a.referencia === q.eq.referencia && q.in.includes(a.origen))
+            .map((a) => ({ tenant: a.tenant, origen: a.origen })));
+        }
         if ("origen" in q.eq) {
           const act = [...db.asientos].reverse().find((a) => a.origen === q.eq.origen && a.referencia === q.eq.referencia);
           return ok(act ? { id: act.id, descripcion: act.descripcion } : null);
@@ -149,7 +161,51 @@ function from(tabla: string) {
   };
   return b;
 }
-const sb = { from, auth: { getUser: async () => ({ data: { user: { id: "u-1", email: "caja@dspacios.test" } }, error: null }) } };
+// 208: el asiento del abono y la factura se escriben por RPC atómicas
+// (postear_asiento_abono / facturar_factura / quitar_factura). Estos manejadores
+// reproducen su CONTRATO observable para esta prueba: fecha del asiento de un
+// abono = fecha_abono; fecha de la factura y de su reversa = día de negocio
+// (Bogotá); updated_at = instante; importes del servidor (F4410); reemplazo sin
+// duplicar. El SQL real —incluida fecha_negocio()— se prueba en Postgres
+// (test_208_facturacion.sql: A1c, A9b2, C8b2).
+const { fechaNegocio } = await import("../lib/fechaNegocio.ts");
+const rpcErr = (code: string, message: string) => ({ data: null, error: { code, message } });
+const RPC: Record<string, (a: Record<string, unknown>) => { data: unknown; error: unknown }> = {
+  postear_asiento_abono: (a) => {
+    const ab = db.abonos.find((x) => x.id === a.p_abono_id);
+    if (!ab) return rpcErr("F4405", "FIN_ABONO_INEXISTENTE: el abono ya no existe; no se registró asiento.");
+    const ref = `abono:${String(ab.id)}`;
+    db.asientos = db.asientos.filter((x) => !(x.origen === "abono" && x.referencia === ref));
+    db.asientos.push({ id: ++db.seq, tenant: a.p_tenant, fecha: ab.fecha_abono, origen: "abono", referencia: ref, descripcion: `Abono ${String(ab.numero_contrato)}` });
+    return { data: { estado: "contabilizado" }, error: null };
+  },
+  consultar_factura_fuera_libros: () => ({ data: { hash: "h", requiere_revision: false, pendientes: [], fotografia: { abonos: [], total_sin_respaldo_cop: 0, total_exceso_cop: 0, no_calculables: 0 } }, error: null }),
+  facturar_factura: (a) => {
+    if (Math.abs(Number(a.p_pvp) - 3_000_000) > 0.5 || Math.abs(Number(a.p_irt) - 2_000_000) > 0.5) return rpcErr("F4410", "FIN_IMPORTES_DESACTUALIZADOS: el total o el IRT no coinciden con los del sistema.");
+    const fact = db.asientos.filter((x) => x.referencia === "facturacion:00-0451");
+    const vigente = fact.filter((x) => x.origen === "facturacion").length > fact.filter((x) => x.origen === "facturacion_reversion").length;
+    const hoy = fechaNegocio();
+    if (vigente) db.asientos.push({ id: ++db.seq, tenant: a.p_tenant, fecha: hoy, origen: "facturacion_reversion", referencia: "facturacion:00-0451" });
+    db.asientos.push({ id: ++db.seq, tenant: a.p_tenant, fecha: hoy, origen: "facturacion", referencia: "facturacion:00-0451" });
+    db.facturacion = [{ numero_contrato: a.p_numero, irt: a.p_irt, updated_at: new Date().toISOString() }];
+    return { data: { estado: "emitida" }, error: null };
+  },
+  quitar_factura: (a) => {
+    const fact = db.asientos.filter((x) => x.referencia === "facturacion:00-0451");
+    if (fact.filter((x) => x.origen === "facturacion").length <= fact.filter((x) => x.origen === "facturacion_reversion").length) return rpcErr("F4438", "FIN_SIN_FACTURA_VIGENTE: no hay factura vigente que retirar.");
+    db.asientos.push({ id: ++db.seq, tenant: a.p_tenant, fecha: fechaNegocio(), origen: "facturacion_reversion", referencia: "facturacion:00-0451" });
+    db.facturacion = [];
+    return { data: { estado: "retirada" }, error: null };
+  },
+};
+const sb = {
+  from,
+  auth: { getUser: async () => ({ data: { user: { id: "u-1", email: "caja@dspacios.test" } }, error: null }) },
+  rpc: async (fn: string, args: Record<string, unknown>) => {
+    if (!RPC[fn]) throw new Error(`rpc no simulado en el arnés: ${fn}`);
+    return RPC[fn](args);
+  },
+};
 
 mock.module("@/lib/supabase/server", { namedExports: { createClient: async () => sb } });
 mock.module("@/lib/supabase/admin", { namedExports: { createAdminClient: () => sb } });

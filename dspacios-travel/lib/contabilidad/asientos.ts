@@ -2,11 +2,11 @@ import "server-only";
 import { createClient } from "@/lib/supabase/server";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { getTenant } from "@/lib/tenant.server";
-import { fechaNegocio } from "@/lib/fechaNegocio";
 
 // ─────────────────────────────────────────────────────────────────────────
-// Posteo automático a Libro diario desde el resto de la app (abonos,
-// facturación, cuentas por pagar, pagos a proveedores, retenciones…).
+// Posteo automático a Libro diario desde el resto de la app (cuentas por
+// pagar, pagos a proveedores, retenciones…). La FACTURA y el asiento de un
+// ABONO no pasan por aquí: son RPC atómicas de la migración 208 (al final).
 // Todo es BEST-EFFORT: la acción de negocio (registrar un abono, un pago…)
 // nunca debe fallar por un problema de contabilidad — si falta una cuenta o
 // algo no cuadra, se devuelve un error/aviso que el módulo que llama decide
@@ -31,7 +31,7 @@ export type LineaPosteo = { cuentaCodigo: string; tercero?: string | null; descr
 // "agencia activa" del actor (ej. superadmin convirtiendo una cotización de
 // la otra agencia) — por eso esas rutas deben pasarlo explícito.
 type PosteoInput = { fecha: string; descripcion: string; origen: string; referencia: string; lineas: LineaPosteo[]; tenant?: string };
-type PResult = { ok: true } | { ok: false; error: string };
+type PResult = { ok: true; id?: number } | { ok: false; error: string };
 const TOL = 1;
 
 async function db() {
@@ -135,17 +135,22 @@ export async function postearAsiento(input: PosteoInput): Promise<PResult> {
     }))
   );
   if (e2) { await sb.from("asientos_contables").delete().eq("id", asiento.id); return { ok: false, error: e2.message }; }
-  return { ok: true };
+  return { ok: true, id: asiento.id };
 }
 
 // REEMPLAZAR: borra cualquier asiento con ese origen+referencia (no ligado a
 // una presentación externa, ej. DIAN) y postea el nuevo si se da uno.
-export async function reemplazarAsiento(origen: string, referencia: string, nuevo: Omit<PosteoInput, "origen" | "referencia"> | null): Promise<PResult> {
+// `tenant` (#30): la agencia del documento cuando se borra sin asiento nuevo;
+// si no se da, la de la sesión (comportamiento de siempre).
+export async function reemplazarAsiento(
+  origen: string, referencia: string, nuevo: Omit<PosteoInput, "origen" | "referencia"> | null, tenantDoc?: string,
+): Promise<PResult> {
   const sb = await db();
-  const tenant = nuevo?.tenant ?? await getTenant();
-  await sb.from("asientos_contables").delete().eq("tenant", tenant).eq("origen", origen).eq("referencia", referencia);
+  const tenant = nuevo?.tenant ?? tenantDoc ?? await getTenant();
+  const { error } = await sb.from("asientos_contables").delete().eq("tenant", tenant).eq("origen", origen).eq("referencia", referencia);
+  if (error) return { ok: false, error: error.message };
   if (!nuevo) return { ok: true };
-  return postearAsiento({ ...nuevo, origen, referencia });
+  return postearAsiento({ ...nuevo, tenant, origen, referencia });
 }
 
 // Devengo de una cuenta por pagar recién creada: Debe Costo de ventas (según
@@ -221,47 +226,53 @@ export async function postearAsientoRetencion(input: {
   });
 }
 
-// REVERSAR: para asientos que ya pudieron usarse en una presentación externa
-// (ej. la factura ante la DIAN) — no se borran, se reversa el activo más
-// reciente (líneas con débito/crédito invertidos, mismo origen+referencia,
-// marcado `${origen}_reversion`) y se postea el nuevo encima. Así el rastro
-// de la corrección queda en el libro diario.
-export async function reversarYRegistrar(origen: string, referencia: string, nuevo: Omit<PosteoInput, "origen" | "referencia"> | null): Promise<PResult> {
-  const sb = await db();
-  const tenant = await getTenant();
+// ── 208 · operaciones atómicas en PostgreSQL ─────────────────────────────
+// La factura (emitir, quitar, marcar DIAN) y el asiento de un abono ya no se
+// escriben con varias llamadas sueltas (RACE-1 / COMP-1): cada operación es UNA
+// RPC transaccional de la migración 208, ejecutable solo con service_role. La
+// Server Action deriva el actor de la sesión y la RPC lo revalida contra
+// `usuarios` (activo, rol y agencia). Las guardas de la base rechazan cualquier
+// escritura directa de asientos de factura o de abono (F4440 / F4421).
 
-  const { data: activo } = await sb
-    .from("asientos_contables")
-    .select("id, descripcion")
-    .eq("tenant", tenant).eq("origen", origen).eq("referencia", referencia)
-    .order("numero", { ascending: false }).limit(1).maybeSingle();
+export type ErrorFinanciero = { ok: false; error: string; code?: string };
 
-  if (activo) {
-    const { data: lineasActivas } = await sb.from("asiento_lineas").select("cuenta_id, tercero, descripcion, debe, haber").eq("asiento_id", activo.id);
-    if (lineasActivas?.length) {
-      const numero = await siguienteNumero(sb, tenant);
-      const usuarioEmail = await usuarioActual();
-      const { data: rev } = await sb.from("asientos_contables").insert({
-        tenant, numero, fecha: nuevo?.fecha ?? fechaNegocio(),
-        descripcion: `Reversión — ${activo.descripcion}`, origen: `${origen}_reversion`, referencia, usuario_email: usuarioEmail,
-      }).select("id").single();
-      if (rev) {
-        await sb.from("asiento_lineas").insert(
-          lineasActivas.map((l) => ({ tenant, asiento_id: rev.id, cuenta_id: l.cuenta_id, tercero: l.tercero, descripcion: l.descripcion, debe: l.haber, haber: l.debe }))
-        );
-      }
-    }
-  }
-  if (!nuevo) return { ok: true };
-  return postearAsiento({ ...nuevo, origen, referencia });
+const MANTENIMIENTO = "La facturación está en mantenimiento: no se emitió, cambió ni retiró nada. Intenta más tarde.";
+const MENSAJES_POR_CODIGO: Record<string, string> = {
+  PGRST202: MANTENIMIENTO, // RPC retirada (retirada parcial de la 208)
+  "42883": MANTENIMIENTO,
+  "55P03": "Otra operación sobre este contrato está en curso; espera unos segundos y vuelve a intentar. No se cambió nada.",
+  "42501": "No autorizado para esta operación.",
+};
+
+// error.code de PostgREST → mensaje para la pantalla. Los F44xx traen su
+// propio texto ('FIN_CODIGO: …'); se muestra sin el prefijo técnico.
+export function mensajeFinanciero(e: { code?: string | null; message?: string | null }): ErrorFinanciero {
+  const code = e.code ?? "";
+  if (/^F44\d\d$/.test(code)) return { ok: false, code, error: (e.message ?? "").replace(/^FIN_[A-Z_]+:\s*/, "") };
+  if (MENSAJES_POR_CODIGO[code]) return { ok: false, code, error: MENSAJES_POR_CODIGO[code] };
+  return { ok: false, ...(code ? { code } : {}), error: e.message || "Error desconocido de la base de datos." };
 }
 
-// Anticipo NETO acumulado de un contrato (para el asiento de facturación).
-export async function anticipoNetoDeContrato(numeroContrato: string): Promise<number> {
-  const sb = await db();
-  const tenant = await getTenant();
-  const { data: cAnticipos } = await sb.from("puc_cuentas").select("id").eq("tenant", tenant).eq("codigo", CUENTA.ANTICIPOS_CLIENTES).maybeSingle();
-  if (!cAnticipos) return 0;
-  const { data: lineas } = await sb.from("asiento_lineas").select("debe, haber").eq("tenant", tenant).eq("cuenta_id", cAnticipos.id).eq("tercero", numeroContrato);
-  return Math.max(0, (lineas ?? []).reduce((s, l) => s + (Number(l.haber) || 0) - (Number(l.debe) || 0), 0));
+type ClienteRpc = { rpc: (fn: string, args: Record<string, unknown>) => PromiseLike<{ data: unknown; error: { code?: string; message?: string } | null }> };
+
+export async function rpcFinanciero<T>(fn: string, args: Record<string, unknown>): Promise<{ ok: true; data: T } | ErrorFinanciero> {
+  if (!process.env.SUPABASE_SERVICE_ROLE_KEY) {
+    return { ok: false, error: "Falta la configuración del servidor (service role) para la operación contable; no se cambió nada." };
+  }
+  try {
+    const { data, error } = await (createAdminClient() as unknown as ClienteRpc).rpc(fn, args);
+    if (error) return mensajeFinanciero(error);
+    return { ok: true, data: data as T };
+  } catch (e) {
+    return { ok: false, error: e instanceof Error ? e.message : String(e) };
+  }
+}
+
+// M1: el asiento de un abono lo escribe la RPC con el abono y la venta
+// bloqueados — si el abono se borró mientras tanto, no queda asiento huérfano.
+// La cuenta acreedora (Anticipos o Clientes) la decide la base con la factura
+// vigente a la vista, y se conserva al re-postear.
+export async function postearAsientoAbonoAtomico(abonoId: number, tenant: string, actor: string): Promise<{ ok: true } | ErrorFinanciero> {
+  const r = await rpcFinanciero<{ estado: string }>("postear_asiento_abono", { p_abono_id: abonoId, p_tenant: tenant, p_actor: actor });
+  return r.ok ? { ok: true } : r;
 }

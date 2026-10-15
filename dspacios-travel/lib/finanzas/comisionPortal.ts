@@ -27,6 +27,14 @@ const PAGINA = 1000;
 export type ComisionPortal = ComisionVisible & {
   /** pendiente / parcial / pagada por sus abonos (filas), o el de ventas (vía ventas / NETO). */
   estado: string | null;
+  /**
+   * Lo que el aliado ve como importe (#30 B, decisión del dueño 2026-10-12):
+   *  · filas (PVP): el SALDO de su comisión = total − sus abonos (131);
+   *  · NETO descontada: el valor descontado del precio (sin saldo ni cobro);
+   *  · vía ventas: el total de `ventas.comision_b2b` (no tiene abonos propios).
+   * null = no se muestra (no hay comisión suya, o una lectura falló).
+   */
+  importe: number | null;
 };
 
 /** Lee todo con .range(), avanzando por lo recibido; null si alguna página falla. */
@@ -76,20 +84,29 @@ export async function comisionesDelPortal(
     // El estado de `ventas` solo acompaña a un importe que sale de `ventas`;
     // el de las filas se calcula abajo por sus abonos (131).
     const estado = vis.fuente === "ventas" || vis.fuente === "descontada" ? (c.comision_estado ?? null) : null;
-    res.set(num, { ...vis, estado });
+    // Filas: el importe (saldo) y el estado salen de sus abonos, abajo; hasta
+    // entonces no se muestra nada.
+    res.set(num, { ...vis, estado, importe: vis.fuente === "filas" ? null : vis.total });
     ids.push(...vis.ids);
   }
 
   if (ids.length > 0) {
     const pagos = await leerTodo<{ aliado_b2b_id: number; valor: number | string | null }>((d, h) =>
       admin.from("comision_b2b_pagos").select("aliado_b2b_id, valor").in("aliado_b2b_id", ids).order("id").range(d, h));
-    if (pagos) {
-      const pagado = new Map<number, number>();
-      for (const p of pagos) pagado.set(p.aliado_b2b_id, (pagado.get(p.aliado_b2b_id) ?? 0) + Number(p.valor ?? 0));
-      for (const vis of res.values()) {
-        if (!vis || vis.fuente !== "filas" || vis.total == null) continue;
-        vis.estado = estadoComisionFila(vis.total, vis.ids.reduce((s, id) => s + (pagado.get(id) ?? 0), 0), false);
+    for (const [num, vis] of res) {
+      if (!vis || vis.fuente !== "filas" || vis.total == null) continue;
+      if (!pagos) {
+        // #30 B: sin la lectura completa de sus abonos, el saldo y el estado
+        // serían inciertos — no se muestra importe, estado ni cobro.
+        res.set(num, { ...vis, importe: null, estado: null, cobrable: false });
+        continue;
       }
+      const pagado = pagos.filter((p) => vis.ids.includes(p.aliado_b2b_id)).reduce((s, p) => s + Number(p.valor ?? 0), 0);
+      const saldo = Math.max(0, vis.total - pagado);
+      vis.estado = estadoComisionFila(vis.total, pagado, false);
+      vis.importe = saldo;
+      // Pagada del todo: nada más que cobrar.
+      vis.cobrable = vis.cobrable && saldo > 0;
     }
   }
   return res;

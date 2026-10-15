@@ -12,17 +12,66 @@ import { formatMoneda } from "@/lib/utils";
 import { fechaElegidaONegocio, fechaNegocio } from "@/lib/fechaNegocio";
 import { siguienteNumeroContrato } from "@/lib/contrato/numeracion";
 import { contextoCrearContrato } from "@/lib/contrato/contexto";
-import { reemplazarAsiento, cuentaDisponible, postearAsientoCxP, eliminarAsientoCxP, CUENTA } from "@/lib/contabilidad/asientos";
+import { reemplazarAsiento, postearAsientoCxP, eliminarAsientoCxP, postearAsientoAbonoAtomico } from "@/lib/contabilidad/asientos";
 import { esInfantePorEdad, pasajeroConsumeSilla } from "@/lib/reservar/pasajeros";
 import { payloadGuardarPasajeros } from "@/lib/reservar/pasajerosEdicion";
+import {
+  planNetoContratoManual, comisionCoincide, esAsesorPropio, aplicarNetoContratoManual, type PlanNetoManual,
+} from "@/lib/contrato/netoManual";
+import { evaluarMargenContrato, puedeAprobarMargenBajo, mensajeMargenInsuficiente } from "@/lib/contrato/margenContrato";
 import type { Json } from "@/types/database";
 import {
   generarFlujoId, crearMedidor, registrarEtapa, registrarErrorTecnico,
   crearEstadoFlujo, elevarEstadoFlujo, resultadoTotal,
   type Medidor, type ResultadoEtapa, type EstadoFlujo,
 } from "@/lib/observabilidad/medicion";
-import { revertirContratoIncompleto } from "@/lib/reservar/financieroContrato";
+import { revertirContratoIncompleto, registrarFinancieroContrato, type CxPFinanciera, type CostosContrato } from "@/lib/reservar/financieroContrato";
 import { netoTotalExigibleDeContrato } from "@/lib/contrato/netoContrato.server";
+
+// #30 (CXP-1) — escritura financiera del contrato manual: las mismas RPC de
+// sistema que usa reservar (migraciones 171/172, solo service_role), con
+// despacho explícito por nombre. Las CxP llevan la marca de "automática"
+// (`marca_cxp_automatica()`, como prefijo) para que un reintento las
+// reemplace en vez de duplicarlas.
+const OBS_CXP_MANUAL = "Generado automáticamente desde el tarifario (contrato manual)";
+async function rpcFinancieroManual(fn: string, args: Record<string, unknown>): Promise<{ data: unknown; error: { message: string } | null }> {
+  const admin = createAdminClient();
+  if (fn === "registrar_financiero_contrato") {
+    const { data, error } = await admin.rpc("registrar_financiero_contrato", {
+      p_numero_contrato: String(args.p_numero_contrato ?? ""),
+      p_tenant: String(args.p_tenant ?? ""),
+      p_costos: (args.p_costos ?? {}) as Json,
+      p_cxp: (args.p_cxp ?? []) as Json,
+    });
+    return { data: data as unknown, error: error ? { message: error.message } : null };
+  }
+  if (fn === "revertir_contrato_incompleto") {
+    const { data, error } = await admin.rpc("revertir_contrato_incompleto", {
+      p_numero_contrato: String(args.p_numero_contrato ?? ""),
+      p_tenant: String(args.p_tenant ?? ""),
+    });
+    return { data: data as unknown, error: error ? { message: error.message } : null };
+  }
+  return { data: null, error: { message: `RPC no soportado: ${fn}` } };
+}
+function depsFinancieroManual(numeroContrato: string, tenant: string, fecha: string) {
+  return {
+    rpc: rpcFinancieroManual,
+    postearAsiento: (c: { id: number; tipo_proveedor: string | null; proveedor: string | null; servicio: string | null; valor_total: number }) =>
+      postearAsientoCxP({
+        cuentaId: c.id, numeroContrato, tipoProveedor: c.tipo_proveedor, proveedor: c.proveedor,
+        servicio: c.servicio, valorTotal: c.valor_total, fecha, tenant,
+      }),
+    eliminarAsiento: (cuentaId: number) => eliminarAsientoCxP(cuentaId),
+    // Intención durable (172): su propio commit, antes del RPC.
+    guardarPendiente: async (p: { numeroContrato: string; tenant: string; costos: CostosContrato; cxp: CxPFinanciera[] }) => {
+      const { error } = await createAdminClient().from("contrato_financiero_pendiente").upsert({
+        numero_contrato: p.numeroContrato, tenant: p.tenant, costos: p.costos as Json, cxp: p.cxp as unknown as Json,
+      }, { onConflict: "numero_contrato" });
+      return error ? { ok: false, error: error.message } : { ok: true };
+    },
+  };
+}
 
 // Deshace un contrato manual que quedó a medias: borra la venta y sus hijas y
 // libera SOLO sus sillas (`revertir_contrato_incompleto`, migración 171). Es
@@ -43,28 +92,24 @@ async function revertirContratoManual(numero: string, tenant: string): Promise<{
 
 // Postea (o reemplaza) el asiento de un abono: Debe Caja/Bancos (según forma
 // de pago) / Haber Anticipos de clientes (280505) si el contrato AÚN no está
-// facturado, o Clientes (130505) si ya lo está — best-effort, nunca bloquea
-// el registro del abono en sí.
+// facturado, o Clientes (130505) si ya lo está. Nunca bloquea el registro del
+// abono en sí, pero un fallo ya no es silencioso: se devuelve para avisarlo.
+// 208 (M1): lo escribe UNA RPC atómica con el abono y la venta bloqueados (el
+// asiento nunca sobrevive a su abono), en los libros de la agencia DEL
+// CONTRATO; la cuenta acreedora la decide la base con la factura vigente a la
+// vista y se conserva al re-postear. El actor es el usuario de la sesión.
 async function postearAsientoAbono(
-  sb: Awaited<ReturnType<typeof createClient>>,
-  numeroContrato: string, abonoId: number, fecha: string, montoCop: number, formaPago: string | null, moneda: string
-): Promise<void> {
-  if (montoCop <= 0) return;
-  const { data: fact } = await sb.from("contrato_facturacion").select("numero_contrato").eq("numero_contrato", numeroContrato).maybeSingle();
-  const cuentaCredito = fact ? CUENTA.CLIENTES : CUENTA.ANTICIPOS_CLIENTES;
-  await reemplazarAsiento("abono", `abono:${abonoId}`, {
-    fecha,
-    descripcion: `Abono ${numeroContrato}${formaPago ? ` (${formaPago})` : ""}`,
-    lineas: [
-      { cuentaCodigo: cuentaDisponible(formaPago, moneda), tercero: numeroContrato, descripcion: "Abono recibido", debe: montoCop, haber: 0 },
-      { cuentaCodigo: cuentaCredito, tercero: numeroContrato, descripcion: fact ? "Aplicación a cartera" : "Anticipo de cliente", debe: 0, haber: montoCop },
-    ],
-  });
+  sb: Awaited<ReturnType<typeof createClient>>, abonoId: number, tenant: string | undefined,
+): Promise<string | null> {
+  const { data: { user } } = await sb.auth.getUser();
+  if (!user) return "sesión no válida";
+  const r = await postearAsientoAbonoAtomico(abonoId, tenant ?? "mayorista", user.id);
+  return r.ok ? null : r.error;
 }
 
-// Margen mínimo que debe dejar un contrato manual (dinámico/empaquetado):
-// PVP ≥ total de costos ÷ (1 − 20%).
-const MARKUP_MIN = 0.20;
+// Margen mínimo de un contrato manual (dinámico/empaquetado): 20 % sobre el
+// PVP; 6 % sobre el total exigible si el comprador B2B compra en NETO (#30).
+// Regla y tolerancia en lib/contrato/margenContrato.ts.
 
 // Mensajes públicos FIJOS para fallos TÉCNICOS de crearContrato() (revisión
 // posterior — ronda 3, defecto "ERROR.MESSAGE TODAVÍA LLEGA AL NAVEGADOR"):
@@ -193,11 +238,18 @@ export type ContratoInput = {
   // Canal / asesor. Todo contrato lleva asesor interno; B2B además agencia o freelance.
   tipoVenta?: "interno" | "agencia" | "freelance";
   aliadoId?: number | null;   // id del catálogo de agencias/freelance (B2B)
+  // #30 (entrega B): cómo compra el aliado B2B. "pvp" (default) = paga el
+  // total y su comisión queda "Por definir" (como dejó #38); "neto" = paga
+  // PVP − su comisión, ya descontada. `comisionNetoEsperada` es la comisión
+  // que el asesor vio en pantalla: si el servidor o la base calculan otra, se
+  // niegan en vez de cobrar un total distinto al mostrado.
+  modoCompra?: "pvp" | "neto";
+  comisionNetoEsperada?: number | null;
   // Moneda del contrato. En empaquetado/dinámico (todo manual) el asesor puede
   // venderlo en USD; el resto (abonos con TRM, estado de cuenta) fluye igual.
   moneda?: string;
   // Aprobación explícita de superadmin/administración para crear el contrato
-  // aunque el margen no cubra el mínimo (ver validación de MARKUP_MIN). El rol
+  // aunque el margen no cubra el mínimo (lib/contrato/margenContrato.ts). El rol
   // se revalida siempre en el servidor — nunca se confía en este flag solo.
   forzarMargen?: boolean;
 };
@@ -400,26 +452,24 @@ async function crearContratoInterno(
   const costoReceptivoManual = !negociado ? servicios.filter((s) => s.tipo === "traslado" || s.tipo === "tour").reduce((s, x) => s + Math.max(0, Number(x.costo) || 0), 0) : 0;
   const otrosCostosManual = !negociado ? servicios.filter((s) => s.tipo === "otro").reduce((s, x) => s + Math.max(0, Number(x.costo) || 0), 0) : 0;
   const totalCostosManual = costoHotelManual + costoAereoManual + costoAsistenciaManual + costoReceptivoManual + otrosCostosManual;
-  // Validación de margen mínimo: PVP ≥ costos ÷ (1 − 20%). Un superadmin o
+  // Validación de margen mínimo: (PVP − costo) / PVP ≥ 20 %. Un superadmin o
   // administración puede aprobar explícitamente un contrato que no lo cumpla
   // (`forzarMargen`) — el rol se revalida aquí mismo, nunca se confía en el
-  // flag del cliente solo.
-  if (!negociado && totalCostosManual > 0) {
-    const pvpMin = totalCostosManual / (1 - MARKUP_MIN);
-    if (precioVenta + 0.5 < pvpMin) {
-      const margenActual = precioVenta > 0 ? 1 - totalCostosManual / precioVenta : 0;
-      // El rol ya se resolvió y verificó server-side en `contextoCrearContrato()`
-      // (`ctx.rol`) — no hace falta una segunda consulta para revalidarlo aquí.
-      const autorizado = !!input.forzarMargen && ["superadmin", "administracion"].includes(ctx.rol);
-      if (!autorizado) {
-        return _rechazarValidacion({
-          ok: false,
-          error: `El PVP (${formatMoneda(precioVenta, monedaContrato)}) no cubre el margen mínimo del ${MARKUP_MIN * 100}%. Con costos de ${formatMoneda(totalCostosManual, monedaContrato)}, el PVP mínimo es ${formatMoneda(Math.ceil(pvpMin), monedaContrato)}.`,
-          margenInsuficiente: true,
-          margenActual,
-          pvpMinimo: Math.ceil(pvpMin),
-        });
-      }
+  // flag del cliente solo. Si el comprador B2B eligió NETO (#30), el margen se
+  // mide más abajo sobre el total exigible (6 %), con el plan NETO ya validado
+  // y también antes de numerar.
+  if (!negociado && totalCostosManual > 0 && input.modoCompra !== "neto") {
+    const margen = evaluarMargenContrato({ modo: "pvp", ingreso: precioVenta, costos: totalCostosManual });
+    // El rol ya se resolvió y verificó server-side en `contextoCrearContrato()`
+    // (`ctx.rol`) — no hace falta una segunda consulta para revalidarlo aquí.
+    if (!margen.cumple && !puedeAprobarMargenBajo(ctx.rol, input.forzarMargen)) {
+      return _rechazarValidacion({
+        ok: false,
+        error: mensajeMargenInsuficiente(margen, (n) => formatMoneda(n, monedaContrato)),
+        margenInsuficiente: true,
+        margenActual: margen.margenActual,
+        pvpMinimo: Math.ceil(margen.ingresoMinimo),
+      });
     }
   }
 
@@ -438,6 +488,54 @@ async function crearContratoInterno(
     if (aliadoQueryError) return _errorValidacion("error_consulta_aliados", aliadoQueryError);
     if (!data) return _rechazarValidacion({ ok: false, error: "La agencia/freelance seleccionada no existe." });
     if (tipoVenta === "agencia") agenciaNombre = data.nombre; else freelanceNombre = data.nombre;
+  }
+
+  // #30 (entrega B): modalidad del comprador B2B. Se valida TODO antes de
+  // numerar: un NETO que la base vaya a rechazar no gasta un consecutivo.
+  const modoCompraManual = input.modoCompra ?? "pvp";
+  if (modoCompraManual !== "pvp" && modoCompraManual !== "neto") {
+    return _rechazarValidacion({ ok: false, error: "Modalidad de compra inválida." });
+  }
+  let planNeto: PlanNetoManual | null = null;
+  if (modoCompraManual === "neto") {
+    if (tipoVenta === "interno") {
+      return _rechazarValidacion({ ok: false, error: "Una venta directa no tiene modalidad NETO: cobra el PVP (con o sin descuento comercial)." });
+    }
+    if (ctx.rol === "venta") {
+      const { data: { user: yo } } = await sb.auth.getUser();
+      const { data: perfilYo, error: perfilYoError } = yo
+        ? await sb.from("usuarios").select("nombre, email").eq("id", yo.id).maybeSingle()
+        : { data: null, error: null };
+      if (perfilYoError) return _errorValidacion("error_consulta_asesor_neto", perfilYoError);
+      if (!esAsesorPropio(input.asesorNombre, perfilYo)) {
+        return _rechazarValidacion({ ok: false, error: "Solo puedes registrar en NETO tus propios contratos." });
+      }
+    }
+    const plan = await planNetoContratoManual(sb, { tipoVenta, aliadoId: input.aliadoId, precioVenta, impuesto: bnc });
+    if (!plan.ok) return _rechazarValidacion({ ok: false, error: plan.error });
+    if (!comisionCoincide(input.comisionNetoEsperada, plan.plan.comision)) {
+      return _rechazarValidacion({
+        ok: false,
+        error: `La comisión del aliado cambió: ahora es ${formatMoneda(plan.plan.comision, monedaContrato)} (total NETO ${formatMoneda(plan.plan.totalExigible, monedaContrato)}). Revisa el total antes de generar el contrato.`,
+      });
+    }
+    // Margen NETO: (total exigible − costo) / total exigible ≥ 6 %, con el
+    // total del plan recién validado (no el que mande el navegador). Misma
+    // aprobación excepcional que en PVP.
+    if (!negociado && totalCostosManual > 0) {
+      const margen = evaluarMargenContrato({ modo: "neto", ingreso: plan.plan.totalExigible, costos: totalCostosManual });
+      if (!margen.cumple && !puedeAprobarMargenBajo(ctx.rol, input.forzarMargen)) {
+        return _rechazarValidacion({
+          ok: false,
+          error: mensajeMargenInsuficiente(margen, (n) => formatMoneda(n, monedaContrato)),
+          margenInsuficiente: true,
+          margenActual: margen.margenActual,
+          // En NETO es el total exigible mínimo.
+          pvpMinimo: Math.ceil(margen.ingresoMinimo),
+        });
+      }
+    }
+    planNeto = plan.plan;
   }
   registrarEtapa("crear_contrato", flujoId, "validacion_negocio", Math.round(performance.now() - _tValidacion0), "ok");
 
@@ -482,6 +580,11 @@ async function crearContratoInterno(
           costo_asistencia: costoAsistenciaManual,
           costo_receptivo: costoReceptivoManual,
           otros_costos: otrosCostosManual,
+          // #30 (CXP-1): nace con la escritura financiera PENDIENTE — no admite
+          // abonos (trigger de la 172) hasta que `registrar_financiero_contrato`
+          // escriba costos y CxP en una transacción y lo marque 'completo'. Si
+          // el proceso muere antes, la reconciliación lo completa o lo revierte.
+          financiero_estado: "pendiente",
         }
       : {}),
     tipo_paquete: input.tipoPaquete,
@@ -716,14 +819,50 @@ async function crearContratoInterno(
   }
   registrarEtapa("crear_contrato", flujoId, "insert_hijas", Math.round(performance.now() - _tHijas0), "ok");
 
-  // ── CxP automáticas del contrato manual (dinámico/empaquetado) ────────────
-  // Una cuenta por pagar por hotel y por vuelo con costo > 0 y proveedor, en la
-  // moneda del contrato. Toma la retención del catálogo de proveedores.
-  // Best-effort, igual que antes (no bloquea la creación del contrato si algo
-  // aquí falla) — pero ahora la MÉTRICA distingue "error" (la consulta de
-  // proveedores o el insert de la CxP en sí fallaron — probablemente ninguna
-  // cuenta se creó bien) de "parcial" (las CxP se crearon, pero algún asiento
-  // contable individual no se pudo postear) en vez de reportar "ok" a ciegas.
+  // #30 (entrega B): NETO, último paso OBLIGATORIO. El contrato nació como PVP
+  // con la comisión "Por definir"; `aplicar_neto_contrato_manual` rebaja el
+  // precio y crea la comisión descontada en UNA transacción (o ninguna de las
+  // dos). Si falla, se deshace el contrato entero; si tampoco se puede
+  // deshacer, queda como PVP "Por definir" — nunca NETO sin su comisión — y el
+  // mensaje nombra el número.
+  if (planNeto) {
+    const comisionNeto = planNeto.comision;
+    const neto = await medir(
+      "neto_manual",
+      () => aplicarNetoContratoManual(sb, numero, input.aliadoId as number, comisionNeto),
+      (r) => (r.ok ? "ok" : "error"),
+    );
+    if (!neto.ok) {
+      elevarEstadoFlujo(estado, "error");
+      registrarErrorTecnico("crear_contrato", flujoId, "neto_manual", "error_aplicar_neto", neto.error);
+      const rev = await revertirContratoManual(numero, tenant);
+      if (rev.ok) {
+        return { ok: false, error: `No se pudo registrar el contrato en NETO (${neto.error}), así que no se creó. Revisa los datos e inténtalo de nuevo.` };
+      }
+      registrarErrorTecnico("crear_contrato", flujoId, "neto_manual", "reversion_fallida", rev.error);
+      return {
+        ok: false,
+        error: `No se pudo registrar el contrato en NETO (${neto.error}) y tampoco se pudo deshacer el contrato ${numero} automáticamente (${rev.error ?? "motivo desconocido"}). Quedó como PVP con la comisión por definir: revísalo antes de volver a intentarlo.`,
+      };
+    }
+  }
+
+  // ── Costos y CxP del contrato manual (dinámico/empaquetado) ──────────────
+  // Una cuenta por pagar por hotel, por compra aérea y por servicio con costo
+  // > 0 y proveedor, en la moneda del contrato, con la retención del catálogo
+  // de proveedores.
+  // #30 (CXP-1): ya NO es best-effort. Antes se insertaban con el cliente de
+  // SESIÓN: para el rol `venta` la RLS de `cuentas_por_pagar` (116) negaba el
+  // insert (42501) y el contrato quedaba creado y cobrable SIN sus costos de
+  // proveedor ni su IRT. Ahora va por la escritura financiera del sistema
+  // (`registrarFinancieroContrato`, migraciones 171/172 — la misma de
+  // reservar): intención durable en `contrato_financiero_pendiente`, costos +
+  // CxP en UNA transacción que marca `financiero_estado='completo'`, y si
+  // falla, el contrato se revierte entero (o, si ni eso se puede, queda
+  // 'pendiente': sin abonos y en manos de la reconciliación). Un reintento no
+  // duplica: el RPC reemplaza las CxP automáticas sin pagos ni retenciones.
+  // El asiento de cada CxP sigue siendo best-effort (convención contable del
+  // proyecto; la reconciliación postea los que falten).
   const _tCxp0 = performance.now();
   let _resultadoCxp: ResultadoEtapa = "ok";
   if (!negociado) {
@@ -752,52 +891,59 @@ async function crearContratoInterno(
       const costo = Math.max(0, Number(s.costo) || 0);
       if (costo > 0 && s.proveedor?.trim()) cxpRows.push({ proveedor: s.proveedor.trim(), tipo: "servicio", servicio: s.descripcion.trim() || s.tipo, valor: costo });
     }
+    const fallarFinanciero = (motivo: string, tecnico: unknown) => {
+      elevarEstadoFlujo(estado, "error");
+      registrarErrorTecnico("crear_contrato", flujoId, "cxp_automaticas", "error_financiero_manual", tecnico);
+      registrarEtapa("crear_contrato", flujoId, "cxp_automaticas", Math.round(performance.now() - _tCxp0), "error");
+      return { ok: false as const, error: motivo };
+    };
+    // Retención del catálogo (lectura de sistema: el asesor no necesita leer
+    // proveedores para que su contrato quede completo). Si no se puede leer,
+    // no se inventa una retención: se revierte el contrato.
+    let provMap = new Map<string, { aplica_retencion: boolean | null; pct_retencion: number | null }>();
     if (cxpRows.length) {
       const nombres = [...new Set(cxpRows.map((r) => r.proveedor))];
-      const { data: provs, error: provsError } = await sb.from("proveedores").select("nombre, aplica_retencion, pct_retencion").in("nombre", nombres);
+      const { data: provs, error: provsError } = await createAdminClient().from("proveedores").select("nombre, aplica_retencion, pct_retencion").in("nombre", nombres);
       if (provsError) {
-        _resultadoCxp = "error";
-        registrarErrorTecnico("crear_contrato", flujoId, "cxp_automaticas", "error_consulta_proveedores", provsError);
+        const rev = await revertirContratoIncompleto({ rpc: rpcFinancieroManual }, numero, tenant);
+        return fallarFinanciero(rev.ok
+          ? "No se pudo leer el catálogo de proveedores, así que el contrato no se creó. Inténtalo de nuevo."
+          : `No se pudo leer el catálogo de proveedores y tampoco se pudo deshacer el contrato ${numero} (${rev.error ?? "motivo desconocido"}). Quedó sin abonos hasta revisarlo.`, provsError);
       }
-      const provMap = new Map((provs ?? []).map((p) => [p.nombre, p]));
-      const hoyCxP = fechaElegidaONegocio(input.fechaEmision);
-      const { data: cxpCreadas, error: cxpInsertError } = await sb.from("cuentas_por_pagar").insert(
-        cxpRows.map((r) => {
-          const p = provMap.get(r.proveedor);
-          return {
-            numero_contrato: numero,
-            tenant,
-            proveedor: r.proveedor,
-            tipo_proveedor: r.tipo,
-            servicio: r.servicio,
-            valor_total: r.valor,
-            moneda: monedaContrato,
-            fecha_obligacion: hoyCxP,
-            aplica_retencion: p?.aplica_retencion ?? false,
-            pct_retencion: p?.pct_retencion ?? 0,
-          };
-        })
-      ).select("id, tipo_proveedor, proveedor, servicio, valor_total");
-      if (cxpInsertError) {
-        _resultadoCxp = "error";
-        registrarErrorTecnico("crear_contrato", flujoId, "cxp_automaticas", "error_insert_cuentas_por_pagar", cxpInsertError);
-      }
-      for (const c of cxpCreadas ?? []) {
-        const asiento = await postearAsientoCxP({
-          cuentaId: c.id, numeroContrato: numero, tipoProveedor: c.tipo_proveedor, proveedor: c.proveedor,
-          servicio: c.servicio, valorTotal: Number(c.valor_total) || 0, fecha: hoyCxP,
-        });
-        if (!asiento.ok) {
-          if (_resultadoCxp === "ok") _resultadoCxp = "parcial";
-          registrarErrorTecnico("crear_contrato", flujoId, "cxp_automaticas", "error_asiento_cxp", asiento.error);
-        }
-      }
+      provMap = new Map((provs ?? []).map((p) => [p.nombre as string, p]));
+    }
+    const hoyCxP = fechaElegidaONegocio(input.fechaEmision);
+    const cxp: CxPFinanciera[] = cxpRows.map((r) => {
+      const p = provMap.get(r.proveedor);
+      return {
+        proveedor: r.proveedor,
+        tipo_proveedor: r.tipo,
+        servicio: r.servicio,
+        valor_total: r.valor,
+        moneda: monedaContrato,
+        fecha_obligacion: hoyCxP,
+        aplica_retencion: p?.aplica_retencion ?? false,
+        pct_retencion: Number(p?.pct_retencion) || 0,
+        observaciones: OBS_CXP_MANUAL,
+        servicio_id: null,
+      };
+    });
+    const costos: CostosContrato = {
+      costo_hotel: costoHotelManual, costo_aereo: costoAereoManual, costo_asistencia: costoAsistenciaManual,
+      costo_receptivo: costoReceptivoManual, otros_costos: otrosCostosManual,
+    };
+    const fin = await registrarFinancieroContrato(depsFinancieroManual(numero, tenant, hoyCxP), {
+      numeroContrato: numero, tenant, costos, cxp, fecha: hoyCxP,
+    });
+    if (!fin.ok) return fallarFinanciero(fin.error, fin.error);
+    if (fin.avisos.length) {
+      _resultadoCxp = "parcial";
+      registrarErrorTecnico("crear_contrato", flujoId, "cxp_automaticas", "error_asiento_cxp", fin.avisos.join(" | "));
     }
   }
   registrarEtapa("crear_contrato", flujoId, "cxp_automaticas", Math.round(performance.now() - _tCxp0), _resultadoCxp);
-  // Best-effort: NUNCA bloquea la creación del contrato, pero un fallo aquí
-  // sí debe elevar el TOTAL a "parcial" (el contrato se creó, pero algo
-  // best-effort quedó incompleto) — antes el total no reflejaba esto.
+  // Un asiento de CxP sin postear no bloquea (el dinero ya quedó escrito),
+  // pero eleva el TOTAL a "parcial".
   if (_resultadoCxp !== "ok") elevarEstadoFlujo(estado, "parcial");
 
   // ── Productos negociados: costos desde el módulo de producto + cupos ──────
@@ -1033,11 +1179,16 @@ export async function registrarAbono(
   }).select("id").single();
   if (error || !nuevoAbono) return { ok: false, error: error?.message ?? "No se pudo registrar el abono." };
 
-  await postearAsientoAbono(sb, numeroContrato, nuevoAbono.id, fechaAbono, montoCop, formaPago, (venta as { moneda?: string } | null)?.moneda ?? "COP");
+  const errAsiento = await postearAsientoAbono(sb, nuevoAbono.id, (venta as { tenant?: string } | null)?.tenant ?? undefined);
   const conf = await recalcularEstadoAbono(sb, numeroContrato);
   if (!conf.ok) {
     revalidatePath(`/dashboard/contratos/${numeroContrato}`);
     return { ok: false, error: `El abono quedó registrado, pero la venta no se pudo confirmar: ${conf.error}` };
+  }
+  if (errAsiento) {
+    revalidatePath(`/dashboard/contratos/${numeroContrato}`);
+    revalidatePath("/dashboard/cartera");
+    return { ok: false, error: `El abono quedó registrado, pero su asiento contable no: ${errAsiento}. Contabilízalo desde Contabilidad → Facturación.` };
   }
   revalidatePath(`/dashboard/contratos/${numeroContrato}`);
   revalidatePath("/dashboard/cartera");
@@ -1056,7 +1207,7 @@ export async function actualizarAbono(
 ): Promise<{ ok: boolean; error?: string }> {
   if (!(input.valor > 0)) return { ok: false, error: "El valor debe ser mayor a 0." };
   const sb = await createClient();
-  const { data: venta } = await sb.from("ventas").select("moneda").eq("numero_contrato", numeroContrato).maybeSingle();
+  const { data: venta } = await sb.from("ventas").select("moneda, tenant").eq("numero_contrato", numeroContrato).maybeSingle();
   const esUSD = (venta?.moneda ?? "COP") === "USD";
   const montoCop = Math.max(0, Number(input.valor) || 0);
   const trm = esUSD ? (Number(input.trmInput) || 0) : 1;
@@ -1074,11 +1225,16 @@ export async function actualizarAbono(
   }).eq("id", id);
   if (error) return { ok: false, error: error.message };
 
-  await postearAsientoAbono(sb, numeroContrato, id, fechaAbono, montoCop, input.formaPago, (venta as { moneda?: string } | null)?.moneda ?? "COP");
+  const errAsiento = await postearAsientoAbono(sb, id, (venta as { tenant?: string } | null)?.tenant ?? undefined);
   const conf = await recalcularEstadoAbono(sb, numeroContrato);
   if (!conf.ok) {
     revalidatePath(`/dashboard/contratos/${numeroContrato}`);
     return { ok: false, error: `El abono quedó actualizado, pero la venta no se pudo confirmar: ${conf.error}` };
+  }
+  if (errAsiento) {
+    revalidatePath(`/dashboard/contratos/${numeroContrato}`);
+    revalidatePath("/dashboard/cartera");
+    return { ok: false, error: `El abono quedó actualizado, pero su asiento contable no: ${errAsiento}` };
   }
   revalidatePath(`/dashboard/contratos/${numeroContrato}`);
   revalidatePath("/dashboard/cartera");
@@ -1089,9 +1245,23 @@ export async function actualizarAbono(
 
 export async function eliminarAbono(id: number, numeroContrato: string): Promise<{ ok: boolean; error?: string }> {
   const sb = await createClient();
+  // #30: el asiento del abono vive en los libros de la agencia del contrato.
+  const { data: ventaAbono } = await sb.from("ventas").select("tenant").eq("numero_contrato", numeroContrato).maybeSingle();
   const { error } = await sb.from("abonos").delete().eq("id", id);
-  if (error) return { ok: false, error: error.message };
-  await reemplazarAsiento("abono", `abono:${id}`, null);
+  if (error) {
+    // 208 (F4415): un abono con asiento contable NO se borra. Antes se borraba el abono y, si fallaba el
+    // segundo paso, su asiento quedaba huérfano y la acción respondía éxito. Mientras no exista una
+    // operación atómica de eliminar abono, se rechaza y no cambia nada.
+    if (error.code === "F4415") {
+      return { ok: false, error: `Este abono ya tiene asiento contable y todavía no se puede eliminar (falta la operación contable atómica). No se cambió nada: ni el abono ni su asiento.` };
+    }
+    return { ok: false, error: error.message };
+  }
+  // Abono sin asiento (el caso que sí se borra): limpia cualquier asiento residual y NO ignora el fallo.
+  const limpio = await reemplazarAsiento("abono", `abono:${id}`, null, (ventaAbono?.tenant as string | null) ?? undefined);
+  if (!limpio.ok) {
+    return { ok: false, error: `El abono se eliminó, pero no se pudo limpiar su asiento contable: ${limpio.error}. Avisa a contabilidad antes de seguir.` };
+  }
   revalidatePath(`/dashboard/contratos/${numeroContrato}`);
   revalidatePath("/dashboard/cartera");
   revalidatePath("/dashboard/contabilidad/libro-diario");
@@ -1351,4 +1521,28 @@ export async function actualizarServiciosContrato(
 
   revalidatePath(`/dashboard/contratos/${numeroContrato}`);
   return { ok: true };
+}
+
+// #30 (entrega B): vista previa del NETO de un contrato manual B2B — el mismo
+// plan que `crearContrato` vuelve a calcular antes de numerar (y la base al
+// aplicarlo). Solo lectura: % del aliado (o el parámetro de su tipo) con la
+// sesión de quien arma el contrato; no escribe nada.
+// Misma puerta que `crearContrato` (sesión real, usuario activo y rol con
+// escritura sobre `ventas`): el plan revela el % y la comisión del aliado, y
+// una sesión cualquiera (control_vuelo, por ejemplo, que sí lee `aliados`) no
+// debe obtenerlos por aquí. Prueba: pruebas/contratoManualNeto206.pg.ts (P3).
+export async function previsualizarNetoContrato(input: {
+  tipoVenta: string;
+  aliadoId: number | null;
+  precioVenta: number;
+  impuesto: number;
+}): Promise<{ ok: true; plan: PlanNetoManual } | { ok: false; error: string }> {
+  const ctx = await contextoCrearContrato("previsualizar_neto", generarFlujoId());
+  if (!ctx.ok) return { ok: false, error: ctx.error };
+  return planNetoContratoManual(ctx.sb, {
+    tipoVenta: input.tipoVenta,
+    aliadoId: input.aliadoId,
+    precioVenta: Number(input.precioVenta) || 0,
+    impuesto: Number(input.impuesto) || 0,
+  });
 }

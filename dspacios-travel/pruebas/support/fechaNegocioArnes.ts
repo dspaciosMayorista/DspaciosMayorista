@@ -216,8 +216,50 @@ export function crearBD(semilla: Record<string, Fila[]> = {}, rpcs: Record<strin
     // vea exactamente qué recibió la base; sin manejador, falla en claro.
     rpc: async (fn: string, args: Record<string, unknown> = {}) => {
       llamadasRpc.push({ fn, args });
-      if (!rpcs[fn]) throw new Error(`rpc no simulado en el arnés: ${fn}`);
-      return { data: await rpcs[fn](args), error: null };
+      const manejador = rpcs[fn] ?? porDefecto[fn];
+      if (!manejador) throw new Error(`rpc no simulado en el arnés: ${fn}`);
+      // Un manejador puede simular el rechazo de una RPC (SQLSTATE F44xx de la 208)
+      // devolviendo { __error: { code, message } }, como lo entrega PostgREST.
+      const r = await manejador(args);
+      if (r && typeof r === "object" && "__error" in r) return { data: null, error: (r as { __error: unknown }).__error };
+      return { data: r, error: null };
+    },
+  };
+
+  // RPC de sistema que la app llama al crear contratos (#30 B: el contrato
+  // manual escribe costos y CxP por `registrar_financiero_contrato`, migraciones
+  // 171/172, igual que reservar). Solo su EFECTO en memoria, para que las pruebas
+  // de fecha/comisión que crean contratos sigan probando lo suyo; la transacción,
+  // la idempotencia y los permisos reales se prueban en Postgres
+  // (pruebas/contratoManualNeto206.pg.ts, CXP-1..4). Una prueba que pase su
+  // propio manejador lo reemplaza.
+  const MARCA_CXP_AUTOMATICA = "Generado automáticamente desde el tarifario";
+  const porDefecto: Record<string, ManejadorRpc> = {
+    registrar_financiero_contrato: (args) => {
+      const numero = String(args.p_numero_contrato);
+      const v = filas("ventas").find((f) => f.numero_contrato === numero && f.tenant === args.p_tenant);
+      if (!v) throw new Error(`registrar_financiero_contrato: el contrato ${numero} no existe en la agencia ${String(args.p_tenant)}`);
+      const pagadas = new Set([...filas("cxp_pagos"), ...filas("retenciones_cxp")].map((p) => p.cuenta_por_pagar_id));
+      const eliminadas = filas("cuentas_por_pagar")
+        .filter((c) => c.numero_contrato === numero && String(c.observaciones ?? "").startsWith(MARCA_CXP_AUTOMATICA) && !pagadas.has(c.id))
+        .map((c) => c.id);
+      tablas.set("cuentas_por_pagar", filas("cuentas_por_pagar").filter((c) => !eliminadas.includes(c.id)));
+      Object.assign(v, args.p_costos as Fila, { financiero_estado: "completo" });
+      const creadas = ((args.p_cxp as Fila[] | undefined) ?? []).map((c) => {
+        const fila: Fila = { id: nuevoId("cuentas_por_pagar"), numero_contrato: numero, tenant: args.p_tenant, moneda: "COP", ...c };
+        filas("cuentas_por_pagar").push(fila);
+        return { id: fila.id, tipo_proveedor: c.tipo_proveedor, proveedor: c.proveedor, servicio: c.servicio, servicio_id: c.servicio_id ?? null, valor_total: c.valor_total };
+      });
+      tablas.set("contrato_financiero_pendiente", filas("contrato_financiero_pendiente").filter((p) => p.numero_contrato !== numero));
+      return { creadas, eliminadas };
+    },
+    revertir_contrato_incompleto: (args) => {
+      const numero = String(args.p_numero_contrato);
+      for (const t of ["ventas", "contrato_items", "contrato_hoteles", "contrato_vuelos", "contrato_pasajeros", "contrato_servicios",
+        "aliados_b2b", "cuentas_por_pagar", "contrato_financiero_pendiente"]) {
+        tablas.set(t, filas(t).filter((f) => f.numero_contrato !== numero));
+      }
+      return null;
     },
   };
   return { sb, filas, tablas, llamadasRpc };

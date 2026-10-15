@@ -6,8 +6,9 @@ import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { formatMoneda } from "@/lib/utils";
 import { liquidarFacturacion } from "@/lib/contabilidad/facturacion";
-import { guardarFacturacion, quitarFacturacion, marcarDian } from "./actions";
+import { guardarFacturacion, quitarFacturacion, marcarDian, contabilizarAbonosPendientes, type RevisionFueraLibros } from "./actions";
 import { useRouter } from "next/navigation";
+import { AlertTriangle, Lock } from "lucide-react";
 
 export type FactRow = {
   numero_contrato: string;
@@ -104,9 +105,19 @@ function DianTab({ rows }: { rows: FactRow[] }) {
   const [q, setQ] = useState("");
   const [pending, start] = useTransition();
   const fil = (r: FactRow) => !q.trim() || `${r.numero_contrato} ${r.cliente ?? ""}`.toLowerCase().includes(q.toLowerCase());
+  const [errores, setErrores] = useState<Record<string, string>>({});
   const sinFacturar = rows.filter((r) => !r.dianEmitida && fil(r));
   const facturados = rows.filter((r) => r.dianEmitida && fil(r));
-  const toggle = (nc: string, emitida: boolean) => start(async () => { await marcarDian(nc, emitida); router.refresh(); });
+  // 208: el resultado se muestra (antes se ignoraba); la marca DIAN no se deshace.
+  const toggle = (nc: string, emitida: boolean) => start(async () => {
+    const r = await marcarDian(nc, emitida);
+    setErrores((e) => {
+      const resto = { ...e };
+      delete resto[nc];
+      return r.ok ? resto : { ...resto, [nc]: r.error };
+    });
+    router.refresh();
+  });
 
   return (
     <div className="space-y-3">
@@ -114,12 +125,12 @@ function DianTab({ rows }: { rows: FactRow[] }) {
       <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
         <Columna titulo={`Sin facturar a la DIAN (${sinFacturar.length})`} tono="#C0392B">
           {sinFacturar.length === 0 ? <ColVacia>Todo facturado.</ColVacia> : sinFacturar.map((r) => (
-            <DianFila key={r.numero_contrato} row={r} marcado={false} disabled={pending} onToggle={() => toggle(r.numero_contrato, true)} />
+            <DianFila key={r.numero_contrato} row={r} marcado={false} disabled={pending} error={errores[r.numero_contrato]} onToggle={() => toggle(r.numero_contrato, true)} />
           ))}
         </Columna>
         <Columna titulo={`Facturados / emitidos (${facturados.length})`} tono="var(--brand-success)">
           {facturados.length === 0 ? <ColVacia>Aún no marcas ninguno.</ColVacia> : facturados.map((r) => (
-            <DianFila key={r.numero_contrato} row={r} marcado disabled={pending} onToggle={() => toggle(r.numero_contrato, false)} />
+            <DianFila key={r.numero_contrato} row={r} marcado bloqueado disabled={pending} error={errores[r.numero_contrato]} onToggle={() => toggle(r.numero_contrato, false)} />
           ))}
         </Columna>
       </div>
@@ -135,14 +146,21 @@ function Columna({ titulo, tono, children }: { titulo: string; tono: string; chi
   );
 }
 function ColVacia({ children }: { children: React.ReactNode }) { return <p className="px-3 py-6 text-center text-sm text-gray-400">{children}</p>; }
-function DianFila({ row, marcado, disabled, onToggle }: { row: FactRow; marcado: boolean; disabled: boolean; onToggle: () => void }) {
+function DianFila({ row, marcado, bloqueado, disabled, error, onToggle }: {
+  row: FactRow; marcado: boolean; bloqueado?: boolean; disabled: boolean; error?: string; onToggle: () => void;
+}) {
   return (
-    <label className="flex cursor-pointer items-center gap-3 rounded-lg border border-transparent px-3 py-2 text-sm hover:bg-gray-50">
-      <input type="checkbox" checked={marcado} disabled={disabled} onChange={onToggle} className="h-4 w-4" />
-      <span className="font-mono text-[#1D7C9A]">{row.numero_contrato}</span>
-      <span className="flex-1 truncate text-gray-700">{row.cliente ?? "—"}</span>
-      <span className="shrink-0 tabular-nums text-gray-500">{formatMoneda(row.precio_venta, row.moneda)}</span>
-    </label>
+    <div>
+      <label className={`flex items-center gap-3 rounded-lg border border-transparent px-3 py-2 text-sm hover:bg-gray-50 ${bloqueado ? "cursor-default" : "cursor-pointer"}`}
+        title={bloqueado ? "Emitida a la DIAN: la marca no se deshace." : undefined}>
+        <input type="checkbox" checked={marcado} disabled={disabled || bloqueado} onChange={onToggle} className="h-4 w-4" />
+        <span className="font-mono text-[#1D7C9A]">{row.numero_contrato}</span>
+        <span className="flex-1 truncate text-gray-700">{row.cliente ?? "—"}</span>
+        {bloqueado && <Lock className="h-3.5 w-3.5 shrink-0 text-gray-400" aria-label="Marca DIAN definitiva" />}
+        <span className="shrink-0 tabular-nums text-gray-500">{formatMoneda(row.precio_venta, row.moneda)}</span>
+      </label>
+      {error && <p role="alert" className="px-3 pb-2 text-xs text-red-600">{error}</p>}
+    </div>
   );
 }
 
@@ -193,13 +211,19 @@ function Editor({ row, ivaPct }: { row: FactRow; ivaPct: number }) {
   const [error, setError] = useState<string | null>(null);
   const [ok, setOk] = useState(false);
   const [pending, start] = useTransition();
+  // 208: aviso de abonos fuera de libros (revisión + constancia al emitir).
+  const [revision, setRevision] = useState<RevisionFueraLibros | null>(null);
+  const [revisado, setRevisado] = useState(false);
+  const [nota, setNota] = useState("");
+  const [aviso, setAviso] = useState<string | null>(null);
   const fmt = (n: number) => formatMoneda(n, row.moneda);
+  const hayPendientes = (revision?.pendientes.length ?? 0) > 0;
 
   const liq = liquidarFacturacion({ pvp: row.precio_venta, irt, ingresoExento: Number(exento) || 0 }, ivaPct);
   const excede = irt + (Number(exento) || 0) > row.precio_venta + 0.5;
 
   function guardar() {
-    setError(null); setOk(false);
+    setError(null); setOk(false); setAviso(null);
     start(async () => {
       const r = await guardarFacturacion({
         numeroContrato: row.numero_contrato,
@@ -208,12 +232,38 @@ function Editor({ row, ivaPct }: { row: FactRow; ivaPct: number }) {
         ingresoExento: Number(exento) || 0,
         tipoExento,
         observacion: obs,
+        ...(revision && revisado ? { hashRevision: revision.hash, notaRevision: nota } : {}),
       });
-      if (!r.ok) setError(r.error); else { setOk(true); router.refresh(); }
+      if (!r.ok) {
+        setError(r.error);
+        if ("revision" in r && r.revision !== undefined) {
+          // Aviso nuevo o actualizado: hay que volver a revisarlo.
+          setRevision(r.revision);
+          setRevisado(false);
+        }
+        return;
+      }
+      setOk(true); setRevision(null); setRevisado(false); setNota("");
+      router.refresh();
     });
   }
   function quitar() {
-    start(async () => { await quitarFacturacion(row.numero_contrato); router.refresh(); });
+    setError(null); setOk(false); setAviso(null);
+    start(async () => {
+      const r = await quitarFacturacion(row.numero_contrato);
+      if (!r.ok) { setError(r.error); return; }
+      router.refresh();
+    });
+  }
+  function contabilizar() {
+    setError(null); setAviso(null);
+    start(async () => {
+      const r = await contabilizarAbonosPendientes(row.numero_contrato);
+      if (!r.ok) { setError(r.error); return; }
+      setRevision(null); setRevisado(false);
+      setAviso(`${r.contabilizados} abono(s) contabilizado(s). Vuelve a guardar la factura.`);
+      router.refresh();
+    });
   }
 
   return (
@@ -254,13 +304,23 @@ function Editor({ row, ivaPct }: { row: FactRow; ivaPct: number }) {
           <label className="mb-1 block text-xs font-medium text-gray-600">Observación</label>
           <Input value={obs} onChange={(e) => setObs(e.target.value)} placeholder="Nota tributaria (opcional)" />
         </div>
-        {error && <p className="text-sm text-red-600">{error}</p>}
+        {row.dianEmitida && (
+          <p className="flex items-center gap-1.5 rounded-md bg-gray-50 px-2 py-1 text-xs text-gray-600">
+            <Lock className="h-3.5 w-3.5" /> Emitida a la DIAN: esta factura ya no se cambia ni se quita.
+          </p>
+        )}
+        {revision && (
+          <AvisoFueraLibros revision={revision} revisado={revisado} setRevisado={setRevisado} nota={nota} setNota={setNota}
+            onContabilizar={contabilizar} pending={pending} />
+        )}
+        {error && <p role="alert" className="text-sm text-red-600">{error}</p>}
+        {aviso && <p className="text-sm text-[#3d7a63]">{aviso}</p>}
         <div className="flex items-center gap-3">
-          <Button onClick={guardar} disabled={pending} style={{ backgroundColor: "var(--brand-primary)" }}>
-            {pending ? "Guardando…" : "Guardar"}
+          <Button onClick={guardar} disabled={pending || row.dianEmitida || hayPendientes || (!!revision && !revisado)} style={{ backgroundColor: "var(--brand-primary)" }}>
+            {pending ? "Guardando…" : revision ? "Emitir con aviso" : "Guardar"}
           </Button>
           {ok && <span className="text-xs text-[#3d7a63]">Guardado ✓</span>}
-          {row.cfg && (
+          {row.cfg && !row.dianEmitida && (
             <button type="button" onClick={quitar} disabled={pending} className="text-xs font-medium text-red-500 hover:underline disabled:opacity-50">
               Quitar (volver al por defecto)
             </button>
@@ -287,6 +347,48 @@ function Editor({ row, ivaPct }: { row: FactRow; ivaPct: number }) {
         )}
         <p className="text-[11px] text-gray-400">Las provisiones de rentabilidad se calculan sobre el ingreso propio.</p>
       </div>
+    </div>
+  );
+}
+
+// Aviso de abonos fuera de libros (208). Emitir NO corrige Cartera ni los
+// libros de esos abonos: deja constancia de que se revisaron.
+function AvisoFueraLibros({ revision, revisado, setRevisado, nota, setNota, onContabilizar, pending }: {
+  revision: RevisionFueraLibros; revisado: boolean; setRevisado: (v: boolean) => void;
+  nota: string; setNota: (v: string) => void; onContabilizar: () => void; pending: boolean;
+}) {
+  const fmt = (n: number) => formatMoneda(n, "COP");
+  const pendientes = revision.pendientes.length;
+  return (
+    <div role="region" aria-label="Abonos fuera de libros" className="space-y-2 rounded-md border border-amber-200 bg-amber-50 p-3 text-xs text-amber-800">
+      <p className="flex items-center gap-1.5 font-semibold">
+        <AlertTriangle className="h-4 w-4" /> Este contrato tiene abonos que el libro diario no respalda
+      </p>
+      <ul className="list-disc space-y-0.5 pl-5">
+        {revision.abonos.map((a) => <li key={a.id}>{a.mensaje}</li>)}
+      </ul>
+      <p>
+        Sin respaldo: <b className="tabular-nums">{fmt(revision.totalSinRespaldo)}</b>
+        {revision.totalExceso > 0 && <> · De más en el libro: <b className="tabular-nums">{fmt(revision.totalExceso)}</b></>}
+        {revision.noCalculables > 0 && <> · No calculables: <b>{revision.noCalculables}</b></>}
+      </p>
+      {pendientes > 0 ? (
+        <div className="flex items-center gap-3">
+          <span>Hay {pendientes} abono(s) recientes sin asiento: contabilízalos antes de facturar.</span>
+          <button type="button" onClick={onContabilizar} disabled={pending} className="font-medium underline disabled:opacity-50">
+            Contabilizar pendientes
+          </button>
+        </div>
+      ) : (
+        <>
+          <p>Emitir la factura no corrige Cartera ni los libros de estos abonos: queda constancia de que los revisaste.</p>
+          <label className="flex cursor-pointer items-center gap-2">
+            <input type="checkbox" checked={revisado} onChange={(e) => setRevisado(e.target.checked)} className="h-4 w-4" />
+            <span>Revisé estos abonos y emito la factura con este aviso</span>
+          </label>
+          <Input value={nota} onChange={(e) => setNota(e.target.value)} placeholder="Nota de la revisión (opcional)" className="bg-white" />
+        </>
+      )}
     </div>
   );
 }
