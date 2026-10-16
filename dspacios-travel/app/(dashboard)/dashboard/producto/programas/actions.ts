@@ -3,6 +3,7 @@
 import { createClient } from "@/lib/supabase/server";
 import { revalidatePath } from "next/cache";
 import { parsearPrograma } from "@/lib/programasImport";
+import { limpiarAlojamientoPrevisto } from "@/lib/programas";
 import { salidaTieneContenido, tieneImpuestoAcomodacionNegativo, tieneTarifaNegativa } from "@/lib/programas/salidasGuardado";
 import { resolverValorReglaAcomodacion, validarReglaComisionable, validarTarifaModalidad, esModalidadMkValida, type ModalidadMk } from "@/lib/calc/programaPrecio";
 import {
@@ -201,23 +202,25 @@ export async function eliminarPrograma(id: number): Promise<Result> {
 // ── Ciudades (ruta) ───────────────────────────────────────────────────────────
 export async function guardarCiudades(
   programaId: number,
-  ciudades: { nombre: string; codigoIata: string; noches: number | null }[]
+  ciudades: { nombre: string; codigoIata: string; noches: number | null; alojamientoPrevisto?: string | null }[]
 ): Promise<Result> {
   const sb = await createClient();
-  await sb.from("programa_ciudades").delete().eq("programa_id", programaId);
-  const filas = ciudades
-    .filter((c) => c.nombre.trim())
-    .map((c, i) => ({
-      programa_id: programaId,
-      orden: i,
-      nombre: c.nombre.trim(),
-      codigo_iata: oNull(c.codigoIata),
-      noches: num(c.noches) ?? 0,
-    }));
-  if (filas.length) {
-    const { error } = await sb.from("programa_ciudades").insert(filas);
-    if (error) return { ok: false, error: error.message };
-  }
+  // Reemplazo ATÓMICO en la base (migración 212): borrar + insertar en una sola
+  // transacción, serializada por programa. Si el cliente no manda el campo
+  // (pestaña/bundle viejo) la RPC conserva el alojamiento ya guardado de la
+  // ciudad con ese nombre; si lo manda (aunque vacío) manda lo enviado.
+  const { error } = await sb.rpc("reemplazar_ruta_programa", {
+    p_programa_id: programaId,
+    p_ciudades: ciudades
+      .filter((c) => c.nombre.trim())
+      .map((c) => ({
+        nombre: c.nombre.trim(),
+        codigo_iata: oNull(c.codigoIata),
+        noches: num(c.noches) ?? 0,
+        ...(c.alojamientoPrevisto === undefined ? {} : { alojamiento_previsto: limpiarAlojamientoPrevisto(c.alojamientoPrevisto) }),
+      })),
+  });
+  if (error) return { ok: false, error: error.message };
   rev(programaId);
   return { ok: true };
 }
@@ -591,15 +594,13 @@ export async function importarDesdeTexto(
   }
 
   if (opciones.ruta && parsed.ciudades.length) {
-    await sb.from("programa_ciudades").delete().eq("programa_id", programaId);
-    const filas = parsed.ciudades.map((nombre, i) => ({
-      programa_id: programaId,
-      orden: i,
-      nombre: nombre.trim(),
-      codigo_iata: null,
-      noches: 0,
-    }));
-    const { error } = await sb.from("programa_ciudades").insert(filas);
+    // El alojamiento previsto no viene en el texto del proveedor: se omite la
+    // clave y la RPC atómica (migración 212) conserva el de cada ciudad por
+    // nombre y orden de aparición, en la misma transacción que reemplaza la ruta.
+    const { error } = await sb.rpc("reemplazar_ruta_programa", {
+      p_programa_id: programaId,
+      p_ciudades: parsed.ciudades.map((nombre) => ({ nombre: nombre.trim(), codigo_iata: null, noches: 0 })),
+    });
     if (error) return { ok: false, error: error.message };
   }
 

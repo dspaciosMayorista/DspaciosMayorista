@@ -2722,6 +2722,7 @@ export type Database = {
           nombre: string;
           codigo_iata: string | null;
           noches: number;
+          alojamiento_previsto: string | null;
         };
         Insert: {
           id?: number;
@@ -2730,6 +2731,7 @@ export type Database = {
           nombre: string;
           codigo_iata?: string | null;
           noches?: number;
+          alojamiento_previsto?: string | null;
         };
         Update: Partial<Database["public"]["Tables"]["programa_ciudades"]["Insert"]>;
         Relationships: [];
@@ -3567,6 +3569,12 @@ export type Database = {
       fn_fusionar_destino: {
         Args: { p_origen: number; p_destino: number };
         Returns: undefined;
+      };
+      // Migración 212: reemplazo ATÓMICO de la ruta de un programa (delete + insert
+      // en una transacción, serializado por programa). Devuelve las ciudades insertadas.
+      reemplazar_ruta_programa: {
+        Args: { p_programa_id: number; p_ciudades: Json };
+        Returns: number;
       };
       // Migración 179 (PROPUESTA — no aplicada todavía). Reemplazo
       // TRANSACCIONAL de las tarifas de `tarifa_hotel` generadas por la

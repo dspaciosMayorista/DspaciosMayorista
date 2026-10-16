@@ -19,6 +19,16 @@ import { pvpPrograma, type PvpOpciones } from "./calc/programaPrecio.ts";
 type SB = SupabaseClient<Database>;
 type ProgramaRow = Database["public"]["Tables"]["programas"]["Row"];
 
+/** Largo máximo del alojamiento previsto (coincide con el CHECK de la migración 212). */
+export const ALOJAMIENTO_PREVISTO_MAX = 200;
+
+/** Texto libre opcional: recorta, colapsa vacío a null y respeta el máximo. */
+export function limpiarAlojamientoPrevisto(v: unknown): string | null {
+  if (typeof v !== "string") return null;
+  const t = v.trim();
+  return t ? t.slice(0, ALOJAMIENTO_PREVISTO_MAX) : null;
+}
+
 /** Solo markup: neto / (1 - mk). Se mantiene para compatibilidad. */
 export function pvpDesdeNeto(neto: number, pctMk: number): number {
   const mk = Number(pctMk) || 0;
@@ -238,7 +248,7 @@ export async function getProgramasResumen(sb: SB, soloPublicados = true): Promis
 export type ProgramaDetalle = {
   programa: ProgramaRow;
   proveedorNombre: string | null;
-  ciudades: { id: number; nombre: string; codigo_iata: string | null; noches: number }[];
+  ciudades: { id: number; nombre: string; codigo_iata: string | null; noches: number; alojamiento_previsto: string | null }[];
   dias: { dia: number; titulo: string | null; desayuno: boolean; almuerzo: boolean; cena: boolean; descripcion: string | null }[];
   categorias: {
     id: number;
@@ -281,7 +291,7 @@ export async function getProgramaDetalle(sb: SB, id: number): Promise<ProgramaDe
 
   const [{ data: ciudades }, { data: dias }, { data: categorias }, { data: hoteles }, { data: precios }, { data: salidasRaw }, { data: inclusiones }, { data: tours }, { data: blackouts }] =
     await Promise.all([
-      sb.from("programa_ciudades").select("id, nombre, codigo_iata, noches").eq("programa_id", id).order("orden"),
+      sb.from("programa_ciudades").select("id, nombre, codigo_iata, noches, alojamiento_previsto").eq("programa_id", id).order("orden"),
       sb.from("programa_dias").select("dia, titulo, desayuno, almuerzo, cena, descripcion").eq("programa_id", id).order("dia"),
       sb.from("programa_categorias").select("id, nombre, orden").eq("programa_id", id).order("orden"),
       sb.from("programa_categoria_hoteles").select("categoria_id, ciudad, hotel, orden").order("orden"),

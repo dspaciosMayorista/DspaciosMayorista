@@ -1,0 +1,29 @@
+// Loader COMPLEMENTARIO de pruebas/programaRutaAlojamiento.react.ts (se registra
+// DESPUÉS de reactLoader.mjs, por lo que corre primero). Solo redirige, para los
+// archivos de programas bajo prueba, los módulos que no existen fuera de Next
+// (next/cache, next/navigation, cliente servidor de Supabase, tenant.server).
+import { fileURLToPath, pathToFileURL } from "node:url";
+import { dirname, join } from "node:path";
+
+const AQUI = dirname(fileURLToPath(import.meta.url));
+const stub = (n) => pathToFileURL(join(AQUI, "stubs", n)).href;
+
+const PADRES = [
+  "/dashboard/producto/programas/actions.ts",
+  "/tarifario/programa/[id]/page.tsx",
+  "/tarifario/programa/[id]/doc/page.tsx",
+];
+const DESTINOS = {
+  "@/lib/supabase/server": stub("supabaseServerStub.mjs"),
+  "next/cache": stub("nextCacheStub.mjs"),
+  "next/navigation": stub("programasRutaStub.mjs"),
+  "@/lib/tenant.server": stub("programasRutaStub.mjs"),
+};
+
+export async function resolve(specifier, context, nextResolve) {
+  const padre = decodeURIComponent(context.parentURL ?? "");
+  if (DESTINOS[specifier] && PADRES.some((p) => padre.endsWith(p))) {
+    return { url: DESTINOS[specifier], shortCircuit: true };
+  }
+  return nextResolve(specifier, context);
+}
