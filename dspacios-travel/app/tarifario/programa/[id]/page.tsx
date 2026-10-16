@@ -241,6 +241,22 @@ export default async function ProgramaVitrinaPage({ params }: { params: Promise<
           </section>
         )}
 
+        {/* Alojamiento previsto por ciudad (texto libre, informativo) */}
+        {det.ciudades.some((c) => c.alojamiento_previsto) && (
+          <section>
+            <h2 className="mb-3 text-xl font-semibold text-gray-900">Alojamiento previsto</h2>
+            <ul className="divide-y divide-gray-100 rounded-xl border border-gray-200 bg-white text-sm">
+              {det.ciudades.filter((c) => c.alojamiento_previsto).map((c) => (
+                <li key={c.id} className="flex flex-wrap gap-x-3 px-4 py-3">
+                  <span className="font-medium text-gray-700">{c.nombre}</span>
+                  <span className="text-gray-600">{c.alojamiento_previsto}</span>
+                </li>
+              ))}
+            </ul>
+            <p className="mt-2 text-xs text-gray-400">Referencia sujeta a disponibilidad; no constituye un hotel confirmado.</p>
+          </section>
+        )}
+
         {/* Itinerario */}
         {det.dias.length > 0 && (
           <section>

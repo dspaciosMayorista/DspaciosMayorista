@@ -44,7 +44,7 @@ import { ComboCiudad } from "@/components/ComboCiudad";
 import type { DestinoOpt } from "@/components/ComboDestino";
 
 type ProgramaRow = Database["public"]["Tables"]["programas"]["Row"];
-type Ciudad = { id: number; nombre: string; codigo_iata: string | null; noches: number };
+type Ciudad = { id: number; nombre: string; codigo_iata: string | null; noches: number; alojamiento_previsto?: string | null };
 type Dia = { dia: number; titulo: string | null; desayuno: boolean; almuerzo: boolean; cena: boolean; descripcion: string | null };
 type Categoria = { id: number; nombre: string | null; orden: number };
 type HotelRow = { categoria_id: number; ciudad: string; hotel: string | null; orden: number };
@@ -369,7 +369,7 @@ function DelBtn({ onClick }: { onClick: () => void }) {
 // ── Ruta (ciudades) ───────────────────────────────────────────────────────────
 function RutaEditor({ programaId, ciudades, destinos }: { programaId: number; ciudades: Ciudad[]; destinos: DestinoOpt[] }) {
   const [rows, setRows] = useState(
-    ciudades.map((c) => ({ nombre: c.nombre, codigoIata: c.codigo_iata ?? "", noches: c.noches as number | null }))
+    ciudades.map((c) => ({ nombre: c.nombre, codigoIata: c.codigo_iata ?? "", noches: c.noches as number | null, alojamientoPrevisto: c.alojamiento_previsto ?? "" }))
   );
   const upd = (i: number, k: string, v: unknown) => setRows((p) => p.map((r, j) => (j === i ? { ...r, [k]: v } : r)));
   // Al elegir un destino del catálogo, auto-rellena el IATA de esa fila (si el destino lo tiene).
@@ -381,7 +381,7 @@ function RutaEditor({ programaId, ciudades, destinos }: { programaId: number; ci
     }));
   return (
     <div>
-      <p className="mb-3 text-sm text-gray-500">Ciudades del circuito, en orden. Las noches suman el total del programa.</p>
+      <p className="mb-3 text-sm text-gray-500">Ciudades del circuito, en orden. Las noches suman el total del programa. El alojamiento previsto es un texto libre opcional (hotel, categoría o &ldquo;similar&rdquo;): se muestra al cliente como referencia, no se vincula al catálogo ni cambia precios.</p>
       <div className="space-y-2">
         {rows.map((r, i) => (
           <div key={i} className="flex flex-wrap items-center gap-2">
@@ -389,12 +389,13 @@ function RutaEditor({ programaId, ciudades, destinos }: { programaId: number; ci
             <div className="w-56"><ComboCiudad destinos={destinos} value={r.nombre} onChange={(v) => setCiudad(i, v)} modo="nombre" permitirLibre placeholder="Ciudad" /></div>
             <Input value={r.codigoIata} onChange={(e) => upd(i, "codigoIata", e.target.value)} placeholder="IATA" className="w-24" />
             <Input type="number" value={r.noches ?? ""} onChange={(e) => upd(i, "noches", e.target.value === "" ? null : Number(e.target.value))} placeholder="Noches" className="w-28" />
+            <Input value={r.alojamientoPrevisto} onChange={(e) => upd(i, "alojamientoPrevisto", e.target.value)} maxLength={200} placeholder="Alojamiento previsto (opcional): hotel, categoría o similar" aria-label={`Alojamiento previsto de ${r.nombre || "la ciudad " + (i + 1)}`} className="w-80" />
             <DelBtn onClick={() => setRows((p) => p.filter((_, j) => j !== i))} />
           </div>
         ))}
       </div>
       <div className="mt-3">
-        <AddBtn onClick={() => setRows((p) => [...p, { nombre: "", codigoIata: "", noches: null }])}>+ Agregar ciudad</AddBtn>
+        <AddBtn onClick={() => setRows((p) => [...p, { nombre: "", codigoIata: "", noches: null, alojamientoPrevisto: "" }])}>+ Agregar ciudad</AddBtn>
       </div>
       <SaveBar onSave={() => guardarCiudades(programaId, rows)} />
     </div>

@@ -232,6 +232,19 @@ export default async function ProgramaDocPage({
                 </section>
               )}
 
+              {/* Alojamiento previsto por ciudad (texto libre, informativo) */}
+              {det.ciudades.some((c) => c.alojamiento_previsto) && (
+                <section className="mb-5 break-inside-avoid">
+                  <h2 className="mb-2 text-sm font-bold uppercase tracking-wide text-gray-700">Alojamiento previsto</h2>
+                  <ul className="space-y-1 text-xs text-gray-600">
+                    {det.ciudades.filter((c) => c.alojamiento_previsto).map((c) => (
+                      <li key={c.id}><span className="font-semibold text-gray-800">{c.nombre}:</span> {c.alojamiento_previsto}</li>
+                    ))}
+                  </ul>
+                  <p className="mt-1 text-[10px] text-gray-400">Referencia sujeta a disponibilidad; no constituye un hotel confirmado.</p>
+                </section>
+              )}
+
               {/* Itinerario */}
               {det.dias.length > 0 && (
                 <section className="mb-5">
