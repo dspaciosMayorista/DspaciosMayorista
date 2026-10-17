@@ -4,6 +4,7 @@ import Link from "next/link";
 import { Button } from "@/components/ui/button";
 import { formatMoneda, formatFechaLarga } from "@/lib/utils";
 import { ResponsiveTableShell } from "@/components/ui/ResponsiveTableShell";
+import { desdeComparativa } from "@/lib/cotizacion/comparativa";
 
 export const dynamic = "force-dynamic";
 
@@ -20,10 +21,21 @@ export default async function CotizacionesPage() {
   // global — puede alternar de agencia, pero no ve las dos mezcladas de una).
   let q = sb
     .from("cotizaciones")
-    .select("id, codigo, tipo, moneda, cliente, destino, hotel, fecha_salida, precio_venta, estado, numero_contrato, vigencia_hasta, created_at")
+    .select("id, codigo, tipo, modo, moneda, cliente, destino, hotel, fecha_salida, precio_venta, estado, numero_contrato, vigencia_hasta, created_at")
     .order("created_at", { ascending: false });
   if (ctx.ok && !ctx.superadmin) q = q.eq("tenant", ctx.tenant);
   const { data: cots } = ctx.ok ? await q : { data: [] };
+
+  // #35: una comparativa no tiene precio_venta (NULL). Se muestra «desde» el mínimo REAL de sus
+  // opciones; jamás un $0 ficticio ni la suma de hoteles alternativos.
+  const idsMadre = (cots ?? []).filter((c) => c.modo === "comparativa").map((c) => c.id);
+  const { data: opsMadre } = idsMadre.length
+    ? await sb.from("cotizacion_opciones").select("cotizacion_id, total, moneda").in("cotizacion_id", idsMadre)
+    : { data: [] };
+  const desdePorMadre = new Map<number, ReturnType<typeof desdeComparativa>>();
+  for (const id of idsMadre) {
+    desdePorMadre.set(id, desdeComparativa((opsMadre ?? []).filter((o) => o.cotizacion_id === id).map((o) => ({ total: Number(o.total), moneda: o.moneda }))));
+  }
 
   return (
     <div className="mx-auto max-w-5xl p-4 md:p-8">
@@ -73,6 +85,9 @@ export default async function CotizacionesPage() {
                     {c.tipo === "manual" && (
                       <span className="ml-1.5 rounded bg-[color:var(--brand-accent)]/15 px-1.5 py-0.5 align-middle font-sans text-[9px] font-semibold uppercase tracking-wide" style={{ color: "var(--brand-primary)" }}>Dinámica</span>
                     )}
+                    {c.modo === "comparativa" && (
+                      <span className="ml-1.5 rounded bg-sky-50 px-1.5 py-0.5 align-middle font-sans text-[9px] font-semibold uppercase tracking-wide text-sky-700">Comparativa</span>
+                    )}
                     {c.tipo === "carrito" && (
                       <span className="ml-1.5 rounded bg-[color:var(--brand-success)]/15 px-1.5 py-0.5 align-middle font-sans text-[9px] font-semibold uppercase tracking-wide" style={{ color: "var(--brand-success)" }}>Carrito</span>
                     )}
@@ -83,7 +98,9 @@ export default async function CotizacionesPage() {
                   <td className="px-4 py-3 text-gray-700" data-label="Cliente">{c.cliente ?? "—"}</td>
                   <td className="px-4 py-3 text-gray-500" data-label="Destino">{c.destino ?? "—"}</td>
                   <td className="px-4 py-3 text-gray-500" data-label="Salida">{formatFechaLarga(c.fecha_salida)}</td>
-                  <td className="px-4 py-3 text-right tabular-nums text-gray-700" data-label="Valor">{formatMoneda(c.precio_venta ?? 0, c.moneda)}</td>
+                  <td className="px-4 py-3 text-right tabular-nums text-gray-700" data-label="Valor">{c.modo === "comparativa"
+                      ? (() => { const d = desdePorMadre.get(c.id); return d ? <span title="Valor mínimo entre las opciones; cada hotel tiene su propio total">desde {formatMoneda(d.total, d.moneda)}</span> : <span>—</span>; })()
+                      : formatMoneda(c.precio_venta ?? 0, c.moneda)}</td>
                   <td className="px-4 py-3" data-label="Estado">
                     <span className={`rounded-full px-2 py-0.5 text-xs ${ESTADO_BADGE[c.estado] ?? "bg-gray-100 text-gray-600"}`}>
                       {c.estado}

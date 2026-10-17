@@ -52,6 +52,7 @@ import { BuscadorBooking, Resultado, type EstadoBusquedaPorcion } from "./Buscad
 import type { OpcionUnidadConfirmada } from "./busquedaUnidadActions";
 import { claveBusquedaUnidad, claveReservaUnidad, revalidarReservaUnidad } from "@/lib/tarifario/identidadReservaUnidad";
 import { BuscadorReceptivos } from "./BuscadorReceptivos";
+import { ModoComparativaBooking } from "@/lib/cotizacion/comparativaBooking";
 import { BackgroundVideo } from "@/components/BackgroundVideo";
 import { LoadingScreen } from "@/components/LoadingScreen";
 import type { FilaTarifario, CapHotel } from "./TarifarioPublic";
@@ -1691,6 +1692,9 @@ export function VistaBooking({
   return (
     <div>
       {subtabsSlot && createPortal(subtabsBotones, subtabsSlot)}
+
+      {/* #35: modo explícito «Cotización comparativa» (apagado por defecto) */}
+      <ModoComparativaBooking />
 
       {/* Buscador de BLOQUEOS: origen → destino → salida (vuelo) */}
       {sub === "bloqueo" && (

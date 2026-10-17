@@ -12,6 +12,7 @@ import type {
 import type { ComposicionBernaloDocumento, HabitacionBernaloDocumento } from "@/lib/reservar/alojamientoBernaloDocumento";
 import { condicionesTarifaParaRender } from "@/lib/calc/condicionesTarifa";
 import { tituloDocumento } from "@/lib/utils/tituloDocumento";
+import { paginaPublicaComparativa } from "@/lib/cotizacion/comparativaDocumento";
 
 export const dynamic = "force-dynamic";
 
@@ -49,6 +50,11 @@ type Detalle = {
 // cotización exacta.
 export default async function CotizacionPublicaPage({ params }: { params: Promise<{ token: string }> }) {
   const { token } = await params;
+  // #35: una comparativa (enlace de SOLO lectura) se resuelve en su propio componente, también únicamente por
+  // share_token. Para continuar con una opción hay que pasar por el checkout o enviar una solicitud: el token nunca escribe.
+  const comparativa = await paginaPublicaComparativa(token);
+  if (comparativa) return comparativa;
+
   const sb = createAdminClient();
 
   const { data: cot } = await sb

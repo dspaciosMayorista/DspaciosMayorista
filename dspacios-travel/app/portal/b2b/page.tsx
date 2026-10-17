@@ -145,12 +145,27 @@ export default async function PortalB2BPage() {
   const { data: cotsRaw } = nombre || user.email
     ? await admin
         .from("cotizaciones")
-        .select("id, codigo, cliente, destino, hotel, pax, precio_venta, moneda, fecha_salida, vigencia_hasta, estado, share_token, numero_contrato, created_at")
+        .select("id, codigo, modo, cliente, destino, hotel, pax, precio_venta, moneda, fecha_salida, vigencia_hasta, estado, share_token, numero_contrato, created_at")
         .eq("creado_por", user.email ?? "")
         .eq("tenant", perfil?.tenant ?? "mayorista")
         .order("created_at", { ascending: false })
     : { data: [] as Record<string, unknown>[] };
-  const cotizaciones = (cotsRaw ?? []).filter((c) => c.estado !== "descartada");
+  // #35: las comparativas (precio NULL, se verían como $0) van en su propia sección.
+  const cotizaciones = (cotsRaw ?? []).filter((c) => c.estado !== "descartada" && c.modo !== "comparativa");
+
+  // #35: comparativas del aliado. La propiedad la decide la BASE con la identidad de la SESIÓN
+  // (auth.uid() → vínculo de aliado aprobado o propietario); aquí no se compara por email ni nombre.
+  // Se llama con el cliente de sesión `sb`, nunca con service-role y sin ningún parámetro de usuario.
+  // Tolerante: si la RPC aún no existe (código desplegado antes que la migración 211) o falla, la sección simplemente
+  // no aparece; nunca tumba el portal.
+  let comparativasRaw: unknown = null;
+  try { comparativasRaw = (await sb.rpc("comparativas_b2b_visibles")).data; } catch { comparativasRaw = null; }
+  const comparativas = (comparativasRaw ?? []) as unknown as Array<{
+    id: number; codigo: string; share_token: string; estado: string; destino: string | null; fecha_salida: string | null;
+    moneda: string | null; vigencia_hasta: string | null;
+    opciones: Array<{ opcion: string; acomodacion: string; etiqueta: string; total: number; moneda: string }>;
+    hija: { codigo: string; estado: string; numero_contrato: string | null } | null;
+  }>;
 
   return (
     <Shell nombre={nombre}>
@@ -230,6 +245,48 @@ export default async function PortalB2BPage() {
             </tbody>
           </table>
         </div>
+      )}
+
+      {comparativas.length > 0 && (
+        <>
+          <div id="mis-comparativas" className="mb-3 flex flex-wrap items-center justify-between gap-3">
+            <h2 className="text-lg font-semibold text-gray-900">Mis comparativas</h2>
+            <p className="text-xs text-gray-500">Compara hoteles y escoge uno; cada total es de ese hotel, no se suman.</p>
+          </div>
+          <div className="mb-8 space-y-3">
+            {comparativas.map((c) => {
+              const mejores = new Map<string, { etiqueta: string; total: number; moneda: string }>();
+              for (const o of c.opciones) {
+                const prev = mejores.get(o.opcion);
+                if (!prev || Number(o.total) < prev.total) mejores.set(o.opcion, { etiqueta: o.etiqueta, total: Number(o.total), moneda: o.moneda });
+              }
+              return (
+                <div key={c.id} className="rounded-xl border border-gray-200 bg-white p-4">
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <div>
+                      <span className="font-mono font-semibold text-[#1D7C9A]">{c.codigo}</span>
+                      <span className="ml-2 text-sm text-gray-600">{c.destino ?? "—"}</span>
+                      <span className="ml-2 text-xs text-gray-400">{c.fecha_salida ? formatFechaLarga(c.fecha_salida) : ""} · vigente hasta {c.vigencia_hasta ? formatFechaLarga(c.vigencia_hasta) : "—"}</span>
+                    </div>
+                    <a href={`/cot/${c.share_token}`} target="_blank" rel="noopener noreferrer" className="text-xs font-medium hover:underline" style={{ color: "var(--brand-primary)" }}>
+                      {c.hija ? "Ver la comparativa" : "Ver y elegir una opción"}
+                    </a>
+                  </div>
+                  <ul className="mt-2 grid grid-cols-1 gap-1 text-xs text-gray-600 sm:grid-cols-3">
+                    {[...mejores.entries()].map(([ref, o]) => (
+                      <li key={ref} className="rounded-lg bg-gray-50 px-3 py-1.5">Opción {ref} · {o.etiqueta}: <b className="tabular-nums">desde {formatMoneda(o.total, o.moneda)}</b></li>
+                    ))}
+                  </ul>
+                  {c.hija && (
+                    <p className="mt-2 text-xs text-green-700">
+                      Opción elegida: cotización {c.hija.codigo}{c.hija.numero_contrato ? ` · contrato ${c.hija.numero_contrato}` : ""}.
+                    </p>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+        </>
       )}
 
       <div id="mis-ventas" className="mb-5 flex flex-wrap items-center justify-between gap-3">

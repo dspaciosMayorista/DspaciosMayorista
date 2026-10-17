@@ -17,6 +17,8 @@ import { RecobroNinosEditor } from "./RecobroNinosEditor";
 import { ConvertirCarritoBtn } from "./ConvertirCarritoBtn";
 import { resolverVinculosCotizacion } from "@/lib/reservar/vinculoServiciosCheckout";
 import { ROLES_CONTRATO_COMPLETO } from "@/lib/roles";
+import { FichaComparativa } from "@/lib/cotizacion/comparativaDocumento";
+import { hoyBogota } from "@/lib/cotizacion/vigencia";
 import PagosPreviosPanel, { type PagoPrevioUI } from "@/components/cotizacion/PagosPreviosPanel";
 
 const TIPO_SERV_LABEL: Record<string, string> = {
@@ -53,6 +55,9 @@ export default async function CotizacionDetallePage({
   // (404) que "no existe" — no delata si el id pertenece a otra agencia.
   const ctxAcceso = await contextoCotizacion();
   if (!autorizaTenant(ctxAcceso, c.tenant)) notFound();
+
+  // #35: una comparativa (madre) no tiene editores, pagos ni conversión: tiene su propia ficha.
+  if (c.modo === "comparativa") return <FichaComparativa madre={c} puedeResolver hoy={hoyBogota()} />;
 
   const esManual = c.tipo === "manual";
   // Cotización combinada generada desde el carrito del tarifario público

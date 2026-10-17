@@ -6,8 +6,9 @@ import { useRouter } from "next/navigation";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { formatMoneda } from "@/lib/utils";
-import { Plane, Hotel, Car, HeartPulse, Plus, Trash2, type LucideIcon } from "lucide-react";
-import { crearCotizacionManual, type ServicioManual } from "../manual-actions";
+import { Plane, Hotel, Car, HeartPulse, Plus, Trash2, GitCompareArrows, type LucideIcon } from "lucide-react";
+import { crearCotizacionManual, crearComparativaManual, type ServicioManual } from "../manual-actions";
+import { OPCIONES_REF, MAX_OPCIONES, type OpcionRef } from "@/lib/cotizacion/comparativa";
 import { sugerirIncluye, NO_INCLUYE_DEFAULT } from "@/lib/cotizacion/incluye";
 import { hoyBogota, vigenciaInicial } from "@/lib/cotizacion/vigencia";
 
@@ -22,7 +23,7 @@ const TIPOS: { value: string; label: string; icon: LucideIcon }[] = [
   { value: "otro", label: "Otro", icon: Plus },
 ];
 
-type Fila = ServicioManual & { _id: number };
+type Fila = ServicioManual & { _id: number; opcionRef?: OpcionRef | null };
 let _seq = 1;
 
 const lbl = "mb-1 block text-xs font-medium text-gray-600";
@@ -66,6 +67,9 @@ export function CotizacionManualForm({ asesores, aliados, miNombre, miRolVenta, 
   const [asesorInterno, setAsesorInterno] = useState(miRolVenta ? miNombre : "");
   const [aliadoNombre, setAliadoNombre] = useState("");
 
+  // Modo explícito «Cotización comparativa» (#35). Apagado por defecto: el flujo simple no cambia.
+  const [comparativa, setComparativa] = useState(false);
+
   // Markup general + servicios
   const [markupGeneral, setMarkupGeneral] = useState("20");
   const [filas, setFilas] = useState<Fila[]>([]);
@@ -80,6 +84,14 @@ export function CotizacionManualForm({ asesores, aliados, miNombre, miRolVenta, 
   const totalNinos = nNinos * valorNino;
   const recobroN = Math.max(Number(recobro) || 0, 0);
   const totalCotizacion = totalServicios + totalNinos + recobroN;
+
+  // Comparativa: lo común (aéreo, traslados, asistencia, otros) se cuenta UNA vez en cada hotel.
+  // NUNCA se suma un hotel con otro: cada opción tiene su propio total.
+  const comunes = filas.filter((f) => f.tipo !== "hotel").reduce((s, f) => s + valor({ ...f, modo: efModo(f) }), 0);
+  const opcionesUsadas = OPCIONES_REF.filter((r) => filas.some((f) => f.tipo === "hotel" && f.opcionRef === r));
+  const hotelSinOpcion = filas.some((f) => f.tipo === "hotel" && !f.opcionRef);
+  const totalOpcion = (r: OpcionRef) =>
+    comunes + filas.filter((f) => f.tipo === "hotel" && f.opcionRef === r).reduce((s, f) => s + valor({ ...f, modo: efModo(f) }), 0);
 
   const esB2B = tipoAsesor !== "interno";
   const recobroAliadoN = esB2B ? Math.min(Math.max(Number(recobroAliado) || 0, 0), recobroN) : 0;
@@ -106,6 +118,29 @@ export function CotizacionManualForm({ asesores, aliados, miNombre, miRolVenta, 
     setErr("");
     if (!`${cli.nombres}${cli.apellidos}`.trim()) { setErr("El nombre del cliente es obligatorio."); return; }
     if (!filas.length) { setErr("Agrega al menos un servicio."); return; }
+    if (comparativa) {
+      if (hotelSinOpcion) { setErr("Asigna cada hotel a una opción (A, B o C)."); return; }
+      if (opcionesUsadas.length < 2) { setErr("Una comparativa necesita al menos dos hoteles en opciones distintas."); return; }
+      if (tipoAsesor !== "interno" && aliadoId == null) { setErr("Elige el aliado del catálogo (no se admite texto libre en una comparativa)."); return; }
+      start(async () => {
+        const r = await crearComparativaManual({
+          cliente: cli, destino, fechaIda, fechaRegreso, pax: Number(pax) || 0, moneda,
+          ninos: nNinos, tarifaNino: valorNino, recobro: recobroN, recobroAliado: recobroAliadoN, tipoAsesor,
+          asesorInterno: tipoAsesor === "interno" ? asesorInterno : "",
+          agenciaNombre: tipoAsesor === "agencia" ? aliadoNombre : "",
+          freelanceNombre: tipoAsesor === "freelance" ? aliadoNombre : "",
+          aliadoId: tipoAsesor === "interno" ? null : aliadoId,
+          plazo, vigenciaHasta: vigencia, observaciones, incluye, noIncluye,
+          servicios: filas.map(({ tipo, plataforma, nombre, proveedor, costoNeto, modo, pctMarkup, ta, opcionRef }) => ({
+            tipo, plataforma, nombre, proveedor, costoNeto: Number(costoNeto) || 0, modo, pctMarkup: Number(pctMarkup) || 0, ta: Number(ta) || 0,
+            opcionRef: tipo === "hotel" ? (opcionRef ?? null) : null,
+          })),
+        });
+        if (r.ok) router.push(`/dashboard/cotizaciones/${r.id}`);
+        else setErr(r.error);
+      });
+      return;
+    }
     start(async () => {
       const r = await crearCotizacionManual({
         cliente: cli, destino, fechaIda, fechaRegreso, pax: Number(pax) || 0, moneda,
@@ -123,7 +158,10 @@ export function CotizacionManualForm({ asesores, aliados, miNombre, miRolVenta, 
     });
   }
 
-  const aliadosFiltrados = aliados.filter((a) => tipoAsesor === "agencia" ? (a.tipo ?? "").toLowerCase().includes("agencia") : tipoAsesor === "freelance" ? (a.tipo ?? "").toLowerCase().includes("free") : true);
+  const aliadosFiltrados0 = aliados.filter((a) => tipoAsesor === "agencia" ? (a.tipo ?? "").toLowerCase().includes("agencia") : tipoAsesor === "freelance" ? (a.tipo ?? "").toLowerCase().includes("free") : true);
+  const aliadosFiltrados = aliadosFiltrados0;
+  // El aliado de una comparativa sale del catálogo por id; el texto libre no cuenta.
+  const aliadoId = aliadosFiltrados.find((a) => a.nombre === aliadoNombre)?.id ?? null;
 
   return (
     <div className="space-y-6">
@@ -205,11 +243,23 @@ export function CotizacionManualForm({ asesores, aliados, miNombre, miRolVenta, 
       <section className="rounded-xl border border-gray-200 bg-white p-5">
         <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
           <h2 className="text-sm font-semibold text-gray-700">Servicios</h2>
+          <button type="button" onClick={() => setComparativa((v) => !v)} aria-pressed={comparativa}
+            className="inline-flex items-center gap-1.5 rounded-lg border px-3 py-1.5 text-xs font-medium transition-colors"
+            style={comparativa ? { borderColor: "var(--brand-primary)", color: "var(--brand-primary)", backgroundColor: "rgba(29,124,154,0.08)" } : { borderColor: "#e5e7eb", color: "#6b7280" }}>
+            <GitCompareArrows size={14} /> Cotización comparativa
+          </button>
           <label className="flex items-center gap-2 text-xs text-gray-500">
             Markup general
             <Input type="number" min={0} className="h-8 w-20" value={markupGeneral} onChange={(e) => setMarkupGeneral(e.target.value)} />%
           </label>
         </div>
+        {comparativa && (
+          <p className="mb-3 rounded-lg bg-sky-50 px-3 py-2 text-xs text-sky-800">
+            Compara hasta {MAX_OPCIONES} hoteles del mismo viaje y moneda. El aéreo (uno o varios tramos), los traslados y los demás
+            servicios son <b>comunes</b> y se cuentan una sola vez en el total de cada hotel. Asigna cada hotel a una opción (A, B o C).
+            El cliente elige <b>un</b> hotel: los hoteles no se suman entre sí.
+          </p>
+        )}
         <div className="mb-3 flex flex-wrap gap-1.5">
           {TIPOS.map((t) => (
             <button key={t.value} type="button" onClick={() => agregar(t.value)}
@@ -244,6 +294,16 @@ export function CotizacionManualForm({ asesores, aliados, miNombre, miRolVenta, 
                         ))}
                       </div>
                     )}
+                    {comparativa && (f.tipo === "hotel" ? (
+                      <select aria-label="Opción de la comparativa" value={f.opcionRef ?? ""}
+                        onChange={(e) => setFilas((fs) => fs.map((x) => (x._id === f._id ? { ...x, opcionRef: (e.target.value || null) as OpcionRef | null } : x)))}
+                        className="rounded-md border px-2 py-1 text-xs font-semibold" style={f.opcionRef ? { borderColor: "var(--brand-primary)" } : { borderColor: "#f59e0b" }}>
+                        <option value="">Opción…</option>
+                        {OPCIONES_REF.map((r) => <option key={r} value={r}>Opción {r}</option>)}
+                      </select>
+                    ) : (
+                      <span className="rounded-full bg-gray-100 px-2 py-0.5 text-[11px] font-medium text-gray-500">Común a todas las opciones</span>
+                    ))}
                     <button type="button" onClick={() => quitar(f._id)} className="ml-auto text-gray-400 hover:text-red-500"><Trash2 size={15} /></button>
                   </div>
                   <div className="grid grid-cols-2 gap-2 md:grid-cols-3">
@@ -305,7 +365,32 @@ export function CotizacionManualForm({ asesores, aliados, miNombre, miRolVenta, 
         </div>
       </section>
 
+      {/* Total por opción (comparativa): sin total global */}
+      {comparativa && (
+        <section className="rounded-xl border p-5" style={{ borderColor: "var(--brand-primary)", backgroundColor: "rgba(29,124,154,0.04)" }}>
+          <h2 className="mb-2 text-sm font-semibold text-gray-700">Total por opción</h2>
+          {opcionesUsadas.length === 0 ? (
+            <p className="text-xs text-gray-400">Asigna al menos dos hoteles a una opción para ver el total de cada una.</p>
+          ) : (
+            <div className="space-y-2">
+              {opcionesUsadas.map((r) => {
+                const nombreHotel = filas.find((f) => f.tipo === "hotel" && f.opcionRef === r)?.nombre || `Hotel ${r}`;
+                const total = totalOpcion(r) + totalNinos + recobroN;
+                return (
+                  <div key={r} className="flex items-center justify-between rounded-lg bg-white px-3 py-2 text-sm">
+                    <span className="font-medium text-gray-700">Opción {r} · {nombreHotel}</span>
+                    <span className="text-lg font-bold tabular-nums" style={{ color: "var(--brand-primary)" }}>{fmt(total)}</span>
+                  </div>
+                );
+              })}
+              <p className="text-[11px] text-gray-400">Cada total incluye los servicios comunes una sola vez{nNinos > 0 ? ", los niños" : ""}{recobroN > 0 ? " y el recobro (oculto)" : ""}. No hay un total global: se elige un hotel.</p>
+            </div>
+          )}
+        </section>
+      )}
+
       {/* Total cotización */}
+      {!comparativa && (
       <section className="rounded-xl border p-5" style={{ borderColor: "var(--brand-primary)", backgroundColor: "rgba(29,124,154,0.04)" }}>
         <div className="space-y-1 text-sm text-gray-600">
           <div className="flex items-center justify-between"><span>Servicios (adultos)</span><span className="tabular-nums">{fmt(totalServicios)}</span></div>
@@ -317,6 +402,7 @@ export function CotizacionManualForm({ asesores, aliados, miNombre, miRolVenta, 
           <span className="text-2xl font-bold tabular-nums" style={{ color: "var(--brand-primary)" }}>{fmt(totalCotizacion)}</span>
         </div>
       </section>
+      )}
 
       {/* Incluye / No incluye */}
       <section className="rounded-xl border border-gray-200 bg-white p-5">
@@ -352,9 +438,9 @@ export function CotizacionManualForm({ asesores, aliados, miNombre, miRolVenta, 
       {err && <p className="text-sm text-red-600">{err}</p>}
       <div className="flex items-center gap-3">
         <Button onClick={guardar} disabled={pending} style={{ backgroundColor: "var(--brand-primary)" }}>
-          {pending ? "Guardando…" : "Generar cotización"}
+          {pending ? "Guardando…" : comparativa ? "Generar comparativa" : "Generar cotización"}
         </Button>
-        <span className="text-xs text-gray-400">Se guarda como cotización (estado abierta).</span>
+        <span className="text-xs text-gray-400">{comparativa ? "Se guarda como comparativa: no se cobra ni se convierte hasta elegir una opción." : "Se guarda como cotización (estado abierta)."}</span>
       </div>
     </div>
   );

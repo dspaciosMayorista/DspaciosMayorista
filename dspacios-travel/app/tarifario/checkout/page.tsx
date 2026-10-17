@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState, useTransition } from "react";
+import { Suspense, lazy, useEffect, useMemo, useState, useSyncExternalStore, useTransition } from "react";
 import Link from "next/link";
 import { formatMoneda } from "@/lib/utils";
 import { ACOM_ROOM_LABEL, type AcomRoom } from "@/lib/acomodaciones";
@@ -8,7 +8,10 @@ import { useCart, type CartItem, type HotelCartItem, type HotelCartItemPersona, 
 import { normalizarEdadesMenoresCarrito } from "@/lib/reservar/edadesMenores";
 import { comisionSobre, formatImporte, monedaDeItem, preverCotizacion } from "@/lib/cart/monedaCarrito";
 import { AvisoMonedas, TotalesPorMoneda } from "../totalesCarrito";
-import { crearSolicitudReserva, fotosPortada, getContextoB2B, type SolicitudResult, type ContextoB2B } from "./actions";
+import { crearSolicitudReserva, fotosPortada, getContextoB2B, type SolicitudResult, type ContextoB2B, type ResultadoComparativaCreada } from "./actions";
+// #35: se carga solo cuando el modo comparativa está activo (no entra al grafo del checkout normal).
+const ContinuarComparativa = lazy(() => import("@/lib/cotizacion/comparativaCheckout").then((m) => ({ default: m.ContinuarComparativa })));
+import { MAX_OPCIONES } from "@/lib/cotizacion/comparativa";
 
 function resumenHab(it: HotelCartItemPersona): string {
   const partes = Object.entries(it.habitaciones).filter(([, n]) => n > 0).map(([a, n]) => `${n} ${ACOM_ROOM_LABEL[a as AcomRoom] ?? a}`);
@@ -43,6 +46,14 @@ export default function CheckoutPage() {
   const [precioCambio, setPrecioCambio] = useState<{ paqueteId: number; hotelId: number; mensaje: string } | null>(null);
   const [res, setRes] = useState<Extract<SolicitudResult, { ok: true }> | null>(null);
   const [fotos, setFotos] = useState<Record<number, string>>({});
+  // #35: modo de la página según la URL. Se lee en el cliente (sin useSearchParams → sin Suspense).
+  const [resCmp, setResCmp] = useState<Extract<ResultadoComparativaCreada, { ok: true }> | null>(null);
+  const search = useSyncExternalStore(() => () => {}, () => window.location.search, () => "");
+  const vista = useMemo(() => {
+    const q = new URLSearchParams(search);
+    const token = q.get("comparativa"), op = q.get("op"), ac = q.get("ac");
+    return { crear: q.get("modo") === "comparativa", continuar: token && op && ac ? { token, op, ac } : null };
+  }, [search]);
 
   // Contexto B2B (si el aliado está logueado): habilita modo + facturación.
   const [ctx, setCtx] = useState<ContextoB2B | null>(null);
@@ -81,39 +92,9 @@ export default function CheckoutPage() {
   const inp = "w-full rounded-lg border border-gray-300 px-3 py-2 text-sm";
   const lbl = "mb-1 block text-xs font-medium text-gray-600";
 
-  function enviar() {
-    setErr("");
-    setPrecioCambio(null);
-    if (!c.nombres.trim() || !c.apellidos.trim()) { setErr("Ingresa nombres y apellidos."); return; }
-    if (!c.numeroDoc.trim()) { setErr("El documento es obligatorio."); return; }
-    if (!c.telefono.trim()) { setErr("El teléfono / WhatsApp es obligatorio."); return; }
-
-    // Carritos guardados en el navegador ANTES de pedir la edad de cada menor
-    // no traen `edadesMenores`: sin menores declarados se normaliza a `[]`
-    // (nada que perder); con menores pero sin edad de cada uno se bloquea
-    // AQUÍ, con un mensaje que dice qué hotel retirar y volver a agregar —
-    // nunca se manda al servidor a que intente adivinar (ese reparto legado
-    // ya no existe para este flujo público, ver checkout/actions.ts).
-    const itemsNormalizados: { it: HotelCartItemPersona; edadesMenores: number[] }[] = [];
-    for (const it of hotelItems) {
-      const r = normalizarEdadesMenoresCarrito(it);
-      if (!r.ok) { setErr(`${it.hotelNombre}: ${r.error}`); return; }
-      itemsNormalizados.push({ it, edadesMenores: r.edadesMenores });
-    }
-
-    // Tours agregados antes de que el carrito guardara `servicioId` (o cuyo
-    // servicio no quedó identificado por algún motivo) no se pueden
-    // re-liquidar en el servidor — se bloquea acá con un mensaje claro en vez
-    // de mandarlos y que el servidor los rechace uno por uno sin contexto.
-    for (const it of tourItems) {
-      if (it.servicioId == null || !it.fechaIda || !it.fechaRegreso) {
-        setErr(`${it.nombre}: este servicio se agregó antes de poder re-liquidarlo en el servidor. Quítalo del carrito y agrégalo de nuevo desde Receptivos.`);
-        return;
-      }
-    }
-
-    start(async () => {
-      const r = await crearSolicitudReserva({
+  // Entrada que se manda al servidor (la misma para la solicitud normal y para la comparativa).
+  function armarEntrada(itemsNormalizados: { it: HotelCartItemPersona; edadesMenores: number[] }[]) {
+    return {
         items: [
           ...itemsNormalizados.map(({ it, edadesMenores }) => ({
             // `itemId`: solo para que sus servicios vinculados lo señalen.
@@ -158,7 +139,63 @@ export default function CheckoutPage() {
         // elección legítima del B2B ya autenticado, pero solo tiene efecto
         // si el servidor confirma la sesión como B2B.
         ...(esB2B ? { modo } : {}),
-      });
+      };
+  }
+
+  function enviarComparativa() {
+    setErr("");
+    if (!c.nombres.trim() || !c.apellidos.trim()) { setErr("Ingresa nombres y apellidos."); return; }
+    if (!c.telefono.trim()) { setErr("El teléfono / WhatsApp es obligatorio."); return; }
+    if (bernaloItems.length) { setErr("Los hoteles por unidad todavía no se pueden comparar. Quítalos del carrito."); return; }
+    if (hotelItems.length < 2 || hotelItems.length > MAX_OPCIONES) { setErr(`Una comparativa necesita entre 2 y ${MAX_OPCIONES} hoteles en el carrito.`); return; }
+    if (hotelItems.some((h) => h.modulo === "bloqueo")) { setErr("Los paquetes con vuelo negociado todavía no se pueden comparar."); return; }
+    if (tourItems.some((t) => !t.hotelItemId)) { setErr("En una comparativa cada servicio debe estar vinculado a un hotel. Quita los servicios sueltos."); return; }
+    const itemsNormalizados: { it: HotelCartItemPersona; edadesMenores: number[] }[] = [];
+    for (const it of hotelItems) {
+      const r = normalizarEdadesMenoresCarrito(it);
+      if (!r.ok) { setErr(`${it.hotelNombre}: ${r.error}`); return; }
+      itemsNormalizados.push({ it, edadesMenores: r.edadesMenores });
+    }
+    start(async () => {
+      const { crearComparativaCarrito } = await import("@/app/tarifario/checkout/actions");
+      const r = await crearComparativaCarrito(armarEntrada(itemsNormalizados));
+      if (r.ok) { setResCmp(r); clear(); } else setErr(r.error);
+    });
+  }
+
+  function enviar() {
+    setErr("");
+    setPrecioCambio(null);
+    if (!c.nombres.trim() || !c.apellidos.trim()) { setErr("Ingresa nombres y apellidos."); return; }
+    if (!c.numeroDoc.trim()) { setErr("El documento es obligatorio."); return; }
+    if (!c.telefono.trim()) { setErr("El teléfono / WhatsApp es obligatorio."); return; }
+
+    // Carritos guardados en el navegador ANTES de pedir la edad de cada menor
+    // no traen `edadesMenores`: sin menores declarados se normaliza a `[]`
+    // (nada que perder); con menores pero sin edad de cada uno se bloquea
+    // AQUÍ, con un mensaje que dice qué hotel retirar y volver a agregar —
+    // nunca se manda al servidor a que intente adivinar (ese reparto legado
+    // ya no existe para este flujo público, ver checkout/actions.ts).
+    const itemsNormalizados: { it: HotelCartItemPersona; edadesMenores: number[] }[] = [];
+    for (const it of hotelItems) {
+      const r = normalizarEdadesMenoresCarrito(it);
+      if (!r.ok) { setErr(`${it.hotelNombre}: ${r.error}`); return; }
+      itemsNormalizados.push({ it, edadesMenores: r.edadesMenores });
+    }
+
+    // Tours agregados antes de que el carrito guardara `servicioId` (o cuyo
+    // servicio no quedó identificado por algún motivo) no se pueden
+    // re-liquidar en el servidor — se bloquea acá con un mensaje claro en vez
+    // de mandarlos y que el servidor los rechace uno por uno sin contexto.
+    for (const it of tourItems) {
+      if (it.servicioId == null || !it.fechaIda || !it.fechaRegreso) {
+        setErr(`${it.nombre}: este servicio se agregó antes de poder re-liquidarlo en el servidor. Quítalo del carrito y agrégalo de nuevo desde Receptivos.`);
+        return;
+      }
+    }
+
+    start(async () => {
+      const r = await crearSolicitudReserva(armarEntrada(itemsNormalizados));
       if (r.ok) { setRes(r); clear(); }
       // `"tipo" in r` (en vez de `r.tipo === "precio_actualizado"`) es lo que
       // permite a TypeScript angostar `r` a `ResultadoPrecioActualizadoBernalo`
@@ -184,12 +221,16 @@ export default function CheckoutPage() {
       <header className="bg-brand-gradient px-6 py-6 text-white">
         <div className="mx-auto max-w-3xl">
           <Link href="/tarifario" className="text-sm text-white/80 hover:text-white">← Volver al tarifario</Link>
-          <h1 className="mt-1 text-xl font-semibold">Finalizar solicitud</h1>
+          <h1 className="mt-1 text-xl font-semibold">{vista.continuar ? "Continuar con tu opción" : vista.crear ? "Crear cotización comparativa" : "Finalizar solicitud"}</h1>
         </div>
       </header>
 
       <main className="mx-auto max-w-3xl px-4 py-8">
-        {res ? (
+        {vista.continuar ? (
+          <Suspense fallback={null}><ContinuarComparativa token={vista.continuar.token} opcionRef={vista.continuar.op} acomodacionRef={vista.continuar.ac} /></Suspense>
+        ) : resCmp ? (
+          <ExitoComparativa res={resCmp} />
+        ) : res ? (
           <Exito res={res} />
         ) : !items.length ? (
           <div className="rounded-2xl border-2 border-dashed border-gray-200 py-16 text-center text-gray-400">
@@ -201,6 +242,11 @@ export default function CheckoutPage() {
             {/* Resumen del carrito */}
             <section className="rounded-2xl border border-gray-200 bg-white p-5">
               <h2 className="mb-3 text-sm font-semibold text-gray-700">Tu selección</h2>
+              {vista.crear && (
+                <p className="mb-3 rounded-lg bg-sky-50 px-3 py-2 text-xs text-sky-800">
+                  Modo comparativa: cada hotel del carrito (con sus servicios vinculados) será una opción para que escojas <b>una</b>. Los hoteles no se suman entre sí y no hay un total global.
+                </p>
+              )}
               <ul className="space-y-3">
                 {items.map((it) => (
                   <li key={it.id} className="flex gap-3 border-b border-gray-50 pb-3 last:border-0 last:pb-0">
@@ -254,8 +300,8 @@ export default function CheckoutPage() {
                 ))}
               </ul>
               <div className="mt-3 space-y-2 border-t border-gray-100 pt-3">
-                <TotalesPorMoneda totales={totales} etiqueta={`Total${esB2B ? " (PVP)" : " estimado"}`} />
-                <AvisoMonedas totales={totales} prevision={prevision} />
+                {!vista.crear && <TotalesPorMoneda totales={totales} etiqueta={`Total${esB2B ? " (PVP)" : " estimado"}`} />}
+                {!vista.crear && <AvisoMonedas totales={totales} prevision={prevision} />}
                 {esB2B && !baseComision && (
                   <p className="text-xs text-gray-500">La comisión se calculará sobre la cotización que se genere (una sola moneda).</p>
                 )}
@@ -281,7 +327,7 @@ export default function CheckoutPage() {
             </section>
 
             {/* Modalidad B2B */}
-            {esB2B && (
+            {esB2B && !vista.crear && (
               <section className="rounded-2xl border border-gray-200 bg-white p-5">
                 <h2 className="mb-3 text-sm font-semibold text-gray-700">Modalidad del contrato</h2>
                 <div className="flex flex-wrap gap-2">
@@ -306,7 +352,7 @@ export default function CheckoutPage() {
             {/* Facturación (solo contrato neto) — SOLO LECTURA: son los datos
                 registrados de tu agencia; el servidor los toma directo de tu
                 sesión, así que editarlos acá no cambiaría lo que se cotiza. */}
-            {esB2B && modo === "neta" && (
+            {esB2B && !vista.crear && modo === "neta" && (
               <section className="rounded-2xl border border-gray-200 bg-white p-5">
                 <h2 className="mb-1 text-sm font-semibold text-gray-700">Facturar a (agencia)</h2>
                 <p className="mb-3 text-xs text-gray-400">Datos registrados de tu agencia. No se editan aquí: para corregirlos, pídelo a D&apos;spacios Travel.</p>
@@ -342,9 +388,9 @@ export default function CheckoutPage() {
               )}
               {ctx?.error && <p role="alert" className="mt-3 rounded-lg bg-red-50 px-3 py-2 text-sm text-red-600">{ctx.error}</p>}
               {err && <p className="mt-3 rounded-lg bg-red-50 px-3 py-2 text-sm text-red-600">{err}</p>}
-              <button type="button" onClick={enviar} disabled={pending || !!ctx?.error}
+              <button type="button" onClick={vista.crear ? enviarComparativa : enviar} disabled={pending || !!ctx?.error}
                 className="mt-4 w-full rounded-lg px-4 py-3 text-sm font-semibold text-white disabled:opacity-50" style={{ backgroundColor: "var(--brand-primary)" }}>
-                {pending ? "Generando…" : precioCambio ? "Confirmar con el nuevo precio y enviar" : "Generar cotización y enviar solicitud"}
+                {pending ? "Generando…" : vista.crear ? "Generar cotización comparativa" : precioCambio ? "Confirmar con el nuevo precio y enviar" : "Generar cotización y enviar solicitud"}
               </button>
               <p className="mt-2 text-center text-[11px] text-gray-400">Generamos tu cotización y preparamos la solicitud para enviarla por WhatsApp o correo.</p>
             </section>
@@ -404,6 +450,28 @@ function Exito({ res }: { res: Extract<SolicitudResult, { ok: true }> }) {
         </details>
       </div>
 
+      <Link href="/tarifario" className="block text-center text-sm font-medium" style={{ color: "var(--brand-primary)" }}>
+        ← Volver al tarifario
+      </Link>
+    </div>
+  );
+}
+
+function ExitoComparativa({ res }: { res: Extract<ResultadoComparativaCreada, { ok: true }> }) {
+  return (
+    <div className="space-y-5">
+      <div className="rounded-2xl border border-green-200 bg-green-50 p-5 text-center">
+        <h2 className="mt-1 text-lg font-semibold text-green-800">¡Comparativa generada!</h2>
+        <p className="mt-1 text-sm text-green-700">Tu comparativa: {res.codigo}</p>
+        <p className="mt-1 text-xs text-green-700">Compara los hoteles y escoge UNO. Elegir no genera ningún cobro ni contrato.</p>
+      </div>
+      <div className="rounded-2xl border border-gray-200 bg-white p-5">
+        <h3 className="mb-2 text-sm font-semibold text-gray-700">Tu documento</h3>
+        <a href={res.url || "#"} target="_blank" rel="noopener noreferrer"
+          className="flex items-center justify-between rounded-lg border border-gray-200 px-4 py-3 text-sm font-medium hover:bg-gray-50" style={{ color: "var(--brand-primary)" }}>
+          <span>Ver la comparativa {res.codigo}</span><span aria-hidden>↗</span>
+        </a>
+      </div>
       <Link href="/tarifario" className="block text-center text-sm font-medium" style={{ color: "var(--brand-primary)" }}>
         ← Volver al tarifario
       </Link>

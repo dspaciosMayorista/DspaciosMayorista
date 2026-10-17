@@ -2948,6 +2948,23 @@ export type Database = {
           monto_exigido_total: number | null;
           monto_exigido_total_cop: number | null;
           pct_efectivo_informativo: number | null; // solo informativo (0..100)
+          // ── Cotizaciones comparativas (migración 211, #35) ──
+          // modo 'comparativa' = MADRE (tipo comparativa_*): nunca se cobra ni
+          // se convierte, precio_venta SIEMPRE null. Las columnas de enlace
+          // (cotizacion_origen_id…) solo existen en la HIJA y solo las escribe
+          // la RPC: la API las rechaza (trigger). NO hay estado 'elegida'.
+          modo: string; // 'simple' | 'comparativa'
+          version: number;
+          sello_economico: string | null;
+          aliado_id: number | null;
+          propietario_id: string | null;
+          creado_por_id: string | null;
+          cotizacion_origen_id: number | null;
+          opcion_ref: string | null;
+          acomodacion_ref: string | null;
+          madre_version: number | null;
+          madre_sello: string | null;
+          vigencia_tope: string | null; // date
         };
         Insert: {
           id?: number;
@@ -3001,6 +3018,7 @@ export type Database = {
           ta: number;
           valor: number;
           created_at: string;
+          opcion_ref: string | null; // 211: solo filas 'hotel' de una comparativa
         };
         Insert: {
           id?: number;
@@ -3018,6 +3036,78 @@ export type Database = {
           created_at?: string;
         };
         Update: Partial<Database["public"]["Tables"]["cotizacion_servicios"]["Insert"]>;
+        Relationships: [];
+      };
+      // ── Cotizaciones comparativas (migración 211, #35) ───────────────────
+      // Todas con RLS activo. La API solo LEE (opciones/eventos/solicitudes,
+      // personal interno por tenant); `validaciones` no la lee nadie salvo el
+      // servidor. Toda escritura pasa por las RPC SECURITY DEFINER.
+      cotizacion_opciones: {
+        Row: {
+          id: number;
+          cotizacion_id: number;
+          tenant: string;
+          opcion_ref: string; // 'A' | 'B' | 'C'
+          acomodacion_ref: string; // 'unica' en manual; 'sencilla' | 'doble' | … en tarifario
+          version: number;
+          orden: number;
+          etiqueta: string;
+          moneda: string;
+          tarifa_persona: number | null;
+          total: number;
+          resumen_publico: Json; // sin netos ni proveedores
+          plantilla_hija: Json;
+          created_at: string;
+        };
+        Insert: never;
+        Update: never;
+        Relationships: [];
+      };
+      cotizacion_comparativa_eventos: {
+        Row: {
+          id: number;
+          cotizacion_id: number;
+          tenant: string;
+          tipo: string;
+          hija_id: number | null;
+          opcion_ref: string | null;
+          acomodacion_ref: string | null;
+          version: number | null;
+          actor_tipo: string | null;
+          actor_id: string | null;
+          validacion_id: string | null;
+          solicitud_id: number | null;
+          clave: string | null;
+          huella: string | null;
+          detalle: Json | null;
+          created_at: string;
+        };
+        Insert: never;
+        Update: never;
+        Relationships: [];
+      };
+      cotizacion_comparativa_solicitudes: {
+        Row: {
+          id: number;
+          cotizacion_id: number;
+          tenant: string;
+          opcion_ref: string;
+          acomodacion_ref: string;
+          version: number;
+          estado: string; // 'pendiente' | 'atendida' | 'rechazada' | 'cancelada' | 'superada'
+          contacto_nombre: string;
+          contacto_telefono: string | null;
+          contacto_email: string | null;
+          nota: string | null;
+          hija_id: number | null;
+          verificada_por: string | null;
+          motivo: string | null;
+          created_at: string;
+          updated_at: string;
+          atendida_en: string | null;
+        };
+        Insert: never;
+        Update: never;
         Relationships: [];
       };
       // ── Condiciones de pago por componente (migración 164) ──────────────
@@ -3728,6 +3818,44 @@ export type Database = {
       convertir_cotizacion_a_contrato: {
         Args: { p_cotizacion_id: number; p_usuario_id: string };
         Returns: string;
+      };
+      // ── Cotizaciones comparativas (migración 211, #35) ───────────────────
+      // Todas SECURITY DEFINER con search_path fijo. Errores: `COMPARATIVA_<X>: …`.
+      // `crear…`, `registrar_validacion…`, `elegir…publica` y `registrar_solicitud…`:
+      // SOLO service_role. `elegir…sesion`, `resolver_solicitud…` y el listado B2B:
+      // authenticated, con la identidad de auth.uid() (nunca un parámetro).
+      crear_cotizacion_comparativa: {
+        Args: { p_usuario_id: string | null; p_cabecera: Json; p_servicios: Json; p_opciones: Json; p_aliado_id: number | null };
+        Returns: number;
+      };
+      registrar_validacion_comparativa: {
+        Args: {
+          p_madre_id: number; p_opcion_ref: string; p_acomodacion_ref: string; p_version: number; p_canal: string;
+          p_actor_id: string | null; p_precio_reliquidado: number; p_moneda: string; p_disponibilidad_ok: boolean;
+          p_datos_cliente: Json | null;
+        };
+        Returns: string;
+      };
+      elegir_opcion_comparativa_sesion: { Args: { p_validacion: string; p_clave: string }; Returns: number };
+      elegir_opcion_comparativa_publica: { Args: { p_validacion: string; p_clave: string }; Returns: number };
+      registrar_solicitud_comparativa: {
+        Args: {
+          p_madre_id: number; p_opcion_ref: string; p_acomodacion_ref: string; p_version: number; p_nombre: string;
+          p_telefono: string | null; p_email: string | null; p_nota: string | null; p_clave: string; p_ip_huella: string | null;
+        };
+        Returns: Json;
+      };
+      resolver_solicitud_comparativa: {
+        Args: { p_solicitud: number; p_decision: string; p_motivo: string | null; p_clave: string | null };
+        Returns: number | null;
+      };
+      comparativas_b2b_visibles: {
+        Args: Record<string, never>;
+        Returns: {
+          id: number; codigo: string; share_token: string; estado: string; tipo: string; destino: string | null;
+          fecha_salida: string | null; fecha_regreso: string | null; moneda: string | null; vigencia_hasta: string | null;
+          created_at: string; opciones: Json; hija: Json | null;
+        }[];
       };
       // Migración 164 (Commit 6). Único RPC de escritura de `restriccion_overrides`
       // para excepciones a restricciones de condiciones de pago del contrato.
