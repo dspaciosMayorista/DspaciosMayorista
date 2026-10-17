@@ -17,7 +17,7 @@ import type { DestinoPorcionOpcion } from "@/lib/tarifario/destinosPorcion";
 import type { ComboPersonaElegido } from "@/lib/tarifario/filtrosBusqueda";
 import { BackgroundVideo } from "@/components/BackgroundVideo";
 import {
-  Categoria, EtiquetasHotel, DescripcionHotelExpandible, UbicacionHotel, SeccionesIncluye, AddonsPaquete, ReceptivoModal,
+  Categoria, EtiquetasHotel, DescripcionHotelExpandible, UbicacionHotel, SeccionesIncluye, IncluyeCompacto, AddonsPaquete, ReceptivoModal,
   type Receptivo, type ReceptivoModalInfo,
 } from "./tarjetaHotelCompartida";
 import type { DescripcionPaqueteRaw } from "@/lib/tarifario/descripcionPaquete";
@@ -841,7 +841,9 @@ export function Resultado({ r, recomendada = false, foto, info, descripcionPorPa
         {/* Incluye/No incluye y add-on del paquete de ESTE resultado — nunca
             fuente de precio/disponibilidad (eso sigue siendo `combo.total`,
             resuelto por `buscarHoteles` arriba). */}
-        <SeccionesIncluye descripcion={descripcionPaquete} />
+        <IncluyeCompacto>
+          <SeccionesIncluye descripcion={descripcionPaquete} />
+        </IncluyeCompacto>
         <AddonsPaquete addons={addons} onAbrir={setAddonAbierto} paqueteId={r.paqueteId} seleccion={seleccionServicios.seleccion} />
       </div>
     </div>

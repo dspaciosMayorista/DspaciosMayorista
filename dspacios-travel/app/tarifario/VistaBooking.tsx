@@ -6,7 +6,7 @@ import { createPortal } from "react-dom";
 import Image from "next/image";
 import { formatMoneda } from "@/lib/utils";
 import {
-  Categoria, EtiquetasHotel, DescripcionHotelExpandible, UbicacionHotel, SeccionesIncluye, AddonsPaquete, ReceptivoModal,
+  Categoria, EtiquetasHotel, DescripcionHotelExpandible, UbicacionHotel, SeccionesIncluye, IncluyeCompacto, AddonsPaquete, ReceptivoModal,
   type Receptivo, type ReceptivoModalInfo,
 } from "./tarjetaHotelCompartida";
 import { serviciosParaCarrito, type HotelParaServicios } from "@/lib/tarifario/servicioAdicionalPaquete";
@@ -2352,7 +2352,7 @@ function HotelModal({
 // confirmada por el combo categoría/alimentación elegido). Nunca fuente de
 // precio/disponibilidad: eso sigue siendo EXCLUSIVO de `opcionSel.precioVenta`/
 // `cotizarAlojamientoBernaloPublico` (revalidado en `agregar()`).
-function TarjetaUnidadBusqueda({
+export function TarjetaUnidadBusqueda({
   hotel, opciones, recomendada = false, foto, videoUrl, estrellas, clasificacion, adultsOnly, petFriendly, tieneCondicion, descripcion, ubicacion,
   descripcionPorPaquete, addonsPorPaquete, catInicial, alimInicial, opcionesPermitidas,
 }: {
@@ -2647,7 +2647,9 @@ function TarjetaUnidadBusqueda({
         {/* Incluye/No incluye y add-on de la OFERTA seleccionada — nunca
             fuente de precio/disponibilidad (eso sigue siendo exclusivo de
             opcionSel.precioVenta/cotizarAlojamientoBernaloPublico arriba). */}
-        <SeccionesIncluye descripcion={descripcionOpcion} />
+        <IncluyeCompacto>
+          <SeccionesIncluye descripcion={descripcionOpcion} />
+        </IncluyeCompacto>
         <AddonsPaquete addons={addons} onAbrir={setAddonAbierto} paqueteId={opcionSel.paqueteId} seleccion={seleccionServicios.seleccion} />
       </div>
     </div>
