@@ -5,6 +5,7 @@ import { CargarDestinosSugeridos } from "./CargarDestinosSugeridos";
 import { DestinosLista } from "./DestinosLista";
 import { CATEGORIAS_RECEPTIVO, agruparReceptivosPorDestino, cargarReceptivosSegunRol, filaReceptivoConNombre } from "@/lib/producto/receptivos";
 import { puedeEscribir } from "@/lib/roles";
+import { DestinosTabs } from "./DestinosTabs";
 
 export const dynamic = "force-dynamic";
 
@@ -60,6 +61,8 @@ export default async function DestinosPage() {
           <NuevoDestinoDialog />
         </div>
       </div>
+
+      <DestinosTabs activa="destinos" />
 
       {!destinos?.length ? (
         <div className="rounded-2xl border-2 border-dashed border-gray-200 py-20 text-center text-gray-400">

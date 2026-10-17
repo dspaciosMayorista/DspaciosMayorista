@@ -13,6 +13,7 @@ import { conCacheDetalle, claveDetalleSalida, claveDetallePaquete, type EstadoDe
 import type { FilaResumen } from "@/lib/tarifario/resumen";
 import type { DescripcionPaqueteRaw } from "@/lib/tarifario/descripcionPaquete";
 import type { HotelBernaloDescubierto } from "@/lib/tarifario/datosBernalo";
+import { destinosParaFiltro } from "@/lib/programas/destinoFijo";
 
 export type CapHotel = Record<number, { paxMin: number | null; paxMax: number | null; acom: AcomConfig[] }>;
 
@@ -27,6 +28,8 @@ export type ProgramaResumen = {
   tipo_transporte: "ninguno" | "aereo" | "terrestre";
   portada_url: string | null;
   ciudades: string[];
+  /** Destino fijo comercial (migración 213). El filtro público usa SOLO este campo, nunca `ciudades`. */
+  destino: { id: number; nombre: string; es_provisional?: boolean | null } | null;
 };
 
 export type FilaTarifario = {
@@ -1013,17 +1016,14 @@ function PorProgramas({ programas, puedeReservar = false }: { programas: Program
   const [destino, setDestino] = useState("");
   const [transporte, setTransporte] = useState<"" | "aereo" | "terrestre" | "ninguno">("");
 
-  // Destinos únicos (ciudades de todos los programas) para el filtro.
-  const destinos = useMemo(() => {
-    const set = new Set<string>();
-    for (const p of programas) for (const c of p.ciudades) if (c) set.add(c.trim());
-    return [...set].sort((a, b) => a.localeCompare(b));
-  }, [programas]);
+  // Destinos del filtro: SOLO los destinos fijos asignados a los programas (migración
+  // 213), nunca las ciudades del circuito.
+  const destinos = useMemo(() => destinosParaFiltro(programas), [programas]);
 
   const filtrados = useMemo(
     () =>
       programas.filter((p) => {
-        if (destino && !p.ciudades.some((c) => c.toLowerCase() === destino.toLowerCase())) return false;
+        if (destino && String(p.destino?.id ?? "") !== destino) return false;
         if (transporte && p.tipo_transporte !== transporte) return false;
         return true;
       }),
@@ -1047,7 +1047,7 @@ function PorProgramas({ programas, puedeReservar = false }: { programas: Program
           >
             <option value="">Todos los destinos</option>
             {destinos.map((d) => (
-              <option key={d} value={d}>{d}</option>
+              <option key={d.id} value={String(d.id)}>{d.nombre}</option>
             ))}
           </select>
         </div>

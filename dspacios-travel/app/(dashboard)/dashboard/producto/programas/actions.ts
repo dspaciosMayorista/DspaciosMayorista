@@ -70,11 +70,18 @@ export type CabeceraInput = {
   condicionPagoPctInicial?: unknown; // 1–99, no fracción
   condicionPagoDiasSaldo?: unknown;
   restriccionComercial?: unknown;
+  /**
+   * Destino fijo del programa (migración 213). `undefined` = el cliente no lo envió
+   * (formulario viejo): NO se toca la columna al guardar. `null` = sin destino.
+   */
+  destinoFijoId?: number | null;
 };
 
 function validarCondicionYRestriccionPrograma(
   input: CabeceraInput,
 ): { ok: true; condicion: CondicionPagoPersistible; restriccion: string } | { ok: false; error: string } {
+  const d = input.destinoFijoId;
+  if (d !== undefined && d !== null && !(Number.isInteger(d) && d > 0)) return { ok: false, error: "Destino inválido." };
   const cp = validarCondicionPago(
     {
       tipo: input.condicionPagoTipo ?? "normal",
@@ -133,6 +140,8 @@ function cabeceraRow(input: CabeceraInput, condicion: CondicionPagoPersistible, 
     condicion_pago_pct_inicial: condicion.condicion_pago_pct_inicial,
     condicion_pago_dias_saldo: condicion.condicion_pago_dias_saldo,
     restriccion_comercial: restriccion,
+    // Solo se escribe si el cliente lo manda: un guardado de cabecera nunca borra el destino por omisión.
+    ...(input.destinoFijoId === undefined ? {} : { destino_fijo_id: input.destinoFijoId }),
   };
 }
 

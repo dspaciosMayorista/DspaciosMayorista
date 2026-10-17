@@ -6,6 +6,8 @@ import { useRouter } from "next/navigation";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { ComboProveedor, type ProveedorOpt } from "@/components/ComboProveedor";
+import Link from "next/link";
+import { ETIQUETA_FALTA_DESTINO } from "@/lib/programas/destinoFijo";
 import type { CabeceraInput } from "./actions";
 
 type Result = { ok: true; id?: number } | { ok: false; error: string };
@@ -16,12 +18,15 @@ const sel = "w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm
 export function CabeceraForm({
   initial,
   proveedores,
+  destinosFijos = [],
   onSubmit,
   submitLabel,
   redirectOnCreate = false,
 }: {
   initial?: Partial<CabeceraInput>;
   proveedores: ProveedorOpt[];
+  /** Lista fija "destino de programas" (migración 213), para el desplegable de destino. */
+  destinosFijos?: { id: number; nombre: string; es_provisional?: boolean | null }[];
   onSubmit: (input: CabeceraInput) => Promise<Result>;
   submitLabel: string;
   redirectOnCreate?: boolean;
@@ -63,6 +68,8 @@ export function CabeceraForm({
     condicionPagoPctInicial: initial?.condicionPagoPctInicial ?? "",
     condicionPagoDiasSaldo: initial?.condicionPagoDiasSaldo ?? "",
     restriccionComercial: (initial?.restriccionComercial as string | undefined) ?? "normal",
+    // Destino fijo (migración 213): se inicializa SIEMPRE con lo guardado (null = sin destino).
+    destinoFijoId: initial?.destinoFijoId ?? null,
   });
   const [error, setError] = useState<string | null>(null);
   const [okMsg, setOkMsg] = useState(false);
@@ -107,6 +114,31 @@ export function CabeceraForm({
           onChange={(e) => set("subtitulo", e.target.value)}
           placeholder="Río de Janeiro – Foz do Iguazú – Manaus – Salvador"
         />
+      </div>
+
+      <div>
+        <label htmlFor="destino-fijo-programa" className={lbl}>Destino del programa</label>
+        <select
+          id="destino-fijo-programa"
+          className={sel}
+          value={f.destinoFijoId == null ? "" : String(f.destinoFijoId)}
+          onChange={(e) => set("destinoFijoId", e.target.value === "" ? null : Number(e.target.value))}
+          aria-describedby="destino-fijo-ayuda"
+        >
+          <option value="">— Sin destino —</option>
+          {destinosFijos.map((d) => (
+            <option key={d.id} value={String(d.id)}>{d.es_provisional === true ? `${d.nombre} (provisional)` : d.nombre}</option>
+          ))}
+        </select>
+        <p id="destino-fijo-ayuda" className={`mt-1 text-xs ${f.destinoFijoId == null ? "text-amber-700" : "text-gray-500"}`}>
+          {f.destinoFijoId == null
+            ? `${ETIQUETA_FALTA_DESTINO}: sin destino el programa no aparece en el tarifario público, aunque esté publicado.`
+            : "Es el destino con el que se filtra y muestra en el tarifario. No depende de la ruta del circuito."}
+          {destinosFijos.find((d) => d.id === f.destinoFijoId)?.es_provisional === true &&
+            " Es el destino PROVISIONAL: el programa se ve en el tarifario, pero falta asignarle su destino real."}
+          {" "}
+          <Link href="/dashboard/producto/destinos/listas-fijas" className="underline">Administrar la lista</Link>
+        </p>
       </div>
 
       <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
