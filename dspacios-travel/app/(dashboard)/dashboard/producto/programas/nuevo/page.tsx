@@ -8,6 +8,7 @@ export const dynamic = "force-dynamic";
 export default async function NuevoProgramaPage() {
   const sb = await createClient();
   const { data: proveedores } = await sb.from("proveedores").select("id, nombre").order("nombre");
+  const { data: destinosFijos } = await sb.from("programa_destinos_fijos").select("id, nombre, es_provisional").order("nombre");
 
   return (
     <div className="mx-auto max-w-3xl p-4 md:p-8">
@@ -20,6 +21,7 @@ export default async function NuevoProgramaPage() {
       </p>
       <CabeceraForm
         proveedores={proveedores ?? []}
+        destinosFijos={destinosFijos ?? []}
         onSubmit={crearPrograma}
         submitLabel="Crear y continuar"
         redirectOnCreate

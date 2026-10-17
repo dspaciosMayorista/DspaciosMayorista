@@ -2,6 +2,7 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
 import { getProgramaDetalle } from "@/lib/programas";
+import { programaVisibleEnPublico } from "@/lib/programas/destinoFijo";
 import { formatMoneda, formatFechaLarga } from "@/lib/utils";
 import { Logo } from "@/components/Logo";
 import { BackgroundVideo } from "@/components/BackgroundVideo";
@@ -43,8 +44,10 @@ export default async function ProgramaVitrinaPage({ params }: { params: Promise<
 
   const det = await getProgramaDetalle(sb, id);
   if (!det) notFound();
-  // No mostrar borradores al público.
-  if (!det.programa.publicado && !esInterno) notFound();
+  // No mostrar al público borradores ni programas sin destino fijo (migración 213):
+  // el enlace directo responde 404 igual que el listado los omite. El equipo interno
+  // puede abrirlos para revisarlos.
+  if (!esInterno && !programaVisibleEnPublico(det.programa)) notFound();
 
   const { programa: p } = det;
   const moneda = p.moneda;

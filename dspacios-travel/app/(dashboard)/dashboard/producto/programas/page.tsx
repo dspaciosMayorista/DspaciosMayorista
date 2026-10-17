@@ -1,7 +1,7 @@
 import Link from "next/link";
 import { createClient } from "@/lib/supabase/server";
 import { Button } from "@/components/ui/button";
-import { formatMoneda } from "@/lib/utils";
+import { ProgramasLista, type ProgramaListado } from "./ProgramasLista";
 
 export const dynamic = "force-dynamic";
 
@@ -9,7 +9,7 @@ export default async function ProgramasPage() {
   const sb = await createClient();
   const { data: programas } = await sb
     .from("programas")
-    .select("id, nombre, subtitulo, dias, noches, moneda, publicado, proveedores(nombre)")
+    .select("id, nombre, subtitulo, dias, noches, moneda, publicado, activo, destino_fijo_id, proveedores(nombre), programa_destinos_fijos(nombre, es_provisional)")
     .order("created_at", { ascending: false });
 
   // Precio "desde" por programa (mínimo neto publicado, informativo).
@@ -28,6 +28,21 @@ export default async function ProgramasPage() {
       if (!prev || neto < prev.neto) desde.set(pid, { neto, moneda: "USD" });
     }
   }
+
+  const listado: ProgramaListado[] = (programas ?? []).map((p) => ({
+    id: p.id,
+    nombre: p.nombre,
+    subtitulo: p.subtitulo,
+    dias: p.dias,
+    noches: p.noches,
+    publicado: p.publicado,
+    activo: p.activo,
+    destino_fijo_id: p.destino_fijo_id,
+    destino: (p.programa_destinos_fijos as unknown as { nombre: string } | null)?.nombre ?? null,
+    destino_es_provisional: (p.programa_destinos_fijos as unknown as { es_provisional?: boolean | null } | null)?.es_provisional === true,
+    proveedor: (p.proveedores as unknown as { nombre: string } | null)?.nombre ?? null,
+    desde: desde.get(p.id) ?? null,
+  }));
 
   return (
     <div className="mx-auto max-w-5xl p-4 md:p-8">
@@ -52,55 +67,7 @@ export default async function ProgramasPage() {
         </div>
       </div>
 
-      {!programas?.length ? (
-        <div className="rounded-2xl border-2 border-dashed border-gray-200 py-20 text-center text-gray-400">
-          <p className="text-lg">Aún no hay programas</p>
-          <p className="mt-1 text-sm">Crea el primero con el botón “Nuevo programa”.</p>
-        </div>
-      ) : (
-        <div className="grid grid-cols-1 gap-3">
-          {programas.map((p) => {
-            const d = desde.get(p.id);
-            return (
-              <Link
-                key={p.id}
-                href={`/dashboard/producto/programas/${p.id}`}
-                className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-gray-200 bg-white p-5 transition-all hover:border-[#1D7C9A] hover:shadow-sm"
-              >
-                <div className="min-w-0">
-                  <div className="flex items-center gap-2">
-                    <span className="font-semibold text-gray-800">{p.nombre}</span>
-                    {p.publicado ? (
-                      <span className="rounded-full bg-green-100 px-2 py-0.5 text-xs text-green-700">
-                        Publicado
-                      </span>
-                    ) : (
-                      <span className="rounded-full bg-gray-100 px-2 py-0.5 text-xs text-gray-500">
-                        Borrador
-                      </span>
-                    )}
-                  </div>
-                  <p className="truncate text-xs text-gray-500">
-                    {p.subtitulo ?? "—"}
-                    {p.dias ? ` · ${p.dias}d/${p.noches ?? ""}n` : ""}
-                    {(p.proveedores as unknown as { nombre: string } | null)?.nombre
-                      ? ` · ${(p.proveedores as unknown as { nombre: string }).nombre}`
-                      : ""}
-                  </p>
-                </div>
-                {d && (
-                  <div className="text-right">
-                    <div className="text-xs text-gray-400">desde (neto)</div>
-                    <div className="font-semibold" style={{ color: "var(--brand-primary)" }}>
-                      {formatMoneda(d.neto, d.moneda)}
-                    </div>
-                  </div>
-                )}
-              </Link>
-            );
-          })}
-        </div>
-      )}
+      <ProgramasLista programas={listado} />
     </div>
   );
 }

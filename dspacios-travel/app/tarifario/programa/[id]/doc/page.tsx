@@ -1,6 +1,7 @@
 import { notFound } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
 import { getProgramaDetalle } from "@/lib/programas";
+import { programaVisibleEnPublico } from "@/lib/programas/destinoFijo";
 import { agenciaDe } from "@/lib/tenant.server";
 import { formatMoneda, formatFechaLarga } from "@/lib/utils";
 import { Logo } from "@/components/Logo";
@@ -62,7 +63,8 @@ export default async function ProgramaDocPage({
 
   const det = await getProgramaDetalle(sb, id);
   if (!det) notFound();
-  if (!det.programa.publicado && !esInterno) notFound();
+  // Sin destino fijo (migración 213) tampoco es público: solo el equipo interno abre el PDF.
+  if (!esInterno && !programaVisibleEnPublico(det.programa)) notFound();
 
   const ag = marcaBlanca ? null : await agenciaDe("mayorista").catch(() => null);
 

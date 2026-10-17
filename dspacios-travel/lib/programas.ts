@@ -88,10 +88,12 @@ export async function getProgramasResumen(sb: SB, soloPublicados = true): Promis
   let q = sb
     .from("programas")
     .select(
-      "id, nombre, subtitulo, dias, noches, moneda, pct_mk, pct_fee_tarjeta, asistencia_medica_dia, publicado, desde_precio, incluye_aereo, tipo_transporte, portada_url, regla_comisionable, regla_comisionable_modalidad_mk, regla_comisionable_modo, regla_comisionable_valor, regla_comisionable_pct_comision, regla_comisionable_impuesto_por_acomodacion"
+      "id, nombre, subtitulo, dias, noches, moneda, pct_mk, pct_fee_tarjeta, asistencia_medica_dia, publicado, destino_fijo_id, programa_destinos_fijos(id, nombre, es_provisional), desde_precio, incluye_aereo, tipo_transporte, portada_url, regla_comisionable, regla_comisionable_modalidad_mk, regla_comisionable_modo, regla_comisionable_valor, regla_comisionable_pct_comision, regla_comisionable_impuesto_por_acomodacion"
     )
     .eq("activo", true);
-  if (soloPublicados) q = q.eq("publicado", true);
+  // Visibilidad pública (migración 213): publicado Y con destino fijo asignado.
+  // Un programa sin destino sigue visible en el panel interno (soloPublicados=false).
+  if (soloPublicados) q = q.eq("publicado", true).not("destino_fijo_id", "is", null);
   const { data: programas, error: errorProgramas } = await q.order("nombre");
   if (errorProgramas) return { programas: [], error: errorProgramas };
   if (!programas?.length) return { programas: [], error: null };
@@ -239,6 +241,8 @@ export async function getProgramasResumen(sb: SB, soloPublicados = true): Promis
       tipo_transporte: (p.tipo_transporte as "ninguno" | "aereo" | "terrestre" | undefined) ?? (p.incluye_aereo ? "aereo" : "ninguno"),
       portada_url: p.portada_url ?? null,
       ciudades: ciudadesPorProg.get(p.id) ?? [],
+      // Destino fijo comercial (migración 213): lo que ofrece y compara el filtro público.
+      destino: (p.programa_destinos_fijos as unknown as { id: number; nombre: string; es_provisional?: boolean | null } | null) ?? null,
     };
   });
 
@@ -248,6 +252,8 @@ export async function getProgramasResumen(sb: SB, soloPublicados = true): Promis
 export type ProgramaDetalle = {
   programa: ProgramaRow;
   proveedorNombre: string | null;
+  /** Destino fijo comercial (migración 213); null = sin destino (oculto del tarifario público). */
+  destinoFijo: { id: number; nombre: string; es_provisional?: boolean | null } | null;
   ciudades: { id: number; nombre: string; codigo_iata: string | null; noches: number; alojamiento_previsto: string | null }[];
   dias: { dia: number; titulo: string | null; desayuno: boolean; almuerzo: boolean; cena: boolean; descripcion: string | null }[];
   categorias: {
@@ -275,7 +281,7 @@ export type ProgramaDetalle = {
 export async function getProgramaDetalle(sb: SB, id: number): Promise<ProgramaDetalle | null> {
   const { data: programa } = await sb
     .from("programas")
-    .select("*, proveedores(nombre)")
+    .select("*, proveedores(nombre), programa_destinos_fijos(id, nombre, es_provisional)")
     .eq("id", id)
     .maybeSingle();
   if (!programa) return null;
@@ -416,6 +422,7 @@ export async function getProgramaDetalle(sb: SB, id: number): Promise<ProgramaDe
   return {
     programa: programa as ProgramaRow,
     proveedorNombre,
+    destinoFijo: (programa.programa_destinos_fijos as unknown as { id: number; nombre: string; es_provisional?: boolean | null } | null) ?? null,
     ciudades: ciudades ?? [],
     dias: dias ?? [],
     categorias: cats,
