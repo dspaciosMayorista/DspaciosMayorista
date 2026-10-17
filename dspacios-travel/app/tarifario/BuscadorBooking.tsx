@@ -799,7 +799,7 @@ export function Resultado({ r, recomendada = false, foto, info, descripcionPorPa
           <DescripcionHotelExpandible texto={info?.descripcion} className="mt-1" textClassName="text-xs text-gray-400" />
         </div>
 
-        <UbicacionHotel hotelNombre={r.hotelNombre ?? ""} ubicacion={info?.ubicacion} />
+        <UbicacionHotel hotelNombre={r.hotelNombre ?? ""} ubicacion={info?.ubicacion} compacto />
 
         {/* Selectores de categoría y alimentación */}
         <div className="grid grid-cols-1 gap-2">

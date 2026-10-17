@@ -20,7 +20,7 @@
 // importa de ninguno de los dos, así que ambos lo importan sin ciclo.
 // ─────────────────────────────────────────────────────────────────────────
 
-import { createContext, useContext, useEffect, useId, useLayoutEffect, useRef, useState, type ReactNode, type Ref } from "react";
+import { createContext, useContext, useEffect, useId, useRef, useState, type ReactNode } from "react";
 import Image from "next/image";
 import { Popover } from "@base-ui/react/popover";
 import { Check, ChevronDown, ChevronRight, Circle, CircleCheck, Info, Star, X } from "lucide-react";
@@ -171,63 +171,42 @@ function IconoSeccion({ titulo }: { titulo: string }) {
 // Bloque de ubicación/mapa — mismo criterio en TODA la app: informativo,
 // nunca expone nada de precio/disponibilidad. `null`/vacío/solo-espacios →
 // no se renderiza nada (nunca un mapa sin dirección real).
-export function UbicacionHotel({ hotelNombre, ubicacion }: { hotelNombre: string; ubicacion: string | null | undefined }) {
+export function UbicacionHotel({ hotelNombre, ubicacion, compacto = false }: { hotelNombre: string; ubicacion: string | null | undefined; compacto?: boolean }) {
+  const [abierto, setAbierto] = useState(false);
+  const idMapa = useId();
   if (!ubicacion?.trim()) return null;
   return (
     <div>
-      <div className="mb-1 flex items-center justify-between">
-        <span className="text-xs font-semibold uppercase tracking-wide text-gray-400">Ubicación</span>
-        <a href={`https://www.google.com/maps?q=${encodeURIComponent(ubicacion)}`} target="_blank" rel="noopener noreferrer" className="text-xs font-medium" style={{ color: "var(--brand-accent)" }}>
+      {compacto ? (
+        <>
+          <p className="text-xs font-semibold uppercase tracking-wide text-gray-400">Ubicación</p>
+          <button type="button" aria-expanded={abierto} aria-controls={idMapa}
+            aria-label={`${abierto ? "Ver menos" : "Ver más"}: ubicación`}
+            onClick={() => setAbierto((v) => !v)}
+            className="inline-flex min-h-9 items-center gap-1 text-xs font-medium focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--brand-accent)]"
+            style={{ color: "var(--brand-accent)" }}>
+            {abierto ? "Ver menos" : "Ver más"}
+            <ChevronDown size={14} aria-hidden className={abierto ? "rotate-180" : ""} />
+          </button>
+        </>
+      ) : <p className="mb-1 text-xs font-semibold uppercase tracking-wide text-gray-400">Ubicación</p>}
+      <div id={idMapa} hidden={compacto && !abierto}>
+        <a href={`https://www.google.com/maps?q=${encodeURIComponent(ubicacion)}`} target="_blank" rel="noopener noreferrer" className="mb-1 inline-block text-xs font-medium" style={{ color: "var(--brand-accent)" }}>
           Ver en Google Maps →
         </a>
+        {(!compacto || abierto) && <iframe
+          title={`Mapa ${hotelNombre}`}
+          src={`https://www.google.com/maps?q=${encodeURIComponent(ubicacion)}&output=embed`}
+          className="h-56 w-full rounded-lg border border-gray-200"
+          loading="lazy"
+          referrerPolicy="no-referrer-when-downgrade"
+        />}
       </div>
-      <iframe
-        title={`Mapa ${hotelNombre}`}
-        src={`https://www.google.com/maps?q=${encodeURIComponent(ubicacion)}&output=embed`}
-        className="h-56 w-full rounded-lg border border-gray-200"
-        loading="lazy"
-        referrerPolicy="no-referrer-when-downgrade"
-      />
     </div>
   );
 }
 
-// ── Variante COMPACTA de Incluye/No incluye (#52) ───────────────────────────
-// Las tarjetas de resultado (`Resultado` y `TarjetaUnidadBusqueda`) comparten
-// fila en una grilla: la descripción completa de un paquete las estiraba y
-// dejaba huecos en las vecinas. Criterio ÚNICO del resumen (`resumirSecciones`):
-//   · solo "El programa incluye" y "El programa no incluye" (si el paquete no
-//     tiene ninguna de las dos, la primera sección con contenido), en el orden
-//     de siempre;
-//   · hasta RESUMEN_MAX_ITEMS ítems por sección, cada uno recortado a 2 líneas;
-//   · "Ver más" aparece SOLO si el resumen oculta algo, por una de dos vías:
-//     (a) ESTRUCTURAL — sección omitida o ítems de más (`resumirSecciones`,
-//         puro, sin DOM);
-//     (b) RECORTE REAL — algún ítem visible no cabe en sus 2 líneas. Se MIDE
-//         el elemento renderizado (`scrollHeight` vs `clientHeight`, mismo
-//         método que `DescripcionHotelExpandible`), nunca se adivina por
-//         cantidad de caracteres: el mismo texto cabe o no según el ancho de
-//         la tarjeta y la fuente. Se vuelve a medir al cambiar el ancho
-//         (`ResizeObserver`), la descripción o al terminar de cargar fuentes.
-//     Con texto que cabe completo no hay botón.
-// Se activa envolviendo el componente en <IncluyeCompacto>. Sin ese envoltorio
-// (modales `HotelModal`/`HotelBernaloCotizarModal`) o con `compacto={false}`
-// el contenido es SIEMPRE el completo de antes.
-const TITULOS_RESUMEN = ["El programa incluye", "El programa no incluye"];
-export const RESUMEN_MAX_ITEMS = 2;
-
-export function resumirSecciones(secciones: readonly SeccionDescripcion[]): { secciones: SeccionDescripcion[]; hayMas: boolean } {
-  let base = secciones.filter((s) => TITULOS_RESUMEN.includes(s.titulo));
-  if (!base.length) base = secciones.slice(0, 1);
-  let hayMas = base.length < secciones.length;
-  const visibles = base.map((s) => {
-    const items = s.items.slice(0, RESUMEN_MAX_ITEMS);
-    if (items.length < s.items.length) hayMas = true;
-    return { titulo: s.titulo, items };
-  });
-  return { secciones: visibles, hayMas };
-}
-
+// Las tarjetas y los dos modales muestran solo el acceso al detalle al abrir.
 const IncluyeCompactoContexto = createContext(false);
 
 /** Envoltorio de las tarjetas: los <SeccionesIncluye> de adentro salen compactos. */
@@ -235,123 +214,42 @@ export function IncluyeCompacto({ children }: { children: ReactNode }) {
   return <IncluyeCompactoContexto.Provider value={true}>{children}</IncluyeCompactoContexto.Provider>;
 }
 
-// Cada instancia (cada tarjeta) guarda SU expansión; el contenido sale siempre
-// de `descripcion` (la de la oferta/paquete seleccionado), nunca de un valor
-// recordado. Si esa descripción cambia (otra oferta o categoría) la tarjeta
-// vuelve a su tamaño compacto — mismo patrón de ajuste durante el render que
-// `AddonsPaquete` (sin efecto ni frame con contenido ajeno) — y su recorte se
-// vuelve a medir desde cero.
-//
-// Expandida, la tarjeta NO reutiliza el markup de los modales: allí el texto
-// es hijo directo de un <li flex> y no puede encogerse, así que un token sin
-// espacios desborda la tarjeta (que tiene overflow:hidden) y queda invisible.
-// La tarjeta usa SU lista (`ListaTarjeta`) en las dos vistas: el texto va en
-// un <span min-w-0 overflow-wrap:anywhere> que se ajusta al ancho visible;
-// solo el resumen agrega el recorte a 2 líneas y la medición.
+// Al cambiar la oferta seleccionada, cada instancia se cierra de nuevo.
 function SeccionesIncluyeResumen({ descripcion }: { descripcion: DescripcionPaqueteRaw | undefined | null }) {
   const secciones = seccionesDescripcion(descripcion);
   const firma = secciones.map((s) => `${s.titulo}\u0001${s.items.join("\u0002")}`).join("\u0003");
   const [expandido, setExpandido] = useState(false);
-  const [recortado, setRecortado] = useState(false);
   const [firmaAnterior, setFirmaAnterior] = useState(firma);
   if (firma !== firmaAnterior) {
     setFirmaAnterior(firma);
     setExpandido(false);
-    setRecortado(false);
   }
-  const refResumen = useRef<HTMLDivElement>(null);
-  const refRegion = useRef<HTMLDivElement>(null);
-  const refBoton = useRef<HTMLButtonElement>(null);
-  const devolverFoco = useRef(false);
   const idRegion = useId();
-  const resumen = resumirSecciones(secciones);
-  const estructural = resumen.hayMas;
-  const hayMas = estructural || recortado;
-  const abierto = expandido && hayMas;
-
-  // Medición del recorte real de los ítems del resumen. `useLayoutEffect`:
-  // se mide antes de pintar, así no se ve un ítem cortado sin su botón.
-  // Mientras está abierto no hay resumen que medir: se conserva el último
-  // valor para que "Ver menos" siga disponible, y al cerrar se vuelve a medir.
-  useLayoutEffect(() => {
-    if (abierto) return;
-    const el = refResumen.current;
-    if (!el) return;
-    const items = () => [...el.querySelectorAll<HTMLElement>("[data-recorte]")];
-    const medir = () => {
-      const r = items().some((it) => it.scrollHeight - it.clientHeight > 1);
-      // El botón va a desaparecer (nada oculto) justo cuando tiene el foco —
-      // p. ej. "Ver menos" tras ensanchar la ventana —: se anota ANTES de
-      // quitarlo, sin depender de `blur` (que el navegador no dispara de forma
-      // consistente al eliminar el elemento enfocado).
-      if (!r && !estructural && document.activeElement === refBoton.current) devolverFoco.current = true;
-      setRecortado(r);
-    };
-    medir();
-    let vigente = true;
-    document.fonts?.ready.then(() => { if (vigente) medir(); });
-    if (typeof ResizeObserver === "undefined") return () => { vigente = false; };
-    const ro = new ResizeObserver(medir);
-    ro.observe(el);
-    for (const it of items()) ro.observe(it);
-    return () => { vigente = false; ro.disconnect(); };
-  }, [firma, abierto, estructural]);
-
-  // Sin control, el foco se quedaría en <body>: se lleva a la región del
-  // bloque (tabIndex=-1, dentro de la misma tarjeta), así el siguiente Tab
-  // continúa con el próximo control de la tarjeta.
-  useLayoutEffect(() => {
-    if (hayMas || !devolverFoco.current) return;
-    devolverFoco.current = false;
-    refRegion.current?.focus();
-  }, [hayMas]);
 
   return (
     <div className="min-w-0 space-y-1">
-      <div
-        id={idRegion}
-        ref={refRegion}
-        tabIndex={-1}
-        role="group"
-        aria-label="Incluye y no incluye"
-        className="min-w-0 rounded-lg focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--brand-accent)]"
-      >
-        {abierto ? (
-          <ListaTarjeta secciones={secciones} recortar={false} />
-        ) : (
-          <ListaTarjeta secciones={resumen.secciones} recortar refLista={refResumen} />
-        )}
+      <p className="text-xs font-semibold uppercase tracking-wide text-gray-400">Incluye/No incluye</p>
+      <button type="button" aria-expanded={expandido} aria-controls={idRegion}
+        aria-label={`${expandido ? "Ver menos" : "Ver más"}: incluye y no incluye`}
+        onClick={() => setExpandido((v) => !v)}
+        className="inline-flex min-h-9 items-center gap-1 text-xs font-medium focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--brand-accent)]"
+        style={{ color: "var(--brand-accent)" }}>
+        {expandido ? "Ver menos" : "Ver más"}
+        <ChevronDown size={14} aria-hidden className={expandido ? "rotate-180" : ""} />
+      </button>
+      <div id={idRegion} hidden={!expandido}>
+        <ListaTarjeta secciones={secciones} />
       </div>
-      {hayMas && (
-        <button
-          ref={refBoton}
-          type="button"
-          aria-expanded={abierto}
-          aria-controls={idRegion}
-          aria-label={`${abierto ? "Ver menos" : "Ver más"}: incluye y no incluye`}
-          onClick={() => setExpandido((v) => !v)}
-          className="-ml-1 inline-flex min-h-9 items-center gap-1 rounded px-1 text-xs font-medium focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--brand-accent)]"
-          style={{ color: "var(--brand-accent)" }}
-        >
-          {abierto ? "Ver menos" : "Ver más"}
-          <ChevronDown size={14} aria-hidden className={abierto ? "rotate-180 transition-transform" : "transition-transform"} />
-        </button>
-      )}
     </div>
   );
 }
 
-// Lista de secciones de la TARJETA (resumen y expandida). `recortar`: cada
-// ítem a 2 líneas y marcado con `data-recorte` para medirlo; sin `recortar`,
-// el texto completo, ajustado al ancho de la tarjeta (tokens sin espacios
-// incluidos, `overflow-wrap:anywhere` + `min-w-0`).
-function ListaTarjeta({ secciones, recortar, refLista }: {
+// El detalle abierto conserva todas las secciones y ajusta palabras largas.
+function ListaTarjeta({ secciones }: {
   secciones: readonly SeccionDescripcion[];
-  recortar: boolean;
-  refLista?: Ref<HTMLDivElement>;
 }) {
   return (
-    <div ref={refLista} className="min-w-0 space-y-1.5">
+    <div className="min-w-0 space-y-1.5">
       {secciones.map((s) => (
         <div key={s.titulo} className="min-w-0 rounded-lg border border-gray-100 bg-gray-50 px-2.5 py-2">
           <p className="mb-1 text-[10px] font-semibold uppercase tracking-wide text-gray-400">{s.titulo}</p>
@@ -359,10 +257,7 @@ function ListaTarjeta({ secciones, recortar, refLista }: {
             {s.items.map((it, i) => (
               <li key={i} className="flex min-w-0 items-start gap-1.5 text-xs text-gray-700">
                 <IconoSeccion titulo={s.titulo} />
-                <span
-                  data-recorte={recortar ? "" : undefined}
-                  className={recortar ? "line-clamp-2 min-w-0 [overflow-wrap:anywhere]" : "min-w-0 [overflow-wrap:anywhere]"}
-                >
+                <span className="min-w-0 [overflow-wrap:anywhere]">
                   {it}
                 </span>
               </li>
