@@ -2558,6 +2558,25 @@ export type Database = {
         Update: Partial<Database["public"]["Tables"]["tarifario_resultado"]["Insert"]>;
         Relationships: [];
       };
+      // Migración 213: lista comercial fija de destinos de programas (manual).
+      programa_destinos_fijos: {
+        Row: {
+          id: number;
+          nombre: string;
+          es_provisional: boolean;
+          created_at: string;
+          updated_at: string;
+        };
+        Insert: {
+          id?: number;
+          nombre: string;
+          es_provisional?: boolean;
+          created_at?: string;
+          updated_at?: string;
+        };
+        Update: Partial<Database["public"]["Tables"]["programa_destinos_fijos"]["Insert"]>;
+        Relationships: [];
+      };
       programas: {
         Row: {
           id: number;
@@ -2594,6 +2613,7 @@ export type Database = {
           modo_precio: string;
           video_url: string | null;
           activo: boolean;          publicado: boolean;
+          destino_fijo_id: number | null;
           regla_comisionable: boolean;
           regla_comisionable_modo: string;
           regla_comisionable_valor: number | null;
@@ -2646,6 +2666,7 @@ export type Database = {
           video_url?: string | null;
           activo?: boolean;
           publicado?: boolean;
+          destino_fijo_id?: number | null;
           regla_comisionable?: boolean;
           regla_comisionable_modo?: string;
           regla_comisionable_valor?: number | null;
@@ -2660,7 +2681,15 @@ export type Database = {
           restriccion_comercial?: string;
         };
         Update: Partial<Database["public"]["Tables"]["programas"]["Insert"]>;
-        Relationships: [];
+        Relationships: [
+          {
+            foreignKeyName: "programas_destino_fijo_fk";
+            columns: ["destino_fijo_id"];
+            isOneToOne: false;
+            referencedRelation: "programa_destinos_fijos";
+            referencedColumns: ["id"];
+          },
+        ];
       };
       programa_salidas: {
         Row: {

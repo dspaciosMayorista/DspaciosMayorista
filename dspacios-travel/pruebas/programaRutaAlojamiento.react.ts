@@ -1,8 +1,6 @@
-// Se ejecuta con el comando directo (no registrado en package.json):
-//   node --experimental-test-module-mocks \
-//     --experimental-loader ./pruebas/support/reactLoader.mjs \
-//     --experimental-loader ./pruebas/support/programasRutaLoader.mjs \
-//     --test pruebas/programaRutaAlojamiento.react.ts
+// Registrada en `npm run test:react`. Comando equivalente para correrla sola:
+//   node --experimental-test-module-mocks --import ./pruebas/support/registrarProgramasRuta.mjs
+//     --experimental-loader ./pruebas/support/reactLoader.mjs --test pruebas/programaRutaAlojamiento.react.ts
 // #51 / migración 212. Ejecuta las Server Actions REALES (guardarCiudades,
 // importarDesdeTexto) contra una tabla en memoria, y las dos páginas REALES de
 // programa (ficha y documento/PDF) renderizadas a HTML.
@@ -80,6 +78,8 @@ function crearClienteFalso(seed: Record<string, Fila[]>) {
 const PROGRAMA = {
   id: 7, nombre: "Perú Mágico", publicado: true, moneda: "USD", pct_mk: 0.2, asistencia_medica_dia: 0,
   dias: 6, noches: 5, pct_fee_tarjeta: 0, subtitulo: null, highlights: [], proveedores: null,
+  // #23: sin destino fijo el programa no es público; la ruta y el alojamiento se prueban con uno asignado.
+  destino_fijo_id: 1, programa_destinos_fijos: { id: 1, nombre: "Perú" },
 };
 
 let sb: ReturnType<typeof crearClienteFalso>;

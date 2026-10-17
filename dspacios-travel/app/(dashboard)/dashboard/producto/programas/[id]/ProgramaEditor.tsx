@@ -5,6 +5,8 @@ import { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { AlertTriangle } from "lucide-react";
+import { ETIQUETA_FALTA_DESTINO, ETIQUETA_POR_CLASIFICAR, tieneDestinoFijo } from "@/lib/programas/destinoFijo";
 import { CabeceraForm } from "../CabeceraForm";
 import { ProgramaImagenes } from "./ProgramaImagenes";
 import type { Database } from "@/types/database";
@@ -91,6 +93,8 @@ export function ProgramaEditor(props: {
   tours: Tour[];
   blackouts: Blackout[];
   destinos?: DestinoOpt[];
+  /** Lista fija "destino de programas" (migración 213). */
+  destinosFijos?: { id: number; nombre: string; es_provisional?: boolean | null }[];
 }) {
   const { programa } = props;
   const [tab, setTab] = useState<(typeof TABS)[number]["key"]>("general");
@@ -186,6 +190,7 @@ export function ProgramaEditor(props: {
     condicionPagoPctInicial: programa.condicion_pago_pct_inicial != null ? Math.round(Number(programa.condicion_pago_pct_inicial) * 100) : "",
     condicionPagoDiasSaldo: programa.condicion_pago_dias_saldo ?? "",
     restriccionComercial: programa.restriccion_comercial ?? "normal",
+    destinoFijoId: programa.destino_fijo_id ?? null,
   };
 
   return (
@@ -210,6 +215,23 @@ export function ProgramaEditor(props: {
           >
             {programa.publicado ? "Publicado" : "Borrador"}
           </span>
+          {tieneDestinoFijo({ destino_fijo_id: programa.destino_fijo_id }) &&
+            props.destinosFijos?.find((d) => d.id === programa.destino_fijo_id)?.es_provisional === true && (
+            <span
+              className="inline-flex items-center gap-1 rounded-full bg-sky-100 px-2 py-0.5 text-xs font-medium text-sky-800"
+              title="Está en el destino provisional: se ve en el tarifario, pero falta asignarle su destino real en General."
+            >
+              {ETIQUETA_POR_CLASIFICAR}
+            </span>
+          )}
+          {!tieneDestinoFijo({ destino_fijo_id: programa.destino_fijo_id }) && (
+            <span
+              className="inline-flex items-center gap-1 rounded-full bg-amber-100 px-2 py-0.5 text-xs font-medium text-amber-800"
+              title="Sin destino fijo el programa no aparece en el tarifario público, ni su ficha ni su PDF. Asígnalo en General."
+            >
+              <AlertTriangle size={12} aria-hidden="true" /> {ETIQUETA_FALTA_DESTINO}
+            </span>
+          )}
           <Button
             disabled={pubPending}
             onClick={() => startPub(async () => void (await setPublicado(programa.id, !programa.publicado)))}
@@ -252,6 +274,7 @@ export function ProgramaEditor(props: {
           <CabeceraForm
             initial={initialCab}
             proveedores={props.proveedores}
+            destinosFijos={props.destinosFijos ?? []}
             onSubmit={(input) => guardarCabecera(programa.id, input)}
             submitLabel="Guardar cabecera"
           />
