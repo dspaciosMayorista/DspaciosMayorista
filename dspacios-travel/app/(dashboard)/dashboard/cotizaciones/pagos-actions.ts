@@ -36,6 +36,7 @@
 // ⚠️ Tipado: opera vía el cliente tipado BASE (`createAdminClient`); la
 // superficie de la migración 164 vive en `types/database.ts`.
 // ─────────────────────────────────────────────────────────────────────────
+import { MENSAJES_COMPARATIVA } from "@/lib/cotizacion/comparativa";
 import { createClient } from "@/lib/supabase/server";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { ROLES_CONTRATO_COMPLETO } from "@/lib/roles";
@@ -138,6 +139,9 @@ export async function registrarPagoPrevio(
     .eq("id", cotizacionId)
     .maybeSingle();
   if (!cot) return { ok: false, error: "La cotización no existe." };
+  // #35: una comparativa (madre) NUNCA recibe pagos ni congela: el valor numérico no existe
+  // (precio_venta es NULL) y el cálculo de abajo lo trataría como cero. La base también lo rechaza.
+  if (cot.modo === "comparativa") return { ok: false, error: MENSAJES_COMPARATIVA.NO_COBRABLE };
   if (cot.estado !== "abierta") return { ok: false, error: "Solo se pueden registrar pagos previos en una cotización abierta." };
   if (cot.tenant !== sesion.tenant && sesion.rol !== "superadmin") {
     return { ok: false, error: "La cotización pertenece a otra agencia." };

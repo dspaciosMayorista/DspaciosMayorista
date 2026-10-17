@@ -1150,10 +1150,12 @@ export async function convertirCotizacion(id: number, pasajeros?: PasajeroReserv
   const sb = await createClient();
   const { data: cot, error } = await sb
     .from("cotizaciones")
-    .select("estado, payload, numero_contrato, tenant")
+    .select("estado, payload, numero_contrato, tenant, modo")
     .eq("id", id)
     .maybeSingle();
   if (error || !cot) return { ok: false, error: error?.message ?? "Cotización no encontrada." };
+  // #35: una comparativa (madre) no se convierte: primero se elige una opción (la hija sí se convierte).
+  if (cot.modo === "comparativa") return { ok: false, error: "Una comparativa no se convierte en contrato: elige una opción primero." };
   if (cot.estado === "convertida" && cot.numero_contrato) return { ok: true, numero: cot.numero_contrato };
   if (cot.estado === "descartada") return { ok: false, error: "La cotización está descartada; no se puede convertir." };
 

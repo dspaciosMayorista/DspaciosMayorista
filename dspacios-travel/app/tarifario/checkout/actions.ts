@@ -31,6 +31,13 @@ import { hoyBogota, resolverVigenciaCotizacion } from "@/lib/cotizacion/vigencia
 import { calcularResidualServiciosIncluidosPorGrupo } from "@/lib/reservar/desglosePersonaCotizacion";
 import type { ComposicionBernaloDocumento } from "@/lib/reservar/alojamientoBernaloDocumento";
 import type { Json } from "@/types/database";
+import { PAX_TARIFA_DEFAULT, paxDeAcomodacion } from "@/lib/acomodaciones";
+import {
+  MAX_OPCIONES, OPCIONES_REF, MENSAJES_COMPARATIVA, canalDeRol, composicionesUniformes, codigoErrorComparativa,
+  esErrorReintentable, ipOrigenConfiable, mensajeErrorComparativa, validarClienteCheckoutPublico, validarEntradaEleccion,
+  validarEntradaSolicitud, validarRefsOpcion, type CanalEleccion, type CapacidadAcomodacion, type OpcionRef, type OpcionRpc,
+} from "@/lib/cotizacion/comparativa";
+import { huellaIp } from "@/lib/cotizacion/comparativaServidor";
 
 // Forma que arma el CARRITO en el cliente (ver lib/cart/CartContext.tsx) —
 // incluye `ninos`/`ninos2`/`infantes`/`pax`/`precio` para la vista previa en
@@ -476,12 +483,19 @@ const refItemCotizacion = (posicion: number) => `item-${posicion}`;
 
 export type ItemExcluido = { etiqueta: string; motivo: "moneda" | "no_disponible" };
 
+// #35 (comparativas): `capturar` entrega la FILA de `cotizaciones` que se iba a
+// insertar y devuelve el éxito SIN insertar nada. Así cada opción de una
+// comparativa se arma con EXACTAMENTE el mismo motor que una cotización de
+// carrito común (mismos precios, mismas reglas), sin duplicar su cálculo.
+// Sin `capturar` el comportamiento es el de siempre.
+type OpcionesCarrito = { capturar?: (fila: Record<string, unknown>) => void };
+
 async function crearCotizacionCarrito(input: {
   items: SolicitudItemVariante[];
   tours: SolicitudTourValidado[];
   hotelDeTour: (number | null)[];
   cliente: SolicitudCliente;
-}): Promise<
+}, opts?: OpcionesCarrito): Promise<
   | { ok: true; id: number; codigo: string; url: string; moneda: string; itemsOk: SolicitudItemComputado[]; itemsBernaloOk: SolicitudItemBernaloComputado[]; toursOk: SolicitudTourComputado[]; excluidos: ItemExcluido[] }
   | { ok: false; error: string }
   | ResultadoPrecioActualizadoBernalo
@@ -979,7 +993,7 @@ async function crearCotizacionCarrito(input: {
   const { data: { user } } = await sb.auth.getUser();
   const admin = process.env.SUPABASE_SERVICE_ROLE_KEY ? createAdminClient() : sb;
 
-  const { data: row, error } = await admin.from("cotizaciones").insert({
+  const filaCotizacion = {
     // Estampado FIJO en el servidor — nunca desde `input` (el cliente no
     // manda ni puede mandar un tenant): este checkout es el carrito público
     // del tarifario, que es un producto exclusivo de mayorista (minorista no
@@ -1006,7 +1020,13 @@ async function crearCotizacionCarrito(input: {
     vigencia_hasta: vigencia,
     asesor: null,
     creado_por: user?.email ?? null,
-  }).select("id, codigo, share_token").single();
+  };
+  // #35: una opción de comparativa solo necesita la fila calculada.
+  if (opts?.capturar) {
+    opts.capturar(filaCotizacion as unknown as Record<string, unknown>);
+    return { ok: true, id: 0, codigo: "", url: "", moneda, itemsOk, itemsBernaloOk, toursOk, excluidos };
+  }
+  const { data: row, error } = await admin.from("cotizaciones").insert(filaCotizacion).select("id, codigo, share_token").single();
   // FRONTERA PÚBLICA (ronda 7): nunca se reenvía `error.message` — un fallo
   // real de Postgres/Supabase (columna faltante, RLS, restricción violada)
   // no debe llegar a esta Server Action pública. `respuestaPublicaInsertCotizacion`
@@ -1120,4 +1140,335 @@ export async function crearSolicitudReserva(inputRaw: unknown): Promise<Solicitu
     : null;
 
   return { ok: true, cotizacion: { id: cot.id, codigo: cot.codigo, url: cot.url }, waUrl, mailtoUrl, mensaje };
+}
+
+// ═════════════════════════════════════════════════════════════════════════
+// #35 · COTIZACIONES COMPARATIVAS del tarifario (Vista Booking)
+//
+// Una comparativa sirve para ESCOGER UN hotel (hasta 3) del mismo viaje; nunca
+// para comprar alternativas juntas. Cada opción = su hotel + sus servicios
+// vinculados + sus acomodaciones; cada opción se arma con el MISMO motor que
+// una cotización de carrito común (`crearCotizacionCarrito` con `capturar`).
+//
+//   crearComparativaCarrito   → madre (precio_venta NULL; no se cobra ni convierte)
+//   elegirOpcionComparativa   → revalida y reliquida, emite un RECIBO de un solo
+//                               uso y recién entonces crea la HIJA (cotización
+//                               simple con solo la opción elegida)
+//   solicitarOpcionComparativa→ visitante / B2B sobre comparativas que no
+//                               continúan por checkout: solo registra una
+//                               SOLICITUD; nada cobrable
+//
+// El `share_token` del enlace público solo LEE: nunca autoriza escribir. Quien
+// escribe es siempre una acción validada en servidor (sesión, recibo, RPC).
+// ═════════════════════════════════════════════════════════════════════════
+
+export type ResultadoComparativaCreada =
+  | { ok: true; id: number; codigo: string; url: string }
+  | { ok: false; error: string };
+export type ResultadoEleccion =
+  | { ok: true; hijaId: number; codigo: string; url: string }
+  | { ok: false; error: string; tipo?: "precio_actualizado"; pvp?: number; moneda?: string; reintentable?: boolean };
+export type ResultadoSolicitud = { ok: true; actualizada: boolean } | { ok: false; error: string };
+
+type ActorComparativa = { userId: string | null; canal: CanalEleccion; email: string | null; aliadoId: number | null; tipoB2B: "agencia" | "freelance" | null };
+
+/** Identidad desde la SESIÓN auténtica (`auth.getUser()` valida el JWT); jamás desde el cuerpo de la petición. */
+async function actorComparativa(): Promise<ActorComparativa> {
+  const anonimo: ActorComparativa = { userId: null, canal: "publico", email: null, aliadoId: null, tipoB2B: null };
+  const sb = await createClient();
+  const { data: { user } } = await sb.auth.getUser();
+  if (!user) return anonimo;
+  const { data: perfil } = await sb.from("usuarios").select("rol, activo, aliado_id").eq("id", user.id).maybeSingle();
+  if (!perfil) return anonimo;
+  const canal = canalDeRol(perfil.rol, perfil.activo);
+  if (canal === "publico") return anonimo;
+  return {
+    userId: user.id, canal, email: user.email ?? null,
+    aliadoId: canal === "b2b" ? (perfil.aliado_id ?? null) : null,
+    tipoB2B: canal === "b2b" ? (perfil.rol === "agencia" ? "agencia" : "freelance") : null,
+  };
+}
+
+function urlCotizacionPublica(h: Headers, token: string | null | undefined): string {
+  const host = h.get("x-forwarded-host") ?? h.get("host");
+  const proto = h.get("x-forwarded-proto") ?? "https";
+  return host && token ? `${proto}://${host}/cot/${token}` : "";
+}
+
+/** Pax que cubre cada acomodación del hotel (migración 027), con los valores por defecto del sistema. */
+async function capacidadesAcomodacion(hotelId: number): Promise<CapacidadAcomodacion> {
+  const caps: CapacidadAcomodacion = { ...PAX_TARIFA_DEFAULT };
+  if (!process.env.SUPABASE_SERVICE_ROLE_KEY) return caps;
+  const { data } = await createAdminClient().from("hotel_acomodaciones").select("acomodacion, pax_tarifa").eq("hotel_id", hotelId);
+  for (const r of data ?? []) {
+    if (typeof r.acomodacion === "string" && Number.isInteger(r.pax_tarifa) && (r.pax_tarifa as number) > 0) caps[r.acomodacion] = r.pax_tarifa as number;
+  }
+  return caps;
+}
+
+type FilaCapturada = Record<string, unknown> & {
+  payload: { items?: Array<Record<string, unknown>>; tours?: Array<Record<string, unknown>> };
+  detalle: unknown; moneda: string; precio_venta: number; pax: number; destino: string | null;
+  fecha_salida: string | null; fecha_regreso: string | null; hotel: string | null; plan_nombre: string | null;
+  cliente: string; cliente_documento: string | null;
+};
+
+/** Arma UNA opción (un hotel con una composición) con el motor real; no inserta nada. */
+async function armarOpcionCarrito(
+  item: SolicitudItemVariante, tours: SolicitudTourValidado[], cliente: SolicitudCliente
+): Promise<{ ok: true; fila: FilaCapturada } | { ok: false; error: string }> {
+  let fila: FilaCapturada | null = null;
+  const r = await crearCotizacionCarrito(
+    { items: [item], tours, hotelDeTour: tours.map(() => 0), cliente },
+    { capturar: (f) => { fila = f as FilaCapturada; } }
+  );
+  if (!r.ok) return { ok: false, error: "error" in r ? r.error : "El precio cambió; vuelve a intentarlo." };
+  if (r.excluidos.length) return { ok: false, error: `No se pudo cotizar el conjunto completo de ${item.hotelNombre}: ${r.excluidos.map((e) => e.etiqueta).join(", ")}.` };
+  if (!fila) return { ok: false, error: "No se pudo armar la opción." };
+  return { ok: true, fila };
+}
+
+export async function crearComparativaCarrito(inputRaw: unknown): Promise<ResultadoComparativaCreada> {
+  const v = validarCrearSolicitudInput(inputRaw);
+  if (!v.ok) return { ok: false, error: v.error };
+  const input = v.input;
+
+  if (input.items.length < 2 || input.items.length > MAX_OPCIONES) {
+    return { ok: false, error: `Una comparativa necesita entre 2 y ${MAX_OPCIONES} hoteles.` };
+  }
+  if (input.items.some((i) => i.modeloTarifario === "unidad")) {
+    return { ok: false, error: "Los hoteles por unidad (Bernalo) todavía no se pueden comparar." };
+  }
+  const items = input.items as Exclude<SolicitudItemVariante, { modeloTarifario: "unidad" }>[];
+  if (items.some((i) => i.modulo === "bloqueo")) {
+    return { ok: false, error: "Los paquetes con vuelo negociado todavía no se pueden comparar." };
+  }
+  if (input.hotelDeTour.some((h) => h == null)) {
+    return { ok: false, error: "En una comparativa cada servicio debe estar vinculado a un hotel." };
+  }
+  const cli = input.cliente;
+  if (!`${cli.nombres}${cli.apellidos}`.trim()) return { ok: false, error: "Ingresa nombres y apellidos." };
+  if (!cli.telefono.trim()) return { ok: false, error: "El teléfono / WhatsApp es obligatorio." };
+
+  const actor = await actorComparativa();
+
+  type OpcionArmada = { opcion_ref: OpcionRef; acomodacion_ref: string; fila: FilaCapturada; hotelPrecio: number };
+  const armadas: OpcionArmada[] = [];
+  for (let i = 0; i < items.length; i++) {
+    const item = items[i];
+    const toursDelHotel = input.tours.filter((_, j) => input.hotelDeTour[j] === i);
+    const caps = await capacidadesAcomodacion(item.hotelId);
+    const adultos = Object.entries(item.habitaciones).reduce((s, [a, n]) => s + n * (caps[a] ?? paxDeAcomodacion(a)), 0);
+    const candidatas = composicionesUniformes(adultos, caps, {
+      conMenores: (item.edadesMenores?.length ?? 0) > 0, composicionActual: item.habitaciones,
+    });
+    for (let k = 0; k < candidatas.length; k++) {
+      const cand = candidatas[k];
+      const r = await armarOpcionCarrito({ ...item, habitaciones: cand.habitaciones }, toursDelHotel, cli);
+      if (!r.ok) {
+        if (k === 0) return { ok: false, error: r.error }; // la composición del carrito siempre debe poder cotizarse
+        continue; // una alternativa que el hotel no admite simplemente no se ofrece
+      }
+      const hotelPrecio = Number(r.fila.payload.items?.[0]?.precio) || 0;
+      armadas.push({ opcion_ref: OPCIONES_REF[i], acomodacion_ref: cand.acomodacionRef, fila: r.fila, hotelPrecio });
+    }
+  }
+
+  // Mismo viaje: destino, fechas, pasajeros y moneda iguales en TODAS las opciones.
+  const ref = armadas[0].fila;
+  const mismoViaje = armadas.every((o) =>
+    o.fila.moneda === ref.moneda && o.fila.pax === ref.pax && o.fila.fecha_salida === ref.fecha_salida &&
+    o.fila.fecha_regreso === ref.fecha_regreso && o.fila.destino === ref.destino);
+  if (!mismoViaje) {
+    return { ok: false, error: "Los hoteles de una comparativa deben tener el mismo destino, fechas, pasajeros y moneda." };
+  }
+
+  const vigenciaRes = resolverVigenciaCotizacion({ hoy: hoyBogota(), fechaSalida: ref.fecha_salida, diasPorDefecto: 3 });
+  if (!vigenciaRes.ok) return { ok: false, error: vigenciaRes.error };
+
+  const opciones: OpcionRpc[] = armadas.map((o, idx) => ({
+    opcion_ref: o.opcion_ref,
+    acomodacion_ref: o.acomodacion_ref,
+    orden: idx,
+    etiqueta: o.fila.hotel ?? `Hotel ${o.opcion_ref}`,
+    moneda: o.fila.moneda,
+    tarifa_persona: o.fila.pax > 0 && o.hotelPrecio > 0 ? Math.round(o.hotelPrecio / o.fila.pax) : null,
+    total: o.fila.precio_venta,
+    resumen_publico: {
+      hotel: o.fila.hotel, plan_nombre: o.fila.plan_nombre, pax: o.fila.pax, moneda: o.fila.moneda,
+      total: o.fila.precio_venta, total_hotel: o.hotelPrecio, acomodacion: o.acomodacion_ref,
+      habitaciones: o.fila.payload.items?.[0]?.habitaciones ?? null,
+      servicios: (o.fila.payload.tours ?? []).map((t) => ({ nombre: t.nombre, precio: t.precio })),
+      fecha_salida: o.fila.fecha_salida, fecha_regreso: o.fila.fecha_regreso,
+    },
+    plantilla_hija: {
+      hotel: o.fila.hotel, destino: o.fila.destino, plan_nombre: o.fila.plan_nombre, pax: o.fila.pax,
+      cliente: o.fila.cliente, cliente_documento: o.fila.cliente_documento,
+      fecha_salida: o.fila.fecha_salida, fecha_regreso: o.fila.fecha_regreso, payload: o.fila.payload, detalle: o.fila.detalle,
+    },
+  }));
+
+  if (!process.env.SUPABASE_SERVICE_ROLE_KEY) return { ok: false, error: "No se pudo crear la comparativa por un problema de configuración del servidor." };
+  const admin = createAdminClient();
+  const nombre = `${cli.nombres} ${cli.apellidos}`.trim();
+  const { data: id, error } = await admin.rpc("crear_cotizacion_comparativa", {
+    p_usuario_id: actor.userId,
+    p_cabecera: {
+      tipo: "comparativa_carrito", moneda: ref.moneda, vigencia_hasta: vigenciaRes.vigencia,
+      cliente: nombre, cliente_documento: cli.numeroDoc.trim() || null, destino: ref.destino, plan_nombre: "Cotización comparativa",
+      pax: ref.pax, asesor: null, creado_por: actor.email, fecha_salida: ref.fecha_salida, fecha_regreso: ref.fecha_regreso,
+      payload: { comparativa: true, tipoAsesor: actor.tipoB2B && actor.aliadoId ? actor.tipoB2B : "interno", cliente: cli },
+      detalle: { comparativa: true, venta: { cliente: nombre, destino: ref.destino, fecha_salida: ref.fecha_salida, fecha_regreso: ref.fecha_regreso, pax: ref.pax, moneda: ref.moneda, estado: "cotizacion" } },
+    } as unknown as Json,
+    p_servicios: [] as unknown as Json,
+    p_opciones: opciones as unknown as Json,
+    p_aliado_id: actor.tipoB2B ? actor.aliadoId : null,
+  });
+  if (error || id == null) {
+    console.error(formatearLogInsertCotizacion({ etapa: "crear_comparativa", detalle: error?.message ?? "sin id" }));
+    return { ok: false, error: mensajeErrorComparativa(error?.message) };
+  }
+  const { data: fila } = await admin.from("cotizaciones").select("codigo, share_token").eq("id", id).maybeSingle();
+  return { ok: true, id, codigo: fila?.codigo ?? "", url: urlCotizacionPublica(await headers(), fila?.share_token) };
+}
+
+/** Reconstruye el carrito de UNA opción desde su plantilla guardada y lo reliquida con el motor real. */
+async function reliquidarOpcionCarrito(
+  plantilla: { payload?: { items?: Array<Record<string, unknown>>; tours?: Array<Record<string, unknown>> } },
+  cliente: SolicitudCliente
+): Promise<{ ok: true; fila: FilaCapturada } | { ok: false; error: string }> {
+  const item = plantilla.payload?.items?.[0];
+  if (!item || item.modeloTarifario === "unidad") return { ok: false, error: "No se pudo validar la opción." };
+  const { ref: _r, ninos: _n, ninos2: _n2, infantes: _i, pax: _p, precio: _pr, ...entrada } = item;
+  void _r; void _n; void _n2; void _i; void _p; void _pr;
+  const tours: SolicitudTourValidado[] = (plantilla.payload?.tours ?? []).map((t) => ({
+    servicioId: Number(t.servicioId), paqueteId: Number(t.paqueteId),
+    fechaIda: String(t.fechaIda), fechaRegreso: String(t.fechaRegreso), pax: Number(t.pax),
+  }));
+  return armarOpcionCarrito(entrada as unknown as SolicitudItemVariante, tours, cliente);
+}
+
+export async function elegirOpcionComparativa(inputRaw: unknown): Promise<ResultadoEleccion> {
+  const v = validarEntradaEleccion(inputRaw);
+  if (!v.ok) return { ok: false, error: v.error };
+  const d = v.datos;
+  if (!process.env.SUPABASE_SERVICE_ROLE_KEY) return { ok: false, error: "No se pudo completar la operación por un problema de configuración del servidor." };
+  const admin = createAdminClient();
+  const sb = await createClient();
+  const actor = await actorComparativa();
+
+  const { data: madre } = await admin.from("cotizaciones")
+    .select("id, tipo, modo, estado, version, vigencia_hasta, moneda").eq("share_token", d.token).maybeSingle();
+  // «No existe» y «no es tuya» responden igual: nunca se enumeran cotizaciones.
+  if (!madre || madre.modo !== "comparativa" || madre.estado !== "abierta") return { ok: false, error: MENSAJES_COMPARATIVA.NO_DISPONIBLE };
+  if (madre.version !== d.version) return { ok: false, error: MENSAJES_COMPARATIVA.VERSION, reintentable: true };
+
+  const { data: opcion } = await admin.from("cotizacion_opciones")
+    .select("total, moneda, plantilla_hija").eq("cotizacion_id", madre.id).eq("opcion_ref", d.opcionRef).eq("acomodacion_ref", d.acomodacionRef).maybeSingle();
+  if (!opcion) return { ok: false, error: MENSAJES_COMPARATIVA.OPCION };
+
+  const esCarrito = madre.tipo === "comparativa_carrito";
+  // El origen manual no tiene checkout público: allí el visitante/B2B solo SOLICITA (otra acción).
+  if (!esCarrito && actor.canal !== "interno") return { ok: false, error: "Esta comparativa se confirma con tu asesor: envía una solicitud." };
+
+  let datosCliente: Json | null = null;
+  if (actor.canal === "publico") {
+    const val = validarClienteCheckoutPublico(d.cliente);
+    if (!val.ok) return { ok: false, error: val.error };
+    datosCliente = { nombres: d.cliente!.nombres, apellidos: d.cliente!.apellidos, numeroDoc: d.cliente!.numeroDoc, telefono: d.cliente!.telefono, email: d.cliente!.email };
+  }
+
+  // Reliquidación EN VIVO con el motor real (precio y disponibilidad vigentes).
+  let precio = Number(opcion.total);
+  if (esCarrito) {
+    const clienteMotor: SolicitudCliente = d.cliente
+      ? { nombres: d.cliente.nombres, apellidos: d.cliente.apellidos, numeroDoc: d.cliente.numeroDoc, telefono: d.cliente.telefono, email: d.cliente.email }
+      : { nombres: "Cliente", apellidos: "", numeroDoc: "", telefono: "", email: "" };
+    const r = await reliquidarOpcionCarrito(opcion.plantilla_hija as { payload?: { items?: Array<Record<string, unknown>>; tours?: Array<Record<string, unknown>> } }, clienteMotor);
+    if (!r.ok) return { ok: false, error: r.error };
+    if (r.fila.moneda !== opcion.moneda) return { ok: false, error: MENSAJES_COMPARATIVA.PRECIO_CAMBIO, tipo: "precio_actualizado", reintentable: false };
+    precio = Number(r.fila.precio_venta);
+    if (Math.round(precio * 100) !== Math.round(Number(opcion.total) * 100)) {
+      // La comparativa es inmutable: no se "confirma" un valor nuevo sobre ella. Se informa el valor vigente y se pide una nueva.
+      return { ok: false, tipo: "precio_actualizado", pvp: precio, moneda: r.fila.moneda, reintentable: false,
+        error: `El precio de esta opción cambió (ahora ${formatMoneda(precio, r.fila.moneda)}). Esta comparativa no se modifica: genera una comparativa nueva desde el tarifario.` };
+    }
+  }
+
+  const recibo = await admin.rpc("registrar_validacion_comparativa", {
+    p_madre_id: madre.id, p_opcion_ref: d.opcionRef, p_acomodacion_ref: d.acomodacionRef, p_version: d.version,
+    p_canal: actor.canal, p_actor_id: actor.userId, p_precio_reliquidado: precio, p_moneda: opcion.moneda,
+    p_disponibilidad_ok: true, p_datos_cliente: datosCliente,
+  });
+  if (recibo.error || !recibo.data) return { ok: false, error: mensajeErrorComparativa(recibo.error?.message), reintentable: esErrorReintentable(codigoErrorComparativa(recibo.error?.message)) };
+
+  // Consumo del recibo: con sesión (identidad = auth.uid() en la base) o por checkout público.
+  const consumo = actor.canal === "publico"
+    ? await admin.rpc("elegir_opcion_comparativa_publica", { p_validacion: recibo.data, p_clave: d.clave })
+    : await sb.rpc("elegir_opcion_comparativa_sesion", { p_validacion: recibo.data, p_clave: d.clave });
+  if (consumo.error || consumo.data == null) {
+    return { ok: false, error: mensajeErrorComparativa(consumo.error?.message), reintentable: esErrorReintentable(codigoErrorComparativa(consumo.error?.message)) };
+  }
+  const { data: hija } = await admin.from("cotizaciones").select("codigo, share_token").eq("id", consumo.data).maybeSingle();
+  return { ok: true, hijaId: consumo.data, codigo: hija?.codigo ?? "", url: urlCotizacionPublica(await headers(), hija?.share_token) };
+}
+
+/** Visitante o B2B sobre una comparativa que no continúa por checkout: solo registra una SOLICITUD. */
+export async function solicitarOpcionComparativa(inputRaw: unknown): Promise<ResultadoSolicitud> {
+  const v = validarEntradaSolicitud(inputRaw);
+  if (!v.ok) return { ok: false, error: v.error };
+  const d = v.datos;
+  if (!process.env.SUPABASE_SERVICE_ROLE_KEY) return { ok: false, error: "No se pudo completar la operación por un problema de configuración del servidor." };
+  const admin = createAdminClient();
+  // La comparativa se localiza SOLO por el token de su enlace; un id adivinado no existe para esta acción.
+  const { data: madre } = await admin.from("cotizaciones").select("id").eq("share_token", d.token).eq("modo", "comparativa").maybeSingle();
+  if (!madre) return { ok: false, error: MENSAJES_COMPARATIVA.NO_DISPONIBLE };
+  const h = await headers();
+  // IP SOLO de cabeceras que fija la plataforma (nunca un x-forwarded-for del cliente).
+  const ip = ipOrigenConfiable((n) => h.get(n), { enVercel: process.env.VERCEL === "1" });
+  const { data, error } = await admin.rpc("registrar_solicitud_comparativa", {
+    p_madre_id: madre.id, p_opcion_ref: d.opcionRef, p_acomodacion_ref: d.acomodacionRef, p_version: d.version,
+    p_nombre: d.contacto.nombre, p_telefono: d.contacto.telefono || null, p_email: d.contacto.email || null,
+    p_nota: d.contacto.nota || null, p_clave: d.clave, p_ip_huella: huellaIp(ip, process.env.SUPABASE_SERVICE_ROLE_KEY),
+  });
+  if (error) return { ok: false, error: mensajeErrorComparativa(error.message) };
+  const r = (data ?? {}) as { actualizada?: boolean };
+  return { ok: true, actualizada: r.actualizada === true };
+}
+
+export type ResumenOpcionComparativa = {
+  version: number; tipo: string; opcionRef: string; acomodacionRef: string; etiqueta: string;
+  total: number; moneda: string; tarifaPersona: number | null; destino: string | null; fechaSalida: string | null;
+  fechaRegreso: string | null; pax: number | null; vigenciaHasta: string | null; vencida: boolean;
+};
+
+/**
+ * Resumen PÚBLICO (solo lectura) de UNA opción, para la pantalla «Continuar con
+ * esta opción» del checkout. El `share_token` solo localiza la comparativa: nada
+ * de lo que devuelve concede escritura. Sin netos, proveedores ni datos personales.
+ */
+export async function resumenOpcionComparativa(
+  token: unknown, opcionRef: unknown, acomodacionRef: unknown
+): Promise<{ ok: true; datos: ResumenOpcionComparativa } | { ok: false; error: string }> {
+  const refs = validarRefsOpcion(opcionRef, acomodacionRef);
+  if (typeof token !== "string" || !/^[0-9a-f-]{36}$/i.test(token) || !refs) return { ok: false, error: MENSAJES_COMPARATIVA.NO_DISPONIBLE };
+  if (!process.env.SUPABASE_SERVICE_ROLE_KEY) return { ok: false, error: MENSAJES_COMPARATIVA.NO_DISPONIBLE };
+  const admin = createAdminClient();
+  const { data: m } = await admin.from("cotizaciones")
+    .select("id, tipo, modo, estado, version, vigencia_hasta, destino, fecha_salida, fecha_regreso, pax")
+    .eq("share_token", token).maybeSingle();
+  if (!m || m.modo !== "comparativa" || m.estado !== "abierta") return { ok: false, error: MENSAJES_COMPARATIVA.NO_DISPONIBLE };
+  const { data: o } = await admin.from("cotizacion_opciones")
+    .select("etiqueta, total, moneda, tarifa_persona")
+    .eq("cotizacion_id", m.id).eq("opcion_ref", refs.opcionRef).eq("acomodacion_ref", refs.acomodacionRef).maybeSingle();
+  if (!o) return { ok: false, error: MENSAJES_COMPARATIVA.OPCION };
+  return {
+    ok: true,
+    datos: {
+      version: m.version, tipo: m.tipo, opcionRef: refs.opcionRef, acomodacionRef: refs.acomodacionRef,
+      etiqueta: o.etiqueta, total: Number(o.total), moneda: o.moneda, tarifaPersona: o.tarifa_persona == null ? null : Number(o.tarifa_persona),
+      destino: m.destino, fechaSalida: m.fecha_salida, fechaRegreso: m.fecha_regreso, pax: m.pax,
+      vigenciaHasta: m.vigencia_hasta, vencida: !!m.vigencia_hasta && m.vigencia_hasta < hoyBogota(),
+    },
+  };
 }

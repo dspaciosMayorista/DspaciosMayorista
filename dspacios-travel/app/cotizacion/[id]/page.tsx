@@ -15,6 +15,8 @@ import type {
 import type { ComposicionBernaloDocumento, HabitacionBernaloDocumento } from "@/lib/reservar/alojamientoBernaloDocumento";
 import { condicionesTarifaParaRender } from "@/lib/calc/condicionesTarifa";
 import { tituloDocumento } from "@/lib/utils/tituloDocumento";
+import { PaginaImprimibleComparativa } from "@/lib/cotizacion/comparativaDocumento";
+import { hoyBogota } from "@/lib/cotizacion/vigencia";
 
 export async function generateMetadata({
   params,
@@ -80,7 +82,7 @@ export default async function CotizacionImprimiblePage({
 
   const { data: cot } = await sb
     .from("cotizaciones")
-    .select("codigo, detalle, vigencia_hasta, tipo, payload, created_at, tenant")
+    .select("codigo, detalle, vigencia_hasta, tipo, payload, created_at, tenant, modo")
     .eq("id", Number(id))
     .maybeSingle();
 
@@ -93,6 +95,13 @@ export default async function CotizacionImprimiblePage({
   // impredecible), que no pasa por aquí.
   const ctx = await contextoCotizacion();
   if (!autorizaTenant(ctx, cot.tenant)) notFound();
+
+  // #35: la comparativa se imprime con importes POR OPCIÓN, sin total global.
+  if (cot.modo === "comparativa") {
+    const { data: madre } = await sb.from("cotizaciones").select("*").eq("id", Number(id)).maybeSingle();
+    if (!madre) notFound();
+    return <PaginaImprimibleComparativa madre={madre} hoy={hoyBogota()} />;
+  }
 
   const volverLink = (
     <div className="mx-auto mb-4 flex max-w-3xl items-center justify-between px-4 print:hidden">

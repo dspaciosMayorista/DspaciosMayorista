@@ -8,6 +8,10 @@ import { sugerirIncluye } from "@/lib/cotizacion/incluye";
 import { contextoCotizacion, autorizaTenant } from "@/lib/cotizacion/acceso";
 import { ROLES_CONTRATO_COMPLETO } from "@/lib/roles";
 import { hoyBogota, resolverVigenciaCotizacion } from "@/lib/cotizacion/vigencia";
+import type { Json } from "@/types/database";
+import {
+  construirComparativaManual, mensajeErrorComparativa, validarClaveIdempotencia, type EntradaComparativaManual,
+} from "@/lib/cotizacion/comparativa";
 
 export type ServicioManual = {
   tipo: string;          // aereo / hotel / traslado / asistencia / otro
@@ -443,6 +447,9 @@ export async function convertirCotizacionManualAContrato(
   }
 
   const admin = createAdminClient();
+  // #35: la madre comparativa no se convierte (el RPC y los triggers también lo impiden).
+  const { data: madre } = await admin.from("cotizaciones").select("modo").eq("id", cotizacionId).maybeSingle();
+  if (madre?.modo === "comparativa") return { ok: false, error: "Una comparativa no se convierte en contrato: elige una opción primero." };
   const rpc = await admin.rpc("convertir_cotizacion_a_contrato", {
     p_cotizacion_id: cotizacionId,
     p_usuario_id: sesion.userId,
@@ -461,4 +468,87 @@ export async function convertirCotizacionManualAContrato(
   revalidatePath("/dashboard/flujo-caja");
 
   return { ok: true, numero };
+}
+
+
+// ═════════════════════════════════════════════════════════════════════════
+// #35 · COTIZACIÓN COMPARATIVA (manual / dinámica)
+//
+// Escoger UN hotel entre hasta tres del mismo viaje. Los vuelos (uno o varios
+// tramos) y servicios son COMUNES y se cuentan UNA sola vez en el total de cada
+// hotel; nunca se suman las alternativas entre sí. La MADRE no se cobra, no se
+// convierte y es económicamente inmutable; al elegir se crea una HIJA que es
+// una cotización dinámica común con solo lo común y la opción elegida.
+// ═════════════════════════════════════════════════════════════════════════
+
+/** Crea la comparativa manual de forma ATÓMICA (cabecera + servicios + opciones + sello) por RPC. */
+export async function crearComparativaManual(
+  input: EntradaComparativaManual
+): Promise<{ ok: true; id: number } | { ok: false; error: string }> {
+  // Acción INTERNA: exige sesión y perfil activo (falla cerrado). El tenant sale
+  // del perfil/cookie validada, nunca del navegador; para no superadmin la base
+  // lo vuelve a fijar con el de su perfil.
+  const ctx = await contextoCotizacion();
+  if (!ctx.ok) return { ok: false, error: "No autorizado." };
+  const sb = await createClient();
+  const { data: { user } } = await sb.auth.getUser();
+  if (!user) return { ok: false, error: "No autorizado." };
+  if (!process.env.SUPABASE_SERVICE_ROLE_KEY) {
+    return { ok: false, error: "No se pudo crear la comparativa por un problema de configuración del servidor." };
+  }
+  const admin = createAdminClient();
+
+  // El aliado SIEMPRE sale del catálogo (por id): su nombre pisa el texto libre.
+  let entrada: EntradaComparativaManual = { ...input, tenant: ctx.tenant };
+  if (input.aliadoId != null) {
+    const { data: aliado } = await admin.from("aliados").select("id, nombre").eq("id", input.aliadoId).maybeSingle();
+    if (!aliado) return { ok: false, error: "El aliado elegido no existe." };
+    entrada = {
+      ...entrada,
+      agenciaNombre: input.tipoAsesor === "agencia" ? aliado.nombre : "",
+      freelanceNombre: input.tipoAsesor === "freelance" ? aliado.nombre : "",
+    };
+  }
+  const r = construirComparativaManual(entrada, { creadoPorEmail: user.email ?? null });
+  if (!r.ok) return r;
+
+  const { data: id, error } = await admin.rpc("crear_cotizacion_comparativa", {
+    p_usuario_id: user.id,
+    p_cabecera: r.datos.cabecera as unknown as Json,
+    p_servicios: r.datos.servicios as unknown as Json,
+    p_opciones: r.datos.opciones as unknown as Json,
+    p_aliado_id: r.datos.aliadoId,
+  });
+  if (error || id == null) return { ok: false, error: mensajeErrorComparativa(error?.message) };
+
+  revalidatePath("/dashboard/cotizaciones");
+  return { ok: true, id };
+}
+
+/**
+ * Confirma o rechaza una solicitud de un cliente/aliado (comparativas que no
+ * continúan por checkout). La identidad es la de la SESIÓN (auth.uid() dentro de
+ * la RPC): no se pasa ningún usuario. Confirmar crea la hija; no concede permisos
+ * de conversión.
+ */
+export async function resolverSolicitudComparativa(
+  solicitudId: number,
+  decision: "confirmar" | "rechazar",
+  motivo: string,
+  clave: string
+): Promise<{ ok: true; hijaId: number | null } | { ok: false; error: string }> {
+  if (!Number.isInteger(solicitudId) || solicitudId <= 0) return { ok: false, error: "Solicitud inválida." };
+  if (decision !== "confirmar" && decision !== "rechazar") return { ok: false, error: "Decisión inválida." };
+  const claveOk = validarClaveIdempotencia(clave);
+  if (!claveOk) return { ok: false, error: "Falta la clave de la operación. Recarga la página e inténtalo de nuevo." };
+  const sb = await createClient();
+  const { data, error } = await sb.rpc("resolver_solicitud_comparativa", {
+    p_solicitud: solicitudId,
+    p_decision: decision,
+    p_motivo: (motivo || "").trim().slice(0, 300) || null,
+    p_clave: decision === "confirmar" ? claveOk : null,
+  });
+  if (error) return { ok: false, error: mensajeErrorComparativa(error.message) };
+  revalidatePath("/dashboard/cotizaciones");
+  return { ok: true, hijaId: data ?? null };
 }
