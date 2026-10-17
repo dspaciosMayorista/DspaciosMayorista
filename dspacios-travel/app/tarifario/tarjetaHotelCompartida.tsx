@@ -20,12 +20,13 @@
 // importa de ninguno de los dos, así que ambos lo importan sin ciclo.
 // ─────────────────────────────────────────────────────────────────────────
 
-import { useEffect, useId, useRef, useState } from "react";
+import { createContext, useContext, useEffect, useId, useRef, useState, type ReactNode } from "react";
 import Image from "next/image";
 import { Popover } from "@base-ui/react/popover";
 import { Check, ChevronDown, ChevronRight, Circle, CircleCheck, Info, Star, X } from "lucide-react";
 import { formatMoneda } from "@/lib/utils";
 import { seccionesDescripcion, type DescripcionPaqueteRaw } from "@/lib/tarifario/descripcionPaquete";
+import type { SeccionDescripcion } from "@/lib/tarifario/descripcionPaquete";
 
 // Servicio opcional (add-on) de un paquete — mismo shape en las 4 tarjetas
 // que lo consumen (exploración y resultados de búsqueda, persona y unidad).
@@ -170,23 +171,100 @@ function IconoSeccion({ titulo }: { titulo: string }) {
 // Bloque de ubicación/mapa — mismo criterio en TODA la app: informativo,
 // nunca expone nada de precio/disponibilidad. `null`/vacío/solo-espacios →
 // no se renderiza nada (nunca un mapa sin dirección real).
-export function UbicacionHotel({ hotelNombre, ubicacion }: { hotelNombre: string; ubicacion: string | null | undefined }) {
+export function UbicacionHotel({ hotelNombre, ubicacion, compacto = false }: { hotelNombre: string; ubicacion: string | null | undefined; compacto?: boolean }) {
+  const [abierto, setAbierto] = useState(false);
+  const idMapa = useId();
   if (!ubicacion?.trim()) return null;
   return (
     <div>
-      <div className="mb-1 flex items-center justify-between">
-        <span className="text-xs font-semibold uppercase tracking-wide text-gray-400">Ubicación</span>
-        <a href={`https://www.google.com/maps?q=${encodeURIComponent(ubicacion)}`} target="_blank" rel="noopener noreferrer" className="text-xs font-medium" style={{ color: "var(--brand-accent)" }}>
+      {compacto ? (
+        <>
+          <p className="text-xs font-semibold uppercase tracking-wide text-gray-400">Ubicación</p>
+          <button type="button" aria-expanded={abierto} aria-controls={idMapa}
+            aria-label={`${abierto ? "Ver menos" : "Ver más"}: ubicación`}
+            onClick={() => setAbierto((v) => !v)}
+            className="inline-flex min-h-9 items-center gap-1 text-xs font-medium focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--brand-accent)]"
+            style={{ color: "var(--brand-accent)" }}>
+            {abierto ? "Ver menos" : "Ver más"}
+            <ChevronDown size={14} aria-hidden className={abierto ? "rotate-180" : ""} />
+          </button>
+        </>
+      ) : <p className="mb-1 text-xs font-semibold uppercase tracking-wide text-gray-400">Ubicación</p>}
+      <div id={idMapa} hidden={compacto && !abierto}>
+        <a href={`https://www.google.com/maps?q=${encodeURIComponent(ubicacion)}`} target="_blank" rel="noopener noreferrer" className="mb-1 inline-block text-xs font-medium" style={{ color: "var(--brand-accent)" }}>
           Ver en Google Maps →
         </a>
+        {(!compacto || abierto) && <iframe
+          title={`Mapa ${hotelNombre}`}
+          src={`https://www.google.com/maps?q=${encodeURIComponent(ubicacion)}&output=embed`}
+          className="h-56 w-full rounded-lg border border-gray-200"
+          loading="lazy"
+          referrerPolicy="no-referrer-when-downgrade"
+        />}
       </div>
-      <iframe
-        title={`Mapa ${hotelNombre}`}
-        src={`https://www.google.com/maps?q=${encodeURIComponent(ubicacion)}&output=embed`}
-        className="h-56 w-full rounded-lg border border-gray-200"
-        loading="lazy"
-        referrerPolicy="no-referrer-when-downgrade"
-      />
+    </div>
+  );
+}
+
+// Las tarjetas y los dos modales muestran solo el acceso al detalle al abrir.
+const IncluyeCompactoContexto = createContext(false);
+
+/** Envoltorio de las tarjetas: los <SeccionesIncluye> de adentro salen compactos. */
+export function IncluyeCompacto({ children }: { children: ReactNode }) {
+  return <IncluyeCompactoContexto.Provider value={true}>{children}</IncluyeCompactoContexto.Provider>;
+}
+
+// Al cambiar la oferta seleccionada, cada instancia se cierra de nuevo.
+function SeccionesIncluyeResumen({ descripcion }: { descripcion: DescripcionPaqueteRaw | undefined | null }) {
+  const secciones = seccionesDescripcion(descripcion);
+  const firma = secciones.map((s) => `${s.titulo}\u0001${s.items.join("\u0002")}`).join("\u0003");
+  const [expandido, setExpandido] = useState(false);
+  const [firmaAnterior, setFirmaAnterior] = useState(firma);
+  if (firma !== firmaAnterior) {
+    setFirmaAnterior(firma);
+    setExpandido(false);
+  }
+  const idRegion = useId();
+
+  return (
+    <div className="min-w-0 space-y-1">
+      <p className="text-xs font-semibold uppercase tracking-wide text-gray-400">Incluye/No incluye</p>
+      <button type="button" aria-expanded={expandido} aria-controls={idRegion}
+        aria-label={`${expandido ? "Ver menos" : "Ver más"}: incluye y no incluye`}
+        onClick={() => setExpandido((v) => !v)}
+        className="inline-flex min-h-9 items-center gap-1 text-xs font-medium focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--brand-accent)]"
+        style={{ color: "var(--brand-accent)" }}>
+        {expandido ? "Ver menos" : "Ver más"}
+        <ChevronDown size={14} aria-hidden className={expandido ? "rotate-180" : ""} />
+      </button>
+      <div id={idRegion} hidden={!expandido}>
+        <ListaTarjeta secciones={secciones} />
+      </div>
+    </div>
+  );
+}
+
+// El detalle abierto conserva todas las secciones y ajusta palabras largas.
+function ListaTarjeta({ secciones }: {
+  secciones: readonly SeccionDescripcion[];
+}) {
+  return (
+    <div className="min-w-0 space-y-1.5">
+      {secciones.map((s) => (
+        <div key={s.titulo} className="min-w-0 rounded-lg border border-gray-100 bg-gray-50 px-2.5 py-2">
+          <p className="mb-1 text-[10px] font-semibold uppercase tracking-wide text-gray-400">{s.titulo}</p>
+          <ul className="space-y-0.5">
+            {s.items.map((it, i) => (
+              <li key={i} className="flex min-w-0 items-start gap-1.5 text-xs text-gray-700">
+                <IconoSeccion titulo={s.titulo} />
+                <span className="min-w-0 [overflow-wrap:anywhere]">
+                  {it}
+                </span>
+              </li>
+            ))}
+          </ul>
+        </div>
+      ))}
     </div>
   );
 }
@@ -196,10 +274,14 @@ export function UbicacionHotel({ hotelNombre, ubicacion }: { hotelNombre: string
 // `armado_paquetes`, ver lib/tarifario/descripcionPaquete.ts). El llamador
 // decide QUÉ `paqueteId` corresponde (el de la opción/oferta/combo elegido);
 // este componente solo renderiza — mismo criterio de "sección omitida si no
-// tiene contenido" en los lugares que la usan.
-export function SeccionesIncluye({ descripcion }: { descripcion: DescripcionPaqueteRaw | undefined | null }) {
+// tiene contenido" en los lugares que la usan. `compacto` (opcional) fuerza la
+// variante: por defecto sigue al envoltorio <IncluyeCompacto> y, sin él, es la
+// vista completa de siempre.
+export function SeccionesIncluye({ descripcion, compacto }: { descripcion: DescripcionPaqueteRaw | undefined | null; compacto?: boolean }) {
+  const delContexto = useContext(IncluyeCompactoContexto);
   const secciones = seccionesDescripcion(descripcion);
   if (!secciones.length) return null;
+  if (compacto ?? delContexto) return <SeccionesIncluyeResumen descripcion={descripcion} />;
   return (
     <div className="space-y-3">
       {secciones.map((s) => (
