@@ -4,7 +4,10 @@ import { createContext, useContext, useEffect, useRef, useState, useCallback, ty
 import { type CondicionTipo } from "@/lib/cotizacion/condicionPago";
 import type { SalidaSeleccionadaBernaloEntrada } from "@/lib/reservar/solicitudAlojamientoBernalo";
 import type { HabitacionOcupacionEntrada } from "@/lib/reservar/ocupacionPorHabitacion";
-import { crearActualizadorConjunto, normalizarVinculos, quitarConVinculos } from "@/lib/cart/vinculoServicios";
+import {
+  crearActualizadorConjunto, normalizarVinculos, quitarConVinculos, reemplazarConjunto,
+  type MotivoRechazoConjunto, type ReemplazoConjunto,
+} from "@/lib/cart/vinculoServicios";
 import { resumirMonedas, type ResumenMonedas } from "@/lib/cart/monedaCarrito";
 
 // Ítem de HOTEL del carrito — unión discriminada real por `modeloTarifario`
@@ -171,12 +174,32 @@ type DistributiveOmit<T, K extends PropertyKey> = T extends unknown ? Omit<T, K>
 // referencia ANTES de llegar acá, nunca produce un intent con este campo vacío.
 export type AddonsIntent = { paqueteId: number; destino: string | null; fechaIda: string | null; fechaRegreso: string | null; pax: number; nonce: number };
 
+/** #54: edición confirmada de un conjunto que YA está en el carrito. Ver
+ * `reemplazarConjunto` (lib/cart/vinculoServicios.ts). */
+export type ActualizacionConjunto = {
+  /** `id` del hotel en el carrito: se conserva, y con él el vínculo de sus servicios. */
+  hotelItemId: string;
+  /** `firmaConjunto` del conjunto sobre el que se preparó la edición. */
+  firmaEsperada: string;
+  hotel: DistributiveOmit<HotelCartItem, "id">;
+  /** Servicios definitivos (vacío = retirarlos todos). */
+  servicios: readonly TourSinVinculo[];
+  /** Identidad completa de la reserva (persona o unidad), para no convertir una en otra. */
+  claveReserva?: (hotel: HotelCartItem) => string;
+};
+export type ResultadoActualizacionConjunto = { ok: true } | { ok: false; motivo: MotivoRechazoConjunto };
+
 type CartCtx = {
   items: CartItem[];
   add: (item: DistributiveOmit<CartItem, "id">) => void;
   // Hotel + sus servicios elegidos en la tarjeta, en UNA sola actualización
   // del carrito (nunca queda un servicio sin su hotel). Devuelve el id del hotel.
   addConjunto: (hotel: DistributiveOmit<HotelCartItem, "id">, servicios: readonly TourSinVinculo[]) => string;
+  // #54: sustituye hotel + servicios de un conjunto ya agregado, en UNA sola
+  // actualización y solo si sigue siendo el conjunto sobre el que se editó.
+  // Si no aplica (hotel quitado, conjunto cambiado, reserva distinta) el
+  // carrito queda igual y se devuelve el motivo.
+  actualizarConjunto: (cambio: ActualizacionConjunto) => ResultadoActualizacionConjunto;
   // Quitar un hotel quita también sus servicios vinculados; quitar un
   // servicio deja el hotel.
   remove: (id: string) => void;
@@ -207,8 +230,24 @@ export function CartProvider({ children }: { children: ReactNode }) {
   const [items, setItems] = useState<CartItem[]>([]);
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [addonsIntent, setAddonsIntent] = useState<AddonsIntent | null>(null);
-  // Evita guardar en el primer render (antes de hidratar desde localStorage).
-  const yaHidrato = useRef(false);
+  // No se guarda en localStorage hasta que el render YA incluye lo hidratado.
+  // Es estado (no una ref) a propósito: con <StrictMode> en la raíz los
+  // efectos corren dos veces al montar, y con una ref el efecto de guardado
+  // escribía `[]` (el estado inicial) antes de que la segunda hidratación
+  // leyera — el carrito se perdía al recargar en desarrollo.
+  const [hidratado, setHidratado] = useState(false);
+  // #54: estado del carrito tras TODAS las actualizaciones ya pedidas, aunque
+  // React todavía no las haya renderizado. Cada mutación aplica aquí la MISMA
+  // función pura que encola en `setItems`, en el mismo orden, así que este
+  // valor es exactamente el `prev` que verá el siguiente actualizador. Con él
+  // `actualizarConjunto` responde lo que de verdad se aplicará, también si en
+  // el mismo lote hubo un `remove` u otra edición (sin efectos secundarios
+  // dentro de `setItems`).
+  const ultimoRef = useRef<CartItem[]>([]);
+  const encolar = useCallback((f: (prev: CartItem[]) => CartItem[]) => {
+    ultimoRef.current = f(ultimoRef.current);
+    setItems(f);
+  }, []);
 
   useEffect(() => {
     try {
@@ -220,20 +259,24 @@ export function CartProvider({ children }: { children: ReactNode }) {
         const parsed = JSON.parse(raw) as Record<string, unknown>[];
         // Un servicio vinculado cuyo hotel ya no está (carrito editado o de
         // una versión anterior) se descarta: nunca queda suelto.
+        const hidratados = normalizarVinculos(parsed.map((i) => (i.tipo ? i : { ...i, tipo: "hotel" })) as CartItem[]);
+        ultimoRef.current = hidratados;
         // eslint-disable-next-line react-hooks/set-state-in-effect
-        setItems(normalizarVinculos(parsed.map((i) => (i.tipo ? i : { ...i, tipo: "hotel" })) as CartItem[]));
+        setItems(hidratados);
       }
     } catch { /* ignore */ }
-    yaHidrato.current = true;
+    setHidratado(true);
   }, []);
 
   useEffect(() => {
-    if (!yaHidrato.current) return;
+    if (!hidratado) return;
     try { localStorage.setItem(KEY, JSON.stringify(items)); } catch { /* ignore */ }
-  }, [items]);
+  }, [items, hidratado]);
 
   const add = useCallback((item: DistributiveOmit<CartItem, "id">) => {
-    setItems((prev) => [...prev, { ...item, id: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}` } as CartItem]);
+    const id = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+    ultimoRef.current = [...ultimoRef.current, { ...item, id } as CartItem];
+    setItems((prev) => [...prev, { ...item, id: id } as CartItem]);
   }, []);
   const addConjunto = useCallback((hotel: DistributiveOmit<HotelCartItem, "id">, servicios: readonly TourSinVinculo[]) => {
     const nuevoId = () => `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
@@ -241,16 +284,39 @@ export function CartProvider({ children }: { children: ReactNode }) {
     // actualizador es puro y, si React lo ejecuta más de una vez (modo
     // estricto), produce exactamente los mismos ids y vínculos.
     const ids = { hotel: nuevoId(), servicios: servicios.map(() => nuevoId()) };
-    setItems(crearActualizadorConjunto<CartItem>(
+    encolar(crearActualizadorConjunto<CartItem>(
       hotel as Omit<CartItem, "id">, servicios as unknown as Omit<CartItem, "id" | "hotelItemId">[], ids,
     ));
     return ids.hotel;
-  }, []);
-  const remove = useCallback((id: string) => setItems((prev) => quitarConVinculos(prev, id)), []);
+  }, [encolar]);
+  const actualizarConjunto = useCallback((c: ActualizacionConjunto): ResultadoActualizacionConjunto => {
+    const nuevoId = () => `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+    const claveReserva = c.claveReserva;
+    // Igual que `addConjunto`: los ids se deciden aquí, fuera del actualizador.
+    const cambio: ReemplazoConjunto<CartItem> = {
+      hotelItemId: c.hotelItemId,
+      firmaEsperada: c.firmaEsperada,
+      hotel: c.hotel as Omit<CartItem, "id">,
+      servicios: c.servicios as unknown as Omit<CartItem, "id" | "hotelItemId">[],
+      idsNuevos: c.servicios.map(() => nuevoId()),
+      claveReserva: claveReserva ? (h) => (h.tipo === "hotel" ? claveReserva(h) : "") : undefined,
+    };
+    // Se decide contra el estado tras lo ya pedido (`ultimoRef`), que es el
+    // `prev` exacto con el que correrá el actualizador: lo que se responde es
+    // lo que se aplica. Si no aplica, no se encola nada.
+    const r = reemplazarConjunto(ultimoRef.current, cambio);
+    if (!r.ok) return { ok: false, motivo: r.motivo };
+    encolar((prev) => {
+      const v = reemplazarConjunto(prev, cambio);
+      return v.ok ? v.items : prev;
+    });
+    return { ok: true };
+  }, [encolar]);
+  const remove = useCallback((id: string) => encolar((prev) => quitarConVinculos(prev, id)), [encolar]);
   const actualizarPrecioBernalo = useCallback((id: string, precio: number, moneda: string | null) => {
-    setItems((prev) => prev.map((i) => (i.id === id && i.tipo === "hotel" && i.modeloTarifario === "unidad" ? { ...i, precio, moneda } : i)));
-  }, []);
-  const clear = useCallback(() => setItems([]), []);
+    encolar((prev) => prev.map((i) => (i.id === id && i.tipo === "hotel" && i.modeloTarifario === "unidad" ? { ...i, precio, moneda } : i)));
+  }, [encolar]);
+  const clear = useCallback(() => encolar(() => []), [encolar]);
   const openDrawer = useCallback(() => setDrawerOpen(true), []);
   const closeDrawer = useCallback(() => setDrawerOpen(false), []);
 
@@ -259,6 +325,7 @@ export function CartProvider({ children }: { children: ReactNode }) {
   return (
     <Ctx.Provider value={{
       items, add, addConjunto, remove, actualizarPrecioBernalo, clear, totales, count: items.length,
+      actualizarConjunto,
       drawerOpen, openDrawer, closeDrawer, addonsIntent, setAddonsIntent,
     }}>
       {children}
@@ -271,7 +338,7 @@ export function useCart(): CartCtx {
   if (!c) {
     // Outside CartProvider: return safe no-ops.
     return {
-      items: [], add: () => {}, addConjunto: () => "", remove: () => {}, actualizarPrecioBernalo: () => {}, clear: () => {}, totales: resumirMonedas([]), count: 0,
+      items: [], add: () => {}, addConjunto: () => "", actualizarConjunto: () => ({ ok: false, motivo: "hotel_no_encontrado" }), remove: () => {}, actualizarPrecioBernalo: () => {}, clear: () => {}, totales: resumirMonedas([]), count: 0,
       drawerOpen: false, openDrawer: () => {}, closeDrawer: () => {}, addonsIntent: null, setAddonsIntent: () => {},
     };
   }

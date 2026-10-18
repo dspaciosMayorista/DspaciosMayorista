@@ -42,7 +42,7 @@ const { createRoot } = await import("react-dom/client");
 const { act } = React;
 const { Resultado } = await import("../app/tarifario/BuscadorBooking.tsx");
 const { CartProvider, useCart } = await import("../lib/cart/CartContext.tsx");
-const { __setBuscarReceptivos } = await import("./support/stubs/reservarActionsStub.mjs");
+const { __setBuscarReceptivos, __setBuscarHoteles } = await import("./support/stubs/reservarActionsStub.mjs");
 const h = React.createElement;
 
 // Más que el debounce de la cotización de servicios (300 ms).
@@ -115,6 +115,7 @@ describe("Servicios adicionales como subelección del hotel (Resultado)", () => 
     act(() => root.unmount());
     container.remove();
     __setBuscarReceptivos(null);
+    __setBuscarHoteles(null);
   });
 
   test("hotel en COP: la tarjeta pinta el precio en pesos (moneda del resultado)", () => {
@@ -201,12 +202,68 @@ describe("Servicios adicionales como subelección del hotel (Resultado)", () => 
     assert.match(tarjeta(), /En el carrito con este hotel/);
   });
 
-  test("con el hotel en el carrito la selección se bloquea (no se cambian servicios a medias)", async () => {
-    await abrirServicio(/City tour/);
-    const dialogo = document.querySelector('[role="dialog"]')!;
-    assert.equal(boton(/Seleccionar para este hotel/, dialogo), undefined);
-    assert.match(dialogo.textContent ?? "", /Quítalo del carrito para cambiar sus servicios/);
-    await cerrarModal();
+  // #54: con el hotel en el carrito los servicios se cambian como BORRADOR del
+  // conjunto guardado; el carrito no se toca hasta «Confirmar actualización»
+  // (que revalida hotel y servicios con los motores existentes) y «Descartar
+  // cambios» vuelve a lo guardado. Las aserciones comparan textos, ids o
+  // booleanos — nunca un elemento del DOM (al fallar, imprimirlo agota memoria).
+  test("con el hotel en el carrito la selección es un BORRADOR: carrito intacto hasta confirmar; descartar conserva lo guardado; confirmar actualiza sin duplicar el hotel ni perder vínculos", async () => {
+    respuesta = () => ({ ok: true, resultados: [servicio(10, 55, 180_000), servicio(10, 56, 85_000)] });
+    __setBuscarHoteles(async () => ({ ok: true, resultados: [resultadoFixture()] }));
+    const idsGuardados = carrito.items.map((i) => i.id);
+    const [hotel, tour55] = carrito.items;
+    const persistidoAntes = localStorage.getItem(CLAVE_CARRITO);
+    async function cambiarEnModal(nombre: RegExp, accion: RegExp) {
+      await abrirServicio(nombre);
+      const dialogo = document.querySelector('[role="dialog"]')!;
+      assert.equal(/Quítalo del carrito/.test(dialogo.textContent ?? ""), false, "la selección ya no se bloquea con el hotel en el carrito");
+      const b = boton(accion, dialogo);
+      assert.equal(b !== undefined, true, `el modal debe ofrecer ${accion}`);
+      await act(async () => { click(b!); await espera(); });
+      await cerrarModal();
+      await act(async () => { await espera(COTIZAR); });
+    }
+    // La cotización en caché es la de la prueba anterior (City tour sin precio
+    // para este estado del hotel): cambiar la alimentación y volver obliga a
+    // cotizar de nuevo con la respuesta actual del paquete.
+    await act(async () => { cambiarSelect(container, "Alimentación", "Todo incluido"); await espera(COTIZAR); });
+    await act(async () => { cambiarSelect(container, "Alimentación", "Desayuno"); await espera(); });
+    assert.match(tarjeta(), /En el carrito con este hotel/);
+    assert.match(tarjeta(), /Servicios adicionales \(2\) · 1 elegido/, "la selección guardada se hidrata en la tarjeta");
+
+    // 1) Borrador: agregar City tour con el hotel ya en el carrito.
+    await cambiarEnModal(/City tour/, /Seleccionar para este hotel/);
+    assert.deepEqual(carrito.items.map((i) => i.id), idsGuardados, "el borrador no toca el carrito");
+    assert.equal(localStorage.getItem(CLAVE_CARRITO) === persistidoAntes, true, "ni lo persistido");
+    assert.match(tarjeta(), /Cambios sin confirmar/);
+    assert.match(tarjeta(), /Total hotel \+ servicios\s*\$\s?1\.465\.000/);
+
+    // 2) Descartar: vuelve a lo guardado, sin tocar el carrito.
+    await act(async () => { click(boton(/Descartar cambios/, container)!); await espera(); });
+    assert.doesNotMatch(tarjeta(), /Cambios sin confirmar/);
+    assert.match(tarjeta(), /Servicios adicionales \(2\) · 1 elegido/);
+    assert.deepEqual(carrito.items.map((i) => i.id), idsGuardados);
+    assert.equal(localStorage.getItem(CLAVE_CARRITO) === persistidoAntes, true);
+
+    // 3) Confirmar: una sola actualización; mismo hotel, mismos vínculos.
+    await cambiarEnModal(/City tour/, /Seleccionar para este hotel/);
+    await act(async () => { click(boton(/Confirmar actualización/, container)!); await espera(); });
+    const items = carrito.items;
+    assert.equal(items.filter((i) => i.tipo === "hotel").length, 1, "un solo hotel");
+    assert.equal(items[0].id, hotel.id, "el hotel conserva su id");
+    assert.equal(items[1].id, tour55.id, "el servicio que se queda conserva su id");
+    assert.deepEqual(items.slice(1).map((i) => (i.tipo === "tour" ? [i.servicioId, i.hotelItemId, i.precio] : null)),
+      [[55, hotel.id, 180_000], [56, hotel.id, 85_000]]);
+    const persistido = JSON.parse(localStorage.getItem(CLAVE_CARRITO) ?? "[]") as { id: string; hotelItemId?: string }[];
+    assert.deepEqual(persistido.map((i) => i.id), items.map((i) => i.id), "persistido igual que el estado");
+    assert.equal(persistido.slice(1).every((i) => i.hotelItemId === hotel.id), true, "los vínculos persisten");
+    assert.doesNotMatch(tarjeta(), /Cambios sin confirmar/);
+
+    // 4) Quitar City tour y confirmar: vuelve al conjunto inicial (hotel +
+    // Islas, mismos ids), del que parte la prueba siguiente.
+    await cambiarEnModal(/City tour/, /Seleccionado · quitar/);
+    await act(async () => { click(boton(/Confirmar actualización/, container)!); await espera(); });
+    assert.deepEqual(carrito.items.map((i) => i.id), idsGuardados);
   });
 
   test("quitar el servicio deja el hotel; quitar el hotel se lleva sus servicios", async () => {
