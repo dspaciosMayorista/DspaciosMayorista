@@ -1065,12 +1065,22 @@ describe("TarjetaUnidadBusqueda — selectores + precio + agregar al carrito INL
   test("el precio/pax se leen de `opcionesEfectivas` (ya calculadas por el buscador, y ya recortadas al filtro si aplica) — cambiar de selector NUNCA dispara una consulta nueva", () => {
     assert.match(cuerpoTarjetaUnidad, /const opcionSel = opcionesEfectivas\.find\(\(o\) => o\.categoria === catEff && o\.alimentacion === alimEff\) \?\? opcionesEfectivas\[0\];/);
     assert.doesNotMatch(cuerpoTarjetaUnidad, /buscarAlojamientosUnidadPorFechas/, "cambiar de selector no debe volver a buscar");
-    // El ÚNICO useEffect de la tarjeta es el cleanup de `montadoRef` (deps
-    // vacías, solo marca desmontaje — no toca datos ni reacciona a selectores).
+    // La tarjeta tiene EXACTAMENTE dos useEffect y ninguno toca datos ni
+    // reacciona a selectores: (1) el montaje de `montadoRef` (deps vacías,
+    // setup → true y cleanup → false, correcto bajo StrictMode) y (2) #54, la
+    // sincronización de `huellaRef` (solo escribe una ref, sin setState ni red),
+    // que deja descartar una confirmación cuya reserva/tarifa cambió en vuelo.
     // Nunca hay un efecto que sincronice cat/alim/precio ni que dispare red.
-    const efectos = [...cuerpoTarjetaUnidad.matchAll(/useEffect\(/g)].length;
-    assert.equal(efectos, 1, "el único useEffect permitido es el cleanup de montadoRef");
-    assert.match(cuerpoTarjetaUnidad, /useEffect\(\(\) => \(\) => \{ montadoRef\.current = false; \}, \[\]\);/);
+    const efectos = cuerpoTarjetaUnidad.split("\n").filter((l) => /useEffect\(/.test(l)).map((l) => l.trim());
+    assert.equal(efectos.length, 2, "solo dos useEffect: montaje de montadoRef y sincronización de huellaRef");
+    const permitidos = [
+      /^useEffect\(\(\) => \{ montadoRef\.current = true; return \(\) => \{ montadoRef\.current = false; \}; \}, \[\]\);$/,
+      /^useEffect\(\(\) => \{ huellaRef\.current = huella; \}\);$/,
+    ];
+    for (const efecto of efectos) {
+      assert.ok(permitidos.some((p) => p.test(efecto)), `useEffect no permitido en la tarjeta: ${efecto}`);
+    }
+    assert.ok(permitidos.every((p) => efectos.some((e) => p.test(e))), "deben estar los dos efectos permitidos");
     assert.doesNotMatch(cuerpoTarjetaUnidad, /useEffect\([^)]*setCat|useEffect\([^)]*setAlim|useEffect\([^)]*setPrecioActualizado/);
   });
 
@@ -1164,7 +1174,16 @@ describe('TarjetaUnidadBusqueda — "Agregar al carrito" revalida en servidor (n
     assert.match(cuerpoAgregar, /\} finally \{\s*\n?\s*if \(montadoRef\.current\) setAgregando\(false\);\s*\n?\s*\}/);
     assert.match(cuerpoAgregar, /if \(!montadoRef\.current\) return;/);
     assert.match(cuerpoTarjetaUnidad, /const montadoRef = useRef\(true\);/);
-    assert.match(cuerpoTarjetaUnidad, /useEffect\(\(\) => \(\) => \{ montadoRef\.current = false; \}, \[\]\);/);
+    // Bajo StrictMode React desmonta y vuelve a montar los efectos: el setup
+    // debe restablecer `true` y el cleanup poner `false` (mismo criterio que
+    // BuscadorReceptivos en addonsIntentWiring.test.ts). Un efecto con SOLO
+    // cleanup dejaba la marca en `false` para siempre y la tarjeta atascada.
+    assert.match(cuerpoTarjetaUnidad, /useEffect\(\(\) => \{ montadoRef\.current = true; return \(\) => \{ montadoRef\.current = false; \}; \}, \[\]\);/);
+    assert.doesNotMatch(cuerpoTarjetaUnidad, /useEffect\(\(\) => \(\) => \{ montadoRef\.current = false; \}, \[\]\);/);
+    // #54: la confirmación de una edición tampoco toca nada tras un desmontaje.
+    const cuerpoConfirmarEdicion = cuerpoFuncion(cuerpoTarjetaUnidad, "async function confirmarEdicion() {");
+    assert.match(cuerpoConfirmarEdicion, /if \(!montadoRef\.current \|\| intento !== intentoRef\.current \|\| huellaRef\.current !== huellaAlConfirmar\) return;/);
+    assert.match(cuerpoConfirmarEdicion, /\} finally \{\s*\n\s*enCursoRef\.current = false;\s*\n\s*if \(montadoRef\.current\) setConfirmando\(false\);\s*\n\s*\}/);
     // Además bloqueado mientras los servicios seleccionados no estén cotizados.
     assert.match(cuerpoTarjetaUnidad, /disabled=\{agregando \|\| \(!enCarrito && !evaluacion\.listo\)\}/);
     assert.match(cuerpoTarjetaUnidad, /\{agregando\s*\?\s*"Confirmando…"\s*:/);

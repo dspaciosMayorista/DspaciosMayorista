@@ -139,6 +139,79 @@ export function evaluarServicios(input: {
   return { servicios, listo, bloqueo, total };
 }
 
+// ── #54: editar los servicios de un hotel que YA está en el carrito ──────
+// La tarjeta muestra un BORRADOR (hidratado desde lo guardado) y el carrito
+// conserva el conjunto confirmado hasta que el borrador completo es válido y
+// se confirma. Nada de esto calcula precios: reutiliza `evaluarServicios`.
+
+/** Servicios de la selección que el catálogo del paquete ya no ofrece (o que
+ * no se pueden cotizar en línea). `evaluarServicios` los omite; al EDITAR un
+ * conjunto guardado eso los haría desaparecer en silencio, así que la edición
+ * los nombra y no deja confirmar hasta que se quiten a conciencia. */
+export function serviciosFueraDeCatalogo(seleccion: readonly number[], disponibles: readonly ServicioSeleccionable[]): number[] {
+  const enCatalogo = new Set(disponibles.filter((d) => d.servicioId != null).map((d) => d.servicioId as number));
+  return [...new Set(seleccion)].filter((id) => !enCatalogo.has(id));
+}
+
+/** Mismos servicios, sin importar orden ni repetidos. */
+export function mismaSeleccion(a: readonly number[], b: readonly number[]): boolean {
+  const sa = new Set(a), sb = new Set(b);
+  return sa.size === sb.size && [...sb].every((id) => sa.has(id));
+}
+
+/** ¿La cotización pedida al confirmar coincide con la que vio el usuario?
+ * Mismos servicios, en el mismo orden, con el mismo total, moneda y pax, y el
+ * mismo total del conjunto. Cualquier diferencia exige volver a confirmar. */
+export function mismaCotizacion(mostrada: EvaluacionServicios, nueva: EvaluacionServicios): boolean {
+  if (!mostrada.listo || !nueva.listo || mostrada.servicios.length !== nueva.servicios.length) return false;
+  if (mostrada.total?.monto !== nueva.total?.monto || mostrada.total?.moneda !== nueva.total?.moneda) return false;
+  return mostrada.servicios.every((s, k) => {
+    const n = nueva.servicios[k];
+    return n.servicioId === s.servicioId && n.resultado != null && s.resultado != null
+      && n.resultado.total === s.resultado.total && n.resultado.pax === s.resultado.pax
+      && (n.resultado.moneda || "COP").toUpperCase() === (s.resultado.moneda || "COP").toUpperCase();
+  });
+}
+
+export type EvaluacionEdicion = {
+  /** El borrador difiere de lo guardado (sin importar el orden). */
+  cambios: boolean;
+  /** La actualización completa se puede confirmar. */
+  listo: boolean;
+  /** Motivo legible propio de la edición (los de la cotización los da `evaluacion.bloqueo`). */
+  bloqueo: string | null;
+  /** Servicios del borrador que el catálogo ya no ofrece: hay que quitarlos. */
+  fueraDeCatalogo: number[];
+  /** El borrador deja el hotel sin servicios. */
+  retiroTotal: boolean;
+};
+
+export const MENSAJE_CONJUNTO_CAMBIO =
+  "Los servicios de este hotel cambiaron en el carrito mientras editabas. Descarta los cambios para ver lo que quedó guardado.";
+export const MENSAJE_FUERA_DE_CATALOGO =
+  "Hay servicios guardados que este paquete ya no ofrece. Quítalos para poder confirmar la actualización.";
+
+/** Estado de la edición del conjunto de un hotel que ya está en el carrito.
+ * `conjuntoVigente` = el carrito sigue teniendo el conjunto sobre el que se
+ * empezó el borrador (misma huella). Retirar todos los servicios no necesita
+ * cotización; con servicios, la evaluación debe estar lista. */
+export function evaluarEdicionServicios(input: {
+  guardados: readonly number[];
+  borrador: readonly number[];
+  disponibles: readonly ServicioSeleccionable[];
+  evaluacion: EvaluacionServicios;
+  conjuntoVigente: boolean;
+}): EvaluacionEdicion {
+  const cambios = !mismaSeleccion(input.guardados, input.borrador);
+  const fueraDeCatalogo = serviciosFueraDeCatalogo(input.borrador, input.disponibles);
+  const retiroTotal = input.borrador.length === 0;
+  let bloqueo: string | null = null;
+  if (!input.conjuntoVigente) bloqueo = MENSAJE_CONJUNTO_CAMBIO;
+  else if (fueraDeCatalogo.length) bloqueo = MENSAJE_FUERA_DE_CATALOGO;
+  const listo = cambios && bloqueo == null && (retiroTotal || input.evaluacion.listo);
+  return { cambios, listo, bloqueo, fueraDeCatalogo, retiroTotal };
+}
+
 /** Ítems de servicio para el carrito (sin `id`/`hotelItemId`: los pone
  * `addConjunto`). Solo con una evaluación lista; si no, lista vacía. */
 export function serviciosParaCarrito(

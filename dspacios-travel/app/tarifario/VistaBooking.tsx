@@ -9,13 +9,14 @@ import {
   Categoria, EtiquetasHotel, DescripcionHotelExpandible, UbicacionHotel, SeccionesIncluye, IncluyeCompacto, AddonsPaquete, ReceptivoModal,
   type Receptivo, type ReceptivoModalInfo,
 } from "./tarjetaHotelCompartida";
-import { serviciosParaCarrito, type HotelParaServicios } from "@/lib/tarifario/servicioAdicionalPaquete";
+import { claveConsultaServicios, evaluarEdicionServicios, serviciosParaCarrito, type HotelParaServicios } from "@/lib/tarifario/servicioAdicionalPaquete";
 import { serviciosDeHotel } from "@/lib/cart/vinculoServicios";
 import {
-  DesgloseServicios, ServiciosEnCarrito, etiquetaAgregarConjunto, seleccionParaModal, useCotizacionServicios, useSeleccionServicios,
+  DesgloseServicios, EdicionServiciosCarrito, PISTA_EDITAR_SERVICIOS, ServiciosEnCarrito, avisoTarifaHotel, conjuntoGuardadoDe,
+  etiquetaAgregarConjunto, mensajeRechazoConjunto, revalidarServicios, seleccionParaModal, useCotizacionServicios, useSeleccionServicios,
 } from "./serviciosHotel";
 import { ACOM_ROOMS, ACOM_ROOM_LABEL, defaultAcomConfig, textoEdadesHotel, type AcomRoom, type AcomConfig } from "@/lib/acomodaciones";
-import { useCart, type HotelCartItemPersona, type TourCartItem, type TourSinVinculo } from "@/lib/cart/CartContext";
+import { useCart, type HotelCartItem, type HotelCartItemBernalo, type HotelCartItemPersona, type TourCartItem, type TourSinVinculo } from "@/lib/cart/CartContext";
 import { cotizarPorFechas } from "@/app/(dashboard)/dashboard/reservar/actions";
 import { type BusquedaResultado, type ComboCotizado, type SugerenciaFecha } from "@/lib/reservar/cotizar";
 import { CondicionHotelBadges, CondicionCompacta, type CondicionHotelBadgeData } from "@/components/cotizacion/CondicionHotelBadges";
@@ -2394,7 +2395,7 @@ export function TarjetaUnidadBusqueda({
    * (comportamiento de siempre, el usuario elige libremente). */
   opcionesPermitidas?: OpcionUnidadConfirmada[];
 }) {
-  const { items, addConjunto, remove, openDrawer } = useCart();
+  const { items, addConjunto, actualizarConjunto, remove, openDrawer } = useCart();
   const [addonAbierto, setAddonAbierto] = useState<ReceptivoModalInfo | null>(null);
 
   // `opcionesEfectivas`: la fuente ÚNICA de la que salen categorías/
@@ -2443,9 +2444,12 @@ export function TarjetaUnidadBusqueda({
   // hotel REMONTA esta tarjeta (la `key` incluye la búsqueda vigente — ver
   // `claveBusquedaUnidad`), así que una revalidación en vuelo puede resolver
   // cuando este componente ya no existe. Se marca en el cleanup y se revisa
-  // antes de cualquier setState del callback asíncrono.
+  // antes de cualquier setState del callback asíncrono. Se marca `true` al
+  // montar (no solo en el valor inicial): en modo estricto React desmonta y
+  // vuelve a montar los efectos, y sin esto la marca quedaba en `false` y la
+  // tarjeta nunca salía de "Confirmando…" (#54).
   const montadoRef = useRef(true);
-  useEffect(() => () => { montadoRef.current = false; }, []);
+  useEffect(() => { montadoRef.current = true; return () => { montadoRef.current = false; }; }, []);
 
   // `enCarrito` compara la identidad CANÓNICA COMPLETA de la reserva
   // (hotel + paquete + categoría + alimentación + salida/fechas + composición
@@ -2462,7 +2466,7 @@ export function TarjetaUnidadBusqueda({
     habitaciones: opcionSel.ocupacion,
   });
   const enCarrito = items.find(
-    (i) =>
+    (i): i is HotelCartItemBernalo =>
       i.tipo === "hotel" &&
       i.modeloTarifario === "unidad" &&
       claveReservaUnidad({
@@ -2478,19 +2482,110 @@ export function TarjetaUnidadBusqueda({
   // Servicios adicionales = subelección de ESTA oferta: se cotizan con las
   // fechas/pax/precio de `opcionSel` (cambiar de combo o de precio cambia la
   // clave y obliga a recotizar) y viajan al carrito SOLO con el hotel.
-  const seleccionServicios = useSeleccionServicios(opcionSel.paqueteId);
+  // #54: con la reserva exacta ya en el carrito, la selección se hidrata
+  // desde lo guardado y los cambios quedan en un borrador hasta confirmar.
+  const guardado = conjuntoGuardadoDe(items, enCarrito?.id);
+  const seleccionServicios = useSeleccionServicios(opcionSel.paqueteId, guardado);
   const hotelServicios: HotelParaServicios = {
     paqueteId: opcionSel.paqueteId, hotelNombre: hotel.hotelNombre,
     fechaIda: opcionSel.fechaIda, fechaRegreso: opcionSel.fechaRegreso, pax: opcionSel.paxTotal,
     precio: precioMostrado, moneda: monedaMostrada,
     firma: JSON.stringify([opcionSel.categoria, opcionSel.alimentacion, opcionSel.ocupacion]),
   };
-  const { evaluacion, reintentar } = useCotizacionServicios(hotelServicios, seleccionServicios.seleccion, addons);
+  const { evaluacion, reintentar, fijarConsulta } = useCotizacionServicios(hotelServicios, seleccionServicios.paraCotizar, addons);
   const serviciosVinculados = enCarrito ? serviciosDeHotel(items, enCarrito.id).filter((i): i is TourCartItem => i.tipo === "tour") : [];
-  const bloqueoSeleccion = enCarrito
-    ? "Este hotel ya está en el carrito. Quítalo del carrito para cambiar sus servicios."
-    : agregando ? "Confirmando el hotel…" : null;
+  const edicion = seleccionServicios.edicion && guardado
+    ? evaluarEdicionServicios({
+        guardados: seleccionServicios.edicion.guardados, borrador: seleccionServicios.edicion.borrador, disponibles: addons, evaluacion,
+        conjuntoVigente: seleccionServicios.edicion.firmaBase === guardado.firma,
+      })
+    : null;
+  const [confirmando, setConfirmando] = useState(false);
+  const [errorEdicion, setErrorEdicion] = useState<string | null>(null);
+  const bloqueoSeleccion = guardado?.bloqueo
+    ?? (agregando ? "Confirmando el hotel…" : confirmando ? "Actualizando el carrito…" : null);
   const fotosServicios = Object.fromEntries(addons.filter((a) => a.servicioId != null).map((a) => [a.servicioId as number, a.foto]));
+  const nombresGuardados = Object.fromEntries(serviciosVinculados.filter((s) => s.servicioId != null).map((s) => [s.servicioId as number, s.nombre]));
+
+  // Una confirmación a la vez (también ante doble clic) y solo la respuesta
+  // del ÚLTIMO intento, para la MISMA reserva y la misma tarifa mostrada,
+  // puede tocar el carrito.
+  const enCursoRef = useRef(false);
+  const intentoRef = useRef(0);
+  const huella = JSON.stringify([claveReserva, claveConsultaServicios(hotelServicios)]);
+  const huellaRef = useRef(huella);
+  useEffect(() => { huellaRef.current = huella; });
+
+  async function confirmarEdicion() {
+    if (!enCarrito || !guardado || !seleccionServicios.edicion || !edicion?.listo || enCursoRef.current || agregando) return;
+    const intento = ++intentoRef.current;
+    const { firmaBase, borrador } = seleccionServicios.edicion;
+    const hotelItemId = enCarrito.id;
+    const huellaAlConfirmar = huella;
+    const claveDeReserva = (h: HotelCartItem) => (h.modeloTarifario === "unidad"
+      ? claveReservaUnidad({ hotelId: h.hotelId, paqueteId: h.paqueteId, categoria: h.categoria, alimentacion: h.alimentacion, salida: h.salida, habitaciones: h.habitaciones })
+      : "");
+    enCursoRef.current = true;
+    setConfirmando(true);
+    setErrorEdicion(null);
+    try {
+      // Retirar todos los servicios no introduce ningún precio nuevo: el hotel
+      // queda tal cual está guardado, sin consultar nada.
+      if (!borrador.length) {
+        const res = actualizarConjunto({ hotelItemId, firmaEsperada: firmaBase, hotel: enCarrito, servicios: [], claveReserva: claveDeReserva });
+        if (!res.ok) setErrorEdicion(mensajeRechazoConjunto(res.motivo));
+        else seleccionServicios.descartar();
+        return;
+      }
+      // Con servicios, el hotel se revalida en servidor (el precio de la
+      // tarjeta nunca es autoridad, igual que al agregar) y los servicios se
+      // vuelven a cotizar; las dos consultas van en paralelo.
+      const habitaciones: HabitacionOcupacionEntrada[] = opcionSel.ocupacion.map((hab) => ({
+        id: hab.id, acom: hab.acom, adultos: hab.adultos, cantidadMenores: hab.edadesMenores.length, edadesMenores: hab.edadesMenores,
+      }));
+      const salida: SalidaSeleccionadaBernaloEntrada = { tipo: "sin_vuelo", fechaIda: opcionSel.fechaIda, fechaRegreso: opcionSel.fechaRegreso };
+      const [revHotel, revServicios] = await Promise.all([
+        revalidarReservaUnidad(
+          cotizarAlojamientoBernaloPublico,
+          { paqueteId: opcionSel.paqueteId, hotelId: opcionSel.hotelId, categoria: opcionSel.categoria, alimentacion: opcionSel.alimentacion, salida, habitaciones },
+          // Contra el precio que VE el usuario (no el de la búsqueda): si ya
+          // se actualizó en un intento anterior, no vuelve a contar como cambio.
+          precioMostrado, monedaMostrada,
+        ),
+        revalidarServicios(hotelServicios, borrador, addons, evaluacion),
+      ]);
+      if (!montadoRef.current || intento !== intentoRef.current || huellaRef.current !== huellaAlConfirmar) return;
+      if (revHotel.estado !== "agregar") { setErrorEdicion(revHotel.mensaje); return; }
+      if (revHotel.precioCambio) {
+        // La tarjeta pasa a la tarifa real; eso cambia la clave de los
+        // servicios, que se recotizan solos, y el usuario confirma de nuevo.
+        setPrecioActualizado({ combo: claveCombo, precio: revHotel.precio, moneda: revHotel.moneda });
+        setErrorEdicion("La tarifa del hotel cambió. Volvimos a cotizar los servicios con el precio actualizado: revisa el total y vuelve a confirmar.");
+        return;
+      }
+      if (revServicios.estado === "error") { setErrorEdicion(revServicios.mensaje); return; }
+      if (revServicios.estado === "cambio") { fijarConsulta(revServicios.consulta); setErrorEdicion(revServicios.mensaje); return; }
+      const res = actualizarConjunto({
+        hotelItemId, firmaEsperada: firmaBase, claveReserva: claveDeReserva,
+        hotel: {
+          tipo: "hotel", modeloTarifario: "unidad", paqueteId: opcionSel.paqueteId, hotelId: opcionSel.hotelId,
+          hotelNombre: hotel.hotelNombre, destino: opcionSel.destinoNombre, fotoUrl: foto,
+          categoria: opcionSel.categoria, alimentacion: opcionSel.alimentacion, salida, habitaciones,
+          precio: revHotel.precio, moneda: revHotel.moneda, composicionHabitaciones: revHotel.composicionHabitaciones,
+        },
+        servicios: serviciosParaCarrito(revServicios.evaluacion, hotelServicios, fotosServicios),
+      });
+      if (!res.ok) { setErrorEdicion(mensajeRechazoConjunto(res.motivo)); return; }
+      seleccionServicios.descartar();
+    } finally {
+      enCursoRef.current = false;
+      if (montadoRef.current) setConfirmando(false);
+    }
+  }
+  function descartarEdicion() {
+    setErrorEdicion(null);
+    seleccionServicios.descartar();
+  }
 
   async function agregar() {
     if (agregando) return; // nunca doble envío mientras revalida
@@ -2499,6 +2594,7 @@ export function TarjetaUnidadBusqueda({
     // mientras se revalida (ver `bloqueoSeleccion`).
     const serviciosConjunto = serviciosParaCarrito(evaluacion, hotelServicios, fotosServicios);
     setErrorAgregar(null);
+    setErrorEdicion(null);
     setAgregando(true);
     const habitaciones: HabitacionOcupacionEntrada[] = opcionSel.ocupacion.map((h) => ({
       id: h.id, acom: h.acom, adultos: h.adultos, cantidadMenores: h.edadesMenores.length, edadesMenores: h.edadesMenores,
@@ -2520,8 +2616,12 @@ export function TarjetaUnidadBusqueda({
           categoria: opcionSel.categoria, alimentacion: opcionSel.alimentacion,
           salida, habitaciones,
         },
-        opcionSel.precioVenta,
-        opcionSel.moneda,
+        // Contra el precio que la tarjeta MUESTRA (al inicio, el de la
+        // búsqueda). Con `opcionSel.precioVenta`, tras un primer cambio de
+        // tarifa con servicios elegidos cada nuevo clic volvía a contar como
+        // cambio y el conjunto nunca se podía agregar (#54).
+        precioMostrado,
+        monedaMostrada,
       );
     } finally {
       if (montadoRef.current) setAgregando(false);
@@ -2641,12 +2741,22 @@ export function TarjetaUnidadBusqueda({
           </button>
         </div>
 
-        {enCarrito ? (
-          <ServiciosEnCarrito servicios={serviciosVinculados} />
+        {enCarrito && edicion?.cambios ? (
+          <EdicionServiciosCarrito hotelNombre={hotel.hotelNombre}
+            precioHotel={edicion.retiroTotal ? enCarrito.precio : precioMostrado}
+            moneda={edicion.retiroTotal ? enCarrito.moneda : monedaMostrada}
+            evaluacion={evaluacion} edicion={edicion} nombres={nombresGuardados}
+            avisoHotel={edicion.retiroTotal ? null : avisoTarifaHotel(enCarrito, { precio: precioMostrado, moneda: monedaMostrada })}
+            error={errorEdicion} confirmando={confirmando}
+            onQuitar={seleccionServicios.quitar} onReintentar={reintentar} onConfirmar={confirmarEdicion} onDescartar={descartarEdicion} />
+        ) : enCarrito ? (
+          <ServiciosEnCarrito servicios={serviciosVinculados}
+            pista={guardado?.bloqueo ?? (addons.length ? PISTA_EDITAR_SERVICIOS : null)} />
         ) : (
           <DesgloseServicios hotelNombre={hotel.hotelNombre} precioHotel={precioMostrado} moneda={monedaMostrada} evaluacion={evaluacion}
             onQuitar={seleccionServicios.quitar} onReintentar={reintentar} soloLectura={agregando} />
         )}
+        {errorEdicion && !(enCarrito && edicion?.cambios) && <p role="alert" className="text-xs text-red-600">{errorEdicion}</p>}
 
         {/* Incluye/No incluye y add-on de la OFERTA seleccionada — nunca
             fuente de precio/disponibilidad (eso sigue siendo exclusivo de
