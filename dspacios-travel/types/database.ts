@@ -4336,6 +4336,23 @@ export type Database = {
         Args: { p_tenant: string; p_periodo: string };
         Returns: { moneda: string; total: number }[];
       };
+      // Migración 214 (#32) — registro central de personas. ÚNICA superficie de
+      // lectura: búsqueda EXACTA por tenant + tipo + número normalizado,
+      // SECURITY DEFINER, con el actor leído de `usuarios` dentro de la función.
+      // Las tablas `personas`, `persona_capturas` y `persona_observaciones` no se
+      // leen directo desde la app (sin GRANT a anon/authenticated). Devuelve un
+      // objeto JSON con como máximo 50 observaciones por página y variantes
+      // acotadas; la forma está tipada en lib/personas/consulta.ts.
+      buscar_personas_documento: {
+        Args: {
+          p_tenant: string | null;
+          p_tipo_doc: string;
+          p_numero: string;
+          p_limite?: number;
+          p_offset?: number;
+        };
+        Returns: Json;
+      };
     };
     Enums: {
       rol_usuario:
