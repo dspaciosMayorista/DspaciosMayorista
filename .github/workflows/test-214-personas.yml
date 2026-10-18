@@ -39,7 +39,8 @@ jobs:
       CT: pg214_ci
       RED: red214
       PLANTILLA: plantilla214ci
-      IMAGEN_PG: public.ecr.aws/supabase/postgres:15.8.1.085
+      IMAGEN_PG: supabase/postgres:15.8.1.085
+      IMAGEN_PGRST: ghcr.io/supabase/postgrest:v16.1
     defaults:
       run:
         shell: bash
@@ -57,6 +58,14 @@ jobs:
           docker network create "$RED"
           # Contraseña local de un contenedor efímero que nunca sale del runner (no es un secreto).
           docker run -d --name "$CT" --network "$RED" -e POSTGRES_PASSWORD=postgres "$IMAGEN_PG"
+
+      - name: Descargar PostgREST antes del esquema (falla temprano si no hay acceso)
+        timeout-minutes: 5
+        run: |
+          set -euo pipefail
+          # Debe ser la misma imagen que levanta el runner en la sección H.
+          grep -qF "$IMAGEN_PGRST" supabase/scripts/test_214_personas_carreras.sh
+          docker pull "$IMAGEN_PGRST"
 
       - name: Esquema 001-213 (incluye 211, 212 y 213) sin la 214
         timeout-minutes: 15

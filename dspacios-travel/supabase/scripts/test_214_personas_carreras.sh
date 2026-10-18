@@ -563,7 +563,7 @@ SQL
   docker run -d --name "$PGRST" --network "$RED" -p 127.0.0.1:3214:3000 \
     -e PGRST_DB_URI="postgres://authenticator:$CLAVE_AUTH@$CT:5432/$DBA" \
     -e PGRST_DB_SCHEMAS=public -e PGRST_DB_ANON_ROLE=anon -e PGRST_JWT_SECRET="$SECRETO" \
-    public.ecr.aws/supabase/postgrest:v16.1 >/dev/null
+    ghcr.io/supabase/postgrest:v16.1 >/dev/null
   BASE="http://127.0.0.1:3214"
   i=0; while [ "$i" -lt 90 ]; do [ "$(curl -s -o /dev/null -w '%{http_code}' "$BASE/" || true)" = 200 ] && break; sleep 1; i=$((i + 1)); done
   [ "$i" -lt 90 ] && ok "H1 PostgREST local listo con secreto JWT local" || fallo "H1 PostgREST no respondió: $(docker logs --tail 5 "$PGRST" 2>&1 | tr '\n' ' ')"
