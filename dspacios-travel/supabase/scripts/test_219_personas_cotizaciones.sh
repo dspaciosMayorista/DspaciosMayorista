@@ -453,7 +453,15 @@ if $PSA -d "$DBL" -f "$DIR_CT/test_214_personas_identidad.sql" > "$TMP/s214.out"
   ok "RB6 la prueba SQL 214 completa vuelve a pasar ($(grep -c 'NOTICE:  OK' "$TMP/s214.out") verificaciones, E8g incluida)"
 else fallo "RB6 prueba 214 tras el rollback: $(grep -E 'FALLO|ERROR' "$TMP/s214.out" | head -3 | tr '\n' ' ')"; fi
 R="$(postcheck "$DBL" postcheck_219_personas_cotizaciones.sql 20)"
-if [ "$R" != invalido ] && [ "${R#*/}" -ge 15 ]; then ok "RB7 tras el rollback el postcheck 219 queda en rojo ($R ok/fallos)"; else fallo "RB7 postcheck 219 tras rollback: $R"; fi
+# Con la 214 restaurada y ningún objeto de la 219, el veredicto es FALLA y los controles son EXACTOS:
+# fallan los que exigen algo de la 219 (C1-C13: columnas, CHECK, destino de la FK, vínculo, FK, índice,
+# disparadores, privilegios, firmas nuevas, fachadas, lista, consulta con el filtro nuevo, ACL de
+# p214_priv con las firmas nuevas; C16: la foto) y pasan los que la 214 sola cumple (C14 search_path,
+# C15 sin esquema nuevo, C17 gramática ASCII, C18 informativa, C19 dueño sin RLS, C20 disparadores 214).
+RB7_ESPERADO="FALLA|6|14|20|C1,C2,C3,C4,C5,C6,C7,C8,C9,C10,C11,C12,C13,C16|C1=f;C2=f;C3=f;C4=f;C5=f;C6=f;C7=f;C8=f;C9=f;C10=f;C11=f;C12=f;C13=f;C14=t;C15=t;C16=f;C17=t;C18=t;C19=t;C20=t"
+if [ "$R" = "6/14" ] && [ "$(cut -d'|' -f1-6 "$TMP/post.out")" = "$RB7_ESPERADO" ]; then
+  ok "RB7 tras el rollback el postcheck 219 da FALLA con 6/14: fallan exactamente C1-C13 y C16; pasan C14, C15, C17-C20"
+else fallo "RB7 postcheck 219 tras rollback: $R $(cut -d'|' -f1-6 "$TMP/post.out" | tr '\n' ' ' | cut -c1-400)"; fi
 if aplicar_219 "$DBL" && [ "$(postcheck "$DBL" postcheck_219_personas_cotizaciones.sql 20)" = "20/0" ]; then
   ok "RB8 la 219 se reaplica sobre la base revertida: postcheck 20/20"
 else fallo "RB8 reaplicar: $(cut -c1-300 "$TMP/aplicar.out")"; fi
