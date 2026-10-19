@@ -119,12 +119,19 @@ beforeEach(() => {
   E.respRpc = () => ({ data: 1, error: null });
 });
 
+// #42 (219): después de crear, la acción registra al titular en el registro de personas por la
+// fachada `registrar_personas_cotizacion`. Es la ÚNICA llamada adicional y no es financiera.
+const RPC_PERSONAS = "registrar_personas_cotizacion";
+const registroOk = (fn: string) => ({ data: fn === RPC_PERSONAS ? { cotizacion_id: 501, nuevos: 1, reintentos: 0, omitidos: 0 } : 501, error: null });
+
 describe("crearCotizacionManual → RPC con autor estable", () => {
-  test("una sola RPC con el usuario de la sesión, el tenant del contexto y la cabecera de la fórmula única; sin INSERT directo", async () => {
-    E.respRpc = () => ({ data: 501, error: null });
+  test("una sola RPC financiera con el usuario de la sesión, el tenant del contexto y la cabecera de la fórmula única; sin INSERT directo", async () => {
+    E.respRpc = registroOk;
     const r = await M.crearCotizacionManual(ENTRADA);
     assert.deepEqual(r, { ok: true, id: 501 });
-    assert.equal(E.rpc.length, 1);
+    assert.deepEqual(E.rpc.map((x) => x.fn), ["crear_cotizacion_manual", RPC_PERSONAS],
+      "crear primero (única RPC financiera) y después, solo, el registro de personas");
+    assert.equal(E.rpc.filter((x) => x.fn !== RPC_PERSONAS).length, 1, "una sola RPC que no es de personas");
     const [llamada] = E.rpc;
     assert.equal(llamada.fn, "crear_cotizacion_manual");
     assert.equal(llamada.cliente, "admin");
@@ -135,6 +142,46 @@ describe("crearCotizacionManual → RPC con autor estable", () => {
     assert.deepEqual(llamada.args.p_cabecera, esperado.cabecera);
     assert.deepEqual(llamada.args.p_servicios, esperado.servicios);
     assert.equal(escrituras("cotizaciones").length + escrituras("cotizacion_servicios").length, 0, "nada de INSERT directo");
+    // El registro de personas: cliente service-role, misma cotización y mismo autor; solo el titular.
+    const reg = E.rpc[1];
+    assert.equal(reg.cliente, "admin");
+    assert.deepEqual(Object.keys(reg.args).sort(), ["p_cotizacion_id", "p_participantes", "p_usuario_id"]);
+    assert.equal(reg.args.p_cotizacion_id, 501);
+    assert.equal(reg.args.p_usuario_id, "u-1");
+    assert.deepEqual(reg.args.p_participantes, [{
+      rol: "titular", tipo_doc: "CC", numero_doc: "1",
+      observaciones: [
+        { campo: "nombres", valor: "Ana" }, { campo: "apellidos", valor: "Pérez" }, { campo: "telefono", valor: "3" },
+        { campo: "email", valor: "a@x.test" }, { campo: "fecha_nacimiento", valor: "1990-01-01" },
+      ],
+    }], "solo el titular, tal como se persistió (las cantidades de pax/niños no crean personas)");
+    assert.equal(E.consultas.filter((c) => c.op !== "select").length, 0, "ninguna escritura directa en ninguna tabla");
+  });
+  test("si el registro de personas falla, la cotización queda creada y la acción devuelve el aviso (nunca lo ignora)", async () => {
+    const errores: string[] = [];
+    const original = console.error;
+    console.error = (...a: unknown[]) => { errores.push(a.map(String).join(" ")); };
+    try {
+      E.respRpc = (fn) => fn === RPC_PERSONAS
+        ? { data: null, error: { message: "cotizacion_no_abierta" } }
+        : { data: 501, error: null };
+      const r = await M.crearCotizacionManual(ENTRADA);
+      assert.equal(r.ok, true);
+      assert.equal((r as { id: number }).id, 501);
+      assert.match((r as { avisoPersonas?: string }).avisoPersonas ?? "", /pendientes de registrar en el CRM/);
+      assert.deepEqual(E.rpc.map((x) => x.fn), ["crear_cotizacion_manual", RPC_PERSONAS], "no reintenta ni llama a nada más");
+      assert.equal(E.consultas.filter((c) => c.op !== "select").length, 0, "el fallo no provoca escrituras directas");
+      assert.equal(errores.length, 1);
+      assert.match(errores[0], /^\[personas42\] origen=manual etapa=registro cotizacion=501 codigo=cotizacion_no_abierta$/);
+      assert.doesNotMatch(errores[0], /Ana|Pérez|a@x\.test/, "el log no lleva datos personales");
+      // Una respuesta sin la forma esperada también se trata como fallo (no como éxito silencioso).
+      E.rpc.length = 0;
+      E.respRpc = (fn) => ({ data: fn === RPC_PERSONAS ? 1 : 501, error: null });
+      const r2 = await M.crearCotizacionManual(ENTRADA);
+      assert.match((r2 as { avisoPersonas?: string }).avisoPersonas ?? "", /pendientes de registrar/);
+    } finally {
+      console.error = original;
+    }
   });
   test("sin contexto autorizado o sin sesión: no llama a la base", async () => {
     E.ctx = { ok: false, motivo: "sin_perfil" };
@@ -149,6 +196,7 @@ describe("crearCotizacionManual → RPC con autor estable", () => {
     const r = await M.crearCotizacionManual(ENTRADA);
     assert.equal(r.ok, false);
     assert.match((r as { error: string }).error, /permiso/);
+    assert.deepEqual(E.rpc.map((x) => x.fn), ["crear_cotizacion_manual"], "sin cotización creada no se registran personas");
   });
 });
 
@@ -211,12 +259,60 @@ describe("actualizarRecobroNinosCotizacionManual (C5)", () => {
 });
 
 describe("titular e incluye: solo sobre una cotización abierta", () => {
-  test("el UPDATE filtra estado=abierta y 0 filas avisa", async () => {
-    const t = { nombres: "Ana", apellidos: "Ruiz", tipoDoc: "CC", numeroDoc: "9", nacimiento: "1990-01-01", telefono: "", email: "" };
-    assert.deepEqual(await M.actualizarTitularCotizacionManual(77, t), { ok: true });
+  const T = { nombres: "Ana", apellidos: "Ruiz", tipoDoc: "CC", numeroDoc: "9", nacimiento: "1990-01-01", telefono: "", email: "" };
+  const CLAVE = "11111111-1111-4111-8111-111111111111";
+  const titularOk = (fn: string) => ({ data: fn === "actualizar_titular_cotizacion" ? { resultado: "actualizado", version: 2 } : 1, error: null });
+
+  test("titular (#42, 219): por la fachada atómica con versión y clave, sin UPDATE directo", async () => {
+    E.respRpc = titularOk;
+    assert.deepEqual(await M.actualizarTitularCotizacionManual(77, T, { versionEsperada: 1, clave: CLAVE }), { ok: true });
+    assert.deepEqual(E.rpc.map((x) => x.fn), ["actualizar_titular_cotizacion"]);
+    const [l] = E.rpc;
+    assert.equal(l.cliente, "admin");
+    assert.deepEqual(Object.keys(l.args).sort(), ["p_clave", "p_cotizacion_id", "p_titular", "p_usuario_id", "p_version_esperada"]);
+    assert.deepEqual([l.args.p_cotizacion_id, l.args.p_usuario_id, l.args.p_version_esperada, l.args.p_clave], [77, "u-1", 1, CLAVE]);
+    assert.deepEqual(l.args.p_titular, {
+      nombres: "Ana", apellidos: "Ruiz", tipo_doc: "CC", numero_doc: "9", fecha_nacimiento: "1990-01-01", telefono: null, email: null,
+    });
+    assert.equal(escrituras("cotizaciones").length, 0, "el titular ya no escribe directo en cotizaciones");
+  });
+  test("titular: el tipo vacío viaja vacío (nunca un 'CC' supuesto)", async () => {
+    E.respRpc = titularOk;
+    assert.deepEqual(await M.actualizarTitularCotizacionManual(77, { ...T, tipoDoc: "" }, { versionEsperada: 1, clave: CLAVE }), { ok: true });
+    assert.equal((E.rpc[0].args.p_titular as { tipo_doc: unknown }).tipo_doc, null);
+  });
+  test("titular: versión obsoleta → pide recargar; nada escrito directo", async () => {
+    E.respRpc = (fn) => fn === "actualizar_titular_cotizacion"
+      ? { data: null, error: { message: "version_obsoleta" } }
+      : { data: 1, error: null };
+    const r = await M.actualizarTitularCotizacionManual(77, T, { versionEsperada: 1, clave: CLAVE });
+    assert.equal(r.ok, false);
+    assert.match((r as { error: string }).error, /recarga la página/);
+    assert.deepEqual(E.rpc.map((x) => x.fn), ["actualizar_titular_cotizacion"], "un solo intento, sin reintentos en silencio");
+    assert.equal(escrituras("cotizaciones").length, 0);
+  });
+  test("titular: un error crudo de la base nunca llega al navegador", async () => {
+    E.respRpc = () => ({ data: null, error: { message: 'duplicate key value violates unique constraint "uq_cotizacion_participantes_titular_activo"' } });
+    const r = await M.actualizarTitularCotizacionManual(77, T, { versionEsperada: 1, clave: CLAVE });
+    assert.equal((r as { error: string }).error, "No se pudo guardar el titular. Inténtalo de nuevo.");
+  });
+  test("titular: sin versión/clave, tenant ajeno, cotización no abierta o no manual → no llama a la base", async () => {
+    assert.equal((await M.actualizarTitularCotizacionManual(77, T)).ok, false);
+    assert.equal((await M.actualizarTitularCotizacionManual(77, T, { versionEsperada: 1, clave: "no-es-uuid" })).ok, false);
+    assert.equal((await M.actualizarTitularCotizacionManual(77, T, { versionEsperada: -1, clave: CLAVE })).ok, false);
+    E.cot = { ...COT, tenant: "minorista" };
+    assert.equal((await M.actualizarTitularCotizacionManual(77, T, { versionEsperada: 1, clave: CLAVE })).ok, false);
+    E.cot = { ...COT, estado: "convertida" };
+    assert.equal((await M.actualizarTitularCotizacionManual(77, T, { versionEsperada: 1, clave: CLAVE })).ok, false);
+    E.cot = { ...COT, tipo: "carrito" };
+    assert.equal((await M.actualizarTitularCotizacionManual(77, T, { versionEsperada: 1, clave: CLAVE })).ok, false);
+    assert.equal(E.rpc.length, 0);
+    assert.equal(escrituras("cotizaciones").length, 0);
+  });
+  test("incluye: el UPDATE filtra estado=abierta y 0 filas avisa", async () => {
     assert.deepEqual(await M.actualizarIncluyeCotizacionManual(77, "a", "b"), { ok: true });
     const ups = escrituras("cotizaciones");
-    assert.equal(ups.length, 2);
+    assert.equal(ups.length, 1);
     for (const u of ups) assert.ok(u.filtros.some(([k, v]) => k === "estado" && v === "abierta"), "filtra estado");
     E.filasUpdate = [];
     const r = await M.actualizarIncluyeCotizacionManual(77, "a", "b");

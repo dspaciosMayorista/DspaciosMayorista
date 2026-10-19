@@ -38,6 +38,9 @@ import {
   validarEntradaSolicitud, validarRefsOpcion, type CanalEleccion, type CapacidadAcomodacion, type OpcionRef, type OpcionRpc,
 } from "@/lib/cotizacion/comparativa";
 import { huellaIp } from "@/lib/cotizacion/comparativaServidor";
+import { TIPOS_DOC_PERSONA } from "@/lib/personas/identidad";
+import { tipoDocCheckout } from "@/lib/personas/cotizacion";
+import { altaPersonasCotizacion, logPersonasCotizacion } from "@/lib/personas/consulta";
 
 // Forma que arma el CARRITO en el cliente (ver lib/cart/CartContext.tsx) —
 // incluye `ninos`/`ninos2`/`infantes`/`pax`/`precio` para la vista previa en
@@ -185,7 +188,9 @@ type SolicitudTourComputado = {
   categoria: CategoriaServicio;
 };
 
-export type SolicitudCliente = { nombres: string; apellidos: string; numeroDoc: string; telefono: string; email: string };
+// `tipoDoc` (#42, D-6): tipo de documento que elige quien llena el checkout; se lee de la entrada
+// cruda (el validador compartido no lo conserva) y se guarda tal cual en `payload.cliente`.
+export type SolicitudCliente = { nombres: string; apellidos: string; numeroDoc: string; telefono: string; email: string; tipoDoc?: string };
 
 // Datos de facturación (contrato neto): normalmente la agencia.
 export type Facturacion = { nombre: string; nit: string; email: string; telefono: string };
@@ -1042,6 +1047,18 @@ async function crearCotizacionCarrito(input: {
     return respuestaPublicaInsertCotizacion(detalle);
   }
 
+  // #42: titular en el registro de personas (solo titular: el carrito no trae pasajeros). Con
+  // sesión interna o B2B se sella el autor; sin sesión la cotización es anónima y su captura,
+  // provisional (D-6). El cliente público nunca ve este error: queda el aviso interno de la
+  // ficha y un log sin datos personales.
+  const actorPersonas = await actorComparativa();
+  const alta = await altaPersonasCotizacion(admin, {
+    fila: { id: row.id, tenant: "mayorista", tipo: "carrito", payload: filaCotizacion.payload, creado_por_id: null },
+    usuarioId: actorPersonas.userId,
+    sellar: true,
+  });
+  if (!alta.ok) console.error(logPersonasCotizacion("checkout", row.id, alta));
+
   const h = await headers();
   const host = h.get("x-forwarded-host") ?? h.get("host");
   const proto = h.get("x-forwarded-proto") ?? "https";
@@ -1063,6 +1080,10 @@ export async function crearSolicitudReserva(inputRaw: unknown): Promise<Solicitu
   if (!`${input.cliente.nombres}${input.cliente.apellidos}`.trim()) return { ok: false, error: "Ingresa nombres y apellidos." };
   if (!input.cliente.numeroDoc.trim()) return { ok: false, error: "El documento es obligatorio." };
   if (!input.cliente.telefono.trim()) return { ok: false, error: "El teléfono / WhatsApp es obligatorio." };
+  // #42 (D-6): tipo de documento elegido en el checkout, tal cual (nunca un "CC" por defecto).
+  const tipoDoc = tipoDocCheckout(inputRaw, TIPOS_DOC_PERSONA);
+  if (!tipoDoc.ok) return { ok: false, error: tipoDoc.error };
+  const clienteCheckout: SolicitudCliente = tipoDoc.tipo ? { ...input.cliente, tipoDoc: tipoDoc.tipo } : input.cliente;
 
   // El contexto B2B se resuelve ANTES de crear la cotización: si la
   // facturación de un aliado no se puede cargar (configuración), la solicitud
@@ -1070,7 +1091,7 @@ export async function crearSolicitudReserva(inputRaw: unknown): Promise<Solicitu
   const ctxB2B = await getContextoB2B();
   if (ctxB2B.error) return { ok: false, error: ctxB2B.error };
 
-  const cot = await crearCotizacionCarrito({ items: input.items, tours, hotelDeTour: input.hotelDeTour, cliente: input.cliente });
+  const cot = await crearCotizacionCarrito({ items: input.items, tours, hotelDeTour: input.hotelDeTour, cliente: clienteCheckout });
   if (!cot.ok) return cot;
 
   // Agrega el cliente a la base de contactos del CRM como B2C (cliente_final),
@@ -1246,7 +1267,10 @@ export async function crearComparativaCarrito(inputRaw: unknown): Promise<Result
   if (input.hotelDeTour.some((h) => h == null)) {
     return { ok: false, error: "En una comparativa cada servicio debe estar vinculado a un hotel." };
   }
-  const cli = input.cliente;
+  // #42 (D-6): tipo de documento del checkout, tal cual; viaja en el payload de la madre y de cada opción.
+  const tipoDoc = tipoDocCheckout(inputRaw, TIPOS_DOC_PERSONA);
+  if (!tipoDoc.ok) return { ok: false, error: tipoDoc.error };
+  const cli: SolicitudCliente = tipoDoc.tipo ? { ...input.cliente, tipoDoc: tipoDoc.tipo } : input.cliente;
   if (!`${cli.nombres}${cli.apellidos}`.trim()) return { ok: false, error: "Ingresa nombres y apellidos." };
   if (!cli.telefono.trim()) return { ok: false, error: "El teléfono / WhatsApp es obligatorio." };
 
@@ -1328,7 +1352,14 @@ export async function crearComparativaCarrito(inputRaw: unknown): Promise<Result
     console.error(formatearLogInsertCotizacion({ etapa: "crear_comparativa", detalle: error?.message ?? "sin id" }));
     return { ok: false, error: mensajeErrorComparativa(error?.message) };
   }
-  const { data: fila } = await admin.from("cotizaciones").select("codigo, share_token").eq("id", id).maybeSingle();
+  const { data: fila } = await admin.from("cotizaciones")
+    .select("id, codigo, share_token, tenant, tipo, payload, creado_por_id, propietario_id, aliado_id").eq("id", id).maybeSingle();
+  // #42: titular de la MADRE en el registro de personas, sin escribir su payload (la 211 ya
+  // estampó el autor si había sesión; sin sesión es anónima y su captura, provisional).
+  const alta = fila
+    ? await altaPersonasCotizacion(admin, { fila, usuarioId: actor.userId, sellar: false })
+    : ({ ok: false, etapa: "registro", codigo: null } as const);
+  if (!alta.ok) console.error(logPersonasCotizacion("comparativa_carrito", id, alta));
   return { ok: true, id, codigo: fila?.codigo ?? "", url: urlCotizacionPublica(await headers(), fila?.share_token) };
 }
 
@@ -1409,7 +1440,14 @@ export async function elegirOpcionComparativa(inputRaw: unknown): Promise<Result
   if (consumo.error || consumo.data == null) {
     return { ok: false, error: mensajeErrorComparativa(consumo.error?.message), reintentable: esErrorReintentable(codigoErrorComparativa(consumo.error?.message)) };
   }
-  const { data: hija } = await admin.from("cotizaciones").select("codigo, share_token").eq("id", consumo.data).maybeSingle();
+  const { data: hija } = await admin.from("cotizaciones")
+    .select("id, codigo, share_token, tenant, tipo, payload, creado_por_id, propietario_id, aliado_id").eq("id", consumo.data).maybeSingle();
+  // #42: titular de la HIJA con los datos que ella persistió. El relleno "Cliente" que usa el
+  // motor para reliquidar no se persiste ni se registra (participantesDesdeCotizacion lo omite).
+  const alta = hija
+    ? await altaPersonasCotizacion(admin, { fila: hija, usuarioId: actor.userId, sellar: false })
+    : ({ ok: false, etapa: "registro", codigo: null } as const);
+  if (!alta.ok) console.error(logPersonasCotizacion("hija_checkout", consumo.data, alta));
   return { ok: true, hijaId: consumo.data, codigo: hija?.codigo ?? "", url: urlCotizacionPublica(await headers(), hija?.share_token) };
 }
 

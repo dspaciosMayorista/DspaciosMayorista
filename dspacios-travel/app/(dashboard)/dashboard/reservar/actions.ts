@@ -66,6 +66,8 @@ import type { ComponenteSnapshot } from "@/lib/cotizacion/snapshotCondiciones";
 import { hoyBogota, resolverVigenciaCotizacion } from "@/lib/cotizacion/vigencia";
 import { fechaNegocio } from "@/lib/fechaNegocio";
 import { resolverAliadoReserva, planComisionReserva, registrarComisionReserva, type PlanComisionReserva } from "@/lib/reservar/comisionReserva";
+import { asignarRefsPasajeros, AVISO_PERSONAS_PENDIENTES } from "@/lib/personas/cotizacion";
+import { altaPersonasCotizacion, logPersonasCotizacion } from "@/lib/personas/consulta";
 
 const oNull = (s: string | null | undefined) => (s && s.trim() !== "" ? s.trim() : null);
 
@@ -928,7 +930,7 @@ async function reservarDesdeTarifarioInterno(input: ReservaInput, tenant: Tenant
 // crearCotizacion reusa computarReserva (mismo precio que el contrato) y guarda
 // un snapshot listo para el PDF. NO toca inventario ni numera. Al convertir se
 // llama a reservarDesdeTarifario (que sí genera número, sillas y CxP).
-export type CotizacionResult = { ok: true; id: number } | { ok: false; error: string };
+export type CotizacionResult = { ok: true; id: number; avisoPersonas?: string } | { ok: false; error: string };
 
 export async function crearCotizacion(input: ReservaInput, opts?: { vigenciaHasta?: string }): Promise<CotizacionResult> {
   const sb = await createClient();
@@ -996,8 +998,15 @@ export async function crearCotizacion(input: ReservaInput, opts?: { vigenciaHast
     moneda: monedaReserva,
   };
 
-  const pasajerosSnap: Record<string, unknown>[] = input.pasajeros.map((p, i) => ({
+  // #42: cada pasajero IDENTIFICADO recibe aquí, en servidor y ANTES del insert, el `ref`
+  // estable de su puesto (nunca el índice ni el documento); el que mande el navegador se
+  // descarta. Va en `payload.pasajeros` y en `detalle.pasajeros` de la misma escritura.
+  const pasajerosConRef = asignarRefsPasajeros(input.pasajeros, () => crypto.randomUUID());
+  const inputPersistido: ReservaInput = { ...input, pasajeros: pasajerosConRef };
+
+  const pasajerosSnap: Record<string, unknown>[] = pasajerosConRef.map((p, i) => ({
     id: i + 1,
+    ...(p.ref ? { ref: p.ref } : {}),
     nombre: `${p.nombres ?? ""} ${p.apellidos ?? ""}`.trim(),
     tipo_id: oNull(p.tipoDoc) ?? "CC",
     identificacion: oNull(p.numeroDoc),
@@ -1120,7 +1129,7 @@ export async function crearCotizacion(input: ReservaInput, opts?: { vigenciaHast
 
   const { data: row, error } = await sbCot.from("cotizaciones").insert({
     tenant: tenantCotizacion,
-    payload: input as unknown as Json,
+    payload: inputPersistido as unknown as Json,
     detalle: detalle as unknown as Json,
     cliente: clienteNombre,
     cliente_documento: oNull(input.cliente.numeroDoc),
@@ -1140,8 +1149,28 @@ export async function crearCotizacion(input: ReservaInput, opts?: { vigenciaHast
   }).select("id").single();
   if (error) return { ok: false, error: error.message };
 
+  // #42: sello del autor estable (la API no puede estamparlo: solo la función de la 219) y alta
+  // del titular y los pasajeros identificados en el registro de personas, desde lo que se acaba
+  // de persistir. La cotización ya quedó guardada: un fallo aquí no la deshace, deja un aviso
+  // persistente en su ficha (con "Reintentar") y un log sin datos personales — nunca se ignora.
+  let avisoPersonas: string | undefined;
+  if (process.env.SUPABASE_SERVICE_ROLE_KEY && user) {
+    const alta = await altaPersonasCotizacion(createAdminClient(), {
+      fila: { id: row.id, tenant: tenantCotizacion, tipo: "tarifario", payload: inputPersistido },
+      usuarioId: user.id,
+      sellar: true,
+    });
+    if (!alta.ok) {
+      console.error(logPersonasCotizacion("reservar", row.id, alta));
+      avisoPersonas = AVISO_PERSONAS_PENDIENTES;
+    }
+  } else {
+    console.error(logPersonasCotizacion("reservar", row.id, { etapa: "configuracion", codigo: null }));
+    avisoPersonas = AVISO_PERSONAS_PENDIENTES;
+  }
+
   revalidatePath("/dashboard/cotizaciones");
-  return { ok: true, id: row.id };
+  return avisoPersonas ? { ok: true, id: row.id, avisoPersonas } : { ok: true, id: row.id };
 }
 
 // Convierte una cotización en CONTRATO: corre el motor de reserva normal (genera

@@ -1,32 +1,44 @@
 "use client";
 
 import { DateInput } from "@/components/ui/DateInput";
-import { useState, useTransition } from "react";
+import { useRef, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { TIPOS_DOC_PERSONA } from "@/lib/personas/identidad";
 import { actualizarTitularCotizacionManual, type TitularInput } from "../manual-actions";
 
 const lbl = "mb-1 block text-xs font-medium text-gray-600";
 
 // Editor del titular de una cotización dinámica (antes de generar contrato).
 // Para generar contrato se exigen nombre, tipo y número de doc y nacimiento.
-export function TitularEditor({ id, inicial }: { id: number; inicial: TitularInput }) {
+// #42: guarda por la fachada de la 219 con la versión del puesto titular (CAS) y una clave de
+// idempotencia por envío: reenviar los MISMOS datos repite la clave (no duplica la captura); datos
+// distintos estrenan clave. El tipo vacío se conserva vacío (nunca un "CC" supuesto).
+export function TitularEditor({ id, inicial, version }: { id: number; inicial: TitularInput; version: number }) {
   const router = useRouter();
   const [t, setT] = useState<TitularInput>(inicial);
   const [editando, setEditando] = useState(false);
   const [pending, start] = useTransition();
   const [err, setErr] = useState("");
   const [ok, setOk] = useState(false);
+  const envio = useRef<{ datos: string; clave: string } | null>(null);
 
   const set = (k: keyof TitularInput, v: string) => setT((p) => ({ ...p, [k]: v }));
   const completo = !!`${t.nombres}${t.apellidos}`.trim() && !!t.tipoDoc.trim() && !!t.numeroDoc.trim() && !!t.nacimiento.trim();
 
+  function claveDelEnvio(): string {
+    const datos = JSON.stringify(t);
+    if (!envio.current || envio.current.datos !== datos) envio.current = { datos, clave: crypto.randomUUID() };
+    return envio.current.clave;
+  }
+
   function guardar() {
     setErr(""); setOk(false);
+    const clave = claveDelEnvio();
     start(async () => {
-      const r = await actualizarTitularCotizacionManual(id, t);
-      if (r.ok) { setOk(true); setEditando(false); router.refresh(); }
+      const r = await actualizarTitularCotizacionManual(id, t, { versionEsperada: version, clave });
+      if (r.ok) { envio.current = null; setOk(true); setEditando(false); router.refresh(); }
       else setErr(r.error);
     });
   }
@@ -63,7 +75,9 @@ export function TitularEditor({ id, inicial }: { id: number; inicial: TitularInp
             <div>
               <label className={lbl}>Tipo doc</label>
               <select value={t.tipoDoc} onChange={(e) => set("tipoDoc", e.target.value)} className="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm">
-                {["CC", "CE", "PAS", "NIT", "TI"].map((x) => <option key={x}>{x}</option>)}
+                <option value="">—</option>
+                {TIPOS_DOC_PERSONA.map((x) => <option key={x} value={x}>{x}</option>)}
+                {t.tipoDoc && !(TIPOS_DOC_PERSONA as readonly string[]).includes(t.tipoDoc) && <option value={t.tipoDoc}>{t.tipoDoc}</option>}
               </select>
             </div>
             <div><label className={lbl}>N° documento</label><Input value={t.numeroDoc} onChange={(e) => set("numeroDoc", e.target.value)} /></div>

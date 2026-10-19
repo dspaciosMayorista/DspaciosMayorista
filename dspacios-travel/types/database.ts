@@ -3477,6 +3477,29 @@ export type Database = {
         Update: Partial<Database["public"]["Tables"]["web_secciones"]["Insert"]>;
         Relationships: [];
       };
+      // Migración 219 (#42): puesto (titular/pasajero) de una cotización. Sin GRANT a
+      // anon/authenticated: solo lo lee una página de servidor con service-role (aviso de
+      // personas pendientes y versión del titular). Se escribe SOLO por las fachadas de la 219.
+      cotizacion_participantes: {
+        Row: {
+          id: string;
+          cotizacion_id: number;
+          tenant: string;
+          rol: "titular" | "pasajero";
+          orden: number | null;
+          persona_id: string;
+          captura_id: string;
+          activo: boolean;
+          retirado_en: string | null;
+          retirado_por: string | null;
+          version: number;
+          created_at: string;
+          updated_at: string;
+        };
+        Insert: never;
+        Update: never;
+        Relationships: [];
+      };
     };
     Views: {
       // Migración 144: `ventas` SIN columnas financieras. Es la única puerta
@@ -4429,6 +4452,25 @@ export type Database = {
           p_limite?: number;
           p_offset?: number;
         };
+        Returns: Json;
+      };
+      // Migración 219 (#42) — personas de cotizaciones. Las tres fachadas de escritura son
+      // SECURITY DEFINER con EXECUTE solo para service_role (las llama lib/personas/consulta.ts
+      // desde Server Actions); la lista del CRM es para authenticated (actor = auth.uid()).
+      registrar_personas_cotizacion: {
+        Args: { p_cotizacion_id: number; p_usuario_id: string | null; p_participantes: Json };
+        Returns: Json;
+      };
+      actualizar_titular_cotizacion: {
+        Args: { p_cotizacion_id: number; p_usuario_id: string; p_titular: Json; p_version_esperada: number; p_clave: string };
+        Returns: Json;
+      };
+      sellar_creador_cotizacion: {
+        Args: { p_cotizacion_id: number; p_usuario_id: string };
+        Returns: string;
+      };
+      crm_personas_cotizacion_buscar: {
+        Args: { p_tenant: string | null; p_texto?: string | null; p_limite?: number; p_offset?: number };
         Returns: Json;
       };
     };

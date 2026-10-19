@@ -63,6 +63,9 @@ export type PasajeroReserva = {
   // desde la UI de creación en vez de que el RPC rechace todo infante sin
   // vínculo con un mensaje genérico).
   responsableIndex?: number | null;
+  // #42: identidad estable del puesto en la cotización (UUID asignado en servidor, migración 219).
+  // Las conversiones lo ignoran.
+  ref?: string;
 };
 
 export type ReservaInput = {

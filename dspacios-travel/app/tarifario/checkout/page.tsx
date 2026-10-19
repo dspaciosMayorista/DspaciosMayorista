@@ -12,6 +12,7 @@ import { crearSolicitudReserva, fotosPortada, getContextoB2B, type SolicitudResu
 // #35: se carga solo cuando el modo comparativa está activo (no entra al grafo del checkout normal).
 const ContinuarComparativa = lazy(() => import("@/lib/cotizacion/comparativaCheckout").then((m) => ({ default: m.ContinuarComparativa })));
 import { MAX_OPCIONES } from "@/lib/cotizacion/comparativa";
+import { TIPOS_DOC_PERSONA } from "@/lib/personas/identidad";
 
 function resumenHab(it: HotelCartItemPersona): string {
   const partes = Object.entries(it.habitaciones).filter(([, n]) => n > 0).map(([a, n]) => `${n} ${ACOM_ROOM_LABEL[a as AcomRoom] ?? a}`);
@@ -35,7 +36,9 @@ export default function CheckoutPage() {
   // para detectar si cambiaron, ver `enviar()`).
   const bernaloItems = items.filter((i): i is HotelCartItemBernalo => i.tipo === "hotel" && i.modeloTarifario === "unidad");
   const tourItems = items.filter((i): i is Extract<CartItem, { tipo: "tour" }> => i.tipo === "tour");
-  const [c, setC] = useState({ nombres: "", apellidos: "", numeroDoc: "", telefono: "", email: "" });
+  // `tipoDoc` (#42, D-6): se pide en el checkout; vacío = sin elegir (nunca un "CC" por defecto). No bloquea
+  // el envío: sin tipo, la persona queda como ficha provisional en el CRM.
+  const [c, setC] = useState({ nombres: "", apellidos: "", tipoDoc: "", numeroDoc: "", telefono: "", email: "" });
   const [pending, start] = useTransition();
   const [err, setErr] = useState("");
   // Fase 3F-4A, regla B.10: cuando el servidor detecta que el PVP/moneda de
@@ -377,7 +380,16 @@ export default function CheckoutPage() {
               <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
                 <div><label className={lbl}>Nombres *</label><input className={inp} value={c.nombres} onChange={(e) => setC({ ...c, nombres: e.target.value })} /></div>
                 <div><label className={lbl}>Apellidos *</label><input className={inp} value={c.apellidos} onChange={(e) => setC({ ...c, apellidos: e.target.value })} /></div>
-                <div><label className={lbl}>Documento *</label><input className={inp} value={c.numeroDoc} onChange={(e) => setC({ ...c, numeroDoc: e.target.value })} /></div>
+                <div className="grid grid-cols-[6.5rem_1fr] gap-2">
+                  <div>
+                    <label className={lbl} htmlFor="checkout-tipo-doc">Tipo</label>
+                    <select id="checkout-tipo-doc" className={inp} value={c.tipoDoc} onChange={(e) => setC({ ...c, tipoDoc: e.target.value })}>
+                      <option value="">—</option>
+                      {TIPOS_DOC_PERSONA.map((t) => <option key={t} value={t}>{t}</option>)}
+                    </select>
+                  </div>
+                  <div><label className={lbl}>Documento *</label><input className={inp} value={c.numeroDoc} onChange={(e) => setC({ ...c, numeroDoc: e.target.value })} /></div>
+                </div>
                 <div><label className={lbl}>Teléfono / WhatsApp *</label><input className={inp} value={c.telefono} onChange={(e) => setC({ ...c, telefono: e.target.value })} /></div>
                 <div className="sm:col-span-2"><label className={lbl}>Correo</label><input type="email" className={inp} value={c.email} onChange={(e) => setC({ ...c, email: e.target.value })} /></div>
               </div>

@@ -40,7 +40,11 @@ const rpcs: { fn: string; args: Fila }[] = [];
 function cliente() {
   return {
     auth: { getUser: async () => ({ data: { user: { id: "u-1", email: "asesor@dspacios.test" } }, error: null }) },
-    rpc: async (fn: string, args: Fila) => { rpcs.push({ fn, args }); return { data: 501, error: null }; },
+    // #42 (219): la creación manual registra después al titular; el doble responde como la fachada.
+    rpc: async (fn: string, args: Fila) => {
+      rpcs.push({ fn, args });
+      return { data: fn === "registrar_personas_cotizacion" ? { cotizacion_id: 501, nuevos: 1, reintentos: 0, omitidos: 0 } : 501, error: null };
+    },
     from: (tabla: string) => {
       const b: Record<string, unknown> = {};
       Object.assign(b, {
@@ -104,10 +108,19 @@ async function dinamicaComun(entrada: EntradaComparativaManual, ref: "A" | "B") 
   const r = await crearCotizacionManual({ ...resto, servicios });
   assert.ok(r.ok, "la cotización dinámica de referencia debe crearse");
   assert.equal(r.ok && r.id, 501, "devuelve el id que crea la RPC");
+  assert.equal(r.ok && "avisoPersonas" in r, false, "con el registro de personas en orden no hay aviso");
 
   // #39: una sola llamada a la RPC definer y ninguna escritura directa desde TypeScript.
+  // #42: después, y solo después, el registro del titular (no es financiero).
   assert.equal(inserts.length, 0, "crearCotizacionManual no debe insertar directo en ninguna tabla");
-  assert.deepEqual(rpcs.map((x) => x.fn), ["crear_cotizacion_manual"], "la creación va por UNA llamada a crear_cotizacion_manual");
+  assert.deepEqual(rpcs.map((x) => x.fn), ["crear_cotizacion_manual", "registrar_personas_cotizacion"],
+    "la creación va por UNA llamada a crear_cotizacion_manual, seguida del registro del titular");
+  const alta = rpcs[1].args as { p_cotizacion_id: number; p_usuario_id: string; p_participantes: { rol: string; numero_doc: string | null }[] };
+  assert.deepEqual(Object.keys(alta).sort(), ["p_cotizacion_id", "p_participantes", "p_usuario_id"], "argumentos del registro");
+  assert.equal(alta.p_cotizacion_id, 501, "registra la cotización recién creada");
+  assert.equal(alta.p_usuario_id, "u-1", "con el mismo autor de la sesión");
+  assert.deepEqual(alta.p_participantes.map((p) => [p.rol, p.numero_doc]), [["titular", entrada.cliente.numeroDoc]],
+    "solo el titular: las cantidades de pax/niños nunca crean personas");
   const args = rpcs[0].args;
   assert.deepEqual(Object.keys(args).sort(), ["p_cabecera", "p_servicios", "p_tenant", "p_usuario_id"], "argumentos de la RPC");
   assert.equal(args.p_usuario_id, "u-1", "el autor es el usuario de la sesión, no un dato del formulario");
