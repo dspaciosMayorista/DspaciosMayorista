@@ -77,8 +77,8 @@ begin
     and not has_table_privilege('service_role', 'public.cotizacion_ediciones', 'INSERT,UPDATE,DELETE,TRUNCATE'));
   perform t216.afirma('P7 tablas de p39_priv: ningún privilegio para la API',
     not exists (select 1 from (values ('p39_priv.autorizacion_emitida'), ('p39_priv.autorizacion_cerrada'), ('p39_priv.suspension_edicion')) t(n),
-                       (values ('anon'), ('authenticated'), ('service_role')) r(rol)
-                 where has_table_privilege(r.rol, t.n, 'SELECT,INSERT,UPDATE,DELETE,TRUNCATE')));
+                       (values ('anon'), ('authenticated'), ('service_role')) api(rol)
+                 where has_table_privilege(api.rol, t.n, 'SELECT,INSERT,UPDATE,DELETE,TRUNCATE')));
   perform t216.afirma('P8 la RPC 198 (4 funciones) no cambió: mismo md5 que en main',
     (select string_agg(coalesce(md5(replace(p.prosrc, chr(13), '')), 'falta'), ',' order by f.n)
        from (values (1, 'public.anular_pago_previo(bigint,uuid,text)'), (2, 'public.convertir_cotizacion_a_contrato(bigint,uuid)'),
