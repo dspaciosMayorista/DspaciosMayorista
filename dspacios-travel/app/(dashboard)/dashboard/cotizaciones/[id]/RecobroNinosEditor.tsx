@@ -12,13 +12,16 @@ const lbl = "mb-1 block text-xs font-medium text-gray-600";
 // Editor posterior de NIÑOS y RECOBRO de una cotización dinámica (antes de
 // generar el contrato). El recobro va oculto al cliente (dentro de la tarifa de
 // adulto) y, en B2B, se reparte entre empresa y aliado.
+// #39 (C5): la ficha solo lo muestra en una manual simple abierta que nunca tuvo
+// pago; guarda con la revisión que leyó la ficha y con motivo obligatorio.
 export function RecobroNinosEditor({
-  id, moneda, esB2B, pctAliadoB2B, inicial,
+  id, moneda, esB2B, pctAliadoB2B, revEsperada, inicial,
 }: {
   id: number;
   moneda: string;
   esB2B: boolean;
   pctAliadoB2B: number;
+  revEsperada: number;
   inicial: { ninos: number; tarifaNino: number; recobro: number; recobroAliado: number };
 }) {
   const router = useRouter();
@@ -27,6 +30,7 @@ export function RecobroNinosEditor({
   const [tarifaNino, setTarifaNino] = useState(String(inicial.tarifaNino));
   const [recobro, setRecobro] = useState(String(inicial.recobro));
   const [recobroAliado, setRecobroAliado] = useState(String(inicial.recobroAliado));
+  const [motivo, setMotivo] = useState("");
   const [pending, start] = useTransition();
   const [err, setErr] = useState("");
   const [ok, setOk] = useState(false);
@@ -43,16 +47,18 @@ export function RecobroNinosEditor({
     setTarifaNino(String(inicial.tarifaNino));
     setRecobro(String(inicial.recobro));
     setRecobroAliado(String(inicial.recobroAliado));
+    setMotivo("");
     setErr("");
   }
 
   function guardar() {
     setErr(""); setOk(false);
+    if (!motivo.trim()) { setErr("Indica el motivo del cambio."); return; }
     start(async () => {
       const r = await actualizarRecobroNinosCotizacionManual(id, {
         ninos: nNinos, tarifaNino: valorNino, recobro: recobroN, recobroAliado: recobroAliadoN,
-      });
-      if (r.ok) { setOk(true); setEditando(false); router.refresh(); }
+      }, { revEsperada, motivo: motivo.trim() });
+      if (r.ok) { setOk(true); setEditando(false); setMotivo(""); router.refresh(); }
       else setErr(r.error);
     });
   }
@@ -109,6 +115,19 @@ export function RecobroNinosEditor({
               </div>
             )}
             {nNinos === 0 && recobroN === 0 && <span className="text-gray-400">Sin niños ni recobro.</span>}
+          </div>
+
+          <div className="mt-3">
+            <label className={lbl} htmlFor={`motivo-recobro-${id}`}>Motivo del cambio (obligatorio)</label>
+            <textarea
+              id={`motivo-recobro-${id}`}
+              value={motivo}
+              maxLength={500}
+              rows={2}
+              onChange={(e) => setMotivo(e.target.value)}
+              className="w-full rounded-md border border-gray-200 px-3 py-2 text-sm"
+              placeholder="Ej.: el cliente agregó un niño"
+            />
           </div>
 
           <div className="mt-3 flex items-center gap-2">

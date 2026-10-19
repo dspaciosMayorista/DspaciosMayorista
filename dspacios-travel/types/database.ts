@@ -2965,6 +2965,10 @@ export type Database = {
           madre_version: number | null;
           madre_sello: string | null;
           vigencia_tope: string | null; // date
+          // ── Edición de servicios (migración 216, #39) ──
+          // Revisión económica propia: sube sola ante cualquier cambio de precio,
+          // servicios, recobro o niños. La API no la puede fijar (disparador).
+          economico_rev: number;
         };
         Insert: {
           id?: number;
@@ -3058,6 +3062,29 @@ export type Database = {
           resumen_publico: Json; // sin netos ni proveedores
           plantilla_hija: Json;
           created_at: string;
+        };
+        Insert: never;
+        Update: never;
+        Relationships: [];
+      };
+      // Migración 216 (#39). Historial de ediciones de una cotización dinámica,
+      // con motivo. Solo inserción y solo desde las RPC de edición.
+      cotizacion_ediciones: {
+        Row: {
+          id: number;
+          cotizacion_id: number;
+          tenant: string;
+          tipo: string; // 'servicios' | 'recobro_ninos'
+          actor_id: string;
+          actor_rol: string;
+          motivo: string;
+          rev_anterior: number;
+          rev_nueva: number;
+          precio_anterior: number | null;
+          precio_nuevo: number | null;
+          antes: Json;
+          despues: Json;
+          creado_en: string;
         };
         Insert: never;
         Update: never;
@@ -3818,6 +3845,57 @@ export type Database = {
       convertir_cotizacion_a_contrato: {
         Args: { p_cotizacion_id: number; p_usuario_id: string };
         Returns: string;
+      };
+      // ── Edición de cotizaciones dinámicas (migraciones 216/217, #39) ─────
+      // RPC SECURITY DEFINER, SOLO service_role. Errores: `EDICION_39_<X>: …`.
+      crear_cotizacion_manual: {
+        Args: { p_usuario_id: string; p_tenant: string; p_cabecera: Json; p_servicios: Json };
+        Returns: number;
+      };
+      editar_servicios_cotizacion_manual: {
+        Args: {
+          p_usuario_id: string; p_cotizacion_id: number; p_rev_esperada: number; p_motivo: string;
+          p_servicios: Json; p_cambios: Json;
+        };
+        Returns: number;
+      };
+      actualizar_recobro_ninos_manual: {
+        Args: { p_usuario_id: string; p_cotizacion_id: number; p_rev_esperada: number; p_motivo: string; p_cambios: Json };
+        Returns: number;
+      };
+      // Wrappers INVOKER (solo service_role): la ÚNICA puerta de pago, anulación y
+      // conversión manual. Llaman la 198 sin cambios con la autorización de su
+      // transacción. Mismo retorno que la RPC que envuelven.
+      registrar_pago_previo_rev: {
+        Args: {
+          p_cotizacion_id: number;
+          p_valor: number;
+          p_moneda: string;
+          p_trm: number;
+          p_forma_pago: string;
+          p_referencia: string;
+          p_fecha_pago: string;
+          p_usuario_id: string;
+          p_idempotency_key: string;
+          p_rev_esperada: number;
+          p_snapshot?: Json;
+          p_exigido_total_moneda?: number;
+          p_pct_efectivo?: number;
+        };
+        Returns: string;
+      };
+      anular_pago_previo_controlado: {
+        Args: { p_pago_id: number; p_usuario_id: string; p_motivo?: string | null };
+        Returns: string;
+      };
+      convertir_cotizacion_manual_controlada: {
+        Args: { p_cotizacion_id: number; p_usuario_id: string };
+        Returns: string;
+      };
+      // authenticated: ¿la edición está habilitada (frontera activa, sin suspensión)?
+      edicion_cotizaciones_habilitada: {
+        Args: Record<string, never>;
+        Returns: boolean;
       };
       // ── Cotizaciones comparativas (migración 211, #35) ───────────────────
       // Todas SECURITY DEFINER con search_path fijo. Errores: `COMPARATIVA_<X>: …`.

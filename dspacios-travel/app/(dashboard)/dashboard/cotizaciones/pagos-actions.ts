@@ -45,6 +45,7 @@ import { componentesDeManual } from "@/lib/cotizacion/componentesManual";
 import type { ServicioManualCondicionable } from "@/lib/cotizacion/componentesManual";
 import type { Json } from "@/types/database";
 import { fechaElegidaONegocio } from "@/lib/fechaNegocio";
+import { mensajeEdicion39 } from "@/lib/cotizacion/edicionServiciosManual";
 import { revalidatePath } from "next/cache";
 
 // La misma lista que `_autorizado_pago_previo` en la migración 164:
@@ -86,6 +87,11 @@ function mensajeSeguro(msg: string): string {
     return "No se pudo registrar el pago por un conflicto de datos. Reintenta; si persiste, verifica que no ya esté registrado.";
   }
   return m;
+}
+
+/** Errores propios de #39 (revisión/composición/frontera) con su texto; el resto, como siempre. */
+function mensajeDinero(msg: string): string {
+  return /PAGO_39_|FRONTERA_39/.test(String(msg ?? "")) ? mensajeEdicion39(msg) : mensajeSeguro(msg);
 }
 
 export interface RegistrarPagoPrevioInput {
@@ -167,6 +173,9 @@ export async function registrarPagoPrevio(
   // ── snapshot del PRIMER pago: se calcula (lectura pura) SOLO si aún no está
   //    congelada. El RPC lo persiste de forma atómica; si ya está congelada, se
   //    reutiliza el snapshot/TRM guardados (no se envía nada).
+  // #39: la revisión económica se toma de ESTA lectura, hecha ANTES de leer los
+  // servicios: si algo cambia entre medio, el wrapper la ve distinta y rechaza.
+  const revEsperada = Number(cot.economico_rev);
   const yaCongelada = Boolean(cot.condicion_pago_congelada_en);
   let snapshotJson: Json | undefined;
   let exigidoTotalMoneda: number | undefined;
@@ -174,11 +183,14 @@ export async function registrarPagoPrevio(
 
   if (!yaCongelada) {
     const precioTotalMoneda = redondear2(Number(cot.precio_venta) || 0);
+    // Mismo orden estable que `p39_priv.componentes_manual` (orden, id): la 216
+    // compara este snapshot fila por fila con los servicios guardados.
     const { data: servicios } = await admin
       .from("cotizacion_servicios")
       .select("id, tipo_servicio, valor, nombre_servicio")
       .eq("cotizacion_id", cotizacionId)
-      .order("orden");
+      .order("orden")
+      .order("id");
     const componentes = componentesDeManual(
       (servicios ?? []) as ServicioManualCondicionable[],
       cot.fecha_salida as string | null,
@@ -204,7 +216,10 @@ export async function registrarPagoPrevio(
   }
 
   // ── RPC de dinero ÚNICO y atómico: persiste snapshot/resumen/congelado/pago/asiento ──
-  const rpc = await admin.rpc("registrar_pago_previo", {
+  // #39: por el wrapper `registrar_pago_previo_rev` (migración 216), que bloquea
+  // la cotización, exige en el primer pago la MISMA revisión y la MISMA
+  // composición de servicios, y llama la 198 sin cambios.
+  const rpc = await admin.rpc("registrar_pago_previo_rev", {
     p_cotizacion_id: cotizacionId,
     p_valor: valor,
     p_moneda: moneda,
@@ -214,12 +229,13 @@ export async function registrarPagoPrevio(
     p_fecha_pago: fechaPago,
     p_usuario_id: sesion.userId,
     p_idempotency_key: key,
+    p_rev_esperada: revEsperada,
     ...(snapshotJson !== undefined
       ? { p_snapshot: snapshotJson, p_exigido_total_moneda: exigidoTotalMoneda, p_pct_efectivo: pctEfectivo }
       : {}),
   });
   if (rpc.error) {
-    return { ok: false, error: mensajeSeguro(rpc.error.message) };
+    return { ok: false, error: mensajeDinero(rpc.error.message) };
   }
   const txt = String(rpc.data ?? "");
   const pagoId = txt.startsWith("OK|") ? Number(txt.slice(3)) : undefined;
@@ -255,12 +271,14 @@ export async function anularPagoPrevio(
     return { ok: false, error: "Solo se pueden anular pagos previos activos." };
   }
 
-  const rpc = await admin.rpc("anular_pago_previo", {
+  // #39: por el wrapper `anular_pago_previo_controlado` (bloquea la cotización
+  // antes que el pago y comprueba el tenant en SQL); la 198 queda sin cambios.
+  const rpc = await admin.rpc("anular_pago_previo_controlado", {
     p_pago_id: pagoId,
     p_motivo: String(motivo ?? "").trim() || null,
     p_usuario_id: sesion.userId,
   });
-  if (rpc.error) return { ok: false, error: mensajeSeguro(rpc.error.message) };
+  if (rpc.error) return { ok: false, error: mensajeDinero(rpc.error.message) };
 
   revalidatePath(`/dashboard/cotizaciones/${pago.cotizacion_id}`);
   revalidatePath("/dashboard/cotizaciones");

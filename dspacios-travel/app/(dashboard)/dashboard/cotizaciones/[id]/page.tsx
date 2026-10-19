@@ -14,7 +14,10 @@ import { ConvertirManualBtn } from "./ConvertirManualBtn";
 import { TitularEditor } from "./TitularEditor";
 import { IncluyeEditor } from "./IncluyeEditor";
 import { RecobroNinosEditor } from "./RecobroNinosEditor";
+import { ServiciosCotizacionEditor } from "./ServiciosCotizacionEditor";
 import { ConvertirCarritoBtn } from "./ConvertirCarritoBtn";
+import { elegibilidadEdicion } from "@/lib/cotizacion/edicionServiciosManual";
+import { servicioDesdeFila } from "@/lib/cotizacion/liquidacionManual";
 import { resolverVinculosCotizacion } from "@/lib/reservar/vinculoServiciosCheckout";
 import { ROLES_CONTRATO_COMPLETO } from "@/lib/roles";
 import { FichaComparativa } from "@/lib/cotizacion/comparativaDocumento";
@@ -84,7 +87,7 @@ export default async function CotizacionDetallePage({
   const condicionesUI = condicionesParaUI((condRows ?? []) as FilaCondicionRowUI[]);
 
   const { data: { user } } = await sb.auth.getUser();
-  const { data: perfil } = user ? await sb.from("usuarios").select("rol, nombre").eq("id", user.id).single() : { data: null };
+  const { data: perfil } = user ? await sb.from("usuarios").select("rol, nombre, activo").eq("id", user.id).single() : { data: null };
   const esSuperadmin = perfil?.rol === "superadmin";
   // El panel de pagos previos (migración 164) lo ve/opera solo el rol
   // autorizado — la MISMA lista que `_autorizado_pago_previo` en SQL.
@@ -163,6 +166,25 @@ export default async function CotizacionDetallePage({
   const recobroAliado = Number(detalleM.recobro?.aliado ?? 0);
   const ninosSubtotal = Math.max((Number(c.precio_venta) || 0) - serviciosSubtotal - recobroTotal, 0);
   const numNinos = Number(detalleM.venta?.ninos ?? 0);
+
+  // #39 fase 1: editar servicios y niños/recobro SOLO en una manual simple abierta
+  // que nunca tuvo pago, vigente, con la edición habilitada (frontera de la 217
+  // activa y sin suspensión); `venta` solo en las que creó. La RPC vuelve a
+  // comprobar todo con la fila bloqueada: esto solo decide qué se muestra.
+  const { data: edicionHabilitada } = esManual && c.estado === "abierta"
+    ? await sb.rpc("edicion_cotizaciones_habilitada")
+    : { data: false };
+  const elegibilidad = elegibilidadEdicion(c, {
+    actor: { id: user?.id ?? null, rol: perfil?.rol ?? null, activo: perfil?.activo === true },
+    habilitada: edicionHabilitada === true,
+    hoy: hoyBogota(),
+    // Solo los roles de pago leen los pagos (RLS); para el resto basta el congelado
+    // (el primer pago siempre congela) y la base vuelve a comprobarlo.
+    tienePagos: (pagosPrevios ?? []).length > 0,
+  });
+  const avisoEdicion = !elegibilidad.ok && ["VENCIDA", "CON_PAGOS", "CONGELADA", "AUTOR"].includes(elegibilidad.codigo)
+    ? elegibilidad.mensaje
+    : null;
 
   return (
     <div className="mx-auto max-w-3xl p-4 md:p-8">
@@ -272,18 +294,34 @@ export default async function CotizacionDetallePage({
             incluye={String((c.detalle as { incluye?: string } | null)?.incluye ?? "")}
             noIncluye={String((c.detalle as { noIncluye?: string } | null)?.noIncluye ?? "")}
           />
-          <RecobroNinosEditor
-            id={c.id}
-            moneda={moneda}
-            esB2B={esB2B}
-            pctAliadoB2B={pctAliadoB2B}
-            inicial={{
-              ninos: Number(payload.ninos ?? detalleM.venta?.ninos ?? 0),
-              tarifaNino: Number(payload.tarifaNino ?? 0),
-              recobro: Number(payload.recobro ?? detalleM.recobro?.total ?? 0),
-              recobroAliado: Number(payload.recobroAliado ?? detalleM.recobro?.aliado ?? 0),
-            }}
-          />
+          {elegibilidad.ok ? (
+            <>
+              <ServiciosCotizacionEditor
+                id={c.id}
+                moneda={moneda}
+                revEsperada={c.economico_rev}
+                extrasTotal={recobroTotal + ninosSubtotal}
+                inicial={(serviciosManual ?? []).map(servicioDesdeFila)}
+              />
+              <RecobroNinosEditor
+                id={c.id}
+                moneda={moneda}
+                esB2B={esB2B}
+                pctAliadoB2B={pctAliadoB2B}
+                revEsperada={c.economico_rev}
+                inicial={{
+                  ninos: Number(payload.ninos ?? detalleM.venta?.ninos ?? 0),
+                  tarifaNino: Number(payload.tarifaNino ?? 0),
+                  recobro: Number(payload.recobro ?? detalleM.recobro?.total ?? 0),
+                  recobroAliado: Number(payload.recobroAliado ?? detalleM.recobro?.aliado ?? 0),
+                }}
+              />
+            </>
+          ) : avisoEdicion ? (
+            <p className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">
+              Servicios, niños y recobro no se pueden editar: {avisoEdicion}
+            </p>
+          ) : null}
         </div>
       )}
 
