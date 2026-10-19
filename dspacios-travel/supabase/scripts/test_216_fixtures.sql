@@ -63,6 +63,30 @@ begin
   perform t216.afirma(p_nombre, p_res = 'ok', p_res);
 end $$;
 
+-- Corre VARIAS sentencias, EN ORDEN, como un rol de la API y dentro de UNA subtransacción
+-- explícita (bloque BEGIN … EXCEPTION): si una falla, se revierten todas, igual que una petición
+-- HTTP que aborta su transacción. Cada sentencia devuelve un escalar; el resultado es la lista
+-- unida por ' / ', o 'ERR <sqlstate>: <mensaje>' si alguna falló. (La batería ya corre en UNA
+-- transacción que termina en ROLLBACK: no cabe un BEGIN/COMMIT anidado.)
+create function t216.intenta_juntas(p_rol text, p_sqls text[]) returns text
+language plpgsql as $$
+declare v_res text := ''; v_val text; v_sql text;
+begin
+  perform set_config('request.jwt.claims', '', true);
+  perform set_config('request.jwt.claim.sub', '', true);
+  execute format('set local role %I', p_rol);
+  begin
+    foreach v_sql in array p_sqls loop
+      execute v_sql into v_val;
+      v_res := v_res || case when v_res = '' then '' else ' / ' end || coalesce(v_val, 'null');
+    end loop;
+  exception when others then
+    v_res := 'ERR ' || sqlstate || ': ' || sqlerrm;
+  end;
+  reset role;
+  return v_res;
+end $$;
+
 -- ── Usuarios (ids fijos reconocibles) ─────────────────────────────────────
 create function t216.u(p_k text) returns uuid language sql immutable as $$
   select ('00000000-0000-0000-0000-000000216' || case p_k

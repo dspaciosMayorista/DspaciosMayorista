@@ -11,8 +11,10 @@
 #       service_role sí lo ve (control positivo: a él solo lo protege la configuración)
 #   D   escrituras directas por REST con la frontera activa (authenticated y service_role)
 #   O   firmas antiguas por REST: la 198 llamada directo no escribe; las puertas nuevas sí
-#   L   lotes (Prefer: params=multiple-objects): cada llamada al wrapper con su autorización;
-#       la 198 en lote falla entera
+#   L   llamadas individuales por HTTP (una operación por petición, sin params=multiple-objects):
+#       cada pago y cada conversión por el wrapper con SU autorización, y la 198 directo rechazada,
+#       comprobando pagos, contratos y autorizaciones de cada cotización. Dos operaciones atómicas
+#       en UNA transacción se prueban en la batería SQL (grupo LT de test_216_edicion39.sql)
 #   A   ACL de las RPC nuevas por HTTP (authenticated no ejecuta las de servidor)
 #
 # Límite: demuestra el comportamiento de PostgREST con el secreto LOCAL; no prueba la
@@ -127,6 +129,8 @@ pedir() { # $1 método, $2 ruta, $3 token o '-', $4 cuerpo o '-', $5 encabezado 
   fi
 }
 cuerpo() { tr '\n' ' ' < "$TMP/h.body" | cut -c1-300; }
+# Claves de un JSON objeto (ordenadas), para compararlas con la firma real de la función (O4).
+claves() { uno "select coalesce(string_agg(k, ',' order by k), '(sin claves)') from json_object_keys(\$j\$$1\$j\$::json) k" 2>&1 || true; }
 
 # ══ X · exposición ═══════════════════════════════════════════════════════
 for t in "$T_AD" "$T_SR"; do
@@ -255,30 +259,90 @@ c="$(pedir POST /rpc/convertir_cotizacion_a_contrato "$T_SR" "{\"p_cotizacion_id
 c="$(pedir POST /rpc/anular_pago_previo "$T_SR" "{\"p_pago_id\":$P_PAG,\"p_usuario_id\":\"$ADMIN\",\"p_motivo\":\"x\"}" -)"
 [ "$c" = 403 ] && [ "$(uno "select estado from public.cotizacion_pagos_previos where id = $P_PAG")" = activo ] \
   && ok "O3 /rpc/anular_pago_previo (198) directo: 403, el pago sigue activo" || fallo "O3 $c $(cuerpo)"
-ARGS_REV="$(printf '%s' "$ARGS_198" | sed "s/}\$/, \"p_rev_esperada\": $(uno "select t216.rev($C_O)")}/")"
+# O4. PGRST202 (404) = PostgREST no halla una función con ESOS nombres de argumento. L1 llama al
+# mismo wrapper con las mismas claves armadas con json_build_object y PostgREST sí lo resuelve; la
+# única diferencia era que aquí el cuerpo se armaba editando el TEXTO de ARGS_198 con sed. Ahora
+# se arma igual que en L1, y se registra en el log la comparación con la firma real (también del
+# cuerpo que producía sed, para confirmar o descartar esa causa en el CI).
+REV_O="$(uno "select t216.rev($C_O)")"
+FIRMA_REV="$(uno "select string_agg(a, ',' order by a) from unnest((select proargnames from pg_proc where oid =
+   'public.registrar_pago_previo_rev(bigint,numeric,text,numeric,text,text,date,uuid,text,integer,jsonb,numeric,numeric)'::regprocedure)) a")"
+ARGS_REV_SED="$(printf '%s' "$ARGS_198" | sed "s/}\$/, \"p_rev_esperada\": $REV_O}/")"
+ARGS_REV="$(uno "select json_build_object('p_cotizacion_id', $C_O, 'p_valor', 100000, 'p_moneda', 'COP', 'p_trm', 1, 'p_forma_pago', 'Transferencia',
+   'p_referencia', 'REF-O1', 'p_fecha_pago', '$HOY', 'p_usuario_id', '$ADMIN', 'p_idempotency_key', 'api-o1', 'p_rev_esperada', $REV_O,
+   'p_snapshot', t216.snap($C_O), 'p_exigido_total_moneda', t216.exigido($C_O), 'p_pct_efectivo', null)::text")"
+CL_REV="$(claves "$ARGS_REV")"
+echo "INFO  O4 firma real de registrar_pago_previo_rev: [$FIRMA_REV]"
+echo "INFO  O4 claves del cuerpo que armaba sed (corrida anterior): [$(claves "$ARGS_REV_SED")] · líneas de ARGS_198: $(printf '%s\n' "$ARGS_198" | wc -l)"
+echo "INFO  O4 claves del cuerpo enviado: [$CL_REV]"
+[ "$CL_REV" = "$FIRMA_REV" ] && ok "O4.0 el cuerpo de O4 trae exactamente los argumentos de la firma real" \
+  || fallo "O4.0 cuerpo de O4 distinto de la firma: enviadas=[$CL_REV] firma=[$FIRMA_REV]"
 c="$(pedir POST /rpc/registrar_pago_previo_rev "$T_SR" "$ARGS_REV" -)"
-[ "$c" = 200 ] && grep -q 'OK|' "$TMP/h.body" && ok "O4 la puerta nueva por REST (service_role): 200 $(cuerpo)" || fallo "O4 $c $(cuerpo)"
+[ "$c" = 200 ] && grep -q 'OK|' "$TMP/h.body" && ok "O4 la puerta nueva por REST (service_role): 200 $(cuerpo)" \
+  || fallo "O4 $c $(cuerpo) · enviadas=[$CL_REV] · firma=[$FIRMA_REV]"
 c="$(pedir POST /rpc/convertir_cotizacion_manual_controlada "$T_SR" "{\"p_cotizacion_id\":$C_PAG,\"p_usuario_id\":\"$ADMIN\"}" -)"
 [ "$c" = 200 ] && [ "$(uno "select count(*) from public.ventas where cotizacion_id = $C_PAG")" = 1 ] && ok "O5 conversión por la puerta nueva: 200 $(cuerpo)" || fallo "O5 $c $(cuerpo)"
 
-# ══ L · lotes ════════════════════════════════════════════════════════════
-LOTE="$(uno "select json_agg(json_build_object('p_cotizacion_id', c, 'p_valor', 100000, 'p_moneda', 'COP', 'p_trm', 1, 'p_forma_pago', 'Transferencia',
-   'p_referencia', 'REF-L1-' || c, 'p_fecha_pago', '$HOY', 'p_usuario_id', '$ADMIN', 'p_idempotency_key', 'api-l1-' || c,
-   'p_rev_esperada', t216.rev(c), 'p_snapshot', t216.snap(c), 'p_exigido_total_moneda', t216.exigido(c), 'p_pct_efectivo', null))::text
-   from unnest(array[$C_L1A, $C_L1B]::bigint[]) c")"
-E0="$(uno "select count(*) from p39_priv.autorizacion_emitida")"
-c="$(pedir POST /rpc/registrar_pago_previo_rev "$T_SR" "$LOTE" 'Prefer: params=multiple-objects')"
-if [ "$c" = 200 ] && [ "$(uno "select count(*) from public.cotizacion_pagos_previos where cotizacion_id in ($C_L1A, $C_L1B)")" = 2 ] \
-   && [ "$(uno "select count(*) from p39_priv.autorizacion_emitida")" = "$((E0 + 2))" ] \
-   && [ "$(uno "select count(*) from p39_priv.autorizacion_emitida e where not exists (select 1 from p39_priv.autorizacion_cerrada x where x.autorizacion_id = e.id)")" = 0 ]; then
-  ok "L1 lote de 2 pagos por el wrapper: 2 pagos, 2 autorizaciones, todas cerradas"
-else fallo "L1 $c $(cuerpo)"; fi
-c="$(pedir POST /rpc/convertir_cotizacion_a_contrato "$T_SR" "[{\"p_cotizacion_id\":$C_L2A,\"p_usuario_id\":\"$ADMIN\"},{\"p_cotizacion_id\":$C_L2B,\"p_usuario_id\":\"$ADMIN\"}]" 'Prefer: params=multiple-objects')"
-[ "$c" = 403 ] && [ "$(uno "select count(*) from public.ventas where cotizacion_id in ($C_L2A, $C_L2B)")" = 0 ] \
-  && ok "L2 la 198 en lote falla entera: 403 y ningún contrato" || fallo "L2 $c $(cuerpo)"
-c="$(pedir POST /rpc/convertir_cotizacion_manual_controlada "$T_SR" "[{\"p_cotizacion_id\":$C_L2A,\"p_usuario_id\":\"$ADMIN\"},{\"p_cotizacion_id\":$C_L2B,\"p_usuario_id\":\"$ADMIN\"}]" 'Prefer: params=multiple-objects')"
-[ "$c" = 200 ] && [ "$(uno "select count(*) from public.ventas where cotizacion_id in ($C_L2A, $C_L2B)")" = 2 ] \
-  && ok "L3 lote de conversiones por el wrapper: 2 contratos" || fallo "L3 $c $(cuerpo)"
+# ══ L · llamadas individuales por HTTP ═══════════════════════════════════
+# Una operación por petición: sin Prefer: params=multiple-objects y sin atribuir a PostgREST
+# atomicidad de lote. Se comprueba cada llamada y sus efectos, cotización por cotización. La
+# atomicidad de dos operaciones en UNA transacción la prueba la batería SQL (grupo LT).
+MAXAUT="select coalesce(max(id), 0) from p39_priv.autorizacion_emitida"
+ABIERTAS="select count(*) from p39_priv.autorizacion_emitida e where not exists (select 1 from p39_priv.autorizacion_cerrada x where x.autorizacion_id = e.id)"
+# Autorizaciones emitidas DESPUÉS de $1, como total/de la cotización $2 con operación $3/cerradas.
+aut_nuevas() {
+  uno "select count(*) || '/' || count(*) filter (where e.cotizacion_id = $2 and e.operacion = '$3') || '/' || count(x.autorizacion_id)
+         from p39_priv.autorizacion_emitida e left join p39_priv.autorizacion_cerrada x on x.autorizacion_id = e.id where e.id > $1"
+}
+npagos() { uno "select count(*) from public.cotizacion_pagos_previos where cotizacion_id = $1"; }
+
+# L1 · el primer pago de cada cotización por el wrapper, cada uno en su petición.
+for X in "$C_L1A" "$C_L1B"; do
+  M0="$(uno "$MAXAUT")"
+  ARGS_L1="$(uno "select json_build_object('p_cotizacion_id', $X, 'p_valor', 100000, 'p_moneda', 'COP', 'p_trm', 1, 'p_forma_pago', 'Transferencia',
+     'p_referencia', 'REF-L1-$X', 'p_fecha_pago', '$HOY', 'p_usuario_id', '$ADMIN', 'p_idempotency_key', 'api-l1-$X',
+     'p_rev_esperada', t216.rev($X), 'p_snapshot', t216.snap($X), 'p_exigido_total_moneda', t216.exigido($X), 'p_pct_efectivo', null)::text")"
+  c="$(pedir POST /rpc/registrar_pago_previo_rev "$T_SR" "$ARGS_L1" -)"
+  if [ "$X" = "$C_L1A" ]; then ESP_PAGOS="A=1 B=0"; else ESP_PAGOS="A=1 B=1"; fi
+  PAGOS="A=$(npagos "$C_L1A") B=$(npagos "$C_L1B")"
+  AUT="$(aut_nuevas "$M0" "$X" pago)"; AB="$(uno "$ABIERTAS")"
+  DIAG="pagos $PAGOS (esperado $ESP_PAGOS) · autorizaciones nuevas total/propias/cerradas=$AUT (esperado 1/1/1) · abiertas $AB"
+  if [ "$c" = 200 ] && grep -q 'OK|' "$TMP/h.body" && [ "$PAGOS" = "$ESP_PAGOS" ] && [ "$AUT" = 1/1/1 ] && [ "$AB" = 0 ]; then
+    ok "L1 ($X) primer pago por el wrapper en su petición: 200 $(cuerpo) · $DIAG"
+  else fallo "L1 ($X) $c $(cuerpo) · $DIAG"; fi
+done
+
+# L2 · la 198 directo, cada cotización (ya pagada) en su petición: 403 FRONTERA_39 y nada escrito.
+for X in "$C_L2A" "$C_L2B"; do
+  M0="$(uno "$MAXAUT")"
+  c="$(pedir POST /rpc/convertir_cotizacion_a_contrato "$T_SR" "{\"p_cotizacion_id\":$X,\"p_usuario_id\":\"$ADMIN\"}" -)"
+  EST="$(uno "select (select count(*) from public.ventas v where v.cotizacion_id = k.id) || '/' || k.estado || '/'
+                || (select count(*) filter (where p.estado = 'activo') || ':' || count(*) from public.cotizacion_pagos_previos p where p.cotizacion_id = k.id)
+              from public.cotizaciones k where k.id = $X")"
+  AUT="$(aut_nuevas "$M0" "$X" conversion)"
+  DIAG="ventas/estado/pagos activos:total=$EST (esperado 0/abierta/1:1) · autorizaciones nuevas=$AUT (esperado 0/0/0)"
+  if [ "$c" = 403 ] && grep -q FRONTERA_39 "$TMP/h.body" && [ "$EST" = "0/abierta/1:1" ] && [ "$AUT" = 0/0/0 ]; then
+    ok "L2 ($X) la 198 directo en su petición: 403 FRONTERA_39, sin contrato ni autorización · $DIAG"
+  else fallo "L2 ($X) $c $(cuerpo) · $DIAG"; fi
+done
+
+# L3 · la conversión de cada cotización por el wrapper, cada una en su petición.
+for X in "$C_L2A" "$C_L2B"; do
+  M0="$(uno "$MAXAUT")"
+  c="$(pedir POST /rpc/convertir_cotizacion_manual_controlada "$T_SR" "{\"p_cotizacion_id\":$X,\"p_usuario_id\":\"$ADMIN\"}" -)"
+  NUM="$(tr -d '"\r\n' < "$TMP/h.body")"
+  EST="$(uno "select (select count(*) || ':' || coalesce(max(v.numero_contrato), '-') from public.ventas v where v.cotizacion_id = k.id)
+                || '/' || k.estado || ':' || coalesce(k.numero_contrato, '-')
+                || '/' || (select count(*) filter (where p.estado = 'aplicado') || ':' || count(*) from public.cotizacion_pagos_previos p where p.cotizacion_id = k.id)
+                || '/' || (select count(*) from public.abonos a where a.numero_contrato = k.numero_contrato)
+              from public.cotizaciones k where k.id = $X")"
+  AUT="$(aut_nuevas "$M0" "$X" conversion)"; AB="$(uno "$ABIERTAS")"
+  ESP="1:$NUM/convertida:$NUM/1:1/1"
+  DIAG="ventas:número/estado:número/pagos aplicados:total/abonos=$EST (esperado $ESP) · autorizaciones nuevas=$AUT (esperado 1/1/1) · abiertas $AB"
+  if [ "$c" = 200 ] && printf '%s' "$NUM" | grep -Eq '^DTM-[0-9]{4,}$' && [ "$EST" = "$ESP" ] && [ "$AUT" = 1/1/1 ] && [ "$AB" = 0 ]; then
+    ok "L3 ($X) conversión por el wrapper en su petición: 200 $NUM · $DIAG"
+  else fallo "L3 ($X) $c $(cuerpo) · $DIAG"; fi
+done
 
 docker rm -f "$PGRST" >/dev/null 2>&1 || true
 echo "------------------------------------------------------------"

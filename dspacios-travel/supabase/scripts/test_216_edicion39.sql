@@ -718,6 +718,90 @@ begin
   perform t216.afirma('B3.2 sin el fallo, el mismo pago entra', t216.escalar('service_role', null, t216.pago_sql(c, 'admin', 100000, 'b3-ok')) ~ '^OK\|');
 end $$;
 
+-- ═════════════════════════════════════════════════════════════════════════
+\echo '--- LT. Dos operaciones de dinero en UNA transacción (lo que el lote HTTP no garantiza)'
+-- La API prueba cada llamada por separado (grupo L de test_216_api.sh). Aquí, dos operaciones van
+-- juntas con t216.intenta_juntas: en orden, como service_role y en UNA subtransacción explícita,
+-- así que si una falla se revierten las dos. Se comprueba por cotización: pagos, contratos y que
+-- cada operación lleve SU autorización (la de una no habilita la otra).
+do $$
+declare a bigint; b bigint; r text; m0 bigint; ha jsonb; hb jsonb; ha2 jsonb; hb2 jsonb; n_a text; n_b text;
+begin
+  -- LT1 · dos primeros pagos por el wrapper, juntos.
+  a := t216.crear('admin'); b := t216.crear('admin');
+  select coalesce(max(id), 0) into m0 from p39_priv.autorizacion_emitida;
+  r := t216.intenta_juntas('service_role', array[t216.pago_sql(a, 'admin', 100000, 'lt1a'), t216.pago_sql(b, 'admin', 100000, 'lt1b')]);
+  perform t216.afirma('LT1 dos primeros pagos por el wrapper en una transacción: los dos responden OK', r ~ '^OK\|\d+ / OK\|\d+$', r);
+  perform t216.afirma('LT1.1 un pago en cada cotización',
+    (select count(*) from public.cotizacion_pagos_previos where cotizacion_id = a) = 1
+    and (select count(*) from public.cotizacion_pagos_previos where cotizacion_id = b) = 1);
+  perform t216.afirma('LT1.2 cada pago con SU autorización de pago, y las dos cerradas',
+    (select count(*) = 2 and count(*) filter (where e.cotizacion_id = a and e.operacion = 'pago') = 1
+            and count(*) filter (where e.cotizacion_id = b and e.operacion = 'pago') = 1 and count(x.autorizacion_id) = 2
+       from p39_priv.autorizacion_emitida e left join p39_priv.autorizacion_cerrada x on x.autorizacion_id = e.id where e.id > m0));
+
+  -- LT2 · el wrapper paga A y, en la misma transacción, la 198 directo intenta pagar B: falla TODO.
+  a := t216.crear('admin'); b := t216.crear('admin');
+  ha := t216.huella_dinero(a); hb := t216.huella_dinero(b);
+  select coalesce(max(id), 0) into m0 from p39_priv.autorizacion_emitida;
+  r := t216.intenta_juntas('service_role', array[t216.pago_sql(a, 'admin', 100000, 'lt2a'),
+         format('select public.registrar_pago_previo(%s, 100000, ''COP'', 1, ''Transferencia'', ''REF-lt2b'', public.fecha_negocio(), %L, ''lt2b'', %L::jsonb, %s, null)',
+                b, t216.u('admin'), t216.snap(b), t216.exigido(b))]);
+  perform t216.rechaza('LT2 la autorización del pago de A no habilita la 198 directo para B', r, 'FRONTERA_39');
+  ha2 := t216.huella_dinero(a); hb2 := t216.huella_dinero(b);
+  perform t216.afirma('LT2.1 se revierte todo: ni el pago de A ni el de B (huellas de dinero idénticas)', ha2 = ha and hb2 = hb,
+    coalesce(t216.dif_huella(ha, ha2), '') || ' | ' || coalesce(t216.dif_huella(hb, hb2), ''));
+  perform t216.afirma('LT2.2 sin autorizaciones nuevas', not exists (select 1 from p39_priv.autorizacion_emitida where id > m0));
+
+  -- LT3 · el wrapper paga A y, en la misma transacción, la 198 directo intenta un segundo pago de A:
+  -- falla (la autorización de A ya se cerró) y se revierte también el primero.
+  a := t216.crear('admin');
+  ha := t216.huella_dinero(a);
+  select coalesce(max(id), 0) into m0 from p39_priv.autorizacion_emitida;
+  r := t216.intenta_juntas('service_role', array[t216.pago_sql(a, 'admin', 100000, 'lt3a'),
+         format('select public.registrar_pago_previo(%s, 10000, ''COP'', 1, ''Transferencia'', ''REF-lt3x'', public.fecha_negocio(), %L, ''lt3x'', null, null, null)',
+                a, t216.u('admin'))]);
+  perform t216.rechaza('LT3 tras el wrapper, la 198 directo sobre la MISMA cotización sigue rechazada (autorización cerrada)', r, 'FRONTERA_39');
+  ha2 := t216.huella_dinero(a);
+  perform t216.afirma('LT3.1 se revierte todo, también el pago por el wrapper', ha2 = ha, t216.dif_huella(ha, ha2));
+  perform t216.afirma('LT3.2 sin autorizaciones nuevas', not exists (select 1 from p39_priv.autorizacion_emitida where id > m0));
+
+  -- LT4 · dos conversiones por el wrapper, juntas.
+  a := t216.crear('admin'); b := t216.crear('admin');
+  perform t216.pagar(a, 450000, 'lt4a'); perform t216.pagar(b, 450000, 'lt4b');
+  select coalesce(max(id), 0) into m0 from p39_priv.autorizacion_emitida;
+  r := t216.intenta_juntas('service_role', array[t216.convertir_sql(a), t216.convertir_sql(b)]);
+  n_a := split_part(r, ' / ', 1); n_b := split_part(r, ' / ', 2);
+  perform t216.afirma('LT4 dos conversiones por el wrapper en una transacción: dos números DTM distintos',
+    n_a ~ '^DTM-\d{4,}$' and n_b ~ '^DTM-\d{4,}$' and n_a <> n_b, r);
+  perform t216.afirma('LT4.1 un contrato por cotización, con su número',
+    (select count(*) = 1 and max(numero_contrato) = n_a from public.ventas where cotizacion_id = a)
+    and (select count(*) = 1 and max(numero_contrato) = n_b from public.ventas where cotizacion_id = b));
+  perform t216.afirma('LT4.2 las dos convertidas, sus pagos aplicados y pasados a abonos',
+    (select estado = 'convertida' and numero_contrato = n_a from public.cotizaciones where id = a)
+    and (select estado = 'convertida' and numero_contrato = n_b from public.cotizaciones where id = b)
+    and not exists (select 1 from public.cotizacion_pagos_previos where cotizacion_id in (a, b) and estado <> 'aplicado')
+    and (select count(*) from public.abonos where numero_contrato = n_a) = 1
+    and (select count(*) from public.abonos where numero_contrato = n_b) = 1);
+  perform t216.afirma('LT4.3 cada conversión con SU autorización de conversión, y las dos cerradas',
+    (select count(*) = 2 and count(*) filter (where e.cotizacion_id = a and e.operacion = 'conversion') = 1
+            and count(*) filter (where e.cotizacion_id = b and e.operacion = 'conversion') = 1 and count(x.autorizacion_id) = 2
+       from p39_priv.autorizacion_emitida e left join p39_priv.autorizacion_cerrada x on x.autorizacion_id = e.id where e.id > m0));
+
+  -- LT5 · el wrapper convierte A y, en la misma transacción, la 198 directo intenta convertir B: falla TODO.
+  a := t216.crear('admin'); b := t216.crear('admin');
+  perform t216.pagar(a, 450000, 'lt5a'); perform t216.pagar(b, 450000, 'lt5b');
+  ha := t216.huella_dinero(a); hb := t216.huella_dinero(b);
+  select coalesce(max(id), 0) into m0 from p39_priv.autorizacion_emitida;
+  r := t216.intenta_juntas('service_role', array[t216.convertir_sql(a),
+         format('select public.convertir_cotizacion_a_contrato(%s, %L)', b, t216.u('admin'))]);
+  perform t216.rechaza('LT5 la conversión de A por el wrapper no habilita la 198 directo para B', r, 'FRONTERA_39');
+  ha2 := t216.huella_dinero(a); hb2 := t216.huella_dinero(b);
+  perform t216.afirma('LT5.1 se revierte todo: ningún contrato, abono ni cambio (huellas de dinero idénticas)', ha2 = ha and hb2 = hb,
+    coalesce(t216.dif_huella(ha, ha2), '') || ' | ' || coalesce(t216.dif_huella(hb, hb2), ''));
+  perform t216.afirma('LT5.2 sin autorizaciones nuevas', not exists (select 1 from p39_priv.autorizacion_emitida where id > m0));
+end $$;
+
 -- ── Resumen ────────────────────────────────────────────────────────────────
 \echo '=== RESUMEN ==='
 select count(*) filter (where ok) as ok, count(*) filter (where not ok) as fallos, count(*) as total from t216.res;
