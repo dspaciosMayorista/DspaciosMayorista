@@ -88,7 +88,8 @@ jobs:
           # bloque (un bloque que se saltara en silencio no puede dar verde).
           faltan=""
           for marca in 'OK    F9 ' 'OK    M4 ' 'OK    M6 ' 'OK    A0 ' 'OK    A10 ' 'OK    B3 ' 'OK    B5 ' 'OK    B6 ' 'OK    B8 ' \
-                       'OK    DV5 ' 'OK    DV6 ' 'OK    DV7 ' 'OK    DV8 ' 'OK    RB1 ' 'OK    RB3 ' 'OK    RB5 ' 'OK    RB6.1 ' 'OK    RB7 '; do
+                       'OK    DV5 ' 'OK    DV6 ' 'OK    DV7 ' 'OK    DV8 ' 'OK    RB1 ' 'OK    RB1.4 ' 'OK    RB3 ' 'OK    RB5 ' 'OK    RB6.1 ' 'OK    RB7 ' \
+                       'OK    RB8 ' 'OK    RB8.3 ' 'OK    RB8.4 ' 'OK    RB8.5 '; do
             grep -qF "$marca" "$salida" || faltan="$faltan [$marca]"
           done
           if [ "$rc" != 0 ] || grep -q '^FALLO' "$salida" || grep -q 'FALLO ' "$salida" \

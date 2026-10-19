@@ -8,9 +8,14 @@
 -- frontera, `edicion_cotizaciones_habilitada()` es falsa. Contención previa
 -- recomendada: el interruptor (`p39_priv.suspension_edicion`), no esta retirada.
 --
--- Qué hace: deshabilita los tres disparadores de frontera y restaura la LISTA
--- FIJA de permisos que la 217 retiró (los de Supabase por defecto). No toca
--- datos: compara los conteos antes y después y aborta si algo cambió.
+-- Qué hace: deshabilita los tres disparadores de frontera y restaura la línea
+-- base de permisos de PRODUCCIÓN previa a la 217 (P10 = 30 en el preflight 216):
+-- INSERT/UPDATE/DELETE para anon y authenticated, y lo que la 217 le retiró a
+-- service_role. NUNCA concede TRUNCATE a anon ni a authenticated en servicios,
+-- pagos previos ni condiciones: Producción no lo tenía, aunque la 217 lo revoque
+-- también en bases que sí lo traían por los permisos por defecto de Supabase.
+-- Si al final existiera alguno de esos seis, aborta. No toca datos: compara los
+-- conteos antes y después y aborta si algo cambió.
 -- ═════════════════════════════════════════════════════════════════════════
 begin;
 
@@ -43,11 +48,13 @@ alter table public.cotizaciones disable trigger trg_cot_frontera_39;
 alter table public.cotizacion_pagos_previos disable trigger trg_cot_pagos_frontera_39;
 alter table public.cotizacion_condiciones disable trigger trg_cot_condiciones_frontera_39;
 
--- Lista fija (exactamente lo que la 217 revocó a los roles de la API).
-grant insert, update, delete, truncate on public.cotizacion_servicios to anon, authenticated, service_role;
-grant insert, update, delete, truncate on public.cotizacion_pagos_previos to anon, authenticated;
+-- Línea base de Producción previa a la 217 (P10 = 30): lo que la 217 revocó a los
+-- roles de la API, SALVO TRUNCATE para anon y authenticated, que nunca tuvieron.
+grant insert, update, delete on public.cotizacion_servicios to anon, authenticated;
+grant insert, update, delete, truncate on public.cotizacion_servicios to service_role;
+grant insert, update, delete on public.cotizacion_pagos_previos to anon, authenticated;
 grant delete, truncate on public.cotizacion_pagos_previos to service_role;
-grant insert, update, delete, truncate on public.cotizacion_condiciones to anon, authenticated;
+grant insert, update, delete on public.cotizacion_condiciones to anon, authenticated;
 grant truncate on public.cotizacion_condiciones to service_role;
 
 do $$
@@ -71,7 +78,13 @@ begin
   if p39_priv.frontera_activa() or public.edicion_cotizaciones_habilitada() then
     raise exception 'ROLLBACK 217 ABORTADO: la frontera o la edición siguen activas.';
   end if;
-  raise notice 'ROLLBACK 217 COMPLETO: frontera desactivada, permisos restaurados, conteos iguales; la edición quedó apagada.';
+  -- Nunca más permisos que la línea base: ni directo ni vía PUBLIC.
+  if exists (select 1 from (values ('anon'), ('authenticated')) rol_api(rol),
+                           (values ('public.cotizacion_servicios'), ('public.cotizacion_pagos_previos'), ('public.cotizacion_condiciones')) tabla(n)
+              where has_table_privilege(rol_api.rol, tabla.n, 'TRUNCATE')) then
+    raise exception 'ROLLBACK 217 ABORTADO: anon o authenticated quedarían con TRUNCATE en servicios, pagos previos o condiciones (Producción no lo tenía).';
+  end if;
+  raise notice 'ROLLBACK 217 COMPLETO: frontera desactivada, permisos de la línea base restaurados (sin TRUNCATE para anon/authenticated), conteos iguales; la edición quedó apagada.';
 end $$;
 
 commit;

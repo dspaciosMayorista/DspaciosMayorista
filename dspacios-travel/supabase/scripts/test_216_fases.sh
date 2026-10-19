@@ -17,7 +17,8 @@
 #   DV  desvíos: un disparador deshabilitado, un permiso devuelto o la réplica de sesión apagan la edición
 #   RB  rollbacks: 217 tras uso real (conteos iguales, edición apagada) y se reaplica; 216 aborta con uso
 #       real o con la 217 activa; 216 sin uso se retira por completo y se reaplica; 217 abortada a mitad
-#       no deja nada
+#       no deja nada. RB8: sobre la línea base REAL de Producción (P10=30, anon/authenticated sin
+#       TRUNCATE), 216 → 217 → rollback 217 deja P10=30 y la misma matriz de permisos: nada ampliado
 #
 # Rol que aplica: ROL_MIGRA (por defecto supabase_admin, porque la plantilla de
 # preparar_esquema_local.sh deja las tablas a su nombre; en Supabase alojado es `postgres`, dueño).
@@ -363,6 +364,14 @@ c2="$(uno "$DB" "select count(*) || '/' || (select count(*) from public.cotizaci
 [ "$c1" = "$c2" ] && [ "$(hab)" = "false/false" ] && [ "$(uno "$DB" "select has_table_privilege('authenticated', 'public.cotizacion_servicios', 'INSERT')::text")" = true ] \
   && ok "RB1.1 datos intactos ($c2), frontera y edición apagadas, permisos devueltos" || fallo "RB1.1 c1=$c1 c2=$c2 hab=$(hab)"
 R="$(post217 "$DB")"; [ "$R" != invalido ] && [ "${R#*/}" -ge 1 ] && ok "RB1.2 postcheck 217 en rojo tras la retirada ($R)" || fallo "RB1.2 $R"
+# Esta base parte de la plantilla del CI (permisos por defecto de Supabase, CON TRUNCATE para
+# anon/authenticated). El rollback tampoco aquí los concede: queda en la línea base de Producción.
+SEIS_TRUNCATE="select count(*) from (values ('anon'), ('authenticated')) rol_api(rol),
+  (values ('public.cotizacion_servicios'), ('public.cotizacion_pagos_previos'), ('public.cotizacion_condiciones')) tabla(n)
+  where has_table_privilege(rol_api.rol, tabla.n, 'TRUNCATE')"
+preflight "$DB"; R="$(pf "$TMP/pre.out" P10)"
+[ "$(uno "$DB" "$SEIS_TRUNCATE")" = 0 ] && [ "$R" = INFO/30 ] \
+  && ok "RB1.4 el rollback no concede los seis TRUNCATE de anon/authenticated, ni aunque la base los trajera (P10 $R)" || fallo "RB1.4 TRUNCATE=$(uno "$DB" "$SEIS_TRUNCATE") P10=$R"
 R="$(post216 "$DB")"; [ "$R" = "22/0" ] && ok "RB1.3 postcheck 216 sigue 22/22 (A intacta)" || fallo "RB1.3 $R"
 if $PSM -d "$DB" < "$AQUI/rollback_217_cotizacion_manual_cierre.sql" > "$TMP/rb.out" 2>&1; then fallo "RB2 rollback 217 repetido no abortó"; else
   grep -q 'la 217 no está aplicada' "$TMP/rb.out" && ok "RB2 rollback 217 sin la 217: aborta" || fallo "RB2 $(grep ERROR "$TMP/rb.out" | head -2)"; fi
@@ -394,6 +403,55 @@ if printf '%s' "$R" | grep -q '217: la frontera no quedó activa' \
   ok "RB7 la 217 abortada a mitad no deja nada (disparadores deshabilitados, permisos intactos)"
 else fallo "RB7 $(printf '%s' "$R" | tr '\n' ' ' | cut -c1-300)"; fi
 R="$(post217 "$DBV")"; [ "$R" != invalido ] && [ "${R#*/}" -ge 1 ] && ok "RB7.1 postcheck 217 en rojo ($R)" || fallo "RB7.1 $R"
+
+# ══ RB8 · rollback 217 sobre la línea base REAL de Producción ══════════════
+# Antes de la 216, Producción tenía P10=30: anon y authenticated SIN TRUNCATE en servicios, pagos
+# previos y condiciones (la plantilla del CI trae los permisos por defecto de Supabase, con
+# TRUNCATE). Se simula esa línea base en una base desechable, se aplica 216 → 217 → rollback 217
+# y se exige P10=30 con la MISMA matriz de permisos que antes de la 217.
+# Matriz: cada (rol, tabla, privilegio) que la API tiene sobre las tres tablas, incluido PUBLIC.
+matriz() { # $1 base, $2 archivo de salida (una entrada por línea, ordenada)
+  uno "$1" "select r.rol || ':' || t.n || ':' || p.priv
+              from (values ('anon'), ('authenticated'), ('service_role'), ('public')) r(rol),
+                   (values ('public.cotizacion_servicios'), ('public.cotizacion_pagos_previos'), ('public.cotizacion_condiciones')) t(n),
+                   (values ('SELECT'), ('INSERT'), ('UPDATE'), ('DELETE'), ('TRUNCATE'), ('REFERENCES'), ('TRIGGER')) p(priv)
+             where has_table_privilege(r.rol, t.n, p.priv) order by 1" | sort > "$2"
+}
+hab_en() { uno "$1" "select p39_priv.frontera_activa()::text || '/' || public.edicion_cotizaciones_habilitada()::text"; }
+DBP="t216_p10_$SUF"; crear_base "$DBP"
+preflight "$DBP"; P10_PLANTILLA="$(pf "$TMP/pre.out" P10)"
+# Línea base explícita (no depende de los permisos por defecto de la plantilla): anon/authenticated
+# con INSERT/UPDATE/DELETE y SIN TRUNCATE; service_role con los cuatro.
+uno "$DBP" "revoke truncate on public.cotizacion_servicios, public.cotizacion_pagos_previos, public.cotizacion_condiciones from anon, authenticated;
+            grant insert, update, delete on public.cotizacion_servicios, public.cotizacion_pagos_previos, public.cotizacion_condiciones to anon, authenticated;
+            grant insert, update, delete, truncate on public.cotizacion_servicios, public.cotizacion_pagos_previos, public.cotizacion_condiciones to service_role" >/dev/null
+preflight "$DBP"; R="$(pf "$TMP/pre.out" P10)"
+[ "$R" = INFO/30 ] && [ "$(uno "$DBP" "$SEIS_TRUNCATE")" = 0 ] \
+  && ok "RB8 línea base de Producción simulada: P10=30, sin los seis TRUNCATE (la plantilla del CI traía $P10_PLANTILLA)" \
+  || fallo "RB8 línea base: P10=$R (plantilla $P10_PLANTILLA), TRUNCATE=$(uno "$DBP" "$SEIS_TRUNCATE")"
+aplicar "$DBP" "$M216" || fallo "RB8.1 216: $(cut -c1-300 "$TMP/aplicar.out")"
+matriz "$DBP" "$TMP/m_antes.out"
+if aplicar "$DBP" "$M217" && [ "$(post217 "$DBP")" = "12/0" ] && [ "$(post216 "$DBP")" = "22/0" ]; then
+  ok "RB8.1 216 y 217 aplicadas sobre la línea base de Producción (217 12/12, 216 22/22)"
+else fallo "RB8.1 217: $(cut -c1-300 "$TMP/aplicar.out") · 217=$(post217 "$DBP") 216=$(post216 "$DBP")"; fi
+if $PSM -d "$DBP" < "$AQUI/rollback_217_cotizacion_manual_cierre.sql" > "$TMP/rb.out" 2>&1 && grep -q 'ROLLBACK 217 COMPLETO' "$TMP/rb.out"; then
+  ok "RB8.2 rollback 217 completo sobre la línea base de Producción"
+else fallo "RB8.2 $(grep -E 'ERROR|NOTICE' "$TMP/rb.out" | head -3 | tr '\n' ' ')"; fi
+matriz "$DBP" "$TMP/m_despues.out"
+preflight "$DBP"; R="$(pf "$TMP/pre.out" P10)"
+AGREGADOS="$(comm -13 "$TMP/m_antes.out" "$TMP/m_despues.out" | tr '\n' ' ')"
+QUITADOS="$(comm -23 "$TMP/m_antes.out" "$TMP/m_despues.out" | tr '\n' ' ')"
+[ "$R" = INFO/30 ] && [ -s "$TMP/m_antes.out" ] && cmp -s "$TMP/m_antes.out" "$TMP/m_despues.out" \
+  && ok "RB8.3 P10 vuelve a 30 y la matriz de permisos es idéntica a la previa a la 217 ($(wc -l < "$TMP/m_antes.out" | tr -d ' ') entradas): nada ampliado ni perdido" \
+  || fallo "RB8.3 P10=$R · agregados=[$AGREGADOS] · quitados=[$QUITADOS]"
+[ "$(uno "$DBP" "$SEIS_TRUNCATE")" = 0 ] && [ "$(hab_en "$DBP")" = "false/false" ] \
+  && ok "RB8.4 sin ninguno de los seis TRUNCATE; frontera y edición apagadas" || fallo "RB8.4 TRUNCATE=$(uno "$DBP" "$SEIS_TRUNCATE") hab=$(hab_en "$DBP")"
+# Control: la comparación SÍ detecta un permiso de más (y se retira enseguida).
+uno "$DBP" "grant truncate on public.cotizacion_servicios to anon" >/dev/null
+matriz "$DBP" "$TMP/m_control.out"
+uno "$DBP" "revoke truncate on public.cotizacion_servicios from anon" >/dev/null
+[ "$(comm -13 "$TMP/m_antes.out" "$TMP/m_control.out" | tr -d '\n')" = "anon:public.cotizacion_servicios:TRUNCATE" ] \
+  && ok "RB8.5 control: un TRUNCATE de más sí aparece como ampliación" || fallo "RB8.5 $(comm -13 "$TMP/m_antes.out" "$TMP/m_control.out" | tr '\n' ' ')"
 
 echo "------------------------------------------------------------"
 echo "Resultado: $OKS OK, $FALLOS FALLO(S)"
