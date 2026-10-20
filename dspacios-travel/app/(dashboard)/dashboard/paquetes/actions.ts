@@ -17,6 +17,7 @@ import {
   type TemporadaRango,
 } from "@/lib/calc/paquetes";
 import { empaquetadoVigente, hoyBogota } from "@/lib/reservar/origen";
+import { seleccionarSalidasVigentes } from "@/lib/reservar/salidaDinamicaVigente";
 import {
   validarCondicionPago,
   validarRestriccionComercialCatalogo,
@@ -1026,10 +1027,18 @@ export async function generarTarifario(paqueteId: number): Promise<Result> {
   // clasificación de hoteles Bernalo antes de llegar aquí.
 
   // Salidas dinámicas (vuelo por sistema): solo para el tipo 'dinamico'.
-  const { data: salidasRaw } = tipo === "dinamico"
-    ? await sb.from("salidas_dinamicas").select("*").eq("paquete_id", paqueteId).eq("activo", true).order("fecha_ida")
-    : { data: null };
-  const salidas = salidasRaw ?? [];
+  //
+  // #62: ya no basta `activo` — se publica solo lo que la regla común
+  // (lib/reservar/salidaDinamicaVigente.ts) considera elegible HOY: activa,
+  // ventana de compra abierta (inclusiva, Bogotá) y viaje no pasado. Es la
+  // misma regla con la que cargarDatosTarifario() oculta lo ya publicado y
+  // computarReserva() rechaza la venta. Un error de lectura aborta la
+  // generación (antes se ignoraba y el paquete quedaba "sin salidas").
+  const { data: salidasRaw, error: eSalidas } = tipo === "dinamico"
+    ? await sb.from("salidas_dinamicas").select("*").eq("paquete_id", paqueteId).order("fecha_ida")
+    : { data: null, error: null };
+  if (eSalidas) return await fallarTecnico(eSalidas.message);
+  const { vigentes: salidas, descartadas: salidasDescartadas } = seleccionarSalidasVigentes(salidasRaw ?? []);
 
   // Validaciones según el tipo (mensajes claros en vez de 0 silencioso).
   // 'bloqueo' acepta cupos negociados (armado_vuelos) O tarifas de Sistema
@@ -1045,7 +1054,11 @@ export async function generarTarifario(paqueteId: number): Promise<Result> {
   if (tipo === "porcion_terrestre" && (!pq.fecha_viaje_inicio || !pq.fecha_viaje_fin))
     return await fallar("Porción terrestre: define el rango de viaje (fechas) en la Configuración inicial.");
   if (tipo === "dinamico" && !salidas.length)
-    return await fallar("Dinámico: agrega al menos una salida (vuelo por sistema).");
+    return await fallar(
+      salidasDescartadas
+        ? "Dinámico: ninguna salida está vigente (activa, con compra abierta y viaje futuro). Revisa sus fechas de compra y de viaje."
+        : "Dinámico: agrega al menos una salida (vuelo por sistema)."
+    );
   if ((tipo === "bloqueo" || tipo === "porcion_terrestre" || tipo === "dinamico") && !hoteles.length)
     return await fallar("Agrega al menos un hotel.");
   if (tipo === "servicios" && !servicios.length)

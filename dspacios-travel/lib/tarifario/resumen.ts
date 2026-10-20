@@ -342,13 +342,19 @@ export async function cargarResumenTarifario(
   // hay disponible". Ahora la función entera falla cerrada: nunca entrega
   // catálogo parcial como disponibilidad válida para /tarifario ni
   // /dashboard/reservar.
-  const huboErrorFiltros = !!(resFiltros.errorVigencia || resFiltros.errorEmpaquetado);
+  const huboErrorFiltros = !!(resFiltros.errorVigencia || resFiltros.errorEmpaquetado || resFiltros.errorSalida);
   if (resFiltros.errorVigencia) {
     registrarErrorTecnico(flujo, flujoId, "filtro_vigencia", "error_hotel_temporadas_o_tarifa_hotel", resFiltros.errorVigencia);
   }
   if (resFiltros.errorEmpaquetado) {
     _huboErrorAux = true;
     registrarErrorTecnico(flujo, flujoId, "datos_auxiliares", "error_consulta_empaquetados_vigencia", resFiltros.errorEmpaquetado);
+  }
+  // #62: error al verificar la vigencia de las salidas dinámicas — mismo trato
+  // que empaquetados: error técnico y fallo cerrado, nunca "sin disponibilidad".
+  if (resFiltros.errorSalida) {
+    _huboErrorAux = true;
+    registrarErrorTecnico(flujo, flujoId, "datos_auxiliares", "error_consulta_salidas_dinamicas_vigencia", resFiltros.errorSalida);
   }
   registrarEtapa(flujo, flujoId, "filtro_vigencia", Math.round(performance.now() - _tAux0), huboErrorFiltros ? "error" : "ok");
   registrarDatoPagina(flujo, flujoId, "filtro_vigencia", `filas=${filas.length} consultas=${huboVigencia ? 2 : 0}`);

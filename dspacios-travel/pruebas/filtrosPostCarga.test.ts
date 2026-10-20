@@ -47,6 +47,7 @@ void hoyISO;
 type FilaTest = {
   modulo: string; hotel_id: number | null; categoria: string | null; regimen: string | null;
   fecha_ida: string | null; fecha_regreso: string | null; noches: number | null; empaquetado_id: number | null;
+  salida_id?: number | null;
 };
 function filaBase(overrides: Partial<FilaTest>): FilaTest {
   return { modulo: "bloqueo", hotel_id: 1, categoria: null, regimen: null, fecha_ida: MANIANA, fecha_regreso: null, noches: 3, empaquetado_id: null, ...overrides };
@@ -152,5 +153,122 @@ describe("aplicarFiltrosPostCarga() — combinación de los 3 filtros a la vez",
     const filas = [filaBase({ modulo: "bloqueo", hotel_id: 10, categoria: "Estandar", regimen: "PC", fecha_ida: MANIANA, empaquetado_id: null })];
     const r = await aplicarFiltrosPostCarga(admin, filas);
     assert.equal(r.filas.length, 1, "vigente, fecha futura, sin empaquetado — debe sobrevivir los 3 filtros");
+    assert.equal(r.errorSalida, null, "sin filas con salida_id no hay nada que verificar de salidas");
+  });
+});
+
+// ─── #62 — salidas dinámicas (4º filtro) ───────────────────────────────────
+// La fila publicada en tarifario_resultado es una CACHÉ: una salida
+// desactivada, fuera de su ventana de compra, de un viaje pasado o eliminada
+// DESPUÉS de generar el tarifario sigue teniendo filas. `hotel_id: null` aísla
+// este filtro del de vigencia de hotel (mismo criterio que la sección de
+// empaquetados). El cliente falso devuelve el fixture de `salidas_dinamicas`
+// tal cual (como PostgREST tras `.in("id", ...)`).
+const HOY = fechaEnBogota(0);
+const EN_30 = fechaEnBogota(30);
+type SalidaViva = { id: number; activo: boolean | null; compra_inicio: string | null; compra_fin: string | null; fecha_ida: string | null };
+const salidaViva = (id: number, o: Partial<SalidaViva> = {}): SalidaViva => ({ id, activo: true, compra_inicio: null, compra_fin: null, fecha_ida: EN_30, ...o });
+const conSalidas = (data: SalidaViva[]) => clienteFalso({ salidas_dinamicas: { data, error: null } });
+const filaDin = (salida_id: number | null, o: Partial<FilaTest> = {}) =>
+  filaBase({ modulo: "dinamico", hotel_id: null, fecha_ida: EN_30, salida_id, ...o });
+const idsSalida = (filas: FilaTest[]) => filas.map((f) => f.salida_id);
+
+describe("aplicarFiltrosPostCarga() — salidas dinámicas (#62)", () => {
+  test("vigente (activa, sin ventana, viaje futuro): se conserva y errorSalida es null", async () => {
+    const r = await aplicarFiltrosPostCarga(conSalidas([salidaViva(1)]), [filaDin(1)]);
+    assert.deepEqual(idsSalida(r.filas), [1]);
+    assert.equal(r.errorSalida, null);
+  });
+  test("límites INCLUSIVOS: compra_inicio = hoy, compra_fin = hoy, viaje hoy: se conserva", async () => {
+    const r = await aplicarFiltrosPostCarga(
+      conSalidas([salidaViva(1, { compra_inicio: HOY, compra_fin: HOY, fecha_ida: HOY })]),
+      [filaDin(1, { fecha_ida: HOY })]
+    );
+    assert.deepEqual(idsSalida(r.filas), [1]);
+  });
+  test("inactiva (desactivada después de generar): se oculta, sin error técnico", async () => {
+    const r = await aplicarFiltrosPostCarga(conSalidas([salidaViva(1, { activo: false })]), [filaDin(1)]);
+    assert.equal(r.filas.length, 0);
+    assert.equal(r.errorSalida, null, "una salida no elegible es un resultado de negocio, no un error técnico");
+  });
+  test("compra aún no iniciada (compra_inicio = mañana): se oculta", async () => {
+    const r = await aplicarFiltrosPostCarga(conSalidas([salidaViva(1, { compra_inicio: MANIANA })]), [filaDin(1)]);
+    assert.equal(r.filas.length, 0);
+    assert.equal(r.errorSalida, null);
+  });
+  test("compra vencida (compra_fin = ayer): se oculta", async () => {
+    const r = await aplicarFiltrosPostCarga(conSalidas([salidaViva(1, { compra_fin: AYER })]), [filaDin(1)]);
+    assert.equal(r.filas.length, 0);
+    assert.equal(r.errorSalida, null);
+  });
+  test("viaje pasado según la salida VIVA (la fila cacheada aún dice futuro): se oculta", async () => {
+    const r = await aplicarFiltrosPostCarga(conSalidas([salidaViva(1, { fecha_ida: AYER })]), [filaDin(1, { fecha_ida: EN_30 })]);
+    assert.equal(r.filas.length, 0);
+    assert.equal(r.errorSalida, null);
+  });
+  test("eliminada o invisible (no viene en la respuesta): se oculta", async () => {
+    const r = await aplicarFiltrosPostCarga(conSalidas([]), [filaDin(1)]);
+    assert.equal(r.filas.length, 0);
+    assert.equal(r.errorSalida, null);
+  });
+  test("ERROR de consulta: fallo cerrado — oculta TODAS las dinámicas, reporta errorSalida y no toca las demás filas", async () => {
+    const admin = clienteFalso({ salidas_dinamicas: { data: null, error: { message: "boom" } } });
+    const filas = [filaDin(1), filaDin(2), filaBase({ modulo: "servicios", hotel_id: null, fecha_ida: null })];
+    const r = await aplicarFiltrosPostCarga(admin, filas);
+    assert.ok(r.errorSalida, "debe exponer errorSalida por separado");
+    assert.equal(r.errorVigencia, null);
+    assert.equal(r.errorEmpaquetado, null, "errorSalida es independiente de errorEmpaquetado/errorVigencia");
+    assert.deepEqual(r.filas.map((f) => f.modulo), ["servicios"]);
+  });
+  test("AUSENCIA de cliente (admin null) con filas con salida_id: fallo cerrado y errorSalida", async () => {
+    const r = await aplicarFiltrosPostCarga(null, [filaDin(1), filaDin(2)]);
+    assert.equal(r.filas.length, 0);
+    assert.ok(r.errorSalida);
+  });
+  test("ausencia de cliente SIN filas con salida_id: no hay error (comportamiento previo intacto)", async () => {
+    const r = await aplicarFiltrosPostCarga(null, [filaBase({ modulo: "bloqueo", hotel_id: null, fecha_ida: MANIANA })]);
+    assert.equal(r.filas.length, 1);
+    assert.equal(r.errorSalida, null);
+  });
+  test("MEZCLA: solo sobreviven las vigentes; las filas sin salida_id (bloqueo, porción, servicios) no se tocan", async () => {
+    const admin = conSalidas([
+      salidaViva(1),
+      salidaViva(2, { activo: false }),
+      salidaViva(3, { compra_fin: AYER }),
+      salidaViva(4, { compra_inicio: MANIANA }),
+      salidaViva(5, { fecha_ida: AYER }),
+      salidaViva(6, { compra_inicio: HOY, compra_fin: HOY, fecha_ida: HOY }),
+      // 7: eliminada → ausente
+    ]);
+    const filas = [
+      filaDin(1), filaDin(2), filaDin(3), filaDin(4), filaDin(5), filaDin(6, { fecha_ida: HOY }), filaDin(7),
+      filaBase({ modulo: "bloqueo", hotel_id: null, fecha_ida: MANIANA }),
+      filaBase({ modulo: "porcion_terrestre", hotel_id: null, fecha_ida: AYER }),
+      filaBase({ modulo: "servicios", hotel_id: null, fecha_ida: null }),
+    ];
+    const r = await aplicarFiltrosPostCarga(admin, filas);
+    assert.equal(r.errorSalida, null);
+    assert.deepEqual(
+      r.filas.map((f) => (f.salida_id != null ? f.salida_id : f.modulo)),
+      [1, 6, "bloqueo", "porcion_terrestre", "servicios"]
+    );
+  });
+  test("sin filas con salida_id: NO consulta salidas_dinamicas", async () => {
+    const consultadas: string[] = [];
+    const base = clienteFalso({});
+    const admin = { from(t: string) { consultadas.push(t); return (base as unknown as { from(t: string): unknown }).from(t); } } as unknown as SupabaseClient<Database>;
+    const r = await aplicarFiltrosPostCarga(admin, [filaBase({ modulo: "porcion_terrestre", hotel_id: null })]);
+    assert.equal(r.filas.length, 1);
+    assert.ok(!consultadas.includes("salidas_dinamicas"));
+  });
+  test("convive con el filtro de empaquetados: un error de empaquetados NO se confunde con errorSalida", async () => {
+    const admin = clienteFalso({
+      empaquetados: { data: null, error: { message: "boom" } },
+      salidas_dinamicas: { data: [salidaViva(1)], error: null },
+    });
+    const r = await aplicarFiltrosPostCarga(admin, [filaDin(1), filaBase({ hotel_id: null, empaquetado_id: 9 })]);
+    assert.ok(r.errorEmpaquetado);
+    assert.equal(r.errorSalida, null);
+    assert.deepEqual(idsSalida(r.filas), [1], "la salida vigente se conserva; la fila del empaquetado fallido se oculta");
   });
 });

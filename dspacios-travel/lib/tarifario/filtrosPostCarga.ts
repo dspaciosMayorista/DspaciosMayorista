@@ -3,8 +3,9 @@ import type { Database } from "@/types/database";
 import { filtrarTarifarioVencidas, type ResultadoVigencia } from "./vigencia.ts";
 import { hoyISO } from "../calc/paquetes.ts";
 import { empaquetadoVigente, hoyBogota } from "../reservar/origen.ts";
+import { salidasDinamicasVigentes } from "../reservar/salidaDinamicaVigente.ts";
 
-// Los 3 filtros "post-carga" que `cargarDatosTarifario()` (lib/tarifario/
+// Los 4 filtros "post-carga" que `cargarDatosTarifario()` (lib/tarifario/
 // datos.ts) siempre aplicó DESPUÉS de traer las filas crudas, y que la carga
 // en dos niveles (lib/tarifario/resumen.ts, app/tarifario/detalle-actions.ts)
 // también debe aplicar — tanto al resumen (Tier 1) como al detalle bajo
@@ -13,6 +14,11 @@ import { empaquetadoVigente, hoyBogota } from "../reservar/origen.ts";
 //   1. Vigencia de COMPRA por hotel+categoría+régimen (`filtrarTarifarioVencidas`).
 //   2. Salidas de bloqueo/dinámico cuya fecha de ida YA PASÓ.
 //   3. Empaquetados desactivados o fuera de vigencia de compra.
+//   4. Salidas dinámicas (`salida_id`) desactivadas, fuera de su ventana de
+//      compra, de un viaje pasado o eliminadas DESPUÉS de generar el tarifario
+//      (#62) — la fila publicada en `tarifario_resultado` es una caché; la
+//      regla vive en lib/reservar/salidaDinamicaVigente.ts, la misma que usan
+//      generarTarifario() y computarReserva().
 // Factorizado UNA sola vez (antes vivía repetido dentro de
 // `cargarDatosTarifario`); ahora lo comparten los 3 caminos que leen
 // `tarifario_resultado`/`tarifario_resumen`, para que una futura regla nueva
@@ -27,12 +33,21 @@ type FilaFiltrable = {
   fecha_regreso?: string | null;
   noches?: number | null;
   empaquetado_id?: number | null;
+  salida_id?: number | null;
 };
 
 export type ResultadoFiltrosPostCarga<T> = {
   filas: T[];
   errorVigencia: unknown;
   errorEmpaquetado: unknown;
+  /**
+   * Error TÉCNICO al verificar la vigencia de las salidas dinámicas (consulta
+   * fallida, o sin cliente de servicio habiendo filas con `salida_id`). Se
+   * expone aparte de `errorEmpaquetado`/`errorVigencia` para que cada
+   * llamador lo trate como error técnico — nunca como "sin disponibilidad".
+   * Las filas con `salida_id` ya vienen ocultas (fallo cerrado).
+   */
+  errorSalida: unknown;
 };
 
 export async function aplicarFiltrosPostCarga<T extends FilaFiltrable>(
@@ -75,5 +90,27 @@ export async function aplicarFiltrosPostCarga<T extends FilaFiltrable>(
     }
   }
 
-  return { filas, errorVigencia: resVigencia?.error ?? null, errorEmpaquetado };
+  // Salidas dinámicas (#62). FALLA CERRADA: sin cliente de servicio o con
+  // error de consulta se ocultan TODAS las filas con `salida_id` y se reporta
+  // `errorSalida`; las filas sin `salida_id` no se tocan.
+  const salidaIds = [...new Set(
+    filas.filter((f) => f.salida_id != null).map((f) => f.salida_id as number)
+  )];
+  let errorSalida: unknown = null;
+  if (salidaIds.length) {
+    if (!admin) {
+      errorSalida = new Error("Sin cliente de servicio: no se puede verificar la vigencia de las salidas dinámicas.");
+      filas = filas.filter((f) => f.salida_id == null);
+    } else {
+      const rSalidas = await salidasDinamicasVigentes(admin, salidaIds);
+      if (!rSalidas.ok) {
+        errorSalida = rSalidas.error;
+        filas = filas.filter((f) => f.salida_id == null);
+      } else {
+        filas = filas.filter((f) => f.salida_id == null || rSalidas.vigentes.has(f.salida_id));
+      }
+    }
+  }
+
+  return { filas, errorVigencia: resVigencia?.error ?? null, errorEmpaquetado, errorSalida };
 }

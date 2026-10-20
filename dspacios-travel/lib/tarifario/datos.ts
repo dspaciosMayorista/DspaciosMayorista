@@ -14,6 +14,7 @@ import { filtrarTarifarioVencidas } from "./vigencia.ts";
 import { cargarFilasTarifarioPaginado } from "./paginacion.ts";
 import { hoyISO } from "../calc/paquetes.ts";
 import { empaquetadoVigente, hoyBogota } from "../reservar/origen.ts";
+import { salidasDinamicasVigentes } from "../reservar/salidaDinamicaVigente.ts";
 import { registrarEtapa, registrarDatoPagina, registrarErrorTecnico } from "../observabilidad/medicion.ts";
 
 // Columnas completas que necesita Vista Booking (Reservar/tarifario público)
@@ -258,6 +259,33 @@ export async function cargarDatosTarifario(
               .map((e) => e.id)
           );
       filas = filas.filter((f) => f.empaquetado_id == null || vigentes.has(f.empaquetado_id));
+      _consultasAux += 1;
+    }
+  }
+
+  // Oculta filas de SALIDA DINÁMICA cuya salida viva ya no es elegible (#62):
+  // desactivada, fuera de su ventana de compra, de un viaje pasado o eliminada
+  // DESPUÉS de generar el tarifario — misma razón que el filtro de empaquetados
+  // de arriba (la fila publicada es una caché). La regla vive en
+  // lib/reservar/salidaDinamicaVigente.ts, compartida con generarTarifario() y
+  // computarReserva(). FALLA CERRADA: sin cliente de servicio o con error de
+  // consulta se ocultan TODAS las filas con salida_id (nunca se publica algo
+  // que no se pudo verificar); las demás filas no se tocan.
+  const salidaIds = [...new Set(
+    filas.filter((f) => f.salida_id != null).map((f) => f.salida_id as number)
+  )];
+  if (salidaIds.length) {
+    if (!admin) {
+      filas = filas.filter((f) => f.salida_id == null);
+    } else {
+      const rSalidas = await salidasDinamicasVigentes(admin, salidaIds);
+      if (!rSalidas.ok) {
+        _huboErrorAux = true;
+        registrarErrorTecnico(flujo, flujoId, "datos_auxiliares", "error_consulta_salidas_dinamicas_vigencia", rSalidas.error);
+        filas = filas.filter((f) => f.salida_id == null);
+      } else {
+        filas = filas.filter((f) => f.salida_id == null || rSalidas.vigentes.has(f.salida_id));
+      }
       _consultasAux += 1;
     }
   }
