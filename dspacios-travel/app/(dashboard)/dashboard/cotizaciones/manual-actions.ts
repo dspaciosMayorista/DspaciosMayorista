@@ -15,6 +15,10 @@ import {
   type CotizacionManualInput, type ServicioManual, type RecobroNinosInput,
 } from "@/lib/cotizacion/liquidacionManual";
 import { mensajeEdicion39, validarMotivo, validarRevision } from "@/lib/cotizacion/edicionServiciosManual";
+import {
+  AVISO_PERSONAS_PENDIENTES, codigoErrorPersonas, mensajePersonas, titularParaFachada, validarClaveEnvio, validarVersionEsperada,
+} from "@/lib/personas/cotizacion";
+import { altaPersonasCotizacion, logPersonasCotizacion } from "@/lib/personas/consulta";
 
 // Los tipos viven en lib/cotizacion/liquidacionManual.ts (la fórmula única de
 // creación y edición); se re-exportan para no romper a quien ya los importa.
@@ -41,7 +45,7 @@ async function usuarioSesion(): Promise<{ id: string } | null> {
 
 export async function crearCotizacionManual(
   input: CotizacionManualInput
-): Promise<{ ok: true; id: number } | { ok: false; error: string }> {
+): Promise<{ ok: true; id: number; avisoPersonas?: string } | { ok: false; error: string }> {
   if (!`${input.cliente?.nombres ?? ""}${input.cliente?.apellidos ?? ""}`.trim())
     return { ok: false, error: "El nombre del cliente es obligatorio." };
   const vigenciaRes = resolverVigenciaCotizacion({
@@ -84,8 +88,18 @@ export async function crearCotizacionManual(
   });
   if (error || id == null) return { ok: false, error: mensajeEdicion39(error?.message, "No se pudo crear la cotización.") };
 
+  // #42: alta del titular en el registro de personas desde lo que se acaba de persistir (las
+  // cantidades nunca crean personas; la 216 ya estampó el autor). La cotización ya quedó
+  // guardada: un fallo deja el aviso persistente de la ficha y un log sin datos personales.
+  const alta = await altaPersonasCotizacion(admin, {
+    fila: { id: Number(id), tenant: tenantCotizacion, tipo: "manual", payload: armado.cabecera.payload, creado_por_id: usuario.id },
+    usuarioId: usuario.id,
+    sellar: false,
+  });
+  if (!alta.ok) console.error(logPersonasCotizacion("manual", Number(id), alta));
+
   revalidatePath("/dashboard/cotizaciones");
-  return { ok: true, id: Number(id) };
+  return alta.ok ? { ok: true, id: Number(id) } : { ok: true, id: Number(id), avisoPersonas: AVISO_PERSONAS_PENDIENTES };
 }
 
 // ── Editar los servicios de una cotización dinámica (#39 fase 1) ────────────
@@ -144,14 +158,22 @@ export async function editarServiciosCotizacionManual(
 // generar el contrato. Solo en estado 'abierta'.
 export type TitularInput = { nombres: string; apellidos: string; tipoDoc: string; numeroDoc: string; nacimiento: string; telefono: string; email: string };
 
+// #42 (C4/C5): el titular se corrige por la fachada `actualizar_titular_cotizacion` (migración
+// 219), que en UNA transacción bloquea la cotización, registra la captura nueva del puesto
+// titular, re-apunta el vínculo y reescribe payload/detalle/cliente/cliente_documento con el
+// tipo CRUDO (sin "CC" por defecto: la conversión 198 lo sigue exigiendo). CAS por la versión
+// del puesto (`versionEsperada`) y clave de idempotencia por envío (`clave`). Sin `control` (un
+// llamador anterior a #42) falla cerrado: pide recargar y no escribe nada.
 export async function actualizarTitularCotizacionManual(
   cotizacionId: number,
-  titular: TitularInput
+  titular: TitularInput,
+  control?: { versionEsperada: number; clave: string }
 ): Promise<{ ok: true } | { ok: false; error: string }> {
+  if (!(Number(cotizacionId) > 0)) return { ok: false, error: "Cotización inválida." };
   const sb = await createClient();
   const { data: cot } = await sb
     .from("cotizaciones")
-    .select("payload, detalle, estado, tipo, tenant")
+    .select("estado, tipo, tenant")
     .eq("id", cotizacionId)
     .maybeSingle();
   if (!cot) return { ok: false, error: "Cotización no encontrada." };
@@ -159,39 +181,29 @@ export async function actualizarTitularCotizacionManual(
   if (!autorizaTenant(ctx, cot.tenant)) return { ok: false, error: "No tienes acceso a esta cotización." };
   if (cot.tipo !== "manual" || cot.estado !== "abierta")
     return { ok: false, error: "Solo se puede editar el titular de una cotización dinámica abierta." };
-  if (!`${titular.nombres ?? ""}${titular.apellidos ?? ""}`.trim())
+  if (!`${titular?.nombres ?? ""}${titular?.apellidos ?? ""}`.trim())
     return { ok: false, error: "El nombre del titular es obligatorio." };
+  const clave = validarClaveEnvio(control?.clave);
+  const versionEsperada = validarVersionEsperada(control?.versionEsperada);
+  if (clave == null || versionEsperada == null) return { ok: false, error: "Recarga la página e inténtalo de nuevo." };
 
-  const nombre = `${titular.nombres ?? ""} ${titular.apellidos ?? ""}`.trim();
-  const payload = { ...((cot.payload ?? {}) as Record<string, unknown>) };
-  payload.cliente = {
-    nombres: (titular.nombres || "").trim(),
-    apellidos: (titular.apellidos || "").trim(),
-    tipoDoc: (titular.tipoDoc || "CC").trim(),
-    numeroDoc: (titular.numeroDoc || "").trim(),
-    nacimiento: (titular.nacimiento || "").trim(),
-    telefono: (titular.telefono || "").trim(),
-    email: (titular.email || "").trim(),
-  };
-  const detalle = { ...((cot.detalle ?? {}) as Record<string, unknown>) };
-  const ventaSnap = { ...((detalle.venta ?? {}) as Record<string, unknown>), cliente: nombre };
-  detalle.venta = ventaSnap;
-
-  // Solo si sigue abierta (#39): otra pestaña pudo convertirla o descartarla.
-  // El titular no es un dato económico: la frontera de la 217 lo deja pasar.
-  const { data: filas, error } = await sb
-    .from("cotizaciones")
-    .update({
-      payload: JSON.parse(JSON.stringify(payload)),
-      detalle: JSON.parse(JSON.stringify(detalle)),
-      cliente: nombre,
-      cliente_documento: (titular.numeroDoc || "").trim() || null,
-    })
-    .eq("id", cotizacionId)
-    .eq("estado", "abierta")
-    .select("id");
-  if (error) return { ok: false, error: errorDatoNoEconomico(error.message) };
-  if (!filas?.length) return { ok: false, error: "La cotización ya no está abierta; recarga la página." };
+  const usuario = await usuarioSesion();
+  if (!usuario) return { ok: false, error: "No autorizado." };
+  if (!process.env.SUPABASE_SERVICE_ROLE_KEY) {
+    return { ok: false, error: "No se pudo guardar el titular por un problema de configuración del servidor." };
+  }
+  const admin = createAdminClient();
+  const { data, error } = await admin.rpc("actualizar_titular_cotizacion", {
+    p_cotizacion_id: cotizacionId,
+    p_usuario_id: usuario.id,
+    p_titular: titularParaFachada(titular) as unknown as Json,
+    p_version_esperada: versionEsperada,
+    p_clave: clave,
+  });
+  const resultado = (data as { resultado?: unknown } | null)?.resultado;
+  if (error || (resultado !== "actualizado" && resultado !== "sin_cambios" && resultado !== "reintento")) {
+    return { ok: false, error: mensajePersonas(codigoErrorPersonas(error?.message)) };
+  }
 
   revalidatePath(`/dashboard/cotizaciones/${cotizacionId}`);
   revalidatePath(`/cotizacion/${cotizacionId}`);
@@ -384,7 +396,7 @@ export async function convertirCotizacionManualAContrato(
 /** Crea la comparativa manual de forma ATÓMICA (cabecera + servicios + opciones + sello) por RPC. */
 export async function crearComparativaManual(
   input: EntradaComparativaManual
-): Promise<{ ok: true; id: number } | { ok: false; error: string }> {
+): Promise<{ ok: true; id: number; avisoPersonas?: string } | { ok: false; error: string }> {
   // Acción INTERNA: exige sesión y perfil activo (falla cerrado). El tenant sale
   // del perfil/cookie validada, nunca del navegador; para no superadmin la base
   // lo vuelve a fijar con el de su perfil.
@@ -421,8 +433,17 @@ export async function crearComparativaManual(
   });
   if (error || id == null) return { ok: false, error: mensajeErrorComparativa(error?.message) };
 
+  // #42: titular de la MADRE en el registro de personas, sin escribir su payload (la madre es
+  // inmutable); la 211 ya estampó el autor. Un fallo deja el aviso de la ficha y un log sin PII.
+  const alta = await altaPersonasCotizacion(admin, {
+    fila: { id, tenant: ctx.tenant, tipo: "comparativa_manual", payload: r.datos.cabecera.payload, creado_por_id: user.id, aliado_id: r.datos.aliadoId },
+    usuarioId: user.id,
+    sellar: false,
+  });
+  if (!alta.ok) console.error(logPersonasCotizacion("comparativa_manual", id, alta));
+
   revalidatePath("/dashboard/cotizaciones");
-  return { ok: true, id };
+  return alta.ok ? { ok: true, id } : { ok: true, id, avisoPersonas: AVISO_PERSONAS_PENDIENTES };
 }
 
 /**
@@ -436,7 +457,7 @@ export async function resolverSolicitudComparativa(
   decision: "confirmar" | "rechazar",
   motivo: string,
   clave: string
-): Promise<{ ok: true; hijaId: number | null } | { ok: false; error: string }> {
+): Promise<{ ok: true; hijaId: number | null; avisoPersonas?: string } | { ok: false; error: string }> {
   if (!Number.isInteger(solicitudId) || solicitudId <= 0) return { ok: false, error: "Solicitud inválida." };
   if (decision !== "confirmar" && decision !== "rechazar") return { ok: false, error: "Decisión inválida." };
   const claveOk = validarClaveIdempotencia(clave);
@@ -449,6 +470,25 @@ export async function resolverSolicitudComparativa(
     p_clave: decision === "confirmar" ? claveOk : null,
   });
   if (error) return { ok: false, error: mensajeErrorComparativa(error.message) };
+
+  // #42: confirmar crea la HIJA (cotización común): su titular entra al registro de personas con
+  // los datos que la hija persistió. Un fallo deja el aviso de su ficha y un log sin PII.
+  let avisoPersonas: string | undefined;
+  if (data != null) {
+    const hijaId = Number(data);
+    const { data: { user } } = await sb.auth.getUser();
+    const admin = process.env.SUPABASE_SERVICE_ROLE_KEY ? createAdminClient() : null;
+    const { data: hija } = admin
+      ? await admin.from("cotizaciones").select("id, tenant, tipo, payload, creado_por_id, propietario_id, aliado_id").eq("id", hijaId).maybeSingle()
+      : { data: null };
+    const alta = admin && hija && user
+      ? await altaPersonasCotizacion(admin, { fila: hija, usuarioId: user.id, sellar: false })
+      : ({ ok: false, etapa: "registro", codigo: null } as const);
+    if (!alta.ok) {
+      console.error(logPersonasCotizacion("hija_solicitud", hijaId, alta));
+      avisoPersonas = AVISO_PERSONAS_PENDIENTES;
+    }
+  }
   revalidatePath("/dashboard/cotizaciones");
-  return { ok: true, hijaId: data ?? null };
+  return avisoPersonas ? { ok: true, hijaId: data ?? null, avisoPersonas } : { ok: true, hijaId: data ?? null };
 }

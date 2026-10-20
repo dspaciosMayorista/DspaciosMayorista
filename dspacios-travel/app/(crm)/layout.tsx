@@ -4,7 +4,7 @@ import { createClient } from "@/lib/supabase/server";
 import { Logo } from "@/components/Logo";
 import { LogoutButton } from "../(dashboard)/LogoutButton";
 import { getTenant } from "@/lib/tenant.server";
-import { Contact, Send, Upload, Settings, Megaphone, Users, Inbox } from "lucide-react";
+import { Contact, Send, Upload, Settings, Megaphone, Users, Inbox, UserSearch } from "lucide-react";
 
 const NAV = [
   { href: "/crm", label: "Contactos", Icon: Contact },
@@ -16,6 +16,9 @@ const NAV = [
   // nunca destinatarios de campaña por defecto (migración 187, rama CRM
   // pasajeros de contratos — ver PasajerosContratoPage).
   { href: "/crm/pasajeros", label: "Pasajeros de contratos", Icon: Users },
+  // #42 (migración 219): titulares y pasajeros de COTIZACIONES. La entrada no autoriza: la RPC
+  // filtra por rol, agencia y propiedad (venta y B2B, solo cotizaciones creadas por su usuario).
+  { href: "/crm/personas-cotizacion", label: "Personas de cotizaciones", Icon: UserSearch },
   { href: "/crm/campanas", label: "Campañas", Icon: Send },
   { href: "/crm/difusion", label: "Difusión", Icon: Megaphone },
   { href: "/crm/b2b", label: "Cargar B2B", Icon: Upload },

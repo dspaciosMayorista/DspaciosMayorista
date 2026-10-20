@@ -23,6 +23,13 @@ import { ROLES_CONTRATO_COMPLETO } from "@/lib/roles";
 import { FichaComparativa } from "@/lib/cotizacion/comparativaDocumento";
 import { hoyBogota } from "@/lib/cotizacion/vigencia";
 import PagosPreviosPanel, { type PagoPrevioUI } from "@/components/cotizacion/PagosPreviosPanel";
+import { revalidatePath } from "next/cache";
+import { createAdminClient } from "@/lib/supabase/admin";
+import { ReintentarPersonasBtn } from "./ReintentarPersonasBtn";
+import {
+  mensajePersonas, participantesDesdeCotizacion, personasPendientes, versionTitular, type PuestoRegistrado,
+} from "@/lib/personas/cotizacion";
+import { altaPersonasCotizacion, logPersonasCotizacion } from "@/lib/personas/consulta";
 
 const TIPO_SERV_LABEL: Record<string, string> = {
   aereo: "Aéreo", hotel: "Hotel", traslado: "Traslado", asistencia: "Asistencia médica", otro: "Otro",
@@ -59,8 +66,52 @@ export default async function CotizacionDetallePage({
   const ctxAcceso = await contextoCotizacion();
   if (!autorizaTenant(ctxAcceso, c.tenant)) notFound();
 
+  // #42 (C7): puestos de esta cotización en el registro de personas. La tabla no tiene GRANT
+  // para la sesión: se lee con service-role SOLO después de la comprobación de tenant de arriba,
+  // y solo id/rol/activo/versión (nada de personas ni capturas). El aviso se CALCULA: titular
+  // identificado sin puesto activo o pasajero con ref sin puesto.
+  const cotizacionId = Number(c.id);
+  const { data: puestosFila } = process.env.SUPABASE_SERVICE_ROLE_KEY
+    ? await createAdminClient().from("cotizacion_participantes").select("id, rol, activo, version").eq("cotizacion_id", cotizacionId)
+    : { data: null };
+  const puestos: PuestoRegistrado[] = (puestosFila ?? []).map((p) => ({ id: p.id, rol: p.rol, activo: p.activo, version: p.version }));
+  const pendientesPersonas = c.estado === "abierta" ? personasPendientes(participantesDesdeCotizacion(c), puestos) : 0;
+
+  async function reintentarPersonas(): Promise<{ ok: true } | { ok: false; error: string }> {
+    "use server";
+    // Acción de servidor: se vuelve a autenticar y a comprobar el tenant; la fachada SQL decide.
+    const sesion = await createClient();
+    const { data: { user } } = await sesion.auth.getUser();
+    if (!user) return { ok: false, error: "No autorizado." };
+    const { data: cot } = await sesion.from("cotizaciones").select("tenant, estado").eq("id", cotizacionId).maybeSingle();
+    if (!cot || !autorizaTenant(await contextoCotizacion(), cot.tenant)) return { ok: false, error: "No tienes acceso a esta cotización." };
+    if (cot.estado !== "abierta") return { ok: false, error: "La cotización ya no está abierta; recarga la página." };
+    if (!process.env.SUPABASE_SERVICE_ROLE_KEY) return { ok: false, error: "No se pudo reintentar por un problema de configuración del servidor." };
+    const admin = createAdminClient();
+    const { data: fila } = await admin.from("cotizaciones")
+      .select("id, tenant, tipo, payload, creado_por_id, propietario_id, aliado_id").eq("id", cotizacionId).maybeSingle();
+    if (!fila) return { ok: false, error: "Cotización no encontrada." };
+    const alta = await altaPersonasCotizacion(admin, { fila, usuarioId: user.id, sellar: false });
+    if (!alta.ok) {
+      console.error(logPersonasCotizacion("reintento", cotizacionId, alta));
+      return { ok: false, error: mensajePersonas(alta.codigo, "No se pudo registrar a las personas. Inténtalo de nuevo.") };
+    }
+    revalidatePath(`/dashboard/cotizaciones/${cotizacionId}`);
+    return { ok: true };
+  }
+  const avisoPersonas = pendientesPersonas > 0
+    ? <ReintentarPersonasBtn pendientes={pendientesPersonas} reintentar={reintentarPersonas} />
+    : null;
+
   // #35: una comparativa (madre) no tiene editores, pagos ni conversión: tiene su propia ficha.
-  if (c.modo === "comparativa") return <FichaComparativa madre={c} puedeResolver hoy={hoyBogota()} />;
+  if (c.modo === "comparativa") {
+    return (
+      <>
+        {avisoPersonas && <div className="mx-auto max-w-3xl px-4 md:px-8">{avisoPersonas}</div>}
+        <FichaComparativa madre={c} puedeResolver hoy={hoyBogota()} />
+      </>
+    );
+  }
 
   const esManual = c.tipo === "manual";
   // Cotización combinada generada desde el carrito del tarifario público
@@ -223,6 +274,8 @@ export default async function CotizacionDetallePage({
         <Dato label="Asesor" value={c.asesor ?? "—"} />
       </div>
 
+      {avisoPersonas}
+
       <CondicionesPanel ui={condicionesUI} moneda={moneda} />
 
       {esManual && (
@@ -279,10 +332,12 @@ export default async function CotizacionDetallePage({
         <div className="mt-6 space-y-4">
           <TitularEditor
             id={c.id}
+            version={versionTitular(puestos)}
             inicial={{
               nombres: payload.cliente?.nombres ?? "",
               apellidos: payload.cliente?.apellidos ?? "",
-              tipoDoc: payload.cliente?.tipoDoc ?? "CC",
+              // #42: el tipo tal como está guardado; vacío = sin tipo (nunca un "CC" supuesto).
+              tipoDoc: payload.cliente?.tipoDoc ?? "",
               numeroDoc: payload.cliente?.numeroDoc ?? "",
               nacimiento: payload.cliente?.nacimiento ?? "",
               telefono: payload.cliente?.telefono ?? "",
