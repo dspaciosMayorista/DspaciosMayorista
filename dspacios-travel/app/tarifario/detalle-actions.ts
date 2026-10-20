@@ -146,6 +146,15 @@ async function cargarDetalleAcotado(
     registrarEtapa(FLUJO, flujoId, "detalle_tarifas", Math.round(performance.now() - t0), "error");
     return { ok: false, error: MSG_ERROR_DETALLE };
   }
+  // #62: error técnico al verificar la vigencia de las salidas dinámicas —
+  // mismo trato que los dos anteriores (falla cerrada con el mensaje público
+  // existente, nunca "sin disponibilidad"). Bloque aparte a propósito: deja
+  // intacto el contrato ya cubierto por pruebas/tarifarioDetalleWiring.test.ts.
+  if (res.errorSalida) {
+    registrarErrorTecnico(FLUJO, flujoId, "detalle_tarifas", `error_salidas_${etapa}`, res.errorSalida);
+    registrarEtapa(FLUJO, flujoId, "detalle_tarifas", Math.round(performance.now() - t0), "error");
+    return { ok: false, error: MSG_ERROR_DETALLE };
+  }
   const filasFinal = combos ? filtrarPorCombos(res.filas, combos) : res.filas;
   registrarEtapa(FLUJO, flujoId, "detalle_tarifas", Math.round(performance.now() - t0), "ok");
   registrarDatoPagina(
@@ -303,6 +312,13 @@ export async function obtenerDetalleServicios(): Promise<ResultadoDetalle> {
   if (res.errorVigencia || res.errorEmpaquetado) {
     if (res.errorVigencia) registrarErrorTecnico(FLUJO, flujoId, "detalle_tarifas", "error_vigencia_servicios", res.errorVigencia);
     if (res.errorEmpaquetado) registrarErrorTecnico(FLUJO, flujoId, "detalle_tarifas", "error_empaquetados_servicios", res.errorEmpaquetado);
+    registrarEtapa(FLUJO, flujoId, "detalle_tarifas", Math.round(performance.now() - t0), "error");
+    return { ok: false, error: MSG_ERROR_DETALLE };
+  }
+  // #62: igual que en cargarDetalleAcotado (bloque aparte para no alterar el
+  // contrato cubierto por pruebas/tarifarioDetalleWiring.test.ts).
+  if (res.errorSalida) {
+    registrarErrorTecnico(FLUJO, flujoId, "detalle_tarifas", "error_salidas_servicios", res.errorSalida);
     registrarEtapa(FLUJO, flujoId, "detalle_tarifas", Math.round(performance.now() - t0), "error");
     return { ok: false, error: MSG_ERROR_DETALLE };
   }

@@ -40,6 +40,7 @@ import { validarCantidadMenores, validarEdadesMenores, clasificarMenoresPorEdad,
 import { distribuirPorHabitaciones, type HabitacionConsultada, type AsignacionHabitacion } from "@/lib/reservar/distribucionHabitaciones";
 import { liquidarHotelPaquete } from "@/lib/reservar/cotizar";
 import { resolverOrigenVuelo, empaquetadoVigente, hoyBogota, type OrigenVuelo } from "@/lib/reservar/origen";
+import { verificarSalidaDinamicaVigente, mensajeSalidaNoVigente } from "@/lib/reservar/salidaDinamicaVigente";
 import {
   normalizarCategoriaServicio, costoNetoServicioIncluido, cargoGrupoIncluido,
   type CategoriaServicio, type ServicioEfectivo, type ServicioGrupoIncluido,
@@ -262,6 +263,26 @@ export async function computarReserva(
     if (!eq.activo) return { ok: false, error: "Este empaquetado fue desactivado y ya no se puede reservar." };
     if (!empaquetadoVigente(eq.compra_inicio, eq.compra_fin, hoyBogota(new Date())))
       return { ok: false, error: "Este empaquetado está fuera de su vigencia de compra." };
+  }
+
+  // Vigencia y estado de la SALIDA dinámica (#62) — misma razón que el
+  // empaquetado de arriba: `tarifario_resultado` es una caché y la salida pudo
+  // desactivarse, vencer su ventana de compra, pasar o eliminarse DESPUÉS de
+  // publicar. Se valida contra la fila viva ANTES de leer precio/hotel/tarifa,
+  // así que un rechazo no deja ninguna lectura de precio ni escritura posterior.
+  // Se lee con el cliente de SERVICIO: por RLS (migración 094) `salidas_dinamicas`
+  // solo la ven roles internos administrativos, y esta función también la
+  // ejecutan `venta`, agencias B2B y el checkout público. Cualquier fallo (sin
+  // llave de servicio, error de consulta, fila invisible) rechaza; nunca "disponible".
+  if (origen.tipo === "salida") {
+    let lector: ReturnType<typeof createAdminClient>;
+    try {
+      lector = createAdminClient();
+    } catch {
+      return { ok: false, error: mensajeSalidaNoVigente("error_lectura") };
+    }
+    const vigencia = await verificarSalidaDinamicaVigente(lector, origen.id);
+    if (!vigencia.ok) return { ok: false, error: vigencia.error };
   }
 
   const esServicios = input.modulo === "servicios";
