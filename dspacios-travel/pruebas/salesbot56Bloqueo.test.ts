@@ -14,7 +14,6 @@ import {
   ofertaDeSeleccion,
   ofertasBloqueo,
   resolverCotizacion,
-  rutaPublica,
   validarCriteriosBloqueos,
   validarSeleccionBloqueo,
 } from "../lib/salesbot/paquetes/bloqueo.ts";
@@ -128,26 +127,34 @@ describe("disponibilidad del vuelo: nunca se afirma lo que no se verificó", () 
   });
 });
 
-describe("rutaPublica: lista blanca de ruta IATA; el record/PNR nunca sale aunque una fila vieja lo traiga", () => {
-  test("extrae solo la ruta, con PNR de letras y dígitos o SOLO de letras, antes o después", () => {
-    assert.equal(rutaPublica("L93FYZ · BOG-ADZ"), "BOG-ADZ");
-    assert.equal(rutaPublica("BOG-ADZ / L93FYZ"), "BOG-ADZ");
-    assert.equal(rutaPublica("MAD-BOG · QWERTY"), "MAD-BOG"); // caso del Auditor
-    assert.equal(rutaPublica("QWERTY · MAD-BOG"), "MAD-BOG");
-    assert.equal(rutaPublica("AV9381 BOG-CTG"), "BOG-CTG");
+describe("privacidad de ruta: la oferta no publica ruta ni origen; solo destino y fechas", () => {
+  // Etiquetas de los casos del gate: un record con forma de ruta, uno mezclado, la ruta contaminada y la ausencia de ruta.
+  const ETIQUETAS = ["ABC-DEF", "MAD-BOG · QWERTY", "PNR-BOG", "L93FYZ · BOG-ADZ", "QWERTY", "", null];
+
+  test("ningún texto de la etiqueta llega a la oferta, cualquiera sea su forma", () => {
+    for (const label of ETIQUETAS) {
+      const [o] = ofertasBloqueo([fila({ bloqueo_label: label })], CUPOS);
+      const json = JSON.stringify(o);
+      for (const pedazo of ["ABC", "DEF", "QWERTY", "PNR", "L93FYZ", "MAD-BOG", "BOG-ADZ"]) assert.equal(json.includes(pedazo), false, `${label} → ${pedazo}`);
+      for (const k of ["ruta", "origen", "origen_iata", "bloqueo_label"]) assert.equal(k in o, false, k);
+    }
   });
-  test("normaliza la ruta: mayúsculas, guion simple, varios tramos", () => {
-    assert.equal(rutaPublica("BOG-ADZ"), "BOG-ADZ");
-    assert.equal(rutaPublica("bog - adz"), "BOG-ADZ");
-    assert.equal(rutaPublica("BOG-ADZ-BOG"), "BOG-ADZ-BOG");
+
+  test("la oferta conserva destino y fechas para mostrar", () => {
+    const [o] = ofertasBloqueo([fila({ bloqueo_label: "PNR-BOG" })], CUPOS);
+    assert.deepEqual([o.destino, o.fecha_ida, o.fecha_regreso], ["SAN ANDRÉS", "2027-03-10", "2027-03-13"]);
   });
-  test("sin una ruta IATA reconocible → null (nunca el texto crudo)", () => {
-    for (const l of ["L93FYZ", "QWERTY", "ABCDEF-BOG", "QWE-RTYU", "Salida especial", "", null]) assert.equal(rutaPublica(l), null, String(l));
+
+  test("tiquete de sistema: tampoco publica la etiqueta", () => {
+    const [o] = ofertasBloqueo([fila({ bloqueo_id: null, empaquetado_id: 3, bloqueo_label: "MAD-BOG · QWERTY" })], CUPOS);
+    assert.equal(JSON.stringify(o).includes("QWERTY"), false);
+    assert.equal(JSON.stringify(o).includes("MAD-BOG"), false);
   });
-  test("la oferta usa la ruta pública", () => {
-    const [o] = ofertasBloqueo([fila({ bloqueo_label: "L93FYZ · BOG-ADZ" })], CUPOS);
-    assert.equal(o.ruta, "BOG-ADZ");
-    assert.equal(JSON.stringify(o).includes("L93FYZ"), false);
+
+  test("la búsqueda por texto no encuentra por la etiqueta (no se indexa)", () => {
+    const ofertas = ofertasBloqueo([fila({ bloqueo_label: "ABC-DEF" })], CUPOS);
+    assert.equal(buscarEnOfertas(ofertas, { texto: "ABC-DEF" }).total_encontradas, 0);
+    assert.equal(buscarEnOfertas(ofertas, { texto: "caribe" }).total_encontradas, 1);
   });
 });
 
@@ -165,9 +172,9 @@ describe("búsqueda de bloqueos", () => {
     const r = buscarEnOfertas(ofertas, { destino: "san andres" });
     assert.deepEqual(r.ofertas.map((o) => o.paquete_id).sort(), [1, 3]);
   });
-  test("texto por palabras sobre hotel/paquete/destino/ruta", () => {
+  test("texto por palabras sobre hotel/paquete/destino/origen", () => {
     assert.deepEqual(buscarEnOfertas(ofertas, { texto: "isleño" }).ofertas.map((o) => o.paquete_id), [3]);
-    assert.deepEqual(buscarEnOfertas(ofertas, { texto: "caribe bog" }).ofertas.map((o) => o.paquete_id), [1]);
+    assert.deepEqual(buscarEnOfertas(ofertas, { texto: "caribe andres" }).ofertas.map((o) => o.paquete_id), [1]);
   });
   test("rango de la fecha de ida", () => {
     assert.deepEqual(buscarEnOfertas(ofertas, { fechaDesde: "2027-03-01" }).ofertas.map((o) => o.paquete_id).sort(), [1, 3]);

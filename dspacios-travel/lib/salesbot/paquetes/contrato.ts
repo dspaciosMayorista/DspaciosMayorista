@@ -43,7 +43,6 @@ export type OfertaBloqueo = {
   origen_vuelo: OrigenVueloConsulta;
   bloqueo_id: number | null;
   empaquetado_id: number | null;
-  ruta: string | null;
   fecha_ida: string | null;
   fecha_regreso: string | null;
   noches: number | null;
@@ -280,4 +279,29 @@ export function preciosPublicables(precios: Record<string, number> | null | unde
     out[a] = v;
   }
   return out;
+}
+
+// ── Markup leído con la sesión (H-PQ1, #60) ─────────────────────────────
+
+export type LecturaMarkup = { ok: true; pct: number } | { ok: false };
+
+/**
+ * Interpreta `pct_mk` SIN convertir en 0 lo que no se entiende (el motor sí lo
+ * hace con `Number(x) || 0`; esa es la mitad de H-PQ1, #60).
+ *   · NULL → 0: es la semántica válida del contrato del motor (paquete sin
+ *     markup configurado), no un fallo.
+ *   · número finito en [0, 1) → ese número (convención de margen: 0,2 = 20 %;
+ *     el mismo rango que `validarPctMarkup` del motor de servicios).
+ *   · texto numérico exacto (PostgREST puede devolver `numeric` como texto) →
+ *     se convierte y se le aplica el mismo rango.
+ *   · cualquier otra cosa (ausente, texto no numérico, NaN, ±Infinity,
+ *     negativo, ≥ 1, booleano, objeto) → no confiable.
+ */
+export function interpretarPctMk(v: unknown): LecturaMarkup {
+  if (v === null) return { ok: true, pct: 0 };
+  let n: number;
+  if (typeof v === "number") n = v;
+  else if (typeof v === "string" && /^\d+(\.\d+)?$/.test(v.trim())) n = Number(v.trim());
+  else return { ok: false };
+  return Number.isFinite(n) && n >= 0 && n < 1 ? { ok: true, pct: n } : { ok: false };
 }

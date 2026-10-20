@@ -29,7 +29,7 @@ function Oferta({ o, sp }: { o: OfertaBloqueo; sp: Params }) {
     <li className="rounded-lg border bg-white p-3">
       <p className="font-semibold text-gray-900">{o.hotel_nombre ?? "Hotel"}</p>
       <p className="text-sm text-gray-600">
-        {[o.destino, o.ruta, o.noches ? `${o.noches} noches` : null].filter(Boolean).join(" · ")}
+        {[o.destino, o.noches ? `${o.noches} noches` : null].filter(Boolean).join(" · ")}
       </p>
       <p className="text-xs text-gray-500">
         {formatFechaLarga(o.fecha_ida)} — {formatFechaLarga(o.fecha_regreso)}
@@ -131,7 +131,7 @@ export async function PanelBloqueos({ sp }: { sp: Params }) {
         <input type="hidden" name="producto" value="bloqueos" />
         <label className="text-sm">
           <span className="mb-1 block text-gray-700">Texto</span>
-          <input name="texto" defaultValue={uno(sp, "texto") ?? ""} className="w-full rounded-md border px-2 py-1.5" placeholder="Hotel, ruta o paquete" />
+          <input name="texto" defaultValue={uno(sp, "texto") ?? ""} className="w-full rounded-md border px-2 py-1.5" placeholder="Hotel, destino o paquete" />
         </label>
         <label className="text-sm">
           <span className="mb-1 block text-gray-700">Destino</span>
@@ -180,7 +180,7 @@ export async function PanelBloqueos({ sp }: { sp: Params }) {
       {oferta && (
         <section id="cotizar-bloqueo" className="space-y-3 rounded-lg border bg-white p-4" aria-label="Cotizar bloqueo">
           <h2 className="text-lg font-semibold" style={{ color: "var(--brand-primary)" }}>
-            Cotizar: {[oferta.hotel_nombre ?? "Hotel", oferta.ruta].filter(Boolean).join(" · ")}
+            Cotizar: {[oferta.hotel_nombre ?? "Hotel", oferta.destino, `${formatFechaLarga(oferta.fecha_ida)} — ${formatFechaLarga(oferta.fecha_regreso)}`].filter(Boolean).join(" · ")}
           </h2>
           <form method="get" className="grid gap-3 md:grid-cols-3">
             <Ocultos sp={sp} claves={["producto", "texto", "destino", "fechaDesde", "fechaHasta", "audiencia", "agencia", "oferta"]} />

@@ -19,6 +19,8 @@ import { resolverAccesoConsulta } from "@/lib/salesbot/acceso";
 import { clavesProhibidasEn, crearSello, type CodigoError, type MotivoNoAutorizado, type Respuesta, type Sello } from "@/lib/salesbot/contrato";
 import {
   clasificarMensajeMotor,
+  interpretarPctMk,
+  type LecturaMarkup,
   type CotizacionPaquete,
   type CotizacionPorcionPorPersona,
   type OfertaBloqueo,
@@ -109,14 +111,12 @@ export async function prepararConsultaPaquetes(): Promise<{ ok: true; ctx: Conte
   return { ok: true, ctx: { sb, datos: carga.datos, flujoId } };
 }
 
-type LecturaMarkup = { ok: true; pct: number } | { ok: false };
-
 /**
  * Lee, con la SESIÓN, la MISMA columna que `computarReserva` usa para el
- * markup (`armado_paquetes.pct_mk`, `computo.ts:348`) y la normaliza igual
- * que el motor (`Number(...) || 0`). El motor ignora el error de esa lectura y
- * sigue con 0 (H-PQ1); aquí un error o una fila invisible es "no confiable".
- * El valor nunca sale de este módulo.
+ * markup (`armado_paquetes.pct_mk`, `computo.ts:348`). El motor ignora el
+ * error de esa lectura y convierte en 0 cualquier valor que no entienda
+ * (H-PQ1, #60); aquí un error, una fila invisible o un valor no interpretable
+ * es "no confiable" (`interpretarPctMk`). El valor nunca sale de este módulo.
  */
 async function leerMarkupSesion(ctx: ContextoPaquetes, paqueteId: number): Promise<LecturaMarkup> {
   const { data, error } = await ctx.sb.from("armado_paquetes").select("pct_mk").eq("id", paqueteId).maybeSingle();
@@ -125,7 +125,7 @@ async function leerMarkupSesion(ctx: ContextoPaquetes, paqueteId: number): Promi
     return { ok: false };
   }
   if (!data) return { ok: false };
-  return { ok: true, pct: Number((data as { pct_mk: unknown }).pct_mk) || 0 };
+  return interpretarPctMk((data as { pct_mk?: unknown }).pct_mk);
 }
 
 /**

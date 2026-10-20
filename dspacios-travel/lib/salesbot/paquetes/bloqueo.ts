@@ -56,18 +56,11 @@ export function validarCriteriosBloqueos(entrada: Record<string, string | undefi
   return campos.length ? { ok: false, campos } : { ok: true, criterios: c };
 }
 
-/**
- * Ruta pública del vuelo, por LISTA BLANCA. `bloqueo_label` históricamente
- * pudo traer el record/PNR junto a la ruta, y un PNR no tiene forma fija
- * (`L93FYZ`, `QWERTY`…): no se intenta reconocerlo para borrarlo. Se extrae
- * SOLO la primera ruta en códigos IATA de 3 letras separados por guion
- * (`MAD-BOG`, `BOG-ADZ-BOG`) y se descarta todo lo demás. Sin una ruta así,
- * null (la tarjeta muestra destino y fechas).
- */
-export function rutaPublica(label: string | null | undefined): string | null {
-  const m = (label ?? "").match(/(?<![A-Za-z0-9])[A-Za-z]{3}(?:\s*[-–]\s*[A-Za-z]{3})+(?![A-Za-z0-9])/);
-  return m ? m[0].split(/\s*[-–]\s*/).join("-").toUpperCase() : null;
-}
+// Privacidad de ruta: la oferta NO publica ruta ni origen del vuelo. Las
+// fuentes disponibles son texto libre que puede traer el record/PNR:
+// `bloqueo_label` y `origenPorBloqueo` (`datos.ts:199-201` lo rellena desde
+// `bloqueos_vuelo.ruta` cuando falta `origen`). Un PNR (`ABC-DEF`, `QWERTY`…)
+// no se distingue de una ruta, así que solo se muestran destino y fechas.
 
 /** Clave estable de una oferta: paquete + origen del vuelo + hotel. */
 export function claveOferta(paqueteId: number, bloqueoId: number | null, empaquetadoId: number | null, hotelId: number): string {
@@ -111,7 +104,6 @@ export function ofertasBloqueo(filas: readonly FilaTarifario[], cupos: Readonly<
         origen_vuelo: bloqueoId != null ? "bloqueo" : "sistema",
         bloqueo_id: bloqueoId,
         empaquetado_id: empaquetadoId,
-        ruta: rutaPublica(f.bloqueo_label),
         fecha_ida: f.fecha_ida,
         fecha_regreso: f.fecha_regreso,
         noches: f.noches,
@@ -151,7 +143,7 @@ export function buscarEnOfertas(ofertas: readonly OfertaBloqueo[], c: CriteriosB
     .filter((o) => !destino || normalizarTexto(o.destino).includes(destino))
     .filter((o) => {
       if (!tokens.length) return true;
-      const pajar = normalizarTexto([o.paquete_nombre, o.hotel_nombre, o.destino, o.ruta].filter(Boolean).join(" "));
+      const pajar = normalizarTexto([o.paquete_nombre, o.hotel_nombre, o.destino].filter(Boolean).join(" "));
       return tokens.every((t) => pajar.includes(t));
     })
     .filter((o) => !c.fechaDesde || (o.fecha_ida != null && o.fecha_ida >= c.fechaDesde))

@@ -162,4 +162,20 @@ describe("pantallas", () => {
       assert.doesNotMatch(src, /neto|numero_silla|pasajero_|tarifa_para_empaquetar|impuesto/i, rel);
     }
   });
+
+  test("privacidad de ruta: ningún código de SalesBot usa bloqueo_label, la ruta ni origenPorBloqueo", () => {
+    for (const rel of TODO) {
+      const src = sinComentarios(leer(rel));
+      assert.doesNotMatch(src, /bloqueo_label/, rel);
+      assert.doesNotMatch(src, /\.ruta\b|\bruta:/, rel);
+      assert.doesNotMatch(src, /origenPorBloqueo|origen_iata|origenPublico/, rel);
+    }
+  });
+
+  test("tarjeta y título de bloqueos: solo destino, noches y fechas", () => {
+    const src = sinComentarios(leer("app/(dashboard)/dashboard/salesbot/PanelBloqueos.tsx"));
+    assert.match(src, /\{\[o\.destino, o\.noches \? `\$\{o\.noches\} noches` : null\]\.filter\(Boolean\)\.join\(" · "\)\}/);
+    assert.match(src, /Cotizar: \{\[oferta\.hotel_nombre \?\? "Hotel", oferta\.destino, `\$\{formatFechaLarga\(oferta\.fecha_ida\)\}/);
+    assert.doesNotMatch(src, /Desde \$\{/);
+  });
 });

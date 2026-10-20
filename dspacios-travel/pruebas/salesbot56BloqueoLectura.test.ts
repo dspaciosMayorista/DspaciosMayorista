@@ -61,7 +61,10 @@ const filaBloqueo = (f: Fila = {}): Fila => ({
   moneda: "COP",
   ...f,
 });
-const FILAS = [filaBloqueo(), filaBloqueo({ modulo: "porcion_terrestre", bloqueo_id: null, paquete_id: 50, hotel_id: 217, destino_nombre: "SAN ANDRÉS" })];
+// Caso del gate: `bloqueos_vuelo.origen` NULL y `ruta` = "PNR-BOG" → el cargador real (datos.ts:199-201)
+// entrega origenPorBloqueo = { 10: "PNR" } y la etiqueta trae el mismo texto. Nada de eso debe salir.
+const ORIGENES_CONTAMINADOS = { 10: "PNR" };
+const FILAS = [filaBloqueo({ bloqueo_label: "PNR-BOG" }), filaBloqueo({ modulo: "porcion_terrestre", bloqueo_id: null, paquete_id: 50, hotel_id: 217, destino_nombre: "SAN ANDRÉS" })];
 
 const SESION = {
   auth: { getUser: async () => ({ data: { user: usuario }, error: null }) },
@@ -116,7 +119,7 @@ mock.module("@/lib/tarifario/datos", {
     cargarDatosTarifario: async () => {
       llamadasCarga++;
       if (!cargaOk) return { ok: false, error: "No se pudo cargar el tarifario." };
-      return { ok: true, datos: { filasVisibles: FILAS, cuposPorBloqueo: { 10: 3 }, origenPorBloqueo: {} } };
+      return { ok: true, datos: { filasVisibles: FILAS, cuposPorBloqueo: { 10: 3 }, origenPorBloqueo: ORIGENES_CONTAMINADOS } };
     },
   },
 });
@@ -152,6 +155,7 @@ const L = await import("../lib/salesbot/paquetes/lectura.ts");
 const { entradaComputoBloqueo, ofertasBloqueo } = await import("../lib/salesbot/paquetes/bloqueo.ts");
 const { entradaBuscarHoteles, entradaComputoPorcion } = await import("../lib/salesbot/paquetes/porcion.ts");
 const { clavesProhibidasEn } = await import("../lib/salesbot/contrato.ts");
+const { interpretarPctMk } = await import("../lib/salesbot/paquetes/contrato.ts");
 
 beforeEach(() => {
   usuario = { id: "u1" };
@@ -328,6 +332,49 @@ describe("cotizarBloqueo", () => {
     if (r.ok) assert.equal(r.datos.total_orientativo, 2_100_000);
   });
 
+  // Valores que NO son un % interpretable: nunca se convierten en 0.
+  const INVALIDOS: unknown[] = ["abc", "", " ", "0,2", "-0.1", Number.NaN, Number.POSITIVE_INFINITY, Number.NEGATIVE_INFINITY, -0.1, 1, 1.5, true, {}, [], undefined];
+
+  test("interpretarPctMk: NULL vale 0; número finito en [0, 1) o texto numérico exacto; todo lo demás no confiable", () => {
+    assert.deepEqual(interpretarPctMk(null), { ok: true, pct: 0 });
+    assert.deepEqual(interpretarPctMk(0), { ok: true, pct: 0 });
+    assert.deepEqual(interpretarPctMk(0.2), { ok: true, pct: 0.2 });
+    assert.deepEqual(interpretarPctMk("0.2"), { ok: true, pct: 0.2 });
+    assert.deepEqual(interpretarPctMk(0.999), { ok: true, pct: 0.999 });
+    for (const v of INVALIDOS) assert.deepEqual(interpretarPctMk(v), { ok: false }, String(v));
+  });
+
+  test("pct_mk inválido en la lectura PREVIA o en la POSTERIOR → sin total (nunca un total con markup 0 inventado)", async () => {
+    respuestaComputo = CON_CARGO_GRUPO;
+    for (const v of INVALIDOS) {
+      lecturasMarkup = [{ data: { pct_mk: v }, error: null }, { data: { pct_mk: 0.2 }, error: null }];
+      await sinTotal();
+      lecturasMarkup = [{ data: { pct_mk: 0.2 }, error: null }, { data: { pct_mk: v }, error: null }];
+      await sinTotal();
+    }
+  });
+
+  test("fila sin la columna pct_mk → sin total", async () => {
+    respuestaComputo = CON_CARGO_GRUPO;
+    lecturasMarkup = [{ data: {}, error: null }, { data: {}, error: null }];
+    await sinTotal();
+  });
+
+  test("pct_mk como texto numérico, igual antes y después → total presentado", async () => {
+    respuestaComputo = CON_CARGO_GRUPO;
+    lecturasMarkup = [{ data: { pct_mk: "0.2" }, error: null }, { data: { pct_mk: "0.2" }, error: null }];
+    const r = await L.cotizarBloqueo(await ctx(), ENTRADA);
+    assert.equal(r.ok, true);
+  });
+
+  test("porción: las mismas reglas de markup retienen el total con cargo por grupo", async () => {
+    respuestaComputo = CON_CARGO_GRUPO;
+    lecturasMarkup = [{ data: { pct_mk: "abc" }, error: null }, { data: { pct_mk: 0.2 }, error: null }];
+    const r = await L.cotizarPorcion(await ctx(), { paquete: "50", hotel: "217", fechaIda: "2027-03-10", fechaRegreso: "2027-03-13", combo: "Estándar|PAE", hab_doble: "1" });
+    assert.equal(r.ok, false);
+    if (!r.ok) assert.equal(r.codigo, "no_cotizable");
+  });
+
   test("pct_mk nulo en la fila: el motor usa 0 y el bot también (configuración real, confiable)", async () => {
     respuestaComputo = CON_CARGO_GRUPO;
     lecturasMarkup = [{ data: { pct_mk: null }, error: null }, { data: { pct_mk: null }, error: null }];
@@ -344,6 +391,19 @@ describe("cotizarBloqueo", () => {
 });
 
 describe("buscarBloqueos", () => {
+  test("ruta contaminada (origen ausente, ruta PNR-BOG): ni la búsqueda, ni la oferta, ni la cotización publican PNR", async () => {
+    const c = await ctx();
+    const b = L.buscarBloqueos(c, { destino: "san andres" });
+    const o = L.ofertaBloqueoPorClave(c, "5-b10-7");
+    const q = await L.cotizarBloqueo(c, { oferta: "5-b10-7", combo: "Estándar|PAE", hab_doble: "1" });
+    assert.ok(b.ok && o && q.ok);
+    for (const salida of [b, o, q]) {
+      const json = JSON.stringify(salida);
+      assert.equal(json.includes("PNR"), false, json.slice(0, 200));
+      assert.doesNotMatch(json, /"(ruta|origen|origen_iata|bloqueo_label)"/);
+    }
+  });
+
   test("solo lee las filas ya visibles; no llama motores; sin record", async () => {
     const r = L.buscarBloqueos(await ctx(), { destino: "san andres" });
     assert.ok(r.ok);
