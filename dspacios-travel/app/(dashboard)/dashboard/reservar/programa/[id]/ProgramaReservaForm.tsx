@@ -11,6 +11,7 @@ import { esInfantePorEdad } from "@/lib/reservar/pasajeros";
 import { truncarPasajeros, recalcularVinculosPorEdad } from "@/lib/reservar/pasajerosFilas";
 import { BuscarPasajeroDocumento } from "@/components/pasajeros/BuscarPasajeroDocumento";
 import { reservarPrograma } from "../../actions";
+import { totalDesdePrecios, type CambioPrecioPrograma } from "@/lib/programas/precioReserva57";
 
 // Pax que cubre 1 habitación (Doble=2, Triple=3, Cuádruple=4, Sencilla=1).
 const paxPorHab = (a: string) => paxDeAcomodacion(a);
@@ -96,12 +97,20 @@ export function ProgramaReservaForm({
   );
   const totalPax = paxConSilla + (Number(infantes) || 0);
 
-  const total = useMemo(() => {
-    let t = 0;
-    for (const a of acomsAdulto) t += (a.pvp ?? 0) * paxPorHab(a.acomodacion) * (Number(habs[a.acomodacion]) || 0);
-    if (precioNino != null) t += precioNino * (Number(ninos) || 0);
-    return t;
-  }, [acomsAdulto, habs, ninos, precioNino]);
+  // #57: misma aritmética (centavos) y mismos precios por persona que la ficha y
+  // que la liquidación del servidor (`lib/programas/precioReserva57.ts`).
+  const total = useMemo(
+    () => totalDesdePrecios({ adultos: acomsAdulto, precioNino, habitaciones: habs, ninos: Number(ninos) || 0 }),
+    [acomsAdulto, habs, ninos, precioNino]
+  );
+
+  // #57: el servidor recalcula el precio al confirmar. Si cambió, no crea nada y
+  // devuelve el nuevo importe; solo un clic EXPRESO del usuario lo acepta. La
+  // aceptación y el aviso valen únicamente para la selección en la que se
+  // produjeron (cambiar categoría, fecha, habitaciones o niños los descarta).
+  const claveSeleccion = JSON.stringify([categoriaId, fechaIda, habs, Number(ninos) || 0, Number(infantes) || 0]);
+  const [cambio, setCambio] = useState<{ clave: string; datos: CambioPrecioPrograma } | null>(null);
+  const cambioVigente = cambio && cambio.clave === claveSeleccion ? cambio.datos : null;
 
   // Pasajeros: tantos como pax total
   const [pasajeros, setPasajeros] = useState<Pasajero[]>([]);
@@ -144,12 +153,20 @@ export function ProgramaReservaForm({
 
   function submit(e: React.FormEvent) {
     e.preventDefault();
+    // Con un cambio de precio pendiente NO se reenvía el importe viejo: se acepta
+    // el nuevo con su botón, o se cambia la selección.
+    if (cambioVigente) return;
+    enviar(total);
+  }
+
+  function enviar(precioConfirmado: number) {
     setError(null);
     if (!fechaIda) return setError("Elige la fecha de salida.");
     if (totalPax <= 0) return setError("Indica cuántas habitaciones reservas en cada acomodación.");
     if (!`${cliente.nombres}${cliente.apellidos}`.trim()) return setError("El nombre del cliente es obligatorio.");
     startTransition(async () => {
       const res = await reservarPrograma({
+        precioConfirmado,
         programaId,
         categoriaId,
         salidaId: modoSalida ? categoriaId : undefined,
@@ -179,7 +196,14 @@ export function ProgramaReservaForm({
           responsableIndex: p.responsableIndex ?? null,
         })),
       });
-      if (!res.ok) return setError(res.error);
+      if (!res.ok) {
+        if ("cambioPrecio" in res) {
+          setCambio({ clave: claveSeleccion, datos: res.cambioPrecio });
+          return setError(null);
+        }
+        return setError(res.error);
+      }
+      setCambio(null);
       if (res.advertencias?.length) window.alert(`Contrato creado, pero con avisos:\n\n${res.advertencias.join("\n")}`);
       router.push(`/dashboard/contratos/${encodeURIComponent(res.numero)}`);
     });
@@ -400,7 +424,24 @@ export function ProgramaReservaForm({
       </fieldset>
 
       {error && <p className="text-sm text-red-600">{error}</p>}
-      <Button type="submit" disabled={pending} style={{ backgroundColor: "var(--brand-primary)" }}>
+      {cambioVigente && (
+        <div role="alert" className="space-y-2 rounded-lg border border-amber-300 bg-amber-50 p-4 text-sm text-amber-900">
+          <p className="font-medium">El precio de la reserva cambió. No se creó ningún contrato.</p>
+          <p>
+            {cambioVigente.anterior != null ? <>Habías confirmado {formatMoneda(cambioVigente.anterior, cambioVigente.moneda)}. </> : null}
+            Importe actual: <strong>{formatMoneda(cambioVigente.nuevo, cambioVigente.moneda)}</strong>.
+          </p>
+          <Button
+            type="button"
+            disabled={pending}
+            onClick={() => enviar(cambioVigente.nuevo)}
+            style={{ backgroundColor: "var(--brand-primary)" }}
+          >
+            {pending ? "Generando…" : `Aceptar ${formatMoneda(cambioVigente.nuevo, cambioVigente.moneda)} y generar reserva`}
+          </Button>
+        </div>
+      )}
+      <Button type="submit" disabled={pending || !!cambioVigente} style={{ backgroundColor: "var(--brand-primary)" }}>
         {pending ? "Generando…" : "Generar reserva"}
       </Button>
     </form>
