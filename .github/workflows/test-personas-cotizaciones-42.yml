@@ -106,7 +106,9 @@ jobs:
                        '  OK    E1 ' '  OK    T2 ' '  OK    S1 ' '  OK    I4 ' '  OK    V7 ' '  OK    V15 ' '  OK    G8 '; do
             grep -qF -- "$marca" "$salida" || faltan="$faltan [$marca]"
           done
-          if [ "$rc" != 0 ] || grep -q '^FALLO' "$salida" || grep -q 'omitida' "$salida" \
+          # La sección saltada se detecta por SU línea exacta (no por la palabra "omitida", que aparece
+          # en el nombre de comprobaciones SQL legítimas como T15).
+          if [ "$rc" != 0 ] || grep -q '^FALLO' "$salida" || grep -qE '^INFO  H omitida por SIN_API=1' "$salida" \
              || ! grep -q 'TEST 219 PERSONAS COTIZACIONES: TODO OK' "$salida" || [ -n "$faltan" ]; then
             echo "::error::Pruebas 219 en rojo (rc=$rc; faltan:${faltan:- ninguna})"
             exit 1
