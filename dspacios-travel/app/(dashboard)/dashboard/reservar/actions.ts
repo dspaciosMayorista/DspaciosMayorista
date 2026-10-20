@@ -4,10 +4,17 @@ import { createClient } from "@/lib/supabase/server";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { revalidatePath } from "next/cache";
 import { precioServicio, noches, temporadaVigenteParaFecha, toTemporadaRango, factorLiquidacion, type TemporadaRango } from "@/lib/calc/paquetes";
-import { ACOM_ROOM_LABEL, paxDeAcomodacion, clasificarPorEdad, type AcomRoom } from "@/lib/acomodaciones";
+import { ACOM_ROOM_LABEL, clasificarPorEdad, type AcomRoom } from "@/lib/acomodaciones";
 import { parseRuta, ciudadIata } from "@/lib/iata";
 import { calcularEdad } from "@/lib/utils";
-import { pvpPrograma } from "@/lib/programas";
+import {
+  liquidarSeleccion,
+  impuestoParaVenta,
+  avisoResidualBaseB2B,
+  evaluarPrecioConfirmado,
+  type FuentePrecio,
+  type CambioPrecioPrograma,
+} from "@/lib/programas/precioReserva57";
 import { postearAsientoCxP, eliminarAsientoCxP } from "@/lib/contabilidad/asientos";
 import { contextoCotizacion, autorizaTenant } from "@/lib/cotizacion/acceso";
 import { siguienteNumeroContrato } from "@/lib/contrato/numeracion";
@@ -2890,7 +2897,20 @@ export type ReservaProgramaInput = {
   freelanceNombre: string;
   plazo: string;
   pasajeros: PasajeroReserva[];
+  /**
+   * #57 — Importe total que el usuario VIO y confirmó en la moneda del
+   * programa. El servidor recalcula con la regla única de precio
+   * (`lib/programas/precioReserva57.ts`); si no coincide, no crea contrato,
+   * CxP ni asientos: devuelve el nuevo importe (`cambioPrecio`) para que el
+   * usuario lo acepte de forma expresa. Obligatorio: sin él no se reserva.
+   */
+  precioConfirmado: number;
 };
+
+/** #57 — `ReservaResult` + el rechazo por cambio de precio (sin escrituras). */
+export type ReservaProgramaResultado =
+  | ReservaResult
+  | { ok: false; error: string; cambioPrecio: CambioPrecioPrograma };
 
 function sumarDias(fecha: string, dias: number): string {
   const d = new Date(`${fecha}T00:00:00`);
@@ -2907,7 +2927,7 @@ function sumarDias(fecha: string, dias: number): string {
 // las etapas atadas al mismo `flujo_id` — antes esta Server Action solo
 // medía "contexto" y nada más, lo que no permitía diagnosticar el botón
 // "Generar reserva" de Programas más allá del gate de autorización.
-export async function reservarPrograma(input: ReservaProgramaInput): Promise<ReservaResult> {
+export async function reservarPrograma(input: ReservaProgramaInput): Promise<ReservaProgramaResultado> {
   const flujoId = generarFlujoId();
   const medir = crearMedidor("reservar_programa", flujoId);
   // Estado técnico INTERNO (revisión posterior — ronda 2, mismo mecanismo que
@@ -2934,7 +2954,7 @@ async function reservarProgramaInterno(
   flujoId: string,
   medir: Medidor,
   estado: EstadoFlujo
-): Promise<ReservaResult> {
+): Promise<ReservaProgramaResultado> {
   // Contexto fail-closed INTERNO (revisión posterior al PR #274, ronda 2):
   // reservarPrograma() es exportada y por lo tanto alcanzable directo por
   // red — este flujo NO es autoservicio B2B como convertirCotizacion*/
@@ -2987,7 +3007,7 @@ async function reservarProgramaInterno(
   // contratos/actions.ts): envuelve cada `return` de rechazo de esta sección
   // para que la etapa quede en "rechazado" sin duplicar el log de éxito
   // (mutuamente excluyentes) y sin reordenar ninguna validación.
-  const _rechazarValidacionPrograma = (resultado: ReservaResult): ReservaResult => {
+  const _rechazarValidacionPrograma = (resultado: ReservaProgramaResultado): ReservaProgramaResultado => {
     registrarEtapa("reservar_programa", flujoId, "validacion_programa", Math.round(performance.now() - _tValidacionProg0), "rechazado");
     return resultado;
   };
@@ -3014,7 +3034,7 @@ async function reservarProgramaInterno(
   // 1) Programa + precios (autoritativo). proveedores/neto se leen aquí.
   const { data: prog, error: progError } = await sb
     .from("programas")
-    .select("id, nombre, subtitulo, moneda, pct_mk, pct_fee_tarjeta, asistencia_medica_dia, modo_precio, dias, noches, proveedor_id, vigencia_desde, vigencia_hasta, edad_nino_min, edad_nino_max, edad_infante_max, condicion_pago_tipo, condicion_pago_pct_inicial, condicion_pago_dias_saldo, restriccion_comercial, proveedores(nombre, aplica_retencion, pct_retencion)")
+    .select("id, nombre, subtitulo, moneda, pct_mk, pct_fee_tarjeta, asistencia_medica_dia, modo_precio, dias, noches, proveedor_id, vigencia_desde, vigencia_hasta, edad_nino_min, edad_nino_max, edad_infante_max, condicion_pago_tipo, condicion_pago_pct_inicial, condicion_pago_dias_saldo, restriccion_comercial, regla_comisionable, regla_comisionable_modalidad_mk, regla_comisionable_modo, regla_comisionable_valor, regla_comisionable_pct_comision, regla_comisionable_impuesto_por_acomodacion, proveedores(nombre, aplica_retencion, pct_retencion)")
     .eq("id", input.programaId)
     .maybeSingle();
   if (progError) return _errorValidacionPrograma("error_consulta_programa", progError);
@@ -3039,8 +3059,13 @@ async function reservarProgramaInterno(
   }
 
   // 2) Precios — por categoría (matriz) o por salida (fecha × precio).
-  const netoDe: Record<string, { neto: number | null; bs: boolean }> = {};
-  let nochesViaje = prog.dias != null ? Math.max(0, prog.dias - 1) : null; // noches del viaje
+  //    #57: el PVP sale de la REGLA ÚNICA (`lib/programas/precioReserva57.ts`),
+  //    la misma que la ficha y el formulario: regla 161 (tarifa de proveedor y
+  //    modalidad de MK), fee bancario dentro del PVP y asistencia por las noches
+  //    de la salida o, si son NULL, por los días del programa. Antes se usaba
+  //    `pvpPrograma(neto)` suelto con `dias − 1` y sin la regla 161.
+  let fuentePrecio: FuentePrecio;
+  let nochesViaje = prog.dias != null ? Math.max(0, prog.dias - 1) : null; // noches del viaje (fecha de regreso)
   let etiquetaOpcion: string | null = null; // nombre de la opción elegida (categoría o salida)
   let hotelSalida: string | null = null;
 
@@ -3048,18 +3073,13 @@ async function reservarProgramaInterno(
     if (!input.salidaId) return _rechazarValidacionPrograma({ ok: false, error: "Elige una salida." });
     const { data: sal, error: salError } = await sb
       .from("programa_salidas")
-      .select("etiqueta, columna, noches, neto_sencilla, neto_doble, neto_triple, neto_multiple, neto_nino, bajo_solicitud")
+      .select("etiqueta, columna, noches, neto_sencilla, neto_doble, neto_triple, neto_multiple, neto_nino, bajo_solicitud, tarifa_sencilla, tarifa_doble, tarifa_triple, tarifa_multiple, impuesto_sencilla, impuesto_doble, impuesto_triple, impuesto_multiple")
       .eq("id", input.salidaId)
       .eq("programa_id", input.programaId)
       .maybeSingle();
     if (salError) return _errorValidacionPrograma("error_consulta_salida", salError);
     if (!sal) return _rechazarValidacionPrograma({ ok: false, error: "Salida no encontrada." });
-    const bs = sal.bajo_solicitud;
-    netoDe["sencilla"] = { neto: sal.neto_sencilla, bs };
-    netoDe["doble"] = { neto: sal.neto_doble, bs };
-    netoDe["triple"] = { neto: sal.neto_triple, bs };
-    netoDe["multiple"] = { neto: sal.neto_multiple, bs };
-    netoDe["nino"] = { neto: sal.neto_nino, bs };
+    fuentePrecio = { modo: "salida", salida: sal };
     if (sal.noches != null) nochesViaje = sal.noches;
     etiquetaOpcion = sal.etiqueta ?? null;
     hotelSalida = sal.columna ?? null;
@@ -3070,32 +3090,32 @@ async function reservarProgramaInterno(
       .eq("categoria_id", input.categoriaId);
     if (preciosError) return _errorValidacionPrograma("error_consulta_precios", preciosError);
     if (!precios?.length) return _rechazarValidacionPrograma({ ok: false, error: "La categoría no tiene precios cargados." });
-    for (const p of precios) netoDe[p.acomodacion] = { neto: p.neto, bs: p.bajo_solicitud };
+    fuentePrecio = { modo: "categoria", precios };
   }
-
-  // PVP de venta: (neto + asistencia médica/día × días) → +markup → +fee bancario.
-  // La asistencia es un costo neto más, así que entra ANTES del markup.
-  // En modo salida la asistencia médica usa las noches de la salida.
-  const diasPvp = modoSalida && nochesViaje != null ? nochesViaje : prog.dias;
-  const pvp = (neto: number) =>
-    pvpPrograma(neto, {
-      pctMk: prog.pct_mk,
-      asistenciaDia: prog.asistencia_medica_dia,
-      dias: diasPvp,
-      pctFee: prog.pct_fee_tarjeta,
-      moneda: prog.moneda,
-    });
 
   // 3) Liquidación por HABITACIONES (igual que hoteles): pax = hab × pax_tarifa
   //    (Doble ⇒ 2 pax, Triple ⇒ 3, Sencilla ⇒ 1). El precio de la matriz es por
   //    persona, así que 1 habitación = pax_tarifa × precio/persona. Niños aparte.
-  const habs = Object.entries(input.paxPorAcom).filter(([, n]) => (Number(n) || 0) > 0);
-  if (!habs.length && (input.ninos || 0) <= 0)
+  //    La FORMA de la solicitud (sin habitaciones ni niños, sin pasajeros) se
+  //    valida aquí, como siempre; los errores de PRECIO (acomodación o niño sin
+  //    tarifa) los devuelve la liquidación compartida.
+  const hayHabitaciones = Object.values(input.paxPorAcom).some((n) => (Number(n) || 0) > 0);
+  if (!hayHabitaciones && (Number(input.ninos) || 0) <= 0)
     return _rechazarValidacionPrograma({ ok: false, error: "Indica cuántas habitaciones reservas en cada acomodación." });
+  const liq = liquidarSeleccion({
+    programa: prog,
+    fuente: fuentePrecio,
+    habitaciones: input.paxPorAcom,
+    ninos: input.ninos,
+    infantes: input.infantes,
+  });
+  // El mensaje NO lleva cifras de costo (neto del proveedor, costo atribuible): el rol `venta`
+  // también reserva programas y no debe verlas; tampoco se loguean (los logs no llevan datos de negocio).
+  if (!liq.ok) return _rechazarValidacionPrograma({ ok: false, error: liq.error });
+  const { precioVenta, costoNeto, totalPax } = liq;
+  if (totalPax <= 0) return _rechazarValidacionPrograma({ ok: false, error: "Debe haber al menos un pasajero." });
+  const numInfantes = Math.max(0, Math.trunc(Number(input.infantes) || 0));
 
-  let precioVenta = 0;
-  let costoNeto = 0;
-  let totalPax = 0;
   const items: { numero_contrato: string; descripcion: string; adultos: number; ninos: number; tarifa_adulto: number; tarifa_nino: number; orden: number }[] = [];
   let catNombre: string | null = etiquetaOpcion;
   if (!modoSalida) {
@@ -3105,52 +3125,30 @@ async function reservarProgramaInterno(
   }
 
   let orden = 0;
-  for (const [acom, habRaw] of habs) {
-    const nHab = Number(habRaw) || 0;
-    const info = netoDe[acom];
-    if (!info || info.neto == null || info.bs)
-      return _rechazarValidacionPrograma({ ok: false, error: `La acomodación ${acom} no tiene precio (o es "a solicitud") en esta categoría.` });
-    const paxTarifa = paxDeAcomodacion(acom); // pax por habitación (cuadruple = 4)
-    const nPax = nHab * paxTarifa;
-    const precioPax = pvp(info.neto);
-    const label = ACOM_ROOM_LABEL[acom as AcomRoom] ?? (acom === "cuadruple" ? "Cuádruple" : acom);
-    precioVenta += precioPax * nPax;
-    costoNeto += info.neto * nPax;
-    totalPax += nPax;
+  for (const l of liq.lineas) {
+    const label = ACOM_ROOM_LABEL[l.acomodacion as AcomRoom] ?? (l.acomodacion === "cuadruple" ? "Cuádruple" : l.acomodacion);
     items.push({
       numero_contrato: "",
-      descripcion: `${nHab} hab ${label} (${nPax} pax)${catNombre ? ` · ${catNombre}` : ""}`,
-      adultos: nPax,
+      descripcion: `${l.habitaciones} hab ${label} (${l.pax} pax)${catNombre ? ` · ${catNombre}` : ""}`,
+      adultos: l.pax,
       ninos: 0,
-      tarifa_adulto: precioPax,
+      tarifa_adulto: l.pvpUnit,
       tarifa_nino: 0,
       orden: orden++,
     });
   }
   // Niños (por cantidad, no por habitación)
-  if ((input.ninos || 0) > 0) {
-    const info = netoDe["nino"];
-    if (!info || info.neto == null || info.bs)
-      return _rechazarValidacionPrograma({ ok: false, error: `Esta categoría no tiene precio de niño (o es "a solicitud").` });
-    const n = Number(input.ninos) || 0;
-    const precioPax = pvp(info.neto);
-    precioVenta += precioPax * n;
-    costoNeto += info.neto * n;
-    totalPax += n;
+  if (liq.nino) {
     items.push({
       numero_contrato: "",
-      descripcion: `${n} niño(s)${catNombre ? ` · ${catNombre}` : ""}`,
+      descripcion: `${liq.nino.cantidad} niño(s)${catNombre ? ` · ${catNombre}` : ""}`,
       adultos: 0,
-      ninos: n,
+      ninos: liq.nino.cantidad,
       tarifa_adulto: 0,
-      tarifa_nino: precioPax,
+      tarifa_nino: liq.nino.pvpUnit,
       orden: orden++,
     });
   }
-  // Los infantes son pasajeros adicionales (sin silla), por cantidad.
-  const numInfantes = Math.max(0, Math.trunc(Number(input.infantes) || 0));
-  totalPax += numInfantes;
-  if (totalPax <= 0) return _rechazarValidacionPrograma({ ok: false, error: "Debe haber al menos un pasajero." });
 
   // 3.b) Validación de pasajeros por edad (umbrales del programa, según el
   //      proveedor). Si hay fechas de nacimiento, la clasificación real debe
@@ -3177,6 +3175,17 @@ async function reservarProgramaInterno(
     }
   }
 
+  // 3.c) #57 — CONFIRMACIÓN DEL PRECIO. El importe que el usuario vio y confirmó
+  //      debe ser el que cobra el servidor con la regla única. Si cambió (el
+  //      programa se editó entre la lectura y la confirmación, o es el segundo
+  //      cambio de un reintento), se rechaza AQUÍ: antes de numerar y de toda
+  //      escritura (sin contrato, CxP ni asientos), devolviendo el nuevo importe
+  //      para que el usuario lo acepte de forma expresa. Cada intento recalcula.
+  const confirmacion = evaluarPrecioConfirmado(input.precioConfirmado, precioVenta, prog.moneda);
+  if (!confirmacion.ok) {
+    return _rechazarValidacionPrograma({ ok: false, error: confirmacion.error, cambioPrecio: confirmacion.cambioPrecio });
+  }
+
   registrarEtapa("reservar_programa", flujoId, "validacion_programa", Math.round(performance.now() - _tValidacionProg0), "ok");
 
   // 4) Número de contrato — ya completo, tenant resuelto arriba (nunca del navegador)
@@ -3194,6 +3203,11 @@ async function reservarProgramaInterno(
   // aplica la escala). La agencia/freelance se guarda aparte (canal B2B).
   const asesorNombre = input.asesorInterno;
   const fechaRegreso = nochesViaje != null ? sumarDias(input.fechaIda, nochesViaje) : prog.dias ? sumarDias(input.fechaIda, Math.max(0, prog.dias - 1)) : null;
+
+  // #57 — impuesto fiscal verificable (solo B2B) y residual de la base comisionable.
+  const impuestoVenta = impuestoParaVenta(liq, input.tipoAsesor);
+  const residualB2B = avisoResidualBaseB2B(liq, input.tipoAsesor);
+  if (residualB2B) advertencias.push(residualB2B);
 
   // 5) Venta (cabecera) — nace PENDIENTE, en la moneda del programa
   const _tVenta0 = performance.now();
@@ -3221,6 +3235,10 @@ async function reservarProgramaInterno(
     plazo: oNull(input.plazo),
     asesor_firma_nombre: oNull(asesorNombre),
     plan_nombre: catNombre ?? prog.nombre,
+    // #57 — base comisionable B2B: SOLO un impuesto del proveedor verificable
+    // (regla en modo `impuesto` con tarifa de proveedor cargada). Nunca se
+    // infiere de `montoNoComisionable` ni de la reducción por % de la regla.
+    ...(impuestoVenta != null ? { impuesto: impuestoVenta } : {}),
   });
   registrarEtapa("reservar_programa", flujoId, "insert_venta", Math.round(performance.now() - _tVenta0), ve ? "error" : "ok");
   if (ve) {

@@ -44,6 +44,8 @@ const inputPrograma = {
   cliente: { nombres: "Ana", apellidos: "Ruiz", tipoDoc: "CC", numeroDoc: "1010", telefono: "300", email: "" },
   tipoAsesor: "interno" as const, asesorInterno: "Asesor", agenciaNombre: "", agenciaAsesor: "", freelanceNombre: "",
   plazo: "2026-10-10", pasajeros: [],
+  // #57: el importe que el usuario confirmó (1 hab. doble = 2 pax × 1.112.000: neto 1.000.000, mk 10 %).
+  precioConfirmado: 2_224_000,
 };
 
 for (const [momento, instante] of MOMENTOS) {
