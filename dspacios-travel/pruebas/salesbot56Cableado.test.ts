@@ -11,7 +11,7 @@ const leer = (ruta: string) => readFileSync(new URL(ruta, import.meta.url), "utf
 const lectura = leer("../lib/salesbot/lectura.ts");
 const pagina = leer("../app/(dashboard)/dashboard/salesbot/page.tsx");
 const layout = leer("../app/(dashboard)/layout.tsx");
-const salesbot = readdirSync(new URL("../lib/salesbot/", import.meta.url)).map((f) => leer(`../lib/salesbot/${f}`));
+const salesbot = readdirSync(new URL("../lib/salesbot/", import.meta.url)).filter((f) => f.endsWith(".ts")).map((f) => leer(`../lib/salesbot/${f}`));
 const todo = [...salesbot, pagina];
 
 /** Código sin comentarios de línea ni de bloque (los comentarios pueden nombrar lo que el código NO usa). */
@@ -51,7 +51,7 @@ describe("sin chat, totales ni comisión calculada", () => {
 
   test("ni la página ni el módulo calculan base, comisión o total", () => {
     // contrato.ts se excluye: ahí esos nombres están en la LISTA NEGRA de claves.
-    const sinContrato = [pagina, ...readdirSync(new URL("../lib/salesbot/", import.meta.url)).filter((f) => f !== "contrato.ts").map((f) => leer(`../lib/salesbot/${f}`))];
+    const sinContrato = [pagina, ...readdirSync(new URL("../lib/salesbot/", import.meta.url)).filter((f) => f.endsWith(".ts") && f !== "contrato.ts").map((f) => leer(`../lib/salesbot/${f}`))];
     for (const src of sinContrato.map(sinComentarios)) {
       assert.doesNotMatch(src, /base_comisionable|comision_estimada|precioTotal|\btotal_pvp\b/);
     }

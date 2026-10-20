@@ -71,6 +71,27 @@ export const CLAVES_PROHIBIDAS: readonly string[] = [
   "tipo_cuenta",
   "numero_cuenta",
   "nit",
+  // Paquetes y vuelos (#56 multiproducto): el PNR, los costos del tiquete y
+  // del hotel, el impuesto interno y cualquier dato de silla o pasajero.
+  "record",
+  "tarifa_neta",
+  "tarifa_para_empaquetar",
+  "impuesto",
+  "impuestoTotal",
+  "netoPorAcom",
+  "netos",
+  "costoNeto",
+  "costo_neto",
+  "proveedorId",
+  "proveedor_id_servicio",
+  "serviciosIncluidos",
+  "numero_silla",
+  "pasajero_nombres",
+  "pasajero_apellidos",
+  "numero_doc",
+  "nacimiento",
+  "cupos_ocupados",
+  "cupos_devueltos",
 ];
 
 export type Audiencia = "b2c" | "b2b";
@@ -79,13 +100,25 @@ export type TipoTransporte = "ninguno" | "aereo" | "terrestre";
 
 export type MotivoNoAutorizado = "sin_sesion" | "usuario_inactivo" | "rol_no_permitido" | "agencia_no_permitida";
 
-export type CodigoError = "no_autorizado" | "parametros_invalidos" | "sin_resultados" | "no_encontrado" | "error_tecnico";
+/**
+ * `no_cotizable`: el motor de venta rechazó la consulta por una razón comercial
+ * (tarifa vencida, capacidad, fechas…); el `motivo` es el mensaje comercial del
+ * motor, nunca un error técnico (ver `clasificarMensajeMotor`).
+ */
+export type CodigoError = "no_autorizado" | "parametros_invalidos" | "sin_resultados" | "no_encontrado" | "no_cotizable" | "error_tecnico";
 
 /** Sello de cada respuesta: cuándo se consultó, hasta cuándo vale y de dónde salió. */
 export type Sello = {
   consultado_en: string;
   valido_hasta: string;
-  fuente: "buscarProgramas" | "detallePrograma" | "porcentajeAgencia";
+  fuente:
+    | "buscarProgramas"
+    | "detallePrograma"
+    | "porcentajeAgencia"
+    | "buscarBloqueos"
+    | "cotizarBloqueo"
+    | "buscarPorcion"
+    | "cotizarPorcion";
   version: string;
 };
 
