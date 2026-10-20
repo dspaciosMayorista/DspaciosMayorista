@@ -1,13 +1,18 @@
 "use client";
 
 import { DateInput } from "@/components/ui/DateInput";
-import { useEffect, useMemo, useState, useTransition } from "react";
+import { useEffect, useMemo, useRef, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { formatMoneda } from "@/lib/utils";
-import { Plane, Hotel, Car, HeartPulse, Plus, Trash2, GitCompareArrows, type LucideIcon } from "lucide-react";
+import { Plane, Hotel, Car, HeartPulse, Plus, Trash2, GitCompareArrows, Search, TriangleAlert, type LucideIcon } from "lucide-react";
 import { crearCotizacionManual, crearComparativaManual, type ServicioManual } from "../manual-actions";
+import {
+  buscarClienteDocumento,
+  type CampoCliente, type CampoClienteCotizacion, type ResultadoBuscarCliente, type ValorCliente,
+} from "./buscar-cliente-actions";
+import { COOKIE_TENANT, numeroVisible } from "@/lib/tenant";
 import { OPCIONES_REF, MAX_OPCIONES, type OpcionRef } from "@/lib/cotizacion/comparativa";
 import { sugerirIncluye, NO_INCLUYE_DEFAULT } from "@/lib/cotizacion/incluye";
 import { hoyBogota, vigenciaInicial } from "@/lib/cotizacion/vigencia";
@@ -29,6 +34,134 @@ let _seq = 1;
 const lbl = "mb-1 block text-xs font-medium text-gray-600";
 const hoy = hoyBogota();
 
+// ── #40 · Búsqueda explícita del cliente por documento ───────────────────────
+type Cliente = { nombres: string; apellidos: string; tipoDoc: string; numeroDoc: string; telefono: string; email: string; nacimiento: string };
+type ClienteEncontrado = Extract<ResultadoBuscarCliente, { ok: true }>;
+type EstadoBusqueda =
+  | { fase: "reposo" }
+  | { fase: "buscando" }
+  | { fase: "error"; mensaje: string }
+  | { fase: "listo"; resultado: ClienteEncontrado };
+
+/** Campo del registro central → campo del formulario. El tipo y el número son la clave, no se aplican. */
+const CAMPO_FORM: Record<CampoClienteCotizacion, "nombres" | "apellidos" | "telefono" | "email" | "nacimiento"> = {
+  nombres: "nombres", apellidos: "apellidos", telefono: "telefono", email: "email", fecha_nacimiento: "nacimiento",
+};
+const ETIQUETA_CAMPO: Record<CampoClienteCotizacion, string> = {
+  nombres: "Nombres", apellidos: "Apellidos", telefono: "Teléfono", email: "Email", fecha_nacimiento: "Fecha de nacimiento",
+};
+const ETIQUETA_FUENTE: Record<string, string> = {
+  captura_interna: "Captura interna", contrato_pasajero: "Pasajero de contrato", cotizacion: "Cotización",
+};
+const MSG_BUSQUEDA_FALLIDA = "No se pudo consultar el documento. Revisa tu conexión e intenta de nuevo; puedes seguir llenando los datos a mano.";
+
+/** Cookie de agencia activa (no es HttpOnly): sirve para descartar una respuesta de otra agencia. */
+function leerTenantCookie(): string {
+  if (typeof document === "undefined") return "";
+  const m = document.cookie.split("; ").find((c) => c.startsWith(`${COOKIE_TENANT}=`));
+  return m ? m.slice(COOKIE_TENANT.length + 1) : "";
+}
+
+function fechaProcedencia(iso: string | null): string {
+  if (!iso) return "";
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return "";
+  return d.toLocaleDateString("es-CO", { timeZone: "America/Bogota", day: "2-digit", month: "short", year: "numeric" });
+}
+
+/** Un valor solo es aplicable si cabe en el control del formulario (la fecha de nacimiento es AAAA-MM-DD). */
+function valorAplicable(campo: CampoClienteCotizacion, valor: string): boolean {
+  if (campo !== "fecha_nacimiento") return true;
+  return /^\d{4}-\d{2}-\d{2}$/.test(valor) && !Number.isNaN(Date.parse(valor));
+}
+
+function PanelClienteEncontrado({ resultado, cli, confirmando, onUsar, onConfirmar, onCancelar }: {
+  resultado: ClienteEncontrado;
+  cli: Cliente;
+  confirmando: { campo: CampoClienteCotizacion; valor: string } | null;
+  onUsar: (campo: CampoClienteCotizacion, valor: string) => void;
+  onConfirmar: () => void;
+  onCancelar: () => void;
+}) {
+  if (resultado.estado === "sin_registro") {
+    return (
+      <p className="rounded-lg bg-gray-50 px-3 py-2 text-xs text-gray-600">
+        No hay datos previos para este documento. Continúa llenando los datos del cliente a mano.
+      </p>
+    );
+  }
+  const { incompleto, campos } = resultado;
+  return (
+    <div className="space-y-3 rounded-lg border border-gray-200 bg-gray-50 p-3 text-xs text-gray-700">
+      <p className="font-medium text-gray-700">
+        Datos de registros anteriores con este documento. No se aplica nada solo: elige cada dato que quieras usar.
+      </p>
+      {incompleto && (
+        <p role="alert" className="flex items-start gap-1.5 rounded-md bg-amber-50 px-2 py-1.5 text-amber-800">
+          <TriangleAlert size={14} className="mt-0.5 shrink-0" />
+          <span>Lectura incompleta: hay más registros de los que se pueden mostrar. No se ofrece aplicar datos; llénalos a mano.</span>
+        </p>
+      )}
+      {campos.length === 0 && !incompleto && (
+        <p className="text-gray-500">Hay un registro, pero sin datos que se puedan aplicar a este formulario.</p>
+      )}
+      {campos.map((c: CampoCliente) => (
+        <div key={c.campo} data-campo={c.campo} className="space-y-1.5">
+          <div className="flex flex-wrap items-center gap-2">
+            <span className="font-semibold text-gray-700">{ETIQUETA_CAMPO[c.campo]}</span>
+            {c.divergencia && <span className="rounded-full bg-amber-100 px-2 py-0.5 text-[11px] font-medium text-amber-800">Valores distintos: elige uno</span>}
+            {c.omitidos > 0 && <span className="text-[11px] text-amber-800">+{c.omitidos} sin mostrar</span>}
+          </div>
+          {c.valores.map((v: ValorCliente) => {
+            const actual = cli[CAMPO_FORM[c.campo]];
+            const igual = actual === v.valor;
+            const sustituye = actual.trim() !== "" && !igual;
+            const enConfirmacion = confirmando?.campo === c.campo && confirmando.valor === v.valor;
+            const aplicable = !incompleto && valorAplicable(c.campo, v.valor);
+            return (
+              <div key={v.valor} className="rounded-md border border-gray-200 bg-white px-2.5 py-2">
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <span className="font-medium text-gray-800">{v.valor}</span>
+                  {aplicable && !enConfirmacion && (
+                    <button type="button" disabled={igual} onClick={() => onUsar(c.campo, v.valor)}
+                      aria-label={`${sustituye ? "Reemplazar" : "Usar"} ${ETIQUETA_CAMPO[c.campo].toLowerCase()}: ${v.valor}`}
+                      className="rounded-md border border-[color:var(--brand-primary)] px-2 py-0.5 text-[11px] font-medium text-[color:var(--brand-primary)] disabled:cursor-default disabled:border-gray-200 disabled:text-gray-400">
+                      {igual ? "Ya coincide" : sustituye ? "Reemplazar" : "Usar"}
+                    </button>
+                  )}
+                </div>
+                <p className="mt-0.5 text-[11px] text-gray-500">
+                  {v.nCapturas} {v.nCapturas === 1 ? "registro" : "registros"}
+                  {v.procedencia.map((p, i) => (
+                    <span key={i} className="block">
+                      {ETIQUETA_FUENTE[p.fuente] ?? "Otra fuente"}
+                      {p.contratoNumero ? ` · contrato ${numeroVisible(p.contratoNumero)}` : ""}
+                      {p.cotizacionId != null ? ` · cotización #${p.cotizacionId}` : ""}
+                      {fechaProcedencia(p.capturadoEn) ? ` · ${fechaProcedencia(p.capturadoEn)}` : ""}
+                    </span>
+                  ))}
+                </p>
+                {!incompleto && !valorAplicable(c.campo, v.valor) && (
+                  <p className="mt-0.5 text-[11px] text-amber-800">Este valor no tiene un formato que el formulario pueda recibir; escríbelo a mano.</p>
+                )}
+                {enConfirmacion && (
+                  <div role="alertdialog" aria-label={`Confirmar reemplazo de ${ETIQUETA_CAMPO[c.campo].toLowerCase()}`} className="mt-1.5 space-y-1.5 rounded-md bg-amber-50 px-2 py-1.5">
+                    <p className="text-amber-900">Ya escribiste «{actual}». ¿Reemplazarlo por «{v.valor}»?</p>
+                    <div className="flex gap-2">
+                      <button type="button" onClick={onConfirmar} className="rounded-md bg-[color:var(--brand-primary)] px-2 py-0.5 text-[11px] font-medium text-white">Sí, reemplazar</button>
+                      <button type="button" onClick={onCancelar} className="rounded-md border border-gray-300 px-2 py-0.5 text-[11px] font-medium text-gray-600">Conservar lo escrito</button>
+                    </div>
+                  </div>
+                )}
+              </div>
+            );
+          })}
+        </div>
+      ))}
+    </div>
+  );
+}
+
 function valor(f: { costoNeto: number; modo: "mk" | "ta"; pctMarkup: number; ta: number }): number {
   const c = Number(f.costoNeto) || 0;
   if (f.modo === "ta") return Math.round(Math.max(0, c) + (Number(f.ta) || 0));
@@ -45,7 +178,24 @@ export function CotizacionManualForm({ asesores, aliados, miNombre, miRolVenta, 
   const [err, setErr] = useState("");
 
   // Cliente / cabecera
-  const [cli, setCli] = useState({ nombres: "", apellidos: "", tipoDoc: "CC", numeroDoc: "", telefono: "", email: "", nacimiento: "" });
+  const [cli, setCli] = useState<Cliente>({ nombres: "", apellidos: "", tipoDoc: "CC", numeroDoc: "", telefono: "", email: "", nacimiento: "" });
+
+  // #40 · Búsqueda del cliente por documento. `busquedaSeq` numera las consultas: cualquier cambio de
+  // documento, canal o modo (y desmontar) la incrementa EN EL MISMO EVENTO, así una respuesta tardía
+  // ya no coincide con el número vigente y se descarta sin tocar el formulario.
+  const [busqueda, setBusqueda] = useState<EstadoBusqueda>({ fase: "reposo" });
+  const [confirmando, setConfirmando] = useState<{ campo: CampoClienteCotizacion; valor: string } | null>(null);
+  const busquedaSeq = useRef(0);
+  useEffect(() => {
+    const seq = busquedaSeq;
+    return () => { seq.current += 1; };
+  }, []);
+  function invalidarBusqueda() {
+    busquedaSeq.current += 1;
+    setBusqueda({ fase: "reposo" });
+    setConfirmando(null);
+  }
+
   const [destino, setDestino] = useState("");
   const [fechaIda, setFechaIda] = useState("");
   const [fechaRegreso, setFechaRegreso] = useState("");
@@ -103,6 +253,37 @@ export function CotizacionManualForm({ asesores, aliados, miNombre, miRolVenta, 
     setRecobroAliado((prev) => (Number(prev) > 0 ? prev : String(Math.round(recobroN * pctAliadoB2B))));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [tipoAsesor]);
+
+  // El botón solo existe en la cotización dinámica SIMPLE de canal interno; la action vuelve a exigir rol y tenant.
+  const puedeBuscarCliente = !comparativa && tipoAsesor === "interno";
+
+  async function buscarCliente() {
+    const seq = ++busquedaSeq.current;
+    const agenciaAntes = leerTenantCookie();
+    setConfirmando(null);
+    setBusqueda({ fase: "buscando" });
+    let r: ResultadoBuscarCliente;
+    try {
+      r = await buscarClienteDocumento({ tipoDoc: cli.tipoDoc, numeroDoc: cli.numeroDoc });
+    } catch {
+      r = { ok: false, codigo: "consulta", error: MSG_BUSQUEDA_FALLIDA };
+    }
+    if (seq !== busquedaSeq.current) return; // tardía: cambió el documento, el canal, el modo o se desmontó
+    if (leerTenantCookie() !== agenciaAntes) { invalidarBusqueda(); return; } // cambió la agencia activa
+    setBusqueda(r.ok ? { fase: "listo", resultado: r } : { fase: "error", mensaje: r.error });
+  }
+
+  function aplicarDato(campo: CampoClienteCotizacion, valor: string) {
+    setCli((c) => ({ ...c, [CAMPO_FORM[campo]]: valor }));
+    setConfirmando(null);
+  }
+  /** Con el campo vacío se aplica directo (el clic ES el consentimiento); con texto distinto pide confirmar. */
+  function usarDato(campo: CampoClienteCotizacion, valor: string) {
+    const actual = cli[CAMPO_FORM[campo]];
+    if (actual === valor) return;
+    if (actual.trim() === "") aplicarDato(campo, valor);
+    else setConfirmando({ campo, valor });
+  }
 
   function agregar(tipo: string) {
     setFilas((f) => [...f, { _id: _seq++, tipo, plataforma: "", nombre: "", proveedor: "", costoNeto: 0, modo: "mk", pctMarkup: Number(markupGeneral) || 0, ta: 0 }]);
@@ -173,15 +354,35 @@ export function CotizacionManualForm({ asesores, aliados, miNombre, miRolVenta, 
           <div><label className={lbl}>Apellidos</label><Input value={cli.apellidos} onChange={(e) => setCli({ ...cli, apellidos: e.target.value })} /></div>
           <div>
             <label className={lbl}>Tipo doc</label>
-            <select value={cli.tipoDoc} onChange={(e) => setCli({ ...cli, tipoDoc: e.target.value })} className="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm">
+            <select value={cli.tipoDoc} onChange={(e) => { invalidarBusqueda(); setCli({ ...cli, tipoDoc: e.target.value }); }} className="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm">
               {["CC", "CE", "PAS", "NIT", "TI"].map((t) => <option key={t}>{t}</option>)}
             </select>
           </div>
-          <div><label className={lbl}>N° documento</label><Input value={cli.numeroDoc} onChange={(e) => setCli({ ...cli, numeroDoc: e.target.value })} /></div>
+          <div>
+            <label className={lbl}>N° documento</label>
+            <Input value={cli.numeroDoc} onChange={(e) => { invalidarBusqueda(); setCli({ ...cli, numeroDoc: e.target.value }); }} />
+            {puedeBuscarCliente && (
+              <button type="button" onClick={buscarCliente} disabled={busqueda.fase === "buscando" || cli.numeroDoc.trim() === ""}
+                className="mt-1.5 inline-flex items-center gap-1.5 rounded-md border border-gray-300 px-2 py-1 text-[11px] font-medium text-gray-600 hover:border-[color:var(--brand-primary)] hover:text-[color:var(--brand-primary)] disabled:cursor-not-allowed disabled:opacity-50">
+                <Search size={12} /> {busqueda.fase === "buscando" ? "Buscando…" : "Buscar cliente"}
+              </button>
+            )}
+          </div>
           <div><label className={lbl}>Fecha de nacimiento</label><DateInput aria-label="Fecha de nacimiento" type="date" value={cli.nacimiento} onValueChange={(dateValue) => setCli({ ...cli, nacimiento: dateValue })} /></div>
           <div><label className={lbl}>Teléfono</label><Input value={cli.telefono} onChange={(e) => setCli({ ...cli, telefono: e.target.value })} /></div>
           <div><label className={lbl}>Email</label><Input value={cli.email} onChange={(e) => setCli({ ...cli, email: e.target.value })} /></div>
         </div>
+        {puedeBuscarCliente && busqueda.fase === "error" && (
+          <p role="alert" className="mt-3 text-xs text-red-600">{busqueda.mensaje}</p>
+        )}
+        {puedeBuscarCliente && busqueda.fase === "listo" && (
+          <div className="mt-3" aria-live="polite">
+            <PanelClienteEncontrado resultado={busqueda.resultado} cli={cli} confirmando={confirmando}
+              onUsar={usarDato}
+              onConfirmar={() => { if (confirmando) aplicarDato(confirmando.campo, confirmando.valor); }}
+              onCancelar={() => setConfirmando(null)} />
+          </div>
+        )}
         <p className="mt-2 text-xs text-gray-400">Para generar el contrato se exige nombre, tipo y número de documento y fecha de nacimiento del titular.</p>
       </section>
 
@@ -213,7 +414,7 @@ export function CotizacionManualForm({ asesores, aliados, miNombre, miRolVenta, 
             <label className={lbl}>Tipo de venta</label>
             <div className="flex gap-1">
               {(["interno", "agencia", "freelance"] as const).map((t) => (
-                <button key={t} type="button" onClick={() => setTipoAsesor(t)}
+                <button key={t} type="button" onClick={() => { invalidarBusqueda(); setTipoAsesor(t); }}
                   className="flex-1 rounded-lg border px-3 py-2 text-xs font-medium capitalize transition-colors"
                   style={tipoAsesor === t ? { borderColor: "var(--brand-primary)", color: "var(--brand-primary)", backgroundColor: "rgba(29,124,154,0.08)" } : { borderColor: "#e5e7eb", color: "#6b7280" }}>
                   {t}
@@ -243,7 +444,7 @@ export function CotizacionManualForm({ asesores, aliados, miNombre, miRolVenta, 
       <section className="rounded-xl border border-gray-200 bg-white p-5">
         <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
           <h2 className="text-sm font-semibold text-gray-700">Servicios</h2>
-          <button type="button" onClick={() => setComparativa((v) => !v)} aria-pressed={comparativa}
+          <button type="button" onClick={() => { invalidarBusqueda(); setComparativa((v) => !v); }} aria-pressed={comparativa}
             className="inline-flex items-center gap-1.5 rounded-lg border px-3 py-1.5 text-xs font-medium transition-colors"
             style={comparativa ? { borderColor: "var(--brand-primary)", color: "var(--brand-primary)", backgroundColor: "rgba(29,124,154,0.08)" } : { borderColor: "#e5e7eb", color: "#6b7280" }}>
             <GitCompareArrows size={14} /> Cotización comparativa
