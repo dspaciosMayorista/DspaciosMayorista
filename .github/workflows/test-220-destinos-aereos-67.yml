@@ -73,9 +73,19 @@ jobs:
           grep -qF "$IMAGEN_PGRST" supabase/scripts/test_220_api.sh
           docker pull "$IMAGEN_PGRST"
 
-      - name: Esquema 001-219 sin la 220
+      - name: Esquema 001-221 SIN la 220 (la 220 se prueba sobre la cadena real)
         timeout-minutes: 15
-        run: bash supabase/scripts/preparar_esquema_local.sh "$CT" 219 "$PLANTILLA"
+        run: |
+          set -euo pipefail
+          # preparar_esquema_local.sh aplica todo número <= 'hasta' y resuelve las migraciones respecto de su propia
+          # ubicación: para incluir la 221 y dejar fuera la 220 se usa una copia de supabase/ sin el archivo de la 220.
+          ESQ="$RUNNER_TEMP/esquema"
+          mkdir -p "$ESQ"
+          cp -r supabase "$ESQ/supabase"
+          rm -f "$ESQ"/supabase/migrations/20260601000220_*.sql
+          test -f "$ESQ/supabase/migrations/20260601000221_clientes_contratos_crm.sql"
+          test ! -e "$ESQ/supabase/migrations/20260601000220_paquete_destinos_aereos.sql"
+          bash "$ESQ/supabase/scripts/preparar_esquema_local.sh" "$CT" 221 "$PLANTILLA"
 
       - name: Fases (preflight, aplicar, postcheck, batería SQL, idempotencia y rollback)
         timeout-minutes: 15
@@ -100,8 +110,8 @@ jobs:
             exit 1
           fi
 
-      - name: Carreras entre sesiones reales
-        timeout-minutes: 15
+      - name: Carreras entre sesiones reales (el script se aborta solo a los 110 s)
+        timeout-minutes: 4
         run: |
           set +e
           set -uo pipefail
@@ -109,7 +119,8 @@ jobs:
           bash supabase/scripts/test_220_carrera.sh "$CT" "$PLANTILLA" 2>&1 | tee "$salida"
           rc="${PIPESTATUS[0]}"
           faltan=""
-          for marca in 'OK    C1.2 ' 'OK    C1.3 ' 'OK    C2.2 ' 'OK    C2.3 ' 'OK    C3.1 ' 'OK    C3.3 ' 'OK    C3.4 ' 'OK    C4 '; do
+          for marca in 'OK    C0 ' 'OK    C1.0 ' 'OK    C1.1 ' 'OK    C1.2 ' 'OK    C1.3 ' 'OK    C2.0 ' 'OK    C2.1 ' 'OK    C2.2 ' 'OK    C2.3 ' \
+                       'OK    C3.0 ' 'OK    C3.1 ' 'OK    C3.2 ' 'OK    C3.3 ' 'OK    C3.4 ' 'OK    C4.1 ' 'OK    C4.2 '; do
             grep -qF "$marca" "$salida" || faltan="$faltan [$marca]"
           done
           if [ "$rc" != 0 ] || grep -q '^FALLO' "$salida" || ! grep -q 'TEST 220 CARRERAS: TODO OK' "$salida" || [ -n "$faltan" ]; then

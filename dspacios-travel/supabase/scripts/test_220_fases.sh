@@ -3,7 +3,7 @@
 # FASES · #67 (migración 220) sobre una base DESECHABLE (CI o local); nunca remota.
 #
 # Uso (desde dspacios-travel/):  sh supabase/scripts/test_220_fases.sh <contenedor> [plantilla]
-#   plantilla = base con las migraciones 001-219 (la crea preparar_esquema_local.sh <ct> 219 <plantilla>)
+#   plantilla = cadena 001-221 SIN la 220 (la crea el workflow con una copia de supabase/ sin el archivo de la 220)
 #
 #   F1   preflight ANTES de la 220: P3 en INFO y un vínculo antiguo incoherente listado (P4)
 #   F2   la 220 se aplica con datos antiguos incoherentes SIN validarlos (no toca lo existente)
