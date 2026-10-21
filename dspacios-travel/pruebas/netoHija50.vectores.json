@@ -1,0 +1,823 @@
+[
+ {
+  "id": "V1",
+  "nota": "directo, reconoce participacion",
+  "entrada": {
+   "servicios": [
+    {
+     "id": 1,
+     "orden": 0,
+     "tipo": "aereo",
+     "valor": 2000000,
+     "costoNeto": 1900000
+    },
+    {
+     "id": 2,
+     "orden": 1,
+     "tipo": "hotel",
+     "valor": 6000000,
+     "costoNeto": 5100000
+    },
+    {
+     "id": 3,
+     "orden": 2,
+     "tipo": "traslado",
+     "valor": 1000000,
+     "costoNeto": 850000
+    },
+    {
+     "id": 4,
+     "orden": 3,
+     "tipo": "asistencia",
+     "valor": 500000,
+     "costoNeto": 400000
+    }
+   ],
+   "precioVenta": 10000000,
+   "recobro": 500000,
+   "ninos": 0,
+   "tarifaNino": 0,
+   "recobroAliado": 250000,
+   "reconoceRecobro": true,
+   "pct": 0.12
+  },
+  "esperado": {
+   "neto": 8850000,
+   "descuento": 1150000,
+   "costos": 8250000,
+   "descuentosFila": [
+    0,
+    720000,
+    120000,
+    60000
+   ],
+   "cumple": true,
+   "bajoCosto": false,
+   "costoCero": false,
+   "soloTiquetes": false
+  }
+ },
+ {
+  "id": "V2",
+  "nota": "costo hotel 5.200.000: margen 5,65 %",
+  "entrada": {
+   "servicios": [
+    {
+     "id": 1,
+     "orden": 0,
+     "tipo": "aereo",
+     "valor": 2000000,
+     "costoNeto": 1900000
+    },
+    {
+     "id": 2,
+     "orden": 1,
+     "tipo": "hotel",
+     "valor": 6000000,
+     "costoNeto": 5200000
+    },
+    {
+     "id": 3,
+     "orden": 2,
+     "tipo": "traslado",
+     "valor": 1000000,
+     "costoNeto": 850000
+    },
+    {
+     "id": 4,
+     "orden": 3,
+     "tipo": "asistencia",
+     "valor": 500000,
+     "costoNeto": 400000
+    }
+   ],
+   "precioVenta": 10000000,
+   "recobro": 500000,
+   "ninos": 0,
+   "tarifaNino": 0,
+   "recobroAliado": 250000,
+   "reconoceRecobro": true,
+   "pct": 0.12
+  },
+  "esperado": {
+   "neto": 8850000,
+   "descuento": 1150000,
+   "costos": 8350000,
+   "descuentosFila": [
+    0,
+    720000,
+    120000,
+    60000
+   ],
+   "cumple": false,
+   "bajoCosto": false,
+   "costoCero": false,
+   "soloTiquetes": false
+  }
+ },
+ {
+  "id": "V3",
+  "nota": "costo = NETO",
+  "entrada": {
+   "servicios": [
+    {
+     "id": 1,
+     "orden": 0,
+     "tipo": "aereo",
+     "valor": 2000000,
+     "costoNeto": 1900000
+    },
+    {
+     "id": 2,
+     "orden": 1,
+     "tipo": "hotel",
+     "valor": 6000000,
+     "costoNeto": 5700000
+    },
+    {
+     "id": 3,
+     "orden": 2,
+     "tipo": "traslado",
+     "valor": 1000000,
+     "costoNeto": 850000
+    },
+    {
+     "id": 4,
+     "orden": 3,
+     "tipo": "asistencia",
+     "valor": 500000,
+     "costoNeto": 400000
+    }
+   ],
+   "precioVenta": 10000000,
+   "recobro": 500000,
+   "ninos": 0,
+   "tarifaNino": 0,
+   "recobroAliado": 250000,
+   "reconoceRecobro": true,
+   "pct": 0.12
+  },
+  "esperado": {
+   "neto": 8850000,
+   "descuento": 1150000,
+   "costos": 8850000,
+   "descuentosFila": [
+    0,
+    720000,
+    120000,
+    60000
+   ],
+   "cumple": false,
+   "bajoCosto": false,
+   "costoCero": false,
+   "soloTiquetes": false
+  }
+ },
+ {
+  "id": "V3b",
+  "nota": "costo 1 peso sobre el NETO",
+  "entrada": {
+   "servicios": [
+    {
+     "id": 1,
+     "orden": 0,
+     "tipo": "aereo",
+     "valor": 2000000,
+     "costoNeto": 1900000
+    },
+    {
+     "id": 2,
+     "orden": 1,
+     "tipo": "hotel",
+     "valor": 6000000,
+     "costoNeto": 5700001
+    },
+    {
+     "id": 3,
+     "orden": 2,
+     "tipo": "traslado",
+     "valor": 1000000,
+     "costoNeto": 850000
+    },
+    {
+     "id": 4,
+     "orden": 3,
+     "tipo": "asistencia",
+     "valor": 500000,
+     "costoNeto": 400000
+    }
+   ],
+   "precioVenta": 10000000,
+   "recobro": 500000,
+   "ninos": 0,
+   "tarifaNino": 0,
+   "recobroAliado": 250000,
+   "reconoceRecobro": true,
+   "pct": 0.12
+  },
+  "esperado": {
+   "neto": 8850000,
+   "descuento": 1150000,
+   "costos": 8850001,
+   "descuentosFila": [
+    0,
+    720000,
+    120000,
+    60000
+   ],
+   "cumple": false,
+   "bajoCosto": true,
+   "costoCero": false,
+   "soloTiquetes": false
+  }
+ },
+ {
+  "id": "V4",
+  "nota": "solo tiquetes, 2 % exacto en el limite",
+  "entrada": {
+   "servicios": [
+    {
+     "id": 1,
+     "orden": 0,
+     "tipo": "aereo",
+     "valor": 2000000,
+     "costoNeto": 2009000
+    }
+   ],
+   "precioVenta": 2100000,
+   "recobro": 100000,
+   "ninos": 0,
+   "tarifaNino": 0,
+   "recobroAliado": 50000,
+   "reconoceRecobro": true,
+   "pct": 0.12
+  },
+  "esperado": {
+   "neto": 2050000,
+   "descuento": 50000,
+   "costos": 2009000,
+   "descuentosFila": [
+    0
+   ],
+   "cumple": true,
+   "bajoCosto": false,
+   "costoCero": false,
+   "soloTiquetes": true
+  }
+ },
+ {
+  "id": "V4b",
+  "nota": "solo tiquetes, un centavo bajo el 2 %",
+  "entrada": {
+   "servicios": [
+    {
+     "id": 1,
+     "orden": 0,
+     "tipo": "aereo",
+     "valor": 2000000,
+     "costoNeto": 2009000.01
+    }
+   ],
+   "precioVenta": 2100000,
+   "recobro": 100000,
+   "ninos": 0,
+   "tarifaNino": 0,
+   "recobroAliado": 50000,
+   "reconoceRecobro": true,
+   "pct": 0.12
+  },
+  "esperado": {
+   "neto": 2050000,
+   "descuento": 50000,
+   "costos": 2009000.01,
+   "descuentosFila": [
+    0
+   ],
+   "cumple": false,
+   "bajoCosto": false,
+   "costoCero": false,
+   "soloTiquetes": true
+  }
+ },
+ {
+  "id": "V4c",
+  "nota": "solo tiquetes, un peso bajo el 2 %",
+  "entrada": {
+   "servicios": [
+    {
+     "id": 1,
+     "orden": 0,
+     "tipo": "aereo",
+     "valor": 2000000,
+     "costoNeto": 2009001
+    }
+   ],
+   "precioVenta": 2100000,
+   "recobro": 100000,
+   "ninos": 0,
+   "tarifaNino": 0,
+   "recobroAliado": 50000,
+   "reconoceRecobro": true,
+   "pct": 0.12
+  },
+  "esperado": {
+   "neto": 2050000,
+   "descuento": 50000,
+   "costos": 2009001,
+   "descuentosFila": [
+    0
+   ],
+   "cumple": false,
+   "bajoCosto": false,
+   "costoCero": false,
+   "soloTiquetes": true
+  }
+ },
+ {
+  "id": "V5a",
+  "nota": "descuento 0: solo tiquete sin recobro",
+  "entrada": {
+   "servicios": [
+    {
+     "id": 1,
+     "orden": 0,
+     "tipo": "aereo",
+     "valor": 2000000,
+     "costoNeto": 1900000
+    }
+   ],
+   "precioVenta": 2000000,
+   "recobro": 0,
+   "ninos": 0,
+   "tarifaNino": 0,
+   "recobroAliado": 0,
+   "reconoceRecobro": true,
+   "pct": 0.12
+  },
+  "esperado": {
+   "neto": 2000000,
+   "descuento": 0,
+   "costos": 1900000,
+   "descuentosFila": [
+    0
+   ],
+   "cumple": true,
+   "bajoCosto": false,
+   "costoCero": false,
+   "soloTiquetes": true
+  }
+ },
+ {
+  "id": "V5b",
+  "nota": "descuento 0: porcentaje 0 sin participacion",
+  "entrada": {
+   "servicios": [
+    {
+     "id": 1,
+     "orden": 0,
+     "tipo": "aereo",
+     "valor": 2000000,
+     "costoNeto": 1900000
+    },
+    {
+     "id": 2,
+     "orden": 1,
+     "tipo": "hotel",
+     "valor": 6000000,
+     "costoNeto": 5100000
+    },
+    {
+     "id": 3,
+     "orden": 2,
+     "tipo": "traslado",
+     "valor": 1000000,
+     "costoNeto": 850000
+    },
+    {
+     "id": 4,
+     "orden": 3,
+     "tipo": "asistencia",
+     "valor": 500000,
+     "costoNeto": 400000
+    }
+   ],
+   "precioVenta": 10000000,
+   "recobro": 500000,
+   "ninos": 0,
+   "tarifaNino": 0,
+   "recobroAliado": 250000,
+   "reconoceRecobro": false,
+   "pct": 0
+  },
+  "esperado": {
+   "neto": 10000000,
+   "descuento": 0,
+   "costos": 8250000,
+   "descuentosFila": [
+    0,
+    0,
+    0,
+    0
+   ],
+   "cumple": true,
+   "bajoCosto": false,
+   "costoCero": false,
+   "soloTiquetes": false
+  }
+ },
+ {
+  "id": "V6",
+  "nota": "asistida sin reconocer participacion",
+  "entrada": {
+   "servicios": [
+    {
+     "id": 1,
+     "orden": 0,
+     "tipo": "aereo",
+     "valor": 2000000,
+     "costoNeto": 1900000
+    },
+    {
+     "id": 2,
+     "orden": 1,
+     "tipo": "hotel",
+     "valor": 6000000,
+     "costoNeto": 5100000
+    },
+    {
+     "id": 3,
+     "orden": 2,
+     "tipo": "traslado",
+     "valor": 1000000,
+     "costoNeto": 850000
+    },
+    {
+     "id": 4,
+     "orden": 3,
+     "tipo": "asistencia",
+     "valor": 500000,
+     "costoNeto": 400000
+    }
+   ],
+   "precioVenta": 10000000,
+   "recobro": 500000,
+   "ninos": 0,
+   "tarifaNino": 0,
+   "recobroAliado": 250000,
+   "reconoceRecobro": false,
+   "pct": 0.12
+  },
+  "esperado": {
+   "neto": 9040000,
+   "descuento": 960000,
+   "costos": 8250000,
+   "descuentosFila": [
+    0,
+    720000,
+    120000,
+    60000
+   ],
+   "cumple": true,
+   "bajoCosto": false,
+   "costoCero": false,
+   "soloTiquetes": false
+  }
+ },
+ {
+  "id": "V8",
+  "nota": "costo total 0",
+  "entrada": {
+   "servicios": [
+    {
+     "id": 1,
+     "orden": 0,
+     "tipo": "aereo",
+     "valor": 2000000,
+     "costoNeto": 0
+    },
+    {
+     "id": 2,
+     "orden": 1,
+     "tipo": "hotel",
+     "valor": 6000000,
+     "costoNeto": 0
+    },
+    {
+     "id": 3,
+     "orden": 2,
+     "tipo": "traslado",
+     "valor": 1000000,
+     "costoNeto": 0
+    },
+    {
+     "id": 4,
+     "orden": 3,
+     "tipo": "asistencia",
+     "valor": 500000,
+     "costoNeto": 0
+    }
+   ],
+   "precioVenta": 10000000,
+   "recobro": 500000,
+   "ninos": 0,
+   "tarifaNino": 0,
+   "recobroAliado": 250000,
+   "reconoceRecobro": true,
+   "pct": 0.12
+  },
+  "esperado": {
+   "neto": 8850000,
+   "descuento": 1150000,
+   "costos": 0,
+   "descuentosFila": [
+    0,
+    720000,
+    120000,
+    60000
+   ],
+   "cumple": false,
+   "bajoCosto": false,
+   "costoCero": true,
+   "soloTiquetes": false
+  }
+ },
+ {
+  "id": "V9",
+  "nota": "los ninos entran a la base",
+  "entrada": {
+   "servicios": [
+    {
+     "id": 1,
+     "orden": 0,
+     "tipo": "hotel",
+     "valor": 4000000,
+     "costoNeto": 3400000
+    }
+   ],
+   "precioVenta": 4600000,
+   "recobro": 0,
+   "ninos": 2,
+   "tarifaNino": 300000,
+   "recobroAliado": 0,
+   "reconoceRecobro": true,
+   "pct": 0.1
+  },
+  "esperado": {
+   "neto": 4140000,
+   "descuento": 460000,
+   "costos": 3400000,
+   "descuentosFila": [
+    400000
+   ],
+   "cumple": true,
+   "bajoCosto": false,
+   "costoCero": false,
+   "soloTiquetes": false
+  }
+ },
+ {
+  "id": "V10",
+  "nota": "mayor resto: el centavo cae en la ultima fila",
+  "entrada": {
+   "servicios": [
+    {
+     "id": 1,
+     "orden": 0,
+     "tipo": "hotel",
+     "valor": 33333.33,
+     "costoNeto": 25000
+    },
+    {
+     "id": 2,
+     "orden": 1,
+     "tipo": "hotel",
+     "valor": 33333.33,
+     "costoNeto": 25000
+    },
+    {
+     "id": 3,
+     "orden": 2,
+     "tipo": "hotel",
+     "valor": 33333.34,
+     "costoNeto": 25000
+    }
+   ],
+   "precioVenta": 100000,
+   "recobro": 0,
+   "ninos": 0,
+   "tarifaNino": 0,
+   "recobroAliado": 0,
+   "reconoceRecobro": true,
+   "pct": 0.1
+  },
+  "esperado": {
+   "neto": 90000,
+   "descuento": 10000,
+   "costos": 75000,
+   "descuentosFila": [
+    3333.33,
+    3333.33,
+    3333.34
+   ],
+   "cumple": true,
+   "bajoCosto": false,
+   "costoCero": false,
+   "soloTiquetes": false
+  }
+ },
+ {
+  "id": "V11",
+  "nota": "USD con decimales",
+  "entrada": {
+   "servicios": [
+    {
+     "id": 1,
+     "orden": 0,
+     "tipo": "aereo",
+     "valor": 400,
+     "costoNeto": 380
+    },
+    {
+     "id": 2,
+     "orden": 1,
+     "tipo": "hotel",
+     "valor": 1500,
+     "costoNeto": 1200
+    },
+    {
+     "id": 3,
+     "orden": 2,
+     "tipo": "traslado",
+     "valor": 200.5,
+     "costoNeto": 150.25
+    }
+   ],
+   "precioVenta": 2200.5,
+   "recobro": 100,
+   "ninos": 0,
+   "tarifaNino": 0,
+   "recobroAliado": 40,
+   "reconoceRecobro": true,
+   "pct": 0.12
+  },
+  "esperado": {
+   "neto": 1956.5,
+   "descuento": 244,
+   "costos": 1730.25,
+   "descuentosFila": [
+    0,
+    179.95,
+    24.05
+   ],
+   "cumple": true,
+   "bajoCosto": false,
+   "costoCero": false,
+   "soloTiquetes": false
+  }
+ },
+ {
+  "id": "B5a",
+  "nota": "borde .5 COP: 1.000.004 x 0,125 = 125.000,5 -> 125.001 (mitad hacia arriba)",
+  "entrada": {
+   "servicios": [
+    {
+     "id": 1,
+     "orden": 0,
+     "tipo": "hotel",
+     "valor": 1000004,
+     "costoNeto": 800000
+    }
+   ],
+   "precioVenta": 1000004,
+   "recobro": 0,
+   "ninos": 0,
+   "tarifaNino": 0,
+   "recobroAliado": 0,
+   "reconoceRecobro": false,
+   "pct": 0.125
+  },
+  "esperado": {
+   "neto": 875003,
+   "descuento": 125001,
+   "costos": 800000,
+   "descuentosFila": [
+    125001
+   ],
+   "cumple": true,
+   "bajoCosto": false,
+   "costoCero": false,
+   "soloTiquetes": false
+  }
+ },
+ {
+  "id": "B5b",
+  "nota": "borde .5 COP con pct de 4 decimales: 1.000.200 x 0,1175 = 117.523,5 -> 117.524",
+  "entrada": {
+   "servicios": [
+    {
+     "id": 1,
+     "orden": 0,
+     "tipo": "hotel",
+     "valor": 1000200,
+     "costoNeto": 800000
+    }
+   ],
+   "precioVenta": 1000200,
+   "recobro": 0,
+   "ninos": 0,
+   "tarifaNino": 0,
+   "recobroAliado": 0,
+   "reconoceRecobro": false,
+   "pct": 0.1175
+  },
+  "esperado": {
+   "neto": 882676,
+   "descuento": 117524,
+   "costos": 800000,
+   "descuentosFila": [
+    117524
+   ],
+   "cumple": true,
+   "bajoCosto": false,
+   "costoCero": false,
+   "soloTiquetes": false
+  }
+ },
+ {
+  "id": "B5c",
+  "nota": "borde .5 USD con centavos: base 1.604 x 0,125 = 200,5 -> 201 (unidad entera); aereo 400,50 fuera de la base",
+  "entrada": {
+   "servicios": [
+    {
+     "id": 1,
+     "orden": 0,
+     "tipo": "aereo",
+     "valor": 400.5,
+     "costoNeto": 380
+    },
+    {
+     "id": 2,
+     "orden": 1,
+     "tipo": "hotel",
+     "valor": 1604,
+     "costoNeto": 1300
+    }
+   ],
+   "precioVenta": 2004.5,
+   "recobro": 0,
+   "ninos": 0,
+   "tarifaNino": 0,
+   "recobroAliado": 0,
+   "reconoceRecobro": false,
+   "pct": 0.125,
+   "moneda": "USD"
+  },
+  "esperado": {
+   "neto": 1803.5,
+   "descuento": 201,
+   "costos": 1680,
+   "descuentosFila": [
+    0,
+    201
+   ],
+   "cumple": true,
+   "bajoCosto": false,
+   "costoCero": false,
+   "soloTiquetes": false
+  }
+ },
+ {
+  "id": "B5d",
+  "nota": "justo debajo del borde COP: 1.000.003 x 0,125 = 125.000,375 -> 125.000",
+  "entrada": {
+   "servicios": [
+    {
+     "id": 1,
+     "orden": 0,
+     "tipo": "hotel",
+     "valor": 1000003,
+     "costoNeto": 800000
+    }
+   ],
+   "precioVenta": 1000003,
+   "recobro": 0,
+   "ninos": 0,
+   "tarifaNino": 0,
+   "recobroAliado": 0,
+   "reconoceRecobro": false,
+   "pct": 0.125
+  },
+  "esperado": {
+   "neto": 875003,
+   "descuento": 125000,
+   "costos": 800000,
+   "descuentosFila": [
+    125000
+   ],
+   "cumple": true,
+   "bajoCosto": false,
+   "costoCero": false,
+   "soloTiquetes": false
+  }
+ }
+]
