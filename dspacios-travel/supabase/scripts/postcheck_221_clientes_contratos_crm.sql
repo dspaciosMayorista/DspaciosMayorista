@@ -6,6 +6,9 @@
 --   fallidos    códigos que fallaron, o 'ninguno'.
 --   resumen     C1=t;C2=t;...;C15=t  (todas, en orden; t = pasa, f = falla).
 --   detalle     jsonb con cada verificación: codigo, ok y su explicación.
+-- C15 (ACL) es una lista blanca exhaustiva: acepta al dueño, a authenticated y a los roles ADMINISTRATIVOS postgres y
+-- supabase_admin, porque Supabase les concede EXECUTE por privilegios por defecto (no son roles de la API); cualquier otro
+-- beneficiario (PUBLIC, anon, service_role u otro rol) la hace fallar y el detalle lo nombra. Exige además EXECUTE de authenticated.
 -- No lee datos personales: solo catálogo (firmas, atributos, ACL y texto de las funciones).
 -- ───────────────────────────────────────────────────────────────────────────
 begin transaction read only;
@@ -86,18 +89,19 @@ chequeos(codigo, ok, detalle) as (
          'La vista y los helpers que usa la 221 siguen presentes y sin cambios de tipo (soy_asesor_del_contrato sigue SECURITY DEFINER)'
   union all
   select 'C15', (select count(*) from ambas) = 2
+                 and (select bool_and(has_function_privilege('authenticated', a.oid, 'execute')) from ambas a)
                  and not exists (select 1
                                    from ambas a
                                   cross join lateral aclexplode(coalesce(a.proacl, acldefault('f', a.proowner))) x
                                   where x.grantee <> a.proowner
-                                    and x.grantee <> (select r.oid from pg_catalog.pg_roles r where r.rolname = 'authenticated')),
-         'ACL exacta: solo el dueño y authenticated tienen privilegios sobre las dos funciones. Beneficiarios que sobran: '
+                                    and x.grantee not in (select r.oid from pg_catalog.pg_roles r where r.rolname in ('authenticated', 'postgres', 'supabase_admin'))),
+         'ACL exacta (lista blanca): authenticated con EXECUTE en las dos funciones y, como beneficiarios, solo el dueño, authenticated y los roles administrativos postgres y supabase_admin. Beneficiarios que sobran: '
          || coalesce((select string_agg(a.proname || ' -> ' || coalesce(r.rolname, 'PUBLIC') || ':' || x.privilege_type, ', ' order by a.proname, r.rolname)
                         from ambas a
                        cross join lateral aclexplode(coalesce(a.proacl, acldefault('f', a.proowner))) x
                         left join pg_catalog.pg_roles r on r.oid = x.grantee
                        where x.grantee <> a.proowner
-                         and x.grantee <> (select r2.oid from pg_catalog.pg_roles r2 where r2.rolname = 'authenticated')), 'ninguno')
+                         and x.grantee not in (select r3.oid from pg_catalog.pg_roles r3 where r3.rolname in ('authenticated', 'postgres', 'supabase_admin'))), 'ninguno')
          || '. Dueño: ' || coalesce((select string_agg(distinct pg_catalog.pg_get_userbyid(a.proowner), ',') from ambas a), '?')
 ),
 orden as (
