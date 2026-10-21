@@ -155,6 +155,12 @@ async function cargarDetalleAcotado(
     registrarEtapa(FLUJO, flujoId, "detalle_tarifas", Math.round(performance.now() - t0), "error");
     return { ok: false, error: MSG_ERROR_DETALLE };
   }
+  // #67: error al verificar el destino aéreo — mismo trato (bloque aparte).
+  if (res.errorOrigenAereo) {
+    registrarErrorTecnico(FLUJO, flujoId, "detalle_tarifas", `error_destinos_aereos_${etapa}`, res.errorOrigenAereo);
+    registrarEtapa(FLUJO, flujoId, "detalle_tarifas", Math.round(performance.now() - t0), "error");
+    return { ok: false, error: MSG_ERROR_DETALLE };
+  }
   const filasFinal = combos ? filtrarPorCombos(res.filas, combos) : res.filas;
   registrarEtapa(FLUJO, flujoId, "detalle_tarifas", Math.round(performance.now() - t0), "ok");
   registrarDatoPagina(
@@ -319,6 +325,11 @@ export async function obtenerDetalleServicios(): Promise<ResultadoDetalle> {
   // contrato cubierto por pruebas/tarifarioDetalleWiring.test.ts).
   if (res.errorSalida) {
     registrarErrorTecnico(FLUJO, flujoId, "detalle_tarifas", "error_salidas_servicios", res.errorSalida);
+    registrarEtapa(FLUJO, flujoId, "detalle_tarifas", Math.round(performance.now() - t0), "error");
+    return { ok: false, error: MSG_ERROR_DETALLE };
+  }
+  if (res.errorOrigenAereo) {
+    registrarErrorTecnico(FLUJO, flujoId, "detalle_tarifas", "error_destinos_aereos_servicios", res.errorOrigenAereo);
     registrarEtapa(FLUJO, flujoId, "detalle_tarifas", Math.round(performance.now() - t0), "error");
     return { ok: false, error: MSG_ERROR_DETALLE };
   }

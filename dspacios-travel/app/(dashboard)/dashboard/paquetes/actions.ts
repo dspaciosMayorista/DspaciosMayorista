@@ -19,6 +19,17 @@ import {
 import { empaquetadoVigente, hoyBogota } from "@/lib/reservar/origen";
 import { seleccionarSalidasVigentes } from "@/lib/reservar/salidaDinamicaVigente";
 import {
+  filtrarCandidatos,
+  mensajeErrorBase,
+  leerInfoFuentes,
+  motivoRechazoFuente,
+  prepararGuardadoDestinosAereos,
+  resolverDestinosAereosPaquete,
+  validarLoteOrigenesAereos,
+  MENSAJES as MENSAJES_DEST_AEREOS,
+  type DestinoCatalogo,
+} from "@/lib/paquetes/destinosAereos67";
+import {
   validarCondicionPago,
   validarRestriccionComercialCatalogo,
   type CondicionPagoEntrada,
@@ -74,6 +85,12 @@ export interface PaqueteConfig {
   programaNoIncluye: string;
   programaTarifasEspeciales: string;
   programaCondicionesComerciales: string;
+  // Destinos aéreos alternativos (migración 220, #67) — OPCIONALES: un
+  // formulario anterior que no los envía no toca la configuración aérea
+  // guardada. `destinosAereosIds` son SOLO las alternativas (el destino
+  // comercial es siempre `destinoId` y nunca se repite aquí).
+  destinosAereosAlternativos?: boolean;
+  destinosAereosIds?: number[];
 }
 
 function validarCondicionYRestriccionPaquete(
@@ -124,17 +141,45 @@ function configToRow(c: PaqueteConfig, condicion: { condicion_pago_tipo: string;
 // no lee estas columnas) — solo viaja al desglose de exigencia de pago. Igual
 // que el resto de esta pantalla (nombre/fechas/mk no regeneran por sí solos),
 // el botón explícito "Generar tarifario" sigue siendo quien dispara el cálculo.
+// ¿El formulario envió la configuración de destinos aéreos (#67)? Si no, no se toca.
+function entradaDestinosAereos(c: PaqueteConfig) {
+  if (c.destinosAereosAlternativos === undefined && c.destinosAereosIds === undefined) return null;
+  return {
+    destinoComercialId: c.destinoId,
+    alternativos: c.destinosAereosAlternativos === true,
+    alternativaIds: (c.destinosAereosIds ?? []).map(Number),
+  };
+}
+
 export async function crearPaquete(c: PaqueteConfig): Promise<Result> {
   if (!c.nombre.trim()) return { ok: false, error: "El nombre es obligatorio." };
   const v = validarCondicionYRestriccionPaquete(c);
   if (!v.ok) return v;
   const sb = await createClient();
+  // #67: se valida la configuración aérea ANTES de crear nada.
+  const entradaAerea = entradaDestinosAereos(c);
+  let destinosAereos: number[] | null = null;
+  if (entradaAerea && (entradaAerea.alternativos || entradaAerea.alternativaIds.length)) {
+    const prep = await prepararGuardadoDestinosAereos(sb, null, entradaAerea);
+    if (!prep.ok) return { ok: false, error: prep.error };
+    destinosAereos = prep.destinosIds;
+  }
   const { data, error } = await sb
     .from("armado_paquetes")
     .insert(configToRow(c, v))
     .select("id")
     .single();
   if (error) return { ok: false, error: error.message };
+  if (entradaAerea && destinosAereos) {
+    const { error: eAereo } = await sb.rpc("guardar_destinos_aereos_67", {
+      p_paquete_id: data.id, p_destino_id: c.destinoId, p_activo: entradaAerea.alternativos, p_destinos: destinosAereos,
+    });
+    if (eAereo) {
+      // El paquete recién creado aún no tiene vuelos ni ventas: se elimina para no dejarlo a medias.
+      await sb.from("armado_paquetes").delete().eq("id", data.id);
+      return { ok: false, error: mensajeErrorBase(eAereo.message) };
+    }
+  }
   revalidatePath("/dashboard/paquetes");
   return { ok: true, id: data.id };
 }
@@ -144,6 +189,20 @@ export async function actualizarPaquete(id: number, c: PaqueteConfig): Promise<R
   const v = validarCondicionYRestriccionPaquete(c);
   if (!v.ok) return v;
   const sb = await createClient();
+  // #67: configuración aérea. Primero se valida TODO sin escribir (país
+  // comparable, alternativas activas, y que ningún vuelo ya vinculado quede
+  // incompatible: hay que desvincularlo explícitamente, nunca se borra solo);
+  // después se guarda destino + check + alternativas en UNA transacción, y solo
+  // si eso se confirma se actualiza el resto de la configuración.
+  const entradaAerea = entradaDestinosAereos(c);
+  if (entradaAerea) {
+    const prep = await prepararGuardadoDestinosAereos(sb, id, entradaAerea);
+    if (!prep.ok) return { ok: false, error: prep.error };
+    const { error: eAereo } = await sb.rpc("guardar_destinos_aereos_67", {
+      p_paquete_id: id, p_destino_id: c.destinoId, p_activo: entradaAerea.alternativos, p_destinos: prep.destinosIds,
+    });
+    if (eAereo) return { ok: false, error: mensajeErrorBase(eAereo.message) };
+  }
   const { error } = await sb
     .from("armado_paquetes")
     .update({ ...configToRow(c, v), updated_at: new Date().toISOString() })
@@ -151,6 +210,26 @@ export async function actualizarPaquete(id: number, c: PaqueteConfig): Promise<R
   if (error) return { ok: false, error: error.message };
   revalidatePath(`/dashboard/paquetes/${id}`);
   return { ok: true, id };
+}
+
+// Candidatos para el selector de destinos aéreos alternativos del editor (#67):
+// destinos ACTIVOS del MISMO país que el destino comercial. Se piden al servidor
+// (no se filtran en el navegador) para que la regla de país sea una sola.
+export type CandidatosDestinosAereos =
+  | { ok: true; candidatos: { id: number; nombre: string; codigo_iata: string | null }[]; motivo: string | null }
+  | { ok: false; error: string };
+
+export async function listarDestinosAereosCandidatos(destinoComercialId: number | null): Promise<CandidatosDestinosAereos> {
+  if (!destinoComercialId) return { ok: true, candidatos: [], motivo: "Elige primero el destino comercial." };
+  const sb = await createClient();
+  const { data, error } = await sb.from("destinos").select("id, nombre, codigo_iata, pais, activo");
+  if (error) return { ok: false, error: MENSAJES_DEST_AEREOS.tecnico };
+  const r = filtrarCandidatos(destinoComercialId, (data ?? []) as DestinoCatalogo[]);
+  return {
+    ok: true,
+    motivo: r.motivo,
+    candidatos: r.candidatos.map((d) => ({ id: d.id, nombre: d.nombre ?? "", codigo_iata: d.codigo_iata })),
+  };
 }
 
 export async function eliminarPaquete(id: number): Promise<Result> {
@@ -172,8 +251,16 @@ export async function setVuelo(
 ): Promise<Result> {
   const sb = await createClient();
   if (!checked) {
-    await sb.from("armado_vuelos").delete().eq("paquete_id", paqueteId).eq("bloqueo_id", bloqueoId);
+    // Desvincular siempre se permite (es la desvinculación explícita que pide
+    // #67 antes de retirar un destino aéreo). Ahora también se revisa su error.
+    const { error } = await sb.from("armado_vuelos").delete().eq("paquete_id", paqueteId).eq("bloqueo_id", bloqueoId);
+    if (error) return { ok: false, error: error.message };
   } else {
+    // #67: el destino de llegada del vuelo debe estar entre los destinos aéreos
+    // permitidos del paquete — validado aquí (POST directo incluido) y, además,
+    // por la base. Se valida ANTES de escribir.
+    const val = await validarLoteOrigenesAereos(sb, paqueteId, [{ tipo: "bloqueo", id: bloqueoId }]);
+    if (!val.ok) return { ok: false, error: val.error };
     const { error } = await sb
       .from("armado_vuelos")
       .upsert(
@@ -194,12 +281,18 @@ export async function setTodosVuelos(
 ): Promise<Result> {
   const sb = await createClient();
   if (!checked) {
-    await sb.from("armado_vuelos").delete().eq("paquete_id", paqueteId);
+    const { error } = await sb.from("armado_vuelos").delete().eq("paquete_id", paqueteId);
+    if (error) return { ok: false, error: error.message };
   } else if (bloqueoIds.length) {
+    // #67: lote TODO O NADA. Se deduplica y se valida cada vuelo contra los
+    // destinos permitidos ANTES de escribir; si uno solo no cumple, no se
+    // vincula ninguno.
+    const val = await validarLoteOrigenesAereos(sb, paqueteId, bloqueoIds.map((id) => ({ tipo: "bloqueo" as const, id })));
+    if (!val.ok) return { ok: false, error: val.error };
     const { error } = await sb
       .from("armado_vuelos")
       .upsert(
-        bloqueoIds.map((b) => ({ paquete_id: paqueteId, bloqueo_id: b, aplica_mk: true, ta: 0 })),
+        val.fuentes.map((f) => ({ paquete_id: paqueteId, bloqueo_id: f.id, aplica_mk: true, ta: 0 })),
         { onConflict: "paquete_id,bloqueo_id", ignoreDuplicates: true }
       );
     if (error) return { ok: false, error: error.message };
@@ -978,6 +1071,31 @@ export async function generarTarifario(paqueteId: number): Promise<Result> {
     }
   }
 
+  // #67 — destinos aéreos permitidos del paquete (solo Bloqueo/Sistema). Un
+  // vuelo vinculado solo se publica si su destino de llegada está entre los
+  // efectivos HOY: check apagado = destino comercial exacto; encendido =
+  // comercial + alternativas válidas del mismo país. Es la misma regla que usan
+  // la vinculación, la venta y la vitrina; aquí evita publicar (o seguir
+  // publicando) un vuelo cuyo país/destino cambió después de vincularlo. Un
+  // error de lectura aborta la generación como fallo técnico (nunca "sin
+  // vuelos"). Dinámico no pasa por aquí: sus salidas manuales siguen #62.
+  let permiteDestinoAereo = (_tipo: "bloqueo" | "empaquetado", _id: number) => true;
+  let excluidosPorDestinoAereo = 0;
+  if (tipo === "bloqueo" && ((vuelosSel?.length ?? 0) + (empaquetadosSel?.length ?? 0)) > 0) {
+    const efAereo = await resolverDestinosAereosPaquete(sb, paqueteId);
+    if (!efAereo.ok) return await fallarTecnico(efAereo.error);
+    if (!efAereo.efectivos.ok) return await fallar(`Bloqueo: ${efAereo.efectivos.error}`);
+    const permitidos = efAereo.efectivos.ids;
+    const fuentesAereas = [
+      ...(vuelosSel ?? []).map((v) => ({ tipo: "bloqueo" as const, id: v.bloqueo_id })),
+      ...(empaquetadosSel ?? []).map((v) => ({ tipo: "empaquetado" as const, id: v.empaquetado_id })),
+    ];
+    const infoAerea = await leerInfoFuentes(sb, fuentesAereas);
+    if (!infoAerea.ok) return await fallarTecnico(infoAerea.error);
+    permiteDestinoAereo = (t, id) => motivoRechazoFuente(permitidos, infoAerea.info.get(`${t}:${id}`) ?? null) === null;
+    excluidosPorDestinoAereo = fuentesAereas.filter((f) => !permiteDestinoAereo(f.tipo, f.id)).length;
+  }
+
   const vuelos = (vuelosSel ?? [])
     .map((v) => ({
       aplica_mk: v.aplica_mk as boolean,
@@ -991,7 +1109,7 @@ export async function generarTarifario(paqueteId: number): Promise<Result> {
         tarifa_para_empaquetar: number;
       } | null,
     }))
-    .filter((v): v is typeof v & { b: NonNullable<typeof v.b> } => !!v.b && !!v.b.fecha_ida && !!v.b.fecha_regreso);
+    .filter((v): v is typeof v & { b: NonNullable<typeof v.b> } => !!v.b && !!v.b.fecha_ida && !!v.b.fecha_regreso && permiteDestinoAereo("bloqueo", v.b.id));
 
   // Vuelos por SISTEMA (Empaquetados) — mismo shape que `vuelos`, filtrando
   // los desactivados (un empaquetado apagado a mano no debe seguir
@@ -1021,6 +1139,7 @@ export async function generarTarifario(paqueteId: number): Promise<Result> {
     .filter((v): v is typeof v & { e: NonNullable<typeof v.e> } =>
       !!v.e && v.e.activo && !!v.e.fecha_ida && !!v.e.fecha_regreso
       && empaquetadoVigente(v.e.compra_inicio, v.e.compra_fin, hoyBogota(new Date()))
+      && permiteDestinoAereo("empaquetado", v.e.id)
     );
 
   // `tipo` ya se resolvió arriba (justo tras leer `pq`) — lo necesita la
@@ -1050,7 +1169,11 @@ export async function generarTarifario(paqueteId: number): Promise<Result> {
   // dedicado (`salidas_dinamicas`, deliberadamente no fusionado con
   // Empaquetados — ver la migración 156).
   if (tipo === "bloqueo" && !vuelos.length && !empaquetadosVuelos.length)
-    return await fallar("Bloqueo: selecciona al menos un vuelo o un empaquetado.");
+    return await fallar(
+      excluidosPorDestinoAereo
+        ? `Bloqueo: los ${excluidosPorDestinoAereo} vuelo(s) vinculado(s) ya no cumplen los destinos aéreos permitidos del paquete. Revisa la configuración de destinos aéreos o desvincula esos vuelos.`
+        : "Bloqueo: selecciona al menos un vuelo o un empaquetado."
+    );
   if (tipo === "porcion_terrestre" && (!pq.fecha_viaje_inicio || !pq.fecha_viaje_fin))
     return await fallar("Porción terrestre: define el rango de viaje (fechas) en la Configuración inicial.");
   if (tipo === "dinamico" && !salidas.length)
@@ -1261,11 +1384,14 @@ export async function generarTarifario(paqueteId: number): Promise<Result> {
   const avisoNoCompatibles = hotelesBernaloNoCompatibles.length
     ? ` ${hotelesBernaloNoCompatibles.length === 1 ? "El hotel" : "Los hoteles"} ${hotelesBernaloNoCompatibles.join(", ")} también usa${hotelesBernaloNoCompatibles.length === 1 ? "" : "n"} el modelo por unidad, pero el tipo de paquete (${tipo === "dinamico" ? "dinámico" : "servicios"}) todavía no está integrado con Vista Booking — no aparecerá${hotelesBernaloNoCompatibles.length === 1 ? "" : "n"} ahí hasta que exista esa integración.`
     : "";
+  const avisoDestinosAereos = excluidosPorDestinoAereo
+    ? ` ${excluidosPorDestinoAereo} vuelo(s) vinculado(s) se omitieron porque su destino aéreo ya no está permitido para este paquete.`
+    : "";
   return {
     ok: true,
     id: filas.length,
-    ...(avisoValidos || avisoSinPublicar || avisoNoCompatibles
-      ? { aviso: `${filas.length} tarifa(s) persona publicada(s) en el tarifario.${avisoValidos ? ` Además, ${avisoValidos}` : ""}${avisoSinPublicar}${avisoNoCompatibles}` }
+    ...(avisoValidos || avisoSinPublicar || avisoNoCompatibles || avisoDestinosAereos
+      ? { aviso: `${filas.length} tarifa(s) persona publicada(s) en el tarifario.${avisoValidos ? ` Además, ${avisoValidos}` : ""}${avisoSinPublicar}${avisoNoCompatibles}${avisoDestinosAereos}` }
       : {}),
   };
 }

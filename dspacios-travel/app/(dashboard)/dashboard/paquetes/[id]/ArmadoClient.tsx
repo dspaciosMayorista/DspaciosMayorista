@@ -84,13 +84,26 @@ export function ArmadoClient(props: {
   resultado: Resultado[];
   salidas?: SalidaDinamica[];
   moneda?: string;
+  // #67 — error técnico al leer los destinos aéreos del paquete (distinto de "no hay vuelos").
+  destinosAereosError?: string | null;
 }) {
   const router = useRouter();
   const tipo = (props.config?.tipo ?? "bloqueo") as "bloqueo" | "porcion_terrestre" | "servicios" | "dinamico";
   const [openCfg, setOpenCfg] = useState(false);
   const [pending, start] = useTransition();
   const [msg, setMsg] = useState("");
+  // Errores de vincular/desvincular vuelos (#67): el servidor y la base pueden
+  // rechazar un vuelo cuyo destino no está permitido; se muestran junto a los vuelos.
+  const [errVinculo, setErrVinculo] = useState("");
 
+  // Etiqueta del destino de LLEGADA de cada vuelo ("Punta Cana (PUJ)"): se muestra
+  // cuando difiere del destino comercial; nunca se inventa un aeropuerto.
+  const destinoPorId = new Map(props.destinos.map((d) => [d.id, d]));
+  const etiquetaAerea = (destinoId: number | null): string | null => {
+    if (destinoId == null || destinoId === props.config?.destinoId) return null;
+    const d = destinoPorId.get(destinoId);
+    return d ? `${d.nombre}${d.codigo_iata ? ` (${d.codigo_iata})` : ""}` : null;
+  };
   const vueloSel = new Map(props.selVuelos.map((v) => [v.bloqueo_id, v]));
   const empaquetadoSel = new Map(props.selEmpaquetados.map((e) => [e.empaquetado_id, e]));
   const hotelSel = new Map(props.selHoteles.map((h) => [h.hotel_id, h]));
@@ -178,11 +191,18 @@ export function ArmadoClient(props: {
         <ConfigForm destinos={props.destinos} id={props.paqueteId} initial={props.config} />
       </Section>
 
+      {tipo === "bloqueo" && props.destinosAereosError && (
+        <p className="rounded-lg border border-red-200 bg-red-50 p-3 text-sm text-red-700" role="alert">{props.destinosAereosError}</p>
+      )}
+      {tipo === "bloqueo" && errVinculo && (
+        <p className="rounded-lg border border-red-200 bg-red-50 p-3 text-sm text-red-700" role="alert">{errVinculo}</p>
+      )}
+
       {/* Adición de vuelos */}
       {tipo === "bloqueo" && (
       <Section title={`Adición de vuelos (${vueloSel.size})`} open onToggle={() => {}}>
         {!props.vuelosDisp.length ? (
-          <Empty>No hay ciclos aéreos del destino en el rango de viaje.</Empty>
+          <Empty>{props.destinosAereosError ? "No se pudieron cargar los vuelos." : "No hay ciclos aéreos de los destinos permitidos en el rango de viaje."}</Empty>
         ) : (
           <>
             <label className="mb-1 flex items-center gap-2 border-b border-gray-100 pb-2 text-sm font-medium text-gray-700">
@@ -194,11 +214,12 @@ export function ArmadoClient(props: {
                 }}
                 onChange={(e) =>
                   start(async () => {
-                    await setTodosVuelos(
+                    const r = await setTodosVuelos(
                       props.paqueteId,
                       props.vuelosDisp.map((v) => v.id),
                       e.target.checked
                     );
+                    setErrVinculo(r.ok ? "" : r.error);
                     refrescar();
                   })
                 }
@@ -210,8 +231,10 @@ export function ArmadoClient(props: {
               <VueloRow
                 key={v.id}
                 v={v}
+                destinoAereo={etiquetaAerea(v.destino_id)}
                 sel={vueloSel.get(v.id)}
                 paqueteId={props.paqueteId}
+                onError={setErrVinculo}
                 onDone={refrescar}
               />
               ))}
@@ -231,7 +254,7 @@ export function ArmadoClient(props: {
       {tipo === "bloqueo" && (
       <Section title={`Vuelos por Sistema — Empaquetados (${empaquetadoSel.size})`} open onToggle={() => {}}>
         {!props.empaquetadosDisp.length ? (
-          <Empty>No hay empaquetados del destino en el rango de viaje.</Empty>
+          <Empty>{props.destinosAereosError ? "No se pudieron cargar los vuelos." : "No hay empaquetados de los destinos permitidos en el rango de viaje."}</Empty>
         ) : (
           <>
             <label className="mb-1 flex items-center gap-2 border-b border-gray-100 pb-2 text-sm font-medium text-gray-700">
@@ -243,11 +266,12 @@ export function ArmadoClient(props: {
                 }}
                 onChange={(e) =>
                   start(async () => {
-                    await setTodosEmpaquetados(
+                    const r = await setTodosEmpaquetados(
                       props.paqueteId,
                       props.empaquetadosDisp.map((e) => e.id),
                       e.target.checked
                     );
+                    setErrVinculo(r.ok ? "" : r.error);
                     refrescar();
                   })
                 }
@@ -259,8 +283,10 @@ export function ArmadoClient(props: {
               <EmpaquetadoRow
                 key={e.id}
                 e={e}
+                destinoAereo={etiquetaAerea(e.destino_id)}
                 sel={empaquetadoSel.get(e.id)}
                 paqueteId={props.paqueteId}
+                onError={setErrVinculo}
                 onDone={refrescar}
               />
               ))}
@@ -364,9 +390,9 @@ export function ArmadoClient(props: {
 }
 
 function VueloRow({
-  v, sel, paqueteId, onDone,
+  v, destinoAereo, sel, paqueteId, onError, onDone,
 }: {
-  v: Vuelo; sel: SelVuelo | undefined; paqueteId: number; onDone: () => void;
+  v: Vuelo; destinoAereo: string | null; sel: SelVuelo | undefined; paqueteId: number; onError: (m: string) => void; onDone: () => void;
 }) {
   const [, start] = useTransition();
   const checked = !!sel;
@@ -375,7 +401,8 @@ function VueloRow({
 
   function save(nextChecked: boolean, nextMk = aplicaMk, nextTa = ta) {
     start(async () => {
-      await setVuelo(paqueteId, v.id, nextChecked, nextMk, Number(nextTa) || 0);
+      const r = await setVuelo(paqueteId, v.id, nextChecked, nextMk, Number(nextTa) || 0);
+      onError(r.ok ? "" : r.error);
       onDone();
     });
   }
@@ -397,6 +424,9 @@ function VueloRow({
           <p className="text-xs text-gray-500">
             {v.fecha_ida} → {v.fecha_regreso} · tiquete {formatCOP(v.tarifa_para_empaquetar)}
           </p>
+          {destinoAereo && (
+            <p className="text-xs text-teal-700">Destino aéreo: {destinoAereo} · el hotel sigue siendo del destino comercial (sin traslado incluido)</p>
+          )}
 
           {checked && (
             <div className="mt-2 flex flex-wrap items-center gap-3 rounded-lg bg-gray-50 p-2">
@@ -443,9 +473,9 @@ function VueloRow({
 // empaquetado puede no tener PNR todavía) — se muestra "Sin record", nunca
 // como si faltara un dato obligatorio.
 function EmpaquetadoRow({
-  e, sel, paqueteId, onDone,
+  e, destinoAereo, sel, paqueteId, onError, onDone,
 }: {
-  e: Empaquetado; sel: SelEmpaquetado | undefined; paqueteId: number; onDone: () => void;
+  e: Empaquetado; destinoAereo: string | null; sel: SelEmpaquetado | undefined; paqueteId: number; onError: (m: string) => void; onDone: () => void;
 }) {
   const [, start] = useTransition();
   const checked = !!sel;
@@ -454,7 +484,8 @@ function EmpaquetadoRow({
 
   function save(nextChecked: boolean, nextMk = aplicaMk, nextTa = ta) {
     start(async () => {
-      await setEmpaquetado(paqueteId, e.id, nextChecked, nextMk, Number(nextTa) || 0);
+      const r = await setEmpaquetado(paqueteId, e.id, nextChecked, nextMk, Number(nextTa) || 0);
+      onError(r.ok ? "" : r.error);
       onDone();
     });
   }
@@ -477,6 +508,9 @@ function EmpaquetadoRow({
           <p className="text-xs text-gray-500">
             {e.fecha_ida} → {e.fecha_regreso} · tarifa empaquetar {formatCOP(e.tarifa_para_empaquetar)}
           </p>
+          {destinoAereo && (
+            <p className="text-xs text-teal-700">Destino aéreo: {destinoAereo} · el hotel sigue siendo del destino comercial (sin traslado incluido)</p>
+          )}
 
           {checked && (
             <div className="mt-2 flex flex-wrap items-center gap-3 rounded-lg bg-gray-50 p-2">

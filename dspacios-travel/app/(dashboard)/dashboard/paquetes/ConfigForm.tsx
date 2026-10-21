@@ -1,11 +1,11 @@
 "use client";
 
 import { DateInput } from "@/components/ui/DateInput";
-import { useState, useTransition } from "react";
+import { useEffect, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { crearPaquete, actualizarPaquete, type PaqueteConfig } from "./actions";
+import { crearPaquete, actualizarPaquete, listarDestinosAereosCandidatos, type PaqueteConfig } from "./actions";
 import { ComboDestino } from "@/components/ComboDestino";
 
 type Opt = { id: number; nombre: string; codigo_iata?: string | null };
@@ -33,6 +33,9 @@ type Initial = Partial<{
   programaNoIncluye: string;
   programaTarifasEspeciales: string;
   programaCondicionesComerciales: string;
+  // #67 — destinos aéreos alternativos (solo Bloqueo/Sistema).
+  destinosAereosAlternativos: boolean;
+  destinosAereosIds: number[];
 }>;
 
 const lbl = "mb-1 block text-xs font-medium text-gray-600";
@@ -74,8 +77,36 @@ export function ConfigForm({
   const [programaNoIncluye, setProgramaNoIncluye] = useState(initial?.programaNoIncluye ?? "");
   const [programaTarifasEspeciales, setProgramaTarifasEspeciales] = useState(initial?.programaTarifasEspeciales ?? "");
   const [programaCondicionesComerciales, setProgramaCondicionesComerciales] = useState(initial?.programaCondicionesComerciales ?? "");
+  // #67 — destinos aéreos alternativos: check por paquete + selección múltiple de
+  // destinos del MISMO país. Los candidatos los entrega el servidor (una sola
+  // regla de país); el servidor y la base vuelven a validar al guardar.
+  const [aereosAlt, setAereosAlt] = useState(initial?.destinosAereosAlternativos ?? false);
+  const [aereosIds, setAereosIds] = useState<number[]>(initial?.destinosAereosIds ?? []);
+  const [candidatos, setCandidatos] = useState<{ id: number; nombre: string; codigo_iata: string | null }[]>([]);
+  const [candidatosMotivo, setCandidatosMotivo] = useState<string | null>(null);
+  const [candidatosCargando, setCandidatosCargando] = useState(false);
   const [pending, start] = useTransition();
   const [err, setErr] = useState("");
+
+  useEffect(() => {
+    if (tipo !== "bloqueo" || destinoId === "") {
+      setCandidatos([]);
+      setCandidatosMotivo(null);
+      return;
+    }
+    let vigente = true;
+    setCandidatosCargando(true);
+    listarDestinosAereosCandidatos(Number(destinoId)).then((r) => {
+      if (!vigente) return;
+      setCandidatosCargando(false);
+      if (r.ok) { setCandidatos(r.candidatos); setCandidatosMotivo(r.motivo); }
+      else { setCandidatos([]); setCandidatosMotivo(r.error); }
+    });
+    return () => { vigente = false; };
+  }, [tipo, destinoId]);
+
+  const toggleAereo = (id: number) =>
+    setAereosIds((prev) => (prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]));
 
   function guardar() {
     if (!nombre.trim()) {
@@ -105,6 +136,9 @@ export function ConfigForm({
       programaNoIncluye,
       programaTarifasEspeciales,
       programaCondicionesComerciales,
+      // Solo Bloqueo/Sistema usa destinos aéreos alternativos; en los demás tipos
+      // no se envía nada (no se toca lo guardado).
+      ...(tipo === "bloqueo" ? { destinosAereosAlternativos: aereosAlt, destinosAereosIds: aereosIds } : {}),
     };
     start(async () => {
       const r = id ? await actualizarPaquete(id, cfg) : await crearPaquete(cfg);
@@ -156,6 +190,48 @@ export function ConfigForm({
             Activo (visible en el tarifario)
           </label>
         </div>
+
+        {tipo === "bloqueo" && (
+          <div className="md:col-span-2 rounded-lg border border-gray-100 bg-gray-50 p-3" data-testid="destinos-aereos">
+            <label className="flex items-center gap-2 text-sm font-medium text-gray-700">
+              <input
+                type="checkbox"
+                checked={aereosAlt}
+                disabled={destinoId === ""}
+                onChange={(e) => setAereosAlt(e.target.checked)}
+                aria-label="Permitir vuelos a otros destinos del mismo país"
+              />
+              Permitir vuelos a otros destinos del mismo país
+            </label>
+            <p className="mt-1 text-[11px] text-gray-400">
+              Apagado: solo vuelos al destino comercial. Encendido: también los destinos aéreos que elijas aquí (activos y del mismo país).
+              El hotel, el destino público y los servicios no cambian, y no se agregan traslados.
+            </p>
+            {aereosAlt && (
+              <div className="mt-2">
+                {candidatosCargando ? (
+                  <p className="text-xs text-gray-400">Cargando destinos…</p>
+                ) : candidatos.length ? (
+                  <ul className="grid grid-cols-1 gap-1 sm:grid-cols-2">
+                    {candidatos.map((c) => (
+                      <li key={c.id}>
+                        <label className="flex items-center gap-2 text-sm text-gray-700">
+                          <input type="checkbox" checked={aereosIds.includes(c.id)} onChange={() => toggleAereo(c.id)} />
+                          {c.nombre}{c.codigo_iata ? ` (${c.codigo_iata})` : ""}
+                        </label>
+                      </li>
+                    ))}
+                  </ul>
+                ) : (
+                  <p className="rounded-lg bg-amber-50 px-3 py-2 text-xs text-amber-700">{candidatosMotivo ?? "No hay destinos alternativos disponibles."}</p>
+                )}
+                <p className="mt-2 text-[11px] text-gray-400">
+                  Para quitar un destino o apagar la opción, primero desvincula en la sección de vuelos los que ya estén asociados a él.
+                </p>
+              </div>
+            )}
+          </div>
+        )}
 
         <div>
           <label className={lbl}>Vigencia de compra — desde</label>

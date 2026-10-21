@@ -4,8 +4,9 @@ import { filtrarTarifarioVencidas, type ResultadoVigencia } from "./vigencia.ts"
 import { hoyISO } from "../calc/paquetes.ts";
 import { empaquetadoVigente, hoyBogota } from "../reservar/origen.ts";
 import { salidasDinamicasVigentes } from "../reservar/salidaDinamicaVigente.ts";
+import { filtrarFilasPorOrigenAereo } from "../paquetes/destinosAereos67.ts";
 
-// Los 4 filtros "post-carga" que `cargarDatosTarifario()` (lib/tarifario/
+// Los 5 filtros "post-carga" que `cargarDatosTarifario()` (lib/tarifario/
 // datos.ts) siempre aplicó DESPUÉS de traer las filas crudas, y que la carga
 // en dos niveles (lib/tarifario/resumen.ts, app/tarifario/detalle-actions.ts)
 // también debe aplicar — tanto al resumen (Tier 1) como al detalle bajo
@@ -19,6 +20,9 @@ import { salidasDinamicasVigentes } from "../reservar/salidaDinamicaVigente.ts";
 //      (#62) — la fila publicada en `tarifario_resultado` es una caché; la
 //      regla vive en lib/reservar/salidaDinamicaVigente.ts, la misma que usan
 //      generarTarifario() y computarReserva().
+//   5. Vuelos de Bloqueo/Sistema cuyo destino de llegada ya no está entre los
+//      destinos aéreos permitidos del paquete (#67): país o destino cambiado
+//      después de generar el tarifario. Regla en lib/paquetes/destinosAereos67.ts.
 // Factorizado UNA sola vez (antes vivía repetido dentro de
 // `cargarDatosTarifario`); ahora lo comparten los 3 caminos que leen
 // `tarifario_resultado`/`tarifario_resumen`, para que una futura regla nueva
@@ -34,6 +38,8 @@ type FilaFiltrable = {
   noches?: number | null;
   empaquetado_id?: number | null;
   salida_id?: number | null;
+  paquete_id?: number | null;
+  bloqueo_id?: number | null;
 };
 
 export type ResultadoFiltrosPostCarga<T> = {
@@ -48,6 +54,14 @@ export type ResultadoFiltrosPostCarga<T> = {
    * Las filas con `salida_id` ya vienen ocultas (fallo cerrado).
    */
   errorSalida: unknown;
+  /**
+   * Error TÉCNICO al verificar el destino aéreo de los vuelos de Bloqueo (#67):
+   * consulta fallida o sin cliente de servicio. Aparte de los demás errores para
+   * que cada llamador lo trate como error técnico y no como "sin disponibilidad".
+   * Una fuente cuyo destino ya no está permitido NO es un error: la fila se
+   * oculta sin más. Las filas de Bloqueo con fuente ya vienen ocultas (fallo cerrado).
+   */
+  errorOrigenAereo: unknown;
 };
 
 export async function aplicarFiltrosPostCarga<T extends FilaFiltrable>(
@@ -112,5 +126,9 @@ export async function aplicarFiltrosPostCarga<T extends FilaFiltrable>(
     }
   }
 
-  return { filas, errorVigencia: resVigencia?.error ?? null, errorEmpaquetado, errorSalida };
+  // Destino aéreo de la fuente de cada fila de Bloqueo (#67). FALLA CERRADA.
+  const rOrigen = await filtrarFilasPorOrigenAereo(admin, filas);
+  filas = rOrigen.filas;
+
+  return { filas, errorVigencia: resVigencia?.error ?? null, errorEmpaquetado, errorSalida, errorOrigenAereo: rOrigen.errorOrigenAereo };
 }
