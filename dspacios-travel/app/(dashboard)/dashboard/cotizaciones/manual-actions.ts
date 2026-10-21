@@ -19,6 +19,7 @@ import {
   AVISO_PERSONAS_PENDIENTES, codigoErrorPersonas, mensajePersonas, titularParaFachada, validarClaveEnvio, validarVersionEsperada,
 } from "@/lib/personas/cotizacion";
 import { altaPersonasCotizacion, logPersonasCotizacion } from "@/lib/personas/consulta";
+import { leerEntradaModalidad } from "@/lib/cotizacion/netoHija";
 
 // Los tipos viven en lib/cotizacion/liquidacionManual.ts (la fórmula única de
 // creación y edición); se re-exportan para no romper a quien ya los importa.
@@ -456,19 +457,33 @@ export async function resolverSolicitudComparativa(
   solicitudId: number,
   decision: "confirmar" | "rechazar",
   motivo: string,
-  clave: string
+  clave: string,
+  /** #50: { modalidad: "pvp" | "neto", reconoceRecobro, autorizarMargen } de la hija B2B; sin él, como siempre. */
+  modalidadRaw?: unknown
 ): Promise<{ ok: true; hijaId: number | null; avisoPersonas?: string } | { ok: false; error: string }> {
   if (!Number.isInteger(solicitudId) || solicitudId <= 0) return { ok: false, error: "Solicitud inválida." };
   if (decision !== "confirmar" && decision !== "rechazar") return { ok: false, error: "Decisión inválida." };
   const claveOk = validarClaveIdempotencia(clave);
   if (!claveOk) return { ok: false, error: "Falta la clave de la operación. Recarga la página e inténtalo de nuevo." };
+  const mod = leerEntradaModalidad(modalidadRaw ?? null);
+  if (!mod.ok) return { ok: false, error: mod.error };
   const sb = await createClient();
-  const { data, error } = await sb.rpc("resolver_solicitud_comparativa", {
+  const paramsResolver = {
     p_solicitud: solicitudId,
     p_decision: decision,
     p_motivo: (motivo || "").trim().slice(0, 300) || null,
     p_clave: decision === "confirmar" ? claveOk : null,
-  });
+  };
+  // #50: la modalidad solo cuenta al confirmar. La identidad es la de la sesión (auth.uid() en la RPC);
+  // la base decide el rol, el aliado, el margen y si la modalidad es obligatoria.
+  const { data, error } = mod.datos && decision === "confirmar"
+    ? await sb.rpc("resolver_solicitud_comparativa_n50", {
+        ...paramsResolver,
+        p_modalidad: mod.datos.modalidad,
+        p_reconoce: mod.datos.reconoceRecobro,
+        p_autorizar: mod.datos.autorizarMargen,
+      })
+    : await sb.rpc("resolver_solicitud_comparativa", paramsResolver);
   if (error) return { ok: false, error: mensajeErrorComparativa(error.message) };
 
   // #42: confirmar crea la HIJA (cotización común): su titular entra al registro de personas con

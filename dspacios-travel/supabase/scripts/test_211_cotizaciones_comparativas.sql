@@ -140,10 +140,54 @@ begin
                      and has_function_privilege('public', p.oid, 'execute')));
 end $$;
 
+-- ─── Contexto de la frontera de #39 (216/217) para los bloques 4, 6, 8 y 12 ─────────────────────────────
+-- Con la 217 activa, la API (anon/authenticated/service_role) ya no escribe directo en cotizaciones manuales ni
+-- en sus servicios (privilegios revocados y disparadores FRONTERA_39). Esas protecciones PREEMPTAN a las de la
+-- 211, que sigue vigente. Por eso, con la 217 activa, cada prueba (a) exige el rechazo ESPECÍFICO de la 217 y
+-- (b) comprueba que el estado de la madre y de sus servicios quedó intacto y que la 217 sigue intacta (no se
+-- concede ningún privilegio ni se toca ningún disparador). La guarda propia de la 211 se prueba (i) con roles de
+-- API sobre la hija de CARRITO, que la frontera no cubre (4.21b, 4.22b, 8.12-8.17), y (ii) sobre las mismas
+-- sentencias originales cuando NO hay frontera: el runner de #50 corre esta batería completa también en una
+-- base hasta la 211, sin 216/217, exigiendo el contexto INACTIVA.
+-- Sin frontera se conservan las expectativas originales de la 211.
+-- El runner de #50 puede exigir el contexto con: psql -v esperar_frontera=activa|inactiva (G2: activa).
+\if :{?esperar_frontera}
+select set_config('t211.esperar_frontera', :'esperar_frontera', false);
+\endif
+create function t211.frontera_activa() returns boolean
+language plpgsql as $f$
+declare v boolean := false;
+begin
+  if to_regprocedure('p39_priv.frontera_activa()') is not null then
+    execute 'select p39_priv.frontera_activa()' into v;
+  end if;
+  return coalesce(v, false);
+end $f$;
+-- Registra el contexto (nunca se salta en silencio) y falla si no es el esperado por el runner.
+create function t211.contexto(p_bloque text) returns boolean
+language plpgsql as $f$
+declare v boolean := t211.frontera_activa(); e text := coalesce(current_setting('t211.esperar_frontera', true), '');
+begin
+  perform t211.afirma(p_bloque || ' contexto: ' || case when v then 'frontera 216/217 ACTIVA' else 'sin frontera de #39' end
+     || case when e <> '' then ' (esperado: ' || e || ')' else '' end,
+     case e when 'activa' then v when 'inactiva' then not v else true end,
+     'frontera_activa=' || v::text || ' esperar_frontera=' || coalesce(nullif(e, ''), '(libre)'));
+  return v;
+end $f$;
+-- Huella del estado protegido de una madre: su fila, sus servicios y cuántas hijas tiene. Si un rechazo dejara
+-- pasar algo (aunque fuera parcialmente), la huella cambia.
+create function t211.estado_madre(p_cot bigint) returns text
+language sql stable as $f$
+  select md5(coalesce((select to_jsonb(q)::text from public.cotizaciones q where q.id = p_cot), '<sin madre>')
+          || '|' || coalesce((select string_agg(to_jsonb(s)::text, ';' order by s.id) from public.cotizacion_servicios s where s.cotizacion_id = p_cot), '<sin servicios>')
+          || '|' || (select count(*) from public.cotizaciones h where h.cotizacion_origen_id = p_cot)::text)
+$f$;
+
 \echo '--- 4. La madre es económicamente inmutable (API y GUC falsificado)'
 do $$
-declare r text; m bigint; admin_ uuid := '00000000-0000-0000-0000-000000211002';
+declare r text; m bigint; admin_ uuid := '00000000-0000-0000-0000-000000211002'; v_front boolean; v_e0 text; v_e1 text; v_e2 text;
 begin
+  v_front := t211.contexto('4.0');
   select v into m from t211.ids where k = 'manual';
   perform t211.rechaza('4.1 authenticated no cambia precio_venta de la madre', t211.intenta('authenticated', admin_, format('update public.cotizaciones set precio_venta = 5 where id = %s', m)), 'INMUTABLE');
   perform t211.rechaza('4.2 authenticated no cambia payload', t211.intenta('authenticated', admin_, format('update public.cotizaciones set payload = ''{}'' where id = %s', m)), 'INMUTABLE');
@@ -156,9 +200,21 @@ begin
   perform t211.rechaza('4.9 no se amplía la vigencia', t211.intenta('authenticated', admin_, format('update public.cotizaciones set vigencia_hasta = vigencia_hasta + 10 where id = %s', m)), 'solo puede reducirse');
   perform t211.acepta('4.10 sí se puede reducir la vigencia', t211.intenta('authenticated', admin_, format('update public.cotizaciones set vigencia_hasta = vigencia_hasta - 1 where id = %s', m)));
   -- Servicios de la madre
+  v_e0 := t211.estado_madre(m);
+  if not v_front then
   perform t211.rechaza('4.11 no se inserta un servicio en la madre', t211.intenta('authenticated', admin_, format('insert into public.cotizacion_servicios (cotizacion_id, tipo_servicio, valor) values (%s, ''otro'', 1)', m)), 'INMUTABLE');
   perform t211.rechaza('4.12 no se edita un servicio de la madre', t211.intenta('authenticated', admin_, format('update public.cotizacion_servicios set valor = 1 where cotizacion_id = %s', m)), 'INMUTABLE');
   perform t211.rechaza('4.13 no se borra un servicio de la madre', t211.intenta('service_role', null, format('delete from public.cotizacion_servicios where cotizacion_id = %s', m)), 'INMUTABLE');
+  else
+    -- Con la 217 activa la API pierde el DML directo sobre servicios: rechazo ESPECÍFICO de la 217 (privilegio),
+    -- con la frontera intacta antes y después. La guarda de la 211 sobre estos servicios queda cubierta por las
+    -- sentencias originales (sin frontera) y no se abre ningún privilegio para alcanzarla.
+    perform t211.afirma('4.10b la frontera 216/217 está intacta antes de los rechazos', t211.frontera_activa());
+    perform t211.rechaza('4.11 no se inserta un servicio en la madre (217: sin privilegio)', t211.intenta('authenticated', admin_, format('insert into public.cotizacion_servicios (cotizacion_id, tipo_servicio, valor) values (%s, ''otro'', 1)', m)), 'permission denied for table cotizacion_servicios');
+    perform t211.rechaza('4.12 no se edita un servicio de la madre (217: sin privilegio)', t211.intenta('authenticated', admin_, format('update public.cotizacion_servicios set valor = 1 where cotizacion_id = %s', m)), 'permission denied for table cotizacion_servicios');
+    perform t211.rechaza('4.13 no se borra un servicio de la madre (217: sin privilegio)', t211.intenta('service_role', null, format('delete from public.cotizacion_servicios where cotizacion_id = %s', m)), 'permission denied for table cotizacion_servicios');
+    perform t211.afirma('4.13b la madre y sus servicios quedaron intactos y la frontera 216/217 sigue activa', t211.estado_madre(m) = v_e0 and t211.frontera_activa());
+  end if;
   perform t211.rechaza('4.14 no se borra la madre', t211.intenta('authenticated', admin_, format('delete from public.cotizaciones where id = %s', m)), 'COMPARATIVA');
   -- Opciones inmutables incluso para el dueño
   perform t211.rechaza('4.15 opciones: UPDATE rechazado (dueño)', t211.intenta('supabase_admin', null, format('update public.cotizacion_opciones set total = 1 where cotizacion_id = %s', m)), 'solo inserción');
@@ -168,18 +224,44 @@ begin
   -- No se fabrican comparativas ni hijas por la API
   perform t211.rechaza('4.20 authenticated no inserta una comparativa', t211.intenta('authenticated', admin_,
       $q$ insert into public.cotizaciones (tenant, tipo, modo, estado, payload, vigencia_hasta, moneda) values ('mayorista', 'comparativa_manual', 'comparativa', 'abierta', '{}', current_date, 'COP') $q$), 'SOLO_RPC');
+  v_e2 := t211.estado_madre(m);
+  if not v_front then
   perform t211.rechaza('4.21 authenticated no marca una simple como hija', t211.intenta('authenticated', admin_, format(
       $q$ insert into public.cotizaciones (tenant, tipo, payload, precio_venta, moneda, cotizacion_origen_id, opcion_ref, acomodacion_ref, madre_version, madre_sello, vigencia_tope)
          values ('mayorista', 'manual', '{}', 100, 'COP', %s, 'A', 'unica', 1, 'x', current_date) $q$, m)), 'SOLO_RPC');
   perform t211.rechaza('4.22 authenticated no se pone aliado/propietario en una simple', t211.intenta('authenticated', admin_,
       $q$ insert into public.cotizaciones (tenant, tipo, payload, moneda, aliado_id) values ('mayorista', 'manual', '{}', 'COP', 921101) $q$), 'SOLO_RPC');
+  else
+    -- Con la 217 activa, una manual no se inserta por la API: rechazo exacto de la frontera...
+    perform t211.rechaza('4.21 authenticated no marca una manual como hija (217: solo se crea con la operación de creación)', t211.intenta('authenticated', admin_, format(
+        $q$ insert into public.cotizaciones (tenant, tipo, payload, precio_venta, moneda, cotizacion_origen_id, opcion_ref, acomodacion_ref, madre_version, madre_sello, vigencia_tope)
+           values ('mayorista', 'manual', '{}', 100, 'COP', %s, 'A', 'unica', 1, 'x', current_date) $q$, m)), 'FRONTERA_39: una cotización dinámica solo se crea con la operación de creación');
+    perform t211.rechaza('4.22 authenticated no se pone aliado/propietario en una manual (217: solo se crea con la operación de creación)', t211.intenta('authenticated', admin_,
+        $q$ insert into public.cotizaciones (tenant, tipo, payload, moneda, aliado_id) values ('mayorista', 'manual', '{}', 'COP', 921101) $q$), 'FRONTERA_39: una cotización dinámica solo se crea con la operación de creación');
+  end if;
+  -- ...y la guarda propia de la 211, que la frontera no cubre (tipo carrito): vale con y sin la 217.
+  perform t211.rechaza('4.21b authenticated no marca una cotización de carrito como hija (guarda de la 211)', t211.intenta('authenticated', admin_, format(
+      $q$ insert into public.cotizaciones (tenant, tipo, payload, precio_venta, moneda, cotizacion_origen_id, opcion_ref, acomodacion_ref, madre_version, madre_sello, vigencia_tope)
+         values ('mayorista', 'carrito', '{}', 100, 'COP', %s, 'A', 'unica', 1, 'x', current_date) $q$, m)), 'COMPARATIVA_SOLO_RPC: las comparativas y sus hijas solo se crean con la operación de comparativa');
+  perform t211.rechaza('4.22b authenticated no se pone aliado/propietario en una cotización de carrito (guarda de la 211)', t211.intenta('authenticated', admin_,
+      $q$ insert into public.cotizaciones (tenant, tipo, payload, moneda, aliado_id) values ('mayorista', 'carrito', '{}', 'COP', 921101) $q$), 'COMPARATIVA_SOLO_RPC: las comparativas y sus hijas solo se crean con la operación de comparativa');
+  perform t211.afirma('4.22c ninguno de esos intentos dejó una hija ni tocó la madre' || case when v_front then ' (frontera 216/217 intacta)' else '' end,
+     t211.estado_madre(m) = v_e2 and t211.frontera_activa() = v_front);
   -- GUC falsificado: un authenticated puede escribir cualquier variable, pero nada la consulta
   perform t211.rechaza('4.30 GUC app.comparativa_rpc falsificado no salta el trigger',
      t211.intenta('authenticated', admin_, format($q$ select set_config('app.comparativa_rpc', %L, true), set_config('app.factura_rpc', %L, true), set_config('app.posteo_abono', 'x', true);
         update public.cotizaciones set precio_venta = 1 where id = %s $q$, m::text, m::text, m)), 'INMUTABLE');
+  v_e1 := t211.estado_madre(m);
+  if not v_front then
   perform t211.rechaza('4.31 GUC falsificado tampoco permite insertar servicios en la madre',
      t211.intenta('authenticated', admin_, format($q$ select set_config('app.comparativa_rpc', %L, true);
         insert into public.cotizacion_servicios (cotizacion_id, tipo_servicio, valor) values (%s, 'otro', 1) $q$, m::text, m)), 'INMUTABLE');
+  else
+    perform t211.rechaza('4.31 GUC falsificado tampoco permite insertar servicios en la madre (217: sin privilegio)',
+       t211.intenta('authenticated', admin_, format($q$ select set_config('app.comparativa_rpc', %L, true);
+          insert into public.cotizacion_servicios (cotizacion_id, tipo_servicio, valor) values (%s, 'otro', 1) $q$, m::text, m)), 'permission denied for table cotizacion_servicios');
+    perform t211.afirma('4.31b la madre y sus servicios quedaron intactos y la frontera 216/217 sigue activa', t211.estado_madre(m) = v_e1 and t211.frontera_activa());
+  end if;
   perform t211.rechaza('4.32 GUC falsificado tampoco crea una comparativa',
      t211.intenta('authenticated', admin_, $q$ select set_config('app.comparativa_rpc', '1', true);
         insert into public.cotizaciones (tenant, tipo, modo, estado, payload, vigencia_hasta, moneda) values ('mayorista', 'comparativa_manual', 'comparativa', 'abierta', '{}', current_date, 'COP') $q$), 'SOLO_RPC');
@@ -219,10 +301,11 @@ end $$;
 
 \echo '--- 6. Recibos de un solo uso, identidad y elección con sesión'
 do $$
-declare m bigint; rid uuid; r text; h bigint; h2 bigint; c public.cotizaciones; n int; s numeric;
+declare m bigint; rid uuid; r text; h bigint; h2 bigint; c public.cotizaciones; n int; s numeric; v_front boolean;
   admin_ uuid := '00000000-0000-0000-0000-000000211002'; venta_ uuid := '00000000-0000-0000-0000-000000211003';
   min_ uuid := '00000000-0000-0000-0000-000000211004'; inact uuid := '00000000-0000-0000-0000-000000211009';
 begin
+  v_front := t211.contexto('6.0');
   -- madre nueva y limpia para este bloque
   m := t211.madre_manual(admin_);
   insert into t211.ids values ('manual2', m) on conflict (k) do update set v = excluded.v;
@@ -304,8 +387,17 @@ begin
   -- editar el precio de la hija sí es posible (simple); extender más allá del tope, no
   perform t211.acepta('6.27 la hija se edita como una simple (descripción)', t211.intenta('authenticated', admin_, format('update public.cotizaciones set cliente = ''Otro'' where id = %s', h)));
   perform t211.rechaza('6.28 la hija no extiende su vigencia más allá de la madre', t211.intenta('authenticated', admin_, format('update public.cotizaciones set vigencia_hasta = vigencia_hasta + 30 where id = %s', h)), 'no puede superar');
+  if not v_front then
   perform t211.rechaza('6.29 la hija no cambia su origen/opción por la API', t211.intenta('authenticated', admin_, format('update public.cotizaciones set opcion_ref = ''B'' where id = %s', h)), 'SOLO_RPC');
   perform t211.rechaza('6.30 la hija no se borra', t211.intenta('authenticated', admin_, format('delete from public.cotizaciones where id = %s', h)), 'COMPARATIVA');
+
+  else
+    -- Con la 217 activa la hija es una manual: la frontera la protege primero (la guarda de la 211 sobre la hija de
+    -- carrito, que la frontera no cubre, se prueba en 8.13-8.17 con roles de API).
+    perform t211.rechaza('6.29 la hija no cambia su origen/opción por la API (217: dato económico solo con la operación autorizada)', t211.intenta('authenticated', admin_, format('update public.cotizaciones set opcion_ref = ''B'' where id = %s', h)), 'FRONTERA_39: los datos económicos de una cotización dinámica solo se cambian con su operación autorizada');
+    perform t211.rechaza('6.30 la hija no se borra (217: una cotización dinámica no se borra)', t211.intenta('authenticated', admin_, format('delete from public.cotizaciones where id = %s', h)), 'FRONTERA_39: una cotización dinámica no se borra');
+    perform t211.afirma('6.30b …y la hija sigue intacta', (select opcion_ref = 'A' and estado = 'abierta' from public.cotizaciones where id = h));
+  end if;
 
   -- descarte y reelección
   perform t211.acepta('6.40 la hija se descarta (flujo existente, sin pagos)', t211.intenta('authenticated', admin_, format('update public.cotizaciones set estado = ''descartada'' where id = %s', h)));
@@ -370,6 +462,15 @@ begin
   m := t211.madre_carrito(admin_);
   r := t211.intenta('service_role', null, format($q$ select public.registrar_validacion_comparativa(%s, 'A', 'doble', 1, 'publico', null, 1400000, 'COP', true, %L) $q$, m, t211.cliente_ok()));
   perform t211.rechaza('8.11 madre de un interno no admite el canal público', r, 'NO_AUTORIZADO');
+  -- Guarda propia de la 211 sobre una hija NO manual: la frontera de #39 solo cubre cotizaciones manuales, así que
+  -- estas pruebas alcanzan tg_cotizaciones_guarda con roles de API también cuando la 217 está activa.
+  perform t211.afirma('8.12 precondición: el interno ve la hija de carrito (si no, un UPDATE/DELETE no dispararía nada)',
+     t211.escalar('authenticated', admin_, format('select count(*)::text from public.cotizaciones where id = %s', h)) = '1');
+  perform t211.rechaza('8.13 authenticated no cambia el origen/opción de una hija de carrito', t211.intenta('authenticated', admin_, format('update public.cotizaciones set opcion_ref = ''B'' where id = %s', h)), 'COMPARATIVA_SOLO_RPC: esas columnas solo las escribe la operación de comparativa');
+  perform t211.rechaza('8.14 service_role tampoco', t211.intenta('service_role', null, format('update public.cotizaciones set opcion_ref = ''B'' where id = %s', h)), 'COMPARATIVA_SOLO_RPC: esas columnas solo las escribe la operación de comparativa');
+  perform t211.rechaza('8.15 authenticated no borra una hija de carrito', t211.intenta('authenticated', admin_, format('delete from public.cotizaciones where id = %s', h)), 'COMPARATIVA_INMUTABLE: una comparativa o su hija no se borra');
+  perform t211.rechaza('8.16 service_role tampoco', t211.intenta('service_role', null, format('delete from public.cotizaciones where id = %s', h)), 'COMPARATIVA_INMUTABLE: una comparativa o su hija no se borra');
+  perform t211.afirma('8.17 …y la hija de carrito sigue intacta', (select opcion_ref = 'A' from public.cotizaciones where id = h));
 end $$;
 
 \echo '--- 9. Propiedad B2B autoritativa'
@@ -543,18 +644,93 @@ begin
 end $$;
 
 \echo '--- 12. Regresión: cotizaciones simples siguen funcionando como antes'
+-- Este bloque corre en DOS contextos y lo dice (12.0), nunca salta en silencio:
+--   · SIN la frontera de #39 (211 sola, o con la 216 sin la 217): una cotización simple se crea, edita y
+--     recibe servicios y pagos previos con INSERT/UPDATE directos, "como siempre" (pruebas originales).
+--   · CON la frontera 216/217 activa (`p39_priv.frontera_activa()`): ESA es la regresión que importa. La
+--     creación solo existe por `crear_cotizacion_manual` (service_role) y las escrituras económicas directas
+--     se rechazan con el mensaje exacto de cada puerta (sin desactivar disparadores ni usar superusuario);
+--     el flujo completo de edición, pago, anulación y conversión lo prueba test_216_edicion39.sql (G1).
+-- El contexto se fija una sola vez antes del bloque 4 (`psql -v esperar_frontera=activa|inactiva`; G2: «activa»).
 do $$
-declare r text; c bigint; admin_ uuid := '00000000-0000-0000-0000-000000211002';
+declare
+  r text; c bigint; admin_ uuid := '00000000-0000-0000-0000-000000211002';
+  v_front boolean := false; v_esp text := coalesce(current_setting('t211.esperar_frontera', true), '');
+  v_cab jsonb; v_srv jsonb;
 begin
-  r := t211.escalar('authenticated', admin_, $q$ insert into public.cotizaciones (tenant, tipo, estado, payload, moneda, precio_venta, vigencia_hasta)
-        values ('mayorista', 'manual', 'abierta', '{}', 'COP', 1000, current_date + 3) returning id::text $q$);
-  perform t211.afirma('12.1 un interno crea una cotización simple como siempre', r ~ '^\d+$', r);
-  c := r::bigint;
-  perform t211.acepta('12.2 …y la edita (precio, vigencia, estado)', t211.intenta('authenticated', admin_, format('update public.cotizaciones set precio_venta = 2000, vigencia_hasta = current_date + 10 where id = %s', c)));
-  perform t211.acepta('12.3 …y agrega/edita/borra servicios', t211.intenta('authenticated', admin_, format('insert into public.cotizacion_servicios (cotizacion_id, tipo_servicio, valor) values (%s, ''hotel'', 5)', c)));
-  perform t211.acepta('12.4 …y puede registrar pagos previos como antes (trigger no la afecta)',
-     t211.intenta('supabase_admin', null, format($q$ insert into public.cotizacion_pagos_previos (cotizacion_id, tenant, monto_cop, monto_moneda, moneda, forma_pago, referencia, registrado_por_id)
-         values (%s, 'mayorista', 1, 1, 'COP', 'Transferencia', 'R-REG-1', %L) $q$, c, admin_)));
+  -- Dinámico: sin la 216 la función ni existe y el bloque debe compilar igual.
+  if to_regprocedure('p39_priv.frontera_activa()') is not null then
+    execute 'select p39_priv.frontera_activa()' into v_front;
+  end if;
+  perform t211.afirma('12.0 contexto de la regresión: ' || case when v_front then 'frontera 216/217 ACTIVA' else 'sin frontera de #39' end
+     || case when v_esp <> '' then ' (esperado: ' || v_esp || ')' else '' end,
+     case v_esp when 'activa' then v_front when 'inactiva' then not v_front else true end,
+     'frontera_activa=' || v_front::text || ' esperar_frontera=' || coalesce(nullif(v_esp, ''), '(libre)'));
+
+  if not v_front then
+    r := t211.escalar('authenticated', admin_, $q$ insert into public.cotizaciones (tenant, tipo, estado, payload, moneda, precio_venta, vigencia_hasta)
+          values ('mayorista', 'manual', 'abierta', '{}', 'COP', 1000, current_date + 3) returning id::text $q$);
+    perform t211.afirma('12.1 un interno crea una cotización simple como siempre', r ~ '^\d+$', r);
+    c := r::bigint;
+    perform t211.acepta('12.2 …y la edita (precio, vigencia, estado)', t211.intenta('authenticated', admin_, format('update public.cotizaciones set precio_venta = 2000, vigencia_hasta = current_date + 10 where id = %s', c)));
+    perform t211.acepta('12.3 …y agrega/edita/borra servicios', t211.intenta('authenticated', admin_, format('insert into public.cotizacion_servicios (cotizacion_id, tipo_servicio, valor) values (%s, ''hotel'', 5)', c)));
+    perform t211.acepta('12.4 …y puede registrar pagos previos como antes (trigger no la afecta)',
+       t211.intenta('supabase_admin', null, format($q$ insert into public.cotizacion_pagos_previos (cotizacion_id, tenant, monto_cop, monto_moneda, moneda, forma_pago, referencia, registrado_por_id)
+           values (%s, 'mayorista', 1, 1, 'COP', 'Transferencia', 'R-REG-1', %L) $q$, c, admin_)));
+  else
+    -- 12.1 La creación autorizada: crear_cotizacion_manual (solo service_role) con el autor explícito.
+    v_cab := jsonb_build_object('payload', '{}'::jsonb, 'detalle', '{}'::jsonb, 'precio_venta', 1000, 'moneda', 'COP',
+                                'vigencia_hasta', (current_date + 3)::text, 'cliente', 'Cliente 12', 'pax', 2);
+    v_srv := jsonb_build_array(jsonb_build_object('orden', 0, 'tipo_servicio', 'hotel', 'nombre_servicio', 'Hotel 12',
+                                                  'costo_neto', 800, 'valor', 1000));
+    r := t211.escalar('service_role', null, format('select public.crear_cotizacion_manual(%L, ''mayorista'', %L::jsonb, %L::jsonb)::text', admin_, v_cab, v_srv));
+    perform t211.afirma('12.1 un interno crea una cotización simple por la operación autorizada (crear_cotizacion_manual)', r ~ '^\d+$', r);
+    c := r::bigint;
+    perform t211.afirma('12.1b …queda abierta, manual, con su autor y sus servicios',
+       (select q.tipo = 'manual' and q.modo = 'simple' and q.estado = 'abierta' and q.creado_por_id = admin_ and q.precio_venta = 1000
+           and q.cotizacion_origen_id is null from public.cotizaciones q where q.id = c)
+       and (select count(*) = 1 and sum(valor) = 1000 from public.cotizacion_servicios where cotizacion_id = c));
+    perform t211.rechaza('12.1c el INSERT directo de una manual sigue prohibido (authenticated)',
+       t211.intenta('authenticated', admin_, $q$ insert into public.cotizaciones (tenant, tipo, estado, payload, moneda, precio_venta, vigencia_hasta)
+          values ('mayorista', 'manual', 'abierta', '{}', 'COP', 1000, current_date + 3) $q$),
+       'FRONTERA_39: una cotización dinámica solo se crea con la operación de creación');
+    perform t211.rechaza('12.1d …y tampoco con service_role sin la operación de creación',
+       t211.intenta('service_role', null, $q$ insert into public.cotizaciones (tenant, tipo, estado, payload, moneda, precio_venta, vigencia_hasta)
+          values ('mayorista', 'manual', 'abierta', '{}', 'COP', 1000, current_date + 3) $q$),
+       'FRONTERA_39: una cotización dinámica solo se crea con la operación de creación');
+
+    -- 12.2 Los datos NO económicos siguen editables directo; el precio no.
+    perform t211.acepta('12.2 …se le edita la vigencia directo (campo libre)',
+       t211.intenta('authenticated', admin_, format('update public.cotizaciones set vigencia_hasta = current_date + 10 where id = %s', c)));
+    perform t211.rechaza('12.2b …pero el precio directo se rechaza (solo con la operación autorizada)',
+       t211.intenta('authenticated', admin_, format('update public.cotizaciones set precio_venta = 2000 where id = %s', c)),
+       'FRONTERA_39: los datos económicos de una cotización dinámica solo se cambian con su operación autorizada');
+    perform t211.afirma('12.2c …y el precio quedó intacto', (select precio_venta = 1000 from public.cotizaciones where id = c));
+
+    -- 12.3 Servicios: sin privilegio de escritura directa para ningún rol de la API (la puerta es la RPC de edición).
+    perform t211.rechaza('12.3 agregar un servicio directo se rechaza (authenticated)',
+       t211.intenta('authenticated', admin_, format('insert into public.cotizacion_servicios (cotizacion_id, tipo_servicio, valor) values (%s, ''hotel'', 5)', c)),
+       'permission denied for table cotizacion_servicios');
+    perform t211.rechaza('12.3b …y con service_role tampoco',
+       t211.intenta('service_role', null, format('insert into public.cotizacion_servicios (cotizacion_id, tipo_servicio, valor) values (%s, ''hotel'', 5)', c)),
+       'permission denied for table cotizacion_servicios');
+    perform t211.rechaza('12.3c …ni se editan ni se borran los existentes (authenticated)',
+       t211.intenta('authenticated', admin_, format('update public.cotizacion_servicios set valor = 1 where cotizacion_id = %s', c)),
+       'permission denied for table cotizacion_servicios');
+    perform t211.afirma('12.3d …y los servicios siguen intactos', (select count(*) = 1 and sum(valor) = 1000 from public.cotizacion_servicios where cotizacion_id = c));
+
+    -- 12.4 Pagos previos: solo con la operación autorizada (registrar_pago_previo_rev; flujo completo en G1).
+    perform t211.rechaza('12.4 un pago previo directo se rechaza (authenticated)',
+       t211.intenta('authenticated', admin_, format($q$ insert into public.cotizacion_pagos_previos (cotizacion_id, tenant, monto_cop, monto_moneda, moneda, forma_pago, referencia, registrado_por_id)
+           values (%s, 'mayorista', 1, 1, 'COP', 'Transferencia', 'R-REG-1', %L) $q$, c, admin_)),
+       'permission denied for table cotizacion_pagos_previos');
+    perform t211.rechaza('12.4b …y con service_role sin autorización emitida tampoco',
+       t211.intenta('service_role', null, format($q$ insert into public.cotizacion_pagos_previos (cotizacion_id, tenant, monto_cop, monto_moneda, moneda, forma_pago, referencia, registrado_por_id)
+           values (%s, 'mayorista', 1, 1, 'COP', 'Transferencia', 'R-REG-2', %L) $q$, c, admin_)),
+       'FRONTERA_39: los pagos previos solo se registran con la operación autorizada');
+    perform t211.afirma('12.4c …y no quedó ningún pago previo', not exists (select 1 from public.cotizacion_pagos_previos where cotizacion_id = c));
+  end if;
+
   perform t211.afirma('12.5 el hash del RPC 198 no cambió respecto de main (md5 capturado en el preflight)',
      (select md5(replace(prosrc, chr(13), '')) from pg_proc where oid = to_regprocedure('public.convertir_cotizacion_a_contrato(bigint,uuid)')) = 'edc9975010746e53e4af6a75ad9763dc');
 end $$;

@@ -36,7 +36,11 @@
 // ⚠️ Tipado: opera vía el cliente tipado BASE (`createAdminClient`); la
 // superficie de la migración 164 vive en `types/database.ts`.
 // ─────────────────────────────────────────────────────────────────────────
-import { MENSAJES_COMPARATIVA } from "@/lib/cotizacion/comparativa";
+import { MENSAJES_COMPARATIVA, ROLES_INTERNOS_COMPARATIVA, TOKEN_ENLACE } from "@/lib/cotizacion/comparativa";
+import { pctComisionAliado } from "@/lib/finanzas/comisionB2B";
+import {
+  calcularNetoHija, evaluarMargenNeto, puedeAutorizarMargen, puedeFijarNeto, aUnidades, type ServicioNeto,
+} from "@/lib/cotizacion/netoHija";
 import { createClient } from "@/lib/supabase/server";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { ROLES_CONTRATO_COMPLETO } from "@/lib/roles";
@@ -182,7 +186,7 @@ export async function registrarPagoPrevio(
   let pctEfectivo: number | undefined;
 
   if (!yaCongelada) {
-    const precioTotalMoneda = redondear2(Number(cot.precio_venta) || 0);
+    let precioTotalMoneda = redondear2(Number(cot.precio_venta) || 0);
     // Mismo orden estable que `p39_priv.componentes_manual` (orden, id): la 216
     // compara este snapshot fila por fila con los servicios guardados.
     const { data: servicios } = await admin
@@ -191,10 +195,31 @@ export async function registrarPagoPrevio(
       .eq("cotizacion_id", cotizacionId)
       .order("orden")
       .order("id");
-    const componentes = componentesDeManual(
+    let componentes = componentesDeManual(
       (servicios ?? []) as ServicioManualCondicionable[],
       cot.fecha_salida as string | null,
     );
+    // #50: una hija con precio NETO congela las condiciones sobre los valores NETO sellados (si no,
+    // el "Pago mínimo" de cada fila dejaría despejar el PVP y la comisión). La base lo exige igual:
+    // compara este snapshot con el reparto sellado y rechaza uno a PVP.
+    const { data: sello } = await admin
+      .from("cotizacion_neto")
+      .select("modalidad, neto_total")
+      .eq("cotizacion_id", cotizacionId)
+      .maybeSingle();
+    if (sello?.modalidad === "neto") {
+      const { data: reparto } = await admin
+        .from("cotizacion_neto_componentes")
+        .select("orden, neto")
+        .eq("cotizacion_id", cotizacionId)
+        .order("orden");
+      const filas = reparto ?? [];
+      if (filas.length !== componentes.length || filas.some((r, i) => Number(r.orden) !== i) || !(Number(sello.neto_total) > 0)) {
+        return { ok: false, error: "No se pudo leer el reparto del precio NETO de esta cotización; recarga la página." };
+      }
+      componentes = componentes.map((c, i) => ({ ...c, valor: redondear2(Number(filas[i].neto)) }));
+      precioTotalMoneda = redondear2(Number(sello.neto_total));
+    }
     const snapshot = construirSnapshot(componentes, { fechaPago, precioTotalMoneda, trm });
     // Objeto JSON plano (solo valores JSON) — claves que el RPC 164 espera.
     const filas = snapshot.filas.map((f) => ({
@@ -283,4 +308,124 @@ export async function anularPagoPrevio(
   revalidatePath(`/dashboard/cotizaciones/${pago.cotizacion_id}`);
   revalidatePath("/dashboard/cotizaciones");
   return { ok: true };
+}
+
+// ═════════════════════════════════════════════════════════════════════════
+// #50 · Modalidad PVP/NETO de la hija B2B de una comparativa manual.
+//
+// Contexto para el selector de la interfaz: ¿esta comparativa pide elegir la
+// modalidad?, ¿qué puede hacer el rol de quien mira? y, para quien puede fijar
+// NETO, la vista previa de cada opción (descuento, NETO y margen) calculada con
+// el espejo TS de la base (lib/cotizacion/netoHija.ts). NO decide nada: la base
+// vuelve a calcular y a validar al sellar la hija (migración 222).
+// ═════════════════════════════════════════════════════════════════════════
+export type VistaNeto = {
+  reconoce: boolean;
+  /** ¿Hay descuento? Con descuento 0 no hay NETO. */
+  hayDescuento: boolean;
+  pvp: number;
+  neto: number;
+  descuento: number;
+  base: number;
+  ordinaria: number;
+  participacion: number;
+  costos: number;
+  /** Fracción (0,0678 = 6,78 %). */
+  margen: number;
+  pisoPct: number;
+  soloTiquetes: boolean;
+  cumple: boolean;
+  bajoCosto: boolean;
+  costoCero: boolean;
+};
+export type ContextoModalidad =
+  | { permite: false }
+  | {
+      permite: true;
+      puedeNeto: boolean;
+      puedeAutorizar6: boolean;
+      puedeAutorizar2: boolean;
+      /** Clave "A/doble" → vista con y sin reconocer la participación del recobro. */
+      vista: Record<string, { moneda: string; conReconoce: VistaNeto; sinReconoce: VistaNeto }>;
+    };
+
+export async function contextoModalidadNeto(
+  entrada: { token?: string | null; solicitudId?: number | null },
+): Promise<ContextoModalidad> {
+  const NO: ContextoModalidad = { permite: false };
+  if (!process.env.SUPABASE_SERVICE_ROLE_KEY) return NO;
+  const sb = await createClient();
+  const { data: { user } } = await sb.auth.getUser();
+  if (!user) return NO;
+  const { data: perfil } = await sb.from("usuarios").select("rol, activo, tenant").eq("id", user.id).maybeSingle();
+  const rol = perfil?.rol ?? null;
+  if (!rol || perfil?.activo !== true || !(ROLES_INTERNOS_COMPARATIVA as readonly string[]).includes(rol)) return NO;
+
+  const admin = createAdminClient();
+  let madreId: number | null = null;
+  if (typeof entrada?.token === "string" && TOKEN_ENLACE.test(entrada.token.trim())) {
+    const { data } = await admin.from("cotizaciones").select("id").eq("share_token", entrada.token.trim().toLowerCase()).maybeSingle();
+    madreId = data?.id ?? null;
+  } else if (Number.isInteger(entrada?.solicitudId) && (entrada.solicitudId as number) > 0) {
+    const { data } = await admin.from("cotizacion_comparativa_solicitudes").select("cotizacion_id").eq("id", entrada.solicitudId as number).maybeSingle();
+    madreId = data?.cotizacion_id ?? null;
+  }
+  if (madreId == null) return NO;
+  const { data: madre } = await admin.from("cotizaciones")
+    .select("id, tenant, tipo, modo, estado, aliado_id, payload").eq("id", madreId).maybeSingle();
+  if (!madre || madre.modo !== "comparativa" || madre.tipo !== "comparativa_manual" || madre.estado !== "abierta") return NO;
+  // Misma regla que `autorizaTenant`: su agencia (superadmin, cualquiera). Sin importar `server-only`
+  // (este módulo se carga también desde pruebas de interfaz).
+  if (rol !== "superadmin" && perfil?.tenant !== madre.tenant) return NO;
+  const tipoAsesor = String((madre.payload as { tipoAsesor?: string } | null)?.tipoAsesor ?? "interno");
+  if ((tipoAsesor !== "agencia" && tipoAsesor !== "freelance") || madre.aliado_id == null) return NO;
+
+  const puedeNeto = puedeFijarNeto(rol);
+  const base: ContextoModalidad = {
+    permite: true,
+    puedeNeto,
+    puedeAutorizar6: puedeAutorizarMargen(rol, false),
+    puedeAutorizar2: puedeAutorizarMargen(rol, true),
+    vista: {},
+  };
+  if (!puedeNeto) return base;
+
+  const [{ data: opciones }, { data: servs }, { data: aliado }, { data: param }] = await Promise.all([
+    admin.from("cotizacion_opciones").select("opcion_ref, acomodacion_ref, total, moneda, plantilla_hija").eq("cotizacion_id", madre.id),
+    admin.from("cotizacion_servicios").select("id, orden, tipo_servicio, valor, costo_neto, opcion_ref").eq("cotizacion_id", madre.id).order("orden").order("id"),
+    admin.from("aliados").select("id, tipo, pct_comision").eq("id", madre.aliado_id).maybeSingle(),
+    admin.from("parametros_tributarios").select("valor").eq("parametro", tipoAsesor === "agencia" ? "COMISION_AGENCIA" : "COMISION_FREELANCE").maybeSingle(),
+  ]);
+  if (!aliado) return base;
+  const pct = Math.round(pctComisionAliado(aliado.pct_comision, param?.valor ?? null, tipoAsesor) * 10000) / 10000;
+
+  const vista = (e: Parameters<typeof calcularNetoHija>[0]): VistaNeto => {
+    const r = calcularNetoHija(e);
+    const ev = evaluarMargenNeto(r.neto, r.costos, r.soloTiquetes);
+    return {
+      reconoce: e.reconoceRecobro, hayDescuento: r.descuento > BigInt(0), pvp: aUnidades(r.precio),
+      neto: aUnidades(r.neto), descuento: aUnidades(r.descuento), base: aUnidades(r.base),
+      ordinaria: aUnidades(r.ordinaria), participacion: aUnidades(r.participacion), costos: aUnidades(r.costos),
+      margen: ev.margen, pisoPct: ev.pisoBps / 100, soloTiquetes: r.soloTiquetes,
+      cumple: ev.cumple, bajoCosto: ev.bajoCosto, costoCero: ev.costoCero,
+    };
+  };
+  for (const op of opciones ?? []) {
+    const pl = (op.plantilla_hija ?? {}) as { payload?: { recobro?: number; ninos?: number; tarifaNino?: number; recobroAliado?: number } };
+    const pay = pl.payload ?? {};
+    // Mismas filas que copia `crear_hija`: las comunes y las de esta opción.
+    const filas: ServicioNeto[] = (servs ?? [])
+      .filter((s) => s.opcion_ref == null || s.opcion_ref === op.opcion_ref)
+      .map((s) => ({ id: s.id, orden: Number(s.orden), tipo: String(s.tipo_servicio), valor: Number(s.valor) || 0, costoNeto: Number(s.costo_neto) || 0 }));
+    const comun = {
+      servicios: filas, precioVenta: Number(op.total) || 0, recobro: Number(pay.recobro) || 0, ninos: Number(pay.ninos) || 0,
+      tarifaNino: Number(pay.tarifaNino) || 0, recobroAliado: Number(pay.recobroAliado) || 0, pct,
+    };
+    base.vista[`${op.opcion_ref}/${op.acomodacion_ref}`] = {
+      moneda: String(op.moneda),
+      conReconoce: vista({ ...comun, reconoceRecobro: true }),
+      sinReconoce: vista({ ...comun, reconoceRecobro: false }),
+    };
+  }
+  return base;
 }

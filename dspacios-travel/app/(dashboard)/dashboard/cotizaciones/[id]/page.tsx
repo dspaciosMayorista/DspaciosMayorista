@@ -162,6 +162,16 @@ export default async function CotizacionDetallePage({
         .eq("cotizacion_id", c.id)
         .order("id", { ascending: false })
     : { data: null };
+  // #50: sello de la modalidad PVP/NETO (solo roles de pago; service-role, DESPUÉS de la comprobación
+  // de tenant de arriba). En NETO el panel de pagos trabaja sobre el total NETO, no sobre el PVP.
+  const { data: selloNeto } = esPagoAutorizado && esManual && process.env.SUPABASE_SERVICE_ROLE_KEY
+    ? await createAdminClient()
+        .from("cotizacion_neto")
+        .select("modalidad, pvp_total, neto_total, descuento_total, comision_ordinaria, participacion_recobro, base_comision, reconoce_recobro, margen, piso, autorizado_rol")
+        .eq("cotizacion_id", cotizacionId)
+        .maybeSingle()
+    : { data: null };
+  const esNeto = selloNeto?.modalidad === "neto" && Number(selloNeto.neto_total) > 0;
   // Los asesores internos son los usuarios con rol 'venta'.
   const { data: asesores } = await sb.from("usuarios").select("nombre, email").eq("rol", "venta").eq("activo", true).order("nombre");
   // % por defecto del recobro para el aliado en B2B (editor de niños/recobro).
@@ -390,7 +400,13 @@ export default async function CotizacionDetallePage({
           congelado={!!congeladoCot?.condicion_pago_congelada_en}
           montoExigidoMoneda={congeladoCot?.monto_exigido_total ?? null}
           montoExigidoCop={congeladoCot?.monto_exigido_total_cop ?? null}
-          precioTotalMoneda={Number(c.precio_venta) || 0}
+          precioTotalMoneda={esNeto && selloNeto ? Number(selloNeto.neto_total) : Number(c.precio_venta) || 0}
+          neto={esNeto && selloNeto ? {
+            pvp: Number(selloNeto.pvp_total), neto: Number(selloNeto.neto_total), descuento: Number(selloNeto.descuento_total) || 0,
+            ordinaria: Number(selloNeto.comision_ordinaria) || 0, participacion: Number(selloNeto.participacion_recobro) || 0,
+            base: Number(selloNeto.base_comision) || 0, reconoce: selloNeto.reconoce_recobro === true,
+            margen: Number(selloNeto.margen) || 0, piso: Number(selloNeto.piso) || 0, autorizadoRol: selloNeto.autorizado_rol ?? null,
+          } : null}
           trmAutoritativa={congeladoCot?.trm_autoritativa ?? null}
           pagos={(pagosPrevios ?? []) as PagoPrevioUI[]}
         />

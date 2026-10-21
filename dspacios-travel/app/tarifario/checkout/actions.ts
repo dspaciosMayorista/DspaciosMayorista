@@ -42,6 +42,7 @@ import { TIPOS_DOC_PERSONA } from "@/lib/personas/identidad";
 import { tipoDocCheckout } from "@/lib/personas/cotizacion";
 import { altaPersonasCotizacion, logPersonasCotizacion } from "@/lib/personas/consulta";
 import { codigoErrorContacto, datosContactoTarifario, logContactoTarifario } from "@/lib/crm/contactoTarifario";
+import { leerEntradaModalidad } from "@/lib/cotizacion/netoHija";
 
 // Forma que arma el CARRITO en el cliente (ver lib/cart/CartContext.tsx) —
 // incluye `ninos`/`ninos2`/`infantes`/`pax`/`precio` para la vista previa en
@@ -1386,6 +1387,10 @@ export async function elegirOpcionComparativa(inputRaw: unknown): Promise<Result
   const v = validarEntradaEleccion(inputRaw);
   if (!v.ok) return { ok: false, error: v.error };
   const d = v.datos;
+  // #50: modalidad PVP/NETO de la hija B2B (solo personal interno, comparativa manual). Sin ella,
+  // el comportamiento de siempre; la base decide permisos, aliado, margen y obligatoriedad.
+  const mod = leerEntradaModalidad(inputRaw);
+  if (!mod.ok) return { ok: false, error: mod.error };
   if (!process.env.SUPABASE_SERVICE_ROLE_KEY) return { ok: false, error: "No se pudo completar la operación por un problema de configuración del servidor." };
   const admin = createAdminClient();
   const sb = await createClient();
@@ -1404,6 +1409,9 @@ export async function elegirOpcionComparativa(inputRaw: unknown): Promise<Result
   const esCarrito = madre.tipo === "comparativa_carrito";
   // El origen manual no tiene checkout público: allí el visitante/B2B solo SOLICITA (otra acción).
   if (!esCarrito && actor.canal !== "interno") return { ok: false, error: "Esta comparativa se confirma con tu asesor: envía una solicitud." };
+  if (mod.datos && (esCarrito || actor.canal !== "interno")) {
+    return { ok: false, error: "La modalidad PVP/NETO solo la fija el personal interno en una comparativa manual." };
+  }
 
   let datosCliente: Json | null = null;
   if (actor.canal === "publico") {
@@ -1429,11 +1437,17 @@ export async function elegirOpcionComparativa(inputRaw: unknown): Promise<Result
     }
   }
 
-  const recibo = await admin.rpc("registrar_validacion_comparativa", {
+  const paramsRecibo = {
     p_madre_id: madre.id, p_opcion_ref: d.opcionRef, p_acomodacion_ref: d.acomodacionRef, p_version: d.version,
     p_canal: actor.canal, p_actor_id: actor.userId, p_precio_reliquidado: precio, p_moneda: opcion.moneda,
     p_disponibilidad_ok: true, p_datos_cliente: datosCliente,
-  });
+  };
+  // #50: con modalidad, el recibo la lleva (RPC n50); sin ella, la de siempre.
+  const recibo = mod.datos
+    ? await admin.rpc("registrar_validacion_comparativa_n50", {
+        ...paramsRecibo, p_modalidad: mod.datos.modalidad, p_reconoce: mod.datos.reconoceRecobro, p_autorizar: mod.datos.autorizarMargen,
+      })
+    : await admin.rpc("registrar_validacion_comparativa", paramsRecibo);
   if (recibo.error || !recibo.data) return { ok: false, error: mensajeErrorComparativa(recibo.error?.message), reintentable: esErrorReintentable(codigoErrorComparativa(recibo.error?.message)) };
 
   // Consumo del recibo: con sesión (identidad = auth.uid() en la base) o por checkout público.

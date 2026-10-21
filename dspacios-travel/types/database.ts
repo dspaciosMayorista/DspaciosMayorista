@@ -3151,6 +3151,56 @@ export type Database = {
         Update: never;
         Relationships: [];
       };
+      // ── #50 (migración 222): sello de la modalidad PVP/NETO de la hija manual ──
+      // Solo lectura para service_role; las escribe `p50_priv.sellar_hija`.
+      cotizacion_neto: {
+        Row: {
+          cotizacion_id: number;
+          tenant: string;
+          modalidad: "pvp" | "neto";
+          reconoce_recobro: boolean | null;
+          aliado_id: number | null;
+          tipo_asesor: "interno" | "agencia" | "freelance";
+          moneda: string;
+          pvp_total: number;
+          tiquetes: number | null;
+          recobro: number | null;
+          ninos_total: number | null;
+          recobro_aliado_original: number | null;
+          base_comision: number | null;
+          pct_comision: number | null;
+          comision_ordinaria: number | null;
+          participacion_recobro: number | null;
+          descuento_total: number | null;
+          neto_total: number | null;
+          costo_total: number | null;
+          margen: number | null;
+          piso: number | null;
+          solo_tiquetes: boolean | null;
+          autorizado_por: string | null;
+          autorizado_rol: string | null;
+          autorizado_en: string | null;
+          creado_por_id: string | null;
+          creado_en: string;
+        };
+        Insert: never;
+        Update: never;
+        Relationships: [];
+      };
+      cotizacion_neto_componentes: {
+        Row: {
+          cotizacion_id: number;
+          orden: number;
+          servicio_id: number | null;
+          tipo_servicio: string;
+          pvp: number;
+          descuento: number;
+          neto: number;
+        };
+        Insert: never;
+        Update: never;
+        Relationships: [];
+      };
       // ── Condiciones de pago por componente (migración 164) ──────────────
       cotizacion_condiciones: {
         Row: {
@@ -3971,6 +4021,22 @@ export type Database = {
       };
       resolver_solicitud_comparativa: {
         Args: { p_solicitud: number; p_decision: string; p_motivo: string | null; p_clave: string | null };
+        Returns: number | null;
+      };
+      // #50 (migración 222): igual que las dos anteriores, con la modalidad PVP/NETO de la hija B2B.
+      registrar_validacion_comparativa_n50: {
+        Args: {
+          p_madre_id: number; p_opcion_ref: string; p_acomodacion_ref: string; p_version: number; p_canal: string;
+          p_actor_id: string | null; p_precio_reliquidado: number; p_moneda: string; p_disponibilidad_ok: boolean;
+          p_datos_cliente: Json | null; p_modalidad: string | null; p_reconoce: boolean | null; p_autorizar: boolean | null;
+        };
+        Returns: string;
+      };
+      resolver_solicitud_comparativa_n50: {
+        Args: {
+          p_solicitud: number; p_decision: string; p_motivo: string | null; p_clave: string | null;
+          p_modalidad: string | null; p_reconoce: boolean | null; p_autorizar: boolean | null;
+        };
         Returns: number | null;
       };
       comparativas_b2b_visibles: {
