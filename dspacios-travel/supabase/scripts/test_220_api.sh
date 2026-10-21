@@ -62,7 +62,7 @@ until $PSA -d postgres -c "create database $DB template $PLANTILLA" >/dev/null 2
   i=$((i + 1)); sleep 2
 done
 $PSA -d postgres -c "comment on database $DB is '$MARCA'" >/dev/null
-$PSA -d "$DB" >/dev/null <<'SQL'
+$PSA -d "$DB" > "$TMP/env.out" 2>&1 <<'SQL' || { echo "No se pudo preparar auth.uid()/auth.role() en la base de prueba: $(tail -3 "$TMP/env.out" | cut -c1-300)" >&2; exit 1; }
 create or replace function auth.uid() returns uuid language sql stable as $$
   select coalesce(nullif(current_setting('request.jwt.claim.sub', true), ''),
                   (nullif(current_setting('request.jwt.claims', true), '')::jsonb ->> 'sub'))::uuid

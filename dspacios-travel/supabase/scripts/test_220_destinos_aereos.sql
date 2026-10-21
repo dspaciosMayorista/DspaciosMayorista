@@ -100,12 +100,14 @@ insert into public.bloqueos_vuelo (id, record, ruta, fecha_ida, fecha_regreso, c
   (92105, 'T220A5', 'BOG - JDO - BOG', current_date + 60, current_date + 64, 10, 92010),
   (92106, 'T220A6', 'BOG - XXX - BOG', current_date + 60, current_date + 64, 10, 92050),
   (92107, 'T220A7', 'BOG - AZS - BOG', current_date + 60, current_date + 64, 10, 92060),
-  (92108, 'T220A8', 'BOG - SIN',       current_date + 60, current_date + 64, 10, null);
+  (92108, 'T220A8', 'BOG - SIN',       current_date + 60, current_date + 64, 10, null),
+  -- Segundo vuelo a Juan Dolio, NUNCA vinculado antes de V8: el lote mezclado debe fallar por la guarda de destino, no por la PK.
+  (92109, 'T220A9', 'BOG - JDO - BOG', current_date + 70, current_date + 74, 10, 92010);
 insert into public.empaquetados (id, record, ruta, fecha_ida, fecha_regreso, destino_id, activo) values
   (92201, 'T220E1', 'BOG - PUJ - BOG', current_date + 40, current_date + 44, 92030, true),
   (92202, 'T220E2', 'BOG - CTG - BOG', current_date + 40, current_date + 44, 92040, true),
   (92203, 'T220E3', 'BOG - SDQ - BOG', current_date + 40, current_date + 44, 92020, true);
-select setval(pg_get_serial_sequence('public.bloqueos_vuelo', 'id'), greatest((select max(id) from public.bloqueos_vuelo), 92108));
+select setval(pg_get_serial_sequence('public.bloqueos_vuelo', 'id'), greatest((select max(id) from public.bloqueos_vuelo), 92109));
 select setval(pg_get_serial_sequence('public.empaquetados', 'id'), greatest((select max(id) from public.empaquetados), 92203));
 
 -- Paquetes (se crean con el check apagado y sin alternativas: nada que validar al insertar).
@@ -176,11 +178,12 @@ select t220.afirma('V6 nada quedó vinculado por los rechazos',
 select t220.rechaza('V7 ID de fuente inexistente (forjado)',
   t220.intenta('insert into public.armado_empaquetados (paquete_id, empaquetado_id) values (92301, 999999999)'), 'violates foreign key');
 
--- Lote mezclado: un vuelo válido y uno inválido en la MISMA sentencia -> todo o nada.
+-- Lote mezclado: un vuelo válido (92109, aún no vinculado) y uno inválido (92104, Cartagena) en la MISMA sentencia -> todo o nada.
 select t220.rechaza('V8 lote mezclado: se rechaza completo',
-  t220.intenta('insert into public.armado_vuelos (paquete_id, bloqueo_id) values (92301, 92105), (92301, 92104)'), 'destino_aereo_no_permitido');
-select t220.afirma('V9 lote mezclado: no quedó ningún vínculo parcial nuevo',
-  (select count(*) from public.armado_vuelos where paquete_id = 92301) = 1);
+  t220.intenta('insert into public.armado_vuelos (paquete_id, bloqueo_id) values (92301, 92109), (92301, 92104)'), 'destino_aereo_no_permitido');
+select t220.afirma('V9 lote mezclado: no quedó ningún vínculo parcial nuevo (ni el válido 92109)',
+  (select count(*) from public.armado_vuelos where paquete_id = 92301) = 1
+  and not exists (select 1 from public.armado_vuelos where paquete_id = 92301 and bloqueo_id = 92109));
 
 -- Configuración ON con alternativas por la RPC (como lo hace el servidor).
 select t220.acepta('G1 RPC guarda destino + check + alternativas',

@@ -55,7 +55,7 @@ until $PSA -d postgres -c "create database $DB template $PLANTILLA" >/dev/null 2
   i=$((i + 1)); sleep 2
 done
 $PSA -d postgres -c "comment on database $DB is '$MARCA'" >/dev/null
-$PSA -d "$DB" >/dev/null <<'SQL'
+$PSA -d "$DB" > "$TMP/env.out" 2>&1 <<'SQL' || { echo "No se pudo preparar auth.uid()/auth.role() en la base de prueba: $(tail -3 "$TMP/env.out" | cut -c1-300)" >&2; exit 1; }
 create or replace function auth.uid() returns uuid language sql stable as $$
   select coalesce(nullif(current_setting('request.jwt.claim.sub', true), ''),
                   (nullif(current_setting('request.jwt.claims', true), '')::jsonb ->> 'sub'))::uuid
@@ -75,6 +75,8 @@ insert into public.destinos (id, nombre, codigo_iata, pais, activo) values
 insert into public.bloqueos_vuelo (id, record, ruta, fecha_ida, fecha_regreso, cupos_total, destino_id)
   values (95101, 'F220CTG', 'BOG - CTG - BOG', current_date + 40, current_date + 44, 10, 95040);
 insert into public.armado_paquetes (id, nombre, destino_id) values (95301, 'F220 Juan Dolio', 95010);
+-- Paquete SIN vínculos incompatibles para la "configuración en uso" de F6 (el 95301 conserva a propósito el vínculo antiguo incompatible).
+insert into public.armado_paquetes (id, nombre, destino_id) values (95302, 'F220 Juan Dolio B', 95010);
 insert into public.armado_vuelos (paquete_id, bloqueo_id) values (95301, 95101);
 commit;
 SQL
@@ -103,19 +105,21 @@ aplicar && ok "F5.1 la 220 se aplica por segunda vez sin error" || fallo "F5.1 s
 postcheck && grep -Eq '^OK\|12\|0\|12\|ninguno\|' "$TMP/post.out" && ok "F5.2 postcheck sigue en OK" || fallo "F5.2 postcheck: $(head -3 "$TMP/post.out" | cut -c1-300)"
 
 # ── F6 · el rollback se niega con configuración en uso ────────────
-$PSA -d "$DB" >/dev/null <<'SQL'
+$PSA -d "$DB" > "$TMP/prep6.out" 2>&1 <<'SQL' || { fallo "F6 la preparación de la configuración en uso falló: $(tail -3 "$TMP/prep6.out" | cut -c1-300)"; exit 1; }
 begin;
 insert into public.destinos (id, nombre, codigo_iata, pais, activo) values (95020, 'F220 SANTO DOMINGO', 'SDQ', 'República Dominicana', true);
-insert into public.armado_paquete_destinos_aereos (paquete_id, destino_id) values (95301, 95020);
+insert into public.armado_paquete_destinos_aereos (paquete_id, destino_id) values (95302, 95020);
 commit;
 SQL
+[ "$(uno "select count(*) from public.armado_paquete_destinos_aereos where paquete_id = 95302")" = 1 ] || { fallo "F6 la preparación no dejó la alternativa del paquete 95302"; exit 1; }
 if correr "$AQUI/rollback_220_destinos_aereos.sql" > "$TMP/rb.out" 2>&1; then fallo "F6 el rollback procedió con configuración en uso"; else
   grep -q 'ROLLBACK 220 ABORTADO' "$TMP/rb.out" && ok "F6 el rollback se niega con configuración en uso (forward-only)" || fallo "F6 mensaje inesperado: $(cut -c1-300 "$TMP/rb.out")"
 fi
-[ "$(uno "select count(*) from public.armado_paquete_destinos_aereos")" = 1 ] && ok "F6.1 la configuración quedó intacta tras el rechazo" || fallo "F6.1 la configuración cambió"
+[ "$(uno "select count(*) from public.armado_paquete_destinos_aereos where paquete_id = 95302")" = 1 ] && ok "F6.1 la configuración del paquete 95302 quedó intacta tras el rechazo" || fallo "F6.1 la configuración cambió"
 
 # ── F7 · rollback sin configuración ───────────────────────────────
-$PSA -d "$DB" -c "delete from public.armado_paquete_destinos_aereos" >/dev/null
+$PSA -d "$DB" -c "delete from public.armado_paquete_destinos_aereos where paquete_id = 95302" > "$TMP/prep7.out" 2>&1 || { fallo "F7 no se pudo limpiar la configuración: $(tail -3 "$TMP/prep7.out" | cut -c1-300)"; exit 1; }
+[ "$(uno "select count(*) from public.armado_paquete_destinos_aereos")" = 0 ] || { fallo "F7 quedó configuración sin limpiar"; exit 1; }
 correr "$AQUI/rollback_220_destinos_aereos.sql" > "$TMP/rb2.out" 2>&1 && ok "F7.1 el rollback procedió sin configuración" || fallo "F7.1 rollback: $(cut -c1-400 "$TMP/rb2.out")"
 [ "$(uno "select (to_regclass('public.armado_paquete_destinos_aereos') is null)::int + (to_regprocedure('public.guardar_destinos_aereos_67(bigint,bigint,boolean,bigint[])') is null)::int
           + (not exists (select 1 from information_schema.columns where table_schema = 'public' and table_name = 'armado_paquetes' and column_name = 'destinos_aereos_alternativos'))::int")" = 3 ] \
