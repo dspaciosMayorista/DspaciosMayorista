@@ -4343,6 +4343,57 @@ export type Database = {
           total_filas: number;
         }[];
       };
+      // Migración 221 (#68) — «Clientes de contratos» del CRM, UNA FILA POR CONTRATO.
+      // Solo lectura sobre `ventas_basica`. El actor y su tenant salen de auth.uid() y de
+      // la fila activa de `usuarios`; `p_tenant` solo lo elige el superadmin (el resto
+      // queda en su tenant). `venta` solo ve contratos propios y ninguno cuyo asesor
+      // equivalga a más de un usuario activo del tenant. Vacío idéntico para ajeno, otro
+      // tenant, inexistente y sin permiso. NUNCA devuelve precio, dirección, firma ni
+      // `share_token`, y no lee `crm_contactos`.
+      crm_contratos_clientes_buscar: {
+        Args: {
+          p_tenant?: string | null;
+          p_busqueda?: string | null;
+          p_cursor?: string | null;
+          p_tam?: number;
+        };
+        Returns: {
+          numero_contrato: string;
+          fecha_venta: string | null;
+          cliente: string;
+          cliente_documento: string | null;
+          cliente_email: string | null;
+          cliente_telefono: string | null;
+          destino: string | null;
+          fecha_salida: string | null;
+          fecha_regreso: string | null;
+          estado: string | null;
+          tipo_asesor: string | null;
+          agencia_nombre: string | null;
+          freelance_nombre: string | null;
+          tenant: string;
+          hay_mas: boolean;
+        }[];
+      };
+      crm_contrato_cliente_ficha: {
+        Args: { p_numero_contrato: string };
+        Returns: {
+          numero_contrato: string;
+          fecha_venta: string | null;
+          cliente: string;
+          cliente_documento: string | null;
+          cliente_email: string | null;
+          cliente_telefono: string | null;
+          destino: string | null;
+          fecha_salida: string | null;
+          fecha_regreso: string | null;
+          estado: string | null;
+          tipo_asesor: string | null;
+          agencia_nombre: string | null;
+          freelance_nombre: string | null;
+          tenant: string;
+        }[];
+      };
       // Migración 187 — búsqueda interna de pasajero por documento EXACTO
       // (reutilización de identidad entre contratos). Solo lectura; filtra
       // por rol interno + puede_ver_contrato/soy_asesor_del_contrato dentro

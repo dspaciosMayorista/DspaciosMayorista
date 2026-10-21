@@ -4,7 +4,7 @@ import { createClient } from "@/lib/supabase/server";
 import { Logo } from "@/components/Logo";
 import { LogoutButton } from "../(dashboard)/LogoutButton";
 import { getTenant } from "@/lib/tenant.server";
-import { Contact, Send, Upload, Settings, Megaphone, Users, Inbox, UserSearch } from "lucide-react";
+import { Contact, Send, Upload, Settings, Megaphone, Users, Inbox, UserSearch, FileUser } from "lucide-react";
 
 const NAV = [
   { href: "/crm", label: "Contactos", Icon: Contact },
@@ -19,6 +19,9 @@ const NAV = [
   // #42 (migración 219): titulares y pasajeros de COTIZACIONES. La entrada no autoriza: la RPC
   // filtra por rol, agencia y propiedad (venta y B2B, solo cotizaciones creadas por su usuario).
   { href: "/crm/personas-cotizacion", label: "Personas de cotizaciones", Icon: UserSearch },
+  // #68 (migración 221): clientes de CONTRATOS, una fila por contrato. Separado de Contactos y de
+  // Pasajeros. La entrada no autoriza: la RPC decide por rol, tenant y propiedad.
+  { href: "/crm/clientes-contratos", label: "Clientes de contratos", Icon: FileUser },
   { href: "/crm/campanas", label: "Campañas", Icon: Send },
   { href: "/crm/difusion", label: "Difusión", Icon: Megaphone },
   { href: "/crm/b2b", label: "Cargar B2B", Icon: Upload },
