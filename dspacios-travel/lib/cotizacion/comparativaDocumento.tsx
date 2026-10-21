@@ -152,7 +152,7 @@ export async function FichaComparativa({ madre, puedeResolver, hoy }: { madre: M
           </p>
         </div>
         <div className="flex flex-wrap items-center gap-2 print:hidden">
-          <Link href={`/cotizacion/${madre.id}`} className="inline-flex items-center gap-1.5 rounded-lg border border-gray-300 px-3 py-2 text-sm text-gray-600 hover:bg-gray-50"><Printer size={14} aria-hidden /> Documento</Link>
+          <Link href={`/cotizacion/${madre.id}`} target="_blank" rel="noopener noreferrer" className="inline-flex items-center gap-1.5 rounded-lg border border-gray-300 px-3 py-2 text-sm text-gray-600 hover:bg-gray-50"><Printer size={14} aria-hidden /> Documento<span className="sr-only"> (se abre en otra pestaña; muestra la comparativa a PVP)</span></Link>
           <Link href={`/cot/${madre.share_token}`} target="_blank" className="inline-flex items-center gap-1.5 rounded-lg border border-gray-300 px-3 py-2 text-sm text-gray-600 hover:bg-gray-50"><ExternalLink size={14} aria-hidden /> Enlace del cliente</Link>
           {abierta && !datos.elegida && <DescartarBtn id={madre.id} />}
         </div>

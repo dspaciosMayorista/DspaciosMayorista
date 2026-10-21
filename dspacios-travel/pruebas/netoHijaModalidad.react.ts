@@ -279,3 +279,40 @@ test("el panel de solicitudes sin contexto B2B confirma como siempre (sin quinto
   const [r] = neto.llamadas.filter((l) => l[0] === "resolver").map((l) => l[1] as unknown[]);
   assert.equal(r[4], undefined);
 });
+
+test("vista previa: el aviso dice que la modalidad se guarda al Elegir; marcar radios no envía ni guarda nada", async () => {
+  neto.respCtx = () => ctxBase();
+  const raiz = await montar(h(SelectorOpciones, base));
+  assert.match(raiz.textContent ?? "", /Vista previa\. La modalidad se guarda al pulsar Elegir esta opción/);
+  await marcar(radio(raiz, /NETO/)!);
+  await marcar(radio(raiz, /Sí: el recobro/)!);
+  assert.equal(elegirLlamadas().length, 0, "marcar los radios no llama a ninguna acción de guardado");
+  assert.equal(neto.refrescos, 0);
+  const g = globalThis as unknown as { localStorage?: { length: number }; sessionStorage?: { length: number } };
+  assert.equal(g.localStorage?.length ?? 0, 0, "sin localStorage"); assert.equal(g.sessionStorage?.length ?? 0, 0, "sin sessionStorage");
+});
+
+test("con la vista previa NETO: el total NETO del aliado se destaca y el PVP original queda identificado", async () => {
+  neto.respCtx = () => ctxBase();
+  const raiz = await montar(h(SelectorOpciones, base));
+  assert.match(raiz.textContent ?? "", /Total de este hotel/, "sin vista NETO el total se ve como siempre");
+  await marcar(radio(raiz, /NETO/)!);
+  await marcar(radio(raiz, /Sí: el recobro/)!);
+  const t = raiz.textContent ?? "";
+  assert.match(t, /Total NETO que paga el aliado/);
+  assert.match(t, /PVP original \(cliente\)/);
+  assert.match(t, /PVP original \(precio al cliente\)/);
+  assert.doesNotMatch(t, /Total de este hotel/, "el PVP deja de ser el total principal de la opción con NETO");
+  // el importe NETO es el protagonista (más grande que el PVP) y ni importes ni porcentaje se parten
+  const neto$ = [...raiz.querySelectorAll("p")].find((p) => /530/.test(p.textContent ?? "") && /text-2xl/.test(p.className));
+  assert.ok(neto$, "el NETO va en el texto grande");
+  assert.match(neto$!.className, /whitespace-nowrap/);
+  const margen = [...raiz.querySelectorAll("dd")].find((d) => /15,09 %/.test(d.textContent ?? ""));
+  assert.ok(margen && /whitespace-nowrap/.test(margen.className) && /shrink-0/.test(margen.className), "el porcentaje no se corta");
+});
+
+test("el panel de solicitudes nombra el botón que guarda: «Confirmar y crear la cotización»", async () => {
+  neto.respCtx = () => ctxBase();
+  const raiz = await montar(h(PanelSolicitudes, { solicitudes: SOLICITUDES, puedeResolver: true, hayElegida: false }));
+  assert.match(raiz.textContent ?? "", /Vista previa\. La modalidad se guarda al pulsar Confirmar y crear la cotización/);
+});

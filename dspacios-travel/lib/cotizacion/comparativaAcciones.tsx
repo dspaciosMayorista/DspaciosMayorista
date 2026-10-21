@@ -18,7 +18,7 @@
 import { useEffect, useRef, useState, useTransition } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { CheckCircle2, Loader2, Send, XCircle, ArrowRight, ShieldAlert } from "lucide-react";
+import { CheckCircle2, Loader2, Send, XCircle, ArrowRight, ShieldAlert, Info } from "lucide-react";
 import { formatMoneda } from "@/lib/utils";
 import { ACOM_ROOM_LABEL, type AcomRoom } from "@/lib/acomodaciones";
 import { elegirOpcionComparativa, solicitarOpcionComparativa } from "@/app/tarifario/checkout/actions";
@@ -83,44 +83,64 @@ function motivoBloqueo(ctx: ContextoModalidad | null, clave: string, e: Eleccion
   return bloqueoNeto(vista.v, ctx, e.autorizar);
 }
 
-function PanelModalidad({ ctx, valor, onChange }: { ctx: ContextoModalidad | null; valor: EleccionModalidad; onChange: (e: EleccionModalidad) => void }) {
-  if (!ctx || !ctx.permite) return null;
-  const radio = "flex items-center gap-2 text-sm text-gray-700";
+// Una fila etiqueta/importe: la etiqueta puede partirse en varias líneas; el importe y el porcentaje NUNCA se cortan
+// y quedan alineados a la derecha (escritorio y móvil).
+function Fila({ k, v, fuerte }: { k: string; v: string; fuerte?: boolean }) {
   return (
-    <fieldset className="rounded-xl border border-gray-200 bg-white p-4 text-sm print:hidden">
+    <div className={"flex items-baseline justify-between gap-3" + (fuerte ? " border-t border-gray-200 pt-1 font-medium text-gray-700" : "")}>
+      <dt className="min-w-0">{k}</dt>
+      <dd className="shrink-0 whitespace-nowrap text-right tabular-nums">{v}</dd>
+    </div>
+  );
+}
+
+function PanelModalidad({ ctx, valor, onChange, accion = "Elegir esta opción" }: {
+  ctx: ContextoModalidad | null; valor: EleccionModalidad; onChange: (e: EleccionModalidad) => void;
+  /** Botón que GUARDA la modalidad (en las solicitudes es «Confirmar y crear la cotización»). */
+  accion?: string;
+}) {
+  if (!ctx || !ctx.permite) return null;
+  const radio = "flex items-start gap-2 text-sm text-gray-700";
+  const entrada = "mt-0.5 shrink-0";
+  return (
+    <fieldset className="min-w-0 rounded-xl border border-gray-200 bg-white p-4 text-sm print:hidden">
       <legend className="px-1 text-xs font-semibold uppercase tracking-wide text-gray-500">Precio de la venta B2B</legend>
-      <div className="flex flex-wrap gap-x-6 gap-y-2">
+      <p role="note" className="mb-3 flex items-start gap-2 rounded-lg bg-blue-50 px-3 py-2 text-xs text-blue-800">
+        <Info size={14} className="mt-0.5 shrink-0" aria-hidden />
+        <span><b className="font-semibold">Vista previa.</b>{" "}La modalidad se guarda al pulsar <b className="font-semibold">{accion}</b></span>
+      </p>
+      <div className="grid gap-x-6 gap-y-2 sm:grid-cols-2">
         <label className={radio}>
-          <input type="radio" name="modalidad-b2b" checked={valor.modalidad === "pvp"}
+          <input type="radio" name="modalidad-b2b" className={entrada} checked={valor.modalidad === "pvp"}
             onChange={() => onChange({ modalidad: "pvp", reconoce: null, autorizar: false })} />
-          PVP (el aliado cobra su comisión aparte)
+          <span className="min-w-0"><b className="font-semibold">PVP</b> (el aliado cobra su comisión aparte)</span>
         </label>
         <label className={radio + (ctx.puedeNeto ? "" : " opacity-50")}>
-          <input type="radio" name="modalidad-b2b" disabled={!ctx.puedeNeto} checked={valor.modalidad === "neto"}
+          <input type="radio" name="modalidad-b2b" className={entrada} disabled={!ctx.puedeNeto} checked={valor.modalidad === "neto"}
             onChange={() => onChange({ modalidad: "neto", reconoce: valor.reconoce, autorizar: false })} />
-          NETO (el aliado paga el PVP menos su descuento)
+          <span className="min-w-0"><b className="font-semibold">NETO</b> (el aliado paga el PVP menos su descuento)</span>
         </label>
       </div>
       {!ctx.puedeNeto && <p className="mt-2 text-xs text-gray-500">El precio NETO lo fija gerencia, administración, operaciones o superadmin.</p>}
       {valor.modalidad === "neto" && (
         <div className="mt-3 space-y-2 border-t border-gray-100 pt-3">
           <p className="text-xs font-medium text-gray-600">¿Se reconoce la participación del aliado en el recobro?</p>
-          <div className="flex flex-wrap gap-x-6 gap-y-2">
+          <div className="grid gap-x-6 gap-y-2 sm:grid-cols-2">
             <label className={radio}>
-              <input type="radio" name="reconoce-recobro" checked={valor.reconoce === true}
+              <input type="radio" name="reconoce-recobro" className={entrada} checked={valor.reconoce === true}
                 onChange={() => onChange({ ...valor, reconoce: true, autorizar: false })} />
-              Sí: el recobro sale de la base y su participación se suma al descuento
+              <span className="min-w-0">Sí: el recobro sale de la base y su participación se suma al descuento</span>
             </label>
             <label className={radio}>
-              <input type="radio" name="reconoce-recobro" checked={valor.reconoce === false}
+              <input type="radio" name="reconoce-recobro" className={entrada} checked={valor.reconoce === false}
                 onChange={() => onChange({ ...valor, reconoce: false, autorizar: false })} />
-              No: el recobro entra a la base de la comisión
+              <span className="min-w-0">No: el recobro entra a la base de la comisión</span>
             </label>
           </div>
           {(ctx.puedeAutorizar6 || ctx.puedeAutorizar2) && (
             <label className={radio + " pt-1"}>
-              <input type="checkbox" checked={valor.autorizar} onChange={(e) => onChange({ ...valor, autorizar: e.target.checked })} />
-              <ShieldAlert size={14} aria-hidden className="text-amber-600" /> Autorizo un margen por debajo del mínimo (solo si hace falta)
+              <input type="checkbox" className={entrada} checked={valor.autorizar} onChange={(e) => onChange({ ...valor, autorizar: e.target.checked })} />
+              <span className="min-w-0"><ShieldAlert size={14} aria-hidden className="mr-1 inline text-amber-600" />Autorizo un margen por debajo del mínimo (solo si hace falta)</span>
             </label>
           )}
         </div>
@@ -135,15 +155,23 @@ function ResumenNeto({ ctx, clave, valor }: { ctx: ContextoModalidad | null; cla
   const { v, moneda } = vista;
   const bloqueo = bloqueoNeto(v, ctx, valor.autorizar);
   return (
-    <div className="mt-3 rounded-lg bg-gray-50 p-3 text-xs text-gray-600" aria-live="polite">
-      <div className="flex justify-between"><span>PVP</span><span className="tabular-nums">{mon(v.pvp, moneda)}</span></div>
-      <div className="flex justify-between"><span>Base del descuento</span><span className="tabular-nums">{mon(v.base, moneda)}</span></div>
-      <div className="flex justify-between"><span>Comisión ordinaria</span><span className="tabular-nums">{mon(v.ordinaria, moneda)}</span></div>
-      <div className="flex justify-between"><span>Participación en el recobro</span><span className="tabular-nums">{mon(v.participacion, moneda)}</span></div>
-      <div className="flex justify-between border-t border-gray-200 pt-1 font-medium text-gray-700"><span>Descuento total</span><span className="tabular-nums">{mon(v.descuento, moneda)}</span></div>
-      <div className="flex justify-between font-semibold text-gray-800"><span>Total NETO</span><span className="tabular-nums">{mon(v.neto, moneda)}</span></div>
-      <div className="flex justify-between"><span>Margen sobre el total NETO (mín. {v.pisoPct} %)</span><span className="tabular-nums">{pctTexto(v.margen)}</span></div>
-      {bloqueo && <p role="alert" className="mt-2 text-amber-700">{bloqueo}</p>}
+    <div className="mt-3 space-y-2" aria-live="polite">
+      <dl className="space-y-1 rounded-lg bg-gray-50 p-3 text-xs text-gray-600">
+        <Fila k="PVP original (precio al cliente)" v={mon(v.pvp, moneda)} />
+        <Fila k="Base del descuento" v={mon(v.base, moneda)} />
+        <Fila k="Comisión ordinaria" v={mon(v.ordinaria, moneda)} />
+        <Fila k="Participación en el recobro" v={mon(v.participacion, moneda)} />
+        <Fila k="Descuento total" v={mon(v.descuento, moneda)} fuerte />
+      </dl>
+      <div className="rounded-lg border-2 bg-white p-3" style={{ borderColor: "var(--brand-primary)" }}>
+        <p className="text-[11px] font-semibold uppercase tracking-wide" style={{ color: "var(--brand-primary)" }}>Total NETO que paga el aliado</p>
+        <p className="mt-0.5 whitespace-nowrap text-2xl font-bold tabular-nums text-gray-900">{mon(v.neto, moneda)}</p>
+        <dl className="mt-2 space-y-0.5 text-xs text-gray-600">
+          <Fila k="Margen sobre el total NETO" v={pctTexto(v.margen)} />
+          <Fila k="Mínimo exigido" v={`${v.pisoPct}\u00a0%`} />
+        </dl>
+      </div>
+      {bloqueo && <p role="alert" className="text-xs text-amber-700">{bloqueo}</p>}
     </div>
   );
 }
@@ -215,8 +243,11 @@ export function SelectorOpciones({
           const sel: OpcionVista = g.acomodaciones.find((a) => a.acomodacionRef === acom[g.opcionRef]) ?? g.acomodaciones[0];
           const r = resumenes[`${g.opcionRef}/${sel.acomodacionRef}`] ?? resumenes[g.opcionRef] ?? {};
           const esElegida = !!elegida && elegida.opcionRef === g.opcionRef && elegida.acomodacionRef === sel.acomodacionRef;
+          // Con la vista previa NETO activa, el total de la opción pasa a ser el PVP ORIGINAL (identificado y atenuado)
+          // y el protagonista es el NETO del resumen. Sin vista previa NETO, el total se ve como siempre.
+          const conNeto = modo === "interno" && !deshabilitada && !!vistaDe(ctxMod, `${g.opcionRef}/${sel.acomodacionRef}`, eleccion);
           return (
-            <article key={g.opcionRef} className="flex flex-col rounded-2xl border bg-white p-4 shadow-sm"
+            <article key={g.opcionRef} className="flex min-w-0 flex-col rounded-2xl border bg-white p-4 shadow-sm"
               style={esElegida ? { borderColor: "var(--brand-success)" } : { borderColor: "#e5e7eb" }}>
               <header className="mb-2">
                 <p className="text-[11px] font-semibold uppercase tracking-wide text-gray-400">Opción {g.opcionRef}</p>
@@ -249,14 +280,18 @@ export function SelectorOpciones({
 
               <div className="mt-auto border-t border-gray-100 pt-3">
                 {sel.tarifaPersona != null && (
-                  <div className="flex items-baseline justify-between text-xs text-gray-500">
-                    <span>Tarifa por persona{etiquetaAcom(sel.acomodacionRef) ? ` · ${etiquetaAcom(sel.acomodacionRef)}` : ""}</span>
-                    <span className="font-medium tabular-nums text-gray-700">{formatMoneda(sel.tarifaPersona, sel.moneda)}</span>
+                  <div className="flex items-baseline justify-between gap-3 text-xs text-gray-500">
+                    <span className="min-w-0">Tarifa por persona{etiquetaAcom(sel.acomodacionRef) ? ` · ${etiquetaAcom(sel.acomodacionRef)}` : ""}</span>
+                    <span className="shrink-0 whitespace-nowrap text-right font-medium tabular-nums text-gray-700">{formatMoneda(sel.tarifaPersona, sel.moneda)}</span>
                   </div>
                 )}
-                <div className="mt-1 flex items-baseline justify-between">
-                  <span className="text-sm font-medium text-gray-600">Total de este hotel</span>
-                  <span className="text-xl font-bold tabular-nums" style={{ color: "var(--brand-primary)" }}>{formatMoneda(sel.total, sel.moneda)}</span>
+                <div className="mt-1 flex items-baseline justify-between gap-3">
+                  <span className={conNeto ? "min-w-0 text-xs font-medium text-gray-500" : "min-w-0 text-sm font-medium text-gray-600"}>
+                    {conNeto ? "PVP original (cliente)" : "Total de este hotel"}
+                  </span>
+                  {conNeto
+                    ? <span className="shrink-0 whitespace-nowrap text-right text-sm font-semibold tabular-nums text-gray-500">{formatMoneda(sel.total, sel.moneda)}</span>
+                    : <span className="shrink-0 whitespace-nowrap text-right text-xl font-bold tabular-nums" style={{ color: "var(--brand-primary)" }}>{formatMoneda(sel.total, sel.moneda)}</span>}
                 </div>
 
                 {modo === "checkout" && !deshabilitada && token && (
@@ -351,7 +386,7 @@ export function PanelSolicitudes({ solicitudes, puedeResolver, hayElegida }: { s
       </p>
       {err && <p role="alert" className="mb-3 rounded-lg bg-red-50 px-3 py-2 text-sm text-red-600">{err}</p>}
       {puedeResolver && !hayElegida && pendientes.length > 0 && (
-        <div className="mb-3"><PanelModalidad ctx={ctxMod} valor={eleccion} onChange={(e) => { setEleccion(e); claves.current = {}; }} /></div>
+        <div className="mb-3"><PanelModalidad ctx={ctxMod} valor={eleccion} accion="Confirmar y crear la cotización" onChange={(e) => { setEleccion(e); claves.current = {}; }} /></div>
       )}
       {solicitudes.length === 0 ? <p className="text-sm text-gray-400">Sin solicitudes.</p> : (
         <ul className="space-y-3">
