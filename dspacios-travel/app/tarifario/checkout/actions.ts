@@ -41,6 +41,7 @@ import { huellaIp } from "@/lib/cotizacion/comparativaServidor";
 import { TIPOS_DOC_PERSONA } from "@/lib/personas/identidad";
 import { tipoDocCheckout } from "@/lib/personas/cotizacion";
 import { altaPersonasCotizacion, logPersonasCotizacion } from "@/lib/personas/consulta";
+import { codigoErrorContacto, datosContactoTarifario, logContactoTarifario } from "@/lib/crm/contactoTarifario";
 
 // Forma que arma el CARRITO en el cliente (ver lib/cart/CartContext.tsx) —
 // incluye `ninos`/`ninos2`/`infantes`/`pax`/`precio` para la vista previa en
@@ -1096,27 +1097,29 @@ export async function crearSolicitudReserva(inputRaw: unknown): Promise<Solicitu
 
   // Agrega el cliente a la base de contactos del CRM como B2C (cliente_final),
   // editable luego a B2B (agencia/freelance). Service-role: el checkout es público.
+  // Efecto AUXILIAR (#40 E1): conserva el tipo elegido (NULL si no eligió, nunca "CC"), revisa el
+  // `{error}`, no sobrescribe una colisión 23505 y registra solo el código; jamás bloquea la solicitud.
   try {
     const admin = createAdminClient();
-    const nombre = `${input.cliente.nombres} ${input.cliente.apellidos}`.trim();
-    if (nombre) {
-      // Si ya existe (índice único por documento/email/teléfono) el insert falla
-      // con 23505 y simplemente se ignora (no se duplica ni bloquea la solicitud).
-      await admin.from("crm_contactos").insert({
+    const datos = datosContactoTarifario(input.cliente, tipoDoc.tipo);
+    if (datos) {
+      const { error } = await admin.from("crm_contactos").insert({
         categoria: "cliente_final",
-        nombre,
-        tipo_doc: input.cliente.numeroDoc.trim() ? "CC" : null,
-        documento: input.cliente.numeroDoc.trim() || null,
-        email: input.cliente.email.trim() || null,
-        telefono: input.cliente.telefono.trim() || null,
+        ...datos,
         origen: "Cotización tarifario (B2C)",
         // Misma agencia FIJA que la cotización de este checkout (arriba): el
         // tarifario público es solo de mayorista. Service-role no tiene sesión,
         // así que sin esto el contacto quedaría sin atribuir.
         tenant: "mayorista",
       });
+      // 23505 (ya existe) y éxito no registran nada; cualquier otro error, solo su código.
+      const codigo = codigoErrorContacto(error);
+      if (codigo) console.error(logContactoTarifario(codigo));
     }
-  } catch { /* no bloquear la solicitud */ }
+  } catch {
+    // Excepción (red, o falta la configuración del servidor): nunca se registra su mensaje.
+    console.error(logContactoTarifario("excepcion"));
+  }
 
   // Destinatarios configurados (service-role: el checkout es público/anónimo).
   let whatsapp: string | null = null, emails: string | null = null, mensajeExtra: string | null = null;
