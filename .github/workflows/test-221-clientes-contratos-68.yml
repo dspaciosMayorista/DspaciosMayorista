@@ -80,6 +80,8 @@ jobs:
       - name: Migración 221 real (F, M, S, RB y H con PostgREST local)
         timeout-minutes: 20
         run: |
+          # Sin -e: el pipeline con tee puede devolver distinto de 0 y hay que capturar rc para imprimir qué falta.
+          set +e
           set -uo pipefail
           salida="$RUNNER_TEMP/test221.out"
           bash supabase/scripts/test_221_clientes_contratos_crm.sh "$CT" "$PLANTILLA" "$RED" 2>&1 | tee "$salida"
@@ -133,6 +135,8 @@ jobs:
       - name: 'Pruebas TS de #68 (sin base de datos) y tsc'
         timeout-minutes: 20
         run: |
+          # Sin -e: el pipeline con tee puede devolver distinto de 0 y hay que capturar rc para imprimir qué falta.
+          set +e
           set -uo pipefail
           salida="$RUNNER_TEMP/ts68.out"
           docker run --rm --name "$CTN" -e CI=1 -e COREPACK_ENABLE_DOWNLOAD_PROMPT=0 \

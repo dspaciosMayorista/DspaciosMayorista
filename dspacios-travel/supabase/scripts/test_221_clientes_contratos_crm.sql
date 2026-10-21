@@ -57,19 +57,19 @@ on conflict (id) do update set email = excluded.email, nombre = excluded.nombre,
 insert into public.ventas (numero_contrato, fecha_venta, asesor, cliente, cliente_documento, cliente_email, cliente_telefono,
                            destino, fecha_salida, fecha_regreso, estado, tipo_asesor, agencia_nombre, freelance_nombre, tenant)
 values
-  ('68-0001', '2026-01-10', 'C216 ventaB',                  'Cliente68 Uno',    '10000001', 'uno68@example.test',    '3000000001', 'CARTAGENA',   '2026-03-01', '2026-03-04', 'activo',     'interno',   null,         null,      'mayorista'),
-  ('68-0002', '2026-01-11', 'C216 ventaA',                  'Cliente68 Dos',    '10000002', 'dos68@example.test',    '3000000002', 'SAN ANDRES',  '2026-03-02', '2026-03-06', 'activo',     'interno',   null,         null,      'mayorista'),
-  ('68-0003', '2026-01-12', 'c216-ventab@x.test',           'Cliente68 Tres',   '10000003', 'tres68@example.test',   '3000000003', 'SANTA MARTA', '2026-03-03', '2026-03-07', 'confirmado', 'agencia',   'Agencia 68', null,      'mayorista'),
-  ('68-0004', '2026-01-13', null,                           'Cliente68 Cuatro', '10000004', 'cuatro68@example.test', '3000000004', 'CARTAGENA',   '2026-03-04', '2026-03-08', 'activo',     'interno',   null,         null,      'mayorista'),
-  ('68-0006', '2026-01-14', 'Asesor Importado Sin Usuario', 'Cliente68 Seis',   '10000006', 'seis68@example.test',   '3000000006', 'CARTAGENA',   '2026-03-05', '2026-03-09', 'activo',     'interno',   null,         null,      'mayorista'),
-  ('68-0007', '2026-01-15', 'C216 ventaB',                  'Cliente68 Siete',  null,       'siete68@example.test',  '3000000007', 'SAN ANDRES',  '2026-03-06', '2026-03-10', 'cancelado',  'freelance', null,         'Free 68', 'mayorista'),
-  ('68-0008', '2026-01-16', null,                           'Cliente68 100%_Ocho', '10000008', 'ocho68@example.test', '3000000008', 'CARTAGENA',   '2026-03-07', '2026-03-11', 'activo',     'interno',   null,         null,      'mayorista'),
+  ('DTM-6801', '2026-01-10', 'C216 ventaB',                  'Cliente68 Uno',    '10000001', 'uno68@example.test',    '3000000001', 'CARTAGENA',   '2026-03-01', '2026-03-04', 'activo',     'interno',   null,         null,      'mayorista'),
+  ('DTM-6802', '2026-01-11', 'C216 ventaA',                  'Cliente68 Dos',    '10000002', 'dos68@example.test',    '3000000002', 'SAN ANDRES',  '2026-03-02', '2026-03-06', 'activo',     'interno',   null,         null,      'mayorista'),
+  ('DTM-6803', '2026-01-12', 'c216-ventab@x.test',           'Cliente68 Tres',   '10000003', 'tres68@example.test',   '3000000003', 'SANTA MARTA', '2026-03-03', '2026-03-07', 'confirmado', 'agencia',   'Agencia 68', null,      'mayorista'),
+  ('DTM-6804', '2026-01-13', null,                           'Cliente68 Cuatro', '10000004', 'cuatro68@example.test', '3000000004', 'CARTAGENA',   '2026-03-04', '2026-03-08', 'activo',     'interno',   null,         null,      'mayorista'),
+  ('DTM-6806', '2026-01-14', 'Asesor Importado Sin Usuario', 'Cliente68 Seis',   '10000006', 'seis68@example.test',   '3000000006', 'CARTAGENA',   '2026-03-05', '2026-03-09', 'activo',     'interno',   null,         null,      'mayorista'),
+  ('DTM-6807', '2026-01-15', 'C216 ventaB',                  'Cliente68 Siete',  null,       'siete68@example.test',  '3000000007', 'SAN ANDRES',  '2026-03-06', '2026-03-10', 'cancelado',  'freelance', null,         'Free 68', 'mayorista'),
+  ('DTM-6808', '2026-01-16', null,                           'Cliente68 100%_Ocho', '10000008', 'ocho68@example.test', '3000000008', 'CARTAGENA',   '2026-03-07', '2026-03-11', 'activo',     'interno',   null,         null,      'mayorista'),
   ('MIN-68-0005', '2026-01-17', 'C216 ventaMin',            'Cliente68 Cinco',  '10000005', 'cinco68@example.test',  '3000000005', 'CARTAGENA',   '2026-03-08', '2026-03-12', 'activo',     'interno',   null,         null,      'minorista'),
   ('MIN-68-0009', '2026-01-18', 'C216 ventaB',              'Cliente68 Nueve',  '10000009', 'nueve68@example.test',  '3000000009', 'CARTAGENA',   '2026-03-09', '2026-03-13', 'activo',     'interno',   null,         null,      'minorista');
 
 -- 55 contratos más (paginación): sin asesor, solo los ven los roles administrativos.
 insert into public.ventas (numero_contrato, asesor, cliente, cliente_documento, tenant, estado)
-select '68-' || (1000 + g), null, 'Pagina68 ' || g, '2000' || g, 'mayorista', 'activo'
+select 'DTM-' || (7000 + g), null, 'Pagina68 ' || g, '2000' || g, 'mayorista', 'activo'
   from generate_series(0, 54) g;
 
 -- ── Ayudantes ──────────────────────────────────────────────────────────────
@@ -110,7 +110,7 @@ begin
 end $$;
 
 -- Referencias de resultados esperados.
-create function t221.m7() returns text language sql immutable as $$ select '68-0008,68-0007,68-0006,68-0004,68-0003,68-0002,68-0001' $$;
+create function t221.m7() returns text language sql immutable as $$ select 'DTM-6808,DTM-6807,DTM-6806,DTM-6804,DTM-6803,DTM-6802,DTM-6801' $$;
 create function t221.n2() returns text language sql immutable as $$ select 'MIN-68-0009,MIN-68-0005' $$;
 
 -- ═══ A · autoridad por rol y tenant (p_tenant NO decide) ═══════════════════
@@ -152,15 +152,15 @@ declare va uuid := t216.u('ventaA'); vb uuid := t216.u('ventaB'); vc uuid := t22
         r text;
 begin
   perform t216.afirma('V1 ventaB ve SUS contratos (nombre exacto y correo) aunque haya un homónimo INACTIVO y otro en OTRO tenant',
-    t221.lista('authenticated', vb, null, 'Cliente68') = '68-0007,68-0003,68-0001', t221.lista('authenticated', vb, null, 'Cliente68'));
+    t221.lista('authenticated', vb, null, 'Cliente68') = 'DTM-6807,DTM-6803,DTM-6801', t221.lista('authenticated', vb, null, 'Cliente68'));
   perform t216.afirma('V2 ventaB pide el otro tenant: vacío', t221.lista('authenticated', vb, 'minorista', 'Cliente68') = '');
   perform t216.afirma('V3 ventaB no ve el contrato de minorista cuyo asesor se escribe igual que su nombre (otro tenant)',
     t221.lista('authenticated', vb, null, 'Nueve') = '' and t221.ficha('authenticated', vb, 'MIN-68-0009') = '');
   perform t216.afirma('V4 guarda de homónimos: ventaA y ventaC (mismo nombre, ambos activos, mismo tenant) no ven ese contrato',
     t221.lista('authenticated', va, null, 'Cliente68') = '' and t221.lista('authenticated', vc, null, 'Cliente68') = ''
-    and t221.ficha('authenticated', va, '68-0002') = '' and t221.ficha('authenticated', vc, '68-0002') = '');
+    and t221.ficha('authenticated', va, 'DTM-6802') = '' and t221.ficha('authenticated', vc, 'DTM-6802') = '');
   perform t216.afirma('V4.1 los roles administrativos SÍ ven ese contrato',
-    t221.ficha('authenticated', t216.u('admin'), '68-0002') = '68-0002:mayorista' and t221.ficha('authenticated', t216.u('gerencia'), '68-0002') = '68-0002:mayorista');
+    t221.ficha('authenticated', t216.u('admin'), 'DTM-6802') = 'DTM-6802:mayorista' and t221.ficha('authenticated', t216.u('gerencia'), 'DTM-6802') = 'DTM-6802:mayorista');
   perform t216.afirma('V5 ventaMin y ventaMinB ven cada uno el suyo en minorista',
     t221.lista('authenticated', vm, null, 'Cliente68') = 'MIN-68-0005' and t221.lista('authenticated', vmb, null, 'Cliente68') = 'MIN-68-0009');
   perform t216.afirma('V5.1 ventaMin pide mayorista: vacío', t221.lista('authenticated', vm, 'mayorista', 'Cliente68') = '');
@@ -169,54 +169,54 @@ begin
   -- CORREO sigue siendo de ventaB (el correo no se repite).
   update public.usuarios set activo = true where id = ve;
   perform t216.afirma('V6 al activar al homónimo de ventaB en su tenant: ambos pierden los contratos escritos por nombre y ventaB conserva el del correo',
-    t221.lista('authenticated', vb, null, 'Cliente68') = '68-0003' and t221.lista('authenticated', ve, null, 'Cliente68') = '',
+    t221.lista('authenticated', vb, null, 'Cliente68') = 'DTM-6803' and t221.lista('authenticated', ve, null, 'Cliente68') = '',
     t221.lista('authenticated', vb, null, 'Cliente68'));
   update public.usuarios set activo = false where id = ve;
-  perform t216.afirma('V6.1 al desactivarlo, ventaB recupera sus tres contratos', t221.lista('authenticated', vb, null, 'Cliente68') = '68-0007,68-0003,68-0001');
+  perform t216.afirma('V6.1 al desactivarlo, ventaB recupera sus tres contratos', t221.lista('authenticated', vb, null, 'Cliente68') = 'DTM-6807,DTM-6803,DTM-6801');
 
   update public.usuarios set tenant = 'mayorista' where id = vmb;
   perform t216.afirma('V7 un homónimo de OTRO tenant que pasa a mayorista vuelve ambiguo el contrato',
-    t221.lista('authenticated', vb, null, 'Cliente68') = '68-0003');
+    t221.lista('authenticated', vb, null, 'Cliente68') = 'DTM-6803');
   update public.usuarios set tenant = 'minorista' where id = vmb;
-  perform t216.afirma('V7.1 al volver a minorista, ventaB recupera sus tres contratos', t221.lista('authenticated', vb, null, 'Cliente68') = '68-0007,68-0003,68-0001');
+  perform t216.afirma('V7.1 al volver a minorista, ventaB recupera sus tres contratos', t221.lista('authenticated', vb, null, 'Cliente68') = 'DTM-6807,DTM-6803,DTM-6801');
 
   perform t216.afirma('V8 ventaB ve SU documento sin enmascarar y sus datos de contacto',
-    t221.unico('authenticated', vb, '68-0001', 'cliente_documento') = '10000001'
-    and t221.unico('authenticated', vb, '68-0001', 'cliente_email') = 'uno68@example.test'
-    and t221.unico('authenticated', vb, '68-0001', 'cliente_telefono') = '3000000001');
+    t221.unico('authenticated', vb, 'DTM-6801', 'cliente_documento') = '10000001'
+    and t221.unico('authenticated', vb, 'DTM-6801', 'cliente_email') = 'uno68@example.test'
+    and t221.unico('authenticated', vb, 'DTM-6801', 'cliente_telefono') = '3000000001');
   perform t216.afirma('V9 contrato propio SIN documento: una fila con documento nulo y su estado',
-    t221.unico('authenticated', vb, '68-0007', 'cliente_documento') = '<null>' and t221.unico('authenticated', vb, '68-0007', 'estado') = 'cancelado');
+    t221.unico('authenticated', vb, 'DTM-6807', 'cliente_documento') = '<null>' and t221.unico('authenticated', vb, 'DTM-6807', 'estado') = 'cancelado');
   perform t216.afirma('V10 contrato sin asesor o con asesor sin usuario: venta no lo ve; administración sí',
-    t221.ficha('authenticated', vb, '68-0004') = '' and t221.ficha('authenticated', vb, '68-0006') = ''
-    and t221.ficha('authenticated', t216.u('admin'), '68-0004') = '68-0004:mayorista' and t221.ficha('authenticated', t216.u('admin'), '68-0006') = '68-0006:mayorista');
+    t221.ficha('authenticated', vb, 'DTM-6804') = '' and t221.ficha('authenticated', vb, 'DTM-6806') = ''
+    and t221.ficha('authenticated', t216.u('admin'), 'DTM-6804') = 'DTM-6804:mayorista' and t221.ficha('authenticated', t216.u('admin'), 'DTM-6806') = 'DTM-6806:mayorista');
 end $$;
 
 -- ═══ R · roles y contextos sin acceso ══════════════════════════════════════
 do $$
 declare r text; ad uuid := t216.u('admin');
 begin
-  perform t216.afirma('R1 usuario INACTIVO (administración): vacío', t221.lista('authenticated', t216.u('inactivo'), null, 'Cliente68') = '' and t221.ficha('authenticated', t216.u('inactivo'), '68-0001') = '');
+  perform t216.afirma('R1 usuario INACTIVO (administración): vacío', t221.lista('authenticated', t216.u('inactivo'), null, 'Cliente68') = '' and t221.ficha('authenticated', t216.u('inactivo'), 'DTM-6801') = '');
   perform t216.afirma('R2 agencia, freelance y cliente final: vacío',
     t221.lista('authenticated', t216.u('agencia'), null, 'Cliente68') = '' and t221.lista('authenticated', t221.u('freelance'), null, 'Cliente68') = ''
-    and t221.lista('authenticated', t221.u('clientefinal'), null, 'Cliente68') = '' and t221.ficha('authenticated', t216.u('agencia'), '68-0001') = '');
-  perform t216.afirma('R3 control_vuelo: vacío', t221.lista('authenticated', t216.u('vuelo'), null, 'Cliente68') = '' and t221.ficha('authenticated', t216.u('vuelo'), '68-0001') = '');
+    and t221.lista('authenticated', t221.u('clientefinal'), null, 'Cliente68') = '' and t221.ficha('authenticated', t216.u('agencia'), 'DTM-6801') = '');
+  perform t216.afirma('R3 control_vuelo: vacío', t221.lista('authenticated', t216.u('vuelo'), null, 'Cliente68') = '' and t221.ficha('authenticated', t216.u('vuelo'), 'DTM-6801') = '');
   perform t216.afirma('R4 sub sin fila en usuarios (mi_tenant() caería a mayorista): vacío',
     t221.lista('authenticated', t221.u('fantasma'), null, 'Cliente68') = '' and t221.lista('authenticated', t221.u('fantasma'), 'mayorista', 'Cliente68') = ''
-    and t221.ficha('authenticated', t221.u('fantasma'), '68-0001') = '');
-  perform t216.afirma('R5 sesión sin sub: vacío', t221.lista('authenticated', null, null, 'Cliente68') = '' and t221.ficha('authenticated', null, '68-0001') = '');
+    and t221.ficha('authenticated', t221.u('fantasma'), 'DTM-6801') = '');
+  perform t216.afirma('R5 sesión sin sub: vacío', t221.lista('authenticated', null, null, 'Cliente68') = '' and t221.ficha('authenticated', null, 'DTM-6801') = '');
   r := t221.lista('anon', null, null, 'Cliente68');
   perform t216.afirma('R6 anon no ejecuta la función (42501)', r like 'ERR 42501%', r);
-  r := t221.ficha('anon', null, '68-0001');
+  r := t221.ficha('anon', null, 'DTM-6801');
   perform t216.afirma('R6.1 anon no ejecuta la ficha (42501)', r like 'ERR 42501%', r);
   r := t221.lista('service_role', null, 'mayorista', 'Cliente68');
   perform t216.afirma('R7 service_role no ejecuta la función (42501)', r like 'ERR 42501%', r);
-  r := t221.ficha('service_role', null, '68-0001');
+  r := t221.ficha('service_role', null, 'DTM-6801');
   perform t216.afirma('R7.1 service_role no ejecuta la ficha (42501)', r like 'ERR 42501%', r);
 
   -- Un tenant propio inválido (usuarios.tenant es NOT NULL, así que el nulo no es representable): vacío.
   update public.usuarios set tenant = 'otra' where id = ad;
   perform t216.afirma('R8 usuario con tenant propio inválido: vacío, no cae a mayorista',
-    t221.lista('authenticated', ad, null, 'Cliente68') = '' and t221.lista('authenticated', ad, 'mayorista', 'Cliente68') = '' and t221.ficha('authenticated', ad, '68-0001') = '');
+    t221.lista('authenticated', ad, null, 'Cliente68') = '' and t221.lista('authenticated', ad, 'mayorista', 'Cliente68') = '' and t221.ficha('authenticated', ad, 'DTM-6801') = '');
   update public.usuarios set tenant = 'mayorista' where id = ad;
   perform t216.afirma('R8.1 restaurado, vuelve a ver su tenant', t221.lista('authenticated', ad, null, 'Cliente68') = t221.m7());
 
@@ -229,38 +229,38 @@ end $$;
 do $$
 declare vb uuid := t216.u('ventaB'); ad uuid := t216.u('admin'); adm uuid := t216.u('adminMin'); su uuid := t216.u('super'); ge uuid := t216.u('gerencia');
 begin
-  perform t216.afirma('F1 ventaB: su contrato sí', t221.ficha('authenticated', vb, '68-0001') = '68-0001:mayorista');
+  perform t216.afirma('F1 ventaB: su contrato sí', t221.ficha('authenticated', vb, 'DTM-6801') = 'DTM-6801:mayorista');
   perform t216.afirma('F2 ventaB: contrato de OTRO asesor (colega con homónimo), de otro tenant, sin asesor o inexistente: vacío',
-    t221.ficha('authenticated', vb, '68-0002') = '' and t221.ficha('authenticated', vb, 'MIN-68-0009') = ''
-    and t221.ficha('authenticated', vb, '68-0004') = '' and t221.ficha('authenticated', vb, '99-9999') = '');
+    t221.ficha('authenticated', vb, 'DTM-6802') = '' and t221.ficha('authenticated', vb, 'MIN-68-0009') = ''
+    and t221.ficha('authenticated', vb, 'DTM-6804') = '' and t221.ficha('authenticated', vb, '99-9999') = '');
   perform t216.afirma('F3 la respuesta para «ajeno» es IDÉNTICA byte a byte a la de «inexistente» y a la de «otro tenant»',
-    t221.ficha_json('authenticated', vb, '68-0002') = t221.ficha_json('authenticated', vb, '99-9999')
+    t221.ficha_json('authenticated', vb, 'DTM-6802') = t221.ficha_json('authenticated', vb, '99-9999')
     and t221.ficha_json('authenticated', vb, 'MIN-68-0009') = t221.ficha_json('authenticated', vb, '99-9999')
     and t221.ficha_json('authenticated', vb, '99-9999') = '[]');
   perform t216.afirma('F4 administración de un tenant no ve contratos del otro',
-    t221.ficha('authenticated', ad, 'MIN-68-0005') = '' and t221.ficha('authenticated', adm, '68-0001') = ''
-    and t221.ficha('authenticated', ge, 'MIN-68-0005') = '' and t221.ficha('authenticated', t221.u('gerenciaMin'), '68-0001') = '');
+    t221.ficha('authenticated', ad, 'MIN-68-0005') = '' and t221.ficha('authenticated', adm, 'DTM-6801') = ''
+    and t221.ficha('authenticated', ge, 'MIN-68-0005') = '' and t221.ficha('authenticated', t221.u('gerenciaMin'), 'DTM-6801') = '');
   perform t216.afirma('F5 superadmin abre cualquiera de los dos tenants',
-    t221.ficha('authenticated', su, '68-0001') = '68-0001:mayorista' and t221.ficha('authenticated', su, 'MIN-68-0005') = 'MIN-68-0005:minorista');
+    t221.ficha('authenticated', su, 'DTM-6801') = 'DTM-6801:mayorista' and t221.ficha('authenticated', su, 'MIN-68-0005') = 'MIN-68-0005:minorista');
   perform t216.afirma('F6 entradas extremas: vacío, no error',
     t221.ficha('authenticated', ad, '') = '' and t221.ficha('authenticated', ad, repeat('9', 61)) = '' and t221.ficha('authenticated', ad, null) = ''
-    and t221.ficha('authenticated', ad, '68-0001'' or ''1''=''1') = '');
-  perform t216.afirma('F7 la ficha no aplica comodines: un prefijo no encuentra nada', t221.ficha('authenticated', ad, '68-000%') = '' and t221.ficha('authenticated', ad, '68-000_') = '');
+    and t221.ficha('authenticated', ad, 'DTM-6801'' or ''1''=''1') = '');
+  perform t216.afirma('F7 la ficha no aplica comodines: un prefijo no encuentra nada', t221.ficha('authenticated', ad, 'DTM-680%') = '' and t221.ficha('authenticated', ad, 'DTM-680_') = '');
 end $$;
 
 -- ═══ S · búsqueda y paginación ═════════════════════════════════════════════
 do $$
 declare ad uuid := t216.u('admin'); vb uuid := t216.u('ventaB'); r text; p1 text; p2 text;
 begin
-  perform t216.afirma('S1 por nombre', t221.lista('authenticated', ad, null, 'Cliente68 Dos') = '68-0002');
-  perform t216.afirma('S2 por documento', t221.lista('authenticated', ad, null, '10000003') = '68-0003');
-  perform t216.afirma('S3 por correo', t221.lista('authenticated', ad, null, 'uno68@') = '68-0001');
-  perform t216.afirma('S4 por teléfono', t221.lista('authenticated', ad, null, '3000000007') = '68-0007');
-  perform t216.afirma('S5 por número de contrato', t221.lista('authenticated', ad, null, '68-0006') = '68-0006');
+  perform t216.afirma('S1 por nombre', t221.lista('authenticated', ad, null, 'Cliente68 Dos') = 'DTM-6802');
+  perform t216.afirma('S2 por documento', t221.lista('authenticated', ad, null, '10000003') = 'DTM-6803');
+  perform t216.afirma('S3 por correo', t221.lista('authenticated', ad, null, 'uno68@') = 'DTM-6801');
+  perform t216.afirma('S4 por teléfono', t221.lista('authenticated', ad, null, '3000000007') = 'DTM-6807');
+  perform t216.afirma('S5 por número de contrato', t221.lista('authenticated', ad, null, 'DTM-6806') = 'DTM-6806');
   perform t216.afirma('S6 los comodines son LITERALES: «100%_» solo encuentra el nombre que lo contiene; «1__», «%%%» y «___» no ensanchan',
-    t221.lista('authenticated', ad, null, '100%_') = '68-0008' and t221.lista('authenticated', ad, null, '1__') = ''
+    t221.lista('authenticated', ad, null, '100%_') = 'DTM-6808' and t221.lista('authenticated', ad, null, '1__') = ''
     and t221.lista('authenticated', ad, null, '%%%') = '' and t221.lista('authenticated', ad, null, '___') = ''
-    and t221.lista('authenticated', ad, null, 'Cliente68 100%') = '68-0008');
+    and t221.lista('authenticated', ad, null, 'Cliente68 100%') = 'DTM-6808');
   perform t216.afirma('S7 búsqueda de 2 o de 101 caracteres: vacío (no error)',
     t221.lista('authenticated', ad, null, 'Cl') = '' and t221.lista('authenticated', ad, null, repeat('a', 101)) = '');
   perform t216.afirma('S7.1 100 caracteres: se acepta (sin coincidencias)', t221.lista('authenticated', ad, null, repeat('a', 100)) = '');
@@ -270,27 +270,27 @@ begin
   perform t216.afirma('S9 venta NO encuentra datos ajenos por NINGÚN término (nombre, documento, correo, teléfono, número); igual que un término inexistente',
     t221.lista('authenticated', vb, null, 'Cliente68 Dos') = '' and t221.lista('authenticated', vb, null, '10000002') = ''
     and t221.lista('authenticated', vb, null, 'dos68@') = '' and t221.lista('authenticated', vb, null, '3000000002') = ''
-    and t221.lista('authenticated', vb, null, '68-0002') = '' and t221.lista('authenticated', vb, null, 'ZzNoExiste68') = ''
+    and t221.lista('authenticated', vb, null, 'DTM-6802') = '' and t221.lista('authenticated', vb, null, 'ZzNoExiste68') = ''
     and t221.lista('authenticated', vb, null, 'Pagina68') = '');
   perform t216.afirma('S9.1 sobre lo propio sí encuentra (documento, correo, teléfono)',
-    t221.lista('authenticated', vb, null, '10000001') = '68-0001' and t221.lista('authenticated', vb, null, 'tres68@') = '68-0003'
-    and t221.lista('authenticated', vb, null, '3000000007') = '68-0007');
+    t221.lista('authenticated', vb, null, '10000001') = 'DTM-6801' and t221.lista('authenticated', vb, null, 'tres68@') = 'DTM-6803'
+    and t221.lista('authenticated', vb, null, '3000000007') = 'DTM-6807');
 
   -- Paginación por cursor sobre 55 contratos: sin repetir ni saltar.
   p1 := t221.pagina('authenticated', ad, null, 'Pagina68');
-  p2 := t221.pagina('authenticated', ad, null, 'Pagina68', '68-1005');
-  perform t216.afirma('S10 primera página: 50 filas, hay más, de 68-1005 a 68-1054', p1 = '50|true|68-1005|68-1054', p1);
-  perform t216.afirma('S10.1 segunda página con el cursor: 5 filas, sin más, de 68-1000 a 68-1004', p2 = '5|false|68-1000|68-1004', p2);
+  p2 := t221.pagina('authenticated', ad, null, 'Pagina68', 'DTM-7005');
+  perform t216.afirma('S10 primera página: 50 filas, hay más, de DTM-7005 a DTM-7054', p1 = '50|true|DTM-7005|DTM-7054', p1);
+  perform t216.afirma('S10.1 segunda página con el cursor: 5 filas, sin más, de DTM-7000 a DTM-7004', p2 = '5|false|DTM-7000|DTM-7004', p2);
   perform t216.afirma('S10.2 sin solape: las 55 filas, una vez cada una',
-    t216.escalar('authenticated', ad, 'select count(distinct numero_contrato) from (select numero_contrato from public.crm_contratos_clientes_buscar(null, ''Pagina68'', null, 50) union all select numero_contrato from public.crm_contratos_clientes_buscar(null, ''Pagina68'', ''68-1005'', 50)) x') = '55');
+    t216.escalar('authenticated', ad, 'select count(distinct numero_contrato) from (select numero_contrato from public.crm_contratos_clientes_buscar(null, ''Pagina68'', null, 50) union all select numero_contrato from public.crm_contratos_clientes_buscar(null, ''Pagina68'', ''DTM-7005'', 50)) x') = '55');
   perform t216.afirma('S11 p_tam: 0 se sube a 1; 1000 se baja a 50; nulo = 50',
     t221.pagina('authenticated', ad, null, 'Pagina68', null, 0) like '1|true|%' and t221.pagina('authenticated', ad, null, 'Pagina68', null, 1000) like '50|true|%'
     and t221.pagina('authenticated', ad, null, 'Pagina68', null, null) like '50|true|%');
   perform t216.afirma('S12 cursor de más de 60 caracteres: vacío; cursor alto no amplía el alcance de venta',
     t221.lista('authenticated', ad, null, 'Cliente68', repeat('z', 61)) = ''
-    and t221.lista('authenticated', vb, null, 'Cliente68', 'zz') = '68-0007,68-0003,68-0001');
+    and t221.lista('authenticated', vb, null, 'Cliente68', 'zz') = 'DTM-6807,DTM-6803,DTM-6801');
   perform t216.afirma('S13 contrato cancelado e interno sin documento aparecen para administración',
-    t221.lista('authenticated', ad, null, 'Siete') = '68-0007');
+    t221.lista('authenticated', ad, null, 'Siete') = 'DTM-6807');
 end $$;
 
 -- ═══ E · contrato de las funciones ════════════════════════════════════════

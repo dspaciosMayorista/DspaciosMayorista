@@ -195,6 +195,8 @@ pc_valido_ajeno() { # $1 archivo, $2 número de chequeos
   [ "$(wc -l < "$1" | tr -d ' ')" = 1 ] || return 1
   awk -F'|' -v N="$2" 'NR == 1 { if (($1 == "OK" || $1 == "FALLA") && $4 == N) bien = 1 } END { exit !bien }' "$1"
 }
+# Detalle de SOLO los controles que fallaron del postcheck 221 (jsonb de la fila en $TMP/post.out), para el log.
+post_fallos() { grep -o '{[^{}]*"ok": false[^{}]*}' "$TMP/post.out" 2>/dev/null | tr '\n' ' ' | cut -c1-900; }
 postcheck() { # $1 base, $2 script, $3 número de chequeos, $4 (opcional) "propio" ; imprime ok/fallos o "invalido" (deja la fila en $TMP/post.out)
   $PSA -d "$1" -t -A -F'|' < "$AQUI/$2" > "$TMP/post.out" 2>&1 || true
   if [ "${4:-}" = propio ]; then
@@ -231,7 +233,7 @@ else fallo "M1 preflight: $(tr '\n' ' ' < "$TMP/pre1.out" | cut -c1-600)"; fi
 if aplicar_221 "$DBM"; then ok "M2 221 aplicada como $ROL_MIGRA"; else fallo "M2 221: $(cut -c1-600 "$TMP/aplicar.out")"; exit 1; fi
 if aplicar_221 "$DBM"; then ok "M3 221 aplicada por segunda vez sin error (idempotente)"; else fallo "M3 segunda aplicación: $(cut -c1-400 "$TMP/aplicar.out")"; fi
 R="$(postcheck "$DBM" postcheck_221_clientes_contratos_crm.sql 15 propio)"
-[ "$R" = "15/0" ] && ok "M4 postcheck 221 15/15" || fallo "M4 postcheck 221 ok/fallos=$R: $(cut -d'|' -f1-5 "$TMP/post.out" | tr '\n' ' ' | cut -c1-300)"
+[ "$R" = "15/0" ] && ok "M4 postcheck 221 15/15" || fallo "M4 postcheck 221 ok/fallos=$R: $(cut -d'|' -f1-5 "$TMP/post.out" | tr '\n' ' ' | cut -c1-300) detalle: $(post_fallos)"
 $PSM -d "$DBM" -t -A -F'|' < "$AQUI/preflight_221_clientes_contratos_crm.sql" > "$TMP/pre2.out" 2>&1 || true
 pf_valido "$TMP/pre2.out" && [ "$(cut -d'|' -f1,2 "$TMP/pre2.out")" = "INFO|0" ] && [ "$(pf "$TMP/pre2.out" P5)" = REVISAR/2 ] \
   && ok "M5 preflight tras aplicar: P5 'ya aplicada' (REVISAR), sin bloqueantes" || fallo "M5 $(cut -d'|' -f1-5 "$TMP/pre2.out" | tr '\n' ' ' | cut -c1-400)"
@@ -277,7 +279,7 @@ cmp -s "$TMP/ajena0.out" "$TMP/ajena2.out" && ok "RB4 tras el rollback la base e
 if rb "$DBR"; then ok "RB5 el rollback es idempotente"; else fallo "RB5 $(cut -c1-200 "$TMP/rb.out")"; fi
 if aplicar_221 "$DBR"; then ok "RB6 la 221 se reaplica tras el rollback"; else fallo "RB6 $(cut -c1-300 "$TMP/aplicar.out")"; fi
 R="$(postcheck "$DBR" postcheck_221_clientes_contratos_crm.sql 15 propio)"
-[ "$R" = "15/0" ] && ok "RB7 postcheck 221 15/15 tras reaplicar" || fallo "RB7 postcheck = $R"
+[ "$R" = "15/0" ] && ok "RB7 postcheck 221 15/15 tras reaplicar" || fallo "RB7 postcheck = $R detalle: $(post_fallos)"
 
 # ══ H · API con JWT firmados (PostgREST local) ═══════════════════════════════
 if [ "${SIN_API:-}" = 1 ]; then
@@ -309,14 +311,14 @@ insert into public.usuarios (id, email, nombre, rol, activo, tenant) values
 on conflict (id) do update set email = excluded.email, nombre = excluded.nombre, rol = excluded.rol,
                                activo = excluded.activo, tenant = excluded.tenant;
 insert into public.ventas (numero_contrato, asesor, cliente, cliente_documento, cliente_email, cliente_telefono, tenant, estado) values
-  ('H221-0001', 'Beto Venta', 'Cliente H Uno',    '90000001', 'h1@example.test', '3100000001', 'mayorista', 'activo'),
-  ('H221-0002', 'Ana Venta',  'Cliente H Dos',    '90000002', 'h2@example.test', '3100000002', 'mayorista', 'activo'),
-  ('H221-0003', null,         'Cliente H Tres',   '90000003', 'h3@example.test', '3100000003', 'mayorista', 'activo'),
-  ('H221-0004', 'Beto Venta', 'Cliente H Cuatro', '90000004', 'h4@example.test', '3100000004', 'mayorista', 'activo'),
+  ('DTM-6901', 'Beto Venta', 'Cliente H Uno',    '90000001', 'h1@example.test', '3100000001', 'mayorista', 'activo'),
+  ('DTM-6902', 'Ana Venta',  'Cliente H Dos',    '90000002', 'h2@example.test', '3100000002', 'mayorista', 'activo'),
+  ('DTM-6903', null,         'Cliente H Tres',   '90000003', 'h3@example.test', '3100000003', 'mayorista', 'activo'),
+  ('DTM-6904', 'Beto Venta', 'Cliente H Cuatro', '90000004', 'h4@example.test', '3100000004', 'mayorista', 'activo'),
   ('MIN-H221-0005', 'Mina Venta', 'Cliente H Cinco', '90000005', 'h5@example.test', '3100000005', 'minorista', 'activo'),
   ('MIN-H221-0006', 'Beto Venta', 'Cliente H Seis',  '90000006', 'h6@example.test', '3100000006', 'minorista', 'activo');
 SQL
-  [ "$(uno "$DBA" "select count(*) from public.ventas where numero_contrato like '%H221-%'")" = 6 ] && ok "H0 datos sembrados (13 usuarios, 6 contratos)" || fallo "H0 siembra: $(tail -3 "$TMP/seed.out" | tr '\n' ' ')"
+  [ "$(uno "$DBA" "select count(*) from public.ventas where numero_contrato ~ '^(DTM-690[1-4]|MIN-H221-000[56])$'")" = 6 ] && ok "H0 datos sembrados (13 usuarios, 6 contratos)" || fallo "H0 siembra: $(tail -3 "$TMP/seed.out" | tr '\n' ' ')"
 
   docker rm -f "$PGRST" >/dev/null 2>&1 || true
   docker run -d --name "$PGRST" --network "$RED" -p 127.0.0.1:3221:3000 \
@@ -353,7 +355,7 @@ SQL
   ficha() { pedir POST /rpc/crm_contrato_cliente_ficha "$1" "{\"p_numero_contrato\":\"$2\"}"; }
   # Números de contrato devueltos, separados por coma ('' si el arreglo está vacío); 'ERROR' si no es un arreglo JSON.
   nums() { node -e "let r;try{r=JSON.parse(require('fs').readFileSync(0,'utf8'))}catch(e){console.log('ERROR');process.exit(0)}console.log(Array.isArray(r)?r.map(x=>x.numero_contrato).sort().reverse().join(','):'ERROR')" < "$TMP/h.body"; }
-  MAYO4="H221-0004,H221-0003,H221-0002,H221-0001"
+  MAYO4="DTM-6904,DTM-6903,DTM-6902,DTM-6901"
 
   s="$(lista "$T_AD" '{"p_tenant":"minorista"}')"; n="$(nums)"
   [ "$s" = 200 ] && [ "$n" = "" ] && ok "H2 administración (mayorista) pide minorista por REST: 200 y vacío" || fallo "H2 s=$s nums=$n"
@@ -370,7 +372,7 @@ SQL
   s="$(lista "$T_SU" '{"p_tenant":"minorista"}')"; n1="$(nums)"; lista "$T_SU" '{"p_tenant":"mayorista"}' >/dev/null; n2="$(nums)"; lista "$T_SU" '{}' >/dev/null; n3="$(nums)"
   [ "$n1" = "MIN-H221-0006,MIN-H221-0005" ] && [ "$n2" = "$MAYO4" ] && [ "$n3" = "" ] && ok "H8 superadmin elige el tenant; sin p_tenant, vacío" || fallo "H8 n1=$n1 n2=$n2 n3=$n3"
   s="$(lista "$T_VB" '{}')"; n="$(nums)"
-  [ "$s" = 200 ] && [ "$n" = "H221-0004,H221-0001" ] && ok "H9 venta B por REST: solo sus contratos de mayorista (no el de minorista con su mismo nombre de asesor)" || fallo "H9 s=$s nums=$n"
+  [ "$s" = 200 ] && [ "$n" = "DTM-6904,DTM-6901" ] && ok "H9 venta B por REST: solo sus contratos de mayorista (no el de minorista con su mismo nombre de asesor)" || fallo "H9 s=$s nums=$n"
   s="$(lista "$T_VB" '{"p_tenant":"minorista"}')"; n="$(nums)"
   [ "$n" = "" ] && ok "H10 venta B pide minorista: vacío" || fallo "H10 nums=$n"
   s="$(lista "$T_VA" '{}')"; n1="$(nums)"; s2="$(lista "$T_VC" '{}')"; n2="$(nums)"
@@ -379,21 +381,21 @@ SQL
   [ "$n" = "MIN-H221-0005" ] && ok "H12 venta de minorista: solo el suyo" || fallo "H12 nums=$n"
 
   # Contrato de OTRO asesor: ni la lista ni la búsqueda ni la ficha lo entregan, y la respuesta es idéntica a «no existe».
-  for termino in "Cliente H Dos" "90000002" "h2@example" "3100000002" "H221-0002"; do
+  for termino in "Cliente H Dos" "90000002" "h2@example" "3100000002" "DTM-6902"; do
     lista "$T_VB" "{\"p_busqueda\":\"$termino\"}" >/dev/null; n="$(nums)"
     [ "$n" = "" ] || fallo "H13 venta B encontró un contrato ajeno con el término '$termino': $n"
   done
   s_aj="$(lista "$T_VB" '{"p_busqueda":"Cliente H Dos"}')"; cp "$TMP/h.body" "$TMP/aj.body"
   s_no="$(lista "$T_VB" '{"p_busqueda":"ZzNoExiste221"}')"; cp "$TMP/h.body" "$TMP/no.body"
   [ "$s_aj" = "$s_no" ] && cmp -s "$TMP/aj.body" "$TMP/no.body" && ok "H13 buscar datos de un contrato ajeno: nada, y la respuesta es idéntica a buscar algo inexistente (estado y cuerpo)" || fallo "H13 respuestas distintas ($s_aj/$s_no)"
-  s="$(ficha "$T_VB" H221-0001)"; n="$(nums)"; [ "$s" = 200 ] && [ "$n" = "H221-0001" ] && ok "H14 ficha de un contrato propio: una fila" || fallo "H14 s=$s nums=$n"
-  s_aj="$(ficha "$T_VB" H221-0002)"; cp "$TMP/h.body" "$TMP/aj.body"
-  s_in="$(ficha "$T_VB" H221-9999)"; cp "$TMP/h.body" "$TMP/in.body"
+  s="$(ficha "$T_VB" DTM-6901)"; n="$(nums)"; [ "$s" = 200 ] && [ "$n" = "DTM-6901" ] && ok "H14 ficha de un contrato propio: una fila" || fallo "H14 s=$s nums=$n"
+  s_aj="$(ficha "$T_VB" DTM-6902)"; cp "$TMP/h.body" "$TMP/aj.body"
+  s_in="$(ficha "$T_VB" DTM-6999)"; cp "$TMP/h.body" "$TMP/in.body"
   s_ot="$(ficha "$T_VB" MIN-H221-0006)"; cp "$TMP/h.body" "$TMP/ot.body"
   if [ "$s_aj" = 200 ] && [ "$s_aj" = "$s_in" ] && [ "$s_aj" = "$s_ot" ] && cmp -s "$TMP/aj.body" "$TMP/in.body" && cmp -s "$TMP/ot.body" "$TMP/in.body" && [ "$(cat "$TMP/in.body")" = "[]" ]; then
     ok "H15 ficha de contrato de OTRO asesor, de OTRO tenant e inexistente: las tres respuestas son idénticas ([])"
   else fallo "H15 respuestas distintas ($s_aj/$s_in/$s_ot): $(cat "$TMP/aj.body" | cut -c1-100)"; fi
-  s="$(ficha "$T_AD" MIN-H221-0005)"; n1="$(nums)"; s2="$(ficha "$T_AM" H221-0001)"; n2="$(nums)"
+  s="$(ficha "$T_AD" MIN-H221-0005)"; n1="$(nums)"; s2="$(ficha "$T_AM" DTM-6901)"; n2="$(nums)"
   [ "$n1" = "" ] && [ "$n2" = "" ] && ok "H16 ficha de otro tenant por REST: vacío para administración de cada agencia" || fallo "H16 n1=$n1 n2=$n2"
   ficha "$T_GE" MIN-H221-0005 >/dev/null; n1="$(nums)"; ficha "$T_SU" MIN-H221-0005 >/dev/null; n2="$(nums)"
   [ "$n1" = "" ] && [ "$n2" = "MIN-H221-0005" ] && ok "H17 ficha de otro tenant: gerencia vacío, superadmin sí" || fallo "H17 n1=$n1 n2=$n2"
@@ -402,14 +404,14 @@ SQL
   todo=""
   for t in "$T_IN" "$T_AG" "$T_CV" "$T_FR"; do
     s="$(lista "$t" '{}')"; n="$(nums)"; [ "$s" = 200 ] && [ "$n" = "" ] || todo="$todo [lista s=$s n=$n]"
-    s="$(ficha "$t" H221-0001)"; n="$(nums)"; [ "$s" = 200 ] && [ "$n" = "" ] || todo="$todo [ficha s=$s n=$n]"
+    s="$(ficha "$t" DTM-6901)"; n="$(nums)"; [ "$s" = 200 ] && [ "$n" = "" ] || todo="$todo [ficha s=$s n=$n]"
   done
   [ -z "$todo" ] && ok "H18 usuario inactivo, agencia, control_vuelo y freelance: 200 y vacío en lista y ficha" || fallo "H18$todo"
 
   s="$(lista - '{}')"; [ "$s" = 401 ] || [ "$s" = 403 ] && ok "H19 anon (sin token) no ejecuta la lista ($s)" || fallo "H19 s=$s"
-  s="$(ficha - H221-0001)"; [ "$s" = 401 ] || [ "$s" = 403 ] && ok "H20 anon no ejecuta la ficha ($s)" || fallo "H20 s=$s"
+  s="$(ficha - DTM-6901)"; [ "$s" = 401 ] || [ "$s" = 403 ] && ok "H20 anon no ejecuta la ficha ($s)" || fallo "H20 s=$s"
   s="$(lista "$T_SR" '{"p_tenant":"mayorista"}')"; [ "$s" = 401 ] || [ "$s" = 403 ] && ok "H21 service_role no ejecuta la lista ($s)" || fallo "H21 s=$s"
-  s="$(ficha "$T_SR" H221-0001)"; [ "$s" = 401 ] || [ "$s" = 403 ] && ok "H22 service_role no ejecuta la ficha ($s)" || fallo "H22 s=$s"
+  s="$(ficha "$T_SR" DTM-6901)"; [ "$s" = 401 ] || [ "$s" = 403 ] && ok "H22 service_role no ejecuta la ficha ($s)" || fallo "H22 s=$s"
   s="$(lista "$T_MAL" '{}')"; [ "$s" = 401 ] && ok "H23 JWT con secreto equivocado: 401" || fallo "H23 s=$s"
 
   # p_tenant hostil y GET.

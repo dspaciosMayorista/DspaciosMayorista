@@ -91,7 +91,14 @@ chequeos(codigo, ok, detalle) as (
                                   cross join lateral aclexplode(coalesce(a.proacl, acldefault('f', a.proowner))) x
                                   where x.grantee <> a.proowner
                                     and x.grantee <> (select r.oid from pg_catalog.pg_roles r where r.rolname = 'authenticated')),
-         'ACL exacta: solo el dueño y authenticated tienen privilegios sobre las dos funciones'
+         'ACL exacta: solo el dueño y authenticated tienen privilegios sobre las dos funciones. Beneficiarios que sobran: '
+         || coalesce((select string_agg(a.proname || ' -> ' || coalesce(r.rolname, 'PUBLIC') || ':' || x.privilege_type, ', ' order by a.proname, r.rolname)
+                        from ambas a
+                       cross join lateral aclexplode(coalesce(a.proacl, acldefault('f', a.proowner))) x
+                        left join pg_catalog.pg_roles r on r.oid = x.grantee
+                       where x.grantee <> a.proowner
+                         and x.grantee <> (select r2.oid from pg_catalog.pg_roles r2 where r2.rolname = 'authenticated')), 'ninguno')
+         || '. Dueño: ' || coalesce((select string_agg(distinct pg_catalog.pg_get_userbyid(a.proowner), ',') from ambas a), '?')
 ),
 orden as (
   select c.codigo, coalesce(c.ok, false) as ok, c.detalle, row_number() over (order by length(c.codigo), c.codigo) as n
