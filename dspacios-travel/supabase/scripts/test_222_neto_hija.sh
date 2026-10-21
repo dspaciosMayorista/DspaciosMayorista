@@ -19,6 +19,12 @@
 #       (huella de políticas, funciones, tablas/ACL, disparadores y columnas); la 222 se reaplica
 #   RB2 con una hija sellada COMMITEADA, rollback_222 se niega y no cambia nada
 #
+# Modo «211sola» (tercer argumento): corre SOLO la batería #35 completa (test_211_cotizaciones_comparativas.sql) en una
+# base creada desde una plantilla hasta la 211, SIN 216/217 (contexto INACTIVA). Es la cobertura de la guarda propia
+# de la 211 con las sentencias originales, que con la frontera activa (G2) preempta la 217:
+#   sh supabase/scripts/preparar_esquema_local.sh pg211 211 plantilla211
+#   sh supabase/scripts/test_222_neto_hija.sh pg211 plantilla211 211sola
+#
 # Rol que aplica: ROL_MIGRA (por defecto supabase_admin; en Supabase alojado es `postgres`).
 # Límite: no se prueba PostgREST por HTTP; los permisos se prueban con `set role` y JWT en SQL
 # (patrón de test_216_edicion39.sql). Las carreras y la API HTTP de 216/217 siguen en su propio workflow.
@@ -26,11 +32,13 @@
 set -eu
 CT="${1:-}"
 PLANTILLA="${2:-plantilla222}"
+MODO="${3:-completo}"
 export MSYS_NO_PATHCONV=1
 
 valido() { printf '%s' "$1" | grep -Eq "$2"; }
-valido "$CT" '^[A-Za-z0-9][A-Za-z0-9_.-]{0,62}$' || { echo "Uso: test_222_neto_hija.sh <contenedor> [plantilla]" >&2; exit 2; }
+valido "$CT" '^[A-Za-z0-9][A-Za-z0-9_.-]{0,62}$' || { echo "Uso: test_222_neto_hija.sh <contenedor> [plantilla] [completo|211sola]" >&2; exit 2; }
 valido "$PLANTILLA" '^[a-z][a-z0-9_]{0,62}$' || { echo "Plantilla inválida." >&2; exit 2; }
+valido "$MODO" '^(completo|211sola)$' || { echo "Modo inválido (completo | 211sola)." >&2; exit 2; }
 
 AQUI="$(cd "$(dirname "$0")" && pwd)"
 APP="$(cd "$AQUI/../.." && pwd)"
@@ -54,6 +62,47 @@ OKS=0
 BASES=""
 ok()    { echo "OK    $1"; OKS=$((OKS + 1)); }
 fallo() { echo "FALLO $1"; FALLOS=$((FALLOS + 1)); }
+
+# ── Batería #35 (test_211_cotizaciones_comparativas.sql): verificación y diagnóstico comunes a G2 (217+222, ACTIVA)
+# y a H1 (base hasta la 211, sin 216/217, INACTIVA). La salida completa vive solo en $TMP (se borra al salir): por
+# eso, si algo falla, se imprime AQUÍ lo necesario para diagnosticar desde el log de Actions.
+V211_MOTIVO=""
+verificar_211() { # $1 = rc ; $2 = salida ; $3 = ACTIVA|INACTIVA ; resto = marcas «OK    x.y» que deben figurar
+  v_rc="$1"; v_out="$2"; v_ctx="$3"; shift 3
+  v_falta=""
+  if [ "$v_ctx" = ACTIVA ]; then v_txt='frontera 216/217 ACTIVA (esperado: activa)'; else v_txt='sin frontera de #39 (esperado: inactiva)'; fi
+  # El contexto lo declaran los bloques 4, 6 y 12: ninguno puede correr en el contexto equivocado ni saltarse.
+  for v_b in 4 6 12; do
+    grep -F -- "OK    $v_b.0 " "$v_out" | grep -qF -- "$v_txt" || v_falta="$v_falta [contexto $v_ctx en $v_b.0]"
+  done
+  # Resumen de la batería: presente, con al menos una prueba ok y 0 fallos.
+  grep -qF -- '=== RESUMEN ===' "$v_out" || v_falta="$v_falta [=== RESUMEN ===]"
+  grep -qE '^ *[1-9][0-9]* *\| *0 *\| *[1-9][0-9]* *$' "$v_out" || v_falta="$v_falta [resumen: ok>0 y fallos=0]"
+  for v_m in "$@"; do
+    grep -qF -- "$v_m" "$v_out" || v_falta="$v_falta [$v_m]"
+  done
+  v_extra=""
+  if grep -q 'FALLO ' "$v_out"; then v_extra="$v_extra hay FALLO;"; fi
+  if grep -qi '^psql:.*ERROR' "$v_out"; then v_extra="$v_extra hay ERROR de psql;"; fi
+  V211_MOTIVO="rc=$v_rc;${v_extra} faltan:${v_falta:- ninguna}"
+  [ "$v_rc" = 0 ] && [ -z "$v_extra" ] && [ -z "$v_falta" ]
+}
+# Publica SIEMPRE los contextos declarados por los bloques 4, 6 y 12, también cuando todo pasa: están al principio de
+# la salida y el `tail -25` no los alcanza. El workflow los exige en el log (no basta que verificar_211 los vea).
+publicar_contextos_211() { # $1 = salida de la batería
+  echo "[contextos declarados por la batería #35]"
+  grep -E 'OK    (4|6|12)\.0 |FALLO (4|6|12)\.0 ' "$1" || echo "FALLO no se declaró el contexto 4.0/6.0/12.0 de la batería #35"
+}
+diag_211() { # $1 = salida de la batería
+  echo "--- diagnóstico de la batería #35 ---"
+  echo "[contexto declarado por los bloques 4, 6 y 12]"
+  grep -E 'OK    (4|6|12)\.0 |FALLO (4|6|12)\.0 ' "$1" || echo "(sin líneas de contexto: la batería no llegó a esos bloques)"
+  echo "[FALLO y errores, con 2 líneas de contexto]"
+  grep -n -B2 -A2 -E 'FALLO |ERROR|test_211: ' "$1" | head -120 || true
+  echo "[resumen]"
+  grep -A4 -F '=== RESUMEN ===' "$1" || echo "(sin resumen: la batería se detuvo antes)"
+  echo "--- fin del diagnóstico ---"
+}
 
 limpiar() {
   st=$?
@@ -92,10 +141,18 @@ docker exec -i "$CT" sh -c "cat > $DIR_CT/222.sql" < "$M222"
 docker exec -i "$CT" sh -c "cat > $DIR_CT/223.sql" < "$M223"
 docker exec -i "$CT" sh -c 'cat > /tmp/netoHija50.vectores.json' < "$VECTORES"
 [ "$($PSA -d postgres -t -A -c "select count(*) from pg_database where datname = '$PLANTILLA'")" = 1 ] || { echo "No existe la plantilla $PLANTILLA." >&2; exit 2; }
-[ "$($PSA -d "$PLANTILLA" -t -A -c "select (to_regclass('public.cotizacion_participantes') is not null and to_regnamespace('p39_priv') is not null and to_regnamespace('p50_priv') is null and to_regclass('public.cotizacion_neto') is null)::int")" = 1 ] \
-  || { echo "La plantilla debe tener la 216/217/219 y NO la 222." >&2; exit 2; }
-[ "$($PSA -d "$PLANTILLA" -t -A -c "select count(*) from pg_trigger where not tgisinternal and tgenabled <> 'D' and tgname = 'trg_cot_frontera_39'")" = 1 ] \
-  || { echo "La plantilla debe tener la frontera de la 217 ACTIVA." >&2; exit 2; }
+if [ "$MODO" = 211sola ]; then
+  # Base hasta la 211: la comparativa (f211_priv) SÍ, la frontera de #39 y la 222 NO.
+  [ "$($PSA -d "$PLANTILLA" -t -A -c "select (to_regnamespace('f211_priv') is not null and to_regnamespace('p39_priv') is null and to_regnamespace('p50_priv') is null and to_regclass('public.cotizacion_comparativa_validaciones') is not null)::int")" = 1 ] \
+    || { echo "La plantilla de 211sola debe tener la 211 y NO la 216/217/222." >&2; exit 2; }
+  [ "$($PSA -d "$PLANTILLA" -t -A -c "select count(*) from pg_trigger where not tgisinternal and tgname = 'trg_cot_frontera_39'")" = 0 ] \
+    || { echo "La plantilla de 211sola no debe tener la frontera de la 217." >&2; exit 2; }
+else
+  [ "$($PSA -d "$PLANTILLA" -t -A -c "select (to_regclass('public.cotizacion_participantes') is not null and to_regnamespace('p39_priv') is not null and to_regnamespace('p50_priv') is null and to_regclass('public.cotizacion_neto') is null)::int")" = 1 ] \
+    || { echo "La plantilla debe tener la 216/217/219 y NO la 222." >&2; exit 2; }
+  [ "$($PSA -d "$PLANTILLA" -t -A -c "select count(*) from pg_trigger where not tgisinternal and tgenabled <> 'D' and tgname = 'trg_cot_frontera_39'")" = 1 ] \
+    || { echo "La plantilla debe tener la frontera de la 217 ACTIVA." >&2; exit 2; }
+fi
 
 crear_base() { # $1 = nombre ; deja la base marcada para borrarla al final
   cb_i=1
@@ -153,6 +210,30 @@ select 'esquemas=' || string_agg(nspname, ',' order by nspname) from pg_namespac
 SQL
 }
 
+# ── Fase H · la batería #35 COMPLETA en una base hasta la 211, SIN 216/217 (contexto INACTIVA) ───────────────
+# Aquí se ejecutan las sentencias ORIGINALES de la 211 (INSERT/UPDATE/DELETE directos con roles de API): es la
+# cobertura de la guarda propia de la 211 sobre servicios y cotizaciones que la frontera de #39 preempta en G2.
+if [ "$MODO" = 211sola ]; then
+  echo "=== Fase H · batería #35 (211) completa en una base hasta la 211, sin 216/217 ==="
+  crear_base "$DBA"
+  if $PSM -v esperar_frontera=inactiva -d "$DBA" < "$AQUI/test_211_cotizaciones_comparativas.sql" > "$TMP/h211.out" 2>&1; then rc=0; else rc=$?; fi
+  tail -25 "$TMP/h211.out"
+  publicar_contextos_211 "$TMP/h211.out"
+  if verificar_211 "$rc" "$TMP/h211.out" INACTIVA \
+       'OK    12.0 contexto de la regresión: sin frontera de #39' 'OK    12.1 un interno crea una cotización simple como siempre' \
+       'OK    4.11 no se inserta un servicio en la madre' 'OK    4.13 no se borra un servicio de la madre' 'OK    4.21 authenticated no marca una simple como hija' \
+       'OK    4.22c ' 'OK    4.31 GUC falsificado tampoco permite insertar servicios en la madre' 'OK    6.29 la hija no cambia su origen/opción por la API' \
+       'OK    6.30 la hija no se borra' 'OK    8.13 ' 'OK    8.16 ' 'OK    12.5 '; then
+    ok "H1 batería #35 (211) completa sin 216/217: contexto INACTIVA, rc 0, resumen sin fallos"
+  else
+    diag_211 "$TMP/h211.out"; fallo "H1 batería #35 (211) sin 216/217 en rojo ($V211_MOTIVO)"
+  fi
+  echo "=== RESUMEN: $OKS ok, $FALLOS fallo(s) ==="
+  if [ "$FALLOS" -gt 0 ]; then exit 1; fi
+  echo "TEST 211 SOLA: TODO OK"
+  exit 0
+fi
+
 echo "=== Fase M · preflight, 222, postcheck ==="
 crear_base "$DBA"
 f="$(fila "$DBA" preflight_222_neto_hija_manual.sql)"
@@ -186,12 +267,17 @@ if [ "$rc" = 0 ] && grep -q 'TEST 216 SQL: TODO OK' "$TMP/g216.out" && ! grep -q
 # apagada por error no pase por el camino viejo.
 if $PSM -v esperar_frontera=activa -d "$DBA" < "$AQUI/test_211_cotizaciones_comparativas.sql" > "$TMP/g211.out" 2>&1; then rc=0; else rc=$?; fi
 tail -25 "$TMP/g211.out"
-# Además de rc y FALLO: el bloque 12 corrió en el contexto esperado (no se salta en silencio) y sus puertas se probaron.
-g2faltan=""
-for marca in 'OK    12.0 contexto de la regresión: frontera 216/217 ACTIVA' 'OK    12.1 un interno crea una cotización simple por la operación autorizada'              'OK    12.1c ' 'OK    12.2b ' 'OK    12.3 ' 'OK    12.4 ' 'OK    12.4b ' 'OK    12.5 '; do
-  grep -qF -- "$marca" "$TMP/g211.out" || g2faltan="$g2faltan [$marca]"
-done
-if [ "$rc" = 0 ] && ! grep -q 'FALLO ' "$TMP/g211.out" && ! grep -qi '^psql:.*ERROR' "$TMP/g211.out" && [ -z "$g2faltan" ]; then ok "G2 batería #35 (211) con la 222 presente (bloque 12 con la frontera activa)"; else fallo "G2 batería #35 en rojo (rc=$rc; faltan:${g2faltan:- ninguna})"; fi
+publicar_contextos_211 "$TMP/g211.out"
+# Además de rc y FALLO: el contexto ACTIVA declarado por los bloques 4, 6 y 12, el resumen sin fallos y las marcas
+# de las pruebas por contexto (no se salta nada en silencio). Si falla, se imprime el diagnóstico completo.
+if verificar_211 "$rc" "$TMP/g211.out" ACTIVA \
+     'OK    12.0 contexto de la regresión: frontera 216/217 ACTIVA' 'OK    12.1 un interno crea una cotización simple por la operación autorizada' \
+     'OK    12.1c ' 'OK    12.2b ' 'OK    12.3 ' 'OK    12.4 ' 'OK    12.4b ' 'OK    12.5 ' \
+     'OK    4.13b ' 'OK    4.22c ' 'OK    4.31b ' 'OK    6.30b ' 'OK    8.12 ' 'OK    8.17 '; then
+  ok "G2 batería #35 (211) con la 222 presente (frontera activa: rechazos de la 217, estado protegido y guarda de la 211 sobre carrito)"
+else
+  diag_211 "$TMP/g211.out"; fallo "G2 batería #35 en rojo (rc=$rc; $V211_MOTIVO)"
+fi
 
 echo "=== Fase B · 223 y modalidad obligatoria ==="
 f="$(fila "$DBA" preflight_223_neto_hija_manual_cierre.sql)"

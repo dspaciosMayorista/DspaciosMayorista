@@ -7,6 +7,9 @@
 # El dueño no usa Docker en su PC: el SQL SOLO corre aquí. NO modifica test-216-217-cotizacion-edicion.yml
 # ni test-personas-cotizaciones-42.yml. Producción sigue con preflight/migración/postcheck manuales y
 # autorizados por el dueño (222 → postcheck → app → 223 → postcheck).
+# Un tercer job (bateria-211-sola) corre la batería #35 COMPLETA en OTRA base desechable construida solo hasta la 211,
+# sin 216/217 ni 222, exigiendo el contexto INACTIVA: ahí se ejercen las sentencias originales de la 211 que, con la
+# frontera de #39 activa (G2 del primer job, contexto ACTIVA), la 217 preempta.
 name: test-222-223-neto-50
 
 on:
@@ -82,7 +85,11 @@ jobs:
       - name: Migraciones 222 y 223 reales (M, S, G, B y RB)
         timeout-minutes: 35
         run: |
-          set -uo pipefail
+          set -u -o pipefail
+          # GitHub ejecuta el paso con `bash -e` (con `shell: bash`, también `-o pipefail`). errexit se desactiva AQUÍ,
+          # antes del pipeline con tee: activo, un runner con rc distinto de 0 mataría el paso en la propia tubería,
+          # antes de capturar PIPESTATUS y de imprimir el diagnóstico. Las guardas de abajo salen con `exit 1` explícito.
+          set +e
           salida="$RUNNER_TEMP/test222.out"
           bash supabase/scripts/test_222_neto_hija.sh "$CT" "$PLANTILLA" 2>&1 | tee "$salida"
           rc="${PIPESTATUS[0]}"
@@ -101,12 +108,17 @@ jobs:
                        'OK    I1.1 ' 'OK    I2.1 ' 'OK    I3.2 ' 'OK    I4.1 ' \
                        'OK    D1.2 ' 'OK    D2.2 ' 'OK    D4.3 ' 'OK    D5.2 ' 'OK    D6.2 ' 'OK    D6.3 ' \
                        'OK    F1.2 ' 'OK    F2.1 ' 'OK    F3.1 ' 'OK    F3.2 ' 'OK    A1.2 ' 'OK    A2.1 ' 'OK    A4.2 ' 'OK    A5.1 ' 'OK    G1.3 ' \
-                       'OK    O1.1 ' 'OK    O2.1 ' 'OK    O2.2 ' 'OK    O2.3 ' 'OK    O4.1 ' 'OK    O5.2 '; do
+                       'OK    O1.1 ' 'OK    O2.1 ' 'OK    O2.2 ' 'OK    O2.3 ' 'OK    O4.1 ' 'OK    O5.2 ' \
+                       'OK    4.0 contexto: frontera 216/217 ACTIVA (esperado: activa)' 'OK    6.0 contexto: frontera 216/217 ACTIVA (esperado: activa)' \
+                       'OK    12.0 contexto de la regresión: frontera 216/217 ACTIVA (esperado: activa)'; do
             grep -qF -- "$marca" "$salida" || faltan="$faltan [$marca]"
           done
           if [ "$rc" != 0 ] || grep -q '^FALLO' "$salida" || grep -q 'FALLO ' "$salida" \
              || ! grep -q 'TEST 222 SQL: TODO OK' "$salida" || ! grep -q 'TEST 223 SQL: TODO OK' "$salida" \
              || ! grep -q 'TEST 222/223 NETO: TODO OK' "$salida" || [ -n "$faltan" ]; then
+            # Diagnóstico en el propio log: los FALLO (con su causa) y las últimas líneas del runner, aunque el log sea largo.
+            grep -n 'FALLO ' "$salida" | head -60 || true
+            tail -15 "$salida" || true
             echo "::error::Pruebas 222/223 en rojo (rc=$rc; faltan:${faltan:- ninguna})"
             exit 1
           fi
@@ -117,6 +129,73 @@ jobs:
         run: docker logs --tail 200 "$CT" 2>&1 || true
 
       - name: Limpieza de contenedores (siempre, también si falla o se cancela)
+        if: always()
+        working-directory: .
+        run: docker rm -f "$CT" || true
+
+  bateria-211-sola:
+    name: '#35 · batería 211 completa en una base hasta la 211 (sin 216/217, contexto INACTIVA)'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    env:
+      CT: pg211_ci
+      PLANTILLA: plantilla211ci
+      IMAGEN_PG: supabase/postgres:15.8.1.085
+    defaults:
+      run:
+        shell: bash
+        working-directory: dspacios-travel
+    steps:
+      - name: Código (solo lectura, sin credenciales persistidas)
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+
+      - name: PostgreSQL desechable (otra base, otro contenedor que el job de 222/223)
+        timeout-minutes: 5
+        run: |
+          set -euo pipefail
+          # Contraseña local de un contenedor efímero que nunca sale del runner (no es un secreto).
+          docker run -d --name "$CT" -e POSTGRES_PASSWORD=postgres "$IMAGEN_PG"
+
+      - name: Cadena REAL de migraciones SOLO hasta la 211 (sin 216/217 ni 222)
+        timeout-minutes: 20
+        run: |
+          set -euo pipefail
+          ls supabase/migrations/ | sed -E 's/^20260601000([0-9]{3})_.*/\1/' | sort -n | awk '$1 <= 211' | tail -4 | tr '\n' ' '; echo
+          bash supabase/scripts/preparar_esquema_local.sh "$CT" 211 "$PLANTILLA"
+
+      - name: Batería 211 completa sin frontera (contexto INACTIVA, rc, resumen y sin FALLO)
+        timeout-minutes: 25
+        run: |
+          set -u -o pipefail
+          # GitHub ejecuta el paso con `bash -e` (con `shell: bash`, también `-o pipefail`). errexit se desactiva AQUÍ,
+          # antes del pipeline con tee: activo, un runner con rc distinto de 0 mataría el paso en la propia tubería,
+          # antes de capturar PIPESTATUS y de imprimir el diagnóstico. Las guardas de abajo salen con `exit 1` explícito.
+          set +e
+          salida="$RUNNER_TEMP/test211sola.out"
+          bash supabase/scripts/test_222_neto_hija.sh "$CT" "$PLANTILLA" 211sola 2>&1 | tee "$salida"
+          rc="${PIPESTATUS[0]}"
+          # rc es el del runner (no el de tee). Además: una línea OK de H1 que nombra el contexto INACTIVA, el cierre en
+          # verde, el resumen del runner y ningún FALLO; el diagnóstico completo ya lo imprimió el runner si algo falló.
+          faltan=""
+          for marca in 'OK    H1 batería #35 (211) completa sin 216/217: contexto INACTIVA, rc 0, resumen sin fallos' \
+                       'TEST 211 SOLA: TODO OK' '=== RESUMEN: ' 'OK    12.0 contexto de la regresión: sin frontera de #39 (esperado: inactiva)' \
+                       'OK    4.0 contexto: sin frontera de #39 (esperado: inactiva)' 'OK    6.0 contexto: sin frontera de #39 (esperado: inactiva)'; do
+            grep -qF -- "$marca" "$salida" || faltan="$faltan [$marca]"
+          done
+          if [ "$rc" != 0 ] || grep -q 'FALLO ' "$salida" || [ -n "$faltan" ]; then
+            grep -n 'FALLO ' "$salida" | head -40 || true
+            echo "::error::Batería 211 sola en rojo (rc=$rc; faltan:${faltan:- ninguna})"
+            exit 1
+          fi
+
+      - name: Diagnóstico del contenedor (solo si falla)
+        if: failure()
+        working-directory: .
+        run: docker logs --tail 200 "$CT" 2>&1 || true
+
+      - name: Limpieza del contenedor (siempre, también si falla o se cancela)
         if: always()
         working-directory: .
         run: docker rm -f "$CT" || true
@@ -141,7 +220,11 @@ jobs:
       - name: 'Pruebas TS de #50 y las de margen/NETO/comparativas que toca (sin base de datos)'
         timeout-minutes: 20
         run: |
-          set -uo pipefail
+          set -u -o pipefail
+          # GitHub ejecuta el paso con `bash -e` (con `shell: bash`, también `-o pipefail`). errexit se desactiva AQUÍ,
+          # antes del pipeline con tee: activo, un runner con rc distinto de 0 mataría el paso en la propia tubería,
+          # antes de capturar PIPESTATUS y de imprimir el diagnóstico. Las guardas de abajo salen con `exit 1` explícito.
+          set +e
           salida="$RUNNER_TEMP/ts50.out"
           docker run --rm --name "$CTN" -e CI=1 -e COREPACK_ENABLE_DOWNLOAD_PROMPT=0 \
             -v "$GITHUB_WORKSPACE:/repo" -w /repo/dspacios-travel "$IMAGEN_NODE" sh -ec '
