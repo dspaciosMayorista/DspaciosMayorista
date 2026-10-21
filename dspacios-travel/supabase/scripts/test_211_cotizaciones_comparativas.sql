@@ -543,18 +543,97 @@ begin
 end $$;
 
 \echo '--- 12. Regresión: cotizaciones simples siguen funcionando como antes'
+-- Este bloque corre en DOS contextos y lo dice (12.0), nunca salta en silencio:
+--   · SIN la frontera de #39 (211 sola, o con la 216 sin la 217): una cotización simple se crea, edita y
+--     recibe servicios y pagos previos con INSERT/UPDATE directos, "como siempre" (pruebas originales).
+--   · CON la frontera 216/217 activa (`p39_priv.frontera_activa()`): ESA es la regresión que importa. La
+--     creación solo existe por `crear_cotizacion_manual` (service_role) y las escrituras económicas directas
+--     se rechazan con el mensaje exacto de cada puerta (sin desactivar disparadores ni usar superusuario);
+--     el flujo completo de edición, pago, anulación y conversión lo prueba test_216_edicion39.sql (G1).
+-- El runner de #50 puede exigir el contexto con `psql -v esperar_frontera=activa|inactiva` (G2: «activa»),
+-- para que una frontera apagada por error no deje pasar la prueba por el camino viejo.
+\if :{?esperar_frontera}
+select set_config('t211.esperar_frontera', :'esperar_frontera', false);
+\endif
 do $$
-declare r text; c bigint; admin_ uuid := '00000000-0000-0000-0000-000000211002';
+declare
+  r text; c bigint; admin_ uuid := '00000000-0000-0000-0000-000000211002';
+  v_front boolean := false; v_esp text := coalesce(current_setting('t211.esperar_frontera', true), '');
+  v_cab jsonb; v_srv jsonb;
 begin
-  r := t211.escalar('authenticated', admin_, $q$ insert into public.cotizaciones (tenant, tipo, estado, payload, moneda, precio_venta, vigencia_hasta)
-        values ('mayorista', 'manual', 'abierta', '{}', 'COP', 1000, current_date + 3) returning id::text $q$);
-  perform t211.afirma('12.1 un interno crea una cotización simple como siempre', r ~ '^\d+$', r);
-  c := r::bigint;
-  perform t211.acepta('12.2 …y la edita (precio, vigencia, estado)', t211.intenta('authenticated', admin_, format('update public.cotizaciones set precio_venta = 2000, vigencia_hasta = current_date + 10 where id = %s', c)));
-  perform t211.acepta('12.3 …y agrega/edita/borra servicios', t211.intenta('authenticated', admin_, format('insert into public.cotizacion_servicios (cotizacion_id, tipo_servicio, valor) values (%s, ''hotel'', 5)', c)));
-  perform t211.acepta('12.4 …y puede registrar pagos previos como antes (trigger no la afecta)',
-     t211.intenta('supabase_admin', null, format($q$ insert into public.cotizacion_pagos_previos (cotizacion_id, tenant, monto_cop, monto_moneda, moneda, forma_pago, referencia, registrado_por_id)
-         values (%s, 'mayorista', 1, 1, 'COP', 'Transferencia', 'R-REG-1', %L) $q$, c, admin_)));
+  -- Dinámico: sin la 216 la función ni existe y el bloque debe compilar igual.
+  if to_regprocedure('p39_priv.frontera_activa()') is not null then
+    execute 'select p39_priv.frontera_activa()' into v_front;
+  end if;
+  perform t211.afirma('12.0 contexto de la regresión: ' || case when v_front then 'frontera 216/217 ACTIVA' else 'sin frontera de #39' end
+     || case when v_esp <> '' then ' (esperado: ' || v_esp || ')' else '' end,
+     case v_esp when 'activa' then v_front when 'inactiva' then not v_front else true end,
+     'frontera_activa=' || v_front::text || ' esperar_frontera=' || coalesce(nullif(v_esp, ''), '(libre)'));
+
+  if not v_front then
+    r := t211.escalar('authenticated', admin_, $q$ insert into public.cotizaciones (tenant, tipo, estado, payload, moneda, precio_venta, vigencia_hasta)
+          values ('mayorista', 'manual', 'abierta', '{}', 'COP', 1000, current_date + 3) returning id::text $q$);
+    perform t211.afirma('12.1 un interno crea una cotización simple como siempre', r ~ '^\d+$', r);
+    c := r::bigint;
+    perform t211.acepta('12.2 …y la edita (precio, vigencia, estado)', t211.intenta('authenticated', admin_, format('update public.cotizaciones set precio_venta = 2000, vigencia_hasta = current_date + 10 where id = %s', c)));
+    perform t211.acepta('12.3 …y agrega/edita/borra servicios', t211.intenta('authenticated', admin_, format('insert into public.cotizacion_servicios (cotizacion_id, tipo_servicio, valor) values (%s, ''hotel'', 5)', c)));
+    perform t211.acepta('12.4 …y puede registrar pagos previos como antes (trigger no la afecta)',
+       t211.intenta('supabase_admin', null, format($q$ insert into public.cotizacion_pagos_previos (cotizacion_id, tenant, monto_cop, monto_moneda, moneda, forma_pago, referencia, registrado_por_id)
+           values (%s, 'mayorista', 1, 1, 'COP', 'Transferencia', 'R-REG-1', %L) $q$, c, admin_)));
+  else
+    -- 12.1 La creación autorizada: crear_cotizacion_manual (solo service_role) con el autor explícito.
+    v_cab := jsonb_build_object('payload', '{}'::jsonb, 'detalle', '{}'::jsonb, 'precio_venta', 1000, 'moneda', 'COP',
+                                'vigencia_hasta', (current_date + 3)::text, 'cliente', 'Cliente 12', 'pax', 2);
+    v_srv := jsonb_build_array(jsonb_build_object('orden', 0, 'tipo_servicio', 'hotel', 'nombre_servicio', 'Hotel 12',
+                                                  'costo_neto', 800, 'valor', 1000));
+    r := t211.escalar('service_role', null, format('select public.crear_cotizacion_manual(%L, ''mayorista'', %L::jsonb, %L::jsonb)::text', admin_, v_cab, v_srv));
+    perform t211.afirma('12.1 un interno crea una cotización simple por la operación autorizada (crear_cotizacion_manual)', r ~ '^\d+$', r);
+    c := r::bigint;
+    perform t211.afirma('12.1b …queda abierta, manual, con su autor y sus servicios',
+       (select q.tipo = 'manual' and q.modo = 'simple' and q.estado = 'abierta' and q.creado_por_id = admin_ and q.precio_venta = 1000
+           and q.cotizacion_origen_id is null from public.cotizaciones q where q.id = c)
+       and (select count(*) = 1 and sum(valor) = 1000 from public.cotizacion_servicios where cotizacion_id = c));
+    perform t211.rechaza('12.1c el INSERT directo de una manual sigue prohibido (authenticated)',
+       t211.intenta('authenticated', admin_, $q$ insert into public.cotizaciones (tenant, tipo, estado, payload, moneda, precio_venta, vigencia_hasta)
+          values ('mayorista', 'manual', 'abierta', '{}', 'COP', 1000, current_date + 3) $q$),
+       'FRONTERA_39: una cotización dinámica solo se crea con la operación de creación');
+    perform t211.rechaza('12.1d …y tampoco con service_role sin la operación de creación',
+       t211.intenta('service_role', null, $q$ insert into public.cotizaciones (tenant, tipo, estado, payload, moneda, precio_venta, vigencia_hasta)
+          values ('mayorista', 'manual', 'abierta', '{}', 'COP', 1000, current_date + 3) $q$),
+       'FRONTERA_39: una cotización dinámica solo se crea con la operación de creación');
+
+    -- 12.2 Los datos NO económicos siguen editables directo; el precio no.
+    perform t211.acepta('12.2 …se le edita la vigencia directo (campo libre)',
+       t211.intenta('authenticated', admin_, format('update public.cotizaciones set vigencia_hasta = current_date + 10 where id = %s', c)));
+    perform t211.rechaza('12.2b …pero el precio directo se rechaza (solo con la operación autorizada)',
+       t211.intenta('authenticated', admin_, format('update public.cotizaciones set precio_venta = 2000 where id = %s', c)),
+       'FRONTERA_39: los datos económicos de una cotización dinámica solo se cambian con su operación autorizada');
+    perform t211.afirma('12.2c …y el precio quedó intacto', (select precio_venta = 1000 from public.cotizaciones where id = c));
+
+    -- 12.3 Servicios: sin privilegio de escritura directa para ningún rol de la API (la puerta es la RPC de edición).
+    perform t211.rechaza('12.3 agregar un servicio directo se rechaza (authenticated)',
+       t211.intenta('authenticated', admin_, format('insert into public.cotizacion_servicios (cotizacion_id, tipo_servicio, valor) values (%s, ''hotel'', 5)', c)),
+       'permission denied for table cotizacion_servicios');
+    perform t211.rechaza('12.3b …y con service_role tampoco',
+       t211.intenta('service_role', null, format('insert into public.cotizacion_servicios (cotizacion_id, tipo_servicio, valor) values (%s, ''hotel'', 5)', c)),
+       'permission denied for table cotizacion_servicios');
+    perform t211.rechaza('12.3c …ni se editan ni se borran los existentes (authenticated)',
+       t211.intenta('authenticated', admin_, format('update public.cotizacion_servicios set valor = 1 where cotizacion_id = %s', c)),
+       'permission denied for table cotizacion_servicios');
+    perform t211.afirma('12.3d …y los servicios siguen intactos', (select count(*) = 1 and sum(valor) = 1000 from public.cotizacion_servicios where cotizacion_id = c));
+
+    -- 12.4 Pagos previos: solo con la operación autorizada (registrar_pago_previo_rev; flujo completo en G1).
+    perform t211.rechaza('12.4 un pago previo directo se rechaza (authenticated)',
+       t211.intenta('authenticated', admin_, format($q$ insert into public.cotizacion_pagos_previos (cotizacion_id, tenant, monto_cop, monto_moneda, moneda, forma_pago, referencia, registrado_por_id)
+           values (%s, 'mayorista', 1, 1, 'COP', 'Transferencia', 'R-REG-1', %L) $q$, c, admin_)),
+       'permission denied for table cotizacion_pagos_previos');
+    perform t211.rechaza('12.4b …y con service_role sin autorización emitida tampoco',
+       t211.intenta('service_role', null, format($q$ insert into public.cotizacion_pagos_previos (cotizacion_id, tenant, monto_cop, monto_moneda, moneda, forma_pago, referencia, registrado_por_id)
+           values (%s, 'mayorista', 1, 1, 'COP', 'Transferencia', 'R-REG-2', %L) $q$, c, admin_)),
+       'FRONTERA_39: los pagos previos solo se registran con la operación autorizada');
+    perform t211.afirma('12.4c …y no quedó ningún pago previo', not exists (select 1 from public.cotizacion_pagos_previos where cotizacion_id = c));
+  end if;
+
   perform t211.afirma('12.5 el hash del RPC 198 no cambió respecto de main (md5 capturado en el preflight)',
      (select md5(replace(prosrc, chr(13), '')) from pg_proc where oid = to_regprocedure('public.convertir_cotizacion_a_contrato(bigint,uuid)')) = 'edc9975010746e53e4af6a75ad9763dc');
 end $$;

@@ -181,9 +181,17 @@ echo "=== Fase G · regresión de #39 y #35 con la 222 presente ==="
 if correr "$DBA" test_216_edicion39.sql g216.out; then rc=0; else rc=$?; fi
 tail -25 "$TMP/g216.out"
 if [ "$rc" = 0 ] && grep -q 'TEST 216 SQL: TODO OK' "$TMP/g216.out" && ! grep -q 'FALLO ' "$TMP/g216.out"; then ok "G1 batería #39 (216/217) completa con la 222 presente"; else fallo "G1 batería #39 en rojo (rc=$rc)"; fi
-if correr "$DBA" test_211_cotizaciones_comparativas.sql g211.out; then rc=0; else rc=$?; fi
+# Con la 217 activa el bloque 12 de la batería #35 prueba la creación por la RPC autorizada y el rechazo de las
+# escrituras económicas directas (no el INSERT directo de antes): se EXIGE ese contexto para que una frontera
+# apagada por error no pase por el camino viejo.
+if $PSM -v esperar_frontera=activa -d "$DBA" < "$AQUI/test_211_cotizaciones_comparativas.sql" > "$TMP/g211.out" 2>&1; then rc=0; else rc=$?; fi
 tail -25 "$TMP/g211.out"
-if [ "$rc" = 0 ] && ! grep -q 'FALLO ' "$TMP/g211.out" && ! grep -qi '^psql:.*ERROR' "$TMP/g211.out"; then ok "G2 batería #35 (211) con la 222 presente"; else fallo "G2 batería #35 en rojo (rc=$rc)"; fi
+# Además de rc y FALLO: el bloque 12 corrió en el contexto esperado (no se salta en silencio) y sus puertas se probaron.
+g2faltan=""
+for marca in 'OK    12.0 contexto de la regresión: frontera 216/217 ACTIVA' 'OK    12.1 un interno crea una cotización simple por la operación autorizada'              'OK    12.1c ' 'OK    12.2b ' 'OK    12.3 ' 'OK    12.4 ' 'OK    12.4b ' 'OK    12.5 '; do
+  grep -qF -- "$marca" "$TMP/g211.out" || g2faltan="$g2faltan [$marca]"
+done
+if [ "$rc" = 0 ] && ! grep -q 'FALLO ' "$TMP/g211.out" && ! grep -qi '^psql:.*ERROR' "$TMP/g211.out" && [ -z "$g2faltan" ]; then ok "G2 batería #35 (211) con la 222 presente (bloque 12 con la frontera activa)"; else fallo "G2 batería #35 en rojo (rc=$rc; faltan:${g2faltan:- ninguna})"; fi
 
 echo "=== Fase B · 223 y modalidad obligatoria ==="
 f="$(fila "$DBA" preflight_223_neto_hija_manual_cierre.sql)"
