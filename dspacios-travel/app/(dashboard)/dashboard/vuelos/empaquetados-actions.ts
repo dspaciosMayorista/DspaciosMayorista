@@ -4,6 +4,7 @@ import { createClient } from "@/lib/supabase/server";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { revalidatePath } from "next/cache";
 import { esEstadoEmision, esEstadoPago, type EstadoEmision, type EstadoPago } from "@/lib/vuelos/control";
+import { validarLoteOrigenesAereos } from "@/lib/paquetes/destinosAereos67";
 
 type Result = { ok: true; id?: number } | { ok: false; error: string };
 
@@ -290,10 +291,17 @@ export async function setEmpaquetado(
   ta: number
 ): Promise<Result> {
   const sb = await createClient();
+  // #67: desvincular siempre se permite (es la desvinculación explícita que se
+  // exige antes de retirar un destino aéreo del paquete); vincular se valida.
   if (!checked) {
     const { error } = await sb.from("armado_empaquetados").delete().eq("paquete_id", paqueteId).eq("empaquetado_id", empaquetadoId);
     if (error) return { ok: false, error: error.message };
   } else {
+    // #67: el destino de llegada del vuelo debe estar entre los destinos aéreos
+    // permitidos del paquete (misma regla y mismo helper que los vuelos
+    // negociados). Se valida ANTES de escribir; la base repite la regla.
+    const val = await validarLoteOrigenesAereos(sb, paqueteId, [{ tipo: "empaquetado", id: empaquetadoId }]);
+    if (!val.ok) return { ok: false, error: val.error };
     const { error } = await sb
       .from("armado_empaquetados")
       .upsert(
@@ -319,10 +327,13 @@ export async function setTodosEmpaquetados(
     const { error } = await sb.from("armado_empaquetados").delete().eq("paquete_id", paqueteId);
     if (error) return { ok: false, error: error.message };
   } else if (empaquetadoIds.length) {
+    // #67: lote TODO O NADA, deduplicado y validado antes de escribir.
+    const val = await validarLoteOrigenesAereos(sb, paqueteId, empaquetadoIds.map((id) => ({ tipo: "empaquetado" as const, id })));
+    if (!val.ok) return { ok: false, error: val.error };
     const { error } = await sb
       .from("armado_empaquetados")
       .upsert(
-        empaquetadoIds.map((id) => ({ paquete_id: paqueteId, empaquetado_id: id, aplica_mk: true, ta: 0 })),
+        val.fuentes.map((f) => ({ paquete_id: paqueteId, empaquetado_id: f.id, aplica_mk: true, ta: 0 })),
         { onConflict: "paquete_id,empaquetado_id", ignoreDuplicates: true }
       );
     if (error) return { ok: false, error: error.message };

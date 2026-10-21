@@ -284,7 +284,8 @@ describe("computarReserva() — cambio de día en Bogotá (UTC-5)", () => {
 });
 
 describe("computarReserva() — regresión: empaquetado directo y otros orígenes no consultan salidas_dinamicas", () => {
-  const EMP_OK = { id: 5, activo: true, compra_inicio: null, compra_fin: null };
+  // #67: el vuelo del empaquetado llega al destino comercial del paquete (destino_id: 1), como exige la venta.
+  const EMP_OK = { id: 5, activo: true, compra_inicio: null, compra_fin: null, destino_id: 1 };
 
   test("empaquetado vigente (módulo bloqueo): ok y NO consulta salidas_dinamicas", async () => {
     const { r, logAdmin, logSb } = await reservar(

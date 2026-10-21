@@ -2,6 +2,7 @@ import { createClient } from "@/lib/supabase/server";
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { ArmadoClient } from "./ArmadoClient";
+import { resolverDestinosAereosPaquete } from "@/lib/paquetes/destinosAereos67";
 
 export const dynamic = "force-dynamic";
 
@@ -24,6 +25,21 @@ export default async function PaqueteDetallePage({ params }: { params: Promise<{
   const viajeIni = pq.fecha_viaje_inicio;
   const viajeFin = pq.fecha_viaje_fin;
 
+  // #67 — destinos de llegada permitidos para los vuelos de este paquete:
+  // check apagado = solo el destino comercial (el filtro de siempre); encendido =
+  // comercial + alternativas elegidas del MISMO país. Sin destino comercial no
+  // se ofrece ningún vuelo (nunca "todos" como respaldo). Un error de lectura
+  // se muestra como error, no como "no hay vuelos". Hoteles, servicios y el
+  // destino público siguen filtrando por el destino comercial.
+  const efAereo = await resolverDestinosAereosPaquete(sb, paqueteId);
+  const destinosAereosError = efAereo.ok ? null : efAereo.error;
+  const idsAereos = efAereo.ok && efAereo.efectivos.ok ? efAereo.efectivos.ids : [];
+  const { data: altRows, error: errAlt } = await sb
+    .from("armado_paquete_destinos_aereos")
+    .select("destino_id")
+    .eq("paquete_id", paqueteId);
+  const destinosAereosErrorTotal = destinosAereosError ?? (errAlt ? "No se pudieron leer los destinos aéreos alternativos del paquete." : null);
+
   // Disponibles (filtrados por destino + rango de viaje)
   let qVuelos = sb
     .from("bloqueos_vuelo")
@@ -31,7 +47,7 @@ export default async function PaqueteDetallePage({ params }: { params: Promise<{
     .order("fecha_ida");
   // Un vuelo SIEMPRE pertenece a un destino: filtro estricto (los que no tienen
   // destino asignado no se mezclan en paquetes de otro destino).
-  if (destinoId) qVuelos = qVuelos.eq("destino_id", destinoId);
+  qVuelos = qVuelos.in("destino_id", idsAereos);
   if (viajeIni) qVuelos = qVuelos.gte("fecha_ida", viajeIni);
   if (viajeFin) qVuelos = qVuelos.lte("fecha_ida", viajeFin);
 
@@ -43,7 +59,7 @@ export default async function PaqueteDetallePage({ params }: { params: Promise<{
     .select("id, record, ruta, aerolinea, fecha_ida, fecha_regreso, tarifa_para_empaquetar, destino_id")
     .eq("activo", true)
     .order("fecha_ida");
-  if (destinoId) qEmpaquetados = qEmpaquetados.eq("destino_id", destinoId);
+  qEmpaquetados = qEmpaquetados.in("destino_id", idsAereos);
   if (viajeIni) qEmpaquetados = qEmpaquetados.gte("fecha_ida", viajeIni);
   if (viajeFin) qEmpaquetados = qEmpaquetados.lte("fecha_ida", viajeFin);
 
@@ -119,6 +135,14 @@ export default async function PaqueteDetallePage({ params }: { params: Promise<{
   }
 
   const destinoNombre = (pq.destinos as unknown as { nombre: string } | null)?.nombre ?? null;
+  // Fuera del JSX: un objeto literal con una flecha adentro como prop no se puede serializar a un Client Component.
+  // Sin FK a destinos: un id huérfano (destino borrado/fusionado) no se le muestra al editor; al volver a guardar se limpia.
+  const destinosExistentes = new Set<number>();
+  for (const d of destinos ?? []) destinosExistentes.add(d.id);
+  const idsAlternativasGuardadas: number[] = [];
+  for (const fila of altRows ?? []) {
+    if (destinosExistentes.has(fila.destino_id)) idsAlternativasGuardadas.push(fila.destino_id);
+  }
 
   return (
     <div className="mx-auto max-w-5xl p-4 md:p-8">
@@ -158,7 +182,10 @@ export default async function PaqueteDetallePage({ params }: { params: Promise<{
           programaNoIncluye: pq.programa_no_incluye ?? "",
           programaTarifasEspeciales: pq.programa_tarifas_especiales ?? "",
           programaCondicionesComerciales: pq.programa_condiciones_comerciales ?? "",
+          destinosAereosAlternativos: pq.destinos_aereos_alternativos === true,
+          destinosAereosIds: idsAlternativasGuardadas,
         }}
+        destinosAereosError={destinosAereosErrorTotal}
         tieneDestino={!!destinoId}
         vuelosDisp={vuelosDisp ?? []}
         empaquetadosDisp={empaquetadosDisp ?? []}

@@ -15,6 +15,7 @@ import { cargarFilasTarifarioPaginado } from "./paginacion.ts";
 import { hoyISO } from "../calc/paquetes.ts";
 import { empaquetadoVigente, hoyBogota } from "../reservar/origen.ts";
 import { salidasDinamicasVigentes } from "../reservar/salidaDinamicaVigente.ts";
+import { filtrarFilasPorOrigenAereo } from "../paquetes/destinosAereos67.ts";
 import { registrarEtapa, registrarDatoPagina, registrarErrorTecnico } from "../observabilidad/medicion.ts";
 
 // Columnas completas que necesita Vista Booking (Reservar/tarifario público)
@@ -287,6 +288,21 @@ export async function cargarDatosTarifario(
         filas = filas.filter((f) => f.salida_id == null || rSalidas.vigentes.has(f.salida_id));
       }
       _consultasAux += 1;
+    }
+  }
+
+  // Destino aéreo de la fuente de cada fila de Bloqueo (#67): se ocultan las
+  // ofertas cuyo vuelo ya no está entre los destinos permitidos del paquete.
+  // FALLA CERRADA con error técnico si la consulta falla.
+  // Este cargador completo no tiene llamadores de producción (la vitrina real usa
+  // resumen.ts + filtrosPostCarga.ts) y, sin cliente de servicio, ya omite sus demás
+  // verificaciones de vigencia de hotel: aquí el filtro solo corre con cliente.
+  if (admin) {
+    const rOrigenAereo = await filtrarFilasPorOrigenAereo(admin, filas);
+    filas = rOrigenAereo.filas;
+    if (rOrigenAereo.errorOrigenAereo) {
+      _huboErrorAux = true;
+      registrarErrorTecnico(flujo, flujoId, "datos_auxiliares", "error_consulta_destinos_aereos", rOrigenAereo.errorOrigenAereo);
     }
   }
 

@@ -1,0 +1,208 @@
+# Gate de #67 (migración 220: destinos aéreos alternativos en paquetes de Bloqueo/Sistema).
+# Ejecuta SOLO las pruebas focales contra un PostgreSQL (imagen de Supabase) y un PostgREST
+# desechables, creados y destruidos dentro del runner: preflight, aplicación, postcheck, batería SQL,
+# idempotencia y rollback; carreras entre sesiones reales (configuración contra vinculación) y API/RLS
+# con JWT firmados con un secreto local aleatorio. Un segundo job corre las pruebas TS de #67
+# (reglas puras, flujos reales de servidor, cargadores y editor React) en una imagen oficial de Node
+# con versión exacta. Sin secretos del repositorio, sin Supabase remoto, sin pull_request_target y con
+# permisos de solo lectura.
+# Producción sigue con preflight/migración/postcheck manuales y autorizados por el dueño.
+name: test-220-destinos-aereos-67
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - '.github/workflows/test-220-destinos-aereos-67.yml'
+      - 'dspacios-travel/supabase/migrations/20260601000220_paquete_destinos_aereos.sql'
+      - 'dspacios-travel/supabase/scripts/*_220_*'
+      - 'dspacios-travel/supabase/scripts/test_220_*'
+      - 'dspacios-travel/supabase/scripts/preparar_esquema_local.sh'
+      - 'dspacios-travel/pruebas/destinosAereos67*'
+      - 'dspacios-travel/lib/paquetes/**'
+      - 'dspacios-travel/lib/reservar/computo.ts'
+      - 'dspacios-travel/lib/tarifario/**'
+      - 'dspacios-travel/app/tarifario/detalle-actions.ts'
+      - 'dspacios-travel/app/(dashboard)/dashboard/paquetes/**'
+      - 'dspacios-travel/app/(dashboard)/dashboard/vuelos/empaquetados-actions.ts'
+      - 'dspacios-travel/package.json'
+      - 'dspacios-travel/pnpm-lock.yaml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: test-220-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  prueba-220:
+    name: 220 · fases, SQL, carreras, API y rollback
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    env:
+      CT: pg220_ci
+      RED: red220
+      PLANTILLA: plantilla220ci
+      IMAGEN_PG: supabase/postgres:15.8.1.085
+      IMAGEN_PGRST: ghcr.io/supabase/postgrest:v16.1
+    defaults:
+      run:
+        shell: bash
+        working-directory: dspacios-travel
+    steps:
+      - name: Código (solo lectura, sin credenciales persistidas)
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+
+      - name: PostgreSQL desechable (imagen de Supabase) en una red propia
+        timeout-minutes: 5
+        run: |
+          set -euo pipefail
+          docker network create "$RED"
+          # Contraseña local de un contenedor efímero que nunca sale del runner (no es un secreto).
+          docker run -d --name "$CT" --network "$RED" -e POSTGRES_PASSWORD=postgres "$IMAGEN_PG"
+
+      - name: Descargar PostgREST antes del esquema (falla temprano si no hay acceso)
+        timeout-minutes: 5
+        run: |
+          set -euo pipefail
+          # Debe ser la misma imagen que levanta el runner de API.
+          grep -qF "$IMAGEN_PGRST" supabase/scripts/test_220_api.sh
+          docker pull "$IMAGEN_PGRST"
+
+      - name: Esquema 001-221 SIN la 220 (la 220 se prueba sobre la cadena real)
+        timeout-minutes: 15
+        run: |
+          set -euo pipefail
+          # preparar_esquema_local.sh aplica todo número <= 'hasta' y resuelve las migraciones respecto de su propia
+          # ubicación: para incluir la 221 y dejar fuera la 220 se usa una copia de supabase/ sin el archivo de la 220.
+          ESQ="$RUNNER_TEMP/esquema"
+          mkdir -p "$ESQ"
+          cp -r supabase "$ESQ/supabase"
+          rm -f "$ESQ"/supabase/migrations/20260601000220_*.sql
+          test -f "$ESQ/supabase/migrations/20260601000221_clientes_contratos_crm.sql"
+          test ! -e "$ESQ/supabase/migrations/20260601000220_paquete_destinos_aereos.sql"
+          bash "$ESQ/supabase/scripts/preparar_esquema_local.sh" "$CT" 221 "$PLANTILLA"
+
+      - name: Fases (preflight, aplicar, postcheck, batería SQL, idempotencia y rollback)
+        timeout-minutes: 15
+        run: |
+          set +e
+          set -uo pipefail
+          salida="$RUNNER_TEMP/fases.out"
+          bash supabase/scripts/test_220_fases.sh "$CT" "$PLANTILLA" 2>&1 | tee "$salida"
+          rc="${PIPESTATUS[0]}"
+          # Además del código de salida: ningún FALLO, el cierre en verde y una línea OK de cada
+          # bloque (un bloque que se saltara en silencio no puede dar verde).
+          faltan=""
+          for marca in 'OK    F1.1 ' 'OK    F1.2 ' 'OK    F2.1 ' 'OK    F3 ' 'OK    F4 ' 'OK    F5.1 ' 'OK    F5.2 ' \
+                       'OK    F6 ' 'OK    F7.1 ' 'OK    F7.2 ' 'OK    F8.1 ' 'OK    F8.2 ' \
+                       'OK    V10 ' 'OK    V11 ' 'OK    V12 ' 'OK    V13 ' 'OK    R5 ' 'OK    R8 ' 'OK    G1 ' 'OK    G3 ' 'OK    G7 ' 'OK    A6 ' \
+                       'TEST 220 SQL: TODO OK'; do
+            grep -qF "$marca" "$salida" || faltan="$faltan [$marca]"
+          done
+          if [ "$rc" != 0 ] || grep -q '^FALLO' "$salida" || grep -q 'FALLO ' "$salida" \
+             || ! grep -q 'TEST 220 FASES: TODO OK' "$salida" || [ -n "$faltan" ]; then
+            echo "::error::Fases 220 en rojo (rc=$rc; faltan:${faltan:- ninguna})"
+            exit 1
+          fi
+
+      - name: Carreras entre sesiones reales (el script se aborta solo a los 110 s)
+        timeout-minutes: 4
+        run: |
+          set +e
+          set -uo pipefail
+          salida="$RUNNER_TEMP/carreras.out"
+          bash supabase/scripts/test_220_carrera.sh "$CT" "$PLANTILLA" 2>&1 | tee "$salida"
+          rc="${PIPESTATUS[0]}"
+          faltan=""
+          for marca in 'OK    C0 ' 'OK    C1.0 ' 'OK    C1.1 ' 'OK    C1.2 ' 'OK    C1.3 ' 'OK    C2.0 ' 'OK    C2.1 ' 'OK    C2.2 ' 'OK    C2.3 ' \
+                       'OK    C3.0 ' 'OK    C3.1 ' 'OK    C3.2 ' 'OK    C3.3 ' 'OK    C3.4 ' 'OK    C4.1 ' 'OK    C4.2 '; do
+            grep -qF "$marca" "$salida" || faltan="$faltan [$marca]"
+          done
+          if [ "$rc" != 0 ] || grep -q '^FALLO' "$salida" || ! grep -q 'TEST 220 CARRERAS: TODO OK' "$salida" || [ -n "$faltan" ]; then
+            echo "::error::Carreras 220 en rojo (rc=$rc; faltan:${faltan:- ninguna})"
+            exit 1
+          fi
+
+      - name: API (PostgREST local con JWT firmados)
+        timeout-minutes: 15
+        run: |
+          set +e
+          set -uo pipefail
+          salida="$RUNNER_TEMP/api.out"
+          bash supabase/scripts/test_220_api.sh "$CT" "$PLANTILLA" "$RED" 2>&1 | tee "$salida"
+          rc="${PIPESTATUS[0]}"
+          faltan=""
+          for marca in 'OK    H1 ' 'OK    T1 ' 'OK    T2 ' 'OK    T3 ' 'OK    R2 ' 'OK    R3 ' 'OK    R5 ' 'OK    V1 ' 'OK    V2 ' 'OK    V3 ' 'OK    V4 ' 'OK    V5 ' 'OK    V6 '; do
+            grep -qF "$marca" "$salida" || faltan="$faltan [$marca]"
+          done
+          if [ "$rc" != 0 ] || grep -q '^FALLO' "$salida" || ! grep -q 'TEST 220 API: TODO OK' "$salida" || [ -n "$faltan" ]; then
+            echo "::error::API 220 en rojo (rc=$rc; faltan:${faltan:- ninguna})"
+            exit 1
+          fi
+
+      - name: Diagnóstico del contenedor (solo si falla)
+        if: failure()
+        working-directory: .
+        run: docker logs --tail 200 "$CT" 2>&1 || true
+
+      - name: Limpieza de contenedores y red (siempre, también si falla o se cancela)
+        if: always()
+        working-directory: .
+        run: |
+          docker ps -aq --filter "name=pgrst220_" | xargs -r docker rm -f || true
+          docker rm -f "$CT" || true
+          docker network rm "$RED" || true
+
+  pruebas-ts-67:
+    name: '#67 · pruebas TS (reglas, flujos de servidor, cargadores, editor React)'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    env:
+      # Misma versión que el entorno local de las verificaciones (Node 24.14.0, pnpm 10.33.0 del
+      # campo packageManager vía corepack). Imagen oficial con versión exacta, sin acciones extra.
+      IMAGEN_NODE: node:24.14.0-bookworm-slim
+      CTN: node67_ci
+    steps:
+      - name: Código (solo lectura, sin credenciales persistidas)
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+
+      - name: Descargar la imagen de Node (falla temprano si no hay acceso)
+        timeout-minutes: 5
+        run: docker pull "$IMAGEN_NODE"
+
+      - name: 'Pruebas TS de #67 (sin base de datos; Supabase simulado)'
+        timeout-minutes: 20
+        run: |
+          set +e
+          set -uo pipefail
+          salida="$RUNNER_TEMP/ts67.out"
+          docker run --rm --name "$CTN" -e CI=1 -e COREPACK_ENABLE_DOWNLOAD_PROMPT=0 \
+            -v "$GITHUB_WORKSPACE:/repo" -w /repo/dspacios-travel "$IMAGEN_NODE" sh -ec '
+            corepack enable
+            pnpm install --frozen-lockfile
+            node --test --test-reporter=spec --experimental-strip-types --experimental-test-module-mocks \
+              --experimental-loader ./pruebas/support/aliasLoader.mjs \
+              pruebas/destinosAereos67.test.ts pruebas/destinosAereosFlujos67.test.ts pruebas/destinosAereos67Sql.wiring.test.ts
+            node --experimental-test-module-mocks --import ./pruebas/support/registrarProgramasRuta.mjs \
+              --experimental-loader ./pruebas/support/reactLoader.mjs --test --test-reporter=spec \
+              pruebas/destinosAereosEditor67.react.ts
+          ' 2>&1 | tee "$salida"
+          rc="${PIPESTATUS[0]}"
+          # Cero fallos y pruebas realmente corridas (dos ejecuciones: unitarias y React).
+          if [ "$rc" != 0 ] || [ "$(grep -cE '^ℹ fail 0$' "$salida")" != 2 ] || grep -qE '^✖|^ *✖ ' "$salida" \
+             || [ "$(grep -cE '^ℹ tests [1-9][0-9]*$' "$salida")" != 2 ]; then
+            echo "::error::Pruebas TS de #67 en rojo (rc=$rc)"
+            exit 1
+          fi
+
+      - name: Limpieza del contenedor de Node (siempre)
+        if: always()
+        working-directory: .
+        run: docker rm -f "$CTN" || true

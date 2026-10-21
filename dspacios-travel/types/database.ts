@@ -2402,6 +2402,10 @@ export type Database = {
           tarifario_error: string | null;
           tarifario_actualizado_en: string | null;
           tarifario_snapshot_publicable: boolean;
+          // Migración 220 (#67) — check por paquete: false = solo el destino
+          // comercial; true = destino comercial + alternativas elegidas del
+          // MISMO país (tabla armado_paquete_destinos_aereos).
+          destinos_aereos_alternativos: boolean;
         };
         Insert: {
           id?: number;
@@ -2441,8 +2445,18 @@ export type Database = {
           tarifario_error?: string | null;
           tarifario_actualizado_en?: string | null;
           tarifario_snapshot_publicable?: boolean;
+          destinos_aereos_alternativos?: boolean;
         };
         Update: Partial<Database["public"]["Tables"]["armado_paquetes"]["Insert"]>;
+        Relationships: [];
+      };
+      // Migración 220 (#67) — destinos de llegada ALTERNATIVOS elegidos para un
+      // paquete (solo cuenta cuando armado_paquetes.destinos_aereos_alternativos
+      // es true). El destino comercial NO se guarda aquí: siempre es el del paquete.
+      armado_paquete_destinos_aereos: {
+        Row: { paquete_id: number; destino_id: number; creado_en: string };
+        Insert: { paquete_id: number; destino_id: number; creado_en?: string };
+        Update: Partial<Database["public"]["Tables"]["armado_paquete_destinos_aereos"]["Insert"]>;
         Relationships: [];
       };
       armado_vuelos: {
@@ -3795,6 +3809,15 @@ export type Database = {
       iniciar_generacion_tarifario: {
         Args: { p_paquete_id: number };
         Returns: { generacion: number; revision_capturada: number }[];
+      };
+      // Migración 220 (#67). Guarda en UNA transacción el destino comercial, el
+      // check y la lista de alternativas de un paquete. SECURITY INVOKER, con
+      // candado de rol interno. Las guardas de la base (triggers diferidos)
+      // validan el estado final al confirmar: país comparable, alternativas
+      // activas, y que ningún vuelo ya vinculado quede incompatible.
+      guardar_destinos_aereos_67: {
+        Args: { p_paquete_id: number; p_destino_id: number | null; p_activo: boolean; p_destinos: number[] };
+        Returns: Json;
       };
       // Migración 181. Publicación atómica del tarifario — paso 2: reemplaza
       // (delete+insert) TODAS las filas de tarifario_resultado de un paquete

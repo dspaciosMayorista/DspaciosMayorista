@@ -342,7 +342,7 @@ export async function cargarResumenTarifario(
   // hay disponible". Ahora la función entera falla cerrada: nunca entrega
   // catálogo parcial como disponibilidad válida para /tarifario ni
   // /dashboard/reservar.
-  const huboErrorFiltros = !!(resFiltros.errorVigencia || resFiltros.errorEmpaquetado || resFiltros.errorSalida);
+  const huboErrorFiltros = !!(resFiltros.errorVigencia || resFiltros.errorEmpaquetado || resFiltros.errorSalida || resFiltros.errorOrigenAereo);
   if (resFiltros.errorVigencia) {
     registrarErrorTecnico(flujo, flujoId, "filtro_vigencia", "error_hotel_temporadas_o_tarifa_hotel", resFiltros.errorVigencia);
   }
@@ -355,6 +355,12 @@ export async function cargarResumenTarifario(
   if (resFiltros.errorSalida) {
     _huboErrorAux = true;
     registrarErrorTecnico(flujo, flujoId, "datos_auxiliares", "error_consulta_salidas_dinamicas_vigencia", resFiltros.errorSalida);
+  }
+  // #67: error al verificar el destino aéreo de los vuelos de Bloqueo — error
+  // técnico y fallo cerrado, nunca "sin disponibilidad" ni catálogo parcial.
+  if (resFiltros.errorOrigenAereo) {
+    _huboErrorAux = true;
+    registrarErrorTecnico(flujo, flujoId, "datos_auxiliares", "error_consulta_destinos_aereos", resFiltros.errorOrigenAereo);
   }
   registrarEtapa(flujo, flujoId, "filtro_vigencia", Math.round(performance.now() - _tAux0), huboErrorFiltros ? "error" : "ok");
   registrarDatoPagina(flujo, flujoId, "filtro_vigencia", `filas=${filas.length} consultas=${huboVigencia ? 2 : 0}`);

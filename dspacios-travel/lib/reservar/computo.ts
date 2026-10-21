@@ -41,6 +41,7 @@ import { distribuirPorHabitaciones, type HabitacionConsultada, type AsignacionHa
 import { liquidarHotelPaquete } from "@/lib/reservar/cotizar";
 import { resolverOrigenVuelo, empaquetadoVigente, hoyBogota, type OrigenVuelo } from "@/lib/reservar/origen";
 import { verificarSalidaDinamicaVigente, mensajeSalidaNoVigente } from "@/lib/reservar/salidaDinamicaVigente";
+import { validarOrigenAereoPaquete, MENSAJES as MENSAJES_DEST_AEREOS } from "@/lib/paquetes/destinosAereos67";
 import {
   normalizarCategoriaServicio, costoNetoServicioIncluido, cargoGrupoIncluido,
   type CategoriaServicio, type ServicioEfectivo, type ServicioGrupoIncluido,
@@ -283,6 +284,27 @@ export async function computarReserva(
     }
     const vigencia = await verificarSalidaDinamicaVigente(lector, origen.id);
     if (!vigencia.ok) return { ok: false, error: vigencia.error };
+  }
+
+  // Destino aéreo del vuelo elegido en Bloqueo/Sistema (#67). El destino de
+  // llegada de la fuente (bloqueo negociado o empaquetado) debe estar entre los
+  // destinos aéreos permitidos HOY del paquete: check apagado = destino
+  // comercial exacto; encendido = comercial + alternativas válidas del mismo
+  // país. `tarifario_resultado` es una caché: el país o el destino de la fuente
+  // pudieron cambiar después de publicar, así que se valida contra los datos
+  // vivos ANTES de leer precio. Se lee con el cliente de SERVICIO porque
+  // `bloqueos_vuelo`/`empaquetados` no son legibles para todos los roles que
+  // venden. Cualquier fallo rechaza, con un mensaje técnico distinto del de
+  // "no corresponde" — nunca se interpreta como permitido.
+  if (origen.tipo === "bloqueo" || origen.tipo === "empaquetado") {
+    let lectorAereo: ReturnType<typeof createAdminClient>;
+    try {
+      lectorAereo = createAdminClient();
+    } catch {
+      return { ok: false, error: MENSAJES_DEST_AEREOS.tecnico };
+    }
+    const destinoAereo = await validarOrigenAereoPaquete(lectorAereo, input.paqueteId, { tipo: origen.tipo, id: origen.id });
+    if (!destinoAereo.ok) return { ok: false, error: destinoAereo.error };
   }
 
   const esServicios = input.modulo === "servicios";
