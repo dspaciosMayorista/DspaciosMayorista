@@ -311,6 +311,8 @@ export function tablasBase(o: {
     armado_paquete_destinos_aereos: (o.alternativas ?? []).map((d) => ({ paquete_id: PAQUETE_ID, destino_id: d })),
     bloqueos_vuelo: bloqueosFixture(),
     empaquetados: empaquetadosFixture(),
+    // 224: computarReserva valida la vigencia del Empaquetado por la VISTA sin costos (mismas filas que la tabla base).
+    empaquetados_basica: empaquetadosFixture(),
     armado_vuelos: (o.vuelosLigados ?? []).map((b) => ({ paquete_id: PAQUETE_ID, bloqueo_id: b, aplica_mk: true, ta: 0 })),
     armado_empaquetados: (o.empaquetadosLigados ?? []).map((e) => ({ paquete_id: PAQUETE_ID, empaquetado_id: e, aplica_mk: true, ta: 0 })),
   };
