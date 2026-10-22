@@ -24,7 +24,7 @@ export function EditarBloqueoForm({
     record: string; aerolinea: string; proveedorId: number | null; destinoId: number | null; ruta: string; origen: string;
     vueloIda: string; fechaIda: string; horaSalidaIda: string; horaLlegadaIda: string;
     vueloRegreso: string; fechaRegreso: string; horaSalidaReg: string; horaLlegadaReg: string;
-    tarifaNeta: number; tarifaParaEmpaquetar: number; fechaDevolucion: string; fechaEmision: string; notas: string; rangosEdad: number[];
+    tarifaNeta: number; tarifaParaEmpaquetar: number; feeInfante?: number; fechaDevolucion: string; fechaEmision: string; notas: string; rangosEdad: number[];
   };
   proveedores: ProveedorOpt[]; destinos: DestinoOpt[]; rangos: RangoEdad[];
 }) {
@@ -32,7 +32,7 @@ export function EditarBloqueoForm({
   const [open, setOpen] = useState(false);
   const [pending, start] = useTransition();
   const [msg, setMsg] = useState("");
-  const [f, setF] = useState({ ...inicial, tarifaParaEmpaquetar: String(inicial.tarifaParaEmpaquetar), tarifaNeta: String(inicial.tarifaNeta) });
+  const [f, setF] = useState({ ...inicial, tarifaParaEmpaquetar: String(inicial.tarifaParaEmpaquetar), tarifaNeta: String(inicial.tarifaNeta), feeInfante: String(inicial.feeInfante ?? 0) });
   const [proveedorId, setProveedorId] = useState<number | "">(inicial.proveedorId ?? "");
   // Valores con los que arrancan los combos: sirven para saber si el usuario
   // cambió origen/destino (ver resolverOrigenRutaEdicion).
@@ -68,6 +68,8 @@ export function EditarBloqueoForm({
         vueloIda: f.vueloIda, fechaIda: f.fechaIda, horaSalidaIda: f.horaSalidaIda, horaLlegadaIda: f.horaLlegadaIda,
         vueloRegreso: f.vueloRegreso, fechaRegreso: f.fechaRegreso, horaSalidaReg: f.horaSalidaReg, horaLlegadaReg: f.horaLlegadaReg,
         tarifaNeta: Number(f.tarifaNeta) || 0, tarifaParaEmpaquetar: Number(f.tarifaParaEmpaquetar) || 0, fechaDevolucion: f.fechaDevolucion, fechaEmision: f.fechaEmision,
+        // Fee de infante: solo viaja si la página lo entregó (migración 226).
+        ...(inicial.feeInfante !== undefined ? { feeInfante: Number(f.feeInfante) || 0 } : {}),
         notas: f.notas, rangosEdad: rangosSel,
       });
       if (r.ok) { setMsg("Guardado."); setOpen(false); router.refresh(); } else setMsg(r.error);
@@ -124,6 +126,12 @@ export function EditarBloqueoForm({
               </div>
               <div><label className={lbl}>Tarifa neta (pago aerolínea)</label><Input type="number" min={0} value={f.tarifaNeta} onChange={set("tarifaNeta")} /></div>
               <div><label className={lbl}>Tarifa empaquetar (reventa)</label><Input type="number" min={0} value={f.tarifaParaEmpaquetar} onChange={set("tarifaParaEmpaquetar")} /></div>
+              {inicial.feeInfante !== undefined && (
+                <div>
+                  <label className={lbl}>Fee de infante (0 a 1,99 años)</label>
+                  <Input type="number" min={0} value={f.feeInfante} onChange={set("feeInfante")} />
+                </div>
+              )}
               <div><label className={lbl}>Fecha devolución</label><DateInput aria-label="Fecha devolución" type="date" value={f.fechaDevolucion} onValueChange={(dateValue) => setF({ ...f, ["fechaDevolucion"]: dateValue })} /></div>
             </div>
             <RangosEdadPicker rangos={rangos} seleccionados={rangosSel} onChange={setRangosSel} label="Rangos de edad del vuelo (infante/niño)" />

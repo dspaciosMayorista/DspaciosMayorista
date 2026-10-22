@@ -239,7 +239,8 @@ describe("R294-2 (revisión B6) · el incluido por grupo se COBRA una vez, con l
     const sumas = cuerpo.match(/precioVenta \+=/g) ?? [];
     assert.equal(sumas.length, 1, "el incluido por grupo se cobra una sola vez");
     assert.match(cuerpo, /precioVenta \+= cargo\.pvp/);
-    assert.match(cuerpo, /cargoGrupoIncluido\(gruposIncluidosPendientes, totalPax, pctMk, numNochesInc\)/);
+    // 226: el rango cuenta SOLO a los de 2+ años (`paxServAdulto`); el menor de 2 años no cuenta ni paga extra.
+    assert.match(cuerpo, /cargoGrupoIncluido\(gruposIncluidosPendientes, paxServAdulto, pctMk, numNochesInc\)/);
   });
   test("el motor de búsqueda usa la MISMA función con el pax real (nunca una división por persona)", () => {
     const cuerpo = cuerpoFuncion(cotizar, "export async function buscarHoteles(");

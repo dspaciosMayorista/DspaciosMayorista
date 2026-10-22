@@ -1171,6 +1171,8 @@ export type Database = {
           modalidad_emision: string | null;
           estado_emision: string | null;
           estado_pago: string | null;
+          // Migración 226: fee de infante del vuelo (0 a 1,99 años). Precio = costo.
+          fee_infante: number;
           created_at: string;
           updated_at: string;
         };
@@ -1179,6 +1181,7 @@ export type Database = {
           record: string;
           proveedor_id?: number | null;
           destino_id?: number | null;
+          fee_infante?: number;
           rangos_edad?: number[] | null;
           aerolinea?: string | null;
           ruta?: string | null;
@@ -2326,6 +2329,8 @@ export type Database = {
           tarifa_neta: number; temporada: string | null; rangos_edad: number[] | null; tipo_tarifa: string;
           precio_persona: number | null; precio_grupo: number | null; categoria: string;
           descripcion: string | null; recargo_individual: number | null; moneda: string; foto_url: string | null;
+          // Migración 226: NETO por infante (0 a 1,99 años). NULL = el infante paga como adulto (NULL ≠ $0).
+          precio_infante: number | null;
           liquidacion: Database["public"]["Enums"]["liquidacion_tipo"]; alcance: string; activo: boolean; created_at: string;
         };
         Insert: {
@@ -2333,6 +2338,7 @@ export type Database = {
           tarifa_neta?: number; temporada?: string | null; rangos_edad?: number[] | null; tipo_tarifa?: string;
           precio_persona?: number | null; precio_grupo?: number | null; categoria?: string;
           descripcion?: string | null; recargo_individual?: number | null; moneda?: string; foto_url?: string | null;
+          precio_infante?: number | null;
           liquidacion?: Database["public"]["Enums"]["liquidacion_tipo"]; alcance?: string; activo?: boolean; created_at?: string;
         };
         Update: Partial<Database["public"]["Tables"]["servicios_adicionales"]["Insert"]>;
@@ -2345,8 +2351,8 @@ export type Database = {
         Relationships: [];
       };
       servicio_temporadas: {
-        Row: { id: number; servicio_id: number; nombre: string; fecha_inicio: string | null; fecha_fin: string | null; prioridad: number; compra_inicio: string | null; compra_fin: string | null; precio_persona: number | null; recargo_individual: number | null; orden: number; created_at: string };
-        Insert: { id?: number; servicio_id: number; nombre: string; fecha_inicio?: string | null; fecha_fin?: string | null; prioridad?: number; compra_inicio?: string | null; compra_fin?: string | null; precio_persona?: number | null; recargo_individual?: number | null; orden?: number; created_at?: string };
+        Row: { id: number; servicio_id: number; nombre: string; fecha_inicio: string | null; fecha_fin: string | null; prioridad: number; compra_inicio: string | null; compra_fin: string | null; precio_persona: number | null; precio_infante: number | null; recargo_individual: number | null; orden: number; created_at: string };
+        Insert: { id?: number; servicio_id: number; nombre: string; fecha_inicio?: string | null; fecha_fin?: string | null; prioridad?: number; compra_inicio?: string | null; compra_fin?: string | null; precio_persona?: number | null; precio_infante?: number | null; recargo_individual?: number | null; orden?: number; created_at?: string };
         Update: Partial<Database["public"]["Tables"]["servicio_temporadas"]["Insert"]>;
         Relationships: [];
       };
@@ -2530,10 +2536,16 @@ export type Database = {
           // false`); con 2+ quedan NULL y `procedencia_mixta = true`.
           procedencia_temporadas: Json | null;
           procedencia_mixta: boolean;
+          // Migración 226: precio de un MENOR DE 2 AÑOS (fee de infante del vuelo
+          // + servicios con su precio de infante + hotel de la clase del menor).
+          // En filas de servicio persona = PVP del infante. NULL = la fila se
+          // publicó antes de la 226 (hay que regenerar) o no aplica (habitación adulta).
+          precio_pvp_menor2: number | null;
         };
         Insert: {
           id?: number;
           paquete_id: number;
+          precio_pvp_menor2?: number | null;
           moneda?: string;
           salida_id?: number | null;
           paquete_nombre?: string | null;

@@ -29,6 +29,7 @@ import { resumirServiciosContrato, type CategoriaServicio, type ServicioEfectivo
 import { claveHuellaIncluidos, incluidosParaPayload, type ServicioIncluidoCotizado } from "@/lib/reservar/incluidosCotizados";
 import { hoyBogota, resolverVigenciaCotizacion } from "@/lib/cotizacion/vigencia";
 import { calcularResidualServiciosIncluidosPorGrupo } from "@/lib/reservar/desglosePersonaCotizacion";
+import { descripcionLineaMenor, menoresDelComputo } from "@/lib/reservar/menoresDeDos";
 import type { ComposicionBernaloDocumento } from "@/lib/reservar/alojamientoBernaloDocumento";
 import type { Json } from "@/types/database";
 import { PAX_TARIFA_DEFAULT, paxDeAcomodacion } from "@/lib/acomodaciones";
@@ -729,7 +730,8 @@ async function crearCotizacionCarrito(input: {
     };
     const comp = await computarReserva(sb, reserva);
     if (!comp.ok) return { ok: false, error: `No se pudo cotizar ${it.hotelNombre}: ${comp.error}` };
-    const { meta, precioVenta, monedaReserva, lineasHab, pvpPorAcom, numNinos, numNinos2, numInfantes, totalPax, edadesMenoresUsadas, serviciosIncluidos } = comp.data;
+    const { meta, precioVenta, monedaReserva, lineasHab, numNinos, numNinos2, numInfantes, totalPax, edadesMenoresUsadas, serviciosIncluidos } = comp.data;
+    const { lineasMenores } = menoresDelComputo(comp.data);
     if (monedaPrincipal && monedaReserva !== monedaPrincipal) {
       if (hotelesConServicios.has(posOriginal)) {
         return { ok: false, error: errorHotelConServicios(meta.hotel_nombre ?? it.hotelNombre, `está en ${monedaReserva} y el resto del carrito en ${monedaPrincipal}`) };
@@ -814,28 +816,16 @@ async function crearCotizacionCarrito(input: {
         adultos: l.pax, ninos: 0, tarifa_adulto: l.pvp, tarifa_nino: 0,
       });
     }
-    if (numNinos > 0 && pvpPorAcom["nino"] != null) {
+    // Menores (migración 226): una fila por clase de hotel Y por tarifa — un
+    // menor de 2 años paga la tarifa de infante (fee de vuelo + servicios de
+    // infante), uno de 2+ paga como adulto en vuelo y servicios. Las líneas
+    // vienen de `comp.data.lineasMenores` (única fuente).
+    for (const lm of lineasMenores) {
       iIdx++;
       itemsSnap.push({
         id: iIdx,
-        descripcion: `${hotelEtiqueta} · Niño 1 · ${it.categoria} / ${it.regimen}`,
-        adultos: 0, ninos: numNinos, tarifa_adulto: 0, tarifa_nino: pvpPorAcom["nino"],
-      });
-    }
-    if (numNinos2 > 0 && pvpPorAcom["nino2"] != null) {
-      iIdx++;
-      itemsSnap.push({
-        id: iIdx,
-        descripcion: `${hotelEtiqueta} · Niño 2 · ${it.categoria} / ${it.regimen}`,
-        adultos: 0, ninos: numNinos2, tarifa_adulto: 0, tarifa_nino: pvpPorAcom["nino2"],
-      });
-    }
-    if (numInfantes > 0 && pvpPorAcom["infante"] != null) {
-      iIdx++;
-      itemsSnap.push({
-        id: iIdx,
-        descripcion: `${hotelEtiqueta} · Infante · ${it.categoria} / ${it.regimen}`,
-        adultos: 0, ninos: numInfantes, tarifa_adulto: 0, tarifa_nino: pvpPorAcom["infante"],
+        descripcion: `${hotelEtiqueta} · ${descripcionLineaMenor(lm, it.categoria, it.regimen)}`,
+        adultos: 0, ninos: lm.cantidad, tarifa_adulto: 0, tarifa_nino: lm.tarifa,
       });
     }
 
@@ -856,9 +846,10 @@ async function crearCotizacionCarrito(input: {
     const rResidual = calcularResidualServiciosIncluidosPorGrupo({
       precioVenta,
       lineasHab,
-      numNinos, tarifaNino: pvpPorAcom["nino"],
-      numNinos2, tarifaNino2: pvpPorAcom["nino2"],
-      numInfantes, tarifaInfante: pvpPorAcom["infante"],
+      numNinos: 0, tarifaNino: null,
+      numNinos2: 0, tarifaNino2: null,
+      numInfantes: 0, tarifaInfante: null,
+      lineasMenores,
     });
     if (!rResidual.ok) return { ok: false, error: `${it.hotelNombre}: ${rResidual.error}` };
     if (rResidual.residual > 0) {

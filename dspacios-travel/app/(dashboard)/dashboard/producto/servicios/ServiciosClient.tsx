@@ -16,6 +16,7 @@ import { Paginador } from "@/components/Paginador";
 import { ComboDestino, type DestinoOpt } from "@/components/ComboDestino";
 import { ComboProveedor, type ProveedorOpt } from "@/components/ComboProveedor";
 import { ServicioFotoCell } from "./ServicioFotoCell";
+import { Info } from "lucide-react";
 
 type Tier = { pax_desde: number; pax_hasta: number; precio: number; temporada?: string | null };
 export type TemporadaServicio = {
@@ -23,6 +24,7 @@ export type TemporadaServicio = {
   fecha_inicio: string | null; fecha_fin: string | null;
   compra_inicio: string | null; compra_fin: string | null;
   prioridad: number; precio_persona: number | null;
+  precio_infante?: number | null;
   recargo_individual: number | null;
   grupos: Tier[];
 };
@@ -34,6 +36,7 @@ type Servicio = {
   liquidacion?: string | null;
   descripcion?: string | null;
   recargo_individual?: number | null;
+  precio_infante?: number | null;
   foto_url?: string | null;
   proveedores: { nombre: string } | null; destinos: { nombre: string } | null;
   servicio_tarifa_pax: Tier[];
@@ -60,6 +63,7 @@ export function ServiciosClient({ servicios, proveedores, destinos, rangos, temp
   const [rangosSel, setRangosSel] = useState<number[]>([]);
   const [moneda, setMoneda] = useState<"COP" | "USD">("COP");
   const [pPersona, setPPersona] = useState("");
+  const [pInfante, setPInfante] = useState("");
   const [categoria, setCategoria] = useState("otro");
   const [liquidacion, setLiquidacion] = useState<"dia" | "noche" | "paquete">("paquete");
   const [descripcion, setDescripcion] = useState("");
@@ -73,6 +77,7 @@ export function ServiciosClient({ servicios, proveedores, destinos, rangos, temp
   const [page, setPage] = useState(0);
   const PAGE_SIZE = 10;
 
+  const sinInfante = servicios.filter((s) => s.precio_persona != null && s.precio_infante == null);
   const filtrados = query.trim()
     ? servicios.filter((s) => s.nombre.toLowerCase().includes(query.trim().toLowerCase()))
     : servicios;
@@ -81,7 +86,7 @@ export function ServiciosClient({ servicios, proveedores, destinos, rangos, temp
   const visibles = filtrados.slice(paginaActual * PAGE_SIZE, paginaActual * PAGE_SIZE + PAGE_SIZE);
 
   function resetForm() {
-    setNombre(""); setProvId(""); setDestId(""); setCobertura("nacional"); setMoneda("COP"); setPPersona(""); setCategoria("otro"); setLiquidacion("paquete"); setDescripcion(""); setRecargoOn(false); setRecargoVal(""); setGrupo([tierVacio()]); setRangosSel([]); setEditId(null);
+    setNombre(""); setProvId(""); setDestId(""); setCobertura("nacional"); setMoneda("COP"); setPPersona(""); setPInfante(""); setCategoria("otro"); setLiquidacion("paquete"); setDescripcion(""); setRecargoOn(false); setRecargoVal(""); setGrupo([tierVacio()]); setRangosSel([]); setEditId(null);
   }
 
   function startEdit(s: Servicio) {
@@ -93,6 +98,7 @@ export function ServiciosClient({ servicios, proveedores, destinos, rangos, temp
     setCobertura(s.destino_id != null ? "destino" : (s.alcance === "internacional" ? "internacional" : "nacional"));
     setMoneda(s.moneda === "USD" ? "USD" : "COP");
     setPPersona(s.precio_persona != null ? String(s.precio_persona) : "");
+    setPInfante(s.precio_infante != null ? String(s.precio_infante) : "");
     setCategoria(s.categoria ?? "otro");
     setLiquidacion((s.liquidacion as "dia" | "noche" | "paquete") ?? "paquete");
     setDescripcion(s.descripcion ?? "");
@@ -126,7 +132,8 @@ export function ServiciosClient({ servicios, proveedores, destinos, rangos, temp
     if (cobertura === "destino" && destinoId == null) { setErr("Elige un destino o cambia la cobertura."); return; }
     const input: ServicioInput = {
       nombre, proveedorId: provId === "" ? null : Number(provId), destinoId, alcance, moneda,
-      precioPersona: persona, grupoTiers, temporada: "", rangosEdad: rangosSel, categoria, liquidacion,
+      precioPersona: persona, precioInfante: pInfante.trim() === "" ? null : Math.max(Number(pInfante) || 0, 0),
+      grupoTiers, temporada: "", rangosEdad: rangosSel, categoria, liquidacion,
       descripcion, recargoIndividual: recargoOn ? Number(recargoVal) || 0 : 0,
     };
     start(async () => {
@@ -165,6 +172,14 @@ export function ServiciosClient({ servicios, proveedores, destinos, rangos, temp
             </select>
           </div>
           <div><label className={lbl}>Precio por persona <span className="font-normal text-gray-400">(tarifa base · {moneda})</span></label><Input type="number" min={0} value={pPersona} onChange={(e) => setPPersona(e.target.value)} placeholder="—" /></div>
+          <div>
+            <label className={lbl}>Precio de infante <span className="font-normal text-gray-400">(0 a 1,99 años · neto · {moneda})</span></label>
+            <Input type="number" min={0} value={pInfante} onChange={(e) => setPInfante(e.target.value)} placeholder="vacío = paga como adulto" />
+            <p className="mt-1 text-[11px] text-gray-400">
+              <b>0</b> = el infante no paga este servicio; <b>vacío</b> = sin configurar, paga como adulto.
+              Solo cobro por persona: en cobro por grupo el infante no cuenta para el rango ni paga extra.
+            </p>
+          </div>
           <div>
             <label className={lbl}>Categoría (en el contrato)</label>
             <select value={categoria} onChange={(e) => setCategoria(e.target.value)} className={sel}>
@@ -262,6 +277,17 @@ export function ServiciosClient({ servicios, proveedores, destinos, rangos, temp
         )}
       </div>
 
+      {sinInfante.length > 0 && (
+        <div role="status" className="flex items-start gap-2 rounded-xl border border-amber-200 bg-amber-50 p-3 text-sm text-amber-800">
+          <Info size={16} className="mt-0.5 shrink-0" aria-hidden="true" />
+          <p>
+            <b>{sinInfante.length} {sinInfante.length === 1 ? "servicio por persona no tiene" : "servicios por persona no tienen"} precio de infante</b>{" "}
+            (0 a 1,99 años): hasta que lo configures, el infante paga como adulto en {sinInfante.length === 1 ? "él" : "ellos"}.
+            Pon <b>0</b> si el infante no paga el servicio.
+          </p>
+        </div>
+      )}
+
       {servicios.length > 0 && (
         <div className="space-y-3">
           <div className="flex flex-wrap items-center justify-between gap-3">
@@ -297,7 +323,7 @@ export function ServiciosClient({ servicios, proveedores, destinos, rangos, temp
 // + rangos por grupo, para su rango de fechas del viaje.
 const vacia = (): TemporadaServicioInput => ({
   nombre: "", fechaInicio: "", fechaFin: "", compraInicio: "", compraFin: "", prioridad: 1,
-  precioPersona: null, recargoIndividual: null, grupoTiers: [],
+  precioPersona: null, precioInfante: null, recargoIndividual: null, grupoTiers: [],
 });
 
 function aInput(t: TemporadaServicio): TemporadaServicioInput {
@@ -305,6 +331,7 @@ function aInput(t: TemporadaServicio): TemporadaServicioInput {
     nombre: t.nombre, fechaInicio: t.fecha_inicio ?? "", fechaFin: t.fecha_fin ?? "",
     compraInicio: t.compra_inicio ?? "", compraFin: t.compra_fin ?? "",
     prioridad: t.prioridad ?? 1, precioPersona: t.precio_persona,
+    precioInfante: t.precio_infante ?? null,
     recargoIndividual: t.recargo_individual,
     grupoTiers: (t.grupos ?? []).map((g) => ({ paxDesde: g.pax_desde, paxHasta: g.pax_hasta, precio: g.precio })),
   };
@@ -380,6 +407,7 @@ function TemporadaFila({ t, onChanged, setErr }: { t: TemporadaServicio; onChang
           </span>
           <span className="tabular-nums text-gray-700">
             {t.precio_persona != null ? `${formatCOP(Number(t.precio_persona))}/persona` : "—"}
+            {t.precio_infante != null ? ` · infante ${formatCOP(Number(t.precio_infante))}` : ""}
             {t.recargo_individual != null ? ` · indiv ${formatCOP(Number(t.recargo_individual))}` : ""}
             {(t.grupos ?? []).length ? ` · ${t.grupos.length} rango(s) grupo` : ""}
           </span>
@@ -415,6 +443,7 @@ function CamposTemporada({ value, onChange }: { value: TemporadaServicioInput; o
         <div><label className={lbl}>Viaje desde</label><DateInput aria-label="Viaje desde" type="date" value={value.fechaInicio} onValueChange={(dateValue) => set("fechaInicio", dateValue)} /></div>
         <div><label className={lbl}>Viaje hasta</label><DateInput aria-label="Viaje hasta" type="date" value={value.fechaFin} onValueChange={(dateValue) => set("fechaFin", dateValue)} /></div>
         <div><label className={lbl}>Precio por persona</label><Input type="number" min={0} value={value.precioPersona ?? ""} onChange={(e) => set("precioPersona", e.target.value === "" ? null : Number(e.target.value))} /></div>
+        <div><label className={lbl}>Precio de infante</label><Input type="number" min={0} value={value.precioInfante ?? ""} placeholder="usa el base" onChange={(e) => set("precioInfante", e.target.value === "" ? null : Number(e.target.value))} /></div>
         <div><label className={lbl}>Compra desde</label><DateInput aria-label="Compra desde" type="date" value={value.compraInicio} onValueChange={(dateValue) => set("compraInicio", dateValue)} /></div>
         <div><label className={lbl}>Compra hasta</label><DateInput aria-label="Compra hasta" type="date" value={value.compraFin} onValueChange={(dateValue) => set("compraFin", dateValue)} /></div>
         <div><label className={lbl}>Prioridad</label><Input type="number" min={1} value={value.prioridad} onChange={(e) => set("prioridad", Number(e.target.value) || 1)} /></div>
@@ -469,7 +498,16 @@ function Row({ s, onEdit }: { s: Servicio; onEdit: (s: Servicio) => void }) {
           <div className="text-[11px] font-normal text-amber-600">+{fmt(Number(s.recargo_individual))} si 1 pax</div>
         )}
       </td>
-      <td className="px-4 py-2 text-xs text-gray-500">{resumenGrupo}</td>
+      <td className="px-4 py-2 text-xs text-gray-500">
+        {resumenGrupo}
+        {s.precio_persona != null && (
+          s.precio_infante != null
+            ? <div className="text-[11px] text-gray-500">Infante: {fmt(Number(s.precio_infante))}</div>
+            : <div className="mt-1 flex items-center gap-1 text-[11px] font-medium text-amber-600" title="Sin precio de infante: los menores de 2 años pagan como adulto en este servicio.">
+                <Info size={12} aria-hidden="true" /> Sin precio de infante
+              </div>
+        )}
+      </td>
       <td className="px-4 py-2 text-right">
         <div className="flex items-center justify-end gap-3">
           <button type="button" onClick={() => onEdit(s)} className="text-xs text-[var(--brand-accent)] hover:underline">Editar</button>

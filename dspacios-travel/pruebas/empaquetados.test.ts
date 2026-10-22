@@ -286,7 +286,8 @@ const paquetesActionsSrc = leer("app/(dashboard)/dashboard/paquetes/actions.ts")
 
 test("generarTarifario lee armado_empaquetados (join con empaquetados) — antes NO lo consultaba en absoluto", () => {
   assert.match(paquetesActionsSrc, /\.from\("armado_empaquetados"\)/, "generarTarifario debe consultar armado_empaquetados");
-  assert.match(paquetesActionsSrc, /empaquetados\(id, record, ruta, fecha_ida, fecha_regreso, tarifa_para_empaquetar, activo, compra_inicio, compra_fin\)/);
+  // 226: además `fee_infante` (el infante paga ese fee en el vuelo; precio = costo).
+  assert.match(paquetesActionsSrc, /empaquetados\(id, record, ruta, fecha_ida, fecha_regreso, tarifa_para_empaquetar, (fee_infante, )?activo, compra_inicio, compra_fin\)/);
 });
 
 test("generarTarifario: la rama 'bloqueo' liquida empaquetados con la MISMA función aporteVuelo/filasHoteles que un bloqueo negociado, usando tarifa_para_empaquetar (nunca tarifa_proveedor) como costoTiquete", () => {
@@ -297,7 +298,8 @@ test("generarTarifario: la rama 'bloqueo' liquida empaquetados con la MISMA func
   assert.match(bloque, /const costoTiquete = Number\(e\.tarifa_para_empaquetar\) \|\| 0;/, "debe usar tarifa_para_empaquetar como base");
   assert.doesNotMatch(bloque, /e\.tarifa_proveedor/, "tarifa_proveedor (neto informativo) NUNCA debe entrar al cálculo del PVP — evita doble margen/inconsistencia");
   assert.match(bloque, /aporteVuelo\(costoTiquete, aplica_mk, pctMk, ta\)/, "debe usar la MISMA función aporteVuelo que un bloqueo negociado");
-  assert.match(bloque, /filasHoteles\(e\.fecha_ida!, numNoches, aporteVueloVal, impuesto, "bloqueo", null, label, e\.fecha_regreso, false, null, e\.id\)/, "debe pasar bloqueoId=null y empaquetadoId=e.id — provenance inequívoca");
+  // 226: el último argumento es el fee de infante de la fuente (precio = costo, sin MK ni TA).
+  assert.match(bloque, /filasHoteles\(e\.fecha_ida!, numNoches, aporteVueloVal, impuesto, "bloqueo", null, label, e\.fecha_regreso, false, null, e\.id(, Number\(e\.fee_infante\) \|\| 0)?\)/, "debe pasar bloqueoId=null y empaquetadoId=e.id — provenance inequívoca");
 });
 
 test("generarTarifario: filasHoteles guarda empaquetado_id en cada fila insertada de tarifario_resultado", () => {

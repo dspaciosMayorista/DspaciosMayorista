@@ -28,6 +28,7 @@ import {
   clasificarMenoresPorEdad,
   verificarTarifasMenoresDisponibles,
 } from "@/lib/reservar/edadesMenores";
+import { contarMenoresDeDos, tarifarMenores } from "@/lib/reservar/menoresDeDos";
 import { distribuirPorHabitaciones, type HabitacionConsultada } from "@/lib/reservar/distribucionHabitaciones";
 import {
   construirHabitacionesUI,
@@ -3007,6 +3008,16 @@ function Selector({
     return m;
   }, [opcion, catEff, regEff]);
 
+  // Precio de un MENOR DE 2 AÑOS por clase de hotel (migración 226): fee de infante del vuelo + servicios con su
+  // precio de infante + hotel de su clase. Vacío en un tarifario anterior a la 226.
+  const pvpMenor2 = useMemo(() => {
+    const m: Record<string, number> = {};
+    for (const f of opcion.filas) {
+      if (f.categoria === catEff && f.regimen === regEff && f.acomodacion && f.precio_pvp_menor2 != null) m[f.acomodacion] = f.precio_pvp_menor2;
+    }
+    return m;
+  }, [opcion, catEff, regEff]);
+
   const selCls = "rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm";
 
   const agregarItem = (habitaciones: Record<string, number>, ninos: number, ninos2: number, infantes: number, pax: number, precio: number, edadesMenores: number[], serviciosConjunto: TourSinVinculo[]) =>
@@ -3043,7 +3054,7 @@ function Selector({
         </div>
       </div>
 
-      <EditorPax pvp={pvp} acomConfig={cap.acom} paxMin={cap.paxMin} paxMax={cap.paxMax} moneda={hotel.moneda} edadesNota={textoEdadesHotel(hotel)} edadInfanteMax={hotel.infMax} edadNinoMax={hotel.ninoMax} nota={!puedeReservar ? "El valor es una estimación con tarifas publicadas; el precio final se confirma al generar la cotización." : undefined} onAgregar={agregarItem}
+      <EditorPax pvp={pvp} pvpMenor2={pvpMenor2} acomConfig={cap.acom} paxMin={cap.paxMin} paxMax={cap.paxMax} moneda={hotel.moneda} edadesNota={textoEdadesHotel(hotel)} edadInfanteMax={hotel.infMax} edadNinoMax={hotel.ninoMax} nota={!puedeReservar ? "El valor es una estimación con tarifas publicadas; el precio final se confirma al generar la cotización." : undefined} onAgregar={agregarItem}
         servicios={servicios ? {
           ...servicios, paqueteId: opcion.paqueteId, hotelNombre: hotel.hotelNombre,
           // Bloqueo: las fechas son las del record (fijas).
@@ -3061,11 +3072,13 @@ function Selector({
 // sola, contra las reglas reales del hotel, si liquida como infante, Niño 1 o
 // Niño 2 (ver lib/reservar/edadesMenores.ts) — nunca un conteo manual por tarifa.
 function EditorPax({
-  pvp, acomConfig = [], paxMin = null, paxMax = null, nota, edadesNota,
+  pvp, pvpMenor2 = {}, acomConfig = [], paxMin = null, paxMax = null, nota, edadesNota,
   edadInfanteMax, edadNinoMax, onAgregar, onAgregarBernalo, btnLabel = "Agregar al carrito", moneda = "COP",
   modeloTarifario = null, hotelId, paqueteId, categoriasDisponibles = [], alimentacionesDisponibles = [], salidas = [], servicios,
 }: {
   pvp: Record<string, number>;
+  // Precio de un menor de 2 años por clase de hotel (migración 226); vacío = tarifario anterior a la 226.
+  pvpMenor2?: Record<string, number>;
   acomConfig?: AcomConfig[];
   paxMin?: number | null;
   paxMax?: number | null;
@@ -3237,9 +3250,21 @@ function EditorPax({
     }
   }
 
+  // Menores (migración 226): parte de hotel por la clase del hotel y vuelo + servicios por EDAD — un menor de 2 años paga
+  // la tarifa de infante (`pvpMenor2`); desde los 2 años, como adulto. Es solo la estimación: el servidor re-liquida.
   let precio = adultosPrecio;
-  if (ninos > 0 && pvp["nino"] != null) precio += ninos * pvp["nino"];
-  if (ninos2 > 0 && pvp["nino2"] != null) precio += ninos2 * pvp["nino2"];
+  const tarifaMenores = tarifarMenores({
+    totales: { infante: infantes, nino: ninos, nino2: ninos2 },
+    menoresDeDos: contarMenoresDeDos(edades, infanteMax, { infante: infantes, nino: ninos, nino2: ninos2 }),
+    pvp, pvpMenor2,
+  });
+  if (tarifaMenores.ok) {
+    precio += tarifaMenores.total;
+  } else {
+    // Tarifario anterior a la 226 (sin precio de menor de 2): estimación histórica; al cotizar el servidor pide regenerarlo.
+    if (ninos > 0 && pvp["nino"] != null) precio += ninos * pvp["nino"];
+    if (ninos2 > 0 && pvp["nino2"] != null) precio += ninos2 * pvp["nino2"];
+  }
   const ninosTotal = ninos + ninos2;
   const pax = adultos + ninosTotal;
 
@@ -3754,6 +3779,7 @@ function SelectorPorFechas({
   const regs = combos ? [...new Set(combos.filter((c) => c.categoria === catEff).map((c) => c.regimen))] : [];
   const regEff = regs.includes(reg) ? reg : (regs[0] ?? "");
   const pvp = combos?.find((c) => c.categoria === catEff && c.regimen === regEff)?.precios ?? {};
+  const pvpMenor2Cot = combos?.find((c) => c.categoria === catEff && c.regimen === regEff)?.preciosMenor2 ?? {};
 
   const selCls = "rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm";
   const dateCls = "rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm";
@@ -3856,7 +3882,7 @@ function SelectorPorFechas({
             {nochesCot != null && <div className="self-end pb-2 text-xs text-gray-400">{nochesCot} noche(s)</div>}
           </div>
           <div className="mt-1"><CondicionHotelBadges condicion={condicion} /></div>
-          <EditorPax pvp={pvp} acomConfig={cap.acom} paxMin={cap.paxMin} paxMax={cap.paxMax} moneda={hotel.moneda} edadesNota={textoEdadesHotel(hotel)} edadInfanteMax={hotel.infMax} edadNinoMax={hotel.ninoMax} onAgregar={agregarItem}
+          <EditorPax pvp={pvp} pvpMenor2={pvpMenor2Cot} acomConfig={cap.acom} paxMin={cap.paxMin} paxMax={cap.paxMax} moneda={hotel.moneda} edadesNota={textoEdadesHotel(hotel)} edadInfanteMax={hotel.infMax} edadNinoMax={hotel.ninoMax} onAgregar={agregarItem}
             servicios={servicios ? {
               ...servicios, paqueteId: opcion.paqueteId, hotelNombre: hotel.hotelNombre,
               // Porción: las fechas son las COTIZADAS (si cambian, `combos`

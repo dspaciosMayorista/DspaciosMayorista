@@ -46,6 +46,9 @@ export type BloqueoInput = {
   horaLlegadaReg: string;
   cuposTotal: number;
   tarifaParaEmpaquetar: number;
+  // Fee de infante del vuelo (0 a 1,99 años; migración 226): el infante paga
+  // SOLO esto en el vuelo. Precio = costo, sin markup ni TA. Puede ser 0.
+  feeInfante?: number;
   fechaDevolucion: string;
   fechaEmision: string;
   notas: string;
@@ -76,6 +79,13 @@ export async function crearBloqueo(input: BloqueoInput): Promise<Result> {
   return Number.isInteger(id) && id > 0 ? { ok: true, id } : { ok: true };
 }
 
+// Fee de infante: número finito >= 0 (vacío o inválido = 0, igual que las otras
+// fuentes de vuelo: `not null default 0`).
+function feeInfanteValido(v: number | null | undefined): number {
+  const n = Number(v);
+  return Number.isFinite(n) && n > 0 ? n : 0;
+}
+
 // Datos del record para `crear_bloqueo` (migración 195): claves = columnas.
 // La función vuelve a validarlo todo; aquí solo se arma el objeto.
 type DatosBloqueo = Record<string, string | number | number[] | null>;
@@ -98,6 +108,7 @@ function datosBloqueoDeInput(input: BloqueoInput): DatosBloqueo {
     hora_salida_reg: oNull(input.horaSalidaReg),
     hora_llegada_reg: oNull(input.horaLlegadaReg),
     tarifa_para_empaquetar: input.tarifaParaEmpaquetar,
+    fee_infante: feeInfanteValido(input.feeInfante),
     fecha_devolucion: oNull(input.fechaDevolucion),
     fecha_emision: oNull(input.fechaEmision),
     notas: oNull(input.notas),
@@ -134,6 +145,8 @@ export async function actualizarBloqueo(id: number, input: BloqueoEditInput): Pr
       hora_salida_reg: oNull(input.horaSalidaReg),
       hora_llegada_reg: oNull(input.horaLlegadaReg),
       tarifa_para_empaquetar: input.tarifaParaEmpaquetar,
+      // Solo si el formulario lo mandó: un llamador que no conoce el fee no lo borra.
+      ...(input.feeInfante !== undefined ? { fee_infante: feeInfanteValido(input.feeInfante) } : {}),
       fecha_devolucion: oNull(input.fechaDevolucion),
       fecha_emision: oNull(input.fechaEmision),
       notas: oNull(input.notas),
@@ -359,6 +372,7 @@ export async function cargarBloqueosMasivo(
         vuelo_ida: oNull(r.vuelo_ida || ""), fecha_ida: parseFechaCSV(r.fecha_ida), hora_salida_ida: dCsv(r.hora_salida_ida), hora_llegada_ida: dCsv(r.hora_llegada_ida),
         vuelo_regreso: oNull(r.vuelo_regreso || ""), fecha_regreso: parseFechaCSV(r.fecha_regreso), hora_salida_reg: dCsv(r.hora_salida_reg), hora_llegada_reg: dCsv(r.hora_llegada_reg),
         tarifa_neta: numCsv(r.tarifa_neta) || null, tarifa_para_empaquetar: numCsv(r.tarifa_para_empaquetar),
+        fee_infante: Math.max(numCsv(r.fee_infante), 0),
         fecha_devolucion: parseFechaCSV(r.fecha_devolucion), fecha_emision: parseFechaCSV(r.fecha_emision), notas: oNull(r.notas || ""),
         rangos_edad: rangosEdad.length ? rangosEdad : null,
         modalidad_emision: modalidad, estado_emision: estadoEmision, estado_pago: estadoPago,

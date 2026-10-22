@@ -28,7 +28,7 @@ export default async function NuevaReservaPage({
   if (!esServicios) {
     let q = sb
       .from("tarifario_resultado_publicable")
-      .select("categoria, regimen, acomodacion, precio_pvp, hotel_nombre, destino_nombre, fecha_ida, fecha_regreso, noches, bloqueo_label, moneda")
+      .select("categoria, regimen, acomodacion, precio_pvp, precio_pvp_menor2, hotel_nombre, destino_nombre, fecha_ida, fecha_regreso, noches, bloqueo_label, moneda")
       .eq("paquete_id", paqueteId)
       .eq("hotel_id", hotelId);
     // Empaquetado (Sistema) se revisa ANTES que bloqueoId: para una fila
@@ -81,7 +81,10 @@ export default async function NuevaReservaPage({
       const key = `${categoria}|||${regimen}`;
       let c = map.get(key);
       if (!c) { c = { categoria, regimen, precios: {} }; map.set(key, c); }
-      if (f.acomodacion) c.precios[f.acomodacion] = f.precio_pvp;
+      if (f.acomodacion) {
+        c.precios[f.acomodacion] = f.precio_pvp;
+        if (f.precio_pvp_menor2 != null) (c.preciosMenor2 ??= {})[f.acomodacion] = f.precio_pvp_menor2;
+      }
     }
     combos = [...map.values()];
 
@@ -113,7 +116,7 @@ export default async function NuevaReservaPage({
   // Servicios del paquete (PVP publicado) → add-ons en la reserva
   const { data: servFilas } = await sb
     .from("tarifario_resultado_publicable")
-    .select("servicio_id, servicio_nombre, tipo_tarifa, pax_desde, pax_hasta, precio_pvp")
+    .select("servicio_id, servicio_nombre, tipo_tarifa, pax_desde, pax_hasta, precio_pvp, precio_pvp_menor2")
     .eq("paquete_id", paqueteId)
     .eq("modulo", "servicios");
   const servMap = new Map<number, ServicioDisp>();
@@ -125,7 +128,7 @@ export default async function NuevaReservaPage({
       servMap.set(r.servicio_id, s);
     }
     if (s.modo === "grupo") s.grupos.push({ pax_desde: r.pax_desde ?? 1, pax_hasta: r.pax_hasta ?? 1, precio: r.precio_pvp });
-    else s.personaPvp = r.precio_pvp;
+    else { s.personaPvp = r.precio_pvp; s.infantePvp = r.precio_pvp_menor2 ?? null; }
   }
   const serviciosDisp = [...servMap.values()];
 

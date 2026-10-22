@@ -34,6 +34,8 @@ export type ServicioDisp = {
   nombre: string;
   modo: "persona" | "grupo";
   personaPvp: number | null;
+  // PVP del infante (0 a 1,99 años) en cobro por persona; null = paga como adulto.
+  infantePvp?: number | null;
   grupos: { pax_desde: number; pax_hasta: number; precio: number }[];
 };
 
@@ -58,7 +60,8 @@ export type Meta = {
   petFriendly: boolean;
   petNota: string | null;
 };
-export type Combo = { categoria: string; regimen: string; precios: Record<string, number> };
+// `preciosMenor2`: precio de un MENOR DE 2 AÑOS por clase de hotel (migración 226).
+export type Combo = { categoria: string; regimen: string; precios: Record<string, number>; preciosMenor2?: Record<string, number> };
 
 const lbl = "mb-1 block text-xs font-medium text-gray-600";
 const inp = "w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm";
@@ -127,6 +130,7 @@ export function ReservaForm({
 
   const combo = combosState.find((c) => c.categoria === catSel && c.regimen === reg);
   const precios = combo?.precios ?? {};
+  const preciosMenor2 = combo?.preciosMenor2 ?? {};
 
   // Reserva por HABITACIONES: cantidad de habitaciones por tipo (sencilla/doble/…).
   const [habs, setHabs] = useState<Record<string, string>>({});
@@ -160,15 +164,24 @@ export function ReservaForm({
   const totalPax = esServicios ? (Number(paxServ) || 0) : paxConSilla + numInfantes;
   const numHabitaciones = roomTypes.reduce((s, a) => s + (Number(habs[a]) || 0), 0);
 
+  // Los infantes declarados son menores de 2 años (tarifa de infante: fee de
+  // vuelo + servicios de infante; no ocupan silla ni cuentan para el rango de
+  // un servicio por grupo).
+  const precioInfante = preciosMenor2["infante"] ?? precios["infante"] ?? 0;
   const totalHotel =
     roomTypes.reduce((s, a) => s + (Number(habs[a]) || 0) * paxTarifa(a) * precios[a]!, 0) +
     numNinos * (precios["nino"] ?? 0) +
-    numNinos2 * (precios["nino2"] ?? 0);
+    numNinos2 * (precios["nino2"] ?? 0) +
+    (esServicios ? 0 : numInfantes * precioInfante);
 
   // Servicios add-on (precio según pax)
   const [servSel, setServSel] = useState<Set<number>>(new Set());
+  // Pax de 2 años o más (rango de grupo y tarifa de adulto); los menores de 2
+  // años pagan su precio de infante en servicios por persona y nada en grupo.
+  const paxServicio = esServicios ? totalPax : paxConSilla;
   function precioServ(s: ServicioDisp): number {
-    return precioServicio(s.modo, s.personaPvp, s.grupos, totalPax);
+    const base = precioServicio(s.modo, s.personaPvp, s.grupos, paxServicio);
+    return !esServicios && s.modo === "persona" ? base + numInfantes * (s.infantePvp ?? s.personaPvp ?? 0) : base;
   }
   const totalServicios = serviciosDisp.reduce((acc, s) => (servSel.has(s.servicioId) ? acc + precioServ(s) : acc), 0);
   const totalPrecio = totalHotel + totalServicios;
@@ -393,7 +406,7 @@ export function ReservaForm({
             </div>
           )}
           <div>
-            <label className={lbl}>Infantes (sin silla; el cargo, si aplica, se confirma al generar)</label>
+            <label className={lbl}>Infantes (menores de 2 años, sin silla){precioInfante > 0 ? ` · ${fmt(precioInfante)}` : ""}</label>
             <Input type="number" min={0} value={infantes} onChange={(e) => setInfantes(e.target.value)} />
           </div>
         </div>
@@ -443,7 +456,7 @@ export function ReservaForm({
                     />
                     <span className="text-sm text-gray-800">
                       {s.nombre}{" "}
-                      <span className="text-xs text-gray-400">({s.modo === "grupo" ? `por grupo · ${totalPax} pax` : "por persona"})</span>
+                      <span className="text-xs text-gray-400">({s.modo === "grupo" ? `por grupo · ${paxServicio} pax` : "por persona"})</span>
                     </span>
                   </label>
                   <span className="text-sm tabular-nums" style={{ color: "var(--brand-primary)" }}>{fmt(precio)}</span>

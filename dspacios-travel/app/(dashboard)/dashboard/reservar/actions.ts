@@ -61,6 +61,7 @@ import { normalizarResponsablesPorGrupo } from "@/lib/reservar/pasajerosFilas";
 import { posicionesSinAsignar, posicionesUnicasDeGrupo, reindexarGrupoLocal, consolidarReservasSillasPorBloqueo, demandaSillasPorBloqueo, faltanteDeCupos, prevalidarResponsablesDeGrupo, mensajePrevalidacionGrupo, type ReservaSillasPorBloqueo } from "@/lib/reservar/carritoAsignaciones";
 import { armarGruposConversion, resolverVinculosCotizacion, validarPasajerosServiciosVinculados } from "@/lib/reservar/vinculoServiciosCheckout";
 import { calcularResidualServiciosIncluidosPorGrupo } from "@/lib/reservar/desglosePersonaCotizacion";
+import { descripcionLineaMenor, ordenLineaMenor, menoresDelComputo } from "@/lib/reservar/menoresDeDos";
 import { claveHuellaIncluidos, validarIncluidosConversion, type ServicioIncluidoGuardado } from "@/lib/reservar/incluidosCotizados";
 import {
   componenteHotelReal,
@@ -204,7 +205,9 @@ async function reservarDesdeTarifarioInterno(input: ReservaInput, tenant: Tenant
   // 1) Cálculo (precios, líneas, pax, impuesto) — fuente única compartida.
   const comp = await computarReserva(sb, input);
   if (!comp.ok) return { ok: false, error: comp.error };
-  const { origen, meta, pvpPorAcom, netoPorAcom, precioVenta, paxConSilla, totalPax, numNinos, numNinos2, lineasHab, serviciosItems, serviciosIncluidos, impuestoTotal, monedaReserva, cargoMascota } = comp.data;
+  const { origen, meta, netoPorAcom, precioVenta, paxConSilla, totalPax, numNinos, numNinos2, lineasHab, serviciosItems, serviciosIncluidos, impuestoTotal, monedaReserva, cargoMascota } = comp.data;
+  // Menores (migración 226): líneas de precio, menores de 2 años (fee de vuelo / precio de infante) e infantes de hotel.
+  const { lineasMenores, numMenoresDeDos, numInfantes } = menoresDelComputo(comp.data, { infantesDeclarados: Number(input.infantes) || 0 });
 
   // 2c) Resolver y VALIDAR el origen completo del vuelo (bloqueo negociado,
   // empaquetado o salida dinámica) ANTES de crear nada — ni sillas, ni venta,
@@ -238,7 +241,11 @@ async function reservarDesdeTarifarioInterno(input: ReservaInput, tenant: Tenant
       }
     }
   }
-  const infantesN = Math.max(0, Math.trunc(Number(input.infantes) || 0));
+  // Menores de 2 años (migración 226): pagan SOLO el fee de infante del vuelo
+  // (precio = costo, sin MK ni TA) y no ocupan silla. El conteo sale del
+  // cómputo (por edad, o por conteo declarado en el flujo legado), no del
+  // `input.infantes` crudo — en el flujo por edades ese campo no se usa.
+  const infantesN = numMenoresDeDos;
   // Costo NETO real (lo que se le debe al proveedor) — nunca la reventa. Con
   // tarifa_proveedor=200.000/tarifa_para_empaquetar=242.022 (2 pax), usar la
   // reventa dejaba costo_aereo/CxP en $484.044 en vez de los $400.000 reales
@@ -643,29 +650,14 @@ async function reservarDesdeTarifarioInterno(input: ReservaInput, tenant: Tenant
       orden: i,
     });
   });
-  if (numNinos > 0 && pvpPorAcom["nino"] != null) {
+  // Menores (migración 226): una fila por clase de hotel Y por tarifa (menor de
+  // 2 años = tarifa de infante; 2+ = adulto en vuelo y servicios). 0 = gratis
+  // sí se itemiza. Las líneas salen de `computarReserva` (única fuente).
+  for (const lm of lineasMenores) {
     items.push({
       numero_contrato: numero,
-      descripcion: `Niño 1 · ${input.categoria} / ${input.regimen}`,
-      adultos: 0, ninos: numNinos, tarifa_adulto: 0, tarifa_nino: pvpPorAcom["nino"], orden: 50,
-    });
-  }
-  if (numNinos2 > 0 && pvpPorAcom["nino2"] != null) {
-    items.push({
-      numero_contrato: numero,
-      descripcion: `Niño 2 · ${input.categoria} / ${input.regimen}`,
-      adultos: 0, ninos: numNinos2, tarifa_adulto: 0, tarifa_nino: pvpPorAcom["nino2"], orden: 51,
-    });
-  }
-  // Infante: mismo tratamiento que Niño 1/2 (tarifa por temporada, 0 = gratis
-  // sí se itemiza). Si el hotel no configuró tarifa de infante, pvpPorAcom["infante"]
-  // no existe y simplemente no se cobra (no bloquea la reserva).
-  const numInfantesItem = Number(input.infantes) || 0;
-  if (numInfantesItem > 0 && pvpPorAcom["infante"] != null) {
-    items.push({
-      numero_contrato: numero,
-      descripcion: `Infante · ${input.categoria} / ${input.regimen}`,
-      adultos: 0, ninos: numInfantesItem, tarifa_adulto: 0, tarifa_nino: pvpPorAcom["infante"], orden: 52,
+      descripcion: descripcionLineaMenor(lm, input.categoria, input.regimen),
+      adultos: 0, ninos: lm.cantidad, tarifa_adulto: 0, tarifa_nino: lm.tarifa, orden: ordenLineaMenor(lm),
     });
   }
   // Servicios add-on como ítems (1 fila por servicio, total del grupo o por pax)
@@ -741,6 +733,9 @@ async function reservarDesdeTarifarioInterno(input: ReservaInput, tenant: Tenant
       for (const l of lineasHab) { const per = netoPorAcom[l.acom]; if (per != null) costoHotelTotal += per * l.pax; }
       if (numNinos > 0 && netoPorAcom["nino"] != null) costoHotelTotal += netoPorAcom["nino"] * numNinos;
       if (numNinos2 > 0 && netoPorAcom["nino2"] != null) costoHotelTotal += netoPorAcom["nino2"] * numNinos2;
+      // Infante de hotel (0 = gratis): el neto que cobra el hotel por cada uno,
+      // menor de 2 años o de 2 (clase infante del hotel) — antes no se sumaba.
+      if (numInfantes > 0 && netoPorAcom["infante"] != null) costoHotelTotal += netoPorAcom["infante"] * numInfantes;
       const { data: hprov, error: hprovErr } = await admin
         .from("hoteles").select("nombre, proveedores(nombre, aplica_retencion, pct_retencion)").eq("id", input.hotelId).maybeSingle();
       if (hprovErr) throw new Error(hprovErr.message);
@@ -777,12 +772,12 @@ async function reservarDesdeTarifarioInterno(input: ReservaInput, tenant: Tenant
       const admin = createAdminClient();
       const [{ data: arm, error: armErr }, { data: gruposNet, error: gruposErr }, { data: tempsNet, error: tempsErr }] = await Promise.all([
         admin.from("armado_servicios")
-          .select("servicio_id, modo, servicios_adicionales(precio_persona, recargo_individual, categoria, nombre, liquidacion, proveedor_id, proveedores(nombre, aplica_retencion, pct_retencion))")
+          .select("servicio_id, modo, servicios_adicionales(precio_persona, precio_infante, recargo_individual, categoria, nombre, liquidacion, proveedor_id, proveedores(nombre, aplica_retencion, pct_retencion))")
           .eq("paquete_id", input.paqueteId).in("servicio_id", input.servicios),
         admin.from("servicio_tarifa_pax")
           .select("servicio_id, pax_desde, pax_hasta, precio, temporada").in("servicio_id", input.servicios),
         admin.from("servicio_temporadas")
-          .select("servicio_id, nombre, fecha_inicio, fecha_fin, compra_inicio, compra_fin, prioridad, precio_persona, recargo_individual").in("servicio_id", input.servicios),
+          .select("servicio_id, nombre, fecha_inicio, fecha_fin, compra_inicio, compra_fin, prioridad, precio_persona, precio_infante, recargo_individual").in("servicio_id", input.servicios),
       ]);
       // Un error de lectura deja `data` en null, no lanza: sin este chequeo el
       // bucle no correría y el contrato quedaría con los servicios cobrados y
@@ -800,12 +795,14 @@ async function reservarDesdeTarifarioInterno(input: ReservaInput, tenant: Tenant
       // Temporadas por servicio: el NETO del costo cambia según la fecha del viaje.
       const tempsPorServ = new Map<number, TemporadaRango[]>();
       const netoTempServ = new Map<string, number>();   // servId|nombre -> neto persona
+      const netoInfTempServ = new Map<string, number>(); // servId|nombre -> neto infante
       const recTempServ = new Map<string, number>();    // servId|nombre -> recargo neto
       for (const t of tempsNet ?? []) {
         const arr = tempsPorServ.get(t.servicio_id) ?? [];
         arr.push(toTemporadaRango(t));
         tempsPorServ.set(t.servicio_id, arr);
         if (t.precio_persona != null) netoTempServ.set(`${t.servicio_id}|${t.nombre}`, Number(t.precio_persona));
+        if (t.precio_infante != null) netoInfTempServ.set(`${t.servicio_id}|${t.nombre}`, Number(t.precio_infante));
         if (t.recargo_individual != null) recTempServ.set(`${t.servicio_id}|${t.nombre}`, Number(t.recargo_individual));
       }
       const fechaViajeCosto = meta.fecha_ida ? new Date(`${meta.fecha_ida}T00:00:00`) : null;
@@ -820,14 +817,19 @@ async function reservarDesdeTarifarioInterno(input: ReservaInput, tenant: Tenant
       let costoReceptivo = 0;
       for (const s of arm ?? []) {
         const modo = (s.modo as string) === "grupo" ? "grupo" : "persona";
-        const srv = s.servicios_adicionales as unknown as { precio_persona: number | null; recargo_individual: number | null; categoria: string | null; nombre: string; liquidacion: string | null; proveedor_id: number | null; proveedores: ProvFact } | null;
+        const srv = s.servicios_adicionales as unknown as { precio_persona: number | null; precio_infante: number | null; recargo_individual: number | null; categoria: string | null; nombre: string; liquidacion: string | null; proveedor_id: number | null; proveedores: ProvFact } | null;
         const nombreTemp = tempVigente(s.servicio_id);
         // Neto por persona: el de la temporada vigente, o el base.
         const netoPersona = (nombreTemp ? netoTempServ.get(`${s.servicio_id}|${nombreTemp}`) : undefined) ?? srv?.precio_persona ?? null;
         // Rangos por grupo: los de la temporada vigente si existen, si no GENERAL.
         const gruposTemp = nombreTemp ? gruposPorServ.get(`${s.servicio_id}|${nombreTemp}`) : undefined;
         const grupos = gruposTemp?.length ? gruposTemp : (gruposPorServ.get(`${s.servicio_id}|GENERAL`) ?? []);
-        let costoServ = precioServicio(modo, netoPersona, grupos, totalPax) * factorLiquidacion(srv?.liquidacion, nochesStay);
+        // Persona: adultos (2+ años) a la tarifa de adulto + menores de 2 años a su
+        // precio de infante NETO (el de la temporada vigente, o el general, o el de
+        // adulto si el servicio no lo configuró). Grupo: el rango cuenta SOLO a los
+        // de 2+ años y el menor de 2 no paga extra (migración 226).
+        const netoInfante = (nombreTemp ? netoInfTempServ.get(`${s.servicio_id}|${nombreTemp}`) : undefined) ?? srv?.precio_infante ?? netoPersona ?? 0;
+        let costoServ = (precioServicio(modo, netoPersona, grupos, paxConSilla) + (modo === "persona" ? netoInfante * numMenoresDeDos : 0)) * factorLiquidacion(srv?.liquidacion, nochesStay);
         // Recargo individual: suplemento NETO del proveedor cuando va 1 pax (cobro
         // por persona). El de la temporada vigente si lo define, si no el base.
         if (modo === "persona" && totalPax === 1) {
@@ -947,7 +949,8 @@ export async function crearCotizacion(input: ReservaInput, opts?: { vigenciaHast
   const esServicios = input.modulo === "servicios";
   const comp = await computarReserva(sb, input);
   if (!comp.ok) return { ok: false, error: comp.error };
-  const { origen, meta, pvpPorAcom, precioVenta, paxConSilla, totalPax, numNinos, numNinos2, lineasHab, serviciosItems, serviciosIncluidos, monedaReserva, cargoMascota } = comp.data;
+  const { origen, meta, precioVenta, paxConSilla, totalPax, numNinos, numNinos2, lineasHab, serviciosItems, serviciosIncluidos, monedaReserva, cargoMascota } = comp.data;
+  const { lineasMenores } = menoresDelComputo(comp.data, { infantesDeclarados: Number(input.infantes) || 0 });
   // Mismo resumen ÚNICO que usa `reservarDesdeTarifarioInterno` al convertir
   // (lib/reservar/serviciosPaquete.ts) — así la cotización ya muestra, antes
   // de convertirse, exactamente lo que mostrará el contrato.
@@ -1083,13 +1086,10 @@ export async function crearCotizacion(input: ReservaInput, opts?: { vigenciaHast
     descripcion: `${l.habitaciones} hab ${ACOM_ROOM_LABEL[l.acom]} (${l.pax} pax) · ${input.categoria} / ${input.regimen}`,
     adultos: l.pax, ninos: 0, tarifa_adulto: l.pvp, tarifa_nino: 0,
   }));
-  if (numNinos > 0 && pvpPorAcom["nino"] != null)
-    itemsSnap.push({ id: 50, descripcion: `Niño 1 · ${input.categoria} / ${input.regimen}`, adultos: 0, ninos: numNinos, tarifa_adulto: 0, tarifa_nino: pvpPorAcom["nino"] });
-  if (numNinos2 > 0 && pvpPorAcom["nino2"] != null)
-    itemsSnap.push({ id: 51, descripcion: `Niño 2 · ${input.categoria} / ${input.regimen}`, adultos: 0, ninos: numNinos2, tarifa_adulto: 0, tarifa_nino: pvpPorAcom["nino2"] });
-  { const numInfantesSnap = Number(input.infantes) || 0;
-    if (numInfantesSnap > 0 && pvpPorAcom["infante"] != null)
-      itemsSnap.push({ id: 52, descripcion: `Infante · ${input.categoria} / ${input.regimen}`, adultos: 0, ninos: numInfantesSnap, tarifa_adulto: 0, tarifa_nino: pvpPorAcom["infante"] }); }
+  // Menores (migración 226): misma composición que el contrato ya convertido
+  // (`lineasMenores` de `computarReserva`, única fuente).
+  for (const lm of lineasMenores)
+    itemsSnap.push({ id: ordenLineaMenor(lm), descripcion: descripcionLineaMenor(lm, input.categoria, input.regimen), adultos: 0, ninos: lm.cantidad, tarifa_adulto: 0, tarifa_nino: lm.tarifa });
   serviciosItems.forEach((s, i) => itemsSnap.push({ id: 100 + i, descripcion: `Servicio · ${s.nombre}`, adultos: 1, ninos: 0, tarifa_adulto: s.precio, tarifa_nino: 0 }));
   if (cargoMascota) {
     itemsSnap.push({
@@ -2329,7 +2329,8 @@ export async function convertirCotizacionCarrito(
 
     for (let hIdx = 0; hIdx < validadosPersona.length; hIdx++) {
       const { item: it, comp } = validadosPersona[hIdx];
-      const { meta, lineasHab, numNinos, numNinos2, pvpPorAcom, netoPorAcom, paxConSilla } = comp;
+      const { meta, lineasHab, numNinos, numNinos2, netoPorAcom, paxConSilla } = comp;
+      const { lineasMenores, numMenoresDeDos, numInfantes } = menoresDelComputo(comp, { infantesDeclarados: it.infantes || 0 });
 
       const partes = lineasHab.map((l) => `${l.habitaciones} hab ${ACOM_ROOM_LABEL[l.acom]} (${l.pax} pax)`);
       if (numNinos > 0) partes.push(`${numNinos} Niño 1`);
@@ -2384,7 +2385,7 @@ export async function convertirCotizacionCarrito(
       if (it.modulo === "bloqueo" && it.bloqueoId) {
         const { data: bq } = await admin
           .from("bloqueos_vuelo")
-          .select("aerolinea, record, ruta, tarifa_para_empaquetar, fecha_ida, fecha_regreso, vuelo_ida, vuelo_regreso, hora_salida_ida, hora_llegada_ida, hora_salida_reg, hora_llegada_reg, proveedores(nombre, aplica_retencion, pct_retencion)")
+          .select("aerolinea, record, ruta, tarifa_para_empaquetar, fee_infante, fecha_ida, fecha_regreso, vuelo_ida, vuelo_regreso, hora_salida_ida, hora_llegada_ida, hora_salida_reg, hora_llegada_reg, proveedores(nombre, aplica_retencion, pct_retencion)")
           .eq("id", it.bloqueoId).maybeSingle();
         if (bq) {
           const r = parseRuta(bq.ruta);
@@ -2404,7 +2405,9 @@ export async function convertirCotizacionCarrito(
           }
           await sb.from("contrato_vuelos").insert(tramos);
 
-          const costoAereo = (Number(bq.tarifa_para_empaquetar) || 0) * paxConSilla;
+          // Menores de 2 años: pagan SOLO el fee de infante del bloqueo (migración
+          // 226, precio = costo) y no ocupan silla (`paxConSilla` ya los excluye).
+          const costoAereo = (Number(bq.tarifa_para_empaquetar) || 0) * paxConSilla + (Number(bq.fee_infante) || 0) * numMenoresDeDos;
           costoAereoTotal += costoAereo;
           pushCxP("aereo", `Aéreo ${bq.aerolinea ?? ""}`.trim(), costoAereo, bq.proveedores as unknown as ProvFact, bq.aerolinea);
 
@@ -2419,10 +2422,11 @@ export async function convertirCotizacionCarrito(
         numero_contrato: numero, descripcion: `${l.habitaciones} hab ${ACOM_ROOM_LABEL[l.acom]} (${l.pax} pax) · ${it.categoria} / ${it.regimen}`,
         adultos: l.pax, ninos: 0, tarifa_adulto: l.pvp, tarifa_nino: 0, orden: hIdx * 300 + i,
       }));
-      if (numNinos > 0 && pvpPorAcom["nino"] != null) itemsHotel.push({ numero_contrato: numero, descripcion: `Niño 1 · ${it.categoria} / ${it.regimen}`, adultos: 0, ninos: numNinos, tarifa_adulto: 0, tarifa_nino: pvpPorAcom["nino"], orden: hIdx * 300 + 50 });
-      if (numNinos2 > 0 && pvpPorAcom["nino2"] != null) itemsHotel.push({ numero_contrato: numero, descripcion: `Niño 2 · ${it.categoria} / ${it.regimen}`, adultos: 0, ninos: numNinos2, tarifa_adulto: 0, tarifa_nino: pvpPorAcom["nino2"], orden: hIdx * 300 + 51 });
-      const numInf = it.infantes || 0;
-      if (numInf > 0 && pvpPorAcom["infante"] != null) itemsHotel.push({ numero_contrato: numero, descripcion: `Infante · ${it.categoria} / ${it.regimen}`, adultos: 0, ninos: numInf, tarifa_adulto: 0, tarifa_nino: pvpPorAcom["infante"], orden: hIdx * 300 + 52 });
+      // Menores (migración 226): una fila por clase de hotel y por tarifa (menor
+      // de 2 años = tarifa de infante; 2+ = adulto en vuelo y servicios).
+      for (const lm of lineasMenores) {
+        itemsHotel.push({ numero_contrato: numero, descripcion: descripcionLineaMenor(lm, it.categoria, it.regimen), adultos: 0, ninos: lm.cantidad, tarifa_adulto: 0, tarifa_nino: lm.tarifa, orden: hIdx * 300 + ordenLineaMenor(lm) });
+      }
       // Servicios incluidos por GRUPO: su cargo (ya dentro de `comp.precioVenta`,
       // una sola vez) no va en ninguna fila de habitación/menores. El total del
       // documento del contrato es la suma de sus líneas, así que sin esta línea
@@ -2430,9 +2434,10 @@ export async function convertirCotizacionCarrito(
       // tiene, checkout/actions.ts). Misma regla y mismo helper: fail-closed.
       const rResidual = calcularResidualServiciosIncluidosPorGrupo({
         precioVenta: comp.precioVenta, lineasHab,
-        numNinos, tarifaNino: pvpPorAcom["nino"],
-        numNinos2, tarifaNino2: pvpPorAcom["nino2"],
-        numInfantes: numInf, tarifaInfante: pvpPorAcom["infante"],
+        numNinos: 0, tarifaNino: null,
+        numNinos2: 0, tarifaNino2: null,
+        numInfantes: 0, tarifaInfante: null,
+        lineasMenores,
       });
       if (!rResidual.ok) return fallarYRevertirGrupo(`${meta.hotel_nombre ?? it.hotelNombre}: ${rResidual.error}`);
       if (rResidual.residual > 0) {
@@ -2448,6 +2453,7 @@ export async function convertirCotizacionCarrito(
       for (const l of lineasHab) { const per = netoPorAcom[l.acom]; if (per != null) costoHotel += per * l.pax; }
       if (numNinos > 0 && netoPorAcom["nino"] != null) costoHotel += netoPorAcom["nino"] * numNinos;
       if (numNinos2 > 0 && netoPorAcom["nino2"] != null) costoHotel += netoPorAcom["nino2"] * numNinos2;
+      if (numInfantes > 0 && netoPorAcom["infante"] != null) costoHotel += netoPorAcom["infante"] * numInfantes;
       costoHotelTotal += costoHotel;
       pushCxP("hotel", `Hotel ${meta.hotel_nombre ?? it.hotelNombre}`.trim(), costoHotel, prH);
     }
