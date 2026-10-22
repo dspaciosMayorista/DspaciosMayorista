@@ -20,12 +20,13 @@ with chequeos as (
          'Prerrequisitos: publicador (181), crear_bloqueo (195), vistas (162/182) y funciones de trigger presentes (1 = sí)' as detalle
   union all
   select 'P2', 'INFO',
-         (select count(*) from information_schema.columns
-           where table_schema = 'public'
-             and ((table_name = 'bloqueos_vuelo' and column_name = 'fee_infante')
-               or (table_name = 'servicios_adicionales' and column_name = 'precio_infante')
-               or (table_name = 'servicio_temporadas' and column_name = 'precio_infante')
-               or (table_name = 'tarifario_resultado' and column_name = 'precio_pvp_menor2')))::int,
+         (select count(*) from information_schema.columns c
+            join information_schema.tables t on t.table_schema = c.table_schema and t.table_name = c.table_name and t.table_type = 'BASE TABLE'
+           where c.table_schema = 'public'
+             and ((c.table_name = 'bloqueos_vuelo' and c.column_name = 'fee_infante')
+               or (c.table_name = 'servicios_adicionales' and c.column_name = 'precio_infante')
+               or (c.table_name = 'servicio_temporadas' and c.column_name = 'precio_infante')
+               or (c.table_name = 'tarifario_resultado' and c.column_name = 'precio_pvp_menor2')))::int,
          '226 ya aplicada: columnas nuevas existentes (0 = ninguna, la migración las crea; 4 = ya aplicada, es idempotente)'
   union all
   select 'P3', case when count(*) > 0 then 'REVISAR' else 'INFO' end, count(*)::int,
@@ -71,12 +72,13 @@ with chequeos as (
   union all
   select 'P12', case when count(*) > 0 then 'REVISAR' else 'INFO' end, count(*)::int,
          'Columnas con el nombre de las nuevas en OTRAS tablas distintas de las esperadas: '
-         || coalesce(string_agg(table_name || '.' || column_name, ', ' order by table_name), 'ninguna')
-    from information_schema.columns
-   where table_schema = 'public'
-     and ((column_name = 'precio_infante' and table_name not in ('servicios_adicionales', 'servicio_temporadas'))
-       or (column_name = 'precio_pvp_menor2' and table_name not in ('tarifario_resultado'))
-       or (column_name = 'fee_infante' and table_name not in ('bloqueos_vuelo', 'empaquetados', 'salidas_dinamicas')))
+         || coalesce(string_agg(c.table_name || '.' || c.column_name, ', ' order by c.table_name), 'ninguna')
+    from information_schema.columns c
+    join information_schema.tables t on t.table_schema = c.table_schema and t.table_name = c.table_name and t.table_type = 'BASE TABLE'
+   where c.table_schema = 'public'
+     and ((c.column_name = 'precio_infante' and c.table_name not in ('servicios_adicionales', 'servicio_temporadas'))
+       or (c.column_name = 'precio_pvp_menor2' and c.table_name not in ('tarifario_resultado'))
+       or (c.column_name = 'fee_infante' and c.table_name not in ('bloqueos_vuelo', 'empaquetados', 'salidas_dinamicas')))
 )
 select codigo, nivel, cantidad, detalle from chequeos order by length(codigo), codigo;
 

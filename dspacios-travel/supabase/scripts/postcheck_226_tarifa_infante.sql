@@ -20,9 +20,14 @@
 begin transaction read only;
 
 with
+-- SOLO tablas base: information_schema.columns incluye también las VISTAS, y ahí ya existen columnas con esos nombres
+-- bien puestas (fee_infante en empaquetados_basica, 224; precio_infante en tarifario_resumen, 162/182).
 cols as (
-  select table_name, column_name, data_type, is_nullable, column_default
-    from information_schema.columns where table_schema = 'public'
+  select c.table_name, c.column_name, c.data_type, c.is_nullable, c.column_default
+    from information_schema.columns c
+    join information_schema.tables t
+      on t.table_schema = c.table_schema and t.table_name = c.table_name and t.table_type = 'BASE TABLE'
+   where c.table_schema = 'public'
 ),
 prof as (
   select p.proname, p.prosecdef, p.proconfig, p.prosrc, p.oid
@@ -122,9 +127,9 @@ c as (
   select 'C10',
          not exists (select 1 from cols
                       where (column_name = 'precio_infante' and table_name not in ('servicios_adicionales', 'servicio_temporadas'))
-                         or (column_name = 'precio_pvp_menor2' and table_name not in ('tarifario_resultado', 'tarifario_resultado_publicable'))
+                         or (column_name = 'precio_pvp_menor2' and table_name not in ('tarifario_resultado'))
                          or (column_name = 'fee_infante' and table_name not in ('bloqueos_vuelo', 'empaquetados', 'salidas_dinamicas'))),
-         'Las columnas nuevas viven solo donde corresponde'
+         'Las columnas nuevas viven solo donde corresponde (solo tablas base; las vistas no cuentan)'
 ),
 -- Un NULL (objeto ausente) cuenta como FALLA: bool_and ignoraría los NULL.
 c2 as (select codigo, coalesce(ok, false) as ok, detalle from c)

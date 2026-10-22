@@ -234,6 +234,17 @@ begin
   v_res := t226.q($q$update public.tarifario_resultado set precio_pvp_menor2 = 1 where paquete_id = 226301 returning 'x'$q$, 'vent');
   perform t226.afirma('D7 venta no escribe tarifario_resultado (precio_pvp_menor2 sigue en 155000)',
     (select precio_pvp_menor2 from public.tarifario_resultado where paquete_id = 226301 and acomodacion = 'infante') = 155000, 'res=' || coalesce(v_res, '<null>'));
+  -- Las vistas públicas exponen precio_pvp_menor2 / precio_infante (precios de VENTA) y NINGUNA columna de costo.
+  -- (information_schema.columns incluye vistas: aquí se consultan a propósito, por nombre de vista.)
+  perform t226.afirma('D8 las vistas públicas exponen los precios de venta del menor de 2 años',
+    exists (select 1 from information_schema.columns where table_schema = 'public' and table_name = 'tarifario_resultado_publicable' and column_name = 'precio_pvp_menor2')
+    and exists (select 1 from information_schema.columns where table_schema = 'public' and table_name = 'tarifario_resumen' and column_name = 'precio_infante'));
+  perform t226.afirma('D9 las vistas públicas NO exponen ninguna columna de costo (tarifa_proveedor, tarifa_neta, fee_infante, neto_*, costo_*)',
+    not exists (select 1 from information_schema.columns
+                 where table_schema = 'public' and table_name in ('tarifario_resultado_publicable', 'tarifario_resumen')
+                   and (column_name in ('tarifa_proveedor', 'tarifa_neta', 'tarifa_para_empaquetar', 'fee_infante', 'recargo_neto')
+                        or column_name like 'neto_%' or column_name like 'costo%'))
+    and (select count(*) from information_schema.columns where table_schema = 'public' and table_name = 'tarifario_resultado_publicable') > 0);
 end $$;
 
 -- ═ E · invalidación del tarifario ═════════════════════════════════════════════════════════
