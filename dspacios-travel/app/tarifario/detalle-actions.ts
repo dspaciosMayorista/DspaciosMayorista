@@ -75,7 +75,7 @@ const MSG_ERROR_DETALLE = "No fue posible cargar el detalle en este momento. Int
 const FLUJO = "tarifario_detalle_bajo_demanda";
 
 const COLUMNAS_DETALLE =
-  "modulo, bloqueo_label, bloqueo_id, empaquetado_id, salida_id, paquete_id, hotel_id, servicio_id, servicio_nombre, tipo_tarifa, pax_desde, pax_hasta, fecha_ida, fecha_regreso, noches, destino_nombre, paquete_nombre, hotel_nombre, categoria, regimen, acomodacion, precio_pvp, descripcion, recargo_individual, moneda";
+  "modulo, bloqueo_label, bloqueo_id, empaquetado_id, salida_id, paquete_id, hotel_id, servicio_id, servicio_nombre, tipo_tarifa, pax_desde, pax_hasta, fecha_ida, fecha_regreso, noches, destino_nombre, paquete_nombre, hotel_nombre, categoria, regimen, acomodacion, precio_pvp, precio_pvp_menor2, descripcion, recargo_individual, moneda";
 
 export type ResultadoDetalle = { ok: true; filas: FilaTarifario[] } | { ok: false; error: string };
 

@@ -109,12 +109,20 @@ export function costoNetoServicioIncluido(
   gruposNeto: { pax_desde: number; pax_hasta: number; precio: number }[],
   totalPax: number,
   liquidacion: string | null,
-  numNoches: number
+  numNoches: number,
+  // Tarifa de infante (migración 226). `totalPax` pasa a ser SOLO los
+  // pasajeros de 2 años o más (adulto en servicios): los menores de 2 años no
+  // cuentan para el rango de un servicio por grupo ni pagan extra; en un
+  // servicio por persona pagan su `precio_infante` NETO (o el de adulto si el
+  // servicio no lo configuró — NULL ≠ $0).
+  menoresDeDos?: { cantidad: number; precioInfanteNeto: number | null }
 ): number | null {
   if (totalPax <= 0) return null;
   if (modo === "persona") {
     if (precioPersonaNeto == null) return null;
-    const total = precioServicio("persona", precioPersonaNeto, [], totalPax) * factorLiquidacion(liquidacion, numNoches);
+    const m2 = Math.max(0, menoresDeDos?.cantidad ?? 0);
+    const netoInfante = menoresDeDos?.precioInfanteNeto ?? precioPersonaNeto;
+    const total = (precioServicio("persona", precioPersonaNeto, [], totalPax) + netoInfante * m2) * factorLiquidacion(liquidacion, numNoches);
     return Number.isFinite(total) ? total : null;
   }
   if (!gruposNeto.length) return null;

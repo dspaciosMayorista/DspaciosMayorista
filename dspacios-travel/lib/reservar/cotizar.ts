@@ -30,6 +30,7 @@ import {
 import { distribuirPorHabitaciones, type HabitacionConsultada } from "@/lib/reservar/distribucionHabitaciones";
 import { ejecutarConsultaPaginada } from "@/lib/tarifario/paginacion";
 import { cargoGrupoIncluido } from "./serviciosPaquete.ts";
+import { contarMenoresDeDos, tarifarMenores } from "./menoresDeDos.ts";
 import {
   construirContextoServicios, calcularResultadoServicio, resolverLiquidacionServicioPuntual,
   respuestaPublicaServicioPuntual, formatearLogLiquidacionServicioPuntual, fallaErrorConsulta,
@@ -111,10 +112,10 @@ async function cargarDatosHotelPaquete(
     { data: servSel, error: servSelErr },
     { data: blackouts, error: blackoutsErr },
   ] = await Promise.all([
-    admin.from("armado_hoteles").select("categorias, regimenes, hoteles(nombre, moneda)").eq("paquete_id", paqueteId).eq("hotel_id", hotelId).maybeSingle(),
+    admin.from("armado_hoteles").select("categorias, regimenes, hoteles(nombre, moneda, adults_only)").eq("paquete_id", paqueteId).eq("hotel_id", hotelId).maybeSingle(),
     admin.from("hotel_temporadas").select("id, nombre, fecha_inicio, fecha_fin, prioridad, compra_inicio, compra_fin, tipo, descuento_valor, rangos, blackouts, min_noches, regimen_restringido, condicion_pago_tipo, condicion_pago_pct_inicial, condicion_pago_dias_saldo").eq("hotel_id", hotelId),
     admin.from("tarifa_hotel").select("*").eq("hotel_id", hotelId),
-    admin.from("armado_servicios").select("incluido, servicio_id, modo, servicios_adicionales(nombre, categoria, precio_persona, liquidacion, proveedor_id)").eq("paquete_id", paqueteId),
+    admin.from("armado_servicios").select("incluido, servicio_id, modo, servicios_adicionales(nombre, categoria, precio_persona, precio_infante, liquidacion, proveedor_id)").eq("paquete_id", paqueteId),
     admin.from("hotel_blackouts").select("fecha_inicio, fecha_fin, total, acomodaciones, categorias").eq("hotel_id", hotelId),
   ]);
   if (hselErr) return { ok: false, motivo: "error_consulta", etapa: "armado_hoteles", detalleInterno: hselErr.message };
@@ -124,7 +125,7 @@ async function cargarDatosHotelPaquete(
   if (servSelErr) return { ok: false, motivo: "error_consulta", etapa: "armado_servicios", detalleInterno: servSelErr.message };
   if (blackoutsErr) return { ok: false, motivo: "error_consulta", etapa: "hotel_blackouts", detalleInterno: blackoutsErr.message };
 
-  const hotelMeta = hsel.hoteles as unknown as { nombre: string; moneda?: string | null } | null;
+  const hotelMeta = hsel.hoteles as unknown as { nombre: string; moneda?: string | null; adults_only?: boolean | null } | null;
   const destinoNombre = (pq.destinos as unknown as { nombre: string } | null)?.nombre ?? null;
 
   const datos: DatosHotelPaquete = {
@@ -137,14 +138,16 @@ async function cargarDatosHotelPaquete(
       regimenes: (hsel.regimenes as string[] | null) ?? null,
       hotel_nombre: hotelMeta?.nombre ?? null,
       hotel_moneda: hotelMeta?.moneda ?? null,
+      hotel_adults_only: hotelMeta?.adults_only ?? null,
     },
     temporadas: (temps ?? []) as FilaTemporadaHotelRaw[],
     tarifas: (tarifas ?? []) as FilaTarifaHotelRaw[],
     serviciosIncluidos: (servSel ?? []).map((s) => {
-      const srv = s.servicios_adicionales as unknown as { nombre: string | null; categoria: string | null; precio_persona: number | null; liquidacion: string | null; proveedor_id: number | null } | null;
+      const srv = s.servicios_adicionales as unknown as { nombre: string | null; categoria: string | null; precio_persona: number | null; precio_infante: number | null; liquidacion: string | null; proveedor_id: number | null } | null;
       return {
         incluido: !!s.incluido,
         precio_persona: srv?.precio_persona ?? null,
+        precio_infante: srv?.precio_infante ?? null,
         liquidacion: srv?.liquidacion ?? null,
         servicio_id: s.servicio_id,
         modo: (s.modo as string | null) ?? null,
@@ -724,11 +727,20 @@ export async function buscarHoteles(inputRaw: unknown): Promise<
         total += adultos * pvp; pax += adultos;
       }
       if (!ok) continue;
-      if (menores.nino > 0) { total += menores.nino * combo.precios["nino"]!; pax += menores.nino; }
-      if (menores.nino2 > 0) { total += menores.nino2 * combo.precios["nino2"]!; pax += menores.nino2; }
-      // Infante: si el hotel no configuró tarifa para este combo, es gratis
-      // (misma asimetría documentada del resto del motor de reservas).
-      if (menores.infantes > 0 && combo.precios["infante"] != null) total += menores.infantes * combo.precios["infante"];
+      // Menores (migración 226): cada uno paga la parte de hotel de SU clase
+      // (infante / Niño 1 / Niño 2 del hotel) y, además, vuelo y servicios por
+      // su EDAD — un menor de 2 años paga la tarifa de infante
+      // (`preciosMenor2`) y no ocupa silla ni cuenta para el rango de un
+      // servicio por grupo; desde los 2 años paga como adulto (`precios`).
+      const tarifaMenores = tarifarMenores({
+        totales: { infante: menores.infantes, nino: menores.nino, nino2: menores.nino2 },
+        menoresDeDos: contarMenoresDeDos(edades, rRegla.regla.infanteMax, { infante: menores.infantes, nino: menores.nino, nino2: menores.nino2 }),
+        pvp: combo.precios,
+        pvpMenor2: combo.preciosMenor2 ?? {},
+      });
+      if (!tarifaMenores.ok) continue; // sin tarifa de infante calculable para este combo
+      total += tarifaMenores.total;
+      pax += tarifaMenores.paxConSilla;
       // Servicio INCLUIDO con cobro POR GRUPO: su costo depende del tamaño del
       // grupo, así que no está en `combo.precios` (por persona). Acá SÍ se
       // conoce el pax real de la composición consultada, así que se cobra —
@@ -736,7 +748,9 @@ export async function buscarHoteles(inputRaw: unknown): Promise<
       // contrato (`cargoGrupoIncluido`). Sin esto, el buscador mostraría un
       // total y el checkout cobraría otro.
       if (res.serviciosGrupoIncluidos.length) {
-        const paxGrupo = pax + menores.infantes;
+        // El rango cuenta SOLO a los de 2 años o más: el menor de 2 años no
+        // cuenta para el rango ni paga extra (decisión del dueño, 226).
+        const paxGrupo = pax;
         const cargo = cargoGrupoIncluido(res.serviciosGrupoIncluidos, paxGrupo, Number(datos.paquete.pct_mk) || 0, numNoches);
         // Sin rango que cubra esta composición NO se publica un precio
         // inventado: el combo se descarta (el hotel puede seguir apareciendo

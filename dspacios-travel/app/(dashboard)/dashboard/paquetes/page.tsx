@@ -4,6 +4,8 @@ import { Button } from "@/components/ui/button";
 import { PaquetesListado, type PaqueteItem } from "./PaquetesListado";
 import { resolverTabInicial } from "./tipo-paquetes";
 import { cargarFilasResumenPaginado } from "@/lib/tarifario/resumen";
+import { Info } from "lucide-react";
+import { paquetesConTarifarioAnteriorAInfante } from "./actions";
 
 export const dynamic = "force-dynamic";
 
@@ -106,6 +108,10 @@ export default async function PaquetesPage({
     );
   }
 
+  // Tarifa de infante (migración 226): paquetes activos cuyo tarifario se publicó ANTES y hay que regenerar a mano.
+  // Es un aviso: si la consulta falla no se muestra nada (la reserva con infantes ya pide regenerar por su cuenta).
+  const pendientesInfante = await paquetesConTarifarioAnteriorAInfante();
+
   // Todo el cómputo por-item vive aquí (server, una sola vez); el listado
   // cliente solo filtra/ordena localmente (ver tipo-paquetes.ts) — no repite
   // consultas a Supabase al cambiar de pestaña.
@@ -135,6 +141,23 @@ export default async function PaquetesPage({
           <Button style={{ backgroundColor: "var(--brand-primary)" }}>+ Nuevo paquete</Button>
         </Link>
       </div>
+
+      {pendientesInfante.ok && pendientesInfante.paquetes.length > 0 && (
+        <div role="status" className="mb-4 flex items-start gap-2 rounded-xl border border-amber-200 bg-amber-50 p-3 text-sm text-amber-800">
+          <Info size={16} className="mt-0.5 shrink-0" aria-hidden="true" />
+          <div>
+            <p>
+              <b>{pendientesInfante.paquetes.length} {pendientesInfante.paquetes.length === 1 ? "paquete tiene" : "paquetes tienen"} el tarifario anterior a la tarifa de infante</b>{" "}
+              (menores de 2 años). Ábrelos y pulsa <b>Generar tarifario</b>; hasta entonces no se puede reservar con infantes en ellos.
+            </p>
+            <ul className="mt-1 flex flex-wrap gap-x-3 gap-y-1 text-xs">
+              {pendientesInfante.paquetes.map((p) => (
+                <li key={p.id}><Link href={`/dashboard/paquetes/${p.id}`} className="underline">{p.nombre}</Link></li>
+              ))}
+            </ul>
+          </div>
+        </div>
+      )}
 
       <PaquetesListado paquetes={paquetes} tabInicial={tabInicial} />
     </div>

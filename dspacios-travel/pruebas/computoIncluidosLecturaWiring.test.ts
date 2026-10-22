@@ -24,7 +24,8 @@ describe("computarReserva — lectura de servicios incluidos", () => {
   test("armado_servicios + categoría/precio y servicio_tarifa_pax se leen con el cliente de servicio", () => {
     assert.match(bloque, /const catalogo = createAdminClient\(\);/);
     assert.match(bloque, /await catalogo\s*\n\s*\.from\("armado_servicios"\)/);
-    assert.match(bloque, /servicios_adicionales\(nombre, categoria, precio_persona, liquidacion, proveedor_id\)/);
+    // 226: además `precio_infante` (precio del menor de 2 años del servicio).
+    assert.match(bloque, /servicios_adicionales\(nombre, categoria, precio_persona, (precio_infante, )?liquidacion, proveedor_id\)/);
     assert.match(bloque, /catalogo\.from\("servicio_tarifa_pax"\)\.select\("servicio_id, pax_desde, pax_hasta, precio, temporada"\)\.eq\("temporada", "GENERAL"\)/);
   });
 
@@ -41,7 +42,8 @@ describe("computarReserva — lectura de servicios incluidos", () => {
   test("reglas de precio intactas: por persona solo se registra; por grupo se cobra una vez con el pax real", () => {
     const resto = computo.slice(inicio, computo.indexOf("serviciosIncluidos.push(...cargo.servicios);", inicio) + 50);
     assert.match(resto, /if \(modo === "persona"\) \{[\s\S]*?serviciosIncluidos\.push\(\{[\s\S]*?continue;/);
-    assert.match(resto, /const cargo = cargoGrupoIncluido\(gruposIncluidosPendientes, totalPax, pctMk, numNochesInc\);/);
+    // 226: el rango cuenta SOLO a los de 2+ años (`paxServAdulto`); el menor de 2 años no cuenta ni paga extra.
+    assert.match(resto, /const cargo = cargoGrupoIncluido\(gruposIncluidosPendientes, paxServAdulto, pctMk, numNochesInc\);/);
     assert.equal((resto.match(/precioVenta \+= cargo\.pvp;/g) ?? []).length, 1);
   });
 });

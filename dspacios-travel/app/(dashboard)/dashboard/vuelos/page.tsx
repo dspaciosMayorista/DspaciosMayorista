@@ -35,6 +35,7 @@ const COLS_BLOQUEOS = [
   { key: "cupos_total", label: "Cupos", ejemplo: "30" },
   { key: "tarifa_neta", label: "Tarifa neta (pago aerolínea)", ejemplo: "200000" },
   { key: "tarifa_para_empaquetar", label: "Tarifa empaquetar (reventa)", ejemplo: "242022" },
+  { key: "fee_infante", label: "Fee de infante 0-1,99 años (precio = costo; vacío = 0)", ejemplo: "0" },
   { key: "fecha_devolucion", label: "Fecha devolución", ejemplo: "2026-06-01" },
   { key: "fecha_emision", label: "Fecha límite de emisión", ejemplo: "2026-05-20" },
   { key: "rangos_edad", label: "Rangos de edad (nombres separados por |)", ejemplo: "" },

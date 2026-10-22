@@ -11,12 +11,14 @@ import {
   marcar,
   aporteVuelo,
   componerTarifa,
+  precioMenorDeDos,
   redondearVenta,
   factorLiquidacion,
   toTemporadaRango,
   type TemporadaRango,
 } from "@/lib/calc/paquetes";
 import { empaquetadoVigente, hoyBogota } from "@/lib/reservar/origen";
+import { serviciosSinPrecioInfante } from "@/lib/reservar/menoresDeDos";
 import { seleccionarSalidasVigentes } from "@/lib/reservar/salidaDinamicaVigente";
 import {
   filtrarCandidatos,
@@ -720,21 +722,21 @@ export async function generarTarifario(paqueteId: number): Promise<Result> {
   const [{ data: vuelosSel, error: eVuelosSel }, { data: empaquetadosSel, error: eEmpaquetadosSel }, { data: hotelesSel, error: eHotelesSel }, { data: serviciosSel, error: eServiciosSel }] = await Promise.all([
     sb
       .from("armado_vuelos")
-      .select("bloqueo_id, aplica_mk, ta, bloqueos_vuelo(id, record, ruta, fecha_ida, fecha_regreso, tarifa_para_empaquetar)")
+      .select("bloqueo_id, aplica_mk, ta, bloqueos_vuelo(id, record, ruta, fecha_ida, fecha_regreso, tarifa_para_empaquetar, fee_infante)")
       .eq("paquete_id", paqueteId),
     // Vuelos por SISTEMA (Empaquetados, migración 156) — mismo patrón que
     // armado_vuelos/bloqueos_vuelo; ver la nota de integración más abajo.
     sb
       .from("armado_empaquetados")
-      .select("empaquetado_id, aplica_mk, ta, empaquetados(id, record, ruta, fecha_ida, fecha_regreso, tarifa_para_empaquetar, activo, compra_inicio, compra_fin)")
+      .select("empaquetado_id, aplica_mk, ta, empaquetados(id, record, ruta, fecha_ida, fecha_regreso, tarifa_para_empaquetar, fee_infante, activo, compra_inicio, compra_fin)")
       .eq("paquete_id", paqueteId),
     sb
       .from("armado_hoteles")
-      .select("hotel_id, categorias, regimenes, hoteles(nombre, moneda, modelo_tarifario)")
+      .select("hotel_id, categorias, regimenes, hoteles(nombre, moneda, modelo_tarifario, adults_only)")
       .eq("paquete_id", paqueteId),
     sb
       .from("armado_servicios")
-      .select("servicio_id, modo, incluido, servicios_adicionales(nombre, precio_persona, liquidacion, descripcion, recargo_individual, moneda)")
+      .select("servicio_id, modo, incluido, servicios_adicionales(nombre, precio_persona, precio_infante, liquidacion, descripcion, recargo_individual, moneda)")
       .eq("paquete_id", paqueteId),
   ]);
   if (eVuelosSel) return await fallarTecnico(eVuelosSel.message);
@@ -950,6 +952,22 @@ export async function generarTarifario(paqueteId: number): Promise<Result> {
     return total;
   }
 
+  // Tarifa de infante (migración 226): lo mismo para un MENOR DE 2 AÑOS — cada
+  // servicio incluido por persona con su `precio_infante` (NETO, con el mismo
+  // markup que el de adulto) o, si el servicio no lo configuró (NULL ≠ $0), el
+  // precio de adulto. Los incluidos por grupo no se hornean (ni para adulto).
+  function aporteServiciosIncluidosMenor(numNoches: number): number {
+    let total = 0;
+    for (const s of servicios) {
+      if (!(s.incluido as boolean)) continue;
+      const srv = s.servicios_adicionales as unknown as { precio_persona: number | null; precio_infante: number | null; liquidacion: string | null } | null;
+      if (srv?.precio_persona == null) continue;
+      const neto = srv.precio_infante != null ? Number(srv.precio_infante) || 0 : Number(srv.precio_persona) || 0;
+      total += marcar(neto, pctMk) * factorLiquidacion(srv.liquidacion, numNoches);
+    }
+    return total;
+  }
+
   // Genera las filas de hotel para una estadía (fechaIda + numNoches).
   // `aporteVueloVal` es el aporte del vuelo al PVP (0 en porción terrestre);
   // `impuesto` es la BNC que se resta del PVP.
@@ -974,11 +992,16 @@ export async function generarTarifario(paqueteId: number): Promise<Result> {
     // (tarifario_resultado.empaquetado_id) para que la procedencia quede
     // inequívoca en el resultado — ver la nota de integración más abajo.
     empaquetadoId: number | null = null,
+    // Fee de infante de la fuente de vuelo (0 a 1,99 años): precio = costo, sin
+    // MK ni TA (migración 226). 0 en porción terrestre (sin vuelo).
+    feeInfante = 0,
   ) {
     if (numNoches <= 0) return;
     const aporteServ = aporteServiciosIncluidos(numNoches); // solo servicios incluidos
+    const aporteServMenor = aporteServiciosIncluidosMenor(numNoches);
     for (const h of hoteles) {
-      const hotelMeta = h.hoteles as unknown as { nombre: string; moneda?: string | null } | null;
+      const hotelMeta = h.hoteles as unknown as { nombre: string; moneda?: string | null; adults_only?: boolean | null } | null;
+      const hotelAdultsOnly = hotelMeta?.adults_only === true;
       const hotelNombre = hotelMeta?.nombre ?? null;
       const monedaHotel = (hotelMeta?.moneda ?? "COP") === "USD" ? "USD" : "COP";
       const filtroCat = (h.categorias as string[] | null) ?? null;
@@ -1005,30 +1028,11 @@ export async function generarTarifario(paqueteId: number): Promise<Result> {
         // el PVP del tarifario. Vacío en combos legacy/sin promociones.
         const precioFinalTemporadas = new Set<string>();
         for (const [temp, row] of tempMap) if (row.precio_final_autoritativo === true) precioFinalTemporadas.add(temp);
-        for (const acom of ACOMODACIONES) {
-          const col = COL_NETO[acom];
-          const netoPorTemporada: Record<string, number | null> = {};
-          for (const [temp, row] of tempMap) {
-            const v = row[col];
-            netoPorTemporada[temp] = v == null ? null : Number(v);
-          }
-          // Procedencia REAL del precio ganador (migración 180) — SIEMPRE
-          // sale de la MISMA búsqueda que produce el total, nunca se infiere
-          // después de `fecha_ida` (en `masBarato` el precio ganador puede
-          // venir de CUALQUIER noche de la ventana, no necesariamente la de
-          // entrada — ese era exactamente el defecto confirmado).
-          const resultado = masBarato
-            ? liquidarHotelMasBaratoConTemporada({ desde: fechaIda, hasta: fechaRegreso ?? fechaIda, numNoches, temporadas, netoPorTemporada, regimen, precioFinalTemporadas })
-            : liquidarHotelNochesConTemporadas({ fechaIda, numNoches, temporadas, netoPorTemporada, regimen, precioFinalTemporadas });
-          const costoHotel = resultado?.total ?? null;
-          // Procedencia deduplicada de TODAS las noches que aportaron al
-          // total (nunca solo el checkin) — ver lib/tarifario/procedenciaTarifario.ts.
-          const procedencia = columnasProcedencia(resultado?.procedencia);
-          // null = no aplica (no se publica). En HABITACIONES, 0 también es "no
-          // aplica" (no es gratis); en niños e infante el 0 sí es válido (gratis).
+        let hayHabitacion = false;
+        let hayInfante = false;
+        let procedenciaHab: ReturnType<typeof columnasProcedencia> | null = null;
+        const publicarFila = (acom: Acomodacion, costoHotel: number, procedencia: ReturnType<typeof columnasProcedencia>) => {
           const esRoom = acom !== "nino" && acom !== "nino2" && acom !== "infante";
-          if (costoHotel == null) continue;
-          if (esRoom && costoHotel <= 0) continue;
           const aporteHotel = marcar(costoHotel, pctMk); // hotel siempre con mk
           const t = componerTarifa({
             aporteHotel,
@@ -1058,6 +1062,10 @@ export async function generarTarifario(paqueteId: number): Promise<Result> {
             base_comisionable: t.baseComisionable,
             impuesto: t.impuesto,
             precio_pvp: t.pvp,
+            // Menor de 2 años de ESTA clase de hotel: hotel de la clase + servicios
+            // con su precio de infante, redondeo al mil/dólar, y el fee de infante
+            // del vuelo EXACTO (regla B, migración 226). NULL en habitaciones adultas.
+            precio_pvp_menor2: esRoom ? null : precioMenorDeDos({ aporteHotel, aporteServiciosMenor: aporteServMenor, feeInfante, moneda: monedaHotel }),
             moneda: monedaHotel,
             salida_id: salidaId,
             temporada_ganadora: procedencia.temporada_ganadora,
@@ -1066,7 +1074,41 @@ export async function generarTarifario(paqueteId: number): Promise<Result> {
             procedencia_temporadas: procedencia.procedencia_temporadas as unknown as Json,
             procedencia_mixta: procedencia.procedencia_mixta,
           });
+        };
+        for (const acom of ACOMODACIONES) {
+          const col = COL_NETO[acom];
+          const netoPorTemporada: Record<string, number | null> = {};
+          for (const [temp, row] of tempMap) {
+            const v = row[col];
+            netoPorTemporada[temp] = v == null ? null : Number(v);
+          }
+          // Procedencia REAL del precio ganador (migración 180) — SIEMPRE
+          // sale de la MISMA búsqueda que produce el total, nunca se infiere
+          // después de `fecha_ida` (en `masBarato` el precio ganador puede
+          // venir de CUALQUIER noche de la ventana, no necesariamente la de
+          // entrada — ese era exactamente el defecto confirmado).
+          const resultado = masBarato
+            ? liquidarHotelMasBaratoConTemporada({ desde: fechaIda, hasta: fechaRegreso ?? fechaIda, numNoches, temporadas, netoPorTemporada, regimen, precioFinalTemporadas })
+            : liquidarHotelNochesConTemporadas({ fechaIda, numNoches, temporadas, netoPorTemporada, regimen, precioFinalTemporadas });
+          const costoHotel = resultado?.total ?? null;
+          // Procedencia deduplicada de TODAS las noches que aportaron al
+          // total (nunca solo el checkin) — ver lib/tarifario/procedenciaTarifario.ts.
+          const procedencia = columnasProcedencia(resultado?.procedencia);
+          // null = no aplica (no se publica). En HABITACIONES, 0 también es "no
+          // aplica" (no es gratis); en niños e infante el 0 sí es válido (gratis).
+          const esRoom = acom !== "nino" && acom !== "nino2" && acom !== "infante";
+          if (costoHotel == null) continue;
+          if (esRoom && costoHotel <= 0) continue;
+          if (esRoom) { hayHabitacion = true; procedenciaHab = procedenciaHab ?? procedencia; }
+          if (acom === "infante") hayInfante = true;
+          publicarFila(acom, costoHotel, procedencia);
         }
+        // Infante (migración 226): un hotel sin tarifa de infante para este combo NO
+        // deja al menor de 2 años gratis en silencio — se publica la fila con hotel
+        // $0 para que el fee de infante del vuelo y los servicios con su precio de
+        // infante se cobren igual. Solo si el combo tiene alguna habitación publicada
+        // y el hotel acepta niños (Adults Only no publica infante).
+        if (hayHabitacion && !hayInfante && !hotelAdultsOnly && procedenciaHab) publicarFila("infante", 0, procedenciaHab);
       }
     }
   }
@@ -1107,6 +1149,7 @@ export async function generarTarifario(paqueteId: number): Promise<Result> {
         fecha_ida: string | null;
         fecha_regreso: string | null;
         tarifa_para_empaquetar: number;
+        fee_infante: number | null;
       } | null,
     }))
     .filter((v): v is typeof v & { b: NonNullable<typeof v.b> } => !!v.b && !!v.b.fecha_ida && !!v.b.fecha_regreso && permiteDestinoAereo("bloqueo", v.b.id));
@@ -1131,6 +1174,7 @@ export async function generarTarifario(paqueteId: number): Promise<Result> {
         fecha_ida: string | null;
         fecha_regreso: string | null;
         tarifa_para_empaquetar: number;
+        fee_infante: number | null;
         activo: boolean;
         compra_inicio: string | null;
         compra_fin: string | null;
@@ -1197,7 +1241,7 @@ export async function generarTarifario(paqueteId: number): Promise<Result> {
       // Etiqueta pública del vuelo: solo la ruta (el record/PNR es interno y
       // NO debe aparecer en el tarifario que ven clientes B2C/B2B).
       const label = b.ruta || "";
-      filasHoteles(b.fecha_ida!, numNoches, aporteVueloVal, impuesto, "bloqueo", b.id, label, b.fecha_regreso);
+      filasHoteles(b.fecha_ida!, numNoches, aporteVueloVal, impuesto, "bloqueo", b.id, label, b.fecha_regreso, false, null, null, Number(b.fee_infante) || 0);
     }
     // MÓDULO BLOQUEOS (Sistema): una liquidación por empaquetado — MISMA
     // matemática que un ciclo aéreo negociado, el único cambio es la fuente
@@ -1222,7 +1266,7 @@ export async function generarTarifario(paqueteId: number): Promise<Result> {
       // Mismo criterio de privacidad que un bloqueo negociado: solo la ruta
       // en el label público, nunca el record/PNR.
       const label = e.ruta || "";
-      filasHoteles(e.fecha_ida!, numNoches, aporteVueloVal, impuesto, "bloqueo", null, label, e.fecha_regreso, false, null, e.id);
+      filasHoteles(e.fecha_ida!, numNoches, aporteVueloVal, impuesto, "bloqueo", null, label, e.fecha_regreso, false, null, e.id, Number(e.fee_infante) || 0);
     }
   } else if (tipo === "porcion_terrestre" && pq.fecha_viaje_inicio) {
     // MÓDULO PORCIÓN TERRESTRE: sin vuelo; noches del paquete desde la fecha inicio
@@ -1243,7 +1287,7 @@ export async function generarTarifario(paqueteId: number): Promise<Result> {
       const impuesto = pq.impuesto_tipo === "tiquete" ? costoTiquete : Number(pq.impuesto_fijo) || 0;
       // Etiqueta pública de la salida: ruta + fecha (NO hay record/PNR).
       const label = `${sal.ruta || ""}${sal.ruta && fIda ? " · " : ""}${fIda ? fIda.split("-").reverse().join("/") : ""}`.trim();
-      filasHoteles(fIda, numNoches, aporteVueloVal, impuesto, "dinamico", null, label || (sal.ruta ?? "Salida"), fReg, false, sal.id as number);
+      filasHoteles(fIda, numNoches, aporteVueloVal, impuesto, "dinamico", null, label || (sal.ruta ?? "Salida"), fReg, false, sal.id as number, null, Number(sal.fee_infante) || 0);
     }
   }
 
@@ -1257,7 +1301,7 @@ export async function generarTarifario(paqueteId: number): Promise<Result> {
   // sin importar el tipo. Persona = una fila; grupo = una fila por rango de pax.
   for (const s of servicios) {
     if (s.incluido as boolean) continue; // los incluidos se hornean, no se publican
-    const srv = s.servicios_adicionales as unknown as { nombre: string; precio_persona: number | null; liquidacion: string | null; descripcion: string | null; recargo_individual: number | null; moneda: string | null } | null;
+    const srv = s.servicios_adicionales as unknown as { nombre: string; precio_persona: number | null; precio_infante: number | null; liquidacion: string | null; descripcion: string | null; recargo_individual: number | null; moneda: string | null } | null;
     if (!srv) continue;
     const fLiq = factorLiquidacion(srv.liquidacion, nochesPaq);
     const modo = (s.modo as string) === "grupo" ? "grupo" : "persona";
@@ -1299,7 +1343,10 @@ export async function generarTarifario(paqueteId: number): Promise<Result> {
       // costo neto lo toma Reservar del catálogo para la CxP del proveedor.
       const recargoNeto = Math.max(Number(srv.recargo_individual) || 0, 0);
       const recargoPvp = recargoNeto > 0 ? redondearVenta(marcar(recargoNeto, pctMk), monedaSrv) : 0;
-      filas.push({ ...comun, base_comisionable: pvp, precio_pvp: pvp, recargo_individual: recargoPvp });
+      // Precio de infante (0 a 1,99 años) del servicio: NETO con el mismo markup.
+      // NULL = el servicio no lo configuró → el infante paga como adulto (NULL ≠ $0).
+      const infantePvp = srv.precio_infante != null ? redondearVenta(marcar(Number(srv.precio_infante) || 0, pctMk) * fLiq, monedaSrv) : null;
+      filas.push({ ...comun, base_comisionable: pvp, precio_pvp: pvp, precio_pvp_menor2: infantePvp, recargo_individual: recargoPvp });
     }
   }
 
@@ -1387,13 +1434,61 @@ export async function generarTarifario(paqueteId: number): Promise<Result> {
   const avisoDestinosAereos = excluidosPorDestinoAereo
     ? ` ${excluidosPorDestinoAereo} vuelo(s) vinculado(s) se omitieron porque su destino aéreo ya no está permitido para este paquete.`
     : "";
+  // Servicios por persona (incluidos u opcionales) SIN precio de infante: el infante
+  // (0 a 1,99 años) pagará como adulto en ellos hasta que se configure (NULL ≠ $0).
+  const sinPrecioInfante = serviciosSinPrecioInfante(
+    servicios.map((sv) => ({
+      nombre: (sv.servicios_adicionales as unknown as { nombre?: string | null } | null)?.nombre ?? null,
+      modo: (sv.modo as string) === "grupo" ? "grupo" : "persona",
+      precioPersona: (sv.servicios_adicionales as unknown as { precio_persona?: number | null } | null)?.precio_persona ?? null,
+      precioInfante: (sv.servicios_adicionales as unknown as { precio_infante?: number | null } | null)?.precio_infante ?? null,
+    }))
+  );
+  const avisoInfante = sinPrecioInfante.length
+    ? ` Atención: ${sinPrecioInfante.length === 1 ? "el servicio" : "los servicios"} ${sinPrecioInfante.join(", ")} ${sinPrecioInfante.length === 1 ? "no tiene" : "no tienen"} precio de infante: los menores de 2 años pagarán como adulto en ${sinPrecioInfante.length === 1 ? "él" : "ellos"}. Configúralo en Producto → Servicios.`
+    : "";
   return {
     ok: true,
     id: filas.length,
-    ...(avisoValidos || avisoSinPublicar || avisoNoCompatibles || avisoDestinosAereos
-      ? { aviso: `${filas.length} tarifa(s) persona publicada(s) en el tarifario.${avisoValidos ? ` Además, ${avisoValidos}` : ""}${avisoSinPublicar}${avisoNoCompatibles}${avisoDestinosAereos}` }
+    ...(avisoValidos || avisoSinPublicar || avisoNoCompatibles || avisoDestinosAereos || avisoInfante
+      ? { aviso: `${filas.length} tarifa(s) persona publicada(s) en el tarifario.${avisoValidos ? ` Además, ${avisoValidos}` : ""}${avisoSinPublicar}${avisoNoCompatibles}${avisoDestinosAereos}${avisoInfante}` }
       : {}),
   };
+}
+
+// ── PAQUETES CON TARIFARIO ANTERIOR A LA TARIFA DE INFANTE (migración 226) ──
+// Los tarifarios publicados antes de la 226 no traen `precio_pvp_menor2` (precio del menor de 2 años) en las filas de
+// niño/infante: mientras no se regeneren, reservar con infantes pide regenerar. Esta lista (solo paquetes ACTIVOS) alimenta
+// el aviso del listado de Paquetes para que se regeneren a mano, uno por uno, con el botón de siempre. Solo lectura: nunca
+// regenera nada. Paginada por la cantidad REAL de filas recibidas (el límite de filas de PostgREST puede truncar en silencio).
+export async function paquetesConTarifarioAnteriorAInfante(): Promise<
+  { ok: true; paquetes: { id: number; nombre: string }[] } | { ok: false }
+> {
+  try {
+    const sb = await createClient();
+    const PAGINA = 1000;
+    const MAX_PAGINAS = 200;
+    const vistos = new Map<number, string>();
+    let desde = 0;
+    for (let i = 0; i < MAX_PAGINAS; i++) {
+      const { data, error } = await sb
+        .from("tarifario_resultado")
+        .select("id, paquete_id, paquete_nombre")
+        .eq("paquete_activo", true)
+        .in("acomodacion", ["nino", "nino2", "infante"])
+        .is("precio_pvp_menor2", null)
+        .order("id")
+        .range(desde, desde + PAGINA - 1);
+      if (error) return { ok: false };
+      const filas = data ?? [];
+      if (!filas.length) return { ok: true, paquetes: [...vistos].map(([id, nombre]) => ({ id, nombre })).sort((a, b) => a.nombre.localeCompare(b.nombre)) };
+      for (const f of filas) if (!vistos.has(f.paquete_id)) vistos.set(f.paquete_id, f.paquete_nombre ?? `Paquete #${f.paquete_id}`);
+      desde += filas.length;
+    }
+    return { ok: false };
+  } catch {
+    return { ok: false };
+  }
 }
 
 // ── AUTO-RECÁLCULO ─────────────────────────────────────────────────────────

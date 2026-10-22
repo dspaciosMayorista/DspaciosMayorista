@@ -25,7 +25,7 @@
 // ─────────────────────────────────────────────────────────────────────────
 
 import {
-  liquidarHotelNoches, liquidarHotelNochesConTemporadas, marcar, componerTarifa, toTemporadaRango, minNochesAplicable,
+  liquidarHotelNoches, liquidarHotelNochesConTemporadas, marcar, componerTarifa, precioMenorDeDos, toTemporadaRango, minNochesAplicable,
   factorLiquidacion, normRangos, hoyISO, type TemporadaRango,
 } from "../calc/paquetes.ts";
 import {
@@ -48,6 +48,7 @@ const MS_DIA = 86_400_000;
 // Acomodaciones (incluye niños e infante) y su columna neta en tarifa_hotel —
 // idéntico a la constante que tenía `cotizar.ts` antes de este refactor.
 const ACOM_ALL = ["sencilla", "doble", "triple", "multiple", "nino", "nino2", "infante"] as const;
+const ACOM_ROOMS_ALL = ["sencilla", "doble", "triple", "multiple"] as const;
 const COL_NETO: Record<string, string> = {
   sencilla: "neto_sencilla", doble: "neto_doble", triple: "neto_triple",
   multiple: "neto_multiple", nino: "neto_nino", nino2: "neto_nino2", infante: "neto_infante",
@@ -55,6 +56,12 @@ const COL_NETO: Record<string, string> = {
 
 export type ComboCotizado = {
   categoria: string; regimen: string; precios: Record<string, number>; netos?: Record<string, number>;
+  // Tarifa de infante (migración 226): precio de un MENOR DE 2 AÑOS por clase de
+  // hotel (infante / nino / nino2) — parte de hotel de esa clase + servicios
+  // incluidos con su precio de infante (o el de adulto si el servicio no lo
+  // tiene). Aquí no hay vuelo (porción/dinámico por fechas), así que no lleva
+  // fee. `precios` conserva su significado: adulto en vuelo y servicios.
+  preciosMenor2?: Record<string, number>;
   // Nombres de las temporadas 'tarifa' de `tarifa_hotel` que realmente
   // aportaron neto/precio a CADA acomodación de HABITACIÓN (sencilla/doble/
   // triple/multiple) de esta estadía — POR ACOMODACIÓN, nunca una unión
@@ -102,6 +109,8 @@ export type FilaArmadoHotel = {
   regimenes: string[] | null;
   hotel_nombre: string | null;
   hotel_moneda: string | null;
+  // Adults Only: sin niños ni infantes, así que no se publica fila de infante.
+  hotel_adults_only?: boolean | null;
 } | null; // null = no hay fila armado_hoteles para este par (mismo comportamiento que antes: sin filtro, moneda COP)
 export type FilaTemporadaHotelRaw = {
   // `id`/`condicion_pago_*` = migración 164 (condiciones de pago por
@@ -121,6 +130,8 @@ export type FilaTemporadaHotelRaw = {
 export type FilaTarifaHotelRaw = Record<string, unknown>; // tipo_habitacion, alimentacion, temporada, neto_*
 export type FilaServicioIncluidoRaw = {
   incluido: boolean; precio_persona: number | null; liquidacion: string | null;
+  // NETO por infante (0 a 1,99 años) del servicio — NULL = el infante paga como adulto (migración 226).
+  precio_infante?: number | null;
   // Identidad + modo de cobro (revisión PR #294). Un incluido con cobro POR
   // GRUPO no se puede hornear en la tarifa por persona (su costo depende del
   // tamaño del grupo): se expone aparte, en `serviciosGrupoIncluidos`, para que
@@ -189,6 +200,7 @@ export function evaluarHotelPorFechas(
   const temporadas: TemporadaRango[] = datos.temporadas.map(toTemporadaRango);
 
   let aporteServ = 0;
+  let aporteServMenor = 0; // igual que aporteServ pero con el precio de infante de cada servicio
   // Incluidos con cobro POR GRUPO: se apartan (no se pueden hornear por
   // persona) y viajan en el resultado para que quien conozca el pax les sume
   // el cargo real — ver `cargoGrupoIncluido` en serviciosPaquete.ts.
@@ -207,7 +219,9 @@ export function evaluarHotelPorFechas(
       continue;
     }
     if (s.precio_persona == null) continue;
-    aporteServ += marcar(Number(s.precio_persona) || 0, pctMk) * factorLiquidacion(s.liquidacion, numNoches);
+    const factorServ = factorLiquidacion(s.liquidacion, numNoches);
+    aporteServ += marcar(Number(s.precio_persona) || 0, pctMk) * factorServ;
+    aporteServMenor += marcar(s.precio_infante != null ? Number(s.precio_infante) || 0 : Number(s.precio_persona) || 0, pctMk) * factorServ;
   }
 
   const grupos = new Map<string, Map<string, FilaTarifaHotelRaw>>();
@@ -226,6 +240,7 @@ export function evaluarHotelPorFechas(
     if (filtroReg && filtroReg.length && !filtroReg.includes(regimen)) continue;
     const precios: Record<string, number> = {};
     const netos: Record<string, number> = {};
+    const preciosMenor2: Record<string, number> = {};
     const temporadasTarifaPorAcom: Record<string, string[]> = {};
     const temporadasCondicionPorAcom: Record<string, string[]> = {};
     // Filas de esta combinación categoría/régimen marcadas como PRECIO FINAL
@@ -262,14 +277,25 @@ export function evaluarHotelPorFechas(
       const t = componerTarifa({ aporteHotel: marcar(costoHotel, pctMk), aporteServicios: aporteServ, aporteVuelo: 0, impuesto, moneda: monedaHotel });
       precios[acom] = t.pvp;
       netos[acom] = costoHotel;
+      if (!esRoom) preciosMenor2[acom] = precioMenorDeDos({ aporteHotel: marcar(costoHotel, pctMk), aporteServiciosMenor: aporteServMenor, feeInfante: 0, moneda: monedaHotel });
       if (esRoom) { temporadasTarifaPorAcom[acom] = temporadasAcom; temporadasCondicionPorAcom[acom] = temporadasCondicionAcom; }
     }
-    if (Object.keys(precios).length) combos.push({ categoria, regimen, precios, netos, temporadasTarifaPorAcom, temporadasCondicionPorAcom });
+    // Infante (migración 226): un hotel sin tarifa de infante para este combo
+    // NO deja al menor de 2 años gratis en silencio — se publica la fila con
+    // hotel $0 para que los servicios incluidos con su precio de infante (y el
+    // vuelo, cuando lo hay) se cobren igual. Solo si el combo tiene alguna
+    // habitación y el hotel acepta niños.
+    if (!precios.infante && !datos.armadoHotel?.hotel_adults_only && ACOM_ROOMS_ALL.some((a) => precios[a] != null)) {
+      precios.infante = componerTarifa({ aporteHotel: 0, aporteServicios: aporteServ, aporteVuelo: 0, impuesto, moneda: monedaHotel }).pvp;
+      netos.infante = 0;
+      preciosMenor2.infante = precioMenorDeDos({ aporteHotel: 0, aporteServiciosMenor: aporteServMenor, feeInfante: 0, moneda: monedaHotel });
+    }
+    if (Object.keys(precios).length) combos.push({ categoria, regimen, precios, netos, preciosMenor2, temporadasTarifaPorAcom, temporadasCondicionPorAcom });
   }
   if (reglasCierre.length) {
     for (const c of combos) {
       for (const a of Object.keys(c.precios)) {
-        if (estaCerrada(c.categoria, a)) { delete c.precios[a]; delete c.netos?.[a]; delete c.temporadasTarifaPorAcom?.[a]; delete c.temporadasCondicionPorAcom?.[a]; }
+        if (estaCerrada(c.categoria, a)) { delete c.precios[a]; delete c.netos?.[a]; delete c.preciosMenor2?.[a]; delete c.temporadasTarifaPorAcom?.[a]; delete c.temporadasCondicionPorAcom?.[a]; }
       }
     }
   }

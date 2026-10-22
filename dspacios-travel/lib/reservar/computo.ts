@@ -47,6 +47,7 @@ import {
   type CategoriaServicio, type ServicioEfectivo, type ServicioGrupoIncluido,
 } from "@/lib/reservar/serviciosPaquete";
 import { validarModoServicio } from "@/lib/reservar/liquidacionServicio";
+import { contarMenoresDeDos, tarifarMenores, totalMenoresDeDos, type ConteoMenores, type LineaMenor } from "@/lib/reservar/menoresDeDos";
 
 export type PasajeroReserva = {
   nombres: string;
@@ -114,13 +115,30 @@ export type ComputoReserva = {
   origen: OrigenVuelo;
   meta: { hotel_nombre: string | null; destino_nombre: string | null; fecha_ida: string | null; fecha_regreso: string | null };
   pvpPorAcom: Record<string, number>;
+  // Tarifa de infante (migración 226): precio de un MENOR DE 2 AÑOS por clase
+  // de hotel (infante / nino / nino2). `pvpPorAcom` conserva su significado:
+  // adulto en vuelo y servicios.
+  pvpMenor2PorAcom: Record<string, number>;
   netoPorAcom: Record<string, number>; // costo neto/persona por acomodación (autoritativo)
   precioVenta: number;
+  // Pasajeros de 2 años o más (ocupan silla, cuentan para el rango de un
+  // servicio por grupo y pagan tarifa de adulto en vuelo y servicios).
   paxConSilla: number;
+  // TODOS los pasajeros (paxConSilla + menores de 2 años).
   totalPax: number;
   numNinos: number;
   numNinos2: number;
+  // Infantes según la CLASE DEL HOTEL (por defecto hasta los 2 años): incluye
+  // niños de 2 años que el hotel llama infante. Los menores de 2 años están
+  // en `menoresDeDos`.
   numInfantes: number;
+  // Cuántos de cada clase de hotel son menores de 2 años (pagan fee de infante
+  // en el vuelo y precio de infante en los servicios; no ocupan silla).
+  menoresDeDos: ConteoMenores;
+  numMenoresDeDos: number;
+  // Líneas de precio de los menores (cantidad × tarifa) — fuente única para los
+  // ítems de contrato/cotización.
+  lineasMenores: LineaMenor[];
   // Distribución por habitación (quién paga Niño 1/Niño 2/infante EN CADA
   // habitación) — solo se calcula cuando la reserva llega con `edadesMenores`
   // (Vista Booking). `null` en el flujo legado (reparto manual ninos/ninos2/
@@ -344,7 +362,10 @@ export async function computarReserva(
   }
 
   const pvpPorAcom: Record<string, number> = {};
+  const pvpMenor2PorAcom: Record<string, number> = {};
   const netoPorAcom: Record<string, number> = {};
+  let menoresDeDos: ConteoMenores = { infante: 0, nino: 0, nino2: 0 };
+  let lineasMenores: LineaMenor[] = [];
   let precioVenta = 0;
   let paxConSilla = 0;
   const lineasHab: { acom: AcomRoom; habitaciones: number; pax: number; pvp: number }[] = [];
@@ -403,6 +424,7 @@ export async function computarReserva(
     const combo = res?.combos.find((c) => c.categoria === input.categoria && c.regimen === input.regimen);
     if (!combo) return { ok: false, error: "No hay tarifa para esas fechas / categoría / régimen." };
     for (const [acom, p] of Object.entries(combo.precios)) pvpPorAcom[acom] = p;
+    if (combo.preciosMenor2) for (const [acom, p] of Object.entries(combo.preciosMenor2)) pvpMenor2PorAcom[acom] = p;
     if (combo.netos) for (const [acom, n] of Object.entries(combo.netos)) netoPorAcom[acom] = n;
     meta = { hotel_nombre: res!.hotelNombre, destino_nombre: res!.destinoNombre, fecha_ida: input.fechaIda!, fecha_regreso: input.fechaRegreso! };
 
@@ -493,12 +515,17 @@ export async function computarReserva(
       paxConSilla += pax;
       lineasHab.push({ acom: a, habitaciones: rooms, pax, pvp: pvpPorAcom[a] });
     }
-    if (numNinos > 0 && pvpPorAcom["nino"] != null) { precioVenta += numNinos * pvpPorAcom["nino"]; paxConSilla += numNinos; }
-    if (numNinos2 > 0 && pvpPorAcom["nino2"] != null) { precioVenta += numNinos2 * pvpPorAcom["nino2"]; paxConSilla += numNinos2; }
-    // Infante: igual que niño (0 = gratis), pero no ocupa silla/habitación.
-    // Si el hotel no configuró tarifa de infante para este combo, pvpPorAcom["infante"]
-    // simplemente no existe → gratis, sin bloquear la reserva (a diferencia de niño).
-    if (numInfantes > 0 && pvpPorAcom["infante"] != null) { precioVenta += numInfantes * pvpPorAcom["infante"]; }
+    // Menores (migración 226): parte de hotel por la CLASE del hotel (infante /
+    // Niño 1 / Niño 2) y vuelo + servicios por EDAD — menor de 2 años = tarifa
+    // de infante (no ocupa silla); desde los 2 años = adulto en vuelo y servicios.
+    menoresDeDos = contarMenoresDeDos(input.edadesMenores !== undefined ? edadesMenoresUsadas : null, reglaEdadF.infanteMax, { infante: numInfantes, nino: numNinos, nino2: numNinos2 });
+    const tarifaMenoresF = tarifarMenores({
+      totales: { infante: numInfantes, nino: numNinos, nino2: numNinos2 },
+      menoresDeDos, pvp: pvpPorAcom, pvpMenor2: pvpMenor2PorAcom,
+    });
+    if (!tarifaMenoresF.ok) return { ok: false, error: tarifaMenoresF.error };
+    precioVenta += tarifaMenoresF.total; paxConSilla += tarifaMenoresF.paxConSilla;
+    lineasMenores = tarifaMenoresF.lineas;
     if (paxConSilla <= 0) return { ok: false, error: "Indica al menos una habitación (cantidad por tipo)." };
 
     const realF = clasificarPorEdad(
@@ -520,7 +547,7 @@ export async function computarReserva(
   } else if (!esServicios) {
     let q = sb
       .from("tarifario_resultado_publicable")
-      .select("acomodacion, precio_pvp, hotel_nombre, destino_nombre, fecha_ida, fecha_regreso, moneda")
+      .select("acomodacion, precio_pvp, precio_pvp_menor2, hotel_nombre, destino_nombre, fecha_ida, fecha_regreso, moneda")
       .eq("paquete_id", input.paqueteId)
       .eq("hotel_id", input.hotelId)
       .eq("categoria", input.categoria)
@@ -537,7 +564,11 @@ export async function computarReserva(
     const { data: filas, error: fe } = await q;
     if (fe) return { ok: false, error: fe.message };
     if (!filas || !filas.length) return { ok: false, error: "No se encontró la tarifa seleccionada en el tarifario." };
-    for (const f of filas) if (f.acomodacion) pvpPorAcom[f.acomodacion] = f.precio_pvp;
+    for (const f of filas) {
+      if (!f.acomodacion) continue;
+      pvpPorAcom[f.acomodacion] = f.precio_pvp;
+      if (f.precio_pvp_menor2 != null) pvpMenor2PorAcom[f.acomodacion] = f.precio_pvp_menor2;
+    }
     meta = filas[0];
     monedaReserva = (filas[0] as { moneda?: string | null }).moneda ?? "COP";
 
@@ -680,9 +711,15 @@ export async function computarReserva(
       distribucionMenores = rMenores.distribucion;
       edadesMenoresUsadas = rMenores.edades;
     }
-    if (numNinos > 0 && pvpPorAcom["nino"] != null) { precioVenta += numNinos * pvpPorAcom["nino"]; paxConSilla += numNinos; }
-    if (numNinos2 > 0 && pvpPorAcom["nino2"] != null) { precioVenta += numNinos2 * pvpPorAcom["nino2"]; paxConSilla += numNinos2; }
-    if (numInfantes > 0 && pvpPorAcom["infante"] != null) { precioVenta += numInfantes * pvpPorAcom["infante"]; }
+    // Menores (migración 226) — misma regla que la rama por fechas de arriba.
+    menoresDeDos = contarMenoresDeDos(input.edadesMenores !== undefined ? edadesMenoresUsadas : null, reglaEdad.infanteMax, { infante: numInfantes, nino: numNinos, nino2: numNinos2 });
+    const tarifaMenores = tarifarMenores({
+      totales: { infante: numInfantes, nino: numNinos, nino2: numNinos2 },
+      menoresDeDos, pvp: pvpPorAcom, pvpMenor2: pvpMenor2PorAcom,
+    });
+    if (!tarifaMenores.ok) return { ok: false, error: tarifaMenores.error };
+    precioVenta += tarifaMenores.total; paxConSilla += tarifaMenores.paxConSilla;
+    lineasMenores = tarifaMenores.lineas;
 
     if (paxConSilla <= 0) return { ok: false, error: "Indica al menos una habitación (cantidad por tipo)." };
 
@@ -753,26 +790,31 @@ export async function computarReserva(
   }
 
   // Servicios (en tipo servicios es el total; en hotel son add-ons).
-  const totalPax = esServicios ? (Number(input.paxServicios) || 0) : paxConSilla + numInfantes;
+  // Menores de 2 años: no ocupan silla ni cuentan para el rango de un servicio
+  // por grupo (decisión del dueño, 226); en un servicio por persona pagan su
+  // precio de infante (o el de adulto si el servicio no lo configuró).
+  const numMenoresDeDos = esServicios ? 0 : totalMenoresDeDos(menoresDeDos);
+  const totalPax = esServicios ? (Number(input.paxServicios) || 0) : paxConSilla + numMenoresDeDos;
+  const paxServAdulto = esServicios ? totalPax : paxConSilla;
   const serviciosItems: { servicioId: number; nombre: string; precio: number; categoria: CategoriaServicio; proveedorId: number | null }[] = [];
   if (input.servicios?.length) {
     const { data: srvRows, error: srvRowsErr } = await sb
       .from("tarifario_resultado_publicable")
-      .select("servicio_id, servicio_nombre, tipo_tarifa, pax_desde, pax_hasta, precio_pvp, recargo_individual")
+      .select("servicio_id, servicio_nombre, tipo_tarifa, pax_desde, pax_hasta, precio_pvp, precio_pvp_menor2, recargo_individual")
       .eq("paquete_id", input.paqueteId)
       .eq("modulo", "servicios")
       .in("servicio_id", input.servicios);
     if (srvRowsErr) return { ok: false, error: `No se pudieron consultar los servicios seleccionados: ${srvRowsErr.message}` };
-    const byServ = new Map<number, { nombre: string; modo: "persona" | "grupo"; personaPvp: number | null; recargoIndividual: number; grupos: { pax_desde: number; pax_hasta: number; precio: number }[]; categoria: CategoriaServicio; proveedorId: number | null }>();
+    const byServ = new Map<number, { nombre: string; modo: "persona" | "grupo"; personaPvp: number | null; infantePvp: number | null; recargoIndividual: number; grupos: { pax_desde: number; pax_hasta: number; precio: number }[]; categoria: CategoriaServicio; proveedorId: number | null }>();
     for (const r of srvRows ?? []) {
       if (r.servicio_id == null) continue;
       let s = byServ.get(r.servicio_id);
       if (!s) {
-        s = { nombre: r.servicio_nombre ?? "Servicio", modo: r.tipo_tarifa === "grupo" ? "grupo" : "persona", personaPvp: null, recargoIndividual: 0, grupos: [], categoria: "otro", proveedorId: null };
+        s = { nombre: r.servicio_nombre ?? "Servicio", modo: r.tipo_tarifa === "grupo" ? "grupo" : "persona", personaPvp: null, infantePvp: null, recargoIndividual: 0, grupos: [], categoria: "otro", proveedorId: null };
         byServ.set(r.servicio_id, s);
       }
       if (s.modo === "grupo") s.grupos.push({ pax_desde: r.pax_desde ?? 1, pax_hasta: r.pax_hasta ?? 1, precio: r.precio_pvp });
-      else { s.personaPvp = r.precio_pvp; s.recargoIndividual = Math.max(Number(r.recargo_individual) || 0, 0); }
+      else { s.personaPvp = r.precio_pvp; s.infantePvp = r.precio_pvp_menor2 ?? null; s.recargoIndividual = Math.max(Number(r.recargo_individual) || 0, 0); }
     }
 
     // Categoría/proveedor real del catálogo — SIEMPRE se consulta (no depende
@@ -804,11 +846,13 @@ export async function computarReserva(
     if (fechaViaje && byServ.size) {
       const ids = [...byServ.keys()];
       const [{ data: baseSrv }, { data: temps }, { data: tarifaPax }] = await Promise.all([
-        sb.from("servicios_adicionales").select("id, precio_persona").in("id", ids),
-        sb.from("servicio_temporadas").select("servicio_id, nombre, fecha_inicio, fecha_fin, compra_inicio, compra_fin, prioridad, precio_persona, recargo_individual").in("servicio_id", ids),
+        sb.from("servicios_adicionales").select("id, precio_persona, precio_infante").in("id", ids),
+        sb.from("servicio_temporadas").select("servicio_id, nombre, fecha_inicio, fecha_fin, compra_inicio, compra_fin, prioridad, precio_persona, precio_infante, recargo_individual").in("servicio_id", ids),
         sb.from("servicio_tarifa_pax").select("servicio_id, pax_desde, pax_hasta, precio, temporada").in("servicio_id", ids),
       ]);
       const netoGen = new Map((baseSrv ?? []).map((b) => [b.id, Number(b.precio_persona) || 0]));
+      const netoInfGen = new Map((baseSrv ?? []).map((b) => [b.id, b.precio_infante == null ? null : Number(b.precio_infante)]));
+      const netoInfTemp = new Map<string, number>(); // servId|nombre -> neto infante de la temporada
       const tempsByServ = new Map<number, TemporadaRango[]>();
       const netoTemp = new Map<string, number>();   // servId|nombre -> neto persona
       const recTemp = new Map<string, number>();    // servId|nombre -> recargo neto
@@ -817,6 +861,7 @@ export async function computarReserva(
         arr.push(toTemporadaRango(t));
         tempsByServ.set(t.servicio_id, arr);
         if (t.precio_persona != null) netoTemp.set(`${t.servicio_id}|${t.nombre}`, Number(t.precio_persona));
+        if (t.precio_infante != null) netoInfTemp.set(`${t.servicio_id}|${t.nombre}`, Number(t.precio_infante));
         if (t.recargo_individual != null) recTemp.set(`${t.servicio_id}|${t.nombre}`, Number(t.recargo_individual));
       }
       // Netos por GRUPO por temporada (incl. GENERAL): para rescatar por rango de pax.
@@ -843,6 +888,14 @@ export async function computarReserva(
           if (nt != null && ng > 0) s.personaPvp = Math.round(s.personaPvp * (nt / ng));
           const rt = recTemp.get(`${id}|${nombre}`);        // recargo NETO de la temporada
           if (rt != null && mkf != null) s.recargoIndividual = Math.round(rt * mkf);
+          // Precio de infante de la temporada (hereda el GENERAL si no lo define;
+          // sin ninguno, el infante sigue el precio de adulto ya escalado arriba).
+          const ni = netoInfTemp.get(`${id}|${nombre}`);
+          if (ni != null) {
+            const nig = netoInfGen.get(id) ?? null;
+            if (s.infantePvp != null && nig != null && nig > 0) s.infantePvp = Math.round(s.infantePvp * (ni / nig));
+            else if (mkf != null) s.infantePvp = Math.round(ni * mkf);
+          }
         } else if (s.modo === "grupo") {
           for (const g of s.grupos) {
             const ngG = netoGrupo(id, "GENERAL", g.pax_desde) ?? netoGrupo(id, "GENERAL", g.pax_hasta);
@@ -854,7 +907,11 @@ export async function computarReserva(
     }
 
     for (const [servicioId, s] of byServ) {
-      let p = precioServicio(s.modo, s.personaPvp, s.grupos, totalPax);
+      // Persona: adultos (2+ años) a la tarifa de adulto + menores de 2 años a
+      // su precio de infante (adulto si el servicio no lo configuró). Grupo: el
+      // rango cuenta SOLO a los de 2+ años y el menor de 2 no paga extra.
+      let p = precioServicio(s.modo, s.personaPvp, s.grupos, paxServAdulto);
+      if (s.modo === "persona" && numMenoresDeDos > 0) p += (s.infantePvp ?? s.personaPvp ?? 0) * numMenoresDeDos;
       // Recargo individual: si el servicio va a 1 solo pax (cobro por persona),
       // se suma el suplemento a la tarifa.
       if (s.modo === "persona" && totalPax === 1 && s.recargoIndividual > 0) p += s.recargoIndividual;
@@ -888,7 +945,7 @@ export async function computarReserva(
     const catalogo = createAdminClient();
     const { data: incRows, error: incErr } = await catalogo
       .from("armado_servicios")
-      .select("servicio_id, modo, servicios_adicionales(nombre, categoria, precio_persona, liquidacion, proveedor_id)")
+      .select("servicio_id, modo, servicios_adicionales(nombre, categoria, precio_persona, precio_infante, liquidacion, proveedor_id)")
       .eq("paquete_id", input.paqueteId)
       .eq("incluido", true);
     if (incErr) return { ok: false, error: `No se pudieron consultar los servicios incluidos del paquete: ${incErr.message}` };
@@ -910,7 +967,7 @@ export async function computarReserva(
       const gruposIncluidosPendientes: ServicioGrupoIncluido[] = [];
       for (const r of incRows) {
         if (r.servicio_id == null) continue;
-        const srv = r.servicios_adicionales as unknown as { nombre: string | null; categoria: string | null; precio_persona: number | null; liquidacion: string | null; proveedor_id: number | null } | null;
+        const srv = r.servicios_adicionales as unknown as { nombre: string | null; categoria: string | null; precio_persona: number | null; precio_infante: number | null; liquidacion: string | null; proveedor_id: number | null } | null;
         // `validarModoServicio` — mismo validador estricto que usa el resto
         // del sistema (lib/reservar/liquidacionServicio.ts): un modo inválido
         // (null/""/texto corrupto) es una configuración incompleta del
@@ -920,7 +977,8 @@ export async function computarReserva(
           return { ok: false, error: `El servicio incluido "${srv?.nombre ?? r.servicio_id}" tiene un modo de cobro inválido en el catálogo (armado_servicios.modo) — corrígelo antes de reservar.` };
         }
         const costoNeto = costoNetoServicioIncluido(
-          modo, srv?.precio_persona ?? null, gruposPorServ.get(r.servicio_id) ?? [], totalPax, srv?.liquidacion ?? null, numNochesInc
+          modo, srv?.precio_persona ?? null, gruposPorServ.get(r.servicio_id) ?? [], paxServAdulto, srv?.liquidacion ?? null, numNochesInc,
+          { cantidad: numMenoresDeDos, precioInfanteNeto: srv?.precio_infante ?? null }
         );
         if (modo === "persona") {
           // Ya horneado en pvpPorAcom — solo se registra para el resumen/CxP,
@@ -957,7 +1015,7 @@ export async function computarReserva(
       // Misma función que usa el buscador de Vista Booking para mostrar el
       // total, así que lo mostrado y lo cotizado coinciden exactamente.
       if (gruposIncluidosPendientes.length) {
-        const cargo = cargoGrupoIncluido(gruposIncluidosPendientes, totalPax, pctMk, numNochesInc);
+        const cargo = cargoGrupoIncluido(gruposIncluidosPendientes, paxServAdulto, pctMk, numNochesInc);
         if (!cargo.ok) {
           return {
             ok: false,
@@ -987,6 +1045,6 @@ export async function computarReserva(
 
   return {
     ok: true,
-    data: { origen, meta, pvpPorAcom, netoPorAcom, precioVenta, paxConSilla, totalPax, numNinos, numNinos2, numInfantes, distribucionMenores, edadesMenoresUsadas, lineasHab, serviciosItems, serviciosIncluidos, impuestoTotal, monedaReserva, notaNino: ninoNotaTxt, cargoMascota, notaMascota: petNotaTxt, condicionesTarifa },
+    data: { origen, meta, pvpPorAcom, pvpMenor2PorAcom, netoPorAcom, precioVenta, paxConSilla, totalPax, numNinos, numNinos2, numInfantes, menoresDeDos, numMenoresDeDos, lineasMenores, distribucionMenores, edadesMenoresUsadas, lineasHab, serviciosItems, serviciosIncluidos, impuestoTotal, monedaReserva, notaNino: ninoNotaTxt, cargoMascota, notaMascota: petNotaTxt, condicionesTarifa },
   };
 }

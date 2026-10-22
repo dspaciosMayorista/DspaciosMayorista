@@ -86,7 +86,7 @@ export async function datosVueloBloqueo(sb: ClienteSb, bloqueoId: number): Promi
   const { data: b, error } = await sb
     .from("bloqueos_vuelo")
     .select(
-      "aerolinea, record, ruta, fecha_ida, fecha_regreso, vuelo_ida, vuelo_regreso, hora_salida_ida, hora_llegada_ida, hora_salida_reg, hora_llegada_reg, tarifa_para_empaquetar, proveedores(nombre, aplica_retencion, pct_retencion)"
+      "aerolinea, record, ruta, fecha_ida, fecha_regreso, vuelo_ida, vuelo_regreso, hora_salida_ida, hora_llegada_ida, hora_salida_reg, hora_llegada_reg, tarifa_para_empaquetar, fee_infante, proveedores(nombre, aplica_retencion, pct_retencion)"
     )
     .eq("id", bloqueoId)
     .maybeSingle();
@@ -104,7 +104,9 @@ export async function datosVueloBloqueo(sb: ClienteSb, bloqueoId: number): Promi
       // empaquetar" — el mismo valor de siempre sirve para ambos.
       costo_neto: Number(b.tarifa_para_empaquetar) || 0,
       tarifa_para_empaquetar: Number(b.tarifa_para_empaquetar) || 0,
-      fee_infante: 0, // bloqueos_vuelo no tiene fee_infante propio — el infante no ocupa silla.
+      // Fee de infante del bloqueo (migración 226, 0 a 1,99 años): el infante no
+      // ocupa silla y paga solo esto (precio = costo). `not null default 0`.
+      fee_infante: Number(b.fee_infante) || 0,
       proveedor: b.proveedores as unknown as ProveedorVuelo,
     },
   };

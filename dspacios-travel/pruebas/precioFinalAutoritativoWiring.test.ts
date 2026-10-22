@@ -807,7 +807,11 @@ describe("HOTFIX — filas de servicio en generarTarifario declaran las 5 column
   });
 
   test("la fila de hotel (`filas.push({ ... })` fuera del spread de comun) sigue llenando las 5 columnas desde `columnasProcedencia`, no desde un literal fijo", () => {
-    const posPushHotel = paquetesActions.indexOf("filas.push({", paquetesActions.indexOf("procedencia = columnasProcedencia"));
+    // 226: la fila de hotel se publica desde `publicarFila(acom, costoHotel, procedencia)` (la comparten la fila normal
+    // y la fila de infante con hotel $0); su `procedencia` sigue saliendo de `columnasProcedencia(resultado?.procedencia)`.
+    assert.match(paquetesActions, /const procedencia = columnasProcedencia\(resultado\?\.procedencia\);/);
+    assert.match(paquetesActions, /publicarFila\(acom, costoHotel, procedencia\);/);
+    const posPushHotel = paquetesActions.indexOf("filas.push({", paquetesActions.indexOf("const publicarFila = "));
     assert.notEqual(posPushHotel, -1, "no se encontró el push de la fila de hotel");
     const posCierre = paquetesActions.indexOf("});", posPushHotel);
     const cuerpoPush = paquetesActions.slice(posPushHotel, posCierre);

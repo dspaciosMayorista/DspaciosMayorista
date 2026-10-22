@@ -705,6 +705,28 @@ export function componerTarifa(args: {
   };
 }
 
+/**
+ * Precio de venta de un MENOR DE 2 AÑOS (migración 226) — regla B del dueño:
+ * el techo al mil (COP) / dólar entero (USD) se aplica SOLO a hotel +
+ * servicios; el fee de infante del vuelo se suma EXACTO después, porque es
+ * precio = costo (sin markup, sin TA, sin redondeo propio).
+ *
+ * `aporteHotel` ya viene marcado (clase de hotel que corresponda: infante,
+ * niño 1 o niño 2); `aporteServiciosMenor` ya viene marcado (servicios
+ * incluidos con su precio de infante, o el de adulto si el servicio no lo
+ * tiene configurado). `feeInfante` es el fee de la fuente de vuelo (0 sin
+ * vuelo).
+ */
+export function precioMenorDeDos(args: {
+  aporteHotel: number;
+  aporteServiciosMenor: number;
+  feeInfante: number;
+  moneda?: string;
+}): number {
+  const fee = Number.isFinite(args.feeInfante) && args.feeInfante > 0 ? args.feeInfante : 0;
+  return redondearVenta(args.aporteHotel + args.aporteServiciosMenor, args.moneda) + fee;
+}
+
 export type GrupoTier = { pax_desde: number; pax_hasta: number; precio: number };
 
 /**

@@ -382,8 +382,9 @@ describe("app/tarifario/checkout/actions.ts — hallazgo confirmado: la rama PER
     assert.doesNotMatch(ramaPersonaSinComentarios, /adultos: 1, ninos: 0, tarifa_adulto: precioVenta,/);
   });
 
-  test("destructura pvpPorAcom de comp.data — necesario para las filas de Niño 1/Niño 2/Infante", () => {
-    assert.match(ramaPersona, /const \{ meta, precioVenta, monedaReserva, lineasHab, pvpPorAcom, numNinos, numNinos2, numInfantes,/);
+  test("226 · las filas de Niño 1/Niño 2/Infante salen de lineasMenores (menoresDelComputo de comp.data): un menor de 2 años y uno de 2+ pueden tener tarifas distintas", () => {
+    assert.match(ramaPersona, /const \{ lineasMenores \} = menoresDelComputo\(comp\.data\);/);
+    assert.match(ramaPersona, /const \{ meta, precioVenta, monedaReserva, lineasHab, numNinos, numNinos2, numInfantes,/);
   });
 
   test("las filas de habitación recorren lineasHab y usan adultos: l.pax / tarifa_adulto: l.pvp — nunca un total fijo", () => {
@@ -394,30 +395,35 @@ describe("app/tarifario/checkout/actions.ts — hallazgo confirmado: la rama PER
   });
 
   test("Niño 1 usa ninos: numNinos y tarifa_nino: pvpPorAcom[\"nino\"] — nunca un valor inventado", () => {
-    const idxNino1 = ramaPersona.indexOf('numNinos > 0 && pvpPorAcom["nino"] != null');
+    const idxNino1 = ramaPersona.indexOf("for (const lm of lineasMenores) {");
     assert.notEqual(idxNino1, -1);
     const bloque = ramaPersona.slice(idxNino1, idxNino1 + 300);
-    assert.match(bloque, /adultos: 0, ninos: numNinos, tarifa_adulto: 0, tarifa_nino: pvpPorAcom\["nino"\],/);
+    // 226: una fila por línea de menores (clase del hotel × tarifa), con su cantidad y su tarifa — nunca un valor inventado.
+    assert.match(bloque, /adultos: 0, ninos: lm\.cantidad, tarifa_adulto: 0, tarifa_nino: lm\.tarifa,/);
   });
 
   test("Niño 2 usa ninos: numNinos2 y tarifa_nino: pvpPorAcom[\"nino2\"]", () => {
-    const idxNino2 = ramaPersona.indexOf('numNinos2 > 0 && pvpPorAcom["nino2"] != null');
+    const idxNino2 = ramaPersona.indexOf("for (const lm of lineasMenores) {");
     assert.notEqual(idxNino2, -1);
     const bloque = ramaPersona.slice(idxNino2, idxNino2 + 300);
-    assert.match(bloque, /adultos: 0, ninos: numNinos2, tarifa_adulto: 0, tarifa_nino: pvpPorAcom\["nino2"\],/);
+    // 226: la descripción identifica la clase (Niño 1/Niño 2/Infante) y si es menor de 2 años.
+    assert.match(bloque, /descripcionLineaMenor\(lm, it\.categoria, it\.regimen\)/);
   });
 
   test("Infante usa ninos: numInfantes y tarifa_nino: pvpPorAcom[\"infante\"]", () => {
-    const idxInf = ramaPersona.indexOf('numInfantes > 0 && pvpPorAcom["infante"] != null');
+    const idxInf = ramaPersona.indexOf("for (const lm of lineasMenores) {");
     assert.notEqual(idxInf, -1);
     const bloque = ramaPersona.slice(idxInf, idxInf + 300);
-    assert.match(bloque, /adultos: 0, ninos: numInfantes, tarifa_adulto: 0, tarifa_nino: pvpPorAcom\["infante"\],/);
+    // 226: el infante (menor de 2 años) y el niño de 2 años con clase infante del hotel salen como líneas distintas, cada una con su tarifa.
+    assert.match(bloque, /iIdx\+\+;/);
+    assert.match(bloque, /tarifa_nino: lm\.tarifa,/);
   });
 
   test("cada fila nueva incrementa iIdx ANTES de usarlo como id (id único, nunca un id fijo/repetido como 50/51/52)", () => {
     const usosIIdxPlusPlus = [...ramaPersona.matchAll(/iIdx\+\+;\s*\n\s*itemsSnap\.push\(\{\s*\n\s*id: iIdx,/g)];
     // 5 sitios: lineasHab (dentro del for), Niño 1, Niño 2, Infante, residual de servicios por grupo.
-    assert.equal(usosIIdxPlusPlus.length, 5, "las 5 ramas (habitación/Niño 1/Niño 2/Infante/residual) deben incrementar iIdx antes de usarlo como id");
+    // 226: 3 sitios — habitación (dentro del for), línea de menores (dentro del for de lineasMenores: una fila por clase y tarifa) y residual.
+    assert.equal(usosIIdxPlusPlus.length, 3, "las 3 ramas (habitación/menores/residual) deben incrementar iIdx antes de usarlo como id");
     assert.doesNotMatch(ramaPersonaSinComentarios, /id: 50,|id: 51,|id: 52,/);
   });
 
@@ -439,9 +445,10 @@ describe("app/tarifario/checkout/actions.ts — hallazgo confirmado: la rama PER
     const bloque = ramaPersona.slice(idxLlamada, idxLlamada + 300);
     assert.match(bloque, /precioVenta,/);
     assert.match(bloque, /lineasHab,/);
-    assert.match(bloque, /numNinos, tarifaNino: pvpPorAcom\["nino"\],/);
-    assert.match(bloque, /numNinos2, tarifaNino2: pvpPorAcom\["nino2"\],/);
-    assert.match(bloque, /numInfantes, tarifaInfante: pvpPorAcom\["infante"\],/);
+    // 226: las líneas de menores (cada una con su tarifa) reemplazan a los pares numNinos/numInfantes.
+    assert.match(bloque, /lineasMenores,/);
+    assert.match(bloque, /numNinos2: 0, tarifaNino2: null,/);
+    assert.match(bloque, /numInfantes: 0, tarifaInfante: null,/);
   });
 
   test('un residual NEGATIVO (helper ok:false) corta la cotización con error — nunca continúa como si el residual fuera 0', () => {

@@ -23,9 +23,20 @@ export type TemporadaServicioInput = {
   compraFin: string;
   prioridad: number;
   precioPersona: number | null;
+  // NETO por infante (0 a 1,99 años) en esta temporada. null = hereda el de la
+  // tarifa GENERAL (y si tampoco lo tiene, el infante paga como adulto).
+  precioInfante?: number | null;
   recargoIndividual: number | null;
   grupoTiers: TierPax[];
 };
+
+// Precio de infante (migración 226): NULL = sin configurar (el infante paga como
+// adulto); 0 = gratis. Un valor negativo o no numérico se rechaza antes de llegar a la BD.
+function precioInfanteRow(v: number | null | undefined): number | null {
+  if (v == null) return null;
+  const n = Number(v);
+  return Number.isFinite(n) && n >= 0 ? n : null;
+}
 
 function temporadaRow(servicioId: number, input: TemporadaServicioInput) {
   return {
@@ -37,6 +48,7 @@ function temporadaRow(servicioId: number, input: TemporadaServicioInput) {
     compra_fin: oNull(input.compraFin),
     prioridad: Number(input.prioridad) || 1,
     precio_persona: input.precioPersona,
+    precio_infante: precioInfanteRow(input.precioInfante),
     recargo_individual: input.recargoIndividual,
   };
 }
@@ -91,6 +103,10 @@ export type ServicioInput = {
   alcance?: "nacional" | "internacional"; // cuando destinoId es null: catch-all nacional o internacional
   moneda?: "COP" | "USD";         // un servicio = una moneda (su tarifa va en ella)
   precioPersona: number | null;
+  // NETO por infante (0 a 1,99 años), solo cobro POR PERSONA. null = sin configurar:
+  // el infante paga como adulto (NULL ≠ $0). En cobro por grupo el infante no cuenta
+  // para el rango ni paga extra, así que no usa este campo.
+  precioInfante?: number | null;
   grupoTiers: TierPax[];          // rangos de pax para cobro POR GRUPO
   temporada: string;
   rangosEdad?: number[];
@@ -109,6 +125,7 @@ function servicioToRow(input: ServicioInput) {
     alcance: input.destinoId == null ? (input.alcance === "internacional" ? "internacional" : "nacional") : "nacional",
     moneda: input.moneda === "USD" ? "USD" : "COP",
     precio_persona: input.precioPersona,
+    precio_infante: precioInfanteRow(input.precioInfante),
     tarifa_neta: input.precioPersona ?? 0,
     temporada: oNull(input.temporada),
     rangos_edad: input.rangosEdad?.length ? input.rangosEdad : null,
@@ -187,6 +204,9 @@ export async function eliminarServicio(id: number): Promise<Result> {
 
 // ── Carga masiva (CSV) ─────────────────────────────────────────────────────
 const numCsv = (s?: string) => (s ? parseInt(String(s).replace(/[^\d-]/g, ""), 10) || 0 : 0);
+// Como numCsv pero distingue "vacío" (null) de "0": el precio de infante en blanco
+// significa "sin configurar" y el infante paga como adulto; "0" significa gratis.
+const numCsvNullable = (s?: string) => (s && String(s).trim() !== "" ? Math.max(numCsv(s), 0) : null);
 const LIQ_VALIDAS = ["dia", "noche", "paquete"];
 const CAT_VALIDAS = ["tour_traslado", "asistencia", "otro"];
 
@@ -254,6 +274,7 @@ export async function cargarServiciosMasivo(
       rangos_edad: rangosEdad.length ? rangosEdad : null,
       descripcion: oNull(r.descripcion || ""),
       recargo_individual: numCsv(r.recargo_individual),
+      precio_infante: numCsvNullable(r.precio_infante),
     }).select("id").single();
     if (error || !sv) { errores.push(`Fila ${linea} (${nombre}): ${error?.message ?? "no se insertó"}`); continue; }
     if (tiers.length) {

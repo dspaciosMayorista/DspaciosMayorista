@@ -30,7 +30,7 @@ export function NuevoBloqueoForm({ proveedores = [], destinos = [], rangos = [] 
     record: "", aerolinea: "",
     vueloIda: "", fechaIda: "", horaSalidaIda: "", horaLlegadaIda: "",
     vueloRegreso: "", fechaRegreso: "", horaSalidaReg: "", horaLlegadaReg: "",
-    cuposTotal: "10", tarifaNeta: "", tarifaParaEmpaquetar: "", fechaDevolucion: "", fechaEmision: "", notas: "",
+    cuposTotal: "10", tarifaNeta: "", tarifaParaEmpaquetar: "", feeInfante: "0", fechaDevolucion: "", fechaEmision: "", notas: "",
   });
   const set = (k: keyof typeof f) => (e: React.ChangeEvent<HTMLInputElement>) => setF({ ...f, [k]: e.target.value });
 
@@ -55,7 +55,7 @@ export function NuevoBloqueoForm({ proveedores = [], destinos = [], rangos = [] 
         destinoId: destinoId === "" ? null : Number(destinoId), ruta: rutaAuto, origen: oIATA,
         vueloIda: f.vueloIda, fechaIda: f.fechaIda, horaSalidaIda: f.horaSalidaIda, horaLlegadaIda: f.horaLlegadaIda,
         vueloRegreso: f.vueloRegreso, fechaRegreso: f.fechaRegreso, horaSalidaReg: f.horaSalidaReg, horaLlegadaReg: f.horaLlegadaReg,
-        cuposTotal: Number(f.cuposTotal) || 0, tarifaNeta: Number(f.tarifaNeta) || 0, tarifaParaEmpaquetar: Number(f.tarifaParaEmpaquetar) || 0,
+        cuposTotal: Number(f.cuposTotal) || 0, tarifaNeta: Number(f.tarifaNeta) || 0, tarifaParaEmpaquetar: Number(f.tarifaParaEmpaquetar) || 0, feeInfante: Number(f.feeInfante) || 0,
         fechaDevolucion: f.fechaDevolucion, fechaEmision: f.fechaEmision, notas: f.notas, rangosEdad: rangosSel,
         modalidadEmision,
       });
@@ -101,6 +101,11 @@ export function NuevoBloqueoForm({ proveedores = [], destinos = [], rangos = [] 
           <div><label className={lbl}>Cupos totales</label><Input type="number" min={0} value={f.cuposTotal} onChange={set("cuposTotal")} /></div>
           <div><label className={lbl}>Tarifa neta (pago aerolínea)</label><Input type="number" min={0} value={f.tarifaNeta} onChange={set("tarifaNeta")} placeholder="200000" /></div>
           <div><label className={lbl}>Tarifa empaquetar (reventa)</label><Input type="number" min={0} value={f.tarifaParaEmpaquetar} onChange={set("tarifaParaEmpaquetar")} placeholder="242022" /></div>
+          <div>
+            <label className={lbl}>Fee de infante (0 a 1,99 años)</label>
+            <Input type="number" min={0} value={f.feeInfante} onChange={set("feeInfante")} placeholder="0" />
+            <p className="mt-1 text-[11px] text-gray-400">Lo que el infante paga en el vuelo (precio = costo, sin markup). 0 = gratis. Desde los 2 años paga como adulto.</p>
+          </div>
           <div><label className={lbl}>Fecha devolución</label><DateInput aria-label="Fecha devolución" type="date" value={f.fechaDevolucion} onValueChange={(dateValue) => setF({ ...f, ["fechaDevolucion"]: dateValue })} /></div>
         </div>
         <RangosEdadPicker rangos={rangos} seleccionados={rangosSel} onChange={setRangosSel} label="Rangos de edad del vuelo (infante/niño)" />
