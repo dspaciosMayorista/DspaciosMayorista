@@ -353,10 +353,22 @@ describe("workflow y scripts focales de la 224 y la 225", () => {
   });
   test("la batería de la 224 afirma la compatibilidad: venta CONSERVA la tabla base en la fase 1", () => {
     const sql = leer("supabase/scripts/test_224_neto_empaquetados.sql");
-    assert.match(sql, /\('vent','2'\)/);
+    assert.match(sql, /\('vent',\(select count\(\*\)::text from public\.empaquetados\)\)/, "venta debe leer TODAS las filas de la tabla base en la fase 1");
     assert.match(sql, /Z venta alcanza filas por la vista \(>0\) y TAMBIÉN por la tabla base/);
     assert.match(sql, /Z control_vuelo SÍ alcanza filas/);
     assert.ok(/set local role %I/.test(sql));
+  });
+  test("las baterías SQL no usan literales para contar filas que otros bloques pueden crear (el bloque R inserta una)", () => {
+    for (const f of ["supabase/scripts/test_224_neto_empaquetados.sql", "supabase/scripts/test_225_neto_empaquetados.sql"]) {
+      const sql = leer(f);
+      // Los esperados de B y V, el select * de venta, el listado de control_vuelo, W y Z se comparan con el conteo REAL.
+      assert.ok(!/\('(super|gere|admi|oper|ctrl)','2'\)/.test(sql), `${f}: esperado literal '2' en B/V`);
+      assert.ok(!/v_res = '3'/.test(sql) && !/v_res::int >= 3/.test(sql), `${f}: literal 3 en W/R`);
+      const z = sql.slice(sql.indexOf("-- ═ Z"));
+      assert.match(z, /v_total := \(select count\(\*\)::text from public\.empaquetados\)/, `${f}: Z debe medir el total real`);
+      assert.ok(!/v_d = '2'/.test(z), `${f}: Z compara la tabla base de venta con un literal`);
+      assert.match(z, /v_a = v_total/, `${f}: Z debe exigir que la vista de venta traiga todas las filas`);
+    }
   });
   test("convenciones del encargo: sin variables PL/pgSQL que coincidan con columnas y fixtures DTM si hay ventas", () => {
     const COLUMNAS = new Set(["id", "record", "aerolinea", "ruta", "origen", "activo", "rol", "nombre", "email", "detalle", "nota", "tenant", "notas"]);

@@ -101,7 +101,7 @@ do $$
 declare r record; v_res text;
 begin
   for r in select * from (values
-    ('super','2'), ('gere','2'), ('admi','2'), ('oper','2'), ('ctrl','2'),
+    ('super',(select count(*)::text from public.empaquetados)), ('gere',(select count(*)::text from public.empaquetados)), ('admi',(select count(*)::text from public.empaquetados)), ('oper',(select count(*)::text from public.empaquetados)), ('ctrl',(select count(*)::text from public.empaquetados)),
     ('vent','0'), ('vini','0'), ('agen','0'), ('free','0'), ('clie','0')) v(k, esperado) loop
     v_res := t225.q('select count(*)::text from public.empaquetados where tarifa_proveedor is not null', r.k);
     perform t225.afirma('B tabla base · ' || r.k || ' lee ' || r.esperado || ' fila(s) con tarifa_proveedor',
@@ -120,7 +120,7 @@ do $$
 declare r record; v_res text;
 begin
   for r in select * from (values
-    ('super','2'), ('gere','2'), ('admi','2'), ('oper','2'), ('ctrl','2'), ('vent','2'),
+    ('super',(select count(*)::text from public.empaquetados)), ('gere',(select count(*)::text from public.empaquetados)), ('admi',(select count(*)::text from public.empaquetados)), ('oper',(select count(*)::text from public.empaquetados)), ('ctrl',(select count(*)::text from public.empaquetados)), ('vent',(select count(*)::text from public.empaquetados)),
     ('vini','0'), ('agen','0'), ('free','0'), ('clie','0')) v(k, esperado) loop
     v_res := t225.q('select count(*)::text from public.empaquetados_basica', r.k);
     perform t225.afirma('V vista · ' || r.k || ' alcanza ' || r.esperado || ' fila(s)', v_res = r.esperado, 'obtenido=' || v_res);
@@ -157,7 +157,7 @@ begin
   end loop;
   -- Historial: lo alcanza venta (policy intacta) pero NO contiene importes de costo.
   v_res := t225.q('select count(*)::text from public.empaquetado_cambios', 'vent');
-  perform t225.afirma('C historial · la policy de empaquetado_cambios sigue como estaba (venta lee su historial)', v_res = '1', 'obtenido=' || v_res);
+  perform t225.afirma('C historial · la policy de empaquetado_cambios sigue como estaba (venta lee su historial)', v_res = (select count(*)::text from public.empaquetado_cambios), 'obtenido=' || v_res);
   v_res := t225.q('select count(*)::text from public.empaquetado_cambios where coalesce(detalle, '''') || coalesce(nota, '''') ~ ''(123456|99999|55555|tarifa|neto)''', 'vent');
   perform t225.afirma('C historial · venta no encuentra importes ni la palabra neto en empaquetado_cambios', v_res = '0', 'obtenido=' || v_res);
   -- RPC de control: sin lectura de la tabla base, venta no puede ni invocarla con efecto.
@@ -188,7 +188,7 @@ end $$;
 
 -- ═ R · regresión de los flujos de empaquetados ═════════════════════════════════════
 do $$
-declare v_res text;
+declare v_res text; v_n0 bigint;
 begin
   -- Editor de vuelos (formularios Nuevo/Editar): control_vuelo y operaciones crean y editan el neto.
   v_res := t225.q('with x as (insert into public.empaquetados (id, fecha_ida, tarifa_proveedor) values (96010, current_date + 60, 777.5) returning 1) select count(*)::text from x', 'ctrl');
@@ -202,11 +202,12 @@ begin
   v_res := t225.q('with x as (update public.empaquetados set fee_infante = 10 where id = 96010 returning 1) select count(*)::text from x', 'admi');
   perform t225.afirma('R editor · administración edita', v_res = '1', 'obtenido=' || v_res);
   -- Control de emisión: control_vuelo usa la RPC (INVOKER; necesita SELECT ... FOR UPDATE sobre la tabla base).
+  v_n0 := (select count(*) from public.empaquetado_cambios where empaquetado_id = 96001);
   v_res := t225.q('select ''ok'' from (select public.actualizar_control_empaquetado(96001, ''T225OK'', ''emitido'', ''pagado'', ''emitido en la prueba'')) s', 'ctrl');
   perform t225.afirma('R control · control_vuelo actualiza record y emisión con la RPC', v_res = 'ok', 'obtenido=' || v_res);
   perform t225.afirma('R control · el cambio quedó (record) y el historial registró la entrada',
     (select record from public.empaquetados where id = 96001) = 'T225OK'
-    and (select count(*) from public.empaquetado_cambios where empaquetado_id = 96001) = 2, null);
+    and (select count(*) from public.empaquetado_cambios where empaquetado_id = 96001) = v_n0 + 1, null);
   v_res := t225.q('select ''ok'' from (select public.actualizar_control_empaquetado(96001, ''T225OP'', ''emitido'', ''pagado'', ''operaciones'')) s', 'oper');
   perform t225.afirma('R control · operaciones también actualiza el control', v_res = 'ok', 'obtenido=' || v_res);
   -- Tras editar el neto, el historial sigue sin importes.
@@ -219,7 +220,7 @@ begin
   perform t225.afirma('R armado · operaciones sigue leyendo armado_empaquetados', v_res = '1', 'obtenido=' || v_res);
   -- control_vuelo conserva el listado del inventario (vuelos/page.tsx `select *`).
   v_res := t225.q('select count(*)::text from (select * from public.empaquetados) s', 'ctrl');
-  perform t225.afirma('R inventario · control_vuelo sigue leyendo el listado completo (select *)', v_res::int >= 3, 'obtenido=' || v_res);
+  perform t225.afirma('R inventario · control_vuelo sigue leyendo el listado completo (select *)', v_res = (select count(*)::text from public.empaquetados), 'obtenido=' || v_res);
 end $$;
 
 -- ═ W · escritura: venta nunca escribe ═══════════════════════════════════════════════
@@ -233,7 +234,7 @@ begin
   v_res := t225.q('with x as (delete from public.empaquetados where id = 96002 returning 1) select count(*)::text from x', 'vent');
   perform t225.afirma('W venta no borra empaquetados', v_res = '0' or v_res like 'ERR%', 'obtenido=' || v_res);
   v_res := t225.q('select count(*)::text from public.empaquetados_basica', 'vent');
-  perform t225.afirma('W la vista de venta sigue entera tras sus intentos de escritura', v_res = '3', 'obtenido=' || v_res);
+  perform t225.afirma('W la vista de venta sigue entera tras sus intentos de escritura', v_res = (select count(*)::text from public.empaquetados), 'obtenido=' || v_res);
   v_res := t225.q('insert into public.empaquetados_basica (id) values (96099) returning 1::text', 'vent');
   perform t225.afirma('W la vista no admite escritura', v_res like 'ERR%', 'obtenido=' || v_res);
   perform t225.afirma('W los datos de 96001 y 96002 quedaron intactos',
@@ -243,14 +244,16 @@ end $$;
 
 -- ═ Z · las pruebas fueron concluyentes (no vacías) ═════════════════════════════════
 do $$
-declare v_a text; v_b text; v_c text; v_d text;
+declare v_a text; v_b text; v_c text; v_d text; v_total text;
 begin
+  -- Conteo REAL de filas (como dueño, sin RLS): los bloques anteriores (R) crean filas; nada de literales.
+  v_total := (select count(*)::text from public.empaquetados);
   v_a := t225.q('select count(*)::text from public.empaquetados_basica', 'vent');
   v_b := t225.q('select count(*)::text from public.empaquetados where tarifa_proveedor is not null', 'ctrl');
   v_c := t225.q('select count(*)::text from public.empaquetados_basica', 'ctrl');
   v_d := t225.q('select count(*)::text from public.empaquetados where tarifa_proveedor is not null', 'vent');
   perform t225.afirma('Z venta SÍ alcanza filas por la vista (>0) y NO por la tabla base (0): la prueba no es vacía',
-    v_a::int > 0 and v_d = '0', 'vista=' || v_a || ' base=' || v_d);
+    v_a::int > 0 and v_a = v_total and v_d = '0', 'vista=' || v_a || ' base=' || v_d || ' total=' || v_total);
   perform t225.afirma('Z control_vuelo SÍ alcanza filas por la tabla base y por la vista (>0)',
     v_b::int > 0 and v_c::int > 0, 'base=' || v_b || ' vista=' || v_c);
   perform t225.afirma('Z existen usuarios activos de los 9 roles de la prueba',
