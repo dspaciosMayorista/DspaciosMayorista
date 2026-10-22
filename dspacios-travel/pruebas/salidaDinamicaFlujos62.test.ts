@@ -179,7 +179,8 @@ type Escenario = {
   errorEnSalidas?: string;                     // fallo de la consulta de salidas
 };
 async function reservar(esc: Escenario, over: Record<string, unknown> = {}) {
-  const tablasSb = tablasPrecio(esc.empaquetados ? { empaquetados: esc.empaquetados } : {});
+  // 224: la vigencia del Empaquetado se lee por la vista `empaquetados_basica` (sin costos); la tabla base se conserva en el fixture.
+  const tablasSb = tablasPrecio(esc.empaquetados ? { empaquetados: esc.empaquetados, empaquetados_basica: esc.empaquetados } : {});
   const tablasAdmin = tablasPrecio({ salidas_dinamicas: esc.salidas ?? [], ...(esc.empaquetados ? { empaquetados: esc.empaquetados } : {}) });
   const logSb: string[] = [];
   const logAdmin: string[] = [];

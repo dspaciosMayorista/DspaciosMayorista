@@ -3602,6 +3602,18 @@ export type Database = {
         Row: { numero_contrato: string; total_pagado: number };
         Relationships: [];
       };
+      // Migración 224: `empaquetados` SIN columnas de costo. Es la única puerta
+      // de lectura del rol `venta` a los empaquetados — a la tabla base ya no
+      // entra, para que no pueda pedir los netos por la API. Los roles
+      // financieros y control_vuelo siguen leyendo la tabla base. `Omit<>`: el
+      // tipo impide pedir una columna de costo a esta vista (el build falla).
+      empaquetados_basica: {
+        Row: Omit<
+          Database["public"]["Tables"]["empaquetados"]["Row"],
+          "tarifa_proveedor" | "fee_infante" | "tarifa_para_empaquetar" | "estado_pago" | "notas"
+        >;
+        Relationships: [];
+      };
       // Migración 182 (Fase 2 de snapshots atómicos): mismas columnas que
       // tarifario_resultado, filtradas por
       // armado_paquetes.tarifario_snapshot_publicable = true — el join de
@@ -4669,6 +4681,7 @@ export type Enums<T extends keyof Database["public"]["Enums"]> =
 export type Usuario = Tables<"usuarios">;
 export type Venta = Tables<"ventas">;
 export type VentaBasica = Database["public"]["Views"]["ventas_basica"]["Row"];
+export type EmpaquetadoBasico = Database["public"]["Views"]["empaquetados_basica"]["Row"];
 // Lo que el DOCUMENTO del contrato necesita de la venta: ninguna columna
 // financiera. Se declara como subconjunto para que la página imprimible pueda
 // alimentarlo tanto desde `ventas` (roles administrativos, service-role del

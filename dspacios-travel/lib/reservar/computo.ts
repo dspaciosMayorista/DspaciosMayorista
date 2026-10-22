@@ -255,7 +255,7 @@ export async function computarReserva(
   // publicado, y `tarifario_resultado` es una caché, no la fuente de verdad.
   if (origen.tipo === "empaquetado") {
     const { data: eq, error: eqErr } = await sb
-      .from("empaquetados")
+      .from("empaquetados_basica")
       .select("activo, compra_inicio, compra_fin")
       .eq("id", origen.id)
       .maybeSingle();
