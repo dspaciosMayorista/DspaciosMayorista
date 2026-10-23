@@ -4,10 +4,14 @@ import { createClient } from "@/lib/supabase/server";
 import { Logo } from "@/components/Logo";
 import { LogoutButton } from "../(dashboard)/LogoutButton";
 import { getTenant } from "@/lib/tenant.server";
-import { Contact, Send, Upload, Settings, Megaphone, Users } from "lucide-react";
+import { Contact, Send, Upload, Settings, Megaphone, Users, Inbox } from "lucide-react";
 
 const NAV = [
   { href: "/crm", label: "Contactos", Icon: Contact },
+  // Leads (migración 202): entidad PROPIA, no `crm_contactos`. La entrada del
+  // menú NO autoriza: cada ruta y action de /crm/leads validan rol por su
+  // cuenta, porque el layout solo exige sesión.
+  { href: "/crm/leads", label: "Leads", Icon: Inbox },
   // Deliberadamente SEPARADO de "Contactos": pasajeros de contrato_pasajeros,
   // nunca destinatarios de campaña por defecto (migración 187, rama CRM
   // pasajeros de contratos — ver PasajerosContratoPage).

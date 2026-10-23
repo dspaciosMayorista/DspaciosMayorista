@@ -3,12 +3,26 @@
 > **Borrador de propuesta (solo documental).** Diseño previo a construcción: no representa funcionalidad implementada, no es un pendiente priorizado ni autoriza cambios de código, SQL, datos o `TASKS.md`. Pasa a la cola solo si el usuario lo decide expresamente.
 >
 > Revisado el 2026-09-30: rutas y líneas citadas en "Estado actual comprobado" verificadas contra el repositorio.
+>
+> Actualización MVP manual: para la rama `crm-leads-mvp`, el primer corte se limita a captura y seguimiento manual. No incluye conversión a contacto, cotización desde lead, integraciones de Meta, métricas ni automatización.
 
 ## Objetivo
 
 Ampliar la gestión comercial hacia ventas B2C iniciadas por WhatsApp e Instagram. Registrar cada oportunidad como una entidad de lead propia, permitir seguimiento humano y crear cotizaciones desde el lead; convertirlo en contacto/cliente cuando corresponda. Empezar con una operación sencilla y gratuita/manual y evolucionar después a integraciones oficiales y asistencia automatizada entrenada sobre información aprobada.
 
 ## Alcance
+
+### MVP manual aprobado
+
+- Entidad propia `crm_leads`, aislada por `tenant`, sin reutilizar `crm_contactos`.
+- Origen manual WhatsApp/Instagram/otro, bandeja, búsqueda, detalle, responsable, etapa comercial, notas/actividades y próxima acción.
+- Etapas observables: `nuevo`, `en_contacto`, `calificado`, `descartado`, `archivado`.
+- Responsables posibles: usuarios activos con rol `venta`, `gerencia` o `administracion`.
+- Visibilidad por RLS: `superadmin` y `gerencia` con alcance autorizado por tenant, `administracion` dentro de su tenant, `venta` solo sus leads o leads sin responsable de su tenant. `operaciones`, `control_vuelo` y roles externos quedan fuera.
+- Sin borrado físico: cierre por `descartado` o `archivado` y bitácora append-only.
+- Duplicados reactivos lead-contra-lead por tenant, con teléfono/email/documento normalizados.
+
+### Fases posteriores
 
 - Entidad de lead/oportunidad separada de `crm_contactos`, con identidad y datos de contacto disponibles, canal/origen, interés de viaje, estado comercial, responsable, fechas y bitácora.
 - Bandeja y etapas configurables del proceso comercial desde nuevo hasta calificado, cotizado, seguimiento, ganado/perdido y conversión a contacto/cliente.
@@ -21,6 +35,9 @@ Ampliar la gestión comercial hacia ventas B2C iniciadas por WhatsApp e Instagra
 ## Fuera de alcance
 
 - Reemplazar el CRM actual de contactos, campañas de correo y difusión.
+- Convertir leads a `crm_contactos` en el MVP manual.
+- Crear cotizaciones, contratos o ventas desde leads en el MVP manual.
+- Consultar o deduplicar contra `crm_contactos` en el MVP manual.
 - Enviar mensajes automatizados o conectarse a WhatsApp/Instagram en la primera fase gratuita/manual.
 - Scraping, automatización de interfaz de consumidor o mecanismos que evadan APIs y políticas de Meta.
 - Entrenar o desplegar un bot autónomo en el MVP.

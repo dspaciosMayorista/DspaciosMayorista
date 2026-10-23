@@ -6,6 +6,11 @@ Convencion: `[x]` integrado en `main`; `[~]` implementado solo en una rama sin i
 
 ## Cola priorizada
 
+### 0. CRM leads manuales WhatsApp/Instagram
+
+- [~] En la rama `crm-leads-mvp-port` (worktree aislado, base `origin/main` `e6aa9fec`): MVP manual de leads como entidad propia (`crm_leads` + `crm_lead_actividades`), tenant obligatorio, RLS por tenant/responsable, sin `operaciones`/`control_vuelo`/externos, sin borrado fisico, sin tocar `crm_contactos`, cotizaciones ni ventas. Migracion `20260601000202_crm_leads.sql`, aplicada sobre `origin/main` donde `201` y `203` ya existen y `202` esta libre.
+- [ ] Validar SQL/RLS localmente (preflight, migracion, postcheck, test, rollback), TypeScript, ESLint, pruebas de interfaz y build. No ejecutar SQL remoto desde la rama.
+
 ### 1. Catalogos compartidos y selectores buscables: validar lo integrado
 
 Hecho en `main` (no reabrir):
