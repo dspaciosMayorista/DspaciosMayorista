@@ -12,6 +12,7 @@ import { formatMoneda, formatFechaLarga, calcularEdad } from "@/lib/utils";
 import { etiquetaIata, parseRuta } from "@/lib/iata";
 import { valorVisibleContratoItem, totalVisibleContratoItems } from "@/lib/contrato/valorContratoItem";
 import { presentacionValoresContrato } from "@/lib/contrato/presentacionValores";
+import { valoresNetosDocumento } from "@/lib/contrato/valoresNetosDocumento";
 import type { ComposicionBernaloDocumento, HabitacionBernaloDocumento } from "@/lib/reservar/alojamientoBernaloDocumento";
 import type {
   VentaDocumento,
@@ -96,8 +97,8 @@ type Props = {
   // #30 — Total exigible de un contrato B2B vendido en NETO (`precio_venta`,
   // PVP − comisión del aliado), resuelto por `netoTotalExigibleDeContrato`.
   // null/ausente = no es NETO: el documento suma los ítems como siempre.
-  // Presente: total y saldo salen de aquí y se ocultan los valores por ítem
-  // (a PVP), que junto al total revelarían la comisión del aliado.
+  // Presente: total y saldo salen de aquí; los valores por ítem se prorratean
+  // a NETO para este documento sin revelar las tarifas originales a PVP.
   netoTotalExigible?: number | null;
 };
 
@@ -119,6 +120,14 @@ function Pill({ label, value }: { label: string; value: string }) {
       <span className="text-sm text-gray-800">{value || "—"}</span>
     </div>
   );
+}
+
+function formatoNetoDocumento(valor: number, moneda: string, aproximado = false): string {
+  const usd = moneda.toUpperCase() === "USD";
+  const importe = new Intl.NumberFormat(usd ? "en-US" : "es-CO", {
+    style: "currency", currency: usd ? "USD" : "COP", minimumFractionDigits: 0, maximumFractionDigits: 2,
+  }).format(valor);
+  return `${aproximado ? "≈ " : ""}${usd ? "USD " : ""}${importe}`;
 }
 
 function resumenMenoresHabitacion(edadesMenores: number[]) {
@@ -162,6 +171,10 @@ export function ContratoDocumento({
     totalPagado,
     netoTotalExigible,
   });
+  const valoresNetos = !mostrarValoresItems ? valoresNetosDocumento(items, total) : null;
+  const mostrarDesglose = mostrarValoresItems || valoresNetos !== null;
+  const importeDocumento = (valor: number) => valoresNetos ? formatoNetoDocumento(valor, moneda) : formatMoneda(valor, moneda);
+  const valorItemDocumento = (item: ContratoItem) => valoresNetos ? (valoresNetos.get(item.id)?.total ?? 0) : valorVisibleContratoItem(item);
   // Separa servicios (línea propia: Servicio · Pax · Valor total) del alojamiento.
   const servicioItems = items.filter((it) => it.descripcion?.startsWith("Servicio · "));
   const alojItems = items.filter((it) => !it.descripcion?.startsWith("Servicio · "));
@@ -506,18 +519,12 @@ export function ContratoDocumento({
               <div className="text-[10px] uppercase opacity-80">
                 Total del contrato
               </div>
-              <div className="text-base font-bold">{formatMoneda(total, moneda)}</div>
+              <div className="text-base font-bold">{importeDocumento(total)}</div>
             </div>
             <Pill label="Total pagado" value={formatMoneda(totalPagado, moneda)} />
-            <Pill label="Saldo pendiente" value={formatMoneda(saldo, moneda)} />
+            <Pill label="Saldo pendiente" value={importeDocumento(saldo)} />
             <Pill label="Moneda" value={moneda} />
           </div>
-          {!mostrarValoresItems && (
-            <p className="mb-3 text-xs text-gray-500">
-              Valor total acordado para el paquete; los servicios incluidos se detallan sin valor por ítem.
-            </p>
-          )}
-
           {/* Hallazgo confirmado (cierre 3F-4B): una línea `modo_precio =
               "total"` (Bernalo) no tiene adultos/niños/tarifa por columna —
               son 0 en la base porque esa fila nunca reparte precio por
@@ -531,8 +538,8 @@ export function ContratoDocumento({
               {alojItemsTotal.map((it) => (
                 <div key={it.id} className="flex items-center justify-between rounded-lg bg-gray-50 px-3 py-2 text-xs">
                   <span className="text-gray-700">{it.descripcion}</span>
-                  {mostrarValoresItems && (
-                    <span className="font-semibold text-gray-800">{formatMoneda(valorVisibleContratoItem(it), moneda)}</span>
+                  {mostrarDesglose && (
+                    <span className="font-semibold text-gray-800">{importeDocumento(valorItemDocumento(it))}</span>
                   )}
                 </div>
               ))}
@@ -577,16 +584,16 @@ export function ContratoDocumento({
                   <th className="border border-gray-200 px-2 py-1">Ítem</th>
                   <th className="border border-gray-200 px-2 py-1">Adultos</th>
                   <th className="border border-gray-200 px-2 py-1">Niños</th>
-                  {mostrarValoresItems && (
+                  {mostrarDesglose && (
                     <>
                       <th className="border border-gray-200 px-2 py-1">
-                        Tarifa Adulto
+                        Tarifa Adulto{valoresNetos ? " NETO" : ""}
                       </th>
                       <th className="border border-gray-200 px-2 py-1">
-                        Tarifa Niño
+                        Tarifa Niño{valoresNetos ? " NETO" : ""}
                       </th>
                       <th className="border border-gray-200 px-2 py-1">
-                        Valor total
+                        Valor total{valoresNetos ? " NETO" : ""}
                       </th>
                     </>
                   )}
@@ -604,16 +611,20 @@ export function ContratoDocumento({
                     <td className="border border-gray-200 px-2 py-1">
                       {it.ninos}
                     </td>
-                    {mostrarValoresItems && (
+                    {mostrarDesglose && (
                       <>
                         <td className="border border-gray-200 px-2 py-1">
-                          {formatMoneda(it.tarifa_adulto, moneda)}
+                          {valoresNetos
+                            ? formatoNetoDocumento(valoresNetos.get(it.id)?.tarifaAdulto ?? 0, moneda, valoresNetos.get(it.id)?.adultoAproximado)
+                            : formatMoneda(it.tarifa_adulto, moneda)}
                         </td>
                         <td className="border border-gray-200 px-2 py-1">
-                          {formatMoneda(it.tarifa_nino, moneda)}
+                          {valoresNetos
+                            ? formatoNetoDocumento(valoresNetos.get(it.id)?.tarifaNino ?? 0, moneda, valoresNetos.get(it.id)?.ninoAproximado)
+                            : formatMoneda(it.tarifa_nino, moneda)}
                         </td>
                         <td className="border border-gray-200 px-2 py-1 font-medium">
-                          {formatMoneda(valorVisibleContratoItem(it), moneda)}
+                          {importeDocumento(valorItemDocumento(it))}
                         </td>
                       </>
                     )}
@@ -666,7 +677,7 @@ export function ContratoDocumento({
                   <tr className="bg-gray-50 text-left text-gray-500">
                     <th className="border border-gray-200 px-2 py-1">Servicio</th>
                     <th className="border border-gray-200 px-2 py-1">Pax</th>
-                    {mostrarValoresItems && <th className="border border-gray-200 px-2 py-1">Valor total</th>}
+                    {mostrarDesglose && <th className="border border-gray-200 px-2 py-1">Valor total{valoresNetos ? " NETO" : ""}</th>}
                   </tr>
                 </thead>
                 <tbody>
@@ -676,9 +687,9 @@ export function ContratoDocumento({
                         {it.descripcion.replace(/^Servicio · /, "")}
                       </td>
                       <td className="border border-gray-200 px-2 py-1">{venta.pax ?? "—"}</td>
-                      {mostrarValoresItems && (
+                      {mostrarDesglose && (
                         <td className="border border-gray-200 px-2 py-1 font-medium">
-                          {formatMoneda(valorVisibleContratoItem(it), moneda)}
+                          {importeDocumento(valorItemDocumento(it))}
                         </td>
                       )}
                     </tr>

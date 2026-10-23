@@ -9,10 +9,10 @@
 //
 // Regla:
 //   · Contrato NETO → total y saldo salen del TOTAL EXIGIBLE (`precio_venta`).
-//     Los valores por ítem (tarifas y totales a PVP) se ocultan: junto al total
-//     neto revelarían la comisión del aliado, que este documento externo no
-//     muestra (decisión del dueño, 2026-10-10). Se siguen listando los ítems
-//     (descripción y pasajeros).
+//     Los valores originales por ítem (a PVP) no se imprimen: junto al total
+//     neto revelarían la comisión del aliado. El documento distribuye el total
+//     exigible entre los ítems por separado (`valoresNetosDocumento`); este
+//     helper conserva la señal para distinguir ambas fuentes.
 //   · Cualquier otro contrato → EXACTAMENTE lo de siempre (suma de ítems): no
 //     se cambia la presentación de contratos históricos ni de venta directa.
 

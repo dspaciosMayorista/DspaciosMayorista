@@ -51,16 +51,41 @@ test("NETO: el documento muestra el total exigible y su saldo, nunca el PVP", ()
   assert.ok(!texto.includes($(PVP - PAGADO)), "no aparece el saldo calculado a PVP");
 });
 
-test("NETO: no revela la comisión del aliado ni los valores por ítem a PVP", () => {
+test("NETO: muestra tarifas prorrateadas por persona sin revelar PVP ni comisión", () => {
   const texto = render(NETO);
   for (const v of [COMISION, 950_000, 1_900_000, 100_000]) {
     assert.ok(!texto.includes($(v)), `no aparece ${$(v)}`);
   }
   assert.doesNotMatch(texto, /comisi[oó]n/i);
-  // Los ítems siguen listados (descripción y pasajeros), solo sin valor.
+  assert.match(texto, /Tarifa Adulto NETO/);
+  assert.match(texto, /Valor total NETO/);
+  assert.ok(texto.includes($(874_000)), "tarifa neta por adulto");
+  assert.ok(texto.includes($(1_748_000)), "subtotal neto de dos adultos");
+  assert.ok(texto.includes($(92_000)), "servicio prorrateado a NETO");
   assert.match(texto, /Doble · Estándar\/PAM/);
   assert.match(texto, /Traslado aeropuerto/);
-  assert.match(texto, /Valor total acordado para el paquete/);
+  assert.doesNotMatch(texto, /Valor total acordado para el paquete/);
+});
+
+test("NETO manual de dos adultos: cada persona ve la mitad neta exigible", () => {
+  const plan = [{ ...items[0], tarifa_adulto: 1_000_000 }];
+  const html = renderToStaticMarkup(createElement(ContratoDocumento, {
+    venta, pasajeros: [], hoteles: [], vuelos: [], items: plan, totalPagado: 0, netoTotalExigible: 1_897_200,
+  } as never)).replace(/<[^>]+>/g, " ").replace(/&nbsp;| /g, " ").replace(/\s+/g, " ");
+  assert.match(html, /Tarifa Adulto NETO/);
+  assert.ok(html.includes($(948_600)));
+  assert.ok(html.includes($(1_897_200)));
+  assert.ok(!html.includes($(1_000_000)) && !html.includes($(2_000_000)));
+  assert.doesNotMatch(html, /Valor total acordado para el paquete/);
+});
+
+test("NETO sin desglose conciliable muestra solo el total y nunca una tarifa PVP", () => {
+  const html = renderToStaticMarkup(createElement(ContratoDocumento, {
+    venta, pasajeros: [], hoteles: [], vuelos: [], items, totalPagado: 0, netoTotalExigible: PVP + 1,
+  } as never)).replace(/<[^>]+>/g, " ").replace(/&nbsp;| /g, " ").replace(/\s+/g, " ");
+  assert.ok(html.includes($(PVP + 1)));
+  assert.doesNotMatch(html, /Tarifa Adulto/);
+  assert.ok(!html.includes($(950_000)) && !html.includes($(100_000)));
 });
 
 test("no NETO: el documento queda exactamente como antes (suma de ítems y valores por ítem)", () => {
@@ -69,6 +94,14 @@ test("no NETO: el documento queda exactamente como antes (suma de ítems y valor
   assert.ok(texto.includes(`Saldo pendiente ${$(PVP - PAGADO)}`));
   assert.ok(texto.includes($(950_000)) && texto.includes($(1_900_000)) && texto.includes($(100_000)));
   assert.doesNotMatch(texto, /Valor total acordado para el paquete/);
+});
+
+test("Minorista PVP conserva las tarifas originales por persona", () => {
+  const html = renderToStaticMarkup(createElement(ContratoDocumento, {
+    venta: { ...venta, tenant: "minorista" }, pasajeros: [], hoteles: [], vuelos: [], items, totalPagado: PAGADO,
+  } as never)).replace(/<[^>]+>/g, " ").replace(/&nbsp;| /g, " ").replace(/\s+/g, " ");
+  assert.ok(html.includes($(950_000)) && html.includes($(1_900_000)));
+  assert.doesNotMatch(html, /Tarifa Adulto NETO/);
 });
 
 test("render sin la prop (páginas que no la pasan) = comportamiento de siempre", () => {
