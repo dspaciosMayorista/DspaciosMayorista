@@ -48,6 +48,9 @@ import {
 } from "@/lib/reservar/serviciosPaquete";
 import { validarModoServicio } from "@/lib/reservar/liquidacionServicio";
 import { contarMenoresDeDos, tarifarMenores, totalMenoresDeDos, type ConteoMenores, type LineaMenor } from "@/lib/reservar/menoresDeDos";
+import { impuestoPorPersona63, impuestoTotal63, monedaNormalizada63 } from "@/lib/reservar/ofertaDinamica63";
+import { resolverOfertaSalida63, type Oferta63 } from "@/lib/reservar/prepararOferta63";
+import type { VigenciaCompra63 } from "@/lib/reservar/aceptacion63";
 
 export type PasajeroReserva = {
   nombres: string;
@@ -109,6 +112,11 @@ export type ReservaInput = {
   plazo: string;
   pasajeros: PasajeroReserva[];
   servicios?: number[];   // ids de servicios add-on seleccionados
+  // #63: la cotización de una oferta en COP con TRM guarda aquí la huella de lo que se mostró (la escribe el servidor al
+  // cotizar; `convertirCotizacion` la pasa tal cual). La reserva la compara con lo que va a cobrar.
+  // `cotizacionId` lo pone SOLO `convertirCotizacion` (con el id de la cotización que el usuario puede ver); lo que venga del
+  // navegador al cotizar se descarta.
+  oferta63?: { huella?: string | null; modo?: string | null; trm?: number | null; cotizacionId?: number | null } | null;
 };
 
 export type ComputoReserva = {
@@ -177,6 +185,14 @@ export type ComputoReserva = {
   // resolverlas) — nunca `null`/`undefined`, para que el llamador (checkout)
   // pueda persistirlo tal cual en el snapshot de la cotización.
   condicionesTarifa: CondicionTarifaAplicada[];
+  // #63 — oferta en modo COP con TRM (salida vinculada a Empaquetados sin record, o salida manual de un
+  // paquete en ese modo). `null`/ausente = el cómputo de siempre. `monedaHotel`/`monedaServicios` son la
+  // moneda ORIGEN de los netos (las CxP se deben en esa moneda; la venta ya está en COP).
+  oferta63?: (Oferta63 & { monedaHotel: "COP" | "USD"; monedaServicios: Record<number, "COP" | "USD"> }) | null;
+  // #63: vigencias de COMPRA de las tarifas de hotel y servicios que respaldan el precio (la temporada que ganó cada noche /
+  // cada servicio, con sus límites tal como se leyeron al cotizar). Van al snapshot de la oferta y `aceptar_oferta_63` las valida
+  // con la fecha de negocio de Bogotá de SU transacción. SIEMPRE un arreglo (vacío fuera de una oferta 63).
+  vigencias63: VigenciaCompra63[];
 };
 
 // Expande `habitaciones: {doble: 2, triple: 1}` (conteo por tipo, la única
@@ -266,6 +282,7 @@ export async function computarReserva(
   const resOrigen = resolverOrigenVuelo(input);
   if (!resOrigen.ok) return { ok: false, error: resOrigen.error };
   const origen = resOrigen.origen;
+  let oferta63: Oferta63 | null = null;
 
   // Vigencia y activo del Empaquetado — revalidados en el momento exacto de
   // resolver la reserva (no solo al generar el tarifario): un empaquetado
@@ -302,6 +319,11 @@ export async function computarReserva(
     }
     const vigencia = await verificarSalidaDinamicaVigente(lector, origen.id);
     if (!vigencia.ok) return { ok: false, error: vigencia.error };
+    // #63: salida vinculada a Empaquetados sin record y/o paquete en modo COP con TRM. Se valida contra la
+    // fuente VIVA; no consulta cupos (un Empaquetado no tiene sillas). En un paquete de siempre devuelve null.
+    const resOferta63 = await resolverOfertaSalida63(lector, input.paqueteId, origen.id);
+    if (!resOferta63.ok) return { ok: false, error: resOferta63.error };
+    oferta63 = resOferta63.oferta;
   }
 
   // Destino aéreo del vuelo elegido en Bloqueo/Sistema (#67). El destino de
@@ -390,6 +412,11 @@ export async function computarReserva(
   let petCostoDesc: string | null = null;
   let petNotaTxt: string | null = null;
   let condicionesTarifa: CondicionTarifaAplicada[] = [];
+  // #63: moneda origen del neto del hotel / de cada servicio (la venta publicada ya está en COP).
+  let monedaHotelOrigen63: "COP" | "USD" = "COP";
+  const monedaServicios63: Record<number, "COP" | "USD"> = {};
+  const vigencias63: VigenciaCompra63[] = [];
+  const nombresVigHotel63 = new Set<string>();
 
   const usarFechas =
     input.modulo !== "bloqueo" && input.modulo !== "dinamico" && !!input.fechaIda && !!input.fechaRegreso && !!process.env.SUPABASE_SERVICE_ROLE_KEY;
@@ -579,10 +606,11 @@ export async function computarReserva(
     // validación de edades reales).
     const { data: hotelRow, error: hotelRowErr } = await sb
       .from("hoteles")
-      .select("edad_infante_min, edad_infante_max, edad_nino_min, edad_nino_max, pax_min, pax_max, nino_nota, pet_costo_neto, pet_costo_desc, pet_nota")
+      .select("edad_infante_min, edad_infante_max, edad_nino_min, edad_nino_max, pax_min, pax_max, nino_nota, pet_costo_neto, pet_costo_desc, pet_nota, moneda")
       .eq("id", input.hotelId)
       .maybeSingle();
     if (hotelRowErr) return { ok: false, error: `No se pudo consultar el hotel: ${hotelRowErr.message}` };
+    monedaHotelOrigen63 = monedaNormalizada63((hotelRow as { moneda?: string | null } | null)?.moneda);
     ninoNotaTxt = hotelRow?.nino_nota ?? null;
     petCostoNeto = Number(hotelRow?.pet_costo_neto) || 0;
     petCostoDesc = hotelRow?.pet_costo_desc ?? null;
@@ -688,6 +716,10 @@ export async function computarReserva(
         netoPorAcom[l.acom] = r.total;
         for (const t of r.temporadasTarifa) { temporadasEstadia.add(t); temporadasCondiciones.add(t); }
         for (const p of r.procedencia) temporadasCondiciones.add(p.temporadaGanadora);
+        if (oferta63) {
+          for (const t of r.temporadasTarifa) nombresVigHotel63.add(t);
+          for (const p of r.procedencia) nombresVigHotel63.add(p.temporadaGanadora);
+        }
       }
       const rEdad = resolverReglaEdadEstadiaSegura({
         filas: tarRowsVig, categoria: input.categoria, regimen: input.regimen,
@@ -725,6 +757,21 @@ export async function computarReserva(
 
     if (conServiceRole) {
       const precioFinalTemporadasMenores = precioFinalTemporadasDe(tarRowsVig as TarRow[]);
+      // #63: la vigencia de compra de la tarifa de un MENOR también respalda el precio (puede ganar otra temporada que la del adulto).
+      const recogerVigenciaMenor63 = (acom: "nino" | "nino2" | "infante", precioFinal: Set<string>) => {
+        const r = liquidarHotelNochesConTemporadas({ fechaIda: meta.fecha_ida!, numNoches: numNochesVig, temporadas: temporadasVig, netoPorTemporada: netoPorTemporadaDe(tarRowsVig as TarRow[], acom), regimen: input.regimen, precioFinalTemporadas: precioFinal });
+        if (r == null) return;
+        for (const t of r.temporadasTarifa) nombresVigHotel63.add(t);
+        for (const p of r.procedencia) nombresVigHotel63.add(p.temporadaGanadora);
+      };
+      if (oferta63) {
+        if (numNinos > 0) recogerVigenciaMenor63("nino", precioFinalTemporadasMenores);
+        if (numNinos2 > 0) recogerVigenciaMenor63("nino2", precioFinalTemporadasMenores);
+        if (numInfantes > 0) recogerVigenciaMenor63("infante", precioFinalTemporadasMenores);
+        for (const t of temporadasVig) {
+          if (nombresVigHotel63.has(t.nombre)) vigencias63.push({ origen: "hotel", ref: t.nombre, compra_inicio: t.compra_inicio ?? null, compra_fin: t.compra_fin ?? null });
+        }
+      }
       if (numNinos > 0) {
         const per = liquidarHotelNoches({ fechaIda: meta.fecha_ida!, numNoches: numNochesVig, temporadas: temporadasVig, netoPorTemporada: netoPorTemporadaDe(tarRowsVig as TarRow[], "nino"), regimen: input.regimen, precioFinalTemporadas: precioFinalTemporadasMenores });
         if (per == null) return { ok: false, error: TARIFA_VENCIDA };
@@ -881,6 +928,10 @@ export async function computarReserva(
         if (!tt?.length) continue;
         const nombre = temporadaVigenteParaFecha(d, tt);
         if (!nombre) continue;
+        if (oferta63) {
+          const tv = tt.find((x) => x.nombre === nombre);
+          if (tv) vigencias63.push({ origen: "servicio", ref: `${id}|${nombre}`, compra_inicio: tv.compra_inicio ?? null, compra_fin: tv.compra_fin ?? null });
+        }
         if (s.modo === "persona" && s.personaPvp != null) {
           const ng = netoGen.get(id) || 0;
           const mkf = ng > 0 ? s.personaPvp / ng : null;   // factor de markup del snapshot
@@ -1032,9 +1083,28 @@ export async function computarReserva(
     return { ok: false, error: "Selecciona al menos un servicio y el número de pasajeros." };
   }
 
+  // #63: en el modo COP con TRM cada servicio (opcional o incluido) conserva la moneda de SU neto: su CxP se debe en esa
+  // moneda y el costo del contrato suma su equivalente en COP. Una sola consulta con el cliente de servicio; un error de
+  // lectura rechaza (nunca se asume COP).
+  if (oferta63) {
+    const idsMoneda = [...new Set([...serviciosItems.map((x) => x.servicioId), ...serviciosIncluidos.map((x) => x.servicioId)])];
+    if (idsMoneda.length) {
+      const { data: monedasSrv, error: monedasErr } = await createAdminClient().from("servicios_adicionales").select("id, moneda").in("id", idsMoneda);
+      if (monedasErr) return { ok: false, error: "No se pudo validar la moneda de los servicios del paquete. Intenta nuevamente." };
+      for (const m of (monedasSrv ?? []) as { id: number; moneda?: string | null }[]) monedaServicios63[m.id] = monedaNormalizada63(m.moneda);
+    }
+  }
+
   // BNC (Base No Comisionable) total = "Valor fijo del impuesto" × pax con tiquete.
   let impuestoTotal = 0;
-  if (!esServicios) {
+  if (oferta63 && !esServicios) {
+    // #63: BNC de la oferta COP. Tiquete = R (el precio del aéreo tal como se vende) × pax con silla; fijo =
+    // el importe del paquete (COP) × pax con silla. Los menores de 2 años no ocupan silla ni generan BNC.
+    impuestoTotal = impuestoTotal63({
+      impuestoPorPersona: impuestoPorPersona63({ tipo: oferta63.impuestoTipo, tarifaParaEmpaquetar: oferta63.tarifaParaEmpaquetar, fijoCop: oferta63.impuestoFijo }),
+      paxConSilla,
+    });
+  } else if (!esServicios) {
     const { data: pqImp } = await sb
       .from("armado_paquetes")
       .select("impuesto_fijo")
@@ -1045,6 +1115,6 @@ export async function computarReserva(
 
   return {
     ok: true,
-    data: { origen, meta, pvpPorAcom, pvpMenor2PorAcom, netoPorAcom, precioVenta, paxConSilla, totalPax, numNinos, numNinos2, numInfantes, menoresDeDos, numMenoresDeDos, lineasMenores, distribucionMenores, edadesMenoresUsadas, lineasHab, serviciosItems, serviciosIncluidos, impuestoTotal, monedaReserva, notaNino: ninoNotaTxt, cargoMascota, notaMascota: petNotaTxt, condicionesTarifa },
+    data: { origen, meta, pvpPorAcom, pvpMenor2PorAcom, netoPorAcom, precioVenta, paxConSilla, totalPax, numNinos, numNinos2, numInfantes, menoresDeDos, numMenoresDeDos, lineasMenores, distribucionMenores, edadesMenoresUsadas, lineasHab, serviciosItems, serviciosIncluidos, impuestoTotal, monedaReserva, notaNino: ninoNotaTxt, cargoMascota, notaMascota: petNotaTxt, condicionesTarifa, oferta63: oferta63 ? { ...oferta63, monedaHotel: monedaHotelOrigen63, monedaServicios: monedaServicios63 } : null, vigencias63 },
   };
 }

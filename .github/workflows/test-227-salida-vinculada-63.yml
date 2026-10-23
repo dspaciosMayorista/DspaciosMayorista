@@ -1,0 +1,252 @@
+# Gate de la migracion 227 (#63: salida de Dinamico vinculada a un vuelo de Empaquetados sin record + modo cop_trm_63).
+# Esquema REAL 001-226 + 227. Corre el preflight, la aplicacion, el postcheck consolidado, la bateria SQL por rol
+# (guardas de la salida vinculada, envoltorio del publicador, invalidacion, extension de la 220, RPC financiera con
+# equivalente COP, metadata privada, contratos intactos; y el cierre E/F/G: cotizar/aceptar atomicos, fencing de la cabecera, RPC financiera
+# derivada del snapshot, protecciones de lo aceptado, cortes y cobertura de revision), la negativa a re-aplicar, el rollback exacto (huella md5 de
+# policies/ACL y de las definiciones de funciones, vistas y triggers) y la reaplicacion.
+# Un segundo job corre las pruebas TS (vectores numericos FX1-FX3, generador, computo, reserva de punta a punta con la BD en
+# memoria, cupos de Bloqueo y regresion de 62/67/224/226) en una imagen oficial de Node con version exacta.
+# Sin secretos del repositorio, sin Supabase remoto, sin pull_request_target y con permisos de solo lectura.
+# Produccion sigue con preflight/migracion/postcheck manuales y autorizados por el dueno (la 227 va ANTES del codigo).
+name: test-227-salida-vinculada-63
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - '.github/workflows/test-227-salida-vinculada-63.yml'
+      - 'dspacios-travel/supabase/migrations/20260601000227_salida_vinculada_empaquetado.sql'
+      - 'dspacios-travel/supabase/scripts/*_227_*'
+      - 'dspacios-travel/supabase/scripts/preparar_esquema_local.sh'
+      - 'dspacios-travel/pruebas/salidaVinculada63*'
+      - 'dspacios-travel/lib/reservar/ofertaDinamica63.ts'
+      - 'dspacios-travel/lib/reservar/prepararOferta63.ts'
+      - 'dspacios-travel/lib/reservar/importeObligacion63.ts'
+      - 'dspacios-travel/lib/reservar/payloadFinanciero63.ts'
+      - 'dspacios-travel/lib/reservar/aceptacion63.ts'
+      - 'dspacios-travel/lib/reservar/aceptacionServidor63.ts'
+      - 'dspacios-travel/lib/reservar/asegurarCuentasPorPagar.ts'
+      - 'dspacios-travel/lib/reservar/financieroContrato.ts'
+      - 'dspacios-travel/app/(dashboard)/dashboard/contratos/**'
+      - 'dspacios-travel/lib/reservar/computo.ts'
+      - 'dspacios-travel/lib/reservar/empaquetadoOrigen.ts'
+      - 'dspacios-travel/lib/paquetes/destinosAereos67.ts'
+      - 'dspacios-travel/lib/contabilidad/asientos.ts'
+      - 'dspacios-travel/app/(dashboard)/dashboard/paquetes/**'
+      - 'dspacios-travel/app/(dashboard)/dashboard/reservar/actions.ts'
+      - 'dspacios-travel/types/database.ts'
+      - 'dspacios-travel/pruebas/support/rpc63.ts'
+      - 'dspacios-travel/package.json'
+      - 'dspacios-travel/pnpm-lock.yaml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: test-227-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  prueba-227:
+    name: 227 · fases, SQL por rol, rollback exacto
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    env:
+      CT: pg227_ci
+      RED: red227
+      PLANTILLA: plantilla227ci
+      IMAGEN_PG: supabase/postgres:15.8.1.085
+    defaults:
+      run:
+        shell: bash
+        working-directory: dspacios-travel
+    steps:
+      - name: Codigo (solo lectura, sin credenciales persistidas)
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+
+      - name: PostgreSQL desechable (imagen de Supabase) en una red propia
+        timeout-minutes: 5
+        run: |
+          set -euo pipefail
+          docker network create "$RED"
+          # Contrasena local de un contenedor efimero que nunca sale del runner (no es un secreto).
+          docker run -d --name "$CT" --network "$RED" -e POSTGRES_PASSWORD=postgres "$IMAGEN_PG"
+
+      - name: Esquema 001-226 REAL (la 227 parte de la cadena vigente)
+        timeout-minutes: 15
+        run: |
+          set -euo pipefail
+          # preparar_esquema_local.sh aplica todo numero <= 'hasta': con 226 queda fuera la 227.
+          test -f supabase/migrations/20260601000226_tarifa_infante.sql
+          test -f supabase/migrations/20260601000227_salida_vinculada_empaquetado.sql
+          bash supabase/scripts/preparar_esquema_local.sh "$CT" 226 "$PLANTILLA"
+
+      - name: '227 · fases (preflight, aplicar, postcheck, bateria SQL, no re-aplicar, rollback exacto, reaplicar)'
+        timeout-minutes: 20
+        run: |
+          set +e
+          set -uo pipefail
+          salida="$RUNNER_TEMP/fases227.out"
+          bash supabase/scripts/test_227_fases.sh "$CT" "$PLANTILLA" 2>&1 | tee "$salida"
+          rc="${PIPESTATUS[0]}"
+          # Ademas del codigo de salida: ningun FALLO, el cierre en verde y una linea OK de cada bloque
+          # (un bloque que se saltara en silencio no puede dar verde).
+          faltan=""
+          for marca in 'OK    F1.1 ' 'OK    F1.2 ' 'OK    F1.3 ' 'OK    F1.4 ' 'OK    F2.1 ' 'OK    F2.2 ' \
+                       'OK    F2.3 ' 'OK    F2.4 ' 'OK    F2.5 ' 'OK    F3 postcheck' 'OK    F4 bater' 'OK    F4.1 ' \
+                       'OK    F5.1 ' 'OK    F5.2 ' 'OK    F5.3 ' 'OK    F6.1 ' 'OK    F6.1b.1 ' 'OK    F6.1b.2 ' \
+                       'OK    F6.2 ' 'OK    F6.3 ' 'OK    F6.4 ' 'OK    F6.5 ' 'OK    F6.6 ' 'OK    F6.7 ' \
+                       'OK    F6.8 ' 'OK    F7.1 ' 'OK    F7.2 ' 'OK    F7.3 ' 'OK    A1 ' 'OK    A2 ' \
+                       'OK    A3 ' 'OK    A4 ' 'OK    A5 ' 'OK    A6 ' 'OK    A7 ' 'OK    A8 ' \
+                       'OK    A9 ' 'OK    A10 ' 'OK    A11 ' 'OK    B1 ' 'OK    B2 ' 'OK    B3 ' \
+                       'OK    B4 ' 'OK    B5 ' 'OK    B6 ' 'OK    B7 ' 'OK    B8 ' 'OK    B9 ' \
+                       'OK    B10 ' 'OK    B11 ' 'OK    B12 ' 'OK    B13 ' 'OK    B14 ' 'OK    B15 ' \
+                       'OK    B16 ' 'OK    C1 ' 'OK    C2 ' 'OK    C3 ' 'OK    C4 ' 'OK    C5 ' \
+                       'OK    C6 ' 'OK    C7 ' 'OK    C8 ' 'OK    C9 ' 'OK    C10 ' 'OK    C11 ' \
+                       'OK    C12 ' 'OK    C13 ' 'OK    C14 ' 'OK    C15 ' 'OK    D1 ' 'OK    D2 ' \
+                       'OK    D3 ' 'OK    D4 ' 'OK    D5 ' 'OK    D6 ' 'OK    D7 ' 'OK    D8 ' \
+                       'OK    D9 ' 'OK    D10 ' 'OK    D11 ' 'OK    E0 ' 'OK    E1 ' 'OK    E2 ' \
+                       'OK    E3 ' 'OK    E4 ' 'OK    F1 ' 'OK    F2 ' 'OK    F3 ' 'OK    F4 ' \
+                       'OK    F5 ' 'OK    F6 ' 'OK    F7 ' 'OK    F8 ' 'OK    F9 ' 'OK    F10 ' \
+                       'OK    F11 ' 'OK    F12 ' 'OK    F13 ' 'OK    G1 ' 'OK    G2 ' 'OK    G3 ' \
+                       'OK    G4 ' 'OK    G5 ' 'OK    H1 ' 'OK    I0 ' 'OK    I1 ' 'OK    I2 ' \
+                       'OK    I3 ' 'OK    I4 ' 'OK    I5 ' 'OK    I6 ' 'OK    I7 ' 'OK    I8 ' \
+                       'OK    I9 ' 'OK    I10 ' 'OK    I11 ' 'OK    I12 ' 'OK    I13 ' 'OK    I14 ' \
+                       'OK    I15 ' 'OK    I16 ' 'OK    I17 ' 'OK    I18 ' 'OK    I19 ' 'OK    I20 ' \
+                       'OK    I21 ' 'OK    I22 ' 'OK    I23 ' 'OK    I24 ' 'OK    J1 ' 'OK    J2 ' \
+                       'OK    J3 ' 'OK    J4 ' 'OK    J5 ' 'OK    J6 ' 'OK    J7 ' 'OK    J8 ' \
+                       'OK    J9 ' 'OK    J10 ' 'OK    J11 ' 'OK    J12 ' 'OK    J13 ' 'OK    J14 ' \
+                       'OK    K1 ' 'OK    K2 ' 'OK    K3 ' 'OK    K4 ' 'OK    K5 ' 'OK    K6 ' \
+                       'OK    K7 ' 'OK    K8 ' 'OK    K9 ' 'OK    K10 ' 'OK    K11 ' 'OK    K12 ' \
+                       'OK    K13 ' 'OK    K14 ' 'OK    K15 ' 'OK    L1 ' 'OK    L2 ' 'OK    L3 ' \
+                       'OK    L4 ' 'OK    L5 ' 'OK    L6 ' 'OK    L6b ' 'OK    L6c ' 'OK    L6d ' \
+                       'OK    L7 ' 'OK    L8 ' 'OK    L9 ' 'OK    L9b ' 'OK    L10 ' 'OK    L11 ' \
+                       'OK    L12 ' 'OK    L13 ' 'OK    L14 ' 'OK    L15 ' 'OK    L16 ' 'OK    L17 ' \
+                       'OK    L18 ' 'OK    L19 ' 'OK    L20 ' 'OK    L21 ' 'OK    L22 ' 'OK    L23 ' \
+                       'OK    L24 ' 'OK    L25 ' 'OK    L26 ' 'OK    L27 ' 'OK    L28b ' 'OK    L28 ' \
+                       'OK    L29 ' 'OK    L30 ' 'OK    M0 ' 'OK    M1 ' 'OK    M2 ' 'OK    M3 ' \
+                       'OK    M4 ' 'OK    M5 ' 'OK    M6 ' 'OK    M7 ' 'OK    N1 ' 'OK    N2 ' \
+                       'OK    N3 ' 'OK    N4 ' 'OK    N5 ' 'OK    N6 ' 'OK    N7 ' 'OK    N8 ' \
+                       'OK    N9 ' 'OK    N10 ' 'OK    N11 ' 'OK    N12 ' 'OK    O0 ' 'OK    O1 ' \
+                       'OK    O2 ' 'OK    O3 ' 'OK    O4 ' 'OK    O5 ' 'OK    O6 ' 'OK    O6b ' \
+                       'OK    O6c ' 'OK    O7 ' 'OK    O8 ' 'OK    O9 ' 'OK    O10 ' 'OK    O11 ' \
+                       'OK    O12 ' 'OK    O13 ' 'OK    O14 ' 'OK    O15 ' 'OK    O16 ' 'OK    O17 ' \
+                       'OK    O18 ' 'OK    O19 ' 'OK    O20 ' 'OK    O21 ' 'OK    O22 ' 'OK    O23 ' \
+                       'OK    Y conclusiva' 'OK    Z conclusiva' 'TEST 227 SQL: TODO OK'; do
+            grep -qF "$marca" "$salida" || faltan="$faltan [$marca]"
+          done
+          if [ "$rc" != 0 ] || grep -q '^FALLO' "$salida" || grep -q 'FALLO ' "$salida" \
+             || ! grep -q 'TEST 227 FASES: TODO OK' "$salida" || [ -n "$faltan" ]; then
+            echo "::error::Fases 227 en rojo (rc=$rc; faltan:${faltan:- ninguna})"
+            exit 1
+          fi
+
+      - name: '227 · carreras de dos sesiones reales (aceptacion, fencing de la cabecera, finalizacion derivada)'
+        timeout-minutes: 15
+        run: |
+          set +e
+          set -uo pipefail
+          salida="$RUNNER_TEMP/carrera227.out"
+          bash supabase/scripts/test_227_carrera.sh t227_carrera_ci "$CT" "$PLANTILLA" 2>&1 | tee "$salida"
+          rc="${PIPESTATUS[0]}"
+          # Ademas del codigo de salida: ningun FALLO y una linea OK de CADA carrera (ninguna se salta en silencio).
+          faltan=""
+          for marca in 'OK    R1 ' 'OK    R2a ' 'OK    R2b ' 'OK    R3 ' 'OK    R4 ' 'OK    R5 ' 'OK    R6 ' 'OK    R7 ' 'OK    R8 ' 'OK    R8b ' 'TEST 227 CARRERAS: TODO OK'; do
+            grep -qF "$marca" "$salida" || faltan="$faltan [$marca]"
+          done
+          if [ "$rc" != 0 ] || grep -q '^FALLO' "$salida" || [ -n "$faltan" ]; then
+            echo "::error::Carreras 227 en rojo (rc=$rc; faltan:${faltan:- ninguna})"
+            exit 1
+          fi
+
+      - name: Diagnostico del contenedor (solo si falla)
+        if: failure()
+        working-directory: .
+        run: docker logs --tail 200 "$CT" 2>&1 || true
+
+      - name: Limpieza de contenedores y red (siempre, tambien si falla o se cancela)
+        if: always()
+        working-directory: .
+        run: |
+          docker rm -f "$CT" || true
+          docker network rm "$RED" || true
+
+  pruebas-ts-227:
+    name: '227 · pruebas TS (vectores FX1-FX3, generador, computo, reserva de punta a punta, cupos, regresion)'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    env:
+      # Misma version que el entorno local de las verificaciones (Node 24.14.0, pnpm 10.33.0 del
+      # campo packageManager via corepack). Imagen oficial con version exacta, sin acciones extra.
+      IMAGEN_NODE: node:24.14.0-bookworm-slim
+      CTN: node227_ci
+    steps:
+      - name: Codigo (solo lectura, sin credenciales persistidas)
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+
+      - name: Descargar la imagen de Node (falla temprano si no hay acceso)
+        timeout-minutes: 5
+        run: docker pull "$IMAGEN_NODE"
+
+      - name: 'Pruebas TS de la 227 (sin base de datos)'
+        timeout-minutes: 25
+        run: |
+          set +e
+          set -uo pipefail
+          salida="$RUNNER_TEMP/ts227.out"
+          docker run --rm --name "$CTN" -e CI=1 -e COREPACK_ENABLE_DOWNLOAD_PROMPT=0 \
+            -v "$GITHUB_WORKSPACE:/repo" -w /repo/dspacios-travel "$IMAGEN_NODE" sh -ec '
+            corepack enable
+            pnpm install --frozen-lockfile
+            node --test --test-reporter=spec --experimental-strip-types --experimental-test-module-mocks \
+              --experimental-loader ./pruebas/support/aliasLoader.mjs \
+              pruebas/salidaVinculada63.test.ts pruebas/salidaVinculada63Generar.test.ts pruebas/salidaVinculada63Computo.test.ts \
+              pruebas/salidaVinculada63Acciones.test.ts pruebas/salidaVinculada63Wiring.test.ts pruebas/salidaVinculada63Aceptacion.test.ts \
+              pruebas/financieroContratoWiring.test.ts pruebas/numeracionOrdenWiring.test.ts pruebas/proveedoresColumnasLegacy.wiring.test.ts \
+              pruebas/tarifaInfante226.test.ts pruebas/tarifaInfante226Cableado.test.ts pruebas/tarifaInfante226Checkout.test.ts \
+              pruebas/salidaDinamicaFlujos62.test.ts pruebas/salidaDinamicaVigencia62.test.ts \
+              pruebas/destinosAereos67.test.ts pruebas/destinosAereosFlujos67.test.ts \
+              pruebas/empaquetados.test.ts pruebas/netoEmpaquetados224.test.ts \
+              pruebas/serviciosPaqueteWiring.test.ts pruebas/computoIncluidosLecturaWiring.test.ts pruebas/cotizacionesTenant.wiring.test.ts
+          ' 2>&1 | tee "$salida"
+          rc="${PIPESTATUS[0]}"
+          # Cero fallos (ni rojos ni pendientes) y pruebas realmente corridas.
+          if [ "$rc" != 0 ] || [ "$(grep -cE '^ℹ fail 0$' "$salida")" != 1 ] || grep -qE '^✖|^ *✖ ' "$salida" \
+             || [ "$(grep -cE '^ℹ todo 0$' "$salida")" != 1 ] \
+             || [ "$(grep -cE '^ℹ tests [1-9][0-9]*$' "$salida")" != 1 ]; then
+            echo "::error::Pruebas TS de la 227 en rojo (rc=$rc)"
+            exit 1
+          fi
+
+      - name: 'Pruebas React / reserva de punta a punta de la 227 (BD en memoria, sin base de datos)'
+        timeout-minutes: 20
+        run: |
+          set +e
+          set -uo pipefail
+          salida="$RUNNER_TEMP/react227.out"
+          docker run --rm --name "$CTN" -e CI=1 -e COREPACK_ENABLE_DOWNLOAD_PROMPT=0 \
+            -v "$GITHUB_WORKSPACE:/repo" -w /repo/dspacios-travel "$IMAGEN_NODE" sh -ec '
+            corepack enable
+            pnpm install --frozen-lockfile
+            node --test --test-reporter=spec --experimental-test-module-mocks \
+              --import ./pruebas/support/registrarProgramasRuta.mjs \
+              --experimental-loader ./pruebas/support/reactLoader.mjs \
+              pruebas/salidaVinculada63Reserva.react.ts pruebas/salidaVinculada63Contabilidad.react.ts pruebas/salidaVinculada63Editor.react.ts pruebas/destinosAereosEditor67.react.ts
+          ' 2>&1 | tee "$salida"
+          rc="${PIPESTATUS[0]}"
+          if [ "$rc" != 0 ] || [ "$(grep -cE '^ℹ fail 0$' "$salida")" != 1 ] || grep -qE '^✖|^ *✖ ' "$salida" \
+             || [ "$(grep -cE '^ℹ todo 0$' "$salida")" != 1 ] \
+             || [ "$(grep -cE '^ℹ tests [1-9][0-9]*$' "$salida")" != 1 ]; then
+            echo "::error::Pruebas React de la 227 en rojo (rc=$rc)"
+            exit 1
+          fi
+
+      - name: Limpieza del contenedor de Node (siempre)
+        if: always()
+        working-directory: .
+        run: docker rm -f "$CTN" || true

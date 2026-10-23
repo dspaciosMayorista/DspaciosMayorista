@@ -43,6 +43,10 @@ const ACCIONES_SALIDAS = datos(`
   export async function crearSalidaDinamica() { return { ok: true }; }
   export async function actualizarSalidaDinamica() { return { ok: true }; }
   export async function eliminarSalidaDinamica() { return { ok: true }; }
+  // #63 (227): el editor de salidas importa también las acciones de las salidas vinculadas. Solo la FORMA del doble.
+  export async function listarEmpaquetadosParaSalidas63() { return { ok: true, candidatos: [], pendientes: 0 }; }
+  export async function vincularSalidasEmpaquetados63() { return { ok: true }; }
+  export async function actualizarSalidaDesdeFuente63() { return { ok: true }; }
 `);
 const ACCIONES_EMPAQUETADOS = datos(`
   export async function setEmpaquetado(...a) { ${G}.llamadas.push(['setEmpaquetado', a]); return ${G}.respVinculo(a); }

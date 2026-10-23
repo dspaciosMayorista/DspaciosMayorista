@@ -28,10 +28,12 @@ export type HotelCartItemPersona = {
   // ítems nuevos como en los ya guardados en localStorage antes de esta fase
   // (que tampoco traen la clave, así que siguen cayendo en este branch).
   modeloTarifario?: undefined;
-  modulo: "bloqueo" | "porcion_terrestre";
+  modulo: "bloqueo" | "porcion_terrestre" | "dinamico";
   paqueteId: number;
   hotelId: number;
   bloqueoId: number | null;
+  // Solo `dinamico`: la salida elegida (sus fechas son fijas). El servidor re-liquida con ESA salida.
+  salidaId?: number | null;
   hotelNombre: string;
   destino: string | null;
   fotoUrl: string | null;

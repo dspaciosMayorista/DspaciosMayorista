@@ -49,6 +49,12 @@
 
 import type { OrigenVuelo } from "@/lib/reservar/origen";
 import { empaquetadoVigente, hoyBogota } from "@/lib/reservar/origen";
+import {
+  evaluarFuenteVinculada63,
+  fuenteCoincideConSalida63,
+  mensajeFuenteCambio63,
+  type FuenteEmpaquetado63,
+} from "@/lib/reservar/ofertaDinamica63";
 
 export type ProveedorVuelo = { nombre: string | null; aplica_retencion: boolean | null; pct_retencion: number | null } | null;
 
@@ -148,14 +154,60 @@ export async function datosVueloEmpaquetado(sb: ClienteSb, empaquetadoId: number
   };
 }
 
+/**
+ * #63 — datos de vuelo de una salida VINCULADA a un Empaquetado SIN record. La fuente se lee
+ * VIVA y se revalida (activa, sin record, ventana de compra, COP, y que la copia guardada en
+ * la salida siga coincidiendo): una fuente cambiada se rechaza, nunca se cobra con una copia
+ * vieja. El record queda NULL a propósito (no existe). Costo/CxP: N = `tarifa_proveedor`
+ * (nunca la reventa R); F = `fee_infante` (precio = costo). Un Empaquetado no tiene sillas ni
+ * cupo: el llamador jamás consulta `cupos_por_bloqueo` para este origen.
+ */
+async function datosVueloSalidaVinculada(
+  sb: ClienteSb,
+  salida: { id: number; empaquetado_id: number } & Record<string, unknown>
+): Promise<ResultadoDatosVuelo> {
+  const { data: e, error } = await sb
+    .from("empaquetados")
+    .select(
+      "aerolinea, record, ruta, fecha_ida, fecha_regreso, vuelo_ida, vuelo_regreso, hora_salida_ida, hora_llegada_ida, hora_salida_reg, hora_llegada_reg, tarifa_proveedor, tarifa_para_empaquetar, fee_infante, activo, compra_inicio, compra_fin, moneda, proveedores(nombre, aplica_retencion, pct_retencion)"
+    )
+    .eq("id", salida.empaquetado_id)
+    .maybeSingle();
+  if (error) return { ok: false, error: "No se pudo validar el vuelo de Empaquetados vinculado a la salida. Intenta nuevamente." };
+  const ev = evaluarFuenteVinculada63(e as FuenteEmpaquetado63 | null, hoyBogota(new Date()));
+  if (!ev.ok) return { ok: false, error: ev.error };
+  const coincide = fuenteCoincideConSalida63(salida as never, e as FuenteEmpaquetado63);
+  if (!coincide.ok) return { ok: false, error: mensajeFuenteCambio63(coincide.campos) };
+  return {
+    ok: true,
+    data: {
+      aerolinea: e.aerolinea, record: null, ruta: e.ruta,
+      fecha_ida: e.fecha_ida, fecha_regreso: e.fecha_regreso,
+      vuelo_ida: e.vuelo_ida, vuelo_regreso: e.vuelo_regreso,
+      hora_salida_ida: e.hora_salida_ida, hora_llegada_ida: e.hora_llegada_ida,
+      hora_salida_reg: e.hora_salida_reg, hora_llegada_reg: e.hora_llegada_reg,
+      costo_neto: Number(e.tarifa_proveedor) || 0,
+      tarifa_para_empaquetar: Number(e.tarifa_para_empaquetar) || 0,
+      fee_infante: Number(e.fee_infante) || 0,
+      proveedor: e.proveedores as unknown as ProveedorVuelo,
+    },
+  };
+}
+
+/**
+ * Una salida MANUAL devuelve tiquete y fee tal como están guardados (en su moneda acreditada); en el modo COP con TRM
+ * (#63) `reservarDesdeTarifarioInterno` los reemplaza por los ya convertidos de `resolverOfertaSalida63`. Una salida
+ * VINCULADA a un Empaquetado sin record se resuelve contra su fuente viva.
+ */
 export async function datosVueloSalida(sb: ClienteSb, salidaId: number): Promise<ResultadoDatosVuelo> {
   const { data: s, error } = await sb
     .from("salidas_dinamicas")
-    .select("aerolinea, ruta, fecha_ida, fecha_regreso, hora_salida_ida, hora_llegada_ida, hora_salida_reg, hora_llegada_reg, valor_tiquete, fee_infante")
+    .select("id, empaquetado_id, aerolinea, ruta, fecha_ida, fecha_regreso, hora_salida_ida, hora_llegada_ida, hora_salida_reg, hora_llegada_reg, valor_tiquete, fee_infante")
     .eq("id", salidaId)
     .maybeSingle();
   if (error) return { ok: false, error: `No se pudo leer la salida: ${error.message}` };
   if (!s) return { ok: false, error: "La salida seleccionada ya no existe." };
+  if (s.empaquetado_id != null) return datosVueloSalidaVinculada(sb, s);
   return {
     ok: true,
     data: {

@@ -315,6 +315,8 @@ export function tablasBase(o: {
     empaquetados_basica: empaquetadosFixture(),
     armado_vuelos: (o.vuelosLigados ?? []).map((b) => ({ paquete_id: PAQUETE_ID, bloqueo_id: b, aplica_mk: true, ta: 0 })),
     armado_empaquetados: (o.empaquetadosLigados ?? []).map((e) => ({ paquete_id: PAQUETE_ID, empaquetado_id: e, aplica_mk: true, ta: 0 })),
+    // #63 (227): las salidas de Dinámico vinculadas a Empaquetados cuentan como un vínculo más; este caso (Bloqueo) no tiene ninguna.
+    salidas_dinamicas: [],
   };
 }
 

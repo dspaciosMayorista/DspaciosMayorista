@@ -214,6 +214,8 @@ describe("inventario de lectores de la tabla base `empaquetados` en la aplicaci√
     ["lib/paquetes/destinosAereos67.ts", { cliente: "sesion", roles: "armado interno o service-role" }],
     ["lib/reservar/computoReservaBernalo.ts", { cliente: "servicio", roles: "service-role" }],
     ["lib/reservar/empaquetadoOrigen.ts", { cliente: "servicio", roles: "service-role" }],
+    // #63: valida la fuente VIVA de una salida vinculada (cliente de servicio; el costo N no sale del servidor).
+    ["lib/reservar/prepararOferta63.ts", { cliente: "servicio", roles: "service-role" }],
     ["lib/tarifario/datos.ts", { cliente: "servicio", roles: "service-role" }],
     ["lib/tarifario/datosBernalo.ts", { cliente: "servicio", roles: "service-role" }],
     ["lib/tarifario/filtrosPostCarga.ts", { cliente: "servicio", roles: "service-role" }],

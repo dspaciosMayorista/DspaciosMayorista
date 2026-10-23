@@ -103,6 +103,7 @@ export default function CheckoutPage() {
             // `itemId`: solo para que sus servicios vinculados lo señalen.
             itemId: it.id,
             modulo: it.modulo, paqueteId: it.paqueteId, hotelId: it.hotelId, bloqueoId: it.bloqueoId,
+            ...(it.modulo === "dinamico" ? { salidaId: it.salidaId ?? null } : {}),
             hotelNombre: it.hotelNombre, destino: it.destino, categoria: it.categoria, regimen: it.regimen,
             fechaIda: it.fechaIda, fechaRegreso: it.fechaRegreso, noches: it.noches,
             habitaciones: it.habitaciones, ninos: it.ninos, ninos2: it.ninos2, infantes: it.infantes, pax: it.pax, precio: it.precio,
