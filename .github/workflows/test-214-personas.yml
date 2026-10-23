@@ -7,19 +7,8 @@
 name: test-214-personas
 
 on:
-  pull_request:
-    branches: [main]
-    # Solo cuando cambia algo que estas pruebas cubren (ahorra minutos).
-    paths:
-      - '.github/workflows/test-214-personas.yml'
-      - 'dspacios-travel/supabase/migrations/20260601000214_personas_identidad.sql'
-      - 'dspacios-travel/supabase/scripts/preflight_214_personas_identidad.sql'
-      - 'dspacios-travel/supabase/scripts/postcheck_214_personas_identidad.sql'
-      - 'dspacios-travel/supabase/scripts/rollback_214_personas_identidad.sql'
-      - 'dspacios-travel/supabase/scripts/test_214_personas_identidad.sql'
-      - 'dspacios-travel/supabase/scripts/test_214_personas_carreras.sh'
-      - 'dspacios-travel/supabase/scripts/preparar_esquema_local.sh'
-      - 'dspacios-travel/pruebas/fixtures/personasIdentidad.vectores.json'
+  # Batería histórica: se lanza a mano (Actions → este workflow → Run workflow) cuando el cambio toca lo que
+  # cubre. Ya no corre en cada pull_request; ver docs/tecnico/ci-baterias-manuales.md.
   workflow_dispatch:
 
 permissions:

@@ -10,29 +10,8 @@
 name: test-personas-cotizaciones-42
 
 on:
-  pull_request:
-    branches: [main]
-    paths:
-      - '.github/workflows/test-personas-cotizaciones-42.yml'
-      - 'dspacios-travel/supabase/migrations/20260601000219_personas_cotizaciones.sql'
-      - 'dspacios-travel/supabase/scripts/*_219_*'
-      # #42 depende de la 214 y de las fixtures/batería de #39: un cambio allí también corre esto.
-      - 'dspacios-travel/supabase/migrations/20260601000214_personas_identidad.sql'
-      - 'dspacios-travel/supabase/scripts/*_214_*'
-      - 'dspacios-travel/supabase/scripts/test_216_fixtures.sql'
-      - 'dspacios-travel/supabase/scripts/test_216_edicion39.sql'
-      - 'dspacios-travel/supabase/scripts/preparar_esquema_local.sh'
-      - 'dspacios-travel/pruebas/fixtures/personasIdentidad.vectores.json'
-      - 'dspacios-travel/pruebas/*PersonasCotizacion42*'
-      - 'dspacios-travel/pruebas/personasIdentidad.test.ts'
-      - 'dspacios-travel/pruebas/personasConsulta.wiring.test.ts'
-      - 'dspacios-travel/lib/personas/**'
-      - 'dspacios-travel/lib/reservar/computo.ts'
-      - 'dspacios-travel/types/database.ts'
-      - 'dspacios-travel/app/(dashboard)/dashboard/reservar/actions.ts'
-      - 'dspacios-travel/app/(dashboard)/dashboard/cotizaciones/**'
-      - 'dspacios-travel/app/tarifario/checkout/**'
-      - 'dspacios-travel/app/(crm)/**'
+  # Batería histórica: se lanza a mano (Actions → este workflow → Run workflow) cuando el cambio toca lo que
+  # cubre. Ya no corre en cada pull_request; ver docs/tecnico/ci-baterias-manuales.md.
   workflow_dispatch:
 
 permissions:
