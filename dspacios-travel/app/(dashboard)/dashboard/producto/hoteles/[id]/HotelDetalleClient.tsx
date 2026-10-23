@@ -1,8 +1,9 @@
 "use client";
 
 import { DateInput } from "@/components/ui/DateInput";
-import { useState, useTransition } from "react";
+import { useRef, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
+import { Pencil, Trash2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { formatCOP, formatFechaLarga } from "@/lib/utils";
@@ -413,6 +414,9 @@ function TarifasBox({ hotelId, categorias, regimenes, temporadas, tarifas, venci
   // la mayoría de tarifas no llevan niño) -- se expanden al pedirlo, o solos si la
   // tarifa que se está editando ya trae algo cargado.
   const [mostrarNinos, setMostrarNinos] = useState(false);
+  // "Editar" en una fila carga el formulario de arriba: en celular (y en listas
+  // largas) ese formulario queda fuera de la pantalla, así que se lleva a la vista.
+  const formRef = useRef<HTMLDivElement>(null);
   const nombresTemporada = Array.from(new Set(temporadas.map((t) => t.nombre)));
   const num = (s: string) => (s === "" ? null : Number(s));
   const str = (n: number | null) => (n == null ? "" : String(n));
@@ -450,6 +454,8 @@ function TarifasBox({ hotelId, categorias, regimenes, temporadas, tarifas, venci
     });
     setNotaInfante(t.nota_infante ?? "");
     setMostrarNinos(t.neto_nino != null || t.neto_nino2 != null || t.neto_infante != null || !!t.nota_infante);
+    formRef.current?.scrollIntoView?.({ behavior: "smooth", block: "start" });
+    formRef.current?.querySelector("select")?.focus({ preventScroll: true });
   }
 
   function add() {
@@ -482,71 +488,100 @@ function TarifasBox({ hotelId, categorias, regimenes, temporadas, tarifas, venci
   const historicas = tarifas.filter((t) => esHistorica(t));
 
   const celda = (base: number | null) => (base ? formatCOP(base) : "—");
+  const importe = "whitespace-nowrap px-2 py-2 text-right tabular-nums";
 
+  // Categoría, régimen y temporada van juntos en la primera columna: con las 7
+  // acomodaciones como columnas, tres columnas de texto no cabían en el ancho
+  // del detalle (~930 px) y empujaban Infante y las acciones fuera de la vista.
+  // Nada se oculta ni se trunca: textos largos y notas se parten en líneas.
   const filaTarifa = (t: Tarifa) => (
-    <tr key={t.id} className="border-t border-gray-50">
-      <td className="px-3 py-2 text-gray-700" data-label="Categoría">{t.tipo_habitacion ?? "—"}</td>
-      <td className="px-3 py-2 text-gray-500" data-label="Régimen">{t.alimentacion ?? "—"}</td>
-      <td className="px-3 py-2 text-gray-500" data-label="Temporada">
-        <div className="flex items-center gap-1.5">
-          <span>{t.temporada ?? "—"}</span>
-          {(() => {
-            const { etiqueta, detalle } = etiquetaFilaTarifa(t, temporadas);
-            return etiqueta === "PROMO" ? (
-              <span className="rounded-full bg-[var(--brand-accent)]/15 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-[var(--brand-accent)]" title={detalle}>
-                Promo
-              </span>
-            ) : (
-              <span className="rounded-full bg-gray-100 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-gray-500" title={detalle}>Base</span>
-            );
-          })()}
-          {t.temporada_base && <span className="text-[10px] text-gray-400">desde {t.temporada_base}</span>}
-        </div>
-        {/* Condición de la TARIFA (ej. "No reembolsable.") — distinta de la
-            condición de PAGO de la temporada (cuánto/cuándo se paga). */}
-        {t.notas?.trim() && (
-          <div className="mt-0.5 max-w-[220px] truncate text-[10px] text-amber-600" title={t.notas}>
-            {t.notas}
+    <tr key={t.id} className="border-t border-gray-50 align-top">
+      <td className="px-2 py-2" data-label="Tarifa">
+        {/* Un solo bloque: apilada, la celda es flex (etiqueta | contenido) y
+            cada línea suelta se volvería una columna angosta. */}
+        <div className="min-w-0 [overflow-wrap:anywhere]">
+          <div className="font-medium text-gray-800">{t.tipo_habitacion ?? "—"}</div>
+          <div className="text-xs text-gray-500">{t.alimentacion ?? "—"}</div>
+          <div className="mt-0.5 text-xs text-gray-500">
+            {t.temporada ?? "—"}{" "}
+            {(() => {
+              const { etiqueta, detalle } = etiquetaFilaTarifa(t, temporadas);
+              return etiqueta === "PROMO" ? (
+                <span className="inline-block rounded-full bg-[var(--brand-accent)]/15 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-[var(--brand-accent)]" title={detalle}>
+                  Promo
+                </span>
+              ) : (
+                <span className="inline-block rounded-full bg-gray-100 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-gray-500" title={detalle}>Base</span>
+              );
+            })()}
+            {t.temporada_base && <span className="block text-[10px] text-gray-400">desde {t.temporada_base}</span>}
           </div>
-        )}
+          {/* Condición de la TARIFA (ej. "No reembolsable.") — distinta de la
+              condición de PAGO de la temporada (cuánto/cuándo se paga). */}
+          {t.notas?.trim() && (
+            <div className="mt-0.5 text-[10px] text-amber-600">{t.notas}</div>
+          )}
+          {/* La nota de infante antes solo vivía en un `title` (invisible al tacto). */}
+          {!adultsOnly && t.nota_infante && (
+            <div className="mt-0.5 text-[10px] text-amber-600">* Infante: {t.nota_infante}</div>
+          )}
+        </div>
       </td>
-      <td className="px-3 py-2 text-right tabular-nums" data-label="Sencilla">{celda(t.neto_sencilla)}</td>
-      <td className="px-3 py-2 text-right tabular-nums" data-label="Doble">{celda(t.neto_doble)}</td>
-      <td className="px-3 py-2 text-right tabular-nums" data-label="Triple">{celda(t.neto_triple)}</td>
-      <td className="px-3 py-2 text-right tabular-nums" data-label="Múltiple">{celda(t.neto_multiple)}</td>
+      <td className={importe} data-label="Sencilla">{celda(t.neto_sencilla)}</td>
+      <td className={importe} data-label="Doble">{celda(t.neto_doble)}</td>
+      <td className={importe} data-label="Triple">{celda(t.neto_triple)}</td>
+      <td className={importe} data-label="Múltiple">{celda(t.neto_multiple)}</td>
       {!adultsOnly && (
         <>
-          <td className="px-3 py-2 text-right tabular-nums" data-label="Niño 1">{celda(t.neto_nino)}</td>
-          <td className="px-3 py-2 text-right tabular-nums" data-label="Niño 2">{celda(t.neto_nino2)}</td>
-          <td className="px-3 py-2 text-right tabular-nums" title={t.nota_infante ?? undefined} data-label="Infante">
-            {t.neto_infante != null ? formatCOP(t.neto_infante) : "—"}
-            {t.nota_infante && <span className="ml-1 text-amber-500" title={t.nota_infante}>*</span>}
+          <td className={importe} data-label="Niño 1">{celda(t.neto_nino)}</td>
+          <td className={importe} data-label="Niño 2">{celda(t.neto_nino2)}</td>
+          <td className={importe} title={t.nota_infante ?? undefined} data-label="Infante">
+            <span>
+              {t.neto_infante != null ? formatCOP(t.neto_infante) : "—"}
+              {t.nota_infante && <span className="ml-1 text-amber-500" aria-hidden>*</span>}
+            </span>
           </td>
         </>
       )}
-      <td className="px-3 py-2 text-right" data-label="">
-        <div className="flex items-center justify-end gap-3">
-          <button type="button" onClick={() => startEdit(t)} className="text-xs text-[var(--brand-accent)] hover:underline">Editar</button>
-          <DelBtn onDel={() => eliminarTarifa(t.id, hotelId)} />
+      <td className="px-1 py-1 text-right" data-label="Acciones">
+        <div className="flex items-center justify-end gap-1">
+          <button
+            type="button"
+            onClick={() => startEdit(t)}
+            aria-label={`Editar tarifa ${t.tipo_habitacion ?? ""} · ${t.alimentacion ?? ""} · ${t.temporada ?? ""}`}
+            title="Editar"
+            className="grid h-10 w-10 place-items-center rounded-lg text-[var(--brand-accent)] hover:bg-gray-100"
+          >
+            <Pencil size={16} aria-hidden />
+          </button>
+          <DelBtn
+            onDel={() => eliminarTarifa(t.id, hotelId)}
+            icono
+            etiqueta={`Eliminar tarifa ${t.tipo_habitacion ?? ""} · ${t.alimentacion ?? ""} · ${t.temporada ?? ""}`}
+          />
         </div>
       </td>
     </tr>
   );
 
+  // Ancho mínimo de la tabla (mismo número en `minWidth` y `min-w-[…]`), medido
+  // con importes de 8 dígitos (788 px con niños, 558 px Adults Only) más margen.
+  // Por debajo de él `ResponsiveTableShell` la apila en tarjetas en vez de
+  // dejar columnas detrás de un scroll horizontal.
   const tablaTarifas = (rows: Tarifa[]) => (
-    <ResponsiveTableShell minWidth={760} className="overflow-x-auto rounded-xl border border-gray-200 bg-white">
-      <table className="w-full min-w-[760px] text-sm">
+    <ResponsiveTableShell minWidth={adultsOnly ? 600 : 820} className="overflow-x-auto rounded-xl border border-gray-200 bg-white">
+      <table className={`w-full text-sm ${adultsOnly ? "min-w-[600px]" : "min-w-[820px]"}`}>
         <thead><tr className="bg-gray-50 text-left text-xs uppercase text-gray-400">
-          <th className="px-3 py-2">Categoría</th><th className="px-3 py-2">Régimen</th><th className="px-3 py-2">Temporada</th>
-          <th className="px-3 py-2 text-right">Sencilla</th><th className="px-3 py-2 text-right">Doble</th>
-          <th className="px-3 py-2 text-right">Triple</th><th className="px-3 py-2 text-right">Múltiple</th>
+          <th className="px-2 py-2">Categoría · Régimen · Temporada</th>
+          <th className="whitespace-nowrap px-2 py-2 text-right">Sencilla</th><th className="whitespace-nowrap px-2 py-2 text-right">Doble</th>
+          <th className="whitespace-nowrap px-2 py-2 text-right">Triple</th><th className="whitespace-nowrap px-2 py-2 text-right">Múltiple</th>
           {!adultsOnly && (
             <>
-              <th className="px-3 py-2 text-right">Niño 1</th><th className="px-3 py-2 text-right">Niño 2</th>
-              <th className="px-3 py-2 text-right">Infante</th>
+              <th className="whitespace-nowrap px-2 py-2 text-right">Niño 1</th><th className="whitespace-nowrap px-2 py-2 text-right">Niño 2</th>
+              <th className="whitespace-nowrap px-2 py-2 text-right">Infante</th>
             </>
           )}
-          <th className="px-3 py-2"></th>
+          <th className="px-2 py-2"><span className="sr-only">Acciones</span></th>
         </tr></thead>
         <tbody>{rows.map((t) => filaTarifa(t))}</tbody>
       </table>
@@ -561,7 +596,7 @@ function TarifasBox({ hotelId, categorias, regimenes, temporadas, tarifas, venci
           Para cargar tarifas necesitas: al menos una categoría y un régimen aplicados al hotel, y una temporada creada arriba.
         </p>
       )}
-      <div className="rounded-xl border border-gray-200 bg-white p-4">
+      <div ref={formRef} className="scroll-mt-4 rounded-xl border border-gray-200 bg-white p-4">
         <div className="grid grid-cols-1 gap-3 md:grid-cols-3">
           <div>
             <label className={lbl}>Categoría de habitación</label>
@@ -651,11 +686,21 @@ function TarifasBox({ hotelId, categorias, regimenes, temporadas, tarifas, venci
   );
 }
 
-function DelBtn({ onDel }: { onDel: () => void | Promise<unknown> }) {
+// `icono`: variante compacta con objetivo táctil de 40px (tabla de tarifas);
+// sin él, el enlace de texto de siempre (temporadas).
+function DelBtn({ onDel, icono = false, etiqueta }: { onDel: () => void | Promise<unknown>; icono?: boolean; etiqueta?: string }) {
   const [pending, start] = useTransition();
+  const onClick = () => { if (confirm("¿Eliminar?")) start(() => { void onDel(); }); };
+  if (icono) {
+    return (
+      <button type="button" disabled={pending} onClick={onClick} aria-label={etiqueta ?? "Eliminar"} title="Eliminar"
+        className="grid h-10 w-10 place-items-center rounded-lg text-gray-400 hover:bg-red-50 hover:text-red-500 disabled:opacity-50">
+        <Trash2 size={16} aria-hidden />
+      </button>
+    );
+  }
   return (
-    <button type="button" disabled={pending}
-      onClick={() => { if (confirm("¿Eliminar?")) start(() => { void onDel(); }); }}
+    <button type="button" disabled={pending} onClick={onClick}
       className="text-xs text-gray-400 hover:text-red-500">Eliminar</button>
   );
 }
