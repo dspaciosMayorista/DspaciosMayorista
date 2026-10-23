@@ -1,0 +1,126 @@
+# #56 (SalesBot comercial: Programas, Bloqueos y Porción terrestre) — checks focales.
+# Corre en el runner de GitHub, sin contenedores: las 10 suites focales (9 de SalesBot #56 + calendario),
+# TypeScript, ESLint de las rutas SalesBot y build de producción. Todos son obligatorios: sin
+# continue-on-error.
+# Sin secretos del repositorio, sin Supabase remoto, sin Docker, sin pull_request_target y con permisos
+# de solo lectura. El build usa valores públicos ficticios de Supabase solo para compilar (no se conecta).
+# FUERA de este workflow (no los corre): la suite unitaria completa (`test:unit`), las pruebas React
+# (`test:react`) y cualquier prueba en navegador.
+# No modifica ni reemplaza test-214-personas.yml ni otros workflows.
+name: test-salesbot-56
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - '.github/workflows/test-salesbot-56.yml'
+      - 'dspacios-travel/lib/salesbot/**'
+      - 'dspacios-travel/app/(dashboard)/dashboard/salesbot/**'
+      - 'dspacios-travel/pruebas/salesbot56*'
+      # Superficies que #56 modificó en r1 (detalle de programas, módulo/ruta y menú).
+      - 'dspacios-travel/lib/programas.ts'
+      - 'dspacios-travel/lib/constants.ts'
+      - 'dspacios-travel/app/(dashboard)/layout.tsx'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: test-salesbot-56-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+env:
+  NODE_VERSION: '24.14.0'
+  COREPACK_ENABLE_DOWNLOAD_PROMPT: '0'
+
+jobs:
+  focales:
+    name: '#56 · suites focales, TypeScript y ESLint'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    defaults:
+      run:
+        shell: bash
+        working-directory: dspacios-travel
+    steps:
+      - name: Código (solo lectura, sin credenciales persistidas)
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+
+      - name: Node 24
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+
+      - name: pnpm del packageManager e instalación desde el lockfile
+        timeout-minutes: 8
+        run: |
+          set -euo pipefail
+          corepack enable
+          pnpm --version
+          pnpm install --frozen-lockfile
+
+      - name: Suites focales (SalesBot #56 y calendario)
+        timeout-minutes: 5
+        run: |
+          set -euo pipefail
+          node --test --test-reporter=spec --experimental-strip-types --experimental-test-module-mocks \
+            --experimental-loader ./pruebas/support/aliasLoader.mjs \
+            pruebas/salesbot56Consulta.test.ts \
+            pruebas/salesbot56Detalle.test.ts \
+            pruebas/salesbot56Cableado.test.ts \
+            pruebas/salesbot56Bloqueo.test.ts \
+            pruebas/salesbot56BloqueoParidad.test.ts \
+            pruebas/salesbot56BloqueoLectura.test.ts \
+            pruebas/salesbot56BloqueoCableado.test.ts \
+            pruebas/salesbot56Porcion.test.ts \
+            pruebas/salesbot56PorcionParidad.test.ts \
+            pruebas/calendariosCobertura.test.ts
+
+      - name: TypeScript
+        timeout-minutes: 5
+        run: pnpm exec tsc --noEmit -p .
+
+      - name: ESLint de las rutas SalesBot
+        timeout-minutes: 5
+        run: |
+          set -euo pipefail
+          pnpm exec eslint "app/(dashboard)/dashboard/salesbot/" lib/salesbot/ pruebas/salesbot56*.test.ts
+
+  build:
+    name: '#56 · build de producción'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    defaults:
+      run:
+        shell: bash
+        working-directory: dspacios-travel
+    env:
+      # Valores públicos ficticios solo para compilar; el build no se conecta a Supabase.
+      NEXT_PUBLIC_SUPABASE_URL: 'https://ci-salesbot-56.invalid'
+      NEXT_PUBLIC_SUPABASE_ANON_KEY: 'ci-sin-secreto'
+      NEXT_TELEMETRY_DISABLED: '1'
+    steps:
+      - name: Código (solo lectura, sin credenciales persistidas)
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+
+      - name: Node 24
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+
+      - name: pnpm del packageManager e instalación desde el lockfile
+        timeout-minutes: 8
+        run: |
+          set -euo pipefail
+          corepack enable
+          pnpm --version
+          pnpm install --frozen-lockfile
+
+      - name: Build de producción
+        timeout-minutes: 15
+        run: pnpm run build

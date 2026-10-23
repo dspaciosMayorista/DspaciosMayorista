@@ -36,6 +36,7 @@ const NAV: NavItem[] = [
   { href: "/tarifario", label: "Tarifario ↗", grupo: "Comercial", iconKey: "tarifario", modulo: "tarifario", minoristaOculto: true },
   { href: "/dashboard/reservar", label: "Reservar", iconKey: "reservar", modulo: "reservar", minoristaOculto: true },
   { href: "/dashboard/cotizaciones", label: "Cotizaciones", iconKey: "cotizaciones", modulo: "cotizaciones", minoristaOculto: true },
+  { href: "/dashboard/salesbot", label: "Consulta de programas", iconKey: "tarifario", modulo: "salesbot", minoristaOculto: true },
 
   // Operación
   { href: "/dashboard/ventas", label: "Ventas", separadorAntes: true, grupo: "Operación", iconKey: "ventas", modulo: "ventas" },
