@@ -15,6 +15,8 @@ import {
   type CrmLeadEtapa,
 } from "@/lib/crm/leads";
 import { DateInput } from "@/components/ui/DateInput";
+import { ResponsiveTableShell } from "@/components/ui/ResponsiveTableShell";
+import styles from "@/components/ui/ResponsiveTable.module.css";
 
 export type LeadRow = {
   id: number;
@@ -122,41 +124,58 @@ export function LeadsClient({ leads, responsables, puedeReasignar, usuarioId }: 
         </div>
 
         <div className="mb-3 flex flex-wrap items-center gap-2 rounded-lg border border-white/70 bg-white/75 p-2">
-          <div className="flex min-w-56 flex-1 items-center gap-2 rounded-md bg-white px-3 py-2 text-sm">
+          <div className="flex w-full min-w-0 items-center gap-2 rounded-md bg-white px-3 py-2 text-sm sm:w-auto sm:flex-1">
             <Search size={16} className="text-gray-400" />
             <input className="w-full outline-none" placeholder="Buscar nombre, teléfono, correo, documento, interés..." value={q} onChange={(e) => setQ(e.target.value)} />
           </div>
-          <select className="rounded-md border border-gray-200 bg-white px-3 py-2 text-sm" value={etapa} onChange={(e) => setEtapa(e.target.value as never)}>
+          <select className="w-full rounded-md border border-gray-200 bg-white px-3 py-2 text-sm sm:w-auto" value={etapa} onChange={(e) => setEtapa(e.target.value as never)}>
             <option value="todos">Todas las etapas</option>
             {CRM_LEAD_ETAPAS.map((e) => <option key={e} value={e}>{CRM_LEAD_ETAPA_LABEL[e]}</option>)}
           </select>
         </div>
 
-        <div className="overflow-hidden rounded-lg border border-white/70 bg-white/85">
+        <ResponsiveTableShell minWidth={780} className="overflow-hidden rounded-lg border border-white/70 bg-white/85">
           <table className="w-full min-w-[780px] text-left text-sm">
             <thead className="bg-gray-50 text-xs uppercase text-gray-500">
               <tr>
-                <th className="px-3 py-2">Lead</th>
-                <th className="px-3 py-2">Origen</th>
-                <th className="px-3 py-2">Etapa</th>
-                <th className="px-3 py-2">Responsable</th>
-                <th className="px-3 py-2">Próxima acción</th>
+                <th scope="col" className="px-3 py-2">Lead</th>
+                <th scope="col" className="px-3 py-2">Origen</th>
+                <th scope="col" className="px-3 py-2">Etapa</th>
+                <th scope="col" className="px-3 py-2">Responsable</th>
+                <th scope="col" className="px-3 py-2">Próxima acción</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-gray-100">
               {visibles.map((lead) => {
                 const responsable = lead.responsable_id ? responsablesPorId.get(lead.responsable_id) : null;
                 const vencido = lead.proxima_accion_at && new Date(lead.proxima_accion_at) < hoy && !lead.cerrado_at;
+                const documento = textoDocumentoLead(lead.tipo_doc, lead.documento);
                 return (
                   <tr key={lead.id} className="hover:bg-cyan-50/50">
-                    <td className="px-3 py-3">
-                      <Link href={`/crm/leads/${lead.id}`} className="font-semibold text-gray-900 hover:text-[var(--brand-primary)]">{lead.nombre}</Link>
-                      <div className="mt-1 text-xs text-gray-500">{lead.telefono || lead.email || textoDocumentoLead(lead.tipo_doc, lead.documento) || "Sin identificador"}</div>
+                    <td className={`px-3 py-3 ${styles.fichaBloque}`} data-label="Lead">
+                      <div className="min-w-0 flex-1 text-left">
+                        <Link href={`/crm/leads/${lead.id}`} className="font-semibold break-words text-gray-900 hover:text-[var(--brand-primary)]">{lead.nombre}</Link>
+                        <div className={`${styles.soloEscritorio} mt-1 break-words text-xs text-gray-500`}>{lead.telefono || lead.email || documento || "Sin identificador"}</div>
+                        <div className={`${styles.soloApilado} mt-2 space-y-1 text-xs text-gray-600`}>
+                          {lead.telefono && <p><span className="text-gray-400">Teléfono:</span> <span className="break-words">{lead.telefono}</span></p>}
+                          {lead.email && <p><span className="text-gray-400">Correo:</span> <span className="break-words">{lead.email}</span></p>}
+                          {documento && <p><span className="text-gray-400">Documento:</span> <span className="break-words">{documento}</span></p>}
+                          {lead.interes && <p><span className="text-gray-400">Interés:</span> <span className="break-words">{lead.interes}</span></p>}
+                          {lead.notas && <p><span className="text-gray-400">Notas:</span> <span className="break-words">{lead.notas}</span></p>}
+                        </div>
+                      </div>
                     </td>
-                    <td className="px-3 py-3">{CRM_LEAD_CANAL_LABEL[lead.canal] ?? lead.canal}</td>
-                    <td className="px-3 py-3"><span className="rounded-md bg-gray-100 px-2 py-1 text-xs font-medium text-gray-700">{CRM_LEAD_ETAPA_LABEL[lead.etapa]}</span></td>
-                    <td className="px-3 py-3">{responsable?.nombre ?? responsable?.email ?? "Sin responsable"}</td>
-                    <td className={`px-3 py-3 ${vencido ? "font-semibold text-red-700" : "text-gray-600"}`}>{textoFecha(lead.proxima_accion_at)}</td>
+                    <td className={`px-3 py-3 ${styles.fichaBloque}`} data-label="Origen">
+                      <div className="min-w-0 flex-1 text-left">
+                        <span className="break-words">{CRM_LEAD_CANAL_LABEL[lead.canal] ?? lead.canal}</span>
+                        {lead.origen_detalle && (
+                          <div className={`${styles.soloApilado} mt-1 break-words text-xs text-gray-500`}>Contexto: {lead.origen_detalle}</div>
+                        )}
+                      </div>
+                    </td>
+                    <td className="px-3 py-3" data-label="Etapa"><span className="rounded-md bg-gray-100 px-2 py-1 text-xs font-medium text-gray-700">{CRM_LEAD_ETAPA_LABEL[lead.etapa]}</span></td>
+                    <td className="px-3 py-3 break-words" data-label="Responsable">{responsable?.nombre ?? responsable?.email ?? "Sin responsable"}</td>
+                    <td className={`px-3 py-3 ${vencido ? "font-semibold text-red-700" : "text-gray-600"}`} data-label="Próxima acción">{textoFecha(lead.proxima_accion_at)}</td>
                   </tr>
                 );
               })}
@@ -165,7 +184,7 @@ export function LeadsClient({ leads, responsables, puedeReasignar, usuarioId }: 
               )}
             </tbody>
           </table>
-        </div>
+        </ResponsiveTableShell>
       </section>
 
       <aside className="rounded-lg border border-white/70 bg-white/85 p-4">

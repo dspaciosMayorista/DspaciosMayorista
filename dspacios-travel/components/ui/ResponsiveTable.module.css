@@ -120,6 +120,38 @@
   content: none;
 }
 
+/* Contenido que solo aporta en la ficha apilada (p. ej. todos los datos de
+ * contacto de un lead, que en la tabla de escritorio se resumen en una línea).
+ * En escritorio no debe ocupar espacio ni alterar las columnas. */
+.soloApilado {
+  display: none;
+}
+
+.stacked .soloApilado {
+  display: block;
+}
+
+/* Contenido que ya resume la ficha apilada y solo debe verse en la tabla de
+ * escritorio (p. ej. el identificador corto del lead). */
+.soloEscritorio {
+  display: block;
+}
+
+.stacked .soloEscritorio {
+  display: none;
+}
+
+/* Celdas cuyo contenido ocupa varios renglones (p. ej. la ficha completa de
+ * un lead): la etiqueta se alinea con la primera línea del bloque, no con su
+ * centro vertical. */
+.stacked > table > tbody > tr > td.fichaBloque {
+  align-items: flex-start;
+}
+
+.stacked > table > tbody > tr > td.fichaBloque::before {
+  padding-top: 0.1rem;
+}
+
 .stacked > table > tbody > tr > td[colspan],
 .stacked > table > tfoot > tr > td[colspan] {
   display: block;
