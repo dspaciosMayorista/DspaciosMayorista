@@ -14,6 +14,7 @@ import {
 } from "../actions";
 import { pctInicialParaFormulario, restriccionImplicitaHotel } from "@/lib/cotizacion/condicionPagoCatalogo";
 import { etiquetasRestriccion } from "@/lib/cotizacion/etiquetasCondicion";
+import { etiquetaFilaTarifa } from "@/lib/calc/promoCalculadora";
 
 type RangoFechas = { fecha_inicio: string; fecha_fin: string };
 type Temporada = {
@@ -486,16 +487,17 @@ function TarifasBox({ hotelId, categorias, regimenes, temporadas, tarifas, venci
       <td className="px-3 py-2 text-gray-500" data-label="Temporada">
         <div className="flex items-center gap-1.5">
           <span>{t.temporada ?? "—"}</span>
-          {t.precio_final_autoritativo ? (
-            <span
-              className="rounded-full bg-[var(--brand-accent)]/15 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-[var(--brand-accent)]"
-              title={t.temporada_base ? `Promoción derivada de la temporada base "${t.temporada_base}" — precio final ya calculado, no se recalcula.` : "Promoción — precio final ya calculado, no se recalcula."}
-            >
-              Promoción
-            </span>
-          ) : (
-            <span className="rounded-full bg-gray-100 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-gray-500">Base</span>
-          )}
+          {(() => {
+            const { etiqueta, detalle } = etiquetaFilaTarifa(t, temporadas);
+            return etiqueta === "PROMO" ? (
+              <span className="rounded-full bg-[var(--brand-accent)]/15 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-[var(--brand-accent)]" title={detalle}>
+                Promo
+              </span>
+            ) : (
+              <span className="rounded-full bg-gray-100 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-gray-500" title={detalle}>Base</span>
+            );
+          })()}
+          {t.temporada_base && <span className="text-[10px] text-gray-400">desde {t.temporada_base}</span>}
         </div>
         {/* Condición de la TARIFA (ej. "No reembolsable.") — distinta de la
             condición de PAGO de la temporada (cuánto/cuándo se paga). */}

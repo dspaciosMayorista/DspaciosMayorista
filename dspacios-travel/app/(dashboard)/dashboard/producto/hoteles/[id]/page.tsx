@@ -9,11 +9,14 @@ import { HotelFotos } from "./HotelFotos";
 import { HotelBlackouts } from "./HotelBlackouts";
 import { HotelAcomodacionesEditor } from "./HotelAcomodacionesEditor";
 import { CalculadoraEditor } from "./CalculadoraEditor";
+import { TarifasHistorial } from "./TarifasHistorial";
+import { consultarHistorialTarifas } from "./historial-actions";
 import { TarifasUnidadEditor, type FilaTarifaUnidadUI } from "./TarifasUnidadEditor";
 import { ModeloTarifarioEditor, type ModeloTarifario } from "./ModeloTarifarioEditor";
 import type { AcomConfig } from "@/lib/acomodaciones";
 import type { DubaiParams, MixtaParams, CorporativaParams, CalcTipo } from "@/lib/calc/calculadoras";
 import { adaptarTarifaAlojamientoPersistida } from "@/lib/calc/tarifaAlojamientoPersistida";
+import { hoyISO, toTemporadaRango } from "@/lib/calc/paquetes";
 
 export const dynamic = "force-dynamic";
 
@@ -44,6 +47,11 @@ export default async function HotelDetallePage({ params }: { params: Promise<{ i
   ]);
 
   if (!hotel) notFound();
+
+  // Historial interno de tarifas (migración 203): primera página por la MISMA
+  // acción paginada que usa el componente (búsqueda y "Ver más" en servidor).
+  // Si la migración no se ha aplicado, la página sigue funcionando y lo indica.
+  const historial = await consultarHistorialTarifas(hotelId, "", null);
 
   const h = hotel as unknown as {
     nombre: string; zona: string | null; edad_infante_min: number; edad_infante_max: number;
@@ -195,6 +203,9 @@ export default async function HotelDetallePage({ params }: { params: Promise<{ i
           mixtaInicial={mixtaInicial}
           corporativaInicial={corporativaInicial}
           adultsOnly={h.adults_only ?? false}
+          vigencias={(temporadas ?? []).map(toTemporadaRango)}
+          hoy={hoyISO()}
+          tarifasExistentes={tarifas ?? []}
         />
         <HotelDetalleClient
           hotelId={hotelId}
@@ -206,6 +217,18 @@ export default async function HotelDetallePage({ params }: { params: Promise<{ i
           adultsOnly={h.adults_only ?? false}
           mostrarTarifaPersona={modeloTarifario === "persona"}
         />
+        {modeloTarifario === "persona" && (
+          <TarifasHistorial
+            // Remonta tras router.refresh() si entraron versiones nuevas (su
+            // estado nace de `inicial` una sola vez).
+            key={historial.ok ? `${historial.pagina.total}-${historial.pagina.filas[0]?.id ?? 0}` : "no-disponible"}
+            hotelId={hotelId}
+            inicial={historial.ok ? historial.pagina : null}
+            errorInicial={historial.ok ? null : historial.error}
+            tarifasActuales={tarifas ?? []}
+            adultsOnly={h.adults_only ?? false}
+          />
+        )}
         {modeloTarifario === "unidad" && (
           <TarifasUnidadEditor
             hotelId={hotelId}
