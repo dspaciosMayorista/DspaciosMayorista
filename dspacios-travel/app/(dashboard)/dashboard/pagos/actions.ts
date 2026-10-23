@@ -4,6 +4,7 @@ import { createClient } from "@/lib/supabase/server";
 import { revalidatePath } from "next/cache";
 import { fechaElegidaONegocio } from "@/lib/fechaNegocio";
 import { postearAsientoPago, eliminarAsientoPago } from "@/lib/contabilidad/asientos";
+import { mensajeGuardaSaldo, pagoSaldoExacto, redondear2, saldoNominalCxp } from "@/lib/finanzas/guardaSaldoCxp";
 
 type Result = { ok: true } | { ok: false; error: string };
 
@@ -54,7 +55,7 @@ export async function registrarPagoProveedor(
   const esUSD = ((cxp as { moneda?: string | null }).moneda ?? "COP") === "USD";
   const trm = esUSD ? (Number(trmInput) || 0) : 1;
   if (esUSD && trm <= 0) return { ok: false, error: "Indica la TRM del día (cuenta en USD)." };
-  const abono = esUSD ? valor / trm : valor;
+  const abono = redondear2(esUSD ? valor / trm : valor);
   const f = fechaElegidaONegocio(fecha);
 
   const { data: pago, error: e2 } = await sb
@@ -62,13 +63,57 @@ export async function registrarPagoProveedor(
     .insert({ cuenta_por_pagar_id: id, fecha: f, valor: abono, trm })
     .select("id")
     .single();
-  if (e2) return { ok: false, error: e2.message };
+  if (e2) return { ok: false, error: mensajeGuardaSaldo(e2, "pago") ?? e2.message };
 
   // Pre-asiento del pago, siempre en COP (es lo que realmente salió de caja o
   // banco, incluso si la CxP es en USD).
   await postearAsientoPago({
     cuentaId: id, pagoId: pago.id, numeroContrato: cxp.numero_contrato, tipoProveedor: cxp.tipo_proveedor, proveedor: cxp.proveedor,
     valor, formaPago: null, moneda: "COP", fecha: f,
+  });
+  revalidatePath("/dashboard/pagos");
+  revalidatePath("/dashboard/contabilidad/libro-diario");
+  if (cxp.numero_contrato) revalidatePath(`/dashboard/contratos/${cxp.numero_contrato}`);
+  return { ok: true };
+}
+
+// S4 / C2 -- "Pagar saldo exacto": cancela el saldo NOMINAL exacto de la cuenta.
+// El usuario digita el COP REAL pagado; nominal = saldo exacto (calculado aquí, no
+// confiado al cliente); trm = COP / nominal a 4 decimales. El asiento usa el COP real.
+export async function pagarSaldoExacto(id: number, copPagado: number, fecha: string): Promise<Result> {
+  const sb = await createClient();
+  const { data: cxp, error: e1 } = await sb
+    .from("cuentas_por_pagar")
+    .select("valor_total, moneda, numero_contrato, tipo_proveedor, proveedor")
+    .eq("id", id)
+    .maybeSingle();
+  if (e1) return { ok: false, error: e1.message };
+  if (!cxp) return { ok: false, error: "Cuenta por pagar no encontrada" };
+
+  const { data: pagos, error: e2 } = await sb.from("cxp_pagos").select("valor").eq("cuenta_por_pagar_id", id);
+  if (e2) return { ok: false, error: e2.message };
+  const { data: rets, error: e3 } = await sb.from("retenciones_cxp").select("valor").eq("cuenta_por_pagar_id", id);
+  if (e3) return { ok: false, error: e3.message };
+  const suma = (rows: { valor: number | null }[] | null) => (rows ?? []).reduce((s, r) => s + (Number(r.valor) || 0), 0);
+  const saldo = saldoNominalCxp(Number(cxp.valor_total) || 0, suma(pagos), suma(rets));
+
+  const esUSD = ((cxp as { moneda?: string | null }).moneda ?? "COP") === "USD";
+  // En COP no hay TRM: el nominal ES el COP pagado (saldo exacto).
+  const calc = esUSD ? pagoSaldoExacto(saldo, copPagado) : pagoSaldoExacto(saldo, saldo);
+  if (!calc.ok) return calc;
+  const trm = esUSD ? calc.trm : 1;
+  const f = fechaElegidaONegocio(fecha);
+
+  const { data: pago, error: e4 } = await sb
+    .from("cxp_pagos")
+    .insert({ cuenta_por_pagar_id: id, fecha: f, valor: calc.nominal, trm })
+    .select("id")
+    .single();
+  if (e4) return { ok: false, error: mensajeGuardaSaldo(e4, "pago") ?? e4.message };
+
+  await postearAsientoPago({
+    cuentaId: id, pagoId: pago.id, numeroContrato: cxp.numero_contrato, tipoProveedor: cxp.tipo_proveedor, proveedor: cxp.proveedor,
+    valor: esUSD ? calc.cop : calc.nominal, formaPago: null, moneda: "COP", fecha: f,
   });
   revalidatePath("/dashboard/pagos");
   revalidatePath("/dashboard/contabilidad/libro-diario");

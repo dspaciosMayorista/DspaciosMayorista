@@ -39,6 +39,7 @@ __setImpls({
     return { ok: true } as const;
   },
   registrarPagoProveedor: async () => ({ ok: true } as const),
+  pagarSaldoExacto: async () => ({ ok: true } as const),
   deshacerUltimoPago: async () => ({ ok: true } as const),
   configurarFacturaProveedor: async () => ({ ok: true } as const),
 });

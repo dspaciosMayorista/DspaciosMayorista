@@ -5,6 +5,7 @@ import { revalidatePath } from "next/cache";
 import { getTenant } from "@/lib/tenant.server";
 import { parseExtracto } from "@/lib/contabilidad/extracto";
 import { postearAsiento, CUENTA } from "@/lib/contabilidad/asientos";
+import { idSaldoCxp, mensajeGuardaSaldo, ordenarPorSaldoCxp } from "@/lib/finanzas/guardaSaldoCxp";
 
 type Result = { ok: true; n?: number; aviso?: string } | { ok: false; error: string };
 
@@ -168,10 +169,13 @@ export async function cruzar(input: {
   // vuelve a aparecer por separado como pendiente de conciliar.
   let aviso: string | undefined;
   const sistemaFinal: typeof input.sistema = [];
-  for (const s of input.sistema) {
-    const m = /^saldo-cxp:(\d+)$/.exec(s.ref);
-    if (!m) { sistemaFinal.push(s); continue; }
-    const cuentaId = Number(m[1]);
+  // #90 E5a (S5): las cuentas se procesan ORDENADAS POR ID, así dos conciliaciones concurrentes
+  // toman los bloqueos de la guarda (228) en el mismo orden y no se interbloquean.
+  const sistemaOrdenado = ordenarPorSaldoCxp(input.sistema);
+  const pagosCreados: number[] = [];
+  for (const s of sistemaOrdenado) {
+    const cuentaId = idSaldoCxp(s.ref);
+    if (cuentaId == null) { sistemaFinal.push(s); continue; }
     const { data: c } = await sb.from("cuentas_por_pagar").select("moneda").eq("id", cuentaId).maybeSingle();
     if (!c) { sistemaFinal.push(s); continue; }
     if ((c.moneda ?? "COP") === "USD") {
@@ -184,7 +188,21 @@ export async function cruzar(input: {
       .insert({ cuenta_por_pagar_id: cuentaId, fecha: fechaPago, valor: Math.abs(s.valor), trm: 1 })
       .select("id")
       .single();
-    if (eIns || !pago) { aviso = `No se pudo registrar el pago automático: ${eIns?.message ?? "error desconocido"}`; sistemaFinal.push(s); continue; }
+    if (eIns || !pago) {
+      // S5: un pago rechazado (guarda de saldo 228, permisos u otro error) NO se cruza: se deshacen los
+      // pagos automáticos ya creados en esta operación y no se crea ningún cruce.
+      const motivo = mensajeGuardaSaldo(eIns, "pago") ?? eIns?.message ?? "error desconocido";
+      let revisar = "";
+      if (pagosCreados.length) {
+        // E3: se comprueba el resultado del borrado (un error, o menos filas de las esperadas por RLS, deja pagos sin deshacer).
+        const { data: borrados, error: eDel } = await sb.from("cxp_pagos").delete().in("id", pagosCreados).select("id");
+        if (eDel || (borrados?.length ?? 0) !== pagosCreados.length) {
+          revisar = " Además, algunos pagos automáticos creados antes en esta operación no se pudieron deshacer: quedaron pagos por revisar en Pagos a proveedores.";
+        }
+      }
+      return { ok: false, error: `No se pudo registrar el pago de la cuenta ${cuentaId}; el cruce no se creó. ${motivo}${revisar}` };
+    }
+    pagosCreados.push(pago.id);
     sistemaFinal.push({ ...s, ref: `pago:${cuentaId}:${pago.id}`, fecha: fechaPago });
   }
 
