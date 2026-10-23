@@ -48,7 +48,14 @@ import {
 } from "./cotizacionBernaloActions";
 import type { HotelBernaloDescubierto, SalidaAereaBernalo } from "@/lib/tarifario/datosBernalo";
 import { obtenerDetalleHotel } from "./detalle-actions";
+import { obtenerDetalleSalida } from "./detalle-actions";
 import { conCacheDetalle, claveDetalleHotel, type EstadoDetalle } from "@/lib/tarifario/detalleCliente";
+import { claveComboAlcanceNormalizada } from "@/lib/tarifario/comboKey";
+import { DinamicoModal, InsigniaFechasSalida } from "./DinamicoModal";
+import {
+  accesoCotizacionDinamica, desdeDobleResumen, destinosDinamicos, esOfertaDinamica, etiquetaSalidaDinamica, filaDinamicaVisibleEnPaquetes, hotelUnidadVisibleConSalida, leerSalidaElegida,
+  origenesDinamicos, salidaIdsDinamicas, salidasDinamicasSelector, valorSalidaElegida, type SalidaElegida,
+} from "@/lib/tarifario/dinamicoBooking";
 import { RegimenInfo, type PlanesInfo } from "./RegimenInfo";
 import { BuscadorBooking, Resultado, type EstadoBusquedaPorcion } from "./BuscadorBooking";
 import type { OpcionUnidadConfirmada } from "./busquedaUnidadActions";
@@ -83,6 +90,16 @@ import { ArrowUpDown, SlidersHorizontal, X, PawPrint, BadgeCheck, PlaneTakeoff, 
 const CAP_VACIA = { paxMin: null as number | null, paxMax: null as number | null, acom: [] as AcomConfig[] };
 
 const MSG_ERROR_DETALLE_HOTEL = "No fue posible cargar el detalle en este momento. Intenta nuevamente en unos segundos.";
+
+// Detalle de una oferta DINÁMICA (hotel + paquete): una salida = una consulta acotada (`obtenerDetalleSalida`, ya cacheada y
+// validada en el servidor con los mismos filtros de vigencia), restringida a los combos de ESTE hotel. Se juntan todas las salidas
+// de la oferta en un solo detalle; si alguna falla, falla el conjunto (nunca un detalle parcial presentado como completo).
+async function cargarDetalleDinamico(filas: readonly FilaResumen[]): Promise<{ ok: true; filas: FilaTarifario[] } | { ok: false; error: string }> {
+  const ids = salidaIdsDinamicas(filas);
+  const rs = await Promise.all(ids.map((id) => obtenerDetalleSalida({ modulo: "dinamico", salidaId: id, combos: filas.filter((f) => f.salida_id === id) })));
+  for (const r of rs) if (!r.ok) return { ok: false, error: r.error };
+  return { ok: true, filas: rs.flatMap((r) => (r.ok ? r.filas : [])) };
+}
 
 // ── Modelo de la vista dinámica: tarjetas por hotel, detalle con opciones ────
 // `filas` de cada tarjeta son de RESUMEN (Tier 1, `FilaResumen[]`) — traen el
@@ -488,9 +505,11 @@ function TarjetaHotelCard({
 
 type Opcion = {
   key: string;
-  modulo: "bloqueo" | "porcion_terrestre";
+  modulo: "bloqueo" | "porcion_terrestre" | "dinamico";
   paqueteId: number;
   bloqueoId: number | null;
+  // Solo `dinamico`: la salida elegida en su modal (el servidor re-liquida con ESA salida).
+  salidaId?: number | null;
   label: string;
   destino: string | null;
   origen: string | null;
@@ -526,6 +545,7 @@ export function VistaBooking({
   fotosPorServicio = {},
   cuposPorBloqueo = {},
   origenPorBloqueo = {},
+  origenPorSalida = {},
   puedeReservar = false,
   ventanaPorPaquete = {},
   infoPorHotel = {},
@@ -559,6 +579,8 @@ export function VistaBooking({
   fotosPorServicio?: Record<number, string>;
   cuposPorBloqueo?: Record<number, number>;
   origenPorBloqueo?: Record<number, string>;
+  // Origen REAL de cada salida dinámica (`salida_id` → IATA). Sin entrada = desconocido: con un origen elegido, esa salida no se muestra.
+  origenPorSalida?: Record<number, string>;
   puedeReservar?: boolean;
   ventanaPorPaquete?: Record<number, { min: string | null; max: string | null }>;
   infoPorHotel?: Record<number, { estrellas: number | null; clasificacion: string | null; descripcion: string | null; ubicacion: string | null; zona?: string | null; video_url?: string | null; ninoMin?: number | null; ninoMax?: number | null; infMin?: number | null; infMax?: number | null; adultsOnly?: boolean; petFriendly?: boolean; tieneCondicion?: boolean }>;
@@ -625,7 +647,8 @@ export function VistaBooking({
   // Buscador de bloqueos: origen → destino → salida (vuelo).
   const [origenSel, setOrigenSel] = useState("");
   const [destinoSel, setDestinoSel] = useState("");
-  const [salidaSel, setSalidaSel] = useState<number | "">("");
+  // Salida elegida en «Salida (vuelo)»: record de Bloqueo o salida dinámica, con su TIPO (los ids pueden coincidir); null = Todas.
+  const [salidaSel, setSalidaSel] = useState<SalidaElegida>(null);
   // El filtro de destino de la grilla de Porción terrestre se ELIMINÓ: era un
   // `<select>` de exploración que solo podía OCULTAR tarjetas, y con hoteles
   // recomendados por paquete eso contradecía la regla del estado global
@@ -777,7 +800,7 @@ export function VistaBooking({
   // (al volver a Bloqueo con un `destinoSel` ya elegido).
   function candidatosDeBloqueo(destino: string): { zona: string | null; estrellas: number | null }[] {
     const idsPersona = filas
-      .filter((f) => f.modulo === "bloqueo" && f.hotel_id != null && (f.destino_nombre ?? "") === destino)
+      .filter((f) => (f.modulo === "bloqueo" || f.modulo === "dinamico") && f.hotel_id != null && (f.destino_nombre ?? "") === destino)
       .map((f) => f.hotel_id as number);
     const idsUnidad = hotelesBernalo
       .filter((h) => h.tipo === "bloqueo" && (h.destinoNombre ?? "") === destino)
@@ -790,7 +813,7 @@ export function VistaBooking({
   // siguen siendo controles visibles ahí, no se tocan).
   function confirmarDestinoBloqueo(nuevoDestino: string) {
     setDestinoSel(nuevoDestino);
-    setSalidaSel("");
+    setSalidaSel(null);
     if (!nuevoDestino) { restablecerControlesOcultos(); return; }
     podarZonasEstrellas(candidatosDeBloqueo(nuevoDestino));
   }
@@ -866,7 +889,11 @@ export function VistaBooking({
     return [...map.values()].sort((a, b) => (a.fechaIda ?? "9999-99-99").localeCompare(b.fechaIda ?? "9999-99-99"));
   }, [filas, cuposPorBloqueo, origenPorBloqueo]);
 
-  const origenes = useMemo(() => [...new Set(salidasBloqueo.map((s) => s.origen).filter(Boolean))].sort(), [salidasBloqueo]);
+  // Orígenes de Bloqueo + los orígenes REALES de las salidas Dinámicas (un Dinámico puede salir de un origen sin Bloqueo).
+  const origenes = useMemo(
+    () => [...new Set([...salidasBloqueo.map((s) => s.origen), ...origenesDinamicos(filas, origenPorSalida)].filter(Boolean))].sort(),
+    [salidasBloqueo, filas, origenPorSalida]
+  );
   // P3 (hallazgo confirmado, validación final): los destinos del selector
   // salían SOLO de `salidasBloqueo` (derivada de `filas`, hoteles persona) —
   // un destino que solo existe en un hotel por unidad (`hotelesBernalo`)
@@ -883,9 +910,21 @@ export function VistaBooking({
     const unidad = hotelesBernalo.filter((h) => h.tipo === "bloqueo" && h.destinoNombre).map((h) => h.destinoNombre as string);
     return [...new Set([...legacy, ...unidad])].filter(Boolean).sort();
   }, [salidasBloqueo, origenSel, hotelesBernalo]);
+  // Destinos que ofrece el selector de "Paquetes": los de Bloqueo (persona y unidad) MÁS los de los paquetes Dinámicos, cuyo destino es
+  // el del paquete/hotel. Con un origen elegido, solo los de Dinámicos con alguna salida REAL desde ese origen.
+  const destinosPaquetes = useMemo(
+    () => [...new Set([...destinosBloqueo, ...destinosDinamicos(filas, origenSel, origenPorSalida)])].sort(),
+    [destinosBloqueo, origenSel, filas, origenPorSalida]
+  );
   const salidasFiltradas = useMemo(
     () => salidasBloqueo.filter((s) => (!origenSel || s.origen === origenSel) && (!destinoSel || s.destino === destinoSel)),
     [salidasBloqueo, origenSel, destinoSel]
+  );
+  // Salidas DINÁMICAS reales para el mismo selector (fecha, noches, origen real de la salida, destino del paquete), con el
+  // mismo origen/destino que acotan arriba. Sin cupos ni datos de vuelo: un Dinámico no los tiene en el tarifario.
+  const salidasDinamicasFiltradas = useMemo(
+    () => salidasDinamicasSelector(filas, { origenSel, destinoSel, origenPorSalida }),
+    [filas, origenSel, destinoSel, origenPorSalida]
   );
 
   // Destino/búsqueda EFECTIVOS del submódulo activo — gobiernan el estado A
@@ -921,13 +960,18 @@ export function VistaBooking({
   const hoteles = useMemo<HotelCard[]>(() => {
     const mod = sub === "receptivos" ? null : sub;
     const conHotel = filas.filter((f) => {
-      if (mod == null || f.modulo !== mod || f.hotel_id == null) return false;
+      if (mod == null || f.hotel_id == null) return false;
+      // Dinámico: va dentro de "Paquetes", con su propia regla (sin cupos; destino del paquete; origen real de su salida).
+      if (f.modulo === "dinamico") return mod === "bloqueo" && filaDinamicaVisibleEnPaquetes(f, { origenSel, salidaSel, destinoSel, origenPorSalida });
+      if (f.modulo !== mod) return false;
+      // Una salida DINÁMICA elegida deja solo las filas de esa salida (arriba): ninguna fila de Bloqueo aplica.
+      if (mod === "bloqueo" && salidaSel?.tipo === "dinamico") return false;
       if (mod === "bloqueo" && f.bloqueo_id != null) {
         const c = cuposPorBloqueo[f.bloqueo_id];
         if (c !== undefined && c <= 0) return false; // sin cupos: no se muestra
         if (origenSel && origenPorBloqueo[f.bloqueo_id] !== origenSel) return false;
         if (destinoSel && (f.destino_nombre ?? "") !== destinoSel) return false;
-        if (salidaSel !== "" && f.bloqueo_id !== salidaSel) return false;
+        if (salidaSel && f.bloqueo_id !== salidaSel.id) return false;
       }
       if (mod === "porcion_terrestre" && destinoPorcionBusqueda && (f.destino_nombre ?? "") !== destinoPorcionBusqueda) return false;
       return true;
@@ -971,8 +1015,10 @@ export function VistaBooking({
     // recomendados, en el `tarjetas` final — ver más abajo.
     if (soloAcom) arr = arr.filter((c) => c.filas.some((f) => tieneAcomodacionResumen(f, soloAcom)));
     for (const c of arr) c.desde = minRoomPvp(c.filas);
+    // El "desde" de un Dinámico toma como referencia la acomodación DOBLE (decisión del dueño); los demás conservan el mínimo de siempre.
+    for (const c of arr) if (esOfertaDinamica(c.filas)) c.desde = desdeDobleResumen(c.filas);
     return arr;
-  }, [filas, fotosPorHotel, infoPorHotel, sub, cuposPorBloqueo, origenPorBloqueo, origenSel, destinoSel, destinoPorcionBusqueda, salidaSel, soloAcom]);
+  }, [filas, fotosPorHotel, infoPorHotel, sub, cuposPorBloqueo, origenPorBloqueo, origenPorSalida, origenSel, destinoSel, destinoPorcionBusqueda, salidaSel, soloAcom]);
 
   // Hoteles por unidad (Bernalo) visibles en el submódulo/filtros ACTIVOS —
   // para el cliente son hoteles normales, así que responden a la misma
@@ -993,9 +1039,11 @@ export function VistaBooking({
     if (sub === "receptivos") return [];
     let arr = hotelesBernalo.filter((h) => h.tipo === sub);
     if (sub === "bloqueo" && destinoSel) arr = arr.filter((h) => (h.destinoNombre ?? "") === destinoSel);
+    // Salida elegida: una dinámica no pertenece a ningún hotel por unidad; un record de Bloqueo, solo a los que lo tienen en `salidas`.
+    if (sub === "bloqueo" && salidaSel) arr = arr.filter((h) => hotelUnidadVisibleConSalida(h, salidaSel));
     if (sub === "porcion_terrestre" && destinoPorcionBusqueda) arr = arr.filter((h) => (h.destinoNombre ?? "") === destinoPorcionBusqueda);
     return arr;
-  }, [hotelesBernalo, sub, destinoSel, destinoPorcionBusqueda]);
+  }, [hotelesBernalo, sub, destinoSel, salidaSel, destinoPorcionBusqueda]);
 
   // Una sola colección para la grilla — persona y unidad mezclados, sin
   // sección aparte (el usuario ve hoteles, no "modelos de cálculo"). Clave
@@ -1531,12 +1579,15 @@ export function VistaBooking({
     setAbierto(h);
     setDetalleHotel({ estado: "cargando" });
     const esBloqueo = sub === "bloqueo";
-    const clave = claveDetalleHotel(esBloqueo ? "bloqueo" : "porcion_terrestre", h.hotelId, h.filas);
+    const dinamico = esOfertaDinamica(h.filas);
+    const clave = dinamico
+      ? `hotel:dinamico:${h.hotelId}:${h.paqueteId}:${claveComboAlcanceNormalizada(h.filas)}`
+      : claveDetalleHotel(esBloqueo ? "bloqueo" : "porcion_terrestre", h.hotelId, h.filas);
     claveAbiertaRef.current = clave;
     const args = esBloqueo
       ? { modulo: "bloqueo" as const, hotelId: h.hotelId, combos: h.filas }
       : { modulo: "porcion_terrestre" as const, hotelId: h.hotelId, combos: h.filas };
-    conCacheDetalle(clave, () => obtenerDetalleHotel(args))
+    conCacheDetalle(clave, () => (dinamico ? cargarDetalleDinamico(h.filas) : obtenerDetalleHotel(args)))
       .then((r) => {
         if (claveAbiertaRef.current !== clave) return; // otro hotel/alcance se abrió mientras tanto
         setDetalleHotel(r.ok ? { estado: "ok", filas: r.filas } : { estado: "error", mensaje: r.error });
@@ -1719,20 +1770,23 @@ export function VistaBooking({
                 <PlaneLanding className={iconoBloqueoCls(!!destinoSel)} aria-hidden />
                 <select value={destinoSel} onChange={(e) => confirmarDestinoBloqueo(e.target.value)} className={campoBloqueoCls(!!destinoSel)}>
                   <option value="">Todos</option>
-                  {destinosBloqueo.map((d) => <option key={d} value={d}>{d}</option>)}
+                  {destinosPaquetes.map((d) => <option key={d} value={d}>{d}</option>)}
                 </select>
               </div>
             </div>
             <div>
               <label className="mb-1 block text-xs font-semibold text-slate-700">Salida (vuelo)</label>
               <div className="relative">
-                <CalendarClock className={iconoBloqueoCls(salidaSel !== "")} aria-hidden />
-                <select value={salidaSel} onChange={(e) => setSalidaSel(e.target.value === "" ? "" : Number(e.target.value))} className={campoBloqueoCls(salidaSel !== "")}>
+                <CalendarClock className={iconoBloqueoCls(salidaSel !== null)} aria-hidden />
+                <select value={valorSalidaElegida(salidaSel)} onChange={(e) => setSalidaSel(leerSalidaElegida(e.target.value))} className={campoBloqueoCls(salidaSel !== null)}>
                   <option value="">Todas las salidas</option>
                   {salidasFiltradas.map((s) => (
-                    <option key={s.id} value={s.id}>
+                    <option key={`b:${s.id}`} value={valorSalidaElegida({ tipo: "bloqueo", id: s.id })}>
                       {s.origen} → {s.destino} · {fmtFecha(s.fechaIda)}–{fmtFecha(s.fechaRegreso)}{s.noches ? ` (${s.noches}N)` : ""} · {s.cupos} cupos
                     </option>
+                  ))}
+                  {salidasDinamicasFiltradas.map((s) => (
+                    <option key={`d:${s.id}`} value={valorSalidaElegida({ tipo: "dinamico", id: s.id })}>{etiquetaSalidaDinamica(s)}</option>
                   ))}
                 </select>
               </div>
@@ -1986,6 +2040,7 @@ export function VistaBooking({
                         {min} cupo{min !== 1 ? "s" : ""}
                       </span>
                     )}
+                    <InsigniaFechasSalida filas={t.card.filas} />
                   </>
                 );
               })()}
@@ -2063,6 +2118,8 @@ export function VistaBooking({
       )}
 
       {abierto && (
+        esOfertaDinamica(abierto.filas) ? <DinamicoModal hotel={abierto} detalle={detalleHotel} onReintentar={() => abrirHotel(abierto)} descripcionPorPaquete={descripcionPorPaquete} acceso={accesoCotizacionDinamica({ puedeReservar })} onClose={cerrarHotel}
+          cotizador={(salidaId, filasDetalle) => <CotizadorDinamico salidaId={salidaId} filas={filasDetalle} hotel={abierto} puedeReservar={puedeReservar} planesInfo={planesInfo} cap={capPorHotel[abierto.hotelId] ?? CAP_VACIA} onAgregado={cerrarHotel} />} /> :
         <HotelModal hotel={abierto} detalle={detalleHotel} onReintentar={() => abrirHotel(abierto)} cuposPorBloqueo={cuposPorBloqueo} origenPorBloqueo={origenPorBloqueo} puedeReservar={puedeReservar} ventanaPorPaquete={ventanaPorPaquete} planesInfo={planesInfo} cap={capPorHotel[abierto.hotelId] ?? CAP_VACIA} descripcionPorPaquete={descripcionPorPaquete} addonsPorPaquete={addonsPorPaquete} onClose={cerrarHotel} />
       )}
 
@@ -3024,6 +3081,7 @@ function Selector({
     onAgregar({
       tipo: "hotel",
       modulo: opcion.modulo, paqueteId: opcion.paqueteId, hotelId: hotel.hotelId, bloqueoId: opcion.bloqueoId,
+      ...(opcion.modulo === "dinamico" ? { salidaId: opcion.salidaId ?? null } : {}),
       hotelNombre: hotel.hotelNombre, destino: hotel.destino, fotoUrl: hotel.foto,
       categoria: catEff, regimen: regEff,
       fechaIda: opcion.fechaIda, fechaRegreso: opcion.fechaRegreso, noches: opcion.noches,
@@ -3062,6 +3120,29 @@ function Selector({
           firma: JSON.stringify([opcion.key, catEff, regEff]),
         } : undefined} />
     </div>
+  );
+}
+
+// Cotizador de UNA salida dinámica dentro de `DinamicoModal`: el mismo `Selector` (categoría/alimentación, habitaciones,
+// edades) y el mismo carrito público que Bloqueo — de ahí a /tarifario/checkout, que no exige sesión y re-liquida en el
+// servidor con `computarReserva` sobre esta salida. Fechas = las de la salida (fijas, como las del record de un Bloqueo).
+function CotizadorDinamico({ salidaId, filas, hotel, puedeReservar, planesInfo, cap, onAgregado }: {
+  salidaId: number; filas: FilaTarifario[]; hotel: HotelCard; puedeReservar: boolean; planesInfo: PlanesInfo;
+  cap: { paxMin: number | null; paxMax: number | null; acom: AcomConfig[] };
+  onAgregado: () => void;
+}) {
+  const { addConjunto, openDrawer } = useCart();
+  const deSalida = filas.filter((f) => f.modulo === "dinamico" && f.salida_id === salidaId);
+  const f0 = deSalida[0];
+  if (!f0 || hotel.paqueteId == null) return null;
+  const opcion: Opcion = {
+    key: `dinamico|${salidaId}|${hotel.paqueteId}`, modulo: "dinamico", paqueteId: hotel.paqueteId, bloqueoId: null, salidaId,
+    label: f0.paquete_nombre ?? "Paquete", destino: f0.destino_nombre, origen: null, cupos: null,
+    fechaIda: f0.fecha_ida, fechaRegreso: f0.fecha_regreso, noches: f0.noches, filas: deSalida,
+  };
+  return (
+    <Selector key={opcion.key} opcion={opcion} hotel={hotel} puedeReservar={puedeReservar} planesInfo={planesInfo} cap={cap}
+      onAgregar={(item, servicios) => { addConjunto(item, servicios); openDrawer(); onAgregado(); }} />
   );
 }
 

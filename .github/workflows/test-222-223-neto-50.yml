@@ -13,31 +13,8 @@
 name: test-222-223-neto-50
 
 on:
-  pull_request:
-    branches: [main]
-    paths:
-      - '.github/workflows/test-222-223-neto-50.yml'
-      - 'dspacios-travel/supabase/migrations/20260601000222_neto_hija_manual.sql'
-      - 'dspacios-travel/supabase/migrations/20260601000223_neto_hija_manual_cierre.sql'
-      - 'dspacios-travel/supabase/scripts/*_222_*'
-      - 'dspacios-travel/supabase/scripts/*_223_*'
-      # #50 depende de las fixtures/batería de #39 y #35: un cambio allí también corre esto.
-      - 'dspacios-travel/supabase/scripts/test_216_fixtures.sql'
-      - 'dspacios-travel/supabase/scripts/test_216_edicion39.sql'
-      - 'dspacios-travel/supabase/scripts/test_211_fixtures.sql'
-      - 'dspacios-travel/supabase/scripts/test_211_cotizaciones_comparativas.sql'
-      - 'dspacios-travel/supabase/scripts/preparar_esquema_local.sh'
-      - 'dspacios-travel/pruebas/netoHija50.vectores.json'
-      - 'dspacios-travel/pruebas/netoHija*'
-      - 'dspacios-travel/pruebas/margenContrato.test.ts'
-      - 'dspacios-travel/lib/cotizacion/**'
-      - 'dspacios-travel/lib/contrato/margenContrato.ts'
-      - 'dspacios-travel/types/database.ts'
-      - 'dspacios-travel/app/(dashboard)/dashboard/cotizaciones/**'
-      - 'dspacios-travel/app/tarifario/checkout/**'
-      - 'dspacios-travel/components/cotizacion/**'
-      - 'dspacios-travel/package.json'
-      - 'dspacios-travel/pnpm-lock.yaml'
+  # Batería histórica: se lanza a mano (Actions → este workflow → Run workflow) cuando el cambio toca lo que
+  # cubre. Ya no corre en cada pull_request; ver docs/tecnico/ci-baterias-manuales.md.
   workflow_dispatch:
 
 permissions:

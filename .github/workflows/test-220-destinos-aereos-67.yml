@@ -10,23 +10,8 @@
 name: test-220-destinos-aereos-67
 
 on:
-  pull_request:
-    branches: [main]
-    paths:
-      - '.github/workflows/test-220-destinos-aereos-67.yml'
-      - 'dspacios-travel/supabase/migrations/20260601000220_paquete_destinos_aereos.sql'
-      - 'dspacios-travel/supabase/scripts/*_220_*'
-      - 'dspacios-travel/supabase/scripts/test_220_*'
-      - 'dspacios-travel/supabase/scripts/preparar_esquema_local.sh'
-      - 'dspacios-travel/pruebas/destinosAereos67*'
-      - 'dspacios-travel/lib/paquetes/**'
-      - 'dspacios-travel/lib/reservar/computo.ts'
-      - 'dspacios-travel/lib/tarifario/**'
-      - 'dspacios-travel/app/tarifario/detalle-actions.ts'
-      - 'dspacios-travel/app/(dashboard)/dashboard/paquetes/**'
-      - 'dspacios-travel/app/(dashboard)/dashboard/vuelos/empaquetados-actions.ts'
-      - 'dspacios-travel/package.json'
-      - 'dspacios-travel/pnpm-lock.yaml'
+  # Batería histórica: se lanza a mano (Actions → este workflow → Run workflow) cuando el cambio toca lo que
+  # cubre. Ya no corre en cada pull_request; ver docs/tecnico/ci-baterias-manuales.md.
   workflow_dispatch:
 
 permissions:

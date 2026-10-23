@@ -57,10 +57,12 @@ export type SolicitudItemPersona = {
   // `id` del ítem en el carrito — SOLO para que un servicio vinculado
   // (`SolicitudTour.hotelItemId`) señale a este hotel; nunca autoriza ni calcula.
   itemId?: string;
-  modulo: "bloqueo" | "porcion_terrestre";
+  modulo: "bloqueo" | "porcion_terrestre" | "dinamico";
   paqueteId: number;
   hotelId: number;
   bloqueoId: number | null;
+  // Solo `dinamico` (obligatoria ahí): la salida elegida — ver `validarSolicitudItem`.
+  salidaId?: number | null;
   hotelNombre: string;
   destino: string | null;
   categoria: string;
@@ -378,6 +380,30 @@ function construirTramosVueloSnap(bq: FilaVueloSnap): Record<string, unknown>[] 
     });
   }
   return tramos;
+}
+
+// Tramos del vuelo de una salida dinámica para el snapshot. Falla (con un motivo solo para el log) si falta la configuración
+// de servicio, la consulta falla, la salida no existe o los tramos quedan incompletos (sin origen/destino IATA o sin fecha).
+async function tramosVueloSalidaDinamica(
+  salidaId: number | null
+): Promise<{ ok: true; tramos: Record<string, unknown>[] } | { ok: false; motivo: string }> {
+  if (!salidaId) return { ok: false, motivo: "sin_salida" };
+  if (!process.env.SUPABASE_SERVICE_ROLE_KEY) return { ok: false, motivo: "sin_service_role" };
+  let admin: ReturnType<typeof createAdminClient>;
+  try {
+    admin = createAdminClient();
+  } catch {
+    return { ok: false, motivo: "cliente_servicio" };
+  }
+  const { data: sd, error } = await admin
+    .from("salidas_dinamicas")
+    .select("aerolinea, ruta, fecha_ida, fecha_regreso, hora_salida_ida, hora_llegada_ida, hora_salida_reg, hora_llegada_reg")
+    .eq("id", salidaId).maybeSingle();
+  if (error) return { ok: false, motivo: `consulta_${error.code ?? "error"}` };
+  if (!sd) return { ok: false, motivo: "salida_inexistente" };
+  const tramos = construirTramosVueloSnap({ ...sd, record: null, vuelo_ida: null, vuelo_regreso: null });
+  const completos = tramos.length > 0 && tramos.every((t) => t.origen_codigo && t.destino_codigo && t.fecha_salida);
+  return completos ? { ok: true, tramos } : { ok: false, motivo: "tramos_incompletos" };
 }
 
 function resumenHab(it: SolicitudItemComputado): string {
@@ -706,10 +732,12 @@ async function crearCotizacionCarrito(input: {
     const reserva: ReservaInput = {
       paqueteId: it.paqueteId,
       bloqueoId: it.bloqueoId,
+      // Dinámico: `computarReserva` valida la salida viva y toma de ELLA las fechas (nunca del navegador).
+      salidaId: it.modulo === "dinamico" ? it.salidaId : undefined,
       modulo: it.modulo,
       hotelId: it.hotelId,
-      fechaIda: it.modulo !== "bloqueo" ? (it.fechaIda ?? undefined) : undefined,
-      fechaRegreso: it.modulo !== "bloqueo" ? (it.fechaRegreso ?? undefined) : undefined,
+      fechaIda: it.modulo === "porcion_terrestre" ? (it.fechaIda ?? undefined) : undefined,
+      fechaRegreso: it.modulo === "porcion_terrestre" ? (it.fechaRegreso ?? undefined) : undefined,
       categoria: it.categoria,
       regimen: it.regimen,
       habitaciones: it.habitaciones,
@@ -797,6 +825,17 @@ async function crearCotizacionCarrito(input: {
         for (const tramo of construirTramosVueloSnap(bq)) { vIdx++; vuelosSnap.push({ id: vIdx, ...tramo }); }
       }
     }
+    // Vuelo por sistema de la salida dinámica (sin record ni tarifa) — OBLIGATORIO: es parte del paquete cotizado, así que
+    // cualquier falla corta la solicitud ANTES de guardar (nunca una cotización sin vuelo). Service-role: `salidas_dinamicas`
+    // es solo interna por RLS. Al navegador va un mensaje fijo; el detalle técnico solo al log del servidor.
+    if (it.modulo === "dinamico") {
+      const vuelo = await tramosVueloSalidaDinamica(it.salidaId ?? null);
+      if (!vuelo.ok) {
+        console.error(`[crearCotizacionCarrito] etapa=vuelo_salida_dinamica salida=${it.salidaId ?? "-"} motivo=${vuelo.motivo}`);
+        return { ok: false, error: `No se pudo cotizar ${it.hotelNombre}: no fue posible confirmar el vuelo de la salida elegida. Intenta de nuevo o elige otra fecha.` };
+      }
+      for (const tramo of vuelo.tramos) { vIdx++; vuelosSnap.push({ id: vIdx, ...tramo }); }
+    }
 
     // Regla (corrección de este hallazgo): la tabla de valores del documento
     // debe reflejar la MISMA composición por acomodación/menor que ya usa el
@@ -863,7 +902,9 @@ async function crearCotizacionCarrito(input: {
     }
 
     total += precioVenta;
-    itemsOk.push({ ...it, ref, edadesMenores: edadesMenoresConfirmadas, ninos: numNinos, ninos2: numNinos2, infantes: numInfantes, pax: totalPax, precio: precioVenta });
+    // Dinámico: las fechas guardadas son las de la salida que resolvió el servidor, no las que mandó el navegador.
+    itemsOk.push({ ...it, ref, edadesMenores: edadesMenoresConfirmadas, ninos: numNinos, ninos2: numNinos2, infantes: numInfantes, pax: totalPax, precio: precioVenta,
+      ...(it.modulo === "dinamico" ? { fechaIda: meta.fecha_ida ?? null, fechaRegreso: meta.fecha_regreso ?? null } : {}) });
   }
 
   for (let j = 0; j < input.tours.length; j++) {
@@ -1258,6 +1299,9 @@ export async function crearComparativaCarrito(inputRaw: unknown): Promise<Result
   const items = input.items as Exclude<SolicitudItemVariante, { modeloTarifario: "unidad" }>[];
   if (items.some((i) => i.modulo === "bloqueo")) {
     return { ok: false, error: "Los paquetes con vuelo negociado todavía no se pueden comparar." };
+  }
+  if (items.some((i) => i.modulo === "dinamico")) {
+    return { ok: false, error: "Los paquetes con salida de vuelo fija (dinámicos) todavía no se pueden comparar." };
   }
   if (input.hotelDeTour.some((h) => h == null)) {
     return { ok: false, error: "En una comparativa cada servicio debe estar vinculado a un hotel." };
