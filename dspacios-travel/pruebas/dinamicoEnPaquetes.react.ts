@@ -71,7 +71,7 @@ async function montar(filas: unknown[], extra: Record<string, unknown> = {}, pue
   return cont;
 }
 const texto = (c: HTMLElement) => (c.textContent ?? "").replace(/\s+/g, " ");
-const opcionesDestino = (c: HTMLElement) => [...c.querySelectorAll("select")].flatMap((s) => [...s.options].map((o) => o.textContent ?? "")).filter((x) => /CARTAGENA|SAN ANDRES/.test(x));
+const opcionesDestino = (c: HTMLElement) => [...c.querySelectorAll("select")].flatMap((s) => [...s.options].map((o) => o.textContent ?? "")).filter((x) => x === "CARTAGENA" || x === "SAN ANDRES");
 async function elegir(c: HTMLElement, etiqueta: string) {
   const sel = [...c.querySelectorAll("select")].find((s) => [...s.options].some((o) => o.textContent === etiqueta)) as HTMLSelectElement | undefined;
   assert.ok(sel, `no hay un selector con la opción ${etiqueta}`);
@@ -81,14 +81,15 @@ async function elegir(c: HTMLElement, etiqueta: string) {
   });
   await act(async () => { await new Promise((r) => setTimeout(r, 60)); });
 }
-const listado = (c: HTMLElement) => (texto(c).match(/Hoteles disponibles\s*\(\d+\)/) ?? [""])[0].replace(/\s+/g, " ");
+const listado = (c: HTMLElement) => (texto(c).match(/Hoteles disponibles\s*\(\d+\)/) ?? [""])[0].replace(/\s+/g, "");
+const modal = (c: HTMLElement) => (c.querySelector(".fixed.inset-0")?.textContent ?? "").replace(/\s+/g, " ");
 const clic = async (el: Element) => { await act(async () => { el.dispatchEvent(new dom.window.MouseEvent("click", { bubbles: true })); }); };
 
 test("DESTINO: el selector ofrece el destino del paquete Dinámico y al elegirlo aparece su hotel (igual que el control)", async () => {
   const c = await montar([BLOQUEO, ...FILAS_DIN]);
   assert.deepEqual([...new Set(opcionesDestino(c))], ["CARTAGENA"]);
   await elegir(c, "CARTAGENA");
-  assert.equal(listado(c), "Hoteles disponibles (2)", "el hotel del Bloqueo y el del Dinámico");
+  assert.equal(listado(c), "Hotelesdisponibles(2)", "el hotel del Bloqueo y el del Dinámico");
   assert.match(texto(c), /Hotel Control/);
   assert.match(texto(c), /Hotel Nacional 54/);
 });
@@ -97,7 +98,7 @@ test("DESTINO: un Dinámico solo (sin ningún Bloqueo) también aparece por su d
   const c = await montar(FILAS_DIN);
   assert.deepEqual([...new Set(opcionesDestino(c))], ["CARTAGENA"], "antes de esta tarea el selector quedaba vacío");
   await elegir(c, "CARTAGENA");
-  assert.equal(listado(c), "Hoteles disponibles (1)");
+  assert.equal(listado(c), "Hotelesdisponibles(1)");
 });
 
 test("DESTINO: se filtra por el destino del PAQUETE (hotel), no por dónde aterriza el vuelo", async () => {
@@ -131,7 +132,8 @@ test("ORIGEN/SALIDA de Bloqueo elegidos: el Dinámico no aplica y se oculta; el 
   const c = await montar([BLOQUEO, ...FILAS_DIN]);
   await elegir(c, "CARTAGENA");
   assert.match(texto(c), /Hotel Nacional 54/);
-  await elegir(c, "BOG");
+  await elegir(c, "BOG"); // cambiar el origen reinicia el destino (comportamiento de Bloqueo)
+  await elegir(c, "CARTAGENA");
   assert.match(texto(c), /Hotel Control/);
   assert.doesNotMatch(texto(c), /Hotel Nacional 54/);
 });
@@ -163,7 +165,7 @@ test("MODAL: visual propia — fechas de salida, precios por categoría/acomodac
   await act(async () => { await new Promise((r) => setTimeout(r, 80)); });
   assert.equal(pedidos.length, 2, "una consulta acotada por cada fecha de salida de la oferta");
   assert.ok((pedidos as Array<{ combos: Array<{ hotel_id: number }> }>).every((p) => p.combos.every((x) => x.hotel_id === 2540)), "acotadas al hotel de la tarjeta");
-  const t = texto(c);
+  const t = modal(c);
   assert.match(t, /Elige tu fecha de salida/);
   assert.match(t, /Estándar · PAE/);
   assert.match(t, /Infante \(menor de 2 años\)/);
@@ -185,11 +187,13 @@ test("MODAL: si el detalle de una salida falla, error con Reintentar (nunca un d
   (globalThis as { __detalleActionsFake?: unknown }).__detalleActionsFake = {
     obtenerDetalleSalida: async (a: { salidaId: number }) => (a.salidaId === 541 ? { ok: false, error: "No fue posible cargar el detalle en este momento." } : { ok: true, filas: [] }),
   };
-  const c = await montar(FILAS_DIN);
+  // Otro hotel: el detalle ya resuelto se cachea durante la visita (conCacheDetalle) y el caso anterior usa el 2540.
+  const falla = FILAS_DIN.map((f) => ({ ...f, hotel_id: 2541, hotel_nombre: "Hotel Falla" }));
+  const c = await montar(falla);
   await elegir(c, "CARTAGENA");
-  await clic([...c.querySelectorAll("button")].find((b) => /Hotel Nacional 54/.test(b.textContent ?? ""))!);
+  await clic([...c.querySelectorAll("button")].find((b) => /Hotel Falla/.test(b.textContent ?? ""))!);
   await act(async () => { await new Promise((r) => setTimeout(r, 80)); });
-  assert.match(texto(c), /No fue posible cargar el detalle/);
-  assert.match(texto(c), /Reintentar/);
-  assert.doesNotMatch(texto(c), /Cotizar esta salida/);
+  assert.match(modal(c), /No fue posible cargar el detalle/, modal(c));
+  assert.match(modal(c), /Reintentar/);
+  assert.doesNotMatch(modal(c), /Cotizar esta salida/);
 });
