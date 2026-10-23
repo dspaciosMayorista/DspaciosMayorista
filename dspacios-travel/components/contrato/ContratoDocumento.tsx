@@ -113,7 +113,7 @@ const MARCA_POR_TENANT = {
 
 function Pill({ label, value }: { label: string; value: string }) {
   return (
-    <div className="rounded-lg bg-gray-50 px-3 py-2">
+    <div className="break-inside-avoid rounded-lg bg-gray-50 px-3 py-2">
       <span className="block text-[10px] font-semibold uppercase tracking-wide text-gray-400">
         {label}
       </span>
@@ -296,7 +296,7 @@ export function ContratoDocumento({
       <div className="space-y-7 px-5 py-6 text-sm md:px-8 md:py-7">
         {/* ── Cliente ──────────────────────────────────────────── */}
         <section>
-          <h2 className="mb-2 text-sm font-semibold" style={{ color: TITULO }}>
+          <h2 className="mb-2 break-after-avoid text-sm font-semibold" style={{ color: TITULO }}>
             Cliente
           </h2>
           <div className="grid grid-cols-2 gap-2 md:grid-cols-4">
@@ -311,7 +311,7 @@ export function ContratoDocumento({
         {vuelos.length > 0 && (
           <section>
             <h2
-              className="mb-2 text-sm font-semibold"
+              className="mb-2 break-after-avoid text-sm font-semibold"
               style={{ color: TITULO }}
             >
               Vuelos
@@ -330,7 +330,7 @@ export function ContratoDocumento({
                 return (
                 <div
                   key={v.id}
-                  className="rounded-lg border border-gray-200 p-3"
+                  className="break-inside-avoid rounded-lg border border-gray-200 p-3"
                 >
                   <div className="flex items-center gap-2 font-semibold text-gray-700">
                     <span>✈</span> {v.aerolinea ?? "—"}
@@ -378,26 +378,28 @@ export function ContratoDocumento({
 
         {/* ── Hoteles y Servicios ──────────────────────────────── */}
         <section>
-          <h2 className="mb-2 text-sm font-semibold" style={{ color: TITULO }}>
-            Hoteles y Servicios
-          </h2>
-          <div className="mb-3 grid grid-cols-1 gap-2 md:grid-cols-3">
-            <Pill
-              label="Asistencia Médica"
-              value={venta.asistencia_medica ? "Sí" : "No"}
-            />
-            <Pill label="Servicio / Plan" value={venta.plan_nombre ?? ""} />
-            <Pill
-              label="Tours y Traslados"
-              value={venta.tours_traslados ?? ""}
-            />
+          <div className="break-inside-avoid">
+            <h2 className="mb-2 break-after-avoid text-sm font-semibold" style={{ color: TITULO }}>
+              Hoteles y Servicios
+            </h2>
+            <div className="mb-3 grid grid-cols-1 gap-2 md:grid-cols-3">
+              <Pill
+                label="Asistencia Médica"
+                value={venta.asistencia_medica ? "Sí" : "No"}
+              />
+              <Pill label="Servicio / Plan" value={venta.plan_nombre ?? ""} />
+              <Pill
+                label="Tours y Traslados"
+                value={venta.tours_traslados ?? ""}
+              />
+            </div>
           </div>
           {hoteles.length > 0 && (
             <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
               {hoteles.map((h) => (
                 <div
                   key={h.id}
-                  className="rounded-lg border border-gray-200 p-3"
+                  className="break-inside-avoid rounded-lg border border-gray-200 p-3"
                 >
                   <div className="flex items-start gap-3">
                     {h.foto_url && (
@@ -425,7 +427,7 @@ export function ContratoDocumento({
                     </div>
                   )}
                   {h.nota_regimen && (
-                    <div className="mt-1 rounded bg-gray-50 px-2 py-1 text-xs text-gray-600">
+                    <div className="mt-1 break-inside-avoid rounded bg-gray-50 px-2 py-1 text-xs text-gray-600">
                       <span className="font-semibold">Nota especial del plan:</span> {h.nota_regimen}
                     </div>
                   )}
@@ -448,14 +450,14 @@ export function ContratoDocumento({
         {pasajeros.length > 0 && (
           <section>
             <h2
-              className="mb-2 text-sm font-semibold"
+              className="mb-2 break-after-avoid text-sm font-semibold"
               style={{ color: TITULO }}
             >
               Pasajeros
             </h2>
             <div className="overflow-x-auto">
             <table className="w-full min-w-[560px] border-collapse text-xs">
-              <thead>
+              <thead className="break-inside-avoid break-after-avoid">
                 <tr className="bg-gray-50 text-left text-gray-500">
                   <th className="border border-gray-200 px-2 py-1">#</th>
                   <th className="border border-gray-200 px-2 py-1">Nombre</th>
@@ -476,7 +478,7 @@ export function ContratoDocumento({
                     venta.fecha_salida
                   );
                   return (
-                    <tr key={p.id}>
+                    <tr key={p.id} className="break-inside-avoid">
                       <td className="border border-gray-200 px-2 py-1">
                         {i + 1}
                       </td>
@@ -511,19 +513,21 @@ export function ContratoDocumento({
 
         {/* ── Valores y Pagos ──────────────────────────────────── */}
         <section>
-          <h2 className="mb-2 text-sm font-semibold" style={{ color: TITULO }}>
-            Valores y Pagos
-          </h2>
-          <div className="mb-3 grid grid-cols-2 gap-2 md:grid-cols-4">
-            <div className="rounded-lg p-3 text-white" style={{ backgroundColor: PRIMARY }}>
-              <div className="text-[10px] uppercase opacity-80">
-                Total del contrato
+          <div className="break-inside-avoid">
+            <h2 className="mb-2 break-after-avoid text-sm font-semibold" style={{ color: TITULO }}>
+              Valores y Pagos
+            </h2>
+            <div className="mb-3 grid grid-cols-2 gap-2 md:grid-cols-4">
+              <div className="break-inside-avoid rounded-lg p-3 text-white" style={{ backgroundColor: PRIMARY }}>
+                <div className="text-[10px] uppercase opacity-80">
+                  Total del contrato
+                </div>
+                <div className="text-base font-bold">{importeDocumento(total)}</div>
               </div>
-              <div className="text-base font-bold">{importeDocumento(total)}</div>
+              <Pill label="Total pagado" value={formatMoneda(totalPagado, moneda)} />
+              <Pill label="Saldo pendiente" value={importeDocumento(saldo)} />
+              <Pill label="Moneda" value={moneda} />
             </div>
-            <Pill label="Total pagado" value={formatMoneda(totalPagado, moneda)} />
-            <Pill label="Saldo pendiente" value={importeDocumento(saldo)} />
-            <Pill label="Moneda" value={moneda} />
           </div>
           {/* Hallazgo confirmado (cierre 3F-4B): una línea `modo_precio =
               "total"` (Bernalo) no tiene adultos/niños/tarifa por columna —
@@ -536,7 +540,7 @@ export function ContratoDocumento({
           {alojItemsTotal.length > 0 && (
             <div className="mb-3 space-y-2">
               {alojItemsTotal.map((it) => (
-                <div key={it.id} className="flex items-center justify-between rounded-lg bg-gray-50 px-3 py-2 text-xs">
+                <div key={it.id} className="flex break-inside-avoid items-center justify-between rounded-lg bg-gray-50 px-3 py-2 text-xs">
                   <span className="text-gray-700">{it.descripcion}</span>
                   {mostrarDesglose && (
                     <span className="font-semibold text-gray-800">{importeDocumento(valorItemDocumento(it))}</span>
@@ -548,9 +552,9 @@ export function ContratoDocumento({
 
           {mostrarValoresItems && composicionBernalo.length > 0 && (
             <div className="mb-3 overflow-x-auto">
-              <p className="mb-1 text-xs font-semibold text-gray-500">Composición tarifa Bernalo</p>
+              <p className="mb-1 break-after-avoid text-xs font-semibold text-gray-500">Composición tarifa Bernalo</p>
               <table className="w-full min-w-[560px] border-collapse text-xs">
-                <thead>
+                <thead className="break-inside-avoid break-after-avoid">
                   <tr className="bg-gray-50 text-left text-gray-500">
                     <th className="border border-gray-200 px-2 py-1">Hotel</th>
                     <th className="border border-gray-200 px-2 py-1">Concepto</th>
@@ -562,7 +566,7 @@ export function ContratoDocumento({
                 </thead>
                 <tbody>
                   {composicionBernalo.map((linea, idx) => (
-                    <tr key={`${linea.habitacionId}-${idx}`}>
+                    <tr key={`${linea.habitacionId}-${idx}`} className="break-inside-avoid">
                       <td className="border border-gray-200 px-2 py-1">{linea.hotelNombre}</td>
                       <td className="border border-gray-200 px-2 py-1">{linea.concepto}</td>
                       <td className="border border-gray-200 px-2 py-1">{linea.cantidad}</td>
@@ -579,7 +583,7 @@ export function ContratoDocumento({
           {alojItemsPorPersona.length > 0 && (
             <div className="overflow-x-auto">
             <table className="w-full min-w-[520px] border-collapse text-xs">
-              <thead>
+              <thead className="break-inside-avoid break-after-avoid">
                 <tr className="bg-gray-50 text-left text-gray-500">
                   <th className="border border-gray-200 px-2 py-1">Ítem</th>
                   <th className="border border-gray-200 px-2 py-1">Adultos</th>
@@ -601,7 +605,7 @@ export function ContratoDocumento({
               </thead>
               <tbody>
                 {alojItemsPorPersona.map((it) => (
-                  <tr key={it.id}>
+                  <tr key={it.id} className="break-inside-avoid">
                     <td className="border border-gray-200 px-2 py-1">
                       {it.descripcion}
                     </td>
@@ -641,9 +645,9 @@ export function ContratoDocumento({
                   categoría, alimentación, adultos, edades) — nunca se
                   reparte el PVP/vuelo/servicios/comisión entre habitaciones,
                   y nunca se muestra un dato del snapshot privado. */}
-              <p className="mb-1 text-xs font-semibold text-gray-500">Detalle por habitación</p>
+              <p className="mb-1 break-after-avoid text-xs font-semibold text-gray-500">Detalle por habitación</p>
               <table className="w-full min-w-[420px] border-collapse text-xs">
-                <thead>
+                <thead className="break-inside-avoid break-after-avoid">
                   <tr className="bg-gray-50 text-left text-gray-500">
                     <th className="border border-gray-200 px-2 py-1">Hotel</th>
                     <th className="border border-gray-200 px-2 py-1">Categoría</th>
@@ -654,7 +658,7 @@ export function ContratoDocumento({
                 </thead>
                 <tbody>
                   {habitacionesBernalo.map((h) => (
-                    <tr key={h.habitacionId}>
+                    <tr key={h.habitacionId} className="break-inside-avoid">
                       <td className="border border-gray-200 px-2 py-1">{h.hotelNombre}</td>
                       <td className="border border-gray-200 px-2 py-1">{h.categoria ?? "—"}</td>
                       <td className="border border-gray-200 px-2 py-1">{h.alimentacion ?? "—"}</td>
@@ -671,9 +675,9 @@ export function ContratoDocumento({
 
           {servicioItems.length > 0 && (
             <div className="mt-3 overflow-x-auto">
-              <p className="mb-1 text-xs font-semibold text-gray-500">Servicios adicionales</p>
+              <p className="mb-1 break-after-avoid text-xs font-semibold text-gray-500">Servicios adicionales</p>
               <table className="w-full min-w-[360px] border-collapse text-xs">
-                <thead>
+                <thead className="break-inside-avoid break-after-avoid">
                   <tr className="bg-gray-50 text-left text-gray-500">
                     <th className="border border-gray-200 px-2 py-1">Servicio</th>
                     <th className="border border-gray-200 px-2 py-1">Pax</th>
@@ -682,7 +686,7 @@ export function ContratoDocumento({
                 </thead>
                 <tbody>
                   {servicioItems.map((it) => (
-                    <tr key={it.id}>
+                    <tr key={it.id} className="break-inside-avoid">
                       <td className="border border-gray-200 px-2 py-1">
                         {it.descripcion.replace(/^Servicio · /, "")}
                       </td>
@@ -709,13 +713,13 @@ export function ContratoDocumento({
             componentes están restringidos — cada componente lleva su propio
             aviso, y el resumen agregado siempre va acompañado del desglose. */}
         {condiciones?.hayCondiciones && condiciones.filas.length > 0 && (
-          <section className="break-inside-avoid">
-            <h2 className="mb-2 text-sm font-semibold" style={{ color: TITULO }}>
+          <section>
+            <h2 className="mb-2 break-after-avoid text-sm font-semibold" style={{ color: TITULO }}>
               Condiciones de pago
             </h2>
             <div className="overflow-x-auto">
               <table className="w-full min-w-[520px] border-collapse text-xs">
-                <thead>
+                <thead className="break-inside-avoid break-after-avoid">
                   <tr className="bg-gray-50 text-left text-gray-500">
                     <th className="border border-gray-200 px-2 py-1">Componente</th>
                     <th className="border border-gray-200 px-2 py-1">Condición</th>
@@ -724,7 +728,7 @@ export function ContratoDocumento({
                 </thead>
                 <tbody>
                   {condiciones.filas.map((l) => (
-                    <tr key={l.key} className="break-inside-avoid">
+                    <tr key={l.key} className="break-inside-avoid last:break-before-avoid">
                       <td className="border border-gray-200 px-2 py-1">
                         {l.referencia ?? l.nombreComponente}
                         <div className="text-[10px] text-gray-400">{l.nombreComponente}</div>
@@ -745,7 +749,7 @@ export function ContratoDocumento({
               </table>
             </div>
             {condiciones.resumen && (
-              <p className="mt-2 text-[11px] font-semibold text-gray-700">{condiciones.resumen.texto}</p>
+              <p className="mt-2 break-inside-avoid text-[11px] font-semibold text-gray-700">{condiciones.resumen.texto}</p>
             )}
             {/* Restricciones: SOLO se enumeran los componentes que de verdad
                 están restringidos EN LA PRESENTACIÓN (tras overrides). Ningún
@@ -763,13 +767,15 @@ export function ContratoDocumento({
         )}
 
         {/* ── Cláusulas ────────────────────────────────────────── */}
-        <section className="break-before-page">
-          <h2 className="mb-3 text-center text-sm font-bold uppercase tracking-wide text-gray-700">
-            {CONTRATO_TITULO}
-          </h2>
-          <p className="mb-4 text-justify text-xs leading-relaxed text-gray-600">
-            {CONTRATO_INTRO}
-          </p>
+        <section>
+          <div className="break-inside-avoid">
+            <h2 className="mb-3 break-after-avoid text-center text-sm font-bold uppercase tracking-wide text-gray-700">
+              {CONTRATO_TITULO}
+            </h2>
+            <p className="mb-4 break-inside-avoid text-justify text-xs leading-relaxed text-gray-600">
+              {CONTRATO_INTRO}
+            </p>
+          </div>
           <div className="space-y-3">
             {CLAUSULAS.map((c) => (
               <div key={c.numero} className="break-inside-avoid">
