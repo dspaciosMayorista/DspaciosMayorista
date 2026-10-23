@@ -48,6 +48,14 @@ Object.assign(globalThis, {
   IS_REACT_ACT_ENVIRONMENT: true,
 });
 Object.defineProperty(globalThis, "navigator", { value: dom.window.navigator, configurable: true });
+// `LeadsClient` envuelve la tabla en `ResponsiveTableShell`, que mide el ancho
+// real con `ResizeObserver` (jsdom no lo implementa). Con clientWidth 0 el
+// shell apila, que es justo el modo que estas pruebas ejercitan.
+(globalThis as unknown as { ResizeObserver: unknown }).ResizeObserver = class {
+  observe() {}
+  unobserve() {}
+  disconnect() {}
+};
 
 type Llamada = { nombre: string; args: Record<string, unknown> };
 type Respuesta = { data: unknown; error: { message: string } | null };

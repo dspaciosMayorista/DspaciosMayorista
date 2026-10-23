@@ -59,6 +59,11 @@ const STUB_ELIMINAR_DESTINO_ACTIONS = pathToFileURL(join(AQUI, "stubs", "elimina
 const STUB_PAGOS_ACTIONS = pathToFileURL(join(AQUI, "stubs", "pagosActionsStub.mjs")).href;
 const STUB_PROVEEDORES_ACTIONS = pathToFileURL(join(AQUI, "stubs", "proveedoresActionsStub.mjs")).href;
 const STUB_DIFUSION_ACTIONS = pathToFileURL(join(AQUI, "stubs", "difusionActionsStub.mjs")).href;
+// Facturación (#49): `FacturacionClient.tsx` importa su Server Action real
+// "./actions" (next/headers + asientos) y `next/navigation`. La prueba
+// `tablasMoviles49.react.ts` solo comprueba la presentación móvil, así que las
+// acciones se sustituyen por un stub que responde ok sin tocar la base.
+const STUB_FACTURACION_ACTIONS = pathToFileURL(join(AQUI, "stubs", "facturacionActionsStub.mjs")).href;
 // `DateInput.tsx` arrastra "react-day-picker" (no instalado en el entorno de
 // pruebas) — se reemplaza por un <input> controlado en los componentes que lo
 // montan pero no lo prueban (DifusionClient, PagosList). Sin esto, esos
@@ -157,6 +162,9 @@ export async function resolve(specifier, context, nextResolve) {
   if (specifier === "./actions" && context.parentURL?.endsWith("DifusionClient.tsx")) {
     return { url: STUB_DIFUSION_ACTIONS, shortCircuit: true };
   }
+  if (specifier === "./actions" && context.parentURL?.endsWith("FacturacionClient.tsx")) {
+    return { url: STUB_FACTURACION_ACTIONS, shortCircuit: true };
+  }
   if (specifier === "./actions" && context.parentURL?.endsWith("/login/LoginClient.tsx")) {
     return { url: STUB_LOGIN_ACTIONS, shortCircuit: true };
   }
@@ -215,7 +223,9 @@ export async function resolve(specifier, context, nextResolve) {
       // Vista previa de la conversión del carrito (pruebas/convertirCarritoVinculos.react.ts).
       context.parentURL?.endsWith("/ConvertirCarritoBtn.tsx") ||
       // Panel del carrito (pruebas/carritoMonedaCheckout.react.ts).
-      context.parentURL?.endsWith("/tarifario/CartDrawer.tsx"))
+      context.parentURL?.endsWith("/tarifario/CartDrawer.tsx") ||
+      // Facturación (#49, pruebas/tablasMoviles49.react.ts).
+      context.parentURL?.endsWith("FacturacionClient.tsx"))
   ) {
     return { url: STUB_NEXT_NAVIGATION, shortCircuit: true };
   }
