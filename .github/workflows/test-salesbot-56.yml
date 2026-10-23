@@ -1,5 +1,5 @@
 # #56 (SalesBot comercial: Programas, Bloqueos y Porción terrestre) — checks focales.
-# Corre en el runner de GitHub, sin contenedores: las 10 suites focales (9 de SalesBot #56 + calendario),
+# Corre en el runner de GitHub, sin contenedores: las 14 suites focales (13 de SalesBot #56 + calendario),
 # TypeScript, ESLint de las rutas SalesBot y build de producción. Todos son obligatorios: sin
 # continue-on-error.
 # Sin secretos del repositorio, sin Supabase remoto, sin Docker, sin pull_request_target y con permisos
@@ -77,6 +77,10 @@ jobs:
             pruebas/salesbot56BloqueoCableado.test.ts \
             pruebas/salesbot56Porcion.test.ts \
             pruebas/salesbot56PorcionParidad.test.ts \
+            pruebas/salesbot56Conversacion.test.ts \
+            pruebas/salesbot56ConversacionFlujo.test.ts \
+            pruebas/salesbot56ConversacionAcciones.test.ts \
+            pruebas/salesbot56ConversacionCableado.test.ts \
             pruebas/calendariosCobertura.test.ts
 
       - name: TypeScript

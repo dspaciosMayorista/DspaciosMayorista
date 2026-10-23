@@ -130,8 +130,10 @@ describe("exclusiones de esta pieza", () => {
 });
 
 describe("pantallas", () => {
-  test("de servidor, sin chat", () => {
-    for (const rel of PANTALLAS) {
+  // La conversación guiada (#56 MVP) es el ÚNICO componente de cliente; sus garantías
+  // (sin persistencia, solo la acción de servidor) las prueba salesbot56ConversacionCableado.
+  test("vistas de consulta: de servidor, sin chat", () => {
+    for (const rel of PANTALLAS.filter((r) => !r.endsWith("/PanelConversacion.tsx"))) {
       const src = sinComentarios(leer(rel));
       assert.doesNotMatch(src, /"use client"/, rel);
       assert.doesNotMatch(src, /textarea|chat|mensaje del bot/i, rel);

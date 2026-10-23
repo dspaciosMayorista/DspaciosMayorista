@@ -7,9 +7,10 @@ import type { AgenciaResumen, PorcentajeAgencia, Respuesta, Sello } from "@/lib/
 
 export type Params = Record<string, string | string[] | undefined>;
 
-export type Producto = "programas" | "bloqueos" | "porcion";
+export type Producto = "conversacion" | "programas" | "bloqueos" | "porcion";
 
 export const PESTANAS: { producto: Producto; etiqueta: string }[] = [
+  { producto: "conversacion", etiqueta: "Conversación" },
   { producto: "programas", etiqueta: "Programas" },
   { producto: "bloqueos", etiqueta: "Bloqueos" },
   { producto: "porcion", etiqueta: "Porción terrestre" },
@@ -40,9 +41,18 @@ export function uno(sp: Params, k: string): string | undefined {
   return typeof v === "string" && v.trim() ? v.trim() : undefined;
 }
 
+/** Parámetros que envían el formulario y los enlaces de la vista Programas (que no llevan `producto`). */
+const PARAMS_PROGRAMAS = ["texto", "destino", "tipoTransporte", "fechaSalida", "presupuesto", "monedaPresupuesto", "programa", "audiencia", "agencia"];
+
+/**
+ * Vista activa. Sin parámetros: la conversación. Las vistas secundarias se
+ * eligen con `?producto=`; un formulario o enlace de Programas (que no envía
+ * `producto`) sigue abriendo Programas, como antes de la conversación.
+ */
 export function productoDe(sp: Params): Producto {
   const p = uno(sp, "producto");
-  return p === "bloqueos" || p === "porcion" ? p : "programas";
+  if (p === "conversacion" || p === "programas" || p === "bloqueos" || p === "porcion") return p;
+  return PARAMS_PROGRAMAS.some((k) => uno(sp, k) !== undefined) ? "programas" : "conversacion";
 }
 
 /** Enlace que conserva los parámetros actuales salvo los que se quitan, y fija los que se pasan. */
