@@ -175,6 +175,13 @@ if $PSA -d postgres -c "create database $DB2 template $DB" >/dev/null 2>"$TMP/db
   $PSA -d postgres -c "comment on database $DB2 is '$MARCA'" >/dev/null
   PS2="docker exec -i -e PGPASSWORD=$PW $CT psql -h 127.0.0.1 -U $ROL_ADMIN -X -q -v ON_ERROR_STOP=1 -d $DB2"
   correr2() { docker exec -i -e PGPASSWORD="$PW" "$CT" psql -h 127.0.0.1 -U "$ROL_MIGRA" -d "$DB2" -X -q -t -A -v ON_ERROR_STOP=1 < "$1"; }
+  # Aislamiento: la copia hereda de F6.1 el paquete en cop_trm_63, y el rollback comprueba el modo ANTES que el contador de costos y que las
+  # ofertas, así que F6.1b.1 y F6.1b.2 chocarían con ese primer motivo y nunca llegarían al suyo. Solo EN LA COPIA se devuelve el paquete a
+  # legacy (trm_oferta = NULL, como exige su CHECK). Cambiar el modo solo invalida el tarifario publicado; no toca p63_rev_costos (los
+  # triggers de costos solo cuentan paquetes en cop_trm_63), y lo comprobamos: si algo quedara en la copia, F6.1b no se ejecuta.
+  $PS2 -c "update public.armado_paquetes set modo_oferta = 'legacy', trm_oferta = null where id = 97227" >/dev/null
+  RESTO_63="$($PS2 -t -A -c "select (select count(*) from public.armado_paquetes where modo_oferta <> 'legacy' or trm_oferta is not null or p63_rev_costos <> 0) + (select count(*) from public.p63_oferta) + (select count(*) from public.p63_aceptacion) + (select count(*) from public.tarifario_oferta_63) + (select count(*) from public.salidas_dinamicas where empaquetado_id is not null or moneda <> 'COP')" 2>&1)"
+  if [ "$RESTO_63" != "0" ]; then fallo "F6.1b la copia desechable no quedó aislada (otros motivos del rollback siguen activos: '$RESTO_63'); F6.1b.1 y F6.1b.2 no son concluyentes"; else
   $PS2 -c "update public.armado_paquetes set p63_rev_costos = 3 where id = 97227" >/dev/null
   if correr2 "$AQUI/rollback_227_salida_vinculada_empaquetado.sql" > "$TMP/rb1b.out" 2>&1; then fallo "F6.1b.1 el rollback procedió con un paquete con revisión de costos acumulada"; else
     grep -q 'revisión de costos' "$TMP/rb1b.out" && ok "F6.1b.1 el rollback se niega con revisión de costos acumulada (forward-only)" || fallo "F6.1b.1 rechazo por otra causa: $(cut -c1-300 "$TMP/rb1b.out")"; fi
@@ -182,6 +189,7 @@ if $PSA -d postgres -c "create database $DB2 template $DB" >/dev/null 2>"$TMP/db
   $PS2 -c "insert into public.cotizaciones (tenant) values ('mayorista'); insert into public.p63_oferta (cotizacion_id, tenant, paquete_id, trm, rev_fuente, rev_costos, huella, huella_financiera, snapshot) select id, 'mayorista', 97227, 4000, 0, 0, 'h', 'f', '{}'::jsonb from public.cotizaciones order by id desc limit 1" >/dev/null
   if correr2 "$AQUI/rollback_227_salida_vinculada_empaquetado.sql" > "$TMP/rb1c.out" 2>&1; then fallo "F6.1b.2 el rollback procedió con una oferta cotizada"; else
     grep -q 'oferta(s) cotizada' "$TMP/rb1c.out" && ok "F6.1b.2 el rollback se niega con una oferta cotizada (snapshot privado = historia; forward-only)" || fallo "F6.1b.2 rechazo por otra causa: $(cut -c1-300 "$TMP/rb1c.out")"; fi
+  fi
   $PSA -d postgres -c "drop database if exists $DB2 with (force)" >/dev/null 2>&1 || true
 else fallo "F6.1b no se pudo crear la copia desechable: $(cut -c1-200 "$TMP/db2.err")"; fi
 $PSA -d "$DB" -c "update public.armado_paquetes set modo_oferta = 'legacy', trm_oferta = null where id = 97227" >/dev/null
