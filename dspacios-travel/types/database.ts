@@ -911,6 +911,87 @@ export type Database = {
         Update: Partial<Database["public"]["Tables"]["asiento_lineas"]["Insert"]>;
         Relationships: [];
       };
+      // Migración 215 (#43-1a): calendario tributario por agencia.
+      obligacion_tributaria: {
+        Row: {
+          id: number;
+          tenant: string;
+          nombre: string;
+          periodicidad: string;
+          regla_digitos: number;
+          dias_aviso: number;
+          requiere_pago: boolean;
+          activa: boolean;
+          notas: string | null;
+          creado_en: string;
+          actualizado_en: string;
+        };
+        Insert: {
+          id?: number;
+          tenant: string;
+          nombre: string;
+          periodicidad: string;
+          regla_digitos?: number;
+          dias_aviso?: number;
+          requiere_pago?: boolean;
+          activa?: boolean;
+          notas?: string | null;
+          creado_en?: string;
+          actualizado_en?: string;
+        };
+        Update: Partial<Database["public"]["Tables"]["obligacion_tributaria"]["Insert"]>;
+        Relationships: [];
+      };
+      obligacion_vencimiento: {
+        Row: {
+          id: number;
+          tenant: string;
+          obligacion_id: number;
+          anio: number;
+          periodo: number;
+          digitos: string;
+          fecha: string;
+        };
+        Insert: {
+          id?: number;
+          tenant: string;
+          obligacion_id: number;
+          anio: number;
+          periodo: number;
+          digitos?: string;
+          fecha: string;
+        };
+        Update: Partial<Database["public"]["Tables"]["obligacion_vencimiento"]["Insert"]>;
+        Relationships: [];
+      };
+      obligacion_cumplimiento: {
+        Row: {
+          id: number;
+          tenant: string;
+          obligacion_id: number;
+          anio: number;
+          periodo: number;
+          presentada_en: string | null;
+          pagada_en: string | null;
+          nota: string | null;
+          actualizado_por: string | null;
+          actualizado_en: string;
+        };
+        Insert: {
+          id?: number;
+          tenant: string;
+          obligacion_id: number;
+          anio: number;
+          periodo: number;
+          presentada_en?: string | null;
+          pagada_en?: string | null;
+          nota?: string | null;
+          actualizado_por?: string | null;
+          actualizado_en?: string;
+        };
+        Update: Partial<Database["public"]["Tables"]["obligacion_cumplimiento"]["Insert"]>;
+        Relationships: [];
+      };
       aliados_b2b: {
         Row: {
           id: number;

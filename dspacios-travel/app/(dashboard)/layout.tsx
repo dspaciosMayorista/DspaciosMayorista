@@ -116,6 +116,7 @@ const NAV: NavItem[] = [
       { href: "/dashboard/contabilidad/facturacion", label: "Facturación" },
       { href: "/dashboard/contabilidad/movimientos", label: "Movimientos de pagos" },
       { href: "/dashboard/contabilidad/retenciones", label: "Retenciones a proveedores" },
+      { href: "/dashboard/contabilidad/calendario-tributario", label: "Calendario tributario" },
       { href: "/dashboard/contabilidad/conciliaciones", label: "Conciliaciones bancarias" },
       { href: "/dashboard/contabilidad/plan-cuentas", label: "Plan de cuentas (PUC)" },
       { href: "/dashboard/contabilidad/libro-diario", label: "Libro diario" },

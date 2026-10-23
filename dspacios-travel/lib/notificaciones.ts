@@ -1,5 +1,11 @@
 import { createAdminClient } from "@/lib/supabase/admin";
 import { enviarEmail } from "@/lib/email/resend";
+import { fechaNegocio } from "@/lib/fechaNegocio";
+import { fetchAllPaginadoConError } from "@/lib/supabase/fetchAllPaginado";
+import {
+  esPeriodicidad, resolverVencimientos, alertasTributarias, ETIQUETA_ESTADO,
+  type Obligacion, type ReglaDigitos,
+} from "@/lib/contabilidad/calendarioTributario";
 
 function fmtCOP(n: number): string {
   return "$ " + Math.round(n || 0).toLocaleString("es-CO");
@@ -68,6 +74,60 @@ async function recopilar(dias: number, flags: { cxp: boolean; cuotas: boolean; b
   return secciones;
 }
 
+// Obligaciones tributarias (#43-1a, migración 215). Cada obligación trae sus
+// propios días de aviso, así que no usa `dias_anticipacion`; y "hoy" es el día
+// de negocio de Bogotá. Si la tabla aún no existe o una lectura falla, la
+// sección no se arma: nunca se envía una lista parcial como si fuera completa.
+async function recopilarTributarias(): Promise<Seccion[]> {
+  try {
+    const admin = createAdminClient();
+    const hoy = fechaNegocio();
+    const anio = Number(hoy.slice(0, 4));
+    const [obR, veR, cuR, agR] = await Promise.all([
+      admin.from("obligacion_tributaria")
+        .select("id, tenant, nombre, periodicidad, regla_digitos, dias_aviso, requiere_pago, activa").eq("activa", true),
+      fetchAllPaginadoConError((d, h) => admin.from("obligacion_vencimiento")
+        .select("tenant, obligacion_id, anio, periodo, digitos, fecha").gte("anio", anio - 1).lte("anio", anio + 1)
+        .order("id").range(d, h)),
+      fetchAllPaginadoConError((d, h) => admin.from("obligacion_cumplimiento")
+        .select("tenant, obligacion_id, anio, periodo, presentada_en, pagada_en").gte("anio", anio - 1).lte("anio", anio + 1)
+        .order("id").range(d, h)),
+      admin.from("agencias").select("tenant, nit, nombre_comercial"),
+    ]);
+    if (obR.error || veR.error || cuR.error || agR.error) return [];
+    const filas: Fila[] = [];
+    for (const ag of agR.data ?? []) {
+      const obligaciones: Obligacion[] = (obR.data ?? [])
+        .filter((o) => o.tenant === ag.tenant && esPeriodicidad(o.periodicidad))
+        .map((o) => ({
+          id: o.id, nombre: o.nombre, periodicidad: o.periodicidad as Obligacion["periodicidad"],
+          reglaDigitos: o.regla_digitos as ReglaDigitos, diasAviso: o.dias_aviso, requierePago: o.requiere_pago, activa: o.activa,
+        }));
+      if (!obligaciones.length) continue;
+      const { items } = resolverVencimientos({
+        obligaciones, nit: ag.nit, hoy,
+        vencimientos: veR.data.filter((v) => v.tenant === ag.tenant).map((v) => ({
+          obligacionId: v.obligacion_id, anio: v.anio, periodo: v.periodo, digitos: v.digitos, fecha: v.fecha,
+        })),
+        cumplimientos: cuR.data.filter((c) => c.tenant === ag.tenant).map((c) => ({
+          obligacionId: c.obligacion_id, anio: c.anio, periodo: c.periodo, presentadaEn: c.presentada_en, pagadaEn: c.pagada_en,
+        })),
+      });
+      for (const i of alertasTributarias(items)) {
+        filas.push({
+          c1: `${i.fecha}${i.estado === "vencida" ? " · VENCIDA" : ""}`,
+          c2: `${i.obligacion} · ${i.etiqueta} (${ag.nombre_comercial || ag.tenant})`,
+          c3: ETIQUETA_ESTADO[i.estado],
+        });
+      }
+    }
+    filas.sort((a, b) => a.c1.localeCompare(b.c1));
+    return filas.length ? [{ titulo: "Obligaciones tributarias", cols: ["Vence", "Obligación / periodo", "Estado"], filas }] : [];
+  } catch {
+    return [];
+  }
+}
+
 function html(secciones: Seccion[], dias: number): string {
   const T = "#1D7C9A";
   const bloques = secciones.map((s) => `
@@ -104,6 +164,7 @@ export async function enviarNotificaciones(opts?: { forzar?: boolean }): Promise
   const secciones = await recopilar(cfg.dias_anticipacion ?? 5, {
     cxp: cfg.alerta_cxp, cuotas: cfg.alerta_cuotas, bloqueos: cfg.alerta_bloqueos,
   });
+  secciones.push(...(await recopilarTributarias()));
   if (!secciones.length && !opts?.forzar) return { ok: true, enviado: false };
 
   const r = await enviarEmail({
