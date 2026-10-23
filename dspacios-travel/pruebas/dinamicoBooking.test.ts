@@ -6,7 +6,8 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import type { Database } from "../types/database.ts";
 import {
   accesoCotizacionDinamica, agruparSalidasDinamicas, desdeDobleResumen, desdeSalidaDinamica, destinosDinamicos, esOfertaDinamica, filaDinamicaVisibleEnPaquetes,
-  origenSalidaDinamica, origenesDinamicos, reservarHrefDinamico, salidaIdsDinamicas,
+  etiquetaSalidaDinamica, hotelUnidadVisibleConSalida, leerSalidaElegida, origenSalidaDinamica, origenesDinamicos, reservarHrefDinamico, salidaIdsDinamicas, salidasDinamicasSelector,
+  valorSalidaElegida, type SalidaElegida,
 } from "../lib/tarifario/dinamicoBooking.ts";
 
 process.env.SUPABASE_SERVICE_ROLE_KEY = "dummy-service-role";
@@ -17,7 +18,7 @@ const { claveOferta } = await import("../lib/tarifario/recomendados.ts");
 
 // Paquetes DINÁMICOS dentro de "Paquetes" (Vista Booking): lógica pura + carga del resumen (Recomendados/descripción/condición).
 
-const LIBRE = { origenSel: "", salidaSel: "" as number | "", destinoSel: "" };
+const LIBRE = { origenSel: "", salidaSel: null as SalidaElegida, destinoSel: "" };
 const fila = (o: Record<string, unknown> = {}) => ({ modulo: "dinamico", paquete_id: 54, hotel_id: 2540, salida_id: 540, destino_nombre: "CARTAGENA", ...o });
 
 describe("filaDinamicaVisibleEnPaquetes", () => {
@@ -32,8 +33,54 @@ describe("filaDinamicaVisibleEnPaquetes", () => {
     assert.equal(filaDinamicaVisibleEnPaquetes(fila({ destino_nombre: null }), { ...LIBRE, destinoSel: "CARTAGENA" }), false);
   });
   test("vuelo (record) de Bloqueo elegido: el Dinámico no aplica; origen elegido sin origen REAL conocido de su salida: tampoco", () => {
-    assert.equal(filaDinamicaVisibleEnPaquetes(fila(), { ...LIBRE, salidaSel: 111 }), false);
+    assert.equal(filaDinamicaVisibleEnPaquetes(fila(), { ...LIBRE, salidaSel: { tipo: "bloqueo", id: 111 } }), false);
     assert.equal(filaDinamicaVisibleEnPaquetes(fila(), { ...LIBRE, origenSel: "BOG" }), false, "nunca se le inventa un origen");
+  });
+});
+
+// Hallazgo de la prueba humana (ID 54): «Salida (vuelo)» solo ofrecía «Todas las salidas» aunque el Dinámico tiene salidas.
+describe("Salida elegida con TIPO (bloqueo o dinámica) — sin colisión de ids", () => {
+  test("valor del selector: el tipo va en el valor, así b:540 y d:540 son opciones distintas", () => {
+    assert.equal(valorSalidaElegida({ tipo: "bloqueo", id: 540 }), "b:540");
+    assert.equal(valorSalidaElegida({ tipo: "dinamico", id: 540 }), "d:540");
+    assert.equal(valorSalidaElegida(null), "");
+    assert.deepEqual(leerSalidaElegida("b:540"), { tipo: "bloqueo", id: 540 });
+    assert.deepEqual(leerSalidaElegida("d:540"), { tipo: "dinamico", id: 540 });
+    for (const malo of ["", "540", "x:540", "d:0", "d:-3", "d:5.5", "d:", "b:abc"]) assert.equal(leerSalidaElegida(malo), null, malo);
+  });
+  test("una salida dinámica elegida deja solo SUS filas; una de Bloqueo con el MISMO número no las deja pasar", () => {
+    const d540: SalidaElegida = { tipo: "dinamico", id: 540 };
+    assert.equal(filaDinamicaVisibleEnPaquetes(fila(), { ...LIBRE, salidaSel: d540 }), true);
+    assert.equal(filaDinamicaVisibleEnPaquetes(fila({ salida_id: 541 }), { ...LIBRE, salidaSel: d540 }), false);
+    assert.equal(filaDinamicaVisibleEnPaquetes(fila(), { ...LIBRE, salidaSel: { tipo: "bloqueo", id: 540 } }), false, "bloqueo_id 540 ≠ salida_id 540");
+  });
+  test("salidasDinamicasSelector: una opción por salida real (fecha/noches/destino del paquete/origen real), ordenadas por fecha", () => {
+    const ORI = { 540: "BOG", 541: "MDE" };
+    const f = (o: Record<string, unknown>) => fila({ fecha_ida: "2030-01-10", fecha_regreso: "2030-01-13", noches: 3, ...o });
+    const filas = [
+      f({ salida_id: 541, fecha_ida: "2030-02-10", fecha_regreso: "2030-02-14", noches: 4 }), f({}), f({ categoria: "Suite" }),
+      f({ salida_id: 999, fecha_ida: "2030-03-01", fecha_regreso: "2030-03-04" }), f({ salida_id: 777, destino_nombre: "SAN ANDRES" }),
+      { ...f({ salida_id: null }), modulo: "bloqueo", bloqueo_id: 540 },
+    ];
+    const todas = salidasDinamicasSelector(filas, { origenSel: "", destinoSel: "CARTAGENA", origenPorSalida: ORI });
+    assert.deepEqual(todas.map((s) => s.id), [540, 541, 999], "sin duplicar la 540 (dos combos) ni tomar otro destino o el bloqueo");
+    assert.deepEqual(todas[0], { id: 540, origen: "BOG", destino: "CARTAGENA", fechaIda: "2030-01-10", fechaRegreso: "2030-01-13", noches: 3 });
+    assert.equal(todas[2].origen, null, "la 999 no tiene origen conocido: no se inventa");
+    assert.deepEqual(salidasDinamicasSelector(filas, { origenSel: "BOG", destinoSel: "CARTAGENA", origenPorSalida: ORI }).map((s) => s.id), [540]);
+    assert.deepEqual(salidasDinamicasSelector(filas, { origenSel: "CLO", destinoSel: "", origenPorSalida: ORI }), []);
+  });
+  test("hotel por UNIDAD con salida elegida: «Todas» entra; una dinámica nunca; un record de Bloqueo solo si lo tiene en sus salidas", () => {
+    const h = { salidas: [{ tipo: "bloqueo", id: 540 }, { tipo: "empaquetado", id: 541 }] };
+    assert.equal(hotelUnidadVisibleConSalida(h, null), true);
+    assert.equal(hotelUnidadVisibleConSalida({ salidas: [] }, null), true, "sin salidas (porción) también, como siempre");
+    assert.equal(hotelUnidadVisibleConSalida(h, { tipo: "dinamico", id: 540 }), false, "aunque tenga un record 540: no es la salida dinámica 540");
+    assert.equal(hotelUnidadVisibleConSalida(h, { tipo: "bloqueo", id: 540 }), true);
+    assert.equal(hotelUnidadVisibleConSalida(h, { tipo: "bloqueo", id: 541 }), false, "el 541 es un empaquetado, no un record de Bloqueo");
+    assert.equal(hotelUnidadVisibleConSalida({ salidas: [] }, { tipo: "bloqueo", id: 540 }), false);
+  });
+  test("etiqueta: origen → destino · fechas (noches), sin cupos ni datos de vuelo; sin origen conocido lo dice", () => {
+    assert.equal(etiquetaSalidaDinamica({ id: 540, origen: "BOG", destino: "CARTAGENA", fechaIda: "2030-01-10", fechaRegreso: "2030-01-13", noches: 3 }), "BOG → CARTAGENA · 10/01/30–13/01/30 (3N)");
+    assert.equal(etiquetaSalidaDinamica({ id: 999, origen: null, destino: "CARTAGENA", fechaIda: "2030-03-01", fechaRegreso: null, noches: null }), "Origen por confirmar → CARTAGENA · 01/03/30");
   });
 });
 

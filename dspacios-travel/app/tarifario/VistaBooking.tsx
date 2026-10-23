@@ -52,7 +52,10 @@ import { obtenerDetalleSalida } from "./detalle-actions";
 import { conCacheDetalle, claveDetalleHotel, type EstadoDetalle } from "@/lib/tarifario/detalleCliente";
 import { claveComboAlcanceNormalizada } from "@/lib/tarifario/comboKey";
 import { DinamicoModal, InsigniaFechasSalida } from "./DinamicoModal";
-import { accesoCotizacionDinamica, desdeDobleResumen, destinosDinamicos, esOfertaDinamica, filaDinamicaVisibleEnPaquetes, origenesDinamicos, salidaIdsDinamicas } from "@/lib/tarifario/dinamicoBooking";
+import {
+  accesoCotizacionDinamica, desdeDobleResumen, destinosDinamicos, esOfertaDinamica, etiquetaSalidaDinamica, filaDinamicaVisibleEnPaquetes, hotelUnidadVisibleConSalida, leerSalidaElegida,
+  origenesDinamicos, salidaIdsDinamicas, salidasDinamicasSelector, valorSalidaElegida, type SalidaElegida,
+} from "@/lib/tarifario/dinamicoBooking";
 import { RegimenInfo, type PlanesInfo } from "./RegimenInfo";
 import { BuscadorBooking, Resultado, type EstadoBusquedaPorcion } from "./BuscadorBooking";
 import type { OpcionUnidadConfirmada } from "./busquedaUnidadActions";
@@ -644,7 +647,8 @@ export function VistaBooking({
   // Buscador de bloqueos: origen → destino → salida (vuelo).
   const [origenSel, setOrigenSel] = useState("");
   const [destinoSel, setDestinoSel] = useState("");
-  const [salidaSel, setSalidaSel] = useState<number | "">("");
+  // Salida elegida en «Salida (vuelo)»: record de Bloqueo o salida dinámica, con su TIPO (los ids pueden coincidir); null = Todas.
+  const [salidaSel, setSalidaSel] = useState<SalidaElegida>(null);
   // El filtro de destino de la grilla de Porción terrestre se ELIMINÓ: era un
   // `<select>` de exploración que solo podía OCULTAR tarjetas, y con hoteles
   // recomendados por paquete eso contradecía la regla del estado global
@@ -809,7 +813,7 @@ export function VistaBooking({
   // siguen siendo controles visibles ahí, no se tocan).
   function confirmarDestinoBloqueo(nuevoDestino: string) {
     setDestinoSel(nuevoDestino);
-    setSalidaSel("");
+    setSalidaSel(null);
     if (!nuevoDestino) { restablecerControlesOcultos(); return; }
     podarZonasEstrellas(candidatosDeBloqueo(nuevoDestino));
   }
@@ -916,6 +920,12 @@ export function VistaBooking({
     () => salidasBloqueo.filter((s) => (!origenSel || s.origen === origenSel) && (!destinoSel || s.destino === destinoSel)),
     [salidasBloqueo, origenSel, destinoSel]
   );
+  // Salidas DINÁMICAS reales para el mismo selector (fecha, noches, origen real de la salida, destino del paquete), con el
+  // mismo origen/destino que acotan arriba. Sin cupos ni datos de vuelo: un Dinámico no los tiene en el tarifario.
+  const salidasDinamicasFiltradas = useMemo(
+    () => salidasDinamicasSelector(filas, { origenSel, destinoSel, origenPorSalida }),
+    [filas, origenSel, destinoSel, origenPorSalida]
+  );
 
   // Destino/búsqueda EFECTIVOS del submódulo activo — gobiernan el estado A
   // (global inicial) vs B (después de buscar) de "hoteles recomendados".
@@ -954,12 +964,14 @@ export function VistaBooking({
       // Dinámico: va dentro de "Paquetes", con su propia regla (sin cupos; destino del paquete; origen real de su salida).
       if (f.modulo === "dinamico") return mod === "bloqueo" && filaDinamicaVisibleEnPaquetes(f, { origenSel, salidaSel, destinoSel, origenPorSalida });
       if (f.modulo !== mod) return false;
+      // Una salida DINÁMICA elegida deja solo las filas de esa salida (arriba): ninguna fila de Bloqueo aplica.
+      if (mod === "bloqueo" && salidaSel?.tipo === "dinamico") return false;
       if (mod === "bloqueo" && f.bloqueo_id != null) {
         const c = cuposPorBloqueo[f.bloqueo_id];
         if (c !== undefined && c <= 0) return false; // sin cupos: no se muestra
         if (origenSel && origenPorBloqueo[f.bloqueo_id] !== origenSel) return false;
         if (destinoSel && (f.destino_nombre ?? "") !== destinoSel) return false;
-        if (salidaSel !== "" && f.bloqueo_id !== salidaSel) return false;
+        if (salidaSel && f.bloqueo_id !== salidaSel.id) return false;
       }
       if (mod === "porcion_terrestre" && destinoPorcionBusqueda && (f.destino_nombre ?? "") !== destinoPorcionBusqueda) return false;
       return true;
@@ -1027,9 +1039,11 @@ export function VistaBooking({
     if (sub === "receptivos") return [];
     let arr = hotelesBernalo.filter((h) => h.tipo === sub);
     if (sub === "bloqueo" && destinoSel) arr = arr.filter((h) => (h.destinoNombre ?? "") === destinoSel);
+    // Salida elegida: una dinámica no pertenece a ningún hotel por unidad; un record de Bloqueo, solo a los que lo tienen en `salidas`.
+    if (sub === "bloqueo" && salidaSel) arr = arr.filter((h) => hotelUnidadVisibleConSalida(h, salidaSel));
     if (sub === "porcion_terrestre" && destinoPorcionBusqueda) arr = arr.filter((h) => (h.destinoNombre ?? "") === destinoPorcionBusqueda);
     return arr;
-  }, [hotelesBernalo, sub, destinoSel, destinoPorcionBusqueda]);
+  }, [hotelesBernalo, sub, destinoSel, salidaSel, destinoPorcionBusqueda]);
 
   // Una sola colección para la grilla — persona y unidad mezclados, sin
   // sección aparte (el usuario ve hoteles, no "modelos de cálculo"). Clave
@@ -1763,13 +1777,16 @@ export function VistaBooking({
             <div>
               <label className="mb-1 block text-xs font-semibold text-slate-700">Salida (vuelo)</label>
               <div className="relative">
-                <CalendarClock className={iconoBloqueoCls(salidaSel !== "")} aria-hidden />
-                <select value={salidaSel} onChange={(e) => setSalidaSel(e.target.value === "" ? "" : Number(e.target.value))} className={campoBloqueoCls(salidaSel !== "")}>
+                <CalendarClock className={iconoBloqueoCls(salidaSel !== null)} aria-hidden />
+                <select value={valorSalidaElegida(salidaSel)} onChange={(e) => setSalidaSel(leerSalidaElegida(e.target.value))} className={campoBloqueoCls(salidaSel !== null)}>
                   <option value="">Todas las salidas</option>
                   {salidasFiltradas.map((s) => (
-                    <option key={s.id} value={s.id}>
+                    <option key={`b:${s.id}`} value={valorSalidaElegida({ tipo: "bloqueo", id: s.id })}>
                       {s.origen} → {s.destino} · {fmtFecha(s.fechaIda)}–{fmtFecha(s.fechaRegreso)}{s.noches ? ` (${s.noches}N)` : ""} · {s.cupos} cupos
                     </option>
+                  ))}
+                  {salidasDinamicasFiltradas.map((s) => (
+                    <option key={`d:${s.id}`} value={valorSalidaElegida({ tipo: "dinamico", id: s.id })}>{etiquetaSalidaDinamica(s)}</option>
                   ))}
                 </select>
               </div>

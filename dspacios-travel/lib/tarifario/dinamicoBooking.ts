@@ -24,9 +24,26 @@ export type FilaDinamicaBase = {
   destino_nombre?: string | null;
 };
 
+/**
+ * Salida elegida en «Salida (vuelo)» de Paquetes: un record de Bloqueo (`bloqueo_id`) o una salida dinámica (`salida_id`). Lleva
+ * el TIPO porque los dos ids son de tablas distintas y pueden coincidir en número; `null` = «Todas las salidas».
+ */
+export type SalidaElegida = { tipo: "bloqueo" | "dinamico"; id: number } | null;
+
+/** Valor del `<option>`: `b:<bloqueo_id>` / `d:<salida_id>`; `""` = «Todas las salidas». */
+export function valorSalidaElegida(s: SalidaElegida): string {
+  return s ? `${s.tipo === "bloqueo" ? "b" : "d"}:${s.id}` : "";
+}
+
+/** Inversa de `valorSalidaElegida`. Cualquier valor que no sea `b:`/`d:` + entero positivo es «Todas» (`null`). */
+export function leerSalidaElegida(v: string): SalidaElegida {
+  const m = /^([bd]):([1-9]\d*)$/.exec(v);
+  return m ? { tipo: m[1] === "b" ? "bloqueo" : "dinamico", id: Number(m[2]) } : null;
+}
+
 export type FiltrosPaquetesBooking = {
   origenSel: string;
-  salidaSel: number | "";
+  salidaSel: SalidaElegida;
   destinoSel: string;
   /** Origen REAL de cada salida dinámica (`salida_id` → IATA). Una salida sin entrada no tiene origen conocido. */
   origenPorSalida?: Readonly<Record<number, string>>;
@@ -45,12 +62,12 @@ const origenDeFila = (f: FilaDinamicaBase, origenPorSalida: Readonly<Record<numb
 
 /**
  * ¿Una fila `dinamico` entra en la pestaña "Paquetes"? Para todos (la acción de cotizar es la que depende del acceso). Con un origen
- * elegido, solo si SU salida sale de ese origen (dato real; sin origen conocido no se muestra, nunca se le inventa). El vuelo (record)
- * del buscador es de Bloqueo: con uno elegido, un Dinámico no aplica. El destino es el del paquete.
+ * elegido, solo si SU salida sale de ese origen (dato real; sin origen conocido no se muestra, nunca se le inventa). Con una salida
+ * elegida, solo si es ESA salida dinámica (una de Bloqueo, aunque tenga el mismo número, no aplica). El destino es el del paquete.
  */
 export function filaDinamicaVisibleEnPaquetes(f: FilaDinamicaBase, filtros: FiltrosPaquetesBooking): boolean {
   if (!esFilaDinamica(f)) return false;
-  if (filtros.salidaSel !== "") return false;
+  if (filtros.salidaSel && (filtros.salidaSel.tipo !== "dinamico" || f.salida_id !== filtros.salidaSel.id)) return false;
   if (filtros.origenSel && origenDeFila(f, filtros.origenPorSalida) !== filtros.origenSel) return false;
   if (filtros.destinoSel && (f.destino_nombre ?? "") !== filtros.destinoSel) return false;
   return true;
@@ -66,6 +83,61 @@ export function destinosDinamicos(filas: readonly FilaDinamicaBase[], origenSel 
 /** Orígenes reales de las salidas dinámicas, para el selector de origen de "Paquetes" (las salidas sin origen conocido no aportan). */
 export function origenesDinamicos(filas: readonly FilaDinamicaBase[], origenPorSalida: Readonly<Record<number, string>>): string[] {
   return [...new Set(filas.filter(esFilaDinamica).map((f) => origenDeFila(f, origenPorSalida)).filter((o): o is string => !!o))];
+}
+
+/**
+ * ¿Un hotel por UNIDAD (Bernalo) entra con la salida elegida? Sus `salidas` reales solo son records de Bloqueo o empaquetados, nunca
+ * salidas dinámicas: con «Todas» entra (comportamiento habitual); con una salida dinámica, nunca; con un record de Bloqueo, solo si
+ * lo tiene entre sus salidas.
+ */
+export function hotelUnidadVisibleConSalida(h: { salidas: readonly { tipo: string; id: number }[] }, salidaSel: SalidaElegida): boolean {
+  if (!salidaSel) return true;
+  if (salidaSel.tipo === "dinamico") return false;
+  return h.salidas.some((s) => s.tipo === "bloqueo" && s.id === salidaSel.id);
+}
+
+export type OpcionSalidaDinamica = {
+  id: number;
+  /** Origen real de la salida (`origenPorSalida`); `null` si no se conoce — nunca inventado. */
+  origen: string | null;
+  /** Destino del PAQUETE (el del hotel), igual que el filtro de destino. */
+  destino: string;
+  fechaIda: string | null;
+  fechaRegreso: string | null;
+  noches: number | null;
+};
+
+/**
+ * Opciones de salida dinámica para «Salida (vuelo)»: una por `salida_id` real de las filas, con el mismo origen/destino que
+ * acotan Paquetes (origen real de la salida; destino del paquete). Ordenadas por fecha de ida (sin fecha, al final).
+ */
+export function salidasDinamicasSelector(
+  filas: readonly (FilaDinamicaBase & { fecha_ida?: string | null; fecha_regreso?: string | null; noches?: number | null })[],
+  filtros: { origenSel: string; destinoSel: string; origenPorSalida: Readonly<Record<number, string>> }
+): OpcionSalidaDinamica[] {
+  const porId = new Map<number, OpcionSalidaDinamica>();
+  for (const f of filas) {
+    if (!esFilaDinamica(f) || f.salida_id == null || porId.has(f.salida_id)) continue;
+    const origen = origenDeFila(f, filtros.origenPorSalida);
+    if (filtros.origenSel && origen !== filtros.origenSel) continue;
+    if (filtros.destinoSel && (f.destino_nombre ?? "") !== filtros.destinoSel) continue;
+    porId.set(f.salida_id, {
+      id: f.salida_id, origen, destino: f.destino_nombre ?? "", fechaIda: f.fecha_ida ?? null, fechaRegreso: f.fecha_regreso ?? null, noches: f.noches ?? null,
+    });
+  }
+  return [...porId.values()].sort((a, b) => (a.fechaIda ?? "9999-99-99").localeCompare(b.fechaIda ?? "9999-99-99") || a.id - b.id);
+}
+
+const fmtFechaCorta = (s: string | null) => {
+  if (!s) return "";
+  const [y, m, d] = s.split("-");
+  return `${d}/${m}/${y.slice(2)}`;
+};
+
+/** Texto de la opción: «BOG → CARTAGENA · 10/01/30–13/01/30 (3N)». Sin cupos ni datos de vuelo (no existen para un Dinámico). */
+export function etiquetaSalidaDinamica(s: OpcionSalidaDinamica): string {
+  const fechas = [fmtFechaCorta(s.fechaIda), fmtFechaCorta(s.fechaRegreso)].filter(Boolean).join("–");
+  return `${s.origen ?? "Origen por confirmar"} → ${s.destino} · ${fechas}${s.noches ? ` (${s.noches}N)` : ""}`;
 }
 
 /** Ids de salida distintos de las filas Dinámicas de una oferta (hotel + paquete), en orden estable. */

@@ -294,7 +294,12 @@ nunca lo tuvo (ni por destino ni en Recomendados). Decisión del dueño: para el
   una sencilla más barata no lo cambia; sin doble, "Consultar"). **Origen = el REAL de cada salida** (`salidas_dinamicas.origen`, o el primer tramo de `ruta`, misma regla que
   `bloqueos_vuelo`): `cargarResumenTarifario` lo devuelve en `origenPorSalida` (service-role; error → sin origen). Con un origen elegido, la fila se ve solo si SU salida sale de ahí; el
   selector de Origen suma los orígenes de los Dinámicos y el de Destino solo los destinos con salida desde ese origen. Salida sin origen conocido → oculta con cualquier origen (nunca se inventa).
-  Con un **vuelo (record)** de Bloqueo elegido, un Dinámico no aplica.
+  **«Salida (vuelo)»** lista los records de Bloqueo y también las salidas dinámicas reales (`salidasDinamicasSelector`: fecha, noches, origen real, destino del
+  paquete; sin cupos ni datos de vuelo). El valor lleva el tipo (`b:<bloqueo_id>` / `d:<salida_id>`, `SalidaElegida`), así que un `bloqueo_id` y un `salida_id` con el mismo número
+  no colisionan. Una salida dinámica elegida deja solo las tarjetas y fechas de esa salida; un record de Bloqueo elegido deja fuera a los Dinámicos. Como el alcance del detalle
+  incluye `salida_id`, el modal de una tarjeta filtrada solo ofrece esa salida y el carrito cotiza esa misma `salidaId`. Los hoteles por unidad (Bernalo) siguen la misma
+  selección (`hotelUnidadVisibleConSalida`): con «Todas» aparecen como siempre; con una salida dinámica, nunca, porque sus `salidas` solo son records de Bloqueo o empaquetados;
+  con un record `b:<id>`, solo los que tienen ese record entre sus `salidas`.
 - **Visibilidad y acción.** Lo ve **todo el mundo** (también el visitante público): aparece en "Paquetes" y por destino. Acción del modal (`accesoCotizacionDinamica`, depende solo de
   `puedeReservar`): **todos, con o sin sesión y sin permiso especial,** cotizan por el **carrito público** (`CotizadorDinamico` en `VistaBooking.tsx` = el mismo `Selector`/`EditorPax` de Bloqueo, con `modulo: "dinamico"` + `salidaId`) → `/tarifario/checkout` →
   `crearSolicitudReserva`, que acepta `dinamico` (`validarSolicitudItem` exige `salidaId`), re-liquida con `computarReserva` sobre esa salida (fechas de la salida, nunca del navegador) y guarda

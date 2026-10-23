@@ -299,15 +299,152 @@ test("VUELO (record) de Bloqueo elegido: el Dinámico no aplica aunque su salida
   await elegir(c, "BOG");
   await elegir(c, "CARTAGENA");
   assert.match(texto(c), /Hotel Nacional 54/);
-  const selVuelo = [...c.querySelectorAll("select")].find((s) => [...s.options].some((o) => o.value === "111"));
-  assert.ok(selVuelo, "selector de vuelo de Bloqueo");
-  await act(async () => {
-    Object.getOwnPropertyDescriptor(dom.window.HTMLSelectElement.prototype, "value")!.set!.call(selVuelo, "111");
-    selVuelo!.dispatchEvent(new dom.window.Event("change", { bubbles: true }));
-  });
-  await act(async () => { await new Promise((r) => setTimeout(r, 60)); });
+  await elegirSalida(c, "b:111");
   assert.match(texto(c), /Hotel Control/);
   assert.doesNotMatch(texto(c), /Hotel Nacional 54/);
+});
+
+// ── «Salida (vuelo)» con salidas dinámicas reales (hallazgo de la prueba humana: solo ofrecía «Todas las salidas») ──────────
+// El valor lleva el TIPO: `b:<bloqueo_id>` / `d:<salida_id>`, así un Bloqueo y un Dinámico con el mismo número no colisionan.
+const selectorSalida = (c: HTMLElement) =>
+  [...c.querySelectorAll("select")].find((s) => [...s.options].some((o) => o.textContent === "Todas las salidas")) as HTMLSelectElement;
+const opcionesSalida = (c: HTMLElement) => [...selectorSalida(c).options].map((o) => ({ value: o.value, texto: (o.textContent ?? "").replace(/\s+/g, " ") }));
+async function elegirSalida(c: HTMLElement, valor: string) {
+  const sel = selectorSalida(c);
+  assert.ok(sel, "selector «Salida (vuelo)»");
+  assert.ok([...sel.options].some((o) => o.value === valor), `no hay opción ${valor}: ${JSON.stringify(opcionesSalida(c))}`);
+  await act(async () => {
+    Object.getOwnPropertyDescriptor(dom.window.HTMLSelectElement.prototype, "value")!.set!.call(sel, valor);
+    sel.dispatchEvent(new dom.window.Event("change", { bubbles: true }));
+  });
+  await act(async () => { await new Promise((r) => setTimeout(r, 60)); });
+}
+const tarjetaDe = (c: HTMLElement, hotel: RegExp) => [...c.querySelectorAll("button")].find((b) => hotel.test(b.textContent ?? ""));
+
+test("SALIDA — Origen → Destino → Salida del 54: la salida dinámica real aparece (fecha y origen, sin cupos) junto al Bloqueo; elegirla deja su tarjeta y el modal cotiza ESA salidaId al precio DOBLE", async () => {
+  dom.window.localStorage.clear();
+  (globalThis as { __detalleActionsFake?: unknown }).__detalleActionsFake = detalleOk();
+  const c = await montar([BLOQUEO, ...FILAS_DIN.map((f) => ({ ...f, hotel_id: 2560 }))], ORIGEN_REAL, false);
+  await elegir(c, "BOG");
+  await elegir(c, "CARTAGENA");
+  const ops = opcionesSalida(c);
+  assert.deepEqual(ops.map((o) => o.value), ["", "b:111", "d:540"], "Todas + el Bloqueo de BOG + la salida dinámica de BOG (la 541 sale de MDE)");
+  const dyn = ops.find((o) => o.value === "d:540")!.texto;
+  assert.ok(dyn.startsWith("BOG → CARTAGENA · "), dyn);
+  assert.match(dyn, /\(3N\)$/, "fecha y noches; nada de cupos ni datos de vuelo inventados");
+  assert.doesNotMatch(dyn, /cupo/i);
+  assert.match(ops.find((o) => o.value === "b:111")!.texto, /5 cupos/, "el Bloqueo conserva su opción tal cual");
+
+  await elegirSalida(c, "d:540");
+  assert.equal(listado(c), "Hotelesdisponibles(1)");
+  assert.doesNotMatch(texto(c), /Hotel Control/, "con una salida dinámica elegida, el Bloqueo no aplica");
+  const tarjeta = tarjetaDe(c, /Hotel Nacional 54/)!;
+  assert.match(tarjeta.textContent ?? "", /1 fecha de salida/);
+  assert.match(tarjeta.textContent ?? "", /900\.000/, "desde = DOBLE de la 540");
+  assert.doesNotMatch(tarjeta.textContent ?? "", /700\.000/);
+
+  await clic(tarjeta);
+  await act(async () => { await new Promise((r) => setTimeout(r, 80)); });
+  const chips = [...c.querySelectorAll(".fixed.inset-0 button[aria-pressed]")].map((b) => (b.textContent ?? "").replace(/\s+/g, " "));
+  assert.equal(chips.length, 1, "el modal conserva SOLO la salida elegida");
+  assert.match(chips[0], /desde \$\s?900\.000 en doble/);
+  await ponerHabitaciones(c, "Doble", 1);
+  await clic([...c.querySelectorAll(".fixed.inset-0 button")].find((b) => /Agregar al carrito/.test(b.textContent ?? ""))!);
+  await act(async () => { await new Promise((r) => setTimeout(r, 30)); });
+  const [it] = carrito();
+  assert.equal(it.modulo, "dinamico");
+  assert.equal(it.salidaId, 540, "cotiza la MISMA salida elegida en el selector");
+  assert.equal(it.bloqueoId, null);
+  assert.equal(it.fechaIda, IDA1);
+  assert.deepEqual(it.habitaciones, { doble: 1 });
+  assert.equal(it.precio, 2 * 900_000);
+});
+
+test("SALIDA — cambio entre salidas dinámicas y vuelta a «Todas las salidas» (vista conjunta)", async () => {
+  dom.window.localStorage.clear();
+  (globalThis as { __detalleActionsFake?: unknown }).__detalleActionsFake = detalleOk();
+  const c = await montar([BLOQUEO, ...FILAS_DIN.map((f) => ({ ...f, hotel_id: 2561 }))], ORIGEN_REAL, false);
+  await elegir(c, "CARTAGENA");
+  assert.deepEqual(opcionesSalida(c).map((o) => o.value), ["", "b:111", "d:540", "d:541"], "sin origen: las dos salidas dinámicas, en orden de fecha");
+  assert.match(opcionesSalida(c).find((o) => o.value === "d:541")!.texto, /^MDE → CARTAGENA · .*\(4N\)$/);
+
+  await elegirSalida(c, "d:541");
+  let tarjeta = tarjetaDe(c, /Hotel Nacional 54/)!;
+  assert.match(tarjeta.textContent ?? "", /1 fecha de salida/);
+  assert.match(tarjeta.textContent ?? "", /1\.100\.000/, "desde = DOBLE de la 541");
+  assert.doesNotMatch(texto(c), /Hotel Control/);
+
+  await elegirSalida(c, "d:540");
+  tarjeta = tarjetaDe(c, /Hotel Nacional 54/)!;
+  assert.match(tarjeta.textContent ?? "", /900\.000/);
+  assert.doesNotMatch(tarjeta.textContent ?? "", /1\.100\.000/);
+
+  await elegirSalida(c, "");
+  assert.equal(listado(c), "Hotelesdisponibles(2)", "Todas: Bloqueo y Dinámico juntos");
+  assert.match(texto(c), /Hotel Control/);
+  tarjeta = tarjetaDe(c, /Hotel Nacional 54/)!;
+  assert.match(tarjeta.textContent ?? "", /2 fechas de salida/);
+  assert.match(tarjeta.textContent ?? "", /900\.000/, "desde DOBLE = la menor de sus salidas");
+
+  // Desde «Todas», el modal ofrece las dos fechas y cotiza la que se elija dentro.
+  await clic(tarjeta);
+  await act(async () => { await new Promise((r) => setTimeout(r, 80)); });
+  assert.equal(c.querySelectorAll(".fixed.inset-0 button[aria-pressed]").length, 2);
+  await clic([...c.querySelectorAll(".fixed.inset-0 button[aria-pressed]")].find((b) => b.getAttribute("aria-pressed") === "false")!);
+  await ponerHabitaciones(c, "Doble", 1);
+  await clic([...c.querySelectorAll(".fixed.inset-0 button")].find((b) => /Agregar al carrito/.test(b.textContent ?? ""))!);
+  await act(async () => { await new Promise((r) => setTimeout(r, 30)); });
+  assert.equal(carrito()[0].salidaId, 541);
+  assert.equal(carrito()[0].precio, 2 * 1_100_000);
+});
+
+test("SALIDA — un Bloqueo con el MISMO número (bloqueo_id 540) que la salida dinámica 540: dos opciones distintas, cada una filtra lo suyo", async () => {
+  const bloqueo540 = { ...BLOQUEO, bloqueo_id: 540, hotel_id: 2112, hotel_nombre: "Hotel Bloqueo 540" };
+  const c = await montar([bloqueo540, ...FILAS_DIN.map((f) => ({ ...f, hotel_id: 2562 }))], { ...ORIGEN_REAL, cuposPorBloqueo: { 540: 5 }, origenPorBloqueo: { 540: "BOG" } }, false);
+  await elegir(c, "CARTAGENA");
+  const valores = opcionesSalida(c).map((o) => o.value);
+  assert.ok(valores.includes("b:540") && valores.includes("d:540"), JSON.stringify(valores));
+
+  await elegirSalida(c, "b:540");
+  assert.match(texto(c), /Hotel Bloqueo 540/);
+  assert.doesNotMatch(texto(c), /Hotel Nacional 54/, "elegir el bloqueo 540 no trae la salida dinámica 540");
+
+  await elegirSalida(c, "d:540");
+  assert.match(texto(c), /Hotel Nacional 54/);
+  assert.doesNotMatch(texto(c), /Hotel Bloqueo 540/, "elegir la salida dinámica 540 no trae el bloqueo 540");
+  assert.match(tarjetaDe(c, /Hotel Nacional 54/)!.textContent ?? "", /1 fecha de salida/);
+});
+
+// Hoteles por UNIDAD (Bernalo) en el mismo destino: no tienen salidas dinámicas (solo records de Bloqueo/empaquetados en `salidas`).
+const unidad = (hotelId: number, hotelNombre: string, salidas: unknown[]) => ({
+  hotelId, hotelNombre, paqueteId: 70 + hotelId % 10, paqueteNombre: `Unidad ${hotelId}`, destinoNombre: "CARTAGENA", tipo: "bloqueo",
+  categorias: ["Estándar"], regimenes: ["PAE"], destinoId: 7, moneda: "COP", salidas,
+});
+test("SALIDA — hoteles por UNIDAD del mismo destino: d:540 deja solo la oferta dinámica 540; b:540 solo lo relacionado con ese record; «Todas» restaura todo", async () => {
+  const bloqueo540 = { ...BLOQUEO, bloqueo_id: 540, hotel_id: 2113, hotel_nombre: "Hotel Bloqueo 540" };
+  const conRecord540 = unidad(3001, "Hotel Unidad Con 540", [{ tipo: "bloqueo", id: 540, fechaIda: IDA1, fechaRegreso: REG1, etiqueta: "BOG-CTG" }]);
+  const sinRelacion = unidad(3002, "Hotel Unidad Sin Relacion", [{ tipo: "bloqueo", id: 999, fechaIda: IDA2, fechaRegreso: REG2, etiqueta: "BOG-CTG" }]);
+  const c = await montar([bloqueo540, ...FILAS_DIN.map((f) => ({ ...f, hotel_id: 2563 }))], {
+    ...ORIGEN_REAL, cuposPorBloqueo: { 540: 5 }, origenPorBloqueo: { 540: "BOG" }, hotelesBernalo: [conRecord540, sinRelacion],
+  }, false);
+  await elegir(c, "CARTAGENA");
+  const todos = /Hotel Bloqueo 540|Hotel Nacional 54|Hotel Unidad Con 540|Hotel Unidad Sin Relacion/g;
+  const visibles = () => [...new Set(texto(c).match(todos) ?? [])].sort();
+  const TODOS = ["Hotel Bloqueo 540", "Hotel Nacional 54", "Hotel Unidad Con 540", "Hotel Unidad Sin Relacion"];
+  assert.deepEqual(visibles(), TODOS, "Todas las salidas: Bloqueo, Dinámico y los dos por unidad");
+  assert.equal(listado(c), "Hotelesdisponibles(4)");
+
+  await elegirSalida(c, "d:540");
+  assert.deepEqual(visibles(), ["Hotel Nacional 54"], "una salida dinámica: ningún hotel por unidad pertenece a ella");
+  assert.equal(listado(c), "Hotelesdisponibles(1)");
+
+  await elegirSalida(c, "");
+  assert.deepEqual(visibles(), TODOS, "«Todas» los restaura");
+  assert.equal(listado(c), "Hotelesdisponibles(4)");
+
+  await elegirSalida(c, "b:540");
+  assert.deepEqual(visibles(), ["Hotel Bloqueo 540", "Hotel Unidad Con 540"], "el record 540: su Bloqueo y el hotel por unidad que lo tiene entre sus salidas; nada sin relación");
+  assert.equal(listado(c), "Hotelesdisponibles(2)");
 });
 
 test("RECOMENDADOS: con prioridad en el paquete, el Dinámico es recomendado como cualquier otra oferta (sin elegir destino)", async () => {
