@@ -13,6 +13,8 @@ git worktree add -b codex/43-1a-recuperada ..\contable-43-1a origin/codex/backup
 
 `backup-main-docs` y `backup-coordination` contienen documentos de coordinación de checkouts distintos y pueden solaparse; revisar sus diferencias antes de integrarlos. El respaldo `backup-vuelos-rescate` conserva 188 archivos de trabajo antiguo, incluida una diferencia de formato en la migración 199 aplicada; es solo para recuperación, no para fusionar o aplicar sin auditoría. Los respaldos WIP no significan pruebas aprobadas.
 
+**Respaldo provisional:** Opus sigue editando el worktree Dinámicos en Vista Booking. Su rama de respaldo contiene los cambios guardados hasta el segundo corte; falta hacer un último commit y actualizar esa rama cuando termine.
+
 ## Worktrees que tenían archivos sin commit
 
 | Frente | Rama remota de respaldo |
