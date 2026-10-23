@@ -2,9 +2,10 @@
 
 // Modal de un paquete DINÁMICO dentro de "Paquetes" (Vista Booking). Visual propia: no hay cupos ni "vuelo"
 // que elegir — se elige la FECHA de salida y se ven los precios por categoría/alimentación y acomodación.
-// "Cotizar" lleva a la ruta de siempre (`reservar/nuevo`, módulo dinámico), que es la que genera la cotización.
+// Cotizar: todos (con o sin sesión) usan el carrito público de siempre (`cotizador`, el mismo Selector de Bloqueo →
+// /tarifario/checkout); quien puede reservar conserva además "Cotizar esta salida" (`reservar/nuevo`, módulo dinámico).
 // La lógica (agrupar, "desde", enlace) vive en lib/tarifario/dinamicoBooking.ts (pura y testeada).
-import { useMemo, useState } from "react";
+import { useMemo, useState, type ReactNode } from "react";
 import Image from "next/image";
 import Link from "next/link";
 import { CalendarClock } from "lucide-react";
@@ -59,11 +60,13 @@ export function InsigniaFechasSalida({ filas }: { filas: readonly { modulo?: str
 }
 
 export function DinamicoModal({
-  hotel, detalle, onReintentar, descripcionPorPaquete, acceso, onClose,
+  hotel, detalle, onReintentar, descripcionPorPaquete, acceso, onClose, cotizador,
 }: {
   hotel: HotelDinamicoModal;
-  /** Qué puede hacer quien mira: cotizar, ingresar al portal o nada (cuenta sin permiso). Ver `accesoCotizacionDinamica`. */
+  /** Qué ofrece el modal: "cotizar" (ruta interna de reserva + carrito) o "carrito" (solo el carrito público). Ver `accesoCotizacionDinamica`. */
   acceso: AccesoCotizacionDinamica;
+  /** Cotizador del carrito público para la salida elegida (habitaciones/edades → carrito → /tarifario/checkout). */
+  cotizador?: (salidaId: number, filas: FilaTarifario[]) => ReactNode;
   detalle: EstadoDetalle<FilaTarifario> | null;
   onReintentar: () => void;
   descripcionPorPaquete: Record<number, DescripcionPaqueteRaw>;
@@ -179,18 +182,8 @@ export function DinamicoModal({
                   Cotizar esta salida
                 </Link>
               )}
-              {/* Esta salida no se compra desde el carrito público: el visitante entra por el acceso de siempre (Ingreso al Portal). */}
-              {acceso === "ingresar" && (
-                <div className="rounded-lg bg-slate-50 p-3 text-sm text-slate-600">
-                  <p>Esta salida se cotiza desde el portal.</p>
-                  <a href="/login" className="mt-2 inline-flex w-full items-center justify-center rounded-lg border px-4 py-2.5 text-sm font-semibold transition-colors hover:bg-white" style={{ borderColor: "var(--brand-accent)", color: "var(--brand-primary)" }}>
-                    Ingresar al portal para cotizar
-                  </a>
-                </div>
-              )}
-              {acceso === "sin_permiso" && (
-                <p className="rounded-lg bg-slate-50 p-3 text-sm text-slate-600">Tu cuenta no tiene permiso para cotizar este paquete. Consúltalo con tu asesor.</p>
-              )}
+              {/* Carrito público (con o sin sesión, sin permiso especial): mismo flujo que Bloqueo, con la salida elegida arriba. */}
+              {detalle.estado === "ok" && cotizador?.(salida.salidaId, detalle.filas)}
 
               <SeccionesIncluye descripcion={descripcion} compacto />
             </>

@@ -1796,6 +1796,8 @@ export async function convertirCotizacionCarrito(
         validadosBernalo.push({ item: it, resultado: rBernalo.resultado, proveedoresServicios: rBernalo.proveedoresServicios });
         continue;
       }
+      // Salida dinámica cotizada en el carrito público: esta conversión no arma su vuelo por sistema todavía — falla cerrada y explícita.
+      if ((it.modulo as string) === "dinamico") return { ok: false, error: `${it.hotelNombre}: es una salida dinámica; genera su contrato desde Reservar (módulo dinámico).` };
       const reserva: ReservaInput = {
         paqueteId: it.paqueteId, bloqueoId: it.bloqueoId, modulo: it.modulo, hotelId: it.hotelId,
         fechaIda: it.modulo !== "bloqueo" ? (it.fechaIda ?? undefined) : undefined,

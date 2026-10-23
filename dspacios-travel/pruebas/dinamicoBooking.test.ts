@@ -6,7 +6,7 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import type { Database } from "../types/database.ts";
 import {
   accesoCotizacionDinamica, agruparSalidasDinamicas, desdeDobleResumen, desdeSalidaDinamica, destinosDinamicos, esOfertaDinamica, filaDinamicaVisibleEnPaquetes,
-  reservarHrefDinamico, salidaIdsDinamicas,
+  origenSalidaDinamica, origenesDinamicos, reservarHrefDinamico, salidaIdsDinamicas,
 } from "../lib/tarifario/dinamicoBooking.ts";
 
 process.env.SUPABASE_SERVICE_ROLE_KEY = "dummy-service-role";
@@ -31,9 +31,39 @@ describe("filaDinamicaVisibleEnPaquetes", () => {
     assert.equal(filaDinamicaVisibleEnPaquetes(fila(), { ...LIBRE, destinoSel: "SAN ANDRES" }), false);
     assert.equal(filaDinamicaVisibleEnPaquetes(fila({ destino_nombre: null }), { ...LIBRE, destinoSel: "CARTAGENA" }), false);
   });
-  test("origen o salida (vuelo) de Bloqueo elegidos: el Dinámico no aplica", () => {
-    assert.equal(filaDinamicaVisibleEnPaquetes(fila(), { ...LIBRE, origenSel: "BOG" }), false);
+  test("vuelo (record) de Bloqueo elegido: el Dinámico no aplica; origen elegido sin origen REAL conocido de su salida: tampoco", () => {
     assert.equal(filaDinamicaVisibleEnPaquetes(fila(), { ...LIBRE, salidaSel: 111 }), false);
+    assert.equal(filaDinamicaVisibleEnPaquetes(fila(), { ...LIBRE, origenSel: "BOG" }), false, "nunca se le inventa un origen");
+  });
+});
+
+// Hallazgo de la prueba humana (ID 54): al elegir Origen, el destino del Dinámico desaparecía del selector y su tarjeta se
+// ocultaba con CUALQUIER origen. La regla nueva usa el origen REAL de cada salida (`salidas_dinamicas.origen`, o el primer tramo de su ruta).
+describe("Origen → Destino con el origen real de la salida dinámica", () => {
+  const ORI: Record<number, string> = { 540: "BOG", 541: "MDE" };
+  test("origenSalidaDinamica: el origen de la salida o, si falta, el primer tramo de su ruta (misma regla que bloqueos_vuelo); sin ninguno, null", () => {
+    assert.equal(origenSalidaDinamica({ origen: " bog ", ruta: "MDE - CTG - MDE" }), "BOG");
+    assert.equal(origenSalidaDinamica({ origen: null, ruta: "mde - ctg - mde" }), "MDE");
+    assert.equal(origenSalidaDinamica({ origen: "  ", ruta: null }), null);
+    assert.equal(origenSalidaDinamica({ origen: null, ruta: null }), null);
+  });
+  test("con un origen elegido, la fila se ve solo si SU salida sale de ese origen", () => {
+    assert.equal(filaDinamicaVisibleEnPaquetes(fila(), { ...LIBRE, origenSel: "BOG", origenPorSalida: ORI }), true);
+    assert.equal(filaDinamicaVisibleEnPaquetes(fila({ salida_id: 541 }), { ...LIBRE, origenSel: "BOG", origenPorSalida: ORI }), false, "la salida 541 sale de MDE");
+    assert.equal(filaDinamicaVisibleEnPaquetes(fila({ salida_id: 999 }), { ...LIBRE, origenSel: "BOG", origenPorSalida: ORI }), false, "salida sin origen conocido");
+    assert.equal(filaDinamicaVisibleEnPaquetes(fila({ salida_id: 541 }), { ...LIBRE, origenSel: "MDE", destinoSel: "CARTAGENA", origenPorSalida: ORI }), true);
+  });
+  test("destinosDinamicos con origen: solo los destinos con alguna salida desde ese origen", () => {
+    const filas = [fila(), fila({ salida_id: 541, destino_nombre: "SAN ANDRES", paquete_id: 55 }), fila({ salida_id: 999, destino_nombre: "MIAMI" })];
+    assert.deepEqual(destinosDinamicos(filas, "BOG", ORI), ["CARTAGENA"]);
+    assert.deepEqual(destinosDinamicos(filas, "MDE", ORI), ["SAN ANDRES"]);
+    assert.deepEqual(destinosDinamicos(filas, "CLO", ORI), []);
+    assert.deepEqual(destinosDinamicos(filas).sort(), ["CARTAGENA", "MIAMI", "SAN ANDRES"], "sin origen elegido, todos");
+  });
+  test("origenesDinamicos: los orígenes reales de las salidas dinámicas visibles (los que no se conocen no aportan)", () => {
+    const filas = [fila(), fila({ salida_id: 541 }), fila({ salida_id: 999 }), fila({ modulo: "bloqueo", salida_id: 540 })];
+    assert.deepEqual(origenesDinamicos(filas, ORI).sort(), ["BOG", "MDE"]);
+    assert.deepEqual(origenesDinamicos(filas, {}), []);
   });
 });
 
@@ -42,11 +72,9 @@ describe("destinos, salidas y oferta", () => {
     const filas = [fila(), fila({ salida_id: 541 }), fila({ destino_nombre: "SAN ANDRES", paquete_id: 55 }), fila({ destino_nombre: null }), fila({ modulo: "bloqueo", destino_nombre: "MIAMI" })];
     assert.deepEqual(destinosDinamicos(filas).sort(), ["CARTAGENA", "SAN ANDRES"]);
   });
-  test("accesoCotizacionDinamica: cotiza quien puede reservar; el visitante ingresa; la cuenta sin permiso solo ve el aviso", () => {
-    assert.equal(accesoCotizacionDinamica({ puedeReservar: true, hayUsuario: true }), "cotizar");
-    assert.equal(accesoCotizacionDinamica({ puedeReservar: true, hayUsuario: false }), "cotizar");
-    assert.equal(accesoCotizacionDinamica({ puedeReservar: false, hayUsuario: false }), "ingresar");
-    assert.equal(accesoCotizacionDinamica({ puedeReservar: false, hayUsuario: true }), "sin_permiso");
+  test("accesoCotizacionDinamica: el permiso de reservar solo agrega la ruta interna; sin él (con o sin sesión) se cotiza por el carrito público", () => {
+    assert.equal(accesoCotizacionDinamica({ puedeReservar: true }), "cotizar");
+    assert.equal(accesoCotizacionDinamica({ puedeReservar: false }), "carrito");
   });
   test("salidaIdsDinamicas y esOfertaDinamica", () => {
     assert.deepEqual(salidaIdsDinamicas([fila({ salida_id: 541 }), fila(), fila(), fila({ modulo: "bloqueo", salida_id: 9 })]), [540, 541]);
@@ -145,16 +173,46 @@ describe("cargarResumenTarifario con un paquete Dinámico", () => {
     assert.equal(r.datos.prioridadesRecomendados[claveOferta(2540, 54)], 1);
     assert.match(String(r.datos.descripcionPorPaquete[54]?.incluye ?? ""), /Piscina/);
   });
+
+  test("origenPorSalida: el origen REAL de cada salida dinámica, desde salidas_dinamicas (origen, o el primer tramo de la ruta)", async () => {
+    const t = tablas();
+    t.salidas_dinamicas = { data: [{ id: 540, activo: true, compra_inicio: null, compra_fin: null, fecha_ida: hoy(30), origen: "bog", ruta: "MDE - CTG - MDE" }], error: null };
+    const sb = cliente(t, [filaResumen]);
+    const r = await cargarResumenTarifario(sb, "test", "dinbk-ori", sb);
+    assert.equal(r.ok, true);
+    if (!r.ok) return;
+    assert.deepEqual(r.datos.origenPorSalida, { 540: "BOG" });
+  });
+
+  test("origenPorSalida: si la consulta falla, la salida queda SIN origen (nunca uno inventado) y el catálogo sigue cargando", async () => {
+    const sb = cliente(tablas(), [filaResumen]);
+    const fake = sb as unknown as { from: (t: string) => Record<string, unknown> };
+    const base = fake.from;
+    fake.from = (tabla: string) => {
+      const b = base(tabla);
+      if (tabla !== "salidas_dinamicas") return b;
+      // Solo la consulta del origen (select con "origen") falla; la de vigencia responde normal.
+      const select = b.select as (s: string) => unknown;
+      return { ...b, select: (s: string) => (/origen/.test(s) ? { in: async () => ({ data: null, error: { message: "boom" } }) } : select.call(b, s)) };
+    };
+    const r = await cargarResumenTarifario(sb, "test", "dinbk-ori-err", sb);
+    assert.equal(r.ok, true);
+    if (!r.ok) return;
+    assert.deepEqual(r.datos.origenPorSalida, {});
+    assert.deepEqual(r.datos.filasVisibles.map((f) => f.salida_id), [540]);
+  });
 });
 
-describe("cableado del acceso (la página decide si hay sesión; el modal decide la acción)", () => {
+describe("cableado del acceso (solo el permiso de reservar decide la ruta interna; la sesión no bloquea la cotización pública)", () => {
   const leer = (rel: string) => readFileSync(fileURLToPath(new URL(`../${rel}`, import.meta.url)), "utf8").replace(/\r\n/g, "\n");
-  test("app/tarifario/page.tsx pasa la sesión real (`!!user`) a TarifarioPublic, junto a puedeReservar", () => {
-    assert.match(leer("app/tarifario/page.tsx"), /<TarifarioPublic [^>]*puedeReservar=\{puedeReservar\} hayUsuario=\{!!user\} /);
-  });
-  test("VistaBooking deriva la acción con accesoCotizacionDinamica y ya no oculta Dinámicos por permiso", () => {
+  test("VistaBooking deriva la acción solo de puedeReservar y ya no oculta Dinámicos por permiso", () => {
     const vb = leer("app/tarifario/VistaBooking.tsx");
-    assert.match(vb, /acceso=\{accesoCotizacionDinamica\(\{ puedeReservar, hayUsuario \}\)\}/);
+    assert.match(vb, /acceso=\{accesoCotizacionDinamica\(\{ puedeReservar \}\)\}/);
     assert.doesNotMatch(vb, /\(f\.modulo === "dinamico" && puedeReservar\)/);
+  });
+  test("DinamicoModal muestra el cotizador del carrito sin condicionarlo al acceso (ni aviso de 'sin permiso')", () => {
+    const dm = leer("app/tarifario/DinamicoModal.tsx");
+    assert.match(dm, /\{detalle\.estado === "ok" && cotizador\?\.\(salida\.salidaId, detalle\.filas\)\}/);
+    assert.doesNotMatch(dm, /sin_permiso|no tiene permiso/);
   });
 });

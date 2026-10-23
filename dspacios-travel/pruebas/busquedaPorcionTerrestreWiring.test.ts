@@ -652,7 +652,8 @@ describe("VistaBooking — resultado CERRADO por destino, persona y unidad por e
     // Memo de cards persona (`hoteles`) — Pet friendly/Adults Only ya NO
     // filtran acá (se movieron a FiltrosResto, aplicados después de elegir
     // recomendados), así que salieron de sus dependencias.
-    assert.match(codigoVista, /\}, \[filas, fotosPorHotel, infoPorHotel, sub, cuposPorBloqueo, origenPorBloqueo, origenSel, destinoSel, destinoPorcionBusqueda, salidaSel, soloAcom\]\);/);
+    // `origenPorSalida`: origen real de las salidas Dinámicas (filtro Origen de "Paquetes").
+    assert.match(codigoVista, /\}, \[filas, fotosPorHotel, infoPorHotel, sub, cuposPorBloqueo, origenPorBloqueo, origenPorSalida, origenSel, destinoSel, destinoPorcionBusqueda, salidaSel, soloAcom\]\);/);
     assert.match(codigoVista, /\}, \[hotelesBernalo, sub, destinoSel, destinoPorcionBusqueda\]\);/);
     // Memo de candidatos (`datosBase`) — hoteles recomendados (migración 183)
     // le suman `destinoActivoSub` (el gatillo A/B: destino activo ≠ destino

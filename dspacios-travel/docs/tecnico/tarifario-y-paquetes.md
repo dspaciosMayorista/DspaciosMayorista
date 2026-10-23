@@ -291,18 +291,23 @@ Antes un paquete Dinámico (`modulo = 'dinamico'`, salidas en `salidas_dinamicas
 nunca lo tuvo (ni por destino ni en Recomendados). Decisión del dueño: para el cliente es un paquete más, con visual propia, dentro de la pestaña **Paquetes**.
 - **Reglas.** Destino = el del PAQUETE/hotel (`destino_nombre` de la fila), nunca el del vuelo. Sin cupos. Entra a Recomendados como cualquier oferta
   (`armado_hoteles.prioridad` por hotel+paquete). **"Desde" = acomodación DOBLE** (tarjeta: menor `precio_doble` > 0 de sus salidas; cada fecha del modal: menor doble de la salida;
-  una sencilla más barata no lo cambia; sin doble, "Consultar"). Con un **origen o vuelo** elegido en el buscador de Bloqueo, un Dinámico no aplica y se oculta (no se le inventa un origen).
-- **Visibilidad y acción.** Lo ve **todo el mundo** (también el visitante público): aparece en "Paquetes" y por destino. El carrito/checkout público no soporta salidas dinámicas, así que
-  lo que cambia es la ACCIÓN del modal (`accesoCotizacionDinamica`): quien `puedeReservar` → "Cotizar esta salida" (`reservar/nuevo`); el visitante sin sesión → "Ingresar al portal para cotizar"
-  (`/login`, el mismo "Ingreso al Portal" del encabezado); una cuenta con sesión pero sin permiso → aviso, sin botón. `page.tsx` pasa `hayUsuario={!!user}` hasta el modal.
+  una sencilla más barata no lo cambia; sin doble, "Consultar"). **Origen = el REAL de cada salida** (`salidas_dinamicas.origen`, o el primer tramo de `ruta`, misma regla que
+  `bloqueos_vuelo`): `cargarResumenTarifario` lo devuelve en `origenPorSalida` (service-role; error → sin origen). Con un origen elegido, la fila se ve solo si SU salida sale de ahí; el
+  selector de Origen suma los orígenes de los Dinámicos y el de Destino solo los destinos con salida desde ese origen. Salida sin origen conocido → oculta con cualquier origen (nunca se inventa).
+  Con un **vuelo (record)** de Bloqueo elegido, un Dinámico no aplica.
+- **Visibilidad y acción.** Lo ve **todo el mundo** (también el visitante público): aparece en "Paquetes" y por destino. Acción del modal (`accesoCotizacionDinamica`, depende solo de
+  `puedeReservar`): **todos, con o sin sesión y sin permiso especial,** cotizan por el **carrito público** (`CotizadorDinamico` en `VistaBooking.tsx` = el mismo `Selector`/`EditorPax` de Bloqueo, con `modulo: "dinamico"` + `salidaId`) → `/tarifario/checkout` →
+  `crearSolicitudReserva`, que acepta `dinamico` (`validarSolicitudItem` exige `salidaId`), re-liquida con `computarReserva` sobre esa salida (fechas de la salida, nunca del navegador) y guarda
+  el vuelo por sistema de la salida en `detalle.vuelos` — **obligatorio**: sin llave de servicio, con la consulta fallida, sin la salida o con tramos incompletos (sin origen/destino IATA o
+  sin fecha), la solicitud falla con un mensaje claro ANTES de guardar (`tramosVueloSalidaDinamica`). El permiso de reservar solo agrega "Cotizar esta salida" (`reservar/nuevo`). La **comparativa** y la **conversión a contrato** de una cotización de carrito todavía rechazan un ítem dinámico con mensaje explícito (el contrato se genera desde Reservar).
 - **Lógica pura:** `lib/tarifario/dinamicoBooking.ts` (visibilidad, destinos, salidas, agrupación de precios, "desde", enlace). **UI:** `app/tarifario/DinamicoModal.tsx` (modal con
   fechas de salida + tabla categoría/alimentación × acomodación + "Cotizar esta salida" + Incluye/No incluye) e `InsigniaFechasSalida` en la tarjeta ("N fechas de salida").
 - **Datos.** `VistaBooking.tsx`: `hoteles` admite filas `dinamico` en la pestaña `bloqueo`; `destinosPaquetes` = destinos de Bloqueo + de Dinámicos; `abrirHotel` carga el detalle de un
   Dinámico con `obtenerDetalleSalida` por cada salida (acotada a los combos de ese hotel; si una falla, falla el conjunto). `lib/tarifario/resumen.ts`: `paqIdsConHotel` y las fechas de
   condición/política incluyen `dinamico`, para que Recomendados, descripción (Incluye) y condiciones también funcionen.
 - **Cotizar:** `/dashboard/reservar/nuevo?paquete=&hotel=&salida=&modulo=dinamico` — la misma ruta de Vista tabla (genera la cotización).
-- **Pendiente (otra tarea):** que el público pueda cotizar un Dinámico sin entrar al portal (CartContext, checkout y `edadesMenores` hoy solo conocen `bloqueo`/`porcion_terrestre`).
-- **Pruebas:** `pruebas/dinamicoBooking.test.ts` (puro + carga del resumen) y `pruebas/dinamicoEnPaquetes.react.ts` (registrada en `test:react`; cada caso se compara con un Bloqueo de control).
+- **Pruebas:** `pruebas/dinamicoBooking.test.ts` (puro + carga del resumen y `origenPorSalida`), `pruebas/dinamicoCheckout.test.ts` (checkout público anónimo con un ítem dinámico) y
+  `pruebas/dinamicoEnPaquetes.react.ts` (registrada en `test:react`; Origen → Destino → tarjeta, cotización como visitante; cada caso se compara con un Bloqueo de control).
 
 ## Enlaces cruzados
 

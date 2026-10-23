@@ -8,9 +8,11 @@
 //   · entran a Recomendados como cualquier otra oferta (prioridad del hotel en el paquete);
 //   · el modal tiene visual propia (fechas de salida + precios) y "Cotizar" lleva a la ruta de reserva dinámica;
 //   · el "desde" (tarjeta y cada salida) toma como referencia la acomodación DOBLE, aunque haya una sencilla más barata;
-//   · los ve TODO el mundo, pero el carrito público no soporta salidas dinámicas: quien puede reservar cotiza; el visitante ingresa al
-//     portal (/login); una cuenta sin permiso ve un aviso;
-//   · con un origen/vuelo elegido en el buscador de Bloqueo, un Dinámico no aplica y se oculta.
+//   · los ve TODO el mundo y todos (con o sin sesión, sin permiso especial) cotizan la salida por el carrito público (mismo flujo
+//     de Bloqueo: carrito → /tarifario/checkout); el permiso de reservar solo agrega "Cotizar esta salida" (reservar/nuevo).
+//     La interfaz no recibe la sesión: una cuenta sin permiso se ve exactamente como el visitante (puedeReservar = false);
+//   · con un origen elegido, el Dinámico se ve solo si alguna de SUS salidas sale de ese origen (origen real de la salida);
+//     con un vuelo (record) de Bloqueo elegido, no aplica.
 // Cada caso se compara contra un Bloqueo de control con el MISMO destino.
 import { JSDOM } from "jsdom";
 import { test, afterEach, after } from "node:test";
@@ -24,6 +26,8 @@ Object.assign(globalThis, {
   IS_REACT_ACT_ENVIRONMENT: true, FormData: dom.window.FormData,
 });
 Object.defineProperty(globalThis, "navigator", { value: dom.window.navigator, configurable: true });
+// El carrito (CartContext) persiste en el `localStorage` global: el de JSDOM, para poder leer lo que agregó el visitante.
+Object.defineProperty(globalThis, "localStorage", { value: dom.window.localStorage, configurable: true });
 Element.prototype.getBoundingClientRect = () => ({ width: 300, height: 40, top: 0, left: 0, right: 300, bottom: 40, x: 0, y: 0, toJSON() {} });
 Element.prototype.scrollIntoView = () => {};
 
@@ -148,27 +152,81 @@ const detalleOk = () => ({
 });
 const enlacesReserva = (c: HTMLElement) => [...c.querySelectorAll("a")].filter((a) => (a.getAttribute("href") ?? "").includes("/dashboard/reservar/nuevo"));
 
-test("ACCIÓN sin sesión: el visitante NO recibe un checkout dinámico; ve fechas y precios y el acceso de siempre (Ingreso al portal, /login)", async () => {
+const carrito = () => JSON.parse(dom.window.localStorage.getItem("dspacios_cart_v1") ?? "[]") as Record<string, unknown>[];
+async function ponerHabitaciones(c: HTMLElement, acom: string, n: number) {
+  const caja = [...c.querySelectorAll(".fixed.inset-0 div.rounded-lg.border")].find((d) => d.firstElementChild?.textContent === acom);
+  const input = caja?.querySelector("input") as HTMLInputElement | undefined;
+  assert.ok(input, `no hay campo de habitaciones ${acom}`);
+  await act(async () => {
+    Object.getOwnPropertyDescriptor(dom.window.HTMLInputElement.prototype, "value")!.set!.call(input, String(n));
+    input!.dispatchEvent(new dom.window.Event("input", { bubbles: true }));
+  });
+}
+
+test("COTIZACIÓN B2C sin sesión: el visitante cotiza la salida por el carrito público, sin /login ni rutas con sesión, conservando paquete/hotel/salida/precio/acomodación", async () => {
+  dom.window.localStorage.clear();
   (globalThis as { __detalleActionsFake?: unknown }).__detalleActionsFake = detalleOk();
-  const c = await montar(FILAS_DIN, { hayUsuario: false }, false);
+  const c = await montar(FILAS_DIN.map((f) => ({ ...f, hotel_id: 2545 })), {}, false);
   await abrirDinamico(c);
   const m = modal(c);
   assert.match(m, /Elige tu fecha de salida/);
   assert.match(m, /Estándar · PAE/);
-  assert.doesNotMatch(m, /Cotizar esta salida/);
-  assert.deepEqual(enlacesReserva(c), [], "ningún enlace a reservar/nuevo (ni al carrito: el público no soporta salidas dinámicas)");
-  const ingresar = [...c.querySelectorAll("a")].find((a) => /Ingresar al portal para cotizar/.test(a.textContent ?? "")) as HTMLAnchorElement | undefined;
-  assert.ok(ingresar);
-  assert.equal(ingresar!.getAttribute("href"), "/login");
+  assert.doesNotMatch(m, /Ingresar al portal/, "ya no se le pide entrar al portal");
+  assert.ok(![...c.querySelectorAll("a")].some((a) => a.getAttribute("href") === "/login"));
+  assert.deepEqual(enlacesReserva(c), [], "ninguna ruta que exija sesión");
+  // Segunda fecha de salida (541): doble a 1.100.000/pers.
+  await clic([...c.querySelectorAll("button")].find((b) => b.getAttribute("aria-pressed") === "false" && /→/.test(b.textContent ?? ""))!);
+  await ponerHabitaciones(c, "Doble", 1);
+  const agregar = [...c.querySelectorAll(".fixed.inset-0 button")].find((b) => /Agregar al carrito/.test(b.textContent ?? "")) as HTMLButtonElement | undefined;
+  assert.ok(agregar, "el visitante tiene el botón del carrito público");
+  assert.equal(agregar!.disabled, false);
+  await clic(agregar!);
+  await act(async () => { await new Promise((r) => setTimeout(r, 30)); });
+  const [it] = carrito();
+  assert.ok(it, "la salida quedó en el carrito público (de ahí sigue a /tarifario/checkout, que no exige sesión)");
+  assert.equal(modal(c), "", "el modal se cierra al agregar, como en Bloqueo");
+  assert.equal(it.tipo, "hotel");
+  assert.equal(it.modulo, "dinamico");
+  assert.equal(it.paqueteId, 54);
+  assert.equal(it.hotelId, 2545);
+  assert.equal(it.salidaId, 541, "la fecha de salida elegida");
+  assert.equal(it.bloqueoId, null);
+  assert.equal(it.fechaIda, IDA2);
+  assert.equal(it.fechaRegreso, REG2);
+  assert.equal(it.categoria, "Estándar");
+  assert.equal(it.regimen, "PAE");
+  assert.deepEqual(it.habitaciones, { doble: 1 });
+  assert.equal(it.precio, 2 * 1_100_000, "precio de la doble de ESA salida × 2 pax");
 });
 
-test("ACCIÓN con sesión pero sin permiso: aviso sin botón (no se lo manda a /login ni a reservar)", async () => {
+test("COTIZACIÓN con permiso de reservar: conserva 'Cotizar esta salida' y también puede usar el carrito", async () => {
   (globalThis as { __detalleActionsFake?: unknown }).__detalleActionsFake = detalleOk();
-  const c = await montar(FILAS_DIN.map((f) => ({ ...f, hotel_id: 2542, hotel_nombre: "Hotel Nacional 54" })), { hayUsuario: true }, false);
+  const c = await montar(FILAS_DIN.map((f) => ({ ...f, hotel_id: 2546 })));
   await abrirDinamico(c);
-  assert.match(modal(c), /Tu cuenta no tiene permiso para cotizar este paquete/);
-  assert.deepEqual(enlacesReserva(c), []);
+  assert.equal(enlacesReserva(c).length, 1);
+  assert.ok([...c.querySelectorAll(".fixed.inset-0 button")].some((b) => /Agregar al carrito/.test(b.textContent ?? "")));
+});
+
+test("COTIZACIÓN B2C con sesión pero SIN permiso de reservar: usa el carrito público igual que el visitante (el permiso solo abre reservar/nuevo)", async () => {
+  dom.window.localStorage.clear();
+  (globalThis as { __detalleActionsFake?: unknown }).__detalleActionsFake = detalleOk();
+  // Cuenta autenticada sin permiso: la página le pasa puedeReservar = false (la sesión no es entrada de la interfaz). Su lado
+  // servidor (checkout con sesión cliente_final) está en pruebas/dinamicoCheckout.test.ts.
+  const c = await montar(FILAS_DIN.map((f) => ({ ...f, hotel_id: 2542, hotel_nombre: "Hotel Nacional 54" })), {}, false);
+  await abrirDinamico(c);
+  assert.doesNotMatch(modal(c), /no tiene permiso/i, "ya no se le bloquea la cotización pública");
+  assert.deepEqual(enlacesReserva(c), [], "sin permiso de reservar no recibe la ruta interna");
   assert.ok(![...c.querySelectorAll("a")].some((a) => a.getAttribute("href") === "/login"));
+  await ponerHabitaciones(c, "Doble", 1);
+  await clic([...c.querySelectorAll(".fixed.inset-0 button")].find((b) => /Agregar al carrito/.test(b.textContent ?? ""))!);
+  await act(async () => { await new Promise((r) => setTimeout(r, 30)); });
+  const [it] = carrito();
+  assert.ok(it, "la salida llegó al carrito público");
+  assert.equal(it.modulo, "dinamico");
+  assert.equal(it.salidaId, 540);
+  assert.equal(it.hotelId, 2542);
+  assert.deepEqual(it.habitaciones, { doble: 1 });
+  assert.equal(it.precio, 2 * 900_000);
 });
 
 test("DESDE = DOBLE: la tarjeta y cada salida del modal toman la doble aunque exista una sencilla más barata", async () => {
@@ -188,12 +246,66 @@ test("DESDE = DOBLE: la tarjeta y cada salida del modal toman la doble aunque ex
   assert.match(modal(c), /\$\s?700\.000/, "la sencilla sí aparece en la tabla de precios");
 });
 
-test("ORIGEN/SALIDA de Bloqueo elegidos: el Dinámico no aplica y se oculta; el Bloqueo permanece", async () => {
+test("ORIGEN sin dato real de la salida: el Dinámico no se atribuye ese origen y se oculta; el Bloqueo permanece", async () => {
   const c = await montar([BLOQUEO, ...FILAS_DIN]);
   await elegir(c, "CARTAGENA");
   assert.match(texto(c), /Hotel Nacional 54/);
   await elegir(c, "BOG"); // cambiar el origen reinicia el destino (comportamiento de Bloqueo)
   await elegir(c, "CARTAGENA");
+  assert.match(texto(c), /Hotel Control/);
+  assert.doesNotMatch(texto(c), /Hotel Nacional 54/);
+});
+
+// Hallazgo de la prueba humana (ID 54): el destino aparecía al inicio pero desaparecía al elegir Origen.
+const ORIGEN_REAL = { origenPorSalida: { 540: "BOG", 541: "MDE" } };
+const opcionesDe = (c: HTMLElement, etiqueta: string) => {
+  const sel = [...c.querySelectorAll("select")].find((s) => [...s.options].some((o) => o.textContent === etiqueta));
+  return sel ? [...sel.options].map((o) => o.textContent ?? "") : [];
+};
+test("ORIGEN → DESTINO → TARJETA 54: con el origen REAL de la salida, el destino sigue en el selector y la tarjeta muestra solo la salida de ese origen (desde DOBLE)", async () => {
+  (globalThis as { __detalleActionsFake?: unknown }).__detalleActionsFake = detalleOk();
+  const c = await montar([BLOQUEO, ...FILAS_DIN.map((f) => ({ ...f, hotel_id: 2547 }))], ORIGEN_REAL);
+  assert.ok(opcionesDe(c, "BOG").includes("MDE"), "el origen real de la salida 541 (sin bloqueo propio) también se ofrece");
+  await elegir(c, "BOG");
+  assert.ok(opcionesDe(c, "CARTAGENA").includes("CARTAGENA"), "el destino del 54 sigue en el selector tras elegir Origen");
+  await elegir(c, "CARTAGENA");
+  assert.equal(listado(c), "Hotelesdisponibles(2)");
+  const tarjeta = [...c.querySelectorAll("button")].find((b) => /Hotel Nacional 54/.test(b.textContent ?? ""));
+  assert.ok(tarjeta, "la tarjeta del 54 aparece con Origen BOG");
+  assert.match(tarjeta!.textContent ?? "", /1 fecha de salida/, "solo la salida que sale de BOG");
+  assert.match(tarjeta!.textContent ?? "", /900\.000/, "desde = DOBLE de la salida de BOG");
+  assert.doesNotMatch(tarjeta!.textContent ?? "", /700\.000/, "nunca la sencilla");
+  await clic(tarjeta!);
+  await act(async () => { await new Promise((r) => setTimeout(r, 80)); });
+  const chips = [...c.querySelectorAll(".fixed.inset-0 button[aria-pressed]")].map((b) => (b.textContent ?? "").replace(/\s+/g, " "));
+  assert.equal(chips.length, 1, "el modal no ofrece la salida de otro origen");
+  assert.match(chips[0], /desde \$\s?900\.000 en doble/);
+});
+
+test("ORIGEN de solo-Dinámico (MDE): su destino y su tarjeta aparecen con la salida de MDE; el Bloqueo (BOG) no", async () => {
+  const c = await montar([BLOQUEO, ...FILAS_DIN.map((f) => ({ ...f, hotel_id: 2548 }))], ORIGEN_REAL);
+  await elegir(c, "MDE");
+  assert.ok(opcionesDe(c, "CARTAGENA").includes("CARTAGENA"));
+  await elegir(c, "CARTAGENA");
+  assert.equal(listado(c), "Hotelesdisponibles(1)");
+  assert.doesNotMatch(texto(c), /Hotel Control/);
+  const tarjeta = [...c.querySelectorAll("button")].find((b) => /Hotel Nacional 54/.test(b.textContent ?? ""))!;
+  assert.match(tarjeta.textContent ?? "", /1 fecha de salida/);
+  assert.match(tarjeta.textContent ?? "", /1\.100\.000/, "desde = DOBLE de la salida de MDE");
+});
+
+test("VUELO (record) de Bloqueo elegido: el Dinámico no aplica aunque su salida salga del mismo origen", async () => {
+  const c = await montar([BLOQUEO, ...FILAS_DIN.map((f) => ({ ...f, hotel_id: 2549 }))], ORIGEN_REAL);
+  await elegir(c, "BOG");
+  await elegir(c, "CARTAGENA");
+  assert.match(texto(c), /Hotel Nacional 54/);
+  const selVuelo = [...c.querySelectorAll("select")].find((s) => [...s.options].some((o) => o.value === "111"));
+  assert.ok(selVuelo, "selector de vuelo de Bloqueo");
+  await act(async () => {
+    Object.getOwnPropertyDescriptor(dom.window.HTMLSelectElement.prototype, "value")!.set!.call(selVuelo, "111");
+    selVuelo!.dispatchEvent(new dom.window.Event("change", { bubbles: true }));
+  });
+  await act(async () => { await new Promise((r) => setTimeout(r, 60)); });
   assert.match(texto(c), /Hotel Control/);
   assert.doesNotMatch(texto(c), /Hotel Nacional 54/);
 });

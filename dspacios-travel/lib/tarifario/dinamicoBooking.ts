@@ -8,9 +8,10 @@
 //     del vuelo no interviene: da igual dónde aterrice, lo que importa es el hotel al que va la persona;
 //   · los Recomendados funcionan igual que para los demás (prioridad del hotel en el paquete);
 //   · el "desde" (tarjeta y cada salida) toma como referencia la acomodación DOBLE, no la habitación más barata;
-//   · TODOS lo ven (también el visitante público), pero el carrito/checkout público no soporta salidas dinámicas: quien puede
-//     reservar cotiza por `reservar/nuevo`; el visitante recibe la acción del acceso existente ("Ingreso al Portal", `/login`);
-//     una cuenta sin permiso para reservar ve un aviso, sin botón.
+//   · el ORIGEN es el real de cada salida (`salidas_dinamicas.origen`, o el primer tramo de su ruta — misma regla que
+//     `bloqueos_vuelo`): con un origen elegido, la fila se ve solo si SU salida sale de ahí; sin origen conocido, nunca se inventa;
+//   · TODOS lo ven y lo cotizan por el carrito público, con o sin sesión (mismo flujo que Bloqueo: carrito →
+//     /tarifario/checkout → `crearSolicitudReserva`, con `salidaId`); quien puede reservar conserva además `reservar/nuevo`.
 //
 // Módulo PURO (sin I/O): lo usan VistaBooking/DinamicoModal y las pruebas.
 // ─────────────────────────────────────────────────────────────────────────
@@ -27,25 +28,44 @@ export type FiltrosPaquetesBooking = {
   origenSel: string;
   salidaSel: number | "";
   destinoSel: string;
+  /** Origen REAL de cada salida dinámica (`salida_id` → IATA). Una salida sin entrada no tiene origen conocido. */
+  origenPorSalida?: Readonly<Record<number, string>>;
 };
 
 export const esFilaDinamica = (f: { modulo?: string | null }): boolean => f.modulo === "dinamico";
 
+/** Origen de una salida dinámica: su `origen` o, si falta, el primer tramo de su `ruta` (misma regla que `bloqueos_vuelo`); sin ninguno, `null`. */
+export function origenSalidaDinamica(s: { origen?: string | null; ruta?: string | null }): string | null {
+  const ori = (s.origen ?? "").trim() || (s.ruta ? s.ruta.split("-")[0].trim() : "");
+  return ori ? ori.toUpperCase() : null;
+}
+
+const origenDeFila = (f: FilaDinamicaBase, origenPorSalida: Readonly<Record<number, string>> = {}): string | null =>
+  f.salida_id != null ? (origenPorSalida[f.salida_id] ?? null) : null;
+
 /**
- * ¿Una fila `dinamico` entra en la pestaña "Paquetes"? Para todos (la acción de cotizar es la que depende del acceso). El origen y la salida
- * (vuelo) del buscador son filtros de Bloqueo (cupos de un record): con alguno elegido, un Dinámico no tiene
- * qué comparar y no se muestra, nunca se le inventa un origen. El destino sí aplica y es el del paquete.
+ * ¿Una fila `dinamico` entra en la pestaña "Paquetes"? Para todos (la acción de cotizar es la que depende del acceso). Con un origen
+ * elegido, solo si SU salida sale de ese origen (dato real; sin origen conocido no se muestra, nunca se le inventa). El vuelo (record)
+ * del buscador es de Bloqueo: con uno elegido, un Dinámico no aplica. El destino es el del paquete.
  */
 export function filaDinamicaVisibleEnPaquetes(f: FilaDinamicaBase, filtros: FiltrosPaquetesBooking): boolean {
   if (!esFilaDinamica(f)) return false;
-  if (filtros.origenSel || filtros.salidaSel !== "") return false;
+  if (filtros.salidaSel !== "") return false;
+  if (filtros.origenSel && origenDeFila(f, filtros.origenPorSalida) !== filtros.origenSel) return false;
   if (filtros.destinoSel && (f.destino_nombre ?? "") !== filtros.destinoSel) return false;
   return true;
 }
 
-/** Destinos (del paquete) que aportan los Dinámicos al selector de destino de "Paquetes". */
-export function destinosDinamicos(filas: readonly FilaDinamicaBase[]): string[] {
-  return [...new Set(filas.filter((f) => esFilaDinamica(f) && f.destino_nombre).map((f) => f.destino_nombre as string))];
+/** Destinos (del paquete) que aportan los Dinámicos al selector de destino de "Paquetes"; con un origen elegido, solo los de salidas desde ahí. */
+export function destinosDinamicos(filas: readonly FilaDinamicaBase[], origenSel = "", origenPorSalida: Readonly<Record<number, string>> = {}): string[] {
+  return [...new Set(filas
+    .filter((f) => esFilaDinamica(f) && f.destino_nombre && (!origenSel || origenDeFila(f, origenPorSalida) === origenSel))
+    .map((f) => f.destino_nombre as string))];
+}
+
+/** Orígenes reales de las salidas dinámicas, para el selector de origen de "Paquetes" (las salidas sin origen conocido no aportan). */
+export function origenesDinamicos(filas: readonly FilaDinamicaBase[], origenPorSalida: Readonly<Record<number, string>>): string[] {
+  return [...new Set(filas.filter(esFilaDinamica).map((f) => origenDeFila(f, origenPorSalida)).filter((o): o is string => !!o))];
 }
 
 /** Ids de salida distintos de las filas Dinámicas de una oferta (hotel + paquete), en orden estable. */
@@ -134,15 +154,14 @@ export function desdeDobleResumen(filas: readonly { precio_doble?: number | null
   return v.length ? Math.min(...v) : null;
 }
 
-export type AccesoCotizacionDinamica = "cotizar" | "ingresar" | "sin_permiso";
+export type AccesoCotizacionDinamica = "cotizar" | "carrito";
 
 /**
- * Acción del modal según el acceso existente: quien puede reservar cotiza (misma ruta de Vista tabla); el visitante sin sesión
- * ingresa al portal (el mismo "Ingreso al Portal" del encabezado); una cuenta con sesión pero sin permiso solo ve el aviso.
+ * Acción del modal: TODOS cotizan por el carrito público (/tarifario/checkout, con o sin sesión — no exige permiso). El permiso de
+ * reservar solo agrega la ruta interna (`reservar/nuevo`, misma de Vista tabla).
  */
-export function accesoCotizacionDinamica(a: { puedeReservar: boolean; hayUsuario: boolean }): AccesoCotizacionDinamica {
-  if (a.puedeReservar) return "cotizar";
-  return a.hayUsuario ? "sin_permiso" : "ingresar";
+export function accesoCotizacionDinamica(a: { puedeReservar: boolean }): AccesoCotizacionDinamica {
+  return a.puedeReservar ? "cotizar" : "carrito";
 }
 
 /** Enlace de reserva/cotización: el MISMO de Vista tabla para una salida dinámica. */
