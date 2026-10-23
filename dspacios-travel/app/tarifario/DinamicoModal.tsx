@@ -1,7 +1,8 @@
 "use client";
 
 // Modal de un paquete DINÁMICO dentro de "Paquetes" (Vista Booking). Visual propia: no hay cupos ni "vuelo"
-// que elegir — se elige la FECHA de salida y se ven los precios por categoría/alimentación y acomodación.
+// que elegir — se elige la FECHA de salida (con su "desde" DOBLE) y el cotizador muestra categoría, alimentación y
+// precios por acomodación de esa salida.
 // Cotizar: todos (con o sin sesión) usan el carrito público de siempre (`cotizador`, el mismo Selector de Bloqueo →
 // /tarifario/checkout); quien puede reservar conserva además "Cotizar esta salida" (`reservar/nuevo`, módulo dinámico).
 // La lógica (agrupar, "desde", enlace) vive en lib/tarifario/dinamicoBooking.ts (pura y testeada).
@@ -10,10 +11,9 @@ import Image from "next/image";
 import Link from "next/link";
 import { CalendarClock } from "lucide-react";
 import { formatMoneda } from "@/lib/utils";
-import { ACOM_ROOM_LABEL, type AcomRoom } from "@/lib/acomodaciones";
 import type { EstadoDetalle } from "@/lib/tarifario/detalleCliente";
 import {
-  agruparSalidasDinamicas, desdeSalidaDinamica, esOfertaDinamica, reservarHrefDinamico, salidaIdsDinamicas, ACOMODACIONES_DINAMICO,
+  agruparSalidasDinamicas, desdeSalidaDinamica, esOfertaDinamica, reservarHrefDinamico, salidaIdsDinamicas,
   type AccesoCotizacionDinamica,
 } from "@/lib/tarifario/dinamicoBooking";
 import type { DescripcionPaqueteRaw } from "@/lib/tarifario/descripcionPaquete";
@@ -35,11 +35,6 @@ export type HotelDinamicoModal = {
   ubicacion: string | null;
   paqueteId?: number | null;
 };
-
-const ETIQUETA_ACOM: Record<string, string> = {
-  nino: "Niño 1", nino2: "Niño 2", infante: "Infante (menor de 2 años)",
-};
-const etiquetaAcom = (a: string) => ETIQUETA_ACOM[a] ?? ACOM_ROOM_LABEL[a as AcomRoom] ?? a;
 
 function fmtFecha(s: string | null): string {
   if (!s) return "";
@@ -146,32 +141,6 @@ export function DinamicoModal({
                   })}
                 </div>
               </div>
-
-              <div className="overflow-x-auto rounded-xl border border-gray-100">
-                <table className="w-full min-w-[420px] text-sm">
-                  <thead>
-                    <tr className="bg-gray-50 text-left text-xs text-gray-500">
-                      <th className="px-3 py-2 font-medium">Categoría · alimentación</th>
-                      {ACOMODACIONES_DINAMICO.filter((a) => salida.combos.some((c) => c.precios[a] != null)).map((a) => (
-                        <th key={a} className="px-3 py-2 text-right font-medium">{etiquetaAcom(a)}</th>
-                      ))}
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {salida.combos.map((c) => (
-                      <tr key={`${c.categoria}|${c.regimen}`} className="border-t border-gray-100">
-                        <td className="px-3 py-2 font-medium text-gray-800">{c.categoria} · {c.regimen}</td>
-                        {ACOMODACIONES_DINAMICO.filter((a) => salida.combos.some((x) => x.precios[a] != null)).map((a) => (
-                          <td key={a} className="px-3 py-2 text-right tabular-nums text-gray-700">
-                            {c.precios[a] != null ? formatMoneda(c.precios[a], salida.moneda) : "—"}
-                          </td>
-                        ))}
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-              <p className="text-xs text-gray-400">Valores por persona. Sujetos a disponibilidad; el precio final se confirma al generar la cotización.</p>
 
               {acceso === "cotizar" && hotel.paqueteId != null && (
                 <Link

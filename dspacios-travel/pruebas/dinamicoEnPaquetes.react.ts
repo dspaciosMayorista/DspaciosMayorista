@@ -170,7 +170,7 @@ test("COTIZACIÓN B2C sin sesión: el visitante cotiza la salida por el carrito 
   await abrirDinamico(c);
   const m = modal(c);
   assert.match(m, /Elige tu fecha de salida/);
-  assert.match(m, /Estándar · PAE/);
+  assert.ok(opcionesDe(c, "Estándar").includes("Estándar"), "el cotizador ofrece la categoría de la salida");
   assert.doesNotMatch(m, /Ingresar al portal/, "ya no se le pide entrar al portal");
   assert.ok(![...c.querySelectorAll("a")].some((a) => a.getAttribute("href") === "/login"));
   assert.deepEqual(enlacesReserva(c), [], "ninguna ruta que exija sesión");
@@ -243,7 +243,7 @@ test("DESDE = DOBLE: la tarjeta y cada salida del modal toman la doble aunque ex
   assert.match(chips[0], /desde \$\s?900\.000 en doble/);
   assert.match(chips[1], /desde \$\s?1\.100\.000 en doble/);
   assert.ok(chips.every((x) => !/700\.000|1\.000\.000/.test(x)), "ningún chip toma la sencilla");
-  assert.match(modal(c), /\$\s?700\.000/, "la sencilla sí aparece en la tabla de precios");
+  assert.match(modal(c), /\$\s?700\.000\/pers/, "la sencilla sí aparece, como precio por persona en el cotizador");
 });
 
 test("ORIGEN sin dato real de la salida: el Dinámico no se atribuye ese origen y se oculta; el Bloqueo permanece", async () => {
@@ -415,6 +415,69 @@ test("SALIDA — un Bloqueo con el MISMO número (bloqueo_id 540) que la salida 
   assert.match(tarjetaDe(c, /Hotel Nacional 54/)!.textContent ?? "", /1 fecha de salida/);
 });
 
+// ── Modal simplificado: sin la matriz de precios entre las fechas y el cotizador ─────────────────────────────────────────────
+// Cada salida con DOS combos de precio distinto (Estándar · PAE y Suite · PC), para ver que el cotizador se actualiza.
+const detalleDosCombos = () => ({
+  obtenerDetalleSalida: async (a: { salidaId: number }) => {
+    const f = FILAS_DIN.find((x) => x.salida_id === a.salidaId)!;
+    const fila = (categoria: string, regimen: string, acomodacion: string, precio: number) => ({ ...f, categoria, regimen, acomodacion, precio_pvp: precio, precio_pvp_menor2: null });
+    return { ok: true, filas: [
+      fila("Estándar", "PAE", "doble", f.precio_doble), fila("Estándar", "PAE", "sencilla", f.precio_sencilla),
+      fila("Suite", "PC", "doble", f.precio_doble + 50_000), fila("Suite", "PC", "sencilla", f.precio_sencilla + 50_000),
+    ] };
+  },
+});
+const totalEstimado = (c: HTMLElement) => (modal(c).match(/Total estimado · \d+ pax\s*\$\s?[\d.]+/) ?? [""])[0].replace(/\s+/g, " ");
+
+test("MODAL SIMPLIFICADO — sin matriz de precios; fechas con 'desde' DOBLE y el cotizador se actualiza al cambiar categoría/alimentación y salida, conservando la salidaId", async () => {
+  dom.window.localStorage.clear();
+  (globalThis as { __detalleActionsFake?: unknown }).__detalleActionsFake = detalleDosCombos();
+  const c = await montar(FILAS_DIN.map((f) => ({ ...f, hotel_id: 2570 })), {}, false);
+  await abrirDinamico(c);
+  const m = c.querySelector(".fixed.inset-0")!;
+  assert.equal(m.querySelectorAll("table").length, 0, "la matriz de precios ya no está");
+  assert.doesNotMatch(modal(c), /Categoría · alimentación/, "ni su encabezado");
+  assert.doesNotMatch(modal(c), /Valores por persona\. Sujetos a disponibilidad/, "ni su nota");
+  assert.doesNotMatch(modal(c), /Estándar · PAE|Suite · PC/, "ni sus filas");
+
+  // Fechas con su 'desde' DOBLE (la menor doble entre categorías: Estándar).
+  const chips = () => [...c.querySelectorAll(".fixed.inset-0 button[aria-pressed]")] as HTMLButtonElement[];
+  assert.equal(chips().length, 2);
+  assert.match(chips()[0].textContent ?? "", /desde \$\s?900\.000 en doble/);
+  assert.match(chips()[1].textContent ?? "", /desde \$\s?1\.100\.000 en doble/);
+
+  // Cotizador de la 1.ª salida: categoría/alimentación, precio por acomodación, total.
+  assert.ok(opcionesDe(c, "Suite").includes("Estándar"), "selector de categoría con las dos");
+  assert.match(modal(c), /\$\s?900\.000\/pers/, "doble de Estándar · PAE");
+  assert.match(modal(c), /\$\s?700\.000\/pers/, "sencilla de Estándar · PAE");
+  await ponerHabitaciones(c, "Doble", 1);
+  assert.match(totalEstimado(c), /2 pax ?\$ ?1\.800\.000$/);
+
+  await elegir(c, "Suite"); // la alimentación cae a la de Suite (PC)
+  assert.ok(opcionesDe(c, "PC").includes("PC"));
+  assert.match(modal(c), /\$\s?950\.000\/pers/, "el precio doble cambia con la categoría");
+  assert.match(totalEstimado(c), /2 pax ?\$ ?1\.900\.000$/, "y el total también");
+
+  // Otra salida: el cotizador se rehace con los precios de ESA salida.
+  await clic(chips()[1]);
+  assert.equal(chips()[1].getAttribute("aria-pressed"), "true");
+  assert.match(modal(c), /\$\s?1\.100\.000\/pers/, "doble de Estándar en la 541");
+  await elegir(c, "Suite");
+  assert.match(modal(c), /\$\s?1\.150\.000\/pers/, "doble de Suite en la 541");
+  await ponerHabitaciones(c, "Doble", 1);
+  assert.match(totalEstimado(c), /2 pax ?\$ ?2\.300\.000$/);
+
+  await clic([...m.querySelectorAll("button")].find((b) => /Agregar al carrito/.test(b.textContent ?? ""))!);
+  await act(async () => { await new Promise((r) => setTimeout(r, 30)); });
+  const [it] = carrito();
+  assert.equal(it.salidaId, 541, "conserva la salida elegida");
+  assert.equal(it.fechaIda, IDA2);
+  assert.equal(it.categoria, "Suite");
+  assert.equal(it.regimen, "PC");
+  assert.deepEqual(it.habitaciones, { doble: 1 });
+  assert.equal(it.precio, 2 * 1_150_000);
+});
+
 // Hoteles por UNIDAD (Bernalo) en el mismo destino: no tienen salidas dinámicas (solo records de Bloqueo/empaquetados en `salidas`).
 const unidad = (hotelId: number, hotelNombre: string, salidas: unknown[]) => ({
   hotelId, hotelNombre, paqueteId: 70 + hotelId % 10, paqueteNombre: `Unidad ${hotelId}`, destinoNombre: "CARTAGENA", tipo: "bloqueo",
@@ -457,7 +520,7 @@ test("RECOMENDADOS: con prioridad en el paquete, el Dinámico es recomendado com
   assert.match(texto(c), /Recomendado\s*·?\s*Nacional 54/i);
 });
 
-test("MODAL: visual propia — fechas de salida, precios por categoría/acomodación y 'Cotizar' hacia la reserva dinámica", async () => {
+test("MODAL: visual propia — fechas de salida, cotizador con precios por acomodación y menores, y 'Cotizar' hacia la reserva dinámica", async () => {
   const pedidos: unknown[] = [];
   (globalThis as { __detalleActionsFake?: unknown }).__detalleActionsFake = {
     obtenerDetalleSalida: async (a: { salidaId: number; combos: Array<Record<string, unknown>> }) => {
@@ -477,10 +540,25 @@ test("MODAL: visual propia — fechas de salida, precios por categoría/acomodac
   assert.ok((pedidos as Array<{ combos: Array<{ hotel_id: number }> }>).every((p) => p.combos.every((x) => x.hotel_id === 2544)), "acotadas al hotel de la tarjeta");
   const t = modal(c);
   assert.match(t, /Elige tu fecha de salida/);
-  assert.match(t, /Estándar · PAE/);
-  assert.match(t, /Infante \(menor de 2 años\)/);
-  assert.match(t, /\$\s?150\.000/, "el infante muestra el precio del menor de 2 años");
+  assert.equal(c.querySelectorAll(".fixed.inset-0 table").length, 0, "sin matriz de precios: los precios están en el cotizador");
+  assert.ok(opcionesDe(c, "Estándar").includes("Estándar"));
+  assert.match(t, /\$\s?900\.000\/pers/);
   assert.doesNotMatch(t, /cupo/i, "un Dinámico no tiene cupos");
+  // Menores en el cotizador: uno de 1 año liquida como infante al precio del menor de 2 años (150.000).
+  await ponerHabitaciones(c, "Doble", 1);
+  const campo = async (etiqueta: RegExp, valor: string) => {
+    const label = [...c.querySelectorAll(".fixed.inset-0 label")].find((l) => etiqueta.test(l.textContent ?? ""));
+    assert.ok(label, `campo ${etiqueta}`);
+    const input = document.getElementById(label!.getAttribute("for")!) as HTMLInputElement;
+    await act(async () => {
+      Object.getOwnPropertyDescriptor(dom.window.HTMLInputElement.prototype, "value")!.set!.call(input, valor);
+      input.dispatchEvent(new dom.window.Event("input", { bubbles: true }));
+    });
+  };
+  await campo(/Cantidad de menores/, "1");
+  await campo(/Edad menor 1/, "1");
+  assert.match(modal(c), /1 infante\(s\)/);
+  assert.match(totalEstimado(c), /\$ ?1\.950\.000$/, "2 × 900.000 + infante 150.000");
   const cotizar = [...c.querySelectorAll("a")].find((a) => /Cotizar esta salida/.test(a.textContent ?? "")) as HTMLAnchorElement | undefined;
   assert.ok(cotizar, "botón Cotizar");
   const href = (a: HTMLAnchorElement) => new URL(a.getAttribute("href")!, "http://x");
