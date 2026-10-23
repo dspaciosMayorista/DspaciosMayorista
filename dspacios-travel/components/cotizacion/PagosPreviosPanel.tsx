@@ -17,6 +17,7 @@ import { useRouter } from "next/navigation";
 import { useRef, useState, useTransition } from "react";
 import { Loader2, Banknote, RotateCcw } from "lucide-react";
 import { formatMoneda } from "@/lib/utils";
+import { fechaNegocio } from "@/lib/fechaNegocio";
 import { registrarPagoPrevio, anularPagoPrevio } from "@/app/(dashboard)/dashboard/cotizaciones/pagos-actions";
 
 export interface PagoPrevioUI {
@@ -54,7 +55,7 @@ export default function PagosPreviosPanel({
   const [trm, setTrm] = useState(trmAutoritativa ? String(trmAutoritativa) : "");
   const [formaPago, setFormaPago] = useState("");
   const [referencia, setReferencia] = useState("");
-  const [fecha, setFecha] = useState(() => new Date().toISOString().slice(0, 10));
+  const [fecha, setFecha] = useState(() => fechaNegocio());
   const [error, setError] = useState<string | null>(null);
   const [pending, start] = useTransition();
 

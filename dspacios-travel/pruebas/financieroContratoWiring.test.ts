@@ -204,12 +204,18 @@ describe("B7 R2 · los dos flujos nacen con financiero_estado='pendiente' explí
 
 describe("B7 R2 · confirmarVenta se niega a confirmar con la escritura financiera incompleta", () => {
   test("lee financiero_estado ANTES de marcar 'confirmado' y rechaza si sigue 'pendiente'", () => {
+    // Desde W7 (migración 197) la confirmación es UNA transacción de la base:
+    // confirmarVenta solo llama a confirmar_venta y el candado vive allí.
     const cuerpo = cuerpoFuncion(reservarActions, "export async function confirmarVenta(numeroContrato: string)");
-    const idxLectura = cuerpo.indexOf('select("financiero_estado")');
-    const idxConfirma = cuerpo.indexOf('.update({ estado: "confirmado" })');
-    assert.ok(idxLectura > -1, "confirmarVenta debe leer financiero_estado");
-    assert.ok(idxConfirma > idxLectura, "debe leer financiero_estado ANTES de confirmar, no después");
-    assert.match(cuerpo, /financiero_estado === "pendiente"/);
+    assert.match(cuerpo, /sb\.rpc\("confirmar_venta", \{ p_numero: numeroContrato \}\)/, "confirmarVenta debe delegar en confirmar_venta");
+    assert.doesNotMatch(cuerpo, /\.update\(\{ estado: "confirmado" \}\)/, "ya no confirma la venta con un UPDATE suelto");
+    const sql = leer("supabase/migrations/20260601000197_confirmar_venta_atomica.sql");
+    const fn = sql.slice(sql.indexOf("create or replace function public.confirmar_venta("));
+    const idxLectura = fn.indexOf("select estado, financiero_estado into v from public.ventas");
+    const idxCandado = fn.indexOf("if v.financiero_estado = 'pendiente' then");
+    const idxConfirma = fn.indexOf("update public.ventas set estado = 'confirmado'");
+    assert.ok(idxLectura > -1 && idxCandado > idxLectura, "confirmar_venta debe leer financiero_estado y rechazar 'pendiente'");
+    assert.ok(idxConfirma > idxCandado, "debe rechazar 'pendiente' ANTES de confirmar, no después");
   });
 });
 

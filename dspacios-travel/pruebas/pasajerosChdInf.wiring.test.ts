@@ -613,10 +613,13 @@ test("vuelos/[id]/page.tsx (detalle de un record) también trae los infantes de 
 
 test("vuelos/[id]/page.tsx NO inyecta infantes dentro de la tabla de sillas (evita exponer acciones de silla sobre una fila que no tiene silla real)", () => {
   const src = leer("app/(dashboard)/dashboard/vuelos/[id]/page.tsx");
-  // La tabla de sillas sigue mapeando exclusivamente `(sillas ?? [])`, nunca
+  // La tabla de sillas sigue mapeando exclusivamente filas de `sillas`, nunca
   // una lista combinada con infantes — PasajeroAcciones/SillaEstado/
-  // SillaContrato operan sobre un sillaId real.
-  assert.match(src, /\{\(sillas \?\? \[\]\)\.map\(\(s\) => \(/, "la tabla de sillas ya no mapea directo sobre `sillas`");
+  // SillaContrato operan sobre un sillaId real. Desde las tareas 2 y 3
+  // (migración 194) recorre `activas`: un FILTRO de `(sillas ?? [])` que
+  // deja fuera las filas de historial (`cambio`/`retirada`).
+  assert.match(src, /const activas = \(sillas \?\? \[\]\)\.filter\(/, "activas debe ser un filtro directo de `sillas`");
+  assert.match(src, /\{activas\.map\(\(s\) => \(/, "la tabla de sillas ya no mapea directo sobre las sillas activas");
 });
 
 // ───────────────────────────────────────────────────────────────────────────

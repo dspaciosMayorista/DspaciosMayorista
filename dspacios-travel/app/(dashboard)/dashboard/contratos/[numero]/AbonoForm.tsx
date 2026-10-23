@@ -6,13 +6,14 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { registrarAbono } from "../actions";
 import { formatUSD } from "@/lib/utils";
+import { fechaNegocio } from "@/lib/fechaNegocio";
 
 export function AbonoForm({ numeroContrato, formasPago = [], moneda = "COP" }: { numeroContrato: string; formasPago?: string[]; moneda?: string }) {
   const [valor, setValor] = useState("");
   const [forma, setForma] = useState("");
   const [ref, setRef] = useState("");
   const [trm, setTrm] = useState("");
-  const [fecha, setFecha] = useState(new Date().toISOString().slice(0, 10));
+  const [fecha, setFecha] = useState(() => fechaNegocio());
   const [pending, startTransition] = useTransition();
   const [error, setError] = useState("");
   const esUSD = (moneda ?? "COP").toUpperCase() === "USD";
@@ -31,7 +32,7 @@ export function AbonoForm({ numeroContrato, formasPago = [], moneda = "COP" }: {
       setForma("");
       setRef("");
       setTrm("");
-      setFecha(new Date().toISOString().slice(0, 10));
+      setFecha(fechaNegocio());
     });
   }
 

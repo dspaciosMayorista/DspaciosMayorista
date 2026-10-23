@@ -14,6 +14,8 @@
 // El hotel se liquida NOCHE POR NOCHE: si la estadía cruza dos temporadas del
 // hotel, cada noche usa la tarifa de la temporada en que cae esa fecha.
 
+import { fechaNegocio } from "../fechaNegocio.ts";
+
 const MS_DIA = 86_400_000;
 
 export type TemporadaTipo = "tarifa" | "descuento_pct" | "descuento_monto" | "promo_noche_gratis";
@@ -42,7 +44,7 @@ export interface TemporadaRango {
 
 /** Fecha de hoy (yyyy-mm-dd) en zona horaria Colombia, para la vigencia de compra. */
 export function hoyISO(): string {
-  return new Date().toLocaleDateString("en-CA", { timeZone: "America/Bogota" });
+  return fechaNegocio();
 }
 
 function enRango(t0: number, ini: string | null, fin: string | null): boolean {

@@ -20,6 +20,7 @@ import { postearAsientoCxP, eliminarAsientoCxP } from "@/lib/contabilidad/asient
 import { reconciliarFinancieroPendiente, type DepsReconciliacion, type ResultadoReconciliacion } from "@/lib/reservar/reconciliacionFinanciera";
 import type { CostosContrato, CxPFinanciera, CxPCreada } from "@/lib/reservar/financieroContrato";
 import type { Json } from "@/types/database";
+import { fechaNegocio } from "@/lib/fechaNegocio";
 
 async function rpcFinanciero(fn: string, args: Record<string, unknown>): Promise<{ data: unknown; error: { message: string } | null }> {
   const admin = createAdminClient();
@@ -56,7 +57,7 @@ function depsReconciliacion(): DepsReconciliacion {
       if (!ctx) return Promise.resolve({ ok: false, error: `No se encontró el contrato/tenant de la CxP ${c.id}.` });
       return postearAsientoCxP({
         cuentaId: c.id, numeroContrato: ctx.numeroContrato, tipoProveedor: c.tipo_proveedor, proveedor: c.proveedor,
-        servicio: c.servicio, valorTotal: c.valor_total, fecha: new Date().toISOString().slice(0, 10), tenant: ctx.tenant,
+        servicio: c.servicio, valorTotal: c.valor_total, fecha: fechaNegocio(), tenant: ctx.tenant,
       });
     },
     eliminarAsiento: (cuentaId: number) => eliminarAsientoCxP(cuentaId),

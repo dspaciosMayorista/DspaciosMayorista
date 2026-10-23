@@ -67,11 +67,29 @@ for (const archivo of RESOLVERS) {
     // agencia, resolver el vínculo fuerte, ni negar a un usuario dado de
     // baja: recibiría null/undefined y denegaría de más, o —peor, con
     // `activo`— dejaría pasar a alguien que no debería.
-    assert.match(src, /select\(\s*"nombre, rol, tenant, activo, aliado_id"\s*\)/, "el perfil no trae tenant/activo/aliado_id");
+    assert.match(src, /select\(\s*"nombre, rol, tenant, activo, aliado_id, acceso_legacy_nombre"\s*\)/, "el perfil no trae tenant/activo/aliado_id/acceso_legacy_nombre");
+    // Migración 193: sin la bandera el respaldo por nombre no se concede; si
+    // un resolver dejara de pasarla, el legacy se apagaría en silencio.
+    assert.match(src, /accesoLegacyNombre:\s*\(perfil\.acceso_legacy_nombre/, "no pasa acceso_legacy_nombre al autorizador");
     assert.match(src, /activo:/, "no pasa `activo` al autorizador");
     assert.match(src, /aliadoId:/, "no pasa el aliado_id al autorizador");
   });
 }
+
+test("193: los dos cargadores pasan como evidencia por nombre SOLO los de ventas", () => {
+  for (const archivo of RESOLVERS) {
+    const src = leer(archivo);
+    const m = src.match(/nombreAliado:\s*\[([^\]]*)\]/);
+    assert.ok(m, `${archivo}: no se encontró nombreAliado`);
+    const nombres = m![1].split(",").map((x) => x.trim()).filter(Boolean);
+    assert.deepEqual(
+      nombres.map((n) => n.replace(/\s+as\s+string\s*\|\s*null/, "")),
+      ["v.agencia_nombre", "v.freelance_nombre"],
+      `${archivo}: el texto libre de aliados_b2b.aliado no puede decidir el acceso`
+    );
+    assert.match(src, /comisionManualConFicha:\s*fichaDeContrato\(fichas, numero\)/, `${archivo}: no verifica fichas fail-closed`);
+  }
+});
 
 test("el plan de cobro y el recibo heredan el control del estado de cuenta", () => {
   const src = leer("lib/cuenta/estado.ts");

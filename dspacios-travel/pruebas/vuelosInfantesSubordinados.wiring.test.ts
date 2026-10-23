@@ -26,12 +26,13 @@ describe("vuelos/[id]/page.tsx — infante subordinado a su silla responsable", 
   const src = leer(RUTA_BLOQUEO);
 
   test("REQUERIDO 1/2: el renglón del infante se interpola DENTRO del mismo .map de sillas, inmediatamente después de la fila de su silla (agrupa consecutivamente si hay varios)", () => {
-    // La JSX de la tabla (no la construcción de datos, que reutiliza el
-    // mismo texto de patrón "(sillas ?? []).map((s) => (" para armar el
-    // arreglo que recibe emparejarInfantesConSilla) — se busca a partir de
-    // <tbody>.
+    // La JSX de la tabla (no la construcción de datos, que usa
+    // "(sillas ?? []).map" para armar el arreglo que recibe
+    // emparejarInfantesConSilla) — se busca a partir de <tbody>. La tabla
+    // recorre solo las sillas ACTIVAS (sin filas `cambio`/`retirada`, que
+    // son historial — tareas 2 y 3, migración 194).
     const inicioTbody = src.indexOf("<tbody>");
-    const inicioMap = src.indexOf("(sillas ?? []).map((s) => (", inicioTbody);
+    const inicioMap = src.indexOf("activas.map((s) => (", inicioTbody);
     assert.ok(inicioMap > -1, "no encuentra el .map de sillas dentro de <tbody>");
     const inicioFragment = src.indexOf("<Fragment key={s.id}>", inicioMap);
     assert.ok(inicioFragment > -1 && inicioFragment - inicioMap < 50, "cada silla debe envolverse en un <Fragment key={s.id}> para poder interpolar su(s) infante(s) justo debajo, sin romper la key de React");
@@ -53,10 +54,12 @@ describe("vuelos/[id]/page.tsx — infante subordinado a su silla responsable", 
   });
 
   test("REQUERIDO 4: los infantes no alteran la numeración ni el conteo de sillas (conteo/totalReal siguen derivándose solo de `sillas`)", () => {
-    const inicioConteo = src.indexOf("const conteo = (sillas ?? [])");
-    const inicioTotal = src.indexOf("const totalReal = (sillas ?? [])");
-    assert.ok(inicioConteo > -1, "conteo debe seguir derivándose de (sillas ?? [])");
-    assert.ok(inicioTotal > -1, "totalReal debe seguir derivándose de (sillas ?? [])");
+    // conteo y totalReal salen de `activas`, que es un filtro de `sillas`
+    // (sin las filas de historial `cambio`/`retirada`): los infantes, que
+    // no tienen fila en `sillas`, siguen sin entrar en ninguno de los dos.
+    assert.ok(src.indexOf("const activas = (sillas ?? []).filter(") > -1, "activas debe derivarse solo de (sillas ?? [])");
+    assert.ok(src.indexOf("const conteo = activas.reduce") > -1, "conteo debe derivarse de activas (sillas)");
+    assert.ok(src.indexOf("const totalReal = activas.length") > -1, "totalReal debe derivarse de activas (sillas)");
   });
 
   test("REQUERIDO 5: NO queda ninguna tabla ni sección independiente para infantes (una sola <table> en la pestaña Pasajeros, sin encabezado propio de infantes)", () => {

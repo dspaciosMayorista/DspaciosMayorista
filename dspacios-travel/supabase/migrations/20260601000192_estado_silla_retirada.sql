@@ -1,0 +1,16 @@
+-- ───────────────────────────────────────────────────────────────────────────
+-- Migración 192 · estado de silla `retirada` (tarea 2, decisión D8 aprobada)
+--
+-- Un cupo que se retira deja de ser vendible y deja de contar como cupo
+-- activo, pero la fila se CONSERVA con su historial (no se borra). Lo usa la
+-- función `retirar_cupo` de la migración 194.
+--
+-- Va SOLA: `ALTER TYPE … ADD VALUE` no puede usarse en la misma transacción
+-- que lo crea. Aplicar la 192 (y confirmarla) antes de la 194.
+--
+-- Compatible con el código actual: nadie escribe todavía este valor. Las
+-- reservas, la carga masiva y la vista `cupos_por_bloqueo` solo toman
+-- `disponible`/`cambio_entrante`, así que una silla `retirada` nunca se vende.
+-- No tiene vuelta atrás: Postgres no permite quitar un valor de un enum.
+-- ───────────────────────────────────────────────────────────────────────────
+alter type public.estado_silla add value if not exists 'retirada';

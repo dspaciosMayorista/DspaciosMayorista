@@ -6,6 +6,7 @@ import Link from "next/link";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { formatCOP } from "@/lib/utils";
+import { fechaNegocio } from "@/lib/fechaNegocio";
 import { calcComisionB2B } from "@/lib/calc/finanzas";
 import { registrarPagoComisionB2B, deshacerUltimoPagoComisionB2B, actualizarComisionB2B } from "./actions";
 import { ChevronDown, ChevronRight } from "lucide-react";
@@ -379,7 +380,7 @@ function PagoComisionPanel({ row }: { row: ComB2BRow }) {
   const saldo = Math.max(total - pagado, 0);
 
   const [valor, setValor] = useState("");
-  const [fecha, setFecha] = useState(new Date().toISOString().slice(0, 10));
+  const [fecha, setFecha] = useState(() => fechaNegocio());
   const [err, setErr] = useState("");
   const [pending, start] = useTransition();
   const [pendingUndo, startUndo] = useTransition();

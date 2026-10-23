@@ -7,7 +7,9 @@ import { precioServicio, noches, factorLiquidacion } from "@/lib/calc/paquetes";
 import { normalizarCategoriaServicio, resumirServiciosContrato, tipoProveedorCxpServicio } from "@/lib/reservar/serviciosPaquete";
 import { planReconciliacionCxpServicios, type ServicioObjetivo } from "@/lib/reservar/cxpCobertura";
 import { asegurarCuentasPorPagar } from "@/lib/reservar/asegurarCuentasPorPagar";
+import { mensajeErrorRpc } from "@/lib/vuelos/operaciones";
 import { formatMoneda } from "@/lib/utils";
+import { fechaElegidaONegocio } from "@/lib/fechaNegocio";
 import { siguienteNumeroContrato } from "@/lib/contrato/numeracion";
 import { contextoCrearContrato } from "@/lib/contrato/contexto";
 import { reemplazarAsiento, cuentaDisponible, postearAsientoCxP, eliminarAsientoCxP, CUENTA } from "@/lib/contabilidad/asientos";
@@ -956,13 +958,17 @@ export async function actualizarVenta(
 // Recalcula TRM promedio (USD) y confirma la venta pendiente si el abonado ya
 // alcanza el % mínimo — compartido por registrar/editar un abono (el umbral se
 // revisa igual después de cualquiera de las dos operaciones).
-async function recalcularEstadoAbono(sb: Awaited<ReturnType<typeof createClient>>, numeroContrato: string): Promise<void> {
+// Devuelve un error EXPLÍCITO si la venta debía confirmarse y no se pudo (W7,
+// §6.8). La confirmación (venta + sillas) es UNA transacción de la base
+// (`confirmar_venta`, migración 197, con la RLS de quien llama): o se aplica
+// entera o no cambia nada.
+async function recalcularEstadoAbono(sb: Awaited<ReturnType<typeof createClient>>, numeroContrato: string): Promise<{ ok: true } | { ok: false; error: string }> {
   const { data: venta, error: ventaError } = await sb
     .from("ventas")
     .select("estado, precio_venta, tipo_paquete, moneda, financiero_estado")
     .eq("numero_contrato", numeroContrato)
     .maybeSingle();
-  if (ventaError || !venta) return;
+  if (ventaError || !venta) return { ok: true };
   const esUSD = (venta?.moneda ?? "COP") === "USD";
   const { data: abs } = await sb.from("abonos").select("valor_abono, monto_cop").eq("numero_contrato", numeroContrato);
   const totalAbonado = (abs ?? []).reduce((s, a) => s + (a.valor_abono ?? 0), 0);   // en moneda del contrato
@@ -977,16 +983,12 @@ async function recalcularEstadoAbono(sb: Awaited<ReturnType<typeof createClient>
   const pctMin = cfg?.pct_abono ?? 0.3;
   const alcanzaMinimo = totalAbonado >= (venta?.precio_venta ?? 0) * pctMin;
   if (venta?.estado === "pendiente" && venta.financiero_estado !== "pendiente" && alcanzaMinimo) {
-    await sb.from("ventas").update({ estado: "confirmado" }).eq("numero_contrato", numeroContrato);
-    const client = process.env.SUPABASE_SERVICE_ROLE_KEY ? createAdminClient() : sb;
-    await client
-      .from("sillas")
-      .update({ estado: "confirmada" })
-      .eq("numero_contrato", numeroContrato)
-      .eq("estado", "en_plazo");
+    const { error: eConf } = await sb.rpc("confirmar_venta", { p_numero: numeroContrato });
+    if (eConf) return { ok: false, error: mensajeErrorRpc(eConf).error };
     // Respaldo: generar cuentas por pagar desde los costos si aún no existen.
     await asegurarCuentasPorPagar(numeroContrato);
   }
+  return { ok: true };
 }
 
 export async function registrarAbono(
@@ -1014,7 +1016,7 @@ export async function registrarAbono(
   // El abono "vale" en la MONEDA DEL CONTRATO: USD = COP / TRM; COP = COP.
   const valorAbono = esUSD ? montoCop / trm : montoCop;
 
-  const fechaAbono = fecha || new Date().toISOString().slice(0, 10);
+  const fechaAbono = fechaElegidaONegocio(fecha);
   const { data: nuevoAbono, error } = await sb.from("abonos").insert({
     numero_contrato: numeroContrato,
     tenant: (venta as { tenant?: string } | null)?.tenant ?? "mayorista",
@@ -1028,7 +1030,11 @@ export async function registrarAbono(
   if (error || !nuevoAbono) return { ok: false, error: error?.message ?? "No se pudo registrar el abono." };
 
   await postearAsientoAbono(sb, numeroContrato, nuevoAbono.id, fechaAbono, montoCop, formaPago, (venta as { moneda?: string } | null)?.moneda ?? "COP");
-  await recalcularEstadoAbono(sb, numeroContrato);
+  const conf = await recalcularEstadoAbono(sb, numeroContrato);
+  if (!conf.ok) {
+    revalidatePath(`/dashboard/contratos/${numeroContrato}`);
+    return { ok: false, error: `El abono quedó registrado, pero la venta no se pudo confirmar: ${conf.error}` };
+  }
   revalidatePath(`/dashboard/contratos/${numeroContrato}`);
   revalidatePath("/dashboard/cartera");
   revalidatePath("/dashboard/contabilidad/libro-diario");
@@ -1052,7 +1058,7 @@ export async function actualizarAbono(
   const trm = esUSD ? (Number(input.trmInput) || 0) : 1;
   if (esUSD && trm <= 0) return { ok: false, error: "Indica la TRM del día (contrato en USD)." };
   const valorAbono = esUSD ? montoCop / trm : montoCop;
-  const fechaAbono = input.fecha || new Date().toISOString().slice(0, 10);
+  const fechaAbono = fechaElegidaONegocio(input.fecha);
 
   const { error } = await sb.from("abonos").update({
     valor_abono: valorAbono,
@@ -1065,7 +1071,11 @@ export async function actualizarAbono(
   if (error) return { ok: false, error: error.message };
 
   await postearAsientoAbono(sb, numeroContrato, id, fechaAbono, montoCop, input.formaPago, (venta as { moneda?: string } | null)?.moneda ?? "COP");
-  await recalcularEstadoAbono(sb, numeroContrato);
+  const conf = await recalcularEstadoAbono(sb, numeroContrato);
+  if (!conf.ok) {
+    revalidatePath(`/dashboard/contratos/${numeroContrato}`);
+    return { ok: false, error: `El abono quedó actualizado, pero la venta no se pudo confirmar: ${conf.error}` };
+  }
   revalidatePath(`/dashboard/contratos/${numeroContrato}`);
   revalidatePath("/dashboard/cartera");
   revalidatePath("/dashboard/contabilidad/libro-diario");

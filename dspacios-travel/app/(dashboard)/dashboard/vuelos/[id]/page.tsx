@@ -19,6 +19,9 @@ import { emparejarInfantesConSilla, descripcionEdadInfante } from "@/lib/vuelos/
 import { contratosQuePuedeAbrir, enlaceContratoEnVuelo } from "@/lib/vuelos/enlaceContrato";
 import { EnlaceEditarContrato } from "@/components/vuelos/EnlaceEditarContrato";
 import { InfanteVueloForm } from "@/components/vuelos/InfanteVueloForm";
+import { esSillaLibre } from "@/lib/vuelos/sillaLibre";
+import { filtrarCompatibles, describirDestinos } from "@/lib/vuelos/compatibles";
+import { agruparHistorial, describirEntrada, esSillaActiva, type MovimientoFila } from "@/lib/vuelos/historial";
 import { tenantContext } from "@/lib/tenant.server";
 
 export const dynamic = "force-dynamic";
@@ -29,9 +32,18 @@ const ESTADO_COLOR: Record<string, string> = {
   confirmada: "#66B596",
   devuelta: "#F3C6C6",
   no_vendida: "#D1D5DB",
+  retirada: "#9CA3AF",
   cambio: "#C7B3E8",
   cambio_entrante: "#BFE3EE",
 };
+
+// Columnas del historial (migración 194). Si la base aún no la tiene, la
+// consulta falla y el historial se ve vacío; el orden de despliegue es
+// 192 → 194 → código.
+const COLUMNAS_HISTORIAL =
+  "id, tipo, operacion_id, motivo, fecha_movimiento, registrado_por, bloqueo_origen_id, bloqueo_destino_id, " +
+  "numero_silla_origen, numero_silla_destino, numero_contrato, contrato_manual, " +
+  "cupos_origen_antes, cupos_origen_despues, cupos_destino_antes, cupos_destino_despues";
 
 export default async function BloqueoDetallePage({
   params,
@@ -45,15 +57,16 @@ export default async function BloqueoDetallePage({
   const sb = await createClient();
   const [{ data: b }, { data: sillas }, { data: otros }, { data: destinos }, { data: proveedores }, { data: rangos }, { data: cambios }, { data: movimientos }] = await Promise.all([
     sb.from("bloqueos_vuelo").select("*").eq("id", bloqueoId).single(),
-    sb.from("sillas").select("id, numero_silla, estado, numero_contrato, pasajero_nombres, pasajero_apellidos, tipo_doc, numero_doc, nacimiento, asesor, hotel, acomodacion, plazo").eq("bloqueo_id", bloqueoId).order("numero_silla"),
-    sb.from("bloqueos_vuelo").select("id, record, fecha_ida").neq("id", bloqueoId).order("fecha_ida"),
+    sb.from("sillas").select("id, numero_silla, estado, numero_contrato, pasajero_nombres, pasajero_apellidos, tipo_doc, numero_doc, nacimiento, asesor, hotel, acomodacion, plazo, agencia, inf_nombres, inf_apellidos, inf_tipo_doc, inf_numero, inf_nacimiento, responsable_menor").eq("bloqueo_id", bloqueoId).order("numero_silla"),
+    sb.from("bloqueos_vuelo").select("id, record, fecha_ida, fecha_regreso, destino_id, proveedor_id, tarifa_neta").neq("id", bloqueoId).order("fecha_ida"),
     sb.from("destinos").select("id, nombre, codigo_iata").order("nombre"),
     sb.from("proveedores").select("id, nombre").eq("tipo", "aereo").order("nombre"),
     sb.from("rangos_edad").select("id, denominacion, edad_min, edad_max").order("edad_min"),
     sb.from("bloqueo_cambios").select("id, fecha, detalle, nota, registrado_por").eq("bloqueo_id", bloqueoId).order("fecha", { ascending: false }),
-    sb.from("movimientos_silla").select("id, motivo, fecha_movimiento, registrado_por, bloqueo_origen_id, bloqueo_destino_id").or(`bloqueo_origen_id.eq.${bloqueoId},bloqueo_destino_id.eq.${bloqueoId}`).order("fecha_movimiento", { ascending: false }),
+    sb.from("movimientos_silla").select(COLUMNAS_HISTORIAL).or(`bloqueo_origen_id.eq.${bloqueoId},bloqueo_destino_id.eq.${bloqueoId}`).order("fecha_movimiento", { ascending: false }).order("id"),
   ]);
   if (!b) notFound();
+  const historial = agruparHistorial((movimientos ?? []) as unknown as MovimientoFila[]);
 
   // Mapa id→record para mostrar los movimientos (este bloqueo + los demás).
   const recordPorId = new Map<number, string>([[bloqueoId, b.record as string]]);
@@ -68,14 +81,33 @@ export default async function BloqueoDetallePage({
     if (!cmErr) for (const r of cm ?? []) contratoManualPorSilla.set(r.id, r.contrato_manual ?? null);
   }
 
-  const conteo = (sillas ?? []).reduce<Record<string, number>>((acc, s) => {
+  // Dos cifras distintas (decisión aprobada): CUPOS ACTIVOS (sillas que hoy
+  // son del record; única cifra vendible) y MOVIMIENTOS HISTÓRICOS (filas de
+  // movimientos_silla, solo trazabilidad). Las filas 'cambio' (legado) y
+  // 'retirada' son historial: no cuentan como cupo ni van en la tabla.
+  const activas = (sillas ?? []).filter((s) => esSillaActiva(s.estado));
+  const conteo = activas.reduce<Record<string, number>>((acc, s) => {
     acc[s.estado] = (acc[s.estado] ?? 0) + 1;
     return acc;
   }, {});
-  const disponibles = (conteo["disponible"] ?? 0) + (conteo["cambio_entrante"] ?? 0);
-  // Total REAL = sillas que pertenecen al record ahora (todas menos las que
-  // salieron a otro record en estado 'cambio'). Consistente con la lista.
-  const totalReal = (sillas ?? []).filter((s) => s.estado !== "cambio").length;
+  const libreSilla = (s: (typeof activas)[number]) => esSillaLibre({ ...s, contrato_manual: contratoManualPorSilla.get(s.id) ?? null });
+  const disponibles = activas.filter(libreSilla).length;
+  const totalReal = activas.length;
+  const movimientosHistoricos = movimientos?.length ?? 0;
+
+  // Records destino COMPATIBLES para trasladar/mover (lib/vuelos/compatibles.ts;
+  // la base vuelve a validarlo): mismo destino, mismo proveedor y vuelo que no
+  // ha salido según el día de negocio de Bogotá. Tarifa distinta: solo
+  // advertencia (D4b).
+  const compatibles = filtrarCompatibles(b, otros ?? []);
+  const libresPorRecord = new Map<number, number>();
+  if (compatibles.length) {
+    const { data: sillasDestino } = await (sb.from("sillas")
+      .select("bloqueo_id, estado, numero_contrato, contrato_manual, pasajero_nombres, pasajero_apellidos, tipo_doc, numero_doc, nacimiento, asesor, hotel, acomodacion, plazo, agencia, inf_nombres, inf_apellidos, inf_tipo_doc, inf_numero, inf_nacimiento, responsable_menor")
+      .in("bloqueo_id", compatibles.map((o) => o.id)) as unknown as Promise<{ data: ({ bloqueo_id: number } & Parameters<typeof esSillaLibre>[0])[] | null }>);
+    for (const sd of sillasDestino ?? []) if (esSillaLibre(sd)) libresPorRecord.set(sd.bloqueo_id, (libresPorRecord.get(sd.bloqueo_id) ?? 0) + 1);
+  }
+  const destinosCompatibles = describirDestinos(b, compatibles, libresPorRecord);
 
   // Infantes de este vuelo (no ocupan silla — ver lib/reservar/pasajeros.ts —
   // así que nunca tienen fila propia en `sillas`, pero deben seguir
@@ -203,7 +235,8 @@ export default async function BloqueoDetallePage({
         Regreso {formatFechaLarga(b.fecha_regreso)} ({b.vuelo_regreso ?? "—"} · {b.hora_salida_reg ?? "—"})
       </p>
       <p className="mt-1 text-xs text-gray-400">
-        Cupos {totalReal}{totalReal !== (b.cupos_total ?? 0) ? ` (contratados ${b.cupos_total})` : ""} · Tarifa empaquetar {formatCOP(b.tarifa_para_empaquetar)} ·
+        Cupos activos <b className="text-gray-600">{totalReal}</b>{totalReal !== (b.cupos_total ?? 0) ? ` (registrados ${b.cupos_total})` : ""} ·
+        Movimientos históricos <b className="text-gray-600">{movimientosHistoricos}</b> <span className="text-gray-300">(no son cupos)</span> · Tarifa empaquetar {formatCOP(b.tarifa_para_empaquetar)} ·
         Devolución {formatFechaLarga(b.fecha_devolucion)}
       </p>
 
@@ -233,7 +266,7 @@ export default async function BloqueoDetallePage({
 
       {/* Pestañas: Pasajeros (sillas activas) · Cambios (movimientos/cupos) · Control (modalidad/emisión/pago) */}
       <BloqueoTabs
-        nCambios={(movimientos?.length ?? 0) + (cambios?.length ?? 0)}
+        nCambios={movimientosHistoricos + (cambios?.length ?? 0)}
         control={
           <ControlBloqueoForm
             bloqueoId={bloqueoId}
@@ -262,7 +295,7 @@ export default async function BloqueoDetallePage({
                   </tr>
                 </thead>
                 <tbody>
-                  {(sillas ?? []).map((s) => (
+                  {activas.map((s) => (
                     <Fragment key={s.id}>
                       <tr className="border-t border-gray-100">
                         <td className="px-3 py-2 font-semibold text-gray-700" data-label="#">
@@ -277,23 +310,22 @@ export default async function BloqueoDetallePage({
                         <td className="px-3 py-2 text-gray-500" data-label="Número">{s.numero_doc || "—"}</td>
                         <td className="px-3 py-2 text-xs text-gray-500" data-label="Nacimiento">{s.nacimiento ? formatFechaLarga(s.nacimiento) : "—"}</td>
                         <td className="px-3 py-2" data-label="Contrato">
-                          <SillaContrato sillaId={s.id} bloqueoId={bloqueoId} estado={s.estado} numeroContrato={s.numero_contrato} contratoManual={contratoManualPorSilla.get(s.id) ?? null} />
+                          <SillaContrato sillaId={s.id} bloqueoId={bloqueoId} numeroContrato={s.numero_contrato} contratoManual={contratoManualPorSilla.get(s.id) ?? null} libre={libreSilla(s)} />
                         </td>
                         <td className="px-3 py-2 text-gray-500" data-label="Asesor">{s.asesor || "—"}</td>
                         <td className="px-3 py-2 text-gray-500" data-label="Hotel">{s.hotel || "—"}</td>
                         <td className="px-3 py-2 text-gray-500" data-label="Acomodación">{s.acomodacion || "—"}</td>
                         <td className="px-3 py-2 text-xs text-gray-500" data-label="Plazo">{s.plazo ? formatFechaLarga(s.plazo) : "—"}</td>
                         <td className="px-3 py-2" data-label="Estado">
-                          <SillaEstado sillaId={s.id} estado={s.estado} bloqueoId={bloqueoId}
-                            bloqueada={s.estado === "cambio"} />
+                          <SillaEstado sillaId={s.id} estado={s.estado} bloqueoId={bloqueoId} libre={libreSilla(s)} />
                         </td>
                         <td className="px-3 py-2" data-label="Acciones">
                           <div className="flex flex-col items-start gap-1">
                             <PasajeroAcciones
                               sillaId={s.id}
                               bloqueoId={bloqueoId}
-                              bloqueada={s.estado === "cambio"}
-                              otros={otros ?? []}
+                              bloqueada={false}
+                              otros={destinosCompatibles}
                               fechaIdaBloqueo={b.fecha_ida}
                               candidatosResponsable={candidatosResponsable.filter((c) => c.sillaId !== s.id)}
                               inicial={{
@@ -301,6 +333,8 @@ export default async function BloqueoDetallePage({
                                 tipo_doc: s.tipo_doc ?? "", numero_doc: s.numero_doc ?? "", nacimiento: s.nacimiento ?? "",
                                 asesor: s.asesor ?? "", hotel: s.hotel ?? "", acomodacion: s.acomodacion ?? "", plazo: s.plazo ?? "",
                               }}
+                              libre={libreSilla(s)}
+                              contratoOrganico={!!s.numero_contrato}
                             />
                             {/* Alta de infante SIN silla a cargo de este adulto — exige
                                 documento propio (es, a la vez, la autorización de
@@ -366,8 +400,8 @@ export default async function BloqueoDetallePage({
                 </tbody>
               </table>
             </ResponsiveTableShell>
-            {!sillas?.length && <p className="mt-4 text-sm text-gray-400">Este bloqueo no tiene sillas generadas.</p>}
-            <p className="mt-2 text-xs text-gray-400">Para registrar una venta externa, usa “+ Contrato manual” en un cupo disponible. Para quitar un cupo libre, usa “eliminar cupo”.</p>
+            {!activas.length && <p className="mt-4 text-sm text-gray-400">Este bloqueo no tiene sillas activas.</p>}
+            <p className="mt-2 text-xs text-gray-400">Para registrar una venta externa, usa “+ Contrato manual” en un cupo libre. Para quitar un cupo libre, usa “retirar cupo”: la silla no se borra, queda en el historial.</p>
 
             {infantesSinResponsable.length > 0 && (
               <div className="mt-4 flex items-start gap-2 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800">
@@ -385,11 +419,11 @@ export default async function BloqueoDetallePage({
         cambios={
           <div className="space-y-5">
             {/* Cambio de sillas entre records */}
-            {disponibles > 0 && otros && otros.length > 0 ? (
-              <CambiarSillasForm origenId={bloqueoId} disponibles={disponibles} destinos={otros} />
+            {disponibles > 0 && destinosCompatibles.length > 0 ? (
+              <CambiarSillasForm origenId={bloqueoId} disponibles={disponibles} destinos={destinosCompatibles} />
             ) : (
               <p className="rounded-xl border border-dashed border-gray-200 bg-white px-4 py-3 text-sm text-gray-400">
-                No hay cupos disponibles para cambiar a otro record (o no hay otros records).
+                No hay cupos libres para trasladar, o no hay records compatibles (mismo destino y proveedor, sin salir).
               </p>
             )}
 
@@ -404,20 +438,28 @@ export default async function BloqueoDetallePage({
 
             {/* Historial de movimientos de sillas (cambios entre records) */}
             <section className="rounded-xl border border-gray-200 bg-white p-4">
-              <p className="mb-2 text-sm font-semibold text-gray-700">Movimientos de sillas</p>
-              {(movimientos?.length ?? 0) === 0 ? (
+              <p className="mb-1 text-sm font-semibold text-gray-700">Movimientos históricos</p>
+              <p className="mb-2 text-xs text-gray-400">Trazabilidad de traslados, pasajeros movidos y cupos retirados. No son cupos ni se venden.</p>
+              {historial.length === 0 ? (
                 <p className="text-xs text-gray-400">Sin movimientos de sillas registrados.</p>
               ) : (
                 <ul className="space-y-2">
-                  {(movimientos ?? []).map((m) => {
-                    const ori = recordPorId.get(m.bloqueo_origen_id as number) ?? "?";
-                    const des = recordPorId.get(m.bloqueo_destino_id as number) ?? "?";
-                    const entra = m.bloqueo_destino_id === bloqueoId;
+                  {historial.map((e) => {
+                    const entra = e.destinoId === bloqueoId;
+                    const cupos = entra ? e.cuposDestino : e.cuposOrigen;
+                    const nums = entra ? e.numerosDestino : e.numerosOrigen;
                     return (
-                      <li key={m.id} className="border-l-2 pl-3 text-xs" style={{ borderColor: entra ? "#BFE3EE" : "#C7B3E8" }}>
-                        <div className="text-gray-400">{formatFechaLarga(m.fecha_movimiento)}{m.registrado_por ? ` · ${m.registrado_por}` : ""}</div>
-                        <div className="text-gray-700">{entra ? "Entró desde" : "Salió hacia"} <b>{entra ? ori : des}</b> (cambio {ori} → {des})</div>
-                        {m.motivo && <div className="text-gray-500 italic">“{m.motivo}”</div>}
+                      <li key={e.clave} className="border-l-2 pl-3 text-xs" style={{ borderColor: entra ? ESTADO_COLOR.cambio_entrante : ESTADO_COLOR.cambio }}>
+                        <div className="text-gray-400">{formatFechaLarga(e.fecha)}{e.registradoPor ? ` · ${e.registradoPor}` : ""}</div>
+                        <div className="text-gray-700">{describirEntrada(e, bloqueoId, (rid) => (rid == null ? "—" : recordPorId.get(rid) ?? `#${rid}`))}</div>
+                        {(nums.length > 0 || cupos) && (
+                          <div className="text-gray-400">
+                            {nums.length > 0 ? `Silla(s) ${nums.map((n) => `#${n}`).join(", ")}` : ""}
+                            {nums.length > 0 && cupos ? " · " : ""}
+                            {cupos ? `cupos ${cupos[0]} → ${cupos[1]}` : ""}
+                          </div>
+                        )}
+                        {e.motivo && <div className="italic text-gray-500">“{e.motivo}”</div>}
                       </li>
                     );
                   })}

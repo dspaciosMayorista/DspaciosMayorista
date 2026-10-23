@@ -6,6 +6,7 @@ import Link from "next/link";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { formatMoneda, formatFechaLarga } from "@/lib/utils";
+import { fechaNegocio } from "@/lib/fechaNegocio";
 import { registrarAbonoCartera, actualizarAbonoCartera, eliminarAbonoCartera } from "./actions";
 import { ResponsiveTableShell } from "@/components/ui/ResponsiveTableShell";
 
@@ -365,7 +366,7 @@ function AbonoInline({
   const [forma, setForma] = useState("");
   const [ref, setRef] = useState("");
   const [trm, setTrm] = useState("");
-  const [fecha, setFecha] = useState(new Date().toISOString().slice(0, 10));
+  const [fecha, setFecha] = useState(() => fechaNegocio());
   const [error, setError] = useState<string | null>(null);
   const [pending, startTransition] = useTransition();
   const esUSD = (moneda ?? "COP").toUpperCase() === "USD";
@@ -393,7 +394,7 @@ function AbonoInline({
       setForma("");
       setRef("");
       setTrm("");
-      setFecha(new Date().toISOString().slice(0, 10));
+      setFecha(fechaNegocio());
     });
   }
 

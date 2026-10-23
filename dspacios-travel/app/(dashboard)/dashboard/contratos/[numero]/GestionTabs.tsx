@@ -6,6 +6,7 @@ import Link from "next/link";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { formatCOP, formatMoneda } from "@/lib/utils";
+import { fechaNegocio } from "@/lib/fechaNegocio";
 import {
   calcComisionB2B,
   FISCAL_DEFAULT,
@@ -556,7 +557,7 @@ function PagoProveedorPanel({ f, pagado, saldo }: { f: CxP; pagado: number; sald
   const pagos = f.pagos;
 
   const [valor, setValor] = useState("");
-  const [fecha, setFecha] = useState(new Date().toISOString().slice(0, 10));
+  const [fecha, setFecha] = useState(() => fechaNegocio());
   const [trm, setTrm] = useState("");
   const [err, setErr] = useState("");
   const [pending, start] = useTransition();

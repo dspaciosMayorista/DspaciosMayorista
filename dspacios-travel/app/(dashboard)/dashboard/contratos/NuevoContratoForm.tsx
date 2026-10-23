@@ -6,6 +6,7 @@ import { useRouter } from "next/navigation";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { formatMoneda, calcularEdad } from "@/lib/utils";
+import { fechaNegocio } from "@/lib/fechaNegocio";
 import { ComboCiudad } from "@/components/ComboCiudad";
 import type { DestinoOpt } from "@/components/ComboDestino";
 import { ciudadIata } from "@/lib/iata";
@@ -30,8 +31,6 @@ const TIPOS_SERVICIO: { value: TipoServicio; label: string }[] = [
   { value: "tour", label: "Tour" },
   { value: "otro", label: "Otro" },
 ];
-
-const hoy = new Date().toISOString().slice(0, 10);
 
 export type PaqueteOpt = {
   id: number;
@@ -117,7 +116,8 @@ export function NuevoContratoForm({
   const [destino, setDestino] = useState("");
   const [fechaSalida, setFechaSalida] = useState("");
   const [fechaRegreso, setFechaRegreso] = useState("");
-  const [fechaEmision, setFechaEmision] = useState(hoy);
+  // Día de negocio (Bogotá) al MONTAR el formulario, no al cargar el módulo.
+  const [fechaEmision, setFechaEmision] = useState(() => fechaNegocio());
   const [planNombre, setPlanNombre] = useState("");
   const [tours, setTours] = useState("");
   const [asistencia, setAsistencia] = useState(false);

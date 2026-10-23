@@ -93,7 +93,7 @@ export function CotizacionManualDocumento({ codigo, venta, items, cliente, inclu
           <div className="text-base font-semibold">COTIZACIÓN</div>
           <div className="mt-1 text-xs opacity-90">
             {venta.numero_contrato
-              ? `Contrato #: ${venta.numero_contrato}`
+              ? `Contrato: #${venta.numero_contrato}`
               : `Cotización #: ${codigo ?? "—"}`}
           </div>
           <div className="text-xs opacity-90">Emisión: {formatFechaLarga(hoy)}</div>

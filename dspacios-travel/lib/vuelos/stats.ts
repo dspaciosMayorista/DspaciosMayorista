@@ -9,13 +9,26 @@ export type ConteoSillas = {
   conf: number;   // confirmadas (vendidas)
   dev: number;    // devueltas
   nven: number;   // no_vendida
-  total: number;  // total de sillas del/los bloqueo(s)
+  total: number;  // total de sillas ACTIVAS del/los bloqueo(s): sin `cambio` ni `retirada`
 };
 
 export const conteoCero = (): ConteoSillas => ({ disp: 0, plazo: 0, conf: 0, dev: 0, nven: 0, total: 0 });
 
-/** Suma una silla (por su estado) a un conteo. */
+/**
+ * Estados de fila que NO son cupos del record y no cuentan en el total, la
+ * ocupación ni la disponibilidad:
+ *  - `cambio`: silla legado que salió a otro record con el traslado antiguo
+ *    (antes de la migración 194); la fila sigue en el origen, pero el cupo ya se sumó al
+ *    destino como `cambio_entrante`. Contarla duplicaba el cupo entre los dos
+ *    records y bajaba el % de ocupación.
+ *  - `retirada`: cupo retirado conservando su historial (decisión aprobada,
+ *    docs/futuro/traslado-cupos-y-mover-pasajero.md §4.4b; migración 192).
+ */
+export const ESTADOS_NO_ACTIVOS: readonly string[] = ["cambio", "retirada"];
+
+/** Suma una silla (por su estado) a un conteo. Las filas no activas no suman nada. */
 export function acumularSilla(c: ConteoSillas, estado: string | null): void {
+  if (estado !== null && ESTADOS_NO_ACTIVOS.includes(estado)) return;
   c.total++;
   if (estado === "disponible" || estado === "cambio_entrante") c.disp++;
   else if (estado === "en_plazo") c.plazo++;
@@ -54,14 +67,30 @@ export function esPasado(fechaIda: string | null, hoy: string = hoyISO()): boole
   return !!fechaIda && fechaIda < hoy;
 }
 
-/** % de ocupación = (confirmadas + en plazo) / total de sillas. */
+/** % de ocupación = (confirmadas + en plazo) / total de sillas activas. */
 export function ocupacionPct(c: ConteoSillas): number {
   if (!c.total) return 0;
   return Math.round(((c.conf + c.plazo) / c.total) * 100);
 }
 
-/** % de venta efectiva (histórico) = confirmadas / total. */
+/** % de venta efectiva (histórico) = confirmadas / total de sillas activas. */
 export function ventaPct(c: ConteoSillas): number {
   if (!c.total) return 0;
   return Math.round((c.conf / c.total) * 100);
+}
+
+export type FilaMovimientoConteo = { bloqueo_origen_id: number | null; bloqueo_destino_id: number | null };
+
+/**
+ * Movimientos históricos por record: cada fila de `movimientos_silla` cuenta
+ * una vez en su origen y una vez en su destino (se ve en los dos). Es una
+ * cifra de TRAZABILIDAD, separada de los cupos activos: nunca se suma al total.
+ */
+export function movimientosPorBloqueo(filas: FilaMovimientoConteo[] | null | undefined): Map<number, number> {
+  const m = new Map<number, number>();
+  for (const f of filas ?? []) {
+    const ids = new Set([f.bloqueo_origen_id, f.bloqueo_destino_id]);
+    for (const id of ids) if (id != null) m.set(id, (m.get(id) ?? 0) + 1);
+  }
+  return m;
 }

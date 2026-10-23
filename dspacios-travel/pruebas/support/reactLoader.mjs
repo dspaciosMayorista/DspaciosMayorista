@@ -76,9 +76,13 @@ const STUB_BUSCAR_PASAJERO = pathToFileURL(join(AQUI, "stubs", "buscarPasajeroSt
 // Producto → Destinos: la Server Action real de la lista de receptivos
 // (`./actions` desde DestinosLista.tsx) -> stub configurable.
 const STUB_DESTINOS_ACTIONS = pathToFileURL(join(AQUI, "stubs", "destinosActionsStub.mjs")).href;
-// Vuelos → detalle del bloqueo: `EditarBloqueoForm.tsx` importa la Server
-// Action real "../actions" (termina en "next/headers") -> stub configurable.
+// Vuelos → detalle del bloqueo: `EditarBloqueoForm.tsx` y `PasajeroAcciones.tsx`
+// importan la Server Action real "../actions" (termina en "next/headers") ->
+// stub configurable.
 const STUB_VUELOS_ACTIONS = pathToFileURL(join(AQUI, "stubs", "vuelosActionsStub.mjs")).href;
+// La Server Action REAL de vuelos (pruebas/vuelosOperacionesActions.react.ts)
+// importa "../paquetes/actions" (motor de tarifarios completo) -> stub.
+const STUB_PAQUETES_ACTIONS = pathToFileURL(join(AQUI, "stubs", "paquetesActionsStub.mjs")).href;
 const STUB_SUPABASE_SERVER = pathToFileURL(join(AQUI, "stubs", "supabaseServerStub.mjs")).href;
 const STUB_NEXT_CACHE = pathToFileURL(join(AQUI, "stubs", "nextCacheStub.mjs")).href;
 const STUB_ASIENTOS = pathToFileURL(join(AQUI, "stubs", "asientosStub.mjs")).href;
@@ -89,6 +93,15 @@ const STUB_ASEGURAR_CXP = pathToFileURL(join(AQUI, "stubs", "asegurarCxpStub.mjs
 // el archivo .css REAL en disco, delegando a `nextLoad` un archivo que no es
 // JS válido.
 const STUB_CSS = pathToFileURL(join(AQUI, "stubs", "cssModuleStub.mjs")).href;
+// Login (pruebas/loginSolicitarAccesoB2B.react.ts): `LoginClient.tsx` importa su
+// Server Action "./actions" (next/headers + service-role) y el cliente de
+// Supabase del navegador -> stubs que registran y lanzan si se invocan.
+const STUB_LOGIN_ACTIONS = pathToFileURL(join(AQUI, "stubs", "loginActionsStub.mjs")).href;
+const STUB_SUPABASE_CLIENT = pathToFileURL(join(AQUI, "stubs", "supabaseClientStub.mjs")).href;
+// Registro B2B (pruebas/registroSolicitudB2BAction.react.ts): la Server Action
+// REAL `app/portal/registro/actions.ts` usa el cliente service-role -> stub
+// configurable con `__setAdmin`.
+const STUB_SUPABASE_ADMIN = pathToFileURL(join(AQUI, "stubs", "supabaseAdminStub.mjs")).href;
 
 export async function resolve(specifier, context, nextResolve) {
   if (specifier.endsWith(".css")) {
@@ -133,23 +146,54 @@ export async function resolve(specifier, context, nextResolve) {
   if (specifier === "./actions" && context.parentURL?.endsWith("DifusionClient.tsx")) {
     return { url: STUB_DIFUSION_ACTIONS, shortCircuit: true };
   }
+  if (specifier === "./actions" && context.parentURL?.endsWith("/login/LoginClient.tsx")) {
+    return { url: STUB_LOGIN_ACTIONS, shortCircuit: true };
+  }
+  if (specifier === "@/lib/supabase/client" && context.parentURL?.endsWith("/login/LoginClient.tsx")) {
+    return { url: STUB_SUPABASE_CLIENT, shortCircuit: true };
+  }
+  // Documentos por URL (migración 193, pruebas/documentosLegacyNombre.react.ts):
+  // los cargadores REALES de estado de cuenta/plan/recibo y cuenta de cobro,
+  // contra una base simulada en memoria.
+  if ((specifier === "@/lib/supabase/server" || specifier === "@/lib/supabase/admin") &&
+      (context.parentURL?.endsWith("/lib/cuenta/estado.ts") ||
+       context.parentURL?.endsWith("/lib/finanzas/comisionResolver.ts"))) {
+    return { url: specifier.endsWith("/admin") ? STUB_SUPABASE_ADMIN : STUB_SUPABASE_SERVER, shortCircuit: true };
+  }
+  // Registro/aprobación B2B (migración 193): acciones REALES de aprobación,
+  // alta interna de usuarios y agentes del portal, con clientes simulados.
+  if (specifier === "@/lib/supabase/admin" &&
+      (context.parentURL?.endsWith("/portal/registro/actions.ts") ||
+       context.parentURL?.endsWith("/dashboard/usuarios/actions.ts") ||
+       context.parentURL?.endsWith("/portal/b2b/agentes/actions.ts"))) {
+    return { url: STUB_SUPABASE_ADMIN, shortCircuit: true };
+  }
+  if ((specifier === "@/lib/supabase/server" || specifier === "next/cache") &&
+      (context.parentURL?.endsWith("/dashboard/usuarios/b2b/actions.ts") ||
+       context.parentURL?.endsWith("/dashboard/usuarios/actions.ts") ||
+       context.parentURL?.endsWith("/portal/b2b/agentes/actions.ts"))) {
+    return { url: specifier === "next/cache" ? STUB_NEXT_CACHE : STUB_SUPABASE_SERVER, shortCircuit: true };
+  }
   if (specifier === "./actions" && context.parentURL?.endsWith("PagosList.tsx")) {
     return { url: STUB_PAGOS_ACTIONS, shortCircuit: true };
   }
-  if (specifier === "../actions" && context.parentURL?.endsWith("/EditarBloqueoForm.tsx")) {
+  if (specifier === "../actions" &&
+      (context.parentURL?.endsWith("/EditarBloqueoForm.tsx") || context.parentURL?.endsWith("/PasajeroAcciones.tsx"))) {
     return { url: STUB_VUELOS_ACTIONS, shortCircuit: true };
   }
   if (
     specifier === "@/components/ui/DateInput" &&
     (context.parentURL?.endsWith("DifusionClient.tsx") ||
       context.parentURL?.endsWith("PagosList.tsx") ||
-      context.parentURL?.endsWith("EditarBloqueoForm.tsx"))
+      context.parentURL?.endsWith("EditarBloqueoForm.tsx") ||
+      context.parentURL?.endsWith("PasajeroAcciones.tsx"))
   ) {
     return { url: STUB_DATE_INPUT, shortCircuit: true };
   }
   if (
     specifier === "next/navigation" &&
-    (context.parentURL?.endsWith("DifusionClient.tsx") || context.parentURL?.endsWith("EditarBloqueoForm.tsx"))
+    (context.parentURL?.endsWith("DifusionClient.tsx") || context.parentURL?.endsWith("EditarBloqueoForm.tsx") ||
+      context.parentURL?.endsWith("/login/LoginClient.tsx"))
   ) {
     return { url: STUB_NEXT_NAVIGATION, shortCircuit: true };
   }
@@ -164,6 +208,8 @@ export async function resolve(specifier, context, nextResolve) {
        context.parentURL?.endsWith("/producto/destinos/actions.ts") ||
        // eliminarDestino/usoDestino reales (pruebas/eliminarDestinoAction.react.ts).
        context.parentURL?.endsWith("/dashboard/tarifario/actions.ts") ||
+       // Acciones reales de inventario de vuelos (pruebas/vuelosOperacionesActions.react.ts).
+       context.parentURL?.endsWith("/dashboard/vuelos/actions.ts") ||
        context.parentURL?.endsWith("/lib/roles.ts"))) {
     return { url: STUB_SUPABASE_SERVER, shortCircuit: true };
   }
@@ -172,8 +218,12 @@ export async function resolve(specifier, context, nextResolve) {
        context.parentURL?.endsWith("dashboard/producto/proveedores/actions.ts") ||
        context.parentURL?.endsWith("/voucher-actions.ts") ||
        context.parentURL?.endsWith("/gestion-actions.ts") ||
-       context.parentURL?.endsWith("/dashboard/tarifario/actions.ts"))) {
+       context.parentURL?.endsWith("/dashboard/tarifario/actions.ts") ||
+       context.parentURL?.endsWith("/dashboard/vuelos/actions.ts"))) {
     return { url: STUB_NEXT_CACHE, shortCircuit: true };
+  }
+  if (specifier === "../paquetes/actions" && context.parentURL?.endsWith("/dashboard/vuelos/actions.ts")) {
+    return { url: STUB_PAQUETES_ACTIONS, shortCircuit: true };
   }
   if (specifier === "@/lib/contabilidad/asientos" &&
       (context.parentURL?.endsWith("dashboard/pagos/actions.ts") || context.parentURL?.endsWith("/gestion-actions.ts"))) {

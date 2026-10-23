@@ -5,6 +5,7 @@ import { Logo } from "@/components/Logo";
 import { LogoutButton } from "@/app/(dashboard)/LogoutButton";
 import { formatMoneda, formatFechaLarga } from "@/lib/utils";
 import { comisionDefault, categoriaAliado } from "@/lib/b2b";
+import { contratosDelPortalB2B, consultasPortalSupabase, COLUMNAS_DECISION } from "@/lib/auth/contratosPortalB2B";
 
 export const dynamic = "force-dynamic";
 
@@ -17,7 +18,7 @@ export default async function PortalB2BPage() {
   const { data: { user } } = await sb.auth.getUser();
 
   const { data: perfil } = user
-    ? await sb.from("usuarios").select("nombre, rol, activo, agencia_id, pct_comision, aliado_id, tenant").eq("id", user.id).maybeSingle()
+    ? await sb.from("usuarios").select("nombre, rol, activo, agencia_id, pct_comision, aliado_id, tenant, acceso_legacy_nombre").eq("id", user.id).maybeSingle()
     : { data: null };
   const rol = perfil?.rol ?? null;
   const esB2B = rol === "agencia" || rol === "freelance";
@@ -68,7 +69,7 @@ export default async function PortalB2BPage() {
     );
   }
 
-  // Mis contratos: por vínculo directo (b2b_usuario_id) o por nombre del aliado.
+  // Mis contratos: por vínculo por id; el nombre solo con acceso legacy explícito (193).
   if (!user) return null;
   const admin = createAdminClient();
   const nombre = (perfil?.nombre ?? "").trim();
@@ -83,39 +84,32 @@ export default async function PortalB2BPage() {
   const pctEfectivo = pctAgencia ?? defCom;
   const cat = categoriaAliado(rol ?? "agencia", pctEfectivo, defCom);
 
-  // Pertenencia de un contrato, por orden de confianza:
-  //  1. `b2b_usuario_id`  → lo compró él mismo desde el portal.
-  //  2. `aliado_id`       → ficha del catálogo enlazada a su usuario al
-  //     aprobarlo (migración 143). Cubre los CONTRATOS ASISTIDOS: los que un
-  //     asesor interno montó a su nombre, incluso antes de que se registrara.
-  //  3. Nombre en texto    → respaldo para contratos viejos sin `aliado_id`.
-  //     Es el vínculo débil que la 143 vino a reemplazar; se conserva para no
-  //     esconderle de golpe su histórico a un aliado ya operando.
-  const sel = "numero_contrato, cliente, destino, fecha_salida, precio_venta, moneda, estado, modo_compra, comision_b2b, comision_estado, tipo_asesor";
-  const aliadoId = perfil?.aliado_id ?? null;
-
-  // ⚠️ El respaldo por nombre NO usa `.or()` con el nombre interpolado. Esa
-  // consulta corre con service-role (se salta toda la RLS) y `.or()` recibe
-  // sintaxis de PostgREST en crudo: un nombre con una coma o un paréntesis
-  // —"Viajes Sol, S.A.S."— rompía el filtro, y uno armado a propósito podía
-  // reescribirlo para traer contratos ajenos. Con `.eq()` el valor viaja como
-  // parámetro y no se interpreta como sintaxis.
+  // Pertenencia de un contrato: la decide `contratosDelPortalB2B`, con la MISMA
+  // regla que los documentos por URL (`accesoDocumentoContrato`):
+  //  1. `b2b_usuario_id` → lo compró él mismo desde el portal.
+  //  2. `aliado_id`      → ficha del catálogo enlazada al APROBARLO (143/193).
+  //  3. Nombre en texto  → SOLO con `acceso_legacy_nombre` concedido
+  //     explícitamente (migración 193) y en contratos SIN ningún id. Una
+  //     cuenta aprobada "sin enlazar" nunca lo tiene.
   //
-  // Además el respaldo por nombre SOLO se usa si el aliado todavía no está
-  // enlazado al catálogo (migración 143). Con `aliado_id` la pertenencia se
-  // resuelve por ID, que es exacto; seguir cruzando por texto ahí solo
-  // agregaría contratos de un homónimo.
-  const consultas = [
-    admin.from("ventas").select(sel).eq("b2b_usuario_id", user.id),
-    aliadoId ? admin.from("ventas").select(sel).eq("aliado_id", aliadoId) : null,
-    !aliadoId && nombre ? admin.from("ventas").select(sel).eq("agencia_nombre", nombre) : null,
-    !aliadoId && nombre ? admin.from("ventas").select(sel).eq("freelance_nombre", nombre) : null,
-  ].filter((q): q is NonNullable<typeof q> => q !== null);
-
-  const resultados = await Promise.all(consultas);
-  const mapa = new Map<string, Record<string, unknown>>();
-  for (const r of resultados) for (const v of r.data ?? []) mapa.set(v.numero_contrato as string, v);
-  const contratos = [...mapa.values()].sort((a, b) => String(b.fecha_salida ?? "").localeCompare(String(a.fecha_salida ?? "")));
+  // Las consultas (y su `.eq()` en vez de `.or()` bajo service-role) viven en
+  // `consultasPortalSupabase`; la verificación de fichas en `aliados_b2b` es
+  // fail-closed (`verificarFichasComisionManual`).
+  const sel = `${COLUMNAS_DECISION}, cliente, destino, precio_venta, moneda, estado, modo_compra, comision_b2b, comision_estado, tipo_asesor`;
+  const { contratos, legacyNoVerificado } = await contratosDelPortalB2B(
+    perfil
+      ? {
+          id: user.id,
+          rol,
+          tenant: (perfil.tenant as string | null) ?? null,
+          activo: (perfil.activo as boolean | null) ?? null,
+          nombre: nombre || null,
+          aliadoId: (perfil.aliado_id as number | null) ?? null,
+          accesoLegacyNombre: (perfil.acceso_legacy_nombre as boolean | null) ?? null,
+        }
+      : null,
+    consultasPortalSupabase(admin, sel)
+  );
 
   // Abonos para el saldo
   const nums = contratos.map((c) => c.numero_contrato as string);
@@ -230,6 +224,12 @@ export default async function PortalB2BPage() {
         <h2 className="text-lg font-semibold text-gray-900">Mis ventas y cartera</h2>
         <p className="text-xs text-gray-500">Descarga el estado de cuenta y los recibos de cada pago.</p>
       </div>
+      {legacyNoVerificado && (
+        <p role="status" className="mb-3 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800">
+          No pudimos verificar parte de tu histórico anterior, así que por seguridad no se muestra ahora. Intenta más tarde o
+          comunícate con tu asesor.
+        </p>
+      )}
       {contratos.length === 0 ? (
         <p className="rounded-xl border border-gray-200 bg-white px-4 py-10 text-center text-gray-400">Aún no tienes contratos. Empieza en el tarifario.</p>
       ) : (

@@ -1,3 +1,5 @@
+import { fechaNegocio } from "../fechaNegocio.ts";
+
 const FECHA_ISO = /^(\d{4})-(\d{2})-(\d{2})$/;
 
 export type ResultadoVigencia =
@@ -15,7 +17,7 @@ export function fechaISOValida(fecha: string): boolean {
 }
 
 export function hoyBogota(ahora = new Date()): string {
-  return ahora.toLocaleDateString("en-CA", { timeZone: "America/Bogota" });
+  return fechaNegocio(ahora);
 }
 
 export function sumarDiasISO(fecha: string, dias: number): string {

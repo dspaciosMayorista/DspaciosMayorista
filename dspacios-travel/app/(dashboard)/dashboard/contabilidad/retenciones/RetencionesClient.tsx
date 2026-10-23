@@ -7,6 +7,7 @@ import { Search, Trash2, Landmark, FileBarChart } from "lucide-react";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { formatMoneda, formatFechaLarga } from "@/lib/utils";
+import { fechaNegocio } from "@/lib/fechaNegocio";
 import {
   buscarCuentasPorContrato,
   listarRetenciones,
@@ -20,7 +21,8 @@ import {
   type InformeRetencionRow,
 } from "./actions";
 
-const hoy = () => new Date().toISOString().slice(0, 10);
+// Día de negocio (Bogotá): también fija el MES de declaración por defecto.
+const hoy = () => fechaNegocio();
 
 export function RetencionesClient({ contratos }: { contratos: string[] }) {
   const [tab, setTab] = useState<"aplicar" | "informe">("aplicar");

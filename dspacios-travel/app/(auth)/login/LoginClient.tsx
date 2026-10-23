@@ -1,12 +1,13 @@
 "use client";
 
 import { useState } from "react";
+import Link from "next/link";
 import { createClient } from "@/lib/supabase/client";
 import { useRouter } from "next/navigation";
 import { Logo } from "@/components/Logo";
 import {
   Eye, EyeOff, Mail, Lock, ArrowRight, Loader2, ShieldCheck, FlaskConical,
-  Tags, CalendarCheck, FileCheck2, Users, Settings,
+  Tags, CalendarCheck, FileCheck2, Users, Settings, UserPlus,
 } from "lucide-react";
 import { loginConCodigo } from "./actions";
 import styles from "./LoginClient.module.css";
@@ -315,6 +316,35 @@ export function LoginClient({
                 )}
               </button>
             </form>
+
+            {/* Solicitud de acceso B2B — solo en la pestaña B2B (en Admin no
+                tiene sentido: el personal interno lo crea un administrador).
+                Igual que el selector, esto es PRESENTACIÓN: mostrarlo u
+                ocultarlo no da ni quita acceso. Lleva al registro existente
+                (/portal/registro), que crea la cuenta INACTIVA y deja la
+                solicitud "pendiente" en /dashboard/usuarios/b2b; solo la
+                aprobación interna la activa. */}
+            {portalSeleccionado === "b2b" && (
+              <div
+                className="mt-4 rounded-md border px-3 py-3 text-sm"
+                style={{ borderColor: "var(--login-field-border)" }}
+                data-testid="solicitar-acceso-b2b"
+              >
+                <p className="text-[var(--login-ink-muted)]">
+                  ¿Tu agencia o freelance aún no tiene cuenta?
+                </p>
+                <Link
+                  href="/portal/registro"
+                  className="mt-1 inline-flex items-center gap-1.5 rounded font-semibold text-[var(--login-primary)] underline-offset-2 hover:underline focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--login-cyan)]"
+                >
+                  <UserPlus size={16} aria-hidden />
+                  Solicitar acceso B2B
+                </Link>
+                <p className="mt-1.5 text-xs leading-relaxed text-[var(--login-ink-muted)]">
+                  El acceso no es inmediato: nuestro equipo revisa cada solicitud y la cuenta se activa solo después de su aprobación.
+                </p>
+              </div>
+            )}
 
             <div className="my-5 flex items-center gap-3 text-xs uppercase tracking-wide text-[var(--login-ink-soft)]">
               <span className="h-px flex-1 bg-[var(--login-field-border)]" />

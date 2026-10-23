@@ -2,6 +2,7 @@
 
 import { createClient } from "@/lib/supabase/server";
 import { revalidatePath } from "next/cache";
+import { fechaElegidaONegocio } from "@/lib/fechaNegocio";
 import { postearAsientoPago, eliminarAsientoPago } from "@/lib/contabilidad/asientos";
 
 type Result = { ok: true } | { ok: false; error: string };
@@ -54,7 +55,7 @@ export async function registrarPagoProveedor(
   const trm = esUSD ? (Number(trmInput) || 0) : 1;
   if (esUSD && trm <= 0) return { ok: false, error: "Indica la TRM del día (cuenta en USD)." };
   const abono = esUSD ? valor / trm : valor;
-  const f = fecha || new Date().toISOString().slice(0, 10);
+  const f = fechaElegidaONegocio(fecha);
 
   const { data: pago, error: e2 } = await sb
     .from("cxp_pagos")

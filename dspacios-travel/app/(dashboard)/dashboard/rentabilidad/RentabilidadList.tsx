@@ -129,24 +129,29 @@ export function RentabilidadList({ rows, tasas }: { rows: RentRow[]; tasas?: Tas
         </div>
       </div>
 
-      {/* Tabla — min-w-1040px; `.stack` la apila en tarjetas por debajo de
-          1280px de viewport, sin fusionar/quitar columnas (pedido explícito).
-          `overflow-x-auto` es solo red de seguridad desde 1280px. */}
-      <ResponsiveTableShell minWidth={1040} className="overflow-x-auto rounded-xl border border-gray-200 bg-white">
-        <table className="w-full min-w-[1040px] text-sm">
+      {/* Tabla — se apila en tarjetas cuando el contenedor mide menos de
+          `minWidth`, sin fusionar/quitar columnas (pedido explícito).
+          `minWidth` tiene que ser el ancho REAL que ocupa la tabla, no uno
+          estimado: con 1040 la tabla medía 1129px con importes de 10 cifras
+          y quedaba sin apilar pero con scroll interno (Clase cortada). Con
+          celdas `px-2` el mínimo real es ~1050px; 1100 deja margen para un
+          dígito más en las seis columnas de importes. `overflow-x-auto`
+          queda solo como red de seguridad. */}
+      <ResponsiveTableShell minWidth={1100} className="overflow-x-auto rounded-xl border border-gray-200 bg-white">
+        <table className="w-full min-w-[1100px] text-sm">
           <thead>
             <tr className="border-b border-gray-100 bg-gray-50 text-left text-xs uppercase tracking-wide text-gray-400">
-              <th className="px-3 py-3">Contrato</th>
-              <th className="px-3 py-3">Cliente</th>
-              <th className="px-3 py-3">Asesor</th>
-              <th className="px-3 py-3 text-right">Ingreso</th>
-              <th className="px-3 py-3 text-right">Costo</th>
-              <th className="px-3 py-3 text-right">Comisiones</th>
-              <th className="px-3 py-3 text-right">Provisiones</th>
-              <th className="px-3 py-3 text-right">IVA x pagar</th>
-              <th className="px-3 py-3 text-right">Util. neta</th>
-              <th className="px-3 py-3 text-right">Margen</th>
-              <th className="px-3 py-3">Clase</th>
+              <th className="pl-3 pr-2 py-3">Contrato</th>
+              <th className="px-2 py-3">Cliente</th>
+              <th className="px-2 py-3">Asesor</th>
+              <th className="px-2 py-3 text-right">Ingreso</th>
+              <th className="px-2 py-3 text-right">Costo</th>
+              <th className="px-2 py-3 text-right">Comisiones</th>
+              <th className="px-2 py-3 text-right">Provisiones</th>
+              <th className="px-2 py-3 text-right">IVA x pagar</th>
+              <th className="px-2 py-3 text-right">Util. neta</th>
+              <th className="px-2 py-3 text-right">Margen</th>
+              <th className="pl-2 pr-3 py-3">Clase</th>
             </tr>
           </thead>
           <tbody>
@@ -158,15 +163,15 @@ export function RentabilidadList({ rows, tasas }: { rows: RentRow[]; tasas?: Tas
           {visibles.length > 0 && (
             <tfoot>
               <tr className="border-t-2 border-gray-200 bg-gray-50 font-semibold">
-                <td className="px-3 py-3" colSpan={3}>Total ({visibles.length})</td>
-                <td className="px-3 py-3 text-right tabular-nums" data-label="Ingreso">{formatCOP(tot.ingreso)}</td>
-                <td className="px-3 py-3 text-right tabular-nums text-gray-500" data-label="Costo">{formatCOP(tot.costo)}</td>
-                <td className="px-3 py-3 text-right tabular-nums text-gray-500" data-label="Comisiones">{formatCOP(tot.com)}</td>
-                <td className="px-3 py-3 text-right tabular-nums text-gray-500" data-label="Provisiones">{formatCOP(tot.prov)}</td>
-                <td className="px-3 py-3 text-right tabular-nums text-gray-500" data-label="IVA x pagar">{formatCOP(tot.iva)}</td>
-                <td className="px-3 py-3 text-right tabular-nums" style={{ color: "var(--brand-primary)" }} data-label="Util. neta">{formatCOP(tot.util)}</td>
-                <td className="px-3 py-3 text-right tabular-nums" data-label="Margen">{(tot.margen * 100).toFixed(1)}%</td>
-                <td className="px-3 py-3" data-label="" />
+                <td className="pl-3 pr-2 py-3" colSpan={3}>Total ({visibles.length})</td>
+                <td className="px-2 py-3 text-right tabular-nums" data-label="Ingreso">{formatCOP(tot.ingreso)}</td>
+                <td className="px-2 py-3 text-right tabular-nums text-gray-500" data-label="Costo">{formatCOP(tot.costo)}</td>
+                <td className="px-2 py-3 text-right tabular-nums text-gray-500" data-label="Comisiones">{formatCOP(tot.com)}</td>
+                <td className="px-2 py-3 text-right tabular-nums text-gray-500" data-label="Provisiones">{formatCOP(tot.prov)}</td>
+                <td className="px-2 py-3 text-right tabular-nums text-gray-500" data-label="IVA x pagar">{formatCOP(tot.iva)}</td>
+                <td className="px-2 py-3 text-right tabular-nums" style={{ color: "var(--brand-primary)" }} data-label="Util. neta">{formatCOP(tot.util)}</td>
+                <td className="px-2 py-3 text-right tabular-nums" data-label="Margen">{(tot.margen * 100).toFixed(1)}%</td>
+                <td className="pl-2 pr-3 py-3" data-label="" />
               </tr>
             </tfoot>
           )}
@@ -186,22 +191,22 @@ function Fila({ r, tasas }: { r: RentRow; tasas?: Tasas }) {
   return (
     <>
       <tr className="border-b border-gray-50 hover:bg-gray-50">
-        <td className="px-3 py-2.5" data-label="Contrato">
+        <td className="pl-3 pr-2 py-2.5" data-label="Contrato">
           <button type="button" onClick={() => setAbierto((v) => !v)} className="mr-1 text-gray-400 hover:text-gray-700">{abierto ? "▾" : "▸"}</button>
           <Link href={`/dashboard/contratos/${encodeURIComponent(r.numero_contrato)}`} className="font-mono font-medium hover:underline" style={{ color: "var(--brand-accent)" }}>
             {r.numero_contrato}
           </Link>
         </td>
-        <td className="px-3 py-2.5 text-gray-700" data-label="Cliente">{r.cliente ?? "—"}</td>
-        <td className="px-3 py-2.5 text-gray-500" data-label="Asesor">{r.asesor ?? "—"}</td>
-        <td className="px-3 py-2.5 text-right tabular-nums" data-label="Ingreso">{formatCOP(r.ingreso)}</td>
-        <td className="px-3 py-2.5 text-right tabular-nums text-gray-500" data-label="Costo">{formatCOP(r.costoNeto)}</td>
-        <td className="px-3 py-2.5 text-right tabular-nums text-gray-500" data-label="Comisiones">{formatCOP(r.comB2B + r.comAsesor)}</td>
-        <td className="px-3 py-2.5 text-right tabular-nums text-gray-500" data-label="Provisiones">{formatCOP(r.totalProvisiones)}</td>
-        <td className="px-3 py-2.5 text-right tabular-nums text-gray-500" data-label="IVA x pagar">{formatCOP(r.ivaPorPagar)}</td>
-        <td className="px-3 py-2.5 text-right font-medium tabular-nums" style={{ color: r.utilNeta < 0 ? "#C0392B" : "inherit" }} data-label="Util. neta">{formatCOP(r.utilNeta)}</td>
-        <td className="px-3 py-2.5 text-right tabular-nums" data-label="Margen">{(r.margenNeto * 100).toFixed(1)}%</td>
-        <td className="px-3 py-2.5" data-label="Clase">
+        <td className="px-2 py-2.5 text-gray-700" data-label="Cliente">{r.cliente ?? "—"}</td>
+        <td className="px-2 py-2.5 text-gray-500" data-label="Asesor">{r.asesor ?? "—"}</td>
+        <td className="px-2 py-2.5 text-right tabular-nums" data-label="Ingreso">{formatCOP(r.ingreso)}</td>
+        <td className="px-2 py-2.5 text-right tabular-nums text-gray-500" data-label="Costo">{formatCOP(r.costoNeto)}</td>
+        <td className="px-2 py-2.5 text-right tabular-nums text-gray-500" data-label="Comisiones">{formatCOP(r.comB2B + r.comAsesor)}</td>
+        <td className="px-2 py-2.5 text-right tabular-nums text-gray-500" data-label="Provisiones">{formatCOP(r.totalProvisiones)}</td>
+        <td className="px-2 py-2.5 text-right tabular-nums text-gray-500" data-label="IVA x pagar">{formatCOP(r.ivaPorPagar)}</td>
+        <td className="px-2 py-2.5 text-right font-medium tabular-nums" style={{ color: r.utilNeta < 0 ? "#C0392B" : "inherit" }} data-label="Util. neta">{formatCOP(r.utilNeta)}</td>
+        <td className="px-2 py-2.5 text-right tabular-nums" data-label="Margen">{(r.margenNeto * 100).toFixed(1)}%</td>
+        <td className="pl-2 pr-3 py-2.5" data-label="Clase">
           <span className="rounded-full px-2 py-0.5 text-xs font-medium text-white" style={{ backgroundColor: colorClase(r.clasificacion) }}>
             {r.clasificacion}
           </span>

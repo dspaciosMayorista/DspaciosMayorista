@@ -12,6 +12,15 @@ import {
   type EstadoPago,
 } from "@/lib/vuelos/control";
 import { validarInfanteVueloInput, type InfanteVueloInput } from "@/lib/vuelos/infanteVuelo";
+import {
+  esEstadoManual,
+  esIdPositivo,
+  esModoMover,
+  esOperacionId,
+  mensajeErrorRpc,
+  type EstadoManual,
+  type ModoMover,
+} from "@/lib/vuelos/operaciones";
 
 type Result = { ok: true; id?: number } | { ok: false; error: string };
 
@@ -45,58 +54,56 @@ export type BloqueoInput = {
   modalidadEmision: ModalidadEmision;
 };
 
+/**
+ * Crea un record y sus N sillas `disponible` en UNA transacción
+ * (`crear_bloqueo`, migración 195, con autorización AUT-1): nunca queda un
+ * record con cupos sin sus sillas.
+ */
 export async function crearBloqueo(input: BloqueoInput): Promise<Result> {
   if (!esModalidadEmision(input.modalidadEmision)) {
     return { ok: false, error: "Selecciona la modalidad de emisión (serie o grupo)." };
   }
+  if (!(input.record ?? "").trim()) return { ok: false, error: "Falta el record (PNR)." };
+  const cupos = Number(input.cuposTotal);
+  if (!Number.isInteger(cupos) || cupos < 0) return { ok: false, error: "Los cupos deben ser un número entero mayor o igual a 0." };
   const sb = await createClient();
-
-  const { data: bloqueo, error } = await sb
-    .from("bloqueos_vuelo")
-    .insert({
-      record: input.record.trim().toUpperCase(),
-      aerolinea: oNull(input.aerolinea),
-      proveedor_id: input.proveedorId,
-      destino_id: input.destinoId,
-      ruta: oNull(input.ruta),
-      origen: oNull(input.origen),
-      tarifa_neta: input.tarifaNeta || null,
-      vuelo_ida: oNull(input.vueloIda),
-      fecha_ida: oNull(input.fechaIda),
-      hora_salida_ida: oNull(input.horaSalidaIda),
-      hora_llegada_ida: oNull(input.horaLlegadaIda),
-      vuelo_regreso: oNull(input.vueloRegreso),
-      fecha_regreso: oNull(input.fechaRegreso),
-      hora_salida_reg: oNull(input.horaSalidaReg),
-      hora_llegada_reg: oNull(input.horaLlegadaReg),
-      cupos_total: input.cuposTotal,
-      tarifa_para_empaquetar: input.tarifaParaEmpaquetar,
-      fecha_devolucion: oNull(input.fechaDevolucion),
-      fecha_emision: oNull(input.fechaEmision),
-      notas: oNull(input.notas),
-      rangos_edad: input.rangosEdad?.length ? input.rangosEdad : null,
-      modalidad_emision: input.modalidadEmision,
-      estado_emision: "pendiente",
-      estado_pago: "pendiente",
-    })
-    .select("id")
-    .single();
-
-  if (error) return { ok: false, error: error.message };
-
-  // Generar las sillas (1..cupos) en estado disponible
-  if (input.cuposTotal > 0) {
-    const sillas = Array.from({ length: input.cuposTotal }, (_, i) => ({
-      bloqueo_id: bloqueo.id,
-      numero_silla: i + 1,
-      estado: "disponible" as const,
-    }));
-    const { error: se } = await sb.from("sillas").insert(sillas);
-    if (se) return { ok: false, error: se.message };
-  }
-
+  const { data, error } = await sb.rpc("crear_bloqueo", { p_datos: datosBloqueoDeInput(input), p_cupos: cupos });
+  if (error) return { ok: false, error: mensajeErrorRpc(error).error };
+  const id = Number((data as { id?: number } | null)?.id);
   revalidatePath("/dashboard/vuelos");
-  return { ok: true, id: bloqueo.id };
+  return Number.isInteger(id) && id > 0 ? { ok: true, id } : { ok: true };
+}
+
+// Datos del record para `crear_bloqueo` (migración 195): claves = columnas.
+// La función vuelve a validarlo todo; aquí solo se arma el objeto.
+type DatosBloqueo = Record<string, string | number | number[] | null>;
+
+function datosBloqueoDeInput(input: BloqueoInput): DatosBloqueo {
+  return {
+    record: input.record.trim().toUpperCase(),
+    aerolinea: oNull(input.aerolinea),
+    proveedor_id: input.proveedorId,
+    destino_id: input.destinoId,
+    ruta: oNull(input.ruta),
+    origen: oNull(input.origen),
+    tarifa_neta: input.tarifaNeta || null,
+    vuelo_ida: oNull(input.vueloIda),
+    fecha_ida: oNull(input.fechaIda),
+    hora_salida_ida: oNull(input.horaSalidaIda),
+    hora_llegada_ida: oNull(input.horaLlegadaIda),
+    vuelo_regreso: oNull(input.vueloRegreso),
+    fecha_regreso: oNull(input.fechaRegreso),
+    hora_salida_reg: oNull(input.horaSalidaReg),
+    hora_llegada_reg: oNull(input.horaLlegadaReg),
+    tarifa_para_empaquetar: input.tarifaParaEmpaquetar,
+    fecha_devolucion: oNull(input.fechaDevolucion),
+    fecha_emision: oNull(input.fechaEmision),
+    notas: oNull(input.notas),
+    rangos_edad: input.rangosEdad?.length ? input.rangosEdad : null,
+    modalidad_emision: input.modalidadEmision,
+    estado_emision: "pendiente",
+    estado_pago: "pendiente",
+  };
 }
 
 // Editar un bloqueo existente (no modifica cupos/sillas ya generadas).
@@ -339,234 +346,178 @@ export async function cargarBloqueosMasivo(
     const estadoPago = parseEstadoPagoCSV(r.estado_pago);
     if (!estadoPago) { errores.push(`Fila ${linea} (${record}): estado_pago debe ser "pendiente" o "pagado" (o dejarse vacío).`); continue; }
 
-    const { data: bq, error } = await sb
-      .from("bloqueos_vuelo")
-      .insert({
+    if (cupos < 0) { errores.push(`Fila ${linea} (${record}): cupos_total no puede ser negativo.`); continue; }
+
+    // Cada fila es atómica (crear_bloqueo, migración 195): el record y sus
+    // sillas se crean juntos o no se crea nada. Un error de la fila se reporta
+    // y la fila NO cuenta como insertada; las demás filas siguen.
+    const { error } = await sb.rpc("crear_bloqueo", {
+      p_datos: {
         record, aerolinea: oNull(r.aerolinea || ""), proveedor_id: provId, destino_id: destinoId, ruta: oNull(r.ruta || ""), origen: oNull(r.origen || ""),
         vuelo_ida: oNull(r.vuelo_ida || ""), fecha_ida: parseFechaCSV(r.fecha_ida), hora_salida_ida: dCsv(r.hora_salida_ida), hora_llegada_ida: dCsv(r.hora_llegada_ida),
         vuelo_regreso: oNull(r.vuelo_regreso || ""), fecha_regreso: parseFechaCSV(r.fecha_regreso), hora_salida_reg: dCsv(r.hora_salida_reg), hora_llegada_reg: dCsv(r.hora_llegada_reg),
-        cupos_total: cupos, tarifa_neta: numCsv(r.tarifa_neta) || null, tarifa_para_empaquetar: numCsv(r.tarifa_para_empaquetar),
+        tarifa_neta: numCsv(r.tarifa_neta) || null, tarifa_para_empaquetar: numCsv(r.tarifa_para_empaquetar),
         fecha_devolucion: parseFechaCSV(r.fecha_devolucion), fecha_emision: parseFechaCSV(r.fecha_emision), notas: oNull(r.notas || ""),
         rangos_edad: rangosEdad.length ? rangosEdad : null,
         modalidad_emision: modalidad, estado_emision: estadoEmision, estado_pago: estadoPago,
-      })
-      .select("id")
-      .single();
-    if (error || !bq) { errores.push(`Fila ${linea} (${record}): ${error?.message ?? "no se insertó"}`); continue; }
-    if (cupos > 0) {
-      const sillas = Array.from({ length: cupos }, (_, k) => ({ bloqueo_id: bq.id, numero_silla: k + 1, estado: "disponible" as const }));
-      await sb.from("sillas").insert(sillas);
-    }
+      },
+      p_cupos: cupos,
+    });
+    if (error) { errores.push(`Fila ${linea} (${record}): ${mensajeErrorRpc(error).error}`); continue; }
     insertados++;
   }
   revalidatePath("/dashboard/vuelos");
   return { ok: errores.length === 0, insertados, errores };
 }
 
+// ── Inventario: trasladar, mover, retirar, estados (tareas 2 y 3) ──────────
+// Todas estas acciones delegan en funciones de la base (migración 194). Cada
+// una corre en UNA transacción con autorización por rol/agencia/contrato,
+// bloqueo de los records involucrados e idempotencia por `operacionId`. Aquí
+// solo se valida la forma de los datos: llamar la acción directamente, sin
+// pasar por el formulario, no salta ninguna regla.
+
+function revalidarRecords(...ids: (number | null | undefined)[]) {
+  for (const id of new Set(ids)) if (id) revalidatePath(`/dashboard/vuelos/${id}`);
+  revalidatePath("/dashboard/vuelos");
+}
+
+export type TrasladoResult =
+  | { ok: true; repetida: boolean; movidas: number }
+  | { ok: false; error: string };
+
+/**
+ * Traslada N cupos LIBRES del record origen (Y) al destino (X): mueve las
+ * mismas filas, Y pierde N y X gana N; la suma no cambia. Solo mismo destino,
+ * mismo proveedor y vuelo destino no salido.
+ */
 export async function cambiarSillas(input: {
   origenId: number;
   destinoId: number;
   cantidad: number;
   motivo: string;
-}): Promise<Result> {
-  const sb = await createClient();
+  operacionId: string;
+}): Promise<TrasladoResult> {
+  if (!esIdPositivo(input?.origenId) || !esIdPositivo(input?.destinoId))
+    return { ok: false, error: "Elige el record de origen y el de destino." };
   if (input.origenId === input.destinoId)
     return { ok: false, error: "El origen y el destino deben ser distintos." };
-  if (input.cantidad <= 0) return { ok: false, error: "Cantidad inválida." };
+  if (!Number.isInteger(input.cantidad) || input.cantidad < 1)
+    return { ok: false, error: "Cantidad inválida." };
+  if (!esOperacionId(input.operacionId))
+    return { ok: false, error: "Falta el identificador de la operación; recarga la página." };
 
-  // Sillas disponibles en el origen
-  const { data: libres } = await sb
-    .from("sillas")
-    .select("id")
-    .eq("bloqueo_id", input.origenId)
-    .in("estado", ["disponible", "cambio_entrante"])
-    .order("numero_silla")
-    .limit(input.cantidad);
-  if (!libres || libres.length < input.cantidad)
-    return { ok: false, error: `Solo hay ${libres?.length ?? 0} sillas disponibles en el origen.` };
-  const ids = libres.map((s) => s.id);
-
-  // Origen → CAMBIO
-  const { error: e1 } = await sb.from("sillas").update({ estado: "cambio" }).in("id", ids);
-  if (e1) return { ok: false, error: e1.message };
-
-  // Siguiente número de silla en el destino
-  const { data: maxRows } = await sb
-    .from("sillas")
-    .select("numero_silla")
-    .eq("bloqueo_id", input.destinoId)
-    .order("numero_silla", { ascending: false })
-    .limit(1);
-  const next = maxRows?.[0]?.numero_silla ?? 0;
-
-  // Destino → nuevas CAMBIO ENTRANTE
-  const nuevas = Array.from({ length: input.cantidad }, (_, i) => ({
-    bloqueo_id: input.destinoId,
-    numero_silla: next + i + 1,
-    estado: "cambio_entrante" as const,
-  }));
-  const { error: e2 } = await sb.from("sillas").insert(nuevas);
-  if (e2) return { ok: false, error: e2.message };
-
-  // Mantener cupos_total en sincronía: el origen pierde N cupos (salieron a otro
-  // record) y el destino gana N. Así el campo guardado no se desfasa del conteo
-  // real de sillas.
-  const [{ data: bo }, { data: bd }] = await Promise.all([
-    sb.from("bloqueos_vuelo").select("cupos_total").eq("id", input.origenId).maybeSingle(),
-    sb.from("bloqueos_vuelo").select("cupos_total").eq("id", input.destinoId).maybeSingle(),
-  ]);
-  await Promise.all([
-    sb.from("bloqueos_vuelo").update({ cupos_total: Math.max(0, (Number(bo?.cupos_total) || 0) - input.cantidad) }).eq("id", input.origenId),
-    sb.from("bloqueos_vuelo").update({ cupos_total: (Number(bd?.cupos_total) || 0) + input.cantidad }).eq("id", input.destinoId),
-  ]);
-
-  // Registrar movimientos
-  await sb.from("movimientos_silla").insert(
-    ids.map((silla_id) => ({
-      silla_id,
-      bloqueo_origen_id: input.origenId,
-      bloqueo_destino_id: input.destinoId,
-      motivo: input.motivo || null,
-    }))
-  );
-
-  revalidatePath(`/dashboard/vuelos/${input.origenId}`);
-  revalidatePath(`/dashboard/vuelos/${input.destinoId}`);
-  revalidatePath("/dashboard/vuelos");
-  return { ok: true };
+  const sb = await createClient();
+  const { data, error } = await sb.rpc("trasladar_cupos", {
+    p_origen: input.origenId,
+    p_destino: input.destinoId,
+    p_cantidad: input.cantidad,
+    p_motivo: (input.motivo ?? "").trim() || null,
+    p_operacion_id: input.operacionId,
+  });
+  if (error) return { ok: false, error: mensajeErrorRpc(error).error };
+  const r = (data ?? {}) as { repetida?: boolean; movidas?: number };
+  revalidarRecords(input.origenId, input.destinoId);
+  return { ok: true, repetida: !!r.repetida, movidas: Number(r.movidas ?? input.cantidad) };
 }
 
-export type EstadoSillaManual = "disponible" | "en_plazo" | "confirmada" | "devuelta" | "no_vendida";
+export type EstadoSillaManual = EstadoManual;
 
+/**
+ * Cambio MANUAL de estado según la matriz DIR-1. Solo sillas sin contrato ni
+ * pasajero, con motivo. Devuelta es definitiva; No vendida → Devuelta exige
+ * confirmar que es una devolución real a la aerolínea.
+ */
 export async function cambiarEstadoSilla(
   sillaId: number,
   estado: EstadoSillaManual,
-  bloqueoId: number
+  bloqueoId: number,
+  motivo: string,
+  devolucionReal = false
 ): Promise<Result> {
+  if (!esIdPositivo(sillaId)) return { ok: false, error: "Silla no válida." };
+  if (!esEstadoManual(estado))
+    return { ok: false, error: "Ese cambio de estado no se hace a mano: usa reservar, confirmar venta, liberar silla o retirar cupo." };
+  if (!(motivo ?? "").trim()) return { ok: false, error: "Escribe el motivo del cambio de estado." };
   const sb = await createClient();
-  const { error } = await sb
-    .from("sillas")
-    .update({ estado, updated_at: new Date().toISOString() })
-    .eq("id", sillaId);
-  if (error) return { ok: false, error: error.message };
-  revalidatePath(`/dashboard/vuelos/${bloqueoId}`);
-  revalidatePath("/dashboard/vuelos");
+  const { error } = await sb.rpc("cambiar_estado_silla", {
+    p_silla_id: sillaId,
+    p_estado: estado,
+    p_motivo: motivo.trim(),
+    p_devolucion_real: devolucionReal === true,
+  });
+  if (error) return { ok: false, error: mensajeErrorRpc(error).error };
+  revalidarRecords(bloqueoId);
   return { ok: true };
 }
 
 // ── Contrato MANUAL en una silla (venta externa al sistema) ────────────────
-// Excluyente con el contrato orgánico: si la silla ya nació de una venta del
-// sistema (numero_contrato), NO se le puede poner manual. Al asignarlo, la
-// silla queda CONFIRMADA (ocupa el cupo).
+// Solo sobre un cupo libre; la silla queda CONFIRMADA. Si la referencia
+// corresponde a un contrato del sistema, se exige permiso sobre ese contrato
+// (un contrato de Minorista solo lo toca quien tenga acceso a él).
 export async function asignarContratoManual(
   sillaId: number,
   contratoManual: string,
   bloqueoId: number
 ): Promise<Result> {
+  if (!esIdPositivo(sillaId)) return { ok: false, error: "Silla no válida." };
+  if (!(contratoManual ?? "").trim()) return { ok: false, error: "Escribe el número de contrato manual." };
   const sb = await createClient();
-  const num = (contratoManual ?? "").trim();
-  if (!num) return { ok: false, error: "Escribe el número de contrato manual." };
-
-  const { data: s } = await sb.from("sillas").select("numero_contrato, estado").eq("id", sillaId).maybeSingle();
-  if (!s) return { ok: false, error: "Silla no encontrada." };
-  if (s.numero_contrato)
-    return { ok: false, error: `Esta silla ya tiene el contrato orgánico ${s.numero_contrato}. No puede tener uno manual.` };
-  if (s.estado === "cambio" || s.estado === "cambio_entrante")
-    return { ok: false, error: "Una silla en cambio no admite contrato manual." };
-
-  const { error } = await sb
-    .from("sillas")
-    // Cast: los tipos generados aún no incluyen contrato_manual (migración 085).
-    .update({ contrato_manual: num, estado: "confirmada", updated_at: new Date().toISOString() } as never)
-    .eq("id", sillaId);
-  if (error) return { ok: false, error: error.message };
-  revalidatePath(`/dashboard/vuelos/${bloqueoId}`);
-  revalidatePath("/dashboard/vuelos");
+  const { error } = await sb.rpc("asignar_contrato_manual", { p_silla_id: sillaId, p_referencia: contratoManual });
+  if (error) return { ok: false, error: mensajeErrorRpc(error).error };
+  revalidarRecords(bloqueoId);
   return { ok: true };
 }
 
 export async function quitarContratoManual(sillaId: number, bloqueoId: number): Promise<Result> {
+  if (!esIdPositivo(sillaId)) return { ok: false, error: "Silla no válida." };
   const sb = await createClient();
-  const { data: s } = await (sb.from("sillas").select("contrato_manual").eq("id", sillaId).maybeSingle() as unknown as Promise<{ data: { contrato_manual: string | null } | null }>);
-  if (!s) return { ok: false, error: "Silla no encontrada." };
-  if (!s.contrato_manual) return { ok: false, error: "Esta silla no tiene contrato manual." };
-  const { error } = await sb
-    .from("sillas")
-    .update({ contrato_manual: null, estado: "disponible", updated_at: new Date().toISOString() } as never)
-    .eq("id", sillaId);
-  if (error) return { ok: false, error: error.message };
-  revalidatePath(`/dashboard/vuelos/${bloqueoId}`);
-  revalidatePath("/dashboard/vuelos");
+  const { error } = await sb.rpc("quitar_contrato_manual", { p_silla_id: sillaId });
+  if (error) return { ok: false, error: mensajeErrorRpc(error).error };
+  revalidarRecords(bloqueoId);
   return { ok: true };
 }
 
-// ── Eliminar un cupo (silla) del bloqueo ───────────────────────────────────
-// Solo se permite quitar sillas DISPONIBLES (o cambio_entrante sin asignar): si
-// había 10 cupos y se elimina uno, quedan 9. Decrementa cupos_total y registra
-// el movimiento en el historial de cambios.
-export async function eliminarCupo(sillaId: number, bloqueoId: number): Promise<Result> {
+// ── Retirar un cupo LIBRE del record (D8) ──────────────────────────────────
+// La fila NO se borra: queda `retirada`, deja de contar como cupo y de
+// venderse, y el retiro queda en el historial. cupos_total baja en 1.
+export async function retirarCupo(
+  sillaId: number,
+  bloqueoId: number,
+  motivo: string,
+  operacionId: string
+): Promise<Result> {
+  if (!esIdPositivo(sillaId)) return { ok: false, error: "Silla no válida." };
+  if (!esOperacionId(operacionId))
+    return { ok: false, error: "Falta el identificador de la operación; recarga la página." };
   const sb = await createClient();
-  const { data: s } = await (sb
-    .from("sillas")
-    .select("estado, numero_silla, numero_contrato, contrato_manual")
-    .eq("id", sillaId)
-    .maybeSingle() as unknown as Promise<{ data: { estado: string; numero_silla: number | null; numero_contrato: string | null; contrato_manual: string | null } | null }>);
-  if (!s) return { ok: false, error: "Silla no encontrada." };
-  if (!["disponible", "cambio_entrante"].includes(s.estado) || s.numero_contrato || s.contrato_manual)
-    return { ok: false, error: "Solo se pueden eliminar cupos disponibles (sin venta ni contrato)." };
-
-  // movimientos_silla referencia la silla (FK sin cascade): limpiar primero.
-  await sb.from("movimientos_silla").delete().eq("silla_id", sillaId);
-  const { error } = await sb.from("sillas").delete().eq("id", sillaId);
-  if (error) return { ok: false, error: error.message };
-
-  // Decrementar cupos_total del bloqueo (no baja de 0).
-  const { data: b } = await sb.from("bloqueos_vuelo").select("cupos_total").eq("id", bloqueoId).maybeSingle();
-  const nuevo = Math.max(0, (Number(b?.cupos_total) || 0) - 1);
-  await sb.from("bloqueos_vuelo").update({ cupos_total: nuevo }).eq("id", bloqueoId);
-
-  // Registrar en el historial de cambios del bloqueo.
-  const { data: { user } } = await sb.auth.getUser();
-  await sb.from("bloqueo_cambios").insert({
-    bloqueo_id: bloqueoId,
-    detalle: `Cupo eliminado (silla ${s.numero_silla ?? "?"}). Cupos: ${nuevo}.`,
-    registrado_por: user?.email ?? null,
+  const { error } = await sb.rpc("retirar_cupo", {
+    p_silla_id: sillaId,
+    p_motivo: (motivo ?? "").trim() || null,
+    p_operacion_id: operacionId,
   });
-
-  revalidatePath(`/dashboard/vuelos/${bloqueoId}`);
-  revalidatePath("/dashboard/vuelos");
+  if (error) return { ok: false, error: mensajeErrorRpc(error).error };
+  revalidarRecords(bloqueoId);
   return { ok: true };
 }
 
+/**
+ * Elimina un record y sus sillas en UNA transacción (`eliminar_bloqueo`,
+ * migración 195, con autorización AUT-1). La función rechaza, sin borrar
+ * nada, si el record tiene historial de movimientos, sillas con contrato,
+ * contrato manual o datos de pasajero, contratos vinculados, o producto
+ * (paquete, tarifario, itinerario) que lo use.
+ */
 export async function eliminarBloqueo(id: number): Promise<Result> {
+  if (!esIdPositivo(id)) return { ok: false, error: "Bloqueo no válido." };
   const sb = await createClient();
-  // Captura los paquetes que usaban el bloqueo ANTES de borrarlo; se regeneran
-  // DESPUÉS para que el tarifario deje de publicar esa salida.
+  // Paquetes que lo usaban (armado_vuelos cae en cascada al borrar): se
+  // regeneran DESPUÉS para que el tarifario deje de publicar esa salida.
   const { data: usados } = await sb.from("armado_vuelos").select("paquete_id").eq("bloqueo_id", id);
   const paqIds = [...new Set((usados ?? []).map((u) => u.paquete_id))];
 
-  // Dependencias sin cascade que bloquean el borrado:
-  // 1) movimientos_silla → silla_id de las sillas de este bloqueo, y los
-  //    movimientos donde este bloqueo es origen o destino de un cambio.
-  const { data: sillasDel } = await sb.from("sillas").select("id").eq("bloqueo_id", id);
-  const sillaIds = (sillasDel ?? []).map((s) => s.id);
-  if (sillaIds.length) await sb.from("movimientos_silla").delete().in("silla_id", sillaIds);
-  await sb.from("movimientos_silla").delete().eq("bloqueo_origen_id", id);
-  await sb.from("movimientos_silla").delete().eq("bloqueo_destino_id", id);
-
-  // 2) Sillas del bloqueo.
-  const { error: es } = await sb.from("sillas").delete().eq("bloqueo_id", id);
-  if (es) return { ok: false, error: `No se pudieron borrar las sillas: ${es.message}` };
-
-  // 3) El bloqueo. Si aún lo referencia un contrato/paquete, Postgres lo impide;
-  //    devolvemos el motivo claro en vez de tragarnos el error.
-  const { error } = await sb.from("bloqueos_vuelo").delete().eq("id", id);
-  if (error) {
-    const fk = /foreign key|violates|referenced/i.test(error.message);
-    return { ok: false, error: fk
-      ? "No se puede eliminar: el bloqueo está referenciado por un contrato o paquete. Quita esas referencias primero."
-      : error.message };
-  }
+  const { error } = await sb.rpc("eliminar_bloqueo", { p_bloqueo_id: id });
+  if (error) return { ok: false, error: mensajeErrorRpc(error).error };
   for (const pid of paqIds) { try { await generarTarifario(pid); } catch { /* sigue */ } }
   revalidatePath("/dashboard/vuelos");
   return { ok: true };
@@ -584,97 +535,123 @@ export async function editarPasajeroSilla(
   bloqueoId: number,
   data: PasajeroSillaInput
 ): Promise<Result> {
+  if (!esIdPositivo(sillaId)) return { ok: false, error: "Silla no válida." };
   const sb = await createClient();
-  const v = (s: string) => (s && s.trim() ? s.trim() : null);
-  const { error } = await sb
-    .from("sillas")
-    .update({
-      pasajero_nombres: v(data.pasajero_nombres),
-      pasajero_apellidos: v(data.pasajero_apellidos),
-      tipo_doc: v(data.tipo_doc),
-      numero_doc: v(data.numero_doc),
-      nacimiento: v(data.nacimiento),
-      asesor: v(data.asesor),
-      hotel: v(data.hotel),
-      acomodacion: v(data.acomodacion),
-      plazo: v(data.plazo),
-      updated_at: new Date().toISOString(),
-    })
-    .eq("id", sillaId);
-  if (error) return { ok: false, error: error.message };
+  const { error } = await sb.rpc("editar_pasajero_silla", {
+    p_silla_id: sillaId,
+    p_datos: {
+      pasajero_nombres: data?.pasajero_nombres ?? "",
+      pasajero_apellidos: data?.pasajero_apellidos ?? "",
+      tipo_doc: data?.tipo_doc ?? "",
+      numero_doc: data?.numero_doc ?? "",
+      nacimiento: data?.nacimiento ?? "",
+      asesor: data?.asesor ?? "",
+      hotel: data?.hotel ?? "",
+      acomodacion: data?.acomodacion ?? "",
+      plazo: data?.plazo ?? "",
+    },
+  });
+  if (error) return { ok: false, error: mensajeErrorRpc(error).error };
   revalidatePath(`/dashboard/vuelos/${bloqueoId}`);
   return { ok: true };
 }
 
-// Borra el pasajero de la silla y la LIBERA (vuelve a 'disponible'). No toca el
-// contrato; es una operación manual del control de vuelos.
+// Borra el pasajero de la silla y la LIBERA (vuelve a 'disponible'), quitando
+// también `contrato_manual`: una silla libre que conservara esa referencia
+// chocaría con el CHECK `sillas_contrato_unico` (migración 085) en cuanto una
+// reserva le asignara `numero_contrato`. No toca el contrato (la venta).
 export async function borrarPasajeroSilla(sillaId: number, bloqueoId: number): Promise<Result> {
+  if (!esIdPositivo(sillaId)) return { ok: false, error: "Silla no válida." };
   const sb = await createClient();
-  const { error } = await sb
-    .from("sillas")
-    .update({
-      estado: "disponible",
-      numero_contrato: null,
-      pasajero_nombres: null, pasajero_apellidos: null, tipo_doc: null, numero_doc: null, nacimiento: null,
-      asesor: null, agencia: null, hotel: null, acomodacion: null, plazo: null,
-      inf_nombres: null, inf_apellidos: null, inf_tipo_doc: null, inf_numero: null, inf_nacimiento: null, responsable_menor: null,
-      updated_at: new Date().toISOString(),
-    })
-    .eq("id", sillaId);
-  if (error) return { ok: false, error: error.message };
-  revalidatePath(`/dashboard/vuelos/${bloqueoId}`);
-  revalidatePath("/dashboard/vuelos");
+  const { error } = await sb.rpc("liberar_silla", { p_silla_id: sillaId });
+  if (error) return { ok: false, error: mensajeErrorRpc(error).error };
+  revalidarRecords(bloqueoId);
   return { ok: true };
 }
 
-// Mueve el pasajero (con su estado y contrato) a otro record: lo copia como
-// nueva silla en el destino, deja la silla de origen DISPONIBLE (liberada y
-// limpia) y registra el cambio en movimientos_silla.
+export type MoverPasajeroOpciones = {
+  /** Obligatorio, sin valor por defecto: el usuario debe elegirlo. */
+  modo: ModoMover;
+  /** Confirmación explícita cuando la tarifa neta del destino es distinta. */
+  aceptaTarifaDistinta?: boolean;
+  motivo?: string;
+  operacionId: string;
+};
+
+export type MoverResult =
+  | {
+      ok: true;
+      repetida: boolean;
+      movidas: number;
+      contrato: string | null;
+      avisoTarifaDistinta: boolean;
+      avisoRecordContrato: boolean;
+      /** D3-c: tramos del vuelo del contrato orgánico reescritos de Y a X. */
+      tramosActualizados: number;
+      /** La silla usa contrato_manual: D3-c no aplica (ni fechas ni tramos). */
+      contratoManual: boolean;
+    }
+  | { ok: false; error: string; requiereConfirmarTarifa?: boolean };
+
+/**
+ * Mueve el pasajero de una silla OCUPADA a otro record. Todas las sillas de su
+ * contrato en el record viajan juntas (no se reparte un contrato entre records).
+ *  - `solo_datos`: ocupa sillas libres que YA existen en el destino y libera
+ *    las de origen; los cupos no cambian. Sin libres suficientes → rechazo.
+ *  - `con_cupo`: traslada las mismas filas; origen −n, destino +n.
+ * D3-c: si la silla tiene numero_contrato, el destino debe tener las mismas
+ * fechas de ida y regreso y los tramos del contrato que apuntaban al origen
+ * pasan al destino en la misma transacción. Con contrato_manual no aplica.
+ * Nunca crea sillas. No recalcula importes (costo ni CxP).
+ */
 export async function moverPasajeroSilla(
   sillaId: number,
   origenId: number,
-  destinoId: number
-): Promise<Result> {
-  const sb = await createClient();
+  destinoId: number,
+  opciones: MoverPasajeroOpciones
+): Promise<MoverResult> {
+  if (!esIdPositivo(sillaId) || !esIdPositivo(destinoId))
+    return { ok: false, error: "Elige la silla y el record destino." };
   if (origenId === destinoId) return { ok: false, error: "Elige un record distinto al actual." };
+  if (!esModoMover(opciones?.modo))
+    return {
+      ok: false,
+      error: "Elige cómo recibirá el record destino al pasajero: solo sus datos (usa un cupo libre de destino) o con su cupo.",
+    };
+  if (!esOperacionId(opciones.operacionId))
+    return { ok: false, error: "Falta el identificador de la operación; recarga la página." };
 
-  const { data: orig } = await sb.from("sillas").select("*").eq("id", sillaId).single();
-  if (!orig) return { ok: false, error: "Silla no encontrada." };
-
-  const { data: maxRows } = await sb
-    .from("sillas").select("numero_silla")
-    .eq("bloqueo_id", destinoId).order("numero_silla", { ascending: false }).limit(1);
-  const next = (maxRows?.[0]?.numero_silla ?? 0) + 1;
-
-  const { error: eIns } = await sb.from("sillas").insert({
-    bloqueo_id: destinoId, numero_silla: next, estado: orig.estado,
-    numero_contrato: orig.numero_contrato,
-    pasajero_nombres: orig.pasajero_nombres, pasajero_apellidos: orig.pasajero_apellidos,
-    tipo_doc: orig.tipo_doc, numero_doc: orig.numero_doc, nacimiento: orig.nacimiento,
-    asesor: orig.asesor, agencia: orig.agencia, hotel: orig.hotel, acomodacion: orig.acomodacion, plazo: orig.plazo,
-    inf_nombres: orig.inf_nombres, inf_apellidos: orig.inf_apellidos, inf_tipo_doc: orig.inf_tipo_doc,
-    inf_numero: orig.inf_numero, inf_nacimiento: orig.inf_nacimiento, responsable_menor: orig.responsable_menor,
+  const sb = await createClient();
+  const { data, error } = await sb.rpc("mover_pasajero", {
+    p_silla_id: sillaId,
+    p_destino: destinoId,
+    p_modo: opciones.modo,
+    p_acepta_tarifa_distinta: opciones.aceptaTarifaDistinta === true,
+    p_motivo: (opciones.motivo ?? "").trim() || null,
+    p_operacion_id: opciones.operacionId,
   });
-  if (eIns) return { ok: false, error: eIns.message };
-
-  // Origen → DISPONIBLE (liberada y limpia); el cambio queda en movimientos_silla.
-  await sb.from("sillas").update({
-    estado: "disponible",
-    numero_contrato: null,
-    pasajero_nombres: null, pasajero_apellidos: null, tipo_doc: null, numero_doc: null, nacimiento: null,
-    asesor: null, agencia: null, hotel: null, acomodacion: null, plazo: null,
-    inf_nombres: null, inf_apellidos: null, inf_tipo_doc: null, inf_numero: null, inf_nacimiento: null, responsable_menor: null,
-    updated_at: new Date().toISOString(),
-  }).eq("id", sillaId);
-  await sb.from("movimientos_silla").insert({
-    silla_id: sillaId, bloqueo_origen_id: origenId, bloqueo_destino_id: destinoId,
-    motivo: "Cambio de pasajero a otro record",
-  });
-
-  revalidatePath(`/dashboard/vuelos/${origenId}`);
-  revalidatePath(`/dashboard/vuelos/${destinoId}`);
-  revalidatePath("/dashboard/vuelos");
-  return { ok: true };
+  if (error) {
+    const m = mensajeErrorRpc(error);
+    return m.tarifaDistinta
+      ? { ok: false, error: m.error, requiereConfirmarTarifa: true }
+      : { ok: false, error: m.error };
+  }
+  const r = (data ?? {}) as {
+    repetida?: boolean; movidas?: number; contrato?: string | null;
+    aviso_tarifa_distinta?: boolean; aviso_record_contrato?: boolean;
+    tramos_actualizados?: number; contrato_manual?: boolean;
+  };
+  revalidarRecords(origenId, destinoId);
+  return {
+    ok: true,
+    repetida: !!r.repetida,
+    movidas: Number(r.movidas ?? 0),
+    contrato: r.contrato ?? null,
+    avisoTarifaDistinta: !!r.aviso_tarifa_distinta,
+    avisoRecordContrato: !!r.aviso_record_contrato,
+    tramosActualizados: Number(r.tramos_actualizados ?? 0),
+    contratoManual: !!r.contrato_manual,
+  };
 }
 
 // ── Carga masiva de PASAJEROS ──────────────────────────────────────────────
@@ -765,6 +742,10 @@ export async function cargarPasajerosMasivo(
       .eq("bloqueo_id", bloqueoId)
       .in("estado", ["disponible", "cambio_entrante"])
       .is("pasajero_nombres", null)
+      // Solo sillas sin contrato: con la fase C (cierre de escritura directa) los datos de
+      // una silla con contrato solo se editan por editar_pasajero_silla.
+      .is("numero_contrato", null)
+      .is("contrato_manual", null)
       .order("numero_silla")
       .limit(pas.length);
     const ids = (libres ?? []).map((s) => s.id);

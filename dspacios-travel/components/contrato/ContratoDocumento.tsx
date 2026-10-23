@@ -219,7 +219,7 @@ export function ContratoDocumento({
         <div className="text-center">
           <div className="text-base font-semibold">{esCotizacion ? "COTIZACIÓN" : CONTRATO_TITULO}</div>
           <div className="mt-1 text-xs opacity-90">
-            {esCotizacion ? `Cotización #: ${codigo ?? "—"}` : `Contrato #: ${venta.numero_contrato}`}
+            {esCotizacion ? `Cotización #: ${codigo ?? "—"}` : `Contrato: #${venta.numero_contrato}`}
           </div>
           <div className="text-xs opacity-90">
             Emisión: {formatFechaLarga(venta.fecha_emision)}

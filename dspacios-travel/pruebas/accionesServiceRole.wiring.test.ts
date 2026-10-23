@@ -81,7 +81,12 @@ test("completarProveedores autoriza con la sesión ANTES de invocar la función 
 test("confirmarVenta y recalcularEstadoAbono solo llegan a asegurar tras leer el contrato con la sesión", () => {
   const reservar = leer("app/(dashboard)/dashboard/reservar/actions.ts");
   const cv = reservar.slice(reservar.indexOf("export async function confirmarVenta"));
-  assert.ok(cv.indexOf('if (!estadoFin) return') > 0 && cv.indexOf('if (!estadoFin) return') < cv.indexOf("asegurarCuentasPorPagar("));
+  // Desde la migración 197 la sesión prueba su acceso dentro de confirmar_venta
+  // (SECURITY INVOKER, RLS de ventas): solo si esa RPC no devolvió error se
+  // llega a asegurarCuentasPorPagar (service-role).
+  const iRpc = cv.indexOf('sb.rpc("confirmar_venta"');
+  const iCorte = cv.indexOf("if (error) return");
+  assert.ok(iRpc > 0 && iCorte > iRpc && iCorte < cv.indexOf("asegurarCuentasPorPagar("), "confirmar con la sesión → cortar si falla → asegurar");
   const contratos = leer("app/(dashboard)/dashboard/contratos/actions.ts");
   const rc = contratos.slice(contratos.indexOf("async function recalcularEstadoAbono"));
   const iCond = rc.indexOf('if (venta?.estado === "pendiente"');

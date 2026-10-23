@@ -61,6 +61,11 @@ begin
     (v_super, 'super168-pc@test.local', jsonb_build_object('rol','superadmin','nombre','Super168PC')),
     (v_cv, 'cv168-pc@test.local', jsonb_build_object('rol','control_vuelo','nombre','CV168PC')),
     (v_venta_ajeno, 'ventaajeno168-pc@test.local', jsonb_build_object('rol','venta','nombre','VentaAjeno168PC'));
+  -- Migración 193: el trigger ya no toma el rol de la metadata (crea
+  -- 'cliente_final' inactivo). Se fija explícitamente, como crearUsuario.
+  update public.usuarios set rol = 'superadmin', activo = true where id = v_super;
+  update public.usuarios set rol = 'control_vuelo', activo = true where id = v_cv;
+  update public.usuarios set rol = 'venta', activo = true where id = v_venta_ajeno;
 
   -- ── Fixtures de vuelo/sillas/ventas ─────────────────────────────────────
   insert into bloqueos_vuelo (record, fecha_ida, cupos_total) values ('PC168A', '2026-06-15', 10) returning id into v_bloqueo;
