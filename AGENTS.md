@@ -5,7 +5,8 @@ Router universal para cualquier agente. El detalle de cada rol vive en los archi
 ## Reglas universales
 - Trabajar por defecto solo dentro de `dspacios-travel/`.
 - `dspacios-travel/TASKS.md` es la única fuente de pendientes.
-- `dspacios-travel/CURRENT_GOAL.md` contiene un solo objetivo activo.
+- `dspacios-travel/WORKSTREAMS.md` es el registro operativo de chats, duenos, dependencias, archivos y migraciones reservadas. El chat coordinador es su unico editor; cada chat de trabajo lo consulta antes de empezar o integrar.
+- `dspacios-travel/CURRENT_GOAL.md` orienta al chat coordinador; no limita a un solo frente de trabajo en todos los chats.
 - Un solo agente implementa cada problema; no delegar el mismo problema a varios.
 - Codex audita; no modifica código salvo autorización explícita.
 - El usuario ejecuta staging, commit, push, SQL remoto y validación en Vercel.
@@ -32,6 +33,6 @@ Router universal para cualquier agente. El detalle de cada rol vive en los archi
 | Plantillas para el usuario | `dspacios-travel/docs/agents/PROMPTS.md` |
 
 ## Lectura mínima por situación
-- **Tarea nueva:** este archivo, `dspacios-travel/CURRENT_GOAL.md`, el archivo del rol, `git status` y el diff de la rama. `dspacios-travel/TASKS.md` solo al elegir o cerrar un pendiente; `DECISIONS.md`/`PROJECT_MAP.md` solo si el objetivo necesita antecedentes arquitectónicos o localización adicional.
+- **Tarea nueva:** este archivo, `dspacios-travel/WORKSTREAMS.md`, el archivo del rol, `git status` y el diff de la rama. `dspacios-travel/TASKS.md` al elegir o cerrar un pendiente; `CURRENT_GOAL.md` para el chat coordinador. `DECISIONS.md`/`PROJECT_MAP.md` solo si el objetivo necesita antecedentes arquitectónicos o localización adicional.
 - **Corrección en la misma conversación:** no releer coordinación; solo archivos afectados, diff nuevo y pruebas relacionadas. Releer coordinación solo si cambió la rama, cambió el objetivo o apareció una contradicción.
-- **Actualización posterior a merge:** este archivo, `dspacios-travel/docs/agents/OPENCODE.md`, `dspacios-travel/TASKS.md`, `dspacios-travel/CURRENT_GOAL.md`, `git status` e historial/diff mínimo para verificar el merge.
+- **Actualización posterior a merge:** este archivo, `dspacios-travel/docs/agents/OPENCODE.md`, `dspacios-travel/TASKS.md`, `dspacios-travel/WORKSTREAMS.md`, `git status` e historial/diff mínimo para verificar el merge. El coordinador actualiza estados y libera dependencias; no tocar cambios ajenos.

@@ -1,19 +1,11 @@
 # CURRENT_GOAL.md
 
-Estado al 2026-09-30.
+Estado al 2026-10-08. Este archivo describe solo el objetivo del **chat coordinador**. No es un objetivo global que impida trabajar en varios chats aislados.
 
-**En `main`** (además de lo registrado al 2026-09-24): selectores buscables de catálogo en el panel (`27fa9402`, `eb274b5b`), resumen de política de reservas con "Ver más" (PR #332) y separación de los datos sensibles de proveedores cerrada con la migración 191 (PR #333, `92b3c51e`). Las migraciones 189 y 190 son prerrequisito de la 191; el usuario reporta la 191 aplicada en producción (no verificado desde el repositorio).
+Objetivo activo: mantener `TASKS.md` como backlog unico y `WORKSTREAMS.md` como tablero de propietarios, archivos reservados, dependencias y migraciones. Abrir auditorias en paralelo cuando sean de solo lectura; habilitar codigo en paralelo solo tras comprobar que no comparte superficies ni espera resultados de otro frente.
 
-**Solo en la rama `ronda1-destinos-y-pruebas`** (commits `a5162cff`, `99599518`, `9bd81e35`; aún NO integrada a `main`): conteo de receptivos y modal de eliminación explicativo en Producto → Destinos, tarjetas compactas con listas de hoteles/receptivos en diálogo, apertura inmediata de listas pequeñas de receptivos (precarga limitada) y línea base de `test:unit` en verde (4.954/4.954, más `test:react` 167/167, TypeScript y build, ejecutados en la rama). Nada de esto está cerrado en `main` hasta su revisión y merge.
+La coordinacion actual parte de `main` `97924fce` (PR #351, CRM leads, integrado). La migracion 202 ya se aplico en Produccion y paso su postcheck; el usuario valido el alta. La 203 tambien esta integrada y aplicada. #38, tarjetas y los frentes de cotizaciones/identidad se siguen por separado en `WORKSTREAMS.md`; sus estados deben confirmarse con cada dueno antes de reanudar.
 
-**Validación en Preview (2026-09-30):** el usuario probó en Vercel Preview los cambios de Destinos de esta rama, incluida la apertura de receptivos, y aprobó el resultado. No confirmó por separado: roles sin acceso (`control_vuelo` sin insignia de receptivos), "Actualizar lista" con datos que cambiaron, destinos con más de 50 receptivos y el texto del modal de eliminación según el rol.
+El checkout principal `C:\Users\Asus\Documents\DspaciosMayorista` ya esta limpio en `main` `97924fce`, igual a `origin/main`. Sus 66 cambios rastreados y 122 archivos nuevos anteriores se restauraron, sin commit, en `.claude/worktrees/vuelos-editar-rescate-20261008`, sobre la rama original; ese conjunto mezcla varios frentes y no debe integrarse como una sola entrega. El stash `d5c76eba` se conserva como respaldo. El trabajo documental de coordinacion sigue sin commit en un worktree aislado hasta que el usuario decida integrarlo.
 
-Objetivo activo: **revisar e integrar la rama `ronda1-destinos-y-pruebas`** (la validación visual en Preview ya fue aprobada).
-
-- Opcional antes del merge, si el usuario lo decide: comprobar los casos no confirmados por separado, listados arriba.
-- Revisar el PR y decidir el merge; tras integrarlo, mover los pendientes #9, #10 y #6 de `TASKS.md` a "Cerrado recientemente" con su hash real.
-- No incluir en este objetivo la otra queja del usuario sobre el modal de eliminación (se verá por separado) ni el flujo de eliminación en sí.
-
-Después: validar el flujo de proveedor nuevo y el comportamiento con datos reales de ambas agencias (pendiente #1 de `TASKS.md`), y luego las tarjetas de Vista Booking (pendiente #2). Ver `TASKS.md` y `PROJECT_MAP.md`.
-
-Trabajar en el repositorio normal `C:\Users\Asus\Documents\DspaciosMayorista` (app en `dspacios-travel`), comprobando raíz, rama, estado y remoto antes de editar. No usar un clon/worktree alterno salvo petición expresa. Las propuestas de `docs/futuro/` son borradores documentales: no autorizan implementarlas ni incorporarlas a la cola. No hacer commit, push ni merge sin instrucción del usuario.
+Cada chat recibe del coordinador un objetivo de `TASKS.md`, un gate (`AUDITORIA` o `CODIGO`), un worktree propio y los limites de `WORKSTREAMS.md`. Su prompt es su objetivo activo. Opus y OpenCode pueden colaborar dentro de ese chat, con un solo responsable de implementacion por problema. El usuario controla staging, commit, push, merge, SQL remoto y validacion en Vercel.
