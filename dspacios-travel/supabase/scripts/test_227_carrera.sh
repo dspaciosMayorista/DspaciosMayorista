@@ -133,6 +133,15 @@ begin
   insert into public.contrato_hoteles (numero_contrato, nombre) values (p_numero, 'T227C HOTEL');
   insert into public.contrato_financiero_pendiente (numero_contrato, tenant, costos, cxp) values (p_numero, 'mayorista', v_der -> 'costos', v_der -> 'cxp');
 end $$;
+
+-- R4 ejecuta t227c.cabecera DENTRO de la sesión de service_role (la carrera necesita que ESA sesión sostenga la cabecera sin confirmar). El esquema
+-- auxiliar lo crea el rol de la migración, así que service_role no lo ve ni puede ejecutar la función: se le conceden SOLO esos dos permisos, en esta
+-- base desechable. La sesión NO se eleva (sigue siendo service_role, con la RLS y los triggers de producción); mundo() y hijos_y_pendiente() siguen
+-- corriendo con el rol administrador, igual que antes.
+-- (Las funciones nuevas nacen con EXECUTE para PUBLIC: se retira para que la única función visible a service_role sea cabecera.)
+revoke execute on all functions in schema t227c from public;
+grant usage on schema t227c to service_role;
+grant execute on function t227c.cabecera(text, bigint, bigint) to service_role;
 SQL
 
 srv() { echo "set role service_role; select set_config('request.jwt.claims', '{\"role\":\"service_role\"}', false);"; }
@@ -238,7 +247,7 @@ set -- $(materializar 10); N10="$2"; I10="$3"
 ALT="select public.registrar_financiero_contrato('$N10', 'mayorista', '{\"costo_hotel\": 1}'::jsonb, '[{\"tipo_proveedor\":\"hotel\",\"valor_total\":1,\"obligacion\":\"hotel:0\"}]'::jsonb);"
 carrera r8 "$(sec "$(fin "$N10")" 3)" "$(srv) $ALT" 1
 if sin_error "$TMP/r8.a" && ( grep -q '"ya_completo": true' "$TMP/r8.b" || con_error "$TMP/r8.b" p63_payload_alterno ) \
-   && [ "$($PS -c "select costo_hotel from public.ventas where numero_contrato = '$N10'")" = 840000 ]; then
+   && [ "$($PS -c "select costo_hotel = 840000 from public.ventas where numero_contrato = '$N10'")" = t ]; then
   ok "R8 finalización ‖ payload alterno: no se tocó nada (costo_hotel sigue en 840.000); respuesta: $(grep -o 'ya_completo\|p63_payload_alterno' "$TMP/r8.b" | head -1)"
 else fallo "R8 a=$(cat "$TMP/r8.a") b=$(cat "$TMP/r8.b")"; fi
 # …y una alterna ANTES de completar se rechaza sin escribir.
