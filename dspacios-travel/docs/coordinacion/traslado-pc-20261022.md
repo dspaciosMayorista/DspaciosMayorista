@@ -13,7 +13,7 @@ git worktree add -b codex/43-1a-recuperada ..\contable-43-1a origin/codex/backup
 
 `backup-main-docs` y `backup-coordination` contienen documentos de coordinación de checkouts distintos y pueden solaparse; revisar sus diferencias antes de integrarlos. El respaldo `backup-vuelos-rescate` conserva 188 archivos de trabajo antiguo, incluida una diferencia de formato en la migración 199 aplicada; es solo para recuperación, no para fusionar o aplicar sin auditoría. Los respaldos WIP no significan pruebas aprobadas.
 
-**Respaldo provisional:** Opus sigue editando el worktree Dinámicos en Vista Booking. Su rama de respaldo contiene los cambios guardados hasta el segundo corte; falta hacer un último commit y actualizar esa rama cuando termine.
+**Dinámicos en Vista Booking cerrado para el traslado:** el trabajo auditado quedó en `claude/dinamicos-en-vista-booking`, commit `8866d4cd`. La rama `codex/backup-dinamicos-booking-20261022` conserva los cortes WIP anteriores; recuperar el frente desde la rama de trabajo actual.
 
 ## Worktrees que tenían archivos sin commit
 
@@ -24,7 +24,7 @@ git worktree add -b codex/43-1a-recuperada ..\contable-43-1a origin/codex/backup
 | #43 contable | `codex/backup-43-contable-20261022` |
 | #43-1a calendario | `codex/backup-43-1a-20261022` |
 | #43-1b libros | `codex/backup-43-1b-20261022` |
-| Dinámicos en Vista Booking | `codex/backup-dinamicos-booking-20261022` |
+| Dinámicos en Vista Booking | `claude/dinamicos-en-vista-booking` (actual); `codex/backup-dinamicos-booking-20261022` (WIP anterior) |
 | Hotfix DTM 0557 | `codex/backup-dtm-0557-20261022` |
 | #49 menú móvil | `codex/backup-49-menu-20261022` |
 | #56 SalesBot | `codex/backup-56-salesbot-20261022` |
