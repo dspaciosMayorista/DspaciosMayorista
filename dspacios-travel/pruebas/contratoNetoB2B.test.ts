@@ -154,15 +154,13 @@ test("modalidad del contrato: si la lectura falla, no adivina (no vuelve a impri
   );
 });
 
-test("documento: ContratoDocumento calcula total/saldo con la regla NETO y oculta los valores por ítem", () => {
+test("documento: ContratoDocumento calcula total/saldo NETO y prorratea los importes visibles", () => {
   const src = leer("components/contrato/ContratoDocumento.tsx");
   assert.match(src, /presentacionValoresContrato\(\{\s*totalItems: totalVisibleContratoItems\(items\),\s*totalPagado,\s*netoTotalExigible,\s*\}\)/);
   assert.doesNotMatch(src, /const total = totalVisibleContratoItems\(items\);/, "volvió a sumar los ítems a PVP como total");
-  // Cada valor monetario por ítem queda detrás de mostrarValoresItems.
-  const valores = src.match(/formatMoneda\((valorVisibleContratoItem\(it\)|it\.tarifa_adulto|it\.tarifa_nino|linea\.valor(Unitario|Total))/g) ?? [];
-  assert.equal(valores.length, 7);
-  assert.equal((src.match(/\{mostrarValoresItems &&/g) ?? []).length, 6);
-  assert.equal((src.match(/\{!mostrarValoresItems &&/g) ?? []).length, 1, "nota del total acordado");
+  assert.match(src, /valoresNetosDocumento\(items, total\)/);
+  assert.match(src, /const mostrarDesglose = mostrarValoresItems \|\| valoresNetos !== null/);
+  assert.doesNotMatch(src, /Valor total acordado para el paquete/);
 });
 
 test("documento interno: la modalidad se consulta DESPUÉS de autorizar el contrato y viaja al documento", () => {
