@@ -7,8 +7,10 @@
 //   · el destino por el que se filtra es el del PAQUETE (el del hotel): `destino_nombre` de la fila. El destino
 //     del vuelo no interviene: da igual dónde aterrice, lo que importa es el hotel al que va la persona;
 //   · los Recomendados funcionan igual que para los demás (prioridad del hotel en el paquete);
-//   · el carrito/checkout público no soporta salidas dinámicas, así que SOLO se ofrecen a quien puede reservar
-//     (los mismos roles que ya ven "Vista tabla"); para el visitante público todo queda como estaba.
+//   · el "desde" (tarjeta y cada salida) toma como referencia la acomodación DOBLE, no la habitación más barata;
+//   · TODOS lo ven (también el visitante público), pero el carrito/checkout público no soporta salidas dinámicas: quien puede
+//     reservar cotiza por `reservar/nuevo`; el visitante recibe la acción del acceso existente ("Ingreso al Portal", `/login`);
+//     una cuenta sin permiso para reservar ve un aviso, sin botón.
 //
 // Módulo PURO (sin I/O): lo usan VistaBooking/DinamicoModal y las pruebas.
 // ─────────────────────────────────────────────────────────────────────────
@@ -22,7 +24,6 @@ export type FilaDinamicaBase = {
 };
 
 export type FiltrosPaquetesBooking = {
-  puedeReservar: boolean;
   origenSel: string;
   salidaSel: number | "";
   destinoSel: string;
@@ -31,21 +32,19 @@ export type FiltrosPaquetesBooking = {
 export const esFilaDinamica = (f: { modulo?: string | null }): boolean => f.modulo === "dinamico";
 
 /**
- * ¿Una fila `dinamico` entra en la pestaña "Paquetes"? Solo para quien puede reservar. El origen y la salida
+ * ¿Una fila `dinamico` entra en la pestaña "Paquetes"? Para todos (la acción de cotizar es la que depende del acceso). El origen y la salida
  * (vuelo) del buscador son filtros de Bloqueo (cupos de un record): con alguno elegido, un Dinámico no tiene
  * qué comparar y no se muestra, nunca se le inventa un origen. El destino sí aplica y es el del paquete.
  */
 export function filaDinamicaVisibleEnPaquetes(f: FilaDinamicaBase, filtros: FiltrosPaquetesBooking): boolean {
   if (!esFilaDinamica(f)) return false;
-  if (!filtros.puedeReservar) return false;
   if (filtros.origenSel || filtros.salidaSel !== "") return false;
   if (filtros.destinoSel && (f.destino_nombre ?? "") !== filtros.destinoSel) return false;
   return true;
 }
 
 /** Destinos (del paquete) que aportan los Dinámicos al selector de destino de "Paquetes". */
-export function destinosDinamicos(filas: readonly FilaDinamicaBase[], puedeReservar: boolean): string[] {
-  if (!puedeReservar) return [];
+export function destinosDinamicos(filas: readonly FilaDinamicaBase[]): string[] {
   return [...new Set(filas.filter((f) => esFilaDinamica(f) && f.destino_nombre).map((f) => f.destino_nombre as string))];
 }
 
@@ -120,10 +119,30 @@ export function agruparSalidasDinamicas(filas: readonly FilaDetalleDinamica[]): 
   return salidas.sort((a, b) => (a.fechaIda ?? "9999-99-99").localeCompare(b.fechaIda ?? "9999-99-99") || a.salidaId - b.salidaId);
 }
 
-/** Precio mínimo por persona de una salida (solo habitaciones adultas, > 0) — para mostrar "desde". */
+/**
+ * "Desde" de una salida: el menor precio por persona en acomodación DOBLE entre sus categorías/alimentaciones (> 0). La referencia es
+ * siempre la doble (decisión del dueño): una sencilla más barata, o cualquier otra acomodación, no cambia el "desde". Sin tarifa doble, `null`.
+ */
 export function desdeSalidaDinamica(s: SalidaDinamica): number | null {
-  const v = s.combos.flatMap((c) => ["sencilla", "doble", "triple", "multiple"].map((a) => c.precios[a]).filter((p): p is number => typeof p === "number" && p > 0));
+  const v = s.combos.map((c) => c.precios.doble).filter((p): p is number => typeof p === "number" && p > 0);
   return v.length ? Math.min(...v) : null;
+}
+
+/** "Desde" de la tarjeta de un Dinámico (filas de RESUMEN): el menor `precio_doble` > 0 de todas sus salidas y combos; sin doble, `null` ("Consultar"). */
+export function desdeDobleResumen(filas: readonly { precio_doble?: number | null }[]): number | null {
+  const v = filas.map((f) => f.precio_doble).filter((p): p is number => typeof p === "number" && p > 0);
+  return v.length ? Math.min(...v) : null;
+}
+
+export type AccesoCotizacionDinamica = "cotizar" | "ingresar" | "sin_permiso";
+
+/**
+ * Acción del modal según el acceso existente: quien puede reservar cotiza (misma ruta de Vista tabla); el visitante sin sesión
+ * ingresa al portal (el mismo "Ingreso al Portal" del encabezado); una cuenta con sesión pero sin permiso solo ve el aviso.
+ */
+export function accesoCotizacionDinamica(a: { puedeReservar: boolean; hayUsuario: boolean }): AccesoCotizacionDinamica {
+  if (a.puedeReservar) return "cotizar";
+  return a.hayUsuario ? "sin_permiso" : "ingresar";
 }
 
 /** Enlace de reserva/cotización: el MISMO de Vista tabla para una salida dinámica. */

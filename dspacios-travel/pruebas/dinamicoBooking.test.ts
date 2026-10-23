@@ -1,9 +1,12 @@
 import { test, describe } from "node:test";
+import { readFileSync } from "node:fs";
+import { fileURLToPath } from "node:url";
 import assert from "node:assert/strict";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type { Database } from "../types/database.ts";
 import {
-  agruparSalidasDinamicas, desdeSalidaDinamica, destinosDinamicos, esOfertaDinamica, filaDinamicaVisibleEnPaquetes, reservarHrefDinamico, salidaIdsDinamicas,
+  accesoCotizacionDinamica, agruparSalidasDinamicas, desdeDobleResumen, desdeSalidaDinamica, destinosDinamicos, esOfertaDinamica, filaDinamicaVisibleEnPaquetes,
+  reservarHrefDinamico, salidaIdsDinamicas,
 } from "../lib/tarifario/dinamicoBooking.ts";
 
 process.env.SUPABASE_SERVICE_ROLE_KEY = "dummy-service-role";
@@ -14,14 +17,14 @@ const { claveOferta } = await import("../lib/tarifario/recomendados.ts");
 
 // Paquetes DINÁMICOS dentro de "Paquetes" (Vista Booking): lógica pura + carga del resumen (Recomendados/descripción/condición).
 
-const LIBRE = { puedeReservar: true, origenSel: "", salidaSel: "" as number | "", destinoSel: "" };
+const LIBRE = { origenSel: "", salidaSel: "" as number | "", destinoSel: "" };
 const fila = (o: Record<string, unknown> = {}) => ({ modulo: "dinamico", paquete_id: 54, hotel_id: 2540, salida_id: 540, destino_nombre: "CARTAGENA", ...o });
 
 describe("filaDinamicaVisibleEnPaquetes", () => {
-  test("solo filas dinámicas y solo para quien puede reservar", () => {
+  test("solo filas dinámicas, y visibles para TODOS: el permiso decide la acción, no la visibilidad", () => {
     assert.equal(filaDinamicaVisibleEnPaquetes(fila(), LIBRE), true);
-    assert.equal(filaDinamicaVisibleEnPaquetes(fila(), { ...LIBRE, puedeReservar: false }), false, "el carrito público no soporta salidas dinámicas");
     assert.equal(filaDinamicaVisibleEnPaquetes(fila({ modulo: "bloqueo" }), LIBRE), false);
+    assert.equal(filaDinamicaVisibleEnPaquetes(fila(), { ...LIBRE, puedeReservar: false } as never), true, "un permiso falso ya no oculta nada");
   });
   test("el destino es el del PAQUETE (destino_nombre de la fila), nunca el del vuelo", () => {
     assert.equal(filaDinamicaVisibleEnPaquetes(fila(), { ...LIBRE, destinoSel: "CARTAGENA" }), true);
@@ -35,10 +38,15 @@ describe("filaDinamicaVisibleEnPaquetes", () => {
 });
 
 describe("destinos, salidas y oferta", () => {
-  test("destinosDinamicos: únicos, solo con permiso, ignora otros módulos y destinos vacíos", () => {
+  test("destinosDinamicos: únicos, para todos, ignora otros módulos y destinos vacíos", () => {
     const filas = [fila(), fila({ salida_id: 541 }), fila({ destino_nombre: "SAN ANDRES", paquete_id: 55 }), fila({ destino_nombre: null }), fila({ modulo: "bloqueo", destino_nombre: "MIAMI" })];
-    assert.deepEqual(destinosDinamicos(filas, true).sort(), ["CARTAGENA", "SAN ANDRES"]);
-    assert.deepEqual(destinosDinamicos(filas, false), []);
+    assert.deepEqual(destinosDinamicos(filas).sort(), ["CARTAGENA", "SAN ANDRES"]);
+  });
+  test("accesoCotizacionDinamica: cotiza quien puede reservar; el visitante ingresa; la cuenta sin permiso solo ve el aviso", () => {
+    assert.equal(accesoCotizacionDinamica({ puedeReservar: true, hayUsuario: true }), "cotizar");
+    assert.equal(accesoCotizacionDinamica({ puedeReservar: true, hayUsuario: false }), "cotizar");
+    assert.equal(accesoCotizacionDinamica({ puedeReservar: false, hayUsuario: false }), "ingresar");
+    assert.equal(accesoCotizacionDinamica({ puedeReservar: false, hayUsuario: true }), "sin_permiso");
   });
   test("salidaIdsDinamicas y esOfertaDinamica", () => {
     assert.deepEqual(salidaIdsDinamicas([fila({ salida_id: 541 }), fila(), fila(), fila({ modulo: "bloqueo", salida_id: 9 })]), [540, 541]);
@@ -71,11 +79,27 @@ describe("agruparSalidasDinamicas / desdeSalidaDinamica", () => {
     assert.equal(s.combos[0].precios.infante, 150000);
     assert.equal(s.combos[0].precios.nino, 500000);
   });
-  test("'desde' = el menor precio de habitación adulta > 0 (no toma niño ni infante)", () => {
+  test("'desde' = el menor precio DOBLE de la salida (no toma niño, infante ni otra acomodación)", () => {
     const [s0, s1] = agruparSalidasDinamicas(filas);
-    assert.equal(desdeSalidaDinamica(s0), 900000);
+    assert.equal(desdeSalidaDinamica(s0), 900000, "la menor doble entre Estándar (900.000) y Suite (950.000)");
     assert.equal(desdeSalidaDinamica(s1), 1100000);
     assert.equal(desdeSalidaDinamica({ ...s0, combos: [{ categoria: "x", regimen: "y", precios: { nino: 1, infante: 0 } }] }), null);
+  });
+  test("una SENCILLA más barata que la DOBLE no cambia el 'desde': la referencia es siempre la doble", () => {
+    const f2 = [det(700, "2030-04-01", "sencilla", 700000), det(700, "2030-04-01", "doble", 900000), det(700, "2030-04-01", "triple", 650000)];
+    const [s] = agruparSalidasDinamicas(f2);
+    assert.equal(desdeSalidaDinamica(s), 900000);
+  });
+  test("sin tarifa doble no hay 'desde' (nunca se cae a otra acomodación en silencio)", () => {
+    const [s] = agruparSalidasDinamicas([det(701, "2030-04-01", "sencilla", 700000), det(701, "2030-04-01", "doble", 0)]);
+    assert.equal(desdeSalidaDinamica(s), null);
+  });
+  test("desdeDobleResumen (tarjeta): el menor precio_doble > 0 entre todas las salidas, ignorando la sencilla", () => {
+    // Filas de RESUMEN reales: traen también precio_sencilla (más barata aquí) — no debe influir.
+    const filas = [{ precio_doble: 1100000, precio_sencilla: 500000 }, { precio_doble: 900000, precio_sencilla: 700000 }, { precio_doble: null, precio_sencilla: 100000 }, { precio_doble: 0, precio_sencilla: 100000 }];
+    assert.equal(desdeDobleResumen(filas), 900000);
+    assert.equal(desdeDobleResumen([{ precio_doble: null }]), null);
+    assert.equal(desdeDobleResumen([]), null);
   });
 });
 
@@ -120,5 +144,17 @@ describe("cargarResumenTarifario con un paquete Dinámico", () => {
     assert.deepEqual(r.datos.filasVisibles.map((f) => `${f.modulo}:${f.paquete_id}`), ["dinamico:54"]);
     assert.equal(r.datos.prioridadesRecomendados[claveOferta(2540, 54)], 1);
     assert.match(String(r.datos.descripcionPorPaquete[54]?.incluye ?? ""), /Piscina/);
+  });
+});
+
+describe("cableado del acceso (la página decide si hay sesión; el modal decide la acción)", () => {
+  const leer = (rel: string) => readFileSync(fileURLToPath(new URL(`../${rel}`, import.meta.url)), "utf8").replace(/\r\n/g, "\n");
+  test("app/tarifario/page.tsx pasa la sesión real (`!!user`) a TarifarioPublic, junto a puedeReservar", () => {
+    assert.match(leer("app/tarifario/page.tsx"), /<TarifarioPublic [^>]*puedeReservar=\{puedeReservar\} hayUsuario=\{!!user\} /);
+  });
+  test("VistaBooking deriva la acción con accesoCotizacionDinamica y ya no oculta Dinámicos por permiso", () => {
+    const vb = leer("app/tarifario/VistaBooking.tsx");
+    assert.match(vb, /acceso=\{accesoCotizacionDinamica\(\{ puedeReservar, hayUsuario \}\)\}/);
+    assert.doesNotMatch(vb, /\(f\.modulo === "dinamico" && puedeReservar\)/);
   });
 });

@@ -47,11 +47,12 @@ import {
   type SalidaSeleccionadaBernaloEntrada,
 } from "./cotizacionBernaloActions";
 import type { HotelBernaloDescubierto, SalidaAereaBernalo } from "@/lib/tarifario/datosBernalo";
-import { obtenerDetalleHotel, obtenerDetalleSalida } from "./detalle-actions";
+import { obtenerDetalleHotel } from "./detalle-actions";
+import { obtenerDetalleSalida } from "./detalle-actions";
 import { conCacheDetalle, claveDetalleHotel, type EstadoDetalle } from "@/lib/tarifario/detalleCliente";
 import { claveComboAlcanceNormalizada } from "@/lib/tarifario/comboKey";
-import { DinamicoModal } from "./DinamicoModal";
-import { destinosDinamicos, esOfertaDinamica, filaDinamicaVisibleEnPaquetes, salidaIdsDinamicas } from "@/lib/tarifario/dinamicoBooking";
+import { DinamicoModal, InsigniaFechasSalida } from "./DinamicoModal";
+import { accesoCotizacionDinamica, desdeDobleResumen, destinosDinamicos, esOfertaDinamica, filaDinamicaVisibleEnPaquetes, salidaIdsDinamicas } from "@/lib/tarifario/dinamicoBooking";
 import { RegimenInfo, type PlanesInfo } from "./RegimenInfo";
 import { BuscadorBooking, Resultado, type EstadoBusquedaPorcion } from "./BuscadorBooking";
 import type { OpcionUnidadConfirmada } from "./busquedaUnidadActions";
@@ -540,6 +541,7 @@ export function VistaBooking({
   cuposPorBloqueo = {},
   origenPorBloqueo = {},
   puedeReservar = false,
+  hayUsuario = false,
   ventanaPorPaquete = {},
   infoPorHotel = {},
   planesInfo = {},
@@ -573,6 +575,9 @@ export function VistaBooking({
   cuposPorBloqueo?: Record<number, number>;
   origenPorBloqueo?: Record<number, string>;
   puedeReservar?: boolean;
+  // ¿Hay una sesión iniciada? Solo decide la acción que se le ofrece a quien NO puede reservar en el modal de un Dinámico
+  // (ingresar al portal vs. aviso de que su cuenta no tiene permiso); no afecta qué se ve.
+  hayUsuario?: boolean;
   ventanaPorPaquete?: Record<number, { min: string | null; max: string | null }>;
   infoPorHotel?: Record<number, { estrellas: number | null; clasificacion: string | null; descripcion: string | null; ubicacion: string | null; zona?: string | null; video_url?: string | null; ninoMin?: number | null; ninoMax?: number | null; infMin?: number | null; infMax?: number | null; adultsOnly?: boolean; petFriendly?: boolean; tieneCondicion?: boolean }>;
   planesInfo?: PlanesInfo;
@@ -790,7 +795,7 @@ export function VistaBooking({
   // (al volver a Bloqueo con un `destinoSel` ya elegido).
   function candidatosDeBloqueo(destino: string): { zona: string | null; estrellas: number | null }[] {
     const idsPersona = filas
-      .filter((f) => (f.modulo === "bloqueo" || (f.modulo === "dinamico" && puedeReservar)) && f.hotel_id != null && (f.destino_nombre ?? "") === destino)
+      .filter((f) => (f.modulo === "bloqueo" || f.modulo === "dinamico") && f.hotel_id != null && (f.destino_nombre ?? "") === destino)
       .map((f) => f.hotel_id as number);
     const idsUnidad = hotelesBernalo
       .filter((h) => h.tipo === "bloqueo" && (h.destinoNombre ?? "") === destino)
@@ -894,11 +899,14 @@ export function VistaBooking({
   const destinosBloqueo = useMemo(() => {
     const legacy = salidasBloqueo.filter((s) => !origenSel || s.origen === origenSel).map((s) => s.destino);
     const unidad = hotelesBernalo.filter((h) => h.tipo === "bloqueo" && h.destinoNombre).map((h) => h.destinoNombre as string);
-    // Dinámicos (se muestran dentro de "Paquetes"): su destino es el del paquete/hotel. Con un origen elegido no aplican (ver
-    // `filaDinamicaVisibleEnPaquetes`), así que tampoco aportan destinos.
-    const dinamicos = origenSel ? [] : destinosDinamicos(filas, puedeReservar);
-    return [...new Set([...legacy, ...unidad, ...dinamicos])].filter(Boolean).sort();
-  }, [salidasBloqueo, origenSel, hotelesBernalo, filas, puedeReservar]);
+    return [...new Set([...legacy, ...unidad])].filter(Boolean).sort();
+  }, [salidasBloqueo, origenSel, hotelesBernalo]);
+  // Destinos que ofrece el selector de "Paquetes": los de Bloqueo (persona y unidad) MÁS los de los paquetes Dinámicos, cuyo destino es
+  // el del paquete/hotel. Con un origen elegido los Dinámicos no aplican (ver `filaDinamicaVisibleEnPaquetes`) y no aportan destinos.
+  const destinosPaquetes = useMemo(
+    () => [...new Set([...destinosBloqueo, ...(origenSel ? [] : destinosDinamicos(filas))])].sort(),
+    [destinosBloqueo, origenSel, filas]
+  );
   const salidasFiltradas = useMemo(
     () => salidasBloqueo.filter((s) => (!origenSel || s.origen === origenSel) && (!destinoSel || s.destino === destinoSel)),
     [salidasBloqueo, origenSel, destinoSel]
@@ -939,7 +947,7 @@ export function VistaBooking({
     const conHotel = filas.filter((f) => {
       if (mod == null || f.hotel_id == null) return false;
       // Dinámico: va dentro de "Paquetes", con su propia regla (sin cupos; el destino es el del paquete).
-      if (f.modulo === "dinamico") return mod === "bloqueo" && filaDinamicaVisibleEnPaquetes(f, { puedeReservar, origenSel, salidaSel, destinoSel });
+      if (f.modulo === "dinamico") return mod === "bloqueo" && filaDinamicaVisibleEnPaquetes(f, { origenSel, salidaSel, destinoSel });
       if (f.modulo !== mod) return false;
       if (mod === "bloqueo" && f.bloqueo_id != null) {
         const c = cuposPorBloqueo[f.bloqueo_id];
@@ -990,8 +998,10 @@ export function VistaBooking({
     // recomendados, en el `tarjetas` final — ver más abajo.
     if (soloAcom) arr = arr.filter((c) => c.filas.some((f) => tieneAcomodacionResumen(f, soloAcom)));
     for (const c of arr) c.desde = minRoomPvp(c.filas);
+    // El "desde" de un Dinámico toma como referencia la acomodación DOBLE (decisión del dueño); los demás conservan el mínimo de siempre.
+    for (const c of arr) if (esOfertaDinamica(c.filas)) c.desde = desdeDobleResumen(c.filas);
     return arr;
-  }, [filas, fotosPorHotel, infoPorHotel, sub, cuposPorBloqueo, origenPorBloqueo, origenSel, destinoSel, destinoPorcionBusqueda, salidaSel, soloAcom, puedeReservar]);
+  }, [filas, fotosPorHotel, infoPorHotel, sub, cuposPorBloqueo, origenPorBloqueo, origenSel, destinoSel, destinoPorcionBusqueda, salidaSel, soloAcom]);
 
   // Hoteles por unidad (Bernalo) visibles en el submódulo/filtros ACTIVOS —
   // para el cliente son hoteles normales, así que responden a la misma
@@ -1741,7 +1751,7 @@ export function VistaBooking({
                 <PlaneLanding className={iconoBloqueoCls(!!destinoSel)} aria-hidden />
                 <select value={destinoSel} onChange={(e) => confirmarDestinoBloqueo(e.target.value)} className={campoBloqueoCls(!!destinoSel)}>
                   <option value="">Todos</option>
-                  {destinosBloqueo.map((d) => <option key={d} value={d}>{d}</option>)}
+                  {destinosPaquetes.map((d) => <option key={d} value={d}>{d}</option>)}
                 </select>
               </div>
             </div>
@@ -1995,8 +2005,6 @@ export function VistaBooking({
                 const ids = [...new Set(t.card.filas.filter((f) => f.bloqueo_id != null).map((f) => f.bloqueo_id as number))];
                 const vals = ids.map((id) => cuposPorBloqueo[id]).filter((c): c is number => c != null && c > 0);
                 const min = vals.length ? Math.min(...vals) : null;
-                // Dinámico: no hay cupos; la insignia dice cuántas fechas de salida tiene.
-                const nSalidas = esOfertaDinamica(t.card.filas) ? salidaIdsDinamicas(t.card.filas).length : 0;
                 return (
                   <>
                     {/* Etiqueta de OFERTA (hallazgo 2): el nombre del paquete
@@ -2010,11 +2018,7 @@ export function VistaBooking({
                         {min} cupo{min !== 1 ? "s" : ""}
                       </span>
                     )}
-                    {nSalidas > 0 && (
-                      <span className="absolute bottom-2 right-2 rounded-full px-2 py-0.5 text-[10px] font-semibold text-white" style={{ backgroundColor: "rgba(0,0,0,0.55)" }}>
-                        {nSalidas} fecha{nSalidas !== 1 ? "s" : ""} de salida
-                      </span>
-                    )}
+                    <InsigniaFechasSalida filas={t.card.filas} />
                   </>
                 );
               })()}
@@ -2091,11 +2095,8 @@ export function VistaBooking({
       </>
       )}
 
-      {abierto && esOfertaDinamica(abierto.filas) && (
-        <DinamicoModal hotel={abierto} detalle={detalleHotel} onReintentar={() => abrirHotel(abierto)} descripcionPorPaquete={descripcionPorPaquete} onClose={cerrarHotel} />
-      )}
-
-      {abierto && !esOfertaDinamica(abierto.filas) && (
+      {abierto && (
+        esOfertaDinamica(abierto.filas) ? <DinamicoModal hotel={abierto} detalle={detalleHotel} onReintentar={() => abrirHotel(abierto)} descripcionPorPaquete={descripcionPorPaquete} acceso={accesoCotizacionDinamica({ puedeReservar, hayUsuario })} onClose={cerrarHotel} /> :
         <HotelModal hotel={abierto} detalle={detalleHotel} onReintentar={() => abrirHotel(abierto)} cuposPorBloqueo={cuposPorBloqueo} origenPorBloqueo={origenPorBloqueo} puedeReservar={puedeReservar} ventanaPorPaquete={ventanaPorPaquete} planesInfo={planesInfo} cap={capPorHotel[abierto.hotelId] ?? CAP_VACIA} descripcionPorPaquete={descripcionPorPaquete} addonsPorPaquete={addonsPorPaquete} onClose={cerrarHotel} />
       )}
 

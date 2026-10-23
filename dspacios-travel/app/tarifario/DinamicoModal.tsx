@@ -11,7 +11,10 @@ import { CalendarClock } from "lucide-react";
 import { formatMoneda } from "@/lib/utils";
 import { ACOM_ROOM_LABEL, type AcomRoom } from "@/lib/acomodaciones";
 import type { EstadoDetalle } from "@/lib/tarifario/detalleCliente";
-import { agruparSalidasDinamicas, desdeSalidaDinamica, reservarHrefDinamico, ACOMODACIONES_DINAMICO } from "@/lib/tarifario/dinamicoBooking";
+import {
+  agruparSalidasDinamicas, desdeSalidaDinamica, esOfertaDinamica, reservarHrefDinamico, salidaIdsDinamicas, ACOMODACIONES_DINAMICO,
+  type AccesoCotizacionDinamica,
+} from "@/lib/tarifario/dinamicoBooking";
 import type { DescripcionPaqueteRaw } from "@/lib/tarifario/descripcionPaquete";
 import { BackgroundVideo } from "@/components/BackgroundVideo";
 import { Categoria, EtiquetasHotel, DescripcionHotelExpandible, UbicacionHotel, SeccionesIncluye } from "./tarjetaHotelCompartida";
@@ -43,10 +46,24 @@ function fmtFecha(s: string | null): string {
   return `${d}/${m}/${y.slice(2)}`;
 }
 
+/** Insignia de la tarjeta de un Dinámico: no tiene cupos, dice cuántas fechas de salida tiene. No pinta nada en las demás ofertas. */
+export function InsigniaFechasSalida({ filas }: { filas: readonly { modulo?: string | null; salida_id?: number | null }[] }) {
+  if (!esOfertaDinamica(filas)) return null;
+  const n = salidaIdsDinamicas(filas).length;
+  if (n === 0) return null;
+  return (
+    <span className="absolute bottom-2 right-2 rounded-full px-2 py-0.5 text-[10px] font-semibold text-white" style={{ backgroundColor: "rgba(0,0,0,0.55)" }}>
+      {n} fecha{n !== 1 ? "s" : ""} de salida
+    </span>
+  );
+}
+
 export function DinamicoModal({
-  hotel, detalle, onReintentar, descripcionPorPaquete, onClose,
+  hotel, detalle, onReintentar, descripcionPorPaquete, acceso, onClose,
 }: {
   hotel: HotelDinamicoModal;
+  /** Qué puede hacer quien mira: cotizar, ingresar al portal o nada (cuenta sin permiso). Ver `accesoCotizacionDinamica`. */
+  acceso: AccesoCotizacionDinamica;
   detalle: EstadoDetalle<FilaTarifario> | null;
   onReintentar: () => void;
   descripcionPorPaquete: Record<number, DescripcionPaqueteRaw>;
@@ -119,7 +136,7 @@ export function DinamicoModal({
                         </span>
                         <span className="block text-xs text-gray-500">
                           {s.noches ? `${s.noches} noche${s.noches === 1 ? "" : "s"}` : ""}
-                          {desde != null ? `${s.noches ? " · " : ""}desde ${formatMoneda(desde, s.moneda)}` : ""}
+                          {desde != null ? `${s.noches ? " · " : ""}desde ${formatMoneda(desde, s.moneda)} en doble` : ""}
                         </span>
                       </button>
                     );
@@ -153,7 +170,7 @@ export function DinamicoModal({
               </div>
               <p className="text-xs text-gray-400">Valores por persona. Sujetos a disponibilidad; el precio final se confirma al generar la cotización.</p>
 
-              {hotel.paqueteId != null && (
+              {acceso === "cotizar" && hotel.paqueteId != null && (
                 <Link
                   href={reservarHrefDinamico({ paqueteId: hotel.paqueteId, hotelId: hotel.hotelId, salidaId: salida.salidaId })}
                   className="inline-flex w-full items-center justify-center rounded-lg px-4 py-2.5 text-sm font-semibold text-white transition-opacity hover:opacity-90"
@@ -161,6 +178,18 @@ export function DinamicoModal({
                 >
                   Cotizar esta salida
                 </Link>
+              )}
+              {/* Esta salida no se compra desde el carrito público: el visitante entra por el acceso de siempre (Ingreso al Portal). */}
+              {acceso === "ingresar" && (
+                <div className="rounded-lg bg-slate-50 p-3 text-sm text-slate-600">
+                  <p>Esta salida se cotiza desde el portal.</p>
+                  <a href="/login" className="mt-2 inline-flex w-full items-center justify-center rounded-lg border px-4 py-2.5 text-sm font-semibold transition-colors hover:bg-white" style={{ borderColor: "var(--brand-accent)", color: "var(--brand-primary)" }}>
+                    Ingresar al portal para cotizar
+                  </a>
+                </div>
+              )}
+              {acceso === "sin_permiso" && (
+                <p className="rounded-lg bg-slate-50 p-3 text-sm text-slate-600">Tu cuenta no tiene permiso para cotizar este paquete. Consúltalo con tu asesor.</p>
               )}
 
               <SeccionesIncluye descripcion={descripcion} compacto />

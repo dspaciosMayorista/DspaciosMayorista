@@ -7,7 +7,9 @@
 //   · no tienen cupos: la tarjeta dice cuántas fechas de salida tiene;
 //   · entran a Recomendados como cualquier otra oferta (prioridad del hotel en el paquete);
 //   · el modal tiene visual propia (fechas de salida + precios) y "Cotizar" lleva a la ruta de reserva dinámica;
-//   · SOLO se ofrecen a quien puede reservar: el carrito público no soporta salidas dinámicas;
+//   · el "desde" (tarjeta y cada salida) toma como referencia la acomodación DOBLE, aunque haya una sencilla más barata;
+//   · los ve TODO el mundo, pero el carrito público no soporta salidas dinámicas: quien puede reservar cotiza; el visitante ingresa al
+//     portal (/login); una cuenta sin permiso ve un aviso;
 //   · con un origen/vuelo elegido en el buscador de Bloqueo, un Dinámico no aplica y se oculta.
 // Cada caso se compara contra un Bloqueo de control con el MISMO destino.
 import { JSDOM } from "jsdom";
@@ -52,9 +54,13 @@ const base = {
 const din = (salida: number, ida: string, reg: string, noches: number, over: Record<string, unknown> = {}) => ({
   ...base, modulo: "dinamico", paquete_id: 54, paquete_nombre: "Nacional 54", bloqueo_id: null, bloqueo_label: "BOG-CTG", empaquetado_id: null, salida_id: salida,
   hotel_id: 2540, hotel_nombre: "Hotel Nacional 54", destino_id: 7, destino_nombre: "CARTAGENA", fecha_ida: ida, fecha_regreso: reg, noches,
-  precio_doble: 900000, desde_adulto: 900000, desde_general: 900000, ...over,
+  // La SENCILLA es más barata que la DOBLE: el "desde" no debe tomarla (referencia = doble).
+  precio_sencilla: 700000, precio_doble: 900000, desde_adulto: 700000, desde_general: 700000, ...over,
 });
-const FILAS_DIN = [din(540, IDA1, REG1, 3), din(541, IDA2, REG2, 4, { precio_doble: 1100000, desde_adulto: 1100000, desde_general: 1100000 })];
+const FILAS_DIN = [
+  din(540, IDA1, REG1, 3),
+  din(541, IDA2, REG2, 4, { precio_sencilla: 1000000, precio_doble: 1100000, desde_adulto: 1000000, desde_general: 1000000 }),
+];
 const BLOQUEO = {
   ...base, modulo: "bloqueo", paquete_id: 11, paquete_nombre: "Bloqueo control", bloqueo_id: 111, bloqueo_label: "BOG-CTG", empaquetado_id: null, salida_id: null,
   hotel_id: 2111, hotel_nombre: "Hotel Control", destino_id: 7, destino_nombre: "CARTAGENA", fecha_ida: IDA1, fecha_regreso: REG1, noches: 3,
@@ -119,13 +125,67 @@ test("TARJETA: sin cupos; dice cuántas fechas de salida tiene", async () => {
   assert.doesNotMatch(tarjetaDin!.textContent ?? "", /cupo/i);
 });
 
-test("PERMISOS: quien no puede reservar NO ve Dinámicos (el carrito público no los soporta): ni destino ni tarjeta", async () => {
+test("VISIBILIDAD PÚBLICA: sin puedeReservar el Dinámico aparece en Paquetes y por destino, igual que el Bloqueo de control", async () => {
   const c = await montar(FILAS_DIN, {}, false);
-  assert.deepEqual(opcionesDestino(c), []);
+  assert.deepEqual([...new Set(opcionesDestino(c))], ["CARTAGENA"], "el visitante también ve el destino del Dinámico");
   const c2 = await montar([BLOQUEO, ...FILAS_DIN], {}, false);
   await elegir(c2, "CARTAGENA");
+  assert.equal(listado(c2), "Hotelesdisponibles(2)");
   assert.match(texto(c2), /Hotel Control/);
-  assert.doesNotMatch(texto(c2), /Hotel Nacional 54/);
+  assert.match(texto(c2), /Hotel Nacional 54/);
+});
+
+async function abrirDinamico(c: HTMLElement) {
+  await elegir(c, "CARTAGENA");
+  await clic([...c.querySelectorAll("button")].find((b) => /Hotel Nacional 54/.test(b.textContent ?? ""))!);
+  await act(async () => { await new Promise((r) => setTimeout(r, 80)); });
+}
+const detalleOk = () => ({
+  obtenerDetalleSalida: async (a: { salidaId: number }) => {
+    const f = FILAS_DIN.find((x) => x.salida_id === a.salidaId)!;
+    return { ok: true, filas: [{ ...f, acomodacion: "doble", precio_pvp: f.precio_doble }, { ...f, acomodacion: "sencilla", precio_pvp: f.precio_sencilla }] };
+  },
+});
+const enlacesReserva = (c: HTMLElement) => [...c.querySelectorAll("a")].filter((a) => (a.getAttribute("href") ?? "").includes("/dashboard/reservar/nuevo"));
+
+test("ACCIÓN sin sesión: el visitante NO recibe un checkout dinámico; ve fechas y precios y el acceso de siempre (Ingreso al portal, /login)", async () => {
+  (globalThis as { __detalleActionsFake?: unknown }).__detalleActionsFake = detalleOk();
+  const c = await montar(FILAS_DIN, { hayUsuario: false }, false);
+  await abrirDinamico(c);
+  const m = modal(c);
+  assert.match(m, /Elige tu fecha de salida/);
+  assert.match(m, /Estándar · PAE/);
+  assert.doesNotMatch(m, /Cotizar esta salida/);
+  assert.deepEqual(enlacesReserva(c), [], "ningún enlace a reservar/nuevo (ni al carrito: el público no soporta salidas dinámicas)");
+  const ingresar = [...c.querySelectorAll("a")].find((a) => /Ingresar al portal para cotizar/.test(a.textContent ?? "")) as HTMLAnchorElement | undefined;
+  assert.ok(ingresar);
+  assert.equal(ingresar!.getAttribute("href"), "/login");
+});
+
+test("ACCIÓN con sesión pero sin permiso: aviso sin botón (no se lo manda a /login ni a reservar)", async () => {
+  (globalThis as { __detalleActionsFake?: unknown }).__detalleActionsFake = detalleOk();
+  const c = await montar(FILAS_DIN.map((f) => ({ ...f, hotel_id: 2542, hotel_nombre: "Hotel Nacional 54" })), { hayUsuario: true }, false);
+  await abrirDinamico(c);
+  assert.match(modal(c), /Tu cuenta no tiene permiso para cotizar este paquete/);
+  assert.deepEqual(enlacesReserva(c), []);
+  assert.ok(![...c.querySelectorAll("a")].some((a) => a.getAttribute("href") === "/login"));
+});
+
+test("DESDE = DOBLE: la tarjeta y cada salida del modal toman la doble aunque exista una sencilla más barata", async () => {
+  (globalThis as { __detalleActionsFake?: unknown }).__detalleActionsFake = detalleOk();
+  const c = await montar(FILAS_DIN.map((f) => ({ ...f, hotel_id: 2543, hotel_nombre: "Hotel Nacional 54" })));
+  await elegir(c, "CARTAGENA");
+  const tarjeta = [...c.querySelectorAll("button")].find((b) => /Hotel Nacional 54/.test(b.textContent ?? ""))!;
+  assert.match(tarjeta.textContent ?? "", /900\.000/, "la tarjeta muestra el menor valor DOBLE de sus salidas");
+  assert.doesNotMatch(tarjeta.textContent ?? "", /700\.000/, "no toma la sencilla (700.000), aunque sea más barata");
+  await clic(tarjeta);
+  await act(async () => { await new Promise((r) => setTimeout(r, 80)); });
+  const chips = [...c.querySelectorAll(".fixed.inset-0 button[aria-pressed]")].map((b) => (b.textContent ?? "").replace(/\s+/g, " "));
+  assert.equal(chips.length, 2);
+  assert.match(chips[0], /desde \$\s?900\.000 en doble/);
+  assert.match(chips[1], /desde \$\s?1\.100\.000 en doble/);
+  assert.ok(chips.every((x) => !/700\.000|1\.000\.000/.test(x)), "ningún chip toma la sencilla");
+  assert.match(modal(c), /\$\s?700\.000/, "la sencilla sí aparece en la tabla de precios");
 });
 
 test("ORIGEN/SALIDA de Bloqueo elegidos: el Dinámico no aplica y se oculta; el Bloqueo permanece", async () => {
@@ -155,16 +215,17 @@ test("MODAL: visual propia — fechas de salida, precios por categoría/acomodac
       pedidos.push(a);
       const f = FILAS_DIN.find((x) => x.salida_id === a.salidaId)!;
       const fila = (acomodacion: string, precio: number, menor2: number | null = null) => ({ ...f, acomodacion, precio_pvp: precio, precio_pvp_menor2: menor2 });
-      return { ok: true, filas: [fila("doble", f.precio_doble), fila("sencilla", f.precio_doble + 300000), fila("nino", 500000), fila("infante", 0, 150000)] };
+      return { ok: true, filas: [fila("doble", f.precio_doble), fila("sencilla", f.precio_sencilla), fila("nino", 500000), fila("infante", 0, 150000)] };
     },
   };
-  const c = await montar([BLOQUEO, ...FILAS_DIN]);
+  // Hotel propio: el detalle ya resuelto se cachea durante la visita (conCacheDetalle) y otros casos abren el 2540.
+  const c = await montar([BLOQUEO, ...FILAS_DIN.map((f) => ({ ...f, hotel_id: 2544 }))]);
   await elegir(c, "CARTAGENA");
   const tarjeta = [...c.querySelectorAll("button")].find((b) => /Hotel Nacional 54/.test(b.textContent ?? ""))!;
   await clic(tarjeta);
   await act(async () => { await new Promise((r) => setTimeout(r, 80)); });
   assert.equal(pedidos.length, 2, "una consulta acotada por cada fecha de salida de la oferta");
-  assert.ok((pedidos as Array<{ combos: Array<{ hotel_id: number }> }>).every((p) => p.combos.every((x) => x.hotel_id === 2540)), "acotadas al hotel de la tarjeta");
+  assert.ok((pedidos as Array<{ combos: Array<{ hotel_id: number }> }>).every((p) => p.combos.every((x) => x.hotel_id === 2544)), "acotadas al hotel de la tarjeta");
   const t = modal(c);
   assert.match(t, /Elige tu fecha de salida/);
   assert.match(t, /Estándar · PAE/);
@@ -175,7 +236,7 @@ test("MODAL: visual propia — fechas de salida, precios por categoría/acomodac
   assert.ok(cotizar, "botón Cotizar");
   const href = (a: HTMLAnchorElement) => new URL(a.getAttribute("href")!, "http://x");
   assert.equal(href(cotizar!).pathname, "/dashboard/reservar/nuevo");
-  assert.deepEqual([...href(cotizar!).searchParams.entries()].sort(), [["hotel", "2540"], ["modulo", "dinamico"], ["paquete", "54"], ["salida", "540"]]);
+  assert.deepEqual([...href(cotizar!).searchParams.entries()].sort(), [["hotel", "2544"], ["modulo", "dinamico"], ["paquete", "54"], ["salida", "540"]]);
   // otra fecha → otra salida
   const segunda = [...c.querySelectorAll("button")].find((b) => b.getAttribute("aria-pressed") === "false" && /→/.test(b.textContent ?? ""))!;
   await clic(segunda);

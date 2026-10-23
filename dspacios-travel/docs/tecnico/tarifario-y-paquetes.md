@@ -285,6 +285,25 @@ RLS: **lectura pública total** (`using (true)`); **escritura** restringida a
 contener costo neto, así que hacerla legible por cualquiera es seguro por construcción (lo
 garantiza lo que `generarTarifario` decide escribir, no una máscara de columnas en RLS).
 
+## Paquetes Dinámicos dentro de "Paquetes" de Vista Booking
+
+Antes un paquete Dinámico (`modulo = 'dinamico'`, salidas en `salidas_dinamicas`) solo se veía en **Vista tabla → "Salidas dinámicas"**; Vista Booking
+nunca lo tuvo (ni por destino ni en Recomendados). Decisión del dueño: para el cliente es un paquete más, con visual propia, dentro de la pestaña **Paquetes**.
+- **Reglas.** Destino = el del PAQUETE/hotel (`destino_nombre` de la fila), nunca el del vuelo. Sin cupos. Entra a Recomendados como cualquier oferta
+  (`armado_hoteles.prioridad` por hotel+paquete). **"Desde" = acomodación DOBLE** (tarjeta: menor `precio_doble` > 0 de sus salidas; cada fecha del modal: menor doble de la salida;
+  una sencilla más barata no lo cambia; sin doble, "Consultar"). Con un **origen o vuelo** elegido en el buscador de Bloqueo, un Dinámico no aplica y se oculta (no se le inventa un origen).
+- **Visibilidad y acción.** Lo ve **todo el mundo** (también el visitante público): aparece en "Paquetes" y por destino. El carrito/checkout público no soporta salidas dinámicas, así que
+  lo que cambia es la ACCIÓN del modal (`accesoCotizacionDinamica`): quien `puedeReservar` → "Cotizar esta salida" (`reservar/nuevo`); el visitante sin sesión → "Ingresar al portal para cotizar"
+  (`/login`, el mismo "Ingreso al Portal" del encabezado); una cuenta con sesión pero sin permiso → aviso, sin botón. `page.tsx` pasa `hayUsuario={!!user}` hasta el modal.
+- **Lógica pura:** `lib/tarifario/dinamicoBooking.ts` (visibilidad, destinos, salidas, agrupación de precios, "desde", enlace). **UI:** `app/tarifario/DinamicoModal.tsx` (modal con
+  fechas de salida + tabla categoría/alimentación × acomodación + "Cotizar esta salida" + Incluye/No incluye) e `InsigniaFechasSalida` en la tarjeta ("N fechas de salida").
+- **Datos.** `VistaBooking.tsx`: `hoteles` admite filas `dinamico` en la pestaña `bloqueo`; `destinosPaquetes` = destinos de Bloqueo + de Dinámicos; `abrirHotel` carga el detalle de un
+  Dinámico con `obtenerDetalleSalida` por cada salida (acotada a los combos de ese hotel; si una falla, falla el conjunto). `lib/tarifario/resumen.ts`: `paqIdsConHotel` y las fechas de
+  condición/política incluyen `dinamico`, para que Recomendados, descripción (Incluye) y condiciones también funcionen.
+- **Cotizar:** `/dashboard/reservar/nuevo?paquete=&hotel=&salida=&modulo=dinamico` — la misma ruta de Vista tabla (genera la cotización).
+- **Pendiente (otra tarea):** que el público pueda cotizar un Dinámico sin entrar al portal (CartContext, checkout y `edadesMenores` hoy solo conocen `bloqueo`/`porcion_terrestre`).
+- **Pruebas:** `pruebas/dinamicoBooking.test.ts` (puro + carga del resumen) y `pruebas/dinamicoEnPaquetes.react.ts` (registrada en `test:react`; cada caso se compara con un Bloqueo de control).
+
 ## Enlaces cruzados
 
 - **Tarifas de hotel** (`tarifa_hotel`, `hotel_temporadas`) y el gotcha de texto-sin-FK — ver
