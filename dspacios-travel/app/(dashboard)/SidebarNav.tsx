@@ -3,7 +3,7 @@
 import Link, { useLinkStatus } from "next/link";
 import Image from "next/image";
 import { usePathname } from "next/navigation";
-import { useEffect, useState } from "react";
+import { useEffect, useId, useState } from "react";
 import { createPortal } from "react-dom";
 import {
   Tags, Ticket, FileText, ShoppingBag, FileSignature, Plane, Package, Boxes,
@@ -202,8 +202,13 @@ export function SidebarNav({ items, collapsed }: { items: NavItem[]; collapsed?:
 function Group({ item, pathname }: { item: NavItem; pathname: string }) {
   const active = pathname === item.href || pathname.startsWith(item.href + "/");
   const hasChildren = !!item.children?.length;
+  // Un hijo activo también abre el grupo: Contabilidad apunta a Facturación y
+  // Finanzas a Rentabilidad, así que en Libro diario o Cartera `active` no lo
+  // cubría y el sub-ítem actual quedaba escondido.
+  const hijoActivo = hasChildren && item.children!.some((c) => c.href === pathname);
   const [manual, setManual] = useState<boolean | null>(null);
-  const open = manual ?? active;
+  const open = manual ?? (active || hijoActivo);
+  const submenuId = useId();
   const Icon = item.iconKey ? ICONS[item.iconKey] : undefined;
 
   return (
@@ -226,7 +231,9 @@ function Group({ item, pathname }: { item: NavItem; pathname: string }) {
         {hasChildren && (
           <button
             type="button"
-            aria-label="Desplegar"
+            aria-label={`Submenú de ${item.label}`}
+            aria-expanded={open}
+            aria-controls={open ? submenuId : undefined}
             onClick={() => setManual(!open)}
             className="px-2 py-2 transition-colors hover:opacity-70"
             style={{ color: "var(--dash-ink-muted)" }}
@@ -237,7 +244,7 @@ function Group({ item, pathname }: { item: NavItem; pathname: string }) {
       </div>
 
       {hasChildren && open && (
-        <div className="ml-[22px] mt-0.5 space-y-0.5 border-l pl-2" style={{ borderColor: "var(--dash-border)" }}>
+        <div id={submenuId} className="ml-[22px] mt-0.5 space-y-0.5 border-l pl-2" style={{ borderColor: "var(--dash-border)" }}>
           {item.children!.map((c) => {
             const cActive = pathname === c.href;
             return (
