@@ -9,22 +9,8 @@
 name: test-226-tarifa-infante
 
 on:
-  pull_request:
-    branches: [main]
-    paths:
-      - '.github/workflows/test-226-tarifa-infante.yml'
-      - 'dspacios-travel/supabase/migrations/20260601000226_tarifa_infante.sql'
-      - 'dspacios-travel/supabase/scripts/*_226_*'
-      - 'dspacios-travel/supabase/scripts/preparar_esquema_local.sh'
-      - 'dspacios-travel/pruebas/tarifaInfante226*'
-      - 'dspacios-travel/lib/reservar/menoresDeDos.ts'
-      - 'dspacios-travel/lib/reservar/computo.ts'
-      - 'dspacios-travel/lib/reservar/liquidacionHotel.ts'
-      - 'dspacios-travel/lib/reservar/serviciosPaquete.ts'
-      - 'dspacios-travel/lib/calc/paquetes.ts'
-      - 'dspacios-travel/types/database.ts'
-      - 'dspacios-travel/package.json'
-      - 'dspacios-travel/pnpm-lock.yaml'
+  # Batería histórica: se lanza a mano (Actions → este workflow → Run workflow) cuando el cambio toca lo que
+  # cubre. Ya no corre en cada pull_request; ver docs/tecnico/ci-baterias-manuales.md.
   workflow_dispatch:
 
 permissions:

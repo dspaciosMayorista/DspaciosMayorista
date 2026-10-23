@@ -10,21 +10,8 @@
 name: test-221-clientes-contratos-68
 
 on:
-  pull_request:
-    branches: [main]
-    paths:
-      - '.github/workflows/test-221-clientes-contratos-68.yml'
-      - 'dspacios-travel/supabase/migrations/20260601000221_clientes_contratos_crm.sql'
-      - 'dspacios-travel/supabase/scripts/*_221_*'
-      # Dependencias de la batería: fixtures de usuarios, esquema local, y las funciones/vistas que la 221 lee.
-      - 'dspacios-travel/supabase/scripts/test_216_fixtures.sql'
-      - 'dspacios-travel/supabase/scripts/preparar_esquema_local.sh'
-      - 'dspacios-travel/supabase/migrations/20260601000142_venta_ve_su_agencia.sql'
-      - 'dspacios-travel/supabase/migrations/20260601000156_empaquetados.sql'
-      - 'dspacios-travel/lib/crm/clientesContratos68.ts'
-      - 'dspacios-travel/pruebas/clientesContratos68*'
-      - 'dspacios-travel/types/database.ts'
-      - 'dspacios-travel/app/(crm)/**'
+  # Batería histórica: se lanza a mano (Actions → este workflow → Run workflow) cuando el cambio toca lo que
+  # cubre. Ya no corre en cada pull_request; ver docs/tecnico/ci-baterias-manuales.md.
   workflow_dispatch:
 
 permissions:

@@ -9,24 +9,8 @@
 name: test-216-217-cotizacion-edicion
 
 on:
-  pull_request:
-    branches: [main]
-    paths:
-      - '.github/workflows/test-216-217-cotizacion-edicion.yml'
-      - 'dspacios-travel/supabase/migrations/20260601000216_cotizacion_manual_edicion_frontera.sql'
-      - 'dspacios-travel/supabase/migrations/20260601000217_cotizacion_manual_cierre_frontera.sql'
-      - 'dspacios-travel/supabase/scripts/*_216_*'
-      - 'dspacios-travel/supabase/scripts/*_217_*'
-      - 'dspacios-travel/supabase/scripts/test_216_*'
-      - 'dspacios-travel/supabase/scripts/preparar_esquema_local.sh'
-      - 'dspacios-travel/pruebas/cotizacionEdicion39*'
-      - 'dspacios-travel/pruebas/cotizacionComparativa35Paridad.test.ts'
-      - 'dspacios-travel/pruebas/cotizacionesTenant.wiring.test.ts'
-      - 'dspacios-travel/app/(dashboard)/dashboard/reservar/actions.ts'
-      - 'dspacios-travel/app/(dashboard)/dashboard/cotizaciones/**'
-      - 'dspacios-travel/lib/cotizacion/**'
-      - 'dspacios-travel/package.json'
-      - 'dspacios-travel/pnpm-lock.yaml'
+  # Batería histórica: se lanza a mano (Actions → este workflow → Run workflow) cuando el cambio toca lo que
+  # cubre. Ya no corre en cada pull_request; ver docs/tecnico/ci-baterias-manuales.md.
   workflow_dispatch:
 
 permissions:
