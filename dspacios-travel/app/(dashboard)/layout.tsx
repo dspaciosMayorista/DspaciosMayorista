@@ -120,6 +120,7 @@ const NAV: NavItem[] = [
       { href: "/dashboard/contabilidad/plan-cuentas", label: "Plan de cuentas (PUC)" },
       { href: "/dashboard/contabilidad/libro-diario", label: "Libro diario" },
       { href: "/dashboard/contabilidad/libro-auxiliar", label: "Libro auxiliar" },
+      { href: "/dashboard/contabilidad/balance-prueba", label: "Balance de prueba" },
       { href: "/dashboard/contabilidad/estados-financieros", label: "Estados financieros" },
       { href: "/dashboard/contabilidad/agencia", label: "Datos de la agencia" },
     ],

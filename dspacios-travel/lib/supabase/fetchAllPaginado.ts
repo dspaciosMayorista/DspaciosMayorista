@@ -15,6 +15,27 @@
 // distintas sin solapes ni huecos.
 export type PaginaResultado<T> = { data: T[] | null; error: { message: string } | null };
 
+/**
+ * Igual que `fetchAllPaginado`, pero un error NO se traga: se devuelve junto
+ * con lo acumulado para que el caller decida (p. ej. el calendario tributario
+ * no puede mostrar una lista parcial como si fuera completa: ocultaría una
+ * alerta de vencimiento).
+ */
+export async function fetchAllPaginadoConError<T>(
+  pedirPagina: (desde: number, hasta: number) => PromiseLike<PaginaResultado<T>>,
+  tamPagina = 1000
+): Promise<{ data: T[]; error: { message: string } | null }> {
+  const acumulado: T[] = [];
+  let desde = 0;
+  for (;;) {
+    const { data, error } = await pedirPagina(desde, desde + tamPagina - 1);
+    if (error) return { data: acumulado, error };
+    if (!data || data.length === 0) return { data: acumulado, error: null };
+    acumulado.push(...data);
+    desde += data.length;
+  }
+}
+
 export async function fetchAllPaginado<T>(
   pedirPagina: (desde: number, hasta: number) => PromiseLike<PaginaResultado<T>>,
   tamPagina = 1000

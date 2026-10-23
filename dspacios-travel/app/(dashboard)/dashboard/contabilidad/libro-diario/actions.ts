@@ -3,6 +3,7 @@
 import { createClient } from "@/lib/supabase/server";
 import { revalidatePath } from "next/cache";
 import { getTenant } from "@/lib/tenant.server";
+import { fetchAllPaginadoConError } from "@/lib/supabase/fetchAllPaginado";
 
 type Result = { ok: true } | { ok: false; error: string };
 const TOL = 1;
@@ -33,33 +34,34 @@ export async function listarAsientos(filtro?: { desde?: string; hasta?: string }
 > {
   const sb = await createClient();
   const tenant = await getTenant();
-  let q = sb.from("asientos_contables").select("id, numero, fecha, descripcion, origen, referencia").eq("tenant", tenant).order("numero", { ascending: false });
-  if (filtro?.desde) q = q.gte("fecha", filtro.desde);
-  if (filtro?.hasta) q = q.lte("fecha", filtro.hasta);
-  const { data: asientos, error } = await q;
-  if (error) return { ok: false, error: error.message };
-  const ids = (asientos ?? []).map((a) => a.id);
+  // El proyecto de Supabase puede tener un límite de filas por respuesta
+  // (Settings → API → "Max rows"): un `.select()` simple se trunca en silencio.
+  // Cabeceras y líneas se paginan avanzando por lo que realmente llega, y un
+  // error se devuelve en vez de mostrar un libro incompleto como si fuera todo.
+  const cabeceras = await fetchAllPaginadoConError((d, h) => {
+    let q = sb.from("asientos_contables").select("id, numero, fecha, descripcion, origen, referencia").eq("tenant", tenant);
+    if (filtro?.desde) q = q.gte("fecha", filtro.desde);
+    if (filtro?.hasta) q = q.lte("fecha", filtro.hasta);
+    return q.order("numero", { ascending: false }).range(d, h);
+  });
+  if (cabeceras.error) return { ok: false, error: cabeceras.error.message };
+  const asientos = cabeceras.data;
+  const ids = asientos.map((a) => a.id);
   if (!ids.length) return { ok: true, asientos: [] };
 
-  // El proyecto de Supabase puede tener un límite de filas por respuesta
-  // (Settings → API → "Max rows") menor a la cantidad real de líneas — un
-  // `.in()` simple se trunca en silencio si hay muchas. Se pagina con
-  // `.range()` avanzando por lo que realmente llega, no por lo pedido (ver
-  // el mismo fix en conciliaciones/page.tsx).
-  const lineas: { id: number; asiento_id: number; cuenta_id: number; tercero: string | null; descripcion: string | null; debe: number; haber: number; puc_cuentas: { codigo: string; nombre: string } | null }[] = [];
-  {
-    const PAGINA = 500;
-    let desde = 0;
-    for (;;) {
-      const { data } = await sb
-        .from("asiento_lineas")
-        .select("id, asiento_id, cuenta_id, tercero, descripcion, debe, haber, puc_cuentas(codigo, nombre)")
-        .in("asiento_id", ids)
-        .range(desde, desde + PAGINA - 1);
-      if (!data || data.length === 0) break;
-      lineas.push(...(data as unknown as typeof lineas));
-      desde += data.length;
-    }
+  // Por lotes de ids: un `.in()` con cientos de ids alarga la URL de PostgREST.
+  type FilaLinea = { id: number; asiento_id: number; cuenta_id: number; tercero: string | null; descripcion: string | null; debe: number; haber: number; puc_cuentas: { codigo: string; nombre: string } | null };
+  const lineas: FilaLinea[] = [];
+  for (let i = 0; i < ids.length; i += 200) {
+    const lote = ids.slice(i, i + 200);
+    const r = await fetchAllPaginadoConError((d, h) => sb
+      .from("asiento_lineas")
+      .select("id, asiento_id, cuenta_id, tercero, descripcion, debe, haber, puc_cuentas(codigo, nombre)")
+      .in("asiento_id", lote)
+      .order("id")
+      .range(d, h));
+    if (r.error) return { ok: false, error: r.error.message };
+    lineas.push(...(r.data as unknown as FilaLinea[]));
   }
 
   const porAsiento = new Map<number, LineaAsiento[]>();
@@ -74,7 +76,7 @@ export async function listarAsientos(filtro?: { desde?: string; hasta?: string }
 
   return {
     ok: true,
-    asientos: (asientos ?? []).map((a) => ({
+    asientos: asientos.map((a) => ({
       id: a.id, numero: a.numero, fecha: a.fecha, descripcion: a.descripcion, origen: a.origen, referencia: a.referencia,
       lineas: porAsiento.get(a.id) ?? [],
     })),
