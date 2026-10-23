@@ -36,6 +36,9 @@ type Initial = Partial<{
   // #67 — destinos aéreos alternativos (solo Bloqueo/Sistema).
   destinosAereosAlternativos: boolean;
   destinosAereosIds: number[];
+  // #63 — modo de oferta del paquete (solo Dinámico): "legacy" o "cop_trm_63" (COP con la TRM del paquete).
+  modoOferta: string;
+  trmOferta: number | null;
 }>;
 
 const lbl = "mb-1 block text-xs font-medium text-gray-600";
@@ -80,6 +83,12 @@ export function ConfigForm({
   // #67 — destinos aéreos alternativos: check por paquete + selección múltiple de
   // destinos del MISMO país. Los candidatos los entrega el servidor (una sola
   // regla de país); el servidor y la base vuelven a validar al guardar.
+  // #63 — modo COP con TRM (solo Dinámico): el tarifario se publica en COP y los netos en USD se convierten con esta TRM.
+  const [modoOferta, setModoOferta] = useState<"legacy" | "cop_trm_63">(initial?.modoOferta === "cop_trm_63" ? "cop_trm_63" : "legacy");
+  const [trmOferta, setTrmOferta] = useState(initial?.trmOferta != null ? String(initial.trmOferta) : "");
+  const modo63 = tipo === "dinamico" && modoOferta === "cop_trm_63";
+  // Los destinos aéreos permitidos (#67) aplican a Bloqueo y, en modo COP, a las salidas vinculadas de Dinámico.
+  const aereosAplica = tipo === "bloqueo" || modo63;
   const [aereosAlt, setAereosAlt] = useState(initial?.destinosAereosAlternativos ?? false);
   const [aereosIds, setAereosIds] = useState<number[]>(initial?.destinosAereosIds ?? []);
   const [candidatos, setCandidatos] = useState<{ id: number; nombre: string; codigo_iata: string | null }[]>([]);
@@ -89,7 +98,7 @@ export function ConfigForm({
   const [err, setErr] = useState("");
 
   useEffect(() => {
-    if (tipo !== "bloqueo" || destinoId === "") {
+    if (!aereosAplica || destinoId === "") {
       setCandidatos([]);
       setCandidatosMotivo(null);
       return;
@@ -103,7 +112,7 @@ export function ConfigForm({
       else { setCandidatos([]); setCandidatosMotivo(r.error); }
     });
     return () => { vigente = false; };
-  }, [tipo, destinoId]);
+  }, [aereosAplica, destinoId]);
 
   const toggleAereo = (id: number) =>
     setAereosIds((prev) => (prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]));
@@ -111,6 +120,10 @@ export function ConfigForm({
   function guardar() {
     if (!nombre.trim()) {
       setErr("El nombre es obligatorio.");
+      return;
+    }
+    if (modo63 && !(Number(trmOferta) > 0)) {
+      setErr("El modo COP exige una TRM positiva (pesos por dólar).");
       return;
     }
     setErr("");
@@ -136,9 +149,12 @@ export function ConfigForm({
       programaNoIncluye,
       programaTarifasEspeciales,
       programaCondicionesComerciales,
-      // Solo Bloqueo/Sistema usa destinos aéreos alternativos; en los demás tipos
-      // no se envía nada (no se toca lo guardado).
-      ...(tipo === "bloqueo" ? { destinosAereosAlternativos: aereosAlt, destinosAereosIds: aereosIds } : {}),
+      // Solo Bloqueo/Sistema (y Dinámico en modo COP) usa destinos aéreos alternativos; en los
+      // demás tipos no se envía nada (no se toca lo guardado).
+      ...(aereosAplica ? { destinosAereosAlternativos: aereosAlt, destinosAereosIds: aereosIds } : {}),
+      // #63: modo de oferta y TRM. Fuera de Dinámico siempre "legacy" (la base lo exige).
+      modoOferta: modo63 ? "cop_trm_63" : "legacy",
+      trmOferta: modo63 ? Number(trmOferta) : null,
     };
     start(async () => {
       const r = id ? await actualizarPaquete(id, cfg) : await crearPaquete(cfg);
@@ -191,7 +207,27 @@ export function ConfigForm({
           </label>
         </div>
 
-        {tipo === "bloqueo" && (
+        {tipo === "dinamico" && (
+          <div className="md:col-span-2 rounded-lg border border-gray-100 bg-gray-50 p-3" data-testid="modo-oferta-63">
+            <label className={lbl}>Modo de oferta</label>
+            <select value={modoOferta} onChange={(e) => setModoOferta(e.target.value === "cop_trm_63" ? "cop_trm_63" : "legacy")} className={sel} aria-label="Modo de oferta">
+              <option value="legacy">De siempre (moneda del hotel)</option>
+              <option value="cop_trm_63">COP con TRM (admite salidas vinculadas a Empaquetados sin record)</option>
+            </select>
+            {modo63 && (
+              <div className="mt-2 max-w-xs">
+                <label className={lbl}>TRM del paquete (COP por USD) *</label>
+                <Input type="number" min={0} step="0.01" value={trmOferta} onChange={(e) => setTrmOferta(e.target.value)} placeholder="4000" aria-label="TRM del paquete" />
+                <p className="mt-1 text-[11px] text-gray-400">
+                  El tarifario se publica en COP. Los netos en USD de hoteles y servicios se convierten con esta TRM antes de aplicar el markup.
+                  Cambiar la TRM invalida el tarifario: hay que volver a generarlo. El impuesto fijo se interpreta en COP.
+                </p>
+              </div>
+            )}
+          </div>
+        )}
+
+        {aereosAplica && (
           <div className="md:col-span-2 rounded-lg border border-gray-100 bg-gray-50 p-3" data-testid="destinos-aereos">
             <label className="flex items-center gap-2 text-sm font-medium text-gray-700">
               <input

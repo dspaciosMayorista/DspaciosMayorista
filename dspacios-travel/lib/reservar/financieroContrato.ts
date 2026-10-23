@@ -72,6 +72,19 @@ export type CxPFinanciera = {
    * default.
    */
   moneda?: string;
+  /**
+   * #63 (migración 227): equivalente en COP de esta obligación, congelado a la TRM del paquete
+   * (`cuentas_por_pagar.valor_cop_63`/`trm_63`). Solo lo mandan las reservas del modo `cop_trm_63`;
+   * `undefined` = toda obligación de siempre. `registrar_financiero_contrato` lo escribe en la MISMA
+   * transacción que la CxP.
+   */
+  valor_cop?: number | null;
+  trm?: number | null;
+  /**
+   * #63 (E/F/G): clave estable de la obligación dentro de lo aceptado. Solo viene en el payload DERIVADO de una aceptación
+   * (la base lo guarda como `obligacion_63`); el contrato de siempre no la manda.
+   */
+  obligacion?: string;
 };
 
 /** Columnas de costo de `ventas`. Solo se escriben las claves presentes. */

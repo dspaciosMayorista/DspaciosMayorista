@@ -19,6 +19,9 @@ export type Database = {
           hora_salida_ida: string | null; hora_llegada_ida: string | null; hora_salida_reg: string | null; hora_llegada_reg: string | null;
           valor_tiquete: number; aplica_mk: boolean; ta: number; fee_infante: number;
           compra_inicio: string | null; compra_fin: string | null; activo: boolean; notas: string | null; orden: number; created_at: string;
+          // Migración 227 (#63): vínculo a un vuelo de Empaquetados sin record (NULL = salida manual) y moneda
+          // acreditada de tiquete/TA/fee de la salida MANUAL (la vinculada es siempre COP).
+          empaquetado_id: number | null; moneda: string;
         };
         Insert: {
           id?: number; paquete_id: number; aerolinea?: string | null; ruta?: string | null; origen?: string | null;
@@ -26,6 +29,7 @@ export type Database = {
           hora_salida_ida?: string | null; hora_llegada_ida?: string | null; hora_salida_reg?: string | null; hora_llegada_reg?: string | null;
           valor_tiquete?: number; aplica_mk?: boolean; ta?: number; fee_infante?: number;
           compra_inicio?: string | null; compra_fin?: string | null; activo?: boolean; notas?: string | null; orden?: number; created_at?: string;
+          empaquetado_id?: number | null; moneda?: string;
         };
         Update: Partial<Database["public"]["Tables"]["salidas_dinamicas"]["Insert"]>;
         Relationships: [];
@@ -350,6 +354,8 @@ export type Database = {
           // Default 'completo'; solo reservarDesdeTarifarioInterno/
           // convertirCotizacionCarrito lo insertan en 'pendiente'.
           financiero_estado: string;
+          // Migración 227 (#63): aceptación de oferta COP con TRM que respalda este contrato (NULL = contrato de siempre).
+          aceptacion_63_id: number | null;
           financiero_actualizado_en: string;
           created_at: string;
           updated_at: string;
@@ -416,11 +422,55 @@ export type Database = {
           recobro_aliado?: number | null;
           cotizacion_id?: number | null;
           financiero_estado?: string;
+          aceptacion_63_id?: number | null;
           financiero_actualizado_en?: string;
           created_at?: string;
           updated_at?: string;
         };
         Update: Partial<Database["public"]["Tables"]["ventas"]["Insert"]>;
+        Relationships: [];
+      };
+      // Migración 227 (#63, E/F/G). PRIVADAS (RLS sin policies): solo el servidor con service_role las lee; nunca el navegador.
+      p63_oferta: {
+        Row: {
+          id: number;
+          cotizacion_id: number;
+          tenant: string;
+          paquete_id: number;
+          salida_id: number | null;
+          trm: number;
+          rev_fuente: number;
+          rev_publicada: number | null;
+          gen_publicada: number | null;
+          rev_costos: number;
+          huella: string;
+          huella_financiera: string;
+          snapshot: Json;
+          estado: "abierta" | "aceptada";
+          creada_en: string;
+          actualizada_en: string;
+        };
+        Insert: never;
+        Update: never;
+        Relationships: [];
+      };
+      p63_aceptacion: {
+        Row: {
+          id: number;
+          oferta_id: number;
+          cotizacion_id: number;
+          tenant: string;
+          numero_contrato: string;
+          usuario_id: string | null;
+          fecha_negocio: string;
+          snapshot: Json;
+          estado: "preparada" | "materializando" | "completa" | "descartada";
+          error: string | null;
+          creada_en: string;
+          actualizada_en: string;
+        };
+        Insert: never;
+        Update: never;
         Relationships: [];
       };
       contrato_financiero_pendiente: {
@@ -725,6 +775,13 @@ export type Database = {
           clasificacion: string;
           tenant: string;
           moneda: string;
+          // Migración 227 (#63): equivalente en COP de una obligación del modo cop_trm_63 (moneda de origen USD),
+          // congelado a la TRM del paquete. NULL en toda obligación de siempre.
+          valor_cop_63: number | null;
+          trm_63: number | null;
+          // Migración 227 (#63): obligación escrita por la RPC financiera desde una aceptación (protegida contra edición).
+          aceptacion_63_id: number | null;
+          obligacion_63: string | null;
           created_at: string;
         };
         Insert: {
@@ -734,6 +791,10 @@ export type Database = {
           tipo_proveedor?: string | null;
           servicio?: string | null;
           servicio_id?: number | null;
+          valor_cop_63?: number | null;
+          trm_63?: number | null;
+          aceptacion_63_id?: number | null;
+          obligacion_63?: string | null;
           fecha_obligacion?: string | null;
           fecha_vencimiento?: string | null;
           valor_total?: number;
@@ -1237,6 +1298,9 @@ export type Database = {
           activo: boolean;
           created_at: string;
           updated_at: string;
+          // La migración 227 (#63) agrega `moneda` (solo COP por ahora). NO se tipa aquí a propósito: la vista
+          // `empaquetados_basica` (224) refleja este Row menos los costos y la prueba de deriva la protege; el código
+          // la lee con consultas sin tipo (lib/reservar/prepararOferta63.ts) y no la necesita en la vista.
         };
         Insert: {
           id?: number;
@@ -2412,6 +2476,12 @@ export type Database = {
           // comercial; true = destino comercial + alternativas elegidas del
           // MISMO país (tabla armado_paquete_destinos_aereos).
           destinos_aereos_alternativos: boolean;
+          // Migración 227 (#63): modo de oferta del paquete. 'legacy' = el de siempre; 'cop_trm_63' = tarifario en COP
+          // con la TRM del paquete (trm_oferta > 0 obligatoria en ese modo).
+          modo_oferta: string;
+          trm_oferta: number | null;
+          // Migración 227 (#63): contador de cambios de proveedor/retención/reglas de hotel (sube en la misma transacción).
+          p63_rev_costos: number;
         };
         Insert: {
           id?: number;
@@ -2452,6 +2522,9 @@ export type Database = {
           tarifario_actualizado_en?: string | null;
           tarifario_snapshot_publicable?: boolean;
           destinos_aereos_alternativos?: boolean;
+          modo_oferta?: string;
+          trm_oferta?: number | null;
+          p63_rev_costos?: number;
         };
         Update: Partial<Database["public"]["Tables"]["armado_paquetes"]["Insert"]>;
         Relationships: [];
@@ -3917,6 +3990,33 @@ export type Database = {
           p_filas: Json;
         };
         Returns: boolean;
+      };
+      // Migración 227 (#63). Envuelve a publicar_tarifario_resultado (el vigente) y guarda, en la
+      // misma transacción, la TRM/modo/fuentes de esa publicación. p_modo y p_trm deben coincidir
+      // con los del paquete (candado de fila) y p_moneda debe ser COP.
+      publicar_tarifario_resultado_63: {
+        Args: {
+          p_paquete_id: number;
+          p_generacion: number;
+          p_revision_capturada: number;
+          p_moneda: string;
+          p_filas: Json;
+          p_modo: string;
+          p_trm: number;
+        };
+        Returns: boolean;
+      };
+      // Migración 227 (#63, E/F/G). Solo service_role: las llama el servidor tras autorizar sesión/rol/tenant. La primera crea
+      // la cotización y su oferta privada (snapshot con costos y proveedores) en UNA transacción; la segunda ACEPTA la oferta
+      // (revalida bajo candado, reserva el número y congela el snapshot).
+      crear_cotizacion_oferta_63: {
+        Args: { p_usuario: string; p_tenant: string; p_cotizacion: Json; p_snapshot: Json; p_huella: string; p_huella_financiera: string; p_t0: Json };
+        Returns: number;
+      };
+      aceptar_oferta_63: {
+        Args: { p_cotizacion: number; p_tenant: string; p_usuario: string; p_huella: string; p_huella_financiera: string };
+        /** {estado: 'preparada' | 'materializando' | 'completa', aceptacion_id, numero_contrato, fecha_negocio?, snapshot?, financiero?} */
+        Returns: Json;
       };
       // Migración 181. Publicación atómica del tarifario — marca el intento
       // vigente (mismos p_generacion Y p_revision_capturada) como fallido con

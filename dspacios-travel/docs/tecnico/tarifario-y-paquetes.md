@@ -285,10 +285,10 @@ RLS: **lectura pública total** (`using (true)`); **escritura** restringida a
 contener costo neto, así que hacerla legible por cualquiera es seguro por construcción (lo
 garantiza lo que `generarTarifario` decide escribir, no una máscara de columnas en RLS).
 
-## Paquetes Dinámicos dentro de "Paquetes" de Vista Booking
+## 8. Paquetes Dinámicos dentro de "Paquetes" de Vista Booking (#379)
 
-Antes un paquete Dinámico (`modulo = 'dinamico'`, salidas en `salidas_dinamicas`) solo se veía en **Vista tabla → "Salidas dinámicas"**; Vista Booking
-nunca lo tuvo (ni por destino ni en Recomendados). Decisión del dueño: para el cliente es un paquete más, con visual propia, dentro de la pestaña **Paquetes**.
+Antes un paquete Dinámico (`modulo = 'dinamico'`, salidas en `salidas_dinamicas`) solo se listaba en **Vista tabla → "Salidas dinámicas"**; Vista Booking
+no lo listaba (ni por destino ni en Recomendados), aunque el `Selector` del modal ya sabía cotizar `modulo: "dinamico"`. Decisión del dueño: para el cliente es un paquete más, con visual propia, dentro de la pestaña **Paquetes**.
 - **Reglas.** Destino = el del PAQUETE/hotel (`destino_nombre` de la fila), nunca el del vuelo. Sin cupos. Entra a Recomendados como cualquier oferta
   (`armado_hoteles.prioridad` por hotel+paquete). **"Desde" = acomodación DOBLE** (tarjeta: menor `precio_doble` > 0 de sus salidas; cada fecha del modal: menor doble de la salida;
   una sencilla más barata no lo cambia; sin doble, "Consultar"). **Origen = el REAL de cada salida** (`salidas_dinamicas.origen`, o el primer tramo de `ruta`, misma regla que
@@ -304,15 +304,52 @@ nunca lo tuvo (ni por destino ni en Recomendados). Decisión del dueño: para el
   `puedeReservar`): **todos, con o sin sesión y sin permiso especial,** cotizan por el **carrito público** (`CotizadorDinamico` en `VistaBooking.tsx` = el mismo `Selector`/`EditorPax` de Bloqueo, con `modulo: "dinamico"` + `salidaId`) → `/tarifario/checkout` →
   `crearSolicitudReserva`, que acepta `dinamico` (`validarSolicitudItem` exige `salidaId`), re-liquida con `computarReserva` sobre esa salida (fechas de la salida, nunca del navegador) y guarda
   el vuelo por sistema de la salida en `detalle.vuelos` — **obligatorio**: sin llave de servicio, con la consulta fallida, sin la salida o con tramos incompletos (sin origen/destino IATA o
-  sin fecha), la solicitud falla con un mensaje claro ANTES de guardar (`tramosVueloSalidaDinamica`). El permiso de reservar solo agrega "Cotizar esta salida" (`reservar/nuevo`). La **comparativa** y la **conversión a contrato** de una cotización de carrito todavía rechazan un ítem dinámico con mensaje explícito (el contrato se genera desde Reservar).
+  sin fecha), la solicitud falla con un mensaje claro ANTES de guardar (`tramosVueloSalidaDinamica`). El permiso de reservar solo agrega "Cotizar esta salida" (`reservar/nuevo`). La **comparativa** y la **conversión a contrato** de una cotización de carrito todavía rechazan un ítem dinámico con mensaje explícito (el contrato se genera desde Reservar). En un paquete en modo `cop_trm_63` (#63), la cotización pública se puede generar, pero la reserva se cierra por la cotización/aceptación interna (`reservar/nuevo`, ver §9).
 - **Lógica pura:** `lib/tarifario/dinamicoBooking.ts` (visibilidad, destinos, salidas, agrupación de precios, "desde", enlace). **UI:** `app/tarifario/DinamicoModal.tsx` (modal con
-  fechas de salida + tabla categoría/alimentación × acomodación + "Cotizar esta salida" + Incluye/No incluye) e `InsigniaFechasSalida` en la tarjeta ("N fechas de salida").
+  fechas de salida con su "desde" DOBLE + cotizador por acomodación —categoría, alimentación, precio por persona, menores y total— + "Cotizar esta salida" + Incluye/No incluye) e `InsigniaFechasSalida` en la tarjeta ("N fechas de salida").
 - **Datos.** `VistaBooking.tsx`: `hoteles` admite filas `dinamico` en la pestaña `bloqueo`; `destinosPaquetes` = destinos de Bloqueo + de Dinámicos; `abrirHotel` carga el detalle de un
   Dinámico con `obtenerDetalleSalida` por cada salida (acotada a los combos de ese hotel; si una falla, falla el conjunto). `lib/tarifario/resumen.ts`: `paqIdsConHotel` y las fechas de
   condición/política incluyen `dinamico`, para que Recomendados, descripción (Incluye) y condiciones también funcionen.
 - **Cotizar:** `/dashboard/reservar/nuevo?paquete=&hotel=&salida=&modulo=dinamico` — la misma ruta de Vista tabla (genera la cotización).
 - **Pruebas:** `pruebas/dinamicoBooking.test.ts` (puro + carga del resumen y `origenPorSalida`), `pruebas/dinamicoCheckout.test.ts` (checkout público anónimo con un ítem dinámico) y
   `pruebas/dinamicoEnPaquetes.react.ts` (registrada en `test:react`; Origen → Destino → tarjeta, cotización como visitante; cada caso se compara con un Bloqueo de control).
+
+## 9. #63 — Dinámico: salida vinculada a un vuelo de Empaquetados SIN record y modo `cop_trm_63` (migración 227)
+
+> Hoja técnica de código. Reglas de negocio y contrato en el histórico de #63 (`chat-4-hotfixes.md`, re-base 2); esta rama se rebasa sobre `origin/main` actual (`adfcee81`). La 227 **no está aplicada**:
+> va ANTES del código (preflight → 227 → postcheck → despliegue).
+
+**Qué es.** Un paquete Dinámico puede estar en modo `legacy` (el de siempre) o `cop_trm_63` (`armado_paquetes.modo_oferta` + `trm_oferta` > 0, solo
+Dinámico, sin TRM por defecto). En `cop_trm_63` el tarifario se publica en **COP**: todo neto en USD de hotel y servicios (y de una salida manual con
+`salidas_dinamicas.moneda = 'USD'`) se liquida en su moneda de origen y se **convierte × TRM ANTES del markup** (`generarTarifario`: `aMonedaOferta`).
+Una **salida vinculada** es una fila de `salidas_dinamicas` con `empaquetado_id` (FK RESTRICT, única por paquete) que copia de un vuelo de
+**Empaquetados sin record** (NULL o vacío; un texto cualquiera cuenta como PNR) sus fechas, ruta, aerolínea y tarifas.
+
+| Pieza | Dónde | Regla |
+|---|---|---|
+| Helpers puros | `lib/reservar/ofertaDinamica63.ts` | TRM estricta (`validarTrm63`), `aCop63`, `feeACop63` (**R1: centavos exactos**, 25 USD × 3.987,65 = 99.691,25), elegibilidad de la fuente (`evaluarFuenteVinculada63`), copia vs fuente (`fuenteCoincideConSalida63`), BNC (`impuestoPorPersona63`/`impuestoTotal63`), huella de la oferta (`huellaOferta63`, sin el costo N). |
+| Aéreo de la vinculada | generador `paquetes/actions.ts` | **R** = `tarifa_para_empaquetar` es el precio final: entra al PVP **sin markup ni TA** (el CHECK de la base lo repite); **N** = `tarifa_proveedor` solo costo (CxP); **F** = `fee_infante`: precio = costo, **exacto**, una vez por menor de 2 años. Rama aparte de la manual (la llamada manual de la 226 no cambia). |
+| Menores | `lib/reservar/menoresDeDos.ts` (226, **sin editar**) | Mismo conteo, mismas filas y **mismos rótulos** (R2). |
+| Elegibilidad | generador + `computo.ts` + vitrina | Fuente activa, sin record, ventana de compra, viaje futuro, COP, copia coincidente y destino aéreo permitido por la **220** (`resolverDestinosAereosPaquete`/`validarOrigenAereoPaquete`). Una vinculada no elegible **no se publica** y se explica en el aviso. |
+| Publicación | RPC `publicar_tarifario_resultado_63` (227) | **Envuelve** al publicador vigente (el de la 226, sin copiar su cuerpo), valida modo/TRM/COP bajo el candado del paquete y guarda la TRM/fuentes en `tarifario_oferta_63` (privada). Un paquete legacy sigue por `publicar_tarifario_resultado`. |
+| Invalidación | trigger propio `tarifario_trg_empaquetado_vinculadas_63` | Cambia record, costo N, tarifa R, fee F, destino, fechas, ruta, activo o compra de la fuente → invalida (bloqueante) los paquetes con salidas vinculadas. **No** reemplaza el trigger de la 226. Cambiar modo/TRM del paquete también invalida. |
+| Editor | `paquetes/[id]/SalidasDinamicasEditor.tsx` + acciones `listarEmpaquetadosParaSalidas63`, `vincularSalidasEmpaquetados63` (todo o nada), `actualizarSalidaDesdeFuente63` | Lista **múltiple** de las elegibles ya revisadas; las nuevas son **pendientes** y no se incorporan solas. Una vinculada no se edita a mano (la copia debe coincidir con la fuente): se actualiza desde la fuente o se desvincula. |
+| Config | `ConfigForm.tsx` + `PaqueteConfig.modoOferta/trmOferta` | Selector de modo + TRM (solo Dinámico); el bloque de destinos aéreos (220) también aplica a Dinámico en modo 63. El impuesto fijo se interpreta en **COP** en ese modo. |
+
+**Vitrina.** En Vista tabla y Vista Booking (#379), `filtrarFilasPorOrigenAereo` (`lib/paquetes/destinosAereos67.ts`) oculta además las filas ya publicadas de una vinculada cuya fuente dejó de ser
+elegible; `vinculosIncompatibles` cuenta las salidas vinculadas al retirar un destino alterno.
+
+**Cierre E/F/G (aceptación atómica).** La misma 227 agrega: `armado_paquetes.p63_rev_costos` (contador que sube por trigger, en la misma transacción, cuando cambian proveedor, retención o
+reglas de hotel/servicio que no mueven el PVP), las tablas PRIVADAS `p63_oferta` (oferta cotizada + snapshot con costos y proveedores) y `p63_aceptacion` (intento + número reservado + snapshot inmutable), las marcas
+`ventas.aceptacion_63_id` y `cuentas_por_pagar.aceptacion_63_id`/`obligacion_63`, las RPC `crear_cotizacion_oferta_63` y `aceptar_oferta_63` (solo service_role), el fencing BEFORE INSERT de la cabecera, el tombstone
+al revertir, las protecciones de obligaciones/costos aceptados y la finalización derivada (`p63_registrar_financiero`). Detalle de flujo y de candados en [`reservar.md`](./reservar.md) §9.
+
+**Ciclo 5 (plan B2B y vigencias).** El snapshot de la oferta también congela el plan B2B (`b2b`: aliado, %, modo de compra, comisión, estado y precio final) y las vigencias de compra de las tarifas de hotel y servicios que respaldan el precio (`vigencias`). Cambiar el % de un aliado o el parámetro general
+`COMISION_AGENCIA`/`COMISION_FREELANCE` sube `p63_rev_costos` de todos los paquetes en modo 63 (`p63_bump_costos_todos`, triggers `trg_p63_costos_aliados` / `trg_p63_costos_parametros_upd|ins`), y `aceptar_oferta_63` valida las vigencias con `p63_hoy_bogota()`.
+Pruebas: bloque O del SQL (O0–O23) y casos `C5 ·` de `salidaVinculada63Reserva.react.ts`.
+
+**Pruebas.** `pruebas/salidaVinculada63{,Generar,Computo,Acciones,Vitrina,Wiring}.test.ts`, `salidaVinculada63{Reserva,Contabilidad,Editor}.react.ts` (comando directo, ver su
+cabecera), `salidaVinculada63Aceptacion.test.ts` y SQL `supabase/scripts/test_227_*` (incluye `test_227_carrera.sh`: dos sesiones reales) + workflow `test-227-salida-vinculada-63.yml`.
 
 ## Enlaces cruzados
 
