@@ -387,7 +387,7 @@ export async function cargarResumenTarifario(
     filasVisibles.filter((f) => f.modulo === "porcion_terrestre" && f.paquete_id != null).map((f) => f.paquete_id as number)
   )];
   const paqIdsConHotel = [...new Set(
-    filasVisibles.filter((f) => (f.modulo === "bloqueo" || f.modulo === "porcion_terrestre") && f.paquete_id != null).map((f) => f.paquete_id as number)
+    filasVisibles.filter((f) => (f.modulo === "bloqueo" || f.modulo === "porcion_terrestre" || f.modulo === "dinamico") && f.paquete_id != null).map((f) => f.paquete_id as number)
   )];
 
   const fotosPorHotel: Record<number, string> = {};
@@ -667,7 +667,8 @@ export async function cargarResumenTarifario(
     for (const f of filasVisibles) {
       if (f.hotel_id == null || f.paquete_id == null) continue;
       const clave = claveOferta(f.hotel_id, f.paquete_id);
-      if (f.modulo === "bloqueo" && f.fecha_ida && f.fecha_regreso) {
+      // Dinámico: las fechas de cada salida (igual que las del bloqueo, sin cupos).
+      if ((f.modulo === "bloqueo" || f.modulo === "dinamico") && f.fecha_ida && f.fecha_regreso) {
         const set = fechasPorOferta.get(clave) ?? new Set<string>();
         set.add(`${f.fecha_ida}|${f.fecha_regreso}`);
         fechasPorOferta.set(clave, set);
