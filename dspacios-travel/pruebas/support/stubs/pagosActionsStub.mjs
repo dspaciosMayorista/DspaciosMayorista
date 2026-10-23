@@ -13,6 +13,10 @@ export async function registrarPagoProveedor(id, valor, fecha, trmInput) {
   if (impls.registrarPagoProveedor) return impls.registrarPagoProveedor(id, valor, fecha, trmInput);
   throw new Error("registrarPagoProveedor: no implementado en el stub de pruebas — usa __setImpls({ registrarPagoProveedor })");
 }
+export async function pagarSaldoExacto(id, copPagado, fecha) {
+  if (impls.pagarSaldoExacto) return impls.pagarSaldoExacto(id, copPagado, fecha);
+  throw new Error("pagarSaldoExacto: no implementado en el stub de pruebas — usa __setImpls({ pagarSaldoExacto })");
+}
 export async function deshacerUltimoPago(id) {
   if (impls.deshacerUltimoPago) return impls.deshacerUltimoPago(id);
   throw new Error("deshacerUltimoPago: no implementado en el stub de pruebas — usa __setImpls({ deshacerUltimoPago })");

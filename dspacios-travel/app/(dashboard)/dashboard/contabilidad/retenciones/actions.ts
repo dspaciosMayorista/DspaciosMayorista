@@ -3,6 +3,7 @@
 import { createClient } from "@/lib/supabase/server";
 import { revalidatePath } from "next/cache";
 import { getTenant } from "@/lib/tenant.server";
+import { mensajeGuardaSaldo } from "@/lib/finanzas/guardaSaldoCxp";
 import { sumarRetencionesPorCuenta } from "@/lib/finanzas/retenciones";
 import { sumarPagosPorCuenta } from "@/lib/finanzas/pagosCxp";
 import { postearAsientoRetencion, reemplazarAsiento } from "@/lib/contabilidad/asientos";
@@ -131,15 +132,8 @@ export async function registrarRetencion(input: {
   if (e1) return { ok: false, error: e1.message };
   if (!cxp) return { ok: false, error: "Cuenta por pagar no encontrada." };
 
-  const { data: ret } = await sb.from("retenciones_cxp").select("valor").eq("cuenta_por_pagar_id", input.cuentaId);
-  const yaRetenido = (ret ?? []).reduce((s, r) => s + (Number(r.valor) || 0), 0);
-  const { data: pagos } = await sb.from("cxp_pagos").select("valor").eq("cuenta_por_pagar_id", input.cuentaId);
-  const pagado = (pagos ?? []).reduce((s, p) => s + (Number(p.valor) || 0), 0);
-  const saldoActual = Math.max((Number(cxp.valor_total) || 0) - pagado - yaRetenido, 0);
-  if (input.valor > saldoActual + 1) {
-    return { ok: false, error: `El valor supera el saldo pendiente (${saldoActual.toLocaleString("es-CO")}).` };
-  }
-
+  // El control de saldo es atómico en PostgreSQL (migración 228, trigger sobre retenciones_cxp):
+  // aquí ya no hay tolerancia propia; se traduce el error de la guarda al insertar.
   const { data: nueva, error } = await sb.from("retenciones_cxp").insert({
     cuenta_por_pagar_id: input.cuentaId,
     valor: input.valor,
@@ -149,7 +143,8 @@ export async function registrarRetencion(input: {
     observaciones: input.observaciones?.trim() || null,
     tenant: await getTenant(),
   }).select("id").single();
-  if (error || !nueva) return { ok: false, error: error?.message ?? "No se pudo registrar la retención." };
+  if (error) return { ok: false, error: mensajeGuardaSaldo(error, "retencion") ?? error.message };
+  if (!nueva) return { ok: false, error: "No se pudo registrar la retención." };
   await postearAsientoRetencion({
     retencionId: nueva.id, tipoProveedor: cxp.tipo_proveedor, proveedor: cxp.proveedor, valor: input.valor, fecha: input.fechaPractica,
   });

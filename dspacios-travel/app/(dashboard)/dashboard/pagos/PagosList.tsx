@@ -8,8 +8,9 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { formatMoneda, formatFechaLarga, formatCOP } from "@/lib/utils";
 import { fechaNegocio } from "@/lib/fechaNegocio";
-import { registrarPagoProveedor, deshacerUltimoPago, asignarProveedorCuentaPorPagar, configurarFacturaProveedor } from "./actions";
+import { registrarPagoProveedor, pagarSaldoExacto, deshacerUltimoPago, asignarProveedorCuentaPorPagar, configurarFacturaProveedor } from "./actions";
 import { ResponsiveTableShell } from "@/components/ui/ResponsiveTableShell";
+import { copMaximoPagable, pagoSaldoExacto } from "@/lib/finanzas/guardaSaldoCxp";
 
 export type PagoRow = {
   id: number;
@@ -487,10 +488,13 @@ function PagoInline({
   const [valor, setValor] = useState("");
   const [fecha, setFecha] = useState(() => fechaNegocio());
   const [trm, setTrm] = useState("");
+  const [exacto, setExacto] = useState<{ nominal: number; trm: number; cop: number } | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [pending, startTransition] = useTransition();
   const esUSD = (moneda ?? "COP").toUpperCase() === "USD";
   const usdEq = esUSD && Number(valor) > 0 && Number(trm) > 0 ? Number(valor) / Number(trm) : null;
+  // S4: COP máximo que admite el saldo a la TRM digitada.
+  const copMax = esUSD ? copMaximoPagable(saldo, Number(trm)) : null;
 
   function handle(e: React.FormEvent) {
     e.preventDefault();
@@ -534,6 +538,9 @@ function PagoInline({
             <label className="mb-1 block text-xs font-medium text-gray-600">TRM del día</label>
             <Input type="number" min={0} value={trm} onChange={(e) => setTrm(e.target.value)} placeholder="4000" className="w-28" />
             <p className="mt-1 text-[11px] text-gray-400">{usdEq != null ? `abona ${formatMoneda(usdEq, "USD")}` : "COP por 1 USD"}</p>
+            {copMax != null && (
+              <p className="mt-1 text-[11px] text-gray-500">Máximo pagable a esa TRM: {formatMoneda(copMax, "COP")}</p>
+            )}
           </div>
         )}
         <div>
@@ -548,15 +555,78 @@ function PagoInline({
         <Button type="submit" disabled={pending} style={{ backgroundColor: "var(--brand-primary)" }}>
           {pending ? "Guardando…" : "Registrar pago"}
         </Button>
-        <button
-          type="button"
-          onClick={() => setValor(String(saldo))}
-          className="text-xs font-medium text-[#1D7C9A] hover:underline"
-        >
-          Saldo total ({formatMoneda(saldo, moneda)})
-        </button>
+        {esUSD ? (
+          <button
+            type="button"
+            disabled={pending}
+            onClick={() => {
+              setError(null);
+              const cop = Number(valor);
+              if (!(cop > 0)) {
+                setError("Digita el valor realmente pagado en COP y luego usa 'Pagar saldo exacto'.");
+                return;
+              }
+              // E2: no se guarda de inmediato; se muestra qué se registrará y se pide confirmación.
+              const calc = pagoSaldoExacto(saldo, cop);
+              if (!calc.ok) {
+                setError(calc.error);
+                return;
+              }
+              setExacto(calc);
+            }}
+            className="text-xs font-medium text-[#1D7C9A] hover:underline disabled:opacity-50"
+          >
+            Pagar saldo exacto ({formatMoneda(saldo, moneda)})
+          </button>
+        ) : (
+          <button
+            type="button"
+            onClick={() => setValor(String(saldo))}
+            className="text-xs font-medium text-[#1D7C9A] hover:underline"
+          >
+            Saldo total ({formatMoneda(saldo, moneda)})
+          </button>
+        )}
         {puedeDeshacer && <Deshacer id={id} />}
       </div>
+      {exacto && (
+        <div className="space-y-2 rounded-md border border-[#1D7C9A]/30 bg-[#1D7C9A]/5 p-3 text-sm text-gray-700">
+          <p>
+            Se registrará {formatMoneda(exacto.nominal, "USD")} con TRM {exacto.trm.toLocaleString("es-CO", { minimumFractionDigits: 4, maximumFractionDigits: 4 })} = {formatMoneda(exacto.cop, "COP")}
+          </p>
+          <div className="flex gap-3">
+            <Button
+              type="button"
+              disabled={pending}
+              onClick={() => {
+                const { cop } = exacto;
+                setError(null);
+                startTransition(async () => {
+                  const res = await pagarSaldoExacto(id, cop, fecha);
+                  if (!res.ok) {
+                    setError(res.error);
+                    return;
+                  }
+                  setExacto(null);
+                  setValor("");
+                  setTrm("");
+                });
+              }}
+              style={{ backgroundColor: "var(--brand-primary)" }}
+            >
+              {pending ? "Guardando…" : "Confirmar pago"}
+            </Button>
+            <button
+              type="button"
+              disabled={pending}
+              onClick={() => setExacto(null)}
+              className="text-xs font-medium text-gray-500 hover:underline disabled:opacity-50"
+            >
+              Cancelar
+            </button>
+          </div>
+        </div>
+      )}
       {error && <p className="text-sm text-red-600">{error}</p>}
     </form>
   );
