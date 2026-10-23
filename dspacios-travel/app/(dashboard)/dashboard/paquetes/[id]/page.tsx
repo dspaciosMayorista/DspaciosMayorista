@@ -106,7 +106,11 @@ export default async function PaqueteDetallePage({ params }: { params: Promise<{
     ? await sb.from("salidas_dinamicas").select("*").eq("paquete_id", paqueteId).order("fecha_ida")
     : { data: null };
   // Moneda del paquete = la de sus hoteles (USD si hay alguno internacional en USD).
-  const monedaPaquete = (hotelesDisp ?? []).some((h) => (h as { moneda?: string | null }).moneda === "USD") ? "USD" : "COP";
+  // #63: en modo COP con TRM el tarifario se publica en COP aunque haya hoteles/servicios en USD.
+  const modo63 = (pq as { modo_oferta?: string | null }).modo_oferta === "cop_trm_63";
+  const monedaPaquete = modo63
+    ? "COP"
+    : (hotelesDisp ?? []).some((h) => (h as { moneda?: string | null }).moneda === "USD") ? "USD" : "COP";
 
   // El resultado puede superar el tope de 1000 filas de PostgREST; paginamos.
   //
@@ -184,6 +188,8 @@ export default async function PaqueteDetallePage({ params }: { params: Promise<{
           programaCondicionesComerciales: pq.programa_condiciones_comerciales ?? "",
           destinosAereosAlternativos: pq.destinos_aereos_alternativos === true,
           destinosAereosIds: idsAlternativasGuardadas,
+          modoOferta: (pq as { modo_oferta?: string | null }).modo_oferta ?? "legacy",
+          trmOferta: (pq as { trm_oferta?: number | null }).trm_oferta ?? null,
         }}
         destinosAereosError={destinosAereosErrorTotal}
         tieneDestino={!!destinoId}

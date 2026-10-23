@@ -188,6 +188,64 @@ Doble gate:
   incluye `"/dashboard/reservar"` — si el tenant activo (cookie) es minorista y la ruta
   coincide (o es subruta), redirige a `/dashboard` con `NextResponse.redirect`.
 
+## 9. #63 — reserva de una salida vinculada a Empaquetados sin record (modo `cop_trm_63`)
+
+> La 227 va ANTES del código. El origen de la reserva sigue siendo `salidaId` (`origen.tipo === "salida"`).
+
+- **Sin cupos.** Una vinculada (y cualquier salida o Empaquetado) **no consulta `cupos_por_bloqueo` ni `sillas`**: la validación de cupos de
+  `reservarDesdeTarifarioInterno` vive solo dentro de `if (origen.tipo === "bloqueo")`. Un Bloqueo sigue exigiéndolos (probado en
+  `salidaVinculada63Reserva.react.ts`, con mutación: hacer que una salida consulte cupos rompe la prueba).
+- **`computarReserva`** llama a `resolverOfertaSalida63` (`lib/reservar/prepararOferta63.ts`, cliente de servicio) solo para origen salida: valida la fuente
+  VIVA (activa, sin record, ventana, COP, copia coincidente, destino aéreo 220) **antes de leer precio**. Devuelve `oferta63` (TRM, R, F, monedas de origen de
+  hotel y servicios, generación/revisión publicadas). En un paquete de siempre devuelve `null` y nada cambia.
+- **BNC.** Oferta 63: `impuestoTotal = impuestoPorPersona63 × paxConSilla` (tiquete = **R**; fijo = importe del paquete en COP). Los menores de 2 años no
+  ocupan silla ni generan BNC. Antes (legacy) se ignoraba `impuesto_tipo`; eso no cambia fuera del modo 63.
+- **Datos de vuelo.** `datosVueloSalida` (`empaquetadoOrigen.ts`) resuelve una vinculada contra su fuente viva: `record` null, `costo_neto` = N, `fee_infante` = F.
+  Una salida **manual** en modo 63 usa el tiquete y el fee ya convertidos de `oferta63` (R1).
+- **Costos y CxP.** `ventas` queda en COP. Cada CxP conserva su **moneda de origen** (hotel/servicios pueden ser USD; el aéreo de Empaquetados, COP) y lleva
+  `valor_cop`/`trm` (`camposCxP63`) que `registrar_financiero_contrato` (227) guarda en `cuentas_por_pagar.valor_cop_63`/`trm_63` **en la misma transacción**.
+  `ventas.costo_hotel`/`costo_receptivo` son la suma de esos equivalentes (el aéreo ya sale en COP). `postearAsientoCxP` devenga por `valor_cop_63`
+  (nunca por el nominal USD; si no puede leerlo, devuelve error). `asegurarCuentasPorPagar` mide la cobertura con el equivalente COP (sin complemento fantasma).
+  `actualizarServiciosContrato` y el valor de una CxP 63 **no se editan** después de reservar (se anula y se reserva de nuevo).
+- **Aceptación atómica con snapshot privado (E/F/G, migración 227).** Una oferta en COP con TRM no se cobra "recalculando": se **cotiza y se acepta** contra un
+  snapshot que calcula el servidor UNA vez y que ningún dato vivo posterior altera.
+  1. **Cotizar** (`crearCotizacion`): lee las revisiones de T0 del paquete ANTES de calcular (`leerRevisiones63`: `tarifario_revision_fuente`/`_publicada`,
+     `tarifario_generacion_publicada`, `p63_rev_costos`), calcula costos y obligaciones con `calcularFinancieroReserva` (los pasos 9–12 de la reserva, extraídos sin cambiar su
+     cálculo), arma el snapshot (`lib/reservar/aceptacion63.ts`: cabecera, hotel, tramos, ítems, costos, obligaciones con clave estable `hotel:0`/`aereo:0`/`<tipo>:s<servicio_id>`,
+     TRM, resumen) y guarda **cotización + oferta + snapshot en UNA transacción** con la RPC `crear_cotizacion_oferta_63` (que vuelve a comparar T0 bajo candado: no hay cotización
+     "rasgada"). El snapshot vive en `p63_oferta` (PRIVADA); la cotización visible solo tiene la huella de precio. La autoría estable y el alta de personas (219) siguen siendo el paso posterior de siempre.
+  2. **Aceptar** (`reservarDesdeTarifarioInterno` → `aceptarOferta63` → `aceptar_oferta_63`): ANTES de numerar o crear nada, el servidor recalcula en vivo la huella de precio y la
+     huella FINANCIERA (`huellaFinanciera63`: costos, proveedor, retención, moneda, valor y equivalente COP) solo para COMPARAR. La RPC toma los candados en orden fijo
+     (fuente FOR SHARE → salida FOR SHARE → paquete FOR NO KEY UPDATE → oferta FOR UPDATE; el mismo orden en que escriben los triggers, hoja → paquete; nunca toma la venta),
+     revalida AHORA con la fecha de negocio de Bogotá (`p63_hoy_bogota`, `clock_timestamp`): activo, ventanas de compra y viaje de salida y fuente, fuente sin record y en COP,
+     copia coincidente, TRM, tarifario publicado, revisiones, contador de costos, huellas y destino aéreo (220). Reserva el número (mismo generador de mayorista) y congela el
+     snapshot en `p63_aceptacion`. Un reintento recibe el MISMO intento. Un cambio de costo/proveedor/retención con el PVP igual se rechaza ("La oferta cambió…").
+  3. **Materializar**: cabecera, hotel, tramos, ítems, costos y obligaciones salen **solo** de lo devuelto por la aceptación (`aceptacion63.snapshot` / `aceptacion63.financiero`); no hay lecturas
+     vivas de costos/proveedores en esos pasos. La cabecera lleva `ventas.aceptacion_63_id` y un trigger BEFORE INSERT la compara campo a campo con lo aceptado y marca el intento
+     `materializando` en el mismo insert (un worker viejo o un número descartado no crean cabecera; después de la cabecera no hay takeover automático).
+  4. **Finalizar**: `registrar_financiero_contrato` conserva EXACTO el texto de la 210 para contratos de siempre; para un contrato con `aceptacion_63_id` desvía a `p63_registrar_financiero`,
+     que deriva costos y obligaciones del snapshot, **rechaza cualquier payload distinto** (también una llamada directa con payload adulterado o sin pendiente), exige el pendiente exacto
+     y los hijos completos, escribe las CxP con `aceptacion_63_id`/`obligacion_63` y marca la aceptación `completa` en la misma transacción. El pendiente
+     (`contrato_financiero_pendiente`) solo admite el payload derivado y solo tras los hijos.
+  5. **Recuperación**: el reconciliador reintenta el MISMO payload aceptado aunque la fuente cambie después; sin payload, la reversión (`revertir_contrato_incompleto`) borra la cabecera y un trigger
+     descarta el intento (el número queda como tombstone) y reabre la oferta. Una oferta convertida es terminal (no se reabre por desaparecer la venta).
+  - **Protecciones de lo aceptado**: triggers impiden editar principal, moneda, proveedor, servicio y retención de una obligación aceptada y los costos del contrato (el borrado es diferido: `eliminar_contrato` sigue pudiendo
+    borrar el contrato entero); `gestion-actions.ts` y `actualizarServiciosContrato` responden un rechazo claro. `asegurarCuentasPorPagar` NUNCA complementa un contrato #63 con nominales (verifica por clave de obligación o pide revisión;
+    distingue ausencia de marca de fallo de lectura). `postearAsientoCxP` falla CERRADO ante cualquier error de lectura (`resolverImporteContable63`).
+  - **Plan B2B congelado (ciclo 5).** La comisión y el precio NETO ya no se recalculan con el % de hoy: `crearCotizacion` resuelve el aliado (`resolverAliadoReserva` con service-role, el mismo cliente que al aceptar) y guarda en el
+    snapshot `b2b` = `{ aliado_id, tipo_asesor, pct, base, comision, modo_compra, comision_estado, precio_final }` más `cabecera.tipo_asesor`/`canal` (`construirPlanB2b63`). Tres capas: (1) `huellaFinanciera63` incluye `b2b` (la clave no entra si la
+    venta es interna, así que la huella de una oferta B2C es la de siempre): con el PVP igual, un % distinto da otra huella y `aceptar_oferta_63` responde `p63_oferta_cambio` ANTES de reservar número; (2) los triggers `trg_p63_costos_aliados`
+    (`pct_comision`/`tipo`) y `trg_p63_costos_parametros_*` (`COMISION_AGENCIA`/`COMISION_FREELANCE`) suben `p63_rev_costos` de TODOS los paquetes en modo 63 (`p63_bump_costos_todos`), en la misma transacción del cambio; (3) la cabecera del
+    contrato sale del snapshot (`aceptacion63.snapshot.b2b`, ya no hay `pctAliado63`) y `trg_ventas_aceptacion_63_ins` la contrasta contra ese valor (aliado, modo, comisión, estado y `precio_final`; sin plan, todo eso debe ser null y el precio es el PVP).
+    Un cambio del % POSTERIOR a la aceptación falla cerrado: `registrar_comision_b2b_reserva` recalcula con el % vigente, no coincide con la cabecera y la reserva se revierte completa (la oferta se reabre).
+  - **Vigencias de compra dentro de la RPC (ciclo 5).** `computarReserva` devuelve `vigencias63` (hotel: toda temporada que ganó una noche o respalda la tarifa de habitación y de niño 1 / niño 2 / infante con `procedencia` y `temporadasTarifa`; servicio opcional:
+    la temporada elegida por `temporadaVigenteParaFecha`, con `ref = "<servicio_id>|<nombre>"`) con sus `compra_inicio`/`compra_fin`; el snapshot las guarda (`normalizarVigencias63`). `aceptar_oferta_63` las valida con `p63_hoy_bogota()` de SU transacción
+    antes de reservar el número (`v_hoy < compra_inicio` o `v_hoy > compra_fin` → `p63_oferta_cambio`), así que una compra que cierra (o aún no abre) entre el cálculo del servidor y la RPC —cruce de medianoche— se rechaza **sin que ningún UPDATE haya movido una revisión**.
+    Un intento ya aceptado no se revalida al recuperarlo (es lo aceptado antes de vencer).
+  - **Desviaciones declaradas**: (a) las vigencias que se congelan son las de las temporadas que GANARON el precio (no las de todas las temporadas del hotel) y no cubren los servicios INCLUIDOS horneados en el PVP (usan la tarifa general); (b) el cálculo vivo del servidor
+    sigue revalidando las ventanas antes de llamar a la RPC (la RPC es la segunda guardia, no la única); (c) el marcado "completa" lo hace la propia RPC financiera (no un trigger separado) en la misma transacción; (d) los errores técnicos de las otras acciones de gestión pueden mostrar el texto
+    `p63_*` de la base (en español, sin datos sensibles).
+
 ## Enlaces cruzados
 
 - **Tarifario/Paquetes** — de dónde sale el PVP congelado (`tarifario_resultado`) y el motor

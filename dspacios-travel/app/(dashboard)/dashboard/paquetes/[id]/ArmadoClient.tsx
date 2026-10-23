@@ -299,7 +299,13 @@ export function ArmadoClient(props: {
       {/* Salidas dinámicas (vuelo por sistema) */}
       {tipo === "dinamico" && (
       <Section title={`Salidas dinámicas (${props.salidas?.length ?? 0})`} open onToggle={() => {}}>
-        <SalidasDinamicasEditor paqueteId={props.paqueteId} salidas={props.salidas ?? []} moneda={props.moneda ?? "COP"} />
+        <SalidasDinamicasEditor
+          paqueteId={props.paqueteId}
+          salidas={props.salidas ?? []}
+          moneda={props.moneda ?? "COP"}
+          modo63={props.config?.modoOferta === "cop_trm_63"}
+          trm={props.config?.trmOferta ?? null}
+        />
       </Section>
       )}
 

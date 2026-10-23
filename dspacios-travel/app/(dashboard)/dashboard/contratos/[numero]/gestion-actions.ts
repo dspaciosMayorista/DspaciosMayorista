@@ -44,6 +44,9 @@ export async function completarProveedores(
   return { ok: true, creadas: r.creadas };
 }
 
+const MSG_PROTEGIDO_63 =
+  "Este contrato nació de una oferta en COP con TRM: sus costos y obligaciones con proveedores (principal, moneda, proveedor, retención) salen de lo aceptado y no se editan. Para corregir, anula el contrato y vuelve a reservar.";
+
 // ── Costos de la venta ───────────────────────────────────────────────────
 export async function guardarCostos(
   numeroContrato: string,
@@ -60,6 +63,8 @@ export async function guardarCostos(
     .from("ventas")
     .update({ ...costos, updated_at: new Date().toISOString() })
     .eq("numero_contrato", numeroContrato);
+  // #63: los costos de un contrato de oferta aceptada salen del snapshot; la base los protege (p63_protegido) y aquí NO hay éxito ficticio.
+  if (error && /p63_protegido/.test(error.message)) return { ok: false, error: MSG_PROTEGIDO_63 };
   if (error) return { ok: false, error: error.message };
   rev(numeroContrato);
   return { ok: true };
@@ -125,6 +130,18 @@ export async function actualizarCuentaPorPagar(input: {
   const sb = await createClient();
   const iva = Math.max(0, Number(input.ivaDescontable) || 0);
   const base = Math.max(0, input.valorTotal - iva);
+  // #63: una obligación del modo COP con TRM lleva su equivalente en COP congelado (`valor_cop_63`). Cambiar su valor lo dejaría
+  // distinto del importe contable ya devengado; el valor/moneda del principal no se corrige aquí (anular y volver a reservar).
+  // Proveedor, servicio, vencimiento e IVA siguen editándose, y los pagos ya registrados no se tocan.
+  const { data: previa, error: errPrevia } = await sb.from("cuentas_por_pagar").select("valor_total, proveedor, servicio, aceptacion_63_id").eq("id", input.id).maybeSingle();
+  if (errPrevia) return { ok: false, error: "No se pudo verificar la cuenta por pagar. Inténtalo de nuevo." };
+  const previaAc = (previa as { valor_total?: number | null; proveedor?: string | null; servicio?: string | null; aceptacion_63_id?: number | null } | null);
+  // La obligación ACEPTADA protege principal, moneda, proveedor, servicio y retención (la base lo hace cumplir). Vencimiento e IVA siguen editables.
+  if (previaAc?.aceptacion_63_id != null && (
+    Number(previaAc.valor_total) !== Number(input.valorTotal) || (previaAc.proveedor ?? null) !== (input.proveedor || null) || (previaAc.servicio ?? null) !== (input.servicio || null)
+  )) {
+    return { ok: false, error: MSG_PROTEGIDO_63 };
+  }
   const { data: actualizada, error } = await sb
     .from("cuentas_por_pagar")
     .update({
@@ -154,6 +171,7 @@ export async function eliminarCuentaPorPagar(
 ): Promise<Result> {
   const sb = await createClient();
   const { error } = await sb.from("cuentas_por_pagar").delete().eq("id", id);
+  if (error && /p63_cxp_protegida/.test(error.message)) return { ok: false, error: MSG_PROTEGIDO_63 };
   if (error) return { ok: false, error: error.message };
   await eliminarAsientoCxP(id);
   rev(numeroContrato);

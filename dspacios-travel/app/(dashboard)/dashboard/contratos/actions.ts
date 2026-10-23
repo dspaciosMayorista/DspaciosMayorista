@@ -1379,6 +1379,18 @@ export async function actualizarServiciosContrato(
 
   // CxP de servicios ya existentes (solo las que declaran su `servicio_id`:
   // hotel/aéreo/manuales/legado quedan intactas) + si ya tienen dinero movido.
+  // #63: un contrato nacido de una oferta en COP con TRM tiene sus obligaciones con el equivalente en COP congelado a la TRM
+  // de la reserva (`valor_cop_63`). Recalcular servicios aquí movería el precio y los costos con netos/monedas que no son
+  // los de ese snapshot y dejaría el equivalente congelado distinto de la obligación: se rechaza (anular y volver a reservar).
+  const { data: venta63, error: venta63Err } = await admin
+    .from("ventas")
+    .select("aceptacion_63_id")
+    .eq("numero_contrato", numeroContrato)
+    .maybeSingle();
+  if (venta63Err) return { ok: false, error: "No se pudo verificar el contrato. Inténtalo de nuevo." };
+  if (venta63?.aceptacion_63_id != null) {
+    return { ok: false, error: "Este contrato nació de una oferta en COP con TRM: sus servicios no se editan después de reservar (las obligaciones con proveedores quedaron congeladas a la TRM de la reserva). Anula y vuelve a reservar." };
+  }
   const { data: cxpFilas, error: cxpErr } = await admin
     .from("cuentas_por_pagar")
     .select("id, servicio_id, valor_total")

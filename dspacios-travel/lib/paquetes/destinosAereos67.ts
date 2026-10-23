@@ -1,5 +1,7 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type { Database } from "../../types/database.ts";
+import { evaluarFuenteVinculada63, fuenteCoincideConSalida63, type FuenteEmpaquetado63, type SalidaVinculada63 } from "../reservar/ofertaDinamica63.ts";
+import { hoyBogota } from "../reservar/origen.ts";
 
 // ─────────────────────────────────────────────────────────────────────────
 // #67 — DESTINOS AÉREOS ALTERNATIVOS de un paquete de Bloqueo/Sistema.
@@ -364,7 +366,64 @@ type FilaConOrigen = {
   paquete_id?: number | null;
   bloqueo_id?: number | null;
   empaquetado_id?: number | null;
+  salida_id?: number | null;
 };
+
+/**
+ * #63 — oculta, de las filas YA publicadas de un paquete Dinámico, las de una
+ * salida VINCULADA a un vuelo de Empaquetados cuya fuente ya no es elegible
+ * (desactivada, fuera de compra, con record, viaje pasado, moneda), cuya copia
+ * ya no coincide con la fuente o cuyo destino aéreo ya no está permitido. Las
+ * salidas manuales y los demás módulos no se tocan. La fila publicada es una
+ * caché: aquí se decide con la fuente VIVA. Sin cliente de servicio no hay
+ * evidencia (queda como hoy y `computarReserva` la rechaza igual); con error de
+ * lectura se ocultan TODAS las filas dinámicas con salida y se informa el error.
+ */
+async function filtrarSalidasVinculadas63<T extends FilaConOrigen>(
+  admin: ClienteDestinos | null,
+  filas: T[]
+): Promise<{ filas: T[]; errorOrigenAereo: unknown }> {
+  const dinamicas = filas.filter((f) => f.modulo === "dinamico" && f.salida_id != null);
+  if (!dinamicas.length || !admin) return { filas, errorOrigenAereo: null };
+  const sinDinamicas = filas.filter((f) => !(f.modulo === "dinamico" && f.salida_id != null));
+  const salidaIds = [...new Set(dinamicas.map((f) => f.salida_id as number))];
+  const { data: salidas, error: eSal } = await admin
+    .from("salidas_dinamicas")
+    .select("id, empaquetado_id, fecha_ida, fecha_regreso, ruta, aerolinea, valor_tiquete, fee_infante")
+    .in("id", salidaIds);
+  if (eSal) return { filas: sinDinamicas, errorOrigenAereo: new Error(MENSAJES.tecnico) };
+  const salidaPorId = new Map(((salidas ?? []) as unknown as (SalidaVinculada63 & { id: number })[]).map((x) => [x.id, x]));
+  const vinculadas = dinamicas.filter((f) => salidaPorId.get(f.salida_id as number)?.empaquetado_id != null);
+  if (!vinculadas.length) return { filas, errorOrigenAereo: null };
+
+  const idsFuente = [...new Set(vinculadas.map((f) => salidaPorId.get(f.salida_id as number)?.empaquetado_id as number))];
+  const paqueteIds = [...new Set(vinculadas.map((f) => f.paquete_id).filter((x): x is number => x != null))];
+  const [ef, inf, fuentesRes] = await Promise.all([
+    resolverEfectivosPorPaquetes(admin, paqueteIds),
+    leerInfoFuentes(admin, idsFuente.map((id) => ({ tipo: "empaquetado" as const, id }))),
+    admin
+      .from("empaquetados")
+      .select("id, activo, record, compra_inicio, compra_fin, fecha_ida, fecha_regreso, ruta, aerolinea, destino_id, moneda, tarifa_para_empaquetar, fee_infante")
+      .in("id", idsFuente),
+  ]);
+  if (!ef.ok || !inf.ok || fuentesRes.error) {
+    return { filas: filas.filter((f) => !vinculadas.includes(f)), errorOrigenAereo: new Error(MENSAJES.tecnico) };
+  }
+  const fuentePorId = new Map(((fuentesRes.data ?? []) as unknown as (FuenteEmpaquetado63 & { id: number })[]).map((x) => [x.id, x]));
+  const hoy = hoyBogota(new Date());
+  const ocultas = new Set<T>();
+  for (const fila of vinculadas) {
+    const salida = salidaPorId.get(fila.salida_id as number) as SalidaVinculada63;
+    const empId = salida.empaquetado_id as number;
+    const fuente = fuentePorId.get(empId) ?? null;
+    const efectivos = fila.paquete_id != null ? ef.porPaquete.get(fila.paquete_id) : undefined;
+    const destinoOk = !efectivos || !efectivos.ok || motivoRechazoFuente(efectivos.ids, inf.info.get(claveFuente({ tipo: "empaquetado", id: empId })) ?? null) === null;
+    const elegible = evaluarFuenteVinculada63(fuente, hoy).ok;
+    const coincide = fuente ? fuenteCoincideConSalida63(salida, fuente).ok : false;
+    if (!destinoOk || !elegible || !coincide) ocultas.add(fila);
+  }
+  return { filas: filas.filter((f) => !ocultas.has(f)), errorOrigenAereo: null };
+}
 
 /**
  * Oculta, de las filas YA publicadas, las de Bloqueo cuya fuente aérea ya no
@@ -375,6 +434,15 @@ type FilaConOrigen = {
  * (error técnico, distinto de "no hay disponibilidad").
  */
 export async function filtrarFilasPorOrigenAereo<T extends FilaConOrigen>(
+  admin: ClienteDestinos | null,
+  filas: T[]
+): Promise<{ filas: T[]; errorOrigenAereo: unknown }> {
+  const vinculadas = await filtrarSalidasVinculadas63(admin, filas);
+  const bloqueoSistema = await filtrarBloqueoSistema67(admin, vinculadas.filas);
+  return { filas: bloqueoSistema.filas, errorOrigenAereo: vinculadas.errorOrigenAereo ?? bloqueoSistema.errorOrigenAereo };
+}
+
+async function filtrarBloqueoSistema67<T extends FilaConOrigen>(
   admin: ClienteDestinos | null,
   filas: T[]
 ): Promise<{ filas: T[]; errorOrigenAereo: unknown }> {
@@ -431,11 +499,13 @@ export async function vinculosIncompatibles(
   paqueteId: number,
   efectivosIds: number[]
 ): Promise<{ ok: true; afectados: VinculoAfectado[] } | ErrorTecnico> {
-  const [rv, re] = await Promise.all([
+  const [rv, re, rs] = await Promise.all([
     sb.from("armado_vuelos").select("bloqueo_id, bloqueos_vuelo(id, record, ruta, destino_id)").eq("paquete_id", paqueteId),
     sb.from("armado_empaquetados").select("empaquetado_id, empaquetados(id, record, ruta, destino_id)").eq("paquete_id", paqueteId),
+    // #63: las salidas de Dinámico vinculadas a un vuelo de Empaquetados cuentan igual que un vínculo de Sistema.
+    sb.from("salidas_dinamicas").select("empaquetado_id, empaquetados(id, record, ruta, destino_id)").eq("paquete_id", paqueteId).not("empaquetado_id", "is", null),
   ]);
-  if (rv.error || re.error) return errorTecnico();
+  if (rv.error || re.error || rs.error) return errorTecnico();
   const afectados: VinculoAfectado[] = [];
   for (const v of (rv.data ?? []) as unknown as { bloqueo_id: number; bloqueos_vuelo: EnlaceConFuente | null }[]) {
     const f = v.bloqueos_vuelo;
@@ -444,6 +514,12 @@ export async function vinculosIncompatibles(
     }
   }
   for (const v of (re.data ?? []) as unknown as { empaquetado_id: number; empaquetados: EnlaceConFuente | null }[]) {
+    const f = v.empaquetados;
+    if (motivoRechazoFuente(efectivosIds, f ? { id: f.id, destino_id: f.destino_id, ruta: f.ruta, record: f.record } : null)) {
+      afectados.push({ fuente: { tipo: "empaquetado", id: v.empaquetado_id }, ruta: f?.ruta ?? null, record: f?.record ?? null, destino_id: f?.destino_id ?? null });
+    }
+  }
+  for (const v of (rs.data ?? []) as unknown as { empaquetado_id: number; empaquetados: EnlaceConFuente | null }[]) {
     const f = v.empaquetados;
     if (motivoRechazoFuente(efectivosIds, f ? { id: f.id, destino_id: f.destino_id, ruta: f.ruta, record: f.record } : null)) {
       afectados.push({ fuente: { tipo: "empaquetado", id: v.empaquetado_id }, ruta: f?.ruta ?? null, record: f?.record ?? null, destino_id: f?.destino_id ?? null });

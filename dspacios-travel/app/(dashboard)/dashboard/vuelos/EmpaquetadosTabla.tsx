@@ -186,7 +186,9 @@ export function EmpaquetadosTabla({
                 <td className="px-3 py-2" data-label="Origen">
                   {f.origen === "contrato"
                     ? <EstadoBadge estado="Contrato" tono="info" />
-                    : <EstadoBadge estado="Promoción" tono="neutral" />}
+                    : (f.record ?? "").trim() === ""
+                      ? <EstadoBadge estado="Promoción" tono="neutral" />
+                      : <EstadoBadge estado="Empaquetado" tono="neutral" />}
                 </td>
                 <td className="px-3 py-2" data-label="Record">
                   {f.origen === "contrato" ? (

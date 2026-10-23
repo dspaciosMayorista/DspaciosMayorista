@@ -21,6 +21,21 @@ import { empaquetadoVigente, hoyBogota } from "@/lib/reservar/origen";
 import { serviciosSinPrecioInfante } from "@/lib/reservar/menoresDeDos";
 import { seleccionarSalidasVigentes } from "@/lib/reservar/salidaDinamicaVigente";
 import {
+  MODO_OFERTA_63,
+  aCop63,
+  aporteVueloVinculada63,
+  copiarDeFuente63,
+  esModo63,
+  etiquetaSalidaVinculada63,
+  evaluarFuenteVinculada63,
+  feeACop63,
+  fuenteCoincideConSalida63,
+  impuestoPorPersona63,
+  mensajeFuenteCambio63,
+  validarTrm63,
+  type FuenteEmpaquetado63,
+} from "@/lib/reservar/ofertaDinamica63";
+import {
   filtrarCandidatos,
   mensajeErrorBase,
   leerInfoFuentes,
@@ -93,6 +108,28 @@ export interface PaqueteConfig {
   // comercial es siempre `destinoId` y nunca se repite aquí).
   destinosAereosAlternativos?: boolean;
   destinosAereosIds?: number[];
+  // Modo de oferta (migración 227, #63) — OPCIONALES: un formulario anterior que
+  // no los envía no toca lo guardado. `cop_trm_63` (solo Dinámico) publica el
+  // tarifario en COP con la TRM del paquete; `legacy` es el de siempre.
+  modoOferta?: unknown;
+  trmOferta?: unknown;
+}
+
+// Modo de oferta + TRM del paquete (#63). Sin los campos = no se toca. TRM obligatoria
+// y positiva en `cop_trm_63` (nunca 1 por omisión); `legacy` guarda la TRM en NULL.
+function validarModoOfertaPaquete(c: PaqueteConfig):
+  | { ok: true; campos: { modo_oferta?: string; trm_oferta?: number | null } }
+  | { ok: false; error: string } {
+  if (c.modoOferta === undefined && c.trmOferta === undefined) return { ok: true, campos: {} };
+  if (c.modoOferta !== MODO_OFERTA_63 && c.modoOferta !== "legacy" && c.modoOferta !== undefined)
+    return { ok: false, error: "El modo de oferta del paquete no es válido." };
+  if (esModo63(c.modoOferta)) {
+    if (c.tipo !== "dinamico") return { ok: false, error: "El modo COP con TRM solo está disponible para paquetes Dinámico." };
+    const t = validarTrm63(c.trmOferta);
+    if (!t.ok) return { ok: false, error: t.error };
+    return { ok: true, campos: { modo_oferta: MODO_OFERTA_63, trm_oferta: t.trm } };
+  }
+  return { ok: true, campos: { modo_oferta: "legacy", trm_oferta: null } };
 }
 
 function validarCondicionYRestriccionPaquete(
@@ -157,6 +194,8 @@ export async function crearPaquete(c: PaqueteConfig): Promise<Result> {
   if (!c.nombre.trim()) return { ok: false, error: "El nombre es obligatorio." };
   const v = validarCondicionYRestriccionPaquete(c);
   if (!v.ok) return v;
+  const oferta = validarModoOfertaPaquete(c);
+  if (!oferta.ok) return oferta;
   const sb = await createClient();
   // #67: se valida la configuración aérea ANTES de crear nada.
   const entradaAerea = entradaDestinosAereos(c);
@@ -168,7 +207,7 @@ export async function crearPaquete(c: PaqueteConfig): Promise<Result> {
   }
   const { data, error } = await sb
     .from("armado_paquetes")
-    .insert(configToRow(c, v))
+    .insert({ ...configToRow(c, v), ...oferta.campos })
     .select("id")
     .single();
   if (error) return { ok: false, error: error.message };
@@ -190,6 +229,8 @@ export async function actualizarPaquete(id: number, c: PaqueteConfig): Promise<R
   if (!c.nombre.trim()) return { ok: false, error: "El nombre es obligatorio." };
   const v = validarCondicionYRestriccionPaquete(c);
   if (!v.ok) return v;
+  const oferta = validarModoOfertaPaquete(c);
+  if (!oferta.ok) return oferta;
   const sb = await createClient();
   // #67: configuración aérea. Primero se valida TODO sin escribir (país
   // comparable, alternativas activas, y que ningún vuelo ya vinculado quede
@@ -207,9 +248,9 @@ export async function actualizarPaquete(id: number, c: PaqueteConfig): Promise<R
   }
   const { error } = await sb
     .from("armado_paquetes")
-    .update({ ...configToRow(c, v), updated_at: new Date().toISOString() })
+    .update({ ...configToRow(c, v), ...oferta.campos, updated_at: new Date().toISOString() })
     .eq("id", id);
-  if (error) return { ok: false, error: error.message };
+  if (error) return { ok: false, error: mensajeErrorOferta63(error.message) };
   revalidatePath(`/dashboard/paquetes/${id}`);
   return { ok: true, id };
 }
@@ -719,6 +760,20 @@ export async function generarTarifario(paqueteId: number): Promise<Result> {
   // compatibles con Vista Booking.
   const tipo = (pq.tipo ?? "bloqueo") as "bloqueo" | "porcion_terrestre" | "servicios" | "dinamico";
 
+  // #63 — modo de oferta del paquete. `cop_trm_63`: el tarifario se publica en
+  // COP; todo neto en USD (hotel/servicios/salida manual) se convierte × la TRM
+  // del paquete ANTES del markup. La TRM es obligatoria y positiva (nunca 1).
+  // Cualquier otro valor = comportamiento de siempre, sin cambios.
+  const modo63 = esModo63((pq as { modo_oferta?: unknown }).modo_oferta);
+  let trm63 = 0;
+  if (modo63) {
+    const t = validarTrm63((pq as { trm_oferta?: unknown }).trm_oferta);
+    if (!t.ok) return await fallar(t.error);
+    trm63 = t.trm;
+  }
+  // Neto → moneda de publicación. En el modo de siempre es la identidad.
+  const aMonedaOferta = (neto: number, monedaOrigen: string | null | undefined) => (modo63 ? aCop63(neto, monedaOrigen, trm63) : neto);
+
   const [{ data: vuelosSel, error: eVuelosSel }, { data: empaquetadosSel, error: eEmpaquetadosSel }, { data: hotelesSel, error: eHotelesSel }, { data: serviciosSel, error: eServiciosSel }] = await Promise.all([
     sb
       .from("armado_vuelos")
@@ -777,12 +832,16 @@ export async function generarTarifario(paqueteId: number): Promise<Result> {
   const monedasHotel = Array.from(
     new Set(hoteles.map((h) => monedaDe((h.hoteles as unknown as { moneda?: string | null } | null)?.moneda)))
   );
-  if (monedasHotel.length > 1)
+  // Modo `cop_trm_63`: cada neto se convierte a COP con la TRM del paquete antes
+  // del markup, así que hoteles y servicios en monedas distintas NO se mezclan.
+  if (!modo63 && monedasHotel.length > 1)
     return await fallar("Los hoteles del paquete tienen monedas distintas (COP y USD). Un paquete debe ser de una sola moneda.");
   const monedasServicio = Array.from(new Set(servicios.map(svcMoneda)));
 
   let paqueteMoneda: "COP" | "USD";
-  if (hoteles.length) {
+  if (modo63) {
+    paqueteMoneda = "COP";
+  } else if (hoteles.length) {
     // La moneda la fija el hotel; cualquier servicio en otra moneda se rechaza.
     paqueteMoneda = monedasHotel[0];
     if (monedasServicio.some((m) => m !== paqueteMoneda))
@@ -947,7 +1006,7 @@ export async function generarTarifario(paqueteId: number): Promise<Result> {
       const srv = s.servicios_adicionales as unknown as { precio_persona: number | null; liquidacion: string | null } | null;
       if (srv?.precio_persona == null) continue;
       // Cobro amarrado a la duración: por noche × noches, por día × (noches+1).
-      total += marcar(Number(srv.precio_persona) || 0, pctMk) * factorLiquidacion(srv.liquidacion, numNoches);
+      total += marcar(aMonedaOferta(Number(srv.precio_persona) || 0, svcMoneda(s)), pctMk) * factorLiquidacion(srv.liquidacion, numNoches);
     }
     return total;
   }
@@ -963,7 +1022,7 @@ export async function generarTarifario(paqueteId: number): Promise<Result> {
       const srv = s.servicios_adicionales as unknown as { precio_persona: number | null; precio_infante: number | null; liquidacion: string | null } | null;
       if (srv?.precio_persona == null) continue;
       const neto = srv.precio_infante != null ? Number(srv.precio_infante) || 0 : Number(srv.precio_persona) || 0;
-      total += marcar(neto, pctMk) * factorLiquidacion(srv.liquidacion, numNoches);
+      total += marcar(aMonedaOferta(neto, svcMoneda(s)), pctMk) * factorLiquidacion(srv.liquidacion, numNoches);
     }
     return total;
   }
@@ -1003,7 +1062,10 @@ export async function generarTarifario(paqueteId: number): Promise<Result> {
       const hotelMeta = h.hoteles as unknown as { nombre: string; moneda?: string | null; adults_only?: boolean | null } | null;
       const hotelAdultsOnly = hotelMeta?.adults_only === true;
       const hotelNombre = hotelMeta?.nombre ?? null;
-      const monedaHotel = (hotelMeta?.moneda ?? "COP") === "USD" ? "USD" : "COP";
+      const monedaHotelOrigen = (hotelMeta?.moneda ?? "COP") === "USD" ? "USD" : "COP";
+      // Moneda de PUBLICACIÓN: la del hotel de siempre; en modo 63 siempre COP
+      // (el neto del hotel se convierte × TRM antes del markup, ver `publicarFila`).
+      const monedaHotel = modo63 ? "COP" : monedaHotelOrigen;
       const filtroCat = (h.categorias as string[] | null) ?? null;
       const filtroReg = (h.regimenes as string[] | null) ?? null;
       const temporadas = temporadasPorHotel.get(h.hotel_id) ?? [];
@@ -1033,7 +1095,7 @@ export async function generarTarifario(paqueteId: number): Promise<Result> {
         let procedenciaHab: ReturnType<typeof columnasProcedencia> | null = null;
         const publicarFila = (acom: Acomodacion, costoHotel: number, procedencia: ReturnType<typeof columnasProcedencia>) => {
           const esRoom = acom !== "nino" && acom !== "nino2" && acom !== "infante";
-          const aporteHotel = marcar(costoHotel, pctMk); // hotel siempre con mk
+          const aporteHotel = marcar(aMonedaOferta(costoHotel, monedaHotelOrigen), pctMk); // hotel siempre con mk (en modo 63: neto × TRM primero)
           const t = componerTarifa({
             aporteHotel,
             aporteServicios: aporteServ,
@@ -1203,6 +1265,38 @@ export async function generarTarifario(paqueteId: number): Promise<Result> {
   if (eSalidas) return await fallarTecnico(eSalidas.message);
   const { vigentes: salidas, descartadas: salidasDescartadas } = seleccionarSalidasVigentes(salidasRaw ?? []);
 
+  // #63 — salidas VINCULADAS a un vuelo de Empaquetados sin record. Se leen sus
+  // fuentes VIVAS (una sola consulta) y se valida, antes de publicar nada:
+  // elegibilidad de la fuente (activa, sin record, ventana de compra, viaje
+  // futuro, COP), que la copia guardada en la salida siga coincidiendo con la
+  // fuente, y que su destino de llegada esté entre los destinos aéreos efectivos
+  // del paquete (#67/220, misma regla que Bloqueo/Sistema). Una vinculada que no
+  // cumple NO se publica y se reporta; nunca se publica con datos viejos.
+  const vinculadas63 = tipo === "dinamico"
+    ? salidas.filter((x) => (x as { empaquetado_id?: number | null }).empaquetado_id != null)
+    : [];
+  const fuentes63 = new Map<number, FuenteEmpaquetado63>();
+  const omitidas63: string[] = [];
+  let permiteVinculada63: (empaquetadoId: number) => boolean = () => true;
+  if (vinculadas63.length) {
+    if (!modo63)
+      return await fallar("Dinámico: las salidas vinculadas a Empaquetados exigen el modo COP con TRM en la configuración del paquete.");
+    const idsFuente = [...new Set(vinculadas63.map((x) => (x as { empaquetado_id: number }).empaquetado_id))];
+    const { data: fuentesRows, error: eFuentes } = await sb
+      .from("empaquetados")
+      .select("id, activo, record, compra_inicio, compra_fin, fecha_ida, fecha_regreso, ruta, aerolinea, destino_id, moneda, tarifa_para_empaquetar, fee_infante")
+      .in("id", idsFuente);
+    if (eFuentes) return await fallarTecnico(eFuentes.message);
+    for (const fr of (fuentesRows ?? []) as unknown as (FuenteEmpaquetado63 & { id: number })[]) fuentes63.set(fr.id, fr);
+    const efAerea63 = await resolverDestinosAereosPaquete(sb, paqueteId);
+    if (!efAerea63.ok) return await fallarTecnico(efAerea63.error);
+    if (!efAerea63.efectivos.ok) return await fallar(`Dinámico: ${efAerea63.efectivos.error}`);
+    const permitidos63 = efAerea63.efectivos.ids;
+    const infoAerea63 = await leerInfoFuentes(sb, idsFuente.map((id) => ({ tipo: "empaquetado" as const, id })));
+    if (!infoAerea63.ok) return await fallarTecnico(infoAerea63.error);
+    permiteVinculada63 = (id) => motivoRechazoFuente(permitidos63, infoAerea63.info.get(`empaquetado:${id}`) ?? null) === null;
+  }
+
   // Validaciones según el tipo (mensajes claros en vez de 0 silencioso).
   // 'bloqueo' acepta cupos negociados (armado_vuelos) O tarifas de Sistema
   // (armado_empaquetados) — no se limita en silencio a solo bloqueos: el
@@ -1282,6 +1376,38 @@ export async function generarTarifario(paqueteId: number): Promise<Result> {
       if (!fIda || !fReg) continue;
       const numNoches = calcNoches(fIda, fReg);
       if (numNoches <= 0) continue;
+      // #63 — salida vinculada: R (precio final del aéreo) entra al PVP SIN markup
+      // ni TA; F (fee de infante) se suma exacto; el hotel y los servicios siguen
+      // el motor de siempre. Camino aparte de la salida manual (no la altera).
+      const empaquetadoVinculado = (sal as { empaquetado_id?: number | null }).empaquetado_id ?? null;
+      if (empaquetadoVinculado != null) {
+        const etiqueta63 = etiquetaSalidaVinculada63(sal);
+        const fuente63 = fuentes63.get(empaquetadoVinculado) ?? null;
+        const elegible63 = evaluarFuenteVinculada63(fuente63, hoyBogota(new Date()));
+        if (!elegible63.ok) { omitidas63.push(`${etiqueta63}: ${elegible63.error}`); continue; }
+        if (!permiteVinculada63(empaquetadoVinculado)) {
+          omitidas63.push(`${etiqueta63}: su destino aéreo no está permitido para este paquete.`);
+          continue;
+        }
+        const coincide63 = fuenteCoincideConSalida63(sal, fuente63!);
+        if (!coincide63.ok) { omitidas63.push(`${etiqueta63}: ${mensajeFuenteCambio63(coincide63.campos)}`); continue; }
+        const tarifaR63 = Number(fuente63!.tarifa_para_empaquetar) || 0;
+        const impuesto63 = impuestoPorPersona63({ tipo: pq.impuesto_tipo, tarifaParaEmpaquetar: tarifaR63, fijoCop: Number(pq.impuesto_fijo) || 0 });
+        const feeF63 = feeACop63(Number(fuente63!.fee_infante) || 0, fuente63!.moneda, trm63);
+        filasHoteles(fIda, numNoches, aporteVueloVinculada63(tarifaR63), impuesto63, "dinamico", null, etiqueta63, fReg, false, sal.id as number, null, feeF63);
+        continue;
+      }
+      // #63 — salida MANUAL en modo COP: el tiquete/TA/fee conservan la moneda
+      // acreditada de la salida y se convierten × TRM antes de publicar en COP.
+      if (modo63) {
+        const monedaManual = (sal as { moneda?: string | null }).moneda ?? "COP";
+        const tiqueteCop = aCop63(Number(sal.valor_tiquete) || 0, monedaManual, trm63);
+        const taCop = aCop63(Number(sal.ta) || 0, monedaManual, trm63);
+        const impuestoManual = pq.impuesto_tipo === "tiquete" ? tiqueteCop : Number(pq.impuesto_fijo) || 0;
+        const etiquetaManual = etiquetaSalidaVinculada63(sal);
+        filasHoteles(fIda, numNoches, aporteVuelo(tiqueteCop, sal.aplica_mk as boolean, pctMk, taCop), impuestoManual, "dinamico", null, etiquetaManual, fReg, false, sal.id as number, null, feeACop63(Number(sal.fee_infante) || 0, monedaManual, trm63));
+        continue;
+      }
       const costoTiquete = Number(sal.valor_tiquete) || 0;
       const aporteVueloVal = aporteVuelo(costoTiquete, sal.aplica_mk as boolean, pctMk, Number(sal.ta) || 0);
       const impuesto = pq.impuesto_tipo === "tiquete" ? costoTiquete : Number(pq.impuesto_fijo) || 0;
@@ -1289,6 +1415,12 @@ export async function generarTarifario(paqueteId: number): Promise<Result> {
       const label = `${sal.ruta || ""}${sal.ruta && fIda ? " · " : ""}${fIda ? fIda.split("-").reverse().join("/") : ""}`.trim();
       filasHoteles(fIda, numNoches, aporteVueloVal, impuesto, "dinamico", null, label || (sal.ruta ?? "Salida"), fReg, false, sal.id as number, null, Number(sal.fee_infante) || 0);
     }
+  }
+
+  // #63 — si el paquete quedó sin ninguna salida dinámica publicable por culpa de
+  // las vinculadas omitidas, se dice por qué (no es "sin salidas" a secas).
+  if (tipo === "dinamico" && omitidas63.length && !filas.some((x) => x.modulo === "dinamico")) {
+    return await fallar(`Dinámico: ninguna salida quedó disponible. ${omitidas63.slice(0, 3).join(" ")}`);
   }
 
   // Noches del paquete para amarrar el cobro de los servicios por día/noche.
@@ -1306,7 +1438,9 @@ export async function generarTarifario(paqueteId: number): Promise<Result> {
     const fLiq = factorLiquidacion(srv.liquidacion, nochesPaq);
     const modo = (s.modo as string) === "grupo" ? "grupo" : "persona";
     // Cada servicio se publica en SU moneda (redondeo a mil en COP, a dólar en USD).
-    const monedaSrv = svcMoneda(s);
+    const monedaSrvOrigen = svcMoneda(s);
+    // Modo 63: se publica en COP (neto × TRM antes del markup); si no, en la moneda del servicio.
+    const monedaSrv = modo63 ? "COP" : monedaSrvOrigen;
     const comun = {
       paquete_id: paqueteId,
       paquete_nombre: paqueteNombre,
@@ -1333,19 +1467,19 @@ export async function generarTarifario(paqueteId: number): Promise<Result> {
     };
     if (modo === "grupo") {
       for (const g of gruposPorServicio.get(s.servicio_id) ?? []) {
-        const pvp = redondearVenta(marcar(Number(g.precio) || 0, pctMk) * fLiq, monedaSrv);
+        const pvp = redondearVenta(marcar(aMonedaOferta(Number(g.precio) || 0, monedaSrvOrigen), pctMk) * fLiq, monedaSrv);
         filas.push({ ...comun, pax_desde: g.pax_desde, pax_hasta: g.pax_hasta, base_comisionable: pvp, precio_pvp: pvp });
       }
     } else if (srv.precio_persona != null) {
-      const pvp = redondearVenta(marcar(Number(srv.precio_persona) || 0, pctMk) * fLiq, monedaSrv);
+      const pvp = redondearVenta(marcar(aMonedaOferta(Number(srv.precio_persona) || 0, monedaSrvOrigen), pctMk) * fLiq, monedaSrv);
       // Recargo individual: suplemento del proveedor cuando va 1 pax (cobro por
       // persona). Es un COSTO, así que el lado de venta sube con su markup; el
       // costo neto lo toma Reservar del catálogo para la CxP del proveedor.
       const recargoNeto = Math.max(Number(srv.recargo_individual) || 0, 0);
-      const recargoPvp = recargoNeto > 0 ? redondearVenta(marcar(recargoNeto, pctMk), monedaSrv) : 0;
+      const recargoPvp = recargoNeto > 0 ? redondearVenta(marcar(aMonedaOferta(recargoNeto, monedaSrvOrigen), pctMk), monedaSrv) : 0;
       // Precio de infante (0 a 1,99 años) del servicio: NETO con el mismo markup.
       // NULL = el servicio no lo configuró → el infante paga como adulto (NULL ≠ $0).
-      const infantePvp = srv.precio_infante != null ? redondearVenta(marcar(Number(srv.precio_infante) || 0, pctMk) * fLiq, monedaSrv) : null;
+      const infantePvp = srv.precio_infante != null ? redondearVenta(marcar(aMonedaOferta(Number(srv.precio_infante) || 0, monedaSrvOrigen), pctMk) * fLiq, monedaSrv) : null;
       filas.push({ ...comun, base_comisionable: pvp, precio_pvp: pvp, precio_pvp_menor2: infantePvp, recargo_individual: recargoPvp });
     }
   }
@@ -1378,13 +1512,27 @@ export async function generarTarifario(paqueteId: number): Promise<Result> {
   // generación Y la revisión de fuente capturadas al principio siguen
   // vigentes. El cálculo de `filas` de arriba no cambió en absoluto — la
   // matemática es idéntica a la versión anterior de esta función.
-  const { data: publicado, error: ePublicar } = await sb.rpc("publicar_tarifario_resultado", {
-    p_paquete_id: paqueteId,
-    p_generacion: generacion,
-    p_revision_capturada: revisionCapturada,
-    p_moneda: paqueteMoneda,
-    p_filas: filas as unknown as Json,
-  });
+  // #63: un paquete en modo COP/TRM publica por el envoltorio de la 227, que
+  // llama al publicador VIGENTE (el de la 226, sin copiar su cuerpo) y guarda la
+  // TRM/modo/fuentes de ESA publicación en la misma transacción. El resto de los
+  // paquetes sigue por el publicador de siempre, sin cambios.
+  const { data: publicado, error: ePublicar } = modo63
+    ? await sb.rpc("publicar_tarifario_resultado_63", {
+        p_paquete_id: paqueteId,
+        p_generacion: generacion,
+        p_revision_capturada: revisionCapturada,
+        p_moneda: paqueteMoneda,
+        p_filas: filas as unknown as Json,
+        p_modo: MODO_OFERTA_63,
+        p_trm: trm63,
+      })
+    : await sb.rpc("publicar_tarifario_resultado", {
+        p_paquete_id: paqueteId,
+        p_generacion: generacion,
+        p_revision_capturada: revisionCapturada,
+        p_moneda: paqueteMoneda,
+        p_filas: filas as unknown as Json,
+      });
   if (ePublicar) return await fallarTecnico(ePublicar.message);
   if (!publicado) {
     // Generación o revisión de fuente superadas DURANTE este cálculo — NUNCA
@@ -1431,6 +1579,9 @@ export async function generarTarifario(paqueteId: number): Promise<Result> {
   const avisoNoCompatibles = hotelesBernaloNoCompatibles.length
     ? ` ${hotelesBernaloNoCompatibles.length === 1 ? "El hotel" : "Los hoteles"} ${hotelesBernaloNoCompatibles.join(", ")} también usa${hotelesBernaloNoCompatibles.length === 1 ? "" : "n"} el modelo por unidad, pero el tipo de paquete (${tipo === "dinamico" ? "dinámico" : "servicios"}) todavía no está integrado con Vista Booking — no aparecerá${hotelesBernaloNoCompatibles.length === 1 ? "" : "n"} ahí hasta que exista esa integración.`
     : "";
+  const avisoVinculadas63 = omitidas63.length
+    ? ` ${omitidas63.length} salida(s) vinculada(s) no se publicaron: ${omitidas63.slice(0, 3).join(" ")}`
+    : "";
   const avisoDestinosAereos = excluidosPorDestinoAereo
     ? ` ${excluidosPorDestinoAereo} vuelo(s) vinculado(s) se omitieron porque su destino aéreo ya no está permitido para este paquete.`
     : "";
@@ -1450,8 +1601,8 @@ export async function generarTarifario(paqueteId: number): Promise<Result> {
   return {
     ok: true,
     id: filas.length,
-    ...(avisoValidos || avisoSinPublicar || avisoNoCompatibles || avisoDestinosAereos || avisoInfante
-      ? { aviso: `${filas.length} tarifa(s) persona publicada(s) en el tarifario.${avisoValidos ? ` Además, ${avisoValidos}` : ""}${avisoSinPublicar}${avisoNoCompatibles}${avisoDestinosAereos}${avisoInfante}` }
+    ...(avisoValidos || avisoSinPublicar || avisoNoCompatibles || avisoDestinosAereos || avisoVinculadas63 || avisoInfante
+      ? { aviso: `${filas.length} tarifa(s) persona publicada(s) en el tarifario.${avisoValidos ? ` Además, ${avisoValidos}` : ""}${avisoSinPublicar}${avisoNoCompatibles}${avisoDestinosAereos}${avisoVinculadas63}${avisoInfante}` }
       : {}),
   };
 }
@@ -1601,6 +1752,9 @@ export type SalidaDinamicaInput = {
   compraInicio: string;
   compraFin: string;
   notas: string;
+  // #63: moneda acreditada de tiquete/TA/fee de la salida MANUAL en modo COP (se convierte × TRM del
+  // paquete). Opcional: sin ella no se toca (la base deja COP por omisión).
+  moneda?: "COP" | "USD";
 };
 
 function salidaRow(paqueteId: number, input: SalidaDinamicaInput) {
@@ -1622,6 +1776,7 @@ function salidaRow(paqueteId: number, input: SalidaDinamicaInput) {
     compra_inicio: dNull(input.compraInicio),
     compra_fin: dNull(input.compraFin),
     notas: oNull(input.notas),
+    ...(input.moneda === "USD" || input.moneda === "COP" ? { moneda: input.moneda } : {}),
   };
 }
 
@@ -1638,11 +1793,16 @@ export async function crearSalidaDinamica(paqueteId: number, input: SalidaDinami
 export async function actualizarSalidaDinamica(id: number, input: SalidaDinamicaInput): Promise<Result> {
   const sb = await createClient();
   if (!input.fechaIda) return { ok: false, error: "La fecha de ida es obligatoria." };
-  const { data: prev } = await sb.from("salidas_dinamicas").select("paquete_id").eq("id", id).maybeSingle();
+  const { data: prev } = await sb.from("salidas_dinamicas").select("paquete_id, empaquetado_id").eq("id", id).maybeSingle();
+  // #63: una salida vinculada guarda una COPIA de su fuente; editar esos campos a mano
+  // la dejaría distinta del vuelo real. Se actualiza solo desde la fuente.
+  if ((prev as { empaquetado_id?: number | null } | null)?.empaquetado_id != null) {
+    return { ok: false, error: "Esta salida está vinculada a un vuelo de Empaquetados: sus datos no se editan aquí. Usa \"Actualizar desde la fuente\" o desvincúlala." };
+  }
   const { paquete_id: _omit, ...row } = salidaRow(prev?.paquete_id ?? 0, input);
   void _omit;
   const { error } = await sb.from("salidas_dinamicas").update(row).eq("id", id);
-  if (error) return { ok: false, error: error.message };
+  if (error) return { ok: false, error: mensajeErrorOferta63(error.message) };
   if (prev?.paquete_id) {
     revalidatePath(`/dashboard/paquetes/${prev.paquete_id}`);
     try { await generarTarifario(prev.paquete_id); } catch { /* sigue */ }
@@ -1660,4 +1820,205 @@ export async function eliminarSalidaDinamica(id: number): Promise<Result> {
     try { await generarTarifario(prev.paquete_id); } catch { /* sigue */ }
   }
   return { ok: true };
+}
+
+// ── SALIDAS VINCULADAS A EMPAQUETADOS SIN RECORD (#63, migración 227) ───────
+// Una salida vinculada toma de un vuelo de Empaquetados SIN record sus fechas, ruta y tarifas
+// (R = precio final del aéreo, sin markup; F = fee de infante). Se consulta SOLO la tabla
+// `empaquetados` (nunca contratos ni vuelos con PNR); la lista es múltiple, muestra todas las
+// elegibles ya revisadas y NO incorpora nada sola: las nuevas aparecen como pendientes y el
+// usuario las agrega y regenera. Reutiliza la configuración de destinos aéreos de la 220.
+
+const SELECT_FUENTE_63 =
+  "id, activo, record, compra_inicio, compra_fin, fecha_ida, fecha_regreso, ruta, aerolinea, hora_salida_ida, hora_llegada_ida, hora_salida_reg, hora_llegada_reg, destino_id, moneda, tarifa_para_empaquetar, fee_infante";
+
+const MSG_TECNICO_63 = "No se pudo completar la operación por un error técnico. Intenta nuevamente.";
+
+/** Traduce los errores de las guardas de la 227 a mensajes de negocio (nunca texto crudo de Postgres). */
+function mensajeErrorOferta63(mensaje: string | null | undefined): string {
+  const m = mensaje ?? "";
+  if (/salida_vinculada_modo/i.test(m)) return "Las salidas vinculadas a Empaquetados exigen que el paquete sea Dinámico en modo COP con TRM.";
+  if (/salida_vinculada_record/i.test(m)) return "Ese vuelo de Empaquetados ya tiene record (PNR): una salida vinculada solo admite vuelos de sistema sin record.";
+  if (/salida_vinculada_unica/i.test(m) || /salidas_dinamicas_paquete_empaquetado_uk/i.test(m)) return "Ese vuelo de Empaquetados ya está vinculado a este paquete.";
+  if (/modo_oferta_vinculadas/i.test(m)) return "Hay salidas vinculadas a Empaquetados: desvincúlalas antes de cambiar el modo de oferta del paquete.";
+  if (/destino_aereo_vinculos|destino_aereo_no_permitido|destino_aereo_config/i.test(m)) return mensajeErrorBase(m);
+  return MENSAJE_ERROR_TECNICO_TARIFARIO;
+}
+
+export type CandidatoSalida63 = {
+  id: number;
+  ruta: string | null;
+  aerolinea: string | null;
+  fechaIda: string;
+  fechaRegreso: string;
+  compraInicio: string | null;
+  compraFin: string | null;
+  /** Precio final del aéreo por pasajero (R) y fee de infante (F): datos de venta, nunca el costo N. */
+  tarifaParaEmpaquetar: number;
+  feeInfante: number;
+  salidaId: number | null;
+  /** true = ya hay una salida vinculada a este vuelo en el paquete. */
+  vinculado: boolean;
+  /** true = la salida vinculada guarda una copia distinta de la fuente o la fuente dejó de ser elegible. */
+  desactualizado: boolean;
+};
+
+type PaqueteOferta63 = { id: number; tipo: string; destino_id: number | null; modo_oferta: string | null; trm_oferta: number | null };
+
+async function leerPaqueteOferta63(
+  sb: Awaited<ReturnType<typeof createClient>>,
+  paqueteId: number
+): Promise<{ ok: true; paquete: PaqueteOferta63 } | { ok: false; error: string }> {
+  const { data, error } = await sb.from("armado_paquetes").select("id, tipo, destino_id, modo_oferta, trm_oferta").eq("id", paqueteId).maybeSingle();
+  if (error) return { ok: false, error: MSG_TECNICO_63 };
+  if (!data) return { ok: false, error: "El paquete ya no existe." };
+  const p = data as unknown as PaqueteOferta63;
+  if (p.tipo !== "dinamico") return { ok: false, error: "Las salidas vinculadas a Empaquetados solo existen en paquetes Dinámico." };
+  if (!esModo63(p.modo_oferta)) return { ok: false, error: "Activa el modo COP con TRM en la configuración del paquete para vincular salidas de Empaquetados." };
+  return { ok: true, paquete: p };
+}
+
+/** Todas las filas ACTIVAS de `empaquetados` (paginado por filas REALES: PostgREST puede truncar sin error). */
+async function leerEmpaquetadosActivos63(
+  sb: Awaited<ReturnType<typeof createClient>>
+): Promise<{ ok: true; filas: (FuenteEmpaquetado63 & { id: number })[] } | { ok: false }> {
+  const PAGINA = 1000;
+  const MAX_PAGINAS = 100;
+  const filas: (FuenteEmpaquetado63 & { id: number })[] = [];
+  let desde = 0;
+  for (let i = 0; i < MAX_PAGINAS; i++) {
+    const { data, error } = await sb
+      .from("empaquetados")
+      .select(SELECT_FUENTE_63)
+      .eq("activo", true)
+      .order("fecha_ida")
+      .order("id")
+      .range(desde, desde + PAGINA - 1);
+    if (error) return { ok: false };
+    const lote = (data ?? []) as unknown as (FuenteEmpaquetado63 & { id: number })[];
+    if (!lote.length) return { ok: true, filas };
+    filas.push(...lote);
+    desde += lote.length;
+  }
+  return { ok: false };
+}
+
+export async function listarEmpaquetadosParaSalidas63(
+  paqueteId: number
+): Promise<{ ok: true; candidatos: CandidatoSalida63[]; pendientes: number } | { ok: false; error: string }> {
+  const sb = await createClient();
+  const pq = await leerPaqueteOferta63(sb, paqueteId);
+  if (!pq.ok) return pq;
+  const [fuentes, vinculadas, ef] = await Promise.all([
+    leerEmpaquetadosActivos63(sb),
+    sb
+      .from("salidas_dinamicas")
+      .select("id, empaquetado_id, fecha_ida, fecha_regreso, ruta, aerolinea, valor_tiquete, fee_infante")
+      .eq("paquete_id", paqueteId)
+      .not("empaquetado_id", "is", null),
+    resolverDestinosAereosPaquete(sb, paqueteId),
+  ]);
+  if (!fuentes.ok || vinculadas.error || !ef.ok) return { ok: false, error: MSG_TECNICO_63 };
+  if (!ef.efectivos.ok) return { ok: false, error: ef.efectivos.error };
+  const permitidos = ef.efectivos.ids;
+  const salidaPorFuente = new Map<number, Record<string, unknown>>();
+  for (const v of (vinculadas.data ?? []) as unknown as (Record<string, unknown> & { empaquetado_id: number })[]) {
+    salidaPorFuente.set(v.empaquetado_id, v);
+  }
+  const hoy = hoyBogota(new Date());
+  const candidatos: CandidatoSalida63[] = [];
+  for (const f of fuentes.filas) {
+    const ya = salidaPorFuente.get(f.id) ?? null;
+    const elegible = evaluarFuenteVinculada63(f, hoy).ok;
+    const destinoOk =
+      motivoRechazoFuente(permitidos, { id: f.id, destino_id: f.destino_id ?? null, ruta: f.ruta ?? null, record: f.record ?? null }) === null;
+    // Las ya vinculadas se muestran aunque dejaran de ser elegibles (para poder revisarlas);
+    // las demás, solo si lo son hoy (sin record, vigentes, destino aéreo permitido).
+    if (!ya && !(elegible && destinoOk)) continue;
+    candidatos.push({
+      id: f.id,
+      ruta: f.ruta ?? null,
+      aerolinea: f.aerolinea ?? null,
+      fechaIda: f.fecha_ida as string,
+      fechaRegreso: f.fecha_regreso as string,
+      compraInicio: f.compra_inicio ?? null,
+      compraFin: f.compra_fin ?? null,
+      tarifaParaEmpaquetar: Number(f.tarifa_para_empaquetar) || 0,
+      feeInfante: Number(f.fee_infante) || 0,
+      salidaId: ya ? Number(ya.id) : null,
+      vinculado: !!ya,
+      desactualizado: ya ? !fuenteCoincideConSalida63(ya as never, f).ok || !elegible || !destinoOk : false,
+    });
+  }
+  return { ok: true, candidatos, pendientes: candidatos.filter((c) => !c.vinculado).length };
+}
+
+/**
+ * Vincula VARIOS vuelos de Empaquetados sin record como salidas del paquete: TODO o NADA.
+ * Se valida cada fuente (elegibilidad + destino aéreo de la 220) ANTES de escribir; un solo
+ * INSERT; la base repite las guardas. Deduplica y respeta la unicidad (paquete, fuente).
+ */
+export async function vincularSalidasEmpaquetados63(paqueteId: number, empaquetadoIds: number[]): Promise<Result> {
+  const sb = await createClient();
+  const ids = [...new Set((empaquetadoIds ?? []).map(Number))];
+  if (!ids.length || ids.length > 200 || ids.some((n) => !Number.isInteger(n) || n <= 0)) {
+    return { ok: false, error: "Elige al menos un vuelo de Empaquetados." };
+  }
+  const pq = await leerPaqueteOferta63(sb, paqueteId);
+  if (!pq.ok) return pq;
+  const { data: fuentesRows, error: eF } = await sb.from("empaquetados").select(SELECT_FUENTE_63).in("id", ids);
+  if (eF) return { ok: false, error: MSG_TECNICO_63 };
+  const porId = new Map(((fuentesRows ?? []) as unknown as (FuenteEmpaquetado63 & { id: number })[]).map((x) => [x.id, x]));
+  const hoy = hoyBogota(new Date());
+  const rechazos: string[] = [];
+  for (const id of ids) {
+    const fuente = porId.get(id) ?? null;
+    const ev = evaluarFuenteVinculada63(fuente, hoy);
+    if (!ev.ok) rechazos.push(`${fuente ? etiquetaSalidaVinculada63(fuente) : `#${id}`}: ${ev.error}`);
+  }
+  if (rechazos.length) return { ok: false, error: `No se vinculó ningún vuelo. ${rechazos.slice(0, 3).join(" ")}` };
+  const val = await validarLoteOrigenesAereos(sb, paqueteId, ids.map((id) => ({ tipo: "empaquetado" as const, id })));
+  if (!val.ok) return { ok: false, error: val.error };
+  const { data: ya, error: eYa } = await sb.from("salidas_dinamicas").select("empaquetado_id").eq("paquete_id", paqueteId).in("empaquetado_id", ids);
+  if (eYa) return { ok: false, error: MSG_TECNICO_63 };
+  const yaVinculados = new Set(((ya ?? []) as { empaquetado_id: number | null }[]).map((x) => x.empaquetado_id));
+  const nuevos = ids.filter((id) => !yaVinculados.has(id));
+  if (!nuevos.length) return { ok: false, error: "Todos esos vuelos ya están vinculados a este paquete." };
+  const filas = nuevos.map((id) => ({ paquete_id: paqueteId, empaquetado_id: id, ...copiarDeFuente63(porId.get(id) as FuenteEmpaquetado63) }));
+  const { error } = await sb.from("salidas_dinamicas").insert(filas);
+  if (error) return { ok: false, error: mensajeErrorOferta63(error.message) };
+  revalidatePath(`/dashboard/paquetes/${paqueteId}`);
+  const regen = await generarTarifario(paqueteId).catch(() => null);
+  if (!regen || !regen.ok) {
+    return {
+      ok: true,
+      id: nuevos.length,
+      aviso: `Se vincularon ${nuevos.length} salida(s), pero el tarifario no se pudo regenerar${regen && !regen.ok ? `: ${regen.error}` : ""}. Genéralo desde el paquete.`,
+    };
+  }
+  return { ok: true, id: nuevos.length, ...(regen.aviso ? { aviso: regen.aviso } : {}) };
+}
+
+/** Vuelve a copiar de la fuente VIVA los datos de una salida vinculada (la copia quedó vieja) y regenera. */
+export async function actualizarSalidaDesdeFuente63(salidaId: number): Promise<Result> {
+  const sb = await createClient();
+  const { data: sal, error: eS } = await sb.from("salidas_dinamicas").select("id, paquete_id, empaquetado_id").eq("id", salidaId).maybeSingle();
+  if (eS) return { ok: false, error: MSG_TECNICO_63 };
+  const s = sal as unknown as { id: number; paquete_id: number; empaquetado_id: number | null } | null;
+  if (!s || s.empaquetado_id == null) return { ok: false, error: "Esta salida no está vinculada a un vuelo de Empaquetados." };
+  const { data: f, error: eF } = await sb.from("empaquetados").select(SELECT_FUENTE_63).eq("id", s.empaquetado_id).maybeSingle();
+  if (eF) return { ok: false, error: MSG_TECNICO_63 };
+  const fuente = f as unknown as (FuenteEmpaquetado63 & { id: number }) | null;
+  const ev = evaluarFuenteVinculada63(fuente, hoyBogota(new Date()));
+  if (!ev.ok) return { ok: false, error: ev.error };
+  const val = await validarLoteOrigenesAereos(sb, s.paquete_id, [{ tipo: "empaquetado", id: s.empaquetado_id }]);
+  if (!val.ok) return { ok: false, error: val.error };
+  const { error } = await sb.from("salidas_dinamicas").update(copiarDeFuente63(fuente as FuenteEmpaquetado63)).eq("id", salidaId);
+  if (error) return { ok: false, error: mensajeErrorOferta63(error.message) };
+  revalidatePath(`/dashboard/paquetes/${s.paquete_id}`);
+  const regen = await generarTarifario(s.paquete_id).catch(() => null);
+  if (!regen || !regen.ok) {
+    return { ok: true, aviso: `La salida se actualizó, pero el tarifario no se pudo regenerar${regen && !regen.ok ? `: ${regen.error}` : ""}. Genéralo desde el paquete.` };
+  }
+  return { ok: true, ...(regen.aviso ? { aviso: regen.aviso } : {}) };
 }
