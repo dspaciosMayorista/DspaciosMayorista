@@ -4,6 +4,7 @@ import { createClient } from "@/lib/supabase/server";
 import { LogoutButton } from "./LogoutButton";
 import { type NavItem } from "./SidebarNav";
 import { DesktopSidebar } from "./DesktopSidebar";
+import { MobileNav } from "./MobileNav";
 import { Topbar } from "./Topbar";
 import { Logo } from "@/components/Logo";
 import { modulosConsultables, miRol } from "@/lib/roles";
@@ -198,18 +199,8 @@ export default async function DashboardLayout({
             <LogoutButton className="text-xs" />
           </div>
         </div>
-        <nav className={`${styles.scrollNoBar} -mx-1 flex gap-1 overflow-x-auto pb-1`}>
-          {nav.map((n) => (
-            <a
-              key={n.href}
-              href={n.href}
-              className="whitespace-nowrap rounded-md px-3 py-1.5 text-sm"
-              style={{ color: "var(--dash-ink-muted)" }}
-            >
-              {n.label}
-            </a>
-          ))}
-        </nav>
+        {/* Mismo `nav` filtrado que el sidebar de escritorio, con sus submenús. */}
+        <MobileNav nav={nav} />
         <div className="text-center text-[9px]" style={{ color: "var(--dash-ink-muted)", opacity: 0.6 }}>{POWERED_BY}</div>
       </header>
 
