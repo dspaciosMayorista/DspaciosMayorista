@@ -2,6 +2,10 @@
 
 import { useEffect, useMemo, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
+import {
+  AlertTriangle, Briefcase, Building2, CheckCircle2, ChevronDown, ChevronRight, Plane, RefreshCw, Settings, Table2, X, XCircle,
+  type LucideIcon,
+} from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { formatCOP, formatMoneda } from "@/lib/utils";
@@ -11,10 +15,14 @@ import {
   setVuelo, setTodosVuelos, setHotel, setTodosHoteles, setServicio, generarTarifario,
   getTarifasHotel, setHotelFiltros, setHotelPrioridad, type TarifaHotelPreview, type TarifaUnidadPreview,
 } from "../actions";
-import { setEmpaquetado, setTodosEmpaquetados } from "../../vuelos/empaquetados-actions";
+import { setEmpaquetado } from "../../vuelos/empaquetados-actions";
 import {
   conPrioridadOptimista, sinPrioridadOptimista, reconciliarPrioridades, prioridadEfectivaDe, prioridadesOcupadasDe,
 } from "@/lib/tarifario/prioridadOptimista";
+import {
+  ETIQUETA_PESTANA, agruparPorHotel, estadoTarifarioVista, normalizarPestana, pestanasVisibles, servicioSeleccionable,
+  type ClaveEstadoTarifario, type PestanaId,
+} from "@/lib/paquetes/armadoPestanas";
 
 type Opt = { id: number; nombre: string; codigo_iata?: string | null };
 type Vuelo = {
@@ -53,8 +61,18 @@ type Resultado = {
 };
 
 const ACOM_LBL: Record<string, string> = {
-  sencilla: "Sencilla", doble: "Doble", triple: "Triple", multiple: "Múltiple", nino: "Niño",
+  sencilla: "Sencilla", doble: "Doble", triple: "Triple", multiple: "Múltiple", nino: "Niño", nino2: "Niño 2", infante: "Infante",
 };
+
+const ICONO_PESTANA: Record<PestanaId, LucideIcon> = {
+  config: Settings, vuelos: Plane, hoteles: Building2, servicios: Briefcase, tarifario: Table2,
+};
+
+function EstadoIcono({ clave }: { clave: ClaveEstadoTarifario }) {
+  if (clave === "publicado") return <CheckCircle2 className="h-4 w-4" style={{ color: "var(--brand-success)" }} aria-hidden="true" />;
+  if (clave === "fallido") return <XCircle className="h-4 w-4 text-red-600" aria-hidden="true" />;
+  return <RefreshCw className="h-4 w-4 text-amber-600" aria-hidden="true" />;
+}
 
 // Etiqueta de procedencia del tarifario administrativo (defecto 2, sep-2026):
 // lee EXCLUSIVAMENTE `temporada_ganadora`/`es_promocion`/`procedencia_mixta`
@@ -88,10 +106,15 @@ export function ArmadoClient(props: {
   moneda?: string;
   // #67 — error técnico al leer los destinos aéreos del paquete (distinto de "no hay vuelos").
   destinosAereosError?: string | null;
+  // #101 — pestaña inicial (`?tab=`) y estado del tarifario (armado_paquetes.tarifario_estado / tarifario_error /
+  // tarifario_snapshot_publicable). Opcionales: sin ellos se deduce de si hay filas publicadas.
+  pestanaInicial?: string | null;
+  tarifarioEstado?: string | null;
+  tarifarioError?: string | null;
+  tarifarioPublicable?: boolean | null;
 }) {
   const router = useRouter();
   const tipo = (props.config?.tipo ?? "bloqueo") as "bloqueo" | "porcion_terrestre" | "servicios" | "dinamico";
-  const [openCfg, setOpenCfg] = useState(false);
   const [pending, start] = useTransition();
   const [msg, setMsg] = useState("");
   // Errores de vincular/desvincular vuelos (#67): el servidor y la base pueden
@@ -107,7 +130,6 @@ export function ArmadoClient(props: {
     return d ? `${d.nombre}${d.codigo_iata ? ` (${d.codigo_iata})` : ""}` : null;
   };
   const vueloSel = new Map(props.selVuelos.map((v) => [v.bloqueo_id, v]));
-  const empaquetadoSel = new Map(props.selEmpaquetados.map((e) => [e.empaquetado_id, e]));
   const hotelSel = new Map(props.selHoteles.map((h) => [h.hotel_id, h]));
   const servSel = new Map(props.selServicios.map((s) => [s.servicio_id, s]));
   // Autosave OPTIMISTA de prioridad (defecto 4): `hotelId -> prioridad` recién
@@ -173,10 +195,61 @@ export function ArmadoClient(props: {
     });
   }
 
+  // ── Pestañas (#101) ──────────────────────────────────────────────────────
+  // La pestaña activa vive en el estado (sobrevive a `router.refresh()` al regenerar) y se refleja en `?tab=` con
+  // `history.replaceState` (sin navegar ni volver a pedir la página), así un F5 o un enlace compartido vuelven a ella.
+  // `pestanaInicial` la entrega `page.tsx` leyendo `searchParams`.
+  const visibles = pestanasVisibles(tipo);
+  const [pestana, setPestana] = useState<PestanaId>(() => normalizarPestana(props.pestanaInicial, tipo));
+  const activa = normalizarPestana(pestana, tipo);
+  function cambiarPestana(id: PestanaId) {
+    setPestana(id);
+    if (typeof window === "undefined") return;
+    try {
+      const url = new URL(window.location.href);
+      url.searchParams.set("tab", id);
+      window.history.replaceState(null, "", `${url.pathname}${url.search}${url.hash}`);
+    } catch {
+      /* sin historial disponible: la pestaña vive solo en el estado */
+    }
+  }
+  function teclaPestana(e: React.KeyboardEvent, idx: number) {
+    const salto = e.key === "ArrowRight" ? 1 : e.key === "ArrowLeft" ? -1 : 0;
+    if (!salto) return;
+    e.preventDefault();
+    const siguiente = visibles[(idx + salto + visibles.length) % visibles.length];
+    cambiarPestana(siguiente);
+    document.getElementById(`tab-armado-${siguiente}`)?.focus();
+  }
+
+  // Servicios: selección en bloque (#98). Solo entran los que tienen alguna tarifa; cada uno se guarda con la acción de
+  // siempre (`setServicio`), uno tras otro, y al final se refresca UNA vez.
+  const [guardandoServicios, startServicios] = useTransition();
+  const [errServicios, setErrServicios] = useState("");
+  const serviciosSeleccionables = props.serviciosDisp.filter(servicioSeleccionable);
+  const nSeleccionablesMarcados = serviciosSeleccionables.filter((s) => servSel.has(s.id)).length;
+  function marcarTodosServicios(marcar: boolean) {
+    setErrServicios("");
+    startServicios(async () => {
+      const objetivo = marcar
+        ? serviciosSeleccionables.filter((s) => !servSel.has(s.id))
+        : props.serviciosDisp.filter((s) => servSel.has(s.id));
+      for (const s of objetivo) {
+        const modo: "persona" | "grupo" = (servSel.get(s.id)?.modo as "persona" | "grupo" | undefined) ?? (s.precio_persona != null ? "persona" : "grupo");
+        const r = await setServicio(props.paqueteId, s.id, marcar, modo, servSel.get(s.id)?.incluido ?? false);
+        if (!r.ok) {
+          setErrServicios(r.error);
+          break;
+        }
+      }
+      refrescar();
+    });
+  }
+
   if (!props.tieneDestino) {
     return (
       <div className="space-y-4">
-        <Section title="Configuración inicial" open onToggle={() => {}}>
+        <Section title="Configuración inicial">
           <ConfigForm destinos={props.destinos} id={props.paqueteId} initial={props.config} />
         </Section>
         <p className="rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm text-amber-700">
@@ -186,212 +259,275 @@ export function ArmadoClient(props: {
     );
   }
 
+  // Empaquetados (vuelos por Sistema): ya no se gestionan en un paquete de Bloqueo ni en uno Dinámico. Los que SIGUEN
+  // vinculados siguen entrando al tarifario, así que se muestran en solo lectura con aviso hasta que el dueño decida.
+  const empaquetadosVinculados = tipo === "bloqueo" || tipo === "dinamico" ? props.selEmpaquetados : [];
+  const etiquetaTipoVinculados = tipo === "dinamico" ? "Dinámico" : "de Bloqueo";
+  const empaquetadoDisp = new Map(props.empaquetadosDisp.map((e) => [e.id, e]));
+
+  const estadoTarifario = estadoTarifarioVista(
+    props.tarifarioEstado ?? (props.resultado.length ? "listo" : "pendiente"),
+    props.tarifarioError,
+    props.tarifarioPublicable
+  );
+
   return (
     <div className="space-y-4">
-      {/* Configuración (colapsable) */}
-      <Section title="Configuración inicial" open={openCfg} onToggle={() => setOpenCfg((o) => !o)}>
-        <ConfigForm destinos={props.destinos} id={props.paqueteId} initial={props.config} />
-      </Section>
+      <div role="tablist" aria-label="Secciones del paquete" className="flex flex-wrap gap-1 border-b border-gray-200">
+        {visibles.map((id, idx) => {
+          const Icono = ICONO_PESTANA[id];
+          const esActiva = id === activa;
+          return (
+            <button
+              key={id}
+              type="button"
+              role="tab"
+              id={`tab-armado-${id}`}
+              aria-selected={esActiva}
+              aria-controls={`panel-armado-${id}`}
+              tabIndex={esActiva ? 0 : -1}
+              onClick={() => cambiarPestana(id)}
+              onKeyDown={(e) => teclaPestana(e, idx)}
+              className={`-mb-px flex items-center gap-1.5 border-b-2 px-3 py-2 text-sm font-medium transition-colors ${
+                esActiva ? "text-[var(--brand-primary)]" : "border-transparent text-gray-500 hover:text-gray-800"
+              }`}
+              style={esActiva ? { borderColor: "var(--brand-accent)" } : undefined}
+            >
+              <Icono className="h-4 w-4" aria-hidden="true" />
+              {ETIQUETA_PESTANA[id]}
+            </button>
+          );
+        })}
+      </div>
 
-      {tipo === "bloqueo" && props.destinosAereosError && (
-        <p className="rounded-lg border border-red-200 bg-red-50 p-3 text-sm text-red-700" role="alert">{props.destinosAereosError}</p>
-      )}
-      {tipo === "bloqueo" && errVinculo && (
-        <p className="rounded-lg border border-red-200 bg-red-50 p-3 text-sm text-red-700" role="alert">{errVinculo}</p>
-      )}
-
-      {/* Adición de vuelos */}
-      {tipo === "bloqueo" && (
-      <Section title={`Adición de vuelos (${vueloSel.size})`} open onToggle={() => {}}>
-        {!props.vuelosDisp.length ? (
-          <Empty>{props.destinosAereosError ? "No se pudieron cargar los vuelos." : "No hay ciclos aéreos de los destinos permitidos en el rango de viaje."}</Empty>
-        ) : (
-          <>
-            <label className="mb-1 flex items-center gap-2 border-b border-gray-100 pb-2 text-sm font-medium text-gray-700">
-              <input
-                type="checkbox"
-                checked={vueloSel.size === props.vuelosDisp.length && props.vuelosDisp.length > 0}
-                ref={(el) => {
-                  if (el) el.indeterminate = vueloSel.size > 0 && vueloSel.size < props.vuelosDisp.length;
-                }}
-                onChange={(e) =>
-                  start(async () => {
-                    const r = await setTodosVuelos(
-                      props.paqueteId,
-                      props.vuelosDisp.map((v) => v.id),
-                      e.target.checked
-                    );
-                    setErrVinculo(r.ok ? "" : r.error);
-                    refrescar();
-                  })
-                }
-              />
-              Seleccionar todos
-            </label>
-            <ul className="divide-y divide-gray-100">
-              {props.vuelosDisp.map((v) => (
-              <VueloRow
-                key={v.id}
-                v={v}
-                destinoAereo={etiquetaAerea(v.destino_id)}
-                sel={vueloSel.get(v.id)}
-                paqueteId={props.paqueteId}
-                onError={setErrVinculo}
-                onDone={refrescar}
-              />
-              ))}
-            </ul>
-          </>
-        )}
-      </Section>
-
-      )}
-
-      {/* Vuelos por SISTEMA (Empaquetados, migración 156) — mismo tipo de
-          paquete ("bloqueo"), fuente de datos distinta: bloqueos_vuelo arriba
-          (Serie/Grupo, negociado) vs. empaquetados aquí (Sistema, sin cupo
-          negociado). Nunca se mezclan los ids: setVuelo/armado_vuelos para
-          uno, setEmpaquetado/armado_empaquetados para el otro — cada
-          empaquetado se vincula sin duplicarse (upsert por PK compuesta). */}
-      {tipo === "bloqueo" && (
-      <Section title={`Vuelos por Sistema — Empaquetados (${empaquetadoSel.size})`} open onToggle={() => {}}>
-        {!props.empaquetadosDisp.length ? (
-          <Empty>{props.destinosAereosError ? "No se pudieron cargar los vuelos." : "No hay empaquetados de los destinos permitidos en el rango de viaje."}</Empty>
-        ) : (
-          <>
-            <label className="mb-1 flex items-center gap-2 border-b border-gray-100 pb-2 text-sm font-medium text-gray-700">
-              <input
-                type="checkbox"
-                checked={empaquetadoSel.size === props.empaquetadosDisp.length && props.empaquetadosDisp.length > 0}
-                ref={(el) => {
-                  if (el) el.indeterminate = empaquetadoSel.size > 0 && empaquetadoSel.size < props.empaquetadosDisp.length;
-                }}
-                onChange={(e) =>
-                  start(async () => {
-                    const r = await setTodosEmpaquetados(
-                      props.paqueteId,
-                      props.empaquetadosDisp.map((e) => e.id),
-                      e.target.checked
-                    );
-                    setErrVinculo(r.ok ? "" : r.error);
-                    refrescar();
-                  })
-                }
-              />
-              Seleccionar todos
-            </label>
-            <ul className="divide-y divide-gray-100">
-              {props.empaquetadosDisp.map((e) => (
-              <EmpaquetadoRow
-                key={e.id}
-                e={e}
-                destinoAereo={etiquetaAerea(e.destino_id)}
-                sel={empaquetadoSel.get(e.id)}
-                paqueteId={props.paqueteId}
-                onError={setErrVinculo}
-                onDone={refrescar}
-              />
-              ))}
-            </ul>
-          </>
-        )}
-      </Section>
-      )}
-
-      {/* Salidas dinámicas (vuelo por sistema) */}
-      {tipo === "dinamico" && (
-      <Section title={`Salidas dinámicas (${props.salidas?.length ?? 0})`} open onToggle={() => {}}>
-        <SalidasDinamicasEditor
-          paqueteId={props.paqueteId}
-          salidas={props.salidas ?? []}
-          moneda={props.moneda ?? "COP"}
-          modo63={props.config?.modoOferta === "cop_trm_63"}
-          trm={props.config?.trmOferta ?? null}
-        />
-      </Section>
-      )}
-
-      {/* Adición de hoteles */}
-      {(tipo === "bloqueo" || tipo === "porcion_terrestre" || tipo === "dinamico") && (
-      <Section title={`Adición de hoteles (${hotelSel.size})`} open onToggle={() => {}}>
-        {!props.hotelesDisp.length ? (
-          <Empty>No hay hoteles del destino.</Empty>
-        ) : (
-          <>
-            <label className="mb-1 flex items-center gap-2 border-b border-gray-100 pb-2 text-sm font-medium text-gray-700">
-              <input
-                type="checkbox"
-                checked={hotelSel.size === props.hotelesDisp.length && props.hotelesDisp.length > 0}
-                ref={(el) => {
-                  if (el) el.indeterminate = hotelSel.size > 0 && hotelSel.size < props.hotelesDisp.length;
-                }}
-                onChange={(e) =>
-                  start(async () => {
-                    await setTodosHoteles(
-                      props.paqueteId,
-                      props.hotelesDisp.map((h) => h.id),
-                      e.target.checked
-                    );
-                    refrescar();
-                  })
-                }
-              />
-              Seleccionar todos
-            </label>
-            <ul className="divide-y divide-gray-100">
-              {props.hotelesDisp.map((h) => (
-                <HotelRow
-                  key={h.id}
-                  hotel={h}
-                  sel={hotelSel.get(h.id)}
-                  paqueteId={props.paqueteId}
-                  prioridad={prioridadEfectiva(h.id)}
-                  prioridadesOcupadas={prioridadesOcupadas}
-                  onPrioridadLocal={setPrioridadOptimista}
-                  onPrioridadDescartar={descartarPrioridadOptimista}
-                  onDone={refrescar}
-                />
-              ))}
-            </ul>
-          </>
-        )}
-      </Section>
-
-      )}
-
-      {/* Adición de servicios */}
-      <Section title={`Adición de servicios (${servSel.size})`} open onToggle={() => {}}>
-        {!props.serviciosDisp.length ? (
-          <Empty>No hay servicios del destino.</Empty>
-        ) : (
-          <ul className="divide-y divide-gray-100">
-            {props.serviciosDisp.map((s) => (
-              <ServicioRow
-                key={s.id}
-                s={s}
-                sel={servSel.get(s.id)}
-                paqueteId={props.paqueteId}
-                onDone={refrescar}
-              />
-            ))}
-          </ul>
-        )}
-      </Section>
-
-      {/* Generar + resultado */}
-      <div className="rounded-xl border border-gray-200 bg-white p-4">
-        <div className="flex flex-wrap items-center justify-between gap-3">
-          <div>
-            <p className="font-semibold text-gray-800">Tarifario (resultado)</p>
-            <p className="text-xs text-gray-500">Liquida el paquete y publica las tarifas por persona.</p>
+      <div role="tabpanel" id={`panel-armado-${activa}`} aria-labelledby={`tab-armado-${activa}`} className="space-y-4">
+        {/* Configuración */}
+        {activa === "config" && (
+          <div className="rounded-xl border border-gray-200 bg-white p-4">
+            <ConfigForm destinos={props.destinos} id={props.paqueteId} initial={props.config} />
           </div>
-          <Button onClick={generar} disabled={pending} style={{ backgroundColor: "var(--brand-accent)" }}>
-            {pending ? "Generando…" : "Generar / actualizar tarifario"}
-          </Button>
-        </div>
-        {msg && <p className="mt-2 text-sm text-gray-600">{msg}</p>}
+        )}
 
-        <ResultadoTabla filas={props.resultado} />
+        {/* Vuelos */}
+        {activa === "vuelos" && (
+          <>
+            {tipo === "bloqueo" && props.destinosAereosError && (
+              <p className="rounded-lg border border-red-200 bg-red-50 p-3 text-sm text-red-700" role="alert">{props.destinosAereosError}</p>
+            )}
+            {tipo === "bloqueo" && errVinculo && (
+              <p className="rounded-lg border border-red-200 bg-red-50 p-3 text-sm text-red-700" role="alert">{errVinculo}</p>
+            )}
+
+            {tipo === "bloqueo" && (
+              <Section title={`Adición de vuelos (${vueloSel.size} de ${props.vuelosDisp.length})`}>
+                {!props.vuelosDisp.length ? (
+                  <Empty>{props.destinosAereosError ? "No se pudieron cargar los vuelos." : "No hay ciclos aéreos de los destinos permitidos en el rango de viaje."}</Empty>
+                ) : (
+                  <>
+                    <label className="mb-1 flex items-center gap-2 border-b border-gray-100 pb-2 text-sm font-medium text-gray-700">
+                      <input
+                        type="checkbox"
+                        checked={vueloSel.size === props.vuelosDisp.length && props.vuelosDisp.length > 0}
+                        ref={(el) => {
+                          if (el) el.indeterminate = vueloSel.size > 0 && vueloSel.size < props.vuelosDisp.length;
+                        }}
+                        onChange={(e) =>
+                          start(async () => {
+                            const r = await setTodosVuelos(
+                              props.paqueteId,
+                              props.vuelosDisp.map((v) => v.id),
+                              e.target.checked
+                            );
+                            setErrVinculo(r.ok ? "" : r.error);
+                            refrescar();
+                          })
+                        }
+                      />
+                      Seleccionar todos
+                    </label>
+                    <ul className="divide-y divide-gray-100">
+                      {props.vuelosDisp.map((v) => (
+                        <VueloRow
+                          key={v.id}
+                          v={v}
+                          destinoAereo={etiquetaAerea(v.destino_id)}
+                          sel={vueloSel.get(v.id)}
+                          paqueteId={props.paqueteId}
+                          onError={setErrVinculo}
+                          onDone={refrescar}
+                        />
+                      ))}
+                    </ul>
+                  </>
+                )}
+              </Section>
+            )}
+
+            {/* Vuelos por SISTEMA (Empaquetados, migración 156): ya no se ofrecen en Bloqueo. Solo se muestran, en
+                lectura, los que quedaron vinculados (siguen alimentando el tarifario) hasta que se decida su destino. */}
+            {empaquetadosVinculados.length > 0 && (
+              <Section title={`Vinculados en un paquete ${etiquetaTipoVinculados}: revisar (${empaquetadosVinculados.length})`}>
+                <p className="mb-2 flex items-start gap-2 rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm text-amber-800" role="status">
+                  <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" aria-hidden="true" />
+                  <span>
+                    Estos vuelos por Sistema siguen vinculados a este paquete {etiquetaTipoVinculados} y
+                    siguen entrando al tarifario. Aquí solo se muestran: no se pueden cambiar desde esta pantalla.
+                  </span>
+                </p>
+                <ul className="divide-y divide-gray-100">
+                  {empaquetadosVinculados.map((s) => {
+                    const e = empaquetadoDisp.get(s.empaquetado_id);
+                    return e ? (
+                      <EmpaquetadoRow
+                        key={e.id}
+                        e={e}
+                        destinoAereo={etiquetaAerea(e.destino_id)}
+                        sel={s}
+                        paqueteId={props.paqueteId}
+                        onError={setErrVinculo}
+                        onDone={refrescar}
+                        soloLectura
+                      />
+                    ) : (
+                      <li key={s.empaquetado_id} className="py-3 text-sm text-gray-600">
+                        Empaquetado #{s.empaquetado_id} <span className="text-gray-400">· fuera del rango de viaje o inactivo</span>
+                        <span className="ml-2 text-xs text-gray-500">{s.aplica_mk ? "mk del paquete" : `TA ${formatCOP(s.ta)}`}</span>
+                      </li>
+                    );
+                  })}
+                </ul>
+              </Section>
+            )}
+
+            {/* Salidas dinámicas (vuelo por sistema) */}
+            {tipo === "dinamico" && (
+              <Section title={`Salidas dinámicas (${props.salidas?.length ?? 0})`}>
+                <SalidasDinamicasEditor
+                  paqueteId={props.paqueteId}
+                  salidas={props.salidas ?? []}
+                  moneda={props.moneda ?? "COP"}
+                  modo63={props.config?.modoOferta === "cop_trm_63"}
+                  trm={props.config?.trmOferta ?? null}
+                />
+              </Section>
+            )}
+          </>
+        )}
+
+        {/* Hoteles */}
+        {activa === "hoteles" && (
+          <Section title={`Adición de hoteles (${hotelSel.size} de ${props.hotelesDisp.length})`}>
+            {!props.hotelesDisp.length ? (
+              <Empty>No hay hoteles del destino.</Empty>
+            ) : (
+              <>
+                <label className="mb-1 flex items-center gap-2 border-b border-gray-100 pb-2 text-sm font-medium text-gray-700">
+                  <input
+                    type="checkbox"
+                    checked={hotelSel.size === props.hotelesDisp.length && props.hotelesDisp.length > 0}
+                    ref={(el) => {
+                      if (el) el.indeterminate = hotelSel.size > 0 && hotelSel.size < props.hotelesDisp.length;
+                    }}
+                    onChange={(e) =>
+                      start(async () => {
+                        await setTodosHoteles(
+                          props.paqueteId,
+                          props.hotelesDisp.map((h) => h.id),
+                          e.target.checked
+                        );
+                        refrescar();
+                      })
+                    }
+                  />
+                  Seleccionar todos
+                </label>
+                <ul className="divide-y divide-gray-100">
+                  {props.hotelesDisp.map((h) => (
+                    <HotelRow
+                      key={h.id}
+                      hotel={h}
+                      sel={hotelSel.get(h.id)}
+                      paqueteId={props.paqueteId}
+                      prioridad={prioridadEfectiva(h.id)}
+                      prioridadesOcupadas={prioridadesOcupadas}
+                      onPrioridadLocal={setPrioridadOptimista}
+                      onPrioridadDescartar={descartarPrioridadOptimista}
+                      onDone={refrescar}
+                    />
+                  ))}
+                </ul>
+              </>
+            )}
+          </Section>
+        )}
+
+        {/* Servicios */}
+        {activa === "servicios" && (
+          <Section title={`Adición de servicios (${servSel.size} de ${props.serviciosDisp.length})`}>
+            {!props.serviciosDisp.length ? (
+              <Empty>No hay servicios del destino.</Empty>
+            ) : (
+              <>
+                {errServicios && (
+                  <p className="mb-2 rounded-lg border border-red-200 bg-red-50 p-3 text-sm text-red-700" role="alert">{errServicios}</p>
+                )}
+                <label className="mb-1 flex items-center gap-2 border-b border-gray-100 pb-2 text-sm font-medium text-gray-700">
+                  <input
+                    type="checkbox"
+                    disabled={guardandoServicios || serviciosSeleccionables.length === 0}
+                    checked={serviciosSeleccionables.length > 0 && nSeleccionablesMarcados === serviciosSeleccionables.length}
+                    ref={(el) => {
+                      if (el) el.indeterminate = nSeleccionablesMarcados > 0 && nSeleccionablesMarcados < serviciosSeleccionables.length;
+                    }}
+                    onChange={(e) => marcarTodosServicios(e.target.checked)}
+                  />
+                  {nSeleccionablesMarcados === serviciosSeleccionables.length && serviciosSeleccionables.length > 0
+                    ? "Deseleccionar todos"
+                    : "Seleccionar todos"}
+                  {guardandoServicios && <span className="text-xs font-normal text-gray-500">Guardando…</span>}
+                </label>
+                <ul className="divide-y divide-gray-100">
+                  {props.serviciosDisp.map((s) => (
+                    <ServicioRow
+                      key={s.id}
+                      s={s}
+                      sel={servSel.get(s.id)}
+                      paqueteId={props.paqueteId}
+                      onDone={refrescar}
+                    />
+                  ))}
+                </ul>
+              </>
+            )}
+          </Section>
+        )}
+
+        {/* Generar + resultado */}
+        {activa === "tarifario" && (
+          <div className="rounded-xl border border-gray-200 bg-white">
+            <div className="sticky top-0 z-10 rounded-t-xl border-b border-gray-100 bg-white p-4">
+              <div className="flex flex-wrap items-center justify-between gap-3">
+                <div className="min-w-0" data-testid="estado-tarifario" data-estado={estadoTarifario.clave}>
+                  <p className="flex items-center gap-2 font-semibold text-gray-800">
+                    <EstadoIcono clave={estadoTarifario.clave} />
+                    Tarifario: {estadoTarifario.etiqueta}
+                  </p>
+                  {estadoTarifario.detalle && (
+                    <p className={`mt-0.5 text-xs ${estadoTarifario.clave === "fallido" ? "text-red-700" : "text-gray-500"}`}>{estadoTarifario.detalle}</p>
+                  )}
+                  <p className="text-xs text-gray-500">Liquida el paquete y publica las tarifas por persona.</p>
+                </div>
+                <Button onClick={generar} disabled={pending} style={{ backgroundColor: "var(--brand-accent)" }}>
+                  {pending ? "Generando…" : "Generar tarifario"}
+                </Button>
+              </div>
+              {msg && <p className="mt-2 text-sm text-gray-600">{msg}</p>}
+            </div>
+            <div className="p-4 pt-0">
+              <ResultadoTabla filas={props.resultado} />
+            </div>
+          </div>
+        )}
       </div>
     </div>
   );
@@ -481,9 +617,11 @@ function VueloRow({
 // empaquetado puede no tener PNR todavía) — se muestra "Sin record", nunca
 // como si faltara un dato obligatorio.
 function EmpaquetadoRow({
-  e, destinoAereo, sel, paqueteId, onError, onDone,
+  e, destinoAereo, sel, paqueteId, onError, onDone, soloLectura = false,
 }: {
   e: Empaquetado; destinoAereo: string | null; sel: SelEmpaquetado | undefined; paqueteId: number; onError: (m: string) => void; onDone: () => void;
+  /** #101: en un paquete de Bloqueo o Dinámico los vinculados se muestran sin poder cambiarse. */
+  soloLectura?: boolean;
 }) {
   const [, start] = useTransition();
   const checked = !!sel;
@@ -505,6 +643,7 @@ function EmpaquetadoRow({
           type="checkbox"
           className="mt-1"
           checked={checked}
+          disabled={soloLectura}
           onChange={(ev) => save(ev.target.checked)}
         />
         <div className="flex-1">
@@ -526,6 +665,7 @@ function EmpaquetadoRow({
                 <input
                   type="radio"
                   checked={aplicaMk}
+                  disabled={soloLectura}
                   onChange={() => { setAplicaMk(true); save(true, true, ta); }}
                 />
                 Aplicar mk del paquete
@@ -534,6 +674,7 @@ function EmpaquetadoRow({
                 <input
                   type="radio"
                   checked={!aplicaMk}
+                  disabled={soloLectura}
                   onChange={() => { setAplicaMk(false); save(true, false, ta); }}
                 />
                 Sumar TA
@@ -545,6 +686,7 @@ function EmpaquetadoRow({
                     type="number"
                     min={0}
                     value={ta}
+                    disabled={soloLectura}
                     onChange={(ev) => setTa(ev.target.value)}
                     onBlur={() => save(true, false, ta)}
                     className="h-7 w-28"
@@ -851,7 +993,7 @@ function HotelModal({
       >
         <div className="mb-3 flex items-center justify-between">
           <h3 className="text-lg font-semibold text-gray-900">{hotel.nombre}</h3>
-          <button onClick={onClose} className="text-gray-400 hover:text-gray-700">✕</button>
+          <button type="button" onClick={onClose} aria-label="Cerrar" className="text-gray-400 hover:text-gray-700"><X className="h-5 w-5" aria-hidden="true" /></button>
         </div>
 
         {loading ? (
@@ -1049,6 +1191,9 @@ function ServicioRow({
             {tienePersona ? `Persona: ${formatCOP(s.precio_persona!)}` : ""}
             {tienePersona && tieneGrupo ? " · " : ""}
             {tieneGrupo ? "Grupo: por rangos de pax" : ""}
+            {!servicioSeleccionable(s) && (
+              <span className="text-amber-700">Sin tarifa configurada: no entra en «Seleccionar todos»</span>
+            )}
           </p>
           {checked && (
             <div className="mt-2 space-y-2 rounded-lg bg-gray-50 p-2 text-xs">
@@ -1094,87 +1239,88 @@ function ResultadoTabla({ filas }: { filas: Resultado[] }) {
     );
   }
 
-  // Separa servicios (módulo servicios) de las tarifas de hotel
+  // Servicios (módulo servicios) aparte; las tarifas de hotel se agrupan por hotel (plegadas por defecto).
   const servicios = filas.filter((f) => f.modulo === "servicios");
-  const hoteles = filas.filter((f) => f.modulo !== "servicios");
-
-  // Agrupa hoteles por salida (bloqueo_label o porción terrestre) → hotel
-  const grupos = new Map<string, Map<string, Resultado[]>>();
-  for (const f of hoteles) {
-    const g = f.bloqueo_label ?? (f.modulo === "porcion_terrestre" ? "Porción terrestre" : "—");
-    const h = f.hotel_nombre ?? "—";
-    if (!grupos.has(g)) grupos.set(g, new Map());
-    const byHotel = grupos.get(g)!;
-    if (!byHotel.has(h)) byHotel.set(h, []);
-    byHotel.get(h)!.push(f);
-  }
+  const grupos = agruparPorHotel(filas);
 
   return (
-    <div className="mt-4 space-y-5">
-      {[...grupos.entries()].map(([salida, byHotel]) => (
-        <div key={salida}>
-          <p className="mb-1 text-sm font-semibold" style={{ color: "var(--brand-primary)" }}>{salida}</p>
-          {[...byHotel.entries()].map(([hotel, rows]) => (
-            <div key={hotel} className="mb-3 overflow-x-auto rounded-lg border border-gray-100">
-              <div className="bg-gray-50 px-3 py-1.5 text-sm font-medium text-gray-700">{hotel}</div>
-              <table className="w-full text-sm">
-                <thead className="text-xs text-gray-500">
-                  <tr className="border-t border-gray-100">
-                    <th className="px-3 py-1.5 text-left">Categoría</th>
-                    <th className="px-3 py-1.5 text-left">Régimen</th>
-                    <th className="px-3 py-1.5 text-left">Procedencia</th>
-                    <th className="px-3 py-1.5 text-left">Acom.</th>
-                    <th className="px-3 py-1.5 text-right">Noches</th>
-                    <th className="px-3 py-1.5 text-right">Base com.</th>
-                    <th className="px-3 py-1.5 text-right">Impuesto</th>
-                    <th className="px-3 py-1.5 text-right">PVP /pax</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {rows.map((r) => {
-                    const procedencia = procedenciaLabel(r);
-                    return (
-                      <tr key={r.id} className="border-t border-gray-50">
-                        <td className="px-3 py-1.5">{r.categoria ?? "—"}</td>
-                        <td className="px-3 py-1.5">{r.regimen ?? "—"}</td>
-                        <td className="px-3 py-1.5">
-                          {procedencia == null ? (
-                            <span className="text-gray-300">—</span>
-                          ) : (
-                            <span
-                              className="rounded-full px-2 py-0.5 text-[11px] font-semibold uppercase tracking-wide"
-                              style={
-                                r.procedencia_mixta
-                                  ? { backgroundColor: "#fffbeb", color: "#d97706" }
-                                  : r.es_promocion
-                                  ? { backgroundColor: "#ecfdf5", color: "#059669" }
-                                  : { backgroundColor: "#eff6ff", color: "#2563eb" }
-                              }
-                            >
-                              {procedencia}
-                            </span>
-                          )}
-                        </td>
-                        <td className="px-3 py-1.5">{ACOM_LBL[r.acomodacion ?? ""] ?? r.acomodacion}</td>
-                        <td className="px-3 py-1.5 text-right tabular-nums">{r.noches}</td>
-                        <td className="px-3 py-1.5 text-right tabular-nums text-gray-500">{formatCOP(r.base_comisionable)}</td>
-                        <td className="px-3 py-1.5 text-right tabular-nums text-gray-500">{formatCOP(r.impuesto)}</td>
-                        <td className="px-3 py-1.5 text-right tabular-nums font-semibold" style={{ color: "var(--brand-primary)" }}>
-                          {formatCOP(r.precio_pvp)}
-                        </td>
-                      </tr>
-                    );
-                  })}
-                </tbody>
-              </table>
-            </div>
-          ))}
-        </div>
+    <div className="mt-4 space-y-3">
+      {grupos.map((g) => (
+        <Section
+          key={g.hotel}
+          title={g.hotel}
+          defaultOpen={false}
+          meta={
+            <span className="text-xs font-normal text-gray-500">
+              {g.filas.length} {g.filas.length === 1 ? "fila" : "filas"} ·{" "}
+              {g.dobleDesde != null ? (
+                <>Doble desde <b className="tabular-nums" style={{ color: "var(--brand-primary)" }}>{formatCOP(g.dobleDesde)}</b></>
+              ) : (
+                "Sin tarifa doble"
+              )}
+            </span>
+          }
+        >
+          <div className="overflow-x-auto rounded-lg border border-gray-100">
+            <table className="w-full text-sm">
+              <thead className="text-xs text-gray-500">
+                <tr className="border-b border-gray-100">
+                  <th className="px-3 py-1.5 text-left">Salida</th>
+                  <th className="px-3 py-1.5 text-left">Categoría</th>
+                  <th className="px-3 py-1.5 text-left">Régimen</th>
+                  <th className="px-3 py-1.5 text-left">Procedencia</th>
+                  <th className="px-3 py-1.5 text-left">Acom.</th>
+                  <th className="px-3 py-1.5 text-right">Noches</th>
+                  <th className="px-3 py-1.5 text-right">Base com.</th>
+                  <th className="px-3 py-1.5 text-right">Impuesto</th>
+                  <th className="px-3 py-1.5 text-right">PVP /pax</th>
+                </tr>
+              </thead>
+              <tbody>
+                {g.filas.map((r) => {
+                  const procedencia = procedenciaLabel(r);
+                  const salida = r.bloqueo_label ?? (r.modulo === "porcion_terrestre" ? "Porción terrestre" : "—");
+                  return (
+                    <tr key={r.id} className="border-t border-gray-50">
+                      <td className="px-3 py-1.5 text-gray-600">{salida}</td>
+                      <td className="px-3 py-1.5">{r.categoria ?? "—"}</td>
+                      <td className="px-3 py-1.5">{r.regimen ?? "—"}</td>
+                      <td className="px-3 py-1.5">
+                        {procedencia == null ? (
+                          <span className="text-gray-300">—</span>
+                        ) : (
+                          <span
+                            className="rounded-full px-2 py-0.5 text-[11px] font-semibold uppercase tracking-wide"
+                            style={
+                              r.procedencia_mixta
+                                ? { backgroundColor: "#fffbeb", color: "#d97706" }
+                                : r.es_promocion
+                                ? { backgroundColor: "#ecfdf5", color: "#059669" }
+                                : { backgroundColor: "#eff6ff", color: "#2563eb" }
+                            }
+                          >
+                            {procedencia}
+                          </span>
+                        )}
+                      </td>
+                      <td className="px-3 py-1.5">{ACOM_LBL[r.acomodacion ?? ""] ?? r.acomodacion}</td>
+                      <td className="px-3 py-1.5 text-right tabular-nums">{r.noches}</td>
+                      <td className="px-3 py-1.5 text-right tabular-nums text-gray-500">{formatCOP(r.base_comisionable)}</td>
+                      <td className="px-3 py-1.5 text-right tabular-nums text-gray-500">{formatCOP(r.impuesto)}</td>
+                      <td className="px-3 py-1.5 text-right tabular-nums font-semibold" style={{ color: "var(--brand-primary)" }}>
+                        {formatCOP(r.precio_pvp)}
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        </Section>
       ))}
 
       {servicios.length > 0 && (
-        <div>
-          <p className="mb-1 text-sm font-semibold" style={{ color: "var(--brand-accent)" }}>Servicios (opcionales)</p>
+        <Section title={`Servicios opcionales (${servicios.length})`} defaultOpen={false}>
           <div className="overflow-x-auto rounded-lg border border-gray-100">
             <table className="w-full text-sm">
               <thead className="text-xs text-gray-500">
@@ -1200,28 +1346,38 @@ function ResultadoTabla({ filas }: { filas: Resultado[] }) {
               </tbody>
             </table>
           </div>
-        </div>
+        </Section>
       )}
     </div>
   );
 }
 
+// Sección plegable. Sin open/onToggle es no controlada (arranca según defaultOpen); con ellos, controlada.
+// meta es un resumen a la derecha de la cabecera (visible aun plegada).
 function Section({
-  title, open, onToggle, children,
+  title, meta, open, onToggle, defaultOpen = true, children,
 }: {
-  title: string; open: boolean; onToggle: () => void; children: React.ReactNode;
+  title: string; meta?: React.ReactNode; open?: boolean; onToggle?: () => void; defaultOpen?: boolean; children: React.ReactNode;
 }) {
+  const [interno, setInterno] = useState(defaultOpen);
+  const controlada = open !== undefined;
+  const abierta = controlada ? open : interno;
+  const Chevron = abierta ? ChevronDown : ChevronRight;
   return (
     <div className="rounded-xl border border-gray-200 bg-white">
       <button
         type="button"
-        onClick={onToggle}
-        className="flex w-full items-center justify-between px-4 py-3 text-left"
+        aria-expanded={abierta}
+        onClick={() => (controlada ? onToggle?.() : setInterno((o) => !o))}
+        className="flex w-full items-center justify-between gap-3 px-4 py-3 text-left"
       >
         <span className="font-semibold text-gray-800">{title}</span>
-        <span className="text-gray-400">{open ? "▾" : "▸"}</span>
+        <span className="flex items-center gap-3">
+          {meta}
+          <Chevron className="h-4 w-4 shrink-0 text-gray-400" aria-hidden="true" />
+        </span>
       </button>
-      {open && <div className="border-t border-gray-100 p-4">{children}</div>}
+      {abierta && <div className="border-t border-gray-100 p-4">{children}</div>}
     </div>
   );
 }
