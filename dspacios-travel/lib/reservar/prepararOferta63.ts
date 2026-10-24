@@ -8,7 +8,7 @@
 //   · una salida MANUAL de un paquete en modo `cop_trm_63`;
 //   · una salida VINCULADA a un Empaquetado sin record (exige modo 63).
 // Una salida vinculada se valida contra su fuente VIVA: activa, sin record,
-// ventana de compra, viaje futuro, COP, copia coincidente y destino aéreo
+// ventana de compra, viaje futuro, moneda COP/USD, copia coincidente y destino aéreo
 // permitido (#67/220). NUNCA consulta cupos: un Empaquetado no tiene sillas.
 // Cualquier fallo rechaza; un error de lectura no se interpreta como "disponible".
 // ─────────────────────────────────────────────────────────────────────────
@@ -22,6 +22,7 @@ import {
   feeACop63,
   fuenteCoincideConSalida63,
   mensajeFuenteCambio63,
+  monedaNormalizada63,
   validarTrm63,
   type FuenteEmpaquetado63,
   type SalidaVinculada63,
@@ -36,10 +37,12 @@ export type Oferta63 = {
   trm: number;
   vinculada: boolean;
   empaquetadoId: number | null;
-  /** R de una vinculada (precio final del aéreo) o el tiquete de una manual, ya en COP. */
+  /** R de una vinculada (precio final del aéreo) o el tiquete de una manual, ya en COP (una sola conversión × TRM si la fuente es USD). */
   tarifaParaEmpaquetar: number;
   /** F: fee de infante ya en COP (centavos exactos). */
   feeInfante: number;
+  /** 230: moneda de ORIGEN del aéreo (de la salida manual o del Empaquetado vinculado); la CxP aérea la conserva. */
+  monedaAereo: "COP" | "USD";
   impuestoTipo: string | null;
   /** Impuesto fijo del paquete: en modo 63 se interpreta en COP. */
   impuestoFijo: number;
@@ -100,6 +103,7 @@ export async function resolverOfertaSalida63(lector: Cliente, paqueteId: number,
         empaquetadoId: null,
         tarifaParaEmpaquetar: aCop63(Number(sal.valor_tiquete) || 0, sal.moneda, trm.trm),
         feeInfante: feeACop63(Number(sal.fee_infante) || 0, sal.moneda, trm.trm),
+        monedaAereo: monedaNormalizada63(sal.moneda),
       },
     };
   }
@@ -126,8 +130,10 @@ export async function resolverOfertaSalida63(lector: Cliente, paqueteId: number,
       ...base,
       vinculada: true,
       empaquetadoId,
-      tarifaParaEmpaquetar: Number((fuente as FuenteEmpaquetado63).tarifa_para_empaquetar) || 0,
+      // 230: R en USD se convierte × TRM UNA sola vez (sin markup ni TA); en COP queda exacto.
+      tarifaParaEmpaquetar: aCop63(Number((fuente as FuenteEmpaquetado63).tarifa_para_empaquetar) || 0, (fuente as FuenteEmpaquetado63).moneda, trm.trm),
       feeInfante: feeACop63(Number((fuente as FuenteEmpaquetado63).fee_infante) || 0, (fuente as FuenteEmpaquetado63).moneda, trm.trm),
+      monedaAereo: monedaNormalizada63((fuente as FuenteEmpaquetado63).moneda),
     },
   };
 }

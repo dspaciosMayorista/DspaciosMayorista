@@ -351,6 +351,16 @@ Pruebas: bloque O del SQL (O0–O23) y casos `C5 ·` de `salidaVinculada63Reserv
 **Pruebas.** `pruebas/salidaVinculada63{,Generar,Computo,Acciones,Vitrina,Wiring}.test.ts`, `salidaVinculada63{Reserva,Contabilidad,Editor}.react.ts` (comando directo, ver su
 cabecera), `salidaVinculada63Aceptacion.test.ts` y SQL `supabase/scripts/test_227_*` (incluye `test_227_carrera.sh`: dos sesiones reales) + workflow `test-227-salida-vinculada-63.yml`.
 
+## 9.bis. #90 — Empaquetados y salidas vinculadas en USD (migración 230)
+
+La 227 solo admitía COP en `empaquetados.moneda` y en las vinculadas. Un caso real (17 vuelos MDE-SDQ-MDE con R 415-445 y fee 45 guardados como COP) obligó a levantar esa restricción. **La 230 es aditiva** (no edita la 227): amplía los CHECK a `COP`/`USD`, la vinculada sigue sin markup ni TA, y `trg_salida_vinculada_63` exige que la salida tenga **la misma moneda que su vuelo**. Cambiar la moneda de un empaquetado invalida el tarifario (trigger de la 226 + `moneda`) y mueve `p63_rev_costos`. `aceptar_oferta_63` acepta COP/USD y compara la moneda de la salida.
+
+- **Modo `cop_trm_63`:** R (tarifa para empaquetar) y F (fee) en USD se convierten × TRM **una sola vez** (`aCop63`/`feeACop63`) y entran sin markup ni TA al PVP y al BNC (`impuesto_tipo = tiquete`). El tarifario se publica en COP por el envoltorio de la 227 (que no cambió). La **CxP aérea conserva USD** (`monedaAereo` de `Oferta63`, de la salida manual o del vuelo vinculado) con `valor_cop_63`/`trm_63`; `ventas.costo_aereo` es el equivalente COP de ese mismo valor.
+- **Fuera del modo 63** (Bloqueo/Porción, `armado_empaquetados`): regla D8, no se mezclan monedas. `generarTarifario` rechaza un Empaquetado cuya moneda difiere de la del paquete y `reservar` lo vuelve a comprobar.
+- **Formularios:** campo "Moneda de las tarifas" (`components/vuelos/MonedaTarifas.tsx`) en Nuevo/Editar Empaquetado y en las salidas manuales del modo 63. Regla del dueño (`lib/vuelos/monedaSospechosa.ts`): COP con un valor positivo menor a 1.000 pregunta "¿Este valor está en USD?" y no deja guardar; el servidor de Empaquetados también lo rechaza.
+- **Datos:** `supabase/scripts/correccion_230_datos_usd.sql` (idempotente, con constancia en `notas`, aborta si hay ventas/ofertas o si el paquete 70 está visible), `rollback_230_correccion_datos.sql`, `rollback_230_empaquetados_usd.sql` y la consulta integral `preflight_postcheck_230_empaquetados_usd.sql`.
+- **Pruebas:** SQL `test_230_empaquetados_usd.sql` (batería de la 227 adaptada + secciones U-W) y `test_230_correccion_fixture.sql`; TS `empaquetadosUsd230{.puro,}.test.ts`, `empaquetadosUsd230{Formularios,Reserva}.react.ts`.
+
 ## Enlaces cruzados
 
 - **Tarifas de hotel** (`tarifa_hotel`, `hotel_temporadas`) y el gotcha de texto-sin-FK — ver

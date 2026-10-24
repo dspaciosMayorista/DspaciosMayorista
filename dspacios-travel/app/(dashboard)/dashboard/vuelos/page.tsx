@@ -294,7 +294,7 @@ export default async function VuelosPage({ searchParams }: { searchParams: Promi
                 id: `promocion:${e.id}`, origen: "promocion" as const, record: e.record, numeroContrato: null,
                 aerolinea: e.aerolinea, ruta: e.ruta,
                 fecha_ida: e.fecha_ida, vuelo_ida: e.vuelo_ida, fecha_regreso: e.fecha_regreso, vuelo_regreso: e.vuelo_regreso,
-                tarifa_para_empaquetar: e.tarifa_para_empaquetar, estado_emision: e.estado_emision, estado_pago: e.estado_pago,
+                tarifa_para_empaquetar: e.tarifa_para_empaquetar, moneda: (e as { moneda?: string | null }).moneda ?? null, estado_emision: e.estado_emision, estado_pago: e.estado_pago,
                 activo: e.activo,
               })),
               // Origen "Contrato" (defecto 3 + hallazgo 3 "columna

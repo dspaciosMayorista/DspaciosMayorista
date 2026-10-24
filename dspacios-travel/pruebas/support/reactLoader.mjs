@@ -88,6 +88,8 @@ const STUB_DESTINOS_ACTIONS = pathToFileURL(join(AQUI, "stubs", "destinosActions
 // importan la Server Action real "../actions" (termina en "next/headers") ->
 // stub configurable.
 const STUB_VUELOS_ACTIONS = pathToFileURL(join(AQUI, "stubs", "vuelosActionsStub.mjs")).href;
+// Formularios de Empaquetados (#90/230): la Server Action real (next/headers) -> stub configurable.
+const STUB_EMPAQUETADOS_ACTIONS = pathToFileURL(join(AQUI, "stubs", "empaquetadosActionsStub.mjs")).href;
 // La Server Action REAL de vuelos (pruebas/vuelosOperacionesActions.react.ts)
 // importa "../paquetes/actions" (motor de tarifarios completo) -> stub.
 const STUB_PAQUETES_ACTIONS = pathToFileURL(join(AQUI, "stubs", "paquetesActionsStub.mjs")).href;
@@ -195,6 +197,10 @@ export async function resolve(specifier, context, nextResolve) {
        context.parentURL?.endsWith("/portal/b2b/agentes/actions.ts"))) {
     return { url: specifier === "next/cache" ? STUB_NEXT_CACHE : STUB_SUPABASE_SERVER, shortCircuit: true };
   }
+  if ((specifier === "../empaquetados-actions" || specifier === "../../empaquetados-actions") &&
+      (context.parentURL?.endsWith("/NuevoEmpaquetadoForm.tsx") || context.parentURL?.endsWith("/EditarEmpaquetadoForm.tsx"))) {
+    return { url: STUB_EMPAQUETADOS_ACTIONS, shortCircuit: true };
+  }
   if (specifier === "./actions" && context.parentURL?.endsWith("PagosList.tsx")) {
     return { url: STUB_PAGOS_ACTIONS, shortCircuit: true };
   }
@@ -210,6 +216,8 @@ export async function resolve(specifier, context, nextResolve) {
       context.parentURL?.endsWith("/ConvertirCarritoBtn.tsx") ||
       context.parentURL?.endsWith("PagosList.tsx") ||
       context.parentURL?.endsWith("EditarBloqueoForm.tsx") ||
+      context.parentURL?.endsWith("/NuevoEmpaquetadoForm.tsx") ||
+      context.parentURL?.endsWith("/EditarEmpaquetadoForm.tsx") ||
       context.parentURL?.endsWith("PasajeroAcciones.tsx"))
   ) {
     return { url: STUB_DATE_INPUT, shortCircuit: true };
@@ -217,6 +225,7 @@ export async function resolve(specifier, context, nextResolve) {
   if (
     specifier === "next/navigation" &&
     (context.parentURL?.endsWith("DifusionClient.tsx") || context.parentURL?.endsWith("EditarBloqueoForm.tsx") ||
+      context.parentURL?.endsWith("/NuevoEmpaquetadoForm.tsx") || context.parentURL?.endsWith("/EditarEmpaquetadoForm.tsx") ||
       context.parentURL?.endsWith("/login/LoginClient.tsx") ||
       // Botón de salir que importa el portal B2B (pruebas/comisionPortalB2B.react.ts).
       context.parentURL?.endsWith("/LogoutButton.tsx") ||

@@ -207,7 +207,7 @@ describe("los caminos de venta usan la fuente única de menores de 2 años", () 
   });
   test("generador: cada fuente de vuelo pasa su fee_infante (precio = costo, sin MK ni TA) y el infante sin tarifa de hotel se publica", () => {
     assert.match(generador, /tarifa_para_empaquetar, fee_infante\)/);
-    assert.match(generador, /tarifa_para_empaquetar, fee_infante, activo, compra_inicio, compra_fin\)/);
+    assert.match(generador, /tarifa_para_empaquetar, fee_infante, (moneda, )?activo, compra_inicio, compra_fin\)/);
     assert.match(generador, /Number\(b\.fee_infante\) \|\| 0\);/);
     assert.match(generador, /Number\(e\.fee_infante\) \|\| 0\);/);
     assert.match(generador, /Number\(sal\.fee_infante\) \|\| 0\);/);

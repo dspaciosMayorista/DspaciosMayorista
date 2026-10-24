@@ -20,7 +20,7 @@ export type Database = {
           valor_tiquete: number; aplica_mk: boolean; ta: number; fee_infante: number;
           compra_inicio: string | null; compra_fin: string | null; activo: boolean; notas: string | null; orden: number; created_at: string;
           // Migración 227 (#63): vínculo a un vuelo de Empaquetados sin record (NULL = salida manual) y moneda
-          // acreditada de tiquete/TA/fee de la salida MANUAL (la vinculada es siempre COP).
+          // acreditada de tiquete/TA/fee de la salida MANUAL; la VINCULADA copia la de su vuelo de Empaquetados (COP o USD, migración 230).
           empaquetado_id: number | null; moneda: string;
         };
         Insert: {
@@ -1298,7 +1298,7 @@ export type Database = {
           activo: boolean;
           created_at: string;
           updated_at: string;
-          // La migración 227 (#63) agrega `moneda` (solo COP por ahora). NO se tipa aquí a propósito: la vista
+          // La migración 227 (#63) agrega `moneda` (COP o USD desde la 230). NO se tipa aquí a propósito: la vista
           // `empaquetados_basica` (224) refleja este Row menos los costos y la prueba de deriva la protege; el código
           // la lee con consultas sin tipo (lib/reservar/prepararOferta63.ts) y no la necesita en la vista.
         };

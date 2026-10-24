@@ -9,6 +9,8 @@ import { actualizarEmpaquetado, eliminarEmpaquetado, type EmpaquetadoInputGenera
 import { ComboDestino, type DestinoOpt } from "@/components/ComboDestino";
 import { ComboProveedor, type ProveedorOpt } from "@/components/ComboProveedor";
 import { ConfirmDialog } from "@/components/ui/ConfirmDialog";
+import { MonedaTarifas, etiquetasSospechosas } from "@/components/vuelos/MonedaTarifas";
+import { mensajeValorSospechoso, type MonedaVuelo } from "@/lib/vuelos/monedaSospechosa";
 
 const lbl = "mb-1 block text-xs font-medium text-gray-600";
 const card = "rounded-xl border border-gray-200 bg-white p-5 space-y-4";
@@ -47,6 +49,14 @@ export function EditarEmpaquetadoForm({
     feeInfante: String(inicial.feeInfante || "0"), compraInicio: inicial.compraInicio, compraFin: inicial.compraFin, notas: inicial.notas,
   });
   const set = (k: keyof typeof f) => (e: React.ChangeEvent<HTMLInputElement>) => setF({ ...f, [k]: e.target.value });
+  // 230: moneda de las tarifas. COP con un valor menor a 1.000 se trata como USD y bloquea el guardado hasta corregirlo.
+  const [moneda, setMoneda] = useState<MonedaVuelo>(inicial.moneda === "USD" ? "USD" : "COP");
+  const camposMoneda = [
+    { etiqueta: "La tarifa proveedor/sistema", valor: f.tarifaProveedor },
+    { etiqueta: "La tarifa para empaquetar", valor: f.tarifaParaEmpaquetar },
+    { etiqueta: "El fee de infante", valor: f.feeInfante },
+  ];
+  const sospechosos = etiquetasSospechosas(moneda, camposMoneda);
 
   const iataDe = (id: number | "") => {
     const d = destinos.find((x) => x.id === id);
@@ -59,6 +69,7 @@ export function EditarEmpaquetadoForm({
   function guardar(e: React.FormEvent) {
     e.preventDefault();
     if (!f.fechaIda) { setErr("La fecha de ida es obligatoria."); return; }
+    if (sospechosos.length) { setErr(mensajeValorSospechoso(sospechosos)); return; }
     setErr(""); setMsg("");
     start(async () => {
       const r = await actualizarEmpaquetado(empaquetadoId, {
@@ -67,7 +78,7 @@ export function EditarEmpaquetadoForm({
         vueloIda: f.vueloIda, fechaIda: f.fechaIda, horaSalidaIda: f.horaSalidaIda, horaLlegadaIda: f.horaLlegadaIda,
         vueloRegreso: f.vueloRegreso, fechaRegreso: f.fechaRegreso, horaSalidaReg: f.horaSalidaReg, horaLlegadaReg: f.horaLlegadaReg,
         tarifaProveedor: Number(f.tarifaProveedor) || 0, tarifaParaEmpaquetar: Number(f.tarifaParaEmpaquetar) || 0,
-        feeInfante: Number(f.feeInfante) || 0, compraInicio: f.compraInicio, compraFin: f.compraFin,
+        feeInfante: Number(f.feeInfante) || 0, moneda, compraInicio: f.compraInicio, compraFin: f.compraFin,
         notas: f.notas, activo,
       });
       if (r.ok) { setMsg("Guardado."); router.refresh(); } else setErr(r.error);
@@ -123,6 +134,9 @@ export function EditarEmpaquetadoForm({
       <section className={card}>
         <p className="text-sm font-semibold" style={{ color: "var(--brand-primary)" }}>Tarifa y vigencia</p>
         <div className="grid grid-cols-2 gap-3 md:grid-cols-3">
+          <div className="col-span-2 md:col-span-3">
+            <MonedaTarifas moneda={moneda} onChange={setMoneda} campos={camposMoneda} ayuda="Moneda del neto, de la tarifa para empaquetar y del fee. Cambiarla invalida los tarifarios y ofertas que usan este vuelo." />
+          </div>
           <div><label className={lbl}>Tarifa proveedor/sistema (neto)</label><Input type="number" min={0} value={f.tarifaProveedor} onChange={set("tarifaProveedor")} /></div>
           <div><label className={lbl}>Tarifa para empaquetar (reventa)</label><Input type="number" min={0} value={f.tarifaParaEmpaquetar} onChange={set("tarifaParaEmpaquetar")} /></div>
           <div><label className={lbl}>Fee infante</label><Input type="number" min={0} value={f.feeInfante} onChange={set("feeInfante")} /></div>

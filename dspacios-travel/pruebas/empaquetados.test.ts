@@ -287,7 +287,7 @@ const paquetesActionsSrc = leer("app/(dashboard)/dashboard/paquetes/actions.ts")
 test("generarTarifario lee armado_empaquetados (join con empaquetados) — antes NO lo consultaba en absoluto", () => {
   assert.match(paquetesActionsSrc, /\.from\("armado_empaquetados"\)/, "generarTarifario debe consultar armado_empaquetados");
   // 226: además `fee_infante` (el infante paga ese fee en el vuelo; precio = costo).
-  assert.match(paquetesActionsSrc, /empaquetados\(id, record, ruta, fecha_ida, fecha_regreso, tarifa_para_empaquetar, (fee_infante, )?activo, compra_inicio, compra_fin\)/);
+  assert.match(paquetesActionsSrc, /empaquetados\(id, record, ruta, fecha_ida, fecha_regreso, tarifa_para_empaquetar, (fee_infante, )?(moneda, )?activo, compra_inicio, compra_fin\)/);
 });
 
 test("generarTarifario: la rama 'bloqueo' liquida empaquetados con la MISMA función aporteVuelo/filasHoteles que un bloqueo negociado, usando tarifa_para_empaquetar (nunca tarifa_proveedor) como costoTiquete", () => {
@@ -434,7 +434,7 @@ test("crearEmpaquetado exige fecha_ida pero NO exige record (el PNR se agrega de
     empActionsSrc.indexOf("export async function crearEmpaquetado"),
     empActionsSrc.indexOf("// GENERALES:")
   );
-  assert.match(fn, /validarEmpaquetado\(input\)/, "crearEmpaquetado debe pasar por la validación compartida");
+  assert.match(fn, /validarEmpaquetado\(input(, true)?\)/, "crearEmpaquetado debe pasar por la validación compartida");
   assert.doesNotMatch(fn, /if \(!input\.record/, "no debe exigir record — es opcional a propósito");
 });
 

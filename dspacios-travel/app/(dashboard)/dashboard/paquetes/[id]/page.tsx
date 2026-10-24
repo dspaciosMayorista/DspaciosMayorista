@@ -1,4 +1,5 @@
 import { createClient } from "@/lib/supabase/server";
+import type { ComponentProps } from "react";
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { ArmadoClient } from "./ArmadoClient";
@@ -56,7 +57,7 @@ export default async function PaqueteDetallePage({ params }: { params: Promise<{
   // (uno apagado no debe ofrecerse para armar un paquete nuevo).
   let qEmpaquetados = sb
     .from("empaquetados")
-    .select("id, record, ruta, aerolinea, fecha_ida, fecha_regreso, tarifa_para_empaquetar, destino_id")
+    .select("id, record, ruta, aerolinea, fecha_ida, fecha_regreso, tarifa_para_empaquetar, destino_id, moneda")
     .eq("activo", true)
     .order("fecha_ida");
   qEmpaquetados = qEmpaquetados.in("destino_id", idsAereos);
@@ -194,7 +195,8 @@ export default async function PaqueteDetallePage({ params }: { params: Promise<{
         destinosAereosError={destinosAereosErrorTotal}
         tieneDestino={!!destinoId}
         vuelosDisp={vuelosDisp ?? []}
-        empaquetadosDisp={empaquetadosDisp ?? []}
+        // 230: `moneda` de empaquetados no está en types/database.ts a propósito (ver su nota); se lee con el select sin tipo.
+        empaquetadosDisp={(empaquetadosDisp ?? []) as unknown as ComponentProps<typeof ArmadoClient>["empaquetadosDisp"]}
         hotelesDisp={hotelesDisp ?? []}
         serviciosDisp={(serviciosDisp ?? []) as unknown as Parameters<typeof ArmadoClient>[0]["serviciosDisp"]}
         selVuelos={selVuelos ?? []}

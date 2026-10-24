@@ -7,6 +7,8 @@ import { AlertTriangle, Link2, RefreshCw } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { formatMoneda } from "@/lib/utils";
+import { MonedaTarifas, etiquetasSospechosas } from "@/components/vuelos/MonedaTarifas";
+import { mensajeValorSospechoso } from "@/lib/vuelos/monedaSospechosa";
 import {
   crearSalidaDinamica, actualizarSalidaDinamica, eliminarSalidaDinamica,
   listarEmpaquetadosParaSalidas63, vincularSalidasEmpaquetados63, actualizarSalidaDesdeFuente63,
@@ -26,6 +28,16 @@ export type SalidaDinamica = {
 };
 
 const lbl = "mb-1 block text-xs font-medium text-gray-600";
+
+// 230: en el modo COP con TRM la salida manual lleva su moneda. COP con un valor menor a 1.000 es casi seguro USD: no se guarda.
+function sospechososSalida(v: SalidaDinamicaInput, modo63: boolean): string[] {
+  if (!modo63) return [];
+  return etiquetasSospechosas(v.moneda === "USD" ? "USD" : "COP", [
+    { etiqueta: "El valor del tiquete", valor: v.valorTiquete },
+    { etiqueta: "La TA", valor: v.ta },
+    { etiqueta: "El fee de infante", valor: v.feeInfante },
+  ]);
+}
 
 function vacia(): SalidaDinamicaInput {
   return {
@@ -58,6 +70,8 @@ export function SalidasDinamicasEditor({
 
   function agregar() {
     if (!nueva.fechaIda) { setErr("Pon al menos la fecha de ida."); return; }
+    const sosp = sospechososSalida(nueva, modo63);
+    if (sosp.length) { setErr(mensajeValorSospechoso(sosp)); return; }
     setErr("");
     start(async () => {
       const r = await crearSalidaDinamica(paqueteId, nueva);
@@ -165,7 +179,7 @@ function VinculadasEmpaquetados({
       <h3 className="text-xs font-semibold uppercase tracking-wide text-gray-400">Salidas vinculadas a Empaquetados (sin record)</h3>
       <p className="text-[11px] text-gray-500">
         Cada salida toma de un vuelo de Empaquetados sin record sus fechas, ruta y tarifas: el precio del aéreo entra tal cual (sin markup ni TA) y el
-        fee de infante se suma exacto. Se cotizan y reservan sin consultar cupos de Bloqueo. Moneda: <b>COP</b>{trm ? <> · TRM del paquete: <b>{formatMoneda(trm, "COP")}</b></> : null}.
+        fee de infante se suma exacto. Se cotizan y reservan sin consultar cupos de Bloqueo. Cada vuelo conserva su moneda (COP o USD): si es USD se convierte con la TRM del paquete{trm ? <> (TRM: <b>{formatMoneda(trm, "COP")}</b>)</> : null}, una sola vez, y el tarifario se publica en COP.
       </p>
 
       {vinculadas.length > 0 && (
@@ -182,8 +196,8 @@ function VinculadasEmpaquetados({
                   </span>
                   <span className="text-xs text-gray-500">{s.fecha_ida} → {s.fecha_regreso || "—"}</span>
                   <span className="tabular-nums text-gray-700">
-                    Aéreo {formatMoneda(Number(s.valor_tiquete), "COP")}
-                    {Number(s.fee_infante) > 0 ? ` · inf ${formatMoneda(Number(s.fee_infante), "COP")}` : ""}
+                    Aéreo {formatMoneda(Number(s.valor_tiquete), s.moneda === "USD" ? "USD" : "COP")}
+                    {Number(s.fee_infante) > 0 ? ` · inf ${formatMoneda(Number(s.fee_infante), s.moneda === "USD" ? "USD" : "COP")}` : ""}
                   </span>
                   <span className="flex items-center gap-3">
                     <button type="button" disabled={pending} onClick={() => actualizar(s.id)} className="inline-flex items-center gap-1 text-xs text-[var(--brand-accent)] hover:underline">
@@ -223,7 +237,7 @@ function VinculadasEmpaquetados({
                   <input type="checkbox" checked={elegidos.includes(c.id)} onChange={() => alternar(c.id)} aria-label={`Vincular ${c.ruta ?? "vuelo"} ${c.fechaIda}`} />
                   <span className="font-medium">{c.ruta || "—"}</span>
                   <span className="text-xs text-gray-500">{c.aerolinea ?? ""} · {c.fechaIda} → {c.fechaRegreso}</span>
-                  <span className="ml-auto tabular-nums text-xs text-gray-600">{formatMoneda(c.tarifaParaEmpaquetar, "COP")}</span>
+                  <span className="ml-auto tabular-nums text-xs text-gray-600">{formatMoneda(c.tarifaParaEmpaquetar, c.moneda)}</span>
                 </label>
               </li>
             ))}
@@ -248,6 +262,8 @@ function SalidaFila({ s, moneda, modo63, onChanged, setErr }: { s: SalidaDinamic
   const monedaFila = modo63 ? (s.moneda === "USD" ? "USD" : "COP") : moneda;
 
   function guardar() {
+    const sosp = sospechososSalida(v, modo63);
+    if (sosp.length) { setErr(mensajeValorSospechoso(sosp)); return; }
     start(async () => {
       const r = await actualizarSalidaDinamica(s.id, v);
       if (r.ok) { setEditando(false); onChanged(); } else setErr(r.error);
@@ -304,12 +320,17 @@ function CamposSalida({ value, onChange, modo63 = false }: { value: SalidaDinami
       </div>
       <div className="grid grid-cols-2 gap-2 rounded-lg border border-gray-100 bg-gray-50/60 p-2 md:grid-cols-4">
         {modo63 && (
-          <div>
-            <label className={lbl}>Moneda del tiquete, TA y fee</label>
-            <select value={value.moneda === "USD" ? "USD" : "COP"} onChange={(e) => onChange({ ...value, moneda: e.target.value === "USD" ? "USD" : "COP" })} className="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm" aria-label="Moneda del tiquete">
-              <option value="COP">COP</option>
-              <option value="USD">USD (se convierte con la TRM del paquete)</option>
-            </select>
+          <div className="col-span-2 md:col-span-4">
+            <MonedaTarifas
+              moneda={value.moneda === "USD" ? "USD" : "COP"}
+              onChange={(m) => onChange({ ...value, moneda: m })}
+              campos={[
+                { etiqueta: "El valor del tiquete", valor: value.valorTiquete },
+                { etiqueta: "La TA", valor: value.ta },
+                { etiqueta: "El fee de infante", valor: value.feeInfante },
+              ]}
+              ayuda="USD se convierte con la TRM del paquete."
+            />
           </div>
         )}
         <div><label className={lbl}>Valor tiquete (adulto 2+)</label><Input type="number" min={0} value={value.valorTiquete || ""} onChange={(e) => set("valorTiquete", Number(e.target.value) || 0)} placeholder="—" /></div>

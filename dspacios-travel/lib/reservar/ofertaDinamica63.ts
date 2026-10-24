@@ -23,6 +23,8 @@
 //     conserva los centavos (numeric(15,2)); nunca se redondea al peso/al mil.
 //   · R2: los rótulos de menores son los de la 226 (`menoresDeDos.ts`), sin
 //     variantes: este módulo NO escribe ningún rótulo.
+//   · 230: un Empaquetado (y su salida vinculada) puede estar en COP o en USD. R y F en USD se convierten × TRM UNA sola vez
+//     (`aCop63`/`feeACop63`), sin markup ni TA; N (costo) y su CxP conservan la moneda de origen con su equivalente en COP.
 // ─────────────────────────────────────────────────────────────────────────
 
 import { createHash } from "node:crypto";
@@ -61,6 +63,11 @@ export function validarTrm63(v: unknown): ResultadoTrm63 {
 
 export function monedaNormalizada63(m: unknown): "COP" | "USD" {
   return typeof m === "string" && m.trim().toUpperCase() === "USD" ? "USD" : "COP";
+}
+
+/** ¿Es una moneda soportada (COP o USD)? A diferencia de `monedaNormalizada63`, null/vacío/otro texto NO se infieren como COP. */
+export function monedaValida63(m: unknown): m is "COP" | "USD" {
+  return m === "COP" || m === "USD";
 }
 
 /**
@@ -170,7 +177,7 @@ const MENSAJES_FUENTE: Record<MotivoFuente63, string> = {
   compra_no_iniciada: "El vuelo de Empaquetados vinculado a esta salida aún no está habilitado para compra.",
   compra_vencida: "El vuelo de Empaquetados vinculado a esta salida está fuera de su vigencia de compra.",
   viaje_pasado: "La fecha del vuelo de Empaquetados vinculado a esta salida ya pasó.",
-  moneda_no_soportada: "El vuelo de Empaquetados vinculado a esta salida no está en COP; esa moneda todavía no está habilitada.",
+  moneda_no_soportada: "El vuelo de Empaquetados vinculado a esta salida no tiene una moneda válida (COP o USD). Corrígela en Vuelos > Empaquetados.",
   sin_tarifa: "El vuelo de Empaquetados vinculado a esta salida no tiene una tarifa para empaquetar válida.",
   error_lectura: "No se pudo validar el vuelo de Empaquetados vinculado a esta salida. Intenta nuevamente.",
 };
@@ -206,7 +213,7 @@ export function evaluarFuenteVinculada63(f: FuenteEmpaquetado63 | null | undefin
   if (f.compra_inicio && hoy < f.compra_inicio) return rechazoFuente("compra_no_iniciada");
   if (f.compra_fin && hoy > f.compra_fin) return rechazoFuente("compra_vencida");
   if (f.fecha_ida < hoy) return rechazoFuente("viaje_pasado");
-  if (f.moneda != null && monedaNormalizada63(f.moneda) !== "COP") return rechazoFuente("moneda_no_soportada");
+  if (!monedaValida63(f.moneda)) return rechazoFuente("moneda_no_soportada");
   const r = Number(f.tarifa_para_empaquetar);
   if (!Number.isFinite(r) || r <= 0) return rechazoFuente("sin_tarifa");
   return { ok: true };
@@ -223,6 +230,7 @@ export type SalidaVinculada63 = {
   aerolinea?: string | null;
   valor_tiquete?: number | string | null;
   fee_infante?: number | string | null;
+  moneda?: string | null;
   aplica_mk?: boolean | null;
   ta?: number | string | null;
 };
@@ -248,6 +256,8 @@ export function fuenteCoincideConSalida63(
   if (txt(salida.aerolinea) !== txt(fuente.aerolinea)) campos.push("aerolínea");
   if (num2(salida.valor_tiquete) !== num2(fuente.tarifa_para_empaquetar)) campos.push("tarifa para empaquetar");
   if (num2(salida.fee_infante) !== num2(fuente.fee_infante)) campos.push("fee de infante");
+  // 230: la salida guarda también la MONEDA de la fuente. Una salida que no trae el dato (lectura antigua) no se compara.
+  if (salida.moneda !== undefined && txt(salida.moneda) !== txt(fuente.moneda)) campos.push("moneda");
   return campos.length ? { ok: false, campos } : { ok: true };
 }
 
@@ -269,7 +279,8 @@ export function copiarDeFuente63(f: FuenteEmpaquetado63) {
     hora_llegada_reg: f.hora_llegada_reg ?? null,
     compra_inicio: f.compra_inicio ?? null,
     compra_fin: f.compra_fin ?? null,
-    moneda: "COP" as const,
+    // 230: la salida vinculada copia la moneda de su fuente (COP o USD); el CHECK/trigger de la base la exige igual.
+    moneda: (monedaValida63(f.moneda) ? f.moneda : "COP") as "COP" | "USD",
     valor_tiquete: num2(f.tarifa_para_empaquetar),
     fee_infante: num2(f.fee_infante),
     aplica_mk: false,

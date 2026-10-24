@@ -3,7 +3,7 @@
 import { useMemo, useState } from "react";
 import Link from "next/link";
 import { Pencil, Plus } from "lucide-react";
-import { formatFechaLarga } from "@/lib/utils";
+import { formatFechaLarga, formatMoneda } from "@/lib/utils";
 import { EstadoBadge } from "@/components/EstadoBadge";
 import { ResponsiveTableShell } from "@/components/ui/ResponsiveTableShell";
 import {
@@ -43,6 +43,7 @@ export type EmpaquetadoFila = {
   fecha_regreso: string | null;
   vuelo_regreso: string | null;
   tarifa_para_empaquetar: number | null; // null en "contrato": no es una tarifa de reventa, es costo interno
+  moneda?: string | null; // 230: moneda de la tarifa (COP o USD); ausente = COP
   estado_emision: string | null;
   estado_pago: string | null;
   activo: boolean;
@@ -221,7 +222,7 @@ export function EmpaquetadosTabla({
                 <td className="px-3 py-2 text-gray-600" data-label="Ruta">{f.ruta ?? "—"}</td>
                 <td className="px-3 py-2 text-xs text-gray-500" data-label="Ida">{formatFechaLarga(f.fecha_ida)}{f.vuelo_ida ? ` · ${f.vuelo_ida}` : ""}</td>
                 <td className="px-3 py-2 text-xs text-gray-500" data-label="Regreso">{formatFechaLarga(f.fecha_regreso)}{f.vuelo_regreso ? ` · ${f.vuelo_regreso}` : ""}</td>
-                <td className="px-3 py-2 text-gray-700" data-label="Tarifa empaquetar">{f.tarifa_para_empaquetar ? `$${f.tarifa_para_empaquetar.toLocaleString("es-CO")}` : "—"}</td>
+                <td className="px-3 py-2 text-gray-700" data-label="Tarifa empaquetar">{f.tarifa_para_empaquetar ? formatMoneda(f.tarifa_para_empaquetar, f.moneda) : "—"}</td>
                 <td className="px-3 py-2" data-label="Emisión"><EstadoBadge estado={labelEstadoEmision(f.estado_emision)} tono={tonoEstadoEmision(f.estado_emision)} /></td>
                 <td className="px-3 py-2" data-label="Pago"><EstadoBadge estado={labelEstadoPago(f.estado_pago)} tono={tonoEstadoPago(f.estado_pago)} /></td>
                 <td className="px-3 py-2" data-label="Estado">

@@ -5,10 +5,15 @@ import { createAdminClient } from "@/lib/supabase/admin";
 import { revalidatePath } from "next/cache";
 import { esEstadoEmision, esEstadoPago, type EstadoEmision, type EstadoPago } from "@/lib/vuelos/control";
 import { validarLoteOrigenesAereos } from "@/lib/paquetes/destinosAereos67";
+import { camposSospechososUsd, esMonedaVuelo, mensajeValorSospechoso, type MonedaVuelo } from "@/lib/vuelos/monedaSospechosa";
 
 type Result = { ok: true; id?: number } | { ok: false; error: string };
 
 const oNull = (s: string) => (s && s.trim() !== "" ? s.trim() : null);
+
+// 230: `empaquetados.moneda` (columna de la 227) NO está en types/database.ts a propósito (la vista empaquetados_basica refleja ese Row y
+// una prueba de deriva lo protege), así que se agrega como campo sin tipo; la base valida COP/USD con su CHECK.
+const campoMoneda = (m: MonedaVuelo | undefined): Record<never, never> => (m ? ({ moneda: m } as Record<never, never>) : {});
 
 // ── Inventario de EMPAQUETADOS (migración 156) — tarifas de SISTEMA, sin
 // cupo negociado, sin sillas, sin dueño obligatorio (puede existir antes de
@@ -32,6 +37,11 @@ export type EmpaquetadoInput = {
   tarifaProveedor: number;
   tarifaParaEmpaquetar: number;
   feeInfante: number;
+  /**
+   * 230: moneda de las tres tarifas (COP o USD). Opcional por compatibilidad: al CREAR, sin valor queda COP (el default de la
+   * base); al EDITAR, sin valor no se toca. Con COP, un valor positivo menor a 1.000 se rechaza (regla del dueño: es USD).
+   */
+  moneda?: MonedaVuelo;
   compraInicio: string;
   compraFin: string;
   estadoEmision: EstadoEmision | "";
@@ -47,8 +57,9 @@ export type EmpaquetadoInput = {
 // del lado del servidor antes de tocar la base de datos; los CHECK de
 // Postgres (migración 156) son la línea de defensa final por si esta
 // función se saltara — nunca al revés.
-function validarEmpaquetado(input: EmpaquetadoInput): string | null {
+function validarEmpaquetado(input: EmpaquetadoInput, creando = false): string | null {
   if (!input.fechaIda) return "La fecha de ida es obligatoria.";
+  if (input.moneda !== undefined && !esMonedaVuelo(input.moneda)) return "La moneda de las tarifas debe ser COP o USD.";
   if (input.estadoEmision && !esEstadoEmision(input.estadoEmision)) return "Estado de emisión inválido.";
   if (input.estadoPago && !esEstadoPago(input.estadoPago)) return "Estado de pago inválido.";
   const tarifaProveedor = Number(input.tarifaProveedor);
@@ -59,11 +70,18 @@ function validarEmpaquetado(input: EmpaquetadoInput): string | null {
   if (!Number.isFinite(feeInfante) || feeInfante < 0) return "El fee de infante no puede ser negativo.";
   if (input.fechaRegreso && input.fechaRegreso < input.fechaIda) return "La fecha de regreso no puede ser anterior a la fecha de ida.";
   if (input.compraInicio && input.compraFin && input.compraFin < input.compraInicio) return "La vigencia de compra (hasta) no puede ser anterior a (desde).";
+  // 230: tiquete en COP con valor menor a 1.000 = casi seguro USD. Al crear sin moneda rige el default COP.
+  const sospechosos = camposSospechososUsd(input.moneda ?? (creando ? "COP" : undefined), [
+    { etiqueta: "La tarifa proveedor/sistema", valor: tarifaProveedor },
+    { etiqueta: "La tarifa para empaquetar", valor: tarifaEmpaquetar },
+    { etiqueta: "El fee de infante", valor: feeInfante },
+  ]);
+  if (sospechosos.length) return mensajeValorSospechoso(sospechosos);
   return null;
 }
 
 export async function crearEmpaquetado(input: EmpaquetadoInput): Promise<Result> {
-  const err = validarEmpaquetado(input);
+  const err = validarEmpaquetado(input, true);
   if (err) return { ok: false, error: err };
 
   const sb = await createClient();
@@ -87,6 +105,7 @@ export async function crearEmpaquetado(input: EmpaquetadoInput): Promise<Result>
       tarifa_proveedor: Number(input.tarifaProveedor) || 0,
       tarifa_para_empaquetar: Number(input.tarifaParaEmpaquetar) || 0,
       fee_infante: Number(input.feeInfante) || 0,
+      ...campoMoneda(input.moneda),
       compra_inicio: oNull(input.compraInicio),
       compra_fin: oNull(input.compraFin),
       estado_emision: input.estadoEmision || null,
@@ -113,7 +132,7 @@ export async function crearEmpaquetado(input: EmpaquetadoInput): Promise<Result>
 export type EmpaquetadoInputGeneral = Omit<EmpaquetadoInput, "record" | "estadoEmision" | "estadoPago">;
 
 function validarEmpaquetadoGeneral(input: EmpaquetadoInputGeneral): string | null {
-  return validarEmpaquetado({ ...input, record: "", estadoEmision: "", estadoPago: "" });
+  return validarEmpaquetado({ ...input, record: "", estadoEmision: "", estadoPago: "" }, false);
 }
 
 export async function actualizarEmpaquetado(id: number, input: EmpaquetadoInputGeneral): Promise<Result> {
@@ -145,6 +164,7 @@ export async function actualizarEmpaquetado(id: number, input: EmpaquetadoInputG
       tarifa_proveedor: Number(input.tarifaProveedor) || 0,
       tarifa_para_empaquetar: Number(input.tarifaParaEmpaquetar) || 0,
       fee_infante: Number(input.feeInfante) || 0,
+      ...campoMoneda(input.moneda),
       compra_inicio: oNull(input.compraInicio),
       compra_fin: oNull(input.compraFin),
       notas: oNull(input.notas),

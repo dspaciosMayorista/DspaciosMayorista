@@ -78,6 +78,11 @@ export type DatosVueloOrigen = {
   // campo "neto" separado, así que aquí queda igual a costo_neto.
   tarifa_para_empaquetar: number;
   fee_infante: number;
+  /**
+   * 230: moneda de ORIGEN de costo_neto / tarifa_para_empaquetar / fee_infante cuando la fuente la tiene (Empaquetado, salida).
+   * Ausente = la del paquete (Bloqueo, que todavía no guarda moneda).
+   */
+  moneda?: "COP" | "USD";
   proveedor: ProveedorVuelo;
 };
 
@@ -128,7 +133,7 @@ export async function datosVueloEmpaquetado(sb: ClienteSb, empaquetadoId: number
   const { data: e, error } = await sb
     .from("empaquetados")
     .select(
-      "aerolinea, record, ruta, fecha_ida, fecha_regreso, vuelo_ida, vuelo_regreso, hora_salida_ida, hora_llegada_ida, hora_salida_reg, hora_llegada_reg, tarifa_proveedor, tarifa_para_empaquetar, fee_infante, activo, compra_inicio, compra_fin, proveedores(nombre, aplica_retencion, pct_retencion)"
+      "aerolinea, record, ruta, fecha_ida, fecha_regreso, vuelo_ida, vuelo_regreso, hora_salida_ida, hora_llegada_ida, hora_salida_reg, hora_llegada_reg, tarifa_proveedor, tarifa_para_empaquetar, fee_infante, moneda, activo, compra_inicio, compra_fin, proveedores(nombre, aplica_retencion, pct_retencion)"
     )
     .eq("id", empaquetadoId)
     .maybeSingle();
@@ -149,6 +154,7 @@ export async function datosVueloEmpaquetado(sb: ClienteSb, empaquetadoId: number
       costo_neto: Number(e.tarifa_proveedor) || 0,
       tarifa_para_empaquetar: Number(e.tarifa_para_empaquetar) || 0,
       fee_infante: Number(e.fee_infante) || 0,
+      moneda: e.moneda === "USD" ? "USD" : "COP",
       proveedor: e.proveedores as unknown as ProveedorVuelo,
     },
   };
@@ -189,6 +195,7 @@ async function datosVueloSalidaVinculada(
       costo_neto: Number(e.tarifa_proveedor) || 0,
       tarifa_para_empaquetar: Number(e.tarifa_para_empaquetar) || 0,
       fee_infante: Number(e.fee_infante) || 0,
+      moneda: e.moneda === "USD" ? "USD" : "COP",
       proveedor: e.proveedores as unknown as ProveedorVuelo,
     },
   };
@@ -202,7 +209,7 @@ async function datosVueloSalidaVinculada(
 export async function datosVueloSalida(sb: ClienteSb, salidaId: number): Promise<ResultadoDatosVuelo> {
   const { data: s, error } = await sb
     .from("salidas_dinamicas")
-    .select("id, empaquetado_id, aerolinea, ruta, fecha_ida, fecha_regreso, hora_salida_ida, hora_llegada_ida, hora_salida_reg, hora_llegada_reg, valor_tiquete, fee_infante")
+    .select("id, empaquetado_id, aerolinea, ruta, fecha_ida, fecha_regreso, hora_salida_ida, hora_llegada_ida, hora_salida_reg, hora_llegada_reg, valor_tiquete, fee_infante, moneda")
     .eq("id", salidaId)
     .maybeSingle();
   if (error) return { ok: false, error: `No se pudo leer la salida: ${error.message}` };
@@ -220,6 +227,7 @@ export async function datosVueloSalida(sb: ClienteSb, salidaId: number): Promise
       costo_neto: Number(s.valor_tiquete) || 0,
       tarifa_para_empaquetar: Number(s.valor_tiquete) || 0,
       fee_infante: Number(s.fee_infante) || 0,
+      moneda: s.moneda === "USD" ? "USD" : "COP",
       proveedor: null,
     },
   };

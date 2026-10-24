@@ -77,7 +77,7 @@ import { resolverAliadoReserva, planComisionReserva, registrarComisionReserva, t
 import { asignarRefsPasajeros, AVISO_PERSONAS_PENDIENTES } from "@/lib/personas/cotizacion";
 import { MODO_OFERTA_63, MENSAJE_OFERTA_CAMBIO_63, huellaOferta63 } from "@/lib/reservar/ofertaDinamica63";
 import { camposCxP63, sumaEquivalentesCop63 } from "@/lib/reservar/payloadFinanciero63";
-import { validarObligacion63 } from "@/lib/reservar/importeObligacion63";
+import { equivalenteCop63, validarObligacion63 } from "@/lib/reservar/importeObligacion63";
 import {
   armarItems63, armarTramos63, construirSnapshot63, construirObligaciones63, construirPlanB2b63, detalleAcomodacion63, huellaFinanciera63,
   MENSAJE_EN_CURSO_63, MENSAJE_OFERTA_CERRADA_63, type AceptacionPreparada63, type HotelSnapshot63, type PlanB2bSnapshot63,
@@ -246,11 +246,14 @@ async function reservarDesdeTarifarioInterno(input: ReservaInput, tenant: Tenant
     const rv = await resolverDatosVuelo(admin, origen);
     if (!rv.ok) return { ok: false, error: rv.error };
     datosVuelo = rv.data;
-    // #63: salida MANUAL en modo COP — tiquete y fee conservan la moneda acreditada de la salida y aquí ya están en COP
-    // (× TRM del paquete; el fee conserva los centavos). Una vinculada ya trae su fuente en COP desde `resolverDatosVuelo`.
-    if (oferta63 && !oferta63.vinculada && origen.tipo === "salida" && datosVuelo) {
-      datosVuelo = { ...datosVuelo, costo_neto: oferta63.tarifaParaEmpaquetar, tarifa_para_empaquetar: oferta63.tarifaParaEmpaquetar, fee_infante: oferta63.feeInfante };
+    // 230 (regla D8): un Empaquetado como origen NO mezcla monedas. Si su moneda no es la del tarifario/contrato, se rechaza
+    // (el generador ya lo bloquea al publicar; esto cubre un cambio posterior de la moneda del vuelo).
+    if (!oferta63 && origen.tipo === "empaquetado" && datosVuelo?.moneda && datosVuelo.moneda !== (monedaReserva === "USD" ? "USD" : "COP")) {
+      return { ok: false, error: `El vuelo de Empaquetados está en ${datosVuelo.moneda} y este contrato está en ${monedaReserva}. Vuelve al tarifario: el paquete debe regenerarse con la moneda del vuelo.` };
     }
+    // #63 / 230: el aéreo (salida MANUAL o vinculada a un Empaquetado) CONSERVA su moneda de origen (COP o USD): `datosVuelo`
+    // queda en esa moneda y la CxP aérea se debe en ella con su equivalente en COP congelado a la TRM (valor_cop_63/trm_63).
+    // `ventas.costo_aereo` es la suma en COP de ese mismo equivalente (ver `costoAereoCop`).
 
     // Cupos: SOLO un Bloqueo negociado tiene sillas. Una salida (vinculada a Empaquetados o manual) y un
     // Empaquetado nunca consultan `cupos_por_bloqueo` (#63, confirmado por el dueño).
@@ -280,6 +283,9 @@ async function reservarDesdeTarifarioInterno(input: ReservaInput, tenant: Tenant
   // reventa dejaba costo_aereo/CxP en $484.044 en vez de los $400.000 reales
   // (hallazgo de la revisión posterior al PR #268, punto 1 "COSTO FINANCIERO").
   const costoAereo = datosVuelo ? datosVuelo.costo_neto * paxConSilla + datosVuelo.fee_infante * infantesN : 0;
+  // 230: en el modo COP con TRM el costo del contrato (COP) es el equivalente del costo de ORIGEN del aéreo (puede ser USD);
+  // fuera de ese modo (y para COP) es el mismo número de siempre.
+  const costoAereoCop = oferta63 ? equivalenteCop63(costoAereo, oferta63.monedaAereo, oferta63.trm) : costoAereo;
 
   // 2d) Reserva B2B: el aliado es OBLIGATORIO y tiene que poder leerse ANTES
   // de numerar o crear nada (#38). Antes, sin `aliadoId` o con la lectura
@@ -392,7 +398,7 @@ async function reservarDesdeTarifarioInterno(input: ReservaInput, tenant: Tenant
     : {
         destino: meta.destino_nombre, moneda: monedaReserva, fecha_salida: meta.fecha_ida, fecha_regreso: meta.fecha_regreso,
         pax: totalPax || paxConSilla, hotel: esServicios ? null : meta.hotel_nombre, impuesto: impuestoTotal,
-        costo_aereo: datosVuelo ? costoAereo : undefined, aerolinea: datosVuelo?.aerolinea ?? null, plan_nombre: `${input.categoria} · ${input.regimen}`,
+        costo_aereo: datosVuelo ? costoAereoCop : undefined, aerolinea: datosVuelo?.aerolinea ?? null, plan_nombre: `${input.categoria} · ${input.regimen}`,
       };
   // 4) Venta (cabecera) — nace PENDIENTE
   const { error: ve } = await sb.from("ventas").insert({
@@ -887,7 +893,7 @@ async function calcularFinancieroReserva(p: {
   const monedaOrigenCxP63 = (tipo: string, servicioId?: number | null): "COP" | "USD" => {
     if (!oferta63) return "COP";
     if (tipo === "hotel") return oferta63.monedaHotel;
-    if (tipo === "aereo") return "COP";
+    if (tipo === "aereo") return oferta63.monedaAereo;
     return servicioId != null ? (oferta63.monedaServicios[servicioId] ?? "COP") : "COP";
   };
   const pushCxP = (tipo: string, servicio: string, valor: number, pr: ProvFact, nombreFallback?: string | null, cxpOpts?: { permitirCero?: boolean; servicioId?: number | null }) => {
@@ -1354,12 +1360,10 @@ export async function crearCotizacion(input: ReservaInput, opts?: { vigenciaHast
     if (!user) return { ok: false, error: "No autorizado." };
     if (!t063) return { ok: false, error: "No se pudo leer la configuración del paquete. Intenta nuevamente." };
     if (!t063.ok) return { ok: false, error: t063.error };
-    // Salida MANUAL en modo 63: el tiquete y el fee ya convertidos a COP son los que cuestan (igual que al reservar).
-    let datosFin: DatosVueloOrigen | null = datosVueloSnap;
-    if (!oferta63.vinculada && origen.tipo === "salida" && datosFin) {
-      datosFin = { ...datosFin, costo_neto: oferta63.tarifaParaEmpaquetar, tarifa_para_empaquetar: oferta63.tarifaParaEmpaquetar, fee_infante: oferta63.feeInfante };
-    }
+    // 230: el aéreo (manual o vinculado) conserva su moneda de origen; la CxP la debe en ella y el costo del contrato es su equivalente COP.
+    const datosFin: DatosVueloOrigen | null = datosVueloSnap;
     const costoAereo63 = datosFin ? datosFin.costo_neto * paxConSilla + datosFin.fee_infante * numMenoresDeDos : 0;
+    const costoAereo63Cop = equivalenteCop63(costoAereo63, oferta63.monedaAereo, oferta63.trm);
     const fin63 = await calcularFinancieroReserva({ input, data: comp.data, datosVuelo: datosFin, costoAereo: costoAereo63, hoyISO: hoy });
     if (!fin63.ok) return { ok: false, error: fin63.error };
     let proveedorHotel63: string | null = null;
@@ -1389,7 +1393,7 @@ export async function crearCotizacion(input: ReservaInput, opts?: { vigenciaHast
       cabecera: {
         tipo_paquete: input.modulo, moneda: monedaReserva, fecha_salida: meta.fecha_ida, fecha_regreso: meta.fecha_regreso,
         pax: totalPax || paxConSilla, destino: meta.destino_nombre, hotel: esServicios ? null : meta.hotel_nombre,
-        precio_venta: precioVenta, impuesto: impuestoTotal, costo_aereo: datosFin ? costoAereo63 : 0, aerolinea: datosFin?.aerolinea ?? null,
+        precio_venta: precioVenta, impuesto: impuestoTotal, costo_aereo: datosFin ? costoAereo63Cop : 0, aerolinea: datosFin?.aerolinea ?? null,
         plan_nombre: `${input.categoria} · ${input.regimen}`, paquete_armado_id: input.paqueteId,
         tipo_asesor: input.tipoAsesor, canal: input.tipoAsesor === "interno" ? "B2C" : "B2B",
       },
