@@ -88,9 +88,14 @@ select control, valor, esperado, estado
            coalesce((select (not activo and not coalesce(tarifario_snapshot_publicable, false))::text from public.armado_paquetes where id = 70), 'no existe'), 'true',
            case when coalesce((select not activo and not coalesce(tarifario_snapshot_publicable, false) from public.armado_paquetes where id = 70), false) then 'OK' else 'REVISAR' end
     union all
-    select 19, 'ventas_u_ofertas_de_los_paquetes_70_y_71',
-           ((select count(*) from public.ventas where paquete_armado_id in (70, 71)) + (select count(*) from public.p63_oferta where paquete_id in (70, 71)))::text, '0 (nunca se vendieron)',
-           case when (select count(*) from public.ventas where paquete_armado_id in (70, 71)) + (select count(*) from public.p63_oferta where paquete_id in (70, 71)) = 0 then 'OK' else 'REVISAR' end
+    select 19, 'ventas_ofertas_aceptadas_o_aceptaciones_vigentes_de_los_paquetes_70_y_71',
+           ((select count(*) from public.ventas where paquete_armado_id in (70, 71))
+            + (select count(*) from public.p63_oferta where paquete_id in (70, 71) and estado = 'aceptada')
+            + (select count(*) from public.p63_aceptacion a join public.p63_oferta o on o.id = a.oferta_id where o.paquete_id in (70, 71) and a.estado <> 'descartada'))::text,
+           '0 (nunca se vendió ni se aceptó nada)',
+           case when (select count(*) from public.ventas where paquete_armado_id in (70, 71))
+                   + (select count(*) from public.p63_oferta where paquete_id in (70, 71) and estado = 'aceptada')
+                   + (select count(*) from public.p63_aceptacion a join public.p63_oferta o on o.id = a.oferta_id where o.paquete_id in (70, 71) and a.estado <> 'descartada') = 0 then 'OK' else 'REVISAR' end
     union all
     select 20, 'ventas_con_un_empaquetado_objetivo_como_origen', count(*)::text, '0',
            case when count(*) = 0 then 'OK' else 'REVISAR' end
@@ -106,5 +111,10 @@ select control, valor, esperado, estado
     union all
     select 23, 'informativo_bloqueos_con_tarifa_menor_1000 (bloqueos_vuelo no tiene moneda)', count(*)::text, 'dato', 'INFO'
       from public.bloqueos_vuelo where tarifa_para_empaquetar > 0 and tarifa_para_empaquetar < 1000
+    union all
+    select 24, 'informativo_ofertas_abiertas_de_los_paquetes_70_y_71 (no bloquean; su aceptación se rechaza por revalidación)',
+           count(*)::text || coalesce(' · ' || string_agg('oferta ' || o.id || ' (cotización ' || o.cotizacion_id || ', paquete ' || o.paquete_id || ')', ', ' order by o.id), ''),
+           'dato', 'INFO'
+      from public.p63_oferta o where o.paquete_id in (70, 71) and o.estado = 'abierta'
   ) q
  order by ord;

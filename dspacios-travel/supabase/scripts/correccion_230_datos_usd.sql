@@ -11,7 +11,8 @@
 -- QUÉ HACE: pasa esas filas a USD y deja CONSTANCIA de la decisión en el campo notas de cada fila. Es idempotente (una segunda
 -- corrida no cambia nada). Todo ocurre en UNA transacción: si cualquier comprobación falla, no se cambia nada.
 -- QUÉ NO HACE: no activa ni regenera ningún paquete (el 70 queda inactivo; no debe activarse ni regenerarse hasta cerrar la tarea #90);
--- no toca ventas, cotizaciones, CxP ni bloqueos.
+-- no toca ventas, cotizaciones, p63_oferta, CxP ni bloqueos. Una oferta #63 ABIERTA de los paquetes 70/71 (cotización de prueba sin aceptar)
+-- no bloquea: se informa con un aviso y su aceptación queda rechazada por la revalidación de la 227.
 -- Antes y después: supabase/scripts/preflight_postcheck_230_empaquetados_usd.sql (una sola consulta). Reversa:
 -- supabase/scripts/rollback_230_correccion_datos.sql.
 -- ───────────────────────────────────────────────────────────────────────────
@@ -24,6 +25,7 @@ declare
   v_n     integer;
   v_mal   integer;
   v_nv    integer;
+  v_of    record;
 begin
   -- 0. La estructura de la 230 debe estar aplicada (si no, el CHECK de la 227 rechazaría el USD).
   if not exists (select 1 from pg_constraint where conrelid = 'public.empaquetados'::regclass and conname = 'empaquetados_moneda_chk') then
@@ -45,12 +47,20 @@ begin
     raise exception 'CORRECCIÓN 230 ABORTADA: % empaquetado(s) objetivo no cumplen la regla (COP con tarifa para empaquetar < 1.000); revisar a mano.', v_mal;
   end if;
 
-  -- 3. Nunca se vendieron: ninguna venta/oferta de los paquetes 70 y 71 ni contrato con estos vuelos como origen.
+  -- 3. Nunca se vendieron ni se aceptó nada: aborta si hay ventas de los paquetes 70/71, ventas con estos empaquetados como origen,
+  --    ofertas #63 ACEPTADAS o aceptaciones no descartadas de esos paquetes. Una oferta #63 'abierta' (cotización sin aceptar) NO
+  --    bloquea: se informa abajo, porque al cambiar la revisión de la fuente su aceptación se rechaza en la revalidación de la 227
+  --    (y el paquete 70 está inactivo). La corrección no borra ni modifica p63_oferta.
   select (select count(*) from public.ventas where paquete_armado_id in (70, 71) or empaquetado_ref_id = any (v_ids))
-       + (select count(*) from public.p63_oferta where paquete_id in (70, 71)) into v_nv;
+       + (select count(*) from public.p63_oferta where paquete_id in (70, 71) and estado = 'aceptada')
+       + (select count(*) from public.p63_aceptacion a join public.p63_oferta o on o.id = a.oferta_id
+           where o.paquete_id in (70, 71) and a.estado <> 'descartada') into v_nv;
   if v_nv > 0 then
-    raise exception 'CORRECCIÓN 230 ABORTADA: hay % venta(s)/oferta(s) ligadas a los paquetes 70/71 o a estos empaquetados; no se corrige en silencio.', v_nv;
+    raise exception 'CORRECCIÓN 230 ABORTADA: hay % venta(s), oferta(s) aceptada(s) o aceptación(es) vigente(s) ligadas a los paquetes 70/71 o a estos empaquetados; no se corrige en silencio.', v_nv;
   end if;
+  for v_of in select o.id, o.cotizacion_id, o.paquete_id from public.p63_oferta o where o.paquete_id in (70, 71) and o.estado = 'abierta' order by o.id loop
+    raise notice 'CORRECCIÓN 230 · INFO: p63_oferta id % (cotización %, paquete %) está ABIERTA; no bloquea y no se toca (su aceptación quedará rechazada por la revalidación de la 227).', v_of.id, v_of.cotizacion_id, v_of.paquete_id;
+  end loop;
   -- 4. El paquete 70 sigue inactivo y sin snapshot publicable (no debe haberse activado).
   if exists (select 1 from public.armado_paquetes where id = 70 and (activo or coalesce(tarifario_snapshot_publicable, false))) then
     raise exception 'CORRECCIÓN 230 ABORTADA: el paquete 70 está activo o publicable; no debe corregirse mientras esté visible.';
