@@ -129,6 +129,12 @@ async function montar(elemento: unknown) {
 const pulsar = async (el: Element) => { await React.act(async () => { (el as HTMLElement).click(); await new Promise((r) => setImmediate(r)); }); };
 const esperar = async () => { await React.act(async () => { await new Promise((r) => setImmediate(r)); await new Promise((r) => setImmediate(r)); }); };
 const boton = (raiz: Element, texto: RegExp) => [...raiz.querySelectorAll("button")].find((b) => texto.test(b.textContent ?? ""));
+// #101: el editor ahora tiene pestañas; los vuelos viven en la pestaña "Vuelos".
+const abrirPestana = async (raiz: Element, nombre: string) => {
+  const pestana = [...raiz.querySelectorAll("[role=tab]")].find((b) => (b.textContent ?? "").trim() === nombre);
+  assert.ok(pestana, `debe existir la pestaña ${nombre}`);
+  await pulsar(pestana);
+};
 const casillaAerea = (raiz: Element) => raiz.querySelector<HTMLInputElement>('[aria-label="Permitir vuelos a otros destinos del mismo país"]');
 const casillasCandidatos = (raiz: Element) => [...(raiz.querySelector('[data-testid="destinos-aereos"]')?.querySelectorAll<HTMLInputElement>("li input[type=checkbox]") ?? [])];
 const etiquetas = (raiz: Element) => [...(raiz.querySelector('[data-testid="destinos-aereos"]')?.querySelectorAll("li label") ?? [])].map((l) => (l.textContent ?? "").trim());
@@ -330,16 +336,18 @@ function propsArmado(over: Partial<PropsArmado> = {}): PropsArmado {
 
 test("ArmadoClient: etiqueta el destino aéreo solo cuando difiere del comercial, con IATA si existe, y aclara que no hay traslado", async () => {
   const raiz = await montar(h(ArmadoClient, propsArmado()));
+  await abrirPestana(raiz, "Vuelos");
   const texto = raiz.textContent ?? "";
   assert.match(texto, /Destino aéreo: SANTO DOMINGO \(SDQ\)/);
   assert.match(texto, /Destino aéreo: PUNTA CANA \(PUJ\)/);
-  assert.equal((texto.match(/Destino aéreo:/g) ?? []).length, 3, "dos vuelos negociados (SDQ, PUJ) + el empaquetado de PUJ; el del destino comercial no lleva etiqueta");
+  assert.equal((texto.match(/Destino aéreo:/g) ?? []).length, 2, "dos vuelos negociados (SDQ, PUJ); el del destino comercial no lleva etiqueta y el empaquetado de PUJ ya no se ofrece en Bloqueo (#101)");
   assert.match(texto, /sin traslado incluido/i);
 });
 
 test("ArmadoClient: un vuelo rechazado por el servidor muestra el motivo (vinculación simple y 'Seleccionar todos')", async () => {
   d67.respVinculo = () => ({ ok: false, error: "El vuelo no corresponde a los destinos aéreos permitidos del paquete." });
   const raiz = await montar(h(ArmadoClient, propsArmado()));
+  await abrirPestana(raiz, "Vuelos");
   const filas = [...raiz.querySelectorAll("li")].filter((li) => /RSD/.test(li.textContent ?? ""));
   await pulsar(filas[0].querySelector("input[type=checkbox]")!);
   assert.ok(d67.llamadas.some(([n, a]) => n === "setVuelo" && (a as unknown[])[1] === 201));
@@ -354,6 +362,7 @@ test("ArmadoClient: un vuelo rechazado por el servidor muestra el motivo (vincul
 
 test("ArmadoClient: un vínculo aceptado limpia el error; error de lectura de destinos aéreos se muestra y no dice 'no hay vuelos'", async () => {
   const raiz = await montar(h(ArmadoClient, propsArmado()));
+  await abrirPestana(raiz, "Vuelos");
   d67.respVinculo = () => ({ ok: false, error: "Error de prueba" });
   const fila = [...raiz.querySelectorAll("li")].find((li) => /RJD/.test(li.textContent ?? ""))!;
   await pulsar(fila.querySelector("input[type=checkbox]")!);
@@ -364,6 +373,7 @@ test("ArmadoClient: un vínculo aceptado limpia el error; error de lectura de de
   await desmontar?.(); desmontar = undefined;
 
   const conError = await montar(h(ArmadoClient, propsArmado({ vuelosDisp: [], empaquetadosDisp: [], destinosAereosError: "No se pudo verificar el destino aéreo de los vuelos. Intenta nuevamente." })));
+  await abrirPestana(conError, "Vuelos");
   const t = conError.textContent ?? "";
   assert.match(t, /No se pudo verificar el destino aéreo/i);
   assert.match(t, /No se pudieron cargar los vuelos/i);
@@ -372,5 +382,6 @@ test("ArmadoClient: un vínculo aceptado limpia el error; error de lectura de de
 
 test("ArmadoClient: con lista vacía sin error, el mensaje habla de los destinos permitidos (no solo del comercial)", async () => {
   const raiz = await montar(h(ArmadoClient, propsArmado({ vuelosDisp: [], empaquetadosDisp: [] })));
+  await abrirPestana(raiz, "Vuelos");
   assert.match(raiz.textContent ?? "", /destinos permitidos/i);
 });

@@ -638,7 +638,10 @@ test("VistaTabs: Inventario | EMPAQUETADOS | CONTROL VUELOS en ese orden, con fa
 const armadoClientSrc = leer("app/(dashboard)/dashboard/paquetes/[id]/ArmadoClient.tsx");
 
 test("ArmadoClient: la sección de Empaquetados usa setEmpaquetado/armado_empaquetados, nunca comparte estado con setVuelo/armado_vuelos", () => {
-  assert.match(armadoClientSrc, /import \{ setEmpaquetado, setTodosEmpaquetados \} from "\.\.\/\.\.\/vuelos\/empaquetados-actions";/);
+  assert.match(armadoClientSrc, /import \{ setEmpaquetado \} from "\.\.\/\.\.\/vuelos\/empaquetados-actions";/);
+  // #101: en un paquete de Bloqueo los empaquetados ya no se ofrecen para vincular (no hay "Seleccionar todos" de
+  // empaquetados); los que sigan vinculados se muestran solo en lectura.
+  assert.doesNotMatch(armadoClientSrc, /setTodosEmpaquetados/);
   assert.match(armadoClientSrc, /empaquetadosDisp:\s*Empaquetado\[\];/);
   assert.match(armadoClientSrc, /selEmpaquetados:\s*SelEmpaquetado\[\];/);
   assert.match(armadoClientSrc, /function EmpaquetadoRow/);

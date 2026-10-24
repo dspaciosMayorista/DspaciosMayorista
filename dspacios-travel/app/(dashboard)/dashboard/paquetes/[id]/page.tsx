@@ -7,8 +7,18 @@ import { resolverDestinosAereosPaquete } from "@/lib/paquetes/destinosAereos67";
 
 export const dynamic = "force-dynamic";
 
-export default async function PaqueteDetallePage({ params }: { params: Promise<{ id: string }> }) {
+export default async function PaqueteDetallePage({
+  params,
+  searchParams,
+}: {
+  params: Promise<{ id: string }>;
+  searchParams?: Promise<{ tab?: string | string[] }>;
+}) {
   const { id } = await params;
+  // #101 — pestaña activa (`?tab=`): sobrevive a un F5 y a un enlace compartido. ArmadoClient valida el valor contra
+  // las pestañas que el tipo de paquete realmente muestra.
+  const tabParam = (await searchParams)?.tab;
+  const pestanaInicial = Array.isArray(tabParam) ? tabParam[0] : tabParam;
   const paqueteId = Number(id);
   const sb = await createClient();
 
@@ -206,6 +216,10 @@ export default async function PaqueteDetallePage({ params }: { params: Promise<{
         resultado={resultado as unknown as Parameters<typeof ArmadoClient>[0]["resultado"]}
         salidas={(salidas ?? []) as unknown as Parameters<typeof ArmadoClient>[0]["salidas"]}
         moneda={monedaPaquete}
+        pestanaInicial={pestanaInicial ?? null}
+        tarifarioEstado={(pq as { tarifario_estado?: string | null }).tarifario_estado ?? null}
+        tarifarioError={(pq as { tarifario_error?: string | null }).tarifario_error ?? null}
+        tarifarioPublicable={(pq as { tarifario_snapshot_publicable?: boolean | null }).tarifario_snapshot_publicable ?? null}
       />
     </div>
   );
