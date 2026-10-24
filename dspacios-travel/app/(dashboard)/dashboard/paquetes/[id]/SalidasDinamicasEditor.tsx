@@ -3,15 +3,17 @@
 import { DateInput } from "@/components/ui/DateInput";
 import { useEffect, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
-import { AlertTriangle, Link2, RefreshCw } from "lucide-react";
+import { AlertTriangle, Link2, RefreshCw, Unlink } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { DialogoConfirmar } from "@/components/ui/DialogoConfirmar";
+import { estadoSeleccionTodos, mensajeLote } from "@/lib/paquetes/seleccionMasiva";
 import { Input } from "@/components/ui/input";
 import { formatMoneda } from "@/lib/utils";
 import { MonedaTarifas, etiquetasSospechosas } from "@/components/vuelos/MonedaTarifas";
 import { mensajeValorSospechoso } from "@/lib/vuelos/monedaSospechosa";
 import {
   crearSalidaDinamica, actualizarSalidaDinamica, eliminarSalidaDinamica,
-  listarEmpaquetadosParaSalidas63, vincularSalidasEmpaquetados63, actualizarSalidaDesdeFuente63,
+  listarEmpaquetadosParaSalidas63, vincularSalidasEmpaquetados63, actualizarSalidaDesdeFuente63, desvincularSalidasEmpaquetados63,
   type SalidaDinamicaInput, type CandidatoSalida63,
 } from "../actions";
 
@@ -132,7 +134,9 @@ function VinculadasEmpaquetados({
   const [cargando, setCargando] = useState(true);
   const [errLista, setErrLista] = useState("");
   const [elegidos, setElegidos] = useState<number[]>([]);
-  const [aviso, setAviso] = useState("");
+  const [aviso, setAviso] = useState<{ tono: "ok" | "aviso"; texto: string } | null>(null);
+  // Qué se está por desvincular: una salida, todas, o nada (diálogo cerrado).
+  const [porDesvincular, setPorDesvincular] = useState<null | { ids: number[] }>(null);
   // Cada cambio de `version` (o de la cantidad de vinculadas) vuelve a pedir la lista al servidor.
   const [version, setVersion] = useState(0);
   const recargar = () => { setCargando(true); setVersion((v) => v + 1); };
@@ -151,27 +155,40 @@ function VinculadasEmpaquetados({
   const porFuente = new Map(candidatos.map((c) => [c.id, c]));
   const alternar = (id: number) => setElegidos((p) => (p.includes(id) ? p.filter((x) => x !== id) : [...p, id]));
 
+  const seleccion = estadoSeleccionTodos(pendientes.length, elegidos.filter((id) => pendientes.some((p) => p.id === id)).length);
+  function alternarTodos() {
+    setElegidos(seleccion.siguiente === "seleccionar" ? pendientes.map((c) => c.id) : []);
+  }
+
+  // UNA acción por lote: un INSERT, una invalidación y una regeneración del tarifario, sea cual sea la cantidad.
   function agregar() {
     if (!elegidos.length) { setErr("Elige al menos un vuelo."); return; }
-    setErr(""); setAviso("");
+    setErr(""); setAviso(null);
     start(async () => {
       const r = await vincularSalidasEmpaquetados63(paqueteId, elegidos);
-      if (r.ok) { setElegidos([]); if (r.aviso) setAviso(r.aviso); onChanged(); recargar(); } else setErr(r.error);
+      if (r.ok) {
+        setElegidos([]);
+        const m = mensajeLote({ ok: true, procesados: r.id ?? elegidos.length, aviso: r.aviso }, { singular: "salida", plural: "salidas", accion: "vinculó" });
+        setAviso({ tono: m.tono === "error" ? "aviso" : m.tono, texto: m.texto });
+        onChanged(); recargar();
+      } else setErr(r.error);
     });
   }
   function actualizar(salidaId: number) {
-    setErr(""); setAviso("");
+    setErr(""); setAviso(null);
     start(async () => {
       const r = await actualizarSalidaDesdeFuente63(salidaId);
-      if (r.ok) { if (r.aviso) setAviso(r.aviso); onChanged(); recargar(); } else setErr(r.error);
+      if (r.ok) { if (r.aviso) setAviso({ tono: "aviso", texto: r.aviso }); onChanged(); recargar(); } else setErr(r.error);
     });
   }
-  function desvincular(salidaId: number) {
-    if (!confirm("¿Desvincular esta salida? Se elimina la salida del paquete (el vuelo de Empaquetados no se toca).")) return;
-    start(async () => {
-      const r = await eliminarSalidaDinamica(salidaId);
-      if (r.ok) { onChanged(); recargar(); } else setErr(r.error);
-    });
+  async function desvincular(ids: number[]): Promise<{ ok: boolean; error?: string }> {
+    setErr(""); setAviso(null);
+    const r = await desvincularSalidasEmpaquetados63(paqueteId, ids);
+    const m = mensajeLote(r, { singular: "salida", plural: "salidas", accion: "desvinculó" });
+    if (!r.ok) return { ok: false, error: m.texto };
+    setAviso({ tono: m.tono === "error" ? "aviso" : m.tono, texto: m.texto });
+    onChanged(); recargar();
+    return { ok: true };
   }
 
   return (
@@ -182,6 +199,14 @@ function VinculadasEmpaquetados({
         fee de infante se suma exacto. Se cotizan y reservan sin consultar cupos de Bloqueo. Cada vuelo conserva su moneda (COP o USD): si es USD se convierte con la TRM del paquete{trm ? <> (TRM: <b>{formatMoneda(trm, "COP")}</b>)</> : null}, una sola vez, y el tarifario se publica en COP.
       </p>
 
+      {vinculadas.length > 1 && (
+        <div className="flex items-center justify-end">
+          <Button type="button" variant="outline" disabled={pending} onClick={() => setPorDesvincular({ ids: vinculadas.map((v) => v.id) })}>
+            <Unlink className="h-4 w-4" aria-hidden="true" />
+            Desvincular todos ({vinculadas.length})
+          </Button>
+        </div>
+      )}
       {vinculadas.length > 0 && (
         <ul className="space-y-2">
           {vinculadas.map((s) => {
@@ -203,7 +228,7 @@ function VinculadasEmpaquetados({
                     <button type="button" disabled={pending} onClick={() => actualizar(s.id)} className="inline-flex items-center gap-1 text-xs text-[var(--brand-accent)] hover:underline">
                       <RefreshCw className="h-3 w-3" aria-hidden /> Actualizar desde la fuente
                     </button>
-                    <button type="button" disabled={pending} onClick={() => desvincular(s.id)} className="text-xs text-gray-400 hover:text-red-500">Desvincular</button>
+                    <button type="button" disabled={pending} onClick={() => setPorDesvincular({ ids: [s.id] })} className="text-xs text-gray-400 hover:text-red-500">Desvincular</button>
                   </span>
                 </div>
                 {revisar && (
@@ -229,6 +254,18 @@ function VinculadasEmpaquetados({
         {!errLista && !cargando && pendientes.length === 0 && (
           <p className="text-xs text-gray-400">No hay vuelos de Empaquetados sin record pendientes de vincular para los destinos aéreos de este paquete.</p>
         )}
+        {pendientes.length > 1 && (
+          <label className="mb-1 flex items-center gap-2 border-b border-gray-100 pb-2 text-sm font-medium text-gray-700">
+            <input
+              type="checkbox"
+              disabled={pending}
+              checked={seleccion.checked}
+              ref={(el) => { if (el) el.indeterminate = seleccion.indeterminate; }}
+              onChange={alternarTodos}
+            />
+            {seleccion.etiqueta}
+          </label>
+        )}
         {pendientes.length > 0 && (
           <ul className="max-h-64 space-y-1 overflow-auto">
             {pendientes.map((c) => (
@@ -245,11 +282,23 @@ function VinculadasEmpaquetados({
         )}
         <div className="mt-2 flex items-center gap-2">
           <Button type="button" variant="outline" onClick={agregar} disabled={pending || !elegidos.length}>
-            Agregar {elegidos.length > 1 ? `${elegidos.length} salidas` : "salida"} y regenerar
+            <Link2 className="h-4 w-4" aria-hidden="true" />
+            Vincular seleccionados{elegidos.length ? ` (${elegidos.length})` : ""}
           </Button>
-          {aviso && <span className="text-xs text-gray-600">{aviso}</span>}
+          {aviso && (
+            <span role="status" className={`text-xs ${aviso.tono === "aviso" ? "text-amber-700" : "text-gray-600"}`}>{aviso.texto}</span>
+          )}
         </div>
       </div>
+      <DialogoConfirmar
+        open={porDesvincular != null}
+        onOpenChange={(abierto) => { if (!abierto) setPorDesvincular(null); }}
+        titulo={porDesvincular && porDesvincular.ids.length > 1 ? `¿Desvincular las ${porDesvincular.ids.length} salidas?` : "¿Desvincular esta salida?"}
+        descripcion="Se elimina la salida del paquete y se regenera el tarifario una sola vez. El vuelo de Empaquetados no se toca."
+        etiquetaConfirmar={porDesvincular && porDesvincular.ids.length > 1 ? "Desvincular todas" : "Desvincular"}
+        destructivo
+        onConfirmar={() => desvincular(porDesvincular?.ids ?? [])}
+      />
     </div>
   );
 }
@@ -258,6 +307,7 @@ function SalidaFila({ s, moneda, modo63, onChanged, setErr }: { s: SalidaDinamic
   const [pending, start] = useTransition();
   const [v, setV] = useState<SalidaDinamicaInput>(aInput(s));
   const [editando, setEditando] = useState(false);
+  const [confirmarBorrar, setConfirmarBorrar] = useState(false);
   // En modo COP cada salida manual muestra sus valores en la moneda que acreditó.
   const monedaFila = modo63 ? (s.moneda === "USD" ? "USD" : "COP") : moneda;
 
@@ -269,13 +319,23 @@ function SalidaFila({ s, moneda, modo63, onChanged, setErr }: { s: SalidaDinamic
       if (r.ok) { setEditando(false); onChanged(); } else setErr(r.error);
     });
   }
-  function borrar() {
-    if (!confirm("¿Eliminar esta salida?")) return;
-    start(async () => { const r = await eliminarSalidaDinamica(s.id); if (r.ok) onChanged(); else setErr(r.error); });
+  async function borrar(): Promise<{ ok: boolean; error?: string }> {
+    const r = await eliminarSalidaDinamica(s.id);
+    if (r.ok) onChanged(); else setErr(r.error);
+    return r;
   }
 
   return (
     <div className="rounded-lg border border-gray-200 bg-white p-3">
+      <DialogoConfirmar
+        open={confirmarBorrar}
+        onOpenChange={setConfirmarBorrar}
+        titulo="¿Eliminar esta salida?"
+        descripcion="Se elimina la salida manual del paquete y se regenera el tarifario."
+        etiquetaConfirmar="Eliminar"
+        destructivo
+        onConfirmar={borrar}
+      />
       {!editando ? (
         <div className="flex flex-wrap items-center justify-between gap-2 text-sm">
           <span className="font-medium text-gray-700">{s.ruta || "—"} {s.aerolinea ? `· ${s.aerolinea}` : ""}</span>
@@ -286,7 +346,7 @@ function SalidaFila({ s, moneda, modo63, onChanged, setErr }: { s: SalidaDinamic
           </span>
           <span className="flex gap-3">
             <button type="button" onClick={() => setEditando(true)} className="text-xs text-[var(--brand-accent)] hover:underline">Editar</button>
-            <button type="button" disabled={pending} onClick={borrar} className="text-xs text-gray-400 hover:text-red-500">Eliminar</button>
+            <button type="button" disabled={pending} onClick={() => setConfirmarBorrar(true)} className="text-xs text-gray-400 hover:text-red-500">Eliminar</button>
           </span>
         </div>
       ) : (

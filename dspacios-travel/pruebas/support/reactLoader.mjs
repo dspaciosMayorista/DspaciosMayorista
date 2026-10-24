@@ -194,6 +194,8 @@ export async function resolve(specifier, context, nextResolve) {
   if ((specifier === "@/lib/supabase/server" || specifier === "next/cache") &&
       (context.parentURL?.endsWith("/dashboard/usuarios/b2b/actions.ts") ||
        context.parentURL?.endsWith("/dashboard/usuarios/actions.ts") ||
+       // #107: acciones por lote del armado (setServicios, desvincularSalidasEmpaquetados63).
+       context.parentURL?.endsWith("/dashboard/paquetes/actions.ts") ||
        context.parentURL?.endsWith("/portal/b2b/agentes/actions.ts"))) {
     return { url: specifier === "next/cache" ? STUB_NEXT_CACHE : STUB_SUPABASE_SERVER, shortCircuit: true };
   }

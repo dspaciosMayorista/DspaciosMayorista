@@ -24,6 +24,7 @@ const ACCIONES = `data:text/javascript,${encodeURIComponent(`
   export async function listarEmpaquetadosParaSalidas63(...a) { reg('listar', a); return ${G}.respListar(a); }
   export async function vincularSalidasEmpaquetados63(...a) { reg('vincular', a); return ${G}.respVincular(a); }
   export async function actualizarSalidaDesdeFuente63(...a) { reg('desdeFuente', a); return { ok: true }; }
+  export async function desvincularSalidasEmpaquetados63(...a) { reg('desvincular', a); return { ok: true, procesados: a[1].length }; }
 `)}`;
 registerHooks({
   resolve(specifier, context, nextResolve) {
@@ -68,8 +69,10 @@ beforeEach(() => {
   estado.llamadas.length = 0;
   estado.respListar = () => ({ ok: true, candidatos: [], pendientes: 0 });
   estado.respVincular = () => ({ ok: true, id: 1 });
-  (dom.window as unknown as { confirm: () => boolean }).confirm = () => true;
-  (globalThis as unknown as { confirm: () => boolean }).confirm = () => true;
+  // #107: ya no se usa confirm() del navegador; si algo lo llama, la prueba debe fallar.
+  const prohibido = () => { throw new Error("se llamó a confirm()"); };
+  (dom.window as unknown as { confirm: () => boolean }).confirm = prohibido;
+  (globalThis as unknown as { confirm: () => boolean }).confirm = prohibido;
 });
 afterEach(async () => { await montado?.desmontar(); montado = null; });
 
@@ -90,9 +93,9 @@ test("modo COP: la lista múltiple muestra los pendientes; elegir varios y agreg
   assert.match(texto(c), /2 pendientes/);
   assert.equal(llamadasDe("vincular").length, 0, "listar NO vincula nada");
   const checks = [...c.querySelectorAll('input[type="checkbox"]')] as HTMLInputElement[];
-  assert.equal(checks.length, 2, "solo los pendientes tienen casilla (el 7 ya está vinculado)");
-  for (const k of checks) await clic(k, "casilla");
-  await clic(botonConTexto(c, /Agregar 2 salidas y regenerar/), "botón agregar");
+  assert.equal(checks.length, 3, "Seleccionar todos + una casilla por pendiente (el 7 ya está vinculado)");
+  for (const k of checks.slice(1)) await clic(k, "casilla");
+  await clic(botonConTexto(c, /Vincular seleccionados \(2\)/), "botón vincular");
   await esperar(() => llamadasDe("vincular").length > 0);
   assert.deepEqual(llamadasDe("vincular")[0][1], [70, [5, 6]]);
 });
@@ -133,8 +136,13 @@ test("'Actualizar desde la fuente' y 'Desvincular' llaman a las acciones con el 
   await esperar(() => llamadasDe("desdeFuente").length > 0);
   assert.deepEqual(llamadasDe("desdeFuente")[0][1], [21]);
   await clic(botonConTexto(c, "Desvincular"), "desvincular");
-  await esperar(() => llamadasDe("eliminar").length > 0);
-  assert.deepEqual(llamadasDe("eliminar")[0][1], [21]);
+  assert.equal(llamadasDe("desvincular").length, 0, "pide confirmación en el diálogo propio antes de actuar");
+  const dlg = document.body.querySelector('[role="dialog"]')!;
+  assert.ok(dlg, "diálogo propio");
+  await clic([...dlg.querySelectorAll("button")].find((b) => b.textContent?.trim() === "Desvincular"), "confirmar");
+  await esperar(() => llamadasDe("desvincular").length > 0);
+  assert.deepEqual(llamadasDe("desvincular")[0][1], [70, [21]]);
+  assert.equal(llamadasDe("eliminar").length, 0);
 });
 
 test("un rechazo del servidor al vincular se muestra al usuario (todo o nada: no queda nada a medias)", async () => {
@@ -143,7 +151,7 @@ test("un rechazo del servidor al vincular se muestra al usuario (todo o nada: no
   const c = await render({ salidas: [], modo63: true, trm: 4000 });
   await esperar(() => /1 pendiente/.test(texto(c)));
   await clic(c.querySelector('input[type="checkbox"]'), "casilla");
-  await clic(botonConTexto(c, /Agregar salida y regenerar/), "agregar");
+  await clic(botonConTexto(c, /Vincular seleccionados/), "agregar");
   await esperar(() => /ya tiene record/.test(texto(c)));
   assert.match(texto(c), /No se vincul[oó] ning[uú]n vuelo/);
 });
@@ -160,7 +168,7 @@ test("sin pendientes se dice por qué (no hay nada que agregar) y el botón no h
   estado.respListar = () => ({ ok: true, candidatos: [], pendientes: 0 });
   const c = await render({ salidas: [], modo63: true, trm: 4000 });
   await esperar(() => /No hay vuelos de Empaquetados sin record pendientes/.test(texto(c)));
-  const boton = botonConTexto(c, /Agregar salida y regenerar/) as HTMLButtonElement;
+  const boton = botonConTexto(c, /Vincular seleccionados/) as HTMLButtonElement;
   assert.equal(boton.disabled, true);
 });
 

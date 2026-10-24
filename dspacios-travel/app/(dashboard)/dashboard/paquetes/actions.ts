@@ -53,6 +53,8 @@ import {
 } from "@/lib/cotizacion/condicionPagoCatalogo";
 import { construirSetParesPublicados, todosLosParesConfiguradosPublicados, primerParConfiguradoSinPublicar } from "@/lib/calc/paresPublicadosUnidad";
 
+import type { ResultadoLote } from "@/lib/paquetes/seleccionMasiva";
+
 type Result = { ok: true; id?: number; aviso?: string } | { ok: false; error: string };
 const oNull = (s: string | null | undefined) => (s && s.trim() !== "" ? s.trim() : null);
 const dNull = (s: string | null | undefined) => (s && s.trim() !== "" ? s : null);
@@ -348,7 +350,8 @@ export async function setTodosVuelos(
 export async function setHotel(paqueteId: number, hotelId: number, checked: boolean): Promise<Result> {
   const sb = await createClient();
   if (!checked) {
-    await sb.from("armado_hoteles").delete().eq("paquete_id", paqueteId).eq("hotel_id", hotelId);
+    const { error } = await sb.from("armado_hoteles").delete().eq("paquete_id", paqueteId).eq("hotel_id", hotelId);
+    if (error) return { ok: false, error: error.message };
   } else {
     const { error } = await sb
       .from("armado_hoteles")
@@ -398,7 +401,8 @@ export async function setHotelPrioridad(paqueteId: number, hotelId: number, prio
 export async function setTodosHoteles(paqueteId: number, hotelIds: number[], checked: boolean): Promise<Result> {
   const sb = await createClient();
   if (!checked) {
-    await sb.from("armado_hoteles").delete().eq("paquete_id", paqueteId);
+    const { error } = await sb.from("armado_hoteles").delete().eq("paquete_id", paqueteId);
+    if (error) return { ok: false, error: error.message };
   } else if (hotelIds.length) {
     const { error } = await sb
       .from("armado_hoteles")
@@ -643,7 +647,8 @@ export async function setServicio(
 ): Promise<Result> {
   const sb = await createClient();
   if (!checked) {
-    await sb.from("armado_servicios").delete().eq("paquete_id", paqueteId).eq("servicio_id", servicioId);
+    const { error } = await sb.from("armado_servicios").delete().eq("paquete_id", paqueteId).eq("servicio_id", servicioId);
+    if (error) return { ok: false, error: error.message };
   } else {
     const { error } = await sb
       .from("armado_servicios")
@@ -652,6 +657,46 @@ export async function setServicio(
   }
   revalidatePath(`/dashboard/paquetes/${paqueteId}`);
   return { ok: true };
+}
+
+// ── Servicios POR LOTE (#107): una sola escritura y una sola invalidación ───
+// Sustituye al guardado en serie (un `setServicio` por servicio). Marcar = UN upsert; desmarcar = UN delete. Un servicio
+// que ya no existe en el catálogo se OMITE y se informa (el resto sí se guarda); no cambia ninguna regla de precio.
+export type ServicioLoteItem = { servicioId: number; modo: "persona" | "grupo"; incluido: boolean };
+
+export async function setServicios(paqueteId: number, items: ServicioLoteItem[], checked: boolean): Promise<ResultadoLote> {
+  const vistos = new Map<number, ServicioLoteItem>();
+  for (const it of items ?? []) {
+    const id = Number(it?.servicioId);
+    if (!Number.isInteger(id) || id <= 0) return { ok: false, error: "Hay un servicio con un identificador inválido." };
+    if (it.modo !== "persona" && it.modo !== "grupo") return { ok: false, error: "Hay un servicio con un modo de cobro inválido." };
+    vistos.set(id, { servicioId: id, modo: it.modo, incluido: !!it.incluido });
+  }
+  const lista = [...vistos.values()];
+  if (!lista.length) return { ok: false, error: "Elige al menos un servicio." };
+  if (lista.length > 500) return { ok: false, error: "Son demasiados servicios en una sola operación (máximo 500)." };
+  const sb = await createClient();
+  const ids = lista.map((x) => x.servicioId);
+  if (!checked) {
+    const { error, count } = await sb
+      .from("armado_servicios")
+      .delete({ count: "exact" })
+      .eq("paquete_id", paqueteId)
+      .in("servicio_id", ids);
+    if (error) return { ok: false, error: error.message };
+    revalidatePath(`/dashboard/paquetes/${paqueteId}`);
+    return { ok: true, procesados: count ?? ids.length };
+  }
+  const { data: existentes, error: eEx } = await sb.from("servicios_adicionales").select("id").in("id", ids);
+  if (eEx) return { ok: false, error: eEx.message };
+  const hay = new Set(((existentes ?? []) as { id: number }[]).map((x) => x.id));
+  const omitidos = lista.filter((x) => !hay.has(x.servicioId)).map((x) => ({ id: x.servicioId, motivo: `El servicio #${x.servicioId} ya no existe.` }));
+  const filas = lista.filter((x) => hay.has(x.servicioId)).map((x) => ({ paquete_id: paqueteId, servicio_id: x.servicioId, modo: x.modo, incluido: x.incluido }));
+  if (!filas.length) return { ok: false, error: "Ninguno de los servicios elegidos existe ya en el catálogo." };
+  const { error } = await sb.from("armado_servicios").upsert(filas, { onConflict: "paquete_id,servicio_id" });
+  if (error) return { ok: false, error: error.message };
+  revalidatePath(`/dashboard/paquetes/${paqueteId}`);
+  return { ok: true, procesados: filas.length, ...(omitidos.length ? { omitidos } : {}) };
 }
 
 // ── GENERAR TARIFARIO: liquida el paquete y reescribe tarifario_resultado ───
@@ -2015,6 +2060,36 @@ export async function vincularSalidasEmpaquetados63(paqueteId: number, empaqueta
     };
   }
   return { ok: true, id: nuevos.length, ...(regen.aviso ? { aviso: regen.aviso } : {}) };
+}
+
+/**
+ * Desvincula VARIAS salidas vinculadas a Empaquetados de una vez (#107): UN delete, UNA invalidación y UNA regeneración
+ * del tarifario (antes, cada salida eliminada regeneraba el tarifario completo). Solo toca salidas VINCULADAS de ESTE
+ * paquete; el vuelo de Empaquetados no se toca. Las que ya no estaban vinculadas se informan como omitidas.
+ */
+export async function desvincularSalidasEmpaquetados63(paqueteId: number, salidaIds: number[]): Promise<ResultadoLote> {
+  const ids = [...new Set((salidaIds ?? []).map(Number))];
+  if (!ids.length || ids.length > 200 || ids.some((n) => !Number.isInteger(n) || n <= 0)) {
+    return { ok: false, error: "Elige al menos una salida vinculada." };
+  }
+  const sb = await createClient();
+  const { data, error } = await sb
+    .from("salidas_dinamicas")
+    .delete()
+    .eq("paquete_id", paqueteId)
+    .not("empaquetado_id", "is", null)
+    .in("id", ids)
+    .select("id");
+  if (error) return { ok: false, error: mensajeErrorOferta63(error.message) };
+  const borrados = new Set(((data ?? []) as { id: number }[]).map((x) => x.id));
+  if (!borrados.size) return { ok: false, error: "Esas salidas ya no estaban vinculadas a este paquete." };
+  const omitidos = ids.filter((id) => !borrados.has(id)).map((id) => ({ id, motivo: `La salida #${id} ya no estaba vinculada.` }));
+  revalidatePath(`/dashboard/paquetes/${paqueteId}`);
+  const regen = await generarTarifario(paqueteId).catch(() => null);
+  const aviso = !regen || !regen.ok
+    ? `Se desvincularon las salidas, pero el tarifario no se pudo regenerar${regen && !regen.ok ? `: ${regen.error}` : ""}. Genéralo desde el paquete.`
+    : regen.aviso;
+  return { ok: true, procesados: borrados.size, ...(omitidos.length ? { omitidos } : {}), ...(aviso ? { aviso } : {}) };
 }
 
 /** Vuelve a copiar de la fuente VIVA los datos de una salida vinculada (la copia quedó vieja) y regenera. */
