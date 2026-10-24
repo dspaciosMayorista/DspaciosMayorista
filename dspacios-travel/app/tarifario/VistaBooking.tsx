@@ -53,7 +53,7 @@ import { conCacheDetalle, claveDetalleHotel, type EstadoDetalle } from "@/lib/ta
 import { claveComboAlcanceNormalizada } from "@/lib/tarifario/comboKey";
 import { DinamicoModal, InsigniaFechasSalida } from "./DinamicoModal";
 import {
-  accesoCotizacionDinamica, desdeDobleResumen, destinosDinamicos, esOfertaDinamica, etiquetaSalidaDinamica, filaDinamicaVisibleEnPaquetes, hotelUnidadVisibleConSalida, leerSalidaElegida,
+  accesoCotizacionDinamica, destinosDinamicos, esOfertaDinamica, etiquetaSalidaDinamica, filaDinamicaVisibleEnPaquetes, hotelUnidadVisibleConSalida, leerSalidaElegida,
   origenesDinamicos, salidaIdsDinamicas, salidasDinamicasSelector, valorSalidaElegida, type SalidaElegida,
 } from "@/lib/tarifario/dinamicoBooking";
 import { RegimenInfo, type PlanesInfo } from "./RegimenInfo";
@@ -66,7 +66,8 @@ import { BackgroundVideo } from "@/components/BackgroundVideo";
 import { LoadingScreen } from "@/components/LoadingScreen";
 import type { FilaTarifario, CapHotel } from "./TarifarioPublic";
 import type { FilaResumen } from "@/lib/tarifario/resumen";
-import { minRoomPvpResumen, tieneAcomodacionResumen } from "@/lib/tarifario/resumenCliente";
+import { tieneAcomodacionResumen } from "@/lib/tarifario/resumenCliente";
+import { desdeDoble } from "@/lib/tarifario/desdeDoble";
 import type { DescripcionPaqueteRaw } from "@/lib/tarifario/descripcionPaquete";
 import { destinosPorcionPublica } from "@/lib/tarifario/destinosPorcion";
 import { EtiquetaOferta } from "./EtiquetaOferta";
@@ -532,11 +533,6 @@ function calcNoches(ida: string, regreso: string): number {
   return Math.round((b - a) / 86_400_000);
 }
 
-// `minRoomPvp`: alias local de `minRoomPvpResumen` (lib/tarifario/
-// resumenCliente.ts) — factorizada ahí (junto con `tieneAcomodacionResumen`)
-// para poder testearla con ejecución real, sin depender de importar este
-// componente cliente (React/Next) bajo `node --test`.
-const minRoomPvp = minRoomPvpResumen;
 
 export function VistaBooking({
   filas,
@@ -1014,9 +1010,9 @@ export function VistaBooking({
     // `soloPetFriendly`/`soloAdultsOnly`) aplicados DESPUÉS de seleccionar
     // recomendados, en el `tarjetas` final — ver más abajo.
     if (soloAcom) arr = arr.filter((c) => c.filas.some((f) => tieneAcomodacionResumen(f, soloAcom)));
-    for (const c of arr) c.desde = minRoomPvp(c.filas);
-    // El "desde" de un Dinámico toma como referencia la acomodación DOBLE (decisión del dueño); los demás conservan el mínimo de siempre.
-    for (const c of arr) if (esOfertaDinamica(c.filas)) c.desde = desdeDobleResumen(c.filas);
+    // «Desde» (TASKS #92): SIEMPRE la tarifa DOBLE publicable de las filas que esta tarjeta realmente ofrece (ya filtradas por
+    // paquete, salida, hotel y vigencia) y de SU moneda; sin DOBLE queda null → «Consultar». Nunca sencilla/triple/niño/infante.
+    for (const c of arr) c.desde = desdeDoble(c.filas, c.moneda);
     return arr;
   }, [filas, fotosPorHotel, infoPorHotel, sub, cuposPorBloqueo, origenPorBloqueo, origenPorSalida, origenSel, destinoSel, destinoPorcionBusqueda, salidaSel, soloAcom]);
 
