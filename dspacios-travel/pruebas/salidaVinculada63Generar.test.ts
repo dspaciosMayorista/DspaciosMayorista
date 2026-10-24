@@ -267,7 +267,7 @@ describe("generarTarifario() REAL · vinculada que NO se publica", () => {
   test("una vinculada en un paquete SIN modo 63 se rechaza (R en COP no se mezcla con un paquete en la moneda del hotel)", async () => {
     const g = await generar({ salidas: [salidaVinculada()], paquete: { modo_oferta: "legacy", trm_oferta: null, moneda_publicacion: "USD" } });
     assert.equal(g.r.ok, false);
-    if (!g.r.ok) assert.match(g.r.error, /modo COP con TRM/i);
+    if (!g.r.ok) assert.match(g.r.error, /modo con conversión por TRM/i);
     assert.equal(g.pub, undefined);
   });
 

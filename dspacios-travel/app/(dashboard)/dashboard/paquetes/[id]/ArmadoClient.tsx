@@ -1466,7 +1466,7 @@ function UnidadesMontaje({ publicacion, rechazo, modo63, trm, textoTrm, filas, r
     <div className="mt-4 rounded-lg border border-gray-100 bg-gray-50 p-3 text-xs text-gray-600" data-testid="unidades-montaje">
       <p className="font-semibold text-gray-700">
         Unidades del montaje · {publicacion ? `se publica en ${publicacion}` : "sin moneda publicable con esta selección"}
-        {publicacion && modo63 ? ` · modo COP con TRM · ${textoTrm ?? (trm ? trm.toLocaleString("es-CO") : "sin definir")}` : ""}
+        {publicacion && modo63 ? ` · modo con conversión por TRM · ${textoTrm ?? (trm ? trm.toLocaleString("es-CO") : "sin definir")}` : ""}
       </p>
       <ul className="mt-2 divide-y divide-gray-200">
         {filas.map((f, i) => (
@@ -1492,7 +1492,7 @@ function UnidadesMontaje({ publicacion, rechazo, modo63, trm, textoTrm, filas, r
         <p className="mt-2 text-amber-700">
           {resumen.requierenTrm > 0 ? `${resumen.requierenTrm} componente(s) están en otra moneda que la de publicación y solo se convertirán con una TRM explícita. ` : ""}
           {resumen.sinAcreditar > 0 ? `${resumen.sinAcreditar} sin moneda acreditada: no se convierten ni se suponen en COP. ` : ""}
-          Hoy el generador rechaza la mezcla fuera del modo COP con TRM; el importe de cada componente se conserva en su unidad.
+          Hoy el generador rechaza la mezcla fuera del modo con conversión por TRM; el importe de cada componente se conserva en su unidad.
         </p>
       )}
     </div>

@@ -9,11 +9,19 @@
 // ni reconvierte con otra TRM. Módulo PURO (sin I/O).
 // ─────────────────────────────────────────────────────────────────────────
 
-import { aCop63, monedaNormalizada63, redondearCentavos63, validarTrm63 } from "./ofertaDinamica63.ts";
+import { aCop63, aMoneda63, monedaNormalizada63, redondearCentavos63, validarTrm63 } from "./ofertaDinamica63.ts";
 
 /** Equivalente en COP de un valor en `moneda`, a la TRM del paquete, con centavos. */
 export function equivalenteCop63(valor: number, moneda: unknown, trm: number | null): number {
   return redondearCentavos63(aCop63(Math.max(0, Number(valor) || 0), moneda, trm));
+}
+
+/**
+ * Valor de ORIGEN expresado en la moneda de la OFERTA (la de publicación/contrato: COP o USD), con centavos. Misma moneda → exacto,
+ * sin TRM; USD→COP × TRM; COP→USD / TRM. Es la cifra de las columnas `ventas.costo_*` del contrato.
+ */
+export function equivalenteOferta63(valor: number, origen: unknown, monedaOferta: unknown, trm: number | null): number {
+  return redondearCentavos63(aMoneda63(Math.max(0, Number(valor) || 0), origen, monedaOferta, trm));
 }
 
 /** Valida que una obligación del modo 63 traiga TRM y equivalente coherentes (fail-closed antes de escribir). */

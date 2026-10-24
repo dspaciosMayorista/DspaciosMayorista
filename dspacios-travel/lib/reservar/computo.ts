@@ -116,7 +116,7 @@ export type ReservaInput = {
   // cotizar; `convertirCotizacion` la pasa tal cual). La reserva la compara con lo que va a cobrar.
   // `cotizacionId` lo pone SOLO `convertirCotizacion` (con el id de la cotización que el usuario puede ver); lo que venga del
   // navegador al cotizar se descarta.
-  oferta63?: { huella?: string | null; modo?: string | null; trm?: number | null; cotizacionId?: number | null } | null;
+  oferta63?: { huella?: string | null; modo?: string | null; trm?: number | null; cotizacionId?: number | null; trmProvisional?: number | null } | null;
 };
 
 export type ComputoReserva = {
@@ -412,7 +412,7 @@ export async function computarReserva(
   let petCostoDesc: string | null = null;
   let petNotaTxt: string | null = null;
   let condicionesTarifa: CondicionTarifaAplicada[] = [];
-  // #63: moneda origen del neto del hotel / de cada servicio (la venta publicada ya está en COP).
+  // #63: moneda origen del neto del hotel / de cada servicio (la venta publicada ya está en la moneda de la oferta: COP o USD).
   let monedaHotelOrigen63: "COP" | "USD" = "COP";
   const monedaServicios63: Record<number, "COP" | "USD"> = {};
   const vigencias63: VigenciaCompra63[] = [];
@@ -1095,13 +1095,19 @@ export async function computarReserva(
     }
   }
 
+  // #90: el tarifario PUBLICADO que respalda el precio debe estar en la moneda de la oferta (la de publicación elegida del paquete). Si el
+  // paquete cambió de moneda y aún no se regeneró, el precio leído de la caché estaría en otra moneda: se rechaza, nunca se mezcla.
+  if (oferta63 && monedaNormalizada63(monedaReserva) !== oferta63.moneda) {
+    return { ok: false, error: `El tarifario publicado de este paquete está en ${monedaNormalizada63(monedaReserva)} pero el paquete se publica en ${oferta63.moneda}. Regenera el tarifario del paquete antes de cotizar o reservar.` };
+  }
+
   // BNC (Base No Comisionable) total = "Valor fijo del impuesto" × pax con tiquete.
   let impuestoTotal = 0;
   if (oferta63 && !esServicios) {
-    // #63: BNC de la oferta COP. Tiquete = R (el precio del aéreo tal como se vende) × pax con silla; fijo =
-    // el importe del paquete (COP) × pax con silla. Los menores de 2 años no ocupan silla ni generan BNC.
+    // #63: BNC de la oferta (en su moneda: COP o USD). Tiquete = R (el precio del aéreo tal como se vende) × pax con silla; fijo =
+    // el importe del paquete (ya capturado en esa moneda) × pax con silla. Los menores de 2 años no ocupan silla ni generan BNC.
     impuestoTotal = impuestoTotal63({
-      impuestoPorPersona: impuestoPorPersona63({ tipo: oferta63.impuestoTipo, tarifaParaEmpaquetar: oferta63.tarifaParaEmpaquetar, fijoCop: oferta63.impuestoFijo }),
+      impuestoPorPersona: impuestoPorPersona63({ tipo: oferta63.impuestoTipo, tarifaParaEmpaquetar: oferta63.tarifaParaEmpaquetar, fijo: oferta63.impuestoFijo }),
       paxConSilla,
     });
   } else if (!esServicios) {

@@ -1389,7 +1389,7 @@ export async function actualizarServiciosContrato(
     .maybeSingle();
   if (venta63Err) return { ok: false, error: "No se pudo verificar el contrato. Inténtalo de nuevo." };
   if (venta63?.aceptacion_63_id != null) {
-    return { ok: false, error: "Este contrato nació de una oferta en COP con TRM: sus servicios no se editan después de reservar (las obligaciones con proveedores quedaron congeladas a la TRM de la reserva). Anula y vuelve a reservar." };
+    return { ok: false, error: "Este contrato nació de una oferta con conversión por TRM: sus servicios no se editan después de reservar (las obligaciones con proveedores quedaron congeladas a la TRM de la reserva). Anula y vuelve a reservar." };
   }
   const { data: cxpFilas, error: cxpErr } = await admin
     .from("cuentas_por_pagar")

@@ -120,11 +120,11 @@ export default async function PaqueteDetallePage({
     ? await sb.from("salidas_dinamicas").select("*").eq("paquete_id", paqueteId).order("fecha_ida")
     : { data: null };
   // #90 D: la moneda de publicación la ELIGE quien monta el paquete (armado_paquetes.moneda_publicacion); ya no se deriva de los hoteles
-  // disponibles. #63: el modo COP con TRM publica en COP aunque haya hoteles/servicios en USD. Para un paquete aún sin elegir, esta
+  // disponibles. #63/234: el modo con conversión por TRM publica en la moneda ELEGIDA (COP si no eligió otra) aunque haya componentes en la otra. Para un paquete aún sin elegir, esta
   // prop solo da formato a los importes mostrados (la última moneda publicada): el panel de abajo exige elegirla antes de generar.
   const modo63 = (pq as { modo_oferta?: string | null }).modo_oferta === "cop_trm_63";
   const monedaElegida = (pq as { moneda_publicacion?: string | null }).moneda_publicacion;
-  const monedaPaquete = modo63 ? "COP" : monedaElegida === "USD" || monedaElegida === "COP" ? monedaElegida : pq.moneda === "USD" ? "USD" : "COP";
+  const monedaPaquete = modo63 ? (monedaElegida === "USD" ? "USD" : "COP") : monedaElegida === "USD" || monedaElegida === "COP" ? monedaElegida : pq.moneda === "USD" ? "USD" : "COP";
 
   // #90 A/D — moneda de publicación que muestra el panel «Unidades del montaje»: se evalúan los VÍNCULOS GUARDADOS del paquete (no las
   // listas «disponibles» del editor) con LA MISMA lectura y LA MISMA evaluación que usan generarTarifario y la cotización de la oferta

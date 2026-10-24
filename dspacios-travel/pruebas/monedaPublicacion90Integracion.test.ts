@@ -246,7 +246,9 @@ describe("cableado: panel, generador y cotización usan la misma lectura y la mi
   });
   test("la configuración: la moneda se ELIGE (obligatoria fuera del modo 63) y la TRM es opcional", () => {
     assert.match(config, /Elige la moneda de publicación del paquete \(COP o USD\)/);
-    assert.match(config, /monedaPublicacion: modo63 \? "COP" : monedaPub/);
+    assert.match(config, /monedaPublicacion: monedaPub,/);
+    assert.doesNotMatch(config, /monedaPub \|\| "COP"/, "ningún COP por omisión en un paquete nuevo");
+    assert.match(config, /id != null && initial\?\.modoOferta === "cop_trm_63" \? "COP" : ""/, "solo la LECTURA de un paquete ya guardado interpreta NULL como COP");
     assert.match(config, /trmOferta: modo63 && trmOferta\.trim\(\) !== "" \? Number\(trmOferta\) : null/);
     assert.doesNotMatch(config, /El modo COP exige una TRM positiva/);
   });

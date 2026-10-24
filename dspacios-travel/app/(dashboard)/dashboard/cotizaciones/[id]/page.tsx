@@ -185,6 +185,10 @@ export default async function CotizacionDetallePage({
   };
   const esB2B = (payload.tipoAsesor ?? "interno") !== "interno";
   const tienePasajeros = Array.isArray(payload.pasajeros) && payload.pasajeros.length > 0;
+  // 234: una oferta #63 en USD cotizada SIN TRM (todas sus fuentes en USD) pide, al convertir a contrato, la TRM provisional con la que se
+  // congela el equivalente en pesos de las obligaciones. Con TRM de publicación (o en COP) no se pide nada.
+  const oferta63Cot = (payload as unknown as { oferta63?: { trm?: number | null } | null }).oferta63 ?? null;
+  const pideTrmProvisional = oferta63Cot != null && (c.moneda ?? "COP") === "USD" && oferta63Cot.trm == null;
   const clientePre = {
     nombres: payload.cliente?.nombres ?? "",
     apellidos: payload.cliente?.apellidos ?? "",
@@ -488,6 +492,7 @@ export default async function CotizacionDetallePage({
             asesores={asesores ?? []}
             miNombre={perfil?.nombre ?? ""}
             miRolVenta={perfil?.rol === "venta"}
+            pideTrmProvisional={pideTrmProvisional}
           />
         ) : c.estado === "convertida" && c.numero_contrato ? (
           <div className="flex flex-wrap items-center justify-between gap-3">

@@ -355,21 +355,21 @@ describe("actualizarPaquete() — check y alternativas con rechazo seguro al ret
 describe("crearPaquete() — alternativas al crear", () => {
   test("crea y guarda las alternativas; si el guardado atómico falla, el paquete recién creado se elimina (sin paquete a medias)", async () => {
     const ok = conBd({ ...tablasBase(), armado_paquetes: [] }, { rpc: RPC_OK });
-    const r = await crearPaquete(cfg({ destinosAereosAlternativos: true, destinosAereosIds: [20, 30] }));
+    const r = await crearPaquete(cfg({ monedaPublicacion: "COP", destinosAereosAlternativos: true, destinosAereosIds: [20, 30] }));
     assert.equal(r.ok, true, r.ok ? "" : r.error);
     assert.ok(hayRpc(ok));
 
     const mal = conBd({ ...tablasBase(), armado_paquetes: [] }, {
       rpc: { guardar_destinos_aereos_67: () => ({ data: null, error: { message: "destino_aereo_config: no válido" } }) },
     });
-    const r2 = await crearPaquete(cfg({ destinosAereosAlternativos: true, destinosAereosIds: [20, 30] }));
+    const r2 = await crearPaquete(cfg({ monedaPublicacion: "COP", destinosAereosAlternativos: true, destinosAereosIds: [20, 30] }));
     assert.equal(r2.ok, false);
     assert.equal(mal.tablas.armado_paquetes.length, 0, "el paquete recién creado no queda a medias");
   });
 
   test("sin los campos nuevos: creación de siempre", async () => {
     const bd = conBd({ ...tablasBase(), armado_paquetes: [] }, { rpc: RPC_OK });
-    const r = await crearPaquete(cfg());
+    const r = await crearPaquete(cfg({ monedaPublicacion: "COP" }));
     assert.equal(r.ok, true);
     assert.equal(hayRpc(bd), false);
   });

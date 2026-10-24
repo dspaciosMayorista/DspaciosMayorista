@@ -56,6 +56,8 @@ describe("#93 modo cop_trm_63: la TRM solo se exige si algo está en USD", () =>
     }
     assert.equal(trmValida90(1), 1, "1 solo si el usuario lo escribió; no hay default");
     assert.equal(trmValida90(null), null);
+    for (const mala of [0, -1, Number.NaN, Number.POSITIVE_INFINITY, "abc", 1e11, "100000000000", 1e20]) assert.equal(trmValida90(mala), null, String(mala));
+    assert.equal(trmValida90(99999999999.99), 99999999999.99, "el tope es exclusivo");
   });
   test("USD con TRM positiva: publica y la TRM es la guardada", () => {
     const ev = evaluarPublicacion90({ modo: "cop_trm_63", monedaPublicacion: "COP", trm: "3987.65", fuentes: [hotel("USD"), sal("COP")] });
@@ -75,10 +77,64 @@ describe("#93 modo cop_trm_63: la TRM solo se exige si algo está en USD", () =>
     assert.equal(ev.ok, true);
     assert.equal(ev.requiereTrm, false);
   });
-  test("el modo 63 publica en COP: elegir USD se rechaza (depende de F)", () => {
-    const ev = evaluarPublicacion90({ modo: "cop_trm_63", monedaPublicacion: "USD", trm: 4000, fuentes: [hotel("USD")] });
+});
+
+describe("#90 (234) modo cop_trm_63 publicando en USD: COP / TRM solo si hay fuentes en COP", () => {
+  test("USD→USD SIN TRM: publica y dice 'No requiere conversión' (nada que convertir; la provisional se congela al contratar)", () => {
+    for (const trm of [null, undefined, "", 0, "abc"]) {
+      const ev = evaluarPublicacion90({ modo: "cop_trm_63", monedaPublicacion: "USD", trm, fuentes: [hotel("USD"), serv("USD"), sal("USD")] });
+      assert.equal(ev.ok, true, String(trm));
+      assert.equal(ev.monedaPublicacion, "USD");
+      assert.equal(ev.requiereTrm, false);
+      assert.equal(ev.estadoTrm, "no_requiere");
+      assert.equal(textoEstadoTrm90(ev), ETIQUETA_SIN_CONVERSION_90);
+    }
+  });
+  test("USD→USD con TRM configurada: publica y la TRM guardada es la de la oferta", () => {
+    const ev = evaluarPublicacion90({ modo: "cop_trm_63", monedaPublicacion: "USD", trm: 4000, fuentes: [hotel("USD"), serv("USD"), sal("USD")] });
+    assert.equal(ev.ok, true);
+    assert.equal(ev.requiereTrm, false);
+    assert.equal(ev.trm, 4000);
+    assert.equal(ev.estadoTrm, "ok");
+    assert.equal(textoEstadoTrm90(ev), ETIQUETA_SIN_CONVERSION_90);
+  });
+  test("COP→USD con TRM: publica; los componentes en COP son los que se convierten", () => {
+    const ev = evaluarPublicacion90({ modo: "cop_trm_63", monedaPublicacion: "USD", trm: "3987.65", fuentes: [hotel("USD"), sal("COP", "BOG-MDE")] });
+    assert.equal(ev.ok, true);
+    assert.equal(ev.trm, 3987.65);
+    assert.deepEqual(ev.componentesCop, ["Salida BOG-MDE"]);
+  });
+  for (const trm of [null, undefined, "", 0, -4000, "abc", true]) {
+    test(`USD con una fuente en COP y sin TRM válida (${JSON.stringify(trm) ?? "undefined"}) bloquea (nunca TRM 1)`, () => {
+      const ev = evaluarPublicacion90({ modo: "cop_trm_63", monedaPublicacion: "USD", trm, fuentes: [hotel("USD"), sal("COP", "BOG-MDE")] });
+      assert.equal(ev.ok, false);
+      assert.equal(ev.requiereTrm, true);
+      assert.ok(["trm_faltante", "trm_invalida"].includes(ev.bloqueos[0].codigo), ev.bloqueos[0].codigo);
+      assert.equal(ev.trm, null);
+      assert.match(mensajeEvaluacion90(ev), /COP/);
+      assert.match(textoEstadoTrm90(ev), /Falta la TRM|TRM inválida/);
+    });
+  }
+  test("USD→COP (publicación COP con fuentes en USD) sigue como antes: TRM obligatoria solo si hay USD", () => {
+    const ev = evaluarPublicacion90({ modo: "cop_trm_63", monedaPublicacion: "COP", trm: 4000, fuentes: [hotel("USD"), sal("COP")] });
+    assert.equal(ev.ok, true);
+    assert.equal(ev.monedaPublicacion, "COP");
+    assert.equal(ev.requiereTrm, true);
+  });
+  test("modo 63 sin moneda elegida (paquetes anteriores a la 233) sigue siendo COP", () => {
+    const ev = evaluarPublicacion90({ modo: "cop_trm_63", monedaPublicacion: null, trm: null, fuentes: [hotel("COP")] });
+    assert.equal(ev.ok, true);
+    assert.equal(ev.monedaPublicacion, "COP");
+    assert.equal(ev.requiereTrm, false);
+  });
+  test("una fuente sin moneda válida sigue bloqueando también en USD", () => {
+    const ev = evaluarPublicacion90({ modo: "cop_trm_63", monedaPublicacion: "USD", trm: 4000, fuentes: [hotel("USD"), serv(null, "Tour")] });
     assert.equal(ev.ok, false);
-    assert.deepEqual(ev.bloqueos.map((b) => b.codigo), ["usd_en_modo63"]);
+    assert.equal(ev.bloqueos[0].codigo, "moneda_fuente_invalida");
+  });
+  test("fuera del modo 63 publicar en USD con fuentes en COP sigue rechazado (no hay conversión de siempre)", () => {
+    const ev = evaluarPublicacion90({ modo: "legacy", monedaPublicacion: "USD", trm: 4000, fuentes: [hotel("COP")] });
+    assert.equal(ev.ok, false);
   });
 });
 

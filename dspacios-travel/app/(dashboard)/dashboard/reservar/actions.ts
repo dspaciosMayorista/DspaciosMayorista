@@ -76,11 +76,11 @@ import { fechaNegocio } from "@/lib/fechaNegocio";
 import { resolverAliadoReserva, planComisionReserva, registrarComisionReserva, type PlanComisionReserva } from "@/lib/reservar/comisionReserva";
 import { asignarRefsPasajeros, AVISO_PERSONAS_PENDIENTES } from "@/lib/personas/cotizacion";
 import { MODO_OFERTA_63, MENSAJE_OFERTA_CAMBIO_63, huellaOferta63 } from "@/lib/reservar/ofertaDinamica63";
-import { camposCxP63, sumaEquivalentesCop63 } from "@/lib/reservar/payloadFinanciero63";
-import { equivalenteCop63, validarObligacion63 } from "@/lib/reservar/importeObligacion63";
+import { camposCxP63, sumaEquivalentesOferta63 } from "@/lib/reservar/payloadFinanciero63";
+import { equivalenteOferta63, validarObligacion63 } from "@/lib/reservar/importeObligacion63";
 import {
   armarItems63, armarTramos63, construirSnapshot63, construirObligaciones63, construirPlanB2b63, detalleAcomodacion63, huellaFinanciera63,
-  MENSAJE_EN_CURSO_63, MENSAJE_OFERTA_CERRADA_63, type AceptacionPreparada63, type HotelSnapshot63, type PlanB2bSnapshot63,
+  MENSAJE_EN_CURSO_63, MENSAJE_OFERTA_CERRADA_63, MENSAJE_TRM_PROVISIONAL_REQUERIDA_63, validarTrmProvisional63, type AceptacionPreparada63, type HotelSnapshot63, type PlanB2bSnapshot63,
 } from "@/lib/reservar/aceptacion63";
 import { aceptarOferta63, crearCotizacionOferta63, leerRevisiones63, ventaExiste63 } from "@/lib/reservar/aceptacionServidor63";
 import { altaPersonasCotizacion, logPersonasCotizacion } from "@/lib/personas/consulta";
@@ -229,7 +229,13 @@ async function reservarDesdeTarifarioInterno(input: ReservaInput, tenant: Tenant
   // #63 (E/F/G): una oferta en COP con TRM se ACEPTA de forma atómica (`aceptar_oferta_63`) contra el snapshot privado de SU
   // cotización antes de numerar o crear nada. `cotizacionId` lo pone solo `convertirCotizacion`.
   const cotizacionId63 = oferta63 ? Number(input.oferta63?.cotizacionId) : 0;
-  if (oferta63 && !(cotizacionId63 > 0)) return { ok: false, error: "Una oferta en COP con TRM solo se reserva desde su cotización." };
+  if (oferta63 && !(cotizacionId63 > 0)) return { ok: false, error: "Una oferta con conversión por TRM solo se reserva desde su cotización." };
+  // 234: TRM provisional INGRESADA al convertir (oferta en USD sin TRM). Se valida positiva ANTES de numerar nada; la base la congela al aceptar.
+  const trmProv63 = oferta63 ? validarTrmProvisional63(input.oferta63?.trmProvisional) : ({ ok: true, trm: null } as const);
+  if (!trmProv63.ok) return { ok: false, error: trmProv63.error };
+  // 234: una oferta en USD SIN TRM de publicación se contrata solo con la TRM provisional INGRESADA (sin respaldo en trm_referencia): sin ella
+  // no se llama a la aceptación ni se reserva número. La base lo vuelve a exigir (aceptar_oferta_63).
+  if (oferta63 && oferta63.moneda === "USD" && oferta63.trm == null && trmProv63.trm == null) return { ok: false, error: MENSAJE_TRM_PROVISIONAL_REQUERIDA_63 };
 
   // 2c) Resolver y VALIDAR el origen completo del vuelo (bloqueo negociado,
   // empaquetado o salida dinámica) ANTES de crear nada — ni sillas, ni venta,
@@ -253,7 +259,7 @@ async function reservarDesdeTarifarioInterno(input: ReservaInput, tenant: Tenant
     }
     // #63 / 230: el aéreo (salida MANUAL o vinculada a un Empaquetado) CONSERVA su moneda de origen (COP o USD): `datosVuelo`
     // queda en esa moneda y la CxP aérea se debe en ella con su equivalente en COP congelado a la TRM (valor_cop_63/trm_63).
-    // `ventas.costo_aereo` es la suma en COP de ese mismo equivalente (ver `costoAereoCop`).
+    // `ventas.costo_aereo` es ese mismo costo expresado en la moneda de la oferta/contrato (ver `costoAereoOferta`).
 
     // Cupos: SOLO un Bloqueo negociado tiene sillas. Una salida (vinculada a Empaquetados o manual) y un
     // Empaquetado nunca consultan `cupos_por_bloqueo` (#63, confirmado por el dueño).
@@ -283,9 +289,9 @@ async function reservarDesdeTarifarioInterno(input: ReservaInput, tenant: Tenant
   // reventa dejaba costo_aereo/CxP en $484.044 en vez de los $400.000 reales
   // (hallazgo de la revisión posterior al PR #268, punto 1 "COSTO FINANCIERO").
   const costoAereo = datosVuelo ? datosVuelo.costo_neto * paxConSilla + datosVuelo.fee_infante * infantesN : 0;
-  // 230: en el modo COP con TRM el costo del contrato (COP) es el equivalente del costo de ORIGEN del aéreo (puede ser USD);
-  // fuera de ese modo (y para COP) es el mismo número de siempre.
-  const costoAereoCop = oferta63 ? equivalenteCop63(costoAereo, oferta63.monedaAereo, oferta63.trm) : costoAereo;
+  // 230 + #90: en el modo de oferta con conversión por TRM el costo del contrato está en la moneda de la oferta (COP o USD) y es el costo
+  // de ORIGEN del aéreo expresado en ella (misma moneda: exacto; si no, con la TRM); fuera de ese modo es el mismo número de siempre.
+  const costoAereoOferta = oferta63 ? equivalenteOferta63(costoAereo, oferta63.monedaAereo, oferta63.moneda, oferta63.trm) : costoAereo;
 
   // 2d) Reserva B2B: el aliado es OBLIGATORIO y tiene que poder leerse ANTES
   // de numerar o crear nada (#38). Antes, sin `aliadoId` o con la lectura
@@ -324,6 +330,7 @@ async function reservarDesdeTarifarioInterno(input: ReservaInput, tenant: Tenant
     const adminAcept = createAdminClient();
     const ac63 = await aceptarOferta63(adminAcept, {
       cotizacionId: cotizacionId63, tenant, usuarioId: actor63.id, huella: huellaDeOferta63(input, comp.data) ?? "", huellaFinanciera: huellaFin63,
+      trmProvisional: trmProv63.trm,
     });
     if (!ac63.ok) return { ok: false, error: ac63.error };
     if (ac63.aceptacion.estado === "completa") {
@@ -398,7 +405,7 @@ async function reservarDesdeTarifarioInterno(input: ReservaInput, tenant: Tenant
     : {
         destino: meta.destino_nombre, moneda: monedaReserva, fecha_salida: meta.fecha_ida, fecha_regreso: meta.fecha_regreso,
         pax: totalPax || paxConSilla, hotel: esServicios ? null : meta.hotel_nombre, impuesto: impuestoTotal,
-        costo_aereo: datosVuelo ? costoAereoCop : undefined, aerolinea: datosVuelo?.aerolinea ?? null, plan_nombre: `${input.categoria} · ${input.regimen}`,
+        costo_aereo: datosVuelo ? costoAereoOferta : undefined, aerolinea: datosVuelo?.aerolinea ?? null, plan_nombre: `${input.categoria} · ${input.regimen}`,
       };
   // 4) Venta (cabecera) — nace PENDIENTE
   const { error: ve } = await sb.from("ventas").insert({
@@ -1107,12 +1114,13 @@ async function calcularFinancieroReserva(p: {
   const costosContrato: CostosContrato = {};
   if (costoHotelTotal > 0) costosContrato.costo_hotel = costoHotelTotal;
   if (costoServiciosTotal > 0) costosContrato.costo_receptivo = costoServiciosTotal;
-  // #63: en el modo COP con TRM las columnas de costo del contrato (COP) son la suma de los equivalentes COP de SUS MISMAS
-  // CxP (cuya moneda de origen puede ser USD): costo y obligación no pueden divergir. El aéreo ya sale en COP del origen.
+  // #63: en el modo de oferta con conversión por TRM las columnas de costo del contrato (en la moneda de la oferta: COP o USD) son la suma
+  // de los equivalentes de SUS MISMAS CxP (cuya moneda de origen puede ser otra): costo y obligación no pueden divergir. El aéreo ya sale
+  // en esa moneda desde el origen.
   if (oferta63) {
     const TIPOS_SERVICIO_63 = ["receptivo", "asistencia", "otro"];
-    const hotel63 = sumaEquivalentesCop63(cxp.filter((c) => c.tipo_proveedor === "hotel").map((c) => ({ valor: c.valor_total, moneda: c.moneda === "USD" ? "USD" as const : "COP" as const })), oferta63.trm);
-    const servicios63 = sumaEquivalentesCop63(cxp.filter((c) => TIPOS_SERVICIO_63.includes(c.tipo_proveedor)).map((c) => ({ valor: c.valor_total, moneda: c.moneda === "USD" ? "USD" as const : "COP" as const })), oferta63.trm);
+    const hotel63 = sumaEquivalentesOferta63(cxp.filter((c) => c.tipo_proveedor === "hotel").map((c) => ({ valor: c.valor_total, moneda: c.moneda === "USD" ? "USD" as const : "COP" as const })), oferta63.moneda, oferta63.trm);
+    const servicios63 = sumaEquivalentesOferta63(cxp.filter((c) => TIPOS_SERVICIO_63.includes(c.tipo_proveedor)).map((c) => ({ valor: c.valor_total, moneda: c.moneda === "USD" ? "USD" as const : "COP" as const })), oferta63.moneda, oferta63.trm);
     if (hotel63 > 0) costosContrato.costo_hotel = hotel63; else delete costosContrato.costo_hotel;
     if (servicios63 > 0) costosContrato.costo_receptivo = servicios63; else delete costosContrato.costo_receptivo;
   }
@@ -1363,7 +1371,7 @@ export async function crearCotizacion(input: ReservaInput, opts?: { vigenciaHast
     // 230: el aéreo (manual o vinculado) conserva su moneda de origen; la CxP la debe en ella y el costo del contrato es su equivalente COP.
     const datosFin: DatosVueloOrigen | null = datosVueloSnap;
     const costoAereo63 = datosFin ? datosFin.costo_neto * paxConSilla + datosFin.fee_infante * numMenoresDeDos : 0;
-    const costoAereo63Cop = equivalenteCop63(costoAereo63, oferta63.monedaAereo, oferta63.trm);
+    const costoAereo63Oferta = equivalenteOferta63(costoAereo63, oferta63.monedaAereo, oferta63.moneda, oferta63.trm);
     const fin63 = await calcularFinancieroReserva({ input, data: comp.data, datosVuelo: datosFin, costoAereo: costoAereo63, hoyISO: hoy });
     if (!fin63.ok) return { ok: false, error: fin63.error };
     let proveedorHotel63: string | null = null;
@@ -1389,11 +1397,11 @@ export async function crearCotizacion(input: ReservaInput, opts?: { vigenciaHast
       planB2b63 = construirPlanB2b63({ aliadoId: al63.aliadoId, tipoAsesor: input.tipoAsesor, plan: plan63.plan });
     }
     const snapshot63 = construirSnapshot63({
-      paqueteId: input.paqueteId, salidaId: input.salidaId ?? null, empaquetadoId: oferta63.empaquetadoId, trm: oferta63.trm,
+      paqueteId: input.paqueteId, salidaId: input.salidaId ?? null, empaquetadoId: oferta63.empaquetadoId, trm: oferta63.trm, moneda: oferta63.moneda,
       cabecera: {
         tipo_paquete: input.modulo, moneda: monedaReserva, fecha_salida: meta.fecha_ida, fecha_regreso: meta.fecha_regreso,
         pax: totalPax || paxConSilla, destino: meta.destino_nombre, hotel: esServicios ? null : meta.hotel_nombre,
-        precio_venta: precioVenta, impuesto: impuestoTotal, costo_aereo: datosFin ? costoAereo63Cop : 0, aerolinea: datosFin?.aerolinea ?? null,
+        precio_venta: precioVenta, impuesto: impuestoTotal, costo_aereo: datosFin ? costoAereo63Oferta : 0, aerolinea: datosFin?.aerolinea ?? null,
         plan_nombre: `${input.categoria} · ${input.regimen}`, paquete_armado_id: input.paqueteId,
         tipo_asesor: input.tipoAsesor, canal: input.tipoAsesor === "interno" ? "B2C" : "B2B",
       },
@@ -1473,7 +1481,7 @@ export async function crearCotizacion(input: ReservaInput, opts?: { vigenciaHast
 
 // Convierte una cotización en CONTRATO: corre el motor de reserva normal (genera
 // numero_contrato + sillas + CxP) con el payload guardado, y enlaza la cotización.
-export async function convertirCotizacion(id: number, pasajeros?: PasajeroReserva[], override?: boolean, asesorInterno?: string): Promise<ReservaResult> {
+export async function convertirCotizacion(id: number, pasajeros?: PasajeroReserva[], override?: boolean, asesorInterno?: string, trmProvisional?: number | null): Promise<ReservaResult> {
   const sb = await createClient();
   const { data: cot, error } = await sb
     .from("cotizaciones")
@@ -1515,7 +1523,7 @@ export async function convertirCotizacion(id: number, pasajeros?: PasajeroReserv
   // nunca se re-deriva de forma independiente (ver reservarDesdeTarifarioInterno).
   // #63: el payload de una cotización en COP con TRM trae su `oferta63.huella`; viaja tal cual dentro del pedido y la
   // reserva la compara con lo que se va a cobrar (precio, vuelo, fechas, TRM y tarifario publicado).
-  const res = await reservarDesdeTarifarioInterno({ ...payload, pasajeros: pax, asesorInterno: asesor, oferta63: payload.oferta63 ? { ...payload.oferta63, cotizacionId: id } : payload.oferta63 }, cot.tenant as Tenant);
+  const res = await reservarDesdeTarifarioInterno({ ...payload, pasajeros: pax, asesorInterno: asesor, oferta63: payload.oferta63 ? { ...payload.oferta63, cotizacionId: id, trmProvisional: trmProvisional ?? null } : payload.oferta63 }, cot.tenant as Tenant);
   if (!res.ok) return res;
 
   await sb.from("cotizaciones").update({ estado: "convertida", numero_contrato: res.numero }).eq("id", id);

@@ -57,7 +57,7 @@ export async function asegurarCuentasPorPagar(numeroContrato: string): Promise<{
     if (!faltan.length && (ac as { numero_contrato?: string }).numero_contrato === numeroContrato) return { ok: true, creadas: 0 };
     return {
       ok: false, creadas: 0, requiereRevision: true,
-      error: "Este contrato nació de una oferta en COP con TRM y le faltan obligaciones aceptadas. No se crean cuentas nuevas desde aquí (se compararían dólares con pesos): requiere revisión.",
+      error: "Este contrato nació de una oferta con conversión por TRM y le faltan obligaciones aceptadas. No se crean cuentas nuevas desde aquí (se compararían dólares con pesos): requiere revisión.",
     };
   }
   const tenant = (v.tenant as string | null) ?? "mayorista";

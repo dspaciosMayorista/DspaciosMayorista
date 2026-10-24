@@ -140,12 +140,12 @@ test("ConfigForm: elegir COP y guardar envía COP", async () => {
 // ═══ ConfigForm: TRM opcional con todo COP, validada si se escribe ═══════════
 const INICIAL_63 = { nombre: "Dinámico", tipo: "dinamico" as const, destinoId: 1, noches: 3, activo: true, pctMk: 20, modoOferta: "cop_trm_63", trmOferta: null };
 
-test("ConfigForm modo COP con TRM: publica en COP (selector fijo) y la TRM vacía se guarda como null (no requiere conversión)", async () => {
+test("ConfigForm modo con conversión por TRM sin moneda elegida: arranca en COP (selector habilitado) y la TRM vacía se guarda como null (no requiere conversión)", async () => {
   const raiz = await montar(h(ConfigForm, { destinos: DESTINOS, id: 7, initial: INICIAL_63 }));
   await esperar();
   assert.equal(selMoneda(raiz).value, "COP");
-  assert.equal(selMoneda(raiz).disabled, true, "el modo COP con TRM no deja elegir otra moneda");
-  assert.match(texto(raiz), /El modo COP con TRM publica siempre en COP/);
+  assert.equal(selMoneda(raiz).disabled, false, "el modo de conversión por TRM deja elegir COP o USD");
+  assert.match(texto(raiz), /Con el modo de conversión por TRM, lo que esté en la otra moneda se convierte/);
   assert.match(texto(raiz), /Solo es obligatoria si algún componente está en USD/);
   assert.doesNotMatch(texto(raiz), /TRM del paquete \(COP por USD\) \*/, "ya no es un campo obligatorio");
   await pulsar(boton(raiz, /Guardar cambios/)!);
@@ -155,7 +155,27 @@ test("ConfigForm modo COP con TRM: publica en COP (selector fijo) y la TRM vací
   assert.equal(cfg.monedaPublicacion, "COP");
 });
 
-test("ConfigForm modo COP con TRM: una TRM positiva se envía como número; una TRM 0 o negativa se rechaza antes de llamar al servidor", async () => {
+test("ConfigForm modo con conversión por TRM publicando en USD: la TRM es opcional (vacía = null); si se escribe se envía como número", async () => {
+  const raiz = await montar(h(ConfigForm, { destinos: DESTINOS, id: 7, initial: INICIAL_63 }));
+  await esperar();
+  await escribir(selMoneda(raiz), "USD");
+  assert.match(texto(raiz), /El tarifario se publica en USD\./);
+  assert.match(texto(raiz), /COP \/ TRM/);
+  assert.match(texto(raiz), /Solo es obligatoria si algún componente está en COP/);
+  await pulsar(boton(raiz, /Guardar cambios/)!);
+  let cfg = cfgGuardada();
+  assert.equal(cfg.monedaPublicacion, "USD");
+  assert.equal(cfg.modoOferta, "cop_trm_63");
+  assert.equal(cfg.trmOferta, null, "todo en USD: se guarda sin TRM");
+  m90.llamadas.length = 0;
+  await escribir(inputTrm(raiz)!, "3987.65");
+  await pulsar(boton(raiz, /Guardar cambios/)!);
+  cfg = cfgGuardada();
+  assert.equal(cfg.monedaPublicacion, "USD");
+  assert.equal(cfg.trmOferta, 3987.65);
+});
+
+test("ConfigForm modo con conversión por TRM: una TRM positiva se envía como número; una TRM 0 o negativa se rechaza antes de llamar al servidor", async () => {
   const raiz = await montar(h(ConfigForm, { destinos: DESTINOS, id: 7, initial: INICIAL_63 }));
   await esperar();
   await escribir(inputTrm(raiz)!, "3987.65");
@@ -170,6 +190,13 @@ test("ConfigForm modo COP con TRM: una TRM positiva se envía como número; una 
   await escribir(inputTrm(raiz)!, "-5");
   await pulsar(boton(raiz, /Guardar cambios/)!);
   assert.equal(llamadaGuardar(), undefined);
+  // Fuera del rango de la base (< 1e11): también se rechaza en el formulario, antes de llamar al servidor.
+  for (const grande of ["100000000000", "1e20"]) {
+    await escribir(inputTrm(raiz)!, grande);
+    await pulsar(boton(raiz, /Guardar cambios/)!);
+    assert.match(texto(raiz), /La TRM debe ser un número positivo/, grande);
+    assert.equal(llamadaGuardar(), undefined, grande);
+  }
 });
 
 // ═══ Panel «Unidades del montaje»: mensaje del componente que bloquea y estado de la TRM ═══
@@ -205,13 +232,13 @@ test("panel: todo COP → 'No requiere conversión' y nada bloquea", async () =>
     publicacionMontaje: { estado: "publicable", moneda: "COP" }, textoTrmMontaje: "No requiere conversión",
     hotelesDisp: [{ id: 31, nombre: "Hotel COP", zona: null, destino_id: 1, moneda: "COP" }] as PropsArmado["hotelesDisp"],
   });
-  assert.match(t, /se publica en COP · modo COP con TRM · No requiere conversión/);
+  assert.match(t, /se publica en COP · modo con conversión por TRM · No requiere conversión/);
   assert.doesNotMatch(t, /El generador rechazaría/);
 });
 
 test("panel: con USD y TRM configurada → muestra la TRM y publica", async () => {
   const t = await panel({ publicacionMontaje: { estado: "publicable", moneda: "COP" }, textoTrmMontaje: "TRM 3987.65 (COP por USD)", config: { ...CONFIG_63, trmOferta: 3987.65 } as PropsArmado["config"] });
-  assert.match(t, /modo COP con TRM · TRM 3987\.65/);
+  assert.match(t, /modo con conversión por TRM · TRM 3987\.65/);
   assert.match(t, /requiere TRM explícita/, "el hotel USD se convierte con la TRM explícita");
   assert.doesNotMatch(t, /El generador rechazaría/);
 });
@@ -221,4 +248,40 @@ test("panel: mezcla fuera del modo 63 → el motivo nombra los componentes y no 
   const t = await panel({ config: { ...CONFIG_63, tipo: "bloqueo", modoOferta: "legacy", trmOferta: null } as PropsArmado["config"], publicacionMontaje: { estado: "rechazado", motivo } });
   assert.match(t, /Vuelo L93FYZ/);
   assert.match(t, /Entrega E aún no disponible/);
+});
+
+// ═══ 234 · hallazgo 2 — en un paquete NUEVO la moneda se elige expresamente, también en el modo con conversión por TRM ═══
+const NUEVO_DINAMICO = { nombre: "Dinámico nuevo", tipo: "dinamico" as const, destinoId: 1, noches: 3, activo: true, pctMk: 20 };
+const selModo = (raiz: Element) => raiz.querySelector<HTMLSelectElement>('[aria-label="Modo de oferta"]')!;
+
+test("paquete NUEVO: cambiar al modo con conversión por TRM ANTES de elegir moneda no muestra ni asume COP; guardar pide elegirla y no llama al servidor", async () => {
+  const raiz = await montar(h(ConfigForm, { destinos: DESTINOS, initial: NUEVO_DINAMICO }));
+  await esperar();
+  assert.equal(selMoneda(raiz).value, "", "arranca sin moneda");
+  await escribir(selModo(raiz), "cop_trm_63");
+  assert.equal(selMoneda(raiz).value, "", "el cambio de modo NO selecciona COP");
+  assert.doesNotMatch(texto(raiz), /El tarifario se publica en COP/, "no se anuncia COP si nadie lo eligió");
+  await pulsar(boton(raiz, /Crear y continuar/)!);
+  assert.match(texto(raiz), /Elige la moneda de publicación del paquete \(COP o USD\)/);
+  assert.equal(llamadaGuardar(), undefined, "no se envía COP por omisión");
+});
+
+test("paquete NUEVO en modo con conversión por TRM: lo elegido (COP o USD) es lo que se envía", async () => {
+  for (const moneda of ["COP", "USD"] as const) {
+    m90.llamadas.length = 0;
+    const raiz = await montar(h(ConfigForm, { destinos: DESTINOS, initial: NUEVO_DINAMICO }));
+    await esperar();
+    await escribir(selModo(raiz), "cop_trm_63");
+    await escribir(selMoneda(raiz), moneda);
+    await pulsar(boton(raiz, /Crear y continuar/)!);
+    const cfg = cfgGuardada();
+    assert.equal(cfg.modoOferta, "cop_trm_63");
+    assert.equal(cfg.monedaPublicacion, moneda);
+  }
+});
+
+test("lectura de LEGADO: un paquete existente en modo 63 con moneda NULL se muestra como COP (no es un valor por defecto de paquetes nuevos)", async () => {
+  const raiz = await montar(h(ConfigForm, { destinos: DESTINOS, id: 7, initial: { ...INICIAL_63, monedaPublicacion: null } }));
+  await esperar();
+  assert.equal(selMoneda(raiz).value, "COP");
 });

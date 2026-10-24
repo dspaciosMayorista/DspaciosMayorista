@@ -101,6 +101,8 @@ export type PublicacionMontaje =
 
 export type EntradaPublicacion = {
   modo63: boolean;
+  /** Moneda elegida del paquete en el modo 63 (COP si no se indica: valor histórico). Fuera del modo 63 se ignora. */
+  monedaOferta63?: MonedaMontaje;
   /** Monedas de los hoteles elegidos (un elemento por hotel). */
   hoteles: readonly (string | null | undefined)[];
   /** Monedas de los servicios elegidos (incluidos u opcionales). */
@@ -118,7 +120,7 @@ export function resolverPublicacionMontaje(e: EntradaPublicacion): PublicacionMo
   const monedasServicio = Array.from(new Set(e.servicios.map(aMoneda)));
   let moneda: MonedaMontaje;
   if (e.modo63) {
-    moneda = "COP";
+    moneda = e.monedaOferta63 ?? "COP";
   } else {
     if (monedasHotel.length > 1) {
       return { estado: "rechazado", motivo: "Los hoteles elegidos tienen monedas distintas (COP y USD). Un paquete debe ser de una sola moneda." };
@@ -143,7 +145,7 @@ export function resolverPublicacionMontaje(e: EntradaPublicacion): PublicacionMo
   if (distinto) {
     return {
       estado: "rechazado",
-      motivo: `El vuelo de Empaquetados ${distinto.etiqueta} está en ${aMoneda(distinto.moneda)} pero este paquete se publicaría en ${moneda}. Un paquete debe ser de una sola moneda: usa un hotel de la misma moneda o, si es Dinámico, el modo COP con TRM.`,
+      motivo: `El vuelo de Empaquetados ${distinto.etiqueta} está en ${aMoneda(distinto.moneda)} pero este paquete se publicaría en ${moneda}. Un paquete debe ser de una sola moneda: usa un hotel de la misma moneda o, si es Dinámico, el modo con conversión por TRM.`,
     };
   }
   return { estado: "publicable", moneda };
@@ -158,6 +160,8 @@ export function resolverPublicacionMontaje(e: EntradaPublicacion): PublicacionMo
 
 export type VinculosGuardados = {
   modo63: boolean;
+  /** Moneda elegida del paquete en el modo 63 (COP si no se indica). */
+  monedaOferta63?: MonedaMontaje;
   /** Fecha de negocio de hoy (YYYY-MM-DD, America/Bogota) para la vigencia de compra de Empaquetados. */
   hoy: string;
   vuelos: readonly { bloqueo_id: number; bloqueos_vuelo: { id: number; record: string | null; ruta: string | null; fecha_ida: string | null; fecha_regreso: string | null; moneda: string | null } | null }[];
@@ -171,6 +175,7 @@ export type VinculosGuardados = {
 export function publicacionDeVinculosGuardados(v: VinculosGuardados): PublicacionMontaje {
   return resolverPublicacionMontaje({
     modo63: v.modo63,
+    monedaOferta63: v.monedaOferta63,
     hoteles: v.hoteles.map((h) => h.hoteles?.moneda),
     servicios: v.servicios.map((s) => s.servicios_adicionales?.moneda),
     bloqueos: v.vuelos

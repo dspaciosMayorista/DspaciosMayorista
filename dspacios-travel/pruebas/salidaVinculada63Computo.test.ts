@@ -203,7 +203,7 @@ describe("computarReserva() · una vinculada que ya no es elegible se RECHAZA an
     ["la copia de la salida quedó vieja (cambió la tarifa)", { fuentes: [fuente({ tarifa_para_empaquetar: 1_200_000 })] }, /cambi[oó]/i],
     ["la copia de la salida quedó vieja (cambió el fee de infante)", { fuentes: [fuente({ fee_infante: 90_000 })] }, /fee de infante/i],
     ["el destino de llegada ya no está permitido (#67/220)", { fuentes: [fuente({ destino_id: 2 })] }, /destinos a[eé]reos permitidos/i],
-    ["el paquete salió del modo 63 teniendo una salida vinculada", { paquete: { modo_oferta: "legacy", trm_oferta: null } }, /modo COP con TRM/i],
+    ["el paquete salió del modo 63 teniendo una salida vinculada", { paquete: { modo_oferta: "legacy", trm_oferta: null } }, /modo con conversión por TRM/i],
     ["el modo 63 perdió su TRM (hay un hotel en USD)", { paquete: { trm_oferta: null } }, /Falta la TRM/i],
     ["la salida pertenece a otro paquete", { salidas: [salidaVinculada({ paquete_id: 99 })] }, /no pertenece/i],
   ];

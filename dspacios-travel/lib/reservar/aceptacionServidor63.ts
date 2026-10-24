@@ -82,7 +82,7 @@ export async function crearCotizacionOferta63(
 /** Aceptación atómica (RPC `aceptar_oferta_63`): revalida AHORA bajo candado, reserva el número y congela el snapshot. */
 export async function aceptarOferta63(
   admin: Cliente,
-  a: { cotizacionId: number; tenant: string; usuarioId: string; huella: string; huellaFinanciera: string }
+  a: { cotizacionId: number; tenant: string; usuarioId: string; huella: string; huellaFinanciera: string; trmProvisional?: number | null }
 ): Promise<ResultadoAceptacion63> {
   try {
     const { data, error } = await admin.rpc("aceptar_oferta_63", {
@@ -91,6 +91,8 @@ export async function aceptarOferta63(
       p_usuario: a.usuarioId,
       p_huella: a.huella,
       p_huella_financiera: a.huellaFinanciera,
+      // 234: tasa INGRESADA al convertir a contrato; OBLIGATORIA en una oferta USD sin TRM (null → la base la rechaza antes de numerar).
+      p_trm_provisional: a.trmProvisional ?? null,
     });
     if (error) {
       const m = mapearErrorRpc63(error.message);

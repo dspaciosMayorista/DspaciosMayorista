@@ -15,10 +15,10 @@
 //     silla: entra al PVP tal cual (SIN markup ni TA, que el CHECK de la base
 //     prohíbe en una vinculada). N = `tarifa_proveedor` es solo COSTO (CxP).
 //     F = `fee_infante`: precio = costo, una sola vez por menor de 2 años.
-//   · Modo `cop_trm_63`: el tarifario se publica en COP. Todo NETO en USD
-//     (hotel y servicios) se liquida en su moneda de origen con sus temporadas y
-//     se CONVIERTE × TRM del paquete ANTES de aplicar el markup. La TRM es
-//     positiva, persistida en el paquete y sin valor por defecto (nunca 1).
+//   · Modo `cop_trm_63` (oferta con conversión por TRM): el tarifario se publica en la moneda ELEGIDA del paquete
+//     (`moneda_publicacion`: COP —el valor de siempre— o USD). Todo NETO se liquida en su moneda de origen con sus temporadas y,
+//     si difiere de la de publicación, se CONVIERTE con la TRM del paquete ANTES de aplicar el markup (USD→COP: × TRM;
+//     COP→USD: / TRM); si coincide, entra tal cual. La TRM es positiva, persistida en el paquete y sin valor por defecto (nunca 1).
 //   · R1: el fee de una salida MANUAL en USD se convierte con la misma TRM y
 //     conserva los centavos (numeric(15,2)); nunca se redondea al peso/al mil.
 //   · R2: los rótulos de menores son los de la 226 (`menoresDeDos.ts`), sin
@@ -71,17 +71,27 @@ export function monedaValida63(m: unknown): m is "COP" | "USD" {
 }
 
 /**
- * Convierte un monto NETO a COP: USD × TRM (sin redondear), COP tal cual. El
- * redondeo de venta lo hace el motor (`componerTarifa`/`precioMenorDeDos`) una
- * sola vez, DESPUÉS del markup.
+ * Convierte un monto NETO de su moneda de ORIGEN a la moneda de la OFERTA (la de publicación del paquete), sin redondear:
+ *   · misma moneda → exacto, SIN conversión (USD→USD y COP→COP no necesitan ni tocan la TRM);
+ *   · USD → COP: USD × TRM;
+ *   · COP → USD: COP / TRM (regla aprobada para publicar en USD con fuentes en COP).
+ * El redondeo de venta lo hace el motor (`componerTarifa`/`precioMenorDeDos`) una sola vez, DESPUÉS del markup.
+ * Una conversión sin TRM positiva es un error de invariante (nunca se usa 1 ni 0 en silencio).
  */
-export function aCop63(monto: number, moneda: unknown, trm: number | null): number {
+export function aMoneda63(monto: number, origen: unknown, destino: unknown, trm: number | null): number {
   const n = Number(monto);
   if (!Number.isFinite(n)) return 0;
-  if (monedaNormalizada63(moneda) !== "USD") return n;
-  // #93: sin TRM (paquete todo COP) un importe en USD NO se convierte "a 1" ni a 0: es un error de invariante, nunca un importe silencioso.
-  if (trm == null || !(trm > 0)) throw new Error("aCop63: un importe en USD exige una TRM positiva");
-  return n * trm;
+  const o = monedaNormalizada63(origen);
+  const d = monedaNormalizada63(destino);
+  if (o === d) return n;
+  // #93: sin TRM un importe que HAY que convertir NO se convierte "a 1" ni a 0: es un error de invariante, nunca un importe silencioso.
+  if (trm == null || !(trm > 0)) throw new Error(`aMoneda63: convertir ${o} a ${d} exige una TRM positiva`);
+  return o === "USD" ? n * trm : n / trm;
+}
+
+/** Atajo de `aMoneda63` hacia COP (modo de siempre del #63: publicación en COP). */
+export function aCop63(monto: number, moneda: unknown, trm: number | null): number {
+  return aMoneda63(monto, moneda, "COP", trm);
 }
 
 /** Redondeo a centavos (numeric(15,2)), sin el error de coma flotante de `x*100`. */
@@ -92,14 +102,19 @@ export function redondearCentavos63(n: number): number {
 }
 
 /**
- * R1 — fee de infante en COP. Una fuente COP (Empaquetados) se queda exacto; una
- * salida manual USD se multiplica por la TRM del paquete y CONSERVA los
- * centavos (25 USD × 3.987,65 = 99.691,25). Nunca se redondea al peso ni al mil.
+ * R1 — fee de infante en la moneda de la oferta. Una fuente en esa misma moneda se queda exacta; una salida manual USD en una
+ * oferta COP se multiplica por la TRM del paquete y CONSERVA los centavos (25 USD × 3.987,65 = 99.691,25); un fee COP en una
+ * oferta USD se divide por la TRM (180.000 / 4.000 = 45,00). Nunca se redondea al peso ni al mil.
  */
-export function feeACop63(fee: number, moneda: unknown, trm: number | null): number {
+export function feeAMoneda63(fee: number, origen: unknown, destino: unknown, trm: number | null): number {
   const n = Number(fee);
   if (!Number.isFinite(n) || n <= 0) return 0;
-  return redondearCentavos63(aCop63(n, moneda, trm));
+  return redondearCentavos63(aMoneda63(n, origen, destino, trm));
+}
+
+/** Atajo de `feeAMoneda63` hacia COP. */
+export function feeACop63(fee: number, moneda: unknown, trm: number | null): number {
+  return feeAMoneda63(fee, moneda, "COP", trm);
 }
 
 // ── Vuelo de la vinculada ───────────────────────────────────────────────────
@@ -120,11 +135,11 @@ export type ImpuestoTipo63 = "tiquete" | "fijo";
 /**
  * Impuesto (BNC) POR PERSONA con silla de una vinculada:
  *   · tiquete → R (el precio del aéreo, tal cual se vende);
- *   · fijo    → el importe configurado en el paquete (ya en COP en modo 63).
+ *   · fijo    → el importe configurado en el paquete, que se captura YA en la moneda de publicación (COP o USD): no se convierte.
  */
-export function impuestoPorPersona63(args: { tipo: unknown; tarifaParaEmpaquetar: number; fijoCop: number }): number {
+export function impuestoPorPersona63(args: { tipo: unknown; tarifaParaEmpaquetar: number; fijo: number }): number {
   if (args.tipo === "tiquete") return aporteVueloVinculada63(args.tarifaParaEmpaquetar);
-  const f = Number(args.fijoCop);
+  const f = Number(args.fijo);
   return Number.isFinite(f) && f > 0 ? f : 0;
 }
 

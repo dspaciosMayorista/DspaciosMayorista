@@ -256,9 +256,10 @@ describe("scripts y workflow de la 227", () => {
     const w = leer(WORKFLOW);
     for (const m of w.matchAll(/pruebas\/[A-Za-z0-9]+\.(?:test\.ts|react\.ts)/g)) assert.ok(existsSync(new URL(m[0], RAIZ)), `el workflow lista ${m[0]} y no existe`);
   });
-  test("package.json NO se tocó (las pruebas React van por comando directo)", () => {
+  test("package.json no registra las pruebas React de la 227 (van por comando directo): la ÚNICA excepción es la de la oferta en USD (234), pedida por el dueño", () => {
     const pkg = leer("package.json");
-    assert.doesNotMatch(pkg, /salidaVinculada63/);
+    assert.doesNotMatch(pkg, /salidaVinculada63(?!Usd\.react\.ts)/);
+    assert.match(pkg, /"test:react":[^\n]*pruebas\/salidaVinculada63Usd\.react\.ts/);
   });
 });
 
@@ -414,7 +415,7 @@ describe("E/F/G: el orquestador TS materializa SOLO desde lo aceptado", () => {
     assert.match(cuerpoReserva, /\} else \{\s*const finCalc = await calcularFinancieroReserva/);
   });
   test("convertirCotizacion pasa SU id como cotizacionId (lo que venga del navegador al cotizar se descarta)", () => {
-    assert.match(acciones, /oferta63: payload\.oferta63 \? \{ \.\.\.payload\.oferta63, cotizacionId: id \} : payload\.oferta63/);
+    assert.match(acciones, /oferta63: payload\.oferta63 \? \{ \.\.\.payload\.oferta63, cotizacionId: id, trmProvisional: trmProvisional \?\? null \} : payload\.oferta63/);
   });
   test("cotizar: T0 se lee ANTES de calcular y la cotización + oferta se guardan por la RPC atómica (la inserción directa queda solo para lo de siempre)", () => {
     const i = acciones.indexOf("export async function crearCotizacion(");

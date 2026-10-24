@@ -22,15 +22,16 @@ import { serviciosSinPrecioInfante } from "@/lib/reservar/menoresDeDos";
 import { seleccionarSalidasVigentes } from "@/lib/reservar/salidaDinamicaVigente";
 import {
   MODO_OFERTA_63,
-  aCop63,
+  aMoneda63,
   aporteVueloVinculada63,
   copiarDeFuente63,
   esModo63,
   etiquetaSalidaVinculada63,
   evaluarFuenteVinculada63,
-  feeACop63,
+  feeAMoneda63,
   fuenteCoincideConSalida63,
   impuestoPorPersona63,
+  redondearCentavos63,
   type FuenteEmpaquetado63,
 } from "@/lib/reservar/ofertaDinamica63";
 import { evaluarPublicacion90, mensajeEvaluacion90, monedaPublicacionValida90, trmValida90 } from "@/lib/reservar/monedaPublicacion90";
@@ -111,12 +112,15 @@ export interface PaqueteConfig {
   destinosAereosAlternativos?: boolean;
   destinosAereosIds?: number[];
   // Modo de oferta (migración 227, #63) — OPCIONALES: un formulario anterior que
-  // no los envía no toca lo guardado. `cop_trm_63` (solo Dinámico) publica el
-  // tarifario en COP con la TRM del paquete; `legacy` es el de siempre.
+  // no los envía no toca lo guardado. `cop_trm_63` (solo Dinámico; "oferta con
+  // conversión por TRM") publica el tarifario en la moneda de publicación elegida
+  // (COP o USD) convirtiendo con la TRM del paquete lo que esté en la otra moneda;
+  // `legacy` es el de siempre.
   modoOferta?: unknown;
   trmOferta?: unknown;
   // Moneda de publicación ELEGIDA (migración 233, #90 D): 'COP' | 'USD'. OPCIONAL: un formulario anterior que no la envía no la toca.
-  // El modo cop_trm_63 solo admite COP; la TRM (#93) es opcional y solo se exige al publicar/cotizar si alguna fuente está en USD.
+  // El modo cop_trm_63 admite COP o USD (234); la TRM (#93) es opcional y solo se exige al publicar/cotizar si hay fuentes que CONVERTIR (en COP: alguna
+  // en USD; en USD: alguna en COP). Con todo en USD se publica sin TRM y la provisional se congela al contratar.
   monedaPublicacion?: unknown;
 }
 
@@ -137,13 +141,12 @@ function validarModoOfertaPaquete(c: PaqueteConfig):
   if (c.modoOferta !== MODO_OFERTA_63 && c.modoOferta !== "legacy" && c.modoOferta !== undefined)
     return { ok: false, error: "El modo de oferta del paquete no es válido." };
   if (esModo63(c.modoOferta)) {
-    if (c.tipo !== "dinamico") return { ok: false, error: "El modo COP con TRM solo está disponible para paquetes Dinámico." };
-    if (moneda === "USD")
-      return { ok: false, error: "El modo COP con TRM publica en COP. Publicar en USD con este modo depende de la moneda de cobro del contrato y aún no está disponible." };
+    if (c.tipo !== "dinamico") return { ok: false, error: "El modo con conversión por TRM solo está disponible para paquetes Dinámico." };
     const escrita = c.trmOferta != null && String(c.trmOferta).trim() !== "";
     const trm = trmValida90(c.trmOferta);
-    if (escrita && trm === null) return { ok: false, error: "La TRM debe ser un número positivo (pesos por dólar). Déjala vacía si todos los componentes están en COP." };
-    return { ok: true, campos: { modo_oferta: MODO_OFERTA_63, trm_oferta: trm, moneda_publicacion: "COP" } };
+    if (escrita && trm === null) return { ok: false, error: "La TRM debe ser un número positivo (pesos por dólar). Déjala vacía solo si ningún componente hay que convertirlo (todo en la moneda de publicación)." };
+    // 234: el modo admite COP o USD. Una moneda no enviada (formulario anterior) conserva COP, que era la única posible.
+    return { ok: true, campos: { modo_oferta: MODO_OFERTA_63, trm_oferta: trm, moneda_publicacion: moneda ?? "COP" } };
   }
   return { ok: true, campos: { modo_oferta: "legacy", trm_oferta: null, ...(moneda ? { moneda_publicacion: moneda } : {}) } };
 }
@@ -212,6 +215,9 @@ export async function crearPaquete(c: PaqueteConfig): Promise<Result> {
   if (!v.ok) return v;
   const oferta = validarModoOfertaPaquete(c);
   if (!oferta.ok) return oferta;
+  // 234: un paquete NUEVO nace con la moneda de publicación ELEGIDA (COP o USD), también en el modo con conversión por TRM. Aquí no hay valor por
+  // defecto: la interpretación histórica de NULL como COP aplica solo al LEER paquetes anteriores (y a actualizar uno que ya existe).
+  if (!monedaPublicacionValida90(c.monedaPublicacion)) return { ok: false, error: "Elige la moneda de publicación del paquete (COP o USD)." };
   const sb = await createClient();
   // #67: se valida la configuración aérea ANTES de crear nada.
   const entradaAerea = entradaDestinosAereos(c);
@@ -819,10 +825,12 @@ export async function generarTarifario(paqueteId: number): Promise<Result> {
   // compatibles con Vista Booking.
   const tipo = (pq.tipo ?? "bloqueo") as "bloqueo" | "porcion_terrestre" | "servicios" | "dinamico";
 
-  // #63 — modo de oferta del paquete. `cop_trm_63`: el tarifario se publica en
-  // COP; todo neto en USD (hotel/servicios/salida manual) se convierte × la TRM
-  // del paquete ANTES del markup. La TRM es obligatoria y positiva (nunca 1).
-  // Cualquier otro valor = comportamiento de siempre, sin cambios.
+  // #63 — modo de oferta del paquete. `cop_trm_63`: el tarifario se publica en la
+  // moneda de publicación ELEGIDA (COP o USD); todo neto en la otra moneda
+  // (hotel/servicios/salida manual/vuelo) se convierte con la TRM del paquete ANTES
+  // del markup (USD→COP × TRM; COP→USD / TRM) y lo que ya está en esa moneda entra
+  // exacto. La TRM es positiva (nunca 1). Cualquier otro valor = comportamiento de
+  // siempre, sin cambios.
   const modo63 = esModo63((pq as { modo_oferta?: unknown }).modo_oferta);
   // #90 D / #93: moneda de publicación ELEGIDA y TRM condicional. Se evalúan más abajo (`evaluarPublicacion90`), cuando ya están leídas las
   // fuentes que REALMENTE aportan al precio (las que este generador no descarta), con la misma función pura que usan el panel y la cotización.
@@ -831,7 +839,7 @@ export async function generarTarifario(paqueteId: number): Promise<Result> {
   let paqueteMoneda: "COP" | "USD" = "COP";
   const hoyGen = hoyBogota(new Date());
   // Neto → moneda de publicación. En el modo de siempre es la identidad.
-  const aMonedaOferta = (neto: number, monedaOrigen: string | null | undefined) => (modo63 ? aCop63(neto, monedaOrigen, trm63) : neto);
+  const aMonedaOferta = (neto: number, monedaOrigen: string | null | undefined) => (modo63 ? aMoneda63(neto, monedaOrigen, paqueteMoneda, trm63) : neto);
 
   const [{ data: vuelosSel, error: eVuelosSel }, { data: empaquetadosSel, error: eEmpaquetadosSel }, { data: hotelesSel, error: eHotelesSel }, { data: serviciosSel, error: eServiciosSel }] = await Promise.all([
     sb
@@ -1097,9 +1105,9 @@ export async function generarTarifario(paqueteId: number): Promise<Result> {
       const hotelAdultsOnly = hotelMeta?.adults_only === true;
       const hotelNombre = hotelMeta?.nombre ?? null;
       const monedaHotelOrigen = (hotelMeta?.moneda ?? "COP") === "USD" ? "USD" : "COP";
-      // Moneda de PUBLICACIÓN: la del hotel de siempre; en modo 63 siempre COP
-      // (el neto del hotel se convierte × TRM antes del markup, ver `publicarFila`).
-      const monedaHotel = modo63 ? "COP" : monedaHotelOrigen;
+      // Moneda de PUBLICACIÓN: la del hotel de siempre; en modo 63 la ELEGIDA del paquete
+      // (el neto del hotel se convierte con la TRM antes del markup si difiere, ver `publicarFila`).
+      const monedaHotel = modo63 ? paqueteMoneda : monedaHotelOrigen;
       const filtroCat = (h.categorias as string[] | null) ?? null;
       const filtroReg = (h.regimenes as string[] | null) ?? null;
       const temporadas = temporadasPorHotel.get(h.hotel_id) ?? [];
@@ -1161,7 +1169,9 @@ export async function generarTarifario(paqueteId: number): Promise<Result> {
             // Menor de 2 años de ESTA clase de hotel: hotel de la clase + servicios
             // con su precio de infante, redondeo al mil/dólar, y el fee de infante
             // del vuelo EXACTO (regla B, migración 226). NULL en habitaciones adultas.
-            precio_pvp_menor2: esRoom ? null : precioMenorDeDos({ aporteHotel, aporteServiciosMenor: aporteServMenor, feeInfante, moneda: monedaHotel }),
+            // El fee conserva sus centavos (numeric(15,2)): COP / TRM o USD × TRM trae decimales y la suma con el techo entero de hotel + servicios
+            // arrastraría ruido de coma flotante (13 + 20,13 = 33,129999…). Se fija a centavos AQUÍ porque el motor de precios (lib/calc/paquetes.ts) está congelado.
+            precio_pvp_menor2: esRoom ? null : redondearCentavos63(precioMenorDeDos({ aporteHotel, aporteServiciosMenor: aporteServMenor, feeInfante, moneda: monedaHotel })),
             moneda: monedaHotel,
             salida_id: salidaId,
             temporada_ganadora: procedencia.temporada_ganadora,
@@ -1312,7 +1322,7 @@ export async function generarTarifario(paqueteId: number): Promise<Result> {
   let permiteVinculada63: (empaquetadoId: number) => boolean = () => true;
   if (vinculadas63.length) {
     if (!modo63)
-      return await fallar("Dinámico: las salidas vinculadas a Empaquetados exigen el modo COP con TRM en la configuración del paquete.");
+      return await fallar("Dinámico: las salidas vinculadas a Empaquetados exigen el modo con conversión por TRM en la configuración del paquete.");
     const idsFuente = [...new Set(vinculadas63.map((x) => (x as { empaquetado_id: number }).empaquetado_id))];
     const { data: fuentesRows, error: eFuentes } = await sb
       .from("empaquetados")
@@ -1352,7 +1362,7 @@ export async function generarTarifario(paqueteId: number): Promise<Result> {
       }),
     });
     if (!ev.ok || !ev.monedaPublicacion) return await fallar(mensajeEvaluacion90(ev));
-    trm63 = ev.trm; // null = "No requiere conversión" (ninguna fuente en USD): nunca se usa una TRM de 1.
+    trm63 = ev.trm; // null = "No requiere conversión" (publicación COP sin fuentes en USD): nunca se usa una TRM de 1.
     paqueteMoneda = ev.monedaPublicacion;
   }
 
@@ -1444,22 +1454,22 @@ export async function generarTarifario(paqueteId: number): Promise<Result> {
         const fuente63 = fuentes63.get(empaquetadoVinculado) ?? null;
         const motivo63 = motivoDescarteVinculada(sal as never, fuente63, hoyGen, (_t, id) => permiteVinculada63(id));
         if (motivo63) { omitidas63.push(`${etiqueta63}: ${motivo63}`); continue; }
-        // 230: R en USD se convierte × TRM UNA sola vez (sin markup ni TA); en COP queda exacto.
-        const tarifaR63 = aCop63(Number(fuente63!.tarifa_para_empaquetar) || 0, fuente63!.moneda, trm63);
-        const impuesto63 = impuestoPorPersona63({ tipo: pq.impuesto_tipo, tarifaParaEmpaquetar: tarifaR63, fijoCop: Number(pq.impuesto_fijo) || 0 });
-        const feeF63 = feeACop63(Number(fuente63!.fee_infante) || 0, fuente63!.moneda, trm63);
+        // 230 + #90: R y F en la moneda de publicación quedan exactos; en la otra se convierten con la TRM UNA sola vez (sin markup ni TA).
+        const tarifaR63 = aMoneda63(Number(fuente63!.tarifa_para_empaquetar) || 0, fuente63!.moneda, paqueteMoneda, trm63);
+        const impuesto63 = impuestoPorPersona63({ tipo: pq.impuesto_tipo, tarifaParaEmpaquetar: tarifaR63, fijo: Number(pq.impuesto_fijo) || 0 });
+        const feeF63 = feeAMoneda63(Number(fuente63!.fee_infante) || 0, fuente63!.moneda, paqueteMoneda, trm63);
         filasHoteles(fIda, numNoches, aporteVueloVinculada63(tarifaR63), impuesto63, "dinamico", null, etiqueta63, fReg, false, sal.id as number, null, feeF63);
         continue;
       }
-      // #63 — salida MANUAL en modo COP: el tiquete/TA/fee conservan la moneda
-      // acreditada de la salida y se convierten × TRM antes de publicar en COP.
+      // #63 — salida MANUAL en modo de oferta con conversión: el tiquete/TA/fee conservan la moneda
+      // acreditada de la salida y se convierten con la TRM (solo si difiere) a la moneda de publicación.
       if (modo63) {
         const monedaManual = (sal as { moneda?: string | null }).moneda ?? "COP";
-        const tiqueteCop = aCop63(Number(sal.valor_tiquete) || 0, monedaManual, trm63);
-        const taCop = aCop63(Number(sal.ta) || 0, monedaManual, trm63);
-        const impuestoManual = pq.impuesto_tipo === "tiquete" ? tiqueteCop : Number(pq.impuesto_fijo) || 0;
+        const tiqueteOferta = aMoneda63(Number(sal.valor_tiquete) || 0, monedaManual, paqueteMoneda, trm63);
+        const taOferta = aMoneda63(Number(sal.ta) || 0, monedaManual, paqueteMoneda, trm63);
+        const impuestoManual = pq.impuesto_tipo === "tiquete" ? tiqueteOferta : Number(pq.impuesto_fijo) || 0;
         const etiquetaManual = etiquetaSalidaVinculada63(sal);
-        filasHoteles(fIda, numNoches, aporteVuelo(tiqueteCop, sal.aplica_mk as boolean, pctMk, taCop), impuestoManual, "dinamico", null, etiquetaManual, fReg, false, sal.id as number, null, feeACop63(Number(sal.fee_infante) || 0, monedaManual, trm63));
+        filasHoteles(fIda, numNoches, aporteVuelo(tiqueteOferta, sal.aplica_mk as boolean, pctMk, taOferta), impuestoManual, "dinamico", null, etiquetaManual, fReg, false, sal.id as number, null, feeAMoneda63(Number(sal.fee_infante) || 0, monedaManual, paqueteMoneda, trm63));
         continue;
       }
       const costoTiquete = Number(sal.valor_tiquete) || 0;
@@ -1493,8 +1503,8 @@ export async function generarTarifario(paqueteId: number): Promise<Result> {
     const modo = (s.modo as string) === "grupo" ? "grupo" : "persona";
     // Cada servicio se publica en SU moneda (redondeo a mil en COP, a dólar en USD).
     const monedaSrvOrigen = svcMoneda(s);
-    // Modo 63: se publica en COP (neto × TRM antes del markup); si no, en la moneda del servicio.
-    const monedaSrv = modo63 ? "COP" : monedaSrvOrigen;
+    // Modo 63: se publica en la moneda ELEGIDA (neto convertido con la TRM antes del markup si difiere); si no, en la moneda del servicio.
+    const monedaSrv = modo63 ? paqueteMoneda : monedaSrvOrigen;
     const comun = {
       paquete_id: paqueteId,
       paquete_nombre: paqueteNombre,
@@ -1891,7 +1901,7 @@ const MSG_TECNICO_63 = "No se pudo completar la operación por un error técnico
 /** Traduce los errores de las guardas de la 227 a mensajes de negocio (nunca texto crudo de Postgres). */
 function mensajeErrorOferta63(mensaje: string | null | undefined): string {
   const m = mensaje ?? "";
-  if (/salida_vinculada_modo/i.test(m)) return "Las salidas vinculadas a Empaquetados exigen que el paquete sea Dinámico en modo COP con TRM.";
+  if (/salida_vinculada_modo/i.test(m)) return "Las salidas vinculadas a Empaquetados exigen que el paquete sea Dinámico en modo con conversión por TRM.";
   if (/salida_vinculada_moneda/i.test(m)) return "La salida debe tener la misma moneda que su vuelo de Empaquetados. Actualízala desde la fuente.";
   if (/salida_vinculada_record/i.test(m)) return "Ese vuelo de Empaquetados ya tiene record (PNR): una salida vinculada solo admite vuelos de sistema sin record.";
   if (/salida_vinculada_unica/i.test(m) || /salidas_dinamicas_paquete_empaquetado_uk/i.test(m)) return "Ese vuelo de Empaquetados ya está vinculado a este paquete.";
@@ -1931,7 +1941,7 @@ async function leerPaqueteOferta63(
   if (!data) return { ok: false, error: "El paquete ya no existe." };
   const p = data as unknown as PaqueteOferta63;
   if (p.tipo !== "dinamico") return { ok: false, error: "Las salidas vinculadas a Empaquetados solo existen en paquetes Dinámico." };
-  if (!esModo63(p.modo_oferta)) return { ok: false, error: "Activa el modo COP con TRM en la configuración del paquete para vincular salidas de Empaquetados." };
+  if (!esModo63(p.modo_oferta)) return { ok: false, error: "Activa el modo con conversión por TRM en la configuración del paquete para vincular salidas de Empaquetados (publica en COP o en USD según la moneda que elijas)." };
   return { ok: true, paquete: p };
 }
 
