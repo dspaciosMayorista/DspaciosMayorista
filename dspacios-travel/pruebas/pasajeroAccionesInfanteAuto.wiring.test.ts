@@ -152,7 +152,8 @@ describe("vuelos/[id]/page.tsx — construye candidatosResponsable desde las sil
   });
 
   test("importa calcularEdad de lib/utils (nunca reimplementa el cálculo de edad)", () => {
-    assert.match(src, /import \{ formatCOP, formatFechaLarga, calcularEdad \} from "@\/lib\/utils";/);
+    // 231: el encabezado del record formatea las tarifas con formatMoneda (el Bloqueo puede estar en USD) en vez de formatCOP.
+    assert.match(src, /import \{ (?:formatCOP|formatMoneda), formatFechaLarga, calcularEdad \} from "@\/lib\/utils";/);
   });
 
   test("PasajeroAcciones recibe fechaIdaBloqueo y candidatosResponsable EXCLUYENDO la propia silla de la fila", () => {

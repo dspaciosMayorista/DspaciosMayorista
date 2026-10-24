@@ -261,6 +261,26 @@ cualquier otro texto tiene que ser exactamente un valor válido o la fila se rec
 emisión" cuando `estado_emision = 'emitido'`. La alerta de devolución (`fecha_devolucion`)
 no depende de esto — se conserva igual que antes.
 
+## Moneda de las tarifas del Bloqueo (#90 Entrega B, migración 231)
+
+`bloqueos_vuelo.moneda` (`COP`/`USD`/`NULL` = sin acreditar) es la moneda de `tarifa_neta`, `tarifa_para_empaquetar` y
+`fee_infante`, con la constancia `moneda_acreditada_en/_por/_ref` que escribe el trigger `trg_bloqueos_moneda_90` (nunca el
+cliente). Reglas:
+
+- **Nunca se supone COP en un Bloqueo nuevo:** `NuevoBloqueoForm` y el CSV exigen la moneda (`validarMonedaBloqueo`,
+  `lib/vuelos/monedaBloqueo.ts`); `EditarBloqueoForm` la muestra (`MonedaTarifas`, con "— Sin acreditar —" si es NULL).
+- **COP < 1.000 = "¿Este valor está en USD?"** en cliente (formularios), servidor (`crearBloqueo`/`actualizarBloqueo`/CSV) y
+  base (trigger).
+- **Los 95 existentes** se acreditan en COP con `supabase/scripts/acreditar_231_bloqueos_cop.sql` (decisión D2, aborta si no son
+  exactamente 95 o si alguna neta/reventa/fee positiva < 1.000). NULL siempre se leyó como COP, por eso acreditar NULL → COP
+  no invalida el tarifario; cualquier otro cambio de moneda sí (`tarifario_trg_bump_por_bloqueo`).
+- **`generarTarifario`** (fuera del modo `cop_trm_63`) rechaza un Bloqueo cuya moneda difiera de la del paquete
+  (`motivoMonedaBloqueoVsPaquete`); sin acreditar solo se rechaza contra un paquete USD.
+- Interruptor estricto `p90_priv.config.exigir_moneda_bloqueo` (apagado de fábrica): **paso obligatorio** tras acreditar y comprobar los 95, con `encender_231_moneda_obligatoria.sql`. El despliegue se da por cerrado solo cuando el postcheck final, con el interruptor encendido, sale sin ningún REVISAR.
+- Control 20 del postcheck: paquetes activos en USD vinculados a Bloqueos sin acreditar o con moneda distinta de USD (un paquete USD con Bloqueo USD es válido).
+- Verificación: `preflight_postcheck_231_moneda_bloqueos.sql` (una consulta), `test_231_fases.sh`, `test_231_moneda_bloqueos.sql`;
+  rollbacks `rollback_231_acreditacion_datos.sql` (datos) y `rollback_231_moneda_bloqueos.sql` (estructura).
+
 ## Enlaces cruzados
 
 - **Reservar** — descuenta cupos (`disponible→en_plazo`), confirma (`en_plazo→confirmada`),

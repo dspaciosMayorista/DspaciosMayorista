@@ -1234,6 +1234,11 @@ export type Database = {
           estado_pago: string | null;
           // Migración 226: fee de infante del vuelo (0 a 1,99 años). Precio = costo.
           fee_infante: number;
+          // Migración 231: moneda de tarifa_neta/tarifa_para_empaquetar/fee_infante. NULL = sin acreditar. La constancia la escribe el trigger.
+          moneda: "COP" | "USD" | null;
+          moneda_acreditada_en: string | null;
+          moneda_acreditada_por: string | null;
+          moneda_acreditada_ref: string | null;
           created_at: string;
           updated_at: string;
         };
@@ -1243,6 +1248,7 @@ export type Database = {
           proveedor_id?: number | null;
           destino_id?: number | null;
           fee_infante?: number;
+          moneda?: "COP" | "USD" | null;
           rangos_edad?: number[] | null;
           aerolinea?: string | null;
           ruta?: string | null;

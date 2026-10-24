@@ -18,6 +18,7 @@ import {
   type TemporadaRango,
 } from "@/lib/calc/paquetes";
 import { empaquetadoVigente, hoyBogota } from "@/lib/reservar/origen";
+import { motivoMonedaBloqueoVsPaquete } from "@/lib/vuelos/monedaBloqueo";
 import { serviciosSinPrecioInfante } from "@/lib/reservar/menoresDeDos";
 import { seleccionarSalidasVigentes } from "@/lib/reservar/salidaDinamicaVigente";
 import {
@@ -822,7 +823,7 @@ export async function generarTarifario(paqueteId: number): Promise<Result> {
   const [{ data: vuelosSel, error: eVuelosSel }, { data: empaquetadosSel, error: eEmpaquetadosSel }, { data: hotelesSel, error: eHotelesSel }, { data: serviciosSel, error: eServiciosSel }] = await Promise.all([
     sb
       .from("armado_vuelos")
-      .select("bloqueo_id, aplica_mk, ta, bloqueos_vuelo(id, record, ruta, fecha_ida, fecha_regreso, tarifa_para_empaquetar, fee_infante)")
+      .select("bloqueo_id, aplica_mk, ta, bloqueos_vuelo(id, record, ruta, fecha_ida, fecha_regreso, tarifa_para_empaquetar, fee_infante, moneda)")
       .eq("paquete_id", paqueteId),
     // Vuelos por SISTEMA (Empaquetados, migración 156) — mismo patrón que
     // armado_vuelos/bloqueos_vuelo; ver la nota de integración más abajo.
@@ -1257,6 +1258,7 @@ export async function generarTarifario(paqueteId: number): Promise<Result> {
         fecha_regreso: string | null;
         tarifa_para_empaquetar: number;
         fee_infante: number | null;
+        moneda: string | null;
       } | null,
     }))
     .filter((v): v is typeof v & { b: NonNullable<typeof v.b> } => !!v.b && !!v.b.fecha_ida && !!v.b.fecha_regreso && permiteDestinoAereo("bloqueo", v.b.id));
@@ -1293,6 +1295,16 @@ export async function generarTarifario(paqueteId: number): Promise<Result> {
       && empaquetadoVigente(v.e.compra_inicio, v.e.compra_fin, hoyBogota(new Date()))
       && permiteDestinoAereo("empaquetado", v.e.id)
     );
+
+  // 231 (#90 Entrega B, regla D8): lo mismo para los Bloqueos aéreos. Fuera del modo cop_trm_63 la moneda de las tarifas del Bloqueo debe
+  // coincidir con la del paquete; sin acreditar (null) se lee como COP —así se vendió siempre— y solo se rechaza contra un paquete USD.
+  // (En modo 63 un Bloqueo no entra al tarifario: ese modo publica solo salidas dinámicas.)
+  if (!modo63) {
+    for (const v of vuelos) {
+      const motivo = motivoMonedaBloqueoVsPaquete(v.b.moneda, paqueteMoneda === "USD" ? "USD" : "COP", v.b.record || v.b.ruta || `#${v.b.id}`);
+      if (motivo) return await fallar(motivo);
+    }
+  }
 
   // 230 (regla D8): fuera del modo cop_trm_63 un tarifario es de UNA moneda. El vuelo de Empaquetados (que ahora puede estar en
   // USD) debe coincidir con la moneda del paquete; si no, NO se genera (nada de sumar dólares a pesos sin conversión).

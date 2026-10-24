@@ -14,6 +14,7 @@ function llamar(nombre, args) {
   throw new Error(`${nombre}: no implementado en el stub de pruebas — usa __setImpls({ ${nombre} })`);
 }
 export async function actualizarBloqueo(...args) { return llamar("actualizarBloqueo", args); }
+export async function crearBloqueo(...args) { return llamar("crearBloqueo", args); }
 export async function editarPasajeroSilla(...args) { return llamar("editarPasajeroSilla", args); }
 export async function borrarPasajeroSilla(...args) { return llamar("borrarPasajeroSilla", args); }
 export async function moverPasajeroSilla(...args) { return llamar("moverPasajeroSilla", args); }

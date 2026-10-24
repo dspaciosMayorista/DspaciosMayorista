@@ -10,6 +10,9 @@ import { RangosEdadPicker, type RangoEdad } from "@/components/RangosEdadPicker"
 import { ComboDestino, type DestinoOpt } from "@/components/ComboDestino";
 import { ComboProveedor, type ProveedorOpt } from "@/components/ComboProveedor";
 import { MODALIDADES_EMISION, MODALIDAD_LABEL, type ModalidadEmision } from "@/lib/vuelos/control";
+import { MonedaTarifas } from "@/components/vuelos/MonedaTarifas";
+import { camposTarifaBloqueo, validarMonedaBloqueo } from "@/lib/vuelos/monedaBloqueo";
+import type { MonedaVuelo } from "@/lib/vuelos/monedaSospechosa";
 
 const lbl = "mb-1 block text-xs font-medium text-gray-600";
 const card = "rounded-xl border border-gray-200 bg-white p-5 space-y-4";
@@ -25,6 +28,8 @@ export function NuevoBloqueoForm({ proveedores = [], destinos = [], rangos = [] 
   // Obligatoria (migración 152): no hay valor neutral razonable para
   // "modalidad no elegida" — el bloqueo nuevo tiene que nacer con una.
   const [modalidadEmision, setModalidadEmision] = useState<ModalidadEmision | "">("");
+  // Moneda de las tarifas (migración 231, #90): se ELIGE; un Bloqueo nuevo nunca se supone en COP.
+  const [moneda, setMoneda] = useState<MonedaVuelo | "">("");
 
   const [f, setF] = useState({
     record: "", aerolinea: "",
@@ -48,6 +53,8 @@ export function NuevoBloqueoForm({ proveedores = [], destinos = [], rangos = [] 
     e.preventDefault();
     if (!f.record.trim()) { setErr("El record (PNR) es obligatorio."); return; }
     if (!modalidadEmision) { setErr("Selecciona la modalidad de emisión (serie o grupo)."); return; }
+    const monedaOk = validarMonedaBloqueo(moneda, { tarifaNeta: f.tarifaNeta, tarifaParaEmpaquetar: f.tarifaParaEmpaquetar, feeInfante: f.feeInfante });
+    if (!monedaOk.ok) { setErr(monedaOk.error); return; }
     setErr("");
     start(async () => {
       const r = await crearBloqueo({
@@ -57,7 +64,7 @@ export function NuevoBloqueoForm({ proveedores = [], destinos = [], rangos = [] 
         vueloRegreso: f.vueloRegreso, fechaRegreso: f.fechaRegreso, horaSalidaReg: f.horaSalidaReg, horaLlegadaReg: f.horaLlegadaReg,
         cuposTotal: Number(f.cuposTotal) || 0, tarifaNeta: Number(f.tarifaNeta) || 0, tarifaParaEmpaquetar: Number(f.tarifaParaEmpaquetar) || 0, feeInfante: Number(f.feeInfante) || 0,
         fechaDevolucion: f.fechaDevolucion, fechaEmision: f.fechaEmision, notas: f.notas, rangosEdad: rangosSel,
-        modalidadEmision,
+        modalidadEmision, moneda: monedaOk.moneda,
       });
       if (r.ok) router.push("/dashboard/vuelos");
       else setErr(r.error);
@@ -99,6 +106,15 @@ export function NuevoBloqueoForm({ proveedores = [], destinos = [], rangos = [] 
             </select>
           </div>
           <div><label className={lbl}>Cupos totales</label><Input type="number" min={0} value={f.cuposTotal} onChange={set("cuposTotal")} /></div>
+          <div className="col-span-2 md:col-span-3">
+            <MonedaTarifas
+              moneda={moneda}
+              onChange={setMoneda}
+              sinElegir="— Elegir —"
+              campos={camposTarifaBloqueo({ tarifaNeta: f.tarifaNeta, tarifaParaEmpaquetar: f.tarifaParaEmpaquetar, feeInfante: f.feeInfante })}
+              ayuda="Moneda de la tarifa neta, la de reventa y el fee de infante. Es obligatoria: no se supone ninguna."
+            />
+          </div>
           <div><label className={lbl}>Tarifa neta (pago aerolínea)</label><Input type="number" min={0} value={f.tarifaNeta} onChange={set("tarifaNeta")} placeholder="200000" /></div>
           <div><label className={lbl}>Tarifa empaquetar (reventa)</label><Input type="number" min={0} value={f.tarifaParaEmpaquetar} onChange={set("tarifaParaEmpaquetar")} placeholder="242022" /></div>
           <div>
