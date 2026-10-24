@@ -3,7 +3,9 @@ import type { ComponentProps } from "react";
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { ArmadoClient } from "./ArmadoClient";
-import { resolverDestinosAereosPaquete } from "@/lib/paquetes/destinosAereos67";
+import { leerInfoFuentes, motivoRechazoFuente, resolverDestinosAereosPaquete } from "@/lib/paquetes/destinosAereos67";
+import { publicacionDeVinculosGuardados, type PublicacionMontaje, type VinculosGuardados } from "@/lib/paquetes/unidadesMontaje";
+import { hoyBogota } from "@/lib/reservar/origen";
 
 export const dynamic = "force-dynamic";
 
@@ -54,7 +56,7 @@ export default async function PaqueteDetallePage({
   // Disponibles (filtrados por destino + rango de viaje)
   let qVuelos = sb
     .from("bloqueos_vuelo")
-    .select("id, record, ruta, aerolinea, fecha_ida, fecha_regreso, tarifa_para_empaquetar, destino_id")
+    .select("id, record, ruta, aerolinea, fecha_ida, fecha_regreso, tarifa_para_empaquetar, tarifa_neta, destino_id, moneda")
     .order("fecha_ida");
   // Un vuelo SIEMPRE pertenece a un destino: filtro estricto (los que no tienen
   // destino asignado no se mezclan en paquetes de otro destino).
@@ -79,7 +81,7 @@ export default async function PaqueteDetallePage({
 
   let qServicios = sb
     .from("servicios_adicionales")
-    .select("id, nombre, precio_persona, destino_id, servicio_tarifa_pax(pax_desde)")
+    .select("id, nombre, precio_persona, destino_id, moneda, servicio_tarifa_pax(pax_desde)")
     .eq("activo", true)
     .order("nombre");
   // Servicio aplica si: es del destino puntual, O es catch-all del MISMO alcance
@@ -122,6 +124,43 @@ export default async function PaqueteDetallePage({
   const monedaPaquete = modo63
     ? "COP"
     : (hotelesDisp ?? []).some((h) => (h as { moneda?: string | null }).moneda === "USD") ? "USD" : "COP";
+
+  // #90 A — moneda de publicación que muestra el panel «Unidades del montaje»: se evalúan los VÍNCULOS GUARDADOS del paquete con las
+  // mismas lecturas y criterios de generarTarifario (no las listas «disponibles» del editor, que se filtran por rango de viaje y
+  // destino y pueden omitir un vínculo que el generador sí lee). No cambia lo que se publica ni el valor `moneda` de arriba.
+  const tipoPaquete = pq.tipo ?? "bloqueo"; // mismo valor por defecto que generarTarifario
+  const publicacionMontaje = await evaluarPublicacionMontaje();
+
+  async function evaluarPublicacionMontaje(): Promise<PublicacionMontaje> {
+    const tecnico: PublicacionMontaje = { estado: "rechazado", motivo: "No se pudieron leer los vínculos guardados del paquete para evaluar su moneda." };
+    const [rv, re, rh, rs] = await Promise.all([
+      sb.from("armado_vuelos").select("bloqueo_id, bloqueos_vuelo(id, record, ruta, fecha_ida, fecha_regreso, moneda)").eq("paquete_id", paqueteId),
+      sb.from("armado_empaquetados").select("empaquetado_id, empaquetados(id, record, ruta, fecha_ida, fecha_regreso, moneda, activo, compra_inicio, compra_fin)").eq("paquete_id", paqueteId),
+      sb.from("armado_hoteles").select("hotel_id, hoteles(moneda)").eq("paquete_id", paqueteId),
+      sb.from("armado_servicios").select("servicio_id, servicios_adicionales(moneda)").eq("paquete_id", paqueteId),
+    ]);
+    if (rv.error || re.error || rh.error || rs.error) return tecnico;
+    // `moneda` de bloqueos_vuelo / empaquetados no está en types/database.ts a propósito: se lee sin tipo, como el generador.
+    const vuelos = (rv.data ?? []) as unknown as VinculosGuardados["vuelos"][number][];
+    const empaquetados = (re.data ?? []) as unknown as VinculosGuardados["empaquetados"][number][];
+    const hoteles = (rh.data ?? []) as unknown as VinculosGuardados["hoteles"][number][];
+    const servicios = (rs.data ?? []) as unknown as VinculosGuardados["servicios"][number][];
+
+    // Destino aéreo permitido: solo en paquetes de Bloqueo con vuelos vinculados, igual que el generador.
+    let permiteDestinoAereo: VinculosGuardados["permiteDestinoAereo"] = () => true;
+    if (tipoPaquete === "bloqueo" && vuelos.length + empaquetados.length > 0) {
+      if (!efAereo.ok) return tecnico;
+      if (!efAereo.efectivos.ok) return { estado: "rechazado", motivo: `Bloqueo: ${efAereo.efectivos.error}` };
+      const permitidos = efAereo.efectivos.ids;
+      const info = await leerInfoFuentes(sb, [
+        ...vuelos.map((x) => ({ tipo: "bloqueo" as const, id: x.bloqueo_id })),
+        ...empaquetados.map((x) => ({ tipo: "empaquetado" as const, id: x.empaquetado_id })),
+      ]);
+      if (!info.ok) return tecnico;
+      permiteDestinoAereo = (t, id) => motivoRechazoFuente(permitidos, info.info.get(`${t}:${id}`) ?? null) === null;
+    }
+    return publicacionDeVinculosGuardados({ modo63, hoy: hoyBogota(new Date()), vuelos, empaquetados, hoteles, servicios, permiteDestinoAereo });
+  }
 
   // El resultado puede superar el tope de 1000 filas de PostgREST; paginamos.
   //
@@ -216,6 +255,7 @@ export default async function PaqueteDetallePage({
         resultado={resultado as unknown as Parameters<typeof ArmadoClient>[0]["resultado"]}
         salidas={(salidas ?? []) as unknown as Parameters<typeof ArmadoClient>[0]["salidas"]}
         moneda={monedaPaquete}
+        publicacionMontaje={publicacionMontaje}
         pestanaInicial={pestanaInicial ?? null}
         tarifarioEstado={(pq as { tarifario_estado?: string | null }).tarifario_estado ?? null}
         tarifarioError={(pq as { tarifario_error?: string | null }).tarifario_error ?? null}
