@@ -162,7 +162,7 @@ async function importeCopCxP(input: { cuentaId: number; numeroContrato: string; 
   const sb = await db();
   const { data, error } = await sb
     .from("cuentas_por_pagar")
-    .select("numero_contrato, tenant, aceptacion_63_id, obligacion_63, valor_cop_63, trm_63")
+    .select("numero_contrato, tenant, aceptacion_63_id, obligacion_63, valor_cop_63, trm_63, moneda")
     .eq("id", input.cuentaId)
     .maybeSingle();
   if (error) return { ok: false, error: MENSAJE_LECTURA_CXP_63 };

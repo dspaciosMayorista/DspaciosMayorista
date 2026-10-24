@@ -225,7 +225,7 @@ const DESTINOS_OPT = [
   { id: D.SANTO_DOMINGO, nombre: "SANTO DOMINGO", codigo_iata: "SDQ" },
   { id: D.PUNTA_CANA, nombre: "PUNTA CANA", codigo_iata: "PUJ" },
 ];
-const INICIAL_BLOQUEO = { nombre: "Juan Dolio", tipo: "bloqueo" as const, destinoId: D.JUAN_DOLIO, noches: 3, activo: true, pctMk: 20 };
+const INICIAL_BLOQUEO = { nombre: "Juan Dolio", tipo: "bloqueo" as const, destinoId: D.JUAN_DOLIO, noches: 3, activo: true, pctMk: 20, monedaPublicacion: "COP" }; // #90 D: la moneda de publicación se elige
 
 test("ConfigForm: Bloqueo muestra el check apagado por defecto y NO pide candidatos hasta encenderlo visualmente (la lista aparece al encender)", async () => {
   const raiz = await montar(h(ConfigForm, { destinos: DESTINOS_OPT, id: PAQUETE_ID, initial: INICIAL_BLOQUEO }));

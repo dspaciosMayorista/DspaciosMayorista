@@ -107,6 +107,11 @@ function tablas(o: Opciones): Record<string, Fila[]> {
       paquete_id: PAQUETE_ID, hotel_id: HOTEL_ID, categorias: null, regimenes: null,
       hoteles: { nombre: "Hotel Dinámico", moneda: o.hotelMoneda ?? "USD", modelo_tarifario: "persona", adults_only: false },
     }],
+    // #90 D: el cargador de fuentes de moneda lee estas tablas por id (misma moneda que el join de arriba).
+    hoteles: [{ id: HOTEL_ID, nombre: "Hotel Dinámico", moneda: o.hotelMoneda ?? "USD", modelo_tarifario: "persona" }],
+    servicios_adicionales: (o.servicios ?? []).map((s) => ({
+      id: s.servicio_id, nombre: (s.servicios_adicionales as Fila).nombre, moneda: (s.servicios_adicionales as Fila).moneda,
+    })),
     hotel_temporadas: [{
       hotel_id: HOTEL_ID, nombre: "Base", fecha_inicio: "2000-01-01", fecha_fin: "2099-12-31", prioridad: 1, compra_inicio: null, compra_fin: null,
       tipo: "tarifa", descuento_valor: null, rangos: null, blackouts: null, regimen_restringido: null,
@@ -216,11 +221,12 @@ describe("generarTarifario() REAL · vinculada a un Empaquetado en USD (modo cop
 
 describe("generarTarifario() REAL · Empaquetado en Bloqueo/Porción (fuera del modo 63): regla D8, no mezclar monedas", () => {
   function tablasBloqueo(monedaVuelo: string, monedaHotel: string): Record<string, Fila[]> {
-    const t = tablas({ salidas: [], hotelMoneda: monedaHotel, paquete: { tipo: "bloqueo", modo_oferta: "legacy", trm_oferta: null, impuesto_tipo: "fijo", impuesto_fijo: 0 } });
+    const t = tablas({ salidas: [], hotelMoneda: monedaHotel, paquete: { tipo: "bloqueo", modo_oferta: "legacy", trm_oferta: null, impuesto_tipo: "fijo", impuesto_fijo: 0, moneda_publicacion: monedaHotel } }); // #90 D: la moneda de publicación se ELIGE (aquí, la del hotel)
     t.armado_empaquetados = [{
       paquete_id: PAQUETE_ID, empaquetado_id: EMPAQUETADO_ID, aplica_mk: true, ta: 0,
       empaquetados: { id: EMPAQUETADO_ID, record: null, ruta: "MDE - SDQ - MDE", fecha_ida: IDA, fecha_regreso: REG, tarifa_para_empaquetar: R_USD, fee_infante: F_USD, moneda: monedaVuelo, activo: true, compra_inicio: null, compra_fin: null },
     }];
+    t.empaquetados = [fuente({ id: EMPAQUETADO_ID, ruta: "MDE - SDQ - MDE", moneda: monedaVuelo })]; // el cargador de fuentes lee la moneda real del vuelo por id
     return t;
   }
   async function generarBloqueo(monedaVuelo: string, monedaHotel: string) {

@@ -75,10 +75,13 @@ export function monedaValida63(m: unknown): m is "COP" | "USD" {
  * redondeo de venta lo hace el motor (`componerTarifa`/`precioMenorDeDos`) una
  * sola vez, DESPUÉS del markup.
  */
-export function aCop63(monto: number, moneda: unknown, trm: number): number {
+export function aCop63(monto: number, moneda: unknown, trm: number | null): number {
   const n = Number(monto);
   if (!Number.isFinite(n)) return 0;
-  return monedaNormalizada63(moneda) === "USD" ? n * trm : n;
+  if (monedaNormalizada63(moneda) !== "USD") return n;
+  // #93: sin TRM (paquete todo COP) un importe en USD NO se convierte "a 1" ni a 0: es un error de invariante, nunca un importe silencioso.
+  if (trm == null || !(trm > 0)) throw new Error("aCop63: un importe en USD exige una TRM positiva");
+  return n * trm;
 }
 
 /** Redondeo a centavos (numeric(15,2)), sin el error de coma flotante de `x*100`. */
@@ -93,7 +96,7 @@ export function redondearCentavos63(n: number): number {
  * salida manual USD se multiplica por la TRM del paquete y CONSERVA los
  * centavos (25 USD × 3.987,65 = 99.691,25). Nunca se redondea al peso ni al mil.
  */
-export function feeACop63(fee: number, moneda: unknown, trm: number): number {
+export function feeACop63(fee: number, moneda: unknown, trm: number | null): number {
   const n = Number(fee);
   if (!Number.isFinite(n) || n <= 0) return 0;
   return redondearCentavos63(aCop63(n, moneda, trm));

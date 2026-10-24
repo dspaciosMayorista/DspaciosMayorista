@@ -110,7 +110,11 @@ function tablasAdmin(o: { salidas?: FilaFalsa[]; fuentes?: FilaFalsa[]; paquete?
       notas: null, edad_infante_min: null, edad_infante_max: null, edad_nino_min: null, edad_nino_max: null, precio_final_autoritativo: false,
     }],
     armado_servicios: o.servicios ?? [],
-    servicios_adicionales: [{ id: 900, moneda: "USD" }],
+    servicios_adicionales: [{ id: 900, nombre: "Tour", moneda: "USD" }],
+    // #90 D: el cargador de fuentes de moneda (TRM condicional) lee el armado del paquete por id.
+    armado_hoteles: [{ paquete_id: PAQUETE_ID, hotel_id: HOTEL_ID }],
+    armado_vuelos: [],
+    armado_empaquetados: [],
     servicio_tarifa_pax: [],
   };
 }
@@ -200,7 +204,7 @@ describe("computarReserva() · una vinculada que ya no es elegible se RECHAZA an
     ["la copia de la salida quedó vieja (cambió el fee de infante)", { fuentes: [fuente({ fee_infante: 90_000 })] }, /fee de infante/i],
     ["el destino de llegada ya no está permitido (#67/220)", { fuentes: [fuente({ destino_id: 2 })] }, /destinos a[eé]reos permitidos/i],
     ["el paquete salió del modo 63 teniendo una salida vinculada", { paquete: { modo_oferta: "legacy", trm_oferta: null } }, /modo COP con TRM/i],
-    ["el modo 63 perdió su TRM", { paquete: { trm_oferta: null } }, /TRM positiva/i],
+    ["el modo 63 perdió su TRM (hay un hotel en USD)", { paquete: { trm_oferta: null } }, /Falta la TRM/i],
     ["la salida pertenece a otro paquete", { salidas: [salidaVinculada({ paquete_id: 99 })] }, /no pertenece/i],
   ];
   for (const [nombre, esc, patron] of casos) {

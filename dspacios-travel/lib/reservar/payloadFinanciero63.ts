@@ -20,12 +20,12 @@ export type ObligacionOrigen63 = {
 };
 
 /** Campos extra de una CxP del modo 63 (se suman a los de siempre). */
-export function camposCxP63(o: ObligacionOrigen63, trm: number): { moneda: "COP" | "USD"; valor_cop: number; trm: number } {
+export function camposCxP63(o: ObligacionOrigen63, trm: number | null): { moneda: "COP" | "USD"; valor_cop: number; trm: number | null } {
   return { moneda: o.moneda, valor_cop: equivalenteCop63(o.valor, o.moneda, trm), trm };
 }
 
 /** Suma de equivalentes COP de varias obligaciones de origen. */
-export function sumaEquivalentesCop63(obligaciones: readonly ObligacionOrigen63[], trm: number): number {
+export function sumaEquivalentesCop63(obligaciones: readonly ObligacionOrigen63[], trm: number | null): number {
   let total = 0;
   for (const o of obligaciones) total += equivalenteCop63(o.valor, o.moneda, trm);
   return redondearCentavos63(total);

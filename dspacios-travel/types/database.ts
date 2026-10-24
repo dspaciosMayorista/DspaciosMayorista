@@ -438,7 +438,7 @@ export type Database = {
           tenant: string;
           paquete_id: number;
           salida_id: number | null;
-          trm: number;
+          trm: number | null;
           rev_fuente: number;
           rev_publicada: number | null;
           gen_publicada: number | null;
@@ -2483,9 +2483,11 @@ export type Database = {
           // MISMO país (tabla armado_paquete_destinos_aereos).
           destinos_aereos_alternativos: boolean;
           // Migración 227 (#63): modo de oferta del paquete. 'legacy' = el de siempre; 'cop_trm_63' = tarifario en COP
-          // con la TRM del paquete (trm_oferta > 0 obligatoria en ese modo).
+          // con la TRM del paquete. Desde la 233 (#93) la TRM puede ser NULL: solo se exige si alguna fuente está en USD.
           modo_oferta: string;
           trm_oferta: number | null;
+          // Migración 233 (#90 D): moneda de publicación ELEGIDA ('COP' | 'USD'); NULL = sin elegir. El modo 63 solo admite COP.
+          moneda_publicacion: string | null;
           // Migración 227 (#63): contador de cambios de proveedor/retención/reglas de hotel (sube en la misma transacción).
           p63_rev_costos: number;
         };
@@ -2530,6 +2532,7 @@ export type Database = {
           destinos_aereos_alternativos?: boolean;
           modo_oferta?: string;
           trm_oferta?: number | null;
+          moneda_publicacion?: string | null;
           p63_rev_costos?: number;
         };
         Update: Partial<Database["public"]["Tables"]["armado_paquetes"]["Insert"]>;
@@ -4008,7 +4011,8 @@ export type Database = {
           p_moneda: string;
           p_filas: Json;
           p_modo: string;
-          p_trm: number;
+          // Migración 233 (#93): NULL = ninguna fuente del paquete está en USD ("no requiere conversión").
+          p_trm: number | null;
         };
         Returns: boolean;
       };

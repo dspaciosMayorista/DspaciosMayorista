@@ -250,6 +250,7 @@ export function fuente(id: number, destino_id: number | null, extra: Fila = {}):
     id, destino_id, record: `R${id}`, ruta: `BOG-D${destino_id ?? "x"}`, aerolinea: "AV",
     fecha_ida: "2026-12-10", fecha_regreso: "2026-12-14", tarifa_para_empaquetar: 1_130_000,
     tarifa_proveedor: 1_000_000, fee_infante: 0, activo: true, compra_inicio: null, compra_fin: null,
+    moneda: "COP", // #90 D: la moneda de cada fuente se acredita; el generador ya no supone COP
     ...extra,
   };
 }
@@ -290,6 +291,7 @@ export function paqueteFixture(extra: Fila = {}): Fila {
     destino_id: D.JUAN_DOLIO, pct_mk: 0.2, impuesto_tipo: "fijo", impuesto_fijo: 100_000,
     fecha_viaje_inicio: "2026-12-01", fecha_viaje_fin: "2026-12-31",
     destinos_aereos_alternativos: false,
+    moneda_publicacion: "COP", // #90 D: la moneda de publicación se ELIGE; el generador no la deduce de los hoteles
     ...extra,
   };
 }

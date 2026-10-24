@@ -39,6 +39,8 @@ type Initial = Partial<{
   // #63 — modo de oferta del paquete (solo Dinámico): "legacy" o "cop_trm_63" (COP con la TRM del paquete).
   modoOferta: string;
   trmOferta: number | null;
+  // #90 D — moneda de publicación ELEGIDA (COP | USD); null = aún sin elegir.
+  monedaPublicacion: string | null;
 }>;
 
 const lbl = "mb-1 block text-xs font-medium text-gray-600";
@@ -87,6 +89,8 @@ export function ConfigForm({
   const [modoOferta, setModoOferta] = useState<"legacy" | "cop_trm_63">(initial?.modoOferta === "cop_trm_63" ? "cop_trm_63" : "legacy");
   const [trmOferta, setTrmOferta] = useState(initial?.trmOferta != null ? String(initial.trmOferta) : "");
   const modo63 = tipo === "dinamico" && modoOferta === "cop_trm_63";
+  // #90 D — la moneda de publicación se ELIGE (nunca se deduce de los hoteles). El modo COP con TRM publica siempre en COP.
+  const [monedaPub, setMonedaPub] = useState<"" | "COP" | "USD">(initial?.monedaPublicacion === "COP" || initial?.monedaPublicacion === "USD" ? initial.monedaPublicacion : "");
   // Los destinos aéreos permitidos (#67) aplican a Bloqueo y, en modo COP, a las salidas vinculadas de Dinámico.
   const aereosAplica = tipo === "bloqueo" || modo63;
   const [aereosAlt, setAereosAlt] = useState(initial?.destinosAereosAlternativos ?? false);
@@ -122,8 +126,13 @@ export function ConfigForm({
       setErr("El nombre es obligatorio.");
       return;
     }
-    if (modo63 && !(Number(trmOferta) > 0)) {
-      setErr("El modo COP exige una TRM positiva (pesos por dólar).");
+    if (!modo63 && !monedaPub) {
+      setErr("Elige la moneda de publicación del paquete (COP o USD).");
+      return;
+    }
+    // #93: la TRM es opcional al guardar (solo se exige al publicar/cotizar si alguna fuente está en USD); si se escribe, debe ser positiva.
+    if (modo63 && trmOferta.trim() !== "" && !(Number(trmOferta) > 0)) {
+      setErr("La TRM debe ser un número positivo (pesos por dólar). Déjala vacía si todos los componentes están en COP.");
       return;
     }
     setErr("");
@@ -154,7 +163,8 @@ export function ConfigForm({
       ...(aereosAplica ? { destinosAereosAlternativos: aereosAlt, destinosAereosIds: aereosIds } : {}),
       // #63: modo de oferta y TRM. Fuera de Dinámico siempre "legacy" (la base lo exige).
       modoOferta: modo63 ? "cop_trm_63" : "legacy",
-      trmOferta: modo63 ? Number(trmOferta) : null,
+      trmOferta: modo63 && trmOferta.trim() !== "" ? Number(trmOferta) : null,
+      monedaPublicacion: modo63 ? "COP" : monedaPub,
     };
     start(async () => {
       const r = id ? await actualizarPaquete(id, cfg) : await crearPaquete(cfg);
@@ -207,6 +217,26 @@ export function ConfigForm({
           </label>
         </div>
 
+        <div className="md:col-span-2 rounded-lg border border-gray-100 bg-gray-50 p-3" data-testid="moneda-publicacion">
+          <label className={lbl}>Moneda de publicación *</label>
+          <select
+            value={modo63 ? "COP" : monedaPub}
+            disabled={modo63}
+            onChange={(e) => setMonedaPub(e.target.value === "USD" ? "USD" : e.target.value === "COP" ? "COP" : "")}
+            className={sel}
+            aria-label="Moneda de publicación"
+          >
+            <option value="">Elige una moneda…</option>
+            <option value="COP">COP (pesos)</option>
+            <option value="USD">USD (dólares)</option>
+          </select>
+          <p className="mt-1 text-[11px] text-gray-400">
+            {modo63
+              ? "El modo COP con TRM publica siempre en COP."
+              : "La eliges tú; no se deduce de los hoteles. Todos los componentes del paquete (hoteles, servicios, vuelos y salidas) deben estar en esta moneda: mezclar o convertir monedas solo existe en el modo COP con TRM. Cambiarla invalida el tarifario."}
+          </p>
+        </div>
+
         {tipo === "dinamico" && (
           <div className="md:col-span-2 rounded-lg border border-gray-100 bg-gray-50 p-3" data-testid="modo-oferta-63">
             <label className={lbl}>Modo de oferta</label>
@@ -216,10 +246,11 @@ export function ConfigForm({
             </select>
             {modo63 && (
               <div className="mt-2 max-w-xs">
-                <label className={lbl}>TRM del paquete (COP por USD) *</label>
+                <label className={lbl}>TRM del paquete (COP por USD)</label>
                 <Input type="number" min={0} step="0.01" value={trmOferta} onChange={(e) => setTrmOferta(e.target.value)} placeholder="4000" aria-label="TRM del paquete" />
                 <p className="mt-1 text-[11px] text-gray-400">
-                  El tarifario se publica en COP. Los netos en USD de hoteles y servicios se convierten con esta TRM antes de aplicar el markup.
+                  El tarifario se publica en COP. Los netos en USD de hoteles, servicios y salidas se convierten con esta TRM antes de aplicar el markup.
+                  Solo es obligatoria si algún componente está en USD; si todo está en COP déjala vacía (no requiere conversión) y no se usa ninguna TRM implícita.
                   Cambiar la TRM invalida el tarifario: hay que volver a generarlo. El impuesto fijo se interpreta en COP.
                 </p>
               </div>

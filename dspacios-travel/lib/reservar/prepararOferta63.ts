@@ -23,18 +23,19 @@ import {
   fuenteCoincideConSalida63,
   mensajeFuenteCambio63,
   monedaNormalizada63,
-  validarTrm63,
   type FuenteEmpaquetado63,
   type SalidaVinculada63,
 } from "./ofertaDinamica63.ts";
 import { hoyBogota } from "./origen.ts";
+import { cargarFuentesMoneda90 } from "./fuentesMoneda90.ts";
+import { evaluarPublicacion90, mensajeEvaluacion90 } from "./monedaPublicacion90.ts";
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 type Cliente = SupabaseClient<any, any, any>;
 
 export type Oferta63 = {
-  /** TRM del paquete (COP por USD), validada > 0. */
-  trm: number;
+  /** TRM del paquete (COP por USD), validada > 0. NULL solo si ninguna fuente del paquete está en USD (#93: "no requiere conversión"). */
+  trm: number | null;
   vinculada: boolean;
   empaquetadoId: number | null;
   /** R de una vinculada (precio final del aéreo) o el tiquete de una manual, ya en COP (una sola conversión × TRM si la fuente es USD). */
@@ -59,7 +60,7 @@ export async function resolverOfertaSalida63(lector: Cliente, paqueteId: number,
   const [pqRes, salRes] = await Promise.all([
     lector
       .from("armado_paquetes")
-      .select("modo_oferta, trm_oferta, impuesto_tipo, impuesto_fijo, tarifario_generacion_publicada, tarifario_revision_publicada")
+      .select("modo_oferta, trm_oferta, moneda_publicacion, impuesto_tipo, impuesto_fijo, tarifario_generacion_publicada, tarifario_revision_publicada")
       .eq("id", paqueteId)
       .maybeSingle(),
     lector
@@ -83,11 +84,16 @@ export async function resolverOfertaSalida63(lector: Cliente, paqueteId: number,
     if (vinculada) return { ok: false, error: "Esta salida está vinculada a un vuelo de Empaquetados pero el paquete no está en modo COP con TRM. Revisa la configuración del paquete." };
     return { ok: true, oferta: null };
   }
-  const trm = validarTrm63(pq.trm_oferta);
-  if (!trm.ok) return { ok: false, error: trm.error };
+  // #93: la TRM solo se exige si alguna fuente que REALMENTE aporta al precio está en USD (las que el generador descarta no cuentan).
+  // Misma lectura y misma evaluación que el panel del armado y el generador.
+  const fuentes = await cargarFuentesMoneda90(lector, paqueteId, { tipo: "dinamico", modo63: true });
+  if (!fuentes.ok) return { ok: false, error: fuentes.error };
+  const ev = evaluarPublicacion90({ modo: "cop_trm_63", monedaPublicacion: pq.moneda_publicacion, trm: pq.trm_oferta, fuentes: fuentes.fuentes });
+  if (!ev.ok) return { ok: false, error: mensajeEvaluacion90(ev) };
+  const trmOferta = ev.trm; // null = "no requiere conversión" (#93); nunca 1
 
   const base = {
-    trm: trm.trm,
+    trm: trmOferta,
     impuestoTipo: (pq.impuesto_tipo as string | null) ?? null,
     impuestoFijo: Number(pq.impuesto_fijo) || 0,
     generacionPublicada: pq.tarifario_generacion_publicada == null ? null : Number(pq.tarifario_generacion_publicada),
@@ -101,8 +107,8 @@ export async function resolverOfertaSalida63(lector: Cliente, paqueteId: number,
         ...base,
         vinculada: false,
         empaquetadoId: null,
-        tarifaParaEmpaquetar: aCop63(Number(sal.valor_tiquete) || 0, sal.moneda, trm.trm),
-        feeInfante: feeACop63(Number(sal.fee_infante) || 0, sal.moneda, trm.trm),
+        tarifaParaEmpaquetar: aCop63(Number(sal.valor_tiquete) || 0, sal.moneda, trmOferta),
+        feeInfante: feeACop63(Number(sal.fee_infante) || 0, sal.moneda, trmOferta),
         monedaAereo: monedaNormalizada63(sal.moneda),
       },
     };
@@ -131,8 +137,8 @@ export async function resolverOfertaSalida63(lector: Cliente, paqueteId: number,
       vinculada: true,
       empaquetadoId,
       // 230: R en USD se convierte × TRM UNA sola vez (sin markup ni TA); en COP queda exacto.
-      tarifaParaEmpaquetar: aCop63(Number((fuente as FuenteEmpaquetado63).tarifa_para_empaquetar) || 0, (fuente as FuenteEmpaquetado63).moneda, trm.trm),
-      feeInfante: feeACop63(Number((fuente as FuenteEmpaquetado63).fee_infante) || 0, (fuente as FuenteEmpaquetado63).moneda, trm.trm),
+      tarifaParaEmpaquetar: aCop63(Number((fuente as FuenteEmpaquetado63).tarifa_para_empaquetar) || 0, (fuente as FuenteEmpaquetado63).moneda, trmOferta),
+      feeInfante: feeACop63(Number((fuente as FuenteEmpaquetado63).fee_infante) || 0, (fuente as FuenteEmpaquetado63).moneda, trmOferta),
       monedaAereo: monedaNormalizada63((fuente as FuenteEmpaquetado63).moneda),
     },
   };

@@ -49,7 +49,8 @@ export type ObligacionSnapshot63 = {
   valor_total: number;
   moneda: "COP" | "USD";
   valor_cop: number;
-  trm: number;
+  /** NULL solo en una obligación COP de una oferta sin TRM (#93: ninguna fuente en USD). */
+  trm: number | null;
   aplica_retencion: boolean;
   pct_retencion: number;
   observaciones: string;
@@ -150,7 +151,8 @@ export type Snapshot63 = {
   paquete_id: number;
   salida_id: number | null;
   empaquetado_id: number | null;
-  trm: number;
+  /** TRM de la oferta; NULL si ninguna fuente del paquete está en USD (#93: "no requiere conversión"). Nunca 1. */
+  trm: number | null;
   moneda: "COP";
   cabecera: CabeceraSnapshot63;
   hotel: HotelSnapshot63 | null;
@@ -235,7 +237,7 @@ type CxPEntrada = {
  * Clave estable por componente: `<tipo>:s<servicio_id>` si es un servicio del catálogo; `<tipo>:<n>` (orden de aparición del
  * tipo) para hotel y aéreo. Dos obligaciones del MISMO proveedor con moneda distinta no se mezclan: son claves distintas.
  */
-export function construirObligaciones63(cxp: readonly CxPEntrada[], trm: number): ObligacionSnapshot63[] {
+export function construirObligaciones63(cxp: readonly CxPEntrada[], trm: number | null): ObligacionSnapshot63[] {
   const contador = new Map<string, number>();
   const usadas = new Set<string>();
   return cxp.map((c) => {
@@ -258,7 +260,7 @@ export function construirObligaciones63(cxp: readonly CxPEntrada[], trm: number)
       valor_total: c.valor_total,
       moneda: c.moneda === "USD" ? "USD" : "COP",
       valor_cop: redondearCentavos63(Number(c.valor_cop) || 0),
-      trm: Number(c.trm) || trm,
+      trm: Number(c.trm) > 0 ? Number(c.trm) : trm,
       aplica_retencion: c.aplica_retencion === true,
       pct_retencion: Number(c.pct_retencion) || 0,
       observaciones: c.observaciones,
@@ -362,7 +364,7 @@ export function construirSnapshot63(a: {
   paqueteId: number;
   salidaId: number | null;
   empaquetadoId: number | null;
-  trm: number;
+  trm: number | null;
   cabecera: Omit<CabeceraSnapshot63, "n_tramos" | "n_items" | "n_hoteles">;
   b2b: PlanB2bSnapshot63 | null;
   vigencias: readonly VigenciaCompra63[];

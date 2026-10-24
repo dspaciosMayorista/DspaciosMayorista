@@ -459,10 +459,10 @@ describe("generarTarifario() — Bloqueo/Sistema con destinos aéreos", () => {
     const tablas = tablasGenerar({ paquete: { tipo: "dinamico" } }, {
       salidas_dinamicas: [{
         id: 1, paquete_id: PAQUETE_ID, aerolinea: "AV", ruta: "BOG-SDQ", origen: "BOG", fecha_ida: mas(30), fecha_regreso: mas(33),
-        valor_tiquete: 400000, aplica_mk: true, ta: 0, fee_infante: 0, compra_inicio: null, compra_fin: mas(5), activo: true, orden: 0,
+        valor_tiquete: 400000, aplica_mk: true, ta: 0, fee_infante: 0, compra_inicio: null, compra_fin: mas(5), activo: true, orden: 0, moneda: "COP",
       }, {
         id: 2, paquete_id: PAQUETE_ID, aerolinea: "AV", ruta: "BOG-SDQ", origen: "BOG", fecha_ida: mas(30), fecha_regreso: mas(33),
-        valor_tiquete: 400000, aplica_mk: true, ta: 0, fee_infante: 0, compra_inicio: null, compra_fin: hoy, activo: false, orden: 1,
+        valor_tiquete: 400000, aplica_mk: true, ta: 0, fee_infante: 0, compra_inicio: null, compra_fin: hoy, activo: false, orden: 1, moneda: "COP",
       }],
     });
     const bd = conBd(tablas, { rpc: RPC_GENERAR });
