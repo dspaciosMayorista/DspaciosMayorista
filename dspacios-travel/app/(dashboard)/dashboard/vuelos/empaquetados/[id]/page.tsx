@@ -84,6 +84,7 @@ export default async function EmpaquetadoDetallePage({ params }: { params: Promi
             vueloRegreso: e.vuelo_regreso ?? "", fechaRegreso: e.fecha_regreso ?? "", horaSalidaReg: e.hora_salida_reg ?? "", horaLlegadaReg: e.hora_llegada_reg ?? "",
             tarifaProveedor: e.tarifa_proveedor ?? 0, tarifaParaEmpaquetar: e.tarifa_para_empaquetar ?? 0, feeInfante: e.fee_infante ?? 0,
             compraInicio: e.compra_inicio ?? "", compraFin: e.compra_fin ?? "", notas: e.notas ?? "", activo: e.activo,
+            moneda: (e as { moneda?: string | null }).moneda === "USD" ? "USD" : "COP",
           }}
         />
       </div>

@@ -783,7 +783,7 @@ export async function generarTarifario(paqueteId: number): Promise<Result> {
     // armado_vuelos/bloqueos_vuelo; ver la nota de integración más abajo.
     sb
       .from("armado_empaquetados")
-      .select("empaquetado_id, aplica_mk, ta, empaquetados(id, record, ruta, fecha_ida, fecha_regreso, tarifa_para_empaquetar, fee_infante, activo, compra_inicio, compra_fin)")
+      .select("empaquetado_id, aplica_mk, ta, empaquetados(id, record, ruta, fecha_ida, fecha_regreso, tarifa_para_empaquetar, fee_infante, moneda, activo, compra_inicio, compra_fin)")
       .eq("paquete_id", paqueteId),
     sb
       .from("armado_hoteles")
@@ -1237,6 +1237,7 @@ export async function generarTarifario(paqueteId: number): Promise<Result> {
         fecha_regreso: string | null;
         tarifa_para_empaquetar: number;
         fee_infante: number | null;
+        moneda: string | null;
         activo: boolean;
         compra_inicio: string | null;
         compra_fin: string | null;
@@ -1247,6 +1248,18 @@ export async function generarTarifario(paqueteId: number): Promise<Result> {
       && empaquetadoVigente(v.e.compra_inicio, v.e.compra_fin, hoyBogota(new Date()))
       && permiteDestinoAereo("empaquetado", v.e.id)
     );
+
+  // 230 (regla D8): fuera del modo cop_trm_63 un tarifario es de UNA moneda. El vuelo de Empaquetados (que ahora puede estar en
+  // USD) debe coincidir con la moneda del paquete; si no, NO se genera (nada de sumar dólares a pesos sin conversión).
+  {
+    const distinto = empaquetadosVuelos.find((v) => (v.e.moneda === "USD" ? "USD" : "COP") !== paqueteMoneda);
+    if (distinto) {
+      const monedaVuelo = distinto.e.moneda === "USD" ? "USD" : "COP";
+      return await fallar(
+        `El vuelo de Empaquetados ${distinto.e.ruta || "#" + distinto.e.id} está en ${monedaVuelo} pero este paquete se publica en ${paqueteMoneda}. Un paquete debe ser de una sola moneda: usa un hotel de la misma moneda o, si es Dinámico, el modo COP con TRM.`
+      );
+    }
+  }
 
   // `tipo` ya se resolvió arriba (justo tras leer `pq`) — lo necesita la
   // clasificación de hoteles Bernalo antes de llegar aquí.
@@ -1391,7 +1404,8 @@ export async function generarTarifario(paqueteId: number): Promise<Result> {
         }
         const coincide63 = fuenteCoincideConSalida63(sal, fuente63!);
         if (!coincide63.ok) { omitidas63.push(`${etiqueta63}: ${mensajeFuenteCambio63(coincide63.campos)}`); continue; }
-        const tarifaR63 = Number(fuente63!.tarifa_para_empaquetar) || 0;
+        // 230: R en USD se convierte × TRM UNA sola vez (sin markup ni TA); en COP queda exacto.
+        const tarifaR63 = aCop63(Number(fuente63!.tarifa_para_empaquetar) || 0, fuente63!.moneda, trm63);
         const impuesto63 = impuestoPorPersona63({ tipo: pq.impuesto_tipo, tarifaParaEmpaquetar: tarifaR63, fijoCop: Number(pq.impuesto_fijo) || 0 });
         const feeF63 = feeACop63(Number(fuente63!.fee_infante) || 0, fuente63!.moneda, trm63);
         filasHoteles(fIda, numNoches, aporteVueloVinculada63(tarifaR63), impuesto63, "dinamico", null, etiqueta63, fReg, false, sal.id as number, null, feeF63);
@@ -1838,6 +1852,7 @@ const MSG_TECNICO_63 = "No se pudo completar la operación por un error técnico
 function mensajeErrorOferta63(mensaje: string | null | undefined): string {
   const m = mensaje ?? "";
   if (/salida_vinculada_modo/i.test(m)) return "Las salidas vinculadas a Empaquetados exigen que el paquete sea Dinámico en modo COP con TRM.";
+  if (/salida_vinculada_moneda/i.test(m)) return "La salida debe tener la misma moneda que su vuelo de Empaquetados. Actualízala desde la fuente.";
   if (/salida_vinculada_record/i.test(m)) return "Ese vuelo de Empaquetados ya tiene record (PNR): una salida vinculada solo admite vuelos de sistema sin record.";
   if (/salida_vinculada_unica/i.test(m) || /salidas_dinamicas_paquete_empaquetado_uk/i.test(m)) return "Ese vuelo de Empaquetados ya está vinculado a este paquete.";
   if (/modo_oferta_vinculadas/i.test(m)) return "Hay salidas vinculadas a Empaquetados: desvincúlalas antes de cambiar el modo de oferta del paquete.";
@@ -1856,6 +1871,8 @@ export type CandidatoSalida63 = {
   /** Precio final del aéreo por pasajero (R) y fee de infante (F): datos de venta, nunca el costo N. */
   tarifaParaEmpaquetar: number;
   feeInfante: number;
+  /** 230: moneda de R y F (COP o USD). */
+  moneda: "COP" | "USD";
   salidaId: number | null;
   /** true = ya hay una salida vinculada a este vuelo en el paquete. */
   vinculado: boolean;
@@ -1913,7 +1930,7 @@ export async function listarEmpaquetadosParaSalidas63(
     leerEmpaquetadosActivos63(sb),
     sb
       .from("salidas_dinamicas")
-      .select("id, empaquetado_id, fecha_ida, fecha_regreso, ruta, aerolinea, valor_tiquete, fee_infante")
+      .select("id, empaquetado_id, fecha_ida, fecha_regreso, ruta, aerolinea, valor_tiquete, fee_infante, moneda")
       .eq("paquete_id", paqueteId)
       .not("empaquetado_id", "is", null),
     resolverDestinosAereosPaquete(sb, paqueteId),
@@ -1945,6 +1962,7 @@ export async function listarEmpaquetadosParaSalidas63(
       compraFin: f.compra_fin ?? null,
       tarifaParaEmpaquetar: Number(f.tarifa_para_empaquetar) || 0,
       feeInfante: Number(f.fee_infante) || 0,
+      moneda: f.moneda === "USD" ? "USD" : "COP",
       salidaId: ya ? Number(ya.id) : null,
       vinculado: !!ya,
       desactualizado: ya ? !fuenteCoincideConSalida63(ya as never, f).ok || !elegible || !destinoOk : false,

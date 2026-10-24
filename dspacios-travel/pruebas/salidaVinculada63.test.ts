@@ -220,7 +220,8 @@ describe("elegibilidad de la fuente: Empaquetado SIN record", () => {
     ["compra aún no inicia", { compra_inicio: "2026-10-23" }, "compra_no_iniciada"],
     ["compra vencida", { compra_fin: "2026-10-21" }, "compra_vencida"],
     ["viaje pasado", { fecha_ida: "2026-10-21", fecha_regreso: "2026-10-24" }, "viaje_pasado"],
-    ["moneda USD (aún no habilitada)", { moneda: "USD" }, "moneda_no_soportada"],
+    // 230: USD ya es una moneda válida de la fuente; lo no soportado es cualquier otra (o ninguna).
+    ["moneda EUR (no soportada)", { moneda: "EUR" }, "moneda_no_soportada"],
     ["sin tarifa para empaquetar", { tarifa_para_empaquetar: 0 }, "sin_tarifa"],
   ];
   for (const [nombre, over, motivo] of rechazos) {

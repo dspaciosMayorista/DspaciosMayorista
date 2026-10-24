@@ -4,7 +4,7 @@ import { useEffect, useMemo, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { formatCOP } from "@/lib/utils";
+import { formatCOP, formatMoneda } from "@/lib/utils";
 import { ConfigForm } from "../ConfigForm";
 import { SalidasDinamicasEditor, type SalidaDinamica } from "./SalidasDinamicasEditor";
 import {
@@ -26,6 +26,8 @@ type Vuelo = {
 type Empaquetado = {
   id: number; record: string | null; ruta: string | null; aerolinea: string | null;
   fecha_ida: string | null; fecha_regreso: string | null; tarifa_para_empaquetar: number; destino_id: number | null;
+  // 230: moneda de la tarifa (COP o USD); ausente = COP.
+  moneda?: string | null;
 };
 type Hotel = { id: number; nombre: string; zona: string | null; destino_id: number | null };
 type Servicio = { id: number; nombre: string; precio_persona: number | null; destino_id: number | null; servicio_tarifa_pax: { pax_desde: number }[] };
@@ -512,7 +514,7 @@ function EmpaquetadoRow({
             <span className="ml-1 rounded bg-teal-50 px-1.5 py-0.5 text-[10px] font-semibold text-teal-700">Sistema</span>
           </p>
           <p className="text-xs text-gray-500">
-            {e.fecha_ida} → {e.fecha_regreso} · tarifa empaquetar {formatCOP(e.tarifa_para_empaquetar)}
+            {e.fecha_ida} → {e.fecha_regreso} · tarifa empaquetar {formatMoneda(e.tarifa_para_empaquetar, e.moneda)}
           </p>
           {destinoAereo && (
             <p className="text-xs text-teal-700">Destino aéreo: {destinoAereo} · el hotel sigue siendo del destino comercial (sin traslado incluido)</p>
