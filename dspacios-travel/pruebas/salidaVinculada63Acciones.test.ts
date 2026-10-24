@@ -143,7 +143,7 @@ describe("listarEmpaquetadosParaSalidas63() · TODAS las elegibles, nuevas = pen
     assert.equal(r.ok && r.candidatos.find((c) => c.id === 5)?.desactualizado, true);
   });
   test("solo existe en paquetes Dinámico en modo cop_trm_63", async () => {
-    for (const [paq, patron] of [[{ tipo: "bloqueo" }, /solo existen en paquetes Din[aá]mico/i], [{ modo_oferta: "legacy", trm_oferta: null }, /modo COP con TRM/i]] as const) {
+    for (const [paq, patron] of [[{ tipo: "bloqueo" }, /solo existen en paquetes Din[aá]mico/i], [{ modo_oferta: "legacy", trm_oferta: null }, /modo con conversión por TRM/i]] as const) {
       montar({ paquete: paq });
       const r = await acciones.listarEmpaquetadosParaSalidas63(PAQUETE_ID);
       assert.equal(r.ok, false);
@@ -309,15 +309,83 @@ describe("modo de oferta y TRM del paquete (crearPaquete / actualizarPaquete)", 
     assert.equal((upd?.payload as Fila).modo_oferta, "cop_trm_63");
     assert.equal((upd?.payload as Fila).trm_oferta, 3987.65);
   });
-  for (const trm of [null, undefined, "", 0, -1, "abc"]) {
-    test(`modo 63 con TRM ${JSON.stringify(trm) ?? "undefined"}: rechazado antes de escribir (nunca TRM 1)`, async () => {
+  // #93: la TRM es OPCIONAL al guardar (solo se exige al publicar/cotizar si alguna fuente está en USD); si se escribe, debe ser positiva.
+  for (const trm of [0, -1, "abc"]) {
+    test(`modo 63 con TRM ${JSON.stringify(trm)}: rechazado antes de escribir (nunca TRM 1)`, async () => {
       montar();
       const r = await acciones.actualizarPaquete(PAQUETE_ID, cfg({ modoOferta: "cop_trm_63", trmOferta: trm }) as never);
       assert.equal(r.ok, false);
-      if (!r.ok) assert.match(r.error, /TRM positiva/i);
+      if (!r.ok) assert.match(r.error, /TRM debe ser un n[uú]mero positivo/i);
       assert.equal(bd.escrituras.length, 0);
     });
   }
+  for (const trm of [null, undefined, ""]) {
+    test(`modo 63 con TRM ${JSON.stringify(trm) ?? "undefined"}: se guarda SIN TRM (null), nunca con 1 (#93)`, async () => {
+      montar();
+      const r = await sinLog(() => acciones.actualizarPaquete(PAQUETE_ID, cfg({ modoOferta: "cop_trm_63", trmOferta: trm }) as never));
+      assert.equal(r.ok, true, r.ok ? "" : r.error);
+      const upd = bd.escrituras.find((e) => e.tabla === "armado_paquetes" && e.op === "update");
+      assert.equal((upd?.payload as Fila).modo_oferta, "cop_trm_63");
+      assert.equal((upd?.payload as Fila).trm_oferta, null);
+      assert.equal((upd?.payload as Fila).moneda_publicacion, "COP", "el modo 63 publica en COP por definición");
+    });
+  }
+  test("modo 63 con moneda de publicación USD y TRM explícita: se guarda (234)", async () => {
+    montar();
+    const r = await sinLog(() => acciones.actualizarPaquete(PAQUETE_ID, cfg({ modoOferta: "cop_trm_63", trmOferta: 4000, monedaPublicacion: "USD" }) as never));
+    assert.equal(r.ok, true, r.ok ? "" : r.error);
+    const upd = bd.escrituras.find((e) => e.tabla === "armado_paquetes" && e.op === "update");
+    assert.equal((upd?.payload as Fila).modo_oferta, "cop_trm_63");
+    assert.equal((upd?.payload as Fila).moneda_publicacion, "USD");
+    assert.equal((upd?.payload as Fila).trm_oferta, 4000);
+  });
+  test("modo 63 en USD SIN TRM (vacía) se guarda con trm_oferta NULL: se exige al publicar solo si hay fuentes en COP", async () => {
+    for (const trm of [null, undefined, ""]) {
+      montar();
+      const r = await sinLog(() => acciones.actualizarPaquete(PAQUETE_ID, cfg({ modoOferta: "cop_trm_63", trmOferta: trm, monedaPublicacion: "USD" }) as never));
+      assert.equal(r.ok, true, r.ok ? "" : r.error);
+      const upd = bd.escrituras.find((e) => e.tabla === "armado_paquetes" && e.op === "update");
+      assert.equal((upd?.payload as Fila).moneda_publicacion, "USD");
+      assert.equal((upd?.payload as Fila).trm_oferta, null);
+    }
+  });
+  test("modo 63 en USD con una TRM escrita 0 o negativa se rechaza antes de escribir (nunca TRM 1)", async () => {
+    for (const trm of [0, -4000, "abc"]) {
+      montar();
+      const r = await acciones.actualizarPaquete(PAQUETE_ID, cfg({ modoOferta: "cop_trm_63", trmOferta: trm, monedaPublicacion: "USD" }) as never);
+      assert.equal(r.ok, false, String(trm));
+      if (!r.ok) assert.match(r.error, /TRM debe ser un n[uú]mero positivo/i);
+      assert.equal(bd.escrituras.length, 0, String(trm));
+    }
+  });
+  test("modo 63 sin moneda enviada (formulario anterior) conserva COP", async () => {
+    montar();
+    const r = await sinLog(() => acciones.actualizarPaquete(PAQUETE_ID, cfg({ modoOferta: "cop_trm_63", trmOferta: 4000 }) as never));
+    assert.equal(r.ok, true, r.ok ? "" : r.error);
+    const upd = bd.escrituras.find((e) => e.tabla === "armado_paquetes" && e.op === "update");
+    assert.equal((upd?.payload as Fila).moneda_publicacion, "COP");
+  });
+  test("paquete de siempre: la moneda de publicación ELEGIDA se guarda; una inválida o vacía se rechaza", async () => {
+    montar();
+    const ok = await sinLog(() => acciones.actualizarPaquete(PAQUETE_ID, cfg({ modoOferta: "legacy", monedaPublicacion: "USD" }) as never));
+    assert.equal(ok.ok, true, ok.ok ? "" : ok.error);
+    const upd = bd.escrituras.find((e) => e.tabla === "armado_paquetes" && e.op === "update");
+    assert.equal((upd?.payload as Fila).moneda_publicacion, "USD");
+    for (const m of ["EUR", "", null]) {
+      montar();
+      const r = await acciones.actualizarPaquete(PAQUETE_ID, cfg({ modoOferta: "legacy", monedaPublicacion: m }) as never);
+      assert.equal(r.ok, false, String(m));
+      if (!r.ok) assert.match(r.error, /Elige la moneda de publicaci[oó]n/i);
+      assert.equal(bd.escrituras.length, 0);
+    }
+  });
+  test("un formulario anterior que NO envía la moneda no la toca", async () => {
+    montar();
+    const r = await sinLog(() => acciones.actualizarPaquete(PAQUETE_ID, cfg({ modoOferta: "legacy" }) as never));
+    assert.equal(r.ok, true, r.ok ? "" : r.error);
+    const upd = bd.escrituras.find((e) => e.tabla === "armado_paquetes" && e.op === "update");
+    assert.equal("moneda_publicacion" in (upd?.payload as Fila), false);
+  });
   test("modo 63 en un paquete que NO es Dinámico: rechazado", async () => {
     montar();
     const r = await acciones.actualizarPaquete(PAQUETE_ID, cfg({ tipo: "bloqueo", modoOferta: "cop_trm_63", trmOferta: 4000 }) as never);
@@ -352,10 +420,51 @@ describe("modo de oferta y TRM del paquete (crearPaquete / actualizarPaquete)", 
     assert.equal(r.ok, false);
     if (!r.ok) assert.match(r.error, /desvinc[uú]lalas antes de cambiar el modo/i);
   });
-  test("crearPaquete también valida la TRM", async () => {
+  test("crearPaquete también valida la TRM escrita (una TRM inválida no se guarda)", async () => {
     montar();
-    const r = await acciones.crearPaquete(cfg({ modoOferta: "cop_trm_63", trmOferta: null }) as never);
+    const r = await acciones.crearPaquete(cfg({ modoOferta: "cop_trm_63", trmOferta: "abc" }) as never);
     assert.equal(r.ok, false);
     assert.equal(bd.escrituras.length, 0);
+  });
+});
+
+describe("234 · hallazgo 2 — crearPaquete exige la moneda de publicación ELEGIDA (llamada directa al servidor)", () => {
+  const cfg = (o: Record<string, unknown> = {}) => ({
+    nombre: "Dinámico 63", tipo: "dinamico", noches: 3, destinoId: 1, fechaCompraInicio: "", fechaCompraFin: "", fechaViajeInicio: "", fechaViajeFin: "",
+    pctMk: 20, impuestoTipo: "tiquete", impuestoFijo: 0, activo: true, notas: "", programaIncluye: "", programaNoIncluye: "",
+    programaTarifasEspeciales: "", programaCondicionesComerciales: "", ...o,
+  });
+  const SIN_ELEGIR: [string, Record<string, unknown>][] = [
+    ["modo 63 sin monedaPublicacion", { modoOferta: "cop_trm_63", trmOferta: null }],
+    ["modo 63 con monedaPublicacion undefined", { modoOferta: "cop_trm_63", monedaPublicacion: undefined }],
+    ["modo 63 con monedaPublicacion vacía", { modoOferta: "cop_trm_63", monedaPublicacion: "" }],
+    ["modo 63 con una moneda inválida", { modoOferta: "cop_trm_63", monedaPublicacion: "EUR" }],
+    ["modo de siempre sin monedaPublicacion", { modoOferta: "legacy" }],
+    ["sin modo ni moneda (formulario anterior)", {}],
+  ];
+  for (const [caso, o] of SIN_ELEGIR) {
+    test(`crearPaquete: ${caso} se rechaza y no escribe nada`, async () => {
+      montar();
+      const r = await acciones.crearPaquete(cfg(o) as never);
+      assert.equal(r.ok, false);
+      if (!r.ok) assert.match(r.error, /Elige la moneda de publicación del paquete \(COP o USD\)/);
+      assert.equal(bd.escrituras.length, 0, "no se insertó ningún paquete");
+    });
+  }
+  for (const moneda of ["COP", "USD"]) {
+    test(`crearPaquete: modo 63 con ${moneda} elegida se guarda con esa moneda`, async () => {
+      montar();
+      const r = await sinLog(() => acciones.crearPaquete(cfg({ modoOferta: "cop_trm_63", monedaPublicacion: moneda }) as never));
+      assert.equal(r.ok, true, r.ok ? "" : r.error);
+      const ins = bd.escrituras.find((e) => e.tabla === "armado_paquetes" && e.op === "insert");
+      assert.equal((ins?.payload as Fila).moneda_publicacion, moneda);
+    });
+  }
+  test("LEGADO: actualizarPaquete de un paquete existente sin monedaPublicacion conserva la interpretación histórica (COP) en modo 63", async () => {
+    montar();
+    const r = await sinLog(() => acciones.actualizarPaquete(PAQUETE_ID, cfg({ modoOferta: "cop_trm_63" }) as never));
+    assert.equal(r.ok, true, r.ok ? "" : r.error);
+    const upd = bd.escrituras.find((e) => e.tabla === "armado_paquetes" && e.op === "update");
+    assert.equal((upd?.payload as Fila).moneda_publicacion, "COP");
   });
 });

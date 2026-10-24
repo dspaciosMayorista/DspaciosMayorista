@@ -8,7 +8,7 @@
 // Qué guarda el snapshot (todo lo que se ve o se debe, calculado UNA vez, por el servidor):
 //   · cabecera de la venta (precio, BNC, costo aéreo, fechas, pax…) y cuántos hijos se esperan (tramos, ítems, hotel);
 //   · el hotel, los tramos de vuelo y los ítems de valores tal como se escribirán en el contrato;
-//   · el payload financiero: costos del contrato (COP) y obligaciones de origen (proveedor, retención, moneda, valor, equivalente
+//   · el payload financiero: costos del contrato (en la moneda de la oferta: COP o USD) y obligaciones de origen (proveedor, retención, moneda, valor, equivalente
 //     en COP congelado a la TRM, clave estable por componente);
 //   · el resumen de tours/asistencia (display) y la TRM.
 // Ninguna lectura viva posterior de costos/proveedores/retenciones cambia lo aceptado.
@@ -21,6 +21,7 @@ import { ACOM_ROOM_LABEL, type AcomRoom } from "../acomodaciones.ts";
 import { ciudadIata, parseRuta } from "../iata.ts";
 import { descripcionLineaMenor, ordenLineaMenor, type LineaMenor } from "./menoresDeDos.ts";
 import { redondearCentavos63 } from "./ofertaDinamica63.ts";
+import { MENSAJE_TRM_PROVISIONAL_REQUERIDA_63 } from "./monedaPublicacion90.ts";
 
 // ── Tipos ───────────────────────────────────────────────────────────────────
 
@@ -48,8 +49,10 @@ export type ObligacionSnapshot63 = {
   servicio: string;
   valor_total: number;
   moneda: "COP" | "USD";
-  valor_cop: number;
-  trm: number;
+  /** NULL solo en una obligación USD de una oferta USD sin TRM (234): la aceptación congela la TRM provisional y la base completa trm/valor_cop. */
+  valor_cop: number | null;
+  /** NULL en una obligación COP de una oferta COP sin TRM (#93) o USD de una oferta USD sin TRM (234, hasta que la aceptación congele la provisional). */
+  trm: number | null;
   aplica_retencion: boolean;
   pct_retencion: number;
   observaciones: string;
@@ -150,8 +153,10 @@ export type Snapshot63 = {
   paquete_id: number;
   salida_id: number | null;
   empaquetado_id: number | null;
-  trm: number;
-  moneda: "COP";
+  /** TRM de la oferta; NULL si ninguna fuente hay que convertirla (#93/234: "no requiere conversión"). Nunca 1. */
+  trm: number | null;
+  /** Moneda de la oferta = moneda de publicación del paquete = moneda del contrato. La base la contrasta contra `ventas.moneda`. */
+  moneda: "COP" | "USD";
   cabecera: CabeceraSnapshot63;
   hotel: HotelSnapshot63 | null;
   tramos: TramoSnapshot63[];
@@ -235,7 +240,7 @@ type CxPEntrada = {
  * Clave estable por componente: `<tipo>:s<servicio_id>` si es un servicio del catálogo; `<tipo>:<n>` (orden de aparición del
  * tipo) para hotel y aéreo. Dos obligaciones del MISMO proveedor con moneda distinta no se mezclan: son claves distintas.
  */
-export function construirObligaciones63(cxp: readonly CxPEntrada[], trm: number): ObligacionSnapshot63[] {
+export function construirObligaciones63(cxp: readonly CxPEntrada[], trm: number | null): ObligacionSnapshot63[] {
   const contador = new Map<string, number>();
   const usadas = new Set<string>();
   return cxp.map((c) => {
@@ -257,8 +262,8 @@ export function construirObligaciones63(cxp: readonly CxPEntrada[], trm: number)
       servicio: c.servicio,
       valor_total: c.valor_total,
       moneda: c.moneda === "USD" ? "USD" : "COP",
-      valor_cop: redondearCentavos63(Number(c.valor_cop) || 0),
-      trm: Number(c.trm) || trm,
+      valor_cop: c.valor_cop == null && c.moneda === "USD" ? null : redondearCentavos63(Number(c.valor_cop) || 0),
+      trm: Number(c.trm) > 0 ? Number(c.trm) : trm,
       aplica_retencion: c.aplica_retencion === true,
       pct_retencion: Number(c.pct_retencion) || 0,
       observaciones: c.observaciones,
@@ -362,7 +367,9 @@ export function construirSnapshot63(a: {
   paqueteId: number;
   salidaId: number | null;
   empaquetadoId: number | null;
-  trm: number;
+  trm: number | null;
+  /** Moneda de la oferta (COP o USD); debe coincidir con `cabecera.moneda`. */
+  moneda: "COP" | "USD";
   cabecera: Omit<CabeceraSnapshot63, "n_tramos" | "n_items" | "n_hoteles">;
   b2b: PlanB2bSnapshot63 | null;
   vigencias: readonly VigenciaCompra63[];
@@ -379,7 +386,7 @@ export function construirSnapshot63(a: {
     salida_id: a.salidaId,
     empaquetado_id: a.empaquetadoId,
     trm: a.trm,
-    moneda: "COP",
+    moneda: a.moneda,
     cabecera: { ...a.cabecera, n_tramos: a.tramos.length, n_items: a.items.length, n_hoteles: a.hotel ? 1 : 0 },
     hotel: a.hotel,
     tramos: a.tramos,
@@ -417,6 +424,19 @@ export const MENSAJE_OFERTA_CERRADA_63 =
   "Esta cotización ya fue convertida en contrato y esa oferta no se reabre. Genera una cotización nueva.";
 export const MENSAJE_EN_CURSO_63 =
   "El contrato de esta cotización ya se está creando (o quedó a medias). No se crea otro: se completa solo en unos minutos; si no ocurre, contacta a soporte con el número.";
+export { MENSAJE_TRM_PROVISIONAL_REQUERIDA_63 };
+/** Tope exclusivo de una TRM en la base (CHECK armado_paquetes_trm_finita_chk y guardas de las RPC #63). */
+export const TRM_MAXIMA_63 = 100000000000;
+export const MENSAJE_TRM_PROVISIONAL_INVALIDA_63 = "La TRM provisional debe ser un número positivo (pesos por dólar).";
+
+/** TRM provisional capturada al convertir: vacía = usar la de referencia; si se escribe, finita y > 0 (nunca 0, negativa, NaN ni texto). */
+export function validarTrmProvisional63(v: unknown): { ok: true; trm: number | null } | { ok: false; error: string } {
+  if (v == null || (typeof v === "string" && v.trim() === "")) return { ok: true, trm: null };
+  if (typeof v === "boolean") return { ok: false, error: MENSAJE_TRM_PROVISIONAL_INVALIDA_63 };
+  const n = typeof v === "number" ? v : Number(v);
+  // Mismo rango que la base (numeric(15,4): finita, > 0 tras redondear a 4 decimales y < 1e11): se rechaza ANTES de reservar número.
+  return Number.isFinite(n) && Math.round(n * 10000) > 0 && n < TRM_MAXIMA_63 ? { ok: true, trm: n } : { ok: false, error: MENSAJE_TRM_PROVISIONAL_INVALIDA_63 };
+}
 export const MENSAJE_TECNICO_63 = "No fue posible aceptar la oferta. Intenta nuevamente o contacta a soporte.";
 
 /**
@@ -427,6 +447,9 @@ export function mapearErrorRpc63(message: string | null | undefined): { error: s
   const m = message ?? "";
   if (/p63_oferta_cambio/.test(m)) return { error: MENSAJE_CAMBIO_ACEPTACION_63, cambio: true };
   if (/p63_oferta_cerrada/.test(m)) return { error: MENSAJE_OFERTA_CERRADA_63, cambio: false };
+  // 234: una oferta en USD sin TRM exige la TRM provisional ingresada al contratar; sin ella no se numera ni se crean CxP ni asientos en COP.
+  if (/p63_trm_invalida/.test(m)) return { error: MENSAJE_TRM_PROVISIONAL_INVALIDA_63, cambio: false };
+  if (/p63_trm_requerida/.test(m)) return { error: MENSAJE_TRM_PROVISIONAL_REQUERIDA_63, cambio: false };
   if (/p63_no_autorizado/.test(m)) return { error: "No tienes autorización para aceptar esta oferta.", cambio: false };
   if (/destino_aereo_no_permitido|destino_aereo/.test(m)) return { error: "El vuelo de esta oferta ya no llega a un destino permitido para el paquete. Genera una cotización nueva.", cambio: true };
   return { error: MENSAJE_TECNICO_63, cambio: false };

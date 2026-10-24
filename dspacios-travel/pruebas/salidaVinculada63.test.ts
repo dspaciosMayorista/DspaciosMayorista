@@ -125,10 +125,10 @@ describe("FX1 · modo cop_trm_63, TRM 4.000, MK 20 %, 2 adultos + 1 menor de 1 a
 
   test("BNC: el infante de 1 año no genera BNC; tiquete = R × pax con silla; fijo = importe × pax con silla", () => {
     const total = adulto.pvp * 2 + 130_500;
-    const tiquete2 = impuestoTotal63({ impuestoPorPersona: impuestoPorPersona63({ tipo: "tiquete", tarifaParaEmpaquetar: R, fijoCop: 100_000 }), paxConSilla: 2 });
+    const tiquete2 = impuestoTotal63({ impuestoPorPersona: impuestoPorPersona63({ tipo: "tiquete", tarifaParaEmpaquetar: R, fijo: 100_000 }), paxConSilla: 2 });
     assert.equal(tiquete2, 2_260_000);
     assert.equal(total - tiquete2, 1_230_500);
-    const fijo2 = impuestoTotal63({ impuestoPorPersona: impuestoPorPersona63({ tipo: "fijo", tarifaParaEmpaquetar: R, fijoCop: 100_000 }), paxConSilla: 2 });
+    const fijo2 = impuestoTotal63({ impuestoPorPersona: impuestoPorPersona63({ tipo: "fijo", tarifaParaEmpaquetar: R, fijo: 100_000 }), paxConSilla: 2 });
     assert.equal(fijo2, 200_000);
     assert.equal(total - fijo2, 3_290_500);
     // con el niño de 2 años (3 pax con silla)
@@ -140,8 +140,8 @@ describe("FX1 · modo cop_trm_63, TRM 4.000, MK 20 %, 2 adultos + 1 menor de 1 a
   });
 
   test("una vinculada con impuesto_tipo = tiquete NO cae al fijo (el defecto que el código anterior tendría)", () => {
-    assert.equal(impuestoPorPersona63({ tipo: "tiquete", tarifaParaEmpaquetar: R, fijoCop: 0 }), R);
-    assert.equal(impuestoPorPersona63({ tipo: "fijo", tarifaParaEmpaquetar: R, fijoCop: 0 }), 0);
+    assert.equal(impuestoPorPersona63({ tipo: "tiquete", tarifaParaEmpaquetar: R, fijo: 0 }), R);
+    assert.equal(impuestoPorPersona63({ tipo: "fijo", tarifaParaEmpaquetar: R, fijo: 0 }), 0);
   });
 });
 

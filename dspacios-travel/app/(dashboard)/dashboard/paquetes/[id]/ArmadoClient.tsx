@@ -103,6 +103,8 @@ export function ArmadoClient(props: {
   moneda?: string;
   // #90 A — publicación de la SELECCIÓN actual (page.tsx). Sin ella (pruebas antiguas) se usa `moneda`.
   publicacionMontaje?: PublicacionMontaje;
+  // #93 — estado de la TRM del modo COP evaluado sobre las fuentes guardadas ("No requiere conversión" / "Falta la TRM…" / "TRM x").
+  textoTrmMontaje?: string;
   // #67 — error técnico al leer los destinos aéreos del paquete (distinto de "no hay vuelos").
   destinosAereosError?: string | null;
   // #101 — pestaña inicial (`?tab=`) y estado del tarifario (armado_paquetes.tarifario_estado / tarifario_error /
@@ -576,6 +578,7 @@ export function ArmadoClient(props: {
                 rechazo={publicacion.estado === "rechazado" ? publicacion.motivo : null}
                 modo63={props.config?.modoOferta === "cop_trm_63"}
                 trm={props.config?.trmOferta ?? null}
+                textoTrm={props.textoTrmMontaje}
                 filas={filasUnid}
                 resumen={resumenUnid}
               />
@@ -1453,8 +1456,8 @@ function ResultadoTabla({ filas }: { filas: Resultado[] }) {
 const ETIQUETA_TIPO_UNIDAD = { bloqueo: "Bloqueo", empaquetado: "Empaquetado", hotel: "Hotel", servicio: "Servicio" } as const;
 
 /** #90 A — moneda real de cada componente elegido, rol de sus importes y si encajan con la moneda de publicación. No convierte. */
-function UnidadesMontaje({ publicacion, rechazo, modo63, trm, filas, resumen }: {
-  publicacion: MonedaMontaje | null; rechazo: string | null; modo63: boolean; trm: number | null;
+function UnidadesMontaje({ publicacion, rechazo, modo63, trm, textoTrm, filas, resumen }: {
+  publicacion: MonedaMontaje | null; rechazo: string | null; modo63: boolean; trm: number | null; textoTrm?: string;
   filas: ReturnType<typeof filasUnidades>; resumen: ReturnType<typeof resumenUnidades>;
 }) {
   // Un rechazo se muestra aunque ningún componente del vínculo aparezca en las listas del editor (p. ej. un Bloqueo fuera del rango).
@@ -1463,7 +1466,7 @@ function UnidadesMontaje({ publicacion, rechazo, modo63, trm, filas, resumen }: 
     <div className="mt-4 rounded-lg border border-gray-100 bg-gray-50 p-3 text-xs text-gray-600" data-testid="unidades-montaje">
       <p className="font-semibold text-gray-700">
         Unidades del montaje · {publicacion ? `se publica en ${publicacion}` : "sin moneda publicable con esta selección"}
-        {publicacion && modo63 ? ` · modo COP con TRM ${trm ? trm.toLocaleString("es-CO") : "sin definir"}` : ""}
+        {publicacion && modo63 ? ` · modo con conversión por TRM · ${textoTrm ?? (trm ? trm.toLocaleString("es-CO") : "sin definir")}` : ""}
       </p>
       <ul className="mt-2 divide-y divide-gray-200">
         {filas.map((f, i) => (
@@ -1489,7 +1492,7 @@ function UnidadesMontaje({ publicacion, rechazo, modo63, trm, filas, resumen }: 
         <p className="mt-2 text-amber-700">
           {resumen.requierenTrm > 0 ? `${resumen.requierenTrm} componente(s) están en otra moneda que la de publicación y solo se convertirán con una TRM explícita. ` : ""}
           {resumen.sinAcreditar > 0 ? `${resumen.sinAcreditar} sin moneda acreditada: no se convierten ni se suponen en COP. ` : ""}
-          Hoy el generador rechaza la mezcla fuera del modo COP con TRM; el importe de cada componente se conserva en su unidad.
+          Hoy el generador rechaza la mezcla fuera del modo con conversión por TRM; el importe de cada componente se conserva en su unidad.
         </p>
       )}
     </div>

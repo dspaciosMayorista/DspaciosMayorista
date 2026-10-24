@@ -34,7 +34,8 @@ registerHooks({
 });
 
 type Cand = { id: number; ruta: string | null; aerolinea: string | null; fechaIda: string; fechaRegreso: string; compraInicio: string | null; compraFin: string | null;
-  tarifaParaEmpaquetar: number; feeInfante: number; salidaId: number | null; vinculado: boolean; desactualizado: boolean };
+  tarifaParaEmpaquetar: number; feeInfante: number; /** 230: moneda de R y F (los fixtures anteriores no la traen: COP). */ moneda?: "COP" | "USD";
+  salidaId: number | null; vinculado: boolean; desactualizado: boolean };
 const estado = {
   llamadas: [] as [string, unknown[]][],
   respListar: (): unknown => ({ ok: true, candidatos: [], pendientes: 0 }),
@@ -76,9 +77,9 @@ beforeEach(() => {
 });
 afterEach(async () => { await montado?.desmontar(); montado = null; });
 
-test("sin modo COP: no ofrece vincular Empaquetados, avisa cómo habilitarlo y NO consulta ninguna lista", async () => {
+test("sin el modo de conversión por TRM: no ofrece vincular Empaquetados, avisa cómo habilitarlo y NO consulta ninguna lista", async () => {
   const c = await render({ salidas: [salida(1, null)], modo63: false });
-  assert.match(texto(c), /activa el modo COP con TRM/i);
+  assert.match(texto(c), /activa el modo con conversión por TRM/i);
   assert.equal(c.querySelector('[data-testid="salidas-vinculadas-63"]'), null);
   assert.equal(llamadasDe("listar").length, 0);
   assert.equal(c.querySelector('select[aria-label="Moneda del tiquete"]'), null, "el formulario manual de siempre no pide moneda");
@@ -112,6 +113,37 @@ test("modo COP: muestra la TRM del paquete y las vinculadas con su aéreo (R) y 
   assert.match(texto(c), /TRM del paquete/);
   assert.equal(fila!.querySelectorAll("input").length, 0, "una vinculada no tiene campos editables");
   assert.equal(c.querySelector('[data-testid="salida-vinculada-revisar"]'), null, "vigente y coincidente: sin alerta");
+});
+
+test("paquete en USD: el selector lista los vuelos elegibles SIN IMPORTAR su moneda y avisa cuáles se convierten con la TRM (hallazgo de Preview #395)", async () => {
+  estado.respListar = () => ({
+    ok: true,
+    candidatos: [cand(5, { moneda: "USD", tarifaParaEmpaquetar: 290, feeInfante: 20 }), cand(6, { moneda: "COP" })] as never,
+    pendientes: 2,
+  });
+  const c = await render({ salidas: [], modo63: true, moneda: "USD", trm: 4000 });
+  await esperar(() => /2 pendientes/.test(texto(c)));
+  assert.ok(c.querySelector('[data-testid="salidas-vinculadas-63"]'), "el selector existe en un paquete publicado en USD");
+  assert.match(texto(c), /Aparecen todos los vuelos elegibles sin importar su moneda/);
+  assert.match(texto(c), /El paquete se publica en USD/);
+  assert.match(texto(c), /COP \/ TRM/);
+  assert.match(texto(c), /USD\s*\$\s*290/, "el vuelo en USD se muestra en su moneda");
+  assert.match(texto(c), /sin conversión/);
+  assert.match(texto(c), /se convierte con la TRM/);
+  const checks = [...c.querySelectorAll('input[type="checkbox"]')] as HTMLInputElement[];
+  assert.equal(checks.length, 3, "Seleccionar todos + una casilla por cada vuelo, de cualquier moneda");
+  for (const k of checks.slice(1)) await clic(k, "casilla");
+  await clic(botonConTexto(c, /Vincular seleccionados \(2\)/), "botón vincular");
+  await esperar(() => llamadasDe("vincular").length > 0);
+  assert.deepEqual(llamadasDe("vincular")[0][1], [70, [5, 6]], "ambos vuelos se vinculan; el cálculo lo decide la configuración del paquete");
+});
+
+test("paquete en COP: un vuelo en USD sigue listado y marcado como convertible con la TRM (USD × TRM)", async () => {
+  estado.respListar = () => ({ ok: true, candidatos: [cand(5, { moneda: "USD", tarifaParaEmpaquetar: 290, feeInfante: 20 }), cand(6)] as never, pendientes: 2 });
+  const c = await render({ salidas: [], modo63: true, moneda: "COP", trm: 4000 });
+  await esperar(() => /2 pendientes/.test(texto(c)));
+  assert.match(texto(c), /El paquete se publica en COP/);
+  assert.match(texto(c), /USD × TRM/);
 });
 
 test("una vinculada cuya fuente cambió o dejó de ser elegible se marca REVISAR", async () => {

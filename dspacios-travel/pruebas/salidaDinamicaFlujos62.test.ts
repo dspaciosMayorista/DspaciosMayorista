@@ -679,7 +679,7 @@ function tablasGenerar(salidas: FilaFalsa[], paquete: Record<string, unknown> = 
   return {
     armado_paquetes: [{
       id: PAQUETE_ID, nombre: "Dinámico Cartagena", activo: true, destino_id: 1, pct_mk: 0, tipo: "dinamico",
-      impuesto_tipo: "fijo", impuesto_fijo: 0, noches: 3, destinos: { nombre: "CARTAGENA" }, ...paquete,
+      impuesto_tipo: "fijo", impuesto_fijo: 0, noches: 3, destinos: { nombre: "CARTAGENA" }, moneda_publicacion: "COP", ...paquete,
     }],
     armado_vuelos: [], armado_empaquetados: [], armado_servicios: [],
     armado_hoteles: [{

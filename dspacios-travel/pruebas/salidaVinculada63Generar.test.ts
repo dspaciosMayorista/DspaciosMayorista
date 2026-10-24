@@ -26,6 +26,8 @@ register("data:text/javascript," + encodeURIComponent(
 ));
 
 const { generarTarifario } = await import("../app/(dashboard)/dashboard/paquetes/actions.ts");
+const { cargarFuentesMoneda90 } = await import("../lib/reservar/fuentesMoneda90.ts");
+const { evaluarPublicacion90, mensajeEvaluacion90 } = await import("../lib/reservar/monedaPublicacion90.ts");
 
 function fechaBogota(offsetDias: number): string {
   return new Date(Date.now() + offsetDias * 86400000).toLocaleDateString("en-CA", { timeZone: "America/Bogota" });
@@ -114,6 +116,11 @@ function tablas(o: Opciones): Record<string, Fila[]> {
       paquete_id: PAQUETE_ID, hotel_id: HOTEL_ID, categorias: null, regimenes: null,
       hoteles: { nombre: "Hotel Dinámico", moneda: o.hotelMoneda ?? "USD", modelo_tarifario: "persona", adults_only: false },
     }],
+    // #90 D: el cargador de fuentes de moneda lee estas tablas por id (misma moneda que los joins de arriba).
+    hoteles: [{ id: HOTEL_ID, nombre: "Hotel Dinámico", moneda: o.hotelMoneda ?? "USD", modelo_tarifario: "persona" }],
+    servicios_adicionales: (o.servicios ?? []).map((s) => ({
+      id: s.servicio_id, nombre: (s.servicios_adicionales as Fila).nombre, moneda: (s.servicios_adicionales as Fila).moneda,
+    })),
     hotel_temporadas: [{
       hotel_id: HOTEL_ID, nombre: "Base", fecha_inicio: "2000-01-01", fecha_fin: "2099-12-31", prioridad: 1, compra_inicio: null, compra_fin: null,
       tipo: "tarifa", descuento_valor: null, rangos: null, blackouts: null, regimen_restringido: null,
@@ -258,9 +265,9 @@ describe("generarTarifario() REAL · vinculada que NO se publica", () => {
   });
 
   test("una vinculada en un paquete SIN modo 63 se rechaza (R en COP no se mezcla con un paquete en la moneda del hotel)", async () => {
-    const g = await generar({ salidas: [salidaVinculada()], paquete: { modo_oferta: "legacy", trm_oferta: null } });
+    const g = await generar({ salidas: [salidaVinculada()], paquete: { modo_oferta: "legacy", trm_oferta: null, moneda_publicacion: "USD" } });
     assert.equal(g.r.ok, false);
-    if (!g.r.ok) assert.match(g.r.error, /modo COP con TRM/i);
+    if (!g.r.ok) assert.match(g.r.error, /modo con conversión por TRM/i);
     assert.equal(g.pub, undefined);
   });
 
@@ -268,9 +275,108 @@ describe("generarTarifario() REAL · vinculada que NO se publica", () => {
     for (const trm of [null, 0, -3]) {
       const g = await generar({ salidas: [salidaVinculada()], paquete: { trm_oferta: trm } });
       assert.equal(g.r.ok, false, `TRM ${trm}`);
-      if (!g.r.ok) assert.match(g.r.error, /TRM positiva/i);
+      if (!g.r.ok) assert.match(g.r.error, /Falta la TRM|TRM no es v[aá]lida/i);
       assert.equal(g.pub, undefined);
     }
+  });
+  test("#93 modo 63 con TODO en COP y sin TRM: sí se publica (null, nunca 1) y dice que no requiere conversión", async () => {
+    const g = await generar({ salidas: [salidaVinculada()], hotelMoneda: "COP", paquete: { trm_oferta: null } });
+    assert.equal(g.r.ok, true, g.r.ok ? "" : g.r.error);
+    assert.equal(g.pub?.nombre, "publicar_tarifario_resultado_63");
+    assert.equal(g.pub?.args.p_trm, null, "sin TRM: el envoltorio recibe null, nunca 0 ni 1");
+    assert.equal(g.pub?.args.p_moneda, "COP");
+    assert.ok(g.filas.length > 0 && g.filas.every((f) => f.moneda === "COP"));
+  });
+  test("#93 cambio posterior COP→USD: el mismo paquete sin TRM deja de poder generarse", async () => {
+    const todoCop = await generar({ salidas: [salidaVinculada()], hotelMoneda: "COP", paquete: { trm_oferta: null } });
+    assert.equal(todoCop.r.ok, true);
+    const conUsd = await generar({ salidas: [salidaVinculada()], hotelMoneda: "COP", paquete: { trm_oferta: null }, servicios: [servicioIncluido(10, 0, "USD")] });
+    assert.equal(conUsd.r.ok, false);
+    if (!conUsd.r.ok) assert.match(conUsd.r.error, /Falta la TRM.*Servicio Tour/i);
+    assert.equal(conUsd.pub, undefined);
+  });
+  test("#93 modo 63 con USD y TRM positiva: publica con esa TRM", async () => {
+    const g = await generar({ salidas: [salidaVinculada()], hotelMoneda: "USD", paquete: { trm_oferta: 3987.65 } });
+    assert.equal(g.r.ok, true, g.r.ok ? "" : g.r.error);
+    assert.equal(g.pub?.args.p_trm, 3987.65);
+  });
+  test("#90 D un paquete sin moneda de publicación elegida no se genera (no se deduce de los hoteles)", async () => {
+    const g = await generar({ salidas: [salidaManual({ valor_tiquete: 400 })], paquete: { modo_oferta: "legacy", trm_oferta: null, moneda_publicacion: null } });
+    assert.equal(g.r.ok, false);
+    if (!g.r.ok) assert.match(g.r.error, /Elige la moneda de publicaci[oó]n/i);
+    assert.equal(g.pub, undefined);
+  });
+});
+
+// #90 D: solo cuentan las fuentes que REALMENTE aportan al precio. El generador, el panel y la cotización (cargarFuentesMoneda90 + evaluarPublicacion90)
+// deben dar el MISMO veredicto sobre las mismas filas.
+describe("#90 D · fuentes incluidas vs descartadas: generador = panel/cotización", () => {
+  async function veredictos(o: Opciones) {
+    const g = await generar(o);
+    const c = clienteGenerar(tablas(o));
+    const fuentes = await cargarFuentesMoneda90(c.sb as never, PAQUETE_ID, { tipo: "dinamico", modo63: true });
+    assert.equal(fuentes.ok, true);
+    const pq = tablas(o).armado_paquetes[0];
+    const ev = fuentes.ok ? evaluarPublicacion90({ modo: "cop_trm_63", monedaPublicacion: pq.moneda_publicacion, trm: pq.trm_oferta, fuentes: fuentes.fuentes }) : null;
+    return { g, ev };
+  }
+  const sinTrm = { trm_oferta: null };
+
+  test("INCLUIDA: una salida manual USD vigente exige TRM en el generador Y en el panel/cotización", async () => {
+    const { g, ev } = await veredictos({ salidas: [salidaVinculada(), salidaManual({ moneda: "USD", valor_tiquete: 100 })], hotelMoneda: "COP", paquete: sinTrm });
+    assert.equal(g.r.ok, false);
+    assert.equal(ev?.ok, false);
+    if (!g.r.ok && ev) assert.equal(g.r.error, mensajeEvaluacion90(ev), "el mismo mensaje en las tres superficies");
+    assert.equal(g.pub, undefined);
+  });
+  test("DESCARTADA (compra vencida): la misma salida USD no exige TRM; el generador publica y el panel/cotización también aprueban", async () => {
+    const { g, ev } = await veredictos({ salidas: [salidaVinculada(), salidaManual({ moneda: "USD", valor_tiquete: 100, compra_fin: AYER })], hotelMoneda: "COP", paquete: sinTrm });
+    assert.equal(g.r.ok, true, g.r.ok ? "" : g.r.error);
+    assert.equal(g.pub?.args.p_trm, null);
+    assert.equal(ev?.ok, true);
+    assert.equal(ev?.requiereTrm, false);
+  });
+  test("DESCARTADA (inactiva, viaje pasado, sin regreso o sin noches): no exige TRM", async () => {
+    const casos: Fila[] = [{ activo: false }, { fecha_ida: fechaBogota(-5), fecha_regreso: fechaBogota(-3) }, { fecha_regreso: null }, { fecha_regreso: IDA, fecha_ida: IDA }];
+    for (const c of casos) {
+      const { g, ev } = await veredictos({ salidas: [salidaVinculada(), salidaManual({ moneda: "USD", valor_tiquete: 100, ...c })], hotelMoneda: "COP", paquete: sinTrm });
+      assert.equal(g.r.ok, true, JSON.stringify(c) + " " + (g.r.ok ? "" : g.r.error));
+      assert.equal(ev?.ok, true, JSON.stringify(c));
+    }
+  });
+  test("DESCARTADA (vinculada USD cuya fuente ya tiene record): no exige TRM y el generador la reporta como omitida", async () => {
+    const usd = { id: 6, moneda: "USD", record: "ZZZ999", tarifa_para_empaquetar: 290, fee_infante: 20 };
+    const { g, ev } = await veredictos({
+      salidas: [salidaVinculada(), salidaVinculada({ id: 13, empaquetado_id: 6, moneda: "USD", valor_tiquete: 290, fee_infante: 20 })],
+      fuentes: [fuente(), fuente(usd)], hotelMoneda: "COP", paquete: sinTrm,
+    });
+    assert.equal(g.r.ok, true, g.r.ok ? "" : g.r.error);
+    if (g.r.ok) assert.match(g.r.aviso ?? "", /vinculada.*no se publicaron/i);
+    assert.equal(ev?.ok, true);
+    assert.equal(ev?.requiereTrm, false);
+  });
+  test("DESCARTADA (vinculada USD con la copia vieja): no exige TRM; INCLUIDA con la copia al día: sí", async () => {
+    const vieja = await veredictos({
+      salidas: [salidaVinculada(), salidaVinculada({ id: 13, empaquetado_id: 6, moneda: "USD", valor_tiquete: 280, fee_infante: 20 })],
+      fuentes: [fuente(), fuente({ id: 6, moneda: "USD", tarifa_para_empaquetar: 290, fee_infante: 20 })], hotelMoneda: "COP", paquete: sinTrm,
+    });
+    assert.equal(vieja.g.r.ok, true, vieja.g.r.ok ? "" : vieja.g.r.error);
+    assert.equal(vieja.ev?.ok, true);
+    const alDia = await veredictos({
+      salidas: [salidaVinculada(), salidaVinculada({ id: 13, empaquetado_id: 6, moneda: "USD", valor_tiquete: 290, fee_infante: 20 })],
+      fuentes: [fuente(), fuente({ id: 6, moneda: "USD", tarifa_para_empaquetar: 290, fee_infante: 20 })], hotelMoneda: "COP", paquete: sinTrm,
+    });
+    assert.equal(alDia.g.r.ok, false);
+    assert.equal(alDia.ev?.ok, false);
+    if (!alDia.g.r.ok && alDia.ev) assert.equal(alDia.g.r.error, mensajeEvaluacion90(alDia.ev));
+  });
+  test("CAMBIO COP→USD después de cotizar: la misma salida pasa de no exigir a exigir TRM (la oferta anterior queda obsoleta)", async () => {
+    const antes = await veredictos({ salidas: [salidaVinculada(), salidaManual({ moneda: "COP", valor_tiquete: 100 })], hotelMoneda: "COP", paquete: sinTrm });
+    const despues = await veredictos({ salidas: [salidaVinculada(), salidaManual({ moneda: "USD", valor_tiquete: 100 })], hotelMoneda: "COP", paquete: sinTrm });
+    assert.equal(antes.g.r.ok, true);
+    assert.equal(antes.ev?.requiereTrm, false);
+    assert.equal(despues.g.r.ok, false);
+    assert.equal(despues.ev?.requiereTrm, true);
   });
 });
 
@@ -278,7 +384,7 @@ describe("generarTarifario() REAL · el modo de siempre NO cambia", () => {
   test("un paquete legacy publica por publicar_tarifario_resultado (sin envoltorio) y en la moneda del hotel", async () => {
     const g = await generar({
       salidas: [salidaManual({ valor_tiquete: 400, aplica_mk: true })],
-      paquete: { modo_oferta: "legacy", trm_oferta: null, impuesto_tipo: "fijo", impuesto_fijo: 0 },
+      paquete: { modo_oferta: "legacy", trm_oferta: null, impuesto_tipo: "fijo", impuesto_fijo: 0, moneda_publicacion: "USD" },
       netoAdulto: 100, netoInfante: 10,
     });
     assert.equal(g.r.ok, true, g.r.ok ? "" : g.r.error);

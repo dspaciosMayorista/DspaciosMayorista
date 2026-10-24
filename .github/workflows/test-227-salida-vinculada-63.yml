@@ -4,6 +4,8 @@
 # equivalente COP, metadata privada, contratos intactos; y el cierre E/F/G: cotizar/aceptar atomicos, fencing de la cabecera, RPC financiera
 # derivada del snapshot, protecciones de lo aceptado, cortes y cobertura de revision), la negativa a re-aplicar, el rollback exacto (huella md5 de
 # policies/ACL y de las definiciones de funciones, vistas y triggers) y la reaplicacion.
+# La 234 (#90: el modo de conversión por TRM también publicando en USD) se prueba aparte en Postgres desechable con supabase/scripts/test_234_fases.sh
+# (esquema 001-233); aquí corren sus pruebas TS y React junto a las de la 227.
 # Un segundo job corre las pruebas TS (vectores numericos FX1-FX3, generador, computo, reserva de punta a punta con la BD en
 # memoria, cupos de Bloqueo y regresion de 62/67/224/226) en una imagen oficial de Node con version exacta.
 # Sin secretos del repositorio, sin Supabase remoto, sin pull_request_target y con permisos de solo lectura.
@@ -32,6 +34,10 @@ on:
       - 'dspacios-travel/lib/reservar/empaquetadoOrigen.ts'
       - 'dspacios-travel/lib/paquetes/destinosAereos67.ts'
       - 'dspacios-travel/lib/contabilidad/asientos.ts'
+      - 'dspacios-travel/lib/reservar/monedaPublicacion90.ts'
+      - 'dspacios-travel/lib/calc/paquetes.ts'
+      - 'dspacios-travel/pruebas/oferta63Moneda234*'
+      - 'dspacios-travel/supabase/migrations/20260601000234_oferta_usd_trm.sql'
       - 'dspacios-travel/app/(dashboard)/dashboard/paquetes/**'
       - 'dspacios-travel/app/(dashboard)/dashboard/reservar/actions.ts'
       - 'dspacios-travel/types/database.ts'
@@ -212,7 +218,8 @@ jobs:
               pruebas/salidaDinamicaFlujos62.test.ts pruebas/salidaDinamicaVigencia62.test.ts \
               pruebas/destinosAereos67.test.ts pruebas/destinosAereosFlujos67.test.ts \
               pruebas/empaquetados.test.ts pruebas/netoEmpaquetados224.test.ts \
-              pruebas/serviciosPaqueteWiring.test.ts pruebas/computoIncluidosLecturaWiring.test.ts pruebas/cotizacionesTenant.wiring.test.ts
+              pruebas/serviciosPaqueteWiring.test.ts pruebas/computoIncluidosLecturaWiring.test.ts pruebas/cotizacionesTenant.wiring.test.ts \
+              pruebas/salidaVinculada63UsdGenerar.test.ts pruebas/oferta63Moneda234.test.ts pruebas/monedaPublicacion90.test.ts pruebas/monedaPublicacion90Integracion.test.ts
           ' 2>&1 | tee "$salida"
           rc="${PIPESTATUS[0]}"
           # Cero fallos (ni rojos ni pendientes) y pruebas realmente corridas.
@@ -236,7 +243,8 @@ jobs:
             node --test --test-reporter=spec --experimental-test-module-mocks \
               --import ./pruebas/support/registrarProgramasRuta.mjs \
               --experimental-loader ./pruebas/support/reactLoader.mjs \
-              pruebas/salidaVinculada63Reserva.react.ts pruebas/salidaVinculada63Contabilidad.react.ts pruebas/salidaVinculada63Editor.react.ts pruebas/destinosAereosEditor67.react.ts
+              pruebas/salidaVinculada63Reserva.react.ts pruebas/salidaVinculada63Contabilidad.react.ts pruebas/salidaVinculada63Editor.react.ts pruebas/destinosAereosEditor67.react.ts \
+              pruebas/salidaVinculada63Usd.react.ts pruebas/monedaPublicacion90.react.ts pruebas/cotizacionAcciones234.react.ts
           ' 2>&1 | tee "$salida"
           rc="${PIPESTATUS[0]}"
           if [ "$rc" != 0 ] || [ "$(grep -cE '^ℹ fail 0$' "$salida")" != 1 ] || grep -qE '^✖|^ *✖ ' "$salida" \

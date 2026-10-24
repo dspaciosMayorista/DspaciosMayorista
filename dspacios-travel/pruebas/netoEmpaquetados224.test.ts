@@ -216,6 +216,9 @@ describe("inventario de lectores de la tabla base `empaquetados` en la aplicaci√
     ["lib/reservar/empaquetadoOrigen.ts", { cliente: "servicio", roles: "service-role" }],
     // #63: valida la fuente VIVA de una salida vinculada (cliente de servicio; el costo N no sale del servidor).
     ["lib/reservar/prepararOferta63.ts", { cliente: "servicio", roles: "service-role" }],
+    // #90 D: lee SOLO `id`/`ruta`/`moneda` del vuelo vinculado (la moneda real de la fuente); nunca columnas de costo. Lo llaman el panel y el
+    // generador del armado (sin venta) y la cotizaci√≥n de la oferta #63 (service-role).
+    ["lib/reservar/fuentesMoneda90.ts", { cliente: "sesion", roles: "armado interno (sin venta) o service-role" }],
     ["lib/tarifario/datos.ts", { cliente: "servicio", roles: "service-role" }],
     ["lib/tarifario/datosBernalo.ts", { cliente: "servicio", roles: "service-role" }],
     ["lib/tarifario/filtrosPostCarga.ts", { cliente: "servicio", roles: "service-role" }],

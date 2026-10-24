@@ -6,6 +6,7 @@ import { useRouter } from "next/navigation";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { calcularEdad } from "@/lib/utils";
+import { MENSAJE_TRM_PROVISIONAL_REQUERIDA_63, trmValida90 } from "@/lib/reservar/monedaPublicacion90";
 import { convertirCotizacion, descartarCotizacion } from "../../reservar/actions";
 import { type PasajeroReserva } from "@/lib/reservar/computo";
 import { BuscarPasajeroDocumento } from "@/components/pasajeros/BuscarPasajeroDocumento";
@@ -15,17 +16,28 @@ type ClientePrefill = { nombres: string; apellidos: string; tipoDoc: string; num
 const TIPOS_DOC = ["CC", "TI", "CE", "PAS", "RC"];
 
 export function CotizacionAcciones({
-  id, pax, infantes, tienePasajeros, cliente, esSuperadmin, asesores, miNombre, miRolVenta,
+  id, pax, infantes, tienePasajeros, cliente, esSuperadmin, asesores, miNombre, miRolVenta, pideTrmProvisional = false,
 }: {
   id: number; pax: number; infantes: number; tienePasajeros: boolean; cliente: ClientePrefill; esSuperadmin: boolean;
   asesores: { nombre: string; email: string | null }[];
   miNombre: string; miRolVenta: boolean;
+  /** Oferta en USD sin TRM: al convertir a contrato se captura la TRM provisional (pesos por dólar). */
+  pideTrmProvisional?: boolean;
 }) {
   const router = useRouter();
   const [pending, start] = useTransition();
   const [err, setErr] = useState("");
   const [confirmarDescarte, setConfirmarDescarte] = useState(false);
   const [capturando, setCapturando] = useState(false);
+  const [trmProv, setTrmProv] = useState("");
+  // Solo aplica a una oferta USD sin TRM: ahí la tasa es OBLIGATORIA (campo vacío = no se convierte) y debe ser un número positivo.
+  const trmProvisional = (): { ok: true; valor: number | null } | { ok: false; error: string } => {
+    if (!pideTrmProvisional) return { ok: true, valor: null };
+    if (trmProv.trim() === "") return { ok: false, error: MENSAJE_TRM_PROVISIONAL_REQUERIDA_63 };
+    // Mismo criterio que el servidor y la base (finita, > 0 con 4 decimales y < 1e11): lo inválido no llega a numerar nada.
+    const n = trmValida90(trmProv.replace(",", "."));
+    return n != null && Math.round(n * 10000) > 0 ? { ok: true, valor: n } : { ok: false, error: "La TRM provisional debe ser un número positivo (pesos por dólar)." };
+  };
   // Si quien gestiona es asesor de ventas, se autollena con su usuario.
   const [asesorSel, setAsesorSel] = useState(miRolVenta ? miNombre : "");
   const asesorBloqueado = miRolVenta && !esSuperadmin; // solo superadmin lo cambia
@@ -47,9 +59,11 @@ export function CotizacionAcciones({
     setPaxRows((rows) => rows.map((r, n) => (n === i ? { ...r, [k]: v } : r)));
 
   function convertirDirecto() {
+    const t = trmProvisional();
+    if (!t.ok) { setErr(t.error); return; }
     setErr("");
     start(async () => {
-      const r = await convertirCotizacion(id);
+      const r = await convertirCotizacion(id, undefined, undefined, undefined, t.valor);
       if (r.ok) {
         if (r.advertencias?.length) window.alert(`Contrato creado, pero con avisos:\n\n${r.advertencias.join("\n")}`);
         router.push(`/dashboard/contratos/${r.numero}`);
@@ -76,9 +90,11 @@ export function CotizacionAcciones({
       vistos.add(k);
     }
     if (!asesorSel && !esSuperadmin) { setErr("Elige el asesor interno que gestiona esta reserva."); return; }
+    const t = trmProvisional();
+    if (!t.ok) { setErr(t.error); return; }
     setErr("");
     start(async () => {
-      const r = await convertirCotizacion(id, paxRows, false, asesorSel);
+      const r = await convertirCotizacion(id, paxRows, false, asesorSel, t.valor);
       if (r.ok) {
         if (r.advertencias?.length) window.alert(`Contrato creado, pero con avisos:\n\n${r.advertencias.join("\n")}`);
         router.push(`/dashboard/contratos/${r.numero}`);
@@ -87,9 +103,11 @@ export function CotizacionAcciones({
   }
 
   function generarSinPasajeros() {
+    const t = trmProvisional();
+    if (!t.ok) { setErr(t.error); return; }
     setErr("");
     start(async () => {
-      const r = await convertirCotizacion(id, [], true);
+      const r = await convertirCotizacion(id, [], true, undefined, t.valor);
       if (r.ok) router.push(`/dashboard/contratos/${r.numero}`);
       else setErr(r.error);
     });
@@ -106,6 +124,17 @@ export function CotizacionAcciones({
 
   return (
     <div className="space-y-3">
+      {pideTrmProvisional && (
+        <div className="max-w-xs rounded-lg border border-gray-200 p-3" data-testid="trm-provisional">
+          <label className="text-[11px] text-gray-500" htmlFor="trm-provisional-input">TRM provisional del contrato (COP por USD) *</label>
+          <Input id="trm-provisional-input" aria-label="TRM provisional" type="number" min={0} step="0.01" inputMode="decimal" placeholder="Obligatoria, ej. 4000" required
+            value={trmProv} onChange={(e) => setTrmProv(e.target.value)} />
+          <p className="mt-1 text-[10px] text-gray-400">
+            Esta oferta está en USD y no tiene TRM: debes ingresar la tasa. Se congela al contratar y es con la que se registran en pesos las
+            cuentas por pagar y los asientos; no cambia después.
+          </p>
+        </div>
+      )}
       <div className="flex flex-wrap gap-3">
         <Button
           onClick={() => (tienePasajeros ? convertirDirecto() : setCapturando((v) => !v))}

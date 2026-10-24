@@ -310,7 +310,7 @@ function tablasGenerar(o: {
   return {
     armado_paquetes: [{
       id: PAQUETE_ID, nombre: "Dinámico 226", activo: true, destino_id: 1, pct_mk: o.mk ?? 0.2, tipo: "dinamico",
-      impuesto_tipo: "fijo", impuesto_fijo: 0, noches: 1, destinos: { nombre: "CARTAGENA" },
+      impuesto_tipo: "fijo", impuesto_fijo: 0, noches: 1, destinos: { nombre: "CARTAGENA" }, moneda_publicacion: moneda,
     }],
     armado_vuelos: [], armado_empaquetados: [],
     armado_servicios: (o.servicios ?? []).map(armadoServicio),

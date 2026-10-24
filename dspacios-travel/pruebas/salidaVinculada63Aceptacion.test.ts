@@ -44,7 +44,7 @@ describe("claves estables de obligación y snapshot", () => {
   });
   test("el snapshot cuenta los hijos que la base exigirá antes de aceptar el pendiente", () => {
     const s = construirSnapshot63({
-      paqueteId: 1, salidaId: 2, empaquetadoId: 3, trm: TRM,
+      paqueteId: 1, salidaId: 2, empaquetadoId: 3, trm: TRM, moneda: "COP",
       cabecera: { tipo_paquete: "dinamico", moneda: "COP", fecha_salida: "2030-01-10", fecha_regreso: "2030-01-13", pax: 2, destino: "CARTAGENA", hotel: "H", precio_venta: 3360000, impuesto: 2260000, costo_aereo: 2080500, aerolinea: "A", plan_nombre: "E · PC", paquete_armado_id: 1, tipo_asesor: "interno", canal: "B2C" },
       b2b: null, vigencias: [],
       hotel: { nombre: "H", categoria: "E", proveedor: "P", ciudad: "CARTAGENA", alimentacion: "PC", acomodacion: "E", detalle_acomodacion: "1 hab Doble (2 pax)", fecha_ingreso: "2030-01-10", fecha_salida: "2030-01-13", orden: 0 },
@@ -60,7 +60,7 @@ describe("claves estables de obligación y snapshot", () => {
   });
   test("un paquete tipo servicios (sin hotel) no espera fila de hotel", () => {
     const s = construirSnapshot63({
-      paqueteId: 1, salidaId: null, empaquetadoId: null, trm: TRM,
+      paqueteId: 1, salidaId: null, empaquetadoId: null, trm: TRM, moneda: "COP",
       cabecera: { tipo_paquete: "servicios", moneda: "COP", fecha_salida: null, fecha_regreso: null, pax: 1, destino: null, hotel: null, precio_venta: 1, impuesto: 0, costo_aereo: 0, aerolinea: null, plan_nombre: "x", paquete_armado_id: 1, tipo_asesor: "interno", canal: "B2C" },
       b2b: null, vigencias: [],
       hotel: null, tramos: [], items: [], costos: {}, cxp: [], resumen: { tours_traslados: null, asistencia_medica: false },
@@ -136,7 +136,7 @@ describe("plan B2B congelado y vigencias de compra en el snapshot (ciclo 5)", ()
   });
   test("construirSnapshot63 guarda el plan B2B y las vigencias normalizadas", () => {
     const s = construirSnapshot63({
-      paqueteId: 1, salidaId: null, empaquetadoId: null, trm: TRM,
+      paqueteId: 1, salidaId: null, empaquetadoId: null, trm: TRM, moneda: "COP",
       cabecera: { tipo_paquete: "dinamico", moneda: "COP", fecha_salida: null, fecha_regreso: null, pax: 1, destino: null, hotel: null, precio_venta: 3360000, impuesto: 2260000, costo_aereo: 0, aerolinea: null, plan_nombre: "x", paquete_armado_id: 1, tipo_asesor: "agencia", canal: "B2B" },
       b2b: plan(0.1), vigencias: [{ origen: "hotel", ref: "Base", compra_inicio: null, compra_fin: "2030-01-31" }, { origen: "hotel", ref: "Base", compra_inicio: null, compra_fin: "2030-01-31" }],
       hotel: null, tramos: [], items: [], costos: {}, cxp: [], resumen: { tours_traslados: null, asistencia_medica: false },
@@ -199,7 +199,10 @@ describe("adaptadores del servidor (cliente inyectado)", () => {
   test("aceptarOferta63: nunca manda datos financieros del navegador (solo ids y huellas) y traduce errores", async () => {
     const vistos: Array<Record<string, unknown>> = [];
     await aceptarOferta63(cliente(async (_fn, a) => { vistos.push(a); return { data: null, error: { message: "p63_oferta_cambio" } }; }), { cotizacionId: 5, tenant: "mayorista", usuarioId: "u1", huella: "h", huellaFinanciera: "f" });
-    assert.deepEqual(Object.keys(vistos[0]).sort(), ["p_cotizacion", "p_huella", "p_huella_financiera", "p_tenant", "p_usuario"]);
+    assert.deepEqual(Object.keys(vistos[0]).sort(), ["p_cotizacion", "p_huella", "p_huella_financiera", "p_tenant", "p_trm_provisional", "p_usuario"]);
+    assert.equal(vistos[0].p_trm_provisional, null, "sin tasa ingresada viaja null (en una oferta USD sin TRM la base la rechaza antes de numerar)");
+    await aceptarOferta63(cliente(async (_fn, a) => { vistos.push(a); return { data: null, error: { message: "p63_oferta_cambio" } }; }), { cotizacionId: 5, tenant: "mayorista", usuarioId: "u1", huella: "h", huellaFinanciera: "f", trmProvisional: 4321.5 });
+    assert.equal(vistos[1].p_trm_provisional, 4321.5, "la tasa ingresada viaja a aceptar_oferta_63");
     const r = await aceptarOferta63(cliente(async () => ({ data: null, error: { message: "p63_oferta_cambio" } })), { cotizacionId: 5, tenant: "mayorista", usuarioId: "u1", huella: "h", huellaFinanciera: "f" });
     assert.deepEqual(r, { ok: false, error: MENSAJE_CAMBIO_ACEPTACION_63, cambio: true });
     const lanza = await aceptarOferta63(cliente(async () => { throw new Error("red"); }), { cotizacionId: 5, tenant: "mayorista", usuarioId: "u1", huella: "h", huellaFinanciera: "f" });

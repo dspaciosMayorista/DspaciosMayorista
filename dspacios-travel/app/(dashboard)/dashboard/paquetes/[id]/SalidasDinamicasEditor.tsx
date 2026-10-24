@@ -87,13 +87,14 @@ export function SalidasDinamicasEditor({
         <VinculadasEmpaquetados
           paqueteId={paqueteId}
           vinculadas={vinculadas}
+          moneda={moneda === "USD" ? "USD" : "COP"}
           trm={trm}
           onChanged={() => router.refresh()}
           setErr={setErr}
         />
       ) : (
         <p className="text-[11px] text-gray-500" data-testid="aviso-modo-63">
-          Para vincular vuelos de Empaquetados sin record como salidas, activa el modo COP con TRM en la configuración del paquete.
+          Para vincular vuelos de Empaquetados sin record como salidas, activa el modo con conversión por TRM en la configuración del paquete (se publica en COP o en USD según la moneda que elijas).
         </p>
       )}
 
@@ -102,7 +103,7 @@ export function SalidasDinamicasEditor({
         <p className="text-[11px] text-gray-500">
           Cada salida manual es un vuelo por sistema (sin record) que escribes a mano: su ruta, fecha e info, y el valor del tiquete.
           El hotel se liquidará por las noches de cada salida. Moneda del paquete: <b>{moneda}</b>.
-          {modo63 && " En modo COP, el tiquete, la TA y el fee conservan la moneda que elijas en cada salida y se convierten con la TRM del paquete."}
+          {modo63 && ` Con el modo de conversión por TRM, el tiquete, la TA y el fee conservan la moneda que elijas en cada salida: si es la del paquete (${moneda}) entran sin conversión y si no se convierten con la TRM del paquete.`}
         </p>
 
         <div className="space-y-2">
@@ -127,8 +128,8 @@ export function SalidasDinamicasEditor({
 // los nuevos aparecen como PENDIENTES y no se incorporan solos — se eligen y se agregan a propósito, y el tarifario se
 // regenera. Los datos copiados de la fuente no se editan aquí: si la fuente cambió, la salida queda marcada para revisar.
 function VinculadasEmpaquetados({
-  paqueteId, vinculadas, trm, onChanged, setErr,
-}: { paqueteId: number; vinculadas: SalidaDinamica[]; trm: number | null; onChanged: () => void; setErr: (m: string) => void }) {
+  paqueteId, vinculadas, moneda, trm, onChanged, setErr,
+}: { paqueteId: number; vinculadas: SalidaDinamica[]; moneda: "COP" | "USD"; trm: number | null; onChanged: () => void; setErr: (m: string) => void }) {
   const [pending, start] = useTransition();
   const [candidatos, setCandidatos] = useState<CandidatoSalida63[]>([]);
   const [cargando, setCargando] = useState(true);
@@ -196,7 +197,7 @@ function VinculadasEmpaquetados({
       <h3 className="text-xs font-semibold uppercase tracking-wide text-gray-400">Salidas vinculadas a Empaquetados (sin record)</h3>
       <p className="text-[11px] text-gray-500">
         Cada salida toma de un vuelo de Empaquetados sin record sus fechas, ruta y tarifas: el precio del aéreo entra tal cual (sin markup ni TA) y el
-        fee de infante se suma exacto. Se cotizan y reservan sin consultar cupos de Bloqueo. Cada vuelo conserva su moneda (COP o USD): si es USD se convierte con la TRM del paquete{trm ? <> (TRM: <b>{formatMoneda(trm, "COP")}</b>)</> : null}, una sola vez, y el tarifario se publica en COP.
+        fee de infante se suma exacto. Se cotizan y reservan sin consultar cupos de Bloqueo. Aparecen todos los vuelos elegibles sin importar su moneda; cada uno conserva la suya (COP o USD). El paquete se publica en <b>{moneda}</b>: un vuelo en {moneda} entra sin conversión y uno en {moneda === "USD" ? "COP" : "USD"} se convierte con la TRM del paquete{trm ? <> (TRM: <b>{formatMoneda(trm, "COP")}</b>)</> : null}, una sola vez ({moneda === "USD" ? "COP / TRM" : "USD × TRM"}).
       </p>
 
       {vinculadas.length > 1 && (
@@ -274,7 +275,10 @@ function VinculadasEmpaquetados({
                   <input type="checkbox" checked={elegidos.includes(c.id)} onChange={() => alternar(c.id)} aria-label={`Vincular ${c.ruta ?? "vuelo"} ${c.fechaIda}`} />
                   <span className="font-medium">{c.ruta || "—"}</span>
                   <span className="text-xs text-gray-500">{c.aerolinea ?? ""} · {c.fechaIda} → {c.fechaRegreso}</span>
-                  <span className="ml-auto tabular-nums text-xs text-gray-600">{formatMoneda(c.tarifaParaEmpaquetar, c.moneda)}</span>
+                  <span className="ml-auto tabular-nums text-xs text-gray-600">
+                    {formatMoneda(c.tarifaParaEmpaquetar, c.moneda)}
+                    <span className="ml-1 text-[10px] text-gray-400">{(c.moneda ?? "COP") === moneda ? "· sin conversión" : "· se convierte con la TRM"}</span>
+                  </span>
                 </label>
               </li>
             ))}

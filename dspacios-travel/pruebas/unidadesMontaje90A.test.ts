@@ -103,10 +103,12 @@ test("sin publicación publicable las filas no prometen conversión", () => {
 
 test("page.tsx entrega al panel la publicación de la selección, no la derivada de los hoteles disponibles", () => {
   const src = readFileSync(new URL("../app/(dashboard)/dashboard/paquetes/[id]/page.tsx", import.meta.url), "utf8");
-  assert.ok(src.includes("publicacionDeVinculosGuardados("));
+  // #90 D: la misma lectura y la misma evaluación que el generador y la cotización (fuentes GUARDADAS + moneda ELEGIDA).
+  assert.ok(src.includes("cargarFuentesMoneda90(") && src.includes("evaluarPublicacion90("));
   assert.ok(src.includes("publicacionMontaje={publicacionMontaje}"));
-  // Lee los vínculos guardados, no las listas «disponibles» del editor.
-  for (const t of ['from("armado_vuelos")', 'from("armado_empaquetados")', 'from("armado_hoteles")', 'from("armado_servicios")']) assert.ok(src.includes(t), t);
+  // La lectura de los vínculos guardados vive en el cargador compartido, no en las listas «disponibles» del editor.
+  const cargador = readFileSync(new URL("../lib/reservar/fuentesMoneda90.ts", import.meta.url), "utf8");
+  for (const t of ['from("armado_vuelos")', 'from("armado_empaquetados")', 'from("armado_hoteles")', 'from("armado_servicios")']) assert.ok(cargador.includes(t), t);
   assert.ok(!src.includes("resolverPublicacionMontaje"), "ya no deriva la publicación de las listas disponibles");
 });
 
@@ -164,12 +166,26 @@ test("modo 63 con vínculos guardados: COP y el Bloqueo no se compara", () => {
 
 test("los criterios del helper siguen siendo los de generarTarifario (guarda contra divergencia)", () => {
   const g = readFileSync(new URL("../app/(dashboard)/dashboard/paquetes/actions.ts", import.meta.url), "utf8").replace(/\r\n/g, "\n");
+  // #90 D: el generador ya NO tiene copias propias de estos criterios: usa los predicados compartidos (aporteFuentes90.ts) que también usan
+  // el panel y la cotización. Si alguien vuelve a escribir un filtro a mano, el veredicto del generador podría divergir de ellos.
   for (const frag of [
-    '!!v.b && !!v.b.fecha_ida && !!v.b.fecha_regreso && permiteDestinoAereo("bloqueo", v.b.id)',
-    "!!v.e && v.e.activo && !!v.e.fecha_ida && !!v.e.fecha_regreso",
-    "empaquetadoVigente(v.e.compra_inicio, v.e.compra_fin, hoyBogota(new Date()))",
-    'permiteDestinoAereo("empaquetado", v.e.id)',
+    "bloqueoAporta(v.b, permiteDestinoAereo)",
+    "empaquetadoVueloAporta(v.e, hoyGen, permiteDestinoAereo)",
+    "motivoDescarteVinculada(sal as never, fuente63, hoyGen,",
+    "fuentesQueAportan90({",
     'const monedaDe = (m: string | null | undefined) => (m === "USD" ? "USD" : "COP");',
     'if (tipo === "bloqueo" && ((vuelosSel?.length ?? 0) + (empaquetadosSel?.length ?? 0)) > 0)',
-  ]) assert.ok(g.includes(frag), "generarTarifario cambió; revisar publicacionDeVinculosGuardados: " + frag);
+  ]) assert.ok(g.includes(frag), "generarTarifario cambió; revisar aporteFuentes90.ts: " + frag);
+  const p = readFileSync(new URL("../lib/reservar/aporteFuentes90.ts", import.meta.url), "utf8").replace(/\r\n/g, "\n");
+  for (const frag of [
+    "!!b && !!b.fecha_ida && !!b.fecha_regreso && permite(\"bloqueo\", b.id)",
+    "!!e && !!e.activo && !!e.fecha_ida && !!e.fecha_regreso",
+    "empaquetadoVigente(e.compra_inicio ?? null, e.compra_fin ?? null, hoy)",
+    "permite(\"empaquetado\", e.id)",
+    "seleccionarSalidasVigentes(",
+    "evaluarFuenteVinculada63(fuente, hoy)",
+    "fuenteCoincideConSalida63(sal,",
+  ]) assert.ok(p.includes(frag), "los criterios compartidos cambiaron: " + frag);
+  const ignorados = g.includes("hoteles.map((h) => ({ id: h.hotel_id");
+  assert.ok(ignorados, "el generador entrega al evaluador los hoteles del armado");
 });

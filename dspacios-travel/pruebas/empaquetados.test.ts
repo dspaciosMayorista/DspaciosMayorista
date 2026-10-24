@@ -325,7 +325,10 @@ test("generarTarifario: empaquetados inactivos (activo=false) se excluyen de la 
   const inicio = paquetesActionsSrc.indexOf("const empaquetadosVuelos = (empaquetadosSel ?? [])");
   const fin = paquetesActionsSrc.indexOf("const tipo = (pq.tipo", inicio);
   const bloque = paquetesActionsSrc.slice(inicio, fin);
-  assert.match(bloque, /v\.e\.activo/, "el filtro debe excluir empaquetados con activo=false");
+  assert.match(bloque, /empaquetadoVueloAporta\(v\.e, /, "el generador debe filtrar con empaquetadoVueloAporta");
+  const aporteSrc = leer("lib/reservar/aporteFuentes90.ts");
+  const predicado = aporteSrc.slice(aporteSrc.indexOf("export function empaquetadoVueloAporta"));
+  assert.match(predicado.slice(0, predicado.indexOf("\n}\n")), /!!e\.activo/, "el predicado debe excluir empaquetados con activo=false");
 });
 
 // ── computo.ts + reservar/actions.ts — provenance hasta Booking/contrato ───

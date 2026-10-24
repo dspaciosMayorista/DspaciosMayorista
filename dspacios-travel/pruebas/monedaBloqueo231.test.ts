@@ -95,18 +95,17 @@ test("mensajeErrorMonedaBloqueo quita el prefijo técnico de la base y respeta l
 
 describe("cableado", () => {
   const generador = leer("app/(dashboard)/dashboard/paquetes/actions.ts");
-  test("generarTarifario lee la moneda del Bloqueo y rechaza una moneda distinta fuera del modo 63", () => {
-    assert.match(generador, /bloqueos_vuelo\(id, record, ruta, fecha_ida, fecha_regreso, tarifa_para_empaquetar, fee_infante, moneda\)/);
-    const i = generador.indexOf("231 (#90 Entrega B, regla D8)");
-    assert.ok(i > 0, "falta el bloque de la 231");
-    const bloque = generador.slice(i, i + 900);
-    assert.match(bloque, /if \(!modo63\)/);
-    assert.match(bloque, /motivoMonedaBloqueoVsPaquete\(v\.b\.moneda/);
-    assert.match(bloque, /return await fallar\(motivo\)/);
+  // #90 D: la regla D8 del Bloqueo (moneda distinta fuera del modo 63) ya no vive en un bloque local del generador: la aplica la evaluación común
+  // (evaluarPublicacion90) sobre los vuelos que REALMENTE aportan (bloqueoAporta), la misma del panel y de la cotización.
+  test("generarTarifario lee la moneda del Bloqueo y la evalúa con la regla común (fuera del modo 63 una moneda distinta se rechaza)", () => {
+    assert.ok(generador.includes("bloqueos_vuelo(id, record, ruta, fecha_ida, fecha_regreso, tarifa_para_empaquetar, fee_infante, moneda)"));
+    assert.ok(generador.includes("bloqueos: (vuelosSel ?? []).map((v) => v.bloqueos_vuelo"));
+    assert.ok(generador.includes("if (!ev.ok || !ev.monedaPublicacion) return await fallar(mensajeEvaluacion90(ev))"));
+    assert.ok(!generador.includes("231 (#90 Entrega B, regla D8)"), "no queda una copia local de la regla");
   });
-  test("la guarda de Bloqueos va antes que la de Empaquetados y después de calcular la moneda del paquete", () => {
-    assert.ok(generador.indexOf("paqueteMoneda = monedasHotel[0]") < generador.indexOf("231 (#90 Entrega B, regla D8)"));
-    assert.ok(generador.indexOf("231 (#90 Entrega B, regla D8)") < generador.indexOf("230 (regla D8): fuera del modo cop_trm_63"));
+  test("la evaluación común va después de filtrar los vuelos que aportan y antes de liquidar", () => {
+    assert.ok(generador.indexOf("bloqueoAporta(v.b, permiteDestinoAereo)") < generador.indexOf("fuentesQueAportan90({"));
+    assert.ok(generador.indexOf("fuentesQueAportan90({") < generador.indexOf("filasHoteles(b.fecha_ida!"));
   });
   test("la acción de crear exige y manda la moneda; editar la manda solo si viene; el CSV la exige por fila", () => {
     const a = leer("app/(dashboard)/dashboard/vuelos/actions.ts");

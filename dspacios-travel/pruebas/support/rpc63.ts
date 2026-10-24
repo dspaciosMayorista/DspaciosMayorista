@@ -1,4 +1,4 @@
-// Simulación EN MEMORIA y ESTRICTA del contrato SQL de #63 (migración 227, E/F/G) para las pruebas del orquestador TS
+// Simulación EN MEMORIA y ESTRICTA del contrato SQL de #63 (migración 227, E/F/G; 233/234: TRM condicional y moneda de la oferta) para las pruebas del orquestador TS
 // (pruebas/salidaVinculada63*.react.ts). Cada función espeja lo que hace la base y RECHAZA lo que la base rechazaría:
 //   · crear_cotizacion_oferta_63  → cotización + oferta privada (snapshot) o p63_oferta_cambio si T0 cambió;
 //   · aceptar_oferta_63           → revalida revisiones/TRM/huellas, reserva el número, congela el snapshot; mismo reintento = mismo intento;
@@ -24,7 +24,16 @@ function fechaNegocioHoy(): string {
 
 export function derivado63(a: Fila): { costos: Fila; cxp: Fila[] } {
   const fin = (a.snapshot as { financiero: { costos: Fila; cxp: Fila[] } }).financiero;
-  return { costos: fin.costos, cxp: fin.cxp.map((o) => ({ ...o, fecha_obligacion: a.fecha_negocio })) };
+  const prov = a.trm_provisional == null ? null : Number(a.trm_provisional);
+  return {
+    costos: fin.costos,
+    // 234 (espejo de p63_financiero_derivado): una obligación en USD sin TRM toma la TRM PROVISIONAL congelada al aceptar y su equivalente COP.
+    cxp: fin.cxp.map((o) => {
+      const sinTrm = prov != null && (o.moneda ?? "COP") === "USD" && (o.trm == null || o.trm === "");
+      const base = sinTrm ? { ...o, trm: prov, valor_cop: Math.round(Number(o.valor_total) * prov * 100) / 100 } : o;
+      return { ...base, fecha_obligacion: a.fecha_negocio };
+    }),
+  };
 }
 
 export type OpcionesRpc63 = {
@@ -57,15 +66,20 @@ export function crearRpcs63(ref: { bd?: BD }, op: OpcionesRpc63 = {}): Record<st
 
   return {
     crear_cotizacion_oferta_63: (args) => {
-      const snap = args.p_snapshot as { paquete_id: number; salida_id: number | null; trm: number; financiero: unknown; cabecera: unknown };
+      const snap = args.p_snapshot as { paquete_id: number; salida_id: number | null; trm: number; moneda?: string; financiero: unknown; cabecera: Record<string, unknown> };
       const t0 = args.p_t0 as Record<string, unknown>;
       const p = paqueteDe(snap.paquete_id);
       if (!p || p.modo_oferta !== "cop_trm_63" || Number(p.trm_oferta) !== Number(snap.trm)) return err("p63_oferta_cambio: el modo o la TRM del paquete cambiaron mientras se cotizaba");
+      // 234: la oferta se cotiza en la moneda ELEGIDA del paquete (COP si nunca eligió); snapshot, cabecera y cotización coinciden; en USD la TRM es obligatoria.
+      const monOferta = snap.moneda || "COP";
+      if (!["COP", "USD"].includes(monOferta) || (p.moneda_publicacion ?? "COP") !== monOferta) return err("p63_oferta_cambio: la moneda de publicación del paquete cambió mientras se cotizaba");
+      if ((snap.cabecera?.moneda ?? "") !== monOferta) return err("p63_invalida: la moneda de la cabecera de la oferta no es la de la oferta");
       if (!isDeepStrictEqual(revisiones(p), { rev_fuente: Number(t0.rev_fuente), rev_publicada: t0.rev_publicada ?? null, gen_publicada: t0.gen_publicada ?? null, rev_costos: Number(t0.rev_costos) })) {
         return err("p63_oferta_cambio: la configuración del paquete cambió mientras se cotizaba");
       }
       if (!snap.financiero || !snap.cabecera || !args.p_huella || !args.p_huella_financiera) return err("p63_invalida: snapshot incompleto");
       const cot = args.p_cotizacion as Fila;
+      if ((cot.moneda ?? null) !== monOferta) return err("p63_invalida: la moneda de la cotización no es la de la oferta");
       // La cotización y su oferta nacen JUNTAS (una transacción): si algo faltara, ninguna de las dos.
       const id = (bd().filas("cotizaciones").reduce((m, c) => Math.max(m, Number(c.id) || 0), 0)) + 1;
       bd().filas("cotizaciones").push({ id, codigo: `COT-${id}`, estado: "abierta", created_at: new Date().toISOString(), ...cot });
@@ -91,6 +105,8 @@ export function crearRpcs63(ref: { bd?: BD }, op: OpcionesRpc63 = {}): Record<st
       const p = paqueteDe(of.paquete_id);
       if (!p || p.activo === false || p.modo_oferta !== "cop_trm_63") return err("p63_oferta_cambio: el paquete ya no está activo en modo COP con TRM");
       if (Number(p.trm_oferta) !== Number(of.trm)) return err("p63_oferta_cambio: la TRM del paquete cambió desde la cotización");
+      // 234: la moneda de la oferta es la que se cotizó; si el paquete cambió de moneda de publicación, no se acepta.
+      if ((p.moneda_publicacion ?? "COP") !== (((of.snapshot as { moneda?: string }).moneda) || "COP")) return err("p63_oferta_cambio: la moneda de publicación del paquete cambió desde la cotización");
       const v = revisiones(p);
       if (p.tarifario_snapshot_publicable === false || v.rev_publicada !== of.rev_publicada || v.gen_publicada !== of.gen_publicada) return err("p63_oferta_cambio: el tarifario publicado del paquete cambió desde la cotización");
       if (v.rev_fuente !== of.rev_fuente || v.rev_costos !== of.rev_costos) return err("p63_oferta_cambio: una fuente, un costo, un proveedor o una retención del paquete cambió desde la cotización");
@@ -102,10 +118,19 @@ export function crearRpcs63(ref: { bd?: BD }, op: OpcionesRpc63 = {}): Record<st
           return err(`p63_oferta_cambio: la tarifa "${v.ref}" de ${v.origen} ya no está en su vigencia de compra`);
         }
       }
+      // 234: una oferta en USD SIN TRM congela, AL ACEPTAR, la TRM provisional INGRESADA (p_trm_provisional): es OBLIGATORIA y no hay respaldo
+      // en trm_referencia (ni con la llamada de cinco argumentos, donde vale NULL). Sin ella no se contrata (antes de reservar número).
+      let trmProvisional: number | null = null;
+      if (of.trm == null && (((of.snapshot as { moneda?: string }).moneda) || "COP") === "USD") {
+        if (args.p_trm_provisional == null) return err("p63_trm_requerida: la oferta está en USD sin TRM: quien la convierte a contrato debe ingresar la TRM provisional");
+        const n = Number(args.p_trm_provisional);
+        if (!Number.isFinite(n) || n <= 0 || n >= 100000000000 || Math.round(n * 10000) / 10000 <= 0) return err("p63_trm_invalida: la TRM provisional debe ser un número positivo");
+        trmProvisional = Math.round(n * 10000) / 10000;
+      }
       const id = aceptaciones().reduce((m, a) => Math.max(m, Number(a.id) || 0), 0) + 1;
       const fila: Fila = {
         id, oferta_id: of.id, cotizacion_id: of.cotizacion_id, tenant: args.p_tenant, numero_contrato: siguienteNumero(), usuario_id: args.p_usuario,
-        fecha_negocio: hoy, snapshot: of.snapshot, estado: "preparada", error: null,
+        fecha_negocio: hoy, snapshot: of.snapshot, estado: "preparada", error: null, trm_provisional: trmProvisional,
       };
       aceptaciones().push(fila);
       of.estado = "aceptada";

@@ -3,9 +3,10 @@ import type { ComponentProps } from "react";
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { ArmadoClient } from "./ArmadoClient";
-import { leerInfoFuentes, motivoRechazoFuente, resolverDestinosAereosPaquete } from "@/lib/paquetes/destinosAereos67";
-import { publicacionDeVinculosGuardados, type PublicacionMontaje, type VinculosGuardados } from "@/lib/paquetes/unidadesMontaje";
-import { hoyBogota } from "@/lib/reservar/origen";
+import { resolverDestinosAereosPaquete } from "@/lib/paquetes/destinosAereos67";
+import type { PublicacionMontaje } from "@/lib/paquetes/unidadesMontaje";
+import { cargarFuentesMoneda90 } from "@/lib/reservar/fuentesMoneda90";
+import { evaluarPublicacion90, mensajeEvaluacion90, textoEstadoTrm90 } from "@/lib/reservar/monedaPublicacion90";
 
 export const dynamic = "force-dynamic";
 
@@ -118,48 +119,35 @@ export default async function PaqueteDetallePage({
   const { data: salidas } = pq.tipo === "dinamico"
     ? await sb.from("salidas_dinamicas").select("*").eq("paquete_id", paqueteId).order("fecha_ida")
     : { data: null };
-  // Moneda del paquete = la de sus hoteles (USD si hay alguno internacional en USD).
-  // #63: en modo COP con TRM el tarifario se publica en COP aunque haya hoteles/servicios en USD.
+  // #90 D: la moneda de publicación la ELIGE quien monta el paquete (armado_paquetes.moneda_publicacion); ya no se deriva de los hoteles
+  // disponibles. #63/234: el modo con conversión por TRM publica en la moneda ELEGIDA (COP si no eligió otra) aunque haya componentes en la otra. Para un paquete aún sin elegir, esta
+  // prop solo da formato a los importes mostrados (la última moneda publicada): el panel de abajo exige elegirla antes de generar.
   const modo63 = (pq as { modo_oferta?: string | null }).modo_oferta === "cop_trm_63";
-  const monedaPaquete = modo63
-    ? "COP"
-    : (hotelesDisp ?? []).some((h) => (h as { moneda?: string | null }).moneda === "USD") ? "USD" : "COP";
+  const monedaElegida = (pq as { moneda_publicacion?: string | null }).moneda_publicacion;
+  const monedaPaquete = modo63 ? (monedaElegida === "USD" ? "USD" : "COP") : monedaElegida === "USD" || monedaElegida === "COP" ? monedaElegida : pq.moneda === "USD" ? "USD" : "COP";
 
-  // #90 A — moneda de publicación que muestra el panel «Unidades del montaje»: se evalúan los VÍNCULOS GUARDADOS del paquete con las
-  // mismas lecturas y criterios de generarTarifario (no las listas «disponibles» del editor, que se filtran por rango de viaje y
-  // destino y pueden omitir un vínculo que el generador sí lee). No cambia lo que se publica ni el valor `moneda` de arriba.
-  const tipoPaquete = pq.tipo ?? "bloqueo"; // mismo valor por defecto que generarTarifario
-  const publicacionMontaje = await evaluarPublicacionMontaje();
+  // #90 A/D — moneda de publicación que muestra el panel «Unidades del montaje»: se evalúan los VÍNCULOS GUARDADOS del paquete (no las
+  // listas «disponibles» del editor) con LA MISMA lectura y LA MISMA evaluación que usan generarTarifario y la cotización de la oferta
+  // (lib/reservar/fuentesMoneda90 + aporteFuentes90 + monedaPublicacion90): solo cuentan las fuentes que REALMENTE aportan al precio (las que el
+  // generador descarta no exigen TRM ni bloquean). Paridad panel = generador = cotización. La moneda es la ELEGIDA, no la de los hoteles.
+  const tipoPaquete = (pq.tipo ?? "bloqueo") as string; // mismo valor por defecto que generarTarifario
+  const { publicacionMontaje, textoTrmMontaje } = await evaluarPublicacionMontaje();
 
-  async function evaluarPublicacionMontaje(): Promise<PublicacionMontaje> {
-    const tecnico: PublicacionMontaje = { estado: "rechazado", motivo: "No se pudieron leer los vínculos guardados del paquete para evaluar su moneda." };
-    const [rv, re, rh, rs] = await Promise.all([
-      sb.from("armado_vuelos").select("bloqueo_id, bloqueos_vuelo(id, record, ruta, fecha_ida, fecha_regreso, moneda)").eq("paquete_id", paqueteId),
-      sb.from("armado_empaquetados").select("empaquetado_id, empaquetados(id, record, ruta, fecha_ida, fecha_regreso, moneda, activo, compra_inicio, compra_fin)").eq("paquete_id", paqueteId),
-      sb.from("armado_hoteles").select("hotel_id, hoteles(moneda)").eq("paquete_id", paqueteId),
-      sb.from("armado_servicios").select("servicio_id, servicios_adicionales(moneda)").eq("paquete_id", paqueteId),
-    ]);
-    if (rv.error || re.error || rh.error || rs.error) return tecnico;
-    // `moneda` de bloqueos_vuelo / empaquetados no está en types/database.ts a propósito: se lee sin tipo, como el generador.
-    const vuelos = (rv.data ?? []) as unknown as VinculosGuardados["vuelos"][number][];
-    const empaquetados = (re.data ?? []) as unknown as VinculosGuardados["empaquetados"][number][];
-    const hoteles = (rh.data ?? []) as unknown as VinculosGuardados["hoteles"][number][];
-    const servicios = (rs.data ?? []) as unknown as VinculosGuardados["servicios"][number][];
-
-    // Destino aéreo permitido: solo en paquetes de Bloqueo con vuelos vinculados, igual que el generador.
-    let permiteDestinoAereo: VinculosGuardados["permiteDestinoAereo"] = () => true;
-    if (tipoPaquete === "bloqueo" && vuelos.length + empaquetados.length > 0) {
-      if (!efAereo.ok) return tecnico;
-      if (!efAereo.efectivos.ok) return { estado: "rechazado", motivo: `Bloqueo: ${efAereo.efectivos.error}` };
-      const permitidos = efAereo.efectivos.ids;
-      const info = await leerInfoFuentes(sb, [
-        ...vuelos.map((x) => ({ tipo: "bloqueo" as const, id: x.bloqueo_id })),
-        ...empaquetados.map((x) => ({ tipo: "empaquetado" as const, id: x.empaquetado_id })),
-      ]);
-      if (!info.ok) return tecnico;
-      permiteDestinoAereo = (t, id) => motivoRechazoFuente(permitidos, info.info.get(`${t}:${id}`) ?? null) === null;
+  async function evaluarPublicacionMontaje(): Promise<{ publicacionMontaje: PublicacionMontaje; textoTrmMontaje: string | undefined }> {
+    const fuentes = await cargarFuentesMoneda90(sb, paqueteId, { tipo: tipoPaquete, modo63 });
+    if (!fuentes.ok) {
+      return { publicacionMontaje: { estado: "rechazado", motivo: "No se pudieron leer los vínculos guardados del paquete para evaluar su moneda." }, textoTrmMontaje: undefined };
     }
-    return publicacionDeVinculosGuardados({ modo63, hoy: hoyBogota(new Date()), vuelos, empaquetados, hoteles, servicios, permiteDestinoAereo });
+    const ev = evaluarPublicacion90({
+      modo: modo63 ? "cop_trm_63" : "legacy",
+      monedaPublicacion: monedaElegida,
+      trm: (pq as { trm_oferta?: number | null }).trm_oferta,
+      fuentes: fuentes.fuentes,
+    });
+    const publicacionMontaje: PublicacionMontaje = ev.ok && ev.monedaPublicacion
+      ? { estado: "publicable", moneda: ev.monedaPublicacion }
+      : { estado: "rechazado", motivo: mensajeEvaluacion90(ev) };
+    return { publicacionMontaje, textoTrmMontaje: modo63 ? textoEstadoTrm90(ev) : undefined };
   }
 
   // El resultado puede superar el tope de 1000 filas de PostgREST; paginamos.
@@ -240,6 +228,7 @@ export default async function PaqueteDetallePage({
           destinosAereosIds: idsAlternativasGuardadas,
           modoOferta: (pq as { modo_oferta?: string | null }).modo_oferta ?? "legacy",
           trmOferta: (pq as { trm_oferta?: number | null }).trm_oferta ?? null,
+          monedaPublicacion: monedaElegida ?? null,
         }}
         destinosAereosError={destinosAereosErrorTotal}
         tieneDestino={!!destinoId}
@@ -256,6 +245,7 @@ export default async function PaqueteDetallePage({
         salidas={(salidas ?? []) as unknown as Parameters<typeof ArmadoClient>[0]["salidas"]}
         moneda={monedaPaquete}
         publicacionMontaje={publicacionMontaje}
+        textoTrmMontaje={textoTrmMontaje}
         pestanaInicial={pestanaInicial ?? null}
         tarifarioEstado={(pq as { tarifario_estado?: string | null }).tarifario_estado ?? null}
         tarifarioError={(pq as { tarifario_error?: string | null }).tarifario_error ?? null}

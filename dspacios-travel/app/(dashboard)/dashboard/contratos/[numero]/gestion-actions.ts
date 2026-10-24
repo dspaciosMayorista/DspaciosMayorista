@@ -45,7 +45,7 @@ export async function completarProveedores(
 }
 
 const MSG_PROTEGIDO_63 =
-  "Este contrato nació de una oferta en COP con TRM: sus costos y obligaciones con proveedores (principal, moneda, proveedor, retención) salen de lo aceptado y no se editan. Para corregir, anula el contrato y vuelve a reservar.";
+  "Este contrato nació de una oferta con conversión por TRM: sus costos y obligaciones con proveedores (principal, moneda, proveedor, retención) salen de lo aceptado y no se editan. Para corregir, anula el contrato y vuelve a reservar.";
 
 // ── Costos de la venta ───────────────────────────────────────────────────
 export async function guardarCostos(
