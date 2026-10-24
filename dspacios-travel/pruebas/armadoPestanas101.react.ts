@@ -29,6 +29,7 @@ const ACCIONES_PAQUETES = datos(`
   export async function setHotel(...a) { reg('setHotel', a); return { ok: true }; }
   export async function setTodosHoteles(...a) { reg('setTodosHoteles', a); return { ok: true }; }
   export async function setServicio(...a) { reg('setServicio', a); return ${G}.respServicio(a); }
+  export async function setServicios(...a) { reg('setServicios', a); return ${G}.respLote(a); }
   export async function generarTarifario(...a) { reg('generarTarifario', a); return { ok: true, id: 3 }; }
   export async function getTarifasHotel() { return { ok: true, modelo: 'persona', categorias: [], regimenes: [], tarifas: [] }; }
   export async function setHotelFiltros() { return { ok: true }; }
@@ -41,6 +42,7 @@ const ACCIONES_SALIDAS = datos(`
   export async function listarEmpaquetadosParaSalidas63() { return { ok: true, candidatos: [], pendientes: 0 }; }
   export async function vincularSalidasEmpaquetados63() { return { ok: true }; }
   export async function actualizarSalidaDesdeFuente63() { return { ok: true }; }
+  export async function desvincularSalidasEmpaquetados63() { return { ok: true, procesados: 0 }; }
 `);
 const ACCIONES_EMPAQUETADOS = datos(`
   export async function setEmpaquetado(...a) { ${G}.llamadas.push(['setEmpaquetado', a]); return { ok: true }; }
@@ -74,6 +76,7 @@ const p101 = {
   llamadas: [] as [string, unknown[]][],
   refrescos: 0,
   respServicio: (a: unknown[]): unknown => { void a; return { ok: true }; },
+  respLote: (a: unknown[]): unknown => ({ ok: true, procesados: (a[1] as unknown[]).length }),
 };
 (globalThis as unknown as { __p101: typeof p101 }).__p101 = p101;
 
@@ -89,6 +92,7 @@ afterEach(async () => {
   await desmontar?.(); desmontar = undefined;
   p101.llamadas.length = 0; p101.refrescos = 0;
   p101.respServicio = () => ({ ok: true });
+  p101.respLote = (a) => ({ ok: true, procesados: (a[1] as unknown[]).length });
   dom.window.history.replaceState(null, "", "/dashboard/paquetes/7");
 });
 after(() => dom.window.close());
@@ -283,48 +287,56 @@ test("las listas son plegables y la cabecera lleva el contador (seleccionados de
   assert.match(texto(raiz), /Hotel Uno/);
 });
 
-// ═══ Servicios: seleccionar todos (#98) ═══════════════════════════════════
-test("Seleccionar todos marca solo los servicios con tarifa, uno a uno con la acción de siempre, y refresca una vez", async () => {
+// ═══ Servicios: seleccionar todos (#98) → acción por lote (#107) ══════════
+const casillaTodos = (raiz: Element, re = /Seleccionar todos|Deseleccionar todos/) =>
+  [...raiz.querySelectorAll("label")].find((l) => re.test(l.textContent ?? ""))!.querySelector("input")!;
+const lotes = () => p101.llamadas.filter(([n]) => n === "setServicios").map(([, a]) => a);
+
+test("Seleccionar todos marca solo los servicios con tarifa en UNA acción por lote, y refresca una vez", async () => {
   const raiz = await montar(props("bloqueo", { pestanaInicial: "servicios" }));
   assert.match(texto(raiz), /Adición de servicios \(0 de 3\)/);
   assert.match(texto(raiz), /Sin tarifa configurada/);
-  const todos = [...raiz.querySelectorAll("label")].find((l) => /Seleccionar todos/.test(l.textContent ?? ""))!.querySelector("input")!;
-  await pulsar(todos);
-  const llamadas = p101.llamadas.filter(([n]) => n === "setServicio").map(([, a]) => a);
-  assert.deepEqual(llamadas, [[7, 41, true, "persona", false], [7, 42, true, "grupo", false]], "el 43 (sin tarifa) no entra");
+  await pulsar(casillaTodos(raiz));
+  assert.deepEqual(lotes(), [[7, [{ servicioId: 41, modo: "persona", incluido: false }, { servicioId: 42, modo: "grupo", incluido: false }], true]], "el 43 (sin tarifa) no entra");
+  assert.equal(p101.llamadas.filter(([n]) => n === "setServicio").length, 0, "ya no se guarda en serie");
   assert.equal(p101.refrescos, 1, "se refresca una sola vez al final");
+  assert.match(texto(raiz), /Se agregó 2 servicios./);
 });
 
-test("con todos los seleccionables marcados: casilla marcada, 'Deseleccionar todos' y desmarca lo marcado conservando nada más", async () => {
+test("con todos los seleccionables marcados: 'Deseleccionar todos' quita en un lote conservando modo e incluido", async () => {
   const sel = [{ servicio_id: 41, modo: "persona", incluido: true }, { servicio_id: 42, modo: "grupo", incluido: false }];
   const raiz = await montar(props("bloqueo", { pestanaInicial: "servicios", selServicios: sel }));
-  const etiqueta = [...raiz.querySelectorAll("label")].find((l) => /Deseleccionar todos/.test(l.textContent ?? ""))!;
-  assert.ok(etiqueta, "ofrece Deseleccionar todos");
-  const casilla = etiqueta.querySelector("input")!;
+  const casilla = casillaTodos(raiz, /Deseleccionar todos/);
   assert.equal(casilla.checked, true);
   assert.equal(casilla.indeterminate, false);
   await pulsar(casilla);
-  const llamadas = p101.llamadas.filter(([n]) => n === "setServicio").map(([, a]) => a);
-  assert.deepEqual(llamadas, [[7, 41, false, "persona", true], [7, 42, false, "grupo", false]]);
+  assert.deepEqual(lotes(), [[7, [{ servicioId: 41, modo: "persona", incluido: true }, { servicioId: 42, modo: "grupo", incluido: false }], false]]);
 });
 
-test("selección parcial: casilla en estado indeterminado y marcar completa solo los que faltan sin tocar los ya marcados", async () => {
+test("selección parcial: indeterminado, y marcar completa solo los que faltan sin reescribir los ya marcados", async () => {
   const raiz = await montar(props("bloqueo", { pestanaInicial: "servicios", selServicios: [{ servicio_id: 41, modo: "persona", incluido: true }] }));
-  const casilla = [...raiz.querySelectorAll("label")].find((l) => /Seleccionar todos/.test(l.textContent ?? ""))!.querySelector("input")!;
+  const casilla = casillaTodos(raiz);
   assert.equal(casilla.indeterminate, true);
   assert.equal(casilla.checked, false);
   await pulsar(casilla);
-  const llamadas = p101.llamadas.filter(([n]) => n === "setServicio").map(([, a]) => a);
-  assert.deepEqual(llamadas, [[7, 42, true, "grupo", false]], "el 41 ya estaba marcado (Incluido) y no se reescribe");
+  assert.deepEqual(lotes(), [[7, [{ servicioId: 42, modo: "grupo", incluido: false }], true]], "el 41 ya estaba marcado (Incluido) y no se reescribe");
 });
 
-test("si el servidor rechaza un servicio, se muestra el error y se detiene el lote", async () => {
-  p101.respServicio = (a) => ((a as unknown[])[1] === 41 ? { ok: false, error: "No se pudo guardar el servicio." } : { ok: true });
+test("si el servidor rechaza el lote, se muestra el error", async () => {
+  p101.respLote = () => ({ ok: false, error: "No se pudo guardar el servicio." });
   const raiz = await montar(props("bloqueo", { pestanaInicial: "servicios" }));
-  const casilla = [...raiz.querySelectorAll("label")].find((l) => /Seleccionar todos/.test(l.textContent ?? ""))!.querySelector("input")!;
-  await pulsar(casilla);
-  assert.match(texto(raiz), /No se pudo guardar el servicio\./);
-  assert.equal(p101.llamadas.filter(([n]) => n === "setServicio").length, 1, "no sigue con el 42");
+  await pulsar(casillaTodos(raiz));
+  assert.match(texto(raiz), /No se pudo guardar el servicio./);
+  assert.equal(lotes().length, 1);
+});
+
+test("resultado parcial: se explica qué elementos no se aplicaron y por qué", async () => {
+  p101.respLote = () => ({ ok: true, procesados: 1, omitidos: [{ id: 42, motivo: "El servicio #42 ya no existe." }] });
+  const raiz = await montar(props("bloqueo", { pestanaInicial: "servicios" }));
+  await pulsar(casillaTodos(raiz));
+  const estado = raiz.querySelector("[role=status]")!;
+  assert.match(estado.textContent ?? "", /Se agregó 1 servicio./);
+  assert.match(estado.textContent ?? "", /No se aplicó a 1 elemento: El servicio #42 ya no existe./);
 });
 
 // ═══ Tarifario resultado ══════════════════════════════════════════════════
@@ -354,10 +366,11 @@ test("agrupado por hotel, plegado por defecto, con nº de filas y precio DOBLE d
 
   await pulsar(uno);
   assert.equal(uno.getAttribute("aria-expanded"), "true");
-  const tablas = raiz.querySelectorAll("table");
-  assert.equal(tablas.length, 1, "solo el grupo abierto renderiza filas");
-  assert.equal(tablas[0].querySelectorAll("tbody tr").length, 4);
-  assert.match(texto(raiz), /Infante/);
+  const lineas = raiz.querySelectorAll("[data-testid=grupos-tarifa] > li");
+  assert.equal(lineas.length, 2, "ESTANDAR/PC y SUPERIOR/PC: una línea por categoría × vigencia × régimen");
+  assert.equal(raiz.querySelectorAll("table").length, 0, "el detalle va en una ventana flotante, no en la página");
+  assert.match(lineas[0].textContent ?? "", /ESTANDAR/);
+  assert.match(lineas[0].textContent ?? "", new RegExp(`Doble desde\\s*${formatCOP(2_000_000).replace(/[$.]/g, "\\$&")}`));
 });
 
 test("un hotel sin fila doble lo dice en vez de inventar una referencia", async () => {

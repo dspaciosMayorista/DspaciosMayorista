@@ -7,12 +7,16 @@ import {
   type LucideIcon,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { DialogoConfirmar } from "@/components/ui/DialogoConfirmar";
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from "@/components/ui/dialog";
+import { estadoSeleccionTodos, mensajeLote } from "@/lib/paquetes/seleccionMasiva";
+import { agruparPorCategoriaVigenciaRegimen, type FilaDetalle, type GrupoTarifa } from "@/lib/paquetes/tarifarioGrupos";
 import { Input } from "@/components/ui/input";
 import { formatCOP, formatMoneda } from "@/lib/utils";
 import { ConfigForm } from "../ConfigForm";
 import { SalidasDinamicasEditor, type SalidaDinamica } from "./SalidasDinamicasEditor";
 import {
-  setVuelo, setTodosVuelos, setHotel, setTodosHoteles, setServicio, generarTarifario,
+  setVuelo, setTodosVuelos, setHotel, setTodosHoteles, setServicio, setServicios, generarTarifario,
   getTarifasHotel, setHotelFiltros, setHotelPrioridad, type TarifaHotelPreview, type TarifaUnidadPreview,
 } from "../actions";
 import { setEmpaquetado } from "../../vuelos/empaquetados-actions";
@@ -58,6 +62,9 @@ type Resultado = {
   precio_final_autoritativo: boolean | null;
   procedencia_temporadas: unknown;
   procedencia_mixta: boolean;
+  // #101b — datos de la salida para rotular el detalle con ruta + fechas.
+  fecha_ida?: string | null; fecha_regreso?: string | null; salida_id?: number | null;
+  bloqueo_id?: number | null; empaquetado_id?: number | null; moneda?: string | null;
 };
 
 const ACOM_LBL: Record<string, string> = {
@@ -72,20 +79,6 @@ function EstadoIcono({ clave }: { clave: ClaveEstadoTarifario }) {
   if (clave === "publicado") return <CheckCircle2 className="h-4 w-4" style={{ color: "var(--brand-success)" }} aria-hidden="true" />;
   if (clave === "fallido") return <XCircle className="h-4 w-4 text-red-600" aria-hidden="true" />;
   return <RefreshCw className="h-4 w-4 text-amber-600" aria-hidden="true" />;
-}
-
-// Etiqueta de procedencia del tarifario administrativo (defecto 2, sep-2026):
-// lee EXCLUSIVAMENTE `temporada_ganadora`/`es_promocion`/`procedencia_mixta`
-// (columnas de la migración 180, ya escritas por `generarTarifario` vía
-// `lib/tarifario/procedenciaTarifario.ts`) — nunca se infiere por precio,
-// nombre o notas. Mismo criterio de clasificación que `IdentidadTemporadaBadge`
-// (app/tarifario/VistaBooking.tsx, carrito público): `es_promocion` es la
-// clasificación GENERAL por `hotel_temporadas.tipo`, independiente de
-// `precio_final_autoritativo` (detalle técnico interno, nunca decide el texto).
-function procedenciaLabel(r: Resultado): string | null {
-  if (r.procedencia_mixta) return "Tarifa mixta";
-  if (r.temporada_ganadora == null) return null; // fila histórica sin procedencia calculada — no se afirma nada
-  return r.es_promocion ? `Promoción · ${r.temporada_ganadora}` : `Base · ${r.temporada_ganadora}`;
 }
 
 export function ArmadoClient(props: {
@@ -228,22 +221,39 @@ export function ArmadoClient(props: {
   const [errServicios, setErrServicios] = useState("");
   const serviciosSeleccionables = props.serviciosDisp.filter(servicioSeleccionable);
   const nSeleccionablesMarcados = serviciosSeleccionables.filter((s) => servSel.has(s.id)).length;
+  // UNA acción de servidor para todo el lote (antes: una por servicio, en serie) y UN refresh al final.
+  const [avisoServicios, setAvisoServicios] = useState<{ tono: "ok" | "aviso"; texto: string } | null>(null);
   function marcarTodosServicios(marcar: boolean) {
     setErrServicios("");
+    setAvisoServicios(null);
     startServicios(async () => {
       const objetivo = marcar
         ? serviciosSeleccionables.filter((s) => !servSel.has(s.id))
         : props.serviciosDisp.filter((s) => servSel.has(s.id));
-      for (const s of objetivo) {
-        const modo: "persona" | "grupo" = (servSel.get(s.id)?.modo as "persona" | "grupo" | undefined) ?? (s.precio_persona != null ? "persona" : "grupo");
-        const r = await setServicio(props.paqueteId, s.id, marcar, modo, servSel.get(s.id)?.incluido ?? false);
-        if (!r.ok) {
-          setErrServicios(r.error);
-          break;
-        }
-      }
+      if (!objetivo.length) return;
+      const items = objetivo.map((s) => ({
+        servicioId: s.id,
+        modo: ((servSel.get(s.id)?.modo as "persona" | "grupo" | undefined) ?? (s.precio_persona != null ? "persona" : "grupo")) as "persona" | "grupo",
+        incluido: servSel.get(s.id)?.incluido ?? false,
+      }));
+      const r = await setServicios(props.paqueteId, items, marcar);
+      const m = mensajeLote(r, { singular: "servicio", plural: "servicios", accion: marcar ? "agregó" : "quitó" });
+      if (m.tono === "error") setErrServicios(m.texto);
+      else setAvisoServicios({ tono: m.tono, texto: m.texto });
       refrescar();
     });
+  }
+
+  // Hoteles: lote ya existente (setTodosHoteles); ahora se muestra su error y quitar todos pide confirmación porque
+  // borra también las categorías/regímenes y la prioridad que se hubieran afinado por hotel.
+  const [errHoteles, setErrHoteles] = useState("");
+  const [confirmarQuitarHoteles, setConfirmarQuitarHoteles] = useState(false);
+  async function aplicarTodosHoteles(marcar: boolean): Promise<{ ok: boolean; error?: string }> {
+    setErrHoteles("");
+    const r = await setTodosHoteles(props.paqueteId, props.hotelesDisp.map((h) => h.id), marcar);
+    if (!r.ok) setErrHoteles(r.error);
+    refrescar();
+    return r.ok ? { ok: true } : { ok: false, error: r.error };
   }
 
   if (!props.tieneDestino) {
@@ -343,7 +353,7 @@ export function ArmadoClient(props: {
                           })
                         }
                       />
-                      Seleccionar todos
+                      {estadoSeleccionTodos(props.vuelosDisp.length, vueloSel.size).etiqueta}
                     </label>
                     <ul className="divide-y divide-gray-100">
                       {props.vuelosDisp.map((v) => (
@@ -428,19 +438,25 @@ export function ArmadoClient(props: {
                     ref={(el) => {
                       if (el) el.indeterminate = hotelSel.size > 0 && hotelSel.size < props.hotelesDisp.length;
                     }}
-                    onChange={(e) =>
-                      start(async () => {
-                        await setTodosHoteles(
-                          props.paqueteId,
-                          props.hotelesDisp.map((h) => h.id),
-                          e.target.checked
-                        );
-                        refrescar();
-                      })
-                    }
+                    onChange={(e) => {
+                      if (!e.target.checked) { setConfirmarQuitarHoteles(true); return; }
+                      start(async () => { await aplicarTodosHoteles(true); });
+                    }}
                   />
-                  Seleccionar todos
+                  {estadoSeleccionTodos(props.hotelesDisp.length, hotelSel.size).etiqueta}
                 </label>
+                {errHoteles && (
+                  <p className="mb-2 rounded-lg border border-red-200 bg-red-50 p-3 text-sm text-red-700" role="alert">{errHoteles}</p>
+                )}
+                <DialogoConfirmar
+                  open={confirmarQuitarHoteles}
+                  onOpenChange={setConfirmarQuitarHoteles}
+                  titulo="¿Quitar todos los hoteles del paquete?"
+                  descripcion="Se quitan los hoteles seleccionados junto con sus categorías, regímenes y prioridad. El tarifario se actualiza al generarlo de nuevo."
+                  etiquetaConfirmar="Quitar todos"
+                  destructivo
+                  onConfirmar={() => aplicarTodosHoteles(false)}
+                />
                 <ul className="divide-y divide-gray-100">
                   {props.hotelesDisp.map((h) => (
                     <HotelRow
@@ -471,6 +487,14 @@ export function ArmadoClient(props: {
                 {errServicios && (
                   <p className="mb-2 rounded-lg border border-red-200 bg-red-50 p-3 text-sm text-red-700" role="alert">{errServicios}</p>
                 )}
+                {avisoServicios && (
+                  <p
+                    role="status"
+                    className={`mb-2 rounded-lg border p-3 text-sm ${avisoServicios.tono === "aviso" ? "border-amber-200 bg-amber-50 text-amber-800" : "border-green-200 bg-green-50 text-green-800"}`}
+                  >
+                    {avisoServicios.texto}
+                  </p>
+                )}
                 <label className="mb-1 flex items-center gap-2 border-b border-gray-100 pb-2 text-sm font-medium text-gray-700">
                   <input
                     type="checkbox"
@@ -481,9 +505,7 @@ export function ArmadoClient(props: {
                     }}
                     onChange={(e) => marcarTodosServicios(e.target.checked)}
                   />
-                  {nSeleccionablesMarcados === serviciosSeleccionables.length && serviciosSeleccionables.length > 0
-                    ? "Deseleccionar todos"
-                    : "Seleccionar todos"}
+                  {estadoSeleccionTodos(serviciosSeleccionables.length, nSeleccionablesMarcados).etiqueta}
                   {guardandoServicios && <span className="text-xs font-normal text-gray-500">Guardando…</span>}
                 </label>
                 <ul className="divide-y divide-gray-100">
@@ -1230,6 +1252,83 @@ function ServicioRow({
   );
 }
 
+// #101b — una línea compacta por categoría × vigencia × régimen; al pulsarla se abre una ventana flotante con el detalle.
+function GrupoTarifaLinea({ hotel, grupo }: { hotel: string; grupo: GrupoTarifa }) {
+  const [abierto, setAbierto] = useState(false);
+  const moneda = grupo.moneda;
+  return (
+    <li>
+      <button
+        type="button"
+        onClick={() => setAbierto(true)}
+        aria-haspopup="dialog"
+        className="flex w-full flex-wrap items-center justify-between gap-2 px-3 py-2 text-left text-sm hover:bg-gray-50"
+      >
+        <span className="min-w-0 text-gray-700">
+          <span className="font-medium">{grupo.categoria}</span>
+          <span className="text-gray-300"> · </span>{grupo.vigencia}
+          <span className="text-gray-300"> · </span>{grupo.regimen}
+        </span>
+        <span className="text-xs text-gray-500">
+          {grupo.dobleDesde != null ? (
+            <>Doble desde <b className="tabular-nums" style={{ color: "var(--brand-primary)" }}>{formatMoneda(grupo.dobleDesde, moneda)}</b></>
+          ) : "Sin tarifa doble"}
+          {grupo.variaPorSalida && <span className="ml-2 rounded bg-amber-50 px-1.5 py-0.5 text-[11px] font-medium text-amber-700">Varía por salida</span>}
+        </span>
+      </button>
+      <Dialog open={abierto} onOpenChange={setAbierto}>
+        <DialogContent className="max-h-[85vh] overflow-y-auto sm:max-w-3xl">
+          <DialogHeader>
+            <DialogTitle>{hotel}</DialogTitle>
+            <DialogDescription>
+              {grupo.categoria} · {grupo.vigencia} · {grupo.regimen}
+              {grupo.variaPorSalida ? " — el precio cambia según la salida." : ""}
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-4">
+            {grupo.bloques.map((bl, idx) => (
+              <div key={idx} className="rounded-lg border border-gray-100">
+                {grupo.variaPorSalida && (
+                  <p className="border-b border-gray-100 bg-gray-50 px-3 py-1.5 text-xs font-medium text-gray-600" data-testid="salidas-del-bloque">
+                    {bl.salidas.join(" · ")}
+                  </p>
+                )}
+                {!grupo.variaPorSalida && grupo.nSalidas > 1 && (
+                  <p className="border-b border-gray-100 bg-gray-50 px-3 py-1.5 text-xs text-gray-500">Mismo precio en las {grupo.nSalidas} salidas.</p>
+                )}
+                <div className="overflow-x-auto">
+                  <table className="w-full text-sm">
+                    <thead className="text-xs text-gray-500">
+                      <tr className="border-b border-gray-100">
+                        <th className="px-3 py-1.5 text-left">Acomodación</th>
+                        <th className="px-3 py-1.5 text-right">Noches</th>
+                        <th className="px-3 py-1.5 text-right">Base com.</th>
+                        <th className="px-3 py-1.5 text-right">Impuesto</th>
+                        <th className="px-3 py-1.5 text-right">PVP /pax</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {bl.lineas.map((l, i) => (
+                        <tr key={i} className="border-t border-gray-50">
+                          <td className="px-3 py-1.5">{ACOM_LBL[l.acomodacion ?? ""] ?? l.acomodacion}</td>
+                          <td className="px-3 py-1.5 text-right tabular-nums">{l.noches}</td>
+                          <td className="px-3 py-1.5 text-right tabular-nums text-gray-500">{formatMoneda(l.base, moneda)}</td>
+                          <td className="px-3 py-1.5 text-right tabular-nums text-gray-500">{formatMoneda(l.impuesto, moneda)}</td>
+                          <td className="px-3 py-1.5 text-right tabular-nums font-semibold" style={{ color: "var(--brand-primary)" }}>{formatMoneda(l.pvp, moneda)}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            ))}
+          </div>
+        </DialogContent>
+      </Dialog>
+    </li>
+  );
+}
+
 function ResultadoTabla({ filas }: { filas: Resultado[] }) {
   if (!filas.length) {
     return (
@@ -1261,61 +1360,11 @@ function ResultadoTabla({ filas }: { filas: Resultado[] }) {
             </span>
           }
         >
-          <div className="overflow-x-auto rounded-lg border border-gray-100">
-            <table className="w-full text-sm">
-              <thead className="text-xs text-gray-500">
-                <tr className="border-b border-gray-100">
-                  <th className="px-3 py-1.5 text-left">Salida</th>
-                  <th className="px-3 py-1.5 text-left">Categoría</th>
-                  <th className="px-3 py-1.5 text-left">Régimen</th>
-                  <th className="px-3 py-1.5 text-left">Procedencia</th>
-                  <th className="px-3 py-1.5 text-left">Acom.</th>
-                  <th className="px-3 py-1.5 text-right">Noches</th>
-                  <th className="px-3 py-1.5 text-right">Base com.</th>
-                  <th className="px-3 py-1.5 text-right">Impuesto</th>
-                  <th className="px-3 py-1.5 text-right">PVP /pax</th>
-                </tr>
-              </thead>
-              <tbody>
-                {g.filas.map((r) => {
-                  const procedencia = procedenciaLabel(r);
-                  const salida = r.bloqueo_label ?? (r.modulo === "porcion_terrestre" ? "Porción terrestre" : "—");
-                  return (
-                    <tr key={r.id} className="border-t border-gray-50">
-                      <td className="px-3 py-1.5 text-gray-600">{salida}</td>
-                      <td className="px-3 py-1.5">{r.categoria ?? "—"}</td>
-                      <td className="px-3 py-1.5">{r.regimen ?? "—"}</td>
-                      <td className="px-3 py-1.5">
-                        {procedencia == null ? (
-                          <span className="text-gray-300">—</span>
-                        ) : (
-                          <span
-                            className="rounded-full px-2 py-0.5 text-[11px] font-semibold uppercase tracking-wide"
-                            style={
-                              r.procedencia_mixta
-                                ? { backgroundColor: "#fffbeb", color: "#d97706" }
-                                : r.es_promocion
-                                ? { backgroundColor: "#ecfdf5", color: "#059669" }
-                                : { backgroundColor: "#eff6ff", color: "#2563eb" }
-                            }
-                          >
-                            {procedencia}
-                          </span>
-                        )}
-                      </td>
-                      <td className="px-3 py-1.5">{ACOM_LBL[r.acomodacion ?? ""] ?? r.acomodacion}</td>
-                      <td className="px-3 py-1.5 text-right tabular-nums">{r.noches}</td>
-                      <td className="px-3 py-1.5 text-right tabular-nums text-gray-500">{formatCOP(r.base_comisionable)}</td>
-                      <td className="px-3 py-1.5 text-right tabular-nums text-gray-500">{formatCOP(r.impuesto)}</td>
-                      <td className="px-3 py-1.5 text-right tabular-nums font-semibold" style={{ color: "var(--brand-primary)" }}>
-                        {formatCOP(r.precio_pvp)}
-                      </td>
-                    </tr>
-                  );
-                })}
-              </tbody>
-            </table>
-          </div>
+          <ul className="divide-y divide-gray-100 rounded-lg border border-gray-100" data-testid="grupos-tarifa">
+            {agruparPorCategoriaVigenciaRegimen(g.filas as unknown as FilaDetalle[]).map((gr) => (
+              <GrupoTarifaLinea key={gr.clave} hotel={g.hotel} grupo={gr} />
+            ))}
+          </ul>
         </Section>
       ))}
 

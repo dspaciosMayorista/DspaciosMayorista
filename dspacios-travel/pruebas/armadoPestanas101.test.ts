@@ -100,7 +100,7 @@ describe("cableado: solo interfaz", () => {
     const imp = cliente.match(/import \{([^}]*)\} from "\.\.\/actions";/);
     assert.ok(imp);
     const nombres = imp[1].split(",").map((s) => s.trim()).filter(Boolean).filter((s) => !s.startsWith("type "));
-    assert.deepEqual(nombres.sort(), ["generarTarifario", "getTarifasHotel", "setHotel", "setHotelFiltros", "setHotelPrioridad", "setServicio", "setTodosHoteles", "setTodosVuelos", "setVuelo"].sort());
+    assert.deepEqual(nombres.sort(), ["generarTarifario", "getTarifasHotel", "setHotel", "setHotelFiltros", "setHotelPrioridad", "setServicio", "setServicios", "setTodosHoteles", "setTodosVuelos", "setVuelo"].sort());
   });
   test("page.tsx entrega la pestaña (?tab=) y el estado del tarifario leído de armado_paquetes", () => {
     assert.match(pagina, /searchParams\?: Promise<\{ tab\?: string \| string\[\] \}>/);
