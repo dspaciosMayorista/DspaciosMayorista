@@ -2,6 +2,7 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
 import { getProgramaDetalle } from "@/lib/programas";
+import { desdeDobleDetallePrograma } from "@/lib/tarifario/desdeDoble";
 import { programaVisibleEnPublico } from "@/lib/programas/destinoFijo";
 import { formatMoneda, formatFechaLarga } from "@/lib/utils";
 import { Logo } from "@/components/Logo";
@@ -51,6 +52,8 @@ export default async function ProgramaVitrinaPage({ params }: { params: Promise<
 
   const { programa: p } = det;
   const moneda = p.moneda;
+  // «Desde» (TASKS #92): solo una DOBLE publicable; el desde_precio manual no se rotula «Desde».
+  const desde = desdeDobleDetallePrograma(det);
   const incluye = det.inclusiones.filter((x) => x.tipo === "incluye");
   const noIncluye = det.inclusiones.filter((x) => x.tipo === "no_incluye");
 
@@ -95,13 +98,17 @@ export default async function ProgramaVitrinaPage({ params }: { params: Promise<
             {p.dias ? ` · ${p.dias} días / ${p.noches ?? ""} noches` : ""}
             {p.salidas ? ` · Salidas: ${p.salidas}` : ""}
           </p>
-          {p.desde_precio != null && p.desde_precio > 0 && (
-            <p className="mt-2 text-sm">
-              <span className="opacity-80">Desde</span>{" "}
-              <span className="text-xl font-semibold">{formatMoneda(p.desde_precio, moneda)}</span>{" "}
-              <span className="opacity-80">por persona</span>
-            </p>
-          )}
+          <p className="mt-2 text-sm">
+            {desde != null ? (
+              <>
+                <span className="opacity-80">Desde</span>{" "}
+                <span className="text-xl font-semibold">{formatMoneda(desde, moneda)}</span>{" "}
+                <span className="opacity-80">por persona</span>
+              </>
+            ) : (
+              <span className="text-base font-semibold">Consultar</span>
+            )}
+          </p>
           {(p.vigencia_desde || p.vigencia_hasta) && (
             <p className="mt-1 text-xs opacity-80">
               Vigencia: {formatFechaLarga(p.vigencia_desde)} — {formatFechaLarga(p.vigencia_hasta)}

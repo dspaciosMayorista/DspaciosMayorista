@@ -6,6 +6,7 @@ import { agenciaDe } from "@/lib/tenant.server";
 import { formatMoneda, formatFechaLarga } from "@/lib/utils";
 import { Logo } from "@/components/Logo";
 import { DocToolbar } from "./DocToolbar";
+import { desdeDobleDetallePrograma } from "@/lib/tarifario/desdeDoble";
 import { Check, X, MapPin, CalendarRange, Plane, Bus, Users, BadgeCheck, Sparkles } from "lucide-react";
 
 export const dynamic = "force-dynamic";
@@ -79,12 +80,8 @@ export default async function ProgramaDocPage({
   const ruta = det.ciudades.map((c) => c.nombre).filter(Boolean).join(" · ") || p.subtitulo || "";
   const highlights = (p.highlights ?? []).filter(Boolean);
 
-  // "Desde" para la portada: el manual de la cabecera manda; si no, el mínimo PVP real.
-  const pvps = [
-    ...det.categorias.flatMap((c) => c.precios.map((pr) => pr.pvp)),
-    ...det.salidas.flatMap((s) => s.precios.map((pr) => pr.pvp)),
-  ].filter((n): n is number => n != null && n > 0);
-  const desde = p.desde_precio && p.desde_precio > 0 ? Number(p.desde_precio) : (pvps.length ? Math.min(...pvps) : null);
+  // "Desde" para la portada (TASKS #92): solo una DOBLE publicable; el desde_precio manual no se rotula «Desde». Sin DOBLE → «Consultar».
+  const desde = desdeDobleDetallePrograma(det);
 
   const sellos = [
     p.tipo_transporte === "aereo" ? "Con aéreo" : p.tipo_transporte === "terrestre" ? "Salida terrestre" : "Porción terrestre",
@@ -128,11 +125,13 @@ export default async function ProgramaDocPage({
                 <div className="mt-3 flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-white/90">
                   {p.dias && <span className="inline-flex items-center gap-1"><CalendarRange size={13} /> {p.dias} días / {p.noches ?? ""} noches</span>}
                   {ruta && <span className="inline-flex items-center gap-1"><MapPin size={13} /> {ruta}</span>}
-                  {desde != null && (
-                    <span className="inline-flex items-center gap-1 rounded-full bg-white/20 px-2 py-0.5 font-semibold">
-                      Desde {formatMoneda(desde, moneda)} <span className="font-normal text-white/80">/persona</span>
-                    </span>
-                  )}
+                  <span className="inline-flex items-center gap-1 rounded-full bg-white/20 px-2 py-0.5 font-semibold">
+                    {desde != null ? (
+                      <>Desde {formatMoneda(desde, moneda)} <span className="font-normal text-white/80">/persona</span></>
+                    ) : (
+                      "Consultar"
+                    )}
+                  </span>
                 </div>
               </div>
             </section>

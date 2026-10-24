@@ -2,7 +2,7 @@
 
 import { useMemo, useState } from "react";
 import Link from "next/link";
-import { formatCOP } from "@/lib/utils";
+import { formatMoneda } from "@/lib/utils";
 import { EliminarPaqueteBtn } from "./EliminarPaqueteBtn";
 import { TABS_TIPO_PAQUETE, construirUrlConTab, filtrarYOrdenarPaquetes, type TipoPaquete } from "./tipo-paquetes";
 
@@ -16,7 +16,8 @@ export type PaqueteItem = {
   fechaViajeInicio: string | null;
   fechaViajeFin: string | null;
   nTarifas: number;
-  desde: number | null;
+  /** «Desde» = tarifa DOBLE publicable, un importe por moneda (nunca mezcladas). Vacío = «Consultar». */
+  desde: { moneda: string; valor: number }[];
 };
 
 export function PaquetesListado({ paquetes, tabInicial }: { paquetes: PaqueteItem[]; tabInicial: TipoPaquete }) {
@@ -107,9 +108,21 @@ export function PaquetesListado({ paquetes, tabInicial }: { paquetes: PaqueteIte
                   <span className="text-xs text-gray-500">
                     {p.nTarifas > 0 ? `${p.nTarifas} tarifas publicadas` : "Sin publicar"}
                   </span>
-                  {p.desde != null && p.desde > 0 && (
+                  {p.nTarifas > 0 && (
                     <span className="text-sm">
-                      Desde <b style={{ color: "var(--brand-primary)" }}>{formatCOP(p.desde)}</b>
+                      {p.desde.length ? (
+                        <>
+                          Desde{" "}
+                          {p.desde.map((d, i) => (
+                            <span key={d.moneda}>
+                              {i > 0 && <span className="text-gray-400"> · </span>}
+                              <b style={{ color: "var(--brand-primary)" }}>{formatMoneda(d.valor, d.moneda)}</b>
+                            </span>
+                          ))}
+                        </>
+                      ) : (
+                        <span className="text-gray-400">Consultar</span>
+                      )}
                     </span>
                   )}
                 </div>

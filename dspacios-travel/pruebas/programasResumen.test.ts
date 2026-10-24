@@ -206,17 +206,52 @@ describe("getProgramasResumen() — equivalencia funcional (fórmula PVP, 'Desde
     assert.ok(!filtrosEq.some(([t, c]) => t === "programas" && c === "publicado"), "soloPublicados=false NUNCA debe filtrar por publicado");
   });
 
-  test("'Desde' manual (desde_precio) manda sobre el mínimo calculado de la matriz", async () => {
-    const conManual: Fila = { ...PROGRAMA_BASE, id: 2, desde_precio: 999 };
+  test("TASKS #92: un desde_precio manual NO se rotula «Desde»: el resumen muestra el PVP de la DOBLE, no el manual", async () => {
     const { sb } = clienteFalso({
-      programas: { data: [conManual], error: null },
+      programas: { data: [{ ...PROGRAMA_BASE, id: 2, desde_precio: 999 }], error: null },
       programa_categorias: { data: [{ id: 200, programa_id: 2 }], error: null },
       programa_ciudades: { data: [], error: null },
       programa_salidas: { data: [], error: null },
-      programa_precios: { data: [{ categoria_id: 200, neto: 100 }], error: null },
+      programa_precios: { data: [{ categoria_id: 200, neto: 100, bajo_solicitud: false }], error: null },
     });
     const r = await getProgramasResumen(sb, true);
-    assert.equal(r.programas[0].desde_pvp, 999, "el manual debe ganar aunque haya un neto calculable en la matriz");
+    assert.equal(r.programas[0].desde_pvp, pvpPrograma(100, { pctMk: 0.25, asistenciaDia: 2, dias: 5, pctFee: 0.03, moneda: "USD" }), "el manual (999) no puede ganar sobre la DOBLE calculada");
+  });
+
+  test("TASKS #92: con desde_precio manual y SIN DOBLE publicable el resumen devuelve null («Consultar»), nunca el manual", async () => {
+    const { sb } = clienteFalso({
+      programas: { data: [{ ...PROGRAMA_BASE, id: 3, desde_precio: 999 }], error: null },
+      programa_categorias: { data: [{ id: 300, programa_id: 3 }], error: null },
+      programa_ciudades: { data: [], error: null },
+      programa_salidas: { data: [], error: null },
+      programa_precios: { data: [], error: null },
+    });
+    const r = await getProgramasResumen(sb, true);
+    assert.equal(r.programas[0].desde_pvp, null);
+  });
+
+  test("TASKS #92: en categorías, una DOBLE bajo_solicitud NO fija el «Desde» (igual que getProgramaDetalle)", async () => {
+    const { sb } = clienteFalso({
+      programas: { data: [PROGRAMA_BASE], error: null },
+      programa_categorias: { data: [{ id: 100, programa_id: 1 }, { id: 101, programa_id: 1 }], error: null },
+      programa_ciudades: { data: [], error: null },
+      programa_salidas: { data: [], error: null },
+      programa_precios: { data: [{ categoria_id: 100, neto: 100, bajo_solicitud: true }, { categoria_id: 101, neto: 300, bajo_solicitud: false }], error: null },
+    });
+    const r = await getProgramasResumen(sb, true);
+    assert.equal(r.programas[0].desde_pvp, pvpPrograma(300, { pctMk: 0.25, asistenciaDia: 2, dias: 5, pctFee: 0.03, moneda: "USD" }), "100 está bajo solicitud: debe ignorarse");
+  });
+
+  test("TASKS #92: si TODAS las DOBLE de categorías están bajo_solicitud → null («Consultar»)", async () => {
+    const { sb } = clienteFalso({
+      programas: { data: [PROGRAMA_BASE], error: null },
+      programa_categorias: { data: [{ id: 100, programa_id: 1 }], error: null },
+      programa_ciudades: { data: [], error: null },
+      programa_salidas: { data: [], error: null },
+      programa_precios: { data: [{ categoria_id: 100, neto: 100, bajo_solicitud: true }], error: null },
+    });
+    const r = await getProgramasResumen(sb, true);
+    assert.equal(r.programas[0].desde_pvp, null);
   });
 
   test("fórmula PVP: modo categorías (programa_precios) reproduce EXACTAMENTE pvpPrograma()", async () => {
@@ -232,7 +267,7 @@ describe("getProgramasResumen() — equivalencia funcional (fórmula PVP, 'Desde
     assert.equal(r.programas[0].desde_pvp, esperado, "debe tomar el MÍNIMO neto (300, no 500) y aplicar la misma fórmula que pvpPrograma()");
   });
 
-  test("fórmula PVP: modo salidas (programa_salidas) también usa el mínimo neto entre acomodaciones, ignora bajo_solicitud", async () => {
+  test("fórmula PVP: modo salidas (programa_salidas) usa el mínimo de la DOBLE entre salidas, ignora bajo_solicitud", async () => {
     const { sb } = clienteFalso({
       programas: { data: [PROGRAMA_BASE], error: null },
       programa_categorias: { data: [], error: null },
@@ -248,6 +283,43 @@ describe("getProgramasResumen() — equivalencia funcional (fórmula PVP, 'Desde
     const r = await getProgramasResumen(sb, true);
     const esperado = pvpPrograma(400, { pctMk: 0.25, asistenciaDia: 2, dias: 5, pctFee: 0.03, moneda: "USD" });
     assert.equal(r.programas[0].desde_pvp, esperado, "400 (doble) es menor que 800 (sencilla); la fila bajo_solicitud=true (100) debe ignorarse por completo");
+  });
+
+  test("TASKS #92: «Desde» nunca toma sencilla/triple/múltiple/niño aunque sean más baratos que la DOBLE (modo salidas)", async () => {
+    const { sb } = clienteFalso({
+      programas: { data: [PROGRAMA_BASE], error: null },
+      programa_categorias: { data: [], error: null },
+      programa_ciudades: { data: [], error: null },
+      programa_salidas: {
+        data: [{ programa_id: 1, neto_sencilla: 50, neto_doble: 400, neto_triple: 60, neto_multiple: 70, neto_nino: 10, bajo_solicitud: false }],
+        error: null,
+      },
+    });
+    const r = await getProgramasResumen(sb, true);
+    assert.equal(r.programas[0].desde_pvp, pvpPrograma(400, { pctMk: 0.25, asistenciaDia: 2, dias: 5, pctFee: 0.03, moneda: "USD" }));
+  });
+
+  test("TASKS #92: salida sin DOBLE (solo sencilla/niño) → desde_pvp null (\"Consultar\"), no un precio de otra acomodación", async () => {
+    const { sb } = clienteFalso({
+      programas: { data: [PROGRAMA_BASE], error: null },
+      programa_categorias: { data: [], error: null },
+      programa_ciudades: { data: [], error: null },
+      programa_salidas: { data: [{ programa_id: 1, neto_sencilla: 50, neto_doble: null, neto_triple: null, neto_multiple: null, neto_nino: 10, bajo_solicitud: false }], error: null },
+    });
+    const r = await getProgramasResumen(sb, true);
+    assert.equal(r.programas[0].desde_pvp, null);
+  });
+
+  test("TASKS #92: modo categorías pide a la base SOLO acomodacion = doble", async () => {
+    const { sb, filtrosEq } = clienteFalso({
+      programas: { data: [PROGRAMA_BASE], error: null },
+      programa_categorias: { data: [{ id: 100, programa_id: 1 }], error: null },
+      programa_ciudades: { data: [], error: null },
+      programa_salidas: { data: [], error: null },
+      programa_precios: { data: [{ categoria_id: 100, neto: 300 }], error: null },
+    });
+    await getProgramasResumen(sb, true);
+    assert.ok(filtrosEq.some(([t, c, v]) => t === "programa_precios" && c === "acomodacion" && v === "doble"));
   });
 
   test("ciudades por programa se agrupan y ordenan por `orden`, tipo_transporte y portada se preservan", async () => {

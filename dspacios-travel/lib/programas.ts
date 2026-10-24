@@ -140,13 +140,15 @@ export async function getProgramasResumen(sb: SB, soloPublicados = true): Promis
   if (catIds.length) {
     const { data: precios, error: ePrecios } = await sb
       .from("programa_precios")
-      .select("categoria_id, neto")
+      .select("categoria_id, acomodacion, neto, bajo_solicitud")
       .in("categoria_id", catIds)
+      .eq("acomodacion", "doble") // «Desde» (TASKS #92): solo la tarifa DOBLE
       .not("neto", "is", null);
     errorPrecios = ePrecios;
     for (const row of precios ?? []) {
       const pid = catToProg.get(row.categoria_id);
       if (pid == null) continue;
+      if (row.bajo_solicitud) continue; // «Desde» (TASKS #92): igual que getProgramaDetalle, un precio bajo solicitud no se publica
       const p = programaById.get(pid);
       if (!p) continue;
       const neto = Number(row.neto ?? 0);
@@ -191,6 +193,8 @@ export async function getProgramasResumen(sb: SB, soloPublicados = true): Promis
     const optNueva: PvpOpciones = { ...optVieja, dias: s.noches != null ? s.noches : p.dias };
 
     for (const [netoCol, tarifaCol, impuestoCol] of ACOM_RESUMEN) {
+      // «Desde» (TASKS #92): de la salida solo cuenta la acomodación DOBLE; sencilla/triple/múltiple/niño nunca fijan el mínimo.
+      if (netoCol !== "neto_doble") continue;
       const neto = s[netoCol] as number | null;
       const tarifa = tarifaCol ? (s[tarifaCol] as number | null) : null;
       const usaTarifaProveedor = tarifa != null && Number.isFinite(Number(tarifa)) && Number(tarifa) > 0;
@@ -228,8 +232,8 @@ export async function getProgramasResumen(sb: SB, soloPublicados = true): Promis
 
   const resultado = programas.map((p) => {
     const pvpMin = minPvp.get(p.id);
-    // El "Desde" manual de la cabecera manda sobre el mínimo calculado de la matriz.
-    const desdeManual = p.desde_precio != null && p.desde_precio > 0 ? Number(p.desde_precio) : null;
+    // «Desde» (TASKS #92): SOLO el PVP de una DOBLE publicable. El desde_precio manual de la cabecera se conserva como dato
+    // histórico pero no se rotula «Desde» en ninguna superficie pública (no está vinculado a una DOBLE); sin DOBLE → null.
     return {
       id: p.id,
       nombre: p.nombre,
@@ -237,7 +241,7 @@ export async function getProgramasResumen(sb: SB, soloPublicados = true): Promis
       dias: p.dias,
       noches: p.noches,
       moneda: p.moneda,
-      desde_pvp: desdeManual ?? (pvpMin != null ? pvpMin : null),
+      desde_pvp: pvpMin != null ? pvpMin : null,
       tipo_transporte: (p.tipo_transporte as "ninguno" | "aereo" | "terrestre" | undefined) ?? (p.incluye_aereo ? "aereo" : "ninguno"),
       portada_url: p.portada_url ?? null,
       ciudades: ciudadesPorProg.get(p.id) ?? [],
