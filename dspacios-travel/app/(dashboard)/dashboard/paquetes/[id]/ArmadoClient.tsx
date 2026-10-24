@@ -12,7 +12,8 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } f
 import { estadoSeleccionTodos, mensajeLote } from "@/lib/paquetes/seleccionMasiva";
 import { agruparPorCategoriaVigenciaRegimen, type FilaDetalle, type GrupoTarifa } from "@/lib/paquetes/tarifarioGrupos";
 import { Input } from "@/components/ui/input";
-import { formatCOP, formatMoneda } from "@/lib/utils";
+import { formatMoneda } from "@/lib/utils";
+import { filasUnidades, resumenUnidades, ROL_NETA_BLOQUEO, ROL_REVENTA_BLOQUEO, type EntradaUnidad, type MonedaMontaje, type PublicacionMontaje } from "@/lib/paquetes/unidadesMontaje";
 import { ConfigForm } from "../ConfigForm";
 import { SalidasDinamicasEditor, type SalidaDinamica } from "./SalidasDinamicasEditor";
 import {
@@ -32,6 +33,9 @@ type Opt = { id: number; nombre: string; codigo_iata?: string | null };
 type Vuelo = {
   id: number; record: string | null; ruta: string | null; aerolinea: string | null;
   fecha_ida: string | null; fecha_regreso: string | null; tarifa_para_empaquetar: number; destino_id: number | null;
+  // #90 A: la neta es el COSTO (y la CxP) a la aerolínea; la de reventa (tarifa_para_empaquetar) arma el precio al cliente.
+  // `moneda` null = Bloqueo sin acreditar (no se presenta como COP).
+  tarifa_neta?: number | null; moneda?: string | null;
 };
 // Vuelos por Sistema (Empaquetados, migración 156) — mismo patrón que Vuelo,
 // pero record puede ser null (PNR opcional, se agrega al comprar/emitir).
@@ -41,8 +45,8 @@ type Empaquetado = {
   // 230: moneda de la tarifa (COP o USD); ausente = COP.
   moneda?: string | null;
 };
-type Hotel = { id: number; nombre: string; zona: string | null; destino_id: number | null };
-type Servicio = { id: number; nombre: string; precio_persona: number | null; destino_id: number | null; servicio_tarifa_pax: { pax_desde: number }[] };
+type Hotel = { id: number; nombre: string; zona: string | null; destino_id: number | null; moneda?: string | null };
+type Servicio = { id: number; nombre: string; precio_persona: number | null; destino_id: number | null; moneda?: string | null; servicio_tarifa_pax: { pax_desde: number }[] };
 type SelServicio = { servicio_id: number; modo: string; incluido: boolean };
 type SelVuelo = { bloqueo_id: number; aplica_mk: boolean; ta: number };
 type SelEmpaquetado = { empaquetado_id: number; aplica_mk: boolean; ta: number };
@@ -97,6 +101,8 @@ export function ArmadoClient(props: {
   resultado: Resultado[];
   salidas?: SalidaDinamica[];
   moneda?: string;
+  // #90 A — publicación de la SELECCIÓN actual (page.tsx). Sin ella (pruebas antiguas) se usa `moneda`.
+  publicacionMontaje?: PublicacionMontaje;
   // #67 — error técnico al leer los destinos aéreos del paquete (distinto de "no hay vuelos").
   destinosAereosError?: string | null;
   // #101 — pestaña inicial (`?tab=`) y estado del tarifario (armado_paquetes.tarifario_estado / tarifario_error /
@@ -125,6 +131,25 @@ export function ArmadoClient(props: {
   const vueloSel = new Map(props.selVuelos.map((v) => [v.bloqueo_id, v]));
   const hotelSel = new Map(props.selHoteles.map((h) => [h.hotel_id, h]));
   const servSel = new Map(props.selServicios.map((s) => [s.servicio_id, s]));
+  // #90 A — unidades de cada componente SELECCIONADO frente a la moneda de publicación. Solo informa: no convierte ni supone TRM.
+  const publicacion: PublicacionMontaje = props.publicacionMontaje ?? { estado: "publicable", moneda: props.moneda === "USD" ? "USD" : "COP" };
+  const monedaPublicacion: MonedaMontaje | null = publicacion.estado === "publicable" ? publicacion.moneda : null;
+  const entradasUnidades: EntradaUnidad[] = [
+    ...props.vuelosDisp.filter((v) => vueloSel.has(v.id)).map((v): EntradaUnidad => ({
+      tipo: "bloqueo", nombre: v.record || v.ruta || `Bloqueo #${v.id}`, moneda: v.moneda,
+      importes: [{ rol: ROL_NETA_BLOQUEO, valor: v.tarifa_neta }, { rol: ROL_REVENTA_BLOQUEO, valor: v.tarifa_para_empaquetar }],
+    })),
+    ...props.empaquetadosDisp.filter((e) => props.selEmpaquetados.some((x) => x.empaquetado_id === e.id)).map((e): EntradaUnidad => ({
+      tipo: "empaquetado", nombre: e.record || e.ruta || `Empaquetado #${e.id}`, moneda: e.moneda,
+      importes: [{ rol: "Tarifa a empaquetar", valor: e.tarifa_para_empaquetar }],
+    })),
+    ...props.hotelesDisp.filter((h) => hotelSel.has(h.id)).map((h): EntradaUnidad => ({ tipo: "hotel", nombre: h.nombre, moneda: h.moneda })),
+    ...props.serviciosDisp.filter((sv) => servSel.has(sv.id)).map((sv): EntradaUnidad => ({
+      tipo: "servicio", nombre: sv.nombre, moneda: sv.moneda, importes: [{ rol: "Por persona", valor: sv.precio_persona }],
+    })),
+  ];
+  const filasUnid = filasUnidades(entradasUnidades, monedaPublicacion);
+  const resumenUnid = resumenUnidades(filasUnid);
   // Autosave OPTIMISTA de prioridad (defecto 4): `hotelId -> prioridad` recién
   // elegida, aplicada POR ENCIMA de lo que trajo el servidor. Un guardado
   // exitoso de prioridad NO recarga el editor (`router.refresh()` re-renderiza
@@ -401,7 +426,7 @@ export function ArmadoClient(props: {
                     ) : (
                       <li key={s.empaquetado_id} className="py-3 text-sm text-gray-600">
                         Empaquetado #{s.empaquetado_id} <span className="text-gray-400">· fuera del rango de viaje o inactivo</span>
-                        <span className="ml-2 text-xs text-gray-500">{s.aplica_mk ? "mk del paquete" : `TA ${formatCOP(s.ta)}`}</span>
+                        <span className="ml-2 text-xs text-gray-500">{s.aplica_mk ? "mk del paquete" : `TA ${Number(s.ta).toLocaleString("es-CO")} (moneda no disponible)`}</span>
                       </li>
                     );
                   })}
@@ -546,6 +571,14 @@ export function ArmadoClient(props: {
               {msg && <p className="mt-2 text-sm text-gray-600">{msg}</p>}
             </div>
             <div className="p-4 pt-0">
+              <UnidadesMontaje
+                publicacion={monedaPublicacion}
+                rechazo={publicacion.estado === "rechazado" ? publicacion.motivo : null}
+                modo63={props.config?.modoOferta === "cop_trm_63"}
+                trm={props.config?.trmOferta ?? null}
+                filas={filasUnid}
+                resumen={resumenUnid}
+              />
               <ResultadoTabla filas={props.resultado} />
             </div>
           </div>
@@ -588,7 +621,20 @@ function VueloRow({
             {v.aerolinea ? <span className="text-gray-400">· {v.aerolinea}</span> : null}
           </p>
           <p className="text-xs text-gray-500">
-            {v.fecha_ida} → {v.fecha_regreso} · tiquete {formatCOP(v.tarifa_para_empaquetar)}
+            {v.fecha_ida} → {v.fecha_regreso}
+          </p>
+          <p className="text-xs text-gray-500" data-testid="vuelo-unidades">
+            {v.moneda ? (
+              <>
+                Neta (costo y CxP) {v.tarifa_neta != null ? formatMoneda(v.tarifa_neta, v.moneda) : "sin neta"} · Reventa (precio al cliente) {formatMoneda(v.tarifa_para_empaquetar, v.moneda)}
+                <span className="ml-1 rounded bg-gray-100 px-1.5 py-0.5 text-[10px] font-semibold text-gray-600">{v.moneda}</span>
+              </>
+            ) : (
+              <>
+                Neta (costo y CxP) {v.tarifa_neta != null ? Number(v.tarifa_neta).toLocaleString("es-CO") : "sin neta"} · Reventa (precio al cliente) {Number(v.tarifa_para_empaquetar).toLocaleString("es-CO")}
+                <span className="ml-1 rounded bg-amber-50 px-1.5 py-0.5 text-[10px] font-semibold text-amber-700">Moneda sin acreditar</span>
+              </>
+            )}
           </p>
           {destinoAereo && (
             <p className="text-xs text-teal-700">Destino aéreo: {destinoAereo} · el hotel sigue siendo del destino comercial (sin traslado incluido)</p>
@@ -1092,7 +1138,7 @@ function HotelModal({
                           <td className="px-2 py-1">{t.temporada}</td>
                           <td className="px-2 py-1">{UNIDAD_COBRO_LBL[t.unidadCobro] ?? t.unidadCobro ?? "—"}</td>
                           <td className="px-2 py-1 text-right tabular-nums">
-                            {t.valorBaseBruto ? formatCOP(t.valorBaseBruto) : "—"}
+                            {t.valorBaseBruto ? formatMoneda(t.valorBaseBruto, hotel.moneda) : "—"}
                           </td>
                         </tr>
                       ))}
@@ -1120,8 +1166,8 @@ function HotelModal({
                           <td className="px-2 py-1">{t.categoria}</td>
                           <td className="px-2 py-1">{t.regimen}</td>
                           <td className="px-2 py-1">{t.temporada}</td>
-                          <td className="px-2 py-1 text-right tabular-nums">{t.neto_doble ? formatCOP(t.neto_doble) : "—"}</td>
-                          <td className="px-2 py-1 text-right tabular-nums">{t.neto_triple ? formatCOP(t.neto_triple) : "—"}</td>
+                          <td className="px-2 py-1 text-right tabular-nums">{t.neto_doble ? formatMoneda(t.neto_doble, hotel.moneda) : "—"}</td>
+                          <td className="px-2 py-1 text-right tabular-nums">{t.neto_triple ? formatMoneda(t.neto_triple, hotel.moneda) : "—"}</td>
                         </tr>
                       ))}
                     </tbody>
@@ -1210,7 +1256,8 @@ function ServicioRow({
         <div className="flex-1">
           <p className="text-sm font-medium text-gray-800">{s.nombre}</p>
           <p className="text-xs text-gray-500">
-            {tienePersona ? `Persona: ${formatCOP(s.precio_persona!)}` : ""}
+            {tienePersona ? `Persona: ${formatMoneda(s.precio_persona!, s.moneda)}` : ""}
+            {tienePersona ? <span className="ml-1 rounded bg-gray-100 px-1.5 py-0.5 text-[10px] font-semibold text-gray-600">{(s.moneda ?? "COP").toUpperCase()}</span> : null}
             {tienePersona && tieneGrupo ? " · " : ""}
             {tieneGrupo ? "Grupo: por rangos de pax" : ""}
             {!servicioSeleccionable(s) && (
@@ -1353,7 +1400,7 @@ function ResultadoTabla({ filas }: { filas: Resultado[] }) {
             <span className="text-xs font-normal text-gray-500">
               {g.filas.length} {g.filas.length === 1 ? "fila" : "filas"} ·{" "}
               {g.dobleDesde != null ? (
-                <>Doble desde <b className="tabular-nums" style={{ color: "var(--brand-primary)" }}>{formatCOP(g.dobleDesde)}</b></>
+                <>Doble desde <b className="tabular-nums" style={{ color: "var(--brand-primary)" }}>{formatMoneda(g.dobleDesde, g.filas[0]?.moneda)}</b></>
               ) : (
                 "Sin tarifa doble"
               )}
@@ -1387,7 +1434,7 @@ function ResultadoTabla({ filas }: { filas: Resultado[] }) {
                       <td className="px-3 py-1.5">{r.servicio_nombre ?? "—"}</td>
                       <td className="px-3 py-1.5 text-gray-500">{esGrupo ? `Por grupo (${r.pax_desde}–${r.pax_hasta} pax)` : "Por persona"}</td>
                       <td className="px-3 py-1.5 text-right tabular-nums font-semibold" style={{ color: "var(--brand-primary)" }}>
-                        {formatCOP(r.precio_pvp)} <span className="text-xs font-normal text-gray-400">{esGrupo ? "/grupo" : "/persona"}</span>
+                        {formatMoneda(r.precio_pvp, r.moneda)} <span className="text-xs font-normal text-gray-400">{esGrupo ? "/grupo" : "/persona"}</span>
                       </td>
                     </tr>
                   );
@@ -1403,6 +1450,52 @@ function ResultadoTabla({ filas }: { filas: Resultado[] }) {
 
 // Sección plegable. Sin open/onToggle es no controlada (arranca según defaultOpen); con ellos, controlada.
 // meta es un resumen a la derecha de la cabecera (visible aun plegada).
+const ETIQUETA_TIPO_UNIDAD = { bloqueo: "Bloqueo", empaquetado: "Empaquetado", hotel: "Hotel", servicio: "Servicio" } as const;
+
+/** #90 A — moneda real de cada componente elegido, rol de sus importes y si encajan con la moneda de publicación. No convierte. */
+function UnidadesMontaje({ publicacion, rechazo, modo63, trm, filas, resumen }: {
+  publicacion: MonedaMontaje | null; rechazo: string | null; modo63: boolean; trm: number | null;
+  filas: ReturnType<typeof filasUnidades>; resumen: ReturnType<typeof resumenUnidades>;
+}) {
+  // Un rechazo se muestra aunque ningún componente del vínculo aparezca en las listas del editor (p. ej. un Bloqueo fuera del rango).
+  if (!filas.length && !rechazo) return null;
+  return (
+    <div className="mt-4 rounded-lg border border-gray-100 bg-gray-50 p-3 text-xs text-gray-600" data-testid="unidades-montaje">
+      <p className="font-semibold text-gray-700">
+        Unidades del montaje · {publicacion ? `se publica en ${publicacion}` : "sin moneda publicable con esta selección"}
+        {publicacion && modo63 ? ` · modo COP con TRM ${trm ? trm.toLocaleString("es-CO") : "sin definir"}` : ""}
+      </p>
+      <ul className="mt-2 divide-y divide-gray-200">
+        {filas.map((f, i) => (
+          <li key={i} className="flex flex-wrap items-baseline justify-between gap-2 py-1">
+            <span><b>{ETIQUETA_TIPO_UNIDAD[f.tipo]}</b> · {f.nombre}</span>
+            <span className="text-gray-500">
+              {f.importes.map((im) => `${im.rol}: ${f.moneda ? formatMoneda(im.valor, f.moneda) : im.valor.toLocaleString("es-CO")}`).join(" · ")}
+              {" "}
+              <span className={f.conversion === "coincide" ? "font-semibold text-gray-700" : "font-semibold text-amber-700"}>
+                {f.moneda ?? "Moneda sin acreditar"}
+                {f.conversion === "requiere_trm" ? " · requiere TRM explícita" : ""}
+              </span>
+            </span>
+          </li>
+        ))}
+      </ul>
+      {rechazo && (
+        <p className="mt-2 text-red-700" data-testid="unidades-rechazo">
+          El generador rechazaría esta selección: {rechazo}
+        </p>
+      )}
+      {(resumen.requierenTrm > 0 || resumen.sinAcreditar > 0) && (
+        <p className="mt-2 text-amber-700">
+          {resumen.requierenTrm > 0 ? `${resumen.requierenTrm} componente(s) están en otra moneda que la de publicación y solo se convertirán con una TRM explícita. ` : ""}
+          {resumen.sinAcreditar > 0 ? `${resumen.sinAcreditar} sin moneda acreditada: no se convierten ni se suponen en COP. ` : ""}
+          Hoy el generador rechaza la mezcla fuera del modo COP con TRM; el importe de cada componente se conserva en su unidad.
+        </p>
+      )}
+    </div>
+  );
+}
+
 function Section({
   title, meta, open, onToggle, defaultOpen = true, children,
 }: {
