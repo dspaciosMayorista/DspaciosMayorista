@@ -34,6 +34,7 @@ const ACCIONES_PAQUETES = datos(`
   export async function setHotel() { return { ok: true }; }
   export async function setTodosHoteles() { return { ok: true }; }
   export async function setServicio() { return { ok: true }; }
+  export async function setServicios() { return { ok: true, procesados: 0 }; }
   export async function generarTarifario() { return { ok: true, id: 0 }; }
   export async function getTarifasHotel() { return { ok: true, tarifas: [], unidades: [] }; }
   export async function setHotelFiltros() { return { ok: true }; }
@@ -47,6 +48,7 @@ const ACCIONES_SALIDAS = datos(`
   export async function listarEmpaquetadosParaSalidas63() { return { ok: true, candidatos: [], pendientes: 0 }; }
   export async function vincularSalidasEmpaquetados63() { return { ok: true }; }
   export async function actualizarSalidaDesdeFuente63() { return { ok: true }; }
+  export async function desvincularSalidasEmpaquetados63() { return { ok: true, procesados: 0 }; }
 `);
 const ACCIONES_EMPAQUETADOS = datos(`
   export async function setEmpaquetado(...a) { ${G}.llamadas.push(['setEmpaquetado', a]); return ${G}.respVinculo(a); }
