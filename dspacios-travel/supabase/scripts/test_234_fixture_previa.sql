@@ -5,6 +5,7 @@
 --   234902  modo 63 en COP sin TRM (todo COP), publicado
 --   234903  legacy en USD, publicado
 --   234904  modo 63 sin publicar y sin moneda elegida (NULL = COP, como los de antes de la 233)
+--   234905/234906  antecedentes del preflight remoto (oferta abierta desfasada no publicable / filas en otra moneda): ver más abajo
 -- ─────────────────────────────────────────────────────────────────────────
 begin;
 
@@ -63,6 +64,43 @@ select 234990, 'mayorista', p.id, null, 4000, p.tarifario_revision_fuente, p.tar
            'n_tramos', 0, 'n_items', 0, 'n_hoteles', 0, 'tipo_asesor', 'interno', 'canal', 'B2C'),
          'b2b', null, 'vigencias', '[]'::jsonb, 'financiero', jsonb_build_object('costos', '{}'::jsonb, 'cxp', '[]'::jsonb))
   from public.armado_paquetes p where p.id = 234901;
+
+-- ── Antecedentes del preflight remoto (se conservan SIN tocar; la 234 no puede alterarlos) ─────────────────────────────────────────────
+-- 234905 (≈ paquete 70): oferta ABIERTA cotizada en COP y el paquete hoy elige USD con tarifario NO publicable (la RPC 233 impide aceptarla).
+--        Se arma como ocurrió: modo 63 en COP, publicado y cotizado; luego pasó a USD (legacy, único modo que admite USD antes de la 234).
+-- 234906 (≈ paquete 71): elige COP pero conserva filas publicadas en USD; estado pendiente, revisión fuente > publicada, snapshot no publicable.
+insert into public.armado_paquetes (id, nombre, tipo, activo, destino_id, modo_oferta, trm_oferta, moneda_publicacion) values
+  (234905, 'T234P oferta COP, paquete luego en USD', 'dinamico', true, 234910, 'cop_trm_63', 4000, 'COP'),
+  (234906, 'T234P filas USD, paquete luego en COP', 'dinamico', true, 234910, 'legacy', null, 'USD');
+select t234p.publicar(234905, 'COP');
+select t234p.publicar(234906, 'USD');
+insert into public.cotizaciones (id, tenant, payload, detalle, cliente, destino, hotel, modulo, plan_nombre, pax, precio_venta, moneda, fecha_salida, fecha_regreso,
+                                 vigencia_hasta, paquete_armado_id, asesor, creado_por)
+values (234991, 'mayorista', '{}'::jsonb, '{}'::jsonb, 'Cliente 234P-2', 'T234P CARTAGENA', 'T234P HOTEL', 'dinamico', 'ESTANDAR · PC', 2, 3360000, 'COP',
+        current_date + 60, current_date + 63, current_date + 1, 234905, 'Asesor 234P', 'c234p@x.test');
+insert into public.p63_oferta (cotizacion_id, tenant, paquete_id, salida_id, trm, rev_fuente, rev_publicada, gen_publicada, rev_costos, huella, huella_financiera, snapshot)
+select 234991, 'mayorista', p.id, null, 4000, p.tarifario_revision_fuente, p.tarifario_revision_publicada, p.tarifario_generacion_publicada, p.p63_rev_costos,
+       'h-hist', 'f-hist',
+       jsonb_build_object('v', 1, 'paquete_id', p.id, 'salida_id', null, 'empaquetado_id', null, 'trm', 4000, 'moneda', 'COP',
+         'cabecera', jsonb_build_object('tipo_paquete', 'dinamico', 'moneda', 'COP', 'pax', 2, 'precio_venta', 3360000, 'paquete_armado_id', p.id,
+           'n_tramos', 0, 'n_items', 0, 'n_hoteles', 0, 'tipo_asesor', 'interno', 'canal', 'B2C'),
+         'b2b', null, 'vigencias', '[]'::jsonb, 'financiero', jsonb_build_object('costos', '{}'::jsonb, 'cxp', '[]'::jsonb))
+  from public.armado_paquetes p where p.id = 234905;
+-- El paquete 234905 cambia de moneda y de modo (antes de la 234 solo legacy admite USD): su tarifario deja de ser publicable.
+update public.armado_paquetes set modo_oferta = 'legacy', trm_oferta = null, moneda_publicacion = 'USD' where id = 234905;
+-- El paquete 234906 pasa a COP (modo 63) con las filas publicadas en USD: se invalida y queda pendiente.
+update public.armado_paquetes set modo_oferta = 'cop_trm_63', trm_oferta = 4000, moneda_publicacion = 'COP' where id = 234906;
+update public.armado_paquetes set tarifario_revision_fuente = tarifario_revision_fuente + 3 where id = 234906;
+do $$
+begin
+  if exists (select 1 from public.armado_paquetes where id in (234905, 234906) and coalesce(tarifario_snapshot_publicable, false)) then
+    raise exception 'fixture previa: 234905/234906 deben quedar con snapshot NO publicable';
+  end if;
+  if (select tarifario_estado from public.armado_paquetes where id = 234906) is distinct from 'pendiente'
+     or (select tarifario_revision_fuente <= tarifario_revision_publicada from public.armado_paquetes where id = 234906) then
+    raise exception 'fixture previa: 234906 debe quedar pendiente con revisión fuente > publicada';
+  end if;
+end $$;
 
 drop function t234p.publicar(bigint, text);
 drop function t234p.u(text);

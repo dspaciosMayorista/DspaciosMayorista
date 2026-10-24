@@ -287,4 +287,15 @@ describe("cableado de la migración 234 y de los scripts (texto)", () => {
     assert.match(sinComentarios, /^with\b/m);
     assert.match(sinComentarios, /select control, valor, esperado, estado/);
   });
+  test("preflight/postcheck: ofertas desfasadas publicables = REVISAR, históricas (snapshot no publicable) = INFO con ids, una sola consulta", () => {
+    const pre = leer("supabase/scripts/preflight_postcheck_234_oferta_usd.sql");
+    assert.match(pre, /ofertas_desfasadas as \(select \* from ofertas_desfasadas_todas where publicable\)/);
+    assert.match(pre, /ofertas_desfasadas_historicas as \(select \* from ofertas_desfasadas_todas where not publicable\)/);
+    assert.match(pre, /select 11, 'ofertas_63_abiertas_cotizadas_en_otra_moneda_que_la_del_paquete_con_tarifario_aun_publicable'[\s\S]*?then 'OK' else 'REVISAR' end/);
+    assert.match(pre, /select 25, 'ofertas_63_historicas_desfasadas_con_snapshot_no_publicable[^']*',\s*\(select count\(\*\) from ofertas_desfasadas_historicas\)::text, 'dato \(trazabilidad\)', 'INFO'/);
+    assert.match(pre, /select 26, 'ids oferta\/cotizacion\/paquete de esas ofertas históricas/);
+    assert.match(pre, /select 28, 'ids de paquetes 63 con filas en otra moneda que la elegida: regenerar/);
+    assert.ok(!/\b(update|delete|insert)\b\s+(public\.|from|into)/i.test(pre.split("\n").filter((l) => !l.trim().startsWith("--")).join("\n")), "solo lectura");
+    assert.equal((pre.match(/;\s*$/gm) ?? []).length, 1, "una sola sentencia");
+  });
 });

@@ -3,7 +3,9 @@
 --   OK = cumple lo esperado · REVISAR = falta algo o requiere decisión · INFO = dato (o pendiente de una fase anterior).
 -- Se corre DOS veces con el mismo archivo (requiere la 233 aplicada: lee armado_paquetes.moneda_publicacion):
 --   1) ANTES de la 234: la estructura sale REVISAR ("pendiente") y los controles de datos ya son decisivos
---      (ninguna oferta/contrato #63 debe estar ya en una moneda distinta de la elegida por su paquete).
+--      (ninguna oferta/contrato #63 PUBLICABLE debe estar ya en una moneda distinta de la elegida por su paquete). Una oferta abierta desfasada
+--      cuyo paquete ya NO es publicable es un antecedente histórico: INFO con conteo e ids (controles 25-26); no se actualiza, borra ni acepta.
+--      Un paquete con filas en otra moneda que la elegida (control 16/28) es INFO: se regenera su tarifario antes de volver a cotizar.
 --   2) DESPUÉS de la 234: TODO debe salir OK (los INFO son solo datos). Comparar 'tarifarios_publicables' con el del preflight: no debe cambiar.
 -- No imprime filas de negocio: solo conteos, ids (máx. 20) y estados.
 -- ───────────────────────────────────────────────────────────────────────────
@@ -54,11 +56,20 @@ ap as (select (chk_libre and chk_mp and fn_requiere_usd and fn_publicar and fn_c
                 and col_prov and fn_derivado and fn_aceptar_prov and fn_registrar and fn_inmutable and guardas and fachada_ok and envoltorio_ok and not interno_anon and not interno_auth and tabla_cerrada and sin_trigger_bandera) as aplicada from est),
 -- Paquetes en modo 63 en USD que TIENEN fuentes en COP y no tienen TRM: no pueden publicar ni cotizar (con todo en USD la TRM no hace falta).
 usd_sin_trm as (select id from p where p.modo_oferta = 'cop_trm_63' and p.mp = 'USD' and p.trm_oferta is null and public.p63_requiere_trm(p.id)),
--- Ofertas #63 abiertas cuyo snapshot está en una moneda distinta de la que hoy elige su paquete (no se podrían aceptar).
-ofertas_desfasadas as (
-  select o.cotizacion_id
+-- Ofertas #63 abiertas cuyo snapshot está en una moneda distinta de la que hoy elige su paquete (la RPC 233 NO permite aceptarlas).
+--   · publicables: el paquete SIGUE publicado (tarifario_snapshot_publicable = true): la oferta todavía se muestra/se puede intentar aceptar → REVISAR.
+--   · históricas: el paquete ya NO es publicable (el snapshot se invalidó al cambiar de moneda): antecedente que se conserva tal cual, sin UPDATE,
+--     DELETE, aceptación ni regeneración → INFO (conteo e ids para trazabilidad).
+ofertas_desfasadas_todas as (
+  select o.id as oferta_id, o.cotizacion_id, o.paquete_id, coalesce(p.publicable, false) as publicable
     from public.p63_oferta o join p on p.id = o.paquete_id
    where o.estado = 'abierta' and coalesce(nullif(o.snapshot ->> 'moneda', ''), 'COP') is distinct from coalesce(p.mp, 'COP')
+),
+ofertas_desfasadas as (select * from ofertas_desfasadas_todas where publicable),
+ofertas_desfasadas_historicas as (select * from ofertas_desfasadas_todas where not publicable),
+-- Paquetes 63 con filas publicadas en otra moneda que la elegida: hay que REGENERAR el tarifario antes de volver a cotizar (dato, no se toca).
+paquetes_a_regenerar as (
+  select p.id from p where p.modo_oferta = 'cop_trm_63' and p.con_snapshot and p.moneda in ('COP', 'USD') and p.moneda is distinct from coalesce(p.mp, 'COP')
 ),
 -- Contratos nacidos de una oferta #63 cuya moneda no es la del snapshot aceptado (nunca debe pasar: lo vigila el trigger de cabecera).
 contratos_desfasados as (
@@ -117,8 +128,9 @@ select control, valor, esperado, estado
                      and not has_table_privilege('anon', 'public.tarifario_oferta_63', 'SELECT') and not has_table_privilege('authenticated', 'public.tarifario_oferta_63', 'SELECT')
                 then 'OK' else 'REVISAR' end
     union all
-    -- DECISIVO ANTES Y DESPUÉS: una oferta abierta cuya moneda ya no es la que elige su paquete no se podría aceptar (se debe recotizar).
-    select 11, 'ofertas_63_abiertas_cotizadas_en_otra_moneda_que_la_del_paquete', (select count(*) from ofertas_desfasadas)::text, '0',
+    -- DECISIVO ANTES Y DESPUÉS: una oferta abierta en otra moneda que la del paquete cuyo tarifario SIGUE publicable no se podría aceptar (se debe recotizar).
+    -- Las históricas (paquete ya no publicable) NO entran aquí: van como INFO en los controles 25-26.
+    select 11, 'ofertas_63_abiertas_cotizadas_en_otra_moneda_que_la_del_paquete_con_tarifario_aun_publicable', (select count(*) from ofertas_desfasadas)::text, '0',
            case when (select count(*) from ofertas_desfasadas) = 0 then 'OK' else 'REVISAR' end
     union all select 12, 'contratos_63_con_moneda_distinta_a_la_del_snapshot_aceptado', (select count(*) from contratos_desfasados)::text, '0',
            case when (select count(*) from contratos_desfasados) = 0 then 'OK' else 'REVISAR' end
@@ -137,8 +149,8 @@ select control, valor, esperado, estado
     union all
     -- Un paquete 63 con tarifario publicado en una moneda distinta de la que hoy elige (p. ej. cambió a USD sin regenerar): hay que regenerar antes de cotizar.
     select 16, 'paquetes_63_publicados_en_otra_moneda_que_la_elegida (regenerar el tarifario)',
-           (select count(*) from p where p.modo_oferta = 'cop_trm_63' and p.con_snapshot and p.moneda in ('COP', 'USD') and p.moneda is distinct from coalesce(p.mp, 'COP'))::text, 'dato (0 = nada que regenerar)',
-           case when (select count(*) from p where p.modo_oferta = 'cop_trm_63' and p.con_snapshot and p.moneda in ('COP', 'USD') and p.moneda is distinct from coalesce(p.mp, 'COP')) = 0 then 'OK' else 'INFO' end
+           (select count(*) from paquetes_a_regenerar)::text, 'dato (0 = nada que regenerar)',
+           case when (select count(*) from paquetes_a_regenerar) = 0 then 'OK' else 'INFO' end
     union all select 17, 'tarifarios_publicables (comparar antes/después: la 234 NO debe cambiarlo)',
            (select count(*) from p where coalesce(p.publicable, false))::text, 'igual al preflight', 'INFO'
     union all select 18, 'ofertas_63_abiertas / aceptaciones_63 / contratos_63_en_usd',
@@ -157,6 +169,17 @@ select control, valor, esperado, estado
     union all select 24, 'frontera_de_publicacion_63: fachada rechaza cop_trm_63 · envoltorio llama al interno sin bandera · interno sin EXECUTE para anon/authenticated · tarifario_resultado sin INSERT/UPDATE/DELETE/TRUNCATE para anon/authenticated · sin trigger de bandera',
            ((select fachada_ok and envoltorio_ok and not interno_anon and not interno_auth and tabla_cerrada and sin_trigger_bandera from est))::text, 'true',
            case when (select fachada_ok and envoltorio_ok and not interno_anon and not interno_auth and tabla_cerrada and sin_trigger_bandera from est) then 'OK' else 'REVISAR' end
+    union all select 25, 'ofertas_63_historicas_desfasadas_con_snapshot_no_publicable (antecedente conservado sin tocar; la RPC 233 impide aceptarlas)',
+           (select count(*) from ofertas_desfasadas_historicas)::text, 'dato (trazabilidad)', 'INFO'
+    union all select 26, 'ids oferta/cotizacion/paquete de esas ofertas históricas (máx. 20)',
+           coalesce((select string_agg('oferta ' || oferta_id || ' / cotización ' || cotizacion_id || ' / paquete ' || paquete_id, '; ' order by oferta_id)
+                       from (select * from ofertas_desfasadas_historicas order by oferta_id limit 20) t), 'ninguna'), 'dato (trazabilidad)', 'INFO'
+    union all select 27, 'ids de ofertas desfasadas aún publicables (máx. 20)',
+           coalesce((select string_agg('oferta ' || oferta_id || ' / cotización ' || cotizacion_id || ' / paquete ' || paquete_id, '; ' order by oferta_id)
+                       from (select * from ofertas_desfasadas order by oferta_id limit 20) t), 'ninguna'), 'ninguna',
+           case when (select count(*) from ofertas_desfasadas) = 0 then 'OK' else 'REVISAR' end
+    union all select 28, 'ids de paquetes 63 con filas en otra moneda que la elegida: regenerar el tarifario antes de volver a cotizar (máx. 20)',
+           coalesce((select string_agg(id::text, ', ' order by id) from (select id from paquetes_a_regenerar order by id limit 20) t), 'ninguno'), 'dato (regenerar; no se toca)', 'INFO'
     union all
     select 23, 'aceptaciones_63_con_trm_provisional (dato; 0 hasta contratar una oferta USD sin TRM)',
            (select count(*) from public.p63_aceptacion a where to_jsonb(a) ->> 'trm_provisional' is not null)::text, 'dato', 'INFO'
