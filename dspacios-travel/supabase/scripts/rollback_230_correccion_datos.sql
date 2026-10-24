@@ -1,6 +1,6 @@
 -- ───────────────────────────────────────────────────────────────────────────
 -- 230 · ROLLBACK de la CORRECCIÓN DE DATOS (correccion_230_datos_usd.sql): devuelve a COP SOLO las filas que la corrección marcó
--- (las que llevan la constancia "[230] Moneda corregida" en notas) y quita esa constancia. Una transacción; si hay ventas u ofertas
+-- (las que llevan la constancia "[230] Moneda corregida" en notas) y quita esa constancia. Una transacción; si hay ventas, ofertas aceptadas o aceptaciones vigentes
 -- ligadas a los paquetes 70/71 o a esos empaquetados, se NIEGA (con USD vendido, volver a COP descuadraría costos y cuentas por pagar).
 -- No toca la estructura de la 230 (para eso: rollback_230_empaquetados_usd.sql, que se corre DESPUÉS de este).
 -- ───────────────────────────────────────────────────────────────────────────
@@ -14,9 +14,11 @@ declare
   v_n  integer;
 begin
   select (select count(*) from public.ventas where paquete_armado_id in (70, 71) or empaquetado_ref_id = any (v_ids))
-       + (select count(*) from public.p63_oferta where paquete_id in (70, 71)) into v_nv;
+       + (select count(*) from public.p63_oferta where paquete_id in (70, 71) and estado = 'aceptada')
+       + (select count(*) from public.p63_aceptacion a join public.p63_oferta o on o.id = a.oferta_id
+           where o.paquete_id in (70, 71) and a.estado <> 'descartada') into v_nv;
   if v_nv > 0 then
-    raise exception 'ROLLBACK DE DATOS 230 ABORTADO: hay % venta(s)/oferta(s) ligadas; no se devuelve a COP lo que ya se usó en USD.', v_nv;
+    raise exception 'ROLLBACK DE DATOS 230 ABORTADO: hay % venta(s), oferta(s) aceptada(s) o aceptación(es) vigente(s) ligadas; no se devuelve a COP lo que ya se usó en USD.', v_nv;
   end if;
 
   -- Primero los empaquetados (fuente), luego las salidas (la base exige la misma moneda).
