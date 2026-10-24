@@ -322,6 +322,7 @@ function CamposSalida({ value, onChange, modo63 = false }: { value: SalidaDinami
         {modo63 && (
           <div className="col-span-2 md:col-span-4">
             <MonedaTarifas
+              etiqueta="Moneda del tiquete"
               moneda={value.moneda === "USD" ? "USD" : "COP"}
               onChange={(m) => onChange({ ...value, moneda: m })}
               campos={[

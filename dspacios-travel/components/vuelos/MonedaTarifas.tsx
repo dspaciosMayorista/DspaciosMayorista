@@ -23,19 +23,22 @@ export function MonedaTarifas({
   onChange,
   campos,
   ayuda,
+  etiqueta = "Moneda de las tarifas",
 }: {
   moneda: MonedaVuelo;
   onChange: (m: MonedaVuelo) => void;
   campos: readonly { etiqueta: string; valor: number | string | null | undefined }[];
   ayuda?: string;
+  /** Nombre visible y accesible del campo; la salida manual de Dinámico (227) lo llama "Moneda del tiquete". */
+  etiqueta?: string;
 }) {
   const sospechosos = camposSospechososUsd(moneda, campos);
   return (
     <div>
-      <label className={lbl} htmlFor="moneda-tarifas">Moneda de las tarifas</label>
+      <label className={lbl} htmlFor="moneda-tarifas">{etiqueta}</label>
       <select
         id="moneda-tarifas"
-        aria-label="Moneda de las tarifas"
+        aria-label={etiqueta}
         value={moneda}
         onChange={(e) => onChange(e.target.value === "USD" ? "USD" : "COP")}
         className={selCls}
