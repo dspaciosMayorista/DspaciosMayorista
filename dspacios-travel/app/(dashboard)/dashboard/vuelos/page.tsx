@@ -36,6 +36,7 @@ const COLS_BLOQUEOS = [
   { key: "tarifa_neta", label: "Tarifa neta (pago aerolínea)", ejemplo: "200000" },
   { key: "tarifa_para_empaquetar", label: "Tarifa empaquetar (reventa)", ejemplo: "242022" },
   { key: "fee_infante", label: "Fee de infante 0-1,99 años (precio = costo; vacío = 0)", ejemplo: "0" },
+  { key: "moneda", label: "Moneda de las tarifas (COP/USD, obligatoria)", ejemplo: "COP" },
   { key: "fecha_devolucion", label: "Fecha devolución", ejemplo: "2026-06-01" },
   { key: "fecha_emision", label: "Fecha límite de emisión", ejemplo: "2026-05-20" },
   { key: "rangos_edad", label: "Rangos de edad (nombres separados por |)", ejemplo: "" },
@@ -374,6 +375,7 @@ export default async function VuelosPage({ searchParams }: { searchParams: Promi
                 id: b.id, record: b.record, aerolinea: b.aerolinea, ruta: b.ruta,
                 fecha_ida: b.fecha_ida, vuelo_ida: b.vuelo_ida, fecha_regreso: b.fecha_regreso, vuelo_regreso: b.vuelo_regreso,
                 fecha_devolucion: b.fecha_devolucion, cupos_total: b.cupos_total ?? 0,
+                moneda: b.moneda ?? null,
                 disp: c.disp, plazo: c.plazo, conf: c.conf, dev: c.dev, nven: c.nven,
                 movimientos: movPorBloqueo.get(b.id) ?? 0,
               };

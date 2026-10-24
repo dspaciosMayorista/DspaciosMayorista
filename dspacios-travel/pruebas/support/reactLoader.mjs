@@ -204,6 +204,9 @@ export async function resolve(specifier, context, nextResolve) {
   if (specifier === "./actions" && context.parentURL?.endsWith("PagosList.tsx")) {
     return { url: STUB_PAGOS_ACTIONS, shortCircuit: true };
   }
+  if (specifier === "./actions" && context.parentURL?.endsWith("/vuelos/NuevoBloqueoForm.tsx")) {
+    return { url: STUB_VUELOS_ACTIONS, shortCircuit: true };
+  }
   if (specifier === "../actions" &&
       (context.parentURL?.endsWith("/EditarBloqueoForm.tsx") || context.parentURL?.endsWith("/PasajeroAcciones.tsx") ||
        context.parentURL?.endsWith("/SillaContrato.tsx") || context.parentURL?.endsWith("/SillaEstado.tsx") ||
@@ -216,6 +219,7 @@ export async function resolve(specifier, context, nextResolve) {
       context.parentURL?.endsWith("/ConvertirCarritoBtn.tsx") ||
       context.parentURL?.endsWith("PagosList.tsx") ||
       context.parentURL?.endsWith("EditarBloqueoForm.tsx") ||
+      context.parentURL?.endsWith("/NuevoBloqueoForm.tsx") ||
       context.parentURL?.endsWith("/NuevoEmpaquetadoForm.tsx") ||
       context.parentURL?.endsWith("/EditarEmpaquetadoForm.tsx") ||
       context.parentURL?.endsWith("PasajeroAcciones.tsx"))
@@ -224,7 +228,7 @@ export async function resolve(specifier, context, nextResolve) {
   }
   if (
     specifier === "next/navigation" &&
-    (context.parentURL?.endsWith("DifusionClient.tsx") || context.parentURL?.endsWith("EditarBloqueoForm.tsx") ||
+    (context.parentURL?.endsWith("DifusionClient.tsx") || context.parentURL?.endsWith("EditarBloqueoForm.tsx") || context.parentURL?.endsWith("/NuevoBloqueoForm.tsx") ||
       context.parentURL?.endsWith("/NuevoEmpaquetadoForm.tsx") || context.parentURL?.endsWith("/EditarEmpaquetadoForm.tsx") ||
       context.parentURL?.endsWith("/login/LoginClient.tsx") ||
       // Botón de salir que importa el portal B2B (pruebas/comisionPortalB2B.react.ts).

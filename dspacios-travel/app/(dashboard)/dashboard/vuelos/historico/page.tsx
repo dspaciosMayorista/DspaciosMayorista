@@ -231,6 +231,7 @@ export default async function HistoricoVuelosPage({ searchParams }: { searchPara
                 id: b.id, record: b.record, aerolinea: b.aerolinea, ruta: b.ruta,
                 fecha_ida: b.fecha_ida, vuelo_ida: b.vuelo_ida, fecha_regreso: b.fecha_regreso, vuelo_regreso: b.vuelo_regreso,
                 fecha_devolucion: b.fecha_devolucion, cupos_total: b.cupos_total ?? 0,
+                moneda: b.moneda ?? null,
                 disp: c.disp, plazo: c.plazo, conf: c.conf, dev: c.dev, nven: c.nven,
                 movimientos: movPorBloqueo.get(b.id) ?? 0,
               };

@@ -4,7 +4,7 @@ import { createClient } from "@/lib/supabase/server";
 import { notFound } from "next/navigation";
 import Link from "next/link";
 import { ResponsiveTableShell } from "@/components/ui/ResponsiveTableShell";
-import { formatCOP, formatFechaLarga, calcularEdad } from "@/lib/utils";
+import { formatMoneda, formatFechaLarga, calcularEdad } from "@/lib/utils";
 import { CambiarSillasForm } from "./CambiarSillasForm";
 import { SillaEstado } from "./SillaEstado";
 import { PasajeroAcciones } from "./PasajeroAcciones";
@@ -247,7 +247,7 @@ export default async function BloqueoDetallePage({
       </p>
       <p className="mt-1 text-xs text-gray-400">
         Cupos activos <b className="text-gray-600">{totalReal}</b>{totalReal !== (b.cupos_total ?? 0) ? ` (registrados ${b.cupos_total})` : ""} ·
-        Movimientos históricos <b className="text-gray-600">{movimientosHistoricos}</b> <span className="text-gray-300">(no son cupos)</span> · Tarifa empaquetar {formatCOP(b.tarifa_para_empaquetar)} · Fee infante {formatCOP(b.fee_infante ?? 0)} ·
+        Movimientos históricos <b className="text-gray-600">{movimientosHistoricos}</b> <span className="text-gray-300">(no son cupos)</span> · Tarifa empaquetar {formatMoneda(b.tarifa_para_empaquetar, b.moneda)} · Fee infante {formatMoneda(b.fee_infante ?? 0, b.moneda)} · Moneda {b.moneda ?? "sin acreditar"} ·
         Devolución {formatFechaLarga(b.fecha_devolucion)}
       </p>
 
@@ -270,7 +270,7 @@ export default async function BloqueoDetallePage({
           record: b.record ?? "", aerolinea: b.aerolinea ?? "", proveedorId: b.proveedor_id, destinoId: b.destino_id, ruta: b.ruta ?? "", origen: b.origen ?? "",
           vueloIda: b.vuelo_ida ?? "", fechaIda: b.fecha_ida ?? "", horaSalidaIda: b.hora_salida_ida ?? "", horaLlegadaIda: b.hora_llegada_ida ?? "",
           vueloRegreso: b.vuelo_regreso ?? "", fechaRegreso: b.fecha_regreso ?? "", horaSalidaReg: b.hora_salida_reg ?? "", horaLlegadaReg: b.hora_llegada_reg ?? "",
-          tarifaNeta: b.tarifa_neta ?? 0, tarifaParaEmpaquetar: b.tarifa_para_empaquetar ?? 0, feeInfante: b.fee_infante ?? 0, fechaDevolucion: b.fecha_devolucion ?? "", fechaEmision: b.fecha_emision ?? "",
+          tarifaNeta: b.tarifa_neta ?? 0, tarifaParaEmpaquetar: b.tarifa_para_empaquetar ?? 0, feeInfante: b.fee_infante ?? 0, moneda: b.moneda ?? null, fechaDevolucion: b.fecha_devolucion ?? "", fechaEmision: b.fecha_emision ?? "",
           notas: b.notas ?? "", rangosEdad: b.rangos_edad ?? [],
         }}
       />

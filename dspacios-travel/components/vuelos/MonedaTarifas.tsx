@@ -24,13 +24,17 @@ export function MonedaTarifas({
   campos,
   ayuda,
   etiqueta = "Moneda de las tarifas",
+  sinElegir,
 }: {
-  moneda: MonedaVuelo;
+  /** "" solo con `sinElegir`: el campo arranca sin moneda (Bloqueos nuevos y sin acreditar: nunca se supone COP). */
+  moneda: MonedaVuelo | "";
   onChange: (m: MonedaVuelo) => void;
   campos: readonly { etiqueta: string; valor: number | string | null | undefined }[];
   ayuda?: string;
   /** Nombre visible y accesible del campo; la salida manual de Dinámico (227) lo llama "Moneda del tiquete". */
   etiqueta?: string;
+  /** Texto de la opción vacía (p. ej. "— Elegir —"). Si se indica, el campo admite `moneda = ""` y no se supone ninguna. */
+  sinElegir?: string;
 }) {
   const sospechosos = camposSospechososUsd(moneda, campos);
   return (
@@ -40,9 +44,14 @@ export function MonedaTarifas({
         id="moneda-tarifas"
         aria-label={etiqueta}
         value={moneda}
-        onChange={(e) => onChange(e.target.value === "USD" ? "USD" : "COP")}
+        onChange={(e) => {
+          const v = e.target.value;
+          if (v === "USD" || v === "COP") onChange(v);
+          else if (sinElegir === undefined) onChange("COP");
+        }}
         className={selCls}
       >
+        {sinElegir !== undefined && <option value="">{sinElegir}</option>}
         <option value="COP">COP (pesos)</option>
         <option value="USD">USD (dólares)</option>
       </select>

@@ -97,7 +97,7 @@ test("crearBloqueo exige modalidad de emisión y arranca los dos estados en 'pen
 test("BloqueoEditInput (editar bloqueo general) NO incluye modalidad: ese campo solo se toca desde Control", () => {
   assert.match(
     actionsSrc,
-    /export type BloqueoEditInput = Omit<BloqueoInput, "cuposTotal" \| "modalidadEmision">;/,
+    /export type BloqueoEditInput = Omit<BloqueoInput, "cuposTotal" \| "modalidadEmision" \| "moneda"> & \{ moneda\?: MonedaVuelo \};/,
     "el formulario general de editar bloqueo volvió a incluir modalidadEmision — debe editarse solo por actualizarControlBloqueo, con su propio log en bloqueo_cambios"
   );
 });
