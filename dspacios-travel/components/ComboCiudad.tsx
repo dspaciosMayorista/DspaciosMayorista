@@ -20,6 +20,7 @@ export function ComboCiudad({
   placeholder = "Ciudad o IATA…",
   permitirLibre = true,
   className = "",
+  inputId,
 }: {
   destinos: DestinoOpt[];
   value: string;
@@ -28,6 +29,8 @@ export function ComboCiudad({
   placeholder?: string;
   permitirLibre?: boolean;
   className?: string;
+  /** id del <input>, para asociarle un <label htmlFor> externo. */
+  inputId?: string;
 }) {
   const [open, setOpen] = useState(false);
   const [q, setQ] = useState("");
@@ -52,6 +55,7 @@ export function ComboCiudad({
       onBlur={(e) => { if (!ref.current?.contains(e.relatedTarget as Node)) setOpen(false); }}
     >
       <input
+        id={inputId}
         className={cls}
         value={open ? q : value}
         placeholder={placeholder}
