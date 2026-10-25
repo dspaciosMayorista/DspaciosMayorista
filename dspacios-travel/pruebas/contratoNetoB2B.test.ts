@@ -234,7 +234,8 @@ test("rentabilidad NETO = PVP con comisión aparte: el margen no depende de la m
 
 test("estado de cuenta: valor y saldo salen de precio_venta (total exigible) y no lee la comisión", () => {
   const src = leer("lib/cuenta/estado.ts");
-  assert.match(src, /const precio = Number\(v\.precio_venta \?\? 0\);/);
+  // 235: el total es el de COBRO (`cobroDeVenta`): sin conversión es exactamente precio_venta (el total exigible, NETO incluido).
+  assert.match(src, /const cobro = cobroDeVenta\(v\);\s+const precio = cobro\.total;/);
   assert.match(src, /saldo: Math\.max\(precio - acum, 0\)/);
   const select = src.match(/\.from\("ventas"\)\s*\.select\("([^"]+)"\)/);
   assert.ok(select, "lee ventas");

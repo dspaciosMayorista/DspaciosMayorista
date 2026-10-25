@@ -1,5 +1,6 @@
 import { createClient } from "@/lib/supabase/server";
 import { getTenant } from "@/lib/tenant.server";
+import { cobroDeVenta } from "@/lib/finanzas/cobro";
 import { CarteraList, type CarteraRow } from "./CarteraList";
 
 export const dynamic = "force-dynamic";
@@ -31,7 +32,7 @@ export default async function CarteraPage() {
   const [{ data: ventas }, { data: abonos }, { data: formasPagoRows }] = await Promise.all([
     sb
       .from("ventas")
-      .select("numero_contrato, cliente, destino, precio_venta, estado, fecha_salida, moneda, created_at")
+      .select("numero_contrato, cliente, destino, precio_venta, estado, fecha_salida, moneda, moneda_cobro, trm_cobro, total_cobro, created_at")
       .eq("tenant", tenant)
       .order("created_at", { ascending: false }),
     sb
@@ -60,15 +61,17 @@ export default async function CarteraPage() {
   const rows: CarteraRow[] = (ventas ?? []).map((v) => {
     const ab = abonosPorContrato.get(v.numero_contrato) ?? [];
     const pagado = ab.reduce((s, x) => s + (x.valor_abono ?? 0), 0);
-    const saldo = Math.max((v.precio_venta ?? 0) - pagado, 0);
+    // 235 (#90 F): la cartera se lleva en la MONEDA DE COBRO (la de la oferta salvo conversión elegida al contratar). Las filas se agrupan por esa moneda.
+    const cobro = cobroDeVenta(v);
+    const saldo = Math.max(cobro.total - pagado, 0);
     return {
       numero_contrato: v.numero_contrato,
       cliente: v.cliente,
       destino: v.destino,
-      precio_venta: v.precio_venta ?? 0,
+      precio_venta: cobro.total,
       estado: v.estado,
       fecha_salida: v.fecha_salida,
-      moneda: v.moneda ?? "COP",
+      moneda: cobro.moneda,
       pagado,
       saldo,
       abonos: ab,

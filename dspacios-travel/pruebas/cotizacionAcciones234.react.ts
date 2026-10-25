@@ -61,7 +61,7 @@ test("oferta USD sin TRM: aparece el campo; la tasa ingresada viaja como 5.º ar
   await escribir(campo(c)!, "4321.5");
   await clic(botonConTexto(c, /Confirmar → generar contrato/), "confirmar");
   await esperar(() => convertir().length > 0);
-  assert.deepEqual(convertir()[0][1], [77, undefined, undefined, undefined, 4321.5]);
+  assert.deepEqual(convertir()[0][1], [77, undefined, undefined, undefined, 4321.5, null, null]);
 });
 
 test("tasa inválida (0 o negativa): NO llama al servidor y explica por qué (un input numérico no admite texto; el servidor igual lo valida)", async () => {

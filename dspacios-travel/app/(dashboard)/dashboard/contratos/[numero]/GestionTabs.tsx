@@ -71,6 +71,11 @@ export type GestionProps = {
   facturas: Factura[];
   formasPago: string[];
   moneda?: string;       // moneda del contrato (USD muestra el estado de cuenta en dólares)
+  /** 235 (#90 F): moneda y total de COBRO (abonos, saldo y plan de cobro). Sin ellos se cobra en `moneda` por `precioVenta`. */
+  monedaCobro?: string;
+  totalCobro?: number;
+  /** Texto fijo si el contrato se cobra en una moneda distinta de la de la oferta (conversión congelada). */
+  notaCobro?: string | null;
   proveedoresCatalogo?: string[]; // nombres del catálogo, para sugerir/autocompletar
   aliadosCatalogo?: AliadoCat[]; // catálogo de aliados B2B, para elegir en vez de retipear
   // false = un asesor consultando el contrato de OTRO asesor de su agencia.
@@ -150,7 +155,7 @@ export function GestionTabs(p: GestionProps) {
           // `verFinanzas`, no `puedeEditar` — un asesor no registra pagos ni
           // siquiera en su propio contrato, y los botones que sí lo intentaban
           // fallaban en silencio.
-          <CarteraTab numero={p.numero} abonos={p.abonos} totalPagado={p.totalPagado} total={p.precioVenta} formasPago={p.formasPago} cuotas={p.cuotas} moneda={p.moneda ?? "COP"} puedeEditar={p.verFinanzas} puedeEditarPlan={p.puedeEditar !== false} />
+          <CarteraTab numero={p.numero} abonos={p.abonos} totalPagado={p.totalPagado} total={p.totalCobro ?? p.precioVenta} formasPago={p.formasPago} cuotas={p.cuotas} moneda={p.monedaCobro ?? p.moneda ?? "COP"} nota={p.notaCobro ?? null} puedeEditar={p.verFinanzas} puedeEditarPlan={p.puedeEditar !== false} />
         )}
         {p.verFinanzas && tab === "costos" && <CostosTab numero={p.numero} costos={p.costos} />}
         {p.verFinanzas && tab === "proveedores" && <ProveedoresTab numero={p.numero} filas={p.cuentasPorPagar} catalogo={p.proveedoresCatalogo ?? []} />}
@@ -220,12 +225,13 @@ function CostosTab({ numero, costos }: { numero: string; costos: GestionProps["c
 }
 
 // ── CARTERA (abonos) ───────────────────────────────────────────────────
-function CarteraTab({ numero, abonos, totalPagado, total, formasPago, cuotas, moneda = "COP", puedeEditar = true, puedeEditarPlan = true }: { numero: string; abonos: Abono[]; totalPagado: number; total: number; formasPago: string[]; cuotas: CuotaRow[]; moneda?: string; puedeEditar?: boolean; puedeEditarPlan?: boolean }) {
+function CarteraTab({ numero, abonos, totalPagado, total, formasPago, cuotas, moneda = "COP", nota = null, puedeEditar = true, puedeEditarPlan = true }: { numero: string; abonos: Abono[]; totalPagado: number; total: number; formasPago: string[]; cuotas: CuotaRow[]; moneda?: string; nota?: string | null; puedeEditar?: boolean; puedeEditarPlan?: boolean }) {
   const saldo = Math.max(total - totalPagado, 0);
   const fmt = (n: number) => formatMoneda(n, moneda);
   const esUSD = (moneda ?? "COP").toUpperCase() === "USD";
   return (
     <div className="space-y-4">
+      {nota && <p className="rounded-lg bg-gray-50 px-3 py-2 text-xs text-gray-600" data-testid="nota-cobro">{nota}</p>}
       <div className="grid grid-cols-3 gap-3">
         <Mini label="Total" value={fmt(total)} />
         <Mini label="Pagado" value={fmt(totalPagado)} color="var(--brand-success)" />

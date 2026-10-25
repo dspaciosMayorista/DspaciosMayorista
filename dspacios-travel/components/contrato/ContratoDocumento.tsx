@@ -71,6 +71,11 @@ type Props = {
   vuelos: ContratoVuelo[];
   items: ContratoItem[];
   totalPagado: number;
+  /**
+   * 235 (#90 F): cómo se COBRA el contrato (`cobroDeVenta`). Si se cobra en una moneda distinta de la de la oferta, el total del contrato sigue
+   * siendo el de la oferta y el pago/saldo se expresan en la moneda de cobro con su total convertido y congelado. Ausente = se cobra en la moneda del contrato.
+   */
+  cobro?: { moneda: string; total: number; trm: number | null; convertido: boolean } | null;
   // Modo COTIZACIÓN: rotula el documento como presupuesto (sin número de
   // contrato) y muestra la vigencia. No constituye reserva en firme.
   esCotizacion?: boolean;
@@ -149,6 +154,7 @@ export function ContratoDocumento({
   vuelos,
   items,
   totalPagado,
+  cobro = null,
   esCotizacion = false,
   codigo,
   vigenciaHasta,
@@ -173,6 +179,10 @@ export function ContratoDocumento({
   });
   const valoresNetos = !mostrarValoresItems ? valoresNetosDocumento(items, total) : null;
   const mostrarDesglose = mostrarValoresItems || valoresNetos !== null;
+  // 235: con conversión de cobro, lo pagado y el saldo van en la moneda de cobro contra el total convertido (nunca se resta una moneda de la otra).
+  const cobroConvertido = cobro?.convertido ? cobro : null;
+  const monedaPago = cobroConvertido ? cobroConvertido.moneda : moneda;
+  const saldoDocumento = cobroConvertido ? Math.max(cobroConvertido.total - totalPagado, 0) : saldo;
   const importeDocumento = (valor: number) => valoresNetos ? formatoNetoDocumento(valor, moneda) : formatMoneda(valor, moneda);
   const valorItemDocumento = (item: ContratoItem) => valoresNetos ? (valoresNetos.get(item.id)?.total ?? 0) : valorVisibleContratoItem(item);
   // Separa servicios (línea propia: Servicio · Pax · Valor total) del alojamiento.
@@ -524,9 +534,10 @@ export function ContratoDocumento({
                 </div>
                 <div className="text-base font-bold">{importeDocumento(total)}</div>
               </div>
-              <Pill label="Total pagado" value={formatMoneda(totalPagado, moneda)} />
-              <Pill label="Saldo pendiente" value={importeDocumento(saldo)} />
-              <Pill label="Moneda" value={moneda} />
+              {cobroConvertido && <Pill label="Total a cobrar" value={formatMoneda(cobroConvertido.total, cobroConvertido.moneda)} />}
+              <Pill label="Total pagado" value={formatMoneda(totalPagado, monedaPago)} />
+              <Pill label="Saldo pendiente" value={cobroConvertido ? formatMoneda(saldoDocumento, monedaPago) : importeDocumento(saldo)} />
+              <Pill label="Moneda" value={cobroConvertido ? `${moneda} · cobro en ${cobroConvertido.moneda}` : moneda} />
             </div>
           </div>
           {/* Hallazgo confirmado (cierre 3F-4B): una línea `modo_precio =

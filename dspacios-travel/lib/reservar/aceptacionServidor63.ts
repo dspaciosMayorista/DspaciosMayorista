@@ -82,7 +82,11 @@ export async function crearCotizacionOferta63(
 /** Aceptación atómica (RPC `aceptar_oferta_63`): revalida AHORA bajo candado, reserva el número y congela el snapshot. */
 export async function aceptarOferta63(
   admin: Cliente,
-  a: { cotizacionId: number; tenant: string; usuarioId: string; huella: string; huellaFinanciera: string; trmProvisional?: number | null }
+  a: {
+    cotizacionId: number; tenant: string; usuarioId: string; huella: string; huellaFinanciera: string; trmProvisional?: number | null;
+    /** 235: moneda de COBRO elegida (null = la de la oferta) y su TRM (solo si difiere de la oferta). */
+    monedaCobro?: "COP" | "USD" | null; trmCobro?: number | null;
+  }
 ): Promise<ResultadoAceptacion63> {
   try {
     const { data, error } = await admin.rpc("aceptar_oferta_63", {
@@ -93,6 +97,9 @@ export async function aceptarOferta63(
       p_huella_financiera: a.huellaFinanciera,
       // 234: tasa INGRESADA al convertir a contrato; OBLIGATORIA en una oferta USD sin TRM (null → la base la rechaza antes de numerar).
       p_trm_provisional: a.trmProvisional ?? null,
+      // 235: la base convierte el total UNA vez con esta tasa y congela la elección; un reintento con otra elección se rechaza.
+      p_moneda_cobro: a.monedaCobro ?? null,
+      p_trm_cobro: a.trmCobro ?? null,
     });
     if (error) {
       const m = mapearErrorRpc63(error.message);

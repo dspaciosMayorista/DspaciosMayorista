@@ -493,6 +493,9 @@ export default async function CotizacionDetallePage({
             miNombre={perfil?.nombre ?? ""}
             miRolVenta={perfil?.rol === "venta"}
             pideTrmProvisional={pideTrmProvisional}
+            permiteMonedaCobro={oferta63Cot != null}
+            monedaOferta={c.moneda ?? "COP"}
+            totalOferta={Number(c.precio_venta ?? 0)}
           />
         ) : c.estado === "convertida" && c.numero_contrato ? (
           <div className="flex flex-wrap items-center justify-between gap-3">

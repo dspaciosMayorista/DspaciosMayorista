@@ -5,6 +5,7 @@ import { revalidatePath } from "next/cache";
 import { formatFechaLarga, calcularEdad } from "@/lib/utils";
 import type { Json } from "@/types/database";
 import { fechaNegocio } from "@/lib/fechaNegocio";
+import { cobroDeVenta } from "@/lib/finanzas/cobro";
 
 // "Adultos" o "Adultos y niños" según las edades de los pasajeros.
 function tipoPaxDe(pasajeros: { fecha_nacimiento: string | null }[], fechaRef: string | null): string {
@@ -86,7 +87,7 @@ export async function generarVouchersServicios(numero: string): Promise<Result> 
   if (!esSuperadmin) {
     const { data: abonos } = await sb.from("abonos").select("valor_abono").eq("numero_contrato", numero);
     const pagado = (abonos ?? []).reduce((s, a) => s + (a.valor_abono ?? 0), 0);
-    if (pagado < (venta.precio_venta ?? 0)) {
+    if (pagado < cobroDeVenta(venta).total) {
       return { ok: false, error: "El contrato debe estar 100% pago para generar los vouchers (o pídelo a un superadmin)." };
     }
   }
@@ -243,7 +244,7 @@ export async function generarVoucherHotel(numero: string): Promise<Result> {
   if (perfil?.rol !== "superadmin") {
     const { data: abonos } = await sb.from("abonos").select("valor_abono").eq("numero_contrato", numero);
     const pagado = (abonos ?? []).reduce((s, a) => s + (a.valor_abono ?? 0), 0);
-    if (pagado < (venta.precio_venta ?? 0)) return { ok: false, error: "El contrato debe estar 100% pago (o pídelo a un superadmin)." };
+    if (pagado < cobroDeVenta(venta).total) return { ok: false, error: "El contrato debe estar 100% pago (o pídelo a un superadmin)." };
   }
 
   const hoy = fechaNegocio();

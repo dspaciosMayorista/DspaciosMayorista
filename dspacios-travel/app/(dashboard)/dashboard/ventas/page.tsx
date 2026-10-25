@@ -36,9 +36,9 @@ export default async function VentasPage({
   const tenant = await getTenant();
   const [{ data: ventasRaw }, { data: abonos }] = await Promise.all([
     sb.from("ventas").select(
-      "numero_contrato, cliente, asesor, asesor_firma_nombre, destino, tipo_paquete, fecha_venta, fecha_salida, fecha_regreso, precio_venta, estado, moneda, costo_hotel, costo_aereo, costo_receptivo, costo_asistencia, otros_costos"
+      "numero_contrato, cliente, asesor, asesor_firma_nombre, destino, tipo_paquete, fecha_venta, fecha_salida, fecha_regreso, precio_venta, estado, moneda, costo_hotel, costo_aereo, costo_receptivo, costo_asistencia, otros_costos, moneda_cobro"
     ).eq("tenant", tenant),
-    sb.from("abonos").select("numero_contrato, valor_abono"),
+    sb.from("abonos").select("numero_contrato, valor_abono, monto_cop"),
   ]);
   const ventas = ventasRaw ?? [];
 
@@ -51,6 +51,14 @@ export default async function VentasPage({
   // Abonos por contrato
   const abonadoPorContrato = new Map<string, number>();
   for (const a of abonos ?? []) abonadoPorContrato.set(a.numero_contrato, (abonadoPorContrato.get(a.numero_contrato) ?? 0) + (a.valor_abono ?? 0));
+  // 235 (#90 F): si el contrato se cobra en una moneda distinta de la de su oferta, `valor_abono` está en la moneda de COBRO y no se puede comparar con
+  // el precio de la oferta; se usa su equivalente en pesos (`monto_cop`, el que se pagó de verdad).
+  const abonadoCopPorContrato = new Map<string, number>();
+  for (const a of abonos ?? []) abonadoCopPorContrato.set(a.numero_contrato, (abonadoCopPorContrato.get(a.numero_contrato) ?? 0) + (Number(a.monto_cop) || 0));
+  const abonadoEnOferta = (v: { numero_contrato: string; moneda: string | null; moneda_cobro?: string | null }) =>
+    v.moneda_cobro && v.moneda_cobro !== (v.moneda ?? "COP")
+      ? (abonadoCopPorContrato.get(v.numero_contrato) ?? 0)
+      : (abonadoPorContrato.get(v.numero_contrato) ?? 0);
 
   // Filtrar al año (por fecha de venta) y excluir anuladas
   const delAnio = ventas.filter((v) => (v.fecha_venta ?? "").startsWith(String(anio)) && !esAnulada(v.estado));
@@ -63,7 +71,7 @@ export default async function VentasPage({
     (v.costo_hotel ?? 0) + (v.costo_aereo ?? 0) + (v.costo_receptivo ?? 0) + (v.costo_asistencia ?? 0) + (v.otros_costos ?? 0);
   const utilidad = cop.reduce((s, v) => s + ((v.precio_venta ?? 0) - costoDirecto(v)), 0);
   const margen = totalIngresos > 0 ? (utilidad / totalIngresos) * 100 : 0;
-  const recaudado = cop.reduce((s, v) => s + Math.min(abonadoPorContrato.get(v.numero_contrato) ?? 0, v.precio_venta ?? 0), 0);
+  const recaudado = cop.reduce((s, v) => s + Math.min(abonadoEnOferta(v), v.precio_venta ?? 0), 0);
   const cartera = Math.max(totalIngresos - recaudado, 0);
   const recaudoPct = totalIngresos > 0 ? (recaudado / totalIngresos) * 100 : 0;
   const ticket = nContratos > 0 ? totalIngresos / nContratos : 0;

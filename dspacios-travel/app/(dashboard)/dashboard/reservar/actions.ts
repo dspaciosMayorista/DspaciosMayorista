@@ -83,6 +83,8 @@ import {
   MENSAJE_EN_CURSO_63, MENSAJE_OFERTA_CERRADA_63, MENSAJE_TRM_PROVISIONAL_REQUERIDA_63, validarTrmProvisional63, type AceptacionPreparada63, type HotelSnapshot63, type PlanB2bSnapshot63,
 } from "@/lib/reservar/aceptacion63";
 import { aceptarOferta63, crearCotizacionOferta63, leerRevisiones63, ventaExiste63 } from "@/lib/reservar/aceptacionServidor63";
+import { validarEleccionCobro } from "@/lib/finanzas/cobro";
+import { ROLES_INTERNOS } from "@/lib/constants";
 import { altaPersonasCotizacion, logPersonasCotizacion } from "@/lib/personas/consulta";
 
 const oNull = (s: string | null | undefined) => (s && s.trim() !== "" ? s.trim() : null);
@@ -324,6 +326,12 @@ async function reservarDesdeTarifarioInterno(input: ReservaInput, tenant: Tenant
     if (!process.env.SUPABASE_SERVICE_ROLE_KEY) return { ok: false, error: "No se pudo crear la reserva (configuración del servidor incompleta)." };
     const { data: { user: actor63 } } = await sb.auth.getUser();
     if (!actor63) return { ok: false, error: "Sesión inválida: no se pudo confirmar el usuario para crear la reserva." };
+    // 235 (#90 F): moneda de COBRO elegida de forma EXPRESA al convertir. Se valida ANTES de numerar nada: solo el personal interno puede cobrar en una
+    // moneda distinta de la de la oferta, la TRM de cobro es obligatoria en ese caso y NUNCA se reutiliza la de publicación ni la de referencia.
+    const { data: perfil63 } = await sb.from("usuarios").select("rol, activo").eq("id", actor63.id).maybeSingle();
+    const esInterno63 = perfil63?.activo === true && ROLES_INTERNOS.includes(perfil63.rol as never);
+    const cobro63 = validarEleccionCobro({ monedaOferta: oferta63.moneda, monedaCobro: input.oferta63?.monedaCobro, trmCobro: input.oferta63?.trmCobro, esInterno: esInterno63 });
+    if (!cobro63.ok) return { ok: false, error: cobro63.error };
     const vivo63 = await calcularFinancieroReserva({ input, data: comp.data, datosVuelo, costoAereo, hoyISO: fechaNegocio() });
     if (!vivo63.ok) return { ok: false, error: vivo63.error };
     const huellaFin63 = huellaFinanciera63({ costos: vivo63.costosContrato, cxp: construirObligaciones63(vivo63.cxp, oferta63.trm), b2b: planVivo63 });
@@ -331,6 +339,7 @@ async function reservarDesdeTarifarioInterno(input: ReservaInput, tenant: Tenant
     const ac63 = await aceptarOferta63(adminAcept, {
       cotizacionId: cotizacionId63, tenant, usuarioId: actor63.id, huella: huellaDeOferta63(input, comp.data) ?? "", huellaFinanciera: huellaFin63,
       trmProvisional: trmProv63.trm,
+      monedaCobro: cobro63.monedaCobro, trmCobro: cobro63.trmCobro,
     });
     if (!ac63.ok) return { ok: false, error: ac63.error };
     if (ac63.aceptacion.estado === "completa") {
@@ -462,6 +471,11 @@ async function reservarDesdeTarifarioInterno(input: ReservaInput, tenant: Tenant
     asesor: oNull(input.asesorInterno),
     plan_nombre: cab.plan_nombre,
     aceptacion_63_id: aceptacion63?.aceptacion_id ?? null,
+    // 235: moneda de cobro CONGELADA con el intento (NULL = aceptación anterior a la 235 o fuera del modo #63: se cobra en la moneda de la oferta).
+    // La base compara estas tres columnas contra lo aceptado y las vuelve inmutables.
+    moneda_cobro: aceptacion63?.cobro?.moneda ?? null,
+    trm_cobro: aceptacion63?.cobro?.trm ?? null,
+    total_cobro: aceptacion63?.cobro?.total ?? null,
   });
   // #63: la guarda de la cabecera (p63_cabecera) habla de intentos y snapshots; el navegador recibe un mensaje de negocio.
   if (ve) return { ok: false, error: aceptacion63 && /p63_cabecera/.test(ve.message) ? MENSAJE_EN_CURSO_63 : ve.message };
@@ -1481,7 +1495,11 @@ export async function crearCotizacion(input: ReservaInput, opts?: { vigenciaHast
 
 // Convierte una cotización en CONTRATO: corre el motor de reserva normal (genera
 // numero_contrato + sillas + CxP) con el payload guardado, y enlaza la cotización.
-export async function convertirCotizacion(id: number, pasajeros?: PasajeroReserva[], override?: boolean, asesorInterno?: string, trmProvisional?: number | null): Promise<ReservaResult> {
+export async function convertirCotizacion(
+  id: number, pasajeros?: PasajeroReserva[], override?: boolean, asesorInterno?: string, trmProvisional?: number | null,
+  /** 235 (#90 F): moneda de cobro elegida (null = la de la oferta) y su TRM (solo si difiere). Se validan en el servidor; el navegador no decide nada. */
+  monedaCobro?: string | null, trmCobro?: number | null,
+): Promise<ReservaResult> {
   const sb = await createClient();
   const { data: cot, error } = await sb
     .from("cotizaciones")
@@ -1523,7 +1541,7 @@ export async function convertirCotizacion(id: number, pasajeros?: PasajeroReserv
   // nunca se re-deriva de forma independiente (ver reservarDesdeTarifarioInterno).
   // #63: el payload de una cotización en COP con TRM trae su `oferta63.huella`; viaja tal cual dentro del pedido y la
   // reserva la compara con lo que se va a cobrar (precio, vuelo, fechas, TRM y tarifario publicado).
-  const res = await reservarDesdeTarifarioInterno({ ...payload, pasajeros: pax, asesorInterno: asesor, oferta63: payload.oferta63 ? { ...payload.oferta63, cotizacionId: id, trmProvisional: trmProvisional ?? null } : payload.oferta63 }, cot.tenant as Tenant);
+  const res = await reservarDesdeTarifarioInterno({ ...payload, pasajeros: pax, asesorInterno: asesor, oferta63: payload.oferta63 ? { ...payload.oferta63, cotizacionId: id, trmProvisional: trmProvisional ?? null, monedaCobro: monedaCobro ?? null, trmCobro: trmCobro ?? null } : payload.oferta63 }, cot.tenant as Tenant);
   if (!res.ok) return res;
 
   await sb.from("cotizaciones").update({ estado: "convertida", numero_contrato: res.numero }).eq("id", id);
