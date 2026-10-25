@@ -4,7 +4,7 @@ import { useMemo, useState, useTransition } from "react";
 import { History, Search } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { formatCOP } from "@/lib/utils";
+import { formatNetoTarifa } from "@/lib/hoteles/tarifasVista";
 import { ResponsiveTableShell } from "@/components/ui/ResponsiveTableShell";
 import {
   resumenVigenciaHistorica, ESTADO_VERSION, MOTIVO_HISTORIAL, OPERACION_HISTORIAL,
@@ -37,8 +37,9 @@ const PRECIOS: [string, string][] = [
 ];
 
 export function TarifasHistorial({
-  hotelId, inicial, errorInicial, tarifasActuales, adultsOnly = false,
+  hotelId, inicial, errorInicial, tarifasActuales, adultsOnly = false, moneda = "COP",
 }: {
+  moneda?: string;
   hotelId: number;
   inicial: PaginaHistorial | null;
   errorInicial: string | null;
@@ -167,10 +168,10 @@ export function TarifasHistorial({
                             </td>
                             {precios.map(([k, l]) => {
                               const n = num(d[k]);
-                              return <td key={k} className="px-2 py-1 text-right tabular-nums" data-label={l}>{n != null ? formatCOP(n) : "—"}</td>;
+                              return <td key={k} className="px-2 py-1 text-right tabular-nums" data-label={l}>{formatNetoTarifa(n, moneda)}</td>;
                             })}
                             <td className="px-2 py-1 text-right tabular-nums text-gray-500" data-label="Hoy (doble)">
-                              {actual ? (actual.neto_doble != null ? formatCOP(Number(actual.neto_doble)) : "—") : <span className="text-gray-400">sin fila actual</span>}
+                              {actual ? formatNetoTarifa(actual.neto_doble, moneda) : <span className="text-gray-400">sin fila actual</span>}
                             </td>
                           </tr>
                         );

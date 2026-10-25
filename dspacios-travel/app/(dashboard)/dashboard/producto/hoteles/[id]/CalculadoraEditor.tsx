@@ -1,10 +1,10 @@
 "use client";
 
-import { useMemo, useState, useTransition } from "react";
+import { createContext, useContext, useMemo, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { formatCOP } from "@/lib/utils";
+import { formatNetoTarifa } from "@/lib/hoteles/tarifasVista";
 import { ResponsiveTableShell } from "@/components/ui/ResponsiveTableShell";
 import {
   generarTarifasDubai, validarDubaiParams, type DubaiParams, type DubaiPromo, type DubaiBase, type DubaiSuplementoRegimen,
@@ -40,10 +40,19 @@ function mensajeGeneracion(
   return partes.join(" ");
 }
 
+// Moneda del hotel para los importes que muestra la calculadora (vistas previas y avisos): antes se formateaban
+// siempre como COP aunque el hotel fuera USD. Solo presentación; no interviene en ningún cálculo.
+const MonedaCalculadora = createContext("COP");
+function useFormatoMoneda() {
+  const moneda = useContext(MonedaCalculadora);
+  return (v: number | null | undefined) => formatNetoTarifa(v, moneda);
+}
+
 export function CalculadoraEditor({
   hotelId, categorias, temporadas, regimenes, tipoInicial, dubaiInicial, mixtaInicial, corporativaInicial, adultsOnly = false,
-  vigencias, hoy, tarifasExistentes,
+  vigencias, hoy, tarifasExistentes, moneda = "COP",
 }: {
+  moneda?: string;
   hotelId: number;
   categorias: string[];
   temporadas: string[];
@@ -64,6 +73,7 @@ export function CalculadoraEditor({
   const [tipoCalc, setTipoCalc] = useState<CalcTipo>(tipoInicial ?? "dubai");
 
   return (
+    <MonedaCalculadora.Provider value={moneda}>
     <section className="mb-6 rounded-xl border border-gray-200 bg-white">
       <button type="button" onClick={() => setOpen((o) => !o)} className="flex w-full items-center justify-between px-4 py-3 text-left">
         <span className="text-sm font-semibold text-gray-700">
@@ -89,6 +99,7 @@ export function CalculadoraEditor({
         </div>
       )}
     </section>
+    </MonedaCalculadora.Provider>
   );
 }
 
@@ -515,6 +526,7 @@ const CAMPO_LABEL: Record<CampoMixta, string> = { sencilla: "Sencilla", doble: "
 function MixtaForm({
   hotelId, categorias, temporadas, regimenes, inicial, adultsOnly, vigencias, hoy, tarifasExistentes,
 }: { hotelId: number; categorias: string[]; temporadas: string[]; regimenes: string[]; inicial: MixtaParams | null; adultsOnly: boolean; vigencias: TemporadaRango[]; hoy: string; tarifasExistentes: TarifaExistente[] }) {
+  const fmtM = useFormatoMoneda();
   const router = useRouter();
   const [pending, start] = useTransition();
   const [msg, setMsg] = useState("");
@@ -579,7 +591,7 @@ function MixtaForm({
   // el servidor recalcula y no escribe nada si no coincide.
   function sustituir(c: string, t: string, b: BloqueoPromoMixta) {
     const aviso = avisoDe(t);
-    const fmt = (v: number | null | undefined) => (v == null ? "—" : formatCOP(v));
+    const fmt = fmtM;
     const campos = adultsOnly ? CAMPOS_VALOR_TARIFA.slice(0, 4) : CAMPOS_VALOR_TARIFA;
     const etiquetas: Record<string, string> = {
       neto_sencilla: "Sencilla", neto_doble: "Doble", neto_triple: "Triple", neto_multiple: "Múltiple",
@@ -722,7 +734,7 @@ function MixtaForm({
                           <div className="text-amber-700">
                             Escrita a mano ({bloqueo.origen.map((o) => (o === "calculadora" ? "calculadora" : "tarifa guardada")).join(" y ")}): no se toca al generar.
                           </div>
-                          <div className="text-gray-500">Calculada: doble {formatCOP(bloqueo.propuesta.neto_doble)} (−{aviso?.pct}% sobre {aviso?.base})</div>
+                          <div className="text-gray-500">Calculada: doble {fmtM(bloqueo.propuesta.neto_doble)} (−{aviso?.pct}% sobre {aviso?.base})</div>
                           <button type="button" disabled={pending} onClick={() => sustituir(c, t, bloqueo)} className="text-[var(--brand-accent)] hover:underline disabled:opacity-50">
                             Sustituir por −{aviso?.pct}% de {aviso?.base}
                           </button>
@@ -734,7 +746,7 @@ function MixtaForm({
                         const v = bloqueo ? valorActual(bloqueo, campo) : derivada ? valorFila(derivada, campo) : null;
                         return (
                           <td key={campo} className="px-2 py-1 text-right text-xs tabular-nums text-gray-500" data-label={CAMPO_LABEL[campo]}>
-                            {v != null ? formatCOP(v) : "—"}
+                            {fmtM(v)}
                           </td>
                         );
                       })
@@ -931,6 +943,7 @@ type FilaPrev = {
   precio_final_autoritativo?: boolean; temporada_base?: string | null;
 };
 function PreviewTabla({ titulo, filas, ocultarNinos = false }: { titulo: string; filas: FilaPrev[]; ocultarNinos?: boolean }) {
+  const fmtM = useFormatoMoneda();
   return (
     <div>
       <p className={lbl}>{titulo}</p>
@@ -952,15 +965,15 @@ function PreviewTabla({ titulo, filas, ocultarNinos = false }: { titulo: string;
                     <span className="ml-1.5 rounded-full bg-[var(--brand-accent)]/15 px-1.5 py-0.5 text-[10px] font-semibold uppercase text-[var(--brand-accent)]" title={f.temporada_base ? `Precio final calculado desde ${f.temporada_base}` : undefined}>Promo</span>
                   )}
                 </td>
-                <td className="px-2 py-1 text-right tabular-nums" data-label="Sencilla">{formatCOP(f.neto_sencilla)}</td>
-                <td className="px-2 py-1 text-right tabular-nums" data-label="Doble">{formatCOP(f.neto_doble)}</td>
-                <td className="px-2 py-1 text-right tabular-nums" data-label="Triple">{formatCOP(f.neto_triple)}</td>
-                <td className="px-2 py-1 text-right tabular-nums" data-label="Múltiple">{formatCOP(f.neto_multiple)}</td>
+                <td className="px-2 py-1 text-right tabular-nums" data-label="Sencilla">{fmtM(f.neto_sencilla)}</td>
+                <td className="px-2 py-1 text-right tabular-nums" data-label="Doble">{fmtM(f.neto_doble)}</td>
+                <td className="px-2 py-1 text-right tabular-nums" data-label="Triple">{fmtM(f.neto_triple)}</td>
+                <td className="px-2 py-1 text-right tabular-nums" data-label="Múltiple">{fmtM(f.neto_multiple)}</td>
                 {!ocultarNinos && (
                   <>
-                    <td className="px-2 py-1 text-right tabular-nums" data-label="Niño 1">{formatCOP(f.neto_nino)}</td>
-                    <td className="px-2 py-1 text-right tabular-nums" data-label="Niño 2">{f.neto_nino2 != null ? formatCOP(f.neto_nino2) : "—"}</td>
-                    <td className="px-2 py-1 text-right tabular-nums" data-label="Infante">{f.neto_infante != null ? formatCOP(f.neto_infante) : "—"}</td>
+                    <td className="px-2 py-1 text-right tabular-nums" data-label="Niño 1">{fmtM(f.neto_nino)}</td>
+                    <td className="px-2 py-1 text-right tabular-nums" data-label="Niño 2">{fmtM(f.neto_nino2)}</td>
+                    <td className="px-2 py-1 text-right tabular-nums" data-label="Infante">{fmtM(f.neto_infante)}</td>
                   </>
                 )}
               </tr>
