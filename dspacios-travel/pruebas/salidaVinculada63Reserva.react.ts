@@ -21,6 +21,17 @@ process.env.SUPABASE_SERVICE_ROLE_KEY ??= "clave-de-prueba";
 
 const { crearCotizacion, convertirCotizacion } = await import("../app/(dashboard)/dashboard/reservar/actions.ts");
 
+// 235 (#90 F): convertir una oferta #63 exige ELEGIR expresamente la moneda de cobro (la omisión se rechaza antes de numerar). Todas las ofertas de este
+// arnés son COP (la venta se asserta en COP; el hotel y los servicios en USD son COSTOS, no la moneda de la oferta), así que la elección es COP: la misma
+// moneda de la oferta, sin conversión y sin TRM de cobro. La TRM de cobro solo viaja si se pide cobrar en la otra moneda. Las conversiones de un Bloqueo
+// (no es #63: no hay oferta ni elección) y los casos que prueban a propósito la omisión o el reintento usan `convertirCotizacion` directamente.
+const MONEDA_OFERTA = "COP";
+function convertirEligiendoCobro(id: number, pasajeros: unknown, cobro: { monedaCobro?: "COP" | "USD"; trmCobro?: number } = {}) {
+  const monedaCobro = cobro.monedaCobro ?? MONEDA_OFERTA;
+  const trmCobro = monedaCobro === MONEDA_OFERTA ? null : (cobro.trmCobro ?? null);
+  return convertirCotizacion(id, pasajeros as never, undefined, undefined, undefined, monedaCobro, trmCobro);
+}
+
 function fechaBogota(offsetDias: number): string {
   return new Date(Date.now() + offsetDias * 86400000).toLocaleDateString("en-CA", { timeZone: "America/Bogota" });
 }
@@ -167,7 +178,7 @@ test("VINCULADA: se cotiza y se reserva SIN consultar cupos de Bloqueo (0 cupos 
   assert.match(String((guardada?.payload as { oferta63?: { huella?: string } })?.oferta63?.huella ?? ""), /^[0-9a-f]{64}$/, "la cotización guarda la huella de lo mostrado");
   assert.equal(JSON.stringify(guardada).includes(String(N)), false, "el costo N (tarifa del proveedor) no viaja en la cotización");
 
-  const r = await convertirCotizacion(cot.id, PASAJEROS_CON_INFANTE as never);
+  const r = await convertirEligiendoCobro(cot.id, PASAJEROS_CON_INFANTE);
   assert.equal(r.ok, true, JSON.stringify(r));
   assert.deepEqual(tocoCupos(tablasConsultadas), [], "una vinculada NO consulta cupos_por_bloqueo / sillas / bloqueos_vuelo");
 
@@ -213,7 +224,7 @@ test("VINCULADA con la fuente cambiada entre cotizar y convertir: NO se cobra un
   assert.equal(cot.ok, true, JSON.stringify(cot));
   if (!cot.ok) return;
   bd.filas("empaquetados")[0].tarifa_para_empaquetar = 1_200_000;
-  const r = await convertirCotizacion(cot.id, PASAJEROS as never);
+  const r = await convertirEligiendoCobro(cot.id, PASAJEROS);
   assert.equal(r.ok, false);
   assert.match((r as { error: string }).error, /cambi[oó]|Actualiza la salida/i);
   assert.equal(bd.filas("ventas").length, 0, "no se creó ningún contrato");
@@ -225,7 +236,7 @@ test("VINCULADA: la fuente recibe un record (PNR) después de cotizar → ya no 
   assert.equal(cot.ok, true, JSON.stringify(cot));
   if (!cot.ok) return;
   bd.filas("empaquetados")[0].record = "L93FYZ";
-  const r = await convertirCotizacion(cot.id, PASAJEROS as never);
+  const r = await convertirEligiendoCobro(cot.id, PASAJEROS);
   assert.equal(r.ok, false);
   assert.match((r as { error: string }).error, /ya tiene record/i);
   assert.equal(bd.filas("ventas").length, 0);
@@ -237,7 +248,7 @@ test("OFERTA CAMBIADA entre cotizar y convertir (TRM del paquete): se exige reco
   assert.equal(cot.ok, true, JSON.stringify(cot));
   if (!cot.ok) return;
   bd.filas("armado_paquetes")[0].trm_oferta = 4100;
-  const r = await convertirCotizacion(cot.id, PASAJEROS as never);
+  const r = await convertirEligiendoCobro(cot.id, PASAJEROS);
   assert.equal(r.ok, false);
   assert.match((r as { error: string }).error, /cambi[oó] desde que se cotiz[oó]/i);
   assert.equal(bd.filas("ventas").length, 0);
@@ -250,7 +261,7 @@ test("OFERTA CAMBIADA (tarifario regenerado: otra generación publicada): tambi�
   assert.equal(cot.ok, true, JSON.stringify(cot));
   if (!cot.ok) return;
   bd.filas("armado_paquetes")[0].tarifario_generacion_publicada = 4;
-  const r = await convertirCotizacion(cot.id, PASAJEROS as never);
+  const r = await convertirEligiendoCobro(cot.id, PASAJEROS);
   assert.equal(r.ok, false);
   assert.match((r as { error: string }).error, /cambi[oó] desde que se cotiz[oó]/i);
   assert.equal(bd.filas("ventas").length, 0);
@@ -303,7 +314,7 @@ test("E/F/G · orden y fuente de verdad: cotizar (RPC atómica) → aceptar → 
   const cot = await crearCotizacion(pedido() as never);
   assert.equal(cot.ok, true, JSON.stringify(cot));
   if (!cot.ok) return;
-  const r = await convertirCotizacion(cot.id, PASAJEROS as never);
+  const r = await convertirEligiendoCobro(cot.id, PASAJEROS);
   assert.equal(r.ok, true, JSON.stringify(r));
 
   const orden = bd.llamadasRpc.map((c) => c.fn).filter((fn) => RPC_CLAVE.includes(fn));
@@ -344,7 +355,7 @@ test("E/F/G · un cambio de CATÁLOGO después de aceptar NO altera el contrato:
   const cot = await crearCotizacion(pedido() as never);
   assert.equal(cot.ok, true, JSON.stringify(cot));
   if (!cot.ok) return;
-  const r = await convertirCotizacion(cot.id, PASAJEROS as never);
+  const r = await convertirEligiendoCobro(cot.id, PASAJEROS);
   assert.equal(r.ok, true, JSON.stringify(r));
   assert.deepEqual(cambios, ["catalogo"], "el cambio de catálogo ocurrió DURANTE la materialización");
   const venta = bd.filas("ventas")[0];
@@ -372,7 +383,7 @@ test("E/F/G · cambio SOLO de costo o proveedor con el PVP igual entre cotizar y
     assert.equal(cot.ok, true, JSON.stringify(cot));
     if (!cot.ok) return;
     cambiar(bd);
-    const r = await convertirCotizacion(cot.id, PASAJEROS as never);
+    const r = await convertirEligiendoCobro(cot.id, PASAJEROS);
     assert.equal(r.ok, false, `${que}: debía rechazarse`);
     assert.match((r as { error: string }).error, /cambi[oó]/i, que);
     assert.equal(bd.filas("ventas").length, 0, `${que}: no se creó contrato`);
@@ -388,7 +399,7 @@ test("E/F/G · corte a mitad de materialización: la reversión descarta el inte
   const cot = await crearCotizacion(pedido() as never);
   assert.equal(cot.ok, true, JSON.stringify(cot));
   if (!cot.ok) return;
-  const r1 = await convertirCotizacion(cot.id, PASAJEROS as never);
+  const r1 = await convertirEligiendoCobro(cot.id, PASAJEROS);
   assert.equal(r1.ok, false);
   const a1 = { ...bd.filas("p63_aceptacion")[0] };
   assert.equal(bd.filas("p63_aceptacion")[0]?.estado, "descartada", "el intento fallido quedó descartado");
@@ -397,7 +408,7 @@ test("E/F/G · corte a mitad de materialización: la reversión descarta el inte
   assert.notEqual(bd.filas("cotizaciones")[0]?.estado, "convertida");
 
   falla = null;
-  const r2 = await convertirCotizacion(cot.id, PASAJEROS as never);
+  const r2 = await convertirEligiendoCobro(cot.id, PASAJEROS);
   assert.equal(r2.ok, true, JSON.stringify(r2));
   const aceptaciones = bd.filas("p63_aceptacion");
   assert.equal(aceptaciones.length, 2);
@@ -412,7 +423,7 @@ test("E/F/G · doble clic: dos conversiones simultáneas dejan UN contrato, UNA 
   const cot = await crearCotizacion(pedido() as never);
   assert.equal(cot.ok, true, JSON.stringify(cot));
   if (!cot.ok) return;
-  const [r1, r2] = await Promise.all([convertirCotizacion(cot.id, PASAJEROS as never), convertirCotizacion(cot.id, PASAJEROS as never)]);
+  const [r1, r2] = await Promise.all([convertirEligiendoCobro(cot.id, PASAJEROS), convertirEligiendoCobro(cot.id, PASAJEROS)]);
   assert.equal(bd.filas("ventas").length, 1, "un solo contrato");
   assert.equal(bd.filas("p63_aceptacion").length, 1, "un solo intento (no se gastó otro número)");
   const aereas = bd.filas("cuentas_por_pagar").filter((c) => c.tipo_proveedor === "aereo");
@@ -434,12 +445,12 @@ test("E/F/G · reintento sobre un intento 'materializando' (cabecera creada, pro
   const oferta = bd.filas("p63_oferta")[0] as Fila;
   const { aceptarOferta63 } = await import("../lib/reservar/aceptacionServidor63.ts");
   const sb = (globalThis as unknown as { __arnesFechas: { sb: never } }).__arnesFechas.sb;
-  const ac = await aceptarOferta63(sb, { cotizacionId: cot.id, tenant: "mayorista", usuarioId: "u-arnes", huella: String(oferta.huella), huellaFinanciera: String(oferta.huella_financiera) });
+  const ac = await aceptarOferta63(sb, { cotizacionId: cot.id, tenant: "mayorista", usuarioId: "u-arnes", huella: String(oferta.huella), huellaFinanciera: String(oferta.huella_financiera), monedaCobro: MONEDA_OFERTA });
   assert.equal(ac.ok, true, JSON.stringify(ac));
   const a = bd.filas("p63_aceptacion")[0];
   a.estado = "materializando";
   bd.filas("ventas").push({ numero_contrato: a.numero_contrato, tenant: "mayorista", aceptacion_63_id: a.id, financiero_estado: "pendiente", estado: "pendiente" });
-  const r = await convertirCotizacion(cot.id, PASAJEROS as never);
+  const r = await convertirEligiendoCobro(cot.id, PASAJEROS);
   assert.equal(r.ok, false);
   assert.match((r as { error: string }).error, /ya se est[aá] creando/i);
   assert.match((r as { error: string }).error, new RegExp(String(a.numero_contrato)), "el mensaje nombra el contrato para que soporte lo ubique");
@@ -452,12 +463,12 @@ test("E/F/G · convertir una oferta ya COMPLETA reconoce el contrato existente (
   const cot = await crearCotizacion(pedido() as never);
   assert.equal(cot.ok, true, JSON.stringify(cot));
   if (!cot.ok) return;
-  const r1 = await convertirCotizacion(cot.id, PASAJEROS as never);
+  const r1 = await convertirEligiendoCobro(cot.id, PASAJEROS);
   assert.equal(r1.ok, true, JSON.stringify(r1));
   // Respuesta perdida: la cotización quedó abierta aunque el contrato ya existe y está completo.
   bd.filas("cotizaciones")[0].estado = "abierta";
   bd.filas("cotizaciones")[0].numero_contrato = null;
-  const r2 = await convertirCotizacion(cot.id, PASAJEROS as never);
+  const r2 = await convertirEligiendoCobro(cot.id, PASAJEROS);
   assert.equal(r2.ok, true, JSON.stringify(r2));
   if (r1.ok && r2.ok) assert.equal(r2.numero, r1.numero, "mismo contrato, sin duplicarlo");
   assert.equal(bd.filas("ventas").length, 1);
@@ -465,7 +476,7 @@ test("E/F/G · convertir una oferta ya COMPLETA reconoce el contrato existente (
   // Si el contrato se eliminó (superadmin), la oferta convertida es terminal: no se reabre ni se rehace.
   bd.tablas.set("ventas", []);
   bd.filas("cotizaciones")[0].estado = "abierta";
-  const r3 = await convertirCotizacion(cot.id, PASAJEROS as never);
+  const r3 = await convertirEligiendoCobro(cot.id, PASAJEROS);
   assert.equal(r3.ok, false);
   assert.match((r3 as { error: string }).error, /ya fue convertida|cotizaci[oó]n nueva/i);
 });
@@ -526,7 +537,7 @@ test("C5 · el plan B2B se congela en el snapshot al cotizar y la cabecera sale 
   assert.deepEqual([snap.cabecera.tipo_asesor, snap.cabecera.canal], ["agencia", "B2B"]);
   assert.equal(snap.cabecera.precio_venta, PVP_B2B, "la cabecera del snapshot guarda el PVP; el precio final B2B vive en b2b.precio_final");
 
-  const r = await convertirCotizacion(cot.id, PASAJEROS as never);
+  const r = await convertirEligiendoCobro(cot.id, PASAJEROS);
   assert.equal(r.ok, true, JSON.stringify(r));
   const [venta] = bd.filas("ventas");
   assert.equal(venta?.precio_venta, PVP_B2B - comisionDe(0.1));
@@ -546,7 +557,7 @@ test("C5 · PVP IGUAL y % del aliado cambiado entre cotizar y convertir: se rech
   const paqueteAntes = JSON.stringify(bd.filas("armado_paquetes")[0]);
   const pvpAntes = (bd.filas("cotizaciones")[0] as Fila).precio_venta;
   bd.filas("aliados")[0].pct_comision = 0.12; // ningún precio, tarifa ni revisión cambió: solo el % del aliado
-  const r = await convertirCotizacion(cot.id, PASAJEROS as never);
+  const r = await convertirEligiendoCobro(cot.id, PASAJEROS);
   assert.equal(r.ok, false);
   assert.match((r as { error: string }).error, /cambi[oó] desde que se cotiz[oó]/i);
   assert.equal(bd.filas("ventas").length, 0, "no se creó contrato");
@@ -560,7 +571,7 @@ test("C5 · PVP IGUAL y % del aliado cambiado entre cotizar y convertir: se rech
   const cot2 = await crearCotizacion(pedidoB2B() as never);
   assert.equal(cot2.ok, true, JSON.stringify(cot2));
   if (!cot2.ok) return;
-  const r2 = await convertirCotizacion(cot2.id, PASAJEROS as never);
+  const r2 = await convertirEligiendoCobro(cot2.id, PASAJEROS);
   assert.equal(r2.ok, true, JSON.stringify(r2));
   assert.equal(bd.filas("ventas")[0]?.comision_b2b, comisionDe(0.12));
   assert.equal(bd.filas("ventas")[0]?.precio_venta, PVP_B2B - comisionDe(0.12));
@@ -573,7 +584,7 @@ test("C5 · el % que sale del PARÁMETRO general (aliado sin % propio) también 
   if (!cot.ok) return;
   assert.equal((bd.filas("p63_oferta")[0]?.snapshot as { b2b: { pct: number } }).b2b.pct, 0.1);
   bd.filas("parametros_tributarios")[0].valor = 0.13;
-  const r = await convertirCotizacion(cot.id, PASAJEROS as never);
+  const r = await convertirEligiendoCobro(cot.id, PASAJEROS);
   assert.equal(r.ok, false);
   assert.match((r as { error: string }).error, /cambi[oó] desde que se cotiz[oó]/i);
   assert.equal(bd.filas("ventas").length + bd.filas("p63_aceptacion").length, 0);
@@ -586,7 +597,7 @@ test("C5 · un cambio del % POSTERIOR a la aceptación falla cerrado: la comisi�
   const cot = await crearCotizacion(pedidoB2B() as never);
   assert.equal(cot.ok, true, JSON.stringify(cot));
   if (!cot.ok) return;
-  const r = await convertirCotizacion(cot.id, PASAJEROS as never);
+  const r = await convertirEligiendoCobro(cot.id, PASAJEROS);
   assert.equal(r.ok, false);
   assert.match((r as { error: string }).error, /comisión B2B de la reserva/i);
   assert.equal(bd.filas("ventas").length, 0, "no queda contrato a medias");
@@ -601,7 +612,7 @@ test("C5 · cambiar de aliado entre cotizar y convertir (mismo % y PVP) también
   assert.equal(cot.ok, true, JSON.stringify(cot));
   if (!cot.ok) return;
   ((bd.filas("cotizaciones")[0] as Fila).payload as Record<string, unknown>).aliadoId = 901;
-  const r = await convertirCotizacion(cot.id, PASAJEROS as never);
+  const r = await convertirEligiendoCobro(cot.id, PASAJEROS);
   assert.equal(r.ok, false);
   assert.equal(bd.filas("ventas").length + bd.filas("p63_aceptacion").length, 0);
 });
@@ -614,7 +625,7 @@ test("C5 · una oferta interna (B2C) no lleva plan B2B: snapshot.b2b = null y la
   const snap = bd.filas("p63_oferta")[0]?.snapshot as { b2b: unknown; cabecera: Record<string, unknown> };
   assert.equal(snap.b2b, null);
   assert.deepEqual([snap.cabecera.tipo_asesor, snap.cabecera.canal], ["interno", "B2C"]);
-  const r = await convertirCotizacion(cot.id, PASAJEROS as never);
+  const r = await convertirEligiendoCobro(cot.id, PASAJEROS);
   assert.equal(r.ok, true, JSON.stringify(r));
   assert.equal(bd.filas("ventas")[0]?.comision_b2b ?? null, null);
   assert.equal(bd.filas("aliados_b2b").length, 0);
@@ -639,7 +650,7 @@ test("C5 · cruce de medianoche (HOTEL): la compra cierra hoy; la RPC ve mañana
   const paquete = JSON.stringify(bd.filas("armado_paquetes")[0]);
   const fuente = JSON.stringify(bd.filas("empaquetados")[0]);
   reloj = fechaBogota(1); // la RPC ya está en el día siguiente; el servidor TS calculó antes de la medianoche
-  const r = await convertirCotizacion(cot.id, PASAJEROS as never);
+  const r = await convertirEligiendoCobro(cot.id, PASAJEROS);
   assert.equal(r.ok, false);
   assert.match((r as { error: string }).error, /cambi[oó] desde que se cotiz[oó]/i);
   assert.equal(bd.filas("ventas").length + bd.filas("p63_aceptacion").length, 0, "ni contrato ni intento");
@@ -648,7 +659,7 @@ test("C5 · cruce de medianoche (HOTEL): la compra cierra hoy; la RPC ve mañana
   assert.equal(JSON.stringify(bd.filas("empaquetados")[0]), fuente);
   assert.equal(bd.filas("p63_oferta")[0]?.estado, "abierta");
   reloj = hoy; // el rechazo era del reloj, no de otro cambio
-  const r2 = await convertirCotizacion(cot.id, PASAJEROS as never);
+  const r2 = await convertirEligiendoCobro(cot.id, PASAJEROS);
   assert.equal(r2.ok, true, JSON.stringify(r2));
 });
 
@@ -659,11 +670,11 @@ test("C5 · una tarifa de hotel que AÚN NO abre su compra para el reloj de la R
   const cot = await crearCotizacion(pedido() as never);
   assert.equal(cot.ok, true, JSON.stringify(cot));
   if (!cot.ok) return;
-  const r = await convertirCotizacion(cot.id, PASAJEROS as never);
+  const r = await convertirEligiendoCobro(cot.id, PASAJEROS);
   assert.equal(r.ok, false);
   assert.equal(bd.filas("p63_aceptacion").length, 0);
   reloj = hoy;
-  const r2 = await convertirCotizacion(cot.id, PASAJEROS as never);
+  const r2 = await convertirEligiendoCobro(cot.id, PASAJEROS);
   assert.equal(r2.ok, true, JSON.stringify(r2));
 });
 
@@ -678,13 +689,13 @@ test("C5 · cruce de medianoche (SERVICIO opcional): la temporada del servicio c
   assert.ok(snap.vigencias.some((v) => v.origen === "servicio" && v.ref === "901|Alta" && v.compra_fin === hoy), JSON.stringify(snap.vigencias));
   const paquete = JSON.stringify(bd.filas("armado_paquetes")[0]);
   reloj = fechaBogota(1);
-  const r = await convertirCotizacion(cot.id, PASAJEROS as never);
+  const r = await convertirEligiendoCobro(cot.id, PASAJEROS);
   assert.equal(r.ok, false);
   assert.match((r as { error: string }).error, /cambi[oó] desde que se cotiz[oó]/i);
   assert.equal(bd.filas("ventas").length + bd.filas("p63_aceptacion").length, 0);
   assert.equal(JSON.stringify(bd.filas("armado_paquetes")[0]), paquete, "ningún UPDATE");
   reloj = hoy;
-  const r2 = await convertirCotizacion(cot.id, PASAJEROS as never);
+  const r2 = await convertirEligiendoCobro(cot.id, PASAJEROS);
   assert.equal(r2.ok, true, JSON.stringify(r2));
 });
 
@@ -699,11 +710,34 @@ test("C5 · lo ya ACEPTADO antes de vencer la compra se recupera después del cr
   const { aceptarOferta63 } = await import("../lib/reservar/aceptacionServidor63.ts");
   const sb = (globalThis as unknown as { __arnesFechas: { sb: never } }).__arnesFechas.sb;
   const args = { cotizacionId: cot.id, tenant: "mayorista", usuarioId: "u-arnes", huella: String(oferta.huella), huellaFinanciera: String(oferta.huella_financiera) };
-  const ac = await aceptarOferta63(sb, args);
+  const ac = await aceptarOferta63(sb, { ...args, monedaCobro: MONEDA_OFERTA }); // intento NUEVO: lleva la elección expresa
   assert.equal(ac.ok, true, JSON.stringify(ac));
   const numero = bd.filas("p63_aceptacion")[0]?.numero_contrato;
   reloj = fechaBogota(1); // cruzó la medianoche
-  const otra = await aceptarOferta63(sb, args);
+  const otra = await aceptarOferta63(sb, args); // reintento de un intento ya aceptado: sin elección, deliberadamente (la RPC devuelve lo congelado y no numera)
   assert.equal(otra.ok && otra.aceptacion.numero_contrato, numero, "el intento ya aceptado sigue siendo el mismo, con el mismo número");
   assert.equal(bd.filas("p63_aceptacion").length, 1);
+});
+
+test("235 · omitir la moneda de cobro se rechaza A PROPÓSITO antes de numerar (sin contrato, sin intento, sin consecutivo); cobrar en la otra moneda sin TRM de cobro también", async () => {
+  const { bd } = montar({ conServicio: true });
+  const cot = await crearCotizacion(pedido() as never);
+  assert.equal(cot.ok, true, JSON.stringify(cot));
+  if (!cot.ok) return;
+  const intentos: Array<[string, Parameters<typeof convertirCotizacion>[5], Parameters<typeof convertirCotizacion>[6], RegExp]> = [
+    ["sin elegir (undefined)", undefined, undefined, /Elige la moneda de cobro/],
+    ["sin elegir (null)", null, null, /Elige la moneda de cobro/],
+    ["sin elegir (vacía)", "", null, /Elige la moneda de cobro/],
+    ["otra moneda sin TRM de cobro", "USD", null, /exige la TRM de cobro/],
+  ];
+  for (const [que, moneda, trm, patron] of intentos) {
+    const r = await convertirCotizacion(cot.id, PASAJEROS as never, undefined, undefined, undefined, moneda, trm);
+    assert.equal(r.ok, false, `${que}: debía rechazarse`);
+    assert.match((r as { error: string }).error, patron, que);
+    assert.equal(bd.filas("ventas").length + bd.filas("p63_aceptacion").length, 0, `${que}: ni contrato ni intento`);
+    assert.equal(consecutivo() ?? 450, 450, `${que}: no se gastó consecutivo`);
+    assert.equal(bd.filas("p63_oferta")[0]?.estado, "abierta", `${que}: la oferta sigue abierta`);
+  }
+  const ok = await convertirEligiendoCobro(cot.id, PASAJEROS);
+  assert.equal(ok.ok, true, JSON.stringify(ok));
 });
