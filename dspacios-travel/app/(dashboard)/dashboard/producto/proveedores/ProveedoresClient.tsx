@@ -194,6 +194,9 @@ function ProveedorForm({ inicial, proveedores, destinos, textoGuardar, onSubmit,
 
 type Vista = "crear" | "listado";
 
+// Pestaña activa: texto y subrayado de marca (el estilo base del componente compartido es muy tenue).
+const TAB_CLS = "flex-none px-3 py-2 data-active:font-semibold data-active:text-[var(--brand-primary)] after:!inset-x-0 after:!bottom-[-7px] after:!h-[3px] data-active:after:!bg-[var(--brand-primary)] data-active:after:!opacity-100";
+
 export function ProveedoresClient({ proveedores: proveedoresServidor, destinos }: { proveedores: Proveedor[]; destinos: DestinoOpt[] }) {
   const [vista, setVista] = useState<Vista>("crear");
   const [query, setQuery] = useState("");
@@ -250,10 +253,10 @@ export function ProveedoresClient({ proveedores: proveedoresServidor, destinos }
   }
 
   return (
-    <Tabs value={vista} onValueChange={(v) => setVista(v as Vista)}>
-      <TabsList variant="line" aria-label="Secciones de proveedores">
-        <TabsTrigger value="crear" className="px-3">Creación o configuración</TabsTrigger>
-        <TabsTrigger value="listado" className="px-3">Listado de proveedores ({proveedores.length})</TabsTrigger>
+    <Tabs value={vista} onValueChange={(v) => setVista(v as Vista)} className="flex-col gap-4">
+      <TabsList variant="line" aria-label="Secciones de proveedores" className="h-auto w-full flex-wrap justify-start gap-2 border-b border-gray-200 pb-1.5">
+        <TabsTrigger value="crear" className={TAB_CLS}>Creación o configuración</TabsTrigger>
+        <TabsTrigger value="listado" className={TAB_CLS}>Listado de proveedores ({proveedores.length})</TabsTrigger>
       </TabsList>
 
       <TabsContent value="crear" keepMounted>
