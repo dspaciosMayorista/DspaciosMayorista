@@ -192,7 +192,9 @@ describe("los caminos de venta usan la fuente única de menores de 2 años", () 
   });
   test("reservar (conversión de carrito, bloqueo): el costo aéreo suma el fee de infante del bloqueo por menor de 2 años", () => {
     assert.match(reservar, /fee_infante, fecha_ida, fecha_regreso, vuelo_ida/);
-    assert.match(reservar, /\(Number\(bq\.fee_infante\) \|\| 0\) \* numMenoresDeDos/);
+    // La fórmula vive en UN solo lugar (la comparten la revisión previa de moneda y la creación del contrato del carrito).
+    assert.match(reservar, /const costoAereo = costoAereoBloqueo\(bq, paxConSilla, numMenoresDeDos\);/);
+    assert.match(leer("lib/reservar/costosObligacionesCarrito.ts"), /\(Number\(bq\.fee_infante\) \|\| 0\) \* numMenoresDeDos/);
   });
   test("checkout: filas de menores y residual salen de lineasMenores", () => {
     assert.match(checkout, /for \(const lm of lineasMenores\)/);

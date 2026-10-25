@@ -84,6 +84,9 @@ import {
 } from "@/lib/reservar/aceptacion63";
 import { aceptarOferta63, crearCotizacionOferta63, leerRevisiones63, ventaExiste63 } from "@/lib/reservar/aceptacionServidor63";
 import { validarEleccionCobro } from "@/lib/finanzas/cobro";
+import { decidirCxP, evaluarObligaciones, type Obligacion } from "@/lib/reservar/monedaObligacionesCarrito";
+import { costoAereoBloqueo, costoHotelPersona, costoTourParaCxP, costoVueloBernalo, liquidarCostoTour } from "@/lib/reservar/costosObligacionesCarrito";
+import { cobroDeContratoCarrito, compararConCongelado, leerCobroCongelado, monedaOfertaDeCotizacion, resolverMonedaOferta, validarEleccionCarrito } from "@/lib/finanzas/cobroCarrito";
 import { ROLES_INTERNOS } from "@/lib/constants";
 import { altaPersonasCotizacion, logPersonasCotizacion } from "@/lib/personas/consulta";
 
@@ -1852,6 +1855,9 @@ export async function convertirCotizacionCarrito(
     // — B17 (ronda 6): los tours también participan en la asignación
     // explícita, nunca heredan en silencio los pasajeros del hotel ni todos.
     asignacionesTours: number[][];
+    /** 235 (#90 F): moneda de COBRO elegida (OBLIGATORIA, COP o USD) y su TRM (solo si difiere de la moneda de la cotización). Una sola para todos los contratos. */
+    monedaCobro?: string | null;
+    trmCobro?: number | string | null;
   }
 ): Promise<{ ok: true; numeros: string[]; advertencias?: string[] } | { ok: false; error: string }> {
   const sb = await createClient();
@@ -1860,11 +1866,39 @@ export async function convertirCotizacionCarrito(
     .select("id, estado, tipo, payload, tenant, numero_contrato, detalle, moneda")
     .eq("id", id).eq("tipo", "carrito").maybeSingle();
   if (!cot) return { ok: false, error: "Cotización no encontrada." };
+  // Acceso PRIMERO (antes de revelar o devolver nada de la cotización, incluso si ya está convertida).
+  // Sin tenant asignado no se convierte (ver migración 153 — nunca se asume
+  // un tenant por defecto), y el caller debe tener acceso a esa agencia.
+  if (!cot.tenant) return { ok: false, error: "Esta cotización no tiene agencia (tenant) asignada; no se puede convertir. Contacta a un administrador." };
+  const ctx = await contextoCotizacion();
+  if (!autorizaTenant(ctx, cot.tenant)) return { ok: false, error: "No tienes acceso a esta cotización." };
+  // Capturado en una constante (en vez de reusar `cot.tenant` más abajo,
+  // después de varios `await`): TypeScript no puede seguir garantizando el
+  // `!cot.tenant` de arriba a través de llamadas intermedias.
+  const tenantCotizacion = cot.tenant as Tenant;
+  // 235 (#90 F): MONEDA DE COBRO. Se valida AQUÍ, en el servidor, antes de leer o escribir nada (el selector de la pantalla no basta): es obligatoria
+  // y expresa —también si coincide con la moneda de la cotización—, solo el personal interno puede cobrar en la otra, y la otra exige una TRM positiva.
+  const monedaOfertaCarrito = monedaOfertaDeCotizacion(cot.moneda, cot.payload);
+  const { data: { user: actorCobro } } = await sb.auth.getUser();
+  const { data: perfilCobro } = actorCobro ? await sb.from("usuarios").select("rol, activo").eq("id", actorCobro.id).maybeSingle() : { data: null };
+  const esInternoCobro = perfilCobro?.activo === true && ROLES_INTERNOS.includes(perfilCobro.rol as never);
+  const vEleccionCobro = validarEleccionCarrito({ monedaOferta: monedaOfertaCarrito, monedaCobro: opts.monedaCobro, trmCobro: opts.trmCobro, esInterno: esInternoCobro });
+  if (!vEleccionCobro.ok) return { ok: false, error: vEleccionCobro.error };
+  const eleccionCobro = vEleccionCobro.eleccion;
   // Hallazgo confirmado (cierre 3F-4B): mismo criterio que `convertirCotizacion`
   // (persona, un solo contrato) — si esta cotización YA quedó "convertida" en
   // un intento anterior, un reintento (doble clic, red lenta, etc.) NUNCA debe
   // volver a crear contratos/sillas/CxP: devuelve los números ya generados.
   const detalleExistente = (cot.detalle ?? {}) as { contratos?: unknown; contratosPorGrupo?: Record<string, string>; agrupar?: string };
+  // 235: un REINTENTO no puede cambiar lo ya congelado (moneda ni TRM de cobro), ni siquiera si la cotización ya quedó convertida.
+  const cmpCobro = compararConCongelado({
+    eleccion: eleccionCobro,
+    congelado: leerCobroCongelado(cot.detalle),
+    hayContratos: Object.keys(detalleExistente.contratosPorGrupo ?? {}).length > 0
+      || (Array.isArray(detalleExistente.contratos) && detalleExistente.contratos.length > 0) || !!cot.numero_contrato,
+    monedaOferta: monedaOfertaCarrito,
+  });
+  if (!cmpCobro.ok) return { ok: false, error: cmpCobro.error };
   if (cot.estado === "convertida") {
     const contratosPrevios = Array.isArray(detalleExistente.contratos)
       ? (detalleExistente.contratos as unknown[]).filter((n): n is string => typeof n === "string")
@@ -1895,15 +1929,6 @@ export async function convertirCotizacionCarrito(
     };
   }
 
-  // Sin tenant asignado no se convierte (ver migración 153 — nunca se asume
-  // un tenant por defecto), y el caller debe tener acceso a esa agencia.
-  if (!cot.tenant) return { ok: false, error: "Esta cotización no tiene agencia (tenant) asignada; no se puede convertir. Contacta a un administrador." };
-  const ctx = await contextoCotizacion();
-  if (!autorizaTenant(ctx, cot.tenant)) return { ok: false, error: "No tienes acceso a esta cotización." };
-  // Capturado en una constante (en vez de reusar `cot.tenant` más abajo,
-  // después de varios `await`): TypeScript no puede seguir garantizando el
-  // `!cot.tenant` de arriba a través de llamadas intermedias.
-  const tenantCotizacion = cot.tenant as Tenant;
 
   const payload = (cot.payload ?? {}) as {
     items?: (ItemCarritoPayload | ItemCarritoBernaloPayload)[]; tours?: TourCarritoPayload[];
@@ -2076,7 +2101,8 @@ export async function convertirCotizacionCarrito(
   // que `grupos`.
   const claveDeGrupo = (g: Grupo) => g.destino ?? "__sin_destino__";
   const contratosPorGrupo: Record<string, string> = { ...contratosPorGrupoExistente };
-  const detalleBase = (cot.detalle ?? {}) as Record<string, unknown>;
+  // 235: la elección de cobro viaja en CADA escritura de progreso, así que queda congelada desde el primer contrato (los reintentos la comparan arriba).
+  const detalleBase = { ...((cot.detalle ?? {}) as Record<string, unknown>), cobro: { moneda: eleccionCobro.monedaCobro, trm: eleccionCobro.trmCobro } } as Record<string, unknown>;
   const numeros: string[] = [];
   // Fallas NO bloqueantes acumuladas de TODOS los grupos/contratos de este
   // carrito — mismo criterio que ReservaResult, ver su comentario.
@@ -2308,6 +2334,88 @@ export async function convertirCotizacionCarrito(
     }
   }
 
+  // Moneda de la OFERTA de los contratos (#90 F): todas las unidades de cada grupo —hoteles Y tours— deben coincidir con la de la cotización. Se valida
+  // para TODOS los grupos pendientes ANTES de numerar o escribir el primero, y nunca se suman importes de monedas distintas. Un grupo de solo tours
+  // toma la moneda de la cotización (antes caía en COP). La elección de cobro se revalida contra esta moneda si la cotización no la traía.
+  const rMoneda = resolverMonedaOferta({
+    monedaCotizacion: cot.moneda,
+    grupos: gruposValidados.map(({ grupo, validadosPersona, validadosBernalo }) => ({
+      etiqueta: grupo.destino ?? "",
+      unidades: [
+        ...validadosPersona.map((v) => ({ origen: v.item.hotelNombre, moneda: v.comp.monedaReserva })),
+        ...validadosBernalo.map((v) => ({ origen: v.item.hotelNombre, moneda: v.resultado.moneda })),
+        ...grupo.tours.map((t) => ({ origen: t.nombre, moneda: t.moneda })),
+      ],
+    })),
+  });
+  if (!rMoneda.ok) return { ok: false, error: rMoneda.error };
+  const monedaOfertaConversion = rMoneda.moneda;
+  if (monedaOfertaConversion !== (monedaOfertaCarrito === "USD" ? "USD" : "COP")) {
+    const revalidada = validarEleccionCarrito({ monedaOferta: monedaOfertaConversion, monedaCobro: opts.monedaCobro, trmCobro: opts.trmCobro, esInterno: esInternoCobro });
+    if (!revalidada.ok) return { ok: false, error: revalidada.error };
+    if (revalidada.eleccion.monedaCobro !== eleccionCobro.monedaCobro || revalidada.eleccion.trmCobro !== eleccionCobro.trmCobro) {
+      return { ok: false, error: "La moneda de la cotización no coincide con la de sus unidades; recotiza el carrito antes de elegir la moneda de cobro." };
+    }
+  }
+
+  // Obligaciones (CxP) de la conversión (#90 F): moneda REAL de cada costo, verificada ANTES de numerar o escribir — SOLO de las CxP que realmente se
+  // crearían con importe positivo. El costo de cada una sale de las MISMAS funciones y condiciones que la creación (lib/reservar/costosObligacionesCarrito.ts
+  // + `obligacionPositiva`, la misma que usa `pushCxP`), así que un costo USD en cero no bloquea y uno positivo sí. La ruta financiera vigente devenga una CxP
+  // sin marca de oferta #63 por su valor nominal: una obligación en USD se contabilizaría como pesos. Mientras no exista el equivalente en COP para el
+  // carrito, cualquier obligación positiva en USD (o de moneda indeterminable en un contrato USD) detiene la conversión, sin tocar ningún importe.
+  const idsServiciosObl = new Set<number>();
+  const idsBloqueosObl = new Set<number>();
+  for (const { grupo, validadosPersona } of gruposValidados) {
+    for (const t of grupo.tours) if (t.servicioId != null && t.paqueteId != null) idsServiciosObl.add(t.servicioId);
+    for (const v of validadosPersona) {
+      for (const sv of v.incluidos) idsServiciosObl.add(sv.servicioId);
+      if (v.item.modulo === "bloqueo" && v.item.bloqueoId) idsBloqueosObl.add(v.item.bloqueoId);
+    }
+  }
+  const monedaServicio = new Map<number, unknown>();
+  if (idsServiciosObl.size) {
+    const { data: filas, error: errMon } = await admin.from("servicios_adicionales").select("id, moneda").in("id", [...idsServiciosObl]);
+    if (errMon) return { ok: false, error: "No se pudo verificar la moneda de los servicios del carrito; no se crea ningún contrato. Intenta de nuevo." };
+    for (const r of filas ?? []) monedaServicio.set(r.id as number, (r as { moneda?: unknown }).moneda);
+  }
+  const bloqueosObl = new Map<number, { moneda: unknown; tarifa_para_empaquetar: unknown; fee_infante: unknown }>();
+  if (idsBloqueosObl.size) {
+    const { data: filas, error: errMon } = await admin.from("bloqueos_vuelo").select("id, moneda, tarifa_para_empaquetar, fee_infante").in("id", [...idsBloqueosObl]);
+    if (errMon) return { ok: false, error: "No se pudo verificar la moneda de los vuelos del carrito; no se crea ningún contrato. Intenta de nuevo." };
+    for (const r of filas ?? []) bloqueosObl.set(r.id as number, r as unknown as { moneda: unknown; tarifa_para_empaquetar: unknown; fee_infante: unknown });
+  }
+  for (const { grupo, validadosPersona, validadosBernalo } of gruposValidados) {
+    const obligaciones: Obligacion[] = [];
+    for (const v of validadosPersona) {
+      const { numMenoresDeDos, numInfantes } = menoresDelComputo(v.comp, { infantesDeclarados: v.item.infantes || 0 });
+      obligaciones.push({ origen: `Hotel ${v.comp.meta.hotel_nombre ?? v.item.hotelNombre}`, moneda: v.comp.monedaReserva, valor: costoHotelPersona(v.comp, numInfantes) });
+      const bq = v.item.modulo === "bloqueo" && v.item.bloqueoId ? bloqueosObl.get(v.item.bloqueoId) : undefined;
+      if (bq) obligaciones.push({ origen: `Vuelo de ${v.item.hotelNombre}`, moneda: bq.moneda, valor: costoAereoBloqueo(bq, v.comp.paxConSilla, numMenoresDeDos) });
+      for (const sv of v.incluidos) obligaciones.push({ origen: sv.nombre, moneda: monedaServicio.get(sv.servicioId), valor: sv.costoNeto });
+    }
+    for (const v of validadosBernalo) {
+      const res = v.resultado;
+      obligaciones.push({ origen: `Hotel ${v.item.hotelNombre}`, moneda: res.moneda, valor: res.costoHotelTotal });
+      for (const sv of res.serviciosIncluidos) obligaciones.push({ origen: sv.nombre, moneda: sv.moneda ?? res.moneda, valor: sv.costoNeto });
+      if (res.salida.tipo === "bloqueo" || res.salida.tipo === "empaquetado") {
+        const rV = res.salida.tipo === "bloqueo" ? await datosVueloBloqueo(admin, res.salida.id) : await datosVueloEmpaquetado(admin, res.salida.id);
+        if (!rV.ok) return { ok: false, error: `No se pudo validar el vuelo del hotel "${res.hotelNombre}": ${rV.error}` };
+        obligaciones.push({ origen: `Vuelo de ${v.item.hotelNombre}`, moneda: rV.data.moneda ?? res.moneda, valor: costoVueloBernalo(rV.data, res.paxTotal, res.paxConSilla) });
+      }
+    }
+    for (const t of grupo.tours) {
+      if (t.servicioId == null || t.paqueteId == null) continue;
+      try {
+        const liq = await liquidarCostoTour(admin, { servicioId: t.servicioId, paqueteId: t.paqueteId, pax: t.pax, fechaIda: t.fechaIda, fechaRegreso: t.fechaRegreso });
+        obligaciones.push({ origen: t.nombre, moneda: monedaServicio.get(t.servicioId), valor: costoTourParaCxP(liq) });
+      } catch (e) {
+        return { ok: false, error: `No se pudo calcular el costo del tour "${t.nombre}": ${e instanceof Error ? e.message : "error desconocido"}. No se crea ningún contrato.` };
+      }
+    }
+    const rObl = evaluarObligaciones({ monedaContrato: monedaOfertaConversion, obligaciones });
+    if (!rObl.ok) return { ok: false, error: rObl.error };
+  }
+
   // `contratosPorGrupo`/`claveDeGrupo`/`detalleBase` ya se inicializaron
   // ANTES de Paso 1 (`gruposPendientes` los usó para excluir los grupos ya
   // convertidos de la reliquidación/validación) — `gruposValidados` acá
@@ -2316,9 +2424,6 @@ export async function convertirCotizacionCarrito(
   // llegado hasta Paso 1 en absoluto.
   for (const { grupo, validadosPersona, validadosBernalo } of gruposValidados) {
     const claveGrupo = claveDeGrupo(grupo);
-    const numRes = await siguienteNumeroContrato(tenantCotizacion);
-    if (!numRes.ok) return { ok: false, error: numRes.error };
-    const numero = numRes.numero;
     const totalHotelesGrupo = validadosPersona.length + validadosBernalo.length;
 
     const clienteNombre = `${cliente.nombres} ${cliente.apellidos}`.trim();
@@ -2366,7 +2471,14 @@ export async function convertirCotizacionCarrito(
     const precioTotal = validadosPersona.reduce((s, v) => s + v.comp.precioVenta, 0)
       + validadosBernalo.reduce((s, v) => s + v.resultado.precioVenta, 0)
       + grupo.tours.reduce((s, t) => s + t.precio, 0);
-    const monedaGrupo = validadosPersona[0]?.comp.monedaReserva ?? validadosBernalo[0]?.resultado.moneda ?? "COP";
+    const monedaGrupo = monedaOfertaConversion; // validada arriba: todas las unidades del grupo (hoteles y tours) están en esta moneda
+    // 235 (#90 F): el total a cobrar de ESTE contrato se convierte UNA sola vez desde su precio_venta (la oferta no cambia) y se congela en la cabecera.
+    // Se calcula ANTES de reservar el número: un total inválido no gasta consecutivo.
+    const cobroGrupo = cobroDeContratoCarrito({ precioVenta: precioTotal, monedaContrato: monedaGrupo, eleccion: eleccionCobro });
+    if (!cobroGrupo.ok) return { ok: false, error: numeros.length ? `${cobroGrupo.error} (los contratos ${numeros.join(", ")} sí quedaron completos)` : cobroGrupo.error };
+    const numRes = await siguienteNumeroContrato(tenantCotizacion);
+    if (!numRes.ok) return { ok: false, error: numRes.error };
+    const numero = numRes.numero;
 
     // ── Universo LOCAL de este contrato (B13, ronda 5; B17, ronda 6) ─────
     // ÚNICAMENTE la unión de posiciones asignadas a las UNIDADES DE ESTE
@@ -2444,6 +2556,7 @@ export async function convertirCotizacionCarrito(
       destino: destinos.join(" · ") || grupo.destino,
       tipo_paquete: "carrito",
       moneda: monedaGrupo,
+      ...cobroGrupo.cobro,
       fecha_salida: fechasIda[0] ?? null,
       fecha_regreso: fechasReg.length ? fechasReg[fechasReg.length - 1] : null,
       pax: paxTotal,
@@ -2625,19 +2738,21 @@ export async function convertirCotizacionCarrito(
     // (migración 171) desde sus propios parámetros — ver el mismo criterio en
     // `reservarDesdeTarifarioInterno`.
     const cxp: CxPFinanciera[] = [];
-    // Regla E.28: `moneda` es OPCIONAL y EXPLÍCITA — omitida (persona, sin
-    // cambios) sigue cayendo en el default 'COP' del RPC (regla A.16); un
-    // llamador Bernalo SIEMPRE la pasa (`resultado.moneda`), nunca depende
-    // de ese default.
-    const pushCxP = (tipo: string, servicio: string, valor: number, pr: ProvFact, nombreFallback?: string | null, servicioId?: number | null, moneda?: string) => {
-      if (!(valor > 0)) return;
+    // #90 F: `moneda` es la moneda REAL del COSTO (hotel, vuelo o servicio), y TODA CxP la lleva EXPLÍCITA — ya no se depende del default 'COP' del RPC ni
+    // se asigna la del contrato en bloque. Una obligación en USD (o indeterminable en un contrato USD) no se registra: ya la detuvo la verificación previa
+    // antes de numerar; esta es la segunda barrera (defensa en profundidad) y revierte el contrato del grupo.
+    const estadoObligaciones: { error: string | null } = { error: null };
+    const pushCxP = (tipo: string, servicio: string, valor: number, pr: ProvFact, nombreFallback: string | null | undefined, servicioId: number | null | undefined, monedaCosto: unknown) => {
+      const decision = decidirCxP({ origen: servicio, moneda: monedaCosto, valor, monedaContrato: monedaGrupo });
+      if (decision.accion === "omitir") return;
+      if (decision.accion === "rechazar") { estadoObligaciones.error ??= decision.error; return; }
       cxp.push({
         proveedor: pr?.nombre ?? nombreFallback ?? null, tipo_proveedor: tipo, servicio,
         valor_total: Math.max(0, valor), fecha_obligacion: hoyServidor,
         aplica_retencion: pr?.aplica_retencion ?? false, pct_retencion: Number(pr?.pct_retencion) || 0, observaciones: OBS_AUTO,
         // Migración 170 — vínculo durable con el servicio del catálogo.
         servicio_id: servicioId ?? null,
-        ...(moneda ? { moneda } : {}),
+        moneda: decision.moneda,
       });
     };
 
@@ -2706,7 +2821,7 @@ export async function convertirCotizacionCarrito(
       if (it.modulo === "bloqueo" && it.bloqueoId) {
         const { data: bq } = await admin
           .from("bloqueos_vuelo")
-          .select("aerolinea, record, ruta, tarifa_para_empaquetar, fee_infante, fecha_ida, fecha_regreso, vuelo_ida, vuelo_regreso, hora_salida_ida, hora_llegada_ida, hora_salida_reg, hora_llegada_reg, proveedores(nombre, aplica_retencion, pct_retencion)")
+          .select("aerolinea, moneda, record, ruta, tarifa_para_empaquetar, fee_infante, fecha_ida, fecha_regreso, vuelo_ida, vuelo_regreso, hora_salida_ida, hora_llegada_ida, hora_salida_reg, hora_llegada_reg, proveedores(nombre, aplica_retencion, pct_retencion)")
           .eq("id", it.bloqueoId).maybeSingle();
         if (bq) {
           const r = parseRuta(bq.ruta);
@@ -2728,9 +2843,9 @@ export async function convertirCotizacionCarrito(
 
           // Menores de 2 años: pagan SOLO el fee de infante del bloqueo (migración
           // 226, precio = costo) y no ocupan silla (`paxConSilla` ya los excluye).
-          const costoAereo = (Number(bq.tarifa_para_empaquetar) || 0) * paxConSilla + (Number(bq.fee_infante) || 0) * numMenoresDeDos;
+          const costoAereo = costoAereoBloqueo(bq, paxConSilla, numMenoresDeDos);
           costoAereoTotal += costoAereo;
-          pushCxP("aereo", `Aéreo ${bq.aerolinea ?? ""}`.trim(), costoAereo, bq.proveedores as unknown as ProvFact, bq.aerolinea);
+          pushCxP("aereo", `Aéreo ${bq.aerolinea ?? ""}`.trim(), costoAereo, bq.proveedores as unknown as ProvFact, bq.aerolinea, null, (bq as { moneda?: unknown }).moneda);
 
           // Las sillas de ESTE bloqueo y los datos del pasajero sobre ellas ya
           // quedaron escritos arriba, en la MISMA transacción
@@ -2770,13 +2885,9 @@ export async function convertirCotizacionCarrito(
       }
       if (itemsHotel.length) await sb.from("contrato_items").insert(itemsHotel);
 
-      let costoHotel = 0;
-      for (const l of lineasHab) { const per = netoPorAcom[l.acom]; if (per != null) costoHotel += per * l.pax; }
-      if (numNinos > 0 && netoPorAcom["nino"] != null) costoHotel += netoPorAcom["nino"] * numNinos;
-      if (numNinos2 > 0 && netoPorAcom["nino2"] != null) costoHotel += netoPorAcom["nino2"] * numNinos2;
-      if (numInfantes > 0 && netoPorAcom["infante"] != null) costoHotel += netoPorAcom["infante"] * numInfantes;
+      const costoHotel = costoHotelPersona(comp, numInfantes);
       costoHotelTotal += costoHotel;
-      pushCxP("hotel", `Hotel ${meta.hotel_nombre ?? it.hotelNombre}`.trim(), costoHotel, prH);
+      pushCxP("hotel", `Hotel ${meta.hotel_nombre ?? it.hotelNombre}`.trim(), costoHotel, prH, null, null, comp.monedaReserva);
     }
 
     // ── Ítems Bernalo del grupo (Fase 3F-4B) ──────────────────────────────
@@ -2879,10 +2990,9 @@ export async function convertirCotizacionCarrito(
         // más el cargo fijo por infante — nunca de `resultado.costoVueloTotal`
         // (que además de no incluir fee_infante, para "empaquetado" venía
         // del `tarifa_para_empaquetar`/reventa antes de este cierre).
-        const infantesBernalo = resultado.paxTotal - resultado.paxConSilla;
-        const costoVueloReal = dv.costo_neto * resultado.paxConSilla + dv.fee_infante * infantesBernalo;
+        const costoVueloReal = costoVueloBernalo(dv, resultado.paxTotal, resultado.paxConSilla);
         costoAereoTotal += costoVueloReal;
-        pushCxP("aereo", `Aéreo ${dv.aerolinea ?? ""}`.trim(), costoVueloReal, dv.proveedor, dv.aerolinea, null, resultado.moneda);
+        pushCxP("aereo", `Aéreo ${dv.aerolinea ?? ""}`.trim(), costoVueloReal, dv.proveedor, dv.aerolinea, null, dv.moneda ?? resultado.moneda);
       }
 
       // `ProveedorHotelBernalo` (camelCase: `aplicaRetencion`/`pctRetencion`)
@@ -2899,7 +3009,7 @@ export async function convertirCotizacionCarrito(
       pushCxP("hotel", `Hotel ${resultado.hotelNombre}`.trim(), resultado.costoHotelTotal, proveedorHotelCxP, null, null, resultado.moneda);
       for (const s of resultado.serviciosIncluidos) {
         if (s.costoNeto <= 0) continue;
-        pushCxP(tipoProveedorCxpServicio(s.categoria), s.nombre, s.costoNeto, proveedoresServicios.get(s.servicioId) ?? null, null, s.servicioId, resultado.moneda);
+        pushCxP(tipoProveedorCxpServicio(s.categoria), s.nombre, s.costoNeto, proveedoresServicios.get(s.servicioId) ?? null, null, s.servicioId, s.moneda ?? resultado.moneda);
       }
     }
 
@@ -2942,37 +3052,13 @@ export async function convertirCotizacionCarrito(
       for (const t of grupo.tours) {
         if (t.servicioId == null || t.paqueteId == null) continue; // legado, sin ids para re-liquidar
         try {
-          const { data: arm, error: armErr } = await admin
-            .from("armado_servicios")
-            .select("modo, servicios_adicionales(precio_persona, recargo_individual, categoria, nombre, liquidacion, proveedor_id, proveedores(nombre, aplica_retencion, pct_retencion))")
-            .eq("paquete_id", t.paqueteId).eq("servicio_id", t.servicioId).maybeSingle();
-          // Un error de lectura deja `arm` en null igual que un tour que ya no
-          // está en el paquete: sin distinguirlos, un fallo técnico se
-          // confundiría con "no aplica" y el tour quedaría cobrado sin CxP.
-          if (armErr) throw new Error(armErr.message);
-          if (!arm) continue;
-          const srv = arm.servicios_adicionales as unknown as { precio_persona: number | null; recargo_individual: number | null; categoria: string | null; nombre: string; liquidacion: string | null; proveedor_id: number | null; proveedores: ProvFact } | null;
-          const modo = (arm.modo as string) === "grupo" ? "grupo" : "persona";
-          const [{ data: gruposNet, error: gruposErr }, { data: tempsNet, error: tempsErr }] = await Promise.all([
-            admin.from("servicio_tarifa_pax").select("pax_desde, pax_hasta, precio, temporada").eq("servicio_id", t.servicioId),
-            admin.from("servicio_temporadas").select("nombre, fecha_inicio, fecha_fin, compra_inicio, compra_fin, prioridad, precio_persona, recargo_individual").eq("servicio_id", t.servicioId),
-          ]);
-          if (gruposErr ?? tempsErr) throw new Error((gruposErr ?? tempsErr)!.message);
-          const tempsRango: TemporadaRango[] = (tempsNet ?? []).map((tt) => toTemporadaRango(tt));
-          const nombreTemp = t.fechaIda && tempsRango.length ? temporadaVigenteParaFecha(new Date(`${t.fechaIda}T00:00:00`), tempsRango) : null;
-          const netoTemp = nombreTemp ? (tempsNet ?? []).find((tt) => tt.nombre === nombreTemp) ?? null : null;
-          const netoPersona = netoTemp?.precio_persona ?? srv?.precio_persona ?? null;
-          const gruposGeneral = (gruposNet ?? []).filter((g) => (g.temporada ?? "GENERAL") === "GENERAL").map((g) => ({ pax_desde: g.pax_desde, pax_hasta: g.pax_hasta, precio: g.precio }));
-          const gruposTempArr = nombreTemp ? (gruposNet ?? []).filter((g) => g.temporada === nombreTemp).map((g) => ({ pax_desde: g.pax_desde, pax_hasta: g.pax_hasta, precio: g.precio })) : [];
-          const grupos = gruposTempArr.length ? gruposTempArr : gruposGeneral;
-          const nochesTour = t.fechaIda && t.fechaRegreso ? (noches(t.fechaIda, t.fechaRegreso) || 1) : 1;
-          let costoNeto = precioServicio(modo, netoPersona, grupos, t.pax) * factorLiquidacion(srv?.liquidacion ?? null, nochesTour);
-          if (modo === "persona" && t.pax === 1) {
-            const recTemp = netoTemp?.recargo_individual;
-            costoNeto += Math.max(Number(recTemp ?? srv?.recargo_individual) || 0, 0);
-          }
-          if (Number.isFinite(costoNeto) && costoNeto > 0) {
-            pushCxP(tipoProveedorCxpServicio(normalizarCategoriaServicio(srv?.categoria)), srv?.nombre ?? t.nombre, costoNeto, srv?.proveedores ?? null, null, t.servicioId);
+          // Misma liquidación que la revisión previa (lib/reservar/costosObligacionesCarrito.ts::liquidarCostoTour). `null` = el tour ya no está en el paquete.
+          const liq = await liquidarCostoTour(admin, { servicioId: t.servicioId, paqueteId: t.paqueteId, pax: t.pax, fechaIda: t.fechaIda, fechaRegreso: t.fechaRegreso });
+          if (!liq) continue;
+          const srv = liq.srv;
+          const costoNeto = costoTourParaCxP(liq);
+          if (costoNeto > 0) {
+            pushCxP(tipoProveedorCxpServicio(normalizarCategoriaServicio(srv?.categoria)), srv?.nombre ?? t.nombre, costoNeto, srv?.proveedores ?? null, null, t.servicioId, monedaServicio.get(t.servicioId));
           }
         } catch (e) {
           // FALLA CERRADO (B7): el tour ya se le cobró al cliente como ítem
@@ -3003,7 +3089,7 @@ export async function convertirCotizacionCarrito(
             // catálogo no lo devuelve, no se registra una CxP a nombre de nadie.
             const prov = provPorId.get(s.servicioId);
             if (!prov?.nombre) throw new Error(`el proveedor de «${s.nombre}» no se encontró en el catálogo`);
-            pushCxP(tipoProveedorCxpServicio(s.categoria), s.nombre, s.costoNeto, prov, null, s.servicioId);
+            pushCxP(tipoProveedorCxpServicio(s.categoria), s.nombre, s.costoNeto, prov, null, s.servicioId, monedaServicio.get(s.servicioId));
           }
         }
       } catch (e) {
@@ -3030,6 +3116,7 @@ export async function convertirCotizacionCarrito(
     // rentabilidad mostraba margen inflado y `asegurarCuentasPorPagar` veía
     // cobertura sin costo. Se calcula de la MISMA lista que se va a insertar,
     // así ambos números salen de una sola fuente.
+    if (estadoObligaciones.error) return fallarYRevertirGrupo(estadoObligaciones.error);
     const costoServiciosCarrito = cxp
       .filter((r) => r.servicio_id != null)
       .reduce((acc, r) => acc + (Number(r.valor_total) || 0), 0);

@@ -244,8 +244,9 @@ describe("convertirCotizacionCarrito — Paso 2: creación de contrato Bernalo",
   test("hallazgo confirmado: CxP aérea/costo_aereo = dv.costo_neto × paxConSilla + dv.fee_infante × infantes — nunca resultado.costoVueloTotal", () => {
     assert.match(loopBernalo, /await datosVueloBloqueo\(admin, resultado\.salida\.id\)/);
     assert.match(loopBernalo, /await datosVueloEmpaquetado\(admin, resultado\.salida\.id\)/);
-    assert.match(loopBernalo, /const infantesBernalo = resultado\.paxTotal - resultado\.paxConSilla;/);
-    assert.match(loopBernalo, /const costoVueloReal = dv\.costo_neto \* resultado\.paxConSilla \+ dv\.fee_infante \* infantesBernalo;/);
+    // La fórmula vive ahora en UN solo lugar (la comparten la revisión previa de moneda y la creación): lib/reservar/costosObligacionesCarrito.ts.
+    assert.match(loopBernalo, /const costoVueloReal = costoVueloBernalo\(dv, resultado\.paxTotal, resultado\.paxConSilla\);/);
+    assert.match(leer("lib/reservar/costosObligacionesCarrito.ts"), /return dv\.costo_neto \* paxConSilla \+ dv\.fee_infante \* \(paxTotal - paxConSilla\);/);
     assert.match(loopBernalo, /costoAereoTotal \+= costoVueloReal;/);
     assert.match(loopBernalo, /pushCxP\("aereo", `Aéreo \$\{dv\.aerolinea/);
     assert.match(loopBernalo, /pushCxP\("aereo",[\s\S]{0,40}costoVueloReal,/);
@@ -271,7 +272,7 @@ describe("convertirCotizacionCarrito — Paso 2: creación de contrato Bernalo",
 
   test("regla E.25: cada servicio incluido con costoNeto>0 genera su PROPIA CxP con servicio_id — nunca se absorbe en el hotel", () => {
     assert.match(loopBernalo, /for \(const s of resultado\.serviciosIncluidos\) \{/);
-    assert.match(loopBernalo, /pushCxP\(tipoProveedorCxpServicio\(s\.categoria\), s\.nombre, s\.costoNeto, proveedoresServicios\.get\(s\.servicioId\) \?\? null, null, s\.servicioId, resultado\.moneda\);/);
+    assert.match(loopBernalo, /pushCxP\(tipoProveedorCxpServicio\(s\.categoria\), s\.nombre, s\.costoNeto, proveedoresServicios\.get\(s\.servicioId\) \?\? null, null, s\.servicioId, s\.moneda \?\? resultado\.moneda\);/);
   });
 
   test("regla E.28: CxP hotel/vuelo/servicios de Bernalo SIEMPRE pasan resultado.moneda explícito a pushCxP — nunca dependen del default", () => {

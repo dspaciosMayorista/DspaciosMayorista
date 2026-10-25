@@ -289,11 +289,11 @@ describe("R294-4 · CxP de servicios: se estampa `servicio_id` (llave de reconci
   test("convertirCotizacionCarrito estampa servicioId en tours e incluidos", () => {
     const cuerpo = cuerpoFuncion(reservarActions, "export async function convertirCotizacionCarrito(");
     assert.match(cuerpo, /servicio_id: servicioId \?\? null/);
-    assert.match(cuerpo, /srv\?\.proveedores \?\? null, null, t\.servicioId\)/);
+    assert.match(cuerpo, /srv\?\.proveedores \?\? null, null, t\.servicioId, monedaServicio\.get\(t\.servicioId\)\)/);
     // Incluidos: el proveedor se exige resuelto del catálogo (PR #353) y la CxP
     // sigue estampando `servicio_id`.
     assert.match(cuerpo, /const prov = provPorId\.get\(s\.servicioId\);/);
-    assert.match(cuerpo, /pushCxP\(tipoProveedorCxpServicio\(s\.categoria\), s\.nombre, s\.costoNeto, prov, null, s\.servicioId\)/);
+    assert.match(cuerpo, /pushCxP\(tipoProveedorCxpServicio\(s\.categoria\), s\.nombre, s\.costoNeto, prov, null, s\.servicioId, monedaServicio\.get\(s\.servicioId\)\)/);
   });
 });
 
