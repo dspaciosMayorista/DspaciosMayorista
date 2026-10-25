@@ -116,7 +116,9 @@ export type ReservaInput = {
   // cotizar; `convertirCotizacion` la pasa tal cual). La reserva la compara con lo que va a cobrar.
   // `cotizacionId` lo pone SOLO `convertirCotizacion` (con el id de la cotización que el usuario puede ver); lo que venga del
   // navegador al cotizar se descarta.
-  oferta63?: { huella?: string | null; modo?: string | null; trm?: number | null; cotizacionId?: number | null; trmProvisional?: number | null } | null;
+  oferta63?: { huella?: string | null; modo?: string | null; trm?: number | null; cotizacionId?: number | null; trmProvisional?: number | null;
+    /** 235 (#90 F): moneda de COBRO que elige quien convierte (null = la de la oferta) y su TRM (solo si difiere). Los pone SOLO `convertirCotizacion`. */
+    monedaCobro?: string | null; trmCobro?: number | null } | null;
 };
 
 export type ComputoReserva = {

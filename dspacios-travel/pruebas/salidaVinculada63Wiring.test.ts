@@ -415,7 +415,7 @@ describe("E/F/G: el orquestador TS materializa SOLO desde lo aceptado", () => {
     assert.match(cuerpoReserva, /\} else \{\s*const finCalc = await calcularFinancieroReserva/);
   });
   test("convertirCotizacion pasa SU id como cotizacionId (lo que venga del navegador al cotizar se descarta)", () => {
-    assert.match(acciones, /oferta63: payload\.oferta63 \? \{ \.\.\.payload\.oferta63, cotizacionId: id, trmProvisional: trmProvisional \?\? null \} : payload\.oferta63/);
+    assert.match(acciones, /oferta63: payload\.oferta63 \? \{ \.\.\.payload\.oferta63, cotizacionId: id, trmProvisional: trmProvisional \?\? null, monedaCobro: monedaCobro \?\? null, trmCobro: trmCobro \?\? null \} : payload\.oferta63/);
   });
   test("cotizar: T0 se lee ANTES de calcular y la cotización + oferta se guardan por la RPC atómica (la inserción directa queda solo para lo de siempre)", () => {
     const i = acciones.indexOf("export async function crearCotizacion(");

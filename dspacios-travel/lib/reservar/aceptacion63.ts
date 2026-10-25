@@ -22,6 +22,7 @@ import { ciudadIata, parseRuta } from "../iata.ts";
 import { descripcionLineaMenor, ordenLineaMenor, type LineaMenor } from "./menoresDeDos.ts";
 import { redondearCentavos63 } from "./ofertaDinamica63.ts";
 import { MENSAJE_TRM_PROVISIONAL_REQUERIDA_63 } from "./monedaPublicacion90.ts";
+import { MENSAJE_COBRO_INVALIDO, MENSAJE_COBRO_REQUERIDO, MENSAJE_TRM_COBRO_INVALIDA, MENSAJE_TRM_COBRO_REQUERIDA } from "../finanzas/cobro.ts";
 
 // ── Tipos ───────────────────────────────────────────────────────────────────
 
@@ -408,6 +409,11 @@ export type AceptacionPreparada63 = {
   snapshot: Snapshot63;
   /** Payload financiero DERIVADO por la base (costos + obligaciones con la fecha de negocio): lo único que se escribe. */
   financiero: { costos: CostosSnapshot63; cxp: (ObligacionSnapshot63 & { fecha_obligacion: string })[] };
+  /**
+   * 235 (#90 F): moneda de COBRO congelada con el intento. `moneda` = la elegida (COP/USD); `trm`/`total` solo si difiere de la moneda de la oferta
+   * (conversión única). `null` en una aceptación anterior a la 235: el contrato se cobra en la moneda de la oferta y la cabecera no lleva cobro.
+   */
+  cobro: { moneda: "COP" | "USD"; trm: number | null; total: number | null } | null;
 };
 export type AceptacionEnCurso63 = { estado: "materializando"; aceptacion_id: number; numero_contrato: string };
 export type AceptacionCompleta63 = { estado: "completa"; aceptacion_id: number; numero_contrato: string };
@@ -425,6 +431,8 @@ export const MENSAJE_OFERTA_CERRADA_63 =
 export const MENSAJE_EN_CURSO_63 =
   "El contrato de esta cotización ya se está creando (o quedó a medias). No se crea otro: se completa solo en unos minutos; si no ocurre, contacta a soporte con el número.";
 export { MENSAJE_TRM_PROVISIONAL_REQUERIDA_63 };
+export const MENSAJE_COBRO_CAMBIO_63 =
+  "La moneda y la TRM de cobro de este contrato ya quedaron congeladas al aceptarlo y no se cambian. Si necesitas otra moneda de cobro, genera una cotización nueva.";
 /** Tope exclusivo de una TRM en la base (CHECK armado_paquetes_trm_finita_chk y guardas de las RPC #63). */
 export const TRM_MAXIMA_63 = 100000000000;
 export const MENSAJE_TRM_PROVISIONAL_INVALIDA_63 = "La TRM provisional debe ser un número positivo (pesos por dólar).";
@@ -450,9 +458,26 @@ export function mapearErrorRpc63(message: string | null | undefined): { error: s
   // 234: una oferta en USD sin TRM exige la TRM provisional ingresada al contratar; sin ella no se numera ni se crean CxP ni asientos en COP.
   if (/p63_trm_invalida/.test(m)) return { error: MENSAJE_TRM_PROVISIONAL_INVALIDA_63, cambio: false };
   if (/p63_trm_requerida/.test(m)) return { error: MENSAJE_TRM_PROVISIONAL_REQUERIDA_63, cambio: false };
+  // 235: moneda de cobro. Mensajes de negocio; ninguno reserva número.
+  if (/p63_cobro_requerido/.test(m)) return { error: MENSAJE_COBRO_REQUERIDO, cambio: false };
+  if (/p63_cobro_trm_requerida/.test(m)) return { error: MENSAJE_TRM_COBRO_REQUERIDA, cambio: false };
+  if (/p63_cobro_trm_invalida/.test(m)) return { error: MENSAJE_TRM_COBRO_INVALIDA, cambio: false };
+  if (/p63_cobro_cambio/.test(m)) return { error: MENSAJE_COBRO_CAMBIO_63, cambio: false };
+  if (/p63_cobro_invalido/.test(m)) return { error: MENSAJE_COBRO_INVALIDO, cambio: false };
   if (/p63_no_autorizado/.test(m)) return { error: "No tienes autorización para aceptar esta oferta.", cambio: false };
   if (/destino_aereo_no_permitido|destino_aereo/.test(m)) return { error: "El vuelo de esta oferta ya no llega a un destino permitido para el paquete. Genera una cotización nueva.", cambio: true };
   return { error: MENSAJE_TECNICO_63, cambio: false };
+}
+
+/** Lee el cobro congelado de la respuesta sin confiar en su forma. Sin moneda válida = aceptación anterior a la 235 (sin cobro). */
+export function leerCobro63(v: unknown): AceptacionPreparada63["cobro"] {
+  const c = (v ?? null) as Record<string, unknown> | null;
+  if (!c || typeof c !== "object") return null;
+  const m = c.moneda === "COP" || c.moneda === "USD" ? c.moneda : null;
+  if (!m) return null;
+  const trm = c.trm == null ? null : Number(c.trm);
+  const total = c.total == null ? null : Number(c.total);
+  return { moneda: m, trm: trm != null && Number.isFinite(trm) ? trm : null, total: total != null && Number.isFinite(total) ? total : null };
 }
 
 /** Lee la respuesta jsonb de la RPC sin confiar en su forma. */
@@ -472,6 +497,6 @@ export function leerAceptacion63(data: unknown): ResultadoAceptacion63 {
   }
   return {
     ok: true,
-    aceptacion: { estado: "preparada", aceptacion_id: id, numero_contrato: numero, fecha_negocio: String(d.fecha_negocio ?? ""), snapshot, financiero: fin },
+    aceptacion: { estado: "preparada", aceptacion_id: id, numero_contrato: numero, fecha_negocio: String(d.fecha_negocio ?? ""), snapshot, financiero: fin, cobro: leerCobro63(d.cobro) },
   };
 }

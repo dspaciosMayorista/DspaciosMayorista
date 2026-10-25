@@ -4,6 +4,7 @@ import { notFound } from "next/navigation";
 import Link from "next/link";
 import { Button } from "@/components/ui/button";
 import { formatMoneda, formatFechaLarga } from "@/lib/utils";
+import { cobroDeVenta } from "@/lib/finanzas/cobro";
 import { ShareButtons } from "./ShareButtons";
 import { permisosComisionContrato } from "@/lib/finanzas/comisionB2B";
 import { GestionTabs } from "./GestionTabs";
@@ -229,7 +230,13 @@ export default async function ContratoDetallePage({
   const totalPagado = puedeEditar
     ? (abonos ?? []).reduce((s, a) => s + (a.valor_abono ?? 0), 0)
     : Number(resumenAbonos?.total_pagado ?? 0);
-  const saldo = Math.max(venta.precio_venta - totalPagado, 0);
+  // 235 (#90 F): abonos y saldo se llevan en la MONEDA DE COBRO. Casi siempre es la de la oferta; si se eligió la otra, el total es el convertido y
+  // congelado al contratar (la oferta, el precio de venta y los costos no cambian).
+  const cobro = cobroDeVenta(venta);
+  const saldo = Math.max(cobro.total - totalPagado, 0);
+  const notaCobro = cobro.convertido
+    ? `Oferta en ${cobro.monedaOferta}: ${formatMoneda(cobro.precioOferta, cobro.monedaOferta)}. Se cobra en ${cobro.moneda}: ${formatMoneda(cobro.total, cobro.moneda)}, convertido una sola vez con TRM ${cobro.trm} al contratar; no cambia.`
+    : null;
 
   // Condiciones PERMANENTES del contrato — mismo resolver que usa el PDF
   // (ContratoDocumento.tsx), así que lo que ve el asesor aquí es exactamente
@@ -237,7 +244,7 @@ export default async function ContratoDetallePage({
   const condicionesResueltas = resolverCondicionesContrato(
     (contratoCondiciones ?? []) as unknown as Parameters<typeof resolverCondicionesContrato>[0],
     (overridesCondiciones ?? []) as unknown as Parameters<typeof resolverCondicionesContrato>[1],
-    { monedaContrato: (venta.moneda as string) ?? "COP", precioVenta: venta.precio_venta, fechaViaje: venta.fecha_salida },
+    { monedaContrato: cobro.moneda, precioVenta: cobro.total, fechaViaje: venta.fecha_salida },
   );
 
   // Formulario de excepción por fila restringida, YA ARMADO aquí (Server
@@ -326,16 +333,17 @@ export default async function ContratoDetallePage({
       {/* Totales */}
       <div className="mt-6 grid grid-cols-1 gap-4 sm:grid-cols-3">
         <div className="rounded-xl p-4 text-white" style={{ backgroundColor: "var(--brand-primary)" }}>
-          <div className="text-xs opacity-80">Precio de venta{venta.moneda && venta.moneda !== "COP" ? ` (${venta.moneda})` : ""}</div>
-          <div className="text-xl font-bold">{formatMoneda(venta.precio_venta, venta.moneda)}</div>
+          <div className="text-xs opacity-80">{cobro.convertido ? "Total a cobrar" : "Precio de venta"}{cobro.moneda !== "COP" ? ` (${cobro.moneda})` : ""}</div>
+          <div className="text-xl font-bold">{formatMoneda(cobro.total, cobro.moneda)}</div>
+          {cobro.convertido && <div className="mt-1 text-[11px] opacity-80" data-testid="oferta-original">Oferta: {formatMoneda(cobro.precioOferta, cobro.monedaOferta)}</div>}
         </div>
         <div className="rounded-xl border border-gray-200 bg-white p-4">
           <div className="text-xs text-gray-400">Total pagado</div>
-          <div className="text-xl font-bold" style={{ color: "var(--brand-success)" }}>{formatMoneda(totalPagado, venta.moneda)}</div>
+          <div className="text-xl font-bold" style={{ color: "var(--brand-success)" }}>{formatMoneda(totalPagado, cobro.moneda)}</div>
         </div>
         <div className="rounded-xl border border-gray-200 bg-white p-4">
           <div className="text-xs text-gray-400">Saldo pendiente</div>
-          <div className="text-xl font-bold text-gray-800">{formatMoneda(saldo, venta.moneda)}</div>
+          <div className="text-xl font-bold text-gray-800">{formatMoneda(saldo, cobro.moneda)}</div>
         </div>
       </div>
 
@@ -439,6 +447,9 @@ export default async function ContratoDetallePage({
         facturas={facturasConItems}
         formasPago={formasPago}
         moneda={(venta.moneda as string) ?? "COP"}
+        monedaCobro={cobro.moneda}
+        totalCobro={cobro.total}
+        notaCobro={notaCobro}
         proveedoresCatalogo={(proveedoresCatalogo ?? []).map((p) => p.nombre)}
         aliadosCatalogo={aliadosCatalogo ?? []}
         puedeEditar={puedeEditar}

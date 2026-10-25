@@ -3,6 +3,7 @@
 import { createClient } from "@/lib/supabase/server";
 import { revalidatePath } from "next/cache";
 import { planDeCuotas, type FrecuenciaCuota } from "@/lib/calc/cuotas";
+import { cobroDeVenta } from "@/lib/finanzas/cobro";
 
 type Result = { ok: true; n?: number } | { ok: false; error: string };
 
@@ -16,11 +17,12 @@ export async function pctAbonoDe(tipoPaquete: string | null): Promise<number> {
 // Genera (o regenera) el plan de cuotas del contrato y lo guarda.
 export async function generarPlanCobro(numero: string, frecuencia: FrecuenciaCuota = "mensual"): Promise<Result> {
   const sb = await createClient();
-  const { data: venta } = await sb.from("ventas").select("precio_venta, fecha_salida, tipo_paquete").eq("numero_contrato", numero).maybeSingle();
+  const { data: venta } = await sb.from("ventas").select("precio_venta, moneda, moneda_cobro, trm_cobro, total_cobro, fecha_salida, tipo_paquete").eq("numero_contrato", numero).maybeSingle();
   if (!venta) return { ok: false, error: "Contrato no encontrado." };
 
   const pct = await pctAbonoDe(venta.tipo_paquete);
-  const plan = planDeCuotas({ precio: venta.precio_venta ?? 0, checkIn: venta.fecha_salida, pctAbono: pct, frecuencia });
+  // 235 (#90 F): las cuotas suman el total de COBRO (el convertido y congelado si se cobra en otra moneda), la misma base de abonos y saldo.
+  const plan = planDeCuotas({ precio: cobroDeVenta(venta).total, checkIn: venta.fecha_salida, pctAbono: pct, frecuencia });
   if (!plan.length) return { ok: false, error: "No hay valor de venta para armar el plan." };
 
   await sb.from("cuotas").delete().eq("numero_contrato", numero);

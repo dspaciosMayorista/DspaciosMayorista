@@ -1,6 +1,7 @@
 import { createClient } from "@/lib/supabase/server";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { accesoDocumentoContrato } from "@/lib/auth/accesoDocumentoContrato";
+import { cobroDeVenta } from "@/lib/finanzas/cobro";
 import { verificarFichasComisionManual, consultarFichasSupabase, fichaDeContrato } from "@/lib/auth/fichaComisionManual";
 
 export type AbonoCuenta = {
@@ -52,7 +53,7 @@ export async function cargarEstadoCuenta(numero: string): Promise<EstadoCuenta |
   const admin = createAdminClient();
   const { data: v } = await admin
     .from("ventas")
-    .select("numero_contrato, cliente, destino, fecha_salida, estado, precio_venta, moneda, tenant, b2b_usuario_id, aliado_id, agencia_nombre, freelance_nombre")
+    .select("numero_contrato, cliente, destino, fecha_salida, estado, precio_venta, moneda, moneda_cobro, trm_cobro, total_cobro, tenant, b2b_usuario_id, aliado_id, agencia_nombre, freelance_nombre")
     .eq("numero_contrato", numero)
     .maybeSingle();
   if (!v) return null;
@@ -95,7 +96,9 @@ export async function cargarEstadoCuenta(numero: string): Promise<EstadoCuenta |
     .order("fecha_abono", { ascending: true })
     .order("id", { ascending: true });
 
-  const precio = Number(v.precio_venta ?? 0);
+  // 235 (#90 F): el estado de cuenta y los recibos se expresan en la MONEDA DE COBRO (abonos y saldo) con su total congelado.
+  const cobro = cobroDeVenta(v);
+  const precio = cobro.total;
   let acum = 0;
   const abonos: AbonoCuenta[] = (abs ?? []).map((a) => {
     acum += Number(a.valor_abono ?? 0);
@@ -116,7 +119,7 @@ export async function cargarEstadoCuenta(numero: string): Promise<EstadoCuenta |
     destino: v.destino as string | null,
     fecha_salida: v.fecha_salida as string | null,
     estado: v.estado as string | null,
-    moneda: (v.moneda as string) ?? "COP",
+    moneda: cobro.moneda,
     tenant: (v.tenant as string) ?? "mayorista",
     precio_venta: precio,
     pagado: acum,

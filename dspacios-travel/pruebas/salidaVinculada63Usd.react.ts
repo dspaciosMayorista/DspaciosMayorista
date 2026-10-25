@@ -19,7 +19,11 @@ import assert from "node:assert/strict";
 
 process.env.SUPABASE_SERVICE_ROLE_KEY ??= "clave-de-prueba";
 
-const { crearCotizacion, convertirCotizacion } = await import("../app/(dashboard)/dashboard/reservar/actions.ts");
+const { crearCotizacion, convertirCotizacion: convertirCotizacionReal } = await import("../app/(dashboard)/dashboard/reservar/actions.ts");
+// 235 (#90 F): convertir una oferta #63 exige ELEGIR la moneda de cobro. Estas pruebas ejercitan otro recorrido, así que eligen la de la oferta (sin conversión).
+let bdActual: { filas(t: string): Array<Record<string, unknown>> } | null = null;
+const convertirCotizacion = (id: number, pasajeros?: unknown, override?: boolean, asesor?: string, trm?: unknown) =>
+  convertirCotizacionReal(id, pasajeros as never, override, asesor, trm as never, ((bdActual?.filas("cotizaciones").find((c) => c.id === id)?.moneda as string | undefined) ?? "COP") === "USD" ? "USD" : "COP");
 
 function fechaBogota(offsetDias: number): string {
   return new Date(Date.now() + offsetDias * 86400000).toLocaleDateString("en-CA", { timeZone: "America/Bogota" });
@@ -134,6 +138,7 @@ function montar(e: Escenario) {
   const sbBase = (globalThis as unknown as { __arnesFechas: { sb: { from: (t: string) => unknown } } }).__arnesFechas.sb;
   const fromOriginal = sbBase.from.bind(sbBase);
   sbBase.from = (t: string) => { tablasConsultadas.push(t); return fromOriginal(t); };
+  bdActual = bd as never;
   return { bd, tablasConsultadas };
 }
 const tocoCupos = (consultadas: string[]) => consultadas.filter((t) => TABLAS_DE_CUPOS.includes(t));
@@ -559,4 +564,20 @@ test("la tasa ausente no afecta a lo vigente: oferta con TRM de publicación y o
     assert.equal(r.ok, true, JSON.stringify(r));
     assert.equal(bd.filas("p63_aceptacion")[0]?.trm_provisional ?? null, null);
   }
+});
+
+test("235: convertir una oferta #63 SIN elegir la moneda de cobro se rechaza en el servidor antes de numerar; con la elección expresa se contrata", async () => {
+  const { bd } = montar(USD_USD);
+  const cot = await crearCotizacion(pedido() as never);
+  assert.equal(cot.ok, true, JSON.stringify(cot));
+  if (!cot.ok) return;
+  for (const omitida of [undefined, null, ""]) {
+    const r = await convertirCotizacionReal(cot.id, PASAJEROS as never, false, undefined, undefined, omitida as never);
+    assert.equal(r.ok, false);
+    assert.match(String((r as { error?: string }).error), /Elige la moneda de cobro/);
+  }
+  assert.equal(bd.filas("ventas").length, 0, "ninguna venta se creó");
+  assert.equal(bd.filas("p63_aceptacion").length, 0, "ninguna aceptación se creó");
+  const ok = await convertirCotizacionReal(cot.id, PASAJEROS as never, false, undefined, undefined, "USD");
+  assert.equal(ok.ok, true, JSON.stringify(ok));
 });

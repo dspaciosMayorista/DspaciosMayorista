@@ -12,6 +12,7 @@ import { resolverCondicionesContrato } from "@/lib/contrato/condicionesContrato"
 import { habitacionesBernaloDeContrato } from "@/lib/reservar/alojamientoBernaloDocumento";
 import { condicionesTarifaParaRender } from "@/lib/calc/condicionesTarifa";
 import { netoTotalExigibleDeContrato } from "@/lib/contrato/netoContrato.server";
+import { cobroDeVenta } from "@/lib/finanzas/cobro";
 
 // ¿Quien mira puede ver el contrato COMPLETO, o solo la parte comercial?
 // Un asesor consultando el contrato de un colega de su agencia recibe el
@@ -124,7 +125,7 @@ export default async function ContratoImprimiblePage({
   const condicionesResueltas = resolverCondicionesContrato(
     (contratoCondiciones ?? []) as unknown as Parameters<typeof resolverCondicionesContrato>[0],
     (overridesCondiciones ?? []) as unknown as Parameters<typeof resolverCondicionesContrato>[1],
-    { monedaContrato: (venta.moneda as string) ?? "COP", precioVenta: venta.precio_venta, fechaViaje: venta.fecha_salida },
+    { monedaContrato: cobroDeVenta(venta).moneda, precioVenta: cobroDeVenta(venta).total, fechaViaje: venta.fecha_salida },
   );
 
   return (
@@ -170,6 +171,7 @@ export default async function ContratoImprimiblePage({
             vuelos={vuelos ?? []}
             items={items ?? []}
             totalPagado={totalPagado}
+            cobro={cobroDeVenta(venta)}
             agencia={agencia}
             condiciones={condicionesResueltas}
             habitacionesBernalo={habitacionesBernalo}

@@ -7,6 +7,8 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { calcularEdad } from "@/lib/utils";
 import { MENSAJE_TRM_PROVISIONAL_REQUERIDA_63, trmValida90 } from "@/lib/reservar/monedaPublicacion90";
+import { totalCobroConvertido, validarEleccionCobro } from "@/lib/finanzas/cobro";
+import { formatMoneda } from "@/lib/utils";
 import { convertirCotizacion, descartarCotizacion } from "../../reservar/actions";
 import { type PasajeroReserva } from "@/lib/reservar/computo";
 import { BuscarPasajeroDocumento } from "@/components/pasajeros/BuscarPasajeroDocumento";
@@ -17,12 +19,18 @@ const TIPOS_DOC = ["CC", "TI", "CE", "PAS", "RC"];
 
 export function CotizacionAcciones({
   id, pax, infantes, tienePasajeros, cliente, esSuperadmin, asesores, miNombre, miRolVenta, pideTrmProvisional = false,
+  permiteMonedaCobro = false, monedaOferta = "COP", totalOferta = 0,
 }: {
   id: number; pax: number; infantes: number; tienePasajeros: boolean; cliente: ClientePrefill; esSuperadmin: boolean;
   asesores: { nombre: string; email: string | null }[];
   miNombre: string; miRolVenta: boolean;
   /** Oferta en USD sin TRM: al convertir a contrato se captura la TRM provisional (pesos por dólar). */
   pideTrmProvisional?: boolean;
+  /** 235 (#90 F): oferta con conversión por TRM y usuario interno: puede elegir en qué moneda se COBRA el contrato. */
+  permiteMonedaCobro?: boolean;
+  /** Moneda e importe de la OFERTA (que no cambian); el total convertido que se muestra es solo una vista previa: la base lo calcula y congela. */
+  monedaOferta?: string;
+  totalOferta?: number;
 }) {
   const router = useRouter();
   const [pending, start] = useTransition();
@@ -37,6 +45,19 @@ export function CotizacionAcciones({
     // Mismo criterio que el servidor y la base (finita, > 0 con 4 decimales y < 1e11): lo inválido no llega a numerar nada.
     const n = trmValida90(trmProv.replace(",", "."));
     return n != null && Math.round(n * 10000) > 0 ? { ok: true, valor: n } : { ok: false, error: "La TRM provisional debe ser un número positivo (pesos por dólar)." };
+  };
+  // 235: moneda de COBRO, OBLIGATORIA y expresa (sin valor por defecto): hay que elegir COP o USD antes de generar el contrato, también cuando es la
+  // misma de la oferta (entonces no hay conversión). Si se elige la otra, la TRM de cobro es OBLIGATORIA y se ingresa aquí (no se reutiliza la de
+  // publicación ni la de referencia); el total convertido se calcula y congela UNA vez al contratar.
+  const [monedaCobro, setMonedaCobro] = useState("");
+  const [trmCobro, setTrmCobro] = useState("");
+  const cobroDistinto = permiteMonedaCobro && monedaCobro !== "" && monedaCobro !== monedaOferta;
+  const trmCobroNum = trmCobro.trim() === "" ? null : trmValida90(trmCobro.replace(",", "."));
+  const vistaPreviaCobro = cobroDistinto ? totalCobroConvertido(totalOferta, monedaOferta, monedaCobro, trmCobroNum) : null;
+  const eleccionCobro = (): { ok: true; monedaCobro: string | null; trmCobro: number | null } | { ok: false; error: string } => {
+    if (!permiteMonedaCobro) return { ok: true, monedaCobro: null, trmCobro: null };
+    const r = validarEleccionCobro({ monedaOferta, monedaCobro: monedaCobro || null, trmCobro: cobroDistinto ? trmCobro : null, esInterno: true });
+    return r.ok ? { ok: true, monedaCobro: r.monedaCobro, trmCobro: r.trmCobro } : r;
   };
   // Si quien gestiona es asesor de ventas, se autollena con su usuario.
   const [asesorSel, setAsesorSel] = useState(miRolVenta ? miNombre : "");
@@ -61,9 +82,11 @@ export function CotizacionAcciones({
   function convertirDirecto() {
     const t = trmProvisional();
     if (!t.ok) { setErr(t.error); return; }
+    const cb = eleccionCobro();
+    if (!cb.ok) { setErr(cb.error); return; }
     setErr("");
     start(async () => {
-      const r = await convertirCotizacion(id, undefined, undefined, undefined, t.valor);
+      const r = await convertirCotizacion(id, undefined, undefined, undefined, t.valor, cb.monedaCobro, cb.trmCobro);
       if (r.ok) {
         if (r.advertencias?.length) window.alert(`Contrato creado, pero con avisos:\n\n${r.advertencias.join("\n")}`);
         router.push(`/dashboard/contratos/${r.numero}`);
@@ -92,9 +115,11 @@ export function CotizacionAcciones({
     if (!asesorSel && !esSuperadmin) { setErr("Elige el asesor interno que gestiona esta reserva."); return; }
     const t = trmProvisional();
     if (!t.ok) { setErr(t.error); return; }
+    const cb = eleccionCobro();
+    if (!cb.ok) { setErr(cb.error); return; }
     setErr("");
     start(async () => {
-      const r = await convertirCotizacion(id, paxRows, false, asesorSel, t.valor);
+      const r = await convertirCotizacion(id, paxRows, false, asesorSel, t.valor, cb.monedaCobro, cb.trmCobro);
       if (r.ok) {
         if (r.advertencias?.length) window.alert(`Contrato creado, pero con avisos:\n\n${r.advertencias.join("\n")}`);
         router.push(`/dashboard/contratos/${r.numero}`);
@@ -105,9 +130,11 @@ export function CotizacionAcciones({
   function generarSinPasajeros() {
     const t = trmProvisional();
     if (!t.ok) { setErr(t.error); return; }
+    const cb = eleccionCobro();
+    if (!cb.ok) { setErr(cb.error); return; }
     setErr("");
     start(async () => {
-      const r = await convertirCotizacion(id, [], true, undefined, t.valor);
+      const r = await convertirCotizacion(id, [], true, undefined, t.valor, cb.monedaCobro, cb.trmCobro);
       if (r.ok) router.push(`/dashboard/contratos/${r.numero}`);
       else setErr(r.error);
     });
@@ -132,6 +159,33 @@ export function CotizacionAcciones({
           <p className="mt-1 text-[10px] text-gray-400">
             Esta oferta está en USD y no tiene TRM: debes ingresar la tasa. Se congela al contratar y es con la que se registran en pesos las
             cuentas por pagar y los asientos; no cambia después.
+          </p>
+        </div>
+      )}
+      {permiteMonedaCobro && (
+        <div className="max-w-sm rounded-lg border border-gray-200 p-3" data-testid="moneda-cobro">
+          <label className="text-[11px] text-gray-500" htmlFor="moneda-cobro-select">Moneda de cobro del contrato *</label>
+          <select id="moneda-cobro-select" aria-label="Moneda de cobro" className="mt-1 block w-full rounded-md border border-gray-200 bg-white px-2 py-1.5 text-sm"
+            required value={monedaCobro} onChange={(e) => setMonedaCobro(e.target.value)}>
+            <option value="" disabled>Elige la moneda de cobro…</option>
+            {(["COP", "USD"] as const).map((m) => (
+              <option key={m} value={m}>{m === monedaOferta ? `${m} (la de la oferta, sin conversión)` : `${m} (convertir al contratar)`}</option>
+            ))}
+          </select>
+          {cobroDistinto && (
+            <div className="mt-2">
+              <label className="text-[11px] text-gray-500" htmlFor="trm-cobro-input">TRM de cobro (COP por USD) *</label>
+              <Input id="trm-cobro-input" aria-label="TRM de cobro" type="number" min={0} step="0.01" inputMode="decimal" placeholder="Obligatoria, ej. 4000" required
+                value={trmCobro} onChange={(e) => setTrmCobro(e.target.value)} />
+              {vistaPreviaCobro != null && (
+                <p className="mt-1 text-xs text-gray-600" data-testid="vista-previa-cobro">
+                  Se cobrará {formatMoneda(vistaPreviaCobro, monedaCobro)} (oferta: {formatMoneda(totalOferta, monedaOferta)}). Vista previa: el sistema calcula y congela el total al contratar.
+                </p>
+              )}
+            </div>
+          )}
+          <p className="mt-1 text-[10px] text-gray-400">
+            La oferta conserva su moneda e importes; solo el total a cobrar se convierte, una vez, con la TRM que ingreses aquí. Abonos y saldo se llevan en la moneda de cobro y no cambian después.
           </p>
         </div>
       )}
