@@ -108,3 +108,22 @@ al momento de cargar.
   `hotel_acomodaciones` al reservar.
 - **`lib/calc/paquetes.ts`** — motor de liquidación noche a noche que lee `tarifa_hotel` +
   `hotel_temporadas` para componer el PVP final (pendiente de hoja técnica propia).
+
+## Detalle de hotel en pestañas (#22)
+
+`/dashboard/producto/hoteles/[id]` se organiza en tres pestañas (`?tab=configuracion|temporadas|tarifas`,
+contenedor `HotelDetalleClient.tsx`; los tres paneles quedan SIEMPRE montados y se ocultan con `hidden`, así
+borradores y formularios a medias sobreviven al cambio de pestaña):
+
+- **Configuración** — modelo tarifario, configuración, categorías/regímenes, fotos, black-out, documentos, acomodaciones.
+- **Temporadas, promociones y calculadora** — `TemporadasBox` + `CalculadoraEditor`.
+- **Tarifas generadas** — `TarifasBox` (formulario + tablas agrupadas por vigencia × alimentación), historial interno y,
+  si el modelo es por unidad, `TarifasUnidadEditor`. Los bloques que arma el servidor (`page.tsx`) llegan como props
+  (`configuracion`, `calculadora`, `tarifasExtra`) y cada uno va como ÚNICO hijo de su contenedor: junto a otros
+  hijos, React 19 (dev) avisa de "key" por elementos que vienen del servidor.
+
+Presentación pura en `lib/hoteles/tarifasVista.ts`: `formatNetoTarifa` (importe en la moneda del hotel, USD con centavos
+sin redondear, **0 = gratis se muestra, `null` = "—"**), `agruparTarifasPorVigenciaRegimen` (partición exacta, no altera
+importes) y `normalizarPestanaHotel`. Antes la tabla, la vista previa de la calculadora y el historial usaban `formatCOP`
+aunque el hotel fuera USD y un `0` se escondía como "—". Pruebas: `pruebas/tarifasVistaHotel22.test.ts`,
+`pruebas/hotelPestanas22.react.ts`.

@@ -20,8 +20,9 @@ import { hoyISO, toTemporadaRango } from "@/lib/calc/paquetes";
 
 export const dynamic = "force-dynamic";
 
-export default async function HotelDetallePage({ params }: { params: Promise<{ id: string }> }) {
+export default async function HotelDetallePage({ params, searchParams }: { params: Promise<{ id: string }>; searchParams: Promise<{ tab?: string | string[] }> }) {
   const { id } = await params;
+  const { tab } = await searchParams;
   const hotelId = Number(id);
   if (isNaN(hotelId)) notFound();
   const sb = await createClient();
@@ -98,6 +99,8 @@ export default async function HotelDetallePage({ params }: { params: Promise<{ i
   // el único editor que existía antes de la fase 2) ante cualquier valor
   // ausente o inesperado — nunca se asume 'unidad' sin que la columna lo diga.
   const modeloTarifario: ModeloTarifario = h.modelo_tarifario === "unidad" ? "unidad" : "persona";
+  // Moneda de las tarifas netas de ESTE hotel: solo decide cómo se rotulan los importes (USD vs COP), nunca su valor.
+  const moneda = ((h as { moneda?: string | null }).moneda ?? "COP").toUpperCase() === "USD" ? "USD" : "COP";
   const calcTipo = (calc?.tipo ?? null) as CalcTipo | null;
   const dubaiInicial = calc?.tipo === "dubai" ? (calc.params as unknown as DubaiParams) : null;
   const mixtaInicial = calc?.tipo === "mixta" ? (calc.params as unknown as MixtaParams) : null;
@@ -121,7 +124,7 @@ export default async function HotelDetallePage({ params }: { params: Promise<{ i
   }
 
   return (
-    <div className="mx-auto max-w-5xl p-4 md:p-8">
+    <div className="mx-auto max-w-7xl p-4 md:p-8">
       <Link href="/dashboard/producto/hoteles" className="text-sm text-gray-400 hover:text-gray-600">← Hoteles</Link>
       <div className="mb-1 mt-2 flex flex-wrap items-center gap-2">
         <h1 className="text-2xl font-semibold text-gray-900">{h.nombre}</h1>
@@ -147,6 +150,19 @@ export default async function HotelDetallePage({ params }: { params: Promise<{ i
       )}
 
       <div className="mt-6">
+        <HotelDetalleClient
+          hotelId={hotelId}
+          categorias={categorias}
+          regimenes={regimenes}
+          temporadas={temporadas ?? []}
+          tarifas={(tarifas ?? []) as never}
+          otrosHoteles={otrosHoteles ?? []}
+          adultsOnly={h.adults_only ?? false}
+          mostrarTarifaPersona={modeloTarifario === "persona"}
+          moneda={moneda}
+          pestanaInicial={Array.isArray(tab) ? tab[0] : tab}
+          configuracion={
+            <>
         <ModeloTarifarioEditor hotelId={hotelId} inicial={modeloTarifario} />
         <HotelConfigEditor
           hotelId={hotelId}
@@ -193,6 +209,9 @@ export default async function HotelDetallePage({ params }: { params: Promise<{ i
           paxMax={h.pax_max}
           configs={acomConfigs}
         />
+            </>
+          }
+          calculadora={
         <CalculadoraEditor
           hotelId={hotelId}
           categorias={categorias}
@@ -206,17 +225,11 @@ export default async function HotelDetallePage({ params }: { params: Promise<{ i
           vigencias={(temporadas ?? []).map(toTemporadaRango)}
           hoy={hoyISO()}
           tarifasExistentes={tarifas ?? []}
+          moneda={moneda}
         />
-        <HotelDetalleClient
-          hotelId={hotelId}
-          categorias={categorias}
-          regimenes={regimenes}
-          temporadas={temporadas ?? []}
-          tarifas={(tarifas ?? []) as never}
-          otrosHoteles={otrosHoteles ?? []}
-          adultsOnly={h.adults_only ?? false}
-          mostrarTarifaPersona={modeloTarifario === "persona"}
-        />
+          }
+          tarifasExtra={
+            <>
         {modeloTarifario === "persona" && (
           <TarifasHistorial
             // Remonta tras router.refresh() si entraron versiones nuevas (su
@@ -227,6 +240,7 @@ export default async function HotelDetallePage({ params }: { params: Promise<{ i
             errorInicial={historial.ok ? null : historial.error}
             tarifasActuales={tarifas ?? []}
             adultsOnly={h.adults_only ?? false}
+            moneda={moneda}
           />
         )}
         {modeloTarifario === "unidad" && (
@@ -245,6 +259,9 @@ export default async function HotelDetallePage({ params }: { params: Promise<{ i
             }}
           />
         )}
+            </>
+          }
+        />
       </div>
     </div>
   );
