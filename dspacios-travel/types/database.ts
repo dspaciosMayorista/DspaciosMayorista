@@ -356,6 +356,11 @@ export type Database = {
           financiero_estado: string;
           // Migración 227 (#63): aceptación de oferta COP con TRM que respalda este contrato (NULL = contrato de siempre).
           aceptacion_63_id: number | null;
+          // Migración 235 (#90 F): moneda de COBRO (NULL = se cobra en `moneda`). Si difiere de `moneda`, `total_cobro` es el total a cobrar
+          // (precio_venta convertido UNA vez con `trm_cobro`, congelado). Léelo siempre con `cobroDeVenta` (lib/finanzas/cobro.ts).
+          moneda_cobro: string | null;
+          trm_cobro: number | null;
+          total_cobro: number | null;
           financiero_actualizado_en: string;
           created_at: string;
           updated_at: string;
@@ -423,6 +428,9 @@ export type Database = {
           cotizacion_id?: number | null;
           financiero_estado?: string;
           aceptacion_63_id?: number | null;
+          moneda_cobro?: string | null;
+          trm_cobro?: number | null;
+          total_cobro?: number | null;
           financiero_actualizado_en?: string;
           created_at?: string;
           updated_at?: string;

@@ -199,7 +199,7 @@ describe("adaptadores del servidor (cliente inyectado)", () => {
   test("aceptarOferta63: nunca manda datos financieros del navegador (solo ids y huellas) y traduce errores", async () => {
     const vistos: Array<Record<string, unknown>> = [];
     await aceptarOferta63(cliente(async (_fn, a) => { vistos.push(a); return { data: null, error: { message: "p63_oferta_cambio" } }; }), { cotizacionId: 5, tenant: "mayorista", usuarioId: "u1", huella: "h", huellaFinanciera: "f" });
-    assert.deepEqual(Object.keys(vistos[0]).sort(), ["p_cotizacion", "p_huella", "p_huella_financiera", "p_tenant", "p_trm_provisional", "p_usuario"]);
+    assert.deepEqual(Object.keys(vistos[0]).sort(), ["p_cotizacion", "p_huella", "p_huella_financiera", "p_moneda_cobro", "p_tenant", "p_trm_cobro", "p_trm_provisional", "p_usuario"]);
     assert.equal(vistos[0].p_trm_provisional, null, "sin tasa ingresada viaja null (en una oferta USD sin TRM la base la rechaza antes de numerar)");
     await aceptarOferta63(cliente(async (_fn, a) => { vistos.push(a); return { data: null, error: { message: "p63_oferta_cambio" } }; }), { cotizacionId: 5, tenant: "mayorista", usuarioId: "u1", huella: "h", huellaFinanciera: "f", trmProvisional: 4321.5 });
     assert.equal(vistos[1].p_trm_provisional, 4321.5, "la tasa ingresada viaja a aceptar_oferta_63");

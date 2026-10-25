@@ -7,6 +7,7 @@ import { formatMoneda, formatFechaLarga } from "@/lib/utils";
 import { comisionDefault, categoriaAliado } from "@/lib/b2b";
 import { contratosDelPortalB2B, consultasPortalSupabase, COLUMNAS_DECISION } from "@/lib/auth/contratosPortalB2B";
 import { comisionesDelPortal } from "@/lib/finanzas/comisionPortal";
+import { cobroDeVenta } from "@/lib/finanzas/cobro";
 
 export const dynamic = "force-dynamic";
 
@@ -97,7 +98,7 @@ export default async function PortalB2BPage() {
   // Las consultas (y su `.eq()` en vez de `.or()` bajo service-role) viven en
   // `consultasPortalSupabase`; la verificación de fichas en `aliados_b2b` es
   // fail-closed (`verificarFichasComisionManual`).
-  const sel = `${COLUMNAS_DECISION}, cliente, destino, precio_venta, moneda, estado, modo_compra, comision_b2b, comision_estado, tipo_asesor`;
+  const sel = `${COLUMNAS_DECISION}, cliente, destino, precio_venta, moneda, moneda_cobro, trm_cobro, total_cobro, estado, modo_compra, comision_b2b, comision_estado, tipo_asesor`;
   const { contratos, via, legacyNoVerificado } = await contratosDelPortalB2B(
     perfil
       ? {
@@ -315,8 +316,11 @@ export default async function PortalB2BPage() {
             <tbody>
               {contratos.map((c) => {
                 const num = c.numero_contrato as string;
-                const moneda = (c.moneda as string) ?? "COP";
-                const valor = Number(c.precio_venta ?? 0);
+                // 235 (#90 F): valor y saldo se expresan en la MONEDA DE COBRO (abonos incluidos); la comisión sigue en la moneda de la oferta.
+                const cobro = cobroDeVenta(c as never);
+                const moneda = cobro.moneda;
+                const monedaOferta = cobro.monedaOferta;
+                const valor = cobro.total;
                 const saldo = valor - (abonosPorContrato.get(num) ?? 0);
                 const vis = comisionPorContrato.get(num) ?? null;
                 // #30 B: en PVP el saldo de SU comisión (total − abonos); en NETO
@@ -333,7 +337,7 @@ export default async function PortalB2BPage() {
                     <td className="px-3 py-2 text-xs text-gray-600">{(c.estado as string) ?? "—"}</td>
                     <td className="px-3 py-2 text-xs text-gray-500">{c.modo_compra === "comisionable" ? "Comisionable" : c.modo_compra === "neta" ? "Neta" : "—"}</td>
                     <td className="px-3 py-2 text-right text-xs tabular-nums">
-                      {com != null && com > 0 ? `${formatMoneda(com, moneda)}` : "—"}
+                      {com != null && com > 0 ? `${formatMoneda(com, monedaOferta)}` : "—"}
                       {vis?.estado ? <span className="block text-[10px] text-gray-400">{ESTADO_COMISION[vis.estado] ?? vis.estado}</span> : null}
                       {/* Cuenta de cobro: solo freelance (persona natural). Las agencias
                           (persona jurídica) deben enviar su factura electrónica. */}

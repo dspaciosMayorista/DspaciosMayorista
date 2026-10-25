@@ -27,6 +27,7 @@ import {
 } from "@/lib/observabilidad/medicion";
 import { revertirContratoIncompleto, registrarFinancieroContrato, type CxPFinanciera, type CostosContrato } from "@/lib/reservar/financieroContrato";
 import { netoTotalExigibleDeContrato } from "@/lib/contrato/netoContrato.server";
+import { cobroDeVenta } from "@/lib/finanzas/cobro";
 
 // #30 (CXP-1) — escritura financiera del contrato manual: las mismas RPC de
 // sistema que usa reservar (migraciones 171/172, solo service_role), con
@@ -1115,11 +1116,13 @@ export async function actualizarVenta(
 async function recalcularEstadoAbono(sb: Awaited<ReturnType<typeof createClient>>, numeroContrato: string): Promise<{ ok: true } | { ok: false; error: string }> {
   const { data: venta, error: ventaError } = await sb
     .from("ventas")
-    .select("estado, precio_venta, tipo_paquete, moneda, financiero_estado")
+    .select("estado, precio_venta, tipo_paquete, moneda, financiero_estado, moneda_cobro, trm_cobro, total_cobro")
     .eq("numero_contrato", numeroContrato)
     .maybeSingle();
   if (ventaError || !venta) return { ok: true };
-  const esUSD = (venta?.moneda ?? "COP") === "USD";
+  // 235 (#90 F): los abonos se llevan en la MONEDA DE COBRO (la de la oferta salvo que se haya elegido otra al contratar).
+  const cobro = cobroDeVenta(venta);
+  const esUSD = cobro.moneda === "USD";
   const { data: abs } = await sb.from("abonos").select("valor_abono, monto_cop").eq("numero_contrato", numeroContrato);
   const totalAbonado = (abs ?? []).reduce((s, a) => s + (a.valor_abono ?? 0), 0);   // en moneda del contrato
   const totalCop = (abs ?? []).reduce((s, a) => s + (Number(a.monto_cop) || 0), 0); // en pesos
@@ -1131,7 +1134,7 @@ async function recalcularEstadoAbono(sb: Awaited<ReturnType<typeof createClient>
 
   const { data: cfg } = await sb.from("config_cobros").select("pct_abono").eq("tipo_paquete", venta?.tipo_paquete ?? "").maybeSingle();
   const pctMin = cfg?.pct_abono ?? 0.3;
-  const alcanzaMinimo = totalAbonado >= (venta?.precio_venta ?? 0) * pctMin;
+  const alcanzaMinimo = totalAbonado >= cobro.total * pctMin;
   if (venta?.estado === "pendiente" && venta.financiero_estado !== "pendiente" && alcanzaMinimo) {
     const { error: eConf } = await sb.rpc("confirmar_venta", { p_numero: numeroContrato });
     if (eConf) return { ok: false, error: mensajeErrorRpc(eConf).error };
@@ -1152,11 +1155,12 @@ export async function registrarAbono(
   const sb = await createClient();
   const { data: venta, error: ventaError } = await sb
     .from("ventas")
-    .select("estado, precio_venta, tipo_paquete, moneda, tenant, financiero_estado")
+    .select("estado, precio_venta, tipo_paquete, moneda, tenant, financiero_estado, moneda_cobro, trm_cobro, total_cobro")
     .eq("numero_contrato", numeroContrato)
     .maybeSingle();
   if (ventaError || !venta) return { ok: false, error: ventaError?.message ?? "Contrato no encontrado." };
-  const esUSD = (venta?.moneda ?? "COP") === "USD";
+  // 235 (#90 F): el abono "vale" en la MONEDA DE COBRO del contrato (no en la de la oferta si se cobra en la otra).
+  const esUSD = cobroDeVenta(venta).moneda === "USD";
   if (venta?.financiero_estado === "pendiente") {
     return { ok: false, error: "Este contrato todavía tiene pendiente su registro financiero. No se pueden registrar abonos hasta completar la reconciliación." };
   }
@@ -1207,8 +1211,8 @@ export async function actualizarAbono(
 ): Promise<{ ok: boolean; error?: string }> {
   if (!(input.valor > 0)) return { ok: false, error: "El valor debe ser mayor a 0." };
   const sb = await createClient();
-  const { data: venta } = await sb.from("ventas").select("moneda, tenant").eq("numero_contrato", numeroContrato).maybeSingle();
-  const esUSD = (venta?.moneda ?? "COP") === "USD";
+  const { data: venta } = await sb.from("ventas").select("moneda, tenant, precio_venta, moneda_cobro, trm_cobro, total_cobro").eq("numero_contrato", numeroContrato).maybeSingle();
+  const esUSD = cobroDeVenta(venta).moneda === "USD";
   const montoCop = Math.max(0, Number(input.valor) || 0);
   const trm = esUSD ? (Number(input.trmInput) || 0) : 1;
   if (esUSD && trm <= 0) return { ok: false, error: "Indica la TRM del día (contrato en USD)." };
