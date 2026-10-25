@@ -246,6 +246,38 @@ Doble gate:
     sigue revalidando las ventanas antes de llamar a la RPC (la RPC es la segunda guardia, no la única); (c) el marcado "completa" lo hace la propia RPC financiera (no un trigger separado) en la misma transacción; (d) los errores técnicos de las otras acciones de gestión pueden mostrar el texto
     `p63_*` de la base (en español, sin datos sensibles).
 
+## 10. #90 F — moneda de COBRO al convertir un carrito (sin migración nueva)
+
+Misma regla que las ofertas #63 (`lib/finanzas/cobro.ts`, migración 235), aplicada a `convertirCotizacionCarrito` + `ConvertirCarritoBtn`:
+
+- **Elección obligatoria y expresa** (COP o USD, también si coincide con la moneda de la cotización), **una sola** para todos los contratos de la
+  conversión («todo» o «por destino»). Si es la otra moneda: TRM positiva ingresada a mano (sin respaldo en `trm_referencia`) y solo personal interno.
+  Se valida **en el servidor** al inicio de la función (`validarEleccionCarrito`, `lib/finanzas/cobroCarrito.ts`), antes de leer o escribir nada; la
+  pantalla (selector sin valor por defecto, TRM, **total a cobrar por contrato** en vista previa) es solo ayuda.
+- **Conversión**: el total de **cada contrato** se convierte una sola vez desde su `precio_venta` (`cobroDeContratoCarrito` → `totalCobroConvertido`,
+  COP al mil / USD al dólar hacia arriba) y se guarda en las columnas de la 235 (`ventas.moneda_cobro/trm_cobro/total_cobro`). La oferta
+  (`moneda`, `precio_venta`), los costos y las CxP no cambian. Se calcula **antes** de reservar el número del contrato.
+- **Moneda de la oferta de cada contrato** (`resolverMonedaOferta`): todas las unidades de cada grupo —hoteles **y tours**— deben estar en la moneda de la
+  cotización; un grupo de solo tours toma esa moneda (antes caía en COP) y un tour histórico sin moneda declarada la hereda. Una unidad en otra moneda se
+  rechaza **antes de numerar o escribir el primer contrato** (nunca se suman importes de monedas distintas).
+- **Moneda REAL de costos y CxP** (`lib/reservar/monedaObligacionesCarrito.ts`): cada CxP del carrito lleva `moneda` EXPLÍCITA = la moneda real de SU costo
+  (hotel por persona: `comp.monedaReserva`; vuelo de un bloqueo: `bloqueos_vuelo.moneda`; servicios y tours: `servicios_adicionales.moneda`; Bernalo: la del
+  componente), nunca la del contrato en bloque ni el default `'COP'` del RPC. **Límite vigente**: `registrar_financiero_contrato` guarda la moneda que recibe y
+  el asiento (`postearAsientoCxP` → `resolverImporteContable63`) devenga una CxP sin marca de oferta #63 por su valor NOMINAL; una CxP en dólares del carrito no
+  tiene equivalente en COP, así que se contabilizaría como pesos. Por eso, **antes de numerar o escribir nada**, cualquier obligación en USD (o de moneda
+  indeterminable en un contrato USD) detiene la conversión con un mensaje explícito; una segunda barrera en `pushCxP` revierte el grupo. Los importes
+  nominales no se tocan. Hoy un carrito USD solo convierte si no genera obligaciones (p. ej. tours históricos sin `servicioId`). El mismo límite aplica a las
+  reservas no #63 en USD fuera del carrito (pendiente del corte contable C/E).
+- **Idempotencia / reintentos**: la elección se congela en `cotizaciones.detalle.cobro` con el progreso del primer contrato; un reintento con otra
+  moneda u otra TRM se rechaza (`compararConCongelado`), también si la cotización ya quedó convertida. Una conversión parcial **anterior** a este
+  cambio (contratos sin elección congelada) solo continúa en la moneda de la oferta, sin TRM. Cupos y asignación de pasajeros no cambian.
+- **Lectores** (saldo, abonos, cartera, documento, plan de cobro, estado de cuenta): ya usan `cobroDeVenta` (#396); funcionan igual para estos contratos.
+- **Límite documentado**: un contrato de carrito cobrado en otra moneda **no se puede facturar** desde el sistema (`public.facturar_factura` →
+  `f208_priv.importes_factura` lanza `F4451`; trigger `trg_p235_cf_cobro_guarda` sobre `contrato_facturacion`) — el candado de la 235 depende de las
+  columnas de `ventas`, no de la aceptación #63. Siguen en moneda de oferta (pendiente del corte contable C): `estadoResultados` y flujo de caja.
+- Pruebas: `pruebas/cobroCarrito.test.ts`, `pruebas/cobroCarritoConversion.test.ts`, `pruebas/convertirCarritoVinculos.react.ts`,
+  `supabase/scripts/test_90g_carrito_cobro.sql`.
+
 ## Enlaces cruzados
 
 - **Tarifario/Paquetes** — de dónde sale el PVP congelado (`tarifario_resultado`) y el motor

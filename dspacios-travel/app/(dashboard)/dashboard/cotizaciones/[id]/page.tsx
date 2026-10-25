@@ -16,6 +16,7 @@ import { IncluyeEditor } from "./IncluyeEditor";
 import { RecobroNinosEditor } from "./RecobroNinosEditor";
 import { ServiciosCotizacionEditor } from "./ServiciosCotizacionEditor";
 import { ConvertirCarritoBtn } from "./ConvertirCarritoBtn";
+import { monedaOfertaDeCotizacion } from "@/lib/finanzas/cobroCarrito";
 import { elegibilidadEdicion } from "@/lib/cotizacion/edicionServiciosManual";
 import { servicioDesdeFila } from "@/lib/cotizacion/liquidacionManual";
 import { resolverVinculosCotizacion } from "@/lib/reservar/vinculoServiciosCheckout";
@@ -199,8 +200,8 @@ export default async function CotizacionDetallePage({
   // Datos propios del carrito: pax máximo (para dimensionar la captura de
   // pasajeros) y destinos distintos (para ofrecer "1 contrato por destino").
   const payloadCarrito = (c.payload ?? {}) as {
-    items?: { destino: string | null; pax: number; fechaIda: string | null; hotelNombre: string; ref?: string; paqueteId?: number }[];
-    tours?: { nombre?: string; destino: string | null; pax: number; fechaIda?: string | null; paqueteId?: number; hotelRef?: string | null }[];
+    items?: { destino: string | null; pax: number; fechaIda: string | null; hotelNombre: string; ref?: string; paqueteId?: number; precio?: number }[];
+    tours?: { nombre?: string; destino: string | null; pax: number; fechaIda?: string | null; paqueteId?: number; hotelRef?: string | null; precio?: number }[];
     cliente?: { nombres?: string; apellidos?: string; numeroDoc?: string };
   };
   const itemsCarrito = payloadCarrito.items ?? [];
@@ -448,8 +449,9 @@ export default async function CotizacionDetallePage({
               <ConvertirCarritoBtn
                 id={c.id}
                 pax={paxCarrito}
-                items={itemsCarrito.map((i) => ({ hotelNombre: i.hotelNombre, destino: i.destino, pax: i.pax, fechaIda: i.fechaIda ?? null }))}
-                tours={toursCarrito.map((t, j) => ({ nombre: t.nombre ?? "Tour", destino: t.destino, pax: t.pax, fechaIda: t.fechaIda ?? null, hotelIndice: hotelDeTourCarrito[j] ?? null }))}
+                items={itemsCarrito.map((i) => ({ hotelNombre: i.hotelNombre, destino: i.destino, pax: i.pax, fechaIda: i.fechaIda ?? null, precio: Number(i.precio) || 0 }))}
+                tours={toursCarrito.map((t, j) => ({ nombre: t.nombre ?? "Tour", destino: t.destino, pax: t.pax, fechaIda: t.fechaIda ?? null, hotelIndice: hotelDeTourCarrito[j] ?? null, precio: Number(t.precio) || 0 }))}
+                monedaOferta={monedaOfertaDeCotizacion(c.moneda, c.payload)}
                 vinculoError={vinculosCarrito.ok ? null : vinculosCarrito.error}
                 destinos={destinosCarrito}
                 cliente={clienteCarritoPre}

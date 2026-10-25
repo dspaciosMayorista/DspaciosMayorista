@@ -7,7 +7,7 @@
 //   · un pasajero del servicio que no viaja en su hotel → error ANTES de enviar
 //     (misma regla que el servidor), aunque la cantidad coincida;
 //   · caso válido con "1 contrato por destino" → envía asignaciones al servidor.
-import { test, describe, before, after } from "node:test";
+import { test, describe, before, after, beforeEach } from "node:test";
 import assert from "node:assert/strict";
 import { JSDOM } from "jsdom";
 
@@ -62,6 +62,12 @@ async function montar(extra: Record<string, unknown> = {}) {
   await act(async () => { r.render(h(ConvertirCarritoBtn, { ...props, ...extra } as never)); await espera(); });
   return { c, r };
 }
+// 235 (#90 F): la moneda de cobro es obligatoria y se elige expresamente (sin valor por defecto).
+function elegirMoneda(c: HTMLElement, valor: string) {
+  const s = c.querySelector('select[aria-label="Moneda de cobro"]') as HTMLSelectElement;
+  Object.getOwnPropertyDescriptor(window.HTMLSelectElement.prototype, "value")!.set!.call(s, valor);
+  s.dispatchEvent(new window.Event("change", { bubbles: true }));
+}
 // Fila de checkboxes de una unidad ("Hotel Almirante", "Tour: Islas…").
 function checks(c: HTMLElement, rotulo: string): HTMLInputElement[] {
   const bloque = [...c.querySelectorAll("div.rounded-lg.bg-white")].find((d) => d.querySelector("p")?.textContent?.startsWith(rotulo))!;
@@ -79,6 +85,8 @@ async function prepararPasajeros(c: HTMLElement) {
   });
   // Rodadero (1 pax) lo usa el pasajero 3: desmarca el 1 (default) y marca el 3.
   await act(async () => { click(checks(c, "Hotel Rodadero")[0]); click(checks(c, "Hotel Rodadero")[2]); await espera(); });
+  // La conversión exige la moneda de cobro; estas pruebas ejercitan los vínculos, así que eligen la de la cotización (COP, sin conversión).
+  await act(async () => { elegirMoneda(c, "COP"); await espera(); });
 }
 
 describe("ConvertirCarritoBtn — servicios vinculados a su hotel", () => {
@@ -114,5 +122,84 @@ describe("ConvertirCarritoBtn — servicios vinculados a su hotel", () => {
     assert.deepEqual(llamadas[0].opts.asignaciones, [[1, 2], [3]]);
     assert.deepEqual(llamadas[0].opts.asignacionesTours, [[1, 2]]);
     act(() => r.unmount()); c.remove();
+  });
+});
+
+describe("ConvertirCarritoBtn — moneda de COBRO (#90 F)", () => {
+  const llamadas: { id: number; opts: { agrupar: string; monedaCobro?: string; trmCobro?: number | null } }[] = [];
+  before(() => { __setConvertirCotizacionCarrito(async (id: number, opts: never) => { llamadas.push({ id, opts }); return { ok: true, numeros: ["DTM-1", "DTM-2"] }; }); });
+  after(() => { __setConvertirCotizacionCarrito(null); });
+  const conPrecios = {
+    items: [
+      { hotelNombre: "Hotel Almirante", destino: "CARTAGENA", pax: 2, fechaIda: "2030-03-01", precio: 600_100 },
+      { hotelNombre: "Hotel Rodadero", destino: "SANTA MARTA", pax: 1, fechaIda: "2030-03-04", precio: 400_100 },
+    ],
+    tours: [{ nombre: "Islas del Rosario", destino: "Cartagena ", pax: 2, fechaIda: "2030-03-01", hotelIndice: 0, precio: 0 }],
+    monedaOferta: "COP",
+  };
+  const generar = async (c: HTMLElement) => { await act(async () => { click(boton(/^Generar contrato/, c)!); await espera(50); }); };
+  beforeEach(() => { llamadas.length = 0; });
+
+  test("sin moneda de cobro no hay valor por defecto: el selector arranca vacío y generar se rechaza sin llamar al servidor", async () => {
+    const { c, r } = await montar(conPrecios);
+    await prepararPasajeros(c);
+    await act(async () => { elegirMoneda(c, ""); await espera(); });
+    const s = c.querySelector('select[aria-label="Moneda de cobro"]') as HTMLSelectElement;
+    assert.equal(s.value, "", "sin valor por defecto");
+    await generar(c);
+    assert.match(c.textContent ?? "", /Elige la moneda de cobro \(COP o USD\) antes de generar el contrato/);
+    assert.equal(llamadas.length, 0);
+    act(() => r.unmount()); c.remove();
+  });
+
+  test("otra moneda sin TRM, o con TRM inválida, se rechaza en pantalla sin llamar al servidor", async () => {
+    const { c, r } = await montar(conPrecios);
+    await prepararPasajeros(c);
+    await act(async () => { elegirMoneda(c, "USD"); await espera(); });
+    await generar(c);
+    assert.match(c.textContent ?? "", /exige la TRM de cobro/);
+    const trm = c.querySelector('input[aria-label="TRM de cobro"]') as HTMLInputElement;
+    for (const mala of ["0", "-5"]) {
+      await act(async () => { escribir(trm, mala); await espera(); });
+      await generar(c);
+      assert.match(c.textContent ?? "", /TRM de cobro debe ser un número positivo/, mala);
+    }
+    assert.equal(llamadas.length, 0);
+    act(() => r.unmount()); c.remove();
+  });
+
+  test("muestra el total a cobrar POR CONTRATO antes de confirmar: «por destino» 151 + 101 USD; «todo» 251 USD", async () => {
+    const { c, r } = await montar(conPrecios);
+    await act(async () => { click(boton(/Confirmar → generar contrato/, c)!); await espera(); });
+    await act(async () => { elegirMoneda(c, "USD"); await espera(); });
+    const trm = c.querySelector('input[aria-label="TRM de cobro"]') as HTMLInputElement;
+    await act(async () => { escribir(trm, "4000"); await espera(); });
+    const lista = () => c.querySelector('[data-testid="totales-cobro-carrito"]')?.textContent ?? "";
+    assert.match(lista(), /Contrato\s*:.*se cobrará.*251/, lista());
+    await act(async () => { click(boton(/1 contrato por destino/, c)!); await espera(); });
+    assert.match(lista(), /Contrato 1 \(CARTAGENA\).*151/, lista());
+    assert.match(lista(), /Contrato 2 \(SANTA MARTA\).*101/, lista());
+    // Sin TRM válida no hay total.
+    await act(async () => { escribir(trm, ""); await espera(); });
+    assert.match(lista(), /falta la TRM/);
+    act(() => r.unmount()); c.remove();
+  });
+
+  test("elegida la moneda, UNA sola elección viaja al servidor para todos los contratos (USD + TRM; o COP expresa sin TRM)", async () => {
+    let m = await montar(conPrecios);
+    await prepararPasajeros(m.c);
+    await act(async () => { click(boton(/1 contrato por destino/, m.c)!); elegirMoneda(m.c, "USD"); await espera(); });
+    await act(async () => { escribir(m.c.querySelector('input[aria-label="TRM de cobro"]') as HTMLInputElement, "4000"); await espera(); });
+    await generar(m.c);
+    assert.equal(llamadas.length, 1, m.c.textContent ?? "");
+    assert.deepEqual([llamadas[0].opts.agrupar, llamadas[0].opts.monedaCobro, llamadas[0].opts.trmCobro], ["por_destino", "USD", 4000]);
+    act(() => m.r.unmount()); m.c.remove();
+
+    llamadas.length = 0;
+    m = await montar(conPrecios);
+    await prepararPasajeros(m.c); // elige COP (la de la cotización)
+    await generar(m.c);
+    assert.deepEqual([llamadas[0].opts.monedaCobro, llamadas[0].opts.trmCobro], ["COP", null], "misma moneda: viaja la elección y ninguna TRM");
+    act(() => m.r.unmount()); m.c.remove();
   });
 });
