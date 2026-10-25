@@ -292,7 +292,7 @@ end $$;
 
 -- ═ B · aceptar con moneda de cobro ═════════════════════════════════════════════════
 do $$
-declare v_cot text; v_a text; v_j jsonb; v_seq text; v_n int; v_snap_antes text; v_num text; v_r text;
+declare v_cot text; v_cot2 text; v_cot3 text; v_a text; v_j jsonb; v_seq text; v_n int; v_snap_antes text; v_num text; v_r text;
 begin
   perform t235.publicar(234302, 'oper', '4000', 'USD');   -- USD con TRM 4000, vuelo USD
   perform t235.publicar(234304, 'oper');                  -- COP sin TRM, todo COP
@@ -334,6 +334,25 @@ begin
   v_cot := t235.cotizar('usd_usd', 'hB5b');
   v_a := t235.aceptar(v_cot, 'hB5b');
   perform t235.afirma('B5b la llamada de la 234 (5 argumentos, sin moneda de cobro) ya NO numera: se rechaza (p63_cobro_requerido)', v_a like 'ERR%p63_cobro_requerido%', v_a);
+  -- B5e: la llamada de SEIS argumentos del CÓDIGO ANTERIOR (cotización, tenant, usuario, huella, huella financiera, p_trm_provisional) tampoco puede crear
+  -- una aceptación: recibe p63_cobro_requerido SIN gastar consecutivo, sin dejar aceptación y con la oferta abierta (interrupción controlada del despliegue).
+  v_cot := t235.cotizar('cop_cop', 'hB5e1');
+  v_cot2 := t235.cotizar('usd_usd', 'hB5e2');
+  v_cot3 := t235.cotizar('usd_sintrm', 'hB5e3');
+  select last_value::text || '/' || is_called::text into v_seq from public.contrato_seq_mayorista;
+  select count(*) into v_n from public.p63_aceptacion;
+  v_a := t235.aceptar_con(v_cot, 'hB5e1', 'null');
+  perform t235.afirma('B5e1 código anterior (6 argumentos posicionales, oferta COP): p63_cobro_requerido', v_a like 'ERR%p63_cobro_requerido%', v_a);
+  v_a := t235.aceptar_con(v_cot2, 'hB5e2', 'null');
+  perform t235.afirma('B5e2 código anterior (6 argumentos posicionales, oferta USD con TRM): p63_cobro_requerido', v_a like 'ERR%p63_cobro_requerido%', v_a);
+  v_a := t235.aceptar_con(v_cot3, 'hB5e3', '4000');
+  perform t235.afirma('B5e3 código anterior (6 argumentos posicionales, oferta USD sin TRM, con la TRM provisional de la 234): p63_cobro_requerido', v_a like 'ERR%p63_cobro_requerido%', v_a);
+  v_a := t235.try(format('select public.aceptar_oferta_63(p_cotizacion => %s, p_tenant => ''mayorista'', p_usuario => %L::uuid, p_huella => ''hB5e3'', p_huella_financiera => ''f1'', p_trm_provisional => 4000)::text',
+    v_cot3, t235.u('vent')));
+  perform t235.afirma('B5e4 código anterior (6 argumentos NOMBRADOS, como los envía la API): p63_cobro_requerido', v_a like 'ERR%p63_cobro_requerido%', v_a);
+  perform t235.afirma('B5e5 ninguna de esas llamadas gastó consecutivo, dejó aceptación ni cerró la oferta',
+    (select last_value::text || '/' || is_called::text from public.contrato_seq_mayorista) = v_seq and (select count(*) from public.p63_aceptacion) = v_n
+    and (select count(*) from public.p63_oferta where cotizacion_id in (v_cot::bigint, v_cot2::bigint, v_cot3::bigint) and estado = 'abierta') = 3);
   v_r := t235.msg(format($f$insert into public.p63_aceptacion (oferta_id, cotizacion_id, tenant, numero_contrato, usuario_id, fecha_negocio, snapshot)
       select id, cotizacion_id, tenant, '00-999990', %L::uuid, current_date, snapshot from public.p63_oferta where cotizacion_id = %s$f$, t235.u('vent'), v_cot));
   perform t235.afirma('B5d defensa en profundidad: insertar una aceptación SIN moneda de cobro falla aunque se salte la RPC (trigger)', v_r like '%p63_cobro_requerido%', v_r);

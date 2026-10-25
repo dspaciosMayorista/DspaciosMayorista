@@ -255,3 +255,15 @@ describe("cartera del dashboard y facturación: nada se calcula en otra moneda q
     assert.doesNotMatch(rb.slice(rb.indexOf("create or replace function f208_priv.importes_factura"), rb.indexOf("drop function if exists public.p63_total_cobro")), /moneda_cobro/);
   });
 });
+
+describe("instrucción de despliegue de la 235", () => {
+  const mig = leer("supabase/migrations/20260601000235_moneda_cobro_contrato.sql");
+  const cab = mig.slice(mig.indexOf("-- ORDEN DE DESPLIEGUE"), mig.indexOf("-- Rollback:"));
+  test("dice que el código anterior NO puede crear aceptaciones #63 tras la 235 y que se aplica inmediatamente antes del código nuevo", () => {
+    assert.match(cab, /INMEDIATAMENTE ANTES del despliegue del código nuevo/);
+    assert.match(cab, /NO puede crear nuevas\s+--\s+aceptaciones #63/);
+    assert.match(cab, /p63_cobro_requerido/);
+    assert.match(cab, /interrupción BREVE y CONTROLADA/);
+    assert.doesNotMatch(cab, /sigue funcionando|la base va ANTES/);
+  });
+});

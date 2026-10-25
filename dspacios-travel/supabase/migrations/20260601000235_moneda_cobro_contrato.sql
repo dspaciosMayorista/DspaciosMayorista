@@ -41,8 +41,13 @@
 --   No toca datos existentes (las columnas nuevas quedan NULL en todo lo anterior), ACL de otras funciones, RLS ni CxP. No cubre la mezcla general
 --   de monedas fuera del modo 63 (E) ni diferencias de cambio contables (C): quedan fuera de este corte.
 --
--- ORDEN DE DESPLIEGUE: la 234 aplicada primero. El código anterior llama aceptar_oferta_63 con nombres de parámetros que siguen existiendo y
---   sigue funcionando (cobro = moneda de la oferta); la base va ANTES del código nuevo.
+-- ORDEN DE DESPLIEGUE: la 234 aplicada primero. La 235 se aplica INMEDIATAMENTE ANTES del despliegue del código nuevo, no con antelación: el código
+--   anterior llama aceptar_oferta_63 con seis argumentos (p_trm_provisional como último) y, una vez aplicada la 235, esa llamada NO puede crear nuevas
+--   aceptaciones #63 — la RPC responde p63_cobro_requerido (sin reservar número ni gastar consecutivo) porque exige la elección expresa de la moneda de
+--   cobro, que solo el código nuevo envía. Hay por tanto una interrupción BREVE y CONTROLADA de la conversión de cotizaciones #63 a contrato entre la
+--   aplicación de la 235 y el fin del despliegue del código nuevo; el resto de la aplicación no se ve afectado. Un reintento de un intento ya aceptado
+--   (preparada) sí se sigue atendiendo sin elección (devuelve lo congelado y no numera). Tampoco se puede desplegar el código nuevo ANTES de la 235:
+--   llama a una firma de ocho argumentos que aún no existe. Por eso se aplican seguidas, con la 235 primero y el despliegue inmediatamente después.
 -- Rollback: supabase/scripts/rollback_235_moneda_cobro.sql (se niega si ya hay contratos o aceptaciones con conversión de cobro).
 -- ───────────────────────────────────────────────────────────────────────────
 
