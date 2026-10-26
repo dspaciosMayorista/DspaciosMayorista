@@ -133,9 +133,14 @@ export async function actualizarCuentaPorPagar(input: {
   // #63: una obligación del modo COP con TRM lleva su equivalente en COP congelado (`valor_cop_63`). Cambiar su valor lo dejaría
   // distinto del importe contable ya devengado; el valor/moneda del principal no se corrige aquí (anular y volver a reservar).
   // Proveedor, servicio, vencimiento e IVA siguen editándose, y los pagos ya registrados no se tocan.
-  const { data: previa, error: errPrevia } = await sb.from("cuentas_por_pagar").select("valor_total, proveedor, servicio, aceptacion_63_id").eq("id", input.id).maybeSingle();
+  const { data: previa, error: errPrevia } = await sb.from("cuentas_por_pagar").select("valor_total, proveedor, servicio, aceptacion_63_id, valor_cop_costo").eq("id", input.id).maybeSingle();
   if (errPrevia) return { ok: false, error: "No se pudo verificar la cuenta por pagar. Inténtalo de nuevo." };
-  const previaAc = (previa as { valor_total?: number | null; proveedor?: string | null; servicio?: string | null; aceptacion_63_id?: number | null } | null);
+  const previaAc = (previa as { valor_total?: number | null; proveedor?: string | null; servicio?: string | null; aceptacion_63_id?: number | null; valor_cop_costo?: number | null } | null);
+  // #90 I (236): una CxP en USD del carrito lleva su equivalente en COP congelado a la TRM de costos (la base lo exige coherente con valor_total y no deja
+  // cambiarlo). Cambiar su valor lo dejaría distinto del importe ya devengado: se rechaza aquí con un mensaje claro en vez del error de la base.
+  if (previaAc?.valor_cop_costo != null && Number(previaAc.valor_total) !== Number(input.valorTotal)) {
+    return { ok: false, error: "Esta obligación en USD tiene su equivalente en pesos congelado a la TRM de costos del contrato; su valor no se corrige aquí (anula y vuelve a convertir). Proveedor, servicio, vencimiento e IVA sí se pueden editar." };
+  }
   // La obligación ACEPTADA protege principal, moneda, proveedor, servicio y retención (la base lo hace cumplir). Vencimiento e IVA siguen editables.
   if (previaAc?.aceptacion_63_id != null && (
     Number(previaAc.valor_total) !== Number(input.valorTotal) || (previaAc.proveedor ?? null) !== (input.proveedor || null) || (previaAc.servicio ?? null) !== (input.servicio || null)

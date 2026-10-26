@@ -85,6 +85,7 @@ import {
 import { aceptarOferta63, crearCotizacionOferta63, leerRevisiones63, ventaExiste63 } from "@/lib/reservar/aceptacionServidor63";
 import { validarEleccionCobro } from "@/lib/finanzas/cobro";
 import { decidirCxP, evaluarObligaciones, type Obligacion } from "@/lib/reservar/monedaObligacionesCarrito";
+import { compararTrmCostoConCongelada, decidirTrmCosto, equivalenteCopCosto, leerTrmCostoCongelada } from "@/lib/finanzas/costoTrmCarrito";
 import { costoAereoBloqueo, costoHotelPersona, costoTourParaCxP, costoVueloBernalo, liquidarCostoTour } from "@/lib/reservar/costosObligacionesCarrito";
 import { cobroDeContratoCarrito, compararConCongelado, leerCobroCongelado, monedaOfertaDeCotizacion, resolverMonedaOferta, validarEleccionCarrito } from "@/lib/finanzas/cobroCarrito";
 import { ROLES_INTERNOS } from "@/lib/constants";
@@ -1858,6 +1859,8 @@ export async function convertirCotizacionCarrito(
     /** 235 (#90 F): moneda de COBRO elegida (OBLIGATORIA, COP o USD) y su TRM (solo si difiere de la moneda de la cotización). Una sola para todos los contratos. */
     monedaCobro?: string | null;
     trmCobro?: number | string | null;
+    /** 236 (#90 I): TRM de COSTOS (pesos por dólar). Solo se exige —y solo se guarda— si alguna obligación positiva con proveedores está en USD. Distinta de la TRM de cobro. */
+    trmCosto?: number | string | null;
   }
 ): Promise<{ ok: true; numeros: string[]; advertencias?: string[] } | { ok: false; error: string }> {
   const sb = await createClient();
@@ -1899,6 +1902,9 @@ export async function convertirCotizacionCarrito(
     monedaOferta: monedaOfertaCarrito,
   });
   if (!cmpCobro.ok) return { ok: false, error: cmpCobro.error };
+  // 236 (#90 I): la TRM de costos congelada tampoco cambia en un reintento, aunque ya esté todo convertido o el grupo pendiente no genere CxP en USD.
+  const cmpTrmCosto = compararTrmCostoConCongelada({ congelada: leerTrmCostoCongelada(cot.detalle), recibida: opts.trmCosto });
+  if (!cmpTrmCosto.ok) return { ok: false, error: cmpTrmCosto.error };
   if (cot.estado === "convertida") {
     const contratosPrevios = Array.isArray(detalleExistente.contratos)
       ? (detalleExistente.contratos as unknown[]).filter((n): n is string => typeof n === "string")
@@ -2384,6 +2390,7 @@ export async function convertirCotizacionCarrito(
     if (errMon) return { ok: false, error: "No se pudo verificar la moneda de los vuelos del carrito; no se crea ningún contrato. Intenta de nuevo." };
     for (const r of filas ?? []) bloqueosObl.set(r.id as number, r as unknown as { moneda: unknown; tarifa_para_empaquetar: unknown; fee_infante: unknown });
   }
+  let requiereTrmCosto = false;
   for (const { grupo, validadosPersona, validadosBernalo } of gruposValidados) {
     const obligaciones: Obligacion[] = [];
     for (const v of validadosPersona) {
@@ -2414,6 +2421,19 @@ export async function convertirCotizacionCarrito(
     }
     const rObl = evaluarObligaciones({ monedaContrato: monedaOfertaConversion, obligaciones });
     if (!rObl.ok) return { ok: false, error: rObl.error };
+    if (rObl.requiereTrmCosto) requiereTrmCosto = true;
+  }
+  // 236 (#90 I): TRM de COSTOS. Se decide AQUÍ, antes de numerar o escribir: con obligaciones en USD es obligatoria (solo personal interno) y un reintento no
+  // puede cambiar la ya congelada; sin ellas no se pide ni se guarda una nueva. Queda en `detalle.costo` junto a la elección de cobro desde el primer contrato.
+  const rTrmCosto = decidirTrmCosto({ requiere: requiereTrmCosto, recibida: opts.trmCosto, esInterno: esInternoCobro, congelada: leerTrmCostoCongelada(cot.detalle) });
+  if (!rTrmCosto.ok) return { ok: false, error: rTrmCosto.error };
+  const trmCostoConversion = rTrmCosto.trm;
+  if (trmCostoConversion != null) detalleBase.costo = { trm: trmCostoConversion };
+  // Orden de despliegue: la RPC de antes de la 236 IGNORA en silencio las claves del equivalente y crearía la CxP en USD sin él (se devengaría como pesos).
+  // Con obligaciones en USD se comprueba ANTES de numerar que la base ya tiene las columnas de la 236; si no, no se crea nada.
+  if (requiereTrmCosto) {
+    const { error: errEsquema236 } = await admin.from("cuentas_por_pagar").select("valor_cop_costo, trm_costo").limit(1);
+    if (errEsquema236) return { ok: false, error: "La base de datos todavía no tiene el equivalente en pesos de las cuentas por pagar (migración 236); no se crea ningún contrato. Avisa a soporte." };
   }
 
   // `contratosPorGrupo`/`claveDeGrupo`/`detalleBase` ya se inicializaron
@@ -2746,13 +2766,19 @@ export async function convertirCotizacionCarrito(
       const decision = decidirCxP({ origen: servicio, moneda: monedaCosto, valor, monedaContrato: monedaGrupo });
       if (decision.accion === "omitir") return;
       if (decision.accion === "rechazar") { estadoObligaciones.error ??= decision.error; return; }
+      // 236 (#90 I): una obligación en USD conserva su valor y moneda originales (a centavos, como la columna) y lleva su equivalente en COP
+      // congelado a la TRM de COSTOS — la misma para todo el contrato. Sin esa TRM no se crea (la revisión previa ya la exigió antes de numerar).
+      const enUsd = decision.moneda === "USD";
+      if (enUsd && trmCostoConversion == null) { estadoObligaciones.error ??= `${servicio}: falta la TRM de costos para su obligación en USD; no se crea el contrato.`; return; }
+      const valorTotal = enUsd ? Math.round(Math.max(0, valor) * 100 + 1e-9) / 100 : Math.max(0, valor);
       cxp.push({
         proveedor: pr?.nombre ?? nombreFallback ?? null, tipo_proveedor: tipo, servicio,
-        valor_total: Math.max(0, valor), fecha_obligacion: hoyServidor,
+        valor_total: valorTotal, fecha_obligacion: hoyServidor,
         aplica_retencion: pr?.aplica_retencion ?? false, pct_retencion: Number(pr?.pct_retencion) || 0, observaciones: OBS_AUTO,
         // Migración 170 — vínculo durable con el servicio del catálogo.
         servicio_id: servicioId ?? null,
         moneda: decision.moneda,
+        ...(enUsd ? { valor_cop_costo: equivalenteCopCosto(valorTotal, trmCostoConversion as number), trm_costo: trmCostoConversion as number } : {}),
       });
     };
 

@@ -1,20 +1,24 @@
-// #90 F — moneda REAL de las obligaciones (CxP) del carrito (lib/reservar/monedaObligacionesCarrito.ts). La ejecución del servidor está en cobroCarritoConversion.test.ts.
+// #90 F/I — moneda REAL de las obligaciones (CxP) del carrito (lib/reservar/monedaObligacionesCarrito.ts). La ejecución del servidor está en cobroCarritoConversion.test.ts.
+// Regla vigente: la moneda del costo debe ser la de la OFERTA; otra moneda detiene la conversión (H-1 y su caso inverso); USD dentro de una oferta USD se registra
+// con equivalente en COP a la TRM de costos (por eso la revisión informa requiereTrmCosto).
 import { test, describe } from "node:test";
 import assert from "node:assert/strict";
 import {
-  decidirCxP, evaluarObligacion, evaluarObligaciones, mensajeObligacionMonedaInvalida, mensajeObligacionSinMoneda, mensajeObligacionUsd, obligacionPositiva,
+  decidirCxP, evaluarObligacion, evaluarObligaciones, mensajeObligacionMonedaDistinta, mensajeObligacionMonedaInvalida, mensajeObligacionSinMoneda, obligacionPositiva,
 } from "../lib/reservar/monedaObligacionesCarrito.ts";
 import { costoAereoBloqueo, costoHotelPersona, costoTourParaCxP, costoVueloBernalo } from "../lib/reservar/costosObligacionesCarrito.ts";
 
 describe("evaluarObligacion: moneda real de cada costo", () => {
-  test("COP → válida, con moneda COP explícita (en contrato COP o USD)", () => {
+  test("misma moneda que la oferta → válida, con su moneda EXPLÍCITA (COP en oferta COP; USD en oferta USD)", () => {
     assert.deepEqual(evaluarObligacion({ origen: "Hotel", moneda: "COP", monedaContrato: "COP" }), { ok: true, moneda: "COP" });
-    assert.deepEqual(evaluarObligacion({ origen: "Hotel", moneda: "cop", monedaContrato: "USD" }), { ok: true, moneda: "COP" });
+    assert.deepEqual(evaluarObligacion({ origen: "Hotel", moneda: "cop", monedaContrato: "cop" }), { ok: true, moneda: "COP" });
+    assert.deepEqual(evaluarObligacion({ origen: "Hotel X", moneda: "USD", monedaContrato: "USD" }), { ok: true, moneda: "USD" });
+    assert.deepEqual(evaluarObligacion({ origen: "Hotel X", moneda: " usd ", monedaContrato: "USD" }), { ok: true, moneda: "USD" });
   });
-  test("USD → se rechaza SIEMPRE (la ruta financiera del carrito la devengaría como pesos), también en un contrato COP: no se asigna la moneda del contrato", () => {
-    assert.deepEqual(evaluarObligacion({ origen: "Hotel X", moneda: "USD", monedaContrato: "USD" }), { ok: false, error: mensajeObligacionUsd("Hotel X") });
-    assert.deepEqual(evaluarObligacion({ origen: "Vuelo", moneda: "usd", monedaContrato: "COP" }), { ok: false, error: mensajeObligacionUsd("Vuelo") });
-    assert.match(mensajeObligacionUsd("Hotel X"), /se contabilizaría como si fueran pesos/);
+  test("H-1: COP dentro de una oferta USD se rechaza (no se mezclan monedas en costo_*); caso inverso: USD dentro de una oferta COP también", () => {
+    assert.deepEqual(evaluarObligacion({ origen: "Islas", moneda: "COP", monedaContrato: "USD" }), { ok: false, error: mensajeObligacionMonedaDistinta("Islas", "COP", "USD") });
+    assert.deepEqual(evaluarObligacion({ origen: "Vuelo", moneda: "usd", monedaContrato: "COP" }), { ok: false, error: mensajeObligacionMonedaDistinta("Vuelo", "USD", "COP") });
+    assert.match(mensajeObligacionMonedaDistinta("Islas", "COP", "USD"), /Islas: su costo con el proveedor está hoy en COP y la oferta del carrito está en USD; no se mezclan monedas/);
   });
   test("sin moneda: COP en un contrato COP (el default histórico, ahora explícito); en un contrato USD no se determina y se rechaza", () => {
     for (const vacia of [undefined, null, "", "  "]) {
@@ -32,22 +36,29 @@ describe("solo existen (y se evalúan) las obligaciones de importe POSITIVO", ()
     for (const v of [0, -1, -0.01, NaN, undefined, null, "5", "", Infinity * 0]) assert.equal(obligacionPositiva(v), false, String(v));
     for (const v of [0.01, 1, 200_000]) assert.equal(obligacionPositiva(v), true, String(v));
   });
-  test("un costo USD en CERO no bloquea; uno POSITIVO sí (hotel, vuelo, servicio, tour: mismo criterio)", () => {
+  test("un costo en OTRA moneda con importe CERO no bloquea ni pide TRM; con importe POSITIVO sí bloquea (hotel, vuelo, servicio, tour: mismo criterio), en ambos sentidos", () => {
     for (const origen of ["Hotel Dólar", "Vuelo de X", "ASISTENCIA MEDICA", "Islas del Rosario"]) {
-      assert.deepEqual(evaluarObligaciones({ monedaContrato: "USD", obligaciones: [{ origen, moneda: "USD", valor: 0 }] }), { ok: true }, `${origen} cero`);
-      assert.deepEqual(evaluarObligaciones({ monedaContrato: "USD", obligaciones: [{ origen, moneda: "USD", valor: 0.01 }] }), { ok: false, error: mensajeObligacionUsd(origen) }, `${origen} positivo`);
+      assert.deepEqual(evaluarObligaciones({ monedaContrato: "USD", obligaciones: [{ origen, moneda: "COP", valor: 0 }] }), { ok: true, requiereTrmCosto: false }, `${origen} cero (COP en USD)`);
+      assert.deepEqual(evaluarObligaciones({ monedaContrato: "USD", obligaciones: [{ origen, moneda: "COP", valor: 0.01 }] }), { ok: false, error: mensajeObligacionMonedaDistinta(origen, "COP", "USD") }, `${origen} positivo (COP en USD)`);
+      assert.deepEqual(evaluarObligaciones({ monedaContrato: "COP", obligaciones: [{ origen, moneda: "USD", valor: 0 }] }), { ok: true, requiereTrmCosto: false }, `${origen} cero (USD en COP)`);
+      assert.deepEqual(evaluarObligaciones({ monedaContrato: "COP", obligaciones: [{ origen, moneda: "USD", valor: 0.01 }] }), { ok: false, error: mensajeObligacionMonedaDistinta(origen, "USD", "COP") }, `${origen} positivo (USD en COP)`);
     }
   });
+  test("una obligación USD positiva en una oferta USD es válida y exige la TRM de costos; en cero no la exige", () => {
+    assert.deepEqual(evaluarObligaciones({ monedaContrato: "USD", obligaciones: [{ origen: "Hotel", moneda: "USD", valor: 0 }] }), { ok: true, requiereTrmCosto: false });
+    assert.deepEqual(evaluarObligaciones({ monedaContrato: "USD", obligaciones: [{ origen: "Hotel", moneda: "USD", valor: 210 }, { origen: "Tour", moneda: "USD", valor: 0 }] }), { ok: true, requiereTrmCosto: true });
+    assert.deepEqual(evaluarObligaciones({ monedaContrato: "COP", obligaciones: [{ origen: "Hotel", moneda: "COP", valor: 210 }] }), { ok: true, requiereTrmCosto: false }, "una oferta COP nunca pide TRM de costos");
+  });
   test("una moneda indeterminable en un contrato USD solo importa si la obligación se crea", () => {
-    assert.deepEqual(evaluarObligaciones({ monedaContrato: "USD", obligaciones: [{ origen: "A", moneda: undefined, valor: 0 }] }), { ok: true });
+    assert.deepEqual(evaluarObligaciones({ monedaContrato: "USD", obligaciones: [{ origen: "A", moneda: undefined, valor: 0 }] }), { ok: true, requiereTrmCosto: false });
     assert.deepEqual(evaluarObligaciones({ monedaContrato: "USD", obligaciones: [{ origen: "A", moneda: undefined, valor: 5 }] }), { ok: false, error: mensajeObligacionSinMoneda("A") });
   });
-  test("todas COP → ok; la primera positiva en USD detiene todo con su mensaje; sin obligaciones no hay nada que denominar", () => {
-    assert.deepEqual(evaluarObligaciones({ monedaContrato: "COP", obligaciones: [{ origen: "A", moneda: "COP", valor: 10 }, { origen: "B", moneda: undefined, valor: 10 }] }), { ok: true });
+  test("todas en la moneda de la oferta → ok; la primera positiva en otra moneda detiene todo con su mensaje; sin obligaciones no hay nada que denominar", () => {
+    assert.deepEqual(evaluarObligaciones({ monedaContrato: "COP", obligaciones: [{ origen: "A", moneda: "COP", valor: 10 }, { origen: "B", moneda: undefined, valor: 10 }] }), { ok: true, requiereTrmCosto: false });
     assert.deepEqual(evaluarObligaciones({ monedaContrato: "COP", obligaciones: [
       { origen: "A", moneda: "COP", valor: 10 }, { origen: "Z", moneda: "USD", valor: 0 }, { origen: "B", moneda: "USD", valor: 3 }, { origen: "C", moneda: "EUR", valor: 3 },
-    ] }), { ok: false, error: mensajeObligacionUsd("B") });
-    assert.deepEqual(evaluarObligaciones({ monedaContrato: "USD", obligaciones: [] }), { ok: true });
+    ] }), { ok: false, error: mensajeObligacionMonedaDistinta("B", "USD", "COP") });
+    assert.deepEqual(evaluarObligaciones({ monedaContrato: "USD", obligaciones: [] }), { ok: true, requiereTrmCosto: false });
   });
 });
 
@@ -60,7 +71,8 @@ describe("la revisión previa y pushCxP deciden igual (misma función, cuadrícu
       const e = evaluarObligaciones({ monedaContrato, obligaciones: [{ origen: "X", moneda, valor: valor as number }] });
       assert.equal(e.ok, d.accion !== "rechazar", `valor=${valor} moneda=${moneda} contrato=${monedaContrato}`);
       assert.equal(d.accion === "omitir", !obligacionPositiva(valor), `omitir ⇔ no positivo: valor=${valor}`);
-      if (d.accion === "crear") assert.equal(d.moneda, "COP", "lo único que se crea queda en COP explícita");
+      if (d.accion === "crear") assert.equal(d.moneda, monedaContrato, "lo único que se crea está en la moneda de la oferta, explícita (nunca una moneda distinta)");
+      if (e.ok && e.requiereTrmCosto) assert.ok(d.accion === "crear" && d.moneda === "USD", "pide TRM de costos solo por una obligación USD que se crea");
     }
   });
 });

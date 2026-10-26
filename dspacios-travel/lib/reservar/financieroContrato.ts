@@ -81,6 +81,13 @@ export type CxPFinanciera = {
   valor_cop?: number | null;
   trm?: number | null;
   /**
+   * #90 I (migración 236): equivalente en COP de una CxP en USD del carrito, congelado a la TRM de COSTOS (`cuentas_por_pagar.valor_cop_costo`/`trm_costo`).
+   * Claves PROPIAS, distintas de `valor_cop`/`trm` de #63: no llevan marca de aceptación y el lector contable las resuelve por su cuenta. `undefined` = toda
+   * obligación de siempre. `registrar_financiero_contrato` valida el par y lo escribe en la MISMA transacción que la CxP.
+   */
+  valor_cop_costo?: number | null;
+  trm_costo?: number | null;
+  /**
    * #63 (E/F/G): clave estable de la obligación dentro de lo aceptado. Solo viene en el payload DERIVADO de una aceptación
    * (la base lo guarda como `obligacion_63`); el contrato de siempre no la manda.
    */
