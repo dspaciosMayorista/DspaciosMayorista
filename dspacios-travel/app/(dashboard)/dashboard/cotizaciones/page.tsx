@@ -6,6 +6,8 @@ import { formatFechaLarga } from "@/lib/utils";
 import { ResponsiveTableShell } from "@/components/ui/ResponsiveTableShell";
 import { desdeComparativa } from "@/lib/cotizacion/comparativa";
 import { ValorCotizacion } from "@/components/cotizacion/ValorCotizacion";
+import { VigenciaTexto } from "@/components/cotizacion/VigenciaTexto";
+import { hoyBogota } from "@/lib/cotizacion/vigencia";
 
 export const dynamic = "force-dynamic";
 
@@ -18,6 +20,7 @@ const ESTADO_BADGE: Record<string, string> = {
 export default async function CotizacionesPage() {
   const sb = await createClient();
   const ctx = await contextoCotizacion();
+  const hoyNegocio = hoyBogota();
   // Listado interno: solo la agencia activa (superadmin conserva alcance
   // global — puede alternar de agencia, pero no ve las dos mezcladas de una).
   let q = sb
@@ -73,6 +76,7 @@ export default async function CotizacionesPage() {
                 <th className="px-4 py-3">Cliente</th>
                 <th className="px-4 py-3">Destino</th>
                 <th className="px-4 py-3">Salida</th>
+                <th className="px-4 py-3">Válida hasta</th>
                 <th className="px-4 py-3 text-right">Valor</th>
                 <th className="px-4 py-3">Estado</th>
                 <th className="px-4 py-3">Acciones</th>
@@ -99,6 +103,7 @@ export default async function CotizacionesPage() {
                   <td className="px-4 py-3 text-gray-700" data-label="Cliente">{c.cliente ?? "—"}</td>
                   <td className="px-4 py-3 text-gray-500" data-label="Destino">{c.destino ?? "—"}</td>
                   <td className="px-4 py-3 text-gray-500" data-label="Salida">{formatFechaLarga(c.fecha_salida)}</td>
+                  <td className="px-4 py-3 text-gray-500" data-label="Válida hasta"><VigenciaTexto vigencia={c.vigencia_hasta} estado={c.estado} hoy={hoyNegocio} /></td>
                   <td className="px-4 py-3 text-right tabular-nums text-gray-700" data-label="Valor">{c.modo === "comparativa"
                       ? <ValorCotizacion desde={desdePorMadre.get(c.id) ?? null} />
                       : <ValorCotizacion modo={(c as { b2b_modo?: string | null }).b2b_modo} precioVenta={c.precio_venta} totalExigible={(c as { b2b_total?: string | null }).b2b_total} moneda={c.moneda} />}</td>

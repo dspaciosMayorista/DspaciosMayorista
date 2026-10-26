@@ -17,6 +17,7 @@
 // ─────────────────────────────────────────────────────────────────────────
 
 import { createHash } from "node:crypto";
+import { MENSAJE_COTIZACION_VENCIDA } from "../cotizacion/vigencia.ts";
 import { ACOM_ROOM_LABEL, type AcomRoom } from "../acomodaciones.ts";
 import { ciudadIata, parseRuta } from "../iata.ts";
 import { descripcionLineaMenor, ordenLineaMenor, type LineaMenor } from "./menoresDeDos.ts";
@@ -453,6 +454,8 @@ export const MENSAJE_TECNICO_63 = "No fue posible aceptar la oferta. Intenta nue
  */
 export function mapearErrorRpc63(message: string | null | undefined): { error: string; cambio: boolean } {
   const m = message ?? "";
+  // 242 (#40 E3): cotización abierta vencida, rechazada por la base antes de numerar.
+  if (/COTIZACION_VENCIDA/.test(m)) return { error: MENSAJE_COTIZACION_VENCIDA, cambio: false };
   if (/p63_oferta_cambio/.test(m)) return { error: MENSAJE_CAMBIO_ACEPTACION_63, cambio: true };
   if (/p63_oferta_cerrada/.test(m)) return { error: MENSAJE_OFERTA_CERRADA_63, cambio: false };
   // 234: una oferta en USD sin TRM exige la TRM provisional ingresada al contratar; sin ella no se numera ni se crean CxP ni asientos en COP.

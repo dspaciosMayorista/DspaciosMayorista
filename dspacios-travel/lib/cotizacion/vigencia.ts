@@ -59,3 +59,11 @@ export function vigenciaInicial(hoy: string, fechaSalida: string | null | undefi
   const r = resolverVigenciaCotizacion({ hoy, fechaSalida, diasPorDefecto });
   return r.ok ? r.vigencia : hoy;
 }
+
+/** `vigencia_hasta` anterior al día de negocio de Bogotá. El día indicado sigue válido; nula (histórica) nunca vence por inferencia. */
+export function cotizacionVencida(vigenciaHasta: string | null | undefined, hoy: string): boolean {
+  return !!vigenciaHasta && vigenciaHasta < hoy;
+}
+
+export const MENSAJE_COTIZACION_VENCIDA =
+  "La cotización está vencida. Renueva su vigencia (personal interno) o genera una cotización nueva antes de convertirla en contrato.";

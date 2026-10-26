@@ -4,12 +4,12 @@ import { DateInput } from "@/components/ui/DateInput";
 import { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { Button } from "@/components/ui/button";
-import { formatFechaLarga } from "@/lib/utils";
 import { actualizarVigenciaCotizacion } from "../../reservar/actions";
 import { hoyBogota } from "@/lib/cotizacion/vigencia";
+import { VigenciaTexto } from "@/components/cotizacion/VigenciaTexto";
 
 // Editable solo si la cotización sigue abierta; si no, muestra la fecha fija.
-export function VigenciaCotizacion({ id, vigencia, fechaSalida, editable }: { id: number; vigencia: string | null; fechaSalida: string | null; editable: boolean }) {
+export function VigenciaCotizacion({ id, vigencia, fechaSalida, editable, estado }: { id: number; vigencia: string | null; fechaSalida: string | null; editable: boolean; estado: string }) {
   const router = useRouter();
   const [edit, setEdit] = useState(false);
   const [valor, setValor] = useState(vigencia ?? "");
@@ -31,7 +31,7 @@ export function VigenciaCotizacion({ id, vigencia, fechaSalida, editable }: { id
       <div className="text-[10px] font-semibold uppercase tracking-wide text-gray-400">Válida hasta</div>
       {!edit ? (
         <div className="flex items-center gap-2">
-          <span className="text-sm text-gray-800">{formatFechaLarga(vigencia) || "—"}</span>
+          <span className="text-sm text-gray-800"><VigenciaTexto vigencia={vigencia} estado={estado} hoy={hoyBogota()} /></span>
           {editable && (
             <button type="button" onClick={() => setEdit(true)} className="text-xs text-[var(--brand-accent)] hover:underline">
               Cambiar

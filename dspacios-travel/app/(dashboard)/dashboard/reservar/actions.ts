@@ -71,7 +71,7 @@ import {
 } from "@/lib/contrato/congelarCondicionesContrato";
 import { componenteDePrograma } from "@/lib/cotizacion/condicionDesdeCatalogo";
 import type { ComponenteSnapshot } from "@/lib/cotizacion/snapshotCondiciones";
-import { hoyBogota, resolverVigenciaCotizacion } from "@/lib/cotizacion/vigencia";
+import { cotizacionVencida, hoyBogota, MENSAJE_COTIZACION_VENCIDA, resolverVigenciaCotizacion } from "@/lib/cotizacion/vigencia";
 import { fechaNegocio } from "@/lib/fechaNegocio";
 import { resolverAliadoReserva, planComisionReserva, registrarComisionReserva, type PlanComisionReserva } from "@/lib/reservar/comisionReserva";
 import { asignarRefsPasajeros, AVISO_PERSONAS_PENDIENTES } from "@/lib/personas/cotizacion";
@@ -1351,17 +1351,6 @@ export async function crearCotizacion(input: ReservaInput, opts?: { vigenciaHast
 
   const detalle = { venta: ventaSnap, pasajeros: pasajerosSnap, hoteles: hotelesSnap, vuelos: vuelosSnap, items: itemsSnap };
 
-  // Una fecha explícita fuera del rango se rechaza; el valor automático de
-  // 24 horas se recorta a la salida para cotizaciones de último minuto.
-  const vigenciaRes = resolverVigenciaCotizacion({
-    hoy,
-    fechaSalida: meta.fecha_ida,
-    vigenciaSolicitada: opts?.vigenciaHasta,
-    diasPorDefecto: 1,
-  });
-  if (!vigenciaRes.ok) return { ok: false, error: vigenciaRes.error };
-  const vigencia = vigenciaRes.vigencia;
-
   const { data: { user } } = await sb.auth.getUser();
 
   // Acción INTERNA (clasificación explícita, ver revisión de PR #267): el
@@ -1375,6 +1364,17 @@ export async function crearCotizacion(input: ReservaInput, opts?: { vigenciaHast
   // `activo !== true`, y solo entonces resuelve tenant/superadmin).
   const ctx = await contextoCotizacion();
   if (!ctx.ok) return { ok: false, error: "No autorizado." };
+
+  // #40 E3: solo el personal interno elige la fecha. Un aliado B2B (o cualquier rol externo) que la mande por red no la adquiere: se ignora
+  // y rige el plazo automático de un día. Una fecha explícita fuera del rango se rechaza; el valor automático se recorta a la salida.
+  const vigenciaRes = resolverVigenciaCotizacion({
+    hoy,
+    fechaSalida: meta.fecha_ida,
+    vigenciaSolicitada: ctx.interno === false ? undefined : opts?.vigenciaHasta,
+    diasPorDefecto: 1,
+  });
+  if (!vigenciaRes.ok) return { ok: false, error: vigenciaRes.error };
+  const vigencia = vigenciaRes.vigencia;
 
   // El precio se calcula en el servidor (autoritativo) y el checkout debe servir
   // tanto a aliados B2B como a usuarios públicos. La RLS de `cotizaciones` es solo
@@ -1516,7 +1516,7 @@ export async function convertirCotizacion(
   const sb = await createClient();
   const { data: cot, error } = await sb
     .from("cotizaciones")
-    .select("estado, payload, numero_contrato, tenant, modo, tipo")
+    .select("estado, payload, numero_contrato, tenant, modo, tipo, vigencia_hasta")
     .eq("id", id)
     .maybeSingle();
   if (error || !cot) return { ok: false, error: error?.message ?? "Cotización no encontrada." };
@@ -1536,6 +1536,10 @@ export async function convertirCotizacion(
 
   const ctx = await contextoCotizacion();
   if (!autorizaTenant(ctx, cot.tenant)) return { ok: false, error: "No tienes acceso a esta cotización." };
+  // #40 E3: una abierta vencida se rechaza ANTES de numerar o reservar sillas. Una oferta #63 la rechaza además la base (`aceptar_oferta_63`),
+  // que deja pasar el reintento de una aceptación ya preparada; aquí solo se corta lo que aún no empezó (sin oferta63).
+  if (cot.estado === "abierta" && !(cot.payload as { oferta63?: unknown } | null)?.oferta63 && cotizacionVencida(cot.vigencia_hasta, hoyBogota()))
+    return { ok: false, error: MENSAJE_COTIZACION_VENCIDA };
 
   const payload = cot.payload as unknown as ReservaInput;
   // Un contrato necesita pasajeros: usa los capturados ahora o los que ya trae la
@@ -1876,7 +1880,7 @@ export async function convertirCotizacionCarrito(
   const sb = await createClient();
   const { data: cot } = await sb
     .from("cotizaciones")
-    .select("id, estado, tipo, payload, tenant, numero_contrato, detalle, moneda")
+    .select("id, estado, tipo, payload, tenant, numero_contrato, detalle, moneda, vigencia_hasta")
     .eq("id", id).eq("tipo", "carrito").maybeSingle();
   if (!cot) return { ok: false, error: "Cotización no encontrada." };
   // Acceso PRIMERO (antes de revelar o devolver nada de la cotización, incluso si ya está convertida).
@@ -1933,6 +1937,11 @@ export async function convertirCotizacionCarrito(
     if (cot.numero_contrato) return { ok: true, numeros: [cot.numero_contrato] };
   }
   if (cot.estado === "descartada") return { ok: false, error: "La cotización está descartada; no se puede convertir." };
+  // #40 E3: una abierta vencida no crea NINGÚN contrato nuevo (ni de los grupos pendientes de una conversión parcial): se rechaza antes de numerar,
+  // reservar sillas o crear contrato/CxP/asientos. Los contratos ya creados no se tocan; una cotización completamente convertida ya salió arriba
+  // con sus números, y al renovar la vigencia el reintento completa solo los grupos pendientes.
+  if (cot.estado === "abierta" && cotizacionVencida(cot.vigencia_hasta, hoyBogota()))
+    return { ok: false, error: MENSAJE_COTIZACION_VENCIDA };
 
   // Hallazgo confirmado (idempotencia, ronda 2): la clave de progreso por
   // grupo (`claveDeGrupo`, más abajo) sale de `grupo.destino`, que solo
@@ -3311,6 +3320,8 @@ export async function convertirCotizacionCarrito(
 export async function actualizarVigenciaCotizacion(id: number, vigenciaHasta: string): Promise<{ ok: boolean; error?: string }> {
   const ctx = await contextoCotizacion();
   if (!ctx.ok) return { ok: false, error: "No autorizado." };
+  // #40 E3: cambiar o renovar la vigencia es solo del personal interno; un aliado B2B activo de la misma agencia pasa `contextoCotizacion` pero no esta puerta.
+  if (ctx.interno === false) return { ok: false, error: "No tienes permiso para cambiar la vigencia." };
   const sb = await createClient();
   let lectura = sb.from("cotizaciones").select("fecha_salida").eq("id", id).eq("estado", "abierta");
   if (!ctx.superadmin) lectura = lectura.eq("tenant", ctx.tenant);

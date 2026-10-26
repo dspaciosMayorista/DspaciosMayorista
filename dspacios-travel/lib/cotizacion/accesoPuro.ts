@@ -1,10 +1,13 @@
 import type { Tenant } from "@/lib/tenant";
+import { ROLES_INTERNOS } from "../constants.ts";
 
 // Lógica PURA (sin I/O, sin Supabase, sin next/headers) — separada a propósito
 // de `acceso.ts` para poder probar CADA combinación de forma determinista con
 // `node --test`, sin depender de una sesión real ni de una base de datos.
 export type ContextoCotizacion =
-  | { ok: true; superadmin: boolean; tenant: Tenant }
+  // `interno`: personal interno (no aliado B2B ni cliente) — el único que elige o cambia la vigencia (#40 E3).
+  // Opcional solo para los dobles de prueba; el resolvedor real lo fija siempre y las guardas fallan cerrado con `=== false`.
+  | { ok: true; superadmin: boolean; tenant: Tenant; interno?: boolean }
   | { ok: false; motivo: "sin_perfil" | "usuario_inactivo" };
 
 // ⚠️ Falla CERRADO: cualquier valor de `activo` que no sea EXACTAMENTE
@@ -17,7 +20,7 @@ export function resolverContextoCotizacion(
 ): ContextoCotizacion {
   if (!perfil) return { ok: false, motivo: "sin_perfil" };
   if (perfil.activo !== true) return { ok: false, motivo: "usuario_inactivo" };
-  return { ok: true, superadmin: perfil.rol === "superadmin", tenant };
+  return { ok: true, superadmin: perfil.rol === "superadmin", tenant, interno: (ROLES_INTERNOS as string[]).includes(perfil.rol) };
 }
 
 // ¿Este contexto puede acceder a una fila con este tenant?
