@@ -8,11 +8,16 @@ import { useCart, type CartItem, type HotelCartItem, type HotelCartItemPersona, 
 import { normalizarEdadesMenoresCarrito } from "@/lib/reservar/edadesMenores";
 import { comisionSobre, formatImporte, monedaDeItem, preverCotizacion } from "@/lib/cart/monedaCarrito";
 import { AvisoMonedas, TotalesPorMoneda } from "../totalesCarrito";
-import { crearSolicitudReserva, fotosPortada, getContextoB2B, type SolicitudResult, type ContextoB2B, type ResultadoComparativaCreada } from "./actions";
+import { UserCheck } from "lucide-react";
+import { crearSolicitudReserva, fotosPortada, getContextoAsistenciaB2B, previsualizarTerminosB2BAsistido, type PrevisualizacionB2B, getContextoB2B, type SolicitudResult, type ContextoAsistenciaCheckout, type ContextoB2B, type ResultadoComparativaCreada } from "./actions";
+import { TerminosB2BAsistido } from "@/components/cotizacion/TerminosB2BAsistido";
 // #35: se carga solo cuando el modo comparativa está activo (no entra al grafo del checkout normal).
 const ContinuarComparativa = lazy(() => import("@/lib/cotizacion/comparativaCheckout").then((m) => ({ default: m.ContinuarComparativa })));
 import { MAX_OPCIONES } from "@/lib/cotizacion/comparativa";
 import { TIPOS_DOC_PERSONA } from "@/lib/personas/identidad";
+
+// El servidor devolvió que el desglose B2B cambió entre la vista previa y generar (no se creó nada).
+const esTerminosCambiaron = (r: SolicitudResult): r is Extract<SolicitudResult, { tipo: "terminos_cambiaron" }> => !r.ok && "tipo" in r && r.tipo === "terminos_cambiaron";
 
 function resumenHab(it: HotelCartItemPersona): string {
   const partes = Object.entries(it.habitaciones).filter(([, n]) => n > 0).map(([a, n]) => `${n} ${ACOM_ROOM_LABEL[a as AcomRoom] ?? a}`);
@@ -41,6 +46,8 @@ export default function CheckoutPage() {
   const [c, setC] = useState({ nombres: "", apellidos: "", tipoDoc: "", numeroDoc: "", telefono: "", email: "" });
   const [pending, start] = useTransition();
   const [err, setErr] = useState("");
+  // Entre la vista previa y generar cambió el desglose B2B: se avisa, la vista previa se actualiza y hay que confirmar de nuevo.
+  const [avisoTerminos, setAvisoTerminos] = useState("");
   // Fase 3F-4A, regla B.10: cuando el servidor detecta que el PVP/moneda de
   // un ítem Bernalo cambiaron, el carrito se actualiza y se exige una
   // SEGUNDA confirmación explícita (el botón normal ya no basta) — nunca se
@@ -70,7 +77,34 @@ export default function CheckoutPage() {
   }, []);
   const esB2B = !!ctx?.esB2B;
   const faltanFacturacion = [!fact.nit.trim() && "NIT", !fact.telefono.trim() && "teléfono"].filter((x): x is string => !!x);
-  const pct = ctx?.pctComision ?? 0;
+
+  // #102 — Venta ASISTIDA por personal interno: B2C (cliente final) o B2B (aliado identificado del catálogo, PVP con comisión o NETO).
+  // Solo ELIGE: el servidor decide quién puede asistir, valida el aliado, su tipo y su porcentaje, y congela los términos. Se muestra solo
+  // al personal autorizado (no a un aliado logueado, que ya tiene su propio flujo) y no en el modo comparativa.
+  const [asist, setAsist] = useState<ContextoAsistenciaCheckout | null>(null);
+  const [canal, setCanal] = useState<"b2c" | "b2b">("b2c");
+  const [aliadoTxt, setAliadoTxt] = useState("");
+  const [modoAsist, setModoAsist] = useState<"comisionable" | "neta">("comisionable");
+  useEffect(() => {
+    getContextoAsistenciaB2B().then(setAsist).catch(() => {});
+  }, []);
+  const puedeAsistir = asist?.puede === true && !esB2B && !vista.crear;
+  const aliadosAsist = asist?.puede === true ? asist.aliados : [];
+  // Buscador por nombre: la lista (<datalist>) filtra mientras se escribe; la elección es SIEMPRE un aliado activo del catálogo (su id). Texto que no
+  // coincide exactamente con una opción no elige nada y no se puede enviar. Si dos opciones se llamaran igual se distinguen con su número.
+  const normNombre = (t: string) => t.trim().replace(/\s+/g, " ").toLowerCase();
+  const etiquetaAliado = (a: (typeof aliadosAsist)[number]) => {
+    const base = `${a.nombre.trim().replace(/\s+/g, " ")} · ${a.tipo === "agencia" ? "Agencia" : "Freelance"}`;
+    return aliadosAsist.filter((o) => normNombre(o.nombre) === normNombre(a.nombre) && o.tipo === a.tipo).length > 1 ? `${base} (#${a.id})` : base;
+  };
+  const opcionesAliado = aliadosAsist.map((a) => ({ a, etiqueta: etiquetaAliado(a) }));
+  const coincidencias = opcionesAliado.filter((o) => normNombre(o.etiqueta) === normNombre(aliadoTxt));
+  const aliadoElegido = coincidencias.length === 1 ? coincidencias[0].a : null;
+  const asistenciaB2B = puedeAsistir && canal === "b2b";
+  // Presentación de la comisión: la del aliado logueado o, en venta asistida, la del aliado elegido (el servidor la recalcula y la congela).
+  const hayB2B = esB2B || asistenciaB2B;
+  const modoVista: "comisionable" | "neta" = asistenciaB2B ? modoAsist : modo;
+  const pct = asistenciaB2B ? (aliadoElegido?.pct ?? 0) : (ctx?.pctComision ?? 0);
   // La comisión B2B (presentación) se calcula sobre UNA sola moneda: el total
   // único del carrito o, si mezcla divisas, lo que se anticipa que entrará a
   // la cotización (`preverCotizacion`). Si no se puede anticipar (ítems sin
@@ -82,6 +116,8 @@ export default function CheckoutPage() {
       : null);
   const { comision, neto: totalNeto } = comisionSobre(baseComision?.monto ?? 0, pct);
   const sobreParte = !totales.unica && baseComision != null;
+  // La venta asistida NO estima la comisión aquí (no es un % del PVP: se descuenta antes el impuesto no comisionable): su desglose viene del servidor (vista previa).
+  const verComision = esB2B;
 
   // Resuelve la portada actual por hotel (ítems del carrito sin fotoUrl).
   useEffect(() => {
@@ -143,6 +179,8 @@ export default function CheckoutPage() {
         // elección legítima del B2B ya autenticado, pero solo tiene efecto
         // si el servidor confirma la sesión como B2B.
         ...(esB2B ? { modo } : {}),
+        // #102: solo la ELECCIÓN del personal interno (aliado + modalidad). El servidor la autoriza, valida el aliado y recalcula todo.
+        ...(asistenciaB2B && aliadoElegido ? { asistencia: { canal: "b2b" as const, aliadoId: aliadoElegido.id, modo: modoAsist } } : {}),
       };
   }
 
@@ -167,12 +205,53 @@ export default function CheckoutPage() {
     });
   }
 
+  // Edades de menores y tours listos para el servidor, o el motivo por el que el carrito aún no puede enviarse.
+  function normalizarCarrito(): { ok: true; itemsNormalizados: { it: HotelCartItemPersona; edadesMenores: number[] }[] } | { ok: false; error: string } {
+    const itemsNormalizados: { it: HotelCartItemPersona; edadesMenores: number[] }[] = [];
+    for (const it of hotelItems) {
+      const r = normalizarEdadesMenoresCarrito(it);
+      if (!r.ok) return { ok: false, error: `${it.hotelNombre}: ${r.error}` };
+      itemsNormalizados.push({ it, edadesMenores: r.edadesMenores });
+    }
+    for (const it of tourItems) {
+      if (it.servicioId == null || !it.fechaIda || !it.fechaRegreso) {
+        return { ok: false, error: `${it.nombre}: este servicio se agregó antes de poder re-liquidarlo en el servidor. Quítalo del carrito y agrégalo de nuevo desde Receptivos.` };
+      }
+    }
+    return { ok: true, itemsNormalizados };
+  }
+
+  // Vista previa del desglose B2B (lo calcula el servidor con el mismo motor de la cotización; no se estima aquí). Se vuelve a pedir al cambiar aliado,
+  // modalidad o carrito; la respuesta de otra combinación nunca se muestra (clave).
+  const normPrevia = asistenciaB2B && aliadoElegido ? normalizarCarrito() : null;
+  const entradaPrevia = normPrevia?.ok ? armarEntrada(normPrevia.itemsNormalizados) : null;
+  const clavePrevia = entradaPrevia ? JSON.stringify({ ...entradaPrevia, cliente: null }) : null;
+  const [previa, setPrevia] = useState<{ clave: string; r: PrevisualizacionB2B } | null>(null);
+  useEffect(() => {
+    if (!entradaPrevia || !clavePrevia) return;
+    let vigente = true;
+    previsualizarTerminosB2BAsistido(entradaPrevia)
+      .then((r) => { if (vigente) setPrevia({ clave: clavePrevia, r }); })
+      .catch(() => { if (vigente) setPrevia({ clave: clavePrevia, r: { ok: false, error: "No se pudo calcular el desglose. Intenta de nuevo en unos minutos." } }); });
+    return () => { vigente = false; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [clavePrevia]);
+  const estadoPrevia: "no_aplica" | "calculando" | "ok" | "error" =
+    !asistenciaB2B || !aliadoElegido ? "no_aplica"
+      : normPrevia && !normPrevia.ok ? "error"
+        : previa?.clave !== clavePrevia ? "calculando" : previa?.r.ok ? "ok" : "error";
+  const errorPrevia = normPrevia && !normPrevia.ok ? normPrevia.error : previa?.r.ok === false ? previa.r.error : "";
+  // Sin desglose del servidor no se confirma una venta B2B: evita generar con cifras que no se vieron.
+  const sinDesglose = estadoPrevia === "calculando" || estadoPrevia === "error";
+
   function enviar() {
     setErr("");
+    setAvisoTerminos("");
     setPrecioCambio(null);
     if (!c.nombres.trim() || !c.apellidos.trim()) { setErr("Ingresa nombres y apellidos."); return; }
     if (!c.numeroDoc.trim()) { setErr("El documento es obligatorio."); return; }
     if (!c.telefono.trim()) { setErr("El teléfono / WhatsApp es obligatorio."); return; }
+    if (asistenciaB2B && !aliadoElegido) { setErr("Elige un aliado de la lista (agencia o freelance) de la venta B2B."); return; }
 
     // Carritos guardados en el navegador ANTES de pedir la edad de cada menor
     // no traen `edadesMenores`: sin menores declarados se normaliza a `[]`
@@ -180,27 +259,22 @@ export default function CheckoutPage() {
     // AQUÍ, con un mensaje que dice qué hotel retirar y volver a agregar —
     // nunca se manda al servidor a que intente adivinar (ese reparto legado
     // ya no existe para este flujo público, ver checkout/actions.ts).
-    const itemsNormalizados: { it: HotelCartItemPersona; edadesMenores: number[] }[] = [];
-    for (const it of hotelItems) {
-      const r = normalizarEdadesMenoresCarrito(it);
-      if (!r.ok) { setErr(`${it.hotelNombre}: ${r.error}`); return; }
-      itemsNormalizados.push({ it, edadesMenores: r.edadesMenores });
-    }
-
-    // Tours agregados antes de que el carrito guardara `servicioId` (o cuyo
-    // servicio no quedó identificado por algún motivo) no se pueden
-    // re-liquidar en el servidor — se bloquea acá con un mensaje claro en vez
-    // de mandarlos y que el servidor los rechace uno por uno sin contexto.
-    for (const it of tourItems) {
-      if (it.servicioId == null || !it.fechaIda || !it.fechaRegreso) {
-        setErr(`${it.nombre}: este servicio se agregó antes de poder re-liquidarlo en el servidor. Quítalo del carrito y agrégalo de nuevo desde Receptivos.`);
-        return;
-      }
-    }
+    const norm = normalizarCarrito();
+    if (!norm.ok) { setErr(norm.error); return; }
+    const itemsNormalizados = norm.itemsNormalizados;
 
     start(async () => {
-      const r = await crearSolicitudReserva(armarEntrada(itemsNormalizados));
+      const entrada = armarEntrada(itemsNormalizados);
+      if (asistenciaB2B && entrada.asistencia && previa?.clave === clavePrevia && previa.r.ok) {
+        const { pvp, impuesto, base, pct, pct_origen, comision, total_exigible, modo_compra, moneda } = previa.r.terminos;
+        entrada.asistencia = { ...entrada.asistencia, vistos: { pvp, impuesto, base, pct, pct_origen, comision, total_exigible, modo_compra, moneda } } as typeof entrada.asistencia;
+      }
+      const r = await crearSolicitudReserva(entrada);
       if (r.ok) { setRes(r); clear(); }
+      else if (esTerminosCambiaron(r)) {
+        if (clavePrevia) setPrevia({ clave: clavePrevia, r: { ok: true, terminos: r.terminos } });
+        setAvisoTerminos(r.error);
+      }
       // `"tipo" in r` (en vez de `r.tipo === "precio_actualizado"`) es lo que
       // permite a TypeScript angostar `r` a `ResultadoPrecioActualizadoBernalo`
       // aquí y al resto (`{ok:false, error:string}`) en el `else` final — la
@@ -304,12 +378,12 @@ export default function CheckoutPage() {
                 ))}
               </ul>
               <div className="mt-3 space-y-2 border-t border-gray-100 pt-3">
-                {!vista.crear && <TotalesPorMoneda totales={totales} etiqueta={`Total${esB2B ? " (PVP)" : " estimado"}`} />}
+                {!vista.crear && <TotalesPorMoneda totales={totales} etiqueta={`Total${hayB2B ? " (PVP)" : " estimado"}`} />}
                 {!vista.crear && <AvisoMonedas totales={totales} prevision={prevision} />}
-                {esB2B && !baseComision && (
+                {verComision && !baseComision && (
                   <p className="text-xs text-gray-500">La comisión se calculará sobre la cotización que se genere (una sola moneda).</p>
                 )}
-                {esB2B && baseComision && modo === "neta" && (
+                {verComision && baseComision && modoVista === "neta" && (
                   <>
                     <div className="flex items-center justify-between text-sm text-gray-500">
                       <span>Comisión ({Math.round(pct * 100)}%){sobreParte ? ` sobre lo cotizado en ${baseComision.moneda}` : ""}</span>
@@ -321,7 +395,7 @@ export default function CheckoutPage() {
                     </div>
                   </>
                 )}
-                {esB2B && baseComision && modo === "comisionable" && (
+                {verComision && baseComision && modoVista === "comisionable" && (
                   <div className="flex items-center justify-between text-sm text-gray-500">
                     <span>Comisión a liquidar ({Math.round(pct * 100)}%){sobreParte ? ` sobre lo cotizado en ${baseComision.moneda}` : ""}</span>
                     <span style={{ color: "var(--brand-success)" }}>{formatMoneda(comision, baseComision.moneda)}</span>
@@ -329,6 +403,79 @@ export default function CheckoutPage() {
                 )}
               </div>
             </section>
+
+            {/* #102 — Venta asistida por personal interno: cliente final (B2C) o aliado identificado (B2B). */}
+            {puedeAsistir && (
+              <section className="rounded-2xl border border-gray-200 bg-white p-5" data-testid="venta-asistida">
+                <h2 className="mb-1 flex items-center gap-2 text-sm font-semibold text-gray-700">
+                  <UserCheck className="h-4 w-4" aria-hidden style={{ color: "var(--brand-primary)" }} />
+                  Tipo de venta
+                </h2>
+                <p className="mb-3 text-xs text-gray-400">Eres personal de D&apos;spacios: elige para quién es esta cotización. El aliado es el beneficiario; tu usuario queda como quien la asistió.</p>
+                <div className="flex flex-wrap gap-2" role="group" aria-label="Tipo de venta">
+                  {([["b2c", "Cliente final (B2C)"], ["b2b", "Aliado (B2B)"]] as const).map(([v, l]) => (
+                    <button key={v} type="button" aria-pressed={canal === v} onClick={() => setCanal(v)}
+                      className="rounded-lg border px-4 py-2 text-sm font-medium transition-all"
+                      style={canal === v
+                        ? { borderColor: "var(--brand-primary)", color: "var(--brand-primary)", backgroundColor: "rgba(29,124,154,0.08)" }
+                        : { borderColor: "#e5e7eb", color: "#6b7280" }}>
+                      {l}
+                    </button>
+                  ))}
+                </div>
+                {canal === "b2b" && (
+                  <div className="mt-4 space-y-3">
+                    <div>
+                      <label className={lbl} htmlFor="asist-aliado">Aliado (agencia o freelance) *</label>
+                      <input id="asist-aliado" className={inp} list="asist-aliados-lista" autoComplete="off" placeholder="Escribe para buscar por nombre…"
+                        value={aliadoTxt} onChange={(e) => setAliadoTxt(e.target.value)}
+                        aria-invalid={aliadoTxt.trim() !== "" && !aliadoElegido} aria-describedby="asist-aliado-ayuda" />
+                      <datalist id="asist-aliados-lista">
+                        {opcionesAliado.map(({ a, etiqueta }) => <option key={a.id} value={etiqueta} />)}
+                      </datalist>
+                      <p id="asist-aliado-ayuda" role="status" className={`mt-1 text-xs ${aliadoTxt.trim() !== "" && !aliadoElegido ? "text-amber-700" : "text-gray-400"}`}>
+                        {aliadoTxt.trim() !== "" && !aliadoElegido
+                          ? "Elige un aliado de la lista: el texto libre que no coincide con un aliado activo no se puede enviar."
+                          : "Solo aliados activos del catálogo."}
+                      </p>
+                      {aliadosAsist.length === 0 && <p role="status" className="mt-1 text-xs text-amber-700">No hay aliados activos en el catálogo.</p>}
+                      {aliadoElegido && (
+                        <p className="mt-1 text-xs text-gray-500" data-testid="asist-pct">
+                          Comisión {Math.round(aliadoElegido.pct * 10000) / 100} % · {aliadoElegido.pctOrigen === "aliado" ? "porcentaje propio del aliado" : aliadoElegido.pctOrigen === "general" ? "porcentaje general del sistema" : "porcentaje por defecto"}
+                        </p>
+                      )}
+                    </div>
+                    <div className="flex flex-wrap gap-2" role="group" aria-label="Modalidad B2B">
+                      {([["comisionable", "PVP con comisión"], ["neta", "NETO"]] as const).map(([v, l]) => (
+                        <button key={v} type="button" aria-pressed={modoAsist === v} onClick={() => setModoAsist(v)}
+                          className="rounded-lg border px-4 py-2 text-sm font-medium transition-all"
+                          style={modoAsist === v
+                            ? { borderColor: "var(--brand-primary)", color: "var(--brand-primary)", backgroundColor: "rgba(29,124,154,0.08)" }
+                            : { borderColor: "#e5e7eb", color: "#6b7280" }}>
+                          {l}
+                        </button>
+                      ))}
+                    </div>
+                    <p className="text-xs text-gray-400">
+                      {modoAsist === "neta"
+                        ? "NETO: el aliado paga el PVP menos su comisión, ya descontada del precio (no se le paga después)."
+                        : "PVP con comisión: el comprador paga el PVP completo; la comisión del aliado queda pendiente de liquidar."}
+                    </p>
+                    {estadoPrevia === "calculando" && <p role="status" className="text-xs text-gray-500" data-testid="previa-calculando">Calculando el desglose con el servidor…</p>}
+                    {avisoTerminos && <p role="alert" className="rounded-lg bg-amber-50 px-3 py-2 text-xs text-amber-800" data-testid="terminos-cambiaron">{avisoTerminos} El desglose de abajo ya está actualizado.</p>}
+                    {estadoPrevia === "ok" && previa?.r.ok && <TerminosB2BAsistido plan={previa.r.terminos} previa />}
+                    {estadoPrevia === "error" && (
+                      <p role="alert" className="rounded-lg bg-amber-50 px-3 py-2 text-xs text-amber-800" data-testid="previa-error">
+                        Todavía no se puede liquidar la venta B2B: {errorPrevia} Mientras tanto no se muestran importes ni se puede generar la cotización: el desglose lo calcula el servidor.
+                      </p>
+                    )}
+                  </div>
+                )}
+              </section>
+            )}
+            {asist && !asist.puede && "error" in asist && (
+              <p role="alert" className="rounded-lg bg-red-50 px-3 py-2 text-sm text-red-600">{asist.error}</p>
+            )}
 
             {/* Modalidad B2B */}
             {esB2B && !vista.crear && (
@@ -377,7 +524,12 @@ export default function CheckoutPage() {
 
             {/* Datos del titular del contrato / cliente */}
             <section className="rounded-2xl border border-gray-200 bg-white p-5">
-              <h2 className="mb-3 text-sm font-semibold text-gray-700">{esB2B ? "Datos del titular del contrato" : "Tus datos"}</h2>
+              <h2 className="mb-3 text-sm font-semibold text-gray-700">{asistenciaB2B && modoAsist === "neta" ? "Titular de la reserva" : esB2B ? "Datos del titular del contrato" : "Tus datos"}</h2>
+              {asistenciaB2B && modoAsist === "neta" && (
+                <p className="mb-3 rounded-lg bg-sky-50 px-3 py-2 text-xs text-sky-800" data-testid="neto-cliente-aviso">
+                  En NETO el cliente de la cotización y del contrato es {aliadoElegido ? <b>{aliadoElegido.nombre}</b> : "el aliado elegido"} (con la identidad de su ficha en el catálogo). Estos datos son los de la persona que viaja: el titular de la reserva.
+                </p>
+              )}
               <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
                 <div><label className={lbl}>Nombres *</label><input className={inp} value={c.nombres} onChange={(e) => setC({ ...c, nombres: e.target.value })} /></div>
                 <div><label className={lbl}>Apellidos *</label><input className={inp} value={c.apellidos} onChange={(e) => setC({ ...c, apellidos: e.target.value })} /></div>
@@ -401,7 +553,7 @@ export default function CheckoutPage() {
               )}
               {ctx?.error && <p role="alert" className="mt-3 rounded-lg bg-red-50 px-3 py-2 text-sm text-red-600">{ctx.error}</p>}
               {err && <p className="mt-3 rounded-lg bg-red-50 px-3 py-2 text-sm text-red-600">{err}</p>}
-              <button type="button" onClick={vista.crear ? enviarComparativa : enviar} disabled={pending || !!ctx?.error}
+              <button type="button" onClick={vista.crear ? enviarComparativa : enviar} disabled={pending || !!ctx?.error || sinDesglose}
                 className="mt-4 w-full rounded-lg px-4 py-3 text-sm font-semibold text-white disabled:opacity-50" style={{ backgroundColor: "var(--brand-primary)" }}>
                 {pending ? "Generando…" : vista.crear ? "Generar cotización comparativa" : precioCambio ? "Confirmar con el nuevo precio y enviar" : "Generar cotización y enviar solicitud"}
               </button>
@@ -422,6 +574,8 @@ function Exito({ res }: { res: Extract<SolicitudResult, { ok: true }> }) {
         <h2 className="mt-1 text-lg font-semibold text-green-800">¡Cotización generada!</h2>
         <p className="mt-1 text-sm text-green-700">Tu cotización: {res.cotizacion.codigo}</p>
       </div>
+
+      {res.b2bAsistido && <TerminosB2BAsistido plan={res.b2bAsistido} />}
 
       <div className="rounded-2xl border border-gray-200 bg-white p-5">
         <h3 className="mb-2 text-sm font-semibold text-gray-700">Tu documento</h3>

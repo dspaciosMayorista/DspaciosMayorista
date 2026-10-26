@@ -23,6 +23,7 @@ import type {
   Agencia,
 } from "@/types/database";
 import type { CondicionesContratoResueltas } from "@/lib/contrato/condicionesContrato";
+import { nombreQuienElabora } from "@/lib/cotizacion/identidadB2B";
 import { agruparCondicionesTarifaPorTexto, type CondicionTarifaAplicada } from "@/lib/calc/condicionesTarifa";
 
 // `condiciones_tarifa` opcional (ausente = cotizaciones/contratos anteriores
@@ -221,12 +222,14 @@ export function ContratoDocumento({
   const tipoAsesorVenta = (venta as { tipo_asesor?: string | null }).tipo_asesor ?? null;
   const agenciaNombreVenta = (venta as { agencia_nombre?: string | null }).agencia_nombre ?? null;
   const freelanceNombreVenta = (venta as { freelance_nombre?: string | null }).freelance_nombre ?? null;
+  // Quien elaboró: el nombre de firma persistido o, si el contrato solo guarda el asesor (importados, cotizaciones viejas), ese asesor. Sin ninguno: «—».
+  const quienElabora = nombreQuienElabora(venta.asesor_firma_nombre, venta.asesor);
   const vendedorNombre =
     tipoAsesorVenta === "agencia"
       ? agenciaNombreVenta
       : tipoAsesorVenta === "freelance"
         ? freelanceNombreVenta
-        : venta.asesor;
+        : venta.asesor ?? venta.asesor_firma_nombre;
   const vendedorCargo =
     tipoAsesorVenta === "agencia" ? "Agencia aliada" : tipoAsesorVenta === "freelance" ? "Freelance / Aliado B2B" : "Vendedor/a";
 
@@ -316,6 +319,21 @@ export function ContratoDocumento({
             <Pill label="Dirección" value={venta.cliente_direccion ?? ""} />
           </div>
         </section>
+
+        {/* ── Titular de la reserva ────────────────────────────────
+            Solo en una venta NETO asistida: el cliente comercial (arriba) es el ALIADO y la persona cuyos datos se capturaron es el titular. */}
+        {venta.titular_nombre && (
+          <section>
+            <h2 className="mb-2 break-after-avoid text-sm font-semibold" style={{ color: TITULO }}>
+              Titular de la reserva
+            </h2>
+            <div className="grid grid-cols-2 gap-2 md:grid-cols-4">
+              <Pill label="Nombre" value={venta.titular_nombre} />
+              <Pill label="N° Documento" value={venta.titular_documento ?? ""} />
+              <Pill label="Teléfono" value={venta.titular_telefono ?? ""} />
+            </div>
+          </section>
+        )}
 
         {/* ── Vuelos ───────────────────────────────────────────── */}
         {vuelos.length > 0 && (
@@ -814,7 +832,7 @@ export function ContratoDocumento({
           <div className="mt-8 flex flex-wrap gap-8">
             <div className="w-64 border-t border-gray-400 pt-1">
               <div className="font-semibold text-gray-800">
-                {venta.asesor_firma_nombre ?? "—"}
+                {quienElabora ?? "—"}
               </div>
               <div>
                 {FIRMA_ETIQUETAS.cargo} {venta.asesor_firma_cargo ?? "Elaboró el contrato"}

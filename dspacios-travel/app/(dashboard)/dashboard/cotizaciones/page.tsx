@@ -2,9 +2,10 @@ import { createClient } from "@/lib/supabase/server";
 import { contextoCotizacion } from "@/lib/cotizacion/acceso";
 import Link from "next/link";
 import { Button } from "@/components/ui/button";
-import { formatMoneda, formatFechaLarga } from "@/lib/utils";
+import { formatFechaLarga } from "@/lib/utils";
 import { ResponsiveTableShell } from "@/components/ui/ResponsiveTableShell";
 import { desdeComparativa } from "@/lib/cotizacion/comparativa";
+import { ValorCotizacion } from "@/components/cotizacion/ValorCotizacion";
 
 export const dynamic = "force-dynamic";
 
@@ -21,7 +22,7 @@ export default async function CotizacionesPage() {
   // global — puede alternar de agencia, pero no ve las dos mezcladas de una).
   let q = sb
     .from("cotizaciones")
-    .select("id, codigo, tipo, modo, moneda, cliente, destino, hotel, fecha_salida, precio_venta, estado, numero_contrato, vigencia_hasta, created_at")
+    .select("id, codigo, tipo, modo, moneda, cliente, destino, hotel, fecha_salida, precio_venta, estado, numero_contrato, vigencia_hasta, created_at, b2b_modo:payload->b2bAsistido->>modo_compra, b2b_total:payload->b2bAsistido->>total_exigible")
     .order("created_at", { ascending: false });
   if (ctx.ok && !ctx.superadmin) q = q.eq("tenant", ctx.tenant);
   const { data: cots } = ctx.ok ? await q : { data: [] };
@@ -99,8 +100,8 @@ export default async function CotizacionesPage() {
                   <td className="px-4 py-3 text-gray-500" data-label="Destino">{c.destino ?? "—"}</td>
                   <td className="px-4 py-3 text-gray-500" data-label="Salida">{formatFechaLarga(c.fecha_salida)}</td>
                   <td className="px-4 py-3 text-right tabular-nums text-gray-700" data-label="Valor">{c.modo === "comparativa"
-                      ? (() => { const d = desdePorMadre.get(c.id); return d ? <span title="Valor mínimo entre las opciones; cada hotel tiene su propio total">desde {formatMoneda(d.total, d.moneda)}</span> : <span>—</span>; })()
-                      : formatMoneda(c.precio_venta ?? 0, c.moneda)}</td>
+                      ? <ValorCotizacion desde={desdePorMadre.get(c.id) ?? null} />
+                      : <ValorCotizacion modo={(c as { b2b_modo?: string | null }).b2b_modo} precioVenta={c.precio_venta} totalExigible={(c as { b2b_total?: string | null }).b2b_total} moneda={c.moneda} />}</td>
                   <td className="px-4 py-3" data-label="Estado">
                     <span className={`rounded-full px-2 py-0.5 text-xs ${ESTADO_BADGE[c.estado] ?? "bg-gray-100 text-gray-600"}`}>
                       {c.estado}

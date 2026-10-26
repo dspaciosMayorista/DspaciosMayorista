@@ -240,6 +240,8 @@ export type Database = {
           banco: string | null;
           tipo_cuenta: string | null;
           numero_cuenta: string | null;
+          // Migración 238 (#102): un aliado inactivo no se puede cotizar como beneficiario de una venta B2B asistida.
+          activo: boolean;
         };
         Insert: {
           id?: number;
@@ -258,6 +260,7 @@ export type Database = {
           banco?: string | null;
           tipo_cuenta?: string | null;
           numero_cuenta?: string | null;
+          activo?: boolean;
         };
         Update: Partial<Database["public"]["Tables"]["aliados"]["Insert"]>;
         Relationships: [];
@@ -361,6 +364,15 @@ export type Database = {
           moneda_cobro: string | null;
           trm_cobro: number | null;
           total_cobro: number | null;
+          // Migración 238 (#102): cotización de carrito de la que nació este contrato en una venta B2B asistida y clave de su grupo (destino, o
+          // `__sin_destino__`). Índice único parcial: una cotización convierte UNA vez cada grupo (doble envío simultáneo). NULL = contrato de siempre.
+          cotizacion_origen_id: number | null;
+          grupo_conversion: string | null;
+          // Migración 239 (#102): titular de la reserva cuando el cliente comercial del contrato es el aliado (venta NETO asistida). NULL en el resto.
+          titular_nombre: string | null;
+          titular_documento: string | null;
+          titular_telefono: string | null;
+          titular_email: string | null;
           financiero_actualizado_en: string;
           created_at: string;
           updated_at: string;
@@ -431,6 +443,12 @@ export type Database = {
           moneda_cobro?: string | null;
           trm_cobro?: number | null;
           total_cobro?: number | null;
+          cotizacion_origen_id?: number | null;
+          grupo_conversion?: string | null;
+          titular_nombre?: string | null;
+          titular_documento?: string | null;
+          titular_telefono?: string | null;
+          titular_email?: string | null;
           financiero_actualizado_en?: string;
           created_at?: string;
           updated_at?: string;
@@ -4848,6 +4866,7 @@ export type VentaDocumento = Pick<
   | "asesor" | "asesor_firma_nombre" | "asesor_firma_cargo" | "asesor_firma_cc" | "asesor_firma_tel"
   | "estado" | "fecha_emision" | "fecha_salida" | "pax"
   | "plan_nombre" | "tours_traslados" | "asistencia_medica"
+  | "titular_nombre" | "titular_documento" | "titular_telefono"
 >;
 export type Agencia = Tables<"agencias">;
 export type Abono = Tables<"abonos">;

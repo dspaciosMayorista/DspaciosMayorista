@@ -547,7 +547,7 @@ describe("app/cot/[token]/page.tsx — hallazgo confirmado: el enlace público n
 
   test("no se tocó createAdminClient() ni la selección de columnas de la consulta — el fix es solo tipos + props, no seguridad/consulta", () => {
     assert.match(codigoPageToken, /const sb = createAdminClient\(\);/);
-    assert.match(codigoPageToken, /\.select\("codigo, detalle, vigencia_hasta"\)/);
+    assert.match(codigoPageToken, /\.select\("codigo, detalle, vigencia_hasta(, tenant)?"\)/);
   });
 });
 

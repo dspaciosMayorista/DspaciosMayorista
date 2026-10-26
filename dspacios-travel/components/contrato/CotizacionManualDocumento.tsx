@@ -9,6 +9,7 @@ import {
   POWERED_BY,
 } from "@/lib/contrato/plantilla";
 import { formatMoneda, formatFechaLarga } from "@/lib/utils";
+import type { Agencia } from "@/types/database";
 
 const PRIMARY = "#1D7C9A";
 
@@ -49,6 +50,8 @@ type Props = {
   noIncluye?: string | null;
   vigenciaHasta?: string | null;
   fechaEmision?: string | null;
+  /** Fila de `agencias` del tenant de la cotización (RNT, NIT, cuenta). Ausente = constante de Mayorista (documentos viejos). */
+  agencia?: Agencia | null;
 };
 
 // Convierte texto libre (una línea por ítem) en lista de viñetas.
@@ -68,7 +71,17 @@ function Pill({ label, value }: { label: string; value: string }) {
   );
 }
 
-export function CotizacionManualDocumento({ codigo, venta, items, cliente, incluye, noIncluye, vigenciaHasta, fechaEmision }: Props) {
+export function CotizacionManualDocumento({ codigo, venta, items, cliente, incluye, noIncluye, vigenciaHasta, fechaEmision, agencia }: Props) {
+  const empresa = {
+    razonSocial: agencia?.razon_social ?? EMPRESA.razonSocial,
+    nit: agencia?.nit ?? EMPRESA.nit,
+    rnt: agencia?.rnt ?? EMPRESA.rnt,
+    correo: agencia?.correo ?? EMPRESA.correo,
+    banco: agencia?.banco ?? EMPRESA.cuentaBancaria.banco,
+    tipoCuenta: agencia?.tipo_cuenta ?? EMPRESA.cuentaBancaria.tipo,
+    numeroCuenta: agencia?.numero_cuenta ?? EMPRESA.cuentaBancaria.numero,
+    titular: agencia?.razon_social ?? EMPRESA.cuentaBancaria.titular,
+  };
   const moneda = venta.moneda ?? "COP";
   const total = items.reduce((s, it) => s + (it.valor ?? 0), 0);
   const ninos = Number(venta.ninos ?? 0);
@@ -106,8 +119,8 @@ export function CotizacionManualDocumento({ codigo, venta, items, cliente, inclu
         </div>
         <div className="text-right text-xs opacity-90">
           <div>{EMPRESA.sitio}</div>
-          <div>{EMPRESA.correo}</div>
-          <div className="mt-1">RNT {EMPRESA.rnt}</div>
+          <div>{empresa.correo}</div>
+          <div className="mt-1">RNT {empresa.rnt}</div>
         </div>
       </header>
 
@@ -252,9 +265,9 @@ export function CotizacionManualDocumento({ codigo, venta, items, cliente, inclu
 
           <div className="mt-6 rounded-lg bg-gray-50 p-3 text-[11px]">
             <div className="font-semibold text-gray-700">Datos de pago</div>
-            <div>{EMPRESA.cuentaBancaria.banco} — {EMPRESA.cuentaBancaria.tipo} {EMPRESA.cuentaBancaria.numero}</div>
-            <div>A nombre de {EMPRESA.cuentaBancaria.titular}</div>
-            <div className="mt-1">{EMPRESA.razonSocial} · NIT {EMPRESA.nit} · RNT {EMPRESA.rnt}</div>
+            <div>{empresa.banco} — {empresa.tipoCuenta} {empresa.numeroCuenta}</div>
+            <div>A nombre de {empresa.titular}</div>
+            <div className="mt-1">{empresa.razonSocial} · NIT {empresa.nit} · RNT {empresa.rnt}</div>
           </div>
 
           <p className="mt-6 text-center text-[10px] text-gray-400">

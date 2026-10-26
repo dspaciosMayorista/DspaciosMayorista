@@ -44,6 +44,12 @@ import { tipoDocCheckout } from "@/lib/personas/cotizacion";
 import { altaPersonasCotizacion, logPersonasCotizacion } from "@/lib/personas/consulta";
 import { codigoErrorContacto, datosContactoTarifario, logContactoTarifario } from "@/lib/crm/contactoTarifario";
 import { leerEntradaModalidad } from "@/lib/cotizacion/netoHija";
+import {
+  compararTerminosVistos, construirPlanB2B, ETIQUETA_MODO_B2B, ETIQUETA_ORIGEN_PCT, leerAsistenciaB2BEntrada, type LineaB2B, type PlanB2BCotizacion,
+} from "@/lib/cotizacion/asistidaB2B";
+import { listarAliadosParaAsistencia, prepararAsistenciaB2B, type AliadoListado, type ContextoAsistenciaB2B } from "@/lib/cotizacion/asistidaB2BServidor";
+import { resolverFirmasSesion } from "@/lib/cotizacion/firmasSesion";
+import { camposClienteVenta, camposVendedorAliado, nombreQuienElabora, titularDeCliente } from "@/lib/cotizacion/identidadB2B";
 
 // Forma que arma el CARRITO en el cliente (ver lib/cart/CartContext.tsx) —
 // incluye `ninos`/`ninos2`/`infantes`/`pax`/`precio` para la vista previa en
@@ -340,9 +346,14 @@ export type ResultadoPrecioActualizadoBernalo = {
 };
 
 export type SolicitudResult =
-  | { ok: true; cotizacion: { id: number; codigo: string; url: string }; waUrl: string | null; mailtoUrl: string | null; mensaje: string }
+  // `b2bAsistido` (#102): términos B2B CONGELADOS en la cotización, solo cuando el personal interno la asistió para un aliado.
+  // Los ve quien la generó (rol de la lista explícita); nunca viajan en un documento externo.
+  | { ok: true; cotizacion: { id: number; codigo: string; url: string }; waUrl: string | null; mailtoUrl: string | null; mensaje: string; b2bAsistido?: PlanB2BCotizacion }
   | { ok: false; error: string }
+  // #102: entre la vista previa y generar cambió el desglose B2B (precio, impuesto, base, %, comisión o total). No se creó nada; `terminos` es el desglose vigente.
+  | ResultadoTerminosCambiaron
   | ResultadoPrecioActualizadoBernalo;
+export type ResultadoTerminosCambiaron = { ok: false; tipo: "terminos_cambiaron"; error: string; terminos: TerminosB2BPrevios };
 
 // ── Snapshot público de vuelo — compartido entre persona (bloqueo) y Bernalo
 // (bloqueo/empaquetado, Fase 3F-4A cierre #3). `bloqueos_vuelo` y
@@ -522,7 +533,9 @@ export type ItemExcluido = { etiqueta: string; motivo: "moneda" | "no_disponible
 // comparativa se arma con EXACTAMENTE el mismo motor que una cotización de
 // carrito común (mismos precios, mismas reglas), sin duplicar su cálculo.
 // Sin `capturar` el comportamiento es el de siempre.
-type OpcionesCarrito = { capturar?: (fila: Record<string, unknown>) => void };
+// #102: `b2b` = venta asistida ya AUTORIZADA en servidor (actor + aliado + modalidad, ver prepararAsistenciaB2B). Con él, los términos
+// quedan congelados dentro de la cotización; sin él, la cotización es la B2C de siempre.
+type OpcionesCarrito = { capturar?: (fila: Record<string, unknown>) => void; b2b?: ContextoAsistenciaB2B | null };
 
 async function crearCotizacionCarrito(input: {
   items: SolicitudItemVariante[];
@@ -530,8 +543,9 @@ async function crearCotizacionCarrito(input: {
   hotelDeTour: (number | null)[];
   cliente: SolicitudCliente;
 }, opts?: OpcionesCarrito): Promise<
-  | { ok: true; id: number; codigo: string; url: string; moneda: string; itemsOk: SolicitudItemComputado[]; itemsBernaloOk: SolicitudItemBernaloComputado[]; toursOk: SolicitudTourComputado[]; excluidos: ItemExcluido[] }
+  | { ok: true; id: number; codigo: string; url: string; moneda: string; itemsOk: SolicitudItemComputado[]; itemsBernaloOk: SolicitudItemBernaloComputado[]; toursOk: SolicitudTourComputado[]; excluidos: ItemExcluido[]; b2bPlan: PlanB2BCotizacion | null }
   | { ok: false; error: string }
+  | ResultadoTerminosCambiaron
   | ResultadoPrecioActualizadoBernalo
 > {
   const sb = await createClient();
@@ -566,6 +580,10 @@ async function crearCotizacionCarrito(input: {
   const incluidosPayload: ServicioIncluidoCotizado[] = [];
   const claveHuella = claveHuellaIncluidos(process.env.SUPABASE_SERVICE_ROLE_KEY);
   const excluidos: ItemExcluido[] = [];
+  // #102: PVP e impuesto no comisionable (BNC) de CADA unidad aceptada, para congelar la venta B2B asistida. Se llena donde se hace
+  // `total += …`, o sea solo con lo que realmente entra en la cotización (nunca con lo excluido por moneda o disponibilidad).
+  // Claves: `item-N` = `ref` estable del ítem (igual a `payload.items[].ref`) y `tour-N` = posición en `payload.tours`.
+  const lineasB2B: LineaB2B[] = [];
   let monedaPrincipal: string | null = null;
   let total = 0;
   let hIdx = 0, vIdx = 0, iIdx = 0;
@@ -719,6 +737,7 @@ async function crearCotizacionCarrito(input: {
       }
 
       total += resultadoBernalo.precioVenta;
+      lineasB2B.push({ clave: ref, pvp: resultadoBernalo.precioVenta, impuesto: 0 });
       itemsBernaloOk.push({
         modeloTarifario: "unidad", ref,
         paqueteId: it.paqueteId, hotelId: it.hotelId, hotelNombre: resultadoBernalo.hotelNombre, destino: destinoAutoritativo,
@@ -902,6 +921,7 @@ async function crearCotizacionCarrito(input: {
     }
 
     total += precioVenta;
+    lineasB2B.push({ clave: ref, pvp: precioVenta, impuesto: comp.data.impuestoTotal });
     // Dinámico: las fechas guardadas son las de la salida que resolvió el servidor, no las que mandó el navegador.
     itemsOk.push({ ...it, ref, edadesMenores: edadesMenoresConfirmadas, ninos: numNinos, ninos2: numNinos2, infantes: numInfantes, pax: totalPax, precio: precioVenta,
       ...(it.modulo === "dinamico" ? { fechaIda: meta.fecha_ida ?? null, fechaRegreso: meta.fecha_regreso ?? null } : {}) });
@@ -965,6 +985,7 @@ async function crearCotizacionCarrito(input: {
       adultos: 1, ninos: 0, tarifa_adulto: resultado.resultado.total, tarifa_nino: 0,
     });
     total += resultado.resultado.total;
+    lineasB2B.push({ clave: `tour-${toursOk.length}`, pvp: resultado.resultado.total, impuesto: 0 });
     toursOk.push({
       servicioId: resultado.resultado.servicioId, paqueteId: resultado.resultado.paqueteId,
       hotelRef: posHotel != null ? refItemCotizacion(posHotel) : null,
@@ -1004,9 +1025,41 @@ async function crearCotizacionCarrito(input: {
   ];
   const resumenServicios = resumirServiciosContrato(serviciosEfectivosSnap);
 
+  // #102: venta B2B asistida. Los términos se calculan AQUÍ, con lo que el servidor liquidó (PVP e impuesto por unidad), el % vigente
+  // del aliado y la modalidad elegida; se congelan dentro de la cotización y la conversión los compara contra lo vivo. Nada de esto
+  // viene del navegador: de él solo llegó el id del aliado y la modalidad (ya autorizados en `prepararAsistenciaB2B`).
+  let planB2B: PlanB2BCotizacion | null = null;
+  if (opts?.b2b) {
+    const r = construirPlanB2B({
+      aliado: opts.b2b.aliado, pct: opts.b2b.aliado.pct, pctOrigen: opts.b2b.aliado.pctOrigen, modo: opts.b2b.modo, moneda, lineas: lineasB2B,
+      identidad: { documento: opts.b2b.aliado.fiscal.documento, tipoDocumento: opts.b2b.aliado.fiscal.tipoDocumento },
+      actor: { id: opts.b2b.actor.id, email: opts.b2b.actor.email, rol: opts.b2b.actor.rol }, congeladoEn: new Date().toISOString(),
+    });
+    if (!r.ok) return { ok: false, error: r.error };
+    planB2B = r.plan;
+    // El usuario confirmó UN desglose (vista previa): si lo que el servidor liquida ahora es distinto, no se crea nada y se devuelve el vigente para confirmar de nuevo.
+    // El cálculo sigue siendo el del servidor; `vistos` solo se compara. (La vista previa misma corre en modo captura y no compara.)
+    if (opts.b2b.vistos && !opts.capturar) {
+      const cmp = compararTerminosVistos(opts.b2b.vistos, planB2B);
+      if (!cmp.ok) return { ok: false, tipo: "terminos_cambiaron", error: cmp.error, terminos: terminosPrevios(planB2B) };
+    }
+  }
+
+  // Preview #403: cliente comercial y firmas. En NETO el cliente es el ALIADO (identidad fiscal del catálogo, ya resuelta en servidor) y la persona queda
+  // como «Titular de la reserva»; en PVP con comisión y B2C el cliente sigue siendo la persona. Quien elaboró sale del usuario autenticado y el vendedor
+  // del aliado (cotizado o logueado): si el dato no existe (visitante anónimo) queda vacío y el documento muestra «—».
+  const adminLookup = process.env.SUPABASE_SERVICE_ROLE_KEY ? createAdminClient() : sb;
+  const firmasSesion = await resolverFirmasSesion(sb, adminLookup);
+  const elabora = nombreQuienElabora(opts?.b2b?.actor.nombre, firmasSesion.elabora);
+  const campos = camposClienteVenta({ modo: planB2B?.modo_compra ?? null, fiscal: opts?.b2b?.aliado.fiscal ?? null, titular: titularDeCliente(input.cliente) });
+  const vendedor = planB2B ? camposVendedorAliado({ nombre: planB2B.aliado_nombre, tipo: planB2B.tipo_asesor }) : camposVendedorAliado(firmasSesion.aliado);
+
   const ventaSnap: Record<string, unknown> = {
-    numero_contrato: "", cliente: clienteNombre, cliente_documento: input.cliente.numeroDoc.trim() || null,
-    cliente_telefono: input.cliente.telefono.trim() || null, cliente_direccion: null,
+    numero_contrato: "", cliente: campos.cliente, cliente_documento: campos.cliente_documento,
+    cliente_telefono: campos.cliente_telefono, cliente_direccion: campos.cliente_direccion,
+    ...(campos.titular_nombre ? { titular_nombre: campos.titular_nombre, titular_documento: campos.titular_documento, titular_telefono: campos.titular_telefono, titular_email: campos.titular_email } : {}),
+    asesor: elabora, asesor_firma_nombre: elabora, asesor_firma_cargo: elabora ? "Asesor/a" : null,
+    ...(vendedor ?? {}),
     destino: destinoTxt, fecha_emision: hoy, fecha_salida: fechaIda, fecha_regreso: fechaRegreso,
     pax: paxTotal, estado: "pendiente",
     plan_nombre: planNombre,
@@ -1019,6 +1072,10 @@ async function crearCotizacionCarrito(input: {
     venta: ventaSnap, pasajeros: [], hoteles: hotelesSnap, vuelos: vuelosSnap, items: itemsSnap,
     habitacionesBernalo: habitacionesBernaloSnap,
     composicionBernalo: composicionBernaloSnap,
+    // #102: lo ÚNICO de la venta B2B que puede ver el comprador en los documentos de la cotización (imprimible y enlace público): en NETO,
+    // el total exigible. Se deriva del plan congelado (que vive en `payload`, nunca en un documento externo); el PVP original y la comisión
+    // no salen de aquí. Quien convierte lee siempre `payload.b2bAsistido`, jamás este valor.
+    ...(planB2B && planB2B.modo_compra === "neta" ? { b2bExterno: { netoTotalExigible: planB2B.total_exigible } } : {}),
   };
 
   const vigenciaRes = resolverVigenciaCotizacion({
@@ -1030,7 +1087,7 @@ async function crearCotizacionCarrito(input: {
   const vigencia = vigenciaRes.vigencia;
 
   const { data: { user } } = await sb.auth.getUser();
-  const admin = process.env.SUPABASE_SERVICE_ROLE_KEY ? createAdminClient() : sb;
+  const admin = adminLookup;
 
   const filaCotizacion = {
     // Estampado FIJO en el servidor — nunca desde `input` (el cliente no
@@ -1043,10 +1100,10 @@ async function crearCotizacionCarrito(input: {
     // "unidad"` (ya presente en `SolicitudItemBernaloComputado`) para que
     // `convertirCotizacionCarrito` (3F-4B) lo detecte y bloquee la
     // conversión a contrato explícitamente, sin caer al flujo persona.
-    payload: { items: [...itemsOk, ...itemsBernaloOk], tours: toursOk, serviciosIncluidos: incluidosPayload, cliente: input.cliente } as unknown as Json,
+    payload: { items: [...itemsOk, ...itemsBernaloOk], tours: toursOk, serviciosIncluidos: incluidosPayload, cliente: input.cliente, ...(planB2B ? { b2bAsistido: planB2B } : {}) } as unknown as Json,
     detalle: detalle as unknown as Json,
-    cliente: clienteNombre,
-    cliente_documento: input.cliente.numeroDoc.trim() || null,
+    cliente: campos.cliente,
+    cliente_documento: campos.cliente_documento,
     destino: destinoTxt,
     hotel: totalHoteles === 1 ? (itemsOk[0]?.hotelNombre ?? itemsBernaloOk[0]?.hotelNombre ?? null) : (totalHoteles ? `${totalHoteles} hoteles` : null),
     modulo: "carrito",
@@ -1057,13 +1114,13 @@ async function crearCotizacionCarrito(input: {
     fecha_salida: fechaIda,
     fecha_regreso: fechaRegreso,
     vigencia_hasta: vigencia,
-    asesor: null,
+    asesor: elabora,
     creado_por: user?.email ?? null,
   };
   // #35: una opción de comparativa solo necesita la fila calculada.
   if (opts?.capturar) {
     opts.capturar(filaCotizacion as unknown as Record<string, unknown>);
-    return { ok: true, id: 0, codigo: "", url: "", moneda, itemsOk, itemsBernaloOk, toursOk, excluidos };
+    return { ok: true, id: 0, codigo: "", url: "", moneda, itemsOk, itemsBernaloOk, toursOk, excluidos, b2bPlan: planB2B };
   }
   const { data: row, error } = await admin.from("cotizaciones").insert(filaCotizacion).select("id, codigo, share_token").single();
   // FRONTERA PÚBLICA (ronda 7): nunca se reenvía `error.message` — un fallo
@@ -1099,7 +1156,7 @@ async function crearCotizacionCarrito(input: {
   const origin = host ? `${proto}://${host}` : "";
   const url = origin && row.share_token ? `${origin}/cot/${row.share_token}` : "";
 
-  return { ok: true, id: row.id, codigo: row.codigo, url, moneda, itemsOk, itemsBernaloOk, toursOk, excluidos };
+  return { ok: true, id: row.id, codigo: row.codigo, url, moneda, itemsOk, itemsBernaloOk, toursOk, excluidos, b2bPlan: planB2B };
 }
 
 // Genera UNA sola cotización combinada para todo el carrito y arma los
@@ -1125,7 +1182,19 @@ export async function crearSolicitudReserva(inputRaw: unknown): Promise<Solicitu
   const ctxB2B = await getContextoB2B();
   if (ctxB2B.error) return { ok: false, error: ctxB2B.error };
 
-  const cot = await crearCotizacionCarrito({ items: input.items, tours, hotelDeTour: input.hotelDeTour, cliente: clienteCheckout });
+  // #102: venta B2B ASISTIDA por personal interno. El navegador solo ELIGE (aliado + modalidad); quién asiste (sesión + rol de la lista
+  // explícita + agencia Mayorista) y quién es el beneficiario (aliado activo del catálogo, con su tipo y su %) se resuelven aquí, ANTES
+  // de crear la cotización. Una sesión de aliado B2B (o cualquier otra) que mande `asistencia` es rechazada: el aliado no se "asiste" a sí mismo.
+  const asistencia = leerAsistenciaB2BEntrada(inputRaw);
+  if (!asistencia.ok) return { ok: false, error: asistencia.error };
+  let b2bAsistido: ContextoAsistenciaB2B | null = null;
+  if (asistencia.asistencia) {
+    const prep = await prepararAsistenciaB2B(await createClient(), asistencia.asistencia);
+    if (!prep.ok) return { ok: false, error: prep.error };
+    b2bAsistido = prep.contexto;
+  }
+
+  const cot = await crearCotizacionCarrito({ items: input.items, tours, hotelDeTour: input.hotelDeTour, cliente: clienteCheckout }, { b2b: b2bAsistido });
   if (!cot.ok) return cot;
 
   // Agrega el cliente a la base de contactos del CRM como B2C (cliente_final),
@@ -1187,7 +1256,8 @@ export async function crearSolicitudReserva(inputRaw: unknown): Promise<Solicitu
     notasExcluidos.push(`Nota: no se pudieron incluir en esta cotización (ya no disponibles) — coordinar aparte: ${excluidosNoDisponibles.join(", ")}.`);
   }
   const notaExcluidos = notasExcluidos.length ? notasExcluidos.join("\n") : null;
-  const extra = [mensajeExtra?.trim() || null, notaExcluidos].filter(Boolean).join("\n\n") || null;
+  const notaB2BAsistida = cot.b2bPlan ? lineasMensajeB2BAsistido(cot.b2bPlan) : null;
+  const extra = [mensajeExtra?.trim() || null, notaExcluidos, notaB2BAsistida].filter(Boolean).join("\n\n") || null;
   const mensaje = construirMensaje(input.cliente, { codigo: cot.codigo, url: cot.url }, cot.itemsOk, cot.toursOk, cot.moneda, extra, b2b, cot.itemsBernaloOk);
   const wa = (whatsapp ?? "").replace(/\D/g, "");
   const waUrl = wa ? `https://wa.me/${wa}?text=${encodeURIComponent(mensaje)}` : null;
@@ -1196,7 +1266,61 @@ export async function crearSolicitudReserva(inputRaw: unknown): Promise<Solicitu
     ? `mailto:${correos}?subject=${encodeURIComponent("Solicitud de reserva — D'spacios Travel")}&body=${encodeURIComponent(mensaje)}`
     : null;
 
-  return { ok: true, cotizacion: { id: cot.id, codigo: cot.codigo, url: cot.url }, waUrl, mailtoUrl, mensaje };
+  return { ok: true, cotizacion: { id: cot.id, codigo: cot.codigo, url: cot.url }, waUrl, mailtoUrl, mensaje, ...(cot.b2bPlan ? { b2bAsistido: cot.b2bPlan } : {}) };
+}
+
+/** Términos de la venta B2B asistida tal como el servidor los liquida HOY (los mismos que se congelarán al generar). */
+export type TerminosB2BPrevios = Pick<PlanB2BCotizacion, "aliado_nombre" | "tipo_asesor" | "modo_compra" | "moneda" | "pvp" | "impuesto" | "base" | "pct" | "pct_origen" | "comision" | "total_exigible">;
+export type PrevisualizacionB2B = { ok: true; terminos: TerminosB2BPrevios } | { ok: false; error: string };
+
+/**
+ * Vista previa del desglose B2B ANTES de generar: corre el MISMO cálculo que `crearSolicitudReserva` (`crearCotizacionCarrito` en modo captura: reliquida el carrito en
+ * el servidor, valida actor/aliado/modalidad y construye el plan), sin insertar nada ni tocar el CRM. No es una fórmula aparte: si no puede liquidarse devuelve el motivo.
+ * Los datos de la persona no intervienen (se usa un titular provisional que nunca se guarda). Generar vuelve a validar y congelar.
+ */
+export async function previsualizarTerminosB2BAsistido(inputRaw: unknown): Promise<PrevisualizacionB2B> {
+  const asistencia = leerAsistenciaB2BEntrada(inputRaw);
+  if (!asistencia.ok) return { ok: false, error: asistencia.error };
+  if (!asistencia.asistencia) return { ok: false, error: "Elige el aliado y la modalidad para ver el desglose." };
+  const crudo = (typeof inputRaw === "object" && inputRaw !== null ? inputRaw : {}) as Record<string, unknown>;
+  const v = validarCrearSolicitudInput({ ...crudo, cliente: { nombres: "Vista", apellidos: "previa", tipoDoc: "CC", numeroDoc: "0", telefono: "0", email: "" } });
+  if (!v.ok) return { ok: false, error: v.error };
+  if (!v.input.items.length && !v.input.tours.length) return { ok: false, error: "El carrito está vacío." };
+  const prep = await prepararAsistenciaB2B(await createClient(), asistencia.asistencia);
+  if (!prep.ok) return { ok: false, error: prep.error };
+  const cot = await crearCotizacionCarrito({ items: v.input.items, tours: v.input.tours, hotelDeTour: v.input.hotelDeTour, cliente: v.input.cliente }, { b2b: prep.contexto, capturar: () => {} });
+  if (!cot.ok) return { ok: false, error: "error" in cot ? cot.error : "El precio de un hotel cambió; revisa el carrito y vuelve a intentar." };
+  if (!cot.b2bPlan) return { ok: false, error: "No se pudo liquidar la venta B2B." };
+  return { ok: true, terminos: terminosPrevios(cot.b2bPlan) };
+}
+
+function terminosPrevios(p: PlanB2BCotizacion): TerminosB2BPrevios {
+  const { aliado_nombre, tipo_asesor, modo_compra, moneda, pvp, impuesto, base, pct, pct_origen, comision, total_exigible } = p;
+  return { aliado_nombre, tipo_asesor, modo_compra, moneda, pvp, impuesto, base, pct, pct_origen, comision, total_exigible };
+}
+
+// Venta B2B asistida: aliado, modalidad y términos congelados, para el mensaje INTERNO que se envía a D'spacios (mismo destino y
+// mismo criterio que el bloque de comisión del aliado logueado en `construirMensaje`).
+function lineasMensajeB2BAsistido(p: PlanB2BCotizacion): string {
+  const m = (n: number) => formatMoneda(n, p.moneda);
+  const L = [
+    `VENTA B2B ASISTIDA — ${p.aliado_nombre} (${p.tipo_asesor === "agencia" ? "agencia" : "freelance"})`,
+    `Modalidad: ${ETIQUETA_MODO_B2B[p.modo_compra]}`,
+    `PVP: ${m(p.pvp)} · Impuesto no comisionable: ${m(p.impuesto)} · Base comisionable: ${m(p.base)}`,
+    `${ETIQUETA_ORIGEN_PCT[p.pct_origen]}: ${(p.pct * 100).toLocaleString("es-CO", { maximumFractionDigits: 2 })} % · Comisión: ${m(p.comision)}`,
+    p.modo_compra === "neta" ? `TOTAL EXIGIBLE (NETO: PVP − comisión): ${m(p.total_exigible)}` : `Total exigible (PVP): ${m(p.total_exigible)} · comisión pendiente de liquidar`,
+  ];
+  return L.join("\n");
+}
+
+// Contexto del checkout para el personal que puede asistir una venta B2B (#102): aliados activos con su % vigente. Quien no tiene
+// permiso (visitante, aliado B2B, cliente, `control_vuelo`…) recibe `puede: false` y ninguna lista. Solo informativo: la autoridad
+// se vuelve a evaluar al crear la cotización.
+export type ContextoAsistenciaCheckout = { puede: false } | { puede: true; aliados: AliadoListado[] } | { puede: false; error: string };
+export async function getContextoAsistenciaB2B(): Promise<ContextoAsistenciaCheckout> {
+  const r = await listarAliadosParaAsistencia(await createClient());
+  if (!r.ok) return { puede: false, error: r.error };
+  return r.puede ? { puede: true, aliados: r.aliados } : { puede: false };
 }
 
 // ═════════════════════════════════════════════════════════════════════════

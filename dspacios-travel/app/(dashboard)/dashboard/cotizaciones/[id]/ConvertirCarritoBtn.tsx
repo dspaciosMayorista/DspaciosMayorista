@@ -9,6 +9,7 @@ import { calcularEdad, formatMoneda } from "@/lib/utils";
 import { trmValida90 } from "@/lib/reservar/monedaPublicacion90";
 import { MENSAJE_COBRO_REQUERIDO, MENSAJE_TRM_COBRO_INVALIDA, MENSAJE_TRM_COBRO_REQUERIDA } from "@/lib/finanzas/cobro";
 import { totalesACobrar } from "@/lib/finanzas/cobroCarrito";
+import { ETIQUETA_MODO_B2B, planDeGrupoB2B, type PlanB2BCotizacion } from "@/lib/cotizacion/asistidaB2B";
 import { convertirCotizacionCarrito } from "../../reservar/actions";
 import { type PasajeroReserva } from "@/lib/reservar/computo";
 import { esInfantePorEdad } from "@/lib/reservar/pasajeros";
@@ -38,10 +39,15 @@ const TIPOS_DOC = ["CC", "TI", "CE", "PAS", "RC"];
 // pasajeros (igual que CotizacionAcciones) y, si el carrito trae 2+ destinos
 // distintos, deja elegir 1 contrato para todo o 1 contrato por destino.
 export function ConvertirCarritoBtn({
-  id, pax, items, tours, destinos, cliente, esSuperadmin, asesores, miNombre, miRolVenta, vinculoError = null, monedaOferta = "COP",
+  id, pax, items, tours, destinos, cliente, esSuperadmin, asesores, miNombre, miRolVenta, vinculoError: vinculoErrorProp = null, monedaOferta = "COP", b2b = null, b2bError = null,
 }: {
+  /** #102: los términos B2B guardados en la cotización están ilegibles; la conversión se rechazaría en el servidor, así que se bloquea desde ya. */
+  b2bError?: string | null;
   /** Moneda de la cotización (y de sus contratos). La moneda de COBRO se elige aparte, de forma expresa. */
   monedaOferta?: string;
+  /** #102: venta B2B asistida (términos congelados en la cotización). Los contratos nacen B2B del aliado, con su modalidad; el importe a cobrar
+   *  es el EXIGIBLE de cada contrato. `clavesUnidades` va en el orden de `items` seguido de `tours`. Solo informativo: el servidor lo vuelve a comprobar. */
+  b2b?: { plan: PlanB2BCotizacion; clavesUnidades: string[] } | null;
   id: number; pax: number; items: ItemCarritoUI[]; tours: TourCarritoUI[]; destinos: string[]; cliente: ClientePrefill; esSuperadmin: boolean;
   /** Vínculo hotel ↔ servicio inválido en esta cotización: la conversión se
    * rechazaría en el servidor; se avisa y se bloquea desde ya. */
@@ -50,6 +56,8 @@ export function ConvertirCarritoBtn({
   miNombre: string; miRolVenta: boolean;
 }) {
   const router = useRouter();
+  // Cualquiera de los dos bloqueos (vínculo hotel↔servicio inválido, o términos B2B ilegibles) detiene la conversión desde ya.
+  const vinculoError = vinculoErrorProp ?? b2bError;
   const [pending, start] = useTransition();
   const [err, setErr] = useState("");
   const [capturando, setCapturando] = useState(false);
@@ -171,8 +179,17 @@ export function ConvertirCarritoBtn({
   const preciosUnidades = [...items.map((it) => it.precio ?? 0), ...tours.map((t) => t.precio ?? 0)];
   const contratosPrevia = agruparUnidadesCarrito({
     modo: agrupar, destinosItems: items.map((it) => it.destino), destinosTours: tours.map((t) => t.destino), hotelDeTour,
-  }).map((g) => ({ destino: g.destino, total: g.unidades.reduce((s, u) => s + (preciosUnidades[u] ?? 0), 0) }));
-  const totalesCobro = monedaCobro === "" ? [] : totalesACobrar(contratosPrevia.map((c) => c.total), monedaOferta, monedaCobro, trmCobroNum);
+  }).map((g) => {
+    const total = g.unidades.reduce((s, u) => s + (preciosUnidades[u] ?? 0), 0);
+    // B2B asistida: lo que se cobra es el EXIGIBLE del contrato (PVP, o PVP − comisión en NETO), con los términos congelados.
+    if (!b2b) return { destino: g.destino, total, exigible: total, comision: null as number | null };
+    const lineas = g.unidades.flatMap((u) => b2b.plan.lineas.filter((l) => l.clave === b2b.clavesUnidades[u]));
+    const pg = planDeGrupoB2B(b2b.plan, lineas);
+    return pg.ok
+      ? { destino: g.destino, total, exigible: pg.plan.precioFinal, comision: pg.plan.comision }
+      : { destino: g.destino, total, exigible: total, comision: null };
+  });
+  const totalesCobro = monedaCobro === "" ? [] : totalesACobrar(contratosPrevia.map((c) => c.exigible), monedaOferta, monedaCobro, trmCobroNum);
 
   const agregarPasajero = () => {
     const { filas, asignacionesPorItem } = agregarPosicionAUniverso<PasajeroReserva>(paxRows, asignaciones, {
@@ -270,6 +287,12 @@ export function ConvertirCarritoBtn({
         </Button>
       </div>
       {vinculoError && <p role="alert" className="rounded-lg bg-red-50 px-3 py-2 text-sm text-red-700">{vinculoError}</p>}
+      {b2b && (
+        <p className="rounded-lg bg-sky-50 px-3 py-2 text-sm text-sky-800" data-testid="convertir-b2b-aviso">
+          Venta B2B asistida: los contratos se generan como <b>B2B</b> para <b>{b2b.plan.aliado_nombre}</b> ({b2b.plan.tipo_asesor === "agencia" ? "agencia" : "freelance"}),
+          modalidad <b>{ETIQUETA_MODO_B2B[b2b.plan.modo_compra]}</b>. {b2b.plan.modo_compra === "neta" ? "Se cobra el PVP menos la comisión, que queda descontada." : "Se cobra el PVP y la comisión queda pendiente de liquidar."}
+        </p>
+      )}
 
       {capturando && (
         <div className="space-y-4 rounded-xl border border-gray-200 p-4">
@@ -322,7 +345,7 @@ export function ConvertirCarritoBtn({
               <ul className="mt-2 space-y-1 text-xs text-gray-600" data-testid="totales-cobro-carrito">
                 {contratosPrevia.map((c, i) => (
                   <li key={i}>
-                    Contrato {contratosPrevia.length > 1 ? `${i + 1}${c.destino ? ` (${c.destino})` : ""}` : ""}: oferta {formatMoneda(c.total, monedaOferta)}
+                    Contrato {contratosPrevia.length > 1 ? `${i + 1}${c.destino ? ` (${c.destino})` : ""}` : ""}: {b2b ? (b2b.plan.modo_compra === "neta" ? "total exigible NETO" : "total exigible (PVP)") : "oferta"} {formatMoneda(c.exigible, monedaOferta)}
                     {" → "}se cobrará <b>{totalesCobro[i] != null ? formatMoneda(totalesCobro[i]!, monedaCobro) : "— (falta la TRM)"}</b>
                   </li>
                 ))}

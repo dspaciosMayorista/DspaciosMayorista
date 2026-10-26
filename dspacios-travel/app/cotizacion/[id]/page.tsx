@@ -17,6 +17,8 @@ import { condicionesTarifaParaRender } from "@/lib/calc/condicionesTarifa";
 import { tituloDocumento } from "@/lib/utils/tituloDocumento";
 import { PaginaImprimibleComparativa } from "@/lib/cotizacion/comparativaDocumento";
 import { hoyBogota } from "@/lib/cotizacion/vigencia";
+import { netoTotalExigibleDeDetalle } from "@/lib/cotizacion/asistidaB2B";
+import { cargarAgenciaDeCotizacion } from "@/lib/cotizacion/agenciaCotizacion";
 
 export async function generateMetadata({
   params,
@@ -58,6 +60,8 @@ type Detalle = {
   // hoteles Bernalo.
   habitacionesBernalo?: HabitacionBernaloDocumento[];
   composicionBernalo?: ComposicionBernaloDocumento[];
+  // #102: solo en una venta B2B asistida en NETO (ver `crearCotizacionCarrito`).
+  b2bExterno?: { netoTotalExigible?: number };
 };
 
 const PRINT_STYLES = `
@@ -103,6 +107,12 @@ export default async function CotizacionImprimiblePage({
     return <PaginaImprimibleComparativa madre={madre} hoy={hoyBogota()} />;
   }
 
+  // RNT, NIT y cuenta de pago: los de la agencia dueña de la cotización (Mayorista ≠ Minorista), igual que en el contrato.
+  const agenciaRes = await cargarAgenciaDeCotizacion(sb, cot.tenant);
+  // Falla explícita (no se imprime el RNT de otra agencia): error técnico, fila ausente o sin RNT en Minorista.
+  if (!agenciaRes.ok) throw new Error(agenciaRes.mensaje);
+  const agencia = agenciaRes.agencia;
+
   const volverLink = (
     <div className="mx-auto mb-4 flex max-w-3xl items-center justify-between px-4 print:hidden">
       <Link href={`/dashboard/cotizaciones/${id}`} className="text-sm text-gray-500 hover:text-gray-800">
@@ -143,6 +153,7 @@ export default async function CotizacionImprimiblePage({
               noIncluye={d?.noIncluye ?? null}
               vigenciaHasta={cot.vigencia_hasta}
               fechaEmision={cot.created_at ? String(cot.created_at).slice(0, 10) : null}
+              agencia={agencia}
             />
           </div>
         </div>
@@ -153,6 +164,9 @@ export default async function CotizacionImprimiblePage({
 
   // ── Cotización del TARIFARIO: flujo original ──────────────────────────────
   const d = cot.detalle as unknown as Detalle;
+  // #102: en una venta B2B asistida en NETO el documento del comprador muestra SOLO el total exigible (PVP − comisión) y los valores por ítem
+  // prorrateados a NETO; nunca el PVP original ni la comisión (esos viven en la ficha interna). En PVP con comisión el documento es el de siempre.
+  const netoTotalExigible = netoTotalExigibleDeDetalle(d.b2bExterno);
 
   return (
     <div className="min-h-screen bg-gray-100 py-6">
@@ -171,6 +185,8 @@ export default async function CotizacionImprimiblePage({
             esCotizacion
             codigo={cot.codigo}
             vigenciaHasta={cot.vigencia_hasta}
+            netoTotalExigible={netoTotalExigible}
+            agencia={agencia}
           />
         </div>
       </div>

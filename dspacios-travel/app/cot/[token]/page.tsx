@@ -13,6 +13,8 @@ import type { ComposicionBernaloDocumento, HabitacionBernaloDocumento } from "@/
 import { condicionesTarifaParaRender } from "@/lib/calc/condicionesTarifa";
 import { tituloDocumento } from "@/lib/utils/tituloDocumento";
 import { paginaPublicaComparativa } from "@/lib/cotizacion/comparativaDocumento";
+import { netoTotalExigibleDeDetalle } from "@/lib/cotizacion/asistidaB2B";
+import { cargarAgenciaDeCotizacion } from "@/lib/cotizacion/agenciaCotizacion";
 
 export const dynamic = "force-dynamic";
 
@@ -37,6 +39,8 @@ type Detalle = {
   // en cotizaciones sin hoteles Bernalo.
   habitacionesBernalo?: HabitacionBernaloDocumento[];
   composicionBernalo?: ComposicionBernaloDocumento[];
+  // #102: solo en una venta B2B asistida en NETO (ver `crearCotizacionCarrito`).
+  b2bExterno?: { netoTotalExigible?: number };
 };
 
 // Vista pública (sin login) de una cotización, por token imposible de adivinar.
@@ -59,12 +63,20 @@ export default async function CotizacionPublicaPage({ params }: { params: Promis
 
   const { data: cot } = await sb
     .from("cotizaciones")
-    .select("codigo, detalle, vigencia_hasta")
+    .select("codigo, detalle, vigencia_hasta, tenant")
     .eq("share_token", token)
     .maybeSingle();
 
   if (!cot || !cot.detalle) notFound();
   const d = cot.detalle as unknown as Detalle;
+  // #102: venta B2B asistida en NETO ⇒ el enlace público muestra solo el total exigible (nunca el PVP original ni la comisión). Sale de
+  // `detalle.b2bExterno`, el único dato externo-seguro del plan; esta página no lee `payload` (datos personales y términos internos).
+  const netoTotalExigible = netoTotalExigibleDeDetalle(d.b2bExterno);
+  // RNT, NIT y cuenta de pago de la agencia dueña de la cotización (el tenant sale de la fila hallada por el token, no de la URL).
+  const agenciaRes = await cargarAgenciaDeCotizacion(sb, cot.tenant);
+  // Falla explícita (no se imprime el RNT de otra agencia): error técnico, fila ausente o sin RNT en Minorista.
+  if (!agenciaRes.ok) throw new Error(agenciaRes.mensaje);
+  const agencia = agenciaRes.agencia;
 
   return (
     <div className="min-h-screen bg-gray-100 py-6">
@@ -86,6 +98,8 @@ export default async function CotizacionPublicaPage({ params }: { params: Promis
             esCotizacion
             codigo={cot.codigo}
             vigenciaHasta={cot.vigencia_hasta}
+            netoTotalExigible={netoTotalExigible}
+            agencia={agencia}
           />
         </div>
       </div>

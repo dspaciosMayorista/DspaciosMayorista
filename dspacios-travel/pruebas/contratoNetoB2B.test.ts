@@ -176,10 +176,18 @@ test("documento por enlace compartido: usa el total exigible de la fila que ya l
   assert.match(src, /netoTotalExigible=\{desgloseNetoB2B\(venta\)\?\.totalExigible \?\? null\}/);
 });
 
-test("documentos de cotización no cambian (no reciben modalidad NETO)", () => {
+test("documentos de cotización: solo reciben el total exigible NETO de una venta B2B asistida (#102), nunca el de un contrato ni la comisión", () => {
+  // Antes de #102 una cotización nunca era NETO y estos documentos no recibían `netoTotalExigible`. Ahora una cotización B2B asistida en NETO
+  // lo recibe, y únicamente a través del dato externo-seguro `detalle.b2bExterno` (derivado del plan congelado al cotizar).
   for (const rel of ["app/cot/[token]/page.tsx", "app/cotizacion/[id]/page.tsx"]) {
-    assert.doesNotMatch(leer(rel), /netoTotalExigible/, rel);
+    const src = leer(rel);
+    assert.match(src, /netoTotalExigible=\{netoTotalExigible\}/, rel);
+    assert.match(src, /const netoTotalExigible = netoTotalExigibleDeDetalle\(d\.b2bExterno\);/, rel);
+    // No usan ninguna fuente de contrato ni de comisión: el PVP original y la comisión del aliado no pueden llegar al documento.
+    assert.doesNotMatch(src, /netoTotalExigibleDeContrato|desgloseNetoB2B|esVentaNetoDescontada|comision_b2b|leerPlanB2BDePayload|b2bAsistido/, rel);
   }
+  // El enlace público no lee `payload` (datos personales y términos internos): su consulta no cambió.
+  assert.match(leer("app/cot/[token]/page.tsx"), /\.select\("codigo, detalle, vigencia_hasta(, tenant)?"\)/);
 });
 
 // ── Ediciones posteriores: la modalidad no cambia sola ──────────────────────
