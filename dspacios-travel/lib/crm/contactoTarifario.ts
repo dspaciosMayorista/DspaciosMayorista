@@ -68,3 +68,16 @@ export function codigoErrorContacto(error: { code?: unknown } | null | undefined
 export function logContactoTarifario(codigo: string): string {
   return `[crm40] etapa=contacto_tarifario codigo=${codigoSeguro(codigo)}`;
 }
+
+// Procedencia del contacto (#42): sale del contexto que el SERVIDOR ya validó en el checkout, nunca del navegador.
+// El texto B2C es el literal que reconocen los scripts de atribución de la 207; los B2B llevan otro, para que un
+// cliente de un aliado no se rotule (ni se atribuya) como cliente final directo de la agencia.
+export const ORIGEN_CONTACTO_B2C = "Cotización tarifario (B2C)";
+export const ORIGEN_CONTACTO_B2B = "Cotización tarifario (B2B)";
+export const ORIGEN_CONTACTO_B2B_ASISTIDA = "Cotización tarifario (B2B asistida)";
+
+/** Venta asistida (#102) gana sobre sesión B2B: la sesión asistente es interna, nunca de aliado. */
+export function origenContactoTarifario(ctx: { asistida: boolean; aliadoAutenticado: boolean }): string {
+  if (ctx.asistida) return ORIGEN_CONTACTO_B2B_ASISTIDA;
+  return ctx.aliadoAutenticado ? ORIGEN_CONTACTO_B2B : ORIGEN_CONTACTO_B2C;
+}
