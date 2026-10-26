@@ -9,6 +9,9 @@ import { formatMoneda, calcularEdad } from "@/lib/utils";
 import { paxDeAcomodacion, textoEdadesHotel } from "@/lib/acomodaciones";
 import { esInfantePorEdad } from "@/lib/reservar/pasajeros";
 import { truncarPasajeros, recalcularVinculosPorEdad } from "@/lib/reservar/pasajerosFilas";
+import { OpcionesTipoDoc } from "@/components/personas/OpcionesTipoDoc";
+import { documentoPasajeroDesdeCliente } from "@/lib/personas/tiposDocumento";
+import { BuscarTitular } from "@/components/personas/BuscarTitular";
 import { BuscarPasajeroDocumento } from "@/components/pasajeros/BuscarPasajeroDocumento";
 import { reservarPrograma } from "../../actions";
 import { totalDesdePrecios, type CambioPrecioPrograma } from "@/lib/programas/precioReserva57";
@@ -79,7 +82,7 @@ export function ProgramaReservaForm({
 
   const textoEdades = textoEdadesHotel({ ninoMin: edadNinoMin, ninoMax: edadNinoMax, infMin: 0, infMax: edadInfanteMax });
 
-  const [cliente, setCliente] = useState({ nombres: "", apellidos: "", tipoDoc: "CC", numeroDoc: "", telefono: "", email: "" });
+  const [cliente, setCliente] = useState({ nombres: "", apellidos: "", tipoDoc: "", numeroDoc: "", telefono: "", email: "" });
   const [tipoAsesor, setTipoAsesor] = useState<"interno" | "agencia" | "freelance">("interno");
   const [asesorInterno, setAsesorInterno] = useState(asesores[0]?.email ?? "");
   const [agenciaNombre, setAgenciaNombre] = useState("");
@@ -146,7 +149,7 @@ export function ProgramaReservaForm({
     setPasajeros((p) => recalcularVinculosPorEdad(p, v || null));
   };
   const copiarCliente = (i: number) =>
-    setPasajeros((p) => p.map((x, j) => (j === i ? { ...x, nombres: cliente.nombres, apellidos: cliente.apellidos, tipoDoc: cliente.tipoDoc, numeroDoc: cliente.numeroDoc } : x)));
+    setPasajeros((p) => p.map((x, j) => (j === i ? { ...x, nombres: cliente.nombres, apellidos: cliente.apellidos, ...documentoPasajeroDesdeCliente(cliente.tipoDoc, cliente.numeroDoc) } : x)));
 
   const [error, setError] = useState<string | null>(null);
   const [pending, startTransition] = useTransition();
@@ -164,6 +167,7 @@ export function ProgramaReservaForm({
     if (!fechaIda) return setError("Elige la fecha de salida.");
     if (totalPax <= 0) return setError("Indica cuántas habitaciones reservas en cada acomodación.");
     if (!`${cliente.nombres}${cliente.apellidos}`.trim()) return setError("El nombre del cliente es obligatorio.");
+    if (cliente.numeroDoc.trim() && !cliente.tipoDoc) return setError("Elige el tipo de documento del cliente.");
     startTransition(async () => {
       const res = await reservarPrograma({
         precioConfirmado,
@@ -298,14 +302,21 @@ export function ProgramaReservaForm({
       <fieldset className="rounded-xl border border-gray-200 p-4">
         <legend className="px-1 text-sm font-semibold text-gray-700">Cliente</legend>
         <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-          <div><label className={lbl}>Nombres</label><Input value={cliente.nombres} onChange={(e) => setCliente({ ...cliente, nombres: e.target.value })} /></div>
-          <div><label className={lbl}>Apellidos</label><Input value={cliente.apellidos} onChange={(e) => setCliente({ ...cliente, apellidos: e.target.value })} /></div>
-          <div><label className={lbl}>Tipo doc.</label>
+          <div className="sm:col-span-2">
+            <label className={lbl}>Número de documento</label>
+            <div className="flex gap-1">
+              <Input value={cliente.numeroDoc} onChange={(e) => setCliente({ ...cliente, numeroDoc: e.target.value })} />
+              <BuscarTitular numero={cliente.numeroDoc} actual={cliente} campos={["nombres", "apellidos", "telefono", "email"]} onAplicar={({ tipoDoc, ...d }) => setCliente((p) => ({ ...p, tipoDoc, ...d }))} />
+            </div>
+          </div>
+          <div className="sm:col-span-2"><label className={lbl}>Tipo de documento</label>
             <select value={cliente.tipoDoc} onChange={(e) => setCliente({ ...cliente, tipoDoc: e.target.value })} className={sel}>
-              <option>CC</option><option>CE</option><option>PASAPORTE</option><option>TI</option>
+              <option value="">Elige el tipo…</option>
+              <OpcionesTipoDoc />
             </select>
           </div>
-          <div><label className={lbl}>Documento</label><Input value={cliente.numeroDoc} onChange={(e) => setCliente({ ...cliente, numeroDoc: e.target.value })} /></div>
+          <div><label className={lbl}>Nombres</label><Input value={cliente.nombres} onChange={(e) => setCliente({ ...cliente, nombres: e.target.value })} /></div>
+          <div><label className={lbl}>Apellidos</label><Input value={cliente.apellidos} onChange={(e) => setCliente({ ...cliente, apellidos: e.target.value })} /></div>
           <div><label className={lbl}>Teléfono</label><Input value={cliente.telefono} onChange={(e) => setCliente({ ...cliente, telefono: e.target.value })} /></div>
           <div><label className={lbl}>Email</label><Input value={cliente.email} onChange={(e) => setCliente({ ...cliente, email: e.target.value })} /></div>
         </div>
@@ -342,7 +353,7 @@ export function ProgramaReservaForm({
                           preexistente, corregido aquí) y además la búsqueda
                           por documento (migración 187) nunca cruzaba con un
                           pasaporte cargado desde otro formulario. */}
-                      <option value="CC">CC</option><option value="CE">CE</option><option value="PAS">Pasaporte</option><option value="TI">TI</option>
+                      <OpcionesTipoDoc pasajero />
                     </select>
                     <div className="flex items-center gap-1">
                       <Input value={p.numeroDoc} onChange={(e) => updPasajero(i, "numeroDoc", e.target.value)} placeholder="Documento" />

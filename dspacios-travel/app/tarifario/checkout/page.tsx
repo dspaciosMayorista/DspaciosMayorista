@@ -1,5 +1,6 @@
 "use client";
 
+import { BuscarTitular } from "@/components/personas/BuscarTitular";
 import { Suspense, lazy, useEffect, useMemo, useState, useSyncExternalStore, useTransition } from "react";
 import Link from "next/link";
 import { formatMoneda } from "@/lib/utils";
@@ -530,22 +531,51 @@ export default function CheckoutPage() {
                   En NETO el cliente de la cotización y del contrato es {aliadoElegido ? <b>{aliadoElegido.nombre}</b> : "el aliado elegido"} (con la identidad de su ficha en el catálogo). Estos datos son los de la persona que viaja: el titular de la reserva.
                 </p>
               )}
-              <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-                <div><label className={lbl}>Nombres *</label><input className={inp} value={c.nombres} onChange={(e) => setC({ ...c, nombres: e.target.value })} /></div>
-                <div><label className={lbl}>Apellidos *</label><input className={inp} value={c.apellidos} onChange={(e) => setC({ ...c, apellidos: e.target.value })} /></div>
-                <div className="grid grid-cols-[6.5rem_1fr] gap-2">
-                  <div>
-                    <label className={lbl} htmlFor="checkout-tipo-doc">Tipo</label>
+              {asist?.puede === true && !esB2B ? (
+                <div className="grid grid-cols-1 gap-3 sm:grid-cols-2" data-testid="checkout-titular-interno">
+                  <div className="sm:col-span-2">
+                    <label className={lbl} htmlFor="checkout-numero-doc">Número de documento *</label>
+                    <div className="flex gap-1">
+                      <input id="checkout-numero-doc" className={inp} value={c.numeroDoc} onChange={(e) => setC({ ...c, numeroDoc: e.target.value })} />
+                      <BuscarTitular
+                        numero={c.numeroDoc}
+                        contexto={`${canal}|${modoAsist}|${aliadoElegido?.id ?? ""}`}
+                        actual={c}
+                        campos={["nombres", "apellidos", "telefono", "email"]}
+                        onAplicar={({ tipoDoc, ...d }) => setC((p) => ({ ...p, tipoDoc, ...d }))}
+                      />
+                    </div>
+                  </div>
+                  <div className="sm:col-span-2">
+                    <label className={lbl} htmlFor="checkout-tipo-doc">Tipo de documento</label>
                     <select id="checkout-tipo-doc" className={inp} value={c.tipoDoc} onChange={(e) => setC({ ...c, tipoDoc: e.target.value })}>
-                      <option value="">—</option>
+                      <option value="">Elige el tipo…</option>
                       {TIPOS_DOC_PERSONA.map((t) => <option key={t} value={t}>{t}</option>)}
                     </select>
                   </div>
-                  <div><label className={lbl}>Documento *</label><input className={inp} value={c.numeroDoc} onChange={(e) => setC({ ...c, numeroDoc: e.target.value })} /></div>
+                  <div><label className={lbl}>Nombres *</label><input className={inp} value={c.nombres} onChange={(e) => setC({ ...c, nombres: e.target.value })} /></div>
+                  <div><label className={lbl}>Apellidos *</label><input className={inp} value={c.apellidos} onChange={(e) => setC({ ...c, apellidos: e.target.value })} /></div>
+                  <div><label className={lbl}>Teléfono / WhatsApp *</label><input className={inp} value={c.telefono} onChange={(e) => setC({ ...c, telefono: e.target.value })} /></div>
+                  <div><label className={lbl}>Correo</label><input type="email" className={inp} value={c.email} onChange={(e) => setC({ ...c, email: e.target.value })} /></div>
                 </div>
-                <div><label className={lbl}>Teléfono / WhatsApp *</label><input className={inp} value={c.telefono} onChange={(e) => setC({ ...c, telefono: e.target.value })} /></div>
-                <div className="sm:col-span-2"><label className={lbl}>Correo</label><input type="email" className={inp} value={c.email} onChange={(e) => setC({ ...c, email: e.target.value })} /></div>
-              </div>
+              ) : (
+                <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                  <div><label className={lbl}>Nombres *</label><input className={inp} value={c.nombres} onChange={(e) => setC({ ...c, nombres: e.target.value })} /></div>
+                  <div><label className={lbl}>Apellidos *</label><input className={inp} value={c.apellidos} onChange={(e) => setC({ ...c, apellidos: e.target.value })} /></div>
+                  <div className="grid grid-cols-[6.5rem_1fr] gap-2">
+                    <div>
+                      <label className={lbl} htmlFor="checkout-tipo-doc">Tipo</label>
+                      <select id="checkout-tipo-doc" className={inp} value={c.tipoDoc} onChange={(e) => setC({ ...c, tipoDoc: e.target.value })}>
+                        <option value="">—</option>
+                        {TIPOS_DOC_PERSONA.map((t) => <option key={t} value={t}>{t}</option>)}
+                      </select>
+                    </div>
+                    <div><label className={lbl}>Documento *</label><input className={inp} value={c.numeroDoc} onChange={(e) => setC({ ...c, numeroDoc: e.target.value })} /></div>
+                  </div>
+                  <div><label className={lbl}>Teléfono / WhatsApp *</label><input className={inp} value={c.telefono} onChange={(e) => setC({ ...c, telefono: e.target.value })} /></div>
+                  <div className="sm:col-span-2"><label className={lbl}>Correo</label><input type="email" className={inp} value={c.email} onChange={(e) => setC({ ...c, email: e.target.value })} /></div>
+                </div>
+              )}
               {precioCambio && (
                 <p className="mt-3 rounded-lg bg-amber-50 px-3 py-2 text-sm text-amber-700">
                   {precioCambio.mensaje}

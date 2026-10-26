@@ -75,6 +75,7 @@ const STUB_NEXT_NAVIGATION = pathToFileURL(join(AQUI, "stubs", "nextNavigationSt
 // `BuscarPasajeroDocumento.tsx` (migración 187) importa la Server Action
 // real "@/lib/reservar/buscarPasajero" — mismo problema que las de arriba
 // (termina en "next/headers"). Mismo criterio de stub configurable.
+const STUB_BUSCAR_TITULAR = pathToFileURL(join(AQUI, "stubs", "buscarTitularStub.mjs")).href;
 const STUB_BUSCAR_PASAJERO = pathToFileURL(join(AQUI, "stubs", "buscarPasajeroStub.mjs")).href;
 // Dependencias externas de la Server Action REAL `dashboard/pagos/actions.ts`
 // (pruebas/asignarProveedorAction.react.ts): el supabase server (next/headers),
@@ -139,6 +140,9 @@ export async function resolve(specifier, context, nextResolve) {
   // importa la Server Action real por ruta RELATIVA -> mismo stub configurable.
   if (specifier === "../../reservar/actions" && context.parentURL?.endsWith("/ConvertirCarritoBtn.tsx")) {
     return { url: STUB_RESERVAR_ACTIONS, shortCircuit: true };
+  }
+  if (specifier === "@/lib/personas/buscarTitular") {
+    return { url: STUB_BUSCAR_TITULAR, shortCircuit: true };
   }
   if (specifier === "@/lib/reservar/buscarPasajero") {
     return { url: STUB_BUSCAR_PASAJERO, shortCircuit: true };

@@ -368,6 +368,7 @@ export default async function ContratoDetallePage({
           inicial={{
             cliente: venta.cliente ?? "",
             clienteDocumento: venta.cliente_documento ?? "",
+            clienteTipoDocumento: fin.cliente_tipo_documento ?? "",
             clienteTelefono: venta.cliente_telefono ?? "",
             clienteEmail: venta.cliente_email ?? "",
             clienteDireccion: fin.cliente_direccion ?? "",

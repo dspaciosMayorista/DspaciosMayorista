@@ -1234,7 +1234,7 @@ describe("102 · NETO asistido: el aliado es el cliente comercial; la persona es
   const filaCot = (id: number) => json<{ cliente: string | null; cliente_documento: string | null; asesor: string | null }>(`select row_to_json(t)::text from (select cliente, cliente_documento, asesor from public.cotizaciones where id = ${id}) t`);
   const ventaDet = (id: number) => (detalleCot(id).venta ?? {}) as DetalleVenta;
   const clienteDe = (id: number) => (payloadCot(id) as unknown as { cliente: Record<string, string> }).cliente;
-  const ventaFicha = (n: string) => json<Record<string, string | null>>(`select row_to_json(t)::text from (select cliente, cliente_documento, cliente_telefono, cliente_email, cliente_direccion, titular_nombre, titular_documento, titular_telefono, titular_email, asesor_firma_nombre, asesor_firma_cargo, asesor, tipo_asesor, agencia_nombre, freelance_nombre from public.ventas where numero_contrato = ${lit(n)}) t`);
+  const ventaFicha = (n: string) => json<Record<string, string | null>>(`select row_to_json(t)::text from (select cliente, cliente_documento, cliente_telefono, cliente_email, cliente_direccion, cliente_tipo_documento, titular_tipo_documento, titular_nombre, titular_documento, titular_telefono, titular_email, asesor_firma_nombre, asesor_firma_cargo, asesor, tipo_asesor, agencia_nombre, freelance_nombre from public.ventas where numero_contrato = ${lit(n)}) t`);
 
   test("I1 cotización NETO: el cliente (lista y documento) es el aliado con la identidad fiscal del CATÁLOGO; el titular queda aparte, en datos persistidos", async () => {
     const r = await cotizar(U.VENTA, { hoteles: [10201], asistencia: { ...b2b(A.AG10, "neta"), nit: "000", cliente: "Falso SA", nombre: "Falso SA" } as Asistencia, extra: { clienteComercial: "Falso SA" } });
@@ -1324,6 +1324,28 @@ describe("102 · NETO asistido: el aliado es el cliente comercial; la persona es
     assert.equal(b.ok, true, b.error);
     v = ventaFicha(b.numeros![0]);
     assert.deepEqual([v.cliente, v.cliente_documento, v.titular_nombre, v.tipo_asesor], ["Ana Pérez", "123", null, "interno"]);
+  });
+
+  test("I7 #40 E2 · tipo de documento en la conversión REAL del carrito: mismo número con CC y CE, en NETO y en PVP con comisión", async () => {
+    for (const modo of ["neta", "comisionable"] as const) {
+      const hechos: Record<string, Record<string, string | null>> = {};
+      for (const tipoDoc of ["CC", "CE"]) {
+        const cot = await cotizarOk(U.VENTA, { hoteles: [10201], asistencia: b2b(A.AG10, modo), extra: { cliente: { ...CLIENTE, tipoDoc } } });
+        const r = await convertir(U.VENTA, cot.id, 1);
+        assert.equal(r.ok, true, r.error);
+        hechos[tipoDoc] = ventaFicha(r.numeros![0]);
+      }
+      for (const tipoDoc of ["CC", "CE"]) {
+        const v = hechos[tipoDoc];
+        if (modo === "neta") {
+          // Cliente = ALIADO (NIT del catálogo); titular = la persona, con SU tipo. Nunca se cruzan.
+          assert.deepEqual([v.cliente_documento, v.cliente_tipo_documento], [FISCAL.nit, "NIT"], "NETO " + tipoDoc);
+          assert.deepEqual([v.titular_documento, v.titular_tipo_documento], ["123", tipoDoc], "NETO " + tipoDoc);
+        } else {
+          assert.deepEqual([v.cliente_documento, v.cliente_tipo_documento, v.titular_documento, v.titular_tipo_documento], ["123", tipoDoc, null, null], "PVP " + tipoDoc);
+        }
+      }
+    }
   });
 
   test("I6 firma del contrato: sin asesor elegido en pantalla (superadmin) se firma con el usuario autenticado; con asesor elegido se respeta; nunca se inventa", async () => {

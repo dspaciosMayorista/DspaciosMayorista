@@ -95,6 +95,10 @@ BASE_PROPIA=1
 $PS -d postgres -c "comment on database $DB is '$MARCA'" >/dev/null
 $PS -d "$DB" -1 < "$APP/supabase/migrations/20260601000238_cotizacion_asistida_b2b.sql" >/dev/null || { echo "La migración 238 falló en $DB." >&2; exit 1; }
 $PS -d "$DB" -1 < "$APP/supabase/migrations/20260601000239_titular_reserva_neto.sql" >/dev/null || { echo "La migración 239 falló en $DB." >&2; exit 1; }
+# #40 E2: el código de conversión escribe cliente_tipo_documento (240) y titular_tipo_documento (241).
+for n in 20260601000240_cliente_tipo_documento 20260601000241_tipo_documento_conversion; do
+  $PS -d "$DB" -1 < "$APP/supabase/migrations/$n.sql" >/dev/null || { echo "La migración $n falló en $DB." >&2; exit 1; }
+done
 $PS -d "$DB" -c "select exists (select 1 from information_schema.columns where table_name = 'aliados' and column_name = 'activo')" | grep -qx t
 
 # Entorno (NO es esquema de la app): el auth.uid()/auth.role() de Supabase alojado leen el JWT de request.jwt.claims (PostgREST ya no fija los GUC legados).

@@ -373,6 +373,10 @@ export type Database = {
           titular_documento: string | null;
           titular_telefono: string | null;
           titular_email: string | null;
+          // Migración 240 (#40): tipo del documento del cliente (catálogo de personas); NULL = no se eligió.
+          cliente_tipo_documento: string | null;
+          // Migración 241 (#40 E2): tipo del documento del titular de la reserva (NETO); NULL = no aplica / no se eligió.
+          titular_tipo_documento: string | null;
           financiero_actualizado_en: string;
           created_at: string;
           updated_at: string;
@@ -449,6 +453,8 @@ export type Database = {
           titular_documento?: string | null;
           titular_telefono?: string | null;
           titular_email?: string | null;
+          cliente_tipo_documento?: string | null;
+          titular_tipo_documento?: string | null;
           financiero_actualizado_en?: string;
           created_at?: string;
           updated_at?: string;
@@ -3701,7 +3707,7 @@ export type Database = {
           | "impuesto" | "comision_b2b" | "comision_estado" | "modo_compra"
           | "recobro_total" | "recobro_empresa" | "recobro_aliado" | "trm_contrato" | "b2b_usuario_id"
           // Migración 147: fuera por sensibles. `observaciones` no vuelve.
-          | "observaciones"
+          | "observaciones" | "cliente_tipo_documento" | "titular_tipo_documento"
           // Enmascaradas por contrato propio/ajeno (147 y 148): siguen en la
           // vista pero llegan en null — o con el documento recortado — cuando
           // el contrato no es del asesor. De ahí el `| null` de abajo.

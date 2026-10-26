@@ -12,6 +12,9 @@ import { precioServicio } from "@/lib/calc/paquetes";
 import { ACOM_ROOMS, ACOM_ROOM_LABEL, paxTarifaDe, clasificarPorEdad, validarReservaHabitaciones, type AcomConfig, type AcomRoom } from "@/lib/acomodaciones";
 import { esInfantePorEdad } from "@/lib/reservar/pasajeros";
 import { recalcularVinculosPorEdad } from "@/lib/reservar/pasajerosFilas";
+import { OpcionesTipoDoc } from "@/components/personas/OpcionesTipoDoc";
+import { documentoClienteAdmitido, documentoPasajeroDesdeCliente } from "@/lib/personas/tiposDocumento";
+import { BuscarTitular } from "@/components/personas/BuscarTitular";
 import { BuscarPasajeroDocumento } from "@/components/pasajeros/BuscarPasajeroDocumento";
 import { hoyBogota, vigenciaInicial } from "@/lib/cotizacion/vigencia";
 
@@ -187,7 +190,7 @@ export function ReservaForm({
   const totalPrecio = totalHotel + totalServicios;
 
   // Cliente
-  const [cli, setCli] = useState({ nombres: "", apellidos: "", tipoDoc: "CC", numeroDoc: "", telefono: "", email: "" });
+  const [cli, setCli] = useState({ nombres: "", apellidos: "", tipoDoc: "", numeroDoc: "", telefono: "", email: "" });
 
   // Tipo de venta
   const [tipoAsesor, setTipoAsesor] = useState<"interno" | "agencia" | "freelance">("interno");
@@ -267,7 +270,7 @@ export function ReservaForm({
     setPax((prev) => {
       const next = [...prev];
       while (next.length <= i) next.push(emptyPax());
-      next[i] = { ...next[i], nombres: cli.nombres, apellidos: cli.apellidos, tipoDoc: cli.tipoDoc, numeroDoc: cli.numeroDoc };
+      next[i] = { ...next[i], nombres: cli.nombres, apellidos: cli.apellidos, ...documentoPasajeroDesdeCliente(cli.tipoDoc, cli.numeroDoc) };
       return next;
     });
   }
@@ -292,7 +295,8 @@ export function ReservaForm({
     if (faltaNombre >= 0) { setErr(`Pasajero ${faltaNombre + 1}: nombres y apellidos son obligatorios.`); return; }
     // Validación de documento: solo Pasaporte admite letras; el resto, solo números.
     const docOk = (tipo: string, num: string) => tipo === "PAS" || num.trim() === "" || /^\d+$/.test(num.trim());
-    if (!docOk(cli.tipoDoc, cli.numeroDoc)) { setErr("El número de documento del cliente debe ser solo números (excepto Pasaporte)."); return; }
+    if (cli.numeroDoc.trim() && !cli.tipoDoc) { setErr("Elige el tipo de documento del cliente."); return; }
+    if (!documentoClienteAdmitido(cli.tipoDoc, cli.numeroDoc)) { setErr("El número de documento del cliente debe ser solo números (excepto Pasaporte y PPT)."); return; }
     const malDoc = paxRows.findIndex((p) => !docOk(p.tipoDoc, p.numeroDoc));
     if (malDoc >= 0) { setErr(`El documento del pasajero ${malDoc + 1} debe ser solo números (excepto Pasaporte).`); return; }
     setErr("");
@@ -471,15 +475,22 @@ export function ReservaForm({
       <section className="rounded-xl border border-gray-200 bg-white p-5">
         <p className="mb-3 text-sm font-semibold" style={{ color: "var(--brand-primary)" }}>Cliente</p>
         <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-          <div><label className={lbl}>Nombres *</label><Input value={cli.nombres} onChange={(e) => setCli({ ...cli, nombres: e.target.value })} /></div>
-          <div><label className={lbl}>Apellidos *</label><Input value={cli.apellidos} onChange={(e) => setCli({ ...cli, apellidos: e.target.value })} /></div>
-          <div>
-            <label className={lbl}>Tipo doc</label>
+          <div className="sm:col-span-2">
+            <label className={lbl}>Número de documento</label>
+            <div className="flex gap-1">
+              <Input value={cli.numeroDoc} onChange={(e) => setCli({ ...cli, numeroDoc: e.target.value })} />
+              <BuscarTitular numero={cli.numeroDoc} actual={cli} campos={["nombres", "apellidos", "telefono", "email"]} onAplicar={({ tipoDoc, ...d }) => setCli((p) => ({ ...p, tipoDoc, ...d }))} />
+            </div>
+          </div>
+          <div className="sm:col-span-2">
+            <label className={lbl}>Tipo de documento</label>
             <select value={cli.tipoDoc} onChange={(e) => setCli({ ...cli, tipoDoc: e.target.value })} className={inp}>
-              <option value="CC">CC</option><option value="CE">CE</option><option value="PAS">Pasaporte</option><option value="TI">TI</option>
+              <option value="">Elige el tipo…</option>
+              <OpcionesTipoDoc />
             </select>
           </div>
-          <div><label className={lbl}>Número doc</label><Input value={cli.numeroDoc} onChange={(e) => setCli({ ...cli, numeroDoc: e.target.value })} /></div>
+          <div><label className={lbl}>Nombres *</label><Input value={cli.nombres} onChange={(e) => setCli({ ...cli, nombres: e.target.value })} /></div>
+          <div><label className={lbl}>Apellidos *</label><Input value={cli.apellidos} onChange={(e) => setCli({ ...cli, apellidos: e.target.value })} /></div>
           <div><label className={lbl}>Teléfono</label><Input value={cli.telefono} onChange={(e) => setCli({ ...cli, telefono: e.target.value })} /></div>
           <div><label className={lbl}>Email</label><Input type="email" value={cli.email} onChange={(e) => setCli({ ...cli, email: e.target.value })} /></div>
         </div>
@@ -589,7 +600,7 @@ export function ReservaForm({
                       <div>
                         <label className={lbl}>Tipo doc</label>
                         <select value={p.tipoDoc} onChange={(e) => setPaxField(i, "tipoDoc", e.target.value)} className={inp}>
-                          <option value="CC">CC</option><option value="CE">CE</option><option value="PAS">Pasaporte</option><option value="TI">TI</option><option value="RC">RC</option>
+                          <OpcionesTipoDoc pasajero />
                         </select>
                       </div>
                       <div>

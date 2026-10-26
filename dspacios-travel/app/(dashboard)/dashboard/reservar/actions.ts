@@ -96,6 +96,7 @@ import {
 } from "@/lib/cotizacion/asistidaB2B";
 import { resolverActorAsistencia, verificarAliadoVivoParaConversion } from "@/lib/cotizacion/asistidaB2BServidor";
 import { resolverFirmasSesion } from "@/lib/cotizacion/firmasSesion";
+import { tipoDocumentoParaVenta } from "@/lib/personas/tiposDocumento";
 import { camposClienteVenta, nombreQuienElabora, titularDeCliente, type FiscalAliado } from "@/lib/cotizacion/identidadB2B";
 
 const oNull = (s: string | null | undefined) => (s && s.trim() !== "" ? s.trim() : null);
@@ -435,6 +436,7 @@ async function reservarDesdeTarifarioInterno(input: ReservaInput, tenant: Tenant
     tenant,
     cliente: `${input.cliente.nombres ?? ""} ${input.cliente.apellidos ?? ""}`.trim(),
     cliente_documento: oNull(input.cliente.numeroDoc),
+    cliente_tipo_documento: tipoDocumentoParaVenta(input.cliente.tipoDoc, input.cliente.numeroDoc),
     cliente_telefono: oNull(input.cliente.telefono),
     cliente_email: oNull(input.cliente.email),
     destino: cab.destino,
@@ -3748,6 +3750,7 @@ async function reservarProgramaInterno(
     tenant,
     cliente: `${input.cliente.nombres ?? ""} ${input.cliente.apellidos ?? ""}`.trim(),
     cliente_documento: oNull(input.cliente.numeroDoc),
+    cliente_tipo_documento: tipoDocumentoParaVenta(input.cliente.tipoDoc, input.cliente.numeroDoc),
     cliente_telefono: oNull(input.cliente.telefono),
     cliente_email: oNull(input.cliente.email),
     destino: prog.subtitulo ?? prog.nombre,

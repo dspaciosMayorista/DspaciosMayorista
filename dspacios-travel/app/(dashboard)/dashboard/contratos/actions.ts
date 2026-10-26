@@ -1,5 +1,6 @@
 "use server";
 
+import { tipoDocumentoCliente } from "@/lib/personas/tiposDocumento";
 import { createClient } from "@/lib/supabase/server";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { revalidatePath } from "next/cache";
@@ -210,6 +211,8 @@ export type ContratoInput = {
   bloqueoId: number | null; // record asignado (solo bloqueo)
   cliente: string;
   clienteDocumento: string;
+  /** #40: tipo del documento del cliente (catálogo de personas); vacío = sin tipo elegido. */
+  clienteTipoDocumento?: string;
   clienteTelefono: string;
   clienteDireccion: string;
   destino: string;
@@ -361,6 +364,9 @@ async function crearContratoInterno(
     registrarEtapa("crear_contrato", flujoId, "validacion_negocio", Math.round(performance.now() - _tValidacion0), "rechazado");
     return resultado;
   };
+  // #40: un tipo de documento fuera del catálogo se rechaza AQUÍ, antes de reservar el consecutivo (no consume número).
+  const tipoCliente = tipoDocumentoCliente(input.clienteTipoDocumento, input.clienteDocumento);
+  if (!tipoCliente.ok) return _rechazarValidacion({ ok: false, error: tipoCliente.error });
   // Revisión posterior — ronda 3, defecto "ERRORES DE CONSULTA CONFUNDIDOS
   // CON RECHAZOS COMERCIALES": las consultas de esta sección (paquete_precios,
   // aliados) desestructuraban solo `data` e ignoraban `error` — un fallo
@@ -558,6 +564,7 @@ async function crearContratoInterno(
   }
   const numero = numRes.numero;
 
+
   // 2. Crear la venta (cabecera del contrato) — estampada con la agencia activa.
   const _tVenta0 = performance.now();
   const { error: ve } = await sb.from("ventas").insert({
@@ -607,6 +614,7 @@ async function crearContratoInterno(
     // viejos, pero la pertenencia en el portal B2B se resuelve por este id.
     aliado_id: tipoVenta !== "interno" ? input.aliadoId ?? null : null,
     cliente_documento: oNull(input.clienteDocumento),
+    ...(tipoCliente.tipo && { cliente_tipo_documento: tipoCliente.tipo }),
     cliente_telefono: oNull(input.clienteTelefono),
     cliente_direccion: oNull(input.clienteDireccion),
     asistencia_medica: input.asistenciaMedica,
@@ -1024,6 +1032,7 @@ async function crearContratoInterno(
 export type VentaEditInput = {
   cliente: string;
   clienteDocumento: string;
+  clienteTipoDocumento?: string;
   clienteTelefono: string;
   clienteEmail: string;
   clienteDireccion: string;
@@ -1047,6 +1056,8 @@ export async function actualizarVenta(
   input: VentaEditInput
 ): Promise<{ ok: true } | { ok: false; error: string }> {
   if (!input.cliente.trim()) return { ok: false, error: "El nombre del cliente es obligatorio." };
+  const tipoCliente = tipoDocumentoCliente(input.clienteTipoDocumento, input.clienteDocumento);
+  if (!tipoCliente.ok) return { ok: false, error: tipoCliente.error };
   const precioVenta = Number(input.precioVenta);
   if (!Number.isFinite(precioVenta) || precioVenta < 0) return { ok: false, error: "El precio de venta debe ser un número ≥ 0." };
   const pax = Math.trunc(Number(input.pax));
@@ -1068,6 +1079,14 @@ export async function actualizarVenta(
     .maybeSingle();
   if (actualError) return { ok: false, error: actualError.message };
   if (!actual) return { ok: false, error: "El contrato no existe o no tienes acceso." };
+  // Tipo del documento: enviado = se guarda (vacío lo quita); NO enviado = se conserva solo si el número no cambió (un tipo no se hereda a otro número).
+  let tipoAGuardar: { cliente_tipo_documento: string | null } | null = null;
+  if (input.clienteTipoDocumento !== undefined) tipoAGuardar = { cliente_tipo_documento: tipoCliente.tipo };
+  else {
+    const { data: previo, error: previoError } = await sb.from("ventas").select("cliente_documento").eq("numero_contrato", numero).maybeSingle();
+    if (previoError) return { ok: false, error: previoError.message };
+    if ((previo?.cliente_documento ?? null) !== oNull(input.clienteDocumento)) tipoAGuardar = { cliente_tipo_documento: null };
+  }
   const netoExigible = await netoTotalExigibleDeContrato(numero);
   if (netoExigible != null) {
     if (oNull(input.tipoAsesor) !== (actual.tipo_asesor ?? null)) {
@@ -1082,6 +1101,8 @@ export async function actualizarVenta(
     .update({
       cliente: input.cliente.trim(),
       cliente_documento: oNull(input.clienteDocumento),
+      // Ausente = no se toca (un llamador viejo no borra el tipo guardado); presente pero vacío = se quita.
+      ...(tipoAGuardar),
       cliente_telefono: oNull(input.clienteTelefono),
       cliente_email: oNull(input.clienteEmail),
       cliente_direccion: oNull(input.clienteDireccion),
