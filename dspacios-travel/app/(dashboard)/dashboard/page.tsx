@@ -4,7 +4,7 @@ import Link from "next/link";
 import { formatCOP, formatUSD } from "@/lib/utils";
 import {
   pctOrNull, pctRawOrNull,
-  clasificarContratosDesdeConteos, carteraPorMonedaDesdeAgregado, ventasMesPorMonedaDesdeAgregado, cuposResumenDesdeAgregado,
+  clasificarContratosDesdeConteos, carteraPorMonedaDesdeAgregado, ventasMesPorMonedaDesdeAgregado, cuposActivosDesdeAgregado, sumarDias,
   BALDE_MONEDA_DESCONOCIDA,
 } from "@/lib/dashboard/metricas";
 import {
@@ -16,7 +16,9 @@ import styles from "../DashboardShell.module.css";
 
 export const dynamic = "force-dynamic";
 
+const NO_DISPONIBLE = "No disponible";
 const addDays = (n: number) => new Date(Date.now() + n * 86_400_000).toISOString().slice(0, 10);
+const plural = (n: number, w: string) => (n === 1 ? w : w === "record" ? "records" : `${w}s`);
 
 export default async function DashboardPage() {
   const supabase = await createClient();
@@ -56,8 +58,8 @@ export default async function DashboardPage() {
   const [
     { count: nPaquetes },
     { data: contratosPorEstado },
-    { data: cuposFila },
-    { count: nSalidas },
+    { data: cuposFila, error: cuposError },
+    { count: nSalidas, error: salidasError },
     { data: cxpResumen },
     { count: nDianTotal },
     { count: nDianEmitidas },
@@ -71,8 +73,8 @@ export default async function DashboardPage() {
     esMinorista ? Promise.resolve({ count: 0 }) : supabase.from("paquetes").select("id", { count: "exact", head: true }),
     // Contratos por estado — antes bajaba TODAS las ventas del tenant.
     supabase.rpc("fn_dashboard_contratos_por_estado", { p_tenant: tenant }),
-    esMinorista ? Promise.resolve({ data: null }) : supabase.rpc("fn_dashboard_cupos_resumen").maybeSingle(),
-    esMinorista ? Promise.resolve({ count: 0 }) : supabase.from("bloqueos_vuelo").select("id", { count: "exact", head: true }).gte("fecha_ida", hoyStr).lte("fecha_ida", addDays(14)),
+    esMinorista ? Promise.resolve({ data: null, error: null }) : supabase.rpc("fn_dashboard_cupos_activos", { p_hoy: hoyBogota }).maybeSingle(),
+    esMinorista ? Promise.resolve({ count: 0, error: null }) : supabase.from("bloqueos_vuelo").select("id", { count: "exact", head: true }).gte("fecha_ida", hoyBogota).lte("fecha_ida", sumarDias(hoyBogota, 14)),
     // CxP por vencer (15d) + cuántas ya están pagadas por completo — antes
     // bajaba cada cuenta Y cada pago para cruzarlos en JS.
     interno
@@ -132,7 +134,11 @@ export default async function DashboardPage() {
   const ventasPorMoneda = ventasMesPorMonedaDesdeAgregado(ventaMesFilas ?? []);
   const ventaMes = ventasPorMoneda["COP"] ?? 0;
 
-  const { cuposCapacidad, cuposOcupados, cuposDisponibles, cuposCriticos } = cuposResumenDesdeAgregado(cuposFila ?? null);
+  const { cuposCapacidad, cuposOcupados, sillasDisponibles, recordsConSillas, proximasSillas, proximosRecords } = cuposActivosDesdeAgregado(cuposFila ?? null);
+  // Si el RPC falla (o no devuelve fila) la cifra NO se publica: ni 0 sillas ni
+  // una alerta calculada con datos ausentes — se muestra «no disponible».
+  const cuposOk = !cuposError && cuposFila != null;
+  const salidasOk = !salidasError && nSalidas != null;
 
   // Cartera al día/vencida — regla de negocio exacta: fecha límite de pago =
   // fecha inicial del viaje − 30 días calendario, en zona horaria de Bogotá
@@ -216,7 +222,7 @@ export default async function DashboardPage() {
   // reales y están semánticamente relacionados (pctOrNull vuelve null sin
   // denominador válido → esa tarjeta no lleva barra).
   const contratosPct = pctOrNull(nConfirmadosOActivos, nVigentes);
-  const cuposPct = pctOrNull(cuposOcupados, cuposCapacidad);
+  const cuposPct = cuposOk ? pctOrNull(cuposOcupados, cuposCapacidad) : null;
   const cxpPct = pctOrNull(cxpPagadas, cxpTotal);
   const dianPct = pctOrNull(dianEmitidas, dianTotal);
   const concPct = pctOrNull(concHechas, concTotal);
@@ -225,8 +231,9 @@ export default async function DashboardPage() {
   // = crítico; al menos un bloqueo con ≤3 cupos = advertencia; el resto,
   // acento normal.
   const cuposBarColor =
-    cuposCapacidad > 0 && cuposOcupados >= cuposCapacidad ? "var(--dash-danger)"
-    : cuposCriticos > 0 ? "var(--dash-warning)"
+    !cuposOk ? undefined
+    : cuposCapacidad > 0 && cuposOcupados >= cuposCapacidad ? "var(--dash-danger)"
+    : proximosRecords > 0 ? "var(--dash-warning)"
     : undefined;
 
   type Bar = { num: number; den: number; pct: number; color?: string };
@@ -297,11 +304,16 @@ export default async function DashboardPage() {
       };
     }) : []),
     ...(!esMinorista ? [{
-      icon: Armchair, label: "Cupos disponibles", value: String(cuposDisponibles),
+      icon: Armchair, label: "Cupos disponibles",
+      value: cuposOk ? `${sillasDisponibles.toLocaleString("es-CO")} ${plural(sillasDisponibles, "silla")} ${plural(sillasDisponibles, "disponible")}` : NO_DISPONIBLE,
+      sub: cuposOk ? `en ${recordsConSillas.toLocaleString("es-CO")} ${plural(recordsConSillas, "record")}` : "No se pudo consultar el inventario de vuelos",
       bar: cuposPct != null ? { num: cuposOcupados, den: cuposCapacidad, pct: cuposPct, color: cuposBarColor } : undefined,
     }] : []),
     ...(!esMinorista ? [{ icon: Package, label: "Paquetes activos", value: String(nPaquetes ?? 0) }] : []),
-    ...(!esMinorista ? [{ icon: PlaneTakeoff, label: "Salidas próximas (14d)", value: String(nSalidas ?? 0) }] : []),
+    ...(!esMinorista ? [{ icon: PlaneTakeoff, label: "Salidas próximas (14d)",
+      value: salidasOk ? String(nSalidas) : NO_DISPONIBLE,
+      // Cuenta SALIDAS (records con ida hoy..+14, tengan o no sillas); la alerta «Cupos críticos» cuenta solo records con sillas disponibles.
+      sub: salidasOk ? "Todas las salidas, con o sin sillas" : "No se pudo consultar las salidas" }] : []),
     ...(interno ? [{
       icon: Receipt, label: "Pagos por vencer (15d)", value: String(cxpTotal),
       sub: cxpTotal > 0 ? `${cxpPagadas} de ${cxpTotal} ya saldada(s) por completo` : "Sin cuentas por vencer",
@@ -324,8 +336,8 @@ export default async function DashboardPage() {
 
   // Alertas: SOLO cupos críticos y pagos por vencer (sin aerolíneas ni datos
   // inventados) — ambas ya calculadas arriba, mismo gating que sus métricas.
-  const alertas: { icon: LucideIcon; label: string; n: number; href: string }[] = [
-    ...(!esMinorista ? [{ icon: AlertTriangle, label: "Cupos críticos", n: cuposCriticos, href: "/dashboard/vuelos" }] : []),
+  const alertas: { icon: LucideIcon; label: string; n: number | null; href: string; detalle?: string }[] = [
+    ...(!esMinorista ? [{ icon: AlertTriangle, label: "Cupos críticos", n: cuposOk ? proximasSillas : null, href: "/dashboard/vuelos?vista=inventario", detalle: cuposOk ? `${proximasSillas.toLocaleString("es-CO")} ${plural(proximasSillas, "silla")} ${plural(proximasSillas, "disponible")} en ${proximosRecords.toLocaleString("es-CO")} ${plural(proximosRecords, "record")} con sillas que salen en 14 días` : "cifra no disponible" }] : []),
     ...(interno ? [{ icon: Receipt, label: "Pagos por vencer (15d)", n: cxpTotal, href: "/dashboard/pagos" }] : []),
   ];
 
@@ -448,13 +460,14 @@ function MetricCard({ icon: Icon, label, value, sub, bar }: {
   );
 }
 
-function AlertChip({ icon: Icon, label, n, href }: { icon: LucideIcon; label: string; n: number; href: string }) {
-  const apagada = n === 0;
+function AlertChip({ icon: Icon, label, n, href, detalle }: { icon: LucideIcon; label: string; n: number | null; href: string; detalle?: string }) {
+  const sinDato = n === null; // error de consulta: ni «0» ni alerta encendida
+  const apagada = n === 0 || sinDato;
   return (
     <Link
       href={href}
       prefetch={false}
-      className="inline-flex items-center gap-2 rounded-md border px-3 py-2 text-xs font-medium transition-colors"
+      className="inline-flex max-w-full items-center gap-2 rounded-md border px-3 py-2 text-xs font-medium transition-colors"
       style={
         apagada
           ? { borderColor: "var(--dash-border)", color: "var(--dash-ink-muted)", backgroundColor: "var(--dash-surface)" }
@@ -462,12 +475,12 @@ function AlertChip({ icon: Icon, label, n, href }: { icon: LucideIcon; label: st
       }
     >
       <Icon size={15} />
-      <span>{label}</span>
+      <span className="min-w-0 [overflow-wrap:anywhere]">{label}{detalle ? `: ${detalle}` : ""}</span>
       <span
-        className="rounded px-1.5 py-0.5 text-[11px] font-bold tabular-nums"
+        className="shrink-0 rounded px-1.5 py-0.5 text-[11px] font-bold tabular-nums"
         style={apagada ? { backgroundColor: "var(--dash-border)", color: "var(--dash-ink-muted)" } : { backgroundColor: "var(--dash-danger)", color: "white" }}
       >
-        {n}
+        {sinDato ? "—" : n}
       </span>
     </Link>
   );

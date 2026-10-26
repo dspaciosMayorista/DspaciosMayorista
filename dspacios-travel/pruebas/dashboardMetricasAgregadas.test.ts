@@ -6,7 +6,7 @@ import { dirname, join } from "node:path";
 import {
   clasificarContratos, clasificarContratosDesdeConteos,
   clasificarCartera, carteraPorMonedaDesdeAgregado, fechaLimitePago,
-  ventasMesPorMoneda, ventasMesPorMonedaDesdeAgregado, BALDE_MONEDA_DESCONOCIDA, cuposResumenDesdeAgregado,
+  ventasMesPorMoneda, ventasMesPorMonedaDesdeAgregado, BALDE_MONEDA_DESCONOCIDA, cuposActivosDesdeAgregado, cuposActivosDesdeFilas, sumarDias,
 } from "../lib/dashboard/metricas.ts";
 
 // ─────────────────────────────────────────────────────────────────────────
@@ -148,15 +148,44 @@ describe("Ventas del mes por moneda — FÓRMULA CORREGIDA: solo confirmado/acti
   });
 });
 
-describe("Cupos — mapeo trivial del agregado de 1 fila a los mismos nombres que ya usaba page.tsx", () => {
-  test("reempaqueta correctamente capacidad/ocupados/disponibles/críticos", () => {
-    const r = cuposResumenDesdeAgregado({ capacidad: 500, ocupados: 320, disponibles: 180, criticos: 4 });
-    assert.deepEqual(r, { cuposCapacidad: 500, cuposOcupados: 320, cuposDisponibles: 180, cuposCriticos: 4 });
+describe("Cupos activos (#118) — sillas disponibles en records activos y próximos 14 días", () => {
+  const f = (fecha_ida: string | null, disp: number) => ({ fecha_ida, cupos_total: 10, cupos_ocupados: 10 - disp, cupos_disponibles: disp });
+  const hoy = "2026-10-26";
+
+  test("reempaqueta la fila del RPC", () => {
+    const r = cuposActivosDesdeAgregado({ capacidad: 500, ocupados: 320, disponibles: 180, records_disponibles: 7, proximos_disponibles: 12, proximos_records: 3 });
+    assert.deepEqual(r, { cuposCapacidad: 500, cuposOcupados: 320, sillasDisponibles: 180, recordsConSillas: 7, proximasSillas: 12, proximosRecords: 3 });
   });
 
-  test("fila ausente (null) no rompe — todo en 0, nunca undefined/NaN", () => {
-    const r = cuposResumenDesdeAgregado(null);
-    assert.deepEqual(r, { cuposCapacidad: 0, cuposOcupados: 0, cuposDisponibles: 0, cuposCriticos: 0 });
+  test("fila ausente (null) no rompe — todo en 0", () => {
+    assert.deepEqual(cuposActivosDesdeAgregado(null), { cuposCapacidad: 0, cuposOcupados: 0, sillasDisponibles: 0, recordsConSillas: 0, proximasSillas: 0, proximosRecords: 0 });
+  });
+
+  test("fronteras: pasado fuera, hoy y día 14 dentro, día 15 activo pero no próximo", () => {
+    const r = cuposActivosDesdeFilas([f("2026-10-25", 5), f("2026-10-26", 2), f("2026-11-09", 3), f("2026-11-10", 4)], hoy);
+    assert.equal(r.sillasDisponibles, 9);   // 2 + 3 + 4; el pasado no suma
+    assert.equal(r.recordsConSillas, 3);
+    assert.equal(r.proximasSillas, 5);      // hoy (2) + día 14 (3); el día 15 (4) no
+    assert.equal(r.proximosRecords, 2);
+  });
+
+  test("varios records y disponibilidad cero: no suman sillas ni cuentan como record", () => {
+    const r = cuposActivosDesdeFilas([f("2026-10-27", 0), f("2026-10-28", 6), f("2026-10-28", 1), f("2026-10-29", -2)], hoy);
+    assert.equal(r.sillasDisponibles, 7);
+    assert.equal(r.recordsConSillas, 2);
+    assert.equal(r.proximasSillas, 7);
+    assert.equal(r.proximosRecords, 2);
+  });
+
+  test("sumarDias: cruza mes y año, y el límite de salidas es hoy+14 (día 15 fuera)", () => {
+    assert.equal(sumarDias("2026-10-26", 14), "2026-11-09");
+    assert.equal(sumarDias("2026-12-25", 14), "2027-01-08");
+    assert.equal(sumarDias("2028-02-20", 14), "2028-03-05"); // bisiesto
+  });
+
+  test("record sin fecha: activo para la tarjeta, nunca en la alerta", () => {
+    const r = cuposActivosDesdeFilas([f(null, 3)], hoy);
+    assert.deepEqual([r.sillasDisponibles, r.recordsConSillas, r.proximasSillas, r.proximosRecords], [3, 1, 0, 0]);
   });
 });
 
