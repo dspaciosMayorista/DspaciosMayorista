@@ -3,6 +3,7 @@
 import { createClient } from "@/lib/supabase/server";
 import { revalidatePath } from "next/cache";
 import { regenerarTarifariosDeServicio, generarTarifario } from "../../paquetes/actions";
+import { exigirEscrituraCatalogoGlobal } from "@/lib/auth/contextoAgencia";
 
 type Result = { ok: true } | { ok: false; error: string };
 const oNull = (s: string) => (s && s.trim() !== "" ? s.trim() : null);
@@ -54,6 +55,9 @@ function temporadaRow(servicioId: number, input: TemporadaServicioInput) {
 }
 
 export async function crearTemporadaServicio(servicioId: number, input: TemporadaServicioInput): Promise<Result> {
+  // D8/D9: los catálogos globales solo se escriben desde Mayorista (la RLS lo exige igual).
+  const catalogo = await exigirEscrituraCatalogoGlobal();
+  if (!catalogo.ok) return catalogo;
   const sb = await createClient();
   const nombre = input.nombre.trim() || "Temporada";
   if (nombre.toUpperCase() === "GENERAL") return { ok: false, error: "'GENERAL' es la tarifa base; usa otro nombre para la temporada." };
@@ -65,6 +69,9 @@ export async function crearTemporadaServicio(servicioId: number, input: Temporad
 }
 
 export async function actualizarTemporadaServicio(id: number, input: TemporadaServicioInput): Promise<Result> {
+  // D8/D9: los catálogos globales solo se escriben desde Mayorista (la RLS lo exige igual).
+  const catalogo = await exigirEscrituraCatalogoGlobal();
+  if (!catalogo.ok) return catalogo;
   const sb = await createClient();
   const nombre = input.nombre.trim() || "Temporada";
   if (nombre.toUpperCase() === "GENERAL") return { ok: false, error: "'GENERAL' es la tarifa base; usa otro nombre para la temporada." };
@@ -86,6 +93,9 @@ export async function actualizarTemporadaServicio(id: number, input: TemporadaSe
 }
 
 export async function eliminarTemporadaServicio(id: number): Promise<Result> {
+  // D8/D9: los catálogos globales solo se escriben desde Mayorista (la RLS lo exige igual).
+  const catalogo = await exigirEscrituraCatalogoGlobal();
+  if (!catalogo.ok) return catalogo;
   const sb = await createClient();
   const { data: prev } = await sb.from("servicio_temporadas").select("servicio_id, nombre").eq("id", id).maybeSingle();
   const { error } = await sb.from("servicio_temporadas").delete().eq("id", id);
@@ -164,6 +174,9 @@ async function guardarGrupoTiers(
 // tarifario público (no se denormaliza en tarifario_resultado), así que no
 // hace falta regenerar nada al cambiarla.
 export async function actualizarFotoServicio(id: number, fotoUrl: string | null): Promise<Result> {
+  // D8/D9: los catálogos globales solo se escriben desde Mayorista (la RLS lo exige igual).
+  const catalogo = await exigirEscrituraCatalogoGlobal();
+  if (!catalogo.ok) return catalogo;
   const sb = await createClient();
   const { error } = await sb.from("servicios_adicionales").update({ foto_url: fotoUrl }).eq("id", id);
   if (error) return { ok: false, error: error.message };
@@ -172,6 +185,9 @@ export async function actualizarFotoServicio(id: number, fotoUrl: string | null)
 }
 
 export async function crearServicio(input: ServicioInput): Promise<Result> {
+  // D8/D9: los catálogos globales solo se escriben desde Mayorista (la RLS lo exige igual).
+  const catalogo = await exigirEscrituraCatalogoGlobal();
+  if (!catalogo.ok) return catalogo;
   const sb = await createClient();
   const { data, error } = await sb.from("servicios_adicionales").insert({ ...servicioToRow(input), activo: true }).select("id").single();
   if (error || !data) return { ok: false, error: error?.message ?? "No se insertó" };
@@ -181,6 +197,9 @@ export async function crearServicio(input: ServicioInput): Promise<Result> {
 }
 
 export async function actualizarServicio(id: number, input: ServicioInput): Promise<Result> {
+  // D8/D9: los catálogos globales solo se escriben desde Mayorista (la RLS lo exige igual).
+  const catalogo = await exigirEscrituraCatalogoGlobal();
+  if (!catalogo.ok) return catalogo;
   const sb = await createClient();
   const { error } = await sb.from("servicios_adicionales").update(servicioToRow(input)).eq("id", id);
   if (error) return { ok: false, error: error.message };
@@ -191,6 +210,9 @@ export async function actualizarServicio(id: number, input: ServicioInput): Prom
 }
 
 export async function eliminarServicio(id: number): Promise<Result> {
+  // D8/D9: los catálogos globales solo se escriben desde Mayorista (la RLS lo exige igual).
+  const catalogo = await exigirEscrituraCatalogoGlobal();
+  if (!catalogo.ok) return catalogo;
   const sb = await createClient();
   // Captura los paquetes que lo usaban ANTES de borrar; se regeneran después.
   const { data: usados } = await sb.from("armado_servicios").select("paquete_id").eq("servicio_id", id);

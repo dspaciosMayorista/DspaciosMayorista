@@ -144,7 +144,14 @@ export async function resolverContextoCrearContratoOrquestado(
   resolverTenant: (
     perfil: { rol: string; activo: boolean | null | undefined; tenant?: string | null } | null
   ) => Tenant,
-  autorizadoPorRolFn: (rol: string) => boolean
+  autorizadoPorRolFn: (rol: string) => boolean,
+  // #5 D8/D9: resolución ASÍNCRONA y verificable de la agencia (superadmin: la de su sesión en la base,
+  // la misma que muestra el panel). Si se pasa, manda sobre `resolverTenant`. `verificada=false` (error
+  // técnico al leer la agencia de la sesión) RECHAZA antes de numerar: no se elige agencia con un dato
+  // no verificado. Sin este parámetro el comportamiento es el de siempre.
+  resolverTenantVerificado?: (
+    perfil: { rol: string; activo: boolean | null | undefined; tenant?: string | null } | null
+  ) => Promise<{ tenant: Tenant; verificada: boolean }>
 ): Promise<ContextoCrearContrato> {
   const u = await obtenerUsuario();
   if (u.tecnico) return { ok: false, error: MSG_SESION, tecnico: true };
@@ -152,6 +159,13 @@ export async function resolverContextoCrearContratoOrquestado(
 
   const p = await consultarPerfil(u.user.id);
   if (p.tecnico) return { ok: false, error: MSG_SESION, tecnico: true };
-  const tenant = resolverTenant(p.perfil);
+  let tenant: Tenant;
+  if (resolverTenantVerificado) {
+    const r = await resolverTenantVerificado(p.perfil);
+    if (!r.verificada) return { ok: false, error: MSG_SESION, tecnico: true };
+    tenant = r.tenant;
+  } else {
+    tenant = resolverTenant(p.perfil);
+  }
   return resolverContextoCrearContrato(p.perfil, p.perfil ? autorizadoPorRolFn(p.perfil.rol) : false, tenant);
 }

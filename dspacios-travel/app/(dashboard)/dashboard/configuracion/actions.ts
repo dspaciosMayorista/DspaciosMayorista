@@ -3,6 +3,7 @@
 import { createClient } from "@/lib/supabase/server";
 import { getTenant } from "@/lib/tenant.server";
 import { revalidatePath } from "next/cache";
+import { exigirEscrituraCatalogoGlobal } from "@/lib/auth/contextoAgencia";
 
 type Result = { ok: true } | { ok: false; error: string };
 
@@ -48,6 +49,9 @@ export async function crearRangoEdad(input: {
   edadMin: number;
   edadMax: number;
 }): Promise<Result> {
+  // D8/D9: los catálogos globales solo se escriben desde Mayorista (la RLS lo exige igual).
+  const catalogo = await exigirEscrituraCatalogoGlobal();
+  if (!catalogo.ok) return catalogo;
   if (!input.denominacion.trim()) return { ok: false, error: "La denominación es obligatoria." };
   if (input.edadMax < input.edadMin) return { ok: false, error: "La edad máxima no puede ser menor que la mínima." };
   const sb = await createClient();
@@ -63,6 +67,9 @@ export async function crearRangoEdad(input: {
 }
 
 export async function eliminarRangoEdad(id: number): Promise<Result> {
+  // D8/D9: los catálogos globales solo se escriben desde Mayorista (la RLS lo exige igual).
+  const catalogo = await exigirEscrituraCatalogoGlobal();
+  if (!catalogo.ok) return catalogo;
   const sb = await createClient();
   const { error } = await sb.from("rangos_edad").delete().eq("id", id);
   if (error) return { ok: false, error: error.message };
@@ -76,6 +83,9 @@ export async function crearAsesor(input: {
   pctComisionBase: number;
   metaMensual: number;
 }): Promise<Result> {
+  // D8/D9: los catálogos globales solo se escriben desde Mayorista (la RLS lo exige igual).
+  const catalogo = await exigirEscrituraCatalogoGlobal();
+  if (!catalogo.ok) return catalogo;
   const sb = await createClient();
   const { error } = await sb.from("asesores").insert({
     nombre: input.nombre.trim(),
@@ -94,6 +104,9 @@ export async function actualizarAsesor(
   pctComisionBase: number,
   aplicaRetencion?: boolean
 ): Promise<Result> {
+  // D8/D9: los catálogos globales solo se escriben desde Mayorista (la RLS lo exige igual).
+  const catalogo = await exigirEscrituraCatalogoGlobal();
+  if (!catalogo.ok) return catalogo;
   const sb = await createClient();
   const patch: { pct_comision_base: number; aplica_retencion?: boolean } = { pct_comision_base: pctComisionBase };
   if (aplicaRetencion !== undefined) patch.aplica_retencion = aplicaRetencion;
@@ -104,6 +117,9 @@ export async function actualizarAsesor(
 }
 
 export async function eliminarAsesor(id: number): Promise<Result> {
+  // D8/D9: los catálogos globales solo se escriben desde Mayorista (la RLS lo exige igual).
+  const catalogo = await exigirEscrituraCatalogoGlobal();
+  if (!catalogo.ok) return catalogo;
   const sb = await createClient();
   const { error } = await sb.from("asesores").delete().eq("id", id);
   if (error) return { ok: false, error: error.message };
@@ -113,6 +129,9 @@ export async function eliminarAsesor(id: number): Promise<Result> {
 
 // ── Formas de pago (catálogo) ──────────────────────────────────────────────
 export async function crearFormaPago(nombre: string): Promise<Result> {
+  // D8/D9: los catálogos globales solo se escriben desde Mayorista (la RLS lo exige igual).
+  const catalogo = await exigirEscrituraCatalogoGlobal();
+  if (!catalogo.ok) return catalogo;
   if (!nombre.trim()) return { ok: false, error: "El nombre es obligatorio." };
   const sb = await createClient();
   const { error } = await sb.from("formas_pago").insert({ nombre: nombre.trim() });
@@ -122,6 +141,9 @@ export async function crearFormaPago(nombre: string): Promise<Result> {
 }
 
 export async function eliminarFormaPago(id: number): Promise<Result> {
+  // D8/D9: los catálogos globales solo se escriben desde Mayorista (la RLS lo exige igual).
+  const catalogo = await exigirEscrituraCatalogoGlobal();
+  if (!catalogo.ok) return catalogo;
   const sb = await createClient();
   const { error } = await sb.from("formas_pago").delete().eq("id", id);
   if (error) return { ok: false, error: error.message };
@@ -130,6 +152,9 @@ export async function eliminarFormaPago(id: number): Promise<Result> {
 }
 
 export async function actualizarParametro(parametro: string, valor: number): Promise<Result> {
+  // D8/D9: los catálogos globales solo se escriben desde Mayorista (la RLS lo exige igual).
+  const catalogo = await exigirEscrituraCatalogoGlobal();
+  if (!catalogo.ok) return catalogo;
   const sb = await createClient();
   const { error } = await sb
     .from("parametros_tributarios")

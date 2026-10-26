@@ -2,6 +2,7 @@
 
 import { createClient } from "@/lib/supabase/server";
 import { revalidatePath } from "next/cache";
+import { exigirEscrituraCatalogoGlobal } from "@/lib/auth/contextoAgencia";
 
 type Result = { ok: true } | { ok: false; error: string };
 const oNull = (s: string) => (s && s.trim() !== "" ? s.trim() : null);
@@ -24,6 +25,9 @@ export type AliadoInput = {
 };
 
 export async function crearAliado(input: AliadoInput): Promise<Result> {
+  // D8/D9: los catálogos globales solo se escriben desde Mayorista (la RLS lo exige igual).
+  const catalogo = await exigirEscrituraCatalogoGlobal();
+  if (!catalogo.ok) return catalogo;
   if (!input.nombre.trim()) return { ok: false, error: "El nombre es obligatorio." };
   const sb = await createClient();
   const { error } = await sb.from("aliados").insert({
@@ -54,6 +58,9 @@ export async function actualizarAliado(
     tipoDocumento?: string; direccion?: string; banco?: string; tipoCuenta?: string; numeroCuenta?: string;
   }
 ): Promise<Result> {
+  // D8/D9: los catálogos globales solo se escriben desde Mayorista (la RLS lo exige igual).
+  const catalogo = await exigirEscrituraCatalogoGlobal();
+  if (!catalogo.ok) return catalogo;
   const sb = await createClient();
   const upd: {
     pct_comision?: number | null; aplica_retencion?: boolean; pct_retencion?: number;
@@ -74,6 +81,9 @@ export async function actualizarAliado(
 }
 
 export async function eliminarAliado(id: number): Promise<Result> {
+  // D8/D9: los catálogos globales solo se escriben desde Mayorista (la RLS lo exige igual).
+  const catalogo = await exigirEscrituraCatalogoGlobal();
+  if (!catalogo.ok) return catalogo;
   const sb = await createClient();
   const { error } = await sb.from("aliados").delete().eq("id", id);
   if (error) return { ok: false, error: error.message };

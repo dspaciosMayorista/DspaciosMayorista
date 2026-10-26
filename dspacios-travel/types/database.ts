@@ -3918,6 +3918,26 @@ export type Database = {
         Args: Record<PropertyKey, never>;
         Returns: Database["public"]["Enums"]["rol_usuario"];
       };
+      // Migración 237 (frontera D8/D9 de catálogos globales). `puede_escribir_
+      // catalogo_global` la usan las policies restrictivas y lo puede consultar
+      // la sesión; `iniciar_/cambiar_contexto_agencia` son SOLO service_role
+      // (la sesión la deriva el servidor del JWT verificado, nunca el cliente).
+      puede_escribir_catalogo_global: {
+        Args: Record<PropertyKey, never>;
+        Returns: boolean;
+      };
+      agencia_activa_sesion: {
+        Args: Record<PropertyKey, never>;
+        Returns: string | null;
+      };
+      iniciar_contexto_agencia: {
+        Args: { p_session: string; p_tenant: string; p_ventana?: string };
+        Returns: undefined;
+      };
+      cambiar_contexto_agencia: {
+        Args: { p_session: string; p_tenant: string };
+        Returns: undefined;
+      };
       fn_fusionar_destino: {
         Args: { p_origen: number; p_destino: number };
         Returns: undefined;

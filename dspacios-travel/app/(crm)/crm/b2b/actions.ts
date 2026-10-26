@@ -42,12 +42,16 @@ export async function cargarAgenciasB2B(
     const aplicaRet = toBool(r.aplica_retencion) || pctRet > 0;
 
     // 1) Catálogo de aliados (comisiones)
-    await sb.from("aliados").insert({
+    const { error: errAliado } = await sb.from("aliados").insert({
       nombre, tipo, nit: oNull(r.nit), contacto: oNull(r.telefono), email: oNull(r.email),
       telefono: oNull(r.telefono),
       pct_comision: pct > 0 ? pct / 100 : null,
       aplica_retencion: aplicaRet, pct_retencion: pctRet / 100,
     });
+    // D9: el catálogo de aliados solo se escribe desde Mayorista; el rechazo ya no se traga en silencio.
+    if (errAliado) {
+      info.push(`Fila ${linea} (${nombre}): aliado no creado en el catálogo (${errAliado.code === "42501" ? "el catálogo de aliados solo se edita desde Mayorista" : errAliado.message}).`);
+    }
 
     // 2) Contacto en el CRM. Con la sesión del usuario (nunca service-role):
     // la RLS decide. Un rechazo ya no se traga en silencio.

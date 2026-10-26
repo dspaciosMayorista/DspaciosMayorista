@@ -1,7 +1,7 @@
 import "server-only";
 import { cookies } from "next/headers";
 import { createClient } from "@/lib/supabase/server";
-import { COOKIE_TENANT, resolverTenantActivo, type Tenant } from "@/lib/tenant";
+import { clasificarAgenciaSesion, COOKIE_TENANT, resolverTenantEfectivo, type Tenant } from "@/lib/tenant";
 import { puedeEscribir } from "@/lib/roles";
 import { crearMedidor, registrarErrorTecnico } from "@/lib/observabilidad/medicion";
 import { resolverContextoCrearContratoOrquestado, type ContextoCrearContrato } from "./contextoPuro";
@@ -32,7 +32,7 @@ export type ContextoCrearContratoResuelto =
  * las dos llamadas de red que esta función ya había hecho. Ahora se pide
  * `tenant` en la MISMA consulta de perfil (`rol, activo, tenant`) y el
  * cálculo del tenant activo (cookie de agencia validada contra lo permitido
- * por rol) se resuelve con `resolverTenantActivo()` (lib/tenant.ts, sin
+ * por rol) se resuelve con `resolverTenantEfectivo()` (lib/tenant.ts, sin
  * I/O) — la misma regla exacta que usa `tenantContext()`, extraída para no
  * repetirla. La lectura de la cookie (`cookies()`) no es una llamada de red.
  *
@@ -40,7 +40,7 @@ export type ContextoCrearContratoResuelto =
  * → gate) vive en `resolverContextoCrearContratoOrquestado()`
  * (`./contextoPuro.ts`, sin I/O propio, con las tres fuentes de datos
  * INYECTADAS) — este wrapper solo arma las closures reales (`sb.auth.
- * getUser()`, la consulta de `usuarios`, `resolverTenantActivo` con la
+ * getUser()`, la consulta de `usuarios`, `resolverTenantEfectivo` con la
  * cookie ya leída) y se las pasa. Así, `pruebas/contratoContexto.test.ts`
  * puede probar con EJECUCIÓN REAL (espías, no grep) que `auth.getUser` y la
  * consulta de perfil se invocan EXACTAMENTE una vez cada uno — nunca dos,
@@ -94,8 +94,26 @@ export async function contextoCrearContrato(flujo: string, flujoId: string): Pro
       }
       return { tecnico: false, perfil: res.data };
     },
-    (perfil) => resolverTenantActivo(perfil as { rol?: string; tenant?: string } | null, ck),
-    (rol) => puedeEscribir("ventas", rol)
+    (perfil) => resolverTenantEfectivo(perfil as { rol?: string; tenant?: string } | null, ck, null).tenant,
+    (rol) => puedeEscribir("ventas", rol),
+    // Misma agencia efectiva que muestra el panel (tenantContext): para el superadmin manda la agencia de su
+    // SESIÓN en la base; ante un error técnico al leerla se rechaza ANTES de numerar. Los demás roles no
+    // consultan nada (agencia fija por perfil) y la función ausente (pre-237) conserva la regla de la cookie.
+    async (perfil) => {
+      const p = perfil as { rol?: string; tenant?: string } | null;
+      let lectura = null;
+      if (p?.rol === "superadmin") {
+        const { data, error } = await medir(
+          "contexto_agencia_sesion",
+          () => sb.rpc("agencia_activa_sesion"),
+          (r) => (r.error ? "error" : "ok")
+        );
+        lectura = clasificarAgenciaSesion(data, error);
+        if (lectura.estado === "error") registrarErrorTecnico(flujo, flujoId, "contexto_agencia_sesion", "error_agencia_sesion", error);
+      }
+      const r = resolverTenantEfectivo(p, ck, lectura);
+      return { tenant: r.tenant, verificada: r.verificada };
+    }
   );
   return ctx.ok ? { ...ctx, sb } : ctx;
 }
