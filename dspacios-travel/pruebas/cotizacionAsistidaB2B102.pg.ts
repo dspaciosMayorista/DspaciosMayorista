@@ -165,7 +165,7 @@ mock.module("@/lib/supabase/admin", { namedExports: { createAdminClient: () => c
 const COOKIES = { get: () => undefined, getAll: () => [] as unknown[] };
 mock.module("next/headers", { namedExports: { headers: async () => new Map([["host", "localhost"]]), cookies: async () => COOKIES } });
 
-const { crearSolicitudReserva, getContextoAsistenciaB2B } = await import("../app/tarifario/checkout/actions.ts");
+const { crearSolicitudReserva, getContextoAsistenciaB2B, previsualizarTerminosB2BAsistido } = await import("../app/tarifario/checkout/actions.ts");
 const { convertirCotizacionCarrito } = await import("../app/(dashboard)/dashboard/reservar/actions.ts");
 const { netoTotalExigibleDeContrato } = await import("../lib/contrato/netoContrato.server.ts");
 const { contratosDelPortalB2B } = await import("../lib/auth/contratosPortalB2B.ts");
@@ -1458,6 +1458,172 @@ describe("102 · NETO asistido: identidad fiscal del aliado congelada (nombre y 
     const r = await convertir(U.VENTA, id, 1);
     assert.equal(r.ok, false);
     assert.equal(r.error, MENSAJE_TERMINOS_CAMBIARON);
+  });
+});
+
+// ═════════════════════════════════════════════════════════════════════════
+// Vista previa del desglose B2B antes de generar (Preview #403): el servidor corre el MISMO cálculo que la cotización y no escribe nada.
+describe("102 · vista previa del desglose B2B: paridad con la cotización generada", () => {
+  type Previa = { ok: boolean; error?: string; terminos?: Record<string, unknown> };
+  async function previsualizar(sesion: string, o: Parameters<typeof cotizar>[1]): Promise<Previa> {
+    uidSesion = sesion;
+    const entrada = {
+      items: (o.hoteles ?? [10201]).map((h) => itemEntrada(h, o.paqueteId, o.bloqueoId ?? null)), tours: o.tours ?? [],
+      ...(o.asistencia !== undefined ? { asistencia: o.asistencia } : {}), ...(o.extra ?? {}),
+    };
+    return (await previsualizarTerminosB2BAsistido(entrada)) as unknown as Previa;
+  }
+  const CAMPOS = ["aliado_nombre", "tipo_asesor", "modo_compra", "moneda", "pvp", "impuesto", "base", "pct", "pct_origen", "comision", "total_exigible"] as const;
+  const delPlan = (p: Record<string, unknown>) => Object.fromEntries(CAMPOS.map((k) => [k, p[k]]));
+
+  test("L1 caso de la captura: PVP USD 1.930, impuesto USD 830, base USD 1.100, 11 % = USD 121 y NETO USD 1.809 (no 11 % del PVP)", async () => {
+    HOTELES[10203] = { nombre: "Hotel Dubái 102", destino: "CARTAGENA", moneda: "USD", pvp: 965, neto: 600, impuesto: 830 };
+    const o = { hoteles: [10203], paqueteId: 10202, asistencia: b2b(A.FL_GENERAL, "neta") };
+    const antes = foto(); const cots = totalCotizaciones();
+    const p = await previsualizar(U.VENTA, o);
+    assert.equal(p.ok, true, p.error);
+    assert.deepEqual(delPlan(p.terminos!), {
+      aliado_nombre: ALIADOS_NOMBRE[A.FL_GENERAL], tipo_asesor: "freelance", modo_compra: "neta", moneda: "USD",
+      pvp: 1930, impuesto: 830, base: 1100, pct: 0.11, pct_origen: "general", comision: 121, total_exigible: 1809,
+    });
+    assert.deepEqual(foto(), antes);
+    assert.equal(totalCotizaciones(), cots, "la vista previa no crea ninguna cotización");
+    // Paridad: la cotización generada congela exactamente lo mismo.
+    const { plan } = await cotizarOk(U.VENTA, o);
+    assert.deepEqual(delPlan(plan as unknown as Record<string, unknown>), delPlan(p.terminos!));
+  });
+
+  test("L2 paridad en cada combinación de aliado, modalidad e ítems (la vista previa es el plan que se congelará)", async () => {
+    const combos: Parameters<typeof cotizar>[1][] = [
+      { hoteles: [10201], asistencia: b2b(A.AG10, "neta") },
+      { hoteles: [10201], asistencia: b2b(A.AG10, "comisionable") },
+      { hoteles: [10201], asistencia: b2b(A.FL_GENERAL, "neta") },
+      { hoteles: [10201, 10202], asistencia: b2b(A.AG10, "neta") },
+      { hoteles: [10204], asistencia: b2b(A.AG10, "neta") },   // base 0: impuesto = PVP
+      { hoteles: [10201], asistencia: b2b(A.AG0, "neta") },    // 0 % explícito
+    ];
+    const vistos = new Set<string>();
+    for (const o of combos) {
+      const p = await previsualizar(U.VENTA, o);
+      assert.equal(p.ok, true, p.error);
+      const { plan } = await cotizarOk(U.VENTA, o);
+      assert.deepEqual(delPlan(p.terminos!), delPlan(plan as unknown as Record<string, unknown>), JSON.stringify(o));
+      vistos.add(JSON.stringify(delPlan(p.terminos!)));
+    }
+    assert.equal(vistos.size, combos.length, "cada combinación produce un desglose distinto");
+  });
+
+  test("L3 la elección es lo único que cuenta: porcentaje, comisión o total que mande el navegador se ignoran; sin escribir CRM ni cotización", async () => {
+    const crm = Number(sql("select count(*) from public.crm_contactos"));
+    const p = await previsualizar(U.VENTA, { asistencia: { ...b2b(A.AG10, "neta"), pct: 0.99, comision: 1, total: 1 } as Asistencia, extra: { pctComision: 0.99, total: 1 } });
+    assert.equal(p.ok, true, p.error);
+    assert.equal(p.terminos!.pct, 0.1);
+    assert.equal(p.terminos!.comision, 80_000);
+    assert.equal(Number(sql("select count(*) from public.crm_contactos")), crm);
+  });
+
+  test("L4 si no puede liquidarse devuelve el motivo (sin cifras): sin sesión válida, sin permiso, sin aliado, aliado inactivo, carrito vacío, servicio no disponible", async () => {
+    for (const [que, sesion, o, esperado] of [
+      ["sin elegir aliado/modalidad", U.VENTA, { hoteles: [10201] }, /Elige el aliado y la modalidad/],
+      ["control_vuelo", U.CTRL, { hoteles: [10201], asistencia: b2b(A.AG10, "neta") }, /no puede cotizar/],
+      ["aliado logueado", U.AGENCIA, { hoteles: [10201], asistencia: b2b(A.AG10, "neta") }, /no puede cotizar/],
+      ["usuario inactivo", U.INACTIVO, { hoteles: [10201], asistencia: b2b(A.AG10, "neta") }, /sesión no es válida/],
+      ["aliado inactivo", U.VENTA, { hoteles: [10201], asistencia: b2b(A.INACTIVO, "neta") }, /inactivo/],
+      ["aliado inexistente", U.VENTA, { hoteles: [10201], asistencia: b2b(99999, "neta") }, /no existe/],
+      ["modalidad inválida", U.VENTA, { hoteles: [10201], asistencia: { canal: "b2b", aliadoId: A.AG10, modo: "otra" } }, /modalidad/],
+      ["carrito vacío", U.VENTA, { hoteles: [], asistencia: b2b(A.AG10, "neta") }, /vacío/],
+      ["servicio no disponible", U.VENTA, { hoteles: [], tours: [tourEntrada(99999)], asistencia: b2b(A.AG10, "neta") }, /No se pudo generar/],
+    ] as [string, string, Parameters<typeof cotizar>[1], RegExp][]) {
+      const p = await previsualizar(sesion, o);
+      assert.equal(p.ok, false, que);
+      assert.match(p.error ?? "", esperado, que);
+      assert.equal(p.terminos, undefined, `${que}: ninguna cifra`);
+    }
+  });
+});
+
+// ═════════════════════════════════════════════════════════════════════════
+// Generar compara los términos vigentes con el desglose que el usuario VIO (vista previa); si cambiaron no se crea la cotización.
+describe("102 · generar con el desglose confirmado: si cambió entre la vista previa y generar, no se crea nada", () => {
+  const ID = 10208;
+  before(() => {
+    sql(`insert into public.aliados (id, nombre, tipo, pct_comision, activo, nit, tipo_documento) values (${ID}, 'Viajes Confirmar 102', 'agencia', 0.11, true, '800111222-3', 'NIT') on conflict (id) do nothing`);
+  });
+  beforeEach(() => sql(`update public.aliados set pct_comision = 0.11 where id = ${ID}`));
+  type Terminos = Record<string, unknown>;
+  const VISTOS = ["modo_compra", "moneda", "pvp", "impuesto", "base", "pct", "pct_origen", "comision", "total_exigible"] as const;
+  const soloVistos = (t: Terminos) => Object.fromEntries(VISTOS.map((k) => [k, t[k]]));
+  async function previa(modo: "neta" | "comisionable" = "neta") {
+    uidSesion = U.VENTA;
+    const r = (await previsualizarTerminosB2BAsistido({ items: [itemEntrada(10201)], tours: [], asistencia: b2b(ID, modo) })) as unknown as { ok: boolean; error?: string; terminos?: Terminos };
+    assert.equal(r.ok, true, r.error);
+    return r.terminos!;
+  }
+  async function generarConVistos(vistos: unknown) {
+    uidSesion = U.VENTA;
+    return (await crearSolicitudReserva({ items: [itemEntrada(10201)], tours: [], cliente: CLIENTE, asistencia: { canal: "b2b", aliadoId: ID, modo: "neta", ...(vistos === undefined ? {} : { vistos }) } })) as unknown as
+      { ok: boolean; error?: string; tipo?: string; terminos?: Terminos; cotizacion?: { id: number }; b2bAsistido?: Terminos };
+  }
+  const foto2 = () => ({ cots: totalCotizaciones(), ...foto(), crm: Number(sql("select count(*) from public.crm_contactos")) });
+
+  test("N1 sin cambios entre la vista previa y generar: se crea y congela EXACTAMENTE lo que se vio", async () => {
+    const t = await previa();
+    assert.deepEqual([t.pvp, t.impuesto, t.base, t.pct, t.comision, t.total_exigible], [1_000_000, 200_000, 800_000, 0.11, 88_000, 912_000]);
+    const r = await generarConVistos(soloVistos(t));
+    assert.equal(r.ok, true, r.error);
+    assert.deepEqual(soloVistos(r.b2bAsistido!), soloVistos(t));
+  });
+
+  test("N2 cambió el PORCENTAJE entre la vista previa y generar: no se crea la cotización; se devuelven los términos vigentes y confirmar de nuevo funciona", async () => {
+    const visto = await previa();
+    sql(`update public.aliados set pct_comision = 0.20 where id = ${ID}`);
+    const antes = foto2();
+    const r = await generarConVistos(soloVistos(visto));
+    assert.equal(r.ok, false);
+    assert.equal(r.tipo, "terminos_cambiaron");
+    assert.match(r.error ?? "", /cambiaron desde el desglose que viste/);
+    assert.deepEqual([r.terminos!.pct, r.terminos!.comision, r.terminos!.total_exigible], [0.2, 160_000, 840_000]);
+    assert.deepEqual(foto2(), antes, "no se insertó ninguna cotización (ni contacto de CRM, ni número, ni nada)");
+    const ok = await generarConVistos(soloVistos(r.terminos!));
+    assert.equal(ok.ok, true, ok.error);
+    assert.equal(ok.b2bAsistido!.comision, 160_000);
+    assert.equal(totalCotizaciones(), antes.cots + 1);
+  });
+
+  test("N3 cambió el IMPUESTO no comisionable (base y comisión con él): no se crea; vigente devuelto", async () => {
+    const visto = await previa();
+    HOTELES[10201].impuesto = 300_000;
+    const antes = foto2();
+    const r = await generarConVistos(soloVistos(visto));
+    assert.equal(r.tipo, "terminos_cambiaron");
+    assert.deepEqual([r.terminos!.impuesto, r.terminos!.base, r.terminos!.comision, r.terminos!.total_exigible], [300_000, 700_000, 77_000, 923_000]);
+    assert.deepEqual(foto2(), antes);
+  });
+
+  test("N4 cambió el PVP del carrito: no se crea", async () => {
+    const visto = await previa();
+    HOTELES[10201].pvp = 600_000;
+    const antes = foto2();
+    const r = await generarConVistos(soloVistos(visto));
+    assert.equal(r.tipo, "terminos_cambiaron");
+    assert.equal(r.terminos!.pvp, 1_200_000);
+    assert.deepEqual(foto2(), antes);
+  });
+
+  test("N5 el desglose visto es solo una comparación: manipularlo no cambia lo que el servidor liquida (vistos inventados ⇒ rechazo, nunca se adoptan)", async () => {
+    const t = await previa();
+    const antes = foto2();
+    const r = await generarConVistos({ ...soloVistos(t), comision: 1, total_exigible: 999_999 });
+    assert.equal(r.tipo, "terminos_cambiaron");
+    assert.equal(r.terminos!.comision, 88_000, "vigente = cálculo del servidor");
+    assert.deepEqual(foto2(), antes);
+    // Un desglose ilegible se rechaza sin crear nada; sin desglose (cliente antiguo) el servidor sigue calculando y congelando como siempre.
+    const malo = await generarConVistos({ pvp: "x" });
+    assert.equal(malo.ok, false);
+    assert.match(malo.error ?? "", /desglose que se confirmó no es válido/);
+    assert.deepEqual(foto2(), antes);
+    const sin = await generarConVistos(undefined);
+    assert.equal(sin.ok, true, sin.error);
   });
 });
 

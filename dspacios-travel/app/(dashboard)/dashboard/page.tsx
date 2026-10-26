@@ -371,7 +371,7 @@ export default async function DashboardPage() {
       </section>
 
       {/* 3. Métricas reales */}
-      <section className="mt-5 grid grid-cols-2 gap-3 md:grid-cols-4">
+      <section className="mt-5 grid grid-cols-[repeat(auto-fill,minmax(13.5rem,1fr))] gap-3">
         {metricas.map((m) => <MetricCard key={m.label} {...m} />)}
       </section>
 
@@ -422,19 +422,19 @@ function MetricCard({ icon: Icon, label, value, sub, bar }: {
   bar?: { num: number; den: number; pct: number; color?: string };
 }) {
   return (
-    <div className="rounded-lg border p-4" style={{ backgroundColor: "var(--dash-kpi-surface)", borderColor: "var(--dash-border)" }}>
+    <div className="min-w-0 rounded-lg border p-4" style={{ backgroundColor: "var(--dash-kpi-surface)", borderColor: "var(--dash-border)" }}>
       <div className="flex items-center gap-2.5">
         <span className="grid h-9 w-9 place-items-center rounded-lg" style={{ backgroundColor: "var(--dash-surface)", color: "var(--dash-primary)" }}>
           <Icon size={18} strokeWidth={2} />
         </span>
-        <span className="text-xs font-medium" style={{ color: "var(--dash-ink-muted)" }}>{label}</span>
+        <span className="min-w-0 text-xs font-medium" style={{ color: "var(--dash-ink-muted)" }}>{label}</span>
       </div>
-      <div className={`${styles.heading} mt-3 text-2xl font-semibold tabular-nums`} style={{ color: "var(--dash-ink)" }}>{value}</div>
+      <div className={`${styles.heading} mt-3 text-xl font-semibold tabular-nums [overflow-wrap:anywhere]`} style={{ color: "var(--dash-ink)" }}>{value}</div>
       {sub && <div className="mt-0.5 text-[11px] capitalize" style={{ color: "var(--dash-ink-muted)" }}>{sub}</div>}
       {bar && (
         <div className="mt-3">
-          <div className="flex items-center justify-between text-[11px] tabular-nums" style={{ color: "var(--dash-ink-muted)" }}>
-            <span>{bar.num} de {bar.den}</span>
+          <div className="flex flex-wrap items-center justify-between gap-x-2 text-[11px] tabular-nums" style={{ color: "var(--dash-ink-muted)" }}>
+            <span className="min-w-0 [overflow-wrap:anywhere]">{bar.num.toLocaleString("es-CO")} de {bar.den.toLocaleString("es-CO")}</span>
             <span className="font-semibold">{bar.pct}%</span>
           </div>
           <div className={styles.barTrack}>

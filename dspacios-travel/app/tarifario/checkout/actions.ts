@@ -45,7 +45,7 @@ import { altaPersonasCotizacion, logPersonasCotizacion } from "@/lib/personas/co
 import { codigoErrorContacto, datosContactoTarifario, logContactoTarifario } from "@/lib/crm/contactoTarifario";
 import { leerEntradaModalidad } from "@/lib/cotizacion/netoHija";
 import {
-  construirPlanB2B, ETIQUETA_MODO_B2B, ETIQUETA_ORIGEN_PCT, leerAsistenciaB2BEntrada, type LineaB2B, type PlanB2BCotizacion,
+  compararTerminosVistos, construirPlanB2B, ETIQUETA_MODO_B2B, ETIQUETA_ORIGEN_PCT, leerAsistenciaB2BEntrada, type LineaB2B, type PlanB2BCotizacion,
 } from "@/lib/cotizacion/asistidaB2B";
 import { listarAliadosParaAsistencia, prepararAsistenciaB2B, type AliadoListado, type ContextoAsistenciaB2B } from "@/lib/cotizacion/asistidaB2BServidor";
 import { resolverFirmasSesion } from "@/lib/cotizacion/firmasSesion";
@@ -350,7 +350,10 @@ export type SolicitudResult =
   // Los ve quien la generó (rol de la lista explícita); nunca viajan en un documento externo.
   | { ok: true; cotizacion: { id: number; codigo: string; url: string }; waUrl: string | null; mailtoUrl: string | null; mensaje: string; b2bAsistido?: PlanB2BCotizacion }
   | { ok: false; error: string }
+  // #102: entre la vista previa y generar cambió el desglose B2B (precio, impuesto, base, %, comisión o total). No se creó nada; `terminos` es el desglose vigente.
+  | ResultadoTerminosCambiaron
   | ResultadoPrecioActualizadoBernalo;
+export type ResultadoTerminosCambiaron = { ok: false; tipo: "terminos_cambiaron"; error: string; terminos: TerminosB2BPrevios };
 
 // ── Snapshot público de vuelo — compartido entre persona (bloqueo) y Bernalo
 // (bloqueo/empaquetado, Fase 3F-4A cierre #3). `bloqueos_vuelo` y
@@ -542,6 +545,7 @@ async function crearCotizacionCarrito(input: {
 }, opts?: OpcionesCarrito): Promise<
   | { ok: true; id: number; codigo: string; url: string; moneda: string; itemsOk: SolicitudItemComputado[]; itemsBernaloOk: SolicitudItemBernaloComputado[]; toursOk: SolicitudTourComputado[]; excluidos: ItemExcluido[]; b2bPlan: PlanB2BCotizacion | null }
   | { ok: false; error: string }
+  | ResultadoTerminosCambiaron
   | ResultadoPrecioActualizadoBernalo
 > {
   const sb = await createClient();
@@ -1033,6 +1037,12 @@ async function crearCotizacionCarrito(input: {
     });
     if (!r.ok) return { ok: false, error: r.error };
     planB2B = r.plan;
+    // El usuario confirmó UN desglose (vista previa): si lo que el servidor liquida ahora es distinto, no se crea nada y se devuelve el vigente para confirmar de nuevo.
+    // El cálculo sigue siendo el del servidor; `vistos` solo se compara. (La vista previa misma corre en modo captura y no compara.)
+    if (opts.b2b.vistos && !opts.capturar) {
+      const cmp = compararTerminosVistos(opts.b2b.vistos, planB2B);
+      if (!cmp.ok) return { ok: false, tipo: "terminos_cambiaron", error: cmp.error, terminos: terminosPrevios(planB2B) };
+    }
   }
 
   // Preview #403: cliente comercial y firmas. En NETO el cliente es el ALIADO (identidad fiscal del catálogo, ya resuelta en servidor) y la persona queda
@@ -1110,7 +1120,7 @@ async function crearCotizacionCarrito(input: {
   // #35: una opción de comparativa solo necesita la fila calculada.
   if (opts?.capturar) {
     opts.capturar(filaCotizacion as unknown as Record<string, unknown>);
-    return { ok: true, id: 0, codigo: "", url: "", moneda, itemsOk, itemsBernaloOk, toursOk, excluidos, b2bPlan: null };
+    return { ok: true, id: 0, codigo: "", url: "", moneda, itemsOk, itemsBernaloOk, toursOk, excluidos, b2bPlan: planB2B };
   }
   const { data: row, error } = await admin.from("cotizaciones").insert(filaCotizacion).select("id, codigo, share_token").single();
   // FRONTERA PÚBLICA (ronda 7): nunca se reenvía `error.message` — un fallo
@@ -1257,6 +1267,36 @@ export async function crearSolicitudReserva(inputRaw: unknown): Promise<Solicitu
     : null;
 
   return { ok: true, cotizacion: { id: cot.id, codigo: cot.codigo, url: cot.url }, waUrl, mailtoUrl, mensaje, ...(cot.b2bPlan ? { b2bAsistido: cot.b2bPlan } : {}) };
+}
+
+/** Términos de la venta B2B asistida tal como el servidor los liquida HOY (los mismos que se congelarán al generar). */
+export type TerminosB2BPrevios = Pick<PlanB2BCotizacion, "aliado_nombre" | "tipo_asesor" | "modo_compra" | "moneda" | "pvp" | "impuesto" | "base" | "pct" | "pct_origen" | "comision" | "total_exigible">;
+export type PrevisualizacionB2B = { ok: true; terminos: TerminosB2BPrevios } | { ok: false; error: string };
+
+/**
+ * Vista previa del desglose B2B ANTES de generar: corre el MISMO cálculo que `crearSolicitudReserva` (`crearCotizacionCarrito` en modo captura: reliquida el carrito en
+ * el servidor, valida actor/aliado/modalidad y construye el plan), sin insertar nada ni tocar el CRM. No es una fórmula aparte: si no puede liquidarse devuelve el motivo.
+ * Los datos de la persona no intervienen (se usa un titular provisional que nunca se guarda). Generar vuelve a validar y congelar.
+ */
+export async function previsualizarTerminosB2BAsistido(inputRaw: unknown): Promise<PrevisualizacionB2B> {
+  const asistencia = leerAsistenciaB2BEntrada(inputRaw);
+  if (!asistencia.ok) return { ok: false, error: asistencia.error };
+  if (!asistencia.asistencia) return { ok: false, error: "Elige el aliado y la modalidad para ver el desglose." };
+  const crudo = (typeof inputRaw === "object" && inputRaw !== null ? inputRaw : {}) as Record<string, unknown>;
+  const v = validarCrearSolicitudInput({ ...crudo, cliente: { nombres: "Vista", apellidos: "previa", tipoDoc: "CC", numeroDoc: "0", telefono: "0", email: "" } });
+  if (!v.ok) return { ok: false, error: v.error };
+  if (!v.input.items.length && !v.input.tours.length) return { ok: false, error: "El carrito está vacío." };
+  const prep = await prepararAsistenciaB2B(await createClient(), asistencia.asistencia);
+  if (!prep.ok) return { ok: false, error: prep.error };
+  const cot = await crearCotizacionCarrito({ items: v.input.items, tours: v.input.tours, hotelDeTour: v.input.hotelDeTour, cliente: v.input.cliente }, { b2b: prep.contexto, capturar: () => {} });
+  if (!cot.ok) return { ok: false, error: "error" in cot ? cot.error : "El precio de un hotel cambió; revisa el carrito y vuelve a intentar." };
+  if (!cot.b2bPlan) return { ok: false, error: "No se pudo liquidar la venta B2B." };
+  return { ok: true, terminos: terminosPrevios(cot.b2bPlan) };
+}
+
+function terminosPrevios(p: PlanB2BCotizacion): TerminosB2BPrevios {
+  const { aliado_nombre, tipo_asesor, modo_compra, moneda, pvp, impuesto, base, pct, pct_origen, comision, total_exigible } = p;
+  return { aliado_nombre, tipo_asesor, modo_compra, moneda, pvp, impuesto, base, pct, pct_origen, comision, total_exigible };
 }
 
 // Venta B2B asistida: aliado, modalidad y términos congelados, para el mensaje INTERNO que se envía a D'spacios (mismo destino y

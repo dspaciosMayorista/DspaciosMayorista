@@ -14,7 +14,7 @@ type Sb = Awaited<ReturnType<typeof createClient>>;
 export type ActorAsistencia = { id: string; email: string | null; rol: RolAsistenciaB2B; superadmin: boolean; nombre: string | null };
 /** `fiscal`: identidad del aliado TAL COMO ESTÁ en el catálogo (nunca texto del navegador); es el cliente comercial de una venta NETO. */
 export type AliadoResuelto = AliadoAsistencia & { pct: number; pctOrigen: OrigenPctB2B; fiscal: FiscalAliado };
-export type ContextoAsistenciaB2B = { actor: ActorAsistencia; aliado: AliadoResuelto; modo: ModoCompra };
+export type ContextoAsistenciaB2B = { actor: ActorAsistencia; aliado: AliadoResuelto; modo: ModoCompra; vistos?: EntradaAsistencia["vistos"] };
 export type AliadoListado = { id: number; nombre: string; tipo: TipoAliadoB2B; pct: number; pctOrigen: OrigenPctB2B };
 
 const ERROR_SESION = "Tu sesión no es válida. Vuelve a iniciar sesión.";
@@ -64,7 +64,7 @@ export async function prepararAsistenciaB2B(sb: Sb, entrada: EntradaAsistencia):
   if (!a.ok) return a;
   const al = await resolverAliadoAsistencia(sb, entrada.aliadoId);
   if (!al.ok) return al;
-  return { ok: true, contexto: { actor: a.actor, aliado: al.aliado, modo: entrada.modo } };
+  return { ok: true, contexto: { actor: a.actor, aliado: al.aliado, modo: entrada.modo, ...(entrada.vistos ? { vistos: entrada.vistos } : {}) } };
 }
 
 /**

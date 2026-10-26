@@ -98,7 +98,30 @@ export function autorizarActorAsistenciaB2B(
 
 // ── Entrada del navegador (solo ELIGE) ───────────────────────────────────────
 
-export type EntradaAsistencia = { aliadoId: number; modo: ModoCompra };
+/** Desglose que el usuario VIO en la vista previa (lo que el navegador devuelve para confirmar). Solo se COMPARA con el cálculo del servidor; nunca lo reemplaza. */
+export type TerminosVistos = Pick<PlanB2BCotizacion, "modo_compra" | "moneda" | "pvp" | "impuesto" | "base" | "pct" | "pct_origen" | "comision" | "total_exigible">;
+export type EntradaAsistencia = { aliadoId: number; modo: ModoCompra; vistos?: TerminosVistos };
+
+export const MENSAJE_TERMINOS_VISTOS_CAMBIARON =
+  "Los términos de la venta B2B cambiaron desde el desglose que viste (precio, impuesto, base, porcentaje, comisión o total). No se creó la cotización: revisa el desglose actualizado y confirma de nuevo.";
+
+function leerVistos(v: unknown): TerminosVistos | null {
+  if (!esObjeto(v)) return null;
+  if (v.modo_compra !== "comisionable" && v.modo_compra !== "neta") return null;
+  if (typeof v.moneda !== "string" || !v.moneda) return null;
+  if (v.pct_origen !== "aliado" && v.pct_origen !== "general" && v.pct_origen !== "defecto") return null;
+  for (const k of ["pvp", "impuesto", "base", "pct", "comision", "total_exigible"] as const) if (!finito(v[k])) return null;
+  return { modo_compra: v.modo_compra, moneda: v.moneda, pct_origen: v.pct_origen, pvp: v.pvp as number, impuesto: v.impuesto as number, base: v.base as number, pct: v.pct as number, comision: v.comision as number, total_exigible: v.total_exigible as number };
+}
+
+/** Los términos que el servidor liquida AHORA deben ser los que el usuario vio: cualquier diferencia (más allá de medio centavo) ⇒ no se crea nada. */
+export function compararTerminosVistos(vistos: TerminosVistos, plan: PlanB2BCotizacion): { ok: true } | { ok: false; error: string } {
+  const igual = (a: number, b: number) => Math.abs(a - b) <= EPS;
+  const cuadra = vistos.modo_compra === plan.modo_compra && vistos.moneda === plan.moneda && vistos.pct_origen === plan.pct_origen
+    && igual(vistos.pvp, plan.pvp) && igual(vistos.impuesto, plan.impuesto) && igual(vistos.base, plan.base)
+    && Math.abs(vistos.pct - plan.pct) <= 1e-9 && igual(vistos.comision, plan.comision) && igual(vistos.total_exigible, plan.total_exigible);
+  return cuadra ? { ok: true } : { ok: false, error: MENSAJE_TERMINOS_VISTOS_CAMBIARON };
+}
 
 /**
  * `asistencia` ausente / null / `{canal:"b2c"}` ⇒ cotización B2C de siempre. `{canal:"b2b", aliadoId, modo}` ⇒ B2B asistida.
@@ -113,7 +136,11 @@ export function leerAsistenciaB2BEntrada(raw: unknown): { ok: true; asistencia: 
   const id = a.aliadoId;
   if (!(typeof id === "number" && Number.isInteger(id) && id > 0)) return { ok: false, error: "Elige el aliado (agencia o freelance) de la venta B2B." };
   if (a.modo !== "comisionable" && a.modo !== "neta") return { ok: false, error: "Elige la modalidad de la venta B2B: PVP con comisión o NETO." };
-  return { ok: true, asistencia: { aliadoId: id, modo: a.modo } };
+  // `vistos` es opcional, pero si llega debe ser un desglose bien formado: uno ilegible no se ignora en silencio.
+  if (a.vistos === undefined || a.vistos === null) return { ok: true, asistencia: { aliadoId: id, modo: a.modo } };
+  const vistos = leerVistos(a.vistos);
+  if (!vistos) return { ok: false, error: "El desglose que se confirmó no es válido. Vuelve a elegir el aliado para recalcularlo." };
+  return { ok: true, asistencia: { aliadoId: id, modo: a.modo, vistos } };
 }
 
 // ── Aliado (catálogo) y porcentaje ───────────────────────────────────────────

@@ -8,7 +8,7 @@ import {
   camposClienteVenta, camposVendedorAliado, fiscalDeFilaAliado, nombreQuienElabora, titularDeCliente, valorParaListado,
 } from "../lib/cotizacion/identidadB2B.ts";
 import { cargarAgenciaDeCotizacion } from "../lib/cotizacion/agenciaCotizacion.ts";
-import { compararIdentidadAliadoConCongelada, construirPlanB2B, leerPlanB2BDePayload, MENSAJE_COTIZACION_B2B_INVALIDA, MENSAJE_IDENTIDAD_ALIADO_CAMBIO } from "../lib/cotizacion/asistidaB2B.ts";
+import { compararIdentidadAliadoConCongelada, compararTerminosVistos, leerAsistenciaB2BEntrada, MENSAJE_TERMINOS_VISTOS_CAMBIARON, construirPlanB2B, leerPlanB2BDePayload, MENSAJE_COTIZACION_B2B_INVALIDA, MENSAJE_IDENTIDAD_ALIADO_CAMBIO } from "../lib/cotizacion/asistidaB2B.ts";
 import { resolverFirmasSesion } from "../lib/cotizacion/firmasSesion.ts";
 
 const leer = (rel: string) => readFileSync(new URL(`../${rel}`, import.meta.url), "utf8").replace(/\r\n/g, "\n");
@@ -291,6 +291,42 @@ describe("cableado: identidad fiscal y RNT fallan antes de numerar / de imprimir
       const f = leer(rel);
       assert.match(f, /if \(!agenciaRes\.ok\) throw new Error\(agenciaRes\.mensaje\)/, rel);
       assert.match(f, /const agencia = agenciaRes\.agencia;/, rel);
+    }
+  });
+});
+
+describe("términos vistos en la vista previa vs. los que liquida el servidor al generar", () => {
+  const plan = (() => {
+    const r = construirPlanB2B({
+      aliado: { id: 7, nombre: "Viajes Aurora", tipo: "agencia", pctAliado: 0.11 }, pct: 0.11, pctOrigen: "aliado", modo: "neta", moneda: "USD",
+      lineas: [{ clave: "item-0", pvp: 1930, impuesto: 830 }], actor: { id: "u1", email: null, rol: "venta" }, congeladoEn: "2030-01-01T00:00:00.000Z",
+    });
+    assert.ok(r.ok);
+    return r.ok ? r.plan : (null as never);
+  })();
+  const vistos = { modo_compra: plan.modo_compra, moneda: plan.moneda, pvp: plan.pvp, impuesto: plan.impuesto, base: plan.base, pct: plan.pct, pct_origen: plan.pct_origen, comision: plan.comision, total_exigible: plan.total_exigible };
+
+  test("sin cambios (caso de la captura: 1.930 / 830 / 1.100 / 11 % = 121 / NETO 1.809) ⇒ ok", () => {
+    assert.deepEqual([plan.pvp, plan.impuesto, plan.base, plan.comision, plan.total_exigible], [1930, 830, 1100, 121, 1809]);
+    assert.deepEqual(compararTerminosVistos(vistos, plan), { ok: true });
+    assert.deepEqual(compararTerminosVistos({ ...vistos, pvp: vistos.pvp + 0.004 }, plan), { ok: true }, "ruido de redondeo bajo medio centavo");
+  });
+
+  test("cambió PVP, impuesto, base, porcentaje, origen, comisión, total, moneda o modalidad ⇒ rechazo con el mensaje de términos cambiados", () => {
+    const cambios: Record<string, unknown>[] = [
+      { pvp: 2000 }, { impuesto: 900 }, { base: 1000 }, { pct: 0.12 }, { pct_origen: "general" }, { comision: 120 }, { total_exigible: 1810 }, { moneda: "COP" }, { modo_compra: "comisionable" },
+    ];
+    for (const c of cambios) assert.deepEqual(compararTerminosVistos({ ...vistos, ...c } as never, plan), { ok: false, error: MENSAJE_TERMINOS_VISTOS_CAMBIARON }, JSON.stringify(c));
+  });
+
+  test("la entrada lee `vistos` si llega bien formado; uno ilegible se rechaza (no se ignora); sin `vistos` sigue igual que antes", () => {
+    const base = { canal: "b2b", aliadoId: 7, modo: "neta" };
+    assert.deepEqual(leerAsistenciaB2BEntrada({ asistencia: base }), { ok: true, asistencia: { aliadoId: 7, modo: "neta" } });
+    const bien = leerAsistenciaB2BEntrada({ asistencia: { ...base, vistos } });
+    assert.ok(bien.ok && bien.asistencia?.vistos?.total_exigible === 1809);
+    for (const malo of [{}, { ...vistos, pvp: "1930" }, { ...vistos, pct: Number.NaN }, { ...vistos, modo_compra: "x" }, { ...vistos, pct_origen: "y" }, { ...vistos, moneda: "" }, "texto", []]) {
+      const r = leerAsistenciaB2BEntrada({ asistencia: { ...base, vistos: malo } });
+      assert.equal(r.ok, false, JSON.stringify(malo));
     }
   });
 });

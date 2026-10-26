@@ -338,7 +338,7 @@ describe("KPI ampliados — barras de progreso con fuente real (ronda de indicad
   });
 
   test("MetricCard renderiza cifra principal, contexto 'X de Y' y porcentaje solo si hay barra", () => {
-    assert.match(home, /<span>\{bar\.num\} de \{bar\.den\}<\/span>/);
+    assert.match(home, /\{bar\.num\.toLocaleString\("es-CO"\)\} de \{bar\.den\.toLocaleString\("es-CO"\)\}<\/span>/);
     assert.match(home, /<span className="font-semibold">\{bar\.pct\}%<\/span>/);
   });
 
@@ -403,8 +403,12 @@ describe("KPI ampliados — barras de progreso con fuente real (ronda de indicad
     assert.match(home, /\{ icon: Percent, label: "Retención en la fuente \(mes\)", value: formatCOP\(retencionMes\), sub: "Practicada a proveedores" \}/);
   });
 
-  test("responsive: el grid de métricas sigue en 2 columnas en móvil y 4 en escritorio (sin recortes al agregar más tarjetas)", () => {
-    assert.match(home, /<section className="mt-5 grid grid-cols-2 gap-3 md:grid-cols-4">/);
+  test("responsive: el grid de métricas se adapta al ancho REAL (menú lateral incluido) y la tarjeta no deja salir el importe completo", () => {
+    assert.match(home, /<section className="mt-5 grid grid-cols-\[repeat\(auto-fill,minmax\(13\.5rem,1fr\)\)\] gap-3">/);
+    assert.doesNotMatch(home, /grid-cols-2 gap-3 md:grid-cols-4/, "ya no hay saltos fijos de 2/4 columnas");
+    assert.match(home, /min-w-0 rounded-lg border p-4/, "la tarjeta puede encogerse dentro de su celda");
+    assert.match(home, /text-xl font-semibold tabular-nums \[overflow-wrap:anywhere\]/, "el valor parte la línea en vez de salirse");
+    assert.match(home, /flex flex-wrap items-center justify-between gap-x-2/, "«X de Y» y el % no se pisan");
   });
 });
 
