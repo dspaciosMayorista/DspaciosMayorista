@@ -70,6 +70,7 @@ export function CabeceraForm({
     restriccionComercial: (initial?.restriccionComercial as string | undefined) ?? "normal",
     // Destino fijo (migración 213): se inicializa SIEMPRE con lo guardado (null = sin destino).
     destinoFijoId: initial?.destinoFijoId ?? null,
+    proveedorAsistenciaId: initial?.proveedorAsistenciaId ?? null,
   });
   const [error, setError] = useState<string | null>(null);
   const [okMsg, setOkMsg] = useState(false);
@@ -193,11 +194,14 @@ export function CabeceraForm({
         <select value={f.modoPrecio} onChange={(e) => set("modoPrecio", e.target.value)} className={sel}>
           <option value="categoria">Por categoría de hotel (matriz categoría × acomodación)</option>
           <option value="salida">Por salida (fecha × precio, noches variables)</option>
+          <option value="hotel" disabled={f.tipoTransporte === "aereo"}>Por hotel y vigencia, con noches adicionales (terrestres)</option>
         </select>
         <p className="mt-1 text-xs text-gray-400">
           {f.modoPrecio === "salida"
             ? "Para circuitos donde el precio cambia por fecha de salida y las noches varían (tipo Cibeles). Cárgalas en la pestaña “Salidas y precios”."
-            : "Para circuitos con niveles de hotel y precio por acomodación. Cárgalos en “Hoteles y precios”."}
+            : f.modoPrecio === "hotel"
+              ? "Para programas terrestres: precio base neto por persona para toda la estancia, por hotel, vigencia (fecha de entrada) y servicios privados o regulares, más la tarifa de cada noche adicional. Cárgalos en “Hoteles y vigencias”."
+              : "Para circuitos con niveles de hotel y precio por acomodación. Cárgalos en “Hoteles y precios”."}
         </p>
       </div>
 
@@ -222,9 +226,12 @@ export function CabeceraForm({
               className={sel}
             >
               <option value="ninguno">Porción terrestre (sin traslado, solo servicios en destino)</option>
-              <option value="aereo">Con aéreo</option>
+              <option value="aereo" disabled={f.modoPrecio === "hotel"}>Con aéreo</option>
               <option value="terrestre">Salida terrestre (bus)</option>
             </select>
+            {f.modoPrecio === "hotel" && (
+              <p className="mt-1 text-xs text-gray-400">El modo por hotel y vigencia es solo terrestre: no se combina con aéreo.</p>
+            )}
           </div>
           <div>
             <label className={lbl}>Imagen de portada (URL)</label>
@@ -266,6 +273,19 @@ export function CabeceraForm({
             onChange={(e) => set("asistenciaMedicaDia", numOrNull(e.target.value))}
             placeholder="0"
           />
+        </div>
+        <div>
+          <label className={lbl}>Proveedor de la asistencia médica</label>
+          <select
+            aria-label="Proveedor de la asistencia médica"
+            value={f.proveedorAsistenciaId == null ? "" : String(f.proveedorAsistenciaId)}
+            onChange={(e) => set("proveedorAsistenciaId", e.target.value === "" ? null : Number(e.target.value))}
+            className={sel}
+          >
+            <option value="">Sin proveedor</option>
+            {proveedores.map((p) => <option key={p.id} value={p.id}>{p.nombre}</option>)}
+          </select>
+          <p className="mt-1 text-xs text-gray-400">Obligatorio para reservar un programa por hotel y vigencia con asistencia diaria: se le registra una cuenta por pagar.</p>
         </div>
         <div>
           <label className={lbl}>Niño: edad máx.</label>

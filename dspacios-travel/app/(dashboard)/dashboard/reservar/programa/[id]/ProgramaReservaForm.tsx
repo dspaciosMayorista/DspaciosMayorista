@@ -14,7 +14,21 @@ import { documentoPasajeroDesdeCliente } from "@/lib/personas/tiposDocumento";
 import { BuscarTitular } from "@/components/personas/BuscarTitular";
 import { BuscarPasajeroDocumento } from "@/components/pasajeros/BuscarPasajeroDocumento";
 import { reservarPrograma } from "../../actions";
-import { totalDesdePrecios, type CambioPrecioPrograma } from "@/lib/programas/precioReserva57";
+import { validarTrmCosto } from "@/lib/finanzas/costoTrmCarrito";
+import { totalDesdePrecios, cotizarEstanciaDesdePvp, resolverBaseHotel, type CambioPrecioPrograma, type TablaHotelPvp } from "@/lib/programas/precioReserva57";
+import {
+  CLAVES_TARIFA,
+  ETIQUETA_MODALIDAD,
+  ETIQUETA_UNIDAD,
+  MAX_NOCHES_ADICIONALES,
+  MODALIDADES_SERVICIOS,
+  fechaLegible,
+  fechaRegresoEstancia,
+  itinerarioConNochesExtra,
+  validarItinerarioCompleto,
+  type DiaItinerario,
+  type ModalidadServicios,
+} from "@/lib/programas/estanciaHotel88";
 
 // Pax que cubre 1 habitación (Doble=2, Triple=3, Cuádruple=4, Sencilla=1).
 const paxPorHab = (a: string) => paxDeAcomodacion(a);
@@ -52,6 +66,10 @@ export function ProgramaReservaForm({
   edadNinoMin = 2,
   edadNinoMax = 11,
   edadInfanteMax = 1,
+  hoteles,
+  nochesIncluidas = null,
+  errorPrograma = null,
+  itinerario = [],
 }: {
   programaId: number;
   moneda: string;
@@ -64,14 +82,18 @@ export function ProgramaReservaForm({
   edadNinoMin?: number;
   edadNinoMax?: number;
   edadInfanteMax?: number;
+  /** #88 — programa por hotel y vigencia: tablas de PVP por hotel (nunca netos). Presente = modo hotel. */
+  hoteles?: TablaHotelPvp[];
+  /** Noches incluidas del programa (para las fechas de las noches adicionales). */
+  nochesIncluidas?: number | null;
+  /** Por qué el programa no permite calcular la estancia (días/noches sin configurar o incoherentes). */
+  errorPrograma?: string | null;
+  /** Itinerario base del programa (para mostrar el desplazado con las noches extra). */
+  itinerario?: DiaItinerario[];
 }) {
   const router = useRouter();
+  const modoHotel = hoteles !== undefined;
   const [categoriaId, setCategoriaId] = useState<number>(categorias[0]?.id ?? 0);
-  const cat = categorias.find((c) => c.id === categoriaId) ?? categorias[0];
-
-  // Acomodaciones (excepto niño) con precio disponible
-  const acomsAdulto = cat.precios.filter((p) => p.acomodacion !== "nino" && p.pvp != null && !p.bajoSolicitud);
-  const precioNino = cat.precios.find((p) => p.acomodacion === "nino" && p.pvp != null && !p.bajoSolicitud)?.pvp ?? null;
 
   const [habs, setHabs] = useState<Record<string, number>>({}); // habitaciones por acomodación
   const [ninos, setNinos] = useState(0);
@@ -79,6 +101,31 @@ export function ProgramaReservaForm({
   // En modo salida, la fecha va atada a la salida elegida (no es un calendario
   // libre): arranca con la de la primera salida.
   const [fechaIda, setFechaIda] = useState(() => (modoSalida ? (categorias[0]?.fechaSugerida ?? "") : ""));
+
+  // #88 — hotel, modalidad de servicios y noches adicionales. La base sale de la vigencia de la
+  // fecha de ENTRADA; cada noche adicional, de la vigencia de su propia fecha. Todo con las
+  // MISMAS funciones puras que usa el servidor (precioReserva57 / estanciaHotel88).
+  const [hotelId, setHotelId] = useState<number>(hoteles?.[0]?.hotel.id ?? 0);
+  const [modalidad, setModalidad] = useState<ModalidadServicios>("privado");
+  const [adicionales, setAdicionales] = useState(0);
+  // TRM de costos (pesos por dólar): solo programas por hotel en USD. La ingresa quien reserva; el servidor la exige y la congela en cada CxP.
+  const pideTrmCosto = modoHotel && moneda.toUpperCase() === "USD";
+  const [trmCosto, setTrmCosto] = useState("");
+  const tablaHotel = modoHotel ? (hoteles ?? []).find((t) => t.hotel.id === hotelId) ?? null : null;
+  const baseHotel = tablaHotel && fechaIda ? resolverBaseHotel(tablaHotel.base, modalidad, fechaIda, tablaHotel.hotel.nombre) : null;
+  const cat: CategoriaReserva | undefined = modoHotel
+    ? {
+        id: 0,
+        nombre: tablaHotel ? `${tablaHotel.hotel.nombre} · ${ETIQUETA_MODALIDAD[modalidad]}` : "",
+        precios: baseHotel?.ok && !baseHotel.fila.bajoSolicitud
+          ? CLAVES_TARIFA.map((k) => ({ acomodacion: k, pvp: baseHotel.fila.pvp[k], bajoSolicitud: false }))
+          : [],
+      }
+    : categorias.find((c) => c.id === categoriaId) ?? categorias[0];
+
+  // Acomodaciones (excepto niño) con precio disponible
+  const acomsAdulto = (cat?.precios ?? []).filter((p) => p.acomodacion !== "nino" && p.pvp != null && !p.bajoSolicitud);
+  const precioNino = (cat?.precios ?? []).find((p) => p.acomodacion === "nino" && p.pvp != null && !p.bajoSolicitud)?.pvp ?? null;
 
   const textoEdades = textoEdadesHotel({ ninoMin: edadNinoMin, ninoMax: edadNinoMax, infMin: 0, infMax: edadInfanteMax });
 
@@ -102,16 +149,28 @@ export function ProgramaReservaForm({
 
   // #57: misma aritmética (centavos) y mismos precios por persona que la ficha y
   // que la liquidación del servidor (`lib/programas/precioReserva57.ts`).
-  const total = useMemo(
+  const totalMatriz = useMemo(
     () => totalDesdePrecios({ adultos: acomsAdulto, precioNino, habitaciones: habs, ninos: Number(ninos) || 0 }),
     [acomsAdulto, habs, ninos, precioNino]
   );
+  // #88: en modo hotel el total es el de la estancia (base + noches adicionales), con el desglose por fecha.
+  const cotizacionHotel =
+    modoHotel && tablaHotel && nochesIncluidas != null && fechaIda
+      ? cotizarEstanciaDesdePvp(tablaHotel, nochesIncluidas, {
+          modalidad, fechaEntrada: fechaIda, nochesAdicionales: adicionales, habitaciones: habs, ninos: Number(ninos) || 0, infantes: Number(infantes) || 0,
+        })
+      : null;
+  const total = modoHotel ? (cotizacionHotel?.ok ? cotizacionHotel.total : 0) : totalMatriz;
+  // Con noches adicionales se desplaza el último día: un itinerario al que le falta un día pondría la recogida en el día equivocado.
+  const errorItinerario = modoHotel && adicionales > 0 ? validarItinerarioCompleto(itinerario, dias) : null;
+  const errorEstancia = !modoHotel ? null : errorPrograma ? errorPrograma : errorItinerario ? errorItinerario : !tablaHotel ? "Elige el hotel." : cotizacionHotel && !cotizacionHotel.ok ? cotizacionHotel.error : baseHotel && !baseHotel.ok ? baseHotel.error : null;
+  const itinerarioReserva = (modoHotel && fechaIda && tablaHotel ? itinerarioConNochesExtra(itinerario, adicionales, fechaIda, tablaHotel.hotel.nombre, dias) : null) ?? [];
 
   // #57: el servidor recalcula el precio al confirmar. Si cambió, no crea nada y
   // devuelve el nuevo importe; solo un clic EXPRESO del usuario lo acepta. La
   // aceptación y el aviso valen únicamente para la selección en la que se
   // produjeron (cambiar categoría, fecha, habitaciones o niños los descarta).
-  const claveSeleccion = JSON.stringify([categoriaId, fechaIda, habs, Number(ninos) || 0, Number(infantes) || 0]);
+  const claveSeleccion = JSON.stringify([categoriaId, fechaIda, habs, Number(ninos) || 0, Number(infantes) || 0, hotelId, modalidad, adicionales]);
   const [cambio, setCambio] = useState<{ clave: string; datos: CambioPrecioPrograma } | null>(null);
   const cambioVigente = cambio && cambio.clave === claveSeleccion ? cambio.datos : null;
 
@@ -164,7 +223,12 @@ export function ProgramaReservaForm({
 
   function enviar(precioConfirmado: number) {
     setError(null);
-    if (!fechaIda) return setError("Elige la fecha de salida.");
+    if (!fechaIda) return setError(modoHotel ? "Elige la fecha de entrada al hotel." : "Elige la fecha de salida.");
+    if (modoHotel && errorEstancia) return setError(errorEstancia);
+    if (pideTrmCosto) {
+      const v = validarTrmCosto(trmCosto);
+      if (!v.ok) return setError(v.error);
+    }
     if (totalPax <= 0) return setError("Indica cuántas habitaciones reservas en cada acomodación.");
     if (!`${cliente.nombres}${cliente.apellidos}`.trim()) return setError("El nombre del cliente es obligatorio.");
     if (cliente.numeroDoc.trim() && !cliente.tipoDoc) return setError("Elige el tipo de documento del cliente.");
@@ -172,8 +236,10 @@ export function ProgramaReservaForm({
       const res = await reservarPrograma({
         precioConfirmado,
         programaId,
-        categoriaId,
+        categoriaId: modoHotel ? 0 : categoriaId,
         salidaId: modoSalida ? categoriaId : undefined,
+        estancia: modoHotel ? { hotelId, modalidad, nochesAdicionales: adicionales } : undefined,
+        trmCosto: pideTrmCosto ? trmCosto : undefined,
         fechaIda,
         paxPorAcom: habs, // ahora son HABITACIONES por acomodación (el server expande a pax)
         ninos: Number(ninos) || 0,
@@ -215,8 +281,107 @@ export function ProgramaReservaForm({
 
   return (
     <form onSubmit={submit} className="space-y-6">
+      {/* Programa por hotel y vigencia (#88) */}
+      {modoHotel && (
+        <div className="space-y-4">
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+            <div>
+              <label className={lbl}>Hotel</label>
+              <select aria-label="Hotel" value={hotelId} onChange={(e) => setHotelId(Number(e.target.value))} className={sel}>
+                {(hoteles ?? []).map((t) => (
+                  <option key={t.hotel.id} value={t.hotel.id}>{[t.hotel.nombre, t.hotel.zona, t.hotel.tipoHabitacion].filter(Boolean).join(" · ")}</option>
+                ))}
+              </select>
+            </div>
+            <div>
+              <label className={lbl}>Servicios</label>
+              <select aria-label="Servicios" value={modalidad} onChange={(e) => setModalidad(e.target.value as ModalidadServicios)} className={sel}>
+                {MODALIDADES_SERVICIOS.map((m) => <option key={m} value={m}>{ETIQUETA_MODALIDAD[m]}</option>)}
+              </select>
+            </div>
+            <div>
+              <label className={lbl}>Fecha de entrada al hotel</label>
+              <DateInput aria-label="Fecha de entrada al hotel" type="date" value={fechaIda} min={vigenciaDesde ?? undefined} max={vigenciaHasta ?? undefined} onValueChange={(dateValue) => cambiarFechaIda(dateValue)} />
+            </div>
+            <div>
+              <label className={lbl}>Noches adicionales (después de la estancia incluida)</label>
+              <Input
+                aria-label="Noches adicionales"
+                type="number"
+                min={0}
+                max={MAX_NOCHES_ADICIONALES}
+                value={adicionales || ""}
+                onChange={(e) => setAdicionales(Math.max(0, Math.trunc(Number(e.target.value) || 0)))}
+                placeholder="0"
+              />
+            </div>
+          </div>
+
+          {pideTrmCosto && (
+            <div>
+              <label className={lbl}>TRM de costos (pesos por dólar)</label>
+              <Input aria-label="TRM de costos" inputMode="decimal" value={trmCosto} onChange={(e) => setTrmCosto(e.target.value)} placeholder="Ej. 4100" className="w-48" />
+              <p className="mt-1 text-xs text-gray-400">Se congela en el contrato y en cada cuenta por pagar en dólares. No es la TRM de cobro.</p>
+            </div>
+          )}
+
+          {errorEstancia && (fechaIda || errorPrograma || errorItinerario) && <p role="alert" className="text-sm text-amber-700">{errorEstancia}</p>}
+
+          {fechaIda && nochesIncluidas != null && !errorEstancia && (
+            <div className="rounded-xl border border-gray-200 bg-gray-50 p-3 text-sm text-gray-700" aria-label="Resumen de la estancia">
+              <p>
+                Estancia incluida: <strong>{fechaLegible(fechaIda)}</strong> a <strong>{fechaLegible(fechaRegresoEstancia(fechaIda, nochesIncluidas, 0))}</strong> ({nochesIncluidas} noches).
+              </p>
+              {adicionales > 0 && cotizacionHotel?.ok && (
+                <>
+                  <p className="mt-1">
+                    Regreso con {adicionales} noche(s) adicional(es): <strong>{fechaLegible(fechaRegresoEstancia(fechaIda, nochesIncluidas, adicionales))}</strong>.
+                  </p>
+                  <table className="mt-2 w-full text-xs">
+                    <thead>
+                      <tr className="text-left uppercase tracking-wide text-gray-400">
+                        <th className="py-1 pr-2">Noche</th><th className="py-1 pr-2">Vigencia</th><th className="py-1 pr-2">Se cobra</th><th className="py-1 text-right">Valor</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {cotizacionHotel.noches.map((n) => (
+                        <tr key={n.fecha} className="border-t border-gray-100">
+                          <td className="py-1 pr-2">{fechaLegible(n.fecha)}</td>
+                          <td className="py-1 pr-2 text-gray-500">{fechaLegible(n.vigenciaDesde)} — {fechaLegible(n.vigenciaHasta)}</td>
+                          <td className="py-1 pr-2 text-gray-500">{ETIQUETA_UNIDAD[n.unidad]}</td>
+                          <td className="py-1 text-right tabular-nums">{formatMoneda(n.pvpCentavos / 100, moneda)}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                    <tfoot>
+                      <tr className="border-t border-gray-200 font-medium">
+                        <td className="py-1" colSpan={3}>Estancia incluida</td>
+                        <td className="py-1 text-right tabular-nums">{formatMoneda(cotizacionHotel.totalBase, moneda)}</td>
+                      </tr>
+                      <tr className="font-medium">
+                        <td className="py-1" colSpan={3}>Noches adicionales</td>
+                        <td className="py-1 text-right tabular-nums">{formatMoneda(cotizacionHotel.totalNoches, moneda)}</td>
+                      </tr>
+                    </tfoot>
+                  </table>
+                </>
+              )}
+              {itinerarioReserva.length > 0 && (
+                <ol className="mt-3 space-y-0.5 text-xs text-gray-600" aria-label="Itinerario con las noches adicionales">
+                  {itinerarioReserva.map((d) => (
+                    <li key={d.dia} className={d.libre ? "text-[#1D7C9A]" : ""}>
+                      Día {d.dia}{d.fecha ? ` (${fechaLegible(d.fecha)})` : ""}: {d.titulo ?? "—"}
+                    </li>
+                  ))}
+                </ol>
+              )}
+            </div>
+          )}
+        </div>
+      )}
+
       {/* Salida (ya trae su fecha concatenada) o Categoría + fecha libre */}
-      {modoSalida ? (
+      {modoHotel ? null : modoSalida ? (
         <div>
           <label className={lbl}>Salida</label>
           <select
@@ -287,7 +452,7 @@ export function ProgramaReservaForm({
             <Input type="number" min={0} value={infantes || ""} onChange={(e) => setInfantes(Number(e.target.value) || 0)} placeholder="0" />
           </div>
         </div>
-        {acomsAdulto.length === 0 && (
+        {acomsAdulto.length === 0 && !(modoHotel && (!fechaIda || errorEstancia)) && (
           <p className="mt-2 text-sm text-amber-700">Esta categoría no tiene precios publicados (revisa “a solicitud”).</p>
         )}
       </div>

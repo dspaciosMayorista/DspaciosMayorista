@@ -299,7 +299,11 @@ describe("elevarEstadoFlujo(estado, \"error\") — fallos técnicos BLOQUEANTES 
     assert.ok(idxErrorHijas > -1, "no se encontró el helper _errorHijas");
     const cuerpoErrorHijas = cuerpo.slice(idxErrorHijas, cuerpo.indexOf("};", idxErrorHijas) + 2);
     assert.match(cuerpoErrorHijas, /elevarEstadoFlujo\(estado,\s*"error"\)/, "_errorHijas (bloqueante) debe elevar 'error'");
-    assert.match(cuerpoErrorHijas, /return\s*\{\s*ok:\s*false\s*as\s*const,\s*error:\s*MSG_ERROR_GUARDAR_RESERVA\s*\}/, "_errorHijas debe devolver el mensaje público FIJO, nunca error.message crudo");
+    // #88: en el modo hotel el mensaje puede añadir el número del contrato que no se pudo revertir, pero se arma SOLO con el público fijo más ese
+    // texto propio (`mensaje`): nunca error.message de Supabase/Postgres.
+    assert.match(cuerpoErrorHijas, /let\s+mensaje\s*=\s*MSG_ERROR_GUARDAR_RESERVA/, "_errorHijas debe partir del mensaje público FIJO");
+    assert.match(cuerpoErrorHijas, /return\s*\{\s*ok:\s*false\s*as\s*const,\s*error:\s*mensaje\s*\}/, "_errorHijas debe devolver ese mensaje, nunca error.message crudo");
+    assert.doesNotMatch(cuerpoErrorHijas, /error\.message|\$\{error/, "_errorHijas no expone el error crudo");
   });
 });
 
@@ -379,14 +383,17 @@ describe("validacion_negocio/validacion_programa registran 'rechazado' en CADA r
     assert.equal(logsRechazado.length, 1, "el log de rechazo debe estar UNA sola vez, dentro de la definición de _rechazarValidacion (reutilizada en los 14 returns)");
   });
 
-  test("reservarProgramaInterno: 14 puntos de rechazo pasan por _rechazarValidacionPrograma(); el log de éxito ('ok') aparece UNA sola vez", () => {
+  // #88 agrega 13 rechazos del modo «hotel y vigencia» (solo terrestre, moneda, hotel, modalidad, fecha de entrada, noches adicionales, noches del
+  // programa, hotel ajeno, precio base sin vigencia, itinerario incompleto, proveedor de la asistencia ausente o inexistente y TRM de costos), todos
+  // ANTES de numerar y envueltos igual: 14 → 27.
+  test("reservarProgramaInterno: 27 puntos de rechazo pasan por _rechazarValidacionPrograma(); el log de éxito ('ok') aparece UNA sola vez", () => {
     const cuerpo = cuerpoDeFuncion(leer(RESERVAR_ARCHIVO), "reservarProgramaInterno");
     const usos = [...cuerpo.matchAll(/return _rechazarValidacionPrograma\(/g)];
-    assert.equal(usos.length, 14, `se esperaban 14 puntos de rechazo envueltos, hubo ${usos.length}`);
+    assert.equal(usos.length, 27, `se esperaban 27 puntos de rechazo envueltos, hubo ${usos.length}`);
     const logsOk = [...cuerpo.matchAll(/registrarEtapa\("reservar_programa", flujoId, "validacion_programa", Math\.round\(performance\.now\(\) - _tValidacionProg0\), "ok"\)/g)];
     assert.equal(logsOk.length, 1, "el log de éxito de validacion_programa debe aparecer exactamente una vez (al final de la sección)");
     const logsRechazado = [...cuerpo.matchAll(/registrarEtapa\("reservar_programa", flujoId, "validacion_programa", Math\.round\(performance\.now\(\) - _tValidacionProg0\), "rechazado"\)/g)];
-    assert.equal(logsRechazado.length, 1, "el log de rechazo debe estar UNA sola vez, dentro de la definición de _rechazarValidacionPrograma (reutilizada en los 14 returns)");
+    assert.equal(logsRechazado.length, 1, "el log de rechazo debe estar UNA sola vez, dentro de la definición de _rechazarValidacionPrograma (reutilizada en los 27 returns)");
   });
 });
 

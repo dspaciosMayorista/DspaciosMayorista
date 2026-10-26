@@ -9,7 +9,7 @@ export default async function ProgramasPage() {
   const sb = await createClient();
   const { data: programas } = await sb
     .from("programas")
-    .select("id, nombre, subtitulo, dias, noches, moneda, publicado, activo, destino_fijo_id, proveedores(nombre), programa_destinos_fijos(nombre, es_provisional)")
+    .select("id, nombre, subtitulo, dias, noches, moneda, publicado, activo, destino_fijo_id, proveedores!programas_proveedor_id_fkey(nombre), programa_destinos_fijos(nombre, es_provisional)")
     .order("created_at", { ascending: false });
 
   // Precio "desde" por programa (mínimo neto publicado, informativo).

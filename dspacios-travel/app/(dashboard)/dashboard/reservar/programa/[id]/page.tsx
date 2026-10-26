@@ -2,6 +2,8 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
 import { getProgramaDetalle } from "@/lib/programas";
+import { cargarTablasPvp88 } from "@/lib/programas/estanciaHotelDatos88";
+import { esModoHotel, nochesIncluidasPrograma } from "@/lib/programas/estanciaHotel88";
 import { formatFecha } from "@/lib/utils";
 import { ProgramaReservaForm, type CategoriaReserva } from "./ProgramaReservaForm";
 
@@ -22,7 +24,11 @@ export default async function ReservarProgramaPage({ params }: { params: Promise
     .map((a) => ({ nombre: a.nombre, email: a.email }));
 
   const modoSalida = det.programa.modo_precio === "salida";
-  const categorias: CategoriaReserva[] = modoSalida
+  // #88: programa por hotel y vigencia — tablas de PVP por hotel (nunca netos), calculadas en el servidor.
+  const modoHotel = esModoHotel(det.programa.modo_precio);
+  const estancia = modoHotel ? await cargarTablasPvp88(sb, id, det.programa) : null;
+  const incluidas = nochesIncluidasPrograma(det.programa);
+  const categorias: CategoriaReserva[] = modoHotel ? [] : modoSalida
     ? det.salidas.map((s) => ({
         id: s.id,
         // Nombre + fecha SIEMPRE concatenados (antes la etiqueta tapaba la
@@ -55,7 +61,15 @@ export default async function ReservarProgramaPage({ params }: { params: Promise
         {det.programa.dias ? ` · ${det.programa.dias} días / ${det.programa.noches ?? ""} noches` : ""} · {det.programa.moneda}
       </p>
 
-      {!categorias.length ? (
+      {modoHotel && !estancia?.ok ? (
+        <p role="alert" className="rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">
+          No se pudieron cargar los hoteles y precios del programa. Inténtalo de nuevo en unos minutos.
+        </p>
+      ) : modoHotel && estancia?.ok && !estancia.tablas.length ? (
+        <p className="rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">
+          Este programa aún no tiene hoteles ni precios cargados.
+        </p>
+      ) : !modoHotel && !categorias.length ? (
         <p className="rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">
           Este programa aún no tiene {modoSalida ? "salidas" : "categorías"}/precios cargados.
         </p>
@@ -72,6 +86,10 @@ export default async function ReservarProgramaPage({ params }: { params: Promise
           edadNinoMin={det.programa.edad_nino_min ?? 2}
           edadNinoMax={det.programa.edad_nino_max ?? 11}
           edadInfanteMax={det.programa.edad_infante_max ?? 1}
+          hoteles={modoHotel && estancia?.ok ? estancia.tablas : undefined}
+          nochesIncluidas={modoHotel && incluidas.ok ? incluidas.noches : null}
+          errorPrograma={modoHotel && !incluidas.ok ? incluidas.error : null}
+          itinerario={modoHotel ? det.dias : undefined}
         />
       )}
     </div>

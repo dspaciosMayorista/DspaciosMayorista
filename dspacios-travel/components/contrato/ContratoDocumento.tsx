@@ -1,4 +1,5 @@
 import { COLOR_DOCUMENTO } from "@/lib/contrato/colorDocumento";
+import { EstanciaContratoBloque, type EstanciaContratoVista } from "@/components/contrato/EstanciaContratoBloque";
 import {
   EMPRESA,
   CONTRATO_TITULO,
@@ -65,6 +66,8 @@ function CondicionesTarifaSection({ condiciones }: { condiciones: CondicionTarif
 }
 
 type Props = {
+  /** #88: foto de la estancia (programa por hotel y vigencia con noches adicionales); null/ausente = otro tipo de contrato. */
+  estancia?: EstanciaContratoVista | null;
   // Subconjunto sin columnas financieras: lo alimenta tanto `ventas` como
   // `ventas_basica` (ver VentaDocumento en types/database.ts).
   venta: VentaDocumento;
@@ -165,6 +168,7 @@ export function ContratoDocumento({
   habitacionesBernalo = [],
   composicionBernalo = [],
   netoTotalExigible = null,
+  estancia = null,
 }: Props) {
   const moneda = (venta as { moneda?: string | null }).moneda ?? "COP";
   // Fase 3F-4B: helper ÚNICO (lib/contrato/valorContratoItem.ts) — lee
@@ -471,6 +475,11 @@ export function ContratoDocumento({
                   </div>
                 </div>
               ))}
+            </div>
+          )}
+          {estancia && (
+            <div className="mt-3">
+              <EstanciaContratoBloque estancia={estancia} />
             </div>
           )}
         </section>

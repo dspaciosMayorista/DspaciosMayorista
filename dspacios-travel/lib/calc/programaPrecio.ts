@@ -215,6 +215,20 @@ export function pvpPrograma(neto: number, opt: PvpOpciones, montoSinMarkup = 0):
   const extra = Number(montoSinMarkup) || 0;
   if (!Number.isFinite(n) || n < 0) return 0;
   if (n === 0 && extra <= 0) return 0;
+  return pvpProgramaFormula(n, opt, extra);
+}
+
+/**
+ * La fórmula de `pvpPrograma` SIN la guarda de "neto 0 = sin precio" (#88): una
+ * tarifa de noche adicional de $0 declarada de forma EXPLÍCITA (p. ej. un menor
+ * sin costo de alojamiento) sigue pagando su asistencia médica, y esa asistencia
+ * debe pasar por la misma fórmula (antes del markup, fee y redondeo) y no por
+ * una copia. `pvpPrograma` delega aquí tras su guarda: su comportamiento no cambia.
+ */
+export function pvpProgramaFormula(neto: number, opt: PvpOpciones, montoSinMarkup = 0): number {
+  const n = Number(neto);
+  const extra = Number(montoSinMarkup) || 0;
+  if (!Number.isFinite(n) || n < 0) return 0;
 
   const mk = Number(opt.pctMk) || 0;
   const fee = Number(opt.pctFee) || 0;

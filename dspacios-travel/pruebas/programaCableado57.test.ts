@@ -61,7 +61,8 @@ test("ventas.impuesto solo con el impuesto verificable; nada se infiere de monto
 test("el módulo de precio es puro y apto para el cliente: sin Supabase ni alias '@/'", () => {
   const modulo = sinComentarios(leer(MODULO));
   const imports = [...modulo.matchAll(/from\s+"([^"]+)"/g)].map((m) => m[1]);
-  assert.deepEqual(imports.sort(), ["../acomodaciones.ts", "../calc/programaPrecio.ts"].sort());
+  // #88: la estancia por hotel y vigencia vive en un módulo puro propio (mismo criterio: relativo, sin Supabase).
+  assert.deepEqual(imports.sort(), ["../acomodaciones.ts", "../calc/programaPrecio.ts", "./estanciaHotel88.ts"].sort());
 });
 
 test("el formulario usa la misma aritmética que el servidor y exige aceptación expresa del nuevo importe", () => {

@@ -9,6 +9,9 @@ import { AlertTriangle } from "lucide-react";
 import { ETIQUETA_FALTA_DESTINO, ETIQUETA_POR_CLASIFICAR, tieneDestinoFijo } from "@/lib/programas/destinoFijo";
 import { CabeceraForm } from "../CabeceraForm";
 import { ProgramaImagenes } from "./ProgramaImagenes";
+import { HotelesVigenciaEditor } from "./HotelesVigenciaEditor";
+import { esModoHotel } from "@/lib/programas/estanciaHotel88";
+import type { CatalogoHoteles88 } from "@/lib/programas/estanciaHotelDatos88";
 import type { Database } from "@/types/database";
 import {
   guardarCabecera,
@@ -95,13 +98,18 @@ export function ProgramaEditor(props: {
   destinos?: DestinoOpt[];
   /** Lista fija "destino de programas" (migración 213). */
   destinosFijos?: { id: number; nombre: string; es_provisional?: boolean | null }[];
+  /** Solo en programas por hotel y vigencia (#88). */
+  catalogoHoteles?: CatalogoHoteles88;
 }) {
   const { programa } = props;
   const [tab, setTab] = useState<(typeof TABS)[number]["key"]>("general");
   const router = useRouter();
   const modoSalidaTabs = programa.modo_precio === "salida";
+  const modoHotelTabs = esModoHotel(programa.modo_precio);
   const tabs = TABS.map((t) =>
-    t.key === "matriz" ? { ...t, label: modoSalidaTabs ? "Salidas y precios" : "Hoteles y precios" } : t
+    t.key === "matriz"
+      ? { ...t, label: modoHotelTabs ? "Hoteles y vigencias" : modoSalidaTabs ? "Salidas y precios" : "Hoteles y precios" }
+      : t
   );
   const [pubPending, startPub] = useTransition();
 
@@ -191,6 +199,7 @@ export function ProgramaEditor(props: {
     condicionPagoDiasSaldo: programa.condicion_pago_dias_saldo ?? "",
     restriccionComercial: programa.restriccion_comercial ?? "normal",
     destinoFijoId: programa.destino_fijo_id ?? null,
+    proveedorAsistenciaId: programa.proveedor_asistencia_id ?? null,
   };
 
   return (
@@ -283,7 +292,21 @@ export function ProgramaEditor(props: {
       {tab === "importar" && <ImportarEditor programaId={programa.id} onDone={() => router.refresh()} />}
       {tab === "ruta" && <RutaEditor programaId={programa.id} ciudades={props.ciudades} destinos={props.destinos ?? []} />}
       {tab === "itinerario" && <ItinerarioEditor programaId={programa.id} dias={props.dias} totalDias={programa.dias} />}
-      {tab === "matriz" &&
+      {tab === "matriz" && modoHotelTabs && (
+        <HotelesVigenciaEditor
+          programaId={programa.id}
+          programa={{
+            moneda: programa.moneda,
+            pct_mk: programa.pct_mk,
+            pct_fee_tarjeta: programa.pct_fee_tarjeta,
+            asistencia_medica_dia: programa.asistencia_medica_dia,
+            dias: programa.dias,
+          }}
+          proveedores={props.proveedores}
+          catalogo={props.catalogoHoteles ?? { hoteles: [], base: [], noches: [] }}
+        />
+      )}
+      {tab === "matriz" && !modoHotelTabs &&
         (modoSalidaTabs ? (
           <SalidasEditor
             programaId={programa.id}

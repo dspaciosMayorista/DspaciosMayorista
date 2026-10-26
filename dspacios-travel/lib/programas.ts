@@ -285,7 +285,7 @@ export type ProgramaDetalle = {
 export async function getProgramaDetalle(sb: SB, id: number): Promise<ProgramaDetalle | null> {
   const { data: programa } = await sb
     .from("programas")
-    .select("*, proveedores(nombre), programa_destinos_fijos(id, nombre, es_provisional)")
+    .select("*, proveedores!programas_proveedor_id_fkey(nombre), programa_destinos_fijos(id, nombre, es_provisional)")
     .eq("id", id)
     .maybeSingle();
   if (!programa) return null;

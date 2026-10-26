@@ -76,6 +76,7 @@ export default async function ContratoImprimiblePage({
     { data: contratoCondiciones },
     { data: overridesCondiciones },
     habitacionesBernalo,
+    { data: estancia },
   ] = await Promise.all([
     // Las dos vistas, no las tablas base: desde la migración 144 el rol
     // `venta` no lee `ventas`, y desde la 148 tampoco `contrato_vuelos`.
@@ -103,6 +104,8 @@ export default async function ContratoImprimiblePage({
     // el acceso a este número de contrato (regla 19). Vacío para contratos
     // persona (nunca escriben esta tabla).
     habitacionesBernaloDeContrato(numero),
+    // #88: foto de la estancia (sin netos); la RLS decide quién la ve. Sin la migración 244 simplemente no hay fila.
+    sb.from("contrato_programa_estancia").select("*").eq("numero_contrato", numero).maybeSingle(),
   ]);
 
   if (!venta) notFound();
@@ -176,6 +179,7 @@ export default async function ContratoImprimiblePage({
             condiciones={condicionesResueltas}
             habitacionesBernalo={habitacionesBernalo}
             netoTotalExigible={netoTotalExigible}
+            estancia={estancia}
           />
         </div>
       </div>

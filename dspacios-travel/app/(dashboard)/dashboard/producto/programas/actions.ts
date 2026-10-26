@@ -5,6 +5,7 @@ import { revalidatePath } from "next/cache";
 import { parsearPrograma } from "@/lib/programasImport";
 import { limpiarAlojamientoPrevisto } from "@/lib/programas";
 import { salidaTieneContenido, tieneImpuestoAcomodacionNegativo, tieneTarifaNegativa } from "@/lib/programas/salidasGuardado";
+import { validarHotelesParaGuardar, errorModoHotelConAereo, CLAVES_TARIFA, type PorAcom, type ClaveTarifa } from "@/lib/programas/estanciaHotel88";
 import { resolverValorReglaAcomodacion, validarReglaComisionable, validarTarifaModalidad, esModalidadMkValida, type ModalidadMk } from "@/lib/calc/programaPrecio";
 import {
   validarCondicionPago,
@@ -75,6 +76,11 @@ export type CabeceraInput = {
    * (formulario viejo): NO se toca la columna al guardar. `null` = sin destino.
    */
   destinoFijoId?: number | null;
+  /**
+   * Proveedor de la asistencia médica (#88, migración 245). `undefined` = el cliente no lo envió: NO se toca la columna. `null` = sin proveedor.
+   * Un programa por hotel y vigencia con asistencia diaria > 0 exige uno para poder reservarse.
+   */
+  proveedorAsistenciaId?: number | null;
 };
 
 function validarCondicionYRestriccionPrograma(
@@ -82,6 +88,13 @@ function validarCondicionYRestriccionPrograma(
 ): { ok: true; condicion: CondicionPagoPersistible; restriccion: string } | { ok: false; error: string } {
   const d = input.destinoFijoId;
   if (d !== undefined && d !== null && !(Number.isInteger(d) && d > 0)) return { ok: false, error: "Destino inválido." };
+  const pa = input.proveedorAsistenciaId;
+  if (pa !== undefined && pa !== null && !(Number.isInteger(pa) && pa > 0)) return { ok: false, error: "Proveedor de la asistencia inválido." };
+  // #88: el modo por hotel y vigencia es solo terrestre; la base también lo impide (programas_modo_hotel_terrestre_chk).
+  if (input.modoPrecio === "hotel") {
+    const aereo = errorModoHotelConAereo({ tipo_transporte: input.tipoTransporte, incluye_aereo: input.tipoTransporte === "aereo" });
+    if (aereo) return { ok: false, error: aereo };
+  }
   const cp = validarCondicionPago(
     {
       tipo: input.condicionPagoTipo ?? "normal",
@@ -134,7 +147,7 @@ function cabeceraRow(input: CabeceraInput, condicion: CondicionPagoPersistible, 
     incluye_aereo: input.tipoTransporte === "aereo", // compat, ya no es la fuente de verdad
     portada_url: oNull(input.portadaUrl),
     asistencia_medica_dia: input.asistenciaMedicaDia ?? 0,
-    modo_precio: input.modoPrecio === "salida" ? "salida" : "categoria",
+    modo_precio: input.modoPrecio === "salida" || input.modoPrecio === "hotel" ? input.modoPrecio : "categoria",
     video_url: oNull(input.videoUrl),
     condicion_pago_tipo: condicion.condicion_pago_tipo,
     condicion_pago_pct_inicial: condicion.condicion_pago_pct_inicial,
@@ -142,6 +155,7 @@ function cabeceraRow(input: CabeceraInput, condicion: CondicionPagoPersistible, 
     restriccion_comercial: restriccion,
     // Solo se escribe si el cliente lo manda: un guardado de cabecera nunca borra el destino por omisión.
     ...(input.destinoFijoId === undefined ? {} : { destino_fijo_id: input.destinoFijoId }),
+    ...(input.proveedorAsistenciaId === undefined ? {} : { proveedor_asistencia_id: input.proveedorAsistenciaId }),
   };
 }
 
@@ -490,6 +504,85 @@ export async function guardarSalidas(
     p_salidas: filas,
   });
   if (error) return { ok: false, error: error.message };
+  rev(programaId);
+  return { ok: true };
+}
+
+// ── Hoteles, vigencias y noches adicionales (#88, migración 244) ───────────────
+export type HotelVigenciaInput = {
+  id?: number | null;
+  nombre: string;
+  zona: string;
+  tipoHabitacion: string;
+  maxPaxHabitacion: string;
+  maxMenoresHabitacion: string;
+  proveedorId: number | null;
+  base: { desde: string; hasta: string; modalidad: string; bajoSolicitud: boolean; neto: Record<ClaveTarifa, string> }[];
+  noches: { desde: string; hasta: string; unidad: string; neto: Record<ClaveTarifa, string> }[];
+};
+
+const netosDe = (n: Record<ClaveTarifa, string>): PorAcom => {
+  const o = { sencilla: null, doble: null, triple: null, multiple: null, nino: null } as PorAcom;
+  for (const k of CLAVES_TARIFA) o[k] = num(n?.[k]);
+  return o;
+};
+const entero = (v: unknown): number | null => {
+  const n = num(v);
+  return n == null ? null : Number.isInteger(n) ? n : Number.NaN;
+};
+
+/**
+ * Reemplaza el catálogo de hoteles de un programa por hotel y vigencia. Valida
+ * antes (unidad de cobro obligatoria, fechas, valores, vigencias que no se solapan)
+ * y delega en la RPC atómica `guardar_programa_hoteles` (conserva los ids de los
+ * hoteles que ya existen). La RLS de siempre decide quién puede escribir.
+ */
+export async function guardarHoteles(programaId: number, hoteles: HotelVigenciaInput[]): Promise<Result> {
+  if (!Array.isArray(hoteles)) return { ok: false, error: "La lista de hoteles no es válida." };
+  const filas = hoteles.map((h) => ({
+    id: Number.isInteger(h.id) ? (h.id as number) : null,
+    nombre: String(h.nombre ?? ""),
+    zona: oNull(h.zona),
+    tipoHabitacion: oNull(h.tipoHabitacion),
+    maxPaxHabitacion: entero(h.maxPaxHabitacion),
+    maxMenoresHabitacion: entero(h.maxMenoresHabitacion),
+    proveedorId: Number.isInteger(h.proveedorId) && (h.proveedorId as number) > 0 ? (h.proveedorId as number) : null,
+    base: (h.base ?? []).map((b) => ({ desde: String(b.desde ?? ""), hasta: String(b.hasta ?? ""), modalidad: String(b.modalidad ?? ""), bajoSolicitud: !!b.bajoSolicitud, neto: netosDe(b.neto) })),
+    // Por habitación el menor va incluido: su campo no se guarda (un valor pegado por error no se cobra ni se exige).
+    noches: (h.noches ?? []).map((t) => {
+      const neto = netosDe(t.neto);
+      if (String(t.unidad ?? "") === "habitacion") neto.nino = null;
+      return { desde: String(t.desde ?? ""), hasta: String(t.hasta ?? ""), unidad: String(t.unidad ?? ""), neto };
+    }),
+  }));
+  if (filas.some((f) => Number.isNaN(f.maxPaxHabitacion) || Number.isNaN(f.maxMenoresHabitacion))) {
+    return { ok: false, error: "La ocupación permitida debe ser un número entero." };
+  }
+  const error = validarHotelesParaGuardar(filas.map((f) => ({ ...f, nombre: f.nombre })));
+  if (error) return { ok: false, error };
+
+  const sb = await createClient();
+  const { error: e } = await sb.rpc("guardar_programa_hoteles", {
+    p_programa_id: programaId,
+    p_hoteles: filas.map((f) => ({
+      id: f.id,
+      nombre: f.nombre.trim(),
+      zona: f.zona,
+      tipo_habitacion: f.tipoHabitacion,
+      max_pax_habitacion: f.maxPaxHabitacion,
+      max_menores_habitacion: f.maxMenoresHabitacion,
+      proveedor_id: f.proveedorId,
+      base: f.base.map((b) => ({
+        desde: b.desde, hasta: b.hasta, modalidad_servicios: b.modalidad, bajo_solicitud: b.bajoSolicitud,
+        neto_sencilla: b.neto.sencilla, neto_doble: b.neto.doble, neto_triple: b.neto.triple, neto_multiple: b.neto.multiple, neto_nino: b.neto.nino,
+      })),
+      noches: f.noches.map((t) => ({
+        desde: t.desde, hasta: t.hasta, unidad_cobro: t.unidad,
+        neto_sencilla: t.neto.sencilla, neto_doble: t.neto.doble, neto_triple: t.neto.triple, neto_multiple: t.neto.multiple, neto_nino: t.neto.nino,
+      })),
+    })) as never,
+  });
+  if (e) return { ok: false, error: e.message };
   rev(programaId);
   return { ok: true };
 }

@@ -43,6 +43,21 @@ import {
   type PvpOpciones,
 } from "../calc/programaPrecio.ts";
 import { paxDeAcomodacion } from "../acomodaciones.ts";
+import {
+  CLAVES_TARIFA,
+  liquidarNochesAdicionales,
+  nocheTarifaConPvp,
+  resolverVigencia,
+  sinNeto,
+  validarOcupacionHotel,
+  type BaseHotelFila,
+  type HotelEstancia,
+  type ModalidadServicios,
+  type Noche88,
+  type NocheTarifaFila,
+  type NocheTarifaPvp,
+  type PorAcom,
+} from "./estanciaHotel88.ts";
 
 /** Columnas de `programas` que intervienen en el precio (las mismas que lee la ficha). */
 export type ProgramaPrecioCabecera = {
@@ -207,6 +222,21 @@ function unidad(programa: ProgramaPrecioCabecera, fuente: FuentePrecio, acomodac
   return fila ? precioUnitarioCategoria(programa, fila) : null;
 }
 
+/**
+ * #88 — Estancia por hotel y vigencia con noches adicionales. La BASE de esta
+ * modalidad entra por `fuente` (la fila de la vigencia de entrada, vista como
+ * una salida: `salidaPrecioDesdeBase`) y pasa por la MISMA regla de #57; esto
+ * solo agrega las noches adicionales, que nunca existen sin la base.
+ */
+export type EstanciaEntrada = {
+  hotel: HotelEstancia;
+  /** Tarifas de noche del hotel con PVP (y neto, en el servidor). */
+  tarifasNoche: readonly NocheTarifaPvp[];
+  fechaEntrada: string;
+  nochesIncluidas: number;
+  nochesAdicionales: number;
+};
+
 export type EntradaLiquidacion = {
   programa: ProgramaPrecioCabecera;
   fuente: FuentePrecio;
@@ -214,6 +244,20 @@ export type EntradaLiquidacion = {
   habitaciones: Record<string, number>;
   ninos: number;
   infantes?: number;
+  /** Solo en programas por hotel y vigencia (#88). */
+  estancia?: EstanciaEntrada;
+};
+
+/** Desglose de la estancia (#88) que acompaña a una liquidación exitosa. */
+export type DesgloseEstancia = {
+  noches: Noche88[];
+  /** PVP de las noches adicionales (ya incluido en `precioVenta`). */
+  precioNoches: number;
+  /** Neto de las noches adicionales (ya incluido en `costoNeto`). */
+  costoNetoNoches: number;
+  /** Asistencia de las noches adicionales (parte de `costoAtribuible`; no va con el hotel: la asistencia de la estancia completa se registra en su propia CxP de asistencia). */
+  costoAsistenciaNoches: number;
+  nochesAdicionales: number;
 };
 
 export type LineaLiquidada = {
@@ -236,8 +280,14 @@ export type LiquidacionPrograma =
       totalPax: number;
       /** Total a cobrar en la moneda del programa (suma exacta en centavos). */
       precioVenta: number;
-      /** Σ neto del proveedor × pax (base de la CxP, sin cambios). */
+      /** Σ neto del proveedor × pax (base de la CxP). Con #88 incluye el neto de las noches adicionales. */
       costoNeto: number;
+      /** Parte de `costoNeto` de la estancia incluida (sin noches adicionales). */
+      costoNetoBase: number;
+      /** PVP de la estancia incluida (sin noches adicionales). */
+      precioBase: number;
+      /** #88: null en las modalidades de siempre. */
+      estancia: DesgloseEstancia | null;
       /**
        * Costo que el precio exigible debe cubrir: neto del proveedor + asistencia
        * (por día) de los pasajeros a quienes se les cobra. Sin fee bancario.
@@ -259,7 +309,7 @@ export type LiquidacionPrograma =
       ok: false;
       /** Mensaje para el usuario: SIN cifras de costo (el rol `venta` también reserva). */
       error: string;
-      codigo?: "neto_obsoleto" | "precio_bajo_costo";
+      codigo?: "neto_obsoleto" | "precio_bajo_costo" | "ocupacion_invalida" | "noches_adicionales";
       /** Diagnóstico con cifras, solo en memoria (pruebas): la acción NO lo envía al navegador ni lo loguea. */
       detalle?: string;
     };
@@ -279,12 +329,14 @@ export function evaluarCoberturaCosto(a: {
   asistenciaDia: number | null | undefined;
   dias: number | null | undefined;
   moneda: string;
+  /** #88: neto y asistencia (centavos) de las noches adicionales, ya incluidos en el precio. */
+  extra?: { netoCentavos: number; asistenciaCentavos: number };
 }): { ok: true; costoAtribuible: number; costoAsistencia: number } | { ok: false; error: string; detalle: string } {
   const asistenciaUnit = Math.round((Number(a.asistenciaDia) || 0) * Math.max(0, Number(a.dias) || 0) * 100);
   const paxCobrados = a.lineas.reduce((s, l) => s + l.pax, 0) + (a.nino?.cantidad ?? 0);
   const neto = a.lineas.reduce((s, l) => s + Math.round(l.netoUnit * 100) * l.pax, 0) + (a.nino ? Math.round(a.nino.netoUnit * 100) * a.nino.cantidad : 0);
-  const asistencia = asistenciaUnit * paxCobrados;
-  const costo = neto + asistencia;
+  const asistencia = asistenciaUnit * paxCobrados + (a.extra?.asistenciaCentavos ?? 0);
+  const costo = neto + (a.extra?.netoCentavos ?? 0) + asistencia;
   if (a.precioCentavos < costo) {
     return {
       ok: false,
@@ -364,6 +416,42 @@ export function liquidarSeleccion(e: EntradaLiquidacion): LiquidacionPrograma {
 
   const dias = e.fuente.modo === "salida" ? diasAsistencia(e.programa, e.fuente.salida.noches) : e.programa.dias;
 
+  // #88 — ocupación del hotel y noches adicionales. La BASE ya quedó liquidada
+  // arriba por la regla de siempre; aquí solo se SUMA lo adicional. Con 0 noches
+  // no se exige ninguna tarifa de noche (el programa se puede vender sin ellas).
+  const precioBaseCentavos = centavos;
+  const costoNetoBase = costoNeto;
+  let estancia: DesgloseEstancia | null = null;
+  let extraCosto: { netoCentavos: number; asistenciaCentavos: number } | undefined;
+  if (e.estancia) {
+    const ocupacion = validarOcupacionHotel(e.estancia.hotel, e.habitaciones, nNinos, nInfantes);
+    if (ocupacion) return { ok: false, codigo: "ocupacion_invalida", error: ocupacion };
+    const n = liquidarNochesAdicionales({
+      tarifas: e.estancia.tarifasNoche,
+      hotelNombre: e.estancia.hotel.nombre,
+      fechaEntrada: e.estancia.fechaEntrada,
+      nochesIncluidas: e.estancia.nochesIncluidas,
+      nochesAdicionales: e.estancia.nochesAdicionales,
+      habitaciones: e.habitaciones,
+      ninos: nNinos,
+      asistenciaDia: Number(e.programa.asistencia_medica_dia) || 0,
+    });
+    if (!n.ok) return { ok: false, codigo: "noches_adicionales", error: n.error };
+    if (n.netoCentavos == null) {
+      return { ok: false, codigo: "noches_adicionales", error: "La tarifa de noche adicional no tiene el neto del proveedor cargado; no se puede registrar su costo." };
+    }
+    centavos += n.pvpCentavos;
+    costoNeto = (Math.round(costoNeto * 100) + n.netoCentavos) / 100; // suma exacta en centavos: sin ruido de coma flotante
+    extraCosto = { netoCentavos: n.netoCentavos, asistenciaCentavos: n.asistenciaCentavos };
+    estancia = {
+      noches: n.noches,
+      precioNoches: n.pvpCentavos / 100,
+      costoNetoNoches: n.netoCentavos / 100,
+      costoAsistenciaNoches: n.asistenciaCentavos / 100,
+      nochesAdicionales: e.estancia.nochesAdicionales,
+    };
+  }
+
   // El precio exigible debe cubrir el costo del programa y la asistencia de quienes PAGAN.
   const cobertura = evaluarCoberturaCosto({
     precioCentavos: centavos,
@@ -372,6 +460,7 @@ export function liquidarSeleccion(e: EntradaLiquidacion): LiquidacionPrograma {
     asistenciaDia: e.programa.asistencia_medica_dia,
     dias,
     moneda: e.programa.moneda,
+    extra: extraCosto,
   });
   if (!cobertura.ok) return { ok: false, codigo: "precio_bajo_costo", error: cobertura.error, detalle: cobertura.detalle };
 
@@ -382,6 +471,9 @@ export function liquidarSeleccion(e: EntradaLiquidacion): LiquidacionPrograma {
     nino,
     totalPax,
     precioVenta: centavos / 100,
+    precioBase: precioBaseCentavos / 100,
+    costoNetoBase,
+    estancia,
     costoNeto,
     costoAtribuible: cobertura.costoAtribuible,
     costoAsistencia: cobertura.costoAsistencia,
@@ -475,4 +567,153 @@ export function evaluarPrecioConfirmado(
       : "El precio de la reserva cambió. Revisa el nuevo importe y acéptalo para continuar; no se creó ningún contrato.",
     cambioPrecio: { anterior, nuevo: calculado, moneda },
   };
+}
+
+// ── #88 — Programas por hotel y vigencia ─────────────────────────────────
+
+/**
+ * La fila de la vigencia de entrada vista como una "salida" para la regla única:
+ * sin `noches` propias (la asistencia usa los días del programa, regla de #57) y
+ * sin tarifa de proveedor (esta modalidad no usa la regla 161: camino histórico).
+ */
+export function salidaPrecioDesdeBase(fila: Pick<BaseHotelFila, "bajoSolicitud" | "neto">): SalidaPrecio {
+  return {
+    noches: null,
+    bajo_solicitud: fila.bajoSolicitud,
+    neto_sencilla: fila.neto.sencilla,
+    neto_doble: fila.neto.doble,
+    neto_triple: fila.neto.triple,
+    neto_multiple: fila.neto.multiple,
+    neto_nino: fila.neto.nino,
+  };
+}
+
+/**
+ * Fila base que aplica: hotel + modalidad de servicios + fecha de ENTRADA al
+ * hotel (la vigencia se decide por la entrada aunque las noches incluidas
+ * terminen en otra). Ninguna o varias → error, nunca una cercana.
+ */
+export function resolverBaseHotel<T extends { desde: string; hasta: string; modalidad: ModalidadServicios }>(
+  /** Filas YA filtradas al hotel elegido. */
+  filasDelHotel: readonly T[],
+  modalidad: ModalidadServicios,
+  fechaEntrada: string,
+  hotelNombre: string,
+) {
+  const delModo = filasDelHotel.filter((f) => f.modalidad === modalidad);
+  return resolverVigencia(delModo, fechaEntrada, `precio base de ${hotelNombre} con ${modalidad === "privado" ? "servicios privados" : "servicios regulares"}`);
+}
+
+/** PVP de las tarifas de noche de un hotel con las opciones de PRECIO del programa (sin días: la noche es 1). */
+export function tarifasNocheConPvp(programa: ProgramaPrecioCabecera, filas: readonly NocheTarifaFila[]): NocheTarifaPvp[] {
+  const opt = opcionesPvp(programa, null);
+  return filas.map((f) => nocheTarifaConPvp(f, opt));
+}
+
+export type FilaBasePvp = {
+  id: number;
+  desde: string;
+  hasta: string;
+  modalidad: ModalidadServicios;
+  bajoSolicitud: boolean;
+  pvp: PorAcom;
+};
+
+/** Lo que viaja al navegador (ficha y formulario): PVP y vigencias, JAMÁS un neto. */
+export type TablaHotelPvp = {
+  hotel: HotelEstancia;
+  base: FilaBasePvp[];
+  noches: NocheTarifaPvp[];
+};
+
+/** PVP por persona de la estancia incluida, por la regla única (`precioUnitarioSalida`). */
+function pvpBase(programa: ProgramaPrecioCabecera, fila: BaseHotelFila): PorAcom {
+  const salida = salidaPrecioDesdeBase(fila);
+  const pvp: PorAcom = { sencilla: null, doble: null, triple: null, multiple: null, nino: null };
+  for (const k of CLAVES_TARIFA) pvp[k] = precioUnitarioSalida(programa, salida, k)?.pvp ?? null;
+  return pvp;
+}
+
+export function construirTablaHotelPvp(programa: ProgramaPrecioCabecera, hotel: HotelEstancia, base: readonly BaseHotelFila[], noches: readonly NocheTarifaFila[]): TablaHotelPvp {
+  return {
+    // El proveedor del hotel es interno (la CxP lo resuelve el servidor): no viaja al navegador.
+    hotel: { ...hotel, proveedorId: null },
+    base: base
+      .filter((f) => f.hotelId === hotel.id)
+      .map((f) => ({ id: f.id, desde: f.desde, hasta: f.hasta, modalidad: f.modalidad, bajoSolicitud: f.bajoSolicitud, pvp: pvpBase(programa, f) })),
+    noches: tarifasNocheConPvp(programa, noches.filter((f) => f.hotelId === hotel.id)).map(sinNeto),
+  };
+}
+
+/**
+ * «Desde» de un programa por hotel y vigencia (#92): el menor PVP de la acomodación DOBLE entre
+ * todos sus hoteles, vigencias y modalidades de servicios que no sean «a solicitud». Sin DOBLE
+ * publicable → null («Consultar»): nunca se inventa un importe ni se usa otra acomodación.
+ */
+export function desdeDobleHoteles(tablas: readonly TablaHotelPvp[]): number | null {
+  const v = tablas
+    .flatMap((t) => t.base.filter((f) => !f.bajoSolicitud).map((f) => f.pvp.doble))
+    .filter((x): x is number => typeof x === "number" && Number.isFinite(x) && x > 0);
+  return v.length ? Math.min(...v) : null;
+}
+
+export type SeleccionEstancia = {
+  modalidad: ModalidadServicios;
+  fechaEntrada: string;
+  nochesAdicionales: number;
+  habitaciones: Record<string, number>;
+  ninos: number;
+  infantes?: number;
+};
+
+export type CotizacionEstanciaPvp =
+  | {
+      ok: true;
+      filaBase: FilaBasePvp;
+      totalBase: number;
+      totalNoches: number;
+      total: number;
+      noches: Noche88[];
+    }
+  | { ok: false; error: string };
+
+/**
+ * Total que ve el navegador, SOLO con PVP: la misma aritmética en centavos que
+ * `liquidarSeleccion` (base con `totalDesdePrecios` y noches con la misma
+ * `liquidarNochesAdicionales`), así lo mostrado y lo cobrado no pueden diferir.
+ */
+export function cotizarEstanciaDesdePvp(tabla: TablaHotelPvp, nochesIncluidas: number, sel: SeleccionEstancia): CotizacionEstanciaPvp {
+  const hotel = tabla.hotel;
+  const nNinos = Math.max(0, Math.trunc(Number(sel.ninos) || 0));
+  const ocupacion = validarOcupacionHotel(hotel, sel.habitaciones, nNinos, Math.max(0, Math.trunc(Number(sel.infantes) || 0)));
+  if (ocupacion) return { ok: false, error: ocupacion };
+
+  const base = resolverBaseHotel(tabla.base, sel.modalidad, sel.fechaEntrada, hotel.nombre);
+  if (!base.ok) return { ok: false, error: base.error };
+  const fila = base.fila;
+  if (fila.bajoSolicitud) return { ok: false, error: "Este precio es «a solicitud»: consúltalo con el proveedor." };
+
+  const habs = Object.entries(sel.habitaciones).filter(([, n]) => (Number(n) || 0) > 0);
+  const adultos: { acomodacion: string; pvp: number | null }[] = [];
+  for (const [acom] of habs) {
+    const pvp = (CLAVES_TARIFA as readonly string[]).includes(acom) && acom !== "nino" ? fila.pvp[acom as keyof PorAcom] : null;
+    if (pvp == null) return { ok: false, error: `La acomodación ${acom} no tiene precio (o es "a solicitud") en esta categoría.` };
+    adultos.push({ acomodacion: acom, pvp });
+  }
+  if (nNinos > 0 && fila.pvp.nino == null) return { ok: false, error: `Esta categoría no tiene precio de niño (o es "a solicitud").` };
+
+  const totalBase = totalDesdePrecios({ adultos, precioNino: fila.pvp.nino, habitaciones: sel.habitaciones, ninos: nNinos });
+  const n = liquidarNochesAdicionales({
+    tarifas: tabla.noches,
+    hotelNombre: hotel.nombre,
+    fechaEntrada: sel.fechaEntrada,
+    nochesIncluidas,
+    nochesAdicionales: sel.nochesAdicionales,
+    habitaciones: sel.habitaciones,
+    ninos: nNinos,
+    asistenciaDia: 0,
+  });
+  if (!n.ok) return { ok: false, error: n.error };
+  const totalNoches = n.pvpCentavos / 100;
+  return { ok: true, filaBase: fila, totalBase, totalNoches, total: (Math.round(totalBase * 100) + n.pvpCentavos) / 100, noches: n.noches };
 }

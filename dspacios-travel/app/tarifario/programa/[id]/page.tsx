@@ -3,6 +3,10 @@ import { notFound } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
 import { getProgramaDetalle } from "@/lib/programas";
 import { desdeDobleDetallePrograma } from "@/lib/tarifario/desdeDoble";
+import { cargarTablasPvp88 } from "@/lib/programas/estanciaHotelDatos88";
+import { esModoHotel } from "@/lib/programas/estanciaHotel88";
+import { desdeDobleHoteles } from "@/lib/programas/precioReserva57";
+import { EstanciaHotelesFicha } from "./EstanciaHotelesFicha";
 import { programaVisibleEnPublico } from "@/lib/programas/destinoFijo";
 import { formatMoneda, formatFechaLarga } from "@/lib/utils";
 import { Logo } from "@/components/Logo";
@@ -52,8 +56,11 @@ export default async function ProgramaVitrinaPage({ params }: { params: Promise<
 
   const { programa: p } = det;
   const moneda = p.moneda;
+  // #88: programa por hotel y vigencia — tablas de PVP (nunca netos) calculadas en el servidor.
+  const modoHotel = esModoHotel(p.modo_precio);
+  const hoteles = modoHotel ? await cargarTablasPvp88(sb, id, p) : null;
   // «Desde» (TASKS #92): solo una DOBLE publicable; el desde_precio manual no se rotula «Desde».
-  const desde = desdeDobleDetallePrograma(det);
+  const desde = modoHotel ? (hoteles?.ok ? desdeDobleHoteles(hoteles.tablas) : null) : desdeDobleDetallePrograma(det);
   const incluye = det.inclusiones.filter((x) => x.tipo === "incluye");
   const noIncluye = det.inclusiones.filter((x) => x.tipo === "no_incluye");
 
@@ -159,6 +166,16 @@ export default async function ProgramaVitrinaPage({ params }: { params: Promise<
             </Link>
           )}
         </div>
+
+        {/* Hoteles y vigencias con noches adicionales (#88) */}
+        {modoHotel &&
+          (hoteles?.ok ? (
+            <EstanciaHotelesFicha tablas={hoteles.tablas} moneda={moneda} noches={p.noches ?? (p.dias != null ? Math.max(0, p.dias - 1) : null)} />
+          ) : (
+            <p role="alert" className="rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">
+              No se pudieron cargar los precios por hotel. Inténtalo de nuevo en unos minutos.
+            </p>
+          ))}
 
         {/* Precios por salida (modo fecha × precio) */}
         {det.salidas.length > 0 && (
