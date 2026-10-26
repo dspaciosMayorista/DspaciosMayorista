@@ -48,6 +48,9 @@ export type FilaCxP63 = {
   trm_63?: number | string | null;
   /** #93: moneda de origen de la obligación; sin TRM solo es válida si es COP. */
   moneda?: string | null;
+  /** #90 I (migración 236): equivalente en COP y TRM de COSTOS de una CxP en USD del carrito. Familia propia, sin marca de aceptación. */
+  valor_cop_costo?: number | string | null;
+  trm_costo?: number | string | null;
 };
 
 export const MENSAJE_LECTURA_CXP_63 =
@@ -57,6 +60,7 @@ export const MENSAJE_LECTURA_CXP_63 =
  * Resuelve el importe en COP con el que se devenga el asiento de una CxP. Es el ÚNICO punto que decide:
  *   · obligación de siempre (sin marca #63 ni equivalente) → su `valorTotal` de siempre;
  *   · obligación aceptada (marca + equivalente COP + TRM, del mismo contrato/agencia) → su equivalente en COP congelado;
+ *   · obligación en USD del carrito (`valor_cop_costo` + `trm_costo`, migración 236, SIN marca #63) → su equivalente en COP a la TRM de costos, validado;
  *   · cualquier otra cosa (fila inexistente, marca sin equivalente, equivalente sin marca, otro contrato) → ERROR: jamás
  *     se cae al nominal (un USD 210 nunca se registra como $210). Un error de LECTURA tampoco es "no es #63".
  */
@@ -67,6 +71,8 @@ export function resolverImporteContable63(
   if (!fila) return { ok: false, error: "No se encontró la obligación para contabilizarla; no se registra el asiento." };
   const marcada = fila.aceptacion_63_id != null || (fila.obligacion_63 != null && String(fila.obligacion_63) !== "");
   const conEquivalente = fila.valor_cop_63 != null || fila.trm_63 != null;
+  // #90 I: la familia del carrito (valor_cop_costo/trm_costo) se resuelve aparte y es excluyente con la de #63.
+  if (fila.valor_cop_costo != null || fila.trm_costo != null) return resolverEquivalenteCosto(fila, ctx, marcada || conEquivalente);
   if (!marcada && !conEquivalente) return { ok: true, importe: ctx.valorTotal };
   // #93: una obligación COP de una oferta aceptada SIN TRM lleva su equivalente (igual a su valor) y no tiene TRM.
   const sinTrmCop = marcada && fila.trm_63 == null && fila.valor_cop_63 != null && fila.moneda === "COP" && Number(fila.valor_cop_63) === Number(ctx.valorTotal);
@@ -83,6 +89,37 @@ export function resolverImporteContable63(
   const trm = fila.trm_63 == null ? null : Number(fila.trm_63);
   if (!Number.isFinite(cop) || cop < 0 || (trm !== null && (!Number.isFinite(trm) || trm <= 0))) {
     return { ok: false, error: "El equivalente en COP de la obligación aceptada es inválido; no se registra el asiento." };
+  }
+  return { ok: true, importe: cop };
+}
+
+/**
+ * #90 I — importe contable de una CxP en USD del carrito: su equivalente en COP congelado a la TRM de costos (`valor_cop_costo`/`trm_costo`). FAIL-CLOSED:
+ * el par debe estar completo, la obligación debe ser USD, del mismo contrato y agencia, sin la familia de #63 al mismo tiempo, y el equivalente debe
+ * corresponder a `valorTotal × TRM` (un valor_total editado después deja de coincidir y no se devenga con un importe inventado).
+ */
+function resolverEquivalenteCosto(
+  fila: FilaCxP63,
+  ctx: { numeroContrato: string; tenant?: string | null; valorTotal: number },
+  tambienFamilia63: boolean,
+): { ok: true; importe: number } | { ok: false; error: string } {
+  if (tambienFamilia63) return { ok: false, error: "La obligación trae a la vez el equivalente de costos y el de una oferta aceptada; no se registra el asiento." };
+  const cop = fila.valor_cop_costo == null ? NaN : Number(fila.valor_cop_costo);
+  const trm = fila.trm_costo == null ? NaN : Number(fila.trm_costo);
+  if (!Number.isFinite(cop) || cop < 0 || !Number.isFinite(trm) || trm <= 0) {
+    return { ok: false, error: "El equivalente en COP o la TRM de costos de la obligación están incompletos o son inválidos; no se registra el asiento." };
+  }
+  if (String(fila.moneda ?? "").trim().toUpperCase() !== "USD") {
+    return { ok: false, error: "Solo una obligación en USD lleva equivalente de costos; no se registra el asiento." };
+  }
+  if (fila.numero_contrato != null && fila.numero_contrato !== ctx.numeroContrato) {
+    return { ok: false, error: "La obligación pertenece a otro contrato; no se registra el asiento." };
+  }
+  if (ctx.tenant != null && fila.tenant != null && fila.tenant !== ctx.tenant) {
+    return { ok: false, error: "La obligación pertenece a otra agencia; no se registra el asiento." };
+  }
+  if (Math.abs(redondearCentavos63(ctx.valorTotal * trm) - cop) > 0.01 + 1e-9) {
+    return { ok: false, error: "El equivalente en COP de la obligación no corresponde a su valor y a la TRM de costos; no se registra el asiento." };
   }
   return { ok: true, importe: cop };
 }

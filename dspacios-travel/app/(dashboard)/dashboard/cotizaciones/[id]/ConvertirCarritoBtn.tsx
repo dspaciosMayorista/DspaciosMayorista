@@ -62,6 +62,10 @@ export function ConvertirCarritoBtn({
   const [trmCobro, setTrmCobro] = useState("");
   const cobroDistinto = monedaCobro !== "" && monedaCobro !== (monedaOferta === "USD" ? "USD" : "COP");
   const trmCobroNum = cobroDistinto ? trmValida90(trmCobro.replace(",", ".")) : null;
+  // 236 (#90 I): TRM de COSTOS — distinta de la de cobro. Solo aplica a ofertas en USD; el servidor decide si hace falta (si algún costo con proveedor
+  // quedó en USD) y la exige antes de numerar. Aquí es un campo opcional: si no hace falta, se ignora y no se guarda.
+  const [trmCosto, setTrmCosto] = useState("");
+  const ofertaUsd = monedaOferta === "USD";
 
   // Universo de pasajeros del carrito — B12 (ronda 5). Antes se derivaba
   // como `Math.max(...item.pax)` (prop `pax`, calculado en page.tsx), que NO
@@ -250,7 +254,7 @@ export function ConvertirCarritoBtn({
     if (errVinculados) { setErr(errVinculados); return; }
     setErr("");
     start(async () => {
-      const r = await convertirCotizacionCarrito(id, { agrupar, pasajeros: paxRows, asesorInterno: asesorSel, asignaciones: asignacionesPorItemPos, asignacionesTours: asignacionesPorTourPos, monedaCobro, trmCobro: cobroDistinto ? trmCobroNum : null });
+      const r = await convertirCotizacionCarrito(id, { agrupar, pasajeros: paxRows, asesorInterno: asesorSel, asignaciones: asignacionesPorItemPos, asignacionesTours: asignacionesPorTourPos, monedaCobro, trmCobro: cobroDistinto ? trmCobroNum : null, trmCosto: ofertaUsd && trmCosto.trim() !== "" ? trmCosto.replace(",", ".") : null });
       if (r.ok) {
         if (r.advertencias?.length) window.alert(`Contrato(s) creado(s), pero con avisos:\n\n${r.advertencias.join("\n")}`);
         router.push(`/dashboard/contratos/${r.numeros[0]}`);
@@ -329,6 +333,18 @@ export function ConvertirCarritoBtn({
               redondeado hacia arriba. Es una vista previa: el sistema recalcula y congela el total real al generar, y no se cambia después.
             </p>
           </div>
+
+          {ofertaUsd && (
+            <div className="max-w-sm rounded-lg border border-gray-200 p-3" data-testid="trm-costo-carrito">
+              <label className="text-[11px] text-gray-500" htmlFor="trm-costo-carrito-input">TRM de costos (COP por USD)</label>
+              <Input id="trm-costo-carrito-input" aria-label="TRM de costos" type="number" min={0} step="0.01" inputMode="decimal" placeholder="Si hay costos en USD, ej. 4000"
+                value={trmCosto} onChange={(e) => setTrmCosto(e.target.value)} />
+              <p className="mt-1 text-[10px] text-gray-400">
+                Se exige solo si algún costo con proveedor está en USD: congela su equivalente en pesos para la contabilidad. No es la TRM de cobro y no se
+                muestra al cliente; no se cambia después de generar el primer contrato.
+              </p>
+            </div>
+          )}
 
           <div className="flex items-center justify-between">
             <div>

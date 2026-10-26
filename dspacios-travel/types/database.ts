@@ -787,6 +787,9 @@ export type Database = {
           // congelado a la TRM del paquete. NULL en toda obligación de siempre.
           valor_cop_63: number | null;
           trm_63: number | null;
+          // Migración 236 (#90 I): equivalente en COP de una CxP en USD del carrito, congelado a la TRM de COSTOS. NULL en toda obligación de siempre.
+          valor_cop_costo: number | null;
+          trm_costo: number | null;
           // Migración 227 (#63): obligación escrita por la RPC financiera desde una aceptación (protegida contra edición).
           aceptacion_63_id: number | null;
           obligacion_63: string | null;
@@ -801,6 +804,8 @@ export type Database = {
           servicio_id?: number | null;
           valor_cop_63?: number | null;
           trm_63?: number | null;
+          valor_cop_costo?: number | null;
+          trm_costo?: number | null;
           aceptacion_63_id?: number | null;
           obligacion_63?: string | null;
           fecha_obligacion?: string | null;

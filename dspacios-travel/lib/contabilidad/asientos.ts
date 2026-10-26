@@ -157,12 +157,13 @@ export async function reemplazarAsiento(
 // Importe contable de una CxP (#63): lo decide `resolverImporteContable63` sobre la fila REAL de la obligación. Una obligación de
 // siempre se devenga por su `valorTotal`; una aceptada, por su equivalente en COP congelado (`valor_cop_63`). Un error de lectura
 // NUNCA cae al nominal (un USD 210 no se registra como $210) ni se interpreta como "no es #63": se devuelve el error y la
-// reconciliación (`listarCxpSinAsiento`) lo reintenta. Sin hueco para la columna ausente: la 227 va ANTES del código.
+// reconciliación (`listarCxpSinAsiento`) lo reintenta. #90 I (migración 236): una CxP en USD del carrito se devenga por su equivalente a la TRM de costos
+// (`valor_cop_costo`), validado contra su valor y moneda; la reconciliación llega aquí por la misma lectura. Sin hueco para la columna ausente: la 227 va ANTES del código.
 async function importeCopCxP(input: { cuentaId: number; numeroContrato: string; tenant?: string; valorTotal: number }): Promise<{ ok: true; importe: number } | { ok: false; error: string }> {
   const sb = await db();
   const { data, error } = await sb
     .from("cuentas_por_pagar")
-    .select("numero_contrato, tenant, aceptacion_63_id, obligacion_63, valor_cop_63, trm_63, moneda")
+    .select("numero_contrato, tenant, aceptacion_63_id, obligacion_63, valor_cop_63, trm_63, moneda, valor_cop_costo, trm_costo")
     .eq("id", input.cuentaId)
     .maybeSingle();
   if (error) return { ok: false, error: MENSAJE_LECTURA_CXP_63 };

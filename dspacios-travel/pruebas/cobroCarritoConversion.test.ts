@@ -181,7 +181,7 @@ async function cotizar(items: unknown[]) {
   return db.cotizaciones[0];
 }
 /** Convierte como personal interno (rol `rol`) con la elección de cobro dada. `undefined` = se omite la clave. */
-async function convertir(nItems: number, eleccion: { monedaCobro?: string | null; trmCobro?: number | string | null }, agrupar: "todo" | "por_destino" = "todo", rol = "administracion", nTours = 0) {
+async function convertir(nItems: number, eleccion: { monedaCobro?: string | null; trmCobro?: number | string | null; trmCosto?: number | string | null }, agrupar: "todo" | "por_destino" = "todo", rol = "administracion", nTours = 0) {
   usuario = { id: "u-admin", email: "admin@dspacios.test" };
   db.usuarios = [{ id: "u-admin", rol, activo: true }];
   return convertirCotizacionCarrito(77, {
@@ -383,15 +383,21 @@ describe("conversión de carrito: grupos de solo tours conservan la moneda de la
     assert.deepEqual([v.moneda_cobro, v.trm_cobro, v.total_cobro], ["COP", 4100.5, 616_000]);
   });
 
-  test("«por destino» con un hotel USD y solo tours USD: el hotel tiene una obligación en USD, así que NADA se numera ni se crea (tampoco el grupo de tours)", async () => {
+  test("«por destino» con un hotel USD y solo tours USD: el hotel tiene una obligación en USD y SIN TRM de costos NADA se numera ni se crea (tampoco el grupo de tours); con ella, ambos contratos", async () => {
     HOTELES = { 3: hotel("Hotel Dólar", "USD", 150) };
     await cotizar([item(3, 20, "CARTAGENA")]);
     assert.equal(db.cotizaciones[0].moneda, "USD");
     (db.cotizaciones[0].payload as { tours: unknown[] }).tours = [tour("Tour Santa Marta", "SANTA MARTA", 150, "USD")];
     const r = await convertir(1, { monedaCobro: "COP", trmCobro: 4100 }, "por_destino", "administracion", 1);
     assert.equal(r.ok, false);
-    assert.match(r.error ?? "", /Hotel Hotel Dólar: su costo con el proveedor está en USD/);
-    sinEscribir("hotel USD + tours USD");
+    assert.match(r.error ?? "", /TRM de costos/);
+    sinEscribir("hotel USD + tours USD sin TRM de costos");
+    const ok = await convertir(1, { monedaCobro: "COP", trmCobro: 4100, trmCosto: 3900 }, "por_destino", "administracion", 1);
+    assert.equal(ok.ok, true, ok.error);
+    assert.equal(db.ventas.length, 2);
+    const cxp = financieros.flatMap((f) => f.cxp) as unknown as Array<{ valor_total: number; moneda: string; valor_cop_costo: number; trm_costo: number }>;
+    assert.deepEqual(cxp.map((c) => [c.valor_total, c.moneda, c.trm_costo, c.valor_cop_costo]), [[210, "USD", 3900, 819_000]], "neto 105 × 2 pax; equivalente a la TRM de COSTOS (no a la de cobro 4.100)");
+    assert.deepEqual(db.cotizaciones[0].detalle && (db.cotizaciones[0].detalle as { costo?: unknown }).costo, { trm: 3900 }, "la TRM de costos queda congelada en la cotización");
   });
 
   test("«por destino» con DOS grupos de solo tours USD (sin obligaciones): ambos contratos USD con la MISMA elección de cobro, cada total convertido una vez", async () => {
@@ -489,9 +495,16 @@ describe("CxP del carrito: moneda real de cada costo, sin asignar USD en bloque"
     cotizacionDirecta({ moneda: "USD", tours: [tourConServicio(20, "USD", 300)] });
     const r = await convertir(0, { monedaCobro: "USD" }, "todo", "administracion", 1);
     assert.equal(r.ok, false);
-    assert.match(r.error ?? "", /Islas del Rosario: su costo con el proveedor está en USD y la ruta financiera del carrito todavía no registra obligaciones en dólares/);
-    sinEscribir("tour USD con costo neto");
+    assert.match(r.error ?? "", /TRM de costos/);
+    sinEscribir("tour USD con costo neto, sin TRM de costos");
     assert.equal(db.cotizaciones[0].estado, "abierta");
+    // 236: con la TRM de costos la obligación en USD SÍ se registra: conserva valor y moneda, y lleva su equivalente en COP congelado a esa TRM.
+    const ok = await convertir(0, { monedaCobro: "USD", trmCosto: "4050.5" }, "todo", "administracion", 1);
+    assert.equal(ok.ok, true, ok.error);
+    const cxp = financieros[0].cxp as unknown as Array<{ valor_total: number; moneda: string; valor_cop_costo: number; trm_costo: number; tipo_proveedor: string }>;
+    assert.deepEqual(cxp.map((c) => [c.tipo_proveedor, c.valor_total, c.moneda, c.trm_costo, c.valor_cop_costo]), [["receptivo", 200, "USD", 4050.5, 810_100]]);
+    assert.deepEqual(financieros[0].costos, { costo_aereo: 0, costo_hotel: 0, costo_receptivo: 200 }, "ventas.costo_* queda en la moneda de la oferta (USD), no en pesos");
+    assert.deepEqual([db.ventas[0].moneda, db.ventas[0].moneda_cobro, db.ventas[0].trm_cobro, db.ventas[0].total_cobro], ["USD", "USD", null, null], "la TRM de costos no toca el cobro");
   });
 
   test("USD con una moneda del servicio indeterminable (columna ausente): en un contrato USD no se asume nada y se detiene antes de numerar", async () => {
@@ -522,7 +535,7 @@ describe("CxP del carrito: moneda real de cada costo, sin asignar USD en bloque"
     cotizacionDirecta({ moneda: "COP", tours: [tourConServicio(20, "COP", 300_000)] });
     const r = await convertir(0, { monedaCobro: "COP" }, "todo", "administracion", 1);
     assert.equal(r.ok, false);
-    assert.match(r.error ?? "", /su costo con el proveedor está en USD/);
+    assert.match(r.error ?? "", /Islas del Rosario: su costo con el proveedor está hoy en USD y la oferta del carrito está en COP/);
     sinEscribir("servicio USD en contrato COP");
   });
 
@@ -535,13 +548,18 @@ describe("CxP del carrito: moneda real de cada costo, sin asignar USD en bloque"
     assert.deepEqual([hotelCxp.valor_total, hotelCxp.moneda], [420_000, "COP"], "neto 210.000 × 2 pax, sin convertir, con moneda explícita");
   });
 
-  test("hotel por persona USD: su obligación en dólares detiene la conversión antes de numerar", async () => {
+  test("hotel por persona USD: su obligación en dólares exige la TRM de costos antes de numerar; con ella conserva USD y lleva su equivalente en COP", async () => {
     HOTELES = { 3: hotel("Hotel Dólar", "USD", 150) };
     await cotizar([item(3, 20)]);
     const r = await convertir(1, { monedaCobro: "USD" });
     assert.equal(r.ok, false);
-    assert.match(r.error ?? "", /Hotel Hotel Dólar: su costo con el proveedor está en USD/);
-    sinEscribir("hotel USD");
+    assert.match(r.error ?? "", /TRM de costos/);
+    sinEscribir("hotel USD sin TRM de costos");
+    const ok = await convertir(1, { monedaCobro: "USD", trmCosto: 4000 });
+    assert.equal(ok.ok, true, ok.error);
+    const h = financieros[0].cxp[0] as unknown as { valor_total: number; moneda: string; valor_cop_costo: number; trm_costo: number };
+    assert.deepEqual([h.valor_total, h.moneda, h.trm_costo, h.valor_cop_costo], [210, "USD", 4000, 840_000]);
+    assert.deepEqual(financieros[0].costos, { costo_aereo: 0, costo_hotel: 210 });
   });
 
   // Vuelo de un BLOQUEO (aéreo por persona): la moneda sale del bloqueo, no del contrato.
@@ -570,7 +588,7 @@ describe("CxP del carrito: moneda real de cada costo, sin asignar USD en bloque"
     montarBloqueo("USD");
     const r = await convertir(1, { monedaCobro: "COP" });
     assert.equal(r.ok, false);
-    assert.match(r.error ?? "", /Vuelo de OZ HOTEL: su costo con el proveedor está en USD/);
+    assert.match(r.error ?? "", /Vuelo de OZ HOTEL: su costo con el proveedor está hoy en USD y la oferta del carrito está en COP/);
     sinEscribir("vuelo USD en contrato COP");
   });
 
@@ -633,8 +651,8 @@ describe("revisión previa de moneda: costo USD cero no bloquea, costo USD posit
     cotizacionDirecta({ moneda: "USD", tours: [tourConServicio(20, "USD", 300)] });
     const pos = await convertir(0, { monedaCobro: "USD" }, "todo", "administracion", 1);
     assert.equal(pos.ok, false);
-    assert.match(pos.error ?? "", /Islas del Rosario: su costo con el proveedor está en USD/);
-    sinEscribir("tour USD positivo");
+    assert.match(pos.error ?? "", /TRM de costos/);
+    sinEscribir("tour USD positivo sin TRM de costos");
   });
 
   test("tour cuyo servicio ya no está en el paquete: no genera CxP, así que su moneda no se evalúa (se convierte)", async () => {
@@ -660,7 +678,7 @@ describe("revisión previa de moneda: costo USD cero no bloquea, costo USD posit
     await cotizar([item(1, 34)]);
     const pos = await convertir(1, { monedaCobro: "COP" });
     assert.equal(pos.ok, false);
-    assert.match(pos.error ?? "", /ASISTENCIA MEDICA: su costo con el proveedor está en USD/);
+    assert.match(pos.error ?? "", /ASISTENCIA MEDICA: su costo con el proveedor está hoy en USD y la oferta del carrito está en COP/);
     sinEscribir("incluido USD positivo");
   });
 
@@ -677,8 +695,8 @@ describe("revisión previa de moneda: costo USD cero no bloquea, costo USD posit
     await cotizar([item(3, 20)]);
     const pos = await convertir(1, { monedaCobro: "USD" });
     assert.equal(pos.ok, false);
-    assert.match(pos.error ?? "", /Hotel Hotel Dólar: su costo con el proveedor está en USD/);
-    sinEscribir("hotel USD positivo");
+    assert.match(pos.error ?? "", /TRM de costos/);
+    sinEscribir("hotel USD positivo sin TRM de costos");
   });
 
   test("vuelo de un bloqueo en USD: tarifa y fee CERO → se convierte sin CxP aérea; tarifa POSITIVA → se detiene antes de numerar", async () => {
@@ -696,7 +714,7 @@ describe("revisión previa de moneda: costo USD cero no bloquea, costo USD posit
     montarBloqueo("USD");
     const pos = await convertir(1, { monedaCobro: "COP" });
     assert.equal(pos.ok, false);
-    assert.match(pos.error ?? "", /Vuelo de OZ HOTEL: su costo con el proveedor está en USD/);
+    assert.match(pos.error ?? "", /Vuelo de OZ HOTEL: su costo con el proveedor está hoy en USD y la oferta del carrito está en COP/);
     sinEscribir("vuelo USD positivo");
   });
 });
