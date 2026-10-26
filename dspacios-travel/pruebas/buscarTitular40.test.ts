@@ -138,7 +138,12 @@ describe("cableado", () => {
     for (const f of internas) assert.match(leer(f), /<BuscarTitular/, f);
   });
   test("checkout solo para personal interno (no B2C público ni aliado)", () => {
-    assert.match(leer("../app/tarifario/checkout/page.tsx"), /asist\?\.puede === true && !esB2B && \(\s*<BuscarTitular/);
+    const src = leer("../app/tarifario/checkout/page.tsx");
+    const interna = src.indexOf("{asist?.puede === true && !esB2B ? (");
+    const publica = src.indexOf(") : (", interna);
+    assert.ok(interna > 0 && publica > interna, "rama interna / pública");
+    assert.equal((src.match(/<BuscarTitular/g) ?? []).length, 1, "una sola búsqueda en el checkout");
+    assert.ok(src.indexOf("<BuscarTitular") > interna && src.indexOf("<BuscarTitular") < publica, "la búsqueda vive solo en la rama interna; el B2C público y el aliado conservan su formulario");
   });
   test("edición de contrato NETO no busca (cliente = aliado)", () => {
     assert.match(leer(D + "contratos/[numero]/EditarVentaForm.tsx"), /!modalidadNeto && \(\s*<BuscarTitular/);

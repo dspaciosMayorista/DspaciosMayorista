@@ -72,7 +72,7 @@ function escribir(container: HTMLElement, etiqueta: string, valor: string) {
 async function llenarCliente(container: HTMLElement) {
   await act(async () => {
     escribir(container, "Nombres *", "Ana"); escribir(container, "Apellidos *", "Pérez");
-    escribir(container, "Documento *", "123"); escribir(container, "Teléfono / WhatsApp *", "300");
+    escribir(container, [...container.querySelectorAll("label")].some((l) => l.textContent === "Número de documento *") ? "Número de documento *" : "Documento *", "123"); escribir(container, "Teléfono / WhatsApp *", "300");
     await espera();
   });
 }
@@ -563,3 +563,133 @@ describe("ConvertirCarritoBtn con una venta B2B asistida", () => {
     m.desmontar();
   });
 });
+
+
+// ── #40 E2 · orden del documento en el checkout ─────────────────────────────────────────────────────────────────────────────────────────────
+// Venta asistida interna (B2C o NETO): el PRIMER campo de la sección es «Número de documento» con «Buscar» al lado; debajo, tipo, nombres, apellidos y
+// contacto. En NETO la sección es la del TITULAR (el cliente comercial sigue siendo el aliado). El checkout público B2C y el del aliado B2B logueado no cambian.
+const { __setBuscarTitularPorNumero } = await import("./support/stubs/buscarTitularStub.mjs");
+const ancho = (px: number) => { Object.defineProperty(window, "innerWidth", { value: px, configurable: true }); window.dispatchEvent(new window.Event("resize")); };
+const textoDe = (e: Element | null | undefined) => sinEspacios((e?.textContent ?? "").replace(/ /g, " ")).trim();
+const etiquetasDeSeccion = (container: HTMLElement, titulo: RegExp) => {
+  const cab = [...container.querySelectorAll("h2")].find((e) => titulo.test(textoDe(e)))!;
+  assert.ok(cab, "no se encontró la sección " + titulo);
+  return [...container.querySelectorAll("label")].filter((l) => cab.compareDocumentPosition(l) & window.Node.DOCUMENT_POSITION_FOLLOWING) as HTMLLabelElement[];
+};
+const campoDe = (ls: HTMLLabelElement[], prefijo: string, sel: string) =>
+  ls.find((l) => textoDe(l).startsWith(prefijo))?.parentElement?.querySelector(sel) as HTMLInputElement | HTMLSelectElement | null;
+const tipoSelect = (container: HTMLElement) => container.querySelector("#checkout-tipo-doc") as HTMLSelectElement;
+async function escribirEn(el: HTMLInputElement, valor: string) {
+  await act(async () => {
+    Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, "value")!.set!.call(el, valor);
+    el.dispatchEvent(new window.Event("input", { bubbles: true }));
+    await espera();
+  });
+}
+async function elegirTipo(sel: HTMLSelectElement, valor: string) {
+  await act(async () => {
+    Object.getOwnPropertyDescriptor(window.HTMLSelectElement.prototype, "value")!.set!.call(sel, valor);
+    sel.dispatchEvent(new window.Event("change", { bubbles: true }));
+    await espera();
+  });
+}
+const buscarCheckout = (container: HTMLElement) => container.querySelector('[data-testid="checkout-titular-interno"] button[title^="Buscar este documento"]') as HTMLButtonElement;
+const candCk = (tipoDoc: string, nombres: string) => ({ tipoDoc, numero: "123456", divergencia: false, datos: { nombres, apellidos: "Pérez", telefono: "311" } });
+
+for (const [vista, px] of [["escritorio", 1280], ["móvil", 390]] as const) {
+  describe(`Checkout · orden del documento · ${vista} (${px}px)`, () => {
+    beforeEach(() => ancho(px));
+    after(() => ancho(1280));
+
+    test("venta asistida B2C: Número de documento primero con «Buscar»; tipo sin presuponer; luego nombres, apellidos y contacto", async () => {
+      stub.__setContextoAsistencia({ puede: true, aliados: ALIADOS });
+      const v = await montarCheckout();
+      const ls = etiquetasDeSeccion(v.container, /^Tus datos$/);
+      assert.match(textoDe(ls[0]), /^Número de documento \*/);
+      assert.equal(textoDe(buscarCheckout(v.container)), "Buscar");
+      assert.deepEqual(ls.map(textoDe).slice(0, 6), ["Número de documento *", "Tipo de documento", "Nombres *", "Apellidos *", "Teléfono / WhatsApp *", "Correo"]);
+      assert.equal(tipoSelect(v.container).value, "", "no se presupone CC antes de buscar");
+      v.desmontar();
+    });
+
+    test("NETO: la sección es la del TITULAR, con el mismo orden; el aviso nombra al aliado como cliente comercial", async () => {
+      stub.__setContextoAsistencia({ puede: true, aliados: ALIADOS });
+      const v = await montarCheckout();
+      await act(async () => { click(boton("Aliado (B2B)", v.container)!); await espera(); });
+      await elegirAliado(v.container, "7");
+      await act(async () => { click(boton("NETO", v.container)!); await espera(); });
+      const ls = etiquetasDeSeccion(v.container, /^Titular de la reserva$/);
+      assert.match(textoDe(ls[0]), /^Número de documento \*/);
+      assert.equal(textoDe(buscarCheckout(v.container)), "Buscar");
+      assert.match(textoDe(v.container.querySelector('[data-testid="neto-cliente-aviso"]')), /el cliente de la cotización y del contrato es Viajes Aurora/);
+      v.desmontar();
+    });
+
+    test("sin coincidencias: se elige el tipo y se completan los demás datos", async () => {
+      stub.__setContextoAsistencia({ puede: true, aliados: ALIADOS });
+      __setBuscarTitularPorNumero(async () => ({ ok: true, candidatos: [] }));
+      const v = await montarCheckout();
+      const ls = etiquetasDeSeccion(v.container, /^Tus datos$/);
+      await escribirEn(campoDe(ls, "Número de documento", "input") as HTMLInputElement, "999999");
+      await act(async () => { click(buscarCheckout(v.container)); await espera(); });
+      assert.match(v.texto(), /Sin coincidencias\. Elige el tipo de documento y completa los demás datos/);
+      await elegirTipo(tipoSelect(v.container), "CE");
+      assert.equal(tipoSelect(v.container).value, "CE");
+      await escribirEn(campoDe(ls, "Nombres", "input") as HTMLInputElement, "Zoe");
+      assert.equal((campoDe(ls, "Nombres", "input") as HTMLInputElement).value, "Zoe");
+      v.desmontar();
+    });
+
+    test("una coincidencia: «Aplicar datos» llena el tipo y los datos", async () => {
+      stub.__setContextoAsistencia({ puede: true, aliados: ALIADOS });
+      __setBuscarTitularPorNumero(async () => ({ ok: true, candidatos: [candCk("CC", "Ana")] }));
+      const v = await montarCheckout();
+      const ls = etiquetasDeSeccion(v.container, /^Tus datos$/);
+      await escribirEn(campoDe(ls, "Número de documento", "input") as HTMLInputElement, "123456");
+      await act(async () => { click(buscarCheckout(v.container)); await espera(); });
+      await act(async () => { click(boton("Aplicar datos", v.container)!); await espera(); });
+      assert.equal(tipoSelect(v.container).value, "CC");
+      assert.equal((campoDe(ls, "Nombres", "input") as HTMLInputElement).value, "Ana");
+      v.desmontar();
+    });
+
+    test("el mismo número como CC y como CE: se elige la persona y se aplica su tipo (en NETO también)", async () => {
+      stub.__setContextoAsistencia({ puede: true, aliados: ALIADOS });
+      __setBuscarTitularPorNumero(async () => ({ ok: true, candidatos: [candCk("CC", "Ana"), candCk("CE", "Beto")] }));
+      const v = await montarCheckout();
+      await act(async () => { click(boton("Aliado (B2B)", v.container)!); await espera(); });
+      await elegirAliado(v.container, "7");
+      await act(async () => { click(boton("NETO", v.container)!); await espera(); });
+      const ls = etiquetasDeSeccion(v.container, /^Titular de la reserva$/);
+      await escribirEn(campoDe(ls, "Número de documento", "input") as HTMLInputElement, "123456");
+      await act(async () => { click(buscarCheckout(v.container)); await espera(); });
+      assert.match(v.texto(), /elige la persona/);
+      assert.equal(boton("Aplicar datos", v.container), undefined, "no aplica sin elegir");
+      await act(async () => { click([...v.container.querySelectorAll("button")].find((b) => textoDe(b).startsWith("CE 123456"))!); await espera(); });
+      await act(async () => { click(boton("Aplicar datos", v.container)!); await espera(); });
+      assert.equal(tipoSelect(v.container).value, "CE");
+      assert.equal((campoDe(ls, "Nombres", "input") as HTMLInputElement).value, "Beto");
+      v.desmontar();
+    });
+
+    test("checkout público B2C (sin permiso): el formulario de siempre — Nombres primero, «Documento *» sin Buscar", async () => {
+      stub.__setContextoAsistencia({ puede: false });
+      const v = await montarCheckout();
+      const ls = etiquetasDeSeccion(v.container, /^Tus datos$/);
+      assert.deepEqual(ls.map(textoDe).slice(0, 6), ["Nombres *", "Apellidos *", "Tipo", "Documento *", "Teléfono / WhatsApp *", "Correo"]);
+      assert.equal(v.container.querySelector('[data-testid="checkout-titular-interno"]'), null);
+      assert.equal([...v.container.querySelectorAll("button")].some((b) => textoDe(b) === "Buscar"), false);
+      v.desmontar();
+    });
+
+    test("aliado B2B logueado: tampoco cambia (sin Buscar, formulario de siempre)", async () => {
+      stub.__setContextoAsistencia({ puede: true, aliados: ALIADOS });
+      stub.__setContextoB2B({ esB2B: true, pctComision: 0.1, agencia: { nombre: "Agencia Uno", nit: "9", email: "a@b.co", telefono: "3" } });
+      const v = await montarCheckout();
+      const ls = etiquetasDeSeccion(v.container, /^Datos del titular del contrato$/);
+      assert.deepEqual(ls.map(textoDe).slice(0, 4), ["Nombres *", "Apellidos *", "Tipo", "Documento *"]);
+      assert.equal(v.container.querySelector('[data-testid="checkout-titular-interno"]'), null);
+      v.desmontar();
+    });
+  });
+}

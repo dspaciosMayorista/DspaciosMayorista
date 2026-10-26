@@ -72,23 +72,23 @@ export function TitularEditor({ id, inicial, version }: { id: number; inicial: T
       ) : (
         <>
           <div className="grid grid-cols-2 gap-3 md:grid-cols-3">
-            <div><label className={lbl}>Nombres</label><Input value={t.nombres} onChange={(e) => set("nombres", e.target.value)} /></div>
-            <div><label className={lbl}>Apellidos</label><Input value={t.apellidos} onChange={(e) => set("apellidos", e.target.value)} /></div>
-            <div>
-              <label className={lbl}>Tipo doc</label>
-              <select value={t.tipoDoc} onChange={(e) => set("tipoDoc", e.target.value)} className="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm">
-                <option value="">—</option>
-                <OpcionesTipoDoc />
-                {t.tipoDoc && !(TIPOS_DOC_PERSONA as readonly string[]).includes(t.tipoDoc) && <option value={t.tipoDoc}>{t.tipoDoc}</option>}
-              </select>
-            </div>
-            <div>
-              <label className={lbl}>N° documento</label>
+            <div className="col-span-2 md:col-span-3">
+              <label className={lbl}>Número de documento</label>
               <div className="flex gap-1">
                 <Input value={t.numeroDoc} onChange={(e) => set("numeroDoc", e.target.value)} />
                 <BuscarTitular numero={t.numeroDoc} actual={t} onAplicar={({ tipoDoc, ...d }) => setT((p) => ({ ...p, tipoDoc, ...d }))} />
               </div>
             </div>
+            <div className="col-span-2 md:col-span-3">
+              <label className={lbl}>Tipo de documento</label>
+              <select value={t.tipoDoc} onChange={(e) => set("tipoDoc", e.target.value)} className="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm">
+                <option value="">Elige el tipo…</option>
+                <OpcionesTipoDoc />
+                {t.tipoDoc && !(TIPOS_DOC_PERSONA as readonly string[]).includes(t.tipoDoc) && <option value={t.tipoDoc}>{t.tipoDoc}</option>}
+              </select>
+            </div>
+            <div><label className={lbl}>Nombres</label><Input value={t.nombres} onChange={(e) => set("nombres", e.target.value)} /></div>
+            <div><label className={lbl}>Apellidos</label><Input value={t.apellidos} onChange={(e) => set("apellidos", e.target.value)} /></div>
             <div><label className={lbl}>Fecha de nacimiento</label><DateInput aria-label="Fecha de nacimiento" type="date" value={t.nacimiento} onValueChange={(dateValue) => set("nacimiento", dateValue)} /></div>
             <div><label className={lbl}>Teléfono</label><Input value={t.telefono} onChange={(e) => set("telefono", e.target.value)} /></div>
             <div className="md:col-span-2"><label className={lbl}>Email</label><Input value={t.email} onChange={(e) => set("email", e.target.value)} /></div>

@@ -47,7 +47,7 @@ export function CotizacionManualForm({ asesores, aliados, miNombre, miRolVenta, 
   const [err, setErr] = useState("");
 
   // Cliente / cabecera
-  const [cli, setCli] = useState({ nombres: "", apellidos: "", tipoDoc: "CC", numeroDoc: "", telefono: "", email: "", nacimiento: "" });
+  const [cli, setCli] = useState({ nombres: "", apellidos: "", tipoDoc: "", numeroDoc: "", telefono: "", email: "", nacimiento: "" });
   const [destino, setDestino] = useState("");
   const [fechaIda, setFechaIda] = useState("");
   const [fechaRegreso, setFechaRegreso] = useState("");
@@ -171,21 +171,22 @@ export function CotizacionManualForm({ asesores, aliados, miNombre, miRolVenta, 
       <section className="rounded-xl border border-gray-200 bg-white p-5">
         <h2 className="mb-3 text-sm font-semibold text-gray-700">Cliente</h2>
         <div className="grid grid-cols-2 gap-3 md:grid-cols-3">
-          <div><label className={lbl}>Nombres</label><Input value={cli.nombres} onChange={(e) => setCli({ ...cli, nombres: e.target.value })} /></div>
-          <div><label className={lbl}>Apellidos</label><Input value={cli.apellidos} onChange={(e) => setCli({ ...cli, apellidos: e.target.value })} /></div>
-          <div>
-            <label className={lbl}>Tipo doc</label>
-            <select value={cli.tipoDoc} onChange={(e) => setCli({ ...cli, tipoDoc: e.target.value })} className="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm">
-              <OpcionesTipoDoc />
-            </select>
-          </div>
-          <div>
-            <label className={lbl}>N° documento</label>
+          <div className="col-span-2 md:col-span-3">
+            <label className={lbl}>Número de documento</label>
             <div className="flex gap-1">
               <Input value={cli.numeroDoc} onChange={(e) => setCli({ ...cli, numeroDoc: e.target.value })} />
               <BuscarTitular numero={cli.numeroDoc} actual={cli} onAplicar={({ tipoDoc, ...d }) => setCli((p) => ({ ...p, tipoDoc, ...d }))} />
             </div>
           </div>
+          <div className="col-span-2 md:col-span-3">
+            <label className={lbl}>Tipo de documento</label>
+            <select value={cli.tipoDoc} onChange={(e) => setCli({ ...cli, tipoDoc: e.target.value })} className="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm">
+              <option value="">Elige el tipo…</option>
+              <OpcionesTipoDoc />
+            </select>
+          </div>
+          <div><label className={lbl}>Nombres</label><Input value={cli.nombres} onChange={(e) => setCli({ ...cli, nombres: e.target.value })} /></div>
+          <div><label className={lbl}>Apellidos</label><Input value={cli.apellidos} onChange={(e) => setCli({ ...cli, apellidos: e.target.value })} /></div>
           <div><label className={lbl}>Fecha de nacimiento</label><DateInput aria-label="Fecha de nacimiento" type="date" value={cli.nacimiento} onValueChange={(dateValue) => setCli({ ...cli, nacimiento: dateValue })} /></div>
           <div><label className={lbl}>Teléfono</label><Input value={cli.telefono} onChange={(e) => setCli({ ...cli, telefono: e.target.value })} /></div>
           <div><label className={lbl}>Email</label><Input value={cli.email} onChange={(e) => setCli({ ...cli, email: e.target.value })} /></div>

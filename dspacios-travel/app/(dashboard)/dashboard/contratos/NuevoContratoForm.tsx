@@ -527,21 +527,9 @@ export function NuevoContratoForm({
           Cliente
         </p>
         <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
-          <div>
-            <label className={labelCls}>Nombres *</label>
-            <Input value={clienteNombres} onChange={(e) => setClienteNombres(e.target.value)} required />
-          </div>
-          <div>
-            <label className={labelCls}>Apellidos *</label>
-            <Input value={clienteApellidos} onChange={(e) => setClienteApellidos(e.target.value)} required />
-          </div>
-          <div>
-            <label className={labelCls}>Tipo y N° de documento</label>
+          <div className="md:col-span-2">
+            <label className={labelCls}>Número de documento</label>
             <div className="flex gap-1">
-              <select aria-label="Tipo de documento" value={tipoDoc} onChange={(e) => setTipoDoc(e.target.value)} className="rounded-lg border border-gray-300 bg-white px-2 py-2 text-sm">
-                <option value="">—</option>
-                <OpcionesTipoDoc />
-              </select>
               <Input value={doc} onChange={(e) => setDoc(e.target.value)} />
               <BuscarTitular
                 numero={doc}
@@ -555,6 +543,21 @@ export function NuevoContratoForm({
                 }}
               />
             </div>
+          </div>
+          <div className="md:col-span-2">
+            <label className={labelCls}>Tipo de documento</label>
+            <select aria-label="Tipo de documento" value={tipoDoc} onChange={(e) => setTipoDoc(e.target.value)} className="w-full rounded-lg border border-gray-300 bg-white px-2 py-2 text-sm">
+              <option value="">Elige el tipo…</option>
+              <OpcionesTipoDoc />
+            </select>
+          </div>
+          <div>
+            <label className={labelCls}>Nombres *</label>
+            <Input value={clienteNombres} onChange={(e) => setClienteNombres(e.target.value)} required />
+          </div>
+          <div>
+            <label className={labelCls}>Apellidos *</label>
+            <Input value={clienteApellidos} onChange={(e) => setClienteApellidos(e.target.value)} required />
           </div>
           <div>
             <label className={labelCls}>Teléfono</label>

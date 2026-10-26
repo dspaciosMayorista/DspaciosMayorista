@@ -1,6 +1,6 @@
 "use client";
 
-// #40 E2 — Botón "Buscar en personas" junto al N° de documento de un cliente/titular (formularios internos).
+// #40 E2 — Acción «Buscar» junto al N° de documento (primer campo de la sección) de un cliente/titular (formularios internos).
 // El número es lo único necesario; el tipo sale de la coincidencia. Varios tipos para el mismo número →
 // se elige expresamente uno. Lo ya escrito nunca se pisa en silencio: los vacíos se llenan y los distintos
 // se ofrecen con casilla (sin marcar = se conserva lo escrito). Cualquier respuesta cuyo número o contexto
@@ -73,11 +73,11 @@ export function BuscarTitular({ numero, contexto = "", actual, campos, nombreCom
 
   return (
     <div className="relative inline-block">
-      <Button type="button" variant="outline" size="icon-sm" disabled={!num} title="Buscar este documento en personas ya registradas" onClick={buscar}>
-        <Search />
+      <Button type="button" variant="outline" size="sm" disabled={!num} title="Buscar este documento en personas ya registradas" onClick={buscar}>
+        <Search /> Buscar
       </Button>
       {abierto && !desactualizado && (
-        <div className="absolute right-0 z-30 mt-1 w-80 rounded-lg border border-gray-200 bg-white p-2 text-left shadow-lg">
+        <div className="absolute right-0 z-30 mt-1 w-80 max-w-[calc(100vw-2rem)] rounded-lg border border-gray-200 bg-white p-2 text-left shadow-lg">
           <div className="mb-1 flex items-center justify-between">
             <span className="text-xs font-medium text-gray-600">Personas con ese documento</span>
             <button type="button" onClick={() => setAbierto(false)} className="text-gray-400 hover:text-gray-600"><X className="size-3.5" /></button>
@@ -85,10 +85,10 @@ export function BuscarTitular({ numero, contexto = "", actual, campos, nombreCom
           {pending && <p className="px-1 py-2 text-xs text-gray-500">Buscando…</p>}
           {!pending && error && <p className="px-1 py-2 text-xs text-red-600">{error}</p>}
           {!pending && !error && candidatos && candidatos.length === 0 && (
-            <p className="px-1 py-2 text-xs text-gray-500">Sin coincidencias. Captura los datos a mano y elige el tipo de documento.</p>
+            <p className="px-1 py-2 text-xs text-gray-500">Sin coincidencias. Elige el tipo de documento y completa los demás datos.</p>
           )}
           {!pending && candidatos && candidatos.length > 1 && !elegido && (
-            <p className="px-1 pb-1 text-[11px] text-amber-700">Ese número existe con más de un tipo de documento: elige cuál es.</p>
+            <p className="px-1 pb-1 text-[11px] text-amber-700">Ese número existe con más de un tipo de documento: elige la persona.</p>
           )}
           {!pending && candidatos && candidatos.length > 1 && !elegido && (
             <ul className="space-y-1">

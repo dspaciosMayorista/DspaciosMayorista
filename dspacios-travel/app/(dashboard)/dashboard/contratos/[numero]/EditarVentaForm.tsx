@@ -43,14 +43,9 @@ export function EditarVentaForm({ numero, inicial, destinos = [], modalidadNeto 
       {open && (
         <div className="space-y-3 border-t border-gray-100 p-4">
           <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
-            <div className="sm:col-span-2"><label className={lbl}>Cliente *</label><Input value={f.cliente} onChange={set("cliente")} /></div>
-            <div>
-              <label className={lbl}>Tipo y N° de documento</label>
+            <div className="sm:col-span-3">
+              <label className={lbl}>Número de documento</label>
               <div className="flex gap-1">
-                <select aria-label="Tipo de documento" value={f.clienteTipoDocumento ?? ""} onChange={set("clienteTipoDocumento")} className="rounded-lg border border-gray-300 bg-white px-2 py-2 text-sm">
-                  <option value="">—</option>
-                  <OpcionesTipoDoc />
-                </select>
                 <Input value={f.clienteDocumento} onChange={set("clienteDocumento")} />
                 {/* En NETO el cliente es el aliado (su ficha), no una persona: no se propone un titular aquí. */}
                 {!modalidadNeto && (
@@ -64,6 +59,14 @@ export function EditarVentaForm({ numero, inicial, destinos = [], modalidadNeto 
                 )}
               </div>
             </div>
+            <div className="sm:col-span-3">
+              <label className={lbl}>Tipo de documento</label>
+              <select aria-label="Tipo de documento" value={f.clienteTipoDocumento ?? ""} onChange={set("clienteTipoDocumento")} className="w-full rounded-lg border border-gray-300 bg-white px-2 py-2 text-sm">
+                <option value="">Sin tipo registrado</option>
+                <OpcionesTipoDoc />
+              </select>
+            </div>
+            <div className="sm:col-span-3"><label className={lbl}>Cliente *</label><Input value={f.cliente} onChange={set("cliente")} /></div>
             <div><label className={lbl}>Teléfono</label><Input value={f.clienteTelefono} onChange={set("clienteTelefono")} /></div>
             <div><label className={lbl}>Email</label><Input value={f.clienteEmail} onChange={set("clienteEmail")} /></div>
             <div><label className={lbl}>Dirección</label><Input value={f.clienteDireccion} onChange={set("clienteDireccion")} /></div>
