@@ -12,6 +12,8 @@ import type { DestinoOpt } from "@/components/ComboDestino";
 import { ciudadIata } from "@/lib/iata";
 import { esInfantePorEdad } from "@/lib/reservar/pasajeros";
 import { quitarPasajero, recalcularVinculosPorEdad } from "@/lib/reservar/pasajerosFilas";
+import { OpcionesTipoDoc } from "@/components/personas/OpcionesTipoDoc";
+import { BuscarTitular } from "@/components/personas/BuscarTitular";
 import { BuscarPasajeroDocumento } from "@/components/pasajeros/BuscarPasajeroDocumento";
 import type { PlanNetoManual } from "@/lib/contrato/netoManual";
 import { evaluarMargenContrato, mensajeMargenInsuficiente } from "@/lib/contrato/margenContrato";
@@ -115,6 +117,7 @@ export function NuevoContratoForm({
   const [clienteApellidos, setClienteApellidos] = useState("");
   const cliente = `${clienteNombres} ${clienteApellidos}`.trim();
   const [doc, setDoc] = useState("");
+  const [tipoDoc, setTipoDoc] = useState(""); // #40: vacío hasta que se elige (a mano o por la búsqueda)
   const [tel, setTel] = useState("");
   const [dir, setDir] = useState("");
 
@@ -313,6 +316,7 @@ export function NuevoContratoForm({
           bloqueoId: bloqueoId === "" ? null : Number(bloqueoId),
           cliente,
           clienteDocumento: doc,
+          clienteTipoDocumento: tipoDoc,
           clienteTelefono: tel,
           clienteDireccion: dir,
           destino,
@@ -532,8 +536,25 @@ export function NuevoContratoForm({
             <Input value={clienteApellidos} onChange={(e) => setClienteApellidos(e.target.value)} required />
           </div>
           <div>
-            <label className={labelCls}>N° Documento</label>
-            <Input value={doc} onChange={(e) => setDoc(e.target.value)} />
+            <label className={labelCls}>Tipo y N° de documento</label>
+            <div className="flex gap-1">
+              <select aria-label="Tipo de documento" value={tipoDoc} onChange={(e) => setTipoDoc(e.target.value)} className="rounded-lg border border-gray-300 bg-white px-2 py-2 text-sm">
+                <option value="">—</option>
+                <OpcionesTipoDoc />
+              </select>
+              <Input value={doc} onChange={(e) => setDoc(e.target.value)} />
+              <BuscarTitular
+                numero={doc}
+                actual={{ nombres: clienteNombres, apellidos: clienteApellidos, telefono: tel }}
+                campos={["nombres", "apellidos", "telefono"]}
+                onAplicar={(d) => {
+                  setTipoDoc(d.tipoDoc);
+                  if (d.nombres !== undefined) setClienteNombres(d.nombres);
+                  if (d.apellidos !== undefined) setClienteApellidos(d.apellidos);
+                  if (d.telefono !== undefined) setTel(d.telefono);
+                }}
+              />
+            </div>
           </div>
           <div>
             <label className={labelCls}>Teléfono</label>

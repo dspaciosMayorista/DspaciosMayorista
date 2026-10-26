@@ -4,6 +4,8 @@ import { DateInput } from "@/components/ui/DateInput";
 import { useEffect, useMemo, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { Button } from "@/components/ui/button";
+import { OpcionesTipoDoc } from "@/components/personas/OpcionesTipoDoc";
+import { BuscarTitular } from "@/components/personas/BuscarTitular";
 import { Input } from "@/components/ui/input";
 import { formatMoneda } from "@/lib/utils";
 import { Plane, Hotel, Car, HeartPulse, Plus, Trash2, GitCompareArrows, type LucideIcon } from "lucide-react";
@@ -174,10 +176,16 @@ export function CotizacionManualForm({ asesores, aliados, miNombre, miRolVenta, 
           <div>
             <label className={lbl}>Tipo doc</label>
             <select value={cli.tipoDoc} onChange={(e) => setCli({ ...cli, tipoDoc: e.target.value })} className="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm">
-              {["CC", "CE", "PAS", "NIT", "TI"].map((t) => <option key={t}>{t}</option>)}
+              <OpcionesTipoDoc />
             </select>
           </div>
-          <div><label className={lbl}>N° documento</label><Input value={cli.numeroDoc} onChange={(e) => setCli({ ...cli, numeroDoc: e.target.value })} /></div>
+          <div>
+            <label className={lbl}>N° documento</label>
+            <div className="flex gap-1">
+              <Input value={cli.numeroDoc} onChange={(e) => setCli({ ...cli, numeroDoc: e.target.value })} />
+              <BuscarTitular numero={cli.numeroDoc} actual={cli} onAplicar={({ tipoDoc, ...d }) => setCli((p) => ({ ...p, tipoDoc, ...d }))} />
+            </div>
+          </div>
           <div><label className={lbl}>Fecha de nacimiento</label><DateInput aria-label="Fecha de nacimiento" type="date" value={cli.nacimiento} onValueChange={(dateValue) => setCli({ ...cli, nacimiento: dateValue })} /></div>
           <div><label className={lbl}>Teléfono</label><Input value={cli.telefono} onChange={(e) => setCli({ ...cli, telefono: e.target.value })} /></div>
           <div><label className={lbl}>Email</label><Input value={cli.email} onChange={(e) => setCli({ ...cli, email: e.target.value })} /></div>

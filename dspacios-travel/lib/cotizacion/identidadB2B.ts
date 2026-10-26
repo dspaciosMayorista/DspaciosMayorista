@@ -4,6 +4,7 @@
 // navegador) y la persona cuyos datos se capturan es el «Titular de la reserva», que se conserva APARTE (`titular_*`; el detalle completo sigue
 // en `payload.cliente`). En PVP con comisión y en B2C el cliente sigue siendo la persona, como siempre.
 import type { ModoCompra } from "@/lib/reservar/comisionReserva";
+import { tipoDocumentoParaVenta } from "../personas/tiposDocumento.ts";
 
 const limpio = (v: unknown): string | null => {
   if (typeof v !== "string") return null;
@@ -38,14 +39,15 @@ export function fiscalDeFilaAliado(fila: FilaFiscalAliado | null | undefined): F
 }
 
 /** Persona que viaja / contrata, como la capturó el checkout (`payload.cliente`). */
-export type ClienteCaptura = { nombres?: string | null; apellidos?: string | null; numeroDoc?: string | null; telefono?: string | null; email?: string | null };
+export type ClienteCaptura = { nombres?: string | null; apellidos?: string | null; numeroDoc?: string | null; tipoDoc?: string | null; telefono?: string | null; email?: string | null };
 
-export type TitularReserva = { nombre: string; documento: string | null; telefono: string | null; email: string | null };
+export type TitularReserva = { nombre: string; documento: string | null; tipoDocumento: string | null; telefono: string | null; email: string | null };
 
 export function titularDeCliente(c: ClienteCaptura | null | undefined): TitularReserva {
   return {
     nombre: `${limpio(c?.nombres) ?? ""} ${limpio(c?.apellidos) ?? ""}`.trim(),
     documento: limpio(c?.numeroDoc),
+    tipoDocumento: tipoDocumentoParaVenta(c?.tipoDoc, c?.numeroDoc),
     telefono: limpio(c?.telefono),
     email: limpio(c?.email),
   };
@@ -55,11 +57,14 @@ export function titularDeCliente(c: ClienteCaptura | null | undefined): TitularR
 export type CamposCliente = {
   cliente: string;
   cliente_documento: string | null;
+  /** #40 E2: tipo del documento de `cliente_documento` (en NETO, el del ALIADO; nunca el del titular). */
+  cliente_tipo_documento: string | null;
   cliente_telefono: string | null;
   cliente_email: string | null;
   cliente_direccion: string | null;
   titular_nombre: string | null;
   titular_documento: string | null;
+  titular_tipo_documento: string | null;
   titular_telefono: string | null;
   titular_email: string | null;
 };
@@ -74,11 +79,13 @@ export function camposClienteVenta(args: { modo: ModoCompra | null | undefined; 
     return {
       cliente: fiscal.nombre,
       cliente_documento: fiscal.documento,
+      cliente_tipo_documento: tipoDocumentoParaVenta(fiscal.tipoDocumento, fiscal.documento),
       cliente_telefono: fiscal.telefono,
       cliente_email: fiscal.email,
       cliente_direccion: fiscal.direccion,
       titular_nombre: titular.nombre || null,
       titular_documento: titular.documento,
+      titular_tipo_documento: titular.tipoDocumento,
       titular_telefono: titular.telefono,
       titular_email: titular.email,
     };
@@ -86,10 +93,11 @@ export function camposClienteVenta(args: { modo: ModoCompra | null | undefined; 
   return {
     cliente: titular.nombre,
     cliente_documento: titular.documento,
+    cliente_tipo_documento: titular.tipoDocumento,
     cliente_telefono: titular.telefono,
     cliente_email: titular.email,
     cliente_direccion: null,
-    titular_nombre: null, titular_documento: null, titular_telefono: null, titular_email: null,
+    titular_nombre: null, titular_documento: null, titular_tipo_documento: null, titular_telefono: null, titular_email: null,
   };
 }
 

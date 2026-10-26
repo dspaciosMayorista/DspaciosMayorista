@@ -9,6 +9,9 @@ import { formatMoneda, calcularEdad } from "@/lib/utils";
 import { paxDeAcomodacion, textoEdadesHotel } from "@/lib/acomodaciones";
 import { esInfantePorEdad } from "@/lib/reservar/pasajeros";
 import { truncarPasajeros, recalcularVinculosPorEdad } from "@/lib/reservar/pasajerosFilas";
+import { OpcionesTipoDoc } from "@/components/personas/OpcionesTipoDoc";
+import { documentoPasajeroDesdeCliente } from "@/lib/personas/tiposDocumento";
+import { BuscarTitular } from "@/components/personas/BuscarTitular";
 import { BuscarPasajeroDocumento } from "@/components/pasajeros/BuscarPasajeroDocumento";
 import { reservarPrograma } from "../../actions";
 import { totalDesdePrecios, type CambioPrecioPrograma } from "@/lib/programas/precioReserva57";
@@ -146,7 +149,7 @@ export function ProgramaReservaForm({
     setPasajeros((p) => recalcularVinculosPorEdad(p, v || null));
   };
   const copiarCliente = (i: number) =>
-    setPasajeros((p) => p.map((x, j) => (j === i ? { ...x, nombres: cliente.nombres, apellidos: cliente.apellidos, tipoDoc: cliente.tipoDoc, numeroDoc: cliente.numeroDoc } : x)));
+    setPasajeros((p) => p.map((x, j) => (j === i ? { ...x, nombres: cliente.nombres, apellidos: cliente.apellidos, ...documentoPasajeroDesdeCliente(cliente.tipoDoc, cliente.numeroDoc) } : x)));
 
   const [error, setError] = useState<string | null>(null);
   const [pending, startTransition] = useTransition();
@@ -302,10 +305,16 @@ export function ProgramaReservaForm({
           <div><label className={lbl}>Apellidos</label><Input value={cliente.apellidos} onChange={(e) => setCliente({ ...cliente, apellidos: e.target.value })} /></div>
           <div><label className={lbl}>Tipo doc.</label>
             <select value={cliente.tipoDoc} onChange={(e) => setCliente({ ...cliente, tipoDoc: e.target.value })} className={sel}>
-              <option>CC</option><option>CE</option><option>PASAPORTE</option><option>TI</option>
+              <OpcionesTipoDoc />
             </select>
           </div>
-          <div><label className={lbl}>Documento</label><Input value={cliente.numeroDoc} onChange={(e) => setCliente({ ...cliente, numeroDoc: e.target.value })} /></div>
+          <div>
+            <label className={lbl}>Documento</label>
+            <div className="flex gap-1">
+              <Input value={cliente.numeroDoc} onChange={(e) => setCliente({ ...cliente, numeroDoc: e.target.value })} />
+              <BuscarTitular numero={cliente.numeroDoc} actual={cliente} campos={["nombres", "apellidos", "telefono", "email"]} onAplicar={({ tipoDoc, ...d }) => setCliente((p) => ({ ...p, tipoDoc, ...d }))} />
+            </div>
+          </div>
           <div><label className={lbl}>Teléfono</label><Input value={cliente.telefono} onChange={(e) => setCliente({ ...cliente, telefono: e.target.value })} /></div>
           <div><label className={lbl}>Email</label><Input value={cliente.email} onChange={(e) => setCliente({ ...cliente, email: e.target.value })} /></div>
         </div>
@@ -342,7 +351,7 @@ export function ProgramaReservaForm({
                           preexistente, corregido aquí) y además la búsqueda
                           por documento (migración 187) nunca cruzaba con un
                           pasaporte cargado desde otro formulario. */}
-                      <option value="CC">CC</option><option value="CE">CE</option><option value="PAS">Pasaporte</option><option value="TI">TI</option>
+                      <OpcionesTipoDoc pasajero />
                     </select>
                     <div className="flex items-center gap-1">
                       <Input value={p.numeroDoc} onChange={(e) => updPasajero(i, "numeroDoc", e.target.value)} placeholder="Documento" />

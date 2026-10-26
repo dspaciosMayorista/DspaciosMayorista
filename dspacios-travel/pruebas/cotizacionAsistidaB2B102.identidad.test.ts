@@ -14,7 +14,7 @@ import { resolverFirmasSesion } from "../lib/cotizacion/firmasSesion.ts";
 const leer = (rel: string) => readFileSync(new URL(`../${rel}`, import.meta.url), "utf8").replace(/\r\n/g, "\n");
 
 const ALIADO = fiscalDeFilaAliado({ nombre: " Viajes Aurora ", nit: "900123456-7", tipo_documento: "NIT", telefono: "604", email: "a@x.test", direccion: "Calle 10" });
-const TITULAR = titularDeCliente({ nombres: "Ana", apellidos: "Pérez", numeroDoc: "123", telefono: "300", email: "ana@x.test" });
+const TITULAR = titularDeCliente({ nombres: "Ana", apellidos: "Pérez", numeroDoc: "123", tipoDoc: "CE", telefono: "300", email: "ana@x.test" });
 
 describe("identidad fiscal del aliado y titular", () => {
   test("la identidad del aliado sale de la fila del catálogo, recortada; lo vacío queda null", () => {
@@ -27,6 +27,7 @@ describe("identidad fiscal del aliado y titular", () => {
     const c = camposClienteVenta({ modo: "neta", fiscal: ALIADO, titular: TITULAR });
     assert.deepEqual(c, {
       cliente: "Viajes Aurora", cliente_documento: "900123456-7", cliente_telefono: "604", cliente_email: "a@x.test", cliente_direccion: "Calle 10",
+      cliente_tipo_documento: "NIT", titular_tipo_documento: "CE",
       titular_nombre: "Ana Pérez", titular_documento: "123", titular_telefono: "300", titular_email: "ana@x.test",
     });
   });
@@ -36,6 +37,7 @@ describe("identidad fiscal del aliado y titular", () => {
       const c = camposClienteVenta({ modo, fiscal: ALIADO, titular: TITULAR });
       assert.deepEqual([c.cliente, c.cliente_documento, c.cliente_telefono, c.cliente_email, c.cliente_direccion], ["Ana Pérez", "123", "300", "ana@x.test", null], String(modo));
       assert.deepEqual([c.titular_nombre, c.titular_documento, c.titular_telefono, c.titular_email], [null, null, null, null]);
+      assert.deepEqual([c.cliente_tipo_documento, c.titular_tipo_documento], ["CE", null]);
     }
   });
 

@@ -11,11 +11,12 @@ import { totalCobroConvertido, validarEleccionCobro } from "@/lib/finanzas/cobro
 import { formatMoneda } from "@/lib/utils";
 import { convertirCotizacion, descartarCotizacion } from "../../reservar/actions";
 import { type PasajeroReserva } from "@/lib/reservar/computo";
+import { OpcionesTipoDoc } from "@/components/personas/OpcionesTipoDoc";
+import { documentoPasajeroDesdeCliente } from "@/lib/personas/tiposDocumento";
 import { BuscarPasajeroDocumento } from "@/components/pasajeros/BuscarPasajeroDocumento";
 
 type ClientePrefill = { nombres: string; apellidos: string; tipoDoc: string; numeroDoc: string };
 
-const TIPOS_DOC = ["CC", "TI", "CE", "PAS", "RC"];
 
 export function CotizacionAcciones({
   id, pax, infantes, tienePasajeros, cliente, esSuperadmin, asesores, miNombre, miRolVenta, pideTrmProvisional = false,
@@ -68,8 +69,7 @@ export function CotizacionAcciones({
     Array.from({ length: total }, (_, i) => ({
       nombres: i === 0 ? cliente.nombres : "",
       apellidos: i === 0 ? cliente.apellidos : "",
-      tipoDoc: i === 0 ? (cliente.tipoDoc || "CC") : "CC",
-      numeroDoc: i === 0 ? cliente.numeroDoc : "",
+      ...(i === 0 ? documentoPasajeroDesdeCliente(cliente.tipoDoc || "CC", cliente.numeroDoc) : { tipoDoc: "CC", numeroDoc: "" }),
       fechaNacimiento: "",
       nacionalidad: "Colombiana",
       esInfante: i >= total - Math.max(0, infantes),
@@ -230,7 +230,7 @@ export function CotizacionAcciones({
               <div className="w-24">
                 <label className="text-[11px] text-gray-500">Tipo doc</label>
                 <select value={p.tipoDoc} onChange={(e) => setRow(i, "tipoDoc", e.target.value)} className="w-full rounded-lg border border-gray-300 bg-white px-2 py-2 text-sm">
-                  {TIPOS_DOC.map((t) => <option key={t} value={t}>{t}</option>)}
+                  <OpcionesTipoDoc pasajero />
                 </select>
               </div>
               <div className="w-28">

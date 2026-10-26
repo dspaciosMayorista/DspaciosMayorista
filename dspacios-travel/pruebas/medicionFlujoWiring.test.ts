@@ -369,14 +369,14 @@ describe("validacion_negocio/validacion_programa registran 'rechazado' en CADA r
   // inválida, venta directa, asesor ajeno, plan, comisión distinta a la
   // mostrada y margen NETO < 6 %), todos antes de numerar y envueltos igual:
   // 7 → 13.
-  test("crearContratoInterno: 13 puntos de rechazo pasan por _rechazarValidacion(); el log de éxito ('ok') aparece UNA sola vez", () => {
+  test("crearContratoInterno: 14 puntos de rechazo pasan por _rechazarValidacion(); el log de éxito ('ok') aparece UNA sola vez", () => {
     const cuerpo = cuerpoDeFuncion(leer(CONTRATOS_ARCHIVO), "crearContratoInterno");
     const usos = [...cuerpo.matchAll(/return _rechazarValidacion\(/g)];
-    assert.equal(usos.length, 13, `se esperaban 13 puntos de rechazo envueltos, hubo ${usos.length}`);
+    assert.equal(usos.length, 14, `se esperaban 14 puntos de rechazo envueltos, hubo ${usos.length}`);
     const logsOk = [...cuerpo.matchAll(/registrarEtapa\("crear_contrato", flujoId, "validacion_negocio", Math\.round\(performance\.now\(\) - _tValidacion0\), "ok"\)/g)];
     assert.equal(logsOk.length, 1, "el log de éxito de validacion_negocio debe aparecer exactamente una vez (al final de la sección)");
     const logsRechazado = [...cuerpo.matchAll(/registrarEtapa\("crear_contrato", flujoId, "validacion_negocio", Math\.round\(performance\.now\(\) - _tValidacion0\), "rechazado"\)/g)];
-    assert.equal(logsRechazado.length, 1, "el log de rechazo debe estar UNA sola vez, dentro de la definición de _rechazarValidacion (reutilizada en los 13 returns)");
+    assert.equal(logsRechazado.length, 1, "el log de rechazo debe estar UNA sola vez, dentro de la definición de _rechazarValidacion (reutilizada en los 14 returns)");
   });
 
   test("reservarProgramaInterno: 14 puntos de rechazo pasan por _rechazarValidacionPrograma(); el log de éxito ('ok') aparece UNA sola vez", () => {

@@ -1,5 +1,6 @@
 "use client";
 
+import { BuscarTitular } from "@/components/personas/BuscarTitular";
 import { Suspense, lazy, useEffect, useMemo, useState, useSyncExternalStore, useTransition } from "react";
 import Link from "next/link";
 import { formatMoneda } from "@/lib/utils";
@@ -541,7 +542,22 @@ export default function CheckoutPage() {
                       {TIPOS_DOC_PERSONA.map((t) => <option key={t} value={t}>{t}</option>)}
                     </select>
                   </div>
-                  <div><label className={lbl}>Documento *</label><input className={inp} value={c.numeroDoc} onChange={(e) => setC({ ...c, numeroDoc: e.target.value })} /></div>
+                  <div>
+                    <label className={lbl}>Documento *</label>
+                    <div className="flex gap-1">
+                      <input className={inp} value={c.numeroDoc} onChange={(e) => setC({ ...c, numeroDoc: e.target.value })} />
+                      {/* #40: solo personal interno (venta asistida); el visitante público B2C y el aliado no tienen la búsqueda. */}
+                      {asist?.puede === true && !esB2B && (
+                        <BuscarTitular
+                          numero={c.numeroDoc}
+                          contexto={`${canal}|${modoAsist}|${aliadoElegido?.id ?? ""}`}
+                          actual={c}
+                          campos={["nombres", "apellidos", "telefono", "email"]}
+                          onAplicar={({ tipoDoc, ...d }) => setC((p) => ({ ...p, tipoDoc, ...d }))}
+                        />
+                      )}
+                    </div>
+                  </div>
                 </div>
                 <div><label className={lbl}>Teléfono / WhatsApp *</label><input className={inp} value={c.telefono} onChange={(e) => setC({ ...c, telefono: e.target.value })} /></div>
                 <div className="sm:col-span-2"><label className={lbl}>Correo</label><input type="email" className={inp} value={c.email} onChange={(e) => setC({ ...c, email: e.target.value })} /></div>

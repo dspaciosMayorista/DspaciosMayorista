@@ -14,6 +14,7 @@ import { convertirCotizacionCarrito } from "../../reservar/actions";
 import { type PasajeroReserva } from "@/lib/reservar/computo";
 import { esInfantePorEdad } from "@/lib/reservar/pasajeros";
 import { recalcularVinculosPorEdadPorFila } from "@/lib/reservar/pasajerosFilas";
+import { OpcionesTipoDoc } from "@/components/personas/OpcionesTipoDoc";
 import { BuscarPasajeroDocumento } from "@/components/pasajeros/BuscarPasajeroDocumento";
 import { agruparUnidadesCarrito, validarPasajerosServiciosVinculados } from "@/lib/reservar/vinculoServiciosCheckout";
 import {
@@ -33,7 +34,6 @@ type ItemCarritoUI = { hotelNombre: string; destino: string | null; pax: number;
 // `null` si es independiente.
 type TourCarritoUI = { nombre: string; destino: string | null; pax: number; fechaIda: string | null; hotelIndice: number | null; precio?: number };
 
-const TIPOS_DOC = ["CC", "TI", "CE", "PAS", "RC"];
 
 // Conversión de una cotización COMBINADA del carrito (Fase 3): captura
 // pasajeros (igual que CotizacionAcciones) y, si el carrito trae 2+ destinos
@@ -400,7 +400,7 @@ export function ConvertirCarritoBtn({
                   <div className="w-24">
                     <label className="text-[11px] text-gray-500">Tipo doc</label>
                     <select value={p.tipoDoc} onChange={(e) => setRow(i, "tipoDoc", e.target.value)} className="w-full rounded-lg border border-gray-300 bg-white px-2 py-2 text-sm">
-                      {TIPOS_DOC.map((t) => <option key={t} value={t}>{t}</option>)}
+                      <OpcionesTipoDoc pasajero />
                     </select>
                   </div>
                   <div className="w-28">
