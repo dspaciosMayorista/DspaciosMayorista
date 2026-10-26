@@ -115,3 +115,27 @@ test("la migración 237 registra los catálogos D9 y las cuatro funciones define
   assert.match(sql, /as restrictive for update/);
   assert.match(sql, /as restrictive for delete/);
 });
+
+// Un `$$` colapsado a `$` (p. ej. por un String.replace con "$$" en la plantilla) rompe la ruta manual:
+// el editor SQL parte el script en sentencias sueltas y un `end;` suelto HACE COMMIT de lo anterior.
+test("la 237 y el rollback tienen los delimitadores $$ balanceados (aperturas = cierres) y ninguna `$` suelta", () => {
+  for (const rel of [
+    "supabase/migrations/20260601000237_catalogos_globales_frontera_mayorista.sql",
+    "supabase/scripts/rollback_237_catalogos_globales_frontera.sql",
+  ]) {
+    const sql = leer(rel).replace(/\r\n/g, "\n").replace(/\$function\$/g, "");
+    const aperturas = (sql.match(/^do \$\$$/gm) ?? []).length + (sql.match(/\bas \$\$$/gm) ?? []).length;
+    const cierres = (sql.match(/^\$\$;$/gm) ?? []).length;
+    assert.equal(aperturas, cierres, `${rel}: ${aperturas} aperturas vs ${cierres} cierres`);
+    assert.equal((sql.match(/\$\$/g) ?? []).length % 2, 0, `${rel}: cantidad impar de $$`);
+    assert.doesNotMatch(sql, /^do \$$/m, `${rel}: 'do $' suelto`);
+    assert.doesNotMatch(sql, /^\$;$/m, `${rel}: '$;' suelto`);
+  }
+});
+
+test("la 237 empieza con begin y termina con commit (transacción explícita)", () => {
+  const sql = leer("supabase/migrations/20260601000237_catalogos_globales_frontera_mayorista.sql").replace(/\r\n/g, "\n");
+  assert.match(sql, /^begin;$/m);
+  assert.match(sql.trimEnd(), /commit;$/);
+  assert.ok(sql.indexOf("\nbegin;") < sql.indexOf("create table public.sesion_agencia"));
+});

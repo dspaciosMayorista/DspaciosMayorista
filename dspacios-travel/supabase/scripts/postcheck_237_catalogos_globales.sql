@@ -91,6 +91,12 @@ filas as (
          ((select count(*) from public.sesion_agencia) || ' / ' || (select count(*) from public.sesion_agencia_inicio)),
          'informativo'
   union all
+  select 17, 'Respaldo exacto de las 4 funciones previas (filas) y cerrado a roles de cliente',
+         (select count(*)::text from public.catalogos_funciones_previas_237)
+           || ' / cliente=' || (has_table_privilege('authenticated', 'public.catalogos_funciones_previas_237', 'select')
+                                 or has_table_privilege('anon', 'public.catalogos_funciones_previas_237', 'select'))::text,
+         '4 / cliente=false'
+  union all
   select 16, 'Sesiones de Auth con created_at/not_after legibles (la función de agencia depende de auth.sessions)',
          (select (count(*) >= 0)::text from auth.sessions limit 1),
          'true'
