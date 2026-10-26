@@ -3,9 +3,14 @@
 -- Cada fila: control · observado · esperado · estado. La última fila es el veredicto:
 -- aplicar la 237 solo si dice "LISTO PARA APLICAR".
 --
--- Los md5 de las 4 funciones son los del cuerpo VIGENTE (migraciones 1..235). Si alguno no
--- coincide, la función se editó fuera del repo (hotfix manual): NO aplicar la 237, porque
--- su CREATE OR REPLACE revertiría ese cambio. Avisar antes de continuar.
+-- NOTA md5: son los del cuerpo (prosrc) VIGENTE de las 4 funciones que la 237 reemplaza. Si alguno no
+-- coincide, la función se editó fuera del repo: NO aplicar la 237 (su CREATE OR REPLACE la pisaría);
+-- avisar antes de continuar. reemplazar_tarifas_hotel_calculadora admite DOS md5 porque se comprobó
+-- por tokens (supabase/scripts/pruebas_237/comparar_funcion_tokens.mjs) que son el MISMO código:
+--   d7e05c96e1260a76fbad22784e881c77  = definición observada en Producción (formato multilínea)
+--   632146aba910eb17f2572273567de091  = migración 179 tal cual (entornos creados desde el repo)
+-- Las otras tres funciones aún no tienen definición de Producción comparada: si en Producción su md5
+-- difiere, hay que compararlas por tokens con la migración que las define antes de aplicar.
 with
 reg(t) as (
   select unnest(array['aliados','asesores','formas_pago','rangos_edad','parametros_tributarios',
@@ -19,7 +24,7 @@ fn(nombre, md5_esperado) as (
   values ('aprobar_solicitud_b2b',                   'b25ce02790c3991ff224be6079093fe5'),
          ('fn_fusionar_destino',                     'ccaecffb962705ae088f7ad6127b7a79'),
          ('generar_tarifas_hotel_calculadora',       'a3ecc79779e4d1c7bda05dca1bb3158e'),
-         ('reemplazar_tarifas_hotel_calculadora',    '632146aba910eb17f2572273567de091')
+         ('reemplazar_tarifas_hotel_calculadora',    'd7e05c96e1260a76fbad22784e881c77 | 632146aba910eb17f2572273567de091')
 ),
 filas as (
   select 1 as n, 'Catálogos del registro que existen en public' as control,
@@ -31,7 +36,7 @@ filas as (
          '26'
   union all
   select 3, 'Objetos de la 237 ya presentes (si hay alguno, la 237 ya se aplicó o quedó a medias)',
-         ((select count(*) from pg_class where relnamespace = 'public'::regnamespace and relname in ('sesion_agencia','sesion_agencia_inicio'))
+         ((select count(*) from pg_class where relnamespace = 'public'::regnamespace and relname in ('sesion_agencia','sesion_agencia_inicio','catalogos_funciones_previas_237'))
         + (select count(*) from pg_proc where pronamespace = 'public'::regnamespace
              and proname in ('agencia_activa_sesion','puede_escribir_catalogo_global','iniciar_contexto_agencia',
                              'cambiar_contexto_agencia','catalogos_globales_registro','invalidar_contexto_agencia_usuario'))
@@ -46,7 +51,7 @@ filas as (
          (select count(*)::text from pg_policy p join reg r on p.polrelid = to_regclass('public.' || r.t) where p.polpermissive),
          '47'
   union all
-  select 6 + row_number() over (order by f.nombre), 'Cuerpo vigente de ' || f.nombre || '() = el del repo',
+  select 6 + row_number() over (order by f.nombre), 'Cuerpo vigente de ' || f.nombre || '() = uno de los md5 conocidos (ver nota)',
          coalesce((select md5(p.prosrc) from pg_proc p where p.pronamespace = 'public'::regnamespace and p.proname = f.nombre), 'NO EXISTE'),
          f.md5_esperado
   from fn f
@@ -83,7 +88,7 @@ evaluadas as (
   select n, control, observado, esperado,
          case
            when esperado like '%informativo%' then 'INFO'
-           when observado = esperado then 'OK'
+           when observado = any (string_to_array(esperado, ' | ')) then 'OK'
            when esperado like '>= 1%' and observado ~ '^[0-9]+$' and observado::int >= 1 then 'OK'
            else 'REVISAR'
          end as estado
