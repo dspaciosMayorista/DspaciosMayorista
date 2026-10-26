@@ -16,6 +16,8 @@ import { IncluyeEditor } from "./IncluyeEditor";
 import { RecobroNinosEditor } from "./RecobroNinosEditor";
 import { ServiciosCotizacionEditor } from "./ServiciosCotizacionEditor";
 import { ConvertirCarritoBtn } from "./ConvertirCarritoBtn";
+import { TerminosB2BAsistido } from "@/components/cotizacion/TerminosB2BAsistido";
+import { leerPlanB2BDePayload } from "@/lib/cotizacion/asistidaB2B";
 import { monedaOfertaDeCotizacion } from "@/lib/finanzas/cobroCarrito";
 import { elegibilidadEdicion } from "@/lib/cotizacion/edicionServiciosManual";
 import { servicioDesdeFila } from "@/lib/cotizacion/liquidacionManual";
@@ -223,6 +225,12 @@ export default async function CotizacionDetallePage({
   };
   const detalleCarrito = (c.detalle ?? {}) as { contratos?: string[] };
   const contratosCarrito = detalleCarrito.contratos ?? (c.numero_contrato ? [c.numero_contrato] : []);
+  // #102: términos de una venta B2B ASISTIDA, congelados al cotizar. Presente pero ilegible ⇒ se avisa y la conversión también lo rechaza.
+  const lecturaB2B = esCarrito ? leerPlanB2BDePayload(c.payload) : { ok: true as const, plan: null };
+  const planB2B = lecturaB2B.ok ? lecturaB2B.plan : null;
+  const netaB2B = planB2B?.modo_compra === "neta";
+  // Clave de cada unidad en el plan congelado (mismo orden que `itemsCarrito` y `toursCarrito`): `ref` del ítem y `tour-N` por posición.
+  const clavesUnidadesB2B = [...itemsCarrito.map((i) => i.ref ?? ""), ...toursCarrito.map((_, j) => `tour-${j}`)];
 
   // Desglose interno: servicios + niños + recobro (oculto al cliente) = total.
   const detalleM = (c.detalle ?? {}) as { recobro?: { total?: number; empresa?: number; aliado?: number }; venta?: { ninos?: number } };
@@ -275,8 +283,9 @@ export default async function CotizacionDetallePage({
 
       <div className="mt-6 grid grid-cols-1 gap-4 sm:grid-cols-3">
         <div className="rounded-xl p-4 text-white" style={{ backgroundColor: "var(--brand-primary)" }}>
-          <div className="text-xs opacity-80">Precio de venta</div>
-          <div className="text-xl font-bold">{formatMoneda(c.precio_venta ?? 0, moneda)}</div>
+          <div className="text-xs opacity-80">{netaB2B ? "Total exigible (NETO)" : "Precio de venta"}</div>
+          <div className="text-xl font-bold">{formatMoneda(netaB2B && planB2B ? planB2B.total_exigible : c.precio_venta ?? 0, moneda)}</div>
+          {netaB2B && <div className="text-[11px] opacity-80">PVP {formatMoneda(c.precio_venta ?? 0, moneda)} − comisión {formatMoneda(planB2B?.comision ?? 0, moneda)}</div>}
         </div>
         <Dato label="Pasajeros" value={String(c.pax ?? "—")} />
         <VigenciaCotizacion id={c.id} vigencia={c.vigencia_hasta} fechaSalida={c.fecha_salida} editable={c.estado === "abierta"} />
@@ -290,6 +299,11 @@ export default async function CotizacionDetallePage({
       </div>
 
       {avisoPersonas}
+
+      {planB2B && <div className="mt-4"><TerminosB2BAsistido plan={planB2B} /></div>}
+      {!lecturaB2B.ok && (
+        <p role="alert" className="mt-4 rounded-lg bg-red-50 px-3 py-2 text-sm text-red-700">{lecturaB2B.error}</p>
+      )}
 
       <CondicionesPanel ui={condicionesUI} moneda={moneda} />
 
@@ -452,6 +466,8 @@ export default async function CotizacionDetallePage({
                 items={itemsCarrito.map((i) => ({ hotelNombre: i.hotelNombre, destino: i.destino, pax: i.pax, fechaIda: i.fechaIda ?? null, precio: Number(i.precio) || 0 }))}
                 tours={toursCarrito.map((t, j) => ({ nombre: t.nombre ?? "Tour", destino: t.destino, pax: t.pax, fechaIda: t.fechaIda ?? null, hotelIndice: hotelDeTourCarrito[j] ?? null, precio: Number(t.precio) || 0 }))}
                 monedaOferta={monedaOfertaDeCotizacion(c.moneda, c.payload)}
+                b2b={planB2B ? { plan: planB2B, clavesUnidades: clavesUnidadesB2B } : null}
+                b2bError={lecturaB2B.ok ? null : lecturaB2B.error}
                 vinculoError={vinculosCarrito.ok ? null : vinculosCarrito.error}
                 destinos={destinosCarrito}
                 cliente={clienteCarritoPre}

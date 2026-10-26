@@ -14,6 +14,14 @@ export function __setCrearSolicitudReserva(fn) {
 export async function getContextoB2B() {
   return contexto;
 }
+// #102: contexto de la venta B2B ASISTIDA por personal interno (por defecto, sin permiso: la sección no se muestra).
+let contextoAsistencia = { puede: false };
+export function __setContextoAsistencia(ctx) {
+  contextoAsistencia = ctx;
+}
+export async function getContextoAsistenciaB2B() {
+  return contextoAsistencia;
+}
 export async function fotosPortada() {
   return {};
 }

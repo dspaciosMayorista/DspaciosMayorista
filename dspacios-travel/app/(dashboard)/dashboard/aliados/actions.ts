@@ -56,6 +56,8 @@ export async function actualizarAliado(
   patch: {
     pctComision?: number | null; aplicaRetencion?: boolean; pctRetencion?: number;
     tipoDocumento?: string; direccion?: string; banco?: string; tipoCuenta?: string; numeroCuenta?: string;
+    /** #102 (migración 238): un aliado inactivo no se puede cotizar como beneficiario de una venta B2B asistida. */
+    activo?: boolean;
   }
 ): Promise<Result> {
   // D8/D9: los catálogos globales solo se escriben desde Mayorista (la RLS lo exige igual).
@@ -65,7 +67,9 @@ export async function actualizarAliado(
   const upd: {
     pct_comision?: number | null; aplica_retencion?: boolean; pct_retencion?: number;
     tipo_documento?: string; direccion?: string | null; banco?: string | null; tipo_cuenta?: string | null; numero_cuenta?: string | null;
+    activo?: boolean;
   } = {};
+  if (patch.activo !== undefined) upd.activo = patch.activo;
   if (patch.pctComision !== undefined) upd.pct_comision = patch.pctComision;
   if (patch.aplicaRetencion !== undefined) upd.aplica_retencion = patch.aplicaRetencion;
   if (patch.pctRetencion !== undefined) upd.pct_retencion = patch.pctRetencion;

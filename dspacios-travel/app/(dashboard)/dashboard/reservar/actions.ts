@@ -90,6 +90,11 @@ import { costoAereoBloqueo, costoHotelPersona, costoTourParaCxP, costoVueloBerna
 import { cobroDeContratoCarrito, compararConCongelado, leerCobroCongelado, monedaOfertaDeCotizacion, resolverMonedaOferta, validarEleccionCarrito } from "@/lib/finanzas/cobroCarrito";
 import { ROLES_INTERNOS } from "@/lib/constants";
 import { altaPersonasCotizacion, logPersonasCotizacion } from "@/lib/personas/consulta";
+import {
+  compararLineasConCongeladas, leerPlanB2BDePayload, planDeGrupoB2B, verificarCoberturaLineasB2B, MENSAJE_COTIZACION_B2B_INVALIDA, MENSAJE_TERMINOS_CAMBIARON,
+  type LineaB2B, type PlanB2BCotizacion,
+} from "@/lib/cotizacion/asistidaB2B";
+import { resolverActorAsistencia, verificarAliadoVivoParaConversion } from "@/lib/cotizacion/asistidaB2BServidor";
 
 const oNull = (s: string | null | undefined) => (s && s.trim() !== "" ? s.trim() : null);
 
@@ -1663,7 +1668,8 @@ type ItemCarritoBernaloConAsignacion = ItemCarritoBernaloPayload & { __posicione
 // INDEPENDIENTE (cada uno con su propio `pax`), así que quién viaja en cada
 // tour NO puede deducirse del grupo del hotel ni de todo el universo: se
 // declara explícitamente, con la misma convención de posiciones 1-based.
-type TourCarritoConAsignacion = TourCarritoPayload & { __posiciones: number[] };
+// `__idx` (#102): posición del tour en `payload.tours`, la llave `tour-N` de las líneas B2B congeladas en la cotización.
+type TourCarritoConAsignacion = TourCarritoPayload & { __posiciones: number[]; __idx: number };
 
 // Reservas de sillas consolidadas de UN grupo/contrato del carrito, EXACTAMENTE
 // como las recibirá `crear_pasajeros_contrato_multi` — fuente ÚNICA usada por
@@ -1879,6 +1885,16 @@ export async function convertirCotizacionCarrito(
   // después de varios `await`): TypeScript no puede seguir garantizando el
   // `!cot.tenant` de arriba a través de llamadas intermedias.
   const tenantCotizacion = cot.tenant as Tenant;
+  // #102: ¿es una venta B2B ASISTIDA? Los términos viven CONGELADOS en la cotización (`payload.b2bAsistido`); una cotización con ese bloque
+  // jamás se convierte en contrato B2C. Bloque presente pero ilegible ⇒ falla cerrado. Quien convierte debe estar en la lista explícita de
+  // roles (ni `control_vuelo` ni un aliado) y en la agencia Mayorista — igual que quien la creó; se exige ANTES de devolver o escribir nada.
+  const lecturaB2B = leerPlanB2BDePayload(cot.payload);
+  if (!lecturaB2B.ok) return { ok: false, error: lecturaB2B.error };
+  const planB2BCot: PlanB2BCotizacion | null = lecturaB2B.plan;
+  if (planB2BCot) {
+    const actorB2B = await resolverActorAsistencia(sb);
+    if (!actorB2B.ok) return { ok: false, error: actorB2B.error };
+  }
   // 235 (#90 F): MONEDA DE COBRO. Se valida AQUÍ, en el servidor, antes de leer o escribir nada (el selector de la pantalla no basta): es obligatoria
   // y expresa —también si coincide con la moneda de la cotización—, solo el personal interno puede cobrar en la otra, y la otra exige una TRM positiva.
   const monedaOfertaCarrito = monedaOfertaDeCotizacion(cot.moneda, cot.payload);
@@ -2043,7 +2059,7 @@ export async function convertirCotizacionCarrito(
       }
       vistos.add(pos);
     }
-    toursAsign.push({ ...t, __posiciones: posiciones });
+    toursAsign.push({ ...t, __posiciones: posiciones, __idx: i });
   }
 
   // Ningún pasajero del universo declarado puede quedar sin viajar en NINGUNA
@@ -2118,6 +2134,23 @@ export async function convertirCotizacionCarrito(
     if (numeroExistente) numeros.push(numeroExistente);
   }
   const gruposPendientes = grupos.filter((g) => !contratosPorGrupo[claveDeGrupo(g)]);
+
+  // #102: con grupos por convertir, el aliado de HOY (existe, activo, mismo tipo, mismo %) debe ser el congelado. Si cambió, se rechaza
+  // ANTES de reliquidar o numerar nada: nunca se recalcula la comisión en silencio con otro porcentaje. Un grupo ya convertido no se
+  // vuelve a juzgar (ese contrato es un hecho consumado).
+  if (planB2BCot && gruposPendientes.length) {
+    // Cobertura exacta del congelado: las unidades de TODOS los grupos (también los ya convertidos, para que el reintento verifique el conjunto
+    // completo) deben ser, una vez cada una, las líneas del plan. Una unidad faltante, repetida o ajena se rechaza antes de numerar.
+    const cobertura = verificarCoberturaLineasB2B(
+      planB2BCot,
+      grupos.map((g) => [...g.items.map((it) => it.ref ?? ""), ...g.tours.map((t) => `tour-${t.__idx}`)]),
+    );
+    if (!cobertura.ok) return { ok: false, error: cobertura.error };
+    const aliadoVivo = await verificarAliadoVivoParaConversion(sb, planB2BCot);
+    if (!aliadoVivo.ok) return { ok: false, error: aliadoVivo.error };
+  }
+  // Plan B2B de cada contrato por crear (con los términos CONGELADOS y el PVP/impuesto VIVOS de sus unidades, ya comparados).
+  const planesB2BPorGrupo = new Map<string, PlanComisionReserva>();
 
   // ── Paso 1: validar TODO (precio autoritativo + cupos) antes de insertar ──
   // Fase 3F-4B: cada ítem se despacha por `modeloTarifario` a su propio
@@ -2208,6 +2241,20 @@ export async function convertirCotizacionCarrito(
       });
       if (!vIncluidos.ok) return { ok: false, error: vIncluidos.error };
       validadosPersona.push({ item: it, comp: comp.data, incluidos: vIncluidos.incluidos });
+    }
+    // #102: cada unidad del grupo debe valer EXACTAMENTE lo congelado en la cotización (PVP e impuesto). Si el precio, el impuesto o la
+    // moneda cambiaron después de cotizar, se rechaza antes de numerar. Bernalo no genera impuesto; los tours conservan su PVP cotizado.
+    if (planB2BCot) {
+      const vivas: LineaB2B[] = [
+        ...validadosPersona.map((v) => ({ clave: v.item.ref ?? "", pvp: v.comp.precioVenta, impuesto: v.comp.impuestoTotal })),
+        ...validadosBernalo.map((v) => ({ clave: v.item.ref ?? "", pvp: v.resultado.precioVenta, impuesto: 0 })),
+        ...grupo.tours.map((t) => ({ clave: `tour-${t.__idx}`, pvp: t.precio, impuesto: 0 })),
+      ];
+      const cmpLineas = compararLineasConCongeladas(planB2BCot, vivas, cot.moneda ?? "");
+      if (!cmpLineas.ok) return { ok: false, error: cmpLineas.error };
+      const pg = planDeGrupoB2B(planB2BCot, vivas);
+      if (!pg.ok) return { ok: false, error: pg.error };
+      planesB2BPorGrupo.set(claveDeGrupo(grupo), pg.plan);
     }
     gruposValidados.push({ grupo, validadosPersona, validadosBernalo });
   }
@@ -2356,6 +2403,8 @@ export async function convertirCotizacionCarrito(
   });
   if (!rMoneda.ok) return { ok: false, error: rMoneda.error };
   const monedaOfertaConversion = rMoneda.moneda;
+  // #102: la moneda con la que se congelaron los términos B2B debe ser la de la conversión (nunca se mezclan ni se reinterpretan importes).
+  if (planB2BCot && monedaOfertaConversion !== planB2BCot.moneda) return { ok: false, error: MENSAJE_TERMINOS_CAMBIARON };
   if (monedaOfertaConversion !== (monedaOfertaCarrito === "USD" ? "USD" : "COP")) {
     const revalidada = validarEleccionCarrito({ monedaOferta: monedaOfertaConversion, monedaCobro: opts.monedaCobro, trmCobro: opts.trmCobro, esInterno: esInternoCobro });
     if (!revalidada.ok) return { ok: false, error: revalidada.error };
@@ -2492,9 +2541,14 @@ export async function convertirCotizacionCarrito(
       + validadosBernalo.reduce((s, v) => s + v.resultado.precioVenta, 0)
       + grupo.tours.reduce((s, t) => s + t.precio, 0);
     const monedaGrupo = monedaOfertaConversion; // validada arriba: todas las unidades del grupo (hoteles y tours) están en esta moneda
+    // #102: venta B2B asistida ⇒ el contrato nace B2B, del aliado congelado, y lo EXIGIBLE es el de su plan (PVP en comisionable; PVP −
+    // comisión en NETO). `precio_venta`, el total de cobro y todo lo que depende de él (saldo, factura, portal) parten de ese importe.
+    const planGrupoB2B = planB2BCot ? planesB2BPorGrupo.get(claveGrupo) ?? null : null;
+    if (planB2BCot && !planGrupoB2B) return { ok: false, error: MENSAJE_COTIZACION_B2B_INVALIDA };
+    const precioExigibleGrupo = planGrupoB2B ? planGrupoB2B.precioFinal : precioTotal;
     // 235 (#90 F): el total a cobrar de ESTE contrato se convierte UNA sola vez desde su precio_venta (la oferta no cambia) y se congela en la cabecera.
     // Se calcula ANTES de reservar el número: un total inválido no gasta consecutivo.
-    const cobroGrupo = cobroDeContratoCarrito({ precioVenta: precioTotal, monedaContrato: monedaGrupo, eleccion: eleccionCobro });
+    const cobroGrupo = cobroDeContratoCarrito({ precioVenta: precioExigibleGrupo, monedaContrato: monedaGrupo, eleccion: eleccionCobro });
     if (!cobroGrupo.ok) return { ok: false, error: numeros.length ? `${cobroGrupo.error} (los contratos ${numeros.join(", ")} sí quedaron completos)` : cobroGrupo.error };
     const numRes = await siguienteNumeroContrato(tenantCotizacion);
     if (!numRes.ok) return { ok: false, error: numRes.error };
@@ -2583,12 +2637,31 @@ export async function convertirCotizacionCarrito(
       hotel: totalHotelesGrupo === 1
         ? (validadosPersona[0]?.comp.meta.hotel_nombre ?? validadosPersona[0]?.item.hotelNombre ?? validadosBernalo[0]?.resultado.hotelNombre ?? null)
         : totalHotelesGrupo === 0 ? null : `${totalHotelesGrupo} hoteles`,
-      precio_venta: precioTotal,
+      // Lo EXIGIBLE del contrato: el PVP del carrito (`precioTotal`) o, en una venta B2B asistida, el de su plan (PVP, o PVP − comisión en NETO).
+      precio_venta: precioExigibleGrupo,
       estado: "pendiente",
       // Migración 172 — mismo criterio que reservarDesdeTarifarioInterno.
       financiero_estado: "pendiente",
-      canal: "B2C",
-      tipo_asesor: "interno",
+      // #102: B2B asistido ⇒ canal B2B del aliado congelado, con su modalidad y su comisión (la fila de `aliados_b2b` la crea la base
+      // justo después). El asesor interno sigue siendo quien gestiona; el beneficiario es el aliado. Sin plan B2B: B2C de siempre.
+      ...(planB2BCot && planGrupoB2B
+        ? {
+            canal: "B2B",
+            tipo_asesor: planB2BCot.tipo_asesor,
+            modo_compra: planGrupoB2B.modoCompra,
+            comision_b2b: planGrupoB2B.comision,
+            comision_estado: planGrupoB2B.comisionEstado,
+            // Mismo impuesto que se usó para la base: la base de datos recalcula la comisión desde `ventas.impuesto`.
+            impuesto: validadosPersona.reduce((s, v) => s + v.comp.impuestoTotal, 0),
+            aliado_id: planB2BCot.aliado_id,
+            agencia_nombre: planB2BCot.tipo_asesor === "agencia" ? planB2BCot.aliado_nombre : null,
+            freelance_nombre: planB2BCot.tipo_asesor === "freelance" ? planB2BCot.aliado_nombre : null,
+            // Candado de la base (238): una cotización convierte UNA vez cada grupo. Un doble envío simultáneo choca aquí, antes de escribir
+            // pasajeros, comisión o CxP; si el contrato se revierte por una falla, su fila desaparece y el reintento queda libre.
+            cotizacion_origen_id: id,
+            grupo_conversion: claveGrupo,
+          }
+        : { canal: "B2C", tipo_asesor: "interno" }),
       plazo: null,
       asesor_firma_nombre: oNull(opts.asesorInterno ?? null),
       asesor: oNull(opts.asesorInterno ?? null),
@@ -2598,7 +2671,14 @@ export async function convertirCotizacionCarrito(
       tours_traslados: resumenGrupo.toursTraslados,
       asistencia_medica: resumenGrupo.asistenciaMedica,
     });
-    if (ve) return { ok: false, error: ve.message };
+    if (ve) {
+      // #102: otra conversión de ESTA misma cotización ya creó (o está creando) este grupo ⇒ no se duplica nada. El número reservado en esta
+      // llamada queda sin usar; el contrato, la comisión y las CxP del otro intento son los válidos.
+      if (planB2BCot && ve.code === "23505" && /ux_ventas_conversion_cotizacion_grupo/.test(ve.message)) {
+        return { ok: false, error: "Esta cotización ya se está convirtiendo (o ya se convirtió) en otra solicitud. No se creó un contrato duplicado: recarga la cotización para ver su contrato." };
+      }
+      return { ok: false, error: ve.message };
+    }
 
     // Igual que en `reservarDesdeTarifarioInterno`: con el contrato ya
     // insertado, ninguna salida por error puede dejarlo vivo — sería un
@@ -2614,6 +2694,14 @@ export async function convertirCotizacionCarrito(
         error: `${motivo} · Además, el contrato ${numero} quedó creado a medias y no se pudo deshacer automáticamente (${rev.error ?? "motivo desconocido"}): revísalo antes de volver a intentarlo.${yaCreados}`,
       };
     };
+
+    // #102 · Comisión B2B del aliado: la crea la base (`registrar_comision_b2b_reserva`, migración 205 — valida usuario, rol, tenant,
+    // aliado y venta, recalcula el importe con la MISMA regla del plan y se niega a duplicar). En NETO queda marcada como descontada
+    // y no se puede pagar otra vez. Si falla, el contrato de este grupo se revierte completo (nunca un contrato B2B sin su comisión).
+    if (planB2BCot) {
+      const com = await registrarComisionReserva(sb, numero, planB2BCot.aliado_id);
+      if (!com.ok) return fallarYRevertirGrupo(com.error);
+    }
 
     // Pasajeros + responsables + sillas de TODOS los bloqueos del grupo, en
     // UNA sola llamada atómica (revisión de alto riesgo, ronda 3 — B6):

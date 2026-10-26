@@ -8,7 +8,9 @@ import { useCart, type CartItem, type HotelCartItem, type HotelCartItemPersona, 
 import { normalizarEdadesMenoresCarrito } from "@/lib/reservar/edadesMenores";
 import { comisionSobre, formatImporte, monedaDeItem, preverCotizacion } from "@/lib/cart/monedaCarrito";
 import { AvisoMonedas, TotalesPorMoneda } from "../totalesCarrito";
-import { crearSolicitudReserva, fotosPortada, getContextoB2B, type SolicitudResult, type ContextoB2B, type ResultadoComparativaCreada } from "./actions";
+import { UserCheck } from "lucide-react";
+import { crearSolicitudReserva, fotosPortada, getContextoAsistenciaB2B, getContextoB2B, type SolicitudResult, type ContextoAsistenciaCheckout, type ContextoB2B, type ResultadoComparativaCreada } from "./actions";
+import { TerminosB2BAsistido } from "@/components/cotizacion/TerminosB2BAsistido";
 // #35: se carga solo cuando el modo comparativa está activo (no entra al grafo del checkout normal).
 const ContinuarComparativa = lazy(() => import("@/lib/cotizacion/comparativaCheckout").then((m) => ({ default: m.ContinuarComparativa })));
 import { MAX_OPCIONES } from "@/lib/cotizacion/comparativa";
@@ -70,7 +72,25 @@ export default function CheckoutPage() {
   }, []);
   const esB2B = !!ctx?.esB2B;
   const faltanFacturacion = [!fact.nit.trim() && "NIT", !fact.telefono.trim() && "teléfono"].filter((x): x is string => !!x);
-  const pct = ctx?.pctComision ?? 0;
+
+  // #102 — Venta ASISTIDA por personal interno: B2C (cliente final) o B2B (aliado identificado del catálogo, PVP con comisión o NETO).
+  // Solo ELIGE: el servidor decide quién puede asistir, valida el aliado, su tipo y su porcentaje, y congela los términos. Se muestra solo
+  // al personal autorizado (no a un aliado logueado, que ya tiene su propio flujo) y no en el modo comparativa.
+  const [asist, setAsist] = useState<ContextoAsistenciaCheckout | null>(null);
+  const [canal, setCanal] = useState<"b2c" | "b2b">("b2c");
+  const [aliadoSel, setAliadoSel] = useState("");
+  const [modoAsist, setModoAsist] = useState<"comisionable" | "neta">("comisionable");
+  useEffect(() => {
+    getContextoAsistenciaB2B().then(setAsist).catch(() => {});
+  }, []);
+  const puedeAsistir = asist?.puede === true && !esB2B && !vista.crear;
+  const aliadosAsist = asist?.puede === true ? asist.aliados : [];
+  const aliadoElegido = aliadosAsist.find((a) => String(a.id) === aliadoSel) ?? null;
+  const asistenciaB2B = puedeAsistir && canal === "b2b";
+  // Presentación de la comisión: la del aliado logueado o, en venta asistida, la del aliado elegido (el servidor la recalcula y la congela).
+  const hayB2B = esB2B || asistenciaB2B;
+  const modoVista: "comisionable" | "neta" = asistenciaB2B ? modoAsist : modo;
+  const pct = asistenciaB2B ? (aliadoElegido?.pct ?? 0) : (ctx?.pctComision ?? 0);
   // La comisión B2B (presentación) se calcula sobre UNA sola moneda: el total
   // único del carrito o, si mezcla divisas, lo que se anticipa que entrará a
   // la cotización (`preverCotizacion`). Si no se puede anticipar (ítems sin
@@ -82,6 +102,7 @@ export default function CheckoutPage() {
       : null);
   const { comision, neto: totalNeto } = comisionSobre(baseComision?.monto ?? 0, pct);
   const sobreParte = !totales.unica && baseComision != null;
+  const verComision = esB2B || (asistenciaB2B && !!aliadoElegido);
 
   // Resuelve la portada actual por hotel (ítems del carrito sin fotoUrl).
   useEffect(() => {
@@ -143,6 +164,8 @@ export default function CheckoutPage() {
         // elección legítima del B2B ya autenticado, pero solo tiene efecto
         // si el servidor confirma la sesión como B2B.
         ...(esB2B ? { modo } : {}),
+        // #102: solo la ELECCIÓN del personal interno (aliado + modalidad). El servidor la autoriza, valida el aliado y recalcula todo.
+        ...(asistenciaB2B && aliadoElegido ? { asistencia: { canal: "b2b" as const, aliadoId: aliadoElegido.id, modo: modoAsist } } : {}),
       };
   }
 
@@ -173,6 +196,7 @@ export default function CheckoutPage() {
     if (!c.nombres.trim() || !c.apellidos.trim()) { setErr("Ingresa nombres y apellidos."); return; }
     if (!c.numeroDoc.trim()) { setErr("El documento es obligatorio."); return; }
     if (!c.telefono.trim()) { setErr("El teléfono / WhatsApp es obligatorio."); return; }
+    if (asistenciaB2B && !aliadoElegido) { setErr("Elige el aliado (agencia o freelance) de la venta B2B."); return; }
 
     // Carritos guardados en el navegador ANTES de pedir la edad de cada menor
     // no traen `edadesMenores`: sin menores declarados se normaliza a `[]`
@@ -304,31 +328,92 @@ export default function CheckoutPage() {
                 ))}
               </ul>
               <div className="mt-3 space-y-2 border-t border-gray-100 pt-3">
-                {!vista.crear && <TotalesPorMoneda totales={totales} etiqueta={`Total${esB2B ? " (PVP)" : " estimado"}`} />}
+                {!vista.crear && <TotalesPorMoneda totales={totales} etiqueta={`Total${hayB2B ? " (PVP)" : " estimado"}`} />}
                 {!vista.crear && <AvisoMonedas totales={totales} prevision={prevision} />}
-                {esB2B && !baseComision && (
+                {verComision && !baseComision && (
                   <p className="text-xs text-gray-500">La comisión se calculará sobre la cotización que se genere (una sola moneda).</p>
                 )}
-                {esB2B && baseComision && modo === "neta" && (
+                {verComision && baseComision && modoVista === "neta" && (
                   <>
                     <div className="flex items-center justify-between text-sm text-gray-500">
                       <span>Comisión ({Math.round(pct * 100)}%){sobreParte ? ` sobre lo cotizado en ${baseComision.moneda}` : ""}</span>
                       <span>−{formatMoneda(comision, baseComision.moneda)}</span>
                     </div>
                     <div className="flex items-center justify-between border-t border-gray-100 pt-1">
-                      <span className="text-sm font-semibold text-gray-700">Total neto a pagar{sobreParte ? " (estimado)" : ""}</span>
+                      <span className="text-sm font-semibold text-gray-700">Total neto a pagar{sobreParte || asistenciaB2B ? " (estimado)" : ""}</span>
                       <span className="text-lg font-bold" style={{ color: "var(--brand-success)" }}>{formatMoneda(totalNeto, baseComision.moneda)}</span>
                     </div>
                   </>
                 )}
-                {esB2B && baseComision && modo === "comisionable" && (
+                {verComision && baseComision && modoVista === "comisionable" && (
                   <div className="flex items-center justify-between text-sm text-gray-500">
                     <span>Comisión a liquidar ({Math.round(pct * 100)}%){sobreParte ? ` sobre lo cotizado en ${baseComision.moneda}` : ""}</span>
                     <span style={{ color: "var(--brand-success)" }}>{formatMoneda(comision, baseComision.moneda)}</span>
                   </div>
                 )}
+                {asistenciaB2B && aliadoElegido && (
+                  <p className="text-[11px] text-gray-400">Estimado sobre el PVP. Al generar, el servidor descuenta el impuesto no comisionable, recalcula con el porcentaje vigente del aliado y congela los términos exactos.</p>
+                )}
               </div>
             </section>
+
+            {/* #102 — Venta asistida por personal interno: cliente final (B2C) o aliado identificado (B2B). */}
+            {puedeAsistir && (
+              <section className="rounded-2xl border border-gray-200 bg-white p-5" data-testid="venta-asistida">
+                <h2 className="mb-1 flex items-center gap-2 text-sm font-semibold text-gray-700">
+                  <UserCheck className="h-4 w-4" aria-hidden style={{ color: "var(--brand-primary)" }} />
+                  Tipo de venta
+                </h2>
+                <p className="mb-3 text-xs text-gray-400">Eres personal de D&apos;spacios: elige para quién es esta cotización. El aliado es el beneficiario; tu usuario queda como quien la asistió.</p>
+                <div className="flex flex-wrap gap-2" role="group" aria-label="Tipo de venta">
+                  {([["b2c", "Cliente final (B2C)"], ["b2b", "Aliado (B2B)"]] as const).map(([v, l]) => (
+                    <button key={v} type="button" aria-pressed={canal === v} onClick={() => setCanal(v)}
+                      className="rounded-lg border px-4 py-2 text-sm font-medium transition-all"
+                      style={canal === v
+                        ? { borderColor: "var(--brand-primary)", color: "var(--brand-primary)", backgroundColor: "rgba(29,124,154,0.08)" }
+                        : { borderColor: "#e5e7eb", color: "#6b7280" }}>
+                      {l}
+                    </button>
+                  ))}
+                </div>
+                {canal === "b2b" && (
+                  <div className="mt-4 space-y-3">
+                    <div>
+                      <label className={lbl} htmlFor="asist-aliado">Aliado (agencia o freelance) *</label>
+                      <select id="asist-aliado" className={inp} value={aliadoSel} onChange={(e) => setAliadoSel(e.target.value)}>
+                        <option value="">— Elegir aliado —</option>
+                        {aliadosAsist.map((a) => <option key={a.id} value={String(a.id)}>{a.nombre} · {a.tipo === "agencia" ? "Agencia" : "Freelance"}</option>)}
+                      </select>
+                      {aliadosAsist.length === 0 && <p role="status" className="mt-1 text-xs text-amber-700">No hay aliados activos en el catálogo.</p>}
+                      {aliadoElegido && (
+                        <p className="mt-1 text-xs text-gray-500" data-testid="asist-pct">
+                          Comisión {Math.round(aliadoElegido.pct * 10000) / 100} % · {aliadoElegido.pctOrigen === "aliado" ? "porcentaje propio del aliado" : aliadoElegido.pctOrigen === "general" ? "porcentaje general del sistema" : "porcentaje por defecto"}
+                        </p>
+                      )}
+                    </div>
+                    <div className="flex flex-wrap gap-2" role="group" aria-label="Modalidad B2B">
+                      {([["comisionable", "PVP con comisión"], ["neta", "NETO"]] as const).map(([v, l]) => (
+                        <button key={v} type="button" aria-pressed={modoAsist === v} onClick={() => setModoAsist(v)}
+                          className="rounded-lg border px-4 py-2 text-sm font-medium transition-all"
+                          style={modoAsist === v
+                            ? { borderColor: "var(--brand-primary)", color: "var(--brand-primary)", backgroundColor: "rgba(29,124,154,0.08)" }
+                            : { borderColor: "#e5e7eb", color: "#6b7280" }}>
+                          {l}
+                        </button>
+                      ))}
+                    </div>
+                    <p className="text-xs text-gray-400">
+                      {modoAsist === "neta"
+                        ? "NETO: el aliado paga el PVP menos su comisión, ya descontada del precio (no se le paga después)."
+                        : "PVP con comisión: el comprador paga el PVP completo; la comisión del aliado queda pendiente de liquidar."}
+                    </p>
+                  </div>
+                )}
+              </section>
+            )}
+            {asist && !asist.puede && "error" in asist && (
+              <p role="alert" className="rounded-lg bg-red-50 px-3 py-2 text-sm text-red-600">{asist.error}</p>
+            )}
 
             {/* Modalidad B2B */}
             {esB2B && !vista.crear && (
@@ -422,6 +507,8 @@ function Exito({ res }: { res: Extract<SolicitudResult, { ok: true }> }) {
         <h2 className="mt-1 text-lg font-semibold text-green-800">¡Cotización generada!</h2>
         <p className="mt-1 text-sm text-green-700">Tu cotización: {res.cotizacion.codigo}</p>
       </div>
+
+      {res.b2bAsistido && <TerminosB2BAsistido plan={res.b2bAsistido} />}
 
       <div className="rounded-2xl border border-gray-200 bg-white p-5">
         <h3 className="mb-2 text-sm font-semibold text-gray-700">Tu documento</h3>
