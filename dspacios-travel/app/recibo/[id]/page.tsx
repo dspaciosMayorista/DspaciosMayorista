@@ -57,7 +57,7 @@ export default async function ReciboCajaPage({ params }: { params: Promise<{ id:
           </div>
 
           {/* Valor destacado */}
-          <div className="mt-5 rounded-lg bg-[rgba(29,124,154,0.06)] px-5 py-4">
+          <div className="mt-5 rounded-lg bg-[rgba(18,5,115,0.06)] px-5 py-4">
             <p className="text-xs uppercase tracking-wide text-gray-500">Recibimos la suma de</p>
             <p className="mt-1 text-2xl font-bold tabular-nums" style={{ color: "var(--brand-primary)" }}>
               {formatMoneda(abono.valor_abono, ec.moneda)}

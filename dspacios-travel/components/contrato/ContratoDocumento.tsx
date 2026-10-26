@@ -1,3 +1,4 @@
+import { COLOR_DOCUMENTO } from "@/lib/contrato/colorDocumento";
 import {
   EMPRESA,
   CONTRATO_TITULO,
@@ -113,8 +114,8 @@ type Props = {
 // de fondo, mismo azul para los títulos de sección (el amarillo de la marca
 // se probó primero pero se leía muy claro sobre el blanco de la página).
 const MARCA_POR_TENANT = {
-  mayorista: { primary: "#1D7C9A", titulo: "#1D7C9A", logo: "/marca/logo-white.png", logoEnTarjeta: false },
-  minorista: { primary: "#120573", titulo: "#120573", logo: "/marca/logo-minorista-white.png", logoEnTarjeta: false },
+  mayorista: { primary: COLOR_DOCUMENTO, titulo: COLOR_DOCUMENTO, logo: "/marca/logo-white.png", logoEnTarjeta: false },
+  minorista: { primary: COLOR_DOCUMENTO, titulo: COLOR_DOCUMENTO, logo: "/marca/logo-minorista-white.png", logoEnTarjeta: false },
 } as const;
 
 function Pill({ label, value }: { label: string; value: string }) {
