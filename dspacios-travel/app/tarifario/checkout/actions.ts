@@ -42,7 +42,7 @@ import { huellaIp } from "@/lib/cotizacion/comparativaServidor";
 import { TIPOS_DOC_PERSONA } from "@/lib/personas/identidad";
 import { tipoDocCheckout } from "@/lib/personas/cotizacion";
 import { altaPersonasCotizacion, logPersonasCotizacion } from "@/lib/personas/consulta";
-import { codigoErrorContacto, datosContactoTarifario, logContactoTarifario } from "@/lib/crm/contactoTarifario";
+import { codigoErrorContacto, datosContactoTarifario, logContactoTarifario, origenContactoTarifario } from "@/lib/crm/contactoTarifario";
 import { leerEntradaModalidad } from "@/lib/cotizacion/netoHija";
 import {
   compararTerminosVistos, construirPlanB2B, ETIQUETA_MODO_B2B, ETIQUETA_ORIGEN_PCT, leerAsistenciaB2BEntrada, type LineaB2B, type PlanB2BCotizacion,
@@ -1208,7 +1208,7 @@ export async function crearSolicitudReserva(inputRaw: unknown): Promise<Solicitu
       const { error } = await admin.from("crm_contactos").insert({
         categoria: "cliente_final",
         ...datos,
-        origen: "Cotización tarifario (B2C)",
+        origen: origenContactoTarifario({ asistida: b2bAsistido !== null, aliadoAutenticado: ctxB2B.esB2B }),
         // Misma agencia FIJA que la cotización de este checkout (arriba): el
         // tarifario público es solo de mayorista. Service-role no tiene sesión,
         // así que sin esto el contacto quedaría sin atribuir.
