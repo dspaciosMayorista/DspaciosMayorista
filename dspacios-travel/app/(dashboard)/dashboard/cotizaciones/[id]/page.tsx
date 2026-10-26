@@ -293,7 +293,7 @@ export default async function CotizacionDetallePage({
           {netaB2B && <div className="text-[11px] opacity-80">PVP {formatMoneda(c.precio_venta ?? 0, moneda)} − comisión {formatMoneda(planB2B?.comision ?? 0, moneda)}</div>}
         </div>
         <Dato label="Pasajeros" value={String(c.pax ?? "—")} />
-        <VigenciaCotizacion id={c.id} vigencia={c.vigencia_hasta} fechaSalida={c.fecha_salida} editable={c.estado === "abierta"} />
+        <VigenciaCotizacion id={c.id} vigencia={c.vigencia_hasta} fechaSalida={c.fecha_salida} editable={c.estado === "abierta"} estado={c.estado} />
       </div>
 
       <div className="mt-4 grid grid-cols-1 gap-3 sm:grid-cols-2">

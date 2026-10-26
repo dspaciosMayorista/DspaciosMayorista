@@ -108,7 +108,7 @@ describe("cableado de vigencia", () => {
   });
 
   test("Reservar y manual validan la fecha explícita en servidor", () => {
-    assert.match(reservar, /vigenciaSolicitada: opts\?\.vigenciaHasta/);
+    assert.match(reservar, /vigenciaSolicitada: (ctx\.interno === false \? undefined : )?opts\?\.vigenciaHasta/);
     assert.match(manual, /vigenciaSolicitada: input\.vigenciaHasta/);
   });
 

@@ -5,7 +5,7 @@ import { createAdminClient } from "@/lib/supabase/admin";
 import { revalidatePath } from "next/cache";
 import { contextoCotizacion, autorizaTenant } from "@/lib/cotizacion/acceso";
 import { ROLES_CONTRATO_COMPLETO } from "@/lib/roles";
-import { hoyBogota, resolverVigenciaCotizacion } from "@/lib/cotizacion/vigencia";
+import { cotizacionVencida, hoyBogota, MENSAJE_COTIZACION_VENCIDA, resolverVigenciaCotizacion } from "@/lib/cotizacion/vigencia";
 import type { Json } from "@/types/database";
 import {
   construirComparativaManual, mensajeErrorComparativa, validarClaveIdempotencia, type EntradaComparativaManual,
@@ -70,6 +70,8 @@ export async function crearCotizacionManual(
   // hay perfil o `activo !== true`, y solo entonces resuelve el tenant real.
   const ctx = await contextoCotizacion();
   if (!ctx.ok) return { ok: false, error: "No autorizado." };
+  // #40 E3: la fecha de vigencia la elige solo el personal interno; un rol externo que la envíe por red se rechaza.
+  if (ctx.interno === false && input.vigenciaHasta?.trim()) return { ok: false, error: "No tienes permiso para elegir la vigencia." };
   const tenantCotizacion = ctx.tenant;
   const usuario = await usuarioSesion();
   if (!usuario) return { ok: false, error: "No autorizado." };
@@ -328,6 +330,7 @@ async function sesionConversionAutorizada(): Promise<{ userId: string; rol: stri
 function mensajeSeguro(msg: string): string {
   const m = String(msg ?? "").trim();
   if (!m) return "No se pudo convertir la cotización a contrato. Inténtalo de nuevo.";
+  if (/COTIZACION_VENCIDA/.test(m)) return MENSAJE_COTIZACION_VENCIDA;
   if (/(duplicate key|violates (foreign key|not-null|check) constraint|constraint "|relation "|pg_|sqlstate|serialization failure|contradice la política|new row violates)/i.test(m)) {
     return "No se pudo convertir por un conflicto de datos. Reintenta; si persiste, revisa que los pagos previos y las condiciones estén correctos.";
   }
@@ -361,8 +364,10 @@ export async function convertirCotizacionManualAContrato(
 
   const admin = createAdminClient();
   // #35: la madre comparativa no se convierte (el RPC y los triggers también lo impiden).
-  const { data: madre } = await admin.from("cotizaciones").select("modo").eq("id", cotizacionId).maybeSingle();
+  const { data: madre } = await admin.from("cotizaciones").select("modo, estado, vigencia_hasta").eq("id", cotizacionId).maybeSingle();
   if (madre?.modo === "comparativa") return { ok: false, error: "Una comparativa no se convierte en contrato: elige una opción primero." };
+  // #40 E3: la abierta vencida se corta aquí y, con autoridad, en la base (antes de numerar); una ya convertida sigue siendo un reintento válido.
+  if (madre?.estado === "abierta" && cotizacionVencida(madre.vigencia_hasta, hoyBogota())) return { ok: false, error: MENSAJE_COTIZACION_VENCIDA };
   const rpc = await admin.rpc("convertir_cotizacion_manual_controlada", {
     p_cotizacion_id: cotizacionId,
     p_usuario_id: sesion.userId,
@@ -411,6 +416,8 @@ export async function crearComparativaManual(
   }
   const admin = createAdminClient();
 
+  // #40 E3: la vigencia la elige solo el personal interno.
+  if (ctx.interno === false && input.vigenciaHasta?.trim()) return { ok: false, error: "No tienes permiso para elegir la vigencia." };
   // El aliado SIEMPRE sale del catálogo (por id): su nombre pisa el texto libre.
   let entrada: EntradaComparativaManual = { ...input, tenant: ctx.tenant };
   if (input.aliadoId != null) {

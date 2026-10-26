@@ -100,7 +100,7 @@ describe("app: una sola puerta de dinero y ninguna escritura directa", () => {
     const fin = reservar.indexOf("export async function convertirCotizacionCarrito");
     assert.ok(ini > 0 && fin > ini, "no se pudo delimitar convertirCotizacion");
     const f = reservar.slice(ini, fin);
-    assert.match(f, /\.select\("estado, payload, numero_contrato, tenant, modo, tipo"\)/, "la lectura incluye tipo");
+    assert.match(f, /\.select\("estado, payload, numero_contrato, tenant, modo, tipo, vigencia_hasta"\)/, "la lectura incluye tipo");
     const iGuarda = f.indexOf('if (cot.tipo === "manual") return { ok: false');
     assert.ok(iGuarda > 0, "falta la guarda de manual");
     for (const despues of ['if (cot.estado === "convertida"', "contextoCotizacion()", "reservarDesdeTarifarioInterno(", '.update({ estado: "convertida"']) {
