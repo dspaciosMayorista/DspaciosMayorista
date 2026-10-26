@@ -272,6 +272,11 @@ export default async function CotizacionDetallePage({
           <p className="mt-1 text-sm text-gray-500">
             {c.cliente ?? "—"} · {c.destino ?? "—"} · Viaje {formatFechaLarga(c.fecha_salida)}
           </p>
+          {netaB2B && (
+            <p className="mt-0.5 text-xs text-gray-500" data-testid="ficha-titular">
+              Cliente: aliado · Titular de la reserva: {`${clienteCarritoPre.nombres} ${clienteCarritoPre.apellidos}`.trim() || "—"}
+            </p>
+          )}
           <span className="mt-2 inline-block rounded-full bg-amber-50 px-2 py-0.5 text-xs text-amber-700">
             {c.estado}
           </span>

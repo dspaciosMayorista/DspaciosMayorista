@@ -320,6 +320,14 @@ describe("102 · migración 238 y catálogo", () => {
     assert.match(salida, /columna_aliados_activo_existe\|true\|true\|OK/);
   });
 
+  test("M2b el postcheck integral de la 239 (UNA consulta) sale todo OK y la vista ventas_basica expone el titular sin columnas financieras", () => {
+    const salida = execFileSync("docker", ["exec", "-i", "-e", "PGPASSWORD=postgres", CT, "psql", "-h", "127.0.0.1", "-U", "supabase_admin", "-d", DB, "-X", "-q", "-t", "-A", "-F", "|"],
+      { input: leerArchivo("supabase/scripts/postcheck_239_titular_reserva.sql"), encoding: "utf8" });
+    assert.ok(!/\|REVISAR\s*$/m.test(salida), salida);
+    assert.match(salida, /ventas_basica_expone_el_titular\|4\|4\|OK/);
+    assert.match(salida, /documento_del_titular_enmascarado_para_venta_ajena\|true\|true\|OK/);
+  });
+
   test("M3 el selector del checkout: el personal ve solo aliados ACTIVOS de tipo agencia/freelance con su % y de dónde sale; los demás roles, nada", async () => {
     uidSesion = U.VENTA;
     const ctx = (await getContextoAsistenciaB2B()) as { puede: boolean; aliados?: { id: number; nombre: string; tipo: string; pct: number; pctOrigen: string }[] };
@@ -364,7 +372,8 @@ describe("102 · crear la cotización: se congela el plan y el servidor decide",
     const d = detalleCot(id);
     assert.deepEqual(d.b2bExterno, { netoTotalExigible: 912_000 });
     const texto = JSON.stringify(d);
-    assert.doesNotMatch(texto, /comision|Comisi|pct|porcentaje|b2bAsistido|Lucía Gómez/i, "el detalle (lo que ve el comprador) no lleva comisión, porcentaje ni aliado");
+    assert.doesNotMatch(texto, /comision|Comisi|pct|porcentaje|b2bAsistido|88000|0\.11/i, "el detalle (lo que ve el comprador) no lleva comisión, porcentaje ni base");
+    assert.match(texto, /Lucía Gómez 102/, "el aliado SÍ aparece, pero como el cliente de la cotización NETO (Preview #403), nunca como términos");
     assert.equal(num(sql(`select precio_venta from public.cotizaciones where id = ${id}`)), 1_000_000, "el PVP de la cotización no se toca; el exigible es el del plan");
   });
 
@@ -1210,6 +1219,245 @@ describe("102 · las unidades económicas de la cotización asistida también qu
     assert.equal(comisionesDe(primero).length, 1, "su comisión no se duplicó");
     assert.equal(comisionesDe(ok.numeros![1]).length, 1);
     assert.equal(ok.numeros!.reduce((s, n) => s + num(ventaDe(n).precio_venta), 0), plan!.total_exigible);
+  });
+});
+
+// ═════════════════════════════════════════════════════════════════════════
+// Preview #403 · identidad comercial de una venta NETO (aliado = cliente, persona = titular de la reserva) y firmas.
+describe("102 · NETO asistido: el aliado es el cliente comercial; la persona es el «Titular de la reserva»", () => {
+  const FISCAL = { nit: "900123456-7", tipo_documento: "NIT", direccion: "Calle 10 # 5-20, Medellín", telefono: "6044440000", email: "contabilidad@aurora102.test" };
+  before(() => {
+    sql(`update public.aliados set nit = ${lit(FISCAL.nit)}, tipo_documento = ${lit(FISCAL.tipo_documento)}, direccion = ${lit(FISCAL.direccion)}, telefono = ${lit(FISCAL.telefono)}, email = ${lit(FISCAL.email)} where id = ${A.AG10}`);
+    sql(`update public.aliados set nit = '1017000111', tipo_documento = 'CC', direccion = 'Carrera 7 # 1-1', telefono = '3105550000', email = 'lucia102@x.test' where id = ${A.FL_GENERAL}`);
+  });
+  type DetalleVenta = Record<string, unknown>;
+  const filaCot = (id: number) => json<{ cliente: string | null; cliente_documento: string | null; asesor: string | null }>(`select row_to_json(t)::text from (select cliente, cliente_documento, asesor from public.cotizaciones where id = ${id}) t`);
+  const ventaDet = (id: number) => (detalleCot(id).venta ?? {}) as DetalleVenta;
+  const clienteDe = (id: number) => (payloadCot(id) as unknown as { cliente: Record<string, string> }).cliente;
+  const ventaFicha = (n: string) => json<Record<string, string | null>>(`select row_to_json(t)::text from (select cliente, cliente_documento, cliente_telefono, cliente_email, cliente_direccion, titular_nombre, titular_documento, titular_telefono, titular_email, asesor_firma_nombre, asesor_firma_cargo, asesor, tipo_asesor, agencia_nombre, freelance_nombre from public.ventas where numero_contrato = ${lit(n)}) t`);
+
+  test("I1 cotización NETO: el cliente (lista y documento) es el aliado con la identidad fiscal del CATÁLOGO; el titular queda aparte, en datos persistidos", async () => {
+    const r = await cotizar(U.VENTA, { hoteles: [10201], asistencia: { ...b2b(A.AG10, "neta"), nit: "000", cliente: "Falso SA", nombre: "Falso SA" } as Asistencia, extra: { clienteComercial: "Falso SA" } });
+    assert.equal(r.ok, true, r.error);
+    const id = r.cotizacion!.id;
+    assert.deepEqual(filaCot(id), { cliente: ALIADOS_NOMBRE[A.AG10], cliente_documento: FISCAL.nit, asesor: SESIONES[U.VENTA].nombre });
+    const v = ventaDet(id);
+    assert.equal(v.cliente, ALIADOS_NOMBRE[A.AG10]);
+    assert.equal(v.cliente_documento, FISCAL.nit);
+    assert.equal(v.cliente_telefono, FISCAL.telefono);
+    assert.equal(v.cliente_direccion, FISCAL.direccion);
+    assert.equal(v.titular_nombre, "Ana Pérez");
+    assert.equal(v.titular_documento, "123");
+    assert.equal(v.titular_telefono, "3000000000");
+    assert.deepEqual(clienteDe(id), { ...CLIENTE }, "el titular completo sigue en payload.cliente");
+    assert.equal(v.tipo_asesor, "agencia");
+    assert.equal(v.agencia_nombre, ALIADOS_NOMBRE[A.AG10]);
+    assert.equal(v.asesor_firma_nombre, SESIONES[U.VENTA].nombre, "quien elaboró sale del usuario interno autenticado");
+    const doc = JSON.stringify(detalleCot(id));
+    assert.doesNotMatch(doc, /Falso SA|"000"/);
+    assert.doesNotMatch(doc, /comision|pct|base/i, "el snapshot del documento externo no lleva comisión, base ni porcentaje");
+  });
+
+  test("I2 cotización PVP con comisión: el cliente sigue siendo la persona (sin titular aparte); la firma sale del usuario y el vendedor es el aliado", async () => {
+    const { id } = await cotizarOk(U.VENTA, { hoteles: [10201], asistencia: b2b(A.FL_GENERAL, "comisionable") });
+    assert.deepEqual(filaCot(id), { cliente: "Ana Pérez", cliente_documento: "123", asesor: SESIONES[U.VENTA].nombre });
+    const v = ventaDet(id);
+    assert.equal(v.cliente, "Ana Pérez");
+    assert.equal(v.titular_nombre, undefined);
+    assert.equal(v.tipo_asesor, "freelance");
+    assert.equal(v.freelance_nombre, ALIADOS_NOMBRE[A.FL_GENERAL]);
+    assert.equal(v.asesor_firma_nombre, SESIONES[U.VENTA].nombre);
+  });
+
+  test("I3 cotización B2C interna: cliente = persona, y quien elaboró es el usuario autenticado (antes salía «—»)", async () => {
+    const { id } = await cotizarOk(U.GERENCIA, { hoteles: [10201] });
+    assert.deepEqual(filaCot(id), { cliente: "Ana Pérez", cliente_documento: "123", asesor: SESIONES[U.GERENCIA].nombre });
+    const v = ventaDet(id);
+    assert.equal(v.asesor_firma_nombre, SESIONES[U.GERENCIA].nombre);
+    assert.equal(v.titular_nombre, undefined);
+  });
+
+  test("I4 conversión NETO: el contrato queda a nombre del aliado (identidad del CATÁLOGO vivo, no del snapshot); el titular se persiste aparte; ventas_basica lo expone", async () => {
+    const { id } = await cotizarOk(U.VENTA, { hoteles: [10201], asistencia: b2b(A.AG10, "neta") });
+    // Un snapshot manipulado (detalle es editable) no puede dictar la identidad fiscal del contrato.
+    sql(`update public.cotizaciones set detalle = jsonb_set(detalle, '{venta,cliente}', '"Falso SA"') where id = ${id}`);
+    const ok = await convertir(U.VENTA, id, 1);
+    assert.equal(ok.ok, true, ok.error);
+    const n = ok.numeros![0];
+    const v = ventaFicha(n);
+    assert.equal(v.cliente, ALIADOS_NOMBRE[A.AG10]);
+    assert.equal(v.cliente_documento, FISCAL.nit);
+    assert.equal(v.cliente_telefono, FISCAL.telefono);
+    assert.equal(v.cliente_email, FISCAL.email);
+    assert.equal(v.cliente_direccion, FISCAL.direccion);
+    assert.equal(v.titular_nombre, "Ana Pérez");
+    assert.equal(v.titular_documento, "123");
+    assert.equal(v.titular_telefono, "3000000000");
+    assert.equal(v.titular_email, "ana@example.com");
+    assert.equal(v.tipo_asesor, "agencia");
+    assert.equal(v.agencia_nombre, ALIADOS_NOMBRE[A.AG10]);
+    assert.equal(ventaDe(n).aliado_id, A.AG10);
+    // La vista que lee el documento (ventas_basica) lleva el titular.
+    const vista = async (uid: string) => {
+      const r = await clienteLocal(jwt({ role: "authenticated", sub: uid })).from("ventas_basica").select("titular_nombre, titular_documento, titular_telefono").eq("numero_contrato", n);
+      assert.equal(r.error, null);
+      return r.data;
+    };
+    assert.deepEqual(await vista(U.VENTA), [{ titular_nombre: "Ana Pérez", titular_documento: "123", titular_telefono: "3000000000" }], "su asesor ve el documento completo");
+    assert.deepEqual(await vista(U.GERENCIA), [{ titular_nombre: "Ana Pérez", titular_documento: "123", titular_telefono: "3000000000" }]);
+    // Otro asesor de la agencia: ve al titular pero con el documento enmascarado, igual que el del cliente.
+    const otro = "00000000-0000-0000-0000-000000102099";
+    sql(`insert into auth.users (id, email) values ('${otro}', 'otro102@x.test') on conflict do nothing;
+         insert into public.usuarios (id, email, nombre, rol, activo, tenant) values ('${otro}', 'otro102@x.test', 'Otro Asesor 102', 'venta', true, 'mayorista') on conflict (id) do update set nombre = excluded.nombre, rol = excluded.rol, activo = excluded.activo, tenant = excluded.tenant`);
+    assert.deepEqual(await vista(otro), [{ titular_nombre: "Ana Pérez", titular_documento: "••••", titular_telefono: "3000000000" }]);
+    assert.equal(comisionesDe(n)[0].aliado, ALIADOS_NOMBRE[A.AG10]);
+  });
+
+  test("I5 conversión PVP con comisión y B2C: el cliente sigue siendo la persona y no hay titular aparte", async () => {
+    const pvp = await cotizarOk(U.VENTA, { hoteles: [10201], asistencia: b2b(A.AG10, "comisionable") });
+    const a = await convertir(U.VENTA, pvp.id, 1);
+    assert.equal(a.ok, true, a.error);
+    let v = ventaFicha(a.numeros![0]);
+    assert.deepEqual([v.cliente, v.cliente_documento, v.titular_nombre, v.titular_documento], ["Ana Pérez", "123", null, null]);
+    const b2c = await cotizarOk(U.VENTA, { hoteles: [10201] });
+    const b = await convertir(U.VENTA, b2c.id, 1);
+    assert.equal(b.ok, true, b.error);
+    v = ventaFicha(b.numeros![0]);
+    assert.deepEqual([v.cliente, v.cliente_documento, v.titular_nombre, v.tipo_asesor], ["Ana Pérez", "123", null, "interno"]);
+  });
+
+  test("I6 firma del contrato: sin asesor elegido en pantalla (superadmin) se firma con el usuario autenticado; con asesor elegido se respeta; nunca se inventa", async () => {
+    const sinElegir = await cotizarOk(U.SUPER, { hoteles: [10201] });
+    uidSesion = U.SUPER;
+    const r = await convertirCotizacionCarrito(sinElegir.id, { agrupar: "todo", pasajeros: PASAJEROS, asesorInterno: "", asignaciones: [[1, 2]], asignacionesTours: [], monedaCobro: "COP" }) as RespConvertir;
+    assert.equal(r.ok, true, r.error);
+    let v = ventaFicha(r.numeros![0]);
+    assert.equal(v.asesor_firma_nombre, SESIONES[U.SUPER].nombre);
+    assert.equal(v.asesor, SESIONES[U.SUPER].nombre);
+    const elegido = await cotizarOk(U.SUPER, { hoteles: [10201], asistencia: b2b(A.AG10, "neta") });
+    const e = await convertir(U.SUPER, elegido.id, 1);
+    assert.equal(e.ok, true, e.error);
+    v = ventaFicha(e.numeros![0]);
+    assert.equal(v.asesor_firma_nombre, SESIONES[U.SUPER].nombre);
+    assert.equal(v.agencia_nombre, ALIADOS_NOMBRE[A.AG10], "la segunda firma (vendedor) es el aliado");
+  });
+});
+
+// ═════════════════════════════════════════════════════════════════════════
+// Auditoría Preview #403 · la identidad fiscal del aliado que se MOSTRÓ al cotizar (cliente de una venta NETO) queda congelada y se verifica antes de numerar.
+describe("102 · NETO asistido: identidad fiscal del aliado congelada (nombre y documento)", () => {
+  const ID = 10207;
+  const NOMBRE = "Viajes Horizonte 102";
+  const NIT = "800555777-1";
+  before(() => {
+    sql(`insert into public.aliados (id, nombre, tipo, pct_comision, activo, nit, tipo_documento) values (${ID}, ${lit(NOMBRE)}, 'agencia', 0.10, true, ${lit(NIT)}, 'NIT') on conflict (id) do nothing`);
+  });
+  const restaurar = () => sql(`update public.aliados set nombre = ${lit(NOMBRE)}, nit = ${lit(NIT)}, tipo_documento = 'NIT', pct_comision = 0.10 where id = ${ID}`);
+  beforeEach(restaurar);
+  const MENSAJE = /identidad fiscal del aliado/;
+
+  test("J1 el plan congela el nombre y el documento fiscal que se mostraron como cliente de la cotización", async () => {
+    const { id, plan } = await cotizarOk(U.VENTA, { hoteles: [10201], asistencia: b2b(ID, "neta") });
+    const congelado = payloadCot(id).b2bAsistido as Record<string, unknown>;
+    assert.equal(congelado.aliado_nombre, NOMBRE);
+    assert.equal(congelado.aliado_documento, NIT);
+    assert.equal(plan!.aliado_documento, NIT);
+    const v = (detalleCot(id).venta ?? {}) as Record<string, unknown>;
+    assert.equal(v.cliente, NOMBRE);
+    assert.equal(v.cliente_documento, NIT, "lo congelado es lo mismo que se mostró");
+  });
+
+  test("J2 cambió el NOMBRE del aliado después de cotizar: se rechaza ANTES de numerar; con el nombre original la misma cotización convierte", async () => {
+    const { id } = await cotizarOk(U.VENTA, { hoteles: [10201], asistencia: b2b(ID, "neta") });
+    sql(`update public.aliados set nombre = 'Otro Nombre SAS' where id = ${ID}`);
+    const antes = foto();
+    const r = await convertir(U.VENTA, id, 1);
+    assert.equal(r.ok, false);
+    assert.match(r.error ?? "", MENSAJE);
+    sinEscribir("nombre cambiado", antes, id);
+    restaurar();
+    const ok = await convertir(U.VENTA, id, 1);
+    assert.equal(ok.ok, true, ok.error);
+    assert.equal(sql(`select cliente from public.ventas where numero_contrato = ${lit(ok.numeros![0])}`), NOMBRE);
+  });
+
+  test("J3 cambió el NIT (o el documento se agregó/quitó/cambió de tipo) después de cotizar: se rechaza antes de numerar", async () => {
+    for (const cambio of [`nit = '800555777-2'`, `nit = null`, `nit = '  800555777-1 x'`, `tipo_documento = 'CC'`]) {
+      const { id } = await cotizarOk(U.VENTA, { hoteles: [10201], asistencia: b2b(ID, "neta") });
+      sql(`update public.aliados set ${cambio} where id = ${ID}`);
+      const antes = foto();
+      const r = await convertir(U.VENTA, id, 1);
+      assert.equal(r.ok, false, cambio);
+      assert.match(r.error ?? "", MENSAJE, cambio);
+      sinEscribir(cambio, antes, id);
+      restaurar();
+    }
+  });
+
+  test("J4 un aliado SIN documento al cotizar y con documento después también se rechaza (no se imprime un NIT que nadie vio)", async () => {
+    sql(`update public.aliados set nit = null where id = ${ID}`);
+    const { id, plan } = await cotizarOk(U.VENTA, { hoteles: [10201], asistencia: b2b(ID, "neta") });
+    assert.equal(plan!.aliado_documento, null);
+    sql(`update public.aliados set nit = '900000001' where id = ${ID}`);
+    const antes = foto();
+    const r = await convertir(U.VENTA, id, 1);
+    assert.equal(r.ok, false);
+    assert.match(r.error ?? "", MENSAJE);
+    sinEscribir("documento agregado", antes, id);
+  });
+
+  test("J5 reintento por destino: el cambio de identidad entre intentos frena solo lo pendiente (el primer contrato ya existe y no se toca)", async () => {
+    const { id } = await cotizarOk(U.VENTA, { hoteles: [10201, 10202], asistencia: b2b(ID, "neta") });
+    sql(`
+      create or replace function public.t102_falla_segunda() returns trigger language plpgsql as $f$
+      begin
+        if NEW.precio_venta = 600000 then raise exception 'falla simulada 102 segunda comisión'; end if;
+        return NEW;
+      end $f$;
+      create trigger t102_falla_comision before insert on public.aliados_b2b for each row execute function public.t102_falla_segunda();
+    `);
+    const r1 = await convertir(U.VENTA, id, 2, { monedaCobro: "COP" }, "por_destino");
+    sql("drop trigger if exists t102_falla_comision on public.aliados_b2b");
+    assert.equal(r1.ok, false);
+    const primero = (detalleCot(id) as { contratos?: string[] }).contratos![0];
+    sql(`update public.aliados set nit = '123' where id = ${ID}`);
+    const antes = foto();
+    const r2 = await convertir(U.VENTA, id, 2, { monedaCobro: "COP" }, "por_destino");
+    assert.equal(r2.ok, false);
+    assert.match(r2.error ?? "", MENSAJE);
+    assert.deepEqual(foto(), antes);
+    restaurar();
+    const ok = await convertir(U.VENTA, id, 2, { monedaCobro: "COP" }, "por_destino");
+    assert.equal(ok.ok, true, ok.error);
+    assert.equal(ok.numeros![0], primero);
+    assert.equal(comisionesDe(primero).length, 1, "la comisión del primero no se duplicó");
+  });
+
+  test("J6 un plan NETO guardado sin identidad congelada (formato anterior) no se convierte: no se puede acreditar qué se mostró", async () => {
+    const { id } = await cotizarOk(U.VENTA, { hoteles: [10201], asistencia: b2b(ID, "neta") });
+    sinFrontera(`update public.cotizaciones set payload = payload #- '{b2bAsistido,aliado_documento}' where id = ${id}`);
+    const antes = foto();
+    const r = await convertir(U.VENTA, id, 1);
+    assert.equal(r.ok, false);
+    sinEscribir("plan sin identidad", antes, id);
+  });
+
+  test("J7 PVP con comisión: el nombre o el NIT del aliado NO bloquean (el cliente es la persona) y las reglas de comisión no cambian", async () => {
+    const { id, plan } = await cotizarOk(U.VENTA, { hoteles: [10201], asistencia: b2b(ID, "comisionable") });
+    sql(`update public.aliados set nombre = 'Nombre Nuevo SAS', nit = '999' where id = ${ID}`);
+    const ok = await convertir(U.VENTA, id, 1);
+    assert.equal(ok.ok, true, ok.error);
+    const v = ventaDe(ok.numeros![0]);
+    assert.equal(num(v.comision_b2b), plan!.comision);
+    assert.equal(sql(`select cliente from public.ventas where numero_contrato = ${lit(ok.numeros![0])}`), "Ana Pérez");
+  });
+
+  test("J8 las reglas de comisión de NETO siguen igual: cambió el PORCENTAJE ⇒ MENSAJE_TERMINOS_CAMBIARON (no el de identidad)", async () => {
+    const { id } = await cotizarOk(U.VENTA, { hoteles: [10201], asistencia: b2b(ID, "neta") });
+    sql(`update public.aliados set pct_comision = 0.20 where id = ${ID}`);
+    const r = await convertir(U.VENTA, id, 1);
+    assert.equal(r.ok, false);
+    assert.equal(r.error, MENSAJE_TERMINOS_CAMBIARON);
   });
 });
 

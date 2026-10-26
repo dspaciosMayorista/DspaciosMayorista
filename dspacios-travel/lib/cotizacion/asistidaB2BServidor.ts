@@ -1,17 +1,19 @@
 import type { createClient } from "@/lib/supabase/server";
 import type { ModoCompra } from "@/lib/reservar/comisionReserva";
 import {
-  autorizarActorAsistenciaB2B, compararAliadoConCongelado, evaluarAliadoAsistencia, resolverPctB2B,
+  autorizarActorAsistenciaB2B, compararAliadoConCongelado, compararIdentidadAliadoConCongelada, evaluarAliadoAsistencia, resolverPctB2B,
   type AliadoAsistencia, type EntradaAsistencia, type OrigenPctB2B, type PlanB2BCotizacion, type RolAsistenciaB2B, type TipoAliadoB2B,
 } from "@/lib/cotizacion/asistidaB2B";
+import { fiscalDeFilaAliado, nombreQuienElabora, type FiscalAliado } from "@/lib/cotizacion/identidadB2B";
 
 // #102 — Resolución EN SERVIDOR de quién asiste y para quién. Todo sale de la sesión autenticada + `usuarios` + el catálogo
 // `aliados`: del navegador solo llega la ELECCIÓN (id de aliado y modalidad). Se lee con el cliente de SESIÓN (la RLS sigue siendo
 // una segunda barrera) — no hace falta service-role: los cinco roles autorizados leen `aliados` y `parametros_tributarios`.
 type Sb = Awaited<ReturnType<typeof createClient>>;
 
-export type ActorAsistencia = { id: string; email: string | null; rol: RolAsistenciaB2B; superadmin: boolean };
-export type AliadoResuelto = AliadoAsistencia & { pct: number; pctOrigen: OrigenPctB2B };
+export type ActorAsistencia = { id: string; email: string | null; rol: RolAsistenciaB2B; superadmin: boolean; nombre: string | null };
+/** `fiscal`: identidad del aliado TAL COMO ESTÁ en el catálogo (nunca texto del navegador); es el cliente comercial de una venta NETO. */
+export type AliadoResuelto = AliadoAsistencia & { pct: number; pctOrigen: OrigenPctB2B; fiscal: FiscalAliado };
 export type ContextoAsistenciaB2B = { actor: ActorAsistencia; aliado: AliadoResuelto; modo: ModoCompra };
 export type AliadoListado = { id: number; nombre: string; tipo: TipoAliadoB2B; pct: number; pctOrigen: OrigenPctB2B };
 
@@ -25,11 +27,11 @@ const parametroDe = (tipo: TipoAliadoB2B) => (tipo === "agencia" ? "COMISION_AGE
 export async function resolverActorAsistencia(sb: Sb): Promise<{ ok: true; actor: ActorAsistencia } | { ok: false; error: string }> {
   const { data: { user }, error: errUser } = await sb.auth.getUser();
   if (errUser || !user) return { ok: false, error: ERROR_SESION };
-  const { data: perfil, error: errPerfil } = await sb.from("usuarios").select("rol, activo, tenant, email").eq("id", user.id).maybeSingle();
+  const { data: perfil, error: errPerfil } = await sb.from("usuarios").select("rol, activo, tenant, email, nombre").eq("id", user.id).maybeSingle();
   if (errPerfil) return { ok: false, error: ERROR_SESION };
   const aut = autorizarActorAsistenciaB2B(perfil);
   if (!aut.ok) return aut;
-  return { ok: true, actor: { id: user.id, email: perfil?.email ?? user.email ?? null, rol: aut.rol, superadmin: aut.superadmin } };
+  return { ok: true, actor: { id: user.id, email: perfil?.email ?? user.email ?? null, rol: aut.rol, superadmin: aut.superadmin, nombre: nombreQuienElabora(perfil?.nombre, null) } };
 }
 
 function errorLecturaAliados(e: { code?: string | null; message?: string | null } | null | undefined): string {
@@ -42,7 +44,7 @@ function errorLecturaAliados(e: { code?: string | null; message?: string | null 
  * defecto). Si el aliado no tiene % propio y el parámetro general no se puede leer, no se adivina (la base lo recalcularía distinto).
  */
 export async function resolverAliadoAsistencia(sb: Sb, aliadoId: number): Promise<{ ok: true; aliado: AliadoResuelto } | { ok: false; error: string }> {
-  const { data: fila, error } = await sb.from("aliados").select("id, nombre, tipo, pct_comision, activo").eq("id", aliadoId).maybeSingle();
+  const { data: fila, error } = await sb.from("aliados").select("id, nombre, tipo, pct_comision, activo, nit, tipo_documento, telefono, email, direccion").eq("id", aliadoId).maybeSingle();
   if (error) return { ok: false, error: errorLecturaAliados(error) };
   const ev = evaluarAliadoAsistencia(fila);
   if (!ev.ok) return ev;
@@ -53,7 +55,7 @@ export async function resolverAliadoAsistencia(sb: Sb, aliadoId: number): Promis
     valorParametro = p?.valor ?? null;
   }
   const { pct, origen } = resolverPctB2B(ev.aliado.pctAliado, valorParametro, ev.aliado.tipo);
-  return { ok: true, aliado: { ...ev.aliado, pct, pctOrigen: origen } };
+  return { ok: true, aliado: { ...ev.aliado, pct, pctOrigen: origen, fiscal: fiscalDeFilaAliado({ ...fila, nombre: ev.aliado.nombre }) } };
 }
 
 /** Crear la cotización: actor autorizado + aliado válido + modalidad elegida. Se llama ANTES de crear nada. */
@@ -96,5 +98,8 @@ export async function verificarAliadoVivoParaConversion(sb: Sb, plan: PlanB2BCot
   if (!al.ok) return al;
   const cmp = compararAliadoConCongelado(plan, { aliadoId: al.aliado.id, tipo: al.aliado.tipo, pct: al.aliado.pct });
   if (!cmp.ok) return cmp;
+  // NETO: el aliado es el cliente del contrato; su identidad fiscal debe ser la que se mostró al cotizar (nombre, documento, tipo).
+  const ident = compararIdentidadAliadoConCongelada(plan, { nombre: al.aliado.fiscal.nombre, documento: al.aliado.fiscal.documento, tipoDocumento: al.aliado.fiscal.tipoDocumento });
+  if (!ident.ok) return ident;
   return { ok: true, aliado: al.aliado };
 }

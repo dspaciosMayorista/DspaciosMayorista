@@ -95,6 +95,8 @@ import {
   type LineaB2B, type PlanB2BCotizacion,
 } from "@/lib/cotizacion/asistidaB2B";
 import { resolverActorAsistencia, verificarAliadoVivoParaConversion } from "@/lib/cotizacion/asistidaB2BServidor";
+import { resolverFirmasSesion } from "@/lib/cotizacion/firmasSesion";
+import { camposClienteVenta, nombreQuienElabora, titularDeCliente, type FiscalAliado } from "@/lib/cotizacion/identidadB2B";
 
 const oNull = (s: string | null | undefined) => (s && s.trim() !== "" ? s.trim() : null);
 
@@ -2138,6 +2140,8 @@ export async function convertirCotizacionCarrito(
   // #102: con grupos por convertir, el aliado de HOY (existe, activo, mismo tipo, mismo %) debe ser el congelado. Si cambió, se rechaza
   // ANTES de reliquidar o numerar nada: nunca se recalcula la comisión en silencio con otro porcentaje. Un grupo ya convertido no se
   // vuelve a juzgar (ese contrato es un hecho consumado).
+  // Identidad fiscal del ALIADO tal como está HOY en el catálogo (nunca del snapshot de la cotización): es el cliente del contrato en NETO.
+  let fiscalAliadoVivo: FiscalAliado | null = null;
   if (planB2BCot && gruposPendientes.length) {
     // Cobertura exacta del congelado: las unidades de TODOS los grupos (también los ya convertidos, para que el reintento verifique el conjunto
     // completo) deben ser, una vez cada una, las líneas del plan. Una unidad faltante, repetida o ajena se rechaza antes de numerar.
@@ -2148,7 +2152,10 @@ export async function convertirCotizacionCarrito(
     if (!cobertura.ok) return { ok: false, error: cobertura.error };
     const aliadoVivo = await verificarAliadoVivoParaConversion(sb, planB2BCot);
     if (!aliadoVivo.ok) return { ok: false, error: aliadoVivo.error };
+    fiscalAliadoVivo = aliadoVivo.aliado.fiscal;
   }
+  // Quien firma como «elaboró»: el asesor elegido en pantalla o, si no se eligió (p. ej. superadmin), el usuario interno autenticado. Nunca se inventa.
+  const firmaConversion = nombreQuienElabora(opts.asesorInterno, (await resolverFirmasSesion(sb)).elabora);
   // Plan B2B de cada contrato por crear (con los términos CONGELADOS y el PVP/impuesto VIVOS de sus unidades, ya comparados).
   const planesB2BPorGrupo = new Map<string, PlanComisionReserva>();
 
@@ -2495,7 +2502,6 @@ export async function convertirCotizacionCarrito(
     const claveGrupo = claveDeGrupo(grupo);
     const totalHotelesGrupo = validadosPersona.length + validadosBernalo.length;
 
-    const clienteNombre = `${cliente.nombres} ${cliente.apellidos}`.trim();
     // Regla A.6/C.12: destino/fechas/precio/moneda del contrato se agregan
     // sobre AMBAS listas — una cotización mixta persona+Bernalo debe quedar
     // en UN contrato coherente, sin que la presencia de Bernalo cambie cómo
@@ -2623,10 +2629,8 @@ export async function convertirCotizacionCarrito(
       // Conserva EXACTAMENTE el tenant de la cotización de origen (validado
       // arriba: no nulo, y el caller tiene acceso a él).
       tenant: tenantCotizacion,
-      cliente: clienteNombre,
-      cliente_documento: oNull(cliente.numeroDoc),
-      cliente_telefono: oNull(cliente.telefono),
-      cliente_email: oNull(cliente.email),
+      // Preview #403: NETO ⇒ cliente = aliado (catálogo) y la persona queda como titular de la reserva; PVP con comisión y B2C ⇒ cliente = la persona.
+      ...camposClienteVenta({ modo: planB2BCot?.modo_compra ?? null, fiscal: fiscalAliadoVivo, titular: titularDeCliente(cliente) }),
       destino: destinos.join(" · ") || grupo.destino,
       tipo_paquete: "carrito",
       moneda: monedaGrupo,
@@ -2663,8 +2667,8 @@ export async function convertirCotizacionCarrito(
           }
         : { canal: "B2C", tipo_asesor: "interno" }),
       plazo: null,
-      asesor_firma_nombre: oNull(opts.asesorInterno ?? null),
-      asesor: oNull(opts.asesorInterno ?? null),
+      asesor_firma_nombre: oNull(firmaConversion),
+      asesor: oNull(firmaConversion),
       plan_nombre: totalHotelesGrupo === 1
         ? (validadosPersona[0] ? `${validadosPersona[0].item.categoria} · ${validadosPersona[0].item.regimen}` : `${validadosBernalo[0].item.categoria} · ${validadosBernalo[0].item.alimentacion}`)
         : totalHotelesGrupo === 0 ? (grupo.tours.length === 1 ? grupo.tours[0].nombre : `${grupo.tours.length} tours`) : `${totalHotelesGrupo} hoteles`,

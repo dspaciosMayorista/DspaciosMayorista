@@ -289,6 +289,9 @@ export default async function ContratoDetallePage({
           <p className="mt-1 text-sm text-gray-500">
             {venta.cliente} · {venta.destino ?? "—"} · Viaje {formatFechaLarga(venta.fecha_salida)}
           </p>
+          {venta.titular_nombre && (
+            <p className="mt-0.5 text-xs text-gray-500" data-testid="ficha-contrato-titular">Cliente: aliado · Titular de la reserva: {venta.titular_nombre}</p>
+          )}
           <div className="mt-2 flex flex-wrap items-center gap-3">
             <EstadoVenta numero={venta.numero_contrato} estado={venta.estado} plazo={venta.plazo} puedeConfirmar={verFinanzas} />
             {/* Trazabilidad venta → empaquetado (revisión de PR #268, defecto 4):
@@ -465,7 +468,7 @@ export default async function ContratoDetallePage({
         pasajeros={(pasajerosC ?? []) as unknown as PasajeroRow[]}
         fechaSalida={venta.fecha_salida}
         pax={venta.pax ?? 0}
-        titularNombre={venta.cliente ?? ""}
+        titularNombre={venta.titular_nombre ?? venta.cliente ?? ""}
         puedeEditar={puedeEditar}
       />
 

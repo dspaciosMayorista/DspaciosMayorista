@@ -48,6 +48,8 @@ import {
   construirPlanB2B, ETIQUETA_MODO_B2B, ETIQUETA_ORIGEN_PCT, leerAsistenciaB2BEntrada, type LineaB2B, type PlanB2BCotizacion,
 } from "@/lib/cotizacion/asistidaB2B";
 import { listarAliadosParaAsistencia, prepararAsistenciaB2B, type AliadoListado, type ContextoAsistenciaB2B } from "@/lib/cotizacion/asistidaB2BServidor";
+import { resolverFirmasSesion } from "@/lib/cotizacion/firmasSesion";
+import { camposClienteVenta, camposVendedorAliado, nombreQuienElabora, titularDeCliente } from "@/lib/cotizacion/identidadB2B";
 
 // Forma que arma el CARRITO en el cliente (ver lib/cart/CartContext.tsx) —
 // incluye `ninos`/`ninos2`/`infantes`/`pax`/`precio` para la vista previa en
@@ -1026,15 +1028,28 @@ async function crearCotizacionCarrito(input: {
   if (opts?.b2b) {
     const r = construirPlanB2B({
       aliado: opts.b2b.aliado, pct: opts.b2b.aliado.pct, pctOrigen: opts.b2b.aliado.pctOrigen, modo: opts.b2b.modo, moneda, lineas: lineasB2B,
+      identidad: { documento: opts.b2b.aliado.fiscal.documento, tipoDocumento: opts.b2b.aliado.fiscal.tipoDocumento },
       actor: { id: opts.b2b.actor.id, email: opts.b2b.actor.email, rol: opts.b2b.actor.rol }, congeladoEn: new Date().toISOString(),
     });
     if (!r.ok) return { ok: false, error: r.error };
     planB2B = r.plan;
   }
 
+  // Preview #403: cliente comercial y firmas. En NETO el cliente es el ALIADO (identidad fiscal del catálogo, ya resuelta en servidor) y la persona queda
+  // como «Titular de la reserva»; en PVP con comisión y B2C el cliente sigue siendo la persona. Quien elaboró sale del usuario autenticado y el vendedor
+  // del aliado (cotizado o logueado): si el dato no existe (visitante anónimo) queda vacío y el documento muestra «—».
+  const adminLookup = process.env.SUPABASE_SERVICE_ROLE_KEY ? createAdminClient() : sb;
+  const firmasSesion = await resolverFirmasSesion(sb, adminLookup);
+  const elabora = nombreQuienElabora(opts?.b2b?.actor.nombre, firmasSesion.elabora);
+  const campos = camposClienteVenta({ modo: planB2B?.modo_compra ?? null, fiscal: opts?.b2b?.aliado.fiscal ?? null, titular: titularDeCliente(input.cliente) });
+  const vendedor = planB2B ? camposVendedorAliado({ nombre: planB2B.aliado_nombre, tipo: planB2B.tipo_asesor }) : camposVendedorAliado(firmasSesion.aliado);
+
   const ventaSnap: Record<string, unknown> = {
-    numero_contrato: "", cliente: clienteNombre, cliente_documento: input.cliente.numeroDoc.trim() || null,
-    cliente_telefono: input.cliente.telefono.trim() || null, cliente_direccion: null,
+    numero_contrato: "", cliente: campos.cliente, cliente_documento: campos.cliente_documento,
+    cliente_telefono: campos.cliente_telefono, cliente_direccion: campos.cliente_direccion,
+    ...(campos.titular_nombre ? { titular_nombre: campos.titular_nombre, titular_documento: campos.titular_documento, titular_telefono: campos.titular_telefono, titular_email: campos.titular_email } : {}),
+    asesor: elabora, asesor_firma_nombre: elabora, asesor_firma_cargo: elabora ? "Asesor/a" : null,
+    ...(vendedor ?? {}),
     destino: destinoTxt, fecha_emision: hoy, fecha_salida: fechaIda, fecha_regreso: fechaRegreso,
     pax: paxTotal, estado: "pendiente",
     plan_nombre: planNombre,
@@ -1062,7 +1077,7 @@ async function crearCotizacionCarrito(input: {
   const vigencia = vigenciaRes.vigencia;
 
   const { data: { user } } = await sb.auth.getUser();
-  const admin = process.env.SUPABASE_SERVICE_ROLE_KEY ? createAdminClient() : sb;
+  const admin = adminLookup;
 
   const filaCotizacion = {
     // Estampado FIJO en el servidor — nunca desde `input` (el cliente no
@@ -1077,8 +1092,8 @@ async function crearCotizacionCarrito(input: {
     // conversión a contrato explícitamente, sin caer al flujo persona.
     payload: { items: [...itemsOk, ...itemsBernaloOk], tours: toursOk, serviciosIncluidos: incluidosPayload, cliente: input.cliente, ...(planB2B ? { b2bAsistido: planB2B } : {}) } as unknown as Json,
     detalle: detalle as unknown as Json,
-    cliente: clienteNombre,
-    cliente_documento: input.cliente.numeroDoc.trim() || null,
+    cliente: campos.cliente,
+    cliente_documento: campos.cliente_documento,
     destino: destinoTxt,
     hotel: totalHoteles === 1 ? (itemsOk[0]?.hotelNombre ?? itemsBernaloOk[0]?.hotelNombre ?? null) : (totalHoteles ? `${totalHoteles} hoteles` : null),
     modulo: "carrito",
@@ -1089,7 +1104,7 @@ async function crearCotizacionCarrito(input: {
     fecha_salida: fechaIda,
     fecha_regreso: fechaRegreso,
     vigencia_hasta: vigencia,
-    asesor: null,
+    asesor: elabora,
     creado_por: user?.email ?? null,
   };
   // #35: una opción de comparativa solo necesita la fila calculada.

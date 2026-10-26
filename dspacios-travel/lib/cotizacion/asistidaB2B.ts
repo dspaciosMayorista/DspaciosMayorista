@@ -36,6 +36,13 @@ export type PlanB2BCotizacion = {
   aliado_id: number;
   /** Solo para mostrar; la autoridad es `aliado_id` (se vuelve a leer del catálogo al convertir). */
   aliado_nombre: string;
+  /**
+   * Documento fiscal del aliado (sin tipo) y su tipo TAL COMO se mostraron como cliente de la cotización NETO (catálogo `aliados`, resueltos en servidor).
+   * Congelados con el plan: la conversión exige que el catálogo vivo diga lo mismo (`compararIdentidadAliadoConCongelada`). `undefined` = plan guardado
+   * antes de este campo (no se puede acreditar qué se mostró); `null` = el aliado no tenía documento al cotizar.
+   */
+  aliado_documento?: string | null;
+  aliado_tipo_documento?: string | null;
   tipo_asesor: TipoAliadoB2B;
   modo_compra: ModoCompra;
   moneda: string;
@@ -62,6 +69,8 @@ const esObjeto = (v: unknown): v is Record<string, unknown> => typeof v === "obj
 
 export const MENSAJE_TERMINOS_CAMBIARON =
   "Los términos B2B de esta cotización cambiaron desde que se cotizó (precio, impuesto, porcentaje de comisión o aliado). No se creó ningún contrato: genera una cotización nueva desde el tarifario para congelar los valores vigentes.";
+export const MENSAJE_IDENTIDAD_ALIADO_CAMBIO =
+  "La identidad fiscal del aliado (nombre o documento) cambió desde que se cotizó, y en una venta NETO el aliado es el cliente del contrato. No se creó ningún contrato: genera una cotización nueva desde el tarifario para congelar la identidad vigente.";
 export const MENSAJE_COTIZACION_B2B_INVALIDA =
   "Los términos B2B guardados en esta cotización están incompletos o no son consistentes; no se puede convertir. Genera una cotización nueva desde el tarifario.";
 export const MENSAJE_SIN_PERMISO_B2B = "Tu rol no puede cotizar ni convertir ventas B2B asistidas.";
@@ -177,6 +186,8 @@ export function construirPlanB2B(args: {
   modo: ModoCompra;
   moneda: string;
   lineas: readonly LineaB2B[];
+  /** Documento y tipo del aliado según el catálogo, para congelarlos junto al nombre. */
+  identidad?: { documento: string | null; tipoDocumento: string | null };
   actor: { id: string; email: string | null; rol: RolAsistenciaB2B };
   congeladoEn: string;
 }): { ok: true; plan: PlanB2BCotizacion } | { ok: false; error: string } {
@@ -193,6 +204,8 @@ export function construirPlanB2B(args: {
       version: 1,
       aliado_id: args.aliado.id,
       aliado_nombre: args.aliado.nombre,
+      aliado_documento: args.identidad?.documento ?? null,
+      aliado_tipo_documento: args.identidad?.tipoDocumento ?? null,
       tipo_asesor: args.aliado.tipo,
       modo_compra: args.modo,
       moneda: args.moneda,
@@ -250,6 +263,8 @@ export function leerPlanB2BDePayload(payload: unknown): { ok: true; plan: PlanB2
     ok: true,
     plan: {
       version: 1, aliado_id: aliadoId, aliado_nombre: typeof p.aliado_nombre === "string" ? p.aliado_nombre : "",
+      ...("aliado_documento" in p ? { aliado_documento: typeof p.aliado_documento === "string" ? p.aliado_documento : null } : {}),
+      ...("aliado_tipo_documento" in p ? { aliado_tipo_documento: typeof p.aliado_tipo_documento === "string" ? p.aliado_tipo_documento : null } : {}),
       tipo_asesor: p.tipo_asesor, modo_compra: p.modo_compra as ModoCompra, moneda: p.moneda, pvp, impuesto, base: e.base, pct: p.pct as number,
       pct_origen: p.pct_origen, comision: e.comision!, comision_estado: e.comisionEstado === "descontada" ? "descontada" : "pendiente",
       total_exigible: e.precioFinal, lineas,
@@ -268,6 +283,24 @@ export function leerPlanB2BDePayload(payload: unknown): { ok: true; plan: PlanB2
 export function compararAliadoConCongelado(plan: PlanB2BCotizacion, vivo: { aliadoId: number; tipo: TipoAliadoB2B; pct: number }): { ok: true } | { ok: false; error: string } {
   if (vivo.aliadoId !== plan.aliado_id || vivo.tipo !== plan.tipo_asesor || Math.abs(vivo.pct - plan.pct) > 1e-9) {
     return { ok: false, error: MENSAJE_TERMINOS_CAMBIARON };
+  }
+  return { ok: true };
+}
+
+/**
+ * NETO: el aliado es el CLIENTE del contrato, así que su identidad fiscal (nombre, documento, tipo) debe ser exactamente la que se mostró al cotizar. Se compara el
+ * catálogo vivo contra lo congelado ANTES de numerar. Un plan NETO sin identidad congelada (formato anterior) no se puede acreditar y se rechaza. En PVP con comisión el
+ * cliente es la persona: no aplica y las reglas de comisión (`compararAliadoConCongelado`) no cambian.
+ */
+export function compararIdentidadAliadoConCongelada(
+  plan: PlanB2BCotizacion,
+  vivo: { nombre: string; documento: string | null; tipoDocumento: string | null },
+): { ok: true } | { ok: false; error: string } {
+  if (plan.modo_compra !== "neta") return { ok: true };
+  if (plan.aliado_documento === undefined || plan.aliado_tipo_documento === undefined || !plan.aliado_nombre.trim()) return { ok: false, error: MENSAJE_COTIZACION_B2B_INVALIDA };
+  const norm = (v: string | null) => (v == null ? null : v.trim() || null);
+  if (plan.aliado_nombre.trim() !== vivo.nombre.trim() || norm(plan.aliado_documento) !== norm(vivo.documento) || norm(plan.aliado_tipo_documento) !== norm(vivo.tipoDocumento)) {
+    return { ok: false, error: MENSAJE_IDENTIDAD_ALIADO_CAMBIO };
   }
   return { ok: true };
 }

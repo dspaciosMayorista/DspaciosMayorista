@@ -187,7 +187,7 @@ test("documentos de cotización: solo reciben el total exigible NETO de una vent
     assert.doesNotMatch(src, /netoTotalExigibleDeContrato|desgloseNetoB2B|esVentaNetoDescontada|comision_b2b|leerPlanB2BDePayload|b2bAsistido/, rel);
   }
   // El enlace público no lee `payload` (datos personales y términos internos): su consulta no cambió.
-  assert.match(leer("app/cot/[token]/page.tsx"), /\.select\("codigo, detalle, vigencia_hasta"\)/);
+  assert.match(leer("app/cot/[token]/page.tsx"), /\.select\("codigo, detalle, vigencia_hasta(, tenant)?"\)/);
 });
 
 // ── Ediciones posteriores: la modalidad no cambia sola ──────────────────────

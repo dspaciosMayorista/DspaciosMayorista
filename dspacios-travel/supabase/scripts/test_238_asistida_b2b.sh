@@ -8,7 +8,7 @@
 #
 # Uso (desde dspacios-travel/):
 #   sh supabase/scripts/test_238_asistida_b2b.sh <base_nueva> [contenedor_pg] [plantilla]
-#     base_nueva    nombre NUEVO: ^t102_[a-z0-9_]{1,40}$ y que NO exista. Se crea desde la plantilla (001-237), recibe la 238 y se borra al final (KEEP=1 la conserva).
+#     base_nueva    nombre NUEVO: ^t102_[a-z0-9_]{1,40}$ y que NO exista. Se crea desde la plantilla (001-237), recibe la 238 y la 239 y se borra al final (KEEP=1 la conserva).
 #     contenedor_pg postgres local desechable (por defecto pg238).
 #     plantilla     base con 001-237 aplicadas (preparar_esquema_local.sh <contenedor> 237 plantilla238). Solo se lee.
 #
@@ -94,6 +94,7 @@ done
 BASE_PROPIA=1
 $PS -d postgres -c "comment on database $DB is '$MARCA'" >/dev/null
 $PS -d "$DB" -1 < "$APP/supabase/migrations/20260601000238_cotizacion_asistida_b2b.sql" >/dev/null || { echo "La migración 238 falló en $DB." >&2; exit 1; }
+$PS -d "$DB" -1 < "$APP/supabase/migrations/20260601000239_titular_reserva_neto.sql" >/dev/null || { echo "La migración 239 falló en $DB." >&2; exit 1; }
 $PS -d "$DB" -c "select exists (select 1 from information_schema.columns where table_name = 'aliados' and column_name = 'activo')" | grep -qx t
 
 # Entorno (NO es esquema de la app): el auth.uid()/auth.role() de Supabase alojado leen el JWT de request.jwt.claims (PostgREST ya no fija los GUC legados).

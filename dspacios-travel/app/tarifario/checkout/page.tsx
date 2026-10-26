@@ -462,7 +462,12 @@ export default function CheckoutPage() {
 
             {/* Datos del titular del contrato / cliente */}
             <section className="rounded-2xl border border-gray-200 bg-white p-5">
-              <h2 className="mb-3 text-sm font-semibold text-gray-700">{esB2B ? "Datos del titular del contrato" : "Tus datos"}</h2>
+              <h2 className="mb-3 text-sm font-semibold text-gray-700">{asistenciaB2B && modoAsist === "neta" ? "Titular de la reserva" : esB2B ? "Datos del titular del contrato" : "Tus datos"}</h2>
+              {asistenciaB2B && modoAsist === "neta" && (
+                <p className="mb-3 rounded-lg bg-sky-50 px-3 py-2 text-xs text-sky-800" data-testid="neto-cliente-aviso">
+                  En NETO el cliente de la cotización y del contrato es {aliadoElegido ? <b>{aliadoElegido.nombre}</b> : "el aliado elegido"} (con la identidad de su ficha en el catálogo). Estos datos son los de la persona que viaja: el titular de la reserva.
+                </p>
+              )}
               <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
                 <div><label className={lbl}>Nombres *</label><input className={inp} value={c.nombres} onChange={(e) => setC({ ...c, nombres: e.target.value })} /></div>
                 <div><label className={lbl}>Apellidos *</label><input className={inp} value={c.apellidos} onChange={(e) => setC({ ...c, apellidos: e.target.value })} /></div>

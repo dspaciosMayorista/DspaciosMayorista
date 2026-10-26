@@ -71,7 +71,7 @@ describe("resolverActorAsistencia", () => {
 
   test("rol de la lista, activo y de Mayorista: pasa, con el correo del perfil", async () => {
     const { sb } = sbFalso({ perfil: PERFIL_VENTA });
-    assert.deepEqual(await resolverActorAsistencia(sb), { ok: true, actor: { id: "u1", email: "venta@x.test", rol: "venta", superadmin: false } });
+    assert.deepEqual(await resolverActorAsistencia(sb), { ok: true, actor: { id: "u1", email: "venta@x.test", rol: "venta", superadmin: false, nombre: null } });
   });
 
   test("control_vuelo, un aliado logueado y un perfil inexistente se niegan; personal de Minorista no asiste ventas de Mayorista", async () => {
@@ -90,8 +90,14 @@ describe("resolverAliadoAsistencia", () => {
   test("con porcentaje propio no se consulta el parámetro general", async () => {
     const { sb, consultas } = sbFalso({ aliados: [ALIADO] });
     const r = await resolverAliadoAsistencia(sb, 7);
-    assert.deepEqual(r, { ok: true, aliado: { id: 7, nombre: "Viajes Aurora", tipo: "agencia", pctAliado: 0.1, pct: 0.1, pctOrigen: "aliado" } });
+    assert.deepEqual(r, { ok: true, aliado: { id: 7, nombre: "Viajes Aurora", tipo: "agencia", pctAliado: 0.1, pct: 0.1, pctOrigen: "aliado", fiscal: { nombre: "Viajes Aurora", documento: null, tipoDocumento: null, telefono: null, email: null, direccion: null } } });
     assert.deepEqual(consultas, ["aliados"]);
+  });
+
+  test("la identidad fiscal del aliado sale de la fila del catálogo (NIT, tipo, teléfono, correo, dirección)", async () => {
+    const fila = { ...ALIADO, nit: " 900123456-7 ", tipo_documento: "NIT", telefono: "604", email: "a@x.test", direccion: "Calle 10" };
+    const r = await resolverAliadoAsistencia(sbFalso({ aliados: [fila] }).sb, 7);
+    assert.deepEqual(r.ok && r.aliado.fiscal, { nombre: "Viajes Aurora", documento: "900123456-7", tipoDocumento: "NIT", telefono: "604", email: "a@x.test", direccion: "Calle 10" });
   });
 
   test("sin porcentaje propio usa el parámetro general del TIPO; si el parámetro no se puede leer, no se adivina", async () => {

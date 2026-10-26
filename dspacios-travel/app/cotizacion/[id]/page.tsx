@@ -18,6 +18,7 @@ import { tituloDocumento } from "@/lib/utils/tituloDocumento";
 import { PaginaImprimibleComparativa } from "@/lib/cotizacion/comparativaDocumento";
 import { hoyBogota } from "@/lib/cotizacion/vigencia";
 import { netoTotalExigibleDeDetalle } from "@/lib/cotizacion/asistidaB2B";
+import { cargarAgenciaDeCotizacion } from "@/lib/cotizacion/agenciaCotizacion";
 
 export async function generateMetadata({
   params,
@@ -106,6 +107,12 @@ export default async function CotizacionImprimiblePage({
     return <PaginaImprimibleComparativa madre={madre} hoy={hoyBogota()} />;
   }
 
+  // RNT, NIT y cuenta de pago: los de la agencia dueña de la cotización (Mayorista ≠ Minorista), igual que en el contrato.
+  const agenciaRes = await cargarAgenciaDeCotizacion(sb, cot.tenant);
+  // Falla explícita (no se imprime el RNT de otra agencia): error técnico, fila ausente o sin RNT en Minorista.
+  if (!agenciaRes.ok) throw new Error(agenciaRes.mensaje);
+  const agencia = agenciaRes.agencia;
+
   const volverLink = (
     <div className="mx-auto mb-4 flex max-w-3xl items-center justify-between px-4 print:hidden">
       <Link href={`/dashboard/cotizaciones/${id}`} className="text-sm text-gray-500 hover:text-gray-800">
@@ -146,6 +153,7 @@ export default async function CotizacionImprimiblePage({
               noIncluye={d?.noIncluye ?? null}
               vigenciaHasta={cot.vigencia_hasta}
               fechaEmision={cot.created_at ? String(cot.created_at).slice(0, 10) : null}
+              agencia={agencia}
             />
           </div>
         </div>
@@ -178,6 +186,7 @@ export default async function CotizacionImprimiblePage({
             codigo={cot.codigo}
             vigenciaHasta={cot.vigencia_hasta}
             netoTotalExigible={netoTotalExigible}
+            agencia={agencia}
           />
         </div>
       </div>

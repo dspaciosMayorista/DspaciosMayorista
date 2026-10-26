@@ -45,7 +45,11 @@ reserva a la RPC de comparativas.
 | Ficha interna y vista previa de la conversión | `app/(dashboard)/dashboard/cotizaciones/[id]/page.tsx`, `ConvertirCarritoBtn.tsx` |
 | Documentos externos (imprimible y enlace público) | `app/cotizacion/[id]/page.tsx`, `app/cot/[token]/page.tsx` |
 | Desactivar aliados | `app/(dashboard)/dashboard/aliados/` (columna «Activo») |
-| Migración y scripts | `supabase/migrations/20260601000238_cotizacion_asistida_b2b.sql`, `supabase/scripts/{preflight,postcheck,rollback}_238_cotizacion_asistida_b2b.sql`, `test_238_asistida_b2b.sh` |
+| Cliente comercial / titular / firmas / etiqueta del listado (reglas puras) | `lib/cotizacion/identidadB2B.ts` |
+| Firmas desde la sesión (quién elabora, aliado B2B logueado) | `lib/cotizacion/firmasSesion.ts` |
+| Fila de `agencias` de la cotización (RNT, NIT, cuenta) | `lib/cotizacion/agenciaCotizacion.ts` |
+| Importe + etiqueta NETO/PVP del listado | `components/cotizacion/ValorCotizacion.tsx`, `app/(dashboard)/dashboard/cotizaciones/page.tsx` |
+| Migraciones y scripts | `supabase/migrations/20260601000238_cotizacion_asistida_b2b.sql`, `…000239_titular_reserva_neto.sql`, `supabase/scripts/{preflight,postcheck,rollback}_{238_cotizacion_asistida_b2b,239_titular_reserva}.sql`, `test_238_asistida_b2b.sh` (aplica 238 y 239) |
 
 ## 5. Flujo
 
@@ -84,6 +88,24 @@ reserva a la RPC de comparativas.
 - **Orden:** preflight (UNA consulta) → 238 → postcheck (UNA consulta) → recién después el código. Sin la 238 la venta B2B asistida y `/dashboard/aliados` fallan con mensaje explícito; el B2C no cambia.
 - Rollback: `rollback_238_cotizacion_asistida_b2b.sql` (se niega si hay aliados inactivos).
 
+## 6.bis Identidad comercial en NETO, firmas y RNT (Preview #403, migración 239)
+
+- **NETO:** el cliente comercial de la cotización y del contrato es el **aliado** elegido; la persona cuyos datos se capturan es el **«Titular de la reserva»**. Se persisten por separado: `cotizaciones.cliente/cliente_documento` y `detalle.venta.cliente*` = aliado;
+  `detalle.venta.titular_*` y el `payload.cliente` completo = persona; en el contrato, `ventas.cliente*` = aliado y `ventas.titular_nombre/documento/telefono/email` = persona (columnas de la **239**, expuestas por `ventas_basica`, con el documento enmascarado para un asesor ajeno).
+  La identidad fiscal del aliado (nombre, NIT, teléfono, correo, dirección) se lee SIEMPRE del catálogo `aliados` en el servidor: al cotizar (`resolverAliadoAsistencia`) y, al convertir, del catálogo VIVO (nunca del snapshot ni de texto del navegador, que solo envía `aliadoId` y modalidad).
+- **PVP con comisión y B2C no cambian:** el cliente sigue siendo la persona y no hay titular aparte. Los documentos externos siguen sin PVP original, base ni comisión en NETO.
+- **Documentos y pantallas:** el checkout rotula «Titular de la reserva» en NETO; la ficha de la cotización y del contrato muestran «Cliente: aliado · Titular de la reserva»; `ContratoDocumento` (cotización imprimible, enlace público, contrato) muestra «Cliente» = aliado y la sección «Titular de la reserva».
+- **Listado:** `ValorCotizacion` muestra «NETO» + el total exigible congelado, o «PVP» + el PVP (con comisión); una cotización histórica o B2C (sin `b2bAsistido`) conserva su precio sin etiqueta (no se afirma NETO ni PVP de lo que no se sabe); la comparativa conserva «desde». Lee solo `payload->b2bAsistido->>modo_compra` y `->>total_exigible`.
+- **Firmas — causa del «—»:** la cotización del carrito no guardaba `asesor` ni el nombre de firma (`cotizaciones.asesor = null`, `detalle.venta` sin `asesor_firma_nombre`) y el documento cae a «—»; y la conversión firmaba con el asesor elegido en pantalla, que un superadmin puede dejar vacío. Ahora quien elabora sale del usuario interno autenticado (`usuarios.nombre`; el asesor elegido en pantalla manda si existe) y el vendedor del aliado (cotizado, o el aliado del B2B logueado). Un contrato que solo tiene `asesor` (importados) firma con ese asesor. Si el dato no existe (visitante anónimo) se muestra «—».
+- **RNT / datos de pago:** la cotización imprimible y el enlace público cargan la fila de `agencias` del **tenant de la cotización** (`cargarAgenciaDeCotizacion`; en la ruta pública con service-role y el tenant de la fila hallada por `share_token`, que sigue siendo la única llave) y la pasan a `ContratoDocumento` y a `CotizacionManualDocumento` (antes esta última usaba la constante de Mayorista).
+- **Migración 239 (aditiva):** `ventas.titular_*` (nullable) + `ventas_basica` redefinida con las columnas al final (resto idéntico a la 235). Sin backfill, sin RLS, sin tocar la 238. Orden: preflight → 239 → postcheck → código. Rollback se niega si hay contratos con titular guardado.
+
+### 6.ter Endurecimiento de la auditoría del Preview #403
+
+- **Listado:** una cotización marcada NETO cuyo total exigible congelado falta o es inválido (no numérico, ≤ 0) muestra «Revisar importe» y **ningún** importe (el PVP no es lo que se cobra en NETO). Con modalidad desconocida (histórica/B2C) el comportamiento es el de siempre: precio guardado sin etiqueta.
+- **Identidad fiscal congelada (NETO):** el plan lleva `aliado_nombre`, `aliado_documento` y `aliado_tipo_documento` tal como se mostraron como cliente. `verificarAliadoVivoParaConversion` (antes de numerar) compara el catálogo vivo con lo congelado (`compararIdentidadAliadoConCongelada`): otro nombre, documento o tipo (incluido pasar de sin documento a con documento) ⇒ `MENSAJE_IDENTIDAD_ALIADO_CAMBIO`, sin número, contrato ni comisión. Un plan NETO de formato anterior (sin identidad congelada) no se convierte. PVP con comisión no se evalúa (el cliente es la persona) y las reglas de comisión (% / aliado / tipo) no cambian. El bloque sigue protegido por el disparador de la 238; no hizo falta migración.
+- **RNT:** `cargarAgenciaDeCotizacion` distingue dato válido, fila ausente y error técnico. Error técnico ⇒ falla explícita en ambos tenants; fila ausente ⇒ solo Mayorista conserva su constante (es la suya), Minorista falla; fila de Minorista sin RNT ⇒ falla. Las dos rutas (imprimible y enlace público) lanzan el error en vez de imprimir el RNT de otra agencia.
+
 ## 7. Pruebas
 
 | Capa | Archivo | Cómo se corre |
@@ -92,7 +114,10 @@ reserva a la RPC de comparativas.
 | Servidor con cliente falso | `pruebas/cotizacionAsistidaB2B102.servidor.test.ts` | `npm run test:unit` |
 | Cableado (orden de barreras, cobertura antes de numerar, autoridad, documentos) | `pruebas/cotizacionAsistidaB2B102.wiring.test.ts` | `npm run test:unit` |
 | React (checkout, panel, vista previa de conversión, documento NETO, catálogo) | `pruebas/cotizacionAsistidaB2B102.react.ts`, `…documentos.react.ts` | `npm run test:react` |
-| **Recorrido integrado contra Postgres real** (checkout → conversión → comisión/CxP/cobro/portal, RLS real, candado, frontera SQL del plan congelado y de sus unidades F1-F8, reintento por destino G5, cobertura exacta G1-G4, regla de PVP de tours H1-H2) | `pruebas/cotizacionAsistidaB2B102.pg.ts` | `sh supabase/scripts/test_238_asistida_b2b.sh t102_x <contenedor> <plantilla>` (Docker local; plantilla con 001-237 — la 237 pide `auth.sessions` y `auth.jwt()`, que la imagen no trae: créalos como stub de entorno antes de aplicarla) |
+| Identidad NETO, titular, firmas, RNT por agencia y listado NETO/PVP (HTML real de los documentos) | `pruebas/cotizacionAsistidaB2B102.identidad.react.ts` | `npm run test:react` |
+| Identidad NETO: reglas puras, identidad congelada, firmas de sesión, agencia por tenant (3 casos), cableado | `pruebas/cotizacionAsistidaB2B102.identidad.test.ts` | `npm run test:unit` |
+| Rutas REALES (imprimible interna, enlace público, listado) con Supabase falso: RNT por tenant y fallos de lectura, «Revisar importe» | `pruebas/cotizacionAsistidaB2B102.rutas.react.ts` | `npm run test:react` |
+| **Recorrido integrado contra Postgres real** (checkout → conversión → comisión/CxP/cobro/portal, RLS real, candado, frontera SQL del plan congelado y de sus unidades F1-F8, reintento por destino G5, cobertura exacta G1-G4, regla de PVP de tours H1-H2, identidad/titular/firma de la cotización y la conversión I1-I6, identidad fiscal congelada J1-J8) | `pruebas/cotizacionAsistidaB2B102.pg.ts` | `sh supabase/scripts/test_238_asistida_b2b.sh t102_x <contenedor> <plantilla>` (Docker local; plantilla con 001-237; el script aplica la 238 y la 239 — la 237 pide `auth.sessions` y `auth.jwt()`, que la imagen no trae: créalos como stub de entorno antes de aplicarla) |
 
 ## 8. Límites conocidos
 
