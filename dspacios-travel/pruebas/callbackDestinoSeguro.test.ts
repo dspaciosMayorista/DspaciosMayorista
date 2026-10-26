@@ -120,6 +120,14 @@ mock.module(new URL("../lib/supabase/server.ts", import.meta.url).href, {
     }),
   },
 });
+// #5 D8/D9: tras un intercambio correcto el callback vincula la agencia activa a la sesión.
+// El módulo real es server-only (next/headers + service-role): se sustituye y se cuentan las llamadas.
+const contextosIniciados: string[] = [];
+mock.module(new URL("../lib/auth/contextoAgencia.ts", import.meta.url).href, {
+  namedExports: {
+    iniciarContextoAgencia: async () => { contextosIniciados.push("iniciar"); return { ok: true, codigo: "ok" }; },
+  },
+});
 const { GET } = await import("../app/auth/callback/route.ts");
 
 async function llamar(query: string) {
@@ -128,13 +136,22 @@ async function llamar(query: string) {
 }
 
 describe("GET /auth/callback — redirección tras OAuth", () => {
-  beforeEach(() => { intercambios.length = 0; errorIntercambio = null; });
+  beforeEach(() => { intercambios.length = 0; errorIntercambio = null; contextosIniciados.length = 0; });
 
   test("sin next: intercambia el código y va a /dashboard", async () => {
     const r = await llamar("?code=abc");
     assert.equal(r.status, 307);
     assert.equal(r.destino, `${ORIGEN}/dashboard`);
     assert.deepEqual(intercambios, ["abc"]);
+  });
+
+  test("intercambio correcto: vincula la agencia a la sesión; si falla el intercambio, NO", async () => {
+    await llamar("?code=abc");
+    assert.deepEqual(contextosIniciados, ["iniciar"]);
+    contextosIniciados.length = 0;
+    errorIntercambio = { message: "invalid grant" };
+    await llamar("?code=abc");
+    assert.deepEqual(contextosIniciados, []);
   });
 
   test("next local se respeta (incluida query)", async () => {

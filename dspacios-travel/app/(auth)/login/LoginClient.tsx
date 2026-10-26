@@ -10,6 +10,7 @@ import {
   Tags, CalendarCheck, FileCheck2, Users, Settings, UserPlus,
 } from "lucide-react";
 import { loginConCodigo } from "./actions";
+import { iniciarContextoSesion } from "./contexto-actions";
 import styles from "./LoginClient.module.css";
 
 // Estilo forzado a mano (no via className) en los campos reales de texto:
@@ -126,6 +127,10 @@ export function LoginClient({
       }
       if (perfil?.rol === "agencia" || perfil?.rol === "freelance" || perfil?.rol === "cliente_final") destino = "/portal/b2b";
     }
+    // Vincula la agencia activa a esta sesión (D8/D9). Si falla no se bloquea el
+    // ingreso: solo quedan denegadas las escrituras de catálogos globales, que
+    // piden este vínculo, y la pantalla lo explica.
+    await iniciarContextoSesion().catch(() => undefined);
     router.push(destino);
     router.refresh();
   }

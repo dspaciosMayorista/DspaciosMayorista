@@ -56,7 +56,7 @@ describe("NAV — sigue filtrándose por módulo, rol y tenant (sin lógica nuev
     assert.match(layout, /import \{ tenantContext \} from "@\/lib\/tenant\.server";/);
     assert.match(layout, /const rol = await miRol\(\);/);
     assert.match(layout, /const permitidos = modulosConsultables\(rol\);/);
-    assert.match(layout, /const \{ tenant, puedeCambiar, permitidos: tenantsPermitidos \} = await tenantContext\(\);/);
+    assert.match(layout, /const \{ tenant, puedeCambiar, permitidos: tenantsPermitidos, agenciaSesion, desincronizada, agenciaVerificada \} = await tenantContext\(\);/);
   });
 
   test("conserva ítems representativos del catálogo real (rutas, módulo y banderas intactas)", () => {
@@ -112,7 +112,10 @@ describe("TenantSwitcher — selector personalizado, mismo comportamiento y pers
     assert.match(tenantSwitcher, /items=\{permitidos\.map\(\(t\) => \(\{ value: t, label: TENANT_LABEL\[t\] \}\)\)\}/);
     assert.match(tenantSwitcher, /value=\{tenant\}/);
     assert.match(tenantSwitcher, /onValueChange=\{onValueChange\}/);
-    assert.match(tenantSwitcher, /await cambiarTenant\(value\);/);
+    // #5 D8/D9: el resultado de cambiarTenant se evalúa; solo si salió bien se recarga (si falla,
+    // el selector muestra el error y la agencia sigue siendo la anterior — ver cambiarTenant237.test.ts).
+    assert.match(tenantSwitcher, /await cambiarTenant\(value\)/);
+    assert.match(tenantSwitcher, /if \(!r\.ok\) \{[\s\S]*?setError\(r\.error\);[\s\S]*?return;/);
     assert.match(tenantSwitcher, /window\.location\.reload\(\);/);
     assert.match(tenantSwitcher, /disabled=\{pending\}/);
   });

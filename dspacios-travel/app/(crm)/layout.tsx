@@ -3,7 +3,7 @@ import { redirect } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
 import { Logo } from "@/components/Logo";
 import { LogoutButton } from "../(dashboard)/LogoutButton";
-import { getTenant } from "@/lib/tenant.server";
+import { tenantContext } from "@/lib/tenant.server";
 import { Contact, Send, Upload, Settings, Megaphone, Users, Inbox, UserSearch, FileUser } from "lucide-react";
 
 const NAV = [
@@ -35,7 +35,9 @@ export default async function CrmLayout({ children }: { children: React.ReactNod
   const supabase = await createClient();
   const { data: { user } } = await supabase.auth.getUser();
   if (!user) redirect("/login");
-  const tenant = await getTenant();
+  // Solo marca (logo): no es una operación sensible, así que usa la pista aunque la agencia de la sesión
+  // no se haya podido verificar (getTenant() lanzaría y tumbaría todo el CRM por un error transitorio).
+  const { tenant } = await tenantContext();
 
   return (
     <div

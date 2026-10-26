@@ -111,9 +111,18 @@ const STUB_SUPABASE_CLIENT = pathToFileURL(join(AQUI, "stubs", "supabaseClientSt
 // Registro B2B (pruebas/registroSolicitudB2BAction.react.ts): la Server Action
 // REAL `app/portal/registro/actions.ts` usa el cliente service-role -> stub
 // configurable con `__setAdmin`.
+const STUB_CONTEXTO_AGENCIA = pathToFileURL(join(AQUI, "stubs", "contextoAgenciaStub.mjs")).href;
+const STUB_CONTEXTO_SESION = pathToFileURL(join(AQUI, "stubs", "contextoSesionStub.mjs")).href;
 const STUB_SUPABASE_ADMIN = pathToFileURL(join(AQUI, "stubs", "supabaseAdminStub.mjs")).href;
 
 export async function resolve(specifier, context, nextResolve) {
+  // #5 D8/D9: la compuerta de catálogos globales y el contexto de sesión (server-only).
+  if (specifier === "@/lib/auth/contextoAgencia") {
+    return { url: STUB_CONTEXTO_AGENCIA, shortCircuit: true };
+  }
+  if (specifier === "./contexto-actions" && context.parentURL?.endsWith("/login/LoginClient.tsx")) {
+    return { url: STUB_CONTEXTO_SESION, shortCircuit: true };
+  }
   if (specifier.endsWith(".css")) {
     return { url: STUB_CSS, shortCircuit: true };
   }

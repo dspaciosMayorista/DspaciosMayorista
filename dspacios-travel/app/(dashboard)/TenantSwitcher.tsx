@@ -1,7 +1,7 @@
 "use client";
 
-import { useTransition } from "react";
-import { Building2, Check, ChevronDown } from "lucide-react";
+import { useState, useTransition } from "react";
+import { Building2, Check, ChevronDown, TriangleAlert } from "lucide-react";
 import { Select as SelectPrimitive } from "@base-ui/react/select";
 import { cambiarTenant } from "./tenant-actions";
 import { TENANT_LABEL, type Tenant } from "@/lib/tenant";
@@ -25,10 +25,13 @@ import { TENANT_LABEL, type Tenant } from "@/lib/tenant";
 // tokens semánticos globales de los que `--dash-*` deriva (--card, --border,
 // --muted, --foreground, --brand-primary) — mismo valor resuelto, mismo
 // comportamiento por tema, sin depender del scope de `.dashRoot`.
-export function TenantSwitcher({ tenant, permitidos, puedeCambiar, compact }: {
+export function TenantSwitcher({ tenant, permitidos, puedeCambiar, compact, verificada = true }: {
   tenant: Tenant; permitidos: Tenant[]; puedeCambiar: boolean; compact?: boolean;
+  /** false = la agencia mostrada es solo la pista de la cookie (no se pudo verificar la de la sesión). */
+  verificada?: boolean;
 }) {
   const [pending, start] = useTransition();
+  const [error, setError] = useState<string | null>(null);
 
   const minorista = tenant === "minorista";
   const base = "flex items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-xs font-semibold";
@@ -46,8 +49,16 @@ export function TenantSwitcher({ tenant, permitidos, puedeCambiar, compact }: {
 
   function onValueChange(value: Tenant | null) {
     if (!value) return;
+    setError(null);
     start(async () => {
-      await cambiarTenant(value);
+      const r = await cambiarTenant(value).catch(() => ({ ok: false as const, recargar: false as boolean | undefined, error: "No se pudo cambiar de agencia. Intenta de nuevo." }));
+      // Si falla, NO se recarga ni se cambia nada: se muestra el motivo y la agencia sigue siendo la anterior.
+      if (!r.ok) {
+        // Cambio a medias (base y cookie en agencias distintas): se recarga para mostrar la agencia de la SESIÓN.
+        if (r.recargar) { window.location.reload(); return; }
+        setError(r.error);
+        return;
+      }
       // Recarga completa: refresca datos del servidor Y reinicia el estado de
       // cualquier pantalla/cliente abierto (que de otro modo quedaría estática).
       window.location.reload();
@@ -55,6 +66,7 @@ export function TenantSwitcher({ tenant, permitidos, puedeCambiar, compact }: {
   }
 
   return (
+    <>
     <SelectPrimitive.Root
       items={permitidos.map((t) => ({ value: t, label: TENANT_LABEL[t] }))}
       value={tenant}
@@ -68,6 +80,7 @@ export function TenantSwitcher({ tenant, permitidos, puedeCambiar, compact }: {
       >
         <Building2 size={13} />
         <SelectPrimitive.Value />
+        {!verificada && <span className="font-normal opacity-80">(sin verificar)</span>}
         <SelectPrimitive.Icon
           className="opacity-70"
           render={<ChevronDown size={13} />}
@@ -99,5 +112,11 @@ export function TenantSwitcher({ tenant, permitidos, puedeCambiar, compact }: {
         </SelectPrimitive.Positioner>
       </SelectPrimitive.Portal>
     </SelectPrimitive.Root>
+    {error && (
+      <span role="alert" className="flex max-w-[16rem] items-start gap-1 text-xs" style={{ color: "var(--destructive, #b42318)" }}>
+        <TriangleAlert size={13} className="mt-0.5 shrink-0" aria-hidden="true" /> {error}
+      </span>
+    )}
+    </>
   );
 }

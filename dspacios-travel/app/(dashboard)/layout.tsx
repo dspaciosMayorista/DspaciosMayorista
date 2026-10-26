@@ -10,6 +10,7 @@ import { Logo } from "@/components/Logo";
 import { modulosConsultables, miRol } from "@/lib/roles";
 import { tenantContext } from "@/lib/tenant.server";
 import { TenantSwitcher } from "./TenantSwitcher";
+import { AvisoContextoAgencia } from "./AvisoContextoAgencia";
 import { POWERED_BY } from "@/lib/contrato/plantilla";
 import styles from "./DashboardShell.module.css";
 
@@ -160,7 +161,7 @@ export default async function DashboardLayout({
   // de datos la garantiza RLS — ver lib/roles.ts, que ambas capas comparten.)
   const rol = await miRol();
   const permitidos = modulosConsultables(rol);
-  const { tenant, puedeCambiar, permitidos: tenantsPermitidos } = await tenantContext();
+  const { tenant, puedeCambiar, permitidos: tenantsPermitidos, agenciaSesion, desincronizada, agenciaVerificada } = await tenantContext();
   const nav = NAV.filter((n) => {
     if (tenant === "minorista" && n.minoristaOculto) return false; // sin tarifario/montaje en minorista
     if (n.soloMinorista && tenant !== "minorista") return false;   // importador solo en minorista
@@ -176,7 +177,15 @@ export default async function DashboardLayout({
   // del servidor, sin consulta ni reloj en vivo actualizándose en el cliente.
   const fecha = new Date().toLocaleDateString("es-CO", { weekday: "long", day: "numeric", month: "long", timeZone: "America/Bogota" });
 
-  const switcher = <TenantSwitcher tenant={tenant} permitidos={tenantsPermitidos} puedeCambiar={puedeCambiar} />;
+  // D8/D9: solo el superadmin puede estar en otra agencia que la suya, y es el único
+  // cuyo permiso de escritura de catálogos depende de un vínculo de SESIÓN. Se le avisa
+  // si la sesión no lo tiene (falla cerrado) o si opera en Minorista (solo lectura).
+  let avisoAgencia: "sin_vinculo" | "minorista" | "ajustada" | "no_verificada" | null = null;
+  if (puedeCambiar) {
+    avisoAgencia = !agenciaVerificada ? "no_verificada" : desincronizada ? "ajustada" : agenciaSesion === "mayorista" ? null : agenciaSesion === "minorista" ? "minorista" : "sin_vinculo";
+  }
+
+  const switcher = <TenantSwitcher tenant={tenant} permitidos={tenantsPermitidos} puedeCambiar={puedeCambiar} verificada={agenciaVerificada} />;
 
   return (
     <div className={`${outfit.variable} ${plusJakartaSans.variable} ${styles.dashRoot} flex min-h-screen flex-col md:flex-row`}>
@@ -230,6 +239,7 @@ export default async function DashboardLayout({
             que antes se recortaba sin que nadie lo notara — que es
             exactamente el bug que había que encontrar, no tapar. */}
         <main data-dashboard-main className="relative min-w-0 flex-1" style={{ backgroundColor: "var(--dash-bg)" }}>
+          {avisoAgencia && <AvisoContextoAgencia estado={avisoAgencia} />}
           {children}
         </main>
       </div>
