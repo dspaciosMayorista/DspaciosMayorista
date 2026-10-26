@@ -126,7 +126,7 @@ export default async function CuentaCobroPage({ params, searchParams }: Props) {
             </tbody>
           </table>
 
-          <div className="mt-2 flex items-center justify-between rounded-lg bg-[rgba(29,124,154,0.06)] px-3 py-2">
+          <div className="mt-2 flex items-center justify-between rounded-lg bg-[rgba(18,5,115,0.06)] px-3 py-2">
             <span className="text-xs font-semibold text-gray-700">Total a cobrar</span>
             <span className="text-base font-bold" style={{ color: "var(--brand-primary)" }}>{formatMoneda(montoComision, moneda)}</span>
           </div>

@@ -164,6 +164,15 @@
   }
 }
 
+/* Documentos imprimibles (contrato, cotización, comparativa, programa, voucher, recibo, estado de
+   cuenta, plan de cobro, cuenta de cobro): azul #120573 en ambas agencias. Acotado a las clases de
+   documento para no tocar el dashboard; los colores funcionales (--brand-success, alertas) no cambian. */
+.doc-print, .contrato-doc, .programa-doc, .voucher-doc, .cuenta-doc {
+  --brand-primary: #120573;
+  --brand-accent: #120573;
+  --brand-gradient: linear-gradient(#120573, #120573);
+}
+
 /* Fondo con el degradado de marca (encabezados, hero) */
 .bg-brand-gradient {
   background-image: var(--brand-gradient);

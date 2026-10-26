@@ -142,7 +142,7 @@ export default async function ProgramaDocPage({
                 {sellos.map((s, i) => {
                   const Icon = SELLO_ICON[i];
                   return (
-                    <span key={s} className="inline-flex items-center gap-1 rounded-full border px-2.5 py-1 text-[11px] font-medium" style={{ borderColor: "var(--brand-accent)", color: "var(--brand-primary)", backgroundColor: "rgba(38,187,217,0.08)" }}>
+                    <span key={s} className="inline-flex items-center gap-1 rounded-full border px-2.5 py-1 text-[11px] font-medium" style={{ borderColor: "var(--brand-accent)", color: "var(--brand-primary)", backgroundColor: "rgba(18,5,115,0.08)" }}>
                       <Icon size={12} /> {s}
                     </span>
                   );
@@ -160,7 +160,7 @@ export default async function ProgramaDocPage({
                   <h2 className="mb-2 flex items-center gap-1.5 text-sm font-bold uppercase tracking-wide text-gray-700"><Sparkles size={15} style={{ color: "var(--brand-accent)" }} /> Lo mejor del programa</h2>
                   <div className="flex flex-wrap gap-2">
                     {highlights.map((h, i) => (
-                      <span key={i} className="rounded-lg px-3 py-1.5 text-xs font-medium" style={{ backgroundColor: "rgba(174,244,74,0.18)", color: "#4d6b13" }}>{h}</span>
+                      <span key={i} className="rounded-lg px-3 py-1.5 text-xs font-medium" style={{ backgroundColor: "rgba(18,5,115,0.08)", color: "var(--brand-primary)" }}>{h}</span>
                     ))}
                   </div>
                 </section>

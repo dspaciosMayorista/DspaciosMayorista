@@ -1,3 +1,4 @@
+import { COLOR_DOCUMENTO } from "@/lib/contrato/colorDocumento";
 import {
   EMPRESA,
   CONTRATO_TITULO,
@@ -11,7 +12,7 @@ import {
 import { formatMoneda, formatFechaLarga } from "@/lib/utils";
 import type { Agencia } from "@/types/database";
 
-const PRIMARY = "#1D7C9A";
+const PRIMARY = COLOR_DOCUMENTO;
 
 type ItemSnap = {
   descripcion: string;
