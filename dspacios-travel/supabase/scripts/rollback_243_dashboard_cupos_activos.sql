@@ -1,0 +1,11 @@
+-- ───────────────────────────────────────────────────────────────────────────
+-- ROLLBACK de la migración 243 (fn_dashboard_cupos_activos, #118).
+-- La 243 solo crea una función (sin tablas ni datos) y no toca la vista ni la
+-- 186, así que revertir es inmediato y sin pérdida de datos.
+--   · `drop function` se lleva consigo los GRANT de la 243.
+--   · ORDEN: revertir PRIMERO el código (despliegue anterior de /dashboard) y
+--     después este script. Con el código nuevo desplegado y la función ausente,
+--     el Home muestra «No disponible» en Cupos disponibles y Cupos críticos
+--     (falla visible, no un 0), pero conviene no dejar esa ventana abierta.
+-- ───────────────────────────────────────────────────────────────────────────
+drop function if exists public.fn_dashboard_cupos_activos(date);

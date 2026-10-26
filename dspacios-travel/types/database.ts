@@ -4752,6 +4752,10 @@ export type Database = {
         Args: Record<PropertyKey, never>;
         Returns: { capacidad: number; ocupados: number; disponibles: number; criticos: number }[];
       };
+      fn_dashboard_cupos_activos: {
+        Args: { p_hoy: string };
+        Returns: { capacidad: number; ocupados: number; disponibles: number; records_disponibles: number; proximos_disponibles: number; proximos_records: number }[];
+      };
       fn_dashboard_retenciones_mes: {
         Args: { p_tenant: string; p_periodo: string };
         Returns: number;
