@@ -245,7 +245,39 @@ begin
 end;
 $$;
 
--- 5. SECURITY DEFINER que escriben catálogos: misma guarda por dentro ---------
+-- 5. Respaldo EXACTO de las 4 funciones que se van a reemplazar (para el rollback) -------
+-- Guarda la definición tal como está HOY en esta base (texto completo + md5 del cuerpo). El
+-- rollback la vuelve a ejecutar y verifica el md5: restaura byte a byte lo que había, sea cual
+-- sea su formato (p. ej. en Producción reemplazar_tarifas_hotel_calculadora tiene el mismo código
+-- que la migración 179 con otro formato: cuerpo md5 d7e05c96e1260a76fbad22784e881c77).
+create table public.catalogos_funciones_previas_237 (
+  firma      text primary key,
+  md5_prosrc text not null,
+  definicion text not null,
+  guardada_en timestamptz not null default now()
+);
+alter table public.catalogos_funciones_previas_237 enable row level security;
+alter table public.catalogos_funciones_previas_237 force row level security;
+revoke all on table public.catalogos_funciones_previas_237 from public, anon, authenticated;
+
+insert into public.catalogos_funciones_previas_237 (firma, md5_prosrc, definicion)
+select p.proname || '(' || pg_get_function_identity_arguments(p.oid) || ')', md5(p.prosrc), pg_get_functiondef(p.oid)
+from pg_proc p
+where p.pronamespace = 'public'::regnamespace
+  and p.proname in ('fn_fusionar_destino', 'generar_tarifas_hotel_calculadora',
+                    'reemplazar_tarifas_hotel_calculadora', 'aprobar_solicitud_b2b');
+
+do $$
+begin
+  if (select count(*) from public.catalogos_funciones_previas_237) <> 4 then
+    raise exception '237: el respaldo de funciones previas no quedó con 4 filas';
+  end if;
+end;
+$$;
+
+-- 6. SECURITY DEFINER que escriben catálogos: misma guarda por dentro ---------
+-- (reemplazar_tarifas_hotel_calculadora parte de la definición VIGENTE en Producción,
+-- tokens idénticos a la 179: ver supabase/scripts/pruebas_237/comparar_funcion_tokens.mjs)
 CREATE OR REPLACE FUNCTION public.fn_fusionar_destino(p_origen bigint, p_destino bigint)
  RETURNS void
  LANGUAGE plpgsql
@@ -527,75 +559,105 @@ CREATE OR REPLACE FUNCTION public.reemplazar_tarifas_hotel_calculadora(p_hotel_i
  SET search_path TO 'public', 'pg_temp'
 AS $function$
 declare
-  v_borradas    integer;
-  v_insertadas  integer;
-  v_fila        jsonb;
-  v_hotel_fila  bigint;
+  v_borradas integer;
+  v_insertadas integer;
+  v_fila jsonb;
+  v_hotel_fila bigint;
 begin
-  -- ⚠️ `coalesce(...::text, '')`, NUNCA `mi_rol() not in (...)` a secas: si
-  -- `mi_rol()` devuelve NULL (usuario `authenticated` sin fila en `usuarios`,
-  -- o con `activo = false` — ver migración 140), `NULL not in (...)`
-  -- evalúa a NULL, y `if NULL then` en PL/pgSQL es FALSO — la excepción
-  -- NUNCA se lanza y la ejecución sigue como si estuviera autorizada. Este
-  -- era un defecto real, detectado en la ronda de validación al intentar
-  -- probar el rechazo de un usuario no autorizado: un usuario `authenticated`
-  -- sin rol (borrado/desactivado) pasaba el candado. `coalesce(...,'')`
-  -- convierte NULL en `''`, que nunca está en la lista permitida.
-  if coalesce(public.mi_rol()::text, '') not in ('superadmin', 'gerencia', 'administracion', 'operaciones') then
-    raise exception 'reemplazar_tarifas_hotel_calculadora: rol sin permiso de escritura sobre tarifa_hotel';
+  if coalesce(public.mi_rol()::text, '') not in (
+    'superadmin',
+    'gerencia',
+    'administracion',
+    'operaciones'
+  ) then
+    raise exception
+      'reemplazar_tarifas_hotel_calculadora: rol sin permiso de escritura sobre tarifa_hotel';
   end if;
   if not public.puede_escribir_catalogo_global() then
     raise exception 'Los catalogos globales solo se editan desde la agencia Mayorista.' using errcode = '42501';
   end if;
+
   if p_hotel_id is null then
-    raise exception 'reemplazar_tarifas_hotel_calculadora: hotel_id requerido';
-  end if;
-  if p_filas is null or jsonb_typeof(p_filas) <> 'array' then
-    raise exception 'reemplazar_tarifas_hotel_calculadora: p_filas debe ser un arreglo jsonb';
-  end if;
-  if jsonb_array_length(p_filas) = 0 then
-    raise exception 'reemplazar_tarifas_hotel_calculadora: p_filas no puede ser un arreglo vacío';
+    raise exception
+      'reemplazar_tarifas_hotel_calculadora: hotel_id requerido';
   end if;
 
-  -- Validación COMPLETA del lote ANTES de tocar una sola fila — si cualquier
-  -- elemento es inválido, ninguna fila anterior se borra (fail-closed real,
-  -- no solo "atómico si falla a mitad de camino"). Defensa en profundidad:
-  -- si una fila del payload declara `hotel_id` (hoy `generarTarifasCalculadora`
-  -- nunca lo incluye — el insert de abajo siempre usa `p_hotel_id` para
-  -- TODAS las filas — pero un llamador futuro/no confiable sí podría) y no
-  -- coincide con `p_hotel_id`, se rechaza el lote completo.
-  for v_fila in select * from jsonb_array_elements(p_filas) loop
+  if p_filas is null or jsonb_typeof(p_filas) <> 'array' then
+    raise exception
+      'reemplazar_tarifas_hotel_calculadora: p_filas debe ser un arreglo jsonb';
+  end if;
+
+  if jsonb_array_length(p_filas) = 0 then
+    raise exception
+      'reemplazar_tarifas_hotel_calculadora: p_filas no puede ser un arreglo vacío';
+  end if;
+
+  for v_fila in
+    select * from jsonb_array_elements(p_filas)
+  loop
     if jsonb_typeof(v_fila) <> 'object' then
-      raise exception 'reemplazar_tarifas_hotel_calculadora: cada elemento de p_filas debe ser un objeto jsonb';
+      raise exception
+        'reemplazar_tarifas_hotel_calculadora: cada elemento de p_filas debe ser un objeto jsonb';
     end if;
-    if v_fila ? 'hotel_id' and v_fila->>'hotel_id' is not null then
+
+    if v_fila ? 'hotel_id'
+       and v_fila->>'hotel_id' is not null then
       begin
         v_hotel_fila := (v_fila->>'hotel_id')::bigint;
-      exception when others then
-        raise exception 'reemplazar_tarifas_hotel_calculadora: hotel_id de una fila no es numérico: %', v_fila->>'hotel_id';
+      exception
+        when others then
+          raise exception
+            'reemplazar_tarifas_hotel_calculadora: hotel_id de una fila no es numérico: %',
+            v_fila->>'hotel_id';
       end;
+
       if v_hotel_fila <> p_hotel_id then
-        raise exception 'reemplazar_tarifas_hotel_calculadora: una fila declara hotel_id % distinto al solicitado (%)', v_hotel_fila, p_hotel_id;
+        raise exception
+          'reemplazar_tarifas_hotel_calculadora: una fila declara hotel_id % distinto al solicitado (%)',
+          v_hotel_fila,
+          p_hotel_id;
       end if;
     end if;
   end loop;
 
-  if p_regimenes is null or array_length(p_regimenes, 1) is null then
-    delete from public.tarifa_hotel where hotel_id = p_hotel_id;
+  if p_regimenes is null
+     or array_length(p_regimenes, 1) is null then
+    delete from public.tarifa_hotel
+    where hotel_id = p_hotel_id;
   else
-    delete from public.tarifa_hotel where hotel_id = p_hotel_id and alimentacion = any(p_regimenes);
+    delete from public.tarifa_hotel
+    where hotel_id = p_hotel_id
+      and alimentacion = any(p_regimenes);
   end if;
-  get diagnostics v_borradas = row_count;
 
+  get diagnostics v_borradas = row_count;
   v_insertadas := 0;
-  for v_fila in select * from jsonb_array_elements(p_filas) loop
+
+  for v_fila in
+    select * from jsonb_array_elements(p_filas)
+  loop
     insert into public.tarifa_hotel (
-      hotel_id, tipo_habitacion, alimentacion, temporada,
-      neto_sencilla, neto_doble, neto_triple, neto_multiple,
-      neto_nino, neto_nino2, neto_infante, nota_infante, notas,
-      edad_infante_min, edad_infante_max, edad_nino_min, edad_nino_max,
-      precio_final_autoritativo, temporada_base
-    ) values (
+      hotel_id,
+      tipo_habitacion,
+      alimentacion,
+      temporada,
+      neto_sencilla,
+      neto_doble,
+      neto_triple,
+      neto_multiple,
+      neto_nino,
+      neto_nino2,
+      neto_infante,
+      nota_infante,
+      notas,
+      edad_infante_min,
+      edad_infante_max,
+      edad_nino_min,
+      edad_nino_max,
+      precio_final_autoritativo,
+      temporada_base
+    )
+    values (
       p_hotel_id,
       v_fila->>'tipo_habitacion',
       v_fila->>'alimentacion',
@@ -613,13 +675,20 @@ begin
       (v_fila->>'edad_infante_max')::integer,
       (v_fila->>'edad_nino_min')::integer,
       (v_fila->>'edad_nino_max')::integer,
-      coalesce((v_fila->>'precio_final_autoritativo')::boolean, false),
+      coalesce(
+        (v_fila->>'precio_final_autoritativo')::boolean,
+        false
+      ),
       v_fila->>'temporada_base'
     );
+
     v_insertadas := v_insertadas + 1;
   end loop;
 
-  return jsonb_build_object('borradas', v_borradas, 'insertadas', v_insertadas);
+  return jsonb_build_object(
+    'borradas', v_borradas,
+    'insertadas', v_insertadas
+  );
 end;
 $function$;
 
@@ -732,7 +801,7 @@ begin
 end;
 $function$;
 
--- 6. Autoverificación: si algo no cuadra, se revierte TODA la migración -------
+-- 7. Autoverificación: si algo no cuadra, se revierte TODA la migración -------
 do $$
 declare
   t text;
@@ -758,6 +827,12 @@ begin
     and p.prosrc not like '%puede_escribir_catalogo_global()%';
   if v_malas is not null then
     raise exception '237: funciones definer sin guarda: %', v_malas;
+  end if;
+
+  if (select count(*) from public.catalogos_funciones_previas_237) <> 4
+     or has_table_privilege('authenticated', 'public.catalogos_funciones_previas_237', 'select')
+     or has_table_privilege('anon', 'public.catalogos_funciones_previas_237', 'select') then
+    raise exception '237: respaldo de funciones previas ausente o legible por roles de cliente';
   end if;
 
   if has_function_privilege('authenticated', 'public.iniciar_contexto_agencia(uuid,text,interval)', 'execute')
