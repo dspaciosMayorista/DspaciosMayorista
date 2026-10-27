@@ -101,6 +101,15 @@ if [ "${PG64_APLICAR_249:-1}" = 1 ]; then
   echo "$POST" | grep -q "|REVISAR$" && { echo "Postcheck 249 con REVISAR." >&2; exit 1; }
   [ "$(echo "$PRE" | grep "^huella_de_payload" | cut -d"|" -f2)" = "$(echo "$POST" | grep "^huella_de_payload" | cut -d"|" -f2)" ] || { echo "La huella de payload cambió." >&2; exit 1; }
 fi
+# 250 (hija de una comparativa con vuelos manuales comunes): preflight → migración → postcheck, cada uno una sola consulta.
+if [ "${PG64_APLICAR_250:-1}" = 1 ]; then
+  PRE250="$($PS -d "$DB" < "$APP/supabase/scripts/preflight_250_comparativa_publica_y_manuales.sql")"; echo "$PRE250"
+  echo "$PRE250" | grep -q "|REVISAR$" && { echo "Preflight 250 con REVISAR." >&2; exit 1; }
+  $PS -d "$DB" -1 < "$APP/supabase/migrations/20260601000250_comparativa_publica_y_manuales.sql" >/dev/null || { echo "La migración 250 falló en $DB." >&2; exit 1; }
+  POST250="$($PS -d "$DB" < "$APP/supabase/scripts/postcheck_250_comparativa_publica_y_manuales.sql")"; echo "$POST250"
+  echo "$POST250" | grep -q "|REVISAR$" && { echo "Postcheck 250 con REVISAR." >&2; exit 1; }
+  [ "$(echo "$PRE250" | grep "^huella_de_cotizaciones" | cut -d"|" -f2)" = "$(echo "$POST250" | grep "^huella_de_cotizaciones" | cut -d"|" -f2)" ] || { echo "La huella de cotizaciones cambió con la 250." >&2; exit 1; }
+fi
 
 # Entorno (NO es esquema de la app): el auth.uid()/auth.role() de Supabase alojado leen el JWT de request.jwt.claims (PostgREST ya no fija los GUC legados).
 $PS -d "$DB" >/dev/null <<'SQL'

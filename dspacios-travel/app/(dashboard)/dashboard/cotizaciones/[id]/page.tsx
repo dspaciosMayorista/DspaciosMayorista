@@ -205,7 +205,7 @@ export default async function CotizacionDetallePage({
     items?: { destino: string | null; pax: number; fechaIda: string | null; hotelNombre: string; ref?: string; paqueteId?: number; precio?: number }[];
     tours?: { nombre?: string; destino: string | null; pax: number; fechaIda?: string | null; paqueteId?: number; hotelRef?: string | null; precio?: number }[];
     cliente?: { nombres?: string; apellidos?: string; numeroDoc?: string };
-    manuales?: { nombre?: string; pax?: number; precio?: number; moneda?: string }[];
+    manuales?: { clase?: string; nombre?: string; pax?: number; precio?: number; moneda?: string; hotelRef?: string | null }[];
   };
   const itemsCarrito = payloadCarrito.items ?? [];
   const toursCarrito = payloadCarrito.tours ?? [];
@@ -472,7 +472,11 @@ export default async function CotizacionDetallePage({
                 items={itemsCarrito.map((i) => ({ hotelNombre: i.hotelNombre, destino: i.destino, pax: i.pax, fechaIda: i.fechaIda ?? null, precio: Number(i.precio) || 0 }))}
                 tours={toursCarrito.map((t, j) => ({ nombre: t.nombre ?? "Tour", destino: t.destino, pax: t.pax, fechaIda: t.fechaIda ?? null, hotelIndice: hotelDeTourCarrito[j] ?? null, precio: Number(t.precio) || 0 }))}
                 contratosPorGrupo={detalleCarrito.contratosPorGrupo ?? {}}
-                manuales={(payloadCarrito.manuales ?? []).map((m) => ({ nombre: m.nombre ?? "Servicio manual", pax: Number(m.pax) || 0, precio: Number(m.precio) || 0, moneda: m.moneda ?? "COP" }))}
+                manuales={(payloadCarrito.manuales ?? []).map((m) => {
+                  // Un vuelo va al contrato de SU hotel (por `hotelRef`); un «otro servicio», al primero.
+                  const idx = m.clase === "vuelo" ? itemsCarrito.findIndex((i) => i.ref === m.hotelRef) : -1;
+                  return { nombre: m.nombre ?? "Servicio manual", pax: Number(m.pax) || 0, precio: Number(m.precio) || 0, moneda: m.moneda ?? "COP", hotelIndice: idx >= 0 ? idx : null };
+                })}
                 monedaOferta={monedaOfertaDeCotizacion(c.moneda, c.payload)}
                 b2b={planB2B ? { plan: planB2B, clavesUnidades: clavesUnidadesB2B } : null}
                 b2bError={lecturaB2B.ok ? null : lecturaB2B.error}

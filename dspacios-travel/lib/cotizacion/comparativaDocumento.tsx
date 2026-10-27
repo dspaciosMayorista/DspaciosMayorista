@@ -14,8 +14,9 @@ import type { Database } from "@/types/database";
 import { createClient } from "@/lib/supabase/server";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { formatFechaLarga, formatMoneda } from "@/lib/utils";
-import { agruparPorHotel, canalDeRol, desdeComparativa, limiteSolicitudVencida, type GrupoHotel, type OpcionVista } from "@/lib/cotizacion/comparativa";
+import { agruparPorHotel, canalDeRol, desdeComparativa, limiteSolicitudVencida, resumenDeOpcion, type GrupoHotel, type OpcionVista } from "@/lib/cotizacion/comparativa";
 import { hoyBogota } from "@/lib/cotizacion/vigencia";
+import { visitantePuedeContinuar } from "@/lib/cotizacion/comparativaServidor";
 import { PrintButton } from "@/components/contrato/PrintButton";
 import { DescartarBtn } from "@/app/(dashboard)/dashboard/cotizaciones/[id]/DescartarBtn";
 import { PanelSolicitudes, SelectorOpciones, type ModoSeleccion, type ResumenHotelUI, type SolicitudUI } from "./comparativaAcciones";
@@ -31,12 +32,6 @@ export type DatosComparativa = {
   elegida: { id: number; codigo: string; estado: string; opcionRef: string; acomodacionRef: string; numeroContrato: string | null } | null;
 };
 
-function resumenDe(raw: unknown): ResumenHotelUI {
-  const r = (raw ?? {}) as Record<string, unknown>;
-  const servicios = Array.isArray(r.servicios) ? (r.servicios as Array<Record<string, unknown>>).map((s) => ({ nombre: String(s.nombre ?? ""), precio: s.precio == null ? null : Number(s.precio) })).filter((s) => s.nombre) : undefined;
-  const items = Array.isArray(r.items) ? (r.items as Array<Record<string, unknown>>).map((i) => ({ descripcion: String(i.descripcion ?? ""), valor: Number(i.valor) || 0 })).filter((i) => i.descripcion) : undefined;
-  return { plan: typeof r.plan_nombre === "string" ? r.plan_nombre : null, servicios, items, incluye: typeof r.incluye === "string" ? r.incluye : null, noIncluye: typeof r.noIncluye === "string" ? r.noIncluye : null };
-}
 
 /** Opciones y opción elegida de una madre, leídas con el cliente que reciba (sesión o servicio). */
 export async function cargarDatosComparativa(sb: SB, madreId: number): Promise<DatosComparativa> {
@@ -51,7 +46,7 @@ export async function cargarDatosComparativa(sb: SB, madreId: number): Promise<D
   }));
   const resumenes: Record<string, ResumenHotelUI> = {};
   for (const o of filas) {
-    const r = resumenDe(o.resumen_publico);
+    const r = resumenDeOpcion(o.resumen_publico);
     resumenes[`${o.opcion_ref}/${o.acomodacion_ref}`] = r;
     resumenes[o.opcion_ref] ??= r;
   }
@@ -226,7 +221,8 @@ export async function paginaPublicaComparativa(token: string) {
   const ses = await createClient();
   const { data: { user } } = await ses.auth.getUser();
   const { data: perfil } = user ? await ses.from("usuarios").select("rol, activo").eq("id", user.id).maybeSingle() : { data: null };
-  const anonima = madre.creado_por_id == null && madre.propietario_id == null && madre.aliado_id == null;
+  // Anónima, o del carrito marcada para compartir mientras su creador interno siga activo con rol permitido: el visitante continúa por el checkout (misma regla que la base).
+  const anonima = await visitantePuedeContinuar(admin, madre);
   const modo: ModoSeleccion =
     madre.tipo === "comparativa_carrito" && (anonima || canalDeRol(perfil?.rol, perfil?.activo) !== "publico") ? "checkout" : "solicitud";
   const vencida = !!madre.vigencia_hasta && madre.vigencia_hasta < hoyBogota();

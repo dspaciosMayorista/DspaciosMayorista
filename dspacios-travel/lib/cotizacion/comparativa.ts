@@ -1,3 +1,4 @@
+import type { ResumenHotelUI } from "./comparativaAcciones";
 // ─────────────────────────────────────────────────────────────────────────
 // Cotizaciones COMPARATIVAS (#35) — lógica PURA (sin I/O, sin Supabase).
 //
@@ -542,4 +543,46 @@ export function validarEntradaSolicitud(raw: unknown): { ok: true; datos: Entrad
   if (!v.ok) return v;
   const { token, opcionRef, acomodacionRef, version, clave } = base.datos;
   return { ok: true, datos: { token, opcionRef, acomodacionRef, version, clave, contacto } };
+}
+
+/**
+ * #64: ¿la comparativa admite la elección por el canal PÚBLICO (visitante con el enlace)? Dos casos, y solo estos: (1) anónima (la creó el propio visitante), o
+ * (2) una comparativa del CARRITO del mayorista que el personal interno marcó EXPRESAMENTE para compartir (`payload.compartirPublico === true`) y que no es de un aliado.
+ * Es la misma regla que `f211_priv.madre_anonima` en la base (que sigue siendo la autoridad); aquí solo decide el camino y el mensaje.
+ */
+export function madreAdmiteEleccionPublica(m: {
+  tipo: string; tenant: string | null; creado_por_id: string | null; propietario_id: string | null; aliado_id: number | null; payload: unknown;
+}): boolean {
+  if (m.creado_por_id == null && m.propietario_id == null && m.aliado_id == null) return true;
+  const p = m.payload;
+  const compartida = typeof p === "object" && p !== null && !Array.isArray(p) && (p as Record<string, unknown>).compartirPublico === true;
+  return compartida && m.tipo === "comparativa_carrito" && m.tenant === "mayorista" && m.creado_por_id != null && m.propietario_id == null && m.aliado_id == null;
+}
+
+/** Lo que se muestra de una opción (de `resumen_publico`, que ya viene sin netos, proveedores ni recobro). Incluye los vuelos manuales comunes (ruta, tramo, fecha y pasajeros; sin precio). */
+export function resumenDeOpcion(raw: unknown): ResumenHotelUI {
+  const r = (raw ?? {}) as Record<string, unknown>;
+  const servicios = Array.isArray(r.servicios) ? (r.servicios as Array<Record<string, unknown>>).map((s) => ({ nombre: String(s.nombre ?? ""), precio: s.precio == null ? null : Number(s.precio) })).filter((s) => s.nombre) : undefined;
+  const items = Array.isArray(r.items) ? (r.items as Array<Record<string, unknown>>).map((i) => ({ descripcion: String(i.descripcion ?? ""), valor: Number(i.valor) || 0 })).filter((i) => i.descripcion) : undefined;
+  const vuelos = Array.isArray(r.vuelos)
+    ? (r.vuelos as Array<Record<string, unknown>>).map((v) => ({ tramo: String(v.tramo ?? ""), origen: v.origen == null ? null : String(v.origen), destino: v.destino == null ? null : String(v.destino), fecha: v.fecha == null ? null : String(v.fecha), nota: String(v.nota ?? "") })).filter((v) => v.tramo)
+    : undefined;
+  return { plan: typeof r.plan_nombre === "string" ? r.plan_nombre : null, servicios, vuelos, items, incluye: typeof r.incluye === "string" ? r.incluye : null, noIncluye: typeof r.noIncluye === "string" ? r.noIncluye : null };
+}
+
+/** Roles internos que pueden dejar una comparativa compartida: los MISMOS de `f211_priv.madre_anonima` (migración 250). */
+export const ROLES_CREADOR_COMPARTIDA = ["superadmin", "gerencia", "administracion", "operaciones", "venta"] as const;
+
+/**
+ * Regla COMPLETA de `f211_priv.madre_anonima` (la base sigue siendo la autoridad): anónima, o del carrito marcada con `compartirPublico` **y cuyo creador interno sigue
+ * activo con un rol interno permitido**. `creador` = fila de `usuarios` del `creado_por_id` (null si no existe). Si el creador deja de cumplirlo, la pantalla pública muestra
+ * el camino de solicitud al asesor y la acción se rechaza, igual que la base.
+ */
+export function madreElegiblePorVisitante(
+  m: Parameters<typeof madreAdmiteEleccionPublica>[0],
+  creador: { rol: string | null; activo: boolean | null } | null | undefined,
+): boolean {
+  if (!madreAdmiteEleccionPublica(m)) return false;
+  if (m.creado_por_id == null && m.propietario_id == null && m.aliado_id == null) return true; // anónima: sin creador que comprobar
+  return creador?.activo === true && (ROLES_CREADOR_COMPARTIDA as readonly string[]).includes(creador.rol ?? "");
 }

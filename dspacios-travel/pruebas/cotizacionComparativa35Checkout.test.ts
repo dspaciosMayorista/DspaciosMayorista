@@ -447,7 +447,8 @@ describe("resumenOpcionComparativa — lectura pública mínima", () => {
     const r = await A.resumenOpcionComparativa("11111111-2222-3333-4444-555555555555", "A", "doble");
     assert.equal(r.ok, true);
     if (!r.ok) return;
-    assert.deepEqual(Object.keys(r.datos).sort(), ["acomodacionRef", "destino", "etiqueta", "fechaRegreso", "fechaSalida", "moneda", "opcionRef", "pax", "tarifaPersona", "tipo", "total", "vencida", "version", "vigenciaHasta"].sort());
+    assert.deepEqual(Object.keys(r.datos).sort(), ["acomodacionRef", "destino", "etiqueta", "fechaRegreso", "fechaSalida", "moneda", "opcionRef", "pax", "tarifaPersona", "tipo", "total", "vencida", "version", "vigenciaHasta", "vuelos"].sort());
+    assert.deepEqual(r.datos.vuelos, [], "sin vuelos manuales comunes la lista va vacía (y nunca lleva precio, costo ni proveedor)");
     assert.equal(r.datos.total, 685_000);
     assert.ok(!JSON.stringify(r).includes("plantilla") && !JSON.stringify(r).includes("payload"));
     assert.equal(rpcs.length, 0, "leer no ejecuta ninguna RPC");

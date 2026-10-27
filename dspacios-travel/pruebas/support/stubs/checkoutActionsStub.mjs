@@ -41,3 +41,14 @@ export async function previsualizarTerminosB2BAsistido(input) {
   if (implPrevia) return implPrevia(input);
   return { ok: false, error: "previsualizarTerminosB2BAsistido: no implementado en el stub de pruebas" };
 }
+// #64: comparativa del carrito — registra lo que la página envía al servidor.
+export const __comparativas = [];
+let implComparativa = null;
+export function __setCrearComparativaCarrito(fn) {
+  implComparativa = fn;
+}
+export async function crearComparativaCarrito(input) {
+  __comparativas.push(input);
+  if (implComparativa) return implComparativa(input);
+  return { ok: false, error: "crearComparativaCarrito: no implementado en el stub de pruebas" };
+}

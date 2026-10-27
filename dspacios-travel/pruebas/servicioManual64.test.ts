@@ -2,7 +2,7 @@ import { test, describe } from "node:test";
 import assert from "node:assert/strict";
 import {
   descripcionContratoManual, descripcionCotizacionManual, leerManualesEntrada, reemplazarManual,
-  validarCostoManual, validarServicioManual, MAX_MANUALES, lineaB2BManual, primerGrupoPendiente, verificarManualesCotizados,
+  validarCostoManual, validarServicioManual, MAX_MANUALES, lineaB2BManual, primerGrupoPendiente, verificarManualesCotizados, tramosVueloManual,
 } from "../lib/cart/servicioManual.ts";
 import { construirPlanB2B } from "../lib/cotizacion/asistidaB2B.ts";
 import { preverCotizacion, resumirMonedas } from "../lib/cart/monedaCarrito.ts";
@@ -10,7 +10,7 @@ import { normalizarVinculos, quitarConVinculos } from "../lib/cart/vinculoServic
 
 // #64 — servicio manual del carrito: validación, edición aislada y sumas por moneda.
 
-const vuelo = { clase: "vuelo", nombre: "Tiquete aéreo ida y regreso", origen: "BOG", destino: "CTG", fechaIda: "2026-12-10", fechaRegreso: "2026-12-14", pax: 2, precio: 1800000, moneda: "COP", impuestoNoComisionable: 200000 };
+const vuelo = { clase: "vuelo", tramo: "ida_regreso", hotelRef: "h1", nombre: "Tiquete aéreo ida y regreso", origen: "BOG", destino: "CTG", fechaIda: "2026-12-10", fechaRegreso: "2026-12-14", pax: 2, precio: 1800000, moneda: "COP", impuestoNoComisionable: 200000 };
 
 describe("validarServicioManual", () => {
   test("acepta un vuelo completo y normaliza espacios", () => {
@@ -172,7 +172,7 @@ describe("#64 impuesto no comisionable del manual (0 ≤ impuesto ≤ PVP, oblig
 describe("#64 lo cotizado manda: verificarManualesCotizados", () => {
   const m = (validarServicioManual(vuelo) as { valor: Parameters<typeof lineaB2BManual>[0] }).valor;
   const item = { descripcion: descripcionCotizacionManual(m), valor_total: m.precio };
-  const bueno = { payload: { manuales: [m] } as unknown, detalleItems: [item] as unknown, plan: null, moneda: "COP" };
+  const bueno = { payload: { manuales: [m] } as unknown, detalleItems: [item] as unknown, detalleVuelos: tramosVueloManual(m, true) as unknown, plan: null, moneda: "COP" };
   test("coincidente: devuelve los manuales validados", () => {
     const r = verificarManualesCotizados(bueno);
     assert.ok(r.ok);

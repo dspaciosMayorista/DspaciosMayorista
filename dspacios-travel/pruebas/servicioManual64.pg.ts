@@ -69,7 +69,7 @@ const fila = (q: string) => sql(q).split("|");
 const lit = (v: unknown) => (v == null ? "null" : `'${String(v).replace(/'/g, "''")}'`);
 
 // ── Motor de reserva simulado, por hotel (el precio NO es lo que se prueba) ──
-type HotelSim = { nombre: string; moneda: string; pvp: number; neto: number };
+type HotelSim = { nombre: string; moneda: string; pvp: number; neto: number; destino?: string; ida?: string; regreso?: string };
 let HOTELES: Record<number, HotelSim> = {};
 mock.module("@/lib/reservar/computo", {
   namedExports: {
@@ -78,7 +78,7 @@ mock.module("@/lib/reservar/computo", {
       return {
         ok: true,
         data: {
-          meta: { hotel_nombre: h.nombre, destino_nombre: "CARTAGENA", fecha_ida: "2030-03-01", fecha_regreso: "2030-03-04" },
+          meta: { hotel_nombre: h.nombre, destino_nombre: h.destino ?? "CARTAGENA", fecha_ida: h.ida ?? "2030-03-01", fecha_regreso: h.regreso ?? "2030-03-04" },
           precioVenta: h.pvp * 2, monedaReserva: h.moneda, impuestoTotal: 0,
           lineasHab: [{ acom: "doble", habitaciones: 1, pax: 2, pvp: h.pvp }], pvpPorAcom: { doble: h.pvp }, netoPorAcom: { doble: h.neto },
           numNinos: 0, numNinos2: 0, numInfantes: 0, totalPax: 2, paxConSilla: 2, edadesMenoresUsadas: [],
@@ -121,10 +121,11 @@ mock.module("@/lib/supabase/admin", { namedExports: { createAdminClient: () => c
 const COOKIES = { get: () => undefined, getAll: () => [] as unknown[] };
 mock.module("next/headers", { namedExports: { headers: async () => new Map([["host", "localhost"]]), cookies: async () => COOKIES } });
 
-const { descripcionCotizacionManual, validarServicioManual, lineaB2BManual } = await import("../lib/cart/servicioManual.ts");
+const { descripcionCotizacionManual, validarServicioManual, lineaB2BManual, tramosVueloManual } = await import("../lib/cart/servicioManual.ts");
 const { construirPlanB2B } = await import("../lib/cotizacion/asistidaB2B.ts");
 const { convertirCotizacionCarrito } = await import("../app/(dashboard)/dashboard/reservar/actions.ts");
-const { crearSolicitudReserva } = await import("../app/tarifario/checkout/actions.ts");
+const { crearSolicitudReserva, crearComparativaCarrito, elegirOpcionComparativa, resumenOpcionComparativa } = await import("../app/tarifario/checkout/actions.ts");
+const { visitantePuedeContinuar } = await import("../lib/cotizacion/comparativaServidor.ts");
 
 // ── Semilla de la base ────────────────────────────────────────────────────
 const PASAJEROS = [
@@ -210,16 +211,24 @@ beforeEach(() => {
   };
 });
 
-const VUELO = { clase: "vuelo", nombre: "Tiquete aéreo ida y regreso", origen: "BOG", destino: "CTG", fechaIda: "2030-02-28", fechaRegreso: "2030-03-04", pax: 2, precio: 1_800_000, moneda: "COP", impuestoNoComisionable: 200_000 };
+const VUELO = { clase: "vuelo", tramo: "ida_regreso", hotelRef: "h1", nombre: "Tiquete aéreo ida y regreso", origen: "BOG", destino: "CARTAGENA", fechaIda: "2030-03-01", fechaRegreso: "2030-03-04", pax: 2, precio: 1_800_000, moneda: "COP", impuestoNoComisionable: 200_000 };
 const OTRO = { clase: "otro", nombre: "Traslado privado", origen: null, destino: null, fechaIda: null, fechaRegreso: null, pax: 2, precio: 90_000, moneda: "COP", impuestoNoComisionable: 0 };
 const COSTO_VUELO = { costo: 1_500_000, proveedor: "Proveedor Vuelos 64" };
 
 /** Inserta una cotización como la deja `crearSolicitudReserva`: el documento (detalle.items) lleva una línea por manual válido. `detalleItems` fuerza otro documento. */
-function cotizacionM(a: { moneda?: "COP" | "USD"; items: unknown[]; manuales?: unknown[]; detalleItems?: unknown[]; payloadExtra?: Record<string, unknown> }): number {
-  const payload = { items: a.items, tours: [], ...(a.manuales ? { manuales: a.manuales } : {}), cliente: CLIENTE, ...(a.payloadExtra ?? {}) };
-  const lineas = a.detalleItems ?? (a.manuales ?? []).flatMap((m) => { const r = validarServicioManual(m); return r.ok ? [{ descripcion: descripcionCotizacionManual(r.valor), valor_total: r.valor.precio }] : []; });
+function cotizacionM(a: { moneda?: "COP" | "USD"; items: unknown[]; manuales?: unknown[]; detalleItems?: unknown[]; detalleVuelos?: unknown[]; payloadExtra?: Record<string, unknown>; hotelDeManual?: string }): number {
+  // Como lo deja `crearSolicitudReserva`: cada hotel con su `ref`, el vuelo ligado a SU hotel (`item-N`) y su cuadro de vuelos en el documento.
+  const items = a.items.map((it, i) => ({ ref: `item-${i}`, ...(it as object) }));
+  const guardados = (a.manuales ?? []).map((m) => {
+    const r = validarServicioManual(m);
+    return r.ok && r.valor.clase === "vuelo" ? { ...r.valor, hotelRef: a.hotelDeManual ?? "item-0", hotelEtiqueta: "Hotel de prueba" } : m;
+  });
+  const payload = { items, tours: [], ...(a.manuales ? { manuales: guardados } : {}), cliente: CLIENTE, ...(a.payloadExtra ?? {}) };
+  const validos = guardados.flatMap((m) => { const r = validarServicioManual(m); return r.ok ? [r.valor] : []; });
+  const lineas = a.detalleItems ?? validos.map((m) => ({ descripcion: descripcionCotizacionManual(m), valor_total: m.precio }));
+  const vuelos = a.detalleVuelos ?? validos.flatMap((m) => tramosVueloManual(m, true)).map((t, i) => ({ id: i + 1, ...t }));
   return Number(sql(`insert into public.cotizaciones (tipo, estado, tenant, moneda, payload, detalle, cliente, pax)
-    values ('carrito', 'abierta', 'mayorista', ${lit(a.moneda ?? "COP")}, ${lit(JSON.stringify(payload))}::jsonb, ${lit(JSON.stringify({ items: lineas }))}::jsonb, 'Ana Pérez', 2) returning id`));
+    values ('carrito', 'abierta', 'mayorista', ${lit(a.moneda ?? "COP")}, ${lit(JSON.stringify(payload))}::jsonb, ${lit(JSON.stringify({ items: lineas, vuelos, hoteles: items.map((it, i) => ({ id: i + 1, ref: `item-${i}`, nombre: (it as { hotelNombre?: string }).hotelNombre, ciudad: (it as { destino?: string }).destino, condiciones_tarifa: [] })) }))}::jsonb, 'Ana Pérez', 2) returning id`));
 }
 async function convertirM(id: number, nItems: number, extra: { costosManuales?: unknown; agrupar?: "todo" | "por_destino" } = {}): Promise<Resultado> {
   uidSesion = UID_ADMIN;
@@ -255,14 +264,15 @@ describe("64 · vuelo manual libre: conversión, financiero y NO reserva de sill
     numero = r.numeros![0];
     // hotel (mock) = 300.000 × 2 = 600.000 de venta y 420.000 de costo; vuelo manual = 1.800.000 de venta y 1.500.000 de costo
     assert.deepEqual(venta(numero), [2_400_000, 420_000, 1_500_000, 0, "COP"]);
-    assert.match(itemsDe(numero), /Vuelo · Tiquete aéreo ida y regreso BOG → CTG · 2030-02-28 → 2030-03-04 · 2 pax\|1800000/);
+    assert.match(itemsDe(numero), /Vuelo · Tiquete aéreo ida y regreso BOG → CARTAGENA \(ida y regreso\) · 2030-03-01 → 2030-03-04 · 2 pax\|1800000/);
     assert.doesNotMatch(itemsDe(numero), /sujeto a confirmación/);
     const cxp = cxpTodas(numero);
     assert.match(cxp, /aereo\|Proveedor Vuelos 64\|1500000\.00\|COP/);
     assert.match(cxp, /hotel\|Proveedor Hotel 236\|420000\.00\|COP/);
     assert.equal(sql(`select count(*) from public.cuentas_por_pagar where numero_contrato = ${lit(numero)}`), "2");
-    const tramos = sql(`select string_agg(direccion || ':' || origen_codigo || '>' || destino_codigo || ':' || coalesce(record, 'SIN-RECORD') || ':' || fecha_salida, ' ; ' order by orden) from public.contrato_vuelos where numero_contrato = ${lit(numero)}`);
-    assert.equal(tramos, "ida:BOG>CTG:SIN-RECORD:2030-02-28 ; regreso:CTG>BOG:SIN-RECORD:2030-03-04");
+    const tramos = sql(`select string_agg(direccion || ':' || coalesce(origen_codigo, origen_ciudad) || '>' || coalesce(destino_codigo, destino_ciudad) || ':' || coalesce(record, 'SIN-RECORD') || ':' || fecha_salida, ' ; ' order by orden) from public.contrato_vuelos where numero_contrato = ${lit(numero)}`);
+    assert.equal(tramos, "ida:BOG>CARTAGENA:SIN-RECORD:2030-03-01 ; regreso:CARTAGENA>BOG:SIN-RECORD:2030-03-04");
+    assert.match(sql(`select string_agg(servicios, '') from public.contrato_vuelos where numero_contrato = ${lit(numero)}`), /pasajeros en este vuelo: 2/);
     assert.equal(sql(`select string_agg(servicios, '') from public.contrato_vuelos where numero_contrato = ${lit(numero)}`).includes("Vuelo manual"), true);
     assert.equal(sql("select count(*) from public.bloqueos_vuelo"), bloqueosAntes, "no crea ni toca bloqueos");
     assert.equal(sql("select count(*) from public.sillas"), sillasAntes, "no reserva ni libera sillas");
@@ -393,14 +403,21 @@ describe("64 · cotización con servicio manual: solo personal interno, sin cost
     const c = cotDe(r.cotizacion.id);
     assert.equal(Number(c.precio), 2_400_000);
     assert.equal(c.moneda, "COP");
-    assert.deepEqual(Object.keys(c.payload.manuales![0]).sort(), ["clase", "destino", "fechaIda", "fechaRegreso", "impuestoNoComisionable", "moneda", "nombre", "origen", "pax", "precio"], "solo lo declarado: nada de costo/proveedor/record");
+    assert.deepEqual(Object.keys(c.payload.manuales![0]).sort(), ["clase", "destino", "fechaIda", "fechaRegreso", "hotelEtiqueta", "hotelRef", "impuestoNoComisionable", "moneda", "nombre", "origen", "pax", "precio", "tramo"], "solo lo declarado: nada de costo/proveedor/record");
+    assert.equal(c.payload.manuales![0].hotelRef, "item-0", "el vuelo queda ligado al hotel (ref que fija el servidor), no al id del navegador");
     const linea = c.detalle.items.find((i) => /^Vuelo ·/.test(i.descripcion));
     assert.ok(linea, "el documento lleva la línea del vuelo manual");
     assert.match(linea!.descripcion, /sujeto a confirmación de disponibilidad y tarifa/);
     assert.equal(Number(linea!.valor_total), 1_800_000);
     assert.doesNotMatch(linea!.descripcion + JSON.stringify(c.payload.manuales), /proveedor|costo|record|PNR/i);
     assert.equal((c.detalle as unknown as { hoteles: unknown[] }).hoteles.length, 1, "el único hotel del documento es el del catálogo; el manual no agrega hotel ni proveedor");
-    assert.deepEqual(c.detalle.vuelos, [], "no se inventa un vuelo de Sistema (sin bloqueo ni empaquetado)");
+    // El vuelo manual se pinta en el cuadro de vuelos: sin record, sin aerolínea, con los pasajeros de ESE vuelo y el aviso; nunca un vuelo de Sistema.
+    const tr = c.detalle.vuelos as { direccion: string; record: unknown; aerolinea: unknown; servicios: string }[];
+    assert.deepEqual(tr.map((t) => t.direccion), ["ida", "regreso"]);
+    for (const t of tr) {
+      assert.equal(t.record, null); assert.equal(t.aerolinea, null);
+      assert.match(t.servicios, /pasajeros en este vuelo: 2.*sujeto a confirmación de disponibilidad y tarifa/);
+    }
     assert.match(r.mensaje, /Servicios manuales .*sujetos a confirmación/);
     assert.match(r.mensaje, /Total \(PVP\): .*2\.400\.000/);
     assert.equal(totalVentas(), ventas, "cotizar no crea contrato");
@@ -410,7 +427,7 @@ describe("64 · cotización con servicio manual: solo personal interno, sin cost
   test("Q4 agregar/editar/quitar el manual no altera hotel ni add-ons: mismo ítem de hotel, mismas líneas; solo cambia el total por el importe del manual", async () => {
     const sin = await solicitar(entrada());
     const con = await solicitar(entrada([VUELO]));
-    const editado = await solicitar(entrada([{ ...VUELO, precio: 2_000_000, pax: 3 }]));
+    const editado = await solicitar(entrada([{ ...VUELO, precio: 2_000_000, pax: 1 }]));
     assert.ok(sin.ok && con.ok && editado.ok);
     if (!sin.ok || !con.ok || !editado.ok) return;
     const [a, b, e] = [sin, con, editado].map((x) => cotDe(x.cotizacion.id));
@@ -421,13 +438,14 @@ describe("64 · cotización con servicio manual: solo personal interno, sin cost
     assert.deepEqual(b.payload.items, e.payload.items, "ni al editarlo");
     assert.equal(a.payload.manuales, undefined, "sin manual no hay clave en el payload");
     assert.deepEqual(a.detalle.items, b.detalle.items.filter((i) => !/^Vuelo ·/.test(i.descripcion)), "las demás líneas del documento no cambian");
+    assert.deepEqual(a.detalle.vuelos, [], "sin manual no hay cuadro de vuelos");
   });
 
   test("Q5 un manual solo, sin hotel ni servicio del tarifario, no sostiene una cotización", async () => {
     const antes = totalCot();
     const r = await solicitar(entrada([VUELO], []));
     assert.equal(r.ok, false);
-    assert.match(msgErr(r), /ya tenga un hotel o un servicio|carrito está vacío|tarifario/i);
+    assert.match(msgErr(r), /ya tenga un hotel o un servicio|carrito está vacío|tarifario|elige el hotel del carrito/i);
     assert.equal(totalCot(), antes);
   });
 
@@ -516,11 +534,12 @@ describe("64 · congelado del servicio cotizado, bloque malformado, base comisio
   test("Z3 NO bloquea lo operativo: el alta de persona (payload.cliente), el progreso (detalle) y el estado siguen actualizándose", async () => {
     const id = cotizacionM({ items: [itemPayload(3601)], manuales: [VUELO] });
     const p = payloadDe(id);
+    const manualesAntes = p.manuales;
     const a = await parchear(id, { ...p, cliente: { ...p.cliente, telefono: "3111111111" }, nota_operativa: "x" });
     assert.equal(a.error, null, a.error?.message);
     const { error } = await clienteSesion().from("cotizaciones").update({ detalle: { items: [DOC_VUELO], progreso: 1 }, estado: "abierta" } as never).eq("id", id);
     assert.equal(error, null, error?.message);
-    assert.deepEqual(payloadDe(id).manuales, [VUELO]);
+    assert.deepEqual(payloadDe(id).manuales, manualesAntes);
   });
 
   test("Z4 bloque ausente o malformado con manuales declarados en el documento: se rechaza antes de numerar (nunca se convierte en [])", async () => {
@@ -600,5 +619,589 @@ describe("64 · congelado del servicio cotizado, bloque malformado, base comisio
     assert.equal(r2.numeros!.length, 2);
     assert.equal(totalCxp() - cxpAntes, 1, "solo la CxP del hotel del segundo destino; el vuelo manual no se duplica");
     assert.equal(sql(`select count(*) from public.contrato_vuelos where numero_contrato in (${r2.numeros!.map(lit).join(",")}) and record is null`), "2");
+  });
+});
+
+// ═════════════════════════════════════════════════════════════════════
+// Ronda 3: tramos (ida / regreso / ida y regreso), hotel asociado, fechas contra su estadía, pasajeros por vuelo, varios destinos y cuadro de vuelos.
+describe("64 · vuelo manual por tramos, ligado a SU hotel del carrito", () => {
+  const H1 = () => ({ ...itemPayload(3601), itemId: "h1" });
+  const H2 = () => ({ ...itemPayload(3602, "SANTA MARTA"), itemId: "h2" });
+  const V = (o: Record<string, unknown> = {}) => ({ ...VUELO, ...o });
+  const ABIERTAS = () => Number(sql("select count(*) from public.cotizaciones"));
+  const crear = async (items: unknown[], manuales: unknown[], opts: { anonimo?: boolean } = {}) => {
+    anonimo = opts.anonimo ?? false; uidSesion = UID_ADMIN;
+    try { return await crearSolicitudReserva({ items, tours: [], manuales, cliente: { ...CLIENTE, tipoDoc: "CC" } }); } finally { anonimo = false; }
+  };
+  const err = (r: { ok: boolean }) => ("error" in r ? String((r as { error: unknown }).error) : "");
+  type Cot = { precio: number; payload: { manuales: Record<string, unknown>[] }; detalle: { items: { descripcion: string; valor_total: number }[]; vuelos: Record<string, unknown>[] } };
+  const cot = (id: number) => JSON.parse(sql(`select json_build_object('precio', precio_venta, 'payload', payload, 'detalle', detalle)::text from public.cotizaciones where id = ${id}`)) as Cot;
+  const sinSillas = () => ({ sillas: sql("select count(*) from public.sillas"), bloqueos: sql("select count(*) from public.bloqueos_vuelo") });
+
+  const TRAMOS = [
+    ["ida", V({ tramo: "ida", origen: "BOG", destino: "cartagena", fechaIda: "2030-03-02", fechaRegreso: null }), ["ida"], ["2030-03-02"]],
+    ["regreso", V({ tramo: "regreso", origen: "Cartagena", destino: "MDE", fechaIda: null, fechaRegreso: "2030-03-04" }), ["regreso"], ["2030-03-04"]],
+    ["ida y regreso", V(), ["ida", "regreso"], ["2030-03-01", "2030-03-04"]],
+  ] as const;
+  for (const [nombre, manual, direcciones, fechas] of TRAMOS) {
+    test(`V1 ${nombre}: el cuadro de vuelos lleva SOLO sus tramos; el lado del hotel sale del hotel; el precio entra una sola vez; sin sillas ni bloqueos`, async () => {
+      const antes = sinSillas();
+      const r = await crear([H1()], [manual]);
+      assert.equal(r.ok, true, err(r));
+      if (!r.ok) return;
+      const c = cot(r.cotizacion.id);
+      assert.equal(Number(c.precio), 600_000 + VUELO.precio, "total = hotel + vuelo");
+      assert.equal(c.detalle.items.filter((i) => /^Vuelo ·/.test(i.descripcion)).length, 1, "una sola línea de valor para el vuelo");
+      assert.deepEqual(c.detalle.vuelos.map((t) => t.direccion), [...direcciones]);
+      assert.deepEqual(c.detalle.vuelos.map((t) => t.fecha_salida), [...fechas]);
+      for (const t of c.detalle.vuelos) { assert.equal(t.record, null); assert.equal(t.aerolinea, null); assert.match(String(t.servicios), /pasajeros en este vuelo: 2 · sujeto a confirmación/); }
+      const m = c.payload.manuales[0];
+      assert.equal(m.hotelRef, "item-0", "ligado al hotel por la ref del servidor");
+      assert.equal(String(m.tramo === "regreso" ? m.origen : m.destino), "CARTAGENA", "la ciudad del hotel la fija el servidor");
+      assert.deepEqual(sinSillas(), antes, "cotizar un vuelo manual no toca sillas ni bloqueos");
+    });
+  }
+
+  test("V2 fechas contra la estadía del hotel (01-mar → 04-mar): límites aceptados, fuera de ellos y fechas desordenadas rechazadas ANTES de cotizar", async () => {
+    const ok: [string, Record<string, unknown>][] = [
+      ["ida el día de la entrada", V({ tramo: "ida", fechaIda: "2030-03-01", fechaRegreso: null })],
+      ["regreso el día de la salida", V({ tramo: "regreso", origen: "CARTAGENA", destino: "BOG", fechaIda: null, fechaRegreso: "2030-03-04" })],
+      ["ida y regreso exactamente en la estadía", V()],
+    ];
+    for (const [que, m] of ok) { const r = await crear([H1()], [m]); assert.equal(r.ok, true, `${que}: ${err(r)}`); }
+    const antes = ABIERTAS();
+    const mal: [string, Record<string, unknown>][] = [
+      ["ida un día ANTES de la entrada", V({ tramo: "ida", fechaIda: "2030-02-28", fechaRegreso: null })],
+      ["ida DESPUÉS de la salida", V({ tramo: "ida", fechaIda: "2030-03-05", fechaRegreso: null })],
+      ["regreso un día DESPUÉS de la salida", V({ tramo: "regreso", origen: "CARTAGENA", destino: "BOG", fechaIda: null, fechaRegreso: "2030-03-05" })],
+      ["regreso ANTES de la entrada", V({ tramo: "regreso", origen: "CARTAGENA", destino: "BOG", fechaIda: null, fechaRegreso: "2030-02-28" })],
+      ["ida y regreso con el regreso antes de la ida", V({ fechaIda: "2030-03-04", fechaRegreso: "2030-03-02" })],
+      ["ida y regreso con la ida antes de la entrada", V({ fechaIda: "2030-02-28" })],
+      ["ida con fecha de regreso", V({ tramo: "ida", fechaRegreso: "2030-03-04" })],
+      ["regreso con fecha de ida", V({ tramo: "regreso", origen: "CARTAGENA", destino: "BOG", fechaIda: "2030-03-01" })],
+    ];
+    for (const [que, m] of mal) { const r = await crear([H1()], [m]); assert.equal(r.ok, false, que); }
+    assert.equal(ABIERTAS(), antes, "ninguna se cotizó");
+  });
+
+  test("V3 vuelos separados con distintos pasajeros: cada uno lleva los suyos y se suman una vez; más pasajeros que la cotización se rechaza", async () => {
+    const a = V({ tramo: "ida", fechaRegreso: null, nombre: "Avianca ida", pax: 2, precio: 900_000, impuestoNoComisionable: 0 });
+    const b = V({ tramo: "ida", fechaRegreso: null, nombre: "Latam ida", pax: 1, precio: 500_000, impuestoNoComisionable: 0 });
+    const r = await crear([H1()], [a, b]);
+    assert.equal(r.ok, true, err(r));
+    if (!r.ok) return;
+    const c = cot(r.cotizacion.id);
+    assert.equal(Number(c.precio), 600_000 + 900_000 + 500_000);
+    assert.deepEqual(c.detalle.vuelos.map((t) => /pasajeros en este vuelo: (\d)/.exec(String(t.servicios))![1]), ["2", "1"]);
+    const antes = ABIERTAS();
+    for (const pax of [3, 0, 1.5]) assert.equal((await crear([H1()], [V({ pax })])).ok, false, `pax ${pax}`);
+    assert.equal(ABIERTAS(), antes);
+  });
+
+  test("V4 varios destinos: el vuelo se liga al hotel ELEGIDO (nunca al primero), con su ciudad y sus fechas; sin elegir, desconocido o cruzado se rechaza", async () => {
+    HOTELES[3602] = { nombre: "Hotel Santa Marta 64", moneda: "COP", pvp: 300_000, neto: 210_000, destino: "SANTA MARTA", ida: "2030-03-10", regreso: "2030-03-14" };
+    const aSM = V({ hotelRef: "h2", tramo: "ida_regreso", origen: "BOG", destino: "Santa Marta", fechaIda: "2030-03-10", fechaRegreso: "2030-03-14", nombre: "Vuelo a Santa Marta" });
+    const r = await crear([H1(), H2()], [aSM]);
+    assert.equal(r.ok, true, err(r));
+    if (!r.ok) return;
+    const m = cot(r.cotizacion.id).payload.manuales[0];
+    assert.deepEqual([m.hotelRef, m.destino, m.hotelEtiqueta], ["item-1", "SANTA MARTA", "Hotel Santa Marta 64"]);
+    const antes = ABIERTAS();
+    const mal: [string, Record<string, unknown>][] = [
+      ["sin hotel (no se asigna al primero)", V({ hotelRef: "" })],
+      ["hotel que no está en el carrito", V({ hotelRef: "zzz" })],
+      ["fechas del primer hotel contra el segundo", { ...aSM, fechaIda: "2030-03-01", fechaRegreso: "2030-03-04" }],
+      ["ciudad del primer hotel contra el segundo", { ...aSM, destino: "CARTAGENA" }],
+      ["ciudad del segundo hotel contra el primero", V({ destino: "SANTA MARTA" })],
+    ];
+    for (const [que, x] of mal) assert.equal((await crear([H1(), H2()], [x])).ok, false, que);
+    assert.equal(ABIERTAS(), antes);
+  });
+
+  test("V5 conversión por destino: cada vuelo viaja y se cobra en el contrato de SU hotel; sillas y bloqueos intactos", async () => {
+    HOTELES[3602] = { nombre: "Hotel Santa Marta V5", moneda: "COP", pvp: 300_000, neto: 210_000, destino: "SANTA MARTA", ida: "2030-03-10", regreso: "2030-03-14" };
+    const aCTG = V({ nombre: "Vuelo CTG", hotelRef: "h1" });
+    const aSM = V({ nombre: "Vuelo SMR", hotelRef: "h2", destino: "SANTA MARTA", fechaIda: "2030-03-10", fechaRegreso: "2030-03-14", precio: 1_000_000, impuestoNoComisionable: 0 });
+    const q = await crear([H1(), H2()], [aCTG, aSM]);
+    assert.equal(q.ok, true, err(q));
+    if (!q.ok) return;
+    const antes = sinSillas();
+    const r = await convertirM(q.cotizacion.id, 2, { agrupar: "por_destino", costosManuales: [{ costo: 1_500_000, proveedor: "Prov CTG" }, { costo: 800_000, proveedor: "Prov SMR" }] });
+    assert.equal(r.ok, true, r.error);
+    assert.equal(r.numeros!.length, 2);
+    const [n1, n2] = r.numeros!;
+    assert.deepEqual(venta(n1), [600_000 + 1_800_000, 420_000, 1_500_000, 0, "COP"]);
+    assert.deepEqual(venta(n2), [600_000 + 1_000_000, 420_000, 800_000, 0, "COP"]);
+    assert.match(cxpTodas(n1), /aereo\|Prov CTG\|1500000/);
+    assert.match(cxpTodas(n2), /aereo\|Prov SMR\|800000/);
+    assert.doesNotMatch(cxpTodas(n1), /Prov SMR/);
+    assert.doesNotMatch(cxpTodas(n2), /Prov CTG/);
+    assert.equal(sql(`select string_agg(coalesce(destino_codigo, destino_ciudad), ',' order by orden) from public.contrato_vuelos where numero_contrato = ${lit(n2)}`), "SANTA MARTA,BOG");
+    assert.deepEqual(sinSillas(), antes);
+    assert.equal(sql(`select count(*) from public.sillas where numero_contrato in (${lit(n1)}, ${lit(n2)})`), "0");
+  });
+
+  test("V6 reintento parcial: si el vuelo vive en el destino PENDIENTE se siguen exigiendo costo y proveedor; solo de ese vuelo", async () => {
+    HOTELES[3601].nombre = "Hotel Uno V6";
+    HOTELES[3602] = { nombre: "Hotel Dos V6", moneda: "COP", pvp: 300_000, neto: 210_000, destino: "SANTA MARTA", ida: "2030-03-10", regreso: "2030-03-14" };
+    const aSM = V({ nombre: "Vuelo SMR V6", hotelRef: "h2", destino: "SANTA MARTA", fechaIda: "2030-03-10", fechaRegreso: "2030-03-14" });
+    const q = await crear([H1(), H2()], [aSM]);
+    assert.equal(q.ok, true, err(q));
+    if (!q.ok) return;
+    sql(`create or replace function public.t64_falla6() returns trigger language plpgsql as $f$ begin raise exception 't64 falla simulada'; end $f$;
+         create trigger t64_falla6_g before insert on public.ventas for each row when (new.hotel = 'Hotel Dos V6') execute function public.t64_falla6()`);
+    try { assert.equal((await convertirM(q.cotizacion.id, 2, { agrupar: "por_destino", costosManuales: [COSTO_VUELO] })).ok, false, "el destino del vuelo falla"); }
+    finally { sql("drop trigger if exists t64_falla6_g on public.ventas; drop function if exists public.t64_falla6()"); }
+    assert.equal(sql("select count(*) from public.ventas where hotel = 'Hotel Uno V6'"), "1", "el primer destino quedó convertido");
+    const antes = foto();
+    const sin = await convertirM(q.cotizacion.id, 2, { agrupar: "por_destino" });
+    assert.equal(sin.ok, false, "el vuelo sigue pendiente: sin costo no se numera");
+    assert.match(sin.error ?? "", /costo y el proveedor/);
+    assert.deepEqual(foto(), antes);
+    const ok = await convertirM(q.cotizacion.id, 2, { agrupar: "por_destino", costosManuales: [COSTO_VUELO] });
+    assert.equal(ok.ok, true, ok.error);
+    assert.equal(ok.numeros!.length, 2);
+    assert.equal(sql(`select count(*) from public.cuentas_por_pagar where numero_contrato in (${ok.numeros!.map(lit).join(",")}) and tipo_proveedor = 'aereo'`), "1");
+  });
+
+  test("V7 datos manipulados en la cotización: hotel inexistente, cuadro de vuelos alterado (fecha, ruta, pasajeros, tramo borrado) o precio distinto se rechazan antes de numerar", async () => {
+    const v = validarServicioManual({ ...VUELO, hotelRef: "item-0" });
+    assert.ok(v.ok);
+    const bueno: Record<string, unknown>[] = v.ok ? tramosVueloManual(v.valor, true).map((t, i) => ({ id: i + 1, ...t })) : [];
+    const casos: [string, Parameters<typeof cotizacionM>[0]][] = [
+      ["hotel inexistente", { items: [itemPayload(3601)], manuales: [VUELO], hotelDeManual: "item-7" }],
+      ["fecha del regreso alterada", { items: [itemPayload(3601)], manuales: [VUELO], detalleVuelos: bueno.map((t, i) => (i === 1 ? { ...t, fecha_salida: "2030-03-09" } : t)) }],
+      ["ruta alterada", { items: [itemPayload(3601)], manuales: [VUELO], detalleVuelos: bueno.map((t) => ({ ...t, destino_ciudad: "Cali" })) }],
+      ["pasajeros alterados", { items: [itemPayload(3601)], manuales: [VUELO], detalleVuelos: bueno.map((t) => ({ ...t, servicios: String(t.servicios).replace("2", "9") })) }],
+      ["tramo borrado", { items: [itemPayload(3601)], manuales: [VUELO], detalleVuelos: bueno.slice(0, 1) }],
+      ["cuadro vacío", { items: [itemPayload(3601)], manuales: [VUELO], detalleVuelos: [] }],
+    ];
+    const antes = foto();
+    for (const [que, c] of casos) {
+      const id = cotizacionM(c);
+      const r = await convertirM(id, 1, { costosManuales: [COSTO_VUELO] });
+      assert.equal(r.ok, false, que);
+      sinEscribir(que, antes, id);
+    }
+  });
+});
+
+describe("64 · el vuelo se vuelve a comprobar contra la estadía RECALCULADA del hotel al convertir", () => {
+  test("V8 si el hotel ya no cuadra con el vuelo cotizado (otra entrada o otro destino), la conversión se rechaza antes de numerar", async () => {
+    const antes = foto();
+    const casos: [string, Partial<HotelSim>][] = [
+      ["la entrada del hotel pasó al 2 de marzo (la ida del 1.º queda antes de la entrada)", { ida: "2030-03-02" }],
+      ["la salida del hotel se adelantó al 3 de marzo (el regreso del 4 queda después de la salida)", { regreso: "2030-03-03" }],
+      ["el hotel ahora está en otra ciudad", { destino: "SANTA MARTA" }],
+    ];
+    for (const [que, cambio] of casos) {
+      const id = cotizacionM({ items: [itemPayload(3601)], manuales: [VUELO] });
+      HOTELES[3601] = { ...HOTELES[3601], ...cambio };
+      const r = await convertirM(id, 1, { costosManuales: [COSTO_VUELO] });
+      assert.equal(r.ok, false, que);
+      assert.match(r.error ?? "", /Tiquete aéreo ida y regreso/);
+      sinEscribir(que, antes, id);
+      HOTELES[3601] = { nombre: "Hotel Uno 64", moneda: "COP", pvp: 300_000, neto: 210_000 };
+    }
+    const bien = await convertirM(cotizacionM({ items: [itemPayload(3601)], manuales: [VUELO] }), 1, { costosManuales: [COSTO_VUELO] });
+    assert.equal(bien.ok, true, bien.error);
+  });
+});
+
+// ═════════════════════════════════════════════════════════════════════
+// Comparativa: vuelos manuales COMUNES a todas las opciones, solo personal interno, congelados en cada opción.
+describe("64 · cotización comparativa con vuelos manuales comunes", () => {
+  const items2 = () => [{ ...itemPayload(3601), itemId: "h1" }, { ...itemPayload(3602), itemId: "h2" }];
+  const COMUN = (o: Record<string, unknown> = {}) => ({ ...VUELO, hotelRef: "comun", ...o });
+  const crearCmp = async (manuales: unknown[] | undefined, opts: { anonimo?: boolean; uid?: string; items?: unknown[] } = {}) => {
+    anonimo = opts.anonimo ?? false; uidSesion = opts.uid ?? UID_ADMIN;
+    try { return await crearComparativaCarrito({ items: opts.items ?? items2(), tours: [], ...(manuales ? { manuales } : {}), cliente: { ...CLIENTE, tipoDoc: "CC" } }); }
+    finally { anonimo = false; uidSesion = UID_ADMIN; }
+  };
+  const err = (r: { ok: boolean }) => ("error" in r ? String((r as { error: unknown }).error) : "");
+  const totalCot = () => Number(sql("select count(*) from public.cotizaciones"));
+  type Opcion = { op: string; ac: string; total: number; resumen: { vuelos: Record<string, unknown>[]; total_hotel: number }; plantilla: { payload: { manuales?: Record<string, unknown>[]; items: { hotelNombre: string }[] }; detalle: { vuelos: Record<string, unknown>[] } } };
+  const opciones = (id: number) => JSON.parse(sql(`select coalesce(json_agg(json_build_object('op', opcion_ref, 'ac', acomodacion_ref, 'total', total, 'resumen', resumen_publico, 'plantilla', plantilla_hija) order by orden), '[]'::json)::text from public.cotizacion_opciones where cotizacion_id = ${id}`)) as Opcion[];
+  const madre = (id: number) => JSON.parse(sql(`select json_build_object('token', share_token, 'version', version, 'precio', precio_venta, 'estado', estado)::text from public.cotizaciones where id = ${id}`)) as { token: string; version: number; precio: number | null; estado: string };
+  const sinSillas = () => ({ sillas: sql("select count(*) from public.sillas"), bloqueos: sql("select count(*) from public.bloqueos_vuelo") });
+
+  test("C1 una llamada directa sin permiso (visitante o aliado) con manuales se RECHAZA: no se acepta para omitirla, y no se crea nada", async () => {
+    const antes = totalCot();
+    for (const o of [{ anonimo: true }, { uid: UID_AGENCIA }]) {
+      const r = await crearCmp([COMUN()], o);
+      assert.equal(r.ok, false);
+      assert.match(err(r), /personal autorizado/);
+    }
+    assert.equal(totalCot(), antes);
+  });
+
+  test("C2 solo vuelos y bien formados: 'otro servicio', bloque corrupto o impuesto mayor al precio se rechazan", async () => {
+    const antes = totalCot();
+    for (const m of [{ ...OTRO, hotelRef: "comun" }, COMUN({ impuestoNoComisionable: 99_999_999 }), COMUN({ tramo: "ida", fechaRegreso: "2030-03-04" }), "x"]) {
+      assert.equal((await crearCmp([m])).ok, false, JSON.stringify(m));
+    }
+    assert.equal(totalCot(), antes);
+  });
+
+  test("C3 personal interno con dos hoteles: cada opción lleva el vuelo y lo suma UNA vez a su propio total; la madre no suma nada; sin sillas ni bloqueos", async () => {
+    const sin = sinSillas();
+    const r = await crearCmp([COMUN()]);
+    assert.equal(r.ok, true, err(r));
+    if (!r.ok) return;
+    const m = madre(r.id), ops = opciones(r.id);
+    assert.equal(m.precio, null, "la madre no tiene total: las alternativas nunca se suman entre sí");
+    assert.ok(ops.length >= 2);
+    for (const o of ops) {
+      assert.equal(Number(o.total), 600_000 + VUELO.precio, `opción ${o.op}/${o.ac}: hotel + vuelo, una vez`);
+      assert.equal(o.plantilla.payload.manuales!.length, 1);
+      assert.equal(o.plantilla.payload.manuales![0].hotelRef, "item-0", "dentro de cada opción el vuelo está ligado a SU hotel");
+      assert.deepEqual(o.plantilla.detalle.vuelos.map((t) => t.direccion), ["ida", "regreso"]);
+      assert.deepEqual((o.resumen.vuelos ?? []).map((t) => t.tramo), ["ida", "regreso"], "el comprador ve ruta, tramo y fecha");
+      assert.doesNotMatch(JSON.stringify(o.resumen.vuelos), /precio|costo|proveedor|comision|impuesto|record/i, "nada de precio, costo ni comisión en los vuelos del resumen público");
+    }
+    assert.deepEqual(sinSillas(), sin);
+  });
+
+  test("C4 solo se ofrece si TODAS las opciones son compatibles: fechas fuera de la estadía de una opción o destinos distintos bloquean la comparativa", async () => {
+    const antes = totalCot();
+    HOTELES[3602] = { nombre: "Hotel Tarde 64", moneda: "COP", pvp: 300_000, neto: 210_000, ida: "2030-03-02", regreso: "2030-03-04" };
+    const a = await crearCmp([COMUN()]);
+    assert.equal(a.ok, false);
+    assert.match(err(a), /Hotel Tarde 64|fecha|estadía|entrada/i);
+    HOTELES[3602] = { nombre: "Hotel Otro Destino 64", moneda: "COP", pvp: 300_000, neto: 210_000, destino: "SANTA MARTA" };
+    assert.equal((await crearCmp([COMUN()])).ok, false);
+    assert.equal(totalCot(), antes, "no quedó ninguna madre a medias");
+  });
+
+  for (const opcion of ["A", "B"]) {
+    test(`C5 elegir la opción ${opcion}: la hija lleva SOLO ese hotel y el vuelo común congelado; reintento idempotente; conversión exige costo y proveedor del vuelo`, async () => {
+      const r = await crearCmp([COMUN()]);
+      assert.equal(r.ok, true, err(r));
+      if (!r.ok) return;
+      const m = madre(r.id);
+      const op = opciones(r.id).find((o) => o.op === opcion)!;
+      const hotelElegido = op.plantilla.payload.items[0].hotelNombre;
+      const sin = sinSillas();
+      const clave = crypto.randomUUID();
+      uidSesion = UID_ADMIN; anonimo = false;
+      const entrada = { token: m.token, version: m.version, opcionRef: op.op, acomodacionRef: op.ac, clave };
+      // quien elige no crea ni modifica vuelos: una petición con manuales se rechaza
+      const antes = totalCot();
+      const intruso = await elegirOpcionComparativa({ ...entrada, clave: crypto.randomUUID(), manuales: [COMUN({ precio: 1 })] });
+      assert.equal(intruso.ok, false);
+      assert.match(err(intruso), /vuelos manuales/);
+      assert.equal(totalCot(), antes, "nada se creó");
+      const e = await elegirOpcionComparativa(entrada);
+      assert.equal(e.ok, true, err(e));
+      if (!e.ok) return;
+      const h = JSON.parse(sql(`select json_build_object('precio', precio_venta, 'payload', payload, 'detalle', detalle, 'hotel', hotel)::text from public.cotizaciones where id = ${e.hijaId}`)) as {
+        precio: number; hotel: string; payload: { manuales: Record<string, unknown>[]; items: unknown[] }; detalle: { vuelos: { direccion: string }[] } };
+      assert.equal(h.payload.items.length, 1, "solo el hotel elegido");
+      assert.equal(h.hotel, hotelElegido);
+      assert.equal(Number(h.precio), 600_000 + VUELO.precio, "hotel + vuelo, una vez");
+      assert.deepEqual(h.payload.manuales, op.plantilla.payload.manuales, "el vuelo común quedó congelado tal cual en la opción");
+      assert.deepEqual(h.detalle.vuelos.map((t) => t.direccion), ["ida", "regreso"]);
+      // reintento con la MISMA clave: la misma hija, sin duplicar
+      const total1 = totalCot();
+      const otra = await elegirOpcionComparativa(entrada);
+      assert.equal(otra.ok && otra.hijaId, e.hijaId, "reintento idempotente");
+      assert.equal(totalCot(), total1);
+      // y el vuelo manual congelado no admite PATCH (migración 249) ni siquiera en la hija
+      const parche = await clienteSesion().from("cotizaciones").update({ payload: { ...h.payload, manuales: [] } } as never).eq("id", e.hijaId);
+      assert.match(parche.error?.message ?? "NO SE RECHAZÓ", /MANUALES_INMUTABLES/);
+      // conversión: sin costo ni proveedor del vuelo no se numera; con ellos, sí
+      const prev = foto();
+      const sinCosto = await convertirM(e.hijaId, 1);
+      assert.equal(sinCosto.ok, false);
+      sinEscribir("hija sin costos", prev, e.hijaId);
+      const conv = await convertirM(e.hijaId, 1, { costosManuales: [COSTO_VUELO] });
+      assert.equal(conv.ok, true, conv.error);
+      assert.deepEqual(venta(conv.numeros![0]), [600_000 + VUELO.precio, 420_000, 1_500_000, 0, "COP"]);
+      assert.equal(sql(`select count(*) from public.contrato_vuelos where numero_contrato = ${lit(conv.numeros![0])} and record is null`), "2");
+      assert.deepEqual(sinSillas(), sin, "ni la comparativa, ni la elección, ni la conversión tocan sillas ni bloqueos");
+    });
+  }
+
+  test("C6 el visitante NO puede crear ni modificar vuelos al elegir; una comparativa hecha por personal interno no se elige por el canal público (regla vigente de la 211); lo manipulado en la opción guardada no llega a la hija", async () => {
+    const r = await crearCmp([COMUN()]);
+    assert.equal(r.ok, true, err(r));
+    if (!r.ok) return;
+    const m = madre(r.id);
+    const op = opciones(r.id)[0];
+    const base = { token: m.token, version: m.version, opcionRef: op.op, acomodacionRef: op.ac };
+    const visitante = { nombres: "Visitante", apellidos: "Uno", numeroDoc: "999", telefono: "3001234567", email: "v@x.test" };
+    const antes = totalCot();
+    anonimo = true; uidSesion = UID_ADMIN;
+    try {
+      const conManuales = await elegirOpcionComparativa({ ...base, clave: crypto.randomUUID(), cliente: visitante, manuales: [COMUN({ precio: 1 })] });
+      assert.equal(conManuales.ok, false);
+      assert.match(err(conManuales), /vuelos manuales/);
+      const sinManuales = await elegirOpcionComparativa({ ...base, clave: crypto.randomUUID(), cliente: visitante });
+      assert.equal(sinManuales.ok, false, "la comparativa fue creada por personal interno: el canal público no la elige");
+    } finally { anonimo = false; }
+    assert.equal(totalCot(), antes, "el visitante no creó ninguna hija");
+    // Opción guardada alterada (precio del vuelo): no coincide con su propio documento; no se emite recibo ni se crea la hija. Restaurada, se elige.
+    uidSesion = UID_ADMIN;
+    sql(`set session_replication_role = replica; update public.cotizacion_opciones set plantilla_hija = jsonb_set(plantilla_hija, '{payload,manuales,0,precio}', '1') where cotizacion_id = ${r.id} and opcion_ref = ${lit(op.op)} and acomodacion_ref = ${lit(op.ac)}`);
+    const alt = await elegirOpcionComparativa({ ...base, clave: crypto.randomUUID() });
+    assert.equal(alt.ok, false);
+    assert.equal(totalCot(), antes, "no se creó ninguna hija");
+    sql(`set session_replication_role = replica; update public.cotizacion_opciones set plantilla_hija = jsonb_set(plantilla_hija, '{payload,manuales,0,precio}', '${VUELO.precio}') where cotizacion_id = ${r.id} and opcion_ref = ${lit(op.op)} and acomodacion_ref = ${lit(op.ac)}`);
+    const bien = await elegirOpcionComparativa({ ...base, clave: crypto.randomUUID() });
+    assert.equal(bien.ok, true, err(bien));
+    if (bien.ok) assert.equal(Number(sql(`select precio_venta from public.cotizaciones where id = ${bien.hijaId}`)), 600_000 + VUELO.precio);
+  });
+});
+
+// ═════════════════════════════════════════════════════════════════════
+// Ronda 4: comparativa del carrito MARCADA por el interno para compartir. El visitante elige con el enlace; el vuelo manual común queda congelado.
+describe("64 · comparativa compartida con el cliente: recorrido completo con vuelo manual", () => {
+  const items2 = () => [{ ...itemPayload(3601), itemId: "h1" }, { ...itemPayload(3602), itemId: "h2" }];
+  const COMUN = (o: Record<string, unknown> = {}) => ({ ...VUELO, hotelRef: "comun", ...o });
+  const crearCmp = async (manuales: unknown[] | undefined, o: { anonimo?: boolean; uid?: string; compartir?: unknown } = {}) => {
+    anonimo = o.anonimo ?? false; uidSesion = o.uid ?? UID_ADMIN;
+    try {
+      return await crearComparativaCarrito({
+        items: items2(), tours: [], ...(manuales ? { manuales } : {}), ...(o.compartir !== undefined ? { compartirPublico: o.compartir } : {}),
+        cliente: { ...CLIENTE, tipoDoc: "CC" },
+      });
+    } finally { anonimo = false; uidSesion = UID_ADMIN; }
+  };
+  const err = (r: { ok: boolean }) => ("error" in r ? String((r as { error: unknown }).error) : "");
+  const totalCot = () => Number(sql("select count(*) from public.cotizaciones"));
+  const hijasDe = (madreId: number) => Number(sql(`select count(*) from public.cotizaciones where cotizacion_origen_id = ${madreId} and estado <> 'descartada'`));
+  type Opcion = { op: string; ac: string; total: number; plantilla: { payload: { manuales?: Record<string, unknown>[]; items: { hotelNombre: string }[] } } };
+  const opciones = (id: number) => JSON.parse(sql(`select coalesce(json_agg(json_build_object('op', opcion_ref, 'ac', acomodacion_ref, 'total', total, 'plantilla', plantilla_hija) order by orden), '[]'::json)::text from public.cotizacion_opciones where cotizacion_id = ${id}`)) as Opcion[];
+  const madre = (id: number) => JSON.parse(sql(`select json_build_object('token', share_token, 'version', version)::text from public.cotizaciones where id = ${id}`)) as { token: string; version: number };
+  const sinSillas = () => ({ sillas: sql("select count(*) from public.sillas"), bloqueos: sql("select count(*) from public.bloqueos_vuelo") });
+  const VISITANTE = { nombres: "Visitante", apellidos: "Uno", numeroDoc: "999", telefono: "3001234567", email: "v@x.test" };
+  const comoVisitante = async <T,>(f: () => Promise<T>): Promise<T> => { anonimo = true; uidSesion = UID_ADMIN; try { return await f(); } finally { anonimo = false; } };
+  const elegirV = (m: { token: string; version: number }, o: Opcion, extra: Record<string, unknown> = {}) =>
+    comoVisitante(() => elegirOpcionComparativa({ token: m.token, version: m.version, opcionRef: o.op, acomodacionRef: o.ac, clave: crypto.randomUUID(), cliente: VISITANTE, ...extra }));
+  const compartida = async () => {
+    const r = await crearCmp([COMUN()], { compartir: true });
+    assert.equal(r.ok, true, err(r));
+    if (!r.ok) throw new Error("no se creó");
+    return { id: r.id, m: madre(r.id), ops: opciones(r.id) };
+  };
+
+  test("P1 la marca solo la pone el personal interno: visitante, aliado o un valor que no es booleano se RECHAZAN (no se ignoran)", async () => {
+    const antes = totalCot();
+    for (const [que, o] of [["visitante", { anonimo: true, compartir: true }], ["aliado B2B", { uid: UID_AGENCIA, compartir: true }], ["texto 'true'", { compartir: "true" }], ["número 1", { compartir: 1 }]] as const) {
+      const r = await crearCmp(undefined, o);
+      assert.equal(r.ok, false, que);
+    }
+    assert.equal(totalCot(), antes, "no se creó ninguna comparativa");
+  });
+
+  test("P2 la base: solo la anónima y la del carrito marcada por un interno ACTIVO son elegibles por el canal público", async () => {
+    const compartidaOk = await compartida();
+    const noMarcada = await crearCmp([COMUN()]);
+    assert.equal(noMarcada.ok, true, err(noMarcada));
+    const anonima = await crearCmp(undefined, { anonimo: true });
+    assert.equal(anonima.ok, true, err(anonima));
+    const elegible = (id: number) => sql(`select f211_priv.madre_anonima(c) from public.cotizaciones c where c.id = ${id}`);
+    assert.equal(elegible(compartidaOk.id), "t", "marcada por un interno");
+    if (noMarcada.ok) assert.equal(elegible(noMarcada.id), "f", "interna SIN marcar: sigue cerrada");
+    if (anonima.ok) assert.equal(elegible(anonima.id), "t", "anónima: sigue igual");
+    sql(`update public.usuarios set activo = false where id = '${UID_ADMIN}'`);
+    try { assert.equal(elegible(compartidaOk.id), "f", "si el creador ya no es un interno activo, deja de ser elegible"); }
+    finally { sql(`update public.usuarios set activo = true where id = '${UID_ADMIN}'`); }
+    const agencia = await crearCmp(undefined, { uid: UID_AGENCIA });
+    if (agencia.ok) assert.equal(elegible(agencia.id), "f", "la de un aliado B2B nunca");
+  });
+
+  test("P3 token inválido, vencida y comparativa interna no compartida: el visitante no elige ni crea nada", async () => {
+    const c = await compartida();
+    const o = c.ops[0];
+    const antes = totalCot();
+    for (const token of ["", "abc", "../../x", "no-es-un-token"]) {
+      const r = await comoVisitante(() => elegirOpcionComparativa({ token, version: c.m.version, opcionRef: o.op, acomodacionRef: o.ac, clave: crypto.randomUUID(), cliente: VISITANTE }));
+      assert.equal(r.ok, false, `token «${token}»`);
+    }
+    const desconocido = await comoVisitante(() => elegirOpcionComparativa({ token: crypto.randomUUID(), version: 1, opcionRef: o.op, acomodacionRef: o.ac, clave: crypto.randomUUID(), cliente: VISITANTE }));
+    assert.equal(desconocido.ok, false);
+    const sin = await comoVisitante(() => resumenOpcionComparativa(crypto.randomUUID(), o.op, o.ac));
+    assert.equal(sin.ok, false);
+    // versión equivocada
+    assert.equal((await elegirV({ token: c.m.token, version: c.m.version + 7 }, o)).ok, false);
+    // vencida
+    sql(`set session_replication_role = replica; update public.cotizaciones set vigencia_hasta = '2000-01-01' where id = ${c.id}`);
+    const venc = await elegirV(c.m, o);
+    assert.equal(venc.ok, false);
+    const resumenVenc = await comoVisitante(() => resumenOpcionComparativa(c.m.token, o.op, o.ac));
+    assert.ok(resumenVenc.ok && resumenVenc.datos.vencida, "el resumen indica que venció");
+    assert.equal(hijasDe(c.id), 0);
+    // interna NO compartida
+    const nc = await crearCmp([COMUN()]);
+    assert.equal(nc.ok, true, err(nc));
+    if (nc.ok) {
+      const m2 = madre(nc.id), o2 = opciones(nc.id)[0];
+      const r = await elegirV(m2, o2);
+      assert.equal(r.ok, false);
+      assert.match(err(r), /asesor/);
+      // y la puerta de la BASE (sin pasar por la app): el recibo público tampoco se emite
+      const { error } = await clienteLocal(TOKEN_SERVICIO).rpc("registrar_validacion_comparativa", {
+        p_madre_id: nc.id, p_opcion_ref: o2.op, p_acomodacion_ref: o2.ac, p_version: m2.version, p_canal: "publico", p_actor_id: null,
+        p_precio_reliquidado: o2.total, p_moneda: "COP", p_disponibilidad_ok: true, p_datos_cliente: VISITANTE,
+      } as never);
+      assert.match(error?.message ?? "SE EMITIÓ EL RECIBO", /COMPARATIVA_NO_AUTORIZADO/);
+      assert.equal(hijasDe(nc.id), 0);
+    }
+    assert.equal(totalCot() - antes, 1, "solo la comparativa no compartida creada por la prueba");
+  });
+
+  test("P4 marcarla DESPUÉS (editando el payload) no la abre: el sello de la madre la deja inelegible; y quitar la marca tras emitir el recibo también cierra la puerta", async () => {
+    const nc = await crearCmp([COMUN()]);
+    assert.equal(nc.ok, true, err(nc));
+    if (!nc.ok) return;
+    const m2 = madre(nc.id), o2 = opciones(nc.id)[0];
+    sql(`set session_replication_role = replica; update public.cotizaciones set payload = jsonb_set(payload, '{compartirPublico}', 'true') where id = ${nc.id}`);
+    const r = await elegirV(m2, o2);
+    assert.equal(r.ok, false);
+    assert.equal(hijasDe(nc.id), 0, "no se creó ninguna hija");
+    // recibo emitido mientras estaba legítimamente compartida; luego la marca desaparece → la elección pública del recibo se rechaza
+    const c = await compartida();
+    const o = c.ops[0];
+    const { data: recibo, error: e1 } = await clienteLocal(TOKEN_SERVICIO).rpc("registrar_validacion_comparativa", {
+      p_madre_id: c.id, p_opcion_ref: o.op, p_acomodacion_ref: o.ac, p_version: c.m.version, p_canal: "publico", p_actor_id: null,
+      p_precio_reliquidado: o.total, p_moneda: "COP", p_disponibilidad_ok: true, p_datos_cliente: VISITANTE,
+    } as never);
+    assert.equal(e1, null, e1?.message);
+    sql(`set session_replication_role = replica; update public.cotizaciones set payload = payload - 'compartirPublico' where id = ${c.id}`);
+    const { error: e2 } = await clienteLocal(TOKEN_SERVICIO).rpc("elegir_opcion_comparativa_publica", { p_validacion: recibo, p_clave: crypto.randomUUID() } as never);
+    assert.match(e2?.message ?? "SE ELIGIÓ", /COMPARATIVA_NO_AUTORIZADO/);
+    assert.equal(hijasDe(c.id), 0);
+  });
+
+  test("P5 recorrido: interno crea → visitante ve y elige → la hija conserva el vuelo → reintento idempotente → el interno convierte (CxP, vuelos, sin sillas)", async () => {
+    const c = await compartida();
+    const op = c.ops.find((o) => o.op === "B")!;
+    const sin = sinSillas();
+    // ver la opción: ruta, tramo, fecha y pasajeros; nunca precio, costo, proveedor ni comisión
+    const res = await comoVisitante(() => resumenOpcionComparativa(c.m.token, op.op, op.ac));
+    assert.ok(res.ok, res.ok ? "" : res.error);
+    if (res.ok) {
+      assert.deepEqual(res.datos.vuelos.map((v) => v.tramo), ["ida", "regreso"]);
+      assert.doesNotMatch(JSON.stringify(res.datos.vuelos), /precio|costo|proveedor|comision|impuesto|record/i);
+      assert.equal(res.datos.total, 600_000 + VUELO.precio, "el total de la opción ya incluye el vuelo, una vez");
+    }
+    // el visitante jamás crea, modifica ni quita el vuelo congelado
+    const antes = totalCot();
+    for (const manuales of [[COMUN({ precio: 1 })], [], [COMUN(), COMUN()]]) {
+      const r = await elegirV(c.m, op, { manuales });
+      assert.equal(r.ok, false);
+      assert.match(err(r), /vuelos manuales/);
+    }
+    assert.equal(totalCot(), antes);
+    // elige
+    const clave = crypto.randomUUID();
+    const e = await comoVisitante(() => elegirOpcionComparativa({ token: c.m.token, version: c.m.version, opcionRef: op.op, acomodacionRef: op.ac, clave, cliente: VISITANTE }));
+    assert.equal(e.ok, true, err(e));
+    if (!e.ok) return;
+    const h = JSON.parse(sql(`select json_build_object('precio', precio_venta, 'payload', payload, 'detalle', detalle, 'hotel', hotel, 'vigencia', vigencia_hasta)::text from public.cotizaciones where id = ${e.hijaId}`)) as {
+      precio: number; hotel: string; vigencia: string; payload: { manuales: Record<string, unknown>[]; items: unknown[]; cliente: Record<string, unknown> }; detalle: { vuelos: Record<string, unknown>[]; items: unknown[] } };
+    assert.equal(h.payload.items.length, 1, "solo el hotel elegido");
+    assert.equal(h.hotel, op.plantilla.payload.items[0].hotelNombre);
+    assert.equal(Number(h.precio), 600_000 + VUELO.precio);
+    assert.deepEqual(h.payload.manuales, op.plantilla.payload.manuales, "el vuelo común quedó congelado: idéntico al de la opción");
+    assert.deepEqual(h.detalle.vuelos.map((t) => t.direccion), ["ida", "regreso"]);
+    assert.equal(h.payload.cliente.numeroDoc, VISITANTE.numeroDoc, "los datos del visitante entran en la hija");
+    // reintentos: misma clave → misma hija; otra clave sobre la misma madre → no crea una segunda
+    const total1 = totalCot();
+    const otra = await comoVisitante(() => elegirOpcionComparativa({ token: c.m.token, version: c.m.version, opcionRef: op.op, acomodacionRef: op.ac, clave, cliente: VISITANTE }));
+    assert.equal(otra.ok && otra.hijaId, e.hijaId, "reintento idempotente");
+    const nueva = await elegirV(c.m, op);
+    assert.equal(nueva.ok, false, "con otra clave no se crea una segunda hija");
+    assert.equal(totalCot(), total1);
+    assert.equal(hijasDe(c.id), 1);
+    // el interno convierte: exige costo y proveedor del vuelo
+    const prev = foto();
+    const sinCosto = await convertirM(e.hijaId, 1);
+    assert.equal(sinCosto.ok, false);
+    sinEscribir("hija sin costos", prev, e.hijaId);
+    const conv = await convertirM(e.hijaId, 1, { costosManuales: [COSTO_VUELO] });
+    assert.equal(conv.ok, true, conv.error);
+    const n = conv.numeros![0];
+    assert.deepEqual(venta(n), [600_000 + VUELO.precio, 420_000, 1_500_000, 0, "COP"]);
+    assert.match(cxpTodas(n), /aereo\|Proveedor Vuelos 64\|1500000/);
+    assert.equal(sql(`select count(*) from public.contrato_vuelos where numero_contrato = ${lit(n)} and record is null`), "2");
+    assert.deepEqual(sinSillas(), sin, "ni la comparativa, ni la elección, ni la conversión tocan sillas ni bloqueos");
+    // Datos REALES para el render del documento (los lee pruebas/vueloManualRecorrido64.react.ts cuando PG64_EXPORT está definido).
+    if (process.env.PG64_EXPORT) {
+      const contrato = JSON.parse(sql(`select json_build_object(
+          'venta', (select to_jsonb(v) from public.ventas v where v.numero_contrato = ${lit(n)}),
+          'items', (select coalesce(json_agg(to_jsonb(i) order by i.orden, i.id), '[]'::json) from public.contrato_items i where i.numero_contrato = ${lit(n)}),
+          'vuelos', (select coalesce(json_agg(to_jsonb(f) order by f.orden, f.id), '[]'::json) from public.contrato_vuelos f where f.numero_contrato = ${lit(n)}),
+          'hoteles', (select coalesce(json_agg(to_jsonb(t) order by t.id), '[]'::json) from public.contrato_hoteles t where t.numero_contrato = ${lit(n)}))::text`));
+      const comparativa = JSON.parse(sql(`select json_build_object(
+          'madre', (select json_build_object('codigo', codigo, 'version', version, 'token', share_token) from public.cotizaciones where id = ${c.id}),
+          'opciones', (select coalesce(json_agg(json_build_object('opcion_ref', opcion_ref, 'acomodacion_ref', acomodacion_ref, 'orden', orden, 'etiqueta', etiqueta, 'moneda', moneda,
+                         'tarifa_persona', tarifa_persona, 'total', total, 'resumen_publico', resumen_publico) order by orden), '[]'::json) from public.cotizacion_opciones where cotizacion_id = ${c.id}))::text`));
+      fs.writeFileSync(process.env.PG64_EXPORT, JSON.stringify({ hija: { detalle: h.detalle, precio: Number(h.precio), vuelo: VUELO.precio, hotelNeto: 600_000 }, contrato, comparativa }, null, 1));
+    }
+  });
+
+  test("P7 si el creador interno deja de estar activo (o pierde su rol interno), el enlace pasa al camino de solicitud y la acción se rechaza; la anónima no cambia", async () => {
+    const c = await compartida();
+    const o = c.ops[0];
+    const filaMadre = (id: number) => JSON.parse(sql(`select json_build_object('tipo', tipo, 'tenant', tenant, 'creado_por_id', creado_por_id, 'propietario_id', propietario_id, 'aliado_id', aliado_id, 'payload', payload)::text from public.cotizaciones where id = ${id}`)) as Parameters<typeof visitantePuedeContinuar>[1];
+    const admin = clienteLocal(TOKEN_SERVICIO);
+    // La pantalla decide con la MISMA función que usa la acción; y la base (f211_priv.madre_anonima) tiene que coincidir en cada paso.
+    const base = (id: number) => sql(`select f211_priv.madre_anonima(c) from public.cotizaciones c where c.id = ${id}`) === "t";
+    assert.equal(await visitantePuedeContinuar(admin, filaMadre(c.id)), true, "activo: «Continuar con esta opción»");
+    assert.equal(base(c.id), true);
+    const estados: Record<string, boolean> = { activo: true };
+    for (const [que, mal, bien] of [
+      ["creador desactivado", `update public.usuarios set activo = false where id = '${UID_ADMIN}'`, `update public.usuarios set activo = true where id = '${UID_ADMIN}'`],
+      ["creador con rol de aliado", `update public.usuarios set rol = 'agencia' where id = '${UID_ADMIN}'`, `update public.usuarios set rol = 'administracion' where id = '${UID_ADMIN}'`],
+    ] as const) {
+      sql(mal);
+      try {
+        const pantalla = await visitantePuedeContinuar(admin, filaMadre(c.id));
+        assert.equal(pantalla, false, `${que}: la pantalla ofrece la solicitud al asesor`);
+        assert.equal(base(c.id), pantalla, `${que}: pantalla y base coinciden`);
+        estados[que] = pantalla;
+        const antes = totalCot();
+        const r = await elegirV(c.m, o);
+        assert.equal(r.ok, false, `${que}: la acción se rechaza`);
+        assert.match(err(r), /asesor/);
+        // y la puerta de la BASE por sí sola (sin la comprobación de la app) también cierra
+        const { error } = await clienteLocal(TOKEN_SERVICIO).rpc("registrar_validacion_comparativa", {
+          p_madre_id: c.id, p_opcion_ref: o.op, p_acomodacion_ref: o.ac, p_version: c.m.version, p_canal: "publico", p_actor_id: null,
+          p_precio_reliquidado: o.total, p_moneda: "COP", p_disponibilidad_ok: true, p_datos_cliente: VISITANTE,
+        } as never);
+        assert.match(error?.message ?? "SE EMITIÓ EL RECIBO", /COMPARATIVA_NO_AUTORIZADO/);
+        assert.equal(totalCot(), antes);
+        assert.equal(hijasDe(c.id), 0);
+      } finally { sql(bien); }
+    }
+    assert.equal(await visitantePuedeContinuar(admin, filaMadre(c.id)), true, "reactivado: vuelve el camino de continuar");
+    // la anónima conserva la elección sin consultar al creador
+    const anonima = await crearCmp(undefined, { anonimo: true });
+    assert.equal(anonima.ok, true, err(anonima));
+    if (anonima.ok) {
+      assert.equal(await visitantePuedeContinuar(admin, filaMadre(anonima.id)), true);
+      assert.equal(base(anonima.id), true);
+    }
+    if (process.env.PG64_EXPORT) {
+      const j = JSON.parse(fs.readFileSync(process.env.PG64_EXPORT, "utf8")) as { comparativa: Record<string, unknown> };
+      j.comparativa.puedeContinuar = { activo: estados.activo, creadorDesactivado: estados["creador desactivado"], creadorSinRolInterno: estados["creador con rol de aliado"] };
+      fs.writeFileSync(process.env.PG64_EXPORT, JSON.stringify(j, null, 1));
+    }
+  });
+
+  test("P6 dos visitantes eligen opciones COMPETIDORAS a la vez: exactamente una hija, la otra se rechaza", async () => {
+    const c = await compartida();
+    const [a, b] = [c.ops.find((o) => o.op === "A")!, c.ops.find((o) => o.op === "B")!];
+    anonimo = true; uidSesion = UID_ADMIN;
+    let rs: Awaited<ReturnType<typeof elegirOpcionComparativa>>[];
+    try {
+      rs = await Promise.all([a, b].map((o) => elegirOpcionComparativa({ token: c.m.token, version: c.m.version, opcionRef: o.op, acomodacionRef: o.ac, clave: crypto.randomUUID(), cliente: VISITANTE })));
+    } finally { anonimo = false; }
+    assert.equal(rs.filter((r) => r.ok).length, 1, rs.map((r) => (r.ok ? "ok" : err(r))).join(" | "));
+    assert.equal(hijasDe(c.id), 1);
+    const hija = JSON.parse(sql(`select payload::text from public.cotizaciones where cotizacion_origen_id = ${c.id} and estado <> 'descartada'`)) as { manuales: unknown[] };
+    assert.equal(hija.manuales.length, 1, "la ganadora lleva el vuelo, una vez");
   });
 });

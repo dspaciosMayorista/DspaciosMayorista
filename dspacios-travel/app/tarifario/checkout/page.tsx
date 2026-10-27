@@ -12,7 +12,8 @@ import { AvisoMonedas, TotalesPorMoneda } from "../totalesCarrito";
 import { UserCheck } from "lucide-react";
 import { crearSolicitudReserva, fotosPortada, getContextoAsistenciaB2B, previsualizarTerminosB2BAsistido, type PrevisualizacionB2B, getContextoB2B, type SolicitudResult, type ContextoAsistenciaCheckout, type ContextoB2B, type ResultadoComparativaCreada } from "./actions";
 import { TerminosB2BAsistido } from "@/components/cotizacion/TerminosB2BAsistido";
-import { ServicioManualPanel } from "./ServicioManualPanel";
+import { ServicioManualPanel, HOTEL_COMUN } from "./ServicioManualPanel";
+import { vuelosComunesCompatibles } from "@/lib/cart/servicioManual";
 // #35: se carga solo cuando el modo comparativa está activo (no entra al grafo del checkout normal).
 const ContinuarComparativa = lazy(() => import("@/lib/cotizacion/comparativaCheckout").then((m) => ({ default: m.ContinuarComparativa })));
 import { MAX_OPCIONES } from "@/lib/cotizacion/comparativa";
@@ -60,6 +61,8 @@ export default function CheckoutPage() {
   const [res, setRes] = useState<Extract<SolicitudResult, { ok: true }> | null>(null);
   const [fotos, setFotos] = useState<Record<number, string>>({});
   // #35: modo de la página según la URL. Se lee en el cliente (sin useSearchParams → sin Suspense).
+  // #64: el interno puede dejar la comparativa para que el cliente elija desde el enlace (solo se envía en modo comparativa).
+  const [compartir, setCompartir] = useState(false);
   const [resCmp, setResCmp] = useState<Extract<ResultadoComparativaCreada, { ok: true }> | null>(null);
   const search = useSyncExternalStore(() => () => {}, () => window.location.search, () => "");
   const vista = useMemo(() => {
@@ -92,6 +95,8 @@ export default function CheckoutPage() {
     getContextoAsistenciaB2B().then(setAsist).catch(() => {});
   }, []);
   const puedeAsistir = asist?.puede === true && !esB2B && !vista.crear;
+  // #64: el vuelo manual también lo agrega el personal interno a una comparativa (común a todas las opciones).
+  const puedeManual = asist?.puede === true && !esB2B;
   const aliadosAsist = asist?.puede === true ? asist.aliados : [];
   // Buscador por nombre: la lista (<datalist>) filtra mientras se escribe; la elección es SIEMPRE un aliado activo del catálogo (su id). Texto que no
   // coincide exactamente con una opción no elige nada y no se puede enviar. Si dos opciones se llamaran igual se distinguen con su número.
@@ -176,7 +181,8 @@ export default function CheckoutPage() {
           hotelItemId: it.hotelItemId ?? null,
         })),
         // #64: precio de venta declarado por el asesor; el servidor lo vuelve a validar y exige sesión interna.
-        ...(manualItems.length ? { manuales: manualItems.map((m) => ({ clase: m.clase, nombre: m.nombre, origen: m.origen, destino: m.destino, fechaIda: m.fechaIda, fechaRegreso: m.fechaRegreso, pax: m.pax, precio: m.precio, moneda: m.moneda, impuestoNoComisionable: m.impuestoNoComisionable })) } : {}),
+        ...(manualItems.length ? { manuales: manualItems.map((m) => ({ clase: m.clase, nombre: m.nombre, origen: m.origen, destino: m.destino, fechaIda: m.fechaIda, fechaRegreso: m.fechaRegreso, pax: m.pax, precio: m.precio, moneda: m.moneda, impuestoNoComisionable: m.impuestoNoComisionable, tramo: m.tramo, hotelRef: vista.crear ? HOTEL_COMUN : m.hotelRef })) } : {}),
+        ...(vista.crear && compartir ? { compartirPublico: true } : {}),
         cliente: c,
         // `facturacion`/`pctComision` YA NO se envían: el servidor los
         // resuelve siempre desde la sesión autenticada (`getContextoB2B()`),
@@ -193,7 +199,11 @@ export default function CheckoutPage() {
     setErr("");
     if (!c.nombres.trim() || !c.apellidos.trim()) { setErr("Ingresa nombres y apellidos."); return; }
     if (!c.telefono.trim()) { setErr("El teléfono / WhatsApp es obligatorio."); return; }
-    if (manualItems.length) { setErr("Una comparativa no admite servicios manuales. Quítalos del carrito."); return; }
+    // #64: en una comparativa solo hay vuelos manuales COMUNES a todas las opciones, y deben ser compatibles con cada una (el servidor lo vuelve a exigir).
+    if (manualItems.length) {
+      const v = vuelosComunesCompatibles(manualItems, hotelItems.map((h) => ({ ref: h.id, nombre: h.hotelNombre, destino: h.destino, fechaIda: h.fechaIda, fechaRegreso: h.fechaRegreso })));
+      if (!v.ok) { setErr(v.error); return; }
+    }
     if (bernaloItems.length) { setErr("Los hoteles por unidad todavía no se pueden comparar. Quítalos del carrito."); return; }
     if (hotelItems.length < 2 || hotelItems.length > MAX_OPCIONES) { setErr(`Una comparativa necesita entre 2 y ${MAX_OPCIONES} hoteles en el carrito.`); return; }
     if (hotelItems.some((h) => h.modulo === "bloqueo")) { setErr("Los paquetes con vuelo negociado todavía no se pueden comparar."); return; }
@@ -324,7 +334,13 @@ export default function CheckoutPage() {
         ) : (
           <div className="space-y-6">
             {/* #64: solo personal interno autorizado (mismo contexto que la venta asistida); el servidor lo exige de nuevo. */}
-            {puedeAsistir && <ServicioManualPanel />}
+            {puedeManual && <ServicioManualPanel comun={!!vista.crear} />}
+            {puedeManual && vista.crear && (
+              <label className="flex items-start gap-2 rounded-2xl border border-gray-200 bg-white p-4 text-sm text-gray-700">
+                <input type="checkbox" className="mt-0.5" checked={compartir} onChange={(e) => setCompartir(e.target.checked)} data-testid="compartir-comparativa" />
+                <span><b>Permitir que el cliente elija desde el enlace.</b> Si no lo marcas, solo el equipo puede elegir una opción; el cliente la ve pero no continúa por su cuenta. Los vuelos manuales quedan congelados: el cliente no puede cambiarlos.</span>
+              </label>
+            )}
             {/* Resumen del carrito */}
             <section className="rounded-2xl border border-gray-200 bg-white p-5">
               <h2 className="mb-3 text-sm font-semibold text-gray-700">Tu selección</h2>

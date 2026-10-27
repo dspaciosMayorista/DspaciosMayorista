@@ -98,7 +98,7 @@ describe("Panel de servicio manual en el checkout", () => {
   });
 
   test("editar: cambia solo el manual (mismo id), hotel y add-on intactos; el total se recalcula", async () => {
-    const manual = { id: "m1", tipo: "manual", clase: "otro", nombre: "Traslado privado", origen: null, destino: null, fechaIda: null, fechaRegreso: null, pax: 2, precio: 90_000, moneda: "COP", fotoUrl: null, noches: null };
+    const manual = { id: "m1", tipo: "manual", clase: "otro", nombre: "Traslado privado", origen: null, destino: null, fechaIda: null, fechaRegreso: null, tramo: null, hotelRef: null, hotelEtiqueta: null, pax: 2, precio: 90_000, moneda: "COP", fotoUrl: null, noches: null };
     const m = await montar([hotel, addon, manual]);
     const antes = JSON.stringify(m.carrito().items.slice(0, 2));
     await act(async () => { click(m.container.querySelector('button[aria-label="Editar Traslado privado"]')!); await espera(); });
@@ -114,7 +114,7 @@ describe("Panel de servicio manual en el checkout", () => {
   });
 
   test("quitar: el carrito vuelve exactamente a hotel + add-on", async () => {
-    const manual = { id: "m1", tipo: "manual", clase: "otro", nombre: "Traslado privado", origen: null, destino: null, fechaIda: null, fechaRegreso: null, pax: 2, precio: 90_000, moneda: "COP", fotoUrl: null, noches: null };
+    const manual = { id: "m1", tipo: "manual", clase: "otro", nombre: "Traslado privado", origen: null, destino: null, fechaIda: null, fechaRegreso: null, tramo: null, hotelRef: null, hotelEtiqueta: null, pax: 2, precio: 90_000, moneda: "COP", fotoUrl: null, noches: null };
     const m = await montar([hotel, addon, manual]);
     const dosPrimeros = JSON.stringify(m.carrito().items.slice(0, 2));
     await act(async () => { click(m.container.querySelector('button[aria-label="Quitar Traslado privado"]')!); await espera(); });
@@ -129,7 +129,7 @@ describe("Panel de servicio manual en el checkout", () => {
     await act(async () => { click(boton(/Agregar/, m.container)!); await espera(); });
     await llenar(m, { nombre: "Tiquete aéreo", pax: "2", precio: "1800000" });
     await act(async () => { click(boton("Agregar al carrito", m.container)!); await espera(); });
-    assert.match(m.container.querySelector('[role="alert"]')?.textContent ?? "", /Un vuelo necesita origen, destino y fecha de ida/);
+    assert.match(m.container.querySelector('[role="alert"]')?.textContent ?? "", /Un vuelo necesita origen y destino/);
     assert.equal(m.carrito().items.length, 1);
     m.desmontar();
   });
@@ -177,7 +177,7 @@ describe("Panel de servicio manual en el checkout", () => {
   });
 
   test("al generar la cotización viaja solo lo declarado: sin costo, proveedor ni id", async () => {
-    const manual = { id: "m1", tipo: "manual", clase: "otro", nombre: "Traslado privado", origen: null, destino: null, fechaIda: null, fechaRegreso: null, pax: 2, precio: 90_000, impuestoNoComisionable: 25_000, moneda: "COP", fotoUrl: null, noches: null };
+    const manual = { id: "m1", tipo: "manual", clase: "otro", nombre: "Traslado privado", origen: null, destino: null, fechaIda: null, fechaRegreso: null, tramo: null, hotelRef: null, hotelEtiqueta: null, pax: 2, precio: 90_000, impuestoNoComisionable: 25_000, moneda: "COP", fotoUrl: null, noches: null };
     stub.__setCrearSolicitudReserva(async () => ({ ok: false, error: "stub" }));
     const m = await montar([hotel, manual]);
     const n0 = stub.__solicitudes.length;
@@ -196,7 +196,7 @@ describe("Panel de servicio manual en el checkout", () => {
     await act(async () => { click(boton(/Generar cotización y enviar solicitud/, m.container)!); await espera(80); });
     const enviado = stub.__solicitudes[n0] as { manuales?: Record<string, unknown>[] } | undefined;
     assert.ok(enviado, "se envió la solicitud");
-    assert.deepEqual(Object.keys(enviado!.manuales![0]).sort(), ["clase", "destino", "fechaIda", "fechaRegreso", "impuestoNoComisionable", "moneda", "nombre", "origen", "pax", "precio"]);
+    assert.deepEqual(Object.keys(enviado!.manuales![0]).sort(), ["clase", "destino", "fechaIda", "fechaRegreso", "hotelRef", "impuestoNoComisionable", "moneda", "nombre", "origen", "pax", "precio", "tramo"]);
     assert.equal(enviado!.manuales![0].precio, 90_000);
     assert.equal(enviado!.manuales![0].impuestoNoComisionable, 25_000, "el impuesto no comisionable viaja para congelarse en la cotización");
     stub.__setCrearSolicitudReserva(null);
@@ -317,6 +317,341 @@ describe("ConvertirCarritoBtn con servicios manuales", () => {
   test("sin manuales no aparece el panel de costos ni se envía costosManuales", async () => {
     const m = await abrir({ manuales: [] });
     assert.equal(m.c.querySelector('[data-testid="costos-manuales-carrito"]'), null);
+    m.desmontar();
+  });
+});
+
+// ═════════════════════════════════════════════════════════════════════
+// Ronda 3: vuelo por tramos, ligado a SU hotel, con fechas acotadas a la estadía y pasajeros editables.
+describe("Panel de vuelo manual: tramos, hotel del carrito y fechas", () => {
+  before(() => stub.__setContextoAsistencia({ puede: true, aliados: [] }));
+  after(() => stub.__setContextoAsistencia({ puede: false }));
+  const hotel2 = { ...hotel, id: "h2", hotelNombre: "Hotel Rodadero", destino: "SANTA MARTA", fechaIda: "2030-10-20", fechaRegreso: "2030-10-24", pax: 3, precio: 900_000 };
+  const textoAlerta = (m: Awaited<ReturnType<typeof montar>>) => m.container.querySelector('[role="alert"]')?.textContent ?? "";
+  async function abrirPanel(m: Awaited<ReturnType<typeof montar>>) { await act(async () => { click(boton(/Agregar/, m.container)!); await espera(); }); }
+  async function datosVuelo(m: Awaited<ReturnType<typeof montar>>, v: { tramo?: string; otra?: string; ida?: string; regreso?: string; pax?: string; precio?: string }) {
+    const c = m.container;
+    if (v.tramo) await escribir(porId(c, "man-tramo")!, v.tramo);
+    await escribir(porId(c, "man-nombre")!, "Tiquete Avianca");
+    if (v.otra !== undefined) await escribir(porId(c, "man-otra")!, v.otra);
+    if (v.ida) await escribir(porId(c, "man-ida")!, v.ida);
+    if (v.regreso) await escribir(porId(c, "man-regreso")!, v.regreso);
+    if (v.pax) await escribir(porId(c, "man-pax")!, v.pax);
+    await escribir(porId(c, "man-precio")!, v.precio ?? "1800000");
+  }
+  const guardar = async (m: Awaited<ReturnType<typeof montar>>) => { await act(async () => { click(boton("Agregar al carrito", m.container)!); await espera(); }); };
+  const ultimo = (m: Awaited<ReturnType<typeof montar>>) => m.carrito().items.at(-1) as unknown as Record<string, unknown>;
+
+  test("un solo hotel: se asocia a él (sin elegir), la ciudad sale del hotel y los pasajeros parten del total de la cotización", async () => {
+    const m = await montar([hotel]);
+    await abrirPanel(m);
+    assert.equal(porId(m.container, "man-hotel")!.tagName, "P", "con un solo hotel no hay selector: queda ligado a él");
+    assert.match(sinEspacios(porId(m.container, "man-hotel")!.textContent ?? ""), /Hotel Almirante · CARTAGENA/);
+    assert.equal(porId(m.container, "man-hotel-ciudad")!.textContent, "CARTAGENA");
+    assert.equal(porId(m.container, "man-pax")!.value, "2", "total de la cotización del carrito");
+    assert.deepEqual([...porId(m.container, "man-tramo")!.querySelectorAll("option")].map((o) => o.textContent), ["Solo ida", "Solo regreso", "Ida y regreso"]);
+    m.desmontar();
+  });
+
+  test("solo ida: la ciudad de llegada es la del hotel, el regreso no aplica y queda ligado al hotel", async () => {
+    const m = await montar([hotel]);
+    await abrirPanel(m);
+    await datosVuelo(m, { tramo: "ida", otra: "BOG", ida: "15/10/2030" });
+    assert.equal(porId(m.container, "man-regreso")!.tagName, "P", "el regreso no se captura");
+    assert.match(m.texto(), /Ida: BOG → CARTAGENA/);
+    await guardar(m);
+    const x = ultimo(m);
+    assert.deepEqual([x.tramo, x.origen, x.destino, x.fechaIda, x.fechaRegreso, x.hotelRef, x.pax], ["ida", "BOG", "CARTAGENA", "2030-10-15", null, "h1", 2]);
+    m.desmontar();
+  });
+
+  test("solo regreso: el origen es la ciudad del hotel y la fecha es la del regreso", async () => {
+    const m = await montar([hotel]);
+    await abrirPanel(m);
+    await datosVuelo(m, { tramo: "regreso", otra: "MDE", regreso: "18/10/2030" });
+    assert.equal(porId(m.container, "man-ida")!.tagName, "P");
+    assert.match(m.texto(), /Regreso: CARTAGENA → MDE/);
+    await guardar(m);
+    const x = ultimo(m);
+    assert.deepEqual([x.tramo, x.origen, x.destino, x.fechaIda, x.fechaRegreso], ["regreso", "CARTAGENA", "MDE", null, "2030-10-18"]);
+    m.desmontar();
+  });
+
+  test("ida y regreso: muestra AMBOS tramos y guarda las dos fechas", async () => {
+    const m = await montar([hotel]);
+    await abrirPanel(m);
+    await datosVuelo(m, { tramo: "ida_regreso", otra: "BOG", ida: "15/10/2030", regreso: "18/10/2030" });
+    const resumen = sinEspacios(m.container.querySelector('[data-testid="resumen-tramos-vuelo"]')!.textContent ?? "");
+    assert.match(resumen, /Ida: BOG → CARTAGENA/);
+    assert.match(resumen, /Regreso: CARTAGENA → BOG/);
+    await guardar(m);
+    const x = ultimo(m);
+    assert.deepEqual([x.tramo, x.fechaIda, x.fechaRegreso], ["ida_regreso", "2030-10-15", "2030-10-18"]);
+    m.desmontar();
+  });
+
+  test("fechas en los límites de la estadía (15 → 18 oct) se aceptan; un día antes de la entrada o después de la salida se rechazan", async () => {
+    const m = await montar([hotel]);
+    await abrirPanel(m);
+    await datosVuelo(m, { tramo: "ida_regreso", otra: "BOG", ida: "14/10/2030", regreso: "18/10/2030" });
+    await guardar(m);
+    assert.match(textoAlerta(m), /(anterior a la entrada|dentro de la estadía)/);
+    assert.equal(m.carrito().items.length, 1);
+    await escribir(porId(m.container, "man-ida")!, "15/10/2030");
+    await escribir(porId(m.container, "man-regreso")!, "19/10/2030");
+    await guardar(m);
+    assert.match(textoAlerta(m), /(posterior a la salida|dentro de la estadía)/);
+    assert.equal(m.carrito().items.length, 1);
+    await escribir(porId(m.container, "man-regreso")!, "18/10/2030");
+    await guardar(m);
+    assert.equal(m.carrito().items.length, 2, "en el límite exacto se acepta");
+    m.desmontar();
+  });
+
+  test("pasajeros editables: un vuelo con menos pasajeros que la cotización conserva su número", async () => {
+    const m = await montar([hotel]);
+    await abrirPanel(m);
+    await datosVuelo(m, { tramo: "ida", otra: "BOG", ida: "15/10/2030", pax: "1" });
+    await guardar(m);
+    assert.equal(ultimo(m).pax, 1);
+    m.desmontar();
+  });
+
+  test("varios destinos: hay que ELEGIR el hotel (no se asigna al primero) y la ciudad y las fechas son las de ese hotel", async () => {
+    const m = await montar([hotel, hotel2]);
+    await abrirPanel(m);
+    assert.equal(porId(m.container, "man-hotel")!.tagName, "SELECT");
+    assert.equal(porId(m.container, "man-pax")!.value, "5", "total de la cotización: 2 + 3");
+    await datosVuelo(m, { tramo: "ida", otra: "BOG", ida: "20/10/2030" });
+    await guardar(m);
+    assert.match(textoAlerta(m), /Elige el hotel o destino del carrito/);
+    assert.equal(m.carrito().items.length, 2, "sin hotel elegido no entra");
+    await escribir(porId(m.container, "man-hotel")!, "h2");
+    assert.equal(porId(m.container, "man-hotel-ciudad")!.textContent, "SANTA MARTA");
+    await guardar(m);
+    assert.equal(m.carrito().items.length, 3);
+    const x = ultimo(m);
+    assert.deepEqual([x.hotelRef, x.destino, x.fechaIda], ["h2", "SANTA MARTA", "2030-10-20"]);
+    m.desmontar();
+  });
+
+  test("varios destinos: las fechas del primer hotel no sirven para el segundo", async () => {
+    const m = await montar([hotel, hotel2]);
+    await abrirPanel(m);
+    await escribir(porId(m.container, "man-hotel")!, "h2");
+    await datosVuelo(m, { tramo: "ida", otra: "BOG", ida: "15/10/2030" });
+    await guardar(m);
+    assert.match(textoAlerta(m), /entrada al hotel|dentro de la estadía/);
+    assert.equal(m.carrito().items.length, 2);
+    m.desmontar();
+  });
+
+  test("editar un vuelo existente conserva tramo, hotel y fechas en el formulario", async () => {
+    const m = await montar([hotel]);
+    await abrirPanel(m);
+    await datosVuelo(m, { tramo: "ida_regreso", otra: "BOG", ida: "15/10/2030", regreso: "18/10/2030" });
+    await guardar(m);
+    await act(async () => { click(m.container.querySelector('button[aria-label="Editar Tiquete Avianca"]')!); await espera(); });
+    assert.equal(porId(m.container, "man-tramo")!.value, "ida_regreso");
+    assert.equal(porId(m.container, "man-otra")!.value, "BOG");
+    assert.equal(porId(m.container, "man-pax")!.value, "2");
+    m.desmontar();
+  });
+
+  test("al generar la cotización viajan tramo y hotel (id del carrito) y el servidor los valida de nuevo", async () => {
+    stub.__setCrearSolicitudReserva(async () => ({ ok: false, error: "stub" }));
+    const m = await montar([hotel]);
+    await abrirPanel(m);
+    await datosVuelo(m, { tramo: "ida_regreso", otra: "BOG", ida: "15/10/2030", regreso: "18/10/2030" });
+    await guardar(m);
+    const n0 = stub.__solicitudes.length;
+    await act(async () => {
+      const set = (label: string, v: string) => {
+        const l = [...m.container.querySelectorAll("label")].find((x) => x.textContent === label)!;
+        const i = l.parentElement!.querySelector("input") as HTMLInputElement;
+        Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, "value")!.set!.call(i, v);
+        i.dispatchEvent(new window.Event("input", { bubbles: true }));
+      };
+      set("Nombres *", "Ana"); set("Apellidos *", "Pérez"); set("Teléfono / WhatsApp *", "300");
+      const doc = [...m.container.querySelectorAll("label")].find((l) => /documento/i.test(l.textContent ?? "") && l.parentElement!.querySelector("input"));
+      if (doc) { const i = doc.parentElement!.querySelector("input") as HTMLInputElement; Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, "value")!.set!.call(i, "123"); i.dispatchEvent(new window.Event("input", { bubbles: true })); }
+      await espera();
+    });
+    await act(async () => { click(boton(/Generar cotización y enviar solicitud/, m.container)!); await espera(80); });
+    const enviado = stub.__solicitudes[n0] as { manuales?: Record<string, unknown>[]; items: { itemId: string }[] } | undefined;
+    assert.ok(enviado);
+    assert.deepEqual([enviado!.manuales![0].tramo, enviado!.manuales![0].hotelRef, enviado!.items[0].itemId], ["ida_regreso", "h1", "h1"], "el vuelo señala el id del hotel que el servidor resuelve");
+    stub.__setCrearSolicitudReserva(null);
+    m.desmontar();
+  });
+});
+
+describe("Comparativa del carrito con vuelos manuales comunes", () => {
+  before(() => stub.__setContextoAsistencia({ puede: true, aliados: [] }));
+  after(() => { stub.__setContextoAsistencia({ puede: false }); window.history.pushState({}, "", "/"); });
+  const hotelB = { ...hotel, id: "h2", hotelNombre: "Hotel Rodadero", paqueteId: 11, hotelId: 2 };
+  const enComparativa = () => window.history.pushState({}, "", "/tarifario/checkout?modo=comparativa");
+  async function llenarCliente(m: Awaited<ReturnType<typeof montar>>) {
+    await act(async () => {
+      const set = (label: string, v: string) => {
+        const l = [...m.container.querySelectorAll("label")].find((x) => x.textContent === label)!;
+        const i = l.parentElement!.querySelector("input") as HTMLInputElement;
+        Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, "value")!.set!.call(i, v);
+        i.dispatchEvent(new window.Event("input", { bubbles: true }));
+      };
+      set("Nombres *", "Ana"); set("Apellidos *", "Pérez"); set("Teléfono / WhatsApp *", "300");
+      await espera();
+    });
+  }
+
+  test("el personal interno agrega un vuelo COMÚN: sin selector de hotel, solo vuelo, y se envía a la comparativa con la marca de común", async () => {
+    enComparativa();
+    stub.__setCrearComparativaCarrito(async () => ({ ok: false, error: "stub" }));
+    const m = await montar([hotel, hotelB]);
+    assert.match(m.texto(), /Vuelo manual común a las opciones/);
+    await act(async () => { click(boton(/Agregar/, m.container)!); await espera(); });
+    assert.match(sinEspacios(porId(m.container, "man-hotel")!.textContent ?? ""), /Todas las opciones/);
+    assert.deepEqual([...porId(m.container, "man-clase")!.querySelectorAll("option")].map((o) => o.value), ["vuelo"], "en una comparativa solo hay vuelos");
+    await escribir(porId(m.container, "man-nombre")!, "Tiquete Avianca");
+    await escribir(porId(m.container, "man-otra")!, "BOG");
+    await escribir(porId(m.container, "man-ida")!, "15/10/2030");
+    await escribir(porId(m.container, "man-regreso")!, "18/10/2030");
+    await escribir(porId(m.container, "man-precio")!, "1800000");
+    await act(async () => { click(boton("Agregar al carrito", m.container)!); await espera(); });
+    assert.equal(m.carrito().items.length, 3);
+    await llenarCliente(m);
+    const n0 = stub.__comparativas.length;
+    await act(async () => { click(boton(/Generar cotización comparativa/, m.container)!); await espera(80); });
+    const enviado = stub.__comparativas[n0] as { manuales?: Record<string, unknown>[] } | undefined;
+    assert.ok(enviado, "se envió la comparativa");
+    assert.deepEqual([enviado!.manuales!.length, enviado!.manuales![0].hotelRef, enviado!.manuales![0].tramo], [1, "comun", "ida_regreso"]);
+    stub.__setCrearComparativaCarrito(null);
+    m.desmontar();
+  });
+
+  test("solo se ofrece si TODAS las opciones son compatibles: si un hotel tiene otras fechas, no se envía y se nombra la opción", async () => {
+    enComparativa();
+    const m = await montar([hotel, { ...hotelB, fechaIda: "2030-10-16", fechaRegreso: "2030-10-18" }]);
+    await act(async () => { click(boton(/Agregar/, m.container)!); await espera(); });
+    await escribir(porId(m.container, "man-nombre")!, "Tiquete Avianca");
+    await escribir(porId(m.container, "man-otra")!, "BOG");
+    await escribir(porId(m.container, "man-ida")!, "15/10/2030");
+    await escribir(porId(m.container, "man-regreso")!, "18/10/2030");
+    await escribir(porId(m.container, "man-precio")!, "1800000");
+    await act(async () => { click(boton("Agregar al carrito", m.container)!); await espera(); });
+    assert.match(m.container.querySelector('[role="alert"]')?.textContent ?? "", /Hotel Rodadero/);
+    assert.equal(m.carrito().items.length, 2, "no entra al carrito de la comparativa");
+    m.desmontar();
+  });
+
+  test("un visitante no ve el panel de vuelos en la comparativa", async () => {
+    enComparativa();
+    stub.__setContextoAsistencia({ puede: false });
+    const m = await montar([hotel, hotelB]);
+    assert.doesNotMatch(m.texto(), /Vuelo manual común/);
+    stub.__setContextoAsistencia({ puede: true, aliados: [] });
+    m.desmontar();
+  });
+});
+
+describe("ConvertirCarritoBtn: cada vuelo viaja y pide costos según el contrato de SU hotel", () => {
+  const dos = {
+    id: 1, pax: 2, destinos: ["CARTAGENA", "SANTA MARTA"], cliente: { nombres: "Ana", apellidos: "Pérez", numeroDoc: "1" }, esSuperadmin: true, asesores: [], miNombre: "", miRolVenta: false,
+    items: [
+      { hotelNombre: "Hotel Almirante", destino: "CARTAGENA", pax: 2, fechaIda: "2030-10-15", precio: 1_200_000 },
+      { hotelNombre: "Hotel Rodadero", destino: "SANTA MARTA", pax: 2, fechaIda: "2030-10-20", precio: 900_000 },
+    ],
+    tours: [],
+    manuales: [{ nombre: "Vuelo a Santa Marta", pax: 2, precio: 1_800_000, moneda: "COP", hotelIndice: 1 }],
+  };
+  const llamadas: { id: number; opts: Record<string, unknown> }[] = [];
+  before(() => { __setConvertirCotizacionCarrito(async (id: number, opts: never) => { llamadas.push({ id, opts }); return { ok: true, numeros: ["DTM-1"] }; }); });
+  after(() => { __setConvertirCotizacionCarrito(null); });
+  async function abrir(extra: Record<string, unknown>) {
+    const c = document.createElement("div");
+    document.body.appendChild(c);
+    const r = createRoot(c);
+    await act(async () => { r.render(h(ConvertirCarritoBtn, { ...dos, ...extra } as never)); await espera(); });
+    await act(async () => { click(boton(/Confirmar → generar contrato/, c)!); await espera(); });
+    await act(async () => { click(boton(/1 contrato por destino/, c)!); await espera(); });
+    return { c, desmontar: () => { act(() => r.unmount()); c.remove(); } };
+  }
+
+  test("el vuelo de Santa Marta se suma al contrato de Santa Marta, no al primero", async () => {
+    const m = await abrir({});
+    await escribir(m.c.querySelector('select[aria-label="Moneda de cobro"]') as HTMLSelectElement, "COP");
+    const t = sinEspacios(m.c.querySelector('[data-testid="totales-cobro-carrito"]')!.textContent ?? "");
+    assert.match(t, /\$\s?1\.200\.000/, "el primer contrato queda solo con su hotel");
+    assert.match(t, /\$\s?2\.700\.000/, "el segundo: 900.000 del hotel + 1.800.000 del vuelo");
+    m.desmontar();
+  });
+
+  test("primer destino convertido pero el vuelo vive en el segundo (pendiente): SE PIDE costo y proveedor", async () => {
+    const m = await abrir({ contratosPorGrupo: { CARTAGENA: "DTM-1" } });
+    assert.ok(m.c.querySelector('[data-testid="costos-manuales-carrito"]'));
+    m.desmontar();
+  });
+
+  test("el destino del vuelo ya convertido (aunque el otro siga pendiente): NO se piden ni se envían costos", async () => {
+    const m = await abrir({ contratosPorGrupo: { "SANTA MARTA": "DTM-2" } });
+    assert.equal(m.c.querySelector('[data-testid="costos-manuales-carrito"]'), null);
+    m.desmontar();
+  });
+});
+
+describe("Comparativa: el interno decide si el cliente puede elegir desde el enlace", () => {
+  before(() => stub.__setContextoAsistencia({ puede: true, aliados: [] }));
+  after(() => { stub.__setContextoAsistencia({ puede: false }); window.history.pushState({}, "", "/"); });
+  const hotelB = { ...hotel, id: "h2", hotelNombre: "Hotel Rodadero", paqueteId: 11, hotelId: 2 };
+  async function enviarComparativa(m: Awaited<ReturnType<typeof montar>>) {
+    await act(async () => {
+      const set = (label: string, v: string) => {
+        const l = [...m.container.querySelectorAll("label")].find((x) => x.textContent === label)!;
+        const i = l.parentElement!.querySelector("input") as HTMLInputElement;
+        Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, "value")!.set!.call(i, v);
+        i.dispatchEvent(new window.Event("input", { bubbles: true }));
+      };
+      set("Nombres *", "Ana"); set("Apellidos *", "Pérez"); set("Teléfono / WhatsApp *", "300");
+      await espera();
+    });
+    const n0 = stub.__comparativas.length;
+    await act(async () => { click(boton(/Generar cotización comparativa/, m.container)!); await espera(80); });
+    return stub.__comparativas[n0] as Record<string, unknown> | undefined;
+  }
+
+  test("el casillero NO viene marcado: sin marcarlo no viaja la clave (la comparativa queda solo para el equipo)", async () => {
+    window.history.pushState({}, "", "/tarifario/checkout?modo=comparativa");
+    stub.__setCrearComparativaCarrito(async () => ({ ok: false, error: "stub" }));
+    const m = await montar([hotel, hotelB]);
+    const caja = m.container.querySelector('[data-testid="compartir-comparativa"]') as HTMLInputElement;
+    assert.ok(caja, "el interno ve el casillero");
+    assert.equal(caja.checked, false);
+    assert.match(m.texto(), /Permitir que el cliente elija desde el enlace/);
+    const enviado = await enviarComparativa(m);
+    assert.ok(enviado);
+    assert.equal("compartirPublico" in enviado!, false);
+    stub.__setCrearComparativaCarrito(null);
+    m.desmontar();
+  });
+
+  test("marcado: viaja compartirPublico = true (el servidor lo vuelve a exigir al personal interno)", async () => {
+    window.history.pushState({}, "", "/tarifario/checkout?modo=comparativa");
+    stub.__setCrearComparativaCarrito(async () => ({ ok: false, error: "stub" }));
+    const m = await montar([hotel, hotelB]);
+    await act(async () => { click(m.container.querySelector('[data-testid="compartir-comparativa"]')!); await espera(); });
+    const enviado = await enviarComparativa(m);
+    assert.ok(enviado);
+    assert.equal(enviado!.compartirPublico, true);
+    stub.__setCrearComparativaCarrito(null);
+    m.desmontar();
+  });
+
+  test("un visitante no ve el casillero ni puede marcarlo", async () => {
+    window.history.pushState({}, "", "/tarifario/checkout?modo=comparativa");
+    stub.__setContextoAsistencia({ puede: false });
+    const m = await montar([hotel, hotelB]);
+    assert.equal(m.container.querySelector('[data-testid="compartir-comparativa"]'), null);
+    stub.__setContextoAsistencia({ puede: true, aliados: [] });
     m.desmontar();
   });
 });
