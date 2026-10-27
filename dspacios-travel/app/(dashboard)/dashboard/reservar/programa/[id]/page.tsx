@@ -3,7 +3,7 @@ import { notFound } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
 import { getProgramaDetalle } from "@/lib/programas";
 import { cargarTablasPvp88 } from "@/lib/programas/estanciaHotelDatos88";
-import { esModoHotel, nochesIncluidasPrograma } from "@/lib/programas/estanciaHotel88";
+import { esModoHotel, estadoItinerario, nochesIncluidasPrograma } from "@/lib/programas/estanciaHotel88";
 import { formatFecha } from "@/lib/utils";
 import { listarAliadosParaAsistencia } from "@/lib/cotizacion/asistidaB2BServidor";
 import { ProgramaReservaForm, type CategoriaReserva } from "./ProgramaReservaForm";
@@ -96,6 +96,8 @@ export default async function ReservarProgramaPage({ params }: { params: Promise
           errorPrograma={modoHotel && !incluidas.ok ? incluidas.error : null}
           itinerario={modoHotel ? det.dias : undefined}
           aliados={aliados}
+          blackouts={det.blackouts}
+          errorItinerarioPrograma={estadoItinerario(det.dias, det.programa.dias ?? null).mensaje}
         />
       )}
     </div>

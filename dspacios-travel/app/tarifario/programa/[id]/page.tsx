@@ -368,6 +368,7 @@ export default async function ProgramaVitrinaPage({ params }: { params: Promise<
                 <li key={i}>
                   {formatFechaLarga(b.fecha_inicio)} — {formatFechaLarga(b.fecha_fin)}
                   {b.motivo ? ` · ${b.motivo}` : ""}
+                  <span className="ml-1 text-xs text-gray-400">({b.alcance === "viaje" ? "afecta cualquier día del viaje" : "solo la fecha de entrada"})</span>
                 </li>
               ))}
             </ul>

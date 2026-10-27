@@ -84,6 +84,7 @@ const COOKIES = { get: () => undefined, getAll: () => [] as unknown[] };
 mock.module("next/headers", { namedExports: { headers: async () => new Map([["host", "localhost"]]), cookies: async () => COOKIES } });
 
 const { reservarPrograma, terminosB2BPrograma } = await import("../app/(dashboard)/dashboard/reservar/actions.ts");
+const { guardarBlackouts, setPublicado, calcularVistaPreviaPrograma, guardarDias, guardarCabecera, importarDesdeTexto } = await import("../app/(dashboard)/dashboard/producto/programas/actions.ts");
 const { getProgramaDetalle } = await import("../lib/programas.ts");
 const { reconciliarFinancieroPendienteCron } = await import("../app/(dashboard)/dashboard/reservar/reconciliacion-actions.ts");
 const { cargarTablasPvp88 } = await import("../lib/programas/estanciaHotelDatos88.ts");
@@ -117,7 +118,7 @@ before(() => {
 });
 
 /** Deja la base sin contratos ni triggers de fallo entre pruebas. */
-function limpiar() {
+function limpiar(conservarBlackouts = false) {
   // Los triggers de inmutabilidad (condiciones congeladas) impiden borrar contratos: la limpieza entre pruebas los desactiva (solo esta sesión).
   sql(`
     set session_replication_role = replica;
@@ -140,7 +141,12 @@ function limpiar() {
       loop execute format('delete from public.%I', t); end loop;
     end $d$;
     delete from public.ventas;
-    update public.programas set proveedor_asistencia_id = 24555, asistencia_medica_dia = 4 where id = ${PID};
+    ${conservarBlackouts ? "" : `delete from public.programa_blackouts where programa_id in (${PID}, 24502);`}
+    update public.programas set proveedor_asistencia_id = 24555, asistencia_medica_dia = 4, publicado = false where id in (${PID}, 24502);
+    -- Itinerario de los dos programas de prueba SIEMPRE completo (1..N exacto) al empezar cada caso: los casos que lo rompen no se filtran a los demás.
+    delete from public.programa_dias where programa_id in (${PID}, 24502);
+    insert into public.programa_dias (programa_id, dia, titulo, desayuno, almuerzo, cena, descripcion)
+      select p.id, d, 'Día ' || d, false, false, false, 'x' from (values (${PID}, 4), (24502, 8)) p(id, n), generate_series(1, p.n) d;
   `);
 }
 const fallaEn = (tabla: string, evento: "insert" | "delete") =>
@@ -306,6 +312,8 @@ describe("PR #409 · reservarPrograma B2B (PVP / NETO) contra Postgres/PostgREST
         (${AL_FREE}, 'Freelance Luna 245', 'freelance', null, true, '52111222', 'CC') on conflict do nothing;
       insert into public.programas (id, nombre, subtitulo, moneda, pct_mk, pct_fee_tarjeta, asistencia_medica_dia, modo_precio, dias, noches, proveedor_id, edad_nino_min, edad_nino_max, edad_infante_max, tipo_transporte, incluye_aereo)
         values (${PID_SAL}, 'Circuito Andino 245', null, 'USD', 0.15, 0.03, 4, 'salida', 8, 7, 24509, 2, 11, 1, 'ninguno', false) on conflict do nothing;
+      insert into public.programa_dias (programa_id, dia, titulo, desayuno, almuerzo, cena, descripcion)
+        select ${PID_SAL}, d, 'Día ' || d, false, false, false, 'x' from generate_series(1, 8) d where not exists (select 1 from public.programa_dias where programa_id = ${PID_SAL});
       insert into public.programa_salidas (programa_id, orden, etiqueta, fecha_desde, fecha_hasta, bajo_solicitud, neto_sencilla, neto_doble, neto_triple, neto_nino)
         select ${PID_SAL}, 0, 'Marzo', '2027-03-01', '2027-03-08', false, 1400, 1000, 900, 700 where not exists (select 1 from public.programa_salidas where programa_id = ${PID_SAL});
     `);
@@ -501,3 +509,330 @@ describe("PR #409 · reservarPrograma B2B (PVP / NETO) contra Postgres/PostgREST
     assert.equal(cuenta("aliados_b2b"), 0);
   });
 });
+
+// ── PR #409 · blackouts con alcance, itinerario completo y publicación contra la base real (migración 246 incluida) ──────────────────────────────
+describe("PR #409 · blackouts (entrada / viaje), itinerario 1..N y publicación contra Postgres/PostgREST real", () => {
+  // Programa por SALIDA (24502, 8 días → regreso a las 7 noches): mismos ayudantes que el bloque B2B (que vive en otro describe).
+  async function importeSalida(): Promise<number> {
+    const det = await getProgramaDetalle(clienteLocal(TOKEN_SERVICIO) as never, 24502);
+    assert.ok(det);
+    const precios = det!.salidas[0].precios;
+    const adultos = precios.filter((p) => p.acomodacion !== "nino" && p.pvp != null).map((p) => ({ acomodacion: p.acomodacion, pvp: p.pvp }));
+    return totalDesdePrecios({ adultos, precioNino: precios.find((p) => p.acomodacion === "nino")?.pvp ?? null, habitaciones: { doble: 1 }, ninos: 0 });
+  }
+  const entradaSalida = (precioConfirmado: number) => ({
+    programaId: 24502, categoriaId: 0, salidaId: Number(sql("select id from public.programa_salidas where programa_id = 24502")), fechaIda: "2027-03-01",
+    paxPorAcom: { doble: 1 }, ninos: 0, cliente: CLIENTE, tipoAsesor: "interno" as const, asesorInterno: "Asesor 245", agenciaNombre: "", agenciaAsesor: "", freelanceNombre: "",
+    plazo: "2027-02-01", pasajeros: [] as never[], precioConfirmado,
+  });
+  const seqMayorista = () => sql("select last_value || ':' || is_called from public.contrato_seq_mayorista");
+  const blackout = (programa: number, ini: string, fin: string, alcance?: "entrada" | "viaje") =>
+    sql(alcance
+      ? `insert into public.programa_blackouts (programa_id, fecha_inicio, fecha_fin, motivo, alcance) values (${programa}, '${ini}', '${fin}', 'bloqueo', '${alcance}')`
+      : `insert into public.programa_blackouts (programa_id, fecha_inicio, fecha_fin, motivo) values (${programa}, '${ini}', '${fin}', 'bloqueo')`);
+  const rechaza = async (k: number, patron: RegExp, que: string) => {
+    const antes = seqMayorista();
+    const r = await reservar(k);
+    assert.equal(r.ok, false, `${que}: ${JSON.stringify(r)}`);
+    assert.match(r.ok ? "" : r.error, patron, que);
+    assert.equal(seqMayorista(), antes, `${que}: NO se consumió número de contrato`);
+    sinResiduos(que);
+  };
+  const acepta = async (k: number, que: string) => {
+    const r = await reservar(k);
+    assert.equal(r.ok, true, `${que}: ${JSON.stringify(r)}`);
+    limpiar(true);
+  };
+
+  test("G1 guardarBlackouts (Server Action + RPC real): guarda con su alcance y reemplaza; cada entrada inválida se rechaza SIN borrar los anteriores", async () => {
+    const ok = await guardarBlackouts(PID, [
+      { fechaInicio: "2027-06-01", fechaFin: "2027-06-05", motivo: "Feria", ciudad: "", alcance: "viaje" },
+      { fechaInicio: "2027-07-01", fechaFin: "2027-07-01", motivo: "", ciudad: "" },
+    ]);
+    assert.deepEqual(ok, { ok: true });
+    assert.equal(sql(`select string_agg(fecha_inicio || ':' || alcance, ',' order by fecha_inicio) from public.programa_blackouts where programa_id = ${PID}`), "2027-06-01:viaje,2027-07-01:entrada");
+    const huella = () => sql(`select string_agg(id || ':' || fecha_inicio || ':' || fecha_fin || ':' || alcance, ',' order by id) from public.programa_blackouts where programa_id = ${PID}`);
+    const antes = huella();
+    const invalidos: [string, { fechaInicio: string; fechaFin: string; motivo: string; ciudad: string; alcance?: string }[], RegExp][] = [
+      ["un solo extremo", [{ fechaInicio: "2027-08-01", fechaFin: "", motivo: "", ciudad: "" }], /fecha de inicio y de fin/],
+      ["fecha inexistente", [{ fechaInicio: "2027-02-30", fechaFin: "2027-03-01", motivo: "", ciudad: "" }], /no existe/],
+      ["inicio después del fin", [{ fechaInicio: "2027-08-09", fechaFin: "2027-08-01", motivo: "", ciudad: "" }], /antes de empezar/],
+      ["alcance desconocido", [{ fechaInicio: "2027-08-01", fechaFin: "2027-08-02", motivo: "", ciudad: "", alcance: "siempre" }], /alcance/],
+      ["solo motivo", [{ fechaInicio: "", fechaFin: "", motivo: "algo", ciudad: "" }], /fecha de inicio y de fin/],
+      ["solo ciudad (no se descarta en silencio)", [{ fechaInicio: "", fechaFin: "", motivo: "", ciudad: "Cusco" }], /fecha de inicio y de fin/],
+      ["fecha con espacios", [{ fechaInicio: " 2027-08-01", fechaFin: "2027-08-02", motivo: "", ciudad: "" }], /no existe/],
+      ["una buena y una mala en la lista", [{ fechaInicio: "2027-08-01", fechaFin: "2027-08-02", motivo: "", ciudad: "" }, { fechaInicio: "2027-08-05", fechaFin: "", motivo: "", ciudad: "" }], /blackout 2/],
+    ];
+    for (const [que, filas, patron] of invalidos) {
+      const r = await guardarBlackouts(PID, filas);
+      assert.equal(r.ok, false, que);
+      assert.match(r.ok ? "" : r.error, patron, que);
+      assert.equal(huella(), antes, `${que}: los blackouts anteriores siguen intactos`);
+    }
+  });
+
+  test("G2 la BASE también es atómica: una entrada inválida en la MITAD del arreglo (que la app no vería) revierte todo y no borra los anteriores", async () => {
+    blackout(PID, "2027-06-01", "2027-06-05", "viaje");
+    const antes = sql(`select count(*) || ':' || min(id) from public.programa_blackouts where programa_id = ${PID}`);
+    const { error } = await clienteSesion().rpc("guardar_programa_blackouts", {
+      p_programa_id: PID,
+      p_blackouts: [{ fecha_inicio: "2027-09-01", fecha_fin: "2027-09-02" }, { fecha_inicio: "2027-02-30", fecha_fin: "2027-03-01" }, { fecha_inicio: "2027-10-01", fecha_fin: "2027-10-02" }] as never,
+    });
+    assert.ok(error, "la RPC rechaza");
+    assert.match(error?.message ?? "", /fecha que no existe/);
+    assert.equal(sql(`select count(*) || ':' || min(id) from public.programa_blackouts where programa_id = ${PID}`), antes);
+  });
+
+  test("G2b la BASE rechaza elementos que no son objeto, fechas con espacios/formato libre y no-arreglos, sin reemplazar las filas", async () => {
+    blackout(PID, "2027-06-01", "2027-06-05", "viaje");
+    const huella = () => sql(`select string_agg(id || ':' || fecha_inicio || ':' || fecha_fin || ':' || alcance, ',' order by id) from public.programa_blackouts where programa_id = ${PID}`);
+    const antes = huella();
+    const buena = { fecha_inicio: "2027-09-01", fecha_fin: "2027-09-02" };
+    for (const [que, lista, patron] of [
+      ["elemento de texto", [buena, "x"], /no es válido \(se esperaba un objeto/],
+      ["elemento null", [buena, null], /no es válido \(se esperaba un objeto/],
+      ["elemento numérico", [buena, 7], /no es válido \(se esperaba un objeto/],
+      ["fecha sin ceros (2027-9-1)", [{ fecha_inicio: "2027-9-1", fecha_fin: "2027-09-02" }], /formato inválido|fecha con formato/],
+      ["fecha en formato libre", [{ fecha_inicio: "1/9/2027", fecha_fin: "2/9/2027" }], /formato inválido|fecha con formato/],
+      ["no es un arreglo", { fecha_inicio: "2027-09-01" }, /./],
+    ] as const) {
+      const { error } = await clienteSesion().rpc("guardar_programa_blackouts", { p_programa_id: PID, p_blackouts: lista as never });
+      assert.ok(error, `${que}: la RPC rechaza`);
+      assert.match(error?.message ?? "", patron, que);
+      assert.equal(huella(), antes, `${que}: las filas anteriores siguen intactas`);
+    }
+  });
+
+  test("G3 fronteras de la fecha de ENTRADA (alcance entrada): inicio y fin son inclusivos; el día anterior y el posterior pasan; un blackout viejo sin alcance se comporta igual", async () => {
+    blackout(PID, "2027-03-05", "2027-03-10"); // sin alcance explícito = entrada (como los cargados antes de la 246)
+    for (const entrada of ["2027-03-05", "2027-03-10"]) {
+      const antes = seqMayorista();
+      const r = await reservarPrograma((await entradaConFecha(entrada)) as never);
+      assert.equal(r.ok, false, entrada);
+      assert.match(r.ok ? "" : r.error, /La fecha cae en un blackout/, entrada);
+      assert.equal(seqMayorista(), antes);
+      sinResiduos(`entrada ${entrada}`);
+    }
+    // 04/03 (un día antes): el blackout es de ENTRADA, así que aunque el viaje lo cruce, se reserva.
+    const r = await reservarPrograma((await entradaConFecha("2027-03-04")) as never);
+    assert.equal(r.ok, true, JSON.stringify(r));
+    limpiar(true);
+    const r2 = await reservarPrograma((await entradaConFecha("2027-03-11")) as never);
+    assert.equal(r2.ok, true, JSON.stringify(r2));
+  });
+
+  test("G4 alcance VIAJE en modo hotel: incluye las noches adicionales (regreso inclusive) y sus fronteras exactas, sin consumir número al rechazar", async () => {
+    // Entrada 01/03, 3 noches incluidas → regreso 04/03; con k noches adicionales, regreso = 04/03 + k.
+    blackout(PID, "2027-03-06", "2027-03-06", "viaje");
+    await acepta(0, "k=0 (regreso 04/03): el blackout del 06/03 no toca el viaje");
+    await acepta(1, "k=1 (regreso 05/03): tampoco");
+    await rechaza(2, /El viaje del 01\/03\/2027 al 06\/03\/2027 cae en un blackout/, "k=2 (regreso 06/03): el día de regreso cuenta (frontera inclusiva)");
+    await rechaza(3, /cae en un blackout/, "k=3 (regreso 07/03): el viaje cruza el blackout");
+    limpiar();
+    blackout(PID, "2027-03-07", "2027-03-07", "viaje");
+    await acepta(2, "k=2: el blackout del 07/03 queda un día después del regreso");
+    await rechaza(3, /cae en un blackout/, "k=3: ahora el regreso (07/03) coincide con el blackout");
+  });
+
+  test("G5 alcance VIAJE: se bloquea si el blackout toca la ENTRADA o cualquier día intermedio, y no si termina el día antes de entrar", async () => {
+    blackout(PID, "2027-02-20", "2027-02-28", "viaje");
+    await acepta(0, "termina un día antes de la entrada");
+    limpiar();
+    blackout(PID, "2027-02-25", "2027-03-01", "viaje");
+    await rechaza(0, /cae en un blackout/, "termina el día de la entrada");
+    limpiar();
+    blackout(PID, "2027-03-02", "2027-03-03", "viaje");
+    await rechaza(0, /cae en un blackout/, "cae en medio del viaje aunque la entrada esté libre");
+    limpiar();
+    blackout(PID, "2027-03-02", "2027-03-03", "entrada");
+    await acepta(0, "el MISMO rango con alcance «entrada» no bloquea (la entrada está libre)");
+  });
+
+  test("G6 programa por SALIDA (no hotel): el viaje dura días−1 noches (regreso 08/03) y se aplican los dos alcances", async () => {
+    const pvp = await importeSalida();
+    const intenta = (ok: boolean, que: string) => async () => {
+      const antes = seqMayorista();
+      const r = await reservarPrograma(entradaSalida(pvp) as never);
+      assert.equal(r.ok, ok, `${que}: ${JSON.stringify(r)}`);
+      if (!ok) { assert.equal(seqMayorista(), antes, `${que}: sin número`); assert.equal(cuenta("ventas"), 0); }
+      limpiar();
+    };
+    blackout(24502, "2027-03-09", "2027-03-10", "viaje");
+    await intenta(true, "un blackout el día siguiente al regreso no toca el viaje")();
+    limpiar();
+    blackout(24502, "2027-03-08", "2027-03-08", "viaje");
+    await intenta(false, "el día de regreso (08/03) bloquea")();
+    limpiar();
+    blackout(24502, "2027-03-05", "2027-03-06", "entrada");
+    await intenta(true, "alcance entrada a mitad del viaje no bloquea")();
+    limpiar();
+    blackout(24502, "2027-03-05", "2027-03-06", "viaje");
+    await intenta(false, "alcance viaje a mitad del viaje bloquea")();
+  });
+
+  test("G7 itinerario incompleto (día 3 ausente): NO se reserva en NINGÚN modo, ni sin noches adicionales, y no se consume número", async () => {
+    sql(`delete from public.programa_dias where programa_id = ${PID} and dia = 3`);
+    await rechaza(0, /faltan los días 3/, "modo hotel sin noches adicionales");
+    await rechaza(2, /faltan los días 3/, "modo hotel con noches adicionales");
+    limpiar();
+    sql("delete from public.programa_dias where programa_id = 24502 and dia = 5");
+    const pvp = await importeSalida();
+    const antes = seqMayorista();
+    const r = await reservarPrograma(entradaSalida(pvp) as never);
+    assert.equal(r.ok, false);
+    assert.match(r.ok ? "" : r.error, /faltan los días 5/);
+    assert.equal(seqMayorista(), antes);
+    assert.equal(cuenta("ventas"), 0);
+  });
+
+  test("G8 itinerario con días repetidos o fuera de 1..N también se rechaza (hotel y salida)", async () => {
+    sql(`insert into public.programa_dias (programa_id, dia, titulo) values (${PID}, 2, 'Día 2 repetido')`);
+    await rechaza(0, /se repiten los días 2/, "repetido");
+    limpiar();
+    sql(`delete from public.programa_dias where programa_id = ${PID}`);
+    sql(`insert into public.programa_dias (programa_id, dia, titulo) values (${PID}, 1, 'a'), (${PID}, 2, 'b'), (${PID}, 3, 'c'), (${PID}, 9, 'fuera')`);
+    await rechaza(0, /fuera de 1–4/, "fuera de rango");
+  });
+
+  test("G9 PUBLICAR exige el itinerario completo (Server Action real); despublicar siempre se puede", async () => {
+    sql(`delete from public.programa_dias where programa_id = ${PID} and dia = 2`);
+    const r = await setPublicado(PID, true);
+    assert.equal(r.ok, false, JSON.stringify(r));
+    assert.match(r.ok ? "" : r.error, /faltan los días 2/);
+    assert.equal(sql(`select publicado from public.programas where id = ${PID}`), "f", "no quedó publicado");
+    sql(`insert into public.programa_dias (programa_id, dia, titulo) values (${PID}, 2, 'Día 2')`);
+    assert.deepEqual(await setPublicado(PID, true), { ok: true, id: PID });
+    assert.equal(sql(`select publicado from public.programas where id = ${PID}`), "t");
+    // Un publicado heredado con el itinerario incompleto (hoy la base ya no deja crearlo): se simula apagando el trigger SOLO en esa sesión.
+    sql(`alter table public.programa_dias disable trigger trg_programa_dias_itinerario_publicado; delete from public.programa_dias where programa_id = ${PID} and dia = 2; alter table public.programa_dias enable trigger trg_programa_dias_itinerario_publicado;`);
+    assert.deepEqual(await setPublicado(PID, false), { ok: true, id: PID }, "despublicar no exige itinerario");
+    assert.equal(sql(`select publicado from public.programas where id = ${PID}`), "f");
+  });
+
+  test("G10 la CALCULADORA (vista previa) aplica la misma regla: itinerario incompleto y blackout de viaje con noches adicionales, sin escribir nada", async () => {
+    const hoteles = [{
+      id: HID, nombre: "Hotel Centro", zona: "Centro", tipoHabitacion: "Estándar", maxPaxHabitacion: "4", maxMenoresHabitacion: "2", proveedorId: null,
+      base: [{ desde: "2027-03-01", hasta: "2027-03-31", modalidad: "privado", bajoSolicitud: false, neto: { sencilla: "800", doble: "600", triple: "520", multiple: "", nino: "400" } }],
+      noches: [{ desde: "2027-03-01", hasta: "2027-03-31", unidad: "persona", neto: { sencilla: "130", doble: "100", triple: "90", multiple: "", nino: "60" } }],
+    }];
+    const sel = (k: number) => ({ hotelIndex: 0, modalidad: "privado", fechaEntrada: "2027-03-01", nochesAdicionales: k, habitaciones: { doble: 1 }, ninos: 0, infantes: 0 });
+    const antes = [cuenta("ventas"), cuenta("cuentas_por_pagar"), seqMayorista()];
+    const bien = await calcularVistaPreviaPrograma(PID, hoteles as never, sel(2));
+    assert.equal(bien.ok, true, JSON.stringify(bien));
+    blackout(PID, "2027-03-06", "2027-03-06", "viaje");
+    const k1 = await calcularVistaPreviaPrograma(PID, hoteles as never, sel(1));
+    assert.equal(k1.ok, true, "k=1 (regreso 05/03) no toca el blackout");
+    const k2 = await calcularVistaPreviaPrograma(PID, hoteles as never, sel(2));
+    assert.equal(k2.ok, false);
+    assert.match(k2.ok ? "" : k2.causa, /cae en un blackout/);
+    sql(`delete from public.programa_dias where programa_id = ${PID} and dia = 3`);
+    const inc = await calcularVistaPreviaPrograma(PID, hoteles as never, sel(0));
+    assert.equal(inc.ok, false);
+    assert.match(inc.ok ? "" : inc.causa, /faltan los días 3/);
+    assert.deepEqual([cuenta("ventas"), cuenta("cuentas_por_pagar"), seqMayorista()], antes, "calcular no escribe ni numera");
+  });
+
+  // ── Un programa PUBLICADO no puede quedar con el itinerario incompleto (app + trigger + RPC reales) ──
+  const filasDias = () => sql(`select string_agg(dia || ':' || coalesce(titulo, ''), ',' order by dia) || '|' || (select dias from public.programas where id = ${PID}) from public.programa_dias where programa_id = ${PID}`);
+  const diaUI = (dia: number) => ({ dia, titulo: `Nuevo ${dia}`, desayuno: true, almuerzo: false, cena: false, descripcion: "d" });
+  const publicar = () => sql(`update public.programas set publicado = true where id = ${PID}`);
+
+  test("G11 guardarDias (Server Action + RPC real): un publicado no queda incompleto (mensaje claro, filas intactas); despublicado el borrador incompleto sí se guarda", async () => {
+    publicar();
+    const antes = filasDias();
+    const inc = await guardarDias(PID, [diaUI(1), diaUI(2), diaUI(4)]);
+    assert.equal(inc.ok, false);
+    assert.match(inc.ok ? "" : inc.error, /publicado.*itinerario incompleto.*faltan los días 3.*Despublícalo primero/);
+    assert.equal(filasDias(), antes, "el itinerario publicado no se tocó");
+    const rep = await guardarDias(PID, [diaUI(1), diaUI(2), diaUI(2), diaUI(3), diaUI(4)]);
+    assert.equal(rep.ok, false);
+    assert.match(rep.ok ? "" : rep.error, /se repiten los días 2/);
+    assert.equal(filasDias(), antes);
+    const sinNumero = await guardarDias(PID, [diaUI(1), { ...diaUI(2), dia: Number.NaN }, diaUI(3), diaUI(4)]);
+    assert.equal(sinNumero.ok, false, "una fila con contenido pero sin día no se descarta en silencio");
+    assert.equal(filasDias(), antes);
+    assert.deepEqual(await guardarDias(PID, [1, 2, 3, 4].map(diaUI)), { ok: true }, "completo se guarda");
+    assert.equal(filasDias(), "1:Nuevo 1,2:Nuevo 2,3:Nuevo 3,4:Nuevo 4|4");
+    // Despublicado: el borrador incompleto SÍ se guarda, y entonces no se puede publicar.
+    sql(`update public.programas set publicado = false where id = ${PID}`);
+    assert.deepEqual(await guardarDias(PID, [diaUI(1), diaUI(2)]), { ok: true });
+    assert.equal(filasDias(), "1:Nuevo 1,2:Nuevo 2|4");
+    const pub = await setPublicado(PID, true);
+    assert.equal(pub.ok, false);
+    assert.match(pub.ok ? "" : pub.error, /faltan los días 3, 4/);
+  });
+
+  test("G12 la BASE protege aunque no pase por la app: con un publicado, borrar/duplicar/renumerar un día o cambiar el total por PostgREST o SQL directo se rechaza; despublicar primero lo permite", async () => {
+    publicar();
+    const antes = filasDias();
+    const intentos: [string, () => Promise<{ message: string } | null>][] = [
+      ["borrar el día 2 (PostgREST, sesión del usuario)", async () => (await clienteSesion().from("programa_dias").delete().eq("programa_id", PID).eq("dia", 2)).error],
+      ["bajar el total (PostgREST)", async () => (await clienteSesion().from("programas").update({ dias: 3 }).eq("id", PID)).error],
+      ["RPC con itinerario incompleto", async () => (await clienteSesion().rpc("guardar_programa_dias", { p_programa_id: PID, p_dias: [{ dia: 1 }, { dia: 2 }] as never })).error],
+    ];
+    for (const [que, f] of intentos) {
+      const e = await f();
+      assert.ok(e, `${que}: debe rechazarse`);
+      assert.match(e?.message ?? "", /itinerario quedaría incompleto/, que);
+      assert.equal(filasDias(), antes, `${que}: nada cambió`);
+    }
+    assert.throws(() => sql(`delete from public.programa_dias where programa_id = ${PID} and dia = 4`), /itinerario quedaría incompleto/, "SQL directo");
+    assert.equal(filasDias(), antes);
+    // Una edición ajena al itinerario sigue permitida, y despublicar habilita el borrador incompleto.
+    sql(`update public.programas set nombre = nombre || ' ' where id = ${PID}`);
+    sql(`update public.programas set publicado = false where id = ${PID}`);
+    sql(`delete from public.programa_dias where programa_id = ${PID} and dia = 4`);
+    assert.equal(sql(`select count(*) from public.programa_dias where programa_id = ${PID}`), "3");
+  });
+
+  test("G13 guardarCabecera: cambiar el total de días de un publicado que lo deja incompleto se rechaza (nada cambia); despublicado se puede", async () => {
+    // guardarCabecera sobrescribe toda la cabecera con la entrada mínima de la prueba: se respalda la fila y se restaura al final.
+    sql(`drop table if exists public.zz_g13; create table public.zz_g13 as select * from public.programas where id = ${PID}`);
+    try {
+      publicar();
+      const cab = (dias: number) => ({ nombre: "Programa hotel 245", dias, noches: dias - 1 }) as never;
+      const antes = filasDias();
+      for (const n of [5, 3]) {
+        const r = await guardarCabecera(PID, cab(n));
+        assert.equal(r.ok, false, `total ${n}`);
+        assert.match(r.ok ? "" : r.error, /publicado.*(faltan los días 5|fuera de 1–3)/, `total ${n}`);
+        assert.equal(filasDias(), antes, `total ${n}: sin cambios`);
+      }
+      sql(`update public.programas set publicado = false where id = ${PID}`);
+      assert.equal((await guardarCabecera(PID, cab(5))).ok, true, "borrador: se puede cambiar el total");
+      assert.equal(sql(`select dias from public.programas where id = ${PID}`), "5");
+    } finally {
+      sql(`
+        update public.programas set publicado = false where id = ${PID};
+        do $d$ declare c text; begin
+          for c in select column_name from information_schema.columns where table_schema = 'public' and table_name = 'programas' and column_name <> 'id' and is_generated = 'NEVER' loop
+            execute format('update public.programas p set %1$I = b.%1$I from public.zz_g13 b where p.id = b.id', c);
+          end loop;
+        end $d$;
+        drop table public.zz_g13;`);
+    }
+  });
+
+  test("G14 importarDesdeTexto en un publicado: valida el resultado antes de escribir y cambia total + días en UNA transacción", async () => {
+    publicar();
+    const antes = filasDias();
+    const salto = "3 días / 2 noches\nDía 1: Lima\nLlegada\nDía 3: Regreso\nSalida";
+    const mal = await importarDesdeTexto(PID, salto, { itinerario: true, ruta: false, inclusiones: false, diasNoches: true });
+    assert.equal(mal.ok, false);
+    assert.match(mal.ok ? "" : mal.error, /publicado.*faltan los días 2/);
+    assert.equal(filasDias(), antes, "ni días ni total cambiaron");
+    const solo = await importarDesdeTexto(PID, "3 días / 2 noches", { itinerario: false, ruta: false, inclusiones: false, diasNoches: true });
+    assert.equal(solo.ok, false, "cambiar solo el total deja un día fuera de rango");
+    assert.equal(filasDias(), antes);
+    const bien = "3 días / 2 noches\nDía 1: Lima\nLlegada\nDía 2: Cusco\nTour\nDía 3: Regreso\nSalida";
+    assert.deepEqual(await importarDesdeTexto(PID, bien, { itinerario: true, ruta: false, inclusiones: false, diasNoches: true }), { ok: true });
+    assert.equal(sql(`select count(*) from public.programa_dias where programa_id = ${PID}`), "3");
+    assert.equal(sql(`select dias from public.programas where id = ${PID}`), "3");
+    assert.equal(sql(`select publicado from public.programas where id = ${PID}`), "t", "sigue publicado y completo");
+  });
+});
+
+/** Entrada de un programa por hotel con una fecha de entrada dada (sin noches adicionales). */
+async function entradaConFecha(fecha: string) {
+  return entrada(0, { fechaIda: fecha, precioConfirmado: await importeFicha(0) });
+}

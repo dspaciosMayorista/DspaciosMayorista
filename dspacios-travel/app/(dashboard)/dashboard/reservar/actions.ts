@@ -28,6 +28,7 @@ import {
   esFechaIso,
   fechaRegresoEstancia,
   validarItinerarioCompleto,
+  estadoItinerario,
   itemsContratoNoches,
   itinerarioConNochesExtra,
   nochesIncluidasPrograma,
@@ -121,6 +122,7 @@ import { resolverFirmasSesion } from "@/lib/cotizacion/firmasSesion";
 import { tipoDocumentoParaVenta } from "@/lib/personas/tiposDocumento";
 import { camposClienteVenta, camposVendedorAliado, nombreQuienElabora, titularDeCliente, type FiscalAliado } from "@/lib/cotizacion/identidadB2B";
 import { resolverAliadoAsistencia, type AliadoResuelto } from "@/lib/cotizacion/asistidaB2BServidor";
+import { blackoutQueAplica, mensajeBlackout, type BlackoutPrograma } from "@/lib/programas/blackouts409";
 import type { TerminosVisibles } from "@/components/cotizacion/TerminosB2BAsistido";
 
 const oNull = (s: string | null | undefined) => (s && s.trim() !== "" ? s.trim() : null);
@@ -3652,15 +3654,17 @@ async function reservarProgramaInterno(
     return _rechazarValidacionPrograma({ ok: false, error: "La fecha de salida supera la vigencia del programa." });
 
   // Blackouts
+  // PR #409: cada blackout tiene un alcance («entrada» = solo la fecha de entrada, lo de siempre; «viaje» = cualquier día del viaje, noches adicionales
+  // incluidas). Si la lectura falla NO se reserva (error técnico, antes de numerar). Aquí se evalúa la entrada; el viaje, cuando se conoce su regreso.
   const { data: bos, error: bosError } = await sb
     .from("programa_blackouts")
-    .select("fecha_inicio, fecha_fin, motivo")
+    .select("fecha_inicio, fecha_fin, motivo, alcance")
     .eq("programa_id", input.programaId);
   if (bosError) return _errorValidacionPrograma("error_consulta_blackouts", bosError);
-  for (const b of bos ?? []) {
-    if (b.fecha_inicio && b.fecha_fin && input.fechaIda >= b.fecha_inicio && input.fechaIda <= b.fecha_fin)
-      return _rechazarValidacionPrograma({ ok: false, error: `La fecha cae en un blackout${b.motivo ? ` (${b.motivo})` : ""}.` });
-  }
+  const blackoutsPrograma = (bos ?? []) as BlackoutPrograma[];
+  const rangoEntrada = { desde: input.fechaIda, hasta: input.fechaIda };
+  const blackoutEntrada = blackoutQueAplica(blackoutsPrograma, rangoEntrada, "entrada");
+  if (blackoutEntrada) return _rechazarValidacionPrograma({ ok: false, error: mensajeBlackout(blackoutEntrada, rangoEntrada) });
 
   // 2) Precios — por categoría (matriz) o por salida (fecha × precio).
   //    #57: el PVP sale de la REGLA ÚNICA (`lib/programas/precioReserva57.ts`),
@@ -3731,8 +3735,8 @@ async function reservarProgramaInterno(
       .from("programa_dias").select("dia, titulo, desayuno, almuerzo, cena, descripcion").eq("programa_id", input.programaId).order("dia");
     if (diasError) return _errorValidacionPrograma("error_consulta_itinerario", diasError);
     diasPrograma = diasRows ?? [];
-    // Con noches adicionales se desplaza el ÚLTIMO día: el itinerario debe traer los días 1..N, o la recogida quedaría en el día equivocado.
-    if (est.nochesAdicionales > 0) {
+    // El itinerario debe traer los días 1..N (siempre; con noches adicionales además se desplaza el ÚLTIMO día y la recogida).
+    {
       const errorItinerario = validarItinerarioCompleto(diasPrograma, prog.dias ?? null);
       if (errorItinerario) return _rechazarValidacionPrograma({ ok: false, error: errorItinerario });
     }
@@ -3881,6 +3885,21 @@ async function reservarProgramaInterno(
     }
   }
 
+  // 3.b.bis) PR #409 — Itinerario completo (días 1..N, sin faltantes ni repetidos) en TODOS los modos, y blackouts de alcance «viaje» sobre el rango real del
+  //          viaje (entrada → regreso, noches adicionales incluidas). Ambos antes de numerar y de toda escritura. Un fallo de lectura bloquea la reserva.
+  if (!estanciaEntrada) {
+    const { data: diasRows, error: diasError } = await sb.from("programa_dias").select("dia").eq("programa_id", input.programaId);
+    if (diasError) return _errorValidacionPrograma("error_consulta_itinerario", diasError);
+    const itinerarioPrograma = estadoItinerario(diasRows ?? [], prog.dias ?? null);
+    if (!itinerarioPrograma.completo) return _rechazarValidacionPrograma({ ok: false, error: itinerarioPrograma.mensaje ?? "El itinerario del programa está incompleto." });
+  }
+  const regresoViaje = estanciaEntrada
+    ? fechaRegresoEstancia(input.fechaIda, estanciaEntrada.nochesIncluidas, estanciaEntrada.nochesAdicionales)
+    : nochesViaje != null ? sumarDias(input.fechaIda, nochesViaje) : prog.dias ? sumarDias(input.fechaIda, Math.max(0, prog.dias - 1)) : null;
+  const rangoDelViaje = { desde: input.fechaIda, hasta: regresoViaje ?? input.fechaIda };
+  const blackoutViaje = blackoutQueAplica(blackoutsPrograma, rangoDelViaje, "viaje");
+  if (blackoutViaje) return _rechazarValidacionPrograma({ ok: false, error: mensajeBlackout(blackoutViaje, rangoDelViaje) });
+
   // 3.c) #57 — CONFIRMACIÓN DEL PRECIO. El importe que el usuario vio y confirmó
   //      debe ser el que cobra el servidor con la regla única. Si cambió (el
   //      programa se editó entre la lectura y la confirmación, o es el segundo
@@ -3953,9 +3972,7 @@ async function reservarProgramaInterno(
   // Todo contrato lleva ASESOR INTERNO (quien firma/vende internamente y a quien
   // aplica la escala). La agencia/freelance se guarda aparte (canal B2B).
   const asesorNombre = input.asesorInterno;
-  const fechaRegreso = estanciaEntrada
-    ? fechaRegresoEstancia(input.fechaIda, estanciaEntrada.nochesIncluidas, estanciaEntrada.nochesAdicionales)
-    : nochesViaje != null ? sumarDias(input.fechaIda, nochesViaje) : prog.dias ? sumarDias(input.fechaIda, Math.max(0, prog.dias - 1)) : null;
+  const fechaRegreso = regresoViaje;
 
   // #57 — impuesto fiscal verificable (solo B2B) y residual de la base comisionable (calculados arriba, antes de numerar).
   if (residualB2B) advertencias.push(residualB2B);

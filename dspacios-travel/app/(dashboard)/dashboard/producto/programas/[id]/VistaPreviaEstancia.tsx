@@ -4,8 +4,8 @@
 // Calcula con el catálogo que hay en pantalla (también un borrador sin guardar ni publicar) usando la acción de servidor
 // `calcularVistaPreviaPrograma`, que a su vez usa el motor de la reserva. Calcular NO crea cotización, contrato, CxP ni
 // publicación. Los costos (netos) solo llegan para quien edita el producto.
-import { useMemo, useState, useTransition } from "react";
-import { Calculator } from "lucide-react";
+import { useId, useMemo, useState, useTransition } from "react";
+import { Calculator, ChevronDown } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { DateInput } from "@/components/ui/DateInput";
@@ -31,7 +31,7 @@ const sel = "w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm
 const entero = (s: string) => Math.max(0, Math.trunc(Number(s) || 0));
 
 export function VistaPreviaEstancia({
-  programaId, hoteles, hotelInicial = 0, dias, moneda,
+  programaId, hoteles, hotelInicial = 0, dias, moneda, iniciaAbierta = false,
 }: {
   programaId: number;
   /** Catálogo en pantalla (guardado o borrador). */
@@ -40,7 +40,11 @@ export function VistaPreviaEstancia({
   /** Itinerario en pantalla (borrador); si falta, el servidor lee el guardado. */
   dias?: DiaItinerario[];
   moneda: string;
+  /** El panel nace recogido: un botón lo abre y lo recoge SIN perder la selección ni el resultado (el contenido se oculta, no se desmonta). */
+  iniciaAbierta?: boolean;
 }) {
+  const [abierto, setAbierto] = useState(iniciaAbierta);
+  const idPanel = useId();
   const [hotelIndex, setHotelIndex] = useState(Math.min(hotelInicial, Math.max(hoteles.length - 1, 0)));
   const [modalidad, setModalidad] = useState<string>("privado");
   const [fecha, setFecha] = useState("");
@@ -75,14 +79,27 @@ export function VistaPreviaEstancia({
   if (!hoteles.length) return <p className="text-sm text-gray-500">Agrega un hotel para poder previsualizar su precio.</p>;
 
   return (
-    <section className="space-y-4 rounded-xl border border-gray-200 bg-white p-4" aria-label="Vista previa del precio">
-      <div>
-        <h3 className="flex items-center gap-2 text-sm font-semibold text-gray-700"><Calculator size={16} aria-hidden="true" /> Vista previa del precio</h3>
-        <p className="text-xs text-gray-500">
-          Solo lectura: calcula con el catálogo que ves ahora (aunque no esté guardado ni publicado) y con las mismas reglas de la reserva.
-          No crea cotización, contrato, cuenta por pagar ni publicación.
-        </p>
-      </div>
+    <section className="rounded-xl border border-gray-200 bg-white" aria-label="Calculadora de precio">
+      <h3 className="m-0">
+        <button
+          type="button"
+          aria-expanded={abierto}
+          aria-controls={idPanel}
+          onClick={() => setAbierto((a) => !a)}
+          className="flex w-full items-center justify-between gap-3 rounded-xl p-4 text-left hover:bg-gray-50 focus-visible:outline focus-visible:outline-2 focus-visible:outline-[#1D7C9A]"
+        >
+          <span className="flex min-w-0 items-center gap-2 text-sm font-semibold text-gray-700">
+            <Calculator size={16} aria-hidden="true" className="shrink-0" />
+            <span>Calculadora de precio<span className="ml-1 font-normal text-gray-500">· vista previa de solo lectura</span></span>
+          </span>
+          <ChevronDown size={18} aria-hidden="true" className={`shrink-0 text-gray-400 transition-transform ${abierto ? "rotate-180" : ""}`} />
+        </button>
+      </h3>
+      <div id={idPanel} hidden={!abierto} className="space-y-4 border-t border-gray-100 p-4">
+      <p className="text-xs text-gray-500">
+        Solo lectura: calcula con el catálogo que ves ahora (aunque no esté guardado ni publicado) y con las mismas reglas de la reserva.
+        No crea cotización, contrato, cuenta por pagar ni publicación.
+      </p>
 
       <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
         <div>
@@ -136,6 +153,7 @@ export function VistaPreviaEstancia({
       )}
 
       {res?.ok && <ResultadoVistaPrevia res={res} />}
+      </div>
     </section>
   );
 }

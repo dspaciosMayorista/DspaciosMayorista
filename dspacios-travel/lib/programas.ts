@@ -278,7 +278,7 @@ export type ProgramaDetalle = {
   }[];
   inclusiones: { ciudad: string | null; tipo: string; texto: string }[];
   tours: { ciudad: string | null; nombre: string; precio: number | null; min_pax: number; dias_operacion: string | null; descripcion: string | null }[];
-  blackouts: { fecha_inicio: string | null; fecha_fin: string | null; motivo: string | null; ciudad: string | null }[];
+  blackouts: { fecha_inicio: string | null; fecha_fin: string | null; motivo: string | null; ciudad: string | null; alcance: string }[];
 };
 
 /** Detalle completo de un programa (para la vitrina pública y para reservar). */
@@ -309,7 +309,7 @@ export async function getProgramaDetalle(sb: SB, id: number): Promise<ProgramaDe
       sb.from("programa_salidas").select("id, etiqueta, fecha_desde, fecha_hasta, noches, columna, neto_sencilla, neto_doble, neto_triple, neto_multiple, neto_nino, bajo_solicitud, tarifa_sencilla, tarifa_doble, tarifa_triple, tarifa_multiple, impuesto_sencilla, impuesto_doble, impuesto_triple, impuesto_multiple").eq("programa_id", id).order("orden"),
       sb.from("programa_inclusiones").select("ciudad, tipo, texto").eq("programa_id", id).order("orden"),
       sb.from("programa_tours").select("ciudad, nombre, precio, min_pax, dias_operacion, descripcion").eq("programa_id", id).order("orden"),
-      sb.from("programa_blackouts").select("fecha_inicio, fecha_fin, motivo, ciudad").eq("programa_id", id).order("fecha_inicio"),
+      sb.from("programa_blackouts").select("fecha_inicio, fecha_fin, motivo, ciudad, alcance").eq("programa_id", id).order("fecha_inicio"),
     ]);
 
   const catIds = new Set((categorias ?? []).map((c) => c.id));

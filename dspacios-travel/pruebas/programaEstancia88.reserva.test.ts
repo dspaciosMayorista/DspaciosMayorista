@@ -326,6 +326,7 @@ test("un contrato ya reservado NO se recalcula si el catálogo cambia después",
 // ── Los modos de siempre no cambian ────────────────────────────────────────
 test("un programa por salida ignora la selección de estancia: sin foto, sin costo, mismo precio de siempre", async () => {
   const bd = usarBD({
+    programa_dias: DIAS.map((d) => ({ ...d })),
     programas: [programa({ modo_precio: "salida" })],
     programa_salidas: [{
       id: 11, programa_id: 3, orden: 0, etiqueta: "Marzo", fecha_desde: "2027-03-01", fecha_hasta: "2027-03-08", noches: null, columna: null,

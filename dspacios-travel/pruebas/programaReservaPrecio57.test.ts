@@ -48,7 +48,10 @@ const salida = (over: Fila = {}): Fila => ({
   impuesto_sencilla: null, impuesto_doble: null, impuesto_triple: null, impuesto_multiple: null,
   ...over,
 });
+// PR #409: reservar exige el itinerario completo (días 1..N del programa) en TODOS los modos.
+const diasDe = (n: number): Fila[] => Array.from({ length: n }, (_, i) => ({ programa_id: 3, dia: i + 1, titulo: `Día ${i + 1}`, desayuno: false, almuerzo: false, cena: false, descripcion: "x" }));
 const seed = (prog: Fila, salidas: Fila[]) => ({
+  programa_dias: diasDe(Number(prog.dias ?? 8)),
   programas: [prog],
   programa_salidas: salidas,
   programa_categorias: [],
@@ -132,7 +135,7 @@ test("modalidad nueva con tarifa de proveedor: la reserva cobra el precio de la 
 test("modo categoría COP con fee: borde de redondeo 3.701.000 por persona y total = ficha", async () => {
   const prog = programa({ moneda: "COP", modo_precio: "categoria", pct_mk: 0.3, pct_fee_tarjeta: 0, asistencia_medica_dia: 0, dias: 5 });
   const bd = usarBD({
-    programas: [prog], programa_salidas: [], programa_categorias: [{ id: 5, programa_id: 3, orden: 0, nombre: "Turista" }],
+    programa_dias: diasDe(Number(prog.dias ?? 8)), programas: [prog], programa_salidas: [], programa_categorias: [{ id: 5, programa_id: 3, orden: 0, nombre: "Turista" }],
     programa_precios: [{ categoria_id: 5, acomodacion: "doble", neto: 2_590_000, bajo_solicitud: false }, { categoria_id: 5, acomodacion: "nino", neto: 1_000_000, bajo_solicitud: false }],
   }, RPCS);
   const esperado = await importeFicha(bd, { categoriaId: 5, habs: { doble: 1 }, ninos: 1 });
@@ -203,7 +206,7 @@ test("otros rechazos tampoco escriben (acomodación sin precio, selección vací
 test("regresión: venta pendiente, ítems, condición de pago congelada, CxP al proveedor (neto × pax) y su asiento", async () => {
   const prog = programa({ moneda: "COP", modo_precio: "categoria", pct_mk: 0.1, pct_fee_tarjeta: 0, asistencia_medica_dia: 0, dias: 5, noches: 4 });
   const bd = usarBD({
-    programas: [prog], programa_salidas: [], programa_categorias: [{ id: 5, programa_id: 3, nombre: "Turista" }],
+    programa_dias: diasDe(Number(prog.dias ?? 8)), programas: [prog], programa_salidas: [], programa_categorias: [{ id: 5, programa_id: 3, nombre: "Turista" }],
     programa_precios: [{ categoria_id: 5, acomodacion: "doble", neto: 1_000_000, bajo_solicitud: false }],
   }, RPCS);
   const esperado = await importeFicha(bd, { categoriaId: 5, habs: { doble: 1 }, ninos: 0 });

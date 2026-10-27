@@ -7,6 +7,8 @@ import { limpiarAlojamientoPrevisto } from "@/lib/programas";
 import { salidaTieneContenido, tieneImpuestoAcomodacionNegativo, tieneTarifaNegativa } from "@/lib/programas/salidasGuardado";
 import { validarHotelesParaGuardar, errorModoHotelConAereo, nochesIncluidasPrograma, esFechaIso, MODALIDADES_SERVICIOS, CLAVES_TARIFA, type PorAcom, type ClaveTarifa, type ModalidadServicios, type BaseHotelFila, type NocheTarifaFila, type DiaItinerario, type HotelEstancia } from "@/lib/programas/estanciaHotel88";
 import { calcularVistaPrevia, type VistaPrevia } from "@/lib/programas/vistaPrevia409";
+import { validarBlackoutsParaGuardar, filaBlackoutVacia, blackoutQueAplica, mensajeBlackout, rangoViaje, type BlackoutPrograma } from "@/lib/programas/blackouts409";
+import { estadoItinerario } from "@/lib/programas/estanciaHotel88";
 import { miRol, puedeEscribir } from "@/lib/roles";
 import { resolverValorReglaAcomodacion, validarReglaComisionable, validarTarifaModalidad, esModalidadMkValida, type ModalidadMk } from "@/lib/calc/programaPrecio";
 import {
@@ -181,6 +183,9 @@ export async function guardarCabecera(id: number, input: CabeceraInput): Promise
   const v = validarCondicionYRestriccionPrograma(input);
   if (!v.ok) return v;
   const sb = await createClient();
+  // Cambiar el total de días de un publicado no puede dejarlo con días sobrantes o faltantes.
+  const incompleto = await errorItinerarioPublicado(sb, id, { total: input.dias });
+  if (incompleto) return { ok: false, error: incompleto };
   const { error } = await sb
     .from("programas")
     .update({ ...cabeceraRow(input, v.condicion, v.restriccion), updated_at: new Date().toISOString() })
@@ -208,8 +213,53 @@ export async function guardarImagenPrograma(
   return { ok: true, id };
 }
 
+/**
+ * Itinerario de un programa contra sus días 1..N (PR #409). Lee la cabecera y los días con la sesión de quien llama. Un fallo de lectura NO se
+ * interpreta como «completo»: se devuelve como error.
+ */
+async function itinerarioDelPrograma(sb: Awaited<ReturnType<typeof createClient>>, programaId: number): Promise<{ ok: true; mensaje: string | null } | { ok: false; error: string }> {
+  const { data: prog, error: ep } = await sb.from("programas").select("dias").eq("id", programaId).maybeSingle();
+  if (ep) return { ok: false, error: "No se pudo leer el programa para validar su itinerario. Inténtalo de nuevo." };
+  if (!prog) return { ok: false, error: "Programa no encontrado." };
+  const { data: dias, error: ed } = await sb.from("programa_dias").select("dia").eq("programa_id", programaId);
+  if (ed) return { ok: false, error: "No se pudo leer el itinerario del programa. Inténtalo de nuevo." };
+  return { ok: true, mensaje: estadoItinerario(dias ?? [], prog.dias ?? null).mensaje };
+}
+
+/**
+ * Un programa PUBLICADO no puede quedar con el itinerario incompleto tras una edición (PR #409). `cambio` describe el resultado que se
+ * pretende: el total de días nuevo y/o los días nuevos; lo que no se indica se lee de la base. Programa despublicado = borrador: null.
+ * Un fallo de lectura se devuelve como error (nunca se interpreta como «completo»). La base repite la regla (migración 246).
+ */
+async function errorItinerarioPublicado(
+  sb: Awaited<ReturnType<typeof createClient>>,
+  programaId: number,
+  cambio: { total?: number | null; dias?: { dia: number }[] }
+): Promise<string | null> {
+  const { data: prog, error } = await sb.from("programas").select("publicado, dias").eq("id", programaId).maybeSingle();
+  if (error) return "No se pudo leer el programa para validar su itinerario. Inténtalo de nuevo.";
+  // Programa inexistente: no hay itinerario que proteger aquí (la RPC y la base lo rechazan al escribir).
+  if (!prog || !prog.publicado) return null;
+  // Reenviar el MISMO total sin tocar los días no cambia el estado del itinerario (igual que el trigger de la base): no se bloquea por datos heredados.
+  if (!cambio.dias && cambio.total !== undefined && cambio.total === (prog.dias ?? null)) return null;
+  let dias = cambio.dias;
+  if (!dias) {
+    const { data, error: ed } = await sb.from("programa_dias").select("dia").eq("programa_id", programaId);
+    if (ed) return "No se pudo leer el itinerario del programa. Inténtalo de nuevo.";
+    dias = data ?? [];
+  }
+  const m = estadoItinerario(dias, cambio.total !== undefined ? cambio.total : prog.dias ?? null).mensaje;
+  return m ? `Este programa está publicado y no puede quedar con el itinerario incompleto: ${m} Despublícalo primero si quieres guardar un borrador incompleto.` : null;
+}
+
 export async function setPublicado(id: number, publicado: boolean): Promise<Result> {
   const sb = await createClient();
+  // PR #409: publicar exige el itinerario completo (días 1..N, sin faltantes ni repetidos). Despublicar siempre se puede.
+  if (publicado) {
+    const it = await itinerarioDelPrograma(sb, id);
+    if (!it.ok) return it;
+    if (it.mensaje) return { ok: false, error: it.mensaje };
+  }
   const { error } = await sb.from("programas").update({ publicado }).eq("id", id);
   if (error) return { ok: false, error: error.message };
   rev(id);
@@ -255,23 +305,25 @@ export async function guardarDias(
   programaId: number,
   dias: { dia: number; titulo: string; desayuno: boolean; almuerzo: boolean; cena: boolean; descripcion: string }[]
 ): Promise<Result> {
-  const sb = await createClient();
-  await sb.from("programa_dias").delete().eq("programa_id", programaId);
-  const filas = dias
-    .filter((d) => num(d.dia) != null)
-    .map((d) => ({
-      programa_id: programaId,
-      dia: num(d.dia) ?? 0,
-      titulo: oNull(d.titulo),
-      desayuno: !!d.desayuno,
-      almuerzo: !!d.almuerzo,
-      cena: !!d.cena,
-      descripcion: oNull(d.descripcion),
-    }));
-  if (filas.length) {
-    const { error } = await sb.from("programa_dias").insert(filas);
-    if (error) return { ok: false, error: error.message };
+  if (!Array.isArray(dias) || dias.some((d) => d == null || typeof d !== "object" || Array.isArray(d))) {
+    return { ok: false, error: "Los días enviados no son válidos (se esperaba una lista de filas). No se cambió nada." };
   }
+  // Una fila sin número de día pero con contenido NO se descarta en silencio: se rechaza (solo una fila totalmente en blanco se ignora).
+  const enBlanco = (d: (typeof dias)[number]) => num(d.dia) == null && !String(d.titulo ?? "").trim() && !String(d.descripcion ?? "").trim() && !d.desayuno && !d.almuerzo && !d.cena;
+  const filas: { dia: number; titulo: string | null; desayuno: boolean; almuerzo: boolean; cena: boolean; descripcion: string | null }[] = [];
+  for (const d of dias) {
+    if (enBlanco(d)) continue;
+    const n = num(d.dia);
+    if (n == null || !Number.isInteger(n) || n < 1) return { ok: false, error: `Una fila del itinerario no tiene un número de día válido (entero desde 1): ${n == null ? "falta el día" : `«${d.dia}»`}. No se cambió nada.` };
+    filas.push({ dia: n, titulo: oNull(d.titulo), desayuno: !!d.desayuno, almuerzo: !!d.almuerzo, cena: !!d.cena, descripcion: oNull(d.descripcion) });
+  }
+  const sb = await createClient();
+  // Un publicado no puede quedar incompleto: se rechaza ANTES de tocar nada, con mensaje claro (la RPC y la base lo repiten).
+  const incompleto = await errorItinerarioPublicado(sb, programaId, { dias: filas });
+  if (incompleto) return { ok: false, error: incompleto };
+  // Reemplazo ATÓMICO en la base (migración 246): valida todo antes de borrar, así que un fallo NO deja el itinerario a medias.
+  const { error } = await sb.rpc("guardar_programa_dias", { p_programa_id: programaId, p_dias: filas as never });
+  if (error) return { ok: false, error: error.message };
   rev(programaId);
   return { ok: true };
 }
@@ -653,9 +705,19 @@ export async function calcularVistaPreviaPrograma(
 
   let dias = diasBorrador;
   if (!dias) {
-    const { data } = await sb.from("programa_dias").select("dia, titulo, desayuno, almuerzo, cena, descripcion").eq("programa_id", programaId).order("dia");
+    const { data, error: edias } = await sb.from("programa_dias").select("dia, titulo, desayuno, almuerzo, cena, descripcion").eq("programa_id", programaId).order("dia");
+    if (edias) return { ok: false, causa: "No se pudo leer el itinerario del programa. Inténtalo de nuevo." };
     dias = (data ?? []).map((d) => ({ dia: d.dia, titulo: d.titulo, desayuno: !!d.desayuno, almuerzo: !!d.almuerzo, cena: !!d.cena, descripcion: d.descripcion }));
   }
+  // PR #409: sin el itinerario 1..N completo no se calcula (se muestran los días que faltan).
+  const itinerario = estadoItinerario(dias, prog.dias ?? null);
+  if (!itinerario.completo) return { ok: false, causa: itinerario.mensaje ?? "El itinerario del programa está incompleto." };
+  // PR #409: la misma regla de blackouts que la reserva (entrada y viaje, con las noches adicionales). Un fallo de lectura NO deja calcular.
+  const { data: bos, error: ebos } = await sb.from("programa_blackouts").select("fecha_inicio, fecha_fin, motivo, alcance").eq("programa_id", programaId);
+  if (ebos) return { ok: false, causa: "No se pudieron leer los blackouts del programa. Inténtalo de nuevo." };
+  const rango = rangoViaje(seleccion.fechaEntrada, incluidas.noches + Math.max(0, Math.trunc(Number(seleccion.nochesAdicionales) || 0)));
+  const bloqueo = blackoutQueAplica((bos ?? []) as BlackoutPrograma[], rango);
+  if (bloqueo) return { ok: false, causa: mensajeBlackout(bloqueo, rango) };
 
   // Ids sintéticos: el borrador puede traer hoteles que aún no existen en la base.
   const hid = seleccion.hotelIndex + 1;
@@ -741,23 +803,27 @@ export async function guardarTours(
 // ── Blackouts ──────────────────────────────────────────────────────────────────
 export async function guardarBlackouts(
   programaId: number,
-  blackouts: { fechaInicio: string; fechaFin: string; motivo: string; ciudad: string }[]
+  blackouts: { fechaInicio: string; fechaFin: string; motivo: string; ciudad: string; alcance?: string }[]
 ): Promise<Result> {
-  const sb = await createClient();
-  await sb.from("programa_blackouts").delete().eq("programa_id", programaId);
-  const filas = blackouts
-    .filter((b) => b.fechaInicio || b.fechaFin || b.motivo.trim())
-    .map((b) => ({
-      programa_id: programaId,
-      fecha_inicio: oNull(b.fechaInicio),
-      fecha_fin: oNull(b.fechaFin),
-      motivo: oNull(b.motivo),
-      ciudad: oNull(b.ciudad),
-    }));
-  if (filas.length) {
-    const { error } = await sb.from("programa_blackouts").insert(filas);
-    if (error) return { ok: false, error: error.message };
+  // PR #409: ambos extremos obligatorios y reales, inicio <= fin y alcance conocido. Sin alcance (formulario viejo) = «entrada».
+  // Una entrada que no es una lista de objetos NO se interpreta como «sin blackouts» (eso borraría los existentes): se rechaza.
+  if (!Array.isArray(blackouts) || blackouts.some((b) => b == null || typeof b !== "object" || Array.isArray(b))) {
+    return { ok: false, error: "Los blackouts enviados no son válidos (se esperaba una lista de filas con sus fechas). No se cambió nada." };
   }
+  const filas = blackouts.map((b) => ({
+    fechaInicio: String(b?.fechaInicio ?? ""), fechaFin: String(b?.fechaFin ?? ""), motivo: String(b?.motivo ?? ""), ciudad: String(b?.ciudad ?? ""), alcance: String(b?.alcance || "entrada"),
+  }));
+  const error = validarBlackoutsParaGuardar(filas);
+  if (error) return { ok: false, error };
+  const sb = await createClient();
+  // Reemplazo ATÓMICO en la base (migración 246): valida todo antes de borrar, así que un fallo NO borra los blackouts anteriores.
+  const { error: e } = await sb.rpc("guardar_programa_blackouts", {
+    p_programa_id: programaId,
+    p_blackouts: filas
+      .filter((f) => !filaBlackoutVacia(f))
+      .map((f) => ({ fecha_inicio: f.fechaInicio, fecha_fin: f.fechaFin, motivo: f.motivo, ciudad: f.ciudad, alcance: f.alcance })) as never,
+  });
+  if (e) return { ok: false, error: e.message };
   rev(programaId);
   return { ok: true };
 }
@@ -783,11 +849,23 @@ export async function importarDesdeTexto(
   const parsed = parsearPrograma(texto);
   const sb = await createClient();
 
+  // Un publicado no puede quedar con el itinerario incompleto: se valida el RESULTADO (total + días) antes de escribir nada.
+  const nuevoTotal = opciones.diasNoches && parsed.dias != null ? parsed.dias : undefined;
+  const importaDias = opciones.itinerario && parsed.itinerario.length > 0;
+  if (nuevoTotal !== undefined || importaDias) {
+    const incompleto = await errorItinerarioPublicado(sb, programaId, {
+      ...(nuevoTotal !== undefined ? { total: nuevoTotal } : {}),
+      ...(importaDias ? { dias: parsed.itinerario } : {}),
+    });
+    if (incompleto) return { ok: false, error: incompleto };
+  }
+
   if (opciones.diasNoches && (parsed.dias != null || parsed.noches != null)) {
     const { error } = await sb
       .from("programas")
       .update({
-        ...(parsed.dias != null ? { dias: parsed.dias } : {}),
+        // Con itinerario importado, el total se cambia junto con los días en la RPC atómica (más abajo).
+        ...(parsed.dias != null && !importaDias ? { dias: parsed.dias } : {}),
         ...(parsed.noches != null ? { noches: parsed.noches } : {}),
         updated_at: new Date().toISOString(),
       })
@@ -806,10 +884,8 @@ export async function importarDesdeTexto(
     if (error) return { ok: false, error: error.message };
   }
 
-  if (opciones.itinerario && parsed.itinerario.length) {
-    await sb.from("programa_dias").delete().eq("programa_id", programaId);
+  if (importaDias) {
     const filas = parsed.itinerario.map((d) => ({
-      programa_id: programaId,
       dia: d.dia,
       titulo: oNull(d.titulo),
       desayuno: d.desayuno,
@@ -817,7 +893,11 @@ export async function importarDesdeTexto(
       cena: d.cena,
       descripcion: oNull(d.descripcion),
     }));
-    const { error } = await sb.from("programa_dias").insert(filas);
+    const { error } = await sb.rpc("guardar_programa_dias", {
+      p_programa_id: programaId,
+      p_dias: filas as never,
+      ...(opciones.diasNoches && parsed.dias != null ? { p_total_dias: parsed.dias } : {}),
+    });
     if (error) return { ok: false, error: error.message };
   }
 

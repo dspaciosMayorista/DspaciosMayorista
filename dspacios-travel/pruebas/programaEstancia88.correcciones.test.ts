@@ -386,10 +386,12 @@ describe("itinerario incompleto: no se desplaza el último día", () => {
       afirmarSinEscrituras(bd);
     }
   });
-  test("sin noches adicionales no hay nada que desplazar: el contrato se reserva aunque el itinerario esté incompleto", async () => {
+  test("PR #409: el itinerario incompleto NO se reserva ni siquiera sin noches adicionales (se exige 1..N siempre), antes de numerar y de toda escritura", async () => {
     const bd = usarBD(semilla({ programa_dias: incompleto([1, 2, 4]) }), RPCS);
     const { r } = await reservar(bd, entrada({ nochesAdicionales: 0 }));
-    assert.equal(r.ok, true, JSON.stringify(r));
+    assert.equal(r.ok, false, JSON.stringify(r));
+    assert.match(r.ok ? "" : r.error, /faltan los días 3/);
+    assert.equal(bd.filas("ventas").length, 0);
   });
   test("itinerario completo: la recogida cae en el día correcto", async () => {
     const bd = usarBD(semilla(), RPCS);

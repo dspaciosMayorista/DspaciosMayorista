@@ -10,6 +10,8 @@ import { ETIQUETA_FALTA_DESTINO, ETIQUETA_POR_CLASIFICAR, tieneDestinoFijo } fro
 import { CabeceraForm } from "../CabeceraForm";
 import { ProgramaImagenes } from "./ProgramaImagenes";
 import { HotelesVigenciaEditor } from "./HotelesVigenciaEditor";
+import { estadoItinerario } from "@/lib/programas/estanciaHotel88";
+import { ALCANCES_BLACKOUT, ETIQUETA_ALCANCE } from "@/lib/programas/blackouts409";
 import { esModoHotel } from "@/lib/programas/estanciaHotel88";
 import type { CatalogoHoteles88 } from "@/lib/programas/estanciaHotelDatos88";
 import type { Database } from "@/types/database";
@@ -64,7 +66,7 @@ type SalidaRow = {
 };
 type Inclusion = { ciudad: string | null; tipo: string; texto: string };
 type Tour = { ciudad: string | null; nombre: string; precio: number | null; min_pax: number; dias_operacion: string | null; descripcion: string | null };
-type Blackout = { fecha_inicio: string | null; fecha_fin: string | null; motivo: string | null; ciudad: string | null };
+type Blackout = { fecha_inicio: string | null; fecha_fin: string | null; motivo: string | null; ciudad: string | null; alcance?: string | null };
 
 const ACOMS = ["sencilla", "doble", "triple", "cuadruple", "nino"];
 const ACOM_LABEL: Record<string, string> = { sencilla: "Sencilla", doble: "Doble", triple: "Triple", cuadruple: "Cuádruple", nino: "Niño" };
@@ -112,6 +114,10 @@ export function ProgramaEditor(props: {
       : t
   );
   const [pubPending, startPub] = useTransition();
+  const [errorPub, setErrorPub] = useState<string | null>(null);
+  // PR #409: sin el itinerario 1..N completo no se publica (el servidor también lo exige; aquí se explica antes de pulsar).
+  const itinerarioGuardado = estadoItinerario(props.dias, programa.dias);
+  const publicacionBloqueada = !programa.publicado && !itinerarioGuardado.completo;
 
   // Regla comisionable de "Salidas y precios" (§ tarifa comisionable del proveedor):
   // vive aquí, no dentro de SalidasEditor, porque ese componente se desmonta al
@@ -204,6 +210,11 @@ export function ProgramaEditor(props: {
 
   return (
     <div className="mt-2">
+      {(publicacionBloqueada || errorPub) && (
+        <p id="motivo-publicacion" role="alert" className="mb-3 rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900">
+          {errorPub ?? `No se puede publicar: ${itinerarioGuardado.mensaje}`}
+        </p>
+      )}
       {/* Cabecera */}
       <div className="mb-5 flex flex-wrap items-center justify-between gap-3">
         <div>
@@ -242,8 +253,13 @@ export function ProgramaEditor(props: {
             </span>
           )}
           <Button
-            disabled={pubPending}
-            onClick={() => startPub(async () => void (await setPublicado(programa.id, !programa.publicado)))}
+            disabled={pubPending || publicacionBloqueada}
+            aria-describedby={publicacionBloqueada ? "motivo-publicacion" : undefined}
+            onClick={() => startPub(async () => {
+              setErrorPub(null);
+              const r = await setPublicado(programa.id, !programa.publicado);
+              if (!r.ok) setErrorPub(r.error);
+            })}
             style={{ backgroundColor: programa.publicado ? "#6b7280" : "var(--brand-success)" }}
           >
             {programa.publicado ? "Despublicar" : "Publicar"}
@@ -291,7 +307,7 @@ export function ProgramaEditor(props: {
       )}
       {tab === "importar" && <ImportarEditor programaId={programa.id} onDone={() => router.refresh()} />}
       {tab === "ruta" && <RutaEditor programaId={programa.id} ciudades={props.ciudades} destinos={props.destinos ?? []} />}
-      {tab === "itinerario" && <ItinerarioEditor programaId={programa.id} dias={props.dias} totalDias={programa.dias} />}
+      {tab === "itinerario" && <ItinerarioEditor programaId={programa.id} dias={props.dias} totalDias={programa.dias} publicado={programa.publicado} />}
       {tab === "matriz" && modoHotelTabs && (
         <HotelesVigenciaEditor
           programaId={programa.id}
@@ -454,7 +470,7 @@ type DiaRow = { dia: number; titulo: string; desayuno: boolean; almuerzo: boolea
 const diaCompleto = (r: DiaRow) => r.titulo.trim() !== "" && r.descripcion.trim() !== "";
 const resumenNota = (t: string) => { const x = t.replace(/\s+/g, " ").trim(); return x.length > 90 ? `${x.slice(0, 90)}…` : x; };
 
-export function ItinerarioEditor({ programaId, dias, totalDias }: { programaId: number; dias: Dia[]; totalDias: number | null }) {
+export function ItinerarioEditor({ programaId, dias, totalDias, publicado = false }: { programaId: number; dias: Dia[]; totalDias: number | null; publicado?: boolean }) {
   const inicial: DiaRow[] = dias.map((d) => ({ dia: d.dia, titulo: d.titulo ?? "", desayuno: d.desayuno, almuerzo: d.almuerzo, cena: d.cena, descripcion: d.descripcion ?? "" }));
   const [rows, setRows] = useState<DiaRow[]>(inicial);
   // Los días ya completados al cargar se ven en una sola fila; los nuevos o incompletos, abiertos. «Editar» reabre sin perder contenido.
@@ -472,8 +488,28 @@ export function ItinerarioEditor({ programaId, dias, totalDias }: { programaId: 
     setRows(Array.from({ length: n }, (_, i) => ({ dia: i + 1, titulo: "", desayuno: false, almuerzo: false, cena: false, descripcion: "" })));
     setAbiertos(new Set(Array.from({ length: n }, (_, i) => i)));
   };
+  // PR #409: el itinerario debe traer los días 1..N, sin faltantes ni repetidos. Un borrador incompleto SÍ se puede guardar, pero no se calcula, publica ni reserva.
+  const estadoIt = estadoItinerario(rows, totalDias);
   return (
     <div>
+      {!estadoIt.completo && (
+        <div role="status" className="mb-3 rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900" data-testid="itinerario-incompleto">
+          <p className="font-medium">Itinerario incompleto</p>
+          <ul className="mt-1 list-disc pl-5 text-xs">
+            {estadoIt.faltantes.length > 0 && <li>Faltan los días: {estadoIt.faltantes.join(", ")}.</li>}
+            {estadoIt.repetidos.length > 0 && <li>Se repiten los días: {estadoIt.repetidos.join(", ")}.</li>}
+            {estadoIt.fuera.length > 0 && <li>Hay días fuera de 1–{totalDias}: {estadoIt.fuera.join(", ")}.</li>}
+            {totalDias == null && <li>El programa no tiene configurados sus días (pestaña General).</li>}
+          </ul>
+          {publicado ? (
+            <p className="mt-1 text-xs font-medium" data-testid="itinerario-publicado-bloqueado">
+              Este programa está publicado: no puede quedar con el itinerario incompleto. Complétalo, o despublícalo primero para guardar un borrador incompleto.
+            </p>
+          ) : (
+            <p className="mt-1 text-xs">Puedes guardar este borrador, pero el programa no se podrá calcular, publicar ni reservar hasta completarlo.</p>
+          )}
+        </div>
+      )}
       <div className="mb-3 flex items-center justify-between">
         <p className="text-sm text-gray-500">Itinerario día por día. Marca las comidas incluidas; al terminar un día pulsa «Listo» y queda en una sola fila.</p>
         {totalDias ? <AddBtn onClick={generar}>Generar {totalDias} días en blanco</AddBtn> : null}
@@ -515,7 +551,7 @@ export function ItinerarioEditor({ programaId, dias, totalDias }: { programaId: 
       <div className="mt-3">
         <AddBtn onClick={() => { setRows((p) => [...p, { dia: p.length + 1, titulo: "", desayuno: false, almuerzo: false, cena: false, descripcion: "" }]); setAbiertos((p) => new Set(p).add(rows.length)); }}>+ Agregar día</AddBtn>
       </div>
-      <SaveBar onSave={() => guardarDias(programaId, rows)} />
+      <SaveBar onSave={() => guardarDias(programaId, rows)} disabled={publicado && !estadoIt.completo} />
     </div>
   );
 }
@@ -1318,27 +1354,33 @@ function ImportarEditor({ programaId, onDone }: { programaId: number; onDone: ()
 }
 
 // ── Blackouts ───────────────────────────────────────────────────────────────────
-function BlackoutsEditor({ programaId, blackouts }: { programaId: number; blackouts: Blackout[] }) {
+export function BlackoutsEditor({ programaId, blackouts }: { programaId: number; blackouts: Blackout[] }) {
   const [rows, setRows] = useState(
-    blackouts.map((b) => ({ fechaInicio: b.fecha_inicio ?? "", fechaFin: b.fecha_fin ?? "", motivo: b.motivo ?? "", ciudad: b.ciudad ?? "" }))
+    blackouts.map((b) => ({ fechaInicio: b.fecha_inicio ?? "", fechaFin: b.fecha_fin ?? "", motivo: b.motivo ?? "", ciudad: b.ciudad ?? "", alcance: b.alcance === "viaje" ? "viaje" : "entrada" }))
   );
   const upd = (i: number, k: string, v: unknown) => setRows((p) => p.map((r, j) => (j === i ? { ...r, [k]: v } : r)));
   return (
     <div>
-      <p className="mb-3 text-sm text-gray-500">Fechas bloqueadas (no se puede viajar / cotizar).</p>
+      <p className="mb-3 text-sm text-gray-500">
+        Fechas bloqueadas. Cada una necesita fecha de inicio y de fin, y un alcance: <b>Solo fecha de entrada</b> (bloquea únicamente si la entrada cae en el rango; lo de siempre) o
+        <b> Cualquier día del viaje</b> (bloquea si el viaje —de la entrada al regreso, con las noches adicionales— toca el rango).
+      </p>
       <div className="space-y-2">
         {rows.map((r, i) => (
-          <div key={i} className="flex flex-wrap items-center gap-2">
-            <DateInput aria-label="Fecha de inicio" type="date" value={r.fechaInicio} onValueChange={(dateValue) => upd(i, "fechaInicio", dateValue)} className="w-44" />
-            <span className="text-gray-400">→</span>
-            <DateInput aria-label="Fecha de fin" type="date" value={r.fechaFin} onValueChange={(dateValue) => upd(i, "fechaFin", dateValue)} className="w-44" />
-            <Input value={r.motivo} onChange={(e) => upd(i, "motivo", e.target.value)} placeholder="Motivo" className="min-w-[12rem] flex-1" />
+          <div key={i} className="grid grid-cols-2 items-center gap-2 rounded-lg border border-gray-100 p-3 sm:flex sm:flex-wrap sm:border-0 sm:p-0">
+            <DateInput aria-label="Fecha de inicio" type="date" value={r.fechaInicio} onValueChange={(dateValue) => upd(i, "fechaInicio", dateValue)} className="w-full sm:w-44" />
+            <span className="hidden text-gray-400 sm:inline">→</span>
+            <DateInput aria-label="Fecha de fin" type="date" value={r.fechaFin} onValueChange={(dateValue) => upd(i, "fechaFin", dateValue)} className="w-full sm:w-44" />
+            <select aria-label="Alcance del blackout" value={r.alcance} onChange={(e) => upd(i, "alcance", e.target.value)} className="col-span-2 rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm sm:col-span-1">
+              {ALCANCES_BLACKOUT.map((a) => <option key={a} value={a}>{ETIQUETA_ALCANCE[a]}</option>)}
+            </select>
+            <Input value={r.motivo} onChange={(e) => upd(i, "motivo", e.target.value)} placeholder="Motivo" className="col-span-2 min-w-[12rem] flex-1 sm:col-span-1" />
             <DelBtn onClick={() => setRows((p) => p.filter((_, j) => j !== i))} />
           </div>
         ))}
       </div>
       <div className="mt-3">
-        <AddBtn onClick={() => setRows((p) => [...p, { fechaInicio: "", fechaFin: "", motivo: "", ciudad: "" }])}>+ Agregar blackout</AddBtn>
+        <AddBtn onClick={() => setRows((p) => [...p, { fechaInicio: "", fechaFin: "", motivo: "", ciudad: "", alcance: "entrada" }])}>+ Agregar blackout</AddBtn>
       </div>
       <SaveBar onSave={() => guardarBlackouts(programaId, rows)} />
     </div>

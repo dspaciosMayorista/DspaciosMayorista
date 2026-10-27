@@ -3211,6 +3211,8 @@ export type Database = {
           fecha_fin: string | null;
           motivo: string | null;
           ciudad: string | null;
+          /** Migración 246 (#409): 'entrada' (solo la fecha de entrada) | 'viaje' (cualquier día del viaje). */
+          alcance: string;
         };
         Insert: {
           id?: number;
@@ -3219,6 +3221,7 @@ export type Database = {
           fecha_fin?: string | null;
           motivo?: string | null;
           ciudad?: string | null;
+          alcance?: string;
         };
         Update: Partial<Database["public"]["Tables"]["programa_blackouts"]["Insert"]>;
         Relationships: [];
@@ -4472,6 +4475,16 @@ export type Database = {
       guardar_programa_hoteles: {
         Args: { p_programa_id: number; p_hoteles: Json };
         Returns: undefined;
+      };
+      // Migración 246 (#409). Reemplazo atómico de los blackouts de un programa: valida todo antes de borrar; devuelve cuántos guardó.
+      guardar_programa_blackouts: {
+        Args: { p_programa_id: number; p_blackouts: Json };
+        Returns: number;
+      };
+      // Migración 246. Reemplazo atómico del itinerario (y opcionalmente del total de días); un publicado no puede quedar incompleto.
+      guardar_programa_dias: {
+        Args: { p_programa_id: number; p_dias: Json; p_total_dias?: number | null };
+        Returns: number;
       };
       // Migración 152. Actualiza modalidad/estado de emisión/estado de pago
       // de un bloqueo y registra el cambio en bloqueo_cambios en una sola

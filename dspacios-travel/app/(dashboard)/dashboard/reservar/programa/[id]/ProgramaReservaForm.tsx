@@ -16,6 +16,7 @@ import { BuscarTitular } from "@/components/personas/BuscarTitular";
 import { BuscarPasajeroDocumento } from "@/components/pasajeros/BuscarPasajeroDocumento";
 import { reservarPrograma, terminosB2BPrograma } from "../../actions";
 import { TerminosB2BAsistido, type TerminosVisibles } from "@/components/cotizacion/TerminosB2BAsistido";
+import { blackoutQueAplica, mensajeBlackout, rangoViaje as rangoDelViaje, type BlackoutPrograma } from "@/lib/programas/blackouts409";
 import type { AliadoListado } from "@/lib/cotizacion/asistidaB2BServidor";
 import type { ModoCompra } from "@/lib/reservar/comisionReserva";
 import { validarTrmCosto } from "@/lib/finanzas/costoTrmCarrito";
@@ -75,6 +76,8 @@ export function ProgramaReservaForm({
   errorPrograma = null,
   itinerario = [],
   aliados = [],
+  blackouts = [],
+  errorItinerarioPrograma = null,
 }: {
   programaId: number;
   moneda: string;
@@ -97,6 +100,10 @@ export function ProgramaReservaForm({
   itinerario?: DiaItinerario[];
   /** PR #409 — aliados ACTIVOS del catálogo (agencia/freelance) con su % vigente, para vender B2B con PVP o NETO. */
   aliados?: AliadoListado[];
+  /** PR #409 — blackouts del programa (con su alcance): la misma regla de la reserva en el servidor, aplicada aquí antes de enviar. */
+  blackouts?: BlackoutPrograma[];
+  /** PR #409 — por qué el itinerario del programa no permite calcular ni reservar (días 1..N incompletos), en cualquier modo. */
+  errorItinerarioPrograma?: string | null;
 }) {
   const router = useRouter();
   const modoHotel = hoteles !== undefined;
@@ -176,7 +183,15 @@ export function ProgramaReservaForm({
       : null;
   const total = modoHotel ? (cotizacionHotel?.ok ? cotizacionHotel.total : 0) : totalMatriz;
   // Con noches adicionales se desplaza el último día: un itinerario al que le falta un día pondría la recogida en el día equivocado.
-  const errorItinerario = modoHotel && adicionales > 0 ? validarItinerarioCompleto(itinerario, dias) : null;
+  // PR #409: el itinerario debe traer los días 1..N en TODOS los modos (antes solo con noches adicionales en modo hotel).
+  const errorItinerario = errorItinerarioPrograma ?? (modoHotel ? validarItinerarioCompleto(itinerario, dias) : null);
+  // Blackouts: la entrada, o —si el blackout es de alcance «viaje»— cualquier día del viaje (noches adicionales incluidas).
+  const nochesDelViaje = modoHotel
+    ? (nochesIncluidas != null ? nochesIncluidas + adicionales : 0)
+    : (modoSalida ? (categorias.find((c) => c.id === categoriaId)?.noches ?? null) : null) ?? (dias ? Math.max(0, dias - 1) : 0);
+  const rangoViaje = fechaIda ? rangoDelViaje(fechaIda, nochesDelViaje) : null;
+  const blackoutAplicado = rangoViaje ? blackoutQueAplica(blackouts, rangoViaje) : null;
+  const errorBlackout = blackoutAplicado && rangoViaje ? mensajeBlackout(blackoutAplicado, rangoViaje) : null;
   const errorEstancia = !modoHotel ? null : errorPrograma ? errorPrograma : errorItinerario ? errorItinerario : !tablaHotel ? "Elige el hotel." : cotizacionHotel && !cotizacionHotel.ok ? cotizacionHotel.error : baseHotel && !baseHotel.ok ? baseHotel.error : null;
   const itinerarioReserva = (modoHotel && fechaIda && tablaHotel ? itinerarioConNochesExtra(itinerario, adicionales, fechaIda, tablaHotel.hotel.nombre, dias) : null) ?? [];
 
@@ -291,6 +306,8 @@ export function ProgramaReservaForm({
 
   function enviar(precioConfirmado: number) {
     setError(null);
+    if (errorItinerario) return setError(errorItinerario);
+    if (errorBlackout) return setError(errorBlackout);
     if (esB2B && !aliadoId) return setError(`Selecciona la ${tipoAsesor} del catálogo.`);
     if (esB2B && !modoCompra) return setError("Elige si el contrato se genera a PVP o a NETO.");
     if (!fechaIda) return setError(modoHotel ? "Elige la fecha de entrada al hotel." : "Elige la fecha de salida.");
@@ -686,6 +703,8 @@ export function ProgramaReservaForm({
         </div>
       </fieldset>
 
+      {errorItinerario && !modoHotel && <p role="alert" className="text-sm text-amber-700" data-testid="error-itinerario">{errorItinerario} No se puede reservar hasta completarlo.</p>}
+      {errorBlackout && <p role="alert" className="text-sm text-amber-700" data-testid="error-blackout">{errorBlackout}</p>}
       {error && <p className="text-sm text-red-600">{error}</p>}
       {cambioVigente && (
         <div role="alert" className="space-y-2 rounded-lg border border-amber-300 bg-amber-50 p-4 text-sm text-amber-900">

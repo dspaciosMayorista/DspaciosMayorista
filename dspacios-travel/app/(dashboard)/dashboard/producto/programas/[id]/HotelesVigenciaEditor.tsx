@@ -166,18 +166,14 @@ export function HotelesVigenciaEditor({
                 nombreRepetido={repetido}
               />
 
-              <details className="rounded-lg border border-gray-200 p-3">
-                <summary className="cursor-pointer text-sm font-medium text-gray-700">Vista previa con este borrador</summary>
-                <div className="mt-3">
-                  <VistaPreviaEstancia
-                    programaId={programaId}
-                    hoteles={edicion.indice == null ? [...hoteles, edicion.borrador] : hoteles.map((h, i) => (i === edicion.indice ? edicion.borrador : h))}
-                    hotelInicial={edicion.indice ?? hoteles.length}
-                    dias={dias}
-                    moneda={programa.moneda}
-                  />
-                </div>
-              </details>
+                <VistaPreviaEstancia
+                  programaId={programaId}
+                  hoteles={edicion.indice == null ? [...hoteles, edicion.borrador] : hoteles.map((h, i) => (i === edicion.indice ? edicion.borrador : h))}
+                  hotelInicial={edicion.indice ?? hoteles.length}
+                  dias={dias}
+                  moneda={programa.moneda}
+                />
+
 
               {error && <p role="alert" className="rounded-lg border border-red-200 bg-red-50 p-3 text-sm text-red-700">{error}</p>}
 

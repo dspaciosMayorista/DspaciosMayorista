@@ -462,7 +462,7 @@ export function itinerarioConNochesExtra(dias: readonly DiaItinerario[], adicion
  */
 export function validarItinerarioCompleto(dias: readonly Pick<DiaItinerario, "dia">[], diasPrograma: number | null): string | null {
   if (diasPrograma == null || !Number.isInteger(diasPrograma) || diasPrograma < 1) {
-    return "El programa no tiene configurados sus días: no se pueden desplazar el itinerario ni la recogida.";
+    return "El programa no tiene configurados sus días: sin ellos no se puede validar el itinerario, ni calcular, publicar ni reservar.";
   }
   const presentes = dias.map((d) => d.dia);
   const faltan = Array.from({ length: diasPrograma }, (_, i) => i + 1).filter((d) => !presentes.includes(d));
@@ -474,7 +474,21 @@ export function validarItinerarioCompleto(dias: readonly Pick<DiaItinerario, "di
     repetidos.length ? `se repiten los días ${[...new Set(repetidos)].join(", ")}` : null,
     sobran.length ? `hay días fuera de 1–${diasPrograma} (${[...new Set(sobran)].join(", ")})` : null,
   ].filter(Boolean).join("; ");
-  return `El itinerario del programa está incompleto (${partes}): complétalo antes de vender noches adicionales, o la recogida quedaría en el día equivocado.`;
+  return `El itinerario del programa está incompleto (${partes}): complétalo antes de calcular, publicar o reservar el programa.`;
+}
+
+/** Estado estructurado del itinerario (PR #409): qué días faltan, cuáles se repiten y cuáles sobran respecto de los días 1..N del programa. */
+export function estadoItinerario(dias: readonly Pick<DiaItinerario, "dia">[], diasPrograma: number | null): { completo: boolean; faltantes: number[]; repetidos: number[]; fuera: number[]; mensaje: string | null } {
+  const mensaje = validarItinerarioCompleto(dias, diasPrograma);
+  if (diasPrograma == null || !Number.isInteger(diasPrograma) || diasPrograma < 1) return { completo: false, faltantes: [], repetidos: [], fuera: [], mensaje };
+  const presentes = dias.map((d) => d.dia);
+  return {
+    completo: mensaje == null,
+    faltantes: Array.from({ length: diasPrograma }, (_, i) => i + 1).filter((d) => !presentes.includes(d)),
+    repetidos: [...new Set(presentes.filter((d, i) => presentes.indexOf(d) !== i))],
+    fuera: [...new Set(presentes.filter((d) => !Number.isInteger(d) || d < 1 || d > diasPrograma))],
+    mensaje,
+  };
 }
 
 // ── Transporte ─────────────────────────────────────────────────────────────
