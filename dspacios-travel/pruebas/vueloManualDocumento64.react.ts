@@ -102,3 +102,37 @@ describe("el vuelo manual en el documento de la cotización", () => {
     assert.doesNotMatch(r, /incluye el valor de los vuelos/, "sin vuelo manual no hay aclaración");
   });
 });
+
+// ── Ronda 12 · horarios: la COTIZACIÓN muestra la hora local de salida; el CONTRATO no muestra horarios ni número de vuelo (#47) ──
+describe("horas del vuelo manual y #47 (ningún horario ni número de vuelo en el contrato)", () => {
+  const m = conHotel({ ...base, horaIda: "06:45", horaRegreso: "18:20" });
+  const { item, vuelos } = lineaYTramos(m, 2);
+  const conDatosOperativos = [
+    ...vuelos,
+    // Un vuelo de Sistema con número de vuelo y horas (también operativos): en el contrato tampoco se muestran.
+    { id: 99, numero_contrato: "", aerolinea: "Avianca", record: null, direccion: "ida", numero_vuelo: "AV9123", hora_salida: "05:10", hora_llegada: "06:25", origen_codigo: "BOG", origen_ciudad: "Bogotá", destino_codigo: "CTG", destino_ciudad: "Cartagena", servicios: "Equipaje", fecha_salida: "2030-10-15" },
+  ];
+  const texto2 = (esCotizacion: boolean) => {
+    const props = { venta, pasajeros: [], hoteles: HOTELES, vuelos: conDatosOperativos, items: [itemHotel, item], totalPagado: 0, agencia: null, condiciones: null, habitacionesBernalo: [], esCotizacion, codigo: "COT-1", vigenciaHasta: "2030-10-10", netoTotalExigible: null };
+    return renderToStaticMarkup(createElement(ContratoDocumento as ComponentType<Record<string, unknown>>, props)).replace(/<[^>]+>/g, " ").replace(/&nbsp;| /g, " ").replace(/&gt;/g, ">").replace(/&amp;/g, "&").replace(/\s+/g, " ");
+  };
+  test("COTIZACIÓN: cada tramo muestra «salida HH:mm (hora local)»; sin hora de llegada inventada", () => {
+    const t = texto2(true);
+    assert.match(t, /Ida: .*15 de octubre de 2030 · salida 06:45 \(hora local\)/);
+    assert.match(t, /Regreso: .*18 de octubre de 2030 · salida 18:20 \(hora local\)/);
+    assert.doesNotMatch(t.slice(t.indexOf("Vuelos"), t.indexOf("Hoteles y Servicios")), /llegada/i);
+  });
+  test("una hora sin confirmar no muestra nada (ni «salida —»)", () => {
+    const sinHora = lineaYTramos(conHotel(base), 2);
+    const props = { venta, pasajeros: [], hoteles: HOTELES, vuelos: sinHora.vuelos, items: [itemHotel, sinHora.item], totalPagado: 0, agencia: null, condiciones: null, habitacionesBernalo: [], esCotizacion: true, codigo: "COT-1", vigenciaHasta: "2030-10-10", netoTotalExigible: null };
+    const t = renderToStaticMarkup(createElement(ContratoDocumento as ComponentType<Record<string, unknown>>, props)).replace(/<[^>]+>/g, " ").replace(/\s+/g, " ");
+    assert.doesNotMatch(t, /salida \d|hora local/);
+  });
+  test("CONTRATO (#47): ningún horario ni número de vuelo, ni del vuelo manual ni de uno de Sistema; la fecha y la ruta siguen", () => {
+    const t = texto2(false);
+    const seccion = t.slice(t.indexOf("Vuelos"), t.indexOf("Hoteles y Servicios"));
+    assert.doesNotMatch(seccion, /06:45|18:20|05:10|06:25|AV9123|vuelo AV|hora local|salida \d/);
+    assert.match(seccion, /Origen: .*BOG/);
+    assert.match(seccion, /Ida: .*15 de octubre de 2030/);
+  });
+});

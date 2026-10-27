@@ -59,10 +59,12 @@ describe("tramos de un vuelo manual", () => {
   test("origen y destino distintos", () => {
     assert.equal(validarServicioManual({ ...ida, origen: "ctg", destino: "CTG" }).ok, false);
   });
-  test("otro servicio conserva su comportamiento: sin tramo ni hotel ni IATA", () => {
-    const r = validarServicioManual({ clase: "otro", nombre: "Traslado privado", pax: 2, precio: 90_000, moneda: "COP", impuestoNoComisionable: 0, tramo: "ida", hotelRef: "h1" });
+  test("otro servicio: sin tramo ni IATA ni horas; conserva el grupo/hotel solo para la comparativa (el servidor lo anula en el carrito normal)", () => {
+    const r = validarServicioManual({ clase: "otro", nombre: "Traslado privado", pax: 2, precio: 90_000, moneda: "COP", impuestoNoComisionable: 0, tramo: "ida", hotelRef: "h1", horaIda: "06:30" });
     assert.ok(r.ok);
-    if (r.ok) { assert.equal(r.valor.tramo, null); assert.equal(r.valor.hotelRef, null); }
+    if (r.ok) { assert.equal(r.valor.tramo, null); assert.equal(r.valor.hotelRef, "h1"); assert.equal(r.valor.horaIda, null); assert.equal(r.valor.origen, null); }
+    const sin = validarServicioManual({ clase: "otro", nombre: "Traslado privado", pax: 2, precio: 90_000, moneda: "COP", impuestoNoComisionable: 0 });
+    assert.ok(sin.ok && sin.valor.hotelRef === null);
   });
   test("ida y regreso: dos tramos con el regreso invertido; el cuadro dice CTG (Cartagena) y nunca inventa record", () => {
     assert.deepEqual(tramosVueloManual(ok(ida), true).map((t) => [t.direccion, t.origen_codigo, t.destino_codigo, t.destino_ciudad, t.fecha_salida]), [["ida", "BOG", "CTG", "Cartagena", "2030-02-28"]]);

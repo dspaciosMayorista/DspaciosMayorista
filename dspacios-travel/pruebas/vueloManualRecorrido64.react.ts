@@ -192,3 +192,24 @@ describe("Identidad de la hija y del contrato elegidos por un visitante", { skip
     });
   }
 });
+
+// #64 (ronda 12) — la hora local de salida de un vuelo manual llega al documento de la comparativa (resumen público), sin inventar llegada ni número de vuelo.
+describe("Horas en el documento de la comparativa (resumen público)", () => {
+  const opcion = (hora: string | null) => ({
+    opcion_ref: "A", acomodacion_ref: "doble", orden: 0, etiqueta: "Hotel A", moneda: "COP", tarifa_persona: 300_000, total: 2_400_000,
+    resumen_publico: { hotel: "Hotel A", plan_nombre: "Marina Suite · Desayuno", pax: 2, moneda: "COP", total: 2_400_000, acomodacion: "doble", habitaciones: { doble: 1 }, servicios: [],
+      vuelos: [{ tramo: "ida", origen: "Bogotá", destino: "Cartagena", fecha: "2030-03-01", hora, nota: "Vuelo manual · pasajeros en este vuelo: 2 · sujeto a confirmación de disponibilidad y tarifa" }] },
+  });
+  const pintar = (hora: string | null) => {
+    const o = opcion(hora);
+    const grupos = agruparPorHotel([{ opcionRef: o.opcion_ref, acomodacionRef: o.acomodacion_ref, etiqueta: o.etiqueta, moneda: o.moneda, tarifaPersona: o.tarifa_persona, total: o.total, orden: o.orden }]);
+    const resumenes = { "A/doble": resumenDeOpcion(o.resumen_publico), A: resumenDeOpcion(o.resumen_publico) };
+    return renderToStaticMarkup(createElement(SelectorOpciones as ComponentType<Fila>, { version: 1, token: "x".repeat(32), grupos, resumenes, modo: "checkout", deshabilitada: false, elegida: null })).replace(/<[^>]+>/g, " ").replace(/\s+/g, " ");
+  };
+  test("con hora: «salida 06:45 (hora local)»; sin hora no aparece nada; una hora mal formada se descarta", () => {
+    assert.match(pintar("06:45"), /Vuelo ida: Bogotá → Cartagena · 2030-03-01 · salida 06:45 \(hora local\)/);
+    assert.doesNotMatch(pintar(null), /salida \d|hora local/);
+    assert.doesNotMatch(pintar("25:99"), /salida \d|hora local/);
+    assert.doesNotMatch(pintar("06:45"), /llegada/i);
+  });
+});

@@ -2197,8 +2197,9 @@ export async function convertirCotizacionCarrito(
     if (!grupos.length) return { ok: false, error: "La cotización tiene servicios manuales pero ninguna unidad del carrito a la que asociarlos." };
     for (let i = 0; i < manualesCot.length; i++) {
       const m = manualesCot[i];
-      const g = m.clase === "vuelo" ? grupos.find((gr) => gr.items.some((it) => it.ref === m.hotelRef)) : grupos[0];
-      if (!g) return { ok: false, error: `${m.nombre}: el hotel al que pertenece el vuelo no está entre las unidades de la cotización.` };
+      // Un vuelo, y un «otro servicio» de una comparativa (que conserva el hotel de su opción), van al grupo de SU hotel; un «otro servicio» sin hotel, al primero.
+      const g = m.clase === "vuelo" || m.hotelRef ? grupos.find((gr) => gr.items.some((it) => it.ref === m.hotelRef)) : grupos[0];
+      if (!g) return { ok: false, error: `${m.nombre}: el hotel al que pertenece ${m.clase === "vuelo" ? "el vuelo" : "el servicio"} no está entre las unidades de la cotización.` };
       if (m.pax > opts.pasajeros.length) return { ok: false, error: `${m.nombre}: tiene ${m.pax} pasajeros pero solo capturaste ${opts.pasajeros.length}.` };
       if (!primerGrupoPendiente(contratosPorGrupo, g.destino)) { g.manuales.push({ idx: i, m, costo: 0, proveedor: "" }); continue; }
       if (!Array.isArray(opts.costosManuales) || opts.costosManuales.length !== manualesCot.length) {
@@ -3302,7 +3303,7 @@ export async function convertirCotizacionCarrito(
         if (m.clase === "vuelo") {
           // Mismas filas que el cuadro de vuelos de la cotización (sin el aviso de «sujeto a confirmación»: el costo y el proveedor ya quedaron registrados).
           for (const t of tramosVueloManual(m, false)) {
-            tramosManual.push({ numero_contrato: numero, aerolinea: null, record: null, direccion: t.direccion as string, origen_codigo: t.origen_codigo as string | null, origen_ciudad: t.origen_ciudad as string | null, destino_codigo: t.destino_codigo as string | null, destino_ciudad: t.destino_ciudad as string | null, servicios: t.servicios as string, fecha_salida: t.fecha_salida as string | null, orden: 9500 + tramosManual.length });
+            tramosManual.push({ numero_contrato: numero, aerolinea: null, record: null, direccion: t.direccion as string, origen_codigo: t.origen_codigo as string | null, origen_ciudad: t.origen_ciudad as string | null, destino_codigo: t.destino_codigo as string | null, destino_ciudad: t.destino_ciudad as string | null, servicios: t.servicios as string, fecha_salida: t.fecha_salida as string | null, hora_salida: (t.hora_salida as string | null) ?? null, orden: 9500 + tramosManual.length });
           }
           costoAereoTotal += x.costo;
           pushCxP("aereo", `Vuelo manual ${m.origen ?? ""} → ${m.destino ?? ""}`.trim(), x.costo, prov, x.proveedor, null, m.moneda);

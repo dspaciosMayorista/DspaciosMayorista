@@ -79,6 +79,7 @@ export default function CheckoutPage() {
   // #35: modo de la página según la URL. Se lee en el cliente (sin useSearchParams → sin Suspense).
   // #64: el interno puede dejar la comparativa para que el cliente elija desde el enlace (solo se envía en modo comparativa).
   const [compartir, setCompartir] = useState(false);
+  const [otrasAcom, setOtrasAcom] = useState(false);
   const [resCmp, setResCmp] = useState<Extract<ResultadoComparativaCreada, { ok: true }> | null>(null);
   const search = useSyncExternalStore(() => () => {}, () => window.location.search, () => "");
   const vista = useMemo(() => {
@@ -208,8 +209,10 @@ export default function CheckoutPage() {
           hotelItemId: it.hotelItemId ?? null,
         })),
         // #64: precio de venta declarado por el asesor; el servidor lo vuelve a validar y exige sesión interna.
-        ...(manualItems.length ? { manuales: manualItems.map(vueloParaEnviar).map((m) => ({ clase: m.clase, nombre: m.nombre, origen: m.origen, destino: m.destino, fechaIda: m.fechaIda, fechaRegreso: m.fechaRegreso, pax: m.pax, precio: m.precio, moneda: m.moneda, impuestoNoComisionable: m.impuestoNoComisionable, tramo: m.tramo, hotelRef: m.hotelRef })) } : {}),
+        ...(manualItems.length ? { manuales: manualItems.map(vueloParaEnviar).map((m) => ({ clase: m.clase, nombre: m.nombre, origen: m.origen, destino: m.destino, fechaIda: m.fechaIda, fechaRegreso: m.fechaRegreso, pax: m.pax, precio: m.precio, moneda: m.moneda, impuestoNoComisionable: m.impuestoNoComisionable, tramo: m.tramo, hotelRef: m.hotelRef, horaIda: m.horaIda ?? null, horaRegreso: m.horaRegreso ?? null })) } : {}),
         ...(vista.crear && compartir ? { compartirPublico: true } : {}),
+        // Elección EXPRESA: por defecto cada hotel se cotiza solo con la acomodación del carrito.
+        ...(vista.crear && otrasAcom ? { otrasAcomodaciones: true } : {}),
         cliente: c,
         // `facturacion`/`pctComision` YA NO se envían: el servidor los
         // resuelve siempre desde la sesión autenticada (`getContextoB2B()`),
@@ -375,6 +378,12 @@ export default function CheckoutPage() {
             {/* #64: solo personal interno autorizado (mismo contexto que la venta asistida); el servidor lo exige de nuevo. */}
             {puedeManual && <ServicioManualPanel comun={!!vista.crear} />}
             {vista.crear && <ResumenOpcionesComparativa items={items} iataDe={iataDe} />}
+            {vista.crear && (
+              <label className="flex items-start gap-2 rounded-2xl border border-gray-200 bg-white p-4 text-sm text-gray-700">
+                <input type="checkbox" className="mt-0.5" checked={otrasAcom} onChange={(e) => setOtrasAcom(e.target.checked)} data-testid="otras-acomodaciones" />
+                <span><b>Ofrecer también otras acomodaciones de cada hotel.</b> Si no lo marcas, cada opción se cotiza solo con la acomodación que elegiste en el carrito (por ejemplo, Marina Suite doble); no se agregan alternativas por tener otra tarifa disponible.</span>
+              </label>
+            )}
             {puedeManual && vista.crear && (
               <label className="flex items-start gap-2 rounded-2xl border border-gray-200 bg-white p-4 text-sm text-gray-700">
                 <input type="checkbox" className="mt-0.5" checked={compartir} onChange={(e) => setCompartir(e.target.checked)} data-testid="compartir-comparativa" />

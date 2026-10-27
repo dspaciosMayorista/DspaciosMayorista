@@ -2,7 +2,7 @@
 
 // #64 — Cada alternativa de la comparativa por separado: su hotel, sus servicios hijos, los vuelos de SU grupo y su PVP. Nada se suma entre hoteles competidores y no hay un
 // «total del carrito». Lo calcula `resumirOpcionesComparativa` (puro); el servidor liquida y es la autoridad al crear la comparativa.
-import { Plane } from "lucide-react";
+import { Package, Plane } from "lucide-react";
 import { formatImporte } from "@/lib/cart/monedaCarrito";
 import { resumirOpcionesComparativa, type HotelComparativa } from "@/lib/cart/opcionesComparativa";
 import type { CartItem } from "@/lib/cart/CartContext";
@@ -20,8 +20,8 @@ export function ResumenOpcionesComparativa({ items, iataDe }: { items: readonly 
     });
   }
   const servicios = items.flatMap((i) => (i.tipo === "tour" && i.hotelItemId ? [{ nombre: i.nombre, precio: i.precio, hotelItemId: i.hotelItemId }] : []));
-  const vuelos = items.flatMap((i) => (i.tipo === "manual" && i.clase === "vuelo"
-    ? [{ id: i.id, nombre: i.nombre, tramo: i.tramo, pax: i.pax, precio: i.precio, impuestoNoComisionable: i.impuestoNoComisionable, moneda: i.moneda, hotelRef: i.hotelRef }] : []));
+  const vuelos = items.flatMap((i) => (i.tipo === "manual"
+    ? [{ clase: i.clase, id: i.id, nombre: i.nombre, tramo: i.tramo, pax: i.pax, precio: i.precio, impuestoNoComisionable: i.impuestoNoComisionable, moneda: i.moneda, hotelRef: i.hotelRef }] : []));
   const { grupos, sinDato, vuelosSinGrupo } = resumirOpcionesComparativa(hoteles, servicios, vuelos);
   if (!hoteles.length) return null;
 
@@ -57,7 +57,7 @@ export function ResumenOpcionesComparativa({ items, iataDe }: { items: readonly 
                     <ul className="mt-2 space-y-0.5 text-xs text-gray-600">
                       {o.vuelos.map((v) => (
                         <li key={v.id} className="flex justify-between gap-2">
-                          <span className="inline-flex min-w-0 items-start gap-1"><Plane size={12} className="mt-0.5 shrink-0" aria-hidden /><span className="break-words">{v.nombre}{v.tramo ? ` · ${ETIQUETA_TRAMO[v.tramo]}` : ""} · {v.pax} pax</span></span>
+                          <span className="inline-flex min-w-0 items-start gap-1">{v.clase === "otro" ? <Package size={12} className="mt-0.5 shrink-0" aria-hidden /> : <Plane size={12} className="mt-0.5 shrink-0" aria-hidden />}<span className="break-words">{v.nombre}{v.tramo ? ` · ${ETIQUETA_TRAMO[v.tramo]}` : ""} · {v.pax} pax</span></span>
                           <span className="shrink-0 tabular-nums">{formatImporte(v.precio, o.moneda)}</span>
                         </li>
                       ))}
@@ -65,7 +65,7 @@ export function ResumenOpcionesComparativa({ items, iataDe }: { items: readonly 
                   )}
                   <div className="mt-auto border-t border-gray-100 pt-2">
                     {o.impuestoNoComisionableVuelos > 0 && (
-                      <p className="flex justify-between gap-2 text-[11px] text-gray-500"><span>Impuesto no comisionable (vuelos)</span><span className="tabular-nums">{formatImporte(o.impuestoNoComisionableVuelos, o.moneda)}</span></p>
+                      <p className="flex justify-between gap-2 text-[11px] text-gray-500"><span>Impuesto no comisionable (vuelos y servicios)</span><span className="tabular-nums">{formatImporte(o.impuestoNoComisionableVuelos, o.moneda)}</span></p>
                     )}
                     <p className="flex items-baseline justify-between gap-2"><span className="text-xs font-medium text-gray-600">PVP de esta opción</span>
                       <span className="text-base font-bold tabular-nums" style={{ color: "var(--brand-primary)" }} data-testid="pvp-opcion">{formatImporte(o.pvp, o.moneda)}</span></p>

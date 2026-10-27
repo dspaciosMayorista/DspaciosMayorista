@@ -363,6 +363,8 @@ export function ContratoDocumento({
                 const origen = etiquetaIata(v.origen_codigo) || (manual ? v.origen_ciudad : etiquetaIata(r.origen)) || "—";
                 const destino = etiquetaIata(v.destino_codigo) || (manual ? v.destino_ciudad : etiquetaIata(r.destino)) || "—";
                 const direccionLabel = v.direccion === "ida" ? "Ida" : v.direccion === "regreso" ? "Regreso" : null;
+                // #47: el CONTRATO no muestra horarios ni número de vuelo (quedan guardados para la operación); la cotización sí muestra la hora local de salida.
+                const mostrarHorario = esCotizacion;
                 // Compat: contratos creados antes de que cada fila fuera UN tramo
                 // guardaban ida+regreso mezclados en la misma fila.
                 const esLegacyDoble = !v.numero_vuelo && !v.hora_salida && !!(v.vuelo_ida || v.vuelo_regreso || v.hora_salida_ida || v.hora_salida_reg);
@@ -390,22 +392,24 @@ export function ContratoDocumento({
                     <>
                       <div className="mt-1 text-xs text-gray-500">
                         Ida: {formatFechaLarga(v.fecha_salida)}
-                        {v.vuelo_ida ? ` · vuelo ${v.vuelo_ida}` : ""}
-                        {v.hora_salida_ida ? ` · ${v.hora_salida_ida}${v.hora_llegada_ida ? `–${v.hora_llegada_ida}` : ""}` : ""}
+                        {mostrarHorario && v.vuelo_ida ? ` · vuelo ${v.vuelo_ida}` : ""}
+                        {mostrarHorario && v.hora_salida_ida ? ` · ${v.hora_salida_ida}${v.hora_llegada_ida ? `–${v.hora_llegada_ida}` : ""}` : ""}
                       </div>
                       {(v.fecha_regreso || v.vuelo_regreso || v.hora_salida_reg) && (
                         <div className="text-xs text-gray-500">
                           Regreso: {formatFechaLarga(v.fecha_regreso)}
-                          {v.vuelo_regreso ? ` · vuelo ${v.vuelo_regreso}` : ""}
-                          {v.hora_salida_reg ? ` · ${v.hora_salida_reg}${v.hora_llegada_reg ? `–${v.hora_llegada_reg}` : ""}` : ""}
+                          {mostrarHorario && v.vuelo_regreso ? ` · vuelo ${v.vuelo_regreso}` : ""}
+                          {mostrarHorario && v.hora_salida_reg ? ` · ${v.hora_salida_reg}${v.hora_llegada_reg ? `–${v.hora_llegada_reg}` : ""}` : ""}
                         </div>
                       )}
                     </>
                   ) : (
                     <div className="mt-1 text-xs text-gray-500">
                       {direccionLabel ? `${direccionLabel}: ` : ""}{formatFechaLarga(v.fecha_salida)}
-                      {v.numero_vuelo ? ` · vuelo ${v.numero_vuelo}` : ""}
-                      {v.hora_salida ? ` · ${v.hora_salida}${v.hora_llegada ? `–${v.hora_llegada}` : ""}` : ""}
+                      {mostrarHorario && v.numero_vuelo ? ` · vuelo ${v.numero_vuelo}` : ""}
+                      {mostrarHorario && v.hora_salida
+                        ? (manual ? ` · salida ${v.hora_salida} (hora local)` : ` · ${v.hora_salida}${v.hora_llegada ? `–${v.hora_llegada}` : ""}`)
+                        : ""}
                     </div>
                   )}
                 </div>

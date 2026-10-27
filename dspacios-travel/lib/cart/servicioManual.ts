@@ -44,11 +44,18 @@ export type ServicioManual = {
   moneda: MonedaManual;
   /** Parte del precio que NO es comisionable (p. ej. impuestos del vuelo). 0 ≤ valor ≤ precio; solo lo captura personal interno. Base de comisión B2B = precio − esto. */
   impuestoNoComisionable: number;
+  /**
+   * Solo vuelo: hora LOCAL de salida del aeropuerto de cada tramo (HH:mm, 24 h). Opcional: null = horario sin confirmar. Nunca se inventa una hora de llegada.
+   * `horaIda` solo existe si el vuelo lleva el tramo de ida; `horaRegreso`, si lleva el de regreso. Ausente = null (cotizaciones anteriores).
+   */
+  horaIda?: string | null;
+  horaRegreso?: string | null;
 };
 
 export const MAX_MANUALES = 10;
 const MAX_PRECIO = 1_000_000_000_000;
 const FECHA = /^\d{4}-\d{2}-\d{2}$/;
+const HORA = /^([01]\d|2[0-3]):[0-5]\d$/;
 
 const esObjeto = (v: unknown): v is Record<string, unknown> => typeof v === "object" && v !== null && !Array.isArray(v);
 const texto = (v: unknown, max: number): string | null => {
@@ -105,7 +112,10 @@ export function validarServicioManual(raw: unknown, monedaCotizacion: string | n
   if (clase === "otro") {
     if (fechaRegreso && !fechaIda) return { ok: false, error: "Indica la fecha de ida para usar una de regreso." };
     if (fechaIda && fechaRegreso && fechaRegreso < fechaIda) return { ok: false, error: "El regreso no puede ser anterior a la ida." };
-    return { ok: true, valor: { ...comunes, origen: null, destino, fechaIda, fechaRegreso, tramo: null, hotelRef: null, hotelEtiqueta: null } };
+    // Un «otro servicio» de una COMPARATIVA se asocia a un grupo (destino + fechas) igual que un vuelo; en el carrito normal no lleva hotel (hotelRef null).
+    const hotelRefOtro = raw.hotelRef == null || raw.hotelRef === "" ? null : texto(raw.hotelRef, 80);
+    if ((raw.hotelRef ?? "") !== "" && !hotelRefOtro) return { ok: false, error: "El grupo o hotel del servicio no es válido." };
+    return { ok: true, valor: { ...comunes, origen: null, destino, fechaIda, fechaRegreso, tramo: null, hotelRef: hotelRefOtro, hotelEtiqueta: null, horaIda: null, horaRegreso: null } };
   }
 
   // Vuelo: tramo, hotel al que pertenece y ruta completa; cada tramo lleva SOLO sus fechas.
@@ -124,7 +134,17 @@ export function validarServicioManual(raw: unknown, monedaCotizacion: string | n
     if (!fechaIda || !fechaRegreso) return { ok: false, error: "Un vuelo de ida y regreso necesita las dos fechas." };
     if (fechaRegreso < fechaIda) return { ok: false, error: "El regreso no puede ser anterior a la ida." };
   }
-  return { ok: true, valor: { ...comunes, origen: origen.toUpperCase(), destino: destino.toUpperCase(), fechaIda, fechaRegreso, tramo: tramo as TramoVueloManual, hotelRef, hotelEtiqueta } };
+  const hora = (v: unknown, etiqueta: string, aplica: boolean): { ok: true; valor: string | null } | { ok: false; error: string } => {
+    if (v == null || v === "") return { ok: true, valor: null };
+    if (!aplica) return { ok: false, error: `Un vuelo de ${tramo === "ida" ? "solo ida" : "solo regreso"} no lleva ${etiqueta}.` };
+    if (typeof v !== "string" || !HORA.test(v)) return { ok: false, error: `${etiqueta[0].toUpperCase()}${etiqueta.slice(1)} no es válida: usa el formato HH:mm de 24 horas (por ejemplo 06:45).` };
+    return { ok: true, valor: v };
+  };
+  const hIda = hora(raw.horaIda, "la hora de ida", tramo !== "regreso");
+  if (!hIda.ok) return hIda;
+  const hRegreso = hora(raw.horaRegreso, "la hora de regreso", tramo !== "ida");
+  if (!hRegreso.ok) return hRegreso;
+  return { ok: true, valor: { ...comunes, origen: origen.toUpperCase(), destino: destino.toUpperCase(), fechaIda, fechaRegreso, tramo: tramo as TramoVueloManual, hotelRef, hotelEtiqueta, horaIda: hIda.valor, horaRegreso: hRegreso.valor } };
 }
 
 /** Compara ciudades sin mayúsculas, tildes ni espacios repetidos («Cartagena» = «CARTAGENA»). */
@@ -227,21 +247,82 @@ export function vuelosComunesCompatibles(
   }
   const grupoDe: (string | null)[] = [];
   for (const m of manuales) {
-    if (m.clase !== "vuelo") return { ok: false, error: "En una comparativa solo se pueden agregar vuelos manuales." };
+    const que = m.clase === "vuelo" ? "vuelo" : "servicio";
     let g = grupos.find((x) => x.clave === m.hotelRef);
     if (!g && m.hotelRef === "comun") {
-      if (grupos.length !== 1) return { ok: false, error: "Hay varios destinos o fechas en la comparativa: elige a qué grupo pertenece el vuelo." };
+      if (grupos.length !== 1) return { ok: false, error: `Hay varios destinos o fechas en la comparativa: elige a qué grupo pertenece el ${que}.` };
       g = grupos[0];
     }
-    if (!g) return { ok: false, error: `El vuelo «${m.nombre}» no pertenece a ningún grupo de la comparativa (destino y fechas).` };
+    if (!g) return { ok: false, error: `El ${que} «${m.nombre}» no pertenece a ningún grupo de la comparativa (destino y fechas).` };
     for (const h of g.hoteles) {
-      const r = validarVueloContraHotel(m, h);
-      if (!r.ok) return { ok: false, error: `El vuelo «${m.nombre}» no es compatible con la opción «${h.nombre}»: ${r.error}` };
-      if (h.pax != null && m.pax > h.pax) return { ok: false, error: `El vuelo «${m.nombre}» tiene ${m.pax} pasajeros y la opción «${h.nombre}» solo ${h.pax}.` };
+      if (m.clase === "vuelo") {
+        const r = validarVueloContraHotel(m, h);
+        if (!r.ok) return { ok: false, error: `El vuelo «${m.nombre}» no es compatible con la opción «${h.nombre}»: ${r.error}` };
+      }
+      if (h.pax != null && m.pax > h.pax) return { ok: false, error: `El ${que} «${m.nombre}» tiene ${m.pax} pasajeros y la opción «${h.nombre}» solo ${h.pax}.` };
     }
     grupoDe.push(g.clave);
   }
+  // Los vuelos de un grupo no pueden duplicar un tramo ni superar los pasajeros de ninguna de sus opciones (la misma regla que aplica el servidor al liquidar cada opción).
+  const cob = validarCoberturaVuelos(manuales, (_m, i) => grupoDe[i], (clave) => {
+    const g = grupos.find((x) => x.clave === clave);
+    const paxs = (g?.hoteles ?? []).map((h) => h.pax).filter((n): n is number => typeof n === "number" && n > 0);
+    return paxs.length ? Math.min(...paxs) : null;
+  });
+  if (!cob.ok) return cob;
   return { ok: true, grupoDe };
+}
+
+/** Pasajeros cubiertos por tramo en un destino de vuelos (un hotel, o un GRUPO de una comparativa). Un vuelo «ida y regreso» cubre los dos tramos. */
+export type CoberturaTramos = { ida: number; regreso: number };
+
+/**
+ * Cobertura acumulada de los vuelos por objetivo. `objetivoDe` devuelve el hotel/grupo al que pertenece cada manual (null = no cuenta). `excluir` omite un manual
+ * (el que se está editando: su propio grupo debe seguir disponible).
+ */
+export function coberturaVuelos(manuales: readonly ServicioManual[], objetivoDe: (m: ServicioManual, i: number) => string | null, excluir: number | null = null): Map<string, CoberturaTramos> {
+  const out = new Map<string, CoberturaTramos>();
+  manuales.forEach((m, i) => {
+    if (i === excluir || m.clase !== "vuelo" || !m.tramo) return;
+    const o = objetivoDe(m, i);
+    if (!o) return;
+    const c = out.get(o) ?? { ida: 0, regreso: 0 };
+    if (m.tramo !== "regreso") c.ida += m.pax;
+    if (m.tramo !== "ida") c.regreso += m.pax;
+    out.set(o, c);
+  });
+  return out;
+}
+
+/** ¿Ida y regreso ya están cubiertos para TODOS los pasajeros? Un vuelo que cubre solo a una parte (o solo la ida) deja el objetivo disponible. */
+export const objetivoCubierto = (c: CoberturaTramos | undefined, pax: number): boolean => !!c && pax > 0 && c.ida >= pax && c.regreso >= pax;
+
+/**
+ * Impide, también en una llamada directa, duplicar un tramo o superar los pasajeros: por objetivo, la suma de pasajeros de los vuelos que cubren la ida (y la de los que
+ * cubren el regreso) no puede exceder los pasajeros de ese objetivo. `paxDe` = pasajeros del objetivo (null = no se puede comprobar: no se rechaza).
+ */
+export function validarCoberturaVuelos(
+  manuales: readonly ServicioManual[], objetivoDe: (m: ServicioManual, i: number) => string | null, paxDe: (objetivo: string) => number | null,
+): { ok: true } | { ok: false; error: string } {
+  const acumulado = new Map<string, CoberturaTramos>();
+  for (const [i, m] of manuales.entries()) {
+    if (m.clase !== "vuelo" || !m.tramo) continue;
+    const o = objetivoDe(m, i);
+    const pax = o ? paxDe(o) : null;
+    if (!o || pax == null) continue;
+    const c = acumulado.get(o) ?? { ida: 0, regreso: 0 };
+    for (const t of ["ida", "regreso"] as const) {
+      if (m.tramo === (t === "ida" ? "regreso" : "ida")) continue;
+      if (c[t] + m.pax > pax) {
+        return { ok: false, error: c[t] >= pax
+          ? `Vuelo «${m.nombre}»: el tramo de ${t} ya está cubierto para los ${pax} pasajeros; no se puede agregar otro vuelo que lo repita.`
+          : `Vuelo «${m.nombre}»: el tramo de ${t} cubriría ${c[t] + m.pax} pasajeros y solo viajan ${pax} (ya hay ${c[t]} cubiertos; faltan ${pax - c[t]}).` };
+      }
+      c[t] += m.pax;
+    }
+    acumulado.set(o, c);
+  }
+  return { ok: true };
 }
 
 const lugar = (t: string | null): { codigo: string | null; ciudad: string | null } => {
@@ -256,13 +337,14 @@ export function tramosVueloManual(m: ServicioManual, cotizado: boolean): Record<
   if (m.clase !== "vuelo" || !m.tramo) return [];
   const o = lugar(m.origen), d = lugar(m.destino);
   const servicios = `Vuelo manual · pasajeros en este vuelo: ${m.pax} · ${cotizado ? AVISO_COTIZACION : "precio y proveedor declarados por el asesor; sin reserva ni sillas en el sistema"}`;
-  const fila = (direccion: "ida" | "regreso", de: typeof o, a: typeof d, fecha: string | null) => ({
-    aerolinea: null, record: null, direccion, numero_vuelo: null,
+  // `hora_salida` = hora LOCAL de salida del aeropuerto de origen de ESE tramo (null si no está confirmada). No existe hora de llegada ni número de vuelo en un vuelo manual.
+  const fila = (direccion: "ida" | "regreso", de: typeof o, a: typeof d, fecha: string | null, hora: string | null | undefined) => ({
+    aerolinea: null, record: null, direccion, numero_vuelo: null, hora_salida: hora ?? null,
     origen_codigo: de.codigo, origen_ciudad: de.ciudad, destino_codigo: a.codigo, destino_ciudad: a.ciudad, servicios, fecha_salida: fecha,
   });
-  if (m.tramo === "ida") return [fila("ida", o, d, m.fechaIda)];
-  if (m.tramo === "regreso") return [fila("regreso", o, d, m.fechaRegreso)];
-  return [fila("ida", o, d, m.fechaIda), fila("regreso", d, o, m.fechaRegreso)];
+  if (m.tramo === "ida") return [fila("ida", o, d, m.fechaIda, m.horaIda)];
+  if (m.tramo === "regreso") return [fila("regreso", o, d, m.fechaRegreso, m.horaRegreso)];
+  return [fila("ida", o, d, m.fechaIda, m.horaIda), fila("regreso", d, o, m.fechaRegreso, m.horaRegreso)];
 }
 
 /** ¿Esta fila del cuadro de vuelos es de un vuelo manual? (la nota empieza por «Vuelo manual») */
@@ -375,7 +457,7 @@ export function verificarManualesCotizados(a: {
   // Cuadro de vuelos: las filas pintadas deben ser EXACTAMENTE las que salen de los vuelos del bloque (ruta, tramo, fecha, pasajeros, aviso), en el mismo orden.
   const esperadas = manuales.flatMap((m) => tramosVueloManual(m, true));
   if (tramosDoc.length !== esperadas.length) return malo("el cuadro de vuelos cotizado trae otra cantidad de tramos");
-  const CAMPOS = ["aerolinea", "record", "direccion", "origen_codigo", "origen_ciudad", "destino_codigo", "destino_ciudad", "fecha_salida", "servicios"] as const;
+  const CAMPOS = ["aerolinea", "record", "direccion", "hora_salida", "origen_codigo", "origen_ciudad", "destino_codigo", "destino_ciudad", "fecha_salida", "servicios"] as const;
   for (const [i, e] of esperadas.entries()) {
     for (const c of CAMPOS) if ((tramosDoc[i][c] ?? null) !== (e[c] ?? null)) return malo(`el tramo ${i + 1} del cuadro de vuelos no coincide con lo cotizado (${c})`);
   }

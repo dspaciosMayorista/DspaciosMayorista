@@ -33,7 +33,7 @@ export type ResumenHotelUI = {
   plan?: string | null;
   servicios?: { nombre: string; precio?: number | null }[];
   /** Vuelos manuales comunes: ruta, tramo, fecha y pasajeros (sin precio). Su valor ya está en el total de la opción. */
-  vuelos?: { tramo: string; origen: string | null; destino: string | null; fecha: string | null; nota: string }[];
+  vuelos?: { tramo: string; origen: string | null; destino: string | null; fecha: string | null; hora?: string | null; nota: string }[];
   items?: { descripcion: string; valor: number }[];
   incluye?: string | null;
   noIncluye?: string | null;
@@ -276,7 +276,7 @@ export function SelectorOpciones({
               )}
               {r.vuelos && r.vuelos.length > 0 && (
                 <ul className="mb-3 space-y-1 text-xs text-gray-600" data-testid="vuelos-opcion">
-                  {r.vuelos.map((v, i) => <li key={i}>Vuelo {v.tramo}: {v.origen ?? "—"} → {v.destino ?? "—"}{v.fecha ? ` · ${v.fecha}` : ""} · {v.nota.replace(/^Vuelo manual · /, "")}</li>)}
+                  {r.vuelos.map((v, i) => <li key={i}>Vuelo {v.tramo}: {v.origen ?? "—"} → {v.destino ?? "—"}{v.fecha ? ` · ${v.fecha}` : ""}{v.hora ? ` · salida ${v.hora} (hora local)` : ""} · {v.nota.replace(/^Vuelo manual · /, "")}</li>)}
                 </ul>
               )}
               {r.items && r.items.length > 0 && (

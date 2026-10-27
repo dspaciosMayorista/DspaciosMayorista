@@ -7,13 +7,15 @@ import { agruparHotelesPorViaje, claveGrupoViaje, esClaveGrupoViaje, type HotelD
 export type HotelComparativa = HotelDeVuelo & { id: string; pax: number; precio: number; moneda: string | null };
 export type ServicioHijo = { nombre: string; precio: number; hotelItemId: string };
 export type VueloComparativa = {
+  /** «otro» = servicio manual que no es un vuelo (sin tramo): se suma igual, una vez, a cada opción de su grupo. */
+  clase?: "vuelo" | "otro";
   id: string; nombre: string; tramo: TramoVueloManual | null; pax: number; precio: number; impuestoNoComisionable: number; moneda: string; hotelRef: string | null;
 };
 
 export type OpcionResumen = {
   hotelId: string; hotelNombre: string; pax: number; moneda: string | null;
   hotelPrecio: number; servicios: { nombre: string; precio: number }[];
-  vuelos: { id: string; nombre: string; tramo: TramoVueloManual | null; pax: number; precio: number; impuestoNoComisionable: number }[];
+  vuelos: { clase?: "vuelo" | "otro"; id: string; nombre: string; tramo: TramoVueloManual | null; pax: number; precio: number; impuestoNoComisionable: number }[];
   /** PVP de ESTA alternativa: hotel + servicios hijos + vuelos de su grupo (cada uno una vez). */
   pvp: number;
   /** Parte NO comisionable de los vuelos de la opción (los impuestos del hotel los liquida el servidor). */
@@ -46,7 +48,7 @@ export function resumirOpcionesComparativa(
       clave: g.clave, destinoIata: g.destinoIata, fechaIda: g.fechaIda, fechaRegreso: g.fechaRegreso,
       opciones: g.hoteles.map((h): OpcionResumen => {
         const hijos = servicios.filter((s) => s.hotelItemId === h.id).map((s) => ({ nombre: s.nombre, precio: s.precio }));
-        const vs = (porGrupo.get(g.clave) ?? []).map((v) => ({ id: v.id, nombre: v.nombre, tramo: v.tramo, pax: v.pax, precio: v.precio, impuestoNoComisionable: v.impuestoNoComisionable }));
+        const vs = (porGrupo.get(g.clave) ?? []).map((v) => ({ clase: v.clase, id: v.id, nombre: v.nombre, tramo: v.tramo, pax: v.pax, precio: v.precio, impuestoNoComisionable: v.impuestoNoComisionable }));
         return {
           hotelId: h.id, hotelNombre: h.nombre, pax: h.pax, moneda: h.moneda, hotelPrecio: h.precio, servicios: hijos, vuelos: vs,
           pvp: h.precio + hijos.reduce((s, x) => s + x.precio, 0) + vs.reduce((s, x) => s + x.precio, 0),

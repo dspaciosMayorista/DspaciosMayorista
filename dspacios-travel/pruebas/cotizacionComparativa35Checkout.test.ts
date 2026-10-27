@@ -132,8 +132,14 @@ describe("crearComparativaCarrito — armado de opciones con el motor real", () 
     assert.ok(r.ok && r.id === 900 && r.codigo === "C-0900");
   });
 
-  test("cada hotel genera sus acomodaciones uniformes; la del carrito va primero y cada una tiene su total", async () => {
+  test("por defecto cada hotel se cotiza SOLO con la acomodación del carrito (sin alternativas por tener otra tarifa disponible)", async () => {
     await crear([hotel("hA", 1), hotel("hB", 2)]);
+    const ops = llamadas("crear_cotizacion_comparativa")[0].args.p_opciones as Array<{ opcion_ref: string; acomodacion_ref: string; total: number }>;
+    assert.deepEqual(ops.map((o) => `${o.opcion_ref}/${o.acomodacion_ref}`), ["A/doble", "B/doble"]);
+  });
+
+  test("otrasAcomodaciones: true (elección expresa): cada hotel genera sus acomodaciones uniformes; la del carrito va primero y cada una tiene su total", async () => {
+    await crear([hotel("hA", 1), hotel("hB", 2)], [], { otrasAcomodaciones: true });
     const ops = llamadas("crear_cotizacion_comparativa")[0].args.p_opciones as Array<{ opcion_ref: string; acomodacion_ref: string; total: number; tarifa_persona: number; etiqueta: string }>;
     assert.deepEqual(ops.map((o) => `${o.opcion_ref}/${o.acomodacion_ref}`), ["A/doble", "A/sencilla", "B/doble", "B/sencilla"]);
     const por = Object.fromEntries(ops.map((o) => [`${o.opcion_ref}/${o.acomodacion_ref}`, o]));

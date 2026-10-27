@@ -197,7 +197,7 @@ describe("Panel de servicio manual en el checkout", () => {
     await act(async () => { click(boton(/Generar cotización y enviar solicitud/, m.container)!); await espera(80); });
     const enviado = stub.__solicitudes[n0] as { manuales?: Record<string, unknown>[] } | undefined;
     assert.ok(enviado, "se envió la solicitud");
-    assert.deepEqual(Object.keys(enviado!.manuales![0]).sort(), ["clase", "destino", "fechaIda", "fechaRegreso", "hotelRef", "impuestoNoComisionable", "moneda", "nombre", "origen", "pax", "precio", "tramo"]);
+    assert.deepEqual(Object.keys(enviado!.manuales![0]).sort(), ["clase", "destino", "fechaIda", "fechaRegreso", "horaIda", "horaRegreso", "hotelRef", "impuestoNoComisionable", "moneda", "nombre", "origen", "pax", "precio", "tramo"]);
     assert.equal(enviado!.manuales![0].precio, 90_000);
     assert.equal(enviado!.manuales![0].impuestoNoComisionable, 25_000, "el impuesto no comisionable viaja para congelarse en la cotización");
     stub.__setCrearSolicitudReserva(null);

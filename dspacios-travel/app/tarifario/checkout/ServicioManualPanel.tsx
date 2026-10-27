@@ -12,7 +12,7 @@ import { Pencil, Plus, Trash2 } from "lucide-react";
 import { DateInput } from "@/components/ui/DateInput";
 import { useCart, type ManualCartItem } from "@/lib/cart/CartContext";
 import {
-  agruparHotelesPorViaje, fechasDeVuelo, validarServicioManual, validarVueloContraHotel, vuelosComunesCompatibles,
+  agruparHotelesPorViaje, coberturaVuelos, fechasDeVuelo, objetivoCubierto, validarServicioManual, validarVueloContraHotel, vuelosComunesCompatibles,
   type HotelDeVuelo, type ServicioManual, type TramoVueloManual,
 } from "@/lib/cart/servicioManual";
 import { useIatasDestinos } from "@/lib/cart/useIatasDestinos";
@@ -22,10 +22,11 @@ import { monedaDeItem, preverCotizacion, formatImporte } from "@/lib/cart/moneda
 export const HOTEL_COMUN = "comun";
 
 const ETIQUETA_TRAMO: Record<TramoVueloManual, string> = { ida: "Solo ida", regreso: "Solo regreso", ida_regreso: "Ida y regreso" };
-const VACIO = { clase: "vuelo", tramo: "ida_regreso", hotelRef: "", nombre: "", otraCiudad: "", fechaIda: "", fechaRegreso: "", pax: "", precio: "", impuestoNoComisionable: "0", moneda: "COP" };
+const VACIO = { clase: "vuelo", tramo: "ida_regreso", hotelRef: "", nombre: "", otraCiudad: "", fechaIda: "", fechaRegreso: "", horaIda: "", horaRegreso: "", pax: "", precio: "", impuestoNoComisionable: "0", moneda: "COP" };
 type Borrador = typeof VACIO;
 type HotelPanel = HotelDeVuelo & { id: string; pax: number };
 
+const AVISO_TODO_CUBIERTO = (comun: boolean) => `${comun ? "Todos los grupos de la comparativa" : "Todos los hoteles del carrito"} ya tienen cubiertas la ida y el regreso para todos los pasajeros. Edita o quita un vuelo para agregar otro.`;
 const corto = (f: string | null) => (f ? f.slice(5).replace("-", "/") : "—");
 
 export function ServicioManualPanel({ comun = false }: { comun?: boolean }) {
@@ -46,6 +47,8 @@ export function ServicioManualPanel({ comun = false }: { comun?: boolean }) {
   const [b, setB] = useState<Borrador>(VACIO);
   const [err, setErr] = useState("");
   const [abierto, setAbierto] = useState(false);
+  // Los pasajeros solo se sugieren mientras el usuario no los haya editado expresamente (al cambiar de grupo se sugieren los del nuevo grupo, sin pisar su cantidad).
+  const [paxEditado, setPaxEditado] = useState(false);
 
   // Moneda ya fijada por el resto del carrito (sin contar el servicio que se edita): el manual se alinea a ella o se rechaza.
   const resto = items.filter((i) => i.id !== editando && i.tipo !== "manual");
@@ -55,14 +58,28 @@ export function ServicioManualPanel({ comun = false }: { comun?: boolean }) {
   const lbl = "mb-1 block text-xs font-medium text-gray-600";
   const set = (k: keyof Borrador, v: string) => setB((p) => ({ ...p, [k]: v }));
 
-  // ── A qué pertenece el vuelo ─────────────────────────────────────────────
-  // Carrito normal: a UN hotel. Comparativa: a un GRUPO (destino IATA + fechas), que lleva a todos sus hoteles alternativos.
-  const destinosDistintos = new Set(hoteles.map((h) => (h.destino ?? "").trim().toUpperCase())).size;
-  const grupoDeHotel = (id: string) => grupos.find((g) => g.hoteles.some((h) => h.id === id)) ?? null;
+  // ── A qué pertenece el servicio ──────────────────────────────────────────
+  // Carrito normal: un vuelo a UN hotel. Comparativa: a un GRUPO (destino IATA + fechas), que lleva a todos sus hoteles alternativos; un «otro servicio» también.
+  const esVuelo = b.clase === "vuelo";
+  // Cobertura de pasajeros por tramo de los vuelos YA agregados (sin contar el que se edita: su propio grupo debe seguir disponible).
+  const idxEditado = editando ? manuales.findIndex((m) => m.id === editando) : null;
+  const objetivoDeManual = (m: ServicioManual): string | null => (comun
+    ? (grupos.find((g) => g.clave === m.hotelRef) ?? (m.hotelRef === HOTEL_COMUN && grupos.length === 1 ? grupos[0] : null))?.clave ?? null
+    : null);
+  const cobertura = coberturaVuelos(manuales as ServicioManual[], objetivoDeManual, idxEditado);
+  // Límite de pasajeros de un grupo = el de la opción con MENOS pasajeros: es el que valida el servidor (cada opción liquida su propia cobertura), así que la pantalla nunca ofrece lo que él rechaza.
+  const paxLimiteGrupo = (g: (typeof grupos)[number]) => { const p = g.hoteles.map((h) => h.pax || 0).filter((n) => n > 0); return p.length ? Math.min(...p) : 0; };
+  // Un vuelo solo se ofrece donde todavía faltan pasajeros por cubrir en ida o regreso; un vuelo que cubre a una parte deja el grupo disponible para completar el resto.
+  const gruposSel = comun ? (esVuelo ? grupos.filter((g) => !objetivoCubierto(cobertura.get(g.clave), paxLimiteGrupo(g))) : grupos) : [];
+  const hotelesSel: HotelPanel[] = comun ? gruposSel.flatMap((g) => g.hoteles) : hoteles;
+  // La cobertura por tramo rige en las COMPARATIVAS; el carrito normal conserva su criterio (por defecto, los pasajeros de toda la cotización).
+  const todoCubierto = comun && esVuelo && hoteles.length > 0 && sinDato.length === 0 && gruposSel.length === 0;
+  const destinosDistintos = new Set(hotelesSel.map((h) => (h.destino ?? "").trim().toUpperCase())).size;
+  const grupoDeHotel = (id: string) => gruposSel.find((g) => g.hoteles.some((h) => h.id === id)) ?? null;
   const grupoElegido = comun
-    ? (grupos.length === 1 ? grupos[0] : (grupos.find((g) => g.clave === b.hotelRef) ?? grupoDeHotel(b.hotelRef)))
+    ? (gruposSel.length === 1 ? gruposSel[0] : (gruposSel.find((g) => g.clave === b.hotelRef) ?? grupoDeHotel(b.hotelRef)))
     : null;
-  const hotelElegido: HotelPanel | null = comun ? null : (hoteles.length === 1 ? hoteles[0] : hoteles.find((h) => h.id === b.hotelRef) ?? null);
+  const hotelElegido: HotelPanel | null = comun ? null : (hotelesSel.length === 1 ? hotelesSel[0] : hotelesSel.find((h) => h.id === b.hotelRef) ?? null);
   // Referencia del plan: el hotel (carrito) o el grupo (comparativa).
   const plan = comun ? (grupoElegido ? { ida: grupoElegido.fechaIda, regreso: grupoElegido.fechaRegreso, iata: grupoElegido.destinoIata, destino: grupoElegido.hoteles[0].destino } : null)
     : (hotelElegido ? { ida: hotelElegido.fechaIda, regreso: hotelElegido.fechaRegreso, iata: hotelElegido.destinoIata ?? null, destino: hotelElegido.destino } : null);
@@ -70,12 +87,12 @@ export function ServicioManualPanel({ comun = false }: { comun?: boolean }) {
   const fechas = plan ? fechasDeVuelo(tramo, { fechaIda: plan.ida, fechaRegreso: plan.regreso }) : { fechaIda: null, fechaRegreso: null };
   // Pasajeros: el carrito normal suma sus hoteles; en una comparativa las alternativas NO se suman (el vuelo propone los de una opción del grupo).
   const paxCarrito = hoteles.reduce((s, h) => s + (h.pax || 0), 0) || 1;
-  const paxGrupo = grupoElegido ? Math.min(...grupoElegido.hoteles.map((h) => h.pax || 0).filter((n) => n > 0)) : 0;
-  const paxPropuesto = comun ? (Number.isFinite(paxGrupo) && paxGrupo > 0 ? paxGrupo : (hoteles[0]?.pax || 1)) : paxCarrito;
+  const paxGrupo = grupoElegido ? paxLimiteGrupo(grupoElegido) : 0;
+  const paxPropuesto = comun ? (paxGrupo > 0 ? paxGrupo : (hoteles[0]?.pax || 1)) : paxCarrito;
 
   // Selector: hotel si hay más de un destino; si hay un destino con varias fechas, el grupo de fechas (sin exigir un hotel concreto).
-  const selectorHotel = comun ? destinosDistintos > 1 : hoteles.length > 1;
-  const selectorFechas = comun && destinosDistintos <= 1 && grupos.length > 1;
+  const selectorHotel = comun ? destinosDistintos > 1 : hotelesSel.length > 1;
+  const selectorFechas = comun && destinosDistintos <= 1 && gruposSel.length > 1;
 
   // Mantiene las fechas del vuelo ligadas al plan: si el plan del hotel o del grupo cambió, el vuelo se actualiza solo.
   useEffect(() => {
@@ -94,23 +111,30 @@ export function ServicioManualPanel({ comun = false }: { comun?: boolean }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [JSON.stringify(hoteles.map((h) => [h.id, h.fechaIda, h.fechaRegreso])), manuales.map((m) => `${m.id}|${m.fechaIda}|${m.fechaRegreso}|${m.hotelRef}`).join(",")]);
 
-  function limpiar() { setB(VACIO); setEditando(null); setErr(""); setAbierto(false); }
-  function abrirNuevo() { setB({ ...VACIO, pax: String(comun ? (grupos.length === 1 && Number.isFinite(Math.min(...grupos[0].hoteles.map((h) => h.pax || 0))) ? Math.min(...grupos[0].hoteles.map((h) => h.pax || 0)) || 1 : (hoteles[0]?.pax || 1)) : paxCarrito) }); setAbierto(true); }
+  function limpiar() { setB(VACIO); setEditando(null); setErr(""); setAbierto(false); setPaxEditado(false); }
+  function abrirNuevo() { setB({ ...VACIO, pax: String(comun ? (grupos.length === 1 ? paxLimiteGrupo(grupos[0]) || 1 : (hoteles[0]?.pax || 1)) : paxCarrito) }); setPaxEditado(false); setAbierto(true); }
+  useEffect(() => {
+    if (!abierto || paxEditado || !comun || !grupoElegido || paxGrupo <= 0) return;
+    setB((p) => (p.pax === String(paxGrupo) ? p : { ...p, pax: String(paxGrupo) }));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [grupoElegido?.clave, paxGrupo, abierto, paxEditado, comun]);
 
   function editar(m: ManualCartItem) {
     const esRegreso = m.tramo === "regreso";
     setEditando(m.id);
+    setPaxEditado(true); // al editar se respeta la cantidad ya guardada
     setB({
       clase: m.clase, tramo: m.tramo ?? "ida_regreso", hotelRef: m.hotelRef ?? "", nombre: m.nombre, otraCiudad: (esRegreso ? m.destino : m.origen) ?? "",
-      fechaIda: m.fechaIda ?? "", fechaRegreso: m.fechaRegreso ?? "", pax: String(m.pax), precio: String(m.precio),
+      fechaIda: m.fechaIda ?? "", fechaRegreso: m.fechaRegreso ?? "", horaIda: m.horaIda ?? "", horaRegreso: m.horaRegreso ?? "", pax: String(m.pax), precio: String(m.precio),
       impuestoNoComisionable: String(m.impuestoNoComisionable), moneda: m.moneda,
     });
     setAbierto(true); setErr("");
   }
 
   function guardar() {
-    const esVuelo = b.clase === "vuelo";
+    if (comun && !esVuelo && !grupoElegido) { setErr("Elige a qué grupo de la comparativa (destino y fechas) pertenece el servicio."); return; }
     if (esVuelo) {
+      if (todoCubierto) { setErr(AVISO_TODO_CUBIERTO(comun)); return; }
       if (sinDato.length) {
         const h = sinDato[0];
         setErr(!h.destinoIata
@@ -132,23 +156,26 @@ export function ServicioManualPanel({ comun = false }: { comun?: boolean }) {
         ...base, tramo, hotelRef: comun ? grupoElegido!.clave : hotelElegido!.id,
         origen: tramo === "regreso" ? plan!.iata : otra, destino: tramo === "regreso" ? otra : plan!.iata,
         fechaIda: fechas.fechaIda, fechaRegreso: fechas.fechaRegreso,
+        horaIda: tramo === "regreso" ? null : (b.horaIda || null), horaRegreso: tramo === "ida" ? null : (b.horaRegreso || null),
       }
-      : { ...base, origen: null, destino: null, fechaIda: b.fechaIda, fechaRegreso: b.fechaRegreso };
+      : { ...base, origen: null, destino: null, fechaIda: b.fechaIda, fechaRegreso: b.fechaRegreso, hotelRef: comun ? grupoElegido!.clave : null };
     const r = validarServicioManual(crudo, monedaCarrito);
     if (!r.ok) { setErr(r.error); return; }
     // Mismas comprobaciones que el servidor: ciudad (IATA) y fechas del plan; en una comparativa, contra TODOS los hoteles del grupo y sin sumar pasajeros de alternativas.
-    if (esVuelo) {
-      const v = comun
-        ? vuelosComunesCompatibles([r.valor], hoteles)
-        : (() => { const x = validarVueloContraHotel(r.valor, { ...hotelElegido!, ref: hotelElegido!.id }); return x.ok ? { ok: true as const } : x; })();
+    // Y contra los vuelos ya agregados: ningún tramo se duplica ni supera los pasajeros (el servidor lo vuelve a exigir).
+    const restoManuales = manuales.filter((m) => m.id !== editando) as ServicioManual[];
+    if (comun) {
+      const v = vuelosComunesCompatibles([...restoManuales, r.valor], hoteles);
       if (!v.ok) { setErr(v.error); return; }
+    } else if (esVuelo) {
+      const x = validarVueloContraHotel(r.valor, { ...hotelElegido!, ref: hotelElegido!.id });
+      if (!x.ok) { setErr(x.error); return; }
     }
     if (editando) actualizarManual(editando, r.valor as ServicioManual);
     else add({ ...r.valor, tipo: "manual", fotoUrl: null, noches: null });
     limpiar();
   }
 
-  const esVuelo = b.clase === "vuelo";
   const conIda = b.tramo !== "regreso";
   const conRegreso = b.tramo !== "ida";
   const iataHotel = plan?.iata ?? null;
@@ -183,7 +210,7 @@ export function ServicioManualPanel({ comun = false }: { comun?: boolean }) {
           {manuales.map((m) => (
             <li key={m.id} className="flex items-center justify-between gap-2 rounded-lg bg-gray-50 px-3 py-2 text-sm">
               <span className="min-w-0 break-words">
-                {m.nombre}{m.tramo ? ` · ${ETIQUETA_TRAMO[m.tramo]}` : ""}{m.clase === "vuelo" && m.origen && m.destino ? ` · ${m.origen} → ${m.destino}` : ""} · {m.pax} pax · {formatImporte(m.precio, monedaDeItem(m))}
+                {m.nombre}{m.tramo ? ` · ${ETIQUETA_TRAMO[m.tramo]}` : ""}{m.clase === "vuelo" && m.origen && m.destino ? ` · ${m.origen} → ${m.destino}` : ""} · {m.pax} pax{m.horaIda ? ` · ida ${m.horaIda}` : ""}{m.horaRegreso ? ` · regreso ${m.horaRegreso}` : ""} · {formatImporte(m.precio, monedaDeItem(m))}
               </span>
               <span className="flex shrink-0 gap-2">
                 <button type="button" aria-label={`Editar ${m.nombre}`} onClick={() => editar(m)} className="text-gray-500 hover:text-gray-800"><Pencil size={14} aria-hidden /></button>
@@ -197,44 +224,51 @@ export function ServicioManualPanel({ comun = false }: { comun?: boolean }) {
         <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
           <div>
             <label className={lbl} htmlFor="man-clase">Tipo</label>
-            <select id="man-clase" className={inp} value={b.clase} disabled={comun} onChange={(e) => set("clase", e.target.value)}>
+            <select id="man-clase" className={inp} value={b.clase} onChange={(e) => set("clase", e.target.value)}>
               <option value="vuelo">Vuelo</option>
-              {!comun && <option value="otro">Otro servicio</option>}
+              <option value="otro">Otro servicio</option>
             </select>
           </div>
           <div>
             <label className={lbl} htmlFor="man-nombre">Descripción</label>
             <input id="man-nombre" className={inp} value={b.nombre} onChange={(e) => set("nombre", e.target.value)} placeholder={esVuelo ? "Ej. Tiquete Avianca" : "Ej. Traslado privado"} />
           </div>
+          {todoCubierto && (
+            <p role="alert" data-testid="aviso-grupos-cubiertos" className="rounded-lg bg-amber-50 px-3 py-2 text-xs text-amber-900 sm:col-span-2">{AVISO_TODO_CUBIERTO(comun)}</p>
+          )}
+          {esVuelo && (
+            <div>
+              <label className={lbl} htmlFor="man-tramo">Tramos del vuelo</label>
+              <select id="man-tramo" className={inp} value={b.tramo} onChange={(e) => set("tramo", e.target.value)}>
+                {(Object.keys(ETIQUETA_TRAMO) as TramoVueloManual[]).map((t) => <option key={t} value={t}>{ETIQUETA_TRAMO[t]}</option>)}
+              </select>
+            </div>
+          )}
+          {(esVuelo || comun) && !todoCubierto && (
+            <div>
+              <label className={lbl} htmlFor="man-hotel">{comun ? "Grupo de la comparativa" : "Hotel o destino del carrito"}</label>
+              {comun && !selectorHotel && !selectorFechas ? (
+                <p id="man-hotel" className="rounded-lg bg-gray-50 px-3 py-2 text-sm text-gray-700">
+                  {gruposSel.length ? `Todas las opciones · ${gruposSel[0].destinoIata} · ${corto(gruposSel[0].fechaIda)} → ${corto(gruposSel[0].fechaRegreso)}` : "Sin destino con código IATA"}
+                </p>
+              ) : selectorFechas ? (
+                <select id="man-hotel" className={inp} value={grupoElegido?.clave ?? ""} onChange={(e) => set("hotelRef", e.target.value)}>
+                  <option value="">Elige las fechas…</option>
+                  {gruposSel.map((g) => <option key={g.clave} value={g.clave}>{etiquetaGrupo(g)}</option>)}
+                </select>
+              ) : !comun && hotelesSel.length === 1 ? (
+                <p id="man-hotel" className="rounded-lg bg-gray-50 px-3 py-2 text-sm text-gray-700">{hotelesSel[0].nombre}{hotelesSel[0].destino ? ` · ${hotelesSel[0].destino}` : ""}</p>
+              ) : (
+                <select id="man-hotel" className={inp} value={comun ? (grupoElegido ? (grupoElegido.hoteles[0]?.id ?? "") : "") : b.hotelRef}
+                  onChange={(e) => set("hotelRef", e.target.value)}>
+                  <option value="">Elige el hotel…</option>
+                  {hotelesSel.map((h) => <option key={h.id} value={h.id}>{h.nombre}{h.destinoIata ? ` · ${h.destinoIata}` : ""}</option>)}
+                </select>
+              )}
+            </div>
+          )}
           {esVuelo && (
             <>
-              <div>
-                <label className={lbl} htmlFor="man-tramo">Tramos del vuelo</label>
-                <select id="man-tramo" className={inp} value={b.tramo} onChange={(e) => set("tramo", e.target.value)}>
-                  {(Object.keys(ETIQUETA_TRAMO) as TramoVueloManual[]).map((t) => <option key={t} value={t}>{ETIQUETA_TRAMO[t]}</option>)}
-                </select>
-              </div>
-              <div>
-                <label className={lbl} htmlFor="man-hotel">{comun ? "Grupo de la comparativa" : "Hotel o destino del carrito"}</label>
-                {comun && !selectorHotel && !selectorFechas ? (
-                  <p id="man-hotel" className="rounded-lg bg-gray-50 px-3 py-2 text-sm text-gray-700">
-                    {grupos.length ? `Todas las opciones · ${grupos[0].destinoIata} · ${corto(grupos[0].fechaIda)} → ${corto(grupos[0].fechaRegreso)}` : "Sin destino con código IATA"}
-                  </p>
-                ) : selectorFechas ? (
-                  <select id="man-hotel" className={inp} value={grupoElegido?.clave ?? ""} onChange={(e) => set("hotelRef", e.target.value)}>
-                    <option value="">Elige las fechas…</option>
-                    {grupos.map((g) => <option key={g.clave} value={g.clave}>{etiquetaGrupo(g)}</option>)}
-                  </select>
-                ) : !comun && hoteles.length === 1 ? (
-                  <p id="man-hotel" className="rounded-lg bg-gray-50 px-3 py-2 text-sm text-gray-700">{hoteles[0].nombre}{hoteles[0].destino ? ` · ${hoteles[0].destino}` : ""}</p>
-                ) : (
-                  <select id="man-hotel" className={inp} value={comun ? (grupoElegido ? (grupoElegido.hoteles[0]?.id ?? "") : "") : b.hotelRef}
-                    onChange={(e) => set("hotelRef", e.target.value)}>
-                    <option value="">Elige el hotel…</option>
-                    {hoteles.map((h) => <option key={h.id} value={h.id}>{h.nombre}{h.destinoIata ? ` · ${h.destinoIata}` : ""}</option>)}
-                  </select>
-                )}
-              </div>
               <div>
                 <label className={lbl} htmlFor="man-hotel-ciudad">{tramo === "regreso" ? "Origen (IATA del hotel)" : "Llegada (IATA del hotel)"}</label>
                 <p id="man-hotel-ciudad" className="rounded-lg bg-gray-50 px-3 py-2 text-sm font-mono text-gray-700">{iataHotel ?? "—"}</p>
@@ -248,6 +282,20 @@ export function ServicioManualPanel({ comun = false }: { comun?: boolean }) {
                   ? <>Ida: <b>{rutaIda}</b> · Regreso: <b>{hotelDelTramo} → {otraTxt}</b></>
                   : <>{tramo === "ida" ? "Ida" : "Regreso"}: <b>{rutaIda}</b></>}
               </p>
+              {conIda && (
+                <div>
+                  <label className={lbl} htmlFor="man-hora-ida">Hora de ida (opcional)</label>
+                  <input id="man-hora-ida" type="time" step={60} className={inp} value={b.horaIda} onChange={(e) => set("horaIda", e.target.value)} />
+                  <p className="mt-1 text-[11px] text-gray-500">HH:mm, hora local de salida del aeropuerto de {tramo === "regreso" ? hotelDelTramo : otraTxt}. Déjala vacía si el horario no está confirmado.</p>
+                </div>
+              )}
+              {conRegreso && (
+                <div>
+                  <label className={lbl} htmlFor="man-hora-regreso">Hora de regreso (opcional)</label>
+                  <input id="man-hora-regreso" type="time" step={60} className={inp} value={b.horaRegreso} onChange={(e) => set("horaRegreso", e.target.value)} />
+                  <p className="mt-1 text-[11px] text-gray-500">HH:mm, hora local de salida del aeropuerto de {hotelDelTramo}. Déjala vacía si el horario no está confirmado.</p>
+                </div>
+              )}
             </>
           )}
           <div>
@@ -268,10 +316,10 @@ export function ServicioManualPanel({ comun = false }: { comun?: boolean }) {
           </div>
           <div>
             <label className={lbl} htmlFor="man-pax">Pasajeros en este vuelo</label>
-            <input id="man-pax" inputMode="numeric" className={inp} value={b.pax} onChange={(e) => set("pax", e.target.value.replace(/\D/g, ""))} />
+            <input id="man-pax" inputMode="numeric" className={inp} value={b.pax} onChange={(e) => { setPaxEditado(true); set("pax", e.target.value.replace(/\D/g, "")); }} />
             <p className="mt-1 text-[11px] text-gray-500">
               {comun
-                ? `Por defecto, los de una opción del grupo (${paxPropuesto}); las alternativas no se suman. Cámbialo si el grupo viaja en vuelos distintos.`
+                ? `Por defecto, los de la opción del grupo con menos pasajeros (${paxPropuesto}); las alternativas no se suman. Cámbialo si el grupo viaja en vuelos distintos.`
                 : `Por defecto, todos los de la cotización (${paxCarrito}). Cámbialo si el grupo viaja en vuelos distintos.`}
             </p>
           </div>
@@ -295,7 +343,7 @@ export function ServicioManualPanel({ comun = false }: { comun?: boolean }) {
           )}
           {err && <p role="alert" className="rounded-lg bg-red-50 px-3 py-2 text-xs text-red-700 sm:col-span-2">{err}</p>}
           <div className="flex flex-wrap gap-2 sm:col-span-2">
-            <button type="button" onClick={guardar} className="rounded-lg px-4 py-2 text-sm font-medium text-white" style={{ background: "var(--brand-primary)" }}>
+            <button type="button" onClick={guardar} disabled={todoCubierto} className="rounded-lg px-4 py-2 text-sm font-medium text-white disabled:opacity-40" style={{ background: "var(--brand-primary)" }}>
               {editando ? "Guardar cambios" : "Agregar al carrito"}
             </button>
             <button type="button" onClick={limpiar} className="rounded-lg border border-gray-300 px-4 py-2 text-sm text-gray-600">Cancelar</button>

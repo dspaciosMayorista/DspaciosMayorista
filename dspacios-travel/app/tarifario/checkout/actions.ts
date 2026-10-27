@@ -52,7 +52,7 @@ import { listarAliadosParaAsistencia, prepararAsistenciaB2B, verificarAliadoVivo
 import { resolverFirmasSesion } from "@/lib/cotizacion/firmasSesion";
 import { visitantePuedeContinuar } from "@/lib/cotizacion/comparativaServidor";
 import { iataDeDestino } from "@/lib/reservar/destinoIata";
-import { claveGrupoViaje, esClaveGrupoViaje, esTramoVueloManual, descripcionCotizacionManual, leerManualesEntrada, lineaB2BManual, resolverHotelDeManuales, tramosVueloManual, validarServicioManual, validarVueloContraHotel, verificarManualesCotizados, type ServicioManual } from "@/lib/cart/servicioManual";
+import { claveGrupoViaje, esClaveGrupoViaje, esTramoVueloManual, descripcionCotizacionManual, leerManualesEntrada, lineaB2BManual, resolverHotelDeManuales, tramosVueloManual, validarCoberturaVuelos, validarServicioManual, validarVueloContraHotel, verificarManualesCotizados, type ServicioManual } from "@/lib/cart/servicioManual";
 import { camposClienteVenta, camposVendedorAliado, nombreQuienElabora, titularDeCliente } from "@/lib/cotizacion/identidadB2B";
 
 // Forma que arma el CARRITO en el cliente (ver lib/cart/CartContext.tsx) —
@@ -1024,28 +1024,40 @@ async function crearCotizacionCarrito(input: {
   // NO guarda costo ni proveedor: se exigen al convertir.
   const manualesOk: ServicioManual[] = [];
   const manualesAplicados: boolean[] = [];
+  const objetivosManual: (string | null)[] = []; // hotel/opción de cada manual aplicado (alineado con manualesOk), para la cobertura de tramos
   const catalogo = process.env.SUPABASE_SERVICE_ROLE_KEY ? createAdminClient() : sb;
   const paxCarrito = [...hotelesResueltos.values()].reduce((sum, h) => sum + (h.pax || 0), 0);
   for (const [mi, m0] of (input.manuales ?? []).entries()) {
     const r0 = validarServicioManual(m0, monedaPrincipal);
     if (!r0.ok) return { ok: false, error: `Servicio manual «${m0.nombre}»: ${r0.error}` };
     let m = r0.valor;
-    if (m.clase === "vuelo") {
-      // El vuelo pertenece a UN hotel ya liquidado de ESTE carrito (nunca el primero por defecto): su ciudad y sus fechas salen de lo que liquidó el servidor.
+    let objetivo: string | null = null;
+    // Un vuelo —y, en una COMPARATIVA, también un «otro servicio»— pertenece a UN hotel ya liquidado de ESTE carrito (en la comparativa, el de su grupo de destino y fechas).
+    if (m.clase === "vuelo" || input.comparativa) {
+      const que = m.clase === "vuelo" ? "Vuelo" : "Servicio";
+      // Nunca el primero por defecto: su ciudad y sus fechas salen de lo que liquidó el servidor.
       const pos = input.comparativa ? 0 : (input.hotelDeManual?.[mi] ?? null);
       const hotel = pos != null ? hotelesResueltos.get(pos) : undefined;
-      if (pos == null || !hotel) return { ok: false, error: `Vuelo «${m.nombre}»: elige un hotel del carrito que entre en la cotización (el hotel asociado no está disponible o fue excluido).` };
+      if (pos == null || !hotel) return { ok: false, error: `${que} «${m.nombre}»: elige un hotel del carrito que entre en la cotización (el hotel asociado no está disponible o fue excluido).` };
       // IATA del destino desde el CATÁLOGO; si falta, se pide corregir el dato (no se infiere del nombre).
       const destinoIata = await iataDeDestino(catalogo, hotel.destino);
       if (input.comparativa) {
         const clave = destinoIata && hotel.fechaIda && hotel.fechaRegreso ? claveGrupoViaje(destinoIata, hotel.fechaIda, hotel.fechaRegreso) : null;
-        if (m.hotelRef !== "comun" && !esClaveGrupoViaje(m.hotelRef)) return { ok: false, error: `Vuelo «${m.nombre}»: elige a qué grupo de la comparativa (destino y fechas) pertenece.` };
+        if (m.hotelRef !== "comun" && !esClaveGrupoViaje(m.hotelRef)) return { ok: false, error: `${que} «${m.nombre}»: elige a qué grupo de la comparativa (destino y fechas) pertenece.` };
         if (m.hotelRef !== "comun" && m.hotelRef !== clave) { manualesAplicados.push(false); continue; } // otro grupo: este hotel no lo lleva
       }
-      const rv = validarVueloContraHotel(m, { ref: refItemCotizacion(pos), nombre: hotel.nombre, destino: hotel.destino ?? null, destinoIata, fechaIda: hotel.fechaIda, fechaRegreso: hotel.fechaRegreso });
-      if (!rv.ok) return { ok: false, error: `Vuelo «${m.nombre}»: ${rv.error}` };
-      m = rv.valor;
-      if (paxCarrito > 0 && m.pax > paxCarrito) return { ok: false, error: `Vuelo «${m.nombre}»: tiene ${m.pax} pasajeros y la cotización solo ${paxCarrito}.` };
+      if (m.clase === "vuelo") {
+        const rv = validarVueloContraHotel(m, { ref: refItemCotizacion(pos), nombre: hotel.nombre, destino: hotel.destino ?? null, destinoIata, fechaIda: hotel.fechaIda, fechaRegreso: hotel.fechaRegreso });
+        if (!rv.ok) return { ok: false, error: `Vuelo «${m.nombre}»: ${rv.error}` };
+        m = rv.valor;
+      } else {
+        m = { ...m, hotelRef: refItemCotizacion(pos) }; // el servicio queda ligado a ESTA opción (sin hotelEtiqueta: es informativo del vuelo)
+      }
+      if (paxCarrito > 0 && m.pax > paxCarrito) return { ok: false, error: `${que} «${m.nombre}»: tiene ${m.pax} pasajeros y la cotización solo ${paxCarrito}.` };
+      // La cobertura por tramo rige en las COMPARATIVAS (grupo/opción); el carrito normal conserva su criterio (pasajeros de la cotización).
+      objetivo = input.comparativa ? String(pos) : null;
+    } else if (m.hotelRef) {
+      m = { ...m, hotelRef: null }; // en el carrito normal un «otro servicio» no se liga a un hotel
     }
     monedaPrincipal = monedaPrincipal ?? m.moneda;
     iIdx++;
@@ -1058,8 +1070,12 @@ async function crearCotizacionCarrito(input: {
     total += m.precio;
     lineasB2B.push(lineaB2BManual(m, manualesOk.length)); // #102: la comisión sale de PVP − impuesto no comisionable del manual
     manualesOk.push(m);
+    objetivosManual.push(objetivo);
     manualesAplicados.push(true);
   }
+  // Ningún tramo se duplica ni supera los pasajeros de su hotel/opción, aunque la llamada no venga de la pantalla.
+  const cobertura = validarCoberturaVuelos(manualesOk, (_m, i) => objetivosManual[i], (o) => hotelesResueltos.get(Number(o))?.pax || null);
+  if (!cobertura.ok) return { ok: false, error: cobertura.error };
 
   // Un servicio manual se SUMA a un carrito con hotel o servicio del tarifario; solo no sostiene una cotización (la conversión necesita al menos una unidad con pasajeros).
   if (!itemsOk.length && !itemsBernaloOk.length && !toursOk.length) {
@@ -1520,12 +1536,12 @@ type FilaCapturada = Record<string, unknown> & {
 };
 
 /** Los vuelos manuales de una opción tal como los ve quien la elige: ruta, tramo, fecha y pasajeros (sin precio, costo ni proveedor). */
-function vuelosPublicos(detalle: unknown): { tramo: string; origen: string | null; destino: string | null; fecha: string | null; nota: string }[] {
+function vuelosPublicos(detalle: unknown): { tramo: string; origen: string | null; destino: string | null; fecha: string | null; hora: string | null; nota: string }[] {
   const v = (detalle as { vuelos?: unknown } | null)?.vuelos;
   return (Array.isArray(v) ? v : []).filter((t): t is Record<string, unknown> => typeof t === "object" && t !== null && esTramoVueloManual(t))
     .map((t) => ({
       tramo: String(t.direccion ?? ""), origen: (t.origen_ciudad ?? t.origen_codigo ?? null) as string | null,
-      destino: (t.destino_ciudad ?? t.destino_codigo ?? null) as string | null, fecha: (t.fecha_salida ?? null) as string | null, nota: String(t.servicios ?? ""),
+      destino: (t.destino_ciudad ?? t.destino_codigo ?? null) as string | null, fecha: (t.fecha_salida ?? null) as string | null, hora: (t.hora_salida ?? null) as string | null, nota: String(t.servicios ?? ""),
     }));
 }
 
@@ -1591,11 +1607,13 @@ async function prepararComparativa(inputCrudo: unknown, vista: boolean): Promise
   if (!man.ok) return { ok: false, error: man.error };
   if (man.manuales.length) {
     if (!(await puedeAgregarServicioManual())) return { ok: false, error: "Los servicios manuales solo los puede agregar el personal autorizado. Inicia sesión con tu usuario interno o quítalos del carrito." };
-    if (man.manuales.some((m) => m.clase !== "vuelo")) return { ok: false, error: "En una comparativa solo se pueden agregar vuelos manuales comunes a todas las opciones." };
   }
 
   // #64: «compartir con el cliente» lo marca expresamente el personal interno; un visitante, un aliado o un valor que no sea booleano se RECHAZA (no se ignora).
-  const crudoCmp = (typeof inputRaw === "object" && inputRaw !== null ? inputRaw : {}) as { compartirPublico?: unknown };
+  const crudoCmp = (typeof inputRaw === "object" && inputRaw !== null ? inputRaw : {}) as { compartirPublico?: unknown; otrasAcomodaciones?: unknown };
+  // Por defecto cada hotel se cotiza SOLO con la acomodación del carrito (p. ej. Marina Suite doble). Ofrecer además otras acomodaciones del mismo hotel es una elección EXPRESA.
+  if (crudoCmp.otrasAcomodaciones !== undefined && typeof crudoCmp.otrasAcomodaciones !== "boolean") return { ok: false, error: "La opción de ofrecer otras acomodaciones no es válida." };
+  const otrasAcomodaciones = crudoCmp.otrasAcomodaciones === true;
   if (crudoCmp.compartirPublico !== undefined && typeof crudoCmp.compartirPublico !== "boolean") return { ok: false, error: "La opción de compartir con el cliente no es válida." };
   const compartirPublico = crudoCmp.compartirPublico === true;
 
@@ -1636,7 +1654,7 @@ async function prepararComparativa(inputCrudo: unknown, vista: boolean): Promise
       conMenores: (item.edadesMenores?.length ?? 0) > 0, composicionActual: item.habitaciones,
     });
     // Multidestino con vuelos: solo la composición del carrito (una acomodación por opción); unidestino: las alternativas de siempre.
-    const ofrecidas = multidestino ? candidatas.slice(0, 1) : candidatas;
+    const ofrecidas = multidestino || !otrasAcomodaciones ? candidatas.slice(0, 1) : candidatas;
     for (let k = 0; k < ofrecidas.length; k++) {
       const cand = ofrecidas[k];
       const r = await armarOpcionCarrito({ ...item, habitaciones: cand.habitaciones }, toursDelHotel, cli, man.manuales, man.manuales.length > 0, b2b);
@@ -1907,7 +1925,7 @@ export type ResumenOpcionComparativa = {
   total: number; moneda: string; tarifaPersona: number | null; destino: string | null; fechaSalida: string | null;
   fechaRegreso: string | null; pax: number | null; vigenciaHasta: string | null; vencida: boolean;
   /** Vuelos manuales comunes de la opción (ruta, tramo, fecha y pasajeros; nunca precio, costo ni proveedor). */
-  vuelos: { tramo: string; origen: string | null; destino: string | null; fecha: string | null; nota: string }[];
+  vuelos: { tramo: string; origen: string | null; destino: string | null; fecha: string | null; /** Hora local de salida (HH:mm) si el asesor la confirmó. */ hora?: string | null; nota: string }[];
 };
 
 /**

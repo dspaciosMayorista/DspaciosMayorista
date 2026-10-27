@@ -410,7 +410,7 @@ describe("64 · cotización con servicio manual: solo personal interno, sin cost
     const c = cotDe(r.cotizacion.id);
     assert.equal(Number(c.precio), 2_400_000);
     assert.equal(c.moneda, "COP");
-    assert.deepEqual(Object.keys(c.payload.manuales![0]).sort(), ["clase", "destino", "fechaIda", "fechaRegreso", "hotelEtiqueta", "hotelRef", "impuestoNoComisionable", "moneda", "nombre", "origen", "pax", "precio", "tramo"], "solo lo declarado: nada de costo/proveedor/record");
+    assert.deepEqual(Object.keys(c.payload.manuales![0]).sort(), ["clase", "destino", "fechaIda", "fechaRegreso", "horaIda", "horaRegreso", "hotelEtiqueta", "hotelRef", "impuestoNoComisionable", "moneda", "nombre", "origen", "pax", "precio", "tramo"], "solo lo declarado: nada de costo/proveedor/record");
     assert.equal(c.payload.manuales![0].hotelRef, "item-0", "el vuelo queda ligado al hotel (ref que fija el servidor), no al id del navegador");
     const linea = c.detalle.items.find((i) => /^Vuelo ·/.test(i.descripcion));
     assert.ok(linea, "el documento lleva la línea del vuelo manual");
@@ -849,9 +849,9 @@ describe("64 · cotización comparativa con vuelos manuales comunes", () => {
     assert.equal(totalCot(), antes);
   });
 
-  test("C2 solo vuelos y bien formados: 'otro servicio', bloque corrupto o impuesto mayor al precio se rechazan", async () => {
+  test("C2 bien formados: bloque corrupto, impuesto mayor al precio o tramo inconsistente se rechazan (un «otro servicio» con grupo SÍ se admite: ver la ronda 12)", async () => {
     const antes = totalCot();
-    for (const m of [{ ...OTRO, hotelRef: "comun" }, COMUN({ impuestoNoComisionable: 99_999_999 }), COMUN({ tramo: "ida", fechaRegreso: "2030-03-04" }), "x"]) {
+    for (const m of [COMUN({ impuestoNoComisionable: 99_999_999 }), COMUN({ tramo: "ida", fechaRegreso: "2030-03-04" }), "x"]) {
       assert.equal((await crearCmp([m])).ok, false, JSON.stringify(m));
     }
     assert.equal(totalCot(), antes);
@@ -1231,10 +1231,10 @@ describe("64 · comparativa por grupos (destino IATA + fechas): cada alternativa
   const vSMR = (o: Record<string, unknown> = {}) => ({ ...VUELO, nombre: "Vuelo a Santa Marta", destino: "SMR", fechaIda: "2030-03-10", fechaRegreso: "2030-03-14", precio: 1_000_000, impuestoNoComisionable: 0, hotelRef: clave("SMR", "2030-03-10", "2030-03-14"), ...o });
   const hotelTres = () => { HOTELES[3603] = { nombre: "Hotel Tres 64", moneda: "COP", pvp: 300_000, neto: 210_000 }; };
   const smr = () => { HOTELES[3602] = { nombre: "Hotel Santa Marta 64", moneda: "COP", pvp: 300_000, neto: 210_000, destino: "SANTA MARTA", ida: "2030-03-10", regreso: "2030-03-14" }; };
-  const crearCmp = async (items: unknown[], manuales: unknown[] | undefined, extra: { tours?: unknown[]; compartir?: boolean } = {}) => {
+  const crearCmp = async (items: unknown[], manuales: unknown[] | undefined, extra: { tours?: unknown[]; compartir?: boolean; otras?: boolean } = {}) => {
     anonimo = false; uidSesion = UID_ADMIN;
     return crearComparativaCarrito({
-      items, tours: extra.tours ?? [], ...(manuales ? { manuales } : {}), ...(extra.compartir ? { compartirPublico: true } : {}), cliente: { ...CLIENTE, tipoDoc: "CC" },
+      items, tours: extra.tours ?? [], ...(manuales ? { manuales } : {}), ...(extra.compartir ? { compartirPublico: true } : {}), ...(extra.otras ? { otrasAcomodaciones: true } : {}), cliente: { ...CLIENTE, tipoDoc: "CC" },
     });
   };
   const err = (r: { ok: boolean }) => ("error" in r ? String((r as { error: unknown }).error) : "");
@@ -1308,7 +1308,7 @@ describe("64 · comparativa por grupos (destino IATA + fechas): cada alternativa
     const comun = await crearCmp([it(3601, "a"), it(3602, "b", "CARTAGENA", ["2030-03-08", "2030-03-11"])], [{ ...VUELO, hotelRef: "comun" }]);
     assert.equal(comun.ok, false);
     assert.equal(totalCot(), antes);
-    const r = await crearCmp([it(3601, "a"), it(3602, "b", "CARTAGENA", ["2030-03-08", "2030-03-11"])], [vCTG(), vCTG({ nombre: "Vuelo semana 2", fechaIda: "2030-03-08", fechaRegreso: "2030-03-11", precio: 1_100_000, impuestoNoComisionable: 0, hotelRef: B })]);
+    const r = await crearCmp([it(3601, "a"), it(3602, "b", "CARTAGENA", ["2030-03-08", "2030-03-11"])], [vCTG(), vCTG({ nombre: "Vuelo semana 2", fechaIda: "2030-03-08", fechaRegreso: "2030-03-11", precio: 1_100_000, impuestoNoComisionable: 0, hotelRef: B })], { otras: true });
     assert.equal(r.ok, true, err(r));
     if (!r.ok) return;
     const ops = opciones(r.id);
@@ -1571,7 +1571,7 @@ describe("64 · acomodación de la comparativa completa con vuelos manuales", ()
   const vCTG = () => ({ ...VUELO, hotelRef: CTG });
   const vSMR = () => ({ ...VUELO, nombre: "Vuelo a Santa Marta", destino: "SMR", fechaIda: "2030-03-10", fechaRegreso: "2030-03-14", hotelRef: SMR });
   const smr = () => { HOTELES[3602] = { nombre: "Hotel Santa Marta 64", moneda: "COP", pvp: 300_000, neto: 210_000, destino: "SANTA MARTA", ida: "2030-03-10", regreso: "2030-03-14" }; };
-  const crear = async (items: unknown[], manuales: unknown[]) => { anonimo = false; uidSesion = UID_ADMIN; return crearComparativaCarrito({ items, tours: [], manuales, cliente: { ...CLIENTE, tipoDoc: "CC" } }); };
+  const crear = async (items: unknown[], manuales: unknown[], otras = false) => { anonimo = false; uidSesion = UID_ADMIN; return crearComparativaCarrito({ items, tours: [], manuales, ...(otras ? { otrasAcomodaciones: true } : {}), cliente: { ...CLIENTE, tipoDoc: "CC" } }); };
   const err = (r: { ok: boolean }) => ("error" in r ? String((r as { error: unknown }).error) : "");
   const totalCot = () => Number(sql("select count(*) from public.cotizaciones"));
   const opsDe = (id: number) => Number(sql(`select count(*) from public.cotizacion_opciones where cotizacion_id = ${id}`));
@@ -1597,7 +1597,7 @@ describe("64 · acomodación de la comparativa completa con vuelos manuales", ()
   test("A3 unidestino con varias acomodaciones se PERMITE: un destino con dos fechas, doble en un hotel y triple en el otro", async () => {
     HOTELES[3602] = { nombre: "Hotel Dos 64", moneda: "COP", pvp: 300_000, neto: 210_000, ida: "2030-03-08", regreso: "2030-03-11" };
     const B = "grupo:CTG|2030-03-08|2030-03-11";
-    const r = await crear([it(3601, "a", "CARTAGENA", { doble: 1 }), it(3602, "b", "CARTAGENA", { triple: 1 }, ["2030-03-08", "2030-03-11"])], [vCTG(), { ...vCTG(), nombre: "Vuelo semana 2", fechaIda: "2030-03-08", fechaRegreso: "2030-03-11", hotelRef: B }]);
+    const r = await crear([it(3601, "a", "CARTAGENA", { doble: 1 }), it(3602, "b", "CARTAGENA", { triple: 1 }, ["2030-03-08", "2030-03-11"])], [vCTG(), { ...vCTG(), nombre: "Vuelo semana 2", fechaIda: "2030-03-08", fechaRegreso: "2030-03-11", hotelRef: B }], true);
     assert.equal(r.ok, true, err(r));
     if (r.ok) assert.ok(opsDe(r.id) > 2, "varias acomodaciones por hotel");
   });
@@ -1783,4 +1783,250 @@ describe("64 · hija: tipo de documento y coherencia del aliado (251)", () => {
       assert.equal(Number(sql("select count(*) from public.cotizaciones")), antes);
     });
   }
+});
+
+// ═════════════════════════════════════════════════════════════════════
+// Ronda 12: otros servicios en la comparativa, cobertura de tramos por grupo, horas de los vuelos y acomodaciones elegidas (servidor real).
+describe("64 · ronda 12: «otro servicio» por grupo, cobertura de tramos, horas y acomodaciones elegidas", () => {
+  const AL = 6414;
+  const CTGK = "grupo:CTG|2030-03-01|2030-03-04", SMRK = "grupo:SMR|2030-03-10|2030-03-14";
+  const VISITANTE = { nombres: "Visitante", apellidos: "Tres", numeroDoc: "888", telefono: "3001112222", email: "v3@x.test" };
+  const COSTO_OTRO = { costo: 60_000, proveedor: "Proveedor Traslados 64" };
+  const err = (r: { ok: boolean }) => ("error" in r ? String((r as { error: unknown }).error) : "");
+  const totalCot = () => Number(sql("select count(*) from public.cotizaciones"));
+  const it = (hotelId: number, itemId: string, destino = "CARTAGENA", fechas?: [string, string], hab?: Record<string, number>) =>
+    ({ ...itemPayload(hotelId, destino), itemId, ...(hab ? { habitaciones: hab } : {}), ...(fechas ? { fechaIda: fechas[0], fechaRegreso: fechas[1] } : {}) });
+  const SMR_ITEM = () => it(3604, "s", "SANTA MARTA", ["2030-03-10", "2030-03-14"]);
+  const hoteles = () => {
+    HOTELES[3601] = { nombre: "Hotel Uno R12", moneda: "COP", pvp: 300_000, neto: 210_000 };
+    HOTELES[3602] = { nombre: "Hotel Dos R12", moneda: "COP", pvp: 400_000, neto: 280_000, impuesto: 100_000 };
+    HOTELES[3603] = { nombre: "Hotel Tres R12", moneda: "COP", pvp: 350_000, neto: 245_000 };
+    HOTELES[3604] = { nombre: "Hotel Santa Marta R12", moneda: "COP", pvp: 500_000, neto: 350_000, destino: "SANTA MARTA", ida: "2030-03-10", regreso: "2030-03-14" };
+  };
+  const V = (g: string, o: Record<string, unknown> = {}) => ({ ...VUELO, hotelRef: g, ...o });
+  const VS = (o: Record<string, unknown> = {}) => V(SMRK, { destino: "SMR", fechaIda: "2030-03-10", fechaRegreso: "2030-03-14", ...o });
+  const O = (g: string | null, o: Record<string, unknown> = {}) => ({ ...OTRO, hotelRef: g, impuestoNoComisionable: 25_000, ...o });
+  type Op = { op: string; ac: string; total: number; resumen: Record<string, unknown> & { vuelos?: { hora?: string | null }[]; acomodacion?: string; habitaciones?: Record<string, number>; total_exigible?: number };
+    plantilla: { payload: { manuales?: Record<string, unknown>[]; items: { habitaciones: Record<string, number>; categoria?: string }[]; b2bAsistido?: { lineas: { clave: string; pvp: number; impuesto: number }[]; pvp: number; impuesto: number; base: number; comision: number } }; detalle: { items: { descripcion: string; valor_total?: number }[]; vuelos: Record<string, unknown>[] } } };
+  const opciones = (id: number) => JSON.parse(sql(`select coalesce(json_agg(json_build_object('op', opcion_ref, 'ac', acomodacion_ref, 'total', total, 'resumen', resumen_publico, 'plantilla', plantilla_hija) order by orden), '[]'::json)::text from public.cotizacion_opciones where cotizacion_id = ${id}`)) as Op[];
+  const madre = (id: number) => JSON.parse(sql(`select json_build_object('token', share_token, 'version', version, 'precio', precio_venta, 'payload', payload)::text from public.cotizaciones where id = ${id}`)) as { token: string; version: number; precio: number | null; payload: Record<string, unknown> };
+  const crear = async (items: unknown[], manuales: unknown[], extra: Record<string, unknown> = {}) => {
+    hoteles(); anonimo = false; uidSesion = UID_ADMIN;
+    return crearComparativaCarrito({ items, tours: [], ...(manuales.length ? { manuales } : {}), compartirPublico: true, cliente: { ...CLIENTE, tipoDoc: "CC" }, ...extra });
+  };
+  const elegir = async (m: { token: string; version: number }, op: string, ac = "doble") => {
+    anonimo = true; uidSesion = UID_ADMIN;
+    try { return await elegirOpcionComparativa({ token: m.token, version: m.version, opcionRef: op, acomodacionRef: ac, clave: crypto.randomUUID(), cliente: VISITANTE }); } finally { anonimo = false; }
+  };
+  const A3 = () => [it(3601, "a"), it(3602, "b"), it(3603, "c")];
+  // El beforeEach global reinicia HOTELES: los de esta ronda se cargan antes de armar los ítems de CADA prueba.
+  beforeEach(hoteles);
+  before(() => {
+    sql(`insert into public.aliados (id, nombre, tipo, pct_comision, activo, nit, tipo_documento) values (${AL}, 'Agencia R12', 'agencia', 0.10, true, '900555000', 'NIT')
+         on conflict (id) do update set activo = true, pct_comision = 0.10, tipo = 'agencia', nombre = 'Agencia R12', nit = '900555000', tipo_documento = 'NIT'`);
+  });
+
+  describe("otro servicio asociado al grupo", () => {
+    test("O1 un grupo (3 hoteles): se suma UNA vez a cada opción; la madre no suma; elegir una opción y convertir conserva precio, impuesto, moneda y exige costo/proveedor", async () => {
+      const r = await crear(A3(), [O("comun")]);
+      assert.equal(r.ok, true, err(r));
+      if (!r.ok) return;
+      const ops = opciones(r.id), m = madre(r.id);
+      assert.equal(m.precio, null, "sin total global");
+      assert.deepEqual(ops.map((o) => [o.op, o.ac, Number(o.total)]), [["A", "doble", 690_000], ["B", "doble", 890_000], ["C", "doble", 790_000]], "hotel × 2 + 90.000 UNA vez en cada opción");
+      for (const o of ops) {
+        const mans = o.plantilla.payload.manuales!;
+        assert.equal(mans.length, 1);
+        assert.deepEqual([mans[0].clase, mans[0].hotelRef, mans[0].precio, mans[0].impuestoNoComisionable, mans[0].moneda], ["otro", "item-0", 90_000, 25_000, "COP"], "ligado a SU opción");
+        assert.equal(o.plantilla.detalle.items.filter((x) => /^Servicio · Traslado privado/.test(x.descripcion)).length, 1, "una sola línea en el documento");
+        assert.equal(o.plantilla.detalle.vuelos.length, 0, "no es un vuelo: no hay cuadro de vuelos");
+      }
+      const e = await elegir(m, "B");
+      assert.equal(e.ok, true, err(e));
+      if (!e.ok) return;
+      assert.equal(Number(sql(`select precio_venta from public.cotizaciones where id = ${e.hijaId}`)), 890_000);
+      const antes = foto();
+      for (const costosManuales of [undefined, [], [{ costo: 0, proveedor: "X Prov" }], [{ costo: 60_000, proveedor: " " }]]) {
+        const rr = await convertirM(e.hijaId, 1, { costosManuales });
+        assert.equal(rr.ok, false, JSON.stringify(costosManuales));
+      }
+      assert.deepEqual(foto(), antes, "sin costo y proveedor no se numera nada");
+      const conv = await convertirM(e.hijaId, 1, { costosManuales: [COSTO_OTRO] });
+      assert.equal(conv.ok, true, conv.error);
+      const n = conv.numeros![0];
+      const [precio, moneda, otros] = fila(`select precio_venta, moneda, coalesce(otros_costos, 0) from public.ventas where numero_contrato = ${lit(n)}`);
+      assert.deepEqual([Number(precio), moneda, Number(otros)], [890_000, "COP", 60_000], "PVP = hotel 800.000 + servicio 90.000; costo del servicio = el capturado");
+      assert.match(cxpDe(n), /otro\|Proveedor Traslados 64|Servicio manual Traslado privado\|otro\|60000/);
+      const despues = foto();
+      assert.deepEqual((await convertirM(e.hijaId, 1, { costosManuales: [COSTO_OTRO] })).numeros, [n]);
+      assert.deepEqual(foto(), despues, "reintento: nada duplicado");
+    });
+
+    test("O2 varios grupos: se asocia al grupo elegido (solo sus opciones lo suman); sin grupo, «comun» con varios grupos o un grupo inexistente se RECHAZAN antes de crear", async () => {
+      const items = [it(3601, "a"), it(3602, "b"), SMR_ITEM()];
+      const r = await crear(items, [O(SMRK), V(CTGK, { precio: 1_000_000, impuestoNoComisionable: 0 })]);
+      assert.equal(r.ok, true, err(r));
+      if (!r.ok) return;
+      const ops = opciones(r.id);
+      assert.deepEqual(ops.map((o) => [o.op, Number(o.total)]), [["A", 600_000 + 1_000_000], ["B", 800_000 + 1_000_000], ["C", 1_000_000 + 90_000]]);
+      assert.equal(ops[0].plantilla.payload.manuales!.length, 1, "Cartagena lleva solo el vuelo de su grupo");
+      assert.equal(ops[0].plantilla.payload.manuales![0].clase, "vuelo");
+      assert.equal(ops[2].plantilla.payload.manuales![0].clase, "otro", "Santa Marta lleva solo el servicio de su grupo");
+      const antes = totalCot();
+      for (const [que, man] of [["sin grupo", O(null)], ["comun con varios grupos", O("comun")], ["grupo inexistente", O("grupo:ZZZ|2031-01-01|2031-01-04")]] as const) {
+        const rr = await crear(items, [man]);
+        assert.equal(rr.ok, false, que);
+        assert.equal(totalCot(), antes, `${que}: no se creó nada`);
+      }
+    });
+
+    test("O3 B2B por opción: cada opción liquida su PVP, impuesto no comisionable (hotel + servicio), base y comisión; el documento NETO público solo lleva el total exigible", async () => {
+      for (const modo of ["comisionable", "neta"] as const) {
+        const r = await crear(A3().slice(0, 2), [O("comun")], { asistencia: { canal: "b2b", aliadoId: AL, modo } });
+        assert.equal(r.ok, true, err(r));
+        if (!r.ok) continue;
+        const ops = opciones(r.id);
+        const planes = ops.map((o) => o.plantilla.payload.b2bAsistido!);
+        assert.deepEqual(planes.map((p) => [p.pvp, p.impuesto, p.base, p.comision]), [[690_000, 25_000, 665_000, 66_500], [890_000, 125_000, 765_000, 76_500]]);
+        for (const p of planes) assert.deepEqual(p.lineas.map((l) => [l.clave, l.pvp, l.impuesto]).filter((l) => l[0] === "manual-0"), [["manual-0", 90_000, 25_000]]);
+        assert.equal(madre(r.id).payload.b2bAsistido, undefined, "no hay plan global");
+        if (modo === "neta") {
+          assert.deepEqual(ops.map((o) => o.resumen.total_exigible), [690_000 - 66_500, 890_000 - 76_500]);
+          assert.doesNotMatch(JSON.stringify(ops.map((o) => o.resumen)), /66500|76500|comisi/i);
+        }
+        // Elegir UNA opción y convertir conserva el precio, el impuesto no comisionable (hotel 100.000 + servicio 25.000) y la comisión de ESA opción.
+        const e = await elegir(madre(r.id), "B");
+        assert.equal(e.ok, true, err(e));
+        if (!e.ok) continue;
+        const conv = await convertirM(e.hijaId, 1, { costosManuales: [COSTO_OTRO] });
+        assert.equal(conv.ok, true, conv.error);
+        const [pv, imp, com] = fila(`select precio_venta, impuesto, comision_b2b from public.ventas where numero_contrato = ${lit(conv.numeros![0])}`).map(Number);
+        assert.deepEqual([pv, imp, com], [modo === "neta" ? 813_500 : 890_000, 125_000, 76_500], modo);
+        assert.deepEqual((await convertirM(e.hijaId, 1, { costosManuales: [COSTO_OTRO] })).numeros, conv.numeros, "reintento");
+      }
+    });
+  });
+
+  describe("cobertura de tramos por grupo (también por llamada directa)", () => {
+    const CASOS: [string, unknown[], boolean, RegExp?][] = [
+      ["ida y regreso para los 2 + otra ida de 1: exceso", [V(CTGK), V(CTGK, { tramo: "ida", fechaRegreso: null, nombre: "Ida extra", pax: 1 })], false, /ya está cubierto/],
+      ["dos vuelos ida y regreso de 2: duplicado", [V(CTGK), V(CTGK, { nombre: "Duplicado" })], false, /ya está cubierto/],
+      ["ida y regreso de 1 + de 2: supera los pasajeros", [V(CTGK, { pax: 1 }), V(CTGK, { pax: 2, nombre: "Otro" })], false, /cubriría 3 pasajeros y solo viajan 2/],
+      ["cobertura parcial completada con otra aerolínea (1 + 1)", [V(CTGK, { pax: 1 }), V(CTGK, { pax: 1, nombre: "Otra aerolínea" })], true],
+      ["ida de 1 + ida de 1 + regreso de 2", [V(CTGK, { tramo: "ida", fechaRegreso: null, pax: 1 }), V(CTGK, { tramo: "ida", fechaRegreso: null, pax: 1, nombre: "Ida 2" }), V(CTGK, { tramo: "regreso", fechaIda: null, origen: "CTG", destino: "BOG", pax: 2, nombre: "Regreso" })], true],
+      ["una ida sola", [V(CTGK, { tramo: "ida", fechaRegreso: null })], true],
+      ["una ida y luego su regreso", [V(CTGK, { tramo: "ida", fechaRegreso: null }), V(CTGK, { tramo: "regreso", fechaIda: null, origen: "CTG", destino: "BOG", nombre: "Regreso" })], true],
+    ];
+    for (const [caso, manuales, ok, msj] of CASOS) {
+      test(`C1 ${caso}: ${ok ? "se admite" : "se rechaza"} sin crear nada a medias`, async () => {
+        const antes = totalCot();
+        const r = await crear(A3().slice(0, 2), manuales);
+        assert.equal(r.ok, ok, err(r));
+        if (!ok) { assert.match(err(r), msj!); assert.equal(totalCot(), antes, "no se creó nada"); }
+        else {
+          assert.equal(totalCot(), antes + 1);
+          const ops = opciones((r as { id: number }).id);
+          const sumaVuelos = (manuales as { precio: number }[]).reduce((s, x) => s + x.precio, 0);
+          assert.deepEqual(ops.map((o) => Number(o.total)), [600_000 + sumaVuelos, 800_000 + sumaVuelos], "cada vuelo suma UNA vez a cada opción");
+        }
+      });
+    }
+
+    test("C2 la cobertura es POR GRUPO: Cartagena cubierta no limita a Santa Marta; el reintento corregido sí se crea", async () => {
+      const items = [it(3601, "a"), it(3602, "b"), SMR_ITEM()];
+      const antes = totalCot();
+      const mal = await crear(items, [V(CTGK), V(CTGK, { nombre: "Duplicado" }), VS()]);
+      assert.equal(mal.ok, false);
+      assert.equal(totalCot(), antes);
+      const bien = await crear(items, [V(CTGK), VS(), VS({ tramo: "ida", fechaRegreso: null, nombre: "Otra", pax: 1 })].slice(0, 2));
+      assert.equal(bien.ok, true, err(bien));
+      assert.equal(totalCot(), antes + 1, "una sola comparativa tras el reintento");
+    });
+  });
+
+  describe("horas de los vuelos", () => {
+    test("H1 unidestino: horaIda/horaRegreso se congelan en la opción, el cuadro de vuelos, el resumen público, la hija y se guardan en contrato_vuelos (sin número de vuelo ni hora de llegada)", async () => {
+      const r = await crear(A3().slice(0, 2), [V(CTGK, { horaIda: "06:45", horaRegreso: "18:20" })]);
+      assert.equal(r.ok, true, err(r));
+      if (!r.ok) return;
+      for (const o of opciones(r.id)) {
+        assert.deepEqual([o.plantilla.payload.manuales![0].horaIda, o.plantilla.payload.manuales![0].horaRegreso], ["06:45", "18:20"]);
+        assert.deepEqual(o.plantilla.detalle.vuelos.map((v) => [v.direccion, v.hora_salida, v.numero_vuelo ?? null, "hora_llegada" in v]), [["ida", "06:45", null, false], ["regreso", "18:20", null, false]]);
+        assert.deepEqual((o.resumen.vuelos ?? []).map((v) => v.hora), ["06:45", "18:20"]);
+      }
+      const m = madre(r.id);
+      const e = await elegir(m, "A");
+      assert.equal(e.ok, true, err(e));
+      if (!e.ok) return;
+      const hija = JSON.parse(sql(`select json_build_object('p', payload->'manuales', 'v', detalle->'vuelos')::text from public.cotizaciones where id = ${e.hijaId}`)) as { p: { horaIda: string; horaRegreso: string }[]; v: { hora_salida: string }[] };
+      assert.deepEqual([hija.p[0].horaIda, hija.p[0].horaRegreso, hija.v.map((x) => x.hora_salida)], ["06:45", "18:20", ["06:45", "18:20"]]);
+      const conv = await convertirM(e.hijaId, 1, { costosManuales: [COSTO_VUELO] });
+      assert.equal(conv.ok, true, conv.error);
+      const n = conv.numeros![0];
+      assert.deepEqual(sql(`select string_agg(direccion || '|' || coalesce(hora_salida, '-') || '|' || coalesce(numero_vuelo, '-') || '|' || coalesce(hora_llegada, '-'), ' ; ' order by orden) from public.contrato_vuelos where numero_contrato = ${lit(n)}`), "ida|06:45|-|- ; regreso|18:20|-|-");
+    });
+
+    test("H2 horas vacías = horario sin confirmar (null); ida sola solo lleva hora de ida y regreso solo, la de regreso; formato inválido o tramo que no aplica se RECHAZA", async () => {
+      const r2 = await crear(A3().slice(0, 2), [V(CTGK, { tramo: "ida", fechaRegreso: null, horaIda: "23:59", pax: 1 }), V(CTGK, { tramo: "regreso", fechaIda: null, origen: "CTG", destino: "BOG", horaRegreso: "00:05", pax: 1, nombre: "Regreso" }), V(CTGK, { pax: 1, nombre: "Sin hora", tramo: "ida", fechaRegreso: null })]);
+      assert.equal(r2.ok, true, err(r2));
+      if (r2.ok) {
+        const v = opciones(r2.id)[0].plantilla.detalle.vuelos;
+        assert.deepEqual(v.map((x) => [x.direccion, x.hora_salida]), [["ida", "23:59"], ["regreso", "00:05"], ["ida", null]]);
+      }
+      const antes = totalCot();
+      for (const [que, man] of [
+        ["sin cero a la izquierda", V(CTGK, { horaIda: "6:45" })], ["hora 24", V(CTGK, { horaIda: "24:00" })], ["minutos 60", V(CTGK, { horaRegreso: "12:60" })],
+        ["texto", V(CTGK, { horaIda: "mañana" })], ["hora de regreso en un vuelo solo ida", V(CTGK, { tramo: "ida", fechaRegreso: null, horaRegreso: "10:00" })],
+      ] as const) {
+        assert.equal((await crear(A3().slice(0, 2), [man])).ok, false, que);
+      }
+      assert.equal(totalCot(), antes + 0, "los rechazos no crean nada");
+    });
+
+    test("H3 multidestino: cada grupo lleva las horas de SU vuelo; el otro grupo no hereda las del primero", async () => {
+      const r = await crear([it(3601, "a"), it(3602, "b"), SMR_ITEM()], [V(CTGK, { horaIda: "06:45", horaRegreso: "18:20" }), VS({ horaIda: "09:10" })]);
+      assert.equal(r.ok, true, err(r));
+      if (!r.ok) return;
+      const ops = opciones(r.id);
+      assert.deepEqual(ops[0].plantilla.detalle.vuelos.map((v) => v.hora_salida), ["06:45", "18:20"]);
+      assert.deepEqual(ops[2].plantilla.detalle.vuelos.map((v) => v.hora_salida), ["09:10", null]);
+    });
+  });
+
+  describe("acomodaciones elegidas", () => {
+    const MARINA = (id: number, itemId: string) => ({ ...it(id, itemId), categoria: "Marina Suite", habitaciones: { doble: 1 } });
+    test("A1 Marina Suite doble: la comparativa, el B2B, la opción y la hija muestran SOLO doble (sin alternativa sencilla)", async () => {
+      const r = await crear([MARINA(3601, "a"), MARINA(3602, "b")], [], { asistencia: { canal: "b2b", aliadoId: AL, modo: "comisionable" } });
+      assert.equal(r.ok, true, err(r));
+      if (!r.ok) return;
+      const ops = opciones(r.id);
+      assert.deepEqual(ops.map((o) => `${o.op}/${o.ac}`), ["A/doble", "B/doble"]);
+      for (const o of ops) {
+        assert.equal(o.resumen.acomodacion, "doble");
+        assert.deepEqual(o.resumen.habitaciones, { doble: 1 });
+        assert.deepEqual(o.plantilla.payload.items[0].habitaciones, { doble: 1 });
+        assert.equal(o.plantilla.payload.items[0].categoria, "Marina Suite");
+        assert.ok(o.plantilla.payload.b2bAsistido, "el B2B se liquida solo para lo elegido");
+      }
+      assert.equal(Number(sql(`select count(*) from public.cotizacion_opciones where cotizacion_id = ${r.id} and acomodacion_ref <> 'doble'`)), 0);
+      anonimo = true;
+      try {
+        const res = await resumenOpcionComparativa(madre(r.id).token, "A", "sencilla");
+        assert.equal(res.ok, false, "la sencilla no existe para el visitante");
+      } finally { anonimo = false; }
+      const e = await elegir(madre(r.id), "A");
+      assert.equal(e.ok, true, err(e));
+      if (e.ok) {
+        const h = JSON.parse(sql(`select json_build_object('ac', acomodacion_ref, 'hab', payload->'items'->0->'habitaciones')::text from public.cotizaciones where id = ${e.hijaId}`)) as { ac: string; hab: Record<string, number> };
+        assert.deepEqual([h.ac, h.hab], ["doble", { doble: 1 }]);
+      }
+    });
+
+    test("A2 solo con elección EXPRESA (otrasAcomodaciones) se ofrecen además las otras del mismo hotel; el valor no booleano se rechaza", async () => {
+      const r = await crear([MARINA(3601, "a"), MARINA(3602, "b")], [], { otrasAcomodaciones: true });
+      assert.equal(r.ok, true, err(r));
+      if (r.ok) assert.deepEqual(opciones(r.id).map((o) => `${o.op}/${o.ac}`), ["A/doble", "A/sencilla", "B/doble", "B/sencilla"]);
+      assert.equal((await crear([MARINA(3601, "a"), MARINA(3602, "b")], [], { otrasAcomodaciones: "si" })).ok, false);
+    });
+  });
 });

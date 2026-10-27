@@ -565,7 +565,7 @@ export function resumenDeOpcion(raw: unknown): ResumenHotelUI {
   const servicios = Array.isArray(r.servicios) ? (r.servicios as Array<Record<string, unknown>>).map((s) => ({ nombre: String(s.nombre ?? ""), precio: s.precio == null ? null : Number(s.precio) })).filter((s) => s.nombre) : undefined;
   const items = Array.isArray(r.items) ? (r.items as Array<Record<string, unknown>>).map((i) => ({ descripcion: String(i.descripcion ?? ""), valor: Number(i.valor) || 0 })).filter((i) => i.descripcion) : undefined;
   const vuelos = Array.isArray(r.vuelos)
-    ? (r.vuelos as Array<Record<string, unknown>>).map((v) => ({ tramo: String(v.tramo ?? ""), origen: v.origen == null ? null : String(v.origen), destino: v.destino == null ? null : String(v.destino), fecha: v.fecha == null ? null : String(v.fecha), nota: String(v.nota ?? "") })).filter((v) => v.tramo)
+    ? (r.vuelos as Array<Record<string, unknown>>).map((v) => ({ tramo: String(v.tramo ?? ""), origen: v.origen == null ? null : String(v.origen), destino: v.destino == null ? null : String(v.destino), fecha: v.fecha == null ? null : String(v.fecha), hora: typeof v.hora === "string" && /^([01]\d|2[0-3]):[0-5]\d$/.test(v.hora) ? v.hora : null, nota: String(v.nota ?? "") })).filter((v) => v.tramo)
     : undefined;
   return { plan: typeof r.plan_nombre === "string" ? r.plan_nombre : null, servicios, vuelos, items, incluye: typeof r.incluye === "string" ? r.incluye : null, noIncluye: typeof r.noIncluye === "string" ? r.noIncluye : null };
 }
