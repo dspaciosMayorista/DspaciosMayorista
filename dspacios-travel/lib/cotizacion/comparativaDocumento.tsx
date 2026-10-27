@@ -14,7 +14,7 @@ import type { Database } from "@/types/database";
 import { createClient } from "@/lib/supabase/server";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { formatFechaLarga, formatMoneda } from "@/lib/utils";
-import { agruparPorHotel, canalDeRol, desdeComparativa, limiteSolicitudVencida, resumenDeOpcion, totalPublicoOpcion, type GrupoHotel, type OpcionVista } from "@/lib/cotizacion/comparativa";
+import { otrosServiciosDeOpcion, agruparPorHotel, canalDeRol, desdeComparativa, limiteSolicitudVencida, resumenDeOpcion, totalPublicoOpcion, type GrupoHotel, type OpcionVista } from "@/lib/cotizacion/comparativa";
 import { hoyBogota } from "@/lib/cotizacion/vigencia";
 import { visitantePuedeContinuar } from "@/lib/cotizacion/comparativaServidor";
 import { PrintButton } from "@/components/contrato/PrintButton";
@@ -24,7 +24,7 @@ import { PanelSolicitudes, SelectorOpciones, type ModoSeleccion, type ResumenHot
 type SB = SupabaseClient<Database>;
 export type MadreComparativa = Database["public"]["Tables"]["cotizaciones"]["Row"];
 
-type FilaOpcion = { opcion_ref: string; acomodacion_ref: string; orden: number; etiqueta: string; moneda: string; tarifa_persona: number | null; total: number; resumen_publico: unknown };
+type FilaOpcion = { opcion_ref: string; acomodacion_ref: string; orden: number; etiqueta: string; moneda: string; tarifa_persona: number | null; total: number; resumen_publico: unknown; plantilla_hija: unknown };
 
 export type DatosComparativa = {
   grupos: GrupoHotel[];
@@ -36,7 +36,7 @@ export type DatosComparativa = {
 /** Opciones y opción elegida de una madre, leídas con el cliente que reciba (sesión o servicio). */
 export async function cargarDatosComparativa(sb: SB, madreId: number): Promise<DatosComparativa> {
   const [{ data: ops }, { data: hijas }] = await Promise.all([
-    sb.from("cotizacion_opciones").select("opcion_ref, acomodacion_ref, orden, etiqueta, moneda, tarifa_persona, total, resumen_publico").eq("cotizacion_id", madreId).order("orden"),
+    sb.from("cotizacion_opciones").select("opcion_ref, acomodacion_ref, orden, etiqueta, moneda, tarifa_persona, total, resumen_publico, plantilla_hija").eq("cotizacion_id", madreId).order("orden"),
     sb.from("cotizaciones").select("id, codigo, estado, opcion_ref, acomodacion_ref, numero_contrato").eq("cotizacion_origen_id", madreId).neq("estado", "descartada").limit(1),
   ]);
   const filas = (ops ?? []) as unknown as FilaOpcion[];
@@ -47,6 +47,9 @@ export async function cargarDatosComparativa(sb: SB, madreId: number): Promise<D
   const resumenes: Record<string, ResumenHotelUI> = {};
   for (const o of filas) {
     const r = resumenDeOpcion(o.resumen_publico);
+    // Los «otros servicios» salen del snapshot congelado de la opción (verificado contra su total); nunca se muestran costos ni proveedores.
+    const otros = otrosServiciosDeOpcion(o.plantilla_hija, o.total);
+    if (otros.ok) { if (otros.otros.length) r.otros = otros.otros; } else r.otrosNoVerificables = true;
     resumenes[`${o.opcion_ref}/${o.acomodacion_ref}`] = r;
     resumenes[o.opcion_ref] ??= r;
   }

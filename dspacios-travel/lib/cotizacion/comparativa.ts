@@ -570,6 +570,43 @@ export function resumenDeOpcion(raw: unknown): ResumenHotelUI {
   return { plan: typeof r.plan_nombre === "string" ? r.plan_nombre : null, servicios, vuelos, items, incluye: typeof r.incluye === "string" ? r.incluye : null, noIncluye: typeof r.noIncluye === "string" ? r.noIncluye : null };
 }
 
+/** Un «otro servicio» manual de una opción, tal como se muestra: nunca precio, costo ni proveedor (su valor ya está en el total de la opción, una sola vez). */
+export type OtroServicioOpcion = { nombre: string; pax: number; fechaIda: string | null; fechaRegreso: string | null };
+
+const FECHA_ISO = /^\d{4}-\d{2}-\d{2}$/;
+
+/**
+ * Los «otros servicios» manuales de UNA opción, leídos de su SNAPSHOT congelado (`cotizacion_opciones.plantilla_hija`), no de lo que haya quedado escrito en el resumen público:
+ * así lo ven igual una comparativa recién creada y una creada antes de que el resumen los listara. Solo se muestran si el snapshot es verificable: hoteles + servicios + manuales
+ * del snapshot deben sumar EXACTAMENTE el total de la opción; si no cuadra (o el bloque está mal formado) devuelve `ok: false` y la pantalla pide generar la comparativa de nuevo,
+ * en vez de aparentar que contiene —o no contiene— el servicio. Una comparativa manual (sin ítems de carrito) no lleva manuales.
+ */
+export function otrosServiciosDeOpcion(plantilla: unknown, total: unknown): { ok: true; otros: OtroServicioOpcion[] } | { ok: false } {
+  const obj = (v: unknown): v is Record<string, unknown> => typeof v === "object" && v !== null && !Array.isArray(v);
+  const payload = obj(plantilla) ? plantilla.payload : undefined;
+  if (!obj(payload) || !Array.isArray(payload.items)) return { ok: true, otros: [] };
+  const manuales = payload.manuales === undefined ? [] : payload.manuales;
+  const tours = payload.tours === undefined ? [] : payload.tours;
+  if (!Array.isArray(manuales) || !Array.isArray(tours)) return { ok: false };
+  let suma = 0;
+  for (const x of [...payload.items, ...tours, ...manuales]) {
+    const p = obj(x) ? x.precio : undefined;
+    if (typeof p !== "number" || !Number.isFinite(p)) return { ok: false };
+    suma += p;
+  }
+  const t = Number(total);
+  if (!Number.isFinite(t) || Math.abs(suma - t) > 0.5) return { ok: false };
+  const otros: OtroServicioOpcion[] = [];
+  for (const m of manuales) {
+    if (!obj(m) || m.clase !== "otro") continue;
+    const nombre = typeof m.nombre === "string" ? m.nombre.trim() : "";
+    const fecha = (v: unknown) => (typeof v === "string" && FECHA_ISO.test(v) ? v : null);
+    if (!nombre || nombre.length > 120 || typeof m.pax !== "number" || !Number.isInteger(m.pax) || m.pax < 1) return { ok: false };
+    otros.push({ nombre, pax: m.pax, fechaIda: fecha(m.fechaIda), fechaRegreso: fecha(m.fechaRegreso) });
+  }
+  return { ok: true, otros };
+}
+
 /** Roles internos que pueden dejar una comparativa compartida: los MISMOS de `f211_priv.madre_anonima` (migración 250). */
 export const ROLES_CREADOR_COMPARTIDA = ["superadmin", "gerencia", "administracion", "operaciones", "venta"] as const;
 

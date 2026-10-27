@@ -130,7 +130,7 @@ const { descripcionCotizacionManual, validarServicioManual, lineaB2BManual, tram
 const { construirPlanB2B } = await import("../lib/cotizacion/asistidaB2B.ts");
 const { convertirCotizacionCarrito } = await import("../app/(dashboard)/dashboard/reservar/actions.ts");
 const { crearSolicitudReserva, crearComparativaCarrito, elegirOpcionComparativa, resumenOpcionComparativa, previsualizarComparativaB2B } = await import("../app/tarifario/checkout/actions.ts");
-const { mensajeAcomodacionComparativa } = await import("../lib/cotizacion/comparativa.ts");
+const { mensajeAcomodacionComparativa, otrosServiciosDeOpcion } = await import("../lib/cotizacion/comparativa.ts");
 const { visitantePuedeContinuar } = await import("../lib/cotizacion/comparativaServidor.ts");
 
 // ── Semilla de la base ────────────────────────────────────────────────────
@@ -1990,6 +1990,37 @@ describe("64 · ronda 12: «otro servicio» por grupo, cobertura de tramos, hora
       const ops = opciones(r.id);
       assert.deepEqual(ops[0].plantilla.detalle.vuelos.map((v) => v.hora_salida), ["06:45", "18:20"]);
       assert.deepEqual(ops[2].plantilla.detalle.vuelos.map((v) => v.hora_salida), ["09:10", null]);
+    });
+  });
+
+  describe("«otro servicio» visible en cada opción (datos REALES: snapshot congelado de la base)", () => {
+    const otrosDe = (id: number) => opciones(id).map((o) => ({ op: o.op, r: otrosServiciosDeOpcion(o.plantilla, o.total) }));
+    test("V1 unidestino: el snapshot de CADA alternativa lista el servicio común, verificable contra su total; totales y liquidación B2B idénticos a los de siempre; el resumen público no trae costo ni proveedor", async () => {
+      const r = await crear(A3().slice(0, 2), [O("comun", { costo: 60_000, proveedor: "Operador Secreto" })], { asistencia: { canal: "b2b", aliadoId: AL, modo: "comisionable" } });
+      assert.equal(r.ok, true, err(r));
+      if (!r.ok) return;
+      for (const { r: x } of otrosDe(r.id)) assert.deepEqual(x, { ok: true, otros: [{ nombre: "Traslado privado", pax: 2, fechaIda: null, fechaRegreso: null }] });
+      const ops = opciones(r.id);
+      assert.deepEqual(ops.map((o) => Number(o.total)), [690_000, 890_000], "mismos totales que sin esta vista (hotel × 2 + 90.000 una vez)");
+      assert.deepEqual(ops.map((o) => [o.plantilla.payload.b2bAsistido!.pvp, o.plantilla.payload.b2bAsistido!.impuesto, o.plantilla.payload.b2bAsistido!.base, o.plantilla.payload.b2bAsistido!.comision]),
+        [[690_000, 25_000, 665_000, 66_500], [890_000, 125_000, 765_000, 76_500]], "liquidación B2B por opción sin cambios");
+      assert.doesNotMatch(JSON.stringify(ops.map((o) => o.resumen)), /Operador Secreto|costo|proveedor|Traslado privado/i, "el resumen público no se toca ni lleva costos");
+      assert.doesNotMatch(JSON.stringify(otrosDe(r.id)), /Operador Secreto|60000|costo|proveedor/i);
+    });
+
+    test("V2 multidestino: solo la opción del grupo elegido lista el servicio; las demás no, y todas siguen siendo verificables", async () => {
+      const r = await crear([it(3601, "a"), it(3602, "b"), SMR_ITEM()], [O(SMRK)]);
+      assert.equal(r.ok, true, err(r));
+      if (!r.ok) return;
+      assert.deepEqual(otrosDe(r.id).map((x) => [x.op, x.r.ok && x.r.otros.length]), [["A", 0], ["B", 0], ["C", 1]]);
+    });
+
+    test("V3 con vuelo y servicio juntos el snapshot sigue cuadrando (el vuelo no se confunde con el servicio y no se suma dos veces)", async () => {
+      const r = await crear(A3().slice(0, 2), [V(CTGK), O("comun")]);
+      assert.equal(r.ok, true, err(r));
+      if (!r.ok) return;
+      for (const { r: x } of otrosDe(r.id)) assert.deepEqual(x.ok && x.otros.map((o) => o.nombre), ["Traslado privado"]);
+      assert.deepEqual(opciones(r.id).map((o) => Number(o.total)), [600_000 + 1_800_000 + 90_000, 800_000 + 1_800_000 + 90_000]);
     });
   });
 

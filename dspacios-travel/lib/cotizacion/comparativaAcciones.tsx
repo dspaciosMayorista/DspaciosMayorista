@@ -18,14 +18,14 @@
 import { useEffect, useRef, useState, useTransition } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { CheckCircle2, Loader2, Send, XCircle, ArrowRight, ShieldAlert, Info } from "lucide-react";
+import { CheckCircle2, Loader2, Send, XCircle, ArrowRight, ShieldAlert, Info, Package } from "lucide-react";
 import { formatMoneda } from "@/lib/utils";
 import { ACOM_ROOM_LABEL, type AcomRoom } from "@/lib/acomodaciones";
 import { elegirOpcionComparativa, solicitarOpcionComparativa } from "@/app/tarifario/checkout/actions";
 import { resolverSolicitudComparativa } from "@/app/(dashboard)/dashboard/cotizaciones/manual-actions";
 import type { ContextoModalidad, VistaNeto } from "@/app/(dashboard)/dashboard/cotizaciones/pagos-actions";
 import { bloqueoNeto, pctTexto } from "@/lib/cotizacion/netoHija";
-import type { GrupoHotel, OpcionVista } from "@/lib/cotizacion/comparativa";
+import type { GrupoHotel, OpcionVista, OtroServicioOpcion } from "@/lib/cotizacion/comparativa";
 
 export type ModoSeleccion = "checkout" | "solicitud" | "interno" | "solo_lectura";
 
@@ -35,6 +35,10 @@ export type ResumenHotelUI = {
   /** Vuelos manuales comunes: ruta, tramo, fecha y pasajeros (sin precio). Su valor ya está en el total de la opción. */
   vuelos?: { tramo: string; origen: string | null; destino: string | null; fecha: string | null; hora?: string | null; nota: string }[];
   items?: { descripcion: string; valor: number }[];
+  /** «Otros servicios» manuales de esta opción (del snapshot congelado; sin precio, costo ni proveedor: su valor ya está en el total). */
+  otros?: OtroServicioOpcion[];
+  /** El snapshot de la opción no permite afirmar con seguridad qué servicios adicionales incluye su total: hay que generar la comparativa de nuevo. */
+  otrosNoVerificables?: boolean;
   incluye?: string | null;
   noIncluye?: string | null;
 };
@@ -273,6 +277,21 @@ export function SelectorOpciones({
                 <ul className="mb-3 space-y-1 text-xs text-gray-600">
                   {r.servicios.map((s) => <li key={s.nombre}>+ {s.nombre}</li>)}
                 </ul>
+              )}
+              {r.otros && r.otros.length > 0 && (
+                <ul className="mb-3 space-y-1 text-xs text-gray-600" data-testid="otros-opcion">
+                  {r.otros.map((o, i) => (
+                    <li key={i} className="flex items-start gap-1.5">
+                      <Package size={12} className="mt-0.5 shrink-0" aria-hidden />
+                      <span className="min-w-0 break-words">Servicio adicional: {o.nombre} · {o.pax} pax{o.fechaIda ? ` · ${o.fechaIda}${o.fechaRegreso ? ` → ${o.fechaRegreso}` : ""}` : ""} · incluido en el total</span>
+                    </li>
+                  ))}
+                </ul>
+              )}
+              {r.otrosNoVerificables && (
+                <p role="note" data-testid="otros-no-verificables" className="mb-3 rounded-lg bg-amber-50 px-3 py-2 text-xs text-amber-900">
+                  No se puede confirmar, desde el registro de esta opción, qué servicios adicionales incluye su total. Genera la comparativa de nuevo para ver el detalle.
+                </p>
               )}
               {r.vuelos && r.vuelos.length > 0 && (
                 <ul className="mb-3 space-y-1 text-xs text-gray-600" data-testid="vuelos-opcion">

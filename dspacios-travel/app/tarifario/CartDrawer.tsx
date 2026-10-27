@@ -12,6 +12,7 @@ import { AvisoMonedas, TotalesPorMoneda } from "./totalesCarrito";
 import { construirAddonsIntentDesdeCarrito } from "@/lib/cart/addonsIntent";
 import { crearContadorAddonsNonce } from "@/lib/cart/addonsNonce";
 import { resumenHabitacionesBernalo } from "@/lib/cart/resumenHabitacionBernalo";
+import { estanciaDeHotel, lineaEstancia } from "@/lib/cart/estanciaCarrito";
 import { CondicionHotelBadges } from "@/components/cotizacion/CondicionHotelBadges";
 
 const MENSAJE_SIN_REFERENCIA_ADDONS =
@@ -194,6 +195,7 @@ export function CartDrawer({ checkoutHabilitado = false, fotosPorHotel = {} }: {
                               {it.destino ?? ""}{it.categoria ? ` · ${it.categoria}` : ""}{it.regimen ? ` / ${it.regimen}` : ""}
                             </div>
                             <div className="truncate text-xs text-gray-400">{resumenHabitaciones(it)}</div>
+                            <div className="mt-0.5 break-words text-xs text-gray-600" data-testid="estancia-hotel">{lineaEstancia(estanciaDeHotel(it))}</div>
                             <div className="mt-1"><CondicionHotelBadges condicion={it.condicion} /></div>
                           </>
                         ) : it.tipo === "hotel" ? (
@@ -203,6 +205,7 @@ export function CartDrawer({ checkoutHabilitado = false, fotosPorHotel = {} }: {
                               {it.destino ?? ""}{it.categoria ? ` · ${it.categoria}` : ""}{it.alimentacion ? ` / ${it.alimentacion}` : ""}
                             </div>
                             <div className="truncate text-xs text-gray-400">{resumenHabitacionesBernalo(it.habitaciones, it.composicionHabitaciones)}</div>
+                            <div className="mt-0.5 break-words text-xs text-gray-600" data-testid="estancia-hotel">{lineaEstancia(estanciaDeHotel(it))}</div>
                           </>
                         ) : (
                           <>
