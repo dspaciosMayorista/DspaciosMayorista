@@ -17,13 +17,15 @@ import { Button } from "@/components/ui/button";
  * - Con `destructivo` el botón de confirmar usa el rojo de la app y el icono de advertencia.
  */
 export function DialogoConfirmar({
-  open, onOpenChange, titulo, descripcion, etiquetaConfirmar = "Confirmar", etiquetaCancelar = "Cancelar",
+  open, onOpenChange, titulo, descripcion, contenido, etiquetaConfirmar = "Confirmar", etiquetaCancelar = "Cancelar",
   destructivo = false, onConfirmar,
 }: {
   open: boolean;
   onOpenChange: (abierto: boolean) => void;
   titulo: string;
   descripcion?: ReactNode;
+  /** Bloque de contenido que NO es texto corrido (listas, dl, tablas): va fuera de `descripcion`, que se renderiza dentro de un <p>. */
+  contenido?: ReactNode;
   etiquetaConfirmar?: string;
   etiquetaCancelar?: string;
   destructivo?: boolean;
@@ -58,6 +60,7 @@ export function DialogoConfirmar({
             {titulo}
           </DialogTitle>
           {descripcion && <DialogDescription>{descripcion}</DialogDescription>}
+          {contenido}
         </DialogHeader>
         {error && (
           <p role="alert" className="rounded-lg bg-red-50 px-3 py-2 text-sm text-red-600">{error}</p>
