@@ -304,6 +304,7 @@ export function ProgramaEditor(props: {
           }}
           proveedores={props.proveedores}
           catalogo={props.catalogoHoteles ?? { hoteles: [], base: [], noches: [] }}
+          dias={props.dias.map((d) => ({ dia: d.dia, titulo: d.titulo, desayuno: d.desayuno, almuerzo: d.almuerzo, cena: d.cena, descripcion: d.descripcion }))}
         />
       )}
       {tab === "matriz" && !modoHotelTabs &&
@@ -449,40 +450,70 @@ function RutaEditor({ programaId, ciudades, destinos }: { programaId: number; ci
 }
 
 // ── Itinerario (días) ──────────────────────────────────────────────────────────
-function ItinerarioEditor({ programaId, dias, totalDias }: { programaId: number; dias: Dia[]; totalDias: number | null }) {
-  const [rows, setRows] = useState(
-    dias.map((d) => ({ dia: d.dia, titulo: d.titulo ?? "", desayuno: d.desayuno, almuerzo: d.almuerzo, cena: d.cena, descripcion: d.descripcion ?? "" }))
-  );
+type DiaRow = { dia: number; titulo: string; desayuno: boolean; almuerzo: boolean; cena: boolean; descripcion: string };
+const diaCompleto = (r: DiaRow) => r.titulo.trim() !== "" && r.descripcion.trim() !== "";
+const resumenNota = (t: string) => { const x = t.replace(/\s+/g, " ").trim(); return x.length > 90 ? `${x.slice(0, 90)}…` : x; };
+
+export function ItinerarioEditor({ programaId, dias, totalDias }: { programaId: number; dias: Dia[]; totalDias: number | null }) {
+  const inicial: DiaRow[] = dias.map((d) => ({ dia: d.dia, titulo: d.titulo ?? "", desayuno: d.desayuno, almuerzo: d.almuerzo, cena: d.cena, descripcion: d.descripcion ?? "" }));
+  const [rows, setRows] = useState<DiaRow[]>(inicial);
+  // Los días ya completados al cargar se ven en una sola fila; los nuevos o incompletos, abiertos. «Editar» reabre sin perder contenido.
+  const [abiertos, setAbiertos] = useState<Set<number>>(() => new Set(inicial.map((r, i) => (diaCompleto(r) ? -1 : i)).filter((i) => i >= 0)));
+  const abrir = (i: number) => setAbiertos((p) => new Set(p).add(i));
+  const cerrar = (i: number) => setAbiertos((p) => { const n = new Set(p); n.delete(i); return n; });
   const upd = (i: number, k: string, v: unknown) => setRows((p) => p.map((r, j) => (j === i ? { ...r, [k]: v } : r)));
+  const quitar = (i: number) => {
+    setRows((p) => p.filter((_, j) => j !== i));
+    setAbiertos((p) => new Set([...p].filter((x) => x !== i).map((x) => (x > i ? x - 1 : x))));
+  };
   const generar = () => {
     const n = totalDias ?? 0;
     if (!n) return;
     setRows(Array.from({ length: n }, (_, i) => ({ dia: i + 1, titulo: "", desayuno: false, almuerzo: false, cena: false, descripcion: "" })));
+    setAbiertos(new Set(Array.from({ length: n }, (_, i) => i)));
   };
   return (
     <div>
       <div className="mb-3 flex items-center justify-between">
-        <p className="text-sm text-gray-500">Itinerario día por día. Marca las comidas incluidas.</p>
+        <p className="text-sm text-gray-500">Itinerario día por día. Marca las comidas incluidas; al terminar un día pulsa «Listo» y queda en una sola fila.</p>
         {totalDias ? <AddBtn onClick={generar}>Generar {totalDias} días en blanco</AddBtn> : null}
       </div>
-      <div className="space-y-3">
-        {rows.map((r, i) => (
-          <div key={i} className="rounded-lg border border-gray-200 bg-white p-3">
-            <div className="mb-2 flex flex-wrap items-center gap-2">
-              <span className="text-xs text-gray-400">Día</span>
-              <Input type="number" value={r.dia} onChange={(e) => upd(i, "dia", Number(e.target.value))} className="w-20" />
-              <Input value={r.titulo} onChange={(e) => upd(i, "titulo", e.target.value)} placeholder="Título (ej. RIO DE JANEIRO)" className="w-72" />
-              <label className="flex items-center gap-1 text-xs text-gray-600"><input type="checkbox" checked={r.desayuno} onChange={(e) => upd(i, "desayuno", e.target.checked)} /> Des</label>
-              <label className="flex items-center gap-1 text-xs text-gray-600"><input type="checkbox" checked={r.almuerzo} onChange={(e) => upd(i, "almuerzo", e.target.checked)} /> Alm</label>
-              <label className="flex items-center gap-1 text-xs text-gray-600"><input type="checkbox" checked={r.cena} onChange={(e) => upd(i, "cena", e.target.checked)} /> Cena</label>
-              <DelBtn onClick={() => setRows((p) => p.filter((_, j) => j !== i))} />
+      <div className="space-y-2">
+        {rows.map((r, i) =>
+          abiertos.has(i) ? (
+            <div key={i} className="rounded-lg border border-gray-200 bg-white p-3">
+              <div className="mb-2 flex flex-wrap items-center gap-2">
+                <span className="text-xs text-gray-400">Día</span>
+                <Input type="number" value={r.dia} onChange={(e) => upd(i, "dia", Number(e.target.value))} className="w-20" />
+                <Input value={r.titulo} onChange={(e) => upd(i, "titulo", e.target.value)} placeholder="Título (ej. RIO DE JANEIRO)" className="w-full sm:w-72" />
+                <label className="flex items-center gap-1 text-xs text-gray-600"><input type="checkbox" checked={r.desayuno} onChange={(e) => upd(i, "desayuno", e.target.checked)} /> Des</label>
+                <label className="flex items-center gap-1 text-xs text-gray-600"><input type="checkbox" checked={r.almuerzo} onChange={(e) => upd(i, "almuerzo", e.target.checked)} /> Alm</label>
+                <label className="flex items-center gap-1 text-xs text-gray-600"><input type="checkbox" checked={r.cena} onChange={(e) => upd(i, "cena", e.target.checked)} /> Cena</label>
+                <DelBtn onClick={() => quitar(i)} />
+              </div>
+              <textarea value={r.descripcion} onChange={(e) => upd(i, "descripcion", e.target.value)} rows={3} className={sel} placeholder="Descripción del día…" />
+              <div className="mt-2 flex justify-end">
+                <button type="button" disabled={!diaCompleto(r)} onClick={() => cerrar(i)} className="rounded-lg border border-gray-300 px-3 py-1 text-xs font-medium text-gray-700 hover:bg-gray-50 disabled:cursor-not-allowed disabled:text-gray-300">
+                  Listo
+                </button>
+              </div>
             </div>
-            <textarea value={r.descripcion} onChange={(e) => upd(i, "descripcion", e.target.value)} rows={3} className={sel} placeholder="Descripción del día…" />
-          </div>
-        ))}
+          ) : (
+            <div key={i} className="flex flex-wrap items-center gap-x-3 gap-y-1 rounded-lg border border-gray-200 bg-white px-3 py-2" aria-label={`Día ${r.dia} completado`}>
+              <span className="w-12 shrink-0 text-xs font-medium text-gray-400">Día {r.dia}</span>
+              <span className="min-w-0 flex-1 truncate text-sm font-medium text-gray-800">{r.titulo}</span>
+              <span className="flex gap-1 text-[11px] text-gray-500" aria-label="Alimentación incluida">
+                {[r.desayuno && "Des", r.almuerzo && "Alm", r.cena && "Cena"].filter(Boolean).map((c) => <span key={String(c)} className="rounded-full bg-gray-100 px-2 py-0.5">{c}</span>)}
+                {!r.desayuno && !r.almuerzo && !r.cena && <span className="text-gray-300">sin comidas</span>}
+              </span>
+              <span className="basis-full truncate text-xs text-gray-500 sm:basis-auto sm:max-w-[40%]">{resumenNota(r.descripcion)}</span>
+              <button type="button" onClick={() => abrir(i)} className="text-xs font-medium text-[#1D7C9A] hover:underline" aria-label={`Editar día ${r.dia}`}>Editar</button>
+            </div>
+          ),
+        )}
       </div>
       <div className="mt-3">
-        <AddBtn onClick={() => setRows((p) => [...p, { dia: p.length + 1, titulo: "", desayuno: false, almuerzo: false, cena: false, descripcion: "" }])}>+ Agregar día</AddBtn>
+        <AddBtn onClick={() => { setRows((p) => [...p, { dia: p.length + 1, titulo: "", desayuno: false, almuerzo: false, cena: false, descripcion: "" }]); setAbiertos((p) => new Set(p).add(rows.length)); }}>+ Agregar día</AddBtn>
       </div>
       <SaveBar onSave={() => guardarDias(programaId, rows)} />
     </div>

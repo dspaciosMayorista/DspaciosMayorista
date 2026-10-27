@@ -5,6 +5,7 @@ import { getProgramaDetalle } from "@/lib/programas";
 import { cargarTablasPvp88 } from "@/lib/programas/estanciaHotelDatos88";
 import { esModoHotel, nochesIncluidasPrograma } from "@/lib/programas/estanciaHotel88";
 import { formatFecha } from "@/lib/utils";
+import { listarAliadosParaAsistencia } from "@/lib/cotizacion/asistidaB2BServidor";
 import { ProgramaReservaForm, type CategoriaReserva } from "./ProgramaReservaForm";
 
 export const dynamic = "force-dynamic";
@@ -22,6 +23,10 @@ export default async function ReservarProgramaPage({ params }: { params: Promise
   const asesores = (asesoresRows ?? [])
     .filter((a): a is { nombre: string; email: string } => !!a.email)
     .map((a) => ({ nombre: a.nombre, email: a.email }));
+
+  // PR #409 — aliados activos del catálogo para vender B2B con PVP o NETO (mismo listado y mismos roles que la venta asistida del carrito).
+  const listaAliados = await listarAliadosParaAsistencia(sb);
+  const aliados = listaAliados.ok && listaAliados.puede ? listaAliados.aliados : [];
 
   const modoSalida = det.programa.modo_precio === "salida";
   // #88: programa por hotel y vigencia — tablas de PVP por hotel (nunca netos), calculadas en el servidor.
@@ -90,6 +95,7 @@ export default async function ReservarProgramaPage({ params }: { params: Promise
           nochesIncluidas={modoHotel && incluidas.ok ? incluidas.noches : null}
           errorPrograma={modoHotel && !incluidas.ok ? incluidas.error : null}
           itinerario={modoHotel ? det.dias : undefined}
+          aliados={aliados}
         />
       )}
     </div>

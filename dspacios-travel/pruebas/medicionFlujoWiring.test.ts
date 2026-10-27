@@ -386,14 +386,16 @@ describe("validacion_negocio/validacion_programa registran 'rechazado' en CADA r
   // #88 agrega 13 rechazos del modo «hotel y vigencia» (solo terrestre, moneda, hotel, modalidad, fecha de entrada, noches adicionales, noches del
   // programa, hotel ajeno, precio base sin vigencia, itinerario incompleto, proveedor de la asistencia ausente o inexistente y TRM de costos), todos
   // ANTES de numerar y envueltos igual: 14 → 27.
-  test("reservarProgramaInterno: 27 puntos de rechazo pasan por _rechazarValidacionPrograma(); el log de éxito ('ok') aparece UNA sola vez", () => {
+  // PR #409 agrega 7 rechazos de la venta B2B de Programas (modalidad PVP/NETO sin elegir, aliado ausente, aliado no resoluble, tipo de aliado distinto,
+  // plan de comisión inválido, y los dos de la vista previa de términos), todos ANTES de numerar y envueltos igual: 27 → 34.
+  test("reservarProgramaInterno: 34 puntos de rechazo pasan por _rechazarValidacionPrograma(); el log de éxito ('ok') aparece UNA sola vez", () => {
     const cuerpo = cuerpoDeFuncion(leer(RESERVAR_ARCHIVO), "reservarProgramaInterno");
     const usos = [...cuerpo.matchAll(/return _rechazarValidacionPrograma\(/g)];
-    assert.equal(usos.length, 27, `se esperaban 27 puntos de rechazo envueltos, hubo ${usos.length}`);
+    assert.equal(usos.length, 34, `se esperaban 34 puntos de rechazo envueltos, hubo ${usos.length}`);
     const logsOk = [...cuerpo.matchAll(/registrarEtapa\("reservar_programa", flujoId, "validacion_programa", Math\.round\(performance\.now\(\) - _tValidacionProg0\), "ok"\)/g)];
     assert.equal(logsOk.length, 1, "el log de éxito de validacion_programa debe aparecer exactamente una vez (al final de la sección)");
     const logsRechazado = [...cuerpo.matchAll(/registrarEtapa\("reservar_programa", flujoId, "validacion_programa", Math\.round\(performance\.now\(\) - _tValidacionProg0\), "rechazado"\)/g)];
-    assert.equal(logsRechazado.length, 1, "el log de rechazo debe estar UNA sola vez, dentro de la definición de _rechazarValidacionPrograma (reutilizada en los 27 returns)");
+    assert.equal(logsRechazado.length, 1, "el log de rechazo debe estar UNA sola vez, dentro de la definición de _rechazarValidacionPrograma (reutilizada en los 34 returns)");
   });
 });
 

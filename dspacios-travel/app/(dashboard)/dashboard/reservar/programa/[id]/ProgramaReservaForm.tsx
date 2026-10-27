@@ -1,7 +1,7 @@
 "use client";
 
 import { DateInput } from "@/components/ui/DateInput";
-import { useMemo, useState, useTransition } from "react";
+import { useEffect, useMemo, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -10,10 +10,14 @@ import { paxDeAcomodacion, textoEdadesHotel } from "@/lib/acomodaciones";
 import { esInfantePorEdad } from "@/lib/reservar/pasajeros";
 import { truncarPasajeros, recalcularVinculosPorEdad } from "@/lib/reservar/pasajerosFilas";
 import { OpcionesTipoDoc } from "@/components/personas/OpcionesTipoDoc";
-import { documentoPasajeroDesdeCliente } from "@/lib/personas/tiposDocumento";
+import { aplicarCopiaTitular, copiaVigente, deshacerCopiaTitular, type CopiaTitular } from "@/lib/personas/copiaTitular";
+import { BotonCopiarTitular } from "@/components/pasajeros/BotonCopiarTitular";
 import { BuscarTitular } from "@/components/personas/BuscarTitular";
 import { BuscarPasajeroDocumento } from "@/components/pasajeros/BuscarPasajeroDocumento";
-import { reservarPrograma } from "../../actions";
+import { reservarPrograma, terminosB2BPrograma } from "../../actions";
+import { TerminosB2BAsistido, type TerminosVisibles } from "@/components/cotizacion/TerminosB2BAsistido";
+import type { AliadoListado } from "@/lib/cotizacion/asistidaB2BServidor";
+import type { ModoCompra } from "@/lib/reservar/comisionReserva";
 import { validarTrmCosto } from "@/lib/finanzas/costoTrmCarrito";
 import { totalDesdePrecios, cotizarEstanciaDesdePvp, resolverBaseHotel, type CambioPrecioPrograma, type TablaHotelPvp } from "@/lib/programas/precioReserva57";
 import {
@@ -70,6 +74,7 @@ export function ProgramaReservaForm({
   nochesIncluidas = null,
   errorPrograma = null,
   itinerario = [],
+  aliados = [],
 }: {
   programaId: number;
   moneda: string;
@@ -90,6 +95,8 @@ export function ProgramaReservaForm({
   errorPrograma?: string | null;
   /** Itinerario base del programa (para mostrar el desplazado con las noches extra). */
   itinerario?: DiaItinerario[];
+  /** PR #409 — aliados ACTIVOS del catálogo (agencia/freelance) con su % vigente, para vender B2B con PVP o NETO. */
+  aliados?: AliadoListado[];
 }) {
   const router = useRouter();
   const modoHotel = hoteles !== undefined;
@@ -132,9 +139,16 @@ export function ProgramaReservaForm({
   const [cliente, setCliente] = useState({ nombres: "", apellidos: "", tipoDoc: "", numeroDoc: "", telefono: "", email: "" });
   const [tipoAsesor, setTipoAsesor] = useState<"interno" | "agencia" | "freelance">("interno");
   const [asesorInterno, setAsesorInterno] = useState(asesores[0]?.email ?? "");
-  const [agenciaNombre, setAgenciaNombre] = useState("");
   const [agenciaAsesor, setAgenciaAsesor] = useState("");
-  const [freelanceNombre, setFreelanceNombre] = useState("");
+  // PR #409 — B2B: aliado del catálogo y elección EXPRESA (sin valor por defecto) de PVP o NETO antes de generar el contrato.
+  const [aliadoId, setAliadoId] = useState<number | null>(null);
+  const [modoCompra, setModoCompra] = useState<ModoCompra | "">("");
+  const [terminos, setTerminos] = useState<TerminosVisibles | null>(null);
+  const [terminosError, setTerminosError] = useState<string | null>(null);
+  const [calculandoTerminos, setCalculandoTerminos] = useState(false);
+  const esB2B = tipoAsesor !== "interno";
+  const aliadosDelTipo = aliados.filter((a) => a.tipo === tipoAsesor);
+  const aliadoElegido = aliadosDelTipo.find((a) => a.id === aliadoId) ?? null;
   const [plazo, setPlazo] = useState("");
 
   // Pasajeros que ocupan silla (adultos por habitación + niños). Los infantes
@@ -207,8 +221,20 @@ export function ProgramaReservaForm({
     setFechaIda(v);
     setPasajeros((p) => recalcularVinculosPorEdad(p, v || null));
   };
-  const copiarCliente = (i: number) =>
-    setPasajeros((p) => p.map((x, j) => (j === i ? { ...x, nombres: cliente.nombres, apellidos: cliente.apellidos, ...documentoPasajeroDesdeCliente(cliente.tipoDoc, cliente.numeroDoc) } : x)));
+  // Los datos del cliente solo se copian a UN pasajero (PR #409); deshacer devuelve lo que tenía.
+  const [copiaTitularRaw, setCopiaTitular] = useState<CopiaTitular>(null);
+  const copiaTitular = copiaVigente(copiaTitularRaw, pasajeros.length);
+  const copiarCliente = (i: number) => {
+    const r = aplicarCopiaTitular(pasajeros, i, cliente, copiaTitular);
+    if (!r) return;
+    setPasajeros(r.pax);
+    setCopiaTitular(r.copia);
+  };
+  const deshacerCopiaCliente = () => {
+    const r = deshacerCopiaTitular(pasajeros, copiaTitular);
+    setPasajeros(r.pax);
+    setCopiaTitular(r.copia);
+  };
 
   const [error, setError] = useState<string | null>(null);
   const [pending, startTransition] = useTransition();
@@ -221,8 +247,52 @@ export function ProgramaReservaForm({
     enviar(total);
   }
 
+  /** Todo lo que el servidor necesita menos los pasajeros: lo comparten «generar reserva» y la vista previa de términos B2B. */
+  const datosReserva = (precioConfirmado: number) => ({
+    precioConfirmado,
+    programaId,
+    categoriaId: modoHotel ? 0 : categoriaId,
+    salidaId: modoSalida ? categoriaId : undefined,
+    estancia: modoHotel ? { hotelId, modalidad, nochesAdicionales: adicionales } : undefined,
+    trmCosto: pideTrmCosto ? trmCosto : undefined,
+    fechaIda,
+    paxPorAcom: habs, // ahora son HABITACIONES por acomodación (el server expande a pax)
+    ninos: Number(ninos) || 0,
+    infantes: Number(infantes) || 0,
+    cliente,
+    tipoAsesor,
+    asesorInterno,
+    // El nombre del aliado sale del catálogo en el servidor; aquí solo viaja la ELECCIÓN.
+    agenciaNombre: "",
+    agenciaAsesor,
+    freelanceNombre: "",
+    aliadoId: esB2B ? aliadoId : null,
+    modoCompra: esB2B && modoCompra ? modoCompra : undefined,
+    plazo,
+  });
+
+  // Vista previa de los términos B2B: la calcula el servidor con las reglas de siempre y NO crea nada.
+  useEffect(() => {
+    setTerminos(null);
+    setTerminosError(null);
+    if (!esB2B || !aliadoId || !modoCompra) return;
+    let vigente = true;
+    setCalculandoTerminos(true);
+    const t = setTimeout(async () => {
+      const r = await terminosB2BPrograma({ ...datosReserva(total), pasajeros: [] });
+      if (!vigente) return;
+      setCalculandoTerminos(false);
+      if (r.ok) setTerminos(r.terminos);
+      else setTerminosError(r.error);
+    }, 350);
+    return () => { vigente = false; clearTimeout(t); };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [esB2B, aliadoId, modoCompra, claveSeleccion, tipoAsesor]);
+
   function enviar(precioConfirmado: number) {
     setError(null);
+    if (esB2B && !aliadoId) return setError(`Selecciona la ${tipoAsesor} del catálogo.`);
+    if (esB2B && !modoCompra) return setError("Elige si el contrato se genera a PVP o a NETO.");
     if (!fechaIda) return setError(modoHotel ? "Elige la fecha de entrada al hotel." : "Elige la fecha de salida.");
     if (modoHotel && errorEstancia) return setError(errorEstancia);
     if (pideTrmCosto) {
@@ -234,23 +304,7 @@ export function ProgramaReservaForm({
     if (cliente.numeroDoc.trim() && !cliente.tipoDoc) return setError("Elige el tipo de documento del cliente.");
     startTransition(async () => {
       const res = await reservarPrograma({
-        precioConfirmado,
-        programaId,
-        categoriaId: modoHotel ? 0 : categoriaId,
-        salidaId: modoSalida ? categoriaId : undefined,
-        estancia: modoHotel ? { hotelId, modalidad, nochesAdicionales: adicionales } : undefined,
-        trmCosto: pideTrmCosto ? trmCosto : undefined,
-        fechaIda,
-        paxPorAcom: habs, // ahora son HABITACIONES por acomodación (el server expande a pax)
-        ninos: Number(ninos) || 0,
-        infantes: Number(infantes) || 0,
-        cliente,
-        tipoAsesor,
-        asesorInterno,
-        agenciaNombre,
-        agenciaAsesor,
-        freelanceNombre,
-        plazo,
+        ...datosReserva(precioConfirmado),
         pasajeros: pasajeros.map((p, i) => ({
           nombres: p.nombres,
           apellidos: p.apellidos,
@@ -503,7 +557,7 @@ export function ProgramaReservaForm({
                 <div key={i} className="rounded-lg border border-gray-100 bg-gray-50 p-3">
                   <div className="mb-1 flex items-center justify-between">
                     <span className="text-xs font-medium text-gray-500">Pasajero {i + 1}</span>
-                    <button type="button" onClick={() => copiarCliente(i)} className="text-xs text-[#1D7C9A] hover:underline">Copiar del cliente</button>
+                    <BotonCopiarTitular indice={i} copia={copiaTitular} onCopiar={() => copiarCliente(i)} onDeshacer={deshacerCopiaCliente} etiqueta="Copiar del cliente" />
                   </div>
                   <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
                     <Input value={p.nombres} onChange={(e) => updPasajero(i, "nombres", e.target.value)} placeholder="Nombres" />
@@ -584,14 +638,47 @@ export function ProgramaReservaForm({
             </select>
           </div>
         )}
-        {tipoAsesor === "agencia" && (
-          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-            <div><label className={lbl}>Agencia</label><Input value={agenciaNombre} onChange={(e) => setAgenciaNombre(e.target.value)} /></div>
-            <div><label className={lbl}>Asesor de la agencia</label><Input value={agenciaAsesor} onChange={(e) => setAgenciaAsesor(e.target.value)} /></div>
+        {esB2B && (
+          <div className="space-y-4">
+            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+              <div>
+                <label className={lbl} htmlFor="aliado-b2b">{tipoAsesor === "agencia" ? "Agencia" : "Freelance"} (catálogo)</label>
+                <select id="aliado-b2b" value={aliadoId ?? ""} onChange={(e) => setAliadoId(e.target.value ? Number(e.target.value) : null)} className={sel}>
+                  <option value="">Selecciona…</option>
+                  {aliadosDelTipo.map((a) => <option key={a.id} value={a.id}>{a.nombre}</option>)}
+                </select>
+                {!aliadosDelTipo.length && <p className="mt-1 text-xs text-amber-700">No hay {tipoAsesor === "agencia" ? "agencias" : "freelances"} activos en el catálogo.</p>}
+                {aliadoElegido && (
+                  <p className="mt-1 text-xs text-gray-500">
+                    Comisión {Math.round(aliadoElegido.pct * 10000) / 100} % · {aliadoElegido.pctOrigen === "aliado" ? "porcentaje propio del aliado" : aliadoElegido.pctOrigen === "general" ? "porcentaje general del sistema" : "porcentaje por defecto"}
+                  </p>
+                )}
+              </div>
+              {tipoAsesor === "agencia" && (
+                <div><label className={lbl} htmlFor="agencia-asesor">Asesor de la agencia</label><Input id="agencia-asesor" value={agenciaAsesor} onChange={(e) => setAgenciaAsesor(e.target.value)} /></div>
+              )}
+            </div>
+
+            <fieldset className="rounded-lg border border-gray-200 p-3">
+              <legend className="px-1 text-xs font-medium text-gray-600">¿Cómo se genera el contrato? (obligatorio)</legend>
+              <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+                {([
+                  ["comisionable", "PVP", "Se cobra el total del programa; la comisión del aliado se liquida aparte. Cliente: la persona."],
+                  ["neta", "NETO", "Se cobra el PVP menos la comisión. Cliente: el aliado; la persona queda como titular de la reserva."],
+                ] as const).map(([valor, titulo, ayuda]) => (
+                  <label key={valor} className={`flex cursor-pointer items-start gap-2 rounded-lg border p-3 text-sm ${modoCompra === valor ? "border-[#1D7C9A] bg-sky-50" : "border-gray-200"}`}>
+                    <input type="radio" name="modo-compra-b2b" className="mt-1" checked={modoCompra === valor} onChange={() => setModoCompra(valor)} />
+                    <span><strong>{titulo}</strong><span className="block text-xs text-gray-500">{ayuda}</span></span>
+                  </label>
+                ))}
+              </div>
+              {!modoCompra && <p className="mt-2 text-xs text-gray-500">Elige PVP o NETO para ver la base comisionable, el impuesto no comisionable, el porcentaje y la comisión.</p>}
+            </fieldset>
+
+            {calculandoTerminos && <p className="text-xs text-gray-500" role="status">Calculando términos…</p>}
+            {terminosError && <p className="rounded-lg border border-amber-200 bg-amber-50 p-3 text-xs text-amber-800" role="status">No se pueden mostrar los términos todavía: {terminosError}</p>}
+            {terminos && <TerminosB2BAsistido plan={terminos} previa />}
           </div>
-        )}
-        {tipoAsesor === "freelance" && (
-          <div><label className={lbl}>Freelance</label><Input value={freelanceNombre} onChange={(e) => setFreelanceNombre(e.target.value)} /></div>
         )}
         <div className="mt-3">
           <label className={lbl}>Plazo de pago (opcional)</label>

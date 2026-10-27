@@ -83,10 +83,11 @@ mock.module("@/lib/supabase/admin", { namedExports: { createAdminClient: () => c
 const COOKIES = { get: () => undefined, getAll: () => [] as unknown[] };
 mock.module("next/headers", { namedExports: { headers: async () => new Map([["host", "localhost"]]), cookies: async () => COOKIES } });
 
-const { reservarPrograma } = await import("../app/(dashboard)/dashboard/reservar/actions.ts");
+const { reservarPrograma, terminosB2BPrograma } = await import("../app/(dashboard)/dashboard/reservar/actions.ts");
+const { getProgramaDetalle } = await import("../lib/programas.ts");
 const { reconciliarFinancieroPendienteCron } = await import("../app/(dashboard)/dashboard/reservar/reconciliacion-actions.ts");
 const { cargarTablasPvp88 } = await import("../lib/programas/estanciaHotelDatos88.ts");
-const { cotizarEstanciaDesdePvp } = await import("../lib/programas/precioReserva57.ts");
+const { cotizarEstanciaDesdePvp, totalDesdePrecios } = await import("../lib/programas/precioReserva57.ts");
 
 // ── Semilla ───────────────────────────────────────────────────────────────
 const PID = 24501;
@@ -126,6 +127,10 @@ function limpiar() {
     drop trigger if exists zz_falla on public.ventas;
     drop trigger if exists zz_falla on public.asiento_lineas;
     drop trigger if exists zz_falla on public.contrato_hoteles;
+    drop trigger if exists zz_falla on public.aliados_b2b;
+    drop trigger if exists zz_falla on public.contrato_pasajeros;
+    drop trigger if exists zz_falla on public.contrato_items;
+    drop trigger if exists zz_falla3 on public.ventas;
     delete from public.asiento_lineas;
     delete from public.asientos_contables;
     -- Con los triggers apagados tampoco corren las FK en cascada: se vacía cada tabla que cuelga del contrato.
@@ -282,5 +287,217 @@ describe("#88 · reservarPrograma contra Postgres/PostgREST real", () => {
     assert.ok((r.advertencias ?? []).length > 0, "el fallo del asiento no se oculta");
     assert.equal(sql(`select financiero_estado from public.ventas where numero_contrato = '${r.numero}'`), "completo");
     assert.equal(cuenta("cuentas_por_pagar"), 2);
+  });
+
+});
+
+// ── PR #409 · venta B2B de Programas (PVP y NETO) contra la base real ──────────────────────────────────────────────────────────────────────
+// Usa la RPC REAL registrar_comision_b2b_reserva (migración 205), la RLS y los CHECK de la 236/245. Cubre modo hotel (244/245) y un programa por salida.
+const AL_PVP = 24591; // agencia, 10 % propio
+const AL_ALTA = 24592; // agencia, 60 % propio (el exigible en NETO queda por debajo del costo)
+const AL_FREE = 24593; // freelance sin % propio → parámetro general o 11 %
+const PID_SAL = 24502;
+describe("PR #409 · reservarPrograma B2B (PVP / NETO) contra Postgres/PostgREST real", () => {
+  before(() => {
+    sql(`
+      insert into public.aliados (id, nombre, tipo, pct_comision, activo, nit, tipo_documento) values
+        (${AL_PVP}, 'Viajes Sol 245', 'agencia', 0.10, true, '900123456', 'NIT'),
+        (${AL_ALTA}, 'Agencia Comision Alta 245', 'agencia', 0.60, true, '900777000', 'NIT'),
+        (${AL_FREE}, 'Freelance Luna 245', 'freelance', null, true, '52111222', 'CC') on conflict do nothing;
+      insert into public.programas (id, nombre, subtitulo, moneda, pct_mk, pct_fee_tarjeta, asistencia_medica_dia, modo_precio, dias, noches, proveedor_id, edad_nino_min, edad_nino_max, edad_infante_max, tipo_transporte, incluye_aereo)
+        values (${PID_SAL}, 'Circuito Andino 245', null, 'USD', 0.15, 0.03, 4, 'salida', 8, 7, 24509, 2, 11, 1, 'ninguno', false) on conflict do nothing;
+      insert into public.programa_salidas (programa_id, orden, etiqueta, fecha_desde, fecha_hasta, bajo_solicitud, neto_sencilla, neto_doble, neto_triple, neto_nino)
+        select ${PID_SAL}, 0, 'Marzo', '2027-03-01', '2027-03-08', false, 1400, 1000, 900, 700 where not exists (select 1 from public.programa_salidas where programa_id = ${PID_SAL});
+    `);
+  });
+
+  const B2B = (aliadoId: number | null, modoCompra: "comisionable" | "neta" | undefined, tipoAsesor: "agencia" | "freelance" = "agencia") => ({ tipoAsesor, aliadoId, modoCompra });
+  const venta = (n: string) => fila(`select precio_venta, modo_compra, comision_b2b, comision_estado, aliado_id, tipo_asesor, coalesce(agencia_nombre,''), coalesce(freelance_nombre,''), cliente, coalesce(cliente_documento,''), coalesce(titular_nombre,''), coalesce(titular_documento,''), financiero_estado from public.ventas where numero_contrato = '${n}'`);
+  const comisionFila = (n: string) => fila(`select aliado, precio_venta, base_comision, pct_comision, estado, descontada_en_precio from public.aliados_b2b where numero_contrato = '${n}'`);
+
+  // Programa por SALIDA (no hotel): PVP que mostraría la ficha para 1 habitación doble.
+  async function importeSalida(): Promise<number> {
+    const det = await getProgramaDetalle(clienteLocal(TOKEN_SERVICIO) as never, PID_SAL);
+    assert.ok(det);
+    const precios = det!.salidas[0].precios;
+    const adultos = precios.filter((p) => p.acomodacion !== "nino" && p.pvp != null).map((p) => ({ acomodacion: p.acomodacion, pvp: p.pvp }));
+    return totalDesdePrecios({ adultos, precioNino: precios.find((p) => p.acomodacion === "nino")?.pvp ?? null, habitaciones: { doble: 1 }, ninos: 0 });
+  }
+  const entradaSalida = (precioConfirmado: number, over: Record<string, unknown> = {}) => ({
+    programaId: PID_SAL, categoriaId: 0, salidaId: Number(sql(`select id from public.programa_salidas where programa_id = ${PID_SAL}`)), fechaIda: "2027-03-01",
+    paxPorAcom: { doble: 1 }, ninos: 0, cliente: CLIENTE, tipoAsesor: "interno" as const, asesorInterno: "Asesor 245", agenciaNombre: "", agenciaAsesor: "", freelanceNombre: "",
+    plazo: "2027-02-01", pasajeros: [] as never[], precioConfirmado, ...over,
+  });
+
+  test("B1 modo hotel a PVP: cobra el total, comisión pendiente (RPC real), cliente = la persona, aliado del catálogo y contrato completo", async () => {
+    const r = await reservar(3, B2B(AL_PVP, "comisionable"));
+    assert.equal(r.ok, true, JSON.stringify(r));
+    if (!r.ok) return;
+    const [precio, modo, comision, estadoCom, aliado, tipo, agencia, , cliente, docCliente, titular, , fin] = venta(r.numero);
+    assert.deepEqual([Number(precio), modo, Number(comision), estadoCom, Number(aliado), tipo, agencia, cliente, docCliente, titular, fin],
+      [2354, "comisionable", 235, "pendiente", AL_PVP, "agencia", "Viajes Sol 245", "Ana Ruiz", "1010", "", "completo"]);
+    assert.deepEqual(comisionFila(r.numero), ["Viajes Sol 245", "2354.00", "2354.00", "0.1000", "pendiente", "f"]);
+    assert.equal(cuenta("cuentas_por_pagar"), 2, "las CxP al proveedor no cambian con la modalidad");
+  });
+
+  test("B2 modo hotel a NETO: cobra PVP − comisión, cliente = el aliado, la persona es el titular, y la comisión queda descontada (RPC real)", async () => {
+    const r = await reservar(3, B2B(AL_PVP, "neta"));
+    assert.equal(r.ok, true, JSON.stringify(r));
+    if (!r.ok) return;
+    const [precio, modo, comision, estadoCom, aliado, , agencia, , cliente, docCliente, titular, docTitular, fin] = venta(r.numero);
+    assert.deepEqual([Number(precio), modo, Number(comision), estadoCom, Number(aliado), agencia, cliente, docCliente, titular, docTitular, fin],
+      [2119, "neta", 235, "descontada", AL_PVP, "Viajes Sol 245", "Viajes Sol 245", "900123456", "Ana Ruiz", "1010", "completo"]);
+    assert.deepEqual(comisionFila(r.numero), ["Viajes Sol 245", "2354.00", "2354.00", "0.1000", "pagada", "t"]);
+  });
+
+  test("B3 NETO sin restricción adicional: con una comisión del 60 % el exigible queda por debajo del costo y la reserva se genera igual", async () => {
+    const r = await reservar(3, B2B(AL_ALTA, "neta"));
+    assert.equal(r.ok, true, JSON.stringify(r));
+    if (!r.ok) return;
+    const [precio, , comision] = venta(r.numero);
+    assert.deepEqual([Number(precio), Number(comision)], [2354 - 1412, 1412]);
+    assert.ok(Number(precio) < 1880 + 56, "exigible 942 < costo 1.936");
+    assert.equal(comisionFila(r.numero)[4], "pagada");
+  });
+
+  test("B4 sin elegir PVP o NETO, o sin aliado: se rechaza antes de numerar y sin residuos", async () => {
+    const sinModo = await reservar(3, B2B(AL_PVP, undefined));
+    assert.equal(sinModo.ok, false);
+    assert.match(sinModo.ok ? "" : sinModo.error, /PVP.*NETO/);
+    const sinAliado = await reservar(3, B2B(null, "comisionable"));
+    assert.equal(sinAliado.ok, false);
+    sinResiduos("sin modalidad / sin aliado");
+    assert.equal(cuenta("aliados_b2b"), 0);
+  });
+
+  test("B5 REVERSIÓN por fallo de comisión (modo hotel): no hay éxito, el contrato se revierte completo sin residuos, y el reintento crea UN contrato con UNA comisión", async () => {
+    fallaEn("aliados_b2b", "insert");
+    const r = await reservar(3, B2B(AL_PVP, "neta"));
+    assert.equal(r.ok, false, JSON.stringify(r));
+    assert.match(r.ok ? "" : r.error, /comisi/i);
+    sinResiduos("falla de comisión B2B");
+    assert.equal(cuenta("aliados_b2b"), 0);
+    limpiar();
+    const r2 = await reservar(3, B2B(AL_PVP, "neta"));
+    assert.equal(r2.ok, true, JSON.stringify(r2));
+    assert.equal(cuenta("ventas"), 1);
+    assert.equal(cuenta("aliados_b2b"), 1);
+    assert.equal(cuenta("cuentas_por_pagar"), 2, "sin CxP duplicadas");
+  });
+
+  test("B6 programa por SALIDA (no hotel) a PVP y a NETO: la RPC real acepta la comisión (la venta nace en curso) y el contrato queda completo", async () => {
+    const pvp = await importeSalida();
+    const a = await reservarPrograma(entradaSalida(pvp, B2B(AL_PVP, "comisionable")) as never);
+    assert.equal(a.ok, true, JSON.stringify(a));
+    if (!a.ok) return;
+    const va = venta(a.numero);
+    assert.deepEqual([Number(va[0]), va[1], Number(va[2]), va[3], va[8], va[12]], [pvp, "comisionable", Math.round(pvp * 0.1), "pendiente", "Ana Ruiz", "completo"]);
+    assert.equal(comisionFila(a.numero)[4], "pendiente");
+    limpiar();
+    const b = await reservarPrograma(entradaSalida(pvp, B2B(AL_PVP, "neta")) as never);
+    assert.equal(b.ok, true, JSON.stringify(b));
+    if (!b.ok) return;
+    const vb = venta(b.numero);
+    assert.deepEqual([Number(vb[0]), vb[1], vb[3], vb[8], vb[10], vb[12]], [pvp - Math.round(pvp * 0.1), "neta", "descontada", "Viajes Sol 245", "Ana Ruiz", "completo"]);
+    assert.equal(comisionFila(b.numero)[4], "pagada");
+  });
+
+  test("B7 REVERSIÓN por fallo de comisión en un programa por SALIDA: se revierte el contrato (y sus hijas), y el reintento sale limpio", async () => {
+    const pvp = await importeSalida();
+    fallaEn("aliados_b2b", "insert");
+    const r = await reservarPrograma(entradaSalida(pvp, B2B(AL_PVP, "comisionable")) as never);
+    assert.equal(r.ok, false, JSON.stringify(r));
+    for (const t of ["ventas", "contrato_items", "cuentas_por_pagar", "aliados_b2b"]) assert.equal(cuenta(t), 0, `no debe quedar nada en ${t}`);
+    limpiar();
+    const r2 = await reservarPrograma(entradaSalida(pvp, B2B(AL_PVP, "comisionable")) as never);
+    assert.equal(r2.ok, true, JSON.stringify(r2));
+    assert.equal(cuenta("ventas"), 1);
+    assert.equal(cuenta("aliados_b2b"), 1);
+  });
+
+  // PR #409 — la venta B2B fuera del modo hotel conserva financiero_estado = 'pendiente' hasta terminar pasajeros e ítems, y se revierte COMPLETA si algo falla.
+  const PASAJEROS_SAL = [
+    { nombres: "Ana", apellidos: "Ruiz", tipoDoc: "CC", numeroDoc: "1010", fechaNacimiento: "1990-01-01", nacionalidad: "Colombiana", esInfante: false, responsableIndex: null },
+    { nombres: "Luis", apellidos: "Ruiz", tipoDoc: "CC", numeroDoc: "2020", fechaNacimiento: "1988-05-05", nacionalidad: "Colombiana", esInfante: false, responsableIndex: null },
+  ];
+  const HIJOS = ["ventas", "aliados_b2b", "contrato_pasajeros", "contrato_items", "cuentas_por_pagar", "contrato_hoteles", "contrato_servicios", "asientos_contables"];
+  const sinVentaNiComisionNiHijos = (que: string) => { for (const t of HIJOS) assert.equal(cuenta(t), 0, `${que}: no debe quedar nada en ${t}`); };
+
+  for (const [etiqueta, tabla] of [["pasajeros", "contrato_pasajeros"], ["ítems", "contrato_items"]] as const) {
+    test(`B6${tabla === "contrato_pasajeros" ? "a" : "b"} fallo forzado en ${etiqueta} (salida B2B): termina sin venta, comisión ni hijos, y el reintento sale limpio y completo`, async () => {
+      const pvp = await importeSalida();
+      fallaEn(tabla, "insert");
+      const r = await reservarPrograma(entradaSalida(pvp, { ...B2B(AL_PVP, "neta"), pasajeros: PASAJEROS_SAL }) as never);
+      assert.equal(r.ok, false, JSON.stringify(r));
+      sinVentaNiComisionNiHijos(`falla en ${tabla}`);
+      limpiar();
+      const r2 = await reservarPrograma(entradaSalida(pvp, { ...B2B(AL_PVP, "neta"), pasajeros: PASAJEROS_SAL }) as never);
+      assert.equal(r2.ok, true, JSON.stringify(r2));
+      if (!r2.ok) return;
+      assert.equal(venta(r2.numero)[12], "completo");
+      assert.equal(cuenta("ventas"), 1);
+      assert.equal(cuenta("aliados_b2b"), 1);
+      assert.equal(cuenta("contrato_pasajeros"), 2);
+    });
+  }
+
+  test("B6c si la reversión TAMBIÉN falla: se comunica con el número de contrato y la venta sigue 'pendiente' (nunca 'completo')", async () => {
+    const pvp = await importeSalida();
+    fallaEn("contrato_pasajeros", "insert");
+    sql(`create trigger zz_falla2 before delete on public.ventas for each row execute function public.zz_falla_245()`);
+    const r = await reservarPrograma(entradaSalida(pvp, { ...B2B(AL_PVP, "comisionable"), pasajeros: PASAJEROS_SAL }) as never);
+    sql(`drop trigger if exists zz_falla2 on public.ventas`);
+    assert.equal(r.ok, false, JSON.stringify(r));
+    assert.match(r.ok ? "" : r.error, /quedó creado a medias y no se pudo deshacer/);
+    assert.equal(sql("select financiero_estado from public.ventas"), "pendiente", "no se marcó completo antes de terminar las escrituras obligatorias");
+  });
+
+  test("B6d si falla la transición a 'completo': se revierte el contrato pendiente (sin venta, comisión ni hijos)", async () => {
+    const pvp = await importeSalida();
+    sql(`create trigger zz_falla3 before update of financiero_estado on public.ventas for each row when (new.financiero_estado = 'completo') execute function public.zz_falla_245()`);
+    const r = await reservarPrograma(entradaSalida(pvp, { ...B2B(AL_PVP, "comisionable"), pasajeros: PASAJEROS_SAL }) as never);
+    sql(`drop trigger if exists zz_falla3 on public.ventas`);
+    assert.equal(r.ok, false, JSON.stringify(r));
+    sinVentaNiComisionNiHijos("falla la transición a completo");
+  });
+
+  test("B6e la venta B2B por salida permanece 'pendiente' mientras se escriben pasajeros e ítems y solo después pasa a 'completo'", async () => {
+    const pvp = await importeSalida();
+    // Un trigger en contrato_items registra el estado de la venta en el momento de insertar los ítems.
+    sql(`
+      create table if not exists public.zz_estado_visto (estado text);
+      create or replace function public.zz_ver_estado() returns trigger language plpgsql as $f$ begin insert into public.zz_estado_visto select financiero_estado from public.ventas where numero_contrato = new.numero_contrato; return new; end $f$;
+      create trigger zz_ver after insert on public.contrato_items for each row execute function public.zz_ver_estado();
+    `);
+    try {
+      const r = await reservarPrograma(entradaSalida(pvp, { ...B2B(AL_PVP, "comisionable"), pasajeros: PASAJEROS_SAL }) as never);
+      assert.equal(r.ok, true, JSON.stringify(r));
+      assert.equal(sql("select string_agg(distinct estado, ',') from public.zz_estado_visto"), "pendiente");
+      if (r.ok) assert.equal(venta(r.numero)[12], "completo");
+    } finally {
+      sql("drop trigger if exists zz_ver on public.contrato_items; drop table if exists public.zz_estado_visto; drop function if exists public.zz_ver_estado()");
+    }
+  });
+
+  test("B8 freelance sin % propio: el % sale del parámetro general o del 11 % por defecto, y queda en freelance_nombre", async () => {
+    const r = await reservar(3, B2B(AL_FREE, "comisionable", "freelance"));
+    assert.equal(r.ok, true, JSON.stringify(r));
+    if (!r.ok) return;
+    const [precio, , comision, , , tipo, agencia, freelance] = venta(r.numero);
+    assert.deepEqual([tipo, agencia, freelance], ["freelance", "", "Freelance Luna 245"]);
+    const pct = Number(comisionFila(r.numero)[3]);
+    assert.ok(pct > 0 && pct < 0.5, `pct ${pct}`);
+    assert.equal(Number(comision), Math.round(Number(precio) * pct));
+  });
+
+  test("B9 la vista previa de términos (terminosB2BPrograma) lee de la base real y NO escribe nada", async () => {
+    const precio = await importeFicha(3);
+    for (const modo of ["comisionable", "neta"] as const) {
+      const t = await terminosB2BPrograma({ ...entrada(3, { precioConfirmado: precio, ...B2B(AL_PVP, modo) }), pasajeros: [] } as never);
+      assert.equal(t.ok, true, JSON.stringify(t));
+      if (t.ok) assert.deepEqual([t.terminos.pvp, t.terminos.comision, t.terminos.total_exigible, t.terminos.pct_origen], [2354, 235, modo === "neta" ? 2119 : 2354, "aliado"]);
+    }
+    sinResiduos("vista previa de términos");
+    assert.equal(cuenta("aliados_b2b"), 0);
   });
 });

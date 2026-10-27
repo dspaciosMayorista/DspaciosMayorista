@@ -37,7 +37,7 @@
 //     total es Σ(noches × unidades × PVP de noche). Así la tabla de la ficha, el
 //     desglose por fechas, el contrato y el total cuadran al centavo.
 // ─────────────────────────────────────────────────────────────────────────
-import { pvpProgramaFormula, type PvpOpciones } from "../calc/programaPrecio.ts";
+import { pvpProgramaDesglose, type DesglosePvp, type PvpOpciones } from "../calc/programaPrecio.ts";
 import { paxDeAcomodacion } from "../acomodaciones.ts";
 
 /** `programas.modo_precio` de un programa terrestre vendido por hotel y vigencia. */
@@ -181,10 +181,15 @@ export type NocheTarifaPvp = {
  * declarada de forma expresa sigue pagando la asistencia de la noche.
  */
 export function pvpNocheUnidad(neto: number, unidad: UnidadCobro, clave: ClaveTarifa, opt: PvpOpciones): number {
+  return desgloseNocheUnidad(neto, unidad, clave, opt).pvp;
+}
+
+/** La misma cuenta de `pvpNocheUnidad`, con sus pasos (vista previa y fórmula visible). Una sola implementación. */
+export function desgloseNocheUnidad(neto: number, unidad: UnidadCobro, clave: ClaveTarifa, opt: PvpOpciones): DesglosePvp {
   const optNoche: PvpOpciones = { ...opt, dias: 1 };
-  if (clave === "nino" || unidad === "persona") return pvpProgramaFormula(neto, optNoche);
+  if (clave === "nino" || unidad === "persona") return pvpProgramaDesglose(neto, optNoche);
   const ocupantes = paxDeAcomodacion(clave);
-  return pvpProgramaFormula(neto, { ...optNoche, asistenciaDia: (Number(opt.asistenciaDia) || 0) * ocupantes });
+  return pvpProgramaDesglose(neto, { ...optNoche, asistenciaDia: (Number(opt.asistenciaDia) || 0) * ocupantes });
 }
 
 export function nocheTarifaConPvp(fila: NocheTarifaFila, opt: PvpOpciones): NocheTarifaPvp {
@@ -485,6 +490,98 @@ export function errorModoHotelConAereo(p: { tipo_transporte?: string | null; inc
     : null;
 }
 
+// ── Capacidad del hotel y vigencias base compartidas (PR #409) ─────────────
+
+/** Ocupación declarada por el hotel; null = sin tope. */
+export type OcupacionHotel = { maxPaxHabitacion?: number | null; maxMenoresHabitacion?: number | null };
+
+/**
+ * ¿Esta tarifa tiene sentido para el hotel? Una acomodación para N personas no cabe si el hotel admite menos de N por
+ * habitación, y la tarifa de menor no existe si el hotel no admite menores (max_menores_habitacion = 0).
+ */
+export function claveCompatible(h: OcupacionHotel, clave: ClaveTarifa): boolean {
+  if (clave === "nino") return h.maxMenoresHabitacion == null || h.maxMenoresHabitacion > 0;
+  return h.maxPaxHabitacion == null || paxDeAcomodacion(clave) <= h.maxPaxHabitacion;
+}
+
+/** Tarifas CARGADAS que el hotel no admite (para mostrarlas y resolverlas; nunca se descartan en silencio). */
+export function clavesIncompatibles(h: OcupacionHotel, neto: PorAcom): ClaveTarifa[] {
+  return CLAVES_TARIFA.filter((k) => neto[k] != null && !claveCompatible(h, k));
+}
+
+export function motivoIncompatible(h: OcupacionHotel, clave: ClaveTarifa): string {
+  return clave === "nino"
+    ? `el hotel admite máximo ${h.maxMenoresHabitacion ?? 0} menor(es) por habitación: no lleva tarifa de menor`
+    : `${ETIQUETA_ACOM[clave]} es para ${paxDeAcomodacion(clave)} personas y el hotel admite máximo ${h.maxPaxHabitacion} persona(s) por habitación`;
+}
+
+/** Deja en null las tarifas que el hotel no admite (lo que se publica jamás las muestra, aunque existan filas antiguas). */
+export function soloCompatibles(h: OcupacionHotel, v: PorAcom): PorAcom {
+  const o = { ...v };
+  for (const k of CLAVES_TARIFA) if (!claveCompatible(h, k)) o[k] = null;
+  return o;
+}
+
+export type OpcionVigenciaBase = { desde: string; hasta: string; modalidades: ModalidadServicios[] };
+
+/**
+ * Vigencias base ÚNICAS de un hotel (las que ofrece el selector de noches adicionales). Privados y regulares con las mismas
+ * fechas son UNA sola opción (la noche adicional tiene una sola tarifa para ambas). Si las dos modalidades existen y sus
+ * fechas no coinciden, devuelve los conflictos: la noche no puede ligarse a una vigencia ambigua.
+ */
+export function opcionesVigenciaBase(base: readonly { desde: string; hasta: string; modalidad: string }[]): { opciones: OpcionVigenciaBase[]; conflictos: string[] } {
+  const mapa = new Map<string, OpcionVigenciaBase>();
+  for (const b of base) {
+    if (!esFechaIso(b.desde) || !esFechaIso(b.hasta) || !(MODALIDADES_SERVICIOS as readonly string[]).includes(b.modalidad)) continue;
+    const clave = `${b.desde}|${b.hasta}`;
+    const o = mapa.get(clave) ?? { desde: b.desde, hasta: b.hasta, modalidades: [] };
+    if (!o.modalidades.includes(b.modalidad as ModalidadServicios)) o.modalidades.push(b.modalidad as ModalidadServicios);
+    mapa.set(clave, o);
+  }
+  const opciones = [...mapa.values()].sort((a, b) => a.desde.localeCompare(b.desde) || a.hasta.localeCompare(b.hasta));
+  const hayPrivado = opciones.some((o) => o.modalidades.includes("privado"));
+  const hayRegular = opciones.some((o) => o.modalidades.includes("regular"));
+  const conflictos: string[] = [];
+  if (hayPrivado && hayRegular) {
+    for (const o of opciones) {
+      if (o.modalidades.length === 2) continue;
+      const falta = o.modalidades[0] === "privado" ? "regulares" : "privados";
+      conflictos.push(`Las vigencias base de servicios privados y regulares no coinciden: ${fechaLegible(o.desde)}–${fechaLegible(o.hasta)} no existe en servicios ${falta}.`);
+    }
+  }
+  return { opciones, conflictos };
+}
+
+export type CatalogoHotelValidable = OcupacionHotel & {
+  base: { desde: string; hasta: string; modalidad: string; neto: PorAcom }[];
+  noches: { desde: string; hasta: string; unidad: string; neto: PorAcom }[];
+};
+
+/**
+ * Conflictos de un hotel que impiden guardarlo (los mismos los muestra el editor y los exige el servidor):
+ * tarifas que el hotel no admite, y noches adicionales que no están ligadas a una vigencia base existente.
+ */
+export function conflictosHotel(h: CatalogoHotelValidable): string[] {
+  const out: string[] = [];
+  h.base.forEach((b, j) => {
+    for (const k of clavesIncompatibles(h, b.neto)) out.push(`La vigencia base ${j + 1} tiene tarifa ${ETIQUETA_ACOM[k]}: ${motivoIncompatible(h, k)}.`);
+  });
+  h.noches.forEach((n, j) => {
+    const ks = clavesIncompatibles(h, n.neto).filter((k) => !(k === "nino" && n.unidad === "habitacion"));
+    for (const k of ks) out.push(`La noche adicional ${j + 1} tiene tarifa ${ETIQUETA_ACOM[k]}: ${motivoIncompatible(h, k)}.`);
+  });
+  if (h.noches.length) {
+    const { opciones, conflictos } = opcionesVigenciaBase(h.base);
+    out.push(...conflictos);
+    h.noches.forEach((n, j) => {
+      if (!opciones.some((o) => o.desde === n.desde && o.hasta === n.hasta)) {
+        out.push(`La tarifa de noche adicional ${j + 1} (${n.desde ? fechaLegible(n.desde) : "?"}–${n.hasta ? fechaLegible(n.hasta) : "?"}) no corresponde a ninguna vigencia base del hotel: elige una vigencia base existente o quita la tarifa.`);
+      }
+    });
+  }
+  return out;
+}
+
 // ── Validación del catálogo al guardarlo ───────────────────────────────────
 
 export type HotelParaGuardar = {
@@ -537,6 +634,8 @@ export function validarHotelesParaGuardar(hoteles: readonly HotelParaGuardar[]):
     }
     const s = primerSolape(h.noches.map((n) => ({ desde: n.desde, hasta: n.hasta })));
     if (s) return `${nombre}: dos vigencias de noche adicional se solapan (${fechaLegible(s[0].desde)}–${fechaLegible(s[0].hasta)} y ${fechaLegible(s[1].desde)}–${fechaLegible(s[1].hasta)}).`;
+    const conflicto = conflictosHotel(h as unknown as CatalogoHotelValidable)[0];
+    if (conflicto) return `${nombre}: ${conflicto}`;
   }
   return null;
 }

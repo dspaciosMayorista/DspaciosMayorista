@@ -49,9 +49,18 @@ const semilla = (): Record<string, Fila[]> => ({
     { id: 1, hotel_id: 1, desde: "2027-03-01", hasta: "2027-03-04", unidad_cobro: "persona", neto_sencilla: 130, neto_doble: 100, neto_triple: 90, neto_multiple: null, neto_nino: 60 },
     { id: 2, hotel_id: 1, desde: "2027-03-05", hasta: "2027-03-31", unidad_cobro: "persona", neto_sencilla: 150, neto_doble: 120, neto_triple: 100, neto_multiple: null, neto_nino: 70 },
   ],
+  aliados: [
+    { id: 5, nombre: "Viajes Sol", tipo: "agencia", pct_comision: 0.1, activo: true, nit: "900123456", tipo_documento: "NIT", telefono: null, email: null, direccion: null },
+    { id: 6, nombre: "Freelance Luna", tipo: "freelance", pct_comision: 0.08, activo: true, nit: "52111222", tipo_documento: "CC", telefono: null, email: null, direccion: null },
+  ],
+  usuarios: [{ id: "u-arnes", rol: "venta", activo: true, tenant: "mayorista" }],
   programa_dias: DIAS, proveedores: [{ id: 9, nombre: "Operador Andes", aplica_retencion: false, pct_retencion: 0 }, { id: 55, nombre: "Asistencia Global", aplica_retencion: false, pct_retencion: 0 }],
 });
-const RPCS = { congelar_condiciones_contrato: () => "OK", crear_pasajeros_contrato: () => [] };
+const RPCS = { congelar_condiciones_contrato: () => "OK", crear_pasajeros_contrato: () => [], registrar_comision_b2b_reserva: () => 501 };
+const ALIADOS_UI = [
+  { id: 5, nombre: "Viajes Sol", tipo: "agencia" as const, pct: 0.1, pctOrigen: "aliado" as const },
+  { id: 6, nombre: "Freelance Luna", tipo: "freelance" as const, pct: 0.08, pctOrigen: "aliado" as const },
+];
 
 let desmontar: (() => Promise<void>) | undefined;
 beforeEach(() => reloj(MOMENTOS[0][1]));
@@ -216,5 +225,106 @@ describe("formulario de reserva · programa por hotel y vigencia", () => {
     assert.equal(m.contenedor.querySelector('[aria-label="Noches adicionales"]'), null);
     assert.equal(m.contenedor.querySelector('[aria-label="Hotel"]'), null);
     assert.match(txt(m.contenedor), /Categoría \(hoteles\)/);
+  });
+
+  // ── PR #409 — B2B: elección expresa PVP o NETO ───────────────────────────────
+  const radio = (raiz: Element, etiqueta: string) =>
+    [...raiz.querySelectorAll('input[type="radio"]')].find((r) => new RegExp(etiqueta).test(txt(r.closest("label")))) as HTMLInputElement;
+  async function elegirTipo(raiz: HTMLElement, tipo: RegExp) {
+    await clic(radio(raiz, tipo.source), "tipo de venta");
+  }
+  async function esperarReal(listo: () => boolean, ms = 4000) {
+    for (let t = 0; t < ms && !listo(); t += 50) await React.act(async () => { await new Promise((r) => setTimeout(r, 50)); });
+  }
+  const esperarTerminos = (raiz: Element) => esperarReal(() => !!raiz.querySelector('[data-testid="terminos-b2b-previa"]'));
+
+  test("B2B: sin modalidad elegida no se genera; elegir PVP o NETO muestra base comisionable, impuesto, % y comisión, y NETO cambia el total exigible", async () => {
+    const { raiz, bd } = await montarForm({ aliados: ALIADOS_UI });
+    await llenarSeleccion(raiz, "2027-03-01", "0");
+    await llenarCliente(raiz);
+    await elegirTipo(raiz, /Agencia \(B2B\)/);
+    assert.equal(radio(raiz, "PVP").checked || radio(raiz, "NETO").checked, false, "no hay modalidad por defecto");
+    await cambiar(raiz.querySelector("#aliado-b2b") as HTMLSelectElement, "5");
+    assert.match(txt(raiz), /Comisión 10 % · porcentaje propio del aliado/);
+    await enviar(raiz.querySelector("form"));
+    await esperar(() => false, 3);
+    assert.match(txt(raiz), /Elige si el contrato se genera a PVP o a NETO/);
+    assert.equal(bd.filas("ventas").length, 0, "nada se creó");
+
+    await clic(radio(raiz, "PVP"), "PVP");
+    await esperarTerminos(raiz);
+    const pvp = txt(raiz.querySelector('[data-testid="terminos-b2b-previa"]')) || `SIN PANEL: ${[...raiz.querySelectorAll("[role=status]")].map(txt).join(" | ")}`;
+    assert.match(pvp, /Base comisionable/);
+    assert.match(pvp, /Impuesto no comisionable/);
+    assert.match(pvp, /10 %/);
+    assert.match(pvp, /Comisión/);
+    assert.match(pvp, /Viajes Sol/);
+    assert.match(pvp, /1[.,]496/, "PVP 748 × 2 pax");
+    await clic(radio(raiz, "NETO"), "NETO");
+    await esperarReal(() => /Total exigible \(NETO\)/.test(txt(raiz.querySelector('[data-testid="terminos-b2b-previa"]'))));
+    const neto = txt(raiz.querySelector('[data-testid="terminos-b2b-previa"]'));
+    assert.match(neto, /Total exigible \(NETO\)/);
+    assert.match(neto, /1[.,]346/, "1.496 − 10 % de comisión (150) = 1.346");
+    assert.equal(bd.filas("ventas").length, 0, "la vista previa no creó nada");
+    assert.equal(bd.llamadasRpc.filter((c) => c.fn === "registrar_comision_b2b_reserva").length, 0);
+  });
+
+  test("copiar datos del cliente: solo UN pasajero a la vez; los demás quedan inhabilitados y deshacer los habilita", async () => {
+    const { raiz } = await montarForm();
+    await llenarSeleccion(raiz, "2027-03-01", "0");
+    await llenarCliente(raiz);
+    const botones = () => [...raiz.querySelectorAll("button")].filter((b) => /Copiar del cliente|Deshacer copia/.test(txt(b))) as HTMLButtonElement[];
+    assert.equal(botones().length, 2, "una doble = 2 pasajeros");
+    assert.deepEqual(botones().map((b) => b.disabled), [false, false]);
+    await clic(botones()[0], "copiar en el pasajero 1");
+    assert.equal(txt(botones()[0]), "Deshacer copia");
+    assert.equal(botones()[1].disabled, true, "el segundo pasajero ya no puede recibir la copia");
+    assert.match(botones()[1].title, /ya se copiaron en el pasajero 1/);
+    await clic(botones()[1], "intento sobre el pasajero 2");
+    assert.equal(txt(botones()[0]), "Deshacer copia", "el intento no hizo nada");
+    await clic(botones()[0], "deshacer");
+    assert.deepEqual(botones().map((b) => b.disabled), [false, false]);
+    assert.equal(txt(botones()[0]), "Copiar del cliente");
+  });
+
+  test("recorrido #409 con un hotel de máximo 2 por habitación: el editor no guarda Triple, la ficha pública no publica filas antiguas y la reserva rechaza antes de numerar", async () => {
+    const { guardarHoteles } = await import("../app/(dashboard)/dashboard/producto/programas/actions.ts");
+    const { reservarPrograma } = await import("../app/(dashboard)/dashboard/reservar/actions.ts");
+    const netos = (o: Record<string, string> = {}) => ({ sencilla: "", doble: "", triple: "", multiple: "", nino: "", ...o });
+
+    // 1) editor → guardado: la Server Action rechaza la tarifa Triple antes de llamar a la base.
+    const llamadas: Record<string, unknown>[] = [];
+    usarBD(semilla(), { ...RPCS, guardar_programa_hoteles: (a) => { llamadas.push(a); return null; } });
+    const guardado = await guardarHoteles(3, [{
+      id: 1, nombre: "Hotel Centro", zona: "", tipoHabitacion: "", maxPaxHabitacion: "2", maxMenoresHabitacion: "2", proveedorId: null,
+      base: [{ desde: "2027-03-01", hasta: "2027-03-31", modalidad: "privado", bajoSolicitud: false, neto: netos({ doble: "600", triple: "520" }) }],
+      noches: [],
+    }]);
+    assert.equal(guardado.ok, false);
+    assert.match(guardado.ok ? "" : guardado.error, /Triple.*máximo 2 persona/);
+    assert.equal(llamadas.length, 0);
+
+    // 2) ficha pública: filas ANTIGUAS con Triple (guardadas cuando el hotel admitía 4) no se publican ahora que admite 2.
+    const sem = semilla();
+    (sem.programa_hoteles[0] as Fila).max_pax_habitacion = 2;
+    const bd = usarBD(sem, RPCS);
+    const t = await cargarTablasPvp88(bd.sb as never, 3, programa as never);
+    assert.equal(t.ok, true);
+    if (!t.ok) return;
+    const tabla = t.tablas[0];
+    assert.ok(tabla.base.every((b) => b.pvp.triple == null && b.pvp.multiple == null), "base sin Triple/Múltiple");
+    assert.ok(tabla.noches.every((n) => n.pvp.triple == null), "noches sin Triple");
+    assert.ok(tabla.base.some((b) => b.pvp.doble != null), "lo compatible sigue publicado");
+
+    // 3) reserva: una triple + una sencilla (4 ocupantes en 2 habitaciones) no pasa con máximo 2, y no se crea nada.
+    const r = await reservarPrograma({
+      programaId: 3, categoriaId: 0, estancia: { hotelId: 1, modalidad: "privado", nochesAdicionales: 0 }, fechaIda: "2027-03-01",
+      paxPorAcom: { triple: 1, sencilla: 1 }, ninos: 0,
+      cliente: { nombres: "Ana", apellidos: "Ruiz", tipoDoc: "CC", numeroDoc: "1010", telefono: "300", email: "" },
+      tipoAsesor: "interno", asesorInterno: "Asesor", agenciaNombre: "", agenciaAsesor: "", freelanceNombre: "", plazo: "", pasajeros: [], precioConfirmado: 1,
+    } as never);
+    assert.equal(r.ok, false);
+    assert.match(r.ok ? "" : r.error, /máximo 2 persona/);
+    assert.equal(bd.filas("ventas").length, 0, "rechazada antes de numerar y de toda escritura");
   });
 });

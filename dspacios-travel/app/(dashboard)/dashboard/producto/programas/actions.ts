@@ -5,7 +5,9 @@ import { revalidatePath } from "next/cache";
 import { parsearPrograma } from "@/lib/programasImport";
 import { limpiarAlojamientoPrevisto } from "@/lib/programas";
 import { salidaTieneContenido, tieneImpuestoAcomodacionNegativo, tieneTarifaNegativa } from "@/lib/programas/salidasGuardado";
-import { validarHotelesParaGuardar, errorModoHotelConAereo, CLAVES_TARIFA, type PorAcom, type ClaveTarifa } from "@/lib/programas/estanciaHotel88";
+import { validarHotelesParaGuardar, errorModoHotelConAereo, nochesIncluidasPrograma, esFechaIso, MODALIDADES_SERVICIOS, CLAVES_TARIFA, type PorAcom, type ClaveTarifa, type ModalidadServicios, type BaseHotelFila, type NocheTarifaFila, type DiaItinerario, type HotelEstancia } from "@/lib/programas/estanciaHotel88";
+import { calcularVistaPrevia, type VistaPrevia } from "@/lib/programas/vistaPrevia409";
+import { miRol, puedeEscribir } from "@/lib/roles";
 import { resolverValorReglaAcomodacion, validarReglaComisionable, validarTarifaModalidad, esModalidadMkValida, type ModalidadMk } from "@/lib/calc/programaPrecio";
 import {
   validarCondicionPago,
@@ -531,15 +533,21 @@ const entero = (v: unknown): number | null => {
   return n == null ? null : Number.isInteger(n) ? n : Number.NaN;
 };
 
+type FilaHotel = {
+  id: number | null; nombre: string; zona: string | null; tipoHabitacion: string | null;
+  maxPaxHabitacion: number | null; maxMenoresHabitacion: number | null; proveedorId: number | null;
+  base: { desde: string; hasta: string; modalidad: string; bajoSolicitud: boolean; neto: PorAcom }[];
+  noches: { desde: string; hasta: string; unidad: string; neto: PorAcom }[];
+};
+
 /**
- * Reemplaza el catálogo de hoteles de un programa por hotel y vigencia. Valida
- * antes (unidad de cobro obligatoria, fechas, valores, vigencias que no se solapan)
- * y delega en la RPC atómica `guardar_programa_hoteles` (conserva los ids de los
- * hoteles que ya existen). La RLS de siempre decide quién puede escribir.
+ * Normaliza y VALIDA el catálogo de hoteles recibido del navegador (guardado y vista previa comparten esta entrada, así que
+ * el borrador que se previsualiza pasa por las mismas reglas que el que se guarda: capacidad, noches ligadas a las
+ * vigencias base, solapes, valores). Mensaje legible o las filas listas.
  */
-export async function guardarHoteles(programaId: number, hoteles: HotelVigenciaInput[]): Promise<Result> {
+function prepararHoteles(hoteles: HotelVigenciaInput[]): { ok: true; filas: FilaHotel[] } | { ok: false; error: string } {
   if (!Array.isArray(hoteles)) return { ok: false, error: "La lista de hoteles no es válida." };
-  const filas = hoteles.map((h) => ({
+  const filas: FilaHotel[] = hoteles.map((h) => ({
     id: Number.isInteger(h.id) ? (h.id as number) : null,
     nombre: String(h.nombre ?? ""),
     zona: oNull(h.zona),
@@ -558,8 +566,21 @@ export async function guardarHoteles(programaId: number, hoteles: HotelVigenciaI
   if (filas.some((f) => Number.isNaN(f.maxPaxHabitacion) || Number.isNaN(f.maxMenoresHabitacion))) {
     return { ok: false, error: "La ocupación permitida debe ser un número entero." };
   }
-  const error = validarHotelesParaGuardar(filas.map((f) => ({ ...f, nombre: f.nombre })));
+  const error = validarHotelesParaGuardar(filas);
   if (error) return { ok: false, error };
+  return { ok: true, filas };
+}
+
+/**
+ * Reemplaza el catálogo de hoteles de un programa por hotel y vigencia. Valida
+ * antes (unidad de cobro obligatoria, fechas, valores, vigencias que no se solapan)
+ * y delega en la RPC atómica `guardar_programa_hoteles` (conserva los ids de los
+ * hoteles que ya existen). La RLS de siempre decide quién puede escribir.
+ */
+export async function guardarHoteles(programaId: number, hoteles: HotelVigenciaInput[]): Promise<Result> {
+  const prep = prepararHoteles(hoteles);
+  if (!prep.ok) return prep;
+  const filas = prep.filas;
 
   const sb = await createClient();
   const { error: e } = await sb.rpc("guardar_programa_hoteles", {
@@ -585,6 +606,85 @@ export async function guardarHoteles(programaId: number, hoteles: HotelVigenciaI
   if (e) return { ok: false, error: e.message };
   rev(programaId);
   return { ok: true };
+}
+
+// ── Vista previa de solo lectura (PR #409) ───────────────────────────────────
+export type SeleccionVistaPrevia = {
+  /** Posición del hotel dentro de la lista enviada (puede ser un hotel aún sin guardar). */
+  hotelIndex: number;
+  modalidad: string;
+  fechaEntrada: string;
+  nochesAdicionales: number;
+  habitaciones: Record<string, number>;
+  ninos: number;
+  infantes: number;
+};
+
+/**
+ * Calcula la liquidación de una selección sobre el catálogo que le envían (guardado o borrador sin publicar) con el MISMO motor que la
+ * reserva. SOLO LECTURA: lee la cabecera del programa (y su itinerario si no llega el borrador) y no escribe nada — no crea
+ * cotización, contrato, CxP ni publicación, y no revalida páginas. Muestra netos únicamente a quien edita el producto.
+ */
+export async function calcularVistaPreviaPrograma(
+  programaId: number,
+  hoteles: HotelVigenciaInput[],
+  seleccion: SeleccionVistaPrevia,
+  diasBorrador?: DiaItinerario[],
+): Promise<VistaPrevia> {
+  const rol = await miRol();
+  if (!puedeEscribir("producto", rol)) return { ok: false, causa: "No tienes permiso para ver la vista previa con costos del programa." };
+
+  const prep = prepararHoteles(hoteles);
+  if (!prep.ok) return { ok: false, causa: prep.error };
+  const fila = prep.filas[seleccion.hotelIndex];
+  if (!fila) return { ok: false, causa: "Elige un hotel de la lista." };
+  if (!(MODALIDADES_SERVICIOS as readonly string[]).includes(seleccion.modalidad)) return { ok: false, causa: "Elige la modalidad de servicios (privados o regulares)." };
+  if (!esFechaIso(seleccion.fechaEntrada)) return { ok: false, causa: "Elige una fecha de entrada válida." };
+
+  const sb = await createClient();
+  const { data: prog } = await sb
+    .from("programas")
+    .select("moneda, pct_mk, pct_fee_tarjeta, asistencia_medica_dia, dias, noches, regla_comisionable, regla_comisionable_modalidad_mk, regla_comisionable_modo, regla_comisionable_valor, regla_comisionable_pct_comision, regla_comisionable_impuesto_por_acomodacion")
+    .eq("id", programaId)
+    .maybeSingle();
+  if (!prog) return { ok: false, causa: "Programa no encontrado." };
+  const incluidas = nochesIncluidasPrograma(prog);
+  if (!incluidas.ok) return { ok: false, causa: incluidas.error };
+
+  let dias = diasBorrador;
+  if (!dias) {
+    const { data } = await sb.from("programa_dias").select("dia, titulo, desayuno, almuerzo, cena, descripcion").eq("programa_id", programaId).order("dia");
+    dias = (data ?? []).map((d) => ({ dia: d.dia, titulo: d.titulo, desayuno: !!d.desayuno, almuerzo: !!d.almuerzo, cena: !!d.cena, descripcion: d.descripcion }));
+  }
+
+  // Ids sintéticos: el borrador puede traer hoteles que aún no existen en la base.
+  const hid = seleccion.hotelIndex + 1;
+  const hotel: HotelEstancia = {
+    id: hid, nombre: fila.nombre.trim(), zona: fila.zona, tipoHabitacion: fila.tipoHabitacion,
+    maxPaxHabitacion: fila.maxPaxHabitacion, maxMenoresHabitacion: fila.maxMenoresHabitacion, proveedorId: null,
+  };
+  const base: BaseHotelFila[] = fila.base.map((b, i) => ({ id: i + 1, hotelId: hid, desde: b.desde, hasta: b.hasta, modalidad: b.modalidad as ModalidadServicios, bajoSolicitud: b.bajoSolicitud, neto: b.neto }));
+  const noches: NocheTarifaFila[] = fila.noches.map((n, i) => ({ id: i + 1, hotelId: hid, desde: n.desde, hasta: n.hasta, unidad: n.unidad as NocheTarifaFila["unidad"], neto: n.neto }));
+  const habitaciones: Record<string, number> = {};
+  for (const [k, v] of Object.entries(seleccion.habitaciones ?? {})) if (Number(v) > 0) habitaciones[k] = Math.trunc(Number(v));
+
+  return calcularVistaPrevia({
+    programa: prog,
+    nochesIncluidas: incluidas.noches,
+    hotel,
+    base,
+    noches,
+    seleccion: {
+      modalidad: seleccion.modalidad as ModalidadServicios,
+      fechaEntrada: seleccion.fechaEntrada,
+      nochesAdicionales: Math.trunc(Number(seleccion.nochesAdicionales) || 0),
+      habitaciones,
+      ninos: Math.trunc(Number(seleccion.ninos) || 0),
+      infantes: Math.trunc(Number(seleccion.infantes) || 0),
+    },
+    itinerario: dias,
+    verNetos: true,
+  });
 }
 
 // ── Inclusiones (incluye / no incluye) ─────────────────────────────────────────

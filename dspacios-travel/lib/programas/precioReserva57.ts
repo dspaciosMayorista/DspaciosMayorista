@@ -50,6 +50,7 @@ import {
   resolverVigencia,
   sinNeto,
   validarOcupacionHotel,
+  soloCompatibles,
   type BaseHotelFila,
   type HotelEstancia,
   type ModalidadServicios,
@@ -121,7 +122,7 @@ export function diasAsistencia(programa: Pick<ProgramaPrecioCabecera, "dias">, n
   return nochesSalida != null ? nochesSalida : programa.dias;
 }
 
-function opcionesPvp(p: ProgramaPrecioCabecera, dias: number | null): PvpOpciones {
+export function opcionesPvp(p: ProgramaPrecioCabecera, dias: number | null): PvpOpciones {
   return { pctMk: p.pct_mk, asistenciaDia: p.asistencia_medica_dia, dias, pctFee: p.pct_fee_tarjeta, moneda: p.moneda };
 }
 
@@ -640,8 +641,8 @@ export function construirTablaHotelPvp(programa: ProgramaPrecioCabecera, hotel: 
     hotel: { ...hotel, proveedorId: null },
     base: base
       .filter((f) => f.hotelId === hotel.id)
-      .map((f) => ({ id: f.id, desde: f.desde, hasta: f.hasta, modalidad: f.modalidad, bajoSolicitud: f.bajoSolicitud, pvp: pvpBase(programa, f) })),
-    noches: tarifasNocheConPvp(programa, noches.filter((f) => f.hotelId === hotel.id)).map(sinNeto),
+      .map((f) => ({ id: f.id, desde: f.desde, hasta: f.hasta, modalidad: f.modalidad, bajoSolicitud: f.bajoSolicitud, pvp: soloCompatibles(hotel, pvpBase(programa, f)) })), // filas antiguas con una acomodación que el hotel ya no admite no se publican
+    noches: tarifasNocheConPvp(programa, noches.filter((f) => f.hotelId === hotel.id)).map(sinNeto).map((n) => ({ ...n, pvp: soloCompatibles(hotel, n.pvp) })),
   };
 }
 

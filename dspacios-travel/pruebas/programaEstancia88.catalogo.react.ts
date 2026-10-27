@@ -11,7 +11,6 @@ import assert from "node:assert/strict";
 
 const React = await import("react");
 const { guardarHoteles } = await import("../app/(dashboard)/dashboard/producto/programas/actions.ts");
-const { HotelesVigenciaEditor } = await import("../app/(dashboard)/dashboard/producto/programas/[id]/HotelesVigenciaEditor.tsx");
 const h = React.createElement;
 
 const txt = (el: Element | null | undefined) => (el?.textContent ?? "").replace(/\s+/g, " ").trim();
@@ -81,87 +80,5 @@ describe("guardarHoteles (Server Action)", () => {
   });
 });
 
-describe("HotelesVigenciaEditor", () => {
-  let desmontar: (() => Promise<void>) | undefined;
-  afterEach(async () => { await desmontar?.(); desmontar = undefined; });
-  after(() => dom.window.close());
-
-  const PROGRAMA = { moneda: "USD", pct_mk: 0.15, pct_fee_tarjeta: 0.03, asistencia_medica_dia: 4, dias: 4 };
-  const boton = (raiz: Element, t: RegExp) => [...raiz.querySelectorAll("button")].find((b) => t.test(txt(b))) as HTMLButtonElement;
-  async function elegir(sel: HTMLSelectElement, valor: string) {
-    await React.act(async () => {
-      Object.getOwnPropertyDescriptor(dom.window.HTMLSelectElement.prototype, "value")!.set!.call(sel, valor);
-      sel.dispatchEvent(new dom.window.Event("change", { bubbles: true }));
-    });
-  }
-  const dentro = (raiz: Element, etiqueta: string) => raiz.querySelector(`[aria-label="${etiqueta}"]`) as HTMLElement;
-
-  test("captura un hotel con precio base y noche adicional: muestra el PVP junto al neto y NO guarda sin unidad de cobro", async () => {
-    const { llamadas } = conRpc();
-    const m = await montar(h(HotelesVigenciaEditor, { programaId: 3, programa: PROGRAMA, proveedores: [{ id: 9, nombre: "Operador Andes" }], catalogo: { hoteles: [], base: [], noches: [] } }));
-    desmontar = m.desmontar;
-    const raiz = m.contenedor as HTMLElement;
-
-    await clic(boton(raiz, /Agregar hotel/), "Agregar hotel");
-    await escribir(raiz.querySelector('input[placeholder="Nombre del hotel"]') as HTMLInputElement, "Hotel Centro");
-
-    await clic(boton(raiz, /Agregar vigencia de precio base/), "Agregar vigencia base");
-    const base = dentro(raiz, "Vigencia base 1 de Hotel Centro");
-    await escribir(base.querySelector('input[aria-label="Entrada desde"]') as HTMLInputElement, "2027-03-01");
-    await escribir(base.querySelector('input[aria-label="Entrada hasta"]') as HTMLInputElement, "2027-03-31");
-    await elegir(base.querySelector("select") as HTMLSelectElement, "privado");
-    const inputsBase = [...base.querySelectorAll('input[inputmode="decimal"]')] as HTMLInputElement[];
-    await escribir(inputsBase[1], "600"); // doble
-    assert.match(txt(base), /PVP USD \$748/, "base doble 600 → 748 por persona (misma fórmula que la ficha)");
-
-    await clic(boton(raiz, /Agregar vigencia de noche adicional/), "Agregar vigencia de noche");
-    const noche = dentro(raiz, "Vigencia de noche adicional 1 de Hotel Centro");
-    await escribir(noche.querySelector('input[aria-label="Noche desde"]') as HTMLInputElement, "2027-03-01");
-    await escribir(noche.querySelector('input[aria-label="Noche hasta"]') as HTMLInputElement, "2027-03-31");
-    const inputsNoche = [...noche.querySelectorAll('input[inputmode="decimal"]')] as HTMLInputElement[];
-    await escribir(inputsNoche[1], "100"); // doble
-    assert.equal((noche.querySelector("select") as HTMLSelectElement).value, "", "la unidad de cobro NO tiene valor por defecto");
-    assert.doesNotMatch(txt(noche), /PVP USD/, "sin unidad no hay PVP de noche que mostrar");
-
-    await clic(boton(raiz, /^Guardar$/), "Guardar");
-    await esperar(() => !!raiz.querySelector('[role="alert"]'));
-    assert.match(txt(raiz.querySelector('[role="alert"]')), /unidad de cobro/);
-    assert.equal(llamadas.length, 0, "sin unidad no se llama a la base");
-
-    await elegir(noche.querySelector("select") as HTMLSelectElement, "habitacion");
-    assert.match(txt(noche), /PVP USD \$131 por habitación/, "(100 + 4×2 ocupantes)/0.8245 = 130,98 → 131 por habitación y noche");
-    await elegir(noche.querySelector("select") as HTMLSelectElement, "persona");
-    assert.match(txt(noche), /PVP USD \$127 por persona/);
-    await clic(boton(raiz, /^Guardar$/), "Guardar");
-    await esperar(() => llamadas.length > 0);
-    assert.equal(llamadas.length, 1);
-    const [hotel] = llamadas[0].p_hoteles as { nombre: string; noches: { unidad_cobro: string; neto_doble: number }[]; base: { modalidad_servicios: string; neto_doble: number }[] }[];
-    assert.equal(hotel.nombre, "Hotel Centro");
-    assert.deepEqual(hotel.noches.map((n) => [n.unidad_cobro, n.neto_doble]), [["persona", 100]]);
-    assert.deepEqual(hotel.base.map((b) => [b.modalidad_servicios, b.neto_doble]), [["privado", 600]]);
-  });
-
-  test("carga un catálogo existente con su unidad de cobro y permite quitar vigencias y hoteles", async () => {
-    conRpc();
-    const neto = (o: Record<string, number | null>) => ({ sencilla: null, doble: null, triple: null, multiple: null, nino: null, ...o });
-    const m = await montar(h(HotelesVigenciaEditor, {
-      programaId: 3, programa: PROGRAMA, proveedores: [],
-      catalogo: {
-        hoteles: [{ id: 1, nombre: "Hotel Playa", zona: "Playa", tipoHabitacion: "Vista mar", maxPaxHabitacion: 3, maxMenoresHabitacion: 1, proveedorId: null }],
-        base: [{ id: 1, hotelId: 1, desde: "2027-03-01", hasta: "2027-03-31", modalidad: "regular", bajoSolicitud: false, neto: neto({ doble: 450 }) }],
-        noches: [{ id: 1, hotelId: 1, desde: "2027-03-01", hasta: "2027-03-31", unidad: "habitacion", neto: neto({ doble: 180 }) }],
-      },
-    }));
-    desmontar = m.desmontar;
-    const raiz = m.contenedor as HTMLElement;
-    assert.equal((raiz.querySelector('input[placeholder="Nombre del hotel"]') as HTMLInputElement).value, "Hotel Playa");
-    const noche = dentro(raiz, "Vigencia de noche adicional 1 de Hotel Playa");
-    assert.equal((noche.querySelector("select") as HTMLSelectElement).value, "habitacion");
-    assert.match(txt(noche), /PVP USD \$229 por habitación/);
-    assert.match(txt(dentro(raiz, "Vigencia base 1 de Hotel Playa")), /PVP USD \$566/);
-    await clic(boton(noche, /Quitar vigencia/), "Quitar vigencia de noche");
-    assert.equal(dentro(raiz, "Vigencia de noche adicional 1 de Hotel Playa"), null);
-    await clic(raiz.querySelector('button[aria-label^="Quitar el hotel"]'), "Quitar el hotel");
-    assert.equal(raiz.querySelector('input[placeholder="Nombre del hotel"]'), null);
-  });
-});
+// El editor (tarjetas + diálogo) se prueba en pruebas/programaHotel409.editor.react.ts.
+after(() => dom.window.close());

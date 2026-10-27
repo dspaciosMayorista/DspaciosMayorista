@@ -91,3 +91,51 @@ La matriz base es hotel × vigencia × acomodación × modalidad de servicios; e
 * No se recalcula ningún contrato histórico ni se infiere una estancia para contratos anteriores.
 * Los modos `categoria` y `salida` conservan su camino de siempre (CxP best-effort, sin pedir TRM de costos ni proveedor de asistencia): solo el modo por hotel usa la escritura financiera estricta.
 * Orden de despliegue: 244 → 245 → código (el código nuevo lee `programas.proveedor_asistencia_id`). Con el código desplegado sin la 245 el listado y la reserva de programas fallarían (columna inexistente).
+
+## 10. PR #409 — capacidad, noches ligadas, editor en diálogo, vista previa, fórmula y B2B
+
+Sin migración nueva: todo es código sobre el esquema 244/245 ya aplicado (no se editaron esas migraciones).
+
+### 10.1 Capacidad del hotel y tarifas publicadas
+* Fuente única: `claveCompatible` / `clavesIncompatibles` / `soloCompatibles` en `lib/programas/estanciaHotel88.ts`. Una acomodación para N personas no se admite si `max_pax_habitacion < N` (Triple/Múltiple con máximo 2); la tarifa de menor no se admite con `max_menores_habitacion = 0`.
+* **Editor:** no pide esas tarifas (ni en precio base ni en noches). Si ya estaban cargadas (se bajó el máximo), aparecen como **conflicto visible** y «Guardar» queda deshabilitado hasta pulsar «Quitar las tarifas que el hotel no admite» (acción explícita; nunca se descarta en silencio).
+* **Servidor:** `guardarHoteles` (y la vista previa) pasan por `prepararHoteles` → `validarHotelesParaGuardar` → `conflictosHotel`: rechaza el guardado incompatible con mensaje de negocio antes de llamar a la RPC.
+* **Publicación:** `construirTablaHotelPvp` (único punto por el que pasan la ficha, el tarifario público, el documento y el formulario de reserva) deja en `null` las tarifas incompatibles aunque existan filas antiguas. La guarda de ocupación de la reserva (`validarOcupacionHotel`, incluido el tope POR habitación) se conserva.
+
+### 10.2 Noches adicionales ligadas a las vigencias base
+* La noche **elige** una vigencia base existente del hotel (`opcionesVigenciaBase`); no se escriben fechas. Privados y regulares con las mismas fechas son **una sola opción** (la noche tiene una tarifa para ambas).
+* Si las vigencias de privados y regulares no coinciden, o una tarifa de noche no coincide con ninguna vigencia base (se editó/quitó la base), `conflictosHotel` lo informa y el guardado se rechaza (editor y servidor): no quedan tarifas huérfanas ni fechas inventadas. Sin noches cargadas las bases pueden diferir.
+* La liquidación no cambia: cada noche extra usa la tarifa de la vigencia que cubre su propia fecha.
+
+### 10.3 Editor compacto, diálogo y clonar
+`HotelesVigenciaEditor.tsx` (tarjetas), `HotelFormulario.tsx` (formulario), `hotelEstado.ts` (estado puro). «Editar», «Clonar» y «Agregar hotel» abren un diálogo; guardar/cancelar lo cierra y devuelve el foco al botón de origen; los errores del servidor se muestran dentro del diálogo y el borrador se conserva; el clic fuera no lo cierra. **Clonar** = borrador sin guardar con identidad nueva (`id = null`), nombre único (`Hotel (copia)`, `(copia 2)`…) y vigencias/modalidades/tarifas copiadas; cancelar no altera el original.
+
+### 10.4 Vista previa de solo lectura
+`calcularVistaPreviaPrograma` (Server Action) → `lib/programas/vistaPrevia409.ts` → `liquidarSeleccion` (el motor de la reserva). Funciona con el catálogo en pantalla (borrador sin guardar ni publicar), muestra vigencia aplicada, tarifa de cada noche, asistencia, MK, fee, redondeo, PVP y total, y la **causa** si falta tarifa o hay conflicto. No escribe nada (ni RPC, ni ventas, ni CxP; no revalida páginas). Exige `ESCRITURA.producto` y solo entonces devuelve costos (netos); sin ese permiso la salida del módulo puro no lleva netos ni desglose.
+
+### 10.5 Itinerario compacto
+`ItinerarioEditor`: un día completado (título + descripción) se ve en una fila (día, título, comidas, nota resumida) y «Editar» lo reabre sin perder contenido. La vista previa muestra los días libres añadidos antes del último día y la recogida desplazada.
+
+### 10.6 Fórmula visible (`pvpProgramaDesglose`)
+Una sola implementación (`pvpProgramaFormula` delega en ella): **(neto del proveedor + asistencia × días) ÷ (1 − MK) [+ monto sin markup] ÷ (1 − fee) → redondeo hacia arriba (COP al millar, USD al dólar)**. En noches extra se redondea **cada noche** y luego se suma. «Neto del proveedor» ≠ «NETO» de venta B2B (PVP − comisión).
+
+Ejemplo base (USD, MK 15 %, fee 3 %, asistencia 4/día, 4 días): neto 600 → asistencia 4 × 4 = 16 → costo 616 → ÷ 0,85 = 724,70 → ÷ 0,97 = 747,11 → **748** por persona; doble (2 pax) = 1.496.
+Ejemplo noche (por persona, neto 100, 1 día de asistencia): (100 + 4) ÷ 0,85 ÷ 0,97 = 126,1 → **127**; doble = 254. Dos noches en vigencias distintas (127 × 2 y 151 × 2) = 254 + 302 = 556 (no se redondea el bloque).
+Paridad cubierta en `pruebas/programaHotel409.vistaPrevia.test.ts` (editor = ficha = vista previa = reserva = navegador; líneas del contrato suman el PVP de las noches).
+
+### 10.7 Copia del titular y B2B en Programas
+* `lib/personas/copiaTitular.ts` + `BotonCopiarTitular`: «Copiar datos del cliente» solo puede estar en UN pasajero por reserva (los demás quedan inhabilitados; «Deshacer copia» restaura los datos previos y los habilita). Superficies: `ReservaForm.tsx` y `ProgramaReservaForm.tsx`.
+* **B2B en Programas** (`reservarProgramaInterno`): agencia/freelance exigen aliado del catálogo (`resolverAliadoAsistencia`, activo y del tipo) y **elección expresa PVP (`comisionable`) o NETO (`neta`)** antes de numerar. Reutiliza `planComisionReserva` (base comisionable = PVP − impuesto no comisionable; % del aliado/general/defecto; comisión) y `registrarComisionReserva` (RPC; si falla, `revertir_contrato_incompleto`). Se congela en `ventas`: `modo_compra`, `comision_b2b`, `comision_estado`, `aliado_id`, nombre del aliado del catálogo. PVP: cliente = la persona, `precio_venta` = PVP. NETO: cliente = el aliado (con su documento del catálogo), **titular = la persona**, `precio_venta` = PVP − comisión (`camposClienteVenta`). En NETO no hay una restricción adicional sobre el importe (la decisión comercial es del asesor). `terminosB2BPrograma` (solo lectura) muestra los términos antes de generar. **No se amplían permisos**: la acción conserva el contexto fail-closed de personal interno (`ESCRITURA.ventas`); ningún rol agencia/freelance llega aquí y `b2b_usuario_id` no se escribe.
+* **Estado de la venta:** la RPC real `registrar_comision_b2b_reserva` solo acepta una reserva EN CURSO (`financiero_estado = 'pendiente'`). En modo hotel ya nacía así; fuera de él (categoría/salida) la venta nace 'pendiente' solo si es B2B y se marca 'completo' ÚNICAMENTE después de escribir pasajeros e ítems. Si falla la comisión, los pasajeros, los ítems o la propia transición a 'completo', el contrato B2B se revierte completo (venta, comisión e hijos) y, si la reversión también falla, el mensaje nombra el contrato (que sigue 'pendiente'). B2C y el modo hotel no cambian. Lo reveló la prueba contra la base real: el arnés en memoria no podía verlo.
+* Pruebas: `programaReservaPrecio57.test.ts` (reserva real PVP/NETO/rechazos/reversión/vista previa), `programaEstancia88.react.ts` (UI B2B + copia), `copiaTitular409.test.ts`.
+
+### 10.8 Validación en Preview (sin pulsar «Generar reserva»)
+1. Programa por hotel → pestaña de hoteles: cada hotel es una tarjeta; «Editar» abre el diálogo; con máximo 2 no hay campos Triple/Múltiple.
+2. Bajar el máximo de un hotel con Triple cargado: aparece el conflicto y «Guardar» queda inhabilitado hasta quitar las tarifas.
+3. Noche adicional: elegir la vigencia base de la lista (privados+regulares = una opción).
+4. «Vista previa del precio»: hotel, servicios, fecha, habitaciones, menores y noches extra → «Calcular vista previa»; abrir «Ver fórmula».
+5. Itinerario: completar un día → queda en una fila; «Editar» lo reabre.
+6. Reservar el programa como interno: en «Tipo de venta» elegir Agencia o Freelance, el aliado y **PVP** o **NETO**; revisar el panel de términos. **No pulsar «Generar reserva»** hasta revisar.
+
+### 10.9 Prueba de punta a punta contra la base local (244/245)
+`sh supabase/scripts/test_245_app_programa_hotel.sh <base_nueva> [contenedor] [plantilla243]` ejecuta `pruebas/programaHotel245.pg.ts`: además de P1–P8, el bloque B1–B9 reserva Programas por hotel y por salida a **PVP** y a **NETO** con la RPC de comisión REAL, verifica `ventas` (precio, modo, comisión, cliente/titular, estado) y `aliados_b2b`, la **reversión por fallo de comisión** (trigger inyectado en `aliados_b2b`), por fallo en **pasajeros** y en **ítems**, por fallo de la transición a 'completo' y cuando la **reversión misma falla** (B6a–B6e: sin venta, comisión ni hijos, reintento limpio; 'pendiente' mientras se escribe y 'completo' solo al final), y que la vista previa de términos no escribe nada.

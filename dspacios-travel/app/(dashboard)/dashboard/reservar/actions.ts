@@ -95,7 +95,7 @@ import { componenteDePrograma } from "@/lib/cotizacion/condicionDesdeCatalogo";
 import type { ComponenteSnapshot } from "@/lib/cotizacion/snapshotCondiciones";
 import { cotizacionVencida, hoyBogota, MENSAJE_COTIZACION_VENCIDA, resolverVigenciaCotizacion } from "@/lib/cotizacion/vigencia";
 import { fechaNegocio } from "@/lib/fechaNegocio";
-import { resolverAliadoReserva, planComisionReserva, registrarComisionReserva, type PlanComisionReserva } from "@/lib/reservar/comisionReserva";
+import { resolverAliadoReserva, planComisionReserva, registrarComisionReserva, type ModoCompra, type PlanComisionReserva } from "@/lib/reservar/comisionReserva";
 import { asignarRefsPasajeros, AVISO_PERSONAS_PENDIENTES } from "@/lib/personas/cotizacion";
 import { MODO_OFERTA_63, MENSAJE_OFERTA_CAMBIO_63, huellaOferta63 } from "@/lib/reservar/ofertaDinamica63";
 import { camposCxP63, sumaEquivalentesOferta63 } from "@/lib/reservar/payloadFinanciero63";
@@ -119,7 +119,9 @@ import {
 import { resolverActorAsistencia, verificarAliadoVivoParaConversion } from "@/lib/cotizacion/asistidaB2BServidor";
 import { resolverFirmasSesion } from "@/lib/cotizacion/firmasSesion";
 import { tipoDocumentoParaVenta } from "@/lib/personas/tiposDocumento";
-import { camposClienteVenta, nombreQuienElabora, titularDeCliente, type FiscalAliado } from "@/lib/cotizacion/identidadB2B";
+import { camposClienteVenta, camposVendedorAliado, nombreQuienElabora, titularDeCliente, type FiscalAliado } from "@/lib/cotizacion/identidadB2B";
+import { resolverAliadoAsistencia, type AliadoResuelto } from "@/lib/cotizacion/asistidaB2BServidor";
+import type { TerminosVisibles } from "@/components/cotizacion/TerminosB2BAsistido";
 
 const oNull = (s: string | null | undefined) => (s && s.trim() !== "" ? s.trim() : null);
 
@@ -3483,7 +3485,17 @@ export type ReservaProgramaInput = {
    * numerar y se congela en el registro de costo y en cada CxP en USD (modelo de la 236). Distinta de cualquier TRM de cobro. En COP se ignora.
    */
   trmCosto?: number | string | null;
+  /**
+   * PR #409 — B2B (agencia/freelance): aliado del CATÁLOGO y elección EXPRESA de la modalidad antes de generar el contrato:
+   * `comisionable` = PVP (se cobra el total y la comisión se liquida aparte) o `neta` = NETO (se cobra PVP − comisión; el aliado figura como cliente y
+   * la persona como titular). Sin ambos no se genera nada. El servidor recalcula con las reglas B2B de siempre y congela la elección en la venta.
+   */
+  aliadoId?: number | null;
+  modoCompra?: ModoCompra;
 };
+
+/** Salida de la vista previa de términos B2B (ver `terminosB2BPrograma`): el cuerpo común se detiene ANTES de numerar. */
+type CapturaTerminosB2B = { terminos?: TerminosVisibles };
 
 /** #57 — `ReservaResult` + el rechazo por cambio de precio (sin escrituras). */
 export type ReservaProgramaResultado =
@@ -3527,11 +3539,24 @@ export async function reservarPrograma(input: ReservaProgramaInput): Promise<Res
   }
 }
 
+/**
+ * PR #409 — Términos B2B (PVP o NETO) que el servidor liquidaría HOY para esta selección, para que el asesor los vea ANTES de generar. Corre el mismo
+ * cuerpo de `reservarPrograma` y se detiene antes de numerar: no crea contrato, CxP, comisión ni asiento. Mismo gate de personal interno.
+ */
+export async function terminosB2BPrograma(input: ReservaProgramaInput): Promise<{ ok: true; terminos: TerminosVisibles } | { ok: false; error: string }> {
+  const flujoId = generarFlujoId();
+  const salida: CapturaTerminosB2B = {};
+  const res = await reservarProgramaInterno(input, flujoId, crearMedidor("reservar_programa", flujoId), crearEstadoFlujo(), salida);
+  if (salida.terminos) return { ok: true, terminos: salida.terminos };
+  return { ok: false, error: res.ok ? "No se pudieron calcular los términos." : res.error };
+}
+
 async function reservarProgramaInterno(
   input: ReservaProgramaInput,
   flujoId: string,
   medir: Medidor,
-  estado: EstadoFlujo
+  estado: EstadoFlujo,
+  vistaPrevia?: CapturaTerminosB2B,
 ): Promise<ReservaProgramaResultado> {
   // Contexto fail-closed INTERNO (revisión posterior al PR #274, ronda 2):
   // reservarPrograma() es exportada y por lo tanto alcanzable directo por
@@ -3847,7 +3872,8 @@ async function reservarProgramaInterno(
       }
       proveedorAsistencia = { id: pa.id, nombre: pa.nombre, aplicaRetencion: pa.aplica_retencion ?? false, pctRetencion: Number(pa.pct_retencion) || 0 };
     }
-    if (String(prog.moneda).toUpperCase() === "USD") {
+    // (La vista previa de términos B2B no pide la TRM de costos: es un dato de costos y no entra a PVP/NETO; al generar sigue siendo obligatoria.)
+    if (!vistaPrevia && String(prog.moneda).toUpperCase() === "USD") {
       // Personal interno: el contexto de esta acción ya exige un rol con escritura sobre ventas (ningún rol externo llega aquí).
       const dTrm = decidirTrmCosto({ requiere: liq.costoNeto > 0 || liq.costoAsistencia > 0, recibida: input.trmCosto, esInterno: true, congelada: null });
       if (!dTrm.ok) return _rechazarValidacionPrograma({ ok: false, error: dTrm.error });
@@ -3861,10 +3887,55 @@ async function reservarProgramaInterno(
   //      cambio de un reintento), se rechaza AQUÍ: antes de numerar y de toda
   //      escritura (sin contrato, CxP ni asientos), devolviendo el nuevo importe
   //      para que el usuario lo acepte de forma expresa. Cada intento recalcula.
-  const confirmacion = evaluarPrecioConfirmado(input.precioConfirmado, precioVenta, prog.moneda);
+  // (La vista previa de términos B2B no confirma importes: solo muestra lo que el servidor liquidaría hoy.)
+  const confirmacion = vistaPrevia ? ({ ok: true } as const) : evaluarPrecioConfirmado(input.precioConfirmado, precioVenta, prog.moneda);
   if (!confirmacion.ok) {
     return _rechazarValidacionPrograma({ ok: false, error: confirmacion.error, cambioPrecio: confirmacion.cambioPrecio });
   }
+
+  // 3.d) PR #409 — B2B: aliado del catálogo + elección EXPRESA de PVP o NETO, con las reglas de siempre (`planComisionReserva`: base comisionable =
+  //      PVP − impuesto no comisionable, % del aliado/general/por defecto, comisión). Todo se decide AQUÍ, antes de numerar y de escribir nada: del
+  //      navegador solo llega la elección (id de aliado y modalidad). No cambia quién puede llamar esta acción (ver contexto fail-closed arriba).
+  const impuestoVenta = impuestoParaVenta(liq, input.tipoAsesor);
+  const residualB2B = avisoResidualBaseB2B(liq, input.tipoAsesor);
+  let aliadoPrograma: AliadoResuelto | null = null;
+  let planB2B: PlanComisionReserva | null = null;
+  if (input.tipoAsesor !== "interno") {
+    if (input.modoCompra !== "comisionable" && input.modoCompra !== "neta") {
+      return _rechazarValidacionPrograma({ ok: false, error: "Elige si el contrato se genera a PVP (se cobra el total y la comisión se liquida aparte) o a NETO (se cobra el PVP menos la comisión) antes de generarlo." });
+    }
+    if (!(Number.isInteger(input.aliadoId) && (input.aliadoId as number) > 0)) {
+      return _rechazarValidacionPrograma({ ok: false, error: `Esta venta es B2B: selecciona la ${input.tipoAsesor} del catálogo. Sin aliado no se puede registrar su comisión.` });
+    }
+    const al = await resolverAliadoAsistencia(sb, input.aliadoId as number);
+    if (!al.ok) return _rechazarValidacionPrograma({ ok: false, error: al.error });
+    if (al.aliado.tipo !== input.tipoAsesor) {
+      return _rechazarValidacionPrograma({ ok: false, error: `El aliado elegido es de tipo "${al.aliado.tipo}", no "${input.tipoAsesor}".` });
+    }
+    const plan = planComisionReserva({ modoCompra: input.modoCompra, precioVenta, impuesto: impuestoVenta ?? 0, pct: al.aliado.pct });
+    if (!plan.ok) return _rechazarValidacionPrograma({ ok: false, error: plan.error });
+    aliadoPrograma = al.aliado;
+    planB2B = plan.plan;
+  }
+  if (vistaPrevia) {
+    if (!aliadoPrograma || !planB2B) return _rechazarValidacionPrograma({ ok: false, error: "Los términos B2B solo aplican a ventas de agencia o freelance." });
+    vistaPrevia.terminos = {
+      aliado_nombre: aliadoPrograma.nombre,
+      tipo_asesor: aliadoPrograma.tipo,
+      modo_compra: planB2B.modoCompra as ModoCompra,
+      moneda: prog.moneda,
+      pvp: precioVenta,
+      impuesto: impuestoVenta ?? 0,
+      base: planB2B.base,
+      pct: planB2B.pct,
+      pct_origen: aliadoPrograma.pctOrigen,
+      comision: planB2B.comision ?? 0,
+      total_exigible: planB2B.precioFinal,
+    };
+    return _rechazarValidacionPrograma({ ok: false, error: "Vista previa de términos B2B (no se generó ningún contrato)." });
+  }
+  // Lo que se le cobra al comprador: PVP en comisionable (y en B2C), PVP − comisión en NETO.
+  const precioExigible = planB2B ? planB2B.precioFinal : precioVenta;
 
   registrarEtapa("reservar_programa", flujoId, "validacion_programa", Math.round(performance.now() - _tValidacionProg0), "ok");
 
@@ -3886,9 +3957,7 @@ async function reservarProgramaInterno(
     ? fechaRegresoEstancia(input.fechaIda, estanciaEntrada.nochesIncluidas, estanciaEntrada.nochesAdicionales)
     : nochesViaje != null ? sumarDias(input.fechaIda, nochesViaje) : prog.dias ? sumarDias(input.fechaIda, Math.max(0, prog.dias - 1)) : null;
 
-  // #57 — impuesto fiscal verificable (solo B2B) y residual de la base comisionable.
-  const impuestoVenta = impuestoParaVenta(liq, input.tipoAsesor);
-  const residualB2B = avisoResidualBaseB2B(liq, input.tipoAsesor);
+  // #57 — impuesto fiscal verificable (solo B2B) y residual de la base comisionable (calculados arriba, antes de numerar).
   if (residualB2B) advertencias.push(residualB2B);
 
   // 5) Venta (cabecera) — nace PENDIENTE, en la moneda del programa
@@ -3896,11 +3965,8 @@ async function reservarProgramaInterno(
   const { error: ve } = await sb.from("ventas").insert({
     numero_contrato: numero,
     tenant,
-    cliente: `${input.cliente.nombres ?? ""} ${input.cliente.apellidos ?? ""}`.trim(),
-    cliente_documento: oNull(input.cliente.numeroDoc),
-    cliente_tipo_documento: tipoDocumentoParaVenta(input.cliente.tipoDoc, input.cliente.numeroDoc),
-    cliente_telefono: oNull(input.cliente.telefono),
-    cliente_email: oNull(input.cliente.email),
+    // PR #409: NETO ⇒ cliente = aliado (identidad del catálogo) y la persona queda como titular; PVP con comisión y B2C ⇒ cliente = la persona.
+    ...camposClienteVenta({ modo: planB2B?.modoCompra ?? null, fiscal: aliadoPrograma?.fiscal ?? null, titular: titularDeCliente(input.cliente) }),
     destino: prog.subtitulo ?? prog.nombre,
     tipo_paquete: "programa",
     moneda: prog.moneda,
@@ -3908,19 +3974,32 @@ async function reservarProgramaInterno(
     fecha_regreso: fechaRegreso,
     pax: totalPax,
     hotel: prog.nombre,
-    precio_venta: precioVenta,
+    precio_venta: precioExigible,
     estado: "pendiente",
     canal,
     tipo_asesor: input.tipoAsesor,
-    agencia_nombre: oNull(input.agenciaNombre),
-    agencia_asesor: oNull(input.agenciaAsesor),
-    freelance_nombre: oNull(input.freelanceNombre),
+    // B2B: el nombre sale del CATÁLOGO (no del navegador) y el aliado queda enlazado por id (migración 143); la modalidad se congela en la venta.
+    ...(aliadoPrograma && planB2B
+      ? {
+          ...camposVendedorAliado({ nombre: aliadoPrograma.nombre, tipo: aliadoPrograma.tipo }),
+          agencia_asesor: aliadoPrograma.tipo === "agencia" ? oNull(input.agenciaAsesor) : null,
+          aliado_id: aliadoPrograma.id,
+          modo_compra: planB2B.modoCompra,
+          comision_b2b: planB2B.comision,
+          comision_estado: planB2B.comisionEstado,
+        }
+      : {
+          agencia_nombre: oNull(input.agenciaNombre),
+          agencia_asesor: oNull(input.agenciaAsesor),
+          freelance_nombre: oNull(input.freelanceNombre),
+        }),
     plazo: oNull(input.plazo),
     asesor_firma_nombre: oNull(asesorNombre),
     plan_nombre: catNombre ?? prog.nombre,
     // #88: nace con la escritura financiera EN CURSO; solo pasa a 'completo' dentro de registrar_financiero_contrato (atómico con sus costos y CxP).
     // Un contrato a medias queda 'pendiente': no se puede confirmar y la reconciliación lo completa o lo revierte.
-    ...(estanciaEntrada ? { financiero_estado: "pendiente" } : {}),
+    // B2B (PR #409): la RPC de comisión solo acepta una reserva EN CURSO, así que también nace 'pendiente' (y se completa justo después de registrar la comisión).
+    ...(estanciaEntrada || aliadoPrograma ? { financiero_estado: "pendiente" } : {}),
     // #57 — base comisionable B2B: SOLO un impuesto del proveedor verificable
     // (regla en modo `impuesto` con tarifa de proveedor cargada). Nunca se
     // infiere de `montoNoComisionable` ni de la reducción por % de la regla.
@@ -3931,6 +4010,21 @@ async function reservarProgramaInterno(
     elevarEstadoFlujo(estado, "error");
     registrarErrorTecnico("reservar_programa", flujoId, "insert_venta", "error_insert_venta", ve);
     return { ok: false, error: MSG_ERROR_GUARDAR_RESERVA };
+  }
+
+  // 5.b) PR #409 — comisión B2B: la crea la base (`registrar_comision_b2b_reserva`, valida usuario, rol, tenant, aliado y venta, y recalcula con la
+  // misma regla del plan). Si falla, el contrato se revierte completo: nunca queda un contrato B2B sin su comisión.
+  if (aliadoPrograma) {
+    const com = await registrarComisionReserva(sb, numero, aliadoPrograma.id);
+    if (!com.ok) {
+      elevarEstadoFlujo(estado, "error");
+      registrarErrorTecnico("reservar_programa", flujoId, "comision_b2b", "error_comision_b2b", com.error);
+      const rev = await revertirContratoIncompleto({ rpc: rpcFinanciero }, numero, tenant);
+      return {
+        ok: false,
+        error: rev.ok ? com.error : `${com.error} · Además, el contrato ${numero} quedó creado a medias y no se pudo deshacer automáticamente (${rev.error ?? "motivo desconocido"}): revísalo antes de volver a reservar.`,
+      };
+    }
   }
 
   // 5bis) Congelar condiciones de pago (Rama B, migración 165) — best-effort,
@@ -3944,7 +4038,7 @@ async function reservarProgramaInterno(
       const fechaPagoCond = fechaNegocio();
       const componente = componenteDePrograma(prog, {
         id: `programa-${input.programaId}`,
-        valor: precioVenta,
+        valor: precioExigible,
         referencia: prog.nombre,
         fechaViaje: input.fechaIda,
       });
@@ -3954,7 +4048,7 @@ async function reservarProgramaInterno(
         componentes: [componente],
         moneda: prog.moneda,
         trm: trmCond,
-        precioTotalMoneda: precioVenta,
+        precioTotalMoneda: precioExigible,
         fechaPago: fechaPagoCond,
         usuarioId: usuarioCond.id,
       });
@@ -3975,9 +4069,10 @@ async function reservarProgramaInterno(
     registrarErrorTecnico("reservar_programa", flujoId, "insert_hijas", detalle, error);
     elevarEstadoFlujo(estado, "error");
     // #88: en el modo hotel el contrato NO puede quedar utilizable sin sus datos (foto, costo, pasajeros, hotel): se revierte entero (las hijas
-    // caen en cascada). Si la reversión misma falla, el error nombra el contrato y este sigue 'pendiente' (no confirmable, recuperable).
+    // caen en cascada). PR #409: lo mismo en una venta B2B (con su comisión) de cualquier modo: nace 'pendiente' y no se completa hasta terminar
+    // pasajeros e ítems. Si la reversión misma falla, el error nombra el contrato y este sigue 'pendiente' (no confirmable, recuperable).
     let mensaje = MSG_ERROR_GUARDAR_RESERVA;
-    if (estanciaEntrada) {
+    if (estanciaEntrada || aliadoPrograma) {
       const rev = await revertirContratoIncompleto({ rpc: rpcFinanciero }, numero, tenant);
       if (!rev.ok) {
         registrarErrorTecnico("reservar_programa", flujoId, "insert_hijas", "error_revertir_contrato", rev.error);
@@ -4054,6 +4149,16 @@ async function reservarProgramaInterno(
   if (items.length) {
     const { error } = await sb.from("contrato_items").insert(items);
     if (error) return _errorHijas("items", error);
+  }
+
+  // 7.a) PR #409 — Fuera del modo hotel no hay escritura financiera atómica que complete el contrato: una venta B2B (que nació 'pendiente' para que la base
+  // acepte su comisión) se marca 'completo' SOLO ahora, ya escritos pasajeros e ítems (con la clave de servicio, como el resto de escrituras financieras).
+  // Si la transición falla, se revierte el contrato pendiente (y se avisa si la reversión también falla).
+  if (aliadoPrograma && !estanciaEntrada) {
+    const completar = process.env.SUPABASE_SERVICE_ROLE_KEY
+      ? await createAdminClient().from("ventas").update({ financiero_estado: "completo", financiero_actualizado_en: new Date().toISOString() }).eq("numero_contrato", numero)
+      : { error: { message: "falta la clave de servicio para completar el contrato" } };
+    if (completar.error) return _errorHijas("completar_b2b", completar.error);
   }
 
   // 7.b) #88 — foto de la estancia: selección, fechas exactas, vigencias, PVP por noche e

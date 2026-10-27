@@ -226,21 +226,63 @@ export function pvpPrograma(neto: number, opt: PvpOpciones, montoSinMarkup = 0):
  * una copia. `pvpPrograma` delega aquí tras su guarda: su comportamiento no cambia.
  */
 export function pvpProgramaFormula(neto: number, opt: PvpOpciones, montoSinMarkup = 0): number {
+  return pvpProgramaDesglose(neto, opt, montoSinMarkup).pvp;
+}
+
+/** Un paso de la fórmula del PVP, para mostrarlo y comprobarlo (la UI NO recalcula: solo presenta estos pasos). */
+export type PasoPvp = {
+  clave: "neto" | "asistencia" | "costo" | "markup" | "sin_markup" | "fee" | "redondeo";
+  etiqueta: string;
+  /** Operación aplicada, en texto (los números ya vienen en `valor`). */
+  operacion: string;
+  /** Acumulado después de este paso (el paso «asistencia» muestra solo su propio importe). */
+  valor: number;
+};
+
+export type DesglosePvp = { pvp: number; pasos: PasoPvp[] };
+
+const pctTexto = (x: number) => `${Math.round(x * 10000) / 100}%`;
+
+/**
+ * La ÚNICA implementación de la fórmula del PVP de un programa, con sus pasos:
+ *   1. neto del proveedor + asistencia × días (la asistencia es un costo: entra ANTES de marcar);
+ *   2. ÷ (1 − MK);
+ *   3. + monto sin markup, si aplica;
+ *   4. ÷ (1 − fee bancario);
+ *   5. redondeo hacia arriba (COP al millar, USD al dólar).
+ * `pvpProgramaFormula`/`pvpPrograma` delegan aquí, así que los pasos que ve el usuario y el importe que se cobra no pueden diferir.
+ * El «neto del proveedor» (paso 1) NO es el «NETO de venta B2B» (precio al aliado = PVP − comisión).
+ */
+export function pvpProgramaDesglose(neto: number, opt: PvpOpciones, montoSinMarkup = 0): DesglosePvp {
   const n = Number(neto);
   const extra = Number(montoSinMarkup) || 0;
-  if (!Number.isFinite(n) || n < 0) return 0;
+  if (!Number.isFinite(n) || n < 0) return { pvp: 0, pasos: [] };
 
   const mk = Number(opt.pctMk) || 0;
   const fee = Number(opt.pctFee) || 0;
   const asis = Number(opt.asistenciaDia) || 0;
   const dias = Math.max(0, Number(opt.dias) || 0);
 
+  const pasos: PasoPvp[] = [{ clave: "neto", etiqueta: "Neto del proveedor", operacion: "tarifa neta cargada", valor: n }];
   // La asistencia se suma al neto ANTES de marcar: es un costo, no un recargo.
   let sub = n + asis * dias;
-  if (mk > 0 && mk < 1) sub = sub / (1 - mk);
-  sub += extra;
-  if (fee > 0 && fee < 1) sub = sub / (1 - fee);
-  return redondearPvp(sub, opt.moneda);
+  pasos.push({ clave: "asistencia", etiqueta: "Asistencia médica", operacion: `${asis} por día × ${dias} día(s)`, valor: asis * dias });
+  pasos.push({ clave: "costo", etiqueta: "Costo (neto + asistencia)", operacion: "neto del proveedor + asistencia", valor: sub });
+  if (mk > 0 && mk < 1) {
+    sub = sub / (1 - mk);
+    pasos.push({ clave: "markup", etiqueta: "Con markup", operacion: `÷ (1 − ${pctTexto(mk)})`, valor: sub });
+  }
+  if (extra !== 0) {
+    sub += extra;
+    pasos.push({ clave: "sin_markup", etiqueta: "Monto sin markup", operacion: `+ ${extra}`, valor: sub });
+  }
+  if (fee > 0 && fee < 1) {
+    sub = sub / (1 - fee);
+    pasos.push({ clave: "fee", etiqueta: "Con fee bancario", operacion: `÷ (1 − ${pctTexto(fee)})`, valor: sub });
+  }
+  const pvp = redondearPvp(sub, opt.moneda);
+  pasos.push({ clave: "redondeo", etiqueta: "PVP redondeado hacia arriba", operacion: String(opt.moneda ?? "").toUpperCase() === "USD" ? "al dólar entero" : "al millar", valor: pvp });
+  return { pvp, pasos };
 }
 
 // ─────────────────────────────────────────────────────────────────────────

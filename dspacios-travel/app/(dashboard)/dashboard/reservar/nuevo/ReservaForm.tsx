@@ -13,7 +13,9 @@ import { ACOM_ROOMS, ACOM_ROOM_LABEL, paxTarifaDe, clasificarPorEdad, validarRes
 import { esInfantePorEdad } from "@/lib/reservar/pasajeros";
 import { recalcularVinculosPorEdad } from "@/lib/reservar/pasajerosFilas";
 import { OpcionesTipoDoc } from "@/components/personas/OpcionesTipoDoc";
-import { documentoClienteAdmitido, documentoPasajeroDesdeCliente } from "@/lib/personas/tiposDocumento";
+import { documentoClienteAdmitido } from "@/lib/personas/tiposDocumento";
+import { aplicarCopiaTitular, copiaVigente, deshacerCopiaTitular, type CopiaTitular } from "@/lib/personas/copiaTitular";
+import { BotonCopiarTitular } from "@/components/pasajeros/BotonCopiarTitular";
 import { BuscarTitular } from "@/components/personas/BuscarTitular";
 import { BuscarPasajeroDocumento } from "@/components/pasajeros/BuscarPasajeroDocumento";
 import { hoyBogota, vigenciaInicial } from "@/lib/cotizacion/vigencia";
@@ -266,13 +268,21 @@ export function ReservaForm({
     if (v && vigencia > v) setVigencia(v);
     setPax((prev) => recalcularVinculosPorEdad(prev, v || null));
   }
+  // Los datos del cliente solo se copian a UN pasajero (PR #409); deshacer devuelve lo que tenía.
+  const [copiaTitularRaw, setCopiaTitular] = useState<CopiaTitular>(null);
+  const copiaTitular = copiaVigente(copiaTitularRaw, Math.max(pax.length, 1));
   function copiarCliente(i: number) {
-    setPax((prev) => {
-      const next = [...prev];
-      while (next.length <= i) next.push(emptyPax());
-      next[i] = { ...next[i], nombres: cli.nombres, apellidos: cli.apellidos, ...documentoPasajeroDesdeCliente(cli.tipoDoc, cli.numeroDoc) };
-      return next;
-    });
+    const base = [...pax];
+    while (base.length <= i) base.push(emptyPax());
+    const r = aplicarCopiaTitular(base, i, cli, copiaTitular);
+    if (!r) return;
+    setPax(r.pax);
+    setCopiaTitular(r.copia);
+  }
+  function deshacerCopiaCliente() {
+    const r = deshacerCopiaTitular(pax, copiaTitular);
+    setPax(r.pax);
+    setCopiaTitular(r.copia);
   }
 
   function guardar() {
@@ -588,11 +598,7 @@ export function ReservaForm({
                       <span className="text-xs font-medium text-gray-500">
                         Pasajero {i + 1}{esInfante ? " · Infante" : ""}
                       </span>
-                      {i === 0 && (
-                        <button type="button" onClick={() => copiarCliente(0)} className="text-xs" style={{ color: "var(--brand-accent)" }}>
-                          Copiar datos del cliente
-                        </button>
-                      )}
+                      <BotonCopiarTitular indice={i} copia={copiaTitular} onCopiar={() => copiarCliente(i)} onDeshacer={deshacerCopiaCliente} />
                     </div>
                     <div className="grid grid-cols-1 gap-2 sm:grid-cols-3">
                       <div><label className={lbl}>Nombres *</label><Input value={p.nombres} onChange={(e) => setPaxField(i, "nombres", e.target.value)} /></div>
