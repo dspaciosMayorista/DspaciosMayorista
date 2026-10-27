@@ -26,7 +26,8 @@ import {
   eliminarFactura,
 } from "./gestion-actions";
 import { registrarPagoProveedor, deshacerUltimoPago } from "../../pagos/actions";
-import { actualizarAbono, eliminarAbono } from "../actions";
+import { actualizarAbono, anularAbono } from "../actions";
+import { AnularAbonoBoton } from "@/components/contrato/AnularAbonoBoton";
 import { ResponsiveTableShell } from "@/components/ui/ResponsiveTableShell";
 import { EditorCamposComision } from "../../comisiones/ComisionesList";
 
@@ -271,10 +272,9 @@ function CarteraTab({ numero, abonos, totalPagado, total, formasPago, cuotas, mo
 }
 
 // Fila de abono con edición inline (corregir valor/fecha/forma/referencia sin
-// tener que registrar un segundo abono para "cuadrar" el saldo) y eliminar.
+// tener que registrar un segundo abono para "cuadrar" el saldo) y anular.
 function FilaAbono({ a, numero, esUSD, moneda, formasPago, puedeEditar = true }: { a: Abono; numero: string; esUSD: boolean; moneda: string; formasPago: string[]; puedeEditar?: boolean }) {
   const [editar, setEditar] = useState(false);
-  const [errorEliminar, setErrorEliminar] = useState("");
   // El campo "Valor" edita lo PAGADO EN COP (mismo criterio de registrarAbono/
   // actualizarAbono); en USD eso es monto_cop, NO valor_abono (que está en USD).
   const [valor, setValor] = useState(String(esUSD ? (a.monto_cop ?? a.valor_abono) : a.valor_abono));
@@ -297,15 +297,6 @@ function FilaAbono({ a, numero, esUSD, moneda, formasPago, puedeEditar = true }:
     });
   }
 
-  async function borrar() {
-    setErrorEliminar("");
-    try {
-      const r = await eliminarAbono(a.id, numero);
-      if (!r.ok) setErrorEliminar(r.error ?? "No se pudo eliminar el abono.");
-    } catch {
-      setErrorEliminar("No se pudo eliminar el abono.");
-    }
-  }
 
   if (editar) {
     return (
@@ -347,8 +338,7 @@ function FilaAbono({ a, numero, esUSD, moneda, formasPago, puedeEditar = true }:
         {puedeEditar ? (
           <>
             <button type="button" onClick={() => setEditar(true)} className="mr-3 text-xs font-medium hover:underline" style={{ color: "var(--brand-accent)" }}>Editar</button>
-            <DeleteBtn onClick={borrar} />
-            {errorEliminar && <p role="alert" className="mt-1 whitespace-normal text-xs text-red-600">{errorEliminar}</p>}
+            <AnularAbonoBoton resumen={`${fmt(a.valor_abono)} del ${a.fecha_abono}`} onAnular={(motivo) => anularAbono(a.id, numero, motivo)} />
           </>
         ) : null}
       </td>

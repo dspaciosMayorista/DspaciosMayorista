@@ -13,7 +13,9 @@ import { formatMoneda } from "@/lib/utils";
 import { fechaElegidaONegocio, fechaNegocio } from "@/lib/fechaNegocio";
 import { siguienteNumeroContrato } from "@/lib/contrato/numeracion";
 import { contextoCrearContrato } from "@/lib/contrato/contexto";
-import { reemplazarAsiento, postearAsientoCxP, eliminarAsientoCxP, postearAsientoAbonoAtomico } from "@/lib/contabilidad/asientos";
+import { postearAsientoCxP, eliminarAsientoCxP, postearAsientoAbonoAtomico, rpcFinanciero } from "@/lib/contabilidad/asientos";
+import { mensajeExcedente, type DatosExcedente } from "@/lib/finanzas/excedenteAbono";
+import { numeroVisible } from "@/lib/tenant";
 import { esInfantePorEdad, pasajeroConsumeSilla } from "@/lib/reservar/pasajeros";
 import { payloadGuardarPasajeros } from "@/lib/reservar/pasajerosEdicion";
 import {
@@ -1165,6 +1167,19 @@ async function recalcularEstadoAbono(sb: Awaited<ReturnType<typeof createClient>
   return { ok: true };
 }
 
+// `confirmacion` solo viene con ok=false cuando el contrato ya está cubierto: no se escribió nada y la pantalla
+// debe pedir confirmación y reintentar con `confirmarExcedente=true`.
+export type ResultadoAbono = { ok: boolean; error?: string; confirmacion?: DatosExcedente };
+
+const UUID_OPERACION = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+type RegistroAbonoSql =
+  | { estado: "registrado"; abono_id: number; asiento_error?: string }
+  | { estado: "ya_registrado"; abono_id: number; asiento_error?: string }
+  | { estado: "requiere_confirmacion"; contrato: string; total: number; pagado: number; nuevo: number; moneda: "COP" | "USD" };
+
+// El registro lo decide UNA RPC de la base (migración 248, `registrar_abono`) con la venta bloqueada: la comprobación
+// «contrato ya pagado», la confirmación y el insert no se pueden separar por otra solicitud, y la misma
+// `operacionId` (una por intento de formulario) nunca crea dos abonos. Aquí solo se validan datos y se interpreta.
 export async function registrarAbono(
   numeroContrato: string,
   valor: number,            // monto PAGADO en COP (en USD se convierte con la TRM)
@@ -1172,7 +1187,9 @@ export async function registrarAbono(
   referencia: string,
   trmInput?: number,        // TRM del día (obligatoria si el contrato es USD)
   fecha?: string,           // fecha del abono (por defecto hoy; editable para registrar abonos atrasados)
-): Promise<{ ok: boolean; error?: string }> {
+  confirmarExcedente?: boolean, // pago adicional intencional sobre un contrato ya cubierto
+  operacionId?: string,     // idempotencia: misma operación = mismo abono (doble pulsación / reintento)
+): Promise<ResultadoAbono> {
   const sb = await createClient();
   const { data: venta, error: ventaError } = await sb
     .from("ventas")
@@ -1188,23 +1205,32 @@ export async function registrarAbono(
   const montoCop = Math.max(0, Number(valor) || 0);
   const trm = esUSD ? (Number(trmInput) || 0) : 1;
   if (esUSD && trm <= 0) return { ok: false, error: "Indica la TRM del día para el abono (contrato en USD)." };
-  // El abono "vale" en la MONEDA DEL CONTRATO: USD = COP / TRM; COP = COP.
-  const valorAbono = esUSD ? montoCop / trm : montoCop;
+  if (operacionId != null && !UUID_OPERACION.test(operacionId)) return { ok: false, error: "Operación no válida; recarga la página e inténtalo de nuevo." };
+  const { data: { user } } = await sb.auth.getUser();
+  if (!user) return { ok: false, error: "Sesión no válida." };
 
-  const fechaAbono = fechaElegidaONegocio(fecha);
-  const { data: nuevoAbono, error } = await sb.from("abonos").insert({
-    numero_contrato: numeroContrato,
-    tenant: (venta as { tenant?: string } | null)?.tenant ?? "mayorista",
-    valor_abono: valorAbono,
-    monto_cop: montoCop,
-    trm,
-    fecha_abono: fechaAbono,
-    forma_pago: formaPago || null,
-    referencia: referencia || null,
-  }).select("id").single();
-  if (error || !nuevoAbono) return { ok: false, error: error?.message ?? "No se pudo registrar el abono." };
+  const r = await rpcFinanciero<RegistroAbonoSql>("registrar_abono", {
+    p_numero: numeroContrato,
+    p_tenant: (venta as { tenant?: string }).tenant ?? "mayorista",
+    p_actor: user.id,
+    p_monto_cop: montoCop,
+    p_trm: esUSD ? trm : null,
+    p_forma: formaPago || null,
+    p_ref: referencia || null,
+    p_fecha: fechaElegidaONegocio(fecha),
+    p_confirmar: confirmarExcedente === true,
+    p_operacion: operacionId ?? null,
+  });
+  if (!r.ok) return { ok: false, error: r.error };
 
-  const errAsiento = await postearAsientoAbono(sb, nuevoAbono.id, (venta as { tenant?: string } | null)?.tenant ?? undefined);
+  if (r.data.estado === "requiere_confirmacion") {
+    // Pago adicional: la base ya vio el contrato cubierto con los abonos vigentes y NO escribió nada.
+    const d = r.data;
+    const datos: DatosExcedente = { contrato: numeroVisible(numeroContrato), total: d.total, pagado: d.pagado, nuevo: d.nuevo, moneda: d.moneda };
+    return { ok: false, error: mensajeExcedente(datos), confirmacion: datos };
+  }
+  // «ya_registrado» (reintento de la misma operación) también trae el estado contable real: la base reintentó el asiento.
+  const errAsiento = r.data.asiento_error ?? null;
   const conf = await recalcularEstadoAbono(sb, numeroContrato);
   if (!conf.ok) {
     revalidatePath(`/dashboard/contratos/${numeroContrato}`);
@@ -1213,7 +1239,7 @@ export async function registrarAbono(
   if (errAsiento) {
     revalidatePath(`/dashboard/contratos/${numeroContrato}`);
     revalidatePath("/dashboard/cartera");
-    return { ok: false, error: `El abono quedó registrado, pero su asiento contable no: ${errAsiento}. Contabilízalo desde Contabilidad → Facturación.` };
+    return { ok: false, error: `El abono quedó registrado, pero su asiento contable no: ${errAsiento}. Vuelve a pulsar Registrar para reintentar el asiento (no duplica el abono) o contabilízalo desde Contabilidad → Facturación.` };
   }
   revalidatePath(`/dashboard/contratos/${numeroContrato}`);
   revalidatePath("/dashboard/cartera");
@@ -1268,25 +1294,22 @@ export async function actualizarAbono(
   return { ok: true };
 }
 
-export async function eliminarAbono(id: number, numeroContrato: string): Promise<{ ok: boolean; error?: string }> {
+// Anula un abono (con o sin asiento contable) en UNA transacción de la base (migración 248, RPC `anular_abono`):
+// retira el asiento, borra el abono y deja la huella con actor y motivo. Las guardas de la 208 siguen activas.
+// Contrato, agencia y rol los revalida la RPC contra `usuarios`; aquí solo se deriva el actor de la sesión.
+export async function anularAbono(id: number, numeroContrato: string, motivo: string): Promise<{ ok: boolean; error?: string }> {
   const sb = await createClient();
-  // #30: el asiento del abono vive en los libros de la agencia del contrato.
-  const { data: ventaAbono } = await sb.from("ventas").select("tenant").eq("numero_contrato", numeroContrato).maybeSingle();
-  const { error } = await sb.from("abonos").delete().eq("id", id);
-  if (error) {
-    // 208 (F4415): un abono con asiento contable NO se borra. Antes se borraba el abono y, si fallaba el
-    // segundo paso, su asiento quedaba huérfano y la acción respondía éxito. Mientras no exista una
-    // operación atómica de eliminar abono, se rechaza y no cambia nada.
-    if (error.code === "F4415") {
-      return { ok: false, error: `Este abono ya tiene asiento contable y todavía no se puede eliminar (falta la operación contable atómica). No se cambió nada: ni el abono ni su asiento.` };
-    }
-    return { ok: false, error: error.message };
-  }
-  // Abono sin asiento (el caso que sí se borra): limpia cualquier asiento residual y NO ignora el fallo.
-  const limpio = await reemplazarAsiento("abono", `abono:${id}`, null, (ventaAbono?.tenant as string | null) ?? undefined);
-  if (!limpio.ok) {
-    return { ok: false, error: `El abono se eliminó, pero no se pudo limpiar su asiento contable: ${limpio.error}. Avisa a contabilidad antes de seguir.` };
-  }
+  const { data: { user } } = await sb.auth.getUser();
+  if (!user) return { ok: false, error: "Sesión no válida." };
+  if (!motivo || motivo.trim().length < 3) return { ok: false, error: "Indica el motivo de la anulación (mínimo 3 caracteres)." };
+  const { data: venta } = await sb.from("ventas").select("tenant").eq("numero_contrato", numeroContrato).maybeSingle();
+  if (!venta) return { ok: false, error: "Contrato no encontrado." };
+  const r = await rpcFinanciero<{ estado: string }>("anular_abono", {
+    p_abono_id: id, p_numero: numeroContrato, p_tenant: (venta.tenant as string | null) ?? "mayorista", p_actor: user.id, p_motivo: motivo.trim(),
+  });
+  if (!r.ok) return { ok: false, error: r.error };
+  // La TRM efectiva (USD) se promedia sobre los abonos que quedan; el resultado de la confirmación no cambia la anulación ya hecha.
+  await recalcularEstadoAbono(sb, numeroContrato);
   revalidatePath(`/dashboard/contratos/${numeroContrato}`);
   revalidatePath("/dashboard/cartera");
   revalidatePath("/dashboard/contabilidad/libro-diario");

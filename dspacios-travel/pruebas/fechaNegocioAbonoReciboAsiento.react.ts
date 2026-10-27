@@ -179,6 +179,15 @@ const RPC: Record<string, (a: Record<string, unknown>) => { data: unknown; error
     db.asientos.push({ id: ++db.seq, tenant: a.p_tenant, fecha: ab.fecha_abono, origen: "abono", referencia: ref, descripcion: `Abono ${String(ab.numero_contrato)}` });
     return { data: { estado: "contabilizado" }, error: null };
   },
+  // 248: el abono y su asiento los crea UNA RPC (registrar_abono); contrato observable para esta prueba: fecha del abono
+  // = la elegida (la Server Action ya la resolvió con el día de negocio) y asiento con esa misma fecha. La decisión de
+  // «ya pagado», la idempotencia y las carreras se prueban en Postgres (test_248_anular_abono.sql / test_248_carrera.sh).
+  registrar_abono: (a) => {
+    const fila: Fila = { id: 7, numero_contrato: a.p_numero, valor_abono: a.p_monto_cop, monto_cop: a.p_monto_cop, fecha_abono: a.p_fecha, forma_pago: a.p_forma, referencia: a.p_ref };
+    db.abonos.push(fila);
+    db.asientos.push({ id: ++db.seq, tenant: a.p_tenant, fecha: fila.fecha_abono, origen: "abono", referencia: `abono:${String(fila.id)}`, descripcion: `Abono ${String(a.p_numero)}` });
+    return { data: { estado: "registrado", abono_id: fila.id }, error: null };
+  },
   consultar_factura_fuera_libros: () => ({ data: { hash: "h", requiere_revision: false, pendientes: [], fotografia: { abonos: [], total_sin_respaldo_cop: 0, total_exceso_cop: 0, no_calculables: 0 } }, error: null }),
   facturar_factura: (a) => {
     if (Math.abs(Number(a.p_pvp) - 3_000_000) > 0.5 || Math.abs(Number(a.p_irt) - 2_000_000) > 0.5) return rpcErr("F4410", "FIN_IMPORTES_DESACTUALIZADOS: el total o el IRT no coinciden con los del sistema.");
