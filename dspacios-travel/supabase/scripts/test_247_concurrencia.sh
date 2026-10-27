@@ -1,8 +1,8 @@
 #!/bin/sh
 # ──────────────────────────────────────────────────────────────────
-# PR #409 · Concurrencia REAL (commits reales, tres sesiones psql) de la comprobación diferida del itinerario de un programa PUBLICADO (migración 246).
-# Lo invoca test_246_programa_blackout_alcance.sh sobre la base desechable ya migrada; también se puede correr suelto:
-#   sh supabase/scripts/test_246_concurrencia.sh <contenedor_pg> <base_con_la_246>
+# PR #409 · Concurrencia REAL (commits reales, tres sesiones psql) de la comprobación diferida del itinerario de un programa PUBLICADO (migración 247).
+# Lo invoca test_247_programa_blackout_alcance.sh sobre la base desechable ya migrada; también se puede correr suelto:
+#   sh supabase/scripts/test_247_concurrencia.sh <contenedor_pg> <base_con_la_246>
 #
 # Barrera determinista: una sesión coordinadora retiene un candado consultivo (246,1); las dos sesiones de la prueba ESCRIBEN y luego piden ese
 # candado (quedan en espera); cuando el coordinador ve las dos esperando las libera y ambas confirman a la vez. Así las dos ya escribieron antes
@@ -36,7 +36,7 @@ limpiar() {
 }
 trap limpiar EXIT
 
-[ "$(q "select count(*) from pg_proc where proname = 'bloquear_itinerario_programa'")" = 1 ] || fallo "la 246 (con el candado por programa) no está aplicada en $DB"
+[ "$(q "select count(*) from pg_proc where proname = 'bloquear_itinerario_programa'")" = 1 ] || fallo "la 247 (con el candado por programa) no está aplicada en $DB"
 q "delete from public.programas where nombre like '\_\_t246\_cc\_%'" >/dev/null
 
 # Programa publicado con días 1..3 (y opcionalmente un día 3 repetido heredado). Con session_replication_role = replica no corren los triggers

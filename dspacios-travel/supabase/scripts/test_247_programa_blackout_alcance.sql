@@ -1,8 +1,8 @@
 -- SOLO base local/desechable con las migraciones hasta 246 (esquema real). Siempre termina en ROLLBACK.
--- PR #409: la 246 agrega programa_blackouts.alcance (entrada | viaje), la CHECK de extremos (NOT VALID: solo filas nuevas) y guardar_programa_blackouts
+-- PR #409: la 247 agrega programa_blackouts.alcance (entrada | viaje), la CHECK de extremos (NOT VALID: solo filas nuevas) y guardar_programa_blackouts
 -- (reemplazo ATÓMICO que valida todo antes de borrar). Comprueba: default y CHECK del alcance, CHECK de extremos, el reemplazo, que CADA entrada inválida
 -- deja los blackouts anteriores intactos, y los permisos (RLS de quien llama; anon sin ejecución).
---   psql -h 127.0.0.1 -U supabase_admin -d <base> -v ON_ERROR_STOP=1 -f test_246_programa_blackout_alcance.sql
+--   psql -h 127.0.0.1 -U supabase_admin -d <base> -v ON_ERROR_STOP=1 -f test_247_programa_blackout_alcance.sql
 \set ON_ERROR_STOP 1
 begin;
 
@@ -202,12 +202,23 @@ select pg_temp.como('authenticated', :'op', format($q$select public.guardar_prog
 select pg_temp.ok(:'r_gd' = '3'
                   and (select titulo || ':' || desayuno from public.programa_dias where programa_id = :pi2 and dia = 1) = 'Uno:true', 'un publicado: un itinerario COMPLETO se guarda y reemplaza los días');
 
+-- Los traslados se guardan y se muestran, pero no reemplazan ni agregan días turísticos.
+select pg_temp.como('authenticated', :'op', format($q$select public.guardar_programa_dias(%s, '[{"dia":0,"tipo_tramo":"traslado_previo"},{"dia":1},{"dia":2},{"dia":3},{"dia":4,"tipo_tramo":"traslado_posterior"}]'::jsonb)::text$q$, :pi2)) as r_traslados \gset
+select pg_temp.ok(:'r_traslados' = '5' and public.itinerario_programa_problema(:pi2, 3) is null
+                  and (select count(*) from public.programa_dias where programa_id=:pi2 and tipo_tramo='dia')=3,
+                  'un publicado admite traslados antes y después sin cambiar sus tres días turísticos');
+select pg_temp.ok(pg_temp.como('authenticated', :'op', format($q$select public.guardar_programa_dias(%s, '[{"dia":0,"tipo_tramo":"traslado_previo"},{"dia":1},{"dia":2},{"dia":3},{"dia":5,"tipo_tramo":"traslado_posterior"}]'::jsonb)::text$q$, :pi2)) like 'ERROR:%no corresponde a su posición%'
+                  and (select count(*) from public.programa_dias where programa_id=:pi2 and tipo_tramo <> 'dia')=2,
+                  'un traslado posterior fuera de posición se rechaza sin cambiar el itinerario');
+select pg_temp.como('authenticated', :'op', format($q$select public.guardar_programa_dias(%s, '[{"dia":1,"titulo":"Uno","desayuno":true},{"dia":2},{"dia":3}]'::jsonb)::text$q$, :pi2)) as r_gd_restaurado \gset
+select pg_temp.ok(:'r_gd_restaurado' = '3', 'el itinerario original se restaura para las demás pruebas');
+
 -- Entradas inválidas: se rechazan (nada se descarta en silencio) y no reemplazan los días.
 select pg_temp.huella_dias(:pi2) as d1 \gset
 select pg_temp.ok(pg_temp.como('authenticated', :'op', format($q$select public.guardar_programa_dias(%s, '[{"dia":1},"texto"]'::jsonb)::text$q$, :pi2)) like 'ERROR:%no es válido (se esperaba un objeto)%' and pg_temp.huella_dias(:pi2) = :'d1', 'un día que no es objeto se rechaza');
-select pg_temp.ok(pg_temp.como('authenticated', :'op', format($q$select public.guardar_programa_dias(%s, '[{"dia":0}]'::jsonb)::text$q$, :pi2)) like 'ERROR:%número entero de 1 en adelante%' and pg_temp.huella_dias(:pi2) = :'d1', 'el día 0 se rechaza');
-select pg_temp.ok(pg_temp.como('authenticated', :'op', format($q$select public.guardar_programa_dias(%s, '[{"dia":"x"}]'::jsonb)::text$q$, :pi2)) like 'ERROR:%número entero de 1 en adelante%' and pg_temp.huella_dias(:pi2) = :'d1', 'un día no numérico se rechaza');
-select pg_temp.ok(pg_temp.como('authenticated', :'op', format($q$select public.guardar_programa_dias(%s, '[{"titulo":"sin número"}]'::jsonb)::text$q$, :pi2)) like 'ERROR:%número entero de 1 en adelante%' and pg_temp.huella_dias(:pi2) = :'d1', 'un día sin número se rechaza');
+select pg_temp.ok(pg_temp.como('authenticated', :'op', format($q$select public.guardar_programa_dias(%s, '[{"dia":0}]'::jsonb)::text$q$, :pi2)) like 'ERROR:%no corresponde a su posición%' and pg_temp.huella_dias(:pi2) = :'d1', 'el día 0 sin tipo de traslado se rechaza');
+select pg_temp.ok(pg_temp.como('authenticated', :'op', format($q$select public.guardar_programa_dias(%s, '[{"dia":"x"}]'::jsonb)::text$q$, :pi2)) like 'ERROR:%tipo o número inválido%' and pg_temp.huella_dias(:pi2) = :'d1', 'un día no numérico se rechaza');
+select pg_temp.ok(pg_temp.como('authenticated', :'op', format($q$select public.guardar_programa_dias(%s, '[{"titulo":"sin número"}]'::jsonb)::text$q$, :pi2)) like 'ERROR:%tipo o número inválido%' and pg_temp.huella_dias(:pi2) = :'d1', 'un día sin número se rechaza');
 select pg_temp.ok(pg_temp.como('authenticated', :'op', format($q$select public.guardar_programa_dias(%s, '{"dia":1}'::jsonb)::text$q$, :pi2)) like 'ERROR:%lista de días no es válida%' and pg_temp.huella_dias(:pi2) = :'d1', 'una lista que no es arreglo se rechaza');
 select pg_temp.ok(pg_temp.como('authenticated', :'op', format($q$select public.guardar_programa_dias(%s, '[{"dia":1}]'::jsonb, 0)::text$q$, :pi2)) like 'ERROR:%total de días%' and pg_temp.huella_dias(:pi2) = :'d1', 'un total de días menor que 1 se rechaza');
 select pg_temp.ok(pg_temp.como('authenticated', :'op', $q$select public.guardar_programa_dias(999999999, '[]'::jsonb)::text$q$) like 'ERROR:%no existe%', 'un programa inexistente se rechaza');
@@ -357,5 +368,26 @@ select pg_temp.ok(pg_temp.intenta_i('update public.programas set publicado = tru
   'publicar por UPDATE un borrador sin itinerario sigue rechazándose');
 select pg_temp.ok(pg_temp.intenta_i('update public.programas set nombre = nombre where id = 246805') = 'OK',
   'una edición ajena al itinerario de un publicado completo sigue permitida');
+
+-- Traslado posterior: sigue a programas.dias (recolocación atómica en la misma sentencia) y su posición se valida.
+select pg_temp.intenta_i($q$with p as (insert into public.programas (id, nombre, dias, noches, moneda, modo_precio, tipo_transporte, publicado)
+                                         values (246810, '__t246_traslado_post__', 3, 2, 'USD', 'categoria', 'ninguno', true) returning id)
+                             insert into public.programa_dias (id, programa_id, dia, tipo_tramo, titulo)
+                             select p.id * 10 + g, p.id, g, case when g = 4 then 'traslado_posterior' else 'dia' end, 'D' || g from p, generate_series(1, 4) g$q$) as r_post \gset
+select pg_temp.ok(:'r_post' = 'OK' and public.itinerario_programa_problema(246810, 3) is null,
+  'publicado con días 1..3 + traslado posterior (día 4): se acepta y no cuenta como día turístico');
+-- (El resultado se captura con \gset: una subconsulta en la misma sentencia vería la instantánea anterior a la función.)
+select pg_temp.intenta_i('delete from public.programa_dias where programa_id = 246810 and dia = 3; update public.programas set dias = 2 where id = 246810') as r_baja \gset
+select pg_temp.ok(:'r_baja' = 'OK'
+                  and (select dia from public.programa_dias where programa_id = 246810 and tipo_tramo = 'traslado_posterior') = 3,
+  'bajar programas.dias de 3 a 2 (y quitar el día 3) recoloca el traslado posterior en el día 3 y el publicado sigue completo');
+select pg_temp.intenta_i('update public.programas set dias = 5 where id = 246810') as r_sube \gset
+select pg_temp.ok(:'r_sube' like 'ERROR:%faltan los días 3, 4, 5%'
+                  and (select dia from public.programa_dias where programa_id = 246810 and tipo_tramo = 'traslado_posterior') = 3
+                  and (select dias from public.programas where id = 246810) = 2,
+  'subir programas.dias sin completar los días: se rechaza con mensaje de negocio y nada cambia (traslado y total intactos)');
+select pg_temp.intenta_i($q$insert into public.programa_dias (id, programa_id, dia, tipo_tramo, titulo) values (2468109, 246810, 9, 'traslado_posterior', 'mal puesto')$q$) as r_dup \gset
+select pg_temp.ok(:'r_dup' like 'ERROR:%traslado fuera de posición o repetido%',
+  'un segundo traslado posterior o en posición equivocada se rechaza en un publicado');
 
 rollback;

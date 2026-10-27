@@ -240,10 +240,10 @@ export function ResultadoVistaPrevia({ res }: { res: Extract<VistaPrevia, { ok: 
           <ul className="space-y-1 text-sm">
             {res.itinerario.dias.map((d, i, arr) => (
               <li key={`${d.dia}-${i}`} className="flex flex-wrap items-baseline gap-2 border-b border-gray-50 py-1">
-                <span className="w-14 text-xs text-gray-400">Día {d.dia}</span>
+                <span className="min-w-14 text-xs text-gray-400">{d.tipo_tramo === "traslado_previo" ? "Traslado previo" : d.tipo_tramo === "traslado_posterior" ? "Traslado posterior" : `Día ${d.dia}`}</span>
                 <span className="text-gray-700">{d.titulo || "Sin título"}</span>
                 {d.libre && <span className="rounded-full bg-amber-50 px-2 text-[11px] text-amber-700">Día libre agregado</span>}
-                {i === arr.length - 1 && <span className="rounded-full bg-blue-50 px-2 text-[11px] text-blue-700">Recogida</span>}
+                {d.tipo_tramo !== "traslado_posterior" && arr.slice(i + 1).every((otro) => otro.tipo_tramo === "traslado_posterior") && <span className="rounded-full bg-blue-50 px-2 text-[11px] text-blue-700">Recogida</span>}
                 {d.fecha && <span className="ml-auto text-xs text-gray-400">{fechaLegible(d.fecha)}</span>}
               </li>
             ))}

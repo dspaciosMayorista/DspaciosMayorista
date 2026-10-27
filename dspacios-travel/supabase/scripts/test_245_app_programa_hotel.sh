@@ -95,8 +95,9 @@ BASE_PROPIA=1
 $PS -d postgres -c "comment on database $DB is '$MARCA'" >/dev/null
 $PS -d "$DB" -1 < "$APP/supabase/migrations/20260601000244_programa_hotel_vigencia_noches.sql" >/dev/null 2>&1 || { echo "La migración 244 falló en $DB." >&2; exit 1; }
 $PS -d "$DB" -1 < "$APP/supabase/migrations/20260601000245_programa_hotel_asistencia_trm.sql" >/dev/null 2>&1 || { echo "La migración 245 falló en $DB." >&2; exit 1; }
+$PS -d "$DB" -1 < "$APP/supabase/migrations/20260601000246_programa_traslados.sql" >/dev/null 2>&1 || { echo "La migración 246 falló en $DB." >&2; exit 1; }
 # PR #409: alcance de los blackouts + guardado atómico (la app lo usa al guardar y al reservar).
-$PS -d "$DB" -1 < "$APP/supabase/migrations/20260601000246_programa_blackout_alcance.sql" >/dev/null 2>&1 || { echo "La migración 246 falló en $DB." >&2; exit 1; }
+$PS -d "$DB" -1 < "$APP/supabase/migrations/20260601000247_programa_blackout_alcance.sql" >/dev/null 2>&1 || { echo "La migración 247 falló en $DB." >&2; exit 1; }
 $PS -d "$DB" -c "select exists (select 1 from information_schema.columns where table_name = 'cuentas_por_pagar' and column_name = 'valor_cop_costo') and exists (select 1 from information_schema.columns where table_name = 'contrato_programa_estancia_costo' and column_name = 'trm_costo')" | grep -qx t || { echo "Faltan columnas de la 236/245." >&2; exit 1; }
 
 # Entorno (NO es esquema de la app): auth.uid()/auth.role() de Supabase alojado leen el JWT de request.jwt.claims.

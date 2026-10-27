@@ -245,6 +245,19 @@ describe("calcularVistaPreviaPrograma (Server Action, solo lectura)", () => {
     for (const t of ["ventas", "cuentas_por_pagar", "contrato_items", "cotizaciones", "programa_hoteles"]) assert.equal(bd.filas(t).length, 0, `${t} sigue vacía`);
   });
 
+  test("un blackout de viaje cubre el traslado previo; uno de entrada conserva la fecha del hotel", async () => {
+    const conTraslado = [{ programa_id: 3, dia: 0, tipo_tramo: "traslado_previo", titulo: "Bus nocturno", desayuno: false, almuerzo: false, cena: false, descripcion: "Salida" }, ...dias];
+    const base = { usuarios: [{ id: "u-arnes", rol: "superadmin" }], programas: [programa], programa_dias: conTraslado };
+    usarBD({ ...base, programa_blackouts: [{ programa_id: 3, fecha_inicio: "2027-02-28", fecha_fin: "2027-02-28", alcance: "viaje" }] });
+    const bloqueado = await calcularVistaPreviaPrograma(3, [hotel() as never], SEL);
+    assert.equal(bloqueado.ok, false);
+    assert.match(bloqueado.ok ? "" : bloqueado.causa, /blackout|bloqueo|disponib/i);
+    usarBD({ ...base, programa_blackouts: [{ programa_id: 3, fecha_inicio: "2027-02-28", fecha_fin: "2027-02-28", alcance: "entrada" }] });
+    const permitido = await calcularVistaPreviaPrograma(3, [hotel() as never], SEL);
+    assert.equal(permitido.ok, true, permitido.ok ? "" : permitido.causa);
+    if (permitido.ok) assert.equal(permitido.itinerario?.dias[0]?.tipo_tramo, "traslado_previo");
+  });
+
   test("sin permiso de producto no hay vista previa (ni costos): el rol venta es rechazado", async () => {
     sembrar("venta");
     const r = await calcularVistaPreviaPrograma(3, [hotel() as never], SEL);

@@ -411,6 +411,7 @@ export function liquidarNochesAdicionales(e: EntradaNoches88): ResultadoNoches88
 
 export type DiaItinerario = {
   dia: number;
+  tipo_tramo?: "dia" | "traslado_previo" | "traslado_posterior";
   titulo: string | null;
   desayuno: boolean;
   almuerzo: boolean;
@@ -432,13 +433,15 @@ export function itinerarioConNochesExtra(dias: readonly DiaItinerario[], adicion
   const orden = [...dias].sort((a, b) => a.dia - b.dia);
   const k = Number.isInteger(adicionales) && adicionales > 0 ? adicionales : 0;
   // Con noches que desplazar, el itinerario DEBE tener los días 1..N del programa: con uno ausente "el último" no sería la recogida.
-  if (k > 0 && validarItinerarioCompleto(dias, diasPrograma === undefined ? orden.length : diasPrograma) != null) return null;
+  const turisticos = orden.filter((d) => (d.tipo_tramo ?? "dia") === "dia");
+  if (k > 0 && validarItinerarioCompleto(dias, diasPrograma === undefined ? turisticos.length : diasPrograma) != null) return null;
   const fechaDe = (dia: number) => (fechaEntrada ? sumarDiasIso(fechaEntrada, dia - 1) : null);
   const original = (d: DiaItinerario): DiaConFecha => ({ ...d, fecha: fechaDe(d.dia), libre: false });
   if (orden.length === 0 || k === 0) return orden.map(original);
 
-  const ultimo = orden[orden.length - 1];
-  const previos = orden.slice(0, -1).map(original);
+  const ultimo = turisticos[turisticos.length - 1];
+  if (!ultimo) return null;
+  const previos = orden.filter((d) => d !== ultimo && d.tipo_tramo !== "traslado_posterior").map(original);
   const libres: DiaConFecha[] = Array.from({ length: k }, (_, j) => {
     const dia = ultimo.dia + j;
     return {
@@ -453,35 +456,45 @@ export function itinerarioConNochesExtra(dias: readonly DiaItinerario[], adicion
     };
   });
   const dia = ultimo.dia + k;
-  return [...previos, ...libres, { ...ultimo, dia, fecha: fechaDe(dia), libre: false }];
+  const posteriores = orden.filter((d) => d.tipo_tramo === "traslado_posterior")
+    .map((d) => ({ ...original(d), dia: d.dia + k, fecha: fechaDe(d.dia + k) }));
+  return [...previos, ...libres, { ...ultimo, dia, fecha: fechaDe(dia), libre: false }, ...posteriores];
 }
 
 /**
  * El itinerario debe traer exactamente los días 1..N del programa (N = `programas.dias`) antes de desplazar el último: con un día
  * ausente o repetido, "el último día" no sería la recogida y el desplazamiento la dejaría en el día equivocado. Mensaje o null.
  */
-export function validarItinerarioCompleto(dias: readonly Pick<DiaItinerario, "dia">[], diasPrograma: number | null): string | null {
+export function validarItinerarioCompleto(dias: readonly Pick<DiaItinerario, "dia" | "tipo_tramo">[], diasPrograma: number | null): string | null {
   if (diasPrograma == null || !Number.isInteger(diasPrograma) || diasPrograma < 1) {
     return "El programa no tiene configurados sus días: sin ellos no se puede validar el itinerario, ni calcular, publicar ni reservar.";
   }
-  const presentes = dias.map((d) => d.dia);
+  const normales = dias.filter((d) => (d.tipo_tramo ?? "dia") === "dia");
+  const presentes = normales.map((d) => d.dia);
   const faltan = Array.from({ length: diasPrograma }, (_, i) => i + 1).filter((d) => !presentes.includes(d));
   const repetidos = presentes.filter((d, i) => presentes.indexOf(d) !== i);
   const sobran = presentes.filter((d) => !Number.isInteger(d) || d < 1 || d > diasPrograma);
-  if (!faltan.length && !repetidos.length && !sobran.length) return null;
+  const previos = dias.filter((d) => d.tipo_tramo === "traslado_previo");
+  const posteriores = dias.filter((d) => d.tipo_tramo === "traslado_posterior");
+  const trasladoInvalido = dias.some((d) => !["dia", "traslado_previo", "traslado_posterior"].includes(d.tipo_tramo ?? "dia"))
+    || previos.length > 1 || posteriores.length > 1
+    || previos.some((d) => d.dia !== 0)
+    || posteriores.some((d) => d.dia !== diasPrograma + 1);
+  if (!faltan.length && !repetidos.length && !sobran.length && !trasladoInvalido) return null;
   const partes = [
     faltan.length ? `faltan los días ${faltan.join(", ")}` : null,
     repetidos.length ? `se repiten los días ${[...new Set(repetidos)].join(", ")}` : null,
     sobran.length ? `hay días fuera de 1–${diasPrograma} (${[...new Set(sobran)].join(", ")})` : null,
+    trasladoInvalido ? "los traslados deben ir antes del día 1 o después del último día, como máximo uno en cada extremo" : null,
   ].filter(Boolean).join("; ");
   return `El itinerario del programa está incompleto (${partes}): complétalo antes de calcular, publicar o reservar el programa.`;
 }
 
 /** Estado estructurado del itinerario (PR #409): qué días faltan, cuáles se repiten y cuáles sobran respecto de los días 1..N del programa. */
-export function estadoItinerario(dias: readonly Pick<DiaItinerario, "dia">[], diasPrograma: number | null): { completo: boolean; faltantes: number[]; repetidos: number[]; fuera: number[]; mensaje: string | null } {
+export function estadoItinerario(dias: readonly Pick<DiaItinerario, "dia" | "tipo_tramo">[], diasPrograma: number | null): { completo: boolean; faltantes: number[]; repetidos: number[]; fuera: number[]; mensaje: string | null } {
   const mensaje = validarItinerarioCompleto(dias, diasPrograma);
   if (diasPrograma == null || !Number.isInteger(diasPrograma) || diasPrograma < 1) return { completo: false, faltantes: [], repetidos: [], fuera: [], mensaje };
-  const presentes = dias.map((d) => d.dia);
+  const presentes = dias.filter((d) => (d.tipo_tramo ?? "dia") === "dia").map((d) => d.dia);
   return {
     completo: mensaje == null,
     faltantes: Array.from({ length: diasPrograma }, (_, i) => i + 1).filter((d) => !presentes.includes(d)),

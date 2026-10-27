@@ -510,7 +510,7 @@ describe("PR #409 · reservarPrograma B2B (PVP / NETO) contra Postgres/PostgREST
   });
 });
 
-// ── PR #409 · blackouts con alcance, itinerario completo y publicación contra la base real (migración 246 incluida) ──────────────────────────────
+// ── PR #409 · blackouts con alcance, itinerario completo y publicación contra la base real (migración 247 incluida) ──────────────────────────────
 describe("PR #409 · blackouts (entrada / viaje), itinerario 1..N y publicación contra Postgres/PostgREST real", () => {
   // Programa por SALIDA (24502, 8 días → regreso a las 7 noches): mismos ayudantes que el bloque B2B (que vive en otro describe).
   async function importeSalida(): Promise<number> {
@@ -604,7 +604,7 @@ describe("PR #409 · blackouts (entrada / viaje), itinerario 1..N y publicación
   });
 
   test("G3 fronteras de la fecha de ENTRADA (alcance entrada): inicio y fin son inclusivos; el día anterior y el posterior pasan; un blackout viejo sin alcance se comporta igual", async () => {
-    blackout(PID, "2027-03-05", "2027-03-10"); // sin alcance explícito = entrada (como los cargados antes de la 246)
+    blackout(PID, "2027-03-05", "2027-03-10"); // sin alcance explícito = entrada (como los cargados antes de la 247)
     for (const entrada of ["2027-03-05", "2027-03-10"]) {
       const antes = seqMayorista();
       const r = await reservarPrograma((await entradaConFecha(entrada)) as never);

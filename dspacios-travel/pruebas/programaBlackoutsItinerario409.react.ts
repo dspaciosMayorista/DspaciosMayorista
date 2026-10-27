@@ -138,6 +138,23 @@ describe("PR #409 · interfaz de blackouts, itinerario, publicación y calculado
     assert.equal((m.contenedor as HTMLElement).querySelector('[data-testid="itinerario-incompleto"]'), null);
   });
 
+  test("los traslados antes y después se distinguen de los días turísticos", async () => {
+    usarBD({});
+    const dias = [
+      { dia: 0, tipo_tramo: "traslado_previo", titulo: "Bus de salida" },
+      { dia: 1, tipo_tramo: "dia", titulo: "Tour" },
+      { dia: 2, tipo_tramo: "dia", titulo: "Regreso" },
+      { dia: 3, tipo_tramo: "traslado_posterior", titulo: "Bus nocturno" },
+    ].map((d) => ({ ...d, desayuno: false, almuerzo: false, cena: false, descripcion: "Detalle" }));
+    const m = await montar(h(ItinerarioEditor as never, { programaId: 3, dias, totalDias: 2 }));
+    desmontar = m.desmontar;
+    assert.doesNotMatch(txt(m.contenedor), /Itinerario incompleto/);
+    assert.match(txt(m.contenedor), /Traslado previo/);
+    assert.match(txt(m.contenedor), /Traslado posterior/);
+    assert.match(txt(m.contenedor), /Día 1/);
+    assert.match(txt(m.contenedor), /Día 2/);
+  });
+
   test("itinerario incompleto de un programa PUBLICADO: aviso claro (despublicar primero) y «Guardar» deshabilitado; al completarlo se habilita", async () => {
     usarBD({});
     const dias = [1, 2, 4].map((dia) => ({ dia, titulo: `Día ${dia}`, desayuno: false, almuerzo: false, cena: false, descripcion: "x" }));
@@ -184,6 +201,27 @@ describe("PR #409 · interfaz de blackouts, itinerario, publicación y calculado
     m = await montar(h(ProgramaEditor as never, base(true, [1])));
     raiz = m.contenedor as HTMLElement;
     assert.equal(boton(raiz, /^Despublicar$/)!.disabled, false, "despublicar siempre se puede");
+    desmontar = m.desmontar;
+  });
+
+  test("formulario de reserva con traslado: el aviso de blackout cuenta el traslado previo una vez (01/03 → 06/03 en vez de 05/03) igual que el servidor", async () => {
+    usarBD({});
+    const traslado = { dia: 0, tipo_tramo: "traslado_previo", titulo: "Bus", desayuno: false, almuerzo: false, cena: false, descripcion: "x" };
+    const props = (over: Record<string, unknown>) => ({
+      programaId: 1, moneda: "USD", dias: 5, vigenciaDesde: null, vigenciaHasta: null, asesores: [{ nombre: "Asesor", email: "a@x.test" }],
+      categorias: [{ id: 1, nombre: "Estándar", precios: [{ acomodacion: "doble", pvp: 1000, bajoSolicitud: false }] }], ...over,
+    });
+    // Un blackout de viaje SOLO el 06/03: sin traslado (regreso 05/03) no toca; con traslado previo (regreso 06/03) sí.
+    const blackouts = [{ fecha_inicio: "2027-03-06", fecha_fin: "2027-03-06", motivo: "Feria", alcance: "viaje" }];
+    let m = await montar(h(ProgramaReservaForm as never, props({ blackouts, itinerario: [] })));
+    let raiz = m.contenedor as HTMLElement;
+    await escribir(raiz.querySelector('input[aria-label="Fecha de salida"]') as HTMLInputElement, "2027-03-01");
+    assert.equal(raiz.querySelector('[data-testid="error-blackout"]'), null, "sin traslado: regreso 05/03");
+    await m.desmontar();
+    m = await montar(h(ProgramaReservaForm as never, props({ blackouts, itinerario: [traslado] })));
+    raiz = m.contenedor as HTMLElement;
+    await escribir(raiz.querySelector('input[aria-label="Fecha de salida"]') as HTMLInputElement, "2027-03-01");
+    assert.match(txt(raiz.querySelector('[data-testid="error-blackout"]')), /El viaje del 01\/03\/2027 al 06\/03\/2027 cae en un blackout \(Feria\)/);
     desmontar = m.desmontar;
   });
 

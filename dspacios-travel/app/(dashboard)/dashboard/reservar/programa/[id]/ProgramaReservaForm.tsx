@@ -16,7 +16,8 @@ import { BuscarTitular } from "@/components/personas/BuscarTitular";
 import { BuscarPasajeroDocumento } from "@/components/pasajeros/BuscarPasajeroDocumento";
 import { reservarPrograma, terminosB2BPrograma } from "../../actions";
 import { TerminosB2BAsistido, type TerminosVisibles } from "@/components/cotizacion/TerminosB2BAsistido";
-import { blackoutQueAplica, mensajeBlackout, rangoViaje as rangoDelViaje, type BlackoutPrograma } from "@/lib/programas/blackouts409";
+import { blackoutQueAplica, mensajeBlackout, type BlackoutPrograma } from "@/lib/programas/blackouts409";
+import { rangoViajeConTraslados, trasladosDeItinerario } from "@/lib/programas/trasladosFechas";
 import type { AliadoListado } from "@/lib/cotizacion/asistidaB2BServidor";
 import type { ModoCompra } from "@/lib/reservar/comisionReserva";
 import { validarTrmCosto } from "@/lib/finanzas/costoTrmCarrito";
@@ -189,7 +190,8 @@ export function ProgramaReservaForm({
   const nochesDelViaje = modoHotel
     ? (nochesIncluidas != null ? nochesIncluidas + adicionales : 0)
     : (modoSalida ? (categorias.find((c) => c.id === categoriaId)?.noches ?? null) : null) ?? (dias ? Math.max(0, dias - 1) : 0);
-  const rangoViaje = fechaIda ? rangoDelViaje(fechaIda, nochesDelViaje) : null;
+  // Mismo cálculo que el servidor (lib/programas/trasladosFechas.ts): el traslado previo/posterior se cuenta una vez en las fechas del viaje.
+  const rangoViaje = fechaIda ? rangoViajeConTraslados(modoHotel ? "hotel" : "salida", fechaIda, nochesDelViaje, trasladosDeItinerario(itinerario)) : null;
   const blackoutAplicado = rangoViaje ? blackoutQueAplica(blackouts, rangoViaje) : null;
   const errorBlackout = blackoutAplicado && rangoViaje ? mensajeBlackout(blackoutAplicado, rangoViaje) : null;
   const errorEstancia = !modoHotel ? null : errorPrograma ? errorPrograma : errorItinerario ? errorItinerario : !tablaHotel ? "Elige el hotel." : cotizacionHotel && !cotizacionHotel.ok ? cotizacionHotel.error : baseHotel && !baseHotel.ok ? baseHotel.error : null;
@@ -441,7 +443,7 @@ export function ProgramaReservaForm({
                 <ol className="mt-3 space-y-0.5 text-xs text-gray-600" aria-label="Itinerario con las noches adicionales">
                   {itinerarioReserva.map((d) => (
                     <li key={d.dia} className={d.libre ? "text-[#1D7C9A]" : ""}>
-                      Día {d.dia}{d.fecha ? ` (${fechaLegible(d.fecha)})` : ""}: {d.titulo ?? "—"}
+                      {d.tipo_tramo === "traslado_previo" ? "Traslado previo" : d.tipo_tramo === "traslado_posterior" ? "Traslado posterior" : `Día ${d.dia}`}{d.fecha ? ` (${fechaLegible(d.fecha)})` : ""}: {d.titulo ?? "—"}
                     </li>
                   ))}
                 </ol>

@@ -267,7 +267,7 @@ export default async function ProgramaDocPage({
                   <div className="space-y-2">
                     {det.dias.map((d) => (
                       <div key={d.dia} className="break-inside-avoid text-xs">
-                        <p className="font-semibold text-gray-800">Día {d.dia}{d.titulo ? `: ${d.titulo}` : ""} <span className="font-normal text-gray-400">{comidas(d)}</span></p>
+                        <p className="font-semibold text-gray-800">{d.tipo_tramo === "traslado_previo" ? "Traslado previo" : d.tipo_tramo === "traslado_posterior" ? "Traslado posterior" : `Día ${d.dia}`}{d.titulo ? `: ${d.titulo}` : ""} <span className="font-normal text-gray-400">{comidas(d)}</span></p>
                         {d.descripcion && <p className="mt-0.5 whitespace-pre-line text-gray-600">{d.descripcion}</p>}
                       </div>
                     ))}

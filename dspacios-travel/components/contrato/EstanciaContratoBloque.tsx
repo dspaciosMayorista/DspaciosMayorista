@@ -6,7 +6,7 @@ import { formatMoneda, formatFechaLarga } from "@/lib/utils";
 import { ETIQUETA_MODALIDAD, ETIQUETA_UNIDAD, type ModalidadServicios, type UnidadCobro } from "@/lib/programas/estanciaHotel88";
 
 type NocheFoto = { fecha: string; vigencia_desde: string; vigencia_hasta: string; unidad: UnidadCobro; pvp_total: number };
-type DiaFoto = { dia: number; titulo: string | null; fecha: string | null; libre: boolean };
+type DiaFoto = { dia: number; tipo_tramo?: "dia" | "traslado_previo" | "traslado_posterior"; titulo: string | null; fecha: string | null; libre: boolean };
 
 export type EstanciaContratoVista = {
   hotel_nombre: string;
@@ -73,7 +73,7 @@ export function EstanciaContratoBloque({ estancia: e }: { estancia: EstanciaCont
         <ol className="mt-3 space-y-0.5 text-xs text-gray-600" aria-label="Itinerario de la reserva">
           {itinerario.map((d) => (
             <li key={d.dia}>
-              Día {d.dia}{d.fecha ? ` · ${formatFechaLarga(d.fecha)}` : ""}: {d.titulo ?? "—"}{d.libre ? " (noche adicional)" : ""}
+              {d.tipo_tramo === "traslado_previo" ? "Traslado previo" : d.tipo_tramo === "traslado_posterior" ? "Traslado posterior" : `Día ${d.dia}`}{d.fecha ? ` · ${formatFechaLarga(d.fecha)}` : ""}: {d.titulo ?? "—"}{d.libre ? " (noche adicional)" : ""}
             </li>
           ))}
         </ol>

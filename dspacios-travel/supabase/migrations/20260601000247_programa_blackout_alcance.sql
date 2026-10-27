@@ -1,5 +1,5 @@
 -- ═════════════════════════════════════════════════════════════════════════
--- Migración 246 (PR #409): blackouts de un programa con ALCANCE y guardado atómico.
+-- Migración 247 (PR #409): blackouts de un programa con ALCANCE y guardado atómico.
 --
 --   1. programa_blackouts.alcance — «entrada» (solo la fecha de entrada; el comportamiento de siempre) | «viaje» (cualquier día del viaje, noches
 --      adicionales incluidas). NOT NULL DEFAULT 'entrada': todo blackout ya cargado conserva el comportamiento de fecha de entrada, sin tocar filas.
@@ -18,7 +18,7 @@
 --      destino; y cada comprobación toma un candado consultivo por programa (bloquear_itinerario_programa, en orden ascendente de id) para que una
 --      transacción concurrente vea el resultado ya confirmado de la anterior (READ COMMITTED). También se rechaza (al cerrar la transacción)
 --      un INSERT de programas con publicado = true sin itinerario 1..N: el trigger de programas cubre INSERT y UPDATE.
--- Aditiva e idempotente. No toca la 244 ni la 245. Rollback: supabase/scripts/rollback_246_programa_blackout_alcance.sql.
+-- Aditiva e idempotente. Requiere la 246 (tramos de traslado). Rollback: supabase/scripts/rollback_247_programa_blackout_alcance.sql.
 -- ═════════════════════════════════════════════════════════════════════════
 begin;
 
@@ -131,6 +131,7 @@ declare
   v_falta  text;
   v_rep    text;
   v_fuera  text;
+  v_traslado text;
   v_partes text[] := array[]::text[];
 begin
   if p_dias is null or p_dias < 1 then
@@ -138,14 +139,22 @@ begin
   end if;
   select string_agg(g::text, ', ' order by g) into v_falta
     from generate_series(1, p_dias) g
-   where not exists (select 1 from public.programa_dias d where d.programa_id = p_programa_id and d.dia = g);
+   where not exists (select 1 from public.programa_dias d where d.programa_id = p_programa_id and d.tipo_tramo = 'dia' and d.dia = g);
   select string_agg(r.dia::text, ', ' order by r.dia) into v_rep
-    from (select dia from public.programa_dias where programa_id = p_programa_id group by dia having count(*) > 1) r;
+    from (select dia from public.programa_dias where programa_id = p_programa_id and tipo_tramo = 'dia' group by dia having count(*) > 1) r;
   select string_agg(r.dia::text, ', ' order by r.dia) into v_fuera
-    from (select distinct dia from public.programa_dias where programa_id = p_programa_id and (dia < 1 or dia > p_dias)) r;
+    from (select distinct dia from public.programa_dias where programa_id = p_programa_id and tipo_tramo = 'dia' and (dia < 1 or dia > p_dias)) r;
+  if (select count(*) from public.programa_dias where programa_id = p_programa_id and tipo_tramo = 'traslado_previo') > 1
+     or (select count(*) from public.programa_dias where programa_id = p_programa_id and tipo_tramo = 'traslado_posterior') > 1
+     or exists (select 1 from public.programa_dias where programa_id = p_programa_id
+                  and ((tipo_tramo = 'traslado_previo' and dia <> 0)
+                    or (tipo_tramo = 'traslado_posterior' and dia <> p_dias + 1))) then
+    v_traslado := 'traslado fuera de posición o repetido';
+  end if;
   if v_falta is not null then v_partes := v_partes || ('faltan los días ' || v_falta); end if;
   if v_rep   is not null then v_partes := v_partes || ('se repiten los días ' || v_rep); end if;
   if v_fuera is not null then v_partes := v_partes || ('hay días fuera de 1–' || p_dias || ' (' || v_fuera || ')'); end if;
+  if v_traslado is not null then v_partes := v_partes || v_traslado; end if;
   return case when cardinality(v_partes) = 0 then null else array_to_string(v_partes, '; ') end;
 end;
 $$;
@@ -225,6 +234,27 @@ create constraint trigger trg_programas_itinerario_publicado
   for each row
   execute function public.tg_programa_itinerario_publicado();
 
+-- Cambiar programas.dias recoloca en la MISMA sentencia el traslado posterior (siempre en total + 1): sin esto el itinerario quedaría inconsistente
+-- y, si el programa está publicado, el cambio de total se rechazaría al cerrar la transacción por una posición que el usuario no tocó.
+create or replace function public.tg_programa_traslado_posterior_sigue_dias()
+returns trigger
+language plpgsql
+set search_path = public, pg_temp
+as $$
+begin
+  if new.dias is not null and new.dias >= 1 and new.dias is distinct from old.dias then
+    update public.programa_dias set dia = new.dias + 1
+     where programa_id = new.id and tipo_tramo = 'traslado_posterior';
+  end if;
+  return new;
+end;
+$$;
+
+drop trigger if exists trg_programas_traslado_posterior on public.programas;
+create trigger trg_programas_traslado_posterior
+  before update of dias on public.programas
+  for each row execute function public.tg_programa_traslado_posterior_sigue_dias();
+
 create or replace function public.guardar_programa_dias(p_programa_id bigint, p_dias jsonb, p_total_dias integer default null)
 returns integer
 language plpgsql
@@ -238,6 +268,7 @@ declare
   v_publicado boolean;
   v_total    integer;
   v_problema text;
+  v_tipo text;
 begin
   -- Serializa con cualquier otra escritura del itinerario de este programa antes de leer su estado.
   perform public.bloquear_itinerario_programa(p_programa_id);
@@ -251,6 +282,7 @@ begin
   if p_total_dias is not null and p_total_dias < 1 then
     raise exception 'El total de días del programa debe ser 1 o más.' using errcode = 'P0001';
   end if;
+  v_total := coalesce(p_total_dias, v_total);
 
   -- 1) Se valida TODO antes de tocar nada: una entrada inválida NO reemplaza los días anteriores.
   for v_item in select * from jsonb_array_elements(p_dias) loop
@@ -258,8 +290,15 @@ begin
     if jsonb_typeof(v_item) <> 'object' then
       raise exception 'El día % no es válido (se esperaba un objeto).', v_n using errcode = 'P0001';
     end if;
-    if coalesce(btrim(v_item ->> 'dia'), '') !~ '^[0-9]{1,4}$' or btrim(v_item ->> 'dia')::integer < 1 then
-      raise exception 'El día % necesita un número entero de 1 en adelante.', v_n using errcode = 'P0001';
+    v_tipo := coalesce(v_item ->> 'tipo_tramo', 'dia');
+    if v_tipo not in ('dia', 'traslado_previo', 'traslado_posterior')
+       or coalesce(btrim(v_item ->> 'dia'), '') !~ '^[0-9]{1,4}$' then
+      raise exception 'El tramo % tiene tipo o número inválido.', v_n using errcode = 'P0001';
+    end if;
+    if (v_tipo = 'dia' and (v_item ->> 'dia')::integer < 1)
+       or (v_tipo = 'traslado_previo' and (v_item ->> 'dia')::integer <> 0)
+       or (v_tipo = 'traslado_posterior' and (v_item ->> 'dia')::integer <> v_total + 1) then
+      raise exception 'El tramo % no corresponde a su posición en el programa.', v_n using errcode = 'P0001';
     end if;
   end loop;
 
@@ -269,9 +308,10 @@ begin
     v_total := p_total_dias;
   end if;
   delete from public.programa_dias where programa_id = p_programa_id;
-  insert into public.programa_dias (programa_id, dia, titulo, desayuno, almuerzo, cena, descripcion)
+  insert into public.programa_dias (programa_id, dia, tipo_tramo, titulo, desayuno, almuerzo, cena, descripcion)
   select p_programa_id,
          btrim(e ->> 'dia')::integer,
+         coalesce(e ->> 'tipo_tramo', 'dia'),
          nullif(btrim(e ->> 'titulo'), ''),
          coalesce((e ->> 'desayuno')::boolean, false),
          coalesce((e ->> 'almuerzo')::boolean, false),

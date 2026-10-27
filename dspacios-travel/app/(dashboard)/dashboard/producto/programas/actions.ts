@@ -5,7 +5,7 @@ import { revalidatePath } from "next/cache";
 import { parsearPrograma } from "@/lib/programasImport";
 import { limpiarAlojamientoPrevisto } from "@/lib/programas";
 import { salidaTieneContenido, tieneImpuestoAcomodacionNegativo, tieneTarifaNegativa } from "@/lib/programas/salidasGuardado";
-import { validarHotelesParaGuardar, errorModoHotelConAereo, nochesIncluidasPrograma, esFechaIso, MODALIDADES_SERVICIOS, CLAVES_TARIFA, type PorAcom, type ClaveTarifa, type ModalidadServicios, type BaseHotelFila, type NocheTarifaFila, type DiaItinerario, type HotelEstancia } from "@/lib/programas/estanciaHotel88";
+import { validarHotelesParaGuardar, errorModoHotelConAereo, nochesIncluidasPrograma, esFechaIso, sumarDiasIso, MODALIDADES_SERVICIOS, CLAVES_TARIFA, type PorAcom, type ClaveTarifa, type ModalidadServicios, type BaseHotelFila, type NocheTarifaFila, type DiaItinerario, type HotelEstancia } from "@/lib/programas/estanciaHotel88";
 import { calcularVistaPrevia, type VistaPrevia } from "@/lib/programas/vistaPrevia409";
 import { validarBlackoutsParaGuardar, filaBlackoutVacia, blackoutQueAplica, mensajeBlackout, rangoViaje, type BlackoutPrograma } from "@/lib/programas/blackouts409";
 import { estadoItinerario } from "@/lib/programas/estanciaHotel88";
@@ -221,7 +221,7 @@ async function itinerarioDelPrograma(sb: Awaited<ReturnType<typeof createClient>
   const { data: prog, error: ep } = await sb.from("programas").select("dias").eq("id", programaId).maybeSingle();
   if (ep) return { ok: false, error: "No se pudo leer el programa para validar su itinerario. Inténtalo de nuevo." };
   if (!prog) return { ok: false, error: "Programa no encontrado." };
-  const { data: dias, error: ed } = await sb.from("programa_dias").select("dia").eq("programa_id", programaId);
+  const { data: dias, error: ed } = await sb.from("programa_dias").select("dia, tipo_tramo").eq("programa_id", programaId);
   if (ed) return { ok: false, error: "No se pudo leer el itinerario del programa. Inténtalo de nuevo." };
   return { ok: true, mensaje: estadoItinerario(dias ?? [], prog.dias ?? null).mensaje };
 }
@@ -229,12 +229,12 @@ async function itinerarioDelPrograma(sb: Awaited<ReturnType<typeof createClient>
 /**
  * Un programa PUBLICADO no puede quedar con el itinerario incompleto tras una edición (PR #409). `cambio` describe el resultado que se
  * pretende: el total de días nuevo y/o los días nuevos; lo que no se indica se lee de la base. Programa despublicado = borrador: null.
- * Un fallo de lectura se devuelve como error (nunca se interpreta como «completo»). La base repite la regla (migración 246).
+ * Un fallo de lectura se devuelve como error (nunca se interpreta como «completo»). La base repite la regla (migración 247).
  */
 async function errorItinerarioPublicado(
   sb: Awaited<ReturnType<typeof createClient>>,
   programaId: number,
-  cambio: { total?: number | null; dias?: { dia: number }[] }
+  cambio: { total?: number | null; dias?: { dia: number; tipo_tramo?: "dia" | "traslado_previo" | "traslado_posterior" }[] }
 ): Promise<string | null> {
   const { data: prog, error } = await sb.from("programas").select("publicado, dias").eq("id", programaId).maybeSingle();
   if (error) return "No se pudo leer el programa para validar su itinerario. Inténtalo de nuevo.";
@@ -244,9 +244,11 @@ async function errorItinerarioPublicado(
   if (!cambio.dias && cambio.total !== undefined && cambio.total === (prog.dias ?? null)) return null;
   let dias = cambio.dias;
   if (!dias) {
-    const { data, error: ed } = await sb.from("programa_dias").select("dia").eq("programa_id", programaId);
+    const { data, error: ed } = await sb.from("programa_dias").select("dia, tipo_tramo").eq("programa_id", programaId);
     if (ed) return "No se pudo leer el itinerario del programa. Inténtalo de nuevo.";
-    dias = data ?? [];
+    // Cambiar el total de días recoloca el traslado posterior en total + 1 (trigger de la base, misma transacción): se valida ya recolocado.
+    const nuevoTotal = cambio.total;
+    dias = (data ?? []).map((d) => (d.tipo_tramo === "traslado_posterior" && nuevoTotal != null ? { ...d, dia: nuevoTotal + 1 } : d));
   }
   const m = estadoItinerario(dias, cambio.total !== undefined ? cambio.total : prog.dias ?? null).mensaje;
   return m ? `Este programa está publicado y no puede quedar con el itinerario incompleto: ${m} Despublícalo primero si quieres guardar un borrador incompleto.` : null;
@@ -303,25 +305,27 @@ export async function guardarCiudades(
 // ── Itinerario (días) ──────────────────────────────────────────────────────────
 export async function guardarDias(
   programaId: number,
-  dias: { dia: number; titulo: string; desayuno: boolean; almuerzo: boolean; cena: boolean; descripcion: string }[]
+  dias: { dia: number; tipo_tramo?: "dia" | "traslado_previo" | "traslado_posterior"; titulo: string; desayuno: boolean; almuerzo: boolean; cena: boolean; descripcion: string }[]
 ): Promise<Result> {
   if (!Array.isArray(dias) || dias.some((d) => d == null || typeof d !== "object" || Array.isArray(d))) {
     return { ok: false, error: "Los días enviados no son válidos (se esperaba una lista de filas). No se cambió nada." };
   }
   // Una fila sin número de día pero con contenido NO se descarta en silencio: se rechaza (solo una fila totalmente en blanco se ignora).
-  const enBlanco = (d: (typeof dias)[number]) => num(d.dia) == null && !String(d.titulo ?? "").trim() && !String(d.descripcion ?? "").trim() && !d.desayuno && !d.almuerzo && !d.cena;
-  const filas: { dia: number; titulo: string | null; desayuno: boolean; almuerzo: boolean; cena: boolean; descripcion: string | null }[] = [];
+  const enBlanco = (d: (typeof dias)[number]) => (d.tipo_tramo ?? "dia") === "dia" && num(d.dia) == null && !String(d.titulo ?? "").trim() && !String(d.descripcion ?? "").trim() && !d.desayuno && !d.almuerzo && !d.cena;
+  const filas: { dia: number; tipo_tramo: "dia" | "traslado_previo" | "traslado_posterior"; titulo: string | null; desayuno: boolean; almuerzo: boolean; cena: boolean; descripcion: string | null }[] = [];
   for (const d of dias) {
     if (enBlanco(d)) continue;
+    const tipo = d.tipo_tramo ?? "dia";
+    if (!["dia", "traslado_previo", "traslado_posterior"].includes(tipo)) return { ok: false, error: "Tipo de tramo inválido. No se cambió nada." };
     const n = num(d.dia);
-    if (n == null || !Number.isInteger(n) || n < 1) return { ok: false, error: `Una fila del itinerario no tiene un número de día válido (entero desde 1): ${n == null ? "falta el día" : `«${d.dia}»`}. No se cambió nada.` };
-    filas.push({ dia: n, titulo: oNull(d.titulo), desayuno: !!d.desayuno, almuerzo: !!d.almuerzo, cena: !!d.cena, descripcion: oNull(d.descripcion) });
+    if (n == null || !Number.isInteger(n) || (tipo === "dia" ? n < 1 : tipo === "traslado_previo" ? n !== 0 : n < 1)) return { ok: false, error: "Número o posición del tramo inválidos. No se cambió nada." };
+    filas.push({ dia: n, tipo_tramo: tipo, titulo: oNull(d.titulo), desayuno: !!d.desayuno, almuerzo: !!d.almuerzo, cena: !!d.cena, descripcion: oNull(d.descripcion) });
   }
   const sb = await createClient();
   // Un publicado no puede quedar incompleto: se rechaza ANTES de tocar nada, con mensaje claro (la RPC y la base lo repiten).
   const incompleto = await errorItinerarioPublicado(sb, programaId, { dias: filas });
   if (incompleto) return { ok: false, error: incompleto };
-  // Reemplazo ATÓMICO en la base (migración 246): valida todo antes de borrar, así que un fallo NO deja el itinerario a medias.
+  // Reemplazo ATÓMICO en la base (migración 247): valida todo antes de borrar, así que un fallo NO deja el itinerario a medias.
   const { error } = await sb.rpc("guardar_programa_dias", { p_programa_id: programaId, p_dias: filas as never });
   if (error) return { ok: false, error: error.message };
   rev(programaId);
@@ -705,9 +709,9 @@ export async function calcularVistaPreviaPrograma(
 
   let dias = diasBorrador;
   if (!dias) {
-    const { data, error: edias } = await sb.from("programa_dias").select("dia, titulo, desayuno, almuerzo, cena, descripcion").eq("programa_id", programaId).order("dia");
+    const { data, error: edias } = await sb.from("programa_dias").select("dia, tipo_tramo, titulo, desayuno, almuerzo, cena, descripcion").eq("programa_id", programaId).order("dia");
     if (edias) return { ok: false, causa: "No se pudo leer el itinerario del programa. Inténtalo de nuevo." };
-    dias = (data ?? []).map((d) => ({ dia: d.dia, titulo: d.titulo, desayuno: !!d.desayuno, almuerzo: !!d.almuerzo, cena: !!d.cena, descripcion: d.descripcion }));
+    dias = (data ?? []).map((d) => ({ dia: d.dia, tipo_tramo: d.tipo_tramo, titulo: d.titulo, desayuno: !!d.desayuno, almuerzo: !!d.almuerzo, cena: !!d.cena, descripcion: d.descripcion }));
   }
   // PR #409: sin el itinerario 1..N completo no se calcula (se muestran los días que faltan).
   const itinerario = estadoItinerario(dias, prog.dias ?? null);
@@ -715,9 +719,17 @@ export async function calcularVistaPreviaPrograma(
   // PR #409: la misma regla de blackouts que la reserva (entrada y viaje, con las noches adicionales). Un fallo de lectura NO deja calcular.
   const { data: bos, error: ebos } = await sb.from("programa_blackouts").select("fecha_inicio, fecha_fin, motivo, alcance").eq("programa_id", programaId);
   if (ebos) return { ok: false, causa: "No se pudieron leer los blackouts del programa. Inténtalo de nuevo." };
-  const rango = rangoViaje(seleccion.fechaEntrada, incluidas.noches + Math.max(0, Math.trunc(Number(seleccion.nochesAdicionales) || 0)));
-  const bloqueo = blackoutQueAplica((bos ?? []) as BlackoutPrograma[], rango);
-  if (bloqueo) return { ok: false, causa: mensajeBlackout(bloqueo, rango) };
+  const rangoEntrada = rangoViaje(seleccion.fechaEntrada, 0);
+  const disponibles = (bos ?? []) as BlackoutPrograma[];
+  const bloqueoEntrada = blackoutQueAplica(disponibles, rangoEntrada, "entrada");
+  if (bloqueoEntrada) return { ok: false, causa: mensajeBlackout(bloqueoEntrada, rangoEntrada) };
+  const rangoBase = rangoViaje(seleccion.fechaEntrada, incluidas.noches + Math.max(0, Math.trunc(Number(seleccion.nochesAdicionales) || 0)));
+  const rangoViajeReal = {
+    desde: dias.some((d) => d.tipo_tramo === "traslado_previo") ? sumarDiasIso(rangoBase.desde, -1) : rangoBase.desde,
+    hasta: dias.some((d) => d.tipo_tramo === "traslado_posterior") ? sumarDiasIso(rangoBase.hasta, 1) : rangoBase.hasta,
+  };
+  const bloqueoViaje = blackoutQueAplica(disponibles, rangoViajeReal, "viaje");
+  if (bloqueoViaje) return { ok: false, causa: mensajeBlackout(bloqueoViaje, rangoViajeReal) };
 
   // Ids sintéticos: el borrador puede traer hoteles que aún no existen en la base.
   const hid = seleccion.hotelIndex + 1;
@@ -816,7 +828,7 @@ export async function guardarBlackouts(
   const error = validarBlackoutsParaGuardar(filas);
   if (error) return { ok: false, error };
   const sb = await createClient();
-  // Reemplazo ATÓMICO en la base (migración 246): valida todo antes de borrar, así que un fallo NO borra los blackouts anteriores.
+  // Reemplazo ATÓMICO en la base (migración 247): valida todo antes de borrar, así que un fallo NO borra los blackouts anteriores.
   const { error: e } = await sb.rpc("guardar_programa_blackouts", {
     p_programa_id: programaId,
     p_blackouts: filas

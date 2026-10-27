@@ -147,7 +147,7 @@ export function calcularVistaPrevia(e: EntradaVistaPrevia): VistaPrevia {
   const itinerario = e.itinerario?.length
     ? (() => {
         const dias = itinerarioConNochesExtra(e.itinerario, sel.nochesAdicionales, sel.fechaEntrada, hotel.nombre, programa.dias);
-        return dias ? { dias, recogida: dias[dias.length - 1]?.fecha ?? null } : null;
+        return dias ? { dias, recogida: [...dias].reverse().find((d) => d.tipo_tramo !== "traslado_posterior")?.fecha ?? null } : null;
       })()
     : null;
 

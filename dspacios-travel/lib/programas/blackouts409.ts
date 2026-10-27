@@ -5,7 +5,7 @@
 //   · alcance 'entrada' (el comportamiento de siempre, y el de TODO blackout existente): bloquea si la fecha de ENTRADA cae dentro del rango.
 //   · alcance 'viaje': bloquea si el rango del blackout se TRASLAPA con algún día del viaje, desde la entrada hasta el regreso, ambos incluidos.
 //     En un programa por hotel el viaje incluye las noches adicionales (regreso = entrada + noches incluidas + adicionales).
-//   · los extremos del blackout son inclusivos. Una fila sin alguno de sus extremos no bloquea nada (compatibilidad con lo cargado antes de la 246),
+//   · los extremos del blackout son inclusivos. Una fila sin alguno de sus extremos no bloquea nada (compatibilidad con lo cargado antes de la 247),
 //     pero ya no se puede guardar.
 import { esFechaIso, fechaLegible, sumarDiasIso } from "./estanciaHotel88.ts";
 
@@ -15,7 +15,7 @@ export const ETIQUETA_ALCANCE: Record<AlcanceBlackout, string> = { entrada: "Sol
 
 export type BlackoutPrograma = { fecha_inicio: string | null; fecha_fin: string | null; motivo?: string | null; alcance?: string | null };
 
-/** Todo valor que no sea 'viaje' (incluido el null de lo cargado antes de la 246) conserva el comportamiento de fecha de entrada. */
+/** Todo valor que no sea 'viaje' (incluido el null de lo cargado antes de la 247) conserva el comportamiento de fecha de entrada. */
 export const normalizarAlcance = (a: unknown): AlcanceBlackout => (a === "viaje" ? "viaje" : "entrada");
 
 export type RangoViaje = { desde: string; hasta: string };
@@ -50,7 +50,7 @@ export type BlackoutEntrada = { fechaInicio: string; fechaFin: string; motivo: s
 
 /**
  * Valida los blackouts ANTES de guardarlos: ambos extremos obligatorios y reales, inicio ≤ fin y un alcance conocido. Una fila totalmente vacía se
- * ignora. Mensaje legible o null. (La base repite lo esencial: CHECK y `guardar_programa_blackouts`, migración 246.)
+ * ignora. Mensaje legible o null. (La base repite lo esencial: CHECK y `guardar_programa_blackouts`, migración 247.)
  */
 export function filaBlackoutVacia(f: Pick<BlackoutEntrada, "fechaInicio" | "fechaFin" | "motivo"> & { ciudad?: string }): boolean {
   return !f.fechaInicio.trim() && !f.fechaFin.trim() && !f.motivo.trim() && !(f.ciudad ?? "").trim();

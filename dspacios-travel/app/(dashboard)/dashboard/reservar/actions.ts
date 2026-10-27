@@ -123,6 +123,7 @@ import { tipoDocumentoParaVenta } from "@/lib/personas/tiposDocumento";
 import { camposClienteVenta, camposVendedorAliado, nombreQuienElabora, titularDeCliente, type FiscalAliado } from "@/lib/cotizacion/identidadB2B";
 import { resolverAliadoAsistencia, type AliadoResuelto } from "@/lib/cotizacion/asistidaB2BServidor";
 import { blackoutQueAplica, mensajeBlackout, type BlackoutPrograma } from "@/lib/programas/blackouts409";
+import { rangoViajeConTraslados, trasladosDeItinerario, errorFechasSalida } from "@/lib/programas/trasladosFechas";
 import type { TerminosVisibles } from "@/components/cotizacion/TerminosB2BAsistido";
 
 const oNull = (s: string | null | undefined) => (s && s.trim() !== "" ? s.trim() : null);
@@ -3680,7 +3681,10 @@ async function reservarProgramaInterno(
   let estanciaEntrada: EstanciaEntrada | undefined;
   let modalidadHotel: ModalidadServicios | null = null;
   let baseHotel: { desde: string; hasta: string } | null = null;
-  let diasPrograma: { dia: number; titulo: string | null; desayuno: boolean; almuerzo: boolean; cena: boolean; descripcion: string | null }[] = [];
+  let diasPrograma: { dia: number; tipo_tramo: "dia" | "traslado_previo" | "traslado_posterior"; titulo: string | null; desayuno: boolean; almuerzo: boolean; cena: boolean; descripcion: string | null }[] = [];
+  let trasladoPrevio = false;
+  let trasladoPosterior = false;
+  let salidaFechas: { etiqueta: string | null; fecha_desde: string | null; fecha_hasta: string | null } | null = null;
   let proveedorHotel: { id: number | null; nombre: string | null; aplicaRetencion: boolean; pctRetencion: number } | null = null;
   let proveedorAsistencia: { id: number; nombre: string | null; aplicaRetencion: boolean; pctRetencion: number } | null = null;
   let trmCosto: number | null = null;
@@ -3689,13 +3693,14 @@ async function reservarProgramaInterno(
     if (!input.salidaId) return _rechazarValidacionPrograma({ ok: false, error: "Elige una salida." });
     const { data: sal, error: salError } = await sb
       .from("programa_salidas")
-      .select("etiqueta, columna, noches, neto_sencilla, neto_doble, neto_triple, neto_multiple, neto_nino, bajo_solicitud, tarifa_sencilla, tarifa_doble, tarifa_triple, tarifa_multiple, impuesto_sencilla, impuesto_doble, impuesto_triple, impuesto_multiple")
+      .select("etiqueta, columna, fecha_desde, fecha_hasta, noches, neto_sencilla, neto_doble, neto_triple, neto_multiple, neto_nino, bajo_solicitud, tarifa_sencilla, tarifa_doble, tarifa_triple, tarifa_multiple, impuesto_sencilla, impuesto_doble, impuesto_triple, impuesto_multiple")
       .eq("id", input.salidaId)
       .eq("programa_id", input.programaId)
       .maybeSingle();
     if (salError) return _errorValidacionPrograma("error_consulta_salida", salError);
     if (!sal) return _rechazarValidacionPrograma({ ok: false, error: "Salida no encontrada." });
     fuentePrecio = { modo: "salida", salida: sal };
+    salidaFechas = { etiqueta: sal.etiqueta ?? null, fecha_desde: sal.fecha_desde ?? null, fecha_hasta: sal.fecha_hasta ?? null };
     if (sal.noches != null) nochesViaje = sal.noches;
     etiquetaOpcion = sal.etiqueta ?? null;
     hotelSalida = sal.columna ?? null;
@@ -3732,9 +3737,11 @@ async function reservarProgramaInterno(
     const base = resolverBaseHotel(cat.catalogo.base.filter((b) => b.hotelId === hotel.id), est.modalidad, input.fechaIda, hotel.nombre);
     if (!base.ok) return _rechazarValidacionPrograma({ ok: false, error: base.error });
     const { data: diasRows, error: diasError } = await sb
-      .from("programa_dias").select("dia, titulo, desayuno, almuerzo, cena, descripcion").eq("programa_id", input.programaId).order("dia");
+      .from("programa_dias").select("dia, tipo_tramo, titulo, desayuno, almuerzo, cena, descripcion").eq("programa_id", input.programaId).order("dia");
     if (diasError) return _errorValidacionPrograma("error_consulta_itinerario", diasError);
     diasPrograma = diasRows ?? [];
+    trasladoPrevio = diasPrograma.some((d) => d.tipo_tramo === "traslado_previo");
+    trasladoPosterior = diasPrograma.some((d) => d.tipo_tramo === "traslado_posterior");
     // El itinerario debe traer los días 1..N (siempre; con noches adicionales además se desplaza el ÚLTIMO día y la recogida).
     {
       const errorItinerario = validarItinerarioCompleto(diasPrograma, prog.dias ?? null);
@@ -3888,15 +3895,26 @@ async function reservarProgramaInterno(
   // 3.b.bis) PR #409 — Itinerario completo (días 1..N, sin faltantes ni repetidos) en TODOS los modos, y blackouts de alcance «viaje» sobre el rango real del
   //          viaje (entrada → regreso, noches adicionales incluidas). Ambos antes de numerar y de toda escritura. Un fallo de lectura bloquea la reserva.
   if (!estanciaEntrada) {
-    const { data: diasRows, error: diasError } = await sb.from("programa_dias").select("dia").eq("programa_id", input.programaId);
+    const { data: diasRows, error: diasError } = await sb.from("programa_dias").select("dia, tipo_tramo").eq("programa_id", input.programaId);
     if (diasError) return _errorValidacionPrograma("error_consulta_itinerario", diasError);
     const itinerarioPrograma = estadoItinerario(diasRows ?? [], prog.dias ?? null);
     if (!itinerarioPrograma.completo) return _rechazarValidacionPrograma({ ok: false, error: itinerarioPrograma.mensaje ?? "El itinerario del programa está incompleto." });
+    ({ previo: trasladoPrevio, posterior: trasladoPosterior } = trasladosDeItinerario(diasRows));
   }
-  const regresoViaje = estanciaEntrada
-    ? fechaRegresoEstancia(input.fechaIda, estanciaEntrada.nochesIncluidas, estanciaEntrada.nochesAdicionales)
-    : nochesViaje != null ? sumarDias(input.fechaIda, nochesViaje) : prog.dias ? sumarDias(input.fechaIda, Math.max(0, prog.dias - 1)) : null;
-  const rangoDelViaje = { desde: input.fechaIda, hasta: regresoViaje ?? input.fechaIda };
+  // Salida: viaje PUNTUAL que empieza en su fecha_desde (el formulario no tiene selector de fecha en este modo). Una reserva directa con OTRA fecha, una
+  // salida sin fecha o, con traslado, un recorrido que no llega a su fecha_hasta daría un contrato con fechas contradictorias: se rechaza ANTES de numerar
+  // (y la vista previa B2B también). Ver lib/programas/trasladosFechas.ts.
+  if (salidaFechas) {
+    const errorFechas = errorFechasSalida({ ...salidaFechas, noches: nochesViaje }, input.fechaIda, { previo: trasladoPrevio, posterior: trasladoPosterior });
+    if (errorFechas) return _rechazarValidacionPrograma({ ok: false, error: errorFechas });
+  }
+  // El traslado se cuenta UNA vez en las fechas del viaje y del contrato; las noches hoteleras, el precio y las CxP no lo ven (nochesViaje sigue igual).
+  const nochesFechas = estanciaEntrada ? estanciaEntrada.nochesIncluidas + estanciaEntrada.nochesAdicionales : nochesViaje ?? (prog.dias ? Math.max(0, prog.dias - 1) : null);
+  const rangoCalculado = nochesFechas != null
+    ? rangoViajeConTraslados(estanciaEntrada ? "hotel" : "salida", input.fechaIda, nochesFechas, { previo: trasladoPrevio, posterior: trasladoPosterior })
+    : null;
+  const regresoViaje = rangoCalculado?.hasta ?? null;
+  const rangoDelViaje = { desde: rangoCalculado?.desde ?? input.fechaIda, hasta: regresoViaje ?? input.fechaIda };
   const blackoutViaje = blackoutQueAplica(blackoutsPrograma, rangoDelViaje, "viaje");
   if (blackoutViaje) return _rechazarValidacionPrograma({ ok: false, error: mensajeBlackout(blackoutViaje, rangoDelViaje) });
 
@@ -3987,7 +4005,7 @@ async function reservarProgramaInterno(
     destino: prog.subtitulo ?? prog.nombre,
     tipo_paquete: "programa",
     moneda: prog.moneda,
-    fecha_salida: input.fechaIda,
+    fecha_salida: rangoDelViaje.desde,
     fecha_regreso: fechaRegreso,
     pax: totalPax,
     hotel: prog.nombre,
@@ -4256,7 +4274,7 @@ async function reservarProgramaInterno(
         proveedor: proveedorHotel?.nombre ?? provNombre,
         ciudad: h.ciudad,
         detalle_acomodacion: `${totalPax} pax`,
-        ...(estanciaEntrada ? { fecha_ingreso: input.fechaIda, fecha_salida: fechaRegreso } : {}),
+        ...(estanciaEntrada ? { fecha_ingreso: input.fechaIda, fecha_salida: fechaRegresoEstancia(input.fechaIda, estanciaEntrada.nochesIncluidas, estanciaEntrada.nochesAdicionales) } : {}),
         orden: i,
       }))
     );

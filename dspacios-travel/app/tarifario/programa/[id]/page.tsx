@@ -292,7 +292,7 @@ export default async function ProgramaVitrinaPage({ params }: { params: Promise<
               {det.dias.map((d) => (
                 <div key={d.dia} className="rounded-xl border border-gray-200 bg-white p-4">
                   <div className="font-semibold text-gray-800">
-                    Día {d.dia}{d.titulo ? `: ${d.titulo}` : ""}{" "}
+                    {d.tipo_tramo === "traslado_previo" ? "Traslado previo" : d.tipo_tramo === "traslado_posterior" ? "Traslado posterior" : `Día ${d.dia}`}{d.titulo ? `: ${d.titulo}` : ""}{" "}
                     <span className="text-xs font-normal text-gray-400">{comidas(d)}</span>
                   </div>
                   {d.descripcion && <p className="mt-1 whitespace-pre-line text-sm text-gray-600">{d.descripcion}</p>}

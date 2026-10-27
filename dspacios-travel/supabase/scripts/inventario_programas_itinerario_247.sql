@@ -8,11 +8,11 @@
 with
 dias_prog as (
   select d.programa_id, array_agg(d.dia order by d.dia) as presentes, count(*) as cargados
-    from public.programa_dias d group by d.programa_id
+    from public.programa_dias d where d.tipo_tramo = 'dia' group by d.programa_id
 ),
 repetidos as (
   select r.programa_id, string_agg(r.dia::text, ',' order by r.dia) as dias
-    from (select programa_id, dia from public.programa_dias group by programa_id, dia having count(*) > 1) r
+    from (select programa_id, dia from public.programa_dias where tipo_tramo = 'dia' group by programa_id, dia having count(*) > 1) r
    group by r.programa_id
 ),
 evaluado as (

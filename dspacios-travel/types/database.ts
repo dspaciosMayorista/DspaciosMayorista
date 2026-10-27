@@ -3086,6 +3086,7 @@ export type Database = {
           id: number;
           programa_id: number;
           dia: number;
+          tipo_tramo: "dia" | "traslado_previo" | "traslado_posterior";
           titulo: string | null;
           desayuno: boolean;
           almuerzo: boolean;
@@ -3096,6 +3097,7 @@ export type Database = {
           id?: number;
           programa_id: number;
           dia: number;
+          tipo_tramo?: "dia" | "traslado_previo" | "traslado_posterior";
           titulo?: string | null;
           desayuno?: boolean;
           almuerzo?: boolean;

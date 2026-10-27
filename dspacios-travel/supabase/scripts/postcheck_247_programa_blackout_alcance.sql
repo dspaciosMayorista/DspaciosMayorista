@@ -1,6 +1,6 @@
 -- ───────────────────────────────────────────────────────────────────────────
--- POSTCHECK de la migración 246 (PR #409: alcance de los blackouts de un programa y guardado atómico). SOLO LECTURA. Correr DESPUÉS de aplicar la 246.
--- Una sola consulta (control · valor · esperado · estado OK/REVISAR/INFO). Si la 246 NO está aplicada marca REVISAR (no falla).
+-- POSTCHECK de la migración 247 (PR #409: alcance de los blackouts de un programa y guardado atómico). SOLO LECTURA. Correr DESPUÉS de aplicar la 247.
+-- Una sola consulta (control · valor · esperado · estado OK/REVISAR/INFO). Si la 247 NO está aplicada marca REVISAR (no falla).
 -- ───────────────────────────────────────────────────────────────────────────
 with
 col as (
@@ -103,12 +103,17 @@ controles as (
          'insert+update',
          case when exists (select 1 from pg_trigger t where t.tgname = 'trg_programas_itinerario_publicado' and not t.tgisinternal and (t.tgtype & 4) <> 0 and (t.tgtype & 16) <> 0 and t.tgdeferrable and t.tginitdeferred) then 'OK' else 'REVISAR' end
   union all
+  select 49, 'el traslado posterior sigue a programas.dias (trigger BEFORE UPDATE OF dias)',
+         case when exists (select 1 from pg_trigger t where t.tgname = 'trg_programas_traslado_posterior' and not t.tgisinternal and (t.tgtype & 2) <> 0 and (t.tgtype & 16) <> 0) then 'presente' else 'falta' end,
+         'presente',
+         case when exists (select 1 from pg_trigger t where t.tgname = 'trg_programas_traslado_posterior' and not t.tgisinternal and (t.tgtype & 2) <> 0 and (t.tgtype & 16) <> 0) then 'OK' else 'REVISAR' end
+  union all
   select 45, 'INFO programas PUBLICADOS con itinerario incompleto hoy (no se tocan; editar sus días o su total exige completarlos o despublicarlos)',
          case when to_regprocedure('public.itinerario_programa_problema(bigint, integer)') is null then 'n/d'
               else (select count(*)::text from public.programas p where p.publicado and public.itinerario_programa_problema(p.id, p.dias) is not null) end,
          'dato', 'INFO'
   union all
-  select 31, 'INFO blackouts con alcance «entrada» (todos los cargados antes de la 246 lo conservan)',
+  select 31, 'INFO blackouts con alcance «entrada» (todos los cargados antes de la 247 lo conservan)',
          case when exists (select 1 from col) then (select count(*)::text from public.programa_blackouts where alcance = 'entrada') else 'n/d' end, 'dato', 'INFO'
   union all
   select 32, 'INFO blackouts con alcance «viaje»',

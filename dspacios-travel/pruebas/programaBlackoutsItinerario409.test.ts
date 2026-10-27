@@ -329,3 +329,123 @@ test("importarDesdeTexto: en un publicado valida el RESULTADO (total + días) an
   assert.deepEqual(await importarDesdeTexto(3, texto3Salto, { itinerario: true, ruta: false, inclusiones: false, diasNoches: true }), { ok: true });
   assert.equal(llamadas.length, 2);
 });
+
+// ── Traslados (migración 246/247) ────────────────────────────────────────────
+const trasl = (dia: number, tipo: "traslado_previo" | "traslado_posterior"): Fila => ({ programa_id: 3, dia, tipo_tramo: tipo, titulo: "Bus", desayuno: false, almuerzo: false, cena: false, descripcion: "x" });
+
+// Programa por SALIDA de 5 días (4 noches) como el 7 de Producción: la salida arranca el día del traslado y programa_salidas.noches = dias − 1.
+const diasConTraslados = (n: number, previo: boolean, posterior: boolean): Fila[] => [
+  ...(previo ? [trasl(0, "traslado_previo")] : []), ...dias(...Array.from({ length: n }, (_, i) => i + 1)), ...(posterior ? [trasl(n + 1, "traslado_posterior")] : []),
+];
+async function reservarSalida(o: { n?: number; previo?: boolean; posterior?: boolean; desde: string; hasta: string; blackouts?: Fila[]; fechaIda?: string }) {
+  const n = o.n ?? 5;
+  const bd = usarBD({
+    programas: [programa({ dias: n, noches: n - 1 })],
+    programa_salidas: [{ ...salida(), fecha_desde: o.desde, fecha_hasta: o.hasta, noches: n - 1 }],
+    programa_categorias: [], programa_precios: [], programa_dias: diasConTraslados(n, !!o.previo, !!o.posterior), programa_blackouts: o.blackouts ?? [],
+  }, RPCS);
+  const r = await reservarPrograma({ ...entrada(await precio(bd)), fechaIda: o.fechaIda ?? o.desde } as never);
+  return { bd, r };
+}
+const regresoDe = (bd: ReturnType<typeof usarBD>) => ({ salida: bd.filas("ventas")[0].fecha_salida, regreso: bd.filas("ventas")[0].fecha_regreso });
+
+test("SALIDA sin traslado: el regreso es desde + noches y NO cambia (aunque fecha_hasta sea cualquier cosa)", async () => {
+  const { bd, r } = await reservarSalida({ desde: "2027-03-02", hasta: "2027-03-20" });
+  assert.equal(r.ok, true, JSON.stringify(r));
+  assert.deepEqual(regresoDe(bd), { salida: "2027-03-02", regreso: "2027-03-06" });
+});
+
+test("SALIDA con traslado previo: del 2 al 7 (no al 6); con posterior, del 2 al 7; con ambos, del 2 al 8 — el traslado se cuenta una sola vez", async () => {
+  for (const [previo, posterior, hasta, regreso] of [[true, false, "2027-03-07", "2027-03-07"], [false, true, "2027-03-07", "2027-03-07"], [true, true, "2027-03-08", "2027-03-08"]] as const) {
+    const { bd, r } = await reservarSalida({ previo, posterior, desde: "2027-03-02", hasta });
+    assert.equal(r.ok, true, `previo=${previo} posterior=${posterior}: ${JSON.stringify(r)}`);
+    assert.deepEqual(regresoDe(bd), { salida: "2027-03-02", regreso }, `previo=${previo} posterior=${posterior}`);
+  }
+});
+
+test("el traslado NO cambia noches, importes ni CxP: misma venta, mismos ítems y mismas cuentas por pagar con y sin traslado", async () => {
+  const sin = await reservarSalida({ desde: "2027-03-02", hasta: "2027-03-06" });
+  const con = await reservarSalida({ previo: true, posterior: true, desde: "2027-03-02", hasta: "2027-03-08" });
+  assert.equal(sin.r.ok && con.r.ok, true);
+  const v = (x: typeof sin) => x.bd.filas("ventas")[0];
+  assert.ok(Number(v(sin).precio_venta) > 0, "hay un importe real que comparar");
+  for (const k of ["precio_venta", "costo_hotel", "costo_aereo", "costo_receptivo", "costo_asistencia", "otros_costos", "pax"]) assert.equal(v(con)[k], v(sin)[k], `ventas.${k}`);
+  const proy = (x: typeof sin, t: string, ks: string[]) => x.bd.filas(t).map((f) => ks.map((k) => f[k]));
+  assert.deepEqual(proy(con, "contrato_items", ["descripcion", "cantidad", "tarifa", "subtotal"]), proy(sin, "contrato_items", ["descripcion", "cantidad", "tarifa", "subtotal"]));
+  assert.deepEqual(proy(con, "cuentas_por_pagar", ["tipo_proveedor", "valor_total"]), proy(sin, "cuentas_por_pagar", ["tipo_proveedor", "valor_total"]));
+});
+
+test("blackouts de VIAJE con traslado previo: cubren el día extra del regreso (07/03) y no el siguiente (08/03)", async () => {
+  const dentro = await reservarSalida({ previo: true, desde: "2027-03-02", hasta: "2027-03-07", blackouts: [bo("2027-03-07", "2027-03-07", "viaje")] });
+  assert.equal(dentro.r.ok, false, "el 07/03 es el regreso real: bloquea");
+  assert.match(dentro.r.ok ? "" : dentro.r.error, /El viaje del 02\/03\/2027 al 07\/03\/2027 cae en un blackout/);
+  sinEscrituras(dentro.bd);
+  const fuera = await reservarSalida({ previo: true, desde: "2027-03-02", hasta: "2027-03-07", blackouts: [bo("2027-03-08", "2027-03-08", "viaje")] });
+  assert.equal(fuera.r.ok, true, JSON.stringify(fuera.r));
+});
+
+test("las CUATRO discrepancias de Producción (programas 7 y 11) fallan ANTES de numerar y sin escribir, con un mensaje claro", async () => {
+  const casos: [number, string, string][] = [[5, "2026-12-28", "2027-01-01"], [6, "2026-10-13", "2026-10-16"], [6, "2026-12-25", "2026-12-30"], [6, "2027-01-02", "2027-01-09"]];
+  for (const [n, desde, hasta] of casos) {
+    const { bd, r } = await reservarSalida({ n, previo: true, desde, hasta });
+    assert.equal(r.ok, false, `${desde}→${hasta} debe rechazarse`);
+    assert.match(r.ok ? "" : r.error, /sus \d noches más el traslado deberían terminar el \d\d\/\d\d\/\d{4}\. Corrige las fechas de la salida/);
+    sinEscrituras(bd);
+    assert.equal(bd.filas("ventas").length, 0);
+  }
+});
+
+const CUATRO_ANOMALAS: [number, string, string][] = [[5, "2026-12-28", "2027-01-01"], [6, "2026-10-13", "2026-10-16"], [6, "2026-12-25", "2026-12-30"], [6, "2027-01-02", "2027-01-09"]];
+const TABLAS_HIJAS = ["ventas", "contrato_items", "contrato_pasajeros", "contrato_hoteles", "contrato_vuelos", "contrato_servicios", "cuentas_por_pagar", "asientos_contables", "aliados_b2b", "sillas", "abonos"];
+const sinNada = (bd: ReturnType<typeof usarBD>, que: string) => {
+  for (const t of TABLAS_HIJAS) assert.equal(bd.filas(t).length, 0, `${que}: sin escrituras en ${t}`);
+  assert.deepEqual(bd.llamadasRpc.map((c) => c.fn), [], `${que}: ni consecutivo ni ninguna RPC (todo se rechaza antes de numerar)`);
+};
+const masDias = (iso: string, n: number) => new Date(Date.parse(`${iso}T00:00:00Z`) + n * 86400000).toISOString().slice(0, 10);
+
+test("LLAMADA DIRECTA con otra fecha a las CUATRO salidas anómalas: falla sin consecutivo, contrato, CxP ni hijos (aunque la fecha 'corrija' el recorrido)", async () => {
+  for (const [n, desde, hasta] of CUATRO_ANOMALAS) {
+    // desde+1, el último día del recorrido cargado y la fecha_hasta esperada si fuera otra: ninguna es la fecha de la salida.
+    for (const otra of [masDias(desde, 1), hasta, masDias(desde, -1)]) {
+      const { bd, r } = await reservarSalida({ n, previo: true, desde, hasta, fechaIda: otra });
+      assert.equal(r.ok, false, `${desde}→${hasta} con fechaIda ${otra} debe rechazarse`);
+      assert.match(r.ok ? "" : r.error, /sale el [0-9]{2}[/][0-9]{2}[/][0-9]{4} y la reserva trae otra fecha/);
+      sinNada(bd, `${desde}→${hasta} / ${otra}`);
+    }
+  }
+});
+
+test("una salida PUNTUAL coherente tampoco acepta otra fecha por llamada directa (con y sin traslado); en su fecha_desde sí reserva", async () => {
+  for (const previo of [false, true]) {
+    const hasta = previo ? "2027-03-07" : "2027-03-06";
+    const otra = await reservarSalida({ previo, desde: "2027-03-02", hasta, fechaIda: "2027-03-03" });
+    assert.equal(otra.r.ok, false, `previo=${previo}`);
+    assert.match(otra.r.ok ? "" : otra.r.error, /otra fecha/);
+    sinNada(otra.bd, `previo=${previo}`);
+    const propia = await reservarSalida({ previo, desde: "2027-03-02", hasta });
+    assert.equal(propia.r.ok, true, JSON.stringify(propia.r));
+  }
+});
+
+test("una salida con rango ancho (fecha_desde → fecha_hasta de varias semanas) NO se trata como fecha libre: otra fecha dentro del rango se rechaza", async () => {
+  const { bd, r } = await reservarSalida({ previo: true, desde: "2027-03-01", hasta: "2027-03-31", fechaIda: "2027-03-10" });
+  assert.equal(r.ok, false);
+  assert.match(r.ok ? "" : r.error, /otra fecha/);
+  sinNada(bd, "rango ancho");
+});
+
+test("una salida sin fecha_desde no se puede reservar por llamada directa (antes aceptaba cualquier fecha)", async () => {
+  const bd = usarBD({ programas: [programa({ dias: 5, noches: 4 })], programa_salidas: [{ ...salida(), fecha_desde: null, fecha_hasta: null, noches: 4 }], programa_categorias: [], programa_precios: [], programa_dias: COMPLETO.slice(0, 5), programa_blackouts: [] }, RPCS);
+  const r = await reservarPrograma({ ...entrada(await precio(bd)), fechaIda: "2027-03-02" } as never);
+  assert.equal(r.ok, false);
+  assert.match(r.ok ? "" : r.error, /no tiene fecha de salida cargada/);
+  sinNada(bd, "salida sin fecha");
+});
+
+test("guardarCabecera: con traslado posterior, cambiar el total se valida con el traslado ya recolocado (solo faltan días, no un traslado mal puesto)", async () => {
+  usarBD(semilla({ programas: [programa({ publicado: true })], programa_dias: [...COMPLETO, trasl(9, "traslado_posterior")] }), RPCS);
+  const r = await guardarCabecera(3, { nombre: "Circuito Andino", dias: 9, noches: 8 } as never);
+  assert.equal(r.ok, false);
+  assert.match(r.ok ? "" : r.error, /faltan los días 9/);
+  assert.doesNotMatch(r.ok ? "" : r.error, /traslados deben/);
+});

@@ -94,7 +94,7 @@ export default async function ReservarProgramaPage({ params }: { params: Promise
           hoteles={modoHotel && estancia?.ok ? estancia.tablas : undefined}
           nochesIncluidas={modoHotel && incluidas.ok ? incluidas.noches : null}
           errorPrograma={modoHotel && !incluidas.ok ? incluidas.error : null}
-          itinerario={modoHotel ? det.dias : undefined}
+          itinerario={det.dias}
           aliados={aliados}
           blackouts={det.blackouts}
           errorItinerarioPrograma={estadoItinerario(det.dias, det.programa.dias ?? null).mensaje}
