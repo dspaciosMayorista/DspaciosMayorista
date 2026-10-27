@@ -12,6 +12,7 @@ import { AvisoMonedas, TotalesPorMoneda } from "../totalesCarrito";
 import { UserCheck } from "lucide-react";
 import { crearSolicitudReserva, fotosPortada, getContextoAsistenciaB2B, previsualizarTerminosB2BAsistido, type PrevisualizacionB2B, getContextoB2B, type SolicitudResult, type ContextoAsistenciaCheckout, type ContextoB2B, type ResultadoComparativaCreada } from "./actions";
 import { TerminosB2BAsistido } from "@/components/cotizacion/TerminosB2BAsistido";
+import { ServicioManualPanel } from "./ServicioManualPanel";
 // #35: se carga solo cuando el modo comparativa está activo (no entra al grafo del checkout normal).
 const ContinuarComparativa = lazy(() => import("@/lib/cotizacion/comparativaCheckout").then((m) => ({ default: m.ContinuarComparativa })));
 import { MAX_OPCIONES } from "@/lib/cotizacion/comparativa";
@@ -42,6 +43,7 @@ export default function CheckoutPage() {
   // para detectar si cambiaron, ver `enviar()`).
   const bernaloItems = items.filter((i): i is HotelCartItemBernalo => i.tipo === "hotel" && i.modeloTarifario === "unidad");
   const tourItems = items.filter((i): i is Extract<CartItem, { tipo: "tour" }> => i.tipo === "tour");
+  const manualItems = items.filter((i): i is Extract<CartItem, { tipo: "manual" }> => i.tipo === "manual");
   // `tipoDoc` (#42, D-6): se pide en el checkout; vacío = sin elegir (nunca un "CC" por defecto). No bloquea
   // el envío: sin tipo, la persona queda como ficha provisional en el CRM.
   const [c, setC] = useState({ nombres: "", apellidos: "", tipoDoc: "", numeroDoc: "", telefono: "", email: "" });
@@ -173,6 +175,8 @@ export default function CheckoutPage() {
           // servidor lo valida y cotiza el conjunto completo o nada.
           hotelItemId: it.hotelItemId ?? null,
         })),
+        // #64: precio de venta declarado por el asesor; el servidor lo vuelve a validar y exige sesión interna.
+        ...(manualItems.length ? { manuales: manualItems.map((m) => ({ clase: m.clase, nombre: m.nombre, origen: m.origen, destino: m.destino, fechaIda: m.fechaIda, fechaRegreso: m.fechaRegreso, pax: m.pax, precio: m.precio, moneda: m.moneda, impuestoNoComisionable: m.impuestoNoComisionable })) } : {}),
         cliente: c,
         // `facturacion`/`pctComision` YA NO se envían: el servidor los
         // resuelve siempre desde la sesión autenticada (`getContextoB2B()`),
@@ -189,6 +193,7 @@ export default function CheckoutPage() {
     setErr("");
     if (!c.nombres.trim() || !c.apellidos.trim()) { setErr("Ingresa nombres y apellidos."); return; }
     if (!c.telefono.trim()) { setErr("El teléfono / WhatsApp es obligatorio."); return; }
+    if (manualItems.length) { setErr("Una comparativa no admite servicios manuales. Quítalos del carrito."); return; }
     if (bernaloItems.length) { setErr("Los hoteles por unidad todavía no se pueden comparar. Quítalos del carrito."); return; }
     if (hotelItems.length < 2 || hotelItems.length > MAX_OPCIONES) { setErr(`Una comparativa necesita entre 2 y ${MAX_OPCIONES} hoteles en el carrito.`); return; }
     if (hotelItems.some((h) => h.modulo === "bloqueo")) { setErr("Los paquetes con vuelo negociado todavía no se pueden comparar."); return; }
@@ -318,6 +323,8 @@ export default function CheckoutPage() {
           </div>
         ) : (
           <div className="space-y-6">
+            {/* #64: solo personal interno autorizado (mismo contexto que la venta asistida); el servidor lo exige de nuevo. */}
+            {puedeAsistir && <ServicioManualPanel />}
             {/* Resumen del carrito */}
             <section className="rounded-2xl border border-gray-200 bg-white p-5">
               <h2 className="mb-3 text-sm font-semibold text-gray-700">Tu selección</h2>
@@ -353,7 +360,7 @@ export default function CheckoutPage() {
                       ) : (
                         <>
                           <div className="font-medium text-gray-800">
-                            <span className="mr-1 rounded bg-[rgba(38,187,217,0.12)] px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide" style={{ color: "var(--brand-accent)" }}>Tour</span>
+                            <span className="mr-1 rounded bg-[rgba(38,187,217,0.12)] px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide" style={{ color: "var(--brand-accent)" }}>{it.tipo === "manual" ? (it.clase === "vuelo" ? "Vuelo manual" : "Servicio manual") : "Tour"}</span>
                             {it.nombre}
                           </div>
                           <div className="text-xs text-gray-500">
@@ -363,7 +370,7 @@ export default function CheckoutPage() {
                             {it.pax} pax
                             {/* Vínculo con su hotel (solo presentación): quitar el
                                 hotel quita también este servicio — ver `remove`. */}
-                            {it.hotelItemId && (() => {
+                            {it.tipo === "tour" && it.hotelItemId && (() => {
                               const h = items.find((x) => x.id === it.hotelItemId);
                               return h && h.tipo === "hotel" ? ` · con ${h.hotelNombre}` : "";
                             })()}

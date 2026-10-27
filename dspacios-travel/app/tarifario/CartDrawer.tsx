@@ -207,7 +207,7 @@ export function CartDrawer({ checkoutHabilitado = false, fotosPorHotel = {} }: {
                         ) : (
                           <>
                             <div className="flex items-center gap-1.5 truncate font-medium text-gray-800">
-                              <span className="rounded bg-[rgba(38,187,217,0.12)] px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide" style={{ color: "var(--brand-accent)" }}>Tour</span>
+                              <span className="rounded bg-[rgba(38,187,217,0.12)] px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide" style={{ color: "var(--brand-accent)" }}>{it.tipo === "manual" ? (it.clase === "vuelo" ? "Vuelo manual" : "Servicio manual") : "Tour"}</span>
                               {it.nombre}
                             </div>
                             <div className="truncate text-xs text-gray-500">{it.destino ?? ""}</div>

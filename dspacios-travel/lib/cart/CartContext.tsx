@@ -9,6 +9,7 @@ import {
   type MotivoRechazoConjunto, type ReemplazoConjunto,
 } from "@/lib/cart/vinculoServicios";
 import { resumirMonedas, type ResumenMonedas } from "@/lib/cart/monedaCarrito";
+import { reemplazarManual, type ServicioManual } from "@/lib/cart/servicioManual";
 
 // Ítem de HOTEL del carrito — unión discriminada real por `modeloTarifario`
 // (Fase 3F-1 Bernalo). `HotelCartItemPersona` es EXACTAMENTE el contrato de
@@ -146,7 +147,18 @@ export type TourCartItem = {
  * le asigna `id` y `hotelItemId`). */
 export type TourSinVinculo = Omit<TourCartItem, "id" | "hotelItemId">;
 
-export type CartItem = HotelCartItem | TourCartItem;
+// #64: servicio MANUAL (vuelo libre u otro) agregado por personal interno. No es
+// un vuelo de Sistema: sin bloqueo, sin sillas. Comparte `nombre`/`fotoUrl`/
+// fechas/`pax`/`precio`/`moneda` con el tour para que el carrito lo muestre igual,
+// pero NUNCA lleva `servicioId`/`paqueteId` ni vínculo a un hotel.
+export type ManualCartItem = ServicioManual & {
+  id: string;
+  tipo: "manual";
+  fotoUrl: null;
+  noches: null;
+};
+
+export type CartItem = HotelCartItem | TourCartItem | ManualCartItem;
 
 // `Omit<Union, K>` NO es distributivo (`keyof` de una unión colapsa a la
 // intersección de claves) — aplicado a `CartItem` (unión discriminada de 3
@@ -202,6 +214,8 @@ type CartCtx = {
   // Si no aplica (hotel quitado, conjunto cambiado, reserva distinta) el
   // carrito queda igual y se devuelve el motivo.
   actualizarConjunto: (cambio: ActualizacionConjunto) => ResultadoActualizacionConjunto;
+  // #64: edita SOLO el servicio manual `id` (el resto del carrito no cambia).
+  actualizarManual: (id: string, datos: ServicioManual) => void;
   // Quitar un hotel quita también sus servicios vinculados; quitar un
   // servicio deja el hotel.
   remove: (id: string) => void;
@@ -318,6 +332,9 @@ export function CartProvider({ children }: { children: ReactNode }) {
   const actualizarPrecioBernalo = useCallback((id: string, precio: number, moneda: string | null) => {
     encolar((prev) => prev.map((i) => (i.id === id && i.tipo === "hotel" && i.modeloTarifario === "unidad" ? { ...i, precio, moneda } : i)));
   }, [encolar]);
+  const actualizarManual = useCallback((id: string, datos: ServicioManual) => {
+    encolar((prev) => reemplazarManual(prev, id, { ...datos }));
+  }, [encolar]);
   const clear = useCallback(() => encolar(() => []), [encolar]);
   const openDrawer = useCallback(() => setDrawerOpen(true), []);
   const closeDrawer = useCallback(() => setDrawerOpen(false), []);
@@ -327,7 +344,7 @@ export function CartProvider({ children }: { children: ReactNode }) {
   return (
     <Ctx.Provider value={{
       items, add, addConjunto, remove, actualizarPrecioBernalo, clear, totales, count: items.length,
-      actualizarConjunto,
+      actualizarConjunto, actualizarManual,
       drawerOpen, openDrawer, closeDrawer, addonsIntent, setAddonsIntent,
     }}>
       {children}
@@ -340,7 +357,7 @@ export function useCart(): CartCtx {
   if (!c) {
     // Outside CartProvider: return safe no-ops.
     return {
-      items: [], add: () => {}, addConjunto: () => "", actualizarConjunto: () => ({ ok: false, motivo: "hotel_no_encontrado" }), remove: () => {}, actualizarPrecioBernalo: () => {}, clear: () => {}, totales: resumirMonedas([]), count: 0,
+      items: [], add: () => {}, addConjunto: () => "", actualizarConjunto: () => ({ ok: false, motivo: "hotel_no_encontrado" }), actualizarManual: () => {}, remove: () => {}, actualizarPrecioBernalo: () => {}, clear: () => {}, totales: resumirMonedas([]), count: 0,
       drawerOpen: false, openDrawer: () => {}, closeDrawer: () => {}, addonsIntent: null, setAddonsIntent: () => {},
     };
   }

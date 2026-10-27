@@ -104,7 +104,8 @@ const etiquetaDe = (it: ItemMoneda) => (it.tipo === "hotel" ? it.hotelNombre : i
 export function preverCotizacion(items: readonly ItemMoneda[]): PrevisionCotizacion {
   const persona = items.filter((i) => i.tipo === "hotel" && i.modeloTarifario !== "unidad");
   const unidad = items.filter((i) => i.tipo === "hotel" && i.modeloTarifario === "unidad");
-  const tours = items.filter((i) => i.tipo === "tour");
+  // #64: el servicio manual cuenta como servicio independiente para la moneda.
+  const tours = items.filter((i) => i.tipo === "tour" || i.tipo === "manual");
   const orden = [...persona, ...unidad, ...tours];
   const porConfirmar = orden.filter((i) => !monedaDeItem(i)).length;
   const nada = (indeterminada: PrevisionCotizacion["indeterminada"]): PrevisionCotizacion =>

@@ -49,6 +49,7 @@ import {
 } from "@/lib/cotizacion/asistidaB2B";
 import { listarAliadosParaAsistencia, prepararAsistenciaB2B, type AliadoListado, type ContextoAsistenciaB2B } from "@/lib/cotizacion/asistidaB2BServidor";
 import { resolverFirmasSesion } from "@/lib/cotizacion/firmasSesion";
+import { descripcionCotizacionManual, leerManualesEntrada, lineaB2BManual, validarServicioManual, type ServicioManual } from "@/lib/cart/servicioManual";
 import { camposClienteVenta, camposVendedorAliado, nombreQuienElabora, titularDeCliente } from "@/lib/cotizacion/identidadB2B";
 
 // Forma que arma el CARRITO en el cliente (ver lib/cart/CartContext.tsx) —
@@ -447,6 +448,7 @@ function construirMensaje(
   extra: string | null,
   b2b?: { modo: "comisionable" | "neta"; facturacion: Facturacion; pctComision: number },
   itemsBernalo: SolicitudItemBernaloComputado[] = [],
+  manuales: ServicioManual[] = [],
 ): string {
   const L: string[] = [];
   L.push("Solicitud de reserva — D'spacios Travel");
@@ -487,6 +489,15 @@ function construirMensaje(
       if (t.fechaIda) L.push(`   ${t.fechaIda} → ${t.fechaRegreso ?? ""}`);
       L.push(`   ${t.pax} pax · Valor estimado: ${formatMoneda(t.precio, moneda)}`);
       total += t.precio;
+    }
+    L.push("");
+  }
+  if (manuales.length) {
+    L.push("Servicios manuales (precio declarado por el asesor, sujetos a confirmación):");
+    for (const m of manuales) {
+      L.push(`- ${m.nombre}${m.clase === "vuelo" && m.origen && m.destino ? ` ${m.origen} → ${m.destino}` : ""}`);
+      L.push(`   ${m.pax} pax · Valor estimado: ${formatMoneda(m.precio, moneda)}`);
+      total += m.precio;
     }
     L.push("");
   }
@@ -542,8 +553,10 @@ async function crearCotizacionCarrito(input: {
   tours: SolicitudTourValidado[];
   hotelDeTour: (number | null)[];
   cliente: SolicitudCliente;
+  /** #64: servicios manuales (ya validados en la frontera; aquí se vuelve a exigir moneda). */
+  manuales?: ServicioManual[];
 }, opts?: OpcionesCarrito): Promise<
-  | { ok: true; id: number; codigo: string; url: string; moneda: string; itemsOk: SolicitudItemComputado[]; itemsBernaloOk: SolicitudItemBernaloComputado[]; toursOk: SolicitudTourComputado[]; excluidos: ItemExcluido[]; b2bPlan: PlanB2BCotizacion | null }
+  | { ok: true; id: number; codigo: string; url: string; moneda: string; itemsOk: SolicitudItemComputado[]; itemsBernaloOk: SolicitudItemBernaloComputado[]; toursOk: SolicitudTourComputado[]; manualesOk: ServicioManual[]; excluidos: ItemExcluido[]; b2bPlan: PlanB2BCotizacion | null }
   | { ok: false; error: string }
   | ResultadoTerminosCambiaron
   | ResultadoPrecioActualizadoBernalo
@@ -996,17 +1009,39 @@ async function crearCotizacionCarrito(input: {
     });
   }
 
-  if (!itemsOk.length && !itemsBernaloOk.length && !toursOk.length) return { ok: false, error: "No se pudo generar la cotización (revisa disponibilidad)." };
+  // #64: servicios manuales. Precio declarado por el asesor (único dato que se acepta tal cual y por eso solo personal interno, ver
+  // crearSolicitudReserva). Nunca se excluyen en silencio: si su moneda no es la de la cotización, la solicitud falla. La cotización
+  // NO guarda costo ni proveedor: se exigen al convertir.
+  const manualesOk: ServicioManual[] = [];
+  for (const m of input.manuales ?? []) {
+    const r = validarServicioManual(m, monedaPrincipal);
+    if (!r.ok) return { ok: false, error: `Servicio manual «${m.nombre}»: ${r.error}` };
+    monedaPrincipal = monedaPrincipal ?? r.valor.moneda;
+    iIdx++;
+    itemsSnap.push({
+      id: iIdx, descripcion: descripcionCotizacionManual(r.valor),
+      adultos: 0, ninos: 0, tarifa_adulto: 0, tarifa_nino: 0, modo_precio: "total", valor_total: r.valor.precio,
+    });
+    total += r.valor.precio;
+    lineasB2B.push(lineaB2BManual(r.valor, manualesOk.length)); // #102: la comisión sale de PVP − impuesto no comisionable del manual
+    manualesOk.push(r.valor);
+  }
+
+  // Un servicio manual se SUMA a un carrito con hotel o servicio del tarifario; solo no sostiene una cotización (la conversión necesita al menos una unidad con pasajeros).
+  if (!itemsOk.length && !itemsBernaloOk.length && !toursOk.length) {
+    return { ok: false, error: manualesOk.length ? "Un servicio manual se agrega a un carrito que ya tenga un hotel o un servicio del tarifario. Agrega uno primero." : "No se pudo generar la cotización (revisa disponibilidad)." };
+  }
 
   const totalHoteles = itemsOk.length + itemsBernaloOk.length;
   const moneda = monedaPrincipal ?? "COP";
   const destinos = [...new Set([...itemsOk.map((i) => i.destino), ...itemsBernaloOk.map((i) => i.destino)].filter((d): d is string => !!d))];
+  if (!destinos.length) for (const m of manualesOk) if (m.destino && !destinos.includes(m.destino)) destinos.push(m.destino);
   const destinoTxt = destinos.length ? destinos.join(" · ") : null;
   const fechasIda = [...itemsOk.map((i) => i.fechaIda), ...itemsBernaloOk.map((i) => i.salida.fechaIda)].filter((f): f is string => !!f).sort();
   const fechasRegreso = [...itemsOk.map((i) => i.fechaRegreso), ...itemsBernaloOk.map((i) => i.salida.fechaRegreso)].filter((f): f is string => !!f).sort();
   const fechaIda = fechasIda[0] ?? null;
   const fechaRegreso = fechasRegreso.length ? fechasRegreso[fechasRegreso.length - 1] : null;
-  const paxTotal = itemsOk.reduce((s, i) => s + (i.pax || 0), 0) + itemsBernaloOk.reduce((s, i) => s + (i.pax || 0), 0) || (toursOk[0]?.pax ?? 0);
+  const paxTotal = itemsOk.reduce((s, i) => s + (i.pax || 0), 0) + itemsBernaloOk.reduce((s, i) => s + (i.pax || 0), 0) || (toursOk[0]?.pax ?? manualesOk[0]?.pax ?? 0);
   const planNombre: string | null = totalHoteles > 1
     ? `${totalHoteles} hoteles`
     : (itemsOk[0] ? `${itemsOk[0].categoria} · ${itemsOk[0].regimen}` : (itemsBernaloOk[0] ? `${itemsBernaloOk[0].categoria} · ${itemsBernaloOk[0].alimentacion}` : null));
@@ -1100,7 +1135,7 @@ async function crearCotizacionCarrito(input: {
     // "unidad"` (ya presente en `SolicitudItemBernaloComputado`) para que
     // `convertirCotizacionCarrito` (3F-4B) lo detecte y bloquee la
     // conversión a contrato explícitamente, sin caer al flujo persona.
-    payload: { items: [...itemsOk, ...itemsBernaloOk], tours: toursOk, serviciosIncluidos: incluidosPayload, cliente: input.cliente, ...(planB2B ? { b2bAsistido: planB2B } : {}) } as unknown as Json,
+    payload: { items: [...itemsOk, ...itemsBernaloOk], tours: toursOk, ...(manualesOk.length ? { manuales: manualesOk } : {}), serviciosIncluidos: incluidosPayload, cliente: input.cliente, ...(planB2B ? { b2bAsistido: planB2B } : {}) } as unknown as Json,
     detalle: detalle as unknown as Json,
     cliente: campos.cliente,
     cliente_documento: campos.cliente_documento,
@@ -1120,7 +1155,7 @@ async function crearCotizacionCarrito(input: {
   // #35: una opción de comparativa solo necesita la fila calculada.
   if (opts?.capturar) {
     opts.capturar(filaCotizacion as unknown as Record<string, unknown>);
-    return { ok: true, id: 0, codigo: "", url: "", moneda, itemsOk, itemsBernaloOk, toursOk, excluidos, b2bPlan: planB2B };
+    return { ok: true, id: 0, codigo: "", url: "", moneda, itemsOk, itemsBernaloOk, toursOk, manualesOk, excluidos, b2bPlan: planB2B };
   }
   const { data: row, error } = await admin.from("cotizaciones").insert(filaCotizacion).select("id, codigo, share_token").single();
   // FRONTERA PÚBLICA (ronda 7): nunca se reenvía `error.message` — un fallo
@@ -1156,7 +1191,7 @@ async function crearCotizacionCarrito(input: {
   const origin = host ? `${proto}://${host}` : "";
   const url = origin && row.share_token ? `${origin}/cot/${row.share_token}` : "";
 
-  return { ok: true, id: row.id, codigo: row.codigo, url, moneda, itemsOk, itemsBernaloOk, toursOk, excluidos, b2bPlan: planB2B };
+  return { ok: true, id: row.id, codigo: row.codigo, url, moneda, itemsOk, itemsBernaloOk, toursOk, manualesOk, excluidos, b2bPlan: planB2B };
 }
 
 // Genera UNA sola cotización combinada para todo el carrito y arma los
@@ -1167,7 +1202,13 @@ export async function crearSolicitudReserva(inputRaw: unknown): Promise<Solicitu
   if (!v.ok) return { ok: false, error: v.error };
   const input = v.input;
   const tours = input.tours;
-  if (!input.items.length && !tours.length) return { ok: false, error: "El carrito está vacío." };
+  const man = leerManualesEntrada(inputRaw);
+  if (!man.ok) return { ok: false, error: man.error };
+  if (!input.items.length && !tours.length && !man.manuales.length) return { ok: false, error: "El carrito está vacío." };
+  // #64: el precio de un servicio manual lo declara el asesor (no sale de un catálogo): solo personal interno autorizado, nunca el público ni un aliado.
+  if (man.manuales.length && !(await puedeAgregarServicioManual())) {
+    return { ok: false, error: "Los servicios manuales solo los puede agregar el personal autorizado. Inicia sesión con tu usuario interno o quítalos del carrito." };
+  }
   if (!`${input.cliente.nombres}${input.cliente.apellidos}`.trim()) return { ok: false, error: "Ingresa nombres y apellidos." };
   if (!input.cliente.numeroDoc.trim()) return { ok: false, error: "El documento es obligatorio." };
   if (!input.cliente.telefono.trim()) return { ok: false, error: "El teléfono / WhatsApp es obligatorio." };
@@ -1194,7 +1235,7 @@ export async function crearSolicitudReserva(inputRaw: unknown): Promise<Solicitu
     b2bAsistido = prep.contexto;
   }
 
-  const cot = await crearCotizacionCarrito({ items: input.items, tours, hotelDeTour: input.hotelDeTour, cliente: clienteCheckout }, { b2b: b2bAsistido });
+  const cot = await crearCotizacionCarrito({ items: input.items, tours, hotelDeTour: input.hotelDeTour, cliente: clienteCheckout, manuales: man.manuales }, { b2b: b2bAsistido });
   if (!cot.ok) return cot;
 
   // Agrega el cliente a la base de contactos del CRM como B2C (cliente_final),
@@ -1258,7 +1299,7 @@ export async function crearSolicitudReserva(inputRaw: unknown): Promise<Solicitu
   const notaExcluidos = notasExcluidos.length ? notasExcluidos.join("\n") : null;
   const notaB2BAsistida = cot.b2bPlan ? lineasMensajeB2BAsistido(cot.b2bPlan) : null;
   const extra = [mensajeExtra?.trim() || null, notaExcluidos, notaB2BAsistida].filter(Boolean).join("\n\n") || null;
-  const mensaje = construirMensaje(input.cliente, { codigo: cot.codigo, url: cot.url }, cot.itemsOk, cot.toursOk, cot.moneda, extra, b2b, cot.itemsBernaloOk);
+  const mensaje = construirMensaje(input.cliente, { codigo: cot.codigo, url: cot.url }, cot.itemsOk, cot.toursOk, cot.moneda, extra, b2b, cot.itemsBernaloOk, cot.manualesOk);
   const wa = (whatsapp ?? "").replace(/\D/g, "");
   const waUrl = wa ? `https://wa.me/${wa}?text=${encodeURIComponent(mensaje)}` : null;
   const correos = (emails ?? "").split(",").map((e) => e.trim()).filter(Boolean).join(",");
@@ -1285,10 +1326,12 @@ export async function previsualizarTerminosB2BAsistido(inputRaw: unknown): Promi
   const crudo = (typeof inputRaw === "object" && inputRaw !== null ? inputRaw : {}) as Record<string, unknown>;
   const v = validarCrearSolicitudInput({ ...crudo, cliente: { nombres: "Vista", apellidos: "previa", tipoDoc: "CC", numeroDoc: "0", telefono: "0", email: "" } });
   if (!v.ok) return { ok: false, error: v.error };
-  if (!v.input.items.length && !v.input.tours.length) return { ok: false, error: "El carrito está vacío." };
+  const man = leerManualesEntrada(inputRaw);
+  if (!man.ok) return { ok: false, error: man.error };
+  if (!v.input.items.length && !v.input.tours.length && !man.manuales.length) return { ok: false, error: "El carrito está vacío." };
   const prep = await prepararAsistenciaB2B(await createClient(), asistencia.asistencia);
   if (!prep.ok) return { ok: false, error: prep.error };
-  const cot = await crearCotizacionCarrito({ items: v.input.items, tours: v.input.tours, hotelDeTour: v.input.hotelDeTour, cliente: v.input.cliente }, { b2b: prep.contexto, capturar: () => {} });
+  const cot = await crearCotizacionCarrito({ items: v.input.items, tours: v.input.tours, hotelDeTour: v.input.hotelDeTour, cliente: v.input.cliente, manuales: man.manuales }, { b2b: prep.contexto, capturar: () => {} });
   if (!cot.ok) return { ok: false, error: "error" in cot ? cot.error : "El precio de un hotel cambió; revisa el carrito y vuelve a intentar." };
   if (!cot.b2bPlan) return { ok: false, error: "No se pudo liquidar la venta B2B." };
   return { ok: true, terminos: terminosPrevios(cot.b2bPlan) };
@@ -1317,6 +1360,12 @@ function lineasMensajeB2BAsistido(p: PlanB2BCotizacion): string {
 // permiso (visitante, aliado B2B, cliente, `control_vuelo`…) recibe `puede: false` y ninguna lista. Solo informativo: la autoridad
 // se vuelve a evaluar al crear la cotización.
 export type ContextoAsistenciaCheckout = { puede: false } | { puede: true; aliados: AliadoListado[] } | { puede: false; error: string };
+/** #64: ¿la sesión actual es personal interno autorizado a vender (mismo criterio que la venta asistida)? */
+async function puedeAgregarServicioManual(): Promise<boolean> {
+  const r = await listarAliadosParaAsistencia(await createClient());
+  return r.ok && r.puede;
+}
+
 export async function getContextoAsistenciaB2B(): Promise<ContextoAsistenciaCheckout> {
   const r = await listarAliadosParaAsistencia(await createClient());
   if (!r.ok) return { puede: false, error: r.error };
