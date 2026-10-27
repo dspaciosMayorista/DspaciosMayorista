@@ -95,6 +95,7 @@ mock.module("@/lib/cotizacion/asistidaB2BServidor", {
   namedExports: {
     prepararAsistenciaB2B: async () => ({ ok: true, contexto: asistencia }),
     listarAliadosParaAsistencia: async () => ({ ok: true, aliados: [] }),
+    verificarAliadoVivoParaConversion: async () => ({ ok: false, error: "no aplica en esta prueba" }),
   },
 });
 mock.module("next/headers", { namedExports: { headers: async () => new Map([["host", "localhost"]]) } });

@@ -111,6 +111,16 @@ if [ "${PG64_APLICAR_250:-1}" = 1 ]; then
   [ "$(echo "$PRE250" | grep "^huella_de_cotizaciones" | cut -d"|" -f2)" = "$(echo "$POST250" | grep "^huella_de_cotizaciones" | cut -d"|" -f2)" ] || { echo "La huella de cotizaciones cambió con la 250." >&2; exit 1; }
 fi
 
+# 251 (identidad de la hija NETO elegida por un visitante): preflight → migración → postcheck, cada uno una sola consulta (PG64_APLICAR_251=0 la omite: línea base de los fallos).
+if [ "${PG64_APLICAR_251:-1}" = 1 ]; then
+  PRE251="$($PS -d "$DB" < "$APP/supabase/scripts/preflight_251_hija_identidad_neto.sql")"; echo "$PRE251"
+  echo "$PRE251" | grep -q "|REVISAR$" && { echo "Preflight 251 con REVISAR." >&2; exit 1; }
+  $PS -d "$DB" -1 < "$APP/supabase/migrations/20260601000251_hija_identidad_neto.sql" >/dev/null || { echo "La migración 251 falló en $DB." >&2; exit 1; }
+  POST251="$($PS -d "$DB" < "$APP/supabase/scripts/postcheck_251_hija_identidad_neto.sql")"; echo "$POST251"
+  echo "$POST251" | grep -q "|REVISAR$" && { echo "Postcheck 251 con REVISAR." >&2; exit 1; }
+  [ "$(echo "$PRE251" | grep "^huella_de_cotizaciones" | cut -d"|" -f2)" = "$(echo "$POST251" | grep "^huella_de_cotizaciones" | cut -d"|" -f2)" ] || { echo "La huella de cotizaciones cambió con la 251." >&2; exit 1; }
+fi
+
 # Entorno (NO es esquema de la app): el auth.uid()/auth.role() de Supabase alojado leen el JWT de request.jwt.claims (PostgREST ya no fija los GUC legados).
 $PS -d "$DB" >/dev/null <<'SQL'
 create or replace function auth.uid() returns uuid language sql stable as $$

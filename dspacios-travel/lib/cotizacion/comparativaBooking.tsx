@@ -13,15 +13,13 @@
 // hoteles, mismo viaje y moneda, nada de Bernalo ni vuelos negociados) la hace
 // el servidor al crear la comparativa.
 // ─────────────────────────────────────────────────────────────────────────
-import { useState } from "react";
 import Link from "next/link";
 import { GitCompareArrows, ArrowRight, AlertTriangle } from "lucide-react";
 import { useCart } from "@/lib/cart/CartContext";
 import { MAX_OPCIONES } from "@/lib/cotizacion/comparativa";
 
 export function ModoComparativaBooking() {
-  const { items } = useCart();
-  const [activo, setActivo] = useState(false);
+  const { items, modoComparativa: activo, setModoComparativa: setActivo } = useCart();
 
   const hoteles = items.filter((i) => i.tipo === "hotel");
   const bernalo = hoteles.filter((h) => h.modeloTarifario === "unidad");
@@ -38,7 +36,7 @@ export function ModoComparativaBooking() {
   return (
     <div className="mb-4 rounded-2xl border border-slate-200/80 bg-white p-3 shadow-sm sm:p-4">
       <div className="flex flex-wrap items-center justify-between gap-2">
-        <button type="button" onClick={() => setActivo((v) => !v)} aria-pressed={activo}
+        <button type="button" onClick={() => setActivo(!activo)} aria-pressed={activo}
           className="inline-flex items-center gap-2 rounded-lg border px-3 py-1.5 text-xs font-semibold transition-colors"
           style={activo ? { borderColor: "var(--brand-primary)", color: "var(--brand-primary)", backgroundColor: "rgba(29,124,154,0.08)" } : { borderColor: "#e2e8f0", color: "#64748b" }}>
           <GitCompareArrows size={14} aria-hidden /> Cotización comparativa
@@ -48,8 +46,8 @@ export function ModoComparativaBooking() {
       {activo && (
         <div className="mt-3 space-y-2 text-xs text-slate-600">
           <p>
-            Agrega al carrito hasta {MAX_OPCIONES} hoteles del <b>mismo destino, fechas, pasajeros y moneda</b>, cada uno con sus servicios.
-            Verás el valor por persona y el total de <b>cada</b> hotel y de cada acomodación; los hoteles no se suman y no hay un total global.
+            Agrega al carrito hasta {MAX_OPCIONES} hoteles de la <b>misma moneda</b>, cada uno con sus servicios. Con vuelos manuales puedes comparar varios destinos o fechas: los hoteles del mismo destino y fechas forman un grupo y comparten sus vuelos.
+            Verás el valor por persona y el total de <b>cada</b> hotel (con sus vuelos y servicios); los hoteles no se suman y no hay un total global.
           </p>
           <p className="font-medium text-slate-700">Hoteles en el carrito: {hoteles.length} de {MAX_OPCIONES}</p>
           {avisos.map((a) => (

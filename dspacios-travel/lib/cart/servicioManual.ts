@@ -12,7 +12,7 @@
 // el servidor, que SIEMPRE vuelve a validar lo que llega del navegador.
 // ─────────────────────────────────────────────────────────────────────────
 
-import { ciudadIata } from "../iata.ts";
+import { ciudadIata, esCodigoIata } from "../iata.ts";
 
 export type ClaseServicioManual = "vuelo" | "otro";
 export type MonedaManual = "COP" | "USD";
@@ -115,14 +115,16 @@ export function validarServicioManual(raw: unknown, monedaCotizacion: string | n
   if (!hotelRef) return { ok: false, error: "Elige el hotel o destino del carrito al que pertenece el vuelo." };
   const hotelEtiqueta = raw.hotelEtiqueta == null || raw.hotelEtiqueta === "" ? null : texto(raw.hotelEtiqueta, 160);
   if (!origen || !destino) return { ok: false, error: "Un vuelo necesita origen y destino." };
-  if (normalizarCiudad(origen) === normalizarCiudad(destino)) return { ok: false, error: "El origen y el destino del vuelo no pueden ser el mismo." };
+  // El origen y el destino de un vuelo son CÓDIGOS IATA (CTG, BOG…), nunca nombres libres.
+  if (!esCodigoIata(origen) || !esCodigoIata(destino)) return { ok: false, error: "El origen y el destino del vuelo van como código IATA de 3 letras (por ejemplo BOG o CTG)." };
+  if (origen.toUpperCase() === destino.toUpperCase()) return { ok: false, error: "El origen y el destino del vuelo no pueden ser el mismo." };
   if (tramo === "ida" && (!fechaIda || fechaRegreso)) return { ok: false, error: "Un vuelo de solo ida lleva la fecha de ida y ninguna de regreso." };
   if (tramo === "regreso" && (!fechaRegreso || fechaIda)) return { ok: false, error: "Un vuelo de solo regreso lleva la fecha de regreso y ninguna de ida." };
   if (tramo === "ida_regreso") {
     if (!fechaIda || !fechaRegreso) return { ok: false, error: "Un vuelo de ida y regreso necesita las dos fechas." };
     if (fechaRegreso < fechaIda) return { ok: false, error: "El regreso no puede ser anterior a la ida." };
   }
-  return { ok: true, valor: { ...comunes, origen, destino, fechaIda, fechaRegreso, tramo: tramo as TramoVueloManual, hotelRef, hotelEtiqueta } };
+  return { ok: true, valor: { ...comunes, origen: origen.toUpperCase(), destino: destino.toUpperCase(), fechaIda, fechaRegreso, tramo: tramo as TramoVueloManual, hotelRef, hotelEtiqueta } };
 }
 
 /** Compara ciudades sin mayúsculas, tildes ni espacios repetidos («Cartagena» = «CARTAGENA»). */
@@ -131,7 +133,36 @@ export function normalizarCiudad(t: string | null | undefined): string {
 }
 
 /** Hotel del carrito tal como lo resolvió el SERVIDOR (o el carrito, en cliente): ciudad y fechas de su estadía. */
-export type HotelDeVuelo = { ref: string; nombre: string; destino: string | null; fechaIda: string | null; fechaRegreso: string | null };
+export type HotelDeVuelo = {
+  ref: string; nombre: string; destino: string | null; fechaIda: string | null; fechaRegreso: string | null;
+  /** Código IATA del destino tomado del CATÁLOGO (nunca inferido del nombre). null = el catálogo no tiene un código confiable. */
+  destinoIata?: string | null;
+};
+
+/** Clave del GRUPO de un viaje: destino IATA + fechas. Los hoteles alternativos con la misma clave comparten sus vuelos. */
+export function claveGrupoViaje(iata: string, fechaIda: string, fechaRegreso: string): string {
+  return `grupo:${iata.toUpperCase()}|${fechaIda}|${fechaRegreso}`;
+}
+export const esClaveGrupoViaje = (v: unknown): v is string => typeof v === "string" && /^grupo:[A-Z]{3}\|\d{4}-\d{2}-\d{2}\|\d{4}-\d{2}-\d{2}$/.test(v);
+
+/** Las fechas de un vuelo salen del PLAN del hotel: ida y vuelta → ambas; solo ida → la ida; solo regreso → el regreso. */
+export function fechasDeVuelo(tramo: TramoVueloManual, plan: { fechaIda: string | null; fechaRegreso: string | null }): { fechaIda: string | null; fechaRegreso: string | null } {
+  return { fechaIda: tramo === "regreso" ? null : plan.fechaIda, fechaRegreso: tramo === "ida" ? null : plan.fechaRegreso };
+}
+
+/** Agrupa hoteles alternativos por destino IATA y fechas. Un hotel sin código IATA confiable o sin fechas NO entra en ningún grupo: se devuelve aparte para pedir la corrección. */
+export function agruparHotelesPorViaje<T extends HotelDeVuelo>(hoteles: readonly T[]): { grupos: { clave: string; destinoIata: string; fechaIda: string; fechaRegreso: string; hoteles: T[] }[]; sinDato: T[] } {
+  const grupos = new Map<string, { clave: string; destinoIata: string; fechaIda: string; fechaRegreso: string; hoteles: T[] }>();
+  const sinDato: T[] = [];
+  for (const h of hoteles) {
+    if (!esCodigoIata(h.destinoIata) || !h.fechaIda || !h.fechaRegreso) { sinDato.push(h); continue; }
+    const clave = claveGrupoViaje(h.destinoIata, h.fechaIda, h.fechaRegreso);
+    const g = grupos.get(clave) ?? { clave, destinoIata: h.destinoIata.toUpperCase(), fechaIda: h.fechaIda, fechaRegreso: h.fechaRegreso, hoteles: [] };
+    g.hoteles.push(h);
+    grupos.set(clave, g);
+  }
+  return { grupos: [...grupos.values()], sinDato };
+}
 
 /**
  * El vuelo contra SU hotel: la ciudad del hotel sale del hotel (se compara con lo que llegó y se rechaza si no coincide), la ida no puede ser anterior a la
@@ -141,9 +172,13 @@ export type HotelDeVuelo = { ref: string; nombre: string; destino: string | null
 export function validarVueloContraHotel(m: ServicioManual, hotel: HotelDeVuelo): ResultadoManual {
   if (m.clase !== "vuelo" || !m.tramo) return { ok: false, error: "El servicio no es un vuelo." };
   if (!hotel.destino || !hotel.fechaIda || !hotel.fechaRegreso) return { ok: false, error: `El hotel «${hotel.nombre}» no tiene destino y fechas confirmados: no se puede asociar un vuelo.` };
+  if (!esCodigoIata(hotel.destinoIata)) {
+    return { ok: false, error: `El destino «${hotel.destino}» no tiene un código IATA confiable en el catálogo. Corrígelo en Producto → Destinos antes de agregar el vuelo (no se infiere del nombre).` };
+  }
+  const iataHotel = hotel.destinoIata.toUpperCase();
   const ladoHotel = m.tramo === "regreso" ? m.origen : m.destino;
-  if (normalizarCiudad(ladoHotel) !== normalizarCiudad(hotel.destino)) {
-    return { ok: false, error: `El vuelo ${m.tramo === "regreso" ? "sale de" : "llega a"} «${ladoHotel}» pero el hotel «${hotel.nombre}» está en ${hotel.destino}.` };
+  if ((ladoHotel ?? "").toUpperCase() !== iataHotel) {
+    return { ok: false, error: `El vuelo ${m.tramo === "regreso" ? "sale de" : "llega a"} ${ladoHotel} pero el hotel «${hotel.nombre}» está en ${hotel.destino} (${iataHotel}).` };
   }
   if (m.fechaIda && m.fechaIda < hotel.fechaIda) return { ok: false, error: `El vuelo de ida no puede ser anterior a la entrada al hotel (${hotel.fechaIda}).` };
   if (m.fechaRegreso && m.fechaRegreso > hotel.fechaRegreso) return { ok: false, error: `El vuelo de regreso no puede ser posterior a la salida del hotel (${hotel.fechaRegreso}).` };
@@ -152,8 +187,12 @@ export function validarVueloContraHotel(m: ServicioManual, hotel: HotelDeVuelo):
       return { ok: false, error: `La fecha del vuelo (${f}) debe estar dentro de la estadía en «${hotel.nombre}» (${hotel.fechaIda} → ${hotel.fechaRegreso}).` };
     }
   }
-  const ciudad = hotel.destino;
-  return { ok: true, valor: { ...m, hotelRef: hotel.ref, hotelEtiqueta: hotel.nombre, ...(m.tramo === "regreso" ? { origen: ciudad } : { destino: ciudad }) } };
+  // Las fechas del vuelo son las del PLAN del hotel (ida y vuelta: ambas; solo ida: la ida; solo regreso: el regreso). Si el plan cambió, el vuelo se actualiza.
+  const plan = fechasDeVuelo(m.tramo, hotel);
+  if (m.fechaIda !== plan.fechaIda || m.fechaRegreso !== plan.fechaRegreso) {
+    return { ok: false, error: `Las fechas del vuelo deben ser las del plan de «${hotel.nombre}» (${[plan.fechaIda, plan.fechaRegreso].filter(Boolean).join(" → ")}). Actualiza el vuelo en el carrito.` };
+  }
+  return { ok: true, valor: { ...m, hotelRef: hotel.ref, hotelEtiqueta: hotel.nombre, ...(m.tramo === "regreso" ? { origen: iataHotel } : { destino: iataHotel }) } };
 }
 
 /** Cada vuelo del carrito señala UN hotel del mismo carrito (por el id del ítem): nunca se asigna en silencio al primero. */
@@ -172,18 +211,37 @@ export function resolverHotelDeManuales(itemsRaw: unknown, manuales: unknown): {
 }
 
 /**
- * Vuelos COMUNES de una comparativa: solo vuelos, y compatibles con TODAS las opciones (mismo destino y fechas dentro de la estadía de cada hotel).
- * Si alguna opción no los admite no se ofrece la comparativa.
+ * Vuelos de una COMPARATIVA: solo vuelos, y cada uno afecta a TODOS los hoteles de su GRUPO (mismo destino IATA y mismas fechas). `selector` del vuelo = clave de grupo
+ * (`grupo:CTG|ida|regreso`) o «comun» (válido solo si hay un único grupo). Con varios grupos cada vuelo debe nombrar el suyo; un grupo sin vuelos es válido. Cada hotel del grupo
+ * debe aceptar el vuelo (ciudad y fechas de su estadía). Los pasajeros del vuelo no superan los de ninguna opción del grupo (las alternativas NO se suman).
  */
-export function vuelosComunesCompatibles(manuales: readonly ServicioManual[], hoteles: readonly HotelDeVuelo[]): { ok: true } | { ok: false; error: string } {
+export function vuelosComunesCompatibles(
+  manuales: readonly ServicioManual[], hoteles: readonly (HotelDeVuelo & { pax?: number })[],
+): { ok: true; grupoDe: (string | null)[] } | { ok: false; error: string } {
+  const { grupos, sinDato } = agruparHotelesPorViaje(hoteles);
+  if (manuales.length && sinDato.length) {
+    const h = sinDato[0];
+    return { ok: false, error: !esCodigoIata(h.destinoIata)
+      ? `El destino «${h.destino ?? "—"}» de «${h.nombre}» no tiene un código IATA confiable en el catálogo. Corrígelo en Producto → Destinos (no se infiere del nombre).`
+      : `El hotel «${h.nombre}» no tiene fechas confirmadas: no se pueden asociar vuelos.` };
+  }
+  const grupoDe: (string | null)[] = [];
   for (const m of manuales) {
-    if (m.clase !== "vuelo") return { ok: false, error: "En una comparativa solo se pueden agregar vuelos manuales comunes a todas las opciones." };
-    for (const h of hoteles) {
+    if (m.clase !== "vuelo") return { ok: false, error: "En una comparativa solo se pueden agregar vuelos manuales." };
+    let g = grupos.find((x) => x.clave === m.hotelRef);
+    if (!g && m.hotelRef === "comun") {
+      if (grupos.length !== 1) return { ok: false, error: "Hay varios destinos o fechas en la comparativa: elige a qué grupo pertenece el vuelo." };
+      g = grupos[0];
+    }
+    if (!g) return { ok: false, error: `El vuelo «${m.nombre}» no pertenece a ningún grupo de la comparativa (destino y fechas).` };
+    for (const h of g.hoteles) {
       const r = validarVueloContraHotel(m, h);
       if (!r.ok) return { ok: false, error: `El vuelo «${m.nombre}» no es compatible con la opción «${h.nombre}»: ${r.error}` };
+      if (h.pax != null && m.pax > h.pax) return { ok: false, error: `El vuelo «${m.nombre}» tiene ${m.pax} pasajeros y la opción «${h.nombre}» solo ${h.pax}.` };
     }
+    grupoDe.push(g.clave);
   }
-  return { ok: true };
+  return { ok: true, grupoDe };
 }
 
 const lugar = (t: string | null): { codigo: string | null; ciudad: string | null } => {

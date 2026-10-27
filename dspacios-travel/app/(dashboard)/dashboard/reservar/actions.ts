@@ -82,6 +82,7 @@ import { esInfantePorEdad, pasajeroConsumeSilla } from "@/lib/reservar/pasajeros
 import { payloadGuardarPasajeros } from "@/lib/reservar/pasajerosEdicion";
 import { normalizarResponsablesPorGrupo } from "@/lib/reservar/pasajerosFilas";
 import { posicionesSinAsignar, posicionesUnicasDeGrupo, reindexarGrupoLocal, consolidarReservasSillasPorBloqueo, demandaSillasPorBloqueo, faltanteDeCupos, prevalidarResponsablesDeGrupo, mensajePrevalidacionGrupo, type ReservaSillasPorBloqueo } from "@/lib/reservar/carritoAsignaciones";
+import { iataDeDestino } from "@/lib/reservar/destinoIata";
 import { descripcionContratoManual, lineaB2BManual, primerGrupoPendiente, tramosVueloManual, validarCostoManual, validarVueloContraHotel, verificarManualesCotizados, type ServicioManual } from "@/lib/cart/servicioManual";
 import { armarGruposConversion, resolverVinculosCotizacion, validarPasajerosServiciosVinculados } from "@/lib/reservar/vinculoServiciosCheckout";
 import { calcularResidualServiciosIncluidosPorGrupo } from "@/lib/reservar/desglosePersonaCotizacion";
@@ -2329,9 +2330,11 @@ export async function convertirCotizacionCarrito(
       if (x.m.clase !== "vuelo") continue;
       const hp = validadosPersona.find((v) => v.item.ref === x.m.hotelRef);
       const hb = validadosBernalo.find((v) => v.item.ref === x.m.hotelRef);
-      const hotel = hp
+      const hotelBase = hp
         ? { ref: hp.item.ref ?? "", nombre: hp.comp.meta.hotel_nombre ?? hp.item.hotelNombre, destino: hp.comp.meta.destino_nombre ?? null, fechaIda: hp.comp.meta.fecha_ida, fechaRegreso: hp.comp.meta.fecha_regreso }
         : hb ? { ref: hb.item.ref ?? "", nombre: hb.resultado.hotelNombre, destino: hb.resultado.hotelDestino, fechaIda: hb.resultado.salida.fechaIda, fechaRegreso: hb.resultado.salida.fechaRegreso } : null;
+      // IATA del destino desde el CATÁLOGO (la misma fuente que al cotizar); si falta, el contrato no se numera.
+      const hotel = hotelBase ? { ...hotelBase, destinoIata: await iataDeDestino(admin, hotelBase.destino) } : null;
       if (!hotel) return { ok: false, error: `${x.m.nombre}: el hotel del vuelo no se pudo validar en este contrato.` };
       const rv = validarVueloContraHotel(x.m, hotel);
       if (!rv.ok) return { ok: false, error: `${x.m.nombre}: ${rv.error}` };

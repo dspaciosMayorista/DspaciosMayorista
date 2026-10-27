@@ -52,3 +52,24 @@ export async function crearComparativaCarrito(input) {
   if (implComparativa) return implComparativa(input);
   return { ok: false, error: "crearComparativaCarrito: no implementado en el stub de pruebas" };
 }
+// #64: catálogo IATA de los destinos (el servidor real consulta destinos.codigo_iata y el catálogo de ciudades).
+import { codigoIataDeCiudad } from "../../../lib/iata.ts";
+let implIata = null;
+export function __setCodigosIata(fn) {
+  implIata = fn;
+}
+export async function codigosIataDestinos(nombres) {
+  if (implIata) return implIata(nombres);
+  return Object.fromEntries((Array.isArray(nombres) ? nombres : []).map((n) => [n, codigoIataDeCiudad(n)]));
+}
+// #64/#102: vista previa B2B de la comparativa (términos por opción).
+export const __previasComparativa = [];
+let implPreviaCmp = null;
+export function __setPrevisualizarComparativa(fn) {
+  implPreviaCmp = fn;
+}
+export async function previsualizarComparativaB2B(input) {
+  __previasComparativa.push(input);
+  if (implPreviaCmp) return implPreviaCmp(input);
+  return { ok: false, error: "previsualizarComparativaB2B: no implementado en el stub de pruebas" };
+}

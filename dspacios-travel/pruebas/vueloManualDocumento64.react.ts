@@ -14,10 +14,10 @@ const { validarServicioManual, validarVueloContraHotel, tramosVueloManual, descr
 const { formatMoneda } = await import("../lib/utils.ts");
 
 const valido = (raw: unknown) => { const r = validarServicioManual(raw); assert.ok(r.ok); return (r as { valor: Parameters<typeof tramosVueloManual>[0] }).valor; };
-const HOTEL = { ref: "item-0", nombre: "Hotel Almirante", destino: "Cartagena", fechaIda: "2030-10-15", fechaRegreso: "2030-10-18" };
+const HOTEL = { ref: "item-0", nombre: "Hotel Almirante", destino: "Cartagena", destinoIata: "CTG", fechaIda: "2030-10-15", fechaRegreso: "2030-10-18" };
 const conHotel = (raw: unknown) => { const r = validarVueloContraHotel(valido(raw), HOTEL); assert.ok(r.ok, r.ok ? "" : r.error); return (r as { valor: Parameters<typeof tramosVueloManual>[0] }).valor; };
 
-const base = { clase: "vuelo", nombre: "Tiquete Avianca", pax: 2, precio: 1_800_000, moneda: "COP", impuestoNoComisionable: 200_000, hotelRef: "h1", origen: "BOG", destino: "Cartagena", tramo: "ida_regreso", fechaIda: "2030-10-15", fechaRegreso: "2030-10-18" };
+const base = { clase: "vuelo", nombre: "Tiquete Avianca", pax: 2, precio: 1_800_000, moneda: "COP", impuestoNoComisionable: 200_000, hotelRef: "h1", origen: "BOG", destino: "CTG", tramo: "ida_regreso", fechaIda: "2030-10-15", fechaRegreso: "2030-10-18" };
 const venta = {
   numero_contrato: "", cliente: "Cliente Prueba", cliente_documento: "1000", cliente_direccion: null, cliente_telefono: null, asesor: "Asesora", asesor_firma_nombre: "Asesora",
   asesor_firma_cargo: "Asesor/a", asesor_firma_cc: null, asesor_firma_tel: null, estado: "pendiente", fecha_emision: "2030-10-01", fecha_salida: "2030-10-15",
@@ -52,7 +52,7 @@ describe("el vuelo manual en el documento de la cotización", () => {
     assert.match(seccion, /Ida:/);
     assert.match(seccion, /Regreso:/);
     assert.match(seccion, /Origen: .*BOG/);
-    assert.match(seccion, /Destino: Cartagena/);
+    assert.match(seccion, /Destino: Cartagena \(CTG\)/);
     assert.match(seccion, /pasajeros en este vuelo: 2/);
     assert.match(seccion, /sujeto a confirmación de disponibilidad y tarifa/);
     assert.doesNotMatch(seccion, /record|PNR|silla/i);
@@ -76,7 +76,7 @@ describe("el vuelo manual en el documento de la cotización", () => {
     const r = texto([itemHotel, ida.item], ida.vuelos);
     assert.match(r, /Ida:/);
     assert.doesNotMatch(r, /Regreso:/);
-    const reg = lineaYTramos(conHotel({ ...base, tramo: "regreso", origen: "Cartagena", destino: "BOG", fechaIda: null }), 2);
+    const reg = lineaYTramos(conHotel({ ...base, tramo: "regreso", origen: "CTG", destino: "BOG", fechaIda: null }), 2);
     const g = texto([itemHotel, reg.item], reg.vuelos);
     assert.match(g, /Regreso:/);
     assert.doesNotMatch(g, /Ida:/);

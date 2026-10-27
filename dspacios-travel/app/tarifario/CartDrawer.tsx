@@ -59,7 +59,7 @@ function ServiciosDelHotel({ hotel, servicios, onQuitar }: { hotel: HotelCartIte
 }
 
 export function CartDrawer({ checkoutHabilitado = false, fotosPorHotel = {} }: { checkoutHabilitado?: boolean; fotosPorHotel?: Record<number, string> }) {
-  const { items, remove, totales, count, drawerOpen, openDrawer, closeDrawer, setAddonsIntent } = useCart();
+  const { items, remove, totales, count, drawerOpen, openDrawer, closeDrawer, setAddonsIntent, modoComparativa } = useCart();
   const router = useRouter();
   // Resuelve la foto ACTUAL del hotel por id (los ítems viejos del carrito pueden
   // no traer fotoUrl si se agregaron antes de subir la portada).
@@ -239,10 +239,16 @@ export function CartDrawer({ checkoutHabilitado = false, fotosPorHotel = {} }: {
             </div>
 
             <div className="border-t border-gray-100 p-4">
+              {modoComparativa ? (
+                <p className="mb-3 rounded-lg bg-sky-50 px-3 py-2 text-xs text-sky-800" data-testid="sin-total-comparativa">
+                  Modo comparativa: cada hotel es una alternativa y se cotiza por separado. No hay un total del carrito; verás el valor de cada opción (con sus servicios y vuelos) al crear la comparativa.
+                </p>
+              ) : (
               <div className="mb-3 space-y-2">
                 <TotalesPorMoneda totales={totales} etiqueta="Total estimado" />
                 <AvisoMonedas totales={totales} prevision={preverCotizacion(items)} />
               </div>
+              )}
               {items.some((i) => i.tipo === "hotel") && (
                 <>
                   <button

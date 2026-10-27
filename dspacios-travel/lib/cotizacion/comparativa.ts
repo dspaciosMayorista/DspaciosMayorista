@@ -586,3 +586,30 @@ export function madreElegiblePorVisitante(
   if (m.creado_por_id == null && m.propietario_id == null && m.aliado_id == null) return true; // anónima: sin creador que comprobar
   return creador?.activo === true && (ROLES_CREADOR_COMPARTIDA as readonly string[]).includes(creador.rol ?? "");
 }
+
+export type ProblemaAcomodacion = { tipo: "mixta" | "distintas"; hotel: string };
+
+/** Texto ÚNICO de la regla de acomodación de la comparativa; lo usan el servidor y la pantalla. */
+export function mensajeAcomodacionComparativa(p: ProblemaAcomodacion): string {
+  return p.tipo === "mixta"
+    ? `No se puede crear la comparativa: con vuelos manuales y varios destinos todas las alternativas deben usar la misma acomodación, y «${p.hotel}» tiene habitaciones de más de un tipo. Deja un solo tipo de habitación en ese hotel o usa un único destino.`
+    : `No se puede crear la comparativa: con vuelos manuales y varios destinos todas las alternativas deben usar la misma acomodación (por ejemplo, todas dobles), y «${p.hotel}» no coincide con las demás. Iguala la acomodación o usa un único destino.`;
+}
+
+/** Con vuelos manuales y más de un destino, TODA la comparativa usa una sola acomodación. Un destino con varias fechas sigue siendo unidestino (no aplica). */
+export function validarAcomodacionComparativa(
+  items: readonly { hotelNombre: string; destino?: string | null; habitaciones: Record<string, number> }[], hayVuelos: boolean,
+): ProblemaAcomodacion | null {
+  if (!hayVuelos || new Set(items.map((i) => (i.destino ?? "").trim().toUpperCase())).size < 2) return null;
+  const tipos = items.map((i) => Object.entries(i.habitaciones).filter(([, n]) => n > 0).map(([a]) => a));
+  const mixto = tipos.findIndex((t) => t.length > 1);
+  if (mixto >= 0) return { tipo: "mixta", hotel: items[mixto].hotelNombre };
+  const distinto = tipos.findIndex((t) => t[0] !== tipos[0][0]);
+  return distinto >= 0 ? { tipo: "distintas", hotel: items[distinto].hotelNombre } : null;
+}
+
+/** Total que ve quien NO es personal interno: en una opción NETO (#102) es el exigible (PVP − comisión); la columna `total` es el PVP y no sale. */
+export function totalPublicoOpcion(total: number, resumen: unknown): number {
+  const x = (resumen as { total_exigible?: unknown } | null)?.total_exigible;
+  return typeof x === "number" && Number.isFinite(x) ? x : total;
+}

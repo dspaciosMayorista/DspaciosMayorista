@@ -14,7 +14,7 @@ import type { Database } from "@/types/database";
 import { createClient } from "@/lib/supabase/server";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { formatFechaLarga, formatMoneda } from "@/lib/utils";
-import { agruparPorHotel, canalDeRol, desdeComparativa, limiteSolicitudVencida, resumenDeOpcion, type GrupoHotel, type OpcionVista } from "@/lib/cotizacion/comparativa";
+import { agruparPorHotel, canalDeRol, desdeComparativa, limiteSolicitudVencida, resumenDeOpcion, totalPublicoOpcion, type GrupoHotel, type OpcionVista } from "@/lib/cotizacion/comparativa";
 import { hoyBogota } from "@/lib/cotizacion/vigencia";
 import { visitantePuedeContinuar } from "@/lib/cotizacion/comparativaServidor";
 import { PrintButton } from "@/components/contrato/PrintButton";
@@ -42,7 +42,7 @@ export async function cargarDatosComparativa(sb: SB, madreId: number): Promise<D
   const filas = (ops ?? []) as unknown as FilaOpcion[];
   const vistas: OpcionVista[] = filas.map((o) => ({
     opcionRef: o.opcion_ref, acomodacionRef: o.acomodacion_ref, etiqueta: o.etiqueta, moneda: o.moneda,
-    tarifaPersona: o.tarifa_persona == null ? null : Number(o.tarifa_persona), total: Number(o.total), orden: o.orden,
+    tarifaPersona: o.tarifa_persona == null ? null : Number(o.tarifa_persona), total: totalPublicoOpcion(Number(o.total), o.resumen_publico), orden: o.orden,
   }));
   const resumenes: Record<string, ResumenHotelUI> = {};
   for (const o of filas) {

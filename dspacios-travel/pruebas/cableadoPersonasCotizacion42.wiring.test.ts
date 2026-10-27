@@ -169,7 +169,9 @@ describe("acciones: C2 y C7", () => {
     assert.ok(!/useState[^\n]*"CC"/.test(titularEditor));
   });
   test("checkout: el tipo sale de la entrada cruda validada contra el catálogo, nunca del CC forzado", () => {
-    for (const fn of ["crearSolicitudReserva", "crearComparativaCarrito"]) {
+    // La comparativa valida su entrada en prepararComparativa (compartida con la vista previa B2B); crearComparativaCarrito solo la invoca.
+    assert.ok(cuerpo(checkout, "crearComparativaCarrito").includes("prepararComparativa(inputRaw, false)"));
+    for (const fn of ["crearSolicitudReserva", "prepararComparativa"]) {
       const c = cuerpo(checkout, fn);
       assert.ok(c.includes("tipoDocCheckout(inputRaw, TIPOS_DOC_PERSONA)"), fn);
     }

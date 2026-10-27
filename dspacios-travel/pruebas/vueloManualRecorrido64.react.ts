@@ -151,3 +151,44 @@ describe("Recorrido completo con datos reales: lo que ve el visitante en la comp
     assert.doesNotMatch(noCompartida, /tarifario\/checkout\?comparativa=/);
   });
 });
+
+// #64 (ronda 7) — identidad de la hija elegida por un visitante, con los datos REALES que escribe la prueba I1 de servicioManual64.pg.ts: documento imprimible de la hija y contrato convertido.
+type FixtureIdentidad = { hija: { detalle: { venta: Fila; hoteles: Fila[]; vuelos: Fila[]; items: Fila[] }; precio: number; exigible: number }; contrato: { venta: Fila; items: Fila[]; vuelos: Fila[]; hoteles: Fila[] } };
+const ID = D as unknown as { identidad_neta?: FixtureIdentidad; identidad_comisionable?: FixtureIdentidad };
+const HAY_ID = HAY && !!ID.identidad_neta && !!ID.identidad_comisionable;
+const clienteYTitular = (t: string) => {
+  const i = t.indexOf("Cliente"), j = t.indexOf("Titular de la reserva");
+  const hasta = (desde: number, marca: string) => { const k = t.indexOf(marca, desde + 1); return k < 0 ? t.slice(desde, desde + 400) : t.slice(desde, k); };
+  return { cliente: j > i ? t.slice(i, j) : hasta(i, "Vuelos"), titular: j >= 0 ? hasta(j, "Vuelos") : "" };
+};
+
+describe("Identidad de la hija y del contrato elegidos por un visitante", { skip: !HAY_ID && "sin fixture identidad_* (lo genera la prueba I1 del arnés de Postgres local)" }, () => {
+  const docHija = (f: FixtureIdentidad, neto: boolean) => html({
+    venta: f.hija.detalle.venta, pasajeros: [], hoteles: f.hija.detalle.hoteles, vuelos: f.hija.detalle.vuelos, items: f.hija.detalle.items,
+    totalPagado: 0, agencia: null, condiciones: null, habitacionesBernalo: [], esCotizacion: true, codigo: "COT-ID", vigenciaHasta: "2030-02-01", netoTotalExigible: neto ? f.hija.exigible : null,
+  });
+  const docContrato = (f: FixtureIdentidad, neto: boolean) => html({
+    venta: f.contrato.venta, pasajeros: [], hoteles: f.contrato.hoteles, vuelos: f.contrato.vuelos, items: f.contrato.items, totalPagado: 0, agencia: null, condiciones: null, habitacionesBernalo: [],
+    netoTotalExigible: neto ? f.hija.exigible : null,
+  });
+
+  for (const [titulo, doc] of [["documento imprimible de la hija", docHija], ["contrato convertido", docContrato]] as const) {
+    test(`NETO · ${titulo}: el cliente es el ALIADO (nombre y NIT) y el visitante figura como titular de la reserva`, () => {
+      const { cliente, titular } = clienteYTitular(doc(ID.identidad_neta!, true));
+      assert.match(cliente, /Agencia Identidad 64/);
+      assert.match(cliente, /900123456/);
+      assert.doesNotMatch(cliente, /Visitante Uno|999/, "la persona no aparece como cliente");
+      assert.match(titular, /Visitante Uno/);
+      assert.match(titular, /999/);
+      assert.match(titular, /3001234567/);
+    });
+    test(`PVP con comisión · ${titulo}: el visitante es el cliente y no hay titular aparte`, () => {
+      const t = doc(ID.identidad_comisionable!, false);
+      const { cliente } = clienteYTitular(t);
+      assert.match(cliente, /Visitante Uno/);
+      assert.match(cliente, /999/);
+      assert.doesNotMatch(cliente, /Agencia Identidad 64/, "el aliado es el vendedor (firma), no el cliente");
+      assert.doesNotMatch(t, /Titular de la reserva/);
+    });
+  }
+});
