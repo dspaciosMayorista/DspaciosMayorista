@@ -69,3 +69,21 @@ export function parseRuta(ruta: string | null | undefined): { origen: string | n
   const codigos = ruta.split(/[^A-Za-z]+/).map((x) => x.trim().toUpperCase()).filter(Boolean);
   return { origen: codigos[0] ?? null, destino: codigos[1] ?? null };
 }
+
+const sinTildes = (t: string) => t.normalize("NFD").replace(/[\u0300-\u036f]/g, "").trim().replace(/\s+/g, " ").toUpperCase();
+
+/**
+ * Código IATA de una ciudad/destino desde el CATÁLOGO (`IATA_CIUDAD`): coincidencia EXACTA del nombre (sin tildes ni mayúsculas) y única. Si el nombre no está o aparece con dos
+ * códigos devuelve null: nunca se infiere ni se adivina (quien llama pide corregir el dato en el catálogo de destinos).
+ */
+export function codigoIataDeCiudad(nombre: string | null | undefined): string | null {
+  const n = sinTildes(nombre ?? "");
+  if (!n) return null;
+  const hallados = Object.entries(IATA_CIUDAD).filter(([codigo, ciudad]) => /^[A-Z]{3}$/.test(codigo) && sinTildes(ciudad) === n).map(([codigo]) => codigo);
+  return hallados.length === 1 ? hallados[0] : null;
+}
+
+/** ¿Tiene forma de código IATA (3 letras)? */
+export function esCodigoIata(c: string | null | undefined): c is string {
+  return typeof c === "string" && /^[A-Za-z]{3}$/.test(c.trim());
+}

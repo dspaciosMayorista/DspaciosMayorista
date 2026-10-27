@@ -120,7 +120,9 @@ describe("conversión: todo se decide ANTES de numerar y el contrato nace del pl
   });
 
   test("el impuesto del contrato es el mismo que se usó para la base (la base de datos recalcula la comisión desde ventas.impuesto)", () => {
-    assert.match(conv, /impuesto: validadosPersona\.reduce\(\(s, v\) => s \+ v\.comp\.impuestoTotal, 0\),/);
+    // #64: es la suma del impuesto de las MISMAS líneas vivas que alimentaron el plan del grupo (hoteles + manuales), no solo el de los hoteles.
+    assert.match(conv, /impuestoB2BPorGrupo\.set\(claveDeGrupo\(grupo\), vivas\.reduce\(\(s, l\) => s \+ l\.impuesto, 0\)\);/);
+    assert.match(conv, /impuesto: impuestoB2BPorGrupo\.get\(claveGrupo\) \?\? 0,/);
   });
 
   test("las claves de las líneas vivas coinciden con las congeladas: ref del ítem y tour-N por posición en payload.tours", () => {
@@ -184,7 +186,7 @@ describe("cobertura exacta antes de numerar (#102)", () => {
   test("la conversión verifica, con las unidades de TODOS los grupos, antes de la validación por grupo y de reservar número", () => {
     const iCob = conv.indexOf("verificarCoberturaLineasB2B(");
     assert.ok(iCob > 0, "la conversión llama a verificarCoberturaLineasB2B");
-    assert.match(conv, /grupos\.map\(\(g\) => \[\.\.\.g\.items\.map\(\(it\) => it\.ref \?\? ""\), \.\.\.g\.tours\.map\(\(t\) => `tour-\$\{t\.__idx\}`\)\]\)/);
+    assert.match(conv, /grupos\.map\(\(g\) => \[\.\.\.g\.items\.map\(\(it\) => it\.ref \?\? ""\), \.\.\.g\.tours\.map\(\(t\) => `tour-\$\{t\.__idx\}`\), \.\.\.g\.manuales\.map\(\(x\) => `manual-\$\{x\.idx\}`\)\]\)/);
     assert.ok(iCob < conv.indexOf("siguienteNumeroContrato(tenantCotizacion)"), "antes de reservar el número");
     assert.ok(iCob < conv.indexOf("compararLineasConCongeladas(planB2BCot"), "antes de la comparación por grupo");
   });

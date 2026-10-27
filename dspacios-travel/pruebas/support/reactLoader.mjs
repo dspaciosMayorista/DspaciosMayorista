@@ -153,6 +153,10 @@ export async function resolve(specifier, context, nextResolve) {
   if (specifier === "./actions" && context.parentURL?.endsWith("/tarifario/checkout/page.tsx")) {
     return { url: STUB_CHECKOUT_ACTIONS, shortCircuit: true };
   }
+  // La comparativa se importa de forma dinámica con el alias (`await import("@/app/tarifario/checkout/actions")`): mismo stub.
+  if (specifier === "@/app/tarifario/checkout/actions" && context.parentURL?.endsWith("/tarifario/checkout/page.tsx")) {
+    return { url: STUB_CHECKOUT_ACTIONS, shortCircuit: true };
+  }
   if (specifier === "./actions" && context.parentURL?.endsWith("PasajerosContratoClient.tsx")) {
     return { url: STUB_PASAJEROS_CONTRATO_ACTIONS, shortCircuit: true };
   }
@@ -252,6 +256,8 @@ export async function resolve(specifier, context, nextResolve) {
       context.parentURL?.endsWith("/ConvertirCarritoBtn.tsx") ||
       // Panel del carrito (pruebas/carritoMonedaCheckout.react.ts).
       context.parentURL?.endsWith("/tarifario/CartDrawer.tsx") ||
+      // Checkout público (pruebas/recorridoComparativa64.react.ts): al abrir la comparativa corrige la URL con router.replace.
+      context.parentURL?.endsWith("/tarifario/checkout/page.tsx") ||
       // Facturación (#49, pruebas/tablasMoviles49.react.ts).
       context.parentURL?.endsWith("FacturacionClient.tsx"))
   ) {

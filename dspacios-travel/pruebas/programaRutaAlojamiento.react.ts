@@ -135,7 +135,10 @@ test("guardarCiudades recorta a 200 caracteres antes de enviar", async () => {
 test("guardarCiudades propaga el error de la RPC y NO revalida", async () => {
   sb.rpcError = { message: "sin permiso para reemplazar la ruta" };
   const r = await guardarCiudades(7, [{ nombre: "LIMA", codigoIata: "", noches: 1, alojamientoPrevisto: "A" }]);
-  assert.deepEqual(r, { ok: false, error: "sin permiso para reemplazar la ruta" });
+  // El texto crudo de la base no llega al formulario: un error sin código de negocio se traduce a un mensaje claro.
+  assert.equal(r.ok, false);
+  assert.match(r.ok ? "" : r.error, /No se pudo guardar el cambio. Inténtalo de nuevo/);
+  assert.doesNotMatch(r.ok ? "" : r.error, /sin permiso para reemplazar la ruta/);
 });
 
 test("importarDesdeTexto con ruta: una sola RPC, sin la clave alojamiento_previsto (se conserva en SQL)", async () => {
@@ -157,7 +160,9 @@ test("importarDesdeTexto con ruta: una sola RPC, sin la clave alojamiento_previs
 test("importarDesdeTexto: si la RPC falla devuelve el error y no sigue con otras secciones", async () => {
   sb.rpcError = { message: "boom" };
   const r = await importarDesdeTexto(7, TEXTO, { ...OPC_RUTA, itinerario: true });
-  assert.deepEqual(r, { ok: false, error: "boom" });
+  assert.equal(r.ok, false);
+  assert.match(r.ok ? "" : r.error, /No se pudo guardar el cambio. Inténtalo de nuevo/);
+  assert.doesNotMatch(r.ok ? "" : r.error, /boom/);
   assert.equal(sb.rpcs.length, 1);
 });
 

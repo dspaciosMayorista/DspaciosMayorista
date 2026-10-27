@@ -3,6 +3,7 @@
 import { BuscarTitular } from "@/components/personas/BuscarTitular";
 import { Suspense, lazy, useEffect, useMemo, useState, useSyncExternalStore, useTransition } from "react";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { formatMoneda } from "@/lib/utils";
 import { ACOM_ROOM_LABEL, type AcomRoom } from "@/lib/acomodaciones";
 import { useCart, type CartItem, type HotelCartItem, type HotelCartItemPersona, type HotelCartItemBernalo } from "@/lib/cart/CartContext";
@@ -10,11 +11,15 @@ import { normalizarEdadesMenoresCarrito } from "@/lib/reservar/edadesMenores";
 import { comisionSobre, formatImporte, monedaDeItem, preverCotizacion } from "@/lib/cart/monedaCarrito";
 import { AvisoMonedas, TotalesPorMoneda } from "../totalesCarrito";
 import { UserCheck } from "lucide-react";
-import { crearSolicitudReserva, fotosPortada, getContextoAsistenciaB2B, previsualizarTerminosB2BAsistido, type PrevisualizacionB2B, getContextoB2B, type SolicitudResult, type ContextoAsistenciaCheckout, type ContextoB2B, type ResultadoComparativaCreada } from "./actions";
+import { crearSolicitudReserva, fotosPortada, getContextoAsistenciaB2B, previsualizarTerminosB2BAsistido, previsualizarComparativaB2B, type PrevisualizacionB2B, type PrevisualizacionComparativaB2B, getContextoB2B, type SolicitudResult, type ContextoAsistenciaCheckout, type ContextoB2B, type ResultadoComparativaCreada } from "./actions";
 import { TerminosB2BAsistido } from "@/components/cotizacion/TerminosB2BAsistido";
+import { ServicioManualPanel } from "./ServicioManualPanel";
+import { ResumenOpcionesComparativa } from "./ResumenOpcionesComparativa";
+import { useIatasDestinos } from "@/lib/cart/useIatasDestinos";
+import { agruparHotelesPorViaje, esClaveGrupoViaje, fechasDeVuelo, vuelosComunesCompatibles, type ServicioManual } from "@/lib/cart/servicioManual";
 // #35: se carga solo cuando el modo comparativa está activo (no entra al grafo del checkout normal).
 const ContinuarComparativa = lazy(() => import("@/lib/cotizacion/comparativaCheckout").then((m) => ({ default: m.ContinuarComparativa })));
-import { MAX_OPCIONES } from "@/lib/cotizacion/comparativa";
+import { MAX_OPCIONES, mensajeAcomodacionComparativa, validarAcomodacionComparativa } from "@/lib/cotizacion/comparativa";
 import { TIPOS_DOC_PERSONA } from "@/lib/personas/identidad";
 
 // El servidor devolvió que el desglose B2B cambió entre la vista previa y generar (no se creó nada).
@@ -34,7 +39,7 @@ function resumenHabBernalo(it: { habitaciones: { acom: string; adultos: number }
 }
 
 export default function CheckoutPage() {
-  const { items, totales, remove, clear, actualizarPrecioBernalo } = useCart();
+  const { items, totales, remove, clear, actualizarPrecioBernalo, modoComparativa, setModoComparativa } = useCart();
   const hotelItems = items.filter((i): i is HotelCartItemPersona => i.tipo === "hotel" && i.modeloTarifario !== "unidad");
   // Fase 3F-4A: el checkout YA envía los ítems Bernalo — el servidor los
   // re-liquida directo con `computarReservaBernalo` (checkout/actions.ts),
@@ -42,6 +47,20 @@ export default function CheckoutPage() {
   // para detectar si cambiaron, ver `enviar()`).
   const bernaloItems = items.filter((i): i is HotelCartItemBernalo => i.tipo === "hotel" && i.modeloTarifario === "unidad");
   const tourItems = items.filter((i): i is Extract<CartItem, { tipo: "tour" }> => i.tipo === "tour");
+  const manualItems = items.filter((i): i is Extract<CartItem, { tipo: "manual" }> => i.tipo === "manual");
+  // #64: IATA de cada destino (catálogo) y grupos de la comparativa (destino IATA + fechas). Los vuelos se asocian al grupo; sus fechas son las del plan del hotel.
+  const iataDe = useIatasDestinos(hotelItems.map((h) => h.destino));
+  const hotelesViaje = hotelItems.map((h) => ({ id: h.id, ref: h.id, nombre: h.hotelNombre, destino: h.destino, destinoIata: iataDe(h.destino), fechaIda: h.fechaIda, fechaRegreso: h.fechaRegreso, pax: h.pax }));
+  const gruposViaje = agruparHotelesPorViaje(hotelesViaje).grupos;
+  /** Lo que se envía de un vuelo: selector (hotel del carrito, o grupo en una comparativa) y fechas SIEMPRE las del plan vigente. */
+  const vueloParaEnviar = (m: Extract<CartItem, { tipo: "manual" }>): Extract<CartItem, { tipo: "manual" }> => {
+    if (m.clase !== "vuelo" || !m.tramo) return m;
+    const grupo = esClaveGrupoViaje(m.hotelRef) ? gruposViaje.find((g) => g.clave === m.hotelRef) : gruposViaje.find((g) => g.hoteles.some((h) => h.id === m.hotelRef));
+    const hotel = hotelesViaje.find((h) => h.id === m.hotelRef);
+    const plan = vista.crear ? (grupo ? { fechaIda: grupo.fechaIda, fechaRegreso: grupo.fechaRegreso } : null) : (hotel ?? null);
+    const f = plan ? fechasDeVuelo(m.tramo, plan) : { fechaIda: m.fechaIda, fechaRegreso: m.fechaRegreso };
+    return { ...m, ...f, hotelRef: vista.crear ? (grupo?.clave ?? m.hotelRef) : m.hotelRef };
+  };
   // `tipoDoc` (#42, D-6): se pide en el checkout; vacío = sin elegir (nunca un "CC" por defecto). No bloquea
   // el envío: sin tipo, la persona queda como ficha provisional en el CRM.
   const [c, setC] = useState({ nombres: "", apellidos: "", tipoDoc: "", numeroDoc: "", telefono: "", email: "" });
@@ -58,6 +77,9 @@ export default function CheckoutPage() {
   const [res, setRes] = useState<Extract<SolicitudResult, { ok: true }> | null>(null);
   const [fotos, setFotos] = useState<Record<number, string>>({});
   // #35: modo de la página según la URL. Se lee en el cliente (sin useSearchParams → sin Suspense).
+  // #64: el interno puede dejar la comparativa para que el cliente elija desde el enlace (solo se envía en modo comparativa).
+  const [compartir, setCompartir] = useState(false);
+  const [otrasAcom, setOtrasAcom] = useState(false);
   const [resCmp, setResCmp] = useState<Extract<ResultadoComparativaCreada, { ok: true }> | null>(null);
   const search = useSyncExternalStore(() => () => {}, () => window.location.search, () => "");
   const vista = useMemo(() => {
@@ -65,6 +87,15 @@ export default function CheckoutPage() {
     const token = q.get("comparativa"), op = q.get("op"), ac = q.get("ac");
     return { crear: q.get("modo") === "comparativa", continuar: token && op && ac ? { token, op, ac } : null };
   }, [search]);
+
+  // El modo «Cotización comparativa» del carrito y la URL no se contradicen en silencio: abrir la comparativa lo activa, y el modo activo no cae en la compra normal.
+  const router = useRouter();
+  const [, refrescarUrl] = useState(0);
+  useEffect(() => {
+    if (vista.continuar) return;
+    if (vista.crear && !modoComparativa) setModoComparativa(true);
+    else if (!vista.crear && modoComparativa) { router.replace("/tarifario/checkout?modo=comparativa"); refrescarUrl((n) => n + 1); }
+  }, [vista.crear, vista.continuar, modoComparativa, setModoComparativa, router]);
 
   // Contexto B2B (si el aliado está logueado): habilita modo + facturación.
   const [ctx, setCtx] = useState<ContextoB2B | null>(null);
@@ -89,7 +120,10 @@ export default function CheckoutPage() {
   useEffect(() => {
     getContextoAsistenciaB2B().then(setAsist).catch(() => {});
   }, []);
-  const puedeAsistir = asist?.puede === true && !esB2B && !vista.crear;
+  // #64/#102: también en la comparativa; allí cada opción liquida SUS términos (no hay total ni comisión global).
+  const puedeAsistir = asist?.puede === true && !esB2B;
+  // #64: el vuelo manual también lo agrega el personal interno a una comparativa (común a todas las opciones).
+  const puedeManual = asist?.puede === true && !esB2B;
   const aliadosAsist = asist?.puede === true ? asist.aliados : [];
   // Buscador por nombre: la lista (<datalist>) filtra mientras se escribe; la elección es SIEMPRE un aliado activo del catálogo (su id). Texto que no
   // coincide exactamente con una opción no elige nada y no se puede enviar. Si dos opciones se llamaran igual se distinguen con su número.
@@ -118,7 +152,8 @@ export default function CheckoutPage() {
   const { comision, neto: totalNeto } = comisionSobre(baseComision?.monto ?? 0, pct);
   const sobreParte = !totales.unica && baseComision != null;
   // La venta asistida NO estima la comisión aquí (no es un % del PVP: se descuenta antes el impuesto no comisionable): su desglose viene del servidor (vista previa).
-  const verComision = esB2B;
+  // Una comparativa no tiene una liquidación B2B única: sus alternativas compiten y no se suman (cada opción se cotiza por separado).
+  const verComision = esB2B && !vista.crear;
 
   // Resuelve la portada actual por hotel (ítems del carrito sin fotoUrl).
   useEffect(() => {
@@ -173,6 +208,11 @@ export default function CheckoutPage() {
           // servidor lo valida y cotiza el conjunto completo o nada.
           hotelItemId: it.hotelItemId ?? null,
         })),
+        // #64: precio de venta declarado por el asesor; el servidor lo vuelve a validar y exige sesión interna.
+        ...(manualItems.length ? { manuales: manualItems.map(vueloParaEnviar).map((m) => ({ clase: m.clase, nombre: m.nombre, origen: m.origen, destino: m.destino, fechaIda: m.fechaIda, fechaRegreso: m.fechaRegreso, pax: m.pax, precio: m.precio, moneda: m.moneda, impuestoNoComisionable: m.impuestoNoComisionable, tramo: m.tramo, hotelRef: m.hotelRef, horaIda: m.horaIda ?? null, horaRegreso: m.horaRegreso ?? null })) } : {}),
+        ...(vista.crear && compartir ? { compartirPublico: true } : {}),
+        // Elección EXPRESA: por defecto cada hotel se cotiza solo con la acomodación del carrito.
+        ...(vista.crear && otrasAcom ? { otrasAcomodaciones: true } : {}),
         cliente: c,
         // `facturacion`/`pctComision` YA NO se envían: el servidor los
         // resuelve siempre desde la sesión autenticada (`getContextoB2B()`),
@@ -189,6 +229,15 @@ export default function CheckoutPage() {
     setErr("");
     if (!c.nombres.trim() || !c.apellidos.trim()) { setErr("Ingresa nombres y apellidos."); return; }
     if (!c.telefono.trim()) { setErr("El teléfono / WhatsApp es obligatorio."); return; }
+    if (asistenciaB2B && !aliadoElegido) { setErr("Elige un aliado de la lista (agencia o freelance) de la venta B2B."); return; }
+    // #64: en una comparativa solo hay vuelos manuales COMUNES a todas las opciones, y deben ser compatibles con cada una (el servidor lo vuelve a exigir).
+    if (manualItems.length) {
+      const v = vuelosComunesCompatibles(manualItems.map(vueloParaEnviar) as ServicioManual[], hotelesViaje);
+      if (!v.ok) { setErr(v.error); return; }
+      // Multidestino (o varias fechas) con vuelos: una sola acomodación por opción. Se avisa aquí, antes de crear, con un mensaje claro (el servidor lo vuelve a exigir).
+      const acom = validarAcomodacionComparativa(hotelItems, true);
+      if (acom) { setErr(mensajeAcomodacionComparativa(acom)); return; }
+    }
     if (bernaloItems.length) { setErr("Los hoteles por unidad todavía no se pueden comparar. Quítalos del carrito."); return; }
     if (hotelItems.length < 2 || hotelItems.length > MAX_OPCIONES) { setErr(`Una comparativa necesita entre 2 y ${MAX_OPCIONES} hoteles en el carrito.`); return; }
     if (hotelItems.some((h) => h.modulo === "bloqueo")) { setErr("Los paquetes con vuelo negociado todavía no se pueden comparar."); return; }
@@ -228,20 +277,28 @@ export default function CheckoutPage() {
   const entradaPrevia = normPrevia?.ok ? armarEntrada(normPrevia.itemsNormalizados) : null;
   const clavePrevia = entradaPrevia ? JSON.stringify({ ...entradaPrevia, cliente: null }) : null;
   const [previa, setPrevia] = useState<{ clave: string; r: PrevisualizacionB2B } | null>(null);
+  const [previaCmp, setPreviaCmp] = useState<{ clave: string; r: PrevisualizacionComparativaB2B } | null>(null);
   useEffect(() => {
     if (!entradaPrevia || !clavePrevia) return;
     let vigente = true;
+    if (vista.crear) {
+      previsualizarComparativaB2B(entradaPrevia)
+        .then((r) => { if (vigente) setPreviaCmp({ clave: clavePrevia, r }); })
+        .catch(() => { if (vigente) setPreviaCmp({ clave: clavePrevia, r: { ok: false, error: "No se pudo calcular el desglose. Intenta de nuevo en unos minutos." } }); });
+      return () => { vigente = false; };
+    }
     previsualizarTerminosB2BAsistido(entradaPrevia)
       .then((r) => { if (vigente) setPrevia({ clave: clavePrevia, r }); })
       .catch(() => { if (vigente) setPrevia({ clave: clavePrevia, r: { ok: false, error: "No se pudo calcular el desglose. Intenta de nuevo en unos minutos." } }); });
     return () => { vigente = false; };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [clavePrevia]);
+  const actual = vista.crear ? previaCmp : previa;
   const estadoPrevia: "no_aplica" | "calculando" | "ok" | "error" =
     !asistenciaB2B || !aliadoElegido ? "no_aplica"
       : normPrevia && !normPrevia.ok ? "error"
-        : previa?.clave !== clavePrevia ? "calculando" : previa?.r.ok ? "ok" : "error";
-  const errorPrevia = normPrevia && !normPrevia.ok ? normPrevia.error : previa?.r.ok === false ? previa.r.error : "";
+        : actual?.clave !== clavePrevia ? "calculando" : actual?.r.ok ? "ok" : "error";
+  const errorPrevia = normPrevia && !normPrevia.ok ? normPrevia.error : actual?.r.ok === false ? actual.r.error : "";
   // Sin desglose del servidor no se confirma una venta B2B: evita generar con cifras que no se vieron.
   const sinDesglose = estadoPrevia === "calculando" || estadoPrevia === "error";
 
@@ -318,6 +375,21 @@ export default function CheckoutPage() {
           </div>
         ) : (
           <div className="space-y-6">
+            {/* #64: solo personal interno autorizado (mismo contexto que la venta asistida); el servidor lo exige de nuevo. */}
+            {puedeManual && <ServicioManualPanel comun={!!vista.crear} />}
+            {vista.crear && <ResumenOpcionesComparativa items={items} iataDe={iataDe} />}
+            {vista.crear && (
+              <label className="flex items-start gap-2 rounded-2xl border border-gray-200 bg-white p-4 text-sm text-gray-700">
+                <input type="checkbox" className="mt-0.5" checked={otrasAcom} onChange={(e) => setOtrasAcom(e.target.checked)} data-testid="otras-acomodaciones" />
+                <span><b>Ofrecer también otras acomodaciones de cada hotel.</b> Si no lo marcas, cada opción se cotiza solo con la acomodación que elegiste en el carrito (por ejemplo, Marina Suite doble); no se agregan alternativas por tener otra tarifa disponible.</span>
+              </label>
+            )}
+            {puedeManual && vista.crear && (
+              <label className="flex items-start gap-2 rounded-2xl border border-gray-200 bg-white p-4 text-sm text-gray-700">
+                <input type="checkbox" className="mt-0.5" checked={compartir} onChange={(e) => setCompartir(e.target.checked)} data-testid="compartir-comparativa" />
+                <span><b>Permitir que el cliente elija desde el enlace.</b> Si no lo marcas, solo el equipo puede elegir una opción; el cliente la ve pero no continúa por su cuenta. Los vuelos manuales quedan congelados: el cliente no puede cambiarlos.</span>
+              </label>
+            )}
             {/* Resumen del carrito */}
             <section className="rounded-2xl border border-gray-200 bg-white p-5">
               <h2 className="mb-3 text-sm font-semibold text-gray-700">Tu selección</h2>
@@ -353,7 +425,7 @@ export default function CheckoutPage() {
                       ) : (
                         <>
                           <div className="font-medium text-gray-800">
-                            <span className="mr-1 rounded bg-[rgba(38,187,217,0.12)] px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide" style={{ color: "var(--brand-accent)" }}>Tour</span>
+                            <span className="mr-1 rounded bg-[rgba(38,187,217,0.12)] px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide" style={{ color: "var(--brand-accent)" }}>{it.tipo === "manual" ? (it.clase === "vuelo" ? "Vuelo manual" : "Servicio manual") : "Tour"}</span>
                             {it.nombre}
                           </div>
                           <div className="text-xs text-gray-500">
@@ -363,7 +435,7 @@ export default function CheckoutPage() {
                             {it.pax} pax
                             {/* Vínculo con su hotel (solo presentación): quitar el
                                 hotel quita también este servicio — ver `remove`. */}
-                            {it.hotelItemId && (() => {
+                            {it.tipo === "tour" && it.hotelItemId && (() => {
                               const h = items.find((x) => x.id === it.hotelItemId);
                               return h && h.tipo === "hotel" ? ` · con ${h.hotelNombre}` : "";
                             })()}
@@ -464,7 +536,18 @@ export default function CheckoutPage() {
                     </p>
                     {estadoPrevia === "calculando" && <p role="status" className="text-xs text-gray-500" data-testid="previa-calculando">Calculando el desglose con el servidor…</p>}
                     {avisoTerminos && <p role="alert" className="rounded-lg bg-amber-50 px-3 py-2 text-xs text-amber-800" data-testid="terminos-cambiaron">{avisoTerminos} El desglose de abajo ya está actualizado.</p>}
-                    {estadoPrevia === "ok" && previa?.r.ok && <TerminosB2BAsistido plan={previa.r.terminos} previa />}
+                    {estadoPrevia === "ok" && !vista.crear && previa?.r.ok && <TerminosB2BAsistido plan={previa.r.terminos} previa />}
+                    {estadoPrevia === "ok" && vista.crear && previaCmp?.r.ok && (
+                      <div className="space-y-3" data-testid="terminos-por-opcion">
+                        <p className="text-xs text-gray-500">Cada alternativa liquida sus propios términos: no se suman entre sí ni existe un total o comisión de la comparativa.</p>
+                        {previaCmp.r.opciones.map((o) => (
+                          <div key={`${o.opcionRef}-${o.acomodacionRef}`} data-testid="terminos-opcion">
+                            <p className="mb-1 text-xs font-semibold text-gray-700">Opción {o.opcionRef} · {o.hotel ?? "Hotel"} · {o.acomodacionRef}</p>
+                            <TerminosB2BAsistido plan={o.terminos} previa />
+                          </div>
+                        ))}
+                      </div>
+                    )}
                     {estadoPrevia === "error" && (
                       <p role="alert" className="rounded-lg bg-amber-50 px-3 py-2 text-xs text-amber-800" data-testid="previa-error">
                         Todavía no se puede liquidar la venta B2B: {errorPrevia} Mientras tanto no se muestran importes ni se puede generar la cotización: el desglose lo calcula el servidor.
@@ -582,7 +665,7 @@ export default function CheckoutPage() {
                 </p>
               )}
               {ctx?.error && <p role="alert" className="mt-3 rounded-lg bg-red-50 px-3 py-2 text-sm text-red-600">{ctx.error}</p>}
-              {err && <p className="mt-3 rounded-lg bg-red-50 px-3 py-2 text-sm text-red-600">{err}</p>}
+              {err && <p role="alert" data-testid="error-checkout" className="mt-3 rounded-lg bg-red-50 px-3 py-2 text-sm text-red-600">{err}</p>}
               <button type="button" onClick={vista.crear ? enviarComparativa : enviar} disabled={pending || !!ctx?.error || sinDesglose}
                 className="mt-4 w-full rounded-lg px-4 py-3 text-sm font-semibold text-white disabled:opacity-50" style={{ backgroundColor: "var(--brand-primary)" }}>
                 {pending ? "Generando…" : vista.crear ? "Generar cotización comparativa" : precioCambio ? "Confirmar con el nuevo precio y enviar" : "Generar cotización y enviar solicitud"}

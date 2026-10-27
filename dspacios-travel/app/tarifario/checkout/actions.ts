@@ -34,7 +34,7 @@ import type { ComposicionBernaloDocumento } from "@/lib/reservar/alojamientoBern
 import type { Json } from "@/types/database";
 import { PAX_TARIFA_DEFAULT, paxDeAcomodacion } from "@/lib/acomodaciones";
 import {
-  MAX_OPCIONES, OPCIONES_REF, MENSAJES_COMPARATIVA, canalDeRol, composicionesUniformes, codigoErrorComparativa,
+  MAX_OPCIONES, OPCIONES_REF, MENSAJES_COMPARATIVA, totalPublicoOpcion, mensajeAcomodacionComparativa, validarAcomodacionComparativa, canalDeRol, composicionesUniformes, codigoErrorComparativa,
   esErrorReintentable, ipOrigenConfiable, mensajeErrorComparativa, validarClienteCheckoutPublico, validarEntradaEleccion,
   validarEntradaSolicitud, validarRefsOpcion, type CanalEleccion, type CapacidadAcomodacion, type OpcionRef, type OpcionRpc,
 } from "@/lib/cotizacion/comparativa";
@@ -45,10 +45,14 @@ import { altaPersonasCotizacion, logPersonasCotizacion } from "@/lib/personas/co
 import { codigoErrorContacto, datosContactoTarifario, logContactoTarifario, origenContactoTarifario } from "@/lib/crm/contactoTarifario";
 import { leerEntradaModalidad } from "@/lib/cotizacion/netoHija";
 import {
-  compararTerminosVistos, construirPlanB2B, ETIQUETA_MODO_B2B, ETIQUETA_ORIGEN_PCT, leerAsistenciaB2BEntrada, type LineaB2B, type PlanB2BCotizacion,
+  compararPlanesB2B, compararTerminosVistos, construirPlanB2B, ETIQUETA_MODO_B2B, ETIQUETA_ORIGEN_PCT, leerAsistenciaB2BEntrada, leerPlanB2BDePayload,
+  MENSAJE_COTIZACION_B2B_INVALIDA, MENSAJE_TERMINOS_CAMBIARON, type LineaB2B, type PlanB2BCotizacion,
 } from "@/lib/cotizacion/asistidaB2B";
-import { listarAliadosParaAsistencia, prepararAsistenciaB2B, type AliadoListado, type ContextoAsistenciaB2B } from "@/lib/cotizacion/asistidaB2BServidor";
+import { listarAliadosParaAsistencia, prepararAsistenciaB2B, verificarAliadoVivoParaConversion, type AliadoListado, type ContextoAsistenciaB2B } from "@/lib/cotizacion/asistidaB2BServidor";
 import { resolverFirmasSesion } from "@/lib/cotizacion/firmasSesion";
+import { visitantePuedeContinuar } from "@/lib/cotizacion/comparativaServidor";
+import { iataDeDestino } from "@/lib/reservar/destinoIata";
+import { claveGrupoViaje, esClaveGrupoViaje, esTramoVueloManual, descripcionCotizacionManual, leerManualesEntrada, lineaB2BManual, resolverHotelDeManuales, tramosVueloManual, validarCoberturaVuelos, validarServicioManual, validarVueloContraHotel, verificarManualesCotizados, type ServicioManual } from "@/lib/cart/servicioManual";
 import { camposClienteVenta, camposVendedorAliado, nombreQuienElabora, titularDeCliente } from "@/lib/cotizacion/identidadB2B";
 
 // Forma que arma el CARRITO en el cliente (ver lib/cart/CartContext.tsx) —
@@ -447,6 +451,7 @@ function construirMensaje(
   extra: string | null,
   b2b?: { modo: "comisionable" | "neta"; facturacion: Facturacion; pctComision: number },
   itemsBernalo: SolicitudItemBernaloComputado[] = [],
+  manuales: ServicioManual[] = [],
 ): string {
   const L: string[] = [];
   L.push("Solicitud de reserva — D'spacios Travel");
@@ -487,6 +492,15 @@ function construirMensaje(
       if (t.fechaIda) L.push(`   ${t.fechaIda} → ${t.fechaRegreso ?? ""}`);
       L.push(`   ${t.pax} pax · Valor estimado: ${formatMoneda(t.precio, moneda)}`);
       total += t.precio;
+    }
+    L.push("");
+  }
+  if (manuales.length) {
+    L.push("Servicios manuales (precio declarado por el asesor, sujetos a confirmación):");
+    for (const m of manuales) {
+      L.push(`- ${m.nombre}${m.clase === "vuelo" && m.origen && m.destino ? ` ${m.origen} → ${m.destino}` : ""}`);
+      L.push(`   ${m.pax} pax · Valor estimado: ${formatMoneda(m.precio, moneda)}`);
+      total += m.precio;
     }
     L.push("");
   }
@@ -542,8 +556,17 @@ async function crearCotizacionCarrito(input: {
   tours: SolicitudTourValidado[];
   hotelDeTour: (number | null)[];
   cliente: SolicitudCliente;
+  /** #64: servicios manuales (ya validados en la frontera; aquí se vuelve a exigir moneda). */
+  manuales?: ServicioManual[];
+  /** #64: para cada manual, la posición en `items` de su hotel (vuelo) o null (otro servicio). El servidor lo resuelve desde `itemId`; aquí se valida contra lo liquidado. */
+  hotelDeManual?: (number | null)[];
+  /**
+   * #64: la cotización es UNA OPCIÓN de una comparativa (un solo hotel, posición 0). Cada vuelo trae como selector la clave de su GRUPO (`grupo:IATA|ida|regreso`) o «comun»:
+   * solo se incluye si el grupo de ESTE hotel (destino IATA + fechas liquidados por el servidor) es el suyo; los de otro grupo se omiten (quedan marcados en `manualesAplicados`).
+   */
+  comparativa?: boolean;
 }, opts?: OpcionesCarrito): Promise<
-  | { ok: true; id: number; codigo: string; url: string; moneda: string; itemsOk: SolicitudItemComputado[]; itemsBernaloOk: SolicitudItemBernaloComputado[]; toursOk: SolicitudTourComputado[]; excluidos: ItemExcluido[]; b2bPlan: PlanB2BCotizacion | null }
+  | { ok: true; id: number; codigo: string; url: string; moneda: string; itemsOk: SolicitudItemComputado[]; itemsBernaloOk: SolicitudItemBernaloComputado[]; toursOk: SolicitudTourComputado[]; manualesOk: ServicioManual[]; manualesAplicados: boolean[]; excluidos: ItemExcluido[]; b2bPlan: PlanB2BCotizacion | null }
   | { ok: false; error: string }
   | ResultadoTerminosCambiaron
   | ResultadoPrecioActualizadoBernalo
@@ -661,7 +684,7 @@ async function crearCotizacionCarrito(input: {
       monedaPrincipal = monedaPrincipal ?? resultadoBernalo.moneda;
       hotelesResueltos.set(posOriginal, {
         nombre: resultadoBernalo.hotelNombre, moneda: resultadoBernalo.moneda, pax: resultadoBernalo.paxTotal,
-        fechaIda: resultadoBernalo.salida.fechaIda, fechaRegreso: resultadoBernalo.salida.fechaRegreso,
+        fechaIda: resultadoBernalo.salida.fechaIda, fechaRegreso: resultadoBernalo.salida.fechaRegreso, destino: resultadoBernalo.hotelDestino,
       });
 
       // Regla C.13: SOLO la ocupación de ENTRADA de cada habitación (nunca
@@ -789,7 +812,7 @@ async function crearCotizacionCarrito(input: {
     monedaPrincipal = monedaPrincipal ?? monedaReserva;
     hotelesResueltos.set(posOriginal, {
       nombre: meta.hotel_nombre ?? it.hotelNombre, moneda: monedaReserva, pax: totalPax,
-      fechaIda: meta.fecha_ida, fechaRegreso: meta.fecha_regreso,
+      fechaIda: meta.fecha_ida, fechaRegreso: meta.fecha_regreso, destino: meta.destino_nombre ?? null,
     });
 
     // Incluidos del paquete: SOLO de un hotel que entra en la cotización (ya
@@ -996,17 +1019,79 @@ async function crearCotizacionCarrito(input: {
     });
   }
 
-  if (!itemsOk.length && !itemsBernaloOk.length && !toursOk.length) return { ok: false, error: "No se pudo generar la cotización (revisa disponibilidad)." };
+  // #64: servicios manuales. Precio declarado por el asesor (único dato que se acepta tal cual y por eso solo personal interno, ver
+  // crearSolicitudReserva). Nunca se excluyen en silencio: si su moneda no es la de la cotización, la solicitud falla. La cotización
+  // NO guarda costo ni proveedor: se exigen al convertir.
+  const manualesOk: ServicioManual[] = [];
+  const manualesAplicados: boolean[] = [];
+  const objetivosManual: (string | null)[] = []; // hotel/opción de cada manual aplicado (alineado con manualesOk), para la cobertura de tramos
+  const catalogo = process.env.SUPABASE_SERVICE_ROLE_KEY ? createAdminClient() : sb;
+  const paxCarrito = [...hotelesResueltos.values()].reduce((sum, h) => sum + (h.pax || 0), 0);
+  for (const [mi, m0] of (input.manuales ?? []).entries()) {
+    const r0 = validarServicioManual(m0, monedaPrincipal);
+    if (!r0.ok) return { ok: false, error: `Servicio manual «${m0.nombre}»: ${r0.error}` };
+    let m = r0.valor;
+    let objetivo: string | null = null;
+    // Un vuelo —y, en una COMPARATIVA, también un «otro servicio»— pertenece a UN hotel ya liquidado de ESTE carrito (en la comparativa, el de su grupo de destino y fechas).
+    if (m.clase === "vuelo" || input.comparativa) {
+      const que = m.clase === "vuelo" ? "Vuelo" : "Servicio";
+      // Nunca el primero por defecto: su ciudad y sus fechas salen de lo que liquidó el servidor.
+      const pos = input.comparativa ? 0 : (input.hotelDeManual?.[mi] ?? null);
+      const hotel = pos != null ? hotelesResueltos.get(pos) : undefined;
+      if (pos == null || !hotel) return { ok: false, error: `${que} «${m.nombre}»: elige un hotel del carrito que entre en la cotización (el hotel asociado no está disponible o fue excluido).` };
+      // IATA del destino desde el CATÁLOGO; si falta, se pide corregir el dato (no se infiere del nombre).
+      const destinoIata = await iataDeDestino(catalogo, hotel.destino);
+      if (input.comparativa) {
+        const clave = destinoIata && hotel.fechaIda && hotel.fechaRegreso ? claveGrupoViaje(destinoIata, hotel.fechaIda, hotel.fechaRegreso) : null;
+        if (m.hotelRef !== "comun" && !esClaveGrupoViaje(m.hotelRef)) return { ok: false, error: `${que} «${m.nombre}»: elige a qué grupo de la comparativa (destino y fechas) pertenece.` };
+        if (m.hotelRef !== "comun" && m.hotelRef !== clave) { manualesAplicados.push(false); continue; } // otro grupo: este hotel no lo lleva
+      }
+      if (m.clase === "vuelo") {
+        const rv = validarVueloContraHotel(m, { ref: refItemCotizacion(pos), nombre: hotel.nombre, destino: hotel.destino ?? null, destinoIata, fechaIda: hotel.fechaIda, fechaRegreso: hotel.fechaRegreso });
+        if (!rv.ok) return { ok: false, error: `Vuelo «${m.nombre}»: ${rv.error}` };
+        m = rv.valor;
+      } else {
+        m = { ...m, hotelRef: refItemCotizacion(pos) }; // el servicio queda ligado a ESTA opción (sin hotelEtiqueta: es informativo del vuelo)
+      }
+      if (paxCarrito > 0 && m.pax > paxCarrito) return { ok: false, error: `${que} «${m.nombre}»: tiene ${m.pax} pasajeros y la cotización solo ${paxCarrito}.` };
+      // La cobertura por tramo rige en las COMPARATIVAS (grupo/opción); el carrito normal conserva su criterio (pasajeros de la cotización).
+      objetivo = input.comparativa ? String(pos) : null;
+    } else if (m.hotelRef) {
+      m = { ...m, hotelRef: null }; // en el carrito normal un «otro servicio» no se liga a un hotel
+    }
+    monedaPrincipal = monedaPrincipal ?? m.moneda;
+    iIdx++;
+    itemsSnap.push({
+      id: iIdx, descripcion: descripcionCotizacionManual(m),
+      adultos: 0, ninos: 0, tarifa_adulto: 0, tarifa_nino: 0, modo_precio: "total", valor_total: m.precio,
+    });
+    // El vuelo se pinta en el cuadro de vuelos; su precio queda UNA sola vez en el total (la línea suelta de la tabla de valores se oculta al mostrar).
+    for (const tramo of tramosVueloManual(m, true)) { vIdx++; vuelosSnap.push({ id: vIdx, ...tramo }); }
+    total += m.precio;
+    lineasB2B.push(lineaB2BManual(m, manualesOk.length)); // #102: la comisión sale de PVP − impuesto no comisionable del manual
+    manualesOk.push(m);
+    objetivosManual.push(objetivo);
+    manualesAplicados.push(true);
+  }
+  // Ningún tramo se duplica ni supera los pasajeros de su hotel/opción, aunque la llamada no venga de la pantalla.
+  const cobertura = validarCoberturaVuelos(manualesOk, (_m, i) => objetivosManual[i], (o) => hotelesResueltos.get(Number(o))?.pax || null);
+  if (!cobertura.ok) return { ok: false, error: cobertura.error };
+
+  // Un servicio manual se SUMA a un carrito con hotel o servicio del tarifario; solo no sostiene una cotización (la conversión necesita al menos una unidad con pasajeros).
+  if (!itemsOk.length && !itemsBernaloOk.length && !toursOk.length) {
+    return { ok: false, error: manualesOk.length ? "Un servicio manual se agrega a un carrito que ya tenga un hotel o un servicio del tarifario. Agrega uno primero." : "No se pudo generar la cotización (revisa disponibilidad)." };
+  }
 
   const totalHoteles = itemsOk.length + itemsBernaloOk.length;
   const moneda = monedaPrincipal ?? "COP";
   const destinos = [...new Set([...itemsOk.map((i) => i.destino), ...itemsBernaloOk.map((i) => i.destino)].filter((d): d is string => !!d))];
+  if (!destinos.length) for (const m of manualesOk) if (m.destino && !destinos.includes(m.destino)) destinos.push(m.destino);
   const destinoTxt = destinos.length ? destinos.join(" · ") : null;
   const fechasIda = [...itemsOk.map((i) => i.fechaIda), ...itemsBernaloOk.map((i) => i.salida.fechaIda)].filter((f): f is string => !!f).sort();
   const fechasRegreso = [...itemsOk.map((i) => i.fechaRegreso), ...itemsBernaloOk.map((i) => i.salida.fechaRegreso)].filter((f): f is string => !!f).sort();
   const fechaIda = fechasIda[0] ?? null;
   const fechaRegreso = fechasRegreso.length ? fechasRegreso[fechasRegreso.length - 1] : null;
-  const paxTotal = itemsOk.reduce((s, i) => s + (i.pax || 0), 0) + itemsBernaloOk.reduce((s, i) => s + (i.pax || 0), 0) || (toursOk[0]?.pax ?? 0);
+  const paxTotal = itemsOk.reduce((s, i) => s + (i.pax || 0), 0) + itemsBernaloOk.reduce((s, i) => s + (i.pax || 0), 0) || (toursOk[0]?.pax ?? manualesOk[0]?.pax ?? 0);
   const planNombre: string | null = totalHoteles > 1
     ? `${totalHoteles} hoteles`
     : (itemsOk[0] ? `${itemsOk[0].categoria} · ${itemsOk[0].regimen}` : (itemsBernaloOk[0] ? `${itemsBernaloOk[0].categoria} · ${itemsBernaloOk[0].alimentacion}` : null));
@@ -1055,9 +1140,9 @@ async function crearCotizacionCarrito(input: {
   const vendedor = planB2B ? camposVendedorAliado({ nombre: planB2B.aliado_nombre, tipo: planB2B.tipo_asesor }) : camposVendedorAliado(firmasSesion.aliado);
 
   const ventaSnap: Record<string, unknown> = {
-    numero_contrato: "", cliente: campos.cliente, cliente_documento: campos.cliente_documento,
+    numero_contrato: "", cliente: campos.cliente, cliente_documento: campos.cliente_documento, cliente_tipo_documento: campos.cliente_tipo_documento,
     cliente_telefono: campos.cliente_telefono, cliente_direccion: campos.cliente_direccion,
-    ...(campos.titular_nombre ? { titular_nombre: campos.titular_nombre, titular_documento: campos.titular_documento, titular_telefono: campos.titular_telefono, titular_email: campos.titular_email } : {}),
+    ...(campos.titular_nombre ? { titular_nombre: campos.titular_nombre, titular_documento: campos.titular_documento, titular_tipo_documento: campos.titular_tipo_documento, titular_telefono: campos.titular_telefono, titular_email: campos.titular_email } : {}),
     asesor: elabora, asesor_firma_nombre: elabora, asesor_firma_cargo: elabora ? "Asesor/a" : null,
     ...(vendedor ?? {}),
     destino: destinoTxt, fecha_emision: hoy, fecha_salida: fechaIda, fecha_regreso: fechaRegreso,
@@ -1100,7 +1185,7 @@ async function crearCotizacionCarrito(input: {
     // "unidad"` (ya presente en `SolicitudItemBernaloComputado`) para que
     // `convertirCotizacionCarrito` (3F-4B) lo detecte y bloquee la
     // conversión a contrato explícitamente, sin caer al flujo persona.
-    payload: { items: [...itemsOk, ...itemsBernaloOk], tours: toursOk, serviciosIncluidos: incluidosPayload, cliente: input.cliente, ...(planB2B ? { b2bAsistido: planB2B } : {}) } as unknown as Json,
+    payload: { items: [...itemsOk, ...itemsBernaloOk], tours: toursOk, ...(manualesOk.length ? { manuales: manualesOk } : {}), serviciosIncluidos: incluidosPayload, cliente: input.cliente, ...(planB2B ? { b2bAsistido: planB2B } : {}) } as unknown as Json,
     detalle: detalle as unknown as Json,
     cliente: campos.cliente,
     cliente_documento: campos.cliente_documento,
@@ -1120,7 +1205,7 @@ async function crearCotizacionCarrito(input: {
   // #35: una opción de comparativa solo necesita la fila calculada.
   if (opts?.capturar) {
     opts.capturar(filaCotizacion as unknown as Record<string, unknown>);
-    return { ok: true, id: 0, codigo: "", url: "", moneda, itemsOk, itemsBernaloOk, toursOk, excluidos, b2bPlan: planB2B };
+    return { ok: true, id: 0, codigo: "", url: "", moneda, itemsOk, itemsBernaloOk, toursOk, manualesOk, manualesAplicados, excluidos, b2bPlan: planB2B };
   }
   const { data: row, error } = await admin.from("cotizaciones").insert(filaCotizacion).select("id, codigo, share_token").single();
   // FRONTERA PÚBLICA (ronda 7): nunca se reenvía `error.message` — un fallo
@@ -1156,18 +1241,34 @@ async function crearCotizacionCarrito(input: {
   const origin = host ? `${proto}://${host}` : "";
   const url = origin && row.share_token ? `${origin}/cot/${row.share_token}` : "";
 
-  return { ok: true, id: row.id, codigo: row.codigo, url, moneda, itemsOk, itemsBernaloOk, toursOk, excluidos, b2bPlan: planB2B };
+  return { ok: true, id: row.id, codigo: row.codigo, url, moneda, itemsOk, itemsBernaloOk, toursOk, manualesOk, manualesAplicados, excluidos, b2bPlan: planB2B };
 }
 
 // Genera UNA sola cotización combinada para todo el carrito y arma los
 // enlaces wa.me + mailto hacia los destinatarios configurados. Público (sin
 // login) — `inputRaw` se trata como `unknown`, ver `validarCrearSolicitudInput`.
+/** Servicios manuales de la entrada con el hotel de cada vuelo resuelto contra los ítems de LA MISMA solicitud (nunca el primero por defecto). */
+function leerManualesConHotel(inputRaw: unknown): { ok: true; manuales: ServicioManual[]; hotelDeManual: (number | null)[] } | { ok: false; error: string } {
+  const man = leerManualesEntrada(inputRaw);
+  if (!man.ok) return man;
+  const crudo = (typeof inputRaw === "object" && inputRaw !== null ? inputRaw : {}) as { items?: unknown; manuales?: unknown };
+  const h = resolverHotelDeManuales(crudo.items, crudo.manuales);
+  if (!h.ok) return h;
+  return { ok: true, manuales: man.manuales, hotelDeManual: h.posiciones };
+}
+
 export async function crearSolicitudReserva(inputRaw: unknown): Promise<SolicitudResult> {
   const v = validarCrearSolicitudInput(inputRaw);
   if (!v.ok) return { ok: false, error: v.error };
   const input = v.input;
   const tours = input.tours;
-  if (!input.items.length && !tours.length) return { ok: false, error: "El carrito está vacío." };
+  const man = leerManualesConHotel(inputRaw);
+  if (!man.ok) return { ok: false, error: man.error };
+  if (!input.items.length && !tours.length && !man.manuales.length) return { ok: false, error: "El carrito está vacío." };
+  // #64: el precio de un servicio manual lo declara el asesor (no sale de un catálogo): solo personal interno autorizado, nunca el público ni un aliado.
+  if (man.manuales.length && !(await puedeAgregarServicioManual())) {
+    return { ok: false, error: "Los servicios manuales solo los puede agregar el personal autorizado. Inicia sesión con tu usuario interno o quítalos del carrito." };
+  }
   if (!`${input.cliente.nombres}${input.cliente.apellidos}`.trim()) return { ok: false, error: "Ingresa nombres y apellidos." };
   if (!input.cliente.numeroDoc.trim()) return { ok: false, error: "El documento es obligatorio." };
   if (!input.cliente.telefono.trim()) return { ok: false, error: "El teléfono / WhatsApp es obligatorio." };
@@ -1194,7 +1295,7 @@ export async function crearSolicitudReserva(inputRaw: unknown): Promise<Solicitu
     b2bAsistido = prep.contexto;
   }
 
-  const cot = await crearCotizacionCarrito({ items: input.items, tours, hotelDeTour: input.hotelDeTour, cliente: clienteCheckout }, { b2b: b2bAsistido });
+  const cot = await crearCotizacionCarrito({ items: input.items, tours, hotelDeTour: input.hotelDeTour, cliente: clienteCheckout, manuales: man.manuales, hotelDeManual: man.hotelDeManual }, { b2b: b2bAsistido });
   if (!cot.ok) return cot;
 
   // Agrega el cliente a la base de contactos del CRM como B2C (cliente_final),
@@ -1258,7 +1359,7 @@ export async function crearSolicitudReserva(inputRaw: unknown): Promise<Solicitu
   const notaExcluidos = notasExcluidos.length ? notasExcluidos.join("\n") : null;
   const notaB2BAsistida = cot.b2bPlan ? lineasMensajeB2BAsistido(cot.b2bPlan) : null;
   const extra = [mensajeExtra?.trim() || null, notaExcluidos, notaB2BAsistida].filter(Boolean).join("\n\n") || null;
-  const mensaje = construirMensaje(input.cliente, { codigo: cot.codigo, url: cot.url }, cot.itemsOk, cot.toursOk, cot.moneda, extra, b2b, cot.itemsBernaloOk);
+  const mensaje = construirMensaje(input.cliente, { codigo: cot.codigo, url: cot.url }, cot.itemsOk, cot.toursOk, cot.moneda, extra, b2b, cot.itemsBernaloOk, cot.manualesOk);
   const wa = (whatsapp ?? "").replace(/\D/g, "");
   const waUrl = wa ? `https://wa.me/${wa}?text=${encodeURIComponent(mensaje)}` : null;
   const correos = (emails ?? "").split(",").map((e) => e.trim()).filter(Boolean).join(",");
@@ -1285,13 +1386,34 @@ export async function previsualizarTerminosB2BAsistido(inputRaw: unknown): Promi
   const crudo = (typeof inputRaw === "object" && inputRaw !== null ? inputRaw : {}) as Record<string, unknown>;
   const v = validarCrearSolicitudInput({ ...crudo, cliente: { nombres: "Vista", apellidos: "previa", tipoDoc: "CC", numeroDoc: "0", telefono: "0", email: "" } });
   if (!v.ok) return { ok: false, error: v.error };
-  if (!v.input.items.length && !v.input.tours.length) return { ok: false, error: "El carrito está vacío." };
+  const man = leerManualesConHotel(inputRaw);
+  if (!man.ok) return { ok: false, error: man.error };
+  if (!v.input.items.length && !v.input.tours.length && !man.manuales.length) return { ok: false, error: "El carrito está vacío." };
   const prep = await prepararAsistenciaB2B(await createClient(), asistencia.asistencia);
   if (!prep.ok) return { ok: false, error: prep.error };
-  const cot = await crearCotizacionCarrito({ items: v.input.items, tours: v.input.tours, hotelDeTour: v.input.hotelDeTour, cliente: v.input.cliente }, { b2b: prep.contexto, capturar: () => {} });
+  const cot = await crearCotizacionCarrito({ items: v.input.items, tours: v.input.tours, hotelDeTour: v.input.hotelDeTour, cliente: v.input.cliente, manuales: man.manuales, hotelDeManual: man.hotelDeManual }, { b2b: prep.contexto, capturar: () => {} });
   if (!cot.ok) return { ok: false, error: "error" in cot ? cot.error : "El precio de un hotel cambió; revisa el carrito y vuelve a intentar." };
   if (!cot.b2bPlan) return { ok: false, error: "No se pudo liquidar la venta B2B." };
   return { ok: true, terminos: terminosPrevios(cot.b2bPlan) };
+}
+
+export type PrevisualizacionComparativaB2B =
+  | { ok: true; opciones: { opcionRef: string; acomodacionRef: string; hotel: string | null; terminos: TerminosB2BPrevios }[] }
+  | { ok: false; error: string };
+
+/** Vista previa de la comparativa asistida: los términos B2B de CADA opción (mismo motor que al crearla). No existe total ni comisión global. */
+export async function previsualizarComparativaB2B(inputRaw: unknown): Promise<PrevisualizacionComparativaB2B> {
+  const a = leerAsistenciaB2BEntrada(inputRaw);
+  if (!a.ok) return { ok: false, error: a.error };
+  if (!a.asistencia) return { ok: false, error: "Elige el aliado y la modalidad para ver el desglose." };
+  const p = await prepararComparativa(inputRaw, true);
+  if (!p.ok) return { ok: false, error: p.error };
+  const opciones: Extract<PrevisualizacionComparativaB2B, { ok: true }>["opciones"] = [];
+  for (const o of p.armadas) {
+    if (!o.plan) return { ok: false, error: "No se pudo liquidar la venta B2B." };
+    opciones.push({ opcionRef: o.opcion_ref, acomodacionRef: o.acomodacion_ref, hotel: o.fila.hotel, terminos: terminosPrevios(o.plan) });
+  }
+  return { ok: true, opciones };
 }
 
 function terminosPrevios(p: PlanB2BCotizacion): TerminosB2BPrevios {
@@ -1317,6 +1439,25 @@ function lineasMensajeB2BAsistido(p: PlanB2BCotizacion): string {
 // permiso (visitante, aliado B2B, cliente, `control_vuelo`…) recibe `puede: false` y ninguna lista. Solo informativo: la autoridad
 // se vuelve a evaluar al crear la cotización.
 export type ContextoAsistenciaCheckout = { puede: false } | { puede: true; aliados: AliadoListado[] } | { puede: false; error: string };
+/** #64: ¿la sesión actual es personal interno autorizado a vender (mismo criterio que la venta asistida)? */
+async function puedeAgregarServicioManual(): Promise<boolean> {
+  const r = await listarAliadosParaAsistencia(await createClient());
+  return r.ok && r.puede;
+}
+
+/**
+ * Código IATA de cada destino del carrito, tomado del CATÁLOGO (`destinos.codigo_iata` y, si falta, el catálogo de ciudades). null = no hay un código confiable: la pantalla pide
+ * corregir el dato en Producto → Destinos en vez de inferirlo del nombre. Solo lectura de datos públicos del catálogo.
+ */
+export async function codigosIataDestinos(nombres: unknown): Promise<Record<string, string | null>> {
+  const lista = Array.isArray(nombres) ? [...new Set(nombres.filter((n): n is string => typeof n === "string").map((n) => n.trim()).filter((n) => n && n.length <= 120))].slice(0, 12) : [];
+  if (!lista.length) return {};
+  const cat = process.env.SUPABASE_SERVICE_ROLE_KEY ? createAdminClient() : await createClient();
+  const salida: Record<string, string | null> = {};
+  for (const n of lista) salida[n] = await iataDeDestino(cat, n);
+  return salida;
+}
+
 export async function getContextoAsistenciaB2B(): Promise<ContextoAsistenciaCheckout> {
   const r = await listarAliadosParaAsistencia(await createClient());
   if (!r.ok) return { puede: false, error: r.error };
@@ -1394,22 +1535,45 @@ type FilaCapturada = Record<string, unknown> & {
   cliente: string; cliente_documento: string | null;
 };
 
+/** Los vuelos manuales de una opción tal como los ve quien la elige: ruta, tramo, fecha y pasajeros (sin precio, costo ni proveedor). */
+function vuelosPublicos(detalle: unknown): { tramo: string; origen: string | null; destino: string | null; fecha: string | null; hora: string | null; nota: string }[] {
+  const v = (detalle as { vuelos?: unknown } | null)?.vuelos;
+  return (Array.isArray(v) ? v : []).filter((t): t is Record<string, unknown> => typeof t === "object" && t !== null && esTramoVueloManual(t))
+    .map((t) => ({
+      tramo: String(t.direccion ?? ""), origen: (t.origen_ciudad ?? t.origen_codigo ?? null) as string | null,
+      destino: (t.destino_ciudad ?? t.destino_codigo ?? null) as string | null, fecha: (t.fecha_salida ?? null) as string | null, hora: (t.hora_salida ?? null) as string | null, nota: String(t.servicios ?? ""),
+    }));
+}
+
 /** Arma UNA opción (un hotel con una composición) con el motor real; no inserta nada. */
 async function armarOpcionCarrito(
-  item: SolicitudItemVariante, tours: SolicitudTourValidado[], cliente: SolicitudCliente
-): Promise<{ ok: true; fila: FilaCapturada } | { ok: false; error: string }> {
+  item: SolicitudItemVariante, tours: SolicitudTourValidado[], cliente: SolicitudCliente, manuales: ServicioManual[] = [], comparativa = false,
+  b2b: ContextoAsistenciaB2B | null = null
+): Promise<{ ok: true; fila: FilaCapturada; manualesAplicados: boolean[]; plan: PlanB2BCotizacion | null } | { ok: false; error: string }> {
   let fila: FilaCapturada | null = null;
+  // Vuelos del GRUPO: cada opción (un solo hotel, posición 0) lleva solo los de su grupo (destino IATA + fechas), validados contra SU hotel y sumados una sola vez a SU total.
   const r = await crearCotizacionCarrito(
-    { items: [item], tours, hotelDeTour: tours.map(() => 0), cliente },
-    { capturar: (f) => { fila = f as FilaCapturada; } }
+    { items: [item], tours, hotelDeTour: tours.map(() => 0), cliente, manuales, hotelDeManual: manuales.map(() => 0), comparativa },
+    { capturar: (f) => { fila = f as FilaCapturada; }, ...(b2b ? { b2b } : {}) }
   );
   if (!r.ok) return { ok: false, error: "error" in r ? r.error : "El precio cambió; vuelve a intentarlo." };
   if (r.excluidos.length) return { ok: false, error: `No se pudo cotizar el conjunto completo de ${item.hotelNombre}: ${r.excluidos.map((e) => e.etiqueta).join(", ")}.` };
   if (!fila) return { ok: false, error: "No se pudo armar la opción." };
-  return { ok: true, fila };
+  return { ok: true, fila, manualesAplicados: r.manualesAplicados, plan: r.b2bPlan };
 }
 
-export async function crearComparativaCarrito(inputRaw: unknown): Promise<ResultadoComparativaCreada> {
+/** Una alternativa ya armada; `plan` = términos B2B de ESA opción (PVP, impuesto, base, comisión, exigible), jamás una suma de alternativas. */
+type OpcionArmada = { opcion_ref: OpcionRef; acomodacion_ref: string; fila: FilaCapturada; hotelPrecio: number; manualesAplicados: boolean[]; plan: PlanB2BCotizacion | null };
+type ComparativaPreparada = {
+  ok: true; ref: FilaCapturada; cli: SolicitudCliente; actor: Awaited<ReturnType<typeof actorComparativa>>; compartirPublico: boolean; vigencia: string;
+  destinoMadre: string | null; salidaMadre: string | null; regresoMadre: string | null; opciones: OpcionRpc[]; armadas: OpcionArmada[];
+};
+
+/** Liquida TODAS las alternativas (y, si se asiste a un aliado, los términos B2B de cada una) sin insertar nada. `vista`: titular provisional que nunca se guarda. */
+async function prepararComparativa(inputCrudo: unknown, vista: boolean): Promise<{ ok: false; error: string } | ComparativaPreparada> {
+  const inputRaw: unknown = vista
+    ? { ...(typeof inputCrudo === "object" && inputCrudo !== null ? inputCrudo : {}), cliente: { nombres: "Vista", apellidos: "previa", tipoDoc: "CC", numeroDoc: "0", telefono: "0", email: "" } }
+    : inputCrudo;
   const v = validarCrearSolicitudInput(inputRaw);
   if (!v.ok) return { ok: false, error: v.error };
   const input = v.input;
@@ -1437,9 +1601,49 @@ export async function crearComparativaCarrito(inputRaw: unknown): Promise<Result
   if (!`${cli.nombres}${cli.apellidos}`.trim()) return { ok: false, error: "Ingresa nombres y apellidos." };
   if (!cli.telefono.trim()) return { ok: false, error: "El teléfono / WhatsApp es obligatorio." };
 
-  const actor = await actorComparativa();
+  // #64: vuelos manuales COMUNES a todas las opciones. Solo personal interno autorizado (la llamada directa de cualquier otro se RECHAZA, nunca se acepta para
+  // omitirla después) y solo vuelos; el visitante que continúa una comparativa ya creada no pasa por aquí.
+  const man = leerManualesEntrada(inputRaw);
+  if (!man.ok) return { ok: false, error: man.error };
+  if (man.manuales.length) {
+    if (!(await puedeAgregarServicioManual())) return { ok: false, error: "Los servicios manuales solo los puede agregar el personal autorizado. Inicia sesión con tu usuario interno o quítalos del carrito." };
+  }
 
-  type OpcionArmada = { opcion_ref: OpcionRef; acomodacion_ref: string; fila: FilaCapturada; hotelPrecio: number };
+  // #64: «compartir con el cliente» lo marca expresamente el personal interno; un visitante, un aliado o un valor que no sea booleano se RECHAZA (no se ignora).
+  const crudoCmp = (typeof inputRaw === "object" && inputRaw !== null ? inputRaw : {}) as { compartirPublico?: unknown; otrasAcomodaciones?: unknown };
+  // Por defecto cada hotel se cotiza SOLO con la acomodación del carrito (p. ej. Marina Suite doble). Ofrecer además otras acomodaciones del mismo hotel es una elección EXPRESA.
+  if (crudoCmp.otrasAcomodaciones !== undefined && typeof crudoCmp.otrasAcomodaciones !== "boolean") return { ok: false, error: "La opción de ofrecer otras acomodaciones no es válida." };
+  const otrasAcomodaciones = crudoCmp.otrasAcomodaciones === true;
+  if (crudoCmp.compartirPublico !== undefined && typeof crudoCmp.compartirPublico !== "boolean") return { ok: false, error: "La opción de compartir con el cliente no es válida." };
+  const compartirPublico = crudoCmp.compartirPublico === true;
+
+  const actor = await actorComparativa();
+  if (compartirPublico && actor.canal !== "interno") return { ok: false, error: "Solo el personal interno puede dejar una comparativa para que el cliente elija desde el enlace." };
+
+  // #64: con vuelos manuales la comparativa admite VARIOS destinos o fechas (grupos: destino IATA + fechas), cada alternativa se cotiza por separado. Combinación admitida:
+  // multidestino con UNA acomodación por opción, o unidestino con varias. Un hotel con habitaciones de más de un tipo en un viaje multidestino se rechaza ANTES de cotizar.
+  const destinosDelCarrito = new Set(items.map((it) => (it.destino ?? "").trim().toUpperCase()));
+  // «Multidestino» = más de un DESTINO. Un destino con dos fechas es unidestino (varias acomodaciones admitidas), aunque forme dos grupos de vuelos.
+  const multidestino = man.manuales.length > 0 && destinosDelCarrito.size > 1;
+  // «comun» (todas las opciones) solo vale con un único destino y una sola pareja de fechas; con varios grupos cada vuelo debe nombrar el suyo. (Después se vuelve a comprobar con lo liquidado.)
+  const variasFechas = new Set(items.map((it) => `${it.fechaIda ?? ""}|${it.fechaRegreso ?? ""}`)).size > 1;
+  const sinGrupo = man.manuales.find((m) => m.hotelRef === "comun");
+  if (sinGrupo && (destinosDelCarrito.size > 1 || variasFechas)) {
+    return { ok: false, error: `El vuelo «${sinGrupo.nombre}»: hay varios destinos o fechas en la comparativa; elige a qué grupo pertenece.` };
+  }
+  const problemaAcom = validarAcomodacionComparativa(items, man.manuales.length > 0);
+  if (problemaAcom) return { ok: false, error: mensajeAcomodacionComparativa(problemaAcom) };
+
+  // #102 en la comparativa: aliado y modalidad los autoriza el servidor; cada opción liquida SUS términos con el mismo motor (no hay plan ni total global).
+  const asist = leerAsistenciaB2BEntrada(inputRaw);
+  if (!asist.ok) return { ok: false, error: asist.error };
+  let b2b: ContextoAsistenciaB2B | null = null;
+  if (asist.asistencia) {
+    const prep = await prepararAsistenciaB2B(await createClient(), asist.asistencia);
+    if (!prep.ok) return { ok: false, error: prep.error };
+    b2b = prep.contexto;
+  }
+
   const armadas: OpcionArmada[] = [];
   for (let i = 0; i < items.length; i++) {
     const item = items[i];
@@ -1449,28 +1653,45 @@ export async function crearComparativaCarrito(inputRaw: unknown): Promise<Result
     const candidatas = composicionesUniformes(adultos, caps, {
       conMenores: (item.edadesMenores?.length ?? 0) > 0, composicionActual: item.habitaciones,
     });
-    for (let k = 0; k < candidatas.length; k++) {
-      const cand = candidatas[k];
-      const r = await armarOpcionCarrito({ ...item, habitaciones: cand.habitaciones }, toursDelHotel, cli);
+    // Multidestino con vuelos: solo la composición del carrito (una acomodación por opción); unidestino: las alternativas de siempre.
+    const ofrecidas = multidestino || !otrasAcomodaciones ? candidatas.slice(0, 1) : candidatas;
+    for (let k = 0; k < ofrecidas.length; k++) {
+      const cand = ofrecidas[k];
+      const r = await armarOpcionCarrito({ ...item, habitaciones: cand.habitaciones }, toursDelHotel, cli, man.manuales, man.manuales.length > 0, b2b);
       if (!r.ok) {
         if (k === 0) return { ok: false, error: r.error }; // la composición del carrito siempre debe poder cotizarse
         continue; // una alternativa que el hotel no admite simplemente no se ofrece
       }
       const hotelPrecio = Number(r.fila.payload.items?.[0]?.precio) || 0;
-      armadas.push({ opcion_ref: OPCIONES_REF[i], acomodacion_ref: cand.acomodacionRef, fila: r.fila, hotelPrecio });
+      armadas.push({ opcion_ref: OPCIONES_REF[i], acomodacion_ref: cand.acomodacionRef, fila: r.fila, hotelPrecio, manualesAplicados: r.manualesAplicados, plan: r.plan });
     }
   }
 
-  // Mismo viaje: destino, fechas, pasajeros y moneda iguales en TODAS las opciones.
   const ref = armadas[0].fila;
-  const mismoViaje = armadas.every((o) =>
-    o.fila.moneda === ref.moneda && o.fila.pax === ref.pax && o.fila.fecha_salida === ref.fecha_salida &&
-    o.fila.fecha_regreso === ref.fecha_regreso && o.fila.destino === ref.destino);
-  if (!mismoViaje) {
-    return { ok: false, error: "Los hoteles de una comparativa deben tener el mismo destino, fechas, pasajeros y moneda." };
+  if (!armadas.every((o) => o.fila.moneda === ref.moneda)) return { ok: false, error: "Los hoteles de una comparativa deben estar en la misma moneda." };
+  if (!man.manuales.length) {
+    // Sin vuelos: el mismo viaje de siempre (destino, fechas y pasajeros iguales en TODAS las opciones).
+    const mismoViaje = armadas.every((o) =>
+      o.fila.pax === ref.pax && o.fila.fecha_salida === ref.fecha_salida && o.fila.fecha_regreso === ref.fecha_regreso && o.fila.destino === ref.destino);
+    if (!mismoViaje) return { ok: false, error: "Los hoteles de una comparativa deben tener el mismo destino, fechas, pasajeros y moneda." };
+  } else {
+    // Con vuelos: grupos por destino y fechas. «comun» solo vale con un único grupo; cada vuelo debe caer en al menos una opción.
+    const grupos = new Set(armadas.map((o) => `${o.fila.destino}|${o.fila.fecha_salida}|${o.fila.fecha_regreso}`));
+    // Defensa con lo LIQUIDADO por el servidor (no con lo que declaró el navegador): multidestino con más de una acomodación por hotel no se admite.
+    const destinosLiquidados = new Set(armadas.map((o) => o.fila.destino));
+    if (destinosLiquidados.size > 1 && new Set(armadas.map((o) => o.opcion_ref)).size < armadas.length) {
+      return { ok: false, error: "No se puede crear la comparativa: con vuelos manuales y varios destinos cada alternativa admite una sola acomodación." };
+    }
+    for (const [mi, m] of man.manuales.entries()) {
+      if (m.hotelRef === "comun" && grupos.size > 1) return { ok: false, error: `El vuelo «${m.nombre}»: hay varios destinos o fechas en la comparativa; elige a qué grupo pertenece.` };
+      if (!armadas.some((o) => o.manualesAplicados[mi])) return { ok: false, error: `El vuelo «${m.nombre}» no pertenece a ningún grupo de la comparativa (destino y fechas).` };
+    }
   }
+  const destinoMadre = [...new Set(armadas.map((o) => o.fila.destino).filter((d): d is string => !!d))].join(" · ") || ref.destino;
+  const salidaMadre = armadas.map((o) => o.fila.fecha_salida).filter((f): f is string => !!f).sort()[0] ?? ref.fecha_salida;
+  const regresoMadre = armadas.map((o) => o.fila.fecha_regreso).filter((f): f is string => !!f).sort().at(-1) ?? ref.fecha_regreso;
 
-  const vigenciaRes = resolverVigenciaCotizacion({ hoy: hoyBogota(), fechaSalida: ref.fecha_salida, diasPorDefecto: 3 });
+  const vigenciaRes = resolverVigenciaCotizacion({ hoy: hoyBogota(), fechaSalida: salidaMadre, diasPorDefecto: 3 });
   if (!vigenciaRes.ok) return { ok: false, error: vigenciaRes.error };
 
   const opciones: OpcionRpc[] = armadas.map((o, idx) => ({
@@ -1479,13 +1700,18 @@ export async function crearComparativaCarrito(inputRaw: unknown): Promise<Result
     orden: idx,
     etiqueta: o.fila.hotel ?? `Hotel ${o.opcion_ref}`,
     moneda: o.fila.moneda,
-    tarifa_persona: o.fila.pax > 0 && o.hotelPrecio > 0 ? Math.round(o.hotelPrecio / o.fila.pax) : null,
+    // NETO: la columna `total` sigue siendo el PVP (la base lo exige), pero NADA derivado del PVP sale al público: solo el total exigible.
+    tarifa_persona: !o.plan?.modo_compra || o.plan.modo_compra === "comisionable" ? (o.fila.pax > 0 && o.hotelPrecio > 0 ? Math.round(o.hotelPrecio / o.fila.pax) : null) : null,
     total: o.fila.precio_venta,
     resumen_publico: {
       hotel: o.fila.hotel, plan_nombre: o.fila.plan_nombre, pax: o.fila.pax, moneda: o.fila.moneda,
-      total: o.fila.precio_venta, total_hotel: o.hotelPrecio, acomodacion: o.acomodacion_ref,
+      total: o.plan?.modo_compra === "neta" ? o.plan.total_exigible : o.fila.precio_venta,
+      ...(o.plan?.modo_compra === "neta" ? { total_exigible: o.plan.total_exigible } : { total_hotel: o.hotelPrecio }),
+      acomodacion: o.acomodacion_ref,
       habitaciones: o.fila.payload.items?.[0]?.habitaciones ?? null,
       servicios: (o.fila.payload.tours ?? []).map((t) => ({ nombre: t.nombre, precio: t.precio })),
+      // Vuelos manuales comunes: ruta, tramo, fecha y pasajeros; nunca precio, costo ni proveedor (su valor ya está en `total`, una sola vez).
+      vuelos: vuelosPublicos(o.fila.detalle),
       fecha_salida: o.fila.fecha_salida, fecha_regreso: o.fila.fecha_regreso,
     },
     plantilla_hija: {
@@ -1495,17 +1721,24 @@ export async function crearComparativaCarrito(inputRaw: unknown): Promise<Result
     },
   }));
 
+  return { ok: true, ref, cli, actor, compartirPublico, vigencia: vigenciaRes.vigencia, destinoMadre, salidaMadre, regresoMadre, opciones, armadas };
+}
+
+export async function crearComparativaCarrito(inputRaw: unknown): Promise<ResultadoComparativaCreada> {
+  const p = await prepararComparativa(inputRaw, false);
+  if (!p.ok) return { ok: false, error: p.error };
+  const { ref, cli, actor, compartirPublico, vigencia, destinoMadre, salidaMadre, regresoMadre, opciones } = p;
   if (!process.env.SUPABASE_SERVICE_ROLE_KEY) return { ok: false, error: "No se pudo crear la comparativa por un problema de configuración del servidor." };
   const admin = createAdminClient();
   const nombre = `${cli.nombres} ${cli.apellidos}`.trim();
   const { data: id, error } = await admin.rpc("crear_cotizacion_comparativa", {
     p_usuario_id: actor.userId,
     p_cabecera: {
-      tipo: "comparativa_carrito", moneda: ref.moneda, vigencia_hasta: vigenciaRes.vigencia,
-      cliente: nombre, cliente_documento: cli.numeroDoc.trim() || null, destino: ref.destino, plan_nombre: "Cotización comparativa",
-      pax: ref.pax, asesor: null, creado_por: actor.email, fecha_salida: ref.fecha_salida, fecha_regreso: ref.fecha_regreso,
-      payload: { comparativa: true, tipoAsesor: actor.tipoB2B && actor.aliadoId ? actor.tipoB2B : "interno", cliente: cli },
-      detalle: { comparativa: true, venta: { cliente: nombre, destino: ref.destino, fecha_salida: ref.fecha_salida, fecha_regreso: ref.fecha_regreso, pax: ref.pax, moneda: ref.moneda, estado: "cotizacion" } },
+      tipo: "comparativa_carrito", moneda: ref.moneda, vigencia_hasta: vigencia,
+      cliente: nombre, cliente_documento: cli.numeroDoc.trim() || null, destino: destinoMadre, plan_nombre: "Cotización comparativa",
+      pax: ref.pax, asesor: null, creado_por: actor.email, fecha_salida: salidaMadre, fecha_regreso: regresoMadre,
+      payload: { comparativa: true, tipoAsesor: actor.tipoB2B && actor.aliadoId ? actor.tipoB2B : "interno", cliente: cli, ...(compartirPublico ? { compartirPublico: true } : {}) },
+      detalle: { comparativa: true, venta: { cliente: nombre, destino: destinoMadre, fecha_salida: salidaMadre, fecha_regreso: regresoMadre, pax: ref.pax, moneda: ref.moneda, estado: "cotizacion" } },
     } as unknown as Json,
     p_servicios: [] as unknown as Json,
     p_opciones: opciones as unknown as Json,
@@ -1539,7 +1772,29 @@ async function reliquidarOpcionCarrito(
     servicioId: Number(t.servicioId), paqueteId: Number(t.paqueteId),
     fechaIda: String(t.fechaIda), fechaRegreso: String(t.fechaRegreso), pax: Number(t.pax),
   }));
-  return armarOpcionCarrito(entrada as unknown as SolicitudItemVariante, tours, cliente);
+  // Los vuelos manuales comunes salen de la plantilla GUARDADA (congelados al crear la comparativa); jamás de lo que mande quien elige.
+  const manuales = leerManualesEntrada({ manuales: (plantilla.payload as { manuales?: unknown } | undefined)?.manuales });
+  if (!manuales.ok) return { ok: false, error: "No se pudo validar la opción." };
+  // #102: si la opción nació de una venta B2B asistida, SUS términos congelados se revalidan antes de confirmar: aliado vivo (activo, tipo, % y, en NETO, identidad)
+  // y reliquidación completa; cualquier diferencia de precio, impuesto, porcentaje o aliado se rechaza sin emitir recibo.
+  const congelado = leerPlanB2BDePayload(plantilla.payload);
+  if (!congelado.ok) return { ok: false, error: MENSAJE_COTIZACION_B2B_INVALIDA };
+  let b2b: ContextoAsistenciaB2B | null = null;
+  if (congelado.plan) {
+    if (!process.env.SUPABASE_SERVICE_ROLE_KEY) return { ok: false, error: "No se pudo completar la operación por un problema de configuración del servidor." };
+    const vivo = await verificarAliadoVivoParaConversion(createAdminClient() as never, congelado.plan);
+    if (!vivo.ok) return { ok: false, error: vivo.error };
+    const a = congelado.plan.asistido_por;
+    b2b = { actor: { id: a.id, email: a.email, rol: a.rol, superadmin: false, nombre: null }, aliado: vivo.aliado, modo: congelado.plan.modo_compra };
+  }
+  const r = await armarOpcionCarrito(entrada as unknown as SolicitudItemVariante, tours, cliente, manuales.manuales, false, b2b);
+  if (!r.ok) return r;
+  if (congelado.plan) {
+    if (!r.plan) return { ok: false, error: MENSAJE_TERMINOS_CAMBIARON };
+    const cmp = compararPlanesB2B(congelado.plan, r.plan);
+    if (!cmp.ok) return cmp;
+  }
+  return r;
 }
 
 export async function elegirOpcionComparativa(inputRaw: unknown): Promise<ResultadoEleccion> {
@@ -1550,13 +1805,17 @@ export async function elegirOpcionComparativa(inputRaw: unknown): Promise<Result
   // el comportamiento de siempre; la base decide permisos, aliado, margen y obligatoriedad.
   const mod = leerEntradaModalidad(inputRaw);
   if (!mod.ok) return { ok: false, error: mod.error };
+  // #64: quien elige una opción no crea ni modifica vuelos manuales: los de la comparativa están congelados en ella.
+  if (typeof inputRaw === "object" && inputRaw !== null && Object.hasOwn(inputRaw, "manuales")) {
+    return { ok: false, error: "Los vuelos manuales de una comparativa no se pueden crear ni modificar al elegir una opción." };
+  }
   if (!process.env.SUPABASE_SERVICE_ROLE_KEY) return { ok: false, error: "No se pudo completar la operación por un problema de configuración del servidor." };
   const admin = createAdminClient();
   const sb = await createClient();
   const actor = await actorComparativa();
 
   const { data: madre } = await admin.from("cotizaciones")
-    .select("id, tipo, modo, estado, version, vigencia_hasta, moneda").eq("share_token", d.token).maybeSingle();
+    .select("id, tipo, modo, estado, version, vigencia_hasta, moneda, tenant, creado_por_id, propietario_id, aliado_id, payload").eq("share_token", d.token).maybeSingle();
   // «No existe» y «no es tuya» responden igual: nunca se enumeran cotizaciones.
   if (!madre || madre.modo !== "comparativa" || madre.estado !== "abierta") return { ok: false, error: MENSAJES_COMPARATIVA.NO_DISPONIBLE };
   if (madre.version !== d.version) return { ok: false, error: MENSAJES_COMPARATIVA.VERSION, reintentable: true };
@@ -1568,6 +1827,10 @@ export async function elegirOpcionComparativa(inputRaw: unknown): Promise<Result
   const esCarrito = madre.tipo === "comparativa_carrito";
   // El origen manual no tiene checkout público: allí el visitante/B2B solo SOLICITA (otra acción).
   if (!esCarrito && actor.canal !== "interno") return { ok: false, error: "Esta comparativa se confirma con tu asesor: envía una solicitud." };
+  // #64: una comparativa hecha por personal interno solo la elige un visitante si el interno la marcó para compartir (la base vuelve a exigirlo).
+  if (esCarrito && actor.canal === "publico" && !(await visitantePuedeContinuar(admin, madre))) {
+    return { ok: false, error: "Esta comparativa la confirma tu asesor: envíale una solicitud." };
+  }
   if (mod.datos && (esCarrito || actor.canal !== "interno")) {
     return { ok: false, error: "La modalidad PVP/NETO solo la fija el personal interno en una comparativa manual." };
   }
@@ -1582,6 +1845,13 @@ export async function elegirOpcionComparativa(inputRaw: unknown): Promise<Result
   // Reliquidación EN VIVO con el motor real (precio y disponibilidad vigentes).
   let precio = Number(opcion.total);
   if (esCarrito) {
+    // Lo congelado en la opción debe ser coherente consigo mismo (bloque, línea del documento y cuadro de vuelos) antes de reliquidar.
+    const pl = opcion.plantilla_hija as { payload?: { items?: Array<{ ref?: unknown }> }; detalle?: { items?: unknown; vuelos?: unknown } };
+    const ver = verificarManualesCotizados({
+      payload: pl.payload, detalleItems: pl.detalle?.items, detalleVuelos: pl.detalle?.vuelos, plan: null, moneda: opcion.moneda,
+      refsHoteles: (pl.payload?.items ?? []).map((it) => it.ref).filter((r): r is string => typeof r === "string"),
+    });
+    if (!ver.ok) return { ok: false, error: ver.error };
     const clienteMotor: SolicitudCliente = d.cliente
       ? { nombres: d.cliente.nombres, apellidos: d.cliente.apellidos, numeroDoc: d.cliente.numeroDoc, telefono: d.cliente.telefono, email: d.cliente.email }
       : { nombres: "Cliente", apellidos: "", numeroDoc: "", telefono: "", email: "" };
@@ -1654,6 +1924,8 @@ export type ResumenOpcionComparativa = {
   version: number; tipo: string; opcionRef: string; acomodacionRef: string; etiqueta: string;
   total: number; moneda: string; tarifaPersona: number | null; destino: string | null; fechaSalida: string | null;
   fechaRegreso: string | null; pax: number | null; vigenciaHasta: string | null; vencida: boolean;
+  /** Vuelos manuales comunes de la opción (ruta, tramo, fecha y pasajeros; nunca precio, costo ni proveedor). */
+  vuelos: { tramo: string; origen: string | null; destino: string | null; fecha: string | null; /** Hora local de salida (HH:mm) si el asesor la confirmó. */ hora?: string | null; nota: string }[];
 };
 
 /**
@@ -1673,16 +1945,17 @@ export async function resumenOpcionComparativa(
     .eq("share_token", token).maybeSingle();
   if (!m || m.modo !== "comparativa" || m.estado !== "abierta") return { ok: false, error: MENSAJES_COMPARATIVA.NO_DISPONIBLE };
   const { data: o } = await admin.from("cotizacion_opciones")
-    .select("etiqueta, total, moneda, tarifa_persona")
+    .select("etiqueta, total, moneda, tarifa_persona, resumen_publico")
     .eq("cotizacion_id", m.id).eq("opcion_ref", refs.opcionRef).eq("acomodacion_ref", refs.acomodacionRef).maybeSingle();
   if (!o) return { ok: false, error: MENSAJES_COMPARATIVA.OPCION };
   return {
     ok: true,
     datos: {
       version: m.version, tipo: m.tipo, opcionRef: refs.opcionRef, acomodacionRef: refs.acomodacionRef,
-      etiqueta: o.etiqueta, total: Number(o.total), moneda: o.moneda, tarifaPersona: o.tarifa_persona == null ? null : Number(o.tarifa_persona),
+      etiqueta: o.etiqueta, total: totalPublicoOpcion(Number(o.total), o.resumen_publico), moneda: o.moneda, tarifaPersona: o.tarifa_persona == null ? null : Number(o.tarifa_persona),
       destino: m.destino, fechaSalida: m.fecha_salida, fechaRegreso: m.fecha_regreso, pax: m.pax,
       vigenciaHasta: m.vigencia_hasta, vencida: !!m.vigencia_hasta && m.vigencia_hasta < hoyBogota(),
+      vuelos: (() => { const v = ((o.resumen_publico ?? {}) as { vuelos?: unknown }).vuelos; return Array.isArray(v) ? (v as ResumenOpcionComparativa["vuelos"]) : []; })(),
     },
   };
 }

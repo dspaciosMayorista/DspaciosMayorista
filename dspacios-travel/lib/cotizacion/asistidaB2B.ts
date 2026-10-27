@@ -307,6 +307,17 @@ export function leerPlanB2BDePayload(payload: unknown): { ok: true; plan: PlanB2
  * El aliado y su % VIVOS deben ser los congelados. Cambió el aliado (otro, inactivo, otro tipo) o su porcentaje ⇒ se rechaza.
  * Un cambio de solo el ORIGEN del % (p. ej. el aliado fija explícitamente el mismo número del general) no mueve dinero y no se rechaza.
  */
+/** #64: el plan B2B de UNA opción de comparativa, re-liquidado ahora, debe ser el congelado al crearla (modalidad, aliado, porcentaje, importes y líneas). */
+export function compararPlanesB2B(congelado: PlanB2BCotizacion, vivo: PlanB2BCotizacion): { ok: true } | { ok: false; error: string } {
+  const igual = (a: number, b: number) => Math.abs(a - b) <= EPS;
+  const mismo = congelado.modo_compra === vivo.modo_compra && congelado.moneda === vivo.moneda && congelado.aliado_id === vivo.aliado_id
+    && congelado.tipo_asesor === vivo.tipo_asesor
+    && (["pct", "pvp", "impuesto", "base", "comision", "total_exigible"] as const).every((k) => igual(congelado[k], vivo[k]))
+    && congelado.lineas.length === vivo.lineas.length
+    && congelado.lineas.every((l, i) => l.clave === vivo.lineas[i].clave && igual(l.pvp, vivo.lineas[i].pvp) && igual(l.impuesto, vivo.lineas[i].impuesto));
+  return mismo ? { ok: true } : { ok: false, error: MENSAJE_TERMINOS_CAMBIARON };
+}
+
 export function compararAliadoConCongelado(plan: PlanB2BCotizacion, vivo: { aliadoId: number; tipo: TipoAliadoB2B; pct: number }): { ok: true } | { ok: false; error: string } {
   if (vivo.aliadoId !== plan.aliado_id || vivo.tipo !== plan.tipo_asesor || Math.abs(vivo.pct - plan.pct) > 1e-9) {
     return { ok: false, error: MENSAJE_TERMINOS_CAMBIARON };

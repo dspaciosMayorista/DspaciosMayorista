@@ -48,7 +48,7 @@ import {
   type Medidor, type ResultadoEtapa, type EstadoFlujo,
 } from "@/lib/observabilidad/medicion";
 import type { Tenant } from "@/lib/tenant";
-import type { Json } from "@/types/database";
+import type { Database, Json } from "@/types/database";
 import {
   cotizarPorFechas as cotizarPorFechasImpl,
   buscarHoteles as buscarHotelesImpl,
@@ -82,6 +82,8 @@ import { esInfantePorEdad, pasajeroConsumeSilla } from "@/lib/reservar/pasajeros
 import { payloadGuardarPasajeros } from "@/lib/reservar/pasajerosEdicion";
 import { normalizarResponsablesPorGrupo } from "@/lib/reservar/pasajerosFilas";
 import { posicionesSinAsignar, posicionesUnicasDeGrupo, reindexarGrupoLocal, consolidarReservasSillasPorBloqueo, demandaSillasPorBloqueo, faltanteDeCupos, prevalidarResponsablesDeGrupo, mensajePrevalidacionGrupo, type ReservaSillasPorBloqueo } from "@/lib/reservar/carritoAsignaciones";
+import { iataDeDestino } from "@/lib/reservar/destinoIata";
+import { descripcionContratoManual, lineaB2BManual, primerGrupoPendiente, tramosVueloManual, validarCostoManual, validarVueloContraHotel, verificarManualesCotizados, type ServicioManual } from "@/lib/cart/servicioManual";
 import { armarGruposConversion, resolverVinculosCotizacion, validarPasajerosServiciosVinculados } from "@/lib/reservar/vinculoServiciosCheckout";
 import { calcularResidualServiciosIncluidosPorGrupo } from "@/lib/reservar/desglosePersonaCotizacion";
 import { descripcionLineaMenor, ordenLineaMenor, menoresDelComputo } from "@/lib/reservar/menoresDeDos";
@@ -1902,6 +1904,8 @@ export async function convertirCotizacionCarrito(
     trmCobro?: number | string | null;
     /** 236 (#90 I): TRM de COSTOS (pesos por dólar). Solo se exige —y solo se guarda— si alguna obligación positiva con proveedores está en USD. Distinta de la TRM de cobro. */
     trmCosto?: number | string | null;
+    /** #64: costo NETO y proveedor de cada servicio manual de la cotización (mismo orden que `payload.manuales`). La cotización no los guarda: se exigen aquí, antes de numerar. */
+    costosManuales?: ({ costo: number; proveedor: string } | null)[];
   }
 ): Promise<{ ok: true; numeros: string[]; advertencias?: string[] } | { ok: false; error: string }> {
   const sb = await createClient();
@@ -2001,10 +2005,20 @@ export async function convertirCotizacionCarrito(
     // Cotizaciones anteriores pueden traer `costoNeto`: si aparece, la
     // conversión se rechaza antes de escribir (ver más abajo), aunque coincida.
     serviciosIncluidos?: ServicioIncluidoGuardado[];
+    /** #64: servicios manuales (vuelo libre u otro) con precio declarado; sin costo ni proveedor. */
+    manuales?: unknown[];
     cliente?: { nombres: string; apellidos: string; numeroDoc: string; telefono: string; email: string };
   };
   const itemsCrudos = payload.items ?? [];
   const tours = payload.tours ?? [];
+  // #64: el payload es JSON libre. Lo cotizado se comprueba contra el documento (detalle.items) y el plan B2B congelado; un bloque ausente o malformado
+  // con manuales declarados se rechaza (nunca se vuelve []), igual que uno que no coincida con lo cotizado.
+  const lecturaManuales = verificarManualesCotizados({
+    payload: cot.payload, detalleItems: ((cot.detalle ?? {}) as { items?: unknown }).items, plan: planB2BCot, moneda: cot.moneda ?? null,
+    detalleVuelos: ((cot.detalle ?? {}) as { vuelos?: unknown }).vuelos, refsHoteles: itemsCrudos.map((it) => it.ref).filter((r): r is string => typeof r === "string"),
+  });
+  if (!lecturaManuales.ok) return { ok: false, error: lecturaManuales.error };
+  const manualesCot: ServicioManual[] = lecturaManuales.manuales;
   const serviciosIncluidosCot = payload.serviciosIncluidos ?? [];
   // Formato anterior a PR #353: el payload guardaba el costo neto de los
   // incluidos (legible por `venta`). Esas cotizaciones NO se convierten —
@@ -2132,7 +2146,9 @@ export async function convertirCotizacionCarrito(
   });
   if (errPasajerosVinculados) return { ok: false, error: errPasajerosVinculados };
 
-  type Grupo = { destino: string | null; items: ItemCarritoConAsignacion[]; tours: TourCarritoConAsignacion[] };
+  // #64: `manuales` = servicios manuales del grupo. Un VUELO va al grupo del hotel al que pertenece (`hotelRef`); un «otro servicio» (sin hotel) al primer grupo.
+  type ManualConvertir = { idx: number; m: ServicioManual; costo: number; proveedor: string };
+  type Grupo = { destino: string | null; items: ItemCarritoConAsignacion[]; tours: TourCarritoConAsignacion[]; manuales: ManualConvertir[] };
   // "todo": un solo contrato. "por_destino": agrupa por destino TANTO
   // hoteles como tours independientes — un destino que solo tenga tours
   // forma su propio contrato (B17), nunca se cuelga en silencio del grupo
@@ -2142,7 +2158,7 @@ export async function convertirCotizacionCarrito(
   // vista previa (ConvertirCarritoBtn).
   const grupos: Grupo[] = armarGruposConversion<ItemCarritoConAsignacion, TourCarritoConAsignacion>({
     modo: opts.agrupar, items, tours: toursAsign, hotelDeTour,
-  });
+  }).map((g) => ({ ...g, manuales: [] as ManualConvertir[] }));
 
   // W8 (§6.8): sin la clave de servicio no se puede crear la reserva. Antes
   // había aquí un respaldo al cliente de SESIÓN que nunca llegaba a escribir
@@ -2175,6 +2191,26 @@ export async function convertirCotizacionCarrito(
   }
   const gruposPendientes = grupos.filter((g) => !contratosPorGrupo[claveDeGrupo(g)]);
 
+  // #64: cada servicio manual va al grupo de SU hotel (un vuelo) o al primero (otro servicio). Su costo y proveedor se exigen SOLO si ese grupo está pendiente (si ya se
+  // convirtió en un intento anterior, el contrato es un hecho consumado) y SIEMPRE antes de numerar: sin costo o proveedor no se crea nada.
+  if (manualesCot.length) {
+    if (!grupos.length) return { ok: false, error: "La cotización tiene servicios manuales pero ninguna unidad del carrito a la que asociarlos." };
+    for (let i = 0; i < manualesCot.length; i++) {
+      const m = manualesCot[i];
+      // Un vuelo, y un «otro servicio» de una comparativa (que conserva el hotel de su opción), van al grupo de SU hotel; un «otro servicio» sin hotel, al primero.
+      const g = m.clase === "vuelo" || m.hotelRef ? grupos.find((gr) => gr.items.some((it) => it.ref === m.hotelRef)) : grupos[0];
+      if (!g) return { ok: false, error: `${m.nombre}: el hotel al que pertenece ${m.clase === "vuelo" ? "el vuelo" : "el servicio"} no está entre las unidades de la cotización.` };
+      if (m.pax > opts.pasajeros.length) return { ok: false, error: `${m.nombre}: tiene ${m.pax} pasajeros pero solo capturaste ${opts.pasajeros.length}.` };
+      if (!primerGrupoPendiente(contratosPorGrupo, g.destino)) { g.manuales.push({ idx: i, m, costo: 0, proveedor: "" }); continue; }
+      if (!Array.isArray(opts.costosManuales) || opts.costosManuales.length !== manualesCot.length) {
+        return { ok: false, error: "Captura el costo y el proveedor de cada servicio manual antes de generar el contrato." };
+      }
+      const c = validarCostoManual(opts.costosManuales[i], m.moneda);
+      if (!c.ok) return { ok: false, error: `${m.nombre}: ${c.error}` };
+      g.manuales.push({ idx: i, m, costo: c.valor.costo, proveedor: c.valor.proveedor });
+    }
+  }
+
   // #102: con grupos por convertir, el aliado de HOY (existe, activo, mismo tipo, mismo %) debe ser el congelado. Si cambió, se rechaza
   // ANTES de reliquidar o numerar nada: nunca se recalcula la comisión en silencio con otro porcentaje. Un grupo ya convertido no se
   // vuelve a juzgar (ese contrato es un hecho consumado).
@@ -2185,7 +2221,7 @@ export async function convertirCotizacionCarrito(
     // completo) deben ser, una vez cada una, las líneas del plan. Una unidad faltante, repetida o ajena se rechaza antes de numerar.
     const cobertura = verificarCoberturaLineasB2B(
       planB2BCot,
-      grupos.map((g) => [...g.items.map((it) => it.ref ?? ""), ...g.tours.map((t) => `tour-${t.__idx}`)]),
+      grupos.map((g) => [...g.items.map((it) => it.ref ?? ""), ...g.tours.map((t) => `tour-${t.__idx}`), ...g.manuales.map((x) => `manual-${x.idx}`)]),
     );
     if (!cobertura.ok) return { ok: false, error: cobertura.error };
     const aliadoVivo = await verificarAliadoVivoParaConversion(sb, planB2BCot);
@@ -2196,6 +2232,8 @@ export async function convertirCotizacionCarrito(
   const firmaConversion = nombreQuienElabora(opts.asesorInterno, (await resolverFirmasSesion(sb)).elabora);
   // Plan B2B de cada contrato por crear (con los términos CONGELADOS y el PVP/impuesto VIVOS de sus unidades, ya comparados).
   const planesB2BPorGrupo = new Map<string, PlanComisionReserva>();
+  // #64: impuesto no comisionable del grupo (hoteles + manuales). Es lo que se escribe en `ventas.impuesto`, de donde la base recalcula la comisión.
+  const impuestoB2BPorGrupo = new Map<string, number>();
 
   // ── Paso 1: validar TODO (precio autoritativo + cupos) antes de insertar ──
   // Fase 3F-4B: cada ítem se despacha por `modeloTarifario` a su propio
@@ -2287,6 +2325,21 @@ export async function convertirCotizacionCarrito(
       if (!vIncluidos.ok) return { ok: false, error: vIncluidos.error };
       validadosPersona.push({ item: it, comp: comp.data, incluidos: vIncluidos.incluidos });
     }
+    // #64: cada vuelo del grupo se vuelve a comprobar contra la ciudad y la estadía que el servidor RECALCULA para SU hotel (la ida no antes de la entrada, el
+    // regreso no después de la salida), antes de numerar: lo cotizado no basta si el hotel ya no cuadra con el vuelo.
+    for (const x of grupo.manuales) {
+      if (x.m.clase !== "vuelo") continue;
+      const hp = validadosPersona.find((v) => v.item.ref === x.m.hotelRef);
+      const hb = validadosBernalo.find((v) => v.item.ref === x.m.hotelRef);
+      const hotelBase = hp
+        ? { ref: hp.item.ref ?? "", nombre: hp.comp.meta.hotel_nombre ?? hp.item.hotelNombre, destino: hp.comp.meta.destino_nombre ?? null, fechaIda: hp.comp.meta.fecha_ida, fechaRegreso: hp.comp.meta.fecha_regreso }
+        : hb ? { ref: hb.item.ref ?? "", nombre: hb.resultado.hotelNombre, destino: hb.resultado.hotelDestino, fechaIda: hb.resultado.salida.fechaIda, fechaRegreso: hb.resultado.salida.fechaRegreso } : null;
+      // IATA del destino desde el CATÁLOGO (la misma fuente que al cotizar); si falta, el contrato no se numera.
+      const hotel = hotelBase ? { ...hotelBase, destinoIata: await iataDeDestino(admin, hotelBase.destino) } : null;
+      if (!hotel) return { ok: false, error: `${x.m.nombre}: el hotel del vuelo no se pudo validar en este contrato.` };
+      const rv = validarVueloContraHotel(x.m, hotel);
+      if (!rv.ok) return { ok: false, error: `${x.m.nombre}: ${rv.error}` };
+    }
     // #102: cada unidad del grupo debe valer EXACTAMENTE lo congelado en la cotización (PVP e impuesto). Si el precio, el impuesto o la
     // moneda cambiaron después de cotizar, se rechaza antes de numerar. Bernalo no genera impuesto; los tours conservan su PVP cotizado.
     if (planB2BCot) {
@@ -2294,12 +2347,14 @@ export async function convertirCotizacionCarrito(
         ...validadosPersona.map((v) => ({ clave: v.item.ref ?? "", pvp: v.comp.precioVenta, impuesto: v.comp.impuestoTotal })),
         ...validadosBernalo.map((v) => ({ clave: v.item.ref ?? "", pvp: v.resultado.precioVenta, impuesto: 0 })),
         ...grupo.tours.map((t) => ({ clave: `tour-${t.__idx}`, pvp: t.precio, impuesto: 0 })),
+        ...grupo.manuales.map((x) => lineaB2BManual(x.m, x.idx)),
       ];
       const cmpLineas = compararLineasConCongeladas(planB2BCot, vivas, cot.moneda ?? "");
       if (!cmpLineas.ok) return { ok: false, error: cmpLineas.error };
       const pg = planDeGrupoB2B(planB2BCot, vivas);
       if (!pg.ok) return { ok: false, error: pg.error };
       planesB2BPorGrupo.set(claveDeGrupo(grupo), pg.plan);
+      impuestoB2BPorGrupo.set(claveDeGrupo(grupo), vivas.reduce((s, l) => s + l.impuesto, 0));
     }
     gruposValidados.push({ grupo, validadosPersona, validadosBernalo });
   }
@@ -2443,6 +2498,7 @@ export async function convertirCotizacionCarrito(
         ...validadosPersona.map((v) => ({ origen: v.item.hotelNombre, moneda: v.comp.monedaReserva })),
         ...validadosBernalo.map((v) => ({ origen: v.item.hotelNombre, moneda: v.resultado.moneda })),
         ...grupo.tours.map((t) => ({ origen: t.nombre, moneda: t.moneda })),
+        ...grupo.manuales.map((x) => ({ origen: x.m.nombre, moneda: x.m.moneda })),
       ],
     })),
   });
@@ -2513,6 +2569,7 @@ export async function convertirCotizacionCarrito(
         return { ok: false, error: `No se pudo calcular el costo del tour "${t.nombre}": ${e instanceof Error ? e.message : "error desconocido"}. No se crea ningún contrato.` };
       }
     }
+    for (const x of grupo.manuales) obligaciones.push({ origen: x.m.nombre, moneda: x.m.moneda, valor: x.costo });
     const rObl = evaluarObligaciones({ monedaContrato: monedaOfertaConversion, obligaciones });
     if (!rObl.ok) return { ok: false, error: rObl.error };
     if (rObl.requiereTrmCosto) requiereTrmCosto = true;
@@ -2583,7 +2640,8 @@ export async function convertirCotizacionCarrito(
     // — la suma de una sola parte más 0 tours/otros hoteles.
     const precioTotal = validadosPersona.reduce((s, v) => s + v.comp.precioVenta, 0)
       + validadosBernalo.reduce((s, v) => s + v.resultado.precioVenta, 0)
-      + grupo.tours.reduce((s, t) => s + t.precio, 0);
+      + grupo.tours.reduce((s, t) => s + t.precio, 0)
+      + grupo.manuales.reduce((s, x) => s + x.m.precio, 0);
     const monedaGrupo = monedaOfertaConversion; // validada arriba: todas las unidades del grupo (hoteles y tours) están en esta moneda
     // #102: venta B2B asistida ⇒ el contrato nace B2B, del aliado congelado, y lo EXIGIBLE es el de su plan (PVP en comisionable; PVP −
     // comisión en NETO). `precio_venta`, el total de cobro y todo lo que depende de él (saldo, factura, portal) parten de ese importe.
@@ -2694,7 +2752,7 @@ export async function convertirCotizacionCarrito(
             comision_b2b: planGrupoB2B.comision,
             comision_estado: planGrupoB2B.comisionEstado,
             // Mismo impuesto que se usó para la base: la base de datos recalcula la comisión desde `ventas.impuesto`.
-            impuesto: validadosPersona.reduce((s, v) => s + v.comp.impuestoTotal, 0),
+            impuesto: impuestoB2BPorGrupo.get(claveGrupo) ?? 0,
             aliado_id: planB2BCot.aliado_id,
             agencia_nombre: planB2BCot.tipo_asesor === "agencia" ? planB2BCot.aliado_nombre : null,
             freelance_nombre: planB2BCot.tipo_asesor === "freelance" ? planB2BCot.aliado_nombre : null,
@@ -3225,6 +3283,41 @@ export async function convertirCotizacionCarrito(
       }
     }
 
+    // #64: servicios MANUALES del grupo. Ítem visible del contrato + (vuelo) tramo informativo SIN record ni sillas + CxP al proveedor con el costo
+    // capturado al convertir. Falla cerrado: el cliente ya lo paga como ítem del contrato, así que su deuda no puede faltar. Un vuelo manual nunca
+    // toca `sillas`/`bloqueos_vuelo`: no reserva ni inventa disponibilidad.
+    let costoOtrosManual = 0;
+    if (grupo.manuales.length) {
+      const { error: eItemsM } = await sb.from("contrato_items").insert(grupo.manuales.map((x, i) => ({
+        numero_contrato: numero, descripcion: descripcionContratoManual(x.m),
+        adultos: 0, ninos: 0, tarifa_adulto: 0, tarifa_nino: 0, modo_precio: "total", valor_total: x.m.precio, orden: 9500 + i,
+      })));
+      if (eItemsM) return fallarYRevertirGrupo(`No se pudo registrar el servicio manual en el contrato: ${eItemsM.message}`);
+      const { data: provCat, error: eProvM } = await admin.from("proveedores").select("nombre, aplica_retencion, pct_retencion");
+      if (eProvM) return fallarYRevertirGrupo(`No se pudo consultar el catálogo de proveedores: ${eProvM.message}`);
+      const norm = (t: string) => t.trim().replace(/\s+/g, " ").toLowerCase();
+      const tramosManual: Database["public"]["Tables"]["contrato_vuelos"]["Insert"][] = [];
+      for (const x of grupo.manuales) {
+        const { m } = x;
+        const prov = (provCat ?? []).find((p) => norm(p.nombre ?? "") === norm(x.proveedor)) ?? { nombre: x.proveedor, aplica_retencion: false, pct_retencion: 0 };
+        if (m.clase === "vuelo") {
+          // Mismas filas que el cuadro de vuelos de la cotización (sin el aviso de «sujeto a confirmación»: el costo y el proveedor ya quedaron registrados).
+          for (const t of tramosVueloManual(m, false)) {
+            tramosManual.push({ numero_contrato: numero, aerolinea: null, record: null, direccion: t.direccion as string, origen_codigo: t.origen_codigo as string | null, origen_ciudad: t.origen_ciudad as string | null, destino_codigo: t.destino_codigo as string | null, destino_ciudad: t.destino_ciudad as string | null, servicios: t.servicios as string, fecha_salida: t.fecha_salida as string | null, hora_salida: (t.hora_salida as string | null) ?? null, orden: 9500 + tramosManual.length });
+          }
+          costoAereoTotal += x.costo;
+          pushCxP("aereo", `Vuelo manual ${m.origen ?? ""} → ${m.destino ?? ""}`.trim(), x.costo, prov, x.proveedor, null, m.moneda);
+        } else {
+          costoOtrosManual += x.costo;
+          pushCxP("otro", `Servicio manual ${m.nombre}`, x.costo, prov, x.proveedor, null, m.moneda);
+        }
+      }
+      if (tramosManual.length) {
+        const { error: eVueloM } = await sb.from("contrato_vuelos").insert(tramosManual);
+        if (eVueloM) return fallarYRevertirGrupo(`No se pudo registrar el vuelo manual en el contrato: ${eVueloM.message}`);
+      }
+    }
+
     // Servicios INCLUIDOS del paquete que pertenecen a este grupo
     // (`incluidosGrupo`, ver arriba) — su PVP ya está en `comp.precioVenta`
     // (nunca se vuelve a sumar acá), solo se genera su CxP real con el costo
@@ -3281,10 +3374,11 @@ export async function convertirCotizacionCarrito(
     // chequeo de error — si cualquiera fallaba, este flujo seguía de largo y
     // devolvía los números de contrato como si todo hubiera quedado bien.
     const costosGrupo: CostosContrato = {};
-    if (costoAereoTotal > 0 || costoHotelTotal > 0 || costoServiciosCarrito > 0) {
+    if (costoAereoTotal > 0 || costoHotelTotal > 0 || costoServiciosCarrito > 0 || costoOtrosManual > 0) {
       costosGrupo.costo_aereo = costoAereoTotal;
       costosGrupo.costo_hotel = costoHotelTotal;
       if (costoServiciosCarrito > 0) costosGrupo.costo_receptivo = costoServiciosCarrito;
+      if (costoOtrosManual > 0) costosGrupo.otros_costos = costoOtrosManual;
     }
     // Igual que el flujo individual, debe cerrar el estado aunque el payload
     // financiero sea vacío.

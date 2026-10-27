@@ -132,8 +132,14 @@ describe("crearComparativaCarrito — armado de opciones con el motor real", () 
     assert.ok(r.ok && r.id === 900 && r.codigo === "C-0900");
   });
 
-  test("cada hotel genera sus acomodaciones uniformes; la del carrito va primero y cada una tiene su total", async () => {
+  test("por defecto cada hotel se cotiza SOLO con la acomodación del carrito (sin alternativas por tener otra tarifa disponible)", async () => {
     await crear([hotel("hA", 1), hotel("hB", 2)]);
+    const ops = llamadas("crear_cotizacion_comparativa")[0].args.p_opciones as Array<{ opcion_ref: string; acomodacion_ref: string; total: number }>;
+    assert.deepEqual(ops.map((o) => `${o.opcion_ref}/${o.acomodacion_ref}`), ["A/doble", "B/doble"]);
+  });
+
+  test("otrasAcomodaciones: true (elección expresa): cada hotel genera sus acomodaciones uniformes; la del carrito va primero y cada una tiene su total", async () => {
+    await crear([hotel("hA", 1), hotel("hB", 2)], [], { otrasAcomodaciones: true });
     const ops = llamadas("crear_cotizacion_comparativa")[0].args.p_opciones as Array<{ opcion_ref: string; acomodacion_ref: string; total: number; tarifa_persona: number; etiqueta: string }>;
     assert.deepEqual(ops.map((o) => `${o.opcion_ref}/${o.acomodacion_ref}`), ["A/doble", "A/sencilla", "B/doble", "B/sencilla"]);
     const por = Object.fromEntries(ops.map((o) => [`${o.opcion_ref}/${o.acomodacion_ref}`, o]));
@@ -447,7 +453,8 @@ describe("resumenOpcionComparativa — lectura pública mínima", () => {
     const r = await A.resumenOpcionComparativa("11111111-2222-3333-4444-555555555555", "A", "doble");
     assert.equal(r.ok, true);
     if (!r.ok) return;
-    assert.deepEqual(Object.keys(r.datos).sort(), ["acomodacionRef", "destino", "etiqueta", "fechaRegreso", "fechaSalida", "moneda", "opcionRef", "pax", "tarifaPersona", "tipo", "total", "vencida", "version", "vigenciaHasta"].sort());
+    assert.deepEqual(Object.keys(r.datos).sort(), ["acomodacionRef", "destino", "etiqueta", "fechaRegreso", "fechaSalida", "moneda", "opcionRef", "pax", "tarifaPersona", "tipo", "total", "vencida", "version", "vigenciaHasta", "vuelos"].sort());
+    assert.deepEqual(r.datos.vuelos, [], "sin vuelos manuales comunes la lista va vacía (y nunca lleva precio, costo ni proveedor)");
     assert.equal(r.datos.total, 685_000);
     assert.ok(!JSON.stringify(r).includes("plantilla") && !JSON.stringify(r).includes("payload"));
     assert.equal(rpcs.length, 0, "leer no ejecuta ninguna RPC");

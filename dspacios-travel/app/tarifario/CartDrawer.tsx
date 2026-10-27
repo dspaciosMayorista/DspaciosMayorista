@@ -12,6 +12,7 @@ import { AvisoMonedas, TotalesPorMoneda } from "./totalesCarrito";
 import { construirAddonsIntentDesdeCarrito } from "@/lib/cart/addonsIntent";
 import { crearContadorAddonsNonce } from "@/lib/cart/addonsNonce";
 import { resumenHabitacionesBernalo } from "@/lib/cart/resumenHabitacionBernalo";
+import { estanciaDeHotel, lineaEstancia } from "@/lib/cart/estanciaCarrito";
 import { CondicionHotelBadges } from "@/components/cotizacion/CondicionHotelBadges";
 
 const MENSAJE_SIN_REFERENCIA_ADDONS =
@@ -59,7 +60,7 @@ function ServiciosDelHotel({ hotel, servicios, onQuitar }: { hotel: HotelCartIte
 }
 
 export function CartDrawer({ checkoutHabilitado = false, fotosPorHotel = {} }: { checkoutHabilitado?: boolean; fotosPorHotel?: Record<number, string> }) {
-  const { items, remove, totales, count, drawerOpen, openDrawer, closeDrawer, setAddonsIntent } = useCart();
+  const { items, remove, totales, count, drawerOpen, openDrawer, closeDrawer, setAddonsIntent, modoComparativa } = useCart();
   const router = useRouter();
   // Resuelve la foto ACTUAL del hotel por id (los ítems viejos del carrito pueden
   // no traer fotoUrl si se agregaron antes de subir la portada).
@@ -194,6 +195,7 @@ export function CartDrawer({ checkoutHabilitado = false, fotosPorHotel = {} }: {
                               {it.destino ?? ""}{it.categoria ? ` · ${it.categoria}` : ""}{it.regimen ? ` / ${it.regimen}` : ""}
                             </div>
                             <div className="truncate text-xs text-gray-400">{resumenHabitaciones(it)}</div>
+                            <div className="mt-0.5 break-words text-xs text-gray-600" data-testid="estancia-hotel">{lineaEstancia(estanciaDeHotel(it))}</div>
                             <div className="mt-1"><CondicionHotelBadges condicion={it.condicion} /></div>
                           </>
                         ) : it.tipo === "hotel" ? (
@@ -203,11 +205,12 @@ export function CartDrawer({ checkoutHabilitado = false, fotosPorHotel = {} }: {
                               {it.destino ?? ""}{it.categoria ? ` · ${it.categoria}` : ""}{it.alimentacion ? ` / ${it.alimentacion}` : ""}
                             </div>
                             <div className="truncate text-xs text-gray-400">{resumenHabitacionesBernalo(it.habitaciones, it.composicionHabitaciones)}</div>
+                            <div className="mt-0.5 break-words text-xs text-gray-600" data-testid="estancia-hotel">{lineaEstancia(estanciaDeHotel(it))}</div>
                           </>
                         ) : (
                           <>
                             <div className="flex items-center gap-1.5 truncate font-medium text-gray-800">
-                              <span className="rounded bg-[rgba(38,187,217,0.12)] px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide" style={{ color: "var(--brand-accent)" }}>Tour</span>
+                              <span className="rounded bg-[rgba(38,187,217,0.12)] px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide" style={{ color: "var(--brand-accent)" }}>{it.tipo === "manual" ? (it.clase === "vuelo" ? "Vuelo manual" : "Servicio manual") : "Tour"}</span>
                               {it.nombre}
                             </div>
                             <div className="truncate text-xs text-gray-500">{it.destino ?? ""}</div>
@@ -239,10 +242,16 @@ export function CartDrawer({ checkoutHabilitado = false, fotosPorHotel = {} }: {
             </div>
 
             <div className="border-t border-gray-100 p-4">
+              {modoComparativa ? (
+                <p className="mb-3 rounded-lg bg-sky-50 px-3 py-2 text-xs text-sky-800" data-testid="sin-total-comparativa">
+                  Modo comparativa: cada hotel es una alternativa y se cotiza por separado. No hay un total del carrito; verás el valor de cada opción (con sus servicios y vuelos) al crear la comparativa.
+                </p>
+              ) : (
               <div className="mb-3 space-y-2">
                 <TotalesPorMoneda totales={totales} etiqueta="Total estimado" />
                 <AvisoMonedas totales={totales} prevision={preverCotizacion(items)} />
               </div>
+              )}
               {items.some((i) => i.tipo === "hotel") && (
                 <>
                   <button
@@ -263,12 +272,12 @@ export function CartDrawer({ checkoutHabilitado = false, fotosPorHotel = {} }: {
                 <button
                   type="button"
                   disabled={!items.length || !checkoutHabilitado}
-                  onClick={() => { closeDrawer(); router.push("/tarifario/checkout"); }}
+                  onClick={() => { closeDrawer(); router.push(modoComparativa ? "/tarifario/checkout?modo=comparativa" : "/tarifario/checkout"); }}
                   className="flex-1 rounded-lg px-4 py-2.5 text-sm font-semibold text-white disabled:opacity-40"
                   style={{ backgroundColor: "var(--brand-primary)" }}
                   title={checkoutHabilitado ? "" : "El checkout se habilita en la próxima fase"}
                 >
-                  Finalizar compra
+                  {modoComparativa ? "Crear comparativa" : "Finalizar compra"}
                 </button>
               </div>
               {!checkoutHabilitado && items.length > 0 && (

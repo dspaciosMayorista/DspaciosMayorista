@@ -88,7 +88,7 @@ export type ItemHotelUnidadAddons = {
 };
 
 /** Cualquier otro ítem del carrito (tours) — nunca participa como referencia. */
-export type ItemNoHotelAddons = { tipo: "tour" };
+export type ItemNoHotelAddons = { tipo: "tour" | "manual" };
 
 export type ItemCarritoAddons = ItemHotelPersonaAddons | ItemHotelUnidadAddons | ItemNoHotelAddons;
 

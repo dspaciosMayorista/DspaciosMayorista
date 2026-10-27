@@ -24,9 +24,22 @@ async function elegir(sel: HTMLSelectElement, valor: string) {
     sel.dispatchEvent(new dom.window.Event("change", { bubbles: true }));
   });
 }
+/** La RPC simulada PERSISTE lo recibido (hoteles, vigencias y noches con ids nuevos), como la real: el editor lee de vuelta los ids guardados. */
+function persistirCatalogo(bd: ReturnType<typeof usarBD>, args: Record<string, unknown>) {
+  const lista = args.p_hoteles as Record<string, unknown>[];
+  const t = (n: string) => bd.tablas.get(n) ?? [];
+  let id = Math.max(100, ...t("programa_hoteles").map((f) => Number(f.id) || 0));
+  bd.tablas.set("programa_hoteles", []); bd.tablas.set("programa_hotel_precios", []); bd.tablas.set("programa_hotel_noches", []);
+  lista.forEach((hh, orden) => {
+    const hid = (hh.id as number | null) ?? ++id;
+    t("programa_hoteles").push({ id: hid, programa_id: args.p_programa_id, orden, nombre: hh.nombre, zona: hh.zona, tipo_habitacion: hh.tipo_habitacion, max_pax_habitacion: hh.max_pax_habitacion, max_menores_habitacion: hh.max_menores_habitacion, proveedor_id: hh.proveedor_id });
+    for (const b of hh.base as Record<string, unknown>[]) t("programa_hotel_precios").push({ id: ++id, hotel_id: hid, ...b });
+    for (const n of hh.noches as Record<string, unknown>[]) t("programa_hotel_noches").push({ id: ++id, hotel_id: hid, ...n });
+  });
+}
 function conRpc(error?: string) {
   const llamadas: Record<string, unknown>[] = [];
-  const bd = usarBD({}, { guardar_programa_hoteles: (args) => { llamadas.push(args); return error ? { __error: { code: "P0001", message: error } } : null; } });
+  const bd: ReturnType<typeof usarBD> = usarBD({}, { guardar_programa_hoteles: (args) => { llamadas.push(args); if (error) return { __error: { code: "P0001", message: error } }; persistirCatalogo(bd, args); return null; } });
   return { bd, llamadas };
 }
 const catalogoUno = (over: { maxPax?: number | null; maxMenores?: number | null; base?: unknown[]; noches?: unknown[] } = {}) => ({

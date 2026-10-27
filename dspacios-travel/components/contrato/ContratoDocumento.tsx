@@ -26,6 +26,7 @@ import type {
 } from "@/types/database";
 import type { CondicionesContratoResueltas } from "@/lib/contrato/condicionesContrato";
 import { nombreQuienElabora } from "@/lib/cotizacion/identidadB2B";
+import { esLineaVueloManual, esTramoVueloManual } from "@/lib/cart/servicioManual";
 import { agruparCondicionesTarifaPorTexto, type CondicionTarifaAplicada } from "@/lib/calc/condicionesTarifa";
 
 // `condiciones_tarifa` opcional (ausente = cotizaciones/contratos anteriores
@@ -193,7 +194,10 @@ export function ContratoDocumento({
   const valorItemDocumento = (item: ContratoItem) => valoresNetos ? (valoresNetos.get(item.id)?.total ?? 0) : valorVisibleContratoItem(item);
   // Separa servicios (línea propia: Servicio · Pax · Valor total) del alojamiento.
   const servicioItems = items.filter((it) => it.descripcion?.startsWith("Servicio · "));
-  const alojItems = items.filter((it) => !it.descripcion?.startsWith("Servicio · "));
+  // La línea suelta de un vuelo manual NO se pinta en la tabla de valores: el vuelo sale en el cuadro de vuelos y su precio ya está en el total (una sola vez).
+  const alojItems = items.filter((it) => !it.descripcion?.startsWith("Servicio · ") && !esLineaVueloManual(it.descripcion));
+  // Hay vuelos manuales cuyo valor está en el total pero NO en las filas visibles: el documento lo dice (sin revelar su importe, ni PVP, ni comisión).
+  const hayVuelosEnElTotal = items.some((it) => esLineaVueloManual(it.descripcion));
   // Cierre 3F-4B: separa las líneas agregadas (`modo_precio = "total"`,
   // Bernalo) de las per-cápita de siempre — nunca se mezclan en la misma
   // tabla (regla F.5).
@@ -354,9 +358,13 @@ export function ContratoDocumento({
                 // Origen/Destino: usa los campos guardados; si están vacíos, los
                 // deriva de la ruta ("MDE - CTG - MDE" → origen MDE, destino CTG).
                 const r = parseRuta(v.servicios);
-                const origen = etiquetaIata(v.origen_codigo) || etiquetaIata(r.origen) || "—";
-                const destino = etiquetaIata(v.destino_codigo) || etiquetaIata(r.destino) || "—";
+                const manual = esTramoVueloManual(v);
+                // Un vuelo manual no trae ruta en «servicios» (es una nota): su ciudad sale de sus propias columnas.
+                const origen = etiquetaIata(v.origen_codigo) || (manual ? v.origen_ciudad : etiquetaIata(r.origen)) || "—";
+                const destino = etiquetaIata(v.destino_codigo) || (manual ? v.destino_ciudad : etiquetaIata(r.destino)) || "—";
                 const direccionLabel = v.direccion === "ida" ? "Ida" : v.direccion === "regreso" ? "Regreso" : null;
+                // #47: el CONTRATO no muestra horarios ni número de vuelo (quedan guardados para la operación); la cotización sí muestra la hora local de salida.
+                const mostrarHorario = esCotizacion;
                 // Compat: contratos creados antes de que cada fila fuera UN tramo
                 // guardaban ida+regreso mezclados en la misma fila.
                 const esLegacyDoble = !v.numero_vuelo && !v.hora_salida && !!(v.vuelo_ida || v.vuelo_regreso || v.hora_salida_ida || v.hora_salida_reg);
@@ -366,7 +374,7 @@ export function ContratoDocumento({
                   className="break-inside-avoid rounded-lg border border-gray-200 p-3"
                 >
                   <div className="flex items-center gap-2 font-semibold text-gray-700">
-                    <span>✈</span> {v.aerolinea ?? "—"}
+                    <span>✈</span> {manual ? "Vuelo sin reserva confirmada" : (v.aerolinea ?? "—")}
                     {/* El record/PNR es interno: NO se muestra al cliente. */}
                   </div>
                   <div className="mt-1 text-xs text-gray-600">
@@ -377,29 +385,31 @@ export function ContratoDocumento({
                   </div>
                   {v.servicios && (
                     <div className="mt-1 text-xs text-gray-500">
-                      Equipaje/Servicios: {v.servicios}
+                      {manual ? "Detalle" : "Equipaje/Servicios"}: {v.servicios}
                     </div>
                   )}
                   {esLegacyDoble ? (
                     <>
                       <div className="mt-1 text-xs text-gray-500">
                         Ida: {formatFechaLarga(v.fecha_salida)}
-                        {v.vuelo_ida ? ` · vuelo ${v.vuelo_ida}` : ""}
-                        {v.hora_salida_ida ? ` · ${v.hora_salida_ida}${v.hora_llegada_ida ? `–${v.hora_llegada_ida}` : ""}` : ""}
+                        {mostrarHorario && v.vuelo_ida ? ` · vuelo ${v.vuelo_ida}` : ""}
+                        {mostrarHorario && v.hora_salida_ida ? ` · ${v.hora_salida_ida}${v.hora_llegada_ida ? `–${v.hora_llegada_ida}` : ""}` : ""}
                       </div>
                       {(v.fecha_regreso || v.vuelo_regreso || v.hora_salida_reg) && (
                         <div className="text-xs text-gray-500">
                           Regreso: {formatFechaLarga(v.fecha_regreso)}
-                          {v.vuelo_regreso ? ` · vuelo ${v.vuelo_regreso}` : ""}
-                          {v.hora_salida_reg ? ` · ${v.hora_salida_reg}${v.hora_llegada_reg ? `–${v.hora_llegada_reg}` : ""}` : ""}
+                          {mostrarHorario && v.vuelo_regreso ? ` · vuelo ${v.vuelo_regreso}` : ""}
+                          {mostrarHorario && v.hora_salida_reg ? ` · ${v.hora_salida_reg}${v.hora_llegada_reg ? `–${v.hora_llegada_reg}` : ""}` : ""}
                         </div>
                       )}
                     </>
                   ) : (
                     <div className="mt-1 text-xs text-gray-500">
                       {direccionLabel ? `${direccionLabel}: ` : ""}{formatFechaLarga(v.fecha_salida)}
-                      {v.numero_vuelo ? ` · vuelo ${v.numero_vuelo}` : ""}
-                      {v.hora_salida ? ` · ${v.hora_salida}${v.hora_llegada ? `–${v.hora_llegada}` : ""}` : ""}
+                      {mostrarHorario && v.numero_vuelo ? ` · vuelo ${v.numero_vuelo}` : ""}
+                      {mostrarHorario && v.hora_salida
+                        ? (manual ? ` · salida ${v.hora_salida} (hora local)` : ` · ${v.hora_salida}${v.hora_llegada ? `–${v.hora_llegada}` : ""}`)
+                        : ""}
                     </div>
                   )}
                 </div>
@@ -567,6 +577,11 @@ export function ContratoDocumento({
               <Pill label="Saldo pendiente" value={cobroConvertido ? formatMoneda(saldoDocumento, monedaPago) : importeDocumento(saldo)} />
               <Pill label="Moneda" value={cobroConvertido ? `${moneda} · cobro en ${cobroConvertido.moneda}` : moneda} />
             </div>
+            {hayVuelosEnElTotal && (
+              <p className="mb-3 text-xs text-gray-500" data-testid="nota-vuelos-incluidos">
+                {valoresNetos ? "El total exigible" : "El total del contrato"} incluye el valor de los vuelos indicados en la sección «Vuelos». Su importe no se desglosa en las filas de esta tabla.
+              </p>
+            )}
           </div>
           {/* Hallazgo confirmado (cierre 3F-4B): una línea `modo_precio =
               "total"` (Bernalo) no tiene adultos/niños/tarifa por columna —

@@ -16,6 +16,7 @@ import { esInfantePorEdad } from "@/lib/reservar/pasajeros";
 import { recalcularVinculosPorEdadPorFila } from "@/lib/reservar/pasajerosFilas";
 import { OpcionesTipoDoc } from "@/components/personas/OpcionesTipoDoc";
 import { BuscarPasajeroDocumento } from "@/components/pasajeros/BuscarPasajeroDocumento";
+import { primerGrupoPendiente } from "@/lib/cart/servicioManual";
 import { agruparUnidadesCarrito, validarPasajerosServiciosVinculados } from "@/lib/reservar/vinculoServiciosCheckout";
 import {
   agregarPosicionAUniverso,
@@ -32,6 +33,8 @@ type ItemCarritoUI = { hotelNombre: string; destino: string | null; pax: number;
 // `hotelIndice`: índice en `items` del hotel al que pertenece el servicio
 // (vínculo ya validado en page.tsx con `resolverVinculosCotizacion`), o
 // `null` si es independiente.
+/** #64: servicio manual de la cotización (precio declarado; su costo y proveedor se capturan al convertir). */
+type ManualCarritoUI = { nombre: string; pax: number; precio: number; moneda: string; /** Posición en `items` del hotel del vuelo (va al contrato de ese hotel); null = «otro servicio», al primer contrato. */ hotelIndice?: number | null };
 type TourCarritoUI = { nombre: string; destino: string | null; pax: number; fechaIda: string | null; hotelIndice: number | null; precio?: number };
 
 
@@ -39,8 +42,10 @@ type TourCarritoUI = { nombre: string; destino: string | null; pax: number; fech
 // pasajeros (igual que CotizacionAcciones) y, si el carrito trae 2+ destinos
 // distintos, deja elegir 1 contrato para todo o 1 contrato por destino.
 export function ConvertirCarritoBtn({
-  id, pax, items, tours, destinos, cliente, esSuperadmin, asesores, miNombre, miRolVenta, vinculoError: vinculoErrorProp = null, monedaOferta = "COP", b2b = null, b2bError = null,
+  id, pax, items, tours, manuales = [], destinos, cliente, esSuperadmin, asesores, miNombre, miRolVenta, vinculoError: vinculoErrorProp = null, monedaOferta = "COP", b2b = null, b2bError = null, contratosPorGrupo = {},
 }: {
+  /** #64: grupos ya convertidos en un intento anterior (destino → contrato). Si el primero ya tiene contrato, el servidor no usa costos manuales y no se piden. */
+  contratosPorGrupo?: Record<string, string>;
   /** #102: los términos B2B guardados en la cotización están ilegibles; la conversión se rechazaría en el servidor, así que se bloquea desde ya. */
   b2bError?: string | null;
   /** Moneda de la cotización (y de sus contratos). La moneda de COBRO se elige aparte, de forma expresa. */
@@ -48,7 +53,9 @@ export function ConvertirCarritoBtn({
   /** #102: venta B2B asistida (términos congelados en la cotización). Los contratos nacen B2B del aliado, con su modalidad; el importe a cobrar
    *  es el EXIGIBLE de cada contrato. `clavesUnidades` va en el orden de `items` seguido de `tours`. Solo informativo: el servidor lo vuelve a comprobar. */
   b2b?: { plan: PlanB2BCotizacion; clavesUnidades: string[] } | null;
-  id: number; pax: number; items: ItemCarritoUI[]; tours: TourCarritoUI[]; destinos: string[]; cliente: ClientePrefill; esSuperadmin: boolean;
+  id: number; pax: number; items: ItemCarritoUI[]; tours: TourCarritoUI[]; destinos: string[];
+  /** #64: servicios manuales (van al primer contrato). Sus claves en el plan B2B son `manual-N`. */
+  manuales?: ManualCarritoUI[]; cliente: ClientePrefill; esSuperadmin: boolean;
   /** Vínculo hotel ↔ servicio inválido en esta cotización: la conversión se
    * rechazaría en el servidor; se avisa y se bloquea desde ya. */
   vinculoError?: string | null;
@@ -73,6 +80,9 @@ export function ConvertirCarritoBtn({
   // 236 (#90 I): TRM de COSTOS — distinta de la de cobro. Solo aplica a ofertas en USD; el servidor decide si hace falta (si algún costo con proveedor
   // quedó en USD) y la exige antes de numerar. Aquí es un campo opcional: si no hace falta, se ignora y no se guarda.
   const [trmCosto, setTrmCosto] = useState("");
+  // #64: costo NETO y proveedor de cada servicio manual (la cotización no los guarda).
+  const [costosM, setCostosM] = useState<{ costo: string; proveedor: string }[]>(() => manuales.map(() => ({ costo: "", proveedor: "" })));
+  const setCostoM = (i: number, k: "costo" | "proveedor", v: string) => setCostosM((p) => p.map((x, j) => (j === i ? { ...x, [k]: v } : x)));
   const ofertaUsd = monedaOferta === "USD";
 
   // Universo de pasajeros del carrito — B12 (ronda 5). Antes se derivaba
@@ -177,18 +187,33 @@ export function ConvertirCarritoBtn({
   // Vista previa del cobro POR CONTRATO (misma agrupación que el servidor). Es solo informativa: el servidor recalcula el precio de cada contrato y congela
   // el total real.
   const preciosUnidades = [...items.map((it) => it.precio ?? 0), ...tours.map((t) => t.precio ?? 0)];
+  const grupoDeManual = (m: ManualCarritoUI, gi: number, unidades: readonly number[]) => (m.hotelIndice != null ? unidades.includes(m.hotelIndice) : gi === 0);
   const contratosPrevia = agruparUnidadesCarrito({
     modo: agrupar, destinosItems: items.map((it) => it.destino), destinosTours: tours.map((t) => t.destino), hotelDeTour,
-  }).map((g) => {
-    const total = g.unidades.reduce((s, u) => s + (preciosUnidades[u] ?? 0), 0);
+  }).map((g, gi) => {
+    // Cada servicio manual viaja en el contrato de SU hotel (un vuelo) o en el primero (otro servicio), igual que en el servidor.
+    const manualesDelGrupo = manuales.map((m, mi) => ({ m, mi })).filter(({ m }) => grupoDeManual(m, gi, g.unidades));
+    const total = g.unidades.reduce((s, u) => s + (preciosUnidades[u] ?? 0), 0) + manualesDelGrupo.reduce((s, { m }) => s + m.precio, 0);
     // B2B asistida: lo que se cobra es el EXIGIBLE del contrato (PVP, o PVP − comisión en NETO), con los términos congelados.
     if (!b2b) return { destino: g.destino, total, exigible: total, comision: null as number | null };
-    const lineas = g.unidades.flatMap((u) => b2b.plan.lineas.filter((l) => l.clave === b2b.clavesUnidades[u]));
+    const lineas = [
+      ...g.unidades.flatMap((u) => b2b.plan.lineas.filter((l) => l.clave === b2b.clavesUnidades[u])),
+      ...manualesDelGrupo.flatMap(({ mi }) => b2b.plan.lineas.filter((l) => l.clave === `manual-${mi}`)),
+    ];
     const pg = planDeGrupoB2B(b2b.plan, lineas);
     return pg.ok
       ? { destino: g.destino, total, exigible: pg.plan.precioFinal, comision: pg.plan.comision }
       : { destino: g.destino, total, exigible: total, comision: null };
   });
+  // #64: costo y proveedor de los manuales solo si el primer contrato (el que los lleva) sigue pendiente; reintentando otro destino el servidor no los usa.
+  const gruposPrevia = agruparUnidadesCarrito({
+    modo: agrupar, destinosItems: items.map((it) => it.destino), destinosTours: tours.map((t) => t.destino), hotelDeTour,
+  });
+  const manualPendiente = manuales.map((m) => {
+    const gi = gruposPrevia.findIndex((g, i) => grupoDeManual(m, i, g.unidades));
+    return primerGrupoPendiente(contratosPorGrupo, gruposPrevia[Math.max(gi, 0)]?.destino ?? null);
+  });
+  const pedirCostosManuales = manualPendiente.some(Boolean);
   const totalesCobro = monedaCobro === "" ? [] : totalesACobrar(contratosPrevia.map((c) => c.exigible), monedaOferta, monedaCobro, trmCobroNum);
 
   const agregarPasajero = () => {
@@ -269,9 +294,18 @@ export function ConvertirCarritoBtn({
       nombresItems: items.map((it) => it.hotelNombre), nombresTours: tours.map((t) => t.nombre),
     });
     if (errVinculados) { setErr(errVinculados); return; }
+    // #64: costo y proveedor de cada servicio manual (el servidor los valida de nuevo antes de numerar). Solo si el primer contrato sigue pendiente.
+    const costosManuales: ({ costo: number; proveedor: string } | null)[] = [];
+    for (let i = 0; pedirCostosManuales && i < manuales.length; i++) {
+      if (!manualPendiente[i]) { costosManuales.push(null); continue; }
+      const costo = Number(costosM[i]?.costo.replace(/[^\d.]/g, ""));
+      const proveedor = costosM[i]?.proveedor.trim() ?? "";
+      if (!(costo > 0) || proveedor.length < 2) { setErr(`${manuales[i].nombre}: captura el costo neto y el proveedor.`); return; }
+      costosManuales.push({ costo, proveedor });
+    }
     setErr("");
     start(async () => {
-      const r = await convertirCotizacionCarrito(id, { agrupar, pasajeros: paxRows, asesorInterno: asesorSel, asignaciones: asignacionesPorItemPos, asignacionesTours: asignacionesPorTourPos, monedaCobro, trmCobro: cobroDistinto ? trmCobroNum : null, trmCosto: ofertaUsd && trmCosto.trim() !== "" ? trmCosto.replace(",", ".") : null });
+      const r = await convertirCotizacionCarrito(id, { agrupar, pasajeros: paxRows, asesorInterno: asesorSel, asignaciones: asignacionesPorItemPos, asignacionesTours: asignacionesPorTourPos, monedaCobro, ...(pedirCostosManuales ? { costosManuales } : {}), trmCobro: cobroDistinto ? trmCobroNum : null, trmCosto: ofertaUsd && trmCosto.trim() !== "" ? trmCosto.replace(",", ".") : null });
       if (r.ok) {
         if (r.advertencias?.length) window.alert(`Contrato(s) creado(s), pero con avisos:\n\n${r.advertencias.join("\n")}`);
         router.push(`/dashboard/contratos/${r.numeros[0]}`);
@@ -356,6 +390,28 @@ export function ConvertirCarritoBtn({
               redondeado hacia arriba. Es una vista previa: el sistema recalcula y congela el total real al generar, y no se cambia después.
             </p>
           </div>
+
+          {pedirCostosManuales && (
+            <div className="space-y-2 rounded-lg border border-amber-200 bg-amber-50 p-3" data-testid="costos-manuales-carrito">
+              <p className="text-xs font-semibold text-amber-900">Servicios manuales: costo neto y proveedor</p>
+              <p className="text-[11px] text-amber-800">
+                La cotización solo lleva el precio de venta. Sin costo y proveedor no se genera el contrato: con ellos se crea la cuenta por pagar. El costo va en {monedaOferta}.
+              </p>
+              {manuales.map((m, i) => !manualPendiente[i] ? null : (
+                <div key={i} className="flex flex-wrap items-end gap-2">
+                  <div className="min-w-40 flex-1 text-xs text-gray-700">{m.nombre} · {m.pax} pax · venta {formatMoneda(m.precio, m.moneda)}</div>
+                  <div className="w-36">
+                    <label className="text-[11px] text-gray-500" htmlFor={`man-costo-${i}`}>Costo neto ({m.moneda})</label>
+                    <Input id={`man-costo-${i}`} inputMode="decimal" value={costosM[i]?.costo ?? ""} onChange={(e) => setCostoM(i, "costo", e.target.value)} />
+                  </div>
+                  <div className="w-48">
+                    <label className="text-[11px] text-gray-500" htmlFor={`man-prov-${i}`}>Proveedor</label>
+                    <Input id={`man-prov-${i}`} value={costosM[i]?.proveedor ?? ""} onChange={(e) => setCostoM(i, "proveedor", e.target.value)} />
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
 
           {ofertaUsd && (
             <div className="max-w-sm rounded-lg border border-gray-200 p-3" data-testid="trm-costo-carrito">

@@ -10,6 +10,8 @@ import { calcularVistaPrevia, type VistaPrevia } from "@/lib/programas/vistaPrev
 import { validarBlackoutsParaGuardar, filaBlackoutVacia, blackoutQueAplica, mensajeBlackout, rangoViaje, type BlackoutPrograma } from "@/lib/programas/blackouts409";
 import { estadoItinerario } from "@/lib/programas/estanciaHotel88";
 import { miRol, puedeEscribir } from "@/lib/roles";
+import { mensajeErrorPrograma } from "@/lib/programas/erroresDb";
+import { cargarCatalogoHoteles88, type CatalogoHoteles88 } from "@/lib/programas/estanciaHotelDatos88";
 import { resolverValorReglaAcomodacion, validarReglaComisionable, validarTarifaModalidad, esModalidadMkValida, type ModalidadMk } from "@/lib/calc/programaPrecio";
 import {
   validarCondicionPago,
@@ -19,6 +21,12 @@ import {
 } from "@/lib/cotizacion/condicionPagoCatalogo";
 
 type Result = { ok: true; id?: number } | { ok: false; error: string };
+/**
+ * Guardar hoteles devuelve los ids reales EN EL ORDEN ENVIADO: el formulario debe reemplazar los hoteles recién creados (sin id) para no reenviarlos como nuevos.
+ * `ids: null` = SÍ se guardó, pero no se pudieron confirmar los ids (falló la lectura o no cuadra lo leído): nunca es un error de guardado, y el formulario debe
+ * recargar el catálogo guardado antes de permitir otro guardado.
+ */
+export type ResultHoteles = { ok: true; ids: number[] | null } | { ok: false; error: string };
 
 const oNull = (s?: string | null) => (s && String(s).trim() !== "" ? String(s).trim() : null);
 const num = (v: unknown) => {
@@ -173,7 +181,7 @@ export async function crearPrograma(input: CabeceraInput): Promise<Result> {
     .insert(cabeceraRow(input, v.condicion, v.restriccion))
     .select("id")
     .single();
-  if (error) return { ok: false, error: error.message };
+  if (error) return { ok: false, error: mensajeErrorPrograma(error, "crearPrograma") };
   revalidatePath("/dashboard/producto/programas");
   return { ok: true, id: data.id };
 }
@@ -190,7 +198,7 @@ export async function guardarCabecera(id: number, input: CabeceraInput): Promise
     .from("programas")
     .update({ ...cabeceraRow(input, v.condicion, v.restriccion), updated_at: new Date().toISOString() })
     .eq("id", id);
-  if (error) return { ok: false, error: error.message };
+  if (error) return { ok: false, error: mensajeErrorPrograma(error, "guardarCabecera") };
   rev(id);
   return { ok: true, id };
 }
@@ -207,7 +215,7 @@ export async function guardarImagenPrograma(
     : campo === "flyer_url" ? { flyer_url: url }
     : { historia_url: url };
   const { error } = await sb.from("programas").update(patch).eq("id", id);
-  if (error) return { ok: false, error: error.message };
+  if (error) return { ok: false, error: mensajeErrorPrograma(error, "guardarImagenPrograma") };
   rev(id);
   revalidatePath("/tarifario");
   return { ok: true, id };
@@ -263,7 +271,7 @@ export async function setPublicado(id: number, publicado: boolean): Promise<Resu
     if (it.mensaje) return { ok: false, error: it.mensaje };
   }
   const { error } = await sb.from("programas").update({ publicado }).eq("id", id);
-  if (error) return { ok: false, error: error.message };
+  if (error) return { ok: false, error: mensajeErrorPrograma(error, "setPublicado") };
   rev(id);
   return { ok: true, id };
 }
@@ -271,7 +279,7 @@ export async function setPublicado(id: number, publicado: boolean): Promise<Resu
 export async function eliminarPrograma(id: number): Promise<Result> {
   const sb = await createClient();
   const { error } = await sb.from("programas").delete().eq("id", id);
-  if (error) return { ok: false, error: error.message };
+  if (error) return { ok: false, error: mensajeErrorPrograma(error, "eliminarPrograma") };
   revalidatePath("/dashboard/producto/programas");
   return { ok: true };
 }
@@ -297,7 +305,7 @@ export async function guardarCiudades(
         ...(c.alojamientoPrevisto === undefined ? {} : { alojamiento_previsto: limpiarAlojamientoPrevisto(c.alojamientoPrevisto) }),
       })),
   });
-  if (error) return { ok: false, error: error.message };
+  if (error) return { ok: false, error: mensajeErrorPrograma(error, "guardarCiudades") };
   rev(programaId);
   return { ok: true };
 }
@@ -327,7 +335,7 @@ export async function guardarDias(
   if (incompleto) return { ok: false, error: incompleto };
   // Reemplazo ATÓMICO en la base (migración 247): valida todo antes de borrar, así que un fallo NO deja el itinerario a medias.
   const { error } = await sb.rpc("guardar_programa_dias", { p_programa_id: programaId, p_dias: filas as never });
-  if (error) return { ok: false, error: error.message };
+  if (error) return { ok: false, error: mensajeErrorPrograma(error, "guardarDias") };
   rev(programaId);
   return { ok: true };
 }
@@ -353,7 +361,7 @@ export async function guardarMatriz(
       .insert({ programa_id: programaId, orden: i, nombre: oNull(cat.nombre) })
       .select("id")
       .single();
-    if (ce) return { ok: false, error: ce.message };
+    if (ce) return { ok: false, error: mensajeErrorPrograma(ce, "guardarMatriz") };
     const catId = catRow.id;
 
     const hoteles = cat.hoteles
@@ -361,7 +369,7 @@ export async function guardarMatriz(
       .map((h, j) => ({ categoria_id: catId, ciudad: h.ciudad.trim(), hotel: oNull(h.hotel), orden: j }));
     if (hoteles.length) {
       const { error } = await sb.from("programa_categoria_hoteles").insert(hoteles);
-      if (error) return { ok: false, error: error.message };
+      if (error) return { ok: false, error: mensajeErrorPrograma(error, "guardarMatriz") };
     }
 
     const precios = cat.precios
@@ -379,7 +387,7 @@ export async function guardarMatriz(
       }));
     if (precios.length) {
       const { error } = await sb.from("programa_precios").insert(precios);
-      if (error) return { ok: false, error: error.message };
+      if (error) return { ok: false, error: mensajeErrorPrograma(error, "guardarMatriz") };
     }
   }
   rev(programaId);
@@ -561,7 +569,7 @@ export async function guardarSalidas(
     },
     p_salidas: filas,
   });
-  if (error) return { ok: false, error: error.message };
+  if (error) return { ok: false, error: mensajeErrorPrograma(error, "guardarSalidas") };
   rev(programaId);
   return { ok: true };
 }
@@ -633,7 +641,7 @@ function prepararHoteles(hoteles: HotelVigenciaInput[]): { ok: true; filas: Fila
  * y delega en la RPC atómica `guardar_programa_hoteles` (conserva los ids de los
  * hoteles que ya existen). La RLS de siempre decide quién puede escribir.
  */
-export async function guardarHoteles(programaId: number, hoteles: HotelVigenciaInput[]): Promise<Result> {
+export async function guardarHoteles(programaId: number, hoteles: HotelVigenciaInput[]): Promise<ResultHoteles> {
   const prep = prepararHoteles(hoteles);
   if (!prep.ok) return prep;
   const filas = prep.filas;
@@ -659,9 +667,16 @@ export async function guardarHoteles(programaId: number, hoteles: HotelVigenciaI
       })),
     })) as never,
   });
-  if (e) return { ok: false, error: e.message };
+  if (e) return { ok: false, error: mensajeErrorPrograma(e, "guardarHoteles") };
+  // La RPC ya escribió (`orden` = posición en la lista). Los ids se leen en ese orden y se VERIFICAN (cantidad y nombre de cada posición). Si la lectura falla o no
+  // cuadra, NO es un error de guardado —repetir la escritura sería lo incorrecto—: se devuelve `ids: null` y el formulario recarga el catálogo guardado.
+  const { data: guardados, error: eIds } = await sb.from("programa_hoteles").select("id, nombre").eq("programa_id", programaId).order("orden");
+  if (eIds) mensajeErrorPrograma(eIds, "guardarHoteles.ids");
   rev(programaId);
-  return { ok: true };
+  const coincide = !eIds && !!guardados && guardados.length === filas.length
+    && guardados.every((g, i) => String(g.nombre ?? "").trim().toLowerCase() === filas[i].nombre.trim().toLowerCase());
+  if (!eIds && !coincide) console.error(`[programas] accion=guardarHoteles.ids codigo=desajuste esperados=${filas.length} leidos=${guardados?.length ?? 0}`);
+  return { ok: true, ids: coincide ? guardados!.map((g) => Number(g.id)) : null };
 }
 
 // ── Vista previa de solo lectura (PR #409) ───────────────────────────────────
@@ -779,7 +794,7 @@ export async function guardarInclusiones(
     }));
   if (filas.length) {
     const { error } = await sb.from("programa_inclusiones").insert(filas);
-    if (error) return { ok: false, error: error.message };
+    if (error) return { ok: false, error: mensajeErrorPrograma(error, "guardarInclusiones") };
   }
   rev(programaId);
   return { ok: true };
@@ -806,7 +821,7 @@ export async function guardarTours(
     }));
   if (filas.length) {
     const { error } = await sb.from("programa_tours").insert(filas);
-    if (error) return { ok: false, error: error.message };
+    if (error) return { ok: false, error: mensajeErrorPrograma(error, "guardarTours") };
   }
   rev(programaId);
   return { ok: true };
@@ -835,7 +850,7 @@ export async function guardarBlackouts(
       .filter((f) => !filaBlackoutVacia(f))
       .map((f) => ({ fecha_inicio: f.fechaInicio, fecha_fin: f.fechaFin, motivo: f.motivo, ciudad: f.ciudad, alcance: f.alcance })) as never,
   });
-  if (e) return { ok: false, error: e.message };
+  if (e) return { ok: false, error: mensajeErrorPrograma(e, "guardarBlackouts") };
   rev(programaId);
   return { ok: true };
 }
@@ -882,7 +897,7 @@ export async function importarDesdeTexto(
         updated_at: new Date().toISOString(),
       })
       .eq("id", programaId);
-    if (error) return { ok: false, error: error.message };
+    if (error) return { ok: false, error: mensajeErrorPrograma(error, "importarDesdeTexto") };
   }
 
   if (opciones.ruta && parsed.ciudades.length) {
@@ -893,7 +908,7 @@ export async function importarDesdeTexto(
       p_programa_id: programaId,
       p_ciudades: parsed.ciudades.map((nombre) => ({ nombre: nombre.trim(), codigo_iata: null, noches: 0 })),
     });
-    if (error) return { ok: false, error: error.message };
+    if (error) return { ok: false, error: mensajeErrorPrograma(error, "importarDesdeTexto") };
   }
 
   if (importaDias) {
@@ -910,7 +925,7 @@ export async function importarDesdeTexto(
       p_dias: filas as never,
       ...(opciones.diasNoches && parsed.dias != null ? { p_total_dias: parsed.dias } : {}),
     });
-    if (error) return { ok: false, error: error.message };
+    if (error) return { ok: false, error: mensajeErrorPrograma(error, "importarDesdeTexto") };
   }
 
   if (opciones.inclusiones && (parsed.incluye.length || parsed.noIncluye.length)) {
@@ -921,10 +936,22 @@ export async function importarDesdeTexto(
     ].map((x) => ({ programa_id: programaId, ciudad: null, ...x }));
     if (filas.length) {
       const { error } = await sb.from("programa_inclusiones").insert(filas);
-      if (error) return { ok: false, error: error.message };
+      if (error) return { ok: false, error: mensajeErrorPrograma(error, "importarDesdeTexto") };
     }
   }
 
   rev(programaId);
   return { ok: true };
+}
+
+export type ResultCatalogoHoteles = { ok: true; catalogo: CatalogoHoteles88 } | { ok: false; error: string };
+
+/** Catálogo de hoteles YA guardado de un programa (mismas filas y orden que carga la página): el editor lo usa para reinicializarse tras un guardado cuyos ids no se pudieron confirmar. */
+export async function leerCatalogoHoteles(programaId: number): Promise<ResultCatalogoHoteles> {
+  const rol = await miRol();
+  if (!puedeEscribir("producto", rol)) return { ok: false, error: "No tienes permiso para ver el catálogo de hoteles del programa." };
+  const sb = await createClient();
+  const r = await cargarCatalogoHoteles88(sb, programaId);
+  if (!r.ok) return { ok: false, error: mensajeErrorPrograma(r.error as { code?: string; message?: string }, "leerCatalogoHoteles") };
+  return { ok: true, catalogo: r.catalogo };
 }
