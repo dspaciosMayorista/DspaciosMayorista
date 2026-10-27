@@ -256,7 +256,9 @@ export function crearBD(semilla: Record<string, Fila[]> = {}, rpcs: Record<strin
     revertir_contrato_incompleto: (args) => {
       const numero = String(args.p_numero_contrato);
       for (const t of ["ventas", "contrato_items", "contrato_hoteles", "contrato_vuelos", "contrato_pasajeros", "contrato_servicios",
-        "aliados_b2b", "cuentas_por_pagar", "contrato_financiero_pendiente"]) {
+        "aliados_b2b", "cuentas_por_pagar", "contrato_financiero_pendiente",
+        // #88: en la base real caen por ON DELETE CASCADE al borrar la venta (lo prueba la corrida contra Postgres).
+        "contrato_programa_estancia", "contrato_programa_estancia_costo"]) {
         tablas.set(t, filas(t).filter((f) => f.numero_contrato !== numero));
       }
       return null;

@@ -7,6 +7,10 @@ import { formatMoneda, formatFechaLarga } from "@/lib/utils";
 import { Logo } from "@/components/Logo";
 import { DocToolbar } from "./DocToolbar";
 import { desdeDobleDetallePrograma } from "@/lib/tarifario/desdeDoble";
+import { cargarTablasPvp88 } from "@/lib/programas/estanciaHotelDatos88";
+import { esModoHotel } from "@/lib/programas/estanciaHotel88";
+import { desdeDobleHoteles } from "@/lib/programas/precioReserva57";
+import { EstanciaHotelesFicha } from "../EstanciaHotelesFicha";
 import { Check, X, MapPin, CalendarRange, Plane, Bus, Users, BadgeCheck, Sparkles } from "lucide-react";
 
 export const dynamic = "force-dynamic";
@@ -81,7 +85,10 @@ export default async function ProgramaDocPage({
   const highlights = (p.highlights ?? []).filter(Boolean);
 
   // "Desde" para la portada (TASKS #92): solo una DOBLE publicable; el desde_precio manual no se rotula «Desde». Sin DOBLE → «Consultar».
-  const desde = desdeDobleDetallePrograma(det);
+  // #88: programa por hotel y vigencia — tablas de PVP calculadas en el servidor (nunca netos).
+  const modoHotel = esModoHotel(p.modo_precio);
+  const hoteles = modoHotel ? await cargarTablasPvp88(sb, id, p) : null;
+  const desde = modoHotel ? (hoteles?.ok ? desdeDobleHoteles(hoteles.tablas) : null) : desdeDobleDetallePrograma(det);
 
   const sellos = [
     p.tipo_transporte === "aereo" ? "Con aéreo" : p.tipo_transporte === "terrestre" ? "Salida terrestre" : "Porción terrestre",
@@ -164,6 +171,13 @@ export default async function ProgramaDocPage({
                     ))}
                   </div>
                 </section>
+              )}
+
+              {/* Hoteles y vigencias con noches adicionales (#88) */}
+              {modoHotel && hoteles?.ok && (
+                <div className="mb-5">
+                  <EstanciaHotelesFicha tablas={hoteles.tablas} moneda={moneda} noches={p.noches ?? (p.dias != null ? Math.max(0, p.dias - 1) : null)} compacto />
+                </div>
               )}
 
               {/* Precios por categoría */}
@@ -253,7 +267,7 @@ export default async function ProgramaDocPage({
                   <div className="space-y-2">
                     {det.dias.map((d) => (
                       <div key={d.dia} className="break-inside-avoid text-xs">
-                        <p className="font-semibold text-gray-800">Día {d.dia}{d.titulo ? `: ${d.titulo}` : ""} <span className="font-normal text-gray-400">{comidas(d)}</span></p>
+                        <p className="font-semibold text-gray-800">{d.tipo_tramo === "traslado_previo" ? "Traslado previo" : d.tipo_tramo === "traslado_posterior" ? "Traslado posterior" : `Día ${d.dia}`}{d.titulo ? `: ${d.titulo}` : ""} <span className="font-normal text-gray-400">{comidas(d)}</span></p>
                         {d.descripcion && <p className="mt-0.5 whitespace-pre-line text-gray-600">{d.descripcion}</p>}
                       </div>
                     ))}

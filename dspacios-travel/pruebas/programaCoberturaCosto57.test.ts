@@ -57,6 +57,8 @@ const salida = (over: Fila = {}): Fila => ({
   impuesto_sencilla: null, impuesto_doble: null, impuesto_triple: null, impuesto_multiple: null,
   ...over,
 });
+// PR #409: reservar exige el itinerario completo (días 1..N) en todos los modos.
+const DIAS_PROG = (n: number) => ({ programa_dias: Array.from({ length: n }, (_, i) => ({ programa_id: 3, dia: i + 1, titulo: `Día ${i + 1}`, desayuno: false, almuerzo: false, cena: false, descripcion: "x" })) });
 const RPCS = { congelar_condiciones_contrato: () => "OK" };
 const entrada = (over: Fila = {}) => ({
   programaId: 3, categoriaId: 11, salidaId: 11, fechaIda: "2027-03-01", paxPorAcom: { doble: 1 }, ninos: 0,
@@ -74,7 +76,7 @@ function afirmarSinEscrituras(bd: BD) {
 }
 
 test("borde: precio == costo (neto + asistencia de quienes pagan), con fee 3,5 % que no cuenta: se reserva", async () => {
-  const bd = usarBD({ programas: [programa()], programa_salidas: [salida()], programa_categorias: [], programa_precios: [] }, RPCS);
+  const bd = usarBD({ ...DIAS_PROG(8), programas: [programa()], programa_salidas: [salida()], programa_categorias: [], programa_precios: [] }, RPCS);
   // 2 hab. dobles (4 pax) + 1 niño: neto 4×1.000 + 700 + asistencia 4 USD × 8 días × 5 pax = 4.860.
   const r = await reservarPrograma(entrada({ paxPorAcom: { doble: 2 }, ninos: 1, infantes: 2, precioConfirmado: 4860 }));
   assert.equal(r.ok, true, JSON.stringify(r));
@@ -83,7 +85,7 @@ test("borde: precio == costo (neto + asistencia de quienes pagan), con fee 3,5 %
 
 test("un dólar menos por persona: el precio no cubre costo + asistencia → rechazo sin contrato, CxP, asientos ni número", async () => {
   delta = -1;
-  const bd = usarBD({ programas: [programa()], programa_salidas: [salida()], programa_categorias: [], programa_precios: [] }, RPCS);
+  const bd = usarBD({ ...DIAS_PROG(8), programas: [programa()], programa_salidas: [salida()], programa_categorias: [], programa_precios: [] }, RPCS);
   const r = await reservarPrograma(entrada({ paxPorAcom: { doble: 2 }, ninos: 1, precioConfirmado: 4860 }));
   assert.equal(r.ok, false);
   if (!r.ok) {
@@ -99,7 +101,7 @@ test("un dólar menos por persona: el precio no cubre costo + asistencia → rec
 test("COP en modo categoría: borde 0 cubre; −1 peso por persona no", async () => {
   const prog = programa({ moneda: "COP", modo_precio: "categoria", asistencia_medica_dia: 4500, dias: 5, noches: 4, pct_fee_tarjeta: 0.035 });
   const seed = () => ({
-    programas: [prog], programa_salidas: [], programa_categorias: [{ id: 5, programa_id: 3, nombre: "Turista" }],
+    ...DIAS_PROG(Number(prog.dias ?? 8)), programas: [prog], programa_salidas: [], programa_categorias: [{ id: 5, programa_id: 3, nombre: "Turista" }],
     programa_precios: [{ categoria_id: 5, acomodacion: "doble", neto: 1_000_000, bajo_solicitud: false }],
   });
   const costo = (1_000_000 + 4500 * 5) * 2;
@@ -119,7 +121,7 @@ test("COP en modo categoría: borde 0 cubre; −1 peso por persona no", async ()
 test("la asistencia cuenta con las noches explícitas de la salida (no con los días del programa)", async () => {
   delta = -1;
   // noches = 3 → asistencia 4×3 = 12 por persona; el motor simulado cobra neto + 12 − 1 < costo.
-  const bd = usarBD({ programas: [programa()], programa_salidas: [salida({ noches: 3 })], programa_categorias: [], programa_precios: [] }, RPCS);
+  const bd = usarBD({ ...DIAS_PROG(8), programas: [programa()], programa_salidas: [salida({ noches: 3 })], programa_categorias: [], programa_precios: [] }, RPCS);
   const r = await reservarPrograma(entrada({ precioConfirmado: 1 }));
   assert.equal(r.ok, false);
   if (!r.ok) assert.doesNotMatch(r.error, /\d/);

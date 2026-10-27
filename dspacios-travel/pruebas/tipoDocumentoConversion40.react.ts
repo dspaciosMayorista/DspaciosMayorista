@@ -133,7 +133,9 @@ test("tipoDocumentoParaVenta: catálogo, «PASAPORTE» legado → PAS, desconoci
 test("wiring: programa, carrito y reservar escriben el tipo; la migración 241 copia el de la cotización manual", () => {
   const src = (p: string) => readFileSync(new URL(`../${p}`, import.meta.url), "utf8");
   const reservar = src("app/(dashboard)/dashboard/reservar/actions.ts");
-  assert.equal((reservar.match(/cliente_tipo_documento: tipoDocumentoParaVenta\(input\.cliente\.tipoDoc/g) ?? []).length, 2, "reservar directo + programa");
+  assert.equal((reservar.match(/cliente_tipo_documento: tipoDocumentoParaVenta\(input\.cliente\.tipoDoc/g) ?? []).length, 1, "reservar directo");
+  // PR #409: el programa arma cliente/titular con camposClienteVenta (PVP: la persona; NETO: el aliado y la persona como titular), que escribe el tipo vía titularDeCliente.
+  assert.match(reservar, /camposClienteVenta\(\{ modo: planB2B\?\.modoCompra \?\? null, fiscal: aliadoPrograma\?\.fiscal \?\? null, titular: titularDeCliente\(input\.cliente\) \}\)/, "programa");
   assert.match(reservar, /camposClienteVenta\(\{ modo: planB2BCot/, "el carrito usa camposClienteVenta (con los dos tipos)");
   assert.match(src("supabase/migrations/20260601000241_tipo_documento_conversion.sql"), /set cliente_tipo_documento = t\.tipo/);
 });

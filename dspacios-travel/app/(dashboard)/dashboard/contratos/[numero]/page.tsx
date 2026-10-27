@@ -8,6 +8,7 @@ import { cobroDeVenta } from "@/lib/finanzas/cobro";
 import { ShareButtons } from "./ShareButtons";
 import { permisosComisionContrato } from "@/lib/finanzas/comisionB2B";
 import { GestionTabs } from "./GestionTabs";
+import { EstanciaContratoBloque } from "@/components/contrato/EstanciaContratoBloque";
 import { EstadoVenta } from "./EstadoVenta";
 import { EditarVentaForm } from "./EditarVentaForm";
 import { ServiciosContratoEditor, type ServicioDispContrato } from "./ServiciosContratoEditor";
@@ -270,6 +271,9 @@ export default async function ContratoDetallePage({
     }
   }
 
+  // #88: foto de la estancia de un programa por hotel y vigencia (sin netos; la RLS decide quién la ve).
+  const { data: estanciaPrograma } = await sb.from("contrato_programa_estancia").select("*").eq("numero_contrato", numero).maybeSingle();
+
   // Buscar el % de comisión del asesor (por email o por nombre de firma)
   const asesorNombre = venta.asesor_firma_nombre ?? venta.asesor ?? "";
   const asesorRow = (asesores ?? []).find(
@@ -349,6 +353,12 @@ export default async function ContratoDetallePage({
           <div className="text-xl font-bold text-gray-800">{formatMoneda(saldo, cobro.moneda)}</div>
         </div>
       </div>
+
+      {estanciaPrograma && (
+        <div className="mt-4">
+          <EstanciaContratoBloque estancia={estanciaPrograma} />
+        </div>
+      )}
 
       <CondicionesContratoPanel
         resuelto={condicionesResueltas}

@@ -127,7 +127,10 @@ describe("pasajeros: solo lo que la reserva admite", () => {
   test("los 4 selects de pasajero usan la lista de pasajero y las copias pasan por documentoPasajeroDesdeCliente", () => {
     const D = "../app/(dashboard)/dashboard/";
     for (const f of ["reservar/nuevo/ReservaForm.tsx", "reservar/programa/[id]/ProgramaReservaForm.tsx", "cotizaciones/[id]/CotizacionAcciones.tsx", "cotizaciones/[id]/ConvertirCarritoBtn.tsx"]) assert.ok(leer(D + f).includes("<OpcionesTipoDoc pasajero />"), f);
-    for (const f of ["reservar/nuevo/ReservaForm.tsx", "reservar/programa/[id]/ProgramaReservaForm.tsx", "cotizaciones/[id]/CotizacionAcciones.tsx"]) assert.ok(leer(D + f).includes("documentoPasajeroDesdeCliente("), f);
+    // PR #409: las dos reservas copian a UN solo pasajero por `aplicarCopiaTitular`, que a su vez usa documentoPasajeroDesdeCliente.
+    for (const f of ["reservar/nuevo/ReservaForm.tsx", "reservar/programa/[id]/ProgramaReservaForm.tsx"]) assert.ok(leer(D + f).includes("aplicarCopiaTitular("), f);
+    assert.ok(leer("../lib/personas/copiaTitular.ts").includes("documentoPasajeroDesdeCliente("), "copiaTitular.ts");
+    assert.ok(leer(D + "cotizaciones/[id]/CotizacionAcciones.tsx").includes("documentoPasajeroDesdeCliente("), "CotizacionAcciones.tsx");
   });
 });
 

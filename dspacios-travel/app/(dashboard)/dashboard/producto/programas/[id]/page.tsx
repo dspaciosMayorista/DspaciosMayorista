@@ -2,6 +2,8 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
 import { ProgramaEditor } from "./ProgramaEditor";
+import { cargarCatalogoHoteles88 } from "@/lib/programas/estanciaHotelDatos88";
+import { esModoHotel } from "@/lib/programas/estanciaHotel88";
 
 export const dynamic = "force-dynamic";
 
@@ -43,6 +45,14 @@ export default async function ProgramaDetallePage({ params }: { params: Promise<
 
   if (!programa) notFound();
 
+  // #88: el catálogo de hoteles/vigencias/noches (con netos) solo se carga para quien edita el programa.
+  let catalogoHoteles;
+  if (esModoHotel(programa.modo_precio)) {
+    const r = await cargarCatalogoHoteles88(sb, id);
+    if (!r.ok) throw new Error("No se pudo leer el catálogo de hoteles del programa.");
+    catalogoHoteles = r.catalogo;
+  }
+
   return (
     <div className="mx-auto max-w-5xl p-4 md:p-8">
       <Link href="/dashboard/producto/programas" className="text-sm text-gray-400 hover:text-gray-700">
@@ -62,6 +72,7 @@ export default async function ProgramaDetallePage({ params }: { params: Promise<
         blackouts={blackouts ?? []}
         destinos={destinos ?? []}
         destinosFijos={destinosFijos ?? []}
+        catalogoHoteles={catalogoHoteles}
       />
     </div>
   );

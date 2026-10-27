@@ -2759,6 +2759,7 @@ export type Database = {
           video_url: string | null;
           activo: boolean;          publicado: boolean;
           destino_fijo_id: number | null;
+          proveedor_asistencia_id: number | null;
           regla_comisionable: boolean;
           regla_comisionable_modo: string;
           regla_comisionable_valor: number | null;
@@ -2812,6 +2813,7 @@ export type Database = {
           activo?: boolean;
           publicado?: boolean;
           destino_fijo_id?: number | null;
+          proveedor_asistencia_id?: number | null;
           regla_comisionable?: boolean;
           regla_comisionable_modo?: string;
           regla_comisionable_valor?: number | null;
@@ -2835,6 +2837,175 @@ export type Database = {
             referencedColumns: ["id"];
           },
         ];
+      };
+      // Migración 244 (#88): programas por hotel y vigencia con noches adicionales.
+      programa_hoteles: {
+        Row: {
+          id: number;
+          programa_id: number;
+          orden: number;
+          nombre: string;
+          zona: string | null;
+          tipo_habitacion: string | null;
+          max_pax_habitacion: number | null;
+          max_menores_habitacion: number | null;
+          proveedor_id: number | null;
+          created_at: string;
+        };
+        Insert: {
+          id?: number;
+          programa_id: number;
+          orden?: number;
+          nombre: string;
+          zona?: string | null;
+          tipo_habitacion?: string | null;
+          max_pax_habitacion?: number | null;
+          max_menores_habitacion?: number | null;
+          proveedor_id?: number | null;
+          created_at?: string;
+        };
+        Update: Partial<Database["public"]["Tables"]["programa_hoteles"]["Insert"]>;
+        Relationships: [];
+      };
+      programa_hotel_precios: {
+        Row: {
+          id: number;
+          hotel_id: number;
+          desde: string;
+          hasta: string;
+          modalidad_servicios: string;
+          bajo_solicitud: boolean;
+          neto_sencilla: number | null;
+          neto_doble: number | null;
+          neto_triple: number | null;
+          neto_multiple: number | null;
+          neto_nino: number | null;
+        };
+        Insert: {
+          id?: number;
+          hotel_id: number;
+          desde: string;
+          hasta: string;
+          modalidad_servicios: string;
+          bajo_solicitud?: boolean;
+          neto_sencilla?: number | null;
+          neto_doble?: number | null;
+          neto_triple?: number | null;
+          neto_multiple?: number | null;
+          neto_nino?: number | null;
+        };
+        Update: Partial<Database["public"]["Tables"]["programa_hotel_precios"]["Insert"]>;
+        Relationships: [];
+      };
+      programa_hotel_noches: {
+        Row: {
+          id: number;
+          hotel_id: number;
+          desde: string;
+          hasta: string;
+          unidad_cobro: string;
+          neto_sencilla: number | null;
+          neto_doble: number | null;
+          neto_triple: number | null;
+          neto_multiple: number | null;
+          neto_nino: number | null;
+        };
+        Insert: {
+          id?: number;
+          hotel_id: number;
+          desde: string;
+          hasta: string;
+          unidad_cobro: string;
+          neto_sencilla?: number | null;
+          neto_doble?: number | null;
+          neto_triple?: number | null;
+          neto_multiple?: number | null;
+          neto_nino?: number | null;
+        };
+        Update: Partial<Database["public"]["Tables"]["programa_hotel_noches"]["Insert"]>;
+        Relationships: [];
+      };
+      contrato_programa_estancia: {
+        Row: {
+          numero_contrato: string;
+          programa_id: number | null;
+          hotel_id: number | null;
+          hotel_nombre: string;
+          zona: string | null;
+          tipo_habitacion: string | null;
+          modalidad_servicios: string;
+          moneda: string;
+          fecha_entrada: string;
+          noches_incluidas: number;
+          noches_adicionales: number;
+          fecha_regreso: string;
+          base_vigencia_desde: string;
+          base_vigencia_hasta: string;
+          habitaciones: Json;
+          ninos: number;
+          infantes: number;
+          precio_base: number;
+          precio_noches: number;
+          noches: Json;
+          itinerario: Json;
+          created_at: string;
+        };
+        Insert: {
+          numero_contrato: string;
+          programa_id?: number | null;
+          hotel_id?: number | null;
+          hotel_nombre: string;
+          zona?: string | null;
+          tipo_habitacion?: string | null;
+          modalidad_servicios: string;
+          moneda: string;
+          fecha_entrada: string;
+          noches_incluidas: number;
+          noches_adicionales?: number;
+          fecha_regreso: string;
+          base_vigencia_desde: string;
+          base_vigencia_hasta: string;
+          habitaciones?: Json;
+          ninos?: number;
+          infantes?: number;
+          precio_base: number;
+          precio_noches?: number;
+          noches?: Json;
+          itinerario?: Json;
+          created_at?: string;
+        };
+        Update: Partial<Database["public"]["Tables"]["contrato_programa_estancia"]["Insert"]>;
+        Relationships: [];
+      };
+      contrato_programa_estancia_costo: {
+        Row: {
+          numero_contrato: string;
+          moneda: string;
+          neto_base: number;
+          neto_noches: number;
+          asistencia_noches: number;
+          detalle_noches: Json;
+          proveedor_noches_id: number | null;
+          asistencia_total: number;
+          proveedor_asistencia_id: number | null;
+          trm_costo: number | null;
+          created_at: string;
+        };
+        Insert: {
+          numero_contrato: string;
+          moneda: string;
+          neto_base: number;
+          neto_noches?: number;
+          asistencia_noches?: number;
+          detalle_noches?: Json;
+          proveedor_noches_id?: number | null;
+          asistencia_total?: number;
+          proveedor_asistencia_id?: number | null;
+          trm_costo?: number | null;
+          created_at?: string;
+        };
+        Update: Partial<Database["public"]["Tables"]["contrato_programa_estancia_costo"]["Insert"]>;
+        Relationships: [];
       };
       programa_salidas: {
         Row: {
@@ -2915,6 +3086,7 @@ export type Database = {
           id: number;
           programa_id: number;
           dia: number;
+          tipo_tramo: "dia" | "traslado_previo" | "traslado_posterior";
           titulo: string | null;
           desayuno: boolean;
           almuerzo: boolean;
@@ -2925,6 +3097,7 @@ export type Database = {
           id?: number;
           programa_id: number;
           dia: number;
+          tipo_tramo?: "dia" | "traslado_previo" | "traslado_posterior";
           titulo?: string | null;
           desayuno?: boolean;
           almuerzo?: boolean;
@@ -3040,6 +3213,8 @@ export type Database = {
           fecha_fin: string | null;
           motivo: string | null;
           ciudad: string | null;
+          /** Migración 246 (#409): 'entrada' (solo la fecha de entrada) | 'viaje' (cualquier día del viaje). */
+          alcance: string;
         };
         Insert: {
           id?: number;
@@ -3048,6 +3223,7 @@ export type Database = {
           fecha_fin?: string | null;
           motivo?: string | null;
           ciudad?: string | null;
+          alcance?: string;
         };
         Update: Partial<Database["public"]["Tables"]["programa_blackouts"]["Insert"]>;
         Relationships: [];
@@ -4295,6 +4471,22 @@ export type Database = {
       guardar_programa_salidas: {
         Args: { p_programa_id: number; p_regla: Json; p_salidas: Json };
         Returns: undefined;
+      };
+      // Migración 244 (#88). Reemplazo atómico del catálogo de hoteles de un
+      // programa por hotel y vigencia; rechaza vigencias solapadas.
+      guardar_programa_hoteles: {
+        Args: { p_programa_id: number; p_hoteles: Json };
+        Returns: undefined;
+      };
+      // Migración 246 (#409). Reemplazo atómico de los blackouts de un programa: valida todo antes de borrar; devuelve cuántos guardó.
+      guardar_programa_blackouts: {
+        Args: { p_programa_id: number; p_blackouts: Json };
+        Returns: number;
+      };
+      // Migración 246. Reemplazo atómico del itinerario (y opcionalmente del total de días); un publicado no puede quedar incompleto.
+      guardar_programa_dias: {
+        Args: { p_programa_id: number; p_dias: Json; p_total_dias?: number | null };
+        Returns: number;
       };
       // Migración 152. Actualiza modalidad/estado de emisión/estado de pago
       // de un bloqueo y registra el cambio en bloqueo_cambios en una sola

@@ -12,9 +12,32 @@ import {
   impuestoParaVenta,
   avisoResidualBaseB2B,
   evaluarPrecioConfirmado,
+  resolverBaseHotel,
+  salidaPrecioDesdeBase,
+  tarifasNocheConPvp,
   type FuentePrecio,
   type CambioPrecioPrograma,
+  type EstanciaEntrada,
 } from "@/lib/programas/precioReserva57";
+import {
+  ETIQUETA_MODALIDAD,
+  MAX_NOCHES_ADICIONALES,
+  esModoHotel,
+  MODALIDADES_SERVICIOS,
+  errorModoHotelConAereo,
+  esFechaIso,
+  fechaRegresoEstancia,
+  validarItinerarioCompleto,
+  estadoItinerario,
+  itemsContratoNoches,
+  itinerarioConNochesExtra,
+  nochesIncluidasPrograma,
+  nochesParaCosto,
+  nochesParaFoto,
+  planObligacionesPrograma,
+  type ModalidadServicios,
+} from "@/lib/programas/estanciaHotel88";
+import { cargarCatalogoHoteles88, clienteCatalogoHoteles } from "@/lib/programas/estanciaHotelDatos88";
 import { postearAsientoCxP, eliminarAsientoCxP } from "@/lib/contabilidad/asientos";
 import { contextoCotizacion, autorizaTenant } from "@/lib/cotizacion/acceso";
 import { siguienteNumeroContrato } from "@/lib/contrato/numeracion";
@@ -73,7 +96,7 @@ import { componenteDePrograma } from "@/lib/cotizacion/condicionDesdeCatalogo";
 import type { ComponenteSnapshot } from "@/lib/cotizacion/snapshotCondiciones";
 import { cotizacionVencida, hoyBogota, MENSAJE_COTIZACION_VENCIDA, resolverVigenciaCotizacion } from "@/lib/cotizacion/vigencia";
 import { fechaNegocio } from "@/lib/fechaNegocio";
-import { resolverAliadoReserva, planComisionReserva, registrarComisionReserva, type PlanComisionReserva } from "@/lib/reservar/comisionReserva";
+import { resolverAliadoReserva, planComisionReserva, registrarComisionReserva, type ModoCompra, type PlanComisionReserva } from "@/lib/reservar/comisionReserva";
 import { asignarRefsPasajeros, AVISO_PERSONAS_PENDIENTES } from "@/lib/personas/cotizacion";
 import { MODO_OFERTA_63, MENSAJE_OFERTA_CAMBIO_63, huellaOferta63 } from "@/lib/reservar/ofertaDinamica63";
 import { camposCxP63, sumaEquivalentesOferta63 } from "@/lib/reservar/payloadFinanciero63";
@@ -97,7 +120,11 @@ import {
 import { resolverActorAsistencia, verificarAliadoVivoParaConversion } from "@/lib/cotizacion/asistidaB2BServidor";
 import { resolverFirmasSesion } from "@/lib/cotizacion/firmasSesion";
 import { tipoDocumentoParaVenta } from "@/lib/personas/tiposDocumento";
-import { camposClienteVenta, nombreQuienElabora, titularDeCliente, type FiscalAliado } from "@/lib/cotizacion/identidadB2B";
+import { camposClienteVenta, camposVendedorAliado, nombreQuienElabora, titularDeCliente, type FiscalAliado } from "@/lib/cotizacion/identidadB2B";
+import { resolverAliadoAsistencia, type AliadoResuelto } from "@/lib/cotizacion/asistidaB2BServidor";
+import { blackoutQueAplica, mensajeBlackout, type BlackoutPrograma } from "@/lib/programas/blackouts409";
+import { rangoViajeConTraslados, trasladosDeItinerario, errorFechasSalida } from "@/lib/programas/trasladosFechas";
+import type { TerminosVisibles } from "@/components/cotizacion/TerminosB2BAsistido";
 
 const oNull = (s: string | null | undefined) => (s && s.trim() !== "" ? s.trim() : null);
 
@@ -3450,7 +3477,28 @@ export type ReservaProgramaInput = {
    * usuario lo acepte de forma expresa. Obligatorio: sin él no se reserva.
    */
   precioConfirmado: number;
+  /**
+   * #88 — Solo en programas por hotel y vigencia (`modo_precio = 'hotel'`): hotel,
+   * modalidad de servicios y noches adicionales. `fechaIda` es la fecha de ENTRADA al
+   * hotel. En cualquier otro modo se ignora.
+   */
+  estancia?: { hotelId: number; modalidad: ModalidadServicios; nochesAdicionales: number };
+  /**
+   * #88 — TRM de COSTOS (pesos por dólar), solo programas por hotel y vigencia en USD: la ingresa el personal interno, se pide y valida ANTES de
+   * numerar y se congela en el registro de costo y en cada CxP en USD (modelo de la 236). Distinta de cualquier TRM de cobro. En COP se ignora.
+   */
+  trmCosto?: number | string | null;
+  /**
+   * PR #409 — B2B (agencia/freelance): aliado del CATÁLOGO y elección EXPRESA de la modalidad antes de generar el contrato:
+   * `comisionable` = PVP (se cobra el total y la comisión se liquida aparte) o `neta` = NETO (se cobra PVP − comisión; el aliado figura como cliente y
+   * la persona como titular). Sin ambos no se genera nada. El servidor recalcula con las reglas B2B de siempre y congela la elección en la venta.
+   */
+  aliadoId?: number | null;
+  modoCompra?: ModoCompra;
 };
+
+/** Salida de la vista previa de términos B2B (ver `terminosB2BPrograma`): el cuerpo común se detiene ANTES de numerar. */
+type CapturaTerminosB2B = { terminos?: TerminosVisibles };
 
 /** #57 — `ReservaResult` + el rechazo por cambio de precio (sin escrituras). */
 export type ReservaProgramaResultado =
@@ -3494,11 +3542,24 @@ export async function reservarPrograma(input: ReservaProgramaInput): Promise<Res
   }
 }
 
+/**
+ * PR #409 — Términos B2B (PVP o NETO) que el servidor liquidaría HOY para esta selección, para que el asesor los vea ANTES de generar. Corre el mismo
+ * cuerpo de `reservarPrograma` y se detiene antes de numerar: no crea contrato, CxP, comisión ni asiento. Mismo gate de personal interno.
+ */
+export async function terminosB2BPrograma(input: ReservaProgramaInput): Promise<{ ok: true; terminos: TerminosVisibles } | { ok: false; error: string }> {
+  const flujoId = generarFlujoId();
+  const salida: CapturaTerminosB2B = {};
+  const res = await reservarProgramaInterno(input, flujoId, crearMedidor("reservar_programa", flujoId), crearEstadoFlujo(), salida);
+  if (salida.terminos) return { ok: true, terminos: salida.terminos };
+  return { ok: false, error: res.ok ? "No se pudieron calcular los términos." : res.error };
+}
+
 async function reservarProgramaInterno(
   input: ReservaProgramaInput,
   flujoId: string,
   medir: Medidor,
-  estado: EstadoFlujo
+  estado: EstadoFlujo,
+  vistaPrevia?: CapturaTerminosB2B,
 ): Promise<ReservaProgramaResultado> {
   // Contexto fail-closed INTERNO (revisión posterior al PR #274, ronda 2):
   // reservarPrograma() es exportada y por lo tanto alcanzable directo por
@@ -3579,12 +3640,13 @@ async function reservarProgramaInterno(
   // 1) Programa + precios (autoritativo). proveedores/neto se leen aquí.
   const { data: prog, error: progError } = await sb
     .from("programas")
-    .select("id, nombre, subtitulo, moneda, pct_mk, pct_fee_tarjeta, asistencia_medica_dia, modo_precio, dias, noches, proveedor_id, vigencia_desde, vigencia_hasta, edad_nino_min, edad_nino_max, edad_infante_max, condicion_pago_tipo, condicion_pago_pct_inicial, condicion_pago_dias_saldo, restriccion_comercial, regla_comisionable, regla_comisionable_modalidad_mk, regla_comisionable_modo, regla_comisionable_valor, regla_comisionable_pct_comision, regla_comisionable_impuesto_por_acomodacion, proveedores(nombre, aplica_retencion, pct_retencion)")
+    .select("id, nombre, subtitulo, moneda, pct_mk, pct_fee_tarjeta, asistencia_medica_dia, modo_precio, dias, noches, proveedor_id, proveedor_asistencia_id, tipo_transporte, incluye_aereo, vigencia_desde, vigencia_hasta, edad_nino_min, edad_nino_max, edad_infante_max, condicion_pago_tipo, condicion_pago_pct_inicial, condicion_pago_dias_saldo, restriccion_comercial, regla_comisionable, regla_comisionable_modalidad_mk, regla_comisionable_modo, regla_comisionable_valor, regla_comisionable_pct_comision, regla_comisionable_impuesto_por_acomodacion, proveedores!programas_proveedor_id_fkey(nombre, aplica_retencion, pct_retencion)")
     .eq("id", input.programaId)
     .maybeSingle();
   if (progError) return _errorValidacionPrograma("error_consulta_programa", progError);
   if (!prog) return _rechazarValidacionPrograma({ ok: false, error: "Programa no encontrado." });
   const modoSalida = prog.modo_precio === "salida";
+  const modoHotel = esModoHotel(prog.modo_precio);
 
   // Vigencia
   if (prog.vigencia_desde && input.fechaIda < prog.vigencia_desde)
@@ -3593,15 +3655,17 @@ async function reservarProgramaInterno(
     return _rechazarValidacionPrograma({ ok: false, error: "La fecha de salida supera la vigencia del programa." });
 
   // Blackouts
+  // PR #409: cada blackout tiene un alcance («entrada» = solo la fecha de entrada, lo de siempre; «viaje» = cualquier día del viaje, noches adicionales
+  // incluidas). Si la lectura falla NO se reserva (error técnico, antes de numerar). Aquí se evalúa la entrada; el viaje, cuando se conoce su regreso.
   const { data: bos, error: bosError } = await sb
     .from("programa_blackouts")
-    .select("fecha_inicio, fecha_fin, motivo")
+    .select("fecha_inicio, fecha_fin, motivo, alcance")
     .eq("programa_id", input.programaId);
   if (bosError) return _errorValidacionPrograma("error_consulta_blackouts", bosError);
-  for (const b of bos ?? []) {
-    if (b.fecha_inicio && b.fecha_fin && input.fechaIda >= b.fecha_inicio && input.fechaIda <= b.fecha_fin)
-      return _rechazarValidacionPrograma({ ok: false, error: `La fecha cae en un blackout${b.motivo ? ` (${b.motivo})` : ""}.` });
-  }
+  const blackoutsPrograma = (bos ?? []) as BlackoutPrograma[];
+  const rangoEntrada = { desde: input.fechaIda, hasta: input.fechaIda };
+  const blackoutEntrada = blackoutQueAplica(blackoutsPrograma, rangoEntrada, "entrada");
+  if (blackoutEntrada) return _rechazarValidacionPrograma({ ok: false, error: mensajeBlackout(blackoutEntrada, rangoEntrada) });
 
   // 2) Precios — por categoría (matriz) o por salida (fecha × precio).
   //    #57: el PVP sale de la REGLA ÚNICA (`lib/programas/precioReserva57.ts`),
@@ -3613,21 +3677,94 @@ async function reservarProgramaInterno(
   let nochesViaje = prog.dias != null ? Math.max(0, prog.dias - 1) : null; // noches del viaje (fecha de regreso)
   let etiquetaOpcion: string | null = null; // nombre de la opción elegida (categoría o salida)
   let hotelSalida: string | null = null;
+  // #88 — programas por hotel y vigencia: lo resuelto en la validación y usado al escribir.
+  let estanciaEntrada: EstanciaEntrada | undefined;
+  let modalidadHotel: ModalidadServicios | null = null;
+  let baseHotel: { desde: string; hasta: string } | null = null;
+  let diasPrograma: { dia: number; tipo_tramo: "dia" | "traslado_previo" | "traslado_posterior"; titulo: string | null; desayuno: boolean; almuerzo: boolean; cena: boolean; descripcion: string | null }[] = [];
+  let trasladoPrevio = false;
+  let trasladoPosterior = false;
+  let salidaFechas: { etiqueta: string | null; fecha_desde: string | null; fecha_hasta: string | null } | null = null;
+  let proveedorHotel: { id: number | null; nombre: string | null; aplicaRetencion: boolean; pctRetencion: number } | null = null;
+  let proveedorAsistencia: { id: number; nombre: string | null; aplicaRetencion: boolean; pctRetencion: number } | null = null;
+  let trmCosto: number | null = null;
 
   if (modoSalida) {
     if (!input.salidaId) return _rechazarValidacionPrograma({ ok: false, error: "Elige una salida." });
     const { data: sal, error: salError } = await sb
       .from("programa_salidas")
-      .select("etiqueta, columna, noches, neto_sencilla, neto_doble, neto_triple, neto_multiple, neto_nino, bajo_solicitud, tarifa_sencilla, tarifa_doble, tarifa_triple, tarifa_multiple, impuesto_sencilla, impuesto_doble, impuesto_triple, impuesto_multiple")
+      .select("etiqueta, columna, fecha_desde, fecha_hasta, noches, neto_sencilla, neto_doble, neto_triple, neto_multiple, neto_nino, bajo_solicitud, tarifa_sencilla, tarifa_doble, tarifa_triple, tarifa_multiple, impuesto_sencilla, impuesto_doble, impuesto_triple, impuesto_multiple")
       .eq("id", input.salidaId)
       .eq("programa_id", input.programaId)
       .maybeSingle();
     if (salError) return _errorValidacionPrograma("error_consulta_salida", salError);
     if (!sal) return _rechazarValidacionPrograma({ ok: false, error: "Salida no encontrada." });
     fuentePrecio = { modo: "salida", salida: sal };
+    salidaFechas = { etiqueta: sal.etiqueta ?? null, fecha_desde: sal.fecha_desde ?? null, fecha_hasta: sal.fecha_hasta ?? null };
     if (sal.noches != null) nochesViaje = sal.noches;
     etiquetaOpcion = sal.etiqueta ?? null;
     hotelSalida = sal.columna ?? null;
+  } else if (modoHotel) {
+    // #88 — hotel × vigencia × modalidad de servicios. La BASE sale de la fila cuya
+    // vigencia cubre la fecha de ENTRADA y pasa por la regla única de #57 (como una
+    // "salida"); las noches adicionales se suman en `liquidarSeleccion`. Los netos se
+    // leen con la clave de servicio (el rol `venta` también reserva y no los ve) y la
+    // foto del contrato solo la escribe esa clave: sin ella no se reserva.
+    if (!process.env.SUPABASE_SERVICE_ROLE_KEY) return _errorValidacionPrograma("sin_service_role_para_estancia", null);
+    // Solo programas TERRESTRES: no se combina con aéreo (la base también lo impide: programas_modo_hotel_terrestre_chk).
+    const errorAereo = errorModoHotelConAereo(prog);
+    if (errorAereo) return _rechazarValidacionPrograma({ ok: false, error: errorAereo });
+    if (!["COP", "USD"].includes(String(prog.moneda).toUpperCase())) {
+      return _rechazarValidacionPrograma({ ok: false, error: "La moneda del programa debe ser COP o USD para reservarlo por hotel y vigencia." });
+    }
+    const est = input.estancia;
+    if (!est || !Number.isInteger(est.hotelId)) return _rechazarValidacionPrograma({ ok: false, error: "Elige el hotel del programa." });
+    if (!(MODALIDADES_SERVICIOS as readonly string[]).includes(est.modalidad)) {
+      return _rechazarValidacionPrograma({ ok: false, error: "Elige la modalidad de servicios (privados o regulares)." });
+    }
+    if (!esFechaIso(input.fechaIda)) return _rechazarValidacionPrograma({ ok: false, error: "La fecha de entrada al hotel no es válida." });
+    if (!Number.isInteger(est.nochesAdicionales) || est.nochesAdicionales < 0 || est.nochesAdicionales > MAX_NOCHES_ADICIONALES) {
+      return _rechazarValidacionPrograma({ ok: false, error: `Las noches adicionales deben ser un número entero entre 0 y ${MAX_NOCHES_ADICIONALES}.` });
+    }
+    const incluidas = nochesIncluidasPrograma(prog);
+    if (!incluidas.ok) return _rechazarValidacionPrograma({ ok: false, error: incluidas.error });
+    const nochesIncluidas = incluidas.noches;
+    const catalogoCliente = clienteCatalogoHoteles(sb);
+    const cat = await cargarCatalogoHoteles88(catalogoCliente, input.programaId);
+    if (!cat.ok) return _errorValidacionPrograma("error_consulta_catalogo_hoteles", cat.error);
+    const hotel = cat.catalogo.hoteles.find((h) => h.id === est.hotelId);
+    if (!hotel) return _rechazarValidacionPrograma({ ok: false, error: "El hotel elegido no pertenece a este programa." });
+    const base = resolverBaseHotel(cat.catalogo.base.filter((b) => b.hotelId === hotel.id), est.modalidad, input.fechaIda, hotel.nombre);
+    if (!base.ok) return _rechazarValidacionPrograma({ ok: false, error: base.error });
+    const { data: diasRows, error: diasError } = await sb
+      .from("programa_dias").select("dia, tipo_tramo, titulo, desayuno, almuerzo, cena, descripcion").eq("programa_id", input.programaId).order("dia");
+    if (diasError) return _errorValidacionPrograma("error_consulta_itinerario", diasError);
+    diasPrograma = diasRows ?? [];
+    trasladoPrevio = diasPrograma.some((d) => d.tipo_tramo === "traslado_previo");
+    trasladoPosterior = diasPrograma.some((d) => d.tipo_tramo === "traslado_posterior");
+    // El itinerario debe traer los días 1..N (siempre; con noches adicionales además se desplaza el ÚLTIMO día y la recogida).
+    {
+      const errorItinerario = validarItinerarioCompleto(diasPrograma, prog.dias ?? null);
+      if (errorItinerario) return _rechazarValidacionPrograma({ ok: false, error: errorItinerario });
+    }
+    if (hotel.proveedorId != null) {
+      const { data: pv, error: pvError } = await catalogoCliente.from("proveedores").select("nombre, aplica_retencion, pct_retencion").eq("id", hotel.proveedorId).maybeSingle();
+      if (pvError) return _errorValidacionPrograma("error_consulta_proveedor_hotel", pvError);
+      proveedorHotel = { id: hotel.proveedorId, nombre: pv?.nombre ?? null, aplicaRetencion: pv?.aplica_retencion ?? false, pctRetencion: Number(pv?.pct_retencion) || 0 };
+    }
+    fuentePrecio = { modo: "salida", salida: salidaPrecioDesdeBase(base.fila) };
+    nochesViaje = nochesIncluidas + est.nochesAdicionales;
+    etiquetaOpcion = `${hotel.nombre} · ${ETIQUETA_MODALIDAD[est.modalidad]}`;
+    hotelSalida = hotel.nombre;
+    modalidadHotel = est.modalidad;
+    baseHotel = { desde: base.fila.desde, hasta: base.fila.hasta };
+    estanciaEntrada = {
+      hotel,
+      tarifasNoche: tarifasNocheConPvp(prog, cat.catalogo.noches.filter((t) => t.hotelId === hotel.id)),
+      fechaEntrada: input.fechaIda,
+      nochesIncluidas,
+      nochesAdicionales: est.nochesAdicionales,
+    };
   } else {
     const { data: precios, error: preciosError } = await sb
       .from("programa_precios")
@@ -3653,6 +3790,7 @@ async function reservarProgramaInterno(
     habitaciones: input.paxPorAcom,
     ninos: input.ninos,
     infantes: input.infantes,
+    estancia: estanciaEntrada,
   });
   // El mensaje NO lleva cifras de costo (neto del proveedor, costo atribuible): el rol `venta`
   // también reserva programas y no debe verlas; tampoco se loguean (los logs no llevan datos de negocio).
@@ -3661,9 +3799,9 @@ async function reservarProgramaInterno(
   if (totalPax <= 0) return _rechazarValidacionPrograma({ ok: false, error: "Debe haber al menos un pasajero." });
   const numInfantes = Math.max(0, Math.trunc(Number(input.infantes) || 0));
 
-  const items: { numero_contrato: string; descripcion: string; adultos: number; ninos: number; tarifa_adulto: number; tarifa_nino: number; orden: number }[] = [];
+  const items: { numero_contrato: string; descripcion: string; adultos: number; ninos: number; tarifa_adulto: number; tarifa_nino: number; orden: number; modo_precio?: "total" | "por_persona"; valor_total?: number | null }[] = [];
   let catNombre: string | null = etiquetaOpcion;
-  if (!modoSalida) {
+  if (!modoSalida && !modoHotel) {
     const { data: catData, error: catError } = await sb.from("programa_categorias").select("nombre").eq("id", input.categoriaId).maybeSingle();
     if (catError) return _errorValidacionPrograma("error_consulta_categoria", catError);
     catNombre = catData?.nombre ?? null;
@@ -3694,6 +3832,13 @@ async function reservarProgramaInterno(
       orden: orden++,
     });
   }
+  // #88 — noches adicionales: líneas en modo "total" (una por acomodación y unidad, con
+  // sus fechas exactas). Su suma es EXACTAMENTE el PVP de las noches: nada se cobra dos veces.
+  if (liq.estancia && estanciaEntrada) {
+    for (const it of itemsContratoNoches(liq.estancia.noches, estanciaEntrada.hotel.nombre)) {
+      items.push({ numero_contrato: "", descripcion: it.descripcion, adultos: 0, ninos: 0, tarifa_adulto: 0, tarifa_nino: 0, modo_precio: "total", valor_total: it.valorTotal, orden: orden++ });
+    }
+  }
 
   // 3.b) Validación de pasajeros por edad (umbrales del programa, según el
   //      proveedor). Si hay fechas de nacimiento, la clasificación real debe
@@ -3720,16 +3865,114 @@ async function reservarProgramaInterno(
     }
   }
 
+  // 3.b2) #88 — asistencia y TRM de costos, ANTES de confirmar el precio y de numerar. La asistencia de la estancia COMPLETA (días incluidos +
+  //       noches adicionales, solo quienes pagan) es un costo con su proveedor y su CxP: si es positiva y falta el proveedor no se reserva.
+  //       En USD el personal interno ingresa la TRM de costos (expresa, positiva y finita): sin ella no hay contrato.
+  if (estanciaEntrada && liq.estancia) {
+    if (liq.costoAsistencia > 0) {
+      if (prog.proveedor_asistencia_id == null) {
+        return _rechazarValidacionPrograma({
+          ok: false,
+          error: "La asistencia médica de este programa tiene costo y no tiene configurado el proveedor de la asistencia: asígnalo en la pestaña General del programa antes de reservar.",
+        });
+      }
+      const { data: pa, error: paError } = await clienteCatalogoHoteles(sb).from("proveedores").select("id, nombre, aplica_retencion, pct_retencion").eq("id", prog.proveedor_asistencia_id).maybeSingle();
+      if (paError) return _errorValidacionPrograma("error_consulta_proveedor_asistencia", paError);
+      if (!pa) {
+        return _rechazarValidacionPrograma({ ok: false, error: "El proveedor de la asistencia configurado en el programa ya no existe en el catálogo: corrígelo en la pestaña General antes de reservar." });
+      }
+      proveedorAsistencia = { id: pa.id, nombre: pa.nombre, aplicaRetencion: pa.aplica_retencion ?? false, pctRetencion: Number(pa.pct_retencion) || 0 };
+    }
+    // (La vista previa de términos B2B no pide la TRM de costos: es un dato de costos y no entra a PVP/NETO; al generar sigue siendo obligatoria.)
+    if (!vistaPrevia && String(prog.moneda).toUpperCase() === "USD") {
+      // Personal interno: el contexto de esta acción ya exige un rol con escritura sobre ventas (ningún rol externo llega aquí).
+      const dTrm = decidirTrmCosto({ requiere: liq.costoNeto > 0 || liq.costoAsistencia > 0, recibida: input.trmCosto, esInterno: true, congelada: null });
+      if (!dTrm.ok) return _rechazarValidacionPrograma({ ok: false, error: dTrm.error });
+      trmCosto = dTrm.trm;
+    }
+  }
+
+  // 3.b.bis) PR #409 — Itinerario completo (días 1..N, sin faltantes ni repetidos) en TODOS los modos, y blackouts de alcance «viaje» sobre el rango real del
+  //          viaje (entrada → regreso, noches adicionales incluidas). Ambos antes de numerar y de toda escritura. Un fallo de lectura bloquea la reserva.
+  if (!estanciaEntrada) {
+    const { data: diasRows, error: diasError } = await sb.from("programa_dias").select("dia, tipo_tramo").eq("programa_id", input.programaId);
+    if (diasError) return _errorValidacionPrograma("error_consulta_itinerario", diasError);
+    const itinerarioPrograma = estadoItinerario(diasRows ?? [], prog.dias ?? null);
+    if (!itinerarioPrograma.completo) return _rechazarValidacionPrograma({ ok: false, error: itinerarioPrograma.mensaje ?? "El itinerario del programa está incompleto." });
+    ({ previo: trasladoPrevio, posterior: trasladoPosterior } = trasladosDeItinerario(diasRows));
+  }
+  // Salida: viaje PUNTUAL que empieza en su fecha_desde (el formulario no tiene selector de fecha en este modo). Una reserva directa con OTRA fecha, una
+  // salida sin fecha o, con traslado, un recorrido que no llega a su fecha_hasta daría un contrato con fechas contradictorias: se rechaza ANTES de numerar
+  // (y la vista previa B2B también). Ver lib/programas/trasladosFechas.ts.
+  if (salidaFechas) {
+    const errorFechas = errorFechasSalida({ ...salidaFechas, noches: nochesViaje }, input.fechaIda, { previo: trasladoPrevio, posterior: trasladoPosterior });
+    if (errorFechas) return _rechazarValidacionPrograma({ ok: false, error: errorFechas });
+  }
+  // El traslado se cuenta UNA vez en las fechas del viaje y del contrato; las noches hoteleras, el precio y las CxP no lo ven (nochesViaje sigue igual).
+  const nochesFechas = estanciaEntrada ? estanciaEntrada.nochesIncluidas + estanciaEntrada.nochesAdicionales : nochesViaje ?? (prog.dias ? Math.max(0, prog.dias - 1) : null);
+  const rangoCalculado = nochesFechas != null
+    ? rangoViajeConTraslados(estanciaEntrada ? "hotel" : "salida", input.fechaIda, nochesFechas, { previo: trasladoPrevio, posterior: trasladoPosterior })
+    : null;
+  const regresoViaje = rangoCalculado?.hasta ?? null;
+  const rangoDelViaje = { desde: rangoCalculado?.desde ?? input.fechaIda, hasta: regresoViaje ?? input.fechaIda };
+  const blackoutViaje = blackoutQueAplica(blackoutsPrograma, rangoDelViaje, "viaje");
+  if (blackoutViaje) return _rechazarValidacionPrograma({ ok: false, error: mensajeBlackout(blackoutViaje, rangoDelViaje) });
+
   // 3.c) #57 — CONFIRMACIÓN DEL PRECIO. El importe que el usuario vio y confirmó
   //      debe ser el que cobra el servidor con la regla única. Si cambió (el
   //      programa se editó entre la lectura y la confirmación, o es el segundo
   //      cambio de un reintento), se rechaza AQUÍ: antes de numerar y de toda
   //      escritura (sin contrato, CxP ni asientos), devolviendo el nuevo importe
   //      para que el usuario lo acepte de forma expresa. Cada intento recalcula.
-  const confirmacion = evaluarPrecioConfirmado(input.precioConfirmado, precioVenta, prog.moneda);
+  // (La vista previa de términos B2B no confirma importes: solo muestra lo que el servidor liquidaría hoy.)
+  const confirmacion = vistaPrevia ? ({ ok: true } as const) : evaluarPrecioConfirmado(input.precioConfirmado, precioVenta, prog.moneda);
   if (!confirmacion.ok) {
     return _rechazarValidacionPrograma({ ok: false, error: confirmacion.error, cambioPrecio: confirmacion.cambioPrecio });
   }
+
+  // 3.d) PR #409 — B2B: aliado del catálogo + elección EXPRESA de PVP o NETO, con las reglas de siempre (`planComisionReserva`: base comisionable =
+  //      PVP − impuesto no comisionable, % del aliado/general/por defecto, comisión). Todo se decide AQUÍ, antes de numerar y de escribir nada: del
+  //      navegador solo llega la elección (id de aliado y modalidad). No cambia quién puede llamar esta acción (ver contexto fail-closed arriba).
+  const impuestoVenta = impuestoParaVenta(liq, input.tipoAsesor);
+  const residualB2B = avisoResidualBaseB2B(liq, input.tipoAsesor);
+  let aliadoPrograma: AliadoResuelto | null = null;
+  let planB2B: PlanComisionReserva | null = null;
+  if (input.tipoAsesor !== "interno") {
+    if (input.modoCompra !== "comisionable" && input.modoCompra !== "neta") {
+      return _rechazarValidacionPrograma({ ok: false, error: "Elige si el contrato se genera a PVP (se cobra el total y la comisión se liquida aparte) o a NETO (se cobra el PVP menos la comisión) antes de generarlo." });
+    }
+    if (!(Number.isInteger(input.aliadoId) && (input.aliadoId as number) > 0)) {
+      return _rechazarValidacionPrograma({ ok: false, error: `Esta venta es B2B: selecciona la ${input.tipoAsesor} del catálogo. Sin aliado no se puede registrar su comisión.` });
+    }
+    const al = await resolverAliadoAsistencia(sb, input.aliadoId as number);
+    if (!al.ok) return _rechazarValidacionPrograma({ ok: false, error: al.error });
+    if (al.aliado.tipo !== input.tipoAsesor) {
+      return _rechazarValidacionPrograma({ ok: false, error: `El aliado elegido es de tipo "${al.aliado.tipo}", no "${input.tipoAsesor}".` });
+    }
+    const plan = planComisionReserva({ modoCompra: input.modoCompra, precioVenta, impuesto: impuestoVenta ?? 0, pct: al.aliado.pct });
+    if (!plan.ok) return _rechazarValidacionPrograma({ ok: false, error: plan.error });
+    aliadoPrograma = al.aliado;
+    planB2B = plan.plan;
+  }
+  if (vistaPrevia) {
+    if (!aliadoPrograma || !planB2B) return _rechazarValidacionPrograma({ ok: false, error: "Los términos B2B solo aplican a ventas de agencia o freelance." });
+    vistaPrevia.terminos = {
+      aliado_nombre: aliadoPrograma.nombre,
+      tipo_asesor: aliadoPrograma.tipo,
+      modo_compra: planB2B.modoCompra as ModoCompra,
+      moneda: prog.moneda,
+      pvp: precioVenta,
+      impuesto: impuestoVenta ?? 0,
+      base: planB2B.base,
+      pct: planB2B.pct,
+      pct_origen: aliadoPrograma.pctOrigen,
+      comision: planB2B.comision ?? 0,
+      total_exigible: planB2B.precioFinal,
+    };
+    return _rechazarValidacionPrograma({ ok: false, error: "Vista previa de términos B2B (no se generó ningún contrato)." });
+  }
+  // Lo que se le cobra al comprador: PVP en comisionable (y en B2C), PVP − comisión en NETO.
+  const precioExigible = planB2B ? planB2B.precioFinal : precioVenta;
 
   registrarEtapa("reservar_programa", flujoId, "validacion_programa", Math.round(performance.now() - _tValidacionProg0), "ok");
 
@@ -3747,11 +3990,9 @@ async function reservarProgramaInterno(
   // Todo contrato lleva ASESOR INTERNO (quien firma/vende internamente y a quien
   // aplica la escala). La agencia/freelance se guarda aparte (canal B2B).
   const asesorNombre = input.asesorInterno;
-  const fechaRegreso = nochesViaje != null ? sumarDias(input.fechaIda, nochesViaje) : prog.dias ? sumarDias(input.fechaIda, Math.max(0, prog.dias - 1)) : null;
+  const fechaRegreso = regresoViaje;
 
-  // #57 — impuesto fiscal verificable (solo B2B) y residual de la base comisionable.
-  const impuestoVenta = impuestoParaVenta(liq, input.tipoAsesor);
-  const residualB2B = avisoResidualBaseB2B(liq, input.tipoAsesor);
+  // #57 — impuesto fiscal verificable (solo B2B) y residual de la base comisionable (calculados arriba, antes de numerar).
   if (residualB2B) advertencias.push(residualB2B);
 
   // 5) Venta (cabecera) — nace PENDIENTE, en la moneda del programa
@@ -3759,28 +4000,41 @@ async function reservarProgramaInterno(
   const { error: ve } = await sb.from("ventas").insert({
     numero_contrato: numero,
     tenant,
-    cliente: `${input.cliente.nombres ?? ""} ${input.cliente.apellidos ?? ""}`.trim(),
-    cliente_documento: oNull(input.cliente.numeroDoc),
-    cliente_tipo_documento: tipoDocumentoParaVenta(input.cliente.tipoDoc, input.cliente.numeroDoc),
-    cliente_telefono: oNull(input.cliente.telefono),
-    cliente_email: oNull(input.cliente.email),
+    // PR #409: NETO ⇒ cliente = aliado (identidad del catálogo) y la persona queda como titular; PVP con comisión y B2C ⇒ cliente = la persona.
+    ...camposClienteVenta({ modo: planB2B?.modoCompra ?? null, fiscal: aliadoPrograma?.fiscal ?? null, titular: titularDeCliente(input.cliente) }),
     destino: prog.subtitulo ?? prog.nombre,
     tipo_paquete: "programa",
     moneda: prog.moneda,
-    fecha_salida: input.fechaIda,
+    fecha_salida: rangoDelViaje.desde,
     fecha_regreso: fechaRegreso,
     pax: totalPax,
     hotel: prog.nombre,
-    precio_venta: precioVenta,
+    precio_venta: precioExigible,
     estado: "pendiente",
     canal,
     tipo_asesor: input.tipoAsesor,
-    agencia_nombre: oNull(input.agenciaNombre),
-    agencia_asesor: oNull(input.agenciaAsesor),
-    freelance_nombre: oNull(input.freelanceNombre),
+    // B2B: el nombre sale del CATÁLOGO (no del navegador) y el aliado queda enlazado por id (migración 143); la modalidad se congela en la venta.
+    ...(aliadoPrograma && planB2B
+      ? {
+          ...camposVendedorAliado({ nombre: aliadoPrograma.nombre, tipo: aliadoPrograma.tipo }),
+          agencia_asesor: aliadoPrograma.tipo === "agencia" ? oNull(input.agenciaAsesor) : null,
+          aliado_id: aliadoPrograma.id,
+          modo_compra: planB2B.modoCompra,
+          comision_b2b: planB2B.comision,
+          comision_estado: planB2B.comisionEstado,
+        }
+      : {
+          agencia_nombre: oNull(input.agenciaNombre),
+          agencia_asesor: oNull(input.agenciaAsesor),
+          freelance_nombre: oNull(input.freelanceNombre),
+        }),
     plazo: oNull(input.plazo),
     asesor_firma_nombre: oNull(asesorNombre),
     plan_nombre: catNombre ?? prog.nombre,
+    // #88: nace con la escritura financiera EN CURSO; solo pasa a 'completo' dentro de registrar_financiero_contrato (atómico con sus costos y CxP).
+    // Un contrato a medias queda 'pendiente': no se puede confirmar y la reconciliación lo completa o lo revierte.
+    // B2B (PR #409): la RPC de comisión solo acepta una reserva EN CURSO, así que también nace 'pendiente' (y se completa justo después de registrar la comisión).
+    ...(estanciaEntrada || aliadoPrograma ? { financiero_estado: "pendiente" } : {}),
     // #57 — base comisionable B2B: SOLO un impuesto del proveedor verificable
     // (regla en modo `impuesto` con tarifa de proveedor cargada). Nunca se
     // infiere de `montoNoComisionable` ni de la reducción por % de la regla.
@@ -3791,6 +4045,21 @@ async function reservarProgramaInterno(
     elevarEstadoFlujo(estado, "error");
     registrarErrorTecnico("reservar_programa", flujoId, "insert_venta", "error_insert_venta", ve);
     return { ok: false, error: MSG_ERROR_GUARDAR_RESERVA };
+  }
+
+  // 5.b) PR #409 — comisión B2B: la crea la base (`registrar_comision_b2b_reserva`, valida usuario, rol, tenant, aliado y venta, y recalcula con la
+  // misma regla del plan). Si falla, el contrato se revierte completo: nunca queda un contrato B2B sin su comisión.
+  if (aliadoPrograma) {
+    const com = await registrarComisionReserva(sb, numero, aliadoPrograma.id);
+    if (!com.ok) {
+      elevarEstadoFlujo(estado, "error");
+      registrarErrorTecnico("reservar_programa", flujoId, "comision_b2b", "error_comision_b2b", com.error);
+      const rev = await revertirContratoIncompleto({ rpc: rpcFinanciero }, numero, tenant);
+      return {
+        ok: false,
+        error: rev.ok ? com.error : `${com.error} · Además, el contrato ${numero} quedó creado a medias y no se pudo deshacer automáticamente (${rev.error ?? "motivo desconocido"}): revísalo antes de volver a reservar.`,
+      };
+    }
   }
 
   // 5bis) Congelar condiciones de pago (Rama B, migración 165) — best-effort,
@@ -3804,7 +4073,7 @@ async function reservarProgramaInterno(
       const fechaPagoCond = fechaNegocio();
       const componente = componenteDePrograma(prog, {
         id: `programa-${input.programaId}`,
-        valor: precioVenta,
+        valor: precioExigible,
         referencia: prog.nombre,
         fechaViaje: input.fechaIda,
       });
@@ -3814,7 +4083,7 @@ async function reservarProgramaInterno(
         componentes: [componente],
         moneda: prog.moneda,
         trm: trmCond,
-        precioTotalMoneda: precioVenta,
+        precioTotalMoneda: precioExigible,
         fechaPago: fechaPagoCond,
         usuarioId: usuarioCond.id,
       });
@@ -3830,11 +4099,22 @@ async function reservarProgramaInterno(
   // vez de "ok" si alguno falla, sin cambiar el comportamiento histórico
   // (siguen sin bloquear la reserva).
   const _tHijas0 = performance.now();
-  const _errorHijas = (detalle: string, error: unknown) => {
+  const _errorHijas = async (detalle: string, error: unknown) => {
     registrarEtapa("reservar_programa", flujoId, "insert_hijas", Math.round(performance.now() - _tHijas0), "error");
     registrarErrorTecnico("reservar_programa", flujoId, "insert_hijas", detalle, error);
     elevarEstadoFlujo(estado, "error");
-    return { ok: false as const, error: MSG_ERROR_GUARDAR_RESERVA };
+    // #88: en el modo hotel el contrato NO puede quedar utilizable sin sus datos (foto, costo, pasajeros, hotel): se revierte entero (las hijas
+    // caen en cascada). PR #409: lo mismo en una venta B2B (con su comisión) de cualquier modo: nace 'pendiente' y no se completa hasta terminar
+    // pasajeros e ítems. Si la reversión misma falla, el error nombra el contrato y este sigue 'pendiente' (no confirmable, recuperable).
+    let mensaje = MSG_ERROR_GUARDAR_RESERVA;
+    if (estanciaEntrada || aliadoPrograma) {
+      const rev = await revertirContratoIncompleto({ rpc: rpcFinanciero }, numero, tenant);
+      if (!rev.ok) {
+        registrarErrorTecnico("reservar_programa", flujoId, "insert_hijas", "error_revertir_contrato", rev.error);
+        mensaje = `${MSG_ERROR_GUARDAR_RESERVA} El contrato ${numero} quedó creado a medias y no se pudo deshacer automáticamente: revísalo antes de volver a reservar.`;
+      }
+    }
+    return { ok: false as const, error: mensaje };
   };
   let _resultadoHijas: ResultadoEtapa = "ok";
 
@@ -3898,9 +4178,74 @@ async function reservarProgramaInterno(
 
   // 7) Ítems (líneas por acomodación)
   for (const it of items) it.numero_contrato = numero;
+  // PostgREST inserta en lote con la UNIÓN de columnas y manda NULL donde una fila no trae la clave (no el DEFAULT): las líneas «total» de las
+  // noches adicionales traen modo_precio/valor_total y las demás no, así que modo_precio (NOT NULL) llegaría nulo. Se hace explícito en todas.
+  if (liq.estancia) for (const it of items) { it.modo_precio ??= "por_persona"; it.valor_total ??= null; }
   if (items.length) {
     const { error } = await sb.from("contrato_items").insert(items);
     if (error) return _errorHijas("items", error);
+  }
+
+  // 7.a) PR #409 — Fuera del modo hotel no hay escritura financiera atómica que complete el contrato: una venta B2B (que nació 'pendiente' para que la base
+  // acepte su comisión) se marca 'completo' SOLO ahora, ya escritos pasajeros e ítems (con la clave de servicio, como el resto de escrituras financieras).
+  // Si la transición falla, se revierte el contrato pendiente (y se avisa si la reversión también falla).
+  if (aliadoPrograma && !estanciaEntrada) {
+    const completar = process.env.SUPABASE_SERVICE_ROLE_KEY
+      ? await createAdminClient().from("ventas").update({ financiero_estado: "completo", financiero_actualizado_en: new Date().toISOString() }).eq("numero_contrato", numero)
+      : { error: { message: "falta la clave de servicio para completar el contrato" } };
+    if (completar.error) return _errorHijas("completar_b2b", completar.error);
+  }
+
+  // 7.b) #88 — foto de la estancia: selección, fechas exactas, vigencias, PVP por noche e
+  //      itinerario desplazado. Se escribe UNA vez y no se recalcula nunca (un contrato
+  //      histórico conserva lo que se vendió aunque el catálogo cambie). Sin netos.
+  if (estanciaEntrada && liq.estancia && modalidadHotel && baseHotel) {
+    const itinerario = itinerarioConNochesExtra(diasPrograma, estanciaEntrada.nochesAdicionales, input.fechaIda, estanciaEntrada.hotel.nombre);
+    const habitaciones = Object.fromEntries(
+      Object.entries(input.paxPorAcom).filter(([, n]) => Number(n) > 0).map(([a, n]) => [a, Number(n)])
+    );
+    const { error: errorEstancia } = await createAdminClient().from("contrato_programa_estancia").insert({
+      numero_contrato: numero,
+      programa_id: input.programaId,
+      hotel_id: estanciaEntrada.hotel.id,
+      hotel_nombre: estanciaEntrada.hotel.nombre,
+      zona: estanciaEntrada.hotel.zona,
+      tipo_habitacion: estanciaEntrada.hotel.tipoHabitacion,
+      modalidad_servicios: modalidadHotel,
+      moneda: prog.moneda,
+      fecha_entrada: input.fechaIda,
+      noches_incluidas: estanciaEntrada.nochesIncluidas,
+      noches_adicionales: estanciaEntrada.nochesAdicionales,
+      fecha_regreso: fechaRegreso ?? input.fechaIda,
+      base_vigencia_desde: baseHotel.desde,
+      base_vigencia_hasta: baseHotel.hasta,
+      habitaciones: habitaciones as unknown as Json,
+      ninos: Math.max(0, Math.trunc(Number(input.ninos) || 0)),
+      infantes: numInfantes,
+      precio_base: liq.precioBase,
+      precio_noches: liq.estancia.precioNoches,
+      noches: nochesParaFoto(liq.estancia.noches) as unknown as Json,
+      itinerario: itinerario as unknown as Json,
+    });
+    if (errorEstancia) return _errorHijas("estancia", errorEstancia);
+  }
+
+  // 7.c) #88 — registro de costo de la estancia (netos, asistencia total y TRM de costos). Va ANTES de la escritura financiera: si falla, el
+  //      contrato se revierte; después de ella el contrato ya está completo y no se puede deshacer.
+  if (estanciaEntrada && liq.estancia) {
+    const { error: errorCosto } = await createAdminClient().from("contrato_programa_estancia_costo").insert({
+      numero_contrato: numero,
+      moneda: prog.moneda,
+      neto_base: liq.costoNetoBase,
+      neto_noches: liq.estancia.costoNetoNoches,
+      asistencia_noches: liq.estancia.costoAsistenciaNoches,
+      asistencia_total: liq.costoAsistencia,
+      detalle_noches: nochesParaCosto(liq.estancia.noches) as unknown as Json,
+      proveedor_noches_id: estanciaEntrada.hotel.proveedorId,
+      proveedor_asistencia_id: proveedorAsistencia?.id ?? null,
+      trm_costo: trmCosto,
+    });
+    if (errorCosto) return _errorHijas("costo_estancia", errorCosto);
   }
 
   // 8) Hoteles por ciudad (de la categoría elegida) — informativo en el
@@ -3909,7 +4254,7 @@ async function reservarProgramaInterno(
   //    "parcial". En modo salida no hay matriz de hoteles; se usa el hotel
   //    de la columna si lo hay.
   const provNombre = (prog.proveedores as unknown as { nombre: string } | null)?.nombre ?? null;
-  const { data: hotelesCat, error: hotelesCatError } = modoSalida
+  const { data: hotelesCat, error: hotelesCatError } = (modoSalida || modoHotel)
     ? { data: hotelSalida ? [{ ciudad: prog.subtitulo ?? prog.nombre, hotel: hotelSalida, orden: 0 }] : [], error: null }
     : await sb
         .from("programa_categoria_hoteles")
@@ -3926,12 +4271,14 @@ async function reservarProgramaInterno(
         numero_contrato: numero,
         nombre: h.hotel ?? "",
         categoria: catNombre,
-        proveedor: provNombre,
+        proveedor: proveedorHotel?.nombre ?? provNombre,
         ciudad: h.ciudad,
         detalle_acomodacion: `${totalPax} pax`,
+        ...(estanciaEntrada ? { fecha_ingreso: input.fechaIda, fecha_salida: fechaRegresoEstancia(input.fechaIda, estanciaEntrada.nochesIncluidas, estanciaEntrada.nochesAdicionales) } : {}),
         orden: i,
       }))
     );
+    if (hotelesInsertError && estanciaEntrada) return _errorHijas("hoteles", hotelesInsertError);
     if (hotelesInsertError) {
       _resultadoHijas = "parcial";
       registrarErrorTecnico("reservar_programa", flujoId, "insert_hijas", "error_insert_hoteles", hotelesInsertError);
@@ -3942,6 +4289,66 @@ async function reservarProgramaInterno(
   // items bloquean y elevan "error" antes de llegar a esta línea, vía
   // `_errorHijas`) — best-effort: eleva el TOTAL a "parcial", nunca a "error".
   if (_resultadoHijas !== "ok") elevarEstadoFlujo(estado, "parcial");
+
+  // 9-hotel) #88 — costo y obligaciones del modo hotel: UNA escritura atómica (`registrar_financiero_contrato`, la de la 171/172/236), con su
+  //          intención durable y su reversión. NO es «mejor esfuerzo»: o quedan el costo y TODAS las CxP (programa, noches con otro proveedor, asistencia)
+  //          o no queda el contrato, y un fallo se devuelve como error. Un reintento reemplaza las CxP automáticas previas (no duplica).
+  if (estanciaEntrada && liq.estancia) {
+    const _tFin0 = performance.now();
+    const fechaFin = fechaNegocio();
+    const pr = prog.proveedores as unknown as { nombre: string | null; aplica_retencion: boolean | null; pct_retencion: number | null } | null;
+    const usd = String(prog.moneda).toUpperCase() === "USD";
+    const OBS = "Generado automáticamente desde el tarifario (programa";
+    const plan88 = planObligacionesPrograma({
+      netoBase: liq.costoNetoBase,
+      netoNoches: liq.estancia.costoNetoNoches,
+      proveedorPrograma: { id: prog.proveedor_id ?? null, nombre: pr?.nombre ?? null, aplicaRetencion: pr?.aplica_retencion ?? false, pctRetencion: Number(pr?.pct_retencion) || 0 },
+      proveedorHotel,
+    });
+    // Modelo de la 236: cada CxP en USD lleva su moneda, su nominal, la TRM de costos (UNA por contrato) y el equivalente en COP; una en COP no lleva equivalente.
+    const filaCxP = (a: { tipo: string; proveedor: string | null; servicio: string; valor: number; aplicaRetencion: boolean; pctRetencion: number; obs: string }): CxPFinanciera => ({
+      proveedor: a.proveedor,
+      tipo_proveedor: a.tipo,
+      servicio: a.servicio,
+      valor_total: a.valor,
+      fecha_obligacion: fechaFin,
+      aplica_retencion: a.aplicaRetencion,
+      pct_retencion: a.pctRetencion,
+      observaciones: `${OBS}${a.obs})`,
+      servicio_id: null,
+      moneda: usd ? "USD" : "COP",
+      ...(usd && trmCosto != null ? { valor_cop_costo: equivalenteCopCosto(a.valor, trmCosto), trm_costo: trmCosto } : {}),
+    });
+    const cxpFin: CxPFinanciera[] = [];
+    if (plan88.programa.valor > 0) {
+      cxpFin.push(filaCxP({ tipo: "programa", proveedor: pr?.nombre ?? null, servicio: prog.nombre, valor: plan88.programa.valor, aplicaRetencion: pr?.aplica_retencion ?? false, pctRetencion: Number(pr?.pct_retencion) || 0, obs: "" }));
+    }
+    if (plan88.noches) {
+      cxpFin.push(filaCxP({
+        tipo: "programa", proveedor: plan88.noches.proveedor.nombre, servicio: `Noches adicionales · ${estanciaEntrada.hotel.nombre}`, valor: plan88.noches.valor,
+        aplicaRetencion: plan88.noches.proveedor.aplicaRetencion, pctRetencion: plan88.noches.proveedor.pctRetencion, obs: " · noches adicionales",
+      }));
+    }
+    if (liq.costoAsistencia > 0 && proveedorAsistencia) {
+      cxpFin.push(filaCxP({
+        tipo: "asistencia", proveedor: proveedorAsistencia.nombre, servicio: `Asistencia médica · ${prog.nombre}`, valor: liq.costoAsistencia,
+        aplicaRetencion: proveedorAsistencia.aplicaRetencion, pctRetencion: proveedorAsistencia.pctRetencion, obs: " · asistencia médica",
+      }));
+    }
+    const costosFin: CostosContrato = { costo_receptivo: liq.costoNeto, ...(liq.costoAsistencia > 0 ? { costo_asistencia: liq.costoAsistencia } : {}) };
+    const fin = await registrarFinancieroContrato(depsFinanciero(numero, tenant, fechaFin), { numeroContrato: numero, tenant, costos: costosFin, cxp: cxpFin, fecha: fechaFin });
+    registrarEtapa("reservar_programa", flujoId, "cxp_programa", Math.round(performance.now() - _tFin0), fin.ok ? (fin.avisos.length ? "parcial" : "ok") : "error");
+    if (!fin.ok) {
+      elevarEstadoFlujo(estado, "error");
+      registrarErrorTecnico("reservar_programa", flujoId, "cxp_programa", "error_escritura_financiera", fin.error);
+      return { ok: false, error: fin.error };
+    }
+    // El espejo contable (asiento por CxP) es lo único best-effort del proyecto: su fallo NO se oculta, se devuelve como aviso.
+    for (const aviso of fin.avisos) advertencias.push(aviso);
+    if (fin.avisos.length) elevarEstadoFlujo(estado, "parcial");
+    revalidatePath("/dashboard/contratos");
+    return { ok: true, numero, ...(advertencias.length ? { advertencias } : {}) };
+  }
 
   // 9) Cuenta por pagar al proveedor del programa (neto, en la moneda del
   // programa). Best-effort igual que antes (no bloquea la reserva), pero la

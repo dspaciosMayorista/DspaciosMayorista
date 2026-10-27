@@ -2,6 +2,7 @@ import { createClient } from "@/lib/supabase/server";
 import { TarifarioPublic } from "./TarifarioPublic";
 import { CartDrawer } from "./CartDrawer";
 import { getProgramasResumen } from "@/lib/programas";
+import { completarDesdeHoteles88 } from "@/lib/programas/estanciaHotelDatos88";
 import { Logo } from "@/components/Logo";
 import { cargarResumenTarifario, MSG_ERROR_CARGAR_TARIFARIO } from "@/lib/tarifario/resumen";
 import { cargarHotelesBernaloDescubiertos, cargarInfoHotelesBernalo, cargarDescripcionPaquetesBernalo, cargarPrioridadesRecomendadosBernalo } from "@/lib/tarifario/datosBernalo";
@@ -228,7 +229,8 @@ export default async function TarifarioPublicoPage() {
   if (resProgramas.error) {
     registrarErrorTecnico(FLUJO, flujoId, "programas_resumen", "error_getProgramasResumen", resProgramas.error);
   }
-  const programas = resProgramas.programas;
+  // #88: «Desde» de los programas por hotel y vigencia (su matriz no la conoce getProgramasResumen). Si falla la lectura, ese «Desde» queda en «Consultar».
+  const programas = (await completarDesdeHoteles88(sb, resProgramas)).programas;
 
   // `config_sitio` ya no alimenta el header público (ver más abajo: el
   // rediseño quitó el `BackgroundVideo` de ahí — mostraba el video propio del
