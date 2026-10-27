@@ -256,6 +256,8 @@ export async function resolve(specifier, context, nextResolve) {
       context.parentURL?.endsWith("/ConvertirCarritoBtn.tsx") ||
       // Panel del carrito (pruebas/carritoMonedaCheckout.react.ts).
       context.parentURL?.endsWith("/tarifario/CartDrawer.tsx") ||
+      // Checkout público (pruebas/recorridoComparativa64.react.ts): al abrir la comparativa corrige la URL con router.replace.
+      context.parentURL?.endsWith("/tarifario/checkout/page.tsx") ||
       // Facturación (#49, pruebas/tablasMoviles49.react.ts).
       context.parentURL?.endsWith("FacturacionClient.tsx"))
   ) {

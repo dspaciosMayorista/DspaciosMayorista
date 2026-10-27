@@ -11,7 +11,7 @@ import { useRouter } from "next/navigation";
 import { Copy, Pencil, Plus, TriangleAlert } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
-import { guardarHoteles } from "../actions";
+import { guardarHoteles, leerCatalogoHoteles } from "../actions";
 import type { ProgramaPrecioCabecera } from "@/lib/programas/precioReserva57";
 import type { DiaItinerario } from "@/lib/programas/estanciaHotel88";
 import type { CatalogoHoteles88 } from "@/lib/programas/estanciaHotelDatos88";
@@ -40,11 +40,15 @@ export function HotelesVigenciaEditor({
   const [error, setError] = useState<string | null>(null);
   const [quitando, setQuitando] = useState(false);
   const [pending, start] = useTransition();
+  // Tras un guardado cuyos ids no se pudieron confirmar el catálogo se recarga de la base: mientras tanto (o si la recarga falla) no se permite otro guardado.
+  const [recarga, setRecarga] = useState<"no" | "cargando" | "fallo">("no");
+  const bloqueado = recarga !== "no";
   const raiz = useRef<HTMLDivElement>(null);
 
   const devolverFoco = (id: string) => requestAnimationFrame(() => raiz.current?.querySelector<HTMLElement>(`[data-foco="${id}"]`)?.focus());
 
   function abrir(e: Edicion) {
+    if (bloqueado) return;
     setError(null);
     setQuitando(false);
     setEdicion(e);
@@ -67,11 +71,21 @@ export function HotelesVigenciaEditor({
     setError(null);
     start(async () => {
       const r = await guardarHoteles(programaId, lista.map(aPayload));
-      if (r.ok) {
-        setHoteles(lista);
-        alExito();
-        router.refresh();
-      } else setError(r.error);
+      if (!r.ok) { setError(r.error); return; }
+      alExito();
+      router.refresh();
+      const ids = r.ids;
+      if (ids) {
+        // Los hoteles recién creados toman su id real: si siguieran sin id, el próximo guardado los reenviaría como NUEVOS y chocarían con ellos mismos.
+        setHoteles(lista.map((h, i) => ({ ...h, id: ids[i] ?? h.id })));
+        return;
+      }
+      // Se guardó, pero no se pudieron confirmar los ids. router.refresh() no reinicializa este estado: se lee el catálogo guardado y se reemplaza la lista; hasta entonces
+      // los hoteles nuevos siguen sin id, así que no se permite otro guardado (y nunca se pide repetir uno que ya ocurrió).
+      setHoteles(lista);
+      setRecarga("cargando");
+      const c = await leerCatalogoHoteles(programaId);
+      if (c.ok) { setHoteles(desdeCatalogo(c.catalogo)); setRecarga("no"); } else setRecarga("fallo");
     });
   }
 
@@ -105,6 +119,15 @@ export function HotelesVigenciaEditor({
         por persona, cada menor exige su tarifa. El PVP se calcula con las reglas vigentes del programa ({programa.moneda}).
       </p>
 
+      {recarga === "cargando" && (
+        <p role="status" data-testid="recargando-hoteles" className="rounded-lg border border-sky-200 bg-sky-50 p-3 text-xs text-sky-800">Los cambios se guardaron. Actualizando la lista de hoteles…</p>
+      )}
+      {recarga === "fallo" && (
+        <div role="alert" data-testid="recarga-fallida-hoteles" className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-amber-200 bg-amber-50 p-3 text-xs text-amber-900">
+          <span>Los cambios se guardaron, pero no se pudo actualizar la lista de hoteles. Recarga la página para seguir editando.</span>
+          <Button type="button" size="sm" variant="outline" onClick={() => window.location.reload()}>Recargar página</Button>
+        </div>
+      )}
       <ul className="grid grid-cols-1 gap-3 md:grid-cols-2" aria-label="Hoteles del programa">
         {hoteles.map((h, i) => {
           const r = resumenVigencias(h);
@@ -126,10 +149,10 @@ export function HotelesVigenciaEditor({
                 <p className="text-xs text-gray-600">{r.noches}</p>
               </div>
               <div className="flex gap-2">
-                <Button type="button" variant="outline" size="sm" data-foco={`editar-${i}`} onClick={() => editar(i)} aria-label={`Editar ${h.nombre || `hotel ${i + 1}`}`}>
+                <Button type="button" variant="outline" size="sm" disabled={bloqueado} data-foco={`editar-${i}`} onClick={() => editar(i)} aria-label={`Editar ${h.nombre || `hotel ${i + 1}`}`}>
                   <Pencil size={14} aria-hidden="true" /> Editar
                 </Button>
-                <Button type="button" variant="outline" size="sm" data-foco={`clonar-${i}`} onClick={() => clonar(i)} aria-label={`Clonar ${h.nombre || `hotel ${i + 1}`}`}>
+                <Button type="button" variant="outline" size="sm" disabled={bloqueado} data-foco={`clonar-${i}`} onClick={() => clonar(i)} aria-label={`Clonar ${h.nombre || `hotel ${i + 1}`}`}>
                   <Copy size={14} aria-hidden="true" /> Clonar
                 </Button>
               </div>
@@ -139,7 +162,7 @@ export function HotelesVigenciaEditor({
       </ul>
       {!hoteles.length && <p className="text-sm text-gray-500">Este programa aún no tiene hoteles.</p>}
 
-      <Button type="button" variant="outline" data-foco="agregar-hotel" onClick={nuevo}>
+      <Button type="button" variant="outline" disabled={bloqueado} data-foco="agregar-hotel" onClick={nuevo}>
         <Plus size={14} aria-hidden="true" /> Agregar hotel
       </Button>
 

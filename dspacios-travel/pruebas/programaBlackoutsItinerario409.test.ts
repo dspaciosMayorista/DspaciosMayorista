@@ -199,7 +199,8 @@ test("si la RPC falla, el error se devuelve y los blackouts anteriores NO se toc
   const bd = usarBD(semilla({ programa_blackouts: [bo("2027-01-01", "2027-01-02", "viaje")] }), { ...RPCS, guardar_programa_blackouts: () => ({ __error: { message: "fallo de la base" } }) });
   const r = await guardarBlackouts(3, [{ fechaInicio: "2027-06-01", fechaFin: "2027-06-05", motivo: "", ciudad: "" }]);
   assert.equal(r.ok, false);
-  assert.match(r.ok ? "" : r.error, /fallo de la base/);
+  assert.match(r.ok ? "" : r.error, /No se pudo guardar el cambio/);
+  assert.doesNotMatch(r.ok ? "" : r.error, /fallo de la base/, "el texto crudo de la base no llega al formulario");
   assert.equal(bd.filas("programa_blackouts").length, 1);
   const src = readFileSync(new URL("../app/(dashboard)/dashboard/producto/programas/actions.ts", import.meta.url), "utf8");
   const ini = src.indexOf("export async function guardarBlackouts(");
@@ -281,7 +282,8 @@ test("guardarDias: si la RPC falla, el error se devuelve y la app no borra ni in
   const bd = usarBD(semilla(), { ...RPCS, guardar_programa_dias: () => ({ __error: { message: "fallo de la base" } }) });
   const r = await guardarDias(3, COMPLETO_UI);
   assert.equal(r.ok, false);
-  assert.match(r.ok ? "" : r.error, /fallo de la base/);
+  assert.match(r.ok ? "" : r.error, /No se pudo guardar el cambio/);
+  assert.doesNotMatch(r.ok ? "" : r.error, /fallo de la base/, "el texto crudo de la base no llega al formulario");
   assert.equal(bd.filas("programa_dias").length, 8, "el itinerario anterior sigue intacto");
   const src = readFileSync(new URL("../app/(dashboard)/dashboard/producto/programas/actions.ts", import.meta.url), "utf8");
   const ini = src.indexOf("export async function guardarDias(");

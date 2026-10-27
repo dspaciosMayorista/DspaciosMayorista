@@ -31,7 +31,7 @@ describe("guardarHoteles (Server Action)", () => {
   test("válido: manda a la RPC la forma exacta que espera la migración 244 (vacíos → null, números → número)", async () => {
     const { llamadas } = conRpc();
     const r = await guardarHoteles(3, [hotelOk()]);
-    assert.deepEqual(r, { ok: true });
+    assert.deepEqual(r, { ok: true, ids: null }, "el arnés no tiene filas guardadas: no se pueden confirmar los ids (el formulario recarga el catálogo; no es un error de guardado)");
     assert.equal(llamadas.length, 1);
     assert.equal(llamadas[0].p_programa_id, 3);
     assert.deepEqual(llamadas[0].p_hoteles, [{

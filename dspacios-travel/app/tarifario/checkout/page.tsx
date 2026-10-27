@@ -3,6 +3,7 @@
 import { BuscarTitular } from "@/components/personas/BuscarTitular";
 import { Suspense, lazy, useEffect, useMemo, useState, useSyncExternalStore, useTransition } from "react";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { formatMoneda } from "@/lib/utils";
 import { ACOM_ROOM_LABEL, type AcomRoom } from "@/lib/acomodaciones";
 import { useCart, type CartItem, type HotelCartItem, type HotelCartItemPersona, type HotelCartItemBernalo } from "@/lib/cart/CartContext";
@@ -38,7 +39,7 @@ function resumenHabBernalo(it: { habitaciones: { acom: string; adultos: number }
 }
 
 export default function CheckoutPage() {
-  const { items, totales, remove, clear, actualizarPrecioBernalo } = useCart();
+  const { items, totales, remove, clear, actualizarPrecioBernalo, modoComparativa, setModoComparativa } = useCart();
   const hotelItems = items.filter((i): i is HotelCartItemPersona => i.tipo === "hotel" && i.modeloTarifario !== "unidad");
   // Fase 3F-4A: el checkout YA envía los ítems Bernalo — el servidor los
   // re-liquida directo con `computarReservaBernalo` (checkout/actions.ts),
@@ -85,6 +86,15 @@ export default function CheckoutPage() {
     const token = q.get("comparativa"), op = q.get("op"), ac = q.get("ac");
     return { crear: q.get("modo") === "comparativa", continuar: token && op && ac ? { token, op, ac } : null };
   }, [search]);
+
+  // El modo «Cotización comparativa» del carrito y la URL no se contradicen en silencio: abrir la comparativa lo activa, y el modo activo no cae en la compra normal.
+  const router = useRouter();
+  const [, refrescarUrl] = useState(0);
+  useEffect(() => {
+    if (vista.continuar) return;
+    if (vista.crear && !modoComparativa) setModoComparativa(true);
+    else if (!vista.crear && modoComparativa) { router.replace("/tarifario/checkout?modo=comparativa"); refrescarUrl((n) => n + 1); }
+  }, [vista.crear, vista.continuar, modoComparativa, setModoComparativa, router]);
 
   // Contexto B2B (si el aliado está logueado): habilita modo + facturación.
   const [ctx, setCtx] = useState<ContextoB2B | null>(null);

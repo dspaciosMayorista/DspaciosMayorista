@@ -269,12 +269,12 @@ export function CartDrawer({ checkoutHabilitado = false, fotosPorHotel = {} }: {
                 <button
                   type="button"
                   disabled={!items.length || !checkoutHabilitado}
-                  onClick={() => { closeDrawer(); router.push("/tarifario/checkout"); }}
+                  onClick={() => { closeDrawer(); router.push(modoComparativa ? "/tarifario/checkout?modo=comparativa" : "/tarifario/checkout"); }}
                   className="flex-1 rounded-lg px-4 py-2.5 text-sm font-semibold text-white disabled:opacity-40"
                   style={{ backgroundColor: "var(--brand-primary)" }}
                   title={checkoutHabilitado ? "" : "El checkout se habilita en la próxima fase"}
                 >
-                  Finalizar compra
+                  {modoComparativa ? "Crear comparativa" : "Finalizar compra"}
                 </button>
               </div>
               {!checkoutHabilitado && items.length > 0 && (

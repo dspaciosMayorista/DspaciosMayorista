@@ -249,6 +249,9 @@ type CartCtx = {
 
 const Ctx = createContext<CartCtx | null>(null);
 const KEY = "dspacios_cart_v1";
+// El modo «Cotización comparativa» se recuerda junto al carrito: cambiar de página, volver al carrito o recargar no lo apaga en silencio.
+const KEY_MODO = "dspacios_cart_modo_v1";
+const leerModoGuardado = (): boolean => { try { return localStorage.getItem(KEY_MODO) === "comparativa"; } catch { return false; } };
 
 export function CartProvider({ children }: { children: ReactNode }) {
   const [items, setItems] = useState<CartItem[]>([]);
@@ -257,7 +260,16 @@ export function CartProvider({ children }: { children: ReactNode }) {
   const [modoComparativa, setModoComparativaEstado] = useState(false);
   const modoRef = useRef(false);
   const [avisoCarrito, setAvisoCarrito] = useState<string | null>(null);
-  const setModoComparativa = useCallback((v: boolean) => { modoRef.current = v; setModoComparativaEstado(v); if (!v) setAvisoCarrito(null); }, []);
+  const setModoComparativa = useCallback((v: boolean) => {
+    modoRef.current = v; setModoComparativaEstado(v); if (!v) setAvisoCarrito(null);
+    try { if (v) localStorage.setItem(KEY_MODO, "comparativa"); else localStorage.removeItem(KEY_MODO); } catch { /* sin almacenamiento: el modo vale solo en esta pantalla */ }
+  }, []);
+  useEffect(() => {
+    if (!leerModoGuardado()) return;
+    modoRef.current = true;
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- hidratar desde localStorage tras montar (evita el desajuste de SSR)
+    setModoComparativaEstado(true);
+  }, []);
   useEffect(() => {
     if (!avisoCarrito) return;
     const t = setTimeout(() => setAvisoCarrito(null), 7000);
