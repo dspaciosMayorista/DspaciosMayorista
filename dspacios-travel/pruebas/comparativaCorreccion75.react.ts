@@ -66,7 +66,7 @@ describe("documento hijo con vuelo manual: la fila del paquete suma el total mos
     assert.doesNotMatch(t, /El total exigible incluye|incluye el valor de los vuelos/);
     assert.doesNotMatch(t, /665\.227|1\.330\.455/);
     assert.doesNotMatch(t, /Vuelo · Avianca/, "el vuelo no sale como importe individual");
-    assert.equal(t.split("1.722.000").length - 1, 3, "total, saldo y fila: ni sumado dos veces ni repetido");
+    assert.equal(t.split("1.722.000").length - 1, 4, "total, saldo, fila de la tabla y tarjeta móvil (la misma fila, oculta según el ancho): ni sumado dos veces");
   });
   test("PVP: total = fila, tarifa por adulto = la mitad, sin nota", () => {
     const t = doc({ items, vuelos, netoTotalExigible: null, paqueteSnapshot: pvpSnap.snap });
@@ -240,7 +240,7 @@ describe("cotización normal con servicio manual: un solo ítem «Paquete Turís
         const h = htmlDoc({ items, vuelos, netoTotalExigible: neto, paqueteSnapshot: snapParcial });
         assert.match(fila(h), /2 1 — — \$/);
         assert.equal(valorFila(h), esperado);
-        assert.match(plano(h), /No se muestra la tarifa por pasajero: el vuelo cubre 3 de los 2 pasajeros|No se muestra la tarifa por pasajero/);
+        assert.match(plano(h), /Tu asesor te detalla la tarifa por pasajero/);
         assert.match(plano(h), neto === null ? /Total del contrato \$ 3\.082\.000/ : /Total del contrato \$ 2\.900\.000,35/);
       });
     }
@@ -261,8 +261,10 @@ describe("cotización normal con servicio manual: un solo ítem «Paquete Turís
     const manual = { ...svc, id: 9, descripcion: descripcionCotizacionManual(m.valor) };
     const h = htmlDoc({ items: [item(1, HOTEL, 2, 0, 800_000, 0), item(3, "Hotel Almirante — CARTAGENA · Niño 1 · Estándar / PAM", 0, 1, 0, 400_000), manual], vuelos: [], paqueteSnapshot: snapshot({ hotelPvp: 2_000_000, manuales: [m.valor] }).snap });
     // 2 adultos × 800.000 + 1 niño × 400.000 + servicio 400.000 entre 3 personas (133.333,34 / 133.333,33 / 133.333,33).
-    assert.deepEqual(importes(h), [93_333_334, 93_333_333, 53_333_333, 240_000_000]);
-    assert.equal(importes(h)[0] + importes(h)[1] + importes(h)[2], importes(h)[3]);
+    // Tarifa única por clase (933.333,33 y 533.333,33) y el centavo que no se reparte sale como ajuste explícito.
+    assert.deepEqual(importes(h), [93_333_333, 53_333_333, 240_000_000]);
+    assert.match(plano(h), /Ajuste de redondeo: \+\$ 0,01 \(ya incluido en el valor total\)/);
+    assert.equal(2 * importes(h)[0] + importes(h)[1] + 1, importes(h)[2]);
   });
 
   test("la edición cambia solo el texto: mismos valores; una edición inválida se ignora", () => {

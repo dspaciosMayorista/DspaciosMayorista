@@ -16,16 +16,8 @@ export type ParteTarifa = { tarifa: number; cantidad: number };
 export type AdicionalPaquete = { nombre: string; centavos: number; pax: number | null };
 
 export type TarifaPaquete =
-  | { ok: true; adultos: number; ninos: number; tarifaAdulto: ParteTarifa[]; tarifaNino: ParteTarifa[]; totalCentavos: number; conAdicionales: boolean; neto: boolean }
+  | { ok: true; adultos: number; ninos: number; tarifaAdulto: number; tarifaNino: number; ajusteCentavos: number; totalCentavos: number; conAdicionales: boolean; neto: boolean }
   | { ok: false; adultos: number; ninos: number; totalCentavos: number; motivo: string; neto: boolean };
-
-/** `total` centavos entre `k` personas: los primeros `resto` reciben un centavo más. */
-function repartirIgual(total: number, k: number): number[] {
-  if (k < 1) return [];
-  const base = Math.floor(total / k);
-  const resto = total - base * k;
-  return Array.from({ length: k }, (_, i) => base + (i < resto ? 1 : 0));
-}
 
 /** Pro rata por mayor fracción (desempate por posición): los repartos suman EXACTAMENTE `total`. */
 export function repartirProporcional(total: number, pesos: readonly number[]): number[] {
@@ -37,12 +29,6 @@ export function repartirProporcional(total: number, pesos: readonly number[]): n
   const orden = exacto.map((e, i) => ({ i, f: e - Math.floor(e) })).filter((x) => pesos[x.i] > 0).sort((a, b) => b.f - a.f || a.i - b.i);
   for (let j = 0; faltan > 0 && orden.length; j++, faltan--) piso[orden[j % orden.length].i]++;
   return piso;
-}
-
-function agrupar(centavos: readonly number[]): ParteTarifa[] {
-  const cuenta = new Map<number, number>();
-  for (const c of centavos) cuenta.set(c, (cuenta.get(c) ?? 0) + 1);
-  return [...cuenta.entries()].sort((a, b) => b[0] - a[0]).map(([c, cantidad]) => ({ tarifa: c / 100, cantidad }));
 }
 
 export function tarifaPaquete(e: {
@@ -64,19 +50,17 @@ export function tarifaPaquete(e: {
   const parcial = e.adicionales.find((a) => a.pax !== n);
   if (parcial) {
     return falla(parcial.pax == null
-      ? `no se puede acreditar a cuántos pasajeros cubre ${parcial.nombre} (la cotización no guardó ese dato)`
-      : `${parcial.nombre} cubre ${parcial.pax} de los ${n} pasajeros y no se sabe cuáles (falta ese dato)`);
+      ? `no se pudo verificar cuántos pasajeros cubre ${parcial.nombre}`
+      : `${parcial.nombre} cubre ${parcial.pax} de los ${n} pasajeros`);
   }
-  // Parte entera por persona (base de su grupo + su parte del adicional) y UN solo residuo, repartido de a un centavo desde la primera persona (adultos primero):
-  // así dos personas del mismo grupo nunca difieren en más de un centavo, ni siquiera cuando los residuos de la base y del adicional caen en la misma persona.
+  // UNA tarifa por clase (todos los adultos pagan lo mismo; todos los niños, lo mismo): la parte entera en centavos de su base + su parte del adicional.
+  // Lo que no se reparte en centavos exactos (menos de un centavo por persona) NO se esconde: sale como «ajuste de redondeo» explícito, de modo que
+  // adultos × tarifa + niños × tarifa + ajuste = total, siempre al centavo.
   const pisoAdic = Math.floor(sumaAdic / n);
-  const pisoA = adultos > 0 ? Math.floor(e.baseAdultoCentavos / adultos) : 0;
-  const pisoN = ninos > 0 ? Math.floor(e.baseNinoCentavos / ninos) : 0;
-  const residuo = (e.baseAdultoCentavos - pisoA * adultos) + (e.baseNinoCentavos - pisoN * ninos) + (sumaAdic - pisoAdic * n);
-  const extra = repartirIgual(residuo, n);
-  const a = Array.from({ length: adultos }, (_, i) => pisoA + pisoAdic + extra[i]);
-  const k = Array.from({ length: ninos }, (_, i) => pisoN + pisoAdic + extra[adultos + i]);
-  return { ok: true, adultos, ninos, tarifaAdulto: agrupar(a), tarifaNino: agrupar(k), totalCentavos, conAdicionales: e.adicionales.length > 0, neto };
+  const pisoA = adultos > 0 ? Math.floor(e.baseAdultoCentavos / adultos) + pisoAdic : 0;
+  const pisoN = ninos > 0 ? Math.floor(e.baseNinoCentavos / ninos) + pisoAdic : 0;
+  const ajusteCentavos = totalCentavos - adultos * pisoA - ninos * pisoN;
+  return { ok: true, adultos, ninos, tarifaAdulto: pisoA / 100, tarifaNino: pisoN / 100, ajusteCentavos, totalCentavos, conAdicionales: e.adicionales.length > 0, neto };
 }
 
 // ── Opción de una comparativa de carrito ──

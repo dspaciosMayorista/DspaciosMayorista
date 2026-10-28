@@ -19,6 +19,7 @@ import { PaginaImprimibleComparativa } from "@/lib/cotizacion/comparativaDocumen
 import { hoyBogota } from "@/lib/cotizacion/vigencia";
 import { netoTotalExigibleDeDetalle } from "@/lib/cotizacion/asistidaB2B";
 import type { SnapshotPaquete } from "@/lib/cotizacion/tarifaPaquete";
+import { snapshotDelDocumento } from "@/lib/cotizacion/paqueteSnapshotDocumento";
 import { cargarAgenciaDeCotizacion } from "@/lib/cotizacion/agenciaCotizacion";
 
 export async function generateMetadata({
@@ -197,7 +198,7 @@ export default async function CotizacionImprimiblePage({
             incluye={d.incluye ?? null}
             noIncluye={d.noIncluye ?? null}
             tituloPaquete={d.tituloPaquete ?? null}
-            paqueteSnapshot={d.paqueteSnapshot ?? null}
+            paqueteSnapshot={snapshotDelDocumento(d, cot.payload)}
           />
         </div>
       </div>

@@ -5,7 +5,7 @@ import { COLOR_DOCUMENTO } from "@/lib/contrato/colorDocumento";
 import { formatFechaLarga } from "@/lib/utils";
 import { formatoExacto } from "@/lib/contrato/repartoTarifa";
 import type { MenorOpcion, OtroServicioOpcion, TarifaVisible, TiqueteVuelo } from "@/lib/cotizacion/comparativa";
-import type { ParteTarifa, TarifaPaquete } from "@/lib/cotizacion/tarifaPaquete";
+import type { TarifaPaquete } from "@/lib/cotizacion/tarifaPaquete";
 
 const PRIMARY = COLOR_DOCUMENTO;
 
@@ -142,28 +142,33 @@ export function MenoresOpcion({ menores, noDesglosables, moneda, pvp }: { menore
   );
 }
 
-const lineaPartes = (partes: ParteTarifa[], moneda: string) => partes.map((p) => `${p.cantidad} × ${formatoExacto(p.tarifa, moneda)}`).join(" + ");
-
 /**
- * Tarifa del PAQUETE por pasajero de UNA opción (alojamiento + vuelos + servicios que cubren a todos, ya repartidos): las tarifas multiplicadas suman EXACTAMENTE el total
- * de la opción. Si no se puede repartir con seguridad, no se inventa nada: se explica qué dato falta y el total de la opción sigue siendo el de abajo.
+ * Tarifa del PAQUETE por pasajero de UNA opción (alojamiento + vuelos + servicios que cubren a todos, ya repartidos): una fila por clase («Adultos (2)» · tarifa por adulto,
+ * «Niños (1)» · tarifa por niño) y, si hace falta, un «ajuste de redondeo» explícito: cantidades × tarifa + ajuste = total de la opción, al centavo. Si no se puede
+ * repartir con seguridad no se inventa nada: se dice en una frase comercial y el total de la opción es el del paquete completo.
  */
 export function TarifaPaqueteOpcion({ paquete, moneda, sufijo = "" }: { paquete: TarifaPaquete; moneda: string; sufijo?: string }) {
   if (!paquete.ok) {
-    return <p data-testid="tarifa-paquete-no-disponible" className="rounded-lg bg-gray-50 px-2 py-1.5 text-left text-[11px] leading-snug text-gray-500">No se muestra la tarifa por pasajero: {paquete.motivo}. El total de la opción es el valor del paquete completo.</p>;
+    return <p data-testid="tarifa-paquete-no-disponible" className="rounded-lg bg-gray-50 px-2 py-1.5 text-left text-[11px] leading-snug text-gray-500">El total de la opción es el valor del paquete completo. Consulta con tu asesor la tarifa por pasajero.</p>;
   }
   const etiqueta = paquete.conAdicionales ? "Tarifa del paquete" : "Tarifa del alojamiento";
-  const fila = (rotulo: string, partes: ParteTarifa[], cantidad: number) => cantidad > 0 && (
-    <div className="flex items-baseline justify-between gap-3 text-xs text-gray-500">
-      <span className="min-w-0 text-left">{rotulo} ({cantidad})</span>
-      <span className="shrink-0 whitespace-nowrap text-right font-medium tabular-nums text-gray-700" data-testid="tarifa-paquete-valor">{lineaPartes(partes, moneda)}</span>
+  const fila = (rotulo: string, unidad: string, tarifa: number, cantidad: number) => cantidad > 0 && (
+    <div className="grid grid-cols-[minmax(0,1fr)_auto] items-baseline gap-x-3 text-xs text-gray-500" data-testid="tarifa-paquete-fila">
+      <span className="text-left">{rotulo} ({cantidad})</span>
+      <span className="text-right tabular-nums"><span className="block whitespace-nowrap font-medium text-gray-700" data-testid="tarifa-paquete-valor">{formatoExacto(tarifa, moneda)}</span><span className="block text-[10px] leading-tight text-gray-400">{unidad}</span></span>
     </div>
   );
   return (
-    <div data-testid="tarifa-paquete" className="space-y-0.5">
-      <p className="text-left text-[11px] text-gray-400">{etiqueta} por pasajero{paquete.conAdicionales ? " (incluye vuelos y servicios)" : ""}{paquete.neto ? " · NETO" : ""}{sufijo}</p>
-      {fila("Adultos", paquete.tarifaAdulto, paquete.adultos)}
-      {fila("Niños", paquete.tarifaNino, paquete.ninos)}
+    <div data-testid="tarifa-paquete" className="space-y-1">
+      <p className="text-left text-[11px] leading-snug text-gray-400">{etiqueta} por pasajero{paquete.conAdicionales ? " (incluye vuelos y servicios)" : ""}{paquete.neto ? " · NETO" : ""}{sufijo}</p>
+      {fila("Adultos", "por adulto", paquete.tarifaAdulto, paquete.adultos)}
+      {fila("Niños", "por niño", paquete.tarifaNino, paquete.ninos)}
+      {paquete.ajusteCentavos > 0 && (
+        <div className="grid grid-cols-[minmax(0,1fr)_auto] items-baseline gap-x-3 text-xs text-gray-500" data-testid="tarifa-paquete-ajuste">
+          <span className="text-left">Ajuste de redondeo</span>
+          <span className="whitespace-nowrap text-right font-medium tabular-nums text-gray-700">+{formatoExacto(paquete.ajusteCentavos / 100, moneda)}</span>
+        </div>
+      )}
     </div>
   );
 }

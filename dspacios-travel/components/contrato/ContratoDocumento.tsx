@@ -12,7 +12,7 @@ import {
 } from "@/lib/contrato/plantilla";
 import { formatMoneda, formatFechaLarga, calcularEdad } from "@/lib/utils";
 import { etiquetaIata, parseRuta } from "@/lib/iata";
-import { esLineaGrupoIncluido, NOMBRE_GRUPO_INCLUIDO, repartirProporcional, tarifaPaquete, vincularAdicionales, type ParteTarifa, type SnapshotPaquete } from "@/lib/cotizacion/tarifaPaquete";
+import { esLineaGrupoIncluido, NOMBRE_GRUPO_INCLUIDO, repartirProporcional, tarifaPaquete, vincularAdicionales, type SnapshotPaquete } from "@/lib/cotizacion/tarifaPaquete";
 import { valorVisibleContratoItem, totalVisibleContratoItems } from "@/lib/contrato/valorContratoItem";
 import { presentacionValoresContrato } from "@/lib/contrato/presentacionValores";
 import { valoresNetosDocumento, tarifaIndividualSegura } from "@/lib/contrato/valoresNetosDocumento";
@@ -162,12 +162,6 @@ function TarifaNetaCelda({ total, cantidad, moneda }: { total: number; cantidad:
       {r.partes.map((p, i) => <span key={i} className="block whitespace-nowrap">{p.cantidad} × {formatoNetoDocumento(p.tarifa, moneda)}</span>)}
     </span>
   );
-}
-
-/** Tarifa del paquete por persona: una sola tarifa, o el reparto honesto en centavos («2 × $932.666,67 + 1 × $932.666,66»); sus productos suman EXACTAMENTE el total. */
-function CeldaPartes({ partes, moneda }: { partes: ParteTarifa[]; moneda: string }) {
-  if (partes.length === 1) return <>{formatoNetoDocumento(partes[0].tarifa, moneda)}</>;
-  return <span className="block" data-testid="reparto-paquete">{partes.map((p, i) => <span key={i} className="block whitespace-nowrap">{p.cantidad} × {formatoNetoDocumento(p.tarifa, moneda)}</span>)}</span>;
 }
 
 function resumenMenoresHabitacion(edadesMenores: number[]) {
@@ -742,8 +736,20 @@ export function ContratoDocumento({
           )}
 
           {filaPaquete && (
-            <div className="overflow-x-auto">
-              <table className="w-full min-w-[520px] border-collapse text-xs">
+            <div>
+              {/* Teléfono: una tarjeta con etiqueta y cifra en su propia fila (seis columnas no caben en 390 px). Desde sm y al imprimir: la tabla de siempre. */}
+              <dl className="space-y-1 rounded-lg border border-gray-200 p-3 text-xs sm:hidden print:hidden" data-testid="paquete-movil">
+                <dt className="font-semibold text-gray-800">{tituloPaqueteDoc}</dt>
+                {filaPaquete.adultos > 0 && (
+                  <div className="flex items-baseline justify-between gap-3"><dd className="text-gray-600">Adultos ({filaPaquete.adultos}){filaPaquete.tarifa.ok ? " · tarifa por adulto" : ""}</dd>{filaPaquete.tarifa.ok && <dd className="shrink-0 whitespace-nowrap tabular-nums">{formatoNetoDocumento(filaPaquete.tarifa.tarifaAdulto, moneda)}</dd>}</div>
+                )}
+                {filaPaquete.ninos > 0 && (
+                  <div className="flex items-baseline justify-between gap-3"><dd className="text-gray-600">Niños ({filaPaquete.ninos}){filaPaquete.tarifa.ok ? " · tarifa por niño" : ""}</dd>{filaPaquete.tarifa.ok && <dd className="shrink-0 whitespace-nowrap tabular-nums">{formatoNetoDocumento(filaPaquete.tarifa.tarifaNino, moneda)}</dd>}</div>
+                )}
+                <div className="flex items-baseline justify-between gap-3 border-t border-gray-100 pt-1 font-medium"><dd>Total del paquete{esNeto ? " NETO" : ""}</dd><dd className="shrink-0 whitespace-nowrap tabular-nums">{formatoNetoDocumento(filaPaquete.tarifa.totalCentavos / 100, moneda)}</dd></div>
+              </dl>
+              <div className="hidden overflow-x-auto sm:block print:block">
+              <table className="w-full border-collapse text-xs">
                 <thead className="break-inside-avoid break-after-avoid">
                   <tr className="bg-gray-50 text-left text-gray-500">
                     <th className="border border-gray-200 px-2 py-1">Ítem</th>
@@ -760,20 +766,26 @@ export function ContratoDocumento({
                     <td className="border border-gray-200 px-2 py-1">{filaPaquete.adultos}</td>
                     <td className="border border-gray-200 px-2 py-1">{filaPaquete.ninos}</td>
                     <td className="border border-gray-200 px-2 py-1">
-                      {filaPaquete.tarifa.ok ? (filaPaquete.adultos > 0 ? <CeldaPartes partes={filaPaquete.tarifa.tarifaAdulto} moneda={moneda} /> : formatoNetoDocumento(0, moneda)) : "—"}
+                      {filaPaquete.tarifa.ok ? (filaPaquete.adultos > 0 ? formatoNetoDocumento(filaPaquete.tarifa.tarifaAdulto, moneda) : formatoNetoDocumento(0, moneda)) : "—"}
                     </td>
                     <td className="border border-gray-200 px-2 py-1">
-                      {filaPaquete.tarifa.ok ? (filaPaquete.ninos > 0 ? <CeldaPartes partes={filaPaquete.tarifa.tarifaNino} moneda={moneda} /> : formatoNetoDocumento(0, moneda)) : "—"}
+                      {filaPaquete.tarifa.ok ? (filaPaquete.ninos > 0 ? formatoNetoDocumento(filaPaquete.tarifa.tarifaNino, moneda) : formatoNetoDocumento(0, moneda)) : "—"}
                     </td>
                     <td className="border border-gray-200 px-2 py-1 font-medium" data-testid="valor-total-paquete">{formatoNetoDocumento(filaPaquete.tarifa.totalCentavos / 100, moneda)}</td>
                   </tr>
                 </tbody>
               </table>
+              </div>
+              {filaPaquete.tarifa.ok && filaPaquete.tarifa.ajusteCentavos > 0 && (
+                <p className="mt-1 text-[11px] text-gray-600" data-testid="ajuste-redondeo">
+                  Ajuste de redondeo: +{formatoNetoDocumento(filaPaquete.tarifa.ajusteCentavos / 100, moneda)} (ya incluido en el valor total).
+                </p>
+              )}
               {filaPaquete.adicionales.length > 0 && (
                 <p className="mt-1 text-[11px] text-gray-500" data-testid="nota-paquete">
                   {filaPaquete.tarifa.ok
                     ? "Las tarifas por pasajero incluyen el alojamiento, los vuelos y los servicios adicionales del paquete."
-                    : `No se muestra la tarifa por pasajero: ${filaPaquete.tarifa.motivo}. El valor total incluye alojamiento, vuelos y servicios adicionales.`}
+                    : "Valor total del paquete: incluye alojamiento, vuelos y servicios adicionales. Tu asesor te detalla la tarifa por pasajero."}
                 </p>
               )}
             </div>
@@ -875,7 +887,7 @@ export function ContratoDocumento({
           {servicioItems.length > 0 && (
             <div className="mt-3 overflow-x-auto">
               <p className="mb-1 break-after-avoid text-xs font-semibold text-gray-500">Servicios adicionales</p>
-              <table className="w-full min-w-[360px] border-collapse text-xs">
+              <table className="w-full min-w-[300px] border-collapse text-xs">
                 <thead className="break-inside-avoid break-after-avoid">
                   <tr className="bg-gray-50 text-left text-gray-500">
                     <th className="border border-gray-200 px-2 py-1">Servicio</th>

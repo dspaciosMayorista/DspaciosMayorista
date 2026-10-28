@@ -61,7 +61,7 @@ export function ComparativaHoja({ madre, grupos, resumenes, vencida, identidad }
             {r.plan && <p className="text-xs text-gray-500">{r.plan}</p>}
           </div>
         </header>
-        <div className="grid grid-cols-1 gap-4 p-4 print:p-3 break-inside-avoid sm:grid-cols-[1fr_15rem]">
+        <div className="grid grid-cols-1 gap-4 p-4 print:p-3 break-inside-avoid sm:grid-cols-[1fr_16rem]">
           {/* Orden: vuelos (por tiquete), el alojamiento y debajo los servicios adicionales. */}
           <div className="min-w-0 space-y-3 text-xs text-gray-600">
             <VuelosOpcion tiquetes={r.tiquetes ?? tiquetesDeOpcion(null, r.vuelos, null)} />

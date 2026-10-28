@@ -15,6 +15,7 @@ import { tituloDocumento } from "@/lib/utils/tituloDocumento";
 import { paginaPublicaComparativa } from "@/lib/cotizacion/comparativaDocumento";
 import { netoTotalExigibleDeDetalle } from "@/lib/cotizacion/asistidaB2B";
 import type { SnapshotPaquete } from "@/lib/cotizacion/tarifaPaquete";
+import { snapshotDelDocumentoPublico } from "@/lib/cotizacion/paqueteSnapshotDocumento";
 import { cargarAgenciaDeCotizacion } from "@/lib/cotizacion/agenciaCotizacion";
 import { abiertaConSalidaPasada, hoyBogota, MENSAJE_SALIDA_PASADA } from "@/lib/cotizacion/vigencia";
 
@@ -78,8 +79,10 @@ export default async function CotizacionPublicaPage({ params }: { params: Promis
   if (!cot || !cot.detalle) notFound();
   const d = cot.detalle as unknown as Detalle;
   // #102: venta B2B asistida en NETO ⇒ el enlace público muestra solo el total exigible (nunca el PVP original ni la comisión). Sale de
-  // `detalle.b2bExterno`, el único dato externo-seguro del plan; esta página no lee `payload` (datos personales y términos internos).
+  // `detalle.b2bExterno`, el único dato externo-seguro del plan; el `payload` (datos personales y términos internos) solo se relee en el servidor, abajo, para derivar el resumen de reparto; nunca llega al documento.
   const netoTotalExigible = netoTotalExigibleDeDetalle(d.b2bExterno);
+  // Reparto por pasajero: el del detalle o, en cotizaciones anteriores, el derivado en el servidor del payload congelado (a la página solo llega el resumen).
+  const paqueteSnapshot = await snapshotDelDocumentoPublico(sb, token, d);
   // RNT, NIT y cuenta de pago de la agencia dueña de la cotización (el tenant sale de la fila hallada por el token, no de la URL).
   const agenciaRes = await cargarAgenciaDeCotizacion(sb, cot.tenant);
   // Falla explícita (no se imprime el RNT de otra agencia): error técnico, fila ausente o sin RNT en Minorista.
@@ -117,7 +120,7 @@ export default async function CotizacionPublicaPage({ params }: { params: Promis
             incluye={d.incluye ?? null}
             noIncluye={d.noIncluye ?? null}
             tituloPaquete={d.tituloPaquete ?? null}
-            paqueteSnapshot={d.paqueteSnapshot ?? null}
+            paqueteSnapshot={paqueteSnapshot}
           />
         </div>
       </div>
