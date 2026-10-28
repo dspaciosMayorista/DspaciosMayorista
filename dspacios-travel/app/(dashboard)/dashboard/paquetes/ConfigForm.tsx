@@ -8,6 +8,7 @@ import { Input } from "@/components/ui/input";
 import { crearPaquete, actualizarPaquete, listarDestinosAereosCandidatos, type PaqueteConfig } from "./actions";
 import { ComboDestino } from "@/components/ComboDestino";
 import { trmValida90 } from "@/lib/reservar/monedaPublicacion90";
+import { pvpInfanteFijoValido } from "@/lib/paquetes/pvpInfanteFijo";
 
 type Opt = { id: number; nombre: string; codigo_iata?: string | null };
 
@@ -23,6 +24,8 @@ type Initial = Partial<{
   fechaViajeInicio: string;
   fechaViajeFin: string;
   pctMk: number;          // porcentaje (20 = 20 %)
+  // PVP fijo de la clase infante del hotel, en la moneda de publicación; null = sin configurar ($0 es válido).
+  pvpInfanteFijo: number | null;
   impuestoTipo: "tiquete" | "fijo";
   impuestoFijo: number;
   notas: string;
@@ -67,6 +70,7 @@ export function ConfigForm({
   const [viajeIni, setViajeIni] = useState(initial?.fechaViajeInicio ?? "");
   const [viajeFin, setViajeFin] = useState(initial?.fechaViajeFin ?? "");
   const [pctMk, setPctMk] = useState(initial?.pctMk != null ? String(initial.pctMk) : "");
+  const [pvpInfanteFijo, setPvpInfanteFijo] = useState(initial?.pvpInfanteFijo != null ? String(initial.pvpInfanteFijo) : "");
   const [impTipo, setImpTipo] = useState<"tiquete" | "fijo">(initial?.impuestoTipo ?? "tiquete");
   const [impFijo, setImpFijo] = useState(initial?.impuestoFijo != null ? String(initial.impuestoFijo) : "");
   const [notas, setNotas] = useState(initial?.notas ?? "");
@@ -145,6 +149,10 @@ export function ConfigForm({
       setErr("La TRM debe ser un número positivo (pesos por dólar). Déjala vacía solo si ningún componente hay que convertirlo (todo en la moneda de publicación).");
       return;
     }
+    if (pvpInfanteFijo.trim() !== "" && pvpInfanteFijoValido(pvpInfanteFijo.trim()) == null) {
+      setErr("El PVP fijo del infante debe ser un número mayor o igual a 0 (déjalo vacío para usar el cálculo normal).");
+      return;
+    }
     setErr("");
     const cfg: PaqueteConfig = {
       nombre,
@@ -156,6 +164,7 @@ export function ConfigForm({
       fechaViajeInicio: viajeIni,
       fechaViajeFin: viajeFin,
       pctMk: Number(pctMk) || 0,
+      pvpInfanteFijo: pvpInfanteFijo.trim() === "" ? null : Number(pvpInfanteFijo),
       impuestoTipo: impTipo,
       impuestoFijo: Number(impFijo) || 0,
       activo,
@@ -332,6 +341,12 @@ export function ConfigForm({
           <label className={lbl}>% MK (margen)</label>
           <Input type="number" min={0} max={99} value={pctMk} onChange={(e) => setPctMk(e.target.value)} placeholder="20" />
           <p className="mt-1 text-[11px] text-gray-400">PVP = costo / (1 − %mk). Aplica a hotel y servicios.</p>
+        </div>
+
+        <div>
+          <label className={lbl}>PVP fijo del infante (opcional)</label>
+          <Input type="number" min={0} value={pvpInfanteFijo} onChange={(e) => setPvpInfanteFijo(e.target.value)} placeholder="Vacío = cálculo normal" />
+          <p className="mt-1 text-[11px] text-gray-400">En la moneda de publicación. Reemplaza el precio del infante (según el hotel) solo si no tiene cargo de vuelo ni de servicios; la asistencia no cuenta. $0 es válido. Al cambiarlo hay que regenerar el tarifario.</p>
         </div>
 
         <div>

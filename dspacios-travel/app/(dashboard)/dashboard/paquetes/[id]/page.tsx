@@ -213,6 +213,7 @@ export default async function PaqueteDetallePage({
           fechaViajeInicio: pq.fecha_viaje_inicio ?? "",
           fechaViajeFin: pq.fecha_viaje_fin ?? "",
           pctMk: Math.round((pq.pct_mk ?? 0) * 100),
+          pvpInfanteFijo: pq.pvp_infante_fijo == null ? null : Number(pq.pvp_infante_fijo),
           impuestoTipo: pq.impuesto_tipo,
           impuestoFijo: pq.impuesto_fijo,
           notas: pq.notas ?? "",

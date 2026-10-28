@@ -157,7 +157,8 @@ const clienteCot = { nombres: "Ana", apellidos: "Pérez", numeroDoc: "123", tele
 const item = (hotelId: number, paqueteId: number, destino = "CARTAGENA") => ({
   modulo: "porcion_terrestre", paqueteId, hotelId, bloqueoId: null, hotelNombre: HOTELES[hotelId].nombre, destino,
   categoria: "Estandar", regimen: "Desayuno", fechaIda: "2030-03-01", fechaRegreso: "2030-03-04", noches: 3,
-  habitaciones: { doble: 1 }, ninos: 0, ninos2: 0, infantes: 0, pax: 2, precio: 1, edadesMenores: [], cantidadMenores: 0,
+  // `precio` = el precio congelado de la cotización: el que cotiza el motor simulado de este hotel (la conversión exige que coincida).
+  habitaciones: { doble: 1 }, ninos: 0, ninos2: 0, infantes: 0, pax: 2, precio: HOTELES[hotelId].pvp * 2 + HOTELES[hotelId].cargoGrupo, edadesMenores: [], cantidadMenores: 0,
 });
 const pasajeros = [
   { nombres: "Ana", apellidos: "Pérez", tipoDoc: "CC", numeroDoc: "123", fechaNacimiento: "1990-01-01", nacionalidad: "Colombiana", esInfante: false },

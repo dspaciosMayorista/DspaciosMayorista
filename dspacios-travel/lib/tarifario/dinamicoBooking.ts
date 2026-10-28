@@ -16,6 +16,8 @@
 // Módulo PURO (sin I/O): lo usan VistaBooking/DinamicoModal y las pruebas.
 // ─────────────────────────────────────────────────────────────────────────
 
+import { claveOrigen } from "../iata.ts";
+
 export type FilaDinamicaBase = {
   modulo?: string | null;
   paquete_id?: number | null;
@@ -59,6 +61,9 @@ export function origenSalidaDinamica(s: { origen?: string | null; ruta?: string 
 
 const origenDeFila = (f: FilaDinamicaBase, origenPorSalida: Readonly<Record<number, string>> = {}): string | null =>
   f.salida_id != null ? (origenPorSalida[f.salida_id] ?? null) : null;
+/** Clave canónica del origen de la fila (ver `claveOrigen`): lo que se compara con el origen elegido. */
+const claveDeFila = (f: FilaDinamicaBase, origenPorSalida: Readonly<Record<number, string>> = {}): string | null =>
+  claveOrigen(origenDeFila(f, origenPorSalida)) || null;
 
 /**
  * ¿Una fila `dinamico` entra en la pestaña "Paquetes"? Para todos (la acción de cotizar es la que depende del acceso). Con un origen
@@ -68,7 +73,7 @@ const origenDeFila = (f: FilaDinamicaBase, origenPorSalida: Readonly<Record<numb
 export function filaDinamicaVisibleEnPaquetes(f: FilaDinamicaBase, filtros: FiltrosPaquetesBooking): boolean {
   if (!esFilaDinamica(f)) return false;
   if (filtros.salidaSel && (filtros.salidaSel.tipo !== "dinamico" || f.salida_id !== filtros.salidaSel.id)) return false;
-  if (filtros.origenSel && origenDeFila(f, filtros.origenPorSalida) !== filtros.origenSel) return false;
+  if (filtros.origenSel && claveDeFila(f, filtros.origenPorSalida) !== filtros.origenSel) return false;
   if (filtros.destinoSel && (f.destino_nombre ?? "") !== filtros.destinoSel) return false;
   return true;
 }
@@ -76,13 +81,13 @@ export function filaDinamicaVisibleEnPaquetes(f: FilaDinamicaBase, filtros: Filt
 /** Destinos (del paquete) que aportan los Dinámicos al selector de destino de "Paquetes"; con un origen elegido, solo los de salidas desde ahí. */
 export function destinosDinamicos(filas: readonly FilaDinamicaBase[], origenSel = "", origenPorSalida: Readonly<Record<number, string>> = {}): string[] {
   return [...new Set(filas
-    .filter((f) => esFilaDinamica(f) && f.destino_nombre && (!origenSel || origenDeFila(f, origenPorSalida) === origenSel))
+    .filter((f) => esFilaDinamica(f) && f.destino_nombre && (!origenSel || claveDeFila(f, origenPorSalida) === origenSel))
     .map((f) => f.destino_nombre as string))];
 }
 
 /** Orígenes reales de las salidas dinámicas, para el selector de origen de "Paquetes" (las salidas sin origen conocido no aportan). */
 export function origenesDinamicos(filas: readonly FilaDinamicaBase[], origenPorSalida: Readonly<Record<number, string>>): string[] {
-  return [...new Set(filas.filter(esFilaDinamica).map((f) => origenDeFila(f, origenPorSalida)).filter((o): o is string => !!o))];
+  return [...new Set(filas.filter(esFilaDinamica).map((f) => claveDeFila(f, origenPorSalida)).filter((o): o is string => !!o))];
 }
 
 /**
@@ -119,7 +124,7 @@ export function salidasDinamicasSelector(
   for (const f of filas) {
     if (!esFilaDinamica(f) || f.salida_id == null || porId.has(f.salida_id)) continue;
     const origen = origenDeFila(f, filtros.origenPorSalida);
-    if (filtros.origenSel && origen !== filtros.origenSel) continue;
+    if (filtros.origenSel && claveOrigen(origen) !== filtros.origenSel) continue;
     if (filtros.destinoSel && (f.destino_nombre ?? "") !== filtros.destinoSel) continue;
     porId.set(f.salida_id, {
       id: f.salida_id, origen, destino: f.destino_nombre ?? "", fechaIda: f.fecha_ida ?? null, fechaRegreso: f.fecha_regreso ?? null, noches: f.noches ?? null,

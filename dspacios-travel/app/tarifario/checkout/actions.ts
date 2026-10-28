@@ -22,6 +22,7 @@ import {
 } from "@/lib/reservar/solicitudAlojamientoBernalo";
 import type { HabitacionOcupacionEntrada, HabitacionOcupacionValidada } from "@/lib/reservar/ocupacionPorHabitacion";
 import { liquidarServicioPuntual } from "@/lib/reservar/cotizar";
+import { opcionalDeTourCarrito } from "@/lib/paquetes/pvpInfanteFijo";
 import {
   errorHotelConServicios, errorServicioVinculado, validarServicioContraHotel, type HotelResueltoCheckout,
 } from "@/lib/reservar/vinculoServiciosCheckout";
@@ -622,6 +623,16 @@ async function crearCotizacionCarrito(input: {
   // que se valida cada servicio, nunca contra lo que declaró el carrito.
   const hotelesConServicios = new Set(input.hotelDeTour.filter((h): h is number => h != null));
   const hotelesResueltos = new Map<number, HotelResueltoCheckout>();
+  // PVP fijo del infante (254): los servicios vinculados a un hotel se cotizan ANTES de liquidarlo para que su total (o su $0) entre a la decisión
+  // de cada infante; el bucle de tours de más abajo reutiliza este resultado (una sola cotización por tour).
+  const resultadosTourVinculado = new Map<number, Awaited<ReturnType<typeof liquidarServicioPuntual>>>();
+  await Promise.all(input.tours.map(async (tv, k) => {
+    if (input.hotelDeTour[k] != null) resultadosTourVinculado.set(k, await liquidarServicioPuntual(tv));
+  }));
+  const opcionalesDeHotel = (pos: number) => input.tours.flatMap((_, k) => {
+    const r = resultadosTourVinculado.get(k);
+    return input.hotelDeTour[k] === pos && r?.ok ? [opcionalDeTourCarrito({ categoria: r.resultado.categoria, precio: r.resultado.total })] : [];
+  });
 
   for (let posOriginal = 0; posOriginal < input.items.length; posOriginal++) {
     const it = input.items[posOriginal];
@@ -803,6 +814,7 @@ async function crearCotizacionCarrito(input: {
       },
       tipoAsesor: "interno", asesorInterno: "", agenciaNombre: "", agenciaAsesor: "", freelanceNombre: "",
       aliadoId: null, plazo: "", pasajeros: [], servicios: [],
+      opcionalesInfante: opcionalesDeHotel(posOriginal),
     };
     const comp = await computarReserva(sb, reserva);
     if (!comp.ok) return { ok: false, error: `No se pudo cotizar ${it.hotelNombre}: ${comp.error}` };

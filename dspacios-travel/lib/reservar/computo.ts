@@ -47,6 +47,7 @@ import {
   type CategoriaServicio, type ServicioEfectivo, type ServicioGrupoIncluido,
 } from "@/lib/reservar/serviciosPaquete";
 import { validarModoServicio } from "@/lib/reservar/liquidacionServicio";
+import { precioInfanteConServiciosOpcionales, type ServicioOpcionalSeleccionado } from "@/lib/paquetes/pvpInfanteFijo";
 import { contarMenoresDeDos, tarifarMenores, totalMenoresDeDos, type ConteoMenores, type LineaMenor } from "@/lib/reservar/menoresDeDos";
 import { impuestoPorPersona63, impuestoTotal63, monedaNormalizada63 } from "@/lib/reservar/ofertaDinamica63";
 import { resolverOfertaSalida63, type Oferta63 } from "@/lib/reservar/prepararOferta63";
@@ -112,6 +113,9 @@ export type ReservaInput = {
   plazo: string;
   pasajeros: PasajeroReserva[];
   servicios?: number[];   // ids de servicios add-on seleccionados
+  // Servicios opcionales que se cobran FUERA de este cómputo (los tours/receptivos del carrito vinculados a este hotel) y que, si cobran un
+  // importe positivo, devuelven al infante con PVP fijo a la fórmula normal completa (254). Solo entran a la decisión; este cómputo no los suma.
+  opcionalesInfante?: ServicioOpcionalSeleccionado[];
   // #63: la cotización de una oferta en COP con TRM guarda aquí la huella de lo que se mostró (la escribe el servidor al
   // cotizar; `convertirCotizacion` la pasa tal cual). La reserva la compara con lo que va a cobrar.
   // `cotizacionId` lo pone SOLO `convertirCotizacion` (con el id de la cotización que el usuario puede ver); lo que venga del
@@ -387,6 +391,9 @@ export async function computarReserva(
 
   const pvpPorAcom: Record<string, number> = {};
   const pvpMenor2PorAcom: Record<string, number> = {};
+  // PVP fijo del infante (254): precio NORMAL de la clase infante por ruta cuando el fijo lo reemplazó. Solo se usa si un servicio opcional
+  // seleccionado le cobra al infante (entonces vale la fórmula normal completa, nunca el fijo + la normal).
+  const pvpInfanteSinFijo: { mayor2: number | null; menor2: number | null } = { mayor2: null, menor2: null };
   const netoPorAcom: Record<string, number> = {};
   let menoresDeDos: ConteoMenores = { infante: 0, nino: 0, nino2: 0 };
   let lineasMenores: LineaMenor[] = [];
@@ -454,6 +461,8 @@ export async function computarReserva(
     if (!combo) return { ok: false, error: "No hay tarifa para esas fechas / categoría / régimen." };
     for (const [acom, p] of Object.entries(combo.precios)) pvpPorAcom[acom] = p;
     if (combo.preciosMenor2) for (const [acom, p] of Object.entries(combo.preciosMenor2)) pvpMenor2PorAcom[acom] = p;
+    pvpInfanteSinFijo.mayor2 = combo.preciosSinFijo?.["infante"] ?? null;
+    pvpInfanteSinFijo.menor2 = combo.preciosMenor2SinFijo?.["infante"] ?? null;
     if (combo.netos) for (const [acom, n] of Object.entries(combo.netos)) netoPorAcom[acom] = n;
     meta = { hotel_nombre: res!.hotelNombre, destino_nombre: res!.destinoNombre, fecha_ida: input.fechaIda!, fecha_regreso: input.fechaRegreso! };
 
@@ -576,7 +585,7 @@ export async function computarReserva(
   } else if (!esServicios) {
     let q = sb
       .from("tarifario_resultado_publicable")
-      .select("acomodacion, precio_pvp, precio_pvp_menor2, hotel_nombre, destino_nombre, fecha_ida, fecha_regreso, moneda")
+      .select("acomodacion, precio_pvp, precio_pvp_menor2, precio_pvp_sin_fijo, precio_pvp_menor2_sin_fijo, hotel_nombre, destino_nombre, fecha_ida, fecha_regreso, moneda")
       .eq("paquete_id", input.paqueteId)
       .eq("hotel_id", input.hotelId)
       .eq("categoria", input.categoria)
@@ -597,6 +606,10 @@ export async function computarReserva(
       if (!f.acomodacion) continue;
       pvpPorAcom[f.acomodacion] = f.precio_pvp;
       if (f.precio_pvp_menor2 != null) pvpMenor2PorAcom[f.acomodacion] = f.precio_pvp_menor2;
+      if (f.acomodacion === "infante") {
+        pvpInfanteSinFijo.mayor2 = f.precio_pvp_sin_fijo ?? null;
+        pvpInfanteSinFijo.menor2 = f.precio_pvp_menor2_sin_fijo ?? null;
+      }
     }
     meta = filas[0];
     monedaReserva = (filas[0] as { moneda?: string | null }).moneda ?? "COP";
@@ -846,6 +859,8 @@ export async function computarReserva(
   const totalPax = esServicios ? (Number(input.paxServicios) || 0) : paxConSilla + numMenoresDeDos;
   const paxServAdulto = esServicios ? totalPax : paxConSilla;
   const serviciosItems: { servicioId: number; nombre: string; precio: number; categoria: CategoriaServicio; proveedorId: number | null }[] = [];
+  // Opcionales que cobran al infante: los externos (carrito) más los realmente seleccionados aquí (se completan al resolver `byServ`).
+  const opcionalesInfante: ServicioOpcionalSeleccionado[] = [...(input.opcionalesInfante ?? [])];
   if (input.servicios?.length) {
     const { data: srvRows, error: srvRowsErr } = await sb
       .from("tarifario_resultado_publicable")
@@ -973,6 +988,17 @@ export async function computarReserva(
         serviciosItems.push({ servicioId, nombre: s.nombre, precio: p, categoria: s.categoria, proveedorId: s.proveedorId });
       }
     }
+
+    // PVP fijo del infante (254) × servicios opcionales realmente seleccionados: si alguno (la asistencia no cuenta) le cobra un importe
+    // positivo a ese infante, vuelve a la fórmula normal COMPLETA de su ruta (menor de 2 años / 2 años o más) y el total se ajusta por la
+    // diferencia; si todos son gratuitos conserva el fijo. Jamás se cobran el fijo y la fórmula normal a la vez.
+    for (const s of byServ.values()) opcionalesInfante.push({ categoria: s.categoria, modo: s.modo, personaPvp: s.personaPvp, infantePvp: s.infantePvp });
+  }
+  for (const lm of lineasMenores) {
+    if (lm.clase !== "infante") continue;
+    const normal = lm.menorDeDos ? pvpInfanteSinFijo.menor2 : pvpInfanteSinFijo.mayor2;
+    const final = precioInfanteConServiciosOpcionales(lm.tarifa, normal, opcionalesInfante, lm.menorDeDos);
+    if (final !== lm.tarifa) { precioVenta += lm.cantidad * (final - lm.tarifa); lm.tarifa = final; }
   }
 
   // Servicios INCLUIDOS del paquete (armado_servicios.incluido=true). Modo

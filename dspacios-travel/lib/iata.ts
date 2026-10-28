@@ -87,3 +87,17 @@ export function codigoIataDeCiudad(nombre: string | null | undefined): string | 
 export function esCodigoIata(c: string | null | undefined): c is string {
   return typeof c === "string" && /^[A-Za-z]{3}$/.test(c.trim());
 }
+
+/**
+ * Clave canónica de un ORIGEN de paquete (solo presentación/filtro; el dato del vuelo no cambia): una ciudad del catálogo `IATA_CIUDAD`
+ * —dada como código ("MDE") o como nombre exacto ("MEDELLÍN")— resuelve a su único código IATA, así bloqueos y salidas dinámicas caen en
+ * la misma opción. Sin correspondencia confiable (fuera del catálogo o con dos códigos) conserva su propio valor: nunca se adivina por texto.
+ */
+export function claveOrigen(valor: string | null | undefined): string {
+  const v = (valor ?? "").trim().toUpperCase().replace(/\s+/g, " ");
+  if (!v) return "";
+  return codigoIataDeCiudad(IATA_CIUDAD[v] ?? v) ?? v;
+}
+
+/** Texto legible de una clave de `claveOrigen`: la ciudad del catálogo, o la clave tal cual si no hay correspondencia. */
+export const etiquetaOrigen = (clave: string): string => ciudadIata(clave) ?? clave;

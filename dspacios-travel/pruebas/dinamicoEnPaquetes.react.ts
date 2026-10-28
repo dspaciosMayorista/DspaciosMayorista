@@ -86,7 +86,9 @@ async function elegir(c: HTMLElement, etiqueta: string) {
   const sel = [...c.querySelectorAll("select")].find((s) => [...s.options].some((o) => o.textContent === etiqueta)) as HTMLSelectElement | undefined;
   assert.ok(sel, `no hay un selector con la opción ${etiqueta}`);
   await act(async () => {
-    Object.getOwnPropertyDescriptor(dom.window.HTMLSelectElement.prototype, "value")!.set!.call(sel, etiqueta);
+    // El selector de Origen muestra la ciudad (etiqueta) y guarda su clave canónica en `value`.
+    const valor = [...sel!.options].find((o) => o.textContent === etiqueta)!.value;
+    Object.getOwnPropertyDescriptor(dom.window.HTMLSelectElement.prototype, "value")!.set!.call(sel, valor);
     sel!.dispatchEvent(new dom.window.Event("change", { bubbles: true }));
   });
   await act(async () => { await new Promise((r) => setTimeout(r, 60)); });
@@ -250,7 +252,7 @@ test("ORIGEN sin dato real de la salida: el Dinámico no se atribuye ese origen 
   const c = await montar([BLOQUEO, ...FILAS_DIN]);
   await elegir(c, "CARTAGENA");
   assert.match(texto(c), /Hotel Nacional 54/);
-  await elegir(c, "BOG"); // cambiar el origen reinicia el destino (comportamiento de Bloqueo)
+  await elegir(c, "Bogotá"); // cambiar el origen reinicia el destino (comportamiento de Bloqueo)
   await elegir(c, "CARTAGENA");
   assert.match(texto(c), /Hotel Control/);
   assert.doesNotMatch(texto(c), /Hotel Nacional 54/);
@@ -262,11 +264,21 @@ const opcionesDe = (c: HTMLElement, etiqueta: string) => {
   const sel = [...c.querySelectorAll("select")].find((s) => [...s.options].some((o) => o.textContent === etiqueta));
   return sel ? [...sel.options].map((o) => o.textContent ?? "") : [];
 };
+test("ORIGEN unificado: MDE (salida dinámica) y MEDELLÍN (bloqueo) son UNA sola opción «Medellín»; elegirla conserva ambas fuentes y un origen sin catálogo sigue separado", async () => {
+  (globalThis as { __detalleActionsFake?: unknown }).__detalleActionsFake = detalleOk();
+  const c = await montar([BLOQUEO, ...FILAS_DIN.map((f) => ({ ...f, hotel_id: 2547 }))], { origenPorBloqueo: { 111: "MEDELLÍN" }, origenPorSalida: { 540: "MDE", 541: "TUMACO" } });
+  const sel = [...c.querySelectorAll("select")].find((s) => [...s.options].some((o) => o.textContent === "Medellín"))!;
+  const etiquetas = [...sel.options].map((o) => o.textContent);
+  assert.deepEqual(etiquetas, ["Todos", "Medellín", "TUMACO"], "sin MDE ni MEDELLÍN duplicados; TUMACO (fuera del catálogo) no se mezcla");
+  assert.equal([...sel.options].find((o) => o.textContent === "Medellín")!.value, "MDE");
+  await elegir(c, "Medellín");
+  assert.ok(opcionesDe(c, "CARTAGENA").includes("CARTAGENA"), "el destino de ambas fuentes sigue disponible");
+});
 test("ORIGEN → DESTINO → TARJETA 54: con el origen REAL de la salida, el destino sigue en el selector y la tarjeta muestra solo la salida de ese origen (desde DOBLE)", async () => {
   (globalThis as { __detalleActionsFake?: unknown }).__detalleActionsFake = detalleOk();
   const c = await montar([BLOQUEO, ...FILAS_DIN.map((f) => ({ ...f, hotel_id: 2547 }))], ORIGEN_REAL);
-  assert.ok(opcionesDe(c, "BOG").includes("MDE"), "el origen real de la salida 541 (sin bloqueo propio) también se ofrece");
-  await elegir(c, "BOG");
+  assert.ok(opcionesDe(c, "Bogotá").includes("Medellín"), "el origen real de la salida 541 (sin bloqueo propio) también se ofrece");
+  await elegir(c, "Bogotá");
   assert.ok(opcionesDe(c, "CARTAGENA").includes("CARTAGENA"), "el destino del 54 sigue en el selector tras elegir Origen");
   await elegir(c, "CARTAGENA");
   assert.equal(listado(c), "Hotelesdisponibles(2)");
@@ -284,7 +296,7 @@ test("ORIGEN → DESTINO → TARJETA 54: con el origen REAL de la salida, el des
 
 test("ORIGEN de solo-Dinámico (MDE): su destino y su tarjeta aparecen con la salida de MDE; el Bloqueo (BOG) no", async () => {
   const c = await montar([BLOQUEO, ...FILAS_DIN.map((f) => ({ ...f, hotel_id: 2548 }))], ORIGEN_REAL);
-  await elegir(c, "MDE");
+  await elegir(c, "Medellín");
   assert.ok(opcionesDe(c, "CARTAGENA").includes("CARTAGENA"));
   await elegir(c, "CARTAGENA");
   assert.equal(listado(c), "Hotelesdisponibles(1)");
@@ -296,7 +308,7 @@ test("ORIGEN de solo-Dinámico (MDE): su destino y su tarjeta aparecen con la sa
 
 test("VUELO (record) de Bloqueo elegido: el Dinámico no aplica aunque su salida salga del mismo origen", async () => {
   const c = await montar([BLOQUEO, ...FILAS_DIN.map((f) => ({ ...f, hotel_id: 2549 }))], ORIGEN_REAL);
-  await elegir(c, "BOG");
+  await elegir(c, "Bogotá");
   await elegir(c, "CARTAGENA");
   assert.match(texto(c), /Hotel Nacional 54/);
   await elegirSalida(c, "b:111");
@@ -325,7 +337,7 @@ test("SALIDA — Origen → Destino → Salida del 54: la salida dinámica real 
   dom.window.localStorage.clear();
   (globalThis as { __detalleActionsFake?: unknown }).__detalleActionsFake = detalleOk();
   const c = await montar([BLOQUEO, ...FILAS_DIN.map((f) => ({ ...f, hotel_id: 2560 }))], ORIGEN_REAL, false);
-  await elegir(c, "BOG");
+  await elegir(c, "Bogotá");
   await elegir(c, "CARTAGENA");
   const ops = opcionesSalida(c);
   assert.deepEqual(ops.map((o) => o.value), ["", "b:111", "d:540"], "Todas + el Bloqueo de BOG + la salida dinámica de BOG (la 541 sale de MDE)");
@@ -559,6 +571,11 @@ test("MODAL: visual propia — fechas de salida, cotizador con precios por acomo
   await campo(/Edad menor 1/, "1");
   assert.match(modal(c), /1 infante\(s\)/);
   assert.match(totalEstimado(c), /\$ ?1\.950\.000$/, "2 × 900.000 + infante 150.000");
+  // Tarifa visible bajo «Edad menor 1»: sale de la misma liquidación que el total (150.000, menor de 2 años).
+  assert.match(modal(c), /Edad menor 1\s*\$ ?150\.000 · menor de 2 años/, "tarifa del menor bajo su edad");
+  await campo(/Edad menor 1/, "");
+  assert.doesNotMatch(modal(c), /· menor de 2 años/, "sin edad no se inventa tarifa");
+  await campo(/Edad menor 1/, "1");
   const cotizar = [...c.querySelectorAll("a")].find((a) => /Cotizar esta salida/.test(a.textContent ?? "")) as HTMLAnchorElement | undefined;
   assert.ok(cotizar, "botón Cotizar");
   const href = (a: HTMLAnchorElement) => new URL(a.getAttribute("href")!, "http://x");

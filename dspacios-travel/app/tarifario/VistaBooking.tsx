@@ -29,6 +29,8 @@ import {
   verificarTarifasMenoresDisponibles,
 } from "@/lib/reservar/edadesMenores";
 import { contarMenoresDeDos, tarifarMenores } from "@/lib/reservar/menoresDeDos";
+import { tarifaPorMenor } from "@/lib/reservar/tarifaPorMenor";
+import { precioInfanteConServiciosOpcionales } from "@/lib/paquetes/pvpInfanteFijo";
 import { distribuirPorHabitaciones, type HabitacionConsultada } from "@/lib/reservar/distribucionHabitaciones";
 import {
   construirHabitacionesUI,
@@ -56,6 +58,7 @@ import {
   accesoCotizacionDinamica, destinosDinamicos, esOfertaDinamica, etiquetaSalidaDinamica, filaDinamicaVisibleEnPaquetes, hotelUnidadVisibleConSalida, leerSalidaElegida,
   origenesDinamicos, salidaIdsDinamicas, salidasDinamicasSelector, valorSalidaElegida, type SalidaElegida,
 } from "@/lib/tarifario/dinamicoBooking";
+import { claveOrigen, etiquetaOrigen } from "@/lib/iata";
 import { RegimenInfo, type PlanesInfo } from "./RegimenInfo";
 import { BuscadorBooking, Resultado, type EstadoBusquedaPorcion } from "./BuscadorBooking";
 import type { OpcionUnidadConfirmada } from "./busquedaUnidadActions";
@@ -887,7 +890,9 @@ export function VistaBooking({
 
   // Orígenes de Bloqueo + los orígenes REALES de las salidas Dinámicas (un Dinámico puede salir de un origen sin Bloqueo).
   const origenes = useMemo(
-    () => [...new Set([...salidasBloqueo.map((s) => s.origen), ...origenesDinamicos(filas, origenPorSalida)].filter(Boolean))].sort(),
+    () => [...new Set([...salidasBloqueo.map((s) => claveOrigen(s.origen)), ...origenesDinamicos(filas, origenPorSalida)].filter(Boolean))]
+      .map((clave) => ({ clave, etiqueta: etiquetaOrigen(clave) }))
+      .sort((a, b) => a.etiqueta.localeCompare(b.etiqueta, "es")),
     [salidasBloqueo, filas, origenPorSalida]
   );
   // P3 (hallazgo confirmado, validación final): los destinos del selector
@@ -902,7 +907,7 @@ export function VistaBooking({
   // `hotelesUnidadVisibles`) — filtrar su destino por el origen elegido
   // sería inventar un dato que no se tiene.
   const destinosBloqueo = useMemo(() => {
-    const legacy = salidasBloqueo.filter((s) => !origenSel || s.origen === origenSel).map((s) => s.destino);
+    const legacy = salidasBloqueo.filter((s) => !origenSel || claveOrigen(s.origen) === origenSel).map((s) => s.destino);
     const unidad = hotelesBernalo.filter((h) => h.tipo === "bloqueo" && h.destinoNombre).map((h) => h.destinoNombre as string);
     return [...new Set([...legacy, ...unidad])].filter(Boolean).sort();
   }, [salidasBloqueo, origenSel, hotelesBernalo]);
@@ -913,7 +918,7 @@ export function VistaBooking({
     [destinosBloqueo, origenSel, filas, origenPorSalida]
   );
   const salidasFiltradas = useMemo(
-    () => salidasBloqueo.filter((s) => (!origenSel || s.origen === origenSel) && (!destinoSel || s.destino === destinoSel)),
+    () => salidasBloqueo.filter((s) => (!origenSel || claveOrigen(s.origen) === origenSel) && (!destinoSel || s.destino === destinoSel)),
     [salidasBloqueo, origenSel, destinoSel]
   );
   // Salidas DINÁMICAS reales para el mismo selector (fecha, noches, origen real de la salida, destino del paquete), con el
@@ -965,7 +970,7 @@ export function VistaBooking({
       if (mod === "bloqueo" && f.bloqueo_id != null) {
         const c = cuposPorBloqueo[f.bloqueo_id];
         if (c !== undefined && c <= 0) return false; // sin cupos: no se muestra
-        if (origenSel && origenPorBloqueo[f.bloqueo_id] !== origenSel) return false;
+        if (origenSel && claveOrigen(origenPorBloqueo[f.bloqueo_id]) !== origenSel) return false;
         if (destinoSel && (f.destino_nombre ?? "") !== destinoSel) return false;
         if (salidaSel && f.bloqueo_id !== salidaSel.id) return false;
       }
@@ -1756,7 +1761,7 @@ export function VistaBooking({
                 <PlaneTakeoff className={iconoBloqueoCls(!!origenSel)} aria-hidden />
                 <select value={origenSel} onChange={(e) => { setOrigenSel(e.target.value); confirmarDestinoBloqueo(""); }} className={campoBloqueoCls(!!origenSel)}>
                   <option value="">Todos</option>
-                  {origenes.map((o) => <option key={o} value={o}>{o}</option>)}
+                  {origenes.map((o) => <option key={o.clave} value={o.clave}>{o.etiqueta}</option>)}
                 </select>
               </div>
             </div>
@@ -3071,6 +3076,12 @@ function Selector({
     return m;
   }, [opcion, catEff, regEff]);
 
+  // PVP fijo del infante (254): precio normal de la clase infante por ruta cuando el fijo la reemplazó; null = el fijo no se aplicó.
+  const pvpInfanteSinFijo = useMemo(() => {
+    const f = opcion.filas.find((x) => x.categoria === catEff && x.regimen === regEff && x.acomodacion === "infante");
+    return { mayor2: f?.precio_pvp_sin_fijo ?? null, menor2: f?.precio_pvp_menor2_sin_fijo ?? null };
+  }, [opcion, catEff, regEff]);
+
   const selCls = "rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm";
 
   const agregarItem = (habitaciones: Record<string, number>, ninos: number, ninos2: number, infantes: number, pax: number, precio: number, edadesMenores: number[], serviciosConjunto: TourSinVinculo[]) =>
@@ -3108,7 +3119,7 @@ function Selector({
         </div>
       </div>
 
-      <EditorPax pvp={pvp} pvpMenor2={pvpMenor2} acomConfig={cap.acom} paxMin={cap.paxMin} paxMax={cap.paxMax} moneda={hotel.moneda} edadesNota={textoEdadesHotel(hotel)} edadInfanteMax={hotel.infMax} edadNinoMax={hotel.ninoMax} nota={!puedeReservar ? "El valor es una estimación con tarifas publicadas; el precio final se confirma al generar la cotización." : undefined} onAgregar={agregarItem}
+      <EditorPax pvp={pvp} pvpMenor2={pvpMenor2} pvpInfanteSinFijo={pvpInfanteSinFijo} acomConfig={cap.acom} paxMin={cap.paxMin} paxMax={cap.paxMax} moneda={hotel.moneda} edadesNota={textoEdadesHotel(hotel)} edadInfanteMax={hotel.infMax} edadNinoMax={hotel.ninoMax} nota={!puedeReservar ? "El valor es una estimación con tarifas publicadas; el precio final se confirma al generar la cotización." : undefined} onAgregar={agregarItem}
         servicios={servicios ? {
           ...servicios, paqueteId: opcion.paqueteId, hotelNombre: hotel.hotelNombre,
           // Bloqueo: las fechas son las del record (fijas).
@@ -3149,13 +3160,15 @@ function CotizadorDinamico({ salidaId, filas, hotel, puedeReservar, planesInfo, 
 // sola, contra las reglas reales del hotel, si liquida como infante, Niño 1 o
 // Niño 2 (ver lib/reservar/edadesMenores.ts) — nunca un conteo manual por tarifa.
 function EditorPax({
-  pvp, pvpMenor2 = {}, acomConfig = [], paxMin = null, paxMax = null, nota, edadesNota,
+  pvp, pvpMenor2 = {}, pvpInfanteSinFijo, acomConfig = [], paxMin = null, paxMax = null, nota, edadesNota,
   edadInfanteMax, edadNinoMax, onAgregar, onAgregarBernalo, btnLabel = "Agregar al carrito", moneda = "COP",
   modeloTarifario = null, hotelId, paqueteId, categoriasDisponibles = [], alimentacionesDisponibles = [], salidas = [], servicios,
 }: {
   pvp: Record<string, number>;
   // Precio de un menor de 2 años por clase de hotel (migración 226); vacío = tarifario anterior a la 226.
   pvpMenor2?: Record<string, number>;
+  // PVP fijo del infante (254): precio normal por ruta; solo se usa si un servicio opcional seleccionado le cobra al infante.
+  pvpInfanteSinFijo?: { mayor2: number | null; menor2: number | null };
   acomConfig?: AcomConfig[];
   paxMin?: number | null;
   paxMax?: number | null;
@@ -3344,6 +3357,10 @@ function EditorPax({
   }
   const ninosTotal = ninos + ninos2;
   const pax = adultos + ninosTotal;
+  // Tarifa de venta de cada menor: sale de las MISMAS líneas que forman el total (`tarifarMenores`), nunca de una fórmula aparte.
+  // Solo con todas las edades válidas, distribución por habitaciones válida y tarifas publicadas; si no, se explica el motivo.
+  const menoresCompletos = cantidadMenores > 0 && edadesValidas && edadesFaltantes === 0 && !clasifError;
+  const errorTarifaMenores = menoresCompletos && !tarifaMenores.ok ? tarifaMenores.error : null;
 
   // Topes efectivos (capacidad de habitaciones + límites del hotel).
   const maxPax = paxMax != null ? Math.min(capPax, paxMax) : capPax;
@@ -3366,7 +3383,7 @@ function EditorPax({
     if (!puede || !evaluacionServicios.listo) return;
     const habitaciones: Record<string, number> = {};
     for (const a of ACOM_ROOMS) if ((habs[a] ?? 0) > 0) habitaciones[a] = habs[a];
-    onAgregar(habitaciones, ninos, ninos2, infantes, pax, precio, edades, serviciosConjunto());
+    onAgregar(habitaciones, ninos, ninos2, infantes, pax, precioFinal, edades, serviciosConjunto());
   }
 
   const inputCls = "w-16 rounded-lg border border-gray-300 px-2 py-1.5 text-sm";
@@ -3452,6 +3469,18 @@ function EditorPax({
     evaluacionServicios, hotelServicios,
     Object.fromEntries((servicios?.addons ?? []).filter((a) => a.servicioId != null).map((a) => [a.servicioId as number, a.foto])),
   );
+  // PVP fijo del infante × servicios opcionales seleccionados (254). ESTIMACIÓN: de cada servicio cotizado solo se conoce el total (no el
+  // precio de infante), así que uno con total positivo cuenta como cargo; el servidor decide con el precio real de infante al cotizar.
+  const opcionalesEstimados = evaluacionServicios.servicios.flatMap((s) =>
+    s.estado === "ok" && s.resultado ? [{ categoria: s.resultado.categoria, modo: "persona" as const, personaPvp: s.resultado.total, infantePvp: null }] : []);
+  const lineasMenoresFinal = tarifaMenores.ok
+    ? tarifaMenores.lineas.map((l) => (l.clase === "infante"
+      ? { ...l, tarifa: precioInfanteConServiciosOpcionales(l.tarifa, l.menorDeDos ? pvpInfanteSinFijo?.menor2 : pvpInfanteSinFijo?.mayor2, opcionalesEstimados, l.menorDeDos) }
+      : l))
+    : null;
+  const ajusteInfante = lineasMenoresFinal && tarifaMenores.ok ? lineasMenoresFinal.reduce((s, l, i) => s + l.cantidad * (l.tarifa - tarifaMenores.lineas[i].tarifa), 0) : 0;
+  const precioFinal = precio + ajusteInfante;
+  const tarifasPorMenor = menoresCompletos && lineasMenoresFinal ? tarifaPorMenor(edadesParsed.map((p) => p.valor), infanteMax, lineasMenoresFinal) : null;
 
   // Regla A.1: SOLO se habilita después de una cotización Bernalo exitosa.
   // `resultadoCotizacion` ya se limpia (null) ante cualquier cambio de
@@ -3693,10 +3722,14 @@ function EditorPax({
                       aria-invalid={mostrarError ? true : undefined}
                     />
                     {mostrarError && <p className="mt-0.5 text-[10px] text-red-600">{err}</p>}
+                    {!mostrarError && tarifasPorMenor && (tarifasPorMenor[i]
+                      ? <p className="mt-0.5 text-[11px] font-semibold" style={{ color: "var(--brand-primary)" }}>{formatMoneda(tarifasPorMenor[i]!.tarifa, moneda)}{tarifasPorMenor[i]!.menorDeDos ? " · menor de 2 años" : ""}</p>
+                      : <p className="mt-0.5 text-[10px] text-amber-600">Sin tarifa para esta edad</p>)}
                   </div>
                 );
               })}
             </div>
+            {errorTarifaMenores && <p className="mt-1 text-[11px] text-red-600">{errorTarifaMenores}</p>}
             {cantidadMenores > 0 && edadesValidas === false && edadesFaltantes > 0 && (
               <p className="mt-1 text-[11px] text-amber-600">Falta la edad de {edadesFaltantes} menor(es).</p>
             )}
@@ -3715,7 +3748,7 @@ function EditorPax({
       )}
 
       {servicios && (
-        <DesgloseServicios hotelNombre={servicios.hotelNombre} precioHotel={hotelServicios.precio} moneda={hotelServicios.moneda}
+        <DesgloseServicios hotelNombre={servicios.hotelNombre} precioHotel={ajusteInfante !== 0 && hotelServicios.precio != null ? precioFinal : hotelServicios.precio} moneda={hotelServicios.moneda}
           evaluacion={evaluacionServicios} onQuitar={servicios.quitar} onReintentar={reintentarServicios} />
       )}
 
@@ -3761,7 +3794,7 @@ function EditorPax({
         <div className="flex items-center justify-between border-t border-gray-100 pt-3">
           <div>
             <div className="text-xs text-gray-400">{evaluacionServicios.servicios.length ? "Hotel" : "Total estimado"}{pax > 0 ? ` · ${pax} pax` : ""}</div>
-            <div className="text-xl font-bold" style={{ color: "var(--brand-primary)" }}>{formatMoneda(precio, moneda)}</div>
+            <div className="text-xl font-bold" style={{ color: "var(--brand-primary)" }}>{formatMoneda(precioFinal, moneda)}</div>
           </div>
           <button type="button" onClick={agregar} disabled={!puede || !evaluacionServicios.listo}
             className="rounded-lg px-4 py-2.5 text-sm font-semibold text-white disabled:opacity-40"
@@ -3856,7 +3889,9 @@ function SelectorPorFechas({
   const regs = combos ? [...new Set(combos.filter((c) => c.categoria === catEff).map((c) => c.regimen))] : [];
   const regEff = regs.includes(reg) ? reg : (regs[0] ?? "");
   const pvp = combos?.find((c) => c.categoria === catEff && c.regimen === regEff)?.precios ?? {};
-  const pvpMenor2Cot = combos?.find((c) => c.categoria === catEff && c.regimen === regEff)?.preciosMenor2 ?? {};
+  const comboCot = combos?.find((c) => c.categoria === catEff && c.regimen === regEff);
+  const pvpMenor2Cot = comboCot?.preciosMenor2 ?? {};
+  const pvpInfanteSinFijoCot = { mayor2: comboCot?.preciosSinFijo?.["infante"] ?? null, menor2: comboCot?.preciosMenor2SinFijo?.["infante"] ?? null };
 
   const selCls = "rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm";
   const dateCls = "rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm";
@@ -3959,7 +3994,7 @@ function SelectorPorFechas({
             {nochesCot != null && <div className="self-end pb-2 text-xs text-gray-400">{nochesCot} noche(s)</div>}
           </div>
           <div className="mt-1"><CondicionHotelBadges condicion={condicion} /></div>
-          <EditorPax pvp={pvp} pvpMenor2={pvpMenor2Cot} acomConfig={cap.acom} paxMin={cap.paxMin} paxMax={cap.paxMax} moneda={hotel.moneda} edadesNota={textoEdadesHotel(hotel)} edadInfanteMax={hotel.infMax} edadNinoMax={hotel.ninoMax} onAgregar={agregarItem}
+          <EditorPax pvp={pvp} pvpMenor2={pvpMenor2Cot} pvpInfanteSinFijo={pvpInfanteSinFijoCot} acomConfig={cap.acom} paxMin={cap.paxMin} paxMax={cap.paxMax} moneda={hotel.moneda} edadesNota={textoEdadesHotel(hotel)} edadInfanteMax={hotel.infMax} edadNinoMax={hotel.ninoMax} onAgregar={agregarItem}
             servicios={servicios ? {
               ...servicios, paqueteId: opcion.paqueteId, hotelNombre: hotel.hotelNombre,
               // Porción: las fechas son las COTIZADAS (si cambian, `combos`

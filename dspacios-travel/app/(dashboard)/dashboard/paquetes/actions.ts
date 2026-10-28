@@ -55,6 +55,7 @@ import {
 import { construirSetParesPublicados, todosLosParesConfiguradosPublicados, primerParConfiguradoSinPublicar } from "@/lib/calc/paresPublicadosUnidad";
 
 import type { ResultadoLote } from "@/lib/paquetes/seleccionMasiva";
+import { aplicaPvpInfanteFijo, pvpInfanteFijoValido } from "@/lib/paquetes/pvpInfanteFijo";
 
 type Result = { ok: true; id?: number; aviso?: string } | { ok: false; error: string };
 const oNull = (s: string | null | undefined) => (s && s.trim() !== "" ? s.trim() : null);
@@ -84,6 +85,8 @@ export interface PaqueteConfig {
   fechaViajeInicio: string;
   fechaViajeFin: string;
   pctMk: number;          // porcentaje (20 = 20 %); se guarda como fracción
+  // PVP fijo de la clase infante del hotel (moneda de publicación). null = sin configurar; 0 es válido. Omitido = no se toca lo guardado.
+  pvpInfanteFijo?: number | null;
   impuestoTipo: ImpuestoTipo;
   impuestoFijo: number;
   activo: boolean;
@@ -179,6 +182,7 @@ function configToRow(c: PaqueteConfig, condicion: { condicion_pago_tipo: string;
     fecha_viaje_inicio: dNull(c.fechaViajeInicio),
     fecha_viaje_fin: dNull(c.fechaViajeFin),
     pct_mk: (Number(c.pctMk) || 0) / 100,
+    ...(c.pvpInfanteFijo !== undefined ? { pvp_infante_fijo: pvpInfanteFijoValido(c.pvpInfanteFijo) } : {}),
     impuesto_tipo: c.impuestoTipo,
     impuesto_fijo: Number(c.impuestoFijo) || 0,
     activo: c.activo,
@@ -213,6 +217,7 @@ export async function crearPaquete(c: PaqueteConfig): Promise<Result> {
   if (!c.nombre.trim()) return { ok: false, error: "El nombre es obligatorio." };
   const v = validarCondicionYRestriccionPaquete(c);
   if (!v.ok) return v;
+  if (c.pvpInfanteFijo != null && pvpInfanteFijoValido(c.pvpInfanteFijo) == null) return { ok: false, error: "El PVP fijo del infante debe ser un número mayor o igual a 0." };
   const oferta = validarModoOfertaPaquete(c);
   if (!oferta.ok) return oferta;
   // 234: un paquete NUEVO nace con la moneda de publicación ELEGIDA (COP o USD), también en el modo con conversión por TRM. Aquí no hay valor por
@@ -251,6 +256,7 @@ export async function actualizarPaquete(id: number, c: PaqueteConfig): Promise<R
   if (!c.nombre.trim()) return { ok: false, error: "El nombre es obligatorio." };
   const v = validarCondicionYRestriccionPaquete(c);
   if (!v.ok) return v;
+  if (c.pvpInfanteFijo != null && pvpInfanteFijoValido(c.pvpInfanteFijo) == null) return { ok: false, error: "El PVP fijo del infante debe ser un número mayor o igual a 0." };
   const oferta = validarModoOfertaPaquete(c);
   if (!oferta.ok) return oferta;
   const sb = await createClient();
@@ -816,6 +822,7 @@ export async function generarTarifario(paqueteId: number): Promise<Result> {
   if (!pq) return await fallar("Paquete no encontrado.");
 
   const pctMk = Number(pq.pct_mk) || 0;
+  const fijoInfante = pvpInfanteFijoValido(pq.pvp_infante_fijo);
   const paqueteNombre = pq.nombre;
   const paqueteActivo = pq.activo;
   const paqueteDestinoId = pq.destino_id;
@@ -858,7 +865,7 @@ export async function generarTarifario(paqueteId: number): Promise<Result> {
       .eq("paquete_id", paqueteId),
     sb
       .from("armado_servicios")
-      .select("servicio_id, modo, incluido, servicios_adicionales(nombre, precio_persona, precio_infante, liquidacion, descripcion, recargo_individual, moneda)")
+      .select("servicio_id, modo, incluido, servicios_adicionales(nombre, categoria, precio_persona, precio_infante, liquidacion, descripcion, recargo_individual, moneda)")
       .eq("paquete_id", paqueteId),
   ]);
   if (eVuelosSel) return await fallarTecnico(eVuelosSel.message);
@@ -1041,12 +1048,14 @@ export async function generarTarifario(paqueteId: number): Promise<Result> {
 
   // Servicios INCLUIDOS se hornean por persona en la tarifa del hotel.
   // (Los OPCIONALES no se hornean: se agregan como add-on en la reserva.)
-  function aporteServiciosIncluidos(numNoches: number): number {
+  // `sinAsistencia`: omite la categoría asistencia (no cuenta como cargo para el PVP fijo del infante).
+  function aporteServiciosIncluidos(numNoches: number, sinAsistencia = false): number {
     let total = 0;
     for (const s of servicios) {
       if (!(s.incluido as boolean)) continue;
-      const srv = s.servicios_adicionales as unknown as { precio_persona: number | null; liquidacion: string | null } | null;
+      const srv = s.servicios_adicionales as unknown as { precio_persona: number | null; liquidacion: string | null; categoria?: string | null } | null;
       if (srv?.precio_persona == null) continue;
+      if (sinAsistencia && srv.categoria === "asistencia") continue;
       // Cobro amarrado a la duración: por noche × noches, por día × (noches+1).
       total += marcar(aMonedaOferta(Number(srv.precio_persona) || 0, svcMoneda(s)), pctMk) * factorLiquidacion(srv.liquidacion, numNoches);
     }
@@ -1057,12 +1066,13 @@ export async function generarTarifario(paqueteId: number): Promise<Result> {
   // servicio incluido por persona con su `precio_infante` (NETO, con el mismo
   // markup que el de adulto) o, si el servicio no lo configuró (NULL ≠ $0), el
   // precio de adulto. Los incluidos por grupo no se hornean (ni para adulto).
-  function aporteServiciosIncluidosMenor(numNoches: number): number {
+  function aporteServiciosIncluidosMenor(numNoches: number, sinAsistencia = false): number {
     let total = 0;
     for (const s of servicios) {
       if (!(s.incluido as boolean)) continue;
-      const srv = s.servicios_adicionales as unknown as { precio_persona: number | null; precio_infante: number | null; liquidacion: string | null } | null;
+      const srv = s.servicios_adicionales as unknown as { precio_persona: number | null; precio_infante: number | null; liquidacion: string | null; categoria?: string | null } | null;
       if (srv?.precio_persona == null) continue;
+      if (sinAsistencia && srv.categoria === "asistencia") continue;
       const neto = srv.precio_infante != null ? Number(srv.precio_infante) || 0 : Number(srv.precio_persona) || 0;
       total += marcar(aMonedaOferta(neto, svcMoneda(s)), pctMk) * factorLiquidacion(srv.liquidacion, numNoches);
     }
@@ -1100,6 +1110,11 @@ export async function generarTarifario(paqueteId: number): Promise<Result> {
     if (numNoches <= 0) return;
     const aporteServ = aporteServiciosIncluidos(numNoches); // solo servicios incluidos
     const aporteServMenor = aporteServiciosIncluidosMenor(numNoches);
+    // PVP fijo del infante (clase del hotel): ver lib/paquetes/pvpInfanteFijo.ts. Cada ruta decide por SUS cargos: el menor de 2 paga el
+    // fee de infante y el precio de infante de los servicios; el de 2+ paga el vuelo y los servicios de adulto.
+    const grupoIncluido = servicios.some((s) => (s.incluido as boolean) && s.modo === "grupo");
+    const fijoMayor2 = aplicaPvpInfanteFijo(fijoInfante, { vuelo: aporteVueloVal, servicios: aporteServiciosIncluidos(numNoches, true), grupoIncluido, menorDeDos: false }) ? fijoInfante : null;
+    const fijoMenor2 = aplicaPvpInfanteFijo(fijoInfante, { vuelo: feeInfante, servicios: aporteServiciosIncluidosMenor(numNoches, true), grupoIncluido, menorDeDos: true }) ? fijoInfante : null;
     for (const h of hoteles) {
       const hotelMeta = h.hoteles as unknown as { nombre: string; moneda?: string | null; adults_only?: boolean | null } | null;
       const hotelAdultsOnly = hotelMeta?.adults_only === true;
@@ -1138,6 +1153,7 @@ export async function generarTarifario(paqueteId: number): Promise<Result> {
         const publicarFila = (acom: Acomodacion, costoHotel: number, procedencia: ReturnType<typeof columnasProcedencia>) => {
           const esRoom = acom !== "nino" && acom !== "nino2" && acom !== "infante";
           const aporteHotel = marcar(aMonedaOferta(costoHotel, monedaHotelOrigen), pctMk); // hotel siempre con mk (en modo 63: neto × TRM primero)
+          const precioMenor2Normal = esRoom ? null : redondearCentavos63(precioMenorDeDos({ aporteHotel, aporteServiciosMenor: aporteServMenor, feeInfante, moneda: monedaHotel }));
           const t = componerTarifa({
             aporteHotel,
             aporteServicios: aporteServ,
@@ -1163,15 +1179,20 @@ export async function generarTarifario(paqueteId: number): Promise<Result> {
             noches: numNoches,
             fecha_ida: fechaIda,
             fecha_regreso: fechaRegreso,
-            base_comisionable: t.baseComisionable,
-            impuesto: t.impuesto,
-            precio_pvp: t.pvp,
+            // Infante con PVP fijo (sin cargo de vuelo/servicios): el precio completo es el fijo; sin vuelo no hay base no comisionable.
+            base_comisionable: acom === "infante" && fijoMayor2 != null ? fijoMayor2 : t.baseComisionable,
+            impuesto: acom === "infante" && fijoMayor2 != null ? 0 : t.impuesto,
+            precio_pvp: acom === "infante" && fijoMayor2 != null ? fijoMayor2 : t.pvp,
+            // Precio NORMAL cuando el PVP fijo lo reemplazó (migración 254): al cotizar, un servicio opcional con cargo positivo devuelve al
+            // infante a esta fórmula completa. NULL = el fijo no se aplicó a esa ruta.
+            precio_pvp_sin_fijo: acom === "infante" && fijoMayor2 != null ? t.pvp : null,
             // Menor de 2 años de ESTA clase de hotel: hotel de la clase + servicios
             // con su precio de infante, redondeo al mil/dólar, y el fee de infante
             // del vuelo EXACTO (regla B, migración 226). NULL en habitaciones adultas.
             // El fee conserva sus centavos (numeric(15,2)): COP / TRM o USD × TRM trae decimales y la suma con el techo entero de hotel + servicios
             // arrastraría ruido de coma flotante (13 + 20,13 = 33,129999…). Se fija a centavos AQUÍ porque el motor de precios (lib/calc/paquetes.ts) está congelado.
-            precio_pvp_menor2: esRoom ? null : redondearCentavos63(precioMenorDeDos({ aporteHotel, aporteServiciosMenor: aporteServMenor, feeInfante, moneda: monedaHotel })),
+            precio_pvp_menor2: esRoom ? null : acom === "infante" && fijoMenor2 != null ? fijoMenor2 : precioMenor2Normal,
+            precio_pvp_menor2_sin_fijo: acom === "infante" && fijoMenor2 != null ? precioMenor2Normal : null,
             moneda: monedaHotel,
             salida_id: salidaId,
             temporada_ganadora: procedencia.temporada_ganadora,

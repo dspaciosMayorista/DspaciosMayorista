@@ -21,7 +21,7 @@ import { registrarEtapa, registrarDatoPagina, registrarErrorTecnico } from "../o
 // Columnas completas que necesita Vista Booking (Reservar/tarifario público)
 // — más que las que pide /dashboard/tarifario, ver lib/tarifario/paginacion.ts.
 const COLUMNAS_COMPLETAS =
-  "modulo, bloqueo_label, bloqueo_id, empaquetado_id, salida_id, paquete_id, hotel_id, servicio_id, servicio_nombre, tipo_tarifa, pax_desde, pax_hasta, fecha_ida, fecha_regreso, noches, destino_nombre, paquete_nombre, hotel_nombre, categoria, regimen, acomodacion, precio_pvp, precio_pvp_menor2, descripcion, recargo_individual, moneda";
+  "modulo, bloqueo_label, bloqueo_id, empaquetado_id, salida_id, paquete_id, hotel_id, servicio_id, servicio_nombre, tipo_tarifa, pax_desde, pax_hasta, fecha_ida, fecha_regreso, noches, destino_nombre, paquete_nombre, hotel_nombre, categoria, regimen, acomodacion, precio_pvp, precio_pvp_menor2, precio_pvp_sin_fijo, precio_pvp_menor2_sin_fijo, descripcion, recargo_individual, moneda";
 
 export type InfoHotelDato = {
   estrellas: number | null; clasificacion: string | null; descripcion: string | null; ubicacion: string | null;

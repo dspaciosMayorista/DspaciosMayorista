@@ -2482,6 +2482,7 @@ export type Database = {
           fecha_viaje_inicio: string | null;
           fecha_viaje_fin: string | null;
           pct_mk: number;
+          pvp_infante_fijo: number | null;
           impuesto_tipo: Database["public"]["Enums"]["impuesto_tipo"];
           impuesto_fijo: number;
           moneda: string;
@@ -2540,6 +2541,7 @@ export type Database = {
           fecha_viaje_inicio?: string | null;
           fecha_viaje_fin?: string | null;
           pct_mk?: number;
+          pvp_infante_fijo?: number | null;
           impuesto_tipo?: Database["public"]["Enums"]["impuesto_tipo"];
           impuesto_fijo?: number;
           moneda?: string;
@@ -2660,11 +2662,15 @@ export type Database = {
           // En filas de servicio persona = PVP del infante. NULL = la fila se
           // publicó antes de la 226 (hay que regenerar) o no aplica (habitación adulta).
           precio_pvp_menor2: number | null;
+          precio_pvp_sin_fijo: number | null;
+          precio_pvp_menor2_sin_fijo: number | null;
         };
         Insert: {
           id?: number;
           paquete_id: number;
           precio_pvp_menor2?: number | null;
+          precio_pvp_sin_fijo?: number | null;
+          precio_pvp_menor2_sin_fijo?: number | null;
           moneda?: string;
           salida_id?: number | null;
           paquete_nombre?: string | null;

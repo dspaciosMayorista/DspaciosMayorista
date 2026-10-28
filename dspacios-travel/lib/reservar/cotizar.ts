@@ -99,7 +99,7 @@ async function cargarDatosHotelPaquete(
 ): Promise<ResultadoCargaHotelPaquete> {
   const { data: pq, error: pqErr } = await admin
     .from("armado_paquetes")
-    .select("pct_mk, impuesto_fijo, destino_id, destinos(nombre), fecha_viaje_inicio, fecha_viaje_fin")
+    .select("pct_mk, pvp_infante_fijo, impuesto_fijo, destino_id, destinos(nombre), fecha_viaje_inicio, fecha_viaje_fin")
     .eq("id", paqueteId)
     .maybeSingle();
   if (pqErr) return { ok: false, motivo: "error_consulta", etapa: "armado_paquetes", detalleInterno: pqErr.message };
@@ -130,7 +130,7 @@ async function cargarDatosHotelPaquete(
 
   const datos: DatosHotelPaquete = {
     paquete: {
-      pct_mk: pq.pct_mk, impuesto_fijo: pq.impuesto_fijo, destino_nombre: destinoNombre,
+      pct_mk: pq.pct_mk, pvp_infante_fijo: pq.pvp_infante_fijo == null ? null : Number(pq.pvp_infante_fijo), impuesto_fijo: pq.impuesto_fijo, destino_nombre: destinoNombre,
       fecha_viaje_inicio: pq.fecha_viaje_inicio, fecha_viaje_fin: pq.fecha_viaje_fin,
     },
     armadoHotel: {
@@ -335,7 +335,11 @@ export async function cotizarPorFechas(inputRaw: unknown): Promise<CotizarResult
     return { ok: false, error: MENSAJE_HOTEL_SIN_TARIFA, sugerencias };
   }
   // Se devuelve al cliente SIN `netos` (el costo interno no sale del servidor).
-  const combosPublicos = res.combos.map((c) => ({ categoria: c.categoria, regimen: c.regimen, precios: c.precios }));
+  // Precios de VENTA de menores (226) y precio normal del infante cuando el PVP fijo lo reemplazó (254): sin costos.
+  const combosPublicos = res.combos.map((c) => ({
+    categoria: c.categoria, regimen: c.regimen, precios: c.precios,
+    preciosMenor2: c.preciosMenor2, preciosSinFijo: c.preciosSinFijo, preciosMenor2SinFijo: c.preciosMenor2SinFijo,
+  }));
   const condicion = condicionHotelFechas(datos.temporadas, { fechaIda: input.fechaIda, fechaRegreso: input.fechaRegreso });
   return {
     ok: true, combos: combosPublicos, noches: numNoches, moneda: res.moneda, condicion,
