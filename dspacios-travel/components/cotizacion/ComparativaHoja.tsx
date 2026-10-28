@@ -116,7 +116,7 @@ export function ComparativaHoja({ madre, grupos, resumenes, vencida, identidad }
 
       <div className={"border-b px-5 py-2 text-center text-xs font-semibold md:px-8 " + (vencida ? "border-red-200 bg-red-50 text-red-700" : "border-amber-200 bg-amber-50 text-amber-700")}>
         {vencida
-          ? "ESTA COMPARATIVA VENCIÓ — los valores deben revalidarse con un asesor."
+          ? "ESTA COMPARATIVA VENCIÓ — los valores deben revalidarse con un asesor. Si la fecha de salida ya pasó, hay que generar una comparativa nueva."
           : "Cada hotel es una alternativa con su propio total: escoge UNA. Los totales no se suman. Sujeta a disponibilidad."}
       </div>
 

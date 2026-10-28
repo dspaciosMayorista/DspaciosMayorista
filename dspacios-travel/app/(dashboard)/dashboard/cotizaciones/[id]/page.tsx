@@ -24,7 +24,7 @@ import { servicioDesdeFila } from "@/lib/cotizacion/liquidacionManual";
 import { resolverVinculosCotizacion } from "@/lib/reservar/vinculoServiciosCheckout";
 import { ROLES_CONTRATO_COMPLETO } from "@/lib/roles";
 import { FichaComparativa } from "@/lib/cotizacion/comparativaDocumento";
-import { hoyBogota } from "@/lib/cotizacion/vigencia";
+import { abiertaConSalidaPasada, hoyBogota, MENSAJE_SALIDA_PASADA } from "@/lib/cotizacion/vigencia";
 import PagosPreviosPanel, { type PagoPrevioUI } from "@/components/cotizacion/PagosPreviosPanel";
 import { revalidatePath } from "next/cache";
 import { createAdminClient } from "@/lib/supabase/admin";
@@ -124,6 +124,8 @@ export default async function CotizacionDetallePage({
   // contrato (uno por destino) — no reutiliza CotizacionAcciones, que asume
   // un solo hotel.
   const esCarrito = c.tipo === "carrito";
+  // Abierta con la salida ya pasada (día de negocio de Bogotá): no se continúa ni se convierte; se muestra como tal en vez de «abierta».
+  const salidaPasada = abiertaConSalidaPasada(c, hoyBogota());
   const moneda = c.moneda ?? "COP";
   const { data: serviciosManual } = esManual
     ? await sb.from("cotizacion_servicios").select("*").eq("cotizacion_id", c.id).order("orden")
@@ -278,9 +280,15 @@ export default async function CotizacionDetallePage({
               Cliente: aliado · Titular de la reserva: {`${clienteCarritoPre.nombres} ${clienteCarritoPre.apellidos}`.trim() || "—"}
             </p>
           )}
-          <span className="mt-2 inline-block rounded-full bg-amber-50 px-2 py-0.5 text-xs text-amber-700">
-            {c.estado}
-          </span>
+          {salidaPasada ? (
+            <div className="mt-2 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-xs font-medium text-red-700" data-testid="ficha-salida-pasada">
+              <span className="mr-2 rounded-full bg-red-100 px-2 py-0.5">Salida pasada</span>{MENSAJE_SALIDA_PASADA}
+            </div>
+          ) : (
+            <span className="mt-2 inline-block rounded-full bg-amber-50 px-2 py-0.5 text-xs text-amber-700">
+              {c.estado}
+            </span>
+          )}
         </div>
         <Link href={`/cotizacion/${id}`} target="_blank">
           <Button style={{ backgroundColor: "var(--brand-primary)" }}>Ver / Imprimir cotización →</Button>
@@ -294,7 +302,7 @@ export default async function CotizacionDetallePage({
           {netaB2B && <div className="text-[11px] opacity-80">PVP {formatMoneda(c.precio_venta ?? 0, moneda)} − comisión {formatMoneda(planB2B?.comision ?? 0, moneda)}</div>}
         </div>
         <Dato label="Pasajeros" value={String(c.pax ?? "—")} />
-        <VigenciaCotizacion id={c.id} vigencia={c.vigencia_hasta} fechaSalida={c.fecha_salida} editable={c.estado === "abierta"} estado={c.estado} />
+        <VigenciaCotizacion id={c.id} vigencia={c.vigencia_hasta} fechaSalida={c.fecha_salida} editable={c.estado === "abierta" && !salidaPasada} estado={c.estado} />
       </div>
 
       <div className="mt-4 grid grid-cols-1 gap-3 sm:grid-cols-2">
@@ -438,7 +446,12 @@ export default async function CotizacionDetallePage({
       )}
 
       <div className="mt-8 rounded-xl border border-gray-200 bg-white p-5">
-        {esManual ? (
+        {salidaPasada ? (
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <p className="text-sm text-gray-600">Esta cotización no se puede continuar ni convertir en contrato: genera una cotización nueva.</p>
+            {(esManual || esCarrito) && <DescartarBtn id={c.id} />}
+          </div>
+        ) : esManual ? (
           c.estado === "abierta" ? (
             <div className="flex flex-wrap items-center justify-between gap-3">
               <p className="text-sm text-gray-500">Cotización dinámica. Genera el contrato para confirmarla o descártala.</p>

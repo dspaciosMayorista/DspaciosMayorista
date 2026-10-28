@@ -14,7 +14,8 @@ import { formatMoneda, formatFechaLarga, calcularEdad } from "@/lib/utils";
 import { etiquetaIata, parseRuta } from "@/lib/iata";
 import { valorVisibleContratoItem, totalVisibleContratoItems } from "@/lib/contrato/valorContratoItem";
 import { presentacionValoresContrato } from "@/lib/contrato/presentacionValores";
-import { valoresNetosDocumento } from "@/lib/contrato/valoresNetosDocumento";
+import { valoresNetosDocumento, tarifaIndividualSegura } from "@/lib/contrato/valoresNetosDocumento";
+import { hayServicioManual, tituloPaqueteEditado, tituloPaqueteTuristico } from "@/lib/contrato/paqueteTuristicoDocumento";
 import type { ComposicionBernaloDocumento, HabitacionBernaloDocumento } from "@/lib/reservar/alojamientoBernaloDocumento";
 import type {
   VentaDocumento,
@@ -118,6 +119,8 @@ type Props = {
   // #75 — Incluye / No incluye de una cotización de carrito que lo trae en su snapshot (p. ej. la opción elegida de una comparativa). Ausente: no se pinta.
   incluye?: string | null;
   noIncluye?: string | null;
+  /** Texto editado del ítem único «Paquete Turístico …» (cotización con servicio manual). Solo cambia la descripción; ausente = la propuesta automática. */
+  tituloPaquete?: string | null;
 };
 
 // Marca por tenant: mayorista mantiene los colores/logo de siempre;
@@ -189,6 +192,7 @@ export function ContratoDocumento({
   estancia = null,
   incluye = null,
   noIncluye = null,
+  tituloPaquete = null,
 }: Props) {
   const lineasIncluye = lineasTextoDoc(incluye);
   const lineasNoIncluye = lineasTextoDoc(noIncluye);
@@ -205,20 +209,25 @@ export function ContratoDocumento({
     totalPagado,
     netoTotalExigible,
   });
-  const valoresNetos = !mostrarValoresItems ? valoresNetosDocumento(items, total) : null;
-  const mostrarDesglose = mostrarValoresItems || valoresNetos !== null;
+  const esNeto = !mostrarValoresItems;
+  // El vuelo manual no se pinta como fila: su parte se absorbe en el paquete visible (por persona o de precio total) para que las filas sumen el total de arriba.
+  const lineasVuelo = items.filter((it) => esLineaVueloManual(it.descripcion));
+  const ocultosVuelo = new Set(lineasVuelo.map((it) => it.id));
+  const idsPaquete = new Set(items.filter((it) => !it.descripcion?.startsWith("Servicio · ") && !esLineaVueloManual(it.descripcion)).map((it) => it.id));
+  // Sin fila visible que lo absorba, valoresDoc es null: en NETO no se pinta NINGÚN importe por fila (serían PVP), solo el total exigible agregado.
+  const valoresDoc = !esNeto && ocultosVuelo.size === 0 ? null : ocultosVuelo.size > 0 ? valoresNetosDocumento(items, total, ocultosVuelo, idsPaquete) : valoresNetosDocumento(items, total);
+  const mostrarDesglose = mostrarValoresItems || valoresDoc !== null;
+  const paxVuelos = lineasVuelo.map((it) => { const m = /· ([0-9]+) pax/.exec(it.descripcion ?? ""); return m ? Number(m[1]) : null; });
   // 235: con conversión de cobro, lo pagado y el saldo van en la moneda de cobro contra el total convertido (nunca se resta una moneda de la otra).
   const cobroConvertido = cobro?.convertido ? cobro : null;
   const monedaPago = cobroConvertido ? cobroConvertido.moneda : moneda;
   const saldoDocumento = cobroConvertido ? Math.max(cobroConvertido.total - totalPagado, 0) : saldo;
-  const importeDocumento = (valor: number) => valoresNetos ? formatoNetoDocumento(valor, moneda) : formatMoneda(valor, moneda);
-  const valorItemDocumento = (item: ContratoItem) => valoresNetos ? (valoresNetos.get(item.id)?.total ?? 0) : valorVisibleContratoItem(item);
+  const importeDocumento = (valor: number) => esNeto ? formatoNetoDocumento(valor, moneda) : formatMoneda(valor, moneda);
+  const valorItemDocumento = (item: ContratoItem) => valoresDoc ? (valoresDoc.get(item.id)?.total ?? 0) : valorVisibleContratoItem(item);
   // Separa servicios (línea propia: Servicio · Pax · Valor total) del alojamiento.
   const servicioItems = items.filter((it) => it.descripcion?.startsWith("Servicio · "));
   // La línea suelta de un vuelo manual NO se pinta en la tabla de valores: el vuelo sale en el cuadro de vuelos y su precio ya está en el total (una sola vez).
   const alojItems = items.filter((it) => !it.descripcion?.startsWith("Servicio · ") && !esLineaVueloManual(it.descripcion));
-  // Hay vuelos manuales cuyo valor está en el total pero NO en las filas visibles: el documento lo dice (sin revelar su importe, ni PVP, ni comisión).
-  const hayVuelosEnElTotal = items.some((it) => esLineaVueloManual(it.descripcion));
   // El aviso de un vuelo manual ("sujeto a confirmación…") se dice UNA vez para toda la sección, no en cada tramo.
   const avisosVuelosManuales = [...new Set(vuelos.map((v) => notaVueloManual(v.servicios)?.aviso).filter((a): a is string => !!a))];
   // Cierre 3F-4B: separa las líneas agregadas (`modo_precio = "total"`,
@@ -226,6 +235,20 @@ export function ContratoDocumento({
   // tabla (regla F.5).
   const alojItemsTotal = alojItems.filter((it) => it.modo_precio === "total");
   const alojItemsPorPersona = alojItems.filter((it) => it.modo_precio !== "total");
+  const tarifaIndividual = tarifaIndividualSegura(alojItemsPorPersona, paxVuelos);
+  // Cotización con servicio manual: adultos y niños se presentan en UN solo ítem «Paquete Turístico …»; los servicios adicionales siguen en su sección.
+  const unificarPaquete = esCotizacion && alojItemsPorPersona.length > 0 && mostrarDesglose && hayServicioManual(items);
+  const ventaTexto = venta as { destino?: string | null; fecha_regreso?: string | null };
+  const tituloPaqueteDoc = tituloPaqueteEditado(tituloPaquete) ?? tituloPaqueteTuristico(ventaTexto.destino, venta.fecha_salida, ventaTexto.fecha_regreso);
+  const filaPaquete = unificarPaquete ? alojItemsPorPersona.reduce((a, it) => {
+    const v = valoresDoc?.get(it.id);
+    return {
+      adultos: a.adultos + Number(it.adultos), ninos: a.ninos + Number(it.ninos),
+      adultoTotal: a.adultoTotal + (v ? v.adultoTotal : Number(it.adultos) * Number(it.tarifa_adulto)),
+      ninoTotal: a.ninoTotal + (v ? v.ninoTotal : Number(it.ninos) * Number(it.tarifa_nino)),
+      total: a.total + valorItemDocumento(it),
+    };
+  }, { adultos: 0, ninos: 0, adultoTotal: 0, ninoTotal: 0, total: 0 }) : null;
   const anio = new Date().getFullYear();
 
   const tenant = ((venta as { tenant?: string | null }).tenant ?? "mayorista") === "minorista" ? "minorista" : "mayorista";
@@ -631,11 +654,6 @@ export function ContratoDocumento({
               <Pill label="Saldo pendiente" value={cobroConvertido ? formatMoneda(saldoDocumento, monedaPago) : importeDocumento(saldo)} />
               <Pill label="Moneda" value={cobroConvertido ? `${moneda} · cobro en ${cobroConvertido.moneda}` : moneda} />
             </div>
-            {hayVuelosEnElTotal && (
-              <p className="mb-3 text-xs text-gray-500" data-testid="nota-vuelos-incluidos">
-                {valoresNetos ? "El total exigible" : "El total del contrato"} incluye el valor de los vuelos indicados en la sección «Vuelos». Su importe no se desglosa en las filas de esta tabla.
-              </p>
-            )}
           </div>
           {/* Hallazgo confirmado (cierre 3F-4B): una línea `modo_precio =
               "total"` (Bernalo) no tiene adultos/niños/tarifa por columna —
@@ -688,7 +706,38 @@ export function ContratoDocumento({
             </div>
           )}
 
-          {alojItemsPorPersona.length > 0 && (
+          {filaPaquete && (
+            <div className="overflow-x-auto">
+              <table className="w-full min-w-[520px] border-collapse text-xs">
+                <thead className="break-inside-avoid break-after-avoid">
+                  <tr className="bg-gray-50 text-left text-gray-500">
+                    <th className="border border-gray-200 px-2 py-1">Ítem</th>
+                    <th className="border border-gray-200 px-2 py-1">Adultos</th>
+                    <th className="border border-gray-200 px-2 py-1">Niños</th>
+                    <th className="border border-gray-200 px-2 py-1">Tarifa Adulto{esNeto ? " NETO" : ""}</th>
+                    <th className="border border-gray-200 px-2 py-1">Tarifa Niño{esNeto ? " NETO" : ""}</th>
+                    <th className="border border-gray-200 px-2 py-1">Valor total{esNeto ? " NETO" : ""}</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <tr className="break-inside-avoid" data-testid="fila-paquete-turistico">
+                    <td className="border border-gray-200 px-2 py-1">{tituloPaqueteDoc}</td>
+                    <td className="border border-gray-200 px-2 py-1">{filaPaquete.adultos}</td>
+                    <td className="border border-gray-200 px-2 py-1">{filaPaquete.ninos}</td>
+                    <td className="border border-gray-200 px-2 py-1">
+                      {tarifaIndividual ? <TarifaNetaCelda total={filaPaquete.adultoTotal} cantidad={filaPaquete.adultos} moneda={moneda} /> : "—"}
+                    </td>
+                    <td className="border border-gray-200 px-2 py-1">
+                      {tarifaIndividual ? <TarifaNetaCelda total={filaPaquete.ninoTotal} cantidad={filaPaquete.ninos} moneda={moneda} /> : "—"}
+                    </td>
+                    <td className="border border-gray-200 px-2 py-1 font-medium">{formatoNetoDocumento(filaPaquete.total, moneda)}</td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+          )}
+
+          {alojItemsPorPersona.length > 0 && !filaPaquete && (
             <div className="overflow-x-auto">
             <table className="w-full min-w-[520px] border-collapse text-xs">
               <thead className="break-inside-avoid break-after-avoid">
@@ -699,13 +748,13 @@ export function ContratoDocumento({
                   {mostrarDesglose && (
                     <>
                       <th className="border border-gray-200 px-2 py-1">
-                        Tarifa Adulto{valoresNetos ? " NETO" : ""}
+                        Tarifa Adulto{esNeto ? " NETO" : ""}
                       </th>
                       <th className="border border-gray-200 px-2 py-1">
-                        Tarifa Niño{valoresNetos ? " NETO" : ""}
+                        Tarifa Niño{esNeto ? " NETO" : ""}
                       </th>
                       <th className="border border-gray-200 px-2 py-1">
-                        Valor total{valoresNetos ? " NETO" : ""}
+                        Valor total{esNeto ? " NETO" : ""}
                       </th>
                     </>
                   )}
@@ -726,13 +775,13 @@ export function ContratoDocumento({
                     {mostrarDesglose && (
                       <>
                         <td className="border border-gray-200 px-2 py-1">
-                          {valoresNetos
-                            ? <TarifaNetaCelda total={valoresNetos.get(it.id)?.adultoTotal ?? 0} cantidad={Number(it.adultos)} moneda={moneda} />
+                          {!tarifaIndividual ? "—" : valoresDoc
+                            ? <TarifaNetaCelda total={valoresDoc.get(it.id)?.adultoTotal ?? 0} cantidad={Number(it.adultos)} moneda={moneda} />
                             : formatMoneda(it.tarifa_adulto, moneda)}
                         </td>
                         <td className="border border-gray-200 px-2 py-1">
-                          {valoresNetos
-                            ? <TarifaNetaCelda total={valoresNetos.get(it.id)?.ninoTotal ?? 0} cantidad={Number(it.ninos)} moneda={moneda} />
+                          {!tarifaIndividual ? "—" : valoresDoc
+                            ? <TarifaNetaCelda total={valoresDoc.get(it.id)?.ninoTotal ?? 0} cantidad={Number(it.ninos)} moneda={moneda} />
                             : formatMoneda(it.tarifa_nino, moneda)}
                         </td>
                         <td className="border border-gray-200 px-2 py-1 font-medium">
@@ -789,7 +838,7 @@ export function ContratoDocumento({
                   <tr className="bg-gray-50 text-left text-gray-500">
                     <th className="border border-gray-200 px-2 py-1">Servicio</th>
                     <th className="border border-gray-200 px-2 py-1">Pax</th>
-                    {mostrarDesglose && <th className="border border-gray-200 px-2 py-1">Valor total{valoresNetos ? " NETO" : ""}</th>}
+                    {mostrarDesglose && <th className="border border-gray-200 px-2 py-1">Valor total{esNeto ? " NETO" : ""}</th>}
                   </tr>
                 </thead>
                 <tbody>

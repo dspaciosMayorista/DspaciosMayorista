@@ -16,7 +16,7 @@ import { createAdminClient } from "@/lib/supabase/admin";
 import { formatFechaLarga } from "@/lib/utils";
 import { formatoExacto } from "@/lib/contrato/repartoTarifa";
 import { menoresDeOpcion, menoresNoDesglosables, otrosServiciosDeOpcion, tarifaVisibleOpcion, tiquetesDeOpcion, agruparPorHotel, canalDeRol, desdeComparativa, limiteSolicitudVencida, resumenDeOpcion, totalPublicoOpcion, type GrupoHotel, type OpcionVista } from "@/lib/cotizacion/comparativa";
-import { hoyBogota } from "@/lib/cotizacion/vigencia";
+import { abiertaConSalidaPasada, hoyBogota } from "@/lib/cotizacion/vigencia";
 import { visitantePuedeContinuar } from "@/lib/cotizacion/comparativaServidor";
 import { PrintButton } from "@/components/contrato/PrintButton";
 import { ComparativaHoja, type IdentidadHoja } from "@/components/cotizacion/ComparativaHoja";
@@ -161,9 +161,9 @@ export async function FichaComparativa({ madre, puedeResolver, hoy }: { madre: M
   const solicitudes: SolicitudUI[] = (sols ?? []).map((s) => ({
     id: s.id, estado: s.estado, opcionRef: s.opcion_ref, acomodacionRef: s.acomodacion_ref, etiqueta: etiquetaDe(s.opcion_ref), nombre: s.contacto_nombre,
     telefono: s.contacto_telefono, email: s.contacto_email, nota: s.nota, creada: formatFechaLarga(s.created_at.slice(0, 10)),
-    vencida: new Date(s.created_at).getTime() < hace72h || (!!madre.vigencia_hasta && madre.vigencia_hasta < hoy),
+    vencida: new Date(s.created_at).getTime() < hace72h || (!!madre.vigencia_hasta && madre.vigencia_hasta < hoy) || abiertaConSalidaPasada(madre, hoy),
   }));
-  const vencida = !!madre.vigencia_hasta && madre.vigencia_hasta < hoy;
+  const vencida = (!!madre.vigencia_hasta && madre.vigencia_hasta < hoy) || abiertaConSalidaPasada(madre, hoy);
   const abierta = madre.estado === "abierta";
   const modo: ModoSeleccion = abierta && !vencida && !datos.elegida ? "interno" : "solo_lectura";
   return (
@@ -220,7 +220,7 @@ export async function PaginaImprimibleComparativa({ madre, hoy }: { madre: Madre
   const sb = await createClient();
   const datos = await cargarDatosComparativa(sb, madre.id);
   if (!datos.grupos.length) notFound();
-  const vencida = !!madre.vigencia_hasta && madre.vigencia_hasta < hoy;
+  const vencida = (!!madre.vigencia_hasta && madre.vigencia_hasta < hoy) || abiertaConSalidaPasada(madre, hoy);
   const identidad = await identidadDe(sb, madre.tenant);
   return (
     <div className="min-h-screen bg-gray-100 py-6 print:min-h-0 print:bg-white print:py-0">
@@ -259,7 +259,7 @@ export async function paginaPublicaComparativa(token: string) {
   const anonima = await visitantePuedeContinuar(admin, madre);
   const modo: ModoSeleccion =
     madre.tipo === "comparativa_carrito" && (anonima || canalDeRol(perfil?.rol, perfil?.activo) !== "publico") ? "checkout" : "solicitud";
-  const vencida = !!madre.vigencia_hasta && madre.vigencia_hasta < hoyBogota();
+  const vencida = (!!madre.vigencia_hasta && madre.vigencia_hasta < hoyBogota()) || abiertaConSalidaPasada(madre, hoyBogota());
   return (
     <div className="min-h-screen bg-gray-100 py-6 print:min-h-0 print:bg-white print:py-0">
       <div className="mx-auto mb-4 flex max-w-5xl items-center justify-end px-4 print:hidden"><PrintButton /></div>

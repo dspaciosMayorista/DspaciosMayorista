@@ -178,7 +178,7 @@ describe("cableado: rutas de la cotización, listado, checkout y conversión", (
 
   test("el enlace público carga la agencia con el tenant de la fila hallada por el token (service-role, sin sesión) y la pasa al documento", () => {
     const f = leer("app/cot/[token]/page.tsx");
-    assert.match(f, /\.select\("codigo, detalle, vigencia_hasta, tenant"\)\s*\.eq\("share_token", token\)/, "se busca solo por share_token y se lee el tenant");
+    assert.match(f, /\.select\("codigo, detalle, vigencia_hasta, tenant, estado, fecha_salida"\)\s*\.eq\("share_token", token\)/, "se busca solo por share_token y se lee el tenant");
     assert.match(f, /cargarAgenciaDeCotizacion\(sb, cot\.tenant\)/);
     assert.match(f, /const sb = createAdminClient\(\)/);
     assert.match(f, /agencia=\{agencia\}/);

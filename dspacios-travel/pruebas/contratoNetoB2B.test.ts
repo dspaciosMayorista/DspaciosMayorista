@@ -159,7 +159,7 @@ test("documento: ContratoDocumento calcula total/saldo NETO y prorratea los impo
   assert.match(src, /presentacionValoresContrato\(\{\s*totalItems: totalVisibleContratoItems\(items\),\s*totalPagado,\s*netoTotalExigible,\s*\}\)/);
   assert.doesNotMatch(src, /const total = totalVisibleContratoItems\(items\);/, "volvió a sumar los ítems a PVP como total");
   assert.match(src, /valoresNetosDocumento\(items, total\)/);
-  assert.match(src, /const mostrarDesglose = mostrarValoresItems \|\| valoresNetos !== null/);
+  assert.match(src, /const mostrarDesglose = mostrarValoresItems \|\| valoresDoc !== null/);
   assert.doesNotMatch(src, /Valor total acordado para el paquete/);
 });
 
@@ -187,7 +187,7 @@ test("documentos de cotización: solo reciben el total exigible NETO de una vent
     assert.doesNotMatch(src, /netoTotalExigibleDeContrato|desgloseNetoB2B|esVentaNetoDescontada|comision_b2b|leerPlanB2BDePayload|b2bAsistido/, rel);
   }
   // El enlace público no lee `payload` (datos personales y términos internos): su consulta no cambió.
-  assert.match(leer("app/cot/[token]/page.tsx"), /\.select\("codigo, detalle, vigencia_hasta(, tenant)?"\)/);
+  assert.match(leer("app/cot/[token]/page.tsx"), /\.select\("codigo, detalle, vigencia_hasta(, tenant)?(, estado, fecha_salida)?"\)/);
 });
 
 // ── Ediciones posteriores: la modalidad no cambia sola ──────────────────────

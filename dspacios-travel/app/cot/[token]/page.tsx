@@ -15,6 +15,7 @@ import { tituloDocumento } from "@/lib/utils/tituloDocumento";
 import { paginaPublicaComparativa } from "@/lib/cotizacion/comparativaDocumento";
 import { netoTotalExigibleDeDetalle } from "@/lib/cotizacion/asistidaB2B";
 import { cargarAgenciaDeCotizacion } from "@/lib/cotizacion/agenciaCotizacion";
+import { abiertaConSalidaPasada, hoyBogota, MENSAJE_SALIDA_PASADA } from "@/lib/cotizacion/vigencia";
 
 export const dynamic = "force-dynamic";
 
@@ -44,6 +45,7 @@ type Detalle = {
   // #75: Incluye / No incluye congelado en el snapshot (p. ej. la opción elegida de una comparativa).
   incluye?: string | null;
   noIncluye?: string | null;
+  tituloPaquete?: string | null;
 };
 
 // Vista pública (sin login) de una cotización, por token imposible de adivinar.
@@ -66,7 +68,7 @@ export default async function CotizacionPublicaPage({ params }: { params: Promis
 
   const { data: cot } = await sb
     .from("cotizaciones")
-    .select("codigo, detalle, vigencia_hasta, tenant")
+    .select("codigo, detalle, vigencia_hasta, tenant, estado, fecha_salida")
     .eq("share_token", token)
     .maybeSingle();
 
@@ -87,6 +89,12 @@ export default async function CotizacionPublicaPage({ params }: { params: Promis
         <PrintButton />
       </div>
 
+      {abiertaConSalidaPasada(cot, hoyBogota()) && (
+        <div className="mx-auto mb-4 max-w-3xl rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm font-medium text-red-700 print:hidden" data-testid="cot-salida-pasada">
+          {MENSAJE_SALIDA_PASADA}
+        </div>
+      )}
+
       <div className="mx-auto max-w-3xl px-4 print:max-w-none print:px-0">
         <div className="overflow-hidden rounded-xl shadow-sm print:rounded-none print:shadow-none">
           <ContratoDocumento
@@ -105,6 +113,7 @@ export default async function CotizacionPublicaPage({ params }: { params: Promis
             agencia={agencia}
             incluye={d.incluye ?? null}
             noIncluye={d.noIncluye ?? null}
+            tituloPaquete={d.tituloPaquete ?? null}
           />
         </div>
       </div>

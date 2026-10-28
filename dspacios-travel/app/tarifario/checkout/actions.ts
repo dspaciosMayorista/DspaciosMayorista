@@ -27,7 +27,8 @@ import {
 } from "@/lib/reservar/vinculoServiciosCheckout";
 import { resumirServiciosContrato, type CategoriaServicio, type ServicioEfectivo } from "@/lib/reservar/serviciosPaquete";
 import { claveHuellaIncluidos, incluidosParaPayload, type ServicioIncluidoCotizado } from "@/lib/reservar/incluidosCotizados";
-import { hoyBogota, resolverVigenciaCotizacion } from "@/lib/cotizacion/vigencia";
+import { tituloPaqueteEditado } from "@/lib/contrato/paqueteTuristicoDocumento";
+import { abiertaConSalidaPasada, hoyBogota, MENSAJE_SALIDA_PASADA, resolverVigenciaCotizacion } from "@/lib/cotizacion/vigencia";
 import { calcularResidualServiciosIncluidosPorGrupo } from "@/lib/reservar/desglosePersonaCotizacion";
 import { descripcionLineaMenor, menoresDelComputo } from "@/lib/reservar/menoresDeDos";
 import type { ComposicionBernaloDocumento } from "@/lib/reservar/alojamientoBernaloDocumento";
@@ -562,6 +563,8 @@ async function crearCotizacionCarrito(input: {
   manuales?: ServicioManual[];
   /** #64: para cada manual, la posición en `items` de su hotel (vuelo) o null (otro servicio). El servidor lo resuelve desde `itemId`; aquí se valida contra lo liquidado. */
   hotelDeManual?: (number | null)[];
+  /** Descripción editada del ítem «Paquete Turístico …» (solo texto; ya saneada). Se guarda únicamente si hay servicio manual. */
+  tituloPaquete?: string | null;
   /**
    * #64: la cotización es UNA OPCIÓN de una comparativa (un solo hotel, posición 0). Cada vuelo trae como selector la clave de su GRUPO (`grupo:IATA|ida|regreso`) o «comun»:
    * solo se incluye si el grupo de ESTE hotel (destino IATA + fechas liquidados por el servidor) es el suyo; los de otro grupo se omiten (quedan marcados en `manualesAplicados`).
@@ -1159,6 +1162,7 @@ async function crearCotizacionCarrito(input: {
     venta: ventaSnap, pasajeros: [], hoteles: hotelesSnap, vuelos: vuelosSnap, items: itemsSnap,
     habitacionesBernalo: habitacionesBernaloSnap,
     composicionBernalo: composicionBernaloSnap,
+    ...(manualesOk.length && input.tituloPaquete ? { tituloPaquete: input.tituloPaquete } : {}),
     // #102: lo ÚNICO de la venta B2B que puede ver el comprador en los documentos de la cotización (imprimible y enlace público): en NETO,
     // el total exigible. Se deriva del plan congelado (que vive en `payload`, nunca en un documento externo); el PVP original y la comisión
     // no salen de aquí. Quien convierte lee siempre `payload.b2bAsistido`, jamás este valor.
@@ -1297,7 +1301,7 @@ export async function crearSolicitudReserva(inputRaw: unknown): Promise<Solicitu
     b2bAsistido = prep.contexto;
   }
 
-  const cot = await crearCotizacionCarrito({ items: input.items, tours, hotelDeTour: input.hotelDeTour, cliente: clienteCheckout, manuales: man.manuales, hotelDeManual: man.hotelDeManual }, { b2b: b2bAsistido });
+  const cot = await crearCotizacionCarrito({ items: input.items, tours, hotelDeTour: input.hotelDeTour, cliente: clienteCheckout, manuales: man.manuales, hotelDeManual: man.hotelDeManual, tituloPaquete: tituloPaqueteEditado((inputRaw as { tituloPaquete?: unknown } | null)?.tituloPaquete) }, { b2b: b2bAsistido });
   if (!cot.ok) return cot;
 
   // Agrega el cliente a la base de contactos del CRM como B2C (cliente_final),
@@ -1866,9 +1870,10 @@ export async function elegirOpcionComparativa(inputRaw: unknown): Promise<Result
   const actor = await actorComparativa();
 
   const { data: madre } = await admin.from("cotizaciones")
-    .select("id, tipo, modo, estado, version, vigencia_hasta, moneda, tenant, creado_por_id, propietario_id, aliado_id, payload").eq("share_token", d.token).maybeSingle();
+    .select("id, tipo, modo, estado, version, vigencia_hasta, fecha_salida, moneda, tenant, creado_por_id, propietario_id, aliado_id, payload").eq("share_token", d.token).maybeSingle();
   // «No existe» y «no es tuya» responden igual: nunca se enumeran cotizaciones.
   if (!madre || madre.modo !== "comparativa" || madre.estado !== "abierta") return { ok: false, error: MENSAJES_COMPARATIVA.NO_DISPONIBLE };
+  if (abiertaConSalidaPasada(madre, hoyBogota())) return { ok: false, error: MENSAJE_SALIDA_PASADA };
   if (madre.version !== d.version) return { ok: false, error: MENSAJES_COMPARATIVA.VERSION, reintentable: true };
 
   const { data: opcion } = await admin.from("cotizacion_opciones")
@@ -2011,7 +2016,7 @@ export async function resumenOpcionComparativa(
       etiqueta: o.etiqueta, total: totalPublicoOpcion(Number(o.total), o.resumen_publico), moneda: o.moneda,
       tarifaPersona: tarifa?.reparto.exacto ? tarifa.reparto.tarifa : null, tarifa,
       destino: m.destino, fechaSalida: m.fecha_salida, fechaRegreso: m.fecha_regreso, pax: m.pax,
-      vigenciaHasta: m.vigencia_hasta, vencida: !!m.vigencia_hasta && m.vigencia_hasta < hoyBogota(),
+      vigenciaHasta: m.vigencia_hasta, vencida: (!!m.vigencia_hasta && m.vigencia_hasta < hoyBogota()) || abiertaConSalidaPasada(m, hoyBogota()),
       vuelos: (() => { const v = ((o.resumen_publico ?? {}) as { vuelos?: unknown }).vuelos; return Array.isArray(v) ? (v as ResumenOpcionComparativa["vuelos"]) : []; })(),
     },
   };

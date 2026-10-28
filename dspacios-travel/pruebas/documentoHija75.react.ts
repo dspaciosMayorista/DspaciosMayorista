@@ -52,7 +52,8 @@ describe("hija NETO: tarifa por persona que cuadra con el total", () => {
     assert.equal(t.split("Pasajeros: 2").length - 1, 2, "una vez en cada tramo (dato del tramo)");
     assert.equal(t.split("sujeto a confirmación de disponibilidad y tarifa").length - 1, 1, "el aviso UNA sola vez");
     assert.doesNotMatch(t, /Vuelo · Avianca/, "la línea del vuelo no se pinta en la tabla");
-    assert.match(t, /incluye el valor de los vuelos/);
+    assert.doesNotMatch(t, /incluye el valor de los vuelos/, "la nota se eliminó: la fila del paquete ya suma el total");
+    assert.ok(t.includes("Paquete Turístico 2 1 — — $ 1.850.000,35"), "un único ítem: adultos y niños con el vuelo incluido una vez");
   });
 });
 

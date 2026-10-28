@@ -65,6 +65,7 @@ type Detalle = {
   // #75: Incluye / No incluye congelado en el snapshot (p. ej. la opción elegida de una comparativa).
   incluye?: string | null;
   noIncluye?: string | null;
+  tituloPaquete?: string | null;
 };
 
 const PRINT_STYLES = `
@@ -192,6 +193,7 @@ export default async function CotizacionImprimiblePage({
             agencia={agencia}
             incluye={d.incluye ?? null}
             noIncluye={d.noIncluye ?? null}
+            tituloPaquete={d.tituloPaquete ?? null}
           />
         </div>
       </div>

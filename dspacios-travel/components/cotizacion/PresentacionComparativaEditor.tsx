@@ -65,13 +65,19 @@ export function PresentacionComparativaEditor({ opciones, edicion, onChange }: {
             <legend className="px-1 text-sm font-semibold text-gray-700">{o.titulo}</legend>
             {o.lineas.length > 0 && (
               <div className="mb-3 space-y-2">
-                <p className={lbl}>Descripción visible en el documento</p>
+                <label className={lbl} htmlFor={`item-${o.clave}-${o.lineas[0].indice}`}>Ítem del documento</label>
                 {o.lineas.map((l) => (
-                  <input key={l.indice} aria-label={`Descripción de la línea ${l.indice + 1} de ${o.titulo}`} maxLength={MAX_DESCRIPCION_ITEM}
+                  <input key={l.indice} id={`item-${o.clave}-${l.indice}`} aria-label={`Ítem del documento (línea ${l.indice + 1}) de ${o.titulo}`} maxLength={MAX_DESCRIPCION_ITEM}
                     className={area} value={e.textos?.[l.indice] ?? l.descripcion}
                     onChange={(ev) => cambiar(o.clave, { textos: { ...(e.textos ?? {}), [l.indice]: ev.target.value } })} />
                 ))}
-                <p className="text-[11px] text-gray-400">Solo cambia el texto: cantidades, tarifas y valores siguen siendo los liquidados.</p>
+                <p className="text-[11px] text-gray-400">Cambia solo la descripción del ítem: cantidades, tarifas y valores siguen siendo los liquidados.</p>
+                <div className="rounded-lg bg-gray-50 p-2 text-xs text-gray-700" data-testid={`vista-previa-${o.clave}`}>
+                  <p className="mb-1 text-[10px] font-semibold uppercase tracking-wide text-gray-400">Vista previa del documento</p>
+                  {o.lineas.map((l) => (
+                    <p key={l.indice}><span className="font-medium">Ítem:</span> {(e.textos?.[l.indice] ?? l.descripcion).replace(/s+/g, " ").trim()}</p>
+                  ))}
+                </div>
               </div>
             )}
             <div className="grid grid-cols-1 gap-3 md:grid-cols-2">

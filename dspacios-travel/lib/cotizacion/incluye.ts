@@ -12,30 +12,41 @@ export const NO_INCLUYE_DEFAULT = [
   "Propinas y gastos personales",
 ].join("\n");
 
+// Orden fijo de la propuesta: tiquetes, hotel, traslados/tours, otros servicios, asistencia médica. Las categorías ausentes simplemente no salen.
+const ORDEN_CATEGORIA: Record<string, number> = { aereo: 0, hotel: 1, traslado: 2, tour: 2, asistencia: 4 };
+const ORDEN_OTROS = 3;
+
 // Construye una lista (una línea por servicio) a partir de los servicios.
 export function sugerirIncluye(servicios: ServicioIncluye[]): string {
-  const lineas: string[] = [];
+  const lineas: { orden: number; texto: string }[] = [];
   for (const s of servicios) {
     const nombre = (s.nombre || "").trim();
+    const orden = ORDEN_CATEGORIA[s.tipo] ?? ORDEN_OTROS;
     switch (s.tipo) {
       case "aereo":
-        lineas.push(`Tiquetes aéreos${nombre ? ` (${nombre})` : ""}`);
+        lineas.push({ orden, texto: `Tiquetes aéreos${nombre ? ` (${nombre})` : ""}` });
         break;
       case "hotel":
-        lineas.push(`Alojamiento${nombre ? ` en ${nombre}` : ""}`);
+        lineas.push({ orden, texto: `Alojamiento${nombre ? ` en ${nombre}` : ""}` });
         break;
       case "traslado":
-        lineas.push(`Traslados${nombre ? ` (${nombre})` : ""}`);
+        lineas.push({ orden, texto: `Traslados${nombre ? ` (${nombre})` : ""}` });
         break;
       case "asistencia":
-        lineas.push(`Asistencia médica${nombre ? ` (${nombre})` : ""}`);
+        lineas.push({ orden, texto: `Asistencia médica${nombre ? ` (${nombre})` : ""}` });
         break;
       default:
-        if (nombre) lineas.push(nombre);
+        if (nombre) lineas.push({ orden, texto: nombre });
     }
   }
-  // Quita duplicados conservando el orden.
-  return [...new Set(lineas)].join("\n");
+  // Orden estable por categoría y sin duplicados (ignora mayúsculas y espacios sobrantes).
+  const vistos = new Set<string>();
+  return lineas
+    .map((l, i) => ({ ...l, i }))
+    .sort((a, b) => a.orden - b.orden || a.i - b.i)
+    .filter((l) => { const k = l.texto.toLowerCase().replace(/\s+/g, " "); if (vistos.has(k)) return false; vistos.add(k); return true; })
+    .map((l) => l.texto)
+    .join("\n");
 }
 
 const texto = (v: unknown) => (typeof v === "string" ? v.trim() : "");
@@ -53,7 +64,7 @@ export function sugerirIncluyeCarrito(payload: unknown): string {
     const nombre = texto(it.hotelNombre);
     if (nombre) servicios.push({ tipo: "hotel", nombre: plan ? `${nombre} (${plan})` : nombre });
   }
-  const tipoServicio = (categoria: unknown) => (categoria === "asistencia" ? "asistencia" : "otro");
+  const tipoServicio = (categoria: unknown) => (categoria === "asistencia" ? "asistencia" : categoria === "tour_traslado" ? "tour" : "otro");
   for (const s of [...lista(p.serviciosIncluidos), ...lista(p.tours)]) servicios.push({ tipo: tipoServicio(s.categoria), nombre: texto(s.nombre) });
   for (const m of lista(p.manuales)) servicios.push({ tipo: m.clase === "vuelo" ? "aereo" : "otro", nombre: texto(m.nombre) });
   return sugerirIncluye(servicios);

@@ -132,7 +132,7 @@ describe("presentación editable (solo texto)", () => {
       tours: [{ nombre: "City tour", categoria: "tour_traslado" }],
       manuales: [{ clase: "vuelo", nombre: "Avianca" }, { clase: "otro", nombre: "Traslado privado" }],
     });
-    assert.deepEqual(t.split("\n"), ["Alojamiento en Hotel Almirante (Estándar, plan PAM)", "Asistencia médica (Asistencia Assist Card)", "City tour", "Tiquetes aéreos (Avianca)", "Traslado privado"]);
+    assert.deepEqual(t.split("\n"), ["Tiquetes aéreos (Avianca)", "Alojamiento en Hotel Almirante (Estándar, plan PAM)", "City tour", "Traslado privado", "Asistencia médica (Asistencia Assist Card)"]);
     assert.equal(sugerirIncluyeCarrito({}), "");
   });
 });

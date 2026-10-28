@@ -27,6 +27,10 @@ export type ValorNetoItemDocumento = {
 export function valoresNetosDocumento(
   items: readonly ItemConId[],
   totalExigible: number,
+  /** Líneas que el documento no pinta (vuelo manual): su parte se absorbe en las filas visibles, para que las filas sumen el total mostrado. */
+  ocultos?: ReadonlySet<number>,
+  /** Líneas que reciben la parte de las ocultas (el paquete). Sin él, todas las visibles. Los servicios adicionales no absorben el vuelo. */
+  receptores?: ReadonlySet<number>,
 ): Map<number, ValorNetoItemDocumento> | null {
   const netoCentavos = Math.round(totalExigible * 100);
   if (!Number.isSafeInteger(netoCentavos) || netoCentavos < 0) return null;
@@ -73,6 +77,26 @@ export function valoresNetosDocumento(
     for (let i = 0; i < netoCentavos - repartidos; i++) candidatos[i % candidatos.length].centavos++;
   }
 
+  if (ocultos && ocultos.size > 0) {
+    let absorber = 0;
+    for (const parte of partes) if (ocultos.has(parte.id)) { absorber += parte.centavos; parte.centavos = 0; parte.peso = 0; }
+    const visibles = partes.filter((parte) => parte.peso > 0 && (!receptores || receptores.has(parte.id)));
+    const pesoVisible = visibles.reduce((suma, parte) => suma + parte.peso, 0);
+    if (absorber > 0) {
+      if (pesoVisible === 0) return null;
+      let repartidos = 0;
+      for (const parte of visibles) {
+        const exacto = (absorber * parte.peso) / pesoVisible;
+        const piso = Math.floor(exacto);
+        parte.centavos += piso;
+        parte.resto = exacto - piso;
+        repartidos += piso;
+      }
+      visibles.sort((a, b) => b.resto - a.resto);
+      for (let i = 0; i < absorber - repartidos; i++) visibles[i % visibles.length].centavos++;
+    }
+  }
+
   const resultado = new Map<number, ValorNetoItemDocumento>();
   for (const item of items) {
     const adulto = partes.find((p) => p.id === item.id && p.tipo === "adulto")?.centavos ?? 0;
@@ -91,4 +115,18 @@ export function valoresNetosDocumento(
     });
   }
   return resultado;
+}
+
+/**
+ * ¿Se puede mostrar una tarifa individual cuando un vuelo oculto se absorbe en el paquete? Solo si no hay menores (no hay base para decir cuánto del
+ * vuelo es de un niño) y cada vuelo cubre exactamente a los adultos del paquete. Si no, el documento muestra el total agregado de la fila.
+ */
+export function tarifaIndividualSegura(
+  visibles: readonly { adultos: number; ninos: number }[],
+  paxVuelosOcultos: readonly (number | null)[],
+): boolean {
+  if (paxVuelosOcultos.length === 0) return true;
+  const adultos = visibles.reduce((s, i) => s + Number(i.adultos), 0);
+  const ninos = visibles.reduce((s, i) => s + Number(i.ninos), 0);
+  return ninos === 0 && paxVuelosOcultos.every((p) => p === adultos);
 }
