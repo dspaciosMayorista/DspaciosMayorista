@@ -1761,7 +1761,7 @@ export function VistaBooking({
                 <PlaneTakeoff className={iconoBloqueoCls(!!origenSel)} aria-hidden />
                 <select value={origenSel} onChange={(e) => { setOrigenSel(e.target.value); confirmarDestinoBloqueo(""); }} className={campoBloqueoCls(!!origenSel)}>
                   <option value="">Todos</option>
-                  {origenes.map((o) => <option key={o.clave} value={o.clave}>{o.etiqueta}</option>)}
+                  {origenes.map((o) => <option key={o.clave} value={o.clave}>{o.etiqueta.toLocaleUpperCase("es")}</option>)}
                 </select>
               </div>
             </div>
@@ -3387,6 +3387,8 @@ function EditorPax({
   }
 
   const inputCls = "w-16 rounded-lg border border-gray-300 px-2 py-1.5 text-sm";
+  // Campo de edad de la captura de menores (persona): ancho acotado dentro de su tarjeta, sin desbordar en móvil.
+  const inputEdadMenorCls = "block w-full max-w-[5rem] rounded-lg border px-2 py-1.5 text-sm text-center focus:outline-none focus:ring-2 focus:ring-[var(--brand-accent)]";
   const inputEdadCls = "w-14 rounded-lg border px-2 py-1.5 text-sm text-center focus:outline-none focus:ring-2 focus:ring-[var(--brand-accent)]";
 
   // ── Fase 3D/3E Bernalo — captura por habitación física + cotización real ─
@@ -3697,38 +3699,48 @@ function EditorPax({
               <label htmlFor={`${idBase}-cant`} className="text-xs font-semibold uppercase tracking-wide text-gray-400">Menores</label>
             </div>
             {edadesNota && <p className="mb-1 text-[11px] font-medium text-gray-500">{edadesNota}</p>}
-            <div className="flex flex-wrap items-end gap-3">
-              <div>
-                <label htmlFor={`${idBase}-cant`} className="mb-1 block text-xs font-medium text-gray-600">Cantidad de menores</label>
-                <input id={`${idBase}-cant`} type="number" inputMode="numeric" min={0} max={MAX_MENORES_POR_CONSULTA}
-                  value={cantidadMenores} disabled={!hayHab}
-                  onChange={(e) => setCantidadMenores(Number(e.target.value))} className={inputCls} />
-              </div>
-              {edadesTxt.map((v, i) => {
-                const err = edadesParsed[i]?.error;
-                const mostrarError = v.trim() !== "" && err;
-                return (
-                  <div key={i}>
-                    <label htmlFor={`${idBase}-edad-${i}`} className="mb-1 block text-xs font-medium text-gray-600">Edad menor {i + 1}</label>
-                    <input
-                      id={`${idBase}-edad-${i}`}
-                      type="number"
-                      inputMode="numeric"
-                      min={0}
-                      max={EDAD_MENOR_MAX}
-                      value={v}
-                      onChange={(e) => setEdadAt(i, e.target.value)}
-                      className={`${inputEdadCls} ${mostrarError ? "border-red-400" : "border-gray-300"}`}
-                      aria-invalid={mostrarError ? true : undefined}
-                    />
-                    {mostrarError && <p className="mt-0.5 text-[10px] text-red-600">{err}</p>}
-                    {!mostrarError && tarifasPorMenor && (tarifasPorMenor[i]
-                      ? <p className="mt-0.5 text-[11px] font-semibold" style={{ color: "var(--brand-primary)" }}>{formatMoneda(tarifasPorMenor[i]!.tarifa, moneda)}{tarifasPorMenor[i]!.menorDeDos ? " · menor de 2 años" : ""}</p>
-                      : <p className="mt-0.5 text-[10px] text-amber-600">Sin tarifa para esta edad</p>)}
-                  </div>
-                );
-              })}
+            <div>
+              <label htmlFor={`${idBase}-cant`} className="mb-1 block text-xs font-medium text-gray-600">Cantidad de menores</label>
+              <input id={`${idBase}-cant`} type="number" inputMode="numeric" min={0} max={MAX_MENORES_POR_CONSULTA}
+                value={cantidadMenores} disabled={!hayHab}
+                onChange={(e) => setCantidadMenores(Number(e.target.value))} className={inputCls} />
             </div>
+            {edadesTxt.length > 0 && (
+              <div className="mt-3 grid grid-cols-1 gap-2 min-[340px]:grid-cols-2 sm:grid-cols-3 lg:grid-cols-4">
+                {edadesTxt.map((v, i) => {
+                  const err = edadesParsed[i]?.error;
+                  const mostrarError = v.trim() !== "" && err;
+                  const tarifa = !mostrarError && tarifasPorMenor ? tarifasPorMenor[i] : undefined;
+                  return (
+                    <div key={i} className="min-w-0 rounded-lg border border-gray-200 bg-gray-50 p-2">
+                      <label htmlFor={`${idBase}-edad-${i}`} className="mb-1 block break-words text-xs font-medium text-gray-600">Edad menor {i + 1}</label>
+                      <input
+                        id={`${idBase}-edad-${i}`}
+                        type="number"
+                        inputMode="numeric"
+                        min={0}
+                        max={EDAD_MENOR_MAX}
+                        value={v}
+                        onChange={(e) => setEdadAt(i, e.target.value)}
+                        className={`${inputEdadMenorCls} ${mostrarError ? "border-red-400" : "border-gray-300"}`}
+                        aria-invalid={mostrarError ? true : undefined}
+                        aria-describedby={!mostrarError && tarifasPorMenor ? `${idBase}-tarifa-${i}` : undefined}
+                      />
+                      {mostrarError && <p className="mt-1 break-words text-[10px] text-red-600">{err}</p>}
+                      {!mostrarError && tarifasPorMenor && (tarifa
+                        ? (
+                          <p id={`${idBase}-tarifa-${i}`} className="mt-1 break-words border-t border-gray-200 pt-1">
+                            <span className="block text-[10px] font-medium uppercase tracking-wide text-gray-400">Tarifa menor {i + 1}</span>
+                            <span className="block break-words text-sm font-semibold" style={{ color: "var(--brand-primary)" }}>{formatMoneda(tarifa.tarifa, moneda)}</span>
+                            {tarifa.menorDeDos && <span className="block text-[10px] text-gray-500">menor de 2 años</span>}
+                          </p>
+                        )
+                        : <p id={`${idBase}-tarifa-${i}`} className="mt-1 break-words text-[10px] text-amber-600">Sin tarifa para esta edad</p>)}
+                    </div>
+                  );
+                })}
+              </div>
+            )}
             {errorTarifaMenores && <p className="mt-1 text-[11px] text-red-600">{errorTarifaMenores}</p>}
             {cantidadMenores > 0 && edadesValidas === false && edadesFaltantes > 0 && (
               <p className="mt-1 text-[11px] text-amber-600">Falta la edad de {edadesFaltantes} menor(es).</p>
