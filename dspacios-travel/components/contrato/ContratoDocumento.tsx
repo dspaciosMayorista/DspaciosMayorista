@@ -12,6 +12,7 @@ import {
 } from "@/lib/contrato/plantilla";
 import { formatMoneda, formatFechaLarga, calcularEdad } from "@/lib/utils";
 import { etiquetaIata, parseRuta } from "@/lib/iata";
+import { esLineaGrupoIncluido, NOMBRE_GRUPO_INCLUIDO, repartirProporcional, tarifaPaquete, vincularAdicionales, type ParteTarifa, type SnapshotPaquete } from "@/lib/cotizacion/tarifaPaquete";
 import { valorVisibleContratoItem, totalVisibleContratoItems } from "@/lib/contrato/valorContratoItem";
 import { presentacionValoresContrato } from "@/lib/contrato/presentacionValores";
 import { valoresNetosDocumento, tarifaIndividualSegura } from "@/lib/contrato/valoresNetosDocumento";
@@ -121,6 +122,8 @@ type Props = {
   noIncluye?: string | null;
   /** Texto editado del ítem único «Paquete Turístico …» (cotización con servicio manual). Solo cambia la descripción; ausente = la propuesta automática. */
   tituloPaquete?: string | null;
+  /** Resumen del snapshot congelado de la cotización (cobertura de cada adicional y su NETO), derivado en el servidor con `snapshotPaqueteDePayload`. Sin él no se reparte. */
+  paqueteSnapshot?: SnapshotPaquete | null;
 };
 
 // Marca por tenant: mayorista mantiene los colores/logo de siempre;
@@ -161,6 +164,12 @@ function TarifaNetaCelda({ total, cantidad, moneda }: { total: number; cantidad:
   );
 }
 
+/** Tarifa del paquete por persona: una sola tarifa, o el reparto honesto en centavos («2 × $932.666,67 + 1 × $932.666,66»); sus productos suman EXACTAMENTE el total. */
+function CeldaPartes({ partes, moneda }: { partes: ParteTarifa[]; moneda: string }) {
+  if (partes.length === 1) return <>{formatoNetoDocumento(partes[0].tarifa, moneda)}</>;
+  return <span className="block" data-testid="reparto-paquete">{partes.map((p, i) => <span key={i} className="block whitespace-nowrap">{p.cantidad} × {formatoNetoDocumento(p.tarifa, moneda)}</span>)}</span>;
+}
+
 function resumenMenoresHabitacion(edadesMenores: number[]) {
   const cantidad = edadesMenores.length;
   if (!cantidad) return "—";
@@ -193,6 +202,7 @@ export function ContratoDocumento({
   incluye = null,
   noIncluye = null,
   tituloPaquete = null,
+  paqueteSnapshot = null,
 }: Props) {
   const lineasIncluye = lineasTextoDoc(incluye);
   const lineasNoIncluye = lineasTextoDoc(noIncluye);
@@ -237,18 +247,43 @@ export function ContratoDocumento({
   const alojItemsPorPersona = alojItems.filter((it) => it.modo_precio !== "total");
   const tarifaIndividual = tarifaIndividualSegura(alojItemsPorPersona, paxVuelos);
   // Cotización con servicio manual: adultos y niños se presentan en UN solo ítem «Paquete Turístico …»; los servicios adicionales siguen en su sección.
-  const unificarPaquete = esCotizacion && alojItemsPorPersona.length > 0 && mostrarDesglose && hayServicioManual(items);
+  // El vuelo y los servicios adicionales entran en las tarifas de esa fila (repartidos entre los pasajeros que cubren), no en una segunda tabla de importes.
+  // Una línea de precio total que NO es de un hotel Bernalo: los servicios incluidos por grupo de un hotel normal. Esa línea no impide el ítem único (se reparte, o se muestra el total).
+  const lineasGrupo = alojItemsTotal.filter(esLineaGrupoIncluido);
+  const unificarPaquete = esCotizacion && alojItemsPorPersona.length > 0 && lineasGrupo.length === alojItemsTotal.length && hayServicioManual(items);
   const ventaTexto = venta as { destino?: string | null; fecha_regreso?: string | null };
   const tituloPaqueteDoc = tituloPaqueteEditado(tituloPaquete) ?? tituloPaqueteTuristico(ventaTexto.destino, venta.fecha_salida, ventaTexto.fecha_regreso);
-  const filaPaquete = unificarPaquete ? alojItemsPorPersona.reduce((a, it) => {
-    const v = valoresDoc?.get(it.id);
-    return {
-      adultos: a.adultos + Number(it.adultos), ninos: a.ninos + Number(it.ninos),
-      adultoTotal: a.adultoTotal + (v ? v.adultoTotal : Number(it.adultos) * Number(it.tarifa_adulto)),
-      ninoTotal: a.ninoTotal + (v ? v.ninoTotal : Number(it.ninos) * Number(it.tarifa_nino)),
-      total: a.total + valorItemDocumento(it),
-    };
-  }, { adultos: 0, ninos: 0, adultoTotal: 0, ninoTotal: 0, total: 0 }) : null;
+  // Cada línea adicional se vincula con el snapshot congelado (a cuántos pasajeros cubre y, en NETO, su parte del plan B2B). Sin vínculo seguro NO se infiere nada
+  // (ni de «venta.pax» ni del texto de la línea): se muestra el total agregado y se explica.
+  const adLineas = unificarPaquete ? [...lineasVuelo, ...servicioItems] : [];
+  const centPvp = (linea: ContratoItem) => Math.round(valorVisibleContratoItem(linea) * 100);
+  const vinculos = vincularAdicionales(adLineas.map((l) => ({ descripcion: l.descripcion, centavos: centPvp(l) })), paqueteSnapshot ?? null);
+  const vinculoPorId = new Map(adLineas.map((l, i) => [l.id, vinculos[i]] as const));
+  const filaPaquete = unificarPaquete ? (() => {
+    const adultos = alojItemsPorPersona.reduce((x, it) => x + Number(it.adultos), 0);
+    const ninos = alojItemsPorPersona.reduce((x, it) => x + Number(it.ninos), 0);
+    let baseAdultoCentavos = alojItemsPorPersona.reduce((x, it) => x + Math.round(Number(it.adultos) * Number(it.tarifa_adulto) * 100), 0);
+    let baseNinoCentavos = alojItemsPorPersona.reduce((x, it) => x + Math.round(Number(it.ninos) * Number(it.tarifa_nino) * 100), 0);
+    const nombreDe = (l: ContratoItem) => (esLineaVueloManual(l.descripcion) ? "el vuelo" : `«${l.descripcion.replace(/^Servicio · /, "").split(" · ")[0].replace(/ — sujeto a confirmación.*$/, "").split(" — ")[0]}»`);
+    const adicionales = adLineas.map((l, i) => ({ nombre: nombreDe(l), centavos: centPvp(l), pax: vinculos[i]?.pax ?? null }));
+    // Servicios incluidos por grupo: su importe ya está en el total; entra al reparto solo si el snapshot acredita a cuántos pasajeros cubre.
+    const grupoCentavos = lineasGrupo.reduce((x, l) => x + centPvp(l), 0);
+    if (lineasGrupo.length) adicionales.push({ nombre: NOMBRE_GRUPO_INCLUIDO, centavos: grupoCentavos, pax: lineasGrupo.length === 1 ? paqueteSnapshot?.grupoPax ?? null : null });
+    const soloTotal = (motivo: string) => ({ ok: false as const, adultos, ninos, totalCentavos: Math.round(total * 100), motivo, neto: true });
+    if (!esNeto) return { adultos, ninos, adicionales, tarifa: tarifaPaquete({ adultos, ninos, baseAdultoCentavos, baseNinoCentavos, adicionales, neto: false }) };
+    // NETO: la comisión del plan B2B congelado recae solo sobre la parte comisionable de cada línea; el impuesto no comisionable queda íntegro.
+    const s = paqueteSnapshot?.neto ?? null;
+    const pvpItems = baseAdultoCentavos + baseNinoCentavos + adicionales.reduce((x, a) => x + a.centavos, 0);
+    if (!paqueteSnapshot || !s || vinculos.some((v) => !v || v.netoCentavos === null) || s.exigibleCentavos !== Math.round(total * 100) || paqueteSnapshot.pvpCentavos !== pvpItems || s.hotelPvpCentavos !== baseAdultoCentavos + baseNinoCentavos + grupoCentavos) {
+      return { adultos, ninos, adicionales, tarifa: soloTotal("falta el plan B2B congelado de esta cotización o no cuadra con su total") };
+    }
+    // El NETO del hotel se reparte entre adultos, niños y el servicio por grupo (líneas del mismo hotel en el plan), en proporción a su PVP.
+    let netoGrupo = 0;
+    [baseAdultoCentavos, baseNinoCentavos, netoGrupo] = repartirProporcional(s.hotelNetoCentavos, [baseAdultoCentavos, baseNinoCentavos, grupoCentavos]);
+    const netos = adicionales.map((a, i) => ({ ...a, centavos: i < vinculos.length ? (vinculos[i]!.netoCentavos as number) : netoGrupo }));
+    const tarifa = tarifaPaquete({ adultos, ninos, baseAdultoCentavos, baseNinoCentavos, adicionales: netos, neto: true });
+    return { adultos, ninos, adicionales, tarifa: tarifa.totalCentavos === Math.round(total * 100) ? tarifa : soloTotal("el reparto NETO no cuadra con el total exigible") };
+  })() : null;
   const anio = new Date().getFullYear();
 
   const tenant = ((venta as { tenant?: string | null }).tenant ?? "mayorista") === "minorista" ? "minorista" : "mayorista";
@@ -663,7 +698,7 @@ export function ContratoDocumento({
               $0) parecía un dato real y no lo es. Se separa en una fila
               agregada limpia — el detalle por habitación va aparte, debajo
               (sección "Detalle por habitación", regla F.32-34). */}
-          {alojItemsTotal.length > 0 && (
+          {alojItemsTotal.length > 0 && !filaPaquete && (
             <div className="mb-3 space-y-2">
               {alojItemsTotal.map((it) => (
                 <div key={it.id} className="flex break-inside-avoid items-center justify-between rounded-lg bg-gray-50 px-3 py-2 text-xs">
@@ -725,15 +760,22 @@ export function ContratoDocumento({
                     <td className="border border-gray-200 px-2 py-1">{filaPaquete.adultos}</td>
                     <td className="border border-gray-200 px-2 py-1">{filaPaquete.ninos}</td>
                     <td className="border border-gray-200 px-2 py-1">
-                      {tarifaIndividual ? <TarifaNetaCelda total={filaPaquete.adultoTotal} cantidad={filaPaquete.adultos} moneda={moneda} /> : "—"}
+                      {filaPaquete.tarifa.ok ? (filaPaquete.adultos > 0 ? <CeldaPartes partes={filaPaquete.tarifa.tarifaAdulto} moneda={moneda} /> : formatoNetoDocumento(0, moneda)) : "—"}
                     </td>
                     <td className="border border-gray-200 px-2 py-1">
-                      {tarifaIndividual ? <TarifaNetaCelda total={filaPaquete.ninoTotal} cantidad={filaPaquete.ninos} moneda={moneda} /> : "—"}
+                      {filaPaquete.tarifa.ok ? (filaPaquete.ninos > 0 ? <CeldaPartes partes={filaPaquete.tarifa.tarifaNino} moneda={moneda} /> : formatoNetoDocumento(0, moneda)) : "—"}
                     </td>
-                    <td className="border border-gray-200 px-2 py-1 font-medium">{formatoNetoDocumento(filaPaquete.total, moneda)}</td>
+                    <td className="border border-gray-200 px-2 py-1 font-medium" data-testid="valor-total-paquete">{formatoNetoDocumento(filaPaquete.tarifa.totalCentavos / 100, moneda)}</td>
                   </tr>
                 </tbody>
               </table>
+              {filaPaquete.adicionales.length > 0 && (
+                <p className="mt-1 text-[11px] text-gray-500" data-testid="nota-paquete">
+                  {filaPaquete.tarifa.ok
+                    ? "Las tarifas por pasajero incluyen el alojamiento, los vuelos y los servicios adicionales del paquete."
+                    : `No se muestra la tarifa por pasajero: ${filaPaquete.tarifa.motivo}. El valor total incluye alojamiento, vuelos y servicios adicionales.`}
+                </p>
+              )}
             </div>
           )}
 
@@ -838,7 +880,7 @@ export function ContratoDocumento({
                   <tr className="bg-gray-50 text-left text-gray-500">
                     <th className="border border-gray-200 px-2 py-1">Servicio</th>
                     <th className="border border-gray-200 px-2 py-1">Pax</th>
-                    {mostrarDesglose && <th className="border border-gray-200 px-2 py-1">Valor total{esNeto ? " NETO" : ""}</th>}
+                    {mostrarDesglose && !filaPaquete && <th className="border border-gray-200 px-2 py-1">Valor total{esNeto ? " NETO" : ""}</th>}
                   </tr>
                 </thead>
                 <tbody>
@@ -847,8 +889,8 @@ export function ContratoDocumento({
                       <td className="border border-gray-200 px-2 py-1">
                         {it.descripcion.replace(/^Servicio · /, "")}
                       </td>
-                      <td className="border border-gray-200 px-2 py-1">{venta.pax ?? "—"}</td>
-                      {mostrarDesglose && (
+                      <td className="border border-gray-200 px-2 py-1">{filaPaquete ? vinculoPorId.get(it.id)?.pax ?? "—" : venta.pax ?? "—"}</td>
+                      {mostrarDesglose && !filaPaquete && (
                         <td className="border border-gray-200 px-2 py-1 font-medium">
                           {importeDocumento(valorItemDocumento(it))}
                         </td>

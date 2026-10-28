@@ -14,6 +14,7 @@ import { condicionesTarifaParaRender } from "@/lib/calc/condicionesTarifa";
 import { tituloDocumento } from "@/lib/utils/tituloDocumento";
 import { paginaPublicaComparativa } from "@/lib/cotizacion/comparativaDocumento";
 import { netoTotalExigibleDeDetalle } from "@/lib/cotizacion/asistidaB2B";
+import type { SnapshotPaquete } from "@/lib/cotizacion/tarifaPaquete";
 import { cargarAgenciaDeCotizacion } from "@/lib/cotizacion/agenciaCotizacion";
 import { abiertaConSalidaPasada, hoyBogota, MENSAJE_SALIDA_PASADA } from "@/lib/cotizacion/vigencia";
 
@@ -46,6 +47,8 @@ type Detalle = {
   incluye?: string | null;
   noIncluye?: string | null;
   tituloPaquete?: string | null;
+  // Cobertura de cada adicional y su NETO, derivados al cotizar (sin comisión ni plan). Ausente en cotizaciones anteriores: sin él no se reparte por pasajero.
+  paqueteSnapshot?: SnapshotPaquete | null;
 };
 
 // Vista pública (sin login) de una cotización, por token imposible de adivinar.
@@ -114,6 +117,7 @@ export default async function CotizacionPublicaPage({ params }: { params: Promis
             incluye={d.incluye ?? null}
             noIncluye={d.noIncluye ?? null}
             tituloPaquete={d.tituloPaquete ?? null}
+            paqueteSnapshot={d.paqueteSnapshot ?? null}
           />
         </div>
       </div>

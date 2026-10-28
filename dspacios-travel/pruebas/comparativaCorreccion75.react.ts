@@ -12,6 +12,8 @@ const { VigenciaTexto } = await import("../components/cotizacion/VigenciaTexto.t
 const { valoresNetosDocumento } = await import("../lib/contrato/valoresNetosDocumento.ts");
 const { tituloPaqueteTuristico, tituloPaqueteEditado } = await import("../lib/contrato/paqueteTuristicoDocumento.ts");
 const { sugerirIncluye } = await import("../lib/cotizacion/incluye.ts");
+const { snapshotPaqueteDePayload } = await import("../lib/cotizacion/tarifaPaquete.ts");
+const { construirPlanB2B } = await import("../lib/cotizacion/asistidaB2B.ts");
 const { abiertaConSalidaPasada, salidaPasada } = await import("../lib/cotizacion/vigencia.ts");
 const { descripcionCotizacionManual, tramosVueloManual, validarServicioManual } = await import("../lib/cart/servicioManual.ts");
 
@@ -33,35 +35,52 @@ const vueloManual = (id: number, pax: number, precio: number, impuestoNoComision
   if (!r.ok) throw new Error("vuelo inválido");
   const linea = { id, numero_contrato: "", descripcion: descripcionCotizacionManual(r.valor), adultos: 0, ninos: 0, tarifa_adulto: 0, tarifa_nino: 0, orden: id, modo_precio: "total", valor_total: precio };
   const vuelos = tramosVueloManual(r.valor, true).map((v, i) => ({ id: id * 10 + i, numero_contrato: "", ...v }));
-  return { linea, vuelos };
+  return { linea, vuelos, valor: r.valor };
 };
+/** Snapshot congelado que el servidor le da al documento: payload con alojamiento + manuales/tours; en NETO, además el plan B2B (10 % sobre lo comisionable). */
+function snapshot(o: { hotelPvp: number; manuales?: unknown[]; tours?: unknown[]; neto?: { lineas: { clave: string; pvp: number; impuesto: number }[] } }) {
+  const payload: Record<string, unknown> = { items: [{ precio: o.hotelPvp }], tours: o.tours ?? [], manuales: o.manuales ?? [] };
+  let exigible: number | null = null;
+  if (o.neto) {
+    const r = construirPlanB2B({ aliado: { id: 1, nombre: "Aliado", tipo: "agencia", pctAliado: 0.1 }, pct: 0.1, pctOrigen: "aliado", modo: "neta", moneda: "COP", lineas: o.neto.lineas, actor: { id: "u", email: null, rol: "venta" }, congeladoEn: "2030-01-01T00:00:00Z" });
+    assert.ok(r.ok);
+    if (!r.ok) throw new Error("plan");
+    payload.b2bAsistido = r.plan;
+    exigible = r.plan.total_exigible;
+  }
+  return { snap: snapshotPaqueteDePayload(payload, exigible), exigible };
+}
+const tour = (pax: number, precio: number) => ({ nombre: "City tour", destino: null, precio, pax });
 const HOTEL = "Hotel Almirante — CARTAGENA · 1 hab Doble (2 pax) · Estándar / PAM";
 
 describe("documento hijo con vuelo manual: la fila del paquete suma el total mostrado", () => {
-  const { linea, vuelos } = vueloManual(2, 2, 500_000, 120_000);
+  const { linea, vuelos, valor } = vueloManual(2, 2, 500_000, 120_000);
   const items = [item(1, HOTEL, 2, 0, 700_000, 0), linea];
-  test("NETO (caso del dueño): total 1.649.400 = fila 1.649.400 = 2 × 824.700; sin nota ni el reparto anterior", () => {
-    const t = doc({ items, vuelos, netoTotalExigible: 1_649_400 });
-    assert.match(t, /Total del contrato \$ 1\.649\.400/);
-    assert.match(t, /Paquete Turístico 2 0 \$ 824\.700 \$ 0 \$ 1\.649\.400/);
+  const pvpSnap = snapshot({ hotelPvp: 1_400_000, manuales: [valor] });
+  // NETO con plan: comisión 10 % solo sobre lo comisionable (hotel 1.400.000 + vuelo 500.000 − 120.000 de impuesto) = 178.000 → exigible 1.722.000.
+  const netoSnap = snapshot({ hotelPvp: 1_400_000, manuales: [valor], neto: { lineas: [{ clave: "item-0", pvp: 1_400_000, impuesto: 0 }, { clave: "manual-0", pvp: 500_000, impuesto: 120_000 }] } });
+  test("NETO con plan congelado: total 1.722.000 = fila 1.722.000 = 2 × 861.000; sin nota ni el reparto anterior", () => {
+    const t = doc({ items, vuelos, netoTotalExigible: netoSnap.exigible, paqueteSnapshot: netoSnap.snap });
+    assert.match(t, /Total del contrato \$ 1\.722\.000/);
+    assert.match(t, /Paquete Turístico 2 0 \$ 861\.000 \$ 0 \$ 1\.722\.000/);
     assert.doesNotMatch(t, /El total exigible incluye|incluye el valor de los vuelos/);
     assert.doesNotMatch(t, /665\.227|1\.330\.455/);
     assert.doesNotMatch(t, /Vuelo · Avianca/, "el vuelo no sale como importe individual");
-    assert.equal(t.split("1.649.400").length - 1, 3, "total, saldo y fila: ni sumado dos veces ni repetido");
+    assert.equal(t.split("1.722.000").length - 1, 3, "total, saldo y fila: ni sumado dos veces ni repetido");
   });
   test("PVP: total = fila, tarifa por adulto = la mitad, sin nota", () => {
-    const t = doc({ items, vuelos, netoTotalExigible: null });
+    const t = doc({ items, vuelos, netoTotalExigible: null, paqueteSnapshot: pvpSnap.snap });
     assert.match(t, /Total del contrato \$ 1\.900\.000/);
     assert.match(t, /Paquete Turístico 2 0 \$ 950\.000 \$ 0 \$ 1\.900\.000/);
     assert.doesNotMatch(t, /incluye el valor de los vuelos/);
   });
   test("reintento: renderizar de nuevo con los mismos datos congelados da el mismo documento", () => {
-    const a = doc({ items, vuelos, netoTotalExigible: 1_649_400 });
-    assert.equal(doc({ items: structuredClone(items), vuelos: structuredClone(vuelos), netoTotalExigible: 1_649_400 }), a);
+    const a = doc({ items, vuelos, netoTotalExigible: netoSnap.exigible, paqueteSnapshot: netoSnap.snap });
+    assert.equal(doc({ items: structuredClone(items), vuelos: structuredClone(vuelos), netoTotalExigible: netoSnap.exigible, paqueteSnapshot: structuredClone(netoSnap.snap) }), a);
   });
   test("con menores y vuelo no se inventa tarifa individual: se muestra el total agregado y las filas cuadran", () => {
     const conNino = [item(1, HOTEL, 2, 0, 500_000, 0), item(3, "Hotel Almirante — CARTAGENA · Niño 1 · Estándar / PAM", 0, 1, 0, 250_000), linea];
-    const t = doc({ items: conNino, vuelos, netoTotalExigible: 1_650_000.35 });
+    const t = doc({ items: conNino, vuelos, netoTotalExigible: 1_650_000.35, paqueteSnapshot: snapshot({ hotelPvp: 1_250_000, manuales: [valor] }).snap });
     assert.match(t, /Total del contrato \$ 1\.650\.000,35/);
     assert.doesNotMatch(t, /incluye el valor de los vuelos/);
     const fila = /Paquete Turístico 2 1 — — \$ ([0-9.,]+)/.exec(t);
@@ -171,7 +190,7 @@ describe("cotización normal con servicio manual: un solo ítem «Paquete Turís
   } as unknown as Parameters<typeof ContratoDocumento>[0]));
   const centavos = (s: string) => Math.round(Number(s.replace(/\./g, "").replace(",", ".")) * 100);
   const fila = (html: string) => plano(/<tr[^>]*data-testid="fila-paquete-turistico"[^]*?<\/tr>/.exec(html)?.[0] ?? "");
-  const servicio = (html: string) => centavos(/City tour (?:\S+ )*?\$ ([\d.,]+)/.exec(plano(html))![1]);
+  const importes = (html: string) => [...fila(html).matchAll(/\$ ([\d.,]+)/g)].map((m) => centavos(m[1]));
   const valorFila = (html: string) => centavos([...fila(html).matchAll(/\$ ([\d.,]+)/g)].at(-1)![1]);
   const svc = { id: 9, numero_contrato: "", descripcion: "Servicio · City tour", adultos: 2, ninos: 0, tarifa_adulto: 200_000, tarifa_nino: 0, orden: 9, modo_precio: null, valor_total: null };
 
@@ -186,33 +205,42 @@ describe("cotización normal con servicio manual: un solo ítem «Paquete Turís
   });
 
   describe("sin menores: paquete (hotel + vuelo, una vez) + servicios adicionales = total", () => {
-    const { linea, vuelos } = vueloManual(2, 2, 682_000);
+    const { linea, vuelos, valor } = vueloManual(2, 2, 682_000);
     const items = [item(1, HOTEL, 2, 0, 800_000, 0), linea, svc];
-    test("PVP: total $2.682.000 = paquete $2.282.000 (2 × $1.141.000) + servicio $400.000", () => {
-      const h = htmlDoc({ items, vuelos, netoTotalExigible: null });
+    const pvpSnap = snapshot({ hotelPvp: 1_600_000, manuales: [valor], tours: [tour(2, 400_000)] });
+    // NETO: 10 % sobre 2.682.000 (todo comisionable) → exigible 2.413.800.
+    const netoSnap = snapshot({ hotelPvp: 1_600_000, manuales: [valor], tours: [tour(2, 400_000)], neto: { lineas: [{ clave: "item-0", pvp: 1_600_000, impuesto: 0 }, { clave: "tour-0", pvp: 400_000, impuesto: 0 }, { clave: "manual-0", pvp: 682_000, impuesto: 0 }] } });
+    test("PVP: total $2.682.000 = 2 × $1.341.000 (alojamiento 800.000 + vuelo 341.000 + servicio 200.000 por persona), en UNA fila", () => {
+      const h = htmlDoc({ items, vuelos, netoTotalExigible: null, paqueteSnapshot: pvpSnap.snap });
       const t = plano(h);
       assert.match(t, /Total del contrato \$ 2\.682\.000/);
-      assert.match(fila(h), /Paquete Turístico CARTAGENA 4 días\/3 noches 2 0 \$ 1\.141\.000 \$ 0 \$ 2\.282\.000/);
-      assert.equal(valorFila(h) + servicio(h), 268_200_000);
+      assert.match(fila(h), /Paquete Turístico CARTAGENA 4 días\/3 noches 2 0 \$ 1\.341\.000 \$ 0 \$ 2\.682\.000/);
+      assert.equal(valorFila(h), 268_200_000);
+      assert.doesNotMatch(t, /\$ 400\.000|\$ 682\.000/, "los importes del vuelo y del servicio no se muestran por separado");
       assert.doesNotMatch(t, /Vuelo · Avianca/);
       assert.equal((h.match(/fila-paquete-turistico/g) ?? []).length, 1, "un único ítem, no una fila por acomodación");
       assert.match(t, /Servicios adicionales/);
     });
-    test("NETO: paquete + servicios = total exigible, el vuelo no se cuenta dos veces", () => {
-      const h = htmlDoc({ items, vuelos, netoTotalExigible: 2_500_000 });
-      assert.match(plano(h), /Total del contrato \$ 2\.500\.000/);
-      assert.equal(valorFila(h) + servicio(h), 250_000_000);
+    test("NETO: la fila ES el total exigible y el vuelo no se cuenta dos veces", () => {
+      const h = htmlDoc({ items, vuelos, netoTotalExigible: netoSnap.exigible, paqueteSnapshot: netoSnap.snap });
+      assert.match(plano(h), /Total del contrato \$ 2\.413\.800/);
+      assert.equal(valorFila(h), 241_380_000);
+      const todos = importes(h); const total = todos[todos.length - 1];
+      const partes = todos.slice(0, -1).filter((c) => c > 0); // 2 adultos: una tarifa × 2, o «1 × a» y «1 × b»
+      assert.equal(partes.length === 1 ? 2 * partes[0] : partes.reduce((x, y) => x + y, 0), total, "tarifas × cantidad = total");
     });
   });
 
   describe("con menores y vuelo: no se reparte el vuelo entre adulto y niño sin una decisión comercial", () => {
-    const { linea, vuelos } = vueloManual(2, 3, 682_000);
+    const { linea, vuelos, valor } = vueloManual(2, 3, 682_000);
+    const snapParcial = snapshot({ hotelPvp: 2_000_000, manuales: [valor], tours: [tour(2, 400_000)] }).snap; // el servicio cubre 2 de los 3 pasajeros
     const items = [item(1, HOTEL, 2, 0, 800_000, 0), item(3, "Hotel Almirante — CARTAGENA · Niño 1 · Estándar / PAM", 0, 1, 0, 400_000), linea, svc];
     for (const [nombre, neto, esperado] of [["PVP", null, 308_200_000], ["NETO", 2_900_000.35, 290_000_035]] as const) {
-      test(`${nombre}: Adultos 2, Niños 1, tarifas individuales ocultas ("—") y la fila + servicios cuadran con el total`, () => {
-        const h = htmlDoc({ items, vuelos, netoTotalExigible: neto });
+      test(`${nombre}: Adultos 2, Niños 1, tarifas individuales ocultas ("—") y la fila ya incluye el servicio: es el total`, () => {
+        const h = htmlDoc({ items, vuelos, netoTotalExigible: neto, paqueteSnapshot: snapParcial });
         assert.match(fila(h), /2 1 — — \$/);
-        assert.equal(valorFila(h) + servicio(h), esperado);
+        assert.equal(valorFila(h), esperado);
+        assert.match(plano(h), /No se muestra la tarifa por pasajero: el vuelo cubre 3 de los 2 pasajeros|No se muestra la tarifa por pasajero/);
         assert.match(plano(h), neto === null ? /Total del contrato \$ 3\.082\.000/ : /Total del contrato \$ 2\.900\.000,35/);
       });
     }
@@ -226,10 +254,15 @@ describe("cotización normal con servicio manual: un solo ítem «Paquete Turís
     for (const p of ["app/cot/[token]/page.tsx", "app/cotizacion/[id]/page.tsx"]) assert.match(leer(p), /tituloPaquete=\{d\.tituloPaquete \?\? null\}/, p);
   });
 
-  test("servicio manual sin vuelo y con menores: sí hay tarifas por adulto y por niño (nada que repartir)", () => {
-    const manual = { ...svc, id: 9, descripcion: "Servicio · City tour · 3 pax — sujeto a confirmación de disponibilidad y tarifa" };
-    const h = htmlDoc({ items: [item(1, HOTEL, 2, 0, 800_000, 0), item(3, "Hotel Almirante — CARTAGENA · Niño 1 · Estándar / PAM", 0, 1, 0, 400_000), manual], vuelos: [] });
-    assert.match(fila(h), /2 1 \$ 800\.000 \$ 400\.000 \$ 2\.000\.000/);
+  test("servicio manual para los 3 pasajeros y con menores: se reparte en centavos entre adultos y niño y las tarifas suman el total", () => {
+    const m = validarServicioManual({ clase: "otro", nombre: "City tour", pax: 3, precio: 400_000, moneda: "COP", impuestoNoComisionable: 0 }, "COP");
+    assert.ok(m.ok);
+    if (!m.ok) return;
+    const manual = { ...svc, id: 9, descripcion: descripcionCotizacionManual(m.valor) };
+    const h = htmlDoc({ items: [item(1, HOTEL, 2, 0, 800_000, 0), item(3, "Hotel Almirante — CARTAGENA · Niño 1 · Estándar / PAM", 0, 1, 0, 400_000), manual], vuelos: [], paqueteSnapshot: snapshot({ hotelPvp: 2_000_000, manuales: [m.valor] }).snap });
+    // 2 adultos × 800.000 + 1 niño × 400.000 + servicio 400.000 entre 3 personas (133.333,34 / 133.333,33 / 133.333,33).
+    assert.deepEqual(importes(h), [93_333_334, 93_333_333, 53_333_333, 240_000_000]);
+    assert.equal(importes(h)[0] + importes(h)[1] + importes(h)[2], importes(h)[3]);
   });
 
   test("la edición cambia solo el texto: mismos valores; una edición inválida se ignora", () => {

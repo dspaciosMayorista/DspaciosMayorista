@@ -17,6 +17,8 @@ import { formatFechaLarga } from "@/lib/utils";
 import { formatoExacto } from "@/lib/contrato/repartoTarifa";
 import { menoresDeOpcion, menoresNoDesglosables, otrosServiciosDeOpcion, tarifaVisibleOpcion, tiquetesDeOpcion, agruparPorHotel, canalDeRol, desdeComparativa, limiteSolicitudVencida, resumenDeOpcion, totalPublicoOpcion, type GrupoHotel, type OpcionVista } from "@/lib/cotizacion/comparativa";
 import { abiertaConSalidaPasada, hoyBogota } from "@/lib/cotizacion/vigencia";
+import { tarifaPaqueteOpcion } from "@/lib/cotizacion/tarifaPaquete";
+import { incluyeParaMostrar } from "@/lib/cotizacion/incluye";
 import { visitantePuedeContinuar } from "@/lib/cotizacion/comparativaServidor";
 import { PrintButton } from "@/components/contrato/PrintButton";
 import { ComparativaHoja, type IdentidadHoja } from "@/components/cotizacion/ComparativaHoja";
@@ -60,6 +62,10 @@ export async function cargarDatosComparativa(sb: SB, madreId: number): Promise<D
     const tiquetes = tiquetesDeOpcion(o.plantilla_hija, r.vuelos, o.moneda);
     if (tiquetes.length) r.tiquetes = tiquetes;
     r.tarifa = tarifaVisibleOpcion(o.resumen_publico, o.plantilla_hija, Number(o.total));
+    // Tarifa del paquete por pasajero (vuelos y servicios repartidos); si aplica, reemplaza a la del alojamiento. En NETO sale del plan B2B congelado.
+    r.paquete = tarifaPaqueteOpcion(o.resumen_publico, o.plantilla_hija, Number(o.total));
+    // Incluye: el texto guardado que es exactamente la propuesta antigua del snapshot (sin edición del asesor) se muestra con el orden vigente; uno editado no se toca.
+    r.incluye = incluyeParaMostrar(r.incluye, (o.plantilla_hija as { payload?: unknown } | null)?.payload);
     resumenes[`${o.opcion_ref}/${o.acomodacion_ref}`] = r;
     resumenes[o.opcion_ref] ??= r;
   }

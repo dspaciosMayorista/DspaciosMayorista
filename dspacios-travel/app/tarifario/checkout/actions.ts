@@ -41,6 +41,7 @@ import {
   aplicarDescripciones, leerPresentacionComparativa, lineaEditable, lineasEditables, tarifaPersonaCarrito, tarifaVisibleOpcion, type TarifaVisible,
 } from "@/lib/cotizacion/comparativa";
 import { NO_INCLUYE_DEFAULT, sugerirIncluyeCarrito } from "@/lib/cotizacion/incluye";
+import { snapshotPaqueteDePayload } from "@/lib/cotizacion/tarifaPaquete";
 import { huellaIp } from "@/lib/cotizacion/comparativaServidor";
 import { TIPOS_DOC_PERSONA } from "@/lib/personas/identidad";
 import { tipoDocCheckout } from "@/lib/personas/cotizacion";
@@ -1158,11 +1159,18 @@ async function crearCotizacionCarrito(input: {
     moneda,
   };
 
+  // Regla C.14: cada ítem Bernalo persistido lleva `modeloTarifario: "unidad"` (ya presente en `SolicitudItemBernaloComputado`) para que
+  // `convertirCotizacionCarrito` (3F-4B) lo detecte y bloquee la conversión a contrato explícitamente, sin caer al flujo persona.
+  const payloadCotizacion = { items: [...itemsOk, ...itemsBernaloOk], tours: toursOk, ...(manualesOk.length ? { manuales: manualesOk } : {}), serviciosIncluidos: incluidosPayload, cliente: input.cliente, ...(planB2B ? { b2bAsistido: planB2B } : {}) };
+
   const detalle = {
     venta: ventaSnap, pasajeros: [], hoteles: hotelesSnap, vuelos: vuelosSnap, items: itemsSnap,
     habitacionesBernalo: habitacionesBernaloSnap,
     composicionBernalo: composicionBernaloSnap,
     ...(manualesOk.length && input.tituloPaquete ? { tituloPaquete: input.tituloPaquete } : {}),
+    // Cobertura (pasajeros) de cada tour y servicio manual y, en NETO, su parte NETO del plan congelado: lo único que el documento necesita para repartir el
+    // paquete por pasajero. Sin comisión, impuesto ni plan; el documento público no lee `payload`, así que viaja aquí.
+    ...(manualesOk.length ? { paqueteSnapshot: snapshotPaqueteDePayload(payloadCotizacion, planB2B && planB2B.modo_compra === "neta" ? planB2B.total_exigible : null) } : {}),
     // #102: lo ÚNICO de la venta B2B que puede ver el comprador en los documentos de la cotización (imprimible y enlace público): en NETO,
     // el total exigible. Se deriva del plan congelado (que vive en `payload`, nunca en un documento externo); el PVP original y la comisión
     // no salen de aquí. Quien convierte lee siempre `payload.b2bAsistido`, jamás este valor.
@@ -1187,11 +1195,7 @@ async function crearCotizacionCarrito(input: {
     // tiene tarifario/catálogo público — MINORISTA_OCULTAS en proxy.ts).
     tenant: "mayorista",
     tipo: "carrito",
-    // Regla C.14: cada ítem Bernalo persistido lleva `modeloTarifario:
-    // "unidad"` (ya presente en `SolicitudItemBernaloComputado`) para que
-    // `convertirCotizacionCarrito` (3F-4B) lo detecte y bloquee la
-    // conversión a contrato explícitamente, sin caer al flujo persona.
-    payload: { items: [...itemsOk, ...itemsBernaloOk], tours: toursOk, ...(manualesOk.length ? { manuales: manualesOk } : {}), serviciosIncluidos: incluidosPayload, cliente: input.cliente, ...(planB2B ? { b2bAsistido: planB2B } : {}) } as unknown as Json,
+    payload: payloadCotizacion as unknown as Json,
     detalle: detalle as unknown as Json,
     cliente: campos.cliente,
     cliente_documento: campos.cliente_documento,

@@ -13,7 +13,7 @@ import { formatFechaLarga } from "@/lib/utils";
 import { formatoExacto } from "@/lib/contrato/repartoTarifa";
 import { bloquesCondiciones, condicionesPorOpcion, etiquetaTotalOpcion, resumenDeAcomodacion, tiquetesDeOpcion, type GrupoHotel } from "@/lib/cotizacion/comparativa";
 import type { ResumenHotelUI } from "@/lib/cotizacion/comparativaAcciones";
-import { ListasIncluye, MenoresOpcion, ServiciosAdicionalesOpcion, TarifaOpcion, VuelosOpcion } from "@/components/cotizacion/ListasIncluye";
+import { ListasIncluye, MenoresOpcion, ServiciosAdicionalesOpcion, TarifaOpcion, TarifaPaqueteOpcion, VuelosOpcion } from "@/components/cotizacion/ListasIncluye";
 
 const PRIMARY = COLOR_DOCUMENTO;
 
@@ -75,8 +75,12 @@ export function ComparativaHoja({ madre, grupos, resumenes, vencida, identidad }
               return (
                 <div key={a.acomodacionRef} className="space-y-1">
                   {etiquetaAcom(a.acomodacionRef) && <p className="text-[11px] font-semibold uppercase tracking-wide text-gray-500">{etiquetaAcom(a.acomodacionRef)}</p>}
-                  <TarifaOpcion tarifa={ra.tarifa} respaldo={{ valor: a.tarifaPersona, conMenores: true }} moneda={a.moneda} />
-                  <MenoresOpcion menores={ra.menores} noDesglosables={ra.menoresNoDesglosables} moneda={a.moneda} />
+                  {ra.paquete
+                    ? <TarifaPaqueteOpcion paquete={ra.paquete} moneda={a.moneda} />
+                    : <>
+                      <TarifaOpcion tarifa={ra.tarifa} respaldo={{ valor: a.tarifaPersona, conMenores: true }} moneda={a.moneda} />
+                      <MenoresOpcion menores={ra.menores} noDesglosables={ra.menoresNoDesglosables} moneda={a.moneda} />
+                    </>}
                   <div className="flex items-baseline justify-between gap-3 border-t border-gray-100 pt-1">
                     <span className="text-xs font-medium text-gray-600">{etiquetaTotalOpcion(ra)}</span>
                     <span className="shrink-0 whitespace-nowrap text-lg font-bold tabular-nums" style={{ color: PRIMARY }}>{formatoExacto(a.total, a.moneda)}</span>

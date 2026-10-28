@@ -26,7 +26,8 @@ import { resolverSolicitudComparativa } from "@/app/(dashboard)/dashboard/cotiza
 import type { ContextoModalidad, VistaNeto } from "@/app/(dashboard)/dashboard/cotizaciones/pagos-actions";
 import { bloqueoNeto, pctTexto } from "@/lib/cotizacion/netoHija";
 import { condicionesPorOpcion, etiquetaTotalOpcion, resumenDeAcomodacion, tiquetesDeOpcion, type GrupoHotel, type MenorOpcion, type OpcionVista, type OtroServicioOpcion, type TarifaVisible, type TiqueteVuelo } from "@/lib/cotizacion/comparativa";
-import { ListasIncluye, MenoresOpcion, ServiciosAdicionalesOpcion, TarifaOpcion, VuelosOpcion } from "@/components/cotizacion/ListasIncluye";
+import { ListasIncluye, MenoresOpcion, ServiciosAdicionalesOpcion, TarifaOpcion, TarifaPaqueteOpcion, VuelosOpcion } from "@/components/cotizacion/ListasIncluye";
+import type { TarifaPaquete } from "@/lib/cotizacion/tarifaPaquete";
 
 export type ModoSeleccion = "checkout" | "solicitud" | "interno" | "solo_lectura";
 
@@ -50,6 +51,8 @@ export type ResumenHotelUI = {
   tiquetes?: TiqueteVuelo[];
   /** #75: tarifa por persona/adulto que cuadra exactamente con lo liquidado; null/ausente = solo se muestra el total. */
   tarifa?: TarifaVisible | null;
+  /** Tarifa del paquete por pasajero (alojamiento + vuelos + servicios repartidos); null/ausente = se usa `tarifa` y `menores`. */
+  paquete?: TarifaPaquete | null;
 };
 
 function nuevaClave(): string {
@@ -303,8 +306,12 @@ export function SelectorOpciones({
               )}
 
               <div className="mt-auto border-t border-gray-100 pt-3">
-                <TarifaOpcion tarifa={r.tarifa} respaldo={{ valor: sel.tarifaPersona, conMenores: !!r.menores?.length }} moneda={sel.moneda} sufijo={etiquetaAcom(sel.acomodacionRef) ? ` · ${etiquetaAcom(sel.acomodacionRef)}` : ""} />
-                <div className="mt-1 space-y-1"><MenoresOpcion menores={r.menores} noDesglosables={r.menoresNoDesglosables} moneda={sel.moneda} pvp={conNeto} /></div>
+                {r.paquete
+                  ? <TarifaPaqueteOpcion paquete={r.paquete} moneda={sel.moneda} sufijo={etiquetaAcom(sel.acomodacionRef) ? ` · ${etiquetaAcom(sel.acomodacionRef)}` : ""} />
+                  : <>
+                    <TarifaOpcion tarifa={r.tarifa} respaldo={{ valor: sel.tarifaPersona, conMenores: !!r.menores?.length }} moneda={sel.moneda} sufijo={etiquetaAcom(sel.acomodacionRef) ? ` · ${etiquetaAcom(sel.acomodacionRef)}` : ""} />
+                    <div className="mt-1 space-y-1"><MenoresOpcion menores={r.menores} noDesglosables={r.menoresNoDesglosables} moneda={sel.moneda} pvp={conNeto} /></div>
+                  </>}
                 <div className="mt-1 flex items-baseline justify-between gap-3">
                   <span className={conNeto ? "min-w-0 text-xs font-medium text-gray-500" : "min-w-0 text-sm font-medium text-gray-600"}>
                     {conNeto ? "PVP original (cliente)" : etiquetaTotalOpcion(r)}

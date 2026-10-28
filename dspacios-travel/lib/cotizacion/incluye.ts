@@ -69,3 +69,37 @@ export function sugerirIncluyeCarrito(payload: unknown): string {
   for (const m of lista(p.manuales)) servicios.push({ tipo: m.clase === "vuelo" ? "aereo" : "otro", nombre: texto(m.nombre) });
   return sugerirIncluye(servicios);
 }
+
+/** Propuesta que generaba la versión anterior (orden de inserción, tours de traslado como «otro»): solo sirve para reconocer un texto guardado sin edición. */
+function incluyeAntiguoCarrito(payload: unknown): string {
+  const p = (typeof payload === "object" && payload !== null ? payload : {}) as Record<string, unknown>;
+  const lineas: string[] = [];
+  for (const it of lista(p.items)) {
+    const plan = [texto(it.categoria), texto(it.regimen ?? it.alimentacion)].filter(Boolean).join(", plan ");
+    const nombre = texto(it.hotelNombre);
+    if (nombre) lineas.push(`Alojamiento en ${plan ? `${nombre} (${plan})` : nombre}`);
+  }
+  for (const s of [...lista(p.serviciosIncluidos), ...lista(p.tours)]) {
+    const nombre = texto(s.nombre);
+    if (s.categoria === "asistencia") lineas.push(`Asistencia médica${nombre ? ` (${nombre})` : ""}`);
+    else if (nombre) lineas.push(nombre);
+  }
+  for (const m of lista(p.manuales)) {
+    const nombre = texto(m.nombre);
+    if (m.clase === "vuelo") lineas.push(`Tiquetes aéreos${nombre ? ` (${nombre})` : ""}`);
+    else if (nombre) lineas.push(nombre);
+  }
+  return [...new Set(lineas)].join("\n");
+}
+
+const normalizarTexto = (t: string) => t.replace(/\r\n/g, "\n").trim();
+
+/**
+ * «Incluye» para MOSTRAR una opción ya guardada: si el texto guardado es EXACTAMENTE lo que generaba el sistema antes (la propuesta de su snapshot, sin que un asesor
+ * lo tocara), se muestra con el orden vigente; cualquier otro texto (editado, o vacío) se devuelve intacto. No escribe nada en la base.
+ */
+export function incluyeParaMostrar<T extends string | null | undefined>(guardado: T, payload: unknown): T | string {
+  if (typeof guardado !== "string" || !guardado.trim()) return guardado;
+  const antiguo = incluyeAntiguoCarrito(payload);
+  return antiguo && normalizarTexto(guardado) === normalizarTexto(antiguo) ? sugerirIncluyeCarrito(payload) : guardado;
+}
