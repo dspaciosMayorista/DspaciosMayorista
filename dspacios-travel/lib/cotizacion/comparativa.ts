@@ -607,6 +607,77 @@ export function otrosServiciosDeOpcion(plantilla: unknown, total: unknown): { ok
   return { ok: true, otros };
 }
 
+/** Tarifa de un menor (Niño 1/2, infante) de UNA opción, tal como la liquidó el snapshot de esa opción: nunca la de adulto. */
+export type MenorOpcion = { descripcion: string; cantidad: number; tarifa: number };
+
+/**
+ * Tarifa de los menores REALMENTE cotizados en una opción (se muestra en el documento; no se calcula ni se infiere).
+ *  · Comparativa manual: la línea «Tarifa por niño» de `resumen_publico.items` (cantidad × tarifa_unit).
+ *  · Comparativa de carrito: las líneas de menores de `plantilla_hija.detalle.items` (adultos = 0, ninos = cantidad, tarifa_nino).
+ * Sin menores cotizados → []. Una opción NETO (`total_exigible`) también → []: sus líneas están a PVP y no cuadran con el total exigible.
+ * `etiqueta` (hotel) se recorta del inicio de la descripción para que no se repita bajo el nombre del hotel.
+ */
+function leerMenores(resumen: unknown, plantilla: unknown, etiqueta: string): MenorOpcion[] {
+  const obj = (v: unknown): v is Record<string, unknown> => typeof v === "object" && v !== null && !Array.isArray(v);
+  const num = (v: unknown) => (typeof v === "number" && Number.isFinite(v) && v >= 0 ? v : null);
+  const cant = (v: unknown) => (typeof v === "number" && Number.isInteger(v) && v > 0 ? v : null);
+  const r = obj(resumen) ? resumen : {};
+  const out: MenorOpcion[] = [];
+  if (Array.isArray(r.items)) {
+    for (const i of r.items) {
+      if (!obj(i) || i.descripcion !== "Tarifa por niño") continue;
+      const cantidad = cant(i.cantidad), tarifa = num(i.tarifa_unit);
+      if (cantidad && tarifa != null) out.push({ descripcion: "Niño", cantidad, tarifa });
+    }
+  }
+  const detalle = obj(plantilla) && obj(plantilla.detalle) ? plantilla.detalle : null;
+  if (detalle && Array.isArray(detalle.items)) {
+    for (const i of detalle.items) {
+      if (!obj(i) || i.adultos !== 0) continue;
+      const cantidad = cant(i.ninos), tarifa = num(i.tarifa_nino);
+      if (!cantidad || tarifa == null || typeof i.descripcion !== "string") continue;
+      const d = i.descripcion.startsWith(etiqueta) ? i.descripcion.slice(etiqueta.length) : i.descripcion;
+      out.push({ descripcion: d.replace(/^(\s*—\s*[^·]*)?\s*·\s*/, "").trim() || "Menor", cantidad, tarifa });
+    }
+  }
+  return out;
+}
+
+const esNeto = (resumen: unknown) => typeof (resumen as { total_exigible?: unknown } | null)?.total_exigible === "number";
+
+/** Tarifa de menores que se puede MOSTRAR: la liquidada en el snapshot. En una opción NETO → [] (ver `menoresNoDesglosables`). */
+export function menoresDeOpcion(resumen: unknown, plantilla: unknown, etiqueta: string): MenorOpcion[] {
+  return esNeto(resumen) ? [] : leerMenores(resumen, plantilla, etiqueta);
+}
+
+/** Opción NETO cuyo snapshot SÍ trae líneas de menores (a PVP): no se muestran como NETO ni se mezclan con el total exigible; la pantalla explica el límite. */
+export function menoresNoDesglosables(resumen: unknown, plantilla: unknown, etiqueta: string): boolean {
+  return esNeto(resumen) && leerMenores(resumen, plantilla, etiqueta).length > 0;
+}
+
+/** Texto libre (una línea por ítem, o separado por «·» / «;») → lista de viñetas. */
+export function lineasTexto(texto?: string | null): string[] {
+  return (texto || "").split(/\r?\n|·|;/).map((t) => t.replace(/^[-•*\s]+/, "").trim()).filter(Boolean);
+}
+
+/**
+ * Incluye / No incluye por opción. `comun` = idéntico en TODAS las opciones y no vacío (se muestra una sola vez); si difiere, cada opción lleva el suyo (`porOpcion`).
+ * Una opción sin texto no muestra nada (nunca se le presta el de otra).
+ */
+export function condicionesPorOpcion(grupos: readonly GrupoHotel[], resumenes: Record<string, ResumenHotelUI>): {
+  comun: { inc: string[]; no: string[] } | null; porOpcion: Record<string, { inc: string[]; no: string[] }>;
+} {
+  const porOpcion: Record<string, { inc: string[]; no: string[] }> = {};
+  for (const g of grupos) {
+    const r = resumenes[g.opcionRef] ?? resumenes[`${g.opcionRef}/${g.acomodaciones[0]?.acomodacionRef}`] ?? {};
+    porOpcion[g.opcionRef] = { inc: lineasTexto(r.incluye), no: lineasTexto(r.noIncluye) };
+  }
+  const todas = grupos.map((g) => porOpcion[g.opcionRef]);
+  const clave = (t: { inc: string[]; no: string[] }) => JSON.stringify([t.inc, t.no]);
+  const comun = todas.length > 0 && todas.every((t) => clave(t) === clave(todas[0])) && (todas[0].inc.length > 0 || todas[0].no.length > 0) ? todas[0] : null;
+  return { comun, porOpcion };
+}
+
 /** Roles internos que pueden dejar una comparativa compartida: los MISMOS de `f211_priv.madre_anonima` (migración 250). */
 export const ROLES_CREADOR_COMPARTIDA = ["superadmin", "gerencia", "administracion", "operaciones", "venta"] as const;
 

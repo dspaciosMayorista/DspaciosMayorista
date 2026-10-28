@@ -62,7 +62,9 @@ const madre = { id: 1, codigo: "COT-CMP-1", version: 1, estado: "abierta", clien
 const texto = (html: string) => html.replace(/<[^>]+>/g, " ").replace(/&nbsp;| /g, " ").replace(/&amp;/g, "&").replace(/\s+/g, " ");
 async function pintar(opciones: Fila[], modo: "solo_lectura" | "checkout") {
   const d = await cargarDatosComparativa(bdCon(opciones), 1);
-  const html = renderToStaticMarkup(createElement(ComparativaDocumento as ComponentType<Record<string, unknown>>, { madre, datos: d, modo, token: modo === "checkout" ? "t".repeat(36) : null, vencida: false }));
+  const completo = renderToStaticMarkup(createElement(ComparativaDocumento as ComponentType<Record<string, unknown>>, { madre, datos: d, modo, token: modo === "checkout" ? "t".repeat(36) : null, vencida: false }));
+  // #75: en el enlace público la hoja de impresión viaja oculta en pantalla (`hidden print:block`) con los MISMOS datos; esta prueba mide la vista de pantalla.
+  const html = completo.split('<div class="hidden print:block">')[0];
   return { d, t: texto(html), html };
 }
 const veces = (t: string, s: string) => t.split(s).length - 1;

@@ -25,7 +25,8 @@ import { elegirOpcionComparativa, solicitarOpcionComparativa } from "@/app/tarif
 import { resolverSolicitudComparativa } from "@/app/(dashboard)/dashboard/cotizaciones/manual-actions";
 import type { ContextoModalidad, VistaNeto } from "@/app/(dashboard)/dashboard/cotizaciones/pagos-actions";
 import { bloqueoNeto, pctTexto } from "@/lib/cotizacion/netoHija";
-import type { GrupoHotel, OpcionVista, OtroServicioOpcion } from "@/lib/cotizacion/comparativa";
+import { condicionesPorOpcion, type GrupoHotel, type MenorOpcion, type OpcionVista, type OtroServicioOpcion } from "@/lib/cotizacion/comparativa";
+import { ListasIncluye, MenoresOpcion } from "@/components/cotizacion/ListasIncluye";
 
 export type ModoSeleccion = "checkout" | "solicitud" | "interno" | "solo_lectura";
 
@@ -41,6 +42,10 @@ export type ResumenHotelUI = {
   otrosNoVerificables?: boolean;
   incluye?: string | null;
   noIncluye?: string | null;
+  /** Tarifa real de los menores cotizados en esta opción (solo la usa el documento; ausente si no hay menores o la opción es NETO). */
+  menores?: MenorOpcion[];
+  /** Opción NETO cuyas líneas de menores están a PVP: no se muestran como NETO y se explica el límite. */
+  menoresNoDesglosables?: boolean;
 };
 
 function nuevaClave(): string {
@@ -202,6 +207,8 @@ export function SelectorOpciones({
   // #50: modalidad PVP/NETO (solo comparativa manual B2B elegida por el equipo).
   const ctxMod = useContextoModalidad(modo === "interno", token, null);
   const [eleccion, setEleccion] = useState<EleccionModalidad>(SIN_ELECCION);
+  // #75: Incluye / No incluye — común a todas las opciones (una vez, tras las tarjetas) o propio de cada una.
+  const { comun, porOpcion } = condicionesPorOpcion(grupos, resumenes);
 
   function actuar(opcionRef: string, acomodacionRef: string) {
     setErr(""); setOk("");
@@ -300,17 +307,21 @@ export function SelectorOpciones({
               )}
               {r.items && r.items.length > 0 && (
                 <ul className="mb-3 space-y-1 text-xs text-gray-600">
-                  {r.items.map((it) => <li key={it.descripcion}>{it.descripcion}</li>)}
+                  {r.items.filter((it) => it.descripcion !== "Tarifa por niño").map((it) => <li key={it.descripcion}>{it.descripcion}</li>)}
                 </ul>
+              )}
+              {!comun && (porOpcion[g.opcionRef].inc.length > 0 || porOpcion[g.opcionRef].no.length > 0) && (
+                <div className="mb-3"><ListasIncluye incluye={porOpcion[g.opcionRef].inc} noIncluye={porOpcion[g.opcionRef].no} opcion={g.opcionRef} columnas={1} /></div>
               )}
 
               <div className="mt-auto border-t border-gray-100 pt-3">
                 {sel.tarifaPersona != null && (
                   <div className="flex items-baseline justify-between gap-3 text-xs text-gray-500">
-                    <span className="min-w-0">Tarifa por persona{etiquetaAcom(sel.acomodacionRef) ? ` · ${etiquetaAcom(sel.acomodacionRef)}` : ""}</span>
+                    <span className="min-w-0">{r.menores?.length ? "Tarifa por adulto" : "Tarifa por persona"}{etiquetaAcom(sel.acomodacionRef) ? ` · ${etiquetaAcom(sel.acomodacionRef)}` : ""}</span>
                     <span className="shrink-0 whitespace-nowrap text-right font-medium tabular-nums text-gray-700">{formatMoneda(sel.tarifaPersona, sel.moneda)}</span>
                   </div>
                 )}
+                <div className="mt-1 space-y-1"><MenoresOpcion menores={r.menores} noDesglosables={r.menoresNoDesglosables} moneda={sel.moneda} pvp={conNeto} /></div>
                 <div className="mt-1 flex items-baseline justify-between gap-3">
                   <span className={conNeto ? "min-w-0 text-xs font-medium text-gray-500" : "min-w-0 text-sm font-medium text-gray-600"}>
                     {conNeto ? "PVP original (cliente)" : "Total de este hotel"}
@@ -365,6 +376,13 @@ export function SelectorOpciones({
           );
         })}
       </div>
+
+      {comun && (
+        <section aria-label="Incluye y no incluye de todas las opciones">
+          <h3 className="mb-2 text-sm font-semibold text-gray-700">Incluye / No incluye (todas las opciones)</h3>
+          <ListasIncluye incluye={comun.inc} noIncluye={comun.no} />
+        </section>
+      )}
     </div>
   );
 }
