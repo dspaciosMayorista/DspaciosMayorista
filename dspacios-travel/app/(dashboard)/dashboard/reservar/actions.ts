@@ -111,6 +111,7 @@ import { aceptarOferta63, crearCotizacionOferta63, leerRevisiones63, ventaExiste
 import { validarEleccionCobro } from "@/lib/finanzas/cobro";
 import { decidirCxP, evaluarObligaciones, type Obligacion } from "@/lib/reservar/monedaObligacionesCarrito";
 import { compararTrmCostoConCongelada, decidirTrmCosto, equivalenteCopCosto, leerTrmCostoCongelada } from "@/lib/finanzas/costoTrmCarrito";
+import { opcionalDeTourCarrito } from "@/lib/paquetes/pvpInfanteFijo";
 import { costoAereoBloqueo, costoHotelPersona, costoTourParaCxP, costoVueloBernalo, liquidarCostoTour } from "@/lib/reservar/costosObligacionesCarrito";
 import { cobroDeContratoCarrito, compararConCongelado, leerCobroCongelado, monedaOfertaDeCotizacion, resolverMonedaOferta, validarEleccionCarrito } from "@/lib/finanzas/cobroCarrito";
 import { ROLES_INTERNOS } from "@/lib/constants";
@@ -1634,6 +1635,9 @@ export type ItemCarritoPayload = {
   hotelNombre: string; destino: string | null; categoria: string; regimen: string;
   fechaIda: string | null; fechaRegreso: string | null; noches: number | null;
   habitaciones: Record<string, number>; ninos: number; ninos2: number; infantes: number; pax: number; precio: number;
+  // Edades EXACTAS de los menores que se cotizaron (y su cantidad), congeladas por checkout/actions.ts. AUSENTES en cotizaciones anteriores a que se
+  // guardaran: con menores declarados, esas cotizaciones no se pueden clasificar con seguridad y la conversión las rechaza (nunca se infieren).
+  edadesMenores?: number[]; cantidadMenores?: number;
   // Referencia ESTABLE del ítem (ver checkout/actions.ts::crearCotizacionCarrito)
   // — OPCIONAL: cotizaciones creadas ANTES de esta ronda no la traen. Cuando
   // falta, `resolverCondicionesTarifaParaConversion` (lib/calc/condicionesTarifa.ts)
@@ -2254,6 +2258,9 @@ export async function convertirCotizacionCarrito(
     validadosPersona: { item: ItemCarritoPersonaConAsignacion; comp: ComputoReserva; incluidos: ServicioEfectivo[] }[];
     validadosBernalo: ValidadoBernalo[];
   }[] = [];
+  // Un rechazo de las guardas de este bloque ocurre ANTES de numerar y de escribir nada para el grupo que falla; si otros grupos ya se habían convertido
+  // (intento anterior parcial), el mensaje lo dice: esos contratos sí quedaron creados y no se tocan.
+  const conCreados = (motivo: string) => (numeros.length ? `${motivo} (los contratos ${numeros.join(", ")} sí quedaron creados y no se tocan; el grupo que falla no creó ningún contrato)` : motivo);
   for (const grupo of gruposPendientes) {
     const validadosPersona: { item: ItemCarritoPersonaConAsignacion; comp: ComputoReserva; incluidos: ServicioEfectivo[] }[] = [];
     const validadosBernalo: ValidadoBernalo[] = [];
@@ -2268,12 +2275,28 @@ export async function convertirCotizacionCarrito(
       }
       // Salida dinámica cotizada en el carrito público: esta conversión no arma su vuelo por sistema todavía — falla cerrada y explícita.
       if ((it.modulo as string) === "dinamico") return { ok: false, error: `${it.hotelNombre}: es una salida dinámica; genera su contrato desde Reservar (módulo dinámico).` };
+      // Menores: la fuente de verdad son las EDADES congeladas de ESTE ítem (como al cotizar), nunca los conteos ni los pasajeros de otro hotel. Una
+      // cotización con menores declarados y sin edades guardadas no se puede clasificar con seguridad: se rechaza ANTES de numerar.
+      const declarados = (it.ninos || 0) + (it.ninos2 || 0) + (it.infantes || 0);
+      const edadesCongeladas = it.edadesMenores;
+      if (edadesCongeladas === undefined && declarados > 0) {
+        return { ok: false, error: conCreados(`${it.hotelNombre}: esta cotización es anterior al registro de las edades de los menores y no se puede clasificar con seguridad. Vuelve al tarifario, escribe la edad de cada menor y genera una cotización nueva antes de convertir.`) };
+      }
+      if (edadesCongeladas !== undefined && (!Array.isArray(edadesCongeladas) || edadesCongeladas.some((e) => typeof e !== "number" || !Number.isFinite(e)))) {
+        return { ok: false, error: conCreados(`${it.hotelNombre}: las edades de los menores guardadas en la cotización no son válidas. Genera una cotización nueva antes de convertir.`) };
+      }
+      // El precio congelado es obligatorio y debe ser un número finito ≥ 0: ausente, nulo, texto o NaN/Infinity se rechaza (la guarda nunca se salta).
+      if (typeof it.precio !== "number" || !Number.isFinite(it.precio) || it.precio < 0) {
+        return { ok: false, error: conCreados(`${it.hotelNombre}: la cotización no trae un precio congelado válido, así que no se puede comprobar contra el precio actual. Vuelve al tarifario y genera una cotización nueva antes de convertir.`) };
+      }
       const reserva: ReservaInput = {
         paqueteId: it.paqueteId, bloqueoId: it.bloqueoId, modulo: it.modulo, hotelId: it.hotelId,
         fechaIda: it.modulo !== "bloqueo" ? (it.fechaIda ?? undefined) : undefined,
         fechaRegreso: it.modulo !== "bloqueo" ? (it.fechaRegreso ?? undefined) : undefined,
         categoria: it.categoria, regimen: it.regimen, habitaciones: it.habitaciones,
-        ninos: it.ninos, ninos2: it.ninos2, infantes: it.infantes || 0,
+        ...(edadesCongeladas !== undefined
+          ? { ninos: 0, ninos2: 0, infantes: 0, edadesMenores: [...edadesCongeladas], cantidadMenores: it.cantidadMenores ?? edadesCongeladas.length }
+          : { ninos: it.ninos, ninos2: it.ninos2, infantes: it.infantes || 0 }),
         cliente: { nombres: cliente.nombres, apellidos: cliente.apellidos, tipoDoc: "CC", numeroDoc: cliente.numeroDoc, telefono: cliente.telefono, email: cliente.email },
         tipoAsesor: "interno", asesorInterno: opts.asesorInterno || "", agenciaNombre: "", agenciaAsesor: "", freelanceNombre: "",
         // Cada ítem valida EXACTAMENTE con SUS pasajeros asignados (B11,
@@ -2282,9 +2305,19 @@ export async function convertirCotizacionCarrito(
         // cada uno con su propio `pax`, sin ninguna garantía de que
         // compartan el mismo subconjunto de `opts.pasajeros`.
         aliadoId: null, plazo: "", pasajeros: it.__posiciones.map((pos) => opts.pasajeros[pos - 1]), servicios: [],
+        // PVP fijo del infante (254): los tours cotizados para ESTE hotel (mismo `hotelRef` congelado) entran a la decisión igual que al cotizar.
+        opcionalesInfante: tours.filter((t) => t.hotelRef != null && t.hotelRef === it.ref).map((t) => opcionalDeTourCarrito({ categoria: t.categoria, precio: Number(t.precio) || 0 })),
       };
       const comp = await computarReserva(sb, reserva);
       if (!comp.ok) return { ok: false, error: `${it.hotelNombre}: ${comp.error}` };
+      // Lo recalculado debe ser lo cotizado: misma clasificación de menores y mismo precio congelado. Si el hotel, sus edades o las tarifas cambiaron,
+      // se detiene ANTES de numerar y de escribir nada.
+      if (edadesCongeladas !== undefined && (comp.data.numNinos !== (it.ninos || 0) || comp.data.numNinos2 !== (it.ninos2 || 0) || comp.data.numInfantes !== (it.infantes || 0))) {
+        return { ok: false, error: conCreados(`${it.hotelNombre}: la clasificación de los menores cambió desde que se generó la cotización (por la edad configurada del hotel). Vuelve al tarifario, recotiza y genera una cotización nueva antes de convertir.`) };
+      }
+      if (comp.data.precioVenta !== it.precio) {
+        return { ok: false, error: conCreados(`${it.hotelNombre}: el precio cambió desde que se generó la cotización (antes ${it.precio}, ahora ${comp.data.precioVenta} ${comp.data.monedaReserva}). Vuelve al tarifario, recotiza y genera una nueva cotización antes de convertir.`) };
+      }
       // Hallazgo confirmado (P2-1): mismo criterio que la guarda de moneda de
       // `validarBernaloParaConversion` — `cotizaciones.moneda` es la moneda
       // ÚNICA congelada para TODA la cotización (persona + Bernalo mixtos

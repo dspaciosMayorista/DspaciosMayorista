@@ -170,7 +170,7 @@ describe("los caminos de venta usan la fuente única de menores de 2 años", () 
 
   test("computarReserva: precio por tarifarMenores, lectura de precio_pvp_menor2, servicios con el pax de 2+ años", () => {
     assert.match(computo, /tarifarMenores\(/);
-    assert.match(computo, /precio_pvp, precio_pvp_menor2, hotel_nombre/);
+    assert.match(computo, /precio_pvp, precio_pvp_menor2, precio_pvp_sin_fijo, precio_pvp_menor2_sin_fijo, hotel_nombre/);
     assert.match(computo, /const paxServAdulto = esServicios \? totalPax : paxConSilla;/);
     assert.match(computo, /precioServicio\(s\.modo, s\.personaPvp, s\.grupos, paxServAdulto\)/);
     assert.match(computo, /cargoGrupoIncluido\(gruposIncluidosPendientes, paxServAdulto,/);
@@ -263,8 +263,8 @@ describe("catálogo y vuelos: los campos nuevos están en las pantallas y en la 
     assert.match(pub, /\["infante", "Infante \(menor de 2 años\)"\]/);
     assert.match(pub, /r\.preciosMenor2\?\.infante \?\? r\.precios\.infante/);
     assert.match(pub, /Desde los 2 años, el vuelo y los servicios se cobran como adulto/);
-    assert.match(leer("lib/tarifario/datos.ts"), /precio_pvp, precio_pvp_menor2, descripcion/);
-    assert.match(leer("app/tarifario/detalle-actions.ts"), /precio_pvp, precio_pvp_menor2, descripcion/);
+    assert.match(leer("lib/tarifario/datos.ts"), /precio_pvp, precio_pvp_menor2, precio_pvp_sin_fijo, precio_pvp_menor2_sin_fijo, descripcion/);
+    assert.match(leer("app/tarifario/detalle-actions.ts"), /precio_pvp, precio_pvp_menor2, precio_pvp_sin_fijo, precio_pvp_menor2_sin_fijo, descripcion/);
   });
   test("listado de paquetes: aviso de los que hay que regenerar (solo lectura, sin barrido automático)", () => {
     const acciones = leer("app/(dashboard)/dashboard/paquetes/actions.ts");

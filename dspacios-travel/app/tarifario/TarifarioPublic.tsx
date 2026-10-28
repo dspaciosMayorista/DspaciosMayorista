@@ -58,6 +58,9 @@ export type FilaTarifario = {
   // Migración 226: precio de un MENOR DE 2 AÑOS (fee de infante del vuelo + servicios
   // con su precio de infante + hotel de su clase). NULL en habitaciones adultas.
   precio_pvp_menor2?: number | null;
+  // Migración 254: precio NORMAL del infante cuando el PVP fijo del paquete lo reemplazó (por ruta). NULL = el fijo no se aplicó.
+  precio_pvp_sin_fijo?: number | null;
+  precio_pvp_menor2_sin_fijo?: number | null;
   descripcion?: string | null;
   recargo_individual?: number | null;
   moneda?: string | null;
