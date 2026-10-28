@@ -131,9 +131,12 @@ test("vuelos y servicios adicionales cuelgan de su opción, sin importe propio",
   };
   const s = html(grupos, { "A/unica": r, A: r, "B/unica": {}, B: {} });
   const [antesB] = s.split("data-testid=\"opcion-B\"");
-  assert.match(antesB, /Vuelo ida: BOG/);
+  assert.match(antesB, /Vuelo de ida/);
+  assert.match(antesB, /BOG → CTG · 10 de noviembre de 2026 · salida 08:15/);
   assert.match(antesB, /Tour islas/);
-  assert.equal(cuenta(s, "Vuelo ida"), 1);
+  assert.equal(cuenta(s, "Vuelo de ida"), 1);
+  // #75: primero los vuelos y debajo los servicios adicionales.
+  assert.ok(antesB.indexOf("Vuelo de ida") < antesB.indexOf("Servicios adicionales"));
   assert.ok(!s.includes("99.999") && !s.includes("99999"));
 });
 
@@ -176,4 +179,52 @@ test("las condiciones van pegadas al último bloque que las precede (break-befor
   const s = html(grupos, resumenes);
   assert.match(s, /<section class="[^"]*break-before-avoid[^"]*" data-testid="condiciones-hoja"/, "las condiciones se pegan a lo anterior");
   assert.match(s, /<section class="[^"]*break-inside-avoid[^"]*" data-testid="condiciones-hoja"/, "y no se parten");
+});
+
+// ── Incluye / No incluye por ACOMODACIÓN (Doble incluye desayuno, Sencilla no) y rótulo del total ──
+const vista = (ref: string, acom: string, total: number): OpcionVista => ({ opcionRef: ref, acomodacionRef: acom, etiqueta: `Hotel ${ref}`, moneda: "COP", tarifaPersona: 300_000, total, orden: 0 });
+const ACOM = {
+  grupos: [
+    { opcionRef: "A", etiqueta: "Hotel A", moneda: "COP", acomodaciones: [vista("A", "doble", 600_000), vista("A", "sencilla", 900_000)] },
+    { opcionRef: "B", etiqueta: "Hotel B", moneda: "COP", acomodaciones: [vista("B", "doble", 700_000)] },
+  ],
+  resumenes: {
+    "A/doble": { incluye: "Desayuno buffet", noIncluye: "Propinas" }, "A/sencilla": { incluye: "Traslados", noIncluye: "Propinas" },
+    "B/doble": { incluye: "Desayuno buffet", noIncluye: "Propinas" },
+    // La clave de la opción es la de la PRIMERA acomodación: nunca debe prestarse a la otra.
+    A: { incluye: "Desayuno buffet", noIncluye: "Propinas" }, B: { incluye: "Desayuno buffet", noIncluye: "Propinas" },
+  } as Record<string, ResumenHotelUI>,
+};
+
+test("Doble con desayuno y Sencilla sin él: la hoja imprime el texto de CADA acomodación y no hay bloque común", () => {
+  const s = html(ACOM.grupos, ACOM.resumenes);
+  assert.doesNotMatch(s, /todas las opciones\)/);
+  assert.match(s, /Opción A · Doble/); assert.match(s, /Opción A · Sencilla/);
+  assert.equal(cuenta(s, "Desayuno buffet"), 2, "A/Doble y B");
+  assert.equal(cuenta(s, "Traslados"), 1, "solo en A/Sencilla");
+  const sencilla = s.slice(s.indexOf("Opción A · Sencilla"));
+  assert.doesNotMatch(sencilla.slice(0, sencilla.indexOf("</article>")), /Desayuno buffet/);
+});
+
+test("mismo texto en todas las alternativas y acomodaciones: UN bloque común", () => {
+  const igual = Object.fromEntries(Object.keys(ACOM.resumenes).map((k) => [k, { incluye: "Desayuno buffet", noIncluye: "Propinas" }]));
+  const s = html(ACOM.grupos, igual);
+  assert.equal(cuenta(s, "Incluye / No incluye (todas las opciones)"), 1);
+  assert.equal(cuenta(s, "Desayuno buffet"), 1);
+});
+
+test("acomodaciones de una opción con el mismo texto pero otra opción distinta: un solo bloque por opción, sin rótulo de acomodación", () => {
+  const r = { ...ACOM.resumenes, "A/sencilla": { incluye: "Desayuno buffet", noIncluye: "Propinas" }, "B/doble": { incluye: "Cena", noIncluye: "" }, B: { incluye: "Cena", noIncluye: "" } };
+  const s = html(ACOM.grupos, r);
+  assert.doesNotMatch(s, /Opción A · /);
+  assert.equal(cuenta(s, "Desayuno buffet"), 1);
+  assert.match(s, /Cena/);
+});
+
+test("el total se rotula «de esta opción» cuando incluye vuelos o servicios, y «de este hotel» si es solo alojamiento; los importes no cambian", () => {
+  const con = { ...ACOM.resumenes, "A/doble": { ...ACOM.resumenes["A/doble"], servicios: [{ nombre: "Tour", precio: null }] } };
+  const s = html(ACOM.grupos, con);
+  assert.equal(cuenta(s, "Total de esta opción"), 1);
+  assert.equal(cuenta(s, "Total de este hotel"), 2);
+  for (const n of [600_000, 900_000, 700_000]) assert.match(s, new RegExp(COP(n)));
 });

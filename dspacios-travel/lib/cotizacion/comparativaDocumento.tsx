@@ -13,8 +13,9 @@ import { ArrowLeft, ExternalLink, GitCompareArrows, History, Printer } from "luc
 import type { Database } from "@/types/database";
 import { createClient } from "@/lib/supabase/server";
 import { createAdminClient } from "@/lib/supabase/admin";
-import { formatFechaLarga, formatMoneda } from "@/lib/utils";
-import { menoresDeOpcion, menoresNoDesglosables, otrosServiciosDeOpcion, agruparPorHotel, canalDeRol, desdeComparativa, limiteSolicitudVencida, resumenDeOpcion, totalPublicoOpcion, type GrupoHotel, type OpcionVista } from "@/lib/cotizacion/comparativa";
+import { formatFechaLarga } from "@/lib/utils";
+import { formatoExacto } from "@/lib/contrato/repartoTarifa";
+import { menoresDeOpcion, menoresNoDesglosables, otrosServiciosDeOpcion, tarifaVisibleOpcion, tiquetesDeOpcion, agruparPorHotel, canalDeRol, desdeComparativa, limiteSolicitudVencida, resumenDeOpcion, totalPublicoOpcion, type GrupoHotel, type OpcionVista } from "@/lib/cotizacion/comparativa";
 import { hoyBogota } from "@/lib/cotizacion/vigencia";
 import { visitantePuedeContinuar } from "@/lib/cotizacion/comparativaServidor";
 import { PrintButton } from "@/components/contrato/PrintButton";
@@ -55,6 +56,10 @@ export async function cargarDatosComparativa(sb: SB, madreId: number): Promise<D
     const menores = menoresDeOpcion(o.resumen_publico, o.plantilla_hija, o.etiqueta);
     if (menores.length) r.menores = menores;
     if (menoresNoDesglosables(o.resumen_publico, o.plantilla_hija, o.etiqueta)) r.menoresNoDesglosables = true;
+    // #75: vuelos por tiquete (del snapshot congelado) y tarifa por persona solo si cuadra con lo liquidado. Nada de esto expone precio, costo ni proveedor.
+    const tiquetes = tiquetesDeOpcion(o.plantilla_hija, r.vuelos, o.moneda);
+    if (tiquetes.length) r.tiquetes = tiquetes;
+    r.tarifa = tarifaVisibleOpcion(o.resumen_publico, o.plantilla_hija, Number(o.total));
     resumenes[`${o.opcion_ref}/${o.acomodacion_ref}`] = r;
     resumenes[o.opcion_ref] ??= r;
   }
@@ -108,7 +113,7 @@ export function ComparativaDocumento({
           <h1 className="text-2xl font-semibold text-gray-900">{madre.codigo}</h1>
           <p className="text-sm text-gray-500">Compara los hoteles y escoge <b>uno</b>. Cada total corresponde a ese hotel por separado: no se suman.</p>
         </div>
-        {desde && <p className="text-right text-xs text-gray-400">Desde<br /><span className="text-lg font-bold tabular-nums" style={{ color: "var(--brand-primary)" }}>{formatMoneda(desde.total, desde.moneda)}</span></p>}
+        {desde && <p className="text-right text-xs text-gray-400">Desde<br /><span className="text-lg font-bold tabular-nums" style={{ color: "var(--brand-primary)" }}>{formatoExacto(desde.total, desde.moneda)}</span></p>}
       </header>
       <ResumenViaje m={madre} />
       <div className="mt-6">

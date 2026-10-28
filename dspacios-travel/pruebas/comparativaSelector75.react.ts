@@ -115,3 +115,24 @@ test("modo solicitud (público) e interno conservan sus controles y muestran lo 
   assert.equal(ci.querySelectorAll('[data-testid="menor-opcion"]').length, 2);
   assert.equal(veces(txt(ci), "Incluye / No incluye (todas las opciones)"), 1);
 });
+
+test("cambiar la acomodación en el select cambia el Incluye / No incluye de la tarjeta (Doble con desayuno, Sencilla sin él)", async () => {
+  const acoms = [{ ...op("A", 600_000) }, { ...op("A", 900_000), acomodacionRef: "sencilla" }];
+  const grupos = [{ opcionRef: "A", etiqueta: "Hotel A", moneda: "COP", acomodaciones: acoms }, { opcionRef: "B", etiqueta: "Hotel B", moneda: "COP", acomodaciones: [op("B", 910_000)] }];
+  const r = {
+    "A/doble": { incluye: "Desayuno buffet", noIncluye: "Propinas", servicios: [{ nombre: "Tour", precio: null }] }, "A/sencilla": { incluye: "Traslados", noIncluye: "Propinas" },
+    A: { incluye: "Desayuno buffet", noIncluye: "Propinas" }, "B/doble": { incluye: "Cena", noIncluye: "" }, B: { incluye: "Cena", noIncluye: "" },
+  };
+  const c = await montar(h(SelectorOpciones as never, props({ grupos, resumenes: r })));
+  const tarjetaA = () => txt(c.querySelectorAll("article")[0]);
+  assert.match(tarjetaA(), /Desayuno buffet/); assert.ok(!tarjetaA().includes("Traslados"));
+  assert.match(tarjetaA(), /Total de esta opción/, "con servicios el total es de la opción");
+  const sel = c.querySelector("#acom-A") as HTMLSelectElement;
+  await React.act(async () => {
+    Object.getOwnPropertyDescriptor(dom.window.HTMLSelectElement.prototype, "value")!.set!.call(sel, "sencilla");
+    sel.dispatchEvent(new dom.window.Event("change", { bubbles: true }));
+  });
+  assert.match(tarjetaA(), /Traslados/); assert.ok(!tarjetaA().includes("Desayuno buffet"), "ya no muestra el texto de la Doble");
+  assert.match(tarjetaA(), /Total de este hotel/);
+  assert.match(txt(c), /Opción A/);
+});

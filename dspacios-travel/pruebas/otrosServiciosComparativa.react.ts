@@ -77,9 +77,12 @@ describe("«Otro servicio» en el resumen de cada opción (selección pública y
     test(`${donde} · unidestino: el servicio común aparece UNA vez en cada alternativa, con tours y vuelos intactos, sin sumarse otra vez ni mostrar costo o proveedor`, async () => {
       const ops = ["A", "B", "C"].map((r, i) => opcion(r, i, [VUELO, OTRO], { tours: [TOUR] }));
       const { d, t } = await pintar(ops, modo);
-      assert.equal(veces(t, "Servicio adicional: Traslado privado · 2 pax · 2030-10-15 · incluido en el total"), 3, "una vez en cada una de las tres opciones");
+      assert.equal(veces(t, "Traslado privado · 2 pax · 2030-10-15 · incluido en el total"), 3, "una vez en cada una de las tres opciones");
       assert.equal(veces(t, "+ City tour"), 3, "los tours se conservan");
-      assert.equal(veces(t, "Vuelo ida: Bogotá → Cartagena"), 3, "los vuelos se conservan");
+      assert.equal(veces(t, "Vuelo de ida y regreso"), 3, "los vuelos se conservan: un tiquete (ida y regreso juntos) por opción");
+      assert.equal(veces(t, "Bogotá (BOG) → Cartagena (CTG)"), 3);
+      assert.equal(veces(t, "Cartagena (CTG) → Bogotá (BOG)"), 3);
+      assert.equal(veces(t, "Sujeto a confirmación de disponibilidad y tarifa"), 3, "el aviso UNA vez por tiquete, no por tramo");
       // Totales: hotel + tour + vuelo + servicio, UNA vez (el servicio no se suma de nuevo al renderizar).
       const esperado = [1_200_000, 1_450_000, 1_100_000].map((h) => h + 85_000 + 1_800_000 + 90_000);
       assert.deepEqual(d.grupos.map((g) => g.acomodaciones[0].total), esperado);
@@ -91,11 +94,11 @@ describe("«Otro servicio» en el resumen de cada opción (selección pública y
     test(`${donde} · multidestino: el servicio del grupo elegido se ve SOLO en sus opciones`, async () => {
       const ops = [opcion("A", 0, [VUELO]), opcion("B", 1, [VUELO]), opcion("C", 2, [OTRO])];
       const { d, t } = await pintar(ops, modo);
-      assert.equal(veces(t, "Servicio adicional: Traslado privado"), 1, "solo la opción de su grupo");
+      assert.equal(veces(t, "Traslado privado · 2 pax"), 1, "solo la opción de su grupo");
       assert.deepEqual(Object.fromEntries(Object.entries(d.resumenes).filter(([k]) => k.includes("/")).map(([k, v]) => [k, (v.otros ?? []).length])), { "A/doble": 0, "B/doble": 0, "C/doble": 1 });
       const tarjetaC = t.slice(t.indexOf("Opción C"));
-      assert.ok(tarjetaC.includes("Servicio adicional: Traslado privado"));
-      assert.equal(t.slice(0, t.indexOf("Opción C")).includes("Servicio adicional"), false, "A y B no lo muestran");
+      assert.ok(tarjetaC.includes("Traslado privado · 2 pax"));
+      assert.equal(t.slice(0, t.indexOf("Opción C")).includes("Traslado privado"), false, "A y B no lo muestran");
     });
   }
 
@@ -103,7 +106,7 @@ describe("«Otro servicio» en el resumen de cada opción (selección pública y
     const ops = ["A", "B"].map((r, i) => opcion(r, i, [OTRO]));
     for (const o of ops) assert.equal(JSON.stringify(o.resumen_publico).includes("Traslado"), false, "el resumen público no lo trae");
     const { t } = await pintar(ops, "solo_lectura");
-    assert.equal(veces(t, "Servicio adicional: Traslado privado"), 2);
+    assert.equal(veces(t, "Traslado privado · 2 pax"), 2);
   });
 
   test("snapshot NO verificable (el total no cuadra con sus componentes, o el bloque está mal formado): no se afirma nada y se pide generar la comparativa de nuevo", async () => {
@@ -111,7 +114,7 @@ describe("«Otro servicio» en el resumen de cada opción (selección pública y
     const malFormado = opcion("B", 1, [OTRO], { payloadManuales: "no es una lista" });
     const sinNombre = opcion("C", 2, [{ ...OTRO, nombre: "" }]);
     const { d, t } = await pintar([sospechosa, malFormado, sinNombre], "solo_lectura");
-    assert.equal(veces(t, "Servicio adicional"), 0, "no aparenta que contiene el servicio");
+    assert.equal(veces(t, "Traslado privado"), 0, "no aparenta que contiene el servicio");
     assert.equal(veces(t, "Genera la comparativa de nuevo"), 3);
     assert.match(t, AVISO_GENERAR);
     assert.ok(Object.values(d.resumenes).every((r) => r.otrosNoVerificables));
@@ -119,7 +122,7 @@ describe("«Otro servicio» en el resumen de cada opción (selección pública y
 
   test("sin servicios manuales (o una comparativa manual): nada que mostrar y ningún aviso", async () => {
     const { t } = await pintar([opcion("A", 0, []), opcion("B", 1, [VUELO])], "solo_lectura");
-    assert.equal(veces(t, "Servicio adicional"), 0);
+    assert.equal(veces(t, "Traslado privado"), 0);
     assert.doesNotMatch(t, AVISO_GENERAR);
     assert.deepEqual(otrosServiciosDeOpcion({ payload: { servicios: [] } }, 1000), { ok: true, otros: [] }, "sin ítems de carrito: no lleva manuales");
   });

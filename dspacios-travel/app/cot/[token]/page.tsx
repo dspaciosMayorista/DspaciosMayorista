@@ -41,6 +41,9 @@ type Detalle = {
   composicionBernalo?: ComposicionBernaloDocumento[];
   // #102: solo en una venta B2B asistida en NETO (ver `crearCotizacionCarrito`).
   b2bExterno?: { netoTotalExigible?: number };
+  // #75: Incluye / No incluye congelado en el snapshot (p. ej. la opción elegida de una comparativa).
+  incluye?: string | null;
+  noIncluye?: string | null;
 };
 
 // Vista pública (sin login) de una cotización, por token imposible de adivinar.
@@ -100,6 +103,8 @@ export default async function CotizacionPublicaPage({ params }: { params: Promis
             vigenciaHasta={cot.vigencia_hasta}
             netoTotalExigible={netoTotalExigible}
             agencia={agencia}
+            incluye={d.incluye ?? null}
+            noIncluye={d.noIncluye ?? null}
           />
         </div>
       </div>

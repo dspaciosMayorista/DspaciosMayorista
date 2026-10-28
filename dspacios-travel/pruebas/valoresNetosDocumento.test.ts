@@ -12,7 +12,7 @@ const porTotal = (id: number, valorTotal: number) => ({
 test("contrato manual: dos adultos muestran su tarifa NETO, no la tarifa original", () => {
   const valores = valoresNetosDocumento([porPersona(1, 2, 0, 1_000_000, 0)], 1_897_200);
   assert.deepEqual(valores?.get(1), {
-    total: 1_897_200, tarifaAdulto: 948_600, tarifaNino: 0, adultoAproximado: false, ninoAproximado: false,
+    total: 1_897_200, tarifaAdulto: 948_600, tarifaNino: 0, adultoAproximado: false, ninoAproximado: false, adultoTotal: 1_897_200, ninoTotal: 0,
   });
 });
 
@@ -22,7 +22,7 @@ test("adultos, niños y servicio reciben descuento proporcional; los subtotales 
     porPersona(2, 1, 0, 200_000, 0),
   ], 1_350_000)!;
   assert.deepEqual(valores.get(1), {
-    total: 1_170_000, tarifaAdulto: 450_000, tarifaNino: 270_000, adultoAproximado: false, ninoAproximado: false,
+    total: 1_170_000, tarifaAdulto: 450_000, tarifaNino: 270_000, adultoAproximado: false, ninoAproximado: false, adultoTotal: 900_000, ninoTotal: 270_000,
   });
   assert.equal(valores.get(2)?.total, 180_000);
   assert.equal([...valores.values()].reduce((s, v) => s + v.total, 0), 1_350_000);

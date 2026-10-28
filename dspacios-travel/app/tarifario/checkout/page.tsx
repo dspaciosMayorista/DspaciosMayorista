@@ -11,7 +11,9 @@ import { normalizarEdadesMenoresCarrito } from "@/lib/reservar/edadesMenores";
 import { comisionSobre, formatImporte, monedaDeItem, preverCotizacion } from "@/lib/cart/monedaCarrito";
 import { AvisoMonedas, TotalesPorMoneda } from "../totalesCarrito";
 import { UserCheck } from "lucide-react";
-import { crearSolicitudReserva, fotosPortada, getContextoAsistenciaB2B, previsualizarTerminosB2BAsistido, previsualizarComparativaB2B, type PrevisualizacionB2B, type PrevisualizacionComparativaB2B, getContextoB2B, type SolicitudResult, type ContextoAsistenciaCheckout, type ContextoB2B, type ResultadoComparativaCreada } from "./actions";
+import { PresentacionComparativaEditor, errorEdicion, presentacionDesdeEdicion, type EdicionPresentacion, type OpcionEditable } from "@/components/cotizacion/PresentacionComparativaEditor";
+import type { PresentacionComparativa } from "@/lib/cotizacion/comparativa";
+import { crearSolicitudReserva, fotosPortada, getContextoAsistenciaB2B, previsualizarPresentacionComparativa, type PresentacionPrevia, previsualizarTerminosB2BAsistido, previsualizarComparativaB2B, type PrevisualizacionB2B, type PrevisualizacionComparativaB2B, getContextoB2B, type SolicitudResult, type ContextoAsistenciaCheckout, type ContextoB2B, type ResultadoComparativaCreada } from "./actions";
 import { TerminosB2BAsistido } from "@/components/cotizacion/TerminosB2BAsistido";
 import { ServicioManualPanel } from "./ServicioManualPanel";
 import { ResumenOpcionesComparativa } from "./ResumenOpcionesComparativa";
@@ -225,6 +227,29 @@ export default function CheckoutPage() {
       };
   }
 
+  // #75: presentación editable de cada opción (Incluye / No incluye y descripciones). La propuesta y las líneas las da el servidor con el mismo motor.
+  const claveEntrada = (e: ReturnType<typeof armarEntrada>) => JSON.stringify({ ...e, cliente: null });
+  const [pres, setPres] = useState<{ clave: string; r: PresentacionPrevia } | null>(null);
+  const [edicionPres, setEdicionPres] = useState<EdicionPresentacion>({});
+  const [preparandoPres, startPres] = useTransition();
+  const opcionesPres: OpcionEditable[] = pres?.r.ok
+    ? pres.r.opciones.map((o) => ({
+      clave: o.clave, titulo: `Opción ${o.opcionRef} · ${o.hotel ?? "Hotel"}${otrasAcom ? ` · ${ACOM_ROOM_LABEL[o.acomodacionRef as AcomRoom] ?? o.acomodacionRef}` : ""}`,
+      lineas: o.lineas, incluyeSugerido: o.incluye, noIncluyeSugerido: o.noIncluye,
+    }))
+    : [];
+  function prepararPresentacion() {
+    setErr("");
+    const norm = normalizarCarrito();
+    if (!norm.ok) { setErr(norm.error); return; }
+    const entrada = armarEntrada(norm.itemsNormalizados);
+    startPres(async () => {
+      const r = await previsualizarPresentacionComparativa(entrada).catch(() => ({ ok: false as const, error: "No se pudo preparar la presentación. Intenta de nuevo." }));
+      setPres({ clave: claveEntrada(entrada), r });
+      setEdicionPres({});
+    });
+  }
+
   function enviarComparativa() {
     setErr("");
     if (!c.nombres.trim() || !c.apellidos.trim()) { setErr("Ingresa nombres y apellidos."); return; }
@@ -248,9 +273,21 @@ export default function CheckoutPage() {
       if (!r.ok) { setErr(`${it.hotelNombre}: ${r.error}`); return; }
       itemsNormalizados.push({ it, edadesMenores: r.edadesMenores });
     }
+    // #75: si el asesor preparó la presentación, se envía tal cual se ve; si el carrito cambió desde entonces, se pide prepararla de nuevo (nunca se descarta en silencio).
+    const entradaCmp = armarEntrada(itemsNormalizados);
+    // Intentó Preparar: no se genera con la propuesta automática por detrás de un error ni mientras la vista previa sigue en curso.
+    if (preparandoPres) { setErr("La presentación se está preparando. Espera a que termine antes de generar la comparativa."); return; }
+    if (pres && !pres.r.ok) { setErr(`No se puede generar la comparativa: la preparación del Incluye / No incluye falló (${pres.r.error}). Corrige el problema y vuelve a preparar.`); return; }
+    let presentacion: PresentacionComparativa | undefined;
+    if (pres?.r.ok) {
+      if (pres.clave !== claveEntrada(entradaCmp)) { setErr("El carrito cambió después de preparar el Incluye / No incluye y las descripciones. Vuelve a prepararlos antes de generar."); return; }
+      const errPres = errorEdicion(opcionesPres, edicionPres);
+      if (errPres) { setErr(errPres); return; }
+      presentacion = presentacionDesdeEdicion(opcionesPres, edicionPres);
+    }
     start(async () => {
       const { crearComparativaCarrito } = await import("@/app/tarifario/checkout/actions");
-      const r = await crearComparativaCarrito(armarEntrada(itemsNormalizados));
+      const r = await crearComparativaCarrito({ ...entradaCmp, ...(presentacion ? { presentacion } : {}) });
       if (r.ok) { setResCmp(r); clear(); } else setErr(r.error);
     });
   }
@@ -390,6 +427,24 @@ export default function CheckoutPage() {
                 <span><b>Permitir que el cliente elija desde el enlace.</b> Si no lo marcas, solo el equipo puede elegir una opción; el cliente la ve pero no continúa por su cuenta. Los vuelos manuales quedan congelados: el cliente no puede cambiarlos.</span>
               </label>
             )}
+            {/* #75: solo personal interno — el servidor rechaza una presentación enviada por otro canal. */}
+            {puedeManual && vista.crear && (
+              <section className="rounded-2xl border border-gray-200 bg-white p-4 sm:p-5" data-testid="presentacion-comparativa">
+                <div className="mb-3 flex flex-wrap items-start justify-between gap-2">
+                  <div className="min-w-0">
+                    <h2 className="text-sm font-semibold text-gray-700">Incluye / No incluye y descripciones</h2>
+                    <p className="text-xs text-gray-500">Opcional. La propuesta sale solo de lo cotizado en cada opción; edítala antes de generar. Si no la preparas, cada opción lleva la propuesta del sistema y el «No incluye» queda vacío.</p>
+                  </div>
+                  <button type="button" onClick={prepararPresentacion} disabled={preparandoPres}
+                    className="shrink-0 rounded-lg border px-3 py-2 text-xs font-semibold disabled:opacity-50" style={{ borderColor: "var(--brand-primary)", color: "var(--brand-primary)" }}>
+                    {preparandoPres ? "Preparando…" : pres?.r.ok ? "Volver a preparar" : "Preparar"}
+                  </button>
+                </div>
+                {pres && !pres.r.ok && <p role="alert" className="rounded-lg bg-amber-50 px-3 py-2 text-xs text-amber-800">{pres.r.error}</p>}
+                {opcionesPres.length > 0 && <PresentacionComparativaEditor opciones={opcionesPres} edicion={edicionPres} onChange={setEdicionPres} />}
+              </section>
+            )}
+
             {/* Resumen del carrito */}
             <section className="rounded-2xl border border-gray-200 bg-white p-5">
               <h2 className="mb-3 text-sm font-semibold text-gray-700">Tu selección</h2>

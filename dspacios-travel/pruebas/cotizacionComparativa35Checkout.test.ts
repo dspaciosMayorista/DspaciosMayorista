@@ -453,7 +453,7 @@ describe("resumenOpcionComparativa — lectura pública mínima", () => {
     const r = await A.resumenOpcionComparativa("11111111-2222-3333-4444-555555555555", "A", "doble");
     assert.equal(r.ok, true);
     if (!r.ok) return;
-    assert.deepEqual(Object.keys(r.datos).sort(), ["acomodacionRef", "destino", "etiqueta", "fechaRegreso", "fechaSalida", "moneda", "opcionRef", "pax", "tarifaPersona", "tipo", "total", "vencida", "version", "vigenciaHasta", "vuelos"].sort());
+    assert.deepEqual(Object.keys(r.datos).sort(), ["acomodacionRef", "destino", "etiqueta", "fechaRegreso", "fechaSalida", "moneda", "opcionRef", "pax", "tarifa", "tarifaPersona", "tipo", "total", "vencida", "version", "vigenciaHasta", "vuelos"].sort());
     assert.deepEqual(r.datos.vuelos, [], "sin vuelos manuales comunes la lista va vacía (y nunca lleva precio, costo ni proveedor)");
     assert.equal(r.datos.total, 685_000);
     assert.ok(!JSON.stringify(r).includes("plantilla") && !JSON.stringify(r).includes("payload"));
@@ -523,5 +523,106 @@ describe("las dos acciones públicas están ligadas al ENLACE de la comparativa"
     const s = await A.solicitarOpcionComparativa({ ...SOL });
     assert.equal(s.ok, false);
     assert.equal(rpcs.length, 0);
+  });
+});
+
+// ── #75 · Presentación editable (Incluye / No incluye y descripción visible) y tarifa por persona ──
+describe("#75 crearComparativaCarrito — presentación de cada opción congelada en su snapshot", () => {
+  type Op = { opcion_ref: string; acomodacion_ref: string; total: number; tarifa_persona: number | null; resumen_publico: Fila; plantilla_hija: { detalle: { items: Fila[]; incluye: string; noIncluye: string } } };
+  const opciones = () => llamadas("crear_cotizacion_comparativa")[0].args.p_opciones as Op[];
+  const interno = () => {
+    USUARIO = { id: "22222222-2222-2222-2222-222222222222", email: "asesor@dspacios.test" };
+    TABLAS.usuarios = [{ id: USUARIO.id, rol: "venta", activo: true, aliado_id: null, tenant: "mayorista", email: USUARIO.email, nombre: "Asesora" }];
+  };
+  const ORIGINAL_A = "Hotel Almirante — CARTAGENA · 1 hab Doble (2 pax) · Estandar / Desayuno";
+
+  test("sin edición: Incluye propuesto SOLO desde lo cotizado en cada opción; No incluye vacío; tarifa por persona = la del motor", async () => {
+    await crear([hotel("hA", 1), hotel("hB", 2)], [tour(55, "hA")]);
+    const [a, b] = opciones();
+    assert.match(String(a.resumen_publico.incluye), /Alojamiento en Hotel Almirante \(Estandar, plan Desayuno\)/);
+    assert.match(String(a.resumen_publico.incluye), /City tour/);
+    assert.doesNotMatch(String(b.resumen_publico.incluye), /City tour/, "el servicio de A no se le atribuye a B");
+    assert.equal(a.resumen_publico.noIncluye, "");
+    assert.equal(a.plantilla_hija.detalle.incluye, a.resumen_publico.incluye, "la hija recibe el mismo texto que el selector");
+    assert.equal(a.tarifa_persona, 300_000);
+    assert.deepEqual(a.resumen_publico.items, [{ descripcion: ORIGINAL_A }], "el texto de la habitación, sin importes");
+  });
+
+  test("interno: el texto editado queda en el resumen y en la plantilla de la hija; importes, cantidades y totales intactos", async () => {
+    interno();
+    await crear([hotel("hA", 1), hotel("hB", 2)]);
+    const base = opciones();
+    rpcs.length = 0;
+    await crear([hotel("hA", 1), hotel("hB", 2)], [], {
+      presentacion: { "A/doble": { incluye: "Alojamiento 3 noches\nDesayunos", noIncluye: "Propinas", descripciones: [{ indice: 0, original: ORIGINAL_A, texto: "Plan Caribe · Hotel Almirante, habitación doble" }] } },
+    });
+    const [a, b] = opciones();
+    assert.equal(a.plantilla_hija.detalle.items[0].descripcion, "Plan Caribe · Hotel Almirante, habitación doble");
+    assert.deepEqual({ ...a.plantilla_hija.detalle.items[0], descripcion: null }, { ...base[0].plantilla_hija.detalle.items[0], descripcion: null }, "solo cambia el texto");
+    assert.equal(a.total, base[0].total);
+    assert.equal(a.resumen_publico.incluye, "Alojamiento 3 noches\nDesayunos");
+    assert.equal(a.plantilla_hija.detalle.noIncluye, "Propinas");
+    assert.deepEqual(b.plantilla_hija.detalle, base[1].plantilla_hija.detalle, "la opción sin edición conserva la propuesta");
+  });
+
+  test("Doble con desayuno y Sencilla sin él: cada fila (y por tanto cada hija elegida) conserva SOLO el texto de su acomodación", async () => {
+    interno();
+    await crear([hotel("hA", 1), hotel("hB", 2)], [], {
+      otrasAcomodaciones: true,
+      presentacion: { "A/doble": { incluye: "Desayuno buffet", noIncluye: "Propinas" }, "A/sencilla": { incluye: "Traslados", noIncluye: "Spa" } },
+    });
+    const por = Object.fromEntries(opciones().map((o) => [`${o.opcion_ref}/${o.acomodacion_ref}`, o]));
+    assert.equal(por["A/doble"].resumen_publico.incluye, "Desayuno buffet");
+    assert.equal(por["A/sencilla"].resumen_publico.incluye, "Traslados");
+    assert.equal(por["A/doble"].plantilla_hija.detalle.incluye, "Desayuno buffet");
+    assert.equal(por["A/doble"].plantilla_hija.detalle.noIncluye, "Propinas");
+    assert.equal(por["A/sencilla"].plantilla_hija.detalle.incluye, "Traslados");
+    assert.equal(por["A/sencilla"].plantilla_hija.detalle.noIncluye, "Spa");
+    assert.doesNotMatch(JSON.stringify(por["A/sencilla"]), /Desayuno buffet/);
+    assert.doesNotMatch(JSON.stringify(por["A/doble"]), /Traslados/);
+  });
+
+  test("un visitante que envía presentación se RECHAZA sin llamar a la RPC (no se ignora)", async () => {
+    const r = await crear([hotel("hA", 1), hotel("hB", 2)], [], { presentacion: { "A/doble": { incluye: "Todo gratis" } } });
+    assert.equal(r.ok, false);
+    assert.match(r.ok ? "" : r.error, /personal interno/);
+    assert.equal(llamadas("crear_cotizacion_comparativa").length, 0);
+  });
+
+  test("una descripción sobre una línea que ya no es la cotizada, o una opción que no existe, se rechaza sin RPC", async () => {
+    interno();
+    const r1 = await crear([hotel("hA", 1), hotel("hB", 2)], [], { presentacion: { "A/doble": { descripciones: [{ indice: 0, original: "otro texto", texto: "Nuevo texto" }] } } });
+    assert.equal(r1.ok, false);
+    assert.match(r1.ok ? "" : r1.error, /Vuelve a preparar/);
+    const r2 = await crear([hotel("hA", 1), hotel("hB", 2)], [], { presentacion: { "C/doble": { incluye: "x" } } });
+    assert.equal(r2.ok, false);
+    assert.equal(llamadas("crear_cotizacion_comparativa").length, 0);
+  });
+
+  test("la vista previa da las líneas editables y la propuesta (solo interno)", async () => {
+    const anon = await A.previsualizarPresentacionComparativa({ items: [hotel("hA", 1), hotel("hB", 2)], tours: [], cliente: CLIENTE });
+    assert.equal(anon.ok, false);
+    interno();
+    const p = await A.previsualizarPresentacionComparativa({ items: [hotel("hA", 1), hotel("hB", 2)], tours: [tour(55, "hA")], cliente: CLIENTE });
+    assert.equal(p.ok, true, p.ok ? "" : p.error);
+    if (!p.ok) return;
+    assert.deepEqual(p.opciones.map((o) => o.clave), ["A/doble", "B/doble"]);
+    assert.deepEqual(p.opciones[0].lineas, [{ indice: 0, descripcion: ORIGINAL_A }], "la línea del tour («Servicio · …») no es editable");
+    assert.match(p.opciones[0].incluye, /City tour/);
+    assert.equal(llamadas("crear_cotizacion_comparativa").length, 0, "la vista previa no crea nada");
+  });
+
+  test("elegir una opción con descripción editada sigue validando y emite el recibo (la plantilla con el texto pasa a la hija)", async () => {
+    interno();
+    await crear([hotel("hA", 1), hotel("hB", 2)], [], { presentacion: { "A/doble": { descripciones: [{ indice: 0, original: ORIGINAL_A, texto: "Plan Caribe · Hotel Almirante" }] } } });
+    const ops = llamadas("crear_cotizacion_comparativa")[0].args.p_opciones as Fila[];
+    TABLAS.cotizaciones = [{ id: 900, codigo: "C-0900", share_token: TOKEN, tipo: "comparativa_carrito", modo: "comparativa", estado: "abierta", version: 1, vigencia_hasta: "2099-01-01", destino: "CARTAGENA", fecha_salida: "2030-03-01", fecha_regreso: "2030-03-04", pax: 2 }, { id: 902, codigo: "C-0902", share_token: "tok-902" }];
+    TABLAS.cotizacion_opciones = ops.map((o) => ({ ...o, cotizacion_id: 900 }));
+    rpcs.length = 0;
+    RESPUESTA_RPC = { registrar_validacion_comparativa: { data: "r-2" }, elegir_opcion_comparativa_sesion: { data: 902 } };
+    const r = await A.elegirOpcionComparativa({ ...ELEGIR, cliente: null });
+    assert.equal(r.ok, true, r.ok ? "" : r.error);
+    const pl = (TABLAS.cotizacion_opciones[0].plantilla_hija as { detalle: { items: Fila[] } });
+    assert.equal(pl.detalle.items[0].descripcion, "Plan Caribe · Hotel Almirante");
   });
 });

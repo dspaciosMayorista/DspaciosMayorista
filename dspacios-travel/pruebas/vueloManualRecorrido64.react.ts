@@ -207,7 +207,9 @@ describe("Horas en el documento de la comparativa (resumen público)", () => {
     return renderToStaticMarkup(createElement(SelectorOpciones as ComponentType<Fila>, { version: 1, token: "x".repeat(32), grupos, resumenes, modo: "checkout", deshabilitada: false, elegida: null })).replace(/<[^>]+>/g, " ").replace(/\s+/g, " ");
   };
   test("con hora: «salida 06:45 (hora local)»; sin hora no aparece nada; una hora mal formada se descarta", () => {
-    assert.match(pintar("06:45"), /Vuelo ida: Bogotá → Cartagena · 2030-03-01 · salida 06:45 \(hora local\)/);
+    // #75: estilo de vuelos del documento (un bloque por tiquete, fecha legible, pasajeros una vez).
+    assert.match(pintar("06:45"), /Vuelo de ida · Pasajeros: 2/);
+    assert.match(pintar("06:45"), /Bogotá → Cartagena · 1 de marzo de 2030 · salida 06:45 \(hora local\)/);
     assert.doesNotMatch(pintar(null), /salida \d|hora local/);
     assert.doesNotMatch(pintar("25:99"), /salida \d|hora local/);
     assert.doesNotMatch(pintar("06:45"), /llegada/i);

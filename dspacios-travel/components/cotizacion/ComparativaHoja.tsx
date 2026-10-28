@@ -5,14 +5,15 @@
 //   · cada hotel es una alternativa con SU total; jamás se suman opciones ni hay un total global;
 //   · vuelos y servicios adicionales cuelgan de la opción que los incluye y sin importe propio (ya van en el total, una sola vez);
 //   · solo se muestra lo que ya trae `resumen_publico` / el snapshot público: sin costos, proveedores, comisión ni términos NETO.
-import { GitCompareArrows, Package, Plane } from "lucide-react";
+import { GitCompareArrows } from "lucide-react";
 import { COLOR_DOCUMENTO } from "@/lib/contrato/colorDocumento";
 import { EMPRESA } from "@/lib/contrato/plantilla";
 import { ACOM_ROOM_LABEL, type AcomRoom } from "@/lib/acomodaciones";
-import { formatFechaLarga, formatMoneda } from "@/lib/utils";
-import { condicionesPorOpcion, type GrupoHotel } from "@/lib/cotizacion/comparativa";
+import { formatFechaLarga } from "@/lib/utils";
+import { formatoExacto } from "@/lib/contrato/repartoTarifa";
+import { bloquesCondiciones, condicionesPorOpcion, etiquetaTotalOpcion, resumenDeAcomodacion, tiquetesDeOpcion, type GrupoHotel } from "@/lib/cotizacion/comparativa";
 import type { ResumenHotelUI } from "@/lib/cotizacion/comparativaAcciones";
-import { ListasIncluye, MenoresOpcion } from "@/components/cotizacion/ListasIncluye";
+import { ListasIncluye, MenoresOpcion, ServiciosAdicionalesOpcion, TarifaOpcion, VuelosOpcion } from "@/components/cotizacion/ListasIncluye";
 
 const PRIMARY = COLOR_DOCUMENTO;
 
@@ -45,13 +46,12 @@ export function ComparativaHoja({ madre, grupos, resumenes, vencida, identidad }
   const correo = identidad?.correo ?? (minorista ? null : EMPRESA.correo);
   const detalle = (g: GrupoHotel) => resumenes[g.opcionRef] ?? resumenes[`${g.opcionRef}/${g.acomodaciones[0]?.acomodacionRef}`] ?? {};
   // Común = idéntico en TODAS las opciones (se imprime una vez al final); si difiere, cada opción lleva el suyo.
-  const { comun, porOpcion } = condicionesPorOpcion(grupos, resumenes);
+  const { comun, porAcomodacion } = condicionesPorOpcion(grupos, resumenes);
 
   const tarjeta = (g: GrupoHotel) => {
     const r = detalle(g);
-    const vuelos = r.vuelos ?? [];
     const items = (r.items ?? []).filter((it) => it.descripcion !== "Tarifa por niño");
-    const propios = porOpcion[g.opcionRef];
+    const propios = comun ? [] : bloquesCondiciones(g, porAcomodacion);
     return (
       <article key={g.opcionRef} data-testid={`opcion-${g.opcionRef}`} className="overflow-hidden rounded-xl border border-gray-200">
         <header className="flex items-start gap-3 border-b border-gray-200 bg-gray-50 px-4 py-3 print:py-2 break-after-avoid">
@@ -62,49 +62,35 @@ export function ComparativaHoja({ madre, grupos, resumenes, vencida, identidad }
           </div>
         </header>
         <div className="grid grid-cols-1 gap-4 p-4 print:p-3 break-inside-avoid sm:grid-cols-[1fr_15rem]">
+          {/* Orden: vuelos (por tiquete), el alojamiento y debajo los servicios adicionales. */}
           <div className="min-w-0 space-y-3 text-xs text-gray-600">
-            {items.length > 0 && <ul className="space-y-1">{items.map((it) => <li key={it.descripcion} className="break-words">{it.descripcion}</li>)}</ul>}
-            {(r.servicios?.length ?? 0) > 0 && <ul className="space-y-1">{r.servicios!.map((s) => <li key={s.nombre} className="break-words">+ {s.nombre}</li>)}</ul>}
-            {(r.otros?.length ?? 0) > 0 && (
-              <ul className="space-y-1">
-                {r.otros!.map((o, i) => (
-                  <li key={i} className="flex items-start gap-1.5"><Package size={12} className="mt-0.5 shrink-0" aria-hidden />
-                    <span className="min-w-0 break-words">Servicio adicional: {o.nombre} · {o.pax} pax{o.fechaIda ? ` · ${o.fechaIda}${o.fechaRegreso ? ` → ${o.fechaRegreso}` : ""}` : ""} · incluido en el total</span></li>
-                ))}
-              </ul>
-            )}
+            <VuelosOpcion tiquetes={r.tiquetes ?? tiquetesDeOpcion(null, r.vuelos, null)} />
+            {items.length > 0 && <ul className="space-y-1">{items.map((it, i) => <li key={i} className="break-words">{it.descripcion}</li>)}</ul>}
+            <ServiciosAdicionalesOpcion servicios={r.servicios} otros={r.otros} />
             {r.otrosNoVerificables && <p className="rounded-lg bg-amber-50 px-3 py-2 text-amber-900">No se puede confirmar, desde el registro de esta opción, qué servicios adicionales incluye su total. Genera la comparativa de nuevo para ver el detalle.</p>}
-            {vuelos.length > 0 && (
-              <ul className="space-y-1">
-                {vuelos.map((v, i) => (
-                  <li key={i} className="flex items-start gap-1.5"><Plane size={12} className="mt-0.5 shrink-0" aria-hidden />
-                    <span className="min-w-0 break-words">Vuelo {v.tramo}: {v.origen ?? "—"} → {v.destino ?? "—"}{v.fecha ? ` · ${v.fecha}` : ""}{v.hora ? ` · salida ${v.hora} (hora local)` : ""} · {v.nota.replace(/^Vuelo manual · /, "")} · incluido en el total</span></li>
-                ))}
-              </ul>
-            )}
           </div>
           <div className="space-y-3 sm:text-right">
             {g.acomodaciones.map((a) => {
-              const ra = resumenes[`${g.opcionRef}/${a.acomodacionRef}`] ?? r;
+              const ra = resumenDeAcomodacion(resumenes, g.opcionRef, a.acomodacionRef);
               return (
                 <div key={a.acomodacionRef} className="space-y-1">
                   {etiquetaAcom(a.acomodacionRef) && <p className="text-[11px] font-semibold uppercase tracking-wide text-gray-500">{etiquetaAcom(a.acomodacionRef)}</p>}
-                  {a.tarifaPersona != null && (
-                    <div className="flex items-baseline justify-between gap-3 text-xs text-gray-500"><span>Tarifa por adulto</span><span className="whitespace-nowrap font-medium tabular-nums text-gray-700">{formatMoneda(a.tarifaPersona, a.moneda)}</span></div>
-                  )}
+                  <TarifaOpcion tarifa={ra.tarifa} respaldo={{ valor: a.tarifaPersona, conMenores: true }} moneda={a.moneda} />
                   <MenoresOpcion menores={ra.menores} noDesglosables={ra.menoresNoDesglosables} moneda={a.moneda} />
                   <div className="flex items-baseline justify-between gap-3 border-t border-gray-100 pt-1">
-                    <span className="text-xs font-medium text-gray-600">Total de este hotel</span>
-                    <span className="shrink-0 whitespace-nowrap text-lg font-bold tabular-nums" style={{ color: PRIMARY }}>{formatMoneda(a.total, a.moneda)}</span>
+                    <span className="text-xs font-medium text-gray-600">{etiquetaTotalOpcion(ra)}</span>
+                    <span className="shrink-0 whitespace-nowrap text-lg font-bold tabular-nums" style={{ color: PRIMARY }}>{formatoExacto(a.total, a.moneda)}</span>
                   </div>
                 </div>
               );
             })}
           </div>
         </div>
-        {!comun && (propios.inc.length > 0 || propios.no.length > 0) && (
-          <div className="break-inside-avoid border-t border-gray-100 p-4 print:p-3"><ListasIncluye incluye={propios.inc} noIncluye={propios.no} opcion={g.opcionRef} /></div>
-        )}
+        {propios.map((b) => (
+          <div key={b.acomodacionRef ?? "todas"} className="break-inside-avoid border-t border-gray-100 p-4 print:p-3">
+            <ListasIncluye incluye={b.inc} noIncluye={b.no} opcion={b.acomodacionRef && etiquetaAcom(b.acomodacionRef) ? `${g.opcionRef} · ${etiquetaAcom(b.acomodacionRef)}` : g.opcionRef} />
+          </div>
+        ))}
       </article>
     );
   };

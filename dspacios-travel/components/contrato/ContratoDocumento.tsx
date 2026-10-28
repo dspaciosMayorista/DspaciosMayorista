@@ -26,7 +26,11 @@ import type {
 } from "@/types/database";
 import type { CondicionesContratoResueltas } from "@/lib/contrato/condicionesContrato";
 import { nombreQuienElabora } from "@/lib/cotizacion/identidadB2B";
-import { esLineaVueloManual, esTramoVueloManual } from "@/lib/cart/servicioManual";
+import { esLineaVueloManual, esTramoVueloManual, notaVueloManual } from "@/lib/cart/servicioManual";
+import { formatoExacto, repartoPorPersona } from "@/lib/contrato/repartoTarifa";
+
+// Incluye / No incluye guardado como texto (una línea por ítem) → viñetas. Mismo criterio que `lineasTexto` de la comparativa.
+const lineasTextoDoc = (t?: string | null) => (t || "").split(/\r?\n|·|;/).map((x) => x.replace(/^[-•*\s]+/, "").trim()).filter(Boolean);
 import { agruparCondicionesTarifaPorTexto, type CondicionTarifaAplicada } from "@/lib/calc/condicionesTarifa";
 
 // `condiciones_tarifa` opcional (ausente = cotizaciones/contratos anteriores
@@ -111,6 +115,9 @@ type Props = {
   // Presente: total y saldo salen de aquí; los valores por ítem se prorratean
   // a NETO para este documento sin revelar las tarifas originales a PVP.
   netoTotalExigible?: number | null;
+  // #75 — Incluye / No incluye de una cotización de carrito que lo trae en su snapshot (p. ej. la opción elegida de una comparativa). Ausente: no se pinta.
+  incluye?: string | null;
+  noIncluye?: string | null;
 };
 
 // Marca por tenant: mayorista mantiene los colores/logo de siempre;
@@ -133,12 +140,22 @@ function Pill({ label, value }: { label: string; value: string }) {
   );
 }
 
-function formatoNetoDocumento(valor: number, moneda: string, aproximado = false): string {
-  const usd = moneda.toUpperCase() === "USD";
-  const importe = new Intl.NumberFormat(usd ? "en-US" : "es-CO", {
-    style: "currency", currency: usd ? "USD" : "COP", minimumFractionDigits: 0, maximumFractionDigits: 2,
-  }).format(valor);
-  return `${aproximado ? "≈ " : ""}${usd ? "USD " : ""}${importe}`;
+// Importe NETO con sus centavos (dos cifras cuando los hay): el total exigible puede tenerlos.
+const formatoNetoDocumento = (valor: number, moneda: string): string => formatoExacto(valor, moneda);
+
+/**
+ * #75 — Tarifa NETO por persona de una línea: la parte NETO de la línea entre sus personas. Si no se divide exacto (p. ej. 1.330.455,25 entre 2) no se
+ * imprime una tarifa que multiplicada no da el total: se imprime el reparto real («1 × $665.227,63» y «1 × $665.227,62»), que suma exactamente.
+ */
+function TarifaNetaCelda({ total, cantidad, moneda }: { total: number; cantidad: number; moneda: string }) {
+  const r = repartoPorPersona(total, cantidad);
+  if (!r) return <>{formatoNetoDocumento(0, moneda)}</>;
+  if (r.exacto) return <>{formatoNetoDocumento(r.tarifa, moneda)}</>;
+  return (
+    <span className="block" data-testid="reparto-neto">
+      {r.partes.map((p, i) => <span key={i} className="block whitespace-nowrap">{p.cantidad} × {formatoNetoDocumento(p.tarifa, moneda)}</span>)}
+    </span>
+  );
 }
 
 function resumenMenoresHabitacion(edadesMenores: number[]) {
@@ -170,7 +187,11 @@ export function ContratoDocumento({
   composicionBernalo = [],
   netoTotalExigible = null,
   estancia = null,
+  incluye = null,
+  noIncluye = null,
 }: Props) {
+  const lineasIncluye = lineasTextoDoc(incluye);
+  const lineasNoIncluye = lineasTextoDoc(noIncluye);
   const moneda = (venta as { moneda?: string | null }).moneda ?? "COP";
   // Fase 3F-4B: helper ÚNICO (lib/contrato/valorContratoItem.ts) — lee
   // `valor_total` para una línea `modo_precio = "total"` (Bernalo) o la
@@ -198,6 +219,8 @@ export function ContratoDocumento({
   const alojItems = items.filter((it) => !it.descripcion?.startsWith("Servicio · ") && !esLineaVueloManual(it.descripcion));
   // Hay vuelos manuales cuyo valor está en el total pero NO en las filas visibles: el documento lo dice (sin revelar su importe, ni PVP, ni comisión).
   const hayVuelosEnElTotal = items.some((it) => esLineaVueloManual(it.descripcion));
+  // El aviso de un vuelo manual ("sujeto a confirmación…") se dice UNA vez para toda la sección, no en cada tramo.
+  const avisosVuelosManuales = [...new Set(vuelos.map((v) => notaVueloManual(v.servicios)?.aviso).filter((a): a is string => !!a))];
   // Cierre 3F-4B: separa las líneas agregadas (`modo_precio = "total"`,
   // Bernalo) de las per-cápita de siempre — nunca se mezclan en la misma
   // tabla (regla F.5).
@@ -383,9 +406,14 @@ export function ContratoDocumento({
                   <div className="text-xs text-gray-600">
                     Destino: {destino}
                   </div>
-                  {v.servicios && (
+                  {/* Vuelo manual: la nota guardada conserva su marca interna; se muestran solo los pasajeros (el aviso va una vez, al pie de la sección). */}
+                  {manual ? (
+                    notaVueloManual(v.servicios)?.pax != null && (
+                      <div className="mt-1 text-xs text-gray-500">Pasajeros: {notaVueloManual(v.servicios)!.pax}</div>
+                    )
+                  ) : v.servicios && (
                     <div className="mt-1 text-xs text-gray-500">
-                      {manual ? "Detalle" : "Equipaje/Servicios"}: {v.servicios}
+                      Equipaje/Servicios: {v.servicios}
                     </div>
                   )}
                   {esLegacyDoble ? (
@@ -416,6 +444,11 @@ export function ContratoDocumento({
                 );
               })}
             </div>
+            {avisosVuelosManuales.length > 0 && (
+              <p className="mt-2 text-xs text-gray-500" data-testid="aviso-vuelos-manuales">
+                {avisosVuelosManuales.map((a) => `Vuelos sin reserva confirmada: ${a}.`).join(" ")}
+              </p>
+            )}
           </section>
         )}
 
@@ -493,6 +526,27 @@ export function ContratoDocumento({
             </div>
           )}
         </section>
+
+        {/* ── Incluye / No incluye (#75: solo si el snapshot lo trae) ── */}
+        {(lineasIncluye.length > 0 || lineasNoIncluye.length > 0) && (
+          <section className="break-inside-avoid" data-testid="incluye-documento">
+            <h2 className="mb-2 break-after-avoid text-sm font-semibold" style={{ color: TITULO }}>Incluye / No incluye</h2>
+            <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
+              {lineasIncluye.length > 0 && (
+                <div className="rounded-lg border border-gray-200 p-3">
+                  <div className="mb-1 text-xs font-semibold text-gray-700">Incluye</div>
+                  <ul className="list-disc space-y-0.5 pl-4 text-xs text-gray-600">{lineasIncluye.map((t, i) => <li key={i}>{t}</li>)}</ul>
+                </div>
+              )}
+              {lineasNoIncluye.length > 0 && (
+                <div className="rounded-lg border border-gray-200 p-3">
+                  <div className="mb-1 text-xs font-semibold text-gray-500">No incluye</div>
+                  <ul className="list-disc space-y-0.5 pl-4 text-xs text-gray-600">{lineasNoIncluye.map((t, i) => <li key={i}>{t}</li>)}</ul>
+                </div>
+              )}
+            </div>
+          </section>
+        )}
 
         {/* ── Pasajeros ────────────────────────────────────────── */}
         {pasajeros.length > 0 && (
@@ -673,12 +727,12 @@ export function ContratoDocumento({
                       <>
                         <td className="border border-gray-200 px-2 py-1">
                           {valoresNetos
-                            ? formatoNetoDocumento(valoresNetos.get(it.id)?.tarifaAdulto ?? 0, moneda, valoresNetos.get(it.id)?.adultoAproximado)
+                            ? <TarifaNetaCelda total={valoresNetos.get(it.id)?.adultoTotal ?? 0} cantidad={Number(it.adultos)} moneda={moneda} />
                             : formatMoneda(it.tarifa_adulto, moneda)}
                         </td>
                         <td className="border border-gray-200 px-2 py-1">
                           {valoresNetos
-                            ? formatoNetoDocumento(valoresNetos.get(it.id)?.tarifaNino ?? 0, moneda, valoresNetos.get(it.id)?.ninoAproximado)
+                            ? <TarifaNetaCelda total={valoresNetos.get(it.id)?.ninoTotal ?? 0} cantidad={Number(it.ninos)} moneda={moneda} />
                             : formatMoneda(it.tarifa_nino, moneda)}
                         </td>
                         <td className="border border-gray-200 px-2 py-1 font-medium">

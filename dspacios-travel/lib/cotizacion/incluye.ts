@@ -37,3 +37,24 @@ export function sugerirIncluye(servicios: ServicioIncluye[]): string {
   // Quita duplicados conservando el orden.
   return [...new Set(lineas)].join("\n");
 }
+
+const texto = (v: unknown) => (typeof v === "string" ? v.trim() : "");
+const lista = (v: unknown): Record<string, unknown>[] => (Array.isArray(v) ? v.filter((x): x is Record<string, unknown> => typeof x === "object" && x !== null) : []);
+
+/**
+ * Propuesta de «Incluye» para UNA opción de carrito, SOLO con lo que su snapshot cotizó (`payload`): el hotel con su categoría y plan, los servicios
+ * incluidos del paquete, los servicios adicionales y los vuelos/servicios manuales. Nada que el payload no traiga. El asesor la edita antes de generar.
+ */
+export function sugerirIncluyeCarrito(payload: unknown): string {
+  const p = (typeof payload === "object" && payload !== null ? payload : {}) as Record<string, unknown>;
+  const servicios: ServicioIncluye[] = [];
+  for (const it of lista(p.items)) {
+    const plan = [texto(it.categoria), texto(it.regimen ?? it.alimentacion)].filter(Boolean).join(", plan ");
+    const nombre = texto(it.hotelNombre);
+    if (nombre) servicios.push({ tipo: "hotel", nombre: plan ? `${nombre} (${plan})` : nombre });
+  }
+  const tipoServicio = (categoria: unknown) => (categoria === "asistencia" ? "asistencia" : "otro");
+  for (const s of [...lista(p.serviciosIncluidos), ...lista(p.tours)]) servicios.push({ tipo: tipoServicio(s.categoria), nombre: texto(s.nombre) });
+  for (const m of lista(p.manuales)) servicios.push({ tipo: m.clase === "vuelo" ? "aereo" : "otro", nombre: texto(m.nombre) });
+  return sugerirIncluye(servicios);
+}

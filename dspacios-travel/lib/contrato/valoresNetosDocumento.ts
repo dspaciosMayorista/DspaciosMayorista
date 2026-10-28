@@ -8,6 +8,9 @@ export type ValorNetoItemDocumento = {
   tarifaNino: number;
   adultoAproximado: boolean;
   ninoAproximado: boolean;
+  /** Parte NETO de los adultos / niños de la línea (exacta, en unidades): de ella sale el reparto por persona que se muestra. */
+  adultoTotal: number;
+  ninoTotal: number;
 };
 
 /**
@@ -83,6 +86,8 @@ export function valoresNetosDocumento(
       tarifaNino: ninos > 0 ? nino / ninos / 100 : 0,
       adultoAproximado: adultos > 0 && adulto % adultos !== 0,
       ninoAproximado: ninos > 0 && nino % ninos !== 0,
+      adultoTotal: adulto / 100,
+      ninoTotal: nino / 100,
     });
   }
   return resultado;

@@ -62,6 +62,9 @@ type Detalle = {
   composicionBernalo?: ComposicionBernaloDocumento[];
   // #102: solo en una venta B2B asistida en NETO (ver `crearCotizacionCarrito`).
   b2bExterno?: { netoTotalExigible?: number };
+  // #75: Incluye / No incluye congelado en el snapshot (p. ej. la opción elegida de una comparativa).
+  incluye?: string | null;
+  noIncluye?: string | null;
 };
 
 const PRINT_STYLES = `
@@ -187,6 +190,8 @@ export default async function CotizacionImprimiblePage({
             vigenciaHasta={cot.vigencia_hasta}
             netoTotalExigible={netoTotalExigible}
             agencia={agencia}
+            incluye={d.incluye ?? null}
+            noIncluye={d.noIncluye ?? null}
           />
         </div>
       </div>
