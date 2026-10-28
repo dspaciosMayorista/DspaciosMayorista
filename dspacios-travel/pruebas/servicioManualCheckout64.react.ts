@@ -768,3 +768,56 @@ describe("Comparativa: el interno decide si el cliente puede elegir desde el enl
     m.desmontar();
   });
 });
+
+describe("#75 Comparativa: tras intentar Preparar no se genera con la propuesta automática", () => {
+  before(() => stub.__setContextoAsistencia({ puede: true, aliados: [] }));
+  after(() => { stub.__setContextoAsistencia({ puede: false }); window.history.pushState({}, "", "/"); stub.__setPrevisualizarPresentacion(null); stub.__setCrearComparativaCarrito(null); });
+  const hotelB = { ...hotel, id: "h2", hotelNombre: "Hotel Rodadero", paqueteId: 11, hotelId: 2 };
+  const OPCIONES = [
+    { clave: "A/doble", opcionRef: "A", acomodacionRef: "doble", hotel: "Hotel A", lineas: [], incluye: "Desayuno", noIncluye: "" },
+    { clave: "B/doble", opcionRef: "B", acomodacionRef: "doble", hotel: "Hotel B", lineas: [], incluye: "Desayuno", noIncluye: "" },
+  ];
+  async function preparar() {
+    window.history.pushState({}, "", "/tarifario/checkout?modo=comparativa");
+    stub.__setCrearComparativaCarrito(async () => ({ ok: false, error: "stub" }));
+    const m = await montar([hotel, hotelB]);
+    await llenarClienteCheckout(m);
+    return m;
+  }
+  const generar = async (m: Awaited<ReturnType<typeof montar>>) => {
+    const n0 = stub.__comparativas.length;
+    await act(async () => { click(boton(/Generar cotización comparativa/, m.container)!); await espera(80); });
+    return stub.__comparativas.length - n0;
+  };
+  const alerta = (m: Awaited<ReturnType<typeof montar>>) => [...m.container.querySelectorAll('[role="alert"]')].map((a) => a.textContent).join(" | ");
+
+  test("la vista previa falló: Generar no envía nada y explica el motivo; al corregirla (Preparar ok) sí envía", async () => {
+    stub.__setPrevisualizarPresentacion(async () => ({ ok: false, error: "No se pudo liquidar la opción B." }));
+    const m = await preparar();
+    await act(async () => { click(boton(/^Preparar$/, m.container)!); await espera(80); });
+    assert.match(alerta(m), /No se pudo liquidar la opción B/);
+    assert.equal(await generar(m), 0, "no se envía la propuesta automática detrás del error");
+    assert.match(alerta(m), /la preparación del Incluye \/ No incluye falló/);
+    stub.__setPrevisualizarPresentacion(async () => ({ ok: true, opciones: OPCIONES }));
+    await act(async () => { click(boton(/^Preparar$/, m.container)!); await espera(80); });
+    assert.equal(await generar(m), 1, "ya preparada, se genera");
+    m.desmontar();
+  });
+
+  test("la vista previa sigue en curso: Generar espera y no envía", async () => {
+    let terminar!: (v: unknown) => void;
+    stub.__setPrevisualizarPresentacion(() => new Promise((r) => { terminar = r; }));
+    const m = await preparar();
+    await act(async () => { click(boton(/^Preparar$/, m.container)!); await espera(20); });
+    assert.equal(await generar(m), 0);
+    assert.match(alerta(m), /se está preparando/);
+    await act(async () => { terminar({ ok: true, opciones: OPCIONES }); await espera(40); });
+    m.desmontar();
+  });
+
+  test("sin haber intentado Preparar, se genera con la propuesta del sistema como siempre", async () => {
+    const m = await preparar();
+    assert.equal(await generar(m), 1);
+    m.desmontar();
+  });
+});

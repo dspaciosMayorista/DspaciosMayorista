@@ -10,7 +10,8 @@ import { Input } from "@/components/ui/input";
 import { formatMoneda } from "@/lib/utils";
 import { Plane, Hotel, Car, HeartPulse, Plus, Trash2, GitCompareArrows, type LucideIcon } from "lucide-react";
 import { crearCotizacionManual, crearComparativaManual, type ServicioManual } from "../manual-actions";
-import { OPCIONES_REF, MAX_OPCIONES, type OpcionRef } from "@/lib/cotizacion/comparativa";
+import { ACOMODACION_UNICA, OPCIONES_REF, MAX_OPCIONES, nombrePaqueteItem, type OpcionRef } from "@/lib/cotizacion/comparativa";
+import { PresentacionComparativaEditor, errorEdicion, presentacionDesdeEdicion, type EdicionPresentacion, type OpcionEditable } from "@/components/cotizacion/PresentacionComparativaEditor";
 import { sugerirIncluye, NO_INCLUYE_DEFAULT } from "@/lib/cotizacion/incluye";
 import { hoyBogota, vigenciaInicial } from "@/lib/cotizacion/vigencia";
 
@@ -95,6 +96,19 @@ export function CotizacionManualForm({ asesores, aliados, miNombre, miRolVenta, 
   const totalOpcion = (r: OpcionRef) =>
     comunes + filas.filter((f) => f.tipo === "hotel" && f.opcionRef === r).reduce((s, f) => s + valor({ ...f, modo: efModo(f) }), 0);
 
+  // #75: Incluye / No incluye y descripción del ítem POR OPCIÓN (la propuesta sale de los servicios comunes + el hotel de esa opción).
+  const [edicionPres, setEdicionPres] = useState<EdicionPresentacion>({});
+  const opcionesEditables: OpcionEditable[] = opcionesUsadas.map((r) => {
+    const deLaOpcion = filas.filter((f) => f.tipo !== "hotel" || f.opcionRef === r);
+    const hotel = filas.find((f) => f.tipo === "hotel" && f.opcionRef === r)?.nombre || `Hotel ${r}`;
+    return {
+      clave: `${r}/${ACOMODACION_UNICA}`, titulo: `Opción ${r} · ${hotel}`,
+      lineas: [{ indice: 0, descripcion: nombrePaqueteItem(destino, fechaIda, fechaRegreso) }],
+      incluyeSugerido: incluye.trim() || sugerirIncluye(deLaOpcion.map((f) => ({ tipo: f.tipo, nombre: f.nombre }))),
+      noIncluyeSugerido: noIncluye.trim(),
+    };
+  });
+
   const esB2B = tipoAsesor !== "interno";
   const recobroAliadoN = esB2B ? Math.min(Math.max(Number(recobroAliado) || 0, 0), recobroN) : 0;
   const recobroEmpresaN = recobroN - recobroAliadoN;
@@ -124,6 +138,9 @@ export function CotizacionManualForm({ asesores, aliados, miNombre, miRolVenta, 
       if (hotelSinOpcion) { setErr("Asigna cada hotel a una opción (A, B o C)."); return; }
       if (opcionesUsadas.length < 2) { setErr("Una comparativa necesita al menos dos hoteles en opciones distintas."); return; }
       if (tipoAsesor !== "interno" && aliadoId == null) { setErr("Elige el aliado del catálogo (no se admite texto libre en una comparativa)."); return; }
+      const errPres = errorEdicion(opcionesEditables, edicionPres);
+      if (errPres) { setErr(errPres); return; }
+      const presentacion = presentacionDesdeEdicion(opcionesEditables, edicionPres);
       start(async () => {
         const r = await crearComparativaManual({
           cliente: cli, destino, fechaIda, fechaRegreso, pax: Number(pax) || 0, moneda,
@@ -132,7 +149,7 @@ export function CotizacionManualForm({ asesores, aliados, miNombre, miRolVenta, 
           agenciaNombre: tipoAsesor === "agencia" ? aliadoNombre : "",
           freelanceNombre: tipoAsesor === "freelance" ? aliadoNombre : "",
           aliadoId: tipoAsesor === "interno" ? null : aliadoId,
-          plazo, vigenciaHasta: vigencia, observaciones, incluye, noIncluye,
+          plazo, vigenciaHasta: vigencia, observaciones, incluye, noIncluye, presentacion,
           servicios: filas.map(({ tipo, plataforma, nombre, proveedor, costoNeto, modo, pctMarkup, ta, opcionRef }) => ({
             tipo, plataforma, nombre, proveedor, costoNeto: Number(costoNeto) || 0, modo, pctMarkup: Number(pctMarkup) || 0, ta: Number(ta) || 0,
             opcionRef: tipo === "hotel" ? (opcionRef ?? null) : null,
@@ -413,7 +430,22 @@ export function CotizacionManualForm({ asesores, aliados, miNombre, miRolVenta, 
       </section>
       )}
 
+      {/* Comparativa: Incluye / No incluye y descripción POR OPCIÓN (lo común se ve una vez en el documento si queda igual en todas) */}
+      {comparativa && opcionesEditables.length > 0 && (
+        <section className="rounded-xl border border-gray-200 bg-white p-5">
+          <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
+            <h2 className="text-sm font-semibold text-gray-700">Presentación de cada opción</h2>
+            <p className="text-xs text-gray-400">Propuesta desde los servicios de cada opción. Edítala antes de generar.</p>
+          </div>
+          <PresentacionComparativaEditor opciones={opcionesEditables} edicion={edicionPres} onChange={setEdicionPres} />
+          <button type="button" onClick={() => setNoIncluye(NO_INCLUYE_DEFAULT)} className="mt-2 text-[11px] font-medium text-[#1D7C9A] hover:underline">
+            Proponer «No incluye» sugerido en todas las opciones
+          </button>
+        </section>
+      )}
+
       {/* Incluye / No incluye */}
+      {!comparativa && (
       <section className="rounded-xl border border-gray-200 bg-white p-5">
         <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
           <h2 className="text-sm font-semibold text-gray-700">Incluye / No incluye</h2>
@@ -438,6 +470,7 @@ export function CotizacionManualForm({ asesores, aliados, miNombre, miRolVenta, 
           </div>
         </div>
       </section>
+      )}
 
       <div>
         <label className={lbl}>Observaciones</label>

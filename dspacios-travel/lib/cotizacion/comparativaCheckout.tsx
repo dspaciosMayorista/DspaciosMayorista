@@ -13,7 +13,7 @@
 import { useEffect, useRef, useState, useTransition } from "react";
 import Link from "next/link";
 import { CheckCircle2, AlertTriangle, Loader2, ExternalLink } from "lucide-react";
-import { formatMoneda } from "@/lib/utils";
+import { formatoExacto, textoReparto } from "@/lib/contrato/repartoTarifa";
 import { ACOM_ROOM_LABEL, type AcomRoom } from "@/lib/acomodaciones";
 import {
   elegirOpcionComparativa, resumenOpcionComparativa, type ResumenOpcionComparativa, type ResultadoEleccion,
@@ -108,8 +108,8 @@ export function ContinuarComparativa({ token, opcionRef, acomodacionRef }: { tok
           {resumen.pax ? ` · ${resumen.pax} pax` : ""}{resumen.acomodacionRef !== "unica" ? ` · Acomodación ${acomLabel}` : ""}
         </div>
         <div className="mt-3 flex items-end justify-between border-t border-gray-100 pt-3">
-          <span className="text-sm text-gray-500">{resumen.tarifaPersona ? `${formatMoneda(resumen.tarifaPersona, resumen.moneda)} por persona` : ""}</span>
-          <span className="text-2xl font-bold tabular-nums" style={{ color: "var(--brand-primary)" }}>{formatMoneda(resumen.total, resumen.moneda)}</span>
+          <span className="text-sm text-gray-500">{resumen.tarifa ? `${resumen.tarifa.etiqueta}${resumen.tarifa.soloHotel ? " (alojamiento)" : ""}: ${textoReparto(resumen.tarifa.reparto, (n) => formatoExacto(n, resumen.moneda))}` : ""}</span>
+          <span className="text-2xl font-bold tabular-nums" style={{ color: "var(--brand-primary)" }}>{formatoExacto(resumen.total, resumen.moneda)}</span>
         </div>
         <p className="mt-2 text-[11px] text-gray-400">Elegir un hotel no suma las demás opciones ni genera un cobro. Validamos el valor y la disponibilidad en este momento.</p>
         {resumen.vencida && <p className="mt-2 rounded-lg bg-amber-50 px-3 py-2 text-xs text-amber-700">Esta comparativa venció. Pide una nueva a tu asesor.</p>}

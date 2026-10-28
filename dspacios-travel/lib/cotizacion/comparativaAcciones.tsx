@@ -18,14 +18,16 @@
 import { useEffect, useRef, useState, useTransition } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { CheckCircle2, Loader2, Send, XCircle, ArrowRight, ShieldAlert, Info, Package } from "lucide-react";
-import { formatMoneda } from "@/lib/utils";
+import { CheckCircle2, Loader2, Send, XCircle, ArrowRight, ShieldAlert, Info } from "lucide-react";
+import { formatoExacto } from "@/lib/contrato/repartoTarifa";
 import { ACOM_ROOM_LABEL, type AcomRoom } from "@/lib/acomodaciones";
 import { elegirOpcionComparativa, solicitarOpcionComparativa } from "@/app/tarifario/checkout/actions";
 import { resolverSolicitudComparativa } from "@/app/(dashboard)/dashboard/cotizaciones/manual-actions";
 import type { ContextoModalidad, VistaNeto } from "@/app/(dashboard)/dashboard/cotizaciones/pagos-actions";
 import { bloqueoNeto, pctTexto } from "@/lib/cotizacion/netoHija";
-import type { GrupoHotel, OpcionVista, OtroServicioOpcion } from "@/lib/cotizacion/comparativa";
+import { condicionesPorOpcion, etiquetaTotalOpcion, resumenDeAcomodacion, tiquetesDeOpcion, type GrupoHotel, type MenorOpcion, type OpcionVista, type OtroServicioOpcion, type TarifaVisible, type TiqueteVuelo } from "@/lib/cotizacion/comparativa";
+import { ListasIncluye, MenoresOpcion, ServiciosAdicionalesOpcion, TarifaOpcion, TarifaPaqueteOpcion, VuelosOpcion } from "@/components/cotizacion/ListasIncluye";
+import type { TarifaPaquete } from "@/lib/cotizacion/tarifaPaquete";
 
 export type ModoSeleccion = "checkout" | "solicitud" | "interno" | "solo_lectura";
 
@@ -41,6 +43,16 @@ export type ResumenHotelUI = {
   otrosNoVerificables?: boolean;
   incluye?: string | null;
   noIncluye?: string | null;
+  /** Tarifa real de los menores cotizados en esta opción (solo la usa el documento; ausente si no hay menores o la opción es NETO). */
+  menores?: MenorOpcion[];
+  /** Opción NETO cuyas líneas de menores están a PVP: no se muestran como NETO y se explica el límite. */
+  menoresNoDesglosables?: boolean;
+  /** #75: vuelos de la opción agrupados por tiquete (ida y regreso juntos, aviso una sola vez). Ausente: se usan `vuelos`. */
+  tiquetes?: TiqueteVuelo[];
+  /** #75: tarifa por persona/adulto que cuadra exactamente con lo liquidado; null/ausente = solo se muestra el total. */
+  tarifa?: TarifaVisible | null;
+  /** Tarifa del paquete por pasajero (alojamiento + vuelos + servicios repartidos); null/ausente = se usa `tarifa` y `menores`. */
+  paquete?: TarifaPaquete | null;
 };
 
 function nuevaClave(): string {
@@ -54,7 +66,7 @@ const inp = "w-full rounded-lg border border-gray-300 px-3 py-2 text-sm";
 // la base decide al crear la hija. Sin B2B/aliado el contexto dice `permite: false` y nada cambia.
 export type EleccionModalidad = { modalidad: "pvp" | "neto" | null; reconoce: boolean | null; autorizar: boolean };
 const SIN_ELECCION: EleccionModalidad = { modalidad: null, reconoce: null, autorizar: false };
-const mon = (n: number, m: string) => formatMoneda(n, m);
+const mon = (n: number, m: string) => formatoExacto(n, m);
 
 function useContextoModalidad(activo: boolean, token: string | null, solicitudId: number | null): ContextoModalidad | null {
   const [ctx, setCtx] = useState<ContextoModalidad | null>(null);
@@ -202,6 +214,8 @@ export function SelectorOpciones({
   // #50: modalidad PVP/NETO (solo comparativa manual B2B elegida por el equipo).
   const ctxMod = useContextoModalidad(modo === "interno", token, null);
   const [eleccion, setEleccion] = useState<EleccionModalidad>(SIN_ELECCION);
+  // #75: Incluye / No incluye — común a todas las opciones (una vez, tras las tarjetas) o propio de cada una.
+  const { comun, porAcomodacion } = condicionesPorOpcion(grupos, resumenes);
 
   function actuar(opcionRef: string, acomodacionRef: string) {
     setErr(""); setOk("");
@@ -247,7 +261,8 @@ export function SelectorOpciones({
       <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-3">
         {grupos.map((g) => {
           const sel: OpcionVista = g.acomodaciones.find((a) => a.acomodacionRef === acom[g.opcionRef]) ?? g.acomodaciones[0];
-          const r = resumenes[`${g.opcionRef}/${sel.acomodacionRef}`] ?? resumenes[g.opcionRef] ?? {};
+          const r = resumenDeAcomodacion(resumenes, g.opcionRef, sel.acomodacionRef);
+          const propios = porAcomodacion[`${g.opcionRef}/${sel.acomodacionRef}`] ?? { inc: [], no: [] };
           const esElegida = !!elegida && elegida.opcionRef === g.opcionRef && elegida.acomodacionRef === sel.acomodacionRef;
           // Con la vista previa NETO activa, el total de la opción pasa a ser el PVP ORIGINAL (identificado y atenuado)
           // y el protagonista es el NETO del resumen. Sin vista previa NETO, el total se ve como siempre.
@@ -267,57 +282,43 @@ export function SelectorOpciones({
                   <select id={`acom-${g.opcionRef}`} value={sel.acomodacionRef} className={inp}
                     onChange={(e) => setAcom({ ...acom, [g.opcionRef]: e.target.value })}>
                     {g.acomodaciones.map((a) => (
-                      <option key={a.acomodacionRef} value={a.acomodacionRef}>{etiquetaAcom(a.acomodacionRef) || "Acomodación"} — {formatMoneda(a.total, a.moneda)}</option>
+                      <option key={a.acomodacionRef} value={a.acomodacionRef}>{etiquetaAcom(a.acomodacionRef) || "Acomodación"} — {formatoExacto(a.total, a.moneda)}</option>
                     ))}
                   </select>
                 </div>
               )}
 
-              {r.servicios && r.servicios.length > 0 && (
+              {/* Orden: vuelos (por tiquete), el alojamiento y debajo los servicios adicionales. */}
+              <div className="mb-3"><VuelosOpcion tiquetes={r.tiquetes ?? tiquetesDeOpcion(null, r.vuelos, null)} /></div>
+              {r.items && r.items.length > 0 && (
                 <ul className="mb-3 space-y-1 text-xs text-gray-600">
-                  {r.servicios.map((s) => <li key={s.nombre}>+ {s.nombre}</li>)}
+                  {r.items.filter((it) => it.descripcion !== "Tarifa por niño").map((it, i) => <li key={i}>{it.descripcion}</li>)}
                 </ul>
               )}
-              {r.otros && r.otros.length > 0 && (
-                <ul className="mb-3 space-y-1 text-xs text-gray-600" data-testid="otros-opcion">
-                  {r.otros.map((o, i) => (
-                    <li key={i} className="flex items-start gap-1.5">
-                      <Package size={12} className="mt-0.5 shrink-0" aria-hidden />
-                      <span className="min-w-0 break-words">Servicio adicional: {o.nombre} · {o.pax} pax{o.fechaIda ? ` · ${o.fechaIda}${o.fechaRegreso ? ` → ${o.fechaRegreso}` : ""}` : ""} · incluido en el total</span>
-                    </li>
-                  ))}
-                </ul>
-              )}
+              <div className="mb-3"><ServiciosAdicionalesOpcion servicios={r.servicios} otros={r.otros} /></div>
               {r.otrosNoVerificables && (
                 <p role="note" data-testid="otros-no-verificables" className="mb-3 rounded-lg bg-amber-50 px-3 py-2 text-xs text-amber-900">
                   No se puede confirmar, desde el registro de esta opción, qué servicios adicionales incluye su total. Genera la comparativa de nuevo para ver el detalle.
                 </p>
               )}
-              {r.vuelos && r.vuelos.length > 0 && (
-                <ul className="mb-3 space-y-1 text-xs text-gray-600" data-testid="vuelos-opcion">
-                  {r.vuelos.map((v, i) => <li key={i}>Vuelo {v.tramo}: {v.origen ?? "—"} → {v.destino ?? "—"}{v.fecha ? ` · ${v.fecha}` : ""}{v.hora ? ` · salida ${v.hora} (hora local)` : ""} · {v.nota.replace(/^Vuelo manual · /, "")}</li>)}
-                </ul>
-              )}
-              {r.items && r.items.length > 0 && (
-                <ul className="mb-3 space-y-1 text-xs text-gray-600">
-                  {r.items.map((it) => <li key={it.descripcion}>{it.descripcion}</li>)}
-                </ul>
+              {!comun && (propios.inc.length > 0 || propios.no.length > 0) && (
+                <div className="mb-3"><ListasIncluye incluye={propios.inc} noIncluye={propios.no} opcion={g.opcionRef} columnas={1} /></div>
               )}
 
               <div className="mt-auto border-t border-gray-100 pt-3">
-                {sel.tarifaPersona != null && (
-                  <div className="flex items-baseline justify-between gap-3 text-xs text-gray-500">
-                    <span className="min-w-0">Tarifa por persona{etiquetaAcom(sel.acomodacionRef) ? ` · ${etiquetaAcom(sel.acomodacionRef)}` : ""}</span>
-                    <span className="shrink-0 whitespace-nowrap text-right font-medium tabular-nums text-gray-700">{formatMoneda(sel.tarifaPersona, sel.moneda)}</span>
-                  </div>
-                )}
+                {r.paquete
+                  ? <TarifaPaqueteOpcion paquete={r.paquete} moneda={sel.moneda} sufijo={etiquetaAcom(sel.acomodacionRef) ? ` · ${etiquetaAcom(sel.acomodacionRef)}` : ""} />
+                  : <>
+                    <TarifaOpcion tarifa={r.tarifa} respaldo={{ valor: sel.tarifaPersona, conMenores: !!r.menores?.length }} moneda={sel.moneda} sufijo={etiquetaAcom(sel.acomodacionRef) ? ` · ${etiquetaAcom(sel.acomodacionRef)}` : ""} />
+                    <div className="mt-1 space-y-1"><MenoresOpcion menores={r.menores} noDesglosables={r.menoresNoDesglosables} moneda={sel.moneda} pvp={conNeto} /></div>
+                  </>}
                 <div className="mt-1 flex items-baseline justify-between gap-3">
                   <span className={conNeto ? "min-w-0 text-xs font-medium text-gray-500" : "min-w-0 text-sm font-medium text-gray-600"}>
-                    {conNeto ? "PVP original (cliente)" : "Total de este hotel"}
+                    {conNeto ? "PVP original (cliente)" : etiquetaTotalOpcion(r)}
                   </span>
                   {conNeto
-                    ? <span className="shrink-0 whitespace-nowrap text-right text-sm font-semibold tabular-nums text-gray-500">{formatMoneda(sel.total, sel.moneda)}</span>
-                    : <span className="shrink-0 whitespace-nowrap text-right text-xl font-bold tabular-nums" style={{ color: "var(--brand-primary)" }}>{formatMoneda(sel.total, sel.moneda)}</span>}
+                    ? <span className="shrink-0 whitespace-nowrap text-right text-sm font-semibold tabular-nums text-gray-500">{formatoExacto(sel.total, sel.moneda)}</span>
+                    : <span className="shrink-0 whitespace-nowrap text-right text-xl font-bold tabular-nums" style={{ color: "var(--brand-primary)" }}>{formatoExacto(sel.total, sel.moneda)}</span>}
                 </div>
 
                 {modo === "checkout" && !deshabilitada && token && (
@@ -365,6 +366,13 @@ export function SelectorOpciones({
           );
         })}
       </div>
+
+      {comun && (
+        <section aria-label="Incluye y no incluye de todas las opciones">
+          <h3 className="mb-2 text-sm font-semibold text-gray-700">Incluye / No incluye (todas las opciones)</h3>
+          <ListasIncluye incluye={comun.inc} noIncluye={comun.no} />
+        </section>
+      )}
     </div>
   );
 }

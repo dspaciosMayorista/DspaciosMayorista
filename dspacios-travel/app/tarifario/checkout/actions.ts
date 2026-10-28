@@ -27,7 +27,8 @@ import {
 } from "@/lib/reservar/vinculoServiciosCheckout";
 import { resumirServiciosContrato, type CategoriaServicio, type ServicioEfectivo } from "@/lib/reservar/serviciosPaquete";
 import { claveHuellaIncluidos, incluidosParaPayload, type ServicioIncluidoCotizado } from "@/lib/reservar/incluidosCotizados";
-import { hoyBogota, resolverVigenciaCotizacion } from "@/lib/cotizacion/vigencia";
+import { tituloPaqueteEditado } from "@/lib/contrato/paqueteTuristicoDocumento";
+import { abiertaConSalidaPasada, hoyBogota, MENSAJE_SALIDA_PASADA, resolverVigenciaCotizacion } from "@/lib/cotizacion/vigencia";
 import { calcularResidualServiciosIncluidosPorGrupo } from "@/lib/reservar/desglosePersonaCotizacion";
 import { descripcionLineaMenor, menoresDelComputo } from "@/lib/reservar/menoresDeDos";
 import type { ComposicionBernaloDocumento } from "@/lib/reservar/alojamientoBernaloDocumento";
@@ -37,7 +38,10 @@ import {
   MAX_OPCIONES, OPCIONES_REF, MENSAJES_COMPARATIVA, totalPublicoOpcion, mensajeAcomodacionComparativa, validarAcomodacionComparativa, canalDeRol, composicionesUniformes, codigoErrorComparativa,
   esErrorReintentable, ipOrigenConfiable, mensajeErrorComparativa, validarClienteCheckoutPublico, validarEntradaEleccion,
   validarEntradaSolicitud, validarRefsOpcion, type CanalEleccion, type CapacidadAcomodacion, type OpcionRef, type OpcionRpc,
+  aplicarDescripciones, leerPresentacionComparativa, lineaEditable, lineasEditables, tarifaPersonaCarrito, tarifaVisibleOpcion, type TarifaVisible,
 } from "@/lib/cotizacion/comparativa";
+import { NO_INCLUYE_DEFAULT, sugerirIncluyeCarrito } from "@/lib/cotizacion/incluye";
+import { snapshotPaqueteDePayload } from "@/lib/cotizacion/tarifaPaquete";
 import { huellaIp } from "@/lib/cotizacion/comparativaServidor";
 import { TIPOS_DOC_PERSONA } from "@/lib/personas/identidad";
 import { tipoDocCheckout } from "@/lib/personas/cotizacion";
@@ -560,6 +564,8 @@ async function crearCotizacionCarrito(input: {
   manuales?: ServicioManual[];
   /** #64: para cada manual, la posición en `items` de su hotel (vuelo) o null (otro servicio). El servidor lo resuelve desde `itemId`; aquí se valida contra lo liquidado. */
   hotelDeManual?: (number | null)[];
+  /** Descripción editada del ítem «Paquete Turístico …» (solo texto; ya saneada). Se guarda únicamente si hay servicio manual. */
+  tituloPaquete?: string | null;
   /**
    * #64: la cotización es UNA OPCIÓN de una comparativa (un solo hotel, posición 0). Cada vuelo trae como selector la clave de su GRUPO (`grupo:IATA|ida|regreso`) o «comun»:
    * solo se incluye si el grupo de ESTE hotel (destino IATA + fechas liquidados por el servidor) es el suyo; los de otro grupo se omiten (quedan marcados en `manualesAplicados`).
@@ -1153,10 +1159,18 @@ async function crearCotizacionCarrito(input: {
     moneda,
   };
 
+  // Regla C.14: cada ítem Bernalo persistido lleva `modeloTarifario: "unidad"` (ya presente en `SolicitudItemBernaloComputado`) para que
+  // `convertirCotizacionCarrito` (3F-4B) lo detecte y bloquee la conversión a contrato explícitamente, sin caer al flujo persona.
+  const payloadCotizacion = { items: [...itemsOk, ...itemsBernaloOk], tours: toursOk, ...(manualesOk.length ? { manuales: manualesOk } : {}), serviciosIncluidos: incluidosPayload, cliente: input.cliente, ...(planB2B ? { b2bAsistido: planB2B } : {}) };
+
   const detalle = {
     venta: ventaSnap, pasajeros: [], hoteles: hotelesSnap, vuelos: vuelosSnap, items: itemsSnap,
     habitacionesBernalo: habitacionesBernaloSnap,
     composicionBernalo: composicionBernaloSnap,
+    ...(manualesOk.length && input.tituloPaquete ? { tituloPaquete: input.tituloPaquete } : {}),
+    // Cobertura (pasajeros) de cada tour y servicio manual y, en NETO, su parte NETO del plan congelado: lo único que el documento necesita para repartir el
+    // paquete por pasajero. Sin comisión, impuesto ni plan; el documento público no lee `payload`, así que viaja aquí.
+    ...(manualesOk.length ? { paqueteSnapshot: snapshotPaqueteDePayload(payloadCotizacion, planB2B && planB2B.modo_compra === "neta" ? planB2B.total_exigible : null) } : {}),
     // #102: lo ÚNICO de la venta B2B que puede ver el comprador en los documentos de la cotización (imprimible y enlace público): en NETO,
     // el total exigible. Se deriva del plan congelado (que vive en `payload`, nunca en un documento externo); el PVP original y la comisión
     // no salen de aquí. Quien convierte lee siempre `payload.b2bAsistido`, jamás este valor.
@@ -1181,11 +1195,7 @@ async function crearCotizacionCarrito(input: {
     // tiene tarifario/catálogo público — MINORISTA_OCULTAS en proxy.ts).
     tenant: "mayorista",
     tipo: "carrito",
-    // Regla C.14: cada ítem Bernalo persistido lleva `modeloTarifario:
-    // "unidad"` (ya presente en `SolicitudItemBernaloComputado`) para que
-    // `convertirCotizacionCarrito` (3F-4B) lo detecte y bloquee la
-    // conversión a contrato explícitamente, sin caer al flujo persona.
-    payload: { items: [...itemsOk, ...itemsBernaloOk], tours: toursOk, ...(manualesOk.length ? { manuales: manualesOk } : {}), serviciosIncluidos: incluidosPayload, cliente: input.cliente, ...(planB2B ? { b2bAsistido: planB2B } : {}) } as unknown as Json,
+    payload: payloadCotizacion as unknown as Json,
     detalle: detalle as unknown as Json,
     cliente: campos.cliente,
     cliente_documento: campos.cliente_documento,
@@ -1295,7 +1305,7 @@ export async function crearSolicitudReserva(inputRaw: unknown): Promise<Solicitu
     b2bAsistido = prep.contexto;
   }
 
-  const cot = await crearCotizacionCarrito({ items: input.items, tours, hotelDeTour: input.hotelDeTour, cliente: clienteCheckout, manuales: man.manuales, hotelDeManual: man.hotelDeManual }, { b2b: b2bAsistido });
+  const cot = await crearCotizacionCarrito({ items: input.items, tours, hotelDeTour: input.hotelDeTour, cliente: clienteCheckout, manuales: man.manuales, hotelDeManual: man.hotelDeManual, tituloPaquete: tituloPaqueteEditado((inputRaw as { tituloPaquete?: unknown } | null)?.tituloPaquete) }, { b2b: b2bAsistido });
   if (!cot.ok) return cot;
 
   // Agrega el cliente a la base de contactos del CRM como B2C (cliente_final),
@@ -1414,6 +1424,29 @@ export async function previsualizarComparativaB2B(inputRaw: unknown): Promise<Pr
     opciones.push({ opcionRef: o.opcion_ref, acomodacionRef: o.acomodacion_ref, hotel: o.fila.hotel, terminos: terminosPrevios(o.plan) });
   }
   return { ok: true, opciones };
+}
+
+export type PresentacionPrevia =
+  | { ok: true; opciones: { clave: string; opcionRef: string; acomodacionRef: string; hotel: string | null; lineas: { indice: number; descripcion: string }[]; incluye: string; noIncluye: string }[] }
+  | { ok: false; error: string };
+
+/**
+ * #75: lo que el asesor puede editar de cada alternativa ANTES de generar: las descripciones de sus líneas (las del documento que recibirá la hija) y la
+ * propuesta de Incluye / No incluye, armada SOLO con lo cotizado. Mismo motor que al crear (sin insertar nada); solo personal interno.
+ */
+export async function previsualizarPresentacionComparativa(inputRaw: unknown): Promise<PresentacionPrevia> {
+  if (!(await puedeAgregarServicioManual())) return { ok: false, error: "Solo el personal interno puede editar la presentación de la comparativa." };
+  const crudo = (typeof inputRaw === "object" && inputRaw !== null ? inputRaw : {}) as Record<string, unknown>;
+  const p = await prepararComparativa({ ...crudo, presentacion: undefined }, true);
+  if (!p.ok) return { ok: false, error: p.error };
+  return {
+    ok: true,
+    opciones: p.armadas.map((o) => ({
+      clave: `${o.opcion_ref}/${o.acomodacion_ref}`, opcionRef: o.opcion_ref, acomodacionRef: o.acomodacion_ref, hotel: o.fila.hotel,
+      lineas: lineasEditables((o.fila.detalle as { items?: unknown } | null)?.items),
+      incluye: sugerirIncluyeCarrito(o.fila.payload), noIncluye: NO_INCLUYE_DEFAULT,
+    })),
+  };
 }
 
 function terminosPrevios(p: PlanB2BCotizacion): TerminosB2BPrevios {
@@ -1619,6 +1652,10 @@ async function prepararComparativa(inputCrudo: unknown, vista: boolean): Promise
 
   const actor = await actorComparativa();
   if (compartirPublico && actor.canal !== "interno") return { ok: false, error: "Solo el personal interno puede dejar una comparativa para que el cliente elija desde el enlace." };
+  // #75: Incluye / No incluye y descripciones editadas por el asesor (solo texto). Un visitante o un aliado que la envíe se RECHAZA, no se ignora.
+  const pres = leerPresentacionComparativa((inputRaw as { presentacion?: unknown } | null)?.presentacion);
+  if (!pres.ok) return { ok: false, error: pres.error };
+  if (pres.datos && actor.canal !== "interno") return { ok: false, error: "Solo el personal interno puede editar el Incluye / No incluye o las descripciones de la comparativa." };
 
   // #64: con vuelos manuales la comparativa admite VARIOS destinos o fechas (grupos: destino IATA + fechas), cada alternativa se cotiza por separado. Combinación admitida:
   // multidestino con UNA acomodación por opción, o unidestino con varias. Un hotel con habitaciones de más de un tipo en un viaje multidestino se rechaza ANTES de cotizar.
@@ -1694,32 +1731,54 @@ async function prepararComparativa(inputCrudo: unknown, vista: boolean): Promise
   const vigenciaRes = resolverVigenciaCotizacion({ hoy: hoyBogota(), fechaSalida: salidaMadre, diasPorDefecto: 3 });
   if (!vigenciaRes.ok) return { ok: false, error: vigenciaRes.error };
 
-  const opciones: OpcionRpc[] = armadas.map((o, idx) => ({
-    opcion_ref: o.opcion_ref,
-    acomodacion_ref: o.acomodacion_ref,
-    orden: idx,
-    etiqueta: o.fila.hotel ?? `Hotel ${o.opcion_ref}`,
-    moneda: o.fila.moneda,
-    // NETO: la columna `total` sigue siendo el PVP (la base lo exige), pero NADA derivado del PVP sale al público: solo el total exigible.
-    tarifa_persona: !o.plan?.modo_compra || o.plan.modo_compra === "comisionable" ? (o.fila.pax > 0 && o.hotelPrecio > 0 ? Math.round(o.hotelPrecio / o.fila.pax) : null) : null,
-    total: o.fila.precio_venta,
-    resumen_publico: {
-      hotel: o.fila.hotel, plan_nombre: o.fila.plan_nombre, pax: o.fila.pax, moneda: o.fila.moneda,
-      total: o.plan?.modo_compra === "neta" ? o.plan.total_exigible : o.fila.precio_venta,
-      ...(o.plan?.modo_compra === "neta" ? { total_exigible: o.plan.total_exigible } : { total_hotel: o.hotelPrecio }),
-      acomodacion: o.acomodacion_ref,
-      habitaciones: o.fila.payload.items?.[0]?.habitaciones ?? null,
-      servicios: (o.fila.payload.tours ?? []).map((t) => ({ nombre: t.nombre, precio: t.precio })),
-      // Vuelos manuales comunes: ruta, tramo, fecha y pasajeros; nunca precio, costo ni proveedor (su valor ya está en `total`, una sola vez).
-      vuelos: vuelosPublicos(o.fila.detalle),
-      fecha_salida: o.fila.fecha_salida, fecha_regreso: o.fila.fecha_regreso,
-    },
-    plantilla_hija: {
-      hotel: o.fila.hotel, destino: o.fila.destino, plan_nombre: o.fila.plan_nombre, pax: o.fila.pax,
-      cliente: o.fila.cliente, cliente_documento: o.fila.cliente_documento,
-      fecha_salida: o.fila.fecha_salida, fecha_regreso: o.fila.fecha_regreso, payload: o.fila.payload, detalle: o.fila.detalle,
-    },
-  }));
+  // #75: presentación de cada opción (solo texto). Toda clave debe ser de una alternativa armada y toda edición, de una línea editable que no cambió.
+  const claves = new Set(armadas.map((o) => `${o.opcion_ref}/${o.acomodacion_ref}`));
+  if (pres.datos && Object.keys(pres.datos).some((k) => !claves.has(k))) {
+    return { ok: false, error: "La presentación nombra una opción que ya no está en la comparativa (el carrito cambió). Vuelve a prepararla." };
+  }
+  const detalles: Record<string, unknown>[] = [];
+  for (const o of armadas) {
+    const p = pres.datos?.[`${o.opcion_ref}/${o.acomodacion_ref}`];
+    const det = (o.fila.detalle ?? {}) as Record<string, unknown>;
+    const ed = aplicarDescripciones(Array.isArray(det.items) ? (det.items as Record<string, unknown>[]) : [], p?.descripciones ?? []);
+    if (!ed.ok) return { ok: false, error: ed.error };
+    // Sin edición: la propuesta sale SOLO de lo cotizado (hotel, plan, incluidos, servicios y vuelos). El No incluye no se inventa: vacío salvo que el asesor lo escriba.
+    detalles.push({ ...det, items: ed.items, incluye: p?.incluye ?? sugerirIncluyeCarrito(o.fila.payload), noIncluye: p?.noIncluye ?? "" });
+  }
+
+  const opciones: OpcionRpc[] = armadas.map((o, idx) => {
+    const detalle = detalles[idx] as { items: Record<string, unknown>[]; incluye: string; noIncluye: string };
+    return {
+      opcion_ref: o.opcion_ref,
+      acomodacion_ref: o.acomodacion_ref,
+      orden: idx,
+      etiqueta: o.fila.hotel ?? `Hotel ${o.opcion_ref}`,
+      moneda: o.fila.moneda,
+      // NETO: la columna `total` sigue siendo el PVP (la base lo exige), pero NADA derivado del PVP sale al público: solo el total exigible.
+      // La tarifa es la que el motor liquidó POR ADULTO en las habitaciones (antes: hotel completo, menores incluidos, entre todos los pasajeros y redondeado).
+      tarifa_persona: !o.plan?.modo_compra || o.plan.modo_compra === "comisionable" ? tarifaPersonaCarrito(detalle.items) : null,
+      total: o.fila.precio_venta,
+      resumen_publico: {
+        hotel: o.fila.hotel, plan_nombre: o.fila.plan_nombre, pax: o.fila.pax, moneda: o.fila.moneda,
+        total: o.plan?.modo_compra === "neta" ? o.plan.total_exigible : o.fila.precio_venta,
+        ...(o.plan?.modo_compra === "neta" ? { total_exigible: o.plan.total_exigible } : { total_hotel: o.hotelPrecio }),
+        acomodacion: o.acomodacion_ref,
+        habitaciones: o.fila.payload.items?.[0]?.habitaciones ?? null,
+        servicios: (o.fila.payload.tours ?? []).map((t) => ({ nombre: t.nombre, precio: t.precio })),
+        // Vuelos manuales comunes: ruta, tramo, fecha y pasajeros; nunca precio, costo ni proveedor (su valor ya está en `total`, una sola vez).
+        vuelos: vuelosPublicos(o.fila.detalle),
+        // #75: el texto de las habitaciones tal como lo verá el documento hijo (solo descripción: sin importes, que en NETO no son públicos).
+        items: detalle.items.filter((i) => lineaEditable(i.descripcion) && (Number(i.adultos) > 0 || i.modo_precio === "total")).map((i) => ({ descripcion: i.descripcion })),
+        incluye: detalle.incluye, noIncluye: detalle.noIncluye,
+        fecha_salida: o.fila.fecha_salida, fecha_regreso: o.fila.fecha_regreso,
+      },
+      plantilla_hija: {
+        hotel: o.fila.hotel, destino: o.fila.destino, plan_nombre: o.fila.plan_nombre, pax: o.fila.pax,
+        cliente: o.fila.cliente, cliente_documento: o.fila.cliente_documento,
+        fecha_salida: o.fila.fecha_salida, fecha_regreso: o.fila.fecha_regreso, payload: o.fila.payload, detalle,
+      },
+    };
+  });
 
   return { ok: true, ref, cli, actor, compartirPublico, vigencia: vigenciaRes.vigencia, destinoMadre, salidaMadre, regresoMadre, opciones, armadas };
 }
@@ -1815,9 +1874,10 @@ export async function elegirOpcionComparativa(inputRaw: unknown): Promise<Result
   const actor = await actorComparativa();
 
   const { data: madre } = await admin.from("cotizaciones")
-    .select("id, tipo, modo, estado, version, vigencia_hasta, moneda, tenant, creado_por_id, propietario_id, aliado_id, payload").eq("share_token", d.token).maybeSingle();
+    .select("id, tipo, modo, estado, version, vigencia_hasta, fecha_salida, moneda, tenant, creado_por_id, propietario_id, aliado_id, payload").eq("share_token", d.token).maybeSingle();
   // «No existe» y «no es tuya» responden igual: nunca se enumeran cotizaciones.
   if (!madre || madre.modo !== "comparativa" || madre.estado !== "abierta") return { ok: false, error: MENSAJES_COMPARATIVA.NO_DISPONIBLE };
+  if (abiertaConSalidaPasada(madre, hoyBogota())) return { ok: false, error: MENSAJE_SALIDA_PASADA };
   if (madre.version !== d.version) return { ok: false, error: MENSAJES_COMPARATIVA.VERSION, reintentable: true };
 
   const { data: opcion } = await admin.from("cotizacion_opciones")
@@ -1922,7 +1982,10 @@ export async function solicitarOpcionComparativa(inputRaw: unknown): Promise<Res
 
 export type ResumenOpcionComparativa = {
   version: number; tipo: string; opcionRef: string; acomodacionRef: string; etiqueta: string;
-  total: number; moneda: string; tarifaPersona: number | null; destino: string | null; fechaSalida: string | null;
+  total: number; moneda: string; tarifaPersona: number | null;
+  /** #75: tarifa por persona/adulto que cuadra con lo liquidado (o null: solo el total). */
+  tarifa: TarifaVisible | null;
+  destino: string | null; fechaSalida: string | null;
   fechaRegreso: string | null; pax: number | null; vigenciaHasta: string | null; vencida: boolean;
   /** Vuelos manuales comunes de la opción (ruta, tramo, fecha y pasajeros; nunca precio, costo ni proveedor). */
   vuelos: { tramo: string; origen: string | null; destino: string | null; fecha: string | null; /** Hora local de salida (HH:mm) si el asesor la confirmó. */ hora?: string | null; nota: string }[];
@@ -1945,16 +2008,19 @@ export async function resumenOpcionComparativa(
     .eq("share_token", token).maybeSingle();
   if (!m || m.modo !== "comparativa" || m.estado !== "abierta") return { ok: false, error: MENSAJES_COMPARATIVA.NO_DISPONIBLE };
   const { data: o } = await admin.from("cotizacion_opciones")
-    .select("etiqueta, total, moneda, tarifa_persona, resumen_publico")
+    .select("etiqueta, total, moneda, tarifa_persona, resumen_publico, plantilla_hija")
     .eq("cotizacion_id", m.id).eq("opcion_ref", refs.opcionRef).eq("acomodacion_ref", refs.acomodacionRef).maybeSingle();
   if (!o) return { ok: false, error: MENSAJES_COMPARATIVA.OPCION };
+  // #75: la tarifa sale del snapshot y solo si cuadra (nunca la columna redondeada); la plantilla no sale de aquí.
+  const tarifa = tarifaVisibleOpcion(o.resumen_publico, o.plantilla_hija, Number(o.total));
   return {
     ok: true,
     datos: {
       version: m.version, tipo: m.tipo, opcionRef: refs.opcionRef, acomodacionRef: refs.acomodacionRef,
-      etiqueta: o.etiqueta, total: totalPublicoOpcion(Number(o.total), o.resumen_publico), moneda: o.moneda, tarifaPersona: o.tarifa_persona == null ? null : Number(o.tarifa_persona),
+      etiqueta: o.etiqueta, total: totalPublicoOpcion(Number(o.total), o.resumen_publico), moneda: o.moneda,
+      tarifaPersona: tarifa?.reparto.exacto ? tarifa.reparto.tarifa : null, tarifa,
       destino: m.destino, fechaSalida: m.fecha_salida, fechaRegreso: m.fecha_regreso, pax: m.pax,
-      vigenciaHasta: m.vigencia_hasta, vencida: !!m.vigencia_hasta && m.vigencia_hasta < hoyBogota(),
+      vigenciaHasta: m.vigencia_hasta, vencida: (!!m.vigencia_hasta && m.vigencia_hasta < hoyBogota()) || abiertaConSalidaPasada(m, hoyBogota()),
       vuelos: (() => { const v = ((o.resumen_publico ?? {}) as { vuelos?: unknown }).vuelos; return Array.isArray(v) ? (v as ResumenOpcionComparativa["vuelos"]) : []; })(),
     },
   };

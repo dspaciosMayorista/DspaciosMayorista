@@ -413,7 +413,7 @@ describe("validarBernaloParaConversion — hallazgo confirmado: compara también
   });
 
   test("convertirCotizacionCarrito consulta cotizaciones.moneda y la pasa al validar cada ítem Bernalo", () => {
-    assert.match(codigo, /\.select\("id, estado, tipo, payload, tenant, numero_contrato, detalle, moneda, vigencia_hasta"\)/);
+    assert.match(codigo, /\.select\("id, estado, tipo, payload, tenant, numero_contrato, detalle, moneda, vigencia_hasta, fecha_salida"\)/);
     assert.match(codigo, /validarBernaloParaConversion\(it, cot\.moneda \?\? null\)/);
   });
 });

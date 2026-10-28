@@ -92,7 +92,7 @@ describe("app: una sola puerta de dinero y ninguna escritura directa", () => {
   test("decisión A: reservar/actions.ts no conoce nada de #39 y la vigencia no se tocó", () => {
     const reservar = leer("app/(dashboard)/dashboard/reservar/actions.ts");
     assert.doesNotMatch(reservar, /economico_rev|_39\b|editar_servicios|creado_por_id/);
-    assert.match(leer("app/(dashboard)/dashboard/cotizaciones/[id]/page.tsx"), /editable=\{c\.estado === "abierta"\}/);
+    assert.match(leer("app/(dashboard)/dashboard/cotizaciones/[id]/page.tsx"), /editable=\{c\.estado === "abierta" && !salidaPasada\}/);
   });
   test("excepción focal: convertirCotizacion rechaza una manual ANTES del motor, y solo ahí aparece la guarda", () => {
     const reservar = leer("app/(dashboard)/dashboard/reservar/actions.ts");
@@ -100,7 +100,7 @@ describe("app: una sola puerta de dinero y ninguna escritura directa", () => {
     const fin = reservar.indexOf("export async function convertirCotizacionCarrito");
     assert.ok(ini > 0 && fin > ini, "no se pudo delimitar convertirCotizacion");
     const f = reservar.slice(ini, fin);
-    assert.match(f, /\.select\("estado, payload, numero_contrato, tenant, modo, tipo, vigencia_hasta"\)/, "la lectura incluye tipo");
+    assert.match(f, /\.select\("estado, payload, numero_contrato, tenant, modo, tipo, vigencia_hasta, fecha_salida"\)/, "la lectura incluye tipo");
     const iGuarda = f.indexOf('if (cot.tipo === "manual") return { ok: false');
     assert.ok(iGuarda > 0, "falta la guarda de manual");
     for (const despues of ['if (cot.estado === "convertida"', "contextoCotizacion()", "reservarDesdeTarifarioInterno(", '.update({ estado: "convertida"']) {

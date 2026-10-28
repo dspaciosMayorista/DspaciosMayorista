@@ -7,7 +7,7 @@ import { ResponsiveTableShell } from "@/components/ui/ResponsiveTableShell";
 import { desdeComparativa } from "@/lib/cotizacion/comparativa";
 import { ValorCotizacion } from "@/components/cotizacion/ValorCotizacion";
 import { VigenciaTexto } from "@/components/cotizacion/VigenciaTexto";
-import { hoyBogota } from "@/lib/cotizacion/vigencia";
+import { abiertaConSalidaPasada, hoyBogota } from "@/lib/cotizacion/vigencia";
 
 export const dynamic = "force-dynamic";
 
@@ -103,14 +103,18 @@ export default async function CotizacionesPage() {
                   <td className="px-4 py-3 text-gray-700" data-label="Cliente">{c.cliente ?? "—"}</td>
                   <td className="px-4 py-3 text-gray-500" data-label="Destino">{c.destino ?? "—"}</td>
                   <td className="px-4 py-3 text-gray-500" data-label="Salida">{formatFechaLarga(c.fecha_salida)}</td>
-                  <td className="px-4 py-3 text-gray-500" data-label="Válida hasta"><VigenciaTexto vigencia={c.vigencia_hasta} estado={c.estado} hoy={hoyNegocio} /></td>
+                  <td className="px-4 py-3 text-gray-500" data-label="Válida hasta"><VigenciaTexto vigencia={c.vigencia_hasta} estado={c.estado} hoy={hoyNegocio} fechaSalida={c.fecha_salida} /></td>
                   <td className="px-4 py-3 text-right tabular-nums text-gray-700" data-label="Valor">{c.modo === "comparativa"
                       ? <ValorCotizacion desde={desdePorMadre.get(c.id) ?? null} />
                       : <ValorCotizacion modo={(c as { b2b_modo?: string | null }).b2b_modo} precioVenta={c.precio_venta} totalExigible={(c as { b2b_total?: string | null }).b2b_total} moneda={c.moneda} />}</td>
                   <td className="px-4 py-3" data-label="Estado">
-                    <span className={`rounded-full px-2 py-0.5 text-xs ${ESTADO_BADGE[c.estado] ?? "bg-gray-100 text-gray-600"}`}>
-                      {c.estado}
-                    </span>
+                    {abiertaConSalidaPasada(c, hoyNegocio) ? (
+                      <span className="rounded-full bg-red-50 px-2 py-0.5 text-xs text-red-700" data-testid="estado-salida-pasada">Salida pasada · generar nueva</span>
+                    ) : (
+                      <span className={`rounded-full px-2 py-0.5 text-xs ${ESTADO_BADGE[c.estado] ?? "bg-gray-100 text-gray-600"}`}>
+                        {c.estado}
+                      </span>
+                    )}
                   </td>
                   <td className="px-4 py-3 text-right" data-label="Acciones">
                     <Link href={`/dashboard/cotizaciones/${c.id}`} className="text-xs font-medium text-[#1D7C9A] hover:underline">

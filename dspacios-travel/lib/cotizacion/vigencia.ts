@@ -65,5 +65,18 @@ export function cotizacionVencida(vigenciaHasta: string | null | undefined, hoy:
   return !!vigenciaHasta && vigenciaHasta < hoy;
 }
 
+/** La fecha de salida ya pasó en Bogotá (el día de la salida aún cuenta). Sin salida (histórica) nunca caduca por inferencia. */
+export function salidaPasada(fechaSalida: string | null | undefined, hoy: string): boolean {
+  return !!fechaSalida && fechaSalida < hoy;
+}
+
+/** Una cotización ABIERTA cuya salida ya pasó no sirve para continuar ni convertir: hay que generar una nueva (la vigencia no se puede renovar más allá de la salida). */
+export function abiertaConSalidaPasada(c: { estado: string; fecha_salida?: string | null }, hoy: string): boolean {
+  return c.estado === "abierta" && salidaPasada(c.fecha_salida, hoy);
+}
+
+export const MENSAJE_SALIDA_PASADA =
+  "La fecha de salida de esta cotización ya pasó. Genera una cotización nueva; no se puede continuar ni convertir en contrato.";
+
 export const MENSAJE_COTIZACION_VENCIDA =
   "La cotización está vencida. Renueva su vigencia (personal interno) o genera una cotización nueva antes de convertirla en contrato.";

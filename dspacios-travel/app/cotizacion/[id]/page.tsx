@@ -18,6 +18,8 @@ import { tituloDocumento } from "@/lib/utils/tituloDocumento";
 import { PaginaImprimibleComparativa } from "@/lib/cotizacion/comparativaDocumento";
 import { hoyBogota } from "@/lib/cotizacion/vigencia";
 import { netoTotalExigibleDeDetalle } from "@/lib/cotizacion/asistidaB2B";
+import type { SnapshotPaquete } from "@/lib/cotizacion/tarifaPaquete";
+import { snapshotDelDocumento } from "@/lib/cotizacion/paqueteSnapshotDocumento";
 import { cargarAgenciaDeCotizacion } from "@/lib/cotizacion/agenciaCotizacion";
 
 export async function generateMetadata({
@@ -62,6 +64,12 @@ type Detalle = {
   composicionBernalo?: ComposicionBernaloDocumento[];
   // #102: solo en una venta B2B asistida en NETO (ver `crearCotizacionCarrito`).
   b2bExterno?: { netoTotalExigible?: number };
+  // #75: Incluye / No incluye congelado en el snapshot (p. ej. la opción elegida de una comparativa).
+  incluye?: string | null;
+  noIncluye?: string | null;
+  tituloPaquete?: string | null;
+  // Cobertura de cada adicional y su NETO, derivados al cotizar (sin comisión ni plan). Ausente en cotizaciones anteriores: sin él no se reparte por pasajero.
+  paqueteSnapshot?: SnapshotPaquete | null;
 };
 
 const PRINT_STYLES = `
@@ -187,6 +195,10 @@ export default async function CotizacionImprimiblePage({
             vigenciaHasta={cot.vigencia_hasta}
             netoTotalExigible={netoTotalExigible}
             agencia={agencia}
+            incluye={d.incluye ?? null}
+            noIncluye={d.noIncluye ?? null}
+            tituloPaquete={d.tituloPaquete ?? null}
+            paqueteSnapshot={snapshotDelDocumento(d, cot.payload)}
           />
         </div>
       </div>

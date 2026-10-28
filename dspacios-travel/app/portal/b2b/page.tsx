@@ -8,6 +8,7 @@ import { comisionDefault, categoriaAliado } from "@/lib/b2b";
 import { contratosDelPortalB2B, consultasPortalSupabase, COLUMNAS_DECISION } from "@/lib/auth/contratosPortalB2B";
 import { comisionesDelPortal } from "@/lib/finanzas/comisionPortal";
 import { cobroDeVenta } from "@/lib/finanzas/cobro";
+import { abiertaConSalidaPasada, hoyBogota } from "@/lib/cotizacion/vigencia";
 
 export const dynamic = "force-dynamic";
 
@@ -231,7 +232,9 @@ export default async function PortalB2BPage() {
                     <td className="px-3 py-2 text-xs">
                       {conv
                         ? <span className="rounded-full bg-[rgba(102,181,150,0.18)] px-2 py-0.5 font-medium" style={{ color: "#3f7d63" }}>Convertida</span>
-                        : <span className="rounded-full bg-gray-100 px-2 py-0.5 font-medium text-gray-500">Vigente</span>}
+                        : abiertaConSalidaPasada(c as { estado: string; fecha_salida: string | null }, hoyBogota())
+                          ? <span className="rounded-full bg-red-50 px-2 py-0.5 font-medium text-red-700" data-testid="b2b-salida-pasada">Salida pasada · genera una nueva</span>
+                          : <span className="rounded-full bg-gray-100 px-2 py-0.5 font-medium text-gray-500">Vigente</span>}
                     </td>
                     <td className="px-3 py-2 text-right">
                       {conv ? (

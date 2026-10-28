@@ -352,6 +352,17 @@ export function esTramoVueloManual(v: { servicios?: unknown } | null | undefined
   return typeof v?.servicios === "string" && v.servicios.startsWith("Vuelo manual");
 }
 
+/**
+ * Lo que se MUESTRA de la nota guardada de un tramo manual (`servicios`): los pasajeros y el aviso, sin la marca interna «Vuelo manual», que se conserva
+ * intacta en el dato (la usan `esTramoVueloManual` y las verificaciones). null si la nota no tiene la forma de un vuelo manual.
+ */
+export function notaVueloManual(servicios: unknown): { pax: number | null; aviso: string | null } | null {
+  if (typeof servicios !== "string" || !servicios.startsWith("Vuelo manual")) return null;
+  const m = /^Vuelo manual · pasajeros en este vuelo: (\d+)(?: · (.+))?$/.exec(servicios.trim());
+  if (!m) return { pax: null, aviso: null };
+  return { pax: Number(m[1]), aviso: m[2]?.trim() || null };
+}
+
 /** La línea suelta de un vuelo manual en la tabla de valores: se oculta porque el vuelo ya sale en el cuadro de vuelos (su precio sigue en el total, una sola vez). */
 export function esLineaVueloManual(descripcion: string | null | undefined): boolean {
   return typeof descripcion === "string" && descripcion.startsWith("Vuelo · ");

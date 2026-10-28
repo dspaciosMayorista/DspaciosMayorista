@@ -53,8 +53,10 @@ describe("el vuelo manual en el documento de la cotización", () => {
     assert.match(seccion, /Regreso:/);
     assert.match(seccion, /Origen: .*BOG/);
     assert.match(seccion, /Destino: Cartagena \(CTG\)/);
-    assert.match(seccion, /pasajeros en este vuelo: 2/);
-    assert.match(seccion, /sujeto a confirmación de disponibilidad y tarifa/);
+    assert.match(seccion, /Pasajeros: 2/);
+    // #75: sin la marca interna ni la frase larga; el aviso, UNA sola vez para la sección (no por tramo).
+    assert.doesNotMatch(seccion, /Vuelo manual|pasajeros en este vuelo/);
+    assert.equal(seccion.split("sujeto a confirmación de disponibilidad y tarifa").length - 1, 1);
     assert.doesNotMatch(seccion, /record|PNR|silla/i);
   });
   test("NO hay línea suelta del vuelo bajo «Valores y Pagos»", () => {
@@ -68,7 +70,7 @@ describe("el vuelo manual en el documento de la cotización", () => {
     assert.equal(veces(t, "Totaldelcontrato" + $(3_000_000)), 1, "el total del contrato aparece una vez");
   });
   test("no afirma que el vuelo cubre a todos: dice los pasajeros reales de ese vuelo (2 de 4)", () => {
-    assert.match(t, /pasajeros en este vuelo: 2/);
+    assert.match(t, /Pasajeros: 2/);
     assert.doesNotMatch(t, /todos los pasajeros|cubre a todos/i);
   });
   test("solo ida y solo regreso pintan un único tramo con su etiqueta", () => {
@@ -85,8 +87,8 @@ describe("el vuelo manual en el documento de la cotización", () => {
     const a = lineaYTramos(conHotel({ ...base, tramo: "ida", fechaRegreso: null, pax: 2, precio: 900_000, impuestoNoComisionable: 0 }), 2);
     const b = lineaYTramos(conHotel({ ...base, nombre: "Tiquete Latam", tramo: "ida", fechaRegreso: null, pax: 3, precio: 1_100_000, impuestoNoComisionable: 0 }), 3);
     const r = texto([itemHotel, a.item, b.item], [...a.vuelos, ...b.vuelos]);
-    assert.match(r, /pasajeros en este vuelo: 2/);
-    assert.match(r, /pasajeros en este vuelo: 3/);
+    assert.match(r, /Pasajeros: 2/);
+    assert.match(r, /Pasajeros: 3/);
     assert.ok(tiene(r, `Total del contrato ${$(1_200_000 + 900_000 + 1_100_000)}`));
   });
   test("NETO: tampoco hay línea suelta y el total es el exigible", () => {

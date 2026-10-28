@@ -96,7 +96,7 @@ import {
 } from "@/lib/contrato/congelarCondicionesContrato";
 import { componenteDePrograma } from "@/lib/cotizacion/condicionDesdeCatalogo";
 import type { ComponenteSnapshot } from "@/lib/cotizacion/snapshotCondiciones";
-import { cotizacionVencida, hoyBogota, MENSAJE_COTIZACION_VENCIDA, resolverVigenciaCotizacion } from "@/lib/cotizacion/vigencia";
+import { abiertaConSalidaPasada, cotizacionVencida, hoyBogota, MENSAJE_COTIZACION_VENCIDA, MENSAJE_SALIDA_PASADA, resolverVigenciaCotizacion } from "@/lib/cotizacion/vigencia";
 import { fechaNegocio } from "@/lib/fechaNegocio";
 import { resolverAliadoReserva, planComisionReserva, registrarComisionReserva, type ModoCompra, type PlanComisionReserva } from "@/lib/reservar/comisionReserva";
 import { asignarRefsPasajeros, AVISO_PERSONAS_PENDIENTES } from "@/lib/personas/cotizacion";
@@ -1545,7 +1545,7 @@ export async function convertirCotizacion(
   const sb = await createClient();
   const { data: cot, error } = await sb
     .from("cotizaciones")
-    .select("estado, payload, numero_contrato, tenant, modo, tipo, vigencia_hasta")
+    .select("estado, payload, numero_contrato, tenant, modo, tipo, vigencia_hasta, fecha_salida")
     .eq("id", id)
     .maybeSingle();
   if (error || !cot) return { ok: false, error: error?.message ?? "Cotización no encontrada." };
@@ -1567,6 +1567,8 @@ export async function convertirCotizacion(
   if (!autorizaTenant(ctx, cot.tenant)) return { ok: false, error: "No tienes acceso a esta cotización." };
   // #40 E3: una abierta vencida se rechaza ANTES de numerar o reservar sillas. Una oferta #63 la rechaza además la base (`aceptar_oferta_63`),
   // que deja pasar el reintento de una aceptación ya preparada; aquí solo se corta lo que aún no empezó (sin oferta63).
+  // Salida ya pasada primero: no hay vigencia que renovar; se genera una nueva (también con oferta #63: nunca se acepta un viaje en el pasado).
+  if (abiertaConSalidaPasada(cot, hoyBogota())) return { ok: false, error: MENSAJE_SALIDA_PASADA };
   if (cot.estado === "abierta" && !(cot.payload as { oferta63?: unknown } | null)?.oferta63 && cotizacionVencida(cot.vigencia_hasta, hoyBogota()))
     return { ok: false, error: MENSAJE_COTIZACION_VENCIDA };
 
@@ -1911,7 +1913,7 @@ export async function convertirCotizacionCarrito(
   const sb = await createClient();
   const { data: cot } = await sb
     .from("cotizaciones")
-    .select("id, estado, tipo, payload, tenant, numero_contrato, detalle, moneda, vigencia_hasta")
+    .select("id, estado, tipo, payload, tenant, numero_contrato, detalle, moneda, vigencia_hasta, fecha_salida")
     .eq("id", id).eq("tipo", "carrito").maybeSingle();
   if (!cot) return { ok: false, error: "Cotización no encontrada." };
   // Acceso PRIMERO (antes de revelar o devolver nada de la cotización, incluso si ya está convertida).
@@ -1971,6 +1973,7 @@ export async function convertirCotizacionCarrito(
   // #40 E3: una abierta vencida no crea NINGÚN contrato nuevo (ni de los grupos pendientes de una conversión parcial): se rechaza antes de numerar,
   // reservar sillas o crear contrato/CxP/asientos. Los contratos ya creados no se tocan; una cotización completamente convertida ya salió arriba
   // con sus números, y al renovar la vigencia el reintento completa solo los grupos pendientes.
+  if (abiertaConSalidaPasada(cot, hoyBogota())) return { ok: false, error: MENSAJE_SALIDA_PASADA };
   if (cot.estado === "abierta" && cotizacionVencida(cot.vigencia_hasta, hoyBogota()))
     return { ok: false, error: MENSAJE_COTIZACION_VENCIDA };
 

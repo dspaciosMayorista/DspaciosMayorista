@@ -10,9 +10,23 @@ import {
   POWERED_BY,
 } from "@/lib/contrato/plantilla";
 import { formatMoneda, formatFechaLarga } from "@/lib/utils";
+import { formatoExacto, repartoPorPersona, tarifaCuadra } from "@/lib/contrato/repartoTarifa";
 import type { Agencia } from "@/types/database";
 
 const PRIMARY = COLOR_DOCUMENTO;
+
+/**
+ * #75 — Tarifa de la línea: la guardada solo si cantidad × tarifa da EXACTAMENTE el valor. Si no (la tarifa se guardó redondeada, p. ej. 1.330.455
+ * entre 2 adultos), se muestra el reparto real del valor («1 × $665.228 + 1 × $665.227»): nunca una tarifa que multiplicada no da el valor de la fila.
+ */
+function TarifaUnitaria({ it, moneda }: { it: ItemSnap; moneda: string }) {
+  if (it.tarifa_unit == null) return <>—</>;
+  const cantidad = Number(it.cantidad);
+  if (!Number.isInteger(cantidad) || cantidad < 1 || tarifaCuadra(it.valor, cantidad, it.tarifa_unit)) return <>{formatoExacto(it.tarifa_unit, moneda)}</>;
+  const r = repartoPorPersona(it.valor, cantidad);
+  if (!r || r.exacto) return <>{r ? formatoExacto(r.tarifa, moneda) : "—"}</>;
+  return <span className="block" data-testid="reparto-tarifa">{r.partes.map((p, i) => <span key={i} className="block whitespace-nowrap">{p.cantidad} × {formatoExacto(p.tarifa, moneda)}</span>)}</span>;
+}
 
 type ItemSnap = {
   descripcion: string;
@@ -172,7 +186,7 @@ export function CotizacionManualDocumento({ codigo, venta, items, cliente, inclu
                     <td className="border border-gray-200 px-3 py-2">{it.descripcion}</td>
                     <td className="border border-gray-200 px-3 py-2 text-center tabular-nums">{it.cantidad ?? "—"}</td>
                     <td className="border border-gray-200 px-3 py-2 text-right tabular-nums">
-                      {it.tarifa_unit != null ? formatMoneda(it.tarifa_unit, moneda) : "—"}
+                      <TarifaUnitaria it={it} moneda={moneda} />
                     </td>
                     <td className="border border-gray-200 px-3 py-2 text-right tabular-nums">
                       {formatMoneda(it.valor, moneda)}

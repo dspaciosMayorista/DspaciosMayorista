@@ -73,3 +73,14 @@ export async function previsualizarComparativaB2B(input) {
   if (implPreviaCmp) return implPreviaCmp(input);
   return { ok: false, error: "previsualizarComparativaB2B: no implementado en el stub de pruebas" };
 }
+// #75: presentación editable de la comparativa (Incluye / No incluye y descripciones por opción).
+export const __previasPresentacion = [];
+let implPreviaPres = null;
+export function __setPrevisualizarPresentacion(fn) {
+  implPreviaPres = fn;
+}
+export async function previsualizarPresentacionComparativa(input) {
+  __previasPresentacion.push(input);
+  if (implPreviaPres) return implPreviaPres(input);
+  return { ok: false, error: "previsualizarPresentacionComparativa: no implementado en el stub de pruebas" };
+}
