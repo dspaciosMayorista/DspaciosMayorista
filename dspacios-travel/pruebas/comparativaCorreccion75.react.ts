@@ -161,7 +161,7 @@ describe("salida pasada", () => {
   });
   test("cableado: listado, ficha, enlace público, portal, acciones del servidor y base usan la misma regla", () => {
     const leer = (p: string) => readFileSync(new URL(`../${p}`, import.meta.url), "utf8");
-    for (const p of ["app/(dashboard)/dashboard/cotizaciones/page.tsx", "app/(dashboard)/dashboard/cotizaciones/[id]/page.tsx", "app/cot/[token]/page.tsx", "app/portal/b2b/page.tsx",
+    for (const p of ["app/(dashboard)/dashboard/cotizaciones/page.tsx", "app/(dashboard)/dashboard/cotizaciones/[id]/page.tsx", "app/cot/[token]/page.tsx", "lib/portal/b2bPortal.ts",
       "app/(dashboard)/dashboard/reservar/actions.ts", "app/(dashboard)/dashboard/cotizaciones/manual-actions.ts", "app/tarifario/checkout/actions.ts", "lib/cotizacion/comparativaDocumento.tsx"]) {
       assert.match(leer(p), /abiertaConSalidaPasada/, p);
     }

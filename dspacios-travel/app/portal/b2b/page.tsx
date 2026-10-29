@@ -1,177 +1,65 @@
 import Link from "next/link";
-import { createClient } from "@/lib/supabase/server";
-import { createAdminClient } from "@/lib/supabase/admin";
-import { Logo } from "@/components/Logo";
-import { LogoutButton } from "@/app/(dashboard)/LogoutButton";
-import { formatMoneda, formatFechaLarga } from "@/lib/utils";
-import { comisionDefault, categoriaAliado } from "@/lib/b2b";
-import { contratosDelPortalB2B, consultasPortalSupabase, COLUMNAS_DECISION } from "@/lib/auth/contratosPortalB2B";
-import { comisionesDelPortal } from "@/lib/finanzas/comisionPortal";
-import { cobroDeVenta } from "@/lib/finanzas/cobro";
-import { abiertaConSalidaPasada, hoyBogota } from "@/lib/cotizacion/vigencia";
+import { ArrowRight, Compass } from "lucide-react";
+import { PortalShell } from "@/components/portal/PortalShell";
+import { PortalGate } from "@/components/portal/PortalGate";
+import { AvisoHistoricoIncompleto } from "@/components/portal/AvisoHistoricoIncompleto";
+import { PlanesRecomendados } from "@/components/portal/PlanesRecomendados";
+import { formatMoneda } from "@/lib/utils";
+import { hoyBogota } from "@/lib/cotizacion/vigencia";
+import {
+  resolverContextoPortal, categoriaDelPortal, cargarConjuntoPortal, cargarCotizacionesPortal, cargarComparativasPortal,
+  linkPagoPortal, monedaOfertaDe,
+} from "@/lib/portal/b2bPortalServidor";
+import { carteraDe, comparativaComoCotizacion, resumenInicio } from "@/lib/portal/b2bPortal";
 
 export const dynamic = "force-dynamic";
 
-const ESTADO_COMISION: Record<string, string> = {
-  pendiente: "Pendiente", cuenta_cobro: "Cuenta de cobro", facturada: "Facturada", pagada: "Pagada",
-  parcial: "Abono parcial", descontada: "Descontada",
-};
+function Monedas({ por }: { por: Record<string, number> }) {
+  const e = Object.entries(por).filter(([, v]) => v > 0);
+  if (e.length === 0) return <>—</>;
+  return <>{e.map(([m, v], i) => <span key={m} className="block">{i > 0 ? "+ " : ""}{formatMoneda(v, m)}</span>)}</>;
+}
 
-export default async function PortalB2BPage() {
-  const sb = await createClient();
-  const { data: { user } } = await sb.auth.getUser();
+export default async function PortalB2BInicio() {
+  const ctx = await resolverContextoPortal();
+  if (ctx.estado !== "ok") return <PortalGate ctx={ctx} />;
 
-  const { data: perfil } = user
-    ? await sb.from("usuarios").select("nombre, rol, activo, agencia_id, pct_comision, aliado_id, tenant, acceso_legacy_nombre").eq("id", user.id).maybeSingle()
-    : { data: null };
-  const rol = perfil?.rol ?? null;
-  const esB2B = rol === "agencia" || rol === "freelance";
-  const esTitularAgencia = rol === "agencia" && !perfil?.agencia_id;
-
-  // Pantalla de ingreso / registro: para visitantes y para usuarios NO B2B (internos).
-  if (!esB2B) {
-    return (
-      <Shell nombre={perfil?.nombre ?? undefined}>
-        <div className="rounded-xl border border-gray-200 bg-white p-8 text-center">
-          <h2 className="text-lg font-semibold text-gray-900">Portal de aliados</h2>
-          <p className="mt-1 text-sm text-gray-500">Agencias y freelance: ingresa o regístrate.</p>
-          <div className="mt-5 flex flex-col gap-3 sm:flex-row sm:justify-center">
-            <Link href="/login" className="rounded-lg px-5 py-2.5 text-sm font-semibold text-white" style={{ backgroundColor: "var(--brand-primary)" }}>Iniciar sesión</Link>
-            <Link href="/portal/registro" className="rounded-lg border px-5 py-2.5 text-sm font-semibold" style={{ borderColor: "var(--brand-primary)", color: "var(--brand-primary)" }}>Registrarse</Link>
-          </div>
-          {user && (
-            <p className="mt-4 text-xs text-gray-400">
-              Estás con una cuenta interna. ¿Buscas tu panel? <Link href="/dashboard" className="font-semibold" style={{ color: "var(--brand-primary)" }}>Portal Admin</Link>.
-            </p>
-          )}
-        </div>
-      </Shell>
-    );
+  // Inicio y pestañas leen el MISMO conjunto autorizado: un indicador nunca cuenta lo que su pestaña no muestra.
+  const [{ cat, pct }, conjunto, cots, comparativas, linkPago] = await Promise.all([
+    categoriaDelPortal(ctx),
+    cargarConjuntoPortal(ctx, { abonos: true }),
+    cargarCotizacionesPortal(ctx),
+    cargarComparativasPortal(ctx),
+    linkPagoPortal(),
+  ]);
+  const hoy = hoyBogota();
+  const cartera = carteraDe(conjunto.ventas, conjunto.abonos);
+  const comisiones: { moneda: string; monto: number }[] = [];
+  for (const [n, vis] of conjunto.comisiones) {
+    if (vis && (vis.fuente === "filas" || vis.fuente === "ventas") && vis.cobrable && (vis.importe ?? 0) > 0) {
+      comisiones.push({ moneda: monedaOfertaDe(conjunto.crudas.get(n)), monto: vis.importe as number });
+    }
   }
+  const r = resumenInicio({
+    ventas: conjunto.ventas, cartera, comisiones, hoy,
+    // Mismo conjunto y misma regla de estado que la pestaña Cotizaciones (cotizaciones + comparativas, directas y asistidas).
+    cotizaciones: [...cots.directas, ...cots.asistidas, ...comparativas.directas.map(comparativaComoCotizacion), ...comparativas.asistidas.map(comparativaComoCotizacion)],
+  });
+  const cotizacionesTotal = cots.directas.length + cots.asistidas.length + comparativas.directas.length + comparativas.asistidas.length;
+  const dato = conjunto.abonosCompletos ? null : "No pudimos leer todos tus pagos; los saldos pueden estar incompletos. Intenta más tarde.";
 
-  // Aliado registrado pero aún no aprobado.
-  if (esB2B && perfil?.activo === false) {
-    return (
-      <Shell nombre={perfil?.nombre ?? undefined}>
-        <div className="rounded-xl border border-amber-200 bg-amber-50 p-8 text-center">
-          <div className="text-2xl">⏳</div>
-          <h2 className="mt-2 text-lg font-semibold text-gray-800">Registro en revisión</h2>
-          <p className="mt-1 text-sm text-gray-600">Tu cuenta fue creada y está pendiente de aprobación. Te avisaremos cuando esté lista.</p>
-        </div>
-      </Shell>
-    );
-  }
-
-  // Usuario interno: este portal no es para él.
-  if (!esB2B) {
-    return (
-      <Shell>
-        <div className="rounded-xl border border-gray-200 bg-white p-8 text-center">
-          <p className="text-sm text-gray-600">Tu cuenta es interna. Ve al <Link href="/dashboard" className="font-semibold" style={{ color: "var(--brand-primary)" }}>Portal Admin</Link>.</p>
-        </div>
-      </Shell>
-    );
-  }
-
-  // Mis contratos: por vínculo por id; el nombre solo con acceso legacy explícito (193).
-  if (!user) return null;
-  const admin = createAdminClient();
-  const nombre = (perfil?.nombre ?? "").trim();
-
-  // Categoría del aliado (Junior/Senior) según su % vs. el default general.
-  let pctAgencia = perfil?.pct_comision ?? null;
-  if (perfil?.agencia_id) {
-    const { data: ag } = await admin.from("usuarios").select("pct_comision").eq("id", perfil.agencia_id).maybeSingle();
-    pctAgencia = ag?.pct_comision ?? null;
-  }
-  const defCom = await comisionDefault(sb, rol ?? "agencia");
-  const pctEfectivo = pctAgencia ?? defCom;
-  const cat = categoriaAliado(rol ?? "agencia", pctEfectivo, defCom);
-
-  // Pertenencia de un contrato: la decide `contratosDelPortalB2B`, con la MISMA
-  // regla que los documentos por URL (`accesoDocumentoContrato`):
-  //  1. `b2b_usuario_id` → lo compró él mismo desde el portal.
-  //  2. `aliado_id`      → ficha del catálogo enlazada al APROBARLO (143/193).
-  //  3. Nombre en texto  → SOLO con `acceso_legacy_nombre` concedido
-  //     explícitamente (migración 193) y en contratos SIN ningún id. Una
-  //     cuenta aprobada "sin enlazar" nunca lo tiene.
-  //
-  // Las consultas (y su `.eq()` en vez de `.or()` bajo service-role) viven en
-  // `consultasPortalSupabase`; la verificación de fichas en `aliados_b2b` es
-  // fail-closed (`verificarFichasComisionManual`).
-  const sel = `${COLUMNAS_DECISION}, cliente, destino, precio_venta, moneda, moneda_cobro, trm_cobro, total_cobro, estado, modo_compra, comision_b2b, comision_estado, tipo_asesor`;
-  const { contratos, via, legacyNoVerificado } = await contratosDelPortalB2B(
-    perfil
-      ? {
-          id: user.id,
-          rol,
-          tenant: (perfil.tenant as string | null) ?? null,
-          activo: (perfil.activo as boolean | null) ?? null,
-          nombre: nombre || null,
-          aliadoId: (perfil.aliado_id as number | null) ?? null,
-          accesoLegacyNombre: (perfil.acceso_legacy_nombre as boolean | null) ?? null,
-        }
-      : null,
-    consultasPortalSupabase(admin, sel)
-  );
-
-  // Comisión visible (#38): sale de aliados_b2b, con la misma lectura que la
-  // cuenta de cobro (`comisionesDelPortal`). No decide pertenencia: usa la
-  // vía que ya resolvió `contratosDelPortalB2B`.
-  const comisionPorContrato = await comisionesDelPortal(
-    admin,
-    contratos as unknown as Parameters<typeof comisionesDelPortal>[1],
-    via,
-    { aliadoId: (perfil?.aliado_id as number | null) ?? null, nombre: nombre || null },
-  );
-
-  // Abonos para el saldo
-  const nums = contratos.map((c) => c.numero_contrato as string);
-  const abonosPorContrato = new Map<string, number>();
-  if (nums.length) {
-    const { data: abonos } = await admin.from("abonos").select("numero_contrato, valor_abono").in("numero_contrato", nums);
-    for (const a of abonos ?? []) abonosPorContrato.set(a.numero_contrato, (abonosPorContrato.get(a.numero_contrato) ?? 0) + Number(a.valor_abono ?? 0));
-  }
-
-  const { data: cfg } = await sb.from("config_sitio").select("link_pago").eq("id", 1).maybeSingle();
-  const linkPago = cfg?.link_pago ?? null;
-
-  // Cotizaciones del aliado: el checkout las guarda con creado_por = su email
-  // (vínculo estable, nunca por nombre). Mostramos las vigentes (no
-  // convertidas/descartadas); las convertidas ya figuran como contrato.
-  // cotizaciones es interna (RLS solo por rol, sin roles B2B) → service-role
-  // — la validación de acceso explícita que sustituye a la RLS es este mismo
-  // `.eq("creado_por", ...)`, exacto por email de sesión; el filtro de
-  // tenant es una segunda capa (nunca debería divergir, porque el checkout
-  // estampa el mismo tenant del usuario que lo crea).
-  const { data: cotsRaw } = nombre || user.email
-    ? await admin
-        .from("cotizaciones")
-        .select("id, codigo, modo, cliente, destino, hotel, pax, precio_venta, moneda, fecha_salida, vigencia_hasta, estado, share_token, numero_contrato, created_at")
-        .eq("creado_por", user.email ?? "")
-        .eq("tenant", perfil?.tenant ?? "mayorista")
-        .order("created_at", { ascending: false })
-    : { data: [] as Record<string, unknown>[] };
-  // #35: las comparativas (precio NULL, se verían como $0) van en su propia sección.
-  const cotizaciones = (cotsRaw ?? []).filter((c) => c.estado !== "descartada" && c.modo !== "comparativa");
-
-  // #35: comparativas del aliado. La propiedad la decide la BASE con la identidad de la SESIÓN
-  // (auth.uid() → vínculo de aliado aprobado o propietario); aquí no se compara por email ni nombre.
-  // Se llama con el cliente de sesión `sb`, nunca con service-role y sin ningún parámetro de usuario.
-  // Tolerante: si la RPC aún no existe (código desplegado antes que la migración 211) o falla, la sección simplemente
-  // no aparece; nunca tumba el portal.
-  let comparativasRaw: unknown = null;
-  try { comparativasRaw = (await sb.rpc("comparativas_b2b_visibles")).data; } catch { comparativasRaw = null; }
-  const comparativas = (comparativasRaw ?? []) as unknown as Array<{
-    id: number; codigo: string; share_token: string; estado: string; destino: string | null; fecha_salida: string | null;
-    moneda: string | null; vigencia_hasta: string | null;
-    opciones: Array<{ opcion: string; acomodacion: string; etiqueta: string; total: number; moneda: string }>;
-    hija: { codigo: string; estado: string; numero_contrato: string | null } | null;
-  }>;
+  const tarjetas: { href: string; titulo: string; valor: React.ReactNode; nota: string }[] = [
+    { href: "/portal/b2b/cotizaciones", titulo: "Cotizaciones vigentes", valor: r.cotizacionesVigentes, nota: `${cotizacionesTotal} en total` },
+    { href: "/portal/b2b/ventas", titulo: "Mis ventas", valor: r.ventasPropias, nota: r.ventasParticipacion > 0 ? `${r.ventasParticipacion} más con tu comisión` : "Contratos propios" },
+    { href: "/portal/b2b/cartera", titulo: "Contratos con saldo", valor: r.contratosConSaldo, nota: "Por cobrar al cliente" },
+    { href: "/portal/b2b/cartera", titulo: "Saldo por cobrar", valor: <Monedas por={r.saldoPorMoneda} />, nota: "Por moneda de cobro" },
+    { href: "/portal/b2b/ventas", titulo: "Comisión por cobrar", valor: <Monedas por={r.comisionPorCobrarPorMoneda} />, nota: "Según tus comisiones registradas" },
+    { href: "/portal/b2b/ventas", titulo: "Salidas próximas", valor: r.salidasProximas, nota: "En los próximos 30 días" },
+  ];
 
   return (
-    <Shell nombre={nombre}>
-      <div className="mb-4 flex flex-wrap items-center gap-3 rounded-xl border border-gray-100 bg-white px-4 py-3">
+    <PortalShell nombre={ctx.nombre} activa="inicio" mostrarAgentes={ctx.esTitularAgencia} linkPago={linkPago}>
+      <div className="mb-4 flex flex-wrap items-center gap-x-3 gap-y-1 text-sm text-gray-600">
         <span
           className="rounded-full px-3 py-1 text-xs font-semibold"
           style={cat.nivel === "senior"
@@ -180,204 +68,41 @@ export default async function PortalB2BPage() {
         >
           {cat.label}
         </span>
-        <span className="text-sm text-gray-600">Tu comisión: <b>{Math.round(pctEfectivo * 1000) / 10}%</b> sobre la base comisionable</span>
+        <span>Comisión <b>{Math.round(pct * 1000) / 10}%</b> sobre la base comisionable</span>
       </div>
 
-      {/* Barra de menú del portal B2B */}
-      <nav className="mb-5 flex flex-wrap items-center gap-2 rounded-xl border border-gray-100 bg-white px-3 py-2">
-        <Link href="/tarifario" className="rounded-lg px-3 py-1.5 text-sm font-medium text-gray-600 hover:bg-gray-100">Tarifario</Link>
-        <Link href="#mis-cotizaciones" className="rounded-lg px-3 py-1.5 text-sm font-medium text-gray-600 hover:bg-gray-100">Cotizaciones</Link>
-        <Link href="#mis-ventas" className="rounded-lg px-3 py-1.5 text-sm font-medium text-gray-600 hover:bg-gray-100">Mis ventas</Link>
-        <Link href="#cartera" className="rounded-lg px-3 py-1.5 text-sm font-medium text-gray-600 hover:bg-gray-100">Cartera</Link>
-        {esTitularAgencia && (
-          <Link href="/portal/b2b/agentes" className="rounded-lg px-3 py-1.5 text-sm font-medium text-gray-600 hover:bg-gray-100">Agentes</Link>
-        )}
-        {linkPago && (
-          <a href={linkPago} target="_blank" rel="noopener noreferrer" className="ml-auto rounded-lg border px-3 py-1.5 text-sm font-semibold" style={{ borderColor: "var(--brand-primary)", color: "var(--brand-primary)" }}>Pagar en línea</a>
-        )}
-        <Link href="/tarifario" className={`rounded-lg px-3 py-1.5 text-sm font-semibold text-white ${linkPago ? "" : "ml-auto"}`} style={{ backgroundColor: "var(--brand-primary)" }}>Cotizar / comprar →</Link>
-      </nav>
-
-      {/* Mis cotizaciones */}
-      <div id="mis-cotizaciones" className="mb-3 flex flex-wrap items-center justify-between gap-3">
-        <h2 className="text-lg font-semibold text-gray-900">Mis cotizaciones</h2>
-        <p className="text-xs text-gray-500">Las cotizaciones que generaste desde el tarifario.</p>
-      </div>
-      {cotizaciones.length === 0 ? (
-        <p className="mb-8 rounded-xl border border-gray-200 bg-white px-4 py-8 text-center text-sm text-gray-400">
-          Aún no tienes cotizaciones. Arma una desde el <Link href="/tarifario" className="font-semibold" style={{ color: "var(--brand-primary)" }}>tarifario</Link>.
-        </p>
-      ) : (
-        <div className="mb-8 overflow-x-auto rounded-xl border border-gray-200 bg-white">
-          <table className="w-full min-w-[820px] text-sm">
-            <thead>
-              <tr className="bg-gray-50 text-left text-xs uppercase text-gray-400">
-                <th className="px-3 py-2">Código</th><th className="px-3 py-2">Cliente</th><th className="px-3 py-2">Destino</th>
-                <th className="px-3 py-2">Salida</th><th className="px-3 py-2 text-right">Valor</th><th className="px-3 py-2">Vigencia</th>
-                <th className="px-3 py-2">Estado</th><th className="px-3 py-2 text-right">Documento</th>
-              </tr>
-            </thead>
-            <tbody>
-              {cotizaciones.map((c) => {
-                const moneda = (c.moneda as string) ?? "COP";
-                const conv = c.estado === "convertida" && c.numero_contrato;
-                return (
-                  <tr key={c.id as number} className="border-t border-gray-50">
-                    <td className="px-3 py-2 font-mono font-semibold text-[#1D7C9A]">{(c.codigo as string) ?? `#${c.id}`}</td>
-                    <td className="px-3 py-2 text-gray-700">{(c.cliente as string) ?? "—"}</td>
-                    <td className="px-3 py-2 text-gray-600">{(c.destino as string) ?? (c.hotel as string) ?? "—"}</td>
-                    <td className="px-3 py-2 text-xs text-gray-500">{formatFechaLarga(c.fecha_salida as string)}</td>
-                    <td className="px-3 py-2 text-right tabular-nums">{formatMoneda(Number(c.precio_venta ?? 0), moneda)}</td>
-                    <td className="px-3 py-2 text-xs text-gray-500">{formatFechaLarga(c.vigencia_hasta as string)}</td>
-                    <td className="px-3 py-2 text-xs">
-                      {conv
-                        ? <span className="rounded-full bg-[rgba(102,181,150,0.18)] px-2 py-0.5 font-medium" style={{ color: "#3f7d63" }}>Convertida</span>
-                        : abiertaConSalidaPasada(c as { estado: string; fecha_salida: string | null }, hoyBogota())
-                          ? <span className="rounded-full bg-red-50 px-2 py-0.5 font-medium text-red-700" data-testid="b2b-salida-pasada">Salida pasada · genera una nueva</span>
-                          : <span className="rounded-full bg-gray-100 px-2 py-0.5 font-medium text-gray-500">Vigente</span>}
-                    </td>
-                    <td className="px-3 py-2 text-right">
-                      {conv ? (
-                        <span className="text-xs text-gray-400">Contrato {c.numero_contrato as string}</span>
-                      ) : c.share_token ? (
-                        <a href={`/cot/${c.share_token as string}`} target="_blank" rel="noopener noreferrer" className="text-xs font-medium hover:underline" style={{ color: "var(--brand-primary)" }}>Ver / descargar ↗</a>
-                      ) : <span className="text-xs text-gray-400">—</span>}
-                    </td>
-                  </tr>
-                );
-              })}
-            </tbody>
-          </table>
+      <section aria-labelledby="cta-tarifario" className="mb-5 flex flex-col items-start justify-between gap-4 rounded-xl p-5 text-white sm:flex-row sm:items-center sm:p-6 bg-brand-gradient">
+        <div>
+          <h1 id="cta-tarifario" className="text-xl font-semibold">Explora el tarifario y cotiza</h1>
+          <p className="mt-1 text-sm text-white/90">Encuentra hoteles, programas y servicios con tu tarifa, arma la propuesta para tu cliente y reserva.</p>
         </div>
-      )}
+        <Link href="/tarifario" className="inline-flex shrink-0 items-center gap-2 rounded-lg bg-white px-5 py-2.5 text-sm font-semibold focus-visible:outline-2 focus-visible:outline-offset-2" style={{ color: "var(--brand-primary)" }}>
+          <Compass aria-hidden className="h-4 w-4" /> Ir al tarifario <ArrowRight aria-hidden className="h-4 w-4" />
+        </Link>
+      </section>
 
-      {comparativas.length > 0 && (
-        <>
-          <div id="mis-comparativas" className="mb-3 flex flex-wrap items-center justify-between gap-3">
-            <h2 className="text-lg font-semibold text-gray-900">Mis comparativas</h2>
-            <p className="text-xs text-gray-500">Compara hoteles y escoge uno; cada total es de ese hotel, no se suman.</p>
-          </div>
-          <div className="mb-8 space-y-3">
-            {comparativas.map((c) => {
-              const mejores = new Map<string, { etiqueta: string; total: number; moneda: string }>();
-              for (const o of c.opciones) {
-                const prev = mejores.get(o.opcion);
-                if (!prev || Number(o.total) < prev.total) mejores.set(o.opcion, { etiqueta: o.etiqueta, total: Number(o.total), moneda: o.moneda });
-              }
-              return (
-                <div key={c.id} className="rounded-xl border border-gray-200 bg-white p-4">
-                  <div className="flex flex-wrap items-center justify-between gap-2">
-                    <div>
-                      <span className="font-mono font-semibold text-[#1D7C9A]">{c.codigo}</span>
-                      <span className="ml-2 text-sm text-gray-600">{c.destino ?? "—"}</span>
-                      <span className="ml-2 text-xs text-gray-400">{c.fecha_salida ? formatFechaLarga(c.fecha_salida) : ""} · vigente hasta {c.vigencia_hasta ? formatFechaLarga(c.vigencia_hasta) : "—"}</span>
-                    </div>
-                    <a href={`/cot/${c.share_token}`} target="_blank" rel="noopener noreferrer" className="text-xs font-medium hover:underline" style={{ color: "var(--brand-primary)" }}>
-                      {c.hija ? "Ver la comparativa" : "Ver y elegir una opción"}
-                    </a>
-                  </div>
-                  <ul className="mt-2 grid grid-cols-1 gap-1 text-xs text-gray-600 sm:grid-cols-3">
-                    {[...mejores.entries()].map(([ref, o]) => (
-                      <li key={ref} className="rounded-lg bg-gray-50 px-3 py-1.5">Opción {ref} · {o.etiqueta}: <b className="tabular-nums">desde {formatMoneda(o.total, o.moneda)}</b></li>
-                    ))}
-                  </ul>
-                  {c.hija && (
-                    <p className="mt-2 text-xs text-green-700">
-                      Opción elegida: cotización {c.hija.codigo}{c.hija.numero_contrato ? ` · contrato ${c.hija.numero_contrato}` : ""}.
-                    </p>
-                  )}
-                </div>
-              );
-            })}
-          </div>
-        </>
-      )}
-
-      <div id="mis-ventas" className="mb-5 flex flex-wrap items-center justify-between gap-3">
-        <h2 className="text-lg font-semibold text-gray-900">Mis ventas y cartera</h2>
-        <p className="text-xs text-gray-500">Descarga el estado de cuenta y los recibos de cada pago.</p>
-      </div>
-      {legacyNoVerificado && (
+      {conjunto.historicoIncompleto && <AvisoHistoricoIncompleto />}
+      {dato && <p role="status" className="mb-3 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800">{dato}</p>}
+      {(cots.error || comparativas.error) && <p role="status" className="mb-3 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800">No pudimos cargar todas tus cotizaciones o comparativas; el conteo de vigentes puede estar incompleto. Intenta más tarde.</p>}
+      {(conjunto.legacyNoVerificado || !conjunto.participacionCompleta) && (
         <p role="status" className="mb-3 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800">
-          No pudimos verificar parte de tu histórico anterior, así que por seguridad no se muestra ahora. Intenta más tarde o
-          comunícate con tu asesor.
+          No pudimos verificar parte de tu histórico, así que por seguridad no se muestra ahora. Intenta más tarde o comunícate con tu asesor.
         </p>
       )}
-      {contratos.length === 0 ? (
-        <p className="rounded-xl border border-gray-200 bg-white px-4 py-10 text-center text-gray-400">Aún no tienes contratos. Empieza en el tarifario.</p>
-      ) : (
-        <div id="cartera" className="overflow-x-auto rounded-xl border border-gray-200 bg-white">
-          <table className="w-full min-w-[940px] text-sm">
-            <thead>
-              <tr className="bg-gray-50 text-left text-xs uppercase text-gray-400">
-                <th className="px-3 py-2">Contrato</th><th className="px-3 py-2">Cliente</th><th className="px-3 py-2">Destino</th>
-                <th className="px-3 py-2">Salida</th><th className="px-3 py-2 text-right">Valor</th><th className="px-3 py-2 text-right">Saldo</th>
-                <th className="px-3 py-2">Estado</th><th className="px-3 py-2">Compra</th><th className="px-3 py-2 text-right">Comisión</th>
-                <th className="px-3 py-2 text-right">Cuenta</th>
-              </tr>
-            </thead>
-            <tbody>
-              {contratos.map((c) => {
-                const num = c.numero_contrato as string;
-                // 235 (#90 F): valor y saldo se expresan en la MONEDA DE COBRO (abonos incluidos); la comisión sigue en la moneda de la oferta.
-                const cobro = cobroDeVenta(c as never);
-                const moneda = cobro.moneda;
-                const monedaOferta = cobro.monedaOferta;
-                const valor = cobro.total;
-                const saldo = valor - (abonosPorContrato.get(num) ?? 0);
-                const vis = comisionPorContrato.get(num) ?? null;
-                // #30 B: en PVP el saldo de SU comisión (total − abonos); en NETO
-                // lo descontado del precio; sin lectura completa, nada.
-                const com = vis?.importe ?? null;
-                return (
-                  <tr key={num} className="border-t border-gray-50">
-                    <td className="px-3 py-2 font-mono font-semibold text-[#1D7C9A]">{num}</td>
-                    <td className="px-3 py-2 text-gray-700">{(c.cliente as string) ?? "—"}</td>
-                    <td className="px-3 py-2 text-gray-600">{(c.destino as string) ?? "—"}</td>
-                    <td className="px-3 py-2 text-xs text-gray-500">{formatFechaLarga(c.fecha_salida as string)}</td>
-                    <td className="px-3 py-2 text-right tabular-nums">{formatMoneda(valor, moneda)}</td>
-                    <td className="px-3 py-2 text-right tabular-nums" style={{ color: saldo > 0 ? "#C0392B" : "var(--brand-success)" }}>{formatMoneda(saldo, moneda)}</td>
-                    <td className="px-3 py-2 text-xs text-gray-600">{(c.estado as string) ?? "—"}</td>
-                    <td className="px-3 py-2 text-xs text-gray-500">{c.modo_compra === "comisionable" ? "Comisionable" : c.modo_compra === "neta" ? "Neta" : "—"}</td>
-                    <td className="px-3 py-2 text-right text-xs tabular-nums">
-                      {com != null && com > 0 ? `${formatMoneda(com, monedaOferta)}` : "—"}
-                      {vis?.estado ? <span className="block text-[10px] text-gray-400">{ESTADO_COMISION[vis.estado] ?? vis.estado}</span> : null}
-                      {/* Cuenta de cobro: solo freelance (persona natural). Las agencias
-                          (persona jurídica) deben enviar su factura electrónica. */}
-                      {vis?.cobrable && vis.tipo === "freelance" && (
-                        <Link href={`/portal/comision/${encodeURIComponent(num)}`} className="block text-[10px] font-medium" style={{ color: "var(--brand-accent)" }}>Cuenta de cobro →</Link>
-                      )}
-                      {vis?.cobrable && vis.tipo === "agencia" && (
-                        <span className="block text-[10px] text-gray-400">Factura electrónica</span>
-                      )}
-                    </td>
-                    <td className="px-3 py-2 text-right">
-                      <Link href={`/estado-cuenta/${encodeURIComponent(num)}`} target="_blank" className="text-xs font-medium hover:underline" style={{ color: "var(--brand-primary)" }}>Estado de cuenta ↗</Link>
-                    </td>
-                  </tr>
-                );
-              })}
-            </tbody>
-          </table>
-        </div>
-      )}
-    </Shell>
-  );
-}
 
-function Shell({ children, nombre }: { children: React.ReactNode; nombre?: string }) {
-  return (
-    <div className="min-h-screen bg-gray-50">
-      <header className="bg-brand-gradient px-6 py-6 text-white">
-        <div className="mx-auto flex max-w-5xl items-center justify-between">
-          <Link href="/portal"><Logo variant="white" height={36} priority className="h-9 w-auto" /></Link>
-          <div className="flex items-center gap-4 text-sm">
-            {nombre && <span className="opacity-90">{nombre}</span>}
-            <LogoutButton className="text-white/90 hover:text-white" />
-          </div>
-        </div>
-      </header>
-      <main className="mx-auto max-w-5xl px-6 py-8">{children}</main>
-    </div>
+      <ul className="mb-5 grid grid-cols-2 gap-3 lg:grid-cols-3">
+        {tarjetas.map((t) => (
+          <li key={t.titulo}>
+            <Link href={t.href} className="block h-full rounded-xl border border-gray-200 bg-white p-4 hover:border-gray-300 focus-visible:outline-2 focus-visible:outline-offset-2">
+              <p className="text-xs font-medium uppercase tracking-wide text-gray-400">{t.titulo}</p>
+              <p className="mt-1 text-xl font-semibold tabular-nums text-gray-900 sm:text-2xl">{t.valor}</p>
+              <p className="mt-1 text-xs text-gray-500">{t.nota}</p>
+            </Link>
+          </li>
+        ))}
+      </ul>
+
+      <PlanesRecomendados />
+    </PortalShell>
   );
 }

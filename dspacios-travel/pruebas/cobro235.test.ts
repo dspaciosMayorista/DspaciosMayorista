@@ -178,7 +178,7 @@ describe("cableado: ninguna lectura de abonos o saldo usa la moneda de la oferta
   test("cartera, estado de cuenta, ficha, portal y documentos del contrato leen el cobro", () => {
     for (const rel of [
       "app/(dashboard)/dashboard/cartera/page.tsx", "lib/cuenta/estado.ts", "app/(dashboard)/dashboard/contratos/[numero]/page.tsx",
-      "app/portal/b2b/page.tsx", "app/c/[token]/page.tsx", "app/contrato/[numero]/page.tsx",
+      "lib/portal/b2bPortal.ts", "app/c/[token]/page.tsx", "app/contrato/[numero]/page.tsx",
     ]) {
       assert.match(leer(rel), /cobroDeVenta\(/, rel);
     }

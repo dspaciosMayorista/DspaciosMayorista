@@ -56,8 +56,12 @@ export type PerfilPortal = {
 };
 
 export type ConsultasPortal = {
-  porB2bUsuario: (usuarioId: string) => Promise<FilaContratoPortal[]>;
-  porAliadoId: (aliadoId: number) => Promise<FilaContratoPortal[]>;
+  /**
+   * Lecturas por id, COMPLETAS o declaradas incompletas (`completa: false`, sin filas): nunca una lista parcial ni
+   * un error convertido en «no tiene contratos». Quien llama informa el histórico incompleto.
+   */
+  porB2bUsuario: (usuarioId: string) => Promise<{ completa: boolean; filas: FilaContratoPortal[] }>;
+  porAliadoId: (aliadoId: number) => Promise<{ completa: boolean; filas: FilaContratoPortal[] }>;
   /**
    * CANDIDATOS por nombre: contratos del `tenant` dado, sin `aliado_id` ni
    * `b2b_usuario_id` en `ventas`, cuyo `agencia_nombre` o `freelance_nombre`
@@ -88,9 +92,9 @@ export function escaparLike(s: string): string {
 export async function contratosDelPortalB2B(
   perfil: PerfilPortal | null,
   q: ConsultasPortal
-): Promise<{ contratos: FilaContratoPortal[]; via: Map<string, ViaPortal>; legacyNoVerificado: boolean }> {
+): Promise<{ contratos: FilaContratoPortal[]; via: Map<string, ViaPortal>; legacyNoVerificado: boolean; incompleto: boolean }> {
   const via = new Map<string, ViaPortal>();
-  const vacio = { contratos: [], via, legacyNoVerificado: false };
+  const vacio = { contratos: [], via, legacyNoVerificado: false, incompleto: false };
 
   if (!perfil || perfil.activo !== true) return vacio;
   if (!perfil.rol || !(ROLES_LEGACY_NOMBRE as readonly string[]).includes(perfil.rol)) return vacio;
@@ -105,8 +109,14 @@ export async function contratosDelPortalB2B(
   const sumar = (filas: FilaContratoPortal[]) => {
     for (const f of filas) if (f?.numero_contrato && !candidatos.has(f.numero_contrato)) candidatos.set(f.numero_contrato, f);
   };
-  sumar(await q.porB2bUsuario(perfil.id));
-  if (perfil.aliadoId != null) sumar(await q.porAliadoId(perfil.aliadoId));
+  // Lecturas por id: si una no se puede completar no aporta nada (nunca una lista parcial) y se avisa.
+  let incompleto = false;
+  const porUsuario = await q.porB2bUsuario(perfil.id);
+  if (!porUsuario.completa) incompleto = true; else sumar(porUsuario.filas);
+  if (perfil.aliadoId != null) {
+    const porFicha = await q.porAliadoId(perfil.aliadoId);
+    if (!porFicha.completa) incompleto = true; else sumar(porFicha.filas);
+  }
 
   // Sin tenant explícito no hay respaldo por nombre (la función también lo
   // exige); ni siquiera se busca.
@@ -147,22 +157,35 @@ export async function contratosDelPortalB2B(
     contratos,
     via,
     legacyNoVerificado: !busqueda.completa || (numsNombre.length > 0 && !fichas.completa),
+    incompleto,
   };
 }
 
 /**
  * Consultas reales del portal (service-role). `columnas` debe incluir
- * `COLUMNAS_DECISION`. Las consultas de `ventas` que fallan devuelven vacío:
- * eso solo puede QUITAR contratos del listado, nunca dar acceso.
+ * `COLUMNAS_DECISION`. Las lecturas de `ventas` son paginadas con conteo y orden estable
+ * (`numero_contrato`, único); si una no se puede completar (error, tope de filas, conteo
+ * inconsistente) devuelve `completa: false` y NINGUNA fila: solo puede QUITAR contratos del
+ * listado —y se avisa—, nunca dar acceso ni presentar un histórico truncado como completo.
  */
 export function consultasPortalSupabase(admin: Admin, columnas: string): ConsultasPortal {
-  const filas = async (p: PromiseLike<{ data: unknown[] | null; error: unknown }>) => {
-    const r = await p;
-    return (r.error ? [] : (r.data ?? [])) as FilaContratoPortal[];
+  const porColumna = async (col: "b2b_usuario_id" | "aliado_id", valor: string | number) => {
+    const r = await leerTodoConConteo<FilaContratoPortal>(
+      (desde, hasta) =>
+        admin
+          .from("ventas")
+          .select(columnas, { count: "exact" })
+          .eq(col, valor as never)
+          .order("numero_contrato", { ascending: true })
+          .range(desde, hasta) as unknown as PromiseLike<PaginaConConteo<FilaContratoPortal>>,
+      PAGINA_FILAS,
+      (f) => typeof f?.numero_contrato === "string"
+    );
+    return r.completa ? { completa: true, filas: r.filas } : { completa: false, filas: [] as FilaContratoPortal[] };
   };
   return {
-    porB2bUsuario: (uid) => filas(admin.from("ventas").select(columnas).eq("b2b_usuario_id", uid)),
-    porAliadoId: (id) => filas(admin.from("ventas").select(columnas).eq("aliado_id", id)),
+    porB2bUsuario: (uid) => porColumna("b2b_usuario_id", uid),
+    porAliadoId: (id) => porColumna("aliado_id", id),
     // Una consulta por columna con `.ilike()` (valor parametrizado) y no `.or()`:
     // con service-role, `.or()` recibe sintaxis de PostgREST en crudo y un
     // nombre con comas o paréntesis podría reescribir el filtro. Comodines del

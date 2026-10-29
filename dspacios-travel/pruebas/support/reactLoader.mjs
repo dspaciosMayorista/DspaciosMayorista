@@ -197,7 +197,9 @@ export async function resolve(specifier, context, nextResolve) {
       (context.parentURL?.endsWith("/lib/cuenta/estado.ts") ||
        context.parentURL?.endsWith("/lib/finanzas/comisionResolver.ts") ||
        // Listado del portal B2B y su columna de comisión (#38, pruebas/comisionPortalB2B.react.ts).
-       context.parentURL?.endsWith("/portal/b2b/page.tsx"))) {
+       context.parentURL?.endsWith("/portal/b2b/page.tsx") ||
+       // 65: la carga del portal salió de la página a su capa servidor (inicio y pestañas la comparten).
+       context.parentURL?.endsWith("/lib/portal/b2bPortalServidor.ts"))) {
     return { url: specifier.endsWith("/admin") ? STUB_SUPABASE_ADMIN : STUB_SUPABASE_SERVER, shortCircuit: true };
   }
   // Registro/aprobación B2B (migración 193): acciones REALES de aprobación,
