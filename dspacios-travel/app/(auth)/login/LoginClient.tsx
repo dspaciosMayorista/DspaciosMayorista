@@ -64,9 +64,11 @@ const CONTENIDO_PORTAL: Record<PortalSeleccionado, {
 export function LoginClient({
   quickLoginEnabled,
   inactivoInicial,
+  sinPerfilInicial = false,
 }: {
   quickLoginEnabled: boolean;
   inactivoInicial: boolean;
+  sinPerfilInicial?: boolean;
 }) {
   const router = useRouter();
   const [portalSeleccionado, setPortalSeleccionado] = useState<PortalSeleccionado>("b2b");
@@ -237,6 +239,16 @@ export function LoginClient({
                 style={{ backgroundColor: "var(--login-warn-bg)", borderColor: "var(--login-warn-border)", color: "var(--login-warn-ink)" }}
               >
                 Tu cuenta está desactivada. Comunícate con el administrador para reactivarla.
+              </p>
+            )}
+
+            {sinPerfilInicial && (
+              <p
+                role="alert"
+                className="mt-5 rounded-md border px-3 py-2 text-sm"
+                style={{ backgroundColor: "var(--login-warn-bg)", borderColor: "var(--login-warn-border)", color: "var(--login-warn-ink)" }}
+              >
+                Tu sesión no tiene un perfil válido en D&apos;spacios. Comunícate con el administrador o regístrate como aliado.
               </p>
             )}
 

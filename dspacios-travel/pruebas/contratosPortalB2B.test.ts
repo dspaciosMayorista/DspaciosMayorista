@@ -183,7 +183,8 @@ for (const [caso, fallo] of [["error", "error"], ["sin conteo", "sin_conteo"], [
       perfil({ aliadoId: 7, accesoLegacyNombre: true }),
       {
         maxFilas: fallo === "vacia" ? 1 : undefined,
-        fallar: (c) => (c.tabla === "ventas" && c.conteo && (fallo !== "vacia" || (c.desde ?? 0) > 0) ? fallo : null),
+        // #65: las lecturas por id (llamadas 1 y 2) ahora también cuentan filas; el fallo se inyecta solo en la búsqueda por nombre (3+).
+        fallar: (c) => (c.tabla === "ventas" && c.conteo && c.llamada > 2 && (fallo !== "vacia" || (c.desde ?? 0) > 0) ? fallo : null),
       },
       T193
     );
@@ -193,12 +194,14 @@ for (const [caso, fallo] of [["error", "error"], ["sin conteo", "sin_conteo"], [
 }
 
 test("wiring: el portal usa el adaptador compartido; las consultas por nombre excluyen ids y no usan .or()", () => {
-  const page = readFileSync(new URL("../app/portal/b2b/page.tsx", import.meta.url), "utf8");
+  // #65: la carga salió de la página a la capa servidor compartida por inicio y pestañas.
+  const page = readFileSync(new URL("../lib/portal/b2bPortalServidor.ts", import.meta.url), "utf8");
+  const inicio = readFileSync(new URL("../app/portal/b2b/page.tsx", import.meta.url), "utf8");
   assert.match(page, /import \{ contratosDelPortalB2B, consultasPortalSupabase, COLUMNAS_DECISION \} from "@\/lib\/auth\/contratosPortalB2B"/);
-  assert.match(page, /consultasPortalSupabase\(admin, sel\)/);
+  assert.match(page, /consultasPortalSupabase\(admin, COLUMNAS_VENTA\)/);
   assert.match(page, /select\("nombre, rol, activo, agencia_id, pct_comision, aliado_id, tenant, acceso_legacy_nombre"\)/);
-  assert.match(page, /legacyNoVerificado &&/, "el aviso de histórico no verificado se muestra");
-  assert.doesNotMatch(page.replace(/\/\/.*$/gm, ""), /from\("aliados_b2b"\)/, "la página no consulta fichas por su cuenta");
+  assert.match(inicio, /conjunto\.legacyNoVerificado/, "el aviso de histórico no verificado se muestra");
+  assert.doesNotMatch(page.replace(/\/\/.*$/gm, ""), /from\("aliados_b2b"\)/, "la capa servidor no consulta fichas por su cuenta (lo hacen los adaptadores)");
 
   const lib = readFileSync(new URL("../lib/auth/contratosPortalB2B.ts", import.meta.url), "utf8");
   const codigo = lib.replace(/\/\/.*$/gm, "");

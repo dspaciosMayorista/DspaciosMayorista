@@ -213,9 +213,9 @@ describe("app — la identidad nunca viene del cuerpo", () => {
 });
 
 describe("app — portal B2B y listados", () => {
-  const portal = leer("app/portal/b2b/page.tsx");
+  const portal = leer("lib/portal/b2bPortalServidor.ts"); // #65: la carga vive en la capa servidor del portal
   test("las comparativas del aliado salen de la RPC con la SESIÓN, no por email ni nombre", () => {
-    assert.match(portal, /sb\.rpc\("comparativas_b2b_visibles"\)/);
+    assert.match(portal, /sb\.rpc\("comparativas_b2b_visibles", undefined, \{ count: "exact" \}\)/);
     const bloque = portal.slice(portal.indexOf("comparativas_b2b_visibles") - 600, portal.indexOf("comparativas_b2b_visibles") + 900);
     assert.doesNotMatch(bloque, /creado_por|agencia_nombre|freelance_nombre|user\.email/);
   });

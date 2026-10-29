@@ -563,9 +563,9 @@ test("/cot/[token] sigue resolviendo únicamente por share_token, nunca por id",
   assert.doesNotMatch(src, /\.eq\("id",/, "empezó a filtrar/aceptar acceso por id — reabriría la enumeración");
 });
 
-test("portal B2B: la lista de cotizaciones sigue por creado_por (vínculo estable), con tenant como segunda capa", () => {
-  const src = leer("app/portal/b2b/page.tsx");
-  assert.match(src, /\.eq\("creado_por",\s*user\.email/, "dejó de filtrar por el email exacto del usuario autenticado");
+test("portal B2B: la lista de cotizaciones sigue por creado_por (vínculo estable), por identidad, sin atribuir por nombre ni por agencia", () => {
+  const src = leer("lib/portal/b2bPortalServidor.ts"); // #65: la carga vive en la capa servidor del portal
+  assert.match(src, /\.eq\("creado_por",\s*ctx\.email/, "dejó de filtrar por el email exacto del usuario autenticado");
   assert.doesNotMatch(
     src,
     /cotizaciones[\s\S]{0,400}\.eq\(\s*"asesor"/,
