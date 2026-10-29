@@ -1,9 +1,8 @@
-import Link from "next/link";
 import { redirect } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
 import { createAdminClient } from "@/lib/supabase/admin";
-import { Logo } from "@/components/Logo";
-import { LogoutButton } from "@/app/(dashboard)/LogoutButton";
+import { PortalShell, Titulo } from "@/components/portal/PortalShell";
+import { BotonTarifario } from "@/components/portal/BotonTarifario";
 import { AgentesClient, type Agente } from "./AgentesClient";
 
 export const dynamic = "force-dynamic";
@@ -24,19 +23,9 @@ export default async function AgentesPage() {
     .order("nombre");
 
   return (
-    <div className="min-h-screen bg-gray-50">
-      <header className="bg-brand-gradient px-6 py-6 text-white">
-        <div className="mx-auto flex max-w-3xl items-center justify-between">
-          <Link href="/portal/b2b"><Logo variant="white" height={36} priority className="h-9 w-auto" /></Link>
-          <LogoutButton className="text-sm text-white/90 hover:text-white" />
-        </div>
-      </header>
-      <main className="mx-auto max-w-3xl px-6 py-8">
-        <Link href="/portal/b2b" className="text-sm text-gray-400 hover:text-gray-700">← Mis contratos</Link>
-        <h1 className="mt-2 mb-1 text-2xl font-semibold text-gray-900">Agentes de la agencia</h1>
-        <p className="mb-6 text-sm text-gray-500">{p?.nombre}</p>
-        <AgentesClient agentes={(agentes ?? []) as Agente[]} />
-      </main>
-    </div>
+    <PortalShell nombre={p?.nombre} rol="agencia" cta={<BotonTarifario />} activa="agentes" mostrarAgentes>
+      <Titulo apoyo="Personas de tu agencia con acceso al portal">Agentes de la agencia</Titulo>
+      <AgentesClient agentes={(agentes ?? []) as Agente[]} />
+    </PortalShell>
   );
 }

@@ -115,6 +115,16 @@ export function estadoCotizacion(c: CotizacionPortal, hoy: string): EstadoCotiza
   return "vigente";
 }
 
+/** Un contrato anulado o cancelado no cuenta como salida: ni en «Próximas salidas», ni en la gráfica, ni en el indicador de 30 días. */
+export function contratoAnulado(v: Pick<VentaPortal, "estado">): boolean {
+  return /anul|cancel/i.test(v.estado ?? "");
+}
+
+/** Salidas con fecha de contratos PROPIOS no anulados: única fuente de las tres vistas de salidas del inicio. */
+export function salidasVigentes(ventas: VentaPortal[]): VentaPortal[] {
+  return ventas.filter((v) => v.relacion === "propio" && !!v.fecha_salida && !contratoAnulado(v));
+}
+
 export type ResumenInicio = {
   cotizacionesVigentes: number;
   ventasPropias: number;
@@ -145,7 +155,7 @@ export function resumenInicio(a: {
     contratosConSaldo: conSaldo.length,
     saldoPorMoneda: sumarPorMoneda(conSaldo.map((f) => ({ moneda: f.moneda, monto: f.saldo }))),
     comisionPorCobrarPorMoneda: sumarPorMoneda(a.comisiones),
-    salidasProximas: a.ventas.filter((v) => v.relacion === "propio" && !!v.fecha_salida && v.fecha_salida >= a.hoy && v.fecha_salida <= tope).length,
+    salidasProximas: salidasVigentes(a.ventas).filter((v) => (v.fecha_salida as string) >= a.hoy && (v.fecha_salida as string) <= tope).length,
   };
 }
 

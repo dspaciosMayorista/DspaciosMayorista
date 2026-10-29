@@ -1,5 +1,6 @@
 import Link from "next/link";
-import { PortalShell, SubPestanas, TablaScroll, Vacio } from "@/components/portal/PortalShell";
+import { PortalShell, Titulo, Aviso, SubPestanas, TablaScroll, Vacio } from "@/components/portal/PortalShell";
+import { BotonTarifario } from "@/components/portal/BotonTarifario";
 import { PortalGate } from "@/components/portal/PortalGate";
 import { AvisoHistoricoIncompleto } from "@/components/portal/AvisoHistoricoIncompleto";
 import { formatMoneda, formatFechaLarga } from "@/lib/utils";
@@ -22,18 +23,17 @@ export default async function PortalCartera({ searchParams }: { searchParams: Pr
   const abonosOrdenados = [...conjunto.abonos].sort((a, b) => String(b.fecha_abono ?? "").localeCompare(String(a.fecha_abono ?? "")) || b.id - a.id);
 
   return (
-    <PortalShell nombre={ctx.nombre} activa="cartera" mostrarAgentes={ctx.esTitularAgencia} linkPago={linkPago}>
-      <h1 className="mb-1 text-lg font-semibold text-gray-900">Cartera</h1>
-      <p className="mb-4 text-xs text-gray-500">Valor, pagos y saldo de tus contratos, en la moneda de cobro de cada uno.</p>
+    <PortalShell nombre={ctx.nombre} rol={ctx.rol} cta={<BotonTarifario />} activa="cartera" mostrarAgentes={ctx.esTitularAgencia} linkPago={linkPago}>
+      <Titulo apoyo={<>Valor, pagos y saldo de tus contratos, en la moneda de cobro de cada uno.</>}>Cartera</Titulo>
       <SubPestanas
         base="/portal/b2b/cartera" actual={actual} etiqueta="Vista de cartera"
         items={[{ id: "saldo", label: "Con saldo", cuenta: conSaldo.length }, { id: "pagos", label: "Pagos", cuenta: pagos.length }]}
       />
       {conjunto.historicoIncompleto && <AvisoHistoricoIncompleto />}
       {!conjunto.abonosCompletos && (
-        <p role="status" className="mb-3 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800">
+        <Aviso>
           No pudimos leer todos tus pagos, así que los saldos pueden estar incompletos. Intenta más tarde.
-        </p>
+        </Aviso>
       )}
 
       {actual === "saldo" ? (

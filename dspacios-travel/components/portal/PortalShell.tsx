@@ -1,65 +1,123 @@
 import Link from "next/link";
+import Image from "next/image";
+import { CreditCard, FileText, House, ClipboardList, ReceiptText, Wallet, Users } from "lucide-react";
 import { Logo } from "@/components/Logo";
 import { LogoutButton } from "@/app/(dashboard)/LogoutButton";
+import s from "./vidrio.module.css";
 
 export type PestanaPortal = "inicio" | "cotizaciones" | "ventas" | "cartera" | "documentos" | "agentes";
 
-const PESTANAS: { id: PestanaPortal; href: string; label: string }[] = [
-  { id: "inicio", href: "/portal/b2b", label: "Inicio" },
-  { id: "cotizaciones", href: "/portal/b2b/cotizaciones", label: "Cotizaciones" },
-  { id: "ventas", href: "/portal/b2b/ventas", label: "Mis ventas" },
-  { id: "cartera", href: "/portal/b2b/cartera", label: "Cartera" },
-  { id: "documentos", href: "/portal/b2b/documentos", label: "Documentos" },
+const ICONO = { size: 20, "aria-hidden": true } as const;
+const PESTANAS: { id: PestanaPortal; href: string; label: string; corto: string; icono: React.ReactNode }[] = [
+  { id: "inicio", href: "/portal/b2b", label: "Inicio", corto: "Inicio", icono: <House {...ICONO} /> },
+  { id: "cotizaciones", href: "/portal/b2b/cotizaciones", label: "Cotizaciones", corto: "Cotiz.", icono: <ClipboardList {...ICONO} /> },
+  { id: "ventas", href: "/portal/b2b/ventas", label: "Mis ventas", corto: "Ventas", icono: <ReceiptText {...ICONO} /> },
+  { id: "cartera", href: "/portal/b2b/cartera", label: "Cartera", corto: "Cartera", icono: <Wallet {...ICONO} /> },
+  { id: "documentos", href: "/portal/b2b/documentos", label: "Documentos", corto: "Docs.", icono: <FileText {...ICONO} /> },
 ];
 
-export function PortalShell({ children, nombre, activa, mostrarAgentes, linkPago }: {
+const ROL: Record<string, string> = { agencia: "Agencia", freelance: "Freelance" };
+
+/**
+ * Marco «Vidrio» del portal. Sin `activa` no se dibuja la navegación (pantallas de ingreso / revisión).
+ * `cta` es la acción principal del encabezado: la pone cada página (el marco no conoce destinos del catálogo).
+ */
+export function PortalShell({ children, nombre, rol, detalle, activa, mostrarAgentes, linkPago, cta }: {
   children: React.ReactNode;
   nombre?: string | null;
-  /** Sin `activa` no se dibuja la navegación (pantallas de ingreso / revisión). */
+  rol?: string | null;
+  /** Reemplaza el texto bajo el nombre (por defecto, el tipo de aliado). */
+  detalle?: string | null;
   activa?: PestanaPortal;
   mostrarAgentes?: boolean;
   linkPago?: string | null;
+  cta?: React.ReactNode;
 }) {
-  const pestanas = mostrarAgentes ? [...PESTANAS, { id: "agentes" as const, href: "/portal/b2b/agentes", label: "Agentes" }] : PESTANAS;
+  const pestanas = mostrarAgentes
+    ? [...PESTANAS, { id: "agentes" as const, href: "/portal/b2b/agentes", label: "Agentes", corto: "Agentes", icono: <Users {...ICONO} /> }]
+    : PESTANAS;
+  const inicial = (nombre ?? "").trim().charAt(0).toUpperCase();
+  const linea = detalle ?? (rol ? `${ROL[rol] ?? rol} · Aliado` : "Portal de aliados");
   return (
-    <div className="min-h-screen bg-gray-50">
-      <header className="bg-brand-gradient px-4 py-5 text-white sm:px-6 sm:py-6">
-        <div className="mx-auto flex max-w-6xl items-center justify-between gap-3">
-          <Link href="/portal"><Logo variant="white" height={36} priority className="h-9 w-auto" /></Link>
-          <div className="flex min-w-0 items-center gap-3 text-sm sm:gap-4">
-            {nombre && <span className="max-w-[10rem] truncate opacity-90 sm:max-w-none">{nombre}</span>}
-            <LogoutButton className="text-white/90 hover:text-white" />
-          </div>
+    <div className={s.raiz}>
+      {/* React 19 eleva este <link> al <head>; la fuente solo se usa dentro de .raiz. */}
+      <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap" precedence="default" />
+      <div aria-hidden="true" className={`${s.halo} ${s.halo1}`} />
+      <div aria-hidden="true" className={`${s.halo} ${s.halo2}`} />
+      <div aria-hidden="true" className={`${s.halo} ${s.halo3}`} />
+      <div className={s.marco}>
+        <div className={s.vidrio}>
+          {activa && (
+            <nav aria-label="Secciones del portal" className={s.nav}>
+              <div aria-hidden="true" className={s.navMarca}>
+                <Image src="/marca/isotipo-white.png" alt="" width={26} height={26} />
+              </div>
+              <ul className={s.navLista}>
+                {pestanas.map((p) => (
+                  <li key={p.id}>
+                    <Link
+                      href={p.href}
+                      title={p.label}
+                      aria-label={p.label}
+                      aria-current={p.id === activa ? "page" : undefined}
+                      className={`${s.navItem} ${p.id === activa ? s.navActivo : ""}`}
+                    >
+                      {p.icono}
+                      <span aria-hidden="true" className={s.navEtiqueta}>{p.corto}</span>
+                    </Link>
+                  </li>
+                ))}
+              </ul>
+            </nav>
+          )}
+          <main className={s.principal}>
+            <header className={s.cabecera}>
+              <div className={s.identidadGrupo}>
+                <Link href="/portal" aria-label="D'spacios Travel, inicio del portal"><Logo variant="full" height={40} priority className="h-10 w-auto" /></Link>
+                {nombre && (
+                  <>
+                    <div aria-hidden="true" className={s.sep} />
+                    <div className={s.identidad}>
+                      <div aria-hidden="true" className={s.avatar}>{inicial || "A"}</div>
+                      <div style={{ minWidth: 0 }}>
+                        <div className={s.idNombre}>{nombre}</div>
+                        <div className={s.idRol}>{linea}</div>
+                      </div>
+                    </div>
+                  </>
+                )}
+              </div>
+              <div className={s.acciones}>
+                {linkPago && (
+                  <a href={linkPago} target="_blank" rel="noopener noreferrer" className={s.btnVidrio}>
+                    <CreditCard aria-hidden size={18} /> Pagar en línea
+                  </a>
+                )}
+                <LogoutButton className={s.btnVidrio} />
+                {cta}
+              </div>
+            </header>
+            {children}
+          </main>
         </div>
-      </header>
-      <main className="mx-auto max-w-6xl px-4 py-6 sm:px-6 sm:py-8">
-        {activa && (
-          <nav aria-label="Secciones del portal" className="mb-5 flex items-center gap-2 rounded-xl border border-gray-100 bg-white px-2 py-2">
-            <ul className="flex min-w-0 flex-1 items-center gap-1 overflow-x-auto">
-              {pestanas.map((p) => (
-                <li key={p.id} className="shrink-0">
-                  <Link
-                    href={p.href}
-                    aria-current={p.id === activa ? "page" : undefined}
-                    className={`block whitespace-nowrap rounded-lg px-3 py-2 text-sm font-medium focus-visible:outline-2 focus-visible:outline-offset-2 ${p.id === activa ? "text-white" : "text-gray-600 hover:bg-gray-100"}`}
-                    style={p.id === activa ? { backgroundColor: "var(--brand-primary)" } : undefined}
-                  >
-                    {p.label}
-                  </Link>
-                </li>
-              ))}
-            </ul>
-            {linkPago && (
-              <a href={linkPago} target="_blank" rel="noopener noreferrer" className="shrink-0 rounded-lg border px-3 py-2 text-sm font-semibold" style={{ borderColor: "var(--brand-primary)", color: "var(--brand-primary)" }}>
-                Pagar en línea
-              </a>
-            )}
-          </nav>
-        )}
-        {children}
-      </main>
+      </div>
     </div>
   );
+}
+
+/** Título de página + línea de apoyo, con el mismo ritmo que la cabecera del inicio. */
+export function Titulo({ children, apoyo }: { children: React.ReactNode; apoyo?: React.ReactNode }) {
+  return (
+    <div className={s.titulo}>
+      <h1 className={s.h1}>{children}</h1>
+      {apoyo ? <span className={s.nota}>{apoyo}</span> : null}
+    </div>
+  );
+}
+
+/** Aviso de estado (lectura incompleta, histórico sin verificar…): visible para lectores de pantalla. */
+export function Aviso({ children }: { children: React.ReactNode }) {
+  return <p role="status" className={s.aviso}>{children}</p>;
 }
 
 /** Subpestañas por enlace real (`?vista=`): enlace directo, teclado y botón Atrás funcionan sin JavaScript. */
@@ -70,16 +128,16 @@ export function SubPestanas({ base, actual, items, etiqueta }: {
   etiqueta: string;
 }) {
   return (
-    <nav aria-label={etiqueta} className="mb-4">
-      <ul className="inline-flex gap-1 rounded-lg bg-gray-100 p-1">
+    <nav aria-label={etiqueta}>
+      <ul className={s.segmentado}>
         {items.map((i) => (
           <li key={i.id}>
             <Link
               href={`${base}?vista=${i.id}`}
               aria-current={i.id === actual ? "page" : undefined}
-              className={`block whitespace-nowrap rounded-md px-3 py-1.5 text-sm font-medium focus-visible:outline-2 focus-visible:outline-offset-2 ${i.id === actual ? "bg-white text-gray-900 shadow-sm" : "text-gray-500 hover:text-gray-800"}`}
+              className={`${s.segmento} ${i.id === actual ? s.segmentoActivo : ""}`}
             >
-              {i.label}{typeof i.cuenta === "number" ? <span className="ml-1.5 text-xs text-gray-400">{i.cuenta}</span> : null}
+              {i.label}{typeof i.cuenta === "number" ? <span className={s.segCuenta}>{i.cuenta}</span> : null}
             </Link>
           </li>
         ))}
@@ -91,12 +149,12 @@ export function SubPestanas({ base, actual, items, etiqueta }: {
 /** Contenedor de tabla desplazable en móvil, enfocable con teclado. */
 export function TablaScroll({ children, etiqueta, ancho = "min-w-[760px]" }: { children: React.ReactNode; etiqueta: string; ancho?: string }) {
   return (
-    <div role="region" aria-label={etiqueta} tabIndex={0} className="overflow-x-auto rounded-xl border border-gray-200 bg-white focus-visible:outline-2 focus-visible:outline-offset-2">
+    <div role="region" aria-label={etiqueta} tabIndex={0} className={`${s.tablaMarco} overflow-x-auto`}>
       <table className={`w-full ${ancho} text-sm`}>{children}</table>
     </div>
   );
 }
 
 export function Vacio({ children }: { children: React.ReactNode }) {
-  return <p className="rounded-xl border border-gray-200 bg-white px-4 py-10 text-center text-sm text-gray-400">{children}</p>;
+  return <p className={s.vacio}>{children}</p>;
 }

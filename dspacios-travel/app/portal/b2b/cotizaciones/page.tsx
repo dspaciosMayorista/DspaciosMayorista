@@ -1,5 +1,6 @@
 import Link from "next/link";
-import { PortalShell, SubPestanas } from "@/components/portal/PortalShell";
+import { PortalShell, Titulo, Aviso, SubPestanas } from "@/components/portal/PortalShell";
+import { BotonTarifario } from "@/components/portal/BotonTarifario";
 import { PortalGate } from "@/components/portal/PortalGate";
 import { TablaCotizaciones } from "@/components/portal/TablaCotizaciones";
 import { ListaComparativas } from "@/components/portal/ListaComparativas";
@@ -7,8 +8,6 @@ import { hoyBogota } from "@/lib/cotizacion/vigencia";
 import { resolverContextoPortal, cargarCotizacionesPortal, cargarComparativasPortal, linkPagoPortal } from "@/lib/portal/b2bPortalServidor";
 
 export const dynamic = "force-dynamic";
-
-const AVISO = "rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800";
 
 export default async function PortalCotizaciones({ searchParams }: { searchParams: Promise<{ vista?: string }> }) {
   const ctx = await resolverContextoPortal();
@@ -22,9 +21,8 @@ export default async function PortalCotizaciones({ searchParams }: { searchParam
   const comps = actual === "directas" ? comparativas.directas : comparativas.asistidas;
 
   return (
-    <PortalShell nombre={ctx.nombre} activa="cotizaciones" mostrarAgentes={ctx.esTitularAgencia} linkPago={linkPago}>
-      <h1 className="mb-1 text-lg font-semibold text-gray-900">Cotizaciones</h1>
-      <p className="mb-4 text-xs text-gray-500">Directas: las generaste tú desde el tarifario. Asistidas: las armó D&apos;spacios para ti.</p>
+    <PortalShell nombre={ctx.nombre} rol={ctx.rol} cta={<BotonTarifario />} activa="cotizaciones" mostrarAgentes={ctx.esTitularAgencia} linkPago={linkPago}>
+      <Titulo apoyo={<>Directas: las generaste tú desde el tarifario. Asistidas: las armó D&apos;spacios para ti.</>}>Cotizaciones</Titulo>
       <SubPestanas
         base="/portal/b2b/cotizaciones" actual={actual} etiqueta="Tipo de cotización"
         items={[
@@ -32,8 +30,8 @@ export default async function PortalCotizaciones({ searchParams }: { searchParam
           { id: "asistidas", label: "Asistidas", cuenta: cots.asistidas.length + comparativas.asistidas.length },
         ]}
       />
-      {cots.error && <p role="status" className={`mb-3 ${AVISO}`}>No pudimos cargar todas tus cotizaciones, así que lo que ves puede estar incompleto. Intenta más tarde.</p>}
-      {comparativas.error && <p role="status" className={`mb-3 ${AVISO}`}>No pudimos cargar tus comparativas en este momento; no significa que no tengas. Intenta más tarde.</p>}
+      {cots.error && <Aviso>No pudimos cargar todas tus cotizaciones, así que lo que ves puede estar incompleto. Intenta más tarde.</Aviso>}
+      {comparativas.error && <Aviso>No pudimos cargar tus comparativas en este momento; no significa que no tengas. Intenta más tarde.</Aviso>}
 
       {(filas.length > 0 || comps.length === 0) && (
         <TablaCotizaciones

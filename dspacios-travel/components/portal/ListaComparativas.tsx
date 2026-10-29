@@ -1,3 +1,4 @@
+import s from "./vidrio.module.css";
 import { formatMoneda, formatFechaLarga } from "@/lib/utils";
 import { comparativaComoCotizacion, estadoCotizacion } from "@/lib/portal/b2bPortal";
 import type { ComparativaPortal } from "@/lib/portal/b2bPortalServidor";
@@ -12,14 +13,14 @@ const ESTADO = {
 
 export function ListaComparativas({ comparativas, hoy }: { comparativas: ComparativaPortal[]; hoy: string }) {
   return (
-    <section aria-labelledby="comparativas" className="mt-8 first:mt-0">
-      <h2 id="comparativas" className="mb-1 text-base font-semibold text-gray-900">Comparativas</h2>
-      <p className="mb-3 text-xs text-gray-500">Compara hoteles y escoge uno; cada total es de ese hotel, no se suman.</p>
+    <section aria-labelledby="comparativas" className="mt-6 first:mt-0">
+      <h2 id="comparativas" className={`${s.h2} mb-1`}>Comparativas</h2>
+      <p className={`${s.subtitulo} mb-3`}>Compara hoteles y escoge uno; cada total es de ese hotel, no se suman.</p>
       <ul className="space-y-3">
         {comparativas.map((c) => {
           const e = ESTADO[estadoCotizacion(comparativaComoCotizacion(c), hoy)];
           return (
-            <li key={c.id} className="rounded-xl border border-gray-200 bg-white p-4">
+            <li key={c.id} className={s.tarjeta}>
               <div className="flex flex-wrap items-center justify-between gap-2">
                 <div>
                   <span className="font-mono font-semibold text-[#1D7C9A]">{c.codigo}</span>
@@ -33,7 +34,7 @@ export function ListaComparativas({ comparativas, hoy }: { comparativas: Compara
               </div>
               <ul className="mt-2 grid grid-cols-1 gap-1 text-xs text-gray-600 sm:grid-cols-2 lg:grid-cols-3">
                 {c.opciones.map((o) => (
-                  <li key={`${o.opcion}-${o.acomodacion}`} className="rounded-lg bg-gray-50 px-3 py-1.5">
+                  <li key={`${o.opcion}-${o.acomodacion}`} className={s.opcion}>
                     Opción {o.opcion} · {o.etiqueta}: <b className="tabular-nums">{formatMoneda(Number(o.total), o.moneda)}</b>
                   </li>
                 ))}

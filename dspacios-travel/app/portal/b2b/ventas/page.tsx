@@ -1,5 +1,6 @@
 import Link from "next/link";
-import { PortalShell, SubPestanas, TablaScroll, Vacio } from "@/components/portal/PortalShell";
+import { PortalShell, Titulo, Aviso, SubPestanas, TablaScroll, Vacio } from "@/components/portal/PortalShell";
+import { BotonTarifario } from "@/components/portal/BotonTarifario";
 import { PortalGate } from "@/components/portal/PortalGate";
 import { AvisoHistoricoIncompleto } from "@/components/portal/AvisoHistoricoIncompleto";
 import { formatMoneda, formatFechaLarga } from "@/lib/utils";
@@ -27,20 +28,19 @@ export default async function PortalVentas({ searchParams }: { searchParams: Pro
   const filas = actual === "directas" ? directas : asistidas;
 
   return (
-    <PortalShell nombre={ctx.nombre} activa="ventas" mostrarAgentes={ctx.esTitularAgencia} linkPago={linkPago}>
-      <h1 className="mb-1 text-lg font-semibold text-gray-900">Mis ventas</h1>
-      <p className="mb-4 text-xs text-gray-500">
+    <PortalShell nombre={ctx.nombre} rol={ctx.rol} cta={<BotonTarifario />} activa="ventas" mostrarAgentes={ctx.esTitularAgencia} linkPago={linkPago}>
+      <Titulo apoyo={<>
         Directas: contratos que generaste tú. Asistidas: contratos que armó D&apos;spacios para ti o que vienen de Minorista. Los saldos y pagos están en Cartera.
-      </p>
+      </>}>Mis ventas</Titulo>
       <SubPestanas
         base="/portal/b2b/ventas" actual={actual} etiqueta="Tipo de venta"
         items={[{ id: "directas", label: "Directas", cuenta: directas.length }, { id: "asistidas", label: "Asistidas", cuenta: asistidas.length }]}
       />
       {conjunto.historicoIncompleto && <AvisoHistoricoIncompleto />}
       {(conjunto.legacyNoVerificado || !conjunto.participacionCompleta) && (
-        <p role="status" className="mb-3 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800">
+        <Aviso>
           No pudimos verificar parte de tu histórico, así que por seguridad no se muestra ahora. Intenta más tarde o comunícate con tu asesor.
-        </p>
+        </Aviso>
       )}
       {filas.length === 0 ? (
         <Vacio>

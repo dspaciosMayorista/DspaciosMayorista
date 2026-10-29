@@ -1,5 +1,6 @@
 import Link from "next/link";
-import { PortalShell, TablaScroll, Vacio } from "@/components/portal/PortalShell";
+import { PortalShell, Titulo, Aviso, TablaScroll, Vacio } from "@/components/portal/PortalShell";
+import { BotonTarifario } from "@/components/portal/BotonTarifario";
 import { PortalGate } from "@/components/portal/PortalGate";
 import { AvisoHistoricoIncompleto } from "@/components/portal/AvisoHistoricoIncompleto";
 import { numeroVisible } from "@/lib/tenant";
@@ -22,14 +23,13 @@ export default async function PortalDocumentos() {
   const incompleto = !conjunto.abonosCompletos || !conjunto.vouchersCompletos;
 
   return (
-    <PortalShell nombre={ctx.nombre} activa="documentos" mostrarAgentes={ctx.esTitularAgencia} linkPago={linkPago}>
-      <h1 className="mb-1 text-lg font-semibold text-gray-900">Documentos</h1>
-      <p className="mb-4 text-xs text-gray-500">Solo se enlazan los documentos que existen. Los contratos en los que solo participas por comisión no incluyen documentos.</p>
+    <PortalShell nombre={ctx.nombre} rol={ctx.rol} cta={<BotonTarifario />} activa="documentos" mostrarAgentes={ctx.esTitularAgencia} linkPago={linkPago}>
+      <Titulo apoyo={<>Solo se enlazan los documentos que existen. Los contratos en los que solo participas por comisión no incluyen documentos.</>}>Documentos</Titulo>
       {conjunto.historicoIncompleto && <AvisoHistoricoIncompleto />}
       {incompleto && (
-        <p role="status" className="mb-3 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800">
+        <Aviso>
           No pudimos leer todos los documentos; algunos pueden figurar como no disponibles. Intenta más tarde.
-        </p>
+        </Aviso>
       )}
       {filas.length === 0 ? (
         <Vacio>Aún no tienes contratos con documentos.</Vacio>

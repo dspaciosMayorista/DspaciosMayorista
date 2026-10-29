@@ -4,6 +4,7 @@ import { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import s from "@/components/portal/vidrio.module.css";
 import { crearAgente, cambiarEstadoAgente } from "./actions";
 
 export type Agente = { id: string; nombre: string; email: string; activo: boolean };
@@ -27,8 +28,8 @@ export function AgentesClient({ agentes }: { agentes: Agente[] }) {
 
   return (
     <div className="space-y-6">
-      <section className="rounded-xl border border-gray-200 bg-white p-5">
-        <h2 className="mb-3 text-sm font-semibold text-gray-700">Crear agente</h2>
+      <section className={s.panel}>
+        <h2 className={s.h2}>Crear agente</h2>
         <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
           <div><label className={lbl}>Nombre</label><Input value={f.nombre} onChange={(e) => setF({ ...f, nombre: e.target.value })} /></div>
           <div><label className={lbl}>Correo</label><Input type="email" value={f.email} onChange={(e) => setF({ ...f, email: e.target.value })} /></div>
@@ -41,8 +42,8 @@ export function AgentesClient({ agentes }: { agentes: Agente[] }) {
         <p className="mt-2 text-xs text-gray-400">El agente entra con ese correo y clave. La facturación de contratos netos siempre va a la agencia.</p>
       </section>
 
-      <section className="rounded-xl border border-gray-200 bg-white p-5">
-        <h2 className="mb-3 text-sm font-semibold text-gray-700">Agentes ({agentes.length})</h2>
+      <section className={s.panel}>
+        <h2 className={s.h2}>Agentes ({agentes.length})</h2>
         {agentes.length === 0 ? (
           <p className="text-sm text-gray-400">Aún no tienes agentes.</p>
         ) : (
