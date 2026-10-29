@@ -13,7 +13,7 @@ export default async function PagarPage() {
     <div className="flex min-h-screen flex-col bg-gray-50">
       <header className="bg-brand-gradient px-6 py-10 text-white">
         <div className="mx-auto max-w-2xl">
-          <Link href="/portal"><Logo variant="white" height={44} priority className="h-10 w-auto" /></Link>
+          <Link href="/tarifario"><Logo variant="white" height={44} priority className="h-10 w-auto" /></Link>
           <h1 className="mt-4 text-2xl font-semibold">Pagos en línea</h1>
           <p className="mt-1 text-sm opacity-90">Realiza el pago de tu reserva de forma segura.</p>
         </div>

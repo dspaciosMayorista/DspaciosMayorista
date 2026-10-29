@@ -15,6 +15,7 @@
  *                       que esto NO lo hace dueño: ve que existe y su comisión,
  *                       nada del cliente, sus pagos ni sus documentos.
  */
+import { ROLES_INTERNOS } from "@/lib/constants";
 import { cobroDeVenta } from "@/lib/finanzas/cobro";
 import { abiertaConSalidaPasada, cotizacionVencida } from "@/lib/cotizacion/vigencia";
 
@@ -221,4 +222,25 @@ export function clasificarComparativas<T extends { id: number }>(
     else sinVerificar++;
   }
   return { directas, asistidas, sinVerificar };
+}
+
+/**
+ * Destino de `/portal` (ya no hay pantalla de elección). Solo decide a dónde ir; no concede acceso:
+ *  · aliado B2B aprobado y registro en revisión → `/portal/b2b` (que muestra su estado);
+ *  · visitante → `/login`;
+ *  · sesión que NO es de aliado:
+ *      - rol interno autorizado (ROLES_INTERNOS) y cuenta no desactivada → `/dashboard`;
+ *      - cliente_final → `/tarifario` (público; el cliente no tiene portal ni dashboard);
+ *      - cuenta desactivada → `/login?inactivo=1` (el mismo aviso que ya pone el proxy);
+ *      - sin fila en `usuarios` o con un rol desconocido → `/login?sinperfil=1` (aviso, no dashboard).
+ * Ningún destino vuelve a `/portal`, y /login, /tarifario y /portal/b2b no redirigen de regreso: sin bucles.
+ */
+export function destinoPortal(ctx: { estado: "ok" | "pendiente" | "visitante" } | { estado: "interno"; perfil: { rol: string | null; activo: boolean | null } | null }): string {
+  if (ctx.estado !== "interno") return ctx.estado === "visitante" ? "/login" : "/portal/b2b";
+  const perfil = ctx.perfil;
+  if (!perfil) return "/login?sinperfil=1";
+  if (perfil.activo === false) return "/login?inactivo=1";
+  if ((ROLES_INTERNOS as readonly string[]).includes(perfil.rol ?? "")) return "/dashboard";
+  if (perfil.rol === "cliente_final") return "/tarifario";
+  return "/login?sinperfil=1";
 }

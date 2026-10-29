@@ -73,7 +73,7 @@ export function PortalShell({ children, nombre, rol, detalle, activa, mostrarAge
           <main className={s.principal}>
             <header className={s.cabecera}>
               <div className={s.identidadGrupo}>
-                <Link href="/portal" aria-label="D'spacios Travel, inicio del portal"><Logo variant="full" height={40} priority className="h-10 w-auto" /></Link>
+                <Link href="/portal/b2b" aria-label="D'spacios Travel, inicio del portal"><Logo variant="full" height={40} priority className="h-10 w-auto" /></Link>
                 {nombre && (
                   <>
                     <div aria-hidden="true" className={s.sep} />

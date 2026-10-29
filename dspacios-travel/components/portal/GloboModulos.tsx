@@ -3,15 +3,15 @@ import { ClipboardList, FileText, ReceiptText, Wallet } from "lucide-react";
 import s from "./vidrio.module.css";
 
 const PUNTOS = [[140, 140], [150, 150], [160, 145], [148, 162], [158, 172], [165, 190], [160, 205], [168, 218], [205, 135], [215, 142], [225, 150], [232, 165], [220, 175], [228, 195], [240, 210]];
-const ICONO = { size: 20, "aria-hidden": true } as const;
+const ICONO = { size: 26, strokeWidth: 2.1, "aria-hidden": true } as const;
 
 /** Globo con órbitas (pieza central) y los cuatro módulos en las esquinas, como la referencia. */
 export function GloboModulos() {
   const modulos = [
-    { href: "/portal/b2b/cotizaciones", etiqueta: "Cotizaciones", pos: s.mTL, grad: s.gradNaranja, icono: <ClipboardList {...ICONO} /> },
-    { href: "/portal/b2b/ventas", etiqueta: "Mis ventas", pos: s.mTR, grad: s.gradAzul, icono: <ReceiptText {...ICONO} /> },
-    { href: "/portal/b2b/cartera", etiqueta: "Cartera", pos: s.mBL, grad: s.gradVerde, icono: <Wallet {...ICONO} /> },
-    { href: "/portal/b2b/documentos", etiqueta: "Documentos", pos: s.mBR, grad: s.gradMorado, icono: <FileText {...ICONO} /> },
+    { href: "/portal/b2b/cotizaciones", etiqueta: "Cotizaciones", pos: s.mTL, tono: s.mNaranja, icono: <ClipboardList {...ICONO} /> },
+    { href: "/portal/b2b/ventas", etiqueta: "Mis ventas", pos: s.mTR, tono: s.mAzul, icono: <ReceiptText {...ICONO} /> },
+    { href: "/portal/b2b/cartera", etiqueta: "Cartera", pos: s.mBL, tono: s.mVerde, icono: <Wallet {...ICONO} /> },
+    { href: "/portal/b2b/documentos", etiqueta: "Documentos", pos: s.mBR, tono: s.mMorado, icono: <FileText {...ICONO} /> },
   ];
   return (
     <nav aria-label="Módulos principales" className={s.globo}>
@@ -41,8 +41,8 @@ export function GloboModulos() {
         <circle cx="158" cy="166" r="4" fill="#FFD27A" /><circle cx="226" cy="150" r="4" fill="#FFD27A" />
       </svg>
       {modulos.map((m) => (
-        <Link key={m.href} href={m.href} className={`${s.modulo} ${m.pos}`}>
-          <span aria-hidden="true" className={`${s.moduloIcono} ${m.grad}`}>{m.icono}</span>
+        <Link key={m.href} href={m.href} className={`${s.modulo} ${m.pos} ${m.tono}`}>
+          <span aria-hidden="true" className={s.moduloIcono}>{m.icono}</span>
           {m.etiqueta}
         </Link>
       ))}

@@ -25,7 +25,9 @@ type Admin = ReturnType<typeof createAdminClient>;
 type Fila = Record<string, unknown>;
 
 export type ContextoPortal =
-  | { estado: "visitante" | "interno" | "pendiente"; nombre: string | null }
+  | { estado: "visitante" | "pendiente"; nombre: string | null }
+  /** Sesión que no es de aliado B2B. `perfil` null = hay sesión pero no existe fila en `usuarios`. Solo informativo: no concede nada. */
+  | { estado: "interno"; nombre: string | null; perfil: { rol: string | null; activo: boolean | null } | null }
   | {
       estado: "ok";
       userId: string;
@@ -51,7 +53,9 @@ export async function resolverContextoPortal(): Promise<ContextoPortal> {
     .maybeSingle();
   const nombre = (perfil?.nombre ?? null) as string | null;
   const rol = perfil?.rol ?? null;
-  if (rol !== "agencia" && rol !== "freelance") return { estado: "interno", nombre };
+  if (rol !== "agencia" && rol !== "freelance") {
+    return { estado: "interno", nombre, perfil: perfil ? { rol: (rol as string | null), activo: (perfil.activo as boolean | null) ?? null } : null };
+  }
   // Solo `true` entra: una cuenta sin valor tampoco es una cuenta aprobada.
   if (perfil?.activo !== true) return { estado: "pendiente", nombre };
   return {

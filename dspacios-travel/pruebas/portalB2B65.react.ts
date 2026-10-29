@@ -57,20 +57,51 @@ test("tabla: región desplazable enfocable con nombre accesible (móvil sin rat�
   await act(async () => root.unmount());
 });
 
-test("carrusel: demostración visible, botones con nombre, mover no rompe y no hay precios", async () => {
+test("carrusel: demostración visible, sin precios y botones con nombre", async () => {
   const { cont, root } = await montar(React.createElement(PlanesRecomendados));
   assert.match(cont.textContent ?? "", /Demostración/);
-  assert.doesNotMatch(cont.textContent ?? "", /\$\s?\d|COP|USD/);
-  const botones = [...cont.querySelectorAll("button")];
-  assert.deepEqual(botones.map((b) => b.getAttribute("aria-label")), ["Planes anteriores", "Planes siguientes"]);
+  assert.doesNotMatch(cont.textContent ?? "", /$s?d|COP|USD/);
+  assert.deepEqual([...cont.querySelectorAll("button")].map((b) => b.getAttribute("aria-label")), ["Planes anteriores", "Planes siguientes"]);
   const pista = cont.querySelector("ul") as HTMLElement;
-  let movido = 0;
-  pista.scrollBy = ((o: { left: number }) => { movido = o.left; }) as never;
-  await act(async () => { botones[1].click(); });
-  assert.ok(movido > 0, "siguiente avanza");
-  await act(async () => { botones[0].click(); });
-  assert.ok(movido < 0, "anterior retrocede");
-  assert.equal(pista.tabIndex, 0, "la pista se puede desplazar con flechas del teclado");
+  assert.equal(pista.tabIndex, 0, "la pista se puede desplazar con el teclado");
   assert.equal(cont.querySelectorAll("li").length, 4);
+  await act(async () => root.unmount());
+});
+
+test("carrusel: cada pulsación mueve UNA tarjeta entera, las flechas se deshabilitan en los extremos y varios clics seguidos suman", async () => {
+  const { cont, root } = await montar(React.createElement(PlanesRecomendados));
+  const pista = cont.querySelector("ul") as HTMLElement;
+  const [ant, sig] = [...cont.querySelectorAll("button")] as HTMLButtonElement[];
+  // Geometría de 4 tarjetas de 220 px con 10 px de separación; la ventana muestra una.
+  [...pista.children].forEach((li, i) => Object.defineProperty(li, "offsetLeft", { value: i * 230, configurable: true }));
+  let x = 0;
+  Object.defineProperty(pista, "scrollLeft", { get: () => x, configurable: true });
+  Object.defineProperty(pista, "clientWidth", { value: 220, configurable: true });
+  Object.defineProperty(pista, "scrollWidth", { value: 910, configurable: true });
+  const destinos: number[] = [];
+  (pista as unknown as { scrollTo: (o: { left: number }) => void }).scrollTo = (o) => { destinos.push(o.left); };
+  const desplazar = async (n: number) => { x = n; await act(async () => { pista.dispatchEvent(new dom.window.Event("scroll")); }); };
+
+  await desplazar(0);
+  assert.equal(ant.disabled, true, "al inicio no se retrocede");
+  assert.equal(sig.disabled, false);
+  await act(async () => { sig.click(); });
+  assert.deepEqual(destinos, [230], "una tarjeta completa");
+  await act(async () => { sig.click(); });
+  assert.deepEqual(destinos, [230, 460], "un segundo clic sin terminar la animación suma otra tarjeta");
+  await desplazar(460);
+  await act(async () => { sig.click(); });
+  assert.equal(destinos.at(-1), 690, "la última tarjeta queda entera y pegada al borde");
+  await desplazar(690);
+  assert.equal(sig.disabled, true, "al final no se avanza");
+  assert.equal(ant.disabled, false);
+  await act(async () => { ant.click(); });
+  assert.equal(destinos.at(-1), 460);
+  assert.ok(destinos.every((d) => d % 230 === 0), "siempre alineado a una tarjeta, nunca cortada");
+  await desplazar(460); // la animación termina en la tarjeta pedida
+  // Teclado: la flecha derecha de la pista mueve igual que el botón.
+  await desplazar(0);
+  await act(async () => { pista.dispatchEvent(new dom.window.KeyboardEvent("keydown", { key: "ArrowRight", bubbles: true })); });
+  assert.equal(destinos.at(-1), 230);
   await act(async () => root.unmount());
 });

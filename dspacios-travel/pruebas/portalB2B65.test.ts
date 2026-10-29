@@ -97,13 +97,15 @@ const VENTAS: Fila[] = [
   { numero_contrato: "C3-dos-aliados", aliado_id: 9, tenant: "minorista" },
   { numero_contrato: "C4-ajeno", aliado_id: 9, tenant: "minorista" },
 ];
+// Comisión económica real (la participación exige `calcularComisionFila(...).totalPagar > 0`).
+const PAGA = { precio_venta: 1_000_000, base_comision: 1_000_000, base_explicita: true, pct_comision: 0.1 };
 const COMISIONES: Fila[] = [
-  { id: 1, numero_contrato: "C1-propio", aliado_id: 7 },
-  { id: 2, numero_contrato: "C2-historico", aliado_id: 7 },
-  { id: 3, numero_contrato: "C3-dos-aliados", aliado_id: 7 },
-  { id: 4, numero_contrato: "C3-dos-aliados", aliado_id: 9 },
-  { id: 5, numero_contrato: "C4-ajeno", aliado_id: 9 },
-  { id: 6, numero_contrato: "C2-historico", aliado_id: null },
+  { id: 1, numero_contrato: "C1-propio", aliado_id: 7, ...PAGA },
+  { id: 2, numero_contrato: "C2-historico", aliado_id: 7, ...PAGA },
+  { id: 3, numero_contrato: "C3-dos-aliados", aliado_id: 7, ...PAGA },
+  { id: 4, numero_contrato: "C3-dos-aliados", aliado_id: 9, ...PAGA },
+  { id: 5, numero_contrato: "C4-ajeno", aliado_id: 9, ...PAGA },
+  { id: 6, numero_contrato: "C2-historico", aliado_id: null, ...PAGA },
 ];
 
 test("participación: contratos donde cobra comisión por ficha, sin los propios, sin los de otro aliado y sin tocar ventas", async () => {
