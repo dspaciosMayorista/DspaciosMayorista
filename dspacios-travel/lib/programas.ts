@@ -140,13 +140,15 @@ export async function getProgramasResumen(sb: SB, soloPublicados = true): Promis
   if (catIds.length) {
     const { data: precios, error: ePrecios } = await sb
       .from("programa_precios")
-      .select("categoria_id, neto")
+      .select("categoria_id, acomodacion, neto, bajo_solicitud")
       .in("categoria_id", catIds)
+      .eq("acomodacion", "doble") // «Desde» (TASKS #92): solo la tarifa DOBLE
       .not("neto", "is", null);
     errorPrecios = ePrecios;
     for (const row of precios ?? []) {
       const pid = catToProg.get(row.categoria_id);
       if (pid == null) continue;
+      if (row.bajo_solicitud) continue; // «Desde» (TASKS #92): igual que getProgramaDetalle, un precio bajo solicitud no se publica
       const p = programaById.get(pid);
       if (!p) continue;
       const neto = Number(row.neto ?? 0);
@@ -191,6 +193,8 @@ export async function getProgramasResumen(sb: SB, soloPublicados = true): Promis
     const optNueva: PvpOpciones = { ...optVieja, dias: s.noches != null ? s.noches : p.dias };
 
     for (const [netoCol, tarifaCol, impuestoCol] of ACOM_RESUMEN) {
+      // «Desde» (TASKS #92): de la salida solo cuenta la acomodación DOBLE; sencilla/triple/múltiple/niño nunca fijan el mínimo.
+      if (netoCol !== "neto_doble") continue;
       const neto = s[netoCol] as number | null;
       const tarifa = tarifaCol ? (s[tarifaCol] as number | null) : null;
       const usaTarifaProveedor = tarifa != null && Number.isFinite(Number(tarifa)) && Number(tarifa) > 0;
@@ -228,8 +232,8 @@ export async function getProgramasResumen(sb: SB, soloPublicados = true): Promis
 
   const resultado = programas.map((p) => {
     const pvpMin = minPvp.get(p.id);
-    // El "Desde" manual de la cabecera manda sobre el mínimo calculado de la matriz.
-    const desdeManual = p.desde_precio != null && p.desde_precio > 0 ? Number(p.desde_precio) : null;
+    // «Desde» (TASKS #92): SOLO el PVP de una DOBLE publicable. El desde_precio manual de la cabecera se conserva como dato
+    // histórico pero no se rotula «Desde» en ninguna superficie pública (no está vinculado a una DOBLE); sin DOBLE → null.
     return {
       id: p.id,
       nombre: p.nombre,
@@ -237,7 +241,7 @@ export async function getProgramasResumen(sb: SB, soloPublicados = true): Promis
       dias: p.dias,
       noches: p.noches,
       moneda: p.moneda,
-      desde_pvp: desdeManual ?? (pvpMin != null ? pvpMin : null),
+      desde_pvp: pvpMin != null ? pvpMin : null,
       tipo_transporte: (p.tipo_transporte as "ninguno" | "aereo" | "terrestre" | undefined) ?? (p.incluye_aereo ? "aereo" : "ninguno"),
       portada_url: p.portada_url ?? null,
       ciudades: ciudadesPorProg.get(p.id) ?? [],
@@ -255,7 +259,7 @@ export type ProgramaDetalle = {
   /** Destino fijo comercial (migración 213); null = sin destino (oculto del tarifario público). */
   destinoFijo: { id: number; nombre: string; es_provisional?: boolean | null } | null;
   ciudades: { id: number; nombre: string; codigo_iata: string | null; noches: number; alojamiento_previsto: string | null }[];
-  dias: { dia: number; titulo: string | null; desayuno: boolean; almuerzo: boolean; cena: boolean; descripcion: string | null }[];
+  dias: { dia: number; tipo_tramo: "dia" | "traslado_previo" | "traslado_posterior"; titulo: string | null; desayuno: boolean; almuerzo: boolean; cena: boolean; descripcion: string | null }[];
   categorias: {
     id: number;
     nombre: string | null;
@@ -274,7 +278,7 @@ export type ProgramaDetalle = {
   }[];
   inclusiones: { ciudad: string | null; tipo: string; texto: string }[];
   tours: { ciudad: string | null; nombre: string; precio: number | null; min_pax: number; dias_operacion: string | null; descripcion: string | null }[];
-  blackouts: { fecha_inicio: string | null; fecha_fin: string | null; motivo: string | null; ciudad: string | null }[];
+  blackouts: { fecha_inicio: string | null; fecha_fin: string | null; motivo: string | null; ciudad: string | null; alcance: string }[];
 };
 
 type Tablas = Database["public"]["Tables"];
@@ -287,7 +291,7 @@ export type ProgramaParaDetalle = ProgramaRow & { proveedores?: unknown; program
 /** Filas crudas de las tablas hijas que arman el detalle (columnas exactas de las consultas). */
 export type FilasDetallePrograma = {
   ciudades: Pick<Tablas["programa_ciudades"]["Row"], "id" | "nombre" | "codigo_iata" | "noches" | "alojamiento_previsto">[];
-  dias: Pick<Tablas["programa_dias"]["Row"], "dia" | "titulo" | "desayuno" | "almuerzo" | "cena" | "descripcion">[];
+  dias: Pick<Tablas["programa_dias"]["Row"], "dia" | "tipo_tramo" | "titulo" | "desayuno" | "almuerzo" | "cena" | "descripcion">[];
   categorias: Pick<Tablas["programa_categorias"]["Row"], "id" | "nombre" | "orden">[];
   hoteles: Pick<Tablas["programa_categoria_hoteles"]["Row"], "categoria_id" | "ciudad" | "hotel" | "orden">[];
   precios: Pick<Tablas["programa_precios"]["Row"], "categoria_id" | "acomodacion" | "neto" | "bajo_solicitud">[];
@@ -300,14 +304,14 @@ export type FilasDetallePrograma = {
   >[];
   inclusiones: Pick<Tablas["programa_inclusiones"]["Row"], "ciudad" | "tipo" | "texto">[];
   tours: Pick<Tablas["programa_tours"]["Row"], "ciudad" | "nombre" | "precio" | "min_pax" | "dias_operacion" | "descripcion">[];
-  blackouts: Pick<Tablas["programa_blackouts"]["Row"], "fecha_inicio" | "fecha_fin" | "motivo" | "ciudad">[];
+  blackouts: Pick<Tablas["programa_blackouts"]["Row"], "fecha_inicio" | "fecha_fin" | "motivo" | "ciudad" | "alcance">[];
 };
 
 /** Detalle completo de un programa (para la vitrina pública y para reservar). */
 export async function getProgramaDetalle(sb: SB, id: number): Promise<ProgramaDetalle | null> {
   const { data: programa } = await sb
     .from("programas")
-    .select("*, proveedores(nombre), programa_destinos_fijos(id, nombre, es_provisional)")
+    .select("*, proveedores!programas_proveedor_id_fkey(nombre), programa_destinos_fijos(id, nombre, es_provisional)")
     .eq("id", id)
     .maybeSingle();
   if (!programa) return null;
@@ -315,14 +319,14 @@ export async function getProgramaDetalle(sb: SB, id: number): Promise<ProgramaDe
   const [{ data: ciudades }, { data: dias }, { data: categorias }, { data: hoteles }, { data: precios }, { data: salidasRaw }, { data: inclusiones }, { data: tours }, { data: blackouts }] =
     await Promise.all([
       sb.from("programa_ciudades").select("id, nombre, codigo_iata, noches, alojamiento_previsto").eq("programa_id", id).order("orden"),
-      sb.from("programa_dias").select("dia, titulo, desayuno, almuerzo, cena, descripcion").eq("programa_id", id).order("dia"),
+      sb.from("programa_dias").select("dia, tipo_tramo, titulo, desayuno, almuerzo, cena, descripcion").eq("programa_id", id).order("dia"),
       sb.from("programa_categorias").select("id, nombre, orden").eq("programa_id", id).order("orden"),
       sb.from("programa_categoria_hoteles").select("categoria_id, ciudad, hotel, orden").order("orden"),
       sb.from("programa_precios").select("categoria_id, acomodacion, neto, bajo_solicitud"),
       sb.from("programa_salidas").select(COLUMNAS_SALIDA_DETALLE).eq("programa_id", id).order("orden"),
       sb.from("programa_inclusiones").select("ciudad, tipo, texto").eq("programa_id", id).order("orden"),
       sb.from("programa_tours").select("ciudad, nombre, precio, min_pax, dias_operacion, descripcion").eq("programa_id", id).order("orden"),
-      sb.from("programa_blackouts").select("fecha_inicio, fecha_fin, motivo, ciudad").eq("programa_id", id).order("fecha_inicio"),
+      sb.from("programa_blackouts").select("fecha_inicio, fecha_fin, motivo, ciudad, alcance").eq("programa_id", id).order("fecha_inicio"),
     ]);
 
   return armarDetallePrograma(programa, {
@@ -363,12 +367,12 @@ export async function getProgramaDetalleSeguro(sb: SB, id: number): Promise<Resu
 
   const [rCiudades, rDias, rCategorias, rSalidas, rInclusiones, rTours, rBlackouts] = await Promise.all([
     sb.from("programa_ciudades").select("id, nombre, codigo_iata, noches, alojamiento_previsto").eq("programa_id", id).order("orden"),
-    sb.from("programa_dias").select("dia, titulo, desayuno, almuerzo, cena, descripcion").eq("programa_id", id).order("dia"),
+    sb.from("programa_dias").select("dia, tipo_tramo, titulo, desayuno, almuerzo, cena, descripcion").eq("programa_id", id).order("dia"),
     sb.from("programa_categorias").select("id, nombre, orden").eq("programa_id", id).order("orden"),
     sb.from("programa_salidas").select(COLUMNAS_SALIDA_DETALLE).eq("programa_id", id).order("orden"),
     sb.from("programa_inclusiones").select("ciudad, tipo, texto").eq("programa_id", id).order("orden"),
     sb.from("programa_tours").select("ciudad, nombre, precio, min_pax, dias_operacion, descripcion").eq("programa_id", id).order("orden"),
-    sb.from("programa_blackouts").select("fecha_inicio, fecha_fin, motivo, ciudad").eq("programa_id", id).order("fecha_inicio"),
+    sb.from("programa_blackouts").select("fecha_inicio, fecha_fin, motivo, ciudad, alcance").eq("programa_id", id).order("fecha_inicio"),
   ]);
   const consultas: [string, { error: unknown }][] = [
     ["programa_ciudades", rCiudades],

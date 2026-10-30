@@ -4,10 +4,40 @@ import { createClient } from "@/lib/supabase/server";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { revalidatePath } from "next/cache";
 import { precioServicio, noches, temporadaVigenteParaFecha, toTemporadaRango, factorLiquidacion, type TemporadaRango } from "@/lib/calc/paquetes";
-import { ACOM_ROOM_LABEL, paxDeAcomodacion, clasificarPorEdad, type AcomRoom } from "@/lib/acomodaciones";
+import { ACOM_ROOM_LABEL, clasificarPorEdad, type AcomRoom } from "@/lib/acomodaciones";
 import { parseRuta, ciudadIata } from "@/lib/iata";
 import { calcularEdad } from "@/lib/utils";
-import { pvpPrograma } from "@/lib/programas";
+import {
+  liquidarSeleccion,
+  impuestoParaVenta,
+  avisoResidualBaseB2B,
+  evaluarPrecioConfirmado,
+  resolverBaseHotel,
+  salidaPrecioDesdeBase,
+  tarifasNocheConPvp,
+  type FuentePrecio,
+  type CambioPrecioPrograma,
+  type EstanciaEntrada,
+} from "@/lib/programas/precioReserva57";
+import {
+  ETIQUETA_MODALIDAD,
+  MAX_NOCHES_ADICIONALES,
+  esModoHotel,
+  MODALIDADES_SERVICIOS,
+  errorModoHotelConAereo,
+  esFechaIso,
+  fechaRegresoEstancia,
+  validarItinerarioCompleto,
+  estadoItinerario,
+  itemsContratoNoches,
+  itinerarioConNochesExtra,
+  nochesIncluidasPrograma,
+  nochesParaCosto,
+  nochesParaFoto,
+  planObligacionesPrograma,
+  type ModalidadServicios,
+} from "@/lib/programas/estanciaHotel88";
+import { cargarCatalogoHoteles88, clienteCatalogoHoteles } from "@/lib/programas/estanciaHotelDatos88";
 import { postearAsientoCxP, eliminarAsientoCxP } from "@/lib/contabilidad/asientos";
 import { contextoCotizacion, autorizaTenant } from "@/lib/cotizacion/acceso";
 import { siguienteNumeroContrato } from "@/lib/contrato/numeracion";
@@ -18,7 +48,7 @@ import {
   type Medidor, type ResultadoEtapa, type EstadoFlujo,
 } from "@/lib/observabilidad/medicion";
 import type { Tenant } from "@/lib/tenant";
-import type { Json } from "@/types/database";
+import type { Database, Json } from "@/types/database";
 import {
   cotizarPorFechas as cotizarPorFechasImpl,
   buscarHoteles as buscarHotelesImpl,
@@ -52,8 +82,11 @@ import { esInfantePorEdad, pasajeroConsumeSilla } from "@/lib/reservar/pasajeros
 import { payloadGuardarPasajeros } from "@/lib/reservar/pasajerosEdicion";
 import { normalizarResponsablesPorGrupo } from "@/lib/reservar/pasajerosFilas";
 import { posicionesSinAsignar, posicionesUnicasDeGrupo, reindexarGrupoLocal, consolidarReservasSillasPorBloqueo, demandaSillasPorBloqueo, faltanteDeCupos, prevalidarResponsablesDeGrupo, mensajePrevalidacionGrupo, type ReservaSillasPorBloqueo } from "@/lib/reservar/carritoAsignaciones";
+import { iataDeDestino } from "@/lib/reservar/destinoIata";
+import { descripcionContratoManual, lineaB2BManual, primerGrupoPendiente, tramosVueloManual, validarCostoManual, validarVueloContraHotel, verificarManualesCotizados, type ServicioManual } from "@/lib/cart/servicioManual";
 import { armarGruposConversion, resolverVinculosCotizacion, validarPasajerosServiciosVinculados } from "@/lib/reservar/vinculoServiciosCheckout";
 import { calcularResidualServiciosIncluidosPorGrupo } from "@/lib/reservar/desglosePersonaCotizacion";
+import { descripcionLineaMenor, ordenLineaMenor, menoresDelComputo } from "@/lib/reservar/menoresDeDos";
 import { claveHuellaIncluidos, validarIncluidosConversion, type ServicioIncluidoGuardado } from "@/lib/reservar/incluidosCotizados";
 import {
   componenteHotelReal,
@@ -63,9 +96,38 @@ import {
 } from "@/lib/contrato/congelarCondicionesContrato";
 import { componenteDePrograma } from "@/lib/cotizacion/condicionDesdeCatalogo";
 import type { ComponenteSnapshot } from "@/lib/cotizacion/snapshotCondiciones";
-import { hoyBogota, resolverVigenciaCotizacion } from "@/lib/cotizacion/vigencia";
+import { abiertaConSalidaPasada, cotizacionVencida, hoyBogota, MENSAJE_COTIZACION_VENCIDA, MENSAJE_SALIDA_PASADA, resolverVigenciaCotizacion } from "@/lib/cotizacion/vigencia";
 import { fechaNegocio } from "@/lib/fechaNegocio";
-import { resolverAliadoReserva, planComisionReserva, registrarComisionReserva, type PlanComisionReserva } from "@/lib/reservar/comisionReserva";
+import { resolverAliadoReserva, planComisionReserva, registrarComisionReserva, type ModoCompra, type PlanComisionReserva } from "@/lib/reservar/comisionReserva";
+import { asignarRefsPasajeros, AVISO_PERSONAS_PENDIENTES } from "@/lib/personas/cotizacion";
+import { MODO_OFERTA_63, MENSAJE_OFERTA_CAMBIO_63, huellaOferta63 } from "@/lib/reservar/ofertaDinamica63";
+import { camposCxP63, sumaEquivalentesOferta63 } from "@/lib/reservar/payloadFinanciero63";
+import { equivalenteOferta63, validarObligacion63 } from "@/lib/reservar/importeObligacion63";
+import {
+  armarItems63, armarTramos63, construirSnapshot63, construirObligaciones63, construirPlanB2b63, detalleAcomodacion63, huellaFinanciera63,
+  MENSAJE_EN_CURSO_63, MENSAJE_OFERTA_CERRADA_63, MENSAJE_TRM_PROVISIONAL_REQUERIDA_63, validarTrmProvisional63, type AceptacionPreparada63, type HotelSnapshot63, type PlanB2bSnapshot63,
+} from "@/lib/reservar/aceptacion63";
+import { aceptarOferta63, crearCotizacionOferta63, leerRevisiones63, ventaExiste63 } from "@/lib/reservar/aceptacionServidor63";
+import { validarEleccionCobro } from "@/lib/finanzas/cobro";
+import { decidirCxP, evaluarObligaciones, type Obligacion } from "@/lib/reservar/monedaObligacionesCarrito";
+import { compararTrmCostoConCongelada, decidirTrmCosto, equivalenteCopCosto, leerTrmCostoCongelada } from "@/lib/finanzas/costoTrmCarrito";
+import { opcionalDeTourCarrito } from "@/lib/paquetes/pvpInfanteFijo";
+import { costoAereoBloqueo, costoHotelPersona, costoTourParaCxP, costoVueloBernalo, liquidarCostoTour } from "@/lib/reservar/costosObligacionesCarrito";
+import { cobroDeContratoCarrito, compararConCongelado, leerCobroCongelado, monedaOfertaDeCotizacion, resolverMonedaOferta, validarEleccionCarrito } from "@/lib/finanzas/cobroCarrito";
+import { ROLES_INTERNOS } from "@/lib/constants";
+import { altaPersonasCotizacion, logPersonasCotizacion } from "@/lib/personas/consulta";
+import {
+  compararLineasConCongeladas, leerPlanB2BDePayload, planDeGrupoB2B, verificarCoberturaLineasB2B, MENSAJE_COTIZACION_B2B_INVALIDA, MENSAJE_TERMINOS_CAMBIARON,
+  type LineaB2B, type PlanB2BCotizacion,
+} from "@/lib/cotizacion/asistidaB2B";
+import { resolverActorAsistencia, verificarAliadoVivoParaConversion } from "@/lib/cotizacion/asistidaB2BServidor";
+import { resolverFirmasSesion } from "@/lib/cotizacion/firmasSesion";
+import { tipoDocumentoParaVenta } from "@/lib/personas/tiposDocumento";
+import { camposClienteVenta, camposVendedorAliado, nombreQuienElabora, titularDeCliente, type FiscalAliado } from "@/lib/cotizacion/identidadB2B";
+import { resolverAliadoAsistencia, type AliadoResuelto } from "@/lib/cotizacion/asistidaB2BServidor";
+import { blackoutQueAplica, mensajeBlackout, type BlackoutPrograma } from "@/lib/programas/blackouts409";
+import { rangoViajeConTraslados, trasladosDeItinerario, errorFechasSalida } from "@/lib/programas/trasladosFechas";
+import type { TerminosVisibles } from "@/components/cotizacion/TerminosB2BAsistido";
 
 const oNull = (s: string | null | undefined) => (s && s.trim() !== "" ? s.trim() : null);
 
@@ -118,6 +180,8 @@ async function guardarPendienteFinanciero(p: { numeroContrato: string; tenant: s
 function depsFinanciero(numeroContrato: string, tenant: Tenant, fecha: string) {
   return {
     rpc: rpcFinanciero,
+    // #63: el importe del asiento de una CxP del modo COP con TRM sale de su equivalente congelado
+    // (`cuentas_por_pagar.valor_cop_63`), que resuelve `postearAsientoCxP` por id de cuenta.
     postearAsiento: (c: { id: number; tipo_proveedor: string | null; proveedor: string | null; servicio: string | null; valor_total: number }) =>
       postearAsientoCxP({
         cuentaId: c.id, numeroContrato, tipoProveedor: c.tipo_proveedor, proveedor: c.proveedor,
@@ -195,7 +259,27 @@ async function reservarDesdeTarifarioInterno(input: ReservaInput, tenant: Tenant
   // 1) Cálculo (precios, líneas, pax, impuesto) — fuente única compartida.
   const comp = await computarReserva(sb, input);
   if (!comp.ok) return { ok: false, error: comp.error };
-  const { origen, meta, pvpPorAcom, netoPorAcom, precioVenta, paxConSilla, totalPax, numNinos, numNinos2, lineasHab, serviciosItems, serviciosIncluidos, impuestoTotal, monedaReserva, cargoMascota } = comp.data;
+  const { origen, meta, precioVenta, paxConSilla, totalPax, numNinos, numNinos2, lineasHab, serviciosItems, impuestoTotal, monedaReserva, cargoMascota } = comp.data;
+  // Menores (migración 226): líneas de precio y menores de 2 años (fee de vuelo / precio de infante).
+  const { lineasMenores, numMenoresDeDos } = menoresDelComputo(comp.data, { infantesDeclarados: Number(input.infantes) || 0 });
+  // #63 — oferta en COP con TRM (salida vinculada a Empaquetados, o manual de un paquete en ese modo). Si la cotización
+  // de origen traía una huella, lo que se va a cobrar tiene que ser EXACTAMENTE lo que el cliente vio: precio, vuelo,
+  // fechas, TRM y tarifario publicado. Cualquier diferencia pide una cotización nueva (nunca se cobra en silencio).
+  const oferta63 = comp.data.oferta63 ?? null;
+  const huellaEsperada63 = input.oferta63?.huella ?? null;
+  if (huellaEsperada63) {
+    if (!oferta63 || huellaDeOferta63(input, comp.data) !== huellaEsperada63) return { ok: false, error: MENSAJE_OFERTA_CAMBIO_63 };
+  }
+  // #63 (E/F/G): una oferta en COP con TRM se ACEPTA de forma atómica (`aceptar_oferta_63`) contra el snapshot privado de SU
+  // cotización antes de numerar o crear nada. `cotizacionId` lo pone solo `convertirCotizacion`.
+  const cotizacionId63 = oferta63 ? Number(input.oferta63?.cotizacionId) : 0;
+  if (oferta63 && !(cotizacionId63 > 0)) return { ok: false, error: "Una oferta con conversión por TRM solo se reserva desde su cotización." };
+  // 234: TRM provisional INGRESADA al convertir (oferta en USD sin TRM). Se valida positiva ANTES de numerar nada; la base la congela al aceptar.
+  const trmProv63 = oferta63 ? validarTrmProvisional63(input.oferta63?.trmProvisional) : ({ ok: true, trm: null } as const);
+  if (!trmProv63.ok) return { ok: false, error: trmProv63.error };
+  // 234: una oferta en USD SIN TRM de publicación se contrata solo con la TRM provisional INGRESADA (sin respaldo en trm_referencia): sin ella
+  // no se llama a la aceptación ni se reserva número. La base lo vuelve a exigir (aceptar_oferta_63).
+  if (oferta63 && oferta63.moneda === "USD" && oferta63.trm == null && trmProv63.trm == null) return { ok: false, error: MENSAJE_TRM_PROVISIONAL_REQUERIDA_63 };
 
   // 2c) Resolver y VALIDAR el origen completo del vuelo (bloqueo negociado,
   // empaquetado o salida dinámica) ANTES de crear nada — ni sillas, ni venta,
@@ -212,7 +296,17 @@ async function reservarDesdeTarifarioInterno(input: ReservaInput, tenant: Tenant
     const rv = await resolverDatosVuelo(admin, origen);
     if (!rv.ok) return { ok: false, error: rv.error };
     datosVuelo = rv.data;
+    // 230 (regla D8): un Empaquetado como origen NO mezcla monedas. Si su moneda no es la del tarifario/contrato, se rechaza
+    // (el generador ya lo bloquea al publicar; esto cubre un cambio posterior de la moneda del vuelo).
+    if (!oferta63 && origen.tipo === "empaquetado" && datosVuelo?.moneda && datosVuelo.moneda !== (monedaReserva === "USD" ? "USD" : "COP")) {
+      return { ok: false, error: `El vuelo de Empaquetados está en ${datosVuelo.moneda} y este contrato está en ${monedaReserva}. Vuelve al tarifario: el paquete debe regenerarse con la moneda del vuelo.` };
+    }
+    // #63 / 230: el aéreo (salida MANUAL o vinculada a un Empaquetado) CONSERVA su moneda de origen (COP o USD): `datosVuelo`
+    // queda en esa moneda y la CxP aérea se debe en ella con su equivalente en COP congelado a la TRM (valor_cop_63/trm_63).
+    // `ventas.costo_aereo` es ese mismo costo expresado en la moneda de la oferta/contrato (ver `costoAereoOferta`).
 
+    // Cupos: SOLO un Bloqueo negociado tiene sillas. Una salida (vinculada a Empaquetados o manual) y un
+    // Empaquetado nunca consultan `cupos_por_bloqueo` (#63, confirmado por el dueño).
     if (origen.tipo === "bloqueo") {
       // Misma definición de silla libre que usa el RPC al tomar las sillas
       // (`_silla_libre`, migración 201): una silla con pasajero precargado sin
@@ -229,32 +323,83 @@ async function reservarDesdeTarifarioInterno(input: ReservaInput, tenant: Tenant
       }
     }
   }
-  const infantesN = Math.max(0, Math.trunc(Number(input.infantes) || 0));
+  // Menores de 2 años (migración 226): pagan SOLO el fee de infante del vuelo
+  // (precio = costo, sin MK ni TA) y no ocupan silla. El conteo sale del
+  // cómputo (por edad, o por conteo declarado en el flujo legado), no del
+  // `input.infantes` crudo — en el flujo por edades ese campo no se usa.
+  const infantesN = numMenoresDeDos;
   // Costo NETO real (lo que se le debe al proveedor) — nunca la reventa. Con
   // tarifa_proveedor=200.000/tarifa_para_empaquetar=242.022 (2 pax), usar la
   // reventa dejaba costo_aereo/CxP en $484.044 en vez de los $400.000 reales
   // (hallazgo de la revisión posterior al PR #268, punto 1 "COSTO FINANCIERO").
   const costoAereo = datosVuelo ? datosVuelo.costo_neto * paxConSilla + datosVuelo.fee_infante * infantesN : 0;
+  // 230 + #90: en el modo de oferta con conversión por TRM el costo del contrato está en la moneda de la oferta (COP o USD) y es el costo
+  // de ORIGEN del aéreo expresado en ella (misma moneda: exacto; si no, con la TRM); fuera de ese modo es el mismo número de siempre.
+  const costoAereoOferta = oferta63 ? equivalenteOferta63(costoAereo, oferta63.monedaAereo, oferta63.moneda, oferta63.trm) : costoAereo;
 
   // 2d) Reserva B2B: el aliado es OBLIGATORIO y tiene que poder leerse ANTES
   // de numerar o crear nada (#38). Antes, sin `aliadoId` o con la lectura
   // fallida, el contrato nacía sin comisión y sin aviso.
   let aliadoB2B: number | null = null;
   let planB2B: PlanComisionReserva | null = null;
+  // #63: el plan B2B VIVO (con el % de hoy) solo sirve para compararlo con el aceptado (huella financiera); el que se escribe en la
+  // cabecera es SIEMPRE el congelado en el snapshot de la oferta. El aliado se lee con el mismo cliente que usó la cotización.
+  let planVivo63: PlanB2bSnapshot63 | null = null;
   if (input.tipoAsesor !== "interno") {
-    const al = await resolverAliadoReserva(sb, input.tipoAsesor, input.aliadoId);
+    const lector63 = oferta63 && process.env.SUPABASE_SERVICE_ROLE_KEY ? createAdminClient() : null;
+    const al = lector63
+      ? await resolverAliadoReserva(lector63, input.tipoAsesor, input.aliadoId)
+      : await resolverAliadoReserva(sb, input.tipoAsesor, input.aliadoId);
     if (!al.ok) return { ok: false, error: al.error };
     const plan = planComisionReserva({ modoCompra: input.modoCompra, precioVenta, impuesto: impuestoTotal, pct: al.pct });
     if (!plan.ok) return { ok: false, error: plan.error };
     aliadoB2B = al.aliadoId;
     planB2B = plan.plan;
+    if (oferta63) planVivo63 = construirPlanB2b63({ aliadoId: al.aliadoId, tipoAsesor: input.tipoAsesor, plan: plan.plan });
   }
 
   // 3) Número de contrato — ya completo (DTM-#### / MIN-00-####), tenant
   // recibido como parámetro ya validado por el caller (nunca del navegador).
-  const numRes = await siguienteNumeroContrato(tenant);
-  if (!numRes.ok) return { ok: false, error: numRes.error };
-  const numero = numRes.numero;
+  let aceptacion63: AceptacionPreparada63 | null = null;
+  let numero: string;
+  if (oferta63) {
+    // #63 (E/F/G): ACEPTACIÓN ATÓMICA. Los costos y obligaciones se recalculan EN VIVO solo para COMPARAR con lo cotizado
+    // (huella financiera): lo que se escribe después sale exclusivamente de lo que devuelve la aceptación.
+    if (!process.env.SUPABASE_SERVICE_ROLE_KEY) return { ok: false, error: "No se pudo crear la reserva (configuración del servidor incompleta)." };
+    const { data: { user: actor63 } } = await sb.auth.getUser();
+    if (!actor63) return { ok: false, error: "Sesión inválida: no se pudo confirmar el usuario para crear la reserva." };
+    // 235 (#90 F): moneda de COBRO elegida de forma EXPRESA al convertir. Se valida ANTES de numerar nada: solo el personal interno puede cobrar en una
+    // moneda distinta de la de la oferta, la TRM de cobro es obligatoria en ese caso y NUNCA se reutiliza la de publicación ni la de referencia.
+    const { data: perfil63 } = await sb.from("usuarios").select("rol, activo").eq("id", actor63.id).maybeSingle();
+    const esInterno63 = perfil63?.activo === true && ROLES_INTERNOS.includes(perfil63.rol as never);
+    const cobro63 = validarEleccionCobro({ monedaOferta: oferta63.moneda, monedaCobro: input.oferta63?.monedaCobro, trmCobro: input.oferta63?.trmCobro, esInterno: esInterno63 });
+    if (!cobro63.ok) return { ok: false, error: cobro63.error };
+    const vivo63 = await calcularFinancieroReserva({ input, data: comp.data, datosVuelo, costoAereo, hoyISO: fechaNegocio() });
+    if (!vivo63.ok) return { ok: false, error: vivo63.error };
+    const huellaFin63 = huellaFinanciera63({ costos: vivo63.costosContrato, cxp: construirObligaciones63(vivo63.cxp, oferta63.trm), b2b: planVivo63 });
+    const adminAcept = createAdminClient();
+    const ac63 = await aceptarOferta63(adminAcept, {
+      cotizacionId: cotizacionId63, tenant, usuarioId: actor63.id, huella: huellaDeOferta63(input, comp.data) ?? "", huellaFinanciera: huellaFin63,
+      trmProvisional: trmProv63.trm,
+      monedaCobro: cobro63.monedaCobro, trmCobro: cobro63.trmCobro,
+    });
+    if (!ac63.ok) return { ok: false, error: ac63.error };
+    if (ac63.aceptacion.estado === "completa") {
+      // Ya convertida: se reconoce como éxito SOLO si el contrato sigue existiendo (la oferta convertida es terminal).
+      const existe63 = await ventaExiste63(adminAcept, ac63.aceptacion.numero_contrato);
+      if (existe63.ok && existe63.existe) return { ok: true, numero: ac63.aceptacion.numero_contrato };
+      return { ok: false, error: MENSAJE_OFERTA_CERRADA_63 };
+    }
+    if (ac63.aceptacion.estado === "materializando") {
+      return { ok: false, error: `${MENSAJE_EN_CURSO_63} (contrato ${ac63.aceptacion.numero_contrato})` };
+    }
+    aceptacion63 = ac63.aceptacion;
+    numero = aceptacion63.numero_contrato;
+  } else {
+    const numRes = await siguienteNumeroContrato(tenant);
+    if (!numRes.ok) return { ok: false, error: numRes.error };
+    numero = numRes.numero;
+  }
 
   const canal = input.tipoAsesor === "interno" ? "B2C" : "B2B";
   // Todo contrato lleva ASESOR INTERNO (quien firma/vende internamente y a quien
@@ -267,6 +412,19 @@ async function reservarDesdeTarifarioInterno(input: ReservaInput, tenant: Tenant
   //   · comisionable → paga el PVP; la comisión se liquida aparte.
   // El plan (paso 2d) es puro y es el MISMO que recalcula la base al crear la
   // fila de comisión: si no cuadran, la reserva se revierte.
+  if (aceptacion63) {
+    // #63: el plan B2B de la cabecera es el ACEPTADO (snapshot.b2b: aliado, %, modo, comisión, estado y precio final), no un
+    // recálculo con el % de hoy. La base contrasta la cabecera contra este mismo valor; y `registrar_comision_b2b_reserva` recalcula
+    // con el % vigente, así que un cambio POSTERIOR a la aceptación falla cerrado y la reserva se revierte completa.
+    const b2b63 = aceptacion63.snapshot.b2b;
+    if (b2b63 == null) {
+      if (aliadoB2B != null) return { ok: false, error: MENSAJE_OFERTA_CAMBIO_63 };
+      planB2B = null;
+    } else {
+      if (aliadoB2B == null || b2b63.aliado_id !== aliadoB2B || b2b63.tipo_asesor !== input.tipoAsesor) return { ok: false, error: MENSAJE_OFERTA_CAMBIO_63 };
+      planB2B = { pct: b2b63.pct, base: b2b63.base, comision: b2b63.comision, modoCompra: b2b63.modo_compra, comisionEstado: b2b63.comision_estado, precioFinal: b2b63.precio_final };
+    }
+  }
   const precioFinal = planB2B ? planB2B.precioFinal : precioVenta;
   const comisionB2B: number | null = planB2B?.comision ?? null;
   const modoCompra: string | null = planB2B?.modoCompra ?? null;
@@ -292,6 +450,14 @@ async function reservarDesdeTarifarioInterno(input: ReservaInput, tenant: Tenant
     return { ok: false, error: "No se pudo crear la reserva (configuración del servidor incompleta)." };
   }
 
+  // #63: la cabecera de una oferta aceptada sale del snapshot (la base además la compara campo a campo al insertar).
+  const cab: { destino: string | null; moneda: string; fecha_salida: string | null; fecha_regreso: string | null; pax: number; hotel: string | null; impuesto: number; costo_aereo: number | undefined; aerolinea: string | null; plan_nombre: string } = aceptacion63
+    ? aceptacion63.snapshot.cabecera
+    : {
+        destino: meta.destino_nombre, moneda: monedaReserva, fecha_salida: meta.fecha_ida, fecha_regreso: meta.fecha_regreso,
+        pax: totalPax || paxConSilla, hotel: esServicios ? null : meta.hotel_nombre, impuesto: impuestoTotal,
+        costo_aereo: datosVuelo ? costoAereoOferta : undefined, aerolinea: datosVuelo?.aerolinea ?? null, plan_nombre: `${input.categoria} · ${input.regimen}`,
+      };
   // 4) Venta (cabecera) — nace PENDIENTE
   const { error: ve } = await sb.from("ventas").insert({
     numero_contrato: numero,
@@ -300,21 +466,22 @@ async function reservarDesdeTarifarioInterno(input: ReservaInput, tenant: Tenant
     tenant,
     cliente: `${input.cliente.nombres ?? ""} ${input.cliente.apellidos ?? ""}`.trim(),
     cliente_documento: oNull(input.cliente.numeroDoc),
+    cliente_tipo_documento: tipoDocumentoParaVenta(input.cliente.tipoDoc, input.cliente.numeroDoc),
     cliente_telefono: oNull(input.cliente.telefono),
     cliente_email: oNull(input.cliente.email),
-    destino: meta.destino_nombre,
+    destino: cab.destino,
     tipo_paquete: input.modulo,
-    moneda: monedaReserva,
-    fecha_salida: meta.fecha_ida,
-    fecha_regreso: meta.fecha_regreso,
-    pax: totalPax || paxConSilla,
-    hotel: esServicios ? null : meta.hotel_nombre,
+    moneda: cab.moneda,
+    fecha_salida: cab.fecha_salida,
+    fecha_regreso: cab.fecha_regreso,
+    pax: cab.pax,
+    hotel: cab.hotel,
     precio_venta: precioFinal,
-    impuesto: impuestoTotal,
+    impuesto: cab.impuesto,
     // Costo aéreo/aerolínea del origen ya resuelto y validado en el paso 2c
     // (nunca de una consulta posterior que pueda fallar en silencio).
-    costo_aereo: datosVuelo ? costoAereo : undefined,
-    aerolinea: datosVuelo?.aerolinea ?? null,
+    costo_aereo: cab.costo_aereo,
+    aerolinea: cab.aerolinea,
     estado: "pendiente",
     // Migración 172: nace con la escritura financiera EN CURSO — solo pasa a
     // 'completo' dentro de registrar_financiero_contrato, atómicamente con
@@ -345,9 +512,16 @@ async function reservarDesdeTarifarioInterno(input: ReservaInput, tenant: Tenant
     empaquetado_ref_id: origen.tipo === "empaquetado" ? origen.id : null,
     asesor_firma_nombre: oNull(asesorNombre),
     asesor: oNull(input.asesorInterno),
-    plan_nombre: `${input.categoria} · ${input.regimen}`,
+    plan_nombre: cab.plan_nombre,
+    aceptacion_63_id: aceptacion63?.aceptacion_id ?? null,
+    // 235: moneda de cobro CONGELADA con el intento (NULL = aceptación anterior a la 235 o fuera del modo #63: se cobra en la moneda de la oferta).
+    // La base compara estas tres columnas contra lo aceptado y las vuelve inmutables.
+    moneda_cobro: aceptacion63?.cobro?.moneda ?? null,
+    trm_cobro: aceptacion63?.cobro?.trm ?? null,
+    total_cobro: aceptacion63?.cobro?.total ?? null,
   });
-  if (ve) return { ok: false, error: ve.message };
+  // #63: la guarda de la cabecera (p63_cabecera) habla de intentos y snapshots; el navegador recibe un mensaje de negocio.
+  if (ve) return { ok: false, error: aceptacion63 && /p63_cabecera/.test(ve.message) ? MENSAJE_EN_CURSO_63 : ve.message };
 
   // A partir de aquí el contrato YA existe: ninguna salida por error puede
   // limitarse a `return { ok: false }`, porque dejaría un contrato fantasma
@@ -481,7 +655,13 @@ async function reservarDesdeTarifarioInterno(input: ReservaInput, tenant: Tenant
   }
 
   // 6) Hotel del contrato (no aplica en paquete tipo servicios)
-  if (!esServicios) {
+  if (aceptacion63) {
+    // #63: el hotel (con su proveedor) sale de lo aceptado; no se vuelve a leer el catálogo.
+    if (aceptacion63.snapshot.hotel) {
+      const { error: ehot } = await sb.from("contrato_hoteles").insert({ numero_contrato: numero, ...aceptacion63.snapshot.hotel });
+      if (ehot) return fallarYRevertir(`No se pudo guardar el hotel del contrato: ${ehot.message}`);
+    }
+  } else if (!esServicios) {
     // Detalle legible: "1 hab Doble (2 pax), 2 hab Triple (6 pax), 1 Niño 1".
     const partes = lineasHab.map(
       (l) => `${l.habitaciones} hab ${ACOM_ROOM_LABEL[l.acom]} (${l.pax} pax)`
@@ -590,7 +770,12 @@ async function reservarDesdeTarifarioInterno(input: ReservaInput, tenant: Tenant
   // no captura esos datos hoy (no existe PNR ni número de vuelo negociado en
   // una salida por sistema) — usar SOLO datos reales, nunca inventar un
   // valor donde la fuente no lo tiene.
-  if ((origen.tipo === "bloqueo" || origen.tipo === "empaquetado" || origen.tipo === "salida") && datosVuelo) {
+  if (aceptacion63) {
+    if (aceptacion63.snapshot.tramos.length) {
+      const { error: ecv } = await sb.from("contrato_vuelos").insert(aceptacion63.snapshot.tramos.map((tr) => ({ numero_contrato: numero, ...tr })));
+      if (ecv) return fallarYRevertir(`No se pudo guardar el vuelo del contrato: ${ecv.message}`);
+    }
+  } else if ((origen.tipo === "bloqueo" || origen.tipo === "empaquetado" || origen.tipo === "salida") && datosVuelo) {
     const r = parseRuta(datosVuelo.ruta);
     const tramos: {
       numero_contrato: string; aerolinea: string | null; record: string | null; direccion: string;
@@ -634,29 +819,14 @@ async function reservarDesdeTarifarioInterno(input: ReservaInput, tenant: Tenant
       orden: i,
     });
   });
-  if (numNinos > 0 && pvpPorAcom["nino"] != null) {
+  // Menores (migración 226): una fila por clase de hotel Y por tarifa (menor de
+  // 2 años = tarifa de infante; 2+ = adulto en vuelo y servicios). 0 = gratis
+  // sí se itemiza. Las líneas salen de `computarReserva` (única fuente).
+  for (const lm of lineasMenores) {
     items.push({
       numero_contrato: numero,
-      descripcion: `Niño 1 · ${input.categoria} / ${input.regimen}`,
-      adultos: 0, ninos: numNinos, tarifa_adulto: 0, tarifa_nino: pvpPorAcom["nino"], orden: 50,
-    });
-  }
-  if (numNinos2 > 0 && pvpPorAcom["nino2"] != null) {
-    items.push({
-      numero_contrato: numero,
-      descripcion: `Niño 2 · ${input.categoria} / ${input.regimen}`,
-      adultos: 0, ninos: numNinos2, tarifa_adulto: 0, tarifa_nino: pvpPorAcom["nino2"], orden: 51,
-    });
-  }
-  // Infante: mismo tratamiento que Niño 1/2 (tarifa por temporada, 0 = gratis
-  // sí se itemiza). Si el hotel no configuró tarifa de infante, pvpPorAcom["infante"]
-  // no existe y simplemente no se cobra (no bloquea la reserva).
-  const numInfantesItem = Number(input.infantes) || 0;
-  if (numInfantesItem > 0 && pvpPorAcom["infante"] != null) {
-    items.push({
-      numero_contrato: numero,
-      descripcion: `Infante · ${input.categoria} / ${input.regimen}`,
-      adultos: 0, ninos: numInfantesItem, tarifa_adulto: 0, tarifa_nino: pvpPorAcom["infante"], orden: 52,
+      descripcion: descripcionLineaMenor(lm, input.categoria, input.regimen),
+      adultos: 0, ninos: lm.cantidad, tarifa_adulto: 0, tarifa_nino: lm.tarifa, orden: ordenLineaMenor(lm),
     });
   }
   // Servicios add-on como ítems (1 fila por servicio, total del grupo o por pax)
@@ -680,13 +850,100 @@ async function reservarDesdeTarifarioInterno(input: ReservaInput, tenant: Tenant
       orden: 201,
     });
   }
-  if (items.length) await sb.from("contrato_items").insert(items);
+  if (aceptacion63) {
+    if (aceptacion63.snapshot.items.length) {
+      const { error: eit } = await sb.from("contrato_items").insert(aceptacion63.snapshot.items.map((it) => ({ numero_contrato: numero, ...it })));
+      if (eit) return fallarYRevertir(`No se pudieron guardar los valores del contrato: ${eit.message}`);
+    }
+  } else if (items.length) await sb.from("contrato_items").insert(items);
+
+  // Cuentas por pagar y costos del contrato (pasos 9 a 12): `calcularFinancieroReserva` (más abajo) los calcula; la escritura
+  // atómica es el paso 12 (`registrarFinancieroContrato`).
+  const hoyISO = aceptacion63 ? aceptacion63.fecha_negocio : fechaNegocio();
+  let cxp: CxPFinanciera[];
+  let costosContrato: CostosContrato;
+  let serviciosEfectivos: ServicioEfectivo[] = [];
+  if (aceptacion63) {
+    // #63: costos y obligaciones EXACTAMENTE los que devolvió la aceptación (derivados por la base del snapshot). No hay
+    // lecturas vivas de costos/proveedores aquí: un cambio de catálogo posterior a la aceptación no altera lo acordado.
+    cxp = aceptacion63.financiero.cxp as unknown as CxPFinanciera[];
+    costosContrato = aceptacion63.financiero.costos as CostosContrato;
+  } else {
+    const finCalc = await calcularFinancieroReserva({ input, data: comp.data, datosVuelo, costoAereo, hoyISO });
+    if (!finCalc.ok) return fallarYRevertir(finCalc.error);
+    ({ cxp, costosContrato, serviciosEfectivos } = finCalc);
+  }
+
+  // Resumen ÚNICO de asistencia/tours (incluidos + opcionales, deduplicado
+  // por servicioId) — misma fuente que checkout/crearCotizacion, para que
+  // cotización y contrato muestren exactamente el mismo resultado. Es
+  // DISPLAY (dos columnas de texto/booleano), no dinero: sigue siendo
+  // best-effort a propósito.
+  if (serviciosEfectivos.length) {
+    try {
+      const admin = createAdminClient();
+      const resumen = resumirServiciosContrato(serviciosEfectivos);
+      const upd: { tours_traslados?: string; asistencia_medica?: boolean } = {};
+      if (resumen.toursTraslados) upd.tours_traslados = resumen.toursTraslados;
+      if (resumen.asistenciaMedica) upd.asistencia_medica = true;
+      if (Object.keys(upd).length) await admin.from("ventas").update(upd).eq("numero_contrato", numero);
+    } catch {
+      // Informativo/display; no bloquea la reserva.
+    }
+  }
+  if (aceptacion63) {
+    // #63: el resumen de tours/asistencia (display) también sale de lo aceptado. Best-effort, como el de siempre.
+    try {
+      const upd63: { tours_traslados?: string; asistencia_medica?: boolean } = {};
+      if (aceptacion63.snapshot.resumen.tours_traslados) upd63.tours_traslados = aceptacion63.snapshot.resumen.tours_traslados;
+      if (aceptacion63.snapshot.resumen.asistencia_medica) upd63.asistencia_medica = true;
+      if (Object.keys(upd63).length) await createAdminClient().from("ventas").update(upd63).eq("numero_contrato", numero);
+    } catch {
+      // Informativo/display; no bloquea la reserva.
+    }
+  }
+  // Se llama incluso con costo/CxP cero: el contrato nació con
+  // financiero_estado='pendiente' y este RPC es la única transición válida a
+  // 'completo'. Omitirlo dejaría una reserva sin costos pendiente para siempre
+  // y el reconciliador terminaría revirtiéndola por falta de payload.
+  // #63: toda obligación del modo COP con TRM debe traer su equivalente en COP coherente con la TRM del paquete ANTES de
+  // escribir (fallo cerrado: nunca una CxP en USD sin equivalente, que la contabilidad leería como pesos).
+  if (oferta63) {
+    for (const c of cxp) {
+      const v = validarObligacion63({ moneda: c.moneda, valor_total: c.valor_total, valor_cop: c.valor_cop, trm: c.trm });
+      if (!v.ok) return fallarYRevertir(v.error);
+    }
+  }
+  const fin = await registrarFinancieroContrato(depsFinanciero(numero, tenant, hoyISO), {
+    numeroContrato: numero, tenant, costos: costosContrato, cxp, fecha: hoyISO,
+  });
+  if (!fin.ok) return { ok: false, error: fin.error };
+
+  revalidatePath("/dashboard/contratos");
+  return { ok: true, numero, ...(advertencias.length ? { advertencias } : {}) };
+}
+
+// Costos y cuentas por pagar (CxP) de una reserva del tarifario — pasos 9 a 12 de `reservarDesdeTarifarioInterno`, extraídos SIN
+// cambiar su cálculo para que el mismo código arme (a) lo que se escribe al reservar un contrato de siempre y (b) el snapshot
+// financiero PRIVADO de una oferta en COP con TRM (#63) al cotizar. No escribe nada: devuelve las obligaciones y los costos.
+// Lecturas con service-role de netos/proveedores/retención (nunca visibles al asesor). Un fallo de lectura es un error, jamás
+// un costo en cero.
+async function calcularFinancieroReserva(p: {
+  input: ReservaInput;
+  data: ComputoReserva;
+  datosVuelo: DatosVueloOrigen | null;
+  costoAereo: number;
+  hoyISO: string;
+}): Promise<{ ok: true; cxp: CxPFinanciera[]; costosContrato: CostosContrato; serviciosEfectivos: ServicioEfectivo[] } | { ok: false; error: string }> {
+  const { input, datosVuelo, costoAereo, hoyISO } = p;
+  const { meta, netoPorAcom, paxConSilla, totalPax, numNinos, numNinos2, lineasHab, serviciosIncluidos, oferta63 } = p.data;
+  const { numMenoresDeDos, numInfantes } = menoresDelComputo(p.data, { infantesDeclarados: Number(input.infantes) || 0 });
+  const esServicios = input.modulo === "servicios";
 
   // Cuentas por pagar (CxP) generadas AUTOMÁTICAMENTE porque la venta sale del
   // tarifario: una por proveedor de aéreo, hotel y cada servicio. Se acumulan
   // en los pasos 9/10/11 (que ya leen los costos netos con service-role) y se
   // insertan en el paso 12. El proveedor (con su retención) se jala del catálogo.
-  const hoyISO = fechaNegocio();
   const OBS_AUTO = "Generado automáticamente desde el tarifario";
   type ProvFact = { nombre: string | null; aplica_retencion: boolean | null; pct_retencion: number | null } | null;
   // `numero_contrato`/`tenant` NO van en la fila: los pone la propia
@@ -694,6 +951,15 @@ async function reservarDesdeTarifarioInterno(input: ReservaInput, tenant: Tenant
   // que no hay forma de que una fila del payload apunte a otro contrato o a
   // otra agencia.
   const cxp: CxPFinanciera[] = [];
+  // #63: en el modo COP con TRM cada obligación conserva su moneda de ORIGEN (hotel/servicios pueden deberse en USD;
+  // el aéreo de Empaquetados, en COP) y lleva su equivalente en COP congelado a la TRM del paquete. En el modo de
+  // siempre `oferta63` es null y la fila queda exactamente como antes (sin moneda, sin equivalente).
+  const monedaOrigenCxP63 = (tipo: string, servicioId?: number | null): "COP" | "USD" => {
+    if (!oferta63) return "COP";
+    if (tipo === "hotel") return oferta63.monedaHotel;
+    if (tipo === "aereo") return oferta63.monedaAereo;
+    return servicioId != null ? (oferta63.monedaServicios[servicioId] ?? "COP") : "COP";
+  };
   const pushCxP = (tipo: string, servicio: string, valor: number, pr: ProvFact, nombreFallback?: string | null, cxpOpts?: { permitirCero?: boolean; servicioId?: number | null }) => {
     if (!(valor > 0) && !cxpOpts?.permitirCero) return;
     cxp.push({
@@ -706,6 +972,7 @@ async function reservarDesdeTarifarioInterno(input: ReservaInput, tenant: Tenant
       pct_retencion: Number(pr?.pct_retencion) || 0,
       observaciones: valor > 0 ? OBS_AUTO : `${OBS_AUTO} · costo neto pendiente`,
       servicio_id: cxpOpts?.servicioId ?? null,
+      ...(oferta63 ? camposCxP63({ valor: Math.max(0, valor), moneda: monedaOrigenCxP63(tipo, cxpOpts?.servicioId) }, oferta63.trm) : {}),
     });
   };
 
@@ -732,6 +999,9 @@ async function reservarDesdeTarifarioInterno(input: ReservaInput, tenant: Tenant
       for (const l of lineasHab) { const per = netoPorAcom[l.acom]; if (per != null) costoHotelTotal += per * l.pax; }
       if (numNinos > 0 && netoPorAcom["nino"] != null) costoHotelTotal += netoPorAcom["nino"] * numNinos;
       if (numNinos2 > 0 && netoPorAcom["nino2"] != null) costoHotelTotal += netoPorAcom["nino2"] * numNinos2;
+      // Infante de hotel (0 = gratis): el neto que cobra el hotel por cada uno,
+      // menor de 2 años o de 2 (clase infante del hotel) — antes no se sumaba.
+      if (numInfantes > 0 && netoPorAcom["infante"] != null) costoHotelTotal += netoPorAcom["infante"] * numInfantes;
       const { data: hprov, error: hprovErr } = await admin
         .from("hoteles").select("nombre, proveedores(nombre, aplica_retencion, pct_retencion)").eq("id", input.hotelId).maybeSingle();
       if (hprovErr) throw new Error(hprovErr.message);
@@ -744,7 +1014,7 @@ async function reservarDesdeTarifarioInterno(input: ReservaInput, tenant: Tenant
       // si nada, dejando el contrato sin costo de hotel ni cuenta por pagar
       // (rentabilidad inflada y una deuda con el hotel que no existe en el
       // sistema). Ya no: se deshace el contrato y se devuelve el error.
-      return fallarYRevertir(`No se pudo calcular el costo del hotel para el contrato: ${e instanceof Error ? e.message : "error desconocido"}.`);
+      return { ok: false, error: `No se pudo calcular el costo del hotel para el contrato: ${e instanceof Error ? e.message : "error desconocido"}.` };
     }
   }
 
@@ -768,12 +1038,12 @@ async function reservarDesdeTarifarioInterno(input: ReservaInput, tenant: Tenant
       const admin = createAdminClient();
       const [{ data: arm, error: armErr }, { data: gruposNet, error: gruposErr }, { data: tempsNet, error: tempsErr }] = await Promise.all([
         admin.from("armado_servicios")
-          .select("servicio_id, modo, servicios_adicionales(precio_persona, recargo_individual, categoria, nombre, liquidacion, proveedor_id, proveedores(nombre, aplica_retencion, pct_retencion))")
+          .select("servicio_id, modo, servicios_adicionales(precio_persona, precio_infante, recargo_individual, categoria, nombre, liquidacion, proveedor_id, proveedores(nombre, aplica_retencion, pct_retencion))")
           .eq("paquete_id", input.paqueteId).in("servicio_id", input.servicios),
         admin.from("servicio_tarifa_pax")
           .select("servicio_id, pax_desde, pax_hasta, precio, temporada").in("servicio_id", input.servicios),
         admin.from("servicio_temporadas")
-          .select("servicio_id, nombre, fecha_inicio, fecha_fin, compra_inicio, compra_fin, prioridad, precio_persona, recargo_individual").in("servicio_id", input.servicios),
+          .select("servicio_id, nombre, fecha_inicio, fecha_fin, compra_inicio, compra_fin, prioridad, precio_persona, precio_infante, recargo_individual").in("servicio_id", input.servicios),
       ]);
       // Un error de lectura deja `data` en null, no lanza: sin este chequeo el
       // bucle no correría y el contrato quedaría con los servicios cobrados y
@@ -791,12 +1061,14 @@ async function reservarDesdeTarifarioInterno(input: ReservaInput, tenant: Tenant
       // Temporadas por servicio: el NETO del costo cambia según la fecha del viaje.
       const tempsPorServ = new Map<number, TemporadaRango[]>();
       const netoTempServ = new Map<string, number>();   // servId|nombre -> neto persona
+      const netoInfTempServ = new Map<string, number>(); // servId|nombre -> neto infante
       const recTempServ = new Map<string, number>();    // servId|nombre -> recargo neto
       for (const t of tempsNet ?? []) {
         const arr = tempsPorServ.get(t.servicio_id) ?? [];
         arr.push(toTemporadaRango(t));
         tempsPorServ.set(t.servicio_id, arr);
         if (t.precio_persona != null) netoTempServ.set(`${t.servicio_id}|${t.nombre}`, Number(t.precio_persona));
+        if (t.precio_infante != null) netoInfTempServ.set(`${t.servicio_id}|${t.nombre}`, Number(t.precio_infante));
         if (t.recargo_individual != null) recTempServ.set(`${t.servicio_id}|${t.nombre}`, Number(t.recargo_individual));
       }
       const fechaViajeCosto = meta.fecha_ida ? new Date(`${meta.fecha_ida}T00:00:00`) : null;
@@ -811,14 +1083,19 @@ async function reservarDesdeTarifarioInterno(input: ReservaInput, tenant: Tenant
       let costoReceptivo = 0;
       for (const s of arm ?? []) {
         const modo = (s.modo as string) === "grupo" ? "grupo" : "persona";
-        const srv = s.servicios_adicionales as unknown as { precio_persona: number | null; recargo_individual: number | null; categoria: string | null; nombre: string; liquidacion: string | null; proveedor_id: number | null; proveedores: ProvFact } | null;
+        const srv = s.servicios_adicionales as unknown as { precio_persona: number | null; precio_infante: number | null; recargo_individual: number | null; categoria: string | null; nombre: string; liquidacion: string | null; proveedor_id: number | null; proveedores: ProvFact } | null;
         const nombreTemp = tempVigente(s.servicio_id);
         // Neto por persona: el de la temporada vigente, o el base.
         const netoPersona = (nombreTemp ? netoTempServ.get(`${s.servicio_id}|${nombreTemp}`) : undefined) ?? srv?.precio_persona ?? null;
         // Rangos por grupo: los de la temporada vigente si existen, si no GENERAL.
         const gruposTemp = nombreTemp ? gruposPorServ.get(`${s.servicio_id}|${nombreTemp}`) : undefined;
         const grupos = gruposTemp?.length ? gruposTemp : (gruposPorServ.get(`${s.servicio_id}|GENERAL`) ?? []);
-        let costoServ = precioServicio(modo, netoPersona, grupos, totalPax) * factorLiquidacion(srv?.liquidacion, nochesStay);
+        // Persona: adultos (2+ años) a la tarifa de adulto + menores de 2 años a su
+        // precio de infante NETO (el de la temporada vigente, o el general, o el de
+        // adulto si el servicio no lo configuró). Grupo: el rango cuenta SOLO a los
+        // de 2+ años y el menor de 2 no paga extra (migración 226).
+        const netoInfante = (nombreTemp ? netoInfTempServ.get(`${s.servicio_id}|${nombreTemp}`) : undefined) ?? srv?.precio_infante ?? netoPersona ?? 0;
+        let costoServ = (precioServicio(modo, netoPersona, grupos, paxConSilla) + (modo === "persona" ? netoInfante * numMenoresDeDos : 0)) * factorLiquidacion(srv?.liquidacion, nochesStay);
         // Recargo individual: suplemento NETO del proveedor cuando va 1 pax (cobro
         // por persona). El de la temporada vigente si lo define, si no el base.
         if (modo === "persona" && totalPax === 1) {
@@ -841,7 +1118,7 @@ async function reservarDesdeTarifarioInterno(input: ReservaInput, tenant: Tenant
       // FALLA CERRADO (B7), igual que el costo del hotel: un servicio del
       // contrato sin costo ni CxP es una deuda con el proveedor que el sistema
       // no conoce. Antes esto se tragaba en silencio.
-      return fallarYRevertir(`No se pudo calcular el costo de los servicios del contrato: ${e instanceof Error ? e.message : "error desconocido"}.`);
+      return { ok: false, error: `No se pudo calcular el costo de los servicios del contrato: ${e instanceof Error ? e.message : "error desconocido"}.` };
     }
   }
 
@@ -875,27 +1152,10 @@ async function reservarDesdeTarifarioInterno(input: ReservaInput, tenant: Tenant
         }
       }
     } catch (e) {
-      return fallarYRevertir(`No se pudo registrar el costo de los servicios incluidos del paquete: ${e instanceof Error ? e.message : "error desconocido"}.`);
+      return { ok: false, error: `No se pudo registrar el costo de los servicios incluidos del paquete: ${e instanceof Error ? e.message : "error desconocido"}.` };
     }
   }
 
-  // Resumen ÚNICO de asistencia/tours (incluidos + opcionales, deduplicado
-  // por servicioId) — misma fuente que checkout/crearCotizacion, para que
-  // cotización y contrato muestren exactamente el mismo resultado. Es
-  // DISPLAY (dos columnas de texto/booleano), no dinero: sigue siendo
-  // best-effort a propósito.
-  if (serviciosEfectivos.length) {
-    try {
-      const admin = createAdminClient();
-      const resumen = resumirServiciosContrato(serviciosEfectivos);
-      const upd: { tours_traslados?: string; asistencia_medica?: boolean } = {};
-      if (resumen.toursTraslados) upd.tours_traslados = resumen.toursTraslados;
-      if (resumen.asistenciaMedica) upd.asistencia_medica = true;
-      if (Object.keys(upd).length) await admin.from("ventas").update(upd).eq("numero_contrato", numero);
-    } catch {
-      // Informativo/display; no bloquea la reserva.
-    }
-  }
 
   // 12) ESCRITURA FINANCIERA ATÓMICA (B7): los costos del contrato y TODAS las
   //     cuentas por pagar acumuladas (hotel/aéreo/servicios) se guardan en UNA
@@ -911,24 +1171,45 @@ async function reservarDesdeTarifarioInterno(input: ReservaInput, tenant: Tenant
   const costosContrato: CostosContrato = {};
   if (costoHotelTotal > 0) costosContrato.costo_hotel = costoHotelTotal;
   if (costoServiciosTotal > 0) costosContrato.costo_receptivo = costoServiciosTotal;
-  // Se llama incluso con costo/CxP cero: el contrato nació con
-  // financiero_estado='pendiente' y este RPC es la única transición válida a
-  // 'completo'. Omitirlo dejaría una reserva sin costos pendiente para siempre
-  // y el reconciliador terminaría revirtiéndola por falta de payload.
-  const fin = await registrarFinancieroContrato(depsFinanciero(numero, tenant, hoyISO), {
-    numeroContrato: numero, tenant, costos: costosContrato, cxp, fecha: hoyISO,
-  });
-  if (!fin.ok) return { ok: false, error: fin.error };
+  // #63: en el modo de oferta con conversión por TRM las columnas de costo del contrato (en la moneda de la oferta: COP o USD) son la suma
+  // de los equivalentes de SUS MISMAS CxP (cuya moneda de origen puede ser otra): costo y obligación no pueden divergir. El aéreo ya sale
+  // en esa moneda desde el origen.
+  if (oferta63) {
+    const TIPOS_SERVICIO_63 = ["receptivo", "asistencia", "otro"];
+    const hotel63 = sumaEquivalentesOferta63(cxp.filter((c) => c.tipo_proveedor === "hotel").map((c) => ({ valor: c.valor_total, moneda: c.moneda === "USD" ? "USD" as const : "COP" as const })), oferta63.moneda, oferta63.trm);
+    const servicios63 = sumaEquivalentesOferta63(cxp.filter((c) => TIPOS_SERVICIO_63.includes(c.tipo_proveedor)).map((c) => ({ valor: c.valor_total, moneda: c.moneda === "USD" ? "USD" as const : "COP" as const })), oferta63.moneda, oferta63.trm);
+    if (hotel63 > 0) costosContrato.costo_hotel = hotel63; else delete costosContrato.costo_hotel;
+    if (servicios63 > 0) costosContrato.costo_receptivo = servicios63; else delete costosContrato.costo_receptivo;
+  }
 
-  revalidatePath("/dashboard/contratos");
-  return { ok: true, numero, ...(advertencias.length ? { advertencias } : {}) };
+  return { ok: true, cxp, costosContrato, serviciosEfectivos };
+}
+
+// #63 — huella de lo que el cliente vio al cotizar / lo que se va a cobrar al convertir. Misma función en las dos puntas.
+function huellaDeOferta63(input: ReservaInput, data: ComputoReserva): string | null {
+  const o = data.oferta63;
+  if (!o) return null;
+  return huellaOferta63({
+    paqueteId: input.paqueteId,
+    salidaId: input.salidaId ?? null,
+    modo: MODO_OFERTA_63,
+    trm: o.trm,
+    generacion: o.generacionPublicada,
+    revisionFuente: o.revisionPublicada,
+    precioVenta: data.precioVenta,
+    moneda: data.monedaReserva,
+    tarifaParaEmpaquetar: o.tarifaParaEmpaquetar,
+    feeInfante: o.feeInfante,
+    fechaIda: data.meta.fecha_ida,
+    fechaRegreso: data.meta.fecha_regreso,
+  });
 }
 
 // ── COTIZACIONES: presupuesto SIN número de contrato ───────────────────────
 // crearCotizacion reusa computarReserva (mismo precio que el contrato) y guarda
 // un snapshot listo para el PDF. NO toca inventario ni numera. Al convertir se
 // llama a reservarDesdeTarifario (que sí genera número, sillas y CxP).
-export type CotizacionResult = { ok: true; id: number } | { ok: false; error: string };
+export type CotizacionResult = { ok: true; id: number; avisoPersonas?: string } | { ok: false; error: string };
 
 export async function crearCotizacion(input: ReservaInput, opts?: { vigenciaHasta?: string }): Promise<CotizacionResult> {
   const sb = await createClient();
@@ -936,9 +1217,13 @@ export async function crearCotizacion(input: ReservaInput, opts?: { vigenciaHast
     return { ok: false, error: "El nombre del cliente es obligatorio." };
 
   const esServicios = input.modulo === "servicios";
+  // #63 (E/F/G): revisiones de T0 de una salida dinámica — se leen ANTES de calcular nada. La base las compara de nuevo al guardar
+  // la cotización y al aceptarla: cualquier cambio entre medias rechaza. Un error de lectura solo bloquea si la oferta es 63.
+  const t063 = input.salidaId && process.env.SUPABASE_SERVICE_ROLE_KEY ? await leerRevisiones63(createAdminClient(), input.paqueteId) : null;
   const comp = await computarReserva(sb, input);
   if (!comp.ok) return { ok: false, error: comp.error };
-  const { origen, meta, pvpPorAcom, precioVenta, paxConSilla, totalPax, numNinos, numNinos2, lineasHab, serviciosItems, serviciosIncluidos, monedaReserva, cargoMascota } = comp.data;
+  const { origen, meta, precioVenta, paxConSilla, totalPax, numNinos, numNinos2, lineasHab, serviciosItems, serviciosIncluidos, monedaReserva, cargoMascota, impuestoTotal } = comp.data;
+  const { lineasMenores, numMenoresDeDos } = menoresDelComputo(comp.data, { infantesDeclarados: Number(input.infantes) || 0 });
   // Mismo resumen ÚNICO que usa `reservarDesdeTarifarioInterno` al convertir
   // (lib/reservar/serviciosPaquete.ts) — así la cotización ya muestra, antes
   // de convertirse, exactamente lo que mostrará el contrato.
@@ -996,8 +1281,22 @@ export async function crearCotizacion(input: ReservaInput, opts?: { vigenciaHast
     moneda: monedaReserva,
   };
 
-  const pasajerosSnap: Record<string, unknown>[] = input.pasajeros.map((p, i) => ({
+  // #42: cada pasajero IDENTIFICADO recibe aquí, en servidor y ANTES del insert, el `ref`
+  // estable de su puesto (nunca el índice ni el documento); el que mande el navegador se
+  // descarta. Va en `payload.pasajeros` y en `detalle.pasajeros` de la misma escritura.
+  const pasajerosConRef = asignarRefsPasajeros(input.pasajeros, () => crypto.randomUUID());
+  // #63: la cotización de una oferta en COP con TRM guarda la HUELLA de lo mostrado (no el costo N). Al convertirla se
+  // recalcula; si el precio, el vuelo, la TRM o el tarifario publicado cambiaron, se exige reconfirmar con una nueva.
+  const huella63 = huellaDeOferta63(input, comp.data);
+  const inputPersistido = {
+    ...input,
+    pasajeros: pasajerosConRef,
+    ...(huella63 ? { oferta63: { huella: huella63, modo: MODO_OFERTA_63, trm: comp.data.oferta63?.trm ?? null } } : {}),
+  } as ReservaInput;
+
+  const pasajerosSnap: Record<string, unknown>[] = pasajerosConRef.map((p, i) => ({
     id: i + 1,
+    ...(p.ref ? { ref: p.ref } : {}),
     nombre: `${p.nombres ?? ""} ${p.apellidos ?? ""}`.trim(),
     tipo_id: oNull(p.tipoDoc) ?? "CC",
     identificacion: oNull(p.numeroDoc),
@@ -1067,13 +1366,10 @@ export async function crearCotizacion(input: ReservaInput, opts?: { vigenciaHast
     descripcion: `${l.habitaciones} hab ${ACOM_ROOM_LABEL[l.acom]} (${l.pax} pax) · ${input.categoria} / ${input.regimen}`,
     adultos: l.pax, ninos: 0, tarifa_adulto: l.pvp, tarifa_nino: 0,
   }));
-  if (numNinos > 0 && pvpPorAcom["nino"] != null)
-    itemsSnap.push({ id: 50, descripcion: `Niño 1 · ${input.categoria} / ${input.regimen}`, adultos: 0, ninos: numNinos, tarifa_adulto: 0, tarifa_nino: pvpPorAcom["nino"] });
-  if (numNinos2 > 0 && pvpPorAcom["nino2"] != null)
-    itemsSnap.push({ id: 51, descripcion: `Niño 2 · ${input.categoria} / ${input.regimen}`, adultos: 0, ninos: numNinos2, tarifa_adulto: 0, tarifa_nino: pvpPorAcom["nino2"] });
-  { const numInfantesSnap = Number(input.infantes) || 0;
-    if (numInfantesSnap > 0 && pvpPorAcom["infante"] != null)
-      itemsSnap.push({ id: 52, descripcion: `Infante · ${input.categoria} / ${input.regimen}`, adultos: 0, ninos: numInfantesSnap, tarifa_adulto: 0, tarifa_nino: pvpPorAcom["infante"] }); }
+  // Menores (migración 226): misma composición que el contrato ya convertido
+  // (`lineasMenores` de `computarReserva`, única fuente).
+  for (const lm of lineasMenores)
+    itemsSnap.push({ id: ordenLineaMenor(lm), descripcion: descripcionLineaMenor(lm, input.categoria, input.regimen), adultos: 0, ninos: lm.cantidad, tarifa_adulto: 0, tarifa_nino: lm.tarifa });
   serviciosItems.forEach((s, i) => itemsSnap.push({ id: 100 + i, descripcion: `Servicio · ${s.nombre}`, adultos: 1, ninos: 0, tarifa_adulto: s.precio, tarifa_nino: 0 }));
   if (cargoMascota) {
     itemsSnap.push({
@@ -1084,17 +1380,6 @@ export async function crearCotizacion(input: ReservaInput, opts?: { vigenciaHast
   }
 
   const detalle = { venta: ventaSnap, pasajeros: pasajerosSnap, hoteles: hotelesSnap, vuelos: vuelosSnap, items: itemsSnap };
-
-  // Una fecha explícita fuera del rango se rechaza; el valor automático de
-  // 24 horas se recorta a la salida para cotizaciones de último minuto.
-  const vigenciaRes = resolverVigenciaCotizacion({
-    hoy,
-    fechaSalida: meta.fecha_ida,
-    vigenciaSolicitada: opts?.vigenciaHasta,
-    diasPorDefecto: 1,
-  });
-  if (!vigenciaRes.ok) return { ok: false, error: vigenciaRes.error };
-  const vigencia = vigenciaRes.vigencia;
 
   const { data: { user } } = await sb.auth.getUser();
 
@@ -1110,6 +1395,17 @@ export async function crearCotizacion(input: ReservaInput, opts?: { vigenciaHast
   const ctx = await contextoCotizacion();
   if (!ctx.ok) return { ok: false, error: "No autorizado." };
 
+  // #40 E3: solo el personal interno elige la fecha. Un aliado B2B (o cualquier rol externo) que la mande por red no la adquiere: se ignora
+  // y rige el plazo automático de un día. Una fecha explícita fuera del rango se rechaza; el valor automático se recorta a la salida.
+  const vigenciaRes = resolverVigenciaCotizacion({
+    hoy,
+    fechaSalida: meta.fecha_ida,
+    vigenciaSolicitada: ctx.interno === false ? undefined : opts?.vigenciaHasta,
+    diasPorDefecto: 1,
+  });
+  if (!vigenciaRes.ok) return { ok: false, error: vigenciaRes.error };
+  const vigencia = vigenciaRes.vigencia;
+
   // El precio se calcula en el servidor (autoritativo) y el checkout debe servir
   // tanto a aliados B2B como a usuarios públicos. La RLS de `cotizaciones` es solo
   // para roles internos, así que el insert va por service-role cuando está
@@ -1118,9 +1414,83 @@ export async function crearCotizacion(input: ReservaInput, opts?: { vigenciaHast
 
   const tenantCotizacion = ctx.tenant;
 
-  const { data: row, error } = await sbCot.from("cotizaciones").insert({
+  // #63 (E/F/G): una oferta en COP con TRM nace con su SNAPSHOT PRIVADO (precio, BNC, costos, proveedores, retenciones, tramos,
+  // ítems y obligaciones de origen) y se guarda JUNTO con la cotización en UNA transacción (`crear_cotizacion_oferta_63`).
+  // La autoría estable y el alta de personas (219) siguen siendo el paso posterior de abajo, con su aviso persistente.
+  let row: { id: number };
+  const oferta63 = comp.data.oferta63;
+  if (oferta63) {
+    const admin = process.env.SUPABASE_SERVICE_ROLE_KEY ? createAdminClient() : null;
+    if (!admin) return { ok: false, error: "No se pudo guardar la cotización (configuración del servidor incompleta)." };
+    if (!user) return { ok: false, error: "No autorizado." };
+    if (!t063) return { ok: false, error: "No se pudo leer la configuración del paquete. Intenta nuevamente." };
+    if (!t063.ok) return { ok: false, error: t063.error };
+    // 230: el aéreo (manual o vinculado) conserva su moneda de origen; la CxP la debe en ella y el costo del contrato es su equivalente COP.
+    const datosFin: DatosVueloOrigen | null = datosVueloSnap;
+    const costoAereo63 = datosFin ? datosFin.costo_neto * paxConSilla + datosFin.fee_infante * numMenoresDeDos : 0;
+    const costoAereo63Oferta = equivalenteOferta63(costoAereo63, oferta63.monedaAereo, oferta63.moneda, oferta63.trm);
+    const fin63 = await calcularFinancieroReserva({ input, data: comp.data, datosVuelo: datosFin, costoAereo: costoAereo63, hoyISO: hoy });
+    if (!fin63.ok) return { ok: false, error: fin63.error };
+    let proveedorHotel63: string | null = null;
+    if (!esServicios && input.hotelId) {
+      const { data: hp63, error: hpe63 } = await admin.from("hoteles").select("proveedores(nombre)").eq("id", input.hotelId).maybeSingle();
+      if (hpe63) return { ok: false, error: "No se pudo leer el proveedor del hotel. Intenta nuevamente." };
+      proveedorHotel63 = (hp63?.proveedores as unknown as { nombre: string } | null)?.nombre ?? null;
+    }
+    const hotel63: HotelSnapshot63 | null = esServicios ? null : {
+      nombre: meta.hotel_nombre ?? "", categoria: input.categoria, proveedor: proveedorHotel63, ciudad: meta.destino_nombre,
+      alimentacion: input.regimen, acomodacion: input.categoria,
+      detalle_acomodacion: detalleAcomodacion63({ lineasHab, numNinos, numNinos2, infantes: Number(input.infantes) || 0, mascotas: Number(input.mascotas) || 0 }),
+      fecha_ingreso: meta.fecha_ida, fecha_salida: meta.fecha_regreso, orden: 0,
+    };
+    const resumen63 = resumirServiciosContrato(fin63.serviciosEfectivos);
+    // Plan B2B que determina comisión y precio NETO: se resuelve AHORA (con el % del aliado de hoy) y se congela en el snapshot.
+    let planB2b63: PlanB2bSnapshot63 | null = null;
+    if (input.tipoAsesor !== "interno") {
+      const al63 = await resolverAliadoReserva(admin, input.tipoAsesor, input.aliadoId);
+      if (!al63.ok) return { ok: false, error: al63.error };
+      const plan63 = planComisionReserva({ modoCompra: input.modoCompra, precioVenta, impuesto: impuestoTotal, pct: al63.pct });
+      if (!plan63.ok) return { ok: false, error: plan63.error };
+      planB2b63 = construirPlanB2b63({ aliadoId: al63.aliadoId, tipoAsesor: input.tipoAsesor, plan: plan63.plan });
+    }
+    const snapshot63 = construirSnapshot63({
+      paqueteId: input.paqueteId, salidaId: input.salidaId ?? null, empaquetadoId: oferta63.empaquetadoId, trm: oferta63.trm, moneda: oferta63.moneda,
+      cabecera: {
+        tipo_paquete: input.modulo, moneda: monedaReserva, fecha_salida: meta.fecha_ida, fecha_regreso: meta.fecha_regreso,
+        pax: totalPax || paxConSilla, destino: meta.destino_nombre, hotel: esServicios ? null : meta.hotel_nombre,
+        precio_venta: precioVenta, impuesto: impuestoTotal, costo_aereo: datosFin ? costoAereo63Oferta : 0, aerolinea: datosFin?.aerolinea ?? null,
+        plan_nombre: `${input.categoria} · ${input.regimen}`, paquete_armado_id: input.paqueteId,
+        tipo_asesor: input.tipoAsesor, canal: input.tipoAsesor === "interno" ? "B2C" : "B2B",
+      },
+      b2b: planB2b63,
+      vigencias: comp.data.vigencias63,
+      hotel: hotel63,
+      tramos: armarTramos63(datosFin),
+      items: armarItems63({ categoria: input.categoria, regimen: input.regimen, lineasHab, lineasMenores, serviciosItems, cargoMascota }),
+      costos: fin63.costosContrato,
+      cxp: fin63.cxp,
+      resumen: { tours_traslados: resumen63.toursTraslados ?? null, asistencia_medica: !!resumen63.asistenciaMedica },
+    });
+    const cr63 = await crearCotizacionOferta63(admin, {
+      usuarioId: user.id,
+      tenant: tenantCotizacion,
+      cotizacion: {
+        tenant: tenantCotizacion, payload: inputPersistido, detalle, cliente: clienteNombre, cliente_documento: oNull(input.cliente.numeroDoc),
+        destino: meta.destino_nombre, hotel: esServicios ? null : meta.hotel_nombre, modulo: input.modulo, plan_nombre: planNombre,
+        pax: totalPax || paxConSilla, precio_venta: precioVenta, moneda: monedaReserva, fecha_salida: meta.fecha_ida, fecha_regreso: meta.fecha_regreso,
+        vigencia_hasta: vigencia, paquete_armado_id: input.paqueteId, asesor: oNull(asesorNombre), creado_por: user.email ?? null,
+      },
+      snapshot: snapshot63,
+      huella: huella63 ?? "",
+      huellaFinanciera: huellaFinanciera63({ ...snapshot63.financiero, b2b: snapshot63.b2b }),
+      revisiones: t063.revisiones,
+    });
+    if (!cr63.ok) return { ok: false, error: cr63.error };
+    row = { id: cr63.id };
+  } else {
+  const { data: row0, error } = await sbCot.from("cotizaciones").insert({
     tenant: tenantCotizacion,
-    payload: input as unknown as Json,
+    payload: inputPersistido as unknown as Json,
     detalle: detalle as unknown as Json,
     cliente: clienteNombre,
     cliente_documento: oNull(input.cliente.numeroDoc),
@@ -1139,23 +1509,54 @@ export async function crearCotizacion(input: ReservaInput, opts?: { vigenciaHast
     creado_por: user?.email ?? null,
   }).select("id").single();
   if (error) return { ok: false, error: error.message };
+  row = row0;
+  }
+
+  // #42: sello del autor estable (la API no puede estamparlo: solo la función de la 219) y alta
+  // del titular y los pasajeros identificados en el registro de personas, desde lo que se acaba
+  // de persistir. La cotización ya quedó guardada: un fallo aquí no la deshace, deja un aviso
+  // persistente en su ficha (con "Reintentar") y un log sin datos personales — nunca se ignora.
+  let avisoPersonas: string | undefined;
+  if (process.env.SUPABASE_SERVICE_ROLE_KEY && user) {
+    const alta = await altaPersonasCotizacion(createAdminClient(), {
+      fila: { id: row.id, tenant: tenantCotizacion, tipo: "tarifario", payload: inputPersistido },
+      usuarioId: user.id,
+      sellar: true,
+    });
+    if (!alta.ok) {
+      console.error(logPersonasCotizacion("reservar", row.id, alta));
+      avisoPersonas = AVISO_PERSONAS_PENDIENTES;
+    }
+  } else {
+    console.error(logPersonasCotizacion("reservar", row.id, { etapa: "configuracion", codigo: null }));
+    avisoPersonas = AVISO_PERSONAS_PENDIENTES;
+  }
 
   revalidatePath("/dashboard/cotizaciones");
-  return { ok: true, id: row.id };
+  return avisoPersonas ? { ok: true, id: row.id, avisoPersonas } : { ok: true, id: row.id };
 }
 
 // Convierte una cotización en CONTRATO: corre el motor de reserva normal (genera
 // numero_contrato + sillas + CxP) con el payload guardado, y enlaza la cotización.
-export async function convertirCotizacion(id: number, pasajeros?: PasajeroReserva[], override?: boolean, asesorInterno?: string): Promise<ReservaResult> {
+export async function convertirCotizacion(
+  id: number, pasajeros?: PasajeroReserva[], override?: boolean, asesorInterno?: string, trmProvisional?: number | null,
+  /** 235 (#90 F): moneda de cobro elegida (null = la de la oferta) y su TRM (solo si difiere). Se validan en el servidor; el navegador no decide nada. */
+  monedaCobro?: string | null, trmCobro?: number | null,
+): Promise<ReservaResult> {
   const sb = await createClient();
   const { data: cot, error } = await sb
     .from("cotizaciones")
-    .select("estado, payload, numero_contrato, tenant, modo")
+    .select("estado, payload, numero_contrato, tenant, modo, tipo, vigencia_hasta, fecha_salida")
     .eq("id", id)
     .maybeSingle();
   if (error || !cot) return { ok: false, error: error?.message ?? "Cotización no encontrada." };
   // #35: una comparativa (madre) no se convierte: primero se elige una opción (la hija sí se convierte).
   if (cot.modo === "comparativa") return { ok: false, error: "Una comparativa no se convierte en contrato: elige una opción primero." };
+  // #39: una cotización dinámica (manual) se convierte SOLO por su propia puerta
+  // (`convertirCotizacionManualAContrato`), que además pasa sus pagos previos a
+  // abonos. Su payload no es un pedido del tarifario, aunque traiga campos que lo
+  // parezcan: se rechaza aquí, ANTES de calcular, numerar o crear nada.
+  if (cot.tipo === "manual") return { ok: false, error: "Esta es una cotización dinámica: se convierte en contrato desde su propia ficha." };
   if (cot.estado === "convertida" && cot.numero_contrato) return { ok: true, numero: cot.numero_contrato };
   if (cot.estado === "descartada") return { ok: false, error: "La cotización está descartada; no se puede convertir." };
 
@@ -1165,6 +1566,12 @@ export async function convertirCotizacion(id: number, pasajeros?: PasajeroReserv
 
   const ctx = await contextoCotizacion();
   if (!autorizaTenant(ctx, cot.tenant)) return { ok: false, error: "No tienes acceso a esta cotización." };
+  // #40 E3: una abierta vencida se rechaza ANTES de numerar o reservar sillas. Una oferta #63 la rechaza además la base (`aceptar_oferta_63`),
+  // que deja pasar el reintento de una aceptación ya preparada; aquí solo se corta lo que aún no empezó (sin oferta63).
+  // Salida ya pasada primero: no hay vigencia que renovar; se genera una nueva (también con oferta #63: nunca se acepta un viaje en el pasado).
+  if (abiertaConSalidaPasada(cot, hoyBogota())) return { ok: false, error: MENSAJE_SALIDA_PASADA };
+  if (cot.estado === "abierta" && !(cot.payload as { oferta63?: unknown } | null)?.oferta63 && cotizacionVencida(cot.vigencia_hasta, hoyBogota()))
+    return { ok: false, error: MENSAJE_COTIZACION_VENCIDA };
 
   const payload = cot.payload as unknown as ReservaInput;
   // Un contrato necesita pasajeros: usa los capturados ahora o los que ya trae la
@@ -1181,7 +1588,9 @@ export async function convertirCotizacion(id: number, pasajeros?: PasajeroReserv
   const asesor = asesorInterno?.trim() || payload.asesorInterno || "";
   // El contrato resultante conserva EXACTAMENTE el tenant de la cotización —
   // nunca se re-deriva de forma independiente (ver reservarDesdeTarifarioInterno).
-  const res = await reservarDesdeTarifarioInterno({ ...payload, pasajeros: pax, asesorInterno: asesor }, cot.tenant as Tenant);
+  // #63: el payload de una cotización en COP con TRM trae su `oferta63.huella`; viaja tal cual dentro del pedido y la
+  // reserva la compara con lo que se va a cobrar (precio, vuelo, fechas, TRM y tarifario publicado).
+  const res = await reservarDesdeTarifarioInterno({ ...payload, pasajeros: pax, asesorInterno: asesor, oferta63: payload.oferta63 ? { ...payload.oferta63, cotizacionId: id, trmProvisional: trmProvisional ?? null, monedaCobro: monedaCobro ?? null, trmCobro: trmCobro ?? null } : payload.oferta63 }, cot.tenant as Tenant);
   if (!res.ok) return res;
 
   await sb.from("cotizaciones").update({ estado: "convertida", numero_contrato: res.numero }).eq("id", id);
@@ -1226,6 +1635,9 @@ export type ItemCarritoPayload = {
   hotelNombre: string; destino: string | null; categoria: string; regimen: string;
   fechaIda: string | null; fechaRegreso: string | null; noches: number | null;
   habitaciones: Record<string, number>; ninos: number; ninos2: number; infantes: number; pax: number; precio: number;
+  // Edades EXACTAS de los menores que se cotizaron (y su cantidad), congeladas por checkout/actions.ts. AUSENTES en cotizaciones anteriores a que se
+  // guardaran: con menores declarados, esas cotizaciones no se pueden clasificar con seguridad y la conversión las rechaza (nunca se infieren).
+  edadesMenores?: number[]; cantidadMenores?: number;
   // Referencia ESTABLE del ítem (ver checkout/actions.ts::crearCotizacionCarrito)
   // — OPCIONAL: cotizaciones creadas ANTES de esta ronda no la traen. Cuando
   // falta, `resolverCondicionesTarifaParaConversion` (lib/calc/condicionesTarifa.ts)
@@ -1299,7 +1711,8 @@ type ItemCarritoBernaloConAsignacion = ItemCarritoBernaloPayload & { __posicione
 // INDEPENDIENTE (cada uno con su propio `pax`), así que quién viaja en cada
 // tour NO puede deducirse del grupo del hotel ni de todo el universo: se
 // declara explícitamente, con la misma convención de posiciones 1-based.
-type TourCarritoConAsignacion = TourCarritoPayload & { __posiciones: number[] };
+// `__idx` (#102): posición del tour en `payload.tours`, la llave `tour-N` de las líneas B2B congeladas en la cotización.
+type TourCarritoConAsignacion = TourCarritoPayload & { __posiciones: number[]; __idx: number };
 
 // Reservas de sillas consolidadas de UN grupo/contrato del carrito, EXACTAMENTE
 // como las recibirá `crear_pasajeros_contrato_multi` — fuente ÚNICA usada por
@@ -1492,19 +1905,67 @@ export async function convertirCotizacionCarrito(
     // — B17 (ronda 6): los tours también participan en la asignación
     // explícita, nunca heredan en silencio los pasajeros del hotel ni todos.
     asignacionesTours: number[][];
+    /** 235 (#90 F): moneda de COBRO elegida (OBLIGATORIA, COP o USD) y su TRM (solo si difiere de la moneda de la cotización). Una sola para todos los contratos. */
+    monedaCobro?: string | null;
+    trmCobro?: number | string | null;
+    /** 236 (#90 I): TRM de COSTOS (pesos por dólar). Solo se exige —y solo se guarda— si alguna obligación positiva con proveedores está en USD. Distinta de la TRM de cobro. */
+    trmCosto?: number | string | null;
+    /** #64: costo NETO y proveedor de cada servicio manual de la cotización (mismo orden que `payload.manuales`). La cotización no los guarda: se exigen aquí, antes de numerar. */
+    costosManuales?: ({ costo: number; proveedor: string } | null)[];
   }
 ): Promise<{ ok: true; numeros: string[]; advertencias?: string[] } | { ok: false; error: string }> {
   const sb = await createClient();
   const { data: cot } = await sb
     .from("cotizaciones")
-    .select("id, estado, tipo, payload, tenant, numero_contrato, detalle, moneda")
+    .select("id, estado, tipo, payload, tenant, numero_contrato, detalle, moneda, vigencia_hasta, fecha_salida")
     .eq("id", id).eq("tipo", "carrito").maybeSingle();
   if (!cot) return { ok: false, error: "Cotización no encontrada." };
+  // Acceso PRIMERO (antes de revelar o devolver nada de la cotización, incluso si ya está convertida).
+  // Sin tenant asignado no se convierte (ver migración 153 — nunca se asume
+  // un tenant por defecto), y el caller debe tener acceso a esa agencia.
+  if (!cot.tenant) return { ok: false, error: "Esta cotización no tiene agencia (tenant) asignada; no se puede convertir. Contacta a un administrador." };
+  const ctx = await contextoCotizacion();
+  if (!autorizaTenant(ctx, cot.tenant)) return { ok: false, error: "No tienes acceso a esta cotización." };
+  // Capturado en una constante (en vez de reusar `cot.tenant` más abajo,
+  // después de varios `await`): TypeScript no puede seguir garantizando el
+  // `!cot.tenant` de arriba a través de llamadas intermedias.
+  const tenantCotizacion = cot.tenant as Tenant;
+  // #102: ¿es una venta B2B ASISTIDA? Los términos viven CONGELADOS en la cotización (`payload.b2bAsistido`); una cotización con ese bloque
+  // jamás se convierte en contrato B2C. Bloque presente pero ilegible ⇒ falla cerrado. Quien convierte debe estar en la lista explícita de
+  // roles (ni `control_vuelo` ni un aliado) y en la agencia Mayorista — igual que quien la creó; se exige ANTES de devolver o escribir nada.
+  const lecturaB2B = leerPlanB2BDePayload(cot.payload);
+  if (!lecturaB2B.ok) return { ok: false, error: lecturaB2B.error };
+  const planB2BCot: PlanB2BCotizacion | null = lecturaB2B.plan;
+  if (planB2BCot) {
+    const actorB2B = await resolverActorAsistencia(sb);
+    if (!actorB2B.ok) return { ok: false, error: actorB2B.error };
+  }
+  // 235 (#90 F): MONEDA DE COBRO. Se valida AQUÍ, en el servidor, antes de leer o escribir nada (el selector de la pantalla no basta): es obligatoria
+  // y expresa —también si coincide con la moneda de la cotización—, solo el personal interno puede cobrar en la otra, y la otra exige una TRM positiva.
+  const monedaOfertaCarrito = monedaOfertaDeCotizacion(cot.moneda, cot.payload);
+  const { data: { user: actorCobro } } = await sb.auth.getUser();
+  const { data: perfilCobro } = actorCobro ? await sb.from("usuarios").select("rol, activo").eq("id", actorCobro.id).maybeSingle() : { data: null };
+  const esInternoCobro = perfilCobro?.activo === true && ROLES_INTERNOS.includes(perfilCobro.rol as never);
+  const vEleccionCobro = validarEleccionCarrito({ monedaOferta: monedaOfertaCarrito, monedaCobro: opts.monedaCobro, trmCobro: opts.trmCobro, esInterno: esInternoCobro });
+  if (!vEleccionCobro.ok) return { ok: false, error: vEleccionCobro.error };
+  const eleccionCobro = vEleccionCobro.eleccion;
   // Hallazgo confirmado (cierre 3F-4B): mismo criterio que `convertirCotizacion`
   // (persona, un solo contrato) — si esta cotización YA quedó "convertida" en
   // un intento anterior, un reintento (doble clic, red lenta, etc.) NUNCA debe
   // volver a crear contratos/sillas/CxP: devuelve los números ya generados.
   const detalleExistente = (cot.detalle ?? {}) as { contratos?: unknown; contratosPorGrupo?: Record<string, string>; agrupar?: string };
+  // 235: un REINTENTO no puede cambiar lo ya congelado (moneda ni TRM de cobro), ni siquiera si la cotización ya quedó convertida.
+  const cmpCobro = compararConCongelado({
+    eleccion: eleccionCobro,
+    congelado: leerCobroCongelado(cot.detalle),
+    hayContratos: Object.keys(detalleExistente.contratosPorGrupo ?? {}).length > 0
+      || (Array.isArray(detalleExistente.contratos) && detalleExistente.contratos.length > 0) || !!cot.numero_contrato,
+    monedaOferta: monedaOfertaCarrito,
+  });
+  if (!cmpCobro.ok) return { ok: false, error: cmpCobro.error };
+  // 236 (#90 I): la TRM de costos congelada tampoco cambia en un reintento, aunque ya esté todo convertido o el grupo pendiente no genere CxP en USD.
+  const cmpTrmCosto = compararTrmCostoConCongelada({ congelada: leerTrmCostoCongelada(cot.detalle), recibida: opts.trmCosto });
+  if (!cmpTrmCosto.ok) return { ok: false, error: cmpTrmCosto.error };
   if (cot.estado === "convertida") {
     const contratosPrevios = Array.isArray(detalleExistente.contratos)
       ? (detalleExistente.contratos as unknown[]).filter((n): n is string => typeof n === "string")
@@ -1513,6 +1974,12 @@ export async function convertirCotizacionCarrito(
     if (cot.numero_contrato) return { ok: true, numeros: [cot.numero_contrato] };
   }
   if (cot.estado === "descartada") return { ok: false, error: "La cotización está descartada; no se puede convertir." };
+  // #40 E3: una abierta vencida no crea NINGÚN contrato nuevo (ni de los grupos pendientes de una conversión parcial): se rechaza antes de numerar,
+  // reservar sillas o crear contrato/CxP/asientos. Los contratos ya creados no se tocan; una cotización completamente convertida ya salió arriba
+  // con sus números, y al renovar la vigencia el reintento completa solo los grupos pendientes.
+  if (abiertaConSalidaPasada(cot, hoyBogota())) return { ok: false, error: MENSAJE_SALIDA_PASADA };
+  if (cot.estado === "abierta" && cotizacionVencida(cot.vigencia_hasta, hoyBogota()))
+    return { ok: false, error: MENSAJE_COTIZACION_VENCIDA };
 
   // Hallazgo confirmado (idempotencia, ronda 2): la clave de progreso por
   // grupo (`claveDeGrupo`, más abajo) sale de `grupo.destino`, que solo
@@ -1535,15 +2002,6 @@ export async function convertirCotizacionCarrito(
     };
   }
 
-  // Sin tenant asignado no se convierte (ver migración 153 — nunca se asume
-  // un tenant por defecto), y el caller debe tener acceso a esa agencia.
-  if (!cot.tenant) return { ok: false, error: "Esta cotización no tiene agencia (tenant) asignada; no se puede convertir. Contacta a un administrador." };
-  const ctx = await contextoCotizacion();
-  if (!autorizaTenant(ctx, cot.tenant)) return { ok: false, error: "No tienes acceso a esta cotización." };
-  // Capturado en una constante (en vez de reusar `cot.tenant` más abajo,
-  // después de varios `await`): TypeScript no puede seguir garantizando el
-  // `!cot.tenant` de arriba a través de llamadas intermedias.
-  const tenantCotizacion = cot.tenant as Tenant;
 
   const payload = (cot.payload ?? {}) as {
     items?: (ItemCarritoPayload | ItemCarritoBernaloPayload)[]; tours?: TourCarritoPayload[];
@@ -1554,10 +2012,20 @@ export async function convertirCotizacionCarrito(
     // Cotizaciones anteriores pueden traer `costoNeto`: si aparece, la
     // conversión se rechaza antes de escribir (ver más abajo), aunque coincida.
     serviciosIncluidos?: ServicioIncluidoGuardado[];
+    /** #64: servicios manuales (vuelo libre u otro) con precio declarado; sin costo ni proveedor. */
+    manuales?: unknown[];
     cliente?: { nombres: string; apellidos: string; numeroDoc: string; telefono: string; email: string };
   };
   const itemsCrudos = payload.items ?? [];
   const tours = payload.tours ?? [];
+  // #64: el payload es JSON libre. Lo cotizado se comprueba contra el documento (detalle.items) y el plan B2B congelado; un bloque ausente o malformado
+  // con manuales declarados se rechaza (nunca se vuelve []), igual que uno que no coincida con lo cotizado.
+  const lecturaManuales = verificarManualesCotizados({
+    payload: cot.payload, detalleItems: ((cot.detalle ?? {}) as { items?: unknown }).items, plan: planB2BCot, moneda: cot.moneda ?? null,
+    detalleVuelos: ((cot.detalle ?? {}) as { vuelos?: unknown }).vuelos, refsHoteles: itemsCrudos.map((it) => it.ref).filter((r): r is string => typeof r === "string"),
+  });
+  if (!lecturaManuales.ok) return { ok: false, error: lecturaManuales.error };
+  const manualesCot: ServicioManual[] = lecturaManuales.manuales;
   const serviciosIncluidosCot = payload.serviciosIncluidos ?? [];
   // Formato anterior a PR #353: el payload guardaba el costo neto de los
   // incluidos (legible por `venta`). Esas cotizaciones NO se convierten —
@@ -1652,7 +2120,7 @@ export async function convertirCotizacionCarrito(
       }
       vistos.add(pos);
     }
-    toursAsign.push({ ...t, __posiciones: posiciones });
+    toursAsign.push({ ...t, __posiciones: posiciones, __idx: i });
   }
 
   // Ningún pasajero del universo declarado puede quedar sin viajar en NINGUNA
@@ -1685,7 +2153,9 @@ export async function convertirCotizacionCarrito(
   });
   if (errPasajerosVinculados) return { ok: false, error: errPasajerosVinculados };
 
-  type Grupo = { destino: string | null; items: ItemCarritoConAsignacion[]; tours: TourCarritoConAsignacion[] };
+  // #64: `manuales` = servicios manuales del grupo. Un VUELO va al grupo del hotel al que pertenece (`hotelRef`); un «otro servicio» (sin hotel) al primer grupo.
+  type ManualConvertir = { idx: number; m: ServicioManual; costo: number; proveedor: string };
+  type Grupo = { destino: string | null; items: ItemCarritoConAsignacion[]; tours: TourCarritoConAsignacion[]; manuales: ManualConvertir[] };
   // "todo": un solo contrato. "por_destino": agrupa por destino TANTO
   // hoteles como tours independientes — un destino que solo tenga tours
   // forma su propio contrato (B17), nunca se cuelga en silencio del grupo
@@ -1695,7 +2165,7 @@ export async function convertirCotizacionCarrito(
   // vista previa (ConvertirCarritoBtn).
   const grupos: Grupo[] = armarGruposConversion<ItemCarritoConAsignacion, TourCarritoConAsignacion>({
     modo: opts.agrupar, items, tours: toursAsign, hotelDeTour,
-  });
+  }).map((g) => ({ ...g, manuales: [] as ManualConvertir[] }));
 
   // W8 (§6.8): sin la clave de servicio no se puede crear la reserva. Antes
   // había aquí un respaldo al cliente de SESIÓN que nunca llegaba a escribir
@@ -1716,7 +2186,8 @@ export async function convertirCotizacionCarrito(
   // que `grupos`.
   const claveDeGrupo = (g: Grupo) => g.destino ?? "__sin_destino__";
   const contratosPorGrupo: Record<string, string> = { ...contratosPorGrupoExistente };
-  const detalleBase = (cot.detalle ?? {}) as Record<string, unknown>;
+  // 235: la elección de cobro viaja en CADA escritura de progreso, así que queda congelada desde el primer contrato (los reintentos la comparan arriba).
+  const detalleBase = { ...((cot.detalle ?? {}) as Record<string, unknown>), cobro: { moneda: eleccionCobro.monedaCobro, trm: eleccionCobro.trmCobro } } as Record<string, unknown>;
   const numeros: string[] = [];
   // Fallas NO bloqueantes acumuladas de TODOS los grupos/contratos de este
   // carrito — mismo criterio que ReservaResult, ver su comentario.
@@ -1726,6 +2197,50 @@ export async function convertirCotizacionCarrito(
     if (numeroExistente) numeros.push(numeroExistente);
   }
   const gruposPendientes = grupos.filter((g) => !contratosPorGrupo[claveDeGrupo(g)]);
+
+  // #64: cada servicio manual va al grupo de SU hotel (un vuelo) o al primero (otro servicio). Su costo y proveedor se exigen SOLO si ese grupo está pendiente (si ya se
+  // convirtió en un intento anterior, el contrato es un hecho consumado) y SIEMPRE antes de numerar: sin costo o proveedor no se crea nada.
+  if (manualesCot.length) {
+    if (!grupos.length) return { ok: false, error: "La cotización tiene servicios manuales pero ninguna unidad del carrito a la que asociarlos." };
+    for (let i = 0; i < manualesCot.length; i++) {
+      const m = manualesCot[i];
+      // Un vuelo, y un «otro servicio» de una comparativa (que conserva el hotel de su opción), van al grupo de SU hotel; un «otro servicio» sin hotel, al primero.
+      const g = m.clase === "vuelo" || m.hotelRef ? grupos.find((gr) => gr.items.some((it) => it.ref === m.hotelRef)) : grupos[0];
+      if (!g) return { ok: false, error: `${m.nombre}: el hotel al que pertenece ${m.clase === "vuelo" ? "el vuelo" : "el servicio"} no está entre las unidades de la cotización.` };
+      if (m.pax > opts.pasajeros.length) return { ok: false, error: `${m.nombre}: tiene ${m.pax} pasajeros pero solo capturaste ${opts.pasajeros.length}.` };
+      if (!primerGrupoPendiente(contratosPorGrupo, g.destino)) { g.manuales.push({ idx: i, m, costo: 0, proveedor: "" }); continue; }
+      if (!Array.isArray(opts.costosManuales) || opts.costosManuales.length !== manualesCot.length) {
+        return { ok: false, error: "Captura el costo y el proveedor de cada servicio manual antes de generar el contrato." };
+      }
+      const c = validarCostoManual(opts.costosManuales[i], m.moneda);
+      if (!c.ok) return { ok: false, error: `${m.nombre}: ${c.error}` };
+      g.manuales.push({ idx: i, m, costo: c.valor.costo, proveedor: c.valor.proveedor });
+    }
+  }
+
+  // #102: con grupos por convertir, el aliado de HOY (existe, activo, mismo tipo, mismo %) debe ser el congelado. Si cambió, se rechaza
+  // ANTES de reliquidar o numerar nada: nunca se recalcula la comisión en silencio con otro porcentaje. Un grupo ya convertido no se
+  // vuelve a juzgar (ese contrato es un hecho consumado).
+  // Identidad fiscal del ALIADO tal como está HOY en el catálogo (nunca del snapshot de la cotización): es el cliente del contrato en NETO.
+  let fiscalAliadoVivo: FiscalAliado | null = null;
+  if (planB2BCot && gruposPendientes.length) {
+    // Cobertura exacta del congelado: las unidades de TODOS los grupos (también los ya convertidos, para que el reintento verifique el conjunto
+    // completo) deben ser, una vez cada una, las líneas del plan. Una unidad faltante, repetida o ajena se rechaza antes de numerar.
+    const cobertura = verificarCoberturaLineasB2B(
+      planB2BCot,
+      grupos.map((g) => [...g.items.map((it) => it.ref ?? ""), ...g.tours.map((t) => `tour-${t.__idx}`), ...g.manuales.map((x) => `manual-${x.idx}`)]),
+    );
+    if (!cobertura.ok) return { ok: false, error: cobertura.error };
+    const aliadoVivo = await verificarAliadoVivoParaConversion(sb, planB2BCot);
+    if (!aliadoVivo.ok) return { ok: false, error: aliadoVivo.error };
+    fiscalAliadoVivo = aliadoVivo.aliado.fiscal;
+  }
+  // Quien firma como «elaboró»: el asesor elegido en pantalla o, si no se eligió (p. ej. superadmin), el usuario interno autenticado. Nunca se inventa.
+  const firmaConversion = nombreQuienElabora(opts.asesorInterno, (await resolverFirmasSesion(sb)).elabora);
+  // Plan B2B de cada contrato por crear (con los términos CONGELADOS y el PVP/impuesto VIVOS de sus unidades, ya comparados).
+  const planesB2BPorGrupo = new Map<string, PlanComisionReserva>();
+  // #64: impuesto no comisionable del grupo (hoteles + manuales). Es lo que se escribe en `ventas.impuesto`, de donde la base recalcula la comisión.
+  const impuestoB2BPorGrupo = new Map<string, number>();
 
   // ── Paso 1: validar TODO (precio autoritativo + cupos) antes de insertar ──
   // Fase 3F-4B: cada ítem se despacha por `modeloTarifario` a su propio
@@ -1743,6 +2258,9 @@ export async function convertirCotizacionCarrito(
     validadosPersona: { item: ItemCarritoPersonaConAsignacion; comp: ComputoReserva; incluidos: ServicioEfectivo[] }[];
     validadosBernalo: ValidadoBernalo[];
   }[] = [];
+  // Un rechazo de las guardas de este bloque ocurre ANTES de numerar y de escribir nada para el grupo que falla; si otros grupos ya se habían convertido
+  // (intento anterior parcial), el mensaje lo dice: esos contratos sí quedaron creados y no se tocan.
+  const conCreados = (motivo: string) => (numeros.length ? `${motivo} (los contratos ${numeros.join(", ")} sí quedaron creados y no se tocan; el grupo que falla no creó ningún contrato)` : motivo);
   for (const grupo of gruposPendientes) {
     const validadosPersona: { item: ItemCarritoPersonaConAsignacion; comp: ComputoReserva; incluidos: ServicioEfectivo[] }[] = [];
     const validadosBernalo: ValidadoBernalo[] = [];
@@ -1755,12 +2273,30 @@ export async function convertirCotizacionCarrito(
         validadosBernalo.push({ item: it, resultado: rBernalo.resultado, proveedoresServicios: rBernalo.proveedoresServicios });
         continue;
       }
+      // Salida dinámica cotizada en el carrito público: esta conversión no arma su vuelo por sistema todavía — falla cerrada y explícita.
+      if ((it.modulo as string) === "dinamico") return { ok: false, error: `${it.hotelNombre}: es una salida dinámica; genera su contrato desde Reservar (módulo dinámico).` };
+      // Menores: la fuente de verdad son las EDADES congeladas de ESTE ítem (como al cotizar), nunca los conteos ni los pasajeros de otro hotel. Una
+      // cotización con menores declarados y sin edades guardadas no se puede clasificar con seguridad: se rechaza ANTES de numerar.
+      const declarados = (it.ninos || 0) + (it.ninos2 || 0) + (it.infantes || 0);
+      const edadesCongeladas = it.edadesMenores;
+      if (edadesCongeladas === undefined && declarados > 0) {
+        return { ok: false, error: conCreados(`${it.hotelNombre}: esta cotización es anterior al registro de las edades de los menores y no se puede clasificar con seguridad. Vuelve al tarifario, escribe la edad de cada menor y genera una cotización nueva antes de convertir.`) };
+      }
+      if (edadesCongeladas !== undefined && (!Array.isArray(edadesCongeladas) || edadesCongeladas.some((e) => typeof e !== "number" || !Number.isFinite(e)))) {
+        return { ok: false, error: conCreados(`${it.hotelNombre}: las edades de los menores guardadas en la cotización no son válidas. Genera una cotización nueva antes de convertir.`) };
+      }
+      // El precio congelado es obligatorio y debe ser un número finito ≥ 0: ausente, nulo, texto o NaN/Infinity se rechaza (la guarda nunca se salta).
+      if (typeof it.precio !== "number" || !Number.isFinite(it.precio) || it.precio < 0) {
+        return { ok: false, error: conCreados(`${it.hotelNombre}: la cotización no trae un precio congelado válido, así que no se puede comprobar contra el precio actual. Vuelve al tarifario y genera una cotización nueva antes de convertir.`) };
+      }
       const reserva: ReservaInput = {
         paqueteId: it.paqueteId, bloqueoId: it.bloqueoId, modulo: it.modulo, hotelId: it.hotelId,
         fechaIda: it.modulo !== "bloqueo" ? (it.fechaIda ?? undefined) : undefined,
         fechaRegreso: it.modulo !== "bloqueo" ? (it.fechaRegreso ?? undefined) : undefined,
         categoria: it.categoria, regimen: it.regimen, habitaciones: it.habitaciones,
-        ninos: it.ninos, ninos2: it.ninos2, infantes: it.infantes || 0,
+        ...(edadesCongeladas !== undefined
+          ? { ninos: 0, ninos2: 0, infantes: 0, edadesMenores: [...edadesCongeladas], cantidadMenores: it.cantidadMenores ?? edadesCongeladas.length }
+          : { ninos: it.ninos, ninos2: it.ninos2, infantes: it.infantes || 0 }),
         cliente: { nombres: cliente.nombres, apellidos: cliente.apellidos, tipoDoc: "CC", numeroDoc: cliente.numeroDoc, telefono: cliente.telefono, email: cliente.email },
         tipoAsesor: "interno", asesorInterno: opts.asesorInterno || "", agenciaNombre: "", agenciaAsesor: "", freelanceNombre: "",
         // Cada ítem valida EXACTAMENTE con SUS pasajeros asignados (B11,
@@ -1769,9 +2305,19 @@ export async function convertirCotizacionCarrito(
         // cada uno con su propio `pax`, sin ninguna garantía de que
         // compartan el mismo subconjunto de `opts.pasajeros`.
         aliadoId: null, plazo: "", pasajeros: it.__posiciones.map((pos) => opts.pasajeros[pos - 1]), servicios: [],
+        // PVP fijo del infante (254): los tours cotizados para ESTE hotel (mismo `hotelRef` congelado) entran a la decisión igual que al cotizar.
+        opcionalesInfante: tours.filter((t) => t.hotelRef != null && t.hotelRef === it.ref).map((t) => opcionalDeTourCarrito({ categoria: t.categoria, precio: Number(t.precio) || 0 })),
       };
       const comp = await computarReserva(sb, reserva);
       if (!comp.ok) return { ok: false, error: `${it.hotelNombre}: ${comp.error}` };
+      // Lo recalculado debe ser lo cotizado: misma clasificación de menores y mismo precio congelado. Si el hotel, sus edades o las tarifas cambiaron,
+      // se detiene ANTES de numerar y de escribir nada.
+      if (edadesCongeladas !== undefined && (comp.data.numNinos !== (it.ninos || 0) || comp.data.numNinos2 !== (it.ninos2 || 0) || comp.data.numInfantes !== (it.infantes || 0))) {
+        return { ok: false, error: conCreados(`${it.hotelNombre}: la clasificación de los menores cambió desde que se generó la cotización (por la edad configurada del hotel). Vuelve al tarifario, recotiza y genera una cotización nueva antes de convertir.`) };
+      }
+      if (comp.data.precioVenta !== it.precio) {
+        return { ok: false, error: conCreados(`${it.hotelNombre}: el precio cambió desde que se generó la cotización (antes ${it.precio}, ahora ${comp.data.precioVenta} ${comp.data.monedaReserva}). Vuelve al tarifario, recotiza y genera una nueva cotización antes de convertir.`) };
+      }
       // Hallazgo confirmado (P2-1): mismo criterio que la guarda de moneda de
       // `validarBernaloParaConversion` — `cotizaciones.moneda` es la moneda
       // ÚNICA congelada para TODA la cotización (persona + Bernalo mixtos
@@ -1814,6 +2360,37 @@ export async function convertirCotizacionCarrito(
       });
       if (!vIncluidos.ok) return { ok: false, error: vIncluidos.error };
       validadosPersona.push({ item: it, comp: comp.data, incluidos: vIncluidos.incluidos });
+    }
+    // #64: cada vuelo del grupo se vuelve a comprobar contra la ciudad y la estadía que el servidor RECALCULA para SU hotel (la ida no antes de la entrada, el
+    // regreso no después de la salida), antes de numerar: lo cotizado no basta si el hotel ya no cuadra con el vuelo.
+    for (const x of grupo.manuales) {
+      if (x.m.clase !== "vuelo") continue;
+      const hp = validadosPersona.find((v) => v.item.ref === x.m.hotelRef);
+      const hb = validadosBernalo.find((v) => v.item.ref === x.m.hotelRef);
+      const hotelBase = hp
+        ? { ref: hp.item.ref ?? "", nombre: hp.comp.meta.hotel_nombre ?? hp.item.hotelNombre, destino: hp.comp.meta.destino_nombre ?? null, fechaIda: hp.comp.meta.fecha_ida, fechaRegreso: hp.comp.meta.fecha_regreso }
+        : hb ? { ref: hb.item.ref ?? "", nombre: hb.resultado.hotelNombre, destino: hb.resultado.hotelDestino, fechaIda: hb.resultado.salida.fechaIda, fechaRegreso: hb.resultado.salida.fechaRegreso } : null;
+      // IATA del destino desde el CATÁLOGO (la misma fuente que al cotizar); si falta, el contrato no se numera.
+      const hotel = hotelBase ? { ...hotelBase, destinoIata: await iataDeDestino(admin, hotelBase.destino) } : null;
+      if (!hotel) return { ok: false, error: `${x.m.nombre}: el hotel del vuelo no se pudo validar en este contrato.` };
+      const rv = validarVueloContraHotel(x.m, hotel);
+      if (!rv.ok) return { ok: false, error: `${x.m.nombre}: ${rv.error}` };
+    }
+    // #102: cada unidad del grupo debe valer EXACTAMENTE lo congelado en la cotización (PVP e impuesto). Si el precio, el impuesto o la
+    // moneda cambiaron después de cotizar, se rechaza antes de numerar. Bernalo no genera impuesto; los tours conservan su PVP cotizado.
+    if (planB2BCot) {
+      const vivas: LineaB2B[] = [
+        ...validadosPersona.map((v) => ({ clave: v.item.ref ?? "", pvp: v.comp.precioVenta, impuesto: v.comp.impuestoTotal })),
+        ...validadosBernalo.map((v) => ({ clave: v.item.ref ?? "", pvp: v.resultado.precioVenta, impuesto: 0 })),
+        ...grupo.tours.map((t) => ({ clave: `tour-${t.__idx}`, pvp: t.precio, impuesto: 0 })),
+        ...grupo.manuales.map((x) => lineaB2BManual(x.m, x.idx)),
+      ];
+      const cmpLineas = compararLineasConCongeladas(planB2BCot, vivas, cot.moneda ?? "");
+      if (!cmpLineas.ok) return { ok: false, error: cmpLineas.error };
+      const pg = planDeGrupoB2B(planB2BCot, vivas);
+      if (!pg.ok) return { ok: false, error: pg.error };
+      planesB2BPorGrupo.set(claveDeGrupo(grupo), pg.plan);
+      impuestoB2BPorGrupo.set(claveDeGrupo(grupo), vivas.reduce((s, l) => s + l.impuesto, 0));
     }
     gruposValidados.push({ grupo, validadosPersona, validadosBernalo });
   }
@@ -1946,6 +2523,106 @@ export async function convertirCotizacionCarrito(
     }
   }
 
+  // Moneda de la OFERTA de los contratos (#90 F): todas las unidades de cada grupo —hoteles Y tours— deben coincidir con la de la cotización. Se valida
+  // para TODOS los grupos pendientes ANTES de numerar o escribir el primero, y nunca se suman importes de monedas distintas. Un grupo de solo tours
+  // toma la moneda de la cotización (antes caía en COP). La elección de cobro se revalida contra esta moneda si la cotización no la traía.
+  const rMoneda = resolverMonedaOferta({
+    monedaCotizacion: cot.moneda,
+    grupos: gruposValidados.map(({ grupo, validadosPersona, validadosBernalo }) => ({
+      etiqueta: grupo.destino ?? "",
+      unidades: [
+        ...validadosPersona.map((v) => ({ origen: v.item.hotelNombre, moneda: v.comp.monedaReserva })),
+        ...validadosBernalo.map((v) => ({ origen: v.item.hotelNombre, moneda: v.resultado.moneda })),
+        ...grupo.tours.map((t) => ({ origen: t.nombre, moneda: t.moneda })),
+        ...grupo.manuales.map((x) => ({ origen: x.m.nombre, moneda: x.m.moneda })),
+      ],
+    })),
+  });
+  if (!rMoneda.ok) return { ok: false, error: rMoneda.error };
+  const monedaOfertaConversion = rMoneda.moneda;
+  // #102: la moneda con la que se congelaron los términos B2B debe ser la de la conversión (nunca se mezclan ni se reinterpretan importes).
+  if (planB2BCot && monedaOfertaConversion !== planB2BCot.moneda) return { ok: false, error: MENSAJE_TERMINOS_CAMBIARON };
+  if (monedaOfertaConversion !== (monedaOfertaCarrito === "USD" ? "USD" : "COP")) {
+    const revalidada = validarEleccionCarrito({ monedaOferta: monedaOfertaConversion, monedaCobro: opts.monedaCobro, trmCobro: opts.trmCobro, esInterno: esInternoCobro });
+    if (!revalidada.ok) return { ok: false, error: revalidada.error };
+    if (revalidada.eleccion.monedaCobro !== eleccionCobro.monedaCobro || revalidada.eleccion.trmCobro !== eleccionCobro.trmCobro) {
+      return { ok: false, error: "La moneda de la cotización no coincide con la de sus unidades; recotiza el carrito antes de elegir la moneda de cobro." };
+    }
+  }
+
+  // Obligaciones (CxP) de la conversión (#90 F): moneda REAL de cada costo, verificada ANTES de numerar o escribir — SOLO de las CxP que realmente se
+  // crearían con importe positivo. El costo de cada una sale de las MISMAS funciones y condiciones que la creación (lib/reservar/costosObligacionesCarrito.ts
+  // + `obligacionPositiva`, la misma que usa `pushCxP`), así que un costo USD en cero no bloquea y uno positivo sí. La ruta financiera vigente devenga una CxP
+  // sin marca de oferta #63 por su valor nominal: una obligación en USD se contabilizaría como pesos. Mientras no exista el equivalente en COP para el
+  // carrito, cualquier obligación positiva en USD (o de moneda indeterminable en un contrato USD) detiene la conversión, sin tocar ningún importe.
+  const idsServiciosObl = new Set<number>();
+  const idsBloqueosObl = new Set<number>();
+  for (const { grupo, validadosPersona } of gruposValidados) {
+    for (const t of grupo.tours) if (t.servicioId != null && t.paqueteId != null) idsServiciosObl.add(t.servicioId);
+    for (const v of validadosPersona) {
+      for (const sv of v.incluidos) idsServiciosObl.add(sv.servicioId);
+      if (v.item.modulo === "bloqueo" && v.item.bloqueoId) idsBloqueosObl.add(v.item.bloqueoId);
+    }
+  }
+  const monedaServicio = new Map<number, unknown>();
+  if (idsServiciosObl.size) {
+    const { data: filas, error: errMon } = await admin.from("servicios_adicionales").select("id, moneda").in("id", [...idsServiciosObl]);
+    if (errMon) return { ok: false, error: "No se pudo verificar la moneda de los servicios del carrito; no se crea ningún contrato. Intenta de nuevo." };
+    for (const r of filas ?? []) monedaServicio.set(r.id as number, (r as { moneda?: unknown }).moneda);
+  }
+  const bloqueosObl = new Map<number, { moneda: unknown; tarifa_para_empaquetar: unknown; fee_infante: unknown }>();
+  if (idsBloqueosObl.size) {
+    const { data: filas, error: errMon } = await admin.from("bloqueos_vuelo").select("id, moneda, tarifa_para_empaquetar, fee_infante").in("id", [...idsBloqueosObl]);
+    if (errMon) return { ok: false, error: "No se pudo verificar la moneda de los vuelos del carrito; no se crea ningún contrato. Intenta de nuevo." };
+    for (const r of filas ?? []) bloqueosObl.set(r.id as number, r as unknown as { moneda: unknown; tarifa_para_empaquetar: unknown; fee_infante: unknown });
+  }
+  let requiereTrmCosto = false;
+  for (const { grupo, validadosPersona, validadosBernalo } of gruposValidados) {
+    const obligaciones: Obligacion[] = [];
+    for (const v of validadosPersona) {
+      const { numMenoresDeDos, numInfantes } = menoresDelComputo(v.comp, { infantesDeclarados: v.item.infantes || 0 });
+      obligaciones.push({ origen: `Hotel ${v.comp.meta.hotel_nombre ?? v.item.hotelNombre}`, moneda: v.comp.monedaReserva, valor: costoHotelPersona(v.comp, numInfantes) });
+      const bq = v.item.modulo === "bloqueo" && v.item.bloqueoId ? bloqueosObl.get(v.item.bloqueoId) : undefined;
+      if (bq) obligaciones.push({ origen: `Vuelo de ${v.item.hotelNombre}`, moneda: bq.moneda, valor: costoAereoBloqueo(bq, v.comp.paxConSilla, numMenoresDeDos) });
+      for (const sv of v.incluidos) obligaciones.push({ origen: sv.nombre, moneda: monedaServicio.get(sv.servicioId), valor: sv.costoNeto });
+    }
+    for (const v of validadosBernalo) {
+      const res = v.resultado;
+      obligaciones.push({ origen: `Hotel ${v.item.hotelNombre}`, moneda: res.moneda, valor: res.costoHotelTotal });
+      for (const sv of res.serviciosIncluidos) obligaciones.push({ origen: sv.nombre, moneda: sv.moneda ?? res.moneda, valor: sv.costoNeto });
+      if (res.salida.tipo === "bloqueo" || res.salida.tipo === "empaquetado") {
+        const rV = res.salida.tipo === "bloqueo" ? await datosVueloBloqueo(admin, res.salida.id) : await datosVueloEmpaquetado(admin, res.salida.id);
+        if (!rV.ok) return { ok: false, error: `No se pudo validar el vuelo del hotel "${res.hotelNombre}": ${rV.error}` };
+        obligaciones.push({ origen: `Vuelo de ${v.item.hotelNombre}`, moneda: rV.data.moneda ?? res.moneda, valor: costoVueloBernalo(rV.data, res.paxTotal, res.paxConSilla) });
+      }
+    }
+    for (const t of grupo.tours) {
+      if (t.servicioId == null || t.paqueteId == null) continue;
+      try {
+        const liq = await liquidarCostoTour(admin, { servicioId: t.servicioId, paqueteId: t.paqueteId, pax: t.pax, fechaIda: t.fechaIda, fechaRegreso: t.fechaRegreso });
+        obligaciones.push({ origen: t.nombre, moneda: monedaServicio.get(t.servicioId), valor: costoTourParaCxP(liq) });
+      } catch (e) {
+        return { ok: false, error: `No se pudo calcular el costo del tour "${t.nombre}": ${e instanceof Error ? e.message : "error desconocido"}. No se crea ningún contrato.` };
+      }
+    }
+    for (const x of grupo.manuales) obligaciones.push({ origen: x.m.nombre, moneda: x.m.moneda, valor: x.costo });
+    const rObl = evaluarObligaciones({ monedaContrato: monedaOfertaConversion, obligaciones });
+    if (!rObl.ok) return { ok: false, error: rObl.error };
+    if (rObl.requiereTrmCosto) requiereTrmCosto = true;
+  }
+  // 236 (#90 I): TRM de COSTOS. Se decide AQUÍ, antes de numerar o escribir: con obligaciones en USD es obligatoria (solo personal interno) y un reintento no
+  // puede cambiar la ya congelada; sin ellas no se pide ni se guarda una nueva. Queda en `detalle.costo` junto a la elección de cobro desde el primer contrato.
+  const rTrmCosto = decidirTrmCosto({ requiere: requiereTrmCosto, recibida: opts.trmCosto, esInterno: esInternoCobro, congelada: leerTrmCostoCongelada(cot.detalle) });
+  if (!rTrmCosto.ok) return { ok: false, error: rTrmCosto.error };
+  const trmCostoConversion = rTrmCosto.trm;
+  if (trmCostoConversion != null) detalleBase.costo = { trm: trmCostoConversion };
+  // Orden de despliegue: la RPC de antes de la 236 IGNORA en silencio las claves del equivalente y crearía la CxP en USD sin él (se devengaría como pesos).
+  // Con obligaciones en USD se comprueba ANTES de numerar que la base ya tiene las columnas de la 236; si no, no se crea nada.
+  if (requiereTrmCosto) {
+    const { error: errEsquema236 } = await admin.from("cuentas_por_pagar").select("valor_cop_costo, trm_costo").limit(1);
+    if (errEsquema236) return { ok: false, error: "La base de datos todavía no tiene el equivalente en pesos de las cuentas por pagar (migración 236); no se crea ningún contrato. Avisa a soporte." };
+  }
+
   // `contratosPorGrupo`/`claveDeGrupo`/`detalleBase` ya se inicializaron
   // ANTES de Paso 1 (`gruposPendientes` los usó para excluir los grupos ya
   // convertidos de la reliquidación/validación) — `gruposValidados` acá
@@ -1954,12 +2631,8 @@ export async function convertirCotizacionCarrito(
   // llegado hasta Paso 1 en absoluto.
   for (const { grupo, validadosPersona, validadosBernalo } of gruposValidados) {
     const claveGrupo = claveDeGrupo(grupo);
-    const numRes = await siguienteNumeroContrato(tenantCotizacion);
-    if (!numRes.ok) return { ok: false, error: numRes.error };
-    const numero = numRes.numero;
     const totalHotelesGrupo = validadosPersona.length + validadosBernalo.length;
 
-    const clienteNombre = `${cliente.nombres} ${cliente.apellidos}`.trim();
     // Regla A.6/C.12: destino/fechas/precio/moneda del contrato se agregan
     // sobre AMBAS listas — una cotización mixta persona+Bernalo debe quedar
     // en UN contrato coherente, sin que la presencia de Bernalo cambie cómo
@@ -2003,8 +2676,21 @@ export async function convertirCotizacionCarrito(
     // — la suma de una sola parte más 0 tours/otros hoteles.
     const precioTotal = validadosPersona.reduce((s, v) => s + v.comp.precioVenta, 0)
       + validadosBernalo.reduce((s, v) => s + v.resultado.precioVenta, 0)
-      + grupo.tours.reduce((s, t) => s + t.precio, 0);
-    const monedaGrupo = validadosPersona[0]?.comp.monedaReserva ?? validadosBernalo[0]?.resultado.moneda ?? "COP";
+      + grupo.tours.reduce((s, t) => s + t.precio, 0)
+      + grupo.manuales.reduce((s, x) => s + x.m.precio, 0);
+    const monedaGrupo = monedaOfertaConversion; // validada arriba: todas las unidades del grupo (hoteles y tours) están en esta moneda
+    // #102: venta B2B asistida ⇒ el contrato nace B2B, del aliado congelado, y lo EXIGIBLE es el de su plan (PVP en comisionable; PVP −
+    // comisión en NETO). `precio_venta`, el total de cobro y todo lo que depende de él (saldo, factura, portal) parten de ese importe.
+    const planGrupoB2B = planB2BCot ? planesB2BPorGrupo.get(claveGrupo) ?? null : null;
+    if (planB2BCot && !planGrupoB2B) return { ok: false, error: MENSAJE_COTIZACION_B2B_INVALIDA };
+    const precioExigibleGrupo = planGrupoB2B ? planGrupoB2B.precioFinal : precioTotal;
+    // 235 (#90 F): el total a cobrar de ESTE contrato se convierte UNA sola vez desde su precio_venta (la oferta no cambia) y se congela en la cabecera.
+    // Se calcula ANTES de reservar el número: un total inválido no gasta consecutivo.
+    const cobroGrupo = cobroDeContratoCarrito({ precioVenta: precioExigibleGrupo, monedaContrato: monedaGrupo, eleccion: eleccionCobro });
+    if (!cobroGrupo.ok) return { ok: false, error: numeros.length ? `${cobroGrupo.error} (los contratos ${numeros.join(", ")} sí quedaron completos)` : cobroGrupo.error };
+    const numRes = await siguienteNumeroContrato(tenantCotizacion);
+    if (!numRes.ok) return { ok: false, error: numRes.error };
+    const numero = numRes.numero;
 
     // ── Universo LOCAL de este contrato (B13, ronda 5; B17, ronda 6) ─────
     // ÚNICAMENTE la unión de posiciones asignadas a las UNIDADES DE ESTE
@@ -2075,35 +2761,60 @@ export async function convertirCotizacionCarrito(
       // Conserva EXACTAMENTE el tenant de la cotización de origen (validado
       // arriba: no nulo, y el caller tiene acceso a él).
       tenant: tenantCotizacion,
-      cliente: clienteNombre,
-      cliente_documento: oNull(cliente.numeroDoc),
-      cliente_telefono: oNull(cliente.telefono),
-      cliente_email: oNull(cliente.email),
+      // Preview #403: NETO ⇒ cliente = aliado (catálogo) y la persona queda como titular de la reserva; PVP con comisión y B2C ⇒ cliente = la persona.
+      ...camposClienteVenta({ modo: planB2BCot?.modo_compra ?? null, fiscal: fiscalAliadoVivo, titular: titularDeCliente(cliente) }),
       destino: destinos.join(" · ") || grupo.destino,
       tipo_paquete: "carrito",
       moneda: monedaGrupo,
+      ...cobroGrupo.cobro,
       fecha_salida: fechasIda[0] ?? null,
       fecha_regreso: fechasReg.length ? fechasReg[fechasReg.length - 1] : null,
       pax: paxTotal,
       hotel: totalHotelesGrupo === 1
         ? (validadosPersona[0]?.comp.meta.hotel_nombre ?? validadosPersona[0]?.item.hotelNombre ?? validadosBernalo[0]?.resultado.hotelNombre ?? null)
         : totalHotelesGrupo === 0 ? null : `${totalHotelesGrupo} hoteles`,
-      precio_venta: precioTotal,
+      // Lo EXIGIBLE del contrato: el PVP del carrito (`precioTotal`) o, en una venta B2B asistida, el de su plan (PVP, o PVP − comisión en NETO).
+      precio_venta: precioExigibleGrupo,
       estado: "pendiente",
       // Migración 172 — mismo criterio que reservarDesdeTarifarioInterno.
       financiero_estado: "pendiente",
-      canal: "B2C",
-      tipo_asesor: "interno",
+      // #102: B2B asistido ⇒ canal B2B del aliado congelado, con su modalidad y su comisión (la fila de `aliados_b2b` la crea la base
+      // justo después). El asesor interno sigue siendo quien gestiona; el beneficiario es el aliado. Sin plan B2B: B2C de siempre.
+      ...(planB2BCot && planGrupoB2B
+        ? {
+            canal: "B2B",
+            tipo_asesor: planB2BCot.tipo_asesor,
+            modo_compra: planGrupoB2B.modoCompra,
+            comision_b2b: planGrupoB2B.comision,
+            comision_estado: planGrupoB2B.comisionEstado,
+            // Mismo impuesto que se usó para la base: la base de datos recalcula la comisión desde `ventas.impuesto`.
+            impuesto: impuestoB2BPorGrupo.get(claveGrupo) ?? 0,
+            aliado_id: planB2BCot.aliado_id,
+            agencia_nombre: planB2BCot.tipo_asesor === "agencia" ? planB2BCot.aliado_nombre : null,
+            freelance_nombre: planB2BCot.tipo_asesor === "freelance" ? planB2BCot.aliado_nombre : null,
+            // Candado de la base (238): una cotización convierte UNA vez cada grupo. Un doble envío simultáneo choca aquí, antes de escribir
+            // pasajeros, comisión o CxP; si el contrato se revierte por una falla, su fila desaparece y el reintento queda libre.
+            cotizacion_origen_id: id,
+            grupo_conversion: claveGrupo,
+          }
+        : { canal: "B2C", tipo_asesor: "interno" }),
       plazo: null,
-      asesor_firma_nombre: oNull(opts.asesorInterno ?? null),
-      asesor: oNull(opts.asesorInterno ?? null),
+      asesor_firma_nombre: oNull(firmaConversion),
+      asesor: oNull(firmaConversion),
       plan_nombre: totalHotelesGrupo === 1
         ? (validadosPersona[0] ? `${validadosPersona[0].item.categoria} · ${validadosPersona[0].item.regimen}` : `${validadosBernalo[0].item.categoria} · ${validadosBernalo[0].item.alimentacion}`)
         : totalHotelesGrupo === 0 ? (grupo.tours.length === 1 ? grupo.tours[0].nombre : `${grupo.tours.length} tours`) : `${totalHotelesGrupo} hoteles`,
       tours_traslados: resumenGrupo.toursTraslados,
       asistencia_medica: resumenGrupo.asistenciaMedica,
     });
-    if (ve) return { ok: false, error: ve.message };
+    if (ve) {
+      // #102: otra conversión de ESTA misma cotización ya creó (o está creando) este grupo ⇒ no se duplica nada. El número reservado en esta
+      // llamada queda sin usar; el contrato, la comisión y las CxP del otro intento son los válidos.
+      if (planB2BCot && ve.code === "23505" && /ux_ventas_conversion_cotizacion_grupo/.test(ve.message)) {
+        return { ok: false, error: "Esta cotización ya se está convirtiendo (o ya se convirtió) en otra solicitud. No se creó un contrato duplicado: recarga la cotización para ver su contrato." };
+      }
+      return { ok: false, error: ve.message };
+    }
 
     // Igual que en `reservarDesdeTarifarioInterno`: con el contrato ya
     // insertado, ninguna salida por error puede dejarlo vivo — sería un
@@ -2119,6 +2830,14 @@ export async function convertirCotizacionCarrito(
         error: `${motivo} · Además, el contrato ${numero} quedó creado a medias y no se pudo deshacer automáticamente (${rev.error ?? "motivo desconocido"}): revísalo antes de volver a intentarlo.${yaCreados}`,
       };
     };
+
+    // #102 · Comisión B2B del aliado: la crea la base (`registrar_comision_b2b_reserva`, migración 205 — valida usuario, rol, tenant,
+    // aliado y venta, recalcula el importe con la MISMA regla del plan y se niega a duplicar). En NETO queda marcada como descontada
+    // y no se puede pagar otra vez. Si falla, el contrato de este grupo se revierte completo (nunca un contrato B2B sin su comisión).
+    if (planB2BCot) {
+      const com = await registrarComisionReserva(sb, numero, planB2BCot.aliado_id);
+      if (!com.ok) return fallarYRevertirGrupo(com.error);
+    }
 
     // Pasajeros + responsables + sillas de TODOS los bloqueos del grupo, en
     // UNA sola llamada atómica (revisión de alto riesgo, ronda 3 — B6):
@@ -2263,19 +2982,27 @@ export async function convertirCotizacionCarrito(
     // (migración 171) desde sus propios parámetros — ver el mismo criterio en
     // `reservarDesdeTarifarioInterno`.
     const cxp: CxPFinanciera[] = [];
-    // Regla E.28: `moneda` es OPCIONAL y EXPLÍCITA — omitida (persona, sin
-    // cambios) sigue cayendo en el default 'COP' del RPC (regla A.16); un
-    // llamador Bernalo SIEMPRE la pasa (`resultado.moneda`), nunca depende
-    // de ese default.
-    const pushCxP = (tipo: string, servicio: string, valor: number, pr: ProvFact, nombreFallback?: string | null, servicioId?: number | null, moneda?: string) => {
-      if (!(valor > 0)) return;
+    // #90 F: `moneda` es la moneda REAL del COSTO (hotel, vuelo o servicio), y TODA CxP la lleva EXPLÍCITA — ya no se depende del default 'COP' del RPC ni
+    // se asigna la del contrato en bloque. Una obligación en USD (o indeterminable en un contrato USD) no se registra: ya la detuvo la verificación previa
+    // antes de numerar; esta es la segunda barrera (defensa en profundidad) y revierte el contrato del grupo.
+    const estadoObligaciones: { error: string | null } = { error: null };
+    const pushCxP = (tipo: string, servicio: string, valor: number, pr: ProvFact, nombreFallback: string | null | undefined, servicioId: number | null | undefined, monedaCosto: unknown) => {
+      const decision = decidirCxP({ origen: servicio, moneda: monedaCosto, valor, monedaContrato: monedaGrupo });
+      if (decision.accion === "omitir") return;
+      if (decision.accion === "rechazar") { estadoObligaciones.error ??= decision.error; return; }
+      // 236 (#90 I): una obligación en USD conserva su valor y moneda originales (a centavos, como la columna) y lleva su equivalente en COP
+      // congelado a la TRM de COSTOS — la misma para todo el contrato. Sin esa TRM no se crea (la revisión previa ya la exigió antes de numerar).
+      const enUsd = decision.moneda === "USD";
+      if (enUsd && trmCostoConversion == null) { estadoObligaciones.error ??= `${servicio}: falta la TRM de costos para su obligación en USD; no se crea el contrato.`; return; }
+      const valorTotal = enUsd ? Math.round(Math.max(0, valor) * 100 + 1e-9) / 100 : Math.max(0, valor);
       cxp.push({
         proveedor: pr?.nombre ?? nombreFallback ?? null, tipo_proveedor: tipo, servicio,
-        valor_total: Math.max(0, valor), fecha_obligacion: hoyServidor,
+        valor_total: valorTotal, fecha_obligacion: hoyServidor,
         aplica_retencion: pr?.aplica_retencion ?? false, pct_retencion: Number(pr?.pct_retencion) || 0, observaciones: OBS_AUTO,
         // Migración 170 — vínculo durable con el servicio del catálogo.
         servicio_id: servicioId ?? null,
-        ...(moneda ? { moneda } : {}),
+        moneda: decision.moneda,
+        ...(enUsd ? { valor_cop_costo: equivalenteCopCosto(valorTotal, trmCostoConversion as number), trm_costo: trmCostoConversion as number } : {}),
       });
     };
 
@@ -2288,7 +3015,8 @@ export async function convertirCotizacionCarrito(
 
     for (let hIdx = 0; hIdx < validadosPersona.length; hIdx++) {
       const { item: it, comp } = validadosPersona[hIdx];
-      const { meta, lineasHab, numNinos, numNinos2, pvpPorAcom, netoPorAcom, paxConSilla } = comp;
+      const { meta, lineasHab, numNinos, numNinos2, netoPorAcom, paxConSilla } = comp;
+      const { lineasMenores, numMenoresDeDos, numInfantes } = menoresDelComputo(comp, { infantesDeclarados: it.infantes || 0 });
 
       const partes = lineasHab.map((l) => `${l.habitaciones} hab ${ACOM_ROOM_LABEL[l.acom]} (${l.pax} pax)`);
       if (numNinos > 0) partes.push(`${numNinos} Niño 1`);
@@ -2343,7 +3071,7 @@ export async function convertirCotizacionCarrito(
       if (it.modulo === "bloqueo" && it.bloqueoId) {
         const { data: bq } = await admin
           .from("bloqueos_vuelo")
-          .select("aerolinea, record, ruta, tarifa_para_empaquetar, fecha_ida, fecha_regreso, vuelo_ida, vuelo_regreso, hora_salida_ida, hora_llegada_ida, hora_salida_reg, hora_llegada_reg, proveedores(nombre, aplica_retencion, pct_retencion)")
+          .select("aerolinea, moneda, record, ruta, tarifa_para_empaquetar, fee_infante, fecha_ida, fecha_regreso, vuelo_ida, vuelo_regreso, hora_salida_ida, hora_llegada_ida, hora_salida_reg, hora_llegada_reg, proveedores(nombre, aplica_retencion, pct_retencion)")
           .eq("id", it.bloqueoId).maybeSingle();
         if (bq) {
           const r = parseRuta(bq.ruta);
@@ -2363,9 +3091,11 @@ export async function convertirCotizacionCarrito(
           }
           await sb.from("contrato_vuelos").insert(tramos);
 
-          const costoAereo = (Number(bq.tarifa_para_empaquetar) || 0) * paxConSilla;
+          // Menores de 2 años: pagan SOLO el fee de infante del bloqueo (migración
+          // 226, precio = costo) y no ocupan silla (`paxConSilla` ya los excluye).
+          const costoAereo = costoAereoBloqueo(bq, paxConSilla, numMenoresDeDos);
           costoAereoTotal += costoAereo;
-          pushCxP("aereo", `Aéreo ${bq.aerolinea ?? ""}`.trim(), costoAereo, bq.proveedores as unknown as ProvFact, bq.aerolinea);
+          pushCxP("aereo", `Aéreo ${bq.aerolinea ?? ""}`.trim(), costoAereo, bq.proveedores as unknown as ProvFact, bq.aerolinea, null, (bq as { moneda?: unknown }).moneda);
 
           // Las sillas de ESTE bloqueo y los datos del pasajero sobre ellas ya
           // quedaron escritos arriba, en la MISMA transacción
@@ -2378,10 +3108,11 @@ export async function convertirCotizacionCarrito(
         numero_contrato: numero, descripcion: `${l.habitaciones} hab ${ACOM_ROOM_LABEL[l.acom]} (${l.pax} pax) · ${it.categoria} / ${it.regimen}`,
         adultos: l.pax, ninos: 0, tarifa_adulto: l.pvp, tarifa_nino: 0, orden: hIdx * 300 + i,
       }));
-      if (numNinos > 0 && pvpPorAcom["nino"] != null) itemsHotel.push({ numero_contrato: numero, descripcion: `Niño 1 · ${it.categoria} / ${it.regimen}`, adultos: 0, ninos: numNinos, tarifa_adulto: 0, tarifa_nino: pvpPorAcom["nino"], orden: hIdx * 300 + 50 });
-      if (numNinos2 > 0 && pvpPorAcom["nino2"] != null) itemsHotel.push({ numero_contrato: numero, descripcion: `Niño 2 · ${it.categoria} / ${it.regimen}`, adultos: 0, ninos: numNinos2, tarifa_adulto: 0, tarifa_nino: pvpPorAcom["nino2"], orden: hIdx * 300 + 51 });
-      const numInf = it.infantes || 0;
-      if (numInf > 0 && pvpPorAcom["infante"] != null) itemsHotel.push({ numero_contrato: numero, descripcion: `Infante · ${it.categoria} / ${it.regimen}`, adultos: 0, ninos: numInf, tarifa_adulto: 0, tarifa_nino: pvpPorAcom["infante"], orden: hIdx * 300 + 52 });
+      // Menores (migración 226): una fila por clase de hotel y por tarifa (menor
+      // de 2 años = tarifa de infante; 2+ = adulto en vuelo y servicios).
+      for (const lm of lineasMenores) {
+        itemsHotel.push({ numero_contrato: numero, descripcion: descripcionLineaMenor(lm, it.categoria, it.regimen), adultos: 0, ninos: lm.cantidad, tarifa_adulto: 0, tarifa_nino: lm.tarifa, orden: hIdx * 300 + ordenLineaMenor(lm) });
+      }
       // Servicios incluidos por GRUPO: su cargo (ya dentro de `comp.precioVenta`,
       // una sola vez) no va en ninguna fila de habitación/menores. El total del
       // documento del contrato es la suma de sus líneas, así que sin esta línea
@@ -2389,9 +3120,10 @@ export async function convertirCotizacionCarrito(
       // tiene, checkout/actions.ts). Misma regla y mismo helper: fail-closed.
       const rResidual = calcularResidualServiciosIncluidosPorGrupo({
         precioVenta: comp.precioVenta, lineasHab,
-        numNinos, tarifaNino: pvpPorAcom["nino"],
-        numNinos2, tarifaNino2: pvpPorAcom["nino2"],
-        numInfantes: numInf, tarifaInfante: pvpPorAcom["infante"],
+        numNinos: 0, tarifaNino: null,
+        numNinos2: 0, tarifaNino2: null,
+        numInfantes: 0, tarifaInfante: null,
+        lineasMenores,
       });
       if (!rResidual.ok) return fallarYRevertirGrupo(`${meta.hotel_nombre ?? it.hotelNombre}: ${rResidual.error}`);
       if (rResidual.residual > 0) {
@@ -2403,12 +3135,9 @@ export async function convertirCotizacionCarrito(
       }
       if (itemsHotel.length) await sb.from("contrato_items").insert(itemsHotel);
 
-      let costoHotel = 0;
-      for (const l of lineasHab) { const per = netoPorAcom[l.acom]; if (per != null) costoHotel += per * l.pax; }
-      if (numNinos > 0 && netoPorAcom["nino"] != null) costoHotel += netoPorAcom["nino"] * numNinos;
-      if (numNinos2 > 0 && netoPorAcom["nino2"] != null) costoHotel += netoPorAcom["nino2"] * numNinos2;
+      const costoHotel = costoHotelPersona(comp, numInfantes);
       costoHotelTotal += costoHotel;
-      pushCxP("hotel", `Hotel ${meta.hotel_nombre ?? it.hotelNombre}`.trim(), costoHotel, prH);
+      pushCxP("hotel", `Hotel ${meta.hotel_nombre ?? it.hotelNombre}`.trim(), costoHotel, prH, null, null, comp.monedaReserva);
     }
 
     // ── Ítems Bernalo del grupo (Fase 3F-4B) ──────────────────────────────
@@ -2511,10 +3240,9 @@ export async function convertirCotizacionCarrito(
         // más el cargo fijo por infante — nunca de `resultado.costoVueloTotal`
         // (que además de no incluir fee_infante, para "empaquetado" venía
         // del `tarifa_para_empaquetar`/reventa antes de este cierre).
-        const infantesBernalo = resultado.paxTotal - resultado.paxConSilla;
-        const costoVueloReal = dv.costo_neto * resultado.paxConSilla + dv.fee_infante * infantesBernalo;
+        const costoVueloReal = costoVueloBernalo(dv, resultado.paxTotal, resultado.paxConSilla);
         costoAereoTotal += costoVueloReal;
-        pushCxP("aereo", `Aéreo ${dv.aerolinea ?? ""}`.trim(), costoVueloReal, dv.proveedor, dv.aerolinea, null, resultado.moneda);
+        pushCxP("aereo", `Aéreo ${dv.aerolinea ?? ""}`.trim(), costoVueloReal, dv.proveedor, dv.aerolinea, null, dv.moneda ?? resultado.moneda);
       }
 
       // `ProveedorHotelBernalo` (camelCase: `aplicaRetencion`/`pctRetencion`)
@@ -2531,7 +3259,7 @@ export async function convertirCotizacionCarrito(
       pushCxP("hotel", `Hotel ${resultado.hotelNombre}`.trim(), resultado.costoHotelTotal, proveedorHotelCxP, null, null, resultado.moneda);
       for (const s of resultado.serviciosIncluidos) {
         if (s.costoNeto <= 0) continue;
-        pushCxP(tipoProveedorCxpServicio(s.categoria), s.nombre, s.costoNeto, proveedoresServicios.get(s.servicioId) ?? null, null, s.servicioId, resultado.moneda);
+        pushCxP(tipoProveedorCxpServicio(s.categoria), s.nombre, s.costoNeto, proveedoresServicios.get(s.servicioId) ?? null, null, s.servicioId, s.moneda ?? resultado.moneda);
       }
     }
 
@@ -2574,37 +3302,13 @@ export async function convertirCotizacionCarrito(
       for (const t of grupo.tours) {
         if (t.servicioId == null || t.paqueteId == null) continue; // legado, sin ids para re-liquidar
         try {
-          const { data: arm, error: armErr } = await admin
-            .from("armado_servicios")
-            .select("modo, servicios_adicionales(precio_persona, recargo_individual, categoria, nombre, liquidacion, proveedor_id, proveedores(nombre, aplica_retencion, pct_retencion))")
-            .eq("paquete_id", t.paqueteId).eq("servicio_id", t.servicioId).maybeSingle();
-          // Un error de lectura deja `arm` en null igual que un tour que ya no
-          // está en el paquete: sin distinguirlos, un fallo técnico se
-          // confundiría con "no aplica" y el tour quedaría cobrado sin CxP.
-          if (armErr) throw new Error(armErr.message);
-          if (!arm) continue;
-          const srv = arm.servicios_adicionales as unknown as { precio_persona: number | null; recargo_individual: number | null; categoria: string | null; nombre: string; liquidacion: string | null; proveedor_id: number | null; proveedores: ProvFact } | null;
-          const modo = (arm.modo as string) === "grupo" ? "grupo" : "persona";
-          const [{ data: gruposNet, error: gruposErr }, { data: tempsNet, error: tempsErr }] = await Promise.all([
-            admin.from("servicio_tarifa_pax").select("pax_desde, pax_hasta, precio, temporada").eq("servicio_id", t.servicioId),
-            admin.from("servicio_temporadas").select("nombre, fecha_inicio, fecha_fin, compra_inicio, compra_fin, prioridad, precio_persona, recargo_individual").eq("servicio_id", t.servicioId),
-          ]);
-          if (gruposErr ?? tempsErr) throw new Error((gruposErr ?? tempsErr)!.message);
-          const tempsRango: TemporadaRango[] = (tempsNet ?? []).map((tt) => toTemporadaRango(tt));
-          const nombreTemp = t.fechaIda && tempsRango.length ? temporadaVigenteParaFecha(new Date(`${t.fechaIda}T00:00:00`), tempsRango) : null;
-          const netoTemp = nombreTemp ? (tempsNet ?? []).find((tt) => tt.nombre === nombreTemp) ?? null : null;
-          const netoPersona = netoTemp?.precio_persona ?? srv?.precio_persona ?? null;
-          const gruposGeneral = (gruposNet ?? []).filter((g) => (g.temporada ?? "GENERAL") === "GENERAL").map((g) => ({ pax_desde: g.pax_desde, pax_hasta: g.pax_hasta, precio: g.precio }));
-          const gruposTempArr = nombreTemp ? (gruposNet ?? []).filter((g) => g.temporada === nombreTemp).map((g) => ({ pax_desde: g.pax_desde, pax_hasta: g.pax_hasta, precio: g.precio })) : [];
-          const grupos = gruposTempArr.length ? gruposTempArr : gruposGeneral;
-          const nochesTour = t.fechaIda && t.fechaRegreso ? (noches(t.fechaIda, t.fechaRegreso) || 1) : 1;
-          let costoNeto = precioServicio(modo, netoPersona, grupos, t.pax) * factorLiquidacion(srv?.liquidacion ?? null, nochesTour);
-          if (modo === "persona" && t.pax === 1) {
-            const recTemp = netoTemp?.recargo_individual;
-            costoNeto += Math.max(Number(recTemp ?? srv?.recargo_individual) || 0, 0);
-          }
-          if (Number.isFinite(costoNeto) && costoNeto > 0) {
-            pushCxP(tipoProveedorCxpServicio(normalizarCategoriaServicio(srv?.categoria)), srv?.nombre ?? t.nombre, costoNeto, srv?.proveedores ?? null, null, t.servicioId);
+          // Misma liquidación que la revisión previa (lib/reservar/costosObligacionesCarrito.ts::liquidarCostoTour). `null` = el tour ya no está en el paquete.
+          const liq = await liquidarCostoTour(admin, { servicioId: t.servicioId, paqueteId: t.paqueteId, pax: t.pax, fechaIda: t.fechaIda, fechaRegreso: t.fechaRegreso });
+          if (!liq) continue;
+          const srv = liq.srv;
+          const costoNeto = costoTourParaCxP(liq);
+          if (costoNeto > 0) {
+            pushCxP(tipoProveedorCxpServicio(normalizarCategoriaServicio(srv?.categoria)), srv?.nombre ?? t.nombre, costoNeto, srv?.proveedores ?? null, null, t.servicioId, monedaServicio.get(t.servicioId));
           }
         } catch (e) {
           // FALLA CERRADO (B7): el tour ya se le cobró al cliente como ítem
@@ -2612,6 +3316,41 @@ export async function convertirCotizacionCarrito(
           // técnico silencioso.
           return fallarYRevertirGrupo(`No se pudo calcular el costo del tour "${t.nombre}": ${e instanceof Error ? e.message : "error desconocido"}.`);
         }
+      }
+    }
+
+    // #64: servicios MANUALES del grupo. Ítem visible del contrato + (vuelo) tramo informativo SIN record ni sillas + CxP al proveedor con el costo
+    // capturado al convertir. Falla cerrado: el cliente ya lo paga como ítem del contrato, así que su deuda no puede faltar. Un vuelo manual nunca
+    // toca `sillas`/`bloqueos_vuelo`: no reserva ni inventa disponibilidad.
+    let costoOtrosManual = 0;
+    if (grupo.manuales.length) {
+      const { error: eItemsM } = await sb.from("contrato_items").insert(grupo.manuales.map((x, i) => ({
+        numero_contrato: numero, descripcion: descripcionContratoManual(x.m),
+        adultos: 0, ninos: 0, tarifa_adulto: 0, tarifa_nino: 0, modo_precio: "total", valor_total: x.m.precio, orden: 9500 + i,
+      })));
+      if (eItemsM) return fallarYRevertirGrupo(`No se pudo registrar el servicio manual en el contrato: ${eItemsM.message}`);
+      const { data: provCat, error: eProvM } = await admin.from("proveedores").select("nombre, aplica_retencion, pct_retencion");
+      if (eProvM) return fallarYRevertirGrupo(`No se pudo consultar el catálogo de proveedores: ${eProvM.message}`);
+      const norm = (t: string) => t.trim().replace(/\s+/g, " ").toLowerCase();
+      const tramosManual: Database["public"]["Tables"]["contrato_vuelos"]["Insert"][] = [];
+      for (const x of grupo.manuales) {
+        const { m } = x;
+        const prov = (provCat ?? []).find((p) => norm(p.nombre ?? "") === norm(x.proveedor)) ?? { nombre: x.proveedor, aplica_retencion: false, pct_retencion: 0 };
+        if (m.clase === "vuelo") {
+          // Mismas filas que el cuadro de vuelos de la cotización (sin el aviso de «sujeto a confirmación»: el costo y el proveedor ya quedaron registrados).
+          for (const t of tramosVueloManual(m, false)) {
+            tramosManual.push({ numero_contrato: numero, aerolinea: null, record: null, direccion: t.direccion as string, origen_codigo: t.origen_codigo as string | null, origen_ciudad: t.origen_ciudad as string | null, destino_codigo: t.destino_codigo as string | null, destino_ciudad: t.destino_ciudad as string | null, servicios: t.servicios as string, fecha_salida: t.fecha_salida as string | null, hora_salida: (t.hora_salida as string | null) ?? null, orden: 9500 + tramosManual.length });
+          }
+          costoAereoTotal += x.costo;
+          pushCxP("aereo", `Vuelo manual ${m.origen ?? ""} → ${m.destino ?? ""}`.trim(), x.costo, prov, x.proveedor, null, m.moneda);
+        } else {
+          costoOtrosManual += x.costo;
+          pushCxP("otro", `Servicio manual ${m.nombre}`, x.costo, prov, x.proveedor, null, m.moneda);
+        }
+      }
+      if (tramosManual.length) {
+        const { error: eVueloM } = await sb.from("contrato_vuelos").insert(tramosManual);
+        if (eVueloM) return fallarYRevertirGrupo(`No se pudo registrar el vuelo manual en el contrato: ${eVueloM.message}`);
       }
     }
 
@@ -2635,7 +3374,7 @@ export async function convertirCotizacionCarrito(
             // catálogo no lo devuelve, no se registra una CxP a nombre de nadie.
             const prov = provPorId.get(s.servicioId);
             if (!prov?.nombre) throw new Error(`el proveedor de «${s.nombre}» no se encontró en el catálogo`);
-            pushCxP(tipoProveedorCxpServicio(s.categoria), s.nombre, s.costoNeto, prov, null, s.servicioId);
+            pushCxP(tipoProveedorCxpServicio(s.categoria), s.nombre, s.costoNeto, prov, null, s.servicioId, monedaServicio.get(s.servicioId));
           }
         }
       } catch (e) {
@@ -2662,6 +3401,7 @@ export async function convertirCotizacionCarrito(
     // rentabilidad mostraba margen inflado y `asegurarCuentasPorPagar` veía
     // cobertura sin costo. Se calcula de la MISMA lista que se va a insertar,
     // así ambos números salen de una sola fuente.
+    if (estadoObligaciones.error) return fallarYRevertirGrupo(estadoObligaciones.error);
     const costoServiciosCarrito = cxp
       .filter((r) => r.servicio_id != null)
       .reduce((acc, r) => acc + (Number(r.valor_total) || 0), 0);
@@ -2670,10 +3410,11 @@ export async function convertirCotizacionCarrito(
     // chequeo de error — si cualquiera fallaba, este flujo seguía de largo y
     // devolvía los números de contrato como si todo hubiera quedado bien.
     const costosGrupo: CostosContrato = {};
-    if (costoAereoTotal > 0 || costoHotelTotal > 0 || costoServiciosCarrito > 0) {
+    if (costoAereoTotal > 0 || costoHotelTotal > 0 || costoServiciosCarrito > 0 || costoOtrosManual > 0) {
       costosGrupo.costo_aereo = costoAereoTotal;
       costosGrupo.costo_hotel = costoHotelTotal;
       if (costoServiciosCarrito > 0) costosGrupo.costo_receptivo = costoServiciosCarrito;
+      if (costoOtrosManual > 0) costosGrupo.otros_costos = costoOtrosManual;
     }
     // Igual que el flujo individual, debe cerrar el estado aunque el payload
     // financiero sea vacío.
@@ -2736,6 +3477,8 @@ export async function convertirCotizacionCarrito(
 export async function actualizarVigenciaCotizacion(id: number, vigenciaHasta: string): Promise<{ ok: boolean; error?: string }> {
   const ctx = await contextoCotizacion();
   if (!ctx.ok) return { ok: false, error: "No autorizado." };
+  // #40 E3: cambiar o renovar la vigencia es solo del personal interno; un aliado B2B activo de la misma agencia pasa `contextoCotizacion` pero no esta puerta.
+  if (ctx.interno === false) return { ok: false, error: "No tienes permiso para cambiar la vigencia." };
   const sb = await createClient();
   let lectura = sb.from("cotizaciones").select("fecha_salida").eq("id", id).eq("estado", "abierta");
   if (!ctx.superadmin) lectura = lectura.eq("tenant", ctx.tenant);
@@ -2856,7 +3599,41 @@ export type ReservaProgramaInput = {
   freelanceNombre: string;
   plazo: string;
   pasajeros: PasajeroReserva[];
+  /**
+   * #57 — Importe total que el usuario VIO y confirmó en la moneda del
+   * programa. El servidor recalcula con la regla única de precio
+   * (`lib/programas/precioReserva57.ts`); si no coincide, no crea contrato,
+   * CxP ni asientos: devuelve el nuevo importe (`cambioPrecio`) para que el
+   * usuario lo acepte de forma expresa. Obligatorio: sin él no se reserva.
+   */
+  precioConfirmado: number;
+  /**
+   * #88 — Solo en programas por hotel y vigencia (`modo_precio = 'hotel'`): hotel,
+   * modalidad de servicios y noches adicionales. `fechaIda` es la fecha de ENTRADA al
+   * hotel. En cualquier otro modo se ignora.
+   */
+  estancia?: { hotelId: number; modalidad: ModalidadServicios; nochesAdicionales: number };
+  /**
+   * #88 — TRM de COSTOS (pesos por dólar), solo programas por hotel y vigencia en USD: la ingresa el personal interno, se pide y valida ANTES de
+   * numerar y se congela en el registro de costo y en cada CxP en USD (modelo de la 236). Distinta de cualquier TRM de cobro. En COP se ignora.
+   */
+  trmCosto?: number | string | null;
+  /**
+   * PR #409 — B2B (agencia/freelance): aliado del CATÁLOGO y elección EXPRESA de la modalidad antes de generar el contrato:
+   * `comisionable` = PVP (se cobra el total y la comisión se liquida aparte) o `neta` = NETO (se cobra PVP − comisión; el aliado figura como cliente y
+   * la persona como titular). Sin ambos no se genera nada. El servidor recalcula con las reglas B2B de siempre y congela la elección en la venta.
+   */
+  aliadoId?: number | null;
+  modoCompra?: ModoCompra;
 };
+
+/** Salida de la vista previa de términos B2B (ver `terminosB2BPrograma`): el cuerpo común se detiene ANTES de numerar. */
+type CapturaTerminosB2B = { terminos?: TerminosVisibles };
+
+/** #57 — `ReservaResult` + el rechazo por cambio de precio (sin escrituras). */
+export type ReservaProgramaResultado =
+  | ReservaResult
+  | { ok: false; error: string; cambioPrecio: CambioPrecioPrograma };
 
 function sumarDias(fecha: string, dias: number): string {
   const d = new Date(`${fecha}T00:00:00`);
@@ -2873,7 +3650,7 @@ function sumarDias(fecha: string, dias: number): string {
 // las etapas atadas al mismo `flujo_id` — antes esta Server Action solo
 // medía "contexto" y nada más, lo que no permitía diagnosticar el botón
 // "Generar reserva" de Programas más allá del gate de autorización.
-export async function reservarPrograma(input: ReservaProgramaInput): Promise<ReservaResult> {
+export async function reservarPrograma(input: ReservaProgramaInput): Promise<ReservaProgramaResultado> {
   const flujoId = generarFlujoId();
   const medir = crearMedidor("reservar_programa", flujoId);
   // Estado técnico INTERNO (revisión posterior — ronda 2, mismo mecanismo que
@@ -2895,12 +3672,25 @@ export async function reservarPrograma(input: ReservaProgramaInput): Promise<Res
   }
 }
 
+/**
+ * PR #409 — Términos B2B (PVP o NETO) que el servidor liquidaría HOY para esta selección, para que el asesor los vea ANTES de generar. Corre el mismo
+ * cuerpo de `reservarPrograma` y se detiene antes de numerar: no crea contrato, CxP, comisión ni asiento. Mismo gate de personal interno.
+ */
+export async function terminosB2BPrograma(input: ReservaProgramaInput): Promise<{ ok: true; terminos: TerminosVisibles } | { ok: false; error: string }> {
+  const flujoId = generarFlujoId();
+  const salida: CapturaTerminosB2B = {};
+  const res = await reservarProgramaInterno(input, flujoId, crearMedidor("reservar_programa", flujoId), crearEstadoFlujo(), salida);
+  if (salida.terminos) return { ok: true, terminos: salida.terminos };
+  return { ok: false, error: res.ok ? "No se pudieron calcular los términos." : res.error };
+}
+
 async function reservarProgramaInterno(
   input: ReservaProgramaInput,
   flujoId: string,
   medir: Medidor,
-  estado: EstadoFlujo
-): Promise<ReservaResult> {
+  estado: EstadoFlujo,
+  vistaPrevia?: CapturaTerminosB2B,
+): Promise<ReservaProgramaResultado> {
   // Contexto fail-closed INTERNO (revisión posterior al PR #274, ronda 2):
   // reservarPrograma() es exportada y por lo tanto alcanzable directo por
   // red — este flujo NO es autoservicio B2B como convertirCotizacion*/
@@ -2953,7 +3743,7 @@ async function reservarProgramaInterno(
   // contratos/actions.ts): envuelve cada `return` de rechazo de esta sección
   // para que la etapa quede en "rechazado" sin duplicar el log de éxito
   // (mutuamente excluyentes) y sin reordenar ninguna validación.
-  const _rechazarValidacionPrograma = (resultado: ReservaResult): ReservaResult => {
+  const _rechazarValidacionPrograma = (resultado: ReservaProgramaResultado): ReservaProgramaResultado => {
     registrarEtapa("reservar_programa", flujoId, "validacion_programa", Math.round(performance.now() - _tValidacionProg0), "rechazado");
     return resultado;
   };
@@ -2980,12 +3770,13 @@ async function reservarProgramaInterno(
   // 1) Programa + precios (autoritativo). proveedores/neto se leen aquí.
   const { data: prog, error: progError } = await sb
     .from("programas")
-    .select("id, nombre, subtitulo, moneda, pct_mk, pct_fee_tarjeta, asistencia_medica_dia, modo_precio, dias, noches, proveedor_id, vigencia_desde, vigencia_hasta, edad_nino_min, edad_nino_max, edad_infante_max, condicion_pago_tipo, condicion_pago_pct_inicial, condicion_pago_dias_saldo, restriccion_comercial, proveedores(nombre, aplica_retencion, pct_retencion)")
+    .select("id, nombre, subtitulo, moneda, pct_mk, pct_fee_tarjeta, asistencia_medica_dia, modo_precio, dias, noches, proveedor_id, proveedor_asistencia_id, tipo_transporte, incluye_aereo, vigencia_desde, vigencia_hasta, edad_nino_min, edad_nino_max, edad_infante_max, condicion_pago_tipo, condicion_pago_pct_inicial, condicion_pago_dias_saldo, restriccion_comercial, regla_comisionable, regla_comisionable_modalidad_mk, regla_comisionable_modo, regla_comisionable_valor, regla_comisionable_pct_comision, regla_comisionable_impuesto_por_acomodacion, proveedores!programas_proveedor_id_fkey(nombre, aplica_retencion, pct_retencion)")
     .eq("id", input.programaId)
     .maybeSingle();
   if (progError) return _errorValidacionPrograma("error_consulta_programa", progError);
   if (!prog) return _rechazarValidacionPrograma({ ok: false, error: "Programa no encontrado." });
   const modoSalida = prog.modo_precio === "salida";
+  const modoHotel = esModoHotel(prog.modo_precio);
 
   // Vigencia
   if (prog.vigencia_desde && input.fechaIda < prog.vigencia_desde)
@@ -2994,41 +3785,116 @@ async function reservarProgramaInterno(
     return _rechazarValidacionPrograma({ ok: false, error: "La fecha de salida supera la vigencia del programa." });
 
   // Blackouts
+  // PR #409: cada blackout tiene un alcance («entrada» = solo la fecha de entrada, lo de siempre; «viaje» = cualquier día del viaje, noches adicionales
+  // incluidas). Si la lectura falla NO se reserva (error técnico, antes de numerar). Aquí se evalúa la entrada; el viaje, cuando se conoce su regreso.
   const { data: bos, error: bosError } = await sb
     .from("programa_blackouts")
-    .select("fecha_inicio, fecha_fin, motivo")
+    .select("fecha_inicio, fecha_fin, motivo, alcance")
     .eq("programa_id", input.programaId);
   if (bosError) return _errorValidacionPrograma("error_consulta_blackouts", bosError);
-  for (const b of bos ?? []) {
-    if (b.fecha_inicio && b.fecha_fin && input.fechaIda >= b.fecha_inicio && input.fechaIda <= b.fecha_fin)
-      return _rechazarValidacionPrograma({ ok: false, error: `La fecha cae en un blackout${b.motivo ? ` (${b.motivo})` : ""}.` });
-  }
+  const blackoutsPrograma = (bos ?? []) as BlackoutPrograma[];
+  const rangoEntrada = { desde: input.fechaIda, hasta: input.fechaIda };
+  const blackoutEntrada = blackoutQueAplica(blackoutsPrograma, rangoEntrada, "entrada");
+  if (blackoutEntrada) return _rechazarValidacionPrograma({ ok: false, error: mensajeBlackout(blackoutEntrada, rangoEntrada) });
 
   // 2) Precios — por categoría (matriz) o por salida (fecha × precio).
-  const netoDe: Record<string, { neto: number | null; bs: boolean }> = {};
-  let nochesViaje = prog.dias != null ? Math.max(0, prog.dias - 1) : null; // noches del viaje
+  //    #57: el PVP sale de la REGLA ÚNICA (`lib/programas/precioReserva57.ts`),
+  //    la misma que la ficha y el formulario: regla 161 (tarifa de proveedor y
+  //    modalidad de MK), fee bancario dentro del PVP y asistencia por las noches
+  //    de la salida o, si son NULL, por los días del programa. Antes se usaba
+  //    `pvpPrograma(neto)` suelto con `dias − 1` y sin la regla 161.
+  let fuentePrecio: FuentePrecio;
+  let nochesViaje = prog.dias != null ? Math.max(0, prog.dias - 1) : null; // noches del viaje (fecha de regreso)
   let etiquetaOpcion: string | null = null; // nombre de la opción elegida (categoría o salida)
   let hotelSalida: string | null = null;
+  // #88 — programas por hotel y vigencia: lo resuelto en la validación y usado al escribir.
+  let estanciaEntrada: EstanciaEntrada | undefined;
+  let modalidadHotel: ModalidadServicios | null = null;
+  let baseHotel: { desde: string; hasta: string } | null = null;
+  let diasPrograma: { dia: number; tipo_tramo: "dia" | "traslado_previo" | "traslado_posterior"; titulo: string | null; desayuno: boolean; almuerzo: boolean; cena: boolean; descripcion: string | null }[] = [];
+  let trasladoPrevio = false;
+  let trasladoPosterior = false;
+  let salidaFechas: { etiqueta: string | null; fecha_desde: string | null; fecha_hasta: string | null } | null = null;
+  let proveedorHotel: { id: number | null; nombre: string | null; aplicaRetencion: boolean; pctRetencion: number } | null = null;
+  let proveedorAsistencia: { id: number; nombre: string | null; aplicaRetencion: boolean; pctRetencion: number } | null = null;
+  let trmCosto: number | null = null;
 
   if (modoSalida) {
     if (!input.salidaId) return _rechazarValidacionPrograma({ ok: false, error: "Elige una salida." });
     const { data: sal, error: salError } = await sb
       .from("programa_salidas")
-      .select("etiqueta, columna, noches, neto_sencilla, neto_doble, neto_triple, neto_multiple, neto_nino, bajo_solicitud")
+      .select("etiqueta, columna, fecha_desde, fecha_hasta, noches, neto_sencilla, neto_doble, neto_triple, neto_multiple, neto_nino, bajo_solicitud, tarifa_sencilla, tarifa_doble, tarifa_triple, tarifa_multiple, impuesto_sencilla, impuesto_doble, impuesto_triple, impuesto_multiple")
       .eq("id", input.salidaId)
       .eq("programa_id", input.programaId)
       .maybeSingle();
     if (salError) return _errorValidacionPrograma("error_consulta_salida", salError);
     if (!sal) return _rechazarValidacionPrograma({ ok: false, error: "Salida no encontrada." });
-    const bs = sal.bajo_solicitud;
-    netoDe["sencilla"] = { neto: sal.neto_sencilla, bs };
-    netoDe["doble"] = { neto: sal.neto_doble, bs };
-    netoDe["triple"] = { neto: sal.neto_triple, bs };
-    netoDe["multiple"] = { neto: sal.neto_multiple, bs };
-    netoDe["nino"] = { neto: sal.neto_nino, bs };
+    fuentePrecio = { modo: "salida", salida: sal };
+    salidaFechas = { etiqueta: sal.etiqueta ?? null, fecha_desde: sal.fecha_desde ?? null, fecha_hasta: sal.fecha_hasta ?? null };
     if (sal.noches != null) nochesViaje = sal.noches;
     etiquetaOpcion = sal.etiqueta ?? null;
     hotelSalida = sal.columna ?? null;
+  } else if (modoHotel) {
+    // #88 — hotel × vigencia × modalidad de servicios. La BASE sale de la fila cuya
+    // vigencia cubre la fecha de ENTRADA y pasa por la regla única de #57 (como una
+    // "salida"); las noches adicionales se suman en `liquidarSeleccion`. Los netos se
+    // leen con la clave de servicio (el rol `venta` también reserva y no los ve) y la
+    // foto del contrato solo la escribe esa clave: sin ella no se reserva.
+    if (!process.env.SUPABASE_SERVICE_ROLE_KEY) return _errorValidacionPrograma("sin_service_role_para_estancia", null);
+    // Solo programas TERRESTRES: no se combina con aéreo (la base también lo impide: programas_modo_hotel_terrestre_chk).
+    const errorAereo = errorModoHotelConAereo(prog);
+    if (errorAereo) return _rechazarValidacionPrograma({ ok: false, error: errorAereo });
+    if (!["COP", "USD"].includes(String(prog.moneda).toUpperCase())) {
+      return _rechazarValidacionPrograma({ ok: false, error: "La moneda del programa debe ser COP o USD para reservarlo por hotel y vigencia." });
+    }
+    const est = input.estancia;
+    if (!est || !Number.isInteger(est.hotelId)) return _rechazarValidacionPrograma({ ok: false, error: "Elige el hotel del programa." });
+    if (!(MODALIDADES_SERVICIOS as readonly string[]).includes(est.modalidad)) {
+      return _rechazarValidacionPrograma({ ok: false, error: "Elige la modalidad de servicios (privados o regulares)." });
+    }
+    if (!esFechaIso(input.fechaIda)) return _rechazarValidacionPrograma({ ok: false, error: "La fecha de entrada al hotel no es válida." });
+    if (!Number.isInteger(est.nochesAdicionales) || est.nochesAdicionales < 0 || est.nochesAdicionales > MAX_NOCHES_ADICIONALES) {
+      return _rechazarValidacionPrograma({ ok: false, error: `Las noches adicionales deben ser un número entero entre 0 y ${MAX_NOCHES_ADICIONALES}.` });
+    }
+    const incluidas = nochesIncluidasPrograma(prog);
+    if (!incluidas.ok) return _rechazarValidacionPrograma({ ok: false, error: incluidas.error });
+    const nochesIncluidas = incluidas.noches;
+    const catalogoCliente = clienteCatalogoHoteles(sb);
+    const cat = await cargarCatalogoHoteles88(catalogoCliente, input.programaId);
+    if (!cat.ok) return _errorValidacionPrograma("error_consulta_catalogo_hoteles", cat.error);
+    const hotel = cat.catalogo.hoteles.find((h) => h.id === est.hotelId);
+    if (!hotel) return _rechazarValidacionPrograma({ ok: false, error: "El hotel elegido no pertenece a este programa." });
+    const base = resolverBaseHotel(cat.catalogo.base.filter((b) => b.hotelId === hotel.id), est.modalidad, input.fechaIda, hotel.nombre);
+    if (!base.ok) return _rechazarValidacionPrograma({ ok: false, error: base.error });
+    const { data: diasRows, error: diasError } = await sb
+      .from("programa_dias").select("dia, tipo_tramo, titulo, desayuno, almuerzo, cena, descripcion").eq("programa_id", input.programaId).order("dia");
+    if (diasError) return _errorValidacionPrograma("error_consulta_itinerario", diasError);
+    diasPrograma = diasRows ?? [];
+    trasladoPrevio = diasPrograma.some((d) => d.tipo_tramo === "traslado_previo");
+    trasladoPosterior = diasPrograma.some((d) => d.tipo_tramo === "traslado_posterior");
+    // El itinerario debe traer los días 1..N (siempre; con noches adicionales además se desplaza el ÚLTIMO día y la recogida).
+    {
+      const errorItinerario = validarItinerarioCompleto(diasPrograma, prog.dias ?? null);
+      if (errorItinerario) return _rechazarValidacionPrograma({ ok: false, error: errorItinerario });
+    }
+    if (hotel.proveedorId != null) {
+      const { data: pv, error: pvError } = await catalogoCliente.from("proveedores").select("nombre, aplica_retencion, pct_retencion").eq("id", hotel.proveedorId).maybeSingle();
+      if (pvError) return _errorValidacionPrograma("error_consulta_proveedor_hotel", pvError);
+      proveedorHotel = { id: hotel.proveedorId, nombre: pv?.nombre ?? null, aplicaRetencion: pv?.aplica_retencion ?? false, pctRetencion: Number(pv?.pct_retencion) || 0 };
+    }
+    fuentePrecio = { modo: "salida", salida: salidaPrecioDesdeBase(base.fila) };
+    nochesViaje = nochesIncluidas + est.nochesAdicionales;
+    etiquetaOpcion = `${hotel.nombre} · ${ETIQUETA_MODALIDAD[est.modalidad]}`;
+    hotelSalida = hotel.nombre;
+    modalidadHotel = est.modalidad;
+    baseHotel = { desde: base.fila.desde, hasta: base.fila.hasta };
+    estanciaEntrada = {
+      hotel,
+      tarifasNoche: tarifasNocheConPvp(prog, cat.catalogo.noches.filter((t) => t.hotelId === hotel.id)),
+      fechaEntrada: input.fechaIda,
+      nochesIncluidas,
+      nochesAdicionales: est.nochesAdicionales,
+    };
   } else {
     const { data: precios, error: preciosError } = await sb
       .from("programa_precios")
@@ -3036,87 +3902,73 @@ async function reservarProgramaInterno(
       .eq("categoria_id", input.categoriaId);
     if (preciosError) return _errorValidacionPrograma("error_consulta_precios", preciosError);
     if (!precios?.length) return _rechazarValidacionPrograma({ ok: false, error: "La categoría no tiene precios cargados." });
-    for (const p of precios) netoDe[p.acomodacion] = { neto: p.neto, bs: p.bajo_solicitud };
+    fuentePrecio = { modo: "categoria", precios };
   }
-
-  // PVP de venta: (neto + asistencia médica/día × días) → +markup → +fee bancario.
-  // La asistencia es un costo neto más, así que entra ANTES del markup.
-  // En modo salida la asistencia médica usa las noches de la salida.
-  const diasPvp = modoSalida && nochesViaje != null ? nochesViaje : prog.dias;
-  const pvp = (neto: number) =>
-    pvpPrograma(neto, {
-      pctMk: prog.pct_mk,
-      asistenciaDia: prog.asistencia_medica_dia,
-      dias: diasPvp,
-      pctFee: prog.pct_fee_tarjeta,
-      moneda: prog.moneda,
-    });
 
   // 3) Liquidación por HABITACIONES (igual que hoteles): pax = hab × pax_tarifa
   //    (Doble ⇒ 2 pax, Triple ⇒ 3, Sencilla ⇒ 1). El precio de la matriz es por
   //    persona, así que 1 habitación = pax_tarifa × precio/persona. Niños aparte.
-  const habs = Object.entries(input.paxPorAcom).filter(([, n]) => (Number(n) || 0) > 0);
-  if (!habs.length && (input.ninos || 0) <= 0)
+  //    La FORMA de la solicitud (sin habitaciones ni niños, sin pasajeros) se
+  //    valida aquí, como siempre; los errores de PRECIO (acomodación o niño sin
+  //    tarifa) los devuelve la liquidación compartida.
+  const hayHabitaciones = Object.values(input.paxPorAcom).some((n) => (Number(n) || 0) > 0);
+  if (!hayHabitaciones && (Number(input.ninos) || 0) <= 0)
     return _rechazarValidacionPrograma({ ok: false, error: "Indica cuántas habitaciones reservas en cada acomodación." });
+  const liq = liquidarSeleccion({
+    programa: prog,
+    fuente: fuentePrecio,
+    habitaciones: input.paxPorAcom,
+    ninos: input.ninos,
+    infantes: input.infantes,
+    estancia: estanciaEntrada,
+  });
+  // El mensaje NO lleva cifras de costo (neto del proveedor, costo atribuible): el rol `venta`
+  // también reserva programas y no debe verlas; tampoco se loguean (los logs no llevan datos de negocio).
+  if (!liq.ok) return _rechazarValidacionPrograma({ ok: false, error: liq.error });
+  const { precioVenta, costoNeto, totalPax } = liq;
+  if (totalPax <= 0) return _rechazarValidacionPrograma({ ok: false, error: "Debe haber al menos un pasajero." });
+  const numInfantes = Math.max(0, Math.trunc(Number(input.infantes) || 0));
 
-  let precioVenta = 0;
-  let costoNeto = 0;
-  let totalPax = 0;
-  const items: { numero_contrato: string; descripcion: string; adultos: number; ninos: number; tarifa_adulto: number; tarifa_nino: number; orden: number }[] = [];
+  const items: { numero_contrato: string; descripcion: string; adultos: number; ninos: number; tarifa_adulto: number; tarifa_nino: number; orden: number; modo_precio?: "total" | "por_persona"; valor_total?: number | null }[] = [];
   let catNombre: string | null = etiquetaOpcion;
-  if (!modoSalida) {
+  if (!modoSalida && !modoHotel) {
     const { data: catData, error: catError } = await sb.from("programa_categorias").select("nombre").eq("id", input.categoriaId).maybeSingle();
     if (catError) return _errorValidacionPrograma("error_consulta_categoria", catError);
     catNombre = catData?.nombre ?? null;
   }
 
   let orden = 0;
-  for (const [acom, habRaw] of habs) {
-    const nHab = Number(habRaw) || 0;
-    const info = netoDe[acom];
-    if (!info || info.neto == null || info.bs)
-      return _rechazarValidacionPrograma({ ok: false, error: `La acomodación ${acom} no tiene precio (o es "a solicitud") en esta categoría.` });
-    const paxTarifa = paxDeAcomodacion(acom); // pax por habitación (cuadruple = 4)
-    const nPax = nHab * paxTarifa;
-    const precioPax = pvp(info.neto);
-    const label = ACOM_ROOM_LABEL[acom as AcomRoom] ?? (acom === "cuadruple" ? "Cuádruple" : acom);
-    precioVenta += precioPax * nPax;
-    costoNeto += info.neto * nPax;
-    totalPax += nPax;
+  for (const l of liq.lineas) {
+    const label = ACOM_ROOM_LABEL[l.acomodacion as AcomRoom] ?? (l.acomodacion === "cuadruple" ? "Cuádruple" : l.acomodacion);
     items.push({
       numero_contrato: "",
-      descripcion: `${nHab} hab ${label} (${nPax} pax)${catNombre ? ` · ${catNombre}` : ""}`,
-      adultos: nPax,
+      descripcion: `${l.habitaciones} hab ${label} (${l.pax} pax)${catNombre ? ` · ${catNombre}` : ""}`,
+      adultos: l.pax,
       ninos: 0,
-      tarifa_adulto: precioPax,
+      tarifa_adulto: l.pvpUnit,
       tarifa_nino: 0,
       orden: orden++,
     });
   }
   // Niños (por cantidad, no por habitación)
-  if ((input.ninos || 0) > 0) {
-    const info = netoDe["nino"];
-    if (!info || info.neto == null || info.bs)
-      return _rechazarValidacionPrograma({ ok: false, error: `Esta categoría no tiene precio de niño (o es "a solicitud").` });
-    const n = Number(input.ninos) || 0;
-    const precioPax = pvp(info.neto);
-    precioVenta += precioPax * n;
-    costoNeto += info.neto * n;
-    totalPax += n;
+  if (liq.nino) {
     items.push({
       numero_contrato: "",
-      descripcion: `${n} niño(s)${catNombre ? ` · ${catNombre}` : ""}`,
+      descripcion: `${liq.nino.cantidad} niño(s)${catNombre ? ` · ${catNombre}` : ""}`,
       adultos: 0,
-      ninos: n,
+      ninos: liq.nino.cantidad,
       tarifa_adulto: 0,
-      tarifa_nino: precioPax,
+      tarifa_nino: liq.nino.pvpUnit,
       orden: orden++,
     });
   }
-  // Los infantes son pasajeros adicionales (sin silla), por cantidad.
-  const numInfantes = Math.max(0, Math.trunc(Number(input.infantes) || 0));
-  totalPax += numInfantes;
-  if (totalPax <= 0) return _rechazarValidacionPrograma({ ok: false, error: "Debe haber al menos un pasajero." });
+  // #88 — noches adicionales: líneas en modo "total" (una por acomodación y unidad, con
+  // sus fechas exactas). Su suma es EXACTAMENTE el PVP de las noches: nada se cobra dos veces.
+  if (liq.estancia && estanciaEntrada) {
+    for (const it of itemsContratoNoches(liq.estancia.noches, estanciaEntrada.hotel.nombre)) {
+      items.push({ numero_contrato: "", descripcion: it.descripcion, adultos: 0, ninos: 0, tarifa_adulto: 0, tarifa_nino: 0, modo_precio: "total", valor_total: it.valorTotal, orden: orden++ });
+    }
+  }
 
   // 3.b) Validación de pasajeros por edad (umbrales del programa, según el
   //      proveedor). Si hay fechas de nacimiento, la clasificación real debe
@@ -3143,6 +3995,115 @@ async function reservarProgramaInterno(
     }
   }
 
+  // 3.b2) #88 — asistencia y TRM de costos, ANTES de confirmar el precio y de numerar. La asistencia de la estancia COMPLETA (días incluidos +
+  //       noches adicionales, solo quienes pagan) es un costo con su proveedor y su CxP: si es positiva y falta el proveedor no se reserva.
+  //       En USD el personal interno ingresa la TRM de costos (expresa, positiva y finita): sin ella no hay contrato.
+  if (estanciaEntrada && liq.estancia) {
+    if (liq.costoAsistencia > 0) {
+      if (prog.proveedor_asistencia_id == null) {
+        return _rechazarValidacionPrograma({
+          ok: false,
+          error: "La asistencia médica de este programa tiene costo y no tiene configurado el proveedor de la asistencia: asígnalo en la pestaña General del programa antes de reservar.",
+        });
+      }
+      const { data: pa, error: paError } = await clienteCatalogoHoteles(sb).from("proveedores").select("id, nombre, aplica_retencion, pct_retencion").eq("id", prog.proveedor_asistencia_id).maybeSingle();
+      if (paError) return _errorValidacionPrograma("error_consulta_proveedor_asistencia", paError);
+      if (!pa) {
+        return _rechazarValidacionPrograma({ ok: false, error: "El proveedor de la asistencia configurado en el programa ya no existe en el catálogo: corrígelo en la pestaña General antes de reservar." });
+      }
+      proveedorAsistencia = { id: pa.id, nombre: pa.nombre, aplicaRetencion: pa.aplica_retencion ?? false, pctRetencion: Number(pa.pct_retencion) || 0 };
+    }
+    // (La vista previa de términos B2B no pide la TRM de costos: es un dato de costos y no entra a PVP/NETO; al generar sigue siendo obligatoria.)
+    if (!vistaPrevia && String(prog.moneda).toUpperCase() === "USD") {
+      // Personal interno: el contexto de esta acción ya exige un rol con escritura sobre ventas (ningún rol externo llega aquí).
+      const dTrm = decidirTrmCosto({ requiere: liq.costoNeto > 0 || liq.costoAsistencia > 0, recibida: input.trmCosto, esInterno: true, congelada: null });
+      if (!dTrm.ok) return _rechazarValidacionPrograma({ ok: false, error: dTrm.error });
+      trmCosto = dTrm.trm;
+    }
+  }
+
+  // 3.b.bis) PR #409 — Itinerario completo (días 1..N, sin faltantes ni repetidos) en TODOS los modos, y blackouts de alcance «viaje» sobre el rango real del
+  //          viaje (entrada → regreso, noches adicionales incluidas). Ambos antes de numerar y de toda escritura. Un fallo de lectura bloquea la reserva.
+  if (!estanciaEntrada) {
+    const { data: diasRows, error: diasError } = await sb.from("programa_dias").select("dia, tipo_tramo").eq("programa_id", input.programaId);
+    if (diasError) return _errorValidacionPrograma("error_consulta_itinerario", diasError);
+    const itinerarioPrograma = estadoItinerario(diasRows ?? [], prog.dias ?? null);
+    if (!itinerarioPrograma.completo) return _rechazarValidacionPrograma({ ok: false, error: itinerarioPrograma.mensaje ?? "El itinerario del programa está incompleto." });
+    ({ previo: trasladoPrevio, posterior: trasladoPosterior } = trasladosDeItinerario(diasRows));
+  }
+  // Salida: viaje PUNTUAL que empieza en su fecha_desde (el formulario no tiene selector de fecha en este modo). Una reserva directa con OTRA fecha, una
+  // salida sin fecha o, con traslado, un recorrido que no llega a su fecha_hasta daría un contrato con fechas contradictorias: se rechaza ANTES de numerar
+  // (y la vista previa B2B también). Ver lib/programas/trasladosFechas.ts.
+  if (salidaFechas) {
+    const errorFechas = errorFechasSalida({ ...salidaFechas, noches: nochesViaje }, input.fechaIda, { previo: trasladoPrevio, posterior: trasladoPosterior });
+    if (errorFechas) return _rechazarValidacionPrograma({ ok: false, error: errorFechas });
+  }
+  // El traslado se cuenta UNA vez en las fechas del viaje y del contrato; las noches hoteleras, el precio y las CxP no lo ven (nochesViaje sigue igual).
+  const nochesFechas = estanciaEntrada ? estanciaEntrada.nochesIncluidas + estanciaEntrada.nochesAdicionales : nochesViaje ?? (prog.dias ? Math.max(0, prog.dias - 1) : null);
+  const rangoCalculado = nochesFechas != null
+    ? rangoViajeConTraslados(estanciaEntrada ? "hotel" : "salida", input.fechaIda, nochesFechas, { previo: trasladoPrevio, posterior: trasladoPosterior })
+    : null;
+  const regresoViaje = rangoCalculado?.hasta ?? null;
+  const rangoDelViaje = { desde: rangoCalculado?.desde ?? input.fechaIda, hasta: regresoViaje ?? input.fechaIda };
+  const blackoutViaje = blackoutQueAplica(blackoutsPrograma, rangoDelViaje, "viaje");
+  if (blackoutViaje) return _rechazarValidacionPrograma({ ok: false, error: mensajeBlackout(blackoutViaje, rangoDelViaje) });
+
+  // 3.c) #57 — CONFIRMACIÓN DEL PRECIO. El importe que el usuario vio y confirmó
+  //      debe ser el que cobra el servidor con la regla única. Si cambió (el
+  //      programa se editó entre la lectura y la confirmación, o es el segundo
+  //      cambio de un reintento), se rechaza AQUÍ: antes de numerar y de toda
+  //      escritura (sin contrato, CxP ni asientos), devolviendo el nuevo importe
+  //      para que el usuario lo acepte de forma expresa. Cada intento recalcula.
+  // (La vista previa de términos B2B no confirma importes: solo muestra lo que el servidor liquidaría hoy.)
+  const confirmacion = vistaPrevia ? ({ ok: true } as const) : evaluarPrecioConfirmado(input.precioConfirmado, precioVenta, prog.moneda);
+  if (!confirmacion.ok) {
+    return _rechazarValidacionPrograma({ ok: false, error: confirmacion.error, cambioPrecio: confirmacion.cambioPrecio });
+  }
+
+  // 3.d) PR #409 — B2B: aliado del catálogo + elección EXPRESA de PVP o NETO, con las reglas de siempre (`planComisionReserva`: base comisionable =
+  //      PVP − impuesto no comisionable, % del aliado/general/por defecto, comisión). Todo se decide AQUÍ, antes de numerar y de escribir nada: del
+  //      navegador solo llega la elección (id de aliado y modalidad). No cambia quién puede llamar esta acción (ver contexto fail-closed arriba).
+  const impuestoVenta = impuestoParaVenta(liq, input.tipoAsesor);
+  const residualB2B = avisoResidualBaseB2B(liq, input.tipoAsesor);
+  let aliadoPrograma: AliadoResuelto | null = null;
+  let planB2B: PlanComisionReserva | null = null;
+  if (input.tipoAsesor !== "interno") {
+    if (input.modoCompra !== "comisionable" && input.modoCompra !== "neta") {
+      return _rechazarValidacionPrograma({ ok: false, error: "Elige si el contrato se genera a PVP (se cobra el total y la comisión se liquida aparte) o a NETO (se cobra el PVP menos la comisión) antes de generarlo." });
+    }
+    if (!(Number.isInteger(input.aliadoId) && (input.aliadoId as number) > 0)) {
+      return _rechazarValidacionPrograma({ ok: false, error: `Esta venta es B2B: selecciona la ${input.tipoAsesor} del catálogo. Sin aliado no se puede registrar su comisión.` });
+    }
+    const al = await resolverAliadoAsistencia(sb, input.aliadoId as number);
+    if (!al.ok) return _rechazarValidacionPrograma({ ok: false, error: al.error });
+    if (al.aliado.tipo !== input.tipoAsesor) {
+      return _rechazarValidacionPrograma({ ok: false, error: `El aliado elegido es de tipo "${al.aliado.tipo}", no "${input.tipoAsesor}".` });
+    }
+    const plan = planComisionReserva({ modoCompra: input.modoCompra, precioVenta, impuesto: impuestoVenta ?? 0, pct: al.aliado.pct });
+    if (!plan.ok) return _rechazarValidacionPrograma({ ok: false, error: plan.error });
+    aliadoPrograma = al.aliado;
+    planB2B = plan.plan;
+  }
+  if (vistaPrevia) {
+    if (!aliadoPrograma || !planB2B) return _rechazarValidacionPrograma({ ok: false, error: "Los términos B2B solo aplican a ventas de agencia o freelance." });
+    vistaPrevia.terminos = {
+      aliado_nombre: aliadoPrograma.nombre,
+      tipo_asesor: aliadoPrograma.tipo,
+      modo_compra: planB2B.modoCompra as ModoCompra,
+      moneda: prog.moneda,
+      pvp: precioVenta,
+      impuesto: impuestoVenta ?? 0,
+      base: planB2B.base,
+      pct: planB2B.pct,
+      pct_origen: aliadoPrograma.pctOrigen,
+      comision: planB2B.comision ?? 0,
+      total_exigible: planB2B.precioFinal,
+    };
+    return _rechazarValidacionPrograma({ ok: false, error: "Vista previa de términos B2B (no se generó ningún contrato)." });
+  }
+  // Lo que se le cobra al comprador: PVP en comisionable (y en B2C), PVP − comisión en NETO.
+  const precioExigible = planB2B ? planB2B.precioFinal : precioVenta;
+
   registrarEtapa("reservar_programa", flujoId, "validacion_programa", Math.round(performance.now() - _tValidacionProg0), "ok");
 
   // 4) Número de contrato — ya completo, tenant resuelto arriba (nunca del navegador)
@@ -3159,40 +4120,76 @@ async function reservarProgramaInterno(
   // Todo contrato lleva ASESOR INTERNO (quien firma/vende internamente y a quien
   // aplica la escala). La agencia/freelance se guarda aparte (canal B2B).
   const asesorNombre = input.asesorInterno;
-  const fechaRegreso = nochesViaje != null ? sumarDias(input.fechaIda, nochesViaje) : prog.dias ? sumarDias(input.fechaIda, Math.max(0, prog.dias - 1)) : null;
+  const fechaRegreso = regresoViaje;
+
+  // #57 — impuesto fiscal verificable (solo B2B) y residual de la base comisionable (calculados arriba, antes de numerar).
+  if (residualB2B) advertencias.push(residualB2B);
 
   // 5) Venta (cabecera) — nace PENDIENTE, en la moneda del programa
   const _tVenta0 = performance.now();
   const { error: ve } = await sb.from("ventas").insert({
     numero_contrato: numero,
     tenant,
-    cliente: `${input.cliente.nombres ?? ""} ${input.cliente.apellidos ?? ""}`.trim(),
-    cliente_documento: oNull(input.cliente.numeroDoc),
-    cliente_telefono: oNull(input.cliente.telefono),
-    cliente_email: oNull(input.cliente.email),
+    // PR #409: NETO ⇒ cliente = aliado (identidad del catálogo) y la persona queda como titular; PVP con comisión y B2C ⇒ cliente = la persona.
+    ...camposClienteVenta({ modo: planB2B?.modoCompra ?? null, fiscal: aliadoPrograma?.fiscal ?? null, titular: titularDeCliente(input.cliente) }),
     destino: prog.subtitulo ?? prog.nombre,
     tipo_paquete: "programa",
     moneda: prog.moneda,
-    fecha_salida: input.fechaIda,
+    fecha_salida: rangoDelViaje.desde,
     fecha_regreso: fechaRegreso,
     pax: totalPax,
     hotel: prog.nombre,
-    precio_venta: precioVenta,
+    precio_venta: precioExigible,
     estado: "pendiente",
     canal,
     tipo_asesor: input.tipoAsesor,
-    agencia_nombre: oNull(input.agenciaNombre),
-    agencia_asesor: oNull(input.agenciaAsesor),
-    freelance_nombre: oNull(input.freelanceNombre),
+    // B2B: el nombre sale del CATÁLOGO (no del navegador) y el aliado queda enlazado por id (migración 143); la modalidad se congela en la venta.
+    ...(aliadoPrograma && planB2B
+      ? {
+          ...camposVendedorAliado({ nombre: aliadoPrograma.nombre, tipo: aliadoPrograma.tipo }),
+          agencia_asesor: aliadoPrograma.tipo === "agencia" ? oNull(input.agenciaAsesor) : null,
+          aliado_id: aliadoPrograma.id,
+          modo_compra: planB2B.modoCompra,
+          comision_b2b: planB2B.comision,
+          comision_estado: planB2B.comisionEstado,
+        }
+      : {
+          agencia_nombre: oNull(input.agenciaNombre),
+          agencia_asesor: oNull(input.agenciaAsesor),
+          freelance_nombre: oNull(input.freelanceNombre),
+        }),
     plazo: oNull(input.plazo),
     asesor_firma_nombre: oNull(asesorNombre),
     plan_nombre: catNombre ?? prog.nombre,
+    // #88: nace con la escritura financiera EN CURSO; solo pasa a 'completo' dentro de registrar_financiero_contrato (atómico con sus costos y CxP).
+    // Un contrato a medias queda 'pendiente': no se puede confirmar y la reconciliación lo completa o lo revierte.
+    // B2B (PR #409): la RPC de comisión solo acepta una reserva EN CURSO, así que también nace 'pendiente' (y se completa justo después de registrar la comisión).
+    ...(estanciaEntrada || aliadoPrograma ? { financiero_estado: "pendiente" } : {}),
+    // #57 — base comisionable B2B: SOLO un impuesto del proveedor verificable
+    // (regla en modo `impuesto` con tarifa de proveedor cargada). Nunca se
+    // infiere de `montoNoComisionable` ni de la reducción por % de la regla.
+    ...(impuestoVenta != null ? { impuesto: impuestoVenta } : {}),
   });
   registrarEtapa("reservar_programa", flujoId, "insert_venta", Math.round(performance.now() - _tVenta0), ve ? "error" : "ok");
   if (ve) {
     elevarEstadoFlujo(estado, "error");
     registrarErrorTecnico("reservar_programa", flujoId, "insert_venta", "error_insert_venta", ve);
     return { ok: false, error: MSG_ERROR_GUARDAR_RESERVA };
+  }
+
+  // 5.b) PR #409 — comisión B2B: la crea la base (`registrar_comision_b2b_reserva`, valida usuario, rol, tenant, aliado y venta, y recalcula con la
+  // misma regla del plan). Si falla, el contrato se revierte completo: nunca queda un contrato B2B sin su comisión.
+  if (aliadoPrograma) {
+    const com = await registrarComisionReserva(sb, numero, aliadoPrograma.id);
+    if (!com.ok) {
+      elevarEstadoFlujo(estado, "error");
+      registrarErrorTecnico("reservar_programa", flujoId, "comision_b2b", "error_comision_b2b", com.error);
+      const rev = await revertirContratoIncompleto({ rpc: rpcFinanciero }, numero, tenant);
+      return {
+        ok: false,
+        error: rev.ok ? com.error : `${com.error} · Además, el contrato ${numero} quedó creado a medias y no se pudo deshacer automáticamente (${rev.error ?? "motivo desconocido"}): revísalo antes de volver a reservar.`,
+      };
+    }
   }
 
   // 5bis) Congelar condiciones de pago (Rama B, migración 165) — best-effort,
@@ -3206,7 +4203,7 @@ async function reservarProgramaInterno(
       const fechaPagoCond = fechaNegocio();
       const componente = componenteDePrograma(prog, {
         id: `programa-${input.programaId}`,
-        valor: precioVenta,
+        valor: precioExigible,
         referencia: prog.nombre,
         fechaViaje: input.fechaIda,
       });
@@ -3216,7 +4213,7 @@ async function reservarProgramaInterno(
         componentes: [componente],
         moneda: prog.moneda,
         trm: trmCond,
-        precioTotalMoneda: precioVenta,
+        precioTotalMoneda: precioExigible,
         fechaPago: fechaPagoCond,
         usuarioId: usuarioCond.id,
       });
@@ -3232,11 +4229,22 @@ async function reservarProgramaInterno(
   // vez de "ok" si alguno falla, sin cambiar el comportamiento histórico
   // (siguen sin bloquear la reserva).
   const _tHijas0 = performance.now();
-  const _errorHijas = (detalle: string, error: unknown) => {
+  const _errorHijas = async (detalle: string, error: unknown) => {
     registrarEtapa("reservar_programa", flujoId, "insert_hijas", Math.round(performance.now() - _tHijas0), "error");
     registrarErrorTecnico("reservar_programa", flujoId, "insert_hijas", detalle, error);
     elevarEstadoFlujo(estado, "error");
-    return { ok: false as const, error: MSG_ERROR_GUARDAR_RESERVA };
+    // #88: en el modo hotel el contrato NO puede quedar utilizable sin sus datos (foto, costo, pasajeros, hotel): se revierte entero (las hijas
+    // caen en cascada). PR #409: lo mismo en una venta B2B (con su comisión) de cualquier modo: nace 'pendiente' y no se completa hasta terminar
+    // pasajeros e ítems. Si la reversión misma falla, el error nombra el contrato y este sigue 'pendiente' (no confirmable, recuperable).
+    let mensaje = MSG_ERROR_GUARDAR_RESERVA;
+    if (estanciaEntrada || aliadoPrograma) {
+      const rev = await revertirContratoIncompleto({ rpc: rpcFinanciero }, numero, tenant);
+      if (!rev.ok) {
+        registrarErrorTecnico("reservar_programa", flujoId, "insert_hijas", "error_revertir_contrato", rev.error);
+        mensaje = `${MSG_ERROR_GUARDAR_RESERVA} El contrato ${numero} quedó creado a medias y no se pudo deshacer automáticamente: revísalo antes de volver a reservar.`;
+      }
+    }
+    return { ok: false as const, error: mensaje };
   };
   let _resultadoHijas: ResultadoEtapa = "ok";
 
@@ -3300,9 +4308,74 @@ async function reservarProgramaInterno(
 
   // 7) Ítems (líneas por acomodación)
   for (const it of items) it.numero_contrato = numero;
+  // PostgREST inserta en lote con la UNIÓN de columnas y manda NULL donde una fila no trae la clave (no el DEFAULT): las líneas «total» de las
+  // noches adicionales traen modo_precio/valor_total y las demás no, así que modo_precio (NOT NULL) llegaría nulo. Se hace explícito en todas.
+  if (liq.estancia) for (const it of items) { it.modo_precio ??= "por_persona"; it.valor_total ??= null; }
   if (items.length) {
     const { error } = await sb.from("contrato_items").insert(items);
     if (error) return _errorHijas("items", error);
+  }
+
+  // 7.a) PR #409 — Fuera del modo hotel no hay escritura financiera atómica que complete el contrato: una venta B2B (que nació 'pendiente' para que la base
+  // acepte su comisión) se marca 'completo' SOLO ahora, ya escritos pasajeros e ítems (con la clave de servicio, como el resto de escrituras financieras).
+  // Si la transición falla, se revierte el contrato pendiente (y se avisa si la reversión también falla).
+  if (aliadoPrograma && !estanciaEntrada) {
+    const completar = process.env.SUPABASE_SERVICE_ROLE_KEY
+      ? await createAdminClient().from("ventas").update({ financiero_estado: "completo", financiero_actualizado_en: new Date().toISOString() }).eq("numero_contrato", numero)
+      : { error: { message: "falta la clave de servicio para completar el contrato" } };
+    if (completar.error) return _errorHijas("completar_b2b", completar.error);
+  }
+
+  // 7.b) #88 — foto de la estancia: selección, fechas exactas, vigencias, PVP por noche e
+  //      itinerario desplazado. Se escribe UNA vez y no se recalcula nunca (un contrato
+  //      histórico conserva lo que se vendió aunque el catálogo cambie). Sin netos.
+  if (estanciaEntrada && liq.estancia && modalidadHotel && baseHotel) {
+    const itinerario = itinerarioConNochesExtra(diasPrograma, estanciaEntrada.nochesAdicionales, input.fechaIda, estanciaEntrada.hotel.nombre);
+    const habitaciones = Object.fromEntries(
+      Object.entries(input.paxPorAcom).filter(([, n]) => Number(n) > 0).map(([a, n]) => [a, Number(n)])
+    );
+    const { error: errorEstancia } = await createAdminClient().from("contrato_programa_estancia").insert({
+      numero_contrato: numero,
+      programa_id: input.programaId,
+      hotel_id: estanciaEntrada.hotel.id,
+      hotel_nombre: estanciaEntrada.hotel.nombre,
+      zona: estanciaEntrada.hotel.zona,
+      tipo_habitacion: estanciaEntrada.hotel.tipoHabitacion,
+      modalidad_servicios: modalidadHotel,
+      moneda: prog.moneda,
+      fecha_entrada: input.fechaIda,
+      noches_incluidas: estanciaEntrada.nochesIncluidas,
+      noches_adicionales: estanciaEntrada.nochesAdicionales,
+      fecha_regreso: fechaRegreso ?? input.fechaIda,
+      base_vigencia_desde: baseHotel.desde,
+      base_vigencia_hasta: baseHotel.hasta,
+      habitaciones: habitaciones as unknown as Json,
+      ninos: Math.max(0, Math.trunc(Number(input.ninos) || 0)),
+      infantes: numInfantes,
+      precio_base: liq.precioBase,
+      precio_noches: liq.estancia.precioNoches,
+      noches: nochesParaFoto(liq.estancia.noches) as unknown as Json,
+      itinerario: itinerario as unknown as Json,
+    });
+    if (errorEstancia) return _errorHijas("estancia", errorEstancia);
+  }
+
+  // 7.c) #88 — registro de costo de la estancia (netos, asistencia total y TRM de costos). Va ANTES de la escritura financiera: si falla, el
+  //      contrato se revierte; después de ella el contrato ya está completo y no se puede deshacer.
+  if (estanciaEntrada && liq.estancia) {
+    const { error: errorCosto } = await createAdminClient().from("contrato_programa_estancia_costo").insert({
+      numero_contrato: numero,
+      moneda: prog.moneda,
+      neto_base: liq.costoNetoBase,
+      neto_noches: liq.estancia.costoNetoNoches,
+      asistencia_noches: liq.estancia.costoAsistenciaNoches,
+      asistencia_total: liq.costoAsistencia,
+      detalle_noches: nochesParaCosto(liq.estancia.noches) as unknown as Json,
+      proveedor_noches_id: estanciaEntrada.hotel.proveedorId,
+      proveedor_asistencia_id: proveedorAsistencia?.id ?? null,
+      trm_costo: trmCosto,
+    });
+    if (errorCosto) return _errorHijas("costo_estancia", errorCosto);
   }
 
   // 8) Hoteles por ciudad (de la categoría elegida) — informativo en el
@@ -3311,7 +4384,7 @@ async function reservarProgramaInterno(
   //    "parcial". En modo salida no hay matriz de hoteles; se usa el hotel
   //    de la columna si lo hay.
   const provNombre = (prog.proveedores as unknown as { nombre: string } | null)?.nombre ?? null;
-  const { data: hotelesCat, error: hotelesCatError } = modoSalida
+  const { data: hotelesCat, error: hotelesCatError } = (modoSalida || modoHotel)
     ? { data: hotelSalida ? [{ ciudad: prog.subtitulo ?? prog.nombre, hotel: hotelSalida, orden: 0 }] : [], error: null }
     : await sb
         .from("programa_categoria_hoteles")
@@ -3328,12 +4401,14 @@ async function reservarProgramaInterno(
         numero_contrato: numero,
         nombre: h.hotel ?? "",
         categoria: catNombre,
-        proveedor: provNombre,
+        proveedor: proveedorHotel?.nombre ?? provNombre,
         ciudad: h.ciudad,
         detalle_acomodacion: `${totalPax} pax`,
+        ...(estanciaEntrada ? { fecha_ingreso: input.fechaIda, fecha_salida: fechaRegresoEstancia(input.fechaIda, estanciaEntrada.nochesIncluidas, estanciaEntrada.nochesAdicionales) } : {}),
         orden: i,
       }))
     );
+    if (hotelesInsertError && estanciaEntrada) return _errorHijas("hoteles", hotelesInsertError);
     if (hotelesInsertError) {
       _resultadoHijas = "parcial";
       registrarErrorTecnico("reservar_programa", flujoId, "insert_hijas", "error_insert_hoteles", hotelesInsertError);
@@ -3344,6 +4419,66 @@ async function reservarProgramaInterno(
   // items bloquean y elevan "error" antes de llegar a esta línea, vía
   // `_errorHijas`) — best-effort: eleva el TOTAL a "parcial", nunca a "error".
   if (_resultadoHijas !== "ok") elevarEstadoFlujo(estado, "parcial");
+
+  // 9-hotel) #88 — costo y obligaciones del modo hotel: UNA escritura atómica (`registrar_financiero_contrato`, la de la 171/172/236), con su
+  //          intención durable y su reversión. NO es «mejor esfuerzo»: o quedan el costo y TODAS las CxP (programa, noches con otro proveedor, asistencia)
+  //          o no queda el contrato, y un fallo se devuelve como error. Un reintento reemplaza las CxP automáticas previas (no duplica).
+  if (estanciaEntrada && liq.estancia) {
+    const _tFin0 = performance.now();
+    const fechaFin = fechaNegocio();
+    const pr = prog.proveedores as unknown as { nombre: string | null; aplica_retencion: boolean | null; pct_retencion: number | null } | null;
+    const usd = String(prog.moneda).toUpperCase() === "USD";
+    const OBS = "Generado automáticamente desde el tarifario (programa";
+    const plan88 = planObligacionesPrograma({
+      netoBase: liq.costoNetoBase,
+      netoNoches: liq.estancia.costoNetoNoches,
+      proveedorPrograma: { id: prog.proveedor_id ?? null, nombre: pr?.nombre ?? null, aplicaRetencion: pr?.aplica_retencion ?? false, pctRetencion: Number(pr?.pct_retencion) || 0 },
+      proveedorHotel,
+    });
+    // Modelo de la 236: cada CxP en USD lleva su moneda, su nominal, la TRM de costos (UNA por contrato) y el equivalente en COP; una en COP no lleva equivalente.
+    const filaCxP = (a: { tipo: string; proveedor: string | null; servicio: string; valor: number; aplicaRetencion: boolean; pctRetencion: number; obs: string }): CxPFinanciera => ({
+      proveedor: a.proveedor,
+      tipo_proveedor: a.tipo,
+      servicio: a.servicio,
+      valor_total: a.valor,
+      fecha_obligacion: fechaFin,
+      aplica_retencion: a.aplicaRetencion,
+      pct_retencion: a.pctRetencion,
+      observaciones: `${OBS}${a.obs})`,
+      servicio_id: null,
+      moneda: usd ? "USD" : "COP",
+      ...(usd && trmCosto != null ? { valor_cop_costo: equivalenteCopCosto(a.valor, trmCosto), trm_costo: trmCosto } : {}),
+    });
+    const cxpFin: CxPFinanciera[] = [];
+    if (plan88.programa.valor > 0) {
+      cxpFin.push(filaCxP({ tipo: "programa", proveedor: pr?.nombre ?? null, servicio: prog.nombre, valor: plan88.programa.valor, aplicaRetencion: pr?.aplica_retencion ?? false, pctRetencion: Number(pr?.pct_retencion) || 0, obs: "" }));
+    }
+    if (plan88.noches) {
+      cxpFin.push(filaCxP({
+        tipo: "programa", proveedor: plan88.noches.proveedor.nombre, servicio: `Noches adicionales · ${estanciaEntrada.hotel.nombre}`, valor: plan88.noches.valor,
+        aplicaRetencion: plan88.noches.proveedor.aplicaRetencion, pctRetencion: plan88.noches.proveedor.pctRetencion, obs: " · noches adicionales",
+      }));
+    }
+    if (liq.costoAsistencia > 0 && proveedorAsistencia) {
+      cxpFin.push(filaCxP({
+        tipo: "asistencia", proveedor: proveedorAsistencia.nombre, servicio: `Asistencia médica · ${prog.nombre}`, valor: liq.costoAsistencia,
+        aplicaRetencion: proveedorAsistencia.aplicaRetencion, pctRetencion: proveedorAsistencia.pctRetencion, obs: " · asistencia médica",
+      }));
+    }
+    const costosFin: CostosContrato = { costo_receptivo: liq.costoNeto, ...(liq.costoAsistencia > 0 ? { costo_asistencia: liq.costoAsistencia } : {}) };
+    const fin = await registrarFinancieroContrato(depsFinanciero(numero, tenant, fechaFin), { numeroContrato: numero, tenant, costos: costosFin, cxp: cxpFin, fecha: fechaFin });
+    registrarEtapa("reservar_programa", flujoId, "cxp_programa", Math.round(performance.now() - _tFin0), fin.ok ? (fin.avisos.length ? "parcial" : "ok") : "error");
+    if (!fin.ok) {
+      elevarEstadoFlujo(estado, "error");
+      registrarErrorTecnico("reservar_programa", flujoId, "cxp_programa", "error_escritura_financiera", fin.error);
+      return { ok: false, error: fin.error };
+    }
+    // El espejo contable (asiento por CxP) es lo único best-effort del proyecto: su fallo NO se oculta, se devuelve como aviso.
+    for (const aviso of fin.avisos) advertencias.push(aviso);
+    if (fin.avisos.length) elevarEstadoFlujo(estado, "parcial");
+    revalidatePath("/dashboard/contratos");
+    return { ok: true, numero, ...(advertencias.length ? { advertencias } : {}) };
+  }
 
   // 9) Cuenta por pagar al proveedor del programa (neto, en la moneda del
   // programa). Best-effort igual que antes (no bloquea la reserva), pero la

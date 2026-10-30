@@ -19,6 +19,7 @@ import { Loader2, Banknote, RotateCcw } from "lucide-react";
 import { formatMoneda } from "@/lib/utils";
 import { fechaNegocio } from "@/lib/fechaNegocio";
 import { registrarPagoPrevio, anularPagoPrevio } from "@/app/(dashboard)/dashboard/cotizaciones/pagos-actions";
+import { pctTexto } from "@/lib/cotizacion/netoHija";
 
 export interface PagoPrevioUI {
   id: number;
@@ -30,6 +31,20 @@ export interface PagoPrevioUI {
   estado: string; // 'activo' | 'aplicado' | 'anulado'
 }
 
+/** #50: precio NETO fijado en la hija (solo se pasa a roles de pago). */
+export interface NetoPanelUI {
+  pvp: number;
+  neto: number;
+  descuento: number;
+  ordinaria: number;
+  participacion: number;
+  base: number;
+  reconoce: boolean;
+  margen: number;
+  piso: number;
+  autorizadoRol: string | null;
+}
+
 export default function PagosPreviosPanel({
   cotizacionId,
   moneda,
@@ -39,6 +54,7 @@ export default function PagosPreviosPanel({
   precioTotalMoneda,
   trmAutoritativa,
   pagos,
+  neto = null,
 }: {
   cotizacionId: number;
   moneda: string;
@@ -48,6 +64,7 @@ export default function PagosPreviosPanel({
   precioTotalMoneda: number | null;
   trmAutoritativa: number | null;
   pagos: PagoPrevioUI[];
+  neto?: NetoPanelUI | null;
 }) {
   const router = useRouter();
   const esUSD = moneda === "USD";
@@ -129,6 +146,21 @@ export default function PagosPreviosPanel({
         Pagos previos (pre-pago manual)
       </div>
       <div className="space-y-4 p-5">
+        {/* #50: precio NETO fijado (el aliado paga el PVP menos su descuento). */}
+        {neto && (
+          <div className="rounded-lg border border-blue-100 bg-blue-50 px-3 py-2 text-sm text-blue-900">
+            <div className="font-semibold">Precio NETO: el aliado paga {formatMoneda(neto.neto, moneda)}</div>
+            <div className="mt-1 text-xs text-blue-800">
+              PVP {formatMoneda(neto.pvp, moneda)} − descuento {formatMoneda(neto.descuento, moneda)}
+              {" "}(comisión ordinaria {formatMoneda(neto.ordinaria, moneda)} sobre una base de {formatMoneda(neto.base, moneda)}
+              {neto.reconoce ? `, más participación en el recobro ${formatMoneda(neto.participacion, moneda)}` : "; el recobro entra a la base"}).
+              {" "}Margen {pctTexto(neto.margen)} (mínimo {(neto.piso * 100).toFixed(0)} %)
+              {neto.autorizadoRol ? `; margen bajo autorizado por ${neto.autorizadoRol}` : ""}.
+              {" "}El descuento no es una comisión por pagar: no genera cuenta de cobro ni pago aparte.
+            </div>
+          </div>
+        )}
+
         {/* Estado de congelado + pago mínimo */}
         <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
           <div className="rounded-lg bg-gray-50 px-3 py-2">

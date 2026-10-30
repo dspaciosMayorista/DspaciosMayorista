@@ -1,0 +1,157 @@
+# #42 (migración 219, personas de cotizaciones en el CRM) — pruebas focales.
+# Ejecuta, contra un PostgreSQL (imagen de Supabase) y un PostgREST desechables creados y destruidos
+# dentro del runner: ciclo preflight/postcheck (fila consolidada), batería SQL de la 219, regresión
+# completa de #39 con la 219 presente, carreras entre sesiones, rollback (que debe dejar la 214 exacta)
+# y API/RLS con JWT firmados con un secreto local aleatorio. Un segundo job corre las pruebas TS de #42
+# y las de la 214 en una imagen oficial de Node con versión exacta.
+# Sin secretos del repositorio, sin Supabase remoto, sin pull_request_target y con permisos de solo
+# lectura. NO modifica ni reemplaza test-214-personas.yml (que sigue probando la 214 sola, 001-213).
+# Producción sigue con preflight/migración/postcheck manuales y autorizados por el dueño.
+name: test-personas-cotizaciones-42
+
+on:
+  # Batería histórica: se lanza a mano (Actions → este workflow → Run workflow) cuando el cambio toca lo que
+  # cubre. Ya no corre en cada pull_request; ver docs/tecnico/ci-baterias-manuales.md.
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: test-personas-cotizaciones-42-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  prueba-219:
+    name: 219 · preflight/postcheck, SQL, #39, carreras, rollback y API
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    env:
+      CT: pg219_ci
+      RED: red219
+      PLANTILLA: plantilla219ci
+      IMAGEN_PG: supabase/postgres:15.8.1.085
+      IMAGEN_PGRST: ghcr.io/supabase/postgrest:v16.1
+    defaults:
+      run:
+        shell: bash
+        working-directory: dspacios-travel
+    steps:
+      - name: Código (solo lectura, sin credenciales persistidas)
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+
+      - name: PostgreSQL desechable (imagen de Supabase) en una red propia
+        timeout-minutes: 5
+        run: |
+          set -euo pipefail
+          docker network create "$RED"
+          # Contraseña local de un contenedor efímero que nunca sale del runner (no es un secreto).
+          docker run -d --name "$CT" --network "$RED" -e POSTGRES_PASSWORD=postgres "$IMAGEN_PG"
+
+      - name: Descargar PostgREST antes del esquema (falla temprano si no hay acceso)
+        timeout-minutes: 5
+        run: |
+          set -euo pipefail
+          grep -qF "$IMAGEN_PGRST" supabase/scripts/test_219_personas_cotizaciones.sh
+          docker pull "$IMAGEN_PGRST"
+
+      - name: Cadena integrada 001-217 (214, 216 y 217 incluidas) sin la 219
+        timeout-minutes: 15
+        run: |
+          set -euo pipefail
+          # Probar sobre la cadena realmente integrada, sin fabricar la 218 (reservada a #56).
+          if ls supabase/migrations/20260601000218_* >/dev/null 2>&1; then
+            echo "::error::Apareció una 218 en el repo: revalidar el orden con el Coordinador antes de seguir."
+            exit 1
+          fi
+          bash supabase/scripts/preparar_esquema_local.sh "$CT" 217 "$PLANTILLA"
+
+      - name: Migración 219 real (F, M, S, G, K, RB y H con PostgREST local)
+        timeout-minutes: 25
+        run: |
+          set -uo pipefail
+          salida="$RUNNER_TEMP/test219.out"
+          bash supabase/scripts/test_219_personas_cotizaciones.sh "$CT" "$PLANTILLA" "$RED" 2>&1 | tee "$salida"
+          rc="${PIPESTATUS[0]}"
+          # Además del código de salida: ningún FALLO, ninguna sección omitida, el cierre en verde y una
+          # línea OK de cada bloque (un bloque que se saltara en silencio no puede dar verde).
+          faltan=""
+          for marca in 'OK    F10 ' 'OK    M1 ' 'OK    M4 ' 'OK    M7 ' 'OK    M8 ' 'OK    M9 ' 'OK    M10 ' 'OK    S1 ' 'OK    G1 ' \
+                       'OK    K1 ' 'OK    K2 ' 'OK    K3a ' 'OK    K3b ' 'OK    K4 ' 'OK    K5a ' 'OK    K5b ' \
+                       'OK    RB0 ' 'OK    RB1 ' 'OK    RB2 ' 'OK    RB3 ' 'OK    RB4 ' 'OK    RB5 ' 'OK    RB6 ' 'OK    RB8 ' 'OK    RB9 ' \
+                       'OK    H1 ' 'OK    H4 ' 'OK    H8 ' 'OK    H12 ' 'OK    H16 ' \
+                       '  OK    E1 ' '  OK    T2 ' '  OK    S1 ' '  OK    I4 ' '  OK    V7 ' '  OK    V15 ' '  OK    G8 '; do
+            grep -qF -- "$marca" "$salida" || faltan="$faltan [$marca]"
+          done
+          # La sección saltada se detecta por SU línea exacta (no por la palabra "omitida", que aparece
+          # en el nombre de comprobaciones SQL legítimas como T15).
+          if [ "$rc" != 0 ] || grep -q '^FALLO' "$salida" || grep -qE '^INFO  H omitida por SIN_API=1' "$salida" \
+             || ! grep -q 'TEST 219 PERSONAS COTIZACIONES: TODO OK' "$salida" || [ -n "$faltan" ]; then
+            echo "::error::Pruebas 219 en rojo (rc=$rc; faltan:${faltan:- ninguna})"
+            exit 1
+          fi
+
+      - name: Diagnóstico del contenedor (solo si falla)
+        if: failure()
+        working-directory: .
+        run: docker logs --tail 200 "$CT" 2>&1 || true
+
+      - name: Limpieza de contenedores y red (siempre, también si falla o se cancela)
+        if: always()
+        working-directory: .
+        run: |
+          docker ps -aq --filter "name=pgrst219_" | xargs -r docker rm -f || true
+          docker rm -f "$CT" || true
+          docker network rm "$RED" || true
+
+  pruebas-ts-42:
+    name: '#42 · pruebas TS (vectores por flujo, cableado y 214)'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    env:
+      IMAGEN_NODE: node:24.14.0-bookworm-slim
+      CTN: node42_ci
+    steps:
+      - name: Código (solo lectura, sin credenciales persistidas)
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+
+      - name: Descargar la imagen de Node (falla temprano si no hay acceso)
+        timeout-minutes: 5
+        run: docker pull "$IMAGEN_NODE"
+
+      - name: 'Pruebas TS de #42 (sin base de datos)'
+        timeout-minutes: 15
+        run: |
+          set -uo pipefail
+          salida="$RUNNER_TEMP/ts42.out"
+          docker run --rm --name "$CTN" -e CI=1 -e COREPACK_ENABLE_DOWNLOAD_PROMPT=0 \
+            -v "$GITHUB_WORKSPACE:/repo" -w /repo/dspacios-travel "$IMAGEN_NODE" sh -ec '
+            corepack enable
+            pnpm install --frozen-lockfile
+            node --test --test-reporter=spec --experimental-strip-types --experimental-test-module-mocks \
+              --experimental-loader ./pruebas/support/aliasLoader.mjs \
+              pruebas/vectoresPersonasCotizacion42.test.ts pruebas/cableadoPersonasCotizacion42.wiring.test.ts \
+              pruebas/personasIdentidad.test.ts pruebas/personasConsulta.wiring.test.ts
+          ' 2>&1 | tee "$salida"
+          rc="${PIPESTATUS[0]}"
+          faltan=""
+          for marca in '✔ solo las filas identificadas reciben ref' '✔ anónima (checkout sin sesión): el tipo no se registra' \
+                       '✔ cada alta de C2 llama a la fachada y NO ignora su resultado' \
+                       '✔ el editor de titular ya no hace UPDATE directo: va por la fachada' \
+                       '✔ solo lib/personas/consulta.ts llama a las RPC de la 219 (y el editor de titular a la suya)'; do
+            grep -qF "$marca" "$salida" || faltan="$faltan [$marca]"
+          done
+          if [ "$rc" != 0 ] || ! grep -qE '^ℹ fail 0$' "$salida" || ! grep -qE '^ℹ tests [1-9][0-9]*$' "$salida" \
+             || grep -qE '^✖|^ *✖ ' "$salida" || [ -n "$faltan" ]; then
+            echo "::error::Pruebas TS de #42 en rojo (rc=$rc; faltan:${faltan:- ninguna})"
+            exit 1
+          fi
+
+      - name: Limpieza del contenedor de Node (siempre)
+        if: always()
+        working-directory: .
+        run: docker rm -f "$CTN" || true

@@ -2,6 +2,7 @@ import { createClient } from "@/lib/supabase/server";
 import { notFound } from "next/navigation";
 import Link from "next/link";
 import { formatCOP, formatFechaLarga } from "@/lib/utils";
+import { cargarVentasDeContacto } from "@/lib/crm/fichaVentas";
 
 export const dynamic = "force-dynamic";
 
@@ -32,19 +33,9 @@ export default async function ContactoDetallePage({ params }: { params: Promise<
   const { data: c } = await sb.from("crm_contactos").select("*").eq("id", contactoId).maybeSingle();
   if (!c) notFound();
 
-  // Cruce con ventas: por documento o email; si no hay, por nombre.
-  type Venta = { numero_contrato: string; fecha_venta: string | null; destino: string | null; precio_venta: number | null; estado: string | null };
-  let ventas: Venta[] = [];
-  const ors: string[] = [];
-  if (c.documento) ors.push(`cliente_documento.eq.${c.documento}`);
-  if (c.email) ors.push(`cliente_email.eq.${c.email}`);
-  if (ors.length) {
-    const { data } = await sb.from("ventas").select("numero_contrato, fecha_venta, destino, precio_venta, estado").or(ors.join(",")).order("fecha_venta", { ascending: false });
-    ventas = (data ?? []) as Venta[];
-  } else if (c.nombre) {
-    const { data } = await sb.from("ventas").select("numero_contrato, fecha_venta, destino, precio_venta, estado").ilike("cliente", `%${c.nombre}%`).order("fecha_venta", { ascending: false });
-    ventas = (data ?? []) as Venta[];
-  }
+  // Cruce con ventas: por documento o email; si no hay, por nombre. Consultas literales separadas,
+  // sin interpolar el texto del contacto en un filtro (#40 H0, lib/crm/fichaVentas.ts).
+  const ventas = await cargarVentasDeContacto(sb, c);
 
   const vigentes = ventas.filter((v) => !["cancelado", "cancelada"].includes((v.estado ?? "").toLowerCase()));
   const totalComprado = vigentes.reduce((s, v) => s + (Number(v.precio_venta) || 0), 0);

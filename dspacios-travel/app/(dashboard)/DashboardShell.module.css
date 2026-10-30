@@ -57,13 +57,22 @@
   font-family: var(--dash-font-heading), ui-sans-serif, system-ui, sans-serif;
 }
 
-/* Oculta la barra nativa de scroll horizontal de la navegación móvil sin
-   perder la funcionalidad (sigue siendo desplazable con el dedo/rueda). */
-.scrollNoBar {
-  scrollbar-width: none;
+/* Panel del menú móvil (MobileNav.tsx): reutiliza el SidebarNav de escritorio
+   tal cual y solo agranda sus objetivos táctiles a 44px (enlaces, sub-enlaces
+   y botones de submenú). El <nav> desplaza dentro del panel sin arrastrar la
+   página de fondo. */
+.menuMovil nav {
+  overscroll-behavior: contain;
 }
-.scrollNoBar::-webkit-scrollbar {
-  display: none;
+.menuMovil nav a,
+.menuMovil nav button {
+  min-height: 44px;
+}
+.menuMovil nav button {
+  min-width: 44px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
 }
 
 /* Barra de progreso delgada de los KPI (X de Y + %) — solo se monta cuando

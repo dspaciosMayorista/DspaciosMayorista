@@ -20,6 +20,8 @@ export type BloqueoFila = {
   vuelo_regreso: string | null;
   fecha_devolucion: string | null;
   cupos_total: number;
+  /** Moneda de las tarifas del Bloqueo (migración 231). null = sin acreditar. */
+  moneda?: "COP" | "USD" | null;
   disp: number; plazo: number; conf: number; dev: number; nven: number;
   /** Movimientos históricos que tocan el record (trazabilidad; NO son cupos). */
   movimientos: number;
@@ -77,8 +79,8 @@ export function BloqueosTabla({ filas }: { filas: BloqueoFila[] }) {
         <span className="ml-auto text-xs text-gray-400">{vis.length} bloque(s)</span>
       </div>
 
-      <ResponsiveTableShell minWidth={1100} className="overflow-x-auto rounded-xl border border-gray-200 bg-white">
-        <table className="w-full min-w-[1100px] text-sm">
+      <ResponsiveTableShell minWidth={1180} className="overflow-x-auto rounded-xl border border-gray-200 bg-white">
+        <table className="w-full min-w-[1180px] text-sm">
           <thead>
             <tr className="bg-gray-50 text-left text-xs uppercase text-gray-400">
               <th className="px-3 py-2">Record</th>
@@ -86,6 +88,7 @@ export function BloqueosTabla({ filas }: { filas: BloqueoFila[] }) {
               <th className="px-3 py-2">Ruta</th>
               <th className="px-3 py-2">Ida</th>
               <th className="px-3 py-2">Regreso</th>
+              <th className="px-3 py-2">Moneda</th>
               <th className="px-3 py-2 text-center">Disp</th>
               <th className="px-3 py-2 text-center">Plazo</th>
               <th className="px-3 py-2 text-center">Conf</th>
@@ -111,6 +114,7 @@ export function BloqueosTabla({ filas }: { filas: BloqueoFila[] }) {
                   <td className="px-3 py-2 text-gray-600" data-label="Ruta">{b.ruta ?? "—"}</td>
                   <td className="px-3 py-2 text-xs text-gray-500" data-label="Ida">{formatFechaLarga(b.fecha_ida)}{b.vuelo_ida ? ` · ${b.vuelo_ida}` : ""}</td>
                   <td className="px-3 py-2 text-xs text-gray-500" data-label="Regreso">{formatFechaLarga(b.fecha_regreso)}{b.vuelo_regreso ? ` · ${b.vuelo_regreso}` : ""}</td>
+                  <td className="px-3 py-2 text-xs" data-label="Moneda">{b.moneda ? <span className="font-semibold text-gray-700">{b.moneda}</span> : <span className="text-amber-700" title="La moneda de las tarifas aún no está acreditada">Sin acreditar</span>}</td>
                   <td className="px-3 py-2 text-center font-semibold tabular-nums" style={{ color: "var(--brand-success)" }} data-label="Disponibles">{b.disp}</td>
                   <td className="px-3 py-2 text-center tabular-nums" style={{ color: "#C99A2E" }} data-label="En plazo">{b.plazo}</td>
                   <td className="px-3 py-2 text-center tabular-nums" style={{ color: "var(--brand-accent)" }} data-label="Confirmadas">{b.conf}</td>
@@ -127,7 +131,7 @@ export function BloqueosTabla({ filas }: { filas: BloqueoFila[] }) {
           </tbody>
           <tfoot>
             <tr className="border-t-2 border-gray-200 bg-gray-50 font-semibold">
-              <td className="px-3 py-2" colSpan={5}>TOTAL ({vis.length} bloques)</td>
+              <td className="px-3 py-2" colSpan={6}>TOTAL ({vis.length} bloques)</td>
               <td className="px-3 py-2 text-center tabular-nums" style={{ color: "var(--brand-success)" }} data-label="Disponibles">{tot.disp}</td>
               <td className="px-3 py-2 text-center tabular-nums" style={{ color: "#C99A2E" }} data-label="En plazo">{tot.plazo}</td>
               <td className="px-3 py-2 text-center tabular-nums" style={{ color: "var(--brand-accent)" }} data-label="Confirmadas">{tot.conf}</td>

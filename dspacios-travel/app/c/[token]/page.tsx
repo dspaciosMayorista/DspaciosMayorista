@@ -10,6 +10,7 @@ import { resolverCondicionesContrato } from "@/lib/contrato/condicionesContrato"
 import { habitacionesBernaloDeContrato } from "@/lib/reservar/alojamientoBernaloDocumento";
 import { condicionesTarifaParaRender } from "@/lib/calc/condicionesTarifa";
 import { desgloseNetoB2B } from "@/lib/finanzas/netoB2B";
+import { cobroDeVenta } from "@/lib/finanzas/cobro";
 
 export const dynamic = "force-dynamic";
 
@@ -87,7 +88,7 @@ export default async function ContratoPublicoPage({
   const condicionesResueltas = resolverCondicionesContrato(
     (contratoCondiciones ?? []) as unknown as Parameters<typeof resolverCondicionesContrato>[0],
     (overridesCondiciones ?? []) as unknown as Parameters<typeof resolverCondicionesContrato>[1],
-    { monedaContrato: (venta.moneda as string) ?? "COP", precioVenta: venta.precio_venta, fechaViaje: venta.fecha_salida },
+    { monedaContrato: cobroDeVenta(venta).moneda, precioVenta: cobroDeVenta(venta).total, fechaViaje: venta.fecha_salida },
   );
 
   return (
@@ -105,6 +106,7 @@ export default async function ContratoPublicoPage({
             vuelos={vuelos ?? []}
             items={items ?? []}
             totalPagado={totalPagado}
+            cobro={cobroDeVenta(venta)}
             agencia={agencia}
             condiciones={condicionesResueltas}
             habitacionesBernalo={habitacionesBernalo}

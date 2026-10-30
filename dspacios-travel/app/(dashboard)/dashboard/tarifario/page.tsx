@@ -3,6 +3,7 @@ import { createAdminClient } from "@/lib/supabase/admin";
 import Link from "next/link";
 import { TarifarioPublic } from "@/app/tarifario/TarifarioPublic";
 import { getProgramasResumen } from "@/lib/programas";
+import { completarDesdeHoteles88 } from "@/lib/programas/estanciaHotelDatos88";
 import { filtrarTarifarioVencidas, esFilaHotelVerificable } from "@/lib/tarifario/vigencia";
 import { cargarFilasResumenPaginado } from "@/lib/tarifario/resumen";
 import { orquestarCargaInterna } from "@/lib/tarifario/orquestacion";
@@ -145,7 +146,8 @@ export default async function TarifarioInternoPage() {
   if (resProgramas.error) {
     registrarErrorTecnico(FLUJO, flujoId, "programas_resumen", "error_getProgramasResumen", resProgramas.error);
   }
-  const programas = resProgramas.programas;
+  // #88: «Desde» de los programas por hotel y vigencia (su matriz no la conoce getProgramasResumen). Si falla la lectura, ese «Desde» queda en «Consultar».
+  const programas = (await completarDesdeHoteles88(sb, resProgramas)).programas;
 
   // Costo de la propia instrumentación (revisión posterior, defecto "COSTO
   // DE LA PROPIA INSTRUMENTACIÓN"): cada valor se estima UNA sola vez y se

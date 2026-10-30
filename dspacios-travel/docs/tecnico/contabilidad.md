@@ -104,8 +104,28 @@ contables`.
    (`contrato_facturacion` no existe para ese `numero_contrato`), o Haber Clientes (130505) si
    ya lo está.` La distinción importa: antes de facturar, la plata recibida es un pasivo
    (anticipo), no una cuenta por cobrar todavía. Llamado desde `registrarAbono` (crea),
-   `actualizarAbono` (corrige valor/fecha/forma de pago sin crear un 2º abono), `eliminarAbono`
-   (`reemplazarAsiento("abono", ..., null)`).
+   `actualizarAbono` (corrige valor/fecha/forma de pago sin crear un 2º abono) y `anularAbono`
+   (migración 248; ya no existe `eliminarAbono`).
+
+   **Anular un abono (248, `anularAbono` → RPC `anular_abono`)**: la guarda F4415 (208) impide borrar un
+   abono con asiento y el Libro diario no deja borrar el asiento automático, así que la salida es una RPC
+   atómica (solo `service_role`; actor = sesión, revalidado contra `usuarios`): bloquea venta y abono, retira el
+   asiento completo (balanceado → el libro sigue cuadrado), guarda la huella append-only en `abonos_anulados`
+   (fila del abono + asiento con líneas + actor + motivo obligatorio) y borra el abono; la guarda F4415 se cumple
+   sola. Bloquea con mensaje propio: F4460 pago previo aplicado · F4461 conciliado con el extracto · F4418
+   factura vigente que ya aplicó el anticipo; además F4402 otra agencia · F4401 sin permiso · F4405 abono ajeno.
+   Repetirla (doble pulsación) responde `ya_anulado` sin escribir. Todo lector basado en `abonos` (Cartera,
+   ficha, estado de cuenta, recibo, conciliaciones) deja de contarlo porque la fila desaparece.
+   **Registro atómico e idempotente (248, `registrarAbono` → RPC `registrar_abono`)**: la comprobación «contrato ya
+   pagado», la confirmación y el insert se deciden dentro de UNA transacción con la venta bloqueada (FOR UPDATE, mismo
+   orden que facturar/anular), así dos solicitudes simultáneas no se saltan la confirmación. Si lo abonado ya cubre el
+   total a cobrar (mismo cálculo que `cobroDeVenta`) y no viene `p_confirmar`, responde `requiere_confirmacion`
+   (contrato/total/pagado/nuevo) SIN escribir; con confirmación se registra el excedente. Cada intento de formulario lleva
+   una `operacionId` (uuid) guardada en `abono_operaciones`: repetirla (doble pulsación, confirmar dos veces) responde
+   `ya_registrado` sin crear otro abono; la clave identifica los DATOS COMPLETOS del abono (huella md5 de contrato, agencia, valor, TRM, forma, referencia, fecha y usuario): reutilizarla con cualquier dato distinto da F4466, y reutilizarla tras anular el abono da F4468 (nunca un éxito apuntando a una fila inexistente). Los formularios congelan los datos al enviar (`useRegistroAbono`): el diálogo de confirmación y el reintento confirmado usan ese mismo envío aunque el formulario cambie mientras llega la respuesta. El asiento se postea en la misma
+   transacción pero un fallo suyo no tumba el abono (`asiento_error`). `f208_abonos_marca` gana una única excepción:
+   un insert de service_role dentro de `registrar_abono` sí es contabilizable (importaciones y pago previo siguen no).
+   Cartera y la ficha (`ConfirmarExcedenteAbono`) muestran el diálogo; cancelar no escribe.
 2. **Facturación** (`app/(dashboard)/dashboard/contabilidad/facturacion/actions.ts`, helper
    local `postearAsientoFacturacion`): al guardar/quitar la facturación de un contrato.
    Asiento **compuesto** (usa `reversarYRegistrar`, porque una factura puede haberse

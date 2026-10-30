@@ -15,24 +15,44 @@
 //   · interno   → el equipo elige directamente (sesión + recibo de un solo uso).
 // El enlace público (`token`) solo sirve para LEER y para llegar al checkout.
 // ─────────────────────────────────────────────────────────────────────────
-import { useRef, useState, useTransition } from "react";
+import { useEffect, useRef, useState, useTransition } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { CheckCircle2, Loader2, Send, XCircle, ArrowRight } from "lucide-react";
-import { formatMoneda } from "@/lib/utils";
+import { CheckCircle2, Loader2, Send, XCircle, ArrowRight, ShieldAlert, Info } from "lucide-react";
+import { formatoExacto } from "@/lib/contrato/repartoTarifa";
 import { ACOM_ROOM_LABEL, type AcomRoom } from "@/lib/acomodaciones";
 import { elegirOpcionComparativa, solicitarOpcionComparativa } from "@/app/tarifario/checkout/actions";
 import { resolverSolicitudComparativa } from "@/app/(dashboard)/dashboard/cotizaciones/manual-actions";
-import type { GrupoHotel, OpcionVista } from "@/lib/cotizacion/comparativa";
+import type { ContextoModalidad, VistaNeto } from "@/app/(dashboard)/dashboard/cotizaciones/pagos-actions";
+import { bloqueoNeto, pctTexto } from "@/lib/cotizacion/netoHija";
+import { condicionesPorOpcion, etiquetaTotalOpcion, resumenDeAcomodacion, tiquetesDeOpcion, type GrupoHotel, type MenorOpcion, type OpcionVista, type OtroServicioOpcion, type TarifaVisible, type TiqueteVuelo } from "@/lib/cotizacion/comparativa";
+import { ListasIncluye, MenoresOpcion, ServiciosAdicionalesOpcion, TarifaOpcion, TarifaPaqueteOpcion, VuelosOpcion } from "@/components/cotizacion/ListasIncluye";
+import type { TarifaPaquete } from "@/lib/cotizacion/tarifaPaquete";
 
 export type ModoSeleccion = "checkout" | "solicitud" | "interno" | "solo_lectura";
 
 export type ResumenHotelUI = {
   plan?: string | null;
   servicios?: { nombre: string; precio?: number | null }[];
+  /** Vuelos manuales comunes: ruta, tramo, fecha y pasajeros (sin precio). Su valor ya está en el total de la opción. */
+  vuelos?: { tramo: string; origen: string | null; destino: string | null; fecha: string | null; hora?: string | null; nota: string }[];
   items?: { descripcion: string; valor: number }[];
+  /** «Otros servicios» manuales de esta opción (del snapshot congelado; sin precio, costo ni proveedor: su valor ya está en el total). */
+  otros?: OtroServicioOpcion[];
+  /** El snapshot de la opción no permite afirmar con seguridad qué servicios adicionales incluye su total: hay que generar la comparativa de nuevo. */
+  otrosNoVerificables?: boolean;
   incluye?: string | null;
   noIncluye?: string | null;
+  /** Tarifa real de los menores cotizados en esta opción (solo la usa el documento; ausente si no hay menores o la opción es NETO). */
+  menores?: MenorOpcion[];
+  /** Opción NETO cuyas líneas de menores están a PVP: no se muestran como NETO y se explica el límite. */
+  menoresNoDesglosables?: boolean;
+  /** #75: vuelos de la opción agrupados por tiquete (ida y regreso juntos, aviso una sola vez). Ausente: se usan `vuelos`. */
+  tiquetes?: TiqueteVuelo[];
+  /** #75: tarifa por persona/adulto que cuadra exactamente con lo liquidado; null/ausente = solo se muestra el total. */
+  tarifa?: TarifaVisible | null;
+  /** Tarifa del paquete por pasajero (alojamiento + vuelos + servicios repartidos); null/ausente = se usa `tarifa` y `menores`. */
+  paquete?: TarifaPaquete | null;
 };
 
 function nuevaClave(): string {
@@ -40,6 +60,139 @@ function nuevaClave(): string {
 }
 const etiquetaAcom = (a: string) => (a === "unica" ? "" : (ACOM_ROOM_LABEL[a as AcomRoom] ?? (a === "mixta" ? "Mixta" : a)));
 const inp = "w-full rounded-lg border border-gray-300 px-3 py-2 text-sm";
+
+// ── #50 · Modalidad PVP/NETO de la hija B2B (comparativa manual, personal interno) ──
+// El contexto (¿se pide elegir?, ¿qué puede mi rol?, vista previa por opción) lo calcula el servidor;
+// la base decide al crear la hija. Sin B2B/aliado el contexto dice `permite: false` y nada cambia.
+export type EleccionModalidad = { modalidad: "pvp" | "neto" | null; reconoce: boolean | null; autorizar: boolean };
+const SIN_ELECCION: EleccionModalidad = { modalidad: null, reconoce: null, autorizar: false };
+const mon = (n: number, m: string) => formatoExacto(n, m);
+
+function useContextoModalidad(activo: boolean, token: string | null, solicitudId: number | null): ContextoModalidad | null {
+  const [ctx, setCtx] = useState<ContextoModalidad | null>(null);
+  useEffect(() => {
+    if (!activo || (!token && !solicitudId)) return;
+    let vivo = true;
+    // Import PEREZOSO de la acción de servidor: solo se carga cuando el equipo elige/confirma, y un fallo
+    // (sin sesión, sin red) deja la interfaz como siempre (`permite: false`).
+    import("@/app/(dashboard)/dashboard/cotizaciones/pagos-actions")
+      .then((m) => m.contextoModalidadNeto({ token, solicitudId }))
+      .then((c) => { if (vivo) setCtx(c); })
+      .catch(() => { if (vivo) setCtx({ permite: false }); });
+    return () => { vivo = false; };
+  }, [activo, token, solicitudId]);
+  return activo ? ctx : null;
+}
+
+function vistaDe(ctx: ContextoModalidad | null, clave: string, e: EleccionModalidad): { moneda: string; v: VistaNeto } | null {
+  if (!ctx || !ctx.permite || e.modalidad !== "neto" || e.reconoce === null) return null;
+  const o = ctx.vista[clave];
+  return o ? { moneda: o.moneda, v: e.reconoce ? o.conReconoce : o.sinReconoce } : null;
+}
+
+/** ¿Falta decidir algo, o algo lo impide, para enviar esta opción? (null = se puede). */
+function motivoBloqueo(ctx: ContextoModalidad | null, clave: string, e: EleccionModalidad): string | null {
+  if (!ctx || !ctx.permite) return null;
+  if (e.modalidad === null) return "Elige PVP o NETO para esta venta B2B.";
+  if (e.modalidad === "pvp") return null;
+  if (e.reconoce === null) return "Indica si se reconoce la participación del aliado en el recobro.";
+  const vista = vistaDe(ctx, clave, e);
+  if (!vista) return null; // sin vista previa (p. ej. no cargó): la base decide.
+  return bloqueoNeto(vista.v, ctx, e.autorizar);
+}
+
+// Una fila etiqueta/importe: la etiqueta puede partirse en varias líneas; el importe y el porcentaje NUNCA se cortan
+// y quedan alineados a la derecha (escritorio y móvil).
+function Fila({ k, v, fuerte }: { k: string; v: string; fuerte?: boolean }) {
+  return (
+    <div className={"flex items-baseline justify-between gap-3" + (fuerte ? " border-t border-gray-200 pt-1 font-medium text-gray-700" : "")}>
+      <dt className="min-w-0">{k}</dt>
+      <dd className="shrink-0 whitespace-nowrap text-right tabular-nums">{v}</dd>
+    </div>
+  );
+}
+
+function PanelModalidad({ ctx, valor, onChange, accion = "Elegir esta opción" }: {
+  ctx: ContextoModalidad | null; valor: EleccionModalidad; onChange: (e: EleccionModalidad) => void;
+  /** Botón que GUARDA la modalidad (en las solicitudes es «Confirmar y crear la cotización»). */
+  accion?: string;
+}) {
+  if (!ctx || !ctx.permite) return null;
+  const radio = "flex items-start gap-2 text-sm text-gray-700";
+  const entrada = "mt-0.5 shrink-0";
+  return (
+    <fieldset className="min-w-0 rounded-xl border border-gray-200 bg-white p-4 text-sm print:hidden">
+      <legend className="px-1 text-xs font-semibold uppercase tracking-wide text-gray-500">Precio de la venta B2B</legend>
+      <p role="note" className="mb-3 flex items-start gap-2 rounded-lg bg-blue-50 px-3 py-2 text-xs text-blue-800">
+        <Info size={14} className="mt-0.5 shrink-0" aria-hidden />
+        <span><b className="font-semibold">Vista previa.</b>{" "}La modalidad se guarda al pulsar <b className="font-semibold">{accion}</b></span>
+      </p>
+      <div className="grid gap-x-6 gap-y-2 sm:grid-cols-2">
+        <label className={radio}>
+          <input type="radio" name="modalidad-b2b" className={entrada} checked={valor.modalidad === "pvp"}
+            onChange={() => onChange({ modalidad: "pvp", reconoce: null, autorizar: false })} />
+          <span className="min-w-0"><b className="font-semibold">PVP</b> (el aliado cobra su comisión aparte)</span>
+        </label>
+        <label className={radio + (ctx.puedeNeto ? "" : " opacity-50")}>
+          <input type="radio" name="modalidad-b2b" className={entrada} disabled={!ctx.puedeNeto} checked={valor.modalidad === "neto"}
+            onChange={() => onChange({ modalidad: "neto", reconoce: valor.reconoce, autorizar: false })} />
+          <span className="min-w-0"><b className="font-semibold">NETO</b> (el aliado paga el PVP menos su descuento)</span>
+        </label>
+      </div>
+      {!ctx.puedeNeto && <p className="mt-2 text-xs text-gray-500">El precio NETO lo fija gerencia, administración, operaciones o superadmin.</p>}
+      {valor.modalidad === "neto" && (
+        <div className="mt-3 space-y-2 border-t border-gray-100 pt-3">
+          <p className="text-xs font-medium text-gray-600">¿Se reconoce la participación del aliado en el recobro?</p>
+          <div className="grid gap-x-6 gap-y-2 sm:grid-cols-2">
+            <label className={radio}>
+              <input type="radio" name="reconoce-recobro" className={entrada} checked={valor.reconoce === true}
+                onChange={() => onChange({ ...valor, reconoce: true, autorizar: false })} />
+              <span className="min-w-0">Sí: el recobro sale de la base y su participación se suma al descuento</span>
+            </label>
+            <label className={radio}>
+              <input type="radio" name="reconoce-recobro" className={entrada} checked={valor.reconoce === false}
+                onChange={() => onChange({ ...valor, reconoce: false, autorizar: false })} />
+              <span className="min-w-0">No: el recobro entra a la base de la comisión</span>
+            </label>
+          </div>
+          {(ctx.puedeAutorizar6 || ctx.puedeAutorizar2) && (
+            <label className={radio + " pt-1"}>
+              <input type="checkbox" className={entrada} checked={valor.autorizar} onChange={(e) => onChange({ ...valor, autorizar: e.target.checked })} />
+              <span className="min-w-0"><ShieldAlert size={14} aria-hidden className="mr-1 inline text-amber-600" />Autorizo un margen por debajo del mínimo (solo si hace falta)</span>
+            </label>
+          )}
+        </div>
+      )}
+    </fieldset>
+  );
+}
+
+function ResumenNeto({ ctx, clave, valor }: { ctx: ContextoModalidad | null; clave: string; valor: EleccionModalidad }) {
+  const vista = vistaDe(ctx, clave, valor);
+  if (!ctx || !ctx.permite || !vista) return null;
+  const { v, moneda } = vista;
+  const bloqueo = bloqueoNeto(v, ctx, valor.autorizar);
+  return (
+    <div className="mt-3 space-y-2" aria-live="polite">
+      <dl className="space-y-1 rounded-lg bg-gray-50 p-3 text-xs text-gray-600">
+        <Fila k="PVP original (precio al cliente)" v={mon(v.pvp, moneda)} />
+        <Fila k="Base del descuento" v={mon(v.base, moneda)} />
+        <Fila k="Comisión ordinaria" v={mon(v.ordinaria, moneda)} />
+        <Fila k="Participación en el recobro" v={mon(v.participacion, moneda)} />
+        <Fila k="Descuento total" v={mon(v.descuento, moneda)} fuerte />
+      </dl>
+      <div className="rounded-lg border-2 bg-white p-3" style={{ borderColor: "var(--brand-primary)" }}>
+        <p className="text-[11px] font-semibold uppercase tracking-wide" style={{ color: "var(--brand-primary)" }}>Total NETO que paga el aliado</p>
+        <p className="mt-0.5 whitespace-nowrap text-2xl font-bold tabular-nums text-gray-900">{mon(v.neto, moneda)}</p>
+        <dl className="mt-2 space-y-0.5 text-xs text-gray-600">
+          <Fila k="Margen sobre el total NETO" v={pctTexto(v.margen)} />
+          <Fila k="Mínimo exigido" v={`${v.pisoPct}\u00a0%`} />
+        </dl>
+      </div>
+      {bloqueo && <p role="alert" className="text-xs text-amber-700">{bloqueo}</p>}
+    </div>
+  );
+}
 
 export function SelectorOpciones({
   version, token, grupos, resumenes, modo, deshabilitada, motivoDeshabilitada, elegida,
@@ -58,13 +211,23 @@ export function SelectorOpciones({
   const [ok, setOk] = useState("");
   const [pending, start] = useTransition();
   const clave = useRef<string>(nuevaClave());
+  // #50: modalidad PVP/NETO (solo comparativa manual B2B elegida por el equipo).
+  const ctxMod = useContextoModalidad(modo === "interno", token, null);
+  const [eleccion, setEleccion] = useState<EleccionModalidad>(SIN_ELECCION);
+  // #75: Incluye / No incluye — común a todas las opciones (una vez, tras las tarjetas) o propio de cada una.
+  const { comun, porAcomodacion } = condicionesPorOpcion(grupos, resumenes);
 
   function actuar(opcionRef: string, acomodacionRef: string) {
     setErr(""); setOk("");
     if (!token) { setErr("No se pudo identificar la comparativa. Recarga la página."); return; }
     if (modo === "interno") {
+      const motivo = motivoBloqueo(ctxMod, `${opcionRef}/${acomodacionRef}`, eleccion);
+      if (motivo) { setErr(motivo); return; }
+      const mod = ctxMod && ctxMod.permite && eleccion.modalidad
+        ? { modalidad: eleccion.modalidad, reconoceRecobro: eleccion.modalidad === "neto" ? eleccion.reconoce : null, autorizarMargen: eleccion.autorizar }
+        : {};
       start(async () => {
-        const r = await elegirOpcionComparativa({ token, opcionRef, acomodacionRef, version, clave: clave.current, cliente: null });
+        const r = await elegirOpcionComparativa({ token, opcionRef, acomodacionRef, version, clave: clave.current, cliente: null, ...mod });
         if (r.ok) { router.refresh(); return; }
         setErr(r.error);
         if (r.reintentable) clave.current = nuevaClave();
@@ -91,13 +254,21 @@ export function SelectorOpciones({
       {ok && <p role="status" className="flex items-start gap-2 rounded-lg bg-green-50 px-3 py-2 text-sm text-green-800"><CheckCircle2 size={16} className="mt-0.5 shrink-0" aria-hidden />{ok}</p>}
       {err && <p role="alert" className="rounded-lg bg-red-50 px-3 py-2 text-sm text-red-600">{err}</p>}
 
+      {modo === "interno" && !deshabilitada && !elegida && (
+        <PanelModalidad ctx={ctxMod} valor={eleccion} onChange={(e) => { setEleccion(e); clave.current = nuevaClave(); }} />
+      )}
+
       <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-3">
         {grupos.map((g) => {
           const sel: OpcionVista = g.acomodaciones.find((a) => a.acomodacionRef === acom[g.opcionRef]) ?? g.acomodaciones[0];
-          const r = resumenes[`${g.opcionRef}/${sel.acomodacionRef}`] ?? resumenes[g.opcionRef] ?? {};
+          const r = resumenDeAcomodacion(resumenes, g.opcionRef, sel.acomodacionRef);
+          const propios = porAcomodacion[`${g.opcionRef}/${sel.acomodacionRef}`] ?? { inc: [], no: [] };
           const esElegida = !!elegida && elegida.opcionRef === g.opcionRef && elegida.acomodacionRef === sel.acomodacionRef;
+          // Con la vista previa NETO activa, el total de la opción pasa a ser el PVP ORIGINAL (identificado y atenuado)
+          // y el protagonista es el NETO del resumen. Sin vista previa NETO, el total se ve como siempre.
+          const conNeto = modo === "interno" && !deshabilitada && !!vistaDe(ctxMod, `${g.opcionRef}/${sel.acomodacionRef}`, eleccion);
           return (
-            <article key={g.opcionRef} className="flex flex-col rounded-2xl border bg-white p-4 shadow-sm"
+            <article key={g.opcionRef} className="flex min-w-0 flex-col rounded-2xl border bg-white p-4 shadow-sm"
               style={esElegida ? { borderColor: "var(--brand-success)" } : { borderColor: "#e5e7eb" }}>
               <header className="mb-2">
                 <p className="text-[11px] font-semibold uppercase tracking-wide text-gray-400">Opción {g.opcionRef}</p>
@@ -111,33 +282,43 @@ export function SelectorOpciones({
                   <select id={`acom-${g.opcionRef}`} value={sel.acomodacionRef} className={inp}
                     onChange={(e) => setAcom({ ...acom, [g.opcionRef]: e.target.value })}>
                     {g.acomodaciones.map((a) => (
-                      <option key={a.acomodacionRef} value={a.acomodacionRef}>{etiquetaAcom(a.acomodacionRef) || "Acomodación"} — {formatMoneda(a.total, a.moneda)}</option>
+                      <option key={a.acomodacionRef} value={a.acomodacionRef}>{etiquetaAcom(a.acomodacionRef) || "Acomodación"} — {formatoExacto(a.total, a.moneda)}</option>
                     ))}
                   </select>
                 </div>
               )}
 
-              {r.servicios && r.servicios.length > 0 && (
-                <ul className="mb-3 space-y-1 text-xs text-gray-600">
-                  {r.servicios.map((s) => <li key={s.nombre}>+ {s.nombre}</li>)}
-                </ul>
-              )}
+              {/* Orden: vuelos (por tiquete), el alojamiento y debajo los servicios adicionales. */}
+              <div className="mb-3"><VuelosOpcion tiquetes={r.tiquetes ?? tiquetesDeOpcion(null, r.vuelos, null)} /></div>
               {r.items && r.items.length > 0 && (
                 <ul className="mb-3 space-y-1 text-xs text-gray-600">
-                  {r.items.map((it) => <li key={it.descripcion}>{it.descripcion}</li>)}
+                  {r.items.filter((it) => it.descripcion !== "Tarifa por niño").map((it, i) => <li key={i}>{it.descripcion}</li>)}
                 </ul>
+              )}
+              <div className="mb-3"><ServiciosAdicionalesOpcion servicios={r.servicios} otros={r.otros} /></div>
+              {r.otrosNoVerificables && (
+                <p role="note" data-testid="otros-no-verificables" className="mb-3 rounded-lg bg-amber-50 px-3 py-2 text-xs text-amber-900">
+                  No se puede confirmar, desde el registro de esta opción, qué servicios adicionales incluye su total. Genera la comparativa de nuevo para ver el detalle.
+                </p>
+              )}
+              {!comun && (propios.inc.length > 0 || propios.no.length > 0) && (
+                <div className="mb-3"><ListasIncluye incluye={propios.inc} noIncluye={propios.no} opcion={g.opcionRef} columnas={1} /></div>
               )}
 
               <div className="mt-auto border-t border-gray-100 pt-3">
-                {sel.tarifaPersona != null && (
-                  <div className="flex items-baseline justify-between text-xs text-gray-500">
-                    <span>Tarifa por persona{etiquetaAcom(sel.acomodacionRef) ? ` · ${etiquetaAcom(sel.acomodacionRef)}` : ""}</span>
-                    <span className="font-medium tabular-nums text-gray-700">{formatMoneda(sel.tarifaPersona, sel.moneda)}</span>
-                  </div>
-                )}
-                <div className="mt-1 flex items-baseline justify-between">
-                  <span className="text-sm font-medium text-gray-600">Total de este hotel</span>
-                  <span className="text-xl font-bold tabular-nums" style={{ color: "var(--brand-primary)" }}>{formatMoneda(sel.total, sel.moneda)}</span>
+                {r.paquete
+                  ? <TarifaPaqueteOpcion paquete={r.paquete} moneda={sel.moneda} sufijo={etiquetaAcom(sel.acomodacionRef) ? ` · ${etiquetaAcom(sel.acomodacionRef)}` : ""} />
+                  : <>
+                    <TarifaOpcion tarifa={r.tarifa} respaldo={{ valor: sel.tarifaPersona, conMenores: !!r.menores?.length }} moneda={sel.moneda} sufijo={etiquetaAcom(sel.acomodacionRef) ? ` · ${etiquetaAcom(sel.acomodacionRef)}` : ""} />
+                    <div className="mt-1 space-y-1"><MenoresOpcion menores={r.menores} noDesglosables={r.menoresNoDesglosables} moneda={sel.moneda} pvp={conNeto} /></div>
+                  </>}
+                <div className="mt-1 flex items-baseline justify-between gap-3">
+                  <span className={conNeto ? "min-w-0 text-xs font-medium text-gray-500" : "min-w-0 text-sm font-medium text-gray-600"}>
+                    {conNeto ? "PVP original (cliente)" : etiquetaTotalOpcion(r)}
+                  </span>
+                  {conNeto
+                    ? <span className="shrink-0 whitespace-nowrap text-right text-sm font-semibold tabular-nums text-gray-500">{formatoExacto(sel.total, sel.moneda)}</span>
+                    : <span className="shrink-0 whitespace-nowrap text-right text-xl font-bold tabular-nums" style={{ color: "var(--brand-primary)" }}>{formatoExacto(sel.total, sel.moneda)}</span>}
                 </div>
 
                 {modo === "checkout" && !deshabilitada && token && (
@@ -147,7 +328,10 @@ export function SelectorOpciones({
                   </Link>
                 )}
                 {modo === "interno" && !deshabilitada && (
-                  <button type="button" disabled={pending} onClick={() => actuar(g.opcionRef, sel.acomodacionRef)}
+                  <ResumenNeto ctx={ctxMod} clave={`${g.opcionRef}/${sel.acomodacionRef}`} valor={eleccion} />
+                )}
+                {modo === "interno" && !deshabilitada && (
+                  <button type="button" disabled={pending || !!motivoBloqueo(ctxMod, `${g.opcionRef}/${sel.acomodacionRef}`, eleccion)} onClick={() => actuar(g.opcionRef, sel.acomodacionRef)}
                     className="mt-3 flex w-full items-center justify-center gap-1.5 rounded-lg px-4 py-2.5 text-sm font-semibold text-white disabled:opacity-50 print:hidden" style={{ backgroundColor: "var(--brand-primary)" }}>
                     {pending ? <Loader2 size={15} className="animate-spin" aria-hidden /> : <CheckCircle2 size={15} aria-hidden />} Elegir esta opción
                   </button>
@@ -182,6 +366,13 @@ export function SelectorOpciones({
           );
         })}
       </div>
+
+      {comun && (
+        <section aria-label="Incluye y no incluye de todas las opciones">
+          <h3 className="mb-2 text-sm font-semibold text-gray-700">Incluye / No incluye (todas las opciones)</h3>
+          <ListasIncluye incluye={comun.inc} noIncluye={comun.no} />
+        </section>
+      )}
     </div>
   );
 }
@@ -199,12 +390,22 @@ export function PanelSolicitudes({ solicitudes, puedeResolver, hayElegida }: { s
   const [motivo, setMotivo] = useState<Record<number, string>>({});
   const claves = useRef<Record<number, string>>({});
   const pendientes = solicitudes.filter((s) => s.estado === "pendiente");
+  // #50: modalidad PVP/NETO al confirmar (una elección para la ficha; el contexto sale de una solicitud pendiente).
+  const ctxMod = useContextoModalidad(puedeResolver && !hayElegida && pendientes.length > 0, null, pendientes[0]?.id ?? null);
+  const [eleccion, setEleccion] = useState<EleccionModalidad>(SIN_ELECCION);
 
-  function resolver(id: number, decision: "confirmar" | "rechazar") {
+  function resolver(id: number, decision: "confirmar" | "rechazar", clave: string = "") {
     setErr("");
+    if (decision === "confirmar") {
+      const motivoBlq = motivoBloqueo(ctxMod, clave, eleccion);
+      if (motivoBlq) { setErr(motivoBlq); return; }
+    }
     claves.current[id] ??= nuevaClave();
+    const mod = decision === "confirmar" && ctxMod && ctxMod.permite && eleccion.modalidad
+      ? { modalidad: eleccion.modalidad, reconoceRecobro: eleccion.modalidad === "neto" ? eleccion.reconoce : null, autorizarMargen: eleccion.autorizar }
+      : undefined;
     start(async () => {
-      const r = await resolverSolicitudComparativa(id, decision, motivo[id] ?? "", claves.current[id]);
+      const r = await resolverSolicitudComparativa(id, decision, motivo[id] ?? "", claves.current[id], mod);
       if (r.ok) { router.refresh(); return; }
       setErr(r.error);
       delete claves.current[id];
@@ -218,6 +419,9 @@ export function PanelSolicitudes({ solicitudes, puedeResolver, hayElegida }: { s
         Varias personas pueden solicitar a la vez: ninguna bloquea la comparativa. Confirmar una crea la cotización de esa opción; las demás pendientes quedan superadas.
       </p>
       {err && <p role="alert" className="mb-3 rounded-lg bg-red-50 px-3 py-2 text-sm text-red-600">{err}</p>}
+      {puedeResolver && !hayElegida && pendientes.length > 0 && (
+        <div className="mb-3"><PanelModalidad ctx={ctxMod} valor={eleccion} accion="Confirmar y crear la cotización" onChange={(e) => { setEleccion(e); claves.current = {}; }} /></div>
+      )}
       {solicitudes.length === 0 ? <p className="text-sm text-gray-400">Sin solicitudes.</p> : (
         <ul className="space-y-3">
           {solicitudes.map((s) => (
@@ -231,10 +435,14 @@ export function PanelSolicitudes({ solicitudes, puedeResolver, hayElegida }: { s
               </div>
               <p className="mt-1 text-xs text-gray-500">{[s.telefono, s.email].filter(Boolean).join(" · ")} · {s.creada}</p>
               {s.nota && <p className="mt-1 text-xs text-gray-600">{s.nota}</p>}
+              {puedeResolver && s.estado === "pendiente" && !hayElegida && !s.vencida && (
+                <ResumenNeto ctx={ctxMod} clave={`${s.opcionRef}/${s.acomodacionRef}`} valor={eleccion} />
+              )}
               {puedeResolver && s.estado === "pendiente" && (
                 <div className="mt-2 flex flex-wrap items-center gap-2">
                   {!hayElegida && !s.vencida && (
-                    <button type="button" disabled={pending} onClick={() => resolver(s.id, "confirmar")}
+                    <button type="button" disabled={pending || !!motivoBloqueo(ctxMod, `${s.opcionRef}/${s.acomodacionRef}`, eleccion)}
+                      onClick={() => resolver(s.id, "confirmar", `${s.opcionRef}/${s.acomodacionRef}`)}
                       className="inline-flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-semibold text-white disabled:opacity-50" style={{ backgroundColor: "var(--brand-primary)" }}>
                       <CheckCircle2 size={14} aria-hidden /> Confirmar y crear la cotización
                     </button>

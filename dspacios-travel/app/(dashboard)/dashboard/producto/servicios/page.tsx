@@ -19,16 +19,17 @@ const COLS_SERVICIOS = [
   { key: "liquidacion", label: "Liquidación (dia/noche/paquete)", ejemplo: "paquete" },
   { key: "descripcion", label: "Descripción del tour", ejemplo: "" },
   { key: "recargo_individual", label: "Recargo individual (1 pax)", ejemplo: "0" },
+  { key: "precio_infante", label: "Precio de infante 0-1,99 años (neto; vacío = paga como adulto, 0 = gratis)", ejemplo: "" },
 ];
 
 export default async function ServiciosPage() {
   const sb = await createClient();
   const [{ data: serviciosRaw }, { data: proveedores }, { data: destinos }, { data: rangos }, { data: temporadasRaw }] = await Promise.all([
-    sb.from("servicios_adicionales").select("id, nombre, temporada, precio_persona, proveedor_id, destino_id, alcance, moneda, rangos_edad, categoria, liquidacion, descripcion, recargo_individual, foto_url, proveedores(nombre), destinos(nombre), servicio_tarifa_pax(pax_desde, pax_hasta, precio, temporada)").order("nombre"),
+    sb.from("servicios_adicionales").select("id, nombre, temporada, precio_persona, proveedor_id, destino_id, alcance, moneda, rangos_edad, categoria, liquidacion, descripcion, recargo_individual, precio_infante, foto_url, proveedores(nombre), destinos(nombre), servicio_tarifa_pax(pax_desde, pax_hasta, precio, temporada)").order("nombre"),
     sb.from("proveedores").select("id, nombre").eq("tipo", "servicios").order("nombre"),
     sb.from("destinos").select("id, nombre, codigo_iata").order("nombre"),
     sb.from("rangos_edad").select("id, denominacion, edad_min, edad_max").order("edad_min"),
-    sb.from("servicio_temporadas").select("id, servicio_id, nombre, fecha_inicio, fecha_fin, compra_inicio, compra_fin, prioridad, precio_persona, recargo_individual").order("prioridad", { ascending: false }),
+    sb.from("servicio_temporadas").select("id, servicio_id, nombre, fecha_inicio, fecha_fin, compra_inicio, compra_fin, prioridad, precio_persona, precio_infante, recargo_individual").order("prioridad", { ascending: false }),
   ]);
   const servicios = (serviciosRaw ?? []) as unknown as Parameters<typeof ServiciosClient>[0]["servicios"];
 

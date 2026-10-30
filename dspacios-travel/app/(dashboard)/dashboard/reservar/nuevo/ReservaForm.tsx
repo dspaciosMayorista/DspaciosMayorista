@@ -12,6 +12,11 @@ import { precioServicio } from "@/lib/calc/paquetes";
 import { ACOM_ROOMS, ACOM_ROOM_LABEL, paxTarifaDe, clasificarPorEdad, validarReservaHabitaciones, type AcomConfig, type AcomRoom } from "@/lib/acomodaciones";
 import { esInfantePorEdad } from "@/lib/reservar/pasajeros";
 import { recalcularVinculosPorEdad } from "@/lib/reservar/pasajerosFilas";
+import { OpcionesTipoDoc } from "@/components/personas/OpcionesTipoDoc";
+import { documentoClienteAdmitido } from "@/lib/personas/tiposDocumento";
+import { aplicarCopiaTitular, copiaVigente, deshacerCopiaTitular, type CopiaTitular } from "@/lib/personas/copiaTitular";
+import { BotonCopiarTitular } from "@/components/pasajeros/BotonCopiarTitular";
+import { BuscarTitular } from "@/components/personas/BuscarTitular";
 import { BuscarPasajeroDocumento } from "@/components/pasajeros/BuscarPasajeroDocumento";
 import { hoyBogota, vigenciaInicial } from "@/lib/cotizacion/vigencia";
 
@@ -34,6 +39,8 @@ export type ServicioDisp = {
   nombre: string;
   modo: "persona" | "grupo";
   personaPvp: number | null;
+  // PVP del infante (0 a 1,99 años) en cobro por persona; null = paga como adulto.
+  infantePvp?: number | null;
   grupos: { pax_desde: number; pax_hasta: number; precio: number }[];
 };
 
@@ -58,7 +65,8 @@ export type Meta = {
   petFriendly: boolean;
   petNota: string | null;
 };
-export type Combo = { categoria: string; regimen: string; precios: Record<string, number> };
+// `preciosMenor2`: precio de un MENOR DE 2 AÑOS por clase de hotel (migración 226).
+export type Combo = { categoria: string; regimen: string; precios: Record<string, number>; preciosMenor2?: Record<string, number> };
 
 const lbl = "mb-1 block text-xs font-medium text-gray-600";
 const inp = "w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm";
@@ -127,6 +135,7 @@ export function ReservaForm({
 
   const combo = combosState.find((c) => c.categoria === catSel && c.regimen === reg);
   const precios = combo?.precios ?? {};
+  const preciosMenor2 = combo?.preciosMenor2 ?? {};
 
   // Reserva por HABITACIONES: cantidad de habitaciones por tipo (sencilla/doble/…).
   const [habs, setHabs] = useState<Record<string, string>>({});
@@ -160,21 +169,30 @@ export function ReservaForm({
   const totalPax = esServicios ? (Number(paxServ) || 0) : paxConSilla + numInfantes;
   const numHabitaciones = roomTypes.reduce((s, a) => s + (Number(habs[a]) || 0), 0);
 
+  // Los infantes declarados son menores de 2 años (tarifa de infante: fee de
+  // vuelo + servicios de infante; no ocupan silla ni cuentan para el rango de
+  // un servicio por grupo).
+  const precioInfante = preciosMenor2["infante"] ?? precios["infante"] ?? 0;
   const totalHotel =
     roomTypes.reduce((s, a) => s + (Number(habs[a]) || 0) * paxTarifa(a) * precios[a]!, 0) +
     numNinos * (precios["nino"] ?? 0) +
-    numNinos2 * (precios["nino2"] ?? 0);
+    numNinos2 * (precios["nino2"] ?? 0) +
+    (esServicios ? 0 : numInfantes * precioInfante);
 
   // Servicios add-on (precio según pax)
   const [servSel, setServSel] = useState<Set<number>>(new Set());
+  // Pax de 2 años o más (rango de grupo y tarifa de adulto); los menores de 2
+  // años pagan su precio de infante en servicios por persona y nada en grupo.
+  const paxServicio = esServicios ? totalPax : paxConSilla;
   function precioServ(s: ServicioDisp): number {
-    return precioServicio(s.modo, s.personaPvp, s.grupos, totalPax);
+    const base = precioServicio(s.modo, s.personaPvp, s.grupos, paxServicio);
+    return !esServicios && s.modo === "persona" ? base + numInfantes * (s.infantePvp ?? s.personaPvp ?? 0) : base;
   }
   const totalServicios = serviciosDisp.reduce((acc, s) => (servSel.has(s.servicioId) ? acc + precioServ(s) : acc), 0);
   const totalPrecio = totalHotel + totalServicios;
 
   // Cliente
-  const [cli, setCli] = useState({ nombres: "", apellidos: "", tipoDoc: "CC", numeroDoc: "", telefono: "", email: "" });
+  const [cli, setCli] = useState({ nombres: "", apellidos: "", tipoDoc: "", numeroDoc: "", telefono: "", email: "" });
 
   // Tipo de venta
   const [tipoAsesor, setTipoAsesor] = useState<"interno" | "agencia" | "freelance">("interno");
@@ -250,13 +268,21 @@ export function ReservaForm({
     if (v && vigencia > v) setVigencia(v);
     setPax((prev) => recalcularVinculosPorEdad(prev, v || null));
   }
+  // Los datos del cliente solo se copian a UN pasajero (PR #409); deshacer devuelve lo que tenía.
+  const [copiaTitularRaw, setCopiaTitular] = useState<CopiaTitular>(null);
+  const copiaTitular = copiaVigente(copiaTitularRaw, Math.max(pax.length, 1));
   function copiarCliente(i: number) {
-    setPax((prev) => {
-      const next = [...prev];
-      while (next.length <= i) next.push(emptyPax());
-      next[i] = { ...next[i], nombres: cli.nombres, apellidos: cli.apellidos, tipoDoc: cli.tipoDoc, numeroDoc: cli.numeroDoc };
-      return next;
-    });
+    const base = [...pax];
+    while (base.length <= i) base.push(emptyPax());
+    const r = aplicarCopiaTitular(base, i, cli, copiaTitular);
+    if (!r) return;
+    setPax(r.pax);
+    setCopiaTitular(r.copia);
+  }
+  function deshacerCopiaCliente() {
+    const r = deshacerCopiaTitular(pax, copiaTitular);
+    setPax(r.pax);
+    setCopiaTitular(r.copia);
   }
 
   function guardar() {
@@ -279,7 +305,8 @@ export function ReservaForm({
     if (faltaNombre >= 0) { setErr(`Pasajero ${faltaNombre + 1}: nombres y apellidos son obligatorios.`); return; }
     // Validación de documento: solo Pasaporte admite letras; el resto, solo números.
     const docOk = (tipo: string, num: string) => tipo === "PAS" || num.trim() === "" || /^\d+$/.test(num.trim());
-    if (!docOk(cli.tipoDoc, cli.numeroDoc)) { setErr("El número de documento del cliente debe ser solo números (excepto Pasaporte)."); return; }
+    if (cli.numeroDoc.trim() && !cli.tipoDoc) { setErr("Elige el tipo de documento del cliente."); return; }
+    if (!documentoClienteAdmitido(cli.tipoDoc, cli.numeroDoc)) { setErr("El número de documento del cliente debe ser solo números (excepto Pasaporte y PPT)."); return; }
     const malDoc = paxRows.findIndex((p) => !docOk(p.tipoDoc, p.numeroDoc));
     if (malDoc >= 0) { setErr(`El documento del pasajero ${malDoc + 1} debe ser solo números (excepto Pasaporte).`); return; }
     setErr("");
@@ -393,7 +420,7 @@ export function ReservaForm({
             </div>
           )}
           <div>
-            <label className={lbl}>Infantes (sin silla; el cargo, si aplica, se confirma al generar)</label>
+            <label className={lbl}>Infantes (menores de 2 años, sin silla){precioInfante > 0 ? ` · ${fmt(precioInfante)}` : ""}</label>
             <Input type="number" min={0} value={infantes} onChange={(e) => setInfantes(e.target.value)} />
           </div>
         </div>
@@ -443,7 +470,7 @@ export function ReservaForm({
                     />
                     <span className="text-sm text-gray-800">
                       {s.nombre}{" "}
-                      <span className="text-xs text-gray-400">({s.modo === "grupo" ? `por grupo · ${totalPax} pax` : "por persona"})</span>
+                      <span className="text-xs text-gray-400">({s.modo === "grupo" ? `por grupo · ${paxServicio} pax` : "por persona"})</span>
                     </span>
                   </label>
                   <span className="text-sm tabular-nums" style={{ color: "var(--brand-primary)" }}>{fmt(precio)}</span>
@@ -458,15 +485,22 @@ export function ReservaForm({
       <section className="rounded-xl border border-gray-200 bg-white p-5">
         <p className="mb-3 text-sm font-semibold" style={{ color: "var(--brand-primary)" }}>Cliente</p>
         <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-          <div><label className={lbl}>Nombres *</label><Input value={cli.nombres} onChange={(e) => setCli({ ...cli, nombres: e.target.value })} /></div>
-          <div><label className={lbl}>Apellidos *</label><Input value={cli.apellidos} onChange={(e) => setCli({ ...cli, apellidos: e.target.value })} /></div>
-          <div>
-            <label className={lbl}>Tipo doc</label>
+          <div className="sm:col-span-2">
+            <label className={lbl}>Número de documento</label>
+            <div className="flex gap-1">
+              <Input value={cli.numeroDoc} onChange={(e) => setCli({ ...cli, numeroDoc: e.target.value })} />
+              <BuscarTitular numero={cli.numeroDoc} actual={cli} campos={["nombres", "apellidos", "telefono", "email"]} onAplicar={({ tipoDoc, ...d }) => setCli((p) => ({ ...p, tipoDoc, ...d }))} />
+            </div>
+          </div>
+          <div className="sm:col-span-2">
+            <label className={lbl}>Tipo de documento</label>
             <select value={cli.tipoDoc} onChange={(e) => setCli({ ...cli, tipoDoc: e.target.value })} className={inp}>
-              <option value="CC">CC</option><option value="CE">CE</option><option value="PAS">Pasaporte</option><option value="TI">TI</option>
+              <option value="">Elige el tipo…</option>
+              <OpcionesTipoDoc />
             </select>
           </div>
-          <div><label className={lbl}>Número doc</label><Input value={cli.numeroDoc} onChange={(e) => setCli({ ...cli, numeroDoc: e.target.value })} /></div>
+          <div><label className={lbl}>Nombres *</label><Input value={cli.nombres} onChange={(e) => setCli({ ...cli, nombres: e.target.value })} /></div>
+          <div><label className={lbl}>Apellidos *</label><Input value={cli.apellidos} onChange={(e) => setCli({ ...cli, apellidos: e.target.value })} /></div>
           <div><label className={lbl}>Teléfono</label><Input value={cli.telefono} onChange={(e) => setCli({ ...cli, telefono: e.target.value })} /></div>
           <div><label className={lbl}>Email</label><Input type="email" value={cli.email} onChange={(e) => setCli({ ...cli, email: e.target.value })} /></div>
         </div>
@@ -564,11 +598,7 @@ export function ReservaForm({
                       <span className="text-xs font-medium text-gray-500">
                         Pasajero {i + 1}{esInfante ? " · Infante" : ""}
                       </span>
-                      {i === 0 && (
-                        <button type="button" onClick={() => copiarCliente(0)} className="text-xs" style={{ color: "var(--brand-accent)" }}>
-                          Copiar datos del cliente
-                        </button>
-                      )}
+                      <BotonCopiarTitular indice={i} copia={copiaTitular} onCopiar={() => copiarCliente(i)} onDeshacer={deshacerCopiaCliente} />
                     </div>
                     <div className="grid grid-cols-1 gap-2 sm:grid-cols-3">
                       <div><label className={lbl}>Nombres *</label><Input value={p.nombres} onChange={(e) => setPaxField(i, "nombres", e.target.value)} /></div>
@@ -576,7 +606,7 @@ export function ReservaForm({
                       <div>
                         <label className={lbl}>Tipo doc</label>
                         <select value={p.tipoDoc} onChange={(e) => setPaxField(i, "tipoDoc", e.target.value)} className={inp}>
-                          <option value="CC">CC</option><option value="CE">CE</option><option value="PAS">Pasaporte</option><option value="TI">TI</option><option value="RC">RC</option>
+                          <OpcionesTipoDoc pasajero />
                         </select>
                       </div>
                       <div>

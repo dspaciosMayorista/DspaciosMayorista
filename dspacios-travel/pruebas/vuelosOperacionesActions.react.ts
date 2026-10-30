@@ -23,7 +23,10 @@ const { __setClient } = await import("./support/stubs/supabaseServerStub.mjs");
 const { __revalidadas, __resetRevalidadas } = await import("./support/stubs/nextCacheStub.mjs");
 const paquetesStub = await import("./support/stubs/paquetesActionsStub.mjs");
 const regenerados: unknown[] = [];
-paquetesStub.__setImpls({ generarTarifario: async (pid: unknown) => { regenerados.push(pid); return { ok: true }; } });
+paquetesStub.__setImpls({
+  generarTarifario: async (pid: unknown) => { regenerados.push(pid); return { ok: true }; },
+  regenerarTarifariosDeBloqueo: async () => undefined,
+});
 
 type Rpc = { fn: string; args: Record<string, unknown> };
 type Op = { tabla: string; op: string; detalle: unknown[] };
@@ -173,7 +176,7 @@ test("retirarCupo llama a retirar_cupo y nunca borra filas", async () => {
   const r = await acciones.retirarCupo(41, 3, " devolución ", OP);
   assert.deepEqual(r, { ok: true });
   assert.deepEqual(rpcs, [{ fn: "retirar_cupo", args: { p_silla_id: 41, p_motivo: "devolución", p_operacion_id: OP } }]);
-  assert.deepEqual(ops, []);
+  assert.equal(ops.length, 0);
   assert.equal((await acciones.retirarCupo(41, 3, "", "x")).ok, false, "sin operación válida no llama");
   assert.equal(rpcs.length, 1);
 });
@@ -209,7 +212,7 @@ test("contrato manual, liberar y editar delegan en su RPC", async () => {
   assert.equal((rpcs[3]!.args.p_datos as Record<string, string>).nacimiento, "1990-01-02");
   assert.deepEqual((rpcs[3]!.args.p_datos as Record<string, unknown>).esperado, { numero_contrato: null, contrato_manual: "EXT-9", updated_at: "V9" },
     "201: la edición manda el contrato y la versión que la pantalla mostraba, para que la base rechace si cambió");
-  assert.deepEqual(ops, []);
+  assert.equal(ops.length, 0);
 });
 
 test("editarPasajeroSilla: sin el contrato visto no llega a la base; el rechazo por silla cambiada se devuelve tal cual", async () => {
@@ -244,7 +247,7 @@ const BLOQUEO = {
   vueloIda: "AV10", fechaIda: "2026-12-01", horaSalidaIda: "06:00", horaLlegadaIda: "07:55",
   vueloRegreso: "AV11", fechaRegreso: "2026-12-05", horaSalidaReg: "18:00", horaLlegadaReg: "19:55",
   cuposTotal: 4, tarifaParaEmpaquetar: 480000, fechaDevolucion: "", fechaEmision: "", notas: "", rangosEdad: [9],
-  modalidadEmision: "serie" as const,
+  modalidadEmision: "serie" as const, moneda: "COP" as const,
 };
 
 test("crearBloqueo: una sola RPC crear_bloqueo con los datos y los cupos; ningún insert directo", async () => {
@@ -267,11 +270,83 @@ test("crearBloqueo: sin modalidad, sin record o con cupos inválidos no llega a 
   assert.deepEqual(rpcs, []);
 });
 
+// ── #90 Entrega B (migración 231): moneda de las tarifas del Bloqueo ─────────
+test("crearBloqueo (231): la moneda elegida viaja a crear_bloqueo y un Bloqueo en USD con tarifas pequeñas es válido", async () => {
+  rpcRespuesta = { data: { ok: true, id: 56 }, error: null };
+  const r = await acciones.crearBloqueo({ ...BLOQUEO, moneda: "USD", tarifaNeta: 380, tarifaParaEmpaquetar: 415, feeInfante: 45 });
+  assert.deepEqual(r, { ok: true, id: 56 });
+  const d = rpcs[0]!.args.p_datos as Record<string, unknown>;
+  assert.deepEqual([d.moneda, d.tarifa_neta, d.tarifa_para_empaquetar, d.fee_infante], ["USD", 380, 415, 45]);
+});
+
+test("crearBloqueo (231): sin moneda o con una inválida NO llega a la base; nunca se supone COP", async () => {
+  for (const moneda of [undefined, "", "EUR", "cop", null]) {
+    const r = await acciones.crearBloqueo({ ...BLOQUEO, moneda } as never);
+    assert.equal(r.ok, false, String(moneda));
+    if (!r.ok) assert.match(r.error, /moneda de las tarifas/i);
+  }
+  assert.deepEqual(rpcs, []);
+});
+
+test("crearBloqueo (231): en COP un importe positivo menor a 1.000 se bloquea con '¿Este valor está en USD?' en el servidor", async () => {
+  const casos = [
+    { tarifaNeta: 380 }, { tarifaParaEmpaquetar: 415 }, { feeInfante: 45 },
+  ];
+  for (const c of casos) {
+    const r = await acciones.crearBloqueo({ ...BLOQUEO, moneda: "COP", ...c });
+    assert.equal(r.ok, false, JSON.stringify(c));
+    if (!r.ok) assert.match(r.error, /¿Este valor está en USD\?/);
+  }
+  assert.deepEqual(rpcs, []);
+  // 0 (gratis / sin dato) y los importes reales en pesos no son sospechosos.
+  rpcRespuesta = { data: { ok: true, id: 57 }, error: null };
+  assert.equal((await acciones.crearBloqueo({ ...BLOQUEO, moneda: "COP", feeInfante: 0 })).ok, true);
+});
+
+test("crearBloqueo (231): el error del trigger de la base se muestra sin el prefijo técnico", async () => {
+  rpcRespuesta = { data: null, error: { code: "22023", message: "MONEDA_BLOQUEO: elige la moneda de las tarifas (COP o USD) del Bloqueo." } };
+  const r = await acciones.crearBloqueo(BLOQUEO);
+  assert.deepEqual(r, { ok: false, error: "elige la moneda de las tarifas (COP o USD) del Bloqueo." });
+});
+
+test("cargarBloqueosMasivo (231): la columna moneda es obligatoria por fila y se valida igual que el formulario", async () => {
+  rpcRespuesta = { data: { ok: true, id: 1 }, error: null };
+  const r = await acciones.cargarBloqueosMasivo([
+    { record: "AAA111", modalidad_emision: "serie", cupos_total: "3", tarifa_neta: "400000" },                                  // sin moneda
+    { record: "BBB222", moneda: "EUR", modalidad_emision: "serie", cupos_total: "3" },                                          // moneda inválida
+    { record: "CCC333", moneda: "COP", modalidad_emision: "serie", cupos_total: "3", tarifa_para_empaquetar: "415" },           // COP < 1.000
+    { record: "DDD444", moneda: "usd", modalidad_emision: "serie", cupos_total: "3", tarifa_para_empaquetar: "415" },           // USD válida
+  ]);
+  assert.equal(r.insertados, 1);
+  assert.equal(r.errores.length, 3);
+  assert.match(r.errores[0]!, /Fila 2 \(AAA111\): moneda debe ser "COP" o "USD"/);
+  assert.match(r.errores[1]!, /Fila 3 \(BBB222\): moneda debe ser/);
+  assert.match(r.errores[2]!, /Fila 4 \(CCC333\): ¿Este valor está en USD\?/);
+  assert.deepEqual(rpcs.map((x) => (x.args.p_datos as Record<string, unknown>).record), ["DDD444"]);
+  assert.equal((rpcs[0]!.args.p_datos as Record<string, unknown>).moneda, "USD");
+});
+
+test("actualizarBloqueo (231): la moneda es opcional al editar, pero COP con un importe menor a 1.000 se bloquea antes de la base", async () => {
+  const base = { ...BLOQUEO } as Record<string, unknown>;
+  delete base.cuposTotal; delete base.modalidadEmision;
+  const r = await acciones.actualizarBloqueo(9, { ...base, moneda: "COP", feeInfante: 45 } as never);
+  assert.equal(r.ok, false);
+  if (!r.ok) assert.match(r.error, /¿Este valor está en USD\?/);
+  assert.equal(ops.length, 0, "no toca la base");
+  const mala = await acciones.actualizarBloqueo(9, { ...base, moneda: "EUR" } as never);
+  assert.equal(mala.ok, false);
+  assert.equal(ops.length, 0);
+  // Sin moneda (Bloqueo aún sin acreditar) la edición sigue funcionando.
+  const sin = await acciones.actualizarBloqueo(9, base as never);
+  assert.equal(sin.ok, true);
+  assert.equal(ops.filter((o) => o.op === "update").length, 1);
+});
+
 test("crearBloqueo: el error de la base se devuelve (p. ej. migración 195 sin aplicar) y no revalida", async () => {
   rpcRespuesta = { data: null, error: { code: "PGRST202", message: "Could not find the function public.crear_bloqueo" } };
   const r = await acciones.crearBloqueo(BLOQUEO);
   assert.ok(!r.ok && /migración de base de datos \(194 a 197\)/.test(r.error), "explica que falta la migración; no cae a un insert directo");
-  assert.deepEqual(ops, []);
+  assert.equal(ops.length, 0);
   assert.deepEqual(__revalidadas(), []);
 });
 
@@ -282,11 +357,11 @@ test("cargarBloqueosMasivo: cada fila válida va por crear_bloqueo; errores de l
     { data: { ok: true, id: 3 }, error: null },
   ];
   const filas: Record<string, string>[] = [
-    { record: "aaa111", modalidad_emision: "serie", cupos_total: "3", destino: "san andrés", proveedor: "avianca sas", rangos_edad: "Adulto", fecha_ida: "01/12/26" },
-    { record: "BBB222", modalidad_emision: "grupo", cupos_total: "5" },
+    { record: "aaa111", moneda: "COP", modalidad_emision: "serie", cupos_total: "3", destino: "san andrés", proveedor: "avianca sas", rangos_edad: "Adulto", fecha_ida: "01/12/26" },
+    { record: "BBB222", moneda: "usd", modalidad_emision: "grupo", cupos_total: "5" },
     { record: "CCC333", modalidad_emision: "mensual", cupos_total: "2" },          // modalidad inválida: ni llega a la base
     { record: "", modalidad_emision: "serie", cupos_total: "2" },                   // sin record
-    { record: "DDD444", modalidad_emision: "serie", cupos_total: "0" },
+    { record: "DDD444", moneda: "COP", modalidad_emision: "serie", cupos_total: "0" },
   ];
   const r = await acciones.cargarBloqueosMasivo(filas);
   assert.equal(r.insertados, 2, "solo cuentan las filas que la base creó");

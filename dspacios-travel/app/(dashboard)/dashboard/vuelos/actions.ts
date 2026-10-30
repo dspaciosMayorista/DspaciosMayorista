@@ -12,6 +12,8 @@ import {
   type EstadoPago,
 } from "@/lib/vuelos/control";
 import { validarInfanteVueloInput, type InfanteVueloInput } from "@/lib/vuelos/infanteVuelo";
+import { mensajeErrorMonedaBloqueo, validarMonedaBloqueo, validarMonedaBloqueoEdicion } from "@/lib/vuelos/monedaBloqueo";
+import { esMonedaVuelo, type MonedaVuelo } from "@/lib/vuelos/monedaSospechosa";
 import { COLUMNAS_DATOS_SILLA, esSillaLibre, type SillaParaLibre } from "@/lib/vuelos/sillaLibre";
 import { fechaNegocio } from "@/lib/fechaNegocio";
 import {
@@ -46,6 +48,12 @@ export type BloqueoInput = {
   horaLlegadaReg: string;
   cuposTotal: number;
   tarifaParaEmpaquetar: number;
+  // Fee de infante del vuelo (0 a 1,99 años; migración 226): el infante paga
+  // SOLO esto en el vuelo. Precio = costo, sin markup ni TA. Puede ser 0.
+  feeInfante?: number;
+  // Moneda de tarifaNeta / tarifaParaEmpaquetar / feeInfante (migración 231, #90). OBLIGATORIA al crear: un Bloqueo nuevo nunca se
+  // supone en COP. En COP un importe positivo menor a 1.000 se rechaza ("¿Este valor está en USD?"). Al EDITAR es opcional.
+  moneda: MonedaVuelo;
   fechaDevolucion: string;
   fechaEmision: string;
   notas: string;
@@ -66,14 +74,23 @@ export async function crearBloqueo(input: BloqueoInput): Promise<Result> {
     return { ok: false, error: "Selecciona la modalidad de emisión (serie o grupo)." };
   }
   if (!(input.record ?? "").trim()) return { ok: false, error: "Falta el record (PNR)." };
+  const monedaOk = validarMonedaBloqueo(input.moneda, input);
+  if (!monedaOk.ok) return { ok: false, error: monedaOk.error };
   const cupos = Number(input.cuposTotal);
   if (!Number.isInteger(cupos) || cupos < 0) return { ok: false, error: "Los cupos deben ser un número entero mayor o igual a 0." };
   const sb = await createClient();
   const { data, error } = await sb.rpc("crear_bloqueo", { p_datos: datosBloqueoDeInput(input), p_cupos: cupos });
-  if (error) return { ok: false, error: mensajeErrorRpc(error).error };
+  if (error) return { ok: false, error: mensajeErrorMonedaBloqueo(mensajeErrorRpc(error).error) };
   const id = Number((data as { id?: number } | null)?.id);
   revalidatePath("/dashboard/vuelos");
   return Number.isInteger(id) && id > 0 ? { ok: true, id } : { ok: true };
+}
+
+// Fee de infante: número finito >= 0 (vacío o inválido = 0, igual que las otras
+// fuentes de vuelo: `not null default 0`).
+function feeInfanteValido(v: number | null | undefined): number {
+  const n = Number(v);
+  return Number.isFinite(n) && n > 0 ? n : 0;
 }
 
 // Datos del record para `crear_bloqueo` (migración 195): claves = columnas.
@@ -98,6 +115,8 @@ function datosBloqueoDeInput(input: BloqueoInput): DatosBloqueo {
     hora_salida_reg: oNull(input.horaSalidaReg),
     hora_llegada_reg: oNull(input.horaLlegadaReg),
     tarifa_para_empaquetar: input.tarifaParaEmpaquetar,
+    fee_infante: feeInfanteValido(input.feeInfante),
+    moneda: input.moneda,
     fecha_devolucion: oNull(input.fechaDevolucion),
     fecha_emision: oNull(input.fechaEmision),
     notas: oNull(input.notas),
@@ -112,8 +131,12 @@ function datosBloqueoDeInput(input: BloqueoInput): DatosBloqueo {
 // "Editar bloqueo" (general) NO toca modalidad/estados — esos tres campos
 // tienen su propio editor con historial (`actualizarControlBloqueo`, pestaña
 // "Control"), igual que horario/vuelo tiene el suyo (`registrarCambioOperacional`).
-export type BloqueoEditInput = Omit<BloqueoInput, "cuposTotal" | "modalidadEmision">;
+// `moneda` es opcional al editar: un Bloqueo sin acreditar se puede seguir editando sin tocarla; si viene, cambia la moneda (el trigger de
+// la 231 deja la constancia y la invalidación del tarifario se dispara por la base).
+export type BloqueoEditInput = Omit<BloqueoInput, "cuposTotal" | "modalidadEmision" | "moneda"> & { moneda?: MonedaVuelo };
 export async function actualizarBloqueo(id: number, input: BloqueoEditInput): Promise<Result> {
+  const monedaOk = validarMonedaBloqueoEdicion(input.moneda, input);
+  if (!monedaOk.ok) return { ok: false, error: monedaOk.error };
   const sb = await createClient();
   const { error } = await sb
     .from("bloqueos_vuelo")
@@ -134,13 +157,17 @@ export async function actualizarBloqueo(id: number, input: BloqueoEditInput): Pr
       hora_salida_reg: oNull(input.horaSalidaReg),
       hora_llegada_reg: oNull(input.horaLlegadaReg),
       tarifa_para_empaquetar: input.tarifaParaEmpaquetar,
+      // Solo si el formulario lo mandó: un llamador que no conoce el fee no lo borra.
+      ...(input.feeInfante !== undefined ? { fee_infante: feeInfanteValido(input.feeInfante) } : {}),
+      // Solo si el formulario la mandó: sin moneda no se toca la acreditada (la constancia la escribe el trigger).
+      ...(monedaOk.moneda ? { moneda: monedaOk.moneda } : {}),
       fecha_devolucion: oNull(input.fechaDevolucion),
       fecha_emision: oNull(input.fechaEmision),
       notas: oNull(input.notas),
       rangos_edad: input.rangosEdad?.length ? input.rangosEdad : null,
     })
     .eq("id", id);
-  if (error) return { ok: false, error: error.message };
+  if (error) return { ok: false, error: mensajeErrorMonedaBloqueo(error.message) };
   revalidatePath(`/dashboard/vuelos/${id}`);
   await regenerarTarifariosDeBloqueo(id); // la tarifa/fechas del aéreo cambió → recalcula paquetes
   return { ok: true, id };
@@ -350,6 +377,15 @@ export async function cargarBloqueosMasivo(
 
     if (cupos < 0) { errores.push(`Fila ${linea} (${record}): cupos_total no puede ser negativo.`); continue; }
 
+    // Moneda de las tarifas (migración 231, #90): obligatoria y explícita por fila — un Bloqueo nuevo nunca se supone en COP. En COP un
+    // importe positivo menor a 1.000 se rechaza igual que en el formulario.
+    const monedaTxt = (r.moneda || "").trim().toUpperCase();
+    if (!esMonedaVuelo(monedaTxt)) { errores.push(`Fila ${linea} (${record}): moneda debe ser "COP" o "USD" (columna obligatoria).`); continue; }
+    const monedaFila = validarMonedaBloqueo(monedaTxt, {
+      tarifaNeta: numCsv(r.tarifa_neta), tarifaParaEmpaquetar: numCsv(r.tarifa_para_empaquetar), feeInfante: numCsv(r.fee_infante),
+    });
+    if (!monedaFila.ok) { errores.push(`Fila ${linea} (${record}): ${monedaFila.error}`); continue; }
+
     // Cada fila es atómica (crear_bloqueo, migración 195): el record y sus
     // sillas se crean juntos o no se crea nada. Un error de la fila se reporta
     // y la fila NO cuenta como insertada; las demás filas siguen.
@@ -359,13 +395,14 @@ export async function cargarBloqueosMasivo(
         vuelo_ida: oNull(r.vuelo_ida || ""), fecha_ida: parseFechaCSV(r.fecha_ida), hora_salida_ida: dCsv(r.hora_salida_ida), hora_llegada_ida: dCsv(r.hora_llegada_ida),
         vuelo_regreso: oNull(r.vuelo_regreso || ""), fecha_regreso: parseFechaCSV(r.fecha_regreso), hora_salida_reg: dCsv(r.hora_salida_reg), hora_llegada_reg: dCsv(r.hora_llegada_reg),
         tarifa_neta: numCsv(r.tarifa_neta) || null, tarifa_para_empaquetar: numCsv(r.tarifa_para_empaquetar),
+        fee_infante: Math.max(numCsv(r.fee_infante), 0), moneda: monedaFila.moneda,
         fecha_devolucion: parseFechaCSV(r.fecha_devolucion), fecha_emision: parseFechaCSV(r.fecha_emision), notas: oNull(r.notas || ""),
         rangos_edad: rangosEdad.length ? rangosEdad : null,
         modalidad_emision: modalidad, estado_emision: estadoEmision, estado_pago: estadoPago,
       },
       p_cupos: cupos,
     });
-    if (error) { errores.push(`Fila ${linea} (${record}): ${mensajeErrorRpc(error).error}`); continue; }
+    if (error) { errores.push(`Fila ${linea} (${record}): ${mensajeErrorMonedaBloqueo(mensajeErrorRpc(error).error)}`); continue; }
     insertados++;
   }
   revalidatePath("/dashboard/vuelos");

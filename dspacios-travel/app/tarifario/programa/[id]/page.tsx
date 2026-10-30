@@ -2,6 +2,11 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
 import { getProgramaDetalle } from "@/lib/programas";
+import { desdeDobleDetallePrograma } from "@/lib/tarifario/desdeDoble";
+import { cargarTablasPvp88 } from "@/lib/programas/estanciaHotelDatos88";
+import { esModoHotel } from "@/lib/programas/estanciaHotel88";
+import { desdeDobleHoteles } from "@/lib/programas/precioReserva57";
+import { EstanciaHotelesFicha } from "./EstanciaHotelesFicha";
 import { programaVisibleEnPublico } from "@/lib/programas/destinoFijo";
 import { formatMoneda, formatFechaLarga } from "@/lib/utils";
 import { Logo } from "@/components/Logo";
@@ -51,6 +56,11 @@ export default async function ProgramaVitrinaPage({ params }: { params: Promise<
 
   const { programa: p } = det;
   const moneda = p.moneda;
+  // #88: programa por hotel y vigencia — tablas de PVP (nunca netos) calculadas en el servidor.
+  const modoHotel = esModoHotel(p.modo_precio);
+  const hoteles = modoHotel ? await cargarTablasPvp88(sb, id, p) : null;
+  // «Desde» (TASKS #92): solo una DOBLE publicable; el desde_precio manual no se rotula «Desde».
+  const desde = modoHotel ? (hoteles?.ok ? desdeDobleHoteles(hoteles.tablas) : null) : desdeDobleDetallePrograma(det);
   const incluye = det.inclusiones.filter((x) => x.tipo === "incluye");
   const noIncluye = det.inclusiones.filter((x) => x.tipo === "no_incluye");
 
@@ -95,13 +105,17 @@ export default async function ProgramaVitrinaPage({ params }: { params: Promise<
             {p.dias ? ` · ${p.dias} días / ${p.noches ?? ""} noches` : ""}
             {p.salidas ? ` · Salidas: ${p.salidas}` : ""}
           </p>
-          {p.desde_precio != null && p.desde_precio > 0 && (
-            <p className="mt-2 text-sm">
-              <span className="opacity-80">Desde</span>{" "}
-              <span className="text-xl font-semibold">{formatMoneda(p.desde_precio, moneda)}</span>{" "}
-              <span className="opacity-80">por persona</span>
-            </p>
-          )}
+          <p className="mt-2 text-sm">
+            {desde != null ? (
+              <>
+                <span className="opacity-80">Desde</span>{" "}
+                <span className="text-xl font-semibold">{formatMoneda(desde, moneda)}</span>{" "}
+                <span className="opacity-80">por persona</span>
+              </>
+            ) : (
+              <span className="text-base font-semibold">Consultar</span>
+            )}
+          </p>
           {(p.vigencia_desde || p.vigencia_hasta) && (
             <p className="mt-1 text-xs opacity-80">
               Vigencia: {formatFechaLarga(p.vigencia_desde)} — {formatFechaLarga(p.vigencia_hasta)}
@@ -152,6 +166,16 @@ export default async function ProgramaVitrinaPage({ params }: { params: Promise<
             </Link>
           )}
         </div>
+
+        {/* Hoteles y vigencias con noches adicionales (#88) */}
+        {modoHotel &&
+          (hoteles?.ok ? (
+            <EstanciaHotelesFicha tablas={hoteles.tablas} moneda={moneda} noches={p.noches ?? (p.dias != null ? Math.max(0, p.dias - 1) : null)} />
+          ) : (
+            <p role="alert" className="rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">
+              No se pudieron cargar los precios por hotel. Inténtalo de nuevo en unos minutos.
+            </p>
+          ))}
 
         {/* Precios por salida (modo fecha × precio) */}
         {det.salidas.length > 0 && (
@@ -268,7 +292,7 @@ export default async function ProgramaVitrinaPage({ params }: { params: Promise<
               {det.dias.map((d) => (
                 <div key={d.dia} className="rounded-xl border border-gray-200 bg-white p-4">
                   <div className="font-semibold text-gray-800">
-                    Día {d.dia}{d.titulo ? `: ${d.titulo}` : ""}{" "}
+                    {d.tipo_tramo === "traslado_previo" ? "Traslado previo" : d.tipo_tramo === "traslado_posterior" ? "Traslado posterior" : `Día ${d.dia}`}{d.titulo ? `: ${d.titulo}` : ""}{" "}
                     <span className="text-xs font-normal text-gray-400">{comidas(d)}</span>
                   </div>
                   {d.descripcion && <p className="mt-1 whitespace-pre-line text-sm text-gray-600">{d.descripcion}</p>}
@@ -344,6 +368,7 @@ export default async function ProgramaVitrinaPage({ params }: { params: Promise<
                 <li key={i}>
                   {formatFechaLarga(b.fecha_inicio)} — {formatFechaLarga(b.fecha_fin)}
                   {b.motivo ? ` · ${b.motivo}` : ""}
+                  <span className="ml-1 text-xs text-gray-400">({b.alcance === "viaje" ? "afecta cualquier día del viaje" : "solo la fecha de entrada"})</span>
                 </li>
               ))}
             </ul>

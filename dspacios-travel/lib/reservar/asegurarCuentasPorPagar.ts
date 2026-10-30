@@ -24,20 +24,42 @@ import { fechaNegocio } from "@/lib/fechaNegocio";
 // (p. ej. "solo el aéreo" porque el costo neto del hotel salió 0). El proveedor
 // del hotel/aéreo se jala del contrato; los demás quedan para que contabilidad
 // los asigne. El hotel se crea aunque el costo sea 0 (queda pendiente de valor).
-export async function asegurarCuentasPorPagar(numeroContrato: string): Promise<{ ok: boolean; creadas: number; error?: string }> {
+export async function asegurarCuentasPorPagar(numeroContrato: string): Promise<{ ok: boolean; creadas: number; error?: string; requiereRevision?: boolean }> {
   if (!process.env.SUPABASE_SERVICE_ROLE_KEY) return { ok: false, creadas: 0 };
   const admin = createAdminClient();
 
-  const [{ data: existentes }, { data: v }, { data: ch }, { data: cv }, { data: provs }] = await Promise.all([
+  const [{ data: existentes, error: errExistentes }, { data: v, error: errVenta }, { data: ch }, { data: cv }, { data: provs }] = await Promise.all([
     // `valor_total` además del tipo: la cobertura de servicios se mide en
     // PESOS, no por existencia de etiqueta (ver lib/reservar/cxpCobertura.ts).
-    admin.from("cuentas_por_pagar").select("tipo_proveedor, valor_total").eq("numero_contrato", numeroContrato),
-    admin.from("ventas").select("tenant, costo_hotel, costo_aereo, costo_receptivo, costo_asistencia, otros_costos, moneda, hotel, aerolinea, plazo, fecha_salida").eq("numero_contrato", numeroContrato).maybeSingle(),
+    // #63: `valor_cop_63` = equivalente en COP de una obligación del modo COP con TRM (hotel/servicios en USD). La cobertura
+    // se mide SIEMPRE en la moneda de las columnas de costo del contrato (COP): comparar el nominal USD contra pesos
+    // crearía un complemento fantasma por la diferencia.
+    admin.from("cuentas_por_pagar").select("tipo_proveedor, valor_total, valor_cop_63, aceptacion_63_id, obligacion_63").eq("numero_contrato", numeroContrato),
+    admin.from("ventas").select("tenant, aceptacion_63_id, costo_hotel, costo_aereo, costo_receptivo, costo_asistencia, otros_costos, moneda, hotel, aerolinea, plazo, fecha_salida").eq("numero_contrato", numeroContrato).maybeSingle(),
     admin.from("contrato_hoteles").select("nombre, proveedor").eq("numero_contrato", numeroContrato).order("orden").limit(1),
     admin.from("contrato_vuelos").select("aerolinea").eq("numero_contrato", numeroContrato).order("orden").limit(1),
     admin.from("proveedores").select("nombre, aplica_retencion, pct_retencion"),
   ]);
   if (!v) return { ok: false, creadas: 0 };
+  // #63 (E/F/G): un contrato de oferta aceptada NUNCA se complementa con nominales ni con costos recalculados. Si el contrato tiene
+  // marca, se VERIFICA que estén sus obligaciones aceptadas (por su clave estable); si faltan, se pide revisión humana. Un error de
+  // lectura no significa "no es #63": se distingue la AUSENCIA de la marca (columna nula) del FALLO de lectura (error).
+  if (errVenta) return { ok: false, creadas: 0, error: "No se pudo leer el contrato para completar sus proveedores. Inténtalo de nuevo." };
+  const aceptacion63 = (v as { aceptacion_63_id?: number | null }).aceptacion_63_id ?? null;
+  if (aceptacion63 != null) {
+    if (errExistentes) return { ok: false, creadas: 0, error: "No se pudieron leer las obligaciones del contrato para verificarlas. Inténtalo de nuevo." };
+    const { data: ac, error: errAc } = await admin.from("p63_aceptacion").select("estado, numero_contrato, snapshot").eq("id", aceptacion63).maybeSingle();
+    if (errAc || !ac) return { ok: false, creadas: 0, error: "No se pudo verificar la oferta aceptada de este contrato. Inténtalo de nuevo." };
+    const esperadas = ((((ac as { snapshot?: { financiero?: { cxp?: { obligacion?: string }[] } } }).snapshot?.financiero?.cxp) ?? []) as { obligacion?: string }[]).map((o) => o.obligacion ?? "");
+    const presentes = new Set(((existentes ?? []) as { aceptacion_63_id?: number | null; obligacion_63?: string | null }[])
+      .filter((e) => e.aceptacion_63_id === aceptacion63).map((e) => e.obligacion_63 ?? ""));
+    const faltan = esperadas.filter((o) => !presentes.has(o));
+    if (!faltan.length && (ac as { numero_contrato?: string }).numero_contrato === numeroContrato) return { ok: true, creadas: 0 };
+    return {
+      ok: false, creadas: 0, requiereRevision: true,
+      error: "Este contrato nació de una oferta con conversión por TRM y le faltan obligaciones aceptadas. No se crean cuentas nuevas desde aquí (se compararían dólares con pesos): requiere revisión.",
+    };
+  }
   const tenant = (v.tenant as string | null) ?? "mayorista";
 
   const hoy = fechaNegocio();
@@ -88,7 +110,9 @@ export async function asegurarCuentasPorPagar(numeroContrato: string): Promise<{
     hotel: hotelRow?.proveedor ?? null,
     aereo: vueloRow?.aerolinea ?? (v.aerolinea as string | null),
   };
-  for (const f of faltantesCxP((existentes ?? []) as CxpExistente[], {
+  const existentesCop = ((existentes ?? []) as { tipo_proveedor: string | null; valor_total: number | null; valor_cop_63?: number | null }[])
+    .map((e): CxpExistente => ({ tipo_proveedor: e.tipo_proveedor, valor_total: e.valor_cop_63 != null ? Number(e.valor_cop_63) : e.valor_total }));
+  for (const f of faltantesCxP(existentesCop, {
     costo_hotel: Number(v.costo_hotel) || 0,
     costo_aereo: Number(v.costo_aereo) || 0,
     costo_receptivo: Number(v.costo_receptivo) || 0,

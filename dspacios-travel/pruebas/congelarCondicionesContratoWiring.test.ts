@@ -73,7 +73,9 @@ test("reservarProgramaInterno: la SELECT de programas trae las 4 columnas de con
   assert.match(fn, /componenteDePrograma\(prog,\s*\{/, "reservarProgramaInterno no arma el componente con componenteDePrograma(prog, …) usando la fila real ya traída");
   assert.match(fn, /congelarCondicionesContratoBestEffort\(adminCond,/, "reservarProgramaInterno no llama al congelado con el cliente admin (service_role)");
   assert.doesNotMatch(fn, /congelarCondicionesContratoBestEffort\(sb,/, "reservarProgramaInterno llamó al congelado con `sb` (sesión)");
-  assert.match(fn, /valor:\s*precioVenta/, "el componente de programa no usa el precioVenta real calculado");
+  // PR #409: lo congelado es lo EXIGIBLE: el PVP calculado, o PVP − comisión en una venta B2B a NETO.
+  assert.match(fn, /valor:\s*precioExigible/, "el componente de programa no usa el importe exigible real");
+  assert.match(fn, /const precioExigible = planB2B \? planB2B\.precioFinal : precioVenta;/, "precioExigible debe salir del precioVenta calculado (o del plan B2B)");
 });
 
 test("convertirCotizacionCarrito: congela UNA vez por contrato (grupo), acumulando un componente hotel por cada ítem real", () => {

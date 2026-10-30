@@ -3,6 +3,7 @@
 import { createClient } from "@/lib/supabase/server";
 import { revalidatePath } from "next/cache";
 import { regenerarTarifariosDeServicio, generarTarifario } from "../../paquetes/actions";
+import { exigirEscrituraCatalogoGlobal } from "@/lib/auth/contextoAgencia";
 
 type Result = { ok: true } | { ok: false; error: string };
 const oNull = (s: string) => (s && s.trim() !== "" ? s.trim() : null);
@@ -23,9 +24,20 @@ export type TemporadaServicioInput = {
   compraFin: string;
   prioridad: number;
   precioPersona: number | null;
+  // NETO por infante (0 a 1,99 años) en esta temporada. null = hereda el de la
+  // tarifa GENERAL (y si tampoco lo tiene, el infante paga como adulto).
+  precioInfante?: number | null;
   recargoIndividual: number | null;
   grupoTiers: TierPax[];
 };
+
+// Precio de infante (migración 226): NULL = sin configurar (el infante paga como
+// adulto); 0 = gratis. Un valor negativo o no numérico se rechaza antes de llegar a la BD.
+function precioInfanteRow(v: number | null | undefined): number | null {
+  if (v == null) return null;
+  const n = Number(v);
+  return Number.isFinite(n) && n >= 0 ? n : null;
+}
 
 function temporadaRow(servicioId: number, input: TemporadaServicioInput) {
   return {
@@ -37,11 +49,15 @@ function temporadaRow(servicioId: number, input: TemporadaServicioInput) {
     compra_fin: oNull(input.compraFin),
     prioridad: Number(input.prioridad) || 1,
     precio_persona: input.precioPersona,
+    precio_infante: precioInfanteRow(input.precioInfante),
     recargo_individual: input.recargoIndividual,
   };
 }
 
 export async function crearTemporadaServicio(servicioId: number, input: TemporadaServicioInput): Promise<Result> {
+  // D8/D9: los catálogos globales solo se escriben desde Mayorista (la RLS lo exige igual).
+  const catalogo = await exigirEscrituraCatalogoGlobal();
+  if (!catalogo.ok) return catalogo;
   const sb = await createClient();
   const nombre = input.nombre.trim() || "Temporada";
   if (nombre.toUpperCase() === "GENERAL") return { ok: false, error: "'GENERAL' es la tarifa base; usa otro nombre para la temporada." };
@@ -53,6 +69,9 @@ export async function crearTemporadaServicio(servicioId: number, input: Temporad
 }
 
 export async function actualizarTemporadaServicio(id: number, input: TemporadaServicioInput): Promise<Result> {
+  // D8/D9: los catálogos globales solo se escriben desde Mayorista (la RLS lo exige igual).
+  const catalogo = await exigirEscrituraCatalogoGlobal();
+  if (!catalogo.ok) return catalogo;
   const sb = await createClient();
   const nombre = input.nombre.trim() || "Temporada";
   if (nombre.toUpperCase() === "GENERAL") return { ok: false, error: "'GENERAL' es la tarifa base; usa otro nombre para la temporada." };
@@ -74,6 +93,9 @@ export async function actualizarTemporadaServicio(id: number, input: TemporadaSe
 }
 
 export async function eliminarTemporadaServicio(id: number): Promise<Result> {
+  // D8/D9: los catálogos globales solo se escriben desde Mayorista (la RLS lo exige igual).
+  const catalogo = await exigirEscrituraCatalogoGlobal();
+  if (!catalogo.ok) return catalogo;
   const sb = await createClient();
   const { data: prev } = await sb.from("servicio_temporadas").select("servicio_id, nombre").eq("id", id).maybeSingle();
   const { error } = await sb.from("servicio_temporadas").delete().eq("id", id);
@@ -91,6 +113,10 @@ export type ServicioInput = {
   alcance?: "nacional" | "internacional"; // cuando destinoId es null: catch-all nacional o internacional
   moneda?: "COP" | "USD";         // un servicio = una moneda (su tarifa va en ella)
   precioPersona: number | null;
+  // NETO por infante (0 a 1,99 años), solo cobro POR PERSONA. null = sin configurar:
+  // el infante paga como adulto (NULL ≠ $0). En cobro por grupo el infante no cuenta
+  // para el rango ni paga extra, así que no usa este campo.
+  precioInfante?: number | null;
   grupoTiers: TierPax[];          // rangos de pax para cobro POR GRUPO
   temporada: string;
   rangosEdad?: number[];
@@ -109,6 +135,7 @@ function servicioToRow(input: ServicioInput) {
     alcance: input.destinoId == null ? (input.alcance === "internacional" ? "internacional" : "nacional") : "nacional",
     moneda: input.moneda === "USD" ? "USD" : "COP",
     precio_persona: input.precioPersona,
+    precio_infante: precioInfanteRow(input.precioInfante),
     tarifa_neta: input.precioPersona ?? 0,
     temporada: oNull(input.temporada),
     rangos_edad: input.rangosEdad?.length ? input.rangosEdad : null,
@@ -147,6 +174,9 @@ async function guardarGrupoTiers(
 // tarifario público (no se denormaliza en tarifario_resultado), así que no
 // hace falta regenerar nada al cambiarla.
 export async function actualizarFotoServicio(id: number, fotoUrl: string | null): Promise<Result> {
+  // D8/D9: los catálogos globales solo se escriben desde Mayorista (la RLS lo exige igual).
+  const catalogo = await exigirEscrituraCatalogoGlobal();
+  if (!catalogo.ok) return catalogo;
   const sb = await createClient();
   const { error } = await sb.from("servicios_adicionales").update({ foto_url: fotoUrl }).eq("id", id);
   if (error) return { ok: false, error: error.message };
@@ -155,6 +185,9 @@ export async function actualizarFotoServicio(id: number, fotoUrl: string | null)
 }
 
 export async function crearServicio(input: ServicioInput): Promise<Result> {
+  // D8/D9: los catálogos globales solo se escriben desde Mayorista (la RLS lo exige igual).
+  const catalogo = await exigirEscrituraCatalogoGlobal();
+  if (!catalogo.ok) return catalogo;
   const sb = await createClient();
   const { data, error } = await sb.from("servicios_adicionales").insert({ ...servicioToRow(input), activo: true }).select("id").single();
   if (error || !data) return { ok: false, error: error?.message ?? "No se insertó" };
@@ -164,6 +197,9 @@ export async function crearServicio(input: ServicioInput): Promise<Result> {
 }
 
 export async function actualizarServicio(id: number, input: ServicioInput): Promise<Result> {
+  // D8/D9: los catálogos globales solo se escriben desde Mayorista (la RLS lo exige igual).
+  const catalogo = await exigirEscrituraCatalogoGlobal();
+  if (!catalogo.ok) return catalogo;
   const sb = await createClient();
   const { error } = await sb.from("servicios_adicionales").update(servicioToRow(input)).eq("id", id);
   if (error) return { ok: false, error: error.message };
@@ -174,6 +210,9 @@ export async function actualizarServicio(id: number, input: ServicioInput): Prom
 }
 
 export async function eliminarServicio(id: number): Promise<Result> {
+  // D8/D9: los catálogos globales solo se escriben desde Mayorista (la RLS lo exige igual).
+  const catalogo = await exigirEscrituraCatalogoGlobal();
+  if (!catalogo.ok) return catalogo;
   const sb = await createClient();
   // Captura los paquetes que lo usaban ANTES de borrar; se regeneran después.
   const { data: usados } = await sb.from("armado_servicios").select("paquete_id").eq("servicio_id", id);
@@ -187,6 +226,9 @@ export async function eliminarServicio(id: number): Promise<Result> {
 
 // ── Carga masiva (CSV) ─────────────────────────────────────────────────────
 const numCsv = (s?: string) => (s ? parseInt(String(s).replace(/[^\d-]/g, ""), 10) || 0 : 0);
+// Como numCsv pero distingue "vacío" (null) de "0": el precio de infante en blanco
+// significa "sin configurar" y el infante paga como adulto; "0" significa gratis.
+const numCsvNullable = (s?: string) => (s && String(s).trim() !== "" ? Math.max(numCsv(s), 0) : null);
 const LIQ_VALIDAS = ["dia", "noche", "paquete"];
 const CAT_VALIDAS = ["tour_traslado", "asistencia", "otro"];
 
@@ -254,6 +296,7 @@ export async function cargarServiciosMasivo(
       rangos_edad: rangosEdad.length ? rangosEdad : null,
       descripcion: oNull(r.descripcion || ""),
       recargo_individual: numCsv(r.recargo_individual),
+      precio_infante: numCsvNullable(r.precio_infante),
     }).select("id").single();
     if (error || !sv) { errores.push(`Fila ${linea} (${nombre}): ${error?.message ?? "no se insertó"}`); continue; }
     if (tiers.length) {

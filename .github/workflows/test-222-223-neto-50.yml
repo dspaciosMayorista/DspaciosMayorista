@@ -1,0 +1,236 @@
+# #50 (migraciones 222 y 223, hija manual de una comparativa con precio NETO) — pruebas focales.
+# Ejecuta, contra un PostgreSQL (imagen de Supabase) desechable creado y destruido dentro del runner:
+# ciclo preflight/postcheck (fila consolidada), batería SQL de #50, regresión de #39 (216/217) y de #35 (211)
+# con la 222 presente, cierre 223, rollback EXACTO y rollback que se niega con hijas selladas. Un segundo job
+# corre las pruebas TS y React de #50 en una imagen oficial de Node con versión exacta.
+# Sin secretos del repositorio, sin Supabase remoto, sin pull_request_target y con permisos de solo lectura.
+# El dueño no usa Docker en su PC: el SQL SOLO corre aquí. NO modifica test-216-217-cotizacion-edicion.yml
+# ni test-personas-cotizaciones-42.yml. Producción sigue con preflight/migración/postcheck manuales y
+# autorizados por el dueño (222 → postcheck → app → 223 → postcheck).
+# Un tercer job (bateria-211-sola) corre la batería #35 COMPLETA en OTRA base desechable construida solo hasta la 211,
+# sin 216/217 ni 222, exigiendo el contexto INACTIVA: ahí se ejercen las sentencias originales de la 211 que, con la
+# frontera de #39 activa (G2 del primer job, contexto ACTIVA), la 217 preempta.
+name: test-222-223-neto-50
+
+on:
+  # Batería histórica: se lanza a mano (Actions → este workflow → Run workflow) cuando el cambio toca lo que
+  # cubre. Ya no corre en cada pull_request; ver docs/tecnico/ci-baterias-manuales.md.
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: test-222-223-neto-50-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  prueba-222-223:
+    name: 222/223 · preflight/postcheck, SQL, #39/#35, cierre y rollback
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    env:
+      CT: pg222_ci
+      PLANTILLA: plantilla222ci
+      IMAGEN_PG: supabase/postgres:15.8.1.085
+    defaults:
+      run:
+        shell: bash
+        working-directory: dspacios-travel
+    steps:
+      - name: Código (solo lectura, sin credenciales persistidas)
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+
+      - name: PostgreSQL desechable (imagen de Supabase)
+        timeout-minutes: 5
+        run: |
+          set -euo pipefail
+          # Contraseña local de un contenedor efímero que nunca sale del runner (no es un secreto).
+          docker run -d --name "$CT" -e POSTGRES_PASSWORD=postgres "$IMAGEN_PG"
+
+      - name: Cadena REAL de migraciones hasta la 221 (sin la 222; sin asumir huecos)
+        timeout-minutes: 20
+        run: |
+          set -euo pipefail
+          # La 220 (#67) puede faltar o estar: se aplica lo que exista hasta la 221, sin fabricar números.
+          # La 222/223 nunca entran en la plantilla.
+          ls supabase/migrations/ | sed -E 's/^20260601000([0-9]{3})_.*/\1/' | sort -n | tail -8 | tr '\n' ' '; echo
+          bash supabase/scripts/preparar_esquema_local.sh "$CT" 221 "$PLANTILLA"
+
+      - name: Migraciones 222 y 223 reales (M, S, G, B y RB)
+        timeout-minutes: 35
+        run: |
+          set -u -o pipefail
+          # GitHub ejecuta el paso con `bash -e` (con `shell: bash`, también `-o pipefail`). errexit se desactiva AQUÍ,
+          # antes del pipeline con tee: activo, un runner con rc distinto de 0 mataría el paso en la propia tubería,
+          # antes de capturar PIPESTATUS y de imprimir el diagnóstico. Las guardas de abajo salen con `exit 1` explícito.
+          set +e
+          salida="$RUNNER_TEMP/test222.out"
+          bash supabase/scripts/test_222_neto_hija.sh "$CT" "$PLANTILLA" 2>&1 | tee "$salida"
+          rc="${PIPESTATUS[0]}"
+          # Además del código de salida: ningún FALLO, el cierre en verde y una línea OK de cada bloque
+          # (un bloque que se saltara en silencio no puede dar verde).
+          faltan=""
+          for marca in 'OK    M1 preflight' 'OK    M3 ' 'OK    M4 ' 'OK    M5 ' 'OK    M6 ' 'OK    M7 ' 'OK    S batería 222 completa' \
+                       'OK    G1 ' 'OK    G2 ' 'OK    B0 ' 'OK    B1 ' 'OK    B2 ' 'OK    B2b ' 'OK    B3 ' 'OK    B4 ' 'OK    B5 ' \
+                       'OK    RB1 ' 'OK    RB2 ' 'OK    RB3 ' 'OK    RB4 ' 'OK    RB5 ' 'OK    RB6 ' 'OK    RB7 ' 'OK    RB8 ' 'OK    RB8b ' \
+                       'OK    M2 V1 ' 'OK    M2 V4b ' 'OK    M2 V10 ' 'OK    M2 V11 ' 'OK    M1 V4b ' 'OK    M1 V8 ' 'OK    M2 B5a ' 'OK    M2 B5b ' 'OK    M2 B5c ' 'OK    M2 B5d ' 'OK    M1 B5c ' 'OK    M1.b1 ' 'OK    M1.b2 ' \
+                       'OK    R1.a ' 'OK    R2.1 ' 'OK    R2.4 ' 'OK    R3.1 ' 'OK    R4.1 ' 'OK    R5.1 ' \
+                       'OK    S1.2 ' 'OK    S1.6 ' 'OK    S1.7 ' 'OK    S2.1 ' 'OK    S3.1 ' 'OK    S4.1 ' 'OK    S4.6 ' 'OK    S4.8 ' 'OK    S4.9 ' 'OK    S4.9b ' 'OK    S4.9c ' 'OK    S5.3 ' 'OK    S5.5 ' \
+                       'OK    M3.1 ' 'OK    M3.3 ' 'OK    M3.4 ' 'OK    M4.5 ' 'OK    M4.8 ' 'OK    M5.1 ' 'OK    M5.3 ' 'OK    M5.4 ' \
+                       'OK    P1.1 ' 'OK    P1.7 ' 'OK    P2.1 ' 'OK    P2.3 ' 'OK    P3.1 ' 'OK    P3.4 ' 'OK    P4.3 ' \
+                       'OK    C1.2 ' 'OK    C1.6 ' 'OK    C1.7 ' 'OK    C1.8 ' 'OK    C1.13 ' 'OK    C2.3 ' 'OK    C2.4 ' 'OK    C3.1 ' \
+                       'OK    I1.1 ' 'OK    I2.1 ' 'OK    I3.2 ' 'OK    I4.1 ' \
+                       'OK    D1.2 ' 'OK    D2.2 ' 'OK    D4.3 ' 'OK    D5.2 ' 'OK    D6.2 ' 'OK    D6.3 ' \
+                       'OK    F1.2 ' 'OK    F2.1 ' 'OK    F3.1 ' 'OK    F3.2 ' 'OK    A1.2 ' 'OK    A2.1 ' 'OK    A4.2 ' 'OK    A5.1 ' 'OK    G1.3 ' \
+                       'OK    O1.1 ' 'OK    O2.1 ' 'OK    O2.2 ' 'OK    O2.3 ' 'OK    O4.1 ' 'OK    O5.2 ' \
+                       'OK    4.0 contexto: frontera 216/217 ACTIVA (esperado: activa)' 'OK    6.0 contexto: frontera 216/217 ACTIVA (esperado: activa)' \
+                       'OK    12.0 contexto de la regresión: frontera 216/217 ACTIVA (esperado: activa)'; do
+            grep -qF -- "$marca" "$salida" || faltan="$faltan [$marca]"
+          done
+          if [ "$rc" != 0 ] || grep -q '^FALLO' "$salida" || grep -q 'FALLO ' "$salida" \
+             || ! grep -q 'TEST 222 SQL: TODO OK' "$salida" || ! grep -q 'TEST 223 SQL: TODO OK' "$salida" \
+             || ! grep -q 'TEST 222/223 NETO: TODO OK' "$salida" || [ -n "$faltan" ]; then
+            # Diagnóstico en el propio log: los FALLO (con su causa) y las últimas líneas del runner, aunque el log sea largo.
+            grep -n 'FALLO ' "$salida" | head -60 || true
+            tail -15 "$salida" || true
+            echo "::error::Pruebas 222/223 en rojo (rc=$rc; faltan:${faltan:- ninguna})"
+            exit 1
+          fi
+
+      - name: Diagnóstico del contenedor (solo si falla)
+        if: failure()
+        working-directory: .
+        run: docker logs --tail 200 "$CT" 2>&1 || true
+
+      - name: Limpieza de contenedores (siempre, también si falla o se cancela)
+        if: always()
+        working-directory: .
+        run: docker rm -f "$CT" || true
+
+  bateria-211-sola:
+    name: '#35 · batería 211 completa en una base hasta la 211 (sin 216/217, contexto INACTIVA)'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    env:
+      CT: pg211_ci
+      PLANTILLA: plantilla211ci
+      IMAGEN_PG: supabase/postgres:15.8.1.085
+    defaults:
+      run:
+        shell: bash
+        working-directory: dspacios-travel
+    steps:
+      - name: Código (solo lectura, sin credenciales persistidas)
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+
+      - name: PostgreSQL desechable (otra base, otro contenedor que el job de 222/223)
+        timeout-minutes: 5
+        run: |
+          set -euo pipefail
+          # Contraseña local de un contenedor efímero que nunca sale del runner (no es un secreto).
+          docker run -d --name "$CT" -e POSTGRES_PASSWORD=postgres "$IMAGEN_PG"
+
+      - name: Cadena REAL de migraciones SOLO hasta la 211 (sin 216/217 ni 222)
+        timeout-minutes: 20
+        run: |
+          set -euo pipefail
+          ls supabase/migrations/ | sed -E 's/^20260601000([0-9]{3})_.*/\1/' | sort -n | awk '$1 <= 211' | tail -4 | tr '\n' ' '; echo
+          bash supabase/scripts/preparar_esquema_local.sh "$CT" 211 "$PLANTILLA"
+
+      - name: Batería 211 completa sin frontera (contexto INACTIVA, rc, resumen y sin FALLO)
+        timeout-minutes: 25
+        run: |
+          set -u -o pipefail
+          # GitHub ejecuta el paso con `bash -e` (con `shell: bash`, también `-o pipefail`). errexit se desactiva AQUÍ,
+          # antes del pipeline con tee: activo, un runner con rc distinto de 0 mataría el paso en la propia tubería,
+          # antes de capturar PIPESTATUS y de imprimir el diagnóstico. Las guardas de abajo salen con `exit 1` explícito.
+          set +e
+          salida="$RUNNER_TEMP/test211sola.out"
+          bash supabase/scripts/test_222_neto_hija.sh "$CT" "$PLANTILLA" 211sola 2>&1 | tee "$salida"
+          rc="${PIPESTATUS[0]}"
+          # rc es el del runner (no el de tee). Además: una línea OK de H1 que nombra el contexto INACTIVA, el cierre en
+          # verde, el resumen del runner y ningún FALLO; el diagnóstico completo ya lo imprimió el runner si algo falló.
+          faltan=""
+          for marca in 'OK    H1 batería #35 (211) completa sin 216/217: contexto INACTIVA, rc 0, resumen sin fallos' \
+                       'TEST 211 SOLA: TODO OK' '=== RESUMEN: ' 'OK    12.0 contexto de la regresión: sin frontera de #39 (esperado: inactiva)' \
+                       'OK    4.0 contexto: sin frontera de #39 (esperado: inactiva)' 'OK    6.0 contexto: sin frontera de #39 (esperado: inactiva)'; do
+            grep -qF -- "$marca" "$salida" || faltan="$faltan [$marca]"
+          done
+          if [ "$rc" != 0 ] || grep -q 'FALLO ' "$salida" || [ -n "$faltan" ]; then
+            grep -n 'FALLO ' "$salida" | head -40 || true
+            echo "::error::Batería 211 sola en rojo (rc=$rc; faltan:${faltan:- ninguna})"
+            exit 1
+          fi
+
+      - name: Diagnóstico del contenedor (solo si falla)
+        if: failure()
+        working-directory: .
+        run: docker logs --tail 200 "$CT" 2>&1 || true
+
+      - name: Limpieza del contenedor (siempre, también si falla o se cancela)
+        if: always()
+        working-directory: .
+        run: docker rm -f "$CT" || true
+
+  pruebas-ts-50:
+    name: '#50 · pruebas TS y React (cálculo, acciones, cableado e interfaz)'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    env:
+      IMAGEN_NODE: node:24.14.0-bookworm-slim
+      CTN: node50_ci
+    steps:
+      - name: Código (solo lectura, sin credenciales persistidas)
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+
+      - name: Descargar la imagen de Node (falla temprano si no hay acceso)
+        timeout-minutes: 5
+        run: docker pull "$IMAGEN_NODE"
+
+      - name: 'Pruebas TS de #50 y las de margen/NETO/comparativas que toca (sin base de datos)'
+        timeout-minutes: 20
+        run: |
+          set -u -o pipefail
+          # GitHub ejecuta el paso con `bash -e` (con `shell: bash`, también `-o pipefail`). errexit se desactiva AQUÍ,
+          # antes del pipeline con tee: activo, un runner con rc distinto de 0 mataría el paso en la propia tubería,
+          # antes de capturar PIPESTATUS y de imprimir el diagnóstico. Las guardas de abajo salen con `exit 1` explícito.
+          set +e
+          salida="$RUNNER_TEMP/ts50.out"
+          docker run --rm --name "$CTN" -e CI=1 -e COREPACK_ENABLE_DOWNLOAD_PROMPT=0 \
+            -v "$GITHUB_WORKSPACE:/repo" -w /repo/dspacios-travel "$IMAGEN_NODE" sh -ec '
+            corepack enable
+            pnpm install --frozen-lockfile
+            node --test --test-reporter=spec --experimental-strip-types --experimental-test-module-mocks \
+              --experimental-loader ./pruebas/support/aliasLoader.mjs \
+              pruebas/netoHijaPuro.test.ts pruebas/netoHijaCableado.wiring.test.ts pruebas/netoHijaAcciones.test.ts \
+              pruebas/margenContrato.test.ts pruebas/contratoManualNeto.test.ts pruebas/contratoNetoB2B.test.ts \
+              pruebas/cotizacionComparativa35Checkout.test.ts pruebas/cotizacionComparativa35Paridad.test.ts \
+              pruebas/cotizacionEdicion39Acciones.test.ts pruebas/documentosContrato.wiring.test.ts
+            node --test --test-reporter=spec --experimental-test-module-mocks \
+              --import ./pruebas/support/registrarProgramasRuta.mjs --experimental-loader ./pruebas/support/reactLoader.mjs \
+              pruebas/netoHijaModalidad.react.ts pruebas/cotizacionComparativa35Ui.react.ts pruebas/contratoDocumentoNeto.react.ts
+          ' 2>&1 | tee "$salida"
+          rc="${PIPESTATUS[0]}"
+          faltan=""
+          for marca in '✔ V1 — directo, reconoce participación' '✔ V4b/V4c — un centavo por debajo del 2 %' \
+                       '✔ T2 — las constantes de la migración 222' '✔ Q-9a: bordes de .5 en COP y USD' '✔ ninguna ruta llama la 198 ni registrar_pago_previo directo' \
+                       '✔ elegir con modalidad' '✔ el selector'; do
+            grep -qF -- "$marca" "$salida" || faltan="$faltan [$marca]"
+          done
+          if [ "$rc" != 0 ] || ! grep -qE '^ℹ fail 0$' "$salida" || ! grep -qE '^ℹ tests [1-9][0-9]*$' "$salida" \
+             || grep -qE '^✖|^ *✖ ' "$salida" || [ -n "$faltan" ]; then
+            echo "::error::Pruebas TS/React de #50 en rojo (rc=$rc; faltan:${faltan:- ninguna})"
+            exit 1
+          fi
+
+      - name: Limpieza del contenedor de Node (siempre)
+        if: always()
+        working-directory: .
+        run: docker rm -f "$CTN" || true

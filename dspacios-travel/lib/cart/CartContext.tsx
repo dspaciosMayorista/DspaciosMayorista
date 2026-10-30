@@ -9,6 +9,8 @@ import {
   type MotivoRechazoConjunto, type ReemplazoConjunto,
 } from "@/lib/cart/vinculoServicios";
 import { resumirMonedas, type ResumenMonedas } from "@/lib/cart/monedaCarrito";
+import { reemplazarManual, type ServicioManual } from "@/lib/cart/servicioManual";
+import { MAX_OPCIONES } from "@/lib/cotizacion/comparativa";
 
 // Ítem de HOTEL del carrito — unión discriminada real por `modeloTarifario`
 // (Fase 3F-1 Bernalo). `HotelCartItemPersona` es EXACTAMENTE el contrato de
@@ -28,10 +30,12 @@ export type HotelCartItemPersona = {
   // ítems nuevos como en los ya guardados en localStorage antes de esta fase
   // (que tampoco traen la clave, así que siguen cayendo en este branch).
   modeloTarifario?: undefined;
-  modulo: "bloqueo" | "porcion_terrestre";
+  modulo: "bloqueo" | "porcion_terrestre" | "dinamico";
   paqueteId: number;
   hotelId: number;
   bloqueoId: number | null;
+  // Solo `dinamico`: la salida elegida (sus fechas son fijas). El servidor re-liquida con ESA salida.
+  salidaId?: number | null;
   hotelNombre: string;
   destino: string | null;
   fotoUrl: string | null;
@@ -144,7 +148,18 @@ export type TourCartItem = {
  * le asigna `id` y `hotelItemId`). */
 export type TourSinVinculo = Omit<TourCartItem, "id" | "hotelItemId">;
 
-export type CartItem = HotelCartItem | TourCartItem;
+// #64: servicio MANUAL (vuelo libre u otro) agregado por personal interno. No es
+// un vuelo de Sistema: sin bloqueo, sin sillas. Comparte `nombre`/`fotoUrl`/
+// fechas/`pax`/`precio`/`moneda` con el tour para que el carrito lo muestre igual,
+// pero NUNCA lleva `servicioId`/`paqueteId` ni vínculo a un hotel.
+export type ManualCartItem = ServicioManual & {
+  id: string;
+  tipo: "manual";
+  fotoUrl: null;
+  noches: null;
+};
+
+export type CartItem = HotelCartItem | TourCartItem | ManualCartItem;
 
 // `Omit<Union, K>` NO es distributivo (`keyof` de una unión colapsa a la
 // intersección de claves) — aplicado a `CartItem` (unión discriminada de 3
@@ -189,8 +204,15 @@ export type ActualizacionConjunto = {
 };
 export type ResultadoActualizacionConjunto = { ok: true } | { ok: false; motivo: MotivoRechazoConjunto };
 
+/** Aviso cuando, en modo comparativa, se intenta agregar un hotel de más (se muestra donde se pulsó «Agregar»). */
+export const AVISO_MAXIMO_COMPARATIVA = `Una comparativa admite hasta ${MAX_OPCIONES} hoteles. Quita uno del carrito para agregar otro, o desactiva «Cotización comparativa».`;
+
 type CartCtx = {
   items: CartItem[];
+  // #64: modo «Cotización comparativa». Activo, el carrito no admite un hotel más allá del máximo (el servidor también lo rechaza).
+  modoComparativa: boolean;
+  setModoComparativa: (v: boolean) => void;
+  avisoCarrito: string | null;
   add: (item: DistributiveOmit<CartItem, "id">) => void;
   // Hotel + sus servicios elegidos en la tarjeta, en UNA sola actualización
   // del carrito (nunca queda un servicio sin su hotel). Devuelve el id del hotel.
@@ -200,6 +222,8 @@ type CartCtx = {
   // Si no aplica (hotel quitado, conjunto cambiado, reserva distinta) el
   // carrito queda igual y se devuelve el motivo.
   actualizarConjunto: (cambio: ActualizacionConjunto) => ResultadoActualizacionConjunto;
+  // #64: edita SOLO el servicio manual `id` (el resto del carrito no cambia).
+  actualizarManual: (id: string, datos: ServicioManual) => void;
   // Quitar un hotel quita también sus servicios vinculados; quitar un
   // servicio deja el hotel.
   remove: (id: string) => void;
@@ -225,11 +249,34 @@ type CartCtx = {
 
 const Ctx = createContext<CartCtx | null>(null);
 const KEY = "dspacios_cart_v1";
+// El modo «Cotización comparativa» se recuerda junto al carrito: cambiar de página, volver al carrito o recargar no lo apaga en silencio.
+const KEY_MODO = "dspacios_cart_modo_v1";
+const leerModoGuardado = (): boolean => { try { return localStorage.getItem(KEY_MODO) === "comparativa"; } catch { return false; } };
 
 export function CartProvider({ children }: { children: ReactNode }) {
   const [items, setItems] = useState<CartItem[]>([]);
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [addonsIntent, setAddonsIntent] = useState<AddonsIntent | null>(null);
+  const [modoComparativa, setModoComparativaEstado] = useState(false);
+  const modoRef = useRef(false);
+  const [avisoCarrito, setAvisoCarrito] = useState<string | null>(null);
+  const setModoComparativa = useCallback((v: boolean) => {
+    modoRef.current = v; setModoComparativaEstado(v); if (!v) setAvisoCarrito(null);
+    try { if (v) localStorage.setItem(KEY_MODO, "comparativa"); else localStorage.removeItem(KEY_MODO); } catch { /* sin almacenamiento: el modo vale solo en esta pantalla */ }
+  }, []);
+  useEffect(() => {
+    if (!leerModoGuardado()) return;
+    modoRef.current = true;
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- hidratar desde localStorage tras montar (evita el desajuste de SSR)
+    setModoComparativaEstado(true);
+  }, []);
+  useEffect(() => {
+    if (!avisoCarrito) return;
+    const t = setTimeout(() => setAvisoCarrito(null), 7000);
+    return () => clearTimeout(t);
+  }, [avisoCarrito]);
+  // El cuarto hotel en modo comparativa no entra: el aviso sale en el mismo lugar donde se pulsó «Agregar».
+  const hotelDeMasEnComparativa = useCallback(() => modoRef.current && ultimoRef.current.filter((i) => i.tipo === "hotel").length >= MAX_OPCIONES, []);
   // No se guarda en localStorage hasta que el render YA incluye lo hidratado.
   // Es estado (no una ref) a propósito: con <StrictMode> en la raíz los
   // efectos corren dos veces al montar, y con una ref el efecto de guardado
@@ -274,11 +321,13 @@ export function CartProvider({ children }: { children: ReactNode }) {
   }, [items, hidratado]);
 
   const add = useCallback((item: DistributiveOmit<CartItem, "id">) => {
+    if (item.tipo === "hotel" && hotelDeMasEnComparativa()) { setAvisoCarrito(AVISO_MAXIMO_COMPARATIVA); return; }
     const id = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
     ultimoRef.current = [...ultimoRef.current, { ...item, id } as CartItem];
     setItems((prev) => [...prev, { ...item, id: id } as CartItem]);
-  }, []);
+  }, [hotelDeMasEnComparativa]);
   const addConjunto = useCallback((hotel: DistributiveOmit<HotelCartItem, "id">, servicios: readonly TourSinVinculo[]) => {
+    if (hotelDeMasEnComparativa()) { setAvisoCarrito(AVISO_MAXIMO_COMPARATIVA); return ""; }
     const nuevoId = () => `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
     // Todos los ids se deciden AQUÍ, fuera del actualizador: así el
     // actualizador es puro y, si React lo ejecuta más de una vez (modo
@@ -288,7 +337,7 @@ export function CartProvider({ children }: { children: ReactNode }) {
       hotel as Omit<CartItem, "id">, servicios as unknown as Omit<CartItem, "id" | "hotelItemId">[], ids,
     ));
     return ids.hotel;
-  }, [encolar]);
+  }, [encolar, hotelDeMasEnComparativa]);
   const actualizarConjunto = useCallback((c: ActualizacionConjunto): ResultadoActualizacionConjunto => {
     const nuevoId = () => `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
     const claveReserva = c.claveReserva;
@@ -316,6 +365,9 @@ export function CartProvider({ children }: { children: ReactNode }) {
   const actualizarPrecioBernalo = useCallback((id: string, precio: number, moneda: string | null) => {
     encolar((prev) => prev.map((i) => (i.id === id && i.tipo === "hotel" && i.modeloTarifario === "unidad" ? { ...i, precio, moneda } : i)));
   }, [encolar]);
+  const actualizarManual = useCallback((id: string, datos: ServicioManual) => {
+    encolar((prev) => reemplazarManual(prev, id, { ...datos }));
+  }, [encolar]);
   const clear = useCallback(() => encolar(() => []), [encolar]);
   const openDrawer = useCallback(() => setDrawerOpen(true), []);
   const closeDrawer = useCallback(() => setDrawerOpen(false), []);
@@ -325,10 +377,18 @@ export function CartProvider({ children }: { children: ReactNode }) {
   return (
     <Ctx.Provider value={{
       items, add, addConjunto, remove, actualizarPrecioBernalo, clear, totales, count: items.length,
-      actualizarConjunto,
+      actualizarConjunto, actualizarManual,
       drawerOpen, openDrawer, closeDrawer, addonsIntent, setAddonsIntent,
+      modoComparativa, setModoComparativa, avisoCarrito,
     }}>
       {children}
+      {avisoCarrito && (
+        <div role="alert" data-testid="aviso-comparativa-maximo"
+          className="fixed inset-x-3 bottom-4 z-[70] mx-auto flex max-w-md items-start gap-3 rounded-xl border border-amber-300 bg-amber-50 px-4 py-3 text-sm text-amber-900 shadow-lg">
+          <span className="min-w-0 flex-1">{avisoCarrito}</span>
+          <button type="button" onClick={() => setAvisoCarrito(null)} className="shrink-0 text-xs font-semibold underline">Entendido</button>
+        </div>
+      )}
     </Ctx.Provider>
   );
 }
@@ -338,8 +398,9 @@ export function useCart(): CartCtx {
   if (!c) {
     // Outside CartProvider: return safe no-ops.
     return {
-      items: [], add: () => {}, addConjunto: () => "", actualizarConjunto: () => ({ ok: false, motivo: "hotel_no_encontrado" }), remove: () => {}, actualizarPrecioBernalo: () => {}, clear: () => {}, totales: resumirMonedas([]), count: 0,
+      items: [], add: () => {}, addConjunto: () => "", actualizarConjunto: () => ({ ok: false, motivo: "hotel_no_encontrado" }), actualizarManual: () => {}, remove: () => {}, actualizarPrecioBernalo: () => {}, clear: () => {}, totales: resumirMonedas([]), count: 0,
       drawerOpen: false, openDrawer: () => {}, closeDrawer: () => {}, addonsIntent: null, setAddonsIntent: () => {},
+      modoComparativa: false, setModoComparativa: () => {}, avisoCarrito: null,
     };
   }
   return c;

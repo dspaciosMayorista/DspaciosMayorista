@@ -28,6 +28,9 @@ import {
   clasificarMenoresPorEdad,
   verificarTarifasMenoresDisponibles,
 } from "@/lib/reservar/edadesMenores";
+import { contarMenoresDeDos, tarifarMenores } from "@/lib/reservar/menoresDeDos";
+import { tarifaPorMenor } from "@/lib/reservar/tarifaPorMenor";
+import { precioInfanteConServiciosOpcionales } from "@/lib/paquetes/pvpInfanteFijo";
 import { distribuirPorHabitaciones, type HabitacionConsultada } from "@/lib/reservar/distribucionHabitaciones";
 import {
   construirHabitacionesUI,
@@ -47,7 +50,15 @@ import {
 } from "./cotizacionBernaloActions";
 import type { HotelBernaloDescubierto, SalidaAereaBernalo } from "@/lib/tarifario/datosBernalo";
 import { obtenerDetalleHotel } from "./detalle-actions";
+import { obtenerDetalleSalida } from "./detalle-actions";
 import { conCacheDetalle, claveDetalleHotel, type EstadoDetalle } from "@/lib/tarifario/detalleCliente";
+import { claveComboAlcanceNormalizada } from "@/lib/tarifario/comboKey";
+import { DinamicoModal, InsigniaFechasSalida } from "./DinamicoModal";
+import {
+  accesoCotizacionDinamica, destinosDinamicos, esOfertaDinamica, etiquetaSalidaDinamica, filaDinamicaVisibleEnPaquetes, hotelUnidadVisibleConSalida, leerSalidaElegida,
+  origenesDinamicos, salidaIdsDinamicas, salidasDinamicasSelector, valorSalidaElegida, type SalidaElegida,
+} from "@/lib/tarifario/dinamicoBooking";
+import { claveOrigen, etiquetaOrigen } from "@/lib/iata";
 import { RegimenInfo, type PlanesInfo } from "./RegimenInfo";
 import { BuscadorBooking, Resultado, type EstadoBusquedaPorcion } from "./BuscadorBooking";
 import type { OpcionUnidadConfirmada } from "./busquedaUnidadActions";
@@ -58,7 +69,8 @@ import { BackgroundVideo } from "@/components/BackgroundVideo";
 import { LoadingScreen } from "@/components/LoadingScreen";
 import type { FilaTarifario, CapHotel } from "./TarifarioPublic";
 import type { FilaResumen } from "@/lib/tarifario/resumen";
-import { minRoomPvpResumen, tieneAcomodacionResumen } from "@/lib/tarifario/resumenCliente";
+import { tieneAcomodacionResumen } from "@/lib/tarifario/resumenCliente";
+import { desdeDoble } from "@/lib/tarifario/desdeDoble";
 import type { DescripcionPaqueteRaw } from "@/lib/tarifario/descripcionPaquete";
 import { destinosPorcionPublica } from "@/lib/tarifario/destinosPorcion";
 import { EtiquetaOferta } from "./EtiquetaOferta";
@@ -82,6 +94,16 @@ import { ArrowUpDown, SlidersHorizontal, X, PawPrint, BadgeCheck, PlaneTakeoff, 
 const CAP_VACIA = { paxMin: null as number | null, paxMax: null as number | null, acom: [] as AcomConfig[] };
 
 const MSG_ERROR_DETALLE_HOTEL = "No fue posible cargar el detalle en este momento. Intenta nuevamente en unos segundos.";
+
+// Detalle de una oferta DINÁMICA (hotel + paquete): una salida = una consulta acotada (`obtenerDetalleSalida`, ya cacheada y
+// validada en el servidor con los mismos filtros de vigencia), restringida a los combos de ESTE hotel. Se juntan todas las salidas
+// de la oferta en un solo detalle; si alguna falla, falla el conjunto (nunca un detalle parcial presentado como completo).
+async function cargarDetalleDinamico(filas: readonly FilaResumen[]): Promise<{ ok: true; filas: FilaTarifario[] } | { ok: false; error: string }> {
+  const ids = salidaIdsDinamicas(filas);
+  const rs = await Promise.all(ids.map((id) => obtenerDetalleSalida({ modulo: "dinamico", salidaId: id, combos: filas.filter((f) => f.salida_id === id) })));
+  for (const r of rs) if (!r.ok) return { ok: false, error: r.error };
+  return { ok: true, filas: rs.flatMap((r) => (r.ok ? r.filas : [])) };
+}
 
 // ── Modelo de la vista dinámica: tarjetas por hotel, detalle con opciones ────
 // `filas` de cada tarjeta son de RESUMEN (Tier 1, `FilaResumen[]`) — traen el
@@ -487,9 +509,11 @@ function TarjetaHotelCard({
 
 type Opcion = {
   key: string;
-  modulo: "bloqueo" | "porcion_terrestre";
+  modulo: "bloqueo" | "porcion_terrestre" | "dinamico";
   paqueteId: number;
   bloqueoId: number | null;
+  // Solo `dinamico`: la salida elegida en su modal (el servidor re-liquida con ESA salida).
+  salidaId?: number | null;
   label: string;
   destino: string | null;
   origen: string | null;
@@ -512,11 +536,6 @@ function calcNoches(ida: string, regreso: string): number {
   return Math.round((b - a) / 86_400_000);
 }
 
-// `minRoomPvp`: alias local de `minRoomPvpResumen` (lib/tarifario/
-// resumenCliente.ts) — factorizada ahí (junto con `tieneAcomodacionResumen`)
-// para poder testearla con ejecución real, sin depender de importar este
-// componente cliente (React/Next) bajo `node --test`.
-const minRoomPvp = minRoomPvpResumen;
 
 export function VistaBooking({
   filas,
@@ -525,6 +544,7 @@ export function VistaBooking({
   fotosPorServicio = {},
   cuposPorBloqueo = {},
   origenPorBloqueo = {},
+  origenPorSalida = {},
   puedeReservar = false,
   ventanaPorPaquete = {},
   infoPorHotel = {},
@@ -558,6 +578,8 @@ export function VistaBooking({
   fotosPorServicio?: Record<number, string>;
   cuposPorBloqueo?: Record<number, number>;
   origenPorBloqueo?: Record<number, string>;
+  // Origen REAL de cada salida dinámica (`salida_id` → IATA). Sin entrada = desconocido: con un origen elegido, esa salida no se muestra.
+  origenPorSalida?: Record<number, string>;
   puedeReservar?: boolean;
   ventanaPorPaquete?: Record<number, { min: string | null; max: string | null }>;
   infoPorHotel?: Record<number, { estrellas: number | null; clasificacion: string | null; descripcion: string | null; ubicacion: string | null; zona?: string | null; video_url?: string | null; ninoMin?: number | null; ninoMax?: number | null; infMin?: number | null; infMax?: number | null; adultsOnly?: boolean; petFriendly?: boolean; tieneCondicion?: boolean }>;
@@ -624,7 +646,8 @@ export function VistaBooking({
   // Buscador de bloqueos: origen → destino → salida (vuelo).
   const [origenSel, setOrigenSel] = useState("");
   const [destinoSel, setDestinoSel] = useState("");
-  const [salidaSel, setSalidaSel] = useState<number | "">("");
+  // Salida elegida en «Salida (vuelo)»: record de Bloqueo o salida dinámica, con su TIPO (los ids pueden coincidir); null = Todas.
+  const [salidaSel, setSalidaSel] = useState<SalidaElegida>(null);
   // El filtro de destino de la grilla de Porción terrestre se ELIMINÓ: era un
   // `<select>` de exploración que solo podía OCULTAR tarjetas, y con hoteles
   // recomendados por paquete eso contradecía la regla del estado global
@@ -776,7 +799,7 @@ export function VistaBooking({
   // (al volver a Bloqueo con un `destinoSel` ya elegido).
   function candidatosDeBloqueo(destino: string): { zona: string | null; estrellas: number | null }[] {
     const idsPersona = filas
-      .filter((f) => f.modulo === "bloqueo" && f.hotel_id != null && (f.destino_nombre ?? "") === destino)
+      .filter((f) => (f.modulo === "bloqueo" || f.modulo === "dinamico") && f.hotel_id != null && (f.destino_nombre ?? "") === destino)
       .map((f) => f.hotel_id as number);
     const idsUnidad = hotelesBernalo
       .filter((h) => h.tipo === "bloqueo" && (h.destinoNombre ?? "") === destino)
@@ -789,7 +812,7 @@ export function VistaBooking({
   // siguen siendo controles visibles ahí, no se tocan).
   function confirmarDestinoBloqueo(nuevoDestino: string) {
     setDestinoSel(nuevoDestino);
-    setSalidaSel("");
+    setSalidaSel(null);
     if (!nuevoDestino) { restablecerControlesOcultos(); return; }
     podarZonasEstrellas(candidatosDeBloqueo(nuevoDestino));
   }
@@ -865,7 +888,13 @@ export function VistaBooking({
     return [...map.values()].sort((a, b) => (a.fechaIda ?? "9999-99-99").localeCompare(b.fechaIda ?? "9999-99-99"));
   }, [filas, cuposPorBloqueo, origenPorBloqueo]);
 
-  const origenes = useMemo(() => [...new Set(salidasBloqueo.map((s) => s.origen).filter(Boolean))].sort(), [salidasBloqueo]);
+  // Orígenes de Bloqueo + los orígenes REALES de las salidas Dinámicas (un Dinámico puede salir de un origen sin Bloqueo).
+  const origenes = useMemo(
+    () => [...new Set([...salidasBloqueo.map((s) => claveOrigen(s.origen)), ...origenesDinamicos(filas, origenPorSalida)].filter(Boolean))]
+      .map((clave) => ({ clave, etiqueta: etiquetaOrigen(clave) }))
+      .sort((a, b) => a.etiqueta.localeCompare(b.etiqueta, "es")),
+    [salidasBloqueo, filas, origenPorSalida]
+  );
   // P3 (hallazgo confirmado, validación final): los destinos del selector
   // salían SOLO de `salidasBloqueo` (derivada de `filas`, hoteles persona) —
   // un destino que solo existe en un hotel por unidad (`hotelesBernalo`)
@@ -878,13 +907,25 @@ export function VistaBooking({
   // `hotelesUnidadVisibles`) — filtrar su destino por el origen elegido
   // sería inventar un dato que no se tiene.
   const destinosBloqueo = useMemo(() => {
-    const legacy = salidasBloqueo.filter((s) => !origenSel || s.origen === origenSel).map((s) => s.destino);
+    const legacy = salidasBloqueo.filter((s) => !origenSel || claveOrigen(s.origen) === origenSel).map((s) => s.destino);
     const unidad = hotelesBernalo.filter((h) => h.tipo === "bloqueo" && h.destinoNombre).map((h) => h.destinoNombre as string);
     return [...new Set([...legacy, ...unidad])].filter(Boolean).sort();
   }, [salidasBloqueo, origenSel, hotelesBernalo]);
+  // Destinos que ofrece el selector de "Paquetes": los de Bloqueo (persona y unidad) MÁS los de los paquetes Dinámicos, cuyo destino es
+  // el del paquete/hotel. Con un origen elegido, solo los de Dinámicos con alguna salida REAL desde ese origen.
+  const destinosPaquetes = useMemo(
+    () => [...new Set([...destinosBloqueo, ...destinosDinamicos(filas, origenSel, origenPorSalida)])].sort(),
+    [destinosBloqueo, origenSel, filas, origenPorSalida]
+  );
   const salidasFiltradas = useMemo(
-    () => salidasBloqueo.filter((s) => (!origenSel || s.origen === origenSel) && (!destinoSel || s.destino === destinoSel)),
+    () => salidasBloqueo.filter((s) => (!origenSel || claveOrigen(s.origen) === origenSel) && (!destinoSel || s.destino === destinoSel)),
     [salidasBloqueo, origenSel, destinoSel]
+  );
+  // Salidas DINÁMICAS reales para el mismo selector (fecha, noches, origen real de la salida, destino del paquete), con el
+  // mismo origen/destino que acotan arriba. Sin cupos ni datos de vuelo: un Dinámico no los tiene en el tarifario.
+  const salidasDinamicasFiltradas = useMemo(
+    () => salidasDinamicasSelector(filas, { origenSel, destinoSel, origenPorSalida }),
+    [filas, origenSel, destinoSel, origenPorSalida]
   );
 
   // Destino/búsqueda EFECTIVOS del submódulo activo — gobiernan el estado A
@@ -920,13 +961,18 @@ export function VistaBooking({
   const hoteles = useMemo<HotelCard[]>(() => {
     const mod = sub === "receptivos" ? null : sub;
     const conHotel = filas.filter((f) => {
-      if (mod == null || f.modulo !== mod || f.hotel_id == null) return false;
+      if (mod == null || f.hotel_id == null) return false;
+      // Dinámico: va dentro de "Paquetes", con su propia regla (sin cupos; destino del paquete; origen real de su salida).
+      if (f.modulo === "dinamico") return mod === "bloqueo" && filaDinamicaVisibleEnPaquetes(f, { origenSel, salidaSel, destinoSel, origenPorSalida });
+      if (f.modulo !== mod) return false;
+      // Una salida DINÁMICA elegida deja solo las filas de esa salida (arriba): ninguna fila de Bloqueo aplica.
+      if (mod === "bloqueo" && salidaSel?.tipo === "dinamico") return false;
       if (mod === "bloqueo" && f.bloqueo_id != null) {
         const c = cuposPorBloqueo[f.bloqueo_id];
         if (c !== undefined && c <= 0) return false; // sin cupos: no se muestra
-        if (origenSel && origenPorBloqueo[f.bloqueo_id] !== origenSel) return false;
+        if (origenSel && claveOrigen(origenPorBloqueo[f.bloqueo_id]) !== origenSel) return false;
         if (destinoSel && (f.destino_nombre ?? "") !== destinoSel) return false;
-        if (salidaSel !== "" && f.bloqueo_id !== salidaSel) return false;
+        if (salidaSel && f.bloqueo_id !== salidaSel.id) return false;
       }
       if (mod === "porcion_terrestre" && destinoPorcionBusqueda && (f.destino_nombre ?? "") !== destinoPorcionBusqueda) return false;
       return true;
@@ -969,9 +1015,11 @@ export function VistaBooking({
     // `soloPetFriendly`/`soloAdultsOnly`) aplicados DESPUÉS de seleccionar
     // recomendados, en el `tarjetas` final — ver más abajo.
     if (soloAcom) arr = arr.filter((c) => c.filas.some((f) => tieneAcomodacionResumen(f, soloAcom)));
-    for (const c of arr) c.desde = minRoomPvp(c.filas);
+    // «Desde» (TASKS #92): SIEMPRE la tarifa DOBLE publicable de las filas que esta tarjeta realmente ofrece (ya filtradas por
+    // paquete, salida, hotel y vigencia) y de SU moneda; sin DOBLE queda null → «Consultar». Nunca sencilla/triple/niño/infante.
+    for (const c of arr) c.desde = desdeDoble(c.filas, c.moneda);
     return arr;
-  }, [filas, fotosPorHotel, infoPorHotel, sub, cuposPorBloqueo, origenPorBloqueo, origenSel, destinoSel, destinoPorcionBusqueda, salidaSel, soloAcom]);
+  }, [filas, fotosPorHotel, infoPorHotel, sub, cuposPorBloqueo, origenPorBloqueo, origenPorSalida, origenSel, destinoSel, destinoPorcionBusqueda, salidaSel, soloAcom]);
 
   // Hoteles por unidad (Bernalo) visibles en el submódulo/filtros ACTIVOS —
   // para el cliente son hoteles normales, así que responden a la misma
@@ -992,9 +1040,11 @@ export function VistaBooking({
     if (sub === "receptivos") return [];
     let arr = hotelesBernalo.filter((h) => h.tipo === sub);
     if (sub === "bloqueo" && destinoSel) arr = arr.filter((h) => (h.destinoNombre ?? "") === destinoSel);
+    // Salida elegida: una dinámica no pertenece a ningún hotel por unidad; un record de Bloqueo, solo a los que lo tienen en `salidas`.
+    if (sub === "bloqueo" && salidaSel) arr = arr.filter((h) => hotelUnidadVisibleConSalida(h, salidaSel));
     if (sub === "porcion_terrestre" && destinoPorcionBusqueda) arr = arr.filter((h) => (h.destinoNombre ?? "") === destinoPorcionBusqueda);
     return arr;
-  }, [hotelesBernalo, sub, destinoSel, destinoPorcionBusqueda]);
+  }, [hotelesBernalo, sub, destinoSel, salidaSel, destinoPorcionBusqueda]);
 
   // Una sola colección para la grilla — persona y unidad mezclados, sin
   // sección aparte (el usuario ve hoteles, no "modelos de cálculo"). Clave
@@ -1530,12 +1580,15 @@ export function VistaBooking({
     setAbierto(h);
     setDetalleHotel({ estado: "cargando" });
     const esBloqueo = sub === "bloqueo";
-    const clave = claveDetalleHotel(esBloqueo ? "bloqueo" : "porcion_terrestre", h.hotelId, h.filas);
+    const dinamico = esOfertaDinamica(h.filas);
+    const clave = dinamico
+      ? `hotel:dinamico:${h.hotelId}:${h.paqueteId}:${claveComboAlcanceNormalizada(h.filas)}`
+      : claveDetalleHotel(esBloqueo ? "bloqueo" : "porcion_terrestre", h.hotelId, h.filas);
     claveAbiertaRef.current = clave;
     const args = esBloqueo
       ? { modulo: "bloqueo" as const, hotelId: h.hotelId, combos: h.filas }
       : { modulo: "porcion_terrestre" as const, hotelId: h.hotelId, combos: h.filas };
-    conCacheDetalle(clave, () => obtenerDetalleHotel(args))
+    conCacheDetalle(clave, () => (dinamico ? cargarDetalleDinamico(h.filas) : obtenerDetalleHotel(args)))
       .then((r) => {
         if (claveAbiertaRef.current !== clave) return; // otro hotel/alcance se abrió mientras tanto
         setDetalleHotel(r.ok ? { estado: "ok", filas: r.filas } : { estado: "error", mensaje: r.error });
@@ -1708,7 +1761,7 @@ export function VistaBooking({
                 <PlaneTakeoff className={iconoBloqueoCls(!!origenSel)} aria-hidden />
                 <select value={origenSel} onChange={(e) => { setOrigenSel(e.target.value); confirmarDestinoBloqueo(""); }} className={campoBloqueoCls(!!origenSel)}>
                   <option value="">Todos</option>
-                  {origenes.map((o) => <option key={o} value={o}>{o}</option>)}
+                  {origenes.map((o) => <option key={o.clave} value={o.clave}>{o.etiqueta.toLocaleUpperCase("es")}</option>)}
                 </select>
               </div>
             </div>
@@ -1718,20 +1771,23 @@ export function VistaBooking({
                 <PlaneLanding className={iconoBloqueoCls(!!destinoSel)} aria-hidden />
                 <select value={destinoSel} onChange={(e) => confirmarDestinoBloqueo(e.target.value)} className={campoBloqueoCls(!!destinoSel)}>
                   <option value="">Todos</option>
-                  {destinosBloqueo.map((d) => <option key={d} value={d}>{d}</option>)}
+                  {destinosPaquetes.map((d) => <option key={d} value={d}>{d}</option>)}
                 </select>
               </div>
             </div>
             <div>
               <label className="mb-1 block text-xs font-semibold text-slate-700">Salida (vuelo)</label>
               <div className="relative">
-                <CalendarClock className={iconoBloqueoCls(salidaSel !== "")} aria-hidden />
-                <select value={salidaSel} onChange={(e) => setSalidaSel(e.target.value === "" ? "" : Number(e.target.value))} className={campoBloqueoCls(salidaSel !== "")}>
+                <CalendarClock className={iconoBloqueoCls(salidaSel !== null)} aria-hidden />
+                <select value={valorSalidaElegida(salidaSel)} onChange={(e) => setSalidaSel(leerSalidaElegida(e.target.value))} className={campoBloqueoCls(salidaSel !== null)}>
                   <option value="">Todas las salidas</option>
                   {salidasFiltradas.map((s) => (
-                    <option key={s.id} value={s.id}>
+                    <option key={`b:${s.id}`} value={valorSalidaElegida({ tipo: "bloqueo", id: s.id })}>
                       {s.origen} → {s.destino} · {fmtFecha(s.fechaIda)}–{fmtFecha(s.fechaRegreso)}{s.noches ? ` (${s.noches}N)` : ""} · {s.cupos} cupos
                     </option>
+                  ))}
+                  {salidasDinamicasFiltradas.map((s) => (
+                    <option key={`d:${s.id}`} value={valorSalidaElegida({ tipo: "dinamico", id: s.id })}>{etiquetaSalidaDinamica(s)}</option>
                   ))}
                 </select>
               </div>
@@ -1985,6 +2041,7 @@ export function VistaBooking({
                         {min} cupo{min !== 1 ? "s" : ""}
                       </span>
                     )}
+                    <InsigniaFechasSalida filas={t.card.filas} />
                   </>
                 );
               })()}
@@ -2062,6 +2119,8 @@ export function VistaBooking({
       )}
 
       {abierto && (
+        esOfertaDinamica(abierto.filas) ? <DinamicoModal hotel={abierto} detalle={detalleHotel} onReintentar={() => abrirHotel(abierto)} descripcionPorPaquete={descripcionPorPaquete} acceso={accesoCotizacionDinamica({ puedeReservar })} onClose={cerrarHotel}
+          cotizador={(salidaId, filasDetalle) => <CotizadorDinamico salidaId={salidaId} filas={filasDetalle} hotel={abierto} puedeReservar={puedeReservar} planesInfo={planesInfo} cap={capPorHotel[abierto.hotelId] ?? CAP_VACIA} onAgregado={cerrarHotel} />} /> :
         <HotelModal hotel={abierto} detalle={detalleHotel} onReintentar={() => abrirHotel(abierto)} cuposPorBloqueo={cuposPorBloqueo} origenPorBloqueo={origenPorBloqueo} puedeReservar={puedeReservar} ventanaPorPaquete={ventanaPorPaquete} planesInfo={planesInfo} cap={capPorHotel[abierto.hotelId] ?? CAP_VACIA} descripcionPorPaquete={descripcionPorPaquete} addonsPorPaquete={addonsPorPaquete} onClose={cerrarHotel} />
       )}
 
@@ -3007,12 +3066,29 @@ function Selector({
     return m;
   }, [opcion, catEff, regEff]);
 
+  // Precio de un MENOR DE 2 AÑOS por clase de hotel (migración 226): fee de infante del vuelo + servicios con su
+  // precio de infante + hotel de su clase. Vacío en un tarifario anterior a la 226.
+  const pvpMenor2 = useMemo(() => {
+    const m: Record<string, number> = {};
+    for (const f of opcion.filas) {
+      if (f.categoria === catEff && f.regimen === regEff && f.acomodacion && f.precio_pvp_menor2 != null) m[f.acomodacion] = f.precio_pvp_menor2;
+    }
+    return m;
+  }, [opcion, catEff, regEff]);
+
+  // PVP fijo del infante (254): precio normal de la clase infante por ruta cuando el fijo la reemplazó; null = el fijo no se aplicó.
+  const pvpInfanteSinFijo = useMemo(() => {
+    const f = opcion.filas.find((x) => x.categoria === catEff && x.regimen === regEff && x.acomodacion === "infante");
+    return { mayor2: f?.precio_pvp_sin_fijo ?? null, menor2: f?.precio_pvp_menor2_sin_fijo ?? null };
+  }, [opcion, catEff, regEff]);
+
   const selCls = "rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm";
 
   const agregarItem = (habitaciones: Record<string, number>, ninos: number, ninos2: number, infantes: number, pax: number, precio: number, edadesMenores: number[], serviciosConjunto: TourSinVinculo[]) =>
     onAgregar({
       tipo: "hotel",
       modulo: opcion.modulo, paqueteId: opcion.paqueteId, hotelId: hotel.hotelId, bloqueoId: opcion.bloqueoId,
+      ...(opcion.modulo === "dinamico" ? { salidaId: opcion.salidaId ?? null } : {}),
       hotelNombre: hotel.hotelNombre, destino: hotel.destino, fotoUrl: hotel.foto,
       categoria: catEff, regimen: regEff,
       fechaIda: opcion.fechaIda, fechaRegreso: opcion.fechaRegreso, noches: opcion.noches,
@@ -3043,7 +3119,7 @@ function Selector({
         </div>
       </div>
 
-      <EditorPax pvp={pvp} acomConfig={cap.acom} paxMin={cap.paxMin} paxMax={cap.paxMax} moneda={hotel.moneda} edadesNota={textoEdadesHotel(hotel)} edadInfanteMax={hotel.infMax} edadNinoMax={hotel.ninoMax} nota={!puedeReservar ? "El valor es una estimación con tarifas publicadas; el precio final se confirma al generar la cotización." : undefined} onAgregar={agregarItem}
+      <EditorPax pvp={pvp} pvpMenor2={pvpMenor2} pvpInfanteSinFijo={pvpInfanteSinFijo} acomConfig={cap.acom} paxMin={cap.paxMin} paxMax={cap.paxMax} moneda={hotel.moneda} edadesNota={textoEdadesHotel(hotel)} edadInfanteMax={hotel.infMax} edadNinoMax={hotel.ninoMax} nota={!puedeReservar ? "El valor es una estimación con tarifas publicadas; el precio final se confirma al generar la cotización." : undefined} onAgregar={agregarItem}
         servicios={servicios ? {
           ...servicios, paqueteId: opcion.paqueteId, hotelNombre: hotel.hotelNombre,
           // Bloqueo: las fechas son las del record (fijas).
@@ -3054,6 +3130,29 @@ function Selector({
   );
 }
 
+// Cotizador de UNA salida dinámica dentro de `DinamicoModal`: el mismo `Selector` (categoría/alimentación, habitaciones,
+// edades) y el mismo carrito público que Bloqueo — de ahí a /tarifario/checkout, que no exige sesión y re-liquida en el
+// servidor con `computarReserva` sobre esta salida. Fechas = las de la salida (fijas, como las del record de un Bloqueo).
+function CotizadorDinamico({ salidaId, filas, hotel, puedeReservar, planesInfo, cap, onAgregado }: {
+  salidaId: number; filas: FilaTarifario[]; hotel: HotelCard; puedeReservar: boolean; planesInfo: PlanesInfo;
+  cap: { paxMin: number | null; paxMax: number | null; acom: AcomConfig[] };
+  onAgregado: () => void;
+}) {
+  const { addConjunto, openDrawer } = useCart();
+  const deSalida = filas.filter((f) => f.modulo === "dinamico" && f.salida_id === salidaId);
+  const f0 = deSalida[0];
+  if (!f0 || hotel.paqueteId == null) return null;
+  const opcion: Opcion = {
+    key: `dinamico|${salidaId}|${hotel.paqueteId}`, modulo: "dinamico", paqueteId: hotel.paqueteId, bloqueoId: null, salidaId,
+    label: f0.paquete_nombre ?? "Paquete", destino: f0.destino_nombre, origen: null, cupos: null,
+    fechaIda: f0.fecha_ida, fechaRegreso: f0.fecha_regreso, noches: f0.noches, filas: deSalida,
+  };
+  return (
+    <Selector key={opcion.key} opcion={opcion} hotel={hotel} puedeReservar={puedeReservar} planesInfo={planesInfo} cap={cap}
+      onAgregar={(item, servicios) => { addConjunto(item, servicios); openDrawer(); onAgregado(); }} />
+  );
+}
+
 // Editor de habitaciones/menores + total + botón. Recibe el PVP por acomodación y
 // reporta la selección (no conoce fechas ni módulo). Reutilizado por bloqueo y porción.
 // La edad de cada menor se pide EXACTA (nunca fecha de nacimiento — esa se
@@ -3061,11 +3160,15 @@ function Selector({
 // sola, contra las reglas reales del hotel, si liquida como infante, Niño 1 o
 // Niño 2 (ver lib/reservar/edadesMenores.ts) — nunca un conteo manual por tarifa.
 function EditorPax({
-  pvp, acomConfig = [], paxMin = null, paxMax = null, nota, edadesNota,
+  pvp, pvpMenor2 = {}, pvpInfanteSinFijo, acomConfig = [], paxMin = null, paxMax = null, nota, edadesNota,
   edadInfanteMax, edadNinoMax, onAgregar, onAgregarBernalo, btnLabel = "Agregar al carrito", moneda = "COP",
   modeloTarifario = null, hotelId, paqueteId, categoriasDisponibles = [], alimentacionesDisponibles = [], salidas = [], servicios,
 }: {
   pvp: Record<string, number>;
+  // Precio de un menor de 2 años por clase de hotel (migración 226); vacío = tarifario anterior a la 226.
+  pvpMenor2?: Record<string, number>;
+  // PVP fijo del infante (254): precio normal por ruta; solo se usa si un servicio opcional seleccionado le cobra al infante.
+  pvpInfanteSinFijo?: { mayor2: number | null; menor2: number | null };
   acomConfig?: AcomConfig[];
   paxMin?: number | null;
   paxMax?: number | null;
@@ -3237,11 +3340,27 @@ function EditorPax({
     }
   }
 
+  // Menores (migración 226): parte de hotel por la clase del hotel y vuelo + servicios por EDAD — un menor de 2 años paga
+  // la tarifa de infante (`pvpMenor2`); desde los 2 años, como adulto. Es solo la estimación: el servidor re-liquida.
   let precio = adultosPrecio;
-  if (ninos > 0 && pvp["nino"] != null) precio += ninos * pvp["nino"];
-  if (ninos2 > 0 && pvp["nino2"] != null) precio += ninos2 * pvp["nino2"];
+  const tarifaMenores = tarifarMenores({
+    totales: { infante: infantes, nino: ninos, nino2: ninos2 },
+    menoresDeDos: contarMenoresDeDos(edades, infanteMax, { infante: infantes, nino: ninos, nino2: ninos2 }),
+    pvp, pvpMenor2,
+  });
+  if (tarifaMenores.ok) {
+    precio += tarifaMenores.total;
+  } else {
+    // Tarifario anterior a la 226 (sin precio de menor de 2): estimación histórica; al cotizar el servidor pide regenerarlo.
+    if (ninos > 0 && pvp["nino"] != null) precio += ninos * pvp["nino"];
+    if (ninos2 > 0 && pvp["nino2"] != null) precio += ninos2 * pvp["nino2"];
+  }
   const ninosTotal = ninos + ninos2;
   const pax = adultos + ninosTotal;
+  // Tarifa de venta de cada menor: sale de las MISMAS líneas que forman el total (`tarifarMenores`), nunca de una fórmula aparte.
+  // Solo con todas las edades válidas, distribución por habitaciones válida y tarifas publicadas; si no, se explica el motivo.
+  const menoresCompletos = cantidadMenores > 0 && edadesValidas && edadesFaltantes === 0 && !clasifError;
+  const errorTarifaMenores = menoresCompletos && !tarifaMenores.ok ? tarifaMenores.error : null;
 
   // Topes efectivos (capacidad de habitaciones + límites del hotel).
   const maxPax = paxMax != null ? Math.min(capPax, paxMax) : capPax;
@@ -3264,10 +3383,12 @@ function EditorPax({
     if (!puede || !evaluacionServicios.listo) return;
     const habitaciones: Record<string, number> = {};
     for (const a of ACOM_ROOMS) if ((habs[a] ?? 0) > 0) habitaciones[a] = habs[a];
-    onAgregar(habitaciones, ninos, ninos2, infantes, pax, precio, edades, serviciosConjunto());
+    onAgregar(habitaciones, ninos, ninos2, infantes, pax, precioFinal, edades, serviciosConjunto());
   }
 
   const inputCls = "w-16 rounded-lg border border-gray-300 px-2 py-1.5 text-sm";
+  // Campo de edad de la captura de menores (persona): ancho acotado dentro de su tarjeta, sin desbordar en móvil.
+  const inputEdadMenorCls = "block w-full max-w-[5rem] rounded-lg border px-2 py-1.5 text-sm text-center focus:outline-none focus:ring-2 focus:ring-[var(--brand-accent)]";
   const inputEdadCls = "w-14 rounded-lg border px-2 py-1.5 text-sm text-center focus:outline-none focus:ring-2 focus:ring-[var(--brand-accent)]";
 
   // ── Fase 3D/3E Bernalo — captura por habitación física + cotización real ─
@@ -3350,6 +3471,18 @@ function EditorPax({
     evaluacionServicios, hotelServicios,
     Object.fromEntries((servicios?.addons ?? []).filter((a) => a.servicioId != null).map((a) => [a.servicioId as number, a.foto])),
   );
+  // PVP fijo del infante × servicios opcionales seleccionados (254). ESTIMACIÓN: de cada servicio cotizado solo se conoce el total (no el
+  // precio de infante), así que uno con total positivo cuenta como cargo; el servidor decide con el precio real de infante al cotizar.
+  const opcionalesEstimados = evaluacionServicios.servicios.flatMap((s) =>
+    s.estado === "ok" && s.resultado ? [{ categoria: s.resultado.categoria, modo: "persona" as const, personaPvp: s.resultado.total, infantePvp: null }] : []);
+  const lineasMenoresFinal = tarifaMenores.ok
+    ? tarifaMenores.lineas.map((l) => (l.clase === "infante"
+      ? { ...l, tarifa: precioInfanteConServiciosOpcionales(l.tarifa, l.menorDeDos ? pvpInfanteSinFijo?.menor2 : pvpInfanteSinFijo?.mayor2, opcionalesEstimados, l.menorDeDos) }
+      : l))
+    : null;
+  const ajusteInfante = lineasMenoresFinal && tarifaMenores.ok ? lineasMenoresFinal.reduce((s, l, i) => s + l.cantidad * (l.tarifa - tarifaMenores.lineas[i].tarifa), 0) : 0;
+  const precioFinal = precio + ajusteInfante;
+  const tarifasPorMenor = menoresCompletos && lineasMenoresFinal ? tarifaPorMenor(edadesParsed.map((p) => p.valor), infanteMax, lineasMenoresFinal) : null;
 
   // Regla A.1: SOLO se habilita después de una cotización Bernalo exitosa.
   // `resultadoCotizacion` ya se limpia (null) ante cualquier cambio de
@@ -3566,35 +3699,49 @@ function EditorPax({
               <label htmlFor={`${idBase}-cant`} className="text-xs font-semibold uppercase tracking-wide text-gray-400">Menores</label>
             </div>
             {edadesNota && <p className="mb-1 text-[11px] font-medium text-gray-500">{edadesNota}</p>}
-            <div className="flex flex-wrap items-end gap-3">
-              <div>
-                <label htmlFor={`${idBase}-cant`} className="mb-1 block text-xs font-medium text-gray-600">Cantidad de menores</label>
-                <input id={`${idBase}-cant`} type="number" inputMode="numeric" min={0} max={MAX_MENORES_POR_CONSULTA}
-                  value={cantidadMenores} disabled={!hayHab}
-                  onChange={(e) => setCantidadMenores(Number(e.target.value))} className={inputCls} />
-              </div>
-              {edadesTxt.map((v, i) => {
-                const err = edadesParsed[i]?.error;
-                const mostrarError = v.trim() !== "" && err;
-                return (
-                  <div key={i}>
-                    <label htmlFor={`${idBase}-edad-${i}`} className="mb-1 block text-xs font-medium text-gray-600">Edad menor {i + 1}</label>
-                    <input
-                      id={`${idBase}-edad-${i}`}
-                      type="number"
-                      inputMode="numeric"
-                      min={0}
-                      max={EDAD_MENOR_MAX}
-                      value={v}
-                      onChange={(e) => setEdadAt(i, e.target.value)}
-                      className={`${inputEdadCls} ${mostrarError ? "border-red-400" : "border-gray-300"}`}
-                      aria-invalid={mostrarError ? true : undefined}
-                    />
-                    {mostrarError && <p className="mt-0.5 text-[10px] text-red-600">{err}</p>}
-                  </div>
-                );
-              })}
+            <div>
+              <label htmlFor={`${idBase}-cant`} className="mb-1 block text-xs font-medium text-gray-600">Cantidad de menores</label>
+              <input id={`${idBase}-cant`} type="number" inputMode="numeric" min={0} max={MAX_MENORES_POR_CONSULTA}
+                value={cantidadMenores} disabled={!hayHab}
+                onChange={(e) => setCantidadMenores(Number(e.target.value))} className={inputCls} />
             </div>
+            {edadesTxt.length > 0 && (
+              <div className="mt-3 grid grid-cols-1 gap-2 min-[340px]:grid-cols-2 sm:grid-cols-3 lg:grid-cols-4">
+                {edadesTxt.map((v, i) => {
+                  const err = edadesParsed[i]?.error;
+                  const mostrarError = v.trim() !== "" && err;
+                  const tarifa = !mostrarError && tarifasPorMenor ? tarifasPorMenor[i] : undefined;
+                  return (
+                    <div key={i} className="min-w-0 rounded-lg border border-gray-200 bg-gray-50 p-2">
+                      <label htmlFor={`${idBase}-edad-${i}`} className="mb-1 block break-words text-xs font-medium text-gray-600">Edad menor {i + 1}</label>
+                      <input
+                        id={`${idBase}-edad-${i}`}
+                        type="number"
+                        inputMode="numeric"
+                        min={0}
+                        max={EDAD_MENOR_MAX}
+                        value={v}
+                        onChange={(e) => setEdadAt(i, e.target.value)}
+                        className={`${inputEdadMenorCls} ${mostrarError ? "border-red-400" : "border-gray-300"}`}
+                        aria-invalid={mostrarError ? true : undefined}
+                        aria-describedby={!mostrarError && tarifasPorMenor ? `${idBase}-tarifa-${i}` : undefined}
+                      />
+                      {mostrarError && <p className="mt-1 break-words text-[10px] text-red-600">{err}</p>}
+                      {!mostrarError && tarifasPorMenor && (tarifa
+                        ? (
+                          <p id={`${idBase}-tarifa-${i}`} className="mt-1 break-words border-t border-gray-200 pt-1">
+                            <span className="block text-[10px] font-medium uppercase tracking-wide text-gray-400">Tarifa menor {i + 1}</span>
+                            <span className="block break-words text-sm font-semibold" style={{ color: "var(--brand-primary)" }}>{formatMoneda(tarifa.tarifa, moneda)}</span>
+                            {tarifa.menorDeDos && <span className="block text-[10px] text-gray-500">menor de 2 años</span>}
+                          </p>
+                        )
+                        : <p id={`${idBase}-tarifa-${i}`} className="mt-1 break-words text-[10px] text-amber-600">Sin tarifa para esta edad</p>)}
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+            {errorTarifaMenores && <p className="mt-1 text-[11px] text-red-600">{errorTarifaMenores}</p>}
             {cantidadMenores > 0 && edadesValidas === false && edadesFaltantes > 0 && (
               <p className="mt-1 text-[11px] text-amber-600">Falta la edad de {edadesFaltantes} menor(es).</p>
             )}
@@ -3613,7 +3760,7 @@ function EditorPax({
       )}
 
       {servicios && (
-        <DesgloseServicios hotelNombre={servicios.hotelNombre} precioHotel={hotelServicios.precio} moneda={hotelServicios.moneda}
+        <DesgloseServicios hotelNombre={servicios.hotelNombre} precioHotel={ajusteInfante !== 0 && hotelServicios.precio != null ? precioFinal : hotelServicios.precio} moneda={hotelServicios.moneda}
           evaluacion={evaluacionServicios} onQuitar={servicios.quitar} onReintentar={reintentarServicios} />
       )}
 
@@ -3659,7 +3806,7 @@ function EditorPax({
         <div className="flex items-center justify-between border-t border-gray-100 pt-3">
           <div>
             <div className="text-xs text-gray-400">{evaluacionServicios.servicios.length ? "Hotel" : "Total estimado"}{pax > 0 ? ` · ${pax} pax` : ""}</div>
-            <div className="text-xl font-bold" style={{ color: "var(--brand-primary)" }}>{formatMoneda(precio, moneda)}</div>
+            <div className="text-xl font-bold" style={{ color: "var(--brand-primary)" }}>{formatMoneda(precioFinal, moneda)}</div>
           </div>
           <button type="button" onClick={agregar} disabled={!puede || !evaluacionServicios.listo}
             className="rounded-lg px-4 py-2.5 text-sm font-semibold text-white disabled:opacity-40"
@@ -3754,6 +3901,9 @@ function SelectorPorFechas({
   const regs = combos ? [...new Set(combos.filter((c) => c.categoria === catEff).map((c) => c.regimen))] : [];
   const regEff = regs.includes(reg) ? reg : (regs[0] ?? "");
   const pvp = combos?.find((c) => c.categoria === catEff && c.regimen === regEff)?.precios ?? {};
+  const comboCot = combos?.find((c) => c.categoria === catEff && c.regimen === regEff);
+  const pvpMenor2Cot = comboCot?.preciosMenor2 ?? {};
+  const pvpInfanteSinFijoCot = { mayor2: comboCot?.preciosSinFijo?.["infante"] ?? null, menor2: comboCot?.preciosMenor2SinFijo?.["infante"] ?? null };
 
   const selCls = "rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm";
   const dateCls = "rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm";
@@ -3856,7 +4006,7 @@ function SelectorPorFechas({
             {nochesCot != null && <div className="self-end pb-2 text-xs text-gray-400">{nochesCot} noche(s)</div>}
           </div>
           <div className="mt-1"><CondicionHotelBadges condicion={condicion} /></div>
-          <EditorPax pvp={pvp} acomConfig={cap.acom} paxMin={cap.paxMin} paxMax={cap.paxMax} moneda={hotel.moneda} edadesNota={textoEdadesHotel(hotel)} edadInfanteMax={hotel.infMax} edadNinoMax={hotel.ninoMax} onAgregar={agregarItem}
+          <EditorPax pvp={pvp} pvpMenor2={pvpMenor2Cot} pvpInfanteSinFijo={pvpInfanteSinFijoCot} acomConfig={cap.acom} paxMin={cap.paxMin} paxMax={cap.paxMax} moneda={hotel.moneda} edadesNota={textoEdadesHotel(hotel)} edadInfanteMax={hotel.infMax} edadNinoMax={hotel.ninoMax} onAgregar={agregarItem}
             servicios={servicios ? {
               ...servicios, paqueteId: opcion.paqueteId, hotelNombre: hotel.hotelNombre,
               // Porción: las fechas son las COTIZADAS (si cambian, `combos`

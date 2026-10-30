@@ -1,11 +1,10 @@
 import { formatFechaLarga } from "@/lib/utils";
+import { COLOR_DOCUMENTO } from "@/lib/contrato/colorDocumento";
 import { Logo } from "@/components/Logo";
 import { POWERED_BY } from "@/lib/contrato/plantilla";
 import type { VoucherContenido } from "@/app/(dashboard)/dashboard/contratos/[numero]/voucher-actions";
 
-const PRIMARY = "#1D7C9A";
-const ACCENT = "#26BBD9";
-const LIMA = "#AEF44A";
+const PRIMARY = COLOR_DOCUMENTO;
 
 const CLAUSULAS = [
   "Revisar que sus datos estén correctos.",
@@ -18,7 +17,7 @@ const CLAUSULAS = [
 
 function Banner({ children }: { children: React.ReactNode }) {
   return (
-    <div className="px-3 py-1 text-center text-xs font-bold uppercase tracking-wide text-white" style={{ backgroundColor: LIMA, color: "#1f3d10" }}>
+    <div className="px-3 py-1 text-center text-xs font-bold uppercase tracking-wide text-white" style={{ backgroundColor: PRIMARY }}>
       {children}
     </div>
   );
@@ -27,7 +26,7 @@ function Banner({ children }: { children: React.ReactNode }) {
 function Celda({ label, value }: { label: string; value: string }) {
   return (
     <div className="border border-white/40">
-      <div className="px-2 py-1 text-center text-[10px] font-bold uppercase text-white" style={{ backgroundColor: ACCENT }}>{label}</div>
+      <div className="px-2 py-1 text-center text-[10px] font-bold uppercase text-white" style={{ backgroundColor: PRIMARY }}>{label}</div>
       <div className="px-2 py-1.5 text-center text-xs text-gray-800">{value || "—"}</div>
     </div>
   );
@@ -40,7 +39,7 @@ export function VoucherDocumento({ c, tenant }: { c: VoucherContenido; tenant?: 
       <header className="flex items-center justify-between gap-4 px-5 py-4">
         <Logo variant="full" height={56} className="h-14 w-auto" tenant={tenant} />
         <div className="text-right">
-          <div className="inline-block px-3 py-0.5 text-[10px] font-bold uppercase text-white" style={{ backgroundColor: LIMA, color: "#1f3d10" }}>Fecha de emisión</div>
+          <div className="inline-block px-3 py-0.5 text-[10px] font-bold uppercase text-white" style={{ backgroundColor: PRIMARY }}>Fecha de emisión</div>
           <div className="mt-1 text-sm font-semibold" style={{ color: PRIMARY }}>{formatFechaLarga(c.emision)}</div>
         </div>
       </header>
@@ -108,7 +107,7 @@ export function VoucherDocumento({ c, tenant }: { c: VoucherContenido; tenant?: 
 
         {/* Información general */}
         <div className="mt-4">
-          <div className="px-3 py-1 text-center text-xs font-bold uppercase text-white" style={{ backgroundColor: ACCENT }}>Información general</div>
+          <div className="px-3 py-1 text-center text-xs font-bold uppercase text-white" style={{ backgroundColor: PRIMARY }}>Información general</div>
           <ul className="mt-2 space-y-1 text-[11px] leading-relaxed text-gray-700">
             {CLAUSULAS.map((cl, n) => <li key={n}>Ø {cl}</li>)}
           </ul>

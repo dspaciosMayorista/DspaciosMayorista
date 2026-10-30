@@ -39,12 +39,21 @@ export function calcularResidualServiciosIncluidosPorGrupo(params: {
   tarifaNino2: number | null | undefined;
   numInfantes: number;
   tarifaInfante: number | null | undefined;
+  // Tarifa de infante (migración 226): si viene, las líneas de menores (cada una
+  // con SU tarifa — menor de 2 años o de 2+) reemplazan por completo a los
+  // pares numNinos/numNinos2/numInfantes de arriba, que ya no alcanzan para
+  // describir a los menores (un mismo grupo puede tener dos tarifas).
+  lineasMenores?: readonly { cantidad: number; tarifa: number }[];
 }): ResidualServiciosIncluidosPorGrupo {
   let subtotalVisible = 0;
   for (const l of params.lineasHab) subtotalVisible += l.pax * l.pvp;
-  if (params.numNinos > 0 && params.tarifaNino != null) subtotalVisible += params.numNinos * params.tarifaNino;
-  if (params.numNinos2 > 0 && params.tarifaNino2 != null) subtotalVisible += params.numNinos2 * params.tarifaNino2;
-  if (params.numInfantes > 0 && params.tarifaInfante != null) subtotalVisible += params.numInfantes * params.tarifaInfante;
+  if (params.lineasMenores) {
+    for (const l of params.lineasMenores) subtotalVisible += l.cantidad * l.tarifa;
+  } else {
+    if (params.numNinos > 0 && params.tarifaNino != null) subtotalVisible += params.numNinos * params.tarifaNino;
+    if (params.numNinos2 > 0 && params.tarifaNino2 != null) subtotalVisible += params.numNinos2 * params.tarifaNino2;
+    if (params.numInfantes > 0 && params.tarifaInfante != null) subtotalVisible += params.numInfantes * params.tarifaInfante;
+  }
 
   const residual = params.precioVenta - subtotalVisible;
   if (residual < 0) {

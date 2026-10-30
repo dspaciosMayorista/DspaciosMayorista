@@ -1,0 +1,221 @@
+# Gate del hotfix 224/225 (netos de empaquetados por rol), en DOS FASES como el despliegue A del Coordinador:
+#   Fase 1 (224, aditiva): esquema real 001-223 + 224. `venta` lee la vista empaquetados_basica Y TAMBIEN la tabla base
+#     (compatibilidad con el codigo anterior al despliegue); la vista nunca trae columnas de costo.
+#   Fase 2 (225, cierre): 224 + 225. `venta` ya NO lee la tabla base y SI alcanza sus filas por la vista; ningun rol sin
+#     acceso financiero lee tarifa_proveedor por ningun camino (tabla, vista, join, historial, RPC, funciones).
+# Cada fase corre su preflight, aplicacion, postcheck, bateria SQL con set role por rol, idempotencia, su rollback POR
+# SEPARADO (con huella md5 exacta de las policies) y su API por HTTP (PostgREST local con JWT firmados con un secreto
+# local aleatorio). Un segundo job corre la prueba TS (inventario de lectores de la app, incluida la guarda de
+# computo.ts, paridad TS-SQL y cableado del workflow) en una imagen oficial de Node con version exacta.
+# Sin secretos del repositorio, sin Supabase remoto, sin pull_request_target y con permisos de solo lectura.
+# Produccion sigue con preflight/migracion/postcheck manuales y autorizados por el dueno (orden: 224, desplegar, 225).
+name: test-224-225-neto-empaquetados
+
+on:
+  # Batería histórica: se lanza a mano (Actions → este workflow → Run workflow) cuando el cambio toca lo que
+  # cubre. Ya no corre en cada pull_request; ver docs/tecnico/ci-baterias-manuales.md.
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: test-224-225-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  prueba-224-225:
+    name: 224 y 225 · fases, SQL por rol, API y rollbacks
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    env:
+      CT: pg224_ci
+      RED: red224
+      PLANTILLA: plantilla224ci
+      IMAGEN_PG: supabase/postgres:15.8.1.085
+      IMAGEN_PGRST: ghcr.io/supabase/postgrest:v16.1
+    defaults:
+      run:
+        shell: bash
+        working-directory: dspacios-travel
+    steps:
+      - name: Codigo (solo lectura, sin credenciales persistidas)
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+
+      - name: PostgreSQL desechable (imagen de Supabase) en una red propia
+        timeout-minutes: 5
+        run: |
+          set -euo pipefail
+          docker network create "$RED"
+          # Contrasena local de un contenedor efimero que nunca sale del runner (no es un secreto).
+          docker run -d --name "$CT" --network "$RED" -e POSTGRES_PASSWORD=postgres "$IMAGEN_PG"
+
+      - name: Descargar PostgREST antes del esquema (falla temprano si no hay acceso)
+        timeout-minutes: 5
+        run: |
+          set -euo pipefail
+          # Debe ser la misma imagen que levanta cada runner de API.
+          grep -qF "$IMAGEN_PGRST" supabase/scripts/test_224_api.sh
+          grep -qF "$IMAGEN_PGRST" supabase/scripts/test_225_api.sh
+          docker pull "$IMAGEN_PGRST"
+
+      - name: Esquema 001-223 REAL (las dos fases parten de la cadena vigente)
+        timeout-minutes: 15
+        run: |
+          set -euo pipefail
+          # preparar_esquema_local.sh aplica todo numero <= 'hasta': con 223 quedan fuera la 224 y la 225.
+          test -f supabase/migrations/20260601000223_neto_hija_manual_cierre.sql
+          test -f supabase/migrations/20260601000224_neto_empaquetados_por_rol.sql
+          test -f supabase/migrations/20260601000225_neto_empaquetados_cierre.sql
+          bash supabase/scripts/preparar_esquema_local.sh "$CT" 223 "$PLANTILLA"
+
+      - name: Fase 1 · 224 aditiva (preflight, aplicar, postcheck, bateria SQL, idempotencia, rollback exacto, reaplicar)
+        timeout-minutes: 15
+        run: |
+          set +e
+          set -uo pipefail
+          salida="$RUNNER_TEMP/fases224.out"
+          bash supabase/scripts/test_224_fases.sh "$CT" "$PLANTILLA" 2>&1 | tee "$salida"
+          rc="${PIPESTATUS[0]}"
+          # Ademas del codigo de salida: ningun FALLO, el cierre en verde y una linea OK de cada bloque
+          # (un bloque que se saltara en silencio no puede dar verde).
+          faltan=""
+          for marca in 'OK    F1.1 ' 'OK    F1.2 ' 'OK    F1.3 ' 'OK    F1.4 ' 'OK    F2.1 ' 'OK    F2.2 ' 'OK    F2.3 ' 'OK    F3 ' 'OK    F4 ' 'OK    F4.1 ' \
+                       'OK    F5.1 ' 'OK    F5.2 ' 'OK    F5.3 ' 'OK    F6.1 ' 'OK    F6.2 ' 'OK    F6.3 ' 'OK    F6.4 ' 'OK    F6.5 ' \
+                       'OK    F7.1 ' 'OK    F7.2 ' 'OK    F7.3 ' \
+                       'OK    B tabla base' 'OK    V vista' 'OK    C join' 'OK    C historial' 'OK    C RPC' 'OK    C funciones' \
+                       'OK    R editor' 'OK    R control' 'OK    R reserva' 'OK    W venta no inserta' 'OK    Z venta' 'OK    Z control_vuelo' \
+                       'TEST 224 SQL: TODO OK'; do
+            grep -qF "$marca" "$salida" || faltan="$faltan [$marca]"
+          done
+          if [ "$rc" != 0 ] || grep -q '^FALLO' "$salida" || grep -q 'FALLO ' "$salida" \
+             || ! grep -q 'TEST 224 FASES: TODO OK' "$salida" || [ -n "$faltan" ]; then
+            echo "::error::Fases 224 en rojo (rc=$rc; faltan:${faltan:- ninguna})"
+            exit 1
+          fi
+
+      - name: Fase 1 · API con solo la 224 (venta lee la vista Y la tabla base)
+        timeout-minutes: 15
+        run: |
+          set +e
+          set -uo pipefail
+          salida="$RUNNER_TEMP/api224.out"
+          bash supabase/scripts/test_224_api.sh "$CT" "$PLANTILLA" "$RED" 2>&1 | tee "$salida"
+          rc="${PIPESTATUS[0]}"
+          faltan=""
+          for marca in 'OK    H1 ' 'OK    T1 ' 'OK    T2 ' 'OK    T3 ' 'OK    T4 ' 'OK    T5 ' 'OK    T6 ' 'OK    T7 ' 'OK    T8 ' \
+                       'OK    V1 ' 'OK    V2 ' 'OK    V3 ' 'OK    V4 ' 'OK    V5 ' 'OK    V6 ' 'OK    V7 ' \
+                       'OK    E1 ' 'OK    E2 ' 'OK    E3 ' \
+                       'OK    W1 ' 'OK    W2 ' 'OK    W3 ' 'OK    W4 ' 'OK    W5 ' 'OK    W6 ' 'OK    W7 ' 'OK    W8 '; do
+            grep -qF "$marca" "$salida" || faltan="$faltan [$marca]"
+          done
+          if [ "$rc" != 0 ] || grep -q '^FALLO' "$salida" || ! grep -q 'TEST 224 API: TODO OK' "$salida" || [ -n "$faltan" ]; then
+            echo "::error::API 224 en rojo (rc=$rc; faltan:${faltan:- ninguna})"
+            exit 1
+          fi
+
+      - name: 'Fase 2 · 225 cierre (224 + 225 - preflight, aplicar, postcheck, bateria SQL, idempotencia, rollbacks por separado, desmontaje)'
+        timeout-minutes: 15
+        run: |
+          set +e
+          set -uo pipefail
+          salida="$RUNNER_TEMP/fases225.out"
+          bash supabase/scripts/test_225_fases.sh "$CT" "$PLANTILLA" 2>&1 | tee "$salida"
+          rc="${PIPESTATUS[0]}"
+          faltan=""
+          for marca in 'OK    F0.1 ' 'OK    F0.2 ' 'OK    F0.3 ' 'OK    F1.1 ' 'OK    F1.2 ' 'OK    F1.3 ' 'OK    F1.4 ' 'OK    F1.5 ' \
+                       'OK    F2.1 ' 'OK    F2.2 ' 'OK    F2.3 ' 'OK    F3 ' 'OK    F4 ' 'OK    F4.1 ' 'OK    F5.1 ' 'OK    F5.2 ' 'OK    F5.3 ' \
+                       'OK    F6.1 ' 'OK    F6.2 ' 'OK    F6.3 ' 'OK    F6.4 ' 'OK    F6.5 ' 'OK    F6.6 ' 'OK    F6.7 ' \
+                       'OK    F7.1 ' 'OK    F7.2 ' 'OK    F7.3 ' 'OK    F8.1 ' 'OK    F8.2 ' 'OK    F8.3 ' \
+                       'OK    B tabla base' 'OK    V vista' 'OK    C join' 'OK    C historial' 'OK    C RPC' 'OK    C funciones' \
+                       'OK    R editor' 'OK    R control' 'OK    R reserva' 'OK    W venta no inserta' 'OK    Z venta' 'OK    Z control_vuelo' \
+                       'TEST 225 SQL: TODO OK'; do
+            grep -qF "$marca" "$salida" || faltan="$faltan [$marca]"
+          done
+          if [ "$rc" != 0 ] || grep -q '^FALLO' "$salida" || grep -q 'FALLO ' "$salida" \
+             || ! grep -q 'TEST 225 FASES: TODO OK' "$salida" || [ -n "$faltan" ]; then
+            echo "::error::Fases 225 en rojo (rc=$rc; faltan:${faltan:- ninguna})"
+            exit 1
+          fi
+
+      - name: Fase 2 · API con 224 + 225 (venta ya NO lee la tabla base y SI alcanza la vista)
+        timeout-minutes: 15
+        run: |
+          set +e
+          set -uo pipefail
+          salida="$RUNNER_TEMP/api225.out"
+          bash supabase/scripts/test_225_api.sh "$CT" "$PLANTILLA" "$RED" 2>&1 | tee "$salida"
+          rc="${PIPESTATUS[0]}"
+          faltan=""
+          for marca in 'OK    H1 ' 'OK    T1 ' 'OK    T2 ' 'OK    T3 ' 'OK    T4 ' 'OK    T5 ' 'OK    T6 ' 'OK    T7 ' 'OK    T8 ' \
+                       'OK    V1 ' 'OK    V2 ' 'OK    V3 ' 'OK    V4 ' 'OK    V5 ' 'OK    V6 ' 'OK    V7 ' \
+                       'OK    E1 ' 'OK    E2 ' 'OK    E3 ' \
+                       'OK    W1 ' 'OK    W2 ' 'OK    W3 ' 'OK    W4 ' 'OK    W5 ' 'OK    W6 ' 'OK    W7 ' 'OK    W8 '; do
+            grep -qF "$marca" "$salida" || faltan="$faltan [$marca]"
+          done
+          if [ "$rc" != 0 ] || grep -q '^FALLO' "$salida" || ! grep -q 'TEST 225 API: TODO OK' "$salida" || [ -n "$faltan" ]; then
+            echo "::error::API 225 en rojo (rc=$rc; faltan:${faltan:- ninguna})"
+            exit 1
+          fi
+
+      - name: Diagnostico del contenedor (solo si falla)
+        if: failure()
+        working-directory: .
+        run: docker logs --tail 200 "$CT" 2>&1 || true
+
+      - name: Limpieza de contenedores y red (siempre, tambien si falla o se cancela)
+        if: always()
+        working-directory: .
+        run: |
+          docker ps -aq --filter "name=pgrst224_" --filter "name=pgrst225_" | xargs -r docker rm -f || true
+          docker rm -f "$CT" || true
+          docker network rm "$RED" || true
+
+  pruebas-ts-224:
+    name: '224 y 225 · pruebas TS (inventario de lectores, guarda de computo.ts, paridad TS-SQL, cableado)'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    env:
+      # Misma version que el entorno local de las verificaciones (Node 24.14.0, pnpm 10.33.0 del
+      # campo packageManager via corepack). Imagen oficial con version exacta, sin acciones extra.
+      IMAGEN_NODE: node:24.14.0-bookworm-slim
+      CTN: node224_ci
+    steps:
+      - name: Codigo (solo lectura, sin credenciales persistidas)
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+
+      - name: Descargar la imagen de Node (falla temprano si no hay acceso)
+        timeout-minutes: 5
+        run: docker pull "$IMAGEN_NODE"
+
+      - name: 'Pruebas TS de 224/225 (sin base de datos)'
+        timeout-minutes: 20
+        run: |
+          set +e
+          set -uo pipefail
+          salida="$RUNNER_TEMP/ts224.out"
+          docker run --rm --name "$CTN" -e CI=1 -e COREPACK_ENABLE_DOWNLOAD_PROMPT=0 \
+            -v "$GITHUB_WORKSPACE:/repo" -w /repo/dspacios-travel "$IMAGEN_NODE" sh -ec '
+            corepack enable
+            pnpm install --frozen-lockfile
+            node --test --test-reporter=spec --experimental-strip-types --experimental-test-module-mocks \
+              --experimental-loader ./pruebas/support/aliasLoader.mjs \
+              pruebas/netoEmpaquetados224.test.ts
+          ' 2>&1 | tee "$salida"
+          rc="${PIPESTATUS[0]}"
+          # Cero fallos (ni rojos ni pendientes) y pruebas realmente corridas.
+          if [ "$rc" != 0 ] || [ "$(grep -cE '^ℹ fail 0$' "$salida")" != 1 ] || grep -qE '^✖|^ *✖ ' "$salida" \
+             || [ "$(grep -cE '^ℹ todo 0$' "$salida")" != 1 ] \
+             || [ "$(grep -cE '^ℹ tests [1-9][0-9]*$' "$salida")" != 1 ]; then
+            echo "::error::Pruebas TS de 224/225 en rojo (rc=$rc)"
+            exit 1
+          fi
+
+      - name: Limpieza del contenedor de Node (siempre)
+        if: always()
+        working-directory: .
+        run: docker rm -f "$CTN" || true

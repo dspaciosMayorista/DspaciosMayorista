@@ -1,11 +1,18 @@
 # Registro central de personas e identidad documental (#32)
 
-Estado: **v3 aprobada por Auditorías como contrato de diseño, implementada y probada SOLO en local**, sobre
-`main` `8987932e` (conciliada desde `ef03a489`), con los dos ajustes obligatorios de la aprobación (base NIT 3-20 y variantes acotadas;
-sección 6). Migración reservada: **214** (`20260601000214_personas_identidad.sql`). Pendiente de revisión de
-Auditorías antes de PR; sin staging, commit, push ni SQL remoto. El SQL de 1.2 se comprobó primero con un
-stub de la gramática (3.7); la migración real y sus pruebas están en la sección 5. Nada de lo descrito está
-aplicado en Producción.
+Estado (2026-10-19):
+- **#32 / migración 214:** fusionada en `main` `862edf42` (PR #363, squash de `d47eec0b`); Actions run
+  `39151910521` en verde (71 OK / 0 fallos reportados). El dueño reportó preflight, aplicación y postcheck en
+  Producción (G0 cerrado por su testimonio en `WORKSTREAMS.md`); este documento no lo verificó por SQL. No
+  reaplicar la 214.
+- **#42 / migración 219 (personas de cotizaciones en el CRM):** implementada SOLO en local en el worktree
+  `personas-cotizaciones-42` (rama `codex/42-personas-cotizaciones`, base `main` `87beb622`). Pruebas TS locales;
+  SQL, API, carreras y rollback se ejecutan en GitHub Actions (workflow `test-personas-cotizaciones-42.yml`),
+  todavía SIN correr. Pendiente de Auditorías y Coordinador antes de Draft PR; sin staging, commit, push ni SQL
+  remoto. Detalle en la sección 8.
+
+Lo que sigue (secciones 1-7) es el contrato v3 de #32, con los dos ajustes obligatorios de su aprobación (base
+NIT de 3-20 y variantes acotadas; sección 6), anotado donde #42 lo cambió.
 
 Alcance de #32: el registro central, su gramática documental y una consulta exacta y segura.
 Fuera de alcance: escritura desde cotizaciones y vínculos (#42), adaptador histórico para #40,
@@ -22,7 +29,7 @@ backfill, UI, loaders, `package.json`, migraciones 042/047/154/187/202/207.
 | `personas` | **Una** identidad documental por `(tenant, tipo_doc, numero_norm)`. Solo identidad: tenant, tipo y número **originales** tal como se capturaron, tipo/número normalizados, estado y marcas de tiempo. | No guarda nombres, fechas de nacimiento, teléfonos, correos **ni el DV del NIT**. |
 | `persona_capturas` | **Una captura concreta** de una fuente sobre una persona. Su `id` (UUID) es el **identificador estable de la captura**: lo aporta el escritor y lo repite en cada reintento del mismo evento. Guarda la procedencia **una sola vez**: fuente, nivel, clave de origen tipada por fuente, el documento tal como lo afirmó esa captura, actor y fecha. Append-only. | No es `contrato_numero` ni otra clave de negocio: esas son columnas de **origen**, no la identidad de la captura. |
 | `persona_observaciones` | Pares `(campo, valor)` aportados por **una** captura (`captura_id`). Append-only. Dos capturas que coinciden o que discrepan generan filas distintas: la procedencia nunca se colapsa y nunca gana la primera ni la más reciente. | No es una proyección ni un "perfil consolidado". |
-| Fuente | `captura_interna` y `contrato_pasajero` en V1, escritas solo por funciones privadas de `service_role`; ningún flujo de la app las llama en V1. `cotizacion` la agrega #42 con su propia migración (3.6). | `crm_leads`, `crm_contactos`, `ventas` y `aliados` NO son fuentes de V1 (ver 1.4). |
+| Fuente | `captura_interna` y `contrato_pasajero` en V1, escritas solo por funciones privadas de `service_role`; ningún flujo de la app las llama. `cotizacion` la agrega la 219 (#42): solo la escriben sus fachadas (sección 8), con origen tipado `cotizacion_id` + `participante_ref` + `rol`. | `crm_leads`, `crm_contactos`, `ventas` y `aliados` NO son fuentes (ver 1.4). |
 
 Separar identidad (1 fila), capturas (N por persona) y observaciones (N por captura) distingue "una
 persona central única" de "varias observaciones autorizadas": el índice único protege lo primero; lo
@@ -133,8 +140,8 @@ p_limite, p_offset)`. **No recibe DV**: la consulta es por base (2.3). El actor 
 | Actor | Tenant consultable | Observaciones visibles | Procedencia visible |
 |---|---|---|---|
 | anon | ninguno (sin EXECUTE) | - | - |
-| inactivo, sin fila en `usuarios`, rol no interno (B2B, `control_vuelo`) | ninguno (vacío) | - | - |
-| venta | el suyo | capturas `nivel='comercial'`; `nivel='pasajero_contrato'` solo si pasan 1.3.1 sobre una única fila de `ventas` | `fuente`, `captura_id` y fecha; `contrato_numero` solo en lo propio |
+| inactivo, sin fila en `usuarios`, rol no interno (B2B, `control_vuelo`) | ninguno (vacío). B2B lee sus personas de cotizaciones por la lista de la 219 (sección 8), nunca por esta consulta | - | - |
+| venta | el suyo | `nivel='comercial'` (= `captura_interna` y, desde la 219, titulares de cotización del tenant, D-3=N2); `nivel='pasajero_contrato'` solo si pasan 1.3.1 sobre una única fila de `ventas`; `nivel='pasajero_cotizacion'` solo de cotizaciones con `creado_por_id` = su usuario | `fuente`, `captura_id` y fecha; `contrato_numero` y `cotizacion_id` solo en lo propio |
 | administracion, operaciones | el suyo | todas las capturas de ese tenant; las `pasajero_contrato` solo si pasan 1.3.1 (sin la condición de asesor) | fuente, `captura_id`, `contrato_numero`, fecha, `actor_rol` |
 | gerencia, superadmin | ambos, **solo si `p_tenant` los nombra explícitamente** | igual que el anterior | igual, siempre rotulado con su tenant |
 
@@ -259,7 +266,10 @@ todas las personas de un tenant, justo lo que la consulta exacta impide.
 - `crm_contactos`, `crm_leads`, `aliados`: ninguna se une ni se lee. `ventas` solo en el `EXISTS` de 1.3.1 (consulta) y en el disparador de escritura de 3.1; `contrato_pasajeros` solo en ese disparador, nunca en la consulta. No hay JOIN que devuelva sus columnas, así que no heredan ni abren sus policies.
 - El nivel `pasajero_contrato` conserva la restricción de la 147/187 (1.3.1).
 - No se modifica ninguna policy ni helper global (107/142/154/187/207). Gerencia/superadmin ven ambos tenants **solo dentro del módulo nuevo**, con lógica propia en la función.
-- B2B en #42 usará una fachada distinta ligada al id del usuario creador, no esta función.
+- B2B (#42, D-4) usa `crm_personas_cotizacion_buscar` (219), ligada al `creado_por_id` estable de cada
+  cotización, no esta función. Ese id lo estampan la 211 (comparativas), la 216 (manual, #39) y, desde la 219,
+  `sellar_creador_cotizacion` en Reservar y en el checkout con sesión; antes de la 219 ninguna vía de alta de
+  Reservar/checkout lo escribía.
 
 ---
 
@@ -669,11 +679,22 @@ explícita), no este script.
 
 V1 **no expone API de escritura** a roles de aplicación. Existen `p214_priv.upsert_persona(...)` y
 `p214_priv.promover_persona(...)` con `EXECUTE` solo para `service_role`; aceptan las fuentes `captura_interna`
-y `contrato_pasajero`, las pruebas de carrera y de visibilidad las usan y #42 las envolverá. Ningún flujo de la
-app ni adaptador histórico las llama en V1. Consecuencia: hasta #42 la consulta devuelve 0 salvo datos de
-prueba; es intencional y no una cobertura histórica.
+y `contrato_pasajero`, y las pruebas de carrera y de visibilidad las usan. Ningún adaptador histórico las llama.
 
-### 3.6 Extensión preparada para #42 (no se implementa en #32)
+Con la 219 (#42): la app solo llama a `upsert_persona` a través de las fachadas `registrar_personas_cotizacion`
+y `actualizar_titular_cotizacion` (sección 8), con la fuente `cotizacion`; `upsert_persona` rechaza esa fuente
+(`fuente_solo_por_fachada`, 42501) si la llama directo un rol de la API, incluido `service_role`.
+`promover_persona` no tiene llamador en #42 V1 y no puede crear capturas `cotizacion` (no tiene parámetros de
+origen: `validar_entrada_captura` responde `origen_invalido`).
+
+### 3.6 Extensión para #42 (diseño original; implementada por la 219, ver sección 8)
+
+Lo implementado difiere del boceto de abajo en: `pasajero_ref` pasó a llamarse `participante_ref` (el titular
+también es un puesto); `cotizacion` NO queda fija en `comercial` (D-3=N2: titular `comercial`, pasajero
+`pasajero_cotizacion`); `captura_visible` se reemplazó con firma nueva y `buscar_personas_documento` se re-creó
+con la misma firma; `validar_entrada_captura`, `captura_coincide` y `upsert_persona` se generalizaron (DROP y
+CREATE, parámetros nuevos con default nulo); el id de captura es `md5(participante_ref:clave:nivel)`; y el
+vínculo apunta a su captura con una FK compuesta.
 
 #42 aportará la clave **cotización–pasajero–rol** como **origen tipado** de una fuente nueva, sin cambiar la
 identidad de la captura ni la idempotencia de las observaciones. Su migración (no la 214) hará:
@@ -989,6 +1010,12 @@ uno de los nueve propios.
 
 ### 5.1 Corridas locales de la migración real
 
+**CI (desde el merge de #363):** el job `test-214-personas.yml` corre en Actions sobre la cadena 001-213 +
+214 (run `39151910521`, verde). Queda **fijo** en esa cadena y probando la 214 sola: en una base con la 219, la
+E8g de `test_214_personas_identidad.sql` (la fuente `cotizacion` todavía no existe) se invertiría a propósito.
+La 219 trae su propio workflow (`test-personas-cotizaciones-42.yml`), que corre la prueba SQL 214 completa,
+E8g incluida, DESPUÉS de su rollback (sección 8.6).
+
 **Vigente: conciliación con `main` `8987932e` (2026-10-17).** Todo con archivos versionados: imagen
 `public.ecr.aws/supabase/postgres:15.8.1.085`, plantilla con `preparar_esquema_local.sh pg214_sb 213
 plantilla214sb` (211 migraciones, 001-213, que incluyen 211, 212 y 213; 0 fallos de esquema) y la 214
@@ -1044,7 +1071,88 @@ Ajustes obligatorios de la aprobación de la v3, ya incorporados: la base NIT us
   La 211 agrega `trg_madre_sin_venta` en `ventas`, que solo actúa sobre `cotizacion_id` (las pruebas de la 214
   no lo usan) y la FK `cotizaciones.propietario_id -> usuarios` (ON DELETE RESTRICT; la 214 no borra usuarios).
 - **#35 / 211:** comparte `types/database.ts` y rutas de cotizaciones, que #32 no toca.
-- **#42:** consume `upsert_persona`/`promover_persona`, agrega la fuente `cotizacion` según 3.6, sus vínculos y
-  el ID de pasajero; fuera de este alcance.
-- **#40:** consume `buscar_personas_documento`; cobertura histórica requiere adaptador aparte.
-- **Aplicación remota:** no se ejecuta SQL remoto. Orden futuro (usuario): preflight, 214, postcheck, despliegue.
+- **#42 (219):** solo llama a `upsert_persona` desde sus dos fachadas; `promover_persona` no tiene llamador.
+  Agrega la fuente `cotizacion`, el vínculo y el ref estable de pasajero (sección 8).
+- **#40:** consume `buscar_personas_documento`; cobertura histórica requiere adaptador aparte. Desde la 219 la
+  respuesta trae también capturas de cotización (procedencia `cotizacion_id`, `rol`, `activo`).
+- **Aplicación remota:** la 214 ya corrió en Producción según el dueño. La 219 sigue su propio orden (8.7).
+
+## 8. #42 — personas de cotizaciones en el CRM (migración 219)
+
+Contrato: `docs/coordinacion/auditorias-identidad-crm.md` (C1-C8) y decisiones del dueño D-3=N2, D-4, D-5 y D-6
+(D-1 retiro de pasajero y D-2 titular que viaja, diferidas: V1 sin editor/retiro de pasajeros ni fusión por
+inferencia). Reserva en `WORKSTREAMS.md` (2026-10-19). Archivos:
+`supabase/migrations/20260601000219_personas_cotizaciones.sql` y `supabase/scripts/*_219_personas_cotizaciones.*`.
+
+### 8.1 Modelo
+- `persona_capturas` gana `cotizacion_id`, `participante_ref` y `rol`, obligatorios solo para la fuente
+  `cotizacion` (CHECK de tres disyuntos). Nivel N2: titular `comercial`, pasajero `pasajero_cotizacion`.
+- `cotizacion_participantes` es el **puesto**: `id` = `participante_ref` (inmutable), cotización + tenant con FK
+  `(cotizacion_id, tenant) -> cotizaciones` ON DELETE RESTRICT, rol, orden (solo para mostrar), persona y captura
+  vigentes con FK compuesta `(captura_id, persona_id, tenant, cotizacion_id, id, rol)` (una captura de otro
+  puesto, cotización, tenant o persona no cabe), `activo`/`retirado_*` (sin uso en V1), `version` que sube sola.
+  Un solo titular activo por cotización. Sin DELETE ni TRUNCATE; RLS sin policies; `service_role`
+  SELECT/INSERT/UPDATE; sin `trg_auditoria`.
+- Identidad de la captura: `md5(participante_ref || ':' || clave || ':' || nivel)::uuid`, con `clave = 'alta'`
+  en el alta y un UUID por envío en las correcciones. Misma clave con otra carga = `captura_inconsistente`.
+
+### 8.2 Ref estable por flujo (C2)
+- **Reservar** (`crearCotizacion`): `asignarRefsPasajeros` (lib/personas/cotizacion.ts) da en servidor, ANTES del
+  insert, un UUID a cada fila identificada de `payload.pasajeros` y `detalle.pasajeros`; descarta cualquier `ref`
+  del navegador. Las filas vacías no crean puesto. `PasajeroReserva.ref?` es aditivo y las conversiones lo
+  ignoran (`payloadGuardarPasajeros` arma claves explícitas).
+- **Titular** (todos los flujos): sin ref en el payload; se encuentra por el índice de titular activo.
+- La fachada exige que el ref de un pasajero esté en el `payload.pasajeros` de ESA cotización
+  (`ref_inconsistente` si no, o si ya es de otra).
+
+### 8.3 Fachadas (SECURITY DEFINER, EXECUTE solo `service_role`, primer candado = la cotización)
+- `registrar_personas_cotizacion(id, usuario, participantes)`: alta y reintento. Rechaza puestos sin documento,
+  nombres ni apellidos (`participante_vacio`), campos ajenos al puesto, dos titulares y el tipo en una
+  cotización anónima. Un alta repetida no escribe (`reintentos`); si el editor ya corrigió el puesto, el alta se
+  omite (`omitidos`). Devuelve conteos; nunca ids de persona ni si la ficha existía (D-4).
+- `actualizar_titular_cotizacion(id, usuario, titular, version, clave)`: solo manuales simples abiertas; en una
+  transacción registra la captura nueva, re-apunta el vínculo (versión +1) y reescribe `payload.cliente`,
+  `detalle.venta.cliente`, `cliente` y `cliente_documento` con el tipo CRUDO (vacío se guarda vacío; la 198 lo
+  sigue exigiendo al convertir). CAS por versión (`version_obsoleta`), `sin_cambios` si coincide con la captura
+  vigente y `reintento` si se repite el mismo envío. Crea el puesto en cotizaciones anteriores a #42.
+- `sellar_creador_cotizacion(id, usuario)`: el sello NUEVO de Reservar y del checkout con sesión. Solo
+  `tarifario`/`carrito` simples abiertas, sin sello, con `creado_por` = correo del usuario y de menos de 15
+  minutos: un histórico o una cotización ajena nunca se vuelve propia. Idempotente. La manual conserva el sello
+  de la 216 y las comparativas/hijas el de la 211.
+- Actor (defensa en profundidad): activo; interno = tenant de la cotización (superadmin cualquiera);
+  agencia/freelance solo si `creado_por_id` = su usuario; usuario nulo solo en el checkout anónimo (carrito o
+  comparativa del carrito, mayorista, sin creador/propietario/aliado), cuyas capturas son siempre provisionales.
+
+### 8.4 Lecturas (un solo filtro: `p214_priv.captura_visible`)
+- Para `cotizacion`: solo la captura VIGENTE de un puesto (una corrección deja de mostrar la anterior), del
+  tenant autorizado; `venta` ve lo comercial del tenant y lo restringido solo en cotizaciones propias;
+  agencia/freelance solo puestos activos de cotizaciones de su usuario.
+- `buscar_personas_documento` (misma firma) agrega `cotizacion_id` (a `venta` solo si es propia), `rol` y
+  `activo`; sigue cerrada a B2B.
+- `crm_personas_cotizacion_buscar(p_tenant, p_texto, p_limite, p_offset)`: lista paginada (máx. 50 con error)
+  de puestos activos con su captura vigente, estado de ficha y cotización de origen. `venta` y B2B, solo
+  cotizaciones propias; gerencia/superadmin con `p_tenant` explícito; vacío idéntico para "sin permiso".
+  Vista: `/crm/personas-cotizacion`.
+
+### 8.5 App y errores (C7)
+- Cada alta llama a la fachada DESPUÉS de guardar la cotización y nunca ignora su resultado: si falla, log sin
+  datos personales (`[personas42] origen=… etapa=… cotizacion=… codigo=…`) y, en flujos internos,
+  `avisoPersonas` en el resultado. La ficha muestra un aviso persistente CALCULADO (titular identificado sin
+  puesto activo o pasajero con ref sin puesto) con «Reintentar», que reconstruye desde el payload guardado.
+- El checkout pide el tipo de documento (D-6) sin bloquear el envío; anónimo = provisional.
+- Mensajes en español por código (`mensajePersonas`); nunca el texto crudo de Postgres.
+
+### 8.6 Pruebas
+- TS (local): `pruebas/vectoresPersonasCotizacion42.test.ts` y `pruebas/cableadoPersonasCotizacion42.wiring.test.ts`.
+- Actions (`test-personas-cotizaciones-42.yml`, cadena 001-217 sin fabricar la 218): M (preflight, 219 dos veces,
+  postcheck 20/20, postchecks 216/217 intactos, postcheck 214 en rojo SOLO en C15/C16, objetos ajenos idénticos),
+  S (`test_219_personas_cotizaciones.sql`), G (batería de #39 con la 219), K (carreras), RB (rollback: aborta con
+  datos, vista ajena o foto incompleta; vacío restaura la 214 exacta, postcheck 214 20/20 y prueba SQL 214 con
+  E8g) y H (PostgREST con JWT).
+
+### 8.7 Orden remoto (lo ejecuta el usuario, con autorización separada)
+preflight 219 (fila consolidada) → 219 → postcheck 219 (fila consolidada; "Filas" trae el monitor de C7) →
+despliegue del código. Con la 219 aplicada y el código viejo, nada se rompe: las cotizaciones nuevas quedan
+sin puestos (el monitor y el aviso de la ficha las muestran) hasta el despliegue. Revalidar el orden con la 218
+de #56 antes de aplicar. Rollback: `rollback_219_personas_cotizaciones.sql` (solo sin capturas de cotización
+ni puestos).

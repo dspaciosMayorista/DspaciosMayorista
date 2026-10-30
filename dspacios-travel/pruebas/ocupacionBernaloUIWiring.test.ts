@@ -79,7 +79,7 @@ describe("EditorPax — hotel 'persona' conserva la salida anterior (regla 9)", 
     // Mismo flujo legado; además bloqueado mientras los servicios seleccionados
     // del hotel no estén cotizados, y los servicios viajan con el hotel.
     assert.match(cuerpoEditorPax, /onClick=\{agregar\} disabled=\{!puede \|\| !evaluacionServicios\.listo\}/);
-    assert.match(cuerpoEditorPax, /onAgregar\(habitaciones, ninos, ninos2, infantes, pax, precio, edades, serviciosConjunto\(\)\)/);
+    assert.match(cuerpoEditorPax, /onAgregar\(habitaciones, ninos, ninos2, infantes, pax, precioFinal, edades, serviciosConjunto\(\)\)/);
   });
 });
 

@@ -4,9 +4,11 @@ import { notFound } from "next/navigation";
 import Link from "next/link";
 import { Button } from "@/components/ui/button";
 import { formatMoneda, formatFechaLarga } from "@/lib/utils";
+import { cobroDeVenta } from "@/lib/finanzas/cobro";
 import { ShareButtons } from "./ShareButtons";
 import { permisosComisionContrato } from "@/lib/finanzas/comisionB2B";
 import { GestionTabs } from "./GestionTabs";
+import { EstanciaContratoBloque } from "@/components/contrato/EstanciaContratoBloque";
 import { EstadoVenta } from "./EstadoVenta";
 import { EditarVentaForm } from "./EditarVentaForm";
 import { ServiciosContratoEditor, type ServicioDispContrato } from "./ServiciosContratoEditor";
@@ -229,7 +231,13 @@ export default async function ContratoDetallePage({
   const totalPagado = puedeEditar
     ? (abonos ?? []).reduce((s, a) => s + (a.valor_abono ?? 0), 0)
     : Number(resumenAbonos?.total_pagado ?? 0);
-  const saldo = Math.max(venta.precio_venta - totalPagado, 0);
+  // 235 (#90 F): abonos y saldo se llevan en la MONEDA DE COBRO. Casi siempre es la de la oferta; si se eligió la otra, el total es el convertido y
+  // congelado al contratar (la oferta, el precio de venta y los costos no cambian).
+  const cobro = cobroDeVenta(venta);
+  const saldo = Math.max(cobro.total - totalPagado, 0);
+  const notaCobro = cobro.convertido
+    ? `Oferta en ${cobro.monedaOferta}: ${formatMoneda(cobro.precioOferta, cobro.monedaOferta)}. Se cobra en ${cobro.moneda}: ${formatMoneda(cobro.total, cobro.moneda)}, convertido una sola vez con TRM ${cobro.trm} al contratar; no cambia.`
+    : null;
 
   // Condiciones PERMANENTES del contrato — mismo resolver que usa el PDF
   // (ContratoDocumento.tsx), así que lo que ve el asesor aquí es exactamente
@@ -237,7 +245,7 @@ export default async function ContratoDetallePage({
   const condicionesResueltas = resolverCondicionesContrato(
     (contratoCondiciones ?? []) as unknown as Parameters<typeof resolverCondicionesContrato>[0],
     (overridesCondiciones ?? []) as unknown as Parameters<typeof resolverCondicionesContrato>[1],
-    { monedaContrato: (venta.moneda as string) ?? "COP", precioVenta: venta.precio_venta, fechaViaje: venta.fecha_salida },
+    { monedaContrato: cobro.moneda, precioVenta: cobro.total, fechaViaje: venta.fecha_salida },
   );
 
   // Formulario de excepción por fila restringida, YA ARMADO aquí (Server
@@ -263,6 +271,9 @@ export default async function ContratoDetallePage({
     }
   }
 
+  // #88: foto de la estancia de un programa por hotel y vigencia (sin netos; la RLS decide quién la ve).
+  const { data: estanciaPrograma } = await sb.from("contrato_programa_estancia").select("*").eq("numero_contrato", numero).maybeSingle();
+
   // Buscar el % de comisión del asesor (por email o por nombre de firma)
   const asesorNombre = venta.asesor_firma_nombre ?? venta.asesor ?? "";
   const asesorRow = (asesores ?? []).find(
@@ -282,6 +293,9 @@ export default async function ContratoDetallePage({
           <p className="mt-1 text-sm text-gray-500">
             {venta.cliente} · {venta.destino ?? "—"} · Viaje {formatFechaLarga(venta.fecha_salida)}
           </p>
+          {venta.titular_nombre && (
+            <p className="mt-0.5 text-xs text-gray-500" data-testid="ficha-contrato-titular">Cliente: aliado · Titular de la reserva: {venta.titular_nombre}</p>
+          )}
           <div className="mt-2 flex flex-wrap items-center gap-3">
             <EstadoVenta numero={venta.numero_contrato} estado={venta.estado} plazo={venta.plazo} puedeConfirmar={verFinanzas} />
             {/* Trazabilidad venta → empaquetado (revisión de PR #268, defecto 4):
@@ -326,18 +340,25 @@ export default async function ContratoDetallePage({
       {/* Totales */}
       <div className="mt-6 grid grid-cols-1 gap-4 sm:grid-cols-3">
         <div className="rounded-xl p-4 text-white" style={{ backgroundColor: "var(--brand-primary)" }}>
-          <div className="text-xs opacity-80">Precio de venta{venta.moneda && venta.moneda !== "COP" ? ` (${venta.moneda})` : ""}</div>
-          <div className="text-xl font-bold">{formatMoneda(venta.precio_venta, venta.moneda)}</div>
+          <div className="text-xs opacity-80">{cobro.convertido ? "Total a cobrar" : "Precio de venta"}{cobro.moneda !== "COP" ? ` (${cobro.moneda})` : ""}</div>
+          <div className="text-xl font-bold">{formatMoneda(cobro.total, cobro.moneda)}</div>
+          {cobro.convertido && <div className="mt-1 text-[11px] opacity-80" data-testid="oferta-original">Oferta: {formatMoneda(cobro.precioOferta, cobro.monedaOferta)}</div>}
         </div>
         <div className="rounded-xl border border-gray-200 bg-white p-4">
           <div className="text-xs text-gray-400">Total pagado</div>
-          <div className="text-xl font-bold" style={{ color: "var(--brand-success)" }}>{formatMoneda(totalPagado, venta.moneda)}</div>
+          <div className="text-xl font-bold" style={{ color: "var(--brand-success)" }}>{formatMoneda(totalPagado, cobro.moneda)}</div>
         </div>
         <div className="rounded-xl border border-gray-200 bg-white p-4">
           <div className="text-xs text-gray-400">Saldo pendiente</div>
-          <div className="text-xl font-bold text-gray-800">{formatMoneda(saldo, venta.moneda)}</div>
+          <div className="text-xl font-bold text-gray-800">{formatMoneda(saldo, cobro.moneda)}</div>
         </div>
       </div>
+
+      {estanciaPrograma && (
+        <div className="mt-4">
+          <EstanciaContratoBloque estancia={estanciaPrograma} />
+        </div>
+      )}
 
       <CondicionesContratoPanel
         resuelto={condicionesResueltas}
@@ -357,6 +378,7 @@ export default async function ContratoDetallePage({
           inicial={{
             cliente: venta.cliente ?? "",
             clienteDocumento: venta.cliente_documento ?? "",
+            clienteTipoDocumento: fin.cliente_tipo_documento ?? "",
             clienteTelefono: venta.cliente_telefono ?? "",
             clienteEmail: venta.cliente_email ?? "",
             clienteDireccion: fin.cliente_direccion ?? "",
@@ -439,6 +461,9 @@ export default async function ContratoDetallePage({
         facturas={facturasConItems}
         formasPago={formasPago}
         moneda={(venta.moneda as string) ?? "COP"}
+        monedaCobro={cobro.moneda}
+        totalCobro={cobro.total}
+        notaCobro={notaCobro}
         proveedoresCatalogo={(proveedoresCatalogo ?? []).map((p) => p.nombre)}
         aliadosCatalogo={aliadosCatalogo ?? []}
         puedeEditar={puedeEditar}
@@ -454,7 +479,7 @@ export default async function ContratoDetallePage({
         pasajeros={(pasajerosC ?? []) as unknown as PasajeroRow[]}
         fechaSalida={venta.fecha_salida}
         pax={venta.pax ?? 0}
-        titularNombre={venta.cliente ?? ""}
+        titularNombre={venta.titular_nombre ?? venta.cliente ?? ""}
         puedeEditar={puedeEditar}
       />
 

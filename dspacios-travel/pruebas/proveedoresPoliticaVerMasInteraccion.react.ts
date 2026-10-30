@@ -7,7 +7,7 @@
 //     COMPLETA, saltos de línea preservados y scroll propio; el diálogo va en
 //     un portal fuera de la tabla (la fila no crece mientras está abierto).
 //   - Escape y "Cerrar" cierran el diálogo; el foco vuelve a "Ver más".
-//   - Editar sigue cargando la política completa en el formulario.
+//   - Editar abre un diálogo con la política completa cargada (sin guardar nada).
 //   - La paginación (10 por página) muestra el resumen correcto por página.
 import { test, afterEach, after } from "node:test";
 import assert from "node:assert/strict";
@@ -140,10 +140,10 @@ test("el botón 'Cerrar' cierra el diálogo", async () => {
   assert.equal(dialogo(), null);
 });
 
-test("Editar sigue cargando la política COMPLETA en el formulario (sin guardar nada)", async () => {
+test("Editar carga la política COMPLETA en el diálogo de edición (sin guardar nada)", async () => {
   await render([prov(1, "Alpha", LARGA)]);
   await clic(botonEn(filaDe("Alpha"), "Editar"));
-  assert.equal(container.querySelector("textarea")!.value, LARGA);
+  assert.equal(dialogo()!.querySelector("textarea")!.value, LARGA);
   assert.deepEqual(llamadas, [], "abrir/editar no llama a ninguna acción de guardado");
 });
 

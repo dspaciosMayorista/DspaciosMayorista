@@ -154,15 +154,13 @@ test("modalidad del contrato: si la lectura falla, no adivina (no vuelve a impri
   );
 });
 
-test("documento: ContratoDocumento calcula total/saldo con la regla NETO y oculta los valores por ítem", () => {
+test("documento: ContratoDocumento calcula total/saldo NETO y prorratea los importes visibles", () => {
   const src = leer("components/contrato/ContratoDocumento.tsx");
   assert.match(src, /presentacionValoresContrato\(\{\s*totalItems: totalVisibleContratoItems\(items\),\s*totalPagado,\s*netoTotalExigible,\s*\}\)/);
   assert.doesNotMatch(src, /const total = totalVisibleContratoItems\(items\);/, "volvió a sumar los ítems a PVP como total");
-  // Cada valor monetario por ítem queda detrás de mostrarValoresItems.
-  const valores = src.match(/formatMoneda\((valorVisibleContratoItem\(it\)|it\.tarifa_adulto|it\.tarifa_nino|linea\.valor(Unitario|Total))/g) ?? [];
-  assert.equal(valores.length, 7);
-  assert.equal((src.match(/\{mostrarValoresItems &&/g) ?? []).length, 6);
-  assert.equal((src.match(/\{!mostrarValoresItems &&/g) ?? []).length, 1, "nota del total acordado");
+  assert.match(src, /valoresNetosDocumento\(items, total\)/);
+  assert.match(src, /const mostrarDesglose = mostrarValoresItems \|\| valoresDoc !== null/);
+  assert.doesNotMatch(src, /Valor total acordado para el paquete/);
 });
 
 test("documento interno: la modalidad se consulta DESPUÉS de autorizar el contrato y viaja al documento", () => {
@@ -178,10 +176,18 @@ test("documento por enlace compartido: usa el total exigible de la fila que ya l
   assert.match(src, /netoTotalExigible=\{desgloseNetoB2B\(venta\)\?\.totalExigible \?\? null\}/);
 });
 
-test("documentos de cotización no cambian (no reciben modalidad NETO)", () => {
+test("documentos de cotización: solo reciben el total exigible NETO de una venta B2B asistida (#102), nunca el de un contrato ni la comisión", () => {
+  // Antes de #102 una cotización nunca era NETO y estos documentos no recibían `netoTotalExigible`. Ahora una cotización B2B asistida en NETO
+  // lo recibe, y únicamente a través del dato externo-seguro `detalle.b2bExterno` (derivado del plan congelado al cotizar).
   for (const rel of ["app/cot/[token]/page.tsx", "app/cotizacion/[id]/page.tsx"]) {
-    assert.doesNotMatch(leer(rel), /netoTotalExigible/, rel);
+    const src = leer(rel);
+    assert.match(src, /netoTotalExigible=\{netoTotalExigible\}/, rel);
+    assert.match(src, /const netoTotalExigible = netoTotalExigibleDeDetalle\(d\.b2bExterno\);/, rel);
+    // No usan ninguna fuente de contrato ni de comisión: el PVP original y la comisión del aliado no pueden llegar al documento.
+    assert.doesNotMatch(src, /netoTotalExigibleDeContrato|desgloseNetoB2B|esVentaNetoDescontada|comision_b2b|leerPlanB2BDePayload|b2bAsistido/, rel);
   }
+  // El enlace público no lee `payload` (datos personales y términos internos): su consulta no cambió.
+  assert.match(leer("app/cot/[token]/page.tsx"), /\.select\("codigo, detalle, vigencia_hasta(, tenant)?(, estado, fecha_salida)?"\)/);
 });
 
 // ── Ediciones posteriores: la modalidad no cambia sola ──────────────────────
@@ -236,7 +242,8 @@ test("rentabilidad NETO = PVP con comisión aparte: el margen no depende de la m
 
 test("estado de cuenta: valor y saldo salen de precio_venta (total exigible) y no lee la comisión", () => {
   const src = leer("lib/cuenta/estado.ts");
-  assert.match(src, /const precio = Number\(v\.precio_venta \?\? 0\);/);
+  // 235: el total es el de COBRO (`cobroDeVenta`): sin conversión es exactamente precio_venta (el total exigible, NETO incluido).
+  assert.match(src, /const cobro = cobroDeVenta\(v\);\s+const precio = cobro\.total;/);
   assert.match(src, /saldo: Math\.max\(precio - acum, 0\)/);
   const select = src.match(/\.from\("ventas"\)\s*\.select\("([^"]+)"\)/);
   assert.ok(select, "lee ventas");

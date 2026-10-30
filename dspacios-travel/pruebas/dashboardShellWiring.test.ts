@@ -56,7 +56,7 @@ describe("NAV — sigue filtrándose por módulo, rol y tenant (sin lógica nuev
     assert.match(layout, /import \{ tenantContext \} from "@\/lib\/tenant\.server";/);
     assert.match(layout, /const rol = await miRol\(\);/);
     assert.match(layout, /const permitidos = modulosConsultables\(rol\);/);
-    assert.match(layout, /const \{ tenant, puedeCambiar, permitidos: tenantsPermitidos \} = await tenantContext\(\);/);
+    assert.match(layout, /const \{ tenant, puedeCambiar, permitidos: tenantsPermitidos, agenciaSesion, desincronizada, agenciaVerificada \} = await tenantContext\(\);/);
   });
 
   test("conserva ítems representativos del catálogo real (rutas, módulo y banderas intactas)", () => {
@@ -112,7 +112,10 @@ describe("TenantSwitcher — selector personalizado, mismo comportamiento y pers
     assert.match(tenantSwitcher, /items=\{permitidos\.map\(\(t\) => \(\{ value: t, label: TENANT_LABEL\[t\] \}\)\)\}/);
     assert.match(tenantSwitcher, /value=\{tenant\}/);
     assert.match(tenantSwitcher, /onValueChange=\{onValueChange\}/);
-    assert.match(tenantSwitcher, /await cambiarTenant\(value\);/);
+    // #5 D8/D9: el resultado de cambiarTenant se evalúa; solo si salió bien se recarga (si falla,
+    // el selector muestra el error y la agencia sigue siendo la anterior — ver cambiarTenant237.test.ts).
+    assert.match(tenantSwitcher, /await cambiarTenant\(value\)/);
+    assert.match(tenantSwitcher, /if \(!r\.ok\) \{[\s\S]*?setError\(r\.error\);[\s\S]*?return;/);
     assert.match(tenantSwitcher, /window\.location\.reload\(\);/);
     assert.match(tenantSwitcher, /disabled=\{pending\}/);
   });
@@ -149,8 +152,8 @@ describe("Home (/dashboard) — agregados en base (ronda de costo), sin datos in
   test("las consultas de fondo pasaron de .select() completos a RPC de agregación — mismo tenant/filtros, resultado pequeño y tipado", () => {
     assert.match(home, /supabase\.from\("paquetes"\)\.select\("id", \{ count: "exact", head: true \}\)/);
     assert.match(home, /supabase\.rpc\("fn_dashboard_contratos_por_estado", \{ p_tenant: tenant \}\)/);
-    assert.match(home, /supabase\.rpc\("fn_dashboard_cupos_resumen"\)\.maybeSingle\(\)/);
-    assert.match(home, /supabase\.from\("bloqueos_vuelo"\)\.select\("id", \{ count: "exact", head: true \}\)\.gte\("fecha_ida", hoyStr\)\.lte\("fecha_ida", addDays\(14\)\)/);
+    assert.match(home, /supabase\.rpc\("fn_dashboard_cupos_activos", \{ p_hoy: hoyBogota \}\)\.maybeSingle\(\)/);
+    assert.match(home, /supabase\.from\("bloqueos_vuelo"\)\.select\("id", \{ count: "exact", head: true \}\)\.gte\("fecha_ida", hoyBogota\)\.lte\("fecha_ida", sumarDias\(hoyBogota, 14\)\)/);
     assert.match(home, /supabase\.rpc\("fn_dashboard_cxp_resumen", \{ p_tenant: tenant, p_desde: hoyStr, p_hasta: addDays\(15\) \}\)\.maybeSingle\(\)/);
     // Ya NO quedan los .select() completos de la ronda anterior.
     assert.doesNotMatch(home, /supabase\.from\("ventas"\)\.select\("numero_contrato/);
@@ -161,7 +164,7 @@ describe("Home (/dashboard) — agregados en base (ronda de costo), sin datos in
     assert.doesNotMatch(home, /supabase\.from\("cxp_pagos"\)\.select\(/);
   });
 
-  test("los cálculos derivados base (contratos vía clasificarContratosDesdeConteos, ventaMes vía ventasMesPorMonedaDesdeAgregado, cupos vía cuposResumenDesdeAgregado) están intactos", () => {
+  test("los cálculos derivados base (contratos vía clasificarContratosDesdeConteos, ventaMes vía ventasMesPorMonedaDesdeAgregado, cupos vía cuposActivosDesdeAgregado) están intactos", () => {
     // Contratos/ventas/cupos ya NO se calculan inline en page.tsx — delegan
     // en funciones puras (lib/dashboard/metricas.ts) que consumen los
     // agregados devueltos por las RPC, probadas a fondo en
@@ -169,7 +172,7 @@ describe("Home (/dashboard) — agregados en base (ronda de costo), sin datos in
     assert.match(home, /const \{ nVigentes, nPendientes, nConfirmadosOActivos \} = clasificarContratosDesdeConteos\(contratosPorEstado \?\? \[\]\);/);
     assert.match(home, /const ventasPorMoneda = ventasMesPorMonedaDesdeAgregado\(ventaMesFilas \?\? \[\]\);/);
     assert.match(home, /const ventaMes = ventasPorMoneda\["COP"\] \?\? 0;/);
-    assert.match(home, /const \{ cuposCapacidad, cuposOcupados, cuposDisponibles, cuposCriticos \} = cuposResumenDesdeAgregado\(cuposFila \?\? null\);/);
+    assert.match(home, /const \{ cuposCapacidad, cuposOcupados, sillasDisponibles, recordsConSillas, proximasSillas, proximosRecords \} = cuposActivosDesdeAgregado\(cuposFila \?\? null\);/);
     // El aggregate viejo `cartera = totalVentas - totalAbonos` (una sola
     // cifra, mezclando monedas) se REEMPLAZÓ por `carteraPorMonedaDesdeAgregado`.
     assert.doesNotMatch(home, /const cartera = Math\.max\(0, totalVentas - totalAbonos\);/);
@@ -195,8 +198,26 @@ describe("Home (/dashboard) — agregados en base (ronda de costo), sin datos in
     ]);
   });
 
+  test("#118: si falla fn_dashboard_cupos_activos o el conteo de salidas, la cifra se muestra «No disponible» (nunca 0 ni alerta con datos ausentes)", () => {
+    assert.match(home, /\{ data: cuposFila, error: cuposError \}/);
+    assert.match(home, /\{ count: nSalidas, error: salidasError \}/);
+    assert.match(home, /const cuposOk = !cuposError && cuposFila != null;/);
+    assert.match(home, /const salidasOk = !salidasError && nSalidas != null;/);
+    assert.match(home, /value: cuposOk \? `[^`]*` : NO_DISPONIBLE/);
+    assert.match(home, /value: salidasOk \? String\(nSalidas\) : NO_DISPONIBLE/);
+    assert.match(home, /const sinDato = n === null;/);
+    assert.match(home, /\{sinDato \? "—" : n\}/);
+    assert.doesNotMatch(home, /String\(nSalidas \?\? 0\)/);
+  });
+
+  test("#118: «Salidas próximas (14d)» y la alerta comparten el día de Bogotá y el límite hoy..hoy+14, y se distinguen en el texto", () => {
+    assert.doesNotMatch(home, /gte\("fecha_ida", hoyStr\)/);
+    assert.match(home, /sub: salidasOk \? "Todas las salidas, con o sin sillas"/);
+    assert.match(home, /con sillas que salen en 14 días/);
+  });
+
   test("las alertas quedan acotadas a cupos críticos y pagos por vencer (sin aerolíneas ni datos inventados)", () => {
-    assert.match(home, /label: "Cupos críticos", n: cuposCriticos, href: "\/dashboard\/vuelos"/);
+    assert.match(home, /label: "Cupos críticos", n: cuposOk \? proximasSillas : null, href: "\/dashboard\/vuelos\?vista=inventario"/);
     assert.match(home, /label: "Pagos por vencer \(15d\)", n: cxpTotal, href: "\/dashboard\/pagos"/);
     assert.doesNotMatch(home, /JetSmart|Avianca|Copa/);
   });
@@ -318,7 +339,7 @@ describe("KPI ampliados — barras de progreso con fuente real (ronda de indicad
   test("pctOrNull (lib/dashboard/metricas.ts, con pruebas ejecutables en pruebas/dashboardMetricas.test.ts) no publica barra sin denominador válido — page.tsx la importa, no la redefine", () => {
     assert.match(metricasLib, /export function pctOrNull\(num: number, den: number\): number \| null \{/);
     assert.match(metricasLib, /if \(!den \|\| den <= 0\) return null;/);
-    assert.match(home, /import \{\s*\n\s*pctOrNull, pctRawOrNull,\s*\n\s*clasificarContratosDesdeConteos, carteraPorMonedaDesdeAgregado, ventasMesPorMonedaDesdeAgregado, cuposResumenDesdeAgregado,\s*\n\s*BALDE_MONEDA_DESCONOCIDA,\s*\n\s*\} from "@\/lib\/dashboard\/metricas";/);
+    assert.match(home, /import \{\s*\n\s*pctOrNull, pctRawOrNull,\s*\n\s*clasificarContratosDesdeConteos, carteraPorMonedaDesdeAgregado, ventasMesPorMonedaDesdeAgregado, cuposActivosDesdeAgregado, sumarDias,\s*\n\s*BALDE_MONEDA_DESCONOCIDA,\s*\n\s*\} from "@\/lib\/dashboard\/metricas";/);
     assert.doesNotMatch(home, /function pctOrNull\(/);
   });
 
@@ -335,7 +356,7 @@ describe("KPI ampliados — barras de progreso con fuente real (ronda de indicad
   });
 
   test("MetricCard renderiza cifra principal, contexto 'X de Y' y porcentaje solo si hay barra", () => {
-    assert.match(home, /<span>\{bar\.num\} de \{bar\.den\}<\/span>/);
+    assert.match(home, /\{bar\.num\.toLocaleString\("es-CO"\)\} de \{bar\.den\.toLocaleString\("es-CO"\)\}<\/span>/);
     assert.match(home, /<span className="font-semibold">\{bar\.pct\}%<\/span>/);
   });
 
@@ -378,13 +399,13 @@ describe("KPI ampliados — barras de progreso con fuente real (ronda de indicad
   });
 
   test("cupos: capacidad/ocupados/disponibles/críticos vienen de un único agregado en base (fn_dashboard_cupos_resumen), no de traer cada bloqueo", () => {
-    assert.match(home, /supabase\.rpc\("fn_dashboard_cupos_resumen"\)\.maybeSingle\(\)/);
+    assert.match(home, /supabase\.rpc\("fn_dashboard_cupos_activos", \{ p_hoy: hoyBogota \}\)\.maybeSingle\(\)/);
     assert.doesNotMatch(home, /supabase\.from\("cupos_por_bloqueo"\)\.select\(/);
   });
 
   test("el color de la barra de cupos usa el mismo umbral ya existente de 'cuposCriticos' (no un umbral nuevo inventado)", () => {
     assert.match(home, /cuposCapacidad > 0 && cuposOcupados >= cuposCapacidad \? "var\(--dash-danger\)"/);
-    assert.match(home, /: cuposCriticos > 0 \? "var\(--dash-warning\)"/);
+    assert.match(home, /: proximosRecords > 0 \? "var\(--dash-warning\)"/);
   });
 
   test("--dash-warning deriva de tokens de marca vía color-mix (sin hex suelto)", () => {
@@ -400,8 +421,12 @@ describe("KPI ampliados — barras de progreso con fuente real (ronda de indicad
     assert.match(home, /\{ icon: Percent, label: "Retención en la fuente \(mes\)", value: formatCOP\(retencionMes\), sub: "Practicada a proveedores" \}/);
   });
 
-  test("responsive: el grid de métricas sigue en 2 columnas en móvil y 4 en escritorio (sin recortes al agregar más tarjetas)", () => {
-    assert.match(home, /<section className="mt-5 grid grid-cols-2 gap-3 md:grid-cols-4">/);
+  test("responsive: el grid de métricas se adapta al ancho REAL (menú lateral incluido) y la tarjeta no deja salir el importe completo", () => {
+    assert.match(home, /<section className="mt-5 grid grid-cols-\[repeat\(auto-fill,minmax\(13\.5rem,1fr\)\)\] gap-3">/);
+    assert.doesNotMatch(home, /grid-cols-2 gap-3 md:grid-cols-4/, "ya no hay saltos fijos de 2/4 columnas");
+    assert.match(home, /min-w-0 rounded-lg border p-4/, "la tarjeta puede encogerse dentro de su celda");
+    assert.match(home, /text-xl font-semibold tabular-nums \[overflow-wrap:anywhere\]/, "el valor parte la línea en vez de salirse");
+    assert.match(home, /flex flex-wrap items-center justify-between gap-x-2/, "«X de Y» y el % no se pisan");
   });
 });
 
@@ -678,7 +703,7 @@ describe("Costo de las consultas (ronda de agregación en base) — ninguna tarj
 
   test("ventas, abonos, cupos_por_bloqueo, cuentas_por_pagar y retenciones_cxp ya NO se descargan fila por fila en dashboard/page.tsx — se leen vía las 6 RPC de agregación (migración 186)", () => {
     assert.match(home, /supabase\.rpc\("fn_dashboard_contratos_por_estado", \{ p_tenant: tenant \}\)/);
-    assert.match(home, /supabase\.rpc\("fn_dashboard_cupos_resumen"\)\.maybeSingle\(\)/);
+    assert.match(home, /supabase\.rpc\("fn_dashboard_cupos_activos", \{ p_hoy: hoyBogota \}\)\.maybeSingle\(\)/);
     assert.match(home, /supabase\.rpc\("fn_dashboard_retenciones_mes", \{ p_tenant: tenant, p_periodo: mesActual \}\)/);
     assert.match(home, /supabase\.rpc\("fn_dashboard_cxp_resumen", \{ p_tenant: tenant, p_desde: hoyStr, p_hasta: addDays\(15\) \}\)\.maybeSingle\(\)/);
     assert.match(home, /supabase\.rpc\("fn_dashboard_cartera_por_moneda", \{ p_tenant: tenant, p_hoy: hoyBogota \}\)/);

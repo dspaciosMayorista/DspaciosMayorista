@@ -55,6 +55,12 @@ export type FilaTarifario = {
   regimen: string | null;
   acomodacion: string | null;
   precio_pvp: number;
+  // Migración 226: precio de un MENOR DE 2 AÑOS (fee de infante del vuelo + servicios
+  // con su precio de infante + hotel de su clase). NULL en habitaciones adultas.
+  precio_pvp_menor2?: number | null;
+  // Migración 254: precio NORMAL del infante cuando el PVP fijo del paquete lo reemplazó (por ruta). NULL = el fijo no se aplicó.
+  precio_pvp_sin_fijo?: number | null;
+  precio_pvp_menor2_sin_fijo?: number | null;
   descripcion?: string | null;
   recargo_individual?: number | null;
   moneda?: string | null;
@@ -74,6 +80,7 @@ const COLS: [string, string][] = [
   ["multiple", "Múltiple"],
   ["nino", "Chd1"],
   ["nino2", "Chd2"],
+  ["infante", "Infante (menor de 2 años)"],
 ];
 
 function fmtFecha(s: string | null): string {
@@ -87,6 +94,8 @@ type Pivotada = {
   categoria: string;
   regimen: string;
   precios: Record<string, number>;
+  // Precio del menor de 2 años por clase de hotel (migración 226).
+  preciosMenor2?: Record<string, number>;
   paquete_id?: number;
   hotel_id?: number | null;
   bloqueo_id?: number | null;
@@ -114,7 +123,10 @@ function pivotar(filas: FilaTarifario[]): Pivotada[] {
       };
       map.set(key, row);
     }
-    if (f.acomodacion) row.precios[f.acomodacion] = f.precio_pvp;
+    if (f.acomodacion) {
+      row.precios[f.acomodacion] = f.precio_pvp;
+      if (f.precio_pvp_menor2 != null) (row.preciosMenor2 ??= {})[f.acomodacion] = f.precio_pvp_menor2;
+    }
   }
   return [...map.values()].sort(
     (a, b) => a.hotel.localeCompare(b.hotel) || a.categoria.localeCompare(b.categoria) || a.regimen.localeCompare(b.regimen)
@@ -297,6 +309,7 @@ export function TarifarioPublic({
   puedeReservar = false,
   cuposPorBloqueo = {},
   origenPorBloqueo = {},
+  origenPorSalida = {},
   fotosPorHotel = {},
   fotosPorServicio = {},
   ventanaPorPaquete = {},
@@ -321,6 +334,8 @@ export function TarifarioPublic({
   puedeReservar?: boolean;
   cuposPorBloqueo?: Record<number, number>;
   origenPorBloqueo?: Record<number, string>;
+  // Origen real de cada salida dinámica (`salida_id` → IATA): filtro Origen de "Paquetes" en Vista Booking.
+  origenPorSalida?: Record<number, string>;
   fotosPorHotel?: Record<number, string>;
   fotosPorServicio?: Record<number, string>;
   ventanaPorPaquete?: Record<number, { min: string | null; max: string | null }>;
@@ -578,7 +593,7 @@ export function TarifarioPublic({
       {vista === "programas" ? (
         <PorProgramas programas={programas} puedeReservar={puedeReservar} />
       ) : vista === "booking" ? (
-        <VistaBooking filas={filasFiltradas} subtabsSlot={subtabsSlot} fotosPorHotel={fotosPorHotel} fotosPorServicio={fotosPorServicio} cuposPorBloqueo={cuposPorBloqueo} origenPorBloqueo={origenPorBloqueo} puedeReservar={puedeReservar} ventanaPorPaquete={ventanaPorPaquete} infoPorHotel={infoPorHotel} planesInfo={planesInfo} capPorHotel={capPorHotel} soloAcom={fAcom || null} filtroTexto={q} filtroCategoria={fCat} filtroRegimen={fReg} descripcionPorPaquete={descripcionPorPaquete} filasAddon={filasAddon} hotelesBernalo={fAcom ? [] : hotelesBernaloFiltrados} hotelIdsUnidadAutoritativos={hotelIdsUnidadAutoritativos} prioridadesRecomendados={prioridadesRecomendados} condicionPorOferta={condicionPorOferta} politicaPorOferta={politicaPorOferta} restriccionPorPaquete={restriccionPorPaquete} />
+        <VistaBooking filas={filasFiltradas} subtabsSlot={subtabsSlot} fotosPorHotel={fotosPorHotel} fotosPorServicio={fotosPorServicio} cuposPorBloqueo={cuposPorBloqueo} origenPorBloqueo={origenPorBloqueo} origenPorSalida={origenPorSalida} puedeReservar={puedeReservar} ventanaPorPaquete={ventanaPorPaquete} infoPorHotel={infoPorHotel} planesInfo={planesInfo} capPorHotel={capPorHotel} soloAcom={fAcom || null} filtroTexto={q} filtroCategoria={fCat} filtroRegimen={fReg} descripcionPorPaquete={descripcionPorPaquete} filasAddon={filasAddon} hotelesBernalo={fAcom ? [] : hotelesBernaloFiltrados} hotelIdsUnidadAutoritativos={hotelIdsUnidadAutoritativos} prioridadesRecomendados={prioridadesRecomendados} condicionPorOferta={condicionPorOferta} politicaPorOferta={politicaPorOferta} restriccionPorPaquete={restriccionPorPaquete} />
       ) : (
         <>
           {/* Tabs de módulos */}
@@ -974,7 +989,9 @@ function TablaHorizontal({ rows, puedeReservar = false, soloAcom = null, infoPor
                       // En habitaciones, 0 = no aplica (no gratis) → "—". En niños
                       // (nino/nino2) e infante el 0 es válido (gratis) y sí se muestra.
                       const esRoom = k !== "nino" && k !== "nino2" && k !== "infante";
-                      const v = r.precios[k];
+                      // Infante = menor de 2 años: su precio (fee de vuelo + servicios de
+                      // infante), no el de un niño de 2 años clasificado infante por el hotel.
+                      const v = k === "infante" ? (r.preciosMenor2?.infante ?? r.precios.infante) : r.precios[k];
                       const mostrar = v != null && (!esRoom || v > 0);
                       return (
                         <td key={k} className="px-3 py-2 text-right tabular-nums">
@@ -1007,6 +1024,12 @@ function TablaHorizontal({ rows, puedeReservar = false, soloAcom = null, infoPor
           })}
         </tbody>
       </table>
+      {cols.some(([k]) => k === "infante") && (
+        <p className="border-t border-gray-100 px-3 py-2 text-[11px] text-gray-500">
+          Infante: menor de 2 años; en el vuelo paga solo su fee de infante y en cada servicio su precio de infante.
+          Desde los 2 años, el vuelo y los servicios se cobran como adulto (el hotel aplica su propia edad de niño e infante).
+        </p>
+      )}
     </div>
   );
 }

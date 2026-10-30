@@ -186,7 +186,9 @@ describe("convertirCotizacionCarrito — Paso 2: creación de contrato Bernalo",
   test("regla C.12: ventas.precio_venta se arma sumando validadosPersona + validadosBernalo + tours (precioTotal)", () => {
     assert.match(codigo, /const precioTotal = validadosPersona\.reduce\(\(s, v\) => s \+ v\.comp\.precioVenta, 0\)/);
     assert.match(codigo, /validadosBernalo\.reduce\(\(s, v\) => s \+ v\.resultado\.precioVenta, 0\)/);
-    assert.match(codigo, /precio_venta: precioTotal,/);
+    // #102: en una venta B2B asistida lo exigible es el del plan del contrato (PVP, o PVP − comisión en NETO); sin plan es EXACTAMENTE `precioTotal`.
+    assert.match(codigo, /const precioExigibleGrupo = planGrupoB2B \? planGrupoB2B\.precioFinal : precioTotal;/);
+    assert.match(codigo, /precio_venta: precioExigibleGrupo,/);
   });
 
   test("regla D.17/19: inserta contrato_alojamiento_bernalo (UNA fila por habitación) usando `admin` (service-role) — nunca `sb`", () => {
@@ -244,8 +246,9 @@ describe("convertirCotizacionCarrito — Paso 2: creación de contrato Bernalo",
   test("hallazgo confirmado: CxP aérea/costo_aereo = dv.costo_neto × paxConSilla + dv.fee_infante × infantes — nunca resultado.costoVueloTotal", () => {
     assert.match(loopBernalo, /await datosVueloBloqueo\(admin, resultado\.salida\.id\)/);
     assert.match(loopBernalo, /await datosVueloEmpaquetado\(admin, resultado\.salida\.id\)/);
-    assert.match(loopBernalo, /const infantesBernalo = resultado\.paxTotal - resultado\.paxConSilla;/);
-    assert.match(loopBernalo, /const costoVueloReal = dv\.costo_neto \* resultado\.paxConSilla \+ dv\.fee_infante \* infantesBernalo;/);
+    // La fórmula vive ahora en UN solo lugar (la comparten la revisión previa de moneda y la creación): lib/reservar/costosObligacionesCarrito.ts.
+    assert.match(loopBernalo, /const costoVueloReal = costoVueloBernalo\(dv, resultado\.paxTotal, resultado\.paxConSilla\);/);
+    assert.match(leer("lib/reservar/costosObligacionesCarrito.ts"), /return dv\.costo_neto \* paxConSilla \+ dv\.fee_infante \* \(paxTotal - paxConSilla\);/);
     assert.match(loopBernalo, /costoAereoTotal \+= costoVueloReal;/);
     assert.match(loopBernalo, /pushCxP\("aereo", `Aéreo \$\{dv\.aerolinea/);
     assert.match(loopBernalo, /pushCxP\("aereo",[\s\S]{0,40}costoVueloReal,/);
@@ -271,7 +274,7 @@ describe("convertirCotizacionCarrito — Paso 2: creación de contrato Bernalo",
 
   test("regla E.25: cada servicio incluido con costoNeto>0 genera su PROPIA CxP con servicio_id — nunca se absorbe en el hotel", () => {
     assert.match(loopBernalo, /for \(const s of resultado\.serviciosIncluidos\) \{/);
-    assert.match(loopBernalo, /pushCxP\(tipoProveedorCxpServicio\(s\.categoria\), s\.nombre, s\.costoNeto, proveedoresServicios\.get\(s\.servicioId\) \?\? null, null, s\.servicioId, resultado\.moneda\);/);
+    assert.match(loopBernalo, /pushCxP\(tipoProveedorCxpServicio\(s\.categoria\), s\.nombre, s\.costoNeto, proveedoresServicios\.get\(s\.servicioId\) \?\? null, null, s\.servicioId, s\.moneda \?\? resultado\.moneda\);/);
   });
 
   test("regla E.28: CxP hotel/vuelo/servicios de Bernalo SIEMPRE pasan resultado.moneda explícito a pushCxP — nunca dependen del default", () => {
@@ -410,7 +413,7 @@ describe("validarBernaloParaConversion — hallazgo confirmado: compara también
   });
 
   test("convertirCotizacionCarrito consulta cotizaciones.moneda y la pasa al validar cada ítem Bernalo", () => {
-    assert.match(codigo, /\.select\("id, estado, tipo, payload, tenant, numero_contrato, detalle, moneda"\)/);
+    assert.match(codigo, /\.select\("id, estado, tipo, payload, tenant, numero_contrato, detalle, moneda, vigencia_hasta, fecha_salida"\)/);
     assert.match(codigo, /validarBernaloParaConversion\(it, cot\.moneda \?\? null\)/);
   });
 });

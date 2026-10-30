@@ -351,10 +351,12 @@ export type SolicitudItemValidado = {
   // byte a byte la misma de siempre. Existe solo para que TypeScript pueda
   // discriminar `if (item.modeloTarifario === "unidad")` sin un cast.
   modeloTarifario?: undefined;
-  modulo: "bloqueo" | "porcion_terrestre";
+  modulo: "bloqueo" | "porcion_terrestre" | "dinamico";
   paqueteId: number;
   hotelId: number;
   bloqueoId: number | null;
+  // Solo `dinamico` (obligatoria ahí, ausente en los demás): la salida que se re-liquida.
+  salidaId?: number;
   hotelNombre: string;
   destino: string | null;
   categoria: string;
@@ -376,10 +378,17 @@ export function validarSolicitudItem(v: unknown, indice: number): { ok: true; it
   if (typeof v !== "object" || v === null || Array.isArray(v)) return { ok: false, error: `${ctx} no tiene una forma válida.` };
   const o = v as Record<string, unknown>;
 
-  if (o.modulo !== "bloqueo" && o.modulo !== "porcion_terrestre") return { ok: false, error: `${ctx} tiene un módulo inválido.` };
+  if (o.modulo !== "bloqueo" && o.modulo !== "porcion_terrestre" && o.modulo !== "dinamico") return { ok: false, error: `${ctx} tiene un módulo inválido.` };
   if (typeof o.paqueteId !== "number" || !Number.isInteger(o.paqueteId)) return { ok: false, error: `${ctx} tiene un paquete inválido.` };
   if (typeof o.hotelId !== "number" || !Number.isInteger(o.hotelId)) return { ok: false, error: `${ctx} tiene un hotel inválido.` };
   if (!(o.bloqueoId === null || (typeof o.bloqueoId === "number" && Number.isInteger(o.bloqueoId)))) return { ok: false, error: `${ctx} tiene un bloqueo inválido.` };
+  // Salida dinámica: su `salidaId` es obligatorio (entero positivo) y no lleva bloqueo; los demás módulos no usan salida.
+  if (o.modulo === "dinamico") {
+    if (!(typeof o.salidaId === "number" && Number.isInteger(o.salidaId) && o.salidaId > 0)) return { ok: false, error: `${ctx} no indica una salida válida.` };
+    if (o.bloqueoId !== null) return { ok: false, error: `${ctx}: una salida dinámica no usa vuelo negociado.` };
+  } else if (o.salidaId != null) {
+    return { ok: false, error: `${ctx}: este paquete no usa salida dinámica.` };
+  }
   const vNombre = validarTextoAcotado(o.hotelNombre, `${ctx}: el nombre del hotel`);
   if (!vNombre.ok) return { ok: false, error: vNombre.error };
   if (o.destino !== null && o.destino !== undefined) {
@@ -455,6 +464,7 @@ export function validarSolicitudItem(v: unknown, indice: number): { ok: true; it
     ok: true,
     item: {
       modulo: o.modulo, paqueteId: o.paqueteId, hotelId: o.hotelId, bloqueoId: o.bloqueoId as number | null,
+      ...(o.modulo === "dinamico" ? { salidaId: o.salidaId as number } : {}),
       hotelNombre: vNombre.texto, destino: o.destino == null ? null : (o.destino as string),
       categoria: vCategoria.texto, regimen: vRegimen.texto,
       fechaIda, fechaRegreso,

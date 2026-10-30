@@ -176,7 +176,7 @@ async function cotizarYConvertir(items: unknown[]) {
   usuario = { id: "u-admin", email: "admin@dspacios.test" }; // quien convierte (interno)
   const nItems = (cot.payload as { items: unknown[] }).items.length;
   const conv = await convertirCotizacionCarrito(77, {
-    agrupar: "todo", pasajeros, asesorInterno: "Asesor", asignaciones: Array.from({ length: nItems }, () => [1, 2]), asignacionesTours: [],
+    agrupar: "todo", pasajeros, asesorInterno: "Asesor", asignaciones: Array.from({ length: nItems }, () => [1, 2]), asignacionesTours: [], monedaCobro: "COP",
   });
   assert.equal(conv.ok, true, (conv as { error?: string }).error);
   return { cot, venta: db.ventas[0], items: db.contrato_items ?? [], cxp: financieros[0].cxp };
@@ -249,7 +249,7 @@ async function cotizar(items: unknown[]) {
 async function convertir(nItems = 1) {
   usuario = { id: "u-admin", email: "admin@dspacios.test" };
   return convertirCotizacionCarrito(77, {
-    agrupar: "todo", pasajeros, asesorInterno: "Asesor", asignaciones: Array.from({ length: nItems }, () => [1, 2]), asignacionesTours: [],
+    agrupar: "todo", pasajeros, asesorInterno: "Asesor", asignaciones: Array.from({ length: nItems }, () => [1, 2]), asignacionesTours: [], monedaCobro: "COP",
   }) as Promise<{ ok: boolean; error?: string }>;
 }
 const sinEscrituras = () => {
@@ -300,7 +300,7 @@ describe("conversión: el costo del incluido se resuelve en el servidor y se val
     (cot.payload as { items: Fila[] }).items[0].pax = 3;
     usuario = { id: "u-admin", email: "admin@dspacios.test" };
     const tres = [...pasajeros, { ...pasajeros[1], nombres: "Eva", numeroDoc: "789" }];
-    const r = await convertirCotizacionCarrito(77, { agrupar: "todo", pasajeros: tres, asesorInterno: "Asesor", asignaciones: [[1, 2, 3]], asignacionesTours: [] }) as { ok: boolean; error?: string };
+    const r = await convertirCotizacionCarrito(77, { agrupar: "todo", pasajeros: tres, asesorInterno: "Asesor", asignaciones: [[1, 2, 3]], asignacionesTours: [], monedaCobro: "COP" }) as { ok: boolean; error?: string };
     assert.equal(r.ok, false);
     assert.match(r.error ?? "", /los pasajeros del hotel \(2\) no coinciden con los cotizados \(3\)/);
     sinEscrituras();
@@ -468,7 +468,7 @@ describe("cotizaciones SIN incluidos: convierten como siempre y conservan sus gu
     HOTELES = { 1: sinIncluidos() };
     await cotizar([item(1, 10)]);
     usuario = { id: "u-admin", email: "admin@dspacios.test" };
-    const r = await convertirCotizacionCarrito(77, { agrupar: "todo", pasajeros, asesorInterno: "Asesor", asignaciones: [[1]], asignacionesTours: [] }) as { ok: boolean; error?: string };
+    const r = await convertirCotizacionCarrito(77, { agrupar: "todo", pasajeros, asesorInterno: "Asesor", asignaciones: [[1]], asignacionesTours: [], monedaCobro: "COP" }) as { ok: boolean; error?: string };
     assert.equal(r.ok, false);
     assert.match(r.error ?? "", /la cantidad de pasajeros asignados \(1\) no coincide con la cantidad esperada \(2\)/);
     sinEscrituras();

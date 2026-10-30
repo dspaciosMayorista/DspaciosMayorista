@@ -26,7 +26,8 @@ import {
   eliminarFactura,
 } from "./gestion-actions";
 import { registrarPagoProveedor, deshacerUltimoPago } from "../../pagos/actions";
-import { actualizarAbono, eliminarAbono } from "../actions";
+import { actualizarAbono, anularAbono } from "../actions";
+import { AnularAbonoBoton } from "@/components/contrato/AnularAbonoBoton";
 import { ResponsiveTableShell } from "@/components/ui/ResponsiveTableShell";
 import { EditorCamposComision } from "../../comisiones/ComisionesList";
 
@@ -71,6 +72,11 @@ export type GestionProps = {
   facturas: Factura[];
   formasPago: string[];
   moneda?: string;       // moneda del contrato (USD muestra el estado de cuenta en dólares)
+  /** 235 (#90 F): moneda y total de COBRO (abonos, saldo y plan de cobro). Sin ellos se cobra en `moneda` por `precioVenta`. */
+  monedaCobro?: string;
+  totalCobro?: number;
+  /** Texto fijo si el contrato se cobra en una moneda distinta de la de la oferta (conversión congelada). */
+  notaCobro?: string | null;
   proveedoresCatalogo?: string[]; // nombres del catálogo, para sugerir/autocompletar
   aliadosCatalogo?: AliadoCat[]; // catálogo de aliados B2B, para elegir en vez de retipear
   // false = un asesor consultando el contrato de OTRO asesor de su agencia.
@@ -150,7 +156,7 @@ export function GestionTabs(p: GestionProps) {
           // `verFinanzas`, no `puedeEditar` — un asesor no registra pagos ni
           // siquiera en su propio contrato, y los botones que sí lo intentaban
           // fallaban en silencio.
-          <CarteraTab numero={p.numero} abonos={p.abonos} totalPagado={p.totalPagado} total={p.precioVenta} formasPago={p.formasPago} cuotas={p.cuotas} moneda={p.moneda ?? "COP"} puedeEditar={p.verFinanzas} puedeEditarPlan={p.puedeEditar !== false} />
+          <CarteraTab numero={p.numero} abonos={p.abonos} totalPagado={p.totalPagado} total={p.totalCobro ?? p.precioVenta} formasPago={p.formasPago} cuotas={p.cuotas} moneda={p.monedaCobro ?? p.moneda ?? "COP"} nota={p.notaCobro ?? null} puedeEditar={p.verFinanzas} puedeEditarPlan={p.puedeEditar !== false} />
         )}
         {p.verFinanzas && tab === "costos" && <CostosTab numero={p.numero} costos={p.costos} />}
         {p.verFinanzas && tab === "proveedores" && <ProveedoresTab numero={p.numero} filas={p.cuentasPorPagar} catalogo={p.proveedoresCatalogo ?? []} />}
@@ -220,12 +226,13 @@ function CostosTab({ numero, costos }: { numero: string; costos: GestionProps["c
 }
 
 // ── CARTERA (abonos) ───────────────────────────────────────────────────
-function CarteraTab({ numero, abonos, totalPagado, total, formasPago, cuotas, moneda = "COP", puedeEditar = true, puedeEditarPlan = true }: { numero: string; abonos: Abono[]; totalPagado: number; total: number; formasPago: string[]; cuotas: CuotaRow[]; moneda?: string; puedeEditar?: boolean; puedeEditarPlan?: boolean }) {
+function CarteraTab({ numero, abonos, totalPagado, total, formasPago, cuotas, moneda = "COP", nota = null, puedeEditar = true, puedeEditarPlan = true }: { numero: string; abonos: Abono[]; totalPagado: number; total: number; formasPago: string[]; cuotas: CuotaRow[]; moneda?: string; nota?: string | null; puedeEditar?: boolean; puedeEditarPlan?: boolean }) {
   const saldo = Math.max(total - totalPagado, 0);
   const fmt = (n: number) => formatMoneda(n, moneda);
   const esUSD = (moneda ?? "COP").toUpperCase() === "USD";
   return (
     <div className="space-y-4">
+      {nota && <p className="rounded-lg bg-gray-50 px-3 py-2 text-xs text-gray-600" data-testid="nota-cobro">{nota}</p>}
       <div className="grid grid-cols-3 gap-3">
         <Mini label="Total" value={fmt(total)} />
         <Mini label="Pagado" value={fmt(totalPagado)} color="var(--brand-success)" />
@@ -265,10 +272,9 @@ function CarteraTab({ numero, abonos, totalPagado, total, formasPago, cuotas, mo
 }
 
 // Fila de abono con edición inline (corregir valor/fecha/forma/referencia sin
-// tener que registrar un segundo abono para "cuadrar" el saldo) y eliminar.
+// tener que registrar un segundo abono para "cuadrar" el saldo) y anular.
 function FilaAbono({ a, numero, esUSD, moneda, formasPago, puedeEditar = true }: { a: Abono; numero: string; esUSD: boolean; moneda: string; formasPago: string[]; puedeEditar?: boolean }) {
   const [editar, setEditar] = useState(false);
-  const [errorEliminar, setErrorEliminar] = useState("");
   // El campo "Valor" edita lo PAGADO EN COP (mismo criterio de registrarAbono/
   // actualizarAbono); en USD eso es monto_cop, NO valor_abono (que está en USD).
   const [valor, setValor] = useState(String(esUSD ? (a.monto_cop ?? a.valor_abono) : a.valor_abono));
@@ -291,15 +297,6 @@ function FilaAbono({ a, numero, esUSD, moneda, formasPago, puedeEditar = true }:
     });
   }
 
-  async function borrar() {
-    setErrorEliminar("");
-    try {
-      const r = await eliminarAbono(a.id, numero);
-      if (!r.ok) setErrorEliminar(r.error ?? "No se pudo eliminar el abono.");
-    } catch {
-      setErrorEliminar("No se pudo eliminar el abono.");
-    }
-  }
 
   if (editar) {
     return (
@@ -341,8 +338,7 @@ function FilaAbono({ a, numero, esUSD, moneda, formasPago, puedeEditar = true }:
         {puedeEditar ? (
           <>
             <button type="button" onClick={() => setEditar(true)} className="mr-3 text-xs font-medium hover:underline" style={{ color: "var(--brand-accent)" }}>Editar</button>
-            <DeleteBtn onClick={borrar} />
-            {errorEliminar && <p role="alert" className="mt-1 whitespace-normal text-xs text-red-600">{errorEliminar}</p>}
+            <AnularAbonoBoton resumen={`${fmt(a.valor_abono)} del ${a.fecha_abono}`} onAnular={(motivo) => anularAbono(a.id, numero, motivo)} />
           </>
         ) : null}
       </td>

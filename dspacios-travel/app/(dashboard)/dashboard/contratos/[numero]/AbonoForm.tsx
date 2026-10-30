@@ -1,12 +1,14 @@
 "use client";
 
 import { DateInput } from "@/components/ui/DateInput";
-import { useState, useTransition } from "react";
+import { useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { registrarAbono } from "../actions";
 import { formatUSD } from "@/lib/utils";
 import { fechaNegocio } from "@/lib/fechaNegocio";
+import { ConfirmarExcedenteAbono } from "@/components/contrato/ConfirmarExcedenteAbono";
+import { useRegistroAbono } from "@/components/contrato/useRegistroAbono";
 
 export function AbonoForm({ numeroContrato, formasPago = [], moneda = "COP" }: { numeroContrato: string; formasPago?: string[]; moneda?: string }) {
   const [valor, setValor] = useState("");
@@ -14,30 +16,19 @@ export function AbonoForm({ numeroContrato, formasPago = [], moneda = "COP" }: {
   const [ref, setRef] = useState("");
   const [trm, setTrm] = useState("");
   const [fecha, setFecha] = useState(() => fechaNegocio());
-  const [pending, startTransition] = useTransition();
-  const [error, setError] = useState("");
   const esUSD = (moneda ?? "COP").toUpperCase() === "USD";
   const usdEq = esUSD && Number(valor) > 0 && Number(trm) > 0 ? Number(valor) / Number(trm) : null;
-
-  function handle(e: React.FormEvent) {
-    e.preventDefault();
-    setError("");
-    const v = Number(valor);
-    if (!v || v <= 0) return;
-    if (esUSD && !(Number(trm) > 0)) return;
-    startTransition(async () => {
-      const r = await registrarAbono(numeroContrato, v, forma, ref, esUSD ? Number(trm) : undefined, fecha);
-      if (!r.ok) { setError(r.error ?? "No se pudo registrar el abono."); return; }
-      setValor("");
-      setForma("");
-      setRef("");
-      setTrm("");
-      setFecha(fechaNegocio());
-    });
-  }
+  const reg = useRegistroAbono({
+    campos: { valor, forma, ref, trm, fecha },
+    esUSD,
+    registrar: (e, confirmar) => registrarAbono(numeroContrato, e.valor, e.forma, e.ref, e.trm, e.fecha, confirmar, e.operacion),
+    reiniciar: () => { setValor(""); setForma(""); setRef(""); setTrm(""); setFecha(fechaNegocio()); },
+  });
+  const { pending, error } = reg;
 
   return (
-    <form onSubmit={handle} className="flex flex-wrap items-end gap-3">
+    <form onSubmit={(e) => { e.preventDefault(); reg.enviar(); }} className="flex flex-wrap items-end gap-3">
+      <ConfirmarExcedenteAbono datos={reg.excedente} onCancelar={reg.cancelar} onConfirmar={reg.confirmar} />
       <div>
         <label className="mb-1 block text-xs font-medium text-gray-600">
           {esUSD ? "Valor pagado (COP)" : "Valor del abono"}

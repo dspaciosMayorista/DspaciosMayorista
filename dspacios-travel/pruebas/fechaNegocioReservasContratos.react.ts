@@ -38,12 +38,16 @@ const semillaPrograma = () => ({
   }],
   programa_categorias: [{ id: 5, programa_id: 3, nombre: "Turista" }],
   programa_precios: [{ categoria_id: 5, acomodacion: "doble", neto: 1_000_000, bajo_solicitud: false }],
+  // PR #409: reservar exige el itinerario completo (días 1..N del programa, aquí 5).
+  programa_dias: [1, 2, 3, 4, 5].map((dia) => ({ programa_id: 3, dia, titulo: `Día ${dia}`, desayuno: false, almuerzo: false, cena: false, descripcion: "x" })),
 });
 const inputPrograma = {
   programaId: 3, categoriaId: 5, fechaIda: "2026-10-30", paxPorAcom: { doble: 1 }, ninos: 0,
   cliente: { nombres: "Ana", apellidos: "Ruiz", tipoDoc: "CC", numeroDoc: "1010", telefono: "300", email: "" },
   tipoAsesor: "interno" as const, asesorInterno: "Asesor", agenciaNombre: "", agenciaAsesor: "", freelanceNombre: "",
   plazo: "2026-10-10", pasajeros: [],
+  // #57: el importe que el usuario confirmó (1 hab. doble = 2 pax × 1.112.000: neto 1.000.000, mk 10 %).
+  precioConfirmado: 2_224_000,
 };
 
 for (const [momento, instante] of MOMENTOS) {

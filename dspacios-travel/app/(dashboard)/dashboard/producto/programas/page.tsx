@@ -9,23 +9,25 @@ export default async function ProgramasPage() {
   const sb = await createClient();
   const { data: programas } = await sb
     .from("programas")
-    .select("id, nombre, subtitulo, dias, noches, moneda, publicado, activo, destino_fijo_id, proveedores(nombre), programa_destinos_fijos(nombre, es_provisional)")
+    .select("id, nombre, subtitulo, dias, noches, moneda, publicado, activo, destino_fijo_id, proveedores!programas_proveedor_id_fkey(nombre), programa_destinos_fijos(nombre, es_provisional)")
     .order("created_at", { ascending: false });
 
   // Precio "desde" por programa (mínimo neto publicado, informativo).
   const ids = (programas ?? []).map((p) => p.id);
   const desde = new Map<number, { neto: number; moneda: string }>();
+  const monedaPorPrograma = new Map((programas ?? []).map((p) => [p.id, p.moneda ?? "USD"] as const));
   if (ids.length) {
     const { data: precios } = await sb
       .from("programa_precios")
       .select("neto, programa_categorias(programa_id)")
+      .eq("acomodacion", "doble") // «Desde» (TASKS #92): solo la tarifa DOBLE
       .not("neto", "is", null);
     for (const row of precios ?? []) {
       const pid = (row.programa_categorias as unknown as { programa_id: number } | null)?.programa_id;
       const neto = row.neto ?? 0;
       if (pid == null || neto <= 0) continue;
       const prev = desde.get(pid);
-      if (!prev || neto < prev.neto) desde.set(pid, { neto, moneda: "USD" });
+      if (!prev || neto < prev.neto) desde.set(pid, { neto, moneda: monedaPorPrograma.get(pid) ?? "USD" });
     }
   }
 

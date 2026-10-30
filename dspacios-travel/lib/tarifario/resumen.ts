@@ -10,6 +10,7 @@ import type { DescripcionPaqueteRaw } from "./descripcionPaquete.ts";
 import { condicionHotelFechas, type FilaTemporadaHotelRaw } from "../reservar/liquidacionHotel.ts";
 import { esNeutra, esRestriccionComercial, type RestriccionComercial } from "../cotizacion/condicionPago.ts";
 import { claveOferta } from "./recomendados.ts";
+import { origenSalidaDinamica } from "./dinamicoBooking.ts";
 import { ejecutarConsultaPaginada } from "./paginacion.ts";
 import { combinarTernario, etiquetaCondicion, etiquetaPolitica, type EvidenciaTernaria } from "./condicionOferta.ts";
 
@@ -206,6 +207,9 @@ export type DatosResumenTarifario = {
   filasAddon: FilaResumen[];
   cuposPorBloqueo: Record<number, number>;
   origenPorBloqueo: Record<number, string>;
+  // Origen REAL de cada salida dinámica (`salidas_dinamicas.origen`/ruta) — filtro Origen de "Paquetes" en Vista Booking.
+  // Sin entrada = origen desconocido (nunca inventado): con un origen elegido, esa salida no se muestra.
+  origenPorSalida: Record<number, string>;
   fotosPorHotel: Record<number, string>;
   fotosPorServicio: Record<number, string>;
   infoPorHotel: Record<number, InfoHotelDato>;
@@ -294,9 +298,13 @@ export async function cargarResumenTarifario(
   const bloqueoIds = [...new Set(
     filas.filter((f) => f.modulo === "bloqueo" && f.bloqueo_id != null).map((f) => f.bloqueo_id as number)
   )];
+  const origenPorSalida: Record<number, string> = {};
+  const salidaIds = [...new Set(
+    filas.filter((f) => f.modulo === "dinamico" && f.salida_id != null).map((f) => f.salida_id as number)
+  )];
 
   const huboVigencia = admin != null;
-  const [resCupos, resFiltros] = await Promise.all([
+  const [resCupos, resFiltros, resOrigenSalidas] = await Promise.all([
     (async () => {
       if (!bloqueoIds.length || !admin) return null;
       const [{ data: cup, error: e1 }, { data: blo, error: e2 }] = await Promise.all([
@@ -311,7 +319,24 @@ export async function cargarResumenTarifario(
     // detalle-actions.ts (Tier 2) para que ninguno de los dos publique una
     // tarifa que el otro ya sabría inválida.
     aplicarFiltrosPostCarga(admin, filas),
+    // Service-role: `salidas_dinamicas` solo la leen roles internos (RLS, migración 094) y el tarifario es público.
+    (async () => {
+      if (!salidaIds.length || !admin) return null;
+      return admin.from("salidas_dinamicas").select("id, origen, ruta").in("id", salidaIds);
+    })(),
   ]);
+
+  if (resOrigenSalidas) {
+    if (resOrigenSalidas.error) {
+      _huboErrorAux = true;
+      registrarErrorTecnico(flujo, flujoId, "datos_auxiliares", "error_salidas_dinamicas_origen", resOrigenSalidas.error);
+    } else {
+      for (const s of resOrigenSalidas.data ?? []) {
+        const ori = origenSalidaDinamica(s);
+        if (ori) origenPorSalida[s.id as number] = ori;
+      }
+    }
+  }
 
   if (resCupos) {
     if (resCupos.e1) {
@@ -342,13 +367,25 @@ export async function cargarResumenTarifario(
   // hay disponible". Ahora la función entera falla cerrada: nunca entrega
   // catálogo parcial como disponibilidad válida para /tarifario ni
   // /dashboard/reservar.
-  const huboErrorFiltros = !!(resFiltros.errorVigencia || resFiltros.errorEmpaquetado);
+  const huboErrorFiltros = !!(resFiltros.errorVigencia || resFiltros.errorEmpaquetado || resFiltros.errorSalida || resFiltros.errorOrigenAereo);
   if (resFiltros.errorVigencia) {
     registrarErrorTecnico(flujo, flujoId, "filtro_vigencia", "error_hotel_temporadas_o_tarifa_hotel", resFiltros.errorVigencia);
   }
   if (resFiltros.errorEmpaquetado) {
     _huboErrorAux = true;
     registrarErrorTecnico(flujo, flujoId, "datos_auxiliares", "error_consulta_empaquetados_vigencia", resFiltros.errorEmpaquetado);
+  }
+  // #62: error al verificar la vigencia de las salidas dinámicas — mismo trato
+  // que empaquetados: error técnico y fallo cerrado, nunca "sin disponibilidad".
+  if (resFiltros.errorSalida) {
+    _huboErrorAux = true;
+    registrarErrorTecnico(flujo, flujoId, "datos_auxiliares", "error_consulta_salidas_dinamicas_vigencia", resFiltros.errorSalida);
+  }
+  // #67: error al verificar el destino aéreo de los vuelos de Bloqueo — error
+  // técnico y fallo cerrado, nunca "sin disponibilidad" ni catálogo parcial.
+  if (resFiltros.errorOrigenAereo) {
+    _huboErrorAux = true;
+    registrarErrorTecnico(flujo, flujoId, "datos_auxiliares", "error_consulta_destinos_aereos", resFiltros.errorOrigenAereo);
   }
   registrarEtapa(flujo, flujoId, "filtro_vigencia", Math.round(performance.now() - _tAux0), huboErrorFiltros ? "error" : "ok");
   registrarDatoPagina(flujo, flujoId, "filtro_vigencia", `filas=${filas.length} consultas=${huboVigencia ? 2 : 0}`);
@@ -375,7 +412,7 @@ export async function cargarResumenTarifario(
     filasVisibles.filter((f) => f.modulo === "porcion_terrestre" && f.paquete_id != null).map((f) => f.paquete_id as number)
   )];
   const paqIdsConHotel = [...new Set(
-    filasVisibles.filter((f) => (f.modulo === "bloqueo" || f.modulo === "porcion_terrestre") && f.paquete_id != null).map((f) => f.paquete_id as number)
+    filasVisibles.filter((f) => (f.modulo === "bloqueo" || f.modulo === "porcion_terrestre" || f.modulo === "dinamico") && f.paquete_id != null).map((f) => f.paquete_id as number)
   )];
 
   const fotosPorHotel: Record<number, string> = {};
@@ -655,7 +692,8 @@ export async function cargarResumenTarifario(
     for (const f of filasVisibles) {
       if (f.hotel_id == null || f.paquete_id == null) continue;
       const clave = claveOferta(f.hotel_id, f.paquete_id);
-      if (f.modulo === "bloqueo" && f.fecha_ida && f.fecha_regreso) {
+      // Dinámico: las fechas de cada salida (igual que las del bloqueo, sin cupos).
+      if ((f.modulo === "bloqueo" || f.modulo === "dinamico") && f.fecha_ida && f.fecha_regreso) {
         const set = fechasPorOferta.get(clave) ?? new Set<string>();
         set.add(`${f.fecha_ida}|${f.fecha_regreso}`);
         fechasPorOferta.set(clave, set);
@@ -729,7 +767,7 @@ export async function cargarResumenTarifario(
     ok: true,
     datos: {
       filasVisibles, filasAddon,
-      cuposPorBloqueo, origenPorBloqueo, fotosPorHotel, fotosPorServicio,
+      cuposPorBloqueo, origenPorBloqueo, origenPorSalida, fotosPorHotel, fotosPorServicio,
       infoPorHotel, capPorHotel, planesInfo, ventanaPorPaquete, descripcionPorPaquete,
       prioridadesRecomendados, condicionPorOferta, politicaPorOferta, restriccionPorPaquete: restriccionPorPaqueteRecord,
     },

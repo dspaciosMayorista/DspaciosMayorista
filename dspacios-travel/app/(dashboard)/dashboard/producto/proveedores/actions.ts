@@ -2,6 +2,7 @@
 
 import { createClient } from "@/lib/supabase/server";
 import { revalidatePath } from "next/cache";
+import { exigirEscrituraCatalogoGlobal } from "@/lib/auth/contextoAgencia";
 
 type Result = { ok: true } | { ok: false; error: string };
 const oNull = (s: string) => (s && s.trim() !== "" ? s.trim() : null);
@@ -45,6 +46,9 @@ function toRow(input: ProveedorInput) {
 }
 
 export async function crearProveedor(input: ProveedorInput): Promise<Result> {
+  // D8/D9: los catálogos globales solo se escriben desde Mayorista (la RLS lo exige igual).
+  const catalogo = await exigirEscrituraCatalogoGlobal();
+  if (!catalogo.ok) return catalogo;
   const sb = await createClient();
   if (!input.nombre.trim()) return { ok: false, error: "El nombre es obligatorio." };
   const { error } = await sb.rpc("guardar_proveedor", { p_proveedor: toRow(input) });
@@ -54,6 +58,9 @@ export async function crearProveedor(input: ProveedorInput): Promise<Result> {
 }
 
 export async function actualizarProveedor(id: number, input: ProveedorInput): Promise<Result> {
+  // D8/D9: los catálogos globales solo se escriben desde Mayorista (la RLS lo exige igual).
+  const catalogo = await exigirEscrituraCatalogoGlobal();
+  if (!catalogo.ok) return catalogo;
   const sb = await createClient();
   if (!input.nombre.trim()) return { ok: false, error: "El nombre es obligatorio." };
   const { error } = await sb.rpc("guardar_proveedor", { p_proveedor: toRow(input), p_id: id });
@@ -63,6 +70,9 @@ export async function actualizarProveedor(id: number, input: ProveedorInput): Pr
 }
 
 export async function eliminarProveedor(id: number): Promise<Result> {
+  // D8/D9: los catálogos globales solo se escriben desde Mayorista (la RLS lo exige igual).
+  const catalogo = await exigirEscrituraCatalogoGlobal();
+  if (!catalogo.ok) return catalogo;
   const sb = await createClient();
   const { error } = await sb.from("proveedores").delete().eq("id", id);
   if (error) return { ok: false, error: error.message };

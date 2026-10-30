@@ -75,7 +75,7 @@ const MSG_ERROR_DETALLE = "No fue posible cargar el detalle en este momento. Int
 const FLUJO = "tarifario_detalle_bajo_demanda";
 
 const COLUMNAS_DETALLE =
-  "modulo, bloqueo_label, bloqueo_id, empaquetado_id, salida_id, paquete_id, hotel_id, servicio_id, servicio_nombre, tipo_tarifa, pax_desde, pax_hasta, fecha_ida, fecha_regreso, noches, destino_nombre, paquete_nombre, hotel_nombre, categoria, regimen, acomodacion, precio_pvp, descripcion, recargo_individual, moneda";
+  "modulo, bloqueo_label, bloqueo_id, empaquetado_id, salida_id, paquete_id, hotel_id, servicio_id, servicio_nombre, tipo_tarifa, pax_desde, pax_hasta, fecha_ida, fecha_regreso, noches, destino_nombre, paquete_nombre, hotel_nombre, categoria, regimen, acomodacion, precio_pvp, precio_pvp_menor2, precio_pvp_sin_fijo, precio_pvp_menor2_sin_fijo, descripcion, recargo_individual, moneda";
 
 export type ResultadoDetalle = { ok: true; filas: FilaTarifario[] } | { ok: false; error: string };
 
@@ -143,6 +143,21 @@ async function cargarDetalleAcotado(
     // Un error TÉCNICO al verificar vigencia/empaquetados nunca se disfraza
     // de "sin disponibilidad" — la Server Action falla cerrada, con
     // `resultado=error` en la instrumentación (nunca "ok").
+    registrarEtapa(FLUJO, flujoId, "detalle_tarifas", Math.round(performance.now() - t0), "error");
+    return { ok: false, error: MSG_ERROR_DETALLE };
+  }
+  // #62: error técnico al verificar la vigencia de las salidas dinámicas —
+  // mismo trato que los dos anteriores (falla cerrada con el mensaje público
+  // existente, nunca "sin disponibilidad"). Bloque aparte a propósito: deja
+  // intacto el contrato ya cubierto por pruebas/tarifarioDetalleWiring.test.ts.
+  if (res.errorSalida) {
+    registrarErrorTecnico(FLUJO, flujoId, "detalle_tarifas", `error_salidas_${etapa}`, res.errorSalida);
+    registrarEtapa(FLUJO, flujoId, "detalle_tarifas", Math.round(performance.now() - t0), "error");
+    return { ok: false, error: MSG_ERROR_DETALLE };
+  }
+  // #67: error al verificar el destino aéreo — mismo trato (bloque aparte).
+  if (res.errorOrigenAereo) {
+    registrarErrorTecnico(FLUJO, flujoId, "detalle_tarifas", `error_destinos_aereos_${etapa}`, res.errorOrigenAereo);
     registrarEtapa(FLUJO, flujoId, "detalle_tarifas", Math.round(performance.now() - t0), "error");
     return { ok: false, error: MSG_ERROR_DETALLE };
   }
@@ -303,6 +318,18 @@ export async function obtenerDetalleServicios(): Promise<ResultadoDetalle> {
   if (res.errorVigencia || res.errorEmpaquetado) {
     if (res.errorVigencia) registrarErrorTecnico(FLUJO, flujoId, "detalle_tarifas", "error_vigencia_servicios", res.errorVigencia);
     if (res.errorEmpaquetado) registrarErrorTecnico(FLUJO, flujoId, "detalle_tarifas", "error_empaquetados_servicios", res.errorEmpaquetado);
+    registrarEtapa(FLUJO, flujoId, "detalle_tarifas", Math.round(performance.now() - t0), "error");
+    return { ok: false, error: MSG_ERROR_DETALLE };
+  }
+  // #62: igual que en cargarDetalleAcotado (bloque aparte para no alterar el
+  // contrato cubierto por pruebas/tarifarioDetalleWiring.test.ts).
+  if (res.errorSalida) {
+    registrarErrorTecnico(FLUJO, flujoId, "detalle_tarifas", "error_salidas_servicios", res.errorSalida);
+    registrarEtapa(FLUJO, flujoId, "detalle_tarifas", Math.round(performance.now() - t0), "error");
+    return { ok: false, error: MSG_ERROR_DETALLE };
+  }
+  if (res.errorOrigenAereo) {
+    registrarErrorTecnico(FLUJO, flujoId, "detalle_tarifas", "error_destinos_aereos_servicios", res.errorOrigenAereo);
     registrarEtapa(FLUJO, flujoId, "detalle_tarifas", Math.round(performance.now() - t0), "error");
     return { ok: false, error: MSG_ERROR_DETALLE };
   }

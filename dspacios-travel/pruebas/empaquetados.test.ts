@@ -286,7 +286,8 @@ const paquetesActionsSrc = leer("app/(dashboard)/dashboard/paquetes/actions.ts")
 
 test("generarTarifario lee armado_empaquetados (join con empaquetados) — antes NO lo consultaba en absoluto", () => {
   assert.match(paquetesActionsSrc, /\.from\("armado_empaquetados"\)/, "generarTarifario debe consultar armado_empaquetados");
-  assert.match(paquetesActionsSrc, /empaquetados\(id, record, ruta, fecha_ida, fecha_regreso, tarifa_para_empaquetar, activo, compra_inicio, compra_fin\)/);
+  // 226: además `fee_infante` (el infante paga ese fee en el vuelo; precio = costo).
+  assert.match(paquetesActionsSrc, /empaquetados\(id, record, ruta, fecha_ida, fecha_regreso, tarifa_para_empaquetar, (fee_infante, )?(moneda, )?activo, compra_inicio, compra_fin\)/);
 });
 
 test("generarTarifario: la rama 'bloqueo' liquida empaquetados con la MISMA función aporteVuelo/filasHoteles que un bloqueo negociado, usando tarifa_para_empaquetar (nunca tarifa_proveedor) como costoTiquete", () => {
@@ -297,7 +298,8 @@ test("generarTarifario: la rama 'bloqueo' liquida empaquetados con la MISMA func
   assert.match(bloque, /const costoTiquete = Number\(e\.tarifa_para_empaquetar\) \|\| 0;/, "debe usar tarifa_para_empaquetar como base");
   assert.doesNotMatch(bloque, /e\.tarifa_proveedor/, "tarifa_proveedor (neto informativo) NUNCA debe entrar al cálculo del PVP — evita doble margen/inconsistencia");
   assert.match(bloque, /aporteVuelo\(costoTiquete, aplica_mk, pctMk, ta\)/, "debe usar la MISMA función aporteVuelo que un bloqueo negociado");
-  assert.match(bloque, /filasHoteles\(e\.fecha_ida!, numNoches, aporteVueloVal, impuesto, "bloqueo", null, label, e\.fecha_regreso, false, null, e\.id\)/, "debe pasar bloqueoId=null y empaquetadoId=e.id — provenance inequívoca");
+  // 226: el último argumento es el fee de infante de la fuente (precio = costo, sin MK ni TA).
+  assert.match(bloque, /filasHoteles\(e\.fecha_ida!, numNoches, aporteVueloVal, impuesto, "bloqueo", null, label, e\.fecha_regreso, false, null, e\.id(, Number\(e\.fee_infante\) \|\| 0)?\)/, "debe pasar bloqueoId=null y empaquetadoId=e.id — provenance inequívoca");
 });
 
 test("generarTarifario: filasHoteles guarda empaquetado_id en cada fila insertada de tarifario_resultado", () => {
@@ -323,7 +325,10 @@ test("generarTarifario: empaquetados inactivos (activo=false) se excluyen de la 
   const inicio = paquetesActionsSrc.indexOf("const empaquetadosVuelos = (empaquetadosSel ?? [])");
   const fin = paquetesActionsSrc.indexOf("const tipo = (pq.tipo", inicio);
   const bloque = paquetesActionsSrc.slice(inicio, fin);
-  assert.match(bloque, /v\.e\.activo/, "el filtro debe excluir empaquetados con activo=false");
+  assert.match(bloque, /empaquetadoVueloAporta\(v\.e, /, "el generador debe filtrar con empaquetadoVueloAporta");
+  const aporteSrc = leer("lib/reservar/aporteFuentes90.ts");
+  const predicado = aporteSrc.slice(aporteSrc.indexOf("export function empaquetadoVueloAporta"));
+  assert.match(predicado.slice(0, predicado.indexOf("\n}\n")), /!!e\.activo/, "el predicado debe excluir empaquetados con activo=false");
 });
 
 // ── computo.ts + reservar/actions.ts — provenance hasta Booking/contrato ───
@@ -432,7 +437,7 @@ test("crearEmpaquetado exige fecha_ida pero NO exige record (el PNR se agrega de
     empActionsSrc.indexOf("export async function crearEmpaquetado"),
     empActionsSrc.indexOf("// GENERALES:")
   );
-  assert.match(fn, /validarEmpaquetado\(input\)/, "crearEmpaquetado debe pasar por la validación compartida");
+  assert.match(fn, /validarEmpaquetado\(input(, true)?\)/, "crearEmpaquetado debe pasar por la validación compartida");
   assert.doesNotMatch(fn, /if \(!input\.record/, "no debe exigir record — es opcional a propósito");
 });
 
@@ -636,7 +641,10 @@ test("VistaTabs: Inventario | EMPAQUETADOS | CONTROL VUELOS en ese orden, con fa
 const armadoClientSrc = leer("app/(dashboard)/dashboard/paquetes/[id]/ArmadoClient.tsx");
 
 test("ArmadoClient: la sección de Empaquetados usa setEmpaquetado/armado_empaquetados, nunca comparte estado con setVuelo/armado_vuelos", () => {
-  assert.match(armadoClientSrc, /import \{ setEmpaquetado, setTodosEmpaquetados \} from "\.\.\/\.\.\/vuelos\/empaquetados-actions";/);
+  assert.match(armadoClientSrc, /import \{ setEmpaquetado \} from "\.\.\/\.\.\/vuelos\/empaquetados-actions";/);
+  // #101: en un paquete de Bloqueo los empaquetados ya no se ofrecen para vincular (no hay "Seleccionar todos" de
+  // empaquetados); los que sigan vinculados se muestran solo en lectura.
+  assert.doesNotMatch(armadoClientSrc, /setTodosEmpaquetados/);
   assert.match(armadoClientSrc, /empaquetadosDisp:\s*Empaquetado\[\];/);
   assert.match(armadoClientSrc, /selEmpaquetados:\s*SelEmpaquetado\[\];/);
   assert.match(armadoClientSrc, /function EmpaquetadoRow/);

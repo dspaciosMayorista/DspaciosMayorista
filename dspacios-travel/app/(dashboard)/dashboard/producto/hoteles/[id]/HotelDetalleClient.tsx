@@ -1,11 +1,15 @@
 "use client";
 
 import { DateInput } from "@/components/ui/DateInput";
-import { useState, useTransition } from "react";
+import { useRef, useState, useTransition, type KeyboardEvent, type ReactNode } from "react";
 import { useRouter } from "next/navigation";
+import { CalendarRange, Pencil, Settings, Table2, Trash2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { formatCOP, formatFechaLarga } from "@/lib/utils";
+import { formatFechaLarga } from "@/lib/utils";
+import {
+  agruparTarifasPorVigenciaRegimen, formatNetoTarifa, normalizarPestanaHotel, PESTANAS_HOTEL, type PestanaHotel,
+} from "@/lib/hoteles/tarifasVista";
 import { ResponsiveTableShell } from "@/components/ui/ResponsiveTableShell";
 import { ComboHotel } from "@/components/ComboHotel";
 import {
@@ -78,8 +82,16 @@ const sel = "rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm";
 const hoyLocal = () => fechaNegocio();
 const esVencida = (t: Temporada, hoy: string): boolean => !!t.compra_fin && t.compra_fin < hoy;
 
+const ETIQUETA_PESTANA: Record<PestanaHotel, { completa: string; corta: string }> = {
+  configuracion: { completa: "Configuración", corta: "Configuración" },
+  temporadas: { completa: "Temporadas, promociones y calculadora", corta: "Temporadas" },
+  tarifas: { completa: "Tarifas generadas", corta: "Tarifas" },
+};
+const ICONO_PESTANA = { configuracion: Settings, temporadas: CalendarRange, tarifas: Table2 } as const;
+
 export function HotelDetalleClient({
   hotelId, categorias, regimenes, temporadas, tarifas, otrosHoteles, adultsOnly = false, mostrarTarifaPersona = true,
+  moneda = "COP", pestanaInicial, configuracion, calculadora, tarifasExtra,
 }: {
   hotelId: number; categorias: string[]; regimenes: string[]; temporadas: Temporada[]; tarifas: Tarifa[];
   otrosHoteles: { id: number; nombre: string }[]; adultsOnly?: boolean;
@@ -89,20 +101,89 @@ export function HotelDetalleClient({
   // siguen mostrándose siempre: el calendario es compartido por los dos
   // editores, no es exclusivo del modelo por persona.
   mostrarTarifaPersona?: boolean;
+  moneda?: string;
+  pestanaInicial?: string;
+  // Bloques que arma el servidor (page.tsx). Los TRES paneles quedan montados
+  // siempre (los inactivos solo se ocultan con `hidden`): cambiar de pestaña no
+  // desmonta nada, así que borradores, filtros y formularios a medias se conservan.
+  configuracion: ReactNode;
+  calculadora: ReactNode;
+  tarifasExtra: ReactNode;
 }) {
   const hoy = hoyLocal();
   const vencidasNombres = new Set(temporadas.filter((t) => esVencida(t, hoy)).map((t) => t.nombre));
+  // La pestaña activa vive en el estado y se refleja en `?tab=` sin navegar (mismo patrón que el armado de paquetes).
+  const [activa, setActiva] = useState<PestanaHotel>(() => normalizarPestanaHotel(pestanaInicial));
+  function cambiarPestana(id: PestanaHotel) {
+    setActiva(id);
+    if (typeof window === "undefined") return;
+    try {
+      const url = new URL(window.location.href);
+      url.searchParams.set("tab", id);
+      window.history.replaceState(null, "", `${url.pathname}${url.search}${url.hash}`);
+    } catch {
+      /* sin historial disponible: la pestaña vive solo en el estado */
+    }
+  }
+  function teclaPestana(e: KeyboardEvent, idx: number) {
+    const salto = e.key === "ArrowRight" ? 1 : e.key === "ArrowLeft" ? -1 : 0;
+    if (!salto) return;
+    e.preventDefault();
+    const siguiente = PESTANAS_HOTEL[(idx + salto + PESTANAS_HOTEL.length) % PESTANAS_HOTEL.length];
+    cambiarPestana(siguiente);
+    document.getElementById(`tab-hotel-${siguiente}`)?.focus();
+  }
   return (
-    <div className="space-y-8">
-      <TemporadasBox hotelId={hotelId} temporadas={temporadas} otrosHoteles={otrosHoteles} hoy={hoy} regimenes={regimenes} />
-      {mostrarTarifaPersona && (
-        <TarifasBox hotelId={hotelId} categorias={categorias} regimenes={regimenes} temporadas={temporadas} tarifas={tarifas} vencidasNombres={vencidasNombres} adultsOnly={adultsOnly} />
-      )}
+    <div className="space-y-6">
+      <div role="tablist" aria-label="Secciones del hotel" className="grid grid-cols-3 gap-1 border-b border-gray-200 sm:flex">
+        {PESTANAS_HOTEL.map((id, idx) => {
+          const Icono = ICONO_PESTANA[id];
+          const esActiva = id === activa;
+          return (
+            <button
+              key={id}
+              type="button"
+              role="tab"
+              id={`tab-hotel-${id}`}
+              aria-selected={esActiva}
+              aria-controls={`panel-hotel-${id}`}
+              aria-label={ETIQUETA_PESTANA[id].completa}
+              tabIndex={esActiva ? 0 : -1}
+              onClick={() => cambiarPestana(id)}
+              onKeyDown={(e) => teclaPestana(e, idx)}
+              className={`-mb-px flex min-h-11 min-w-0 flex-col items-center justify-center gap-0.5 border-b-2 px-1 py-1.5 text-[11px] font-medium leading-tight transition-colors sm:flex-row sm:justify-start sm:gap-1.5 sm:px-3 sm:py-2 sm:text-sm ${
+                esActiva ? "text-[var(--brand-primary)]" : "border-transparent text-gray-500 hover:text-gray-800"
+              }`}
+              style={esActiva ? { borderColor: "var(--brand-accent)" } : undefined}
+            >
+              <Icono className="h-4 w-4 shrink-0" aria-hidden="true" />
+              <span className="min-w-0 sm:hidden">{ETIQUETA_PESTANA[id].corta}</span>
+              <span className="hidden sm:inline">{ETIQUETA_PESTANA[id].completa}</span>
+            </button>
+          );
+        })}
+      </div>
+
+      <div role="tabpanel" id="panel-hotel-configuracion" aria-labelledby="tab-hotel-configuracion" hidden={activa !== "configuracion"} className="mx-auto max-w-5xl">
+        {configuracion}
+      </div>
+      <div role="tabpanel" id="panel-hotel-temporadas" aria-labelledby="tab-hotel-temporadas" hidden={activa !== "temporadas"} className="mx-auto max-w-5xl space-y-8">
+        <TemporadasBox hotelId={hotelId} temporadas={temporadas} otrosHoteles={otrosHoteles} hoy={hoy} regimenes={regimenes} moneda={moneda} />
+        {/* Cada bloque del servidor va como ÚNICO hijo de su contenedor: junto a otros hijos dentro de un arreglo estático,
+           React 19 (dev) avisa "Each child in a list should have a unique key" por los elementos que llegan del servidor. */}
+        <div>{calculadora}</div>
+      </div>
+      <div role="tabpanel" id="panel-hotel-tarifas" aria-labelledby="tab-hotel-tarifas" hidden={activa !== "tarifas"} className="space-y-8">
+        {mostrarTarifaPersona && (
+          <TarifasBox hotelId={hotelId} categorias={categorias} regimenes={regimenes} temporadas={temporadas} tarifas={tarifas} vencidasNombres={vencidasNombres} adultsOnly={adultsOnly} moneda={moneda} />
+        )}
+        <div>{tarifasExtra}</div>
+      </div>
     </div>
   );
 }
 
-function TemporadasBox({ hotelId, temporadas, otrosHoteles, hoy, regimenes }: { hotelId: number; temporadas: Temporada[]; otrosHoteles: { id: number; nombre: string }[]; hoy: string; regimenes: string[] }) {
+function TemporadasBox({ hotelId, temporadas, otrosHoteles, hoy, regimenes, moneda }: { hotelId: number; temporadas: Temporada[]; otrosHoteles: { id: number; nombre: string }[]; hoy: string; regimenes: string[]; moneda: string }) {
   const [editId, setEditId] = useState<number | null>(null);
   const [nombre, setNombre] = useState("");
   const [ini, setIni] = useState("");
@@ -197,7 +278,7 @@ function TemporadasBox({ hotelId, temporadas, otrosHoteles, hoy, regimenes }: { 
           <span className="text-[11px] text-gray-400">P{t.prioridad ?? 1}</span>
           {(tp === "descuento_pct" || tp === "descuento_monto") && t.descuento_valor != null && (
             <span className="text-[11px] font-medium text-[var(--brand-success)]">
-              {tp === "descuento_pct" ? `−${t.descuento_valor}%` : `−${formatCOP(t.descuento_valor)}/pax`}
+              {tp === "descuento_pct" ? `−${t.descuento_valor}%` : `−${formatNetoTarifa(t.descuento_valor, moneda)}/pax`}
             </span>
           )}
           {tp === "promo_noche_gratis" && (
@@ -271,7 +352,7 @@ function TemporadasBox({ hotelId, temporadas, otrosHoteles, hoy, regimenes }: { 
               <Input type="number" min={0} value={descuento} onChange={(e) => setDescuento(e.target.value)} placeholder={tipo === "descuento_pct" ? "20" : "50000"} />
             </div>
           )}
-          <div>
+          <div className="col-span-2 sm:col-span-1">
             <label className={lbl}>Régimen <span className="font-normal text-gray-400">(vacío = todos)</span></label>
             <select value={regimenRestringido} onChange={(e) => setRegimenRestringido(e.target.value)} className={`${sel} w-full`}>
               <option value="">Todos los régimen</option>
@@ -398,9 +479,12 @@ function ListaRangos({ titulo, items, onChange }: { titulo: string; items: Rango
   );
 }
 
-function TarifasBox({ hotelId, categorias, regimenes, temporadas, tarifas, vencidasNombres, adultsOnly }: {
-  hotelId: number; categorias: string[]; regimenes: string[]; temporadas: Temporada[]; tarifas: Tarifa[]; vencidasNombres: Set<string>; adultsOnly: boolean;
+function TarifasBox({ hotelId, categorias, regimenes, temporadas, tarifas, vencidasNombres, adultsOnly, moneda }: {
+  hotelId: number; categorias: string[]; regimenes: string[]; temporadas: Temporada[]; tarifas: Tarifa[]; vencidasNombres: Set<string>; adultsOnly: boolean; moneda: string;
 }) {
+  // "Editar" en una fila carga el formulario de arriba: en celular (y en listas
+  // largas) ese formulario queda fuera de la pantalla, así que se lleva a la vista.
+  const formRef = useRef<HTMLDivElement>(null);
   const [tipo, setTipo] = useState("");
   const [alim, setAlim] = useState("");
   const [temp, setTemp] = useState("");
@@ -450,6 +534,8 @@ function TarifasBox({ hotelId, categorias, regimenes, temporadas, tarifas, venci
     });
     setNotaInfante(t.nota_infante ?? "");
     setMostrarNinos(t.neto_nino != null || t.neto_nino2 != null || t.neto_infante != null || !!t.nota_infante);
+    formRef.current?.scrollIntoView?.({ behavior: "smooth", block: "start" });
+    formRef.current?.querySelector("select")?.focus({ preventScroll: true });
   }
 
   function add() {
@@ -481,15 +567,21 @@ function TarifasBox({ hotelId, categorias, regimenes, temporadas, tarifas, venci
   const activas = tarifas.filter((t) => !esHistorica(t));
   const historicas = tarifas.filter((t) => esHistorica(t));
 
-  const celda = (base: number | null) => (base ? formatCOP(base) : "—");
+  // Importe en la moneda del hotel. Sin dato (null) → "—"; un 0 cargado es un valor real (gratis) y se muestra
+  // como importe, no como "—" (antes `base ? … : "—"` escondía los ceros).
+  const celda = (valor: number | null) => formatNetoTarifa(valor, moneda);
+  const importe = "whitespace-nowrap px-2 py-2 text-right tabular-nums";
 
+  // La temporada (vigencia) y el régimen ya van en el encabezado de cada grupo; la fila conserva la categoría, la
+  // etiqueta Base/Promo, la condición de la tarifa y todas las acomodaciones.
   const filaTarifa = (t: Tarifa) => (
-    <tr key={t.id} className="border-t border-gray-50">
-      <td className="px-3 py-2 text-gray-700" data-label="Categoría">{t.tipo_habitacion ?? "—"}</td>
-      <td className="px-3 py-2 text-gray-500" data-label="Régimen">{t.alimentacion ?? "—"}</td>
-      <td className="px-3 py-2 text-gray-500" data-label="Temporada">
-        <div className="flex items-center gap-1.5">
-          <span>{t.temporada ?? "—"}</span>
+    <tr key={t.id} className="border-t border-gray-50 align-top">
+      <td className="px-2 py-2 text-gray-700" data-label="Categoría">
+        {/* Un solo bloque: apilada, la celda es flex (etiqueta | contenido) y cada hijo suelto se volvería una
+            columna angosta que parte las palabras. */}
+        <div className="min-w-0 text-left">
+        <div className="flex flex-wrap items-center gap-1.5 [overflow-wrap:anywhere]">
+          <span className="font-medium text-gray-800">{t.tipo_habitacion ?? "—"}</span>
           {(() => {
             const { etiqueta, detalle } = etiquetaFilaTarifa(t, temporadas);
             return etiqueta === "PROMO" ? (
@@ -505,52 +597,99 @@ function TarifasBox({ hotelId, categorias, regimenes, temporadas, tarifas, venci
         {/* Condición de la TARIFA (ej. "No reembolsable.") — distinta de la
             condición de PAGO de la temporada (cuánto/cuándo se paga). */}
         {t.notas?.trim() && (
-          <div className="mt-0.5 max-w-[220px] truncate text-[10px] text-amber-600" title={t.notas}>
-            {t.notas}
-          </div>
+          <div className="mt-0.5 text-[10px] text-amber-600 [overflow-wrap:anywhere]">{t.notas}</div>
         )}
+        {/* La nota de infante antes solo vivía en un `title` (invisible al tacto). */}
+        {!adultsOnly && t.nota_infante && (
+          <div className="mt-0.5 text-[10px] text-amber-600 [overflow-wrap:anywhere]">* Infante: {t.nota_infante}</div>
+        )}
+        </div>
       </td>
-      <td className="px-3 py-2 text-right tabular-nums" data-label="Sencilla">{celda(t.neto_sencilla)}</td>
-      <td className="px-3 py-2 text-right tabular-nums" data-label="Doble">{celda(t.neto_doble)}</td>
-      <td className="px-3 py-2 text-right tabular-nums" data-label="Triple">{celda(t.neto_triple)}</td>
-      <td className="px-3 py-2 text-right tabular-nums" data-label="Múltiple">{celda(t.neto_multiple)}</td>
+      <td className={importe} data-label="Sencilla">{celda(t.neto_sencilla)}</td>
+      <td className={importe} data-label="Doble">{celda(t.neto_doble)}</td>
+      <td className={importe} data-label="Triple">{celda(t.neto_triple)}</td>
+      <td className={importe} data-label="Múltiple">{celda(t.neto_multiple)}</td>
       {!adultsOnly && (
         <>
-          <td className="px-3 py-2 text-right tabular-nums" data-label="Niño 1">{celda(t.neto_nino)}</td>
-          <td className="px-3 py-2 text-right tabular-nums" data-label="Niño 2">{celda(t.neto_nino2)}</td>
-          <td className="px-3 py-2 text-right tabular-nums" title={t.nota_infante ?? undefined} data-label="Infante">
-            {t.neto_infante != null ? formatCOP(t.neto_infante) : "—"}
-            {t.nota_infante && <span className="ml-1 text-amber-500" title={t.nota_infante}>*</span>}
+          <td className={importe} data-label="Niño 1">{celda(t.neto_nino)}</td>
+          <td className={importe} data-label="Niño 2">{celda(t.neto_nino2)}</td>
+          <td className={importe} data-label="Infante">
+            <span>
+              {celda(t.neto_infante)}
+              {t.nota_infante && <span className="ml-1 text-amber-500" aria-hidden>*</span>}
+            </span>
           </td>
         </>
       )}
-      <td className="px-3 py-2 text-right" data-label="">
-        <div className="flex items-center justify-end gap-3">
-          <button type="button" onClick={() => startEdit(t)} className="text-xs text-[var(--brand-accent)] hover:underline">Editar</button>
-          <DelBtn onDel={() => eliminarTarifa(t.id, hotelId)} />
+      <td className="px-1 py-1 text-right" data-label="Acciones">
+        <div className="flex items-center justify-end gap-1">
+          <button
+            type="button"
+            onClick={() => startEdit(t)}
+            aria-label={`Editar tarifa ${t.tipo_habitacion ?? ""} · ${t.alimentacion ?? ""} · ${t.temporada ?? ""}`}
+            title="Editar"
+            className="grid h-10 w-10 place-items-center rounded-lg text-[var(--brand-accent)] hover:bg-gray-100"
+          >
+            <Pencil size={16} aria-hidden />
+          </button>
+          <DelBtn
+            onDel={() => eliminarTarifa(t.id, hotelId)}
+            icono
+            etiqueta={`Eliminar tarifa ${t.tipo_habitacion ?? ""} · ${t.alimentacion ?? ""} · ${t.temporada ?? ""}`}
+          />
         </div>
       </td>
     </tr>
   );
 
+  // Ancho mínimo de la tabla (mismo número en `minWidth` y `min-w-[…]`): por debajo, `ResponsiveTableShell`
+  // la apila en fichas con todos los datos y acciones en vez de dejar columnas detrás de un scroll horizontal.
+  const anchoMin = adultsOnly ? 600 : 900;
   const tablaTarifas = (rows: Tarifa[]) => (
-    <ResponsiveTableShell minWidth={760} className="overflow-x-auto rounded-xl border border-gray-200 bg-white">
-      <table className="w-full min-w-[760px] text-sm">
+    <ResponsiveTableShell minWidth={anchoMin} className="overflow-x-auto">
+      <table className={`w-full table-fixed text-sm ${adultsOnly ? "min-w-[600px]" : "min-w-[900px]"}`}>
         <thead><tr className="bg-gray-50 text-left text-xs uppercase text-gray-400">
-          <th className="px-3 py-2">Categoría</th><th className="px-3 py-2">Régimen</th><th className="px-3 py-2">Temporada</th>
-          <th className="px-3 py-2 text-right">Sencilla</th><th className="px-3 py-2 text-right">Doble</th>
-          <th className="px-3 py-2 text-right">Triple</th><th className="px-3 py-2 text-right">Múltiple</th>
+          <th className="px-2 py-2">Categoría</th>
+          <th className="w-24 whitespace-nowrap px-2 py-2 text-right">Sencilla</th><th className="w-24 whitespace-nowrap px-2 py-2 text-right">Doble</th>
+          <th className="w-24 whitespace-nowrap px-2 py-2 text-right">Triple</th><th className="w-24 whitespace-nowrap px-2 py-2 text-right">Múltiple</th>
           {!adultsOnly && (
             <>
-              <th className="px-3 py-2 text-right">Niño 1</th><th className="px-3 py-2 text-right">Niño 2</th>
-              <th className="px-3 py-2 text-right">Infante</th>
+              <th className="w-24 whitespace-nowrap px-2 py-2 text-right">Niño 1</th><th className="w-24 whitespace-nowrap px-2 py-2 text-right">Niño 2</th>
+              <th className="w-24 whitespace-nowrap px-2 py-2 text-right">Infante</th>
             </>
           )}
-          <th className="px-3 py-2"></th>
+          <th className="w-[88px] px-2 py-2"><span className="sr-only">Acciones</span></th>
         </tr></thead>
         <tbody>{rows.map((t) => filaTarifa(t))}</tbody>
       </table>
     </ResponsiveTableShell>
+  );
+
+  // Una tarjeta por vigencia × alimentación: encabezado con la vigencia y su régimen, y debajo la tabla de sus
+  // categorías. Partición exacta de `rows` (ninguna tarifa se pierde ni se altera).
+  const gruposTarifas = (rows: Tarifa[]) => (
+    <div className="space-y-4">
+      {agruparTarifasPorVigenciaRegimen(rows, temporadas).map((g) => (
+        <div key={g.clave} className="overflow-hidden rounded-xl border border-gray-200 bg-white" data-grupo-tarifas>
+          <div className="flex flex-wrap items-center gap-x-3 gap-y-1 border-b border-gray-100 bg-gray-50/70 px-3 py-2">
+            <h3 className="text-sm font-semibold text-gray-800 [overflow-wrap:anywhere]">{g.temporada ?? "Sin temporada"}</h3>
+            <span className="rounded-full bg-[var(--brand-accent)]/15 px-2 py-0.5 text-[11px] font-semibold text-[var(--brand-primary)]">{g.alimentacion ?? "Sin régimen"}</span>
+            <span className="text-xs text-gray-500">
+              {g.vigencias.length === 0
+                ? <span className="text-amber-600">Sin vigencia registrada</span>
+                : g.vigencias.map((v, i) => (
+                    <span key={i} className="mr-2 inline-block">
+                      {formatFechaLarga(v.fecha_inicio)} → {formatFechaLarga(v.fecha_fin)}
+                      {v.compra_fin ? ` · compra hasta ${v.compra_fin}` : ""}
+                    </span>
+                  ))}
+            </span>
+            <span className="ml-auto text-xs text-gray-400">{g.filas.length} {g.filas.length === 1 ? "tarifa" : "tarifas"}</span>
+          </div>
+          {tablaTarifas(g.filas)}
+        </div>
+      ))}
+    </div>
   );
 
   return (
@@ -558,10 +697,10 @@ function TarifasBox({ hotelId, categorias, regimenes, temporadas, tarifas, venci
       <h2 className="mb-3 text-sm font-semibold text-gray-700">Tarifas por persona <span className="font-normal text-gray-400">(lo que pagas al proveedor)</span></h2>
       {faltaConfig && (
         <p className="mb-3 rounded-lg bg-amber-50 px-3 py-2 text-xs text-amber-700">
-          Para cargar tarifas necesitas: al menos una categoría y un régimen aplicados al hotel, y una temporada creada arriba.
+          Para cargar tarifas necesitas: al menos una categoría y un régimen aplicados al hotel, y una temporada creada en la pestaña Temporadas.
         </p>
       )}
-      <div className="rounded-xl border border-gray-200 bg-white p-4">
+      <div ref={formRef} className="scroll-mt-4 rounded-xl border border-gray-200 bg-white p-4">
         <div className="grid grid-cols-1 gap-3 md:grid-cols-3">
           <div>
             <label className={lbl}>Categoría de habitación</label>
@@ -634,7 +773,12 @@ function TarifasBox({ hotelId, categorias, regimenes, temporadas, tarifas, venci
         </div>
       </div>
 
-      {activas.length > 0 && <div className="mt-4">{tablaTarifas(activas)}</div>}
+      {tarifas.length === 0 && (
+        <p className="mt-4 rounded-xl border border-dashed border-gray-200 bg-gray-50 px-4 py-6 text-center text-sm text-gray-500">
+          Este hotel aún no tiene tarifas cargadas. Agrégalas con el formulario de arriba o genéralas desde la calculadora (pestaña Temporadas).
+        </p>
+      )}
+      {activas.length > 0 && <div className="mt-4">{gruposTarifas(activas)}</div>}
 
       {historicas.length > 0 && (
         <details className="mt-4 rounded-xl border border-gray-200 bg-gray-50/60">
@@ -644,18 +788,28 @@ function TarifasBox({ hotelId, categorias, regimenes, temporadas, tarifas, venci
           <p className="px-4 pb-2 text-xs text-gray-500">
             Tarifas de vigencias ya vencidas. No se publican; quedan para auditar contratos viejos con la tarifa que aplicó.
           </p>
-          <div className="px-3 pb-3 opacity-80">{tablaTarifas(historicas)}</div>
+          <div className="px-3 pb-3 opacity-80">{gruposTarifas(historicas)}</div>
         </details>
       )}
     </section>
   );
 }
 
-function DelBtn({ onDel }: { onDel: () => void | Promise<unknown> }) {
+// `icono`: variante compacta con objetivo táctil de 40px (tabla de tarifas); sin él, el enlace de texto de
+// siempre (temporadas).
+function DelBtn({ onDel, icono = false, etiqueta }: { onDel: () => void | Promise<unknown>; icono?: boolean; etiqueta?: string }) {
   const [pending, start] = useTransition();
+  const onClick = () => { if (confirm("¿Eliminar?")) start(() => { void onDel(); }); };
+  if (icono) {
+    return (
+      <button type="button" disabled={pending} onClick={onClick} aria-label={etiqueta ?? "Eliminar"} title="Eliminar"
+        className="grid h-10 w-10 place-items-center rounded-lg text-gray-400 hover:bg-red-50 hover:text-red-500 disabled:opacity-50">
+        <Trash2 size={16} aria-hidden />
+      </button>
+    );
+  }
   return (
-    <button type="button" disabled={pending}
-      onClick={() => { if (confirm("¿Eliminar?")) start(() => { void onDel(); }); }}
+    <button type="button" disabled={pending} onClick={onClick}
       className="text-xs text-gray-400 hover:text-red-500">Eliminar</button>
   );
 }

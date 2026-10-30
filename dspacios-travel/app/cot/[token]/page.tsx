@@ -13,6 +13,11 @@ import type { ComposicionBernaloDocumento, HabitacionBernaloDocumento } from "@/
 import { condicionesTarifaParaRender } from "@/lib/calc/condicionesTarifa";
 import { tituloDocumento } from "@/lib/utils/tituloDocumento";
 import { paginaPublicaComparativa } from "@/lib/cotizacion/comparativaDocumento";
+import { netoTotalExigibleDeDetalle } from "@/lib/cotizacion/asistidaB2B";
+import type { SnapshotPaquete } from "@/lib/cotizacion/tarifaPaquete";
+import { snapshotDelDocumentoPublico } from "@/lib/cotizacion/paqueteSnapshotDocumento";
+import { cargarAgenciaDeCotizacion } from "@/lib/cotizacion/agenciaCotizacion";
+import { abiertaConSalidaPasada, hoyBogota, MENSAJE_SALIDA_PASADA } from "@/lib/cotizacion/vigencia";
 
 export const dynamic = "force-dynamic";
 
@@ -37,6 +42,14 @@ type Detalle = {
   // en cotizaciones sin hoteles Bernalo.
   habitacionesBernalo?: HabitacionBernaloDocumento[];
   composicionBernalo?: ComposicionBernaloDocumento[];
+  // #102: solo en una venta B2B asistida en NETO (ver `crearCotizacionCarrito`).
+  b2bExterno?: { netoTotalExigible?: number };
+  // #75: Incluye / No incluye congelado en el snapshot (p. ej. la opción elegida de una comparativa).
+  incluye?: string | null;
+  noIncluye?: string | null;
+  tituloPaquete?: string | null;
+  // Cobertura de cada adicional y su NETO, derivados al cotizar (sin comisión ni plan). Ausente en cotizaciones anteriores: sin él no se reparte por pasajero.
+  paqueteSnapshot?: SnapshotPaquete | null;
 };
 
 // Vista pública (sin login) de una cotización, por token imposible de adivinar.
@@ -59,18 +72,34 @@ export default async function CotizacionPublicaPage({ params }: { params: Promis
 
   const { data: cot } = await sb
     .from("cotizaciones")
-    .select("codigo, detalle, vigencia_hasta")
+    .select("codigo, detalle, vigencia_hasta, tenant, estado, fecha_salida")
     .eq("share_token", token)
     .maybeSingle();
 
   if (!cot || !cot.detalle) notFound();
   const d = cot.detalle as unknown as Detalle;
+  // #102: venta B2B asistida en NETO ⇒ el enlace público muestra solo el total exigible (nunca el PVP original ni la comisión). Sale de
+  // `detalle.b2bExterno`, el único dato externo-seguro del plan; el `payload` (datos personales y términos internos) solo se relee en el servidor, abajo, para derivar el resumen de reparto; nunca llega al documento.
+  const netoTotalExigible = netoTotalExigibleDeDetalle(d.b2bExterno);
+  // Reparto por pasajero: el del detalle o, en cotizaciones anteriores, el derivado en el servidor del payload congelado (a la página solo llega el resumen).
+  const paqueteSnapshot = await snapshotDelDocumentoPublico(sb, token, d);
+  // RNT, NIT y cuenta de pago de la agencia dueña de la cotización (el tenant sale de la fila hallada por el token, no de la URL).
+  const agenciaRes = await cargarAgenciaDeCotizacion(sb, cot.tenant);
+  // Falla explícita (no se imprime el RNT de otra agencia): error técnico, fila ausente o sin RNT en Minorista.
+  if (!agenciaRes.ok) throw new Error(agenciaRes.mensaje);
+  const agencia = agenciaRes.agencia;
 
   return (
     <div className="min-h-screen bg-gray-100 py-6">
       <div className="mx-auto mb-4 flex max-w-3xl items-center justify-end px-4 print:hidden">
         <PrintButton />
       </div>
+
+      {abiertaConSalidaPasada(cot, hoyBogota()) && (
+        <div className="mx-auto mb-4 max-w-3xl rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm font-medium text-red-700 print:hidden" data-testid="cot-salida-pasada">
+          {MENSAJE_SALIDA_PASADA}
+        </div>
+      )}
 
       <div className="mx-auto max-w-3xl px-4 print:max-w-none print:px-0">
         <div className="overflow-hidden rounded-xl shadow-sm print:rounded-none print:shadow-none">
@@ -86,6 +115,12 @@ export default async function CotizacionPublicaPage({ params }: { params: Promis
             esCotizacion
             codigo={cot.codigo}
             vigenciaHasta={cot.vigencia_hasta}
+            netoTotalExigible={netoTotalExigible}
+            agencia={agencia}
+            incluye={d.incluye ?? null}
+            noIncluye={d.noIncluye ?? null}
+            tituloPaquete={d.tituloPaquete ?? null}
+            paqueteSnapshot={paqueteSnapshot}
           />
         </div>
       </div>

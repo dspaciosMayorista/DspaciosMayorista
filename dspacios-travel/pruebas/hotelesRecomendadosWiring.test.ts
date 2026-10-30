@@ -472,8 +472,8 @@ describe("Etiquetas, Incluye y add-ons toman el paquete CORRECTO (cada card acot
 });
 
 describe("Precio y disponibilidad mantienen sus fuentes actuales (la recomendación no las toca)", () => {
-  test("persona: el `desde` sigue saliendo de minRoomPvp sobre las filas de la card", () => {
-    assert.match(vistaBooking, /for \(const c of arr\) c\.desde = minRoomPvp\(c\.filas\);/);
+  test("persona: el `desde` sale de la tarifa DOBLE (desdeDoble, TASKS #92) sobre las filas y la moneda de la card", () => {
+    assert.match(vistaBooking, /for \(const c of arr\) c\.desde = desdeDoble\(c\.filas, c\.moneda\);/);
   });
 
   test("unidad en búsqueda: el precio sigue siendo opcionSel.precioVenta (ya saneado por el motor)", () => {

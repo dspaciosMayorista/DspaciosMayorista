@@ -2,6 +2,7 @@
 
 import { createClient } from "@/lib/supabase/server";
 import { revalidatePath } from "next/cache";
+import { exigirEscrituraCatalogoGlobal } from "@/lib/auth/contextoAgencia";
 
 type Result = { ok: true } | { ok: false; error: string };
 const oNull = (s: string) => (s && s.trim() !== "" ? s.trim() : null);
@@ -24,6 +25,9 @@ export type AliadoInput = {
 };
 
 export async function crearAliado(input: AliadoInput): Promise<Result> {
+  // D8/D9: los catálogos globales solo se escriben desde Mayorista (la RLS lo exige igual).
+  const catalogo = await exigirEscrituraCatalogoGlobal();
+  if (!catalogo.ok) return catalogo;
   if (!input.nombre.trim()) return { ok: false, error: "El nombre es obligatorio." };
   const sb = await createClient();
   const { error } = await sb.from("aliados").insert({
@@ -52,13 +56,20 @@ export async function actualizarAliado(
   patch: {
     pctComision?: number | null; aplicaRetencion?: boolean; pctRetencion?: number;
     tipoDocumento?: string; direccion?: string; banco?: string; tipoCuenta?: string; numeroCuenta?: string;
+    /** #102 (migración 238): un aliado inactivo no se puede cotizar como beneficiario de una venta B2B asistida. */
+    activo?: boolean;
   }
 ): Promise<Result> {
+  // D8/D9: los catálogos globales solo se escriben desde Mayorista (la RLS lo exige igual).
+  const catalogo = await exigirEscrituraCatalogoGlobal();
+  if (!catalogo.ok) return catalogo;
   const sb = await createClient();
   const upd: {
     pct_comision?: number | null; aplica_retencion?: boolean; pct_retencion?: number;
     tipo_documento?: string; direccion?: string | null; banco?: string | null; tipo_cuenta?: string | null; numero_cuenta?: string | null;
+    activo?: boolean;
   } = {};
+  if (patch.activo !== undefined) upd.activo = patch.activo;
   if (patch.pctComision !== undefined) upd.pct_comision = patch.pctComision;
   if (patch.aplicaRetencion !== undefined) upd.aplica_retencion = patch.aplicaRetencion;
   if (patch.pctRetencion !== undefined) upd.pct_retencion = patch.pctRetencion;
@@ -74,6 +85,9 @@ export async function actualizarAliado(
 }
 
 export async function eliminarAliado(id: number): Promise<Result> {
+  // D8/D9: los catálogos globales solo se escriben desde Mayorista (la RLS lo exige igual).
+  const catalogo = await exigirEscrituraCatalogoGlobal();
+  if (!catalogo.ok) return catalogo;
   const sb = await createClient();
   const { error } = await sb.from("aliados").delete().eq("id", id);
   if (error) return { ok: false, error: error.message };

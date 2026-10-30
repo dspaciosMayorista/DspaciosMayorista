@@ -2,6 +2,7 @@ import "server-only";
 import { createClient } from "@/lib/supabase/server";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { getTenant } from "@/lib/tenant.server";
+import { resolverImporteContable63, MENSAJE_LECTURA_CXP_63, type FilaCxP63 } from "@/lib/reservar/importeObligacion63";
 
 // ─────────────────────────────────────────────────────────────────────────
 // Posteo automático a Libro diario desde el resto de la app (cuentas por
@@ -153,6 +154,22 @@ export async function reemplazarAsiento(
   return postearAsiento({ ...nuevo, tenant, origen, referencia });
 }
 
+// Importe contable de una CxP (#63): lo decide `resolverImporteContable63` sobre la fila REAL de la obligación. Una obligación de
+// siempre se devenga por su `valorTotal`; una aceptada, por su equivalente en COP congelado (`valor_cop_63`). Un error de lectura
+// NUNCA cae al nominal (un USD 210 no se registra como $210) ni se interpreta como "no es #63": se devuelve el error y la
+// reconciliación (`listarCxpSinAsiento`) lo reintenta. #90 I (migración 236): una CxP en USD del carrito se devenga por su equivalente a la TRM de costos
+// (`valor_cop_costo`), validado contra su valor y moneda; la reconciliación llega aquí por la misma lectura. Sin hueco para la columna ausente: la 227 va ANTES del código.
+async function importeCopCxP(input: { cuentaId: number; numeroContrato: string; tenant?: string; valorTotal: number }): Promise<{ ok: true; importe: number } | { ok: false; error: string }> {
+  const sb = await db();
+  const { data, error } = await sb
+    .from("cuentas_por_pagar")
+    .select("numero_contrato, tenant, aceptacion_63_id, obligacion_63, valor_cop_63, trm_63, moneda, valor_cop_costo, trm_costo")
+    .eq("id", input.cuentaId)
+    .maybeSingle();
+  if (error) return { ok: false, error: MENSAJE_LECTURA_CXP_63 };
+  return resolverImporteContable63(data as FilaCxP63 | null, { numeroContrato: input.numeroContrato, tenant: input.tenant, valorTotal: input.valorTotal });
+}
+
 // Devengo de una cuenta por pagar recién creada: Debe Costo de ventas (según
 // tipo_proveedor) / Haber Proveedores. Se llama justo después de insertar la
 // fila en `cuentas_por_pagar`.
@@ -161,7 +178,13 @@ export async function postearAsientoCxP(input: {
   valorTotal: number; fecha: string; tenant?: string;
 }): Promise<PResult> {
   const referencia = `cxp:${input.cuentaId}`;
-  if (input.valorTotal <= 0) return reemplazarAsiento("cxp", referencia, null);
+  // #63: una obligación del modo COP con TRM (hotel/servicios en USD) lleva su equivalente en COP congelado a la TRM del
+  // paquete (`valor_cop_63`, migración 227). El asiento se devenga por ESE importe: nunca por el nominal en dólares. Una
+  // CxP de siempre no lo tiene y se devenga por `valorTotal`, como antes.
+  const eq = await importeCopCxP({ cuentaId: input.cuentaId, numeroContrato: input.numeroContrato, tenant: input.tenant, valorTotal: input.valorTotal });
+  if (!eq.ok) return eq;
+  const importe = eq.importe;
+  if (importe <= 0) return reemplazarAsiento("cxp", referencia, null);
   const cuentas = cuentasProveedor(input.tipoProveedor);
   // REEMPLAZAR: si ya existía un asiento para esta CxP (se está editando), se
   // borra y se postea de nuevo con los valores actuales — no está ligado a
@@ -171,8 +194,8 @@ export async function postearAsientoCxP(input: {
     descripcion: `${input.servicio ?? "Costo"} — ${input.proveedor ?? "Sin especificar"} (${input.numeroContrato})`,
     tenant: input.tenant,
     lineas: [
-      { cuentaCodigo: cuentas.costo, tercero: input.numeroContrato, descripcion: input.servicio, debe: input.valorTotal, haber: 0 },
-      { cuentaCodigo: cuentas.proveedor, tercero: input.proveedor, descripcion: input.servicio, debe: 0, haber: input.valorTotal },
+      { cuentaCodigo: cuentas.costo, tercero: input.numeroContrato, descripcion: input.servicio, debe: importe, haber: 0 },
+      { cuentaCodigo: cuentas.proveedor, tercero: input.proveedor, descripcion: input.servicio, debe: 0, haber: importe },
     ],
   });
 }

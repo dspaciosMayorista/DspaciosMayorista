@@ -40,11 +40,18 @@ import { validarCantidadMenores, validarEdadesMenores, clasificarMenoresPorEdad,
 import { distribuirPorHabitaciones, type HabitacionConsultada, type AsignacionHabitacion } from "@/lib/reservar/distribucionHabitaciones";
 import { liquidarHotelPaquete } from "@/lib/reservar/cotizar";
 import { resolverOrigenVuelo, empaquetadoVigente, hoyBogota, type OrigenVuelo } from "@/lib/reservar/origen";
+import { verificarSalidaDinamicaVigente, mensajeSalidaNoVigente } from "@/lib/reservar/salidaDinamicaVigente";
+import { validarOrigenAereoPaquete, MENSAJES as MENSAJES_DEST_AEREOS } from "@/lib/paquetes/destinosAereos67";
 import {
   normalizarCategoriaServicio, costoNetoServicioIncluido, cargoGrupoIncluido,
   type CategoriaServicio, type ServicioEfectivo, type ServicioGrupoIncluido,
 } from "@/lib/reservar/serviciosPaquete";
 import { validarModoServicio } from "@/lib/reservar/liquidacionServicio";
+import { precioInfanteConServiciosOpcionales, type ServicioOpcionalSeleccionado } from "@/lib/paquetes/pvpInfanteFijo";
+import { contarMenoresDeDos, tarifarMenores, totalMenoresDeDos, type ConteoMenores, type LineaMenor } from "@/lib/reservar/menoresDeDos";
+import { impuestoPorPersona63, impuestoTotal63, monedaNormalizada63 } from "@/lib/reservar/ofertaDinamica63";
+import { resolverOfertaSalida63, type Oferta63 } from "@/lib/reservar/prepararOferta63";
+import type { VigenciaCompra63 } from "@/lib/reservar/aceptacion63";
 
 export type PasajeroReserva = {
   nombres: string;
@@ -63,6 +70,9 @@ export type PasajeroReserva = {
   // desde la UI de creación en vez de que el RPC rechace todo infante sin
   // vínculo con un mensaje genérico).
   responsableIndex?: number | null;
+  // #42: identidad estable del puesto en la cotización (UUID asignado en servidor, migración 219).
+  // Las conversiones lo ignoran.
+  ref?: string;
 };
 
 export type ReservaInput = {
@@ -103,19 +113,46 @@ export type ReservaInput = {
   plazo: string;
   pasajeros: PasajeroReserva[];
   servicios?: number[];   // ids de servicios add-on seleccionados
+  // Servicios opcionales que se cobran FUERA de este cómputo (los tours/receptivos del carrito vinculados a este hotel) y que, si cobran un
+  // importe positivo, devuelven al infante con PVP fijo a la fórmula normal completa (254). Solo entran a la decisión; este cómputo no los suma.
+  opcionalesInfante?: ServicioOpcionalSeleccionado[];
+  // #63: la cotización de una oferta en COP con TRM guarda aquí la huella de lo que se mostró (la escribe el servidor al
+  // cotizar; `convertirCotizacion` la pasa tal cual). La reserva la compara con lo que va a cobrar.
+  // `cotizacionId` lo pone SOLO `convertirCotizacion` (con el id de la cotización que el usuario puede ver); lo que venga del
+  // navegador al cotizar se descarta.
+  oferta63?: { huella?: string | null; modo?: string | null; trm?: number | null; cotizacionId?: number | null; trmProvisional?: number | null;
+    /** 235 (#90 F): moneda de COBRO que elige quien convierte (null = la de la oferta) y su TRM (solo si difiere). Los pone SOLO `convertirCotizacion`. */
+    monedaCobro?: string | null; trmCobro?: number | null } | null;
 };
 
 export type ComputoReserva = {
   origen: OrigenVuelo;
   meta: { hotel_nombre: string | null; destino_nombre: string | null; fecha_ida: string | null; fecha_regreso: string | null };
   pvpPorAcom: Record<string, number>;
+  // Tarifa de infante (migración 226): precio de un MENOR DE 2 AÑOS por clase
+  // de hotel (infante / nino / nino2). `pvpPorAcom` conserva su significado:
+  // adulto en vuelo y servicios.
+  pvpMenor2PorAcom: Record<string, number>;
   netoPorAcom: Record<string, number>; // costo neto/persona por acomodación (autoritativo)
   precioVenta: number;
+  // Pasajeros de 2 años o más (ocupan silla, cuentan para el rango de un
+  // servicio por grupo y pagan tarifa de adulto en vuelo y servicios).
   paxConSilla: number;
+  // TODOS los pasajeros (paxConSilla + menores de 2 años).
   totalPax: number;
   numNinos: number;
   numNinos2: number;
+  // Infantes según la CLASE DEL HOTEL (por defecto hasta los 2 años): incluye
+  // niños de 2 años que el hotel llama infante. Los menores de 2 años están
+  // en `menoresDeDos`.
   numInfantes: number;
+  // Cuántos de cada clase de hotel son menores de 2 años (pagan fee de infante
+  // en el vuelo y precio de infante en los servicios; no ocupan silla).
+  menoresDeDos: ConteoMenores;
+  numMenoresDeDos: number;
+  // Líneas de precio de los menores (cantidad × tarifa) — fuente única para los
+  // ítems de contrato/cotización.
+  lineasMenores: LineaMenor[];
   // Distribución por habitación (quién paga Niño 1/Niño 2/infante EN CADA
   // habitación) — solo se calcula cuando la reserva llega con `edadesMenores`
   // (Vista Booking). `null` en el flujo legado (reparto manual ninos/ninos2/
@@ -154,6 +191,14 @@ export type ComputoReserva = {
   // resolverlas) — nunca `null`/`undefined`, para que el llamador (checkout)
   // pueda persistirlo tal cual en el snapshot de la cotización.
   condicionesTarifa: CondicionTarifaAplicada[];
+  // #63 — oferta en modo COP con TRM (salida vinculada a Empaquetados sin record, o salida manual de un
+  // paquete en ese modo). `null`/ausente = el cómputo de siempre. `monedaHotel`/`monedaServicios` son la
+  // moneda ORIGEN de los netos (las CxP se deben en esa moneda; la venta ya está en COP).
+  oferta63?: (Oferta63 & { monedaHotel: "COP" | "USD"; monedaServicios: Record<number, "COP" | "USD"> }) | null;
+  // #63: vigencias de COMPRA de las tarifas de hotel y servicios que respaldan el precio (la temporada que ganó cada noche /
+  // cada servicio, con sus límites tal como se leyeron al cotizar). Van al snapshot de la oferta y `aceptar_oferta_63` las valida
+  // con la fecha de negocio de Bogotá de SU transacción. SIEMPRE un arreglo (vacío fuera de una oferta 63).
+  vigencias63: VigenciaCompra63[];
 };
 
 // Expande `habitaciones: {doble: 2, triple: 1}` (conteo por tipo, la única
@@ -243,6 +288,7 @@ export async function computarReserva(
   const resOrigen = resolverOrigenVuelo(input);
   if (!resOrigen.ok) return { ok: false, error: resOrigen.error };
   const origen = resOrigen.origen;
+  let oferta63: Oferta63 | null = null;
 
   // Vigencia y activo del Empaquetado — revalidados en el momento exacto de
   // resolver la reserva (no solo al generar el tarifario): un empaquetado
@@ -250,7 +296,7 @@ export async function computarReserva(
   // publicado, y `tarifario_resultado` es una caché, no la fuente de verdad.
   if (origen.tipo === "empaquetado") {
     const { data: eq, error: eqErr } = await sb
-      .from("empaquetados")
+      .from("empaquetados_basica")
       .select("activo, compra_inicio, compra_fin")
       .eq("id", origen.id)
       .maybeSingle();
@@ -259,6 +305,52 @@ export async function computarReserva(
     if (!eq.activo) return { ok: false, error: "Este empaquetado fue desactivado y ya no se puede reservar." };
     if (!empaquetadoVigente(eq.compra_inicio, eq.compra_fin, hoyBogota(new Date())))
       return { ok: false, error: "Este empaquetado está fuera de su vigencia de compra." };
+  }
+
+  // Vigencia y estado de la SALIDA dinámica (#62) — misma razón que el
+  // empaquetado de arriba: `tarifario_resultado` es una caché y la salida pudo
+  // desactivarse, vencer su ventana de compra, pasar o eliminarse DESPUÉS de
+  // publicar. Se valida contra la fila viva ANTES de leer precio/hotel/tarifa,
+  // así que un rechazo no deja ninguna lectura de precio ni escritura posterior.
+  // Se lee con el cliente de SERVICIO: por RLS (migración 094) `salidas_dinamicas`
+  // solo la ven roles internos administrativos, y esta función también la
+  // ejecutan `venta`, agencias B2B y el checkout público. Cualquier fallo (sin
+  // llave de servicio, error de consulta, fila invisible) rechaza; nunca "disponible".
+  if (origen.tipo === "salida") {
+    let lector: ReturnType<typeof createAdminClient>;
+    try {
+      lector = createAdminClient();
+    } catch {
+      return { ok: false, error: mensajeSalidaNoVigente("error_lectura") };
+    }
+    const vigencia = await verificarSalidaDinamicaVigente(lector, origen.id);
+    if (!vigencia.ok) return { ok: false, error: vigencia.error };
+    // #63: salida vinculada a Empaquetados sin record y/o paquete en modo COP con TRM. Se valida contra la
+    // fuente VIVA; no consulta cupos (un Empaquetado no tiene sillas). En un paquete de siempre devuelve null.
+    const resOferta63 = await resolverOfertaSalida63(lector, input.paqueteId, origen.id);
+    if (!resOferta63.ok) return { ok: false, error: resOferta63.error };
+    oferta63 = resOferta63.oferta;
+  }
+
+  // Destino aéreo del vuelo elegido en Bloqueo/Sistema (#67). El destino de
+  // llegada de la fuente (bloqueo negociado o empaquetado) debe estar entre los
+  // destinos aéreos permitidos HOY del paquete: check apagado = destino
+  // comercial exacto; encendido = comercial + alternativas válidas del mismo
+  // país. `tarifario_resultado` es una caché: el país o el destino de la fuente
+  // pudieron cambiar después de publicar, así que se valida contra los datos
+  // vivos ANTES de leer precio. Se lee con el cliente de SERVICIO porque
+  // `bloqueos_vuelo`/`empaquetados` no son legibles para todos los roles que
+  // venden. Cualquier fallo rechaza, con un mensaje técnico distinto del de
+  // "no corresponde" — nunca se interpreta como permitido.
+  if (origen.tipo === "bloqueo" || origen.tipo === "empaquetado") {
+    let lectorAereo: ReturnType<typeof createAdminClient>;
+    try {
+      lectorAereo = createAdminClient();
+    } catch {
+      return { ok: false, error: MENSAJES_DEST_AEREOS.tecnico };
+    }
+    const destinoAereo = await validarOrigenAereoPaquete(lectorAereo, input.paqueteId, { tipo: origen.tipo, id: origen.id });
+    if (!destinoAereo.ok) return { ok: false, error: destinoAereo.error };
   }
 
   const esServicios = input.modulo === "servicios";
@@ -298,7 +390,13 @@ export async function computarReserva(
   }
 
   const pvpPorAcom: Record<string, number> = {};
+  const pvpMenor2PorAcom: Record<string, number> = {};
+  // PVP fijo del infante (254): precio NORMAL de la clase infante por ruta cuando el fijo lo reemplazó. Solo se usa si un servicio opcional
+  // seleccionado le cobra al infante (entonces vale la fórmula normal completa, nunca el fijo + la normal).
+  const pvpInfanteSinFijo: { mayor2: number | null; menor2: number | null } = { mayor2: null, menor2: null };
   const netoPorAcom: Record<string, number> = {};
+  let menoresDeDos: ConteoMenores = { infante: 0, nino: 0, nino2: 0 };
+  let lineasMenores: LineaMenor[] = [];
   let precioVenta = 0;
   let paxConSilla = 0;
   const lineasHab: { acom: AcomRoom; habitaciones: number; pax: number; pvp: number }[] = [];
@@ -323,6 +421,11 @@ export async function computarReserva(
   let petCostoDesc: string | null = null;
   let petNotaTxt: string | null = null;
   let condicionesTarifa: CondicionTarifaAplicada[] = [];
+  // #63: moneda origen del neto del hotel / de cada servicio (la venta publicada ya está en la moneda de la oferta: COP o USD).
+  let monedaHotelOrigen63: "COP" | "USD" = "COP";
+  const monedaServicios63: Record<number, "COP" | "USD"> = {};
+  const vigencias63: VigenciaCompra63[] = [];
+  const nombresVigHotel63 = new Set<string>();
 
   const usarFechas =
     input.modulo !== "bloqueo" && input.modulo !== "dinamico" && !!input.fechaIda && !!input.fechaRegreso && !!process.env.SUPABASE_SERVICE_ROLE_KEY;
@@ -357,6 +460,9 @@ export async function computarReserva(
     const combo = res?.combos.find((c) => c.categoria === input.categoria && c.regimen === input.regimen);
     if (!combo) return { ok: false, error: "No hay tarifa para esas fechas / categoría / régimen." };
     for (const [acom, p] of Object.entries(combo.precios)) pvpPorAcom[acom] = p;
+    if (combo.preciosMenor2) for (const [acom, p] of Object.entries(combo.preciosMenor2)) pvpMenor2PorAcom[acom] = p;
+    pvpInfanteSinFijo.mayor2 = combo.preciosSinFijo?.["infante"] ?? null;
+    pvpInfanteSinFijo.menor2 = combo.preciosMenor2SinFijo?.["infante"] ?? null;
     if (combo.netos) for (const [acom, n] of Object.entries(combo.netos)) netoPorAcom[acom] = n;
     meta = { hotel_nombre: res!.hotelNombre, destino_nombre: res!.destinoNombre, fecha_ida: input.fechaIda!, fecha_regreso: input.fechaRegreso! };
 
@@ -447,12 +553,17 @@ export async function computarReserva(
       paxConSilla += pax;
       lineasHab.push({ acom: a, habitaciones: rooms, pax, pvp: pvpPorAcom[a] });
     }
-    if (numNinos > 0 && pvpPorAcom["nino"] != null) { precioVenta += numNinos * pvpPorAcom["nino"]; paxConSilla += numNinos; }
-    if (numNinos2 > 0 && pvpPorAcom["nino2"] != null) { precioVenta += numNinos2 * pvpPorAcom["nino2"]; paxConSilla += numNinos2; }
-    // Infante: igual que niño (0 = gratis), pero no ocupa silla/habitación.
-    // Si el hotel no configuró tarifa de infante para este combo, pvpPorAcom["infante"]
-    // simplemente no existe → gratis, sin bloquear la reserva (a diferencia de niño).
-    if (numInfantes > 0 && pvpPorAcom["infante"] != null) { precioVenta += numInfantes * pvpPorAcom["infante"]; }
+    // Menores (migración 226): parte de hotel por la CLASE del hotel (infante /
+    // Niño 1 / Niño 2) y vuelo + servicios por EDAD — menor de 2 años = tarifa
+    // de infante (no ocupa silla); desde los 2 años = adulto en vuelo y servicios.
+    menoresDeDos = contarMenoresDeDos(input.edadesMenores !== undefined ? edadesMenoresUsadas : null, reglaEdadF.infanteMax, { infante: numInfantes, nino: numNinos, nino2: numNinos2 });
+    const tarifaMenoresF = tarifarMenores({
+      totales: { infante: numInfantes, nino: numNinos, nino2: numNinos2 },
+      menoresDeDos, pvp: pvpPorAcom, pvpMenor2: pvpMenor2PorAcom,
+    });
+    if (!tarifaMenoresF.ok) return { ok: false, error: tarifaMenoresF.error };
+    precioVenta += tarifaMenoresF.total; paxConSilla += tarifaMenoresF.paxConSilla;
+    lineasMenores = tarifaMenoresF.lineas;
     if (paxConSilla <= 0) return { ok: false, error: "Indica al menos una habitación (cantidad por tipo)." };
 
     const realF = clasificarPorEdad(
@@ -474,7 +585,7 @@ export async function computarReserva(
   } else if (!esServicios) {
     let q = sb
       .from("tarifario_resultado_publicable")
-      .select("acomodacion, precio_pvp, hotel_nombre, destino_nombre, fecha_ida, fecha_regreso, moneda")
+      .select("acomodacion, precio_pvp, precio_pvp_menor2, precio_pvp_sin_fijo, precio_pvp_menor2_sin_fijo, hotel_nombre, destino_nombre, fecha_ida, fecha_regreso, moneda")
       .eq("paquete_id", input.paqueteId)
       .eq("hotel_id", input.hotelId)
       .eq("categoria", input.categoria)
@@ -491,7 +602,15 @@ export async function computarReserva(
     const { data: filas, error: fe } = await q;
     if (fe) return { ok: false, error: fe.message };
     if (!filas || !filas.length) return { ok: false, error: "No se encontró la tarifa seleccionada en el tarifario." };
-    for (const f of filas) if (f.acomodacion) pvpPorAcom[f.acomodacion] = f.precio_pvp;
+    for (const f of filas) {
+      if (!f.acomodacion) continue;
+      pvpPorAcom[f.acomodacion] = f.precio_pvp;
+      if (f.precio_pvp_menor2 != null) pvpMenor2PorAcom[f.acomodacion] = f.precio_pvp_menor2;
+      if (f.acomodacion === "infante") {
+        pvpInfanteSinFijo.mayor2 = f.precio_pvp_sin_fijo ?? null;
+        pvpInfanteSinFijo.menor2 = f.precio_pvp_menor2_sin_fijo ?? null;
+      }
+    }
     meta = filas[0];
     monedaReserva = (filas[0] as { moneda?: string | null }).moneda ?? "COP";
 
@@ -502,10 +621,11 @@ export async function computarReserva(
     // validación de edades reales).
     const { data: hotelRow, error: hotelRowErr } = await sb
       .from("hoteles")
-      .select("edad_infante_min, edad_infante_max, edad_nino_min, edad_nino_max, pax_min, pax_max, nino_nota, pet_costo_neto, pet_costo_desc, pet_nota")
+      .select("edad_infante_min, edad_infante_max, edad_nino_min, edad_nino_max, pax_min, pax_max, nino_nota, pet_costo_neto, pet_costo_desc, pet_nota, moneda")
       .eq("id", input.hotelId)
       .maybeSingle();
     if (hotelRowErr) return { ok: false, error: `No se pudo consultar el hotel: ${hotelRowErr.message}` };
+    monedaHotelOrigen63 = monedaNormalizada63((hotelRow as { moneda?: string | null } | null)?.moneda);
     ninoNotaTxt = hotelRow?.nino_nota ?? null;
     petCostoNeto = Number(hotelRow?.pet_costo_neto) || 0;
     petCostoDesc = hotelRow?.pet_costo_desc ?? null;
@@ -611,6 +731,10 @@ export async function computarReserva(
         netoPorAcom[l.acom] = r.total;
         for (const t of r.temporadasTarifa) { temporadasEstadia.add(t); temporadasCondiciones.add(t); }
         for (const p of r.procedencia) temporadasCondiciones.add(p.temporadaGanadora);
+        if (oferta63) {
+          for (const t of r.temporadasTarifa) nombresVigHotel63.add(t);
+          for (const p of r.procedencia) nombresVigHotel63.add(p.temporadaGanadora);
+        }
       }
       const rEdad = resolverReglaEdadEstadiaSegura({
         filas: tarRowsVig, categoria: input.categoria, regimen: input.regimen,
@@ -634,14 +758,35 @@ export async function computarReserva(
       distribucionMenores = rMenores.distribucion;
       edadesMenoresUsadas = rMenores.edades;
     }
-    if (numNinos > 0 && pvpPorAcom["nino"] != null) { precioVenta += numNinos * pvpPorAcom["nino"]; paxConSilla += numNinos; }
-    if (numNinos2 > 0 && pvpPorAcom["nino2"] != null) { precioVenta += numNinos2 * pvpPorAcom["nino2"]; paxConSilla += numNinos2; }
-    if (numInfantes > 0 && pvpPorAcom["infante"] != null) { precioVenta += numInfantes * pvpPorAcom["infante"]; }
+    // Menores (migración 226) — misma regla que la rama por fechas de arriba.
+    menoresDeDos = contarMenoresDeDos(input.edadesMenores !== undefined ? edadesMenoresUsadas : null, reglaEdad.infanteMax, { infante: numInfantes, nino: numNinos, nino2: numNinos2 });
+    const tarifaMenores = tarifarMenores({
+      totales: { infante: numInfantes, nino: numNinos, nino2: numNinos2 },
+      menoresDeDos, pvp: pvpPorAcom, pvpMenor2: pvpMenor2PorAcom,
+    });
+    if (!tarifaMenores.ok) return { ok: false, error: tarifaMenores.error };
+    precioVenta += tarifaMenores.total; paxConSilla += tarifaMenores.paxConSilla;
+    lineasMenores = tarifaMenores.lineas;
 
     if (paxConSilla <= 0) return { ok: false, error: "Indica al menos una habitación (cantidad por tipo)." };
 
     if (conServiceRole) {
       const precioFinalTemporadasMenores = precioFinalTemporadasDe(tarRowsVig as TarRow[]);
+      // #63: la vigencia de compra de la tarifa de un MENOR también respalda el precio (puede ganar otra temporada que la del adulto).
+      const recogerVigenciaMenor63 = (acom: "nino" | "nino2" | "infante", precioFinal: Set<string>) => {
+        const r = liquidarHotelNochesConTemporadas({ fechaIda: meta.fecha_ida!, numNoches: numNochesVig, temporadas: temporadasVig, netoPorTemporada: netoPorTemporadaDe(tarRowsVig as TarRow[], acom), regimen: input.regimen, precioFinalTemporadas: precioFinal });
+        if (r == null) return;
+        for (const t of r.temporadasTarifa) nombresVigHotel63.add(t);
+        for (const p of r.procedencia) nombresVigHotel63.add(p.temporadaGanadora);
+      };
+      if (oferta63) {
+        if (numNinos > 0) recogerVigenciaMenor63("nino", precioFinalTemporadasMenores);
+        if (numNinos2 > 0) recogerVigenciaMenor63("nino2", precioFinalTemporadasMenores);
+        if (numInfantes > 0) recogerVigenciaMenor63("infante", precioFinalTemporadasMenores);
+        for (const t of temporadasVig) {
+          if (nombresVigHotel63.has(t.nombre)) vigencias63.push({ origen: "hotel", ref: t.nombre, compra_inicio: t.compra_inicio ?? null, compra_fin: t.compra_fin ?? null });
+        }
+      }
       if (numNinos > 0) {
         const per = liquidarHotelNoches({ fechaIda: meta.fecha_ida!, numNoches: numNochesVig, temporadas: temporadasVig, netoPorTemporada: netoPorTemporadaDe(tarRowsVig as TarRow[], "nino"), regimen: input.regimen, precioFinalTemporadas: precioFinalTemporadasMenores });
         if (per == null) return { ok: false, error: TARIFA_VENCIDA };
@@ -707,26 +852,33 @@ export async function computarReserva(
   }
 
   // Servicios (en tipo servicios es el total; en hotel son add-ons).
-  const totalPax = esServicios ? (Number(input.paxServicios) || 0) : paxConSilla + numInfantes;
+  // Menores de 2 años: no ocupan silla ni cuentan para el rango de un servicio
+  // por grupo (decisión del dueño, 226); en un servicio por persona pagan su
+  // precio de infante (o el de adulto si el servicio no lo configuró).
+  const numMenoresDeDos = esServicios ? 0 : totalMenoresDeDos(menoresDeDos);
+  const totalPax = esServicios ? (Number(input.paxServicios) || 0) : paxConSilla + numMenoresDeDos;
+  const paxServAdulto = esServicios ? totalPax : paxConSilla;
   const serviciosItems: { servicioId: number; nombre: string; precio: number; categoria: CategoriaServicio; proveedorId: number | null }[] = [];
+  // Opcionales que cobran al infante: los externos (carrito) más los realmente seleccionados aquí (se completan al resolver `byServ`).
+  const opcionalesInfante: ServicioOpcionalSeleccionado[] = [...(input.opcionalesInfante ?? [])];
   if (input.servicios?.length) {
     const { data: srvRows, error: srvRowsErr } = await sb
       .from("tarifario_resultado_publicable")
-      .select("servicio_id, servicio_nombre, tipo_tarifa, pax_desde, pax_hasta, precio_pvp, recargo_individual")
+      .select("servicio_id, servicio_nombre, tipo_tarifa, pax_desde, pax_hasta, precio_pvp, precio_pvp_menor2, recargo_individual")
       .eq("paquete_id", input.paqueteId)
       .eq("modulo", "servicios")
       .in("servicio_id", input.servicios);
     if (srvRowsErr) return { ok: false, error: `No se pudieron consultar los servicios seleccionados: ${srvRowsErr.message}` };
-    const byServ = new Map<number, { nombre: string; modo: "persona" | "grupo"; personaPvp: number | null; recargoIndividual: number; grupos: { pax_desde: number; pax_hasta: number; precio: number }[]; categoria: CategoriaServicio; proveedorId: number | null }>();
+    const byServ = new Map<number, { nombre: string; modo: "persona" | "grupo"; personaPvp: number | null; infantePvp: number | null; recargoIndividual: number; grupos: { pax_desde: number; pax_hasta: number; precio: number }[]; categoria: CategoriaServicio; proveedorId: number | null }>();
     for (const r of srvRows ?? []) {
       if (r.servicio_id == null) continue;
       let s = byServ.get(r.servicio_id);
       if (!s) {
-        s = { nombre: r.servicio_nombre ?? "Servicio", modo: r.tipo_tarifa === "grupo" ? "grupo" : "persona", personaPvp: null, recargoIndividual: 0, grupos: [], categoria: "otro", proveedorId: null };
+        s = { nombre: r.servicio_nombre ?? "Servicio", modo: r.tipo_tarifa === "grupo" ? "grupo" : "persona", personaPvp: null, infantePvp: null, recargoIndividual: 0, grupos: [], categoria: "otro", proveedorId: null };
         byServ.set(r.servicio_id, s);
       }
       if (s.modo === "grupo") s.grupos.push({ pax_desde: r.pax_desde ?? 1, pax_hasta: r.pax_hasta ?? 1, precio: r.precio_pvp });
-      else { s.personaPvp = r.precio_pvp; s.recargoIndividual = Math.max(Number(r.recargo_individual) || 0, 0); }
+      else { s.personaPvp = r.precio_pvp; s.infantePvp = r.precio_pvp_menor2 ?? null; s.recargoIndividual = Math.max(Number(r.recargo_individual) || 0, 0); }
     }
 
     // Categoría/proveedor real del catálogo — SIEMPRE se consulta (no depende
@@ -758,11 +910,13 @@ export async function computarReserva(
     if (fechaViaje && byServ.size) {
       const ids = [...byServ.keys()];
       const [{ data: baseSrv }, { data: temps }, { data: tarifaPax }] = await Promise.all([
-        sb.from("servicios_adicionales").select("id, precio_persona").in("id", ids),
-        sb.from("servicio_temporadas").select("servicio_id, nombre, fecha_inicio, fecha_fin, compra_inicio, compra_fin, prioridad, precio_persona, recargo_individual").in("servicio_id", ids),
+        sb.from("servicios_adicionales").select("id, precio_persona, precio_infante").in("id", ids),
+        sb.from("servicio_temporadas").select("servicio_id, nombre, fecha_inicio, fecha_fin, compra_inicio, compra_fin, prioridad, precio_persona, precio_infante, recargo_individual").in("servicio_id", ids),
         sb.from("servicio_tarifa_pax").select("servicio_id, pax_desde, pax_hasta, precio, temporada").in("servicio_id", ids),
       ]);
       const netoGen = new Map((baseSrv ?? []).map((b) => [b.id, Number(b.precio_persona) || 0]));
+      const netoInfGen = new Map((baseSrv ?? []).map((b) => [b.id, b.precio_infante == null ? null : Number(b.precio_infante)]));
+      const netoInfTemp = new Map<string, number>(); // servId|nombre -> neto infante de la temporada
       const tempsByServ = new Map<number, TemporadaRango[]>();
       const netoTemp = new Map<string, number>();   // servId|nombre -> neto persona
       const recTemp = new Map<string, number>();    // servId|nombre -> recargo neto
@@ -771,6 +925,7 @@ export async function computarReserva(
         arr.push(toTemporadaRango(t));
         tempsByServ.set(t.servicio_id, arr);
         if (t.precio_persona != null) netoTemp.set(`${t.servicio_id}|${t.nombre}`, Number(t.precio_persona));
+        if (t.precio_infante != null) netoInfTemp.set(`${t.servicio_id}|${t.nombre}`, Number(t.precio_infante));
         if (t.recargo_individual != null) recTemp.set(`${t.servicio_id}|${t.nombre}`, Number(t.recargo_individual));
       }
       // Netos por GRUPO por temporada (incl. GENERAL): para rescatar por rango de pax.
@@ -790,6 +945,10 @@ export async function computarReserva(
         if (!tt?.length) continue;
         const nombre = temporadaVigenteParaFecha(d, tt);
         if (!nombre) continue;
+        if (oferta63) {
+          const tv = tt.find((x) => x.nombre === nombre);
+          if (tv) vigencias63.push({ origen: "servicio", ref: `${id}|${nombre}`, compra_inicio: tv.compra_inicio ?? null, compra_fin: tv.compra_fin ?? null });
+        }
         if (s.modo === "persona" && s.personaPvp != null) {
           const ng = netoGen.get(id) || 0;
           const mkf = ng > 0 ? s.personaPvp / ng : null;   // factor de markup del snapshot
@@ -797,6 +956,14 @@ export async function computarReserva(
           if (nt != null && ng > 0) s.personaPvp = Math.round(s.personaPvp * (nt / ng));
           const rt = recTemp.get(`${id}|${nombre}`);        // recargo NETO de la temporada
           if (rt != null && mkf != null) s.recargoIndividual = Math.round(rt * mkf);
+          // Precio de infante de la temporada (hereda el GENERAL si no lo define;
+          // sin ninguno, el infante sigue el precio de adulto ya escalado arriba).
+          const ni = netoInfTemp.get(`${id}|${nombre}`);
+          if (ni != null) {
+            const nig = netoInfGen.get(id) ?? null;
+            if (s.infantePvp != null && nig != null && nig > 0) s.infantePvp = Math.round(s.infantePvp * (ni / nig));
+            else if (mkf != null) s.infantePvp = Math.round(ni * mkf);
+          }
         } else if (s.modo === "grupo") {
           for (const g of s.grupos) {
             const ngG = netoGrupo(id, "GENERAL", g.pax_desde) ?? netoGrupo(id, "GENERAL", g.pax_hasta);
@@ -808,7 +975,11 @@ export async function computarReserva(
     }
 
     for (const [servicioId, s] of byServ) {
-      let p = precioServicio(s.modo, s.personaPvp, s.grupos, totalPax);
+      // Persona: adultos (2+ años) a la tarifa de adulto + menores de 2 años a
+      // su precio de infante (adulto si el servicio no lo configuró). Grupo: el
+      // rango cuenta SOLO a los de 2+ años y el menor de 2 no paga extra.
+      let p = precioServicio(s.modo, s.personaPvp, s.grupos, paxServAdulto);
+      if (s.modo === "persona" && numMenoresDeDos > 0) p += (s.infantePvp ?? s.personaPvp ?? 0) * numMenoresDeDos;
       // Recargo individual: si el servicio va a 1 solo pax (cobro por persona),
       // se suma el suplemento a la tarifa.
       if (s.modo === "persona" && totalPax === 1 && s.recargoIndividual > 0) p += s.recargoIndividual;
@@ -817,6 +988,17 @@ export async function computarReserva(
         serviciosItems.push({ servicioId, nombre: s.nombre, precio: p, categoria: s.categoria, proveedorId: s.proveedorId });
       }
     }
+
+    // PVP fijo del infante (254) × servicios opcionales realmente seleccionados: si alguno (la asistencia no cuenta) le cobra un importe
+    // positivo a ese infante, vuelve a la fórmula normal COMPLETA de su ruta (menor de 2 años / 2 años o más) y el total se ajusta por la
+    // diferencia; si todos son gratuitos conserva el fijo. Jamás se cobran el fijo y la fórmula normal a la vez.
+    for (const s of byServ.values()) opcionalesInfante.push({ categoria: s.categoria, modo: s.modo, personaPvp: s.personaPvp, infantePvp: s.infantePvp });
+  }
+  for (const lm of lineasMenores) {
+    if (lm.clase !== "infante") continue;
+    const normal = lm.menorDeDos ? pvpInfanteSinFijo.menor2 : pvpInfanteSinFijo.mayor2;
+    const final = precioInfanteConServiciosOpcionales(lm.tarifa, normal, opcionalesInfante, lm.menorDeDos);
+    if (final !== lm.tarifa) { precioVenta += lm.cantidad * (final - lm.tarifa); lm.tarifa = final; }
   }
 
   // Servicios INCLUIDOS del paquete (armado_servicios.incluido=true). Modo
@@ -842,7 +1024,7 @@ export async function computarReserva(
     const catalogo = createAdminClient();
     const { data: incRows, error: incErr } = await catalogo
       .from("armado_servicios")
-      .select("servicio_id, modo, servicios_adicionales(nombre, categoria, precio_persona, liquidacion, proveedor_id)")
+      .select("servicio_id, modo, servicios_adicionales(nombre, categoria, precio_persona, precio_infante, liquidacion, proveedor_id)")
       .eq("paquete_id", input.paqueteId)
       .eq("incluido", true);
     if (incErr) return { ok: false, error: `No se pudieron consultar los servicios incluidos del paquete: ${incErr.message}` };
@@ -864,7 +1046,7 @@ export async function computarReserva(
       const gruposIncluidosPendientes: ServicioGrupoIncluido[] = [];
       for (const r of incRows) {
         if (r.servicio_id == null) continue;
-        const srv = r.servicios_adicionales as unknown as { nombre: string | null; categoria: string | null; precio_persona: number | null; liquidacion: string | null; proveedor_id: number | null } | null;
+        const srv = r.servicios_adicionales as unknown as { nombre: string | null; categoria: string | null; precio_persona: number | null; precio_infante: number | null; liquidacion: string | null; proveedor_id: number | null } | null;
         // `validarModoServicio` — mismo validador estricto que usa el resto
         // del sistema (lib/reservar/liquidacionServicio.ts): un modo inválido
         // (null/""/texto corrupto) es una configuración incompleta del
@@ -874,7 +1056,8 @@ export async function computarReserva(
           return { ok: false, error: `El servicio incluido "${srv?.nombre ?? r.servicio_id}" tiene un modo de cobro inválido en el catálogo (armado_servicios.modo) — corrígelo antes de reservar.` };
         }
         const costoNeto = costoNetoServicioIncluido(
-          modo, srv?.precio_persona ?? null, gruposPorServ.get(r.servicio_id) ?? [], totalPax, srv?.liquidacion ?? null, numNochesInc
+          modo, srv?.precio_persona ?? null, gruposPorServ.get(r.servicio_id) ?? [], paxServAdulto, srv?.liquidacion ?? null, numNochesInc,
+          { cantidad: numMenoresDeDos, precioInfanteNeto: srv?.precio_infante ?? null }
         );
         if (modo === "persona") {
           // Ya horneado en pvpPorAcom — solo se registra para el resumen/CxP,
@@ -911,7 +1094,7 @@ export async function computarReserva(
       // Misma función que usa el buscador de Vista Booking para mostrar el
       // total, así que lo mostrado y lo cotizado coinciden exactamente.
       if (gruposIncluidosPendientes.length) {
-        const cargo = cargoGrupoIncluido(gruposIncluidosPendientes, totalPax, pctMk, numNochesInc);
+        const cargo = cargoGrupoIncluido(gruposIncluidosPendientes, paxServAdulto, pctMk, numNochesInc);
         if (!cargo.ok) {
           return {
             ok: false,
@@ -928,9 +1111,34 @@ export async function computarReserva(
     return { ok: false, error: "Selecciona al menos un servicio y el número de pasajeros." };
   }
 
+  // #63: en el modo COP con TRM cada servicio (opcional o incluido) conserva la moneda de SU neto: su CxP se debe en esa
+  // moneda y el costo del contrato suma su equivalente en COP. Una sola consulta con el cliente de servicio; un error de
+  // lectura rechaza (nunca se asume COP).
+  if (oferta63) {
+    const idsMoneda = [...new Set([...serviciosItems.map((x) => x.servicioId), ...serviciosIncluidos.map((x) => x.servicioId)])];
+    if (idsMoneda.length) {
+      const { data: monedasSrv, error: monedasErr } = await createAdminClient().from("servicios_adicionales").select("id, moneda").in("id", idsMoneda);
+      if (monedasErr) return { ok: false, error: "No se pudo validar la moneda de los servicios del paquete. Intenta nuevamente." };
+      for (const m of (monedasSrv ?? []) as { id: number; moneda?: string | null }[]) monedaServicios63[m.id] = monedaNormalizada63(m.moneda);
+    }
+  }
+
+  // #90: el tarifario PUBLICADO que respalda el precio debe estar en la moneda de la oferta (la de publicación elegida del paquete). Si el
+  // paquete cambió de moneda y aún no se regeneró, el precio leído de la caché estaría en otra moneda: se rechaza, nunca se mezcla.
+  if (oferta63 && monedaNormalizada63(monedaReserva) !== oferta63.moneda) {
+    return { ok: false, error: `El tarifario publicado de este paquete está en ${monedaNormalizada63(monedaReserva)} pero el paquete se publica en ${oferta63.moneda}. Regenera el tarifario del paquete antes de cotizar o reservar.` };
+  }
+
   // BNC (Base No Comisionable) total = "Valor fijo del impuesto" × pax con tiquete.
   let impuestoTotal = 0;
-  if (!esServicios) {
+  if (oferta63 && !esServicios) {
+    // #63: BNC de la oferta (en su moneda: COP o USD). Tiquete = R (el precio del aéreo tal como se vende) × pax con silla; fijo =
+    // el importe del paquete (ya capturado en esa moneda) × pax con silla. Los menores de 2 años no ocupan silla ni generan BNC.
+    impuestoTotal = impuestoTotal63({
+      impuestoPorPersona: impuestoPorPersona63({ tipo: oferta63.impuestoTipo, tarifaParaEmpaquetar: oferta63.tarifaParaEmpaquetar, fijo: oferta63.impuestoFijo }),
+      paxConSilla,
+    });
+  } else if (!esServicios) {
     const { data: pqImp } = await sb
       .from("armado_paquetes")
       .select("impuesto_fijo")
@@ -941,6 +1149,6 @@ export async function computarReserva(
 
   return {
     ok: true,
-    data: { origen, meta, pvpPorAcom, netoPorAcom, precioVenta, paxConSilla, totalPax, numNinos, numNinos2, numInfantes, distribucionMenores, edadesMenoresUsadas, lineasHab, serviciosItems, serviciosIncluidos, impuestoTotal, monedaReserva, notaNino: ninoNotaTxt, cargoMascota, notaMascota: petNotaTxt, condicionesTarifa },
+    data: { origen, meta, pvpPorAcom, pvpMenor2PorAcom, netoPorAcom, precioVenta, paxConSilla, totalPax, numNinos, numNinos2, numInfantes, menoresDeDos, numMenoresDeDos, lineasMenores, distribucionMenores, edadesMenoresUsadas, lineasHab, serviciosItems, serviciosIncluidos, impuestoTotal, monedaReserva, notaNino: ninoNotaTxt, cargoMascota, notaMascota: petNotaTxt, condicionesTarifa, oferta63: oferta63 ? { ...oferta63, monedaHotel: monedaHotelOrigen63, monedaServicios: monedaServicios63 } : null, vigencias63 },
   };
 }

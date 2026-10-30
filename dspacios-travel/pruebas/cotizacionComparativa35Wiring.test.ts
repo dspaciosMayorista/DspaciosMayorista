@@ -231,7 +231,9 @@ describe("app — portal B2B y listados", () => {
 
 describe("Vista Booking y formulario manual — el flujo simple sigue siendo el predeterminado", () => {
   test("el modo comparativa nace apagado en Booking y en el formulario manual", () => {
-    assert.match(leer("lib/cotizacion/comparativaBooking.tsx"), /useState\(false\)/);
+    // #64: el modo vive en el carrito (para bloquear el cuarto hotel donde se pulsa «Agregar»); nace apagado ahí y Booking solo lo lee y lo alterna.
+    assert.match(leer("lib/cart/CartContext.tsx"), /\[modoComparativa, setModoComparativaEstado\] = useState\(false\)/);
+    assert.match(leer("lib/cotizacion/comparativaBooking.tsx"), /modoComparativa: activo, setModoComparativa: setActivo/);
     assert.match(leer("app/(dashboard)/dashboard/cotizaciones/nueva/CotizacionManualForm.tsx"), /const \[comparativa, setComparativa\] = useState\(false\)/);
   });
   test("en modo comparativa el formulario manual no muestra un total global y exige aliado del catálogo", () => {

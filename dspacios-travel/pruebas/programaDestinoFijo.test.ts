@@ -168,8 +168,12 @@ describe("getProgramasResumen(): visibilidad pública por destino fijo", () => {
   });
 
   test("no cambia precios: el 'Desde' sale igual con o sin destino", async () => {
-    const { sb } = clienteEnMemoria({ programas: PROGRAMAS, programa_ciudades: CIUDADES });
+    // El «Desde» sale de la DOBLE publicable (TASKS #92), no del desde_precio manual de la cabecera.
+    const categorias: Fila[] = PROGRAMAS.map((p) => ({ id: (p.id as number) * 10, programa_id: p.id }));
+    const precios: Fila[] = categorias.map((c) => ({ categoria_id: c.id, acomodacion: "doble", neto: 100, bajo_solicitud: false }));
+    const { sb } = clienteEnMemoria({ programas: PROGRAMAS, programa_ciudades: CIUDADES, programa_categorias: categorias, programa_precios: precios });
     const { programas } = await getProgramasResumen(sb, false);
+    assert.equal(programas.length, PROGRAMAS.length);
     for (const p of programas) assert.equal(p.desde_pvp, 100);
   });
 });

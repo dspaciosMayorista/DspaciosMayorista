@@ -59,6 +59,11 @@ const STUB_ELIMINAR_DESTINO_ACTIONS = pathToFileURL(join(AQUI, "stubs", "elimina
 const STUB_PAGOS_ACTIONS = pathToFileURL(join(AQUI, "stubs", "pagosActionsStub.mjs")).href;
 const STUB_PROVEEDORES_ACTIONS = pathToFileURL(join(AQUI, "stubs", "proveedoresActionsStub.mjs")).href;
 const STUB_DIFUSION_ACTIONS = pathToFileURL(join(AQUI, "stubs", "difusionActionsStub.mjs")).href;
+// Facturación (#49): `FacturacionClient.tsx` importa su Server Action real
+// "./actions" (next/headers + asientos) y `next/navigation`. La prueba
+// `tablasMoviles49.react.ts` solo comprueba la presentación móvil, así que las
+// acciones se sustituyen por un stub que responde ok sin tocar la base.
+const STUB_FACTURACION_ACTIONS = pathToFileURL(join(AQUI, "stubs", "facturacionActionsStub.mjs")).href;
 // `DateInput.tsx` arrastra "react-day-picker" (no instalado en el entorno de
 // pruebas) — se reemplaza por un <input> controlado en los componentes que lo
 // montan pero no lo prueban (DifusionClient, PagosList). Sin esto, esos
@@ -70,6 +75,7 @@ const STUB_NEXT_NAVIGATION = pathToFileURL(join(AQUI, "stubs", "nextNavigationSt
 // `BuscarPasajeroDocumento.tsx` (migración 187) importa la Server Action
 // real "@/lib/reservar/buscarPasajero" — mismo problema que las de arriba
 // (termina en "next/headers"). Mismo criterio de stub configurable.
+const STUB_BUSCAR_TITULAR = pathToFileURL(join(AQUI, "stubs", "buscarTitularStub.mjs")).href;
 const STUB_BUSCAR_PASAJERO = pathToFileURL(join(AQUI, "stubs", "buscarPasajeroStub.mjs")).href;
 // Dependencias externas de la Server Action REAL `dashboard/pagos/actions.ts`
 // (pruebas/asignarProveedorAction.react.ts): el supabase server (next/headers),
@@ -83,6 +89,8 @@ const STUB_DESTINOS_ACTIONS = pathToFileURL(join(AQUI, "stubs", "destinosActions
 // importan la Server Action real "../actions" (termina en "next/headers") ->
 // stub configurable.
 const STUB_VUELOS_ACTIONS = pathToFileURL(join(AQUI, "stubs", "vuelosActionsStub.mjs")).href;
+// Formularios de Empaquetados (#90/230): la Server Action real (next/headers) -> stub configurable.
+const STUB_EMPAQUETADOS_ACTIONS = pathToFileURL(join(AQUI, "stubs", "empaquetadosActionsStub.mjs")).href;
 // La Server Action REAL de vuelos (pruebas/vuelosOperacionesActions.react.ts)
 // importa "../paquetes/actions" (motor de tarifarios completo) -> stub.
 const STUB_PAQUETES_ACTIONS = pathToFileURL(join(AQUI, "stubs", "paquetesActionsStub.mjs")).href;
@@ -104,9 +112,18 @@ const STUB_SUPABASE_CLIENT = pathToFileURL(join(AQUI, "stubs", "supabaseClientSt
 // Registro B2B (pruebas/registroSolicitudB2BAction.react.ts): la Server Action
 // REAL `app/portal/registro/actions.ts` usa el cliente service-role -> stub
 // configurable con `__setAdmin`.
+const STUB_CONTEXTO_AGENCIA = pathToFileURL(join(AQUI, "stubs", "contextoAgenciaStub.mjs")).href;
+const STUB_CONTEXTO_SESION = pathToFileURL(join(AQUI, "stubs", "contextoSesionStub.mjs")).href;
 const STUB_SUPABASE_ADMIN = pathToFileURL(join(AQUI, "stubs", "supabaseAdminStub.mjs")).href;
 
 export async function resolve(specifier, context, nextResolve) {
+  // #5 D8/D9: la compuerta de catálogos globales y el contexto de sesión (server-only).
+  if (specifier === "@/lib/auth/contextoAgencia") {
+    return { url: STUB_CONTEXTO_AGENCIA, shortCircuit: true };
+  }
+  if (specifier === "./contexto-actions" && context.parentURL?.endsWith("/login/LoginClient.tsx")) {
+    return { url: STUB_CONTEXTO_SESION, shortCircuit: true };
+  }
   if (specifier.endsWith(".css")) {
     return { url: STUB_CSS, shortCircuit: true };
   }
@@ -124,6 +141,9 @@ export async function resolve(specifier, context, nextResolve) {
   if (specifier === "../../reservar/actions" && context.parentURL?.endsWith("/ConvertirCarritoBtn.tsx")) {
     return { url: STUB_RESERVAR_ACTIONS, shortCircuit: true };
   }
+  if (specifier === "@/lib/personas/buscarTitular") {
+    return { url: STUB_BUSCAR_TITULAR, shortCircuit: true };
+  }
   if (specifier === "@/lib/reservar/buscarPasajero") {
     return { url: STUB_BUSCAR_PASAJERO, shortCircuit: true };
   }
@@ -131,6 +151,10 @@ export async function resolve(specifier, context, nextResolve) {
     return { url: STUB_BUSQUEDA_UNIDAD_ACTIONS, shortCircuit: true };
   }
   if (specifier === "./actions" && context.parentURL?.endsWith("/tarifario/checkout/page.tsx")) {
+    return { url: STUB_CHECKOUT_ACTIONS, shortCircuit: true };
+  }
+  // La comparativa se importa de forma dinámica con el alias (`await import("@/app/tarifario/checkout/actions")`): mismo stub.
+  if (specifier === "@/app/tarifario/checkout/actions" && context.parentURL?.endsWith("/tarifario/checkout/page.tsx")) {
     return { url: STUB_CHECKOUT_ACTIONS, shortCircuit: true };
   }
   if (specifier === "./actions" && context.parentURL?.endsWith("PasajerosContratoClient.tsx")) {
@@ -156,6 +180,9 @@ export async function resolve(specifier, context, nextResolve) {
   }
   if (specifier === "./actions" && context.parentURL?.endsWith("DifusionClient.tsx")) {
     return { url: STUB_DIFUSION_ACTIONS, shortCircuit: true };
+  }
+  if (specifier === "./actions" && context.parentURL?.endsWith("FacturacionClient.tsx")) {
+    return { url: STUB_FACTURACION_ACTIONS, shortCircuit: true };
   }
   if (specifier === "./actions" && context.parentURL?.endsWith("/login/LoginClient.tsx")) {
     return { url: STUB_LOGIN_ACTIONS, shortCircuit: true };
@@ -184,11 +211,20 @@ export async function resolve(specifier, context, nextResolve) {
   if ((specifier === "@/lib/supabase/server" || specifier === "next/cache") &&
       (context.parentURL?.endsWith("/dashboard/usuarios/b2b/actions.ts") ||
        context.parentURL?.endsWith("/dashboard/usuarios/actions.ts") ||
+       // #107: acciones por lote del armado (setServicios, desvincularSalidasEmpaquetados63).
+       context.parentURL?.endsWith("/dashboard/paquetes/actions.ts") ||
        context.parentURL?.endsWith("/portal/b2b/agentes/actions.ts"))) {
     return { url: specifier === "next/cache" ? STUB_NEXT_CACHE : STUB_SUPABASE_SERVER, shortCircuit: true };
   }
+  if ((specifier === "../empaquetados-actions" || specifier === "../../empaquetados-actions") &&
+      (context.parentURL?.endsWith("/NuevoEmpaquetadoForm.tsx") || context.parentURL?.endsWith("/EditarEmpaquetadoForm.tsx"))) {
+    return { url: STUB_EMPAQUETADOS_ACTIONS, shortCircuit: true };
+  }
   if (specifier === "./actions" && context.parentURL?.endsWith("PagosList.tsx")) {
     return { url: STUB_PAGOS_ACTIONS, shortCircuit: true };
+  }
+  if (specifier === "./actions" && context.parentURL?.endsWith("/vuelos/NuevoBloqueoForm.tsx")) {
+    return { url: STUB_VUELOS_ACTIONS, shortCircuit: true };
   }
   if (specifier === "../actions" &&
       (context.parentURL?.endsWith("/EditarBloqueoForm.tsx") || context.parentURL?.endsWith("/PasajeroAcciones.tsx") ||
@@ -202,20 +238,28 @@ export async function resolve(specifier, context, nextResolve) {
       context.parentURL?.endsWith("/ConvertirCarritoBtn.tsx") ||
       context.parentURL?.endsWith("PagosList.tsx") ||
       context.parentURL?.endsWith("EditarBloqueoForm.tsx") ||
+      context.parentURL?.endsWith("/NuevoBloqueoForm.tsx") ||
+      context.parentURL?.endsWith("/NuevoEmpaquetadoForm.tsx") ||
+      context.parentURL?.endsWith("/EditarEmpaquetadoForm.tsx") ||
       context.parentURL?.endsWith("PasajeroAcciones.tsx"))
   ) {
     return { url: STUB_DATE_INPUT, shortCircuit: true };
   }
   if (
     specifier === "next/navigation" &&
-    (context.parentURL?.endsWith("DifusionClient.tsx") || context.parentURL?.endsWith("EditarBloqueoForm.tsx") ||
+    (context.parentURL?.endsWith("DifusionClient.tsx") || context.parentURL?.endsWith("EditarBloqueoForm.tsx") || context.parentURL?.endsWith("/NuevoBloqueoForm.tsx") ||
+      context.parentURL?.endsWith("/NuevoEmpaquetadoForm.tsx") || context.parentURL?.endsWith("/EditarEmpaquetadoForm.tsx") ||
       context.parentURL?.endsWith("/login/LoginClient.tsx") ||
       // Botón de salir que importa el portal B2B (pruebas/comisionPortalB2B.react.ts).
       context.parentURL?.endsWith("/LogoutButton.tsx") ||
       // Vista previa de la conversión del carrito (pruebas/convertirCarritoVinculos.react.ts).
       context.parentURL?.endsWith("/ConvertirCarritoBtn.tsx") ||
       // Panel del carrito (pruebas/carritoMonedaCheckout.react.ts).
-      context.parentURL?.endsWith("/tarifario/CartDrawer.tsx"))
+      context.parentURL?.endsWith("/tarifario/CartDrawer.tsx") ||
+      // Checkout público (pruebas/recorridoComparativa64.react.ts): al abrir la comparativa corrige la URL con router.replace.
+      context.parentURL?.endsWith("/tarifario/checkout/page.tsx") ||
+      // Facturación (#49, pruebas/tablasMoviles49.react.ts).
+      context.parentURL?.endsWith("FacturacionClient.tsx"))
   ) {
     return { url: STUB_NEXT_NAVIGATION, shortCircuit: true };
   }

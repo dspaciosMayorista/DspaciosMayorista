@@ -292,14 +292,22 @@ describe("fuente autoritativa: REFERENCIAS_DESTINO == FKs a destinos(id) en las 
     for (const f of fks) assert.doesNotMatch(f.linea, /on\s+delete/i, `${f.archivo}: ${f.tabla}`);
   });
 
-  test("fn_fusionar_destino (112) re-apunta TODA FK a destinos y solo eso; ninguna migración posterior la redefine", () => {
+  test("fn_fusionar_destino (112) re-apunta TODA FK a destinos y solo eso; la única redefinición posterior (237, D8/D9) solo agrega la guarda de agencia", () => {
     const fn = sinComentarios(leer("supabase/migrations/20260601000112_fusionar_destino.sql"));
     assert.match(fn, /where c\.contype = 'f' and c\.confrelid = 'public\.destinos'::regclass/);
     assert.match(fn, /update %s set %I = \$1 where %I = \$2/);
     const redefiniciones = archivos.filter((a) =>
       /create\s+or\s+replace\s+function\s+public\.fn_fusionar_destino/i.test(sinComentarios(leer(`supabase/migrations/${a}`)))
     );
-    assert.deepEqual(redefiniciones, ["20260601000112_fusionar_destino.sql"]);
+    // #5 D8/D9: la 237 la redefine SOLO para añadir la guarda de Mayorista (SECURITY DEFINER se salta la RLS).
+    assert.deepEqual(redefiniciones, ["20260601000112_fusionar_destino.sql", "20260601000237_catalogos_globales_frontera_mayorista.sql"]);
+    const f237 = sinComentarios(leer("supabase/migrations/20260601000237_catalogos_globales_frontera_mayorista.sql"));
+    const cuerpo237 = f237.slice(f237.search(/create\s+or\s+replace\s+function\s+public\.fn_fusionar_destino/i));
+    const fin = cuerpo237.search(/create\s+or\s+replace\s+function\s+public\.generar_tarifas_hotel_calculadora/i);
+    const soloFusion = fin > 0 ? cuerpo237.slice(0, fin) : cuerpo237;
+    assert.match(soloFusion, /where c\.contype = 'f' and c\.confrelid = 'public\.destinos'::regclass/);
+    assert.match(soloFusion, /update %s set %I = \$1 where %I = \$2/);
+    assert.match(soloFusion, /puede_escribir_catalogo_global\(\)/);
   });
 });
 

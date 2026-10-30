@@ -19,6 +19,9 @@ export type Database = {
           hora_salida_ida: string | null; hora_llegada_ida: string | null; hora_salida_reg: string | null; hora_llegada_reg: string | null;
           valor_tiquete: number; aplica_mk: boolean; ta: number; fee_infante: number;
           compra_inicio: string | null; compra_fin: string | null; activo: boolean; notas: string | null; orden: number; created_at: string;
+          // Migración 227 (#63): vínculo a un vuelo de Empaquetados sin record (NULL = salida manual) y moneda
+          // acreditada de tiquete/TA/fee de la salida MANUAL; la VINCULADA copia la de su vuelo de Empaquetados (COP o USD, migración 230).
+          empaquetado_id: number | null; moneda: string;
         };
         Insert: {
           id?: number; paquete_id: number; aerolinea?: string | null; ruta?: string | null; origen?: string | null;
@@ -26,6 +29,7 @@ export type Database = {
           hora_salida_ida?: string | null; hora_llegada_ida?: string | null; hora_salida_reg?: string | null; hora_llegada_reg?: string | null;
           valor_tiquete?: number; aplica_mk?: boolean; ta?: number; fee_infante?: number;
           compra_inicio?: string | null; compra_fin?: string | null; activo?: boolean; notas?: string | null; orden?: number; created_at?: string;
+          empaquetado_id?: number | null; moneda?: string;
         };
         Update: Partial<Database["public"]["Tables"]["salidas_dinamicas"]["Insert"]>;
         Relationships: [];
@@ -236,6 +240,8 @@ export type Database = {
           banco: string | null;
           tipo_cuenta: string | null;
           numero_cuenta: string | null;
+          // Migración 238 (#102): un aliado inactivo no se puede cotizar como beneficiario de una venta B2B asistida.
+          activo: boolean;
         };
         Insert: {
           id?: number;
@@ -254,6 +260,7 @@ export type Database = {
           banco?: string | null;
           tipo_cuenta?: string | null;
           numero_cuenta?: string | null;
+          activo?: boolean;
         };
         Update: Partial<Database["public"]["Tables"]["aliados"]["Insert"]>;
         Relationships: [];
@@ -350,6 +357,26 @@ export type Database = {
           // Default 'completo'; solo reservarDesdeTarifarioInterno/
           // convertirCotizacionCarrito lo insertan en 'pendiente'.
           financiero_estado: string;
+          // Migración 227 (#63): aceptación de oferta COP con TRM que respalda este contrato (NULL = contrato de siempre).
+          aceptacion_63_id: number | null;
+          // Migración 235 (#90 F): moneda de COBRO (NULL = se cobra en `moneda`). Si difiere de `moneda`, `total_cobro` es el total a cobrar
+          // (precio_venta convertido UNA vez con `trm_cobro`, congelado). Léelo siempre con `cobroDeVenta` (lib/finanzas/cobro.ts).
+          moneda_cobro: string | null;
+          trm_cobro: number | null;
+          total_cobro: number | null;
+          // Migración 238 (#102): cotización de carrito de la que nació este contrato en una venta B2B asistida y clave de su grupo (destino, o
+          // `__sin_destino__`). Índice único parcial: una cotización convierte UNA vez cada grupo (doble envío simultáneo). NULL = contrato de siempre.
+          cotizacion_origen_id: number | null;
+          grupo_conversion: string | null;
+          // Migración 239 (#102): titular de la reserva cuando el cliente comercial del contrato es el aliado (venta NETO asistida). NULL en el resto.
+          titular_nombre: string | null;
+          titular_documento: string | null;
+          titular_telefono: string | null;
+          titular_email: string | null;
+          // Migración 240 (#40): tipo del documento del cliente (catálogo de personas); NULL = no se eligió.
+          cliente_tipo_documento: string | null;
+          // Migración 241 (#40 E2): tipo del documento del titular de la reserva (NETO); NULL = no aplica / no se eligió.
+          titular_tipo_documento: string | null;
           financiero_actualizado_en: string;
           created_at: string;
           updated_at: string;
@@ -416,11 +443,66 @@ export type Database = {
           recobro_aliado?: number | null;
           cotizacion_id?: number | null;
           financiero_estado?: string;
+          aceptacion_63_id?: number | null;
+          moneda_cobro?: string | null;
+          trm_cobro?: number | null;
+          total_cobro?: number | null;
+          cotizacion_origen_id?: number | null;
+          grupo_conversion?: string | null;
+          titular_nombre?: string | null;
+          titular_documento?: string | null;
+          titular_telefono?: string | null;
+          titular_email?: string | null;
+          cliente_tipo_documento?: string | null;
+          titular_tipo_documento?: string | null;
           financiero_actualizado_en?: string;
           created_at?: string;
           updated_at?: string;
         };
         Update: Partial<Database["public"]["Tables"]["ventas"]["Insert"]>;
+        Relationships: [];
+      };
+      // Migración 227 (#63, E/F/G). PRIVADAS (RLS sin policies): solo el servidor con service_role las lee; nunca el navegador.
+      p63_oferta: {
+        Row: {
+          id: number;
+          cotizacion_id: number;
+          tenant: string;
+          paquete_id: number;
+          salida_id: number | null;
+          trm: number | null;
+          rev_fuente: number;
+          rev_publicada: number | null;
+          gen_publicada: number | null;
+          rev_costos: number;
+          huella: string;
+          huella_financiera: string;
+          snapshot: Json;
+          estado: "abierta" | "aceptada";
+          creada_en: string;
+          actualizada_en: string;
+        };
+        Insert: never;
+        Update: never;
+        Relationships: [];
+      };
+      p63_aceptacion: {
+        Row: {
+          id: number;
+          oferta_id: number;
+          cotizacion_id: number;
+          tenant: string;
+          numero_contrato: string;
+          usuario_id: string | null;
+          fecha_negocio: string;
+          snapshot: Json;
+          estado: "preparada" | "materializando" | "completa" | "descartada";
+          error: string | null;
+          creada_en: string;
+          actualizada_en: string;
+        };
+        Insert: never;
+        Update: never;
         Relationships: [];
       };
       contrato_financiero_pendiente: {
@@ -725,6 +807,16 @@ export type Database = {
           clasificacion: string;
           tenant: string;
           moneda: string;
+          // Migración 227 (#63): equivalente en COP de una obligación del modo cop_trm_63 (moneda de origen USD),
+          // congelado a la TRM del paquete. NULL en toda obligación de siempre.
+          valor_cop_63: number | null;
+          trm_63: number | null;
+          // Migración 236 (#90 I): equivalente en COP de una CxP en USD del carrito, congelado a la TRM de COSTOS. NULL en toda obligación de siempre.
+          valor_cop_costo: number | null;
+          trm_costo: number | null;
+          // Migración 227 (#63): obligación escrita por la RPC financiera desde una aceptación (protegida contra edición).
+          aceptacion_63_id: number | null;
+          obligacion_63: string | null;
           created_at: string;
         };
         Insert: {
@@ -734,6 +826,12 @@ export type Database = {
           tipo_proveedor?: string | null;
           servicio?: string | null;
           servicio_id?: number | null;
+          valor_cop_63?: number | null;
+          trm_63?: number | null;
+          valor_cop_costo?: number | null;
+          trm_costo?: number | null;
+          aceptacion_63_id?: number | null;
+          obligacion_63?: string | null;
           fecha_obligacion?: string | null;
           fecha_vencimiento?: string | null;
           valor_total?: number;
@@ -1171,6 +1269,13 @@ export type Database = {
           modalidad_emision: string | null;
           estado_emision: string | null;
           estado_pago: string | null;
+          // Migración 226: fee de infante del vuelo (0 a 1,99 años). Precio = costo.
+          fee_infante: number;
+          // Migración 231: moneda de tarifa_neta/tarifa_para_empaquetar/fee_infante. NULL = sin acreditar. La constancia la escribe el trigger.
+          moneda: "COP" | "USD" | null;
+          moneda_acreditada_en: string | null;
+          moneda_acreditada_por: string | null;
+          moneda_acreditada_ref: string | null;
           created_at: string;
           updated_at: string;
         };
@@ -1179,6 +1284,8 @@ export type Database = {
           record: string;
           proveedor_id?: number | null;
           destino_id?: number | null;
+          fee_infante?: number;
+          moneda?: "COP" | "USD" | null;
           rangos_edad?: number[] | null;
           aerolinea?: string | null;
           ruta?: string | null;
@@ -1234,6 +1341,9 @@ export type Database = {
           activo: boolean;
           created_at: string;
           updated_at: string;
+          // La migración 227 (#63) agrega `moneda` (COP o USD desde la 230). NO se tipa aquí a propósito: la vista
+          // `empaquetados_basica` (224) refleja este Row menos los costos y la prueba de deriva la protege; el código
+          // la lee con consultas sin tipo (lib/reservar/prepararOferta63.ts) y no la necesita en la vista.
         };
         Insert: {
           id?: number;
@@ -2326,6 +2436,8 @@ export type Database = {
           tarifa_neta: number; temporada: string | null; rangos_edad: number[] | null; tipo_tarifa: string;
           precio_persona: number | null; precio_grupo: number | null; categoria: string;
           descripcion: string | null; recargo_individual: number | null; moneda: string; foto_url: string | null;
+          // Migración 226: NETO por infante (0 a 1,99 años). NULL = el infante paga como adulto (NULL ≠ $0).
+          precio_infante: number | null;
           liquidacion: Database["public"]["Enums"]["liquidacion_tipo"]; alcance: string; activo: boolean; created_at: string;
         };
         Insert: {
@@ -2333,6 +2445,7 @@ export type Database = {
           tarifa_neta?: number; temporada?: string | null; rangos_edad?: number[] | null; tipo_tarifa?: string;
           precio_persona?: number | null; precio_grupo?: number | null; categoria?: string;
           descripcion?: string | null; recargo_individual?: number | null; moneda?: string; foto_url?: string | null;
+          precio_infante?: number | null;
           liquidacion?: Database["public"]["Enums"]["liquidacion_tipo"]; alcance?: string; activo?: boolean; created_at?: string;
         };
         Update: Partial<Database["public"]["Tables"]["servicios_adicionales"]["Insert"]>;
@@ -2345,8 +2458,8 @@ export type Database = {
         Relationships: [];
       };
       servicio_temporadas: {
-        Row: { id: number; servicio_id: number; nombre: string; fecha_inicio: string | null; fecha_fin: string | null; prioridad: number; compra_inicio: string | null; compra_fin: string | null; precio_persona: number | null; recargo_individual: number | null; orden: number; created_at: string };
-        Insert: { id?: number; servicio_id: number; nombre: string; fecha_inicio?: string | null; fecha_fin?: string | null; prioridad?: number; compra_inicio?: string | null; compra_fin?: string | null; precio_persona?: number | null; recargo_individual?: number | null; orden?: number; created_at?: string };
+        Row: { id: number; servicio_id: number; nombre: string; fecha_inicio: string | null; fecha_fin: string | null; prioridad: number; compra_inicio: string | null; compra_fin: string | null; precio_persona: number | null; precio_infante: number | null; recargo_individual: number | null; orden: number; created_at: string };
+        Insert: { id?: number; servicio_id: number; nombre: string; fecha_inicio?: string | null; fecha_fin?: string | null; prioridad?: number; compra_inicio?: string | null; compra_fin?: string | null; precio_persona?: number | null; precio_infante?: number | null; recargo_individual?: number | null; orden?: number; created_at?: string };
         Update: Partial<Database["public"]["Tables"]["servicio_temporadas"]["Insert"]>;
         Relationships: [];
       };
@@ -2369,6 +2482,7 @@ export type Database = {
           fecha_viaje_inicio: string | null;
           fecha_viaje_fin: string | null;
           pct_mk: number;
+          pvp_infante_fijo: number | null;
           impuesto_tipo: Database["public"]["Enums"]["impuesto_tipo"];
           impuesto_fijo: number;
           moneda: string;
@@ -2402,6 +2516,18 @@ export type Database = {
           tarifario_error: string | null;
           tarifario_actualizado_en: string | null;
           tarifario_snapshot_publicable: boolean;
+          // Migración 220 (#67) — check por paquete: false = solo el destino
+          // comercial; true = destino comercial + alternativas elegidas del
+          // MISMO país (tabla armado_paquete_destinos_aereos).
+          destinos_aereos_alternativos: boolean;
+          // Migración 227 (#63): modo de oferta del paquete. 'legacy' = el de siempre; 'cop_trm_63' = tarifario en COP
+          // con la TRM del paquete. Desde la 233 (#93) la TRM puede ser NULL: solo se exige si alguna fuente está en USD.
+          modo_oferta: string;
+          trm_oferta: number | null;
+          // Migración 233 (#90 D): moneda de publicación ELEGIDA ('COP' | 'USD'); NULL = sin elegir. El modo 63 solo admite COP.
+          moneda_publicacion: string | null;
+          // Migración 227 (#63): contador de cambios de proveedor/retención/reglas de hotel (sube en la misma transacción).
+          p63_rev_costos: number;
         };
         Insert: {
           id?: number;
@@ -2415,6 +2541,7 @@ export type Database = {
           fecha_viaje_inicio?: string | null;
           fecha_viaje_fin?: string | null;
           pct_mk?: number;
+          pvp_infante_fijo?: number | null;
           impuesto_tipo?: Database["public"]["Enums"]["impuesto_tipo"];
           impuesto_fijo?: number;
           moneda?: string;
@@ -2441,8 +2568,22 @@ export type Database = {
           tarifario_error?: string | null;
           tarifario_actualizado_en?: string | null;
           tarifario_snapshot_publicable?: boolean;
+          destinos_aereos_alternativos?: boolean;
+          modo_oferta?: string;
+          trm_oferta?: number | null;
+          moneda_publicacion?: string | null;
+          p63_rev_costos?: number;
         };
         Update: Partial<Database["public"]["Tables"]["armado_paquetes"]["Insert"]>;
+        Relationships: [];
+      };
+      // Migración 220 (#67) — destinos de llegada ALTERNATIVOS elegidos para un
+      // paquete (solo cuenta cuando armado_paquetes.destinos_aereos_alternativos
+      // es true). El destino comercial NO se guarda aquí: siempre es el del paquete.
+      armado_paquete_destinos_aereos: {
+        Row: { paquete_id: number; destino_id: number; creado_en: string };
+        Insert: { paquete_id: number; destino_id: number; creado_en?: string };
+        Update: Partial<Database["public"]["Tables"]["armado_paquete_destinos_aereos"]["Insert"]>;
         Relationships: [];
       };
       armado_vuelos: {
@@ -2516,10 +2657,20 @@ export type Database = {
           // false`); con 2+ quedan NULL y `procedencia_mixta = true`.
           procedencia_temporadas: Json | null;
           procedencia_mixta: boolean;
+          // Migración 226: precio de un MENOR DE 2 AÑOS (fee de infante del vuelo
+          // + servicios con su precio de infante + hotel de la clase del menor).
+          // En filas de servicio persona = PVP del infante. NULL = la fila se
+          // publicó antes de la 226 (hay que regenerar) o no aplica (habitación adulta).
+          precio_pvp_menor2: number | null;
+          precio_pvp_sin_fijo: number | null;
+          precio_pvp_menor2_sin_fijo: number | null;
         };
         Insert: {
           id?: number;
           paquete_id: number;
+          precio_pvp_menor2?: number | null;
+          precio_pvp_sin_fijo?: number | null;
+          precio_pvp_menor2_sin_fijo?: number | null;
           moneda?: string;
           salida_id?: number | null;
           paquete_nombre?: string | null;
@@ -2614,6 +2765,7 @@ export type Database = {
           video_url: string | null;
           activo: boolean;          publicado: boolean;
           destino_fijo_id: number | null;
+          proveedor_asistencia_id: number | null;
           regla_comisionable: boolean;
           regla_comisionable_modo: string;
           regla_comisionable_valor: number | null;
@@ -2667,6 +2819,7 @@ export type Database = {
           activo?: boolean;
           publicado?: boolean;
           destino_fijo_id?: number | null;
+          proveedor_asistencia_id?: number | null;
           regla_comisionable?: boolean;
           regla_comisionable_modo?: string;
           regla_comisionable_valor?: number | null;
@@ -2690,6 +2843,175 @@ export type Database = {
             referencedColumns: ["id"];
           },
         ];
+      };
+      // Migración 244 (#88): programas por hotel y vigencia con noches adicionales.
+      programa_hoteles: {
+        Row: {
+          id: number;
+          programa_id: number;
+          orden: number;
+          nombre: string;
+          zona: string | null;
+          tipo_habitacion: string | null;
+          max_pax_habitacion: number | null;
+          max_menores_habitacion: number | null;
+          proveedor_id: number | null;
+          created_at: string;
+        };
+        Insert: {
+          id?: number;
+          programa_id: number;
+          orden?: number;
+          nombre: string;
+          zona?: string | null;
+          tipo_habitacion?: string | null;
+          max_pax_habitacion?: number | null;
+          max_menores_habitacion?: number | null;
+          proveedor_id?: number | null;
+          created_at?: string;
+        };
+        Update: Partial<Database["public"]["Tables"]["programa_hoteles"]["Insert"]>;
+        Relationships: [];
+      };
+      programa_hotel_precios: {
+        Row: {
+          id: number;
+          hotel_id: number;
+          desde: string;
+          hasta: string;
+          modalidad_servicios: string;
+          bajo_solicitud: boolean;
+          neto_sencilla: number | null;
+          neto_doble: number | null;
+          neto_triple: number | null;
+          neto_multiple: number | null;
+          neto_nino: number | null;
+        };
+        Insert: {
+          id?: number;
+          hotel_id: number;
+          desde: string;
+          hasta: string;
+          modalidad_servicios: string;
+          bajo_solicitud?: boolean;
+          neto_sencilla?: number | null;
+          neto_doble?: number | null;
+          neto_triple?: number | null;
+          neto_multiple?: number | null;
+          neto_nino?: number | null;
+        };
+        Update: Partial<Database["public"]["Tables"]["programa_hotel_precios"]["Insert"]>;
+        Relationships: [];
+      };
+      programa_hotel_noches: {
+        Row: {
+          id: number;
+          hotel_id: number;
+          desde: string;
+          hasta: string;
+          unidad_cobro: string;
+          neto_sencilla: number | null;
+          neto_doble: number | null;
+          neto_triple: number | null;
+          neto_multiple: number | null;
+          neto_nino: number | null;
+        };
+        Insert: {
+          id?: number;
+          hotel_id: number;
+          desde: string;
+          hasta: string;
+          unidad_cobro: string;
+          neto_sencilla?: number | null;
+          neto_doble?: number | null;
+          neto_triple?: number | null;
+          neto_multiple?: number | null;
+          neto_nino?: number | null;
+        };
+        Update: Partial<Database["public"]["Tables"]["programa_hotel_noches"]["Insert"]>;
+        Relationships: [];
+      };
+      contrato_programa_estancia: {
+        Row: {
+          numero_contrato: string;
+          programa_id: number | null;
+          hotel_id: number | null;
+          hotel_nombre: string;
+          zona: string | null;
+          tipo_habitacion: string | null;
+          modalidad_servicios: string;
+          moneda: string;
+          fecha_entrada: string;
+          noches_incluidas: number;
+          noches_adicionales: number;
+          fecha_regreso: string;
+          base_vigencia_desde: string;
+          base_vigencia_hasta: string;
+          habitaciones: Json;
+          ninos: number;
+          infantes: number;
+          precio_base: number;
+          precio_noches: number;
+          noches: Json;
+          itinerario: Json;
+          created_at: string;
+        };
+        Insert: {
+          numero_contrato: string;
+          programa_id?: number | null;
+          hotel_id?: number | null;
+          hotel_nombre: string;
+          zona?: string | null;
+          tipo_habitacion?: string | null;
+          modalidad_servicios: string;
+          moneda: string;
+          fecha_entrada: string;
+          noches_incluidas: number;
+          noches_adicionales?: number;
+          fecha_regreso: string;
+          base_vigencia_desde: string;
+          base_vigencia_hasta: string;
+          habitaciones?: Json;
+          ninos?: number;
+          infantes?: number;
+          precio_base: number;
+          precio_noches?: number;
+          noches?: Json;
+          itinerario?: Json;
+          created_at?: string;
+        };
+        Update: Partial<Database["public"]["Tables"]["contrato_programa_estancia"]["Insert"]>;
+        Relationships: [];
+      };
+      contrato_programa_estancia_costo: {
+        Row: {
+          numero_contrato: string;
+          moneda: string;
+          neto_base: number;
+          neto_noches: number;
+          asistencia_noches: number;
+          detalle_noches: Json;
+          proveedor_noches_id: number | null;
+          asistencia_total: number;
+          proveedor_asistencia_id: number | null;
+          trm_costo: number | null;
+          created_at: string;
+        };
+        Insert: {
+          numero_contrato: string;
+          moneda: string;
+          neto_base: number;
+          neto_noches?: number;
+          asistencia_noches?: number;
+          detalle_noches?: Json;
+          proveedor_noches_id?: number | null;
+          asistencia_total?: number;
+          proveedor_asistencia_id?: number | null;
+          trm_costo?: number | null;
+          created_at?: string;
+        };
+        Update: Partial<Database["public"]["Tables"]["contrato_programa_estancia_costo"]["Insert"]>;
+        Relationships: [];
       };
       programa_salidas: {
         Row: {
@@ -2770,6 +3092,7 @@ export type Database = {
           id: number;
           programa_id: number;
           dia: number;
+          tipo_tramo: "dia" | "traslado_previo" | "traslado_posterior";
           titulo: string | null;
           desayuno: boolean;
           almuerzo: boolean;
@@ -2780,6 +3103,7 @@ export type Database = {
           id?: number;
           programa_id: number;
           dia: number;
+          tipo_tramo?: "dia" | "traslado_previo" | "traslado_posterior";
           titulo?: string | null;
           desayuno?: boolean;
           almuerzo?: boolean;
@@ -2895,6 +3219,8 @@ export type Database = {
           fecha_fin: string | null;
           motivo: string | null;
           ciudad: string | null;
+          /** Migración 246 (#409): 'entrada' (solo la fecha de entrada) | 'viaje' (cualquier día del viaje). */
+          alcance: string;
         };
         Insert: {
           id?: number;
@@ -2903,6 +3229,7 @@ export type Database = {
           fecha_fin?: string | null;
           motivo?: string | null;
           ciudad?: string | null;
+          alcance?: string;
         };
         Update: Partial<Database["public"]["Tables"]["programa_blackouts"]["Insert"]>;
         Relationships: [];
@@ -2965,6 +3292,10 @@ export type Database = {
           madre_version: number | null;
           madre_sello: string | null;
           vigencia_tope: string | null; // date
+          // ── Edición de servicios (migración 216, #39) ──
+          // Revisión económica propia: sube sola ante cualquier cambio de precio,
+          // servicios, recobro o niños. La API no la puede fijar (disparador).
+          economico_rev: number;
         };
         Insert: {
           id?: number;
@@ -3063,6 +3394,29 @@ export type Database = {
         Update: never;
         Relationships: [];
       };
+      // Migración 216 (#39). Historial de ediciones de una cotización dinámica,
+      // con motivo. Solo inserción y solo desde las RPC de edición.
+      cotizacion_ediciones: {
+        Row: {
+          id: number;
+          cotizacion_id: number;
+          tenant: string;
+          tipo: string; // 'servicios' | 'recobro_ninos'
+          actor_id: string;
+          actor_rol: string;
+          motivo: string;
+          rev_anterior: number;
+          rev_nueva: number;
+          precio_anterior: number | null;
+          precio_nuevo: number | null;
+          antes: Json;
+          despues: Json;
+          creado_en: string;
+        };
+        Insert: never;
+        Update: never;
+        Relationships: [];
+      };
       cotizacion_comparativa_eventos: {
         Row: {
           id: number;
@@ -3105,6 +3459,56 @@ export type Database = {
           created_at: string;
           updated_at: string;
           atendida_en: string | null;
+        };
+        Insert: never;
+        Update: never;
+        Relationships: [];
+      };
+      // ── #50 (migración 222): sello de la modalidad PVP/NETO de la hija manual ──
+      // Solo lectura para service_role; las escribe `p50_priv.sellar_hija`.
+      cotizacion_neto: {
+        Row: {
+          cotizacion_id: number;
+          tenant: string;
+          modalidad: "pvp" | "neto";
+          reconoce_recobro: boolean | null;
+          aliado_id: number | null;
+          tipo_asesor: "interno" | "agencia" | "freelance";
+          moneda: string;
+          pvp_total: number;
+          tiquetes: number | null;
+          recobro: number | null;
+          ninos_total: number | null;
+          recobro_aliado_original: number | null;
+          base_comision: number | null;
+          pct_comision: number | null;
+          comision_ordinaria: number | null;
+          participacion_recobro: number | null;
+          descuento_total: number | null;
+          neto_total: number | null;
+          costo_total: number | null;
+          margen: number | null;
+          piso: number | null;
+          solo_tiquetes: boolean | null;
+          autorizado_por: string | null;
+          autorizado_rol: string | null;
+          autorizado_en: string | null;
+          creado_por_id: string | null;
+          creado_en: string;
+        };
+        Insert: never;
+        Update: never;
+        Relationships: [];
+      };
+      cotizacion_neto_componentes: {
+        Row: {
+          cotizacion_id: number;
+          orden: number;
+          servicio_id: number | null;
+          tipo_servicio: string;
+          pvp: number;
+          descuento: number;
+          neto: number;
         };
         Insert: never;
         Update: never;
@@ -3450,6 +3854,29 @@ export type Database = {
         Update: Partial<Database["public"]["Tables"]["web_secciones"]["Insert"]>;
         Relationships: [];
       };
+      // Migración 219 (#42): puesto (titular/pasajero) de una cotización. Sin GRANT a
+      // anon/authenticated: solo lo lee una página de servidor con service-role (aviso de
+      // personas pendientes y versión del titular). Se escribe SOLO por las fachadas de la 219.
+      cotizacion_participantes: {
+        Row: {
+          id: string;
+          cotizacion_id: number;
+          tenant: string;
+          rol: "titular" | "pasajero";
+          orden: number | null;
+          persona_id: string;
+          captura_id: string;
+          activo: boolean;
+          retirado_en: string | null;
+          retirado_por: string | null;
+          version: number;
+          created_at: string;
+          updated_at: string;
+        };
+        Insert: never;
+        Update: never;
+        Relationships: [];
+      };
     };
     Views: {
       // Migración 144: `ventas` SIN columnas financieras. Es la única puerta
@@ -3462,7 +3889,7 @@ export type Database = {
           | "impuesto" | "comision_b2b" | "comision_estado" | "modo_compra"
           | "recobro_total" | "recobro_empresa" | "recobro_aliado" | "trm_contrato" | "b2b_usuario_id"
           // Migración 147: fuera por sensibles. `observaciones` no vuelve.
-          | "observaciones"
+          | "observaciones" | "cliente_tipo_documento" | "titular_tipo_documento"
           // Enmascaradas por contrato propio/ajeno (147 y 148): siguen en la
           // vista pero llegan en null — o con el documento recortado — cuando
           // el contrato no es del asesor. De ahí el `| null` de abajo.
@@ -3486,6 +3913,18 @@ export type Database = {
       // tipo deja de cuadrar y hay que venir a tocar esto a propósito.
       abonos_resumen: {
         Row: { numero_contrato: string; total_pagado: number };
+        Relationships: [];
+      };
+      // Migración 224: `empaquetados` SIN columnas de costo. Es la única puerta
+      // de lectura del rol `venta` a los empaquetados — a la tabla base ya no
+      // entra, para que no pueda pedir los netos por la API. Los roles
+      // financieros y control_vuelo siguen leyendo la tabla base. `Omit<>`: el
+      // tipo impide pedir una columna de costo a esta vista (el build falla).
+      empaquetados_basica: {
+        Row: Omit<
+          Database["public"]["Tables"]["empaquetados"]["Row"],
+          "tarifa_proveedor" | "fee_infante" | "tarifa_para_empaquetar" | "estado_pago" | "notas"
+        >;
         Relationships: [];
       };
       // Migración 182 (Fase 2 de snapshots atómicos): mismas columnas que
@@ -3685,6 +4124,26 @@ export type Database = {
         Args: Record<PropertyKey, never>;
         Returns: Database["public"]["Enums"]["rol_usuario"];
       };
+      // Migración 237 (frontera D8/D9 de catálogos globales). `puede_escribir_
+      // catalogo_global` la usan las policies restrictivas y lo puede consultar
+      // la sesión; `iniciar_/cambiar_contexto_agencia` son SOLO service_role
+      // (la sesión la deriva el servidor del JWT verificado, nunca el cliente).
+      puede_escribir_catalogo_global: {
+        Args: Record<PropertyKey, never>;
+        Returns: boolean;
+      };
+      agencia_activa_sesion: {
+        Args: Record<PropertyKey, never>;
+        Returns: string | null;
+      };
+      iniciar_contexto_agencia: {
+        Args: { p_session: string; p_tenant: string; p_ventana?: string };
+        Returns: undefined;
+      };
+      cambiar_contexto_agencia: {
+        Args: { p_session: string; p_tenant: string };
+        Returns: undefined;
+      };
       fn_fusionar_destino: {
         Args: { p_origen: number; p_destino: number };
         Returns: undefined;
@@ -3746,6 +4205,15 @@ export type Database = {
         Args: { p_paquete_id: number };
         Returns: { generacion: number; revision_capturada: number }[];
       };
+      // Migración 220 (#67). Guarda en UNA transacción el destino comercial, el
+      // check y la lista de alternativas de un paquete. SECURITY INVOKER, con
+      // candado de rol interno. Las guardas de la base (triggers diferidos)
+      // validan el estado final al confirmar: país comparable, alternativas
+      // activas, y que ningún vuelo ya vinculado quede incompatible.
+      guardar_destinos_aereos_67: {
+        Args: { p_paquete_id: number; p_destino_id: number | null; p_activo: boolean; p_destinos: number[] };
+        Returns: Json;
+      };
       // Migración 181. Publicación atómica del tarifario — paso 2: reemplaza
       // (delete+insert) TODAS las filas de tarifario_resultado de un paquete
       // en una sola transacción, pero SOLO si p_generacion y
@@ -3770,6 +4238,34 @@ export type Database = {
           p_filas: Json;
         };
         Returns: boolean;
+      };
+      // Migración 227 (#63). Envuelve a publicar_tarifario_resultado (el vigente) y guarda, en la
+      // misma transacción, la TRM/modo/fuentes de esa publicación. p_modo y p_trm deben coincidir
+      // con los del paquete (candado de fila) y p_moneda debe ser COP.
+      publicar_tarifario_resultado_63: {
+        Args: {
+          p_paquete_id: number;
+          p_generacion: number;
+          p_revision_capturada: number;
+          p_moneda: string;
+          p_filas: Json;
+          p_modo: string;
+          // Migración 233 (#93): NULL = ninguna fuente del paquete está en USD ("no requiere conversión").
+          p_trm: number | null;
+        };
+        Returns: boolean;
+      };
+      // Migración 227 (#63, E/F/G). Solo service_role: las llama el servidor tras autorizar sesión/rol/tenant. La primera crea
+      // la cotización y su oferta privada (snapshot con costos y proveedores) en UNA transacción; la segunda ACEPTA la oferta
+      // (revalida bajo candado, reserva el número y congela el snapshot).
+      crear_cotizacion_oferta_63: {
+        Args: { p_usuario: string; p_tenant: string; p_cotizacion: Json; p_snapshot: Json; p_huella: string; p_huella_financiera: string; p_t0: Json };
+        Returns: number;
+      };
+      aceptar_oferta_63: {
+        Args: { p_cotizacion: number; p_tenant: string; p_usuario: string; p_huella: string; p_huella_financiera: string };
+        /** {estado: 'preparada' | 'materializando' | 'completa', aceptacion_id, numero_contrato, fecha_negocio?, snapshot?, financiero?} */
+        Returns: Json;
       };
       // Migración 181. Publicación atómica del tarifario — marca el intento
       // vigente (mismos p_generacion Y p_revision_capturada) como fallido con
@@ -3819,6 +4315,57 @@ export type Database = {
         Args: { p_cotizacion_id: number; p_usuario_id: string };
         Returns: string;
       };
+      // ── Edición de cotizaciones dinámicas (migraciones 216/217, #39) ─────
+      // RPC SECURITY DEFINER, SOLO service_role. Errores: `EDICION_39_<X>: …`.
+      crear_cotizacion_manual: {
+        Args: { p_usuario_id: string; p_tenant: string; p_cabecera: Json; p_servicios: Json };
+        Returns: number;
+      };
+      editar_servicios_cotizacion_manual: {
+        Args: {
+          p_usuario_id: string; p_cotizacion_id: number; p_rev_esperada: number; p_motivo: string;
+          p_servicios: Json; p_cambios: Json;
+        };
+        Returns: number;
+      };
+      actualizar_recobro_ninos_manual: {
+        Args: { p_usuario_id: string; p_cotizacion_id: number; p_rev_esperada: number; p_motivo: string; p_cambios: Json };
+        Returns: number;
+      };
+      // Wrappers INVOKER (solo service_role): la ÚNICA puerta de pago, anulación y
+      // conversión manual. Llaman la 198 sin cambios con la autorización de su
+      // transacción. Mismo retorno que la RPC que envuelven.
+      registrar_pago_previo_rev: {
+        Args: {
+          p_cotizacion_id: number;
+          p_valor: number;
+          p_moneda: string;
+          p_trm: number;
+          p_forma_pago: string;
+          p_referencia: string;
+          p_fecha_pago: string;
+          p_usuario_id: string;
+          p_idempotency_key: string;
+          p_rev_esperada: number;
+          p_snapshot?: Json;
+          p_exigido_total_moneda?: number;
+          p_pct_efectivo?: number;
+        };
+        Returns: string;
+      };
+      anular_pago_previo_controlado: {
+        Args: { p_pago_id: number; p_usuario_id: string; p_motivo?: string | null };
+        Returns: string;
+      };
+      convertir_cotizacion_manual_controlada: {
+        Args: { p_cotizacion_id: number; p_usuario_id: string };
+        Returns: string;
+      };
+      // authenticated: ¿la edición está habilitada (frontera activa, sin suspensión)?
+      edicion_cotizaciones_habilitada: {
+        Args: Record<string, never>;
+        Returns: boolean;
+      };
       // ── Cotizaciones comparativas (migración 211, #35) ───────────────────
       // Todas SECURITY DEFINER con search_path fijo. Errores: `COMPARATIVA_<X>: …`.
       // `crear…`, `registrar_validacion…`, `elegir…publica` y `registrar_solicitud…`:
@@ -3847,6 +4394,22 @@ export type Database = {
       };
       resolver_solicitud_comparativa: {
         Args: { p_solicitud: number; p_decision: string; p_motivo: string | null; p_clave: string | null };
+        Returns: number | null;
+      };
+      // #50 (migración 222): igual que las dos anteriores, con la modalidad PVP/NETO de la hija B2B.
+      registrar_validacion_comparativa_n50: {
+        Args: {
+          p_madre_id: number; p_opcion_ref: string; p_acomodacion_ref: string; p_version: number; p_canal: string;
+          p_actor_id: string | null; p_precio_reliquidado: number; p_moneda: string; p_disponibilidad_ok: boolean;
+          p_datos_cliente: Json | null; p_modalidad: string | null; p_reconoce: boolean | null; p_autorizar: boolean | null;
+        };
+        Returns: string;
+      };
+      resolver_solicitud_comparativa_n50: {
+        Args: {
+          p_solicitud: number; p_decision: string; p_motivo: string | null; p_clave: string | null;
+          p_modalidad: string | null; p_reconoce: boolean | null; p_autorizar: boolean | null;
+        };
         Returns: number | null;
       };
       comparativas_b2b_visibles: {
@@ -3914,6 +4477,22 @@ export type Database = {
       guardar_programa_salidas: {
         Args: { p_programa_id: number; p_regla: Json; p_salidas: Json };
         Returns: undefined;
+      };
+      // Migración 244 (#88). Reemplazo atómico del catálogo de hoteles de un
+      // programa por hotel y vigencia; rechaza vigencias solapadas.
+      guardar_programa_hoteles: {
+        Args: { p_programa_id: number; p_hoteles: Json };
+        Returns: undefined;
+      };
+      // Migración 246 (#409). Reemplazo atómico de los blackouts de un programa: valida todo antes de borrar; devuelve cuántos guardó.
+      guardar_programa_blackouts: {
+        Args: { p_programa_id: number; p_blackouts: Json };
+        Returns: number;
+      };
+      // Migración 246. Reemplazo atómico del itinerario (y opcionalmente del total de días); un publicado no puede quedar incompleto.
+      guardar_programa_dias: {
+        Args: { p_programa_id: number; p_dias: Json; p_total_dias?: number | null };
+        Returns: number;
       };
       // Migración 152. Actualiza modalidad/estado de emisión/estado de pago
       // de un bloqueo y registra el cambio en bloqueo_cambios en una sola
@@ -4242,6 +4821,57 @@ export type Database = {
           total_filas: number;
         }[];
       };
+      // Migración 221 (#68) — «Clientes de contratos» del CRM, UNA FILA POR CONTRATO.
+      // Solo lectura sobre `ventas_basica`. El actor y su tenant salen de auth.uid() y de
+      // la fila activa de `usuarios`; `p_tenant` solo lo elige el superadmin (el resto
+      // queda en su tenant). `venta` solo ve contratos propios y ninguno cuyo asesor
+      // equivalga a más de un usuario activo del tenant. Vacío idéntico para ajeno, otro
+      // tenant, inexistente y sin permiso. NUNCA devuelve precio, dirección, firma ni
+      // `share_token`, y no lee `crm_contactos`.
+      crm_contratos_clientes_buscar: {
+        Args: {
+          p_tenant?: string | null;
+          p_busqueda?: string | null;
+          p_cursor?: string | null;
+          p_tam?: number;
+        };
+        Returns: {
+          numero_contrato: string;
+          fecha_venta: string | null;
+          cliente: string;
+          cliente_documento: string | null;
+          cliente_email: string | null;
+          cliente_telefono: string | null;
+          destino: string | null;
+          fecha_salida: string | null;
+          fecha_regreso: string | null;
+          estado: string | null;
+          tipo_asesor: string | null;
+          agencia_nombre: string | null;
+          freelance_nombre: string | null;
+          tenant: string;
+          hay_mas: boolean;
+        }[];
+      };
+      crm_contrato_cliente_ficha: {
+        Args: { p_numero_contrato: string };
+        Returns: {
+          numero_contrato: string;
+          fecha_venta: string | null;
+          cliente: string;
+          cliente_documento: string | null;
+          cliente_email: string | null;
+          cliente_telefono: string | null;
+          destino: string | null;
+          fecha_salida: string | null;
+          fecha_regreso: string | null;
+          estado: string | null;
+          tipo_asesor: string | null;
+          agencia_nombre: string | null;
+          freelance_nombre: string | null;
+          tenant: string;
+        }[];
+      };
       // Migración 187 — búsqueda interna de pasajero por documento EXACTO
       // (reutilización de identidad entre contratos). Solo lectura; filtra
       // por rol interno + puede_ver_contrato/soy_asesor_del_contrato dentro
@@ -4320,6 +4950,10 @@ export type Database = {
         Args: Record<PropertyKey, never>;
         Returns: { capacidad: number; ocupados: number; disponibles: number; criticos: number }[];
       };
+      fn_dashboard_cupos_activos: {
+        Args: { p_hoy: string };
+        Returns: { capacidad: number; ocupados: number; disponibles: number; records_disponibles: number; proximos_disponibles: number; proximos_records: number }[];
+      };
       fn_dashboard_retenciones_mes: {
         Args: { p_tenant: string; p_periodo: string };
         Returns: number;
@@ -4351,6 +4985,25 @@ export type Database = {
           p_limite?: number;
           p_offset?: number;
         };
+        Returns: Json;
+      };
+      // Migración 219 (#42) — personas de cotizaciones. Las tres fachadas de escritura son
+      // SECURITY DEFINER con EXECUTE solo para service_role (las llama lib/personas/consulta.ts
+      // desde Server Actions); la lista del CRM es para authenticated (actor = auth.uid()).
+      registrar_personas_cotizacion: {
+        Args: { p_cotizacion_id: number; p_usuario_id: string | null; p_participantes: Json };
+        Returns: Json;
+      };
+      actualizar_titular_cotizacion: {
+        Args: { p_cotizacion_id: number; p_usuario_id: string; p_titular: Json; p_version_esperada: number; p_clave: string };
+        Returns: Json;
+      };
+      sellar_creador_cotizacion: {
+        Args: { p_cotizacion_id: number; p_usuario_id: string };
+        Returns: string;
+      };
+      crm_personas_cotizacion_buscar: {
+        Args: { p_tenant: string | null; p_texto?: string | null; p_limite?: number; p_offset?: number };
         Returns: Json;
       };
     };
@@ -4409,6 +5062,7 @@ export type Enums<T extends keyof Database["public"]["Enums"]> =
 export type Usuario = Tables<"usuarios">;
 export type Venta = Tables<"ventas">;
 export type VentaBasica = Database["public"]["Views"]["ventas_basica"]["Row"];
+export type EmpaquetadoBasico = Database["public"]["Views"]["empaquetados_basica"]["Row"];
 // Lo que el DOCUMENTO del contrato necesita de la venta: ninguna columna
 // financiera. Se declara como subconjunto para que la página imprimible pueda
 // alimentarlo tanto desde `ventas` (roles administrativos, service-role del
@@ -4420,6 +5074,7 @@ export type VentaDocumento = Pick<
   | "asesor" | "asesor_firma_nombre" | "asesor_firma_cargo" | "asesor_firma_cc" | "asesor_firma_tel"
   | "estado" | "fecha_emision" | "fecha_salida" | "pax"
   | "plan_nombre" | "tours_traslados" | "asistencia_medica"
+  | "titular_nombre" | "titular_documento" | "titular_telefono"
 >;
 export type Agencia = Tables<"agencias">;
 export type Abono = Tables<"abonos">;

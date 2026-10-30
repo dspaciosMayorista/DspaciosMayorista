@@ -659,7 +659,7 @@ describe("VistaBooking.tsx — P3: destinos de hoteles unidad SOLO en el filtro 
     // ningún punto de `filas`/`hoteles` (persona) — nunca queda vacía por
     // depender de datos legacy que no existen para ese destino.
     const idxDecl = fuenteVista.indexOf("const hotelesUnidadVisibles = useMemo(() => {");
-    const idxFin = fuenteVista.indexOf("}, [hotelesBernalo, sub, destinoSel, destinoPorcionBusqueda]);", idxDecl);
+    const idxFin = fuenteVista.indexOf("}, [hotelesBernalo, sub, destinoSel, salidaSel, destinoPorcionBusqueda]);", idxDecl);
     assert.notEqual(idxDecl, -1);
     assert.notEqual(idxFin, -1);
     const cuerpo = fuenteVista.slice(idxDecl, idxFin);
@@ -781,7 +781,7 @@ describe("VistaBooking.tsx — P3: destinos de hoteles unidad SOLO en el filtro 
       // verifica acá es el CÓDIGO.
       const idxHoteles = codigoVista.indexOf("const hoteles = useMemo<HotelCard[]>(() => {");
       const idxFinHoteles = codigoVista.indexOf("const hotelesUnidadVisibles = useMemo(() => {", idxHoteles);
-      const idxFinUnidad = codigoVista.indexOf("}, [hotelesBernalo, sub, destinoSel, destinoPorcionBusqueda]);", idxFinHoteles);
+      const idxFinUnidad = codigoVista.indexOf("}, [hotelesBernalo, sub, destinoSel, salidaSel, destinoPorcionBusqueda]);", idxFinHoteles);
       assert.ok(idxHoteles > -1 && idxFinHoteles > idxHoteles && idxFinUnidad > idxFinHoteles, "no se encontraron los dos memos de candidatos");
       const memoHoteles = codigoVista.slice(idxHoteles, idxFinHoteles);
       const memoUnidad = codigoVista.slice(idxFinHoteles, idxFinUnidad);
@@ -795,7 +795,7 @@ describe("VistaBooking.tsx — P3: destinos de hoteles unidad SOLO en el filtro 
 
     test("hotelesUnidadVisibles filtra por el destino BUSCADO solo cuando sub === 'porcion_terrestre' — igual patrón que destinoSel/bloqueo", () => {
       const idxDecl = fuenteVista.indexOf("const hotelesUnidadVisibles = useMemo(() => {");
-      const idxFin = fuenteVista.indexOf("}, [hotelesBernalo, sub, destinoSel, destinoPorcionBusqueda]);", idxDecl);
+      const idxFin = fuenteVista.indexOf("}, [hotelesBernalo, sub, destinoSel, salidaSel, destinoPorcionBusqueda]);", idxDecl);
       assert.notEqual(idxDecl, -1);
       assert.notEqual(idxFin, -1);
       const cuerpo = fuenteVista.slice(idxDecl, idxFin);
@@ -837,7 +837,7 @@ describe("VistaBooking.tsx — P3: destinos de hoteles unidad SOLO en el filtro 
 
     test("un destino exclusivamente unidad entra al universo de la búsqueda: el filtro de hotelesUnidadVisibles compara SOLO h.destinoNombre (de hotelesBernalo), nunca contra `hoteles`/`filas` (persona)", () => {
       const idxDecl = fuenteVista.indexOf("const hotelesUnidadVisibles = useMemo(() => {");
-      const idxFin = fuenteVista.indexOf("}, [hotelesBernalo, sub, destinoSel, destinoPorcionBusqueda]);", idxDecl);
+      const idxFin = fuenteVista.indexOf("}, [hotelesBernalo, sub, destinoSel, salidaSel, destinoPorcionBusqueda]);", idxDecl);
       const cuerpo = fuenteVista.slice(idxDecl, idxFin);
       assert.match(cuerpo, /let arr = hotelesBernalo\.filter\(\(h\) => h\.tipo === sub\);/);
       assert.match(cuerpo, /if \(sub === "porcion_terrestre" && destinoPorcionBusqueda\) arr = arr\.filter\(\(h\) => \(h\.destinoNombre \?\? ""\) === destinoPorcionBusqueda\);/);

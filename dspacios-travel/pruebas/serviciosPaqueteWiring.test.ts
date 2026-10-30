@@ -135,12 +135,12 @@ describe("reservar/actions.ts (crearCotizacion) — asistencia_medica/tours_tras
 
 describe("reservar/actions.ts (reservarDesdeTarifarioInterno) — CxP de servicios usa el mapeo correcto de tipo_proveedor", () => {
   test("ya no existe el ternario viejo que colapsaba 'otro' en 'receptivo'", () => {
-    const cuerpo = cuerpoFuncion(reservarActions, "async function reservarDesdeTarifarioInterno(input: ReservaInput");
+    const cuerpo = cuerpoFuncion(reservarActions, "async function calcularFinancieroReserva(p: {");
     assert.doesNotMatch(cuerpo, /cat === "asistencia" \? "asistencia" : "receptivo"/);
     assert.match(cuerpo, /tipoProveedorCxpServicio\(categoria\)/);
   });
   test("servicios INCLUIDOS generan su propia CxP (antes se perdían dentro de la CxP de hotel)", () => {
-    const cuerpo = cuerpoFuncion(reservarActions, "async function reservarDesdeTarifarioInterno(input: ReservaInput");
+    const cuerpo = cuerpoFuncion(reservarActions, "async function calcularFinancieroReserva(p: {");
     assert.match(cuerpo, /if \(serviciosIncluidos\.length\) \{/);
     assert.match(cuerpo, /tipoProveedorCxpServicio\(s\.categoria\)/);
   });
@@ -224,7 +224,7 @@ describe("R294-1 · asegurarCuentasPorPagar: cobertura por MONTO, nunca por exis
   });
   test("lee `valor_total` de las CxP existentes (sin el monto no hay cobertura que medir)", () => {
     const cuerpo = cuerpoFuncion(asegurarCxp, "export async function asegurarCuentasPorPagar(");
-    assert.match(cuerpo, /select\("tipo_proveedor, valor_total"\)/);
+    assert.match(cuerpo, /select\("tipo_proveedor, valor_total(, valor_cop_63)?(, aceptacion_63_id, obligacion_63)?"\)/);
   });
 });
 
@@ -239,7 +239,8 @@ describe("R294-2 (revisión B6) · el incluido por grupo se COBRA una vez, con l
     const sumas = cuerpo.match(/precioVenta \+=/g) ?? [];
     assert.equal(sumas.length, 1, "el incluido por grupo se cobra una sola vez");
     assert.match(cuerpo, /precioVenta \+= cargo\.pvp/);
-    assert.match(cuerpo, /cargoGrupoIncluido\(gruposIncluidosPendientes, totalPax, pctMk, numNochesInc\)/);
+    // 226: el rango cuenta SOLO a los de 2+ años (`paxServAdulto`); el menor de 2 años no cuenta ni paga extra.
+    assert.match(cuerpo, /cargoGrupoIncluido\(gruposIncluidosPendientes, paxServAdulto, pctMk, numNochesInc\)/);
   });
   test("el motor de búsqueda usa la MISMA función con el pax real (nunca una división por persona)", () => {
     const cuerpo = cuerpoFuncion(cotizar, "export async function buscarHoteles(");
@@ -280,7 +281,7 @@ describe("R294-3 · frontera pública: `proveedorId` (id interno) no cruza al na
 
 describe("R294-4 · CxP de servicios: se estampa `servicio_id` (llave de reconciliación)", () => {
   test("reservarDesdeTarifarioInterno estampa servicioId en opcionales e incluidos", () => {
-    const cuerpo = cuerpoFuncion(reservarActions, "async function reservarDesdeTarifarioInterno(input: ReservaInput");
+    const cuerpo = cuerpoFuncion(reservarActions, "async function calcularFinancieroReserva(p: {");
     assert.match(cuerpo, /servicio_id: cxpOpts\?\.servicioId \?\? null/);
     assert.match(cuerpo, /\{ servicioId: s\.servicio_id \}/);
     assert.match(cuerpo, /\{ servicioId: s\.servicioId \}/);
@@ -288,17 +289,17 @@ describe("R294-4 · CxP de servicios: se estampa `servicio_id` (llave de reconci
   test("convertirCotizacionCarrito estampa servicioId en tours e incluidos", () => {
     const cuerpo = cuerpoFuncion(reservarActions, "export async function convertirCotizacionCarrito(");
     assert.match(cuerpo, /servicio_id: servicioId \?\? null/);
-    assert.match(cuerpo, /srv\?\.proveedores \?\? null, null, t\.servicioId\)/);
+    assert.match(cuerpo, /srv\?\.proveedores \?\? null, null, t\.servicioId, monedaServicio\.get\(t\.servicioId\)\)/);
     // Incluidos: el proveedor se exige resuelto del catálogo (PR #353) y la CxP
     // sigue estampando `servicio_id`.
     assert.match(cuerpo, /const prov = provPorId\.get\(s\.servicioId\);/);
-    assert.match(cuerpo, /pushCxP\(tipoProveedorCxpServicio\(s\.categoria\), s\.nombre, s\.costoNeto, prov, null, s\.servicioId\)/);
+    assert.match(cuerpo, /pushCxP\(tipoProveedorCxpServicio\(s\.categoria\), s\.nombre, s\.costoNeto, prov, null, s\.servicioId, monedaServicio\.get\(s\.servicioId\)\)/);
   });
 });
 
 describe("R294-5 · los costos de servicio cuadran con las CxP creadas", () => {
   test("reservarDesdeTarifarioInterno escribe costo_receptivo UNA vez, con opcionales + incluidos", () => {
-    const cuerpo = cuerpoFuncion(reservarActions, "async function reservarDesdeTarifarioInterno(input: ReservaInput");
+    const cuerpo = cuerpoFuncion(reservarActions, "async function calcularFinancieroReserva(p: {");
     const escrituras = cuerpo.match(/costo_receptivo = costoServiciosTotal/g) ?? [];
     assert.equal(escrituras.length, 1, "debe haber exactamente una escritura de costo_receptivo");
     assert.match(cuerpo, /costoServiciosTotal \+= s\.costoNeto/, "el costo del incluido debe entrar a la columna");

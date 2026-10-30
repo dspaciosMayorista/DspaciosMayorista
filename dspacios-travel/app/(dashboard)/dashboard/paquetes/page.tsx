@@ -4,6 +4,9 @@ import { Button } from "@/components/ui/button";
 import { PaquetesListado, type PaqueteItem } from "./PaquetesListado";
 import { resolverTabInicial } from "./tipo-paquetes";
 import { cargarFilasResumenPaginado } from "@/lib/tarifario/resumen";
+import { desdeListadoPorPaquete } from "@/lib/tarifario/desdeDoble";
+import { Info } from "lucide-react";
+import { paquetesConTarifarioAnteriorAInfante } from "./actions";
 
 export const dynamic = "force-dynamic";
 
@@ -57,23 +60,16 @@ export default async function PaquetesPage({
   // una migración nueva — evita descargar el catálogo completo para un
   // listado administrativo que solo necesita un conteo y un "desde".
   //
-  // `desde_general` de la vista es `MIN(precio_pvp)` por combo (hotel/
-  // categoría/régimen/servicio) — el mínimo entre combos de un mismo paquete
-  // sigue siendo exactamente el mismo "desde" que daba el cálculo anterior
-  // sobre filas crudas (mínimo de mínimos = mínimo global): el precio
-  // publicado NO cambia. Lo que sí cambia es la MAGNITUD del contador: antes
-  // contaba cada fila de `tarifario_resultado` (una por acomodación —
-  // sencilla/doble/triple/múltiple/niño/niño2/infante, hasta 7× por combo
-  // real); ahora cuenta combos publicados — un número más legible y
-  // consistente con lo que el propio `/tarifario` público considera
-  // "publicado" (misma vista, mismo filtro `paquete_activo = true`).
+  // El "desde" NO es el mínimo de la vista (`MIN(precio_pvp)` incluía infante/niño): es la tarifa DOBLE publicable
+  // (`precio_doble`) por paquete y por moneda — ver lib/tarifario/desdeDoble.ts (TASKS #92/#114). El contador cuenta
+  // combos publicados (filas de la vista), no una fila por acomodación.
   //
   // Un error TÉCNICO real de esta consulta nunca se disfraza de "Sin
   // publicar" para todo el listado: se corta la página con un aviso de error
   // explícito (ver más abajo) — la ausencia de filas y un fallo de red son
   // dos cosas distintas.
   const conteo = new Map<number, number>();
-  const desdePorPaquete = new Map<number, number>();
+  let desdePorPaquete = new Map<number, { moneda: string; valor: number }[]>();
   let errorEstadoPublicacion = false;
   if (filas.length) {
     const pagResumen = await cargarFilasResumenPaginado(sb);
@@ -85,13 +81,9 @@ export default async function PaquetesPage({
         }`
       );
     } else {
-      for (const r of pagResumen.filas) {
-        conteo.set(r.paquete_id, (conteo.get(r.paquete_id) ?? 0) + 1);
-        if (r.desde_general != null) {
-          const prev = desdePorPaquete.get(r.paquete_id);
-          if (prev == null || r.desde_general < prev) desdePorPaquete.set(r.paquete_id, r.desde_general);
-        }
-      }
+      for (const r of pagResumen.filas) conteo.set(r.paquete_id, (conteo.get(r.paquete_id) ?? 0) + 1);
+      // «Desde» = tarifa DOBLE publicable por moneda (#92/#114); sin DOBLE el paquete no entra al mapa y el listado dice «Consultar».
+      desdePorPaquete = desdeListadoPorPaquete(pagResumen.filas);
     }
   }
 
@@ -106,6 +98,10 @@ export default async function PaquetesPage({
     );
   }
 
+  // Tarifa de infante (migración 226): paquetes activos cuyo tarifario se publicó ANTES y hay que regenerar a mano.
+  // Es un aviso: si la consulta falla no se muestra nada (la reserva con infantes ya pide regenerar por su cuenta).
+  const pendientesInfante = await paquetesConTarifarioAnteriorAInfante();
+
   // Todo el cómputo por-item vive aquí (server, una sola vez); el listado
   // cliente solo filtra/ordena localmente (ver tipo-paquetes.ts) — no repite
   // consultas a Supabase al cambiar de pestaña.
@@ -119,7 +115,7 @@ export default async function PaquetesPage({
     fechaViajeInicio: p.fecha_viaje_inicio,
     fechaViajeFin: p.fecha_viaje_fin,
     nTarifas: conteo.get(p.id) ?? 0,
-    desde: desdePorPaquete.get(p.id) ?? null,
+    desde: desdePorPaquete.get(p.id) ?? [],
   }));
 
   return (
@@ -135,6 +131,23 @@ export default async function PaquetesPage({
           <Button style={{ backgroundColor: "var(--brand-primary)" }}>+ Nuevo paquete</Button>
         </Link>
       </div>
+
+      {pendientesInfante.ok && pendientesInfante.paquetes.length > 0 && (
+        <div role="status" className="mb-4 flex items-start gap-2 rounded-xl border border-amber-200 bg-amber-50 p-3 text-sm text-amber-800">
+          <Info size={16} className="mt-0.5 shrink-0" aria-hidden="true" />
+          <div>
+            <p>
+              <b>{pendientesInfante.paquetes.length} {pendientesInfante.paquetes.length === 1 ? "paquete tiene" : "paquetes tienen"} el tarifario anterior a la tarifa de infante</b>{" "}
+              (menores de 2 años). Ábrelos y pulsa <b>Generar tarifario</b>; hasta entonces no se puede reservar con infantes en ellos.
+            </p>
+            <ul className="mt-1 flex flex-wrap gap-x-3 gap-y-1 text-xs">
+              {pendientesInfante.paquetes.map((p) => (
+                <li key={p.id}><Link href={`/dashboard/paquetes/${p.id}`} className="underline">{p.nombre}</Link></li>
+              ))}
+            </ul>
+          </div>
+        </div>
+      )}
 
       <PaquetesListado paquetes={paquetes} tabInicial={tabInicial} />
     </div>

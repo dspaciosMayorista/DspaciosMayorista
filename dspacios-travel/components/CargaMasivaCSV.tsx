@@ -1,7 +1,9 @@
 "use client";
 
 import { useState, useTransition, type ReactNode } from "react";
+import { TriangleAlert } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
 
 export type Columna = { key: string; label: string; ejemplo: string };
 export type ResultadoCarga = { ok: boolean; insertados: number; errores: string[] };
@@ -36,7 +38,7 @@ function parseCSV(text: string, delim: string): string[][] {
 const norm = (s: string) => s.trim().toLowerCase().replace(/\s+/g, "_");
 
 export function CargaMasivaCSV({
-  titulo, descripcion, columnas, onSubmit, nombreArchivo, nota,
+  titulo, descripcion, columnas, onSubmit, nombreArchivo, nota, variante = "acordeon", textoBoton,
 }: {
   titulo: string;
   descripcion?: string;
@@ -45,6 +47,10 @@ export function CargaMasivaCSV({
   nombreArchivo: string;
   /** Aviso de requisitos previos (qué configurar antes y dónde). */
   nota?: ReactNode;
+  /** "dialogo": botón compacto que abre la carga en un diálogo. Por defecto, el acordeón de siempre. */
+  variante?: "acordeon" | "dialogo";
+  /** Texto del botón en la variante "dialogo". */
+  textoBoton?: string;
 }) {
   const [open, setOpen] = useState(false);
   const [texto, setTexto] = useState("");
@@ -122,64 +128,82 @@ export function CargaMasivaCSV({
     });
   }
 
+  const dialogo = variante === "dialogo";
+  const cuerpo = (
+    <div className={dialogo ? "min-w-0 space-y-3" : "space-y-3 border-t border-gray-100 p-4"}>
+      {nota && (
+        <div className="flex gap-2 rounded-lg border border-amber-200 bg-amber-50 p-3 text-xs text-amber-800">
+          {dialogo ? <TriangleAlert aria-hidden className="mt-0.5 size-4 shrink-0" /> : <span aria-hidden>⚠️</span>}
+          <div><span className="font-semibold">Antes de cargar: </span>{nota}</div>
+        </div>
+      )}
+      {descripcion && !dialogo && <p className="text-xs text-gray-500">{descripcion}</p>}
+      <div className="rounded-lg bg-gray-50 p-3 text-xs text-gray-600">
+        <p className="mb-1 font-medium">Columnas (en este orden, con encabezado en la 1ª fila):</p>
+        <code className="block break-words">{columnas.map((c) => c.key).join(" · ")}</code>
+      </div>
+      <div className="flex flex-wrap gap-2">
+        <Button variant="outline" onClick={descargarPlantilla}>Descargar plantilla CSV</Button>
+        <label className="inline-flex cursor-pointer items-center rounded-lg border border-gray-300 px-3 py-1.5 text-sm text-gray-700 hover:bg-gray-50">
+          Subir archivo CSV
+          <input type="file" accept=".csv,text/csv" className="hidden" onChange={onFile} />
+        </label>
+      </div>
+      <div>
+        <p className="mb-1 text-xs text-gray-500">…o pega el contenido del CSV aquí:</p>
+        <textarea
+          value={texto}
+          onChange={(e) => { setTexto(e.target.value); procesar(e.target.value); }}
+          rows={4}
+          className="w-full rounded-lg border border-gray-300 p-2 font-mono text-xs"
+          placeholder={columnas.map((c) => c.key).join(";")}
+        />
+      </div>
+      {errParse && <p className="text-sm text-red-600">{errParse}</p>}
+      {filas.length > 0 && (
+        <div className="flex items-center gap-3">
+          <span className="text-sm text-gray-600">{filas.length} fila(s) listas</span>
+          <Button onClick={subir} disabled={pending} style={{ backgroundColor: "var(--brand-primary)" }}>
+            {pending ? "Subiendo…" : `Subir ${filas.length} fila(s)`}
+          </Button>
+        </div>
+      )}
+      {res && (
+        <div className={`rounded-lg p-3 text-sm ${res.ok ? "bg-green-50 text-green-700" : "bg-amber-50 text-amber-700"}`}>
+          <p><b>{res.insertados}</b> registro(s) cargado(s).</p>
+          {res.errores.length > 0 && (
+            <ul className="mt-1 list-disc pl-5 text-xs">
+              {res.errores.slice(0, 20).map((e, i) => <li key={i}>{e}</li>)}
+              {res.errores.length > 20 && <li>… y {res.errores.length - 20} más</li>}
+            </ul>
+          )}
+        </div>
+      )}
+    </div>
+  );
+
+  if (dialogo) {
+    return (
+      <Dialog open={open} onOpenChange={setOpen}>
+        <DialogTrigger render={<Button variant="outline" />}>{textoBoton ?? titulo}</DialogTrigger>
+        <DialogContent className="max-h-[90dvh] overflow-y-auto sm:max-w-2xl">
+          <DialogHeader>
+            <DialogTitle>{titulo}</DialogTitle>
+            {descripcion && <DialogDescription>{descripcion}</DialogDescription>}
+          </DialogHeader>
+          {cuerpo}
+        </DialogContent>
+      </Dialog>
+    );
+  }
+
   return (
     <section className="rounded-xl border border-gray-200 bg-white">
       <button type="button" onClick={() => setOpen((o) => !o)} className="flex w-full items-center justify-between px-4 py-3 text-left">
         <span className="text-sm font-semibold text-gray-700">{titulo}</span>
         <span className="text-gray-400">{open ? "▾" : "▸"}</span>
       </button>
-      {open && (
-        <div className="space-y-3 border-t border-gray-100 p-4">
-          {nota && (
-            <div className="flex gap-2 rounded-lg border border-amber-200 bg-amber-50 p-3 text-xs text-amber-800">
-              <span aria-hidden>⚠️</span>
-              <div><span className="font-semibold">Antes de cargar: </span>{nota}</div>
-            </div>
-          )}
-          {descripcion && <p className="text-xs text-gray-500">{descripcion}</p>}
-          <div className="rounded-lg bg-gray-50 p-3 text-xs text-gray-600">
-            <p className="mb-1 font-medium">Columnas (en este orden, con encabezado en la 1ª fila):</p>
-            <code className="block break-words">{columnas.map((c) => c.key).join(" · ")}</code>
-          </div>
-          <div className="flex flex-wrap gap-2">
-            <Button variant="outline" onClick={descargarPlantilla}>Descargar plantilla CSV</Button>
-            <label className="inline-flex cursor-pointer items-center rounded-lg border border-gray-300 px-3 py-1.5 text-sm text-gray-700 hover:bg-gray-50">
-              Subir archivo CSV
-              <input type="file" accept=".csv,text/csv" className="hidden" onChange={onFile} />
-            </label>
-          </div>
-          <div>
-            <p className="mb-1 text-xs text-gray-500">…o pega el contenido del CSV aquí:</p>
-            <textarea
-              value={texto}
-              onChange={(e) => { setTexto(e.target.value); procesar(e.target.value); }}
-              rows={4}
-              className="w-full rounded-lg border border-gray-300 p-2 font-mono text-xs"
-              placeholder={columnas.map((c) => c.key).join(";")}
-            />
-          </div>
-          {errParse && <p className="text-sm text-red-600">{errParse}</p>}
-          {filas.length > 0 && (
-            <div className="flex items-center gap-3">
-              <span className="text-sm text-gray-600">{filas.length} fila(s) listas</span>
-              <Button onClick={subir} disabled={pending} style={{ backgroundColor: "var(--brand-primary)" }}>
-                {pending ? "Subiendo…" : `Subir ${filas.length} fila(s)`}
-              </Button>
-            </div>
-          )}
-          {res && (
-            <div className={`rounded-lg p-3 text-sm ${res.ok ? "bg-green-50 text-green-700" : "bg-amber-50 text-amber-700"}`}>
-              <p><b>{res.insertados}</b> registro(s) cargado(s).</p>
-              {res.errores.length > 0 && (
-                <ul className="mt-1 list-disc pl-5 text-xs">
-                  {res.errores.slice(0, 20).map((e, i) => <li key={i}>{e}</li>)}
-                  {res.errores.length > 20 && <li>… y {res.errores.length - 20} más</li>}
-                </ul>
-              )}
-            </div>
-          )}
-        </div>
-      )}
+      {open && cuerpo}
     </section>
   );
 }

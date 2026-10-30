@@ -1,7 +1,7 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
-import { registrarAbono, actualizarAbono, eliminarAbono } from "../contratos/actions";
+import { registrarAbono, actualizarAbono, anularAbono, type ResultadoAbono } from "../contratos/actions";
 
 // Registra un abono del cliente desde el módulo de Cartera (listado central).
 // Reutiliza la regla de negocio canónica de `registrarAbono` (un abono confirma
@@ -13,9 +13,11 @@ export async function registrarAbonoCartera(
   referencia: string,
   trm?: number,   // TRM del día (contratos en USD)
   fecha?: string, // fecha del abono (por defecto hoy)
-): Promise<{ ok: boolean; error?: string }> {
+  confirmarExcedente?: boolean, // pago adicional intencional sobre un contrato ya cubierto
+  operacionId?: string,         // idempotencia del registro (una por intento de formulario)
+): Promise<ResultadoAbono> {
   if (!(valor > 0)) return { ok: false, error: "El valor debe ser mayor a 0" };
-  const r = await registrarAbono(numeroContrato, valor, formaPago, referencia, trm, fecha);
+  const r = await registrarAbono(numeroContrato, valor, formaPago, referencia, trm, fecha, confirmarExcedente, operacionId);
   if (!r.ok) return r;
   revalidatePath("/dashboard/cartera");
   return { ok: true };
@@ -34,8 +36,8 @@ export async function actualizarAbonoCartera(
   return { ok: true };
 }
 
-export async function eliminarAbonoCartera(id: number, numeroContrato: string): Promise<{ ok: boolean; error?: string }> {
-  const r = await eliminarAbono(id, numeroContrato);
+export async function anularAbonoCartera(id: number, numeroContrato: string, motivo: string): Promise<{ ok: boolean; error?: string }> {
+  const r = await anularAbono(id, numeroContrato, motivo);
   if (!r.ok) return r;
   revalidatePath("/dashboard/cartera");
   return { ok: true };

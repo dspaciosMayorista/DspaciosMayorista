@@ -2,9 +2,12 @@ import { createClient } from "@/lib/supabase/server";
 import { contextoCotizacion } from "@/lib/cotizacion/acceso";
 import Link from "next/link";
 import { Button } from "@/components/ui/button";
-import { formatMoneda, formatFechaLarga } from "@/lib/utils";
+import { formatFechaLarga } from "@/lib/utils";
 import { ResponsiveTableShell } from "@/components/ui/ResponsiveTableShell";
 import { desdeComparativa } from "@/lib/cotizacion/comparativa";
+import { ValorCotizacion } from "@/components/cotizacion/ValorCotizacion";
+import { VigenciaTexto } from "@/components/cotizacion/VigenciaTexto";
+import { abiertaConSalidaPasada, hoyBogota } from "@/lib/cotizacion/vigencia";
 
 export const dynamic = "force-dynamic";
 
@@ -17,11 +20,12 @@ const ESTADO_BADGE: Record<string, string> = {
 export default async function CotizacionesPage() {
   const sb = await createClient();
   const ctx = await contextoCotizacion();
+  const hoyNegocio = hoyBogota();
   // Listado interno: solo la agencia activa (superadmin conserva alcance
   // global — puede alternar de agencia, pero no ve las dos mezcladas de una).
   let q = sb
     .from("cotizaciones")
-    .select("id, codigo, tipo, modo, moneda, cliente, destino, hotel, fecha_salida, precio_venta, estado, numero_contrato, vigencia_hasta, created_at")
+    .select("id, codigo, tipo, modo, moneda, cliente, destino, hotel, fecha_salida, precio_venta, estado, numero_contrato, vigencia_hasta, created_at, b2b_modo:payload->b2bAsistido->>modo_compra, b2b_total:payload->b2bAsistido->>total_exigible")
     .order("created_at", { ascending: false });
   if (ctx.ok && !ctx.superadmin) q = q.eq("tenant", ctx.tenant);
   const { data: cots } = ctx.ok ? await q : { data: [] };
@@ -72,6 +76,7 @@ export default async function CotizacionesPage() {
                 <th className="px-4 py-3">Cliente</th>
                 <th className="px-4 py-3">Destino</th>
                 <th className="px-4 py-3">Salida</th>
+                <th className="px-4 py-3">Válida hasta</th>
                 <th className="px-4 py-3 text-right">Valor</th>
                 <th className="px-4 py-3">Estado</th>
                 <th className="px-4 py-3">Acciones</th>
@@ -98,13 +103,18 @@ export default async function CotizacionesPage() {
                   <td className="px-4 py-3 text-gray-700" data-label="Cliente">{c.cliente ?? "—"}</td>
                   <td className="px-4 py-3 text-gray-500" data-label="Destino">{c.destino ?? "—"}</td>
                   <td className="px-4 py-3 text-gray-500" data-label="Salida">{formatFechaLarga(c.fecha_salida)}</td>
+                  <td className="px-4 py-3 text-gray-500" data-label="Válida hasta"><VigenciaTexto vigencia={c.vigencia_hasta} estado={c.estado} hoy={hoyNegocio} fechaSalida={c.fecha_salida} /></td>
                   <td className="px-4 py-3 text-right tabular-nums text-gray-700" data-label="Valor">{c.modo === "comparativa"
-                      ? (() => { const d = desdePorMadre.get(c.id); return d ? <span title="Valor mínimo entre las opciones; cada hotel tiene su propio total">desde {formatMoneda(d.total, d.moneda)}</span> : <span>—</span>; })()
-                      : formatMoneda(c.precio_venta ?? 0, c.moneda)}</td>
+                      ? <ValorCotizacion desde={desdePorMadre.get(c.id) ?? null} />
+                      : <ValorCotizacion modo={(c as { b2b_modo?: string | null }).b2b_modo} precioVenta={c.precio_venta} totalExigible={(c as { b2b_total?: string | null }).b2b_total} moneda={c.moneda} />}</td>
                   <td className="px-4 py-3" data-label="Estado">
-                    <span className={`rounded-full px-2 py-0.5 text-xs ${ESTADO_BADGE[c.estado] ?? "bg-gray-100 text-gray-600"}`}>
-                      {c.estado}
-                    </span>
+                    {abiertaConSalidaPasada(c, hoyNegocio) ? (
+                      <span className="rounded-full bg-red-50 px-2 py-0.5 text-xs text-red-700" data-testid="estado-salida-pasada">Salida pasada · generar nueva</span>
+                    ) : (
+                      <span className={`rounded-full px-2 py-0.5 text-xs ${ESTADO_BADGE[c.estado] ?? "bg-gray-100 text-gray-600"}`}>
+                        {c.estado}
+                      </span>
+                    )}
                   </td>
                   <td className="px-4 py-3 text-right" data-label="Acciones">
                     <Link href={`/dashboard/cotizaciones/${c.id}`} className="text-xs font-medium text-[#1D7C9A] hover:underline">

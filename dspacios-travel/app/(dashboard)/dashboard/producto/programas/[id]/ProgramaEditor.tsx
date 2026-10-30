@@ -9,6 +9,11 @@ import { AlertTriangle } from "lucide-react";
 import { ETIQUETA_FALTA_DESTINO, ETIQUETA_POR_CLASIFICAR, tieneDestinoFijo } from "@/lib/programas/destinoFijo";
 import { CabeceraForm } from "../CabeceraForm";
 import { ProgramaImagenes } from "./ProgramaImagenes";
+import { HotelesVigenciaEditor } from "./HotelesVigenciaEditor";
+import { estadoItinerario } from "@/lib/programas/estanciaHotel88";
+import { ALCANCES_BLACKOUT, ETIQUETA_ALCANCE } from "@/lib/programas/blackouts409";
+import { esModoHotel } from "@/lib/programas/estanciaHotel88";
+import type { CatalogoHoteles88 } from "@/lib/programas/estanciaHotelDatos88";
 import type { Database } from "@/types/database";
 import {
   guardarCabecera,
@@ -47,7 +52,7 @@ import type { DestinoOpt } from "@/components/ComboDestino";
 
 type ProgramaRow = Database["public"]["Tables"]["programas"]["Row"];
 type Ciudad = { id: number; nombre: string; codigo_iata: string | null; noches: number; alojamiento_previsto?: string | null };
-type Dia = { dia: number; titulo: string | null; desayuno: boolean; almuerzo: boolean; cena: boolean; descripcion: string | null };
+type Dia = { dia: number; tipo_tramo?: "dia" | "traslado_previo" | "traslado_posterior"; titulo: string | null; desayuno: boolean; almuerzo: boolean; cena: boolean; descripcion: string | null };
 type Categoria = { id: number; nombre: string | null; orden: number };
 type HotelRow = { categoria_id: number; ciudad: string; hotel: string | null; orden: number };
 type PrecioRow = { categoria_id: number; acomodacion: string; neto: number | null; bajo_solicitud: boolean };
@@ -61,7 +66,7 @@ type SalidaRow = {
 };
 type Inclusion = { ciudad: string | null; tipo: string; texto: string };
 type Tour = { ciudad: string | null; nombre: string; precio: number | null; min_pax: number; dias_operacion: string | null; descripcion: string | null };
-type Blackout = { fecha_inicio: string | null; fecha_fin: string | null; motivo: string | null; ciudad: string | null };
+type Blackout = { fecha_inicio: string | null; fecha_fin: string | null; motivo: string | null; ciudad: string | null; alcance?: string | null };
 
 const ACOMS = ["sencilla", "doble", "triple", "cuadruple", "nino"];
 const ACOM_LABEL: Record<string, string> = { sencilla: "Sencilla", doble: "Doble", triple: "Triple", cuadruple: "Cuádruple", nino: "Niño" };
@@ -95,15 +100,24 @@ export function ProgramaEditor(props: {
   destinos?: DestinoOpt[];
   /** Lista fija "destino de programas" (migración 213). */
   destinosFijos?: { id: number; nombre: string; es_provisional?: boolean | null }[];
+  /** Solo en programas por hotel y vigencia (#88). */
+  catalogoHoteles?: CatalogoHoteles88;
 }) {
   const { programa } = props;
   const [tab, setTab] = useState<(typeof TABS)[number]["key"]>("general");
   const router = useRouter();
   const modoSalidaTabs = programa.modo_precio === "salida";
+  const modoHotelTabs = esModoHotel(programa.modo_precio);
   const tabs = TABS.map((t) =>
-    t.key === "matriz" ? { ...t, label: modoSalidaTabs ? "Salidas y precios" : "Hoteles y precios" } : t
+    t.key === "matriz"
+      ? { ...t, label: modoHotelTabs ? "Hoteles y vigencias" : modoSalidaTabs ? "Salidas y precios" : "Hoteles y precios" }
+      : t
   );
   const [pubPending, startPub] = useTransition();
+  const [errorPub, setErrorPub] = useState<string | null>(null);
+  // PR #409: sin el itinerario 1..N completo no se publica (el servidor también lo exige; aquí se explica antes de pulsar).
+  const itinerarioGuardado = estadoItinerario(props.dias, programa.dias);
+  const publicacionBloqueada = !programa.publicado && !itinerarioGuardado.completo;
 
   // Regla comisionable de "Salidas y precios" (§ tarifa comisionable del proveedor):
   // vive aquí, no dentro de SalidasEditor, porque ese componente se desmonta al
@@ -191,10 +205,16 @@ export function ProgramaEditor(props: {
     condicionPagoDiasSaldo: programa.condicion_pago_dias_saldo ?? "",
     restriccionComercial: programa.restriccion_comercial ?? "normal",
     destinoFijoId: programa.destino_fijo_id ?? null,
+    proveedorAsistenciaId: programa.proveedor_asistencia_id ?? null,
   };
 
   return (
     <div className="mt-2">
+      {(publicacionBloqueada || errorPub) && (
+        <p id="motivo-publicacion" role="alert" className="mb-3 rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900">
+          {errorPub ?? `No se puede publicar: ${itinerarioGuardado.mensaje}`}
+        </p>
+      )}
       {/* Cabecera */}
       <div className="mb-5 flex flex-wrap items-center justify-between gap-3">
         <div>
@@ -233,8 +253,13 @@ export function ProgramaEditor(props: {
             </span>
           )}
           <Button
-            disabled={pubPending}
-            onClick={() => startPub(async () => void (await setPublicado(programa.id, !programa.publicado)))}
+            disabled={pubPending || publicacionBloqueada}
+            aria-describedby={publicacionBloqueada ? "motivo-publicacion" : undefined}
+            onClick={() => startPub(async () => {
+              setErrorPub(null);
+              const r = await setPublicado(programa.id, !programa.publicado);
+              if (!r.ok) setErrorPub(r.error);
+            })}
             style={{ backgroundColor: programa.publicado ? "#6b7280" : "var(--brand-success)" }}
           >
             {programa.publicado ? "Despublicar" : "Publicar"}
@@ -282,8 +307,23 @@ export function ProgramaEditor(props: {
       )}
       {tab === "importar" && <ImportarEditor programaId={programa.id} onDone={() => router.refresh()} />}
       {tab === "ruta" && <RutaEditor programaId={programa.id} ciudades={props.ciudades} destinos={props.destinos ?? []} />}
-      {tab === "itinerario" && <ItinerarioEditor programaId={programa.id} dias={props.dias} totalDias={programa.dias} />}
-      {tab === "matriz" &&
+      {tab === "itinerario" && <ItinerarioEditor programaId={programa.id} dias={props.dias} totalDias={programa.dias} publicado={programa.publicado} />}
+      {tab === "matriz" && modoHotelTabs && (
+        <HotelesVigenciaEditor
+          programaId={programa.id}
+          programa={{
+            moneda: programa.moneda,
+            pct_mk: programa.pct_mk,
+            pct_fee_tarjeta: programa.pct_fee_tarjeta,
+            asistencia_medica_dia: programa.asistencia_medica_dia,
+            dias: programa.dias,
+          }}
+          proveedores={props.proveedores}
+          catalogo={props.catalogoHoteles ?? { hoteles: [], base: [], noches: [] }}
+          dias={props.dias.map((d) => ({ dia: d.dia, tipo_tramo: d.tipo_tramo, titulo: d.titulo, desayuno: d.desayuno, almuerzo: d.almuerzo, cena: d.cena, descripcion: d.descripcion }))}
+        />
+      )}
+      {tab === "matriz" && !modoHotelTabs &&
         (modoSalidaTabs ? (
           <SalidasEditor
             programaId={programa.id}
@@ -426,42 +466,106 @@ function RutaEditor({ programaId, ciudades, destinos }: { programaId: number; ci
 }
 
 // ── Itinerario (días) ──────────────────────────────────────────────────────────
-function ItinerarioEditor({ programaId, dias, totalDias }: { programaId: number; dias: Dia[]; totalDias: number | null }) {
-  const [rows, setRows] = useState(
-    dias.map((d) => ({ dia: d.dia, titulo: d.titulo ?? "", desayuno: d.desayuno, almuerzo: d.almuerzo, cena: d.cena, descripcion: d.descripcion ?? "" }))
-  );
+type DiaRow = { dia: number; tipo_tramo: "dia" | "traslado_previo" | "traslado_posterior"; titulo: string; desayuno: boolean; almuerzo: boolean; cena: boolean; descripcion: string };
+const diaCompleto = (r: DiaRow) => r.titulo.trim() !== "" && r.descripcion.trim() !== "";
+const resumenNota = (t: string) => { const x = t.replace(/\s+/g, " ").trim(); return x.length > 90 ? `${x.slice(0, 90)}…` : x; };
+
+export function ItinerarioEditor({ programaId, dias, totalDias, publicado = false }: { programaId: number; dias: Dia[]; totalDias: number | null; publicado?: boolean }) {
+  const inicial: DiaRow[] = dias.map((d) => ({ dia: d.dia, tipo_tramo: d.tipo_tramo ?? "dia", titulo: d.titulo ?? "", desayuno: d.desayuno, almuerzo: d.almuerzo, cena: d.cena, descripcion: d.descripcion ?? "" }));
+  const [rows, setRows] = useState<DiaRow[]>(inicial);
+  // Los días ya completados al cargar se ven en una sola fila; los nuevos o incompletos, abiertos. «Editar» reabre sin perder contenido.
+  const [abiertos, setAbiertos] = useState<Set<number>>(() => new Set(inicial.map((r, i) => (diaCompleto(r) ? -1 : i)).filter((i) => i >= 0)));
+  const abrir = (i: number) => setAbiertos((p) => new Set(p).add(i));
+  const cerrar = (i: number) => setAbiertos((p) => { const n = new Set(p); n.delete(i); return n; });
   const upd = (i: number, k: string, v: unknown) => setRows((p) => p.map((r, j) => (j === i ? { ...r, [k]: v } : r)));
+  const quitar = (i: number) => {
+    setRows((p) => p.filter((_, j) => j !== i));
+    setAbiertos((p) => new Set([...p].filter((x) => x !== i).map((x) => (x > i ? x - 1 : x))));
+  };
   const generar = () => {
     const n = totalDias ?? 0;
     if (!n) return;
-    setRows(Array.from({ length: n }, (_, i) => ({ dia: i + 1, titulo: "", desayuno: false, almuerzo: false, cena: false, descripcion: "" })));
+    const previos = rows.filter((r) => r.tipo_tramo === "traslado_previo");
+    const posteriores = rows.filter((r) => r.tipo_tramo === "traslado_posterior").map((r) => ({ ...r, dia: n + 1 }));
+    setRows([...previos, ...Array.from({ length: n }, (_, i): DiaRow => ({ dia: i + 1, tipo_tramo: "dia", titulo: "", desayuno: false, almuerzo: false, cena: false, descripcion: "" })), ...posteriores]);
+    setAbiertos(new Set(Array.from({ length: n }, (_, i) => previos.length + i)));
   };
+  // PR #409: el itinerario debe traer los días 1..N, sin faltantes ni repetidos. Un borrador incompleto SÍ se puede guardar, pero no se calcula, publica ni reserva.
+  const estadoIt = estadoItinerario(rows, totalDias);
   return (
     <div>
+      {!estadoIt.completo && (
+        <div role="status" className="mb-3 rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900" data-testid="itinerario-incompleto">
+          <p className="font-medium">Itinerario incompleto</p>
+          <ul className="mt-1 list-disc pl-5 text-xs">
+            {estadoIt.faltantes.length > 0 && <li>Faltan los días: {estadoIt.faltantes.join(", ")}.</li>}
+            {estadoIt.repetidos.length > 0 && <li>Se repiten los días: {estadoIt.repetidos.join(", ")}.</li>}
+            {estadoIt.fuera.length > 0 && <li>Hay días fuera de 1–{totalDias}: {estadoIt.fuera.join(", ")}.</li>}
+            {estadoIt.mensaje?.includes("traslados deben") && <li>El traslado debe estar antes del día 1 o después del último día, una vez por extremo.</li>}
+            {totalDias == null && <li>El programa no tiene configurados sus días (pestaña General).</li>}
+          </ul>
+          {publicado ? (
+            <p className="mt-1 text-xs font-medium" data-testid="itinerario-publicado-bloqueado">
+              Este programa está publicado: no puede quedar con el itinerario incompleto. Complétalo, o despublícalo primero para guardar un borrador incompleto.
+            </p>
+          ) : (
+            <p className="mt-1 text-xs">Puedes guardar este borrador, pero el programa no se podrá calcular, publicar ni reservar hasta completarlo.</p>
+          )}
+        </div>
+      )}
       <div className="mb-3 flex items-center justify-between">
-        <p className="text-sm text-gray-500">Itinerario día por día. Marca las comidas incluidas.</p>
+        <p className="text-sm text-gray-500">Los traslados de salida o regreso se muestran aparte y no suman días turísticos ni noches de hotel.</p>
         {totalDias ? <AddBtn onClick={generar}>Generar {totalDias} días en blanco</AddBtn> : null}
       </div>
-      <div className="space-y-3">
-        {rows.map((r, i) => (
-          <div key={i} className="rounded-lg border border-gray-200 bg-white p-3">
-            <div className="mb-2 flex flex-wrap items-center gap-2">
-              <span className="text-xs text-gray-400">Día</span>
-              <Input type="number" value={r.dia} onChange={(e) => upd(i, "dia", Number(e.target.value))} className="w-20" />
-              <Input value={r.titulo} onChange={(e) => upd(i, "titulo", e.target.value)} placeholder="Título (ej. RIO DE JANEIRO)" className="w-72" />
-              <label className="flex items-center gap-1 text-xs text-gray-600"><input type="checkbox" checked={r.desayuno} onChange={(e) => upd(i, "desayuno", e.target.checked)} /> Des</label>
-              <label className="flex items-center gap-1 text-xs text-gray-600"><input type="checkbox" checked={r.almuerzo} onChange={(e) => upd(i, "almuerzo", e.target.checked)} /> Alm</label>
-              <label className="flex items-center gap-1 text-xs text-gray-600"><input type="checkbox" checked={r.cena} onChange={(e) => upd(i, "cena", e.target.checked)} /> Cena</label>
-              <DelBtn onClick={() => setRows((p) => p.filter((_, j) => j !== i))} />
+      <div className="space-y-2">
+        {rows.map((r, i) =>
+          abiertos.has(i) ? (
+            <div key={i} className="rounded-lg border border-gray-200 bg-white p-3">
+              <div className="mb-2 flex flex-wrap items-center gap-2">
+                <select aria-label="Tipo de tramo" value={r.tipo_tramo} onChange={(e) => {
+                  const tipo = e.target.value as DiaRow["tipo_tramo"];
+                  setRows((p) => p.map((fila, j) => j === i ? { ...fila, tipo_tramo: tipo, dia: tipo === "traslado_previo" ? 0 : tipo === "traslado_posterior" ? (totalDias ?? 0) + 1 : Math.max(1, fila.dia) } : fila));
+                }} className={sel}>
+                  <option value="dia">Día turístico</option>
+                  <option value="traslado_previo">Traslado antes del día 1</option>
+                  <option value="traslado_posterior">Traslado después del último día</option>
+                </select>
+                {r.tipo_tramo === "dia" && <Input type="number" min={1} value={r.dia} onChange={(e) => upd(i, "dia", Number(e.target.value))} aria-label="Número de día turístico" className="w-20" />}
+                <Input value={r.titulo} onChange={(e) => upd(i, "titulo", e.target.value)} placeholder="Título (ej. RIO DE JANEIRO)" className="w-full sm:w-72" />
+                <label className="flex items-center gap-1 text-xs text-gray-600"><input type="checkbox" checked={r.desayuno} onChange={(e) => upd(i, "desayuno", e.target.checked)} /> Des</label>
+                <label className="flex items-center gap-1 text-xs text-gray-600"><input type="checkbox" checked={r.almuerzo} onChange={(e) => upd(i, "almuerzo", e.target.checked)} /> Alm</label>
+                <label className="flex items-center gap-1 text-xs text-gray-600"><input type="checkbox" checked={r.cena} onChange={(e) => upd(i, "cena", e.target.checked)} /> Cena</label>
+                <DelBtn onClick={() => quitar(i)} />
+              </div>
+              <textarea value={r.descripcion} onChange={(e) => upd(i, "descripcion", e.target.value)} rows={3} className={sel} placeholder="Descripción del día…" />
+              <div className="mt-2 flex justify-end">
+                <button type="button" disabled={!diaCompleto(r)} onClick={() => cerrar(i)} className="rounded-lg border border-gray-300 px-3 py-1 text-xs font-medium text-gray-700 hover:bg-gray-50 disabled:cursor-not-allowed disabled:text-gray-300">
+                  Listo
+                </button>
+              </div>
             </div>
-            <textarea value={r.descripcion} onChange={(e) => upd(i, "descripcion", e.target.value)} rows={3} className={sel} placeholder="Descripción del día…" />
-          </div>
-        ))}
+          ) : (
+            <div key={i} className="flex flex-wrap items-center gap-x-3 gap-y-1 rounded-lg border border-gray-200 bg-white px-3 py-2" aria-label={r.tipo_tramo === "dia" ? `Día ${r.dia} completado` : "Traslado completado"}>
+              <span className="min-w-16 shrink-0 text-xs font-medium text-gray-400">{r.tipo_tramo === "dia" ? `Día ${r.dia}` : r.tipo_tramo === "traslado_previo" ? "Traslado previo" : "Traslado posterior"}</span>
+              <span className="min-w-0 flex-1 truncate text-sm font-medium text-gray-800">{r.titulo}</span>
+              <span className="flex gap-1 text-[11px] text-gray-500" aria-label="Alimentación incluida">
+                {[r.desayuno && "Des", r.almuerzo && "Alm", r.cena && "Cena"].filter(Boolean).map((c) => <span key={String(c)} className="rounded-full bg-gray-100 px-2 py-0.5">{c}</span>)}
+                {!r.desayuno && !r.almuerzo && !r.cena && <span className="text-gray-300">sin comidas</span>}
+              </span>
+              <span className="basis-full truncate text-xs text-gray-500 sm:basis-auto sm:max-w-[40%]">{resumenNota(r.descripcion)}</span>
+              <button type="button" onClick={() => abrir(i)} className="text-xs font-medium text-[#1D7C9A] hover:underline" aria-label={r.tipo_tramo === "dia" ? `Editar día ${r.dia}` : "Editar traslado"}>Editar</button>
+            </div>
+          ),
+        )}
       </div>
       <div className="mt-3">
-        <AddBtn onClick={() => setRows((p) => [...p, { dia: p.length + 1, titulo: "", desayuno: false, almuerzo: false, cena: false, descripcion: "" }])}>+ Agregar día</AddBtn>
+        <div className="flex flex-wrap gap-2">
+          <AddBtn onClick={() => { const i = rows.filter((r) => r.tipo_tramo !== "traslado_posterior").length; setRows((p) => { const n = p.filter((r) => r.tipo_tramo === "dia").length + 1; return [...p.slice(0, i), { dia: n, tipo_tramo: "dia", titulo: "", desayuno: false, almuerzo: false, cena: false, descripcion: "" }, ...p.slice(i)]; }); setAbiertos((p) => new Set([...p].map((x) => x >= i ? x + 1 : x).concat(i))); }}>+ Agregar día</AddBtn>
+          {!rows.some((r) => r.tipo_tramo === "traslado_previo") && <AddBtn onClick={() => { setRows((p) => [{ dia: 0, tipo_tramo: "traslado_previo", titulo: "", desayuno: false, almuerzo: false, cena: false, descripcion: "" }, ...p]); setAbiertos((p) => new Set([...p].map((i) => i + 1)).add(0)); }}>+ Traslado previo</AddBtn>}
+          {!rows.some((r) => r.tipo_tramo === "traslado_posterior") && <AddBtn onClick={() => { setRows((p) => [...p, { dia: (totalDias ?? 0) + 1, tipo_tramo: "traslado_posterior", titulo: "", desayuno: false, almuerzo: false, cena: false, descripcion: "" }]); setAbiertos((p) => new Set(p).add(rows.length)); }}>+ Traslado posterior</AddBtn>}
+        </div>
       </div>
-      <SaveBar onSave={() => guardarDias(programaId, rows)} />
+      <SaveBar onSave={() => guardarDias(programaId, rows)} disabled={publicado && !estadoIt.completo} />
     </div>
   );
 }
@@ -1264,27 +1368,33 @@ function ImportarEditor({ programaId, onDone }: { programaId: number; onDone: ()
 }
 
 // ── Blackouts ───────────────────────────────────────────────────────────────────
-function BlackoutsEditor({ programaId, blackouts }: { programaId: number; blackouts: Blackout[] }) {
+export function BlackoutsEditor({ programaId, blackouts }: { programaId: number; blackouts: Blackout[] }) {
   const [rows, setRows] = useState(
-    blackouts.map((b) => ({ fechaInicio: b.fecha_inicio ?? "", fechaFin: b.fecha_fin ?? "", motivo: b.motivo ?? "", ciudad: b.ciudad ?? "" }))
+    blackouts.map((b) => ({ fechaInicio: b.fecha_inicio ?? "", fechaFin: b.fecha_fin ?? "", motivo: b.motivo ?? "", ciudad: b.ciudad ?? "", alcance: b.alcance === "viaje" ? "viaje" : "entrada" }))
   );
   const upd = (i: number, k: string, v: unknown) => setRows((p) => p.map((r, j) => (j === i ? { ...r, [k]: v } : r)));
   return (
     <div>
-      <p className="mb-3 text-sm text-gray-500">Fechas bloqueadas (no se puede viajar / cotizar).</p>
+      <p className="mb-3 text-sm text-gray-500">
+        Fechas bloqueadas. Cada una necesita fecha de inicio y de fin, y un alcance: <b>Solo fecha de entrada</b> (bloquea únicamente si la entrada cae en el rango; lo de siempre) o
+        <b> Cualquier día del viaje</b> (bloquea si el viaje —de la entrada al regreso, con las noches adicionales— toca el rango).
+      </p>
       <div className="space-y-2">
         {rows.map((r, i) => (
-          <div key={i} className="flex flex-wrap items-center gap-2">
-            <DateInput aria-label="Fecha de inicio" type="date" value={r.fechaInicio} onValueChange={(dateValue) => upd(i, "fechaInicio", dateValue)} className="w-44" />
-            <span className="text-gray-400">→</span>
-            <DateInput aria-label="Fecha de fin" type="date" value={r.fechaFin} onValueChange={(dateValue) => upd(i, "fechaFin", dateValue)} className="w-44" />
-            <Input value={r.motivo} onChange={(e) => upd(i, "motivo", e.target.value)} placeholder="Motivo" className="min-w-[12rem] flex-1" />
+          <div key={i} className="grid grid-cols-2 items-center gap-2 rounded-lg border border-gray-100 p-3 sm:flex sm:flex-wrap sm:border-0 sm:p-0">
+            <DateInput aria-label="Fecha de inicio" type="date" value={r.fechaInicio} onValueChange={(dateValue) => upd(i, "fechaInicio", dateValue)} className="w-full sm:w-44" />
+            <span className="hidden text-gray-400 sm:inline">→</span>
+            <DateInput aria-label="Fecha de fin" type="date" value={r.fechaFin} onValueChange={(dateValue) => upd(i, "fechaFin", dateValue)} className="w-full sm:w-44" />
+            <select aria-label="Alcance del blackout" value={r.alcance} onChange={(e) => upd(i, "alcance", e.target.value)} className="col-span-2 rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm sm:col-span-1">
+              {ALCANCES_BLACKOUT.map((a) => <option key={a} value={a}>{ETIQUETA_ALCANCE[a]}</option>)}
+            </select>
+            <Input value={r.motivo} onChange={(e) => upd(i, "motivo", e.target.value)} placeholder="Motivo" className="col-span-2 min-w-[12rem] flex-1 sm:col-span-1" />
             <DelBtn onClick={() => setRows((p) => p.filter((_, j) => j !== i))} />
           </div>
         ))}
       </div>
       <div className="mt-3">
-        <AddBtn onClick={() => setRows((p) => [...p, { fechaInicio: "", fechaFin: "", motivo: "", ciudad: "" }])}>+ Agregar blackout</AddBtn>
+        <AddBtn onClick={() => setRows((p) => [...p, { fechaInicio: "", fechaFin: "", motivo: "", ciudad: "", alcance: "entrada" }])}>+ Agregar blackout</AddBtn>
       </div>
       <SaveBar onSave={() => guardarBlackouts(programaId, rows)} />
     </div>

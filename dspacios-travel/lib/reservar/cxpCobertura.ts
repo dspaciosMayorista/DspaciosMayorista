@@ -31,6 +31,11 @@
 // cobertura porque comparten columnas de costo.
 export const TIPOS_CXP_SERVICIO = ["receptivo", "asistencia", "otro"] as const;
 export type TipoCxpServicio = (typeof TIPOS_CXP_SERVICIO)[number];
+// #88: la CxP al proveedor de un PROGRAMA (tipo `programa`, creada por `reservarPrograma`) también cubre
+// `ventas.costo_receptivo`: esa reserva guarda ahí todo su costo (base + noches adicionales). Sin contarla
+// en la bolsa, confirmar la venta volvía a crear una CxP `receptivo` por EL MISMO dinero. Solo participa
+// en la cobertura; las filas que se crean siguen siendo de los tres tipos de servicio.
+const TIPOS_CXP_QUE_CUBREN_SERVICIOS: readonly string[] = [...TIPOS_CXP_SERVICIO, "programa"];
 export type TipoCxp = "hotel" | "aereo" | TipoCxpServicio;
 
 export type CxpExistente = { tipo_proveedor: string | null; valor_total: number | null };
@@ -77,7 +82,7 @@ export function faltantesCxP(existentes: readonly CxpExistente[], costos: Costos
   let cubierto = 0;
   for (const r of existentes ?? []) {
     const t = r.tipo_proveedor;
-    if (!t || !(TIPOS_CXP_SERVICIO as readonly string[]).includes(t)) continue;
+    if (!t || !TIPOS_CXP_QUE_CUBREN_SERVICIOS.includes(t)) continue;
     cubierto += Math.max(0, num(r.valor_total));
   }
 

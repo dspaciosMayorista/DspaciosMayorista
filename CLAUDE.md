@@ -342,6 +342,11 @@ Para migrar datos reales: exportar cada hoja a CSV e importar a Supabase (no es 
 > tratarla como pendiente y correrla de nuevo sería un no-op en el mejor caso, pero no debe
 > intentarse sin verificar antes que en verdad no se aplicó dos veces.
 
+> **#90 I — migración 236 `cxp_equivalente_costo_carrito` (EN RAMA `claude/90-i-cxp-usd-carrito`, SIN correr):** las CxP en USD del carrito
+> se registran con su equivalente en COP congelado a una **TRM de costos** (`cuentas_por_pagar.valor_cop_costo`/`trm_costo`, familia propia, excluyente con
+> la de #63) y el costo en otra moneda que la de la oferta detiene la conversión antes de numerar (H-1). **Orden:** preflight → 236 → postcheck → recién
+> después el código. Detalle y límites contables (diferencia de cambio, #43) en `dspacios-travel/docs/tecnico/carrito-cxp-usd-236.md`.
+
 > Rama de trabajo actual: **`claude/peaceful-noether-713c7c`** (ya **mergeada a `main`**).
 > Producción = `main` (Vercel despliega de `main`). La **base de datos Supabase de D'spacios
 > es única** y compartida entre `main` y sus ramas de trabajo (`claude/*`); las migraciones

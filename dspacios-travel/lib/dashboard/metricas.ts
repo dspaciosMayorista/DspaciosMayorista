@@ -136,20 +136,49 @@ export function ventasMesPorMonedaDesdeAgregado(filas: { moneda: string; total: 
   return out;
 }
 
-// Reempaqueta la fila única que devuelve `fn_dashboard_cupos_resumen` con
-// los mismos nombres que ya usaba dashboard/page.tsx.
-export function cuposResumenDesdeAgregado(fila: { capacidad: number; ocupados: number; disponibles: number; criticos: number } | null): {
-  cuposCapacidad: number;
-  cuposOcupados: number;
-  cuposDisponibles: number;
-  cuposCriticos: number;
-} {
+export type CuposActivos = {
+  cuposCapacidad: number; cuposOcupados: number;
+  sillasDisponibles: number; recordsConSillas: number;
+  proximasSillas: number; proximosRecords: number;
+};
+
+// Reempaqueta la fila única de `fn_dashboard_cupos_activos` (migración 243).
+export function cuposActivosDesdeAgregado(fila: {
+  capacidad: number; ocupados: number; disponibles: number; records_disponibles: number;
+  proximos_disponibles: number; proximos_records: number;
+} | null): CuposActivos {
+  const n = (v: number | undefined) => Number(v ?? 0) || 0;
   return {
-    cuposCapacidad: Number(fila?.capacidad ?? 0) || 0,
-    cuposOcupados: Number(fila?.ocupados ?? 0) || 0,
-    cuposDisponibles: Number(fila?.disponibles ?? 0) || 0,
-    cuposCriticos: Number(fila?.criticos ?? 0) || 0,
+    cuposCapacidad: n(fila?.capacidad), cuposOcupados: n(fila?.ocupados),
+    sillasDisponibles: n(fila?.disponibles), recordsConSillas: n(fila?.records_disponibles),
+    proximasSillas: n(fila?.proximos_disponibles), proximosRecords: n(fila?.proximos_records),
   };
+}
+
+// Suma `n` días a una fecha ISO (YYYY-MM-DD) sin depender de la zona horaria del proceso.
+export function sumarDias(fecha: string, n: number): string {
+  const d = new Date(`${fecha}T12:00:00Z`);
+  d.setUTCDate(d.getUTCDate() + n);
+  return d.toISOString().slice(0, 10);
+}
+
+// Espejo en JS de la regla de `fn_dashboard_cupos_activos` (paridad en pruebas).
+// `hoy` = fecha de Bogotá (YYYY-MM-DD). Activo = sin fecha o fecha >= hoy;
+// próximo = activo con fecha entre hoy y hoy+14 inclusive (el día 15 no entra).
+export function cuposActivosDesdeFilas(
+  filas: { fecha_ida: string | null; cupos_total: number; cupos_ocupados: number; cupos_disponibles: number }[],
+  hoy: string,
+): CuposActivos {
+  const tope = sumarDias(hoy, 14);
+  const r: CuposActivos = { cuposCapacidad: 0, cuposOcupados: 0, sillasDisponibles: 0, recordsConSillas: 0, proximasSillas: 0, proximosRecords: 0 };
+  for (const f of filas) {
+    if (f.fecha_ida && f.fecha_ida < hoy) continue;
+    const d = Math.max(0, f.cupos_disponibles);
+    r.cuposCapacidad += f.cupos_total; r.cuposOcupados += f.cupos_ocupados; r.sillasDisponibles += d;
+    if (d > 0) r.recordsConSillas++;
+    if (f.fecha_ida && f.fecha_ida <= tope) { r.proximasSillas += d; if (d > 0) r.proximosRecords++; }
+  }
+  return r;
 }
 
 // Regla de negocio exacta: fecha límite de pago = fecha inicial del viaje −

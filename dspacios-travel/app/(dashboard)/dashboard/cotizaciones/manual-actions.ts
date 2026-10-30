@@ -3,186 +3,63 @@
 import { createClient } from "@/lib/supabase/server";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { revalidatePath } from "next/cache";
-import { marcar } from "@/lib/calc/paquetes";
-import { sugerirIncluye } from "@/lib/cotizacion/incluye";
 import { contextoCotizacion, autorizaTenant } from "@/lib/cotizacion/acceso";
 import { ROLES_CONTRATO_COMPLETO } from "@/lib/roles";
-import { hoyBogota, resolverVigenciaCotizacion } from "@/lib/cotizacion/vigencia";
+import { abiertaConSalidaPasada, cotizacionVencida, hoyBogota, MENSAJE_COTIZACION_VENCIDA, MENSAJE_SALIDA_PASADA, resolverVigenciaCotizacion } from "@/lib/cotizacion/vigencia";
 import type { Json } from "@/types/database";
 import {
   construirComparativaManual, mensajeErrorComparativa, validarClaveIdempotencia, type EntradaComparativaManual,
 } from "@/lib/cotizacion/comparativa";
+import {
+  construirCotizacionManual, reliquidarServicios, reliquidarRecobroNinos,
+  type CotizacionManualInput, type ServicioManual, type RecobroNinosInput,
+} from "@/lib/cotizacion/liquidacionManual";
+import { mensajeEdicion39, validarMotivo, validarRevision } from "@/lib/cotizacion/edicionServiciosManual";
+import {
+  AVISO_PERSONAS_PENDIENTES, codigoErrorPersonas, mensajePersonas, titularParaFachada, validarClaveEnvio, validarVersionEsperada,
+} from "@/lib/personas/cotizacion";
+import { altaPersonasCotizacion, logPersonasCotizacion } from "@/lib/personas/consulta";
+import { leerEntradaModalidad } from "@/lib/cotizacion/netoHija";
 
-export type ServicioManual = {
-  tipo: string;          // aereo / hotel / traslado / asistencia / otro
-  plataforma: string;    // por dónde se cotizó
-  nombre: string;        // nombre del servicio
-  proveedor: string;     // proveedor (texto libre)
-  costoNeto: number;     // costo neto
-  modo: "mk" | "ta";     // mk = markup (margen) · ta = valor fijo (solo aéreo)
-  pctMarkup: number;     // markup en % (25 = 25%); margen: costo/(1-mk)
-  ta: number;            // valor fijo a sumar (TA) cuando modo='ta'
-};
+// Los tipos viven en lib/cotizacion/liquidacionManual.ts (la fórmula única de
+// creación y edición); se re-exportan para no romper a quien ya los importa.
+export type { CotizacionManualInput, ServicioManual, RecobroNinosInput };
 
-export type CotizacionManualInput = {
-  cliente: { nombres: string; apellidos: string; tipoDoc: string; numeroDoc: string; telefono: string; email: string; nacimiento?: string };
-  destino: string;
-  fechaIda: string;
-  fechaRegreso: string;
-  pax: number;           // adultos
-  ninos?: number;        // cantidad de niños
-  tarifaNino?: number;   // valor por niño (suma al total)
-  recobro?: number;      // mayor valor cobrado, oculto al cliente
-  recobroAliado?: number;// parte del recobro para el aliado (B2B)
-  moneda: string;        // COP / USD
-  tipoAsesor: "interno" | "agencia" | "freelance";
-  asesorInterno: string;
-  agenciaNombre: string;
-  freelanceNombre: string;
-  plazo: string;
-  vigenciaHasta: string;
-  observaciones: string;
-  incluye?: string;      // qué incluye (texto libre, una línea por ítem)
-  noIncluye?: string;    // qué no incluye (texto libre)
-  servicios: ServicioManual[];
-};
-
-// Fecha YYYY-MM-DD → DD/MM/YYYY (para el nombre del ítem de paquete).
-function fmtDMY(iso?: string | null): string {
-  const m = String(iso ?? "").match(/^(\d{4})-(\d{2})-(\d{2})/);
-  return m ? `${m[3]}/${m[2]}/${m[1]}` : (iso || "—");
+/**
+ * Titular e incluye escriben `payload`/`detalle` completos a partir de lo que
+ * leyeron. Si mientras tanto alguien editó servicios o recobro, la frontera de
+ * la 217 rechaza esa escritura (llevaría datos económicos viejos): se pide
+ * recargar en vez de pisar la edición.
+ */
+function errorDatoNoEconomico(msg: string): string {
+  return /FRONTERA_39/.test(String(msg ?? ""))
+    ? "La cotización cambió mientras la editabas; recarga la página y vuelve a intentarlo."
+    : mensajeEdicion39(msg, msg);
 }
 
-// Nombre del ÍTEM ÚNICO agrupado que ve el cliente (cotización dinámica).
-// No revela hoteles ni proveedores: ese detalle va a los vouchers.
-function nombrePaqueteItem(destino?: string | null, ida?: string | null, regreso?: string | null): string {
-  const d = (destino || "").trim().toUpperCase() || "DESTINO";
-  return `PAQUETE TURÍSTICO A ${d} DEL ${fmtDMY(ida)} AL ${fmtDMY(regreso)}`;
-}
-
-// Niños + recobro de la cotización dinámica.
-//  · Niños: cantidad × tarifa por niño (suma al total).
-//  · Recobro: cliente final (interno) → 100% empresa; agencia/freelance → se
-//    reparte (lo que va al aliado se acota a [0, recobro]).
-function calcularRecobroNinos(input: {
-  pax: number; ninos?: number; tarifaNino?: number; recobro?: number; recobroAliado?: number;
-  tipoAsesor: "interno" | "agencia" | "freelance";
-}) {
-  const nNinos = Math.max(Math.trunc(Number(input.ninos) || 0), 0);
-  const valorNino = Math.max(Number(input.tarifaNino) || 0, 0);
-  const totalNinos = nNinos * valorNino;
-  const recobroN = Math.max(Number(input.recobro) || 0, 0);
-  const esB2B = input.tipoAsesor !== "interno";
-  const recobroAliadoN = esB2B ? Math.min(Math.max(Number(input.recobroAliado) || 0, 0), recobroN) : 0;
-  const recobroEmpresaN = recobroN - recobroAliadoN;
-  return { nNinos, valorNino, totalNinos, recobroN, recobroAliadoN, recobroEmpresaN, esB2B };
-}
-
-// Valor de venta de un servicio:
-//   modo 'mk' → costo / (1 − markup)   (margen)
-//   modo 'ta' → costo + TA             (valor fijo, p. ej. aéreo)
-function valorServicio(costo: number, modo: "mk" | "ta", pctMarkup: number, ta: number): number {
-  const c = Number(costo) || 0;
-  if (modo === "ta") return Math.round(Math.max(0, c) + (Number(ta) || 0));
-  const mk = (Number(pctMarkup) || 0) / 100;
-  if (c <= 0 || mk >= 1) return 0;
-  return Math.round(marcar(c, mk));
+/** Usuario de la sesión (id real) o null. */
+async function usuarioSesion(): Promise<{ id: string } | null> {
+  const sb = await createClient();
+  const { data: { user } } = await sb.auth.getUser();
+  return user ? { id: user.id } : null;
 }
 
 export async function crearCotizacionManual(
   input: CotizacionManualInput
-): Promise<{ ok: true; id: number } | { ok: false; error: string }> {
-  const sb = await createClient();
-
-  if (!`${input.cliente.nombres ?? ""}${input.cliente.apellidos ?? ""}`.trim())
+): Promise<{ ok: true; id: number; avisoPersonas?: string } | { ok: false; error: string }> {
+  if (!`${input.cliente?.nombres ?? ""}${input.cliente?.apellidos ?? ""}`.trim())
     return { ok: false, error: "El nombre del cliente es obligatorio." };
-  const servicios = (input.servicios ?? []).filter((s) => (Number(s.costoNeto) || 0) > 0 || (s.nombre ?? "").trim() || (s.plataforma ?? "").trim());
-  if (!servicios.length) return { ok: false, error: "Agrega al menos un servicio con su costo." };
   const vigenciaRes = resolverVigenciaCotizacion({
     hoy: hoyBogota(),
     fechaSalida: input.fechaIda || null,
     vigenciaSolicitada: input.vigenciaHasta,
     diasPorDefecto: 3,
   });
+  // La liquidación (servicios, recobro, niños, documento) es la fórmula única de
+  // lib/cotizacion/liquidacionManual.ts; la RPC vuelve a exigir que el total cuadre.
+  const armado = construirCotizacionManual(input, { vigencia: vigenciaRes.ok ? vigenciaRes.vigencia : "" });
+  if (!armado.ok) return armado;
   if (!vigenciaRes.ok) return { ok: false, error: vigenciaRes.error };
-
-  const { data: { user } } = await sb.auth.getUser();
-
-  const moneda = (input.moneda || "COP").toUpperCase();
-  const asesor =
-    input.tipoAsesor === "interno" ? input.asesorInterno
-      : input.tipoAsesor === "agencia" ? input.agenciaNombre
-        : input.freelanceNombre;
-  const canal = input.tipoAsesor === "interno" ? "B2C" : "B2B";
-  const clienteNombre = `${input.cliente.nombres ?? ""} ${input.cliente.apellidos ?? ""}`.trim();
-
-  // Liquidación de cada servicio.
-  const filas = servicios.map((s, i) => {
-    // Solo el aéreo permite TA; el resto siempre markup.
-    const modo: "mk" | "ta" = s.tipo === "aereo" && s.modo === "ta" ? "ta" : "mk";
-    const valor = valorServicio(s.costoNeto, modo, s.pctMarkup, s.ta);
-    return {
-      orden: i,
-      tipo_servicio: s.tipo || "otro",
-      plataforma: (s.plataforma || "").trim() || null,
-      nombre_servicio: (s.nombre || "").trim() || null,
-      proveedor: (s.proveedor || "").trim() || null,
-      costo_neto: Number(s.costoNeto) || 0,
-      modo,
-      pct_markup: modo === "mk" ? (Number(s.pctMarkup) || 0) / 100 : 0,
-      ta: modo === "ta" ? (Number(s.ta) || 0) : 0,
-      valor,
-    };
-  });
-  const totalServicios = filas.reduce((acc, f) => acc + f.valor, 0);
-
-  // Niños y recobro (ver helper). adultSubtotal "esconde" el recobro dentro de
-  // la tarifa de adulto: el cliente nunca ve el recobro como línea aparte.
-  const rec = calcularRecobroNinos(input);
-  const adultos = Math.max(Number(input.pax) || 1, 1);
-  const adultSubtotal = totalServicios + rec.recobroN;        // servicios + recobro
-  const tarifaAdultoUnit = Math.round(adultSubtotal / adultos);
-  const precioVenta = adultSubtotal + rec.totalNinos;         // total que paga el cliente
-
-  // Filas visibles para el cliente: una de adultos y otra de niños (si hay).
-  const itemsDoc: { descripcion: string; cantidad: number; tarifa_unit: number; valor: number; orden: number }[] = [
-    { descripcion: nombrePaqueteItem(input.destino, input.fechaIda, input.fechaRegreso), cantidad: adultos, tarifa_unit: tarifaAdultoUnit, valor: adultSubtotal, orden: 0 },
-  ];
-  if (rec.nNinos > 0) {
-    itemsDoc.push({ descripcion: "Tarifa por niño", cantidad: rec.nNinos, tarifa_unit: rec.valorNino, valor: rec.totalNinos, orden: 1 });
-  }
-
-  // Snapshot para el documento/PDF (venta + items).
-  const detalle = {
-    venta: {
-      numero_contrato: "",
-      cliente: clienteNombre,
-      destino: input.destino || null,
-      fecha_salida: input.fechaIda || null,
-      fecha_regreso: input.fechaRegreso || null,
-      pax: adultos,
-      ninos: rec.nNinos,
-      precio_venta: precioVenta,
-      moneda,
-      asesor: asesor || null,
-      canal,
-      tipo_cliente: input.tipoAsesor,
-      hotel: filas.find((f) => f.tipo_servicio === "hotel")?.nombre_servicio ?? null,
-      aerolinea: filas.find((f) => f.tipo_servicio === "aereo")?.nombre_servicio ?? null,
-      observaciones: input.observaciones || null,
-      estado: "cotizacion",
-    },
-    pasajeros: [],
-    hoteles: [],
-    vuelos: [],
-    // Qué incluye / no incluye (texto libre editable). Si el asesor no escribió
-    // el "incluye", se sugiere a partir de los servicios elegidos.
-    incluye: (input.incluye || "").trim() || sugerirIncluye(input.servicios.map((s) => ({ tipo: s.tipo, nombre: s.nombre }))),
-    noIncluye: (input.noIncluye || "").trim(),
-    // Recobro (INTERNO, nunca se muestra al cliente).
-    recobro: { total: rec.recobroN, empresa: rec.recobroEmpresaN, aliado: rec.recobroAliadoN },
-    items: itemsDoc,
-  };
 
   // Acción INTERNA (clasificación explícita, ver revisión de PR #267): único
   // caller es `CotizacionManualForm.tsx` bajo `/dashboard/cotizaciones/nueva`
@@ -193,41 +70,90 @@ export async function crearCotizacionManual(
   // hay perfil o `activo !== true`, y solo entonces resuelve el tenant real.
   const ctx = await contextoCotizacion();
   if (!ctx.ok) return { ok: false, error: "No autorizado." };
+  // #40 E3: la fecha de vigencia la elige solo el personal interno; un rol externo que la envíe por red se rechaza.
+  if (ctx.interno === false && input.vigenciaHasta?.trim()) return { ok: false, error: "No tienes permiso para elegir la vigencia." };
   const tenantCotizacion = ctx.tenant;
+  const usuario = await usuarioSesion();
+  if (!usuario) return { ok: false, error: "No autorizado." };
+  if (!process.env.SUPABASE_SERVICE_ROLE_KEY) {
+    return { ok: false, error: "No se pudo crear la cotización por un problema de configuración del servidor." };
+  }
 
-  const { data: cot, error } = await sb
-    .from("cotizaciones")
-    .insert({
-      tenant: tenantCotizacion,
-      tipo: "manual",
-      estado: "abierta",
-      payload: JSON.parse(JSON.stringify(input)),
-      detalle,
-      cliente: clienteNombre,
-      cliente_documento: input.cliente.numeroDoc || null,
-      destino: input.destino || null,
-      hotel: detalle.venta.hotel,
-      modulo: "manual",
-      plan_nombre: "Cotización dinámica",
-      pax: Number(input.pax) || 0,
-      precio_venta: precioVenta,
-      moneda,
-      fecha_salida: input.fechaIda || null,
-      fecha_regreso: input.fechaRegreso || null,
-      vigencia_hasta: vigenciaRes.vigencia,
-      asesor: asesor || null,
-      creado_por: user?.email ?? null,
-    })
-    .select("id")
-    .single();
-  if (error || !cot) return { ok: false, error: error?.message ?? "No se pudo crear la cotización." };
+  // #39: la cabecera y los servicios se crean en UNA transacción por la RPC
+  // SECURITY DEFINER, que estampa el autor estable (`creado_por_id`): la API ya
+  // no escribe esa columna (211) ni, tras la 217, los servicios.
+  const admin = createAdminClient();
+  const { data: id, error } = await admin.rpc("crear_cotizacion_manual", {
+    p_usuario_id: usuario.id,
+    p_tenant: tenantCotizacion,
+    p_cabecera: armado.cabecera as unknown as Json,
+    p_servicios: armado.servicios as unknown as Json,
+  });
+  if (error || id == null) return { ok: false, error: mensajeEdicion39(error?.message, "No se pudo crear la cotización.") };
 
-  const rows = filas.map((f) => ({ cotizacion_id: cot.id, ...f }));
-  const { error: e2 } = await sb.from("cotizacion_servicios").insert(rows);
-  if (e2) return { ok: false, error: e2.message };
+  // #42: alta del titular en el registro de personas desde lo que se acaba de persistir (las
+  // cantidades nunca crean personas; la 216 ya estampó el autor). La cotización ya quedó
+  // guardada: un fallo deja el aviso persistente de la ficha y un log sin datos personales.
+  const alta = await altaPersonasCotizacion(admin, {
+    fila: { id: Number(id), tenant: tenantCotizacion, tipo: "manual", payload: armado.cabecera.payload, creado_por_id: usuario.id },
+    usuarioId: usuario.id,
+    sellar: false,
+  });
+  if (!alta.ok) console.error(logPersonasCotizacion("manual", Number(id), alta));
 
   revalidatePath("/dashboard/cotizaciones");
-  return { ok: true, id: cot.id };
+  return alta.ok ? { ok: true, id: Number(id) } : { ok: true, id: Number(id), avisoPersonas: AVISO_PERSONAS_PENDIENTES };
+}
+
+// ── Editar los servicios de una cotización dinámica (#39 fase 1) ────────────
+// Modificar, quitar o agregar servicios de una manual simple ABIERTA que nunca
+// tuvo pago (no madre ni hija de la 211, vigente). Recalcula total y documento
+// conservando niños y recobro, con motivo obligatorio e historial. La RPC
+// bloquea la fila y vuelve a comprobar TODO (incluida la revisión esperada).
+export type EditarServiciosInput = { revEsperada: number; motivo: string; servicios: ServicioManual[] };
+
+export async function editarServiciosCotizacionManual(
+  cotizacionId: number,
+  input: EditarServiciosInput
+): Promise<{ ok: true; rev: number } | { ok: false; error: string }> {
+  if (!(Number(cotizacionId) > 0)) return { ok: false, error: "Cotización inválida." };
+  const rev = validarRevision(input?.revEsperada);
+  if (rev == null) return { ok: false, error: "Recarga la página e inténtalo de nuevo." };
+  const motivo = validarMotivo(input?.motivo);
+  if (!motivo.ok) return motivo;
+
+  const sb = await createClient();
+  const { data: cot } = await sb
+    .from("cotizaciones")
+    .select("payload, estado, tipo, tenant, pax, destino, fecha_salida, fecha_regreso")
+    .eq("id", cotizacionId)
+    .maybeSingle();
+  if (!cot) return { ok: false, error: "Cotización no encontrada." };
+  const ctx = await contextoCotizacion();
+  if (!autorizaTenant(ctx, cot.tenant)) return { ok: false, error: "No tienes acceso a esta cotización." };
+  if (cot.tipo !== "manual" || cot.estado !== "abierta")
+    return { ok: false, error: "Solo se puede editar una cotización dinámica abierta." };
+
+  const r = reliquidarServicios(cot, Array.isArray(input?.servicios) ? input.servicios : []);
+  if (!r.ok) return r;
+
+  const usuario = await usuarioSesion();
+  if (!usuario) return { ok: false, error: "No autorizado." };
+  const admin = createAdminClient();
+  const { data, error } = await admin.rpc("editar_servicios_cotizacion_manual", {
+    p_usuario_id: usuario.id,
+    p_cotizacion_id: cotizacionId,
+    p_rev_esperada: rev,
+    p_motivo: motivo.motivo,
+    p_servicios: r.servicios as unknown as Json,
+    p_cambios: r.cambios as unknown as Json,
+  });
+  if (error || data == null) return { ok: false, error: mensajeEdicion39(error?.message) };
+
+  revalidatePath(`/dashboard/cotizaciones/${cotizacionId}`);
+  revalidatePath(`/cotizacion/${cotizacionId}`);
+  revalidatePath("/dashboard/cotizaciones");
+  return { ok: true, rev: Number(data) };
 }
 
 // ── Editar los datos del titular de una cotización dinámica ─────────────────
@@ -235,14 +161,22 @@ export async function crearCotizacionManual(
 // generar el contrato. Solo en estado 'abierta'.
 export type TitularInput = { nombres: string; apellidos: string; tipoDoc: string; numeroDoc: string; nacimiento: string; telefono: string; email: string };
 
+// #42 (C4/C5): el titular se corrige por la fachada `actualizar_titular_cotizacion` (migración
+// 219), que en UNA transacción bloquea la cotización, registra la captura nueva del puesto
+// titular, re-apunta el vínculo y reescribe payload/detalle/cliente/cliente_documento con el
+// tipo CRUDO (sin "CC" por defecto: la conversión 198 lo sigue exigiendo). CAS por la versión
+// del puesto (`versionEsperada`) y clave de idempotencia por envío (`clave`). Sin `control` (un
+// llamador anterior a #42) falla cerrado: pide recargar y no escribe nada.
 export async function actualizarTitularCotizacionManual(
   cotizacionId: number,
-  titular: TitularInput
+  titular: TitularInput,
+  control?: { versionEsperada: number; clave: string }
 ): Promise<{ ok: true } | { ok: false; error: string }> {
+  if (!(Number(cotizacionId) > 0)) return { ok: false, error: "Cotización inválida." };
   const sb = await createClient();
   const { data: cot } = await sb
     .from("cotizaciones")
-    .select("payload, detalle, estado, tipo, tenant")
+    .select("estado, tipo, tenant")
     .eq("id", cotizacionId)
     .maybeSingle();
   if (!cot) return { ok: false, error: "Cotización no encontrada." };
@@ -250,34 +184,29 @@ export async function actualizarTitularCotizacionManual(
   if (!autorizaTenant(ctx, cot.tenant)) return { ok: false, error: "No tienes acceso a esta cotización." };
   if (cot.tipo !== "manual" || cot.estado !== "abierta")
     return { ok: false, error: "Solo se puede editar el titular de una cotización dinámica abierta." };
-  if (!`${titular.nombres ?? ""}${titular.apellidos ?? ""}`.trim())
+  if (!`${titular?.nombres ?? ""}${titular?.apellidos ?? ""}`.trim())
     return { ok: false, error: "El nombre del titular es obligatorio." };
+  const clave = validarClaveEnvio(control?.clave);
+  const versionEsperada = validarVersionEsperada(control?.versionEsperada);
+  if (clave == null || versionEsperada == null) return { ok: false, error: "Recarga la página e inténtalo de nuevo." };
 
-  const nombre = `${titular.nombres ?? ""} ${titular.apellidos ?? ""}`.trim();
-  const payload = { ...((cot.payload ?? {}) as Record<string, unknown>) };
-  payload.cliente = {
-    nombres: (titular.nombres || "").trim(),
-    apellidos: (titular.apellidos || "").trim(),
-    tipoDoc: (titular.tipoDoc || "CC").trim(),
-    numeroDoc: (titular.numeroDoc || "").trim(),
-    nacimiento: (titular.nacimiento || "").trim(),
-    telefono: (titular.telefono || "").trim(),
-    email: (titular.email || "").trim(),
-  };
-  const detalle = { ...((cot.detalle ?? {}) as Record<string, unknown>) };
-  const ventaSnap = { ...((detalle.venta ?? {}) as Record<string, unknown>), cliente: nombre };
-  detalle.venta = ventaSnap;
-
-  const { error } = await sb
-    .from("cotizaciones")
-    .update({
-      payload: JSON.parse(JSON.stringify(payload)),
-      detalle: JSON.parse(JSON.stringify(detalle)),
-      cliente: nombre,
-      cliente_documento: (titular.numeroDoc || "").trim() || null,
-    })
-    .eq("id", cotizacionId);
-  if (error) return { ok: false, error: error.message };
+  const usuario = await usuarioSesion();
+  if (!usuario) return { ok: false, error: "No autorizado." };
+  if (!process.env.SUPABASE_SERVICE_ROLE_KEY) {
+    return { ok: false, error: "No se pudo guardar el titular por un problema de configuración del servidor." };
+  }
+  const admin = createAdminClient();
+  const { data, error } = await admin.rpc("actualizar_titular_cotizacion", {
+    p_cotizacion_id: cotizacionId,
+    p_usuario_id: usuario.id,
+    p_titular: titularParaFachada(titular) as unknown as Json,
+    p_version_esperada: versionEsperada,
+    p_clave: clave,
+  });
+  const resultado = (data as { resultado?: unknown } | null)?.resultado;
+  if (error || (resultado !== "actualizado" && resultado !== "sin_cambios" && resultado !== "reintento")) {
+    return { ok: false, error: mensajePersonas(codigoErrorPersonas(error?.message)) };
+  }
 
   revalidatePath(`/dashboard/cotizaciones/${cotizacionId}`);
   revalidatePath(`/cotizacion/${cotizacionId}`);
@@ -305,11 +234,15 @@ export async function actualizarIncluyeCotizacionManual(
   const detalle = { ...((cot.detalle ?? {}) as Record<string, unknown>), incluye: (incluye || "").trim(), noIncluye: (noIncluye || "").trim() };
   const payload = { ...((cot.payload ?? {}) as Record<string, unknown>), incluye: (incluye || "").trim(), noIncluye: (noIncluye || "").trim() };
 
-  const { error } = await sb
+  // Solo si sigue abierta (#39). Incluye/no incluye no es económico: la frontera lo deja pasar.
+  const { data: filas, error } = await sb
     .from("cotizaciones")
     .update({ detalle: JSON.parse(JSON.stringify(detalle)), payload: JSON.parse(JSON.stringify(payload)) })
-    .eq("id", cotizacionId);
-  if (error) return { ok: false, error: error.message };
+    .eq("id", cotizacionId)
+    .eq("estado", "abierta")
+    .select("id");
+  if (error) return { ok: false, error: errorDatoNoEconomico(error.message) };
+  if (!filas?.length) return { ok: false, error: "La cotización ya no está abierta; recarga la página." };
 
   revalidatePath(`/dashboard/cotizaciones/${cotizacionId}`);
   revalidatePath(`/cotizacion/${cotizacionId}`);
@@ -319,17 +252,19 @@ export async function actualizarIncluyeCotizacionManual(
 // ── Editar niños y recobro de una cotización dinámica ──────────────────────
 // Permite ajustar la cantidad/tarifa de niños y el recobro (oculto al cliente)
 // después de creada la cotización. Recalcula la tarifa de adulto (que esconde
-// el recobro), el subtotal de niños y el total. Solo en estado 'abierta'.
-export type RecobroNinosInput = { ninos: number; tarifaNino: number; recobro: number; recobroAliado: number };
-
+// el recobro), el subtotal de niños y el total.
+// #39 (C5, decisión 1 del dueño): misma elegibilidad que editar servicios —
+// nunca tras un pago previo (aunque se anule), ni en congeladas ni en hijas de
+// una comparativa; `venta` solo en las propias. Motivo obligatorio e historial.
 export async function actualizarRecobroNinosCotizacionManual(
   cotizacionId: number,
-  input: RecobroNinosInput
+  input: RecobroNinosInput,
+  control: { revEsperada: number; motivo: string }
 ): Promise<{ ok: true } | { ok: false; error: string }> {
   const sb = await createClient();
   const { data: cot } = await sb
     .from("cotizaciones")
-    .select("payload, detalle, estado, tipo, pax, destino, fecha_salida, fecha_regreso, tenant")
+    .select("payload, estado, tipo, pax, destino, fecha_salida, fecha_regreso, tenant")
     .eq("id", cotizacionId)
     .maybeSingle();
   if (!cot) return { ok: false, error: "Cotización no encontrada." };
@@ -337,52 +272,28 @@ export async function actualizarRecobroNinosCotizacionManual(
   if (!autorizaTenant(ctx, cot.tenant)) return { ok: false, error: "No tienes acceso a esta cotización." };
   if (cot.tipo !== "manual" || cot.estado !== "abierta")
     return { ok: false, error: "Solo se puede editar una cotización dinámica abierta." };
+  const rev = validarRevision(control?.revEsperada);
+  if (rev == null) return { ok: false, error: "Recarga la página e inténtalo de nuevo." };
+  const motivo = validarMotivo(control?.motivo);
+  if (!motivo.ok) return motivo;
 
-  const payload = { ...((cot.payload ?? {}) as CotizacionManualInput) };
-  const tipoAsesor = (payload.tipoAsesor ?? "interno") as "interno" | "agencia" | "freelance";
-  const adultos = Math.max(Number(payload.pax ?? cot.pax) || 1, 1);
-
-  // Subtotal de servicios ya liquidados (columna valor); no se re-liquida.
+  // Subtotal de servicios ya liquidados (columna valor); no se re-liquida. La
+  // RPC lo vuelve a sumar con la fila bloqueada y rechaza si no cuadra.
   const { data: servs } = await sb.from("cotizacion_servicios").select("valor").eq("cotizacion_id", cotizacionId);
   const totalServicios = (servs ?? []).reduce((a, s) => a + (Number(s.valor) || 0), 0);
+  const r = reliquidarRecobroNinos(cot, totalServicios, input);
 
-  // Niños y recobro con la MISMA lógica que la creación.
-  const rec = calcularRecobroNinos({
-    pax: adultos, ninos: input.ninos, tarifaNino: input.tarifaNino,
-    recobro: input.recobro, recobroAliado: input.recobroAliado, tipoAsesor,
+  const usuario = await usuarioSesion();
+  if (!usuario) return { ok: false, error: "No autorizado." };
+  const admin = createAdminClient();
+  const { data, error } = await admin.rpc("actualizar_recobro_ninos_manual", {
+    p_usuario_id: usuario.id,
+    p_cotizacion_id: cotizacionId,
+    p_rev_esperada: rev,
+    p_motivo: motivo.motivo,
+    p_cambios: r.cambios as unknown as Json,
   });
-  const adultSubtotal = totalServicios + rec.recobroN;          // servicios + recobro (oculto)
-  const tarifaAdultoUnit = Math.round(adultSubtotal / adultos);
-  const precioVenta = adultSubtotal + rec.totalNinos;
-
-  // Filas visibles para el cliente (adultos + niños si hay).
-  const itemsDoc: { descripcion: string; cantidad: number; tarifa_unit: number; valor: number; orden: number }[] = [
-    { descripcion: nombrePaqueteItem(cot.destino, cot.fecha_salida, cot.fecha_regreso), cantidad: adultos, tarifa_unit: tarifaAdultoUnit, valor: adultSubtotal, orden: 0 },
-  ];
-  if (rec.nNinos > 0) {
-    itemsDoc.push({ descripcion: "Tarifa por niño", cantidad: rec.nNinos, tarifa_unit: rec.valorNino, valor: rec.totalNinos, orden: 1 });
-  }
-
-  payload.ninos = rec.nNinos;
-  payload.tarifaNino = rec.valorNino;
-  payload.recobro = rec.recobroN;
-  payload.recobroAliado = rec.recobroAliadoN;
-
-  const detalle = { ...((cot.detalle ?? {}) as Record<string, unknown>) };
-  const ventaSnap = { ...((detalle.venta ?? {}) as Record<string, unknown>), pax: adultos, ninos: rec.nNinos, precio_venta: precioVenta };
-  detalle.venta = ventaSnap;
-  detalle.recobro = { total: rec.recobroN, empresa: rec.recobroEmpresaN, aliado: rec.recobroAliadoN };
-  detalle.items = itemsDoc;
-
-  const { error } = await sb
-    .from("cotizaciones")
-    .update({
-      payload: JSON.parse(JSON.stringify(payload)),
-      detalle: JSON.parse(JSON.stringify(detalle)),
-      precio_venta: precioVenta,
-    })
-    .eq("id", cotizacionId);
-  if (error) return { ok: false, error: error.message };
+  if (error || data == null) return { ok: false, error: mensajeEdicion39(error?.message) };
 
   revalidatePath(`/dashboard/cotizaciones/${cotizacionId}`);
   revalidatePath(`/cotizacion/${cotizacionId}`);
@@ -419,6 +330,8 @@ async function sesionConversionAutorizada(): Promise<{ userId: string; rol: stri
 function mensajeSeguro(msg: string): string {
   const m = String(msg ?? "").trim();
   if (!m) return "No se pudo convertir la cotización a contrato. Inténtalo de nuevo.";
+  if (/COTIZACION_SALIDA_PASADA/.test(m)) return MENSAJE_SALIDA_PASADA;
+  if (/COTIZACION_VENCIDA/.test(m)) return MENSAJE_COTIZACION_VENCIDA;
   if (/(duplicate key|violates (foreign key|not-null|check) constraint|constraint "|relation "|pg_|sqlstate|serialization failure|contradice la política|new row violates)/i.test(m)) {
     return "No se pudo convertir por un conflicto de datos. Reintenta; si persiste, revisa que los pagos previos y las condiciones estén correctos.";
   }
@@ -437,6 +350,10 @@ function mensajeSeguro(msg: string): string {
 // misma venta sin duplicar nada ni consumir otro consecutivo de la numeración.
 // Esta Server Action solo autentica al actor (rol autorizado + activo) y delega;
 // no hay secuencias REST parciales ni builders duplicados (una sola ruta).
+// #39: la ÚNICA puerta es el wrapper `convertir_cotizacion_manual_controlada`
+// (migración 216): bloquea la cotización, emite la autorización de SU
+// transacción y llama la RPC 198 SIN cambios, que sigue corriendo como
+// service_role. Tras la 217, la 198 llamada directo ya no puede escribir.
 export async function convertirCotizacionManualAContrato(
   cotizacionId: number
 ): Promise<{ ok: true; numero: string } | { ok: false; error: string }> {
@@ -448,9 +365,13 @@ export async function convertirCotizacionManualAContrato(
 
   const admin = createAdminClient();
   // #35: la madre comparativa no se convierte (el RPC y los triggers también lo impiden).
-  const { data: madre } = await admin.from("cotizaciones").select("modo").eq("id", cotizacionId).maybeSingle();
+  const { data: madre } = await admin.from("cotizaciones").select("modo, estado, vigencia_hasta, fecha_salida").eq("id", cotizacionId).maybeSingle();
   if (madre?.modo === "comparativa") return { ok: false, error: "Una comparativa no se convierte en contrato: elige una opción primero." };
-  const rpc = await admin.rpc("convertir_cotizacion_a_contrato", {
+  // #40 E3: la abierta vencida se corta aquí y, con autoridad, en la base (antes de numerar); una ya convertida sigue siendo un reintento válido.
+  // Salida pasada primero: aunque también venza la vigencia, renovarla no sirve (genera una nueva).
+  if (madre && abiertaConSalidaPasada(madre, hoyBogota())) return { ok: false, error: MENSAJE_SALIDA_PASADA };
+  if (madre?.estado === "abierta" && cotizacionVencida(madre.vigencia_hasta, hoyBogota())) return { ok: false, error: MENSAJE_COTIZACION_VENCIDA };
+  const rpc = await admin.rpc("convertir_cotizacion_manual_controlada", {
     p_cotizacion_id: cotizacionId,
     p_usuario_id: sesion.userId,
   });
@@ -484,7 +405,7 @@ export async function convertirCotizacionManualAContrato(
 /** Crea la comparativa manual de forma ATÓMICA (cabecera + servicios + opciones + sello) por RPC. */
 export async function crearComparativaManual(
   input: EntradaComparativaManual
-): Promise<{ ok: true; id: number } | { ok: false; error: string }> {
+): Promise<{ ok: true; id: number; avisoPersonas?: string } | { ok: false; error: string }> {
   // Acción INTERNA: exige sesión y perfil activo (falla cerrado). El tenant sale
   // del perfil/cookie validada, nunca del navegador; para no superadmin la base
   // lo vuelve a fijar con el de su perfil.
@@ -498,6 +419,8 @@ export async function crearComparativaManual(
   }
   const admin = createAdminClient();
 
+  // #40 E3: la vigencia la elige solo el personal interno.
+  if (ctx.interno === false && input.vigenciaHasta?.trim()) return { ok: false, error: "No tienes permiso para elegir la vigencia." };
   // El aliado SIEMPRE sale del catálogo (por id): su nombre pisa el texto libre.
   let entrada: EntradaComparativaManual = { ...input, tenant: ctx.tenant };
   if (input.aliadoId != null) {
@@ -521,8 +444,17 @@ export async function crearComparativaManual(
   });
   if (error || id == null) return { ok: false, error: mensajeErrorComparativa(error?.message) };
 
+  // #42: titular de la MADRE en el registro de personas, sin escribir su payload (la madre es
+  // inmutable); la 211 ya estampó el autor. Un fallo deja el aviso de la ficha y un log sin PII.
+  const alta = await altaPersonasCotizacion(admin, {
+    fila: { id, tenant: ctx.tenant, tipo: "comparativa_manual", payload: r.datos.cabecera.payload, creado_por_id: user.id, aliado_id: r.datos.aliadoId },
+    usuarioId: user.id,
+    sellar: false,
+  });
+  if (!alta.ok) console.error(logPersonasCotizacion("comparativa_manual", id, alta));
+
   revalidatePath("/dashboard/cotizaciones");
-  return { ok: true, id };
+  return alta.ok ? { ok: true, id } : { ok: true, id, avisoPersonas: AVISO_PERSONAS_PENDIENTES };
 }
 
 /**
@@ -535,20 +467,53 @@ export async function resolverSolicitudComparativa(
   solicitudId: number,
   decision: "confirmar" | "rechazar",
   motivo: string,
-  clave: string
-): Promise<{ ok: true; hijaId: number | null } | { ok: false; error: string }> {
+  clave: string,
+  /** #50: { modalidad: "pvp" | "neto", reconoceRecobro, autorizarMargen } de la hija B2B; sin él, como siempre. */
+  modalidadRaw?: unknown
+): Promise<{ ok: true; hijaId: number | null; avisoPersonas?: string } | { ok: false; error: string }> {
   if (!Number.isInteger(solicitudId) || solicitudId <= 0) return { ok: false, error: "Solicitud inválida." };
   if (decision !== "confirmar" && decision !== "rechazar") return { ok: false, error: "Decisión inválida." };
   const claveOk = validarClaveIdempotencia(clave);
   if (!claveOk) return { ok: false, error: "Falta la clave de la operación. Recarga la página e inténtalo de nuevo." };
+  const mod = leerEntradaModalidad(modalidadRaw ?? null);
+  if (!mod.ok) return { ok: false, error: mod.error };
   const sb = await createClient();
-  const { data, error } = await sb.rpc("resolver_solicitud_comparativa", {
+  const paramsResolver = {
     p_solicitud: solicitudId,
     p_decision: decision,
     p_motivo: (motivo || "").trim().slice(0, 300) || null,
     p_clave: decision === "confirmar" ? claveOk : null,
-  });
+  };
+  // #50: la modalidad solo cuenta al confirmar. La identidad es la de la sesión (auth.uid() en la RPC);
+  // la base decide el rol, el aliado, el margen y si la modalidad es obligatoria.
+  const { data, error } = mod.datos && decision === "confirmar"
+    ? await sb.rpc("resolver_solicitud_comparativa_n50", {
+        ...paramsResolver,
+        p_modalidad: mod.datos.modalidad,
+        p_reconoce: mod.datos.reconoceRecobro,
+        p_autorizar: mod.datos.autorizarMargen,
+      })
+    : await sb.rpc("resolver_solicitud_comparativa", paramsResolver);
   if (error) return { ok: false, error: mensajeErrorComparativa(error.message) };
+
+  // #42: confirmar crea la HIJA (cotización común): su titular entra al registro de personas con
+  // los datos que la hija persistió. Un fallo deja el aviso de su ficha y un log sin PII.
+  let avisoPersonas: string | undefined;
+  if (data != null) {
+    const hijaId = Number(data);
+    const { data: { user } } = await sb.auth.getUser();
+    const admin = process.env.SUPABASE_SERVICE_ROLE_KEY ? createAdminClient() : null;
+    const { data: hija } = admin
+      ? await admin.from("cotizaciones").select("id, tenant, tipo, payload, creado_por_id, propietario_id, aliado_id").eq("id", hijaId).maybeSingle()
+      : { data: null };
+    const alta = admin && hija && user
+      ? await altaPersonasCotizacion(admin, { fila: hija, usuarioId: user.id, sellar: false })
+      : ({ ok: false, etapa: "registro", codigo: null } as const);
+    if (!alta.ok) {
+      console.error(logPersonasCotizacion("hija_solicitud", hijaId, alta));
+      avisoPersonas = AVISO_PERSONAS_PENDIENTES;
+    }
+  }
   revalidatePath("/dashboard/cotizaciones");
-  return { ok: true, hijaId: data ?? null };
+  return avisoPersonas ? { ok: true, hijaId: data ?? null, avisoPersonas } : { ok: true, hijaId: data ?? null };
 }

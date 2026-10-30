@@ -13,6 +13,7 @@ type Aliado = {
   email: string | null; telefono: string | null; pct_comision: number | null;
   aplica_retencion: boolean; pct_retencion: number;
   banco: string | null; tipo_cuenta: string | null; numero_cuenta: string | null;
+  activo: boolean;
 };
 
 const lbl = "mb-1 block text-xs font-medium text-gray-600";
@@ -106,12 +107,12 @@ export function AliadosClient({
       </div>
 
       {aliados.length > 0 && (
-        <ResponsiveTableShell minWidth={720} className="overflow-x-auto rounded-xl border border-gray-200 bg-white">
-          <table className="w-full min-w-[720px] text-sm">
+        <ResponsiveTableShell minWidth={780} className="overflow-x-auto rounded-xl border border-gray-200 bg-white">
+          <table className="w-full min-w-[780px] text-sm">
             <thead><tr className="bg-gray-50 text-left text-xs uppercase text-gray-400">
               <th className="px-3 py-2">Tipo</th><th className="px-3 py-2">Nombre</th><th className="px-3 py-2">Documento</th>
               <th className="px-3 py-2 text-right">% comisión</th><th className="px-3 py-2 text-center">Retención</th>
-              <th className="px-3 py-2 text-right">% ret.</th><th className="px-3 py-2">Acciones</th>
+              <th className="px-3 py-2 text-right">% ret.</th><th className="px-3 py-2 text-center">Activo</th><th className="px-3 py-2">Acciones</th>
             </tr></thead>
             <tbody>{aliados.map((a) => <Row key={a.id} a={a} defAgencia={defAgencia} defFreelance={defFreelance} />)}</tbody>
           </table>
@@ -126,6 +127,7 @@ function Row({ a, defAgencia, defFreelance }: { a: Aliado; defAgencia: number; d
   const [pct, setPct] = useState(a.pct_comision == null ? "" : String((a.pct_comision * 100)));
   const [ret, setRet] = useState(a.aplica_retencion);
   const [pctRet, setPctRet] = useState(String((a.pct_retencion * 100) || ""));
+  const [activo, setActivo] = useState(a.activo !== false);
   const [abierto, setAbierto] = useState(false);
   const [pending, start] = useTransition();
   const save = (patch: Parameters<typeof actualizarAliado>[1]) => start(() => { void actualizarAliado(a.id, patch); });
@@ -152,6 +154,10 @@ function Row({ a, defAgencia, defFreelance }: { a: Aliado; defAgencia: number; d
           <Input type="number" className="w-16" value={pctRet} onChange={(e) => setPctRet(e.target.value)}
             onBlur={() => save({ pctRetencion: Number(pctRet) / 100 || 0 })} />
         </td>
+        <td className="px-3 py-2 text-center" data-label="Activo">
+          <input type="checkbox" aria-label={`${a.nombre} activo`} checked={activo} title="Un aliado inactivo no se puede elegir en ventas B2B asistidas"
+            onChange={(e) => { setActivo(e.target.checked); save({ activo: e.target.checked }); }} />
+        </td>
         <td className="px-3 py-2 text-right" data-label="Acciones">
           <button type="button" disabled={pending} onClick={() => { if (confirm(`¿Eliminar ${a.nombre}?`)) start(() => { void eliminarAliado(a.id); }); }}
             className="text-xs text-gray-400 hover:text-red-500">Eliminar</button>
@@ -159,7 +165,7 @@ function Row({ a, defAgencia, defFreelance }: { a: Aliado; defAgencia: number; d
       </tr>
       {abierto && (
         <tr className="border-t border-gray-50 bg-gray-50/60">
-          <td colSpan={7} className="px-4 py-3">
+          <td colSpan={8} className="px-4 py-3">
             <DatosPago a={a} />
           </td>
         </tr>

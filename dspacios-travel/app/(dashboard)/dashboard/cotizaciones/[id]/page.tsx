@@ -14,12 +14,25 @@ import { ConvertirManualBtn } from "./ConvertirManualBtn";
 import { TitularEditor } from "./TitularEditor";
 import { IncluyeEditor } from "./IncluyeEditor";
 import { RecobroNinosEditor } from "./RecobroNinosEditor";
+import { ServiciosCotizacionEditor } from "./ServiciosCotizacionEditor";
 import { ConvertirCarritoBtn } from "./ConvertirCarritoBtn";
+import { TerminosB2BAsistido } from "@/components/cotizacion/TerminosB2BAsistido";
+import { leerPlanB2BDePayload } from "@/lib/cotizacion/asistidaB2B";
+import { monedaOfertaDeCotizacion } from "@/lib/finanzas/cobroCarrito";
+import { elegibilidadEdicion } from "@/lib/cotizacion/edicionServiciosManual";
+import { servicioDesdeFila } from "@/lib/cotizacion/liquidacionManual";
 import { resolverVinculosCotizacion } from "@/lib/reservar/vinculoServiciosCheckout";
 import { ROLES_CONTRATO_COMPLETO } from "@/lib/roles";
 import { FichaComparativa } from "@/lib/cotizacion/comparativaDocumento";
-import { hoyBogota } from "@/lib/cotizacion/vigencia";
+import { abiertaConSalidaPasada, hoyBogota, MENSAJE_SALIDA_PASADA } from "@/lib/cotizacion/vigencia";
 import PagosPreviosPanel, { type PagoPrevioUI } from "@/components/cotizacion/PagosPreviosPanel";
+import { revalidatePath } from "next/cache";
+import { createAdminClient } from "@/lib/supabase/admin";
+import { ReintentarPersonasBtn } from "./ReintentarPersonasBtn";
+import {
+  mensajePersonas, participantesDesdeCotizacion, personasPendientes, versionTitular, type PuestoRegistrado,
+} from "@/lib/personas/cotizacion";
+import { altaPersonasCotizacion, logPersonasCotizacion } from "@/lib/personas/consulta";
 
 const TIPO_SERV_LABEL: Record<string, string> = {
   aereo: "Aéreo", hotel: "Hotel", traslado: "Traslado", asistencia: "Asistencia médica", otro: "Otro",
@@ -56,8 +69,52 @@ export default async function CotizacionDetallePage({
   const ctxAcceso = await contextoCotizacion();
   if (!autorizaTenant(ctxAcceso, c.tenant)) notFound();
 
+  // #42 (C7): puestos de esta cotización en el registro de personas. La tabla no tiene GRANT
+  // para la sesión: se lee con service-role SOLO después de la comprobación de tenant de arriba,
+  // y solo id/rol/activo/versión (nada de personas ni capturas). El aviso se CALCULA: titular
+  // identificado sin puesto activo o pasajero con ref sin puesto.
+  const cotizacionId = Number(c.id);
+  const { data: puestosFila } = process.env.SUPABASE_SERVICE_ROLE_KEY
+    ? await createAdminClient().from("cotizacion_participantes").select("id, rol, activo, version").eq("cotizacion_id", cotizacionId)
+    : { data: null };
+  const puestos: PuestoRegistrado[] = (puestosFila ?? []).map((p) => ({ id: p.id, rol: p.rol, activo: p.activo, version: p.version }));
+  const pendientesPersonas = c.estado === "abierta" ? personasPendientes(participantesDesdeCotizacion(c), puestos) : 0;
+
+  async function reintentarPersonas(): Promise<{ ok: true } | { ok: false; error: string }> {
+    "use server";
+    // Acción de servidor: se vuelve a autenticar y a comprobar el tenant; la fachada SQL decide.
+    const sesion = await createClient();
+    const { data: { user } } = await sesion.auth.getUser();
+    if (!user) return { ok: false, error: "No autorizado." };
+    const { data: cot } = await sesion.from("cotizaciones").select("tenant, estado").eq("id", cotizacionId).maybeSingle();
+    if (!cot || !autorizaTenant(await contextoCotizacion(), cot.tenant)) return { ok: false, error: "No tienes acceso a esta cotización." };
+    if (cot.estado !== "abierta") return { ok: false, error: "La cotización ya no está abierta; recarga la página." };
+    if (!process.env.SUPABASE_SERVICE_ROLE_KEY) return { ok: false, error: "No se pudo reintentar por un problema de configuración del servidor." };
+    const admin = createAdminClient();
+    const { data: fila } = await admin.from("cotizaciones")
+      .select("id, tenant, tipo, payload, creado_por_id, propietario_id, aliado_id").eq("id", cotizacionId).maybeSingle();
+    if (!fila) return { ok: false, error: "Cotización no encontrada." };
+    const alta = await altaPersonasCotizacion(admin, { fila, usuarioId: user.id, sellar: false });
+    if (!alta.ok) {
+      console.error(logPersonasCotizacion("reintento", cotizacionId, alta));
+      return { ok: false, error: mensajePersonas(alta.codigo, "No se pudo registrar a las personas. Inténtalo de nuevo.") };
+    }
+    revalidatePath(`/dashboard/cotizaciones/${cotizacionId}`);
+    return { ok: true };
+  }
+  const avisoPersonas = pendientesPersonas > 0
+    ? <ReintentarPersonasBtn pendientes={pendientesPersonas} reintentar={reintentarPersonas} />
+    : null;
+
   // #35: una comparativa (madre) no tiene editores, pagos ni conversión: tiene su propia ficha.
-  if (c.modo === "comparativa") return <FichaComparativa madre={c} puedeResolver hoy={hoyBogota()} />;
+  if (c.modo === "comparativa") {
+    return (
+      <>
+        {avisoPersonas && <div className="mx-auto max-w-3xl px-4 md:px-8">{avisoPersonas}</div>}
+        <FichaComparativa madre={c} puedeResolver hoy={hoyBogota()} />
+      </>
+    );
+  }
 
   const esManual = c.tipo === "manual";
   // Cotización combinada generada desde el carrito del tarifario público
@@ -67,6 +124,8 @@ export default async function CotizacionDetallePage({
   // contrato (uno por destino) — no reutiliza CotizacionAcciones, que asume
   // un solo hotel.
   const esCarrito = c.tipo === "carrito";
+  // Abierta con la salida ya pasada (día de negocio de Bogotá): no se continúa ni se convierte; se muestra como tal en vez de «abierta».
+  const salidaPasada = abiertaConSalidaPasada(c, hoyBogota());
   const moneda = c.moneda ?? "COP";
   const { data: serviciosManual } = esManual
     ? await sb.from("cotizacion_servicios").select("*").eq("cotizacion_id", c.id).order("orden")
@@ -84,7 +143,7 @@ export default async function CotizacionDetallePage({
   const condicionesUI = condicionesParaUI((condRows ?? []) as FilaCondicionRowUI[]);
 
   const { data: { user } } = await sb.auth.getUser();
-  const { data: perfil } = user ? await sb.from("usuarios").select("rol, nombre").eq("id", user.id).single() : { data: null };
+  const { data: perfil } = user ? await sb.from("usuarios").select("rol, nombre, activo").eq("id", user.id).single() : { data: null };
   const esSuperadmin = perfil?.rol === "superadmin";
   // El panel de pagos previos (migración 164) lo ve/opera solo el rol
   // autorizado — la MISMA lista que `_autorizado_pago_previo` en SQL.
@@ -108,6 +167,16 @@ export default async function CotizacionDetallePage({
         .eq("cotizacion_id", c.id)
         .order("id", { ascending: false })
     : { data: null };
+  // #50: sello de la modalidad PVP/NETO (solo roles de pago; service-role, DESPUÉS de la comprobación
+  // de tenant de arriba). En NETO el panel de pagos trabaja sobre el total NETO, no sobre el PVP.
+  const { data: selloNeto } = esPagoAutorizado && esManual && process.env.SUPABASE_SERVICE_ROLE_KEY
+    ? await createAdminClient()
+        .from("cotizacion_neto")
+        .select("modalidad, pvp_total, neto_total, descuento_total, comision_ordinaria, participacion_recobro, base_comision, reconoce_recobro, margen, piso, autorizado_rol")
+        .eq("cotizacion_id", cotizacionId)
+        .maybeSingle()
+    : { data: null };
+  const esNeto = selloNeto?.modalidad === "neto" && Number(selloNeto.neto_total) > 0;
   // Los asesores internos son los usuarios con rol 'venta'.
   const { data: asesores } = await sb.from("usuarios").select("nombre, email").eq("rol", "venta").eq("activo", true).order("nombre");
   // % por defecto del recobro para el aliado en B2B (editor de niños/recobro).
@@ -121,6 +190,10 @@ export default async function CotizacionDetallePage({
   };
   const esB2B = (payload.tipoAsesor ?? "interno") !== "interno";
   const tienePasajeros = Array.isArray(payload.pasajeros) && payload.pasajeros.length > 0;
+  // 234: una oferta #63 en USD cotizada SIN TRM (todas sus fuentes en USD) pide, al convertir a contrato, la TRM provisional con la que se
+  // congela el equivalente en pesos de las obligaciones. Con TRM de publicación (o en COP) no se pide nada.
+  const oferta63Cot = (payload as unknown as { oferta63?: { trm?: number | null } | null }).oferta63 ?? null;
+  const pideTrmProvisional = oferta63Cot != null && (c.moneda ?? "COP") === "USD" && oferta63Cot.trm == null;
   const clientePre = {
     nombres: payload.cliente?.nombres ?? "",
     apellidos: payload.cliente?.apellidos ?? "",
@@ -131,9 +204,10 @@ export default async function CotizacionDetallePage({
   // Datos propios del carrito: pax máximo (para dimensionar la captura de
   // pasajeros) y destinos distintos (para ofrecer "1 contrato por destino").
   const payloadCarrito = (c.payload ?? {}) as {
-    items?: { destino: string | null; pax: number; fechaIda: string | null; hotelNombre: string; ref?: string; paqueteId?: number }[];
-    tours?: { nombre?: string; destino: string | null; pax: number; fechaIda?: string | null; paqueteId?: number; hotelRef?: string | null }[];
+    items?: { destino: string | null; pax: number; fechaIda: string | null; hotelNombre: string; ref?: string; paqueteId?: number; precio?: number }[];
+    tours?: { nombre?: string; destino: string | null; pax: number; fechaIda?: string | null; paqueteId?: number; hotelRef?: string | null; precio?: number }[];
     cliente?: { nombres?: string; apellidos?: string; numeroDoc?: string };
+    manuales?: { clase?: string; nombre?: string; pax?: number; precio?: number; moneda?: string; hotelRef?: string | null }[];
   };
   const itemsCarrito = payloadCarrito.items ?? [];
   const toursCarrito = payloadCarrito.tours ?? [];
@@ -152,8 +226,14 @@ export default async function CotizacionDetallePage({
     apellidos: payloadCarrito.cliente?.apellidos ?? "",
     numeroDoc: payloadCarrito.cliente?.numeroDoc ?? "",
   };
-  const detalleCarrito = (c.detalle ?? {}) as { contratos?: string[] };
+  const detalleCarrito = (c.detalle ?? {}) as { contratos?: string[]; contratosPorGrupo?: Record<string, string> };
   const contratosCarrito = detalleCarrito.contratos ?? (c.numero_contrato ? [c.numero_contrato] : []);
+  // #102: términos de una venta B2B ASISTIDA, congelados al cotizar. Presente pero ilegible ⇒ se avisa y la conversión también lo rechaza.
+  const lecturaB2B = esCarrito ? leerPlanB2BDePayload(c.payload) : { ok: true as const, plan: null };
+  const planB2B = lecturaB2B.ok ? lecturaB2B.plan : null;
+  const netaB2B = planB2B?.modo_compra === "neta";
+  // Clave de cada unidad en el plan congelado (mismo orden que `itemsCarrito` y `toursCarrito`): `ref` del ítem y `tour-N` por posición.
+  const clavesUnidadesB2B = [...itemsCarrito.map((i) => i.ref ?? ""), ...toursCarrito.map((_, j) => `tour-${j}`)];
 
   // Desglose interno: servicios + niños + recobro (oculto al cliente) = total.
   const detalleM = (c.detalle ?? {}) as { recobro?: { total?: number; empresa?: number; aliado?: number }; venta?: { ninos?: number } };
@@ -163,6 +243,25 @@ export default async function CotizacionDetallePage({
   const recobroAliado = Number(detalleM.recobro?.aliado ?? 0);
   const ninosSubtotal = Math.max((Number(c.precio_venta) || 0) - serviciosSubtotal - recobroTotal, 0);
   const numNinos = Number(detalleM.venta?.ninos ?? 0);
+
+  // #39 fase 1: editar servicios y niños/recobro SOLO en una manual simple abierta
+  // que nunca tuvo pago, vigente, con la edición habilitada (frontera de la 217
+  // activa y sin suspensión); `venta` solo en las que creó. La RPC vuelve a
+  // comprobar todo con la fila bloqueada: esto solo decide qué se muestra.
+  const { data: edicionHabilitada } = esManual && c.estado === "abierta"
+    ? await sb.rpc("edicion_cotizaciones_habilitada")
+    : { data: false };
+  const elegibilidad = elegibilidadEdicion(c, {
+    actor: { id: user?.id ?? null, rol: perfil?.rol ?? null, activo: perfil?.activo === true },
+    habilitada: edicionHabilitada === true,
+    hoy: hoyBogota(),
+    // Solo los roles de pago leen los pagos (RLS); para el resto basta el congelado
+    // (el primer pago siempre congela) y la base vuelve a comprobarlo.
+    tienePagos: (pagosPrevios ?? []).length > 0,
+  });
+  const avisoEdicion = !elegibilidad.ok && ["VENCIDA", "CON_PAGOS", "CONGELADA", "AUTOR"].includes(elegibilidad.codigo)
+    ? elegibilidad.mensaje
+    : null;
 
   return (
     <div className="mx-auto max-w-3xl p-4 md:p-8">
@@ -176,9 +275,20 @@ export default async function CotizacionDetallePage({
           <p className="mt-1 text-sm text-gray-500">
             {c.cliente ?? "—"} · {c.destino ?? "—"} · Viaje {formatFechaLarga(c.fecha_salida)}
           </p>
-          <span className="mt-2 inline-block rounded-full bg-amber-50 px-2 py-0.5 text-xs text-amber-700">
-            {c.estado}
-          </span>
+          {netaB2B && (
+            <p className="mt-0.5 text-xs text-gray-500" data-testid="ficha-titular">
+              Cliente: aliado · Titular de la reserva: {`${clienteCarritoPre.nombres} ${clienteCarritoPre.apellidos}`.trim() || "—"}
+            </p>
+          )}
+          {salidaPasada ? (
+            <div className="mt-2 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-xs font-medium text-red-700" data-testid="ficha-salida-pasada">
+              <span className="mr-2 rounded-full bg-red-100 px-2 py-0.5">Salida pasada</span>{MENSAJE_SALIDA_PASADA}
+            </div>
+          ) : (
+            <span className="mt-2 inline-block rounded-full bg-amber-50 px-2 py-0.5 text-xs text-amber-700">
+              {c.estado}
+            </span>
+          )}
         </div>
         <Link href={`/cotizacion/${id}`} target="_blank">
           <Button style={{ backgroundColor: "var(--brand-primary)" }}>Ver / Imprimir cotización →</Button>
@@ -187,11 +297,12 @@ export default async function CotizacionDetallePage({
 
       <div className="mt-6 grid grid-cols-1 gap-4 sm:grid-cols-3">
         <div className="rounded-xl p-4 text-white" style={{ backgroundColor: "var(--brand-primary)" }}>
-          <div className="text-xs opacity-80">Precio de venta</div>
-          <div className="text-xl font-bold">{formatMoneda(c.precio_venta ?? 0, moneda)}</div>
+          <div className="text-xs opacity-80">{netaB2B ? "Total exigible (NETO)" : "Precio de venta"}</div>
+          <div className="text-xl font-bold">{formatMoneda(netaB2B && planB2B ? planB2B.total_exigible : c.precio_venta ?? 0, moneda)}</div>
+          {netaB2B && <div className="text-[11px] opacity-80">PVP {formatMoneda(c.precio_venta ?? 0, moneda)} − comisión {formatMoneda(planB2B?.comision ?? 0, moneda)}</div>}
         </div>
         <Dato label="Pasajeros" value={String(c.pax ?? "—")} />
-        <VigenciaCotizacion id={c.id} vigencia={c.vigencia_hasta} fechaSalida={c.fecha_salida} editable={c.estado === "abierta"} />
+        <VigenciaCotizacion id={c.id} vigencia={c.vigencia_hasta} fechaSalida={c.fecha_salida} editable={c.estado === "abierta" && !salidaPasada} estado={c.estado} />
       </div>
 
       <div className="mt-4 grid grid-cols-1 gap-3 sm:grid-cols-2">
@@ -200,6 +311,13 @@ export default async function CotizacionDetallePage({
         <Dato label="Fechas" value={`${formatFechaLarga(c.fecha_salida)} → ${formatFechaLarga(c.fecha_regreso)}`} />
         <Dato label="Asesor" value={c.asesor ?? "—"} />
       </div>
+
+      {avisoPersonas}
+
+      {planB2B && <div className="mt-4"><TerminosB2BAsistido plan={planB2B} /></div>}
+      {!lecturaB2B.ok && (
+        <p role="alert" className="mt-4 rounded-lg bg-red-50 px-3 py-2 text-sm text-red-700">{lecturaB2B.error}</p>
+      )}
 
       <CondicionesPanel ui={condicionesUI} moneda={moneda} />
 
@@ -257,10 +375,12 @@ export default async function CotizacionDetallePage({
         <div className="mt-6 space-y-4">
           <TitularEditor
             id={c.id}
+            version={versionTitular(puestos)}
             inicial={{
               nombres: payload.cliente?.nombres ?? "",
               apellidos: payload.cliente?.apellidos ?? "",
-              tipoDoc: payload.cliente?.tipoDoc ?? "CC",
+              // #42: el tipo tal como está guardado; vacío = sin tipo (nunca un "CC" supuesto).
+              tipoDoc: payload.cliente?.tipoDoc ?? "",
               numeroDoc: payload.cliente?.numeroDoc ?? "",
               nacimiento: payload.cliente?.nacimiento ?? "",
               telefono: payload.cliente?.telefono ?? "",
@@ -272,18 +392,34 @@ export default async function CotizacionDetallePage({
             incluye={String((c.detalle as { incluye?: string } | null)?.incluye ?? "")}
             noIncluye={String((c.detalle as { noIncluye?: string } | null)?.noIncluye ?? "")}
           />
-          <RecobroNinosEditor
-            id={c.id}
-            moneda={moneda}
-            esB2B={esB2B}
-            pctAliadoB2B={pctAliadoB2B}
-            inicial={{
-              ninos: Number(payload.ninos ?? detalleM.venta?.ninos ?? 0),
-              tarifaNino: Number(payload.tarifaNino ?? 0),
-              recobro: Number(payload.recobro ?? detalleM.recobro?.total ?? 0),
-              recobroAliado: Number(payload.recobroAliado ?? detalleM.recobro?.aliado ?? 0),
-            }}
-          />
+          {elegibilidad.ok ? (
+            <>
+              <ServiciosCotizacionEditor
+                id={c.id}
+                moneda={moneda}
+                revEsperada={c.economico_rev}
+                extrasTotal={recobroTotal + ninosSubtotal}
+                inicial={(serviciosManual ?? []).map(servicioDesdeFila)}
+              />
+              <RecobroNinosEditor
+                id={c.id}
+                moneda={moneda}
+                esB2B={esB2B}
+                pctAliadoB2B={pctAliadoB2B}
+                revEsperada={c.economico_rev}
+                inicial={{
+                  ninos: Number(payload.ninos ?? detalleM.venta?.ninos ?? 0),
+                  tarifaNino: Number(payload.tarifaNino ?? 0),
+                  recobro: Number(payload.recobro ?? detalleM.recobro?.total ?? 0),
+                  recobroAliado: Number(payload.recobroAliado ?? detalleM.recobro?.aliado ?? 0),
+                }}
+              />
+            </>
+          ) : avisoEdicion ? (
+            <p className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">
+              Servicios, niños y recobro no se pueden editar: {avisoEdicion}
+            </p>
+          ) : null}
         </div>
       )}
 
@@ -297,14 +433,25 @@ export default async function CotizacionDetallePage({
           congelado={!!congeladoCot?.condicion_pago_congelada_en}
           montoExigidoMoneda={congeladoCot?.monto_exigido_total ?? null}
           montoExigidoCop={congeladoCot?.monto_exigido_total_cop ?? null}
-          precioTotalMoneda={Number(c.precio_venta) || 0}
+          precioTotalMoneda={esNeto && selloNeto ? Number(selloNeto.neto_total) : Number(c.precio_venta) || 0}
+          neto={esNeto && selloNeto ? {
+            pvp: Number(selloNeto.pvp_total), neto: Number(selloNeto.neto_total), descuento: Number(selloNeto.descuento_total) || 0,
+            ordinaria: Number(selloNeto.comision_ordinaria) || 0, participacion: Number(selloNeto.participacion_recobro) || 0,
+            base: Number(selloNeto.base_comision) || 0, reconoce: selloNeto.reconoce_recobro === true,
+            margen: Number(selloNeto.margen) || 0, piso: Number(selloNeto.piso) || 0, autorizadoRol: selloNeto.autorizado_rol ?? null,
+          } : null}
           trmAutoritativa={congeladoCot?.trm_autoritativa ?? null}
           pagos={(pagosPrevios ?? []) as PagoPrevioUI[]}
         />
       )}
 
       <div className="mt-8 rounded-xl border border-gray-200 bg-white p-5">
-        {esManual ? (
+        {salidaPasada ? (
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <p className="text-sm text-gray-600">Esta cotización no se puede continuar ni convertir en contrato: genera una cotización nueva.</p>
+            {(esManual || esCarrito) && <DescartarBtn id={c.id} />}
+          </div>
+        ) : esManual ? (
           c.estado === "abierta" ? (
             <div className="flex flex-wrap items-center justify-between gap-3">
               <p className="text-sm text-gray-500">Cotización dinámica. Genera el contrato para confirmarla o descártala.</p>
@@ -335,8 +482,17 @@ export default async function CotizacionDetallePage({
               <ConvertirCarritoBtn
                 id={c.id}
                 pax={paxCarrito}
-                items={itemsCarrito.map((i) => ({ hotelNombre: i.hotelNombre, destino: i.destino, pax: i.pax, fechaIda: i.fechaIda ?? null }))}
-                tours={toursCarrito.map((t, j) => ({ nombre: t.nombre ?? "Tour", destino: t.destino, pax: t.pax, fechaIda: t.fechaIda ?? null, hotelIndice: hotelDeTourCarrito[j] ?? null }))}
+                items={itemsCarrito.map((i) => ({ hotelNombre: i.hotelNombre, destino: i.destino, pax: i.pax, fechaIda: i.fechaIda ?? null, precio: Number(i.precio) || 0 }))}
+                tours={toursCarrito.map((t, j) => ({ nombre: t.nombre ?? "Tour", destino: t.destino, pax: t.pax, fechaIda: t.fechaIda ?? null, hotelIndice: hotelDeTourCarrito[j] ?? null, precio: Number(t.precio) || 0 }))}
+                contratosPorGrupo={detalleCarrito.contratosPorGrupo ?? {}}
+                manuales={(payloadCarrito.manuales ?? []).map((m) => {
+                  // Un vuelo va al contrato de SU hotel (por `hotelRef`); un «otro servicio», al primero.
+                  const idx = m.clase === "vuelo" ? itemsCarrito.findIndex((i) => i.ref === m.hotelRef) : -1;
+                  return { nombre: m.nombre ?? "Servicio manual", pax: Number(m.pax) || 0, precio: Number(m.precio) || 0, moneda: m.moneda ?? "COP", hotelIndice: idx >= 0 ? idx : null };
+                })}
+                monedaOferta={monedaOfertaDeCotizacion(c.moneda, c.payload)}
+                b2b={planB2B ? { plan: planB2B, clavesUnidades: clavesUnidadesB2B } : null}
+                b2bError={lecturaB2B.ok ? null : lecturaB2B.error}
                 vinculoError={vinculosCarrito.ok ? null : vinculosCarrito.error}
                 destinos={destinosCarrito}
                 cliente={clienteCarritoPre}
@@ -379,6 +535,10 @@ export default async function CotizacionDetallePage({
             asesores={asesores ?? []}
             miNombre={perfil?.nombre ?? ""}
             miRolVenta={perfil?.rol === "venta"}
+            pideTrmProvisional={pideTrmProvisional}
+            permiteMonedaCobro={oferta63Cot != null}
+            monedaOferta={c.moneda ?? "COP"}
+            totalOferta={Number(c.precio_venta ?? 0)}
           />
         ) : c.estado === "convertida" && c.numero_contrato ? (
           <div className="flex flex-wrap items-center justify-between gap-3">

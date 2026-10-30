@@ -1,0 +1,147 @@
+# Gate de la migracion 226 (tarifa de infante: fee del vuelo y precio de infante de cada servicio, menores de 2 anos).
+# Esquema REAL 001-225 + 226. Corre el preflight, la aplicacion, el postcheck consolidado, la bateria SQL por rol
+# (publicador, crear_bloqueo, vistas, invalidacion, ACL, contratos intactos), la idempotencia, el rollback exacto
+# (huella md5 de policies/ACL y de las definiciones de funciones, vistas y triggers) y la reaplicacion.
+# Un segundo job corre las pruebas TS (vectores numericos del dueno, los caminos que leen el precio del infante,
+# cableado de la app y del workflow) en una imagen oficial de Node con version exacta.
+# Sin secretos del repositorio, sin Supabase remoto, sin pull_request_target y con permisos de solo lectura.
+# Produccion sigue con preflight/migracion/postcheck manuales y autorizados por el dueno (la 226 va ANTES del codigo).
+name: test-226-tarifa-infante
+
+on:
+  # Batería histórica: se lanza a mano (Actions → este workflow → Run workflow) cuando el cambio toca lo que
+  # cubre. Ya no corre en cada pull_request; ver docs/tecnico/ci-baterias-manuales.md.
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: test-226-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  prueba-226:
+    name: 226 · fases, SQL por rol, rollback exacto
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    env:
+      CT: pg226_ci
+      RED: red226
+      PLANTILLA: plantilla226ci
+      IMAGEN_PG: supabase/postgres:15.8.1.085
+    defaults:
+      run:
+        shell: bash
+        working-directory: dspacios-travel
+    steps:
+      - name: Codigo (solo lectura, sin credenciales persistidas)
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+
+      - name: PostgreSQL desechable (imagen de Supabase) en una red propia
+        timeout-minutes: 5
+        run: |
+          set -euo pipefail
+          docker network create "$RED"
+          # Contrasena local de un contenedor efimero que nunca sale del runner (no es un secreto).
+          docker run -d --name "$CT" --network "$RED" -e POSTGRES_PASSWORD=postgres "$IMAGEN_PG"
+
+      - name: Esquema 001-225 REAL (la 226 parte de la cadena vigente)
+        timeout-minutes: 15
+        run: |
+          set -euo pipefail
+          # preparar_esquema_local.sh aplica todo numero <= 'hasta': con 225 queda fuera la 226.
+          test -f supabase/migrations/20260601000225_neto_empaquetados_cierre.sql
+          test -f supabase/migrations/20260601000226_tarifa_infante.sql
+          bash supabase/scripts/preparar_esquema_local.sh "$CT" 225 "$PLANTILLA"
+
+      - name: '226 · fases (preflight, aplicar, postcheck, bateria SQL, idempotencia, rollback exacto, reaplicar)'
+        timeout-minutes: 20
+        run: |
+          set +e
+          set -uo pipefail
+          salida="$RUNNER_TEMP/fases226.out"
+          bash supabase/scripts/test_226_fases.sh "$CT" "$PLANTILLA" 2>&1 | tee "$salida"
+          rc="${PIPESTATUS[0]}"
+          # Ademas del codigo de salida: ningun FALLO, el cierre en verde y una linea OK de cada bloque
+          # (un bloque que se saltara en silencio no puede dar verde).
+          faltan=""
+          for marca in 'OK    F1.1 ' 'OK    F1.2 ' 'OK    F1.3 ' 'OK    F1.4 ' 'OK    F2.1 ' 'OK    F2.2 ' 'OK    F2.3 ' 'OK    F2.4 ' \
+                       'OK    F3 postcheck' 'OK    F4 bater' 'OK    F4.1 ' 'OK    F5.1 ' 'OK    F5.2 ' 'OK    F5.3 ' \
+                       'OK    F6.1 ' 'OK    F6.2 ' 'OK    F6.3 ' 'OK    F6.4 ' 'OK    F6.5 ' 'OK    F6.6 ' 'OK    F6.7 ' 'OK    F6.8 ' \
+                       'OK    F7.1 ' 'OK    F7.2 ' 'OK    F7.3 ' \
+                       'OK    A1 ' 'OK    A2 ' 'OK    A3 ' 'OK    A4 ' 'OK    A5 ' 'OK    A6 ' 'OK    A7 ' \
+                       'OK    B1 ' 'OK    B2 ' 'OK    B3 ' 'OK    B4 ' 'OK    B5 ' 'OK    B6 ' 'OK    B7 ' \
+                       'OK    C1 ' 'OK    C2 ' 'OK    C3 ' 'OK    C4 ' 'OK    C5 ' 'OK    C6 ' 'OK    C7 ' 'OK    C8 ' 'OK    C9 ' 'OK    C10 ' \
+                       'OK    D0 ' 'OK    D1 ' 'OK    D2 ' 'OK    D3 ' 'OK    D4 ' 'OK    D5 ' 'OK    D6 ' 'OK    D7 ' \
+                       'OK    E1 ' 'OK    E3 ' 'OK    E4 ' 'OK    E5 ' 'OK    E6 ' 'OK    E7 ' 'OK    E8 ' \
+                       'OK    F1 anon' 'OK    F2 authenticated' 'OK    F3 la API' 'OK    F4 la API' 'OK    G1 ' 'OK    Z conclusiva' \
+                       'TEST 226 SQL: TODO OK'; do
+            grep -qF "$marca" "$salida" || faltan="$faltan [$marca]"
+          done
+          if [ "$rc" != 0 ] || grep -q '^FALLO' "$salida" || grep -q 'FALLO ' "$salida" \
+             || ! grep -q 'TEST 226 FASES: TODO OK' "$salida" || [ -n "$faltan" ]; then
+            echo "::error::Fases 226 en rojo (rc=$rc; faltan:${faltan:- ninguna})"
+            exit 1
+          fi
+
+      - name: Diagnostico del contenedor (solo si falla)
+        if: failure()
+        working-directory: .
+        run: docker logs --tail 200 "$CT" 2>&1 || true
+
+      - name: Limpieza de contenedores y red (siempre, tambien si falla o se cancela)
+        if: always()
+        working-directory: .
+        run: |
+          docker rm -f "$CT" || true
+          docker network rm "$RED" || true
+
+  pruebas-ts-226:
+    name: '226 · pruebas TS (vectores numericos, caminos de venta, costos, cableado)'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    env:
+      # Misma version que el entorno local de las verificaciones (Node 24.14.0, pnpm 10.33.0 del
+      # campo packageManager via corepack). Imagen oficial con version exacta, sin acciones extra.
+      IMAGEN_NODE: node:24.14.0-bookworm-slim
+      CTN: node226_ci
+    steps:
+      - name: Codigo (solo lectura, sin credenciales persistidas)
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+
+      - name: Descargar la imagen de Node (falla temprano si no hay acceso)
+        timeout-minutes: 5
+        run: docker pull "$IMAGEN_NODE"
+
+      - name: 'Pruebas TS de la 226 (sin base de datos)'
+        timeout-minutes: 20
+        run: |
+          set +e
+          set -uo pipefail
+          salida="$RUNNER_TEMP/ts226.out"
+          docker run --rm --name "$CTN" -e CI=1 -e COREPACK_ENABLE_DOWNLOAD_PROMPT=0 \
+            -v "$GITHUB_WORKSPACE:/repo" -w /repo/dspacios-travel "$IMAGEN_NODE" sh -ec '
+            corepack enable
+            pnpm install --frozen-lockfile
+            node --test --test-reporter=spec --experimental-strip-types --experimental-test-module-mocks \
+              --experimental-loader ./pruebas/support/aliasLoader.mjs \
+              pruebas/tarifaInfante226.test.ts pruebas/tarifaInfante226Cableado.test.ts pruebas/tarifaInfante226Checkout.test.ts
+          ' 2>&1 | tee "$salida"
+          rc="${PIPESTATUS[0]}"
+          # Cero fallos (ni rojos ni pendientes) y pruebas realmente corridas.
+          if [ "$rc" != 0 ] || [ "$(grep -cE '^ℹ fail 0$' "$salida")" != 1 ] || grep -qE '^✖|^ *✖ ' "$salida" \
+             || [ "$(grep -cE '^ℹ todo 0$' "$salida")" != 1 ] \
+             || [ "$(grep -cE '^ℹ tests [1-9][0-9]*$' "$salida")" != 1 ]; then
+            echo "::error::Pruebas TS de la 226 en rojo (rc=$rc)"
+            exit 1
+          fi
+
+      - name: Limpieza del contenedor de Node (siempre)
+        if: always()
+        working-directory: .
+        run: docker rm -f "$CTN" || true

@@ -3,6 +3,7 @@
 import { redirect } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
 import { createAdminClient } from "@/lib/supabase/admin";
+import { iniciarContextoAgencia } from "@/lib/auth/contextoAgencia";
 
 // ⚠️ TEMPORAL (solo pruebas): permite entrar con un código corto en vez de
 // escribir correo y contraseña.
@@ -71,5 +72,6 @@ export async function loginConCodigo(
   if (error) {
     return { ok: false, error: "No se pudo entrar con la cuenta de pruebas (revisa las credenciales del entorno)." };
   }
+  await iniciarContextoAgencia().catch(() => undefined);
   redirect(destino);
 }

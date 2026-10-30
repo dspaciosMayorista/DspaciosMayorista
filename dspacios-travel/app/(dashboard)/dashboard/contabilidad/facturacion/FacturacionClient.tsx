@@ -8,7 +8,8 @@ import { formatMoneda } from "@/lib/utils";
 import { liquidarFacturacion } from "@/lib/contabilidad/facturacion";
 import { guardarFacturacion, quitarFacturacion, marcarDian, contabilizarAbonosPendientes, type RevisionFueraLibros } from "./actions";
 import { useRouter } from "next/navigation";
-import { AlertTriangle, Lock } from "lucide-react";
+import { AlertTriangle, ChevronDown, ChevronRight, Lock } from "lucide-react";
+import { ResponsiveTableShell } from "@/components/ui/ResponsiveTableShell";
 
 export type FactRow = {
   numero_contrato: string;
@@ -72,19 +73,19 @@ function Configuracion({ rows, ivaPct }: { rows: FactRow[]; ivaPct: number }) {
             </button>
           ))}
         </div>
-        <Input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Buscar contrato, cliente o destino…" className="w-72" />
+        <Input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Buscar contrato, cliente o destino…" className="w-full sm:w-72" />
       </div>
 
-      <div className="overflow-hidden rounded-xl border border-gray-200 bg-white">
+      <ResponsiveTableShell minWidth={900} className="overflow-hidden rounded-xl border border-gray-200 bg-white">
         <table className="w-full text-sm">
           <thead>
             <tr className="border-b border-gray-100 bg-gray-50 text-left text-xs uppercase tracking-wide text-gray-400">
-              <th className="px-4 py-3">Contrato</th>
-              <th className="px-4 py-3">Cliente</th>
-              <th className="px-4 py-3 text-right">PVP</th>
-              <th className="px-4 py-3 text-right">IRT</th>
-              <th className="px-4 py-3 text-right">Ingreso propio</th>
-              <th className="px-4 py-3 text-center">Estado</th>
+              <th scope="col" className="px-4 py-3">Contrato</th>
+              <th scope="col" className="px-4 py-3">Cliente</th>
+              <th scope="col" className="px-4 py-3 text-right">PVP</th>
+              <th scope="col" className="px-4 py-3 text-right">IRT</th>
+              <th scope="col" className="px-4 py-3 text-right">Ingreso propio</th>
+              <th scope="col" className="px-4 py-3 text-center">Estado</th>
             </tr>
           </thead>
           <tbody>
@@ -95,7 +96,7 @@ function Configuracion({ rows, ivaPct }: { rows: FactRow[]; ivaPct: number }) {
             )}
           </tbody>
         </table>
-      </div>
+      </ResponsiveTableShell>
     </div>
   );
 }
@@ -121,7 +122,7 @@ function DianTab({ rows }: { rows: FactRow[] }) {
 
   return (
     <div className="space-y-3">
-      <Input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Buscar contrato o cliente…" className="w-72" />
+      <Input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Buscar contrato o cliente…" className="w-full sm:w-72" />
       <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
         <Columna titulo={`Sin facturar a la DIAN (${sinFacturar.length})`} tono="#C0392B">
           {sinFacturar.length === 0 ? <ColVacia>Todo facturado.</ColVacia> : sinFacturar.map((r) => (
@@ -151,11 +152,11 @@ function DianFila({ row, marcado, bloqueado, disabled, error, onToggle }: {
 }) {
   return (
     <div>
-      <label className={`flex items-center gap-3 rounded-lg border border-transparent px-3 py-2 text-sm hover:bg-gray-50 ${bloqueado ? "cursor-default" : "cursor-pointer"}`}
+      <label className={`flex flex-wrap items-center gap-x-3 gap-y-1 rounded-lg border border-transparent px-3 py-2 text-sm hover:bg-gray-50 ${bloqueado ? "cursor-default" : "cursor-pointer"}`}
         title={bloqueado ? "Emitida a la DIAN: la marca no se deshace." : undefined}>
         <input type="checkbox" checked={marcado} disabled={disabled || bloqueado} onChange={onToggle} className="h-4 w-4" />
-        <span className="font-mono text-[#1D7C9A]">{row.numero_contrato}</span>
-        <span className="flex-1 truncate text-gray-700">{row.cliente ?? "—"}</span>
+        <span className="font-mono break-all text-[#1D7C9A]">{row.numero_contrato}</span>
+        <span className="min-w-0 flex-1 break-words text-gray-700">{row.cliente ?? "—"}</span>
         {bloqueado && <Lock className="h-3.5 w-3.5 shrink-0 text-gray-400" aria-label="Marca DIAN definitiva" />}
         <span className="shrink-0 tabular-nums text-gray-500">{formatMoneda(row.precio_venta, row.moneda)}</span>
       </label>
@@ -168,21 +169,31 @@ function Fila({ row, ivaPct }: { row: FactRow; ivaPct: number }) {
   const [abierto, setAbierto] = useState(false);
   const liq = row.cfg ? liquidarFacturacion({ pvp: row.precio_venta, irt: row.irtProveedores, ingresoExento: row.cfg.ingresoExento }, ivaPct) : null;
   const fmt = (n: number) => formatMoneda(n, row.moneda);
+  const editorId = `facturacion-editor-${encodeURIComponent(row.numero_contrato)}`;
 
   return (
     <>
       <tr className="border-b border-gray-50 hover:bg-gray-50">
-        <td className="px-4 py-2.5">
-          <button onClick={() => setAbierto((v) => !v)} className="mr-1 text-gray-400 hover:text-gray-700">{abierto ? "▾" : "▸"}</button>
-          <Link href={`/dashboard/contratos/${encodeURIComponent(row.numero_contrato)}`} className="font-mono font-medium hover:underline" style={{ color: "var(--brand-accent)" }}>
+        <td className="px-4 py-2.5" data-label="Contrato">
+          <button
+            type="button"
+            onClick={() => setAbierto((v) => !v)}
+            aria-expanded={abierto}
+            aria-controls={editorId}
+            aria-label={`${abierto ? "Ocultar" : "Ver"} configuración de ${row.numero_contrato}`}
+            className="mr-1 inline-flex h-7 w-7 items-center justify-center rounded text-gray-500 hover:bg-gray-100 hover:text-gray-800"
+          >
+            {abierto ? <ChevronDown className="h-4 w-4" aria-hidden="true" /> : <ChevronRight className="h-4 w-4" aria-hidden="true" />}
+          </button>
+          <Link href={`/dashboard/contratos/${encodeURIComponent(row.numero_contrato)}`} className="font-mono font-medium break-all hover:underline" style={{ color: "var(--brand-accent)" }}>
             {row.numero_contrato}
           </Link>
         </td>
-        <td className="px-4 py-2.5 text-gray-700">{row.cliente ?? "—"}</td>
-        <td className="px-4 py-2.5 text-right tabular-nums">{fmt(row.precio_venta)}</td>
-        <td className="px-4 py-2.5 text-right tabular-nums text-gray-500">{liq ? fmt(liq.irt) : "—"}</td>
-        <td className="px-4 py-2.5 text-right tabular-nums text-gray-500">{liq ? fmt(liq.ingresoPropio) : "—"}</td>
-        <td className="px-4 py-2.5 text-center">
+        <td className="px-4 py-2.5 text-gray-700" data-label="Cliente">{row.cliente ?? "—"}</td>
+        <td className="px-4 py-2.5 text-right tabular-nums" data-label="PVP">{fmt(row.precio_venta)}</td>
+        <td className="px-4 py-2.5 text-right tabular-nums text-gray-500" data-label="IRT">{liq ? fmt(liq.irt) : "—"}</td>
+        <td className="px-4 py-2.5 text-right tabular-nums text-gray-500" data-label="Ingreso propio">{liq ? fmt(liq.ingresoPropio) : "—"}</td>
+        <td className="px-4 py-2.5 text-center" data-label="Estado">
           {row.cfg ? (
             <span className="rounded-full bg-[#66B596]/15 px-2 py-0.5 text-xs font-medium text-[#3f7d63]">Configurado</span>
           ) : (
@@ -191,7 +202,7 @@ function Fila({ row, ivaPct }: { row: FactRow; ivaPct: number }) {
         </td>
       </tr>
       {abierto && (
-        <tr className="border-b border-gray-100 bg-gray-50/60">
+        <tr id={editorId} className="border-b border-gray-100 bg-gray-50/60">
           <td colSpan={6} className="px-4 py-4">
             <Editor row={row} ivaPct={ivaPct} />
           </td>
@@ -274,7 +285,7 @@ function Editor({ row, ivaPct }: { row: FactRow; ivaPct: number }) {
           <span className="text-gray-500">PVP del contrato{row.monedaOrig === "USD" && row.trm ? <span className="ml-1 text-[11px] text-gray-400">(USD → COP a TRM {formatMoneda(row.trm, "COP")})</span> : null}</span>
           <b className="tabular-nums text-gray-800">{fmt(row.precio_venta)}</b>
         </div>
-        <div className="grid grid-cols-2 gap-3">
+        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
           <div>
             <label className="mb-1 block text-xs font-medium text-gray-600">IRT (automático · de proveedores)</label>
             <div className="flex h-[38px] items-center gap-2 rounded-lg border border-gray-200 bg-gray-50 px-3 text-sm">
@@ -291,7 +302,7 @@ function Editor({ row, ivaPct }: { row: FactRow; ivaPct: number }) {
           El IRT es la suma de las CxP marcadas <b>IRT</b> del contrato (lo que cobran los terceros). Configúralas en
           <b> Finanzas → Proveedores</b>. El ingreso propio = PVP − IRT se calcula solo.
         </p>
-        <div className="flex items-center gap-4 text-sm text-gray-700">
+        <div className="flex flex-wrap items-center gap-x-4 gap-y-2 text-sm text-gray-700">
           <span className="text-xs text-gray-500">El ingreso exento/excluido es:</span>
           {(["exento", "excluido"] as const).map((t) => (
             <label key={t} className="flex cursor-pointer items-center gap-1.5">
@@ -315,7 +326,7 @@ function Editor({ row, ivaPct }: { row: FactRow; ivaPct: number }) {
         )}
         {error && <p role="alert" className="text-sm text-red-600">{error}</p>}
         {aviso && <p className="text-sm text-[#3d7a63]">{aviso}</p>}
-        <div className="flex items-center gap-3">
+        <div className="flex flex-wrap items-center gap-3">
           <Button onClick={guardar} disabled={pending || row.dianEmitida || hayPendientes || (!!revision && !revisado)} style={{ backgroundColor: "var(--brand-primary)" }}>
             {pending ? "Guardando…" : revision ? "Emitir con aviso" : "Guardar"}
           </Button>

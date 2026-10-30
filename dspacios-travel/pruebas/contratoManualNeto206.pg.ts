@@ -1524,11 +1524,22 @@ function filaRecibo(raiz: Element, id: number) {
   return fila;
 }
 
-test("UI1 Gestión muestra F4415 sin retirar el abono y permite borrar uno sin asiento", async () => {
+// 248: «Eliminar» ya no existe; se ANULA con motivo (asiento retirado + huella). Trayecto real: clic → diálogo → motivo → confirmar.
+async function anularDesdePantalla(raiz: Element, id: number, motivo: string) {
+  // El diálogo anterior sigue en el DOM mientras sale: sin esperar a que se vaya, el clic caería en su botón (flaky).
+  assert.ok(await esperarHasta(() => !dom.window.document.querySelector('[role="dialog"], [role="alertdialog"]')), "quedó un diálogo abierto");
+  await clic(botonConTexto(filaRecibo(raiz, id), /^Anular$/), `Anular abono ${id}`);
+  const campo = dom.window.document.querySelector<HTMLInputElement>('[role="dialog"] input, [role="alertdialog"] input');
+  await escribir(campo as HTMLInputElement, motivo);
+  await clic(botonConTexto(dom.window.document.querySelector('[role="dialog"], [role="alertdialog"]') as Element, /^Anular abono$/), "confirmar la anulación");
+  assert.ok(await esperarHasta(() => sql(`select count(*) from public.abonos where id = ${id}`) === "0"), `el abono ${id} sigue vivo`);
+  assert.equal(sql(`select count(*) from public.abonos_anulados where abono_id = ${id} and motivo = '${motivo}'`), "1", "huella con motivo");
+  assert.equal(sql(`select count(*) from public.asientos_contables where referencia = 'abono:${id}'`), "0", "asiento retirado");
+}
+
+test("UI1 Gestión anula con motivo un abono contabilizado (retira su asiento, deja huella) y uno sin asiento", async () => {
   const { GestionTabs } = await import("../app/(dashboard)/dashboard/contratos/[numero]/GestionTabs.tsx");
   const { numero, contabilizado, sinAsiento, abonos } = await abonosParaPantalla("UI1");
-  const confirmar = globalThis.confirm;
-  globalThis.confirm = () => true;
   const m = await montar(h(GestionTabs, {
     numero, precioVenta: 1_800_000, impuesto: 0, clienteNombre: "Cliente UI", clienteDocumento: "",
     asesorNombre: U.venta.nombre, asesorPct: 0, verFinanzas: true,
@@ -1537,24 +1548,16 @@ test("UI1 Gestión muestra F4415 sin retirar el abono y permite borrar uno sin a
   }));
   try {
     const raiz = m.contenedor;
-    await clic(botonConTexto(filaRecibo(raiz, contabilizado), /^Eliminar$/), "eliminar abono contabilizado en Gestión");
-    assert.ok(await esperarHasta(() => /asiento contable/.test(txt(filaRecibo(raiz, contabilizado).querySelector('[role="alert"]')))));
-    assert.equal(sql(`select count(*) from public.abonos where id = ${contabilizado}`), "1");
-    assert.equal(sql(`select count(*) from public.asientos_contables where referencia = 'abono:${contabilizado}'`), "1");
-    await clic(botonConTexto(filaRecibo(raiz, sinAsiento), /^Eliminar$/), "eliminar abono sin asiento en Gestión");
-    assert.ok(await esperarHasta(() => sql(`select count(*) from public.abonos where id = ${sinAsiento}`) === "0"));
-    assert.equal(filaRecibo(raiz, sinAsiento).querySelector('[role="alert"]'), null);
+    await anularDesdePantalla(raiz, contabilizado, "UI Gestión contabilizado");
+    await anularDesdePantalla(raiz, sinAsiento, "UI Gestión sin asiento");
   } finally {
     await m.desmontar();
-    globalThis.confirm = confirmar;
   }
 });
 
-test("UI2 Cartera muestra F4415 sin retirar el abono y permite borrar uno sin asiento", async () => {
+test("UI2 Cartera anula con motivo un abono contabilizado (retira su asiento, deja huella) y uno sin asiento", async () => {
   const { CarteraList } = await import("../app/(dashboard)/dashboard/cartera/CarteraList.tsx");
   const { numero, contabilizado, sinAsiento, abonos } = await abonosParaPantalla("UI2");
-  const confirmar = globalThis.confirm;
-  globalThis.confirm = () => true;
   const m = await montar(h(CarteraList, { rows: [{
     numero_contrato: numero, cliente: "Cliente UI", destino: "Cartagena", precio_venta: 1_800_000,
     estado: "activo", fecha_salida: "2026-12-01", moneda: "COP", pagado: 200_000, saldo: 1_600_000, abonos,
@@ -1562,15 +1565,9 @@ test("UI2 Cartera muestra F4415 sin retirar el abono y permite borrar uno sin as
   try {
     const raiz = m.contenedor;
     await clic(raiz.querySelector('td[data-label="Contrato"]')?.closest("tr"), "abrir contrato en Cartera");
-    await clic(botonConTexto(filaRecibo(raiz, contabilizado), /^Eliminar$/), "eliminar abono contabilizado en Cartera");
-    assert.ok(await esperarHasta(() => /asiento contable/.test(txt(filaRecibo(raiz, contabilizado).querySelector('[role="alert"]')))));
-    assert.equal(sql(`select count(*) from public.abonos where id = ${contabilizado}`), "1");
-    assert.equal(sql(`select count(*) from public.asientos_contables where referencia = 'abono:${contabilizado}'`), "1");
-    await clic(botonConTexto(filaRecibo(raiz, sinAsiento), /^Eliminar$/), "eliminar abono sin asiento en Cartera");
-    assert.ok(await esperarHasta(() => sql(`select count(*) from public.abonos where id = ${sinAsiento}`) === "0"));
-    assert.equal(filaRecibo(raiz, sinAsiento).querySelector('[role="alert"]'), null);
+    await anularDesdePantalla(raiz, contabilizado, "UI Cartera contabilizado");
+    await anularDesdePantalla(raiz, sinAsiento, "UI Cartera sin asiento");
   } finally {
     await m.desmontar();
-    globalThis.confirm = confirmar;
   }
 });

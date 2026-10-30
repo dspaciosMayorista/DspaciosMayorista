@@ -7,7 +7,10 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { formatMoneda, formatFechaLarga } from "@/lib/utils";
 import { fechaNegocio } from "@/lib/fechaNegocio";
-import { registrarAbonoCartera, actualizarAbonoCartera, eliminarAbonoCartera } from "./actions";
+import { registrarAbonoCartera, actualizarAbonoCartera, anularAbonoCartera } from "./actions";
+import { AnularAbonoBoton } from "@/components/contrato/AnularAbonoBoton";
+import { ConfirmarExcedenteAbono } from "@/components/contrato/ConfirmarExcedenteAbono";
+import { useRegistroAbono } from "@/components/contrato/useRegistroAbono";
 import { ResponsiveTableShell } from "@/components/ui/ResponsiveTableShell";
 
 export type CarteraRow = {
@@ -291,7 +294,6 @@ function FilaAbonoCartera({
   const [trm, setTrm] = useState(a.trm ? String(a.trm) : "");
   const [pending, start] = useTransition();
   const [err, setErr] = useState("");
-  const [errorEliminar, setErrorEliminar] = useState("");
 
   function guardar() {
     setErr("");
@@ -304,18 +306,6 @@ function FilaAbonoCartera({
     });
   }
 
-  function borrar() {
-    if (!confirm("¿Eliminar este abono?")) return;
-    setErrorEliminar("");
-    start(async () => {
-      try {
-        const r = await eliminarAbonoCartera(a.id, numeroContrato);
-        if (!r.ok) setErrorEliminar(r.error ?? "No se pudo eliminar el abono.");
-      } catch {
-        setErrorEliminar("No se pudo eliminar el abono.");
-      }
-    });
-  }
 
   if (editar) {
     return (
@@ -353,15 +343,7 @@ function FilaAbonoCartera({
       </td>
       <td className="px-3 py-2 text-right whitespace-nowrap" data-label="Acciones">
         <button type="button" onClick={() => setEditar(true)} className="mr-3 text-xs font-medium hover:underline" style={{ color: "var(--brand-accent)" }}>Editar</button>
-        <button
-          type="button"
-          onClick={borrar}
-          disabled={pending}
-          className="text-xs font-medium text-red-500 hover:underline"
-        >
-          Eliminar
-        </button>
-        {errorEliminar && <p role="alert" className="mt-1 whitespace-normal text-xs text-red-600">{errorEliminar}</p>}
+        <AnularAbonoBoton resumen={`${formatMoneda(a.valor_abono, moneda)} del ${formatFechaLarga(a.fecha_abono)}`} onAnular={(motivo) => anularAbonoCartera(a.id, numeroContrato, motivo)} />
       </td>
     </tr>
   );
@@ -383,39 +365,19 @@ function AbonoInline({
   const [ref, setRef] = useState("");
   const [trm, setTrm] = useState("");
   const [fecha, setFecha] = useState(() => fechaNegocio());
-  const [error, setError] = useState<string | null>(null);
-  const [pending, startTransition] = useTransition();
   const esUSD = (moneda ?? "COP").toUpperCase() === "USD";
   const usdEq = esUSD && Number(valor) > 0 && Number(trm) > 0 ? Number(valor) / Number(trm) : null;
-
-  function handle(e: React.FormEvent) {
-    e.preventDefault();
-    setError(null);
-    const v = Number(valor);
-    if (!v || v <= 0) {
-      setError("Ingresa un valor mayor a 0.");
-      return;
-    }
-    if (esUSD && !(Number(trm) > 0)) {
-      setError("Indica la TRM del día (contrato en USD).");
-      return;
-    }
-    startTransition(async () => {
-      const res = await registrarAbonoCartera(numeroContrato, v, forma, ref, esUSD ? Number(trm) : undefined, fecha);
-      if (!res.ok) {
-        setError(res.error ?? "No se pudo registrar el abono.");
-        return;
-      }
-      setValor("");
-      setForma("");
-      setRef("");
-      setTrm("");
-      setFecha(fechaNegocio());
-    });
-  }
+  const reg = useRegistroAbono({
+    campos: { valor, forma, ref, trm, fecha },
+    esUSD,
+    registrar: (e, confirmar) => registrarAbonoCartera(numeroContrato, e.valor, e.forma, e.ref, e.trm, e.fecha, confirmar, e.operacion),
+    reiniciar: () => { setValor(""); setForma(""); setRef(""); setTrm(""); setFecha(fechaNegocio()); },
+  });
+  const { pending, error } = reg;
 
   return (
-    <form onSubmit={handle} className="space-y-3 rounded-lg border border-gray-200 bg-white p-4">
+    <form onSubmit={(e) => { e.preventDefault(); reg.enviar(); }} className="space-y-3 rounded-lg border border-gray-200 bg-white p-4">
+      <ConfirmarExcedenteAbono datos={reg.excedente} onCancelar={reg.cancelar} onConfirmar={reg.confirmar} />
       <div className="flex flex-wrap items-end gap-3">
         <div>
           <label className="mb-1 block text-xs font-medium text-gray-600">{esUSD ? "Valor pagado (COP)" : "Valor"}</label>

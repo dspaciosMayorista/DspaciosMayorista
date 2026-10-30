@@ -82,6 +82,8 @@ export type HotelResueltoCheckout = {
    * paquete (`precioServicio(..., totalPax)` en lib/reservar/computo.ts). */
   pax: number;
   moneda: string;
+  /** Ciudad/destino AUTORITATIVO del hotel (la usan los vuelos manuales). */
+  destino?: string | null;
 };
 
 /** Un servicio vinculado vale EXACTAMENTE para las fechas confirmadas de su

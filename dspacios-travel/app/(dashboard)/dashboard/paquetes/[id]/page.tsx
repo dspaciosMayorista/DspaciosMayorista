@@ -1,12 +1,27 @@
 import { createClient } from "@/lib/supabase/server";
+import type { ComponentProps } from "react";
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { ArmadoClient } from "./ArmadoClient";
+import { resolverDestinosAereosPaquete } from "@/lib/paquetes/destinosAereos67";
+import type { PublicacionMontaje } from "@/lib/paquetes/unidadesMontaje";
+import { cargarFuentesMoneda90 } from "@/lib/reservar/fuentesMoneda90";
+import { evaluarPublicacion90, mensajeEvaluacion90, textoEstadoTrm90 } from "@/lib/reservar/monedaPublicacion90";
 
 export const dynamic = "force-dynamic";
 
-export default async function PaqueteDetallePage({ params }: { params: Promise<{ id: string }> }) {
+export default async function PaqueteDetallePage({
+  params,
+  searchParams,
+}: {
+  params: Promise<{ id: string }>;
+  searchParams?: Promise<{ tab?: string | string[] }>;
+}) {
   const { id } = await params;
+  // #101 — pestaña activa (`?tab=`): sobrevive a un F5 y a un enlace compartido. ArmadoClient valida el valor contra
+  // las pestañas que el tipo de paquete realmente muestra.
+  const tabParam = (await searchParams)?.tab;
+  const pestanaInicial = Array.isArray(tabParam) ? tabParam[0] : tabParam;
   const paqueteId = Number(id);
   const sb = await createClient();
 
@@ -24,14 +39,29 @@ export default async function PaqueteDetallePage({ params }: { params: Promise<{
   const viajeIni = pq.fecha_viaje_inicio;
   const viajeFin = pq.fecha_viaje_fin;
 
+  // #67 — destinos de llegada permitidos para los vuelos de este paquete:
+  // check apagado = solo el destino comercial (el filtro de siempre); encendido =
+  // comercial + alternativas elegidas del MISMO país. Sin destino comercial no
+  // se ofrece ningún vuelo (nunca "todos" como respaldo). Un error de lectura
+  // se muestra como error, no como "no hay vuelos". Hoteles, servicios y el
+  // destino público siguen filtrando por el destino comercial.
+  const efAereo = await resolverDestinosAereosPaquete(sb, paqueteId);
+  const destinosAereosError = efAereo.ok ? null : efAereo.error;
+  const idsAereos = efAereo.ok && efAereo.efectivos.ok ? efAereo.efectivos.ids : [];
+  const { data: altRows, error: errAlt } = await sb
+    .from("armado_paquete_destinos_aereos")
+    .select("destino_id")
+    .eq("paquete_id", paqueteId);
+  const destinosAereosErrorTotal = destinosAereosError ?? (errAlt ? "No se pudieron leer los destinos aéreos alternativos del paquete." : null);
+
   // Disponibles (filtrados por destino + rango de viaje)
   let qVuelos = sb
     .from("bloqueos_vuelo")
-    .select("id, record, ruta, aerolinea, fecha_ida, fecha_regreso, tarifa_para_empaquetar, destino_id")
+    .select("id, record, ruta, aerolinea, fecha_ida, fecha_regreso, tarifa_para_empaquetar, tarifa_neta, destino_id, moneda")
     .order("fecha_ida");
   // Un vuelo SIEMPRE pertenece a un destino: filtro estricto (los que no tienen
   // destino asignado no se mezclan en paquetes de otro destino).
-  if (destinoId) qVuelos = qVuelos.eq("destino_id", destinoId);
+  qVuelos = qVuelos.in("destino_id", idsAereos);
   if (viajeIni) qVuelos = qVuelos.gte("fecha_ida", viajeIni);
   if (viajeFin) qVuelos = qVuelos.lte("fecha_ida", viajeFin);
 
@@ -40,10 +70,10 @@ export default async function PaqueteDetallePage({ params }: { params: Promise<{
   // (uno apagado no debe ofrecerse para armar un paquete nuevo).
   let qEmpaquetados = sb
     .from("empaquetados")
-    .select("id, record, ruta, aerolinea, fecha_ida, fecha_regreso, tarifa_para_empaquetar, destino_id")
+    .select("id, record, ruta, aerolinea, fecha_ida, fecha_regreso, tarifa_para_empaquetar, destino_id, moneda")
     .eq("activo", true)
     .order("fecha_ida");
-  if (destinoId) qEmpaquetados = qEmpaquetados.eq("destino_id", destinoId);
+  qEmpaquetados = qEmpaquetados.in("destino_id", idsAereos);
   if (viajeIni) qEmpaquetados = qEmpaquetados.gte("fecha_ida", viajeIni);
   if (viajeFin) qEmpaquetados = qEmpaquetados.lte("fecha_ida", viajeFin);
 
@@ -52,7 +82,7 @@ export default async function PaqueteDetallePage({ params }: { params: Promise<{
 
   let qServicios = sb
     .from("servicios_adicionales")
-    .select("id, nombre, precio_persona, destino_id, servicio_tarifa_pax(pax_desde)")
+    .select("id, nombre, precio_persona, destino_id, moneda, servicio_tarifa_pax(pax_desde)")
     .eq("activo", true)
     .order("nombre");
   // Servicio aplica si: es del destino puntual, O es catch-all del MISMO alcance
@@ -89,8 +119,36 @@ export default async function PaqueteDetallePage({ params }: { params: Promise<{
   const { data: salidas } = pq.tipo === "dinamico"
     ? await sb.from("salidas_dinamicas").select("*").eq("paquete_id", paqueteId).order("fecha_ida")
     : { data: null };
-  // Moneda del paquete = la de sus hoteles (USD si hay alguno internacional en USD).
-  const monedaPaquete = (hotelesDisp ?? []).some((h) => (h as { moneda?: string | null }).moneda === "USD") ? "USD" : "COP";
+  // #90 D: la moneda de publicación la ELIGE quien monta el paquete (armado_paquetes.moneda_publicacion); ya no se deriva de los hoteles
+  // disponibles. #63/234: el modo con conversión por TRM publica en la moneda ELEGIDA (COP si no eligió otra) aunque haya componentes en la otra. Para un paquete aún sin elegir, esta
+  // prop solo da formato a los importes mostrados (la última moneda publicada): el panel de abajo exige elegirla antes de generar.
+  const modo63 = (pq as { modo_oferta?: string | null }).modo_oferta === "cop_trm_63";
+  const monedaElegida = (pq as { moneda_publicacion?: string | null }).moneda_publicacion;
+  const monedaPaquete = modo63 ? (monedaElegida === "USD" ? "USD" : "COP") : monedaElegida === "USD" || monedaElegida === "COP" ? monedaElegida : pq.moneda === "USD" ? "USD" : "COP";
+
+  // #90 A/D — moneda de publicación que muestra el panel «Unidades del montaje»: se evalúan los VÍNCULOS GUARDADOS del paquete (no las
+  // listas «disponibles» del editor) con LA MISMA lectura y LA MISMA evaluación que usan generarTarifario y la cotización de la oferta
+  // (lib/reservar/fuentesMoneda90 + aporteFuentes90 + monedaPublicacion90): solo cuentan las fuentes que REALMENTE aportan al precio (las que el
+  // generador descarta no exigen TRM ni bloquean). Paridad panel = generador = cotización. La moneda es la ELEGIDA, no la de los hoteles.
+  const tipoPaquete = (pq.tipo ?? "bloqueo") as string; // mismo valor por defecto que generarTarifario
+  const { publicacionMontaje, textoTrmMontaje } = await evaluarPublicacionMontaje();
+
+  async function evaluarPublicacionMontaje(): Promise<{ publicacionMontaje: PublicacionMontaje; textoTrmMontaje: string | undefined }> {
+    const fuentes = await cargarFuentesMoneda90(sb, paqueteId, { tipo: tipoPaquete, modo63 });
+    if (!fuentes.ok) {
+      return { publicacionMontaje: { estado: "rechazado", motivo: "No se pudieron leer los vínculos guardados del paquete para evaluar su moneda." }, textoTrmMontaje: undefined };
+    }
+    const ev = evaluarPublicacion90({
+      modo: modo63 ? "cop_trm_63" : "legacy",
+      monedaPublicacion: monedaElegida,
+      trm: (pq as { trm_oferta?: number | null }).trm_oferta,
+      fuentes: fuentes.fuentes,
+    });
+    const publicacionMontaje: PublicacionMontaje = ev.ok && ev.monedaPublicacion
+      ? { estado: "publicable", moneda: ev.monedaPublicacion }
+      : { estado: "rechazado", motivo: mensajeEvaluacion90(ev) };
+    return { publicacionMontaje, textoTrmMontaje: modo63 ? textoEstadoTrm90(ev) : undefined };
+  }
 
   // El resultado puede superar el tope de 1000 filas de PostgREST; paginamos.
   //
@@ -119,6 +177,14 @@ export default async function PaqueteDetallePage({ params }: { params: Promise<{
   }
 
   const destinoNombre = (pq.destinos as unknown as { nombre: string } | null)?.nombre ?? null;
+  // Fuera del JSX: un objeto literal con una flecha adentro como prop no se puede serializar a un Client Component.
+  // Sin FK a destinos: un id huérfano (destino borrado/fusionado) no se le muestra al editor; al volver a guardar se limpia.
+  const destinosExistentes = new Set<number>();
+  for (const d of destinos ?? []) destinosExistentes.add(d.id);
+  const idsAlternativasGuardadas: number[] = [];
+  for (const fila of altRows ?? []) {
+    if (destinosExistentes.has(fila.destino_id)) idsAlternativasGuardadas.push(fila.destino_id);
+  }
 
   return (
     <div className="mx-auto max-w-5xl p-4 md:p-8">
@@ -147,6 +213,7 @@ export default async function PaqueteDetallePage({ params }: { params: Promise<{
           fechaViajeInicio: pq.fecha_viaje_inicio ?? "",
           fechaViajeFin: pq.fecha_viaje_fin ?? "",
           pctMk: Math.round((pq.pct_mk ?? 0) * 100),
+          pvpInfanteFijo: pq.pvp_infante_fijo == null ? null : Number(pq.pvp_infante_fijo),
           impuestoTipo: pq.impuesto_tipo,
           impuestoFijo: pq.impuesto_fijo,
           notas: pq.notas ?? "",
@@ -158,10 +225,17 @@ export default async function PaqueteDetallePage({ params }: { params: Promise<{
           programaNoIncluye: pq.programa_no_incluye ?? "",
           programaTarifasEspeciales: pq.programa_tarifas_especiales ?? "",
           programaCondicionesComerciales: pq.programa_condiciones_comerciales ?? "",
+          destinosAereosAlternativos: pq.destinos_aereos_alternativos === true,
+          destinosAereosIds: idsAlternativasGuardadas,
+          modoOferta: (pq as { modo_oferta?: string | null }).modo_oferta ?? "legacy",
+          trmOferta: (pq as { trm_oferta?: number | null }).trm_oferta ?? null,
+          monedaPublicacion: monedaElegida ?? null,
         }}
+        destinosAereosError={destinosAereosErrorTotal}
         tieneDestino={!!destinoId}
         vuelosDisp={vuelosDisp ?? []}
-        empaquetadosDisp={empaquetadosDisp ?? []}
+        // 230: `moneda` de empaquetados no está en types/database.ts a propósito (ver su nota); se lee con el select sin tipo.
+        empaquetadosDisp={(empaquetadosDisp ?? []) as unknown as ComponentProps<typeof ArmadoClient>["empaquetadosDisp"]}
         hotelesDisp={hotelesDisp ?? []}
         serviciosDisp={(serviciosDisp ?? []) as unknown as Parameters<typeof ArmadoClient>[0]["serviciosDisp"]}
         selVuelos={selVuelos ?? []}
@@ -171,6 +245,12 @@ export default async function PaqueteDetallePage({ params }: { params: Promise<{
         resultado={resultado as unknown as Parameters<typeof ArmadoClient>[0]["resultado"]}
         salidas={(salidas ?? []) as unknown as Parameters<typeof ArmadoClient>[0]["salidas"]}
         moneda={monedaPaquete}
+        publicacionMontaje={publicacionMontaje}
+        textoTrmMontaje={textoTrmMontaje}
+        pestanaInicial={pestanaInicial ?? null}
+        tarifarioEstado={(pq as { tarifario_estado?: string | null }).tarifario_estado ?? null}
+        tarifarioError={(pq as { tarifario_error?: string | null }).tarifario_error ?? null}
+        tarifarioPublicable={(pq as { tarifario_snapshot_publicable?: boolean | null }).tarifario_snapshot_publicable ?? null}
       />
     </div>
   );

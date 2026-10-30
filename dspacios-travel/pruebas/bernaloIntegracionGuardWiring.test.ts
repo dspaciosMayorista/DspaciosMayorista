@@ -103,7 +103,8 @@ describe("paquetes/actions.ts (generarTarifario) — hoteles 'unidad' se EXCLUYE
   const cuerpo = cuerpoFuncion(paqueteActions, "export async function generarTarifario(paqueteId: number): Promise<Result> {");
 
   test("selecciona modelo_tarifario del hotel junto con nombre/moneda", () => {
-    assert.match(cuerpo, /hoteles\(nombre, moneda, modelo_tarifario\)/);
+    // 226: además `adults_only` (un hotel Adults Only no publica fila de infante).
+    assert.match(cuerpo, /hoteles\(nombre, moneda, modelo_tarifario(, adults_only)?\)/);
   });
 
   test("hotelIds (usado para consultar hotel_temporadas/tarifa_hotel) EXCLUYE los hoteles con modelo_tarifario === 'unidad'", () => {

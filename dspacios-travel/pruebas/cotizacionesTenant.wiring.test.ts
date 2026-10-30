@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { readFileSync } from "node:fs";
+import { readFileSync, readdirSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
 
@@ -210,34 +210,62 @@ test("manual-actions.ts: crearCotizacionManual falla cerrado con contextoCotizac
   assert.doesNotMatch(src, /import\s*\{\s*getTenant\s*\}\s*from\s*"@\/lib\/tenant\.server"/, "manual-actions.ts volvió a importar getTenant() a secas");
   assert.match(src, /import\s*\{\s*contextoCotizacion,\s*autorizaTenant\s*\}\s*from\s*"@\/lib\/cotizacion\/acceso"/, "no importa el helper de acceso");
 
-  const crear = src.slice(src.indexOf("export async function crearCotizacionManual"), src.indexOf("export async function actualizarTitularCotizacionManual"));
-  assert.match(crear, /tenant:\s*tenantCotizacion/, "crearCotizacionManual no estampa tenant");
+  // #39 (migración 216): la cabecera y los servicios se crean en UNA transacción
+  // por la RPC definer `crear_cotizacion_manual`. El tenant validado viaja como
+  // `p_tenant` y el autor es el id de la sesión; nada se inserta directo desde
+  // TS. Lo que la RPC hace con esos argumentos lo audita el test de la 216 más
+  // abajo.
+  const crear = cuerpoDeFuncion(src, "crearCotizacionManual");
   assert.match(crear, /const\s+ctx\s*=\s*await\s+contextoCotizacion\(\)/, "crearCotizacionManual no llama a contextoCotizacion()");
   assert.match(crear, /if\s*\(!ctx\.ok\)\s*return\s*\{\s*ok:\s*false/, "crearCotizacionManual no falla cerrado cuando el contexto no está autorizado");
   assert.match(crear, /tenantCotizacion\s*=\s*ctx\.tenant/, "crearCotizacionManual no resuelve el tenant desde el contexto validado");
+  assert.match(crear, /const\s+usuario\s*=\s*await\s+usuarioSesion\(\)/, "crearCotizacionManual no toma el autor de la sesión");
+  assert.match(crear, /if\s*\(!usuario\)\s*return\s*\{\s*ok:\s*false/, "crearCotizacionManual no falla cerrado sin usuario de sesión");
+  assert.match(
+    crear,
+    /admin\.rpc\(\s*"crear_cotizacion_manual",\s*\{\s*\n\s*p_usuario_id:\s*usuario\.id,\s*\n\s*p_tenant:\s*tenantCotizacion,/,
+    "crearCotizacionManual no delega en la RPC con el usuario de la sesión y el tenant validado"
+  );
+  const idxRpcCrear = crear.indexOf('admin.rpc("crear_cotizacion_manual"');
+  assert.ok(crear.search(/contextoCotizacion\(\)/) < idxRpcCrear && crear.search(/usuarioSesion\(\)/) < idxRpcCrear,
+    "crearCotizacionManual llama a la RPC antes de validar contexto y sesión");
+  assert.doesNotMatch(crear, /\.from\(\s*"(cotizaciones|cotizacion_servicios)"\s*\)\s*\.(insert|upsert)/, "crearCotizacionManual volvió a insertar directo desde TS — se saltaría la RPC que estampa el autor");
 
-  for (const fnName of ["actualizarTitularCotizacionManual", "actualizarIncluyeCotizacionManual", "actualizarRecobroNinosCotizacionManual"]) {
-    const start = src.indexOf(`export async function ${fnName}`);
-    assert.notEqual(start, -1, `no se encontró ${fnName}`);
-    const fn = src.slice(start, start + 1500);
-    assert.match(fn, /autorizaTenant\(ctx,\s*cot\.tenant\)/, `${fnName} no valida el acceso al tenant antes de editar`);
+  // Cada edición valida el acceso al tenant ANTES de su primera escritura
+  // (update directo o RPC). Cuerpo completo (balanceo de llaves), no una ventana fija.
+  for (const fnName of ["actualizarTitularCotizacionManual", "actualizarIncluyeCotizacionManual", "actualizarRecobroNinosCotizacionManual", "editarServiciosCotizacionManual"]) {
+    const fn = cuerpoDeFuncion(src, fnName);
+    const idxAcceso = fn.search(/autorizaTenant\(ctx,\s*cot\.tenant\)/);
+    assert.ok(idxAcceso > -1, `${fnName} no valida el acceso al tenant antes de editar`);
+    const idxEscritura = fn.search(/\.(update|insert|upsert|delete)\(|\.rpc\(/);
+    assert.ok(idxEscritura > -1, `${fnName}: no se encontró su escritura`);
+    assert.ok(idxAcceso < idxEscritura, `${fnName} escribe antes de validar el acceso al tenant`);
   }
 
   // convertirCotizacionManualAContrato: desde el Commit 5, la conversión es
-  // ATÓMICA dentro del RPC `convertir_cotizacion_a_contrato` (migración 164) —
-  // esta Server Action YA NO valida tenant en TS ni construye la venta: solo
-  // autentica al actor y delega. La cobertura de "rechaza cotización sin
-  // tenant" / "valida acceso al tenant" / "propaga el tenant a ventas" migró
-  // con la lógica al RPC de SQL — ver el test siguiente, que audita el
-  // CUERPO DE ESA FUNCIÓN SQL en la migración real.
+  // ATÓMICA dentro del RPC `convertir_cotizacion_a_contrato` (164, vigente en la
+  // 198) — esta Server Action YA NO valida tenant en TS ni construye la venta:
+  // solo autentica al actor y delega. Desde #39 (migración 216) delega en el
+  // wrapper `convertir_cotizacion_manual_controlada`, la ÚNICA puerta para una
+  // manual: emite la autorización de la frontera y llama a la 198 con el MISMO
+  // actor. La cobertura de "rechaza cotización sin tenant" / "valida acceso al
+  // tenant" / "propaga el tenant a ventas" vive en el RPC de SQL — ver los tests
+  // siguientes, que auditan el cuerpo del wrapper y el de la 198.
   const convertir = cuerpoDeFuncion(src, "convertirCotizacionManualAContrato");
   assert.match(convertir, /const\s+sesion\s*=\s*await\s+sesionConversionAutorizada\(\)/, "convertirCotizacionManualAContrato no autentica con sesionConversionAutorizada()");
   assert.match(convertir, /if\s*\(!sesion\)\s*\{/, "convertirCotizacionManualAContrato no falla cerrado sin sesión autorizada");
   assert.match(
     convertir,
-    /admin\.rpc\(\s*"convertir_cotizacion_a_contrato",\s*\{\s*\n\s*p_cotizacion_id:\s*cotizacionId,\s*\n\s*p_usuario_id:\s*sesion\.userId,/,
-    "convertirCotizacionManualAContrato no delega en el RPC atómico con el usuario de la sesión validada"
+    /admin\.rpc\(\s*"convertir_cotizacion_manual_controlada",\s*\{\s*\n\s*p_cotizacion_id:\s*cotizacionId,\s*\n\s*p_usuario_id:\s*sesion\.userId,\s*\n\s*\}\)/,
+    "convertirCotizacionManualAContrato no delega en el wrapper controlado con el usuario de la sesión validada (y solo esos dos argumentos)"
   );
+  assert.ok(
+    convertir.search(/sesionConversionAutorizada\(\)/) < convertir.indexOf('admin.rpc("convertir_cotizacion_manual_controlada"'),
+    "convertirCotizacionManualAContrato llama al RPC antes de autenticar al actor"
+  );
+  // La puerta vieja no se llama directo desde ningún lugar del archivo: se
+  // saltaría la autorización de conversión que exige la frontera de la 217.
+  assert.doesNotMatch(src, /\.rpc\(\s*["'`]convertir_cotizacion_a_contrato["'`]/, "manual-actions.ts volvió a llamar directo a convertir_cotizacion_a_contrato — debe pasar por convertir_cotizacion_manual_controlada");
   // Guarda de no-regresión: si el builder TS viejo reapareciera (insertar
   // directamente en ventas/aliados_b2b/cuentas_por_pagar desde esta Server
   // Action), la conversión dejaría de ser atómica — esa lógica debe vivir
@@ -245,6 +273,7 @@ test("manual-actions.ts: crearCotizacionManual falla cerrado con contextoCotizac
   assert.doesNotMatch(convertir, /\.from\(\s*"ventas"\s*\)\s*\.insert/, "convertirCotizacionManualAContrato volvió a insertar en ventas desde TS — la conversión debe ser atómica en el RPC, no repartida");
   assert.doesNotMatch(convertir, /\.from\(\s*"aliados_b2b"\s*\)\s*\.insert/, "convertirCotizacionManualAContrato volvió a insertar en aliados_b2b desde TS");
   assert.doesNotMatch(convertir, /\.from\(\s*"cuentas_por_pagar"\s*\)\s*\.insert/, "convertirCotizacionManualAContrato volvió a insertar en cuentas_por_pagar desde TS");
+  assert.doesNotMatch(convertir, /\.(insert|update|upsert|delete)\(/, "convertirCotizacionManualAContrato escribe directo desde TS — toda la conversión debe vivir en el RPC");
 });
 
 // Extrae el cuerpo de una función SQL `language plpgsql` definida como
@@ -258,9 +287,10 @@ test("manual-actions.ts: crearCotizacionManual falla cerrado con contextoCotizac
 // Asume que la función no contiene un segundo par de `$$` anidado (SQL
 // dinámico con `execute format($$...$$)`, etc.) — cierto para las funciones
 // de este archivo (`convertir_cotizacion_a_contrato` no usa SQL dinámico);
-// si eso cambiara, este extractor necesitaría revisarse.
-function cuerpoDeFuncionSql(src: string, nombre: string): string {
-  const marcaDDL = `create or replace function public.${nombre}(`;
+// si eso cambiara, este extractor necesitaría revisarse. `esquema` permite
+// auditar también funciones privadas (p. ej. `p39_priv`, migración 216).
+function cuerpoDeFuncionSql(src: string, nombre: string, esquema = "public"): string {
+  const marcaDDL = `create or replace function ${esquema}.${nombre}(`;
   const inicioDDL = src.indexOf(marcaDDL);
   assert.ok(inicioDDL > -1, `no se encontró "${marcaDDL}" en la migración`);
   const abre = src.indexOf("$$", inicioDDL);
@@ -287,8 +317,31 @@ function assertOrdenSqlAntesDe(cuerpo: string, marcadores: string[], antesDe: st
   }
 }
 
-test("migración 164: el RPC convertir_cotizacion_a_contrato valida actor y tenant ANTES de devolver una venta existente (idempotencia)", () => {
-  const migracion = leer("supabase/migrations/20260601000164_condiciones_pago_componente.sql");
+// `convertir_cotizacion_a_contrato` nace en la 164 y la 198 la redefine: la
+// 198 es la versión VIGENTE, y en ella delega el wrapper de #39 (216). Las dos
+// se auditan con las mismas reglas; la guarda de abajo exige que ninguna
+// migración posterior la vuelva a definir sin sumarse a esta lista.
+const MIGRACIONES_CONVERSION = [
+  ["164", "supabase/migrations/20260601000164_condiciones_pago_componente.sql"],
+  ["198", "supabase/migrations/20260601000198_fecha_negocio_bogota.sql"],
+] as const;
+
+test("convertir_cotizacion_a_contrato: la última migración que la define es la 198 (la que auditan los tests siguientes)", () => {
+  const dir = join(raiz, "supabase/migrations");
+  const definen = readdirSync(dir)
+    .filter((f) => f.endsWith(".sql"))
+    .sort()
+    .filter((f) => readFileSync(join(dir, f), "utf8").includes("create or replace function public.convertir_cotizacion_a_contrato("));
+  assert.deepEqual(
+    definen,
+    MIGRACIONES_CONVERSION.map(([, archivo]) => archivo.split("/").pop()),
+    "otra migración redefine convertir_cotizacion_a_contrato — súmala a MIGRACIONES_CONVERSION para auditar la versión vigente"
+  );
+});
+
+for (const [num, archivo] of MIGRACIONES_CONVERSION) {
+test(`migración ${num}: el RPC convertir_cotizacion_a_contrato valida actor y tenant ANTES de devolver una venta existente (idempotencia)`, () => {
+  const migracion = leer(archivo);
   const rpc = cuerpoDeFuncionSql(migracion, "convertir_cotizacion_a_contrato");
 
   // Autorización del actor (rol interno + activo) y tenant AUTORITATIVO,
@@ -329,8 +382,8 @@ test("migración 164: el RPC convertir_cotizacion_a_contrato valida actor y tena
   assert.doesNotMatch(rpc, /'MIN-'\s*\|\|/, "convertir_cotizacion_a_contrato no debe re-anteponer 'MIN-' al número — eso ya lo hace la función de numeración");
 });
 
-test("migración 164: aliados_b2b y cuentas_por_pagar heredan v_tenant (el validado bajo lock), no un valor independiente", () => {
-  const migracion = leer("supabase/migrations/20260601000164_condiciones_pago_componente.sql");
+test(`migración ${num}: aliados_b2b y cuentas_por_pagar heredan v_tenant (el validado bajo lock), no un valor independiente`, () => {
+  const migracion = leer(archivo);
   const rpc = cuerpoDeFuncionSql(migracion, "convertir_cotizacion_a_contrato");
 
   assert.match(
@@ -354,6 +407,115 @@ test("migración 164: aliados_b2b y cuentas_por_pagar heredan v_tenant (el valid
     /\(v_numero,\s*v_tenant,\s*v_proveedor,/,
     "el insert de cuentas_por_pagar no estampa v_tenant (el tenant validado bajo lock)"
   );
+});
+}
+
+// ── #39 (migración 216): la puerta controlada y las RPC de creación/edición ──
+const MIGRACION_216 = "supabase/migrations/20260601000216_cotizacion_manual_edicion_frontera.sql";
+const MIGRACION_217 = "supabase/migrations/20260601000217_cotizacion_manual_cierre_frontera.sql";
+const sinComentariosSql = (s: string) => s.replace(/--[^\n]*/g, "");
+
+// Encabezado DDL de una función (desde `create or replace` hasta el `$$` de apertura):
+// ahí se declaran SECURITY DEFINER/INVOKER y el search_path.
+function encabezadoFuncionSql(src: string, nombre: string, esquema = "public"): string {
+  const inicio = src.indexOf(`create or replace function ${esquema}.${nombre}(`);
+  assert.ok(inicio > -1, `no se encontró la función ${esquema}.${nombre}`);
+  return src.slice(inicio, src.indexOf("$$", inicio));
+}
+
+// Solo service_role ejecuta la función: la 216 se la quita a todos y se la
+// devuelve únicamente a service_role, y ni la 216 ni la 217 la conceden a
+// anon/authenticated/public.
+function assertSoloServiceRole(firma: string) {
+  const m216 = leer(MIGRACION_216);
+  const ambas = m216 + leer(MIGRACION_217);
+  const f = firma.replace(/[.()]/g, (c) => `\\${c}`);
+  assert.match(m216, new RegExp(`revoke all on function public\\.${f} from public, anon, authenticated, service_role;`), `${firma}: falta el revoke a todos`);
+  assert.match(m216, new RegExp(`grant execute on function public\\.${f} to service_role;`), `${firma}: falta el grant a service_role`);
+  const nombre = firma.slice(0, firma.indexOf("("));
+  assert.doesNotMatch(ambas, new RegExp(`grant[^;]*on function public\\.${nombre}\\([^)]*\\)[^;]*to[^;]*\\b(anon|authenticated|public)\\b`), `${firma} se concede a un rol de la API`);
+}
+
+test("migración 216: convertir_cotizacion_manual_controlada delega en la 198 con el MISMO actor y abre la autorización solo para una conversión nueva", () => {
+  const m216 = leer(MIGRACION_216);
+  const w = sinComentariosSql(cuerpoDeFuncionSql(m216, "convertir_cotizacion_manual_controlada"));
+
+  // INVOKER: no gana privilegios propios; la autorización de actor y tenant la
+  // hace la 198 (auditada arriba), con los mismos argumentos que recibe.
+  assert.match(encabezadoFuncionSql(m216, "convertir_cotizacion_manual_controlada"), /security invoker/, "el wrapper dejó de ser SECURITY INVOKER");
+  const llamadas = [...w.matchAll(/public\.convertir_cotizacion_a_contrato\(([^)]*)\)/g)].map((x) => x[1].replace(/\s+/g, " ").trim());
+  assert.deepEqual(llamadas, ["p_cotizacion_id, p_usuario_id", "p_cotizacion_id, p_usuario_id"],
+    "el wrapper llama a la 198 con otro actor u otra cotización");
+
+  // Orden: bloqueo → madre comparativa → solo manuales → réplica → emitir → 198 → cerrar.
+  assertOrdenSqlAntesDe(
+    w,
+    [
+      "for update;",
+      "COMPARATIVA_NO_COBRABLE",
+      "if v_tipo is distinct from 'manual' then",
+      "if exists (select 1 from public.ventas v where v.cotizacion_id = p_cotizacion_id) then",
+      "return public.convertir_cotizacion_a_contrato(p_cotizacion_id, p_usuario_id);",
+      "v_aut := p39_priv.emitir(p_cotizacion_id, 'conversion', p_usuario_id);",
+      "v_res := public.convertir_cotizacion_a_contrato(p_cotizacion_id, p_usuario_id);",
+    ],
+    "perform p39_priv.cerrar(v_aut);",
+    "convertir_cotizacion_manual_controlada"
+  );
+  // Una réplica (ya convertida) no abre autorización de conversión: la 198
+  // devuelve el número existente tras validar actor y tenant.
+  assert.equal([...w.matchAll(/p39_priv\.emitir\(/g)].length, 1, "el wrapper emite más de una autorización");
+
+  // No escribe por su cuenta, ni ninguna migración de #39 redefine la 198.
+  assert.doesNotMatch(w, /\b(insert into|update|delete from)\s+public\./, "el wrapper escribe directo: la conversión debe seguir dentro de la 198");
+  for (const archivo of [MIGRACION_216, MIGRACION_217]) {
+    assert.doesNotMatch(leer(archivo), /create or replace function public\.convertir_cotizacion_a_contrato\(/, `${archivo} redefine la 198`);
+  }
+  assertSoloServiceRole("convertir_cotizacion_manual_controlada(bigint, uuid)");
+});
+
+test("migración 216: crear y editar manuales validan actor y tenant (bajo lock al editar) ANTES de escribir", () => {
+  const m216 = leer(MIGRACION_216);
+
+  // Crear: el tenant lo decide el usuario de la BD; solo superadmin elige agencia.
+  const crear = sinComentariosSql(cuerpoDeFuncionSql(m216, "crear_cotizacion_manual"));
+  assertOrdenSqlAntesDe(
+    crear,
+    [
+      "select * into u from public.usuarios where id = p_usuario_id;",
+      "u.activo is not true",
+      "v_tenant := case when u.rol = 'superadmin' then coalesce(nullif(btrim(coalesce(p_tenant, '')), ''), u.tenant) else u.tenant end;",
+      "if v_tenant is null or v_tenant not in ('mayorista', 'minorista') then",
+    ],
+    "insert into public.cotizaciones",
+    "crear_cotizacion_manual"
+  );
+  assert.match(crear, /\) values \(\s*\n\s*v_tenant, 'manual', 'abierta',/, "la fila no guarda el tenant resuelto por la RPC");
+  assert.match(crear, /u\.email, u\.id\s*\n\s*\) returning id into v_id;/, "la fila no guarda el autor estable (creado_por_id = usuario de la BD)");
+
+  // Editar: el candado común valida actor, bloquea la fila y compara su tenant.
+  const bloquear = cuerpoDeFuncionSql(m216, "bloquear_para_editar", "p39_priv");
+  assertOrdenSqlAntesDe(
+    bloquear,
+    [
+      "u.activo is not true",
+      "select * into c from public.cotizaciones where id = p_cotizacion_id for update;",
+      "(u.rol <> 'superadmin' and u.tenant is distinct from c.tenant)",
+    ],
+    "return c;",
+    "p39_priv.bloquear_para_editar"
+  );
+  for (const nombre of ["editar_servicios_cotizacion_manual", "actualizar_recobro_ninos_manual"]) {
+    const cuerpo = sinComentariosSql(cuerpoDeFuncionSql(m216, nombre));
+    const idxCandado = cuerpo.indexOf("c := p39_priv.bloquear_para_editar(p_cotizacion_id, p_usuario_id, p_rev_esperada, p_motivo);");
+    assert.ok(idxCandado > -1, `${nombre} no pasa por p39_priv.bloquear_para_editar`);
+    const idxEscritura = cuerpo.search(/\b(insert into|update|delete from)\s+public\./);
+    assert.ok(idxEscritura > idxCandado, `${nombre} escribe antes de validar actor y tenant`);
+  }
+
+  assertSoloServiceRole("crear_cotizacion_manual(uuid, text, jsonb, jsonb)");
+  assertSoloServiceRole("editar_servicios_cotizacion_manual(uuid, bigint, integer, text, jsonb, jsonb)");
+  assertSoloServiceRole("actualizar_recobro_ninos_manual(uuid, bigint, integer, text, jsonb)");
 });
 
 test("migración 154: cotizaciones.tenant sigue siendo NOT NULL — el candado de esquema que hace redundante el chequeo TS eliminado", () => {

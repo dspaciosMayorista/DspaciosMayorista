@@ -11,6 +11,9 @@ import { ComboDestino, type DestinoOpt } from "@/components/ComboDestino";
 import { ComboProveedor, type ProveedorOpt } from "@/components/ComboProveedor";
 import { origenIdDesdeGuardado, resolverOrigenRutaEdicion } from "@/lib/vuelos/rutaBloqueo";
 import { actualizarBloqueo } from "../actions";
+import { MonedaTarifas } from "@/components/vuelos/MonedaTarifas";
+import { camposTarifaBloqueo, validarMonedaBloqueoEdicion } from "@/lib/vuelos/monedaBloqueo";
+import type { MonedaVuelo } from "@/lib/vuelos/monedaSospechosa";
 
 // Mismas clases que NuevoBloqueoForm: las tres secciones se ven igual al crear y al editar.
 const lbl = "mb-1 block text-xs font-medium text-gray-600";
@@ -24,7 +27,10 @@ export function EditarBloqueoForm({
     record: string; aerolinea: string; proveedorId: number | null; destinoId: number | null; ruta: string; origen: string;
     vueloIda: string; fechaIda: string; horaSalidaIda: string; horaLlegadaIda: string;
     vueloRegreso: string; fechaRegreso: string; horaSalidaReg: string; horaLlegadaReg: string;
-    tarifaNeta: number; tarifaParaEmpaquetar: number; fechaDevolucion: string; fechaEmision: string; notas: string; rangosEdad: number[];
+    tarifaNeta: number; tarifaParaEmpaquetar: number; feeInfante?: number;
+    /** Migración 231: moneda acreditada de las tarifas; null = sin acreditar; undefined = la página no la entregó (no se toca). */
+    moneda?: MonedaVuelo | null;
+    fechaDevolucion: string; fechaEmision: string; notas: string; rangosEdad: number[];
   };
   proveedores: ProveedorOpt[]; destinos: DestinoOpt[]; rangos: RangoEdad[];
 }) {
@@ -32,8 +38,9 @@ export function EditarBloqueoForm({
   const [open, setOpen] = useState(false);
   const [pending, start] = useTransition();
   const [msg, setMsg] = useState("");
-  const [f, setF] = useState({ ...inicial, tarifaParaEmpaquetar: String(inicial.tarifaParaEmpaquetar), tarifaNeta: String(inicial.tarifaNeta) });
+  const [f, setF] = useState({ ...inicial, tarifaParaEmpaquetar: String(inicial.tarifaParaEmpaquetar), tarifaNeta: String(inicial.tarifaNeta), feeInfante: String(inicial.feeInfante ?? 0) });
   const [proveedorId, setProveedorId] = useState<number | "">(inicial.proveedorId ?? "");
+  const [moneda, setMoneda] = useState<MonedaVuelo | "">(inicial.moneda ?? "");
   // Valores con los que arrancan los combos: sirven para saber si el usuario
   // cambió origen/destino (ver resolverOrigenRutaEdicion).
   const [origenIdInicial] = useState<number | "">(() => origenIdDesdeGuardado(destinos, inicial.origen));
@@ -60,6 +67,9 @@ export function EditarBloqueoForm({
   function guardar() {
     setMsg("");
     if (!origenRuta.ok) { setMsg(origenRuta.error); return; }
+    // Moneda (231): opcional si el Bloqueo aún no está acreditado; en COP un importe positivo menor a 1.000 se bloquea.
+    const monedaOk = validarMonedaBloqueoEdicion(moneda, { tarifaNeta: f.tarifaNeta, tarifaParaEmpaquetar: f.tarifaParaEmpaquetar, feeInfante: inicial.feeInfante !== undefined ? f.feeInfante : undefined });
+    if (!monedaOk.ok) { setMsg(monedaOk.error); return; }
     const { origen, ruta } = origenRuta;
     start(async () => {
       const r = await actualizarBloqueo(bloqueoId, {
@@ -68,6 +78,9 @@ export function EditarBloqueoForm({
         vueloIda: f.vueloIda, fechaIda: f.fechaIda, horaSalidaIda: f.horaSalidaIda, horaLlegadaIda: f.horaLlegadaIda,
         vueloRegreso: f.vueloRegreso, fechaRegreso: f.fechaRegreso, horaSalidaReg: f.horaSalidaReg, horaLlegadaReg: f.horaLlegadaReg,
         tarifaNeta: Number(f.tarifaNeta) || 0, tarifaParaEmpaquetar: Number(f.tarifaParaEmpaquetar) || 0, fechaDevolucion: f.fechaDevolucion, fechaEmision: f.fechaEmision,
+        // Fee de infante: solo viaja si la página lo entregó (migración 226).
+        ...(inicial.feeInfante !== undefined ? { feeInfante: Number(f.feeInfante) || 0 } : {}),
+        ...(monedaOk.moneda ? { moneda: monedaOk.moneda } : {}),
         notas: f.notas, rangosEdad: rangosSel,
       });
       if (r.ok) { setMsg("Guardado."); setOpen(false); router.refresh(); } else setMsg(r.error);
@@ -122,8 +135,25 @@ export function EditarBloqueoForm({
                 <label className={lbl}>Ruta (automática)</label>
                 <Input value={origenRuta.ok ? origenRuta.ruta : ""} readOnly disabled placeholder="Se arma con Origen y Destino" className="bg-gray-50 text-gray-600" />
               </div>
+              {inicial.moneda !== undefined && (
+                <div className="col-span-2 md:col-span-3">
+                  <MonedaTarifas
+                    moneda={moneda}
+                    onChange={setMoneda}
+                    sinElegir={inicial.moneda ? undefined : "— Sin acreditar —"}
+                    campos={camposTarifaBloqueo({ tarifaNeta: f.tarifaNeta, tarifaParaEmpaquetar: f.tarifaParaEmpaquetar, feeInfante: inicial.feeInfante !== undefined ? f.feeInfante : undefined })}
+                    ayuda={inicial.moneda ? "Cambiar la moneda invalida el tarifario de los paquetes que usan este Bloqueo; se regenera al guardar." : "Este Bloqueo aún no tiene la moneda de sus tarifas acreditada. Elígela para dejar constancia."}
+                  />
+                </div>
+              )}
               <div><label className={lbl}>Tarifa neta (pago aerolínea)</label><Input type="number" min={0} value={f.tarifaNeta} onChange={set("tarifaNeta")} /></div>
               <div><label className={lbl}>Tarifa empaquetar (reventa)</label><Input type="number" min={0} value={f.tarifaParaEmpaquetar} onChange={set("tarifaParaEmpaquetar")} /></div>
+              {inicial.feeInfante !== undefined && (
+                <div>
+                  <label className={lbl}>Fee de infante (0 a 1,99 años)</label>
+                  <Input type="number" min={0} value={f.feeInfante} onChange={set("feeInfante")} />
+                </div>
+              )}
               <div><label className={lbl}>Fecha devolución</label><DateInput aria-label="Fecha devolución" type="date" value={f.fechaDevolucion} onValueChange={(dateValue) => setF({ ...f, ["fechaDevolucion"]: dateValue })} /></div>
             </div>
             <RangosEdadPicker rangos={rangos} seleccionados={rangosSel} onChange={setRangosSel} label="Rangos de edad del vuelo (infante/niño)" />

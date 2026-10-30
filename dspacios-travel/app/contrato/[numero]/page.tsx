@@ -12,6 +12,7 @@ import { resolverCondicionesContrato } from "@/lib/contrato/condicionesContrato"
 import { habitacionesBernaloDeContrato } from "@/lib/reservar/alojamientoBernaloDocumento";
 import { condicionesTarifaParaRender } from "@/lib/calc/condicionesTarifa";
 import { netoTotalExigibleDeContrato } from "@/lib/contrato/netoContrato.server";
+import { cobroDeVenta } from "@/lib/finanzas/cobro";
 
 // ¿Quien mira puede ver el contrato COMPLETO, o solo la parte comercial?
 // Un asesor consultando el contrato de un colega de su agencia recibe el
@@ -75,6 +76,7 @@ export default async function ContratoImprimiblePage({
     { data: contratoCondiciones },
     { data: overridesCondiciones },
     habitacionesBernalo,
+    { data: estancia },
   ] = await Promise.all([
     // Las dos vistas, no las tablas base: desde la migración 144 el rol
     // `venta` no lee `ventas`, y desde la 148 tampoco `contrato_vuelos`.
@@ -102,6 +104,8 @@ export default async function ContratoImprimiblePage({
     // el acceso a este número de contrato (regla 19). Vacío para contratos
     // persona (nunca escriben esta tabla).
     habitacionesBernaloDeContrato(numero),
+    // #88: foto de la estancia (sin netos); la RLS decide quién la ve. Sin la migración 244 simplemente no hay fila.
+    sb.from("contrato_programa_estancia").select("*").eq("numero_contrato", numero).maybeSingle(),
   ]);
 
   if (!venta) notFound();
@@ -124,7 +128,7 @@ export default async function ContratoImprimiblePage({
   const condicionesResueltas = resolverCondicionesContrato(
     (contratoCondiciones ?? []) as unknown as Parameters<typeof resolverCondicionesContrato>[0],
     (overridesCondiciones ?? []) as unknown as Parameters<typeof resolverCondicionesContrato>[1],
-    { monedaContrato: (venta.moneda as string) ?? "COP", precioVenta: venta.precio_venta, fechaViaje: venta.fecha_salida },
+    { monedaContrato: cobroDeVenta(venta).moneda, precioVenta: cobroDeVenta(venta).total, fechaViaje: venta.fecha_salida },
   );
 
   return (
@@ -170,10 +174,12 @@ export default async function ContratoImprimiblePage({
             vuelos={vuelos ?? []}
             items={items ?? []}
             totalPagado={totalPagado}
+            cobro={cobroDeVenta(venta)}
             agencia={agencia}
             condiciones={condicionesResueltas}
             habitacionesBernalo={habitacionesBernalo}
             netoTotalExigible={netoTotalExigible}
+            estancia={estancia}
           />
         </div>
       </div>
