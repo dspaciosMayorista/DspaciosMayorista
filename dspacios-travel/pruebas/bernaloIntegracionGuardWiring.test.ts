@@ -286,7 +286,10 @@ describe("paquetes/actions.ts (generarTarifario) — hallazgo confirmado: filas.
     const idxPublicar = cuerpo.indexOf('sb.rpc("publicar_tarifario_resultado"');
     assert.notEqual(idxPublicar, -1, "debe existir la llamada al RPC de publicación atómica");
     const bloque = cuerpo.slice(idxPublicar, idxPublicar + 400);
-    assert.match(bloque, /p_filas: filas as unknown as Json/, "el payload publicado debe ser el array `filas` calculado tal cual, nunca uno fabricado a mano");
+    // 259: el array `filas` viaja SIN sus claves null (mismo contenido, menos bytes: el servidor trata clave ausente = null) — derivado SOLO de `filas`
+    // por `compactarFilasPublicacion`, nunca un arreglo fabricado a mano.
+    assert.match(bloque, /p_filas: filasPublicar as unknown as Json/, "el payload publicado debe derivarse del array `filas` calculado, nunca uno fabricado a mano");
+    assert.match(cuerpo, /const filasPublicar = compactarFilasPublicacion\(filas\);/);
   });
 
   test("el return final sigue devolviendo id: filas.length (0 para un paquete solo Bernalo) y el aviso Bernalo (basado en hotelesBernaloValidos), sin cambios", () => {

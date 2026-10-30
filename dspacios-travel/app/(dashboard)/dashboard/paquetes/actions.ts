@@ -4,6 +4,7 @@ import { createClient } from "@/lib/supabase/server";
 import { revalidatePath } from "next/cache";
 import type { Database, Json } from "@/types/database";
 import { columnasProcedencia } from "@/lib/tarifario/procedenciaTarifario";
+import { compactarFilasPublicacion } from "@/lib/tarifario/filasPublicacion";
 import {
   noches as calcNoches,
   liquidarHotelNochesConTemporadas,
@@ -1601,13 +1602,15 @@ export async function generarTarifario(paqueteId: number): Promise<Result> {
   // llama al publicador VIGENTE (el de la 226, sin copiar su cuerpo) y guarda la
   // TRM/modo/fuentes de ESA publicación en la misma transacción. El resto de los
   // paquetes sigue por el publicador de siempre, sin cambios.
+  // Mismo contenido, menos bytes (sin claves null: el servidor trata clave ausente = null). Ver lib/tarifario/filasPublicacion.ts.
+  const filasPublicar = compactarFilasPublicacion(filas);
   const { data: publicado, error: ePublicar } = modo63
     ? await sb.rpc("publicar_tarifario_resultado_63", {
         p_paquete_id: paqueteId,
         p_generacion: generacion,
         p_revision_capturada: revisionCapturada,
         p_moneda: paqueteMoneda,
-        p_filas: filas as unknown as Json,
+        p_filas: filasPublicar as unknown as Json,
         p_modo: MODO_OFERTA_63,
         p_trm: trm63,
       })
@@ -1616,7 +1619,7 @@ export async function generarTarifario(paqueteId: number): Promise<Result> {
         p_generacion: generacion,
         p_revision_capturada: revisionCapturada,
         p_moneda: paqueteMoneda,
-        p_filas: filas as unknown as Json,
+        p_filas: filasPublicar as unknown as Json,
       });
   if (ePublicar) return await fallarTecnico(ePublicar.message);
   if (!publicado) {
