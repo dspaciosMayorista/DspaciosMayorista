@@ -4,6 +4,7 @@ import { createClient } from "@/lib/supabase/server";
 import { revalidatePath } from "next/cache";
 import type { Database, Json } from "@/types/database";
 import { columnasProcedencia } from "@/lib/tarifario/procedenciaTarifario";
+import { contarPorModulo, crearCronometro, esTimeoutPostgres, lineaMedicionGeneracion, type ResultadoGeneracion } from "@/lib/tarifario/cronometroGeneracion";
 import {
   noches as calcNoches,
   liquidarHotelNochesConTemporadas,
@@ -739,6 +740,24 @@ const MENSAJE_ERROR_TECNICO_TARIFARIO =
 export async function generarTarifario(paqueteId: number): Promise<Result> {
   const sb = await createClient();
 
+  // Medición por etapas (SOLO diagnóstico: no cambia el cálculo ni la publicación). Cada intento deja UNA línea en los logs del servidor con paquete,
+  // generación, resultado, etapa (la que falló, o la última), duración por etapa y filas calculadas. Solo números y nombres fijos de etapa: sin SQL,
+  // sin texto de Postgres, sin datos de personas. Nunca lanza: si la medición fallara, el intento sigue igual. Ver lib/tarifario/cronometroGeneracion.ts.
+  const cron = crearCronometro();
+  const med: { generacion: number | null; filas: readonly { modulo?: unknown }[] | null } = { generacion: null, filas: null };
+  const medir = (resultado: ResultadoGeneracion) => {
+    try {
+      const { etapa, msEtapa, msTotal } = cron.actual();
+      const linea = lineaMedicionGeneracion({
+        paqueteId, generacion: med.generacion, resultado, etapa, msEtapa, msTotal, etapasCerradas: cron.cerradasTexto(),
+        filas: med.filas ? med.filas.length : null, filasPorModulo: med.filas ? contarPorModulo(med.filas) : null,
+      });
+      if (resultado === "ok") console.info(linea);
+      else if (resultado === "descartado" || resultado === "fallo_negocio") console.warn(linea);
+      else console.error(linea);
+    } catch { /* la medición nunca debe afectar la generación */ }
+  };
+
   // ── Publicación atómica (migración 181) — token de generación capturado
   // como PRIMERA operación de toda la función, antes de leer CUALQUIER
   // fuente ────────────────────────────────────────────────────────────────
@@ -755,8 +774,10 @@ export async function generarTarifario(paqueteId: number): Promise<Result> {
   // dentro de `publicar_tarifario_resultado` (mismo commit que las filas).
   // Por eso ya no hace falta ninguna lectura antes de este punto: el token
   // es literalmente la primera operación de la función.
+  cron.etapa("iniciar_generacion");
   const { data: genRows, error: eGen } = await sb.rpc("iniciar_generacion_tarifario", { p_paquete_id: paqueteId });
   if (eGen || !genRows || !genRows.length) {
+    medir(esTimeoutPostgres(eGen) ? "timeout" : "fallo_tecnico");
     // Todavía NO existe ningún token/generación — `marcar_generacion_fallida`
     // no aplica (no hay nada que marcar). El `.message` crudo (incluido el
     // caso "paquete no encontrado", que sale del mismo `raise exception` de
@@ -766,6 +787,7 @@ export async function generarTarifario(paqueteId: number): Promise<Result> {
   }
   const generacion = genRows[0].generacion;
   const revisionCapturada = genRows[0].revision_capturada;
+  med.generacion = generacion;
   // Best-effort: si marcar el fallo en armado_paquetes también falla, nunca
   // debe ocultar ni reemplazar el error de negocio/técnico real que la
   // función ya está por reportar — solo se registra server-side. `sb.rpc()`
@@ -800,6 +822,7 @@ export async function generarTarifario(paqueteId: number): Promise<Result> {
   // crudo de Postgres/Supabase) — estables y seguros por construcción, se
   // persisten en `tarifario_error` y se devuelven al caller tal cual.
   const fallar = async (mensaje: string): Promise<Result> => {
+    medir("fallo_negocio");
     await marcarFallo(mensaje);
     return { ok: false, error: mensaje };
   };
@@ -808,11 +831,13 @@ export async function generarTarifario(paqueteId: number): Promise<Result> {
   // de módulo (ver arriba) — nunca el texto interno de Postgres.
   const fallarTecnico = async (detalleCrudo: string): Promise<Result> => {
     console.error(`generarTarifario: error técnico (paquete_id=${paqueteId}, generacion=${generacion}): ${detalleCrudo}`);
+    medir(esTimeoutPostgres(detalleCrudo) ? "timeout" : "fallo_tecnico");
     await marcarFallo(MENSAJE_ERROR_TECNICO_TARIFARIO);
     return { ok: false, error: MENSAJE_ERROR_TECNICO_TARIFARIO };
   };
 
   // ── FASE AUTORITATIVA — TODO se lee fresco, DESPUÉS del token ──────────
+  cron.etapa("lectura_paquete");
   const { data: pq, error: ePq } = await sb
     .from("armado_paquetes")
     .select("*, destinos(nombre)")
@@ -848,6 +873,7 @@ export async function generarTarifario(paqueteId: number): Promise<Result> {
   // Neto → moneda de publicación. En el modo de siempre es la identidad.
   const aMonedaOferta = (neto: number, monedaOrigen: string | null | undefined) => (modo63 ? aMoneda63(neto, monedaOrigen, paqueteMoneda, trm63) : neto);
 
+  cron.etapa("lectura_fuentes");
   const [{ data: vuelosSel, error: eVuelosSel }, { data: empaquetadosSel, error: eEmpaquetadosSel }, { data: hotelesSel, error: eHotelesSel }, { data: serviciosSel, error: eServiciosSel }] = await Promise.all([
     sb
       .from("armado_vuelos")
@@ -874,6 +900,7 @@ export async function generarTarifario(paqueteId: number): Promise<Result> {
   if (eServiciosSel) return await fallarTecnico(eServiciosSel.message);
 
   // Rangos de grupo de los servicios seleccionados
+  cron.etapa("lectura_grupos_servicio");
   const servicioIds = (serviciosSel ?? []).map((s) => s.servicio_id);
   const gruposPorServicio = new Map<number, { pax_desde: number; pax_hasta: number; precio: number }[]>();
   if (servicioIds.length) {
@@ -986,6 +1013,7 @@ export async function generarTarifario(paqueteId: number): Promise<Result> {
   // helper puro compartido que `setHotelFiltros`/`datosBernalo.ts`
   // (`lib/calc/paresPublicadosUnidad.ts`) — una sola función decide "¿este
   // hotel Bernalo está realmente publicado?" en los tres lugares.
+  cron.etapa("lectura_bernalo");
   const paresPublicadosPorHotelBernalo = new Map<number, Set<string>>();
   if (hotelesBernaloFilas.length && tipoCompatibleConVistaBooking) {
     const { data: tarifasPublicadasBernalo, error: eTarifasBernalo } = await sb
@@ -1022,6 +1050,7 @@ export async function generarTarifario(paqueteId: number): Promise<Result> {
   const nombresDeIdsBernalo = (ids: Set<number>) => [...ids].map((id) => nombrePorHotelBernalo.get(id) ?? `#${id}`);
   const hotelesBernaloValidos = nombresDeIdsBernalo(idsBernaloValidos);
 
+  cron.etapa("lectura_hoteles");
   const temporadasPorHotel = new Map<number, TemporadaRango[]>();
   type TarifaRow = Record<string, unknown>;
   const tarifasPorHotel = new Map<number, TarifaRow[]>();
@@ -1045,6 +1074,7 @@ export async function generarTarifario(paqueteId: number): Promise<Result> {
 
   type ResultadoInsert = Database["public"]["Tables"]["tarifario_resultado"]["Insert"];
   const filas: ResultadoInsert[] = [];
+  med.filas = filas; // la medición cuenta las filas en el momento de registrar (no copia ni modifica el arreglo)
 
   // Servicios INCLUIDOS se hornean por persona en la tarifa del hotel.
   // (Los OPCIONALES no se hornean: se agregan como add-on en la reserva.)
@@ -1248,6 +1278,7 @@ export async function generarTarifario(paqueteId: number): Promise<Result> {
   // publicando) un vuelo cuyo país/destino cambió después de vincularlo. Un
   // error de lectura aborta la generación como fallo técnico (nunca "sin
   // vuelos"). Dinámico no pasa por aquí: sus salidas manuales siguen #62.
+  cron.etapa("lectura_destinos_aereos");
   let permiteDestinoAereo = (_tipo: "bloqueo" | "empaquetado", _id: number) => true;
   let excluidosPorDestinoAereo = 0;
   if (tipo === "bloqueo" && ((vuelosSel?.length ?? 0) + (empaquetadosSel?.length ?? 0)) > 0) {
@@ -1322,6 +1353,7 @@ export async function generarTarifario(paqueteId: number): Promise<Result> {
   // misma regla con la que cargarDatosTarifario() oculta lo ya publicado y
   // computarReserva() rechaza la venta. Un error de lectura aborta la
   // generación (antes se ignoraba y el paquete quedaba "sin salidas").
+  cron.etapa("lectura_salidas");
   const { data: salidasRaw, error: eSalidas } = tipo === "dinamico"
     ? await sb.from("salidas_dinamicas").select("*").eq("paquete_id", paqueteId).order("fecha_ida")
     : { data: null, error: null };
@@ -1363,6 +1395,7 @@ export async function generarTarifario(paqueteId: number): Promise<Result> {
   // ── #90 D / #93: moneda de publicación ELEGIDA y TRM condicional sobre las fuentes que REALMENTE aportan ──
   // Mismas filas y mismos predicados (aporteFuentes90.ts) que el panel del armado y la cotización de la oferta: una fuente que este
   // generador descarta (vínculo sin fechas, vencido, fuera de destino, vinculada no elegible…) no exige TRM ni bloquea la publicación.
+  cron.etapa("evaluacion_publicacion");
   {
     const permiteAporte = (t: "bloqueo" | "empaquetado", id: number) => (tipo === "dinamico" ? (t === "empaquetado" ? permiteVinculada63(id) : true) : permiteDestinoAereo(t, id));
     const ev = evaluarPublicacion90({
@@ -1415,6 +1448,7 @@ export async function generarTarifario(paqueteId: number): Promise<Result> {
   if (tipo === "servicios" && !servicios.length)
     return await fallar("Agrega al menos un servicio.");
 
+  cron.etapa("calculo");
   if (tipo === "bloqueo") {
     // MÓDULO BLOQUEOS: una liquidación por ciclo aéreo negociado
     for (const { aplica_mk, ta, b } of vuelos) {
@@ -1601,6 +1635,7 @@ export async function generarTarifario(paqueteId: number): Promise<Result> {
   // llama al publicador VIGENTE (el de la 226, sin copiar su cuerpo) y guarda la
   // TRM/modo/fuentes de ESA publicación en la misma transacción. El resto de los
   // paquetes sigue por el publicador de siempre, sin cambios.
+  cron.etapa("publicar");
   const { data: publicado, error: ePublicar } = modo63
     ? await sb.rpc("publicar_tarifario_resultado_63", {
         p_paquete_id: paqueteId,
@@ -1627,6 +1662,7 @@ export async function generarTarifario(paqueteId: number): Promise<Result> {
     // es este, `marcar_generacion_fallida` no aplica) ni hace falta
     // reintentar desde acá — la mutación que invalidó ya disparó su propio
     // recálculo automático por su cuenta (ver `regenerarTarifariosDe*`).
+    medir("descartado");
     return {
       ok: false,
       error:
@@ -1638,6 +1674,7 @@ export async function generarTarifario(paqueteId: number): Promise<Result> {
   // (mismo commit que las filas, con el valor autoritativo `paqueteMoneda`)
   // — no hay ninguna escritura aparte que hacer acá.
 
+  medir("ok");
   revalidatePath(`/dashboard/paquetes/${paqueteId}`);
   revalidatePath("/tarifario");
   // Hallazgo confirmado (Vista Booking unificada): el texto del aviso
