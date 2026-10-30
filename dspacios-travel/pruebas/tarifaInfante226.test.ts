@@ -358,7 +358,8 @@ describe("generarTarifario() REAL — precio del menor de 2 años por fila", () 
     const g = await generar({ servicios: [TOUR_40()] });
     assert.equal(g.r.ok, true, g.r.ok ? "" : g.r.error);
     assert.equal(fila(g.filas, "doble")!.precio_pvp, 1730000);
-    assert.equal(fila(g.filas, "doble")!.precio_pvp_menor2, null, "la habitación adulta no lleva precio de menor de 2");
+    assert.equal(fila(g.filas, "doble")!.precio_pvp_menor2 ?? null, null, // 259: el payload no envía claves null; ausente = NULL para el servidor
+       "la habitación adulta no lleva precio de menor de 2");
     assert.equal(fila(g.filas, "infante")!.precio_pvp, 1305000, "pvp conserva su significado: vuelo y servicios de adulto");
     assert.equal(fila(g.filas, "infante")!.precio_pvp_menor2, 205000);
     assert.equal(fila(g.filas, "nino")!.precio_pvp, 1418000);
@@ -421,7 +422,7 @@ describe("generarTarifario() REAL — precio del menor de 2 años por fila", () 
     const s = (id: number) => g.filas.find((f) => f.servicio_id === id)!;
     assert.equal(s(21).precio_pvp, 100000);
     assert.equal(s(21).precio_pvp_menor2, 25000);
-    assert.equal(s(22).precio_pvp_menor2, null);
+    assert.equal(s(22).precio_pvp_menor2 ?? null, null); // 259: clave ausente = NULL en el servidor
     assert.equal(s(23).precio_pvp_menor2, 0, "$0 es distinto de NULL");
   });
   test("servicio por GRUPO: ninguna fila lleva precio de infante (el infante no cuenta para el rango ni paga extra)", async () => {

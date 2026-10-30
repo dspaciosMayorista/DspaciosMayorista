@@ -96,8 +96,16 @@ describe("cableado en generarTarifario (código fuente)", () => {
     assert.ok(cuerpo.includes("return { ok: false, error: MENSAJE_ERROR_TECNICO_TARIFARIO };"));
     assert.ok(cuerpo.includes('sb.rpc("publicar_tarifario_resultado_63"'));
     assert.ok(cuerpo.includes('sb.rpc("publicar_tarifario_resultado"'));
-    assert.ok(cuerpo.includes("p_filas: filas as unknown as Json"));
     assert.equal((cuerpo.match(/sb\.rpc\("iniciar_generacion_tarifario"/g) ?? []).length, 1);
+  });
+
+  test("#417: la etapa «publicar» arranca ANTES de compactar el payload y ambas RPC envían el payload compactado", () => {
+    assert.ok(todo.includes('import { compactarFilasPublicacion } from "@/lib/tarifario/filasPublicacion";'));
+    const etapa = cuerpo.indexOf('cron.etapa("publicar");');
+    const compactar = cuerpo.indexOf("const filasPublicar = compactarFilasPublicacion(filas);");
+    assert.ok(etapa > 0 && compactar > etapa, "la medición de «publicar» debe incluir el costo de compactar");
+    assert.equal((cuerpo.match(/p_filas: filasPublicar as unknown as Json/g) ?? []).length, 2, "las dos RPC (_63 y base) envían filasPublicar");
+    assert.ok(!cuerpo.includes("p_filas: filas as unknown as Json"));
   });
 
   test("la línea de medición no incluye texto de Postgres ni datos de personas", () => {
