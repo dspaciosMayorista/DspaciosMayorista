@@ -118,11 +118,18 @@ function construirTablas(): TablasFalsas {
     // 7 normal · 8 Bernalo (por unidad) · 9 Adults Only · 12 vigencia de compra vencida
     hoteles: [hotel(7, { nombre: "Hotel Caribe" }), hotel(8, { modelo_tarifario: "unidad" }), hotel(9, { adults_only: true }), hotel(12)],
     // 5 sin incluidos · 6 con un servicio incluido cobrado POR GRUPO
+    // destino_id + check de alternativas: el motor valida el destino aéreo de la fuente (#67).
     armado_paquetes: [
-      { id: 5, pct_mk: 0.2, impuesto_fijo: 50_000 },
-      { id: 6, pct_mk: 0.2, impuesto_fijo: 50_000 },
+      { id: 5, pct_mk: 0.2, impuesto_fijo: 50_000, destino_id: 1, destinos_aereos_alternativos: false },
+      { id: 6, pct_mk: 0.2, impuesto_fijo: 50_000, destino_id: 1, destinos_aereos_alternativos: false },
     ],
+    bloqueos_vuelo: [{ id: 10, destino_id: 1, ruta: "BOG-ADZ", record: null }],
+    // La vigencia del empaquetado la lee la SESIÓN por la vista; el destino aéreo, el cliente de servicio en la tabla.
     empaquetados: [
+      { id: 3, activo: true, compra_inicio: null, compra_fin: null, destino_id: 1, ruta: "BOG-ADZ", record: null },
+      { id: 4, activo: false, compra_inicio: null, compra_fin: null, destino_id: 1, ruta: "BOG-ADZ", record: null },
+    ],
+    empaquetados_basica: [
       { id: 3, activo: true, compra_inicio: null, compra_fin: null },
       { id: 4, activo: false, compra_inicio: null, compra_fin: null },
     ],

@@ -32,8 +32,9 @@ function clienteSimulado(db: Record<string, Fila[]>, errores: Record<string, unk
     const b = {
       select: (...a: unknown[]) => {
         anota("select", a);
-        // Como PostgREST: una relación embebida solo llega si el select la pide.
-        if (tabla === "programas" && !String(a[0]).includes("proveedores(")) filas = filas.map(sinClave("proveedores"));
+        // Como PostgREST: una relación embebida solo llega si el select la pide,
+        // con o sin pista de FK (`proveedores!fk(...)`); la clave sigue siendo `proveedores`.
+        if (tabla === "programas" && !/\bproveedores(![\w]+)?\(/.test(String(a[0]))) filas = filas.map(sinClave("proveedores"));
         return b;
       },
       eq: (col: string, v: unknown) => (anota("eq", [col, v]), (filas = filas.filter((f) => f[col] === v)), b),
