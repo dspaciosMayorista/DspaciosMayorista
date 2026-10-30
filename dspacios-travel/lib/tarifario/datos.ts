@@ -17,6 +17,7 @@ import { empaquetadoVigente, hoyBogota } from "../reservar/origen.ts";
 import { salidasDinamicasVigentes } from "../reservar/salidaDinamicaVigente.ts";
 import { filtrarFilasPorOrigenAereo } from "../paquetes/destinosAereos67.ts";
 import { registrarEtapa, registrarDatoPagina, registrarErrorTecnico } from "../observabilidad/medicion.ts";
+import { galeriaPorHotel as galeriaDe, leerFotosHotel } from "./fotosHotel.ts";
 
 // Columnas completas que necesita Vista Booking (Reservar/tarifario público)
 // — más que las que pide /dashboard/tarifario, ver lib/tarifario/paginacion.ts.
@@ -46,6 +47,7 @@ export type DatosTarifario = {
   cuposPorBloqueo: Record<number, number>;
   origenPorBloqueo: Record<number, string>;
   fotosPorHotel: Record<number, string>;
+  galeriaPorHotel: Record<number, string[]>;
   fotosPorServicio: Record<number, string>;
   infoPorHotel: Record<number, InfoHotelDato>;
   capPorHotel: Record<number, CapHotelDato>;
@@ -342,6 +344,7 @@ export async function cargarDatosTarifario(
   )];
 
   const fotosPorHotel: Record<number, string> = {};
+  let galeriaPorHotel: Record<number, string[]> = {};
   const infoPorHotel: Record<number, InfoHotelDato> = {};
   const capPorHotel: Record<number, CapHotelDato> = {};
   const fotosPorServicio: Record<number, string> = {};
@@ -354,7 +357,7 @@ export async function cargarDatosTarifario(
   ] = await Promise.all([
     // Foto de portada por hotel.
     hotelIds.length
-      ? sb.from("hotel_fotos").select("hotel_id, url, es_portada, orden").in("hotel_id", hotelIds).order("orden")
+      ? leerFotosHotel(sb, hotelIds)
       : null,
     // Estrellas/clasificación/descripción + pax min/max por hotel.
     hotelIds.length
@@ -405,6 +408,7 @@ export async function cargarDatosTarifario(
         if (fotosPorHotel[f.hotel_id] == null) fotosPorHotel[f.hotel_id] = f.url;
         if (f.es_portada) fotosPorHotel[f.hotel_id] = f.url;
       }
+      galeriaPorHotel = galeriaDe(resFotosHotel.data ?? []);
     }
     _consultasAux += 1;
   }
@@ -498,7 +502,7 @@ export async function cargarDatosTarifario(
   return {
     ok: true,
     datos: {
-      filasVisibles, filasAddon, cuposPorBloqueo, origenPorBloqueo, fotosPorHotel, fotosPorServicio,
+      filasVisibles, filasAddon, cuposPorBloqueo, origenPorBloqueo, fotosPorHotel, galeriaPorHotel, fotosPorServicio,
       infoPorHotel, capPorHotel, planesInfo, ventanaPorPaquete, descripcionPorPaquete,
     },
   };

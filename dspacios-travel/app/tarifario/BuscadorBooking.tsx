@@ -16,6 +16,7 @@ import { EDAD_MENOR_MAX, MAX_MENORES_POR_CONSULTA, ajustarCantidadEdades, parseE
 import type { DestinoPorcionOpcion } from "@/lib/tarifario/destinosPorcion";
 import type { ComboPersonaElegido } from "@/lib/tarifario/filtrosBusqueda";
 import { BackgroundVideo } from "@/components/BackgroundVideo";
+import { CarruselFotoHotel } from "./CarruselFotoHotel";
 import {
   Categoria, EtiquetasHotel, DescripcionHotelExpandible, UbicacionHotel, SeccionesIncluye, IncluyeCompacto, AddonsPaquete, ReceptivoModal,
   type Receptivo, type ReceptivoModalInfo,
@@ -708,13 +709,15 @@ export async function revalidarHotelPersona(
 // COMPLETO de `infoPorHotel` (ubicación/video/condición incluidos, no solo un
 // subconjunto) y `descripcionPorPaquete`/`addonsPorPaquete` llegan iguales
 // que a los modales de exploración — nunca una fuente nueva de datos.
-export function Resultado({ r, recomendada = false, foto, info, descripcionPorPaquete, addonsPorPaquete, catInicial, regInicial, combosPermitidos }: {
+export function Resultado({ r, recomendada = false, foto, fotos, info, descripcionPorPaquete, addonsPorPaquete, catInicial, regInicial, combosPermitidos }: {
   r: BusquedaResultado;
   /** ¿Esta oferta es una de las recomendadas del paquete coincidente? Solo
    * cambia la etiqueta de la tarjeta ("Recomendado · <paquete>" vs
    * "<paquete>") — nunca qué se muestra ni qué se cobra. */
   recomendada?: boolean;
   foto: string | null;
+  /** Galería completa (portada primero); sin ella, solo `foto`. */
+  fotos?: string[];
   info?: {
     estrellas: number | null; clasificacion: string | null; descripcion?: string | null;
     ubicacion?: string | null; video_url?: string | null;
@@ -913,21 +916,18 @@ export function Resultado({ r, recomendada = false, foto, info, descripcionPorPa
   return (
     <>
     <div className="flex flex-col overflow-hidden rounded-2xl border border-gray-200 bg-white">
-      <div className="relative aspect-[16/10] w-full bg-gray-100">
-        {info?.video_url ? (
-          <BackgroundVideo url={info.video_url} overlay={0} />
-        ) : foto ? (
-          <Image src={foto} alt={r.hotelNombre ?? ""} fill sizes="(max-width:1024px) 50vw, 33vw" className="object-cover" unoptimized />
-        ) : (
-          <div className="flex h-full w-full items-center justify-center text-sm text-gray-300">Sin foto</div>
-        )}
+      <CarruselFotoHotel
+        fotos={fotos ?? (foto ? [foto] : [])}
+        alt={r.hotelNombre ?? ""}
+        fondo={info?.video_url ? <BackgroundVideo url={info.video_url} overlay={0} /> : undefined}
+      >
         {/* Etiqueta de OFERTA (hallazgo 2): `r.paqueteId` es FIJO para este
             resultado (una fila = un par hotel+paquete), así que el nombre del
             paquete es cierto para toda la tarjeta — y va SIEMPRE, recomendada
             o no, porque el mismo hotel puede venir en dos paquetes distintos
             (ej. normal + 3x2) y cada tarjeta debe leerse como una oferta. */}
         <EtiquetaOferta paqueteNombre={r.paqueteNombre} recomendada={recomendada} />
-      </div>
+      </CarruselFotoHotel>
       <div className="flex flex-1 flex-col gap-3 p-4">
         <div>
           <div className="flex flex-wrap items-center gap-2">

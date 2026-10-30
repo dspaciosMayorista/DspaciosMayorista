@@ -139,7 +139,7 @@ export default async function TarifarioPublicoPage() {
     );
   }
   const {
-    filasVisibles, filasAddon, cuposPorBloqueo, origenPorBloqueo, origenPorSalida, fotosPorHotel: fotosPorHotelLegacy, fotosPorServicio,
+    filasVisibles, filasAddon, cuposPorBloqueo, origenPorBloqueo, origenPorSalida, fotosPorHotel: fotosPorHotelLegacy, galeriaPorHotel: galeriaPorHotelLegacy, fotosPorServicio,
     infoPorHotel: infoPorHotelLegacy, capPorHotel, planesInfo, ventanaPorPaquete, descripcionPorPaquete: descripcionPorPaqueteLegacy,
     prioridadesRecomendados, condicionPorOferta, politicaPorOferta, restriccionPorPaquete,
   } = resDatos.datos;
@@ -213,6 +213,7 @@ export default async function TarifarioPublicoPage() {
     registrarErrorTecnico(FLUJO, flujoId, "datos_auxiliares_pagina", "error_info_hoteles_bernalo", resultadoInfoBernalo.errorInfo);
   }
   const fotosPorHotel = { ...fotosPorHotelLegacy, ...resultadoInfoBernalo.fotosPorHotel };
+  const galeriaPorHotel = { ...galeriaPorHotelLegacy, ...resultadoInfoBernalo.galeriaPorHotel };
   const infoPorHotel = { ...infoPorHotelLegacy, ...resultadoInfoBernalo.infoPorHotel };
 
   // Best-effort (mismo criterio que fotos/info arriba): un fallo acá deja
@@ -307,7 +308,7 @@ export default async function TarifarioPublicoPage() {
         {!filasVisibles.length && !programas.length && !hotelesBernalo.length ? (
           <p className="py-20 text-center text-gray-400">Tarifario en preparación.</p>
         ) : (
-          <TarifarioPublic filas={filasVisibles} programas={programas} puedeReservar={puedeReservar}cuposPorBloqueo={cuposPorBloqueo} origenPorBloqueo={origenPorBloqueo} origenPorSalida={origenPorSalida} fotosPorHotel={fotosPorHotel} fotosPorServicio={fotosPorServicio} ventanaPorPaquete={ventanaPorPaquete} infoPorHotel={infoPorHotel} planesInfo={planesInfo} capPorHotel={capPorHotel} descripcionPorPaquete={descripcionPorPaquete} filasAddon={filasAddon} hotelesBernalo={hotelesBernalo} hotelIdsUnidadAutoritativos={hotelIdsUnidadAutoritativos} prioridadesRecomendados={prioridadesRecomendadasCombinadas} condicionPorOferta={condicionPorOferta} politicaPorOferta={politicaPorOferta} restriccionPorPaquete={restriccionPorPaquete} />
+          <TarifarioPublic filas={filasVisibles} programas={programas} puedeReservar={puedeReservar}cuposPorBloqueo={cuposPorBloqueo} origenPorBloqueo={origenPorBloqueo} origenPorSalida={origenPorSalida} fotosPorHotel={fotosPorHotel} galeriaPorHotel={galeriaPorHotel} fotosPorServicio={fotosPorServicio} ventanaPorPaquete={ventanaPorPaquete} infoPorHotel={infoPorHotel} planesInfo={planesInfo} capPorHotel={capPorHotel} descripcionPorPaquete={descripcionPorPaquete} filasAddon={filasAddon} hotelesBernalo={hotelesBernalo} hotelIdsUnidadAutoritativos={hotelIdsUnidadAutoritativos} prioridadesRecomendados={prioridadesRecomendadasCombinadas} condicionPorOferta={condicionPorOferta} politicaPorOferta={politicaPorOferta} restriccionPorPaquete={restriccionPorPaquete} />
         )}
       </main>
     </div>
