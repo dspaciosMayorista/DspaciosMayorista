@@ -5,6 +5,7 @@ import { createAdminClient } from "../supabase/admin.ts";
 import { aplicarFiltrosPostCarga } from "./filtrosPostCarga.ts";
 import { esFilaHotelVerificable } from "./vigencia.ts";
 import { registrarEtapa, registrarDatoPagina, registrarErrorTecnico, medirPayloadSiHabilitado, textoEstimacionPayload } from "../observabilidad/medicion.ts";
+import { galeriaPorHotel as galeriaDe, leerFotosHotel } from "./fotosHotel.ts";
 import type { InfoHotelDato, CapHotelDato } from "./datos.ts";
 import type { DescripcionPaqueteRaw } from "./descripcionPaquete.ts";
 import { condicionHotelFechas, type FilaTemporadaHotelRaw } from "../reservar/liquidacionHotel.ts";
@@ -211,6 +212,7 @@ export type DatosResumenTarifario = {
   // Sin entrada = origen desconocido (nunca inventado): con un origen elegido, esa salida no se muestra.
   origenPorSalida: Record<number, string>;
   fotosPorHotel: Record<number, string>;
+  galeriaPorHotel: Record<number, string[]>;
   fotosPorServicio: Record<number, string>;
   infoPorHotel: Record<number, InfoHotelDato>;
   capPorHotel: Record<number, CapHotelDato>;
@@ -416,6 +418,7 @@ export async function cargarResumenTarifario(
   )];
 
   const fotosPorHotel: Record<number, string> = {};
+  let galeriaPorHotel: Record<number, string[]> = {};
   const infoPorHotel: Record<number, InfoHotelDato> = {};
   const capPorHotel: Record<number, CapHotelDato> = {};
   const fotosPorServicio: Record<number, string> = {};
@@ -438,7 +441,7 @@ export async function cargarResumenTarifario(
     resFotosHotel, resHoteles, resAcomInfante, resFotosServicio, resPlanes, resVentana, resDescripcion, resCondicionHotel,
   ] = await Promise.all([
     hotelIds.length
-      ? sb.from("hotel_fotos").select("hotel_id, url, es_portada, orden").in("hotel_id", hotelIds).order("orden")
+      ? leerFotosHotel(sb, hotelIds)
       : null,
     hotelIds.length
       ? sb.from("hoteles").select("id, estrellas, clasificacion, descripcion, ubicacion, zona, video_url, pax_min, pax_max, edad_nino_min, edad_nino_max, edad_infante_min, edad_infante_max, nino_nota, adults_only, pet_friendly, pet_costo_neto, pet_costo_desc, pet_nota").in("id", hotelIds)
@@ -503,6 +506,7 @@ export async function cargarResumenTarifario(
         if (fotosPorHotel[f.hotel_id] == null) fotosPorHotel[f.hotel_id] = f.url;
         if (f.es_portada) fotosPorHotel[f.hotel_id] = f.url;
       }
+      galeriaPorHotel = galeriaDe(resFotosHotel.data ?? []);
     }
   }
 
@@ -767,7 +771,7 @@ export async function cargarResumenTarifario(
     ok: true,
     datos: {
       filasVisibles, filasAddon,
-      cuposPorBloqueo, origenPorBloqueo, origenPorSalida, fotosPorHotel, fotosPorServicio,
+      cuposPorBloqueo, origenPorBloqueo, origenPorSalida, fotosPorHotel, galeriaPorHotel, fotosPorServicio,
       infoPorHotel, capPorHotel, planesInfo, ventanaPorPaquete, descripcionPorPaquete,
       prioridadesRecomendados, condicionPorOferta, politicaPorOferta, restriccionPorPaquete: restriccionPorPaqueteRecord,
     },

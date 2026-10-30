@@ -66,6 +66,7 @@ import { claveBusquedaUnidad, claveReservaUnidad, revalidarReservaUnidad } from 
 import { BuscadorReceptivos } from "./BuscadorReceptivos";
 import { ModoComparativaBooking } from "@/lib/cotizacion/comparativaBooking";
 import { BackgroundVideo } from "@/components/BackgroundVideo";
+import { CarruselFotoHotel } from "./CarruselFotoHotel";
 import { LoadingScreen } from "@/components/LoadingScreen";
 import type { FilaTarifario, CapHotel } from "./TarifarioPublic";
 import type { FilaResumen } from "@/lib/tarifario/resumen";
@@ -446,13 +447,15 @@ function PanelFiltrosResto({
 // descripción/etiquetas reales y mostraba "Sin foto" siempre). Un solo
 // componente, con los datos ya resueltos por el llamador — nunca lógica de
 // "cuál modelo es" adentro de la tarjeta misma.
-function TarjetaHotelCard({
-  onClick, foto, hotelNombre, destino, estrellas = null, clasificacion = null,
+export function TarjetaHotelCard({
+  onClick, foto, fotos, hotelNombre, destino, estrellas = null, clasificacion = null,
   adultsOnly = false, petFriendly = false, tieneCondicion, descripcion, desde = null, moneda,
   badgeEsquina,
 }: {
   onClick: () => void;
   foto: string | null;
+  /** Galería completa (portada primero); sin ella, solo `foto`. */
+  fotos?: string[];
   hotelNombre: string;
   destino: string | null;
   estrellas?: number | null;
@@ -466,19 +469,22 @@ function TarjetaHotelCard({
   badgeEsquina?: ReactNode;
 }) {
   return (
-    <button
-      type="button"
-      onClick={onClick}
-      className="group flex flex-col overflow-hidden rounded-2xl border border-gray-200 bg-white text-left transition-all hover:-translate-y-1 hover:shadow-[0_20px_48px_rgba(0,0,0,0.14)] hover:border-[var(--brand-accent)]"
-    >
-      <div className="relative aspect-[16/10] w-full bg-gray-100">
-        {foto ? (
-          <Image src={foto} alt={hotelNombre} fill sizes="(max-width:1024px) 50vw, 33vw" className="object-cover transition-transform group-hover:scale-[1.03]" unoptimized />
-        ) : (
-          <div className="flex h-full w-full items-center justify-center text-sm text-gray-300">Sin foto</div>
-        )}
+    // Tarjeta = contenedor + un solo botón de enlace estirado (z-10) que abre las opciones;
+    // las flechas del carrusel (z-20) son hermanas de ese botón, nunca hijas: sin botones anidados.
+    <div className="group relative flex flex-col overflow-hidden rounded-2xl border border-gray-200 bg-white text-left transition-all hover:-translate-y-1 hover:shadow-[0_20px_48px_rgba(0,0,0,0.14)] hover:border-[var(--brand-accent)]">
+      <button
+        type="button"
+        onClick={onClick}
+        aria-label={`Ver opciones de ${hotelNombre}`}
+        className="absolute inset-0 z-10 cursor-pointer rounded-2xl focus-visible:outline focus-visible:outline-2 focus-visible:outline-[var(--brand-accent)]"
+      />
+      <CarruselFotoHotel
+        fotos={fotos ?? (foto ? [foto] : [])}
+        alt={hotelNombre}
+        className="object-cover transition-transform group-hover:scale-[1.03]"
+      >
         {badgeEsquina}
-      </div>
+      </CarruselFotoHotel>
       <div className="flex flex-1 flex-col p-4">
         <div className="flex flex-wrap items-center gap-2">
           <span className="font-semibold text-gray-800">{hotelNombre}</span>
@@ -503,7 +509,7 @@ function TarjetaHotelCard({
           </span>
         </div>
       </div>
-    </button>
+    </div>
   );
 }
 
@@ -541,6 +547,7 @@ export function VistaBooking({
   filas,
   subtabsSlot = null,
   fotosPorHotel = {},
+  galeriaPorHotel = {},
   fotosPorServicio = {},
   cuposPorBloqueo = {},
   origenPorBloqueo = {},
@@ -575,6 +582,8 @@ export function VistaBooking({
   // a `subtabsBotones`, más abajo).
   subtabsSlot?: HTMLDivElement | null;
   fotosPorHotel?: Record<number, string>;
+  /** Todas las fotos por hotel (portada primero) para el carrusel de las tarjetas. */
+  galeriaPorHotel?: Record<number, string[]>;
   fotosPorServicio?: Record<number, string>;
   cuposPorBloqueo?: Record<number, number>;
   origenPorBloqueo?: Record<number, string>;
@@ -2001,6 +2010,7 @@ export function VistaBooking({
               r={t.r}
               recomendada={t.recomendada === true}
               foto={fotosPorHotel[t.r.hotelId] ?? null}
+              fotos={galeriaPorHotel[t.r.hotelId]}
               info={infoPorHotel[t.r.hotelId]}
               descripcionPorPaquete={descripcionPorPaquete}
               addonsPorPaquete={addonsPorPaquete}
@@ -2013,6 +2023,7 @@ export function VistaBooking({
               key={t.key}
               onClick={() => abrirHotel(t.card)}
               foto={t.card.foto}
+              fotos={galeriaPorHotel[t.card.hotelId]}
               hotelNombre={t.card.hotelNombre}
               destino={t.card.destino}
               estrellas={t.card.estrellas}
@@ -2060,6 +2071,7 @@ export function VistaBooking({
               opciones={t.hotel.opcionesBusqueda}
               recomendada={t.recomendada === true}
               foto={fotosPorHotel[t.hotel.hotelId] ?? null}
+              fotos={galeriaPorHotel[t.hotel.hotelId]}
               videoUrl={infoPorHotel[t.hotel.hotelId]?.video_url ?? null}
               estrellas={infoPorHotel[t.hotel.hotelId]?.estrellas ?? null}
               clasificacion={infoPorHotel[t.hotel.hotelId]?.clasificacion ?? null}
@@ -2092,6 +2104,7 @@ export function VistaBooking({
               key={t.key}
               onClick={() => setModalBernalo(t.hotel)}
               foto={fotosPorHotel[t.hotel.hotelId] ?? null}
+              fotos={galeriaPorHotel[t.hotel.hotelId]}
               hotelNombre={t.hotel.hotelNombre}
               destino={t.hotel.destino}
               estrellas={infoPorHotel[t.hotel.hotelId]?.estrellas ?? null}
@@ -2417,7 +2430,7 @@ function HotelModal({
 // precio/disponibilidad: eso sigue siendo EXCLUSIVO de `opcionSel.precioVenta`/
 // `cotizarAlojamientoBernaloPublico` (revalidado en `agregar()`).
 export function TarjetaUnidadBusqueda({
-  hotel, opciones, recomendada = false, foto, videoUrl, estrellas, clasificacion, adultsOnly, petFriendly, tieneCondicion, descripcion, ubicacion,
+  hotel, opciones, recomendada = false, foto, fotos, videoUrl, estrellas, clasificacion, adultsOnly, petFriendly, tieneCondicion, descripcion, ubicacion,
   descripcionPorPaquete, addonsPorPaquete, catInicial, alimInicial, opcionesPermitidas,
 }: {
   hotel: { hotelId: number; hotelNombre: string; destino: string | null };
@@ -2427,6 +2440,8 @@ export function TarjetaUnidadBusqueda({
    * "<paquete>") — nunca qué se muestra ni qué se cobra. */
   recomendada?: boolean;
   foto: string | null;
+  /** Galería completa (portada primero); sin ella, solo `foto`. */
+  fotos?: string[];
   videoUrl?: string | null;
   estrellas: number | null;
   clasificacion: string | null;
@@ -2729,14 +2744,11 @@ export function TarjetaUnidadBusqueda({
   return (
     <>
     <div className="flex flex-col overflow-hidden rounded-2xl border border-gray-200 bg-white">
-      <div className="relative aspect-[16/10] w-full bg-gray-100">
-        {videoUrl ? (
-          <BackgroundVideo url={videoUrl} overlay={0} />
-        ) : foto ? (
-          <Image src={foto} alt={hotel.hotelNombre} fill sizes="(max-width:1024px) 50vw, 33vw" className="object-cover" unoptimized />
-        ) : (
-          <div className="flex h-full w-full items-center justify-center text-sm text-gray-300">Sin foto</div>
-        )}
+      <CarruselFotoHotel
+        fotos={fotos ?? (foto ? [foto] : [])}
+        alt={hotel.hotelNombre}
+        fondo={videoUrl ? <BackgroundVideo url={videoUrl} overlay={0} /> : undefined}
+      >
         {/* Etiqueta de OFERTA (hallazgo 2) — el nombre del paquete va SIEMPRE,
             recomendada o no: `opcionesBusqueda` son solo las de ESTE paquete
             (la tarjeta es una oferta hotel+paquete), así que el nombre es
@@ -2748,7 +2760,7 @@ export function TarjetaUnidadBusqueda({
         >
           Disponible para tus fechas
         </span>
-      </div>
+      </CarruselFotoHotel>
       <div className="flex flex-1 flex-col gap-3 p-4">
         <div>
           <div className="flex flex-wrap items-center gap-2">

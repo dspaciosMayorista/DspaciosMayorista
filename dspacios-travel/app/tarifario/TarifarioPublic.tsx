@@ -311,6 +311,7 @@ export function TarifarioPublic({
   origenPorBloqueo = {},
   origenPorSalida = {},
   fotosPorHotel = {},
+  galeriaPorHotel = {},
   fotosPorServicio = {},
   ventanaPorPaquete = {},
   infoPorHotel = {},
@@ -337,6 +338,7 @@ export function TarifarioPublic({
   // Origen real de cada salida dinámica (`salida_id` → IATA): filtro Origen de "Paquetes" en Vista Booking.
   origenPorSalida?: Record<number, string>;
   fotosPorHotel?: Record<number, string>;
+  galeriaPorHotel?: Record<number, string[]>;
   fotosPorServicio?: Record<number, string>;
   ventanaPorPaquete?: Record<number, { min: string | null; max: string | null }>;
   infoPorHotel?: InfoHotel;
@@ -593,7 +595,7 @@ export function TarifarioPublic({
       {vista === "programas" ? (
         <PorProgramas programas={programas} puedeReservar={puedeReservar} />
       ) : vista === "booking" ? (
-        <VistaBooking filas={filasFiltradas} subtabsSlot={subtabsSlot} fotosPorHotel={fotosPorHotel} fotosPorServicio={fotosPorServicio} cuposPorBloqueo={cuposPorBloqueo} origenPorBloqueo={origenPorBloqueo} origenPorSalida={origenPorSalida} puedeReservar={puedeReservar} ventanaPorPaquete={ventanaPorPaquete} infoPorHotel={infoPorHotel} planesInfo={planesInfo} capPorHotel={capPorHotel} soloAcom={fAcom || null} filtroTexto={q} filtroCategoria={fCat} filtroRegimen={fReg} descripcionPorPaquete={descripcionPorPaquete} filasAddon={filasAddon} hotelesBernalo={fAcom ? [] : hotelesBernaloFiltrados} hotelIdsUnidadAutoritativos={hotelIdsUnidadAutoritativos} prioridadesRecomendados={prioridadesRecomendados} condicionPorOferta={condicionPorOferta} politicaPorOferta={politicaPorOferta} restriccionPorPaquete={restriccionPorPaquete} />
+        <VistaBooking filas={filasFiltradas} subtabsSlot={subtabsSlot} fotosPorHotel={fotosPorHotel} galeriaPorHotel={galeriaPorHotel} fotosPorServicio={fotosPorServicio} cuposPorBloqueo={cuposPorBloqueo} origenPorBloqueo={origenPorBloqueo} origenPorSalida={origenPorSalida} puedeReservar={puedeReservar} ventanaPorPaquete={ventanaPorPaquete} infoPorHotel={infoPorHotel} planesInfo={planesInfo} capPorHotel={capPorHotel} soloAcom={fAcom || null} filtroTexto={q} filtroCategoria={fCat} filtroRegimen={fReg} descripcionPorPaquete={descripcionPorPaquete} filasAddon={filasAddon} hotelesBernalo={fAcom ? [] : hotelesBernaloFiltrados} hotelIdsUnidadAutoritativos={hotelIdsUnidadAutoritativos} prioridadesRecomendados={prioridadesRecomendados} condicionPorOferta={condicionPorOferta} politicaPorOferta={politicaPorOferta} restriccionPorPaquete={restriccionPorPaquete} />
       ) : (
         <>
           {/* Tabs de módulos */}
