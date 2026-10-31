@@ -10,6 +10,7 @@ import type { DescripcionPaqueteRaw } from "./descripcionPaquete.ts";
 // testeable con ejecución real (pruebas/tarifarioDatos.test.ts, defecto
 // "EQUIVALENCIA FUNCIONAL" de la revisión posterior).
 import { createAdminClient } from "../supabase/admin.ts";
+import { adjuntarComposicionIncluidos } from "./composicionIncluidos.ts";
 import { filtrarTarifarioVencidas } from "./vigencia.ts";
 import { cargarFilasTarifarioPaginado } from "./paginacion.ts";
 import { hoyISO } from "../calc/paquetes.ts";
@@ -498,6 +499,9 @@ export async function cargarDatosTarifario(
   const msAux = _msAux0 + (performance.now() - _tAux1);
   registrarEtapa(flujo, flujoId, "datos_auxiliares", Math.round(msAux), _huboErrorAux ? "error" : "ok");
   registrarDatoPagina(flujo, flujoId, "datos_auxiliares", `filas_visibles=${filasVisibles.length} filas_addon=${filasAddon.length} consultas=${_consultasAux}`);
+
+  // «Incluye» por salida: qué servicios incluidos se omiten en cada salida (sin tarifa vigente). Un error deja el «Incluye» manual sin presentar (falla cerrado).
+  await adjuntarComposicionIncluidos(admin as unknown as Parameters<typeof adjuntarComposicionIncluidos>[0], descripcionPorPaquete, (m) => registrarErrorTecnico(flujo, flujoId, "datos_auxiliares", "error_composicion_incluidos", { message: m }));
 
   return {
     ok: true,

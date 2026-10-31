@@ -53,6 +53,8 @@ import {
 import type { ResultadoValido, SnapshotAlojamiento } from "@/lib/calc/unidadAlojamiento";
 import { type HabitacionOcupacionValidada } from "@/lib/reservar/ocupacionPorHabitacion";
 import { normalizarCategoriaServicio, type ServicioGrupoIncluido } from "@/lib/reservar/serviciosPaquete";
+import { cargarVigenciasServicios } from "@/lib/reservar/temporadasServicio";
+import { incluidoEnEstadia, incluidoSeOmite } from "@/lib/calc/servicioVigencias";
 import { empaquetadoVigente, hoyBogota } from "@/lib/reservar/origen";
 import type { DecisionesOcupacionBernalo, SalidaSeleccionadaBernaloEntrada } from "@/lib/reservar/solicitudAlojamientoBernalo";
 
@@ -340,39 +342,45 @@ export async function computarReservaBernalo(
   // (antes quedaba `null` en el flujo público 3E — regla del encargo:
   // "proveedores e ids se resuelven server-side"). ────────────────────────
   type ProvFact = { nombre: string | null; aplica_retencion: boolean | null; pct_retencion: number | null } | null;
-  const incluidos = (serviciosSel ?? []).filter((s) => s.incluido);
+  const incluidosCatalogo = (serviciosSel ?? []).filter((s) => s.incluido);
+  // SIN «GENERAL»: el precio por persona y los rangos de grupo de cada incluido salen de la vigencia del día de ida (misma regla que la publicación y la cotización
+  // del resto de rutas). Sin vigencia, sin precio/rango o con franjas horarias → mensaje legible, antes de numerar.
+  const rvInc = await cargarVigenciasServicios(admin, incluidosCatalogo.map((s) => ({
+    id: s.servicio_id, nombre: (s.servicios_adicionales as unknown as { nombre?: string | null } | null)?.nombre ?? `Servicio #${s.servicio_id}`,
+  })));
+  if (!rvInc.ok) return { ok: false, codigo: "error_interno", mensaje: "No se pudo consultar la tarifa de un servicio incluido." };
+  const resueltos = new Map<number, Extract<ReturnType<typeof incluidoEnEstadia>, { ok: true }>>();
+  const omitidosSinTarifa = new Set<number>();
+  for (const s of incluidosCatalogo) {
+    const sv = rvInc.porServicio.get(s.servicio_id);
+    const modoInc = s.modo === "grupo" ? "grupo" : "persona";
+    const inc = sv ? incluidoEnEstadia(sv, modoInc, fechaIda, fechaIda) : null;
+    if (!inc) return { ok: false, codigo: "configuracion_incompleta", mensaje: `El servicio incluido #${s.servicio_id} no se encontró en el catálogo.` };
+    if (!inc.ok) {
+      // Sin tarifa vigente en esa fecha: el servicio se OMITE (ni PVP, ni costo, ni CxP, ni «Incluye»); el hotel se ofrece igual.
+      if (incluidoSeOmite(inc)) { omitidosSinTarifa.add(s.servicio_id); continue; }
+      return { ok: false, codigo: "configuracion_incompleta", mensaje: inc.error };
+    }
+    resueltos.set(s.servicio_id, inc);
+  }
+  const incluidos = incluidosCatalogo.filter((s) => !omitidosSinTarifa.has(s.servicio_id));
   const serviciosPersona: ServicioIncluidoPersonaBernalo[] = incluidos
     .filter((s) => s.modo === "persona")
     .map((s) => {
       const sa = s.servicios_adicionales as unknown as {
-        nombre: string; categoria: string; precio_persona: number | null; liquidacion: string | null;
+        nombre: string; categoria: string; liquidacion: string | null;
         moneda?: string | null; proveedor_id: number | null; proveedores: ProvFact;
       } | null;
       return {
         servicioId: s.servicio_id,
         nombre: sa?.nombre ?? `Servicio #${s.servicio_id}`,
         categoria: normalizarCategoriaServicio(sa?.categoria),
-        precioPersonaNeto: sa?.precio_persona ?? null,
+        precioPersonaNeto: resueltos.get(s.servicio_id)?.netoPersona ?? null,
         liquidacion: sa?.liquidacion ?? null,
         proveedorId: sa?.proveedor_id ?? null,
       };
     });
 
-  const idsGrupo = incluidos.filter((s) => s.modo === "grupo").map((s) => s.servicio_id);
-  const rangosGrupoPorServicio = new Map<number, { pax_desde: number; pax_hasta: number; precio: number }[]>();
-  if (idsGrupo.length) {
-    const { data: gr, error: eGr } = await admin
-      .from("servicio_tarifa_pax")
-      .select("servicio_id, pax_desde, pax_hasta, precio")
-      .eq("temporada", "GENERAL")
-      .in("servicio_id", idsGrupo);
-    if (eGr) return { ok: false, codigo: "error_interno", mensaje: "No se pudo consultar la tarifa de un servicio incluido." };
-    for (const g of gr ?? []) {
-      const arr = rangosGrupoPorServicio.get(g.servicio_id) ?? [];
-      arr.push({ pax_desde: g.pax_desde, pax_hasta: g.pax_hasta, precio: g.precio });
-      rangosGrupoPorServicio.set(g.servicio_id, arr);
-    }
-  }
   const serviciosGrupo: ServicioGrupoIncluido[] = incluidos
     .filter((s) => s.modo === "grupo")
     .map((s) => {
@@ -385,7 +393,7 @@ export async function computarReservaBernalo(
         categoria: normalizarCategoriaServicio(sa?.categoria),
         liquidacion: sa?.liquidacion ?? null,
         proveedorId: sa?.proveedor_id ?? null,
-        rangos: rangosGrupoPorServicio.get(s.servicio_id) ?? [],
+        rangos: resueltos.get(s.servicio_id)?.rangos ?? [],
       };
     });
 

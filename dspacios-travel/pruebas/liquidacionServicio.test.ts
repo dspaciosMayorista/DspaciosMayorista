@@ -34,6 +34,8 @@ const PAQUETE: FilaPaquete = { id: 10, pct_mk: 0.2 };
 const ARMADO: FilaArmadoServicio = { paquete_id: 10, servicio_id: 1, modo: "persona" };
 const SERVICIO: FilaServicioAdicional = { id: 1, precio_persona: 100_000, recargo_individual: 5_000, liquidacion: null, moneda: "COP" };
 const FECHA = new Date("2026-10-01T00:00:00");
+// Sin tarifa «GENERAL» (retirada): el precio sale de una vigencia que cubra la fecha del viaje.
+const TEMP_VIGENTE = { servicio_id: 1, nombre: "OCTUBRE", fecha_inicio: "2026-09-01", fecha_fin: "2026-12-31", compra_inicio: null, compra_fin: null, prioridad: 1, precio_persona: 100_000, recargo_individual: 5_000 };
 
 function baseInput(overrides: Partial<Parameters<typeof resolverLiquidacionServicioPuntual>[0]> = {}) {
   return {
@@ -43,7 +45,7 @@ function baseInput(overrides: Partial<Parameters<typeof resolverLiquidacionServi
     armado: ARMADO, armadoError: null,
     servicio: SERVICIO, servicioError: null,
     grupos: [], gruposError: null,
-    temporadas: [], temporadasError: null,
+    temporadas: [TEMP_VIGENTE], temporadasError: null,
     ...overrides,
   };
 }
@@ -125,11 +127,14 @@ describe("6. Servicio genuinamente no disponible se distingue de un fallo técni
     assert.equal(r.ok, false);
     if (!r.ok) assert.equal(r.tipo, "no_disponible");
   });
-  test("sin tarifa vigente para esas fechas/pax (modo persona sin precio_persona) → no_disponible", () => {
+  test("sin vigencia para esas fechas (aunque el servicio tenga precio general) o vigencia sin precio_persona → no_disponible", () => {
     const servicioSinTarifa: FilaServicioAdicional = { id: 1, precio_persona: null, recargo_individual: 0, liquidacion: null, moneda: "COP" };
-    const r = resolverLiquidacionServicioPuntual(baseInput({ servicio: servicioSinTarifa }));
+    const r = resolverLiquidacionServicioPuntual(baseInput({ servicio: servicioSinTarifa, temporadas: [{ ...TEMP_VIGENTE, precio_persona: null }] }));
     assert.equal(r.ok, false);
     if (!r.ok) assert.equal(r.tipo, "no_disponible");
+    // Sin vigencia que cubra la fecha, el precio general del servicio (100.000) ya no se usa como respaldo.
+    const sinVigencia = resolverLiquidacionServicioPuntual(baseInput({ temporadas: [] }));
+    assert.ok(!sinVigencia.ok && sinVigencia.tipo === "no_disponible" && sinVigencia.codigo === "sin_tarifa_vigente");
   });
 });
 
@@ -150,7 +155,7 @@ describe("7. nombre/destino/descripción del par (nunca precio) — cambiarlos n
 describe("8. El resultado puntual coincide BYTE A BYTE con el camino de búsqueda (buscarReceptivos) para el mismo par/fechas/pax", () => {
   test("misma fórmula compartida (calcularPrecioConModoYMarkup): ambos caminos, con los mismos datos reales, dan el mismo objeto", () => {
     const ctx = construirContextoServicios({
-      paquetes: [PAQUETE], armado: [ARMADO], servicios: [SERVICIO], grupos: [], temporadas: [],
+      paquetes: [PAQUETE], armado: [ARMADO], servicios: [SERVICIO], grupos: [], temporadas: [TEMP_VIGENTE],
     });
     // Camino "búsqueda" (tolerante, pero con datos completos no hay diferencia).
     const rBusqueda = calcularResultadoServicio(PAR, ctx, FECHA, 1, 2);
@@ -164,7 +169,7 @@ describe("8. El resultado puntual coincide BYTE A BYTE con el camino de búsqued
   test("ambos caminos usan la misma función base — cambiar el markup cambia el resultado de los dos por igual", () => {
     const paqueteOtroMarkup: FilaPaquete = { id: 10, pct_mk: 0.35 };
     const ctx = construirContextoServicios({
-      paquetes: [paqueteOtroMarkup], armado: [ARMADO], servicios: [SERVICIO], grupos: [], temporadas: [],
+      paquetes: [paqueteOtroMarkup], armado: [ARMADO], servicios: [SERVICIO], grupos: [], temporadas: [TEMP_VIGENTE],
     });
     const rBusqueda = calcularResultadoServicio(PAR, ctx, FECHA, 1, 2);
     const rCheckout = resolverLiquidacionServicioPuntual(baseInput({ paquete: paqueteOtroMarkup }));
@@ -175,12 +180,12 @@ describe("8. El resultado puntual coincide BYTE A BYTE con el camino de búsqued
 
 describe("9. calcularPrecioConModoYMarkup nunca decide defaults por sí sola — exige modo y pctMk explícitos", () => {
   test("modo 'grupo' sin rangos de grupo configurados → null (no inventa un precio por persona)", () => {
-    const ctx = construirContextoServicios({ paquetes: [PAQUETE], armado: [], servicios: [SERVICIO], grupos: [], temporadas: [] });
+    const ctx = construirContextoServicios({ paquetes: [PAQUETE], armado: [], servicios: [SERVICIO], grupos: [], temporadas: [TEMP_VIGENTE] });
     const r = calcularPrecioConModoYMarkup(PAR, ctx, FECHA, 1, 2, "grupo", 0.2);
     assert.equal(r, null);
   });
   test("0% de markup explícito SÍ se respeta (es una decisión real del llamador, no un default oculto)", () => {
-    const ctx = construirContextoServicios({ paquetes: [PAQUETE], armado: [], servicios: [SERVICIO], grupos: [], temporadas: [] });
+    const ctx = construirContextoServicios({ paquetes: [PAQUETE], armado: [], servicios: [SERVICIO], grupos: [], temporadas: [TEMP_VIGENTE] });
     const r = calcularPrecioConModoYMarkup(PAR, ctx, FECHA, 1, 2, "persona", 0);
     assert.ok(r);
     if (r) assert.equal(r.total, 200_000); // 2 pax × 100000, sin margen, sin recargo (pax≠1)
@@ -282,7 +287,7 @@ describe("13. Ronda 5: resolverLiquidacionServicioPuntual — markup inválido n
 
 describe("14. Ronda 5: calcularPrecioConModoYMarkup — defensa final, total/costoNeto finitos/seguros/positivos", () => {
   test("pctMk inválido pasado directo (bypass de validarPctMarkup) igual se rechaza — defensa en profundidad", () => {
-    const ctx = construirContextoServicios({ paquetes: [PAQUETE], armado: [ARMADO], servicios: [SERVICIO], grupos: [], temporadas: [] });
+    const ctx = construirContextoServicios({ paquetes: [PAQUETE], armado: [ARMADO], servicios: [SERVICIO], grupos: [], temporadas: [TEMP_VIGENTE] });
     assert.equal(calcularPrecioConModoYMarkup(PAR, ctx, FECHA, 1, 2, "persona", NaN), null);
     assert.equal(calcularPrecioConModoYMarkup(PAR, ctx, FECHA, 1, 2, "persona", Infinity), null);
     assert.equal(calcularPrecioConModoYMarkup(PAR, ctx, FECHA, 1, 2, "persona", 1), null);
@@ -318,33 +323,33 @@ describe("15. Ronda 5: resolverConfiguracionServicio — validador COMPARTIDO po
 
 describe("16. Ronda 5: calcularResultadoServicio (buscarReceptivos) — controles negativos, nunca publica un precio con configuración inválida", () => {
   test("falta paquete (solo armado+servicio) → null, se omite el par, nunca modo 'persona' con 0% implícito", () => {
-    const ctx = construirContextoServicios({ paquetes: [], armado: [ARMADO], servicios: [SERVICIO], grupos: [], temporadas: [] });
+    const ctx = construirContextoServicios({ paquetes: [], armado: [ARMADO], servicios: [SERVICIO], grupos: [], temporadas: [TEMP_VIGENTE] });
     assert.equal(calcularResultadoServicio(PAR, ctx, FECHA, 1, 2), null);
   });
   test("falta armado (solo paquete+servicio) → null, se omite el par, nunca cae a modo 'persona'", () => {
-    const ctx = construirContextoServicios({ paquetes: [PAQUETE], armado: [], servicios: [SERVICIO], grupos: [], temporadas: [] });
+    const ctx = construirContextoServicios({ paquetes: [PAQUETE], armado: [], servicios: [SERVICIO], grupos: [], temporadas: [TEMP_VIGENTE] });
     assert.equal(calcularResultadoServicio(PAR, ctx, FECHA, 1, 2), null);
   });
   test("armado con modo inválido → null, se omite (nunca se muestra un precio calculado como 'persona')", () => {
-    const ctx = construirContextoServicios({ paquetes: [PAQUETE], armado: [{ ...ARMADO, modo: "otro" }], servicios: [SERVICIO], grupos: [], temporadas: [] });
+    const ctx = construirContextoServicios({ paquetes: [PAQUETE], armado: [{ ...ARMADO, modo: "otro" }], servicios: [SERVICIO], grupos: [], temporadas: [TEMP_VIGENTE] });
     assert.equal(calcularResultadoServicio(PAR, ctx, FECHA, 1, 2), null);
   });
   test("paquete con markup inválido (NaN) → null, se omite (nunca se muestra un precio sin margen real)", () => {
-    const ctx = construirContextoServicios({ paquetes: [{ id: 10, pct_mk: NaN }], armado: [ARMADO], servicios: [SERVICIO], grupos: [], temporadas: [] });
+    const ctx = construirContextoServicios({ paquetes: [{ id: 10, pct_mk: NaN }], armado: [ARMADO], servicios: [SERVICIO], grupos: [], temporadas: [TEMP_VIGENTE] });
     assert.equal(calcularResultadoServicio(PAR, ctx, FECHA, 1, 2), null);
   });
   test("paquete con markup >= 1 → null, se omite (nunca se sustituye por 0% en silencio)", () => {
-    const ctx = construirContextoServicios({ paquetes: [{ id: 10, pct_mk: 1 }], armado: [ARMADO], servicios: [SERVICIO], grupos: [], temporadas: [] });
+    const ctx = construirContextoServicios({ paquetes: [{ id: 10, pct_mk: 1 }], armado: [ARMADO], servicios: [SERVICIO], grupos: [], temporadas: [TEMP_VIGENTE] });
     assert.equal(calcularResultadoServicio(PAR, ctx, FECHA, 1, 2), null);
   });
   test("markup 0% explícito y válido SÍ funciona (no se penaliza un 0% real)", () => {
-    const ctx = construirContextoServicios({ paquetes: [{ id: 10, pct_mk: 0 }], armado: [ARMADO], servicios: [SERVICIO], grupos: [], temporadas: [] });
+    const ctx = construirContextoServicios({ paquetes: [{ id: 10, pct_mk: 0 }], armado: [ARMADO], servicios: [SERVICIO], grupos: [], temporadas: [TEMP_VIGENTE] });
     const r = calcularResultadoServicio(PAR, ctx, FECHA, 1, 2);
     assert.ok(r);
     if (r) assert.equal(r.total, 200_000);
   });
   test("configuración completamente válida (paquete+armado+servicio, modo/markup correctos) SÍ publica un precio", () => {
-    const ctx = construirContextoServicios({ paquetes: [PAQUETE], armado: [ARMADO], servicios: [SERVICIO], grupos: [], temporadas: [] });
+    const ctx = construirContextoServicios({ paquetes: [PAQUETE], armado: [ARMADO], servicios: [SERVICIO], grupos: [], temporadas: [TEMP_VIGENTE] });
     const r = calcularResultadoServicio(PAR, ctx, FECHA, 1, 2);
     assert.ok(r);
     if (r) assert.equal(r.total, 250_000); // 2 pax × 100000, marcado al 20%

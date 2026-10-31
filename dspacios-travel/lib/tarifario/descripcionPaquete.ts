@@ -11,11 +11,26 @@
 // dangerouslySetInnerHTML).
 // ─────────────────────────────────────────────────────────────────────────
 
+import { presentarIncluye, type ServicioIncluidoRef } from "./incluyePorSalida.ts";
+
+/**
+ * Servicios incluidos del paquete y en qué salidas se OMITEN (sin tarifa vigente en la fecha de ida). Sirve para derivar el «Incluye» de cada salida sin tocar el texto
+ * guardado. `omitidosPorFecha` solo conoce las salidas fijas (bloqueo/dinámico); sin fecha conocida (porción por fechas) se resuelve en vivo con la búsqueda.
+ */
+export type ComposicionIncluidos = {
+  servicios: ServicioIncluidoRef[];
+  omitidosPorFecha: Record<string, number[]>;
+};
+
 export type DescripcionPaqueteRaw = {
   incluye: string | null;
   noIncluye: string | null;
   tarifasEspeciales: string | null;
   condicionesComerciales: string | null;
+  /** Presente cuando el paquete tiene servicios incluidos y se calculó su composición por salida. */
+  composicion?: ComposicionIncluidos;
+  /** El cálculo de la composición falló: el texto «Incluye» no se puede validar contra lo que se cobra y NO se presenta (falla cerrado). */
+  composicionNoDisponible?: boolean;
 };
 
 export type SeccionDescripcion = { titulo: string; items: string[] };
@@ -32,6 +47,33 @@ export function lineasDeTexto(texto: string | null | undefined): string[] {
     .split(/\r\n|\r|\n/)
     .map((l) => l.trim())
     .filter((l) => l.length > 0);
+}
+
+/**
+ * Descripción para UNA salida: el texto «Incluye» guardado se conserva, pero se presenta sin afirmar lo que esa salida no incluye ni cobra (ver incluyePorSalida.ts).
+ * `omitidos`/`efectivos` salen de la composición del paquete para `fechaIda`; sin fecha (vista general) se retira todo servicio omitido en ALGUNA salida, para no prometerlo
+ * donde falta. Devuelve además el aviso para el operador (el cliente no lo ve).
+ */
+export function descripcionParaSalida(
+  d: DescripcionPaqueteRaw | undefined | null, fechaIda?: string | null,
+): { descripcion: DescripcionPaqueteRaw | undefined; aviso: string | null } {
+  if (!d) return { descripcion: undefined, aviso: null };
+  if (d.composicionNoDisponible) return { descripcion: { ...d, incluye: null, composicion: undefined }, aviso: "No se pudo validar el «Incluye» contra los servicios cobrados: no se presenta." };
+  const c = d.composicion;
+  if (!c) return { descripcion: d, aviso: null };
+  const idsOmitidos = new Set<number>(fechaIda && c.omitidosPorFecha[fechaIda] ? c.omitidosPorFecha[fechaIda] : fechaIda ? [] : Object.values(c.omitidosPorFecha).flat());
+  return descripcionConServicios(d, c.servicios.filter((s) => !idsOmitidos.has(s.servicioId)), c.servicios.filter((s) => idsOmitidos.has(s.servicioId)));
+}
+
+/** Igual que `descripcionParaSalida` pero con la composición ya resuelta (búsqueda en vivo por fechas). */
+export function descripcionConServicios(
+  d: DescripcionPaqueteRaw, efectivos: readonly ServicioIncluidoRef[], omitidos: readonly ServicioIncluidoRef[],
+): { descripcion: DescripcionPaqueteRaw; aviso: string | null } {
+  const { composicion: _c, composicionNoDisponible: _n, ...base } = d;
+  void _c; void _n;
+  if (!omitidos.length) return { descripcion: base, aviso: null };
+  const pres = presentarIncluye({ lineas: lineasDeTexto(d.incluye), efectivos, omitidos });
+  return { descripcion: { ...base, incluye: pres.lineas.length ? pres.lineas.join("\n") : null }, aviso: pres.aviso };
 }
 
 /** Las 4 secciones a renderizar, en orden fijo, SOLO las que tienen contenido. */

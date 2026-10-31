@@ -1,5 +1,6 @@
 "use client";
 
+import { hayHoraPendiente, MENSAJE_HORA_PENDIENTE } from "@/lib/cart/horaPendiente";
 import { BuscarTitular } from "@/components/personas/BuscarTitular";
 import { Suspense, lazy, useEffect, useMemo, useState, useSyncExternalStore, useTransition } from "react";
 import Link from "next/link";
@@ -214,6 +215,7 @@ export default function CheckoutPage() {
           // Hotel al que pertenece (servicio elegido en su tarjeta) — el
           // servidor lo valida y cotiza el conjunto completo o nada.
           hotelItemId: it.hotelItemId ?? null,
+          ...(it.horas && (it.horas.llegada || it.horas.salida) ? { horas: it.horas } : {}),
         })),
         // #64: precio de venta declarado por el asesor; el servidor lo vuelve a validar y exige sesión interna.
         ...(manualItems.length ? { manuales: manualItems.map(vueloParaEnviar).map((m) => ({ clase: m.clase, nombre: m.nombre, origen: m.origen, destino: m.destino, fechaIda: m.fechaIda, fechaRegreso: m.fechaRegreso, pax: m.pax, precio: m.precio, moneda: m.moneda, impuestoNoComisionable: m.impuestoNoComisionable, tramo: m.tramo, hotelRef: m.hotelRef, horaIda: m.horaIda ?? null, horaRegreso: m.horaRegreso ?? null })) } : {}),
@@ -258,6 +260,7 @@ export default function CheckoutPage() {
 
   function enviarComparativa() {
     setErr("");
+    if (hayHoraPendiente(items)) { setErr(MENSAJE_HORA_PENDIENTE); return; }
     if (!c.nombres.trim() || !c.apellidos.trim()) { setErr("Ingresa nombres y apellidos."); return; }
     if (!c.telefono.trim()) { setErr("El teléfono / WhatsApp es obligatorio."); return; }
     if (asistenciaB2B && !aliadoElegido) { setErr("Elige un aliado de la lista (agencia o freelance) de la venta B2B."); return; }
@@ -347,6 +350,7 @@ export default function CheckoutPage() {
 
   function enviar() {
     setErr("");
+    if (hayHoraPendiente(items)) { setErr(MENSAJE_HORA_PENDIENTE); return; }
     setAvisoTerminos("");
     setPrecioCambio(null);
     if (!c.nombres.trim() || !c.apellidos.trim()) { setErr("Ingresa nombres y apellidos."); return; }
@@ -515,15 +519,16 @@ export default function CheckoutPage() {
                         </>
                       )}
                     </div>
-                    <div className="text-right">
+                    <div className="shrink-0 text-right">
                       <div className="text-sm font-semibold" style={{ color: "var(--brand-primary)" }}>{formatImporte(it.precio, monedaDeItem(it))}</div>
+                      {it.tipo === "tour" && it.referencial && <div className="text-[11px] font-medium text-amber-700">Falta la hora del traslado</div>}
                       <button type="button" onClick={() => remove(it.id)} className="text-xs text-gray-400 hover:text-red-500">Quitar</button>
                     </div>
                   </li>
                 ))}
               </ul>
               <div className="mt-3 space-y-2 border-t border-gray-100 pt-3">
-                {!vista.crear && <TotalesPorMoneda totales={totales} etiqueta={`Total${hayB2B ? " (PVP)" : " estimado"}`} />}
+                {!vista.crear && <TotalesPorMoneda totales={totales} etiqueta={items.some((i) => i.tipo === "tour" && i.referencial) ? "Total referencial, falta horario del traslado" : `Total${hayB2B ? " (PVP)" : " estimado"}`} />}
                 {!vista.crear && <AvisoMonedas totales={totales} prevision={prevision} />}
                 {verComision && !baseComision && (
                   <p className="text-xs text-gray-500">La comisión se calculará sobre la cotización que se genere (una sola moneda).</p>
@@ -737,8 +742,9 @@ export default function CheckoutPage() {
                 </p>
               )}
               {ctx?.error && <p role="alert" className="mt-3 rounded-lg bg-red-50 px-3 py-2 text-sm text-red-600">{ctx.error}</p>}
+              {hayHoraPendiente(items) && <p role="alert" data-testid="hora-pendiente" className="mt-3 rounded-lg bg-amber-50 px-3 py-2 text-sm text-amber-800">{MENSAJE_HORA_PENDIENTE}</p>}
               {err && <p role="alert" data-testid="error-checkout" className="mt-3 rounded-lg bg-red-50 px-3 py-2 text-sm text-red-600">{err}</p>}
-              <button type="button" onClick={vista.crear ? enviarComparativa : enviar} disabled={pending || !!ctx?.error || sinDesglose}
+              <button type="button" onClick={vista.crear ? enviarComparativa : enviar} disabled={pending || !!ctx?.error || sinDesglose || hayHoraPendiente(items)}
                 className="mt-4 w-full rounded-lg px-4 py-3 text-sm font-semibold text-white disabled:opacity-50" style={{ backgroundColor: "var(--brand-primary)" }}>
                 {pending ? "Generando…" : vista.crear ? "Generar cotización comparativa" : precioCambio ? "Confirmar con el nuevo precio y enviar" : "Generar cotización y enviar solicitud"}
               </button>

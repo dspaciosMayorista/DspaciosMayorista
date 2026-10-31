@@ -504,7 +504,7 @@ describe("ciclo 5: plan B2B congelado y vigencias de compra dentro de la aceptac
     assert.match(computo, /recogerVigenciaMenor63\("nino", precioFinalTemporadasMenores\)/);
     assert.match(computo, /recogerVigenciaMenor63\("nino2", precioFinalTemporadasMenores\)/);
     assert.match(computo, /recogerVigenciaMenor63\("infante", precioFinalTemporadasMenores\)/);
-    assert.match(computo, /vigencias63\.push\(\{ origen: "servicio", ref: `\$\{id\}\|\$\{nombre\}`/);
+    assert.match(computo, /vigencias63\.push\(\{ origen: "servicio", ref: `\$\{id\}\|\$\{q\.temporada\}`/);
     assert.match(computo, /oferta63: oferta63 \? \{ \.\.\.oferta63, monedaHotel: monedaHotelOrigen63, monedaServicios: monedaServicios63 \} : null, vigencias63 \}/);
   });
 });

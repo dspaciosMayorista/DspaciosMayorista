@@ -29,8 +29,16 @@ export default async function ServiciosPage() {
     sb.from("proveedores").select("id, nombre").eq("tipo", "servicios").order("nombre"),
     sb.from("destinos").select("id, nombre, codigo_iata").order("nombre"),
     sb.from("rangos_edad").select("id, denominacion, edad_min, edad_max").order("edad_min"),
-    sb.from("servicio_temporadas").select("id, servicio_id, nombre, fecha_inicio, fecha_fin, compra_inicio, compra_fin, prioridad, precio_persona, precio_infante, recargo_individual").order("prioridad", { ascending: false }),
+    sb.from("servicio_temporadas").select("id, servicio_id, nombre, fecha_inicio, fecha_fin, compra_inicio, compra_fin, prioridad, precio_persona, precio_infante, recargo_individual, servicio_suplementos_franja(id, hora_desde, hora_hasta, tramo, tipo, valor, cobro)").order("prioridad", { ascending: false }),
   ]);
+  // Si la migración 255 aún no está aplicada la lectura con franjas falla: se vuelve a leer sin ellas y el editor avisa (no se rompe la página).
+  let temporadasLeidas = temporadasRaw as unknown as Array<Record<string, unknown> & { id: number; servicio_id: number; nombre: string }> | null;
+  let franjasDisponibles = true;
+  if (!temporadasLeidas) {
+    franjasDisponibles = false;
+    const { data: sinFranjas } = await sb.from("servicio_temporadas").select("id, servicio_id, nombre, fecha_inicio, fecha_fin, compra_inicio, compra_fin, prioridad, precio_persona, precio_infante, recargo_individual").order("prioridad", { ascending: false });
+    temporadasLeidas = sinFranjas as unknown as typeof temporadasLeidas;
+  }
   const servicios = (serviciosRaw ?? []) as unknown as Parameters<typeof ServiciosClient>[0]["servicios"];
 
   // Rangos por grupo de cada TEMPORADA (servicio_tarifa_pax.temporada != GENERAL),
@@ -45,10 +53,14 @@ export default async function ServiciosPage() {
   }
 
   // Agrupa las temporadas por servicio (con sus rangos por grupo) para el cliente.
-  type TempRow = NonNullable<typeof temporadasRaw>[number] & { grupos: Tier[] };
+  type TempRow = Parameters<typeof ServiciosClient>[0]["temporadas"][number][number];
   const temporadasPorServicio: Record<number, TempRow[]> = {};
-  for (const t of temporadasRaw ?? []) {
-    (temporadasPorServicio[t.servicio_id] ??= []).push({ ...t, grupos: gruposTemp[`${t.servicio_id}|${t.nombre}`] ?? [] });
+  for (const t of temporadasLeidas ?? []) {
+    const { servicio_suplementos_franja, ...resto } = t as typeof t & { servicio_suplementos_franja?: TempRow["franjas"] };
+    (temporadasPorServicio[t.servicio_id] ??= []).push({
+      ...(resto as unknown as TempRow), grupos: gruposTemp[`${t.servicio_id}|${t.nombre}`] ?? [],
+      franjas: franjasDisponibles ? (servicio_suplementos_franja ?? []).map((f) => ({ ...f, valor: Number(f.valor) })) : null,
+    });
   }
 
   return (

@@ -25,7 +25,7 @@ import {
   conPrioridadOptimista, sinPrioridadOptimista, reconciliarPrioridades, prioridadEfectivaDe, prioridadesOcupadasDe,
 } from "@/lib/tarifario/prioridadOptimista";
 import {
-  ETIQUETA_PESTANA, agruparPorHotel, estadoTarifarioVista, normalizarPestana, pestanasVisibles, servicioSeleccionable,
+  ETIQUETA_PESTANA, agruparPorHotel, estadoTarifarioVista, normalizarPestana, pestanasVisibles, servicioSeleccionable, tarifaBasePermanenteVendible, vigenciasVendibles,
   type ClaveEstadoTarifario, type PestanaId,
 } from "@/lib/paquetes/armadoPestanas";
 
@@ -46,7 +46,7 @@ type Empaquetado = {
   moneda?: string | null;
 };
 type Hotel = { id: number; nombre: string; zona: string | null; destino_id: number | null; moneda?: string | null };
-type Servicio = { id: number; nombre: string; precio_persona: number | null; destino_id: number | null; moneda?: string | null; servicio_tarifa_pax: { pax_desde: number }[] };
+type Servicio = { id: number; nombre: string; categoria?: string | null; precio_persona: number | null; destino_id: number | null; moneda?: string | null; servicio_tarifa_pax: { pax_desde: number; temporada?: string | null }[]; servicio_temporadas?: { nombre: string; fecha_inicio: string | null; fecha_fin: string | null; precio_persona: number | null }[] };
 type SelServicio = { servicio_id: number; modo: string; incluido: boolean };
 type SelVuelo = { bloqueo_id: number; aplica_mk: boolean; ta: number };
 type SelEmpaquetado = { empaquetado_id: number; aplica_mk: boolean; ta: number };
@@ -112,6 +112,8 @@ export function ArmadoClient(props: {
   pestanaInicial?: string | null;
   tarifarioEstado?: string | null;
   tarifarioError?: string | null;
+  /** Migración 256: qué se dejó de publicar por falta de vigencia (incluidos por salida, opcionales ocultos/parciales). */
+  tarifarioDiagnostico?: string | null;
   tarifarioPublicable?: boolean | null;
 }) {
   const router = useRouter();
@@ -246,7 +248,7 @@ export function ArmadoClient(props: {
   // siempre (`setServicio`), uno tras otro, y al final se refresca UNA vez.
   const [guardandoServicios, startServicios] = useTransition();
   const [errServicios, setErrServicios] = useState("");
-  const serviciosSeleccionables = props.serviciosDisp.filter(servicioSeleccionable);
+  const serviciosSeleccionables = props.serviciosDisp.filter((s) => servicioSeleccionable(s));
   const nSeleccionablesMarcados = serviciosSeleccionables.filter((s) => servSel.has(s.id)).length;
   // UNA acción de servidor para todo el lote (antes: una por servicio, en serie) y UN refresh al final.
   const [avisoServicios, setAvisoServicios] = useState<{ tono: "ok" | "aviso"; texto: string } | null>(null);
@@ -305,7 +307,8 @@ export function ArmadoClient(props: {
   const estadoTarifario = estadoTarifarioVista(
     props.tarifarioEstado ?? (props.resultado.length ? "listo" : "pendiente"),
     props.tarifarioError,
-    props.tarifarioPublicable
+    props.tarifarioPublicable,
+    props.tarifarioDiagnostico
   );
 
   return (
@@ -1235,8 +1238,17 @@ function ServicioRow({
   const checked = sel !== undefined;
   const modo = sel?.modo;
   const incluido = sel?.incluido ?? false;
-  const tienePersona = s.precio_persona != null;
-  const tieneGrupo = (s.servicio_tarifa_pax ?? []).length > 0;
+  // Solo cuentan las vigencias vendibles: el precio/rangos GENERAL no se vende (retirado en la 255).
+  const vendibles = vigenciasVendibles(s);
+  // Asistencia médica sin vigencias: su tarifa base (precio por persona / rangos GENERAL) vale en cualquier fecha.
+  const basePermanente = tarifaBasePermanenteVendible(s);
+  const preciosVigencia = basePermanente
+    ? (s.precio_persona != null ? [Number(s.precio_persona)] : [])
+    : vendibles.filter((v) => v.precio_persona != null).map((v) => Number(v.precio_persona));
+  const tienePersona = preciosVigencia.length > 0;
+  const tieneGrupo = basePermanente
+    ? (s.servicio_tarifa_pax ?? []).some((g) => (g.temporada ?? "GENERAL") === "GENERAL")
+    : vendibles.some((v) => (s.servicio_tarifa_pax ?? []).some((g) => g.temporada === v.nombre));
 
   function save(nextChecked: boolean, nextModo: "persona" | "grupo", nextIncluido: boolean) {
     start(async () => {
@@ -1259,12 +1271,12 @@ function ServicioRow({
         <div className="flex-1">
           <p className="text-sm font-medium text-gray-800">{s.nombre}</p>
           <p className="text-xs text-gray-500">
-            {tienePersona ? `Persona: ${formatMoneda(s.precio_persona!, s.moneda)}` : ""}
+            {tienePersona ? `Persona desde ${formatMoneda(Math.min(...preciosVigencia), s.moneda)}` : ""}
             {tienePersona ? <span className="ml-1 rounded bg-gray-100 px-1.5 py-0.5 text-[10px] font-semibold text-gray-600">{(s.moneda ?? "COP").toUpperCase()}</span> : null}
             {tienePersona && tieneGrupo ? " · " : ""}
             {tieneGrupo ? "Grupo: por rangos de pax" : ""}
             {!servicioSeleccionable(s) && (
-              <span className="text-amber-700">Sin tarifa configurada: no entra en «Seleccionar todos»</span>
+              <span className="text-amber-700">Sin vigencia de tarifa vendible: no entra en «Seleccionar todos»</span>
             )}
           </p>
           {checked && (

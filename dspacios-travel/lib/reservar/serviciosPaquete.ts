@@ -158,7 +158,7 @@ export type ServicioGrupoIncluido = {
   categoria: CategoriaServicio;
   liquidacion: string | null;
   proveedorId: number | null;
-  /** Rangos de `servicio_tarifa_pax` (temporada GENERAL) del servicio. */
+  /** Rangos de la vigencia aplicable (incluidoEnEstadia), nunca de la tarifa GENERAL. */
   rangos: { pax_desde: number; pax_hasta: number; precio: number }[];
 };
 
