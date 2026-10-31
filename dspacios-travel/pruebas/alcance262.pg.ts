@@ -87,7 +87,7 @@ const { guardarServiciosContrato } = await import("../app/(dashboard)/dashboard/
 // Paquete de SERVICIOS 6201, markup 20 %: PVP = ceil_mil(neto / 0.8). Vigencia ALTA 2030 en todos; sin GENERAL vendible.
 //  6201 traslado por persona: trayecto 100.000 · ida y regreso 170.000 por persona · franja 19:00–06:00 de 30.000 por GRUPO (tramo «ambos» = cada tramo)
 //  6202 traslado por GRUPO: trayecto 1–4 = 200.000, 5–8 = 300.000 · ida y regreso 1–4 = 350.000, 5–8 = 500.000
-//  6203 traslado con SOLO precio de un trayecto (90.000/persona): ida y regreso no tiene tarifa propia
+//  6203 traslado con SOLO precio de un trayecto (90.000/persona) y SIN tarifa vigente (precio_persona NULL): ida y regreso no tiene precio propio ni tarifa que usar
 //  6204 traslado cuya única vigencia es GENERAL (no vendible)
 //  6205 LEGADO sin clasificar, 50.000/persona · 6206 tour clasificado «tour», 40.000/persona
 //  6207 sin clasificar al cotizar (se clasificará como traslado después) · 6208 traslado persona para el escenario «el precio cambió»
@@ -119,7 +119,7 @@ before(() => {
       (${S_PRE},  'Traslado anterior 262', 6201, 6201, 100000, 'tour_traslado', 'COP', 'persona', 'paquete', null),
       (${S_CAMB}, 'Traslado cambiante 262', 6201, 6201, 0, 'tour_traslado', 'COP', 'persona', 'paquete', 'traslado');
     insert into public.servicio_temporadas (id, servicio_id, nombre, fecha_inicio, fecha_fin, precio_persona) values
-      ${[S_TR, S_GR, S_SIN, S_LEG, S_TOUR, S_PRE, S_CAMB].map((s) => `(${ALTA(s)}, ${s}, 'ALTA', '2030-01-01', '2030-12-31', ${s === S_LEG ? 50000 : s === S_TOUR ? 40000 : s === S_PRE ? 100000 : 0})`).join(",")},
+      ${[S_TR, S_GR, S_SIN, S_LEG, S_TOUR, S_PRE, S_CAMB].map((s) => `(${ALTA(s)}, ${s}, 'ALTA', '2030-01-01', '2030-12-31', ${s === S_LEG ? 50000 : s === S_TOUR ? 40000 : s === S_PRE ? 100000 : s === S_SIN ? "null" : 0})`).join(",")},
       (${ALTA(S_GEN)}, ${S_GEN}, 'GENERAL', null, null, 80000);
     insert into public.servicio_precio_alcance (servicio_temporada_id, alcance, pax_desde, pax_hasta, precio) values
       (${ALTA(S_TR)}, 'trayecto', null, null, 100000), (${ALTA(S_TR)}, 'ida_regreso', null, null, 170000),
@@ -134,7 +134,7 @@ before(() => {
 });
 
 // ── utilidades ────────────────────────────────────────────────────────────
-const PAX = Array.from({ length: 9 }, (_, i) => ({ nombres: `Pax${i + 1}`, apellidos: "Prueba", tipoDoc: "CC", numeroDoc: `${1000 + i}`, fechaNacimiento: "1990-01-01", nacionalidad: "Colombiana", esInfante: false }));
+const PAX = Array.from({ length: 40 }, (_, i) => ({ nombres: `Pax${i + 1}`, apellidos: "Prueba", tipoDoc: "CC", numeroDoc: `${1000 + i}`, fechaNacimiento: "1990-01-01", nacionalidad: "Colombiana", esInfante: false }));
 const CLIENTE = { nombres: "Ana", apellidos: "Pérez", numeroDoc: "123", telefono: "3000000000", email: "ana@example.com" };
 type Res = { ok: boolean; error?: string; numeros?: string[] };
 const tour = (servicioId: number, pax: number, extra: Record<string, unknown> = {}) => ({ servicioId, paqueteId: PAQ, fechaIda: "2030-03-01", fechaRegreso: "2030-03-04", pax, ...extra });
@@ -277,7 +277,7 @@ describe("262 · publicación y búsqueda de receptivos", () => {
     const fuera = resDe(await buscar({ alcance: "llegada", pax: 9 }), S_GR);
     assert.equal(fuera?.total, 0, "9 pax: ningún rango cubre"); assert.ok(fuera?.sinTarifaAlcance, "explica que no hay tarifa");
     const sinIR = resDe(await buscar({ alcance: "ida_regreso" }), S_SIN);
-    assert.equal(sinIR?.total, 0, "sin precio propio de ida y regreso no se vende"); assert.ok(sinIR?.sinTarifaAlcance);
+    assert.equal(sinIR?.total, 0, "sin precio propio de ida y regreso NI tarifa vigente (NULL) no se vende"); assert.ok(sinIR?.sinTarifaAlcance);
     assert.equal(resDe(await buscar({ alcance: "llegada" }), S_SIN)?.total, pvp(180000), "el trayecto sí tiene precio");
   });
   test("B5 alcance en un servicio que no es traslado: no aplica (tour/legado no se afectan ni aceptan alcance)", async () => {
@@ -333,7 +333,7 @@ describe("262 · cotización y conversión REAL a contrato y CxP", () => {
     console.log("      9 pax en grupo →", c.ok ? "COTIZÓ (!)" : c.error);
     assert.equal(c.ok, false, "ningún rango cubre 9 pasajeros: no se cotiza");
   });
-  test("V5 alcance SIN tarifa propia (ida y regreso del servicio con un solo precio) y GENERAL: no se cotiza", async () => {
+  test("V5 ida y regreso SIN precio propio ni tarifa vigente (solo hay un trayecto; la vigencia no tiene tarifa) y GENERAL: no se cotiza", async () => {
     const a = await cotizar([tour(S_SIN, 2, { alcance: "ida_regreso" })]); console.log("      sin tarifa ida_regreso →", a.ok ? "COTIZÓ (!)" : a.error);
     assert.equal(a.ok, false);
     const g = await cotizar([tour(S_GEN, 2, { alcance: "llegada" })]); console.log("      solo GENERAL →", g.ok ? "COTIZÓ (!)" : g.error);
@@ -1208,5 +1208,119 @@ describe("262 · reintento del cron sobre CxP con el texto ANTERIOR (no reconoci
     assert.equal(b.estado, "pendiente"); assert.equal(b.md5cxp, a.md5cxp); assert.match(b.error, /texto anterior del carrito/);
     assert.equal(sql(`select count(*) from public.cxp_pagos where cuenta_por_pagar_id = ${f.id}`), "1", "el pago sigue");
     assert.deepEqual(c.cxp.map((x) => x.id), b.cxp.map((x) => x.id), "el segundo cron no cambia nada");
+  });
+});
+
+// ═════════════════════════════════════════════════════════════════════════════
+// #423 · «Ida y regreso» con la TARIFA que la vigencia YA tiene (por persona o por rango de grupo), sin copiar datos ni recargar nada.
+//  6240 traslado por GRUPO: SOLO la tarifa de siempre (servicio_tarifa_pax) 1–4 = 120.000 · 5–12 = 200.000 · 13–19 = 280.000 · 20–40 = 400.000, sin ningún precio de alcance.
+//       Suplemento nocturno por rango (proveedor de la captura): 45.000 / 80.000 / 130.000 / 190.000 por tramo.
+//  6241 traslado por PERSONA: ALTA (ene–may) 85.000 + recargo individual 10.000 + trayecto propio 60.000 · BAJA (jun–dic) tarifa 95.000 pero ida y regreso PROPIO 120.000.
+//  6242 traslado por GRUPO con los mismos rangos y precios propios: ida y regreso 5–12 = 190.000 (reemplaza) · un trayecto 1–4 = 70.000.
+const S_TV_G = 6240, S_TV_P = 6241, S_TV_X = 6242, BAJA_P = 636241;
+before(() => {
+  const rangos = (s: number) => [[1, 4, 120000], [5, 12, 200000], [13, 19, 280000], [20, 40, 400000]].map(([d, h, p]) => `(${s}, ${d}, ${h}, ${p}, 'ALTA')`).join(", ");
+  sql(`
+    insert into public.servicios_adicionales (id, nombre, proveedor_id, destino_id, precio_persona, categoria, moneda, tipo_tarifa, liquidacion, tipo_receptivo) values
+      (${S_TV_G}, 'Traslado tarifa vigente grupo 262', 6201, 6201, 0, 'tour_traslado', 'COP', 'grupo', 'paquete', 'traslado'),
+      (${S_TV_P}, 'Traslado tarifa vigente persona 262', 6201, 6201, 0, 'tour_traslado', 'COP', 'persona', 'paquete', 'traslado'),
+      (${S_TV_X}, 'Traslado tarifa vigente con propios 262', 6201, 6201, 0, 'tour_traslado', 'COP', 'grupo', 'paquete', 'traslado');
+    insert into public.servicio_temporadas (id, servicio_id, nombre, fecha_inicio, fecha_fin, precio_persona, recargo_individual) values
+      (${ALTA(S_TV_G)}, ${S_TV_G}, 'ALTA', '2030-01-01', '2030-12-31', null, 0),
+      (${ALTA(S_TV_P)}, ${S_TV_P}, 'ALTA', '2030-01-01', '2030-05-31', 85000, 10000),
+      (${BAJA_P}, ${S_TV_P}, 'BAJA', '2030-06-01', '2030-12-31', 95000, 0),
+      (${ALTA(S_TV_X)}, ${S_TV_X}, 'ALTA', '2030-01-01', '2030-12-31', null, 0);
+    insert into public.servicio_tarifa_pax (servicio_id, pax_desde, pax_hasta, precio, temporada) values ${rangos(S_TV_G)}, ${rangos(S_TV_X)};
+    insert into public.servicio_precio_alcance (servicio_temporada_id, alcance, pax_desde, pax_hasta, precio) values
+      (${ALTA(S_TV_X)}, 'ida_regreso', 5, 12, 190000), (${ALTA(S_TV_X)}, 'trayecto', 1, 4, 70000),
+      (${ALTA(S_TV_P)}, 'trayecto', null, null, 60000), (${BAJA_P}, 'ida_regreso', null, null, 120000);
+    insert into public.servicio_suplementos_franja (servicio_temporada_id, hora_desde, hora_hasta, tramo, tipo, valor, cobro, pax_desde, pax_hasta) values
+      (${ALTA(S_TV_G)}, '19:00', '06:00', 'ambos', 'monto', 45000, 'grupo', 1, 4), (${ALTA(S_TV_G)}, '19:00', '06:00', 'ambos', 'monto', 80000, 'grupo', 5, 12),
+      (${ALTA(S_TV_G)}, '19:00', '06:00', 'ambos', 'monto', 130000, 'grupo', 13, 19), (${ALTA(S_TV_G)}, '19:00', '06:00', 'ambos', 'monto', 190000, 'grupo', 20, 40);
+    insert into public.armado_servicios (paquete_id, servicio_id, modo, incluido) values (${PAQ}, ${S_TV_G}, 'grupo', false), (${PAQ}, ${S_TV_P}, 'persona', false), (${PAQ}, ${S_TV_X}, 'grupo', false);
+  `);
+});
+
+describe("262 · #423 ida y regreso con la tarifa que la vigencia ya tiene (sin recargar nada)", () => {
+  // [pax, tarifa del rango, suplemento por tramo del rango] en los bordes de cada rango de la captura; ambos tramos nocturnos (H_NOCHE): neto = tarifa + 2 × suplemento.
+  // Una consulta admite como máximo 24 pax (MAX_PAX_CONSULTA, regla de producto existente): el borde alto alcanzable del rango 20–40 es 24; 25–40 y 41 (fuera de rango) se prueban en las capas puras.
+  const casos = ([[1, 4, 120000, 45000], [5, 12, 200000, 80000], [13, 19, 280000, 130000], [20, 24, 400000, 190000]] as const)
+    .flatMap(([d, h, base, sup]) => [d, h].map((pax) => ({ pax, base, sup, neto: base + 2 * sup })));
+  const marzo = { fechaIda: "2030-03-01", fechaRegreso: "2030-03-04" }, julio = { fechaIda: "2030-07-01", fechaRegreso: "2030-07-04" };
+  /** Un mismo importe en los seis canales: búsqueda, cotización (lo que el carrito congela), conversión (venta/ítem), costo de la línea y CxP enlazada. */
+  async function mismoImporte(s: number, pax: number, neto: number, extra: Record<string, unknown>, horas: Record<string, string>) {
+    const etiqueta = `servicio ${s}, ${pax} pax`;
+    const busq = resDe(await buscar({ ...extra, alcance: "ida_regreso", pax, horas }), s);
+    assert.equal(busq?.total, pvp(neto), `búsqueda · ${etiqueta}`); assert.equal(busq?.sinTarifaAlcance, undefined, `búsqueda sin aviso de «sin tarifa» · ${etiqueta}`);
+    const id = await cotizarOk([tour(s, pax, { ...extra, alcance: "ida_regreso", horas })]);
+    assert.equal(tourCot(id).precio, busq?.total, `cotización == búsqueda · ${etiqueta}`);
+    const r = await convertir(id, 1, pax); assert.equal(r.ok, true, `${etiqueta}: ${r.error}`);
+    const n = r.numeros![0];
+    assert.equal(precioVenta(n), pvp(neto), `venta · ${etiqueta}`); assert.match(itemDe(n), new RegExp(`\\|${pvp(neto)}$`), `ítem · ${etiqueta}`);
+    assert.match(cxpDe(n), new RegExp(`\\|${neto}\\|${s}\\|COP$`), `CxP · ${etiqueta}`);
+    verificarEnlace(n, id, [{ s, alcance: "ida_regreso", costo: neto }]);
+    return n;
+  }
+
+  test("T1 la búsqueda OFRECE ida y regreso aunque no haya ningún precio de un trayecto; y un trayecto exige su precio propio aunque la vigencia tenga tarifa", async () => {
+    await generar();
+    const pub = sql(`select string_agg(servicio_id::text, ',' order by servicio_id) from (select distinct servicio_id from public.tarifario_resultado_publicable where paquete_id = ${PAQ} and modulo = 'servicios') x`);
+    for (const s of [S_TV_G, S_TV_P, S_TV_X]) assert.ok(pub.split(",").includes(String(s)), `el servicio ${s} se publica sin precios de un trayecto: ${pub}`);
+    const ofrece = resDe(await buscar({ alcance: "ida_regreso", pax: 3, horas: H_DIA }), S_TV_G);
+    assert.ok(ofrece && ofrece.total === pvp(120000), "ida y regreso se ofrece con la tarifa vigente");
+    const trayecto = resDe(await buscar({ alcance: "llegada", pax: 3, horas: H_DIA }), S_TV_G);
+    assert.equal(trayecto?.total, 0, "un trayecto NO sale de la tarifa de ida y regreso"); assert.ok(trayecto?.sinTarifaAlcance);
+  });
+
+  test("T2 rangos 1–4 / 5–12 / 13–19 / 20–40 (bordes) con suplemento nocturno por rango: búsqueda = cotización = venta = costo = CxP", async () => {
+    for (const c of casos) await mismoImporte(S_TV_G, c.pax, c.neto, {}, H_NOCHE);
+    // de día: solo la tarifa del rango, sin suplemento
+    await mismoImporte(S_TV_G, 8, 200000, {}, H_DIA);
+    // un tramo nocturno: un solo suplemento (el del rango)
+    await mismoImporte(S_TV_G, 14, 280000 + 130000, {}, H_MIXTA);
+  });
+
+  test("T3 precio explícito de ida y regreso manda en su rango; los otros rangos usan la tarifa; el trayecto propio no interfiere ni se deriva", async () => {
+    await mismoImporte(S_TV_X, 8, 190000, {}, H_DIA);   // explícito 5–12 reemplaza el 200.000
+    await mismoImporte(S_TV_X, 3, 120000, {}, H_DIA);   // sin propio en 1–4: tarifa vigente (no el trayecto de 70.000)
+    await mismoImporte(S_TV_X, 15, 280000, {}, H_DIA);
+    const ll = resDe(await buscar({ alcance: "llegada", pax: 3, horas: H_DIA }), S_TV_X);
+    assert.equal(ll?.total, pvp(70000), "el trayecto propio 1–4 se cobra tal cual");
+    const id = await cotizarOk([tour(S_TV_X, 3, { alcance: "llegada", horas: H_DIA })]); assert.equal(tourCot(id).precio, pvp(70000));
+    const sinPropio = resDe(await buscar({ alcance: "llegada", pax: 8, horas: H_DIA }), S_TV_X);
+    assert.equal(sinPropio?.total, 0, "un trayecto de 8 pax no tiene precio propio aunque ida y regreso sí se venda"); assert.ok(sinPropio?.sinTarifaAlcance);
+    assert.equal((await cotizar([tour(S_TV_X, 8, { alcance: "llegada", horas: H_DIA })])).ok, false);
+  });
+
+  test("T4 por persona con CAMBIO DE VIGENCIA: ALTA usa su tarifa (+ recargo de 1 pax); BAJA usa su precio propio; cada fecha con SU vigencia", async () => {
+    await mismoImporte(S_TV_P, 2, 170000, marzo, H_DIA);         // 2 × 85.000 (no 2 × el trayecto de 60.000)
+    await mismoImporte(S_TV_P, 1, 85000 + 10000, marzo, H_DIA);  // tarifa + recargo individual de la vigencia
+    await mismoImporte(S_TV_P, 2, 240000, julio, H_DIA);         // BAJA: propio 120.000 por persona (no la tarifa de 95.000)
+    await mismoImporte(S_TV_P, 1, 120000, julio, H_DIA);         // con precio propio no se suma recargo
+    assert.equal(resDe(await buscar({ ...marzo, alcance: "llegada", horas: H_DIA }), S_TV_P)?.total, pvp(2 * 60000), "el trayecto propio de ALTA");
+    const julioLlegada = resDe(await buscar({ ...julio, alcance: "llegada", horas: H_DIA }), S_TV_P);
+    assert.equal(julioLlegada?.total, 0, "BAJA no tiene precio propio de un trayecto"); assert.ok(julioLlegada?.sinTarifaAlcance);
+  });
+
+  test("T5 la tarifa vigente cambia después de cotizar: la conversión FALLA pidiendo recotizar y no escribe; al restaurarla, la misma cotización convierte con el mismo importe", async () => {
+    const id = await cotizarOk([tour(S_TV_P, 2, { alcance: "ida_regreso", horas: H_DIA })]);
+    assert.equal(tourCot(id).precio, pvp(170000));
+    // editar la tarifa de una vigencia deja el tarifario desactualizado (no vendible) hasta regenerarlo: la aplicación lo regenera al guardar el servicio
+    sql(`update public.servicio_temporadas set precio_persona = 90000 where id = ${ALTA(S_TV_P)}`); await generar();
+    await noEscribe("tarifa vigente cambiada", id, /cambió desde que se cotizó/);
+    sql(`update public.servicio_temporadas set precio_persona = 85000 where id = ${ALTA(S_TV_P)}`); await generar();
+    const r = await convertir(id); assert.equal(r.ok, true, r.error);
+    assert.match(cxpDe(r.numeros![0]), /\|170000\|6241\|COP$/);
+    verificarEnlace(r.numeros![0], id, [{ s: S_TV_P, alcance: "ida_regreso", costo: 170000 }]);
+  });
+
+  test("T6 sin precio propio NI tarifa vigente no se vende (y se explica); al volver la tarifa vuelve a venderse", async () => {
+    const guardado = sql(`select string_agg(pax_desde || ',' || pax_hasta || ',' || precio, ';') from public.servicio_tarifa_pax where servicio_id = ${S_TV_G}`);
+    sql(`delete from public.servicio_tarifa_pax where servicio_id = ${S_TV_G}`); await generar();
+    const r = resDe(await buscar({ alcance: "ida_regreso", pax: 3, horas: H_DIA }), S_TV_G);
+    assert.ok(r === undefined || (r.total === 0 && r.sinTarifaAlcance), "sin tarifa: no se vende");
+    assert.equal((await cotizar([tour(S_TV_G, 3, { alcance: "ida_regreso", horas: H_DIA })])).ok, false);
+    sql(`insert into public.servicio_tarifa_pax (servicio_id, pax_desde, pax_hasta, precio, temporada) select ${S_TV_G}, split_part(x, ',', 1)::int, split_part(x, ',', 2)::int, split_part(x, ',', 3)::numeric, 'ALTA' from unnest(string_to_array(${lit(guardado)}, ';')) x`); await generar();
+    await mismoImporte(S_TV_G, 3, 120000, {}, H_DIA);
   });
 });

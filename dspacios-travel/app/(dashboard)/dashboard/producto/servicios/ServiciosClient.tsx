@@ -478,7 +478,7 @@ function TemporadaFila({ t, onChanged, setErr }: { t: TemporadaServicio; onChang
         </>
       )}
       <FranjasTraslado temporadaId={t.id} franjas={t.franjas ?? null} moneda={undefined} onChanged={onChanged} setErr={setErr} />
-      <PreciosAlcanceEditor servicioId={t.servicio_id} temporadaId={t.id} nombre={t.nombre} />
+      <PreciosAlcanceEditor servicioId={t.servicio_id} temporadaId={t.id} nombre={t.nombre} tarifaVigente={{ persona: t.precio_persona, grupos: t.grupos ?? [] }} />
     </div>
   );
 }

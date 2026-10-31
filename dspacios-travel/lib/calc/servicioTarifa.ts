@@ -113,6 +113,8 @@ export type CostoNetoServicio =
       costoNeto: number;
       /** Tramos con franja cuya hora no se conoce: sus suplementos NO están sumados (solo ocurre con `permitirSinHora`). */
       pendientes: TramoTraslado[];
+      /** Solo con `alcance`: de dónde salió el neto. `tarifa_vigente` = «ida y regreso» sin precio propio, cobrado con la tarifa de la vigencia. */
+      origenPrecio?: "explicito" | "tarifa_vigente";
       /** Tramos que tienen franja en la vigencia aplicable (los que dependen de una hora). Vacío = el precio no depende del horario. */
       tramosConFranja: TramoTraslado[];
     }
@@ -136,9 +138,10 @@ export function costoNetoServicio(input: {
   hoy?: string;
   /**
    * (262) Alcance VENDIDO de un traslado (llegada | salida | ida_regreso). Con él, el neto sale de los precios PROPIOS del alcance de la vigencia aplicable
-   * (`preciosAlcancePorTemporada`, por nombre de vigencia): «un trayecto» e «ida y regreso» son filas independientes y NUNCA se deriva uno del otro. Sin
-   * precio del alcance pedido falla (`sin_precio_alcance`); no cae a `precio_persona` ni a los rangos de grupo. El recargo individual de la vigencia no se
-   * suma (el precio del alcance ya es el de cada pasajero) y el suplemento solo cuenta para los tramos de ese alcance. Ausente = comportamiento anterior.
+   * (`preciosAlcancePorTemporada`, por nombre de vigencia). «Un trayecto» exige su precio propio y NUNCA se deriva de «ida y regreso»: sin él falla
+   * (`sin_precio_alcance`). «Ida y regreso» usa su precio propio (persona o rango que cubra el pax) y, si no lo hay, la TARIFA de la propia vigencia (`precio_persona` o el
+   * rango de `grupos` de esa vigencia, con su recargo individual): el operador no tiene que recargarla. Con precio propio el recargo individual no se suma (el precio ya es el de
+   * cada pasajero). El suplemento por horario solo cuenta para los tramos de ese alcance. Ausente = comportamiento anterior.
    */
   alcance?: AlcanceVenta;
   preciosAlcancePorTemporada?: Map<string, readonly FilaPrecioAlcance[]>;
@@ -146,13 +149,22 @@ export function costoNetoServicio(input: {
   const porAlcance = input.alcance != null;
   const tramos = porAlcance ? tramosDeAlcance(input.alcance as AlcanceVenta) : input.tramos;
   let t: ReturnType<typeof resolverTarifaServicio>;
+  let origenPrecio: "explicito" | "tarifa_vigente" | undefined;
   if (porAlcance) {
     const rangos = input.temporadas.map((x) => toTemporadaRango(x));
     const nombre = rangos.length ? temporadaVigenteParaFecha(input.fecha, rangos, input.hoy ?? hoyISO()) : null;
     if (!nombre) return { ok: false, motivo: "sin_vigencia" };
-    const r = resolverPrecioAlcance({ filas: input.preciosAlcancePorTemporada?.get(nombre) ?? [], alcance: input.alcance as AlcanceVenta, modo: input.modo, pax: input.pax });
+    const vigencia = input.temporadas.find((x) => x.nombre === nombre);
+    const r = resolverPrecioAlcance({
+      filas: input.preciosAlcancePorTemporada?.get(nombre) ?? [], alcance: input.alcance as AlcanceVenta, modo: input.modo, pax: input.pax,
+      tarifaVigente: { precioPersona: vigencia?.precio_persona, grupos: input.grupos.filter((g) => g.temporada === nombre) },
+    });
     if (!r.ok) return { ok: false, motivo: r.motivo, detalle: r.detalle };
-    t = { ok: true, temporada: nombre, netoPersona: input.modo === "persona" ? r.neto : null, netoGrupo: input.modo === "grupo" ? r.neto : null, recargoIndividual: 0 };
+    origenPrecio = r.origen;
+    t = {
+      ok: true, temporada: nombre, netoPersona: input.modo === "persona" ? r.neto : null, netoGrupo: input.modo === "grupo" ? r.neto : null,
+      recargoIndividual: r.origen === "tarifa_vigente" ? Math.max(Number(vigencia?.recargo_individual) || 0, 0) : 0,
+    };
   } else {
     t = resolverTarifaServicio({ temporadas: input.temporadas, grupos: input.grupos, modo: input.modo, pax: input.pax, fecha: input.fecha, hoy: input.hoy });
   }
@@ -173,7 +185,7 @@ export function costoNetoServicio(input: {
   const netoSuplementos = suplementos.reduce((s, x) => s + x.neto, 0);
   const costoNeto = netoBase + recargo + netoSuplementos;
   if (!Number.isFinite(costoNeto) || costoNeto < 0) return { ok: false, motivo: "costo_invalido" };
-  return { ok: true, temporada: t.temporada, netoBase, recargoIndividual: recargo, suplementos, netoSuplementos, costoNeto, pendientes, tramosConFranja: tramosConFranja(franjas, tramos) };
+  return { ok: true, temporada: t.temporada, netoBase, recargoIndividual: recargo, suplementos, netoSuplementos, costoNeto, pendientes, tramosConFranja: tramosConFranja(franjas, tramos), ...(origenPrecio ? { origenPrecio } : {}) };
 }
 
 export { tramosConFranja };

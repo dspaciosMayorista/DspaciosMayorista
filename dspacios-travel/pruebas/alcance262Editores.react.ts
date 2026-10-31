@@ -111,7 +111,7 @@ test("GENERAL no admite precios por trayecto (histórico, no vendible)", async (
 
 test("precios: un trayecto e ida y regreso se guardan como filas INDEPENDIENTES con SU precio (80.000 ≠ 2 × 45.000)", async () => {
   const raiz = await montar(base({ clasif: { 1: { tipo_receptivo: "traslado" } } }), h(PreciosAlcanceEditor, { servicioId: 1, temporadaId: 10, nombre: "ALTA" }));
-  assert.match(raiz.textContent ?? "", /no se podrá vender por trayecto/);
+  assert.match(raiz.textContent ?? "", /sin precio propio no se podrá vender un solo trayecto/);
   await clic(boton(raiz, /Agregar precio/)); await clic(boton(raiz, /Agregar precio/));
   const precios = [...raiz.querySelectorAll('input[aria-label="Precio neto"]')];
   const alcances = [...raiz.querySelectorAll('select[aria-label="Alcance del precio"]')];
@@ -136,4 +136,43 @@ test("precios: rangos de pasajeros cruzados se rechazan en pantalla sin llamar a
   assert.equal(estado.llamadas.length, 1);
   assert.match(raiz.textContent ?? "", /se conservaron los anteriores/);
   assert.equal(estado.refrescos, 0, "un fallo no recarga");
+});
+
+const TARIFA_PERSONA = { persona: 85000, grupos: [] };
+const TARIFA_RANGOS = { persona: null, grupos: [{ precio: 120000 }, { precio: 200000 }, { precio: 280000 }, { precio: 400000 }] };
+const MENSAJE = "Ida y regreso: usa las tarifas de esta vigencia; puedes definir un precio propio para reemplazarlas.";
+const traslado = (tarifaVigente: { persona: number | null; grupos: { precio: number }[] } | undefined, precios: Datos["precios"] = {}) =>
+  montar(base({ clasif: { 1: { tipo_receptivo: "traslado" } }, precios }), h(PreciosAlcanceEditor, { servicioId: 1, temporadaId: 10, nombre: "ALTA", tarifaVigente }));
+
+test("ida y regreso con la tarifa ya vigente (por persona o por rangos): el editor lo dice y NO muestra «sin tarifa»; un trayecto sigue pidiendo su precio", async () => {
+  for (const tv of [TARIFA_PERSONA, TARIFA_RANGOS, { persona: 0, grupos: [] }, { persona: null, grupos: [{ precio: 0 }] }]) {
+    const raiz = await traslado(tv);
+    assert.ok((raiz.textContent ?? "").includes(MENSAJE), "mensaje exacto");
+    assert.ok(raiz.querySelector('[data-testid="ida-regreso-tarifa-10"]'));
+    assert.equal(raiz.querySelector('[data-testid="ida-regreso-sin-tarifa-10"]'), null, "con tarifa vigente no se dice que no la tiene");
+    assert.doesNotMatch(raiz.textContent ?? "", /no tiene tarifa/);
+    assert.match(raiz.textContent ?? "", /Un trayecto: sin precio propio no se podrá vender un solo trayecto/);
+    await desmontar?.(); desmontar = undefined;
+  }
+});
+
+test("ida y regreso SIN tarifa vigente (NULL, ausente o inválida; el 0 SÍ es tarifa) y sin precio propio: avisa que hay que definir uno; con un precio propio de ida y regreso ya no avisa", async () => {
+  for (const tv of [{ persona: null, grupos: [] }, { persona: Number.NaN, grupos: [{ precio: Number.NaN }] }, undefined]) {
+    const raiz = await traslado(tv);
+    assert.ok(raiz.querySelector('[data-testid="ida-regreso-sin-tarifa-10"]'), "avisa");
+    assert.match(raiz.textContent ?? "", /esta vigencia no tiene tarifa; define un precio propio/);
+    assert.ok(!(raiz.textContent ?? "").includes(MENSAJE));
+    await desmontar?.(); desmontar = undefined;
+  }
+  const conPropio = await traslado({ persona: null, grupos: [] }, { 10: [{ alcance: "ida_regreso", pax_desde: null, pax_hasta: null, precio: 150000 }] });
+  assert.equal(conPropio.querySelector('[data-testid="ida-regreso-sin-tarifa-10"]'), null);
+  assert.ok(conPropio.querySelector('[data-testid="trayecto-sin-precio-10"]'), "el trayecto sí sigue sin precio propio");
+});
+
+test("con precio propio de un trayecto no se avisa del trayecto; con tarifa vigente y precio propio de ida y regreso el mensaje de reemplazo se mantiene", async () => {
+  const raiz = await traslado(TARIFA_RANGOS, { 10: [
+    { alcance: "trayecto", pax_desde: 1, pax_hasta: 4, precio: 70000 }, { alcance: "ida_regreso", pax_desde: 5, pax_hasta: 12, precio: 190000 },
+  ] });
+  assert.equal(raiz.querySelector('[data-testid="trayecto-sin-precio-10"]'), null);
+  assert.ok((raiz.textContent ?? "").includes(MENSAJE));
 });

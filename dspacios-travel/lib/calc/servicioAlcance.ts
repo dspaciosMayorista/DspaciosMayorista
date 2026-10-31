@@ -5,8 +5,10 @@
 // Reglas (decididas, no inferidas):
 //  - Tipo de receptivo: tour · traslado · asistencia_medica · combo. Un servicio sin clasificar (`null`, todo el legado) NO se trata como ninguno de ellos.
 //  - Un traslado se vende por UN TRAYECTO (de llegada o de salida) o por IDA Y REGRESO. Alcance vendido: llegada | salida | ida_regreso.
-//  - Cada vigencia (y cada rango de pasajeros) tiene un precio PROPIO para «un trayecto» y otro para «ida y regreso». Nunca se calcula uno a partir del
-//    otro: sin el precio del alcance pedido el resultado es `sin_precio_alcance`, no la mitad ni el doble del otro.
+//  - «Un trayecto» exige un precio PROPIO por vigencia (y por rango de pasajeros): sin él el resultado es `sin_precio_alcance`. Nunca se calcula a partir de «ida y regreso»
+//    (ni la mitad ni nada parecido).
+//  - «Ida y regreso» usa su precio propio si la vigencia lo define para el rango aplicable; si no, usa la TARIFA que ya tiene esa vigencia (por persona o por rango de
+//    grupo), que históricamente era el precio de ida y regreso. El operador no tiene que volver a cargarla.
 //  - Un combo DEBE declarar si contiene traslado y, si lo contiene, cómo se cobra ese componente (trayecto de llegada, trayecto de salida o ida y regreso).
 //  - El suplemento por franja horaria solo se aplica a los tramos vendidos (`tramosDeAlcance`).
 //
@@ -107,15 +109,25 @@ export function validarPreciosAlcance(filas: readonly FilaPrecioAlcance[]): stri
   return e;
 }
 
+/** Tarifa que la vigencia ya tiene (la de siempre: precio por persona y/o rangos de grupo). Es el precio de «ida y regreso» cuando la vigencia no define uno propio. */
+export type TarifaVigenteFila = { precioPersona: number | null | undefined; grupos: readonly { pax_desde: number; pax_hasta: number; precio: number }[] };
+// Misma regla que la tarifa de siempre (resolverTarifaServicio): 0 ES una tarifa válida (la venta exige después total > 0); «sin tarifa» es solo NULL, ausente o inválida (negativa, NaN).
+const precioValido = (n: number | null | undefined): n is number => n != null && Number.isFinite(Number(n)) && Number(n) >= 0;
+
 export type PrecioAlcanceResuelto =
-  | { ok: true; alcancePrecio: AlcancePrecio; /** Neto por persona (modo persona) o del grupo completo (modo grupo). */ neto: number }
+  | {
+      ok: true; alcancePrecio: AlcancePrecio; /** Neto por persona (modo persona) o del grupo completo (modo grupo). */ neto: number;
+      /** `explicito`: fila propia del alcance. `tarifa_vigente`: «ida y regreso» sin precio propio, cobrado con la tarifa de la vigencia. */
+      origen: "explicito" | "tarifa_vigente";
+    }
   | { ok: false; motivo: "sin_precio_alcance" | "precios_invalidos"; detalle: string };
 
 /**
- * Neto de la tarifa para el alcance VENDIDO. Persona: la fila del alcance sin rango. Grupo: la fila del alcance cuyo rango cubre `pax`. Si falta, falla:
- * jamás se usa el precio del otro alcance (ni mitad ni doble) ni el rango más cercano.
+ * Neto de la tarifa para el alcance VENDIDO. Persona: la fila del alcance sin rango. Grupo: la fila del alcance cuyo rango cubre `pax`. «Un trayecto» sin fila propia
+ * falla: jamás se usa el precio de ida y regreso (ni mitad ni doble) ni el rango más cercano. «Ida y regreso» sin fila propia usa `tarifaVigente` (precio por persona, o
+ * el rango de grupo que cubra `pax`); si tampoco hay, falla.
  */
-export function resolverPrecioAlcance(i: { filas: readonly FilaPrecioAlcance[]; alcance: AlcanceVenta; modo: "persona" | "grupo"; pax: number }): PrecioAlcanceResuelto {
+export function resolverPrecioAlcance(i: { filas: readonly FilaPrecioAlcance[]; alcance: AlcanceVenta; modo: "persona" | "grupo"; pax: number; tarifaVigente?: TarifaVigenteFila }): PrecioAlcanceResuelto {
   const errores = validarPreciosAlcance(i.filas);
   if (errores.length) return { ok: false, motivo: "precios_invalidos", detalle: errores[0] };
   const ap = alcancePrecioDe(i.alcance);
@@ -123,10 +135,27 @@ export function resolverPrecioAlcance(i: { filas: readonly FilaPrecioAlcance[]; 
   const fila = i.modo === "persona"
     ? i.filas.find((f) => f.alcance === ap && f.pax_desde == null)
     : i.filas.find((f) => f.alcance === ap && f.pax_desde != null && i.pax >= f.pax_desde && i.pax <= (f.pax_hasta as number));
-  if (!fila) {
+  if (fila) return { ok: true, alcancePrecio: ap, neto: fila.precio, origen: "explicito" };
+  const t = ap === "ida_regreso" ? i.tarifaVigente : undefined;
+  if (t) {
+    const g = i.modo === "grupo" ? t.grupos.find((x) => i.pax >= x.pax_desde && i.pax <= x.pax_hasta && precioValido(x.precio)) : undefined;
+    const neto = i.modo === "persona" ? (precioValido(t.precioPersona) ? Number(t.precioPersona) : null) : (g ? Number(g.precio) : null);
+    if (neto != null) return { ok: true, alcancePrecio: ap, neto, origen: "tarifa_vigente" };
     return { ok: false, motivo: "sin_precio_alcance", detalle: i.modo === "persona"
-      ? `Este traslado no tiene precio por persona para ${rotulo} en esta vigencia.`
-      : `Este traslado no tiene un rango de pasajeros para ${rotulo} que cubra ${i.pax} pasajero${i.pax === 1 ? "" : "s"} en esta vigencia.` };
+      ? "Este traslado no tiene precio por persona de ida y regreso ni tarifa por persona en esta vigencia."
+      : `Este traslado no tiene un rango de pasajeros de ida y regreso, ni en la tarifa de esta vigencia, que cubra ${i.pax} pasajero${i.pax === 1 ? "" : "s"}.` };
   }
-  return { ok: true, alcancePrecio: ap, neto: fila.precio };
+  return { ok: false, motivo: "sin_precio_alcance", detalle: i.modo === "persona"
+    ? `Este traslado no tiene precio por persona para ${rotulo} en esta vigencia.`
+    : `Este traslado no tiene un rango de pasajeros para ${rotulo} que cubra ${i.pax} pasajero${i.pax === 1 ? "" : "s"} en esta vigencia.` };
+}
+
+/**
+ * Rangos de grupo con que se OFRECE «ida y regreso» en una vigencia: los propios (explícitos) más los de la tarifa vigente que no se crucen con ninguno propio. En la venta
+ * manda el propio para el pax que cubra y, si no, el de la tarifa vigente (`resolverPrecioAlcance`).
+ * shortcut: un rango de la tarifa vigente que solo se cruza en parte con uno propio se omite de esta lista (solo informativa); el cobro por pax sí lo resuelve. Revisar si hace falta ofrecer el tramo no cruzado.
+ */
+export function rangosIdaRegresoEfectivos<T extends { pax_desde: number; pax_hasta: number }>(propios: readonly T[], vigente: readonly T[]): T[] {
+  const cruza = (a: T, b: T) => a.pax_desde <= b.pax_hasta && b.pax_desde <= a.pax_hasta;
+  return [...propios, ...vigente.filter((v) => !propios.some((p) => cruza(p, v)))].sort((a, b) => a.pax_desde - b.pax_desde);
 }

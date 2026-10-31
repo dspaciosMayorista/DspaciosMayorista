@@ -97,11 +97,16 @@ export type ResultadoServicio = {
 };
 
 // Lectura ÚNICA de vigencias + sus franjas (embebidas por la FK servicio_temporada_id): la usan la venta (cotizar.ts) y el costo (costosObligacionesCarrito.ts).
-export const SELECT_TEMPORADAS_CON_FRANJAS =
+// 262: una franja puede limitarse a un rango de pasajeros (pax_desde–pax_hasta). SIN esas columnas el motor leía cada franja como «para todos» y varios importes del mismo horario
+// (45.000 / 80.000 / 130.000 / 190.000 según el grupo) se solapaban. La versión «SIN_RANGO» solo se usa si la base todavía no tiene las columnas (temporadasServicio.ts reintenta).
+export const SELECT_TEMPORADAS_CON_FRANJAS_SIN_RANGO =
   "id, servicio_id, nombre, fecha_inicio, fecha_fin, compra_inicio, compra_fin, prioridad, precio_persona, precio_infante, recargo_individual, " +
   "servicio_suplementos_franja(id, hora_desde, hora_hasta, tramo, tipo, valor, cobro)";
+export const SELECT_TEMPORADAS_CON_FRANJAS =
+  "id, servicio_id, nombre, fecha_inicio, fecha_fin, compra_inicio, compra_fin, prioridad, precio_persona, precio_infante, recargo_individual, " +
+  "servicio_suplementos_franja(id, hora_desde, hora_hasta, tramo, tipo, valor, cobro, pax_desde, pax_hasta)";
 export type FilaTemporadaConFranjas = FilaTemporadaServicio & {
-  servicio_suplementos_franja?: { id: number; hora_desde: string; hora_hasta: string; tramo: string; tipo: string; valor: number | string; cobro: string }[] | null;
+  servicio_suplementos_franja?: { id: number; hora_desde: string; hora_hasta: string; tramo: string; tipo: string; valor: number | string; cobro: string; pax_desde?: number | null; pax_hasta?: number | null }[] | null;
 };
 export function separarFranjas(filas: FilaTemporadaConFranjas[]): { temporadas: FilaTemporadaServicio[]; franjas: FilaFranjaServicio[] } {
   const temporadas: FilaTemporadaServicio[] = [];
@@ -112,6 +117,7 @@ export function separarFranjas(filas: FilaTemporadaConFranjas[]): { temporadas: 
       franjas.push({
         id: f.id, servicio_temporada_id: t.id as number, hora_desde: f.hora_desde, hora_hasta: f.hora_hasta,
         tramo: f.tramo as FranjaSuplemento["tramo"], tipo: f.tipo as FranjaSuplemento["tipo"], valor: Number(f.valor), cobro: f.cobro as FranjaSuplemento["cobro"],
+        ...(f.pax_desde != null || f.pax_hasta != null ? { pax_desde: f.pax_desde ?? null, pax_hasta: f.pax_hasta ?? null } : {}),
       });
     }
   }

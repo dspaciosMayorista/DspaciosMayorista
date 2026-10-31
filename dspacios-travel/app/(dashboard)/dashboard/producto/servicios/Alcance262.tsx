@@ -102,11 +102,18 @@ function aFila(f: FilaForm): FilaPrecioAlcance {
   return { alcance: f.alcance, pax_desde: num(f.paxDesde), pax_hasta: num(f.paxHasta), precio: f.precio.trim() === "" ? Number.NaN : Number(f.precio) };
 }
 
+/** Tarifa que la vigencia ya tiene (la de siempre): es el precio de «ida y regreso» mientras no se defina uno propio. */
+export type TarifaVigente = { persona: number | null; grupos: readonly { precio: number }[] };
+const tarifaValida = (n: number | null | undefined): boolean => n != null && Number.isFinite(Number(n)) && Number(n) >= 0; // 0 es una tarifa válida; NULL/ausente/inválida = sin tarifa
+export const hayTarifaVigente = (t: TarifaVigente | undefined): boolean => !!t && (tarifaValida(t.persona) || t.grupos.some((g) => tarifaValida(g.precio)));
+export const MENSAJE_IDA_REGRESO_USA_TARIFA = "Ida y regreso: usa las tarifas de esta vigencia; puedes definir un precio propio para reemplazarlas.";
+
 /**
- * Precios propios de UNA vigencia: «un trayecto» (llegada o salida) e «ida y regreso» son filas independientes, cada una con su precio y, si el cobro es por
- * grupo, su rango de pasajeros. El sistema NUNCA calcula uno a partir del otro. Solo para servicios que llevan traslado; GENERAL no admite precios.
+ * Precios propios de UNA vigencia. «Un trayecto» (llegada o salida) exige un precio propio, con su rango de pasajeros si el cobro es por grupo, y NUNCA se calcula a partir de
+ * ida y regreso. «Ida y regreso» usa las tarifas que la vigencia ya tiene y solo necesita un precio propio si se quiere reemplazarlas. Solo para servicios que llevan traslado;
+ * GENERAL no admite precios.
  */
-export function PreciosAlcanceEditor({ servicioId, temporadaId, nombre }: { servicioId: number; temporadaId: number; nombre: string }) {
+export function PreciosAlcanceEditor({ servicioId, temporadaId, nombre, tarifaVigente }: { servicioId: number; temporadaId: number; nombre: string; tarifaVigente?: TarifaVigente }) {
   const router = useRouter();
   const { disponible, clasif, precios } = useAlcance262();
   const [filas, setFilas] = useState<FilaForm[]>((precios[temporadaId] ?? []).map(aForm));
@@ -119,6 +126,9 @@ export function PreciosAlcanceEditor({ servicioId, temporadaId, nombre }: { serv
     return <p className="mt-2 text-[11px] text-gray-500">GENERAL es la tarifa histórica y no se vende: los precios por trayecto se cargan en una vigencia con fechas.</p>;
   }
   const errores = validarPreciosAlcance(filas.map(aFila));
+  const usaTarifa = hayTarifaVigente(tarifaVigente);
+  const propioTrayecto = filas.some((f) => f.alcance === "trayecto");
+  const propioIdaRegreso = filas.some((f) => f.alcance === "ida_regreso");
   const set = (i: number, p: Partial<FilaForm>) => { setMsg(""); setFilas((fs) => fs.map((f, j) => (j === i ? { ...f, ...p } : f))); };
   function guardar() {
     if (errores.length) { setMsg(errores[0]); return; }
@@ -128,10 +138,13 @@ export function PreciosAlcanceEditor({ servicioId, temporadaId, nombre }: { serv
     <div className="mt-3 border-t border-gray-100 pt-2" data-testid={`precios-alcance-${temporadaId}`}>
       <p className="text-xs font-medium text-[var(--brand-primary)]">Precios por trayecto</p>
       <p className="mb-2 text-[11px] text-gray-500">
-        «Un trayecto» (llegada o salida) e «ida y regreso» tienen precio <b>propio</b>: no se calcula uno a partir del otro. Sin rango de pasajeros = precio por persona; con
+        «Un trayecto» (llegada o salida) exige un precio <b>propio</b>: no se calcula a partir de ida y regreso. Sin rango de pasajeros = precio por persona; con
         rango = precio del grupo completo.
       </p>
-      {filas.length === 0 && <p className="mb-2 text-[11px] text-amber-700">Sin precios por trayecto: este traslado no se podrá vender por trayecto en esta vigencia.</p>}
+      {usaTarifa
+        ? <p className="mb-2 rounded bg-sky-50 px-2 py-1 text-[11px] text-sky-800" data-testid={`ida-regreso-tarifa-${temporadaId}`}>{MENSAJE_IDA_REGRESO_USA_TARIFA}</p>
+        : !propioIdaRegreso && <p className="mb-2 text-[11px] text-amber-700" data-testid={`ida-regreso-sin-tarifa-${temporadaId}`}>Ida y regreso: esta vigencia no tiene tarifa; define un precio propio para poder venderlo.</p>}
+      {!propioTrayecto && <p className="mb-2 text-[11px] text-amber-700" data-testid={`trayecto-sin-precio-${temporadaId}`}>Un trayecto: sin precio propio no se podrá vender un solo trayecto en esta vigencia.</p>}
       <div className="space-y-2">
         {filas.map((f, i) => (
           <div key={i} className="grid grid-cols-2 items-end gap-2 sm:grid-cols-5">

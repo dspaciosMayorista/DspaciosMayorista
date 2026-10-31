@@ -6,7 +6,7 @@
 // que el resultado es el mismo que con la tabla vacía. Cualquier otro error se devuelve tal cual (la liquidación falla cerrada).
 // ─────────────────────────────────────────────────────────────────────────
 import type { createAdminClient } from "@/lib/supabase/admin";
-import { SELECT_TEMPORADAS_CON_FRANJAS, type FilaTemporadaConFranjas } from "@/lib/reservar/liquidacionServicio";
+import { SELECT_TEMPORADAS_CON_FRANJAS, SELECT_TEMPORADAS_CON_FRANJAS_SIN_RANGO, type FilaTemporadaConFranjas } from "@/lib/reservar/liquidacionServicio";
 import type { VigenciasServicio } from "@/lib/calc/servicioVigencias";
 import { leerAlcanceDeServicios } from "@/lib/servicios/alcanceContexto";
 import { NOMBRE_TARIFA_BASE, vigenciaBasePermanente, type BaseServicioCatalogo, type VigenciaBasePermanente } from "@/lib/calc/tarifaBasePermanente";
@@ -37,7 +37,9 @@ async function leerTemporadasCrudas(
   servicioIds: number[],
 ): Promise<{ data: FilaTemporadaConFranjas[]; error: { message: string } | null }> {
   if (!servicioIds.length) return { data: [], error: null };
-  const conFranjas = await admin.from("servicio_temporadas").select(SELECT_TEMPORADAS_CON_FRANJAS).in("servicio_id", servicioIds);
+  let conFranjas = await admin.from("servicio_temporadas").select(SELECT_TEMPORADAS_CON_FRANJAS).in("servicio_id", servicioIds);
+  // Base sin las columnas de rango de pasajeros de las franjas (262 aún no aplicada): se lee como antes (franjas «para todos»). Cualquier otro error sigue su camino.
+  if (conFranjas.error && (conFranjas.error as { code?: string }).code === "42703") conFranjas = await admin.from("servicio_temporadas").select(SELECT_TEMPORADAS_CON_FRANJAS_SIN_RANGO).in("servicio_id", servicioIds);
   if (!conFranjas.error) return { data: (conFranjas.data ?? []) as unknown as FilaTemporadaConFranjas[], error: null };
   if (!FALTA_TABLA.has((conFranjas.error as { code?: string }).code ?? "")) return { data: [], error: { message: conFranjas.error.message } };
   const plano = await admin.from("servicio_temporadas").select(SIN_FRANJAS).in("servicio_id", servicioIds);
@@ -75,13 +77,17 @@ export async function cargarVigenciasServicios(
       const nombrePorId = new Map(temporadas.map((t) => [t.id, t.nombre]));
       const gruposAlcance: VigenciasServicio["gruposAlcance"] = [];
       const personaAlcance = new Map<string, number>();
+      const gruposIdaRegreso: VigenciasServicio["gruposIdaRegreso"] = [];
+      const personaIdaRegreso = new Map<string, number>();
       for (const f of lecAlc.preciosAlcance) {
         const nombre = nombrePorId.get(f.servicio_temporada_id);
-        if (!nombre || f.alcance !== "trayecto") continue; // la referencia "desde" es la de un trayecto; ida y regreso no se deriva de ella
-        if (f.pax_desde != null && f.pax_hasta != null) gruposAlcance.push({ pax_desde: f.pax_desde, pax_hasta: f.pax_hasta, precio: Number(f.precio), temporada: nombre });
-        else personaAlcance.set(nombre, Number(f.precio));
+        if (!nombre) continue;
+        // Cada alcance publica SU referencia; ninguna se deriva de la otra. Sin precio propio de ida y regreso, la referencia usa la tarifa de la vigencia (servicioVigencias).
+        const [grupos, persona] = f.alcance === "trayecto" ? [gruposAlcance, personaAlcance] : [gruposIdaRegreso, personaIdaRegreso];
+        if (f.pax_desde != null && f.pax_hasta != null) grupos.push({ pax_desde: f.pax_desde, pax_hasta: f.pax_hasta, precio: Number(f.precio), temporada: nombre });
+        else persona.set(nombre, Number(f.precio));
       }
-      Object.assign(extraAlcance, { usaAlcance: true, gruposAlcance, personaAlcance });
+      Object.assign(extraAlcance, { usaAlcance: true, gruposAlcance, personaAlcance, gruposIdaRegreso, personaIdaRegreso });
     }
     porServicio.set(id, {
       ...extraAlcance,
