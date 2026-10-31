@@ -100,6 +100,8 @@ function montar(e: Escenario) {
       { ...base, acomodacion: "doble", precio_pvp: e.precios.doble, precio_pvp_menor2: null },
       { ...base, acomodacion: "infante", precio_pvp: e.precios.infante, precio_pvp_menor2: e.precios.menor2 },
     ],
+    // 258: evidencia de la composición publicada (generación 3 = la publicada, regla 1) con el servicio 900 horneado en la fila de la salida.
+    tarifario_composicion_publicada: [{ paquete_id: PAQUETE_ID, fecha_ida: IDA, generacion: 3, regla: 1, servicios_incluidos: [900] }],
     hotel_acomodaciones: [{ hotel_id: HOTEL_ID, acomodacion: "doble", pax_tarifa: 2, pax_max: 4, adt_min: 1, adt_max: 2, chd_min: 0, chd_max: 2, inf_min: 0, inf_max: 2 }],
     hotel_temporadas: [{
       id: 1, hotel_id: HOTEL_ID, nombre: "Base", fecha_inicio: "2000-01-01", fecha_fin: "2099-12-31", prioridad: 1, compra_inicio: null, compra_fin: null,
@@ -115,7 +117,8 @@ function montar(e: Escenario) {
       servicios_adicionales: { nombre: "Tour", categoria: "tour_traslado", precio_persona: 10, precio_infante: 0, liquidacion: "paquete", proveedor_id: null, proveedores: null },
     }],
     servicios_adicionales: [{ id: 900, moneda: "USD" }],
-    servicio_tarifa_pax: [], servicio_temporadas: [],
+    // SIN «GENERAL»: el servicio incluido se vende desde una vigencia que cubre todo el rango (mismo neto que antes tenía como precio base).
+    servicio_tarifa_pax: [], servicio_temporadas: [{ servicio_id: 900, nombre: "VIG", fecha_inicio: "2000-01-01", fecha_fin: "2099-12-31", compra_inicio: null, compra_fin: null, prioridad: 1, precio_persona: 10, precio_infante: 0, recargo_individual: null }],
     destinos: [{ id: 1, nombre: "CARTAGENA", codigo_iata: "CTG", pais: "Colombia", activo: true }],
     armado_paquete_destinos_aereos: [],
     salidas_dinamicas: [{

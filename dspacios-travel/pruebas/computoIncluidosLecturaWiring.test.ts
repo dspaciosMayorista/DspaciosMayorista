@@ -26,7 +26,9 @@ describe("computarReserva — lectura de servicios incluidos", () => {
     assert.match(bloque, /await catalogo\s*\n\s*\.from\("armado_servicios"\)/);
     // 226: además `precio_infante` (precio del menor de 2 años del servicio).
     assert.match(bloque, /servicios_adicionales\(nombre, categoria, precio_persona, (precio_infante, )?liquidacion, proveedor_id\)/);
-    assert.match(bloque, /catalogo\.from\("servicio_tarifa_pax"\)\.select\("servicio_id, pax_desde, pax_hasta, precio, temporada"\)\.eq\("temporada", "GENERAL"\)/);
+    // SIN «GENERAL»: las vigencias y rangos de cada incluido se leen con ESE mismo cliente de servicio (cargarVigenciasServicios) y ya no se consulta la temporada GENERAL.
+    assert.match(bloque, /cargarVigenciasServicios\(catalogo,/);
+    assert.doesNotMatch(bloque, /"GENERAL"/);
   });
 
   test("ninguna lectura de incluidos queda con la sesión", () => {
@@ -36,7 +38,7 @@ describe("computarReserva — lectura de servicios incluidos", () => {
   test("sigue acotada al paquete y a los incluidos, y falla cerrado ante error", () => {
     assert.match(bloque, /\.eq\("paquete_id", input\.paqueteId\)\s*\n\s*\.eq\("incluido", true\)/);
     assert.match(bloque, /if \(incErr\) return \{ ok: false,/);
-    assert.match(bloque, /if \(gruposIncErr\) return \{ ok: false,/);
+    assert.match(bloque, /if \(!rvInc\.ok\) return \{ ok: false,/);
   });
 
   test("reglas de precio intactas: por persona solo se registra; por grupo se cobra una vez con el pax real", () => {

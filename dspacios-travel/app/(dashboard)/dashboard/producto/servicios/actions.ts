@@ -4,6 +4,7 @@ import { createClient } from "@/lib/supabase/server";
 import { revalidatePath } from "next/cache";
 import { regenerarTarifariosDeServicio, generarTarifario } from "../../paquetes/actions";
 import { exigirEscrituraCatalogoGlobal } from "@/lib/auth/contextoAgencia";
+import { formatearHora, parseHora, validarFranjas, type FranjaSuplemento } from "@/lib/calc/trasladoFranjas";
 
 type Result = { ok: true } | { ok: false; error: string };
 const oNull = (s: string) => (s && s.trim() !== "" ? s.trim() : null);
@@ -88,6 +89,56 @@ export async function actualizarTemporadaServicio(id: number, input: TemporadaSe
     await sb.from("servicio_tarifa_pax").delete().eq("servicio_id", prev.servicio_id).eq("temporada", prev.nombre);
   }
   await guardarGrupoTiers(sb, prev.servicio_id, input.grupoTiers ?? [], nombre);
+  revalidatePath("/dashboard/producto/servicios");
+  return { ok: true };
+}
+
+// ── Suplementos de traslado por franja horaria (migración 255) ──────────────
+// Cuelgan de UNA vigencia (servicio_temporadas.id). Se valida con la misma función pura que usa la liquidación (formato, valor, tramo, medianoche y
+// solapes contra las demás franjas de la vigencia); la base repite la comprobación con su propio trigger.
+export type FranjaServicioInput = Omit<FranjaSuplemento, "id">;
+
+const MENSAJE_FRANJAS_NO_DISPONIBLES = "Los suplementos por horario todavía no están habilitados en la base de datos (falta aplicar la migración 255).";
+
+function mensajeErrorFranja(e: { code?: string; message?: string }): string {
+  if (e.code === "23P01") return e.message ?? "La franja se solapa con otra de la misma vigencia.";
+  if (e.code === "42P01") return MENSAJE_FRANJAS_NO_DISPONIBLES;
+  if (e.code === "23514") return "La franja no cumple las reglas (horas HH:MM, valor mayor que cero, tramo, tipo y cobro válidos).";
+  return "No se pudo guardar la franja. Intenta de nuevo.";
+}
+
+export async function guardarFranjaServicio(temporadaId: number, input: FranjaServicioInput, franjaId?: number): Promise<Result> {
+  const catalogo = await exigirEscrituraCatalogoGlobal();
+  if (!catalogo.ok) return catalogo;
+  const desde = parseHora(input.hora_desde);
+  const hasta = parseHora(input.hora_hasta, true);
+  if (desde == null || hasta == null) return { ok: false, error: "Las horas deben tener formato HH:MM (24:00 solo como hora final)." };
+  const nueva: FranjaSuplemento = {
+    hora_desde: formatearHora(desde), hora_hasta: hasta === 1440 ? "24:00" : formatearHora(hasta),
+    tramo: input.tramo, tipo: input.tipo, valor: Number(input.valor), cobro: input.cobro,
+  };
+  const sb = await createClient();
+  const { data: otras, error: eLeer } = await sb
+    .from("servicio_suplementos_franja").select("id, hora_desde, hora_hasta, tramo, tipo, valor, cobro").eq("servicio_temporada_id", temporadaId);
+  if (eLeer) return { ok: false, error: mensajeErrorFranja(eLeer) };
+  const resto = (otras ?? []).filter((f) => f.id !== franjaId).map((f) => ({ ...f, valor: Number(f.valor) })) as FranjaSuplemento[];
+  const errores = validarFranjas([...resto, nueva]);
+  if (errores.length) return { ok: false, error: errores[errores.length - 1] };
+  const fila = { servicio_temporada_id: temporadaId, ...nueva };
+  const { error } = franjaId
+    ? await sb.from("servicio_suplementos_franja").update(fila).eq("id", franjaId)
+    : await sb.from("servicio_suplementos_franja").insert(fila);
+  if (error) return { ok: false, error: mensajeErrorFranja(error) };
+  revalidatePath("/dashboard/producto/servicios");
+  return { ok: true };
+}
+
+export async function eliminarFranjaServicio(franjaId: number): Promise<Result> {
+  const catalogo = await exigirEscrituraCatalogoGlobal();
+  if (!catalogo.ok) return catalogo;
+  const sb = await createClient();
+  const { error } = await sb.from("servicio_suplementos_franja").delete().eq("id", franjaId);
+  if (error) return { ok: false, error: mensajeErrorFranja(error) };
   revalidatePath("/dashboard/producto/servicios");
   return { ok: true };
 }

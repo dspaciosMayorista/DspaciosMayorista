@@ -104,8 +104,8 @@ describe("liquidacionServicio.ts (ResultadoServicio) — la CATEGORÍA real fluy
     // `proveedorId` se saca a propósito: ver R294-3 más abajo (frontera pública).
     assert.doesNotMatch(tipo, /proveedorId/);
   });
-  test("calcularPrecioConModoYMarkup — única construcción — usa normalizarCategoriaServicio (nunca inventa la categoría)", () => {
-    const cuerpo = cuerpoFuncion(liquidacion, "export function calcularPrecioConModoYMarkup(");
+  test("calcularPrecioServicioDetallado — única construcción — usa normalizarCategoriaServicio (nunca inventa la categoría)", () => {
+    const cuerpo = cuerpoFuncion(liquidacion, "export function calcularPrecioServicioDetallado(");
     assert.match(cuerpo, /categoria: normalizarCategoriaServicio\(srv\.categoria\)/);
   });
 });

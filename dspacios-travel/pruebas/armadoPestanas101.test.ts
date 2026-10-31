@@ -85,11 +85,13 @@ describe("agruparPorHotel", () => {
 });
 
 describe("servicioSeleccionable", () => {
-  test("necesita tarifa por persona o rangos de grupo", () => {
-    assert.equal(servicioSeleccionable({ precio_persona: 0, servicio_tarifa_pax: [] }), true, "$0 es una tarifa (gratis), no ausencia");
-    assert.equal(servicioSeleccionable({ precio_persona: null, servicio_tarifa_pax: [{}] }), true);
-    assert.equal(servicioSeleccionable({ precio_persona: null, servicio_tarifa_pax: [] }), false);
-    assert.equal(servicioSeleccionable({ precio_persona: null }), false);
+  // Detalle GENERAL vs vigencia: pruebas/generalRetiradoRutas255.test.ts.
+  const vig = (precio: number | null) => [{ nombre: "V1", fecha_inicio: "2026-01-01", fecha_fin: "2099-12-31", precio_persona: precio }];
+  test("necesita una vigencia vendible con precio por persona o rangos de grupo propios", () => {
+    assert.equal(servicioSeleccionable({ servicio_temporadas: vig(0), servicio_tarifa_pax: [] }), true, "$0 es una tarifa (gratis), no ausencia");
+    assert.equal(servicioSeleccionable({ servicio_temporadas: vig(null), servicio_tarifa_pax: [{ temporada: "V1" }] }), true);
+    assert.equal(servicioSeleccionable({ servicio_temporadas: vig(null), servicio_tarifa_pax: [] }), false);
+    assert.equal(servicioSeleccionable({}), false);
   });
 });
 

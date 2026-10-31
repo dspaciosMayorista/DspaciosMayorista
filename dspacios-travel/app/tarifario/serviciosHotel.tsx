@@ -16,6 +16,7 @@ import {
   alternarSeleccion, claveConsultaServicios, evaluarServicios, mismaCotizacion, mismaSeleccion,
   type ConsultaServicios, type EvaluacionEdicion, type EvaluacionServicios, type HotelParaServicios, type ServicioSeleccionable,
 } from "@/lib/tarifario/servicioAdicionalPaquete";
+import type { RecorridoServicios } from "@/lib/tarifario/servicioAdicionalPaquete";
 
 const MENSAJE_ERROR_CONSULTA = "No pudimos cotizar los servicios en este momento. Intenta nuevamente.";
 const SIN_SELECCION: readonly number[] = [];
@@ -121,12 +122,12 @@ export function useCotizacionServicios(
     if (!necesita || clave == null) return;
     // La clave ya contiene paquete/fechas/pax — se leen de ahí para que este
     // efecto dependa SOLO de ella (si cambia, la consulta en vuelo se descarta).
-    const [paqueteId, fechaIda, fechaRegreso, pax] = JSON.parse(clave) as [number, string, string, number];
+    const [paqueteId, fechaIda, fechaRegreso, pax, , , , recorrido] = JSON.parse(clave) as [number, string, string, number, number, string, string, RecorridoServicios | null];
     let vigente = true;
     const t = setTimeout(async () => {
       let c: ConsultaServicios;
       try {
-        const r = await buscarReceptivos({ fechaIda, fechaRegreso, pax, paqueteId });
+        const r = await buscarReceptivos({ fechaIda, fechaRegreso, pax, paqueteId, ...(recorrido ? { recorrido } : {}) });
         c = r.ok ? { clave, estado: "ok", resultados: r.resultados } : { clave, estado: "error", mensaje: r.error };
       } catch {
         c = { clave, estado: "error", mensaje: MENSAJE_ERROR_CONSULTA };
@@ -165,10 +166,10 @@ export async function revalidarServicios(
 ): Promise<RevalidacionServicios> {
   const clave = claveConsultaServicios(hotel);
   if (clave == null) return { estado: "error", mensaje: "Completa fechas, pasajeros y precio del hotel para cotizar los servicios seleccionados." };
-  const [paqueteId, fechaIda, fechaRegreso, pax] = JSON.parse(clave) as [number, string, string, number];
+  const [paqueteId, fechaIda, fechaRegreso, pax, , , , recorrido] = JSON.parse(clave) as [number, string, string, number, number, string, string, RecorridoServicios | null];
   let consulta: ConsultaServicios;
   try {
-    const r = await buscarReceptivos({ fechaIda, fechaRegreso, pax, paqueteId });
+    const r = await buscarReceptivos({ fechaIda, fechaRegreso, pax, paqueteId, ...(recorrido ? { recorrido } : {}) });
     if (!r.ok) return { estado: "error", mensaje: r.error || MENSAJE_ERROR_CONSULTA };
     consulta = { clave, estado: "ok", resultados: r.resultados };
   } catch {
@@ -305,6 +306,8 @@ export function DesgloseServicios({ hotelNombre, precioHotel, moneda, evaluacion
               <dd className="flex shrink-0 items-center gap-2 text-right">
                 {s.estado === "ok" && s.resultado ? (
                   <span className="font-medium text-gray-800">{formatMoneda(s.resultado.total, s.resultado.moneda)}</span>
+                ) : s.estado === "hora_pendiente" ? (
+                  <span className="inline-flex items-center gap-1 text-xs font-medium text-amber-700"><AlertTriangle size={12} aria-hidden /> Falta la hora</span>
                 ) : s.estado === "cotizando" ? (
                   <span className="inline-flex items-center gap-1 text-xs text-gray-500"><Loader2 size={12} className="animate-spin" aria-hidden /> Cotizando…</span>
                 ) : s.estado === "faltan_datos" ? (

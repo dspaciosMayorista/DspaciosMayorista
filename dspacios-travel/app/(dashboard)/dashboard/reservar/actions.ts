@@ -4,6 +4,7 @@ import { createClient } from "@/lib/supabase/server";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { revalidatePath } from "next/cache";
 import { precioServicio, noches, temporadaVigenteParaFecha, toTemporadaRango, factorLiquidacion, type TemporadaRango } from "@/lib/calc/paquetes";
+import { costoServicioContrato } from "@/lib/calc/servicioTarifa";
 import { ACOM_ROOM_LABEL, clasificarPorEdad, type AcomRoom } from "@/lib/acomodaciones";
 import { parseRuta, ciudadIata } from "@/lib/iata";
 import { calcularEdad } from "@/lib/utils";
@@ -113,6 +114,9 @@ import { decidirCxP, evaluarObligaciones, type Obligacion } from "@/lib/reservar
 import { compararTrmCostoConCongelada, decidirTrmCosto, equivalenteCopCosto, leerTrmCostoCongelada } from "@/lib/finanzas/costoTrmCarrito";
 import { opcionalDeTourCarrito } from "@/lib/paquetes/pvpInfanteFijo";
 import { costoAereoBloqueo, costoHotelPersona, costoTourParaCxP, costoVueloBernalo, liquidarCostoTour } from "@/lib/reservar/costosObligacionesCarrito";
+import { combinarHoras, horarioCambio, horasDelRecorrido } from "@/lib/reservar/horasRecorrido";
+import { leerTemporadasServicio, vigenciasConFranjas } from "@/lib/reservar/temporadasServicio";
+import type { HorasTramos, TramoTraslado } from "@/lib/calc/trasladoFranjas";
 import { cobroDeContratoCarrito, compararConCongelado, leerCobroCongelado, monedaOfertaDeCotizacion, resolverMonedaOferta, validarEleccionCarrito } from "@/lib/finanzas/cobroCarrito";
 import { ROLES_INTERNOS } from "@/lib/constants";
 import { altaPersonasCotizacion, logPersonasCotizacion } from "@/lib/personas/consulta";
@@ -1042,8 +1046,8 @@ async function calcularFinancieroReserva(p: {
           .eq("paquete_id", input.paqueteId).in("servicio_id", input.servicios),
         admin.from("servicio_tarifa_pax")
           .select("servicio_id, pax_desde, pax_hasta, precio, temporada").in("servicio_id", input.servicios),
-        admin.from("servicio_temporadas")
-          .select("servicio_id, nombre, fecha_inicio, fecha_fin, compra_inicio, compra_fin, prioridad, precio_persona, precio_infante, recargo_individual").in("servicio_id", input.servicios),
+        // Vigencias por la lectura ÚNICA (incluye la tarifa base permanente de la asistencia sin vigencias): precio y costo no pueden divergir.
+        leerTemporadasServicio(admin, input.servicios),
       ]);
       // Un error de lectura deja `data` en null, no lanza: sin este chequeo el
       // bucle no correría y el contrato quedaría con los servicios cobrados y
@@ -1080,28 +1084,32 @@ async function calcularFinancieroReserva(p: {
         return temporadaVigenteParaFecha(fechaViajeCosto, tt);
       };
       const nochesStay = meta.fecha_ida && meta.fecha_regreso ? noches(meta.fecha_ida, meta.fecha_regreso) : 1;
+      // Sin tarifa «GENERAL»: el costo sale de la vigencia aplicable (y de un rango de ESA vigencia por grupo); lo que no se pueda resolver lanza (el contrato
+      // se deshace, igual que cualquier otro fallo de costo — B7). Los traslados con franjas horarias no se cobran por esta ruta: hay que cotizarlos desde el carrito.
+      const conFranjasCosto = vigenciasConFranjas(tempsNet ?? []);
       let costoReceptivo = 0;
       for (const s of arm ?? []) {
         const modo = (s.modo as string) === "grupo" ? "grupo" : "persona";
         const srv = s.servicios_adicionales as unknown as { precio_persona: number | null; precio_infante: number | null; recargo_individual: number | null; categoria: string | null; nombre: string; liquidacion: string | null; proveedor_id: number | null; proveedores: ProvFact } | null;
         const nombreTemp = tempVigente(s.servicio_id);
-        // Neto por persona: el de la temporada vigente, o el base.
-        const netoPersona = (nombreTemp ? netoTempServ.get(`${s.servicio_id}|${nombreTemp}`) : undefined) ?? srv?.precio_persona ?? null;
-        // Rangos por grupo: los de la temporada vigente si existen, si no GENERAL.
-        const gruposTemp = nombreTemp ? gruposPorServ.get(`${s.servicio_id}|${nombreTemp}`) : undefined;
-        const grupos = gruposTemp?.length ? gruposTemp : (gruposPorServ.get(`${s.servicio_id}|GENERAL`) ?? []);
+        const rotuloServ = srv?.nombre ?? `#${s.servicio_id}`;
+        if (!nombreTemp) throw new Error(`el servicio «${rotuloServ}» no tiene una vigencia de tarifa para la fecha del viaje`);
+        if (conFranjasCosto.has(`${s.servicio_id}|${nombreTemp}`)) throw new Error(`el servicio «${rotuloServ}» tiene suplementos por horario; cotízalo desde el carrito indicando la hora del traslado`);
+        // Neto por persona y rangos por grupo: SOLO los de la vigencia aplicable (la tarifa GENERAL ya no es fuente de precio).
+        const netoPersona = netoTempServ.get(`${s.servicio_id}|${nombreTemp}`) ?? null;
+        const grupos = gruposPorServ.get(`${s.servicio_id}|${nombreTemp}`) ?? [];
+        if (modo === "persona" && !((netoPersona ?? 0) > 0)) throw new Error(`el servicio «${rotuloServ}» no tiene precio por persona en su vigencia «${nombreTemp}»`);
+        if (modo === "grupo" && !grupos.some((g) => paxConSilla >= g.pax_desde && paxConSilla <= g.pax_hasta)) throw new Error(`el servicio «${rotuloServ}» no tiene un rango de pasajeros en su vigencia «${nombreTemp}» que cubra ${paxConSilla} pasajero(s)`);
         // Persona: adultos (2+ años) a la tarifa de adulto + menores de 2 años a su
         // precio de infante NETO (el de la temporada vigente, o el general, o el de
         // adulto si el servicio no lo configuró). Grupo: el rango cuenta SOLO a los
         // de 2+ años y el menor de 2 no paga extra (migración 226).
-        const netoInfante = (nombreTemp ? netoInfTempServ.get(`${s.servicio_id}|${nombreTemp}`) : undefined) ?? srv?.precio_infante ?? netoPersona ?? 0;
-        let costoServ = (precioServicio(modo, netoPersona, grupos, paxConSilla) + (modo === "persona" ? netoInfante * numMenoresDeDos : 0)) * factorLiquidacion(srv?.liquidacion, nochesStay);
-        // Recargo individual: suplemento NETO del proveedor cuando va 1 pax (cobro
-        // por persona). El de la temporada vigente si lo define, si no el base.
-        if (modo === "persona" && totalPax === 1) {
-          const recTemp = nombreTemp ? recTempServ.get(`${s.servicio_id}|${nombreTemp}`) : undefined;
-          costoServ += Math.max(recTemp ?? (Number(srv?.recargo_individual) || 0), 0);
-        }
+        // Infante: el de la vigencia o el precio de adulto de ESA vigencia; nunca el `precio_infante` base (GENERAL) del servicio.
+        const recTemp = nombreTemp ? recTempServ.get(`${s.servicio_id}|${nombreTemp}`) : undefined;
+        const costoServ = costoServicioContrato({
+          modo, netoPersona, netoInfanteVigencia: nombreTemp ? netoInfTempServ.get(`${s.servicio_id}|${nombreTemp}`) : undefined, grupos, paxConSilla, numMenoresDeDos,
+          liquidacion: srv?.liquidacion, nochesStay, totalPax, recargoIndividual: recTemp ?? 0,
+        });
         costoReceptivo += costoServ;
         const categoria = normalizarCategoriaServicio(srv?.categoria);
         serviciosEfectivos.push({
@@ -1682,6 +1690,9 @@ export type TourCarritoPayload = {
   // anterior a este cambio (comportamiento de siempre). Ver
   // lib/reservar/vinculoServiciosCheckout.ts.
   hotelRef?: string | null;
+  // Traslados con franjas horarias: horas con las que se cotizó (una por tramo con franja) y suplementos cobrados. Ausentes si el precio no depende del horario.
+  horas?: HorasTramos;
+  suplementos?: { tramo: TramoTraslado; hora: string }[];
 };
 
 // Un ítem del carrito con su asignación EXPLÍCITA de pasajeros — revisión de
@@ -2555,6 +2566,29 @@ export async function convertirCotizacionCarrito(
   // + `obligacionPositiva`, la misma que usa `pushCxP`), así que un costo USD en cero no bloquea y uno positivo sí. La ruta financiera vigente devenga una CxP
   // sin marca de oferta #63 por su valor nominal: una obligación en USD se contabilizaría como pesos. Mientras no exista el equivalente en COP para el
   // carrito, cualquier obligación positiva en USD (o de moneda indeterminable en un contrato USD) detiene la conversión, sin tocar ningún importe.
+  // Horario de los traslados con franjas (ANTES de numerar): si el horario del vuelo cambió desde que se cotizó, el suplemento cotizado ya no es el que
+  // corresponde -> se pide recotizar. Sin vuelo vinculado (porción terrestre) la hora capturada en la cotización es la vigente.
+  const horasVigentesTour = new Map<number, HorasTramos>();
+  for (const { grupo } of gruposValidados) {
+    for (const t of grupo.tours) {
+      if (!t.horas || !Object.keys(t.horas).length) continue;
+      const tramos = (Object.keys(t.horas) as TramoTraslado[]);
+      const item = t.hotelRef ? itemsCrudos.find((x) => (x as { ref?: string }).ref === t.hotelRef) : undefined;
+      let vigentes: HorasTramos = t.horas;
+      if (item && (item as { modeloTarifario?: string }).modeloTarifario !== "unidad") {
+        const it = item as ItemCarritoPayload & { salidaId?: number };
+        const h = await horasDelRecorrido(admin, { modulo: it.modulo, bloqueoId: it.bloqueoId, salidaId: it.salidaId ?? null });
+        if (!h.ok) return { ok: false, error: `No se pudo validar el horario del vuelo para el traslado «${t.nombre}»; no se crea ningún contrato. Intenta de nuevo.` };
+        vigentes = combinarHoras(t.horas, h.horas);
+      }
+      const cambiaron = horarioCambio(t.horas, vigentes, tramos);
+      if (cambiaron.length) {
+        const detalle = cambiaron.map((tr) => `${tr === "llegada" ? "llegada" : "salida"}: cotizado ${t.horas?.[tr] ?? "sin hora"}, ahora ${vigentes[tr] ?? "sin hora"}`).join("; ");
+        return { ok: false, error: `El horario del traslado «${t.nombre}» cambió desde que se cotizó (${detalle}). El suplemento por horario pudo variar: recotiza antes de generar el contrato. No se creó ningún contrato.` };
+      }
+      horasVigentesTour.set(t.__idx, vigentes);
+    }
+  }
   const idsServiciosObl = new Set<number>();
   const idsBloqueosObl = new Set<number>();
   for (const { grupo, validadosPersona } of gruposValidados) {
@@ -2599,7 +2633,7 @@ export async function convertirCotizacionCarrito(
     for (const t of grupo.tours) {
       if (t.servicioId == null || t.paqueteId == null) continue;
       try {
-        const liq = await liquidarCostoTour(admin, { servicioId: t.servicioId, paqueteId: t.paqueteId, pax: t.pax, fechaIda: t.fechaIda, fechaRegreso: t.fechaRegreso });
+        const liq = await liquidarCostoTour(admin, { servicioId: t.servicioId, paqueteId: t.paqueteId, pax: t.pax, fechaIda: t.fechaIda, fechaRegreso: t.fechaRegreso, horas: horasVigentesTour.get(t.__idx) });
         obligaciones.push({ origen: t.nombre, moneda: monedaServicio.get(t.servicioId), valor: costoTourParaCxP(liq) });
       } catch (e) {
         return { ok: false, error: `No se pudo calcular el costo del tour "${t.nombre}": ${e instanceof Error ? e.message : "error desconocido"}. No se crea ningún contrato.` };
@@ -3303,7 +3337,7 @@ export async function convertirCotizacionCarrito(
         if (t.servicioId == null || t.paqueteId == null) continue; // legado, sin ids para re-liquidar
         try {
           // Misma liquidación que la revisión previa (lib/reservar/costosObligacionesCarrito.ts::liquidarCostoTour). `null` = el tour ya no está en el paquete.
-          const liq = await liquidarCostoTour(admin, { servicioId: t.servicioId, paqueteId: t.paqueteId, pax: t.pax, fechaIda: t.fechaIda, fechaRegreso: t.fechaRegreso });
+          const liq = await liquidarCostoTour(admin, { servicioId: t.servicioId, paqueteId: t.paqueteId, pax: t.pax, fechaIda: t.fechaIda, fechaRegreso: t.fechaRegreso, horas: horasVigentesTour.get(t.__idx) });
           if (!liq) continue;
           const srv = liq.srv;
           const costoNeto = costoTourParaCxP(liq);

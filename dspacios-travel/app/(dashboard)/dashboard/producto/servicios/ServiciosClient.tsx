@@ -8,15 +8,19 @@ import { Input } from "@/components/ui/input";
 import { formatCOP, formatMoneda } from "@/lib/utils";
 import {
   crearServicio, actualizarServicio, eliminarServicio,
-  crearTemporadaServicio, actualizarTemporadaServicio, eliminarTemporadaServicio,
-  type ServicioInput, type TierPax, type TemporadaServicioInput,
+  crearTemporadaServicio, actualizarTemporadaServicio, eliminarTemporadaServicio, guardarFranjaServicio, eliminarFranjaServicio,
+  type ServicioInput, type TierPax, type TemporadaServicioInput, type FranjaServicioInput,
 } from "./actions";
+import { describirFranja, type FranjaSuplemento } from "@/lib/calc/trasladoFranjas";
 import { RangosEdadPicker, type RangoEdad } from "@/components/RangosEdadPicker";
 import { Paginador } from "@/components/Paginador";
 import { ComboDestino, type DestinoOpt } from "@/components/ComboDestino";
 import { ComboProveedor, type ProveedorOpt } from "@/components/ComboProveedor";
 import { ServicioFotoCell } from "./ServicioFotoCell";
-import { Info } from "lucide-react";
+import { Info, Clock, Trash2, AlertTriangle, Settings2, List } from "lucide-react";
+import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { HoraInput24 } from "@/components/ui/HoraInput24";
+import { serviciosSinVigencia } from "@/lib/tarifario/serviciosSinVigencia";
 
 type Tier = { pax_desde: number; pax_hasta: number; precio: number; temporada?: string | null };
 export type TemporadaServicio = {
@@ -27,7 +31,10 @@ export type TemporadaServicio = {
   precio_infante?: number | null;
   recargo_individual: number | null;
   grupos: Tier[];
+  // Suplementos de traslado por franja horaria (migración 255). null = la migración aún no está aplicada.
+  franjas?: FranjaGuardada[] | null;
 };
+type FranjaGuardada = FranjaSuplemento & { id: number };
 type Servicio = {
   id: number; nombre: string; temporada: string | null; precio_persona: number | null;
   proveedor_id: number | null; destino_id: number | null; alcance?: string | null; rangos_edad: number[] | null;
@@ -75,12 +82,17 @@ export function ServiciosClient({ servicios, proveedores, destinos, rangos, temp
   const [err, setErr] = useState("");
   const [query, setQuery] = useState("");
   const [page, setPage] = useState(0);
+  const [tab, setTab] = useState<"config" | "listado">("listado");
+  const [destFiltro, setDestFiltro] = useState("");
+  const [avisoAbierto, setAvisoAbierto] = useState(true);
   const PAGE_SIZE = 10;
 
   const sinInfante = servicios.filter((s) => s.precio_persona != null && s.precio_infante == null);
-  const filtrados = query.trim()
+  const sinVigencia = serviciosSinVigencia(servicios, temporadas);
+  const porDestino = (s: Servicio) => !destFiltro || (destFiltro === "nacional" ? s.destino_id == null && s.alcance !== "internacional" : destFiltro === "internacional" ? s.destino_id == null && s.alcance === "internacional" : String(s.destino_id) === destFiltro);
+  const filtrados = (query.trim()
     ? servicios.filter((s) => s.nombre.toLowerCase().includes(query.trim().toLowerCase()))
-    : servicios;
+    : servicios).filter(porDestino);
   const totalPaginas = Math.max(1, Math.ceil(filtrados.length / PAGE_SIZE));
   const paginaActual = Math.min(page, totalPaginas - 1);
   const visibles = filtrados.slice(paginaActual * PAGE_SIZE, paginaActual * PAGE_SIZE + PAGE_SIZE);
@@ -90,6 +102,7 @@ export function ServiciosClient({ servicios, proveedores, destinos, rangos, temp
   }
 
   function startEdit(s: Servicio) {
+    setTab("config");
     setErr("");
     setEditId(s.id);
     setNombre(s.nombre);
@@ -145,6 +158,15 @@ export function ServiciosClient({ servicios, proveedores, destinos, rangos, temp
 
   return (
     <div className="space-y-6">
+      <div role="tablist" aria-label="Secciones de servicios" className="flex gap-1 border-b border-gray-200">
+        {([["listado", "Listado", List], ["config", editId ? "Configuración (editando)" : "Configuración", Settings2]] as const).map(([k, etiqueta, Icono]) => (
+          <button key={k} type="button" role="tab" aria-selected={tab === k} onClick={() => setTab(k)}
+            className={`-mb-px inline-flex items-center gap-1.5 border-b-2 px-4 py-2 text-sm font-medium ${tab === k ? "border-[var(--brand-primary)] text-[var(--brand-primary)]" : "border-transparent text-gray-500 hover:text-gray-800"}`}>
+            <Icono size={15} aria-hidden /> {etiqueta}
+          </button>
+        ))}
+      </div>
+      {tab === "config" && (
       <div className="rounded-xl border border-gray-200 bg-white p-4">
         <p className="mb-3 text-sm font-semibold text-gray-700">{editId ? "Editar servicio" : "Nuevo servicio adicional"}</p>
         <div className="grid grid-cols-1 gap-3 md:grid-cols-3">
@@ -271,13 +293,14 @@ export function ServiciosClient({ servicios, proveedores, destinos, rangos, temp
             <p className="mt-1 text-xs text-gray-500">
               Guarda primero el servicio con <b>«Agregar servicio»</b>; luego ábrelo con <b>Editar</b> (en
               la lista de abajo) y aquí podrás cargar tarifas por temporada con sus fechas y vigencia de
-              compra. El campo <b>«Temporada (opcional)»</b> de arriba es solo una etiqueta de la tarifa base.
+              compra. La tarifa base de arriba es solo un dato histórico: no se vende.
             </p>
           </div>
         )}
       </div>
+      )}
 
-      {sinInfante.length > 0 && (
+      {tab === "config" && sinInfante.length > 0 && (
         <div role="status" className="flex items-start gap-2 rounded-xl border border-amber-200 bg-amber-50 p-3 text-sm text-amber-800">
           <Info size={16} className="mt-0.5 shrink-0" aria-hidden="true" />
           <p>
@@ -288,32 +311,58 @@ export function ServiciosClient({ servicios, proveedores, destinos, rangos, temp
         </div>
       )}
 
-      {servicios.length > 0 && (
+      {tab === "listado" && (
         <div className="space-y-3">
-          <div className="flex flex-wrap items-center justify-between gap-3">
-            <Input value={query} onChange={(e) => { setQuery(e.target.value); setPage(0); }} placeholder="Buscar por nombre…" className="max-w-xs" />
+          <div className="flex flex-wrap items-center gap-3">
+            <Input value={query} onChange={(e) => { setQuery(e.target.value); setPage(0); }} placeholder="Buscar por nombre…" aria-label="Buscar servicio por nombre" className="w-full sm:w-auto sm:max-w-xs sm:flex-1" />
+            <select value={destFiltro} onChange={(e) => { setDestFiltro(e.target.value); setPage(0); }} aria-label="Filtrar por destino" className="h-9 w-full min-w-0 rounded-lg sm:w-auto border border-gray-300 bg-white px-2 text-sm">
+              <option value="">Todos los destinos</option>
+              <option value="nacional">Todos los nacionales</option>
+              <option value="internacional">Todos los internacionales</option>
+              {destinos.map((d) => <option key={d.id} value={String(d.id)}>{d.nombre}</option>)}
+            </select>
             <span className="text-xs text-gray-400">
-              {filtrados.length} {filtrados.length === 1 ? "servicio" : "servicios"}{query.trim() ? ` · filtrado de ${servicios.length}` : ""}
+              {filtrados.length} {filtrados.length === 1 ? "servicio" : "servicios"}{query.trim() || destFiltro ? ` · filtrado de ${servicios.length}` : ""}
             </span>
+            {sinVigencia.length > 0 && (
+              <button type="button" onClick={() => setAvisoAbierto(true)} className="ml-auto inline-flex items-center gap-1 text-xs font-medium text-amber-700 hover:underline">
+                <AlertTriangle size={14} aria-hidden /> {sinVigencia.length} sin vigencia
+              </button>
+            )}
           </div>
 
           {visibles.length === 0 ? (
-            <p className="rounded-xl border border-gray-200 bg-white px-4 py-8 text-center text-sm text-gray-400">Sin resultados para “{query}”.</p>
+            <p className="rounded-xl border border-gray-200 bg-white px-4 py-8 text-center text-sm text-gray-400">
+              {servicios.length === 0 ? "Aún no hay servicios. Créalos en la pestaña Configuración." : "Sin resultados para ese filtro."}
+            </p>
           ) : (
-            <div className="overflow-x-auto rounded-xl border border-gray-200 bg-white">
-              <table className="w-full text-sm">
-                <thead><tr className="bg-gray-50 text-left text-xs uppercase text-gray-400">
-                  <th className="px-4 py-2">Foto</th><th className="px-4 py-2">Servicio</th><th className="px-4 py-2">Proveedor</th><th className="px-4 py-2">Destino</th>
-                  <th className="px-4 py-2 text-right">Por persona</th><th className="px-4 py-2">Por grupo (rangos)</th><th className="px-4 py-2"></th>
-                </tr></thead>
-                <tbody>{visibles.map((s) => <Row key={s.id} s={s} onEdit={startEdit} />)}</tbody>
-              </table>
-            </div>
+            <ul className="divide-y divide-gray-100 overflow-hidden rounded-xl border border-gray-200 bg-white">
+              {visibles.map((s) => <FilaServicio key={s.id} s={s} vigencias={temporadas[s.id] ?? []} sinVigencia={sinVigencia.some((x) => x.id === s.id)} onEdit={startEdit} />)}
+            </ul>
           )}
 
           <Paginador page={paginaActual} totalPaginas={totalPaginas} onPage={setPage} />
         </div>
       )}
+
+      <Dialog open={avisoAbierto && sinVigencia.length > 0} onOpenChange={setAvisoAbierto}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Servicios sin rango de fechas</DialogTitle>
+            <DialogDescription>
+              Estos {sinVigencia.length} servicios no tienen ninguna vigencia con fechas válidas, así que <b>no aparecen en la oferta pública</b>. Ábrelos y carga una vigencia con su rango de fechas.
+            </DialogDescription>
+          </DialogHeader>
+          <ul className="max-h-72 space-y-1 overflow-y-auto text-sm">
+            {sinVigencia.map((s) => (
+              <li key={s.id} className="flex items-center justify-between gap-2 rounded-md bg-gray-50 px-2 py-1.5">
+                <span className="min-w-0 truncate text-gray-700">{s.nombre}</span>
+                <button type="button" onClick={() => { setAvisoAbierto(false); startEdit(s); }} className="shrink-0 text-xs font-medium text-[var(--brand-accent)] hover:underline">Corregir</button>
+              </li>
+            ))}
+          </ul>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }
@@ -358,8 +407,9 @@ function TemporadasServicio({ servicioId, lista }: { servicioId: number; lista: 
     <div className="mt-5 rounded-lg border border-[var(--brand-accent)]/40 bg-[var(--brand-accent)]/5 p-3">
       <p className="mb-1 text-sm font-semibold text-gray-700">Temporadas (tarifa por fecha del viaje)</p>
       <p className="mb-3 text-[11px] text-gray-500">
-        La tarifa de arriba es la <b>GENERAL</b> (aplica siempre). Aquí defines tarifas que ganan cuando la
-        <b> fecha del viaje</b> cae en su rango y están en <b>vigencia de compra</b>. Gana la de mayor prioridad.
+        Un servicio <b>solo se vende con una vigencia</b> que cubra la <b>fecha del viaje</b> y esté en <b>vigencia de compra</b>
+        (gana la de mayor prioridad); en cobro por grupo, además con un <b>rango de pasajeros de esa vigencia</b>. La tarifa
+        <b> GENERAL</b> de arriba ya no se usa para vender ni para calcular el costo: se conserva solo como dato histórico.
       </p>
 
       <div className="space-y-2">
@@ -425,6 +475,95 @@ function TemporadaFila({ t, onChanged, setErr }: { t: TemporadaServicio; onChang
           </div>
         </>
       )}
+      <FranjasTraslado temporadaId={t.id} franjas={t.franjas ?? null} moneda={undefined} onChanged={onChanged} setErr={setErr} />
+    </div>
+  );
+}
+
+// ── Suplementos de traslado por franja horaria (migración 255) ───────────────
+// Se suman al COSTO NETO de la vigencia y luego pasa el margen. La franja es [desde, hasta): el inicio se incluye y el fin no; si desde > hasta cruza la
+// medianoche (19:00 a 06:00). Cada regla se muestra con su descripción legible (la misma función que valida y evalúa).
+const franjaVacia = (): FranjaServicioInput => ({ hora_desde: "19:00", hora_hasta: "06:00", tramo: "ambos", tipo: "monto", valor: 0, cobro: "grupo" });
+
+function FranjasTraslado({ temporadaId, franjas, moneda, onChanged, setErr }: {
+  temporadaId: number; franjas: FranjaGuardada[] | null; moneda?: string; onChanged: () => void; setErr: (s: string) => void;
+}) {
+  const [pending, start] = useTransition();
+  const [abierto, setAbierto] = useState(false);
+  const [f, setF] = useState<FranjaServicioInput>(franjaVacia());
+  const [editId, setEditId] = useState<number | null>(null);
+  const [msg, setMsg] = useState("");
+  const lista = franjas ?? [];
+
+  if (franjas === null) {
+    return <p className="mt-2 text-[11px] text-amber-700">Suplementos por horario no disponibles: falta aplicar la migración 255 en la base de datos.</p>;
+  }
+
+  function guardar() {
+    setMsg("");
+    start(async () => {
+      const r = await guardarFranjaServicio(temporadaId, f, editId ?? undefined);
+      if (r.ok) { setF(franjaVacia()); setEditId(null); onChanged(); } else { setMsg(r.error); setErr(""); }
+    });
+  }
+  function borrar(id: number) {
+    if (!confirm("¿Eliminar esta franja horaria?")) return;
+    start(async () => { const r = await eliminarFranjaServicio(id); if (r.ok) onChanged(); else setMsg(r.error); });
+  }
+  const set = <K extends keyof FranjaServicioInput>(k: K, v: FranjaServicioInput[K]) => setF((x) => ({ ...x, [k]: v }));
+  const previa = f.valor > 0 ? describirFranja(f as FranjaSuplemento, moneda) : "";
+  const selCls = "h-9 w-full rounded-md border border-gray-300 bg-white px-2 text-sm";
+
+  return (
+    <div className="mt-3 border-t border-gray-100 pt-2">
+      <button type="button" onClick={() => setAbierto((a) => !a)} className="flex items-center gap-1 text-xs font-medium text-[var(--brand-primary)] hover:underline">
+        <Clock className="h-3.5 w-3.5" aria-hidden /> Suplementos por horario (traslados){lista.length ? ` · ${lista.length}` : ""}
+      </button>
+      {abierto && (
+        <div className="mt-2 space-y-2">
+          {lista.length === 0 && <p className="text-[11px] text-gray-500">Sin franjas: el traslado no lleva suplemento por horario en esta vigencia.</p>}
+          {lista.map((x) => (
+            <div key={x.id} className="flex items-start justify-between gap-2 rounded-md bg-gray-50 px-2 py-1.5 text-xs text-gray-700">
+              <span>{describirFranja(x, moneda)}</span>
+              <span className="flex shrink-0 items-center gap-2">
+                <button type="button" onClick={() => { setEditId(x.id); setF({ hora_desde: x.hora_desde, hora_hasta: x.hora_hasta, tramo: x.tramo, tipo: x.tipo, valor: x.valor, cobro: x.cobro }); }} className="text-[var(--brand-accent)] hover:underline">Editar</button>
+                <button type="button" disabled={pending} onClick={() => borrar(x.id)} aria-label="Eliminar franja" className="text-gray-400 hover:text-red-500"><Trash2 className="h-3.5 w-3.5" aria-hidden /></button>
+              </span>
+            </div>
+          ))}
+          <div className="rounded-md border border-dashed border-gray-300 p-2">
+            <p className="mb-2 text-[11px] font-medium text-gray-600">{editId ? "Editar franja" : "Agregar franja"}</p>
+            <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-6">
+              <div className="text-[11px] text-gray-500">Desde (incluida)<HoraInput24 etiqueta="Hora desde" value={f.hora_desde} onChange={(v) => set("hora_desde", v)} /></div>
+              <div className="text-[11px] text-gray-500">Hasta (no incluida)<HoraInput24 etiqueta="Hora hasta" permite24 value={f.hora_hasta} onChange={(v) => set("hora_hasta", v)} /></div>
+              <label className="text-[11px] text-gray-500">Tramo
+                <select className={selCls} value={f.tramo} onChange={(e) => set("tramo", e.target.value as FranjaServicioInput["tramo"])}>
+                  <option value="llegada">Llegada (ida)</option><option value="salida">Salida (regreso)</option><option value="ambos">Ambos</option>
+                </select>
+              </label>
+              <label className="text-[11px] text-gray-500">Tipo
+                <select className={selCls} value={f.tipo} onChange={(e) => set("tipo", e.target.value as FranjaServicioInput["tipo"])}>
+                  <option value="monto">Monto fijo (neto)</option><option value="porcentaje">% del neto base</option>
+                </select>
+              </label>
+              <label className="text-[11px] text-gray-500">{f.tipo === "porcentaje" ? "Porcentaje" : "Monto neto"}
+                <Input type="number" min={0} step="any" value={f.valor || ""} onChange={(e) => set("valor", Number(e.target.value))} />
+              </label>
+              <label className="text-[11px] text-gray-500">Cobro
+                <select className={selCls} value={f.cobro} disabled={f.tipo === "porcentaje"} onChange={(e) => set("cobro", e.target.value as FranjaServicioInput["cobro"])}>
+                  <option value="grupo">Una vez por grupo</option><option value="persona">Por persona</option>
+                </select>
+              </label>
+            </div>
+            {previa && <p className="mt-2 text-[11px] text-gray-600">{previa}</p>}
+            <div className="mt-2 flex items-center gap-2">
+              <Button type="button" variant="outline" onClick={guardar} disabled={pending}>{editId ? "Guardar cambios" : "Agregar franja"}</Button>
+              {editId && <button type="button" onClick={() => { setEditId(null); setF(franjaVacia()); setMsg(""); }} className="text-xs text-gray-500 hover:text-gray-800">Cancelar</button>}
+              {msg && <span className="text-xs text-red-600">{msg}</span>}
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
@@ -443,20 +582,19 @@ function CamposTemporada({ value, onChange }: { value: TemporadaServicioInput; o
         <div><label className={lbl}>Viaje desde</label><DateInput aria-label="Viaje desde" type="date" value={value.fechaInicio} onValueChange={(dateValue) => set("fechaInicio", dateValue)} /></div>
         <div><label className={lbl}>Viaje hasta</label><DateInput aria-label="Viaje hasta" type="date" value={value.fechaFin} onValueChange={(dateValue) => set("fechaFin", dateValue)} /></div>
         <div><label className={lbl}>Precio por persona</label><Input type="number" min={0} value={value.precioPersona ?? ""} onChange={(e) => set("precioPersona", e.target.value === "" ? null : Number(e.target.value))} /></div>
-        <div><label className={lbl}>Precio de infante</label><Input type="number" min={0} value={value.precioInfante ?? ""} placeholder="usa el base" onChange={(e) => set("precioInfante", e.target.value === "" ? null : Number(e.target.value))} /></div>
+        <div><label className={lbl}>Precio de infante</label><Input type="number" min={0} value={value.precioInfante ?? ""} placeholder="vacío = paga como adulto" onChange={(e) => set("precioInfante", e.target.value === "" ? null : Number(e.target.value))} /></div>
         <div><label className={lbl}>Compra desde</label><DateInput aria-label="Compra desde" type="date" value={value.compraInicio} onValueChange={(dateValue) => set("compraInicio", dateValue)} /></div>
         <div><label className={lbl}>Compra hasta</label><DateInput aria-label="Compra hasta" type="date" value={value.compraFin} onValueChange={(dateValue) => set("compraFin", dateValue)} /></div>
         <div><label className={lbl}>Prioridad</label><Input type="number" min={1} value={value.prioridad} onChange={(e) => set("prioridad", Number(e.target.value) || 1)} /></div>
         <div>
           <label className={lbl}>Recargo individual (1 pax)</label>
-          <Input type="number" min={0} value={value.recargoIndividual ?? ""} placeholder="usa el base"
+          <Input type="number" min={0} value={value.recargoIndividual ?? ""} placeholder="sin recargo"
             onChange={(e) => set("recargoIndividual", e.target.value === "" ? null : Number(e.target.value))} />
         </div>
       </div>
-      {/* Rangos por grupo de ESTA temporada (cobro por grupo). Si lo dejas vacío,
-          el servicio cobrado por grupo usa la tarifa base GENERAL. */}
+      {/* Rangos por grupo de ESTA vigencia: aplican solo dentro de ella; sin rango que cubra los pasajeros no hay precio. */}
       <div className="rounded-lg border border-gray-100 bg-gray-50/60 p-2">
-        <p className="mb-2 text-[11px] font-medium text-gray-500">Precio por grupo en esta temporada (opcional — vacío usa la base)</p>
+        <p className="mb-2 text-[11px] font-medium text-gray-500">Precio por grupo en esta temporada (obligatorio en cobro por grupo)</p>
         <div className="space-y-2">
           {tiers.map((t, i) => (
             <div key={i} className="flex flex-wrap items-end gap-2">
@@ -473,49 +611,51 @@ function CamposTemporada({ value, onChange }: { value: TemporadaServicioInput; o
   );
 }
 
-function Row({ s, onEdit }: { s: Servicio; onEdit: (s: Servicio) => void }) {
+function FilaServicio({ s, vigencias, sinVigencia, onEdit }: { s: Servicio; vigencias: TemporadaServicio[]; sinVigencia: boolean; onEdit: (s: Servicio) => void }) {
   const [pending, start] = useTransition();
   const moneda = s.moneda === "USD" ? "USD" : "COP";
   const fmt = (n: number) => formatMoneda(n, moneda);
-  const grupo = s.servicio_tarifa_pax ?? [];
-  const resumenGrupo = grupo.length
-    ? grupo.map((t) => `${t.pax_desde}–${t.pax_hasta}: ${fmt(t.precio)}`).join(" · ")
-    : "—";
+  const conSuplemento = vigencias.some((v) => (v.franjas ?? []).length > 0);
+  const precioVigencia = (v: TemporadaServicio) => {
+    const grupos = (v.grupos ?? []).map((t) => `${t.pax_desde}–${t.pax_hasta} pax: ${fmt(Number(t.precio))}`);
+    // Cada precio se muestra una sola vez: por persona o por rangos de grupo, nunca ambos repetidos.
+    if (v.precio_persona != null) return `${fmt(Number(v.precio_persona))} por persona`;
+    return grupos.length ? grupos.join(" · ") : "Sin precio";
+  };
+  const permanente = s.categoria === "asistencia" && vigencias.length === 0 && s.precio_persona != null;
   return (
-    <tr className="border-t border-gray-50">
-      <td className="px-4 py-2">
-        <ServicioFotoCell servicioId={s.id} fotoUrl={s.foto_url ?? null} />
-      </td>
-      <td className="px-4 py-2 text-gray-700">
-        {s.nombre}
-        {moneda === "USD" && <span className="ml-1 rounded bg-[#1D7C9A]/10 px-1.5 py-0.5 text-[10px] font-semibold text-[#1D7C9A]">USD</span>}
-      </td>
-      <td className="px-4 py-2 text-gray-500">{s.proveedores?.nombre ?? "—"}</td>
-      <td className="px-4 py-2 text-gray-500">{s.destinos?.nombre ?? (s.alcance === "internacional" ? "Todos internacionales" : "Todos nacionales")}</td>
-      <td className="px-4 py-2 text-right tabular-nums">
-        {s.precio_persona != null ? fmt(s.precio_persona) : "—"}
-        {(Number(s.recargo_individual) || 0) > 0 && (
-          <div className="text-[11px] font-normal text-amber-600">+{fmt(Number(s.recargo_individual))} si 1 pax</div>
-        )}
-      </td>
-      <td className="px-4 py-2 text-xs text-gray-500">
-        {resumenGrupo}
-        {s.precio_persona != null && (
-          s.precio_infante != null
-            ? <div className="text-[11px] text-gray-500">Infante: {fmt(Number(s.precio_infante))}</div>
-            : <div className="mt-1 flex items-center gap-1 text-[11px] font-medium text-amber-600" title="Sin precio de infante: los menores de 2 años pagan como adulto en este servicio.">
-                <Info size={12} aria-hidden="true" /> Sin precio de infante
-              </div>
-        )}
-      </td>
-      <td className="px-4 py-2 text-right">
-        <div className="flex items-center justify-end gap-3">
-          <button type="button" onClick={() => onEdit(s)} className="text-xs text-[var(--brand-accent)] hover:underline">Editar</button>
-          <button type="button" disabled={pending}
-            onClick={() => { if (confirm(`¿Eliminar ${s.nombre}?`)) start(() => { void eliminarServicio(s.id); }); }}
-            className="text-xs text-gray-400 hover:text-red-500">Eliminar</button>
+    <li className="flex gap-3 p-3 sm:p-4">
+      <ServicioFotoCell servicioId={s.id} fotoUrl={s.foto_url ?? null} />
+      <div className="min-w-0 flex-1">
+        <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
+          <span className="font-medium text-gray-800">{s.nombre}</span>
+          {moneda === "USD" && <span className="rounded bg-[#1D7C9A]/10 px-1.5 py-0.5 text-[10px] font-semibold text-[#1D7C9A]">USD</span>}
+          {sinVigencia && <span className="inline-flex items-center gap-1 rounded bg-amber-50 px-1.5 py-0.5 text-[10px] font-semibold text-amber-700"><AlertTriangle size={11} aria-hidden /> Sin vigencia: no se ofrece</span>}
         </div>
-      </td>
-    </tr>
+        <p className="text-xs text-gray-500">
+          {s.proveedores?.nombre ?? "Sin proveedor"} · {s.destinos?.nombre ?? (s.alcance === "internacional" ? "Todos internacionales" : "Todos nacionales")}
+        </p>
+        <ul className="mt-1.5 space-y-0.5 text-xs text-gray-600">
+          {vigencias.map((v) => (
+            <li key={v.id}><span className="font-medium text-gray-700">{v.nombre}</span> · {v.fecha_inicio || "—"} → {v.fecha_fin || "—"} · <span className="tabular-nums">{precioVigencia(v)}</span>
+              {(Number(v.recargo_individual) || 0) > 0 && <span className="text-amber-600"> · +{fmt(Number(v.recargo_individual))} si 1 pax</span>}
+            </li>
+          ))}
+          {permanente && <li>Tarifa base permanente · <span className="tabular-nums">{fmt(Number(s.precio_persona))} por persona</span></li>}
+        </ul>
+        {conSuplemento && <p className="mt-1 inline-flex items-center gap-1 text-[11px] font-medium text-[var(--brand-primary)]"><Clock size={12} aria-hidden /> Tiene suplemento por horario</p>}
+        {s.precio_persona != null && s.precio_infante == null && (
+          <p className="mt-1 flex items-center gap-1 text-[11px] font-medium text-amber-600" title="Sin precio de infante: los menores de 2 años pagan como adulto en este servicio.">
+            <Info size={12} aria-hidden="true" /> Sin precio de infante
+          </p>
+        )}
+      </div>
+      <div className="flex shrink-0 flex-col items-end gap-2 sm:flex-row sm:items-start sm:gap-3">
+        <button type="button" onClick={() => onEdit(s)} className="text-xs text-[var(--brand-accent)] hover:underline">Editar</button>
+        <button type="button" disabled={pending}
+          onClick={() => { if (confirm(`¿Eliminar ${s.nombre}?`)) start(() => { void eliminarServicio(s.id); }); }}
+          className="text-xs text-gray-400 hover:text-red-500">Eliminar</button>
+      </div>
+    </li>
   );
 }

@@ -32,6 +32,7 @@
 // motivo documentado en `lib/tarifario/datos.ts`.
 // ─────────────────────────────────────────────────────────────────────────
 
+import { adjuntarComposicionIncluidos } from "./composicionIncluidos.ts";
 import { createAdminClient } from "../supabase/admin.ts";
 import { empaquetadoVigente, hoyBogota } from "../reservar/origen.ts";
 import { construirSetParesPublicados, todosLosParesConfiguradosPublicados } from "../calc/paresPublicadosUnidad.ts";
@@ -556,5 +557,8 @@ export async function cargarDescripcionPaquetesBernalo(
   // Mapeo delegado al helper PURO compartido (probado con ejecución real en
   // pruebas/descripcionPaquete.test.ts) — este archivo queda como I/O puro:
   // consulta y devuelve, sin repetir la transformación fila→shape.
-  return { descripcionPorPaquete: filasArmadoPaqueteADescripcionPorPaquete((data ?? []) as unknown as FilaArmadoPaqueteDescripcion[]), error: null };
+  const descripcionPorPaquete = filasArmadoPaqueteADescripcionPorPaquete((data ?? []) as unknown as FilaArmadoPaqueteDescripcion[]);
+  // «Incluye» por salida: composición de los servicios incluidos (omitidos por falta de tarifa vigente). Un error deja el «Incluye» manual sin presentar.
+  await adjuntarComposicionIncluidos(admin, descripcionPorPaquete, (m) => console.error(`[composicion-incluidos] ${m}`));
+  return { descripcionPorPaquete, error: null };
 }

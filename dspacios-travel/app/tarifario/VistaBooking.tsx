@@ -6,10 +6,10 @@ import { createPortal } from "react-dom";
 import Image from "next/image";
 import { formatMoneda } from "@/lib/utils";
 import {
-  Categoria, EtiquetasHotel, DescripcionHotelExpandible, UbicacionHotel, SeccionesIncluye, IncluyeCompacto, AddonsPaquete, ReceptivoModal,
+  Categoria, EtiquetasHotel, DescripcionHotelExpandible, UbicacionHotel, SeccionesIncluye, IncluyeSalida, IncluyeCompacto, AddonsPaquete, ReceptivoModal,
   type Receptivo, type ReceptivoModalInfo,
 } from "./tarjetaHotelCompartida";
-import { claveConsultaServicios, evaluarEdicionServicios, serviciosParaCarrito, type HotelParaServicios } from "@/lib/tarifario/servicioAdicionalPaquete";
+import { claveConsultaServicios, evaluarEdicionServicios, serviciosParaCarrito, type HotelParaServicios, type RecorridoServicios } from "@/lib/tarifario/servicioAdicionalPaquete";
 import { serviciosDeHotel } from "@/lib/cart/vinculoServicios";
 import {
   DesgloseServicios, EdicionServiciosCarrito, PISTA_EDITAR_SERVICIOS, ServiciosEnCarrito, avisoTarifaHotel, conjuntoGuardadoDe,
@@ -2000,13 +2000,10 @@ export function VistaBooking({
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
         {tarjetas.map((t) =>
           t.tipo === "busqueda" ? (
-            // Fila persona ya liquidada por el motor para estas fechas y esta
-            // ocupación — la MISMA lista que las tarjetas de exploración, en
-            // modo búsqueda. El componente vive en `BuscadorBooking` porque es
-            // el único que conoce el carrito por persona
-            // (`HotelCartItemPersona`); acá solo se le da el lugar en la grilla.
+            // Fila persona ya liquidada para estas fechas y ocupación; `Resultado`
+            // (BuscadorBooking) conoce el carrito por persona. IncluyeSalida: «Incluye» de ESTA salida.
+            <IncluyeSalida key={t.key} fechaIda={t.r.fechaIda} incluidos={t.r.incluidosDeLaSalida ?? null}>
             <Resultado
-              key={t.key}
               r={t.r}
               recomendada={t.recomendada === true}
               foto={fotosPorHotel[t.r.hotelId] ?? null}
@@ -2018,6 +2015,7 @@ export function VistaBooking({
               regInicial={t.regForzada ?? undefined}
               combosPermitidos={t.combosRestringidos ?? undefined}
             />
+            </IncluyeSalida>
           ) : t.tipo === "persona" ? (
             <TarjetaHotelCard
               key={t.key}
@@ -2172,6 +2170,8 @@ type ServiciosEditor = ServiciosTarjeta & {
   fechaRegreso: string | null;
   /** Elecciones del hotel que invalidan la cotización de servicios si cambian. */
   firma: string;
+  /** Vuelo del hotel (bloqueo) para acreditar la hora del traslado en el servidor. */
+  recorrido?: RecorridoServicios | null;
 };
 const SIN_SELECCION: readonly number[] = [];
 const SIN_ADDONS: Receptivo[] = [];
@@ -2380,7 +2380,7 @@ function HotelModal({
               {/* Descripción manual del paquete: encabezados fijos, un ítem de
                   lista por línea no vacía. Sección omitida por completo si no
                   tiene contenido (nunca un encabezado con lista vacía). */}
-              <SeccionesIncluye descripcion={descripcionOpcion} compacto />
+              <IncluyeSalida fechaIda={opcion?.fechaIda ?? null}><SeccionesIncluye descripcion={descripcionOpcion} compacto /></IncluyeSalida>
 
               {/* Servicios opcionales (add-on) del MISMO paquete — nunca de otro destino */}
               <AddonsPaquete addons={addons} onAbrir={setAddonAbierto} paqueteId={opcion.paqueteId} seleccion={seleccionServicios.seleccion} />
@@ -3137,6 +3137,7 @@ function Selector({
           // Bloqueo: las fechas son las del record (fijas).
           fechaIda: opcion.fechaIda, fechaRegreso: opcion.fechaRegreso,
           firma: JSON.stringify([opcion.key, catEff, regEff]),
+          recorrido: opcion.modulo === "bloqueo" && opcion.bloqueoId != null ? { modulo: "bloqueo" as const, bloqueoId: opcion.bloqueoId } : null,
         } : undefined} />
     </div>
   );
@@ -3476,6 +3477,7 @@ function EditorPax({
         // Todos los viajeros (infantes incluidos): misma base que exige el checkout.
         pax: puede ? pax + infantes : null, precio: puede ? precio : null, moneda: moneda ?? null,
         firma: JSON.stringify([servicios?.firma ?? "", habs, edades]),
+        recorrido: servicios?.recorrido ?? null,
       };
   const { evaluacion: evaluacionServicios, reintentar: reintentarServicios } =
     useCotizacionServicios(hotelServicios, servicios?.seleccion ?? SIN_SELECCION, servicios?.addons ?? SIN_ADDONS);

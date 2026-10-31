@@ -4,7 +4,7 @@ import { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { Button } from "@/components/ui/button";
 import { formatCOP } from "@/lib/utils";
-import { precioServicio } from "@/lib/calc/paquetes";
+import { precioServicioEstimado, avisoSinRango } from "@/lib/calc/servicioTarifa";
 import { actualizarServiciosContrato } from "../actions";
 
 export type ServicioDispContrato = {
@@ -30,8 +30,10 @@ export function ServiciosContratoEditor({
 
   if (!serviciosDisp.length) return null;
 
-  const precioDe = (s: ServicioDispContrato) => precioServicio(s.modo, s.personaPvp, s.grupos, pax);
-  const total = serviciosDisp.reduce((acc, s) => (sel.has(s.servicioId) ? acc + precioDe(s) : acc), 0);
+  // null = por grupo y ningún rango cubre los pax: no hay estimado (no se muestra el precio del rango más alto) y no se puede guardar así.
+  const precioDe = (s: ServicioDispContrato) => precioServicioEstimado(s.modo, s.personaPvp, s.grupos, pax);
+  const total = serviciosDisp.reduce((acc, s) => (sel.has(s.servicioId) ? acc + (precioDe(s) ?? 0) : acc), 0);
+  const sinRango = serviciosDisp.filter((s) => sel.has(s.servicioId) && precioDe(s) === null);
 
   function toggle(id: number) {
     setSel((prev) => { const n = new Set(prev); if (n.has(id)) n.delete(id); else n.add(id); return n; });
@@ -53,20 +55,23 @@ export function ServiciosContratoEditor({
         {serviciosDisp.map((s) => (
           <li key={s.servicioId} className="flex items-center justify-between py-2.5">
             <label className="flex items-center gap-3">
-              <input type="checkbox" checked={sel.has(s.servicioId)} onChange={() => toggle(s.servicioId)} />
+              <input type="checkbox" checked={sel.has(s.servicioId)} disabled={precioDe(s) === null && !sel.has(s.servicioId)} onChange={() => toggle(s.servicioId)} />
               <span className="text-sm text-gray-800">
                 {s.nombre} <span className="text-xs text-gray-400">({s.modo === "grupo" ? `por grupo · ${pax} pax` : "por persona"})</span>
               </span>
             </label>
-            <span className="text-sm tabular-nums" style={{ color: "var(--brand-primary)" }}>{formatCOP(precioDe(s))}</span>
+            {precioDe(s) === null
+              ? <span role="alert" className="max-w-[16rem] text-right text-xs text-amber-700">{avisoSinRango(pax)}</span>
+              : <span className="text-sm tabular-nums" style={{ color: "var(--brand-primary)" }}>{formatCOP(precioDe(s) as number)}</span>}
           </li>
         ))}
       </ul>
       <div className="mt-3 flex items-center gap-3">
-        <Button onClick={guardar} disabled={pending} style={{ backgroundColor: "var(--brand-primary)" }}>
+        <Button onClick={guardar} disabled={pending || sinRango.length > 0} style={{ backgroundColor: "var(--brand-primary)" }}>
           {pending ? "Guardando…" : "Guardar servicios"}
         </Button>
         <span className="text-sm text-gray-500">Servicios: <b className="tabular-nums">{formatCOP(total)}</b></span>
+        {sinRango.length > 0 && <span className="text-sm text-amber-700">Desmarca «{sinRango.map((s) => s.nombre).join("», «")}»: no tiene rango para {pax} pax.</span>}
         {msg && <span className="text-sm text-green-600">{msg}</span>}
       </div>
     </div>

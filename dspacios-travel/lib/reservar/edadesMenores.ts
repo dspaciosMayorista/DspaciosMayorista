@@ -48,6 +48,7 @@ import { categoriaAliado } from "../b2b.ts";
 // importa nada) — mismo criterio de import relativo que el resto del
 // archivo, seguro para `node --test`.
 import { hoyISO, noches } from "../calc/paquetes.ts";
+import { validarHorasTramos, type HorasTramos } from "../calc/trasladoFranjas.ts";
 
 // Un "menor" nunca puede declararse con 18 años o más — la propia
 // definición de adulto del sistema (ocupación de habitación, nunca tarifa
@@ -482,7 +483,9 @@ export function validarSolicitudItem(v: unknown, indice: number): { ok: true; it
 // liquidación. `nombre`/`precio`/`moneda`/`destino` que mande el navegador
 // NUNCA se leen aquí — no existen en este tipo, así que no hay forma de que
 // se cuelen más adelante (defecto real corregido: antes se usaban tal cual).
-export type SolicitudTourValidado = { servicioId: number; paqueteId: number; fechaIda: string; fechaRegreso: string; pax: number };
+// `horas`: hora local de llegada / salida capturada por quien cotiza (porción terrestre o vuelo sin horas). Si el tour va vinculado a un hotel con vuelo,
+// el servidor reemplaza los tramos que el vuelo sí conoce (ver lib/reservar/horasRecorrido.ts); nunca se confía en el navegador para esos.
+export type SolicitudTourValidado = { servicioId: number; paqueteId: number; fechaIda: string; fechaRegreso: string; pax: number; horas?: HorasTramos };
 
 function esObjetoNoNulo(v: unknown): v is Record<string, unknown> {
   return typeof v === "object" && v !== null && !Array.isArray(v);
@@ -511,7 +514,9 @@ export function validarTourInput(v: unknown, indice: number): { ok: true; tour: 
   if (typeof v.pax !== "number" || !Number.isInteger(v.pax) || v.pax < 1 || v.pax > MAX_PAX_CONSULTA) {
     return { ok: false, error: `${ctx} tiene un pax inválido.` };
   }
-  return { ok: true, tour: { servicioId: v.servicioId, paqueteId: v.paqueteId, fechaIda: vIda.fecha, fechaRegreso: vReg.fecha, pax: v.pax } };
+  const vHoras = validarHorasTramos(v.horas);
+  if (!vHoras.ok) return { ok: false, error: `${ctx}: ${vHoras.error}` };
+  return { ok: true, tour: { servicioId: v.servicioId, paqueteId: v.paqueteId, fechaIda: vIda.fecha, fechaRegreso: vReg.fecha, pax: v.pax, ...(Object.keys(vHoras.horas).length ? { horas: vHoras.horas } : {}) } };
 }
 
 // ── Contexto B2B del mensaje/cotización — SOLO decide, nunca consulta ──────
