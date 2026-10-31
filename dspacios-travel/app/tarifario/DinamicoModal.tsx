@@ -18,7 +18,7 @@ import {
 } from "@/lib/tarifario/dinamicoBooking";
 import type { DescripcionPaqueteRaw } from "@/lib/tarifario/descripcionPaquete";
 import { BackgroundVideo } from "@/components/BackgroundVideo";
-import { Categoria, EtiquetasHotel, DescripcionHotelExpandible, UbicacionHotel, SeccionesIncluye } from "./tarjetaHotelCompartida";
+import { Categoria, EtiquetasHotel, DescripcionHotelExpandible, UbicacionHotel, SeccionesIncluye, IncluyeSalida } from "./tarjetaHotelCompartida";
 import type { FilaTarifario } from "./TarifarioPublic";
 
 export type HotelDinamicoModal = {
@@ -154,7 +154,7 @@ export function DinamicoModal({
               {/* Carrito público (con o sin sesión, sin permiso especial): mismo flujo que Bloqueo, con la salida elegida arriba. */}
               {detalle.estado === "ok" && cotizador?.(salida.salidaId, detalle.filas)}
 
-              <SeccionesIncluye descripcion={descripcion} compacto />
+              <IncluyeSalida fechaIda={salida?.fechaIda ?? null}><SeccionesIncluye descripcion={descripcion} compacto /></IncluyeSalida>
             </>
           )}
         </div>

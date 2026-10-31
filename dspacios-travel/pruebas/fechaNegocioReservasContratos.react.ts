@@ -119,7 +119,12 @@ const semillaServicios = (cxpExistente: boolean) => ({
     numero_contrato: "DTM-0451", tenant: "mayorista", moneda: "COP", estado: "pendiente", pax: 2, precio_venta: 3_000_000,
     paquete_armado_id: 7, fecha_salida: "2026-11-01", fecha_regreso: "2026-11-04", plazo: "2026-10-15",
   }],
-  tarifario_resultado_publicable: [{ paquete_id: 7, modulo: "servicios", servicio_id: 11, servicio_nombre: "Tour bahía", tipo_tarifa: "persona", precio_pvp: 150_000 }],
+  // SIN «GENERAL»: el servicio se vende y se costea desde una vigencia que cubre la fecha de salida (misma re-liquidación que la búsqueda y el carrito).
+  tarifario_resultado_publicable: [{ paquete_id: 7, modulo: "servicios", paquete_activo: true, servicio_id: 11, servicio_nombre: "Tour bahía", destino_nombre: "CARTAGENA", descripcion: null, tipo_tarifa: "persona", precio_pvp: 150_000 }],
+  armado_paquetes: [{ id: 7, pct_mk: 0.2 }],
+  servicios_adicionales: [{ id: 11, precio_persona: null, recargo_individual: null, liquidacion: null, moneda: "COP", categoria: "tour", proveedor_id: null }],
+  servicio_temporadas: [{ servicio_id: 11, nombre: "VIG", fecha_inicio: "2000-01-01", fecha_fin: "2099-12-31", compra_inicio: null, compra_fin: null, prioridad: 1, precio_persona: 100_000, precio_infante: null, recargo_individual: null }],
+  servicio_tarifa_pax: [], contrato_vuelos: [],
   armado_servicios: [{
     paquete_id: 7, servicio_id: 11, modo: "persona",
     servicios_adicionales: { precio_persona: 100_000, categoria: "tour", nombre: "Tour bahía", liquidacion: null, proveedores: { nombre: "Operador Bahía", aplica_retencion: false, pct_retencion: 0 } },
@@ -153,4 +158,63 @@ test("editar servicios a las 19:30 con CxP existente: el asiento se re-postea co
   assert.equal(cx.length, 1);
   assert.equal(cx[0].referencia, "cxp:70");
   assert.equal(cx[0].fecha, DIA_BOGOTA, "regla vigente: el asiento lleva el día de la edición (calculado en Bogotá)");
+});
+
+// ── 255 · editar servicios de un contrato PENDIENTE: SIN «GENERAL» y con horario de traslado ─────────────────────────────────────────────────────────
+// DEFECTO anterior: el precio salía del tarifario publicado (con rango más alto como respaldo) y el costo del precio base GENERAL del servicio, sin importar si
+// había vigencia, rango u hora. AHORA: la misma re-liquidación que la búsqueda y el carrito (vigencia + rango + suplemento horario + margen) y el costo de la
+// CxP con la misma función; lo que falte rechaza la edición sin escribir nada.
+const FRANJA_NOCTURNA = { id: 1, hora_desde: "19:00", hora_hasta: "06:00", tramo: "llegada", tipo: "monto", valor: 40_000, cobro: "grupo" };
+function semillaTraslado(opts: { vigencia?: boolean; franja?: boolean; horaLlegada?: string | null }) {
+  const base = semillaServicios(false);
+  return {
+    ...base,
+    servicio_temporadas: opts.vigencia === false ? [] : [{
+      ...(base.servicio_temporadas[0] as Record<string, unknown>), id: 501,
+      ...(opts.franja ? { servicio_suplementos_franja: [FRANJA_NOCTURNA] } : {}),
+    }],
+    contrato_vuelos: opts.horaLlegada ? [{ numero_contrato: "DTM-0451", direccion: "ida", hora_llegada: opts.horaLlegada, hora_salida: null, orden: 1 }] : [],
+  };
+}
+
+test("255 · servicio solo con precio GENERAL (sin vigencia): se rechaza la edición y NO se escribe nada", async () => {
+  reloj(DESPUES_DEL_CORTE);
+  const bd = usarBD(semillaTraslado({ vigencia: false }));
+  const r = await actualizarServiciosContrato("DTM-0451", [11]);
+  assert.equal(r.ok, false);
+  assert.match(r.error ?? "", /vigencia de tarifa/i);
+  assert.equal(bd.filas("cuentas_por_pagar").length, 0, "no se crea ninguna CxP");
+  assert.equal(bd.filas("ventas")[0]?.precio_venta, 3_000_000, "el precio del contrato no cambia");
+});
+
+test("255 · traslado con franja nocturna y SIN hora capturada: se pide la hora (no se cotiza supuesta) y no se escribe nada", async () => {
+  reloj(DESPUES_DEL_CORTE);
+  const bd = usarBD(semillaTraslado({ franja: true, horaLlegada: null }));
+  const r = await actualizarServiciosContrato("DTM-0451", [11]);
+  assert.equal(r.ok, false);
+  assert.match(r.error ?? "", /hora de llegada/i);
+  assert.equal(bd.filas("cuentas_por_pagar").length, 0);
+  assert.equal(bd.filas("ventas")[0]?.precio_venta, 3_000_000);
+});
+
+test("255 · traslado con franja y hora nocturna (21:15): precio, ítem y CxP llevan el MISMO suplemento neto y el mismo margen", async () => {
+  reloj(DESPUES_DEL_CORTE);
+  const bd = usarBD(semillaTraslado({ franja: true, horaLlegada: "21:15" }));
+  const r = await actualizarServiciosContrato("DTM-0451", [11]);
+  assert.equal(r.ok, true, JSON.stringify(r));
+  // Costo neto: 100.000 × 2 pax + 40.000 de suplemento = 240.000 (CxP al proveedor). Venta: 240.000 / (1 − 0,2) = 300.000.
+  const [cxp] = bd.filas("cuentas_por_pagar");
+  assert.equal(cxp?.valor_total, 240_000);
+  assert.equal(bd.filas("ventas")[0]?.precio_venta, 3_000_000 + 300_000);
+  const item = bd.filas("contrato_items").find((i) => String(i.descripcion).startsWith("Servicio · "));
+  assert.equal(item?.tarifa_adulto, 300_000);
+});
+
+test("255 · el mismo traslado con hora diurna (14:00) no lleva suplemento: 200.000 de costo y 250.000 de venta", async () => {
+  reloj(DESPUES_DEL_CORTE);
+  const bd = usarBD(semillaTraslado({ franja: true, horaLlegada: "14:00" }));
+  const r = await actualizarServiciosContrato("DTM-0451", [11]);
+  assert.equal(r.ok, true, JSON.stringify(r));
+  assert.equal(bd.filas("cuentas_por_pagar")[0]?.valor_total, 200_000);
+  assert.equal(bd.filas("ventas")[0]?.precio_venta, 3_000_000 + 250_000);
 });

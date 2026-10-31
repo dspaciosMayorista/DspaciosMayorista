@@ -37,6 +37,7 @@ import {
 } from "./edadesMenores.ts";
 import { distribuirPorHabitaciones, type HabitacionConsultada } from "./distribucionHabitaciones.ts";
 import { normalizarCategoriaServicio, type ServicioGrupoIncluido } from "./serviciosPaquete.ts";
+import { incluidoEnEstadia, incluidoSeOmite, type VigenciasServicio } from "../calc/servicioVigencias.ts";
 import { aplicaPvpInfanteFijo } from "../paquetes/pvpInfanteFijo.ts";
 import {
   condicionHotelEstadia, barridoRestriccionEstadia, type VigenciaHotelCondicion,
@@ -146,6 +147,8 @@ export type FilaServicioIncluidoRaw = {
   servicio_id: number; modo: string | null; nombre: string | null; categoria: string | null;
   proveedor_id: number | null;
   rangos_grupo: { pax_desde: number; pax_hasta: number; precio: number }[];
+  // Vigencias y rangos del servicio (SIN «GENERAL»): el precio horneado sale de la vigencia del día de ida.
+  vigencias?: VigenciasServicio;
 };
 export type FilaBlackoutHotelRaw = { fecha_inicio: string; fecha_fin: string; total: boolean; acomodaciones: string[] | null; categorias: string[] | null };
 
@@ -165,6 +168,12 @@ export type ResultadoHotelFechas = {
   // pax les suma el cargo con `cargoGrupoIncluido`; quien no, muestra la marca
   // "no es precio final". Vacío = el precio publicado es final.
   serviciosGrupoIncluidos: ServicioGrupoIncluido[];
+  // Incluidos SIN tarifa vigente en esta fecha: se OMITEN (no se cobran, no se listan en «Incluye»/documentos, no generan costo ni CxP) y el hotel se ofrece igual.
+  serviciosOmitidos?: { servicioId: number; nombre: string; motivo: string }[];
+  // Incluidos que SÍ se incluyen y cobran en esta fecha (los demás del paquete se omitieron): base del «Incluye» por salida.
+  serviciosEfectivos?: { servicioId: number; nombre: string }[];
+  // Un incluido con franjas horarias o vigencias ambiguas es un error de configuración (no una omisión): mensaje legible para quien cotiza.
+  errorServiciosIncluidos?: string;
 };
 
 /**
@@ -215,8 +224,21 @@ export function evaluarHotelPorFechas(
   // persona) y viajan en el resultado para que quien conozca el pax les sume
   // el cargo real — ver `cargoGrupoIncluido` en serviciosPaquete.ts.
   const serviciosGrupoIncluidos: ServicioGrupoIncluido[] = [];
+  let errorServiciosIncluidos: string | undefined;
+  const serviciosOmitidos: { servicioId: number; nombre: string; motivo: string }[] = [];
+  const serviciosEfectivos: { servicioId: number; nombre: string }[] = [];
   for (const s of datos.serviciosIncluidos) {
     if (!s.incluido) continue;
+    // SIN «GENERAL»: la vigencia del día de ida decide el precio por persona o los rangos de grupo.
+    const modoInc = s.modo === "grupo" ? "grupo" : "persona";
+    const inc = s.vigencias ? incluidoEnEstadia(s.vigencias, modoInc, fechaIda, fechaIda) : null;
+    if (!inc) { errorServiciosIncluidos ??= `No se cargaron las vigencias del servicio incluido «${s.nombre ?? s.servicio_id}».`; continue; }
+    if (!inc.ok) {
+      if (incluidoSeOmite(inc)) serviciosOmitidos.push({ servicioId: s.servicio_id, nombre: s.nombre ?? "Servicio", motivo: inc.error });
+      else errorServiciosIncluidos ??= inc.error;
+      continue;
+    }
+    serviciosEfectivos.push({ servicioId: s.servicio_id, nombre: s.nombre ?? "Servicio" });
     if (s.modo === "grupo") {
       serviciosGrupoIncluidos.push({
         servicioId: s.servicio_id,
@@ -224,20 +246,21 @@ export function evaluarHotelPorFechas(
         categoria: normalizarCategoriaServicio(s.categoria),
         liquidacion: s.liquidacion,
         proveedorId: s.proveedor_id,
-        rangos: s.rangos_grupo ?? [],
+        rangos: inc.rangos,
       });
       continue;
     }
-    if (s.precio_persona == null) continue;
+    if (inc.netoPersona == null) continue;
     const factorServ = factorLiquidacion(s.liquidacion, numNoches);
-    aporteServ += marcar(Number(s.precio_persona) || 0, pctMk) * factorServ;
-    const menorServ = marcar(s.precio_infante != null ? Number(s.precio_infante) || 0 : Number(s.precio_persona) || 0, pctMk) * factorServ;
+    aporteServ += marcar(inc.netoPersona, pctMk) * factorServ;
+    const menorServ = marcar(inc.netoInfante ?? inc.netoPersona, pctMk) * factorServ;
     aporteServMenor += menorServ;
     if (normalizarCategoriaServicio(s.categoria) !== "asistencia") {
-      aporteServSinAsis += marcar(Number(s.precio_persona) || 0, pctMk) * factorServ;
+      aporteServSinAsis += marcar(inc.netoPersona, pctMk) * factorServ;
       aporteServMenorSinAsis += menorServ;
     }
   }
+  if (errorServiciosIncluidos) return { combos: [], destinoNombre, hotelNombre: datos.armadoHotel?.hotel_nombre ?? null, minNoches: 1, moneda: monedaHotel, serviciosGrupoIncluidos: [], errorServiciosIncluidos };
   // PVP fijo del infante (sin vuelo en este cálculo): reemplaza el precio completo solo sin cargo de servicios atribuible.
   const fijoInfante = datos.paquete.pvp_infante_fijo ?? null;
   const hayGrupoIncluido = serviciosGrupoIncluidos.length > 0;
@@ -331,7 +354,7 @@ export function evaluarHotelPorFechas(
     }
   }
   const combosF = combos.filter((c) => Object.keys(c.precios).some((a) => a !== "nino" && a !== "nino2" && a !== "infante"));
-  return { combos: combosF, destinoNombre, hotelNombre, minNoches: minNochesAplicable(temporadas, fechaIda), moneda: monedaHotel, serviciosGrupoIncluidos };
+  return { combos: combosF, destinoNombre, hotelNombre, minNoches: minNochesAplicable(temporadas, fechaIda), moneda: monedaHotel, serviciosGrupoIncluidos, serviciosEfectivos, ...(serviciosOmitidos.length ? { serviciosOmitidos } : {}) };
 }
 
 // ── Condición de pago del hotel para un rango de fechas (badge, solo lectura) ──

@@ -658,15 +658,19 @@ describe("25. Recálculo server-side — el precio nunca sale de lo que mandó e
     assert.match(cotizar, /resolverLiquidacionServicioPuntual,/);
   });
   test("liquidacionServicio.ts: buscarReceptivos (calcularResultadoServicio) y la re-liquidación puntual (resolverLiquidacionServicioPuntual) llaman a la MISMA fórmula base (calcularPrecioConModoYMarkup), nunca duplicada", () => {
+    // Desde la retirada de la tarifa GENERAL el núcleo es calcularPrecioServicioDetallado (con motivo del fallo y horas de traslado);
+    // calcularPrecioConModoYMarkup quedó como envoltorio de compatibilidad sobre ESE mismo núcleo.
+    assert.match(liquidacion, /export function calcularPrecioServicioDetallado/);
     assert.match(liquidacion, /export function calcularPrecioConModoYMarkup/);
-    const usos = liquidacion.match(/calcularPrecioConModoYMarkup\(/g) ?? [];
-    assert.ok(usos.length >= 3, "calcularPrecioConModoYMarkup debe usarse en su definición + calcularResultadoServicio + resolverLiquidacionServicioPuntual");
+    const usos = liquidacion.match(/calcularPrecioServicioDetallado\(/g) ?? [];
+    assert.ok(usos.length >= 3, "calcularPrecioServicioDetallado debe usarse en su definición + el envoltorio (búsqueda) + resolverLiquidacionServicioPuntual");
+    assert.match(liquidacion, /costoNetoServicio\(/);
   });
   test("checkout/actions.ts re-liquida cada tour con liquidarServicioPuntual y usa SOLO resultado.resultado.* dentro del bucle de tours, nunca t.precio/t.nombre/t.moneda", () => {
     const idxInicio = checkout.indexOf("for (let j = 0; j < input.tours.length; j++)");
     const idxFin = checkout.indexOf("\n  }\n", idxInicio);
     const bucle = checkout.slice(idxInicio, idxFin);
-    assert.match(bucle, /liquidarServicioPuntual\(t\)/);
+    assert.match(bucle, /liquidarServicioPuntual\(tourDe\(j\)\)/); // con las horas efectivas (vuelo del servidor + hora capturada), no el tour crudo
     assert.match(bucle, /resultado\.resultado\.total/);
     assert.match(bucle, /resultado\.resultado\.nombre/);
     // `t` (el ítem validado por `validarTourInput`) solo tiene servicioId/

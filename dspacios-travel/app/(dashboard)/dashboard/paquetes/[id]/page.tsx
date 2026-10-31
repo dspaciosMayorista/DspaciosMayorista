@@ -82,7 +82,7 @@ export default async function PaqueteDetallePage({
 
   let qServicios = sb
     .from("servicios_adicionales")
-    .select("id, nombre, precio_persona, destino_id, moneda, servicio_tarifa_pax(pax_desde)")
+    .select("id, nombre, categoria, precio_persona, destino_id, moneda, servicio_tarifa_pax(pax_desde, temporada), servicio_temporadas(nombre, fecha_inicio, fecha_fin, precio_persona)")
     .eq("activo", true)
     .order("nombre");
   // Servicio aplica si: es del destino puntual, O es catch-all del MISMO alcance
@@ -250,6 +250,7 @@ export default async function PaqueteDetallePage({
         pestanaInicial={pestanaInicial ?? null}
         tarifarioEstado={(pq as { tarifario_estado?: string | null }).tarifario_estado ?? null}
         tarifarioError={(pq as { tarifario_error?: string | null }).tarifario_error ?? null}
+        tarifarioDiagnostico={(pq as { tarifario_diagnostico?: string | null }).tarifario_diagnostico ?? null}
         tarifarioPublicable={(pq as { tarifario_snapshot_publicable?: boolean | null }).tarifario_snapshot_publicable ?? null}
       />
     </div>

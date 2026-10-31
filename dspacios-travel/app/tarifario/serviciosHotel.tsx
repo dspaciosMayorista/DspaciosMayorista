@@ -304,7 +304,7 @@ export function DesgloseServicios({ hotelNombre, precioHotel, moneda, evaluacion
               </dt>
               <dd className="flex shrink-0 items-center gap-2 text-right">
                 {s.estado === "ok" && s.resultado ? (
-                  <span className="font-medium text-gray-800">{formatMoneda(s.resultado.total, s.resultado.moneda)}</span>
+                  <span className="font-medium text-gray-800">{s.resultado.requiereHora?.length ? "Desde " : ""}{formatMoneda(s.resultado.total, s.resultado.moneda)}</span>
                 ) : s.estado === "cotizando" ? (
                   <span className="inline-flex items-center gap-1 text-xs text-gray-500"><Loader2 size={12} className="animate-spin" aria-hidden /> Cotizando…</span>
                 ) : s.estado === "faltan_datos" ? (
@@ -325,7 +325,7 @@ export function DesgloseServicios({ hotelNombre, precioHotel, moneda, evaluacion
         ))}
         {evaluacion.total && (
           <div className="flex items-center justify-between gap-3 py-2">
-            <dt className="font-semibold text-gray-800">Total hotel + servicios</dt>
+            <dt className="font-semibold text-gray-800">{evaluacion.referencial ? "Total referencial (sin recargo por horario)" : "Total hotel + servicios"}</dt>
             <dd className="text-base font-bold" style={{ color: "var(--brand-primary)" }}>{formatMoneda(evaluacion.total.monto, evaluacion.total.moneda)}</dd>
           </div>
         )}

@@ -225,6 +225,8 @@ function servicioConCosto(servicioId: number, monedaServicio: string | undefined
     paquete_id: 34, servicio_id: servicioId, modo: "persona",
     servicios_adicionales: { precio_persona: precioPersona, recargo_individual: null, categoria: "tour_traslado", nombre: "Islas del Rosario", liquidacion: "paquete", proveedor_id: 5, proveedores: proveedorRosario },
   });
+  // Sin tarifa «GENERAL»: el precio sale de una vigencia que cubra la fecha del viaje.
+  (db.servicio_temporadas ??= []).push({ id: 9000 + servicioId, servicio_id: servicioId, nombre: "VIGENTE", fecha_inicio: "2000-01-01", fecha_fin: "2099-12-31", compra_inicio: null, compra_fin: null, prioridad: 1, precio_persona: precioPersona, recargo_individual: null });
 }
 async function cotizacionDirectaConItems(items: unknown[]) { cotizacionDirecta({ moneda: "COP", items, tours: [] }); }
 
@@ -325,6 +327,8 @@ function servicioCatalogo(servicioId: number, moneda: string, precioPersona: num
     paquete_id: 34, servicio_id: servicioId, modo: "persona",
     servicios_adicionales: { precio_persona: precioPersona, recargo_individual: null, categoria: "tour_traslado", nombre: "Islas del Rosario", liquidacion: "paquete", proveedor_id: 5, proveedores: proveedorTour },
   });
+  // Sin tarifa «GENERAL»: el precio sale de una vigencia que cubra la fecha del viaje.
+  (db.servicio_temporadas ??= []).push({ id: 9000 + servicioId, servicio_id: servicioId, nombre: "VIGENTE", fecha_inicio: "2000-01-01", fecha_fin: "2099-12-31", compra_inicio: null, compra_fin: null, prioridad: 1, precio_persona: precioPersona, recargo_individual: null });
 }
 
 describe("#90 H-1 — moneda del servicio distinta de la oferta del carrito", () => {

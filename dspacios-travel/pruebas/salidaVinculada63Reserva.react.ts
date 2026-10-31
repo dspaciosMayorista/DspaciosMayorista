@@ -124,16 +124,19 @@ function montar(esc: Escenario = {}) {
       neto_sencilla: null, neto_doble: 100, neto_triple: null, neto_multiple: null, neto_nino: null, neto_nino2: null, neto_infante: 10, nota_infante: null,
       notas: null, edad_infante_min: null, edad_infante_max: null, edad_nino_min: null, edad_nino_max: null, precio_final_autoritativo: false,
     }],
+    // 258: evidencia de la composición publicada (generación 3 = la publicada, regla 1) con el servicio 900 horneado en la fila de la salida.
+    tarifario_composicion_publicada: esc.conServicio ? [{ paquete_id: PAQUETE_ID, fecha_ida: IDA, generacion: 3, regla: 1, servicios_incluidos: [900] }] : [],
     armado_servicios: esc.conServicio ? [{
       paquete_id: PAQUETE_ID, servicio_id: 900, modo: "persona", incluido: true,
       servicios_adicionales: { nombre: "Tour", categoria: "tour_traslado", precio_persona: 10, precio_infante: 0, liquidacion: "paquete", proveedor_id: null, proveedores: null },
     }] : [],
     servicios_adicionales: [{ id: 900, moneda: "USD" }, ...(esc.servicioOpcional ? [{ id: 901, moneda: "COP", categoria: "otro", proveedor_id: null, precio_persona: 80_000, precio_infante: null, recargo_individual: null, liquidacion: "paquete", nombre: "Tour opcional" }] : [])],
     servicio_tarifa_pax: [],
-    servicio_temporadas: esc.servicioOpcional ? [{
+    // SIN «GENERAL»: el servicio incluido (900) se vende desde una vigencia que cubre todo el rango (mismo neto que antes tenía como precio base).
+    servicio_temporadas: [...(esc.conServicio ? [{ servicio_id: 900, nombre: "VIG", fecha_inicio: "2000-01-01", fecha_fin: "2099-12-31", compra_inicio: null, compra_fin: null, prioridad: 1, precio_persona: 10, precio_infante: 0, recargo_individual: null }] : []), ...(esc.servicioOpcional ? [{
       servicio_id: 901, nombre: "Alta", fecha_inicio: IDA, fecha_fin: REG, compra_inicio: esc.servicioOpcional.compra_inicio, compra_fin: esc.servicioOpcional.compra_fin,
       prioridad: 1, precio_persona: 80_000, precio_infante: null, recargo_individual: null,
-    }] : [],
+    }] : [])],
     destinos: [{ id: 1, nombre: "CARTAGENA", codigo_iata: "CTG", pais: "Colombia", activo: true }],
     armado_paquete_destinos_aereos: [],
     salidas_dinamicas: [{

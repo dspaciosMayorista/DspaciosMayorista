@@ -68,6 +68,9 @@ export function BuscadorReceptivos({
   const [buscando, setBuscando] = useState(false);
   const [err, setErr] = useState("");
   const [resultados, setResultados] = useState<ResultadoServicio[] | null>(null);
+  // Hora prevista del traslado (opcional): solo cambia el precio de los traslados con suplementos por franja horaria.
+  const [hLlegada, setHLlegada] = useState("");
+  const [hSalida, setHSalida] = useState("");
 
   // Generación de solicitud: protección REAL contra respuestas fuera de orden
   // — mismo patrón que `generacionBusquedaRef` en `BuscadorBooking.tsx`. Cada
@@ -116,7 +119,7 @@ export function BuscadorReceptivos({
     if (paxNum <= 0) { setErr("Indica cuántos pax."); return; }
     setBuscando(true);
     start(async () => {
-      const r = await buscarReceptivos({ fechaIda: fIdaQ, fechaRegreso: fRegQ, pax: paxNum, destino: destinoQ, paqueteId: paqueteIdQ ?? undefined });
+      const r = await buscarReceptivos({ fechaIda: fIdaQ, fechaRegreso: fRegQ, pax: paxNum, destino: destinoQ, paqueteId: paqueteIdQ ?? undefined, horas: { llegada: hLlegada, salida: hSalida } });
       // Esta búsqueda quedó obsoleta (otra búsqueda más nueva arrancó, o se
       // pulsó "Limpiar resultados") — no importa si eso ocurrió antes o
       // después de que ESTA respuesta llegara: solo la ÚLTIMA búsqueda
@@ -243,6 +246,17 @@ export function BuscadorReceptivos({
             </div>
           </div>
         </div>
+        <div className="mt-3 grid grid-cols-2 gap-3 sm:grid-cols-4">
+          <div>
+            <label className="mb-1 block text-xs font-semibold text-slate-700">Hora de llegada (traslado)</label>
+            <input type="time" aria-label="Hora de llegada del traslado" value={hLlegada} onChange={(e) => setHLlegada(e.target.value)} className={`${sel} pl-3`} />
+          </div>
+          <div>
+            <label className="mb-1 block text-xs font-semibold text-slate-700">Hora de salida (traslado)</label>
+            <input type="time" aria-label="Hora de salida del traslado" value={hSalida} onChange={(e) => setHSalida(e.target.value)} className={`${sel} pl-3`} />
+          </div>
+          <p className="col-span-2 self-end text-[11px] text-slate-400">Opcional. Algunos traslados cuestan más en ciertos horarios; indica la hora para ver el precio final.</p>
+        </div>
         <div className="mt-4 flex flex-wrap items-center gap-3 border-t border-slate-100 pt-3">
           <button type="button" onClick={() => buscar()} disabled={buscando}
             className="rounded-lg bg-[var(--brand-primary)] px-5 py-2.5 text-xs font-bold uppercase tracking-wide text-white shadow-sm transition hover:brightness-110 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-[var(--brand-accent)] disabled:opacity-50">
@@ -312,6 +326,11 @@ export function BuscadorReceptivos({
                       <div className="text-[10px] uppercase tracking-wide text-gray-400">total</div>
                       <div className="text-lg font-bold" style={{ color: "var(--brand-primary)" }}>{formatMoneda(r.total, r.moneda)}</div>
                       <div className="text-[10px] text-gray-400">{r.pax} pax</div>
+                      {r.requiereHora?.length ? (
+                        <div className="mt-1 text-[11px] font-medium text-amber-700">
+                          Precio base. Indica la hora {r.requiereHora.length === 2 ? "de llegada y de salida" : r.requiereHora[0] === "salida" ? "de salida" : "de llegada"} arriba y busca de nuevo para ver el precio final.
+                        </div>
+                      ) : null}
                     </div>
                     <div className="flex gap-2">
                       <button type="button" onClick={() => onVerDetalle(r)} className="flex-1 rounded-lg border border-gray-200 px-3 py-1.5 text-xs font-medium text-gray-600 hover:bg-gray-50">
@@ -320,6 +339,7 @@ export function BuscadorReceptivos({
                       {onAgregar && (
                         <button
                           type="button"
+                          disabled={!!r.requiereHora?.length}
                           onClick={() => onAgregar({
                             tipo: "tour",
                             paqueteId: r.paqueteId,
@@ -329,6 +349,7 @@ export function BuscadorReceptivos({
                             fotoUrl: r.servicioId != null ? (fotosPorServicio[r.servicioId] ?? null) : null,
                             fechaIda: fIda, fechaRegreso: fReg, noches: r.noches,
                             pax: r.pax, precio: r.total, moneda: r.moneda,
+                            ...(r.horasCotizadas ? { horas: r.horasCotizadas } : {}),
                           })}
                           className="flex-1 rounded-lg px-3 py-1.5 text-xs font-semibold text-white transition-opacity hover:opacity-90"
                           style={{ backgroundColor: "var(--brand-accent)" }}

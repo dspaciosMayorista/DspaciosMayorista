@@ -125,8 +125,8 @@ function props(tipo: string, over: Partial<Props> = {}): Props {
       { id: 32, nombre: "Hotel Dos", zona: null, destino_id: 1 },
     ],
     serviciosDisp: [
-      { id: 41, nombre: "Tour persona", precio_persona: 50000, destino_id: 1, servicio_tarifa_pax: [] },
-      { id: 42, nombre: "Tour grupo", precio_persona: null, destino_id: 1, servicio_tarifa_pax: [{ pax_desde: 2 }] },
+      { id: 41, nombre: "Tour persona", precio_persona: 50000, destino_id: 1, servicio_tarifa_pax: [], servicio_temporadas: [{ nombre: "V1", fecha_inicio: "2026-01-01", fecha_fin: "2099-12-31", precio_persona: 50000 }] },
+      { id: 42, nombre: "Tour grupo", precio_persona: null, destino_id: 1, servicio_tarifa_pax: [{ pax_desde: 2, temporada: "V1" }], servicio_temporadas: [{ nombre: "V1", fecha_inicio: "2026-01-01", fecha_fin: "2099-12-31", precio_persona: null }] },
       { id: 43, nombre: "Tour sin tarifa", precio_persona: null, destino_id: 1, servicio_tarifa_pax: [] },
     ],
     selVuelos: [], selEmpaquetados: [], selHoteles: [{ hotel_id: 31, categorias: null, regimenes: null, prioridad: null }], selServicios: [],
@@ -158,11 +158,11 @@ test("Bloqueo sin moneda acreditada se rotula así y no se formatea como COP", a
 
 test("servicio y hotel USD no se muestran como COP", async () => {
   const raiz = await montar(props("bloqueo", {
-    serviciosDisp: [{ id: 41, nombre: "Tour USD", precio_persona: 80, destino_id: 1, moneda: "USD", servicio_tarifa_pax: [] }] as Props["serviciosDisp"],
+    serviciosDisp: [{ id: 41, nombre: "Tour USD", precio_persona: 80, destino_id: 1, moneda: "USD", servicio_tarifa_pax: [], servicio_temporadas: [{ nombre: "V1", fecha_inicio: "2026-01-01", fecha_fin: "2099-12-31", precio_persona: 80 }] }] as Props["serviciosDisp"],
   }));
   await pulsar(pestana(raiz, "Servicios"));
-  assert.ok(texto(raiz).includes(`Persona: ${formatMoneda(80, "USD")}`));
-  assert.ok(!texto(raiz).includes(`Persona: ${formatCOP(80)}`));
+  assert.ok(texto(raiz).includes(`Persona desde ${formatMoneda(80, "USD")}`));
+  assert.ok(!texto(raiz).includes(`Persona desde ${formatCOP(80)}`));
 });
 
 test("panel de unidades: paquete USD con hotel USD + Bloqueo COP pide TRM explícita y conserva los importes", async () => {

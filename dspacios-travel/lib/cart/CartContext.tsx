@@ -142,6 +142,10 @@ export type TourCartItem = {
   /** `id` del ítem de hotel al que pertenece (subelección de su tarjeta).
    * Ausente = servicio independiente (Receptivos). Ver lib/cart/vinculoServicios.ts. */
   hotelItemId?: string | null;
+  /** Hora local prevista del traslado (llegada / salida), para servicios con suplementos por franja horaria. El servidor la valida y, con vuelo, usa la del vuelo. */
+  horas?: { llegada?: string | null; salida?: string | null };
+  /** Traslado con recargo por horario cuyo precio es el BASE (falta la hora): `precio` NO es un total final. El servidor lo recotiza con la hora del vuelo. */
+  referencial?: boolean;
 };
 
 /** Servicio listo para entrar al carrito junto con su hotel (`addConjunto`

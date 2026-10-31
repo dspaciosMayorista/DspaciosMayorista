@@ -2,6 +2,7 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import type { Database } from "@/types/database";
 import type { AcomConfig } from "@/lib/acomodaciones";
 import { createAdminClient } from "../supabase/admin.ts";
+import { adjuntarComposicionIncluidos } from "./composicionIncluidos.ts";
 import { aplicarFiltrosPostCarga } from "./filtrosPostCarga.ts";
 import { esFilaHotelVerificable } from "./vigencia.ts";
 import { registrarEtapa, registrarDatoPagina, registrarErrorTecnico, medirPayloadSiHabilitado, textoEstimacionPayload } from "../observabilidad/medicion.ts";
@@ -766,6 +767,9 @@ export async function cargarResumenTarifario(
   const filasEntregadasCliente = filasVisibles.length + filasAddon.length;
   const estPayload = medirPayloadSiHabilitado({ filasVisibles, filasAddon });
   registrarDatoPagina(flujo, flujoId, "payload_inicial", `filas_entregadas_cliente=${filasEntregadasCliente} ${textoEstimacionPayload(estPayload)}`);
+
+  // «Incluye» por salida: qué servicios incluidos se omiten en cada salida (sin tarifa vigente). Un error deja el «Incluye» manual sin presentar (falla cerrado).
+  await adjuntarComposicionIncluidos(admin as unknown as Parameters<typeof adjuntarComposicionIncluidos>[0], descripcionPorPaquete, (m) => registrarErrorTecnico(flujo, flujoId, "datos_auxiliares", "error_composicion_incluidos", { message: m }));
 
   return {
     ok: true,

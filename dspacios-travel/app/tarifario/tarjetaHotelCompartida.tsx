@@ -26,6 +26,8 @@ import { Popover } from "@base-ui/react/popover";
 import { Check, ChevronDown, ChevronRight, Circle, CircleCheck, Info, Star, X } from "lucide-react";
 import { formatMoneda } from "@/lib/utils";
 import { seccionesDescripcion, type DescripcionPaqueteRaw } from "@/lib/tarifario/descripcionPaquete";
+import { descripcionParaSalida, descripcionConServicios } from "@/lib/tarifario/descripcionPaquete";
+import type { ServicioIncluidoRef } from "@/lib/tarifario/incluyePorSalida";
 import type { SeccionDescripcion } from "@/lib/tarifario/descripcionPaquete";
 
 // Servicio opcional (add-on) de un paquete — mismo shape en las 4 tarjetas
@@ -277,8 +279,22 @@ function ListaTarjeta({ secciones }: {
 // tiene contenido" en los lugares que la usan. `compacto` (opcional) fuerza la
 // variante: por defecto sigue al envoltorio <IncluyeCompacto> y, sin él, es la
 // vista completa de siempre.
+// «Incluye» POR SALIDA: el texto manual se conserva en la base, pero se presenta sin afirmar lo que esa salida no incluye ni cobra (un servicio incluido sin tarifa vigente
+// en su fecha se omite). La salida se declara con <IncluyeSalida> (salida fija elegida, o composición ya resuelta de la búsqueda en vivo); sin él (vista general del
+// paquete) se retira todo servicio omitido en alguna salida. El aviso para el operador NO se muestra aquí: va al diagnóstico de la publicación.
+type SalidaIncluye = { fechaIda?: string | null; incluidos?: { efectivos: readonly ServicioIncluidoRef[]; omitidos: readonly ServicioIncluidoRef[] } | null };
+const IncluyeSalidaContexto = createContext<SalidaIncluye | null>(null);
+export function IncluyeSalida({ fechaIda, incluidos, children }: SalidaIncluye & { children: ReactNode }) {
+  return <IncluyeSalidaContexto.Provider value={{ fechaIda, incluidos }}>{children}</IncluyeSalidaContexto.Provider>;
+}
+function usePresentada(d: DescripcionPaqueteRaw | undefined | null): DescripcionPaqueteRaw | undefined | null {
+  const s = useContext(IncluyeSalidaContexto);
+  if (!d) return d;
+  return s?.incluidos ? descripcionConServicios(d, s.incluidos.efectivos, s.incluidos.omitidos).descripcion : descripcionParaSalida(d, s?.fechaIda).descripcion;
+}
 export function SeccionesIncluye({ descripcion, compacto }: { descripcion: DescripcionPaqueteRaw | undefined | null; compacto?: boolean }) {
   const delContexto = useContext(IncluyeCompactoContexto);
+  descripcion = usePresentada(descripcion);
   const secciones = seccionesDescripcion(descripcion);
   if (!secciones.length) return null;
   if (compacto ?? delContexto) return <SeccionesIncluyeResumen descripcion={descripcion} />;

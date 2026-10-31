@@ -214,6 +214,7 @@ export default function CheckoutPage() {
           // Hotel al que pertenece (servicio elegido en su tarjeta) — el
           // servidor lo valida y cotiza el conjunto completo o nada.
           hotelItemId: it.hotelItemId ?? null,
+          ...(it.horas && (it.horas.llegada || it.horas.salida) ? { horas: it.horas } : {}),
         })),
         // #64: precio de venta declarado por el asesor; el servidor lo vuelve a validar y exige sesión interna.
         ...(manualItems.length ? { manuales: manualItems.map(vueloParaEnviar).map((m) => ({ clase: m.clase, nombre: m.nombre, origen: m.origen, destino: m.destino, fechaIda: m.fechaIda, fechaRegreso: m.fechaRegreso, pax: m.pax, precio: m.precio, moneda: m.moneda, impuestoNoComisionable: m.impuestoNoComisionable, tramo: m.tramo, hotelRef: m.hotelRef, horaIda: m.horaIda ?? null, horaRegreso: m.horaRegreso ?? null })) } : {}),
@@ -516,14 +517,15 @@ export default function CheckoutPage() {
                       )}
                     </div>
                     <div className="text-right">
-                      <div className="text-sm font-semibold" style={{ color: "var(--brand-primary)" }}>{formatImporte(it.precio, monedaDeItem(it))}</div>
+                      <div className="text-sm font-semibold" style={{ color: "var(--brand-primary)" }}>{it.tipo === "tour" && it.referencial ? "Desde " : ""}{formatImporte(it.precio, monedaDeItem(it))}</div>
+                      {it.tipo === "tour" && it.referencial && <div className="text-[11px] font-medium text-amber-700">Precio base: falta el horario del traslado</div>}
                       <button type="button" onClick={() => remove(it.id)} className="text-xs text-gray-400 hover:text-red-500">Quitar</button>
                     </div>
                   </li>
                 ))}
               </ul>
               <div className="mt-3 space-y-2 border-t border-gray-100 pt-3">
-                {!vista.crear && <TotalesPorMoneda totales={totales} etiqueta={`Total${hayB2B ? " (PVP)" : " estimado"}`} />}
+                {!vista.crear && <TotalesPorMoneda totales={totales} etiqueta={items.some((i) => i.tipo === "tour" && i.referencial) ? "Total referencial, falta horario del traslado" : `Total${hayB2B ? " (PVP)" : " estimado"}`} />}
                 {!vista.crear && <AvisoMonedas totales={totales} prevision={prevision} />}
                 {verComision && !baseComision && (
                   <p className="text-xs text-gray-500">La comisión se calculará sobre la cotización que se genere (una sola moneda).</p>

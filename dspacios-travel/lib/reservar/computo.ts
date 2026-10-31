@@ -14,6 +14,7 @@ import {
   noches,
   liquidarHotelNoches,
   liquidarHotelNochesConTemporadas,
+  hoyISO,
   temporadaVigenteParaFecha,
   toTemporadaRango,
   marcar,
@@ -47,6 +48,10 @@ import {
   type CategoriaServicio, type ServicioEfectivo, type ServicioGrupoIncluido,
 } from "@/lib/reservar/serviciosPaquete";
 import { validarModoServicio } from "@/lib/reservar/liquidacionServicio";
+import { cargarVigenciasServicios } from "@/lib/reservar/temporadasServicio";
+import { referenciaPublicacion, incluidoEnEstadia, incluidoSeOmite } from "@/lib/calc/servicioVigencias";
+import { idsDeJson, MENSAJE_EVIDENCIA_NO_DISPONIBLE, verificarComposicionPublicada } from "@/lib/reservar/composicionPublicada";
+import { resolverTarifaServicio, rangoCubrePax, MENSAJE_SIN_TARIFA } from "@/lib/calc/servicioTarifa";
 import { precioInfanteConServiciosOpcionales, type ServicioOpcionalSeleccionado } from "@/lib/paquetes/pvpInfanteFijo";
 import { contarMenoresDeDos, tarifarMenores, totalMenoresDeDos, type ConteoMenores, type LineaMenor } from "@/lib/reservar/menoresDeDos";
 import { impuestoPorPersona63, impuestoTotal63, monedaNormalizada63 } from "@/lib/reservar/ofertaDinamica63";
@@ -458,6 +463,10 @@ export async function computarReserva(
     const admin = createAdminClient();
     const res = await liquidarHotelPaquete(admin, input.paqueteId, input.hotelId, input.fechaIda!, numNoches);
     const combo = res?.combos.find((c) => c.categoria === input.categoria && c.regimen === input.regimen);
+    // Un servicio INCLUIDO sin vigencia/tarifa para esa fecha impide vender ese hotel (jamás sin el servicio): se dice cuál y por qué, no «sin tarifa».
+    // (La firma pública de liquidarHotelPaquete no cambia: `errorServiciosIncluidos` viaja en el objeto que devuelve evaluarHotelPorFechas.)
+    const errIncluidos = (res as { errorServiciosIncluidos?: string } | null)?.errorServiciosIncluidos;
+    if (!combo && errIncluidos) return { ok: false, error: errIncluidos };
     if (!combo) return { ok: false, error: "No hay tarifa para esas fechas / categoría / régimen." };
     for (const [acom, p] of Object.entries(combo.precios)) pvpPorAcom[acom] = p;
     if (combo.preciosMenor2) for (const [acom, p] of Object.entries(combo.preciosMenor2)) pvpMenor2PorAcom[acom] = p;
@@ -902,74 +911,57 @@ export async function computarReserva(
       }
     }
 
-    // Tarifa por TEMPORADA del servicio: si la fecha del viaje cae en una temporada
-    // vigente, se escala el PVP del snapshot por la razón neto_temporada/neto_general
-    // (conserva markup, liquidación y redondeo del GENERAL proporcionalmente). Una
-    // temporada es una tarifa COMPLETA: persona + recargo individual + rangos por grupo.
+    // Cada servicio opcional se cotiza con SU vigencia, SIN «GENERAL»: la fecha del viaje elige la vigencia y, por grupo, el pax elige un rango de ESA vigencia.
+    // El snapshot publicado trae el precio de REFERENCIA (el mínimo entre las vigencias que cubren el viaje del paquete: lib/calc/servicioVigencias.ts, la misma
+    // función que usa la publicación); aquí se escala por la razón neto_vigencia / neto_referencia (conserva markup, liquidación y redondeo). Lo que no se pueda
+    // resolver —sin fecha, sin vigencia, sin rango, sin precio— FALLA con un mensaje legible antes de numerar; nunca se cae al precio publicado.
     const fechaViaje = meta.fecha_ida;
-    if (fechaViaje && byServ.size) {
-      const ids = [...byServ.keys()];
-      const [{ data: baseSrv }, { data: temps }, { data: tarifaPax }] = await Promise.all([
-        sb.from("servicios_adicionales").select("id, precio_persona, precio_infante").in("id", ids),
-        sb.from("servicio_temporadas").select("servicio_id, nombre, fecha_inicio, fecha_fin, compra_inicio, compra_fin, prioridad, precio_persona, precio_infante, recargo_individual").in("servicio_id", ids),
-        sb.from("servicio_tarifa_pax").select("servicio_id, pax_desde, pax_hasta, precio, temporada").in("servicio_id", ids),
-      ]);
-      const netoGen = new Map((baseSrv ?? []).map((b) => [b.id, Number(b.precio_persona) || 0]));
-      const netoInfGen = new Map((baseSrv ?? []).map((b) => [b.id, b.precio_infante == null ? null : Number(b.precio_infante)]));
-      const netoInfTemp = new Map<string, number>(); // servId|nombre -> neto infante de la temporada
-      const tempsByServ = new Map<number, TemporadaRango[]>();
-      const netoTemp = new Map<string, number>();   // servId|nombre -> neto persona
-      const recTemp = new Map<string, number>();    // servId|nombre -> recargo neto
-      for (const t of temps ?? []) {
-        const arr = tempsByServ.get(t.servicio_id) ?? [];
-        arr.push(toTemporadaRango(t));
-        tempsByServ.set(t.servicio_id, arr);
-        if (t.precio_persona != null) netoTemp.set(`${t.servicio_id}|${t.nombre}`, Number(t.precio_persona));
-        if (t.precio_infante != null) netoInfTemp.set(`${t.servicio_id}|${t.nombre}`, Number(t.precio_infante));
-        if (t.recargo_individual != null) recTemp.set(`${t.servicio_id}|${t.nombre}`, Number(t.recargo_individual));
-      }
-      // Netos por GRUPO por temporada (incl. GENERAL): para rescatar por rango de pax.
-      const grpRanges = new Map<string, { d: number; h: number; p: number }[]>();
-      for (const g of tarifaPax ?? []) {
-        const k = `${g.servicio_id}|${g.temporada ?? "GENERAL"}`;
-        const list = grpRanges.get(k) ?? [];
-        list.push({ d: g.pax_desde, h: g.pax_hasta, p: Number(g.precio) || 0 });
-        grpRanges.set(k, list);
-      }
-      const netoGrupo = (servId: number, temp: string, pax: number): number | undefined =>
-        grpRanges.get(`${servId}|${temp}`)?.find((x) => pax >= x.d && pax <= x.h)?.p;
-
+    if (byServ.size) {
+      if (!fechaViaje) return { ok: false, error: "Indica la fecha del viaje para cotizar los servicios seleccionados." };
+      const adminVig = createAdminClient();
+      const { data: pqVent, error: pqVentErr } = await adminVig.from("armado_paquetes").select("fecha_viaje_inicio, fecha_viaje_fin").eq("id", input.paqueteId).maybeSingle();
+      if (pqVentErr) return { ok: false, error: `No se pudo consultar el viaje del paquete: ${pqVentErr.message}` };
+      const ventana = pqVent?.fecha_viaje_inicio && pqVent?.fecha_viaje_fin ? { desde: pqVent.fecha_viaje_inicio as string, hasta: pqVent.fecha_viaje_fin as string } : null;
+      const rv = await cargarVigenciasServicios(adminVig, [...byServ].map(([id, x]) => ({ id, nombre: x.nombre })));
+      if (!rv.ok) return { ok: false, error: `No se pudieron consultar las vigencias de los servicios: ${rv.error}` };
       const d = new Date(`${fechaViaje}T00:00:00`);
       for (const [id, s] of byServ) {
-        const tt = tempsByServ.get(id);
-        if (!tt?.length) continue;
-        const nombre = temporadaVigenteParaFecha(d, tt);
-        if (!nombre) continue;
-        if (oferta63) {
-          const tv = tt.find((x) => x.nombre === nombre);
-          if (tv) vigencias63.push({ origen: "servicio", ref: `${id}|${nombre}`, compra_inicio: tv.compra_inicio ?? null, compra_fin: tv.compra_fin ?? null });
-        }
-        if (s.modo === "persona" && s.personaPvp != null) {
-          const ng = netoGen.get(id) || 0;
-          const mkf = ng > 0 ? s.personaPvp / ng : null;   // factor de markup del snapshot
-          const nt = netoTemp.get(`${id}|${nombre}`);
-          if (nt != null && ng > 0) s.personaPvp = Math.round(s.personaPvp * (nt / ng));
-          const rt = recTemp.get(`${id}|${nombre}`);        // recargo NETO de la temporada
-          if (rt != null && mkf != null) s.recargoIndividual = Math.round(rt * mkf);
-          // Precio de infante de la temporada (hereda el GENERAL si no lo define;
-          // sin ninguno, el infante sigue el precio de adulto ya escalado arriba).
-          const ni = netoInfTemp.get(`${id}|${nombre}`);
-          if (ni != null) {
-            const nig = netoInfGen.get(id) ?? null;
-            if (s.infantePvp != null && nig != null && nig > 0) s.infantePvp = Math.round(s.infantePvp * (ni / nig));
-            else if (mkf != null) s.infantePvp = Math.round(ni * mkf);
+        const sv = rv.porServicio.get(id);
+        if (!sv) return { ok: false, error: `El servicio «${s.nombre}» no se encontró en el catálogo.` };
+        const ref = referenciaPublicacion(sv, s.modo, ventana, hoyISO());
+        if (!ref.ok) return { ok: false, error: ref.error };
+        const q = resolverTarifaServicio({ temporadas: sv.temporadas, grupos: sv.grupos, modo: s.modo, pax: paxServAdulto, fecha: d });
+        if (!q.ok) return { ok: false, error: `El servicio «${s.nombre}»: ${MENSAJE_SIN_TARIFA[q.motivo]}` };
+        if (sv.conFranjas.has(q.temporada)) return { ok: false, error: `El servicio «${s.nombre}» tiene suplementos por horario en esta vigencia; cotízalo desde el carrito indicando la hora del traslado (esta reserva interna no calcula suplementos por horario, por eso se rechaza antes de numerar).` };
+        const fila = sv.temporadas.find((x) => x.nombre === q.temporada)!;
+        if (oferta63) vigencias63.push({ origen: "servicio", ref: `${id}|${q.temporada}`, compra_inicio: fila.compra_inicio ?? null, compra_fin: fila.compra_fin ?? null });
+        if (s.modo === "persona") {
+          if (s.personaPvp == null) return { ok: false, error: `El servicio «${s.nombre}» no tiene precio por persona publicado; regenera el tarifario del paquete.` };
+          const refN = ref.netoPersona as number;
+          const nt = q.netoPersona as number;
+          if (refN > 0) {
+            const mkf = s.personaPvp / refN; // factor de markup del snapshot
+            s.personaPvp = Math.round(s.personaPvp * (nt / refN));
+            s.recargoIndividual = Math.round(q.recargoIndividual * mkf);
+            // Infante: precio propio de la vigencia o, sin él, el de adulto de esa vigencia (NULL ≠ $0).
+            if (s.infantePvp != null) {
+              const vigInf = fila.precio_infante != null ? Number(fila.precio_infante) : nt;
+              s.infantePvp = ref.netoInfante != null && ref.netoInfante > 0 ? Math.round(s.infantePvp * (vigInf / ref.netoInfante)) : Math.round(vigInf * mkf);
+            }
+          } else if (nt !== 0) {
+            return { ok: false, error: `El servicio «${s.nombre}» se publicó sin costo y su vigencia «${q.temporada}» tiene costo; regenera el tarifario del paquete.` };
           }
-        } else if (s.modo === "grupo") {
+        } else {
           for (const g of s.grupos) {
-            const ngG = netoGrupo(id, "GENERAL", g.pax_desde) ?? netoGrupo(id, "GENERAL", g.pax_hasta);
-            const ntG = netoGrupo(id, nombre, g.pax_desde) ?? netoGrupo(id, nombre, g.pax_hasta);
-            if (ntG != null && ngG != null && ngG > 0) g.precio = Math.round(g.precio * (ntG / ngG));
+            const refR = ref.rangos.find((r) => r.pax_desde === g.pax_desde && r.pax_hasta === g.pax_hasta);
+            const vigR = sv.grupos.find((x) => x.temporada === q.temporada && x.pax_desde === g.pax_desde && x.pax_hasta === g.pax_hasta);
+            if (!refR || !vigR) return { ok: false, error: `El servicio «${s.nombre}» tiene publicado un rango de ${g.pax_desde} a ${g.pax_hasta} pasajeros que su vigencia «${q.temporada}» no tiene; regenera el tarifario del paquete.` };
+            if (refR.precio > 0) g.precio = Math.round(g.precio * (Number(vigR.precio) / refR.precio));
+            else if (Number(vigR.precio) !== 0) return { ok: false, error: `El servicio «${s.nombre}» se publicó sin costo en ese rango y su vigencia «${q.temporada}» tiene costo; regenera el tarifario del paquete.` };
           }
+          // La vigencia cubre el pax (q.ok) pero el precio sale de los rangos PUBLICADOS: si el snapshot quedó atrás (la vigencia ganó un rango después de publicar),
+          // precioServicio caería al rango más alto. Falla antes de numerar en vez de cobrar un rango que no corresponde.
+          if (!rangoCubrePax(s.grupos, paxServAdulto)) return { ok: false, error: `El servicio «${s.nombre}» no tiene publicado un rango que cubra ${paxServAdulto} pasajeros (su vigencia «${q.temporada}» sí lo tiene); regenera el tarifario del paquete.` };
         }
       }
     }
@@ -1030,20 +1022,21 @@ export async function computarReserva(
     if (incErr) return { ok: false, error: `No se pudieron consultar los servicios incluidos del paquete: ${incErr.message}` };
     if (incRows?.length) {
       const ids = incRows.map((r) => r.servicio_id).filter((id): id is number => id != null);
-      const [{ data: gruposInc, error: gruposIncErr }] = await Promise.all([
-        catalogo.from("servicio_tarifa_pax").select("servicio_id, pax_desde, pax_hasta, precio, temporada").eq("temporada", "GENERAL").in("servicio_id", ids),
-      ]);
-      if (gruposIncErr) return { ok: false, error: `No se pudieron consultar las tarifas por grupo de los servicios incluidos: ${gruposIncErr.message}` };
-      const gruposPorServ = new Map<number, { pax_desde: number; pax_hasta: number; precio: number }[]>();
-      for (const g of gruposInc ?? []) {
-        if (g.servicio_id == null) continue;
-        (gruposPorServ.get(g.servicio_id) ?? gruposPorServ.set(g.servicio_id, []).get(g.servicio_id)!).push({ pax_desde: g.pax_desde, pax_hasta: g.pax_hasta, precio: Number(g.precio) || 0 });
-      }
+      // SIN «GENERAL»: el costo del incluido sale de la vigencia del día de ida (precio por persona o rangos de ESA vigencia); sin vigencia, sin precio/rango o
+      // con franjas horarias (un traslado con suplemento por hora no puede ir incluido) falla con un mensaje legible antes de numerar.
+      if (!meta.fecha_ida) return { ok: false, error: "Indica la fecha del viaje para calcular los servicios incluidos del paquete." };
+      const rvInc = await cargarVigenciasServicios(catalogo, incRows.map((r) => ({
+        id: r.servicio_id as number, nombre: (r.servicios_adicionales as unknown as { nombre?: string | null } | null)?.nombre ?? `#${r.servicio_id}`,
+      })));
+      if (!rvInc.ok) return { ok: false, error: `No se pudieron consultar las vigencias de los servicios incluidos: ${rvInc.error}` };
+      void ids;
       const numNochesInc = meta.fecha_ida && meta.fecha_regreso ? (noches(meta.fecha_ida, meta.fecha_regreso) || 1) : 1;
       // Incluidos por GRUPO: se juntan y se cobran de una sola vez más abajo,
       // con la fórmula compartida (nunca uno por uno acá, para que el total
       // sea exactamente el que mostró el buscador).
       const gruposIncluidosPendientes: ServicioGrupoIncluido[] = [];
+      // Incluidos que la composición VIVA incluye y cobra en esta fecha (los omitidos por falta de tarifa no están): se contrasta con lo horneado en la fila publicada.
+      const idsVivos: number[] = [];
       for (const r of incRows) {
         if (r.servicio_id == null) continue;
         const srv = r.servicios_adicionales as unknown as { nombre: string | null; categoria: string | null; precio_persona: number | null; precio_infante: number | null; liquidacion: string | null; proveedor_id: number | null } | null;
@@ -1055,17 +1048,26 @@ export async function computarReserva(
         if (modo == null) {
           return { ok: false, error: `El servicio incluido "${srv?.nombre ?? r.servicio_id}" tiene un modo de cobro inválido en el catálogo (armado_servicios.modo) — corrígelo antes de reservar.` };
         }
+        const svInc = rvInc.porServicio.get(r.servicio_id);
+        if (!svInc) return { ok: false, error: `El servicio incluido "${srv?.nombre ?? r.servicio_id}" no se encontró en el catálogo.` };
+        const inc = incluidoEnEstadia(svInc, modo, meta.fecha_ida, meta.fecha_ida);
+        // Sin tarifa vigente en la fecha de ida: el incluido se OMITE (no entra al PVP —la publicación y la liquidación en vivo tampoco lo hornearon—, ni al costo, ni
+        // a la CxP, ni a «Incluye»/documentos). Los errores de configuración (franjas, vigencias ambiguas) siguen rechazando.
+        if (!inc.ok) { if (incluidoSeOmite(inc)) continue; return { ok: false, error: inc.error }; }
+        idsVivos.push(r.servicio_id);
         const costoNeto = costoNetoServicioIncluido(
-          modo, srv?.precio_persona ?? null, gruposPorServ.get(r.servicio_id) ?? [], paxServAdulto, srv?.liquidacion ?? null, numNochesInc,
-          { cantidad: numMenoresDeDos, precioInfanteNeto: srv?.precio_infante ?? null }
+          modo, inc.netoPersona, inc.rangos, paxServAdulto, srv?.liquidacion ?? null, numNochesInc,
+          { cantidad: numMenoresDeDos, precioInfanteNeto: inc.netoInfante }
         );
         if (modo === "persona") {
-          // Ya horneado en pvpPorAcom — solo se registra para el resumen/CxP,
-          // costoNeto puede quedar en 0 si no se pudo resolver (nunca bloquea
-          // la reserva: el "desde" público ya venía con el mismo criterio).
+          // Ya horneado en pvpPorAcom — se registra para el resumen/CxP. Un cálculo fallido (null) NUNCA se convierte en costo/CxP $0 (el PVP sí lo cobra): se rechaza antes de
+          // cotizar o numerar. El cero VÁLIDO (servicio gratuito: tarifa 0) llega como número 0 y se conserva.
+          if (costoNeto == null) {
+            return { ok: false, error: `No se pudo calcular el costo del servicio incluido «${srv?.nombre ?? r.servicio_id}» para esta reserva (tarifa incompleta o no válida): no se cotiza ni se reserva. Revisa su tarifa en Producto → Servicios.` };
+          }
           serviciosIncluidos.push({
             servicioId: r.servicio_id, nombre: srv?.nombre ?? "Servicio", categoria: normalizarCategoriaServicio(srv?.categoria),
-            incluido: true, costoNeto: costoNeto ?? 0, proveedorId: srv?.proveedor_id ?? null,
+            incluido: true, costoNeto, proveedorId: srv?.proveedor_id ?? null,
           });
           continue;
         }
@@ -1086,8 +1088,26 @@ export async function computarReserva(
           categoria: normalizarCategoriaServicio(srv?.categoria),
           liquidacion: srv?.liquidacion ?? null,
           proveedorId: srv?.proveedor_id ?? null,
-          rangos: gruposPorServ.get(r.servicio_id) ?? [],
+          rangos: inc.rangos,
         });
+      }
+
+      // Fila publicada (bloqueo/dinámico): el PVP sale del snapshot, el costo/CxP de la composición viva. ANTES de cotizar o numerar se acredita que el snapshot corresponde a
+      // la regla vigente (evidencia de la generación publicada, regla vigente y mismos servicios horneados). Sin evidencia —toda fila anterior a la 258— o con discrepancia se
+      // rechaza: nunca se cobra el PVP antiguo de un servicio que la composición actual omite.
+      if (input.modulo === "bloqueo" || input.modulo === "dinamico") {
+        const [pqGen, evid] = await Promise.all([
+          catalogo.from("armado_paquetes").select("tarifario_generacion_publicada").eq("id", input.paqueteId).maybeSingle(),
+          catalogo.from("tarifario_composicion_publicada").select("generacion, regla, servicios_incluidos").eq("paquete_id", input.paqueteId).eq("fecha_ida", meta.fecha_ida).maybeSingle(),
+        ]);
+        if (pqGen.error || evid.error) return { ok: false, error: MENSAJE_EVIDENCIA_NO_DISPONIBLE };
+        const idsEvidencia = evid.data ? idsDeJson(evid.data.servicios_incluidos) : null;
+        const veredicto = verificarComposicionPublicada({
+          generacionPublicada: pqGen.data?.tarifario_generacion_publicada != null ? Number(pqGen.data.tarifario_generacion_publicada) : null,
+          evidencia: evid.data && idsEvidencia ? { generacion: Number(evid.data.generacion), regla: Number(evid.data.regla), servicios: idsEvidencia } : null,
+          idsVivos,
+        });
+        if (!veredicto.ok) return { ok: false, error: veredicto.error };
       }
 
       // Cargo ÚNICO de los servicios incluidos por grupo, con el pax real.

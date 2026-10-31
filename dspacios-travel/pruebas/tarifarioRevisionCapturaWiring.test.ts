@@ -109,16 +109,17 @@ describe("generarTarifario — NINGUNA lectura ocurre antes de capturar el token
     }
   });
 
-  test("la lectura de servicio_tarifa_pax (gruposPorServicio) ocurre DESPUÉS de iniciar_generacion_tarifario", () => {
-    const idxGrupos = cuerpo.indexOf('.from("servicio_tarifa_pax")');
-    assert.notEqual(idxGrupos, -1, "no se encontró la lectura de servicio_tarifa_pax (gruposPorServicio)");
-    assert.ok(idxIniciar < idxGrupos, "la lectura de servicio_tarifa_pax debe ocurrir DESPUÉS de capturar el token");
+  test("la lectura de las vigencias de los servicios (cargarVigenciasServicios, sin GENERAL) ocurre DESPUÉS de iniciar_generacion_tarifario", () => {
+    const idxGrupos = cuerpo.indexOf("cargarVigenciasServicios(");
+    assert.notEqual(idxGrupos, -1, "no se encontró la lectura de las vigencias de los servicios");
+    assert.ok(idxIniciar < idxGrupos, "la lectura de vigencias debe ocurrir DESPUÉS de capturar el token");
   });
 
-  test("la validación ESTRICTA de consistencia de moneda (monedasHotel.length > 1, mensajes de error) ocurre DESPUÉS de iniciar_generacion_tarifario — usa los datos autoritativos", () => {
-    const idxValidacion = cuerpo.indexOf("Los hoteles del paquete tienen monedas distintas");
+  test("la validación de consistencia de moneda (evaluarPublicacion90: moneda de publicación, mezcla de monedas y TRM) ocurre DESPUÉS de iniciar_generacion_tarifario — usa los datos autoritativos", () => {
+    const idxValidacion = cuerpo.indexOf("evaluarPublicacion90({");
     assert.notEqual(idxValidacion, -1);
     assert.ok(idxIniciar < idxValidacion, "la validación estricta de moneda debe ejecutarse sobre datos autoritativos, después del token");
+    assert.match(cuerpo.slice(idxValidacion), /if \(!ev\.ok \|\| !ev\.monedaPublicacion\) return await fallar\(mensajeEvaluacion90\(ev\)\)/, "un resultado negativo de la evaluación debe detener la publicación");
   });
 
   test("la guardia de dinámico 100% unidad (hotelIds.length === 0 && hotelesBernaloFilas.length > 0) ocurre DESPUÉS de iniciar_generacion_tarifario — usa hotelIds derivado de la lectura autoritativa", () => {
@@ -169,7 +170,7 @@ describe("generarTarifario — mensajes técnicos NUNCA se persisten crudos en t
   });
 
   test("los .message crudos de errores de Supabase/Postgres (ePq, eTarifasBernalo, ePublicar, y los 5 de la lectura/cálculo autoritativo) pasan por fallarTecnico(), nunca por fallar() directo", () => {
-    for (const variable of ["ePq", "eTarifasBernalo", "ePublicar", "eVuelosSel", "eEmpaquetadosSel", "eHotelesSel", "eServiciosSel", "eGrupos"]) {
+    for (const variable of ["ePq", "eTarifasBernalo", "ePublicar", "eVuelosSel", "eEmpaquetadosSel", "eHotelesSel", "eServiciosSel"]) {
       const patronCrudo = new RegExp(`return await fallar\\(${variable}\\.message\\)`);
       assert.doesNotMatch(cuerpo, patronCrudo, `${variable}.message no debe pasarse a fallar() directo — debe ir por fallarTecnico()`);
       const patronTecnico = new RegExp(`return await fallarTecnico\\(${variable}\\.message\\)`);

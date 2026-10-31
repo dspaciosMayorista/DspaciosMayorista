@@ -8,15 +8,16 @@ import { Input } from "@/components/ui/input";
 import { formatCOP, formatMoneda } from "@/lib/utils";
 import {
   crearServicio, actualizarServicio, eliminarServicio,
-  crearTemporadaServicio, actualizarTemporadaServicio, eliminarTemporadaServicio,
-  type ServicioInput, type TierPax, type TemporadaServicioInput,
+  crearTemporadaServicio, actualizarTemporadaServicio, eliminarTemporadaServicio, guardarFranjaServicio, eliminarFranjaServicio,
+  type ServicioInput, type TierPax, type TemporadaServicioInput, type FranjaServicioInput,
 } from "./actions";
+import { describirFranja, type FranjaSuplemento } from "@/lib/calc/trasladoFranjas";
 import { RangosEdadPicker, type RangoEdad } from "@/components/RangosEdadPicker";
 import { Paginador } from "@/components/Paginador";
 import { ComboDestino, type DestinoOpt } from "@/components/ComboDestino";
 import { ComboProveedor, type ProveedorOpt } from "@/components/ComboProveedor";
 import { ServicioFotoCell } from "./ServicioFotoCell";
-import { Info } from "lucide-react";
+import { Info, Clock, Trash2 } from "lucide-react";
 
 type Tier = { pax_desde: number; pax_hasta: number; precio: number; temporada?: string | null };
 export type TemporadaServicio = {
@@ -27,7 +28,10 @@ export type TemporadaServicio = {
   precio_infante?: number | null;
   recargo_individual: number | null;
   grupos: Tier[];
+  // Suplementos de traslado por franja horaria (migración 255). null = la migración aún no está aplicada.
+  franjas?: FranjaGuardada[] | null;
 };
+type FranjaGuardada = FranjaSuplemento & { id: number };
 type Servicio = {
   id: number; nombre: string; temporada: string | null; precio_persona: number | null;
   proveedor_id: number | null; destino_id: number | null; alcance?: string | null; rangos_edad: number[] | null;
@@ -358,8 +362,9 @@ function TemporadasServicio({ servicioId, lista }: { servicioId: number; lista: 
     <div className="mt-5 rounded-lg border border-[var(--brand-accent)]/40 bg-[var(--brand-accent)]/5 p-3">
       <p className="mb-1 text-sm font-semibold text-gray-700">Temporadas (tarifa por fecha del viaje)</p>
       <p className="mb-3 text-[11px] text-gray-500">
-        La tarifa de arriba es la <b>GENERAL</b> (aplica siempre). Aquí defines tarifas que ganan cuando la
-        <b> fecha del viaje</b> cae en su rango y están en <b>vigencia de compra</b>. Gana la de mayor prioridad.
+        Un servicio <b>solo se vende con una vigencia</b> que cubra la <b>fecha del viaje</b> y esté en <b>vigencia de compra</b>
+        (gana la de mayor prioridad); en cobro por grupo, además con un <b>rango de pasajeros de esa vigencia</b>. La tarifa
+        <b> GENERAL</b> de arriba ya no se usa para vender ni para calcular el costo: se conserva solo como dato histórico.
       </p>
 
       <div className="space-y-2">
@@ -424,6 +429,95 @@ function TemporadaFila({ t, onChanged, setErr }: { t: TemporadaServicio; onChang
             <button type="button" onClick={() => { setEditando(false); setV(aInput(t)); }} className="text-sm text-gray-500 hover:text-gray-800">Cancelar</button>
           </div>
         </>
+      )}
+      <FranjasTraslado temporadaId={t.id} franjas={t.franjas ?? null} moneda={undefined} onChanged={onChanged} setErr={setErr} />
+    </div>
+  );
+}
+
+// ── Suplementos de traslado por franja horaria (migración 255) ───────────────
+// Se suman al COSTO NETO de la vigencia y luego pasa el margen. La franja es [desde, hasta): el inicio se incluye y el fin no; si desde > hasta cruza la
+// medianoche (19:00 a 06:00). Cada regla se muestra con su descripción legible (la misma función que valida y evalúa).
+const franjaVacia = (): FranjaServicioInput => ({ hora_desde: "19:00", hora_hasta: "06:00", tramo: "ambos", tipo: "monto", valor: 0, cobro: "grupo" });
+
+function FranjasTraslado({ temporadaId, franjas, moneda, onChanged, setErr }: {
+  temporadaId: number; franjas: FranjaGuardada[] | null; moneda?: string; onChanged: () => void; setErr: (s: string) => void;
+}) {
+  const [pending, start] = useTransition();
+  const [abierto, setAbierto] = useState(false);
+  const [f, setF] = useState<FranjaServicioInput>(franjaVacia());
+  const [editId, setEditId] = useState<number | null>(null);
+  const [msg, setMsg] = useState("");
+  const lista = franjas ?? [];
+
+  if (franjas === null) {
+    return <p className="mt-2 text-[11px] text-amber-700">Suplementos por horario no disponibles: falta aplicar la migración 255 en la base de datos.</p>;
+  }
+
+  function guardar() {
+    setMsg("");
+    start(async () => {
+      const r = await guardarFranjaServicio(temporadaId, f, editId ?? undefined);
+      if (r.ok) { setF(franjaVacia()); setEditId(null); onChanged(); } else { setMsg(r.error); setErr(""); }
+    });
+  }
+  function borrar(id: number) {
+    if (!confirm("¿Eliminar esta franja horaria?")) return;
+    start(async () => { const r = await eliminarFranjaServicio(id); if (r.ok) onChanged(); else setMsg(r.error); });
+  }
+  const set = <K extends keyof FranjaServicioInput>(k: K, v: FranjaServicioInput[K]) => setF((x) => ({ ...x, [k]: v }));
+  const previa = f.valor > 0 ? describirFranja(f as FranjaSuplemento, moneda) : "";
+  const selCls = "h-9 w-full rounded-md border border-gray-300 bg-white px-2 text-sm";
+
+  return (
+    <div className="mt-3 border-t border-gray-100 pt-2">
+      <button type="button" onClick={() => setAbierto((a) => !a)} className="flex items-center gap-1 text-xs font-medium text-[var(--brand-primary)] hover:underline">
+        <Clock className="h-3.5 w-3.5" aria-hidden /> Suplementos por horario (traslados){lista.length ? ` · ${lista.length}` : ""}
+      </button>
+      {abierto && (
+        <div className="mt-2 space-y-2">
+          {lista.length === 0 && <p className="text-[11px] text-gray-500">Sin franjas: el traslado no lleva suplemento por horario en esta vigencia.</p>}
+          {lista.map((x) => (
+            <div key={x.id} className="flex items-start justify-between gap-2 rounded-md bg-gray-50 px-2 py-1.5 text-xs text-gray-700">
+              <span>{describirFranja(x, moneda)}</span>
+              <span className="flex shrink-0 items-center gap-2">
+                <button type="button" onClick={() => { setEditId(x.id); setF({ hora_desde: x.hora_desde, hora_hasta: x.hora_hasta, tramo: x.tramo, tipo: x.tipo, valor: x.valor, cobro: x.cobro }); }} className="text-[var(--brand-accent)] hover:underline">Editar</button>
+                <button type="button" disabled={pending} onClick={() => borrar(x.id)} aria-label="Eliminar franja" className="text-gray-400 hover:text-red-500"><Trash2 className="h-3.5 w-3.5" aria-hidden /></button>
+              </span>
+            </div>
+          ))}
+          <div className="rounded-md border border-dashed border-gray-300 p-2">
+            <p className="mb-2 text-[11px] font-medium text-gray-600">{editId ? "Editar franja" : "Agregar franja"}</p>
+            <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-6">
+              <label className="text-[11px] text-gray-500">Desde (incluida)<Input value={f.hora_desde} onChange={(e) => set("hora_desde", e.target.value)} placeholder="19:00" /></label>
+              <label className="text-[11px] text-gray-500">Hasta (no incluida)<Input value={f.hora_hasta} onChange={(e) => set("hora_hasta", e.target.value)} placeholder="06:00" /></label>
+              <label className="text-[11px] text-gray-500">Tramo
+                <select className={selCls} value={f.tramo} onChange={(e) => set("tramo", e.target.value as FranjaServicioInput["tramo"])}>
+                  <option value="llegada">Llegada (ida)</option><option value="salida">Salida (regreso)</option><option value="ambos">Ambos</option>
+                </select>
+              </label>
+              <label className="text-[11px] text-gray-500">Tipo
+                <select className={selCls} value={f.tipo} onChange={(e) => set("tipo", e.target.value as FranjaServicioInput["tipo"])}>
+                  <option value="monto">Monto fijo (neto)</option><option value="porcentaje">% del neto base</option>
+                </select>
+              </label>
+              <label className="text-[11px] text-gray-500">{f.tipo === "porcentaje" ? "Porcentaje" : "Monto neto"}
+                <Input type="number" min={0} step="any" value={f.valor || ""} onChange={(e) => set("valor", Number(e.target.value))} />
+              </label>
+              <label className="text-[11px] text-gray-500">Cobro
+                <select className={selCls} value={f.cobro} disabled={f.tipo === "porcentaje"} onChange={(e) => set("cobro", e.target.value as FranjaServicioInput["cobro"])}>
+                  <option value="grupo">Una vez por grupo</option><option value="persona">Por persona</option>
+                </select>
+              </label>
+            </div>
+            {previa && <p className="mt-2 text-[11px] text-gray-600">{previa}</p>}
+            <div className="mt-2 flex items-center gap-2">
+              <Button type="button" variant="outline" onClick={guardar} disabled={pending}>{editId ? "Guardar cambios" : "Agregar franja"}</Button>
+              {editId && <button type="button" onClick={() => { setEditId(null); setF(franjaVacia()); setMsg(""); }} className="text-xs text-gray-500 hover:text-gray-800">Cancelar</button>}
+              {msg && <span className="text-xs text-red-600">{msg}</span>}
+            </div>
+          </div>
+        </div>
       )}
     </div>
   );

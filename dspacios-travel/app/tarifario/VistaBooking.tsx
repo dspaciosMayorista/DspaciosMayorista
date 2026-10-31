@@ -6,7 +6,7 @@ import { createPortal } from "react-dom";
 import Image from "next/image";
 import { formatMoneda } from "@/lib/utils";
 import {
-  Categoria, EtiquetasHotel, DescripcionHotelExpandible, UbicacionHotel, SeccionesIncluye, IncluyeCompacto, AddonsPaquete, ReceptivoModal,
+  Categoria, EtiquetasHotel, DescripcionHotelExpandible, UbicacionHotel, SeccionesIncluye, IncluyeSalida, IncluyeCompacto, AddonsPaquete, ReceptivoModal,
   type Receptivo, type ReceptivoModalInfo,
 } from "./tarjetaHotelCompartida";
 import { claveConsultaServicios, evaluarEdicionServicios, serviciosParaCarrito, type HotelParaServicios } from "@/lib/tarifario/servicioAdicionalPaquete";
@@ -2000,13 +2000,10 @@ export function VistaBooking({
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
         {tarjetas.map((t) =>
           t.tipo === "busqueda" ? (
-            // Fila persona ya liquidada por el motor para estas fechas y esta
-            // ocupación — la MISMA lista que las tarjetas de exploración, en
-            // modo búsqueda. El componente vive en `BuscadorBooking` porque es
-            // el único que conoce el carrito por persona
-            // (`HotelCartItemPersona`); acá solo se le da el lugar en la grilla.
+            // Fila persona ya liquidada para estas fechas y ocupación; `Resultado`
+            // (BuscadorBooking) conoce el carrito por persona. IncluyeSalida: «Incluye» de ESTA salida.
+            <IncluyeSalida key={t.key} fechaIda={t.r.fechaIda} incluidos={t.r.incluidosDeLaSalida ?? null}>
             <Resultado
-              key={t.key}
               r={t.r}
               recomendada={t.recomendada === true}
               foto={fotosPorHotel[t.r.hotelId] ?? null}
@@ -2018,6 +2015,7 @@ export function VistaBooking({
               regInicial={t.regForzada ?? undefined}
               combosPermitidos={t.combosRestringidos ?? undefined}
             />
+            </IncluyeSalida>
           ) : t.tipo === "persona" ? (
             <TarjetaHotelCard
               key={t.key}
@@ -2380,7 +2378,7 @@ function HotelModal({
               {/* Descripción manual del paquete: encabezados fijos, un ítem de
                   lista por línea no vacía. Sección omitida por completo si no
                   tiene contenido (nunca un encabezado con lista vacía). */}
-              <SeccionesIncluye descripcion={descripcionOpcion} compacto />
+              <IncluyeSalida fechaIda={opcion?.fechaIda ?? null}><SeccionesIncluye descripcion={descripcionOpcion} compacto /></IncluyeSalida>
 
               {/* Servicios opcionales (add-on) del MISMO paquete — nunca de otro destino */}
               <AddonsPaquete addons={addons} onAbrir={setAddonAbierto} paqueteId={opcion.paqueteId} seleccion={seleccionServicios.seleccion} />

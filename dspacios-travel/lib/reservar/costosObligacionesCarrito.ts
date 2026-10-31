@@ -6,7 +6,11 @@
 // que antes vivían en línea dentro de `convertirCotizacionCarrito`.
 // ─────────────────────────────────────────────────────────────────────────
 import type { createAdminClient } from "@/lib/supabase/admin";
-import { precioServicio, noches, temporadaVigenteParaFecha, toTemporadaRango, factorLiquidacion, type TemporadaRango } from "@/lib/calc/paquetes";
+import { noches } from "@/lib/calc/paquetes";
+import { costoNetoServicio, MENSAJE_SIN_TARIFA } from "@/lib/calc/servicioTarifa";
+import type { FranjaSuplemento, HorasTramos, SuplementoAplicado } from "@/lib/calc/trasladoFranjas";
+import { separarFranjas, type FilaTemporadaConFranjas } from "@/lib/reservar/liquidacionServicio";
+import { leerTemporadasServicio } from "@/lib/reservar/temporadasServicio";
 
 /** Costo neto del hotel por persona: Σ neto por acomodación × pax + niños 1/2 + infantes (las filas sin neto no suman). */
 export function costoHotelPersona(
@@ -36,13 +40,15 @@ export type ServicioTour = {
   precio_persona: number | null; recargo_individual: number | null; categoria: string | null; nombre: string; liquidacion: string | null;
   proveedor_id: number | null; proveedores: ProveedorTour;
 };
-type TourLiquidable = { servicioId: number; paqueteId: number; pax: number; fechaIda: string | null; fechaRegreso: string | null };
+type TourLiquidable = { servicioId: number; paqueteId: number; pax: number; fechaIda: string | null; fechaRegreso: string | null; horas?: HorasTramos };
 
 /**
- * Re-liquida el costo NETO de un tour opcional del carrito con la misma fórmula del flujo de reserva (temporada vigente, modo persona/grupo, recargo
- * individual si va 1 pax). `null` = el tour ya no está en el paquete (no genera CxP). Lanza ante un error de lectura (el llamador falla cerrado).
+ * Re-liquida el costo NETO de un tour opcional del carrito con la MISMA función que la venta (lib/calc/servicioTarifa.ts::costoNetoServicio): vigencia
+ * aplicable a la fecha, modo persona/grupo con rango de pax, recargo individual si va 1 pax y suplementos de franja horaria según `horas`. SIN tarifa
+ * «GENERAL»: sin vigencia, sin rango o sin hora requerida LANZA (el llamador falla cerrado y no numera ni crea CxP con un costo inventado).
+ * `null` = el tour ya no está en el paquete (no genera CxP).
  */
-export async function liquidarCostoTour(admin: ReturnType<typeof createAdminClient>, t: TourLiquidable): Promise<{ srv: ServicioTour | null; costoNeto: number } | null> {
+export async function liquidarCostoTour(admin: ReturnType<typeof createAdminClient>, t: TourLiquidable): Promise<{ srv: ServicioTour | null; costoNeto: number; suplementos: SuplementoAplicado[] } | null> {
   const { data: arm, error: armErr } = await admin
     .from("armado_servicios")
     .select("modo, servicios_adicionales(precio_persona, recargo_individual, categoria, nombre, liquidacion, proveedor_id, proveedores(nombre, aplica_retencion, pct_retencion))")
@@ -54,23 +60,24 @@ export async function liquidarCostoTour(admin: ReturnType<typeof createAdminClie
   const modo = (arm.modo as string) === "grupo" ? "grupo" : "persona";
   const [{ data: gruposNet, error: gruposErr }, { data: tempsNet, error: tempsErr }] = await Promise.all([
     admin.from("servicio_tarifa_pax").select("pax_desde, pax_hasta, precio, temporada").eq("servicio_id", t.servicioId),
-    admin.from("servicio_temporadas").select("nombre, fecha_inicio, fecha_fin, compra_inicio, compra_fin, prioridad, precio_persona, recargo_individual").eq("servicio_id", t.servicioId),
+    leerTemporadasServicio(admin, [t.servicioId]),
   ]);
   if (gruposErr ?? tempsErr) throw new Error((gruposErr ?? tempsErr)!.message);
-  const tempsRango: TemporadaRango[] = (tempsNet ?? []).map((tt) => toTemporadaRango(tt));
-  const nombreTemp = t.fechaIda && tempsRango.length ? temporadaVigenteParaFecha(new Date(`${t.fechaIda}T00:00:00`), tempsRango) : null;
-  const netoTemp = nombreTemp ? (tempsNet ?? []).find((tt) => tt.nombre === nombreTemp) ?? null : null;
-  const netoPersona = netoTemp?.precio_persona ?? srv?.precio_persona ?? null;
-  const gruposGeneral = (gruposNet ?? []).filter((g) => (g.temporada ?? "GENERAL") === "GENERAL").map((g) => ({ pax_desde: g.pax_desde, pax_hasta: g.pax_hasta, precio: g.precio }));
-  const gruposTempArr = nombreTemp ? (gruposNet ?? []).filter((g) => g.temporada === nombreTemp).map((g) => ({ pax_desde: g.pax_desde, pax_hasta: g.pax_hasta, precio: g.precio })) : [];
-  const grupos = gruposTempArr.length ? gruposTempArr : gruposGeneral;
-  const nochesTour = t.fechaIda && t.fechaRegreso ? (noches(t.fechaIda, t.fechaRegreso) || 1) : 1;
-  let costoNeto = precioServicio(modo, netoPersona, grupos, t.pax) * factorLiquidacion(srv?.liquidacion ?? null, nochesTour);
-  if (modo === "persona" && t.pax === 1) {
-    const recTemp = netoTemp?.recargo_individual;
-    costoNeto += Math.max(Number(recTemp ?? srv?.recargo_individual) || 0, 0);
+  if (!t.fechaIda) throw new Error("el tour no tiene fecha de ida para elegir su vigencia de tarifa");
+  const { temporadas, franjas } = separarFranjas(((tempsNet ?? []) as unknown as FilaTemporadaConFranjas[]).map((x) => ({ ...x, servicio_id: t.servicioId })));
+  const franjasPorTemporada = new Map<string, FranjaSuplemento[]>();
+  const nombrePorId = new Map(temporadas.map((x) => [x.id, x.nombre]));
+  for (const f of franjas) {
+    const n = nombrePorId.get(f.servicio_temporada_id);
+    if (n) (franjasPorTemporada.get(n) ?? franjasPorTemporada.set(n, []).get(n)!).push(f);
   }
-  return { srv, costoNeto };
+  const nochesTour = t.fechaIda && t.fechaRegreso ? (noches(t.fechaIda, t.fechaRegreso) || 1) : 1;
+  const costo = costoNetoServicio({
+    temporadas, grupos: (gruposNet ?? []).map((g) => ({ pax_desde: g.pax_desde, pax_hasta: g.pax_hasta, precio: Number(g.precio), temporada: g.temporada })),
+    franjasPorTemporada, modo, pax: t.pax, fecha: new Date(`${t.fechaIda}T00:00:00`), liquidacion: srv?.liquidacion ?? null, numNoches: nochesTour, horas: t.horas,
+  });
+  if (!costo.ok) throw new Error(costo.motivo === "hora_requerida" ? `falta la hora de ${(costo.pendientes ?? []).join(" y ")} del traslado` : (MENSAJE_SIN_TARIFA[costo.motivo as keyof typeof MENSAJE_SIN_TARIFA] ?? costo.detalle ?? costo.motivo));
+  return { srv, costoNeto: costo.costoNeto, suplementos: costo.suplementos };
 }
 
 /** Costo de un tour que SÍ genera CxP: finito y positivo; cualquier otro valor no genera obligación. */

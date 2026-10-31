@@ -188,7 +188,9 @@ describe("los caminos de venta usan la fuente única de menores de 2 años", () 
   test("reservar: CxP de hotel incluye el neto del infante y CxP de servicios usa el precio de infante neto", () => {
     assert.match(reservar, /netoPorAcom\["infante"\] \* numInfantes/);
     assert.match(reservar, /netoInfTempServ/);
-    assert.match(reservar, /precioServicio\(modo, netoPersona, grupos, paxConSilla\) \+ \(modo === "persona" \? netoInfante \* numMenoresDeDos : 0\)/);
+    // La fórmula (infante de la VIGENCIA, o el adulto de esa vigencia) vive en costoServicioContrato; reservar la usa para el costo y la CxP.
+    assert.match(reservar, /costoServicioContrato\(/);
+    assert.match(leer("lib/calc/servicioTarifa.ts"), /precioServicio\(i\.modo, i\.netoPersona, i\.grupos, i\.paxConSilla\) \+ \(i\.modo === "persona" \? netoInfante \* i\.numMenoresDeDos : 0\)/);
   });
   test("reservar (conversión de carrito, bloqueo): el costo aéreo suma el fee de infante del bloqueo por menor de 2 años", () => {
     assert.match(reservar, /fee_infante, fecha_ida, fecha_regreso, vuelo_ida/);
