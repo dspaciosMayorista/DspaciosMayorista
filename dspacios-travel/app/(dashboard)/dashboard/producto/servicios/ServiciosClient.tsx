@@ -21,6 +21,7 @@ import { Info, Clock, Trash2, AlertTriangle, Settings2, List } from "lucide-reac
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { HoraInput24 } from "@/components/ui/HoraInput24";
 import { serviciosSinVigencia } from "@/lib/tarifario/serviciosSinVigencia";
+import { ClasificacionServicioEditor, PreciosAlcanceEditor } from "./Alcance262";
 
 type Tier = { pax_desde: number; pax_hasta: number; precio: number; temporada?: string | null };
 export type TemporadaServicio = {
@@ -405,7 +406,8 @@ function TemporadasServicio({ servicioId, lista }: { servicioId: number; lista: 
 
   return (
     <div className="mt-5 rounded-lg border border-[var(--brand-accent)]/40 bg-[var(--brand-accent)]/5 p-3">
-      <p className="mb-1 text-sm font-semibold text-gray-700">Temporadas (tarifa por fecha del viaje)</p>
+      <ClasificacionServicioEditor servicioId={servicioId} />
+      <p className="mb-1 mt-4 text-sm font-semibold text-gray-700">Temporadas (tarifa por fecha del viaje)</p>
       <p className="mb-3 text-[11px] text-gray-500">
         Un servicio <b>solo se vende con una vigencia</b> que cubra la <b>fecha del viaje</b> y esté en <b>vigencia de compra</b>
         (gana la de mayor prioridad); en cobro por grupo, además con un <b>rango de pasajeros de esa vigencia</b>. La tarifa
@@ -476,6 +478,7 @@ function TemporadaFila({ t, onChanged, setErr }: { t: TemporadaServicio; onChang
         </>
       )}
       <FranjasTraslado temporadaId={t.id} franjas={t.franjas ?? null} moneda={undefined} onChanged={onChanged} setErr={setErr} />
+      <PreciosAlcanceEditor servicioId={t.servicio_id} temporadaId={t.id} nombre={t.nombre} tarifaVigente={{ persona: t.precio_persona, grupos: t.grupos ?? [] }} />
     </div>
   );
 }
@@ -526,7 +529,7 @@ function FranjasTraslado({ temporadaId, franjas, moneda, onChanged, setErr }: {
             <div key={x.id} className="flex items-start justify-between gap-2 rounded-md bg-gray-50 px-2 py-1.5 text-xs text-gray-700">
               <span>{describirFranja(x, moneda)}</span>
               <span className="flex shrink-0 items-center gap-2">
-                <button type="button" onClick={() => { setEditId(x.id); setF({ hora_desde: x.hora_desde, hora_hasta: x.hora_hasta, tramo: x.tramo, tipo: x.tipo, valor: x.valor, cobro: x.cobro }); }} className="text-[var(--brand-accent)] hover:underline">Editar</button>
+                <button type="button" onClick={() => { setEditId(x.id); setF({ hora_desde: x.hora_desde, hora_hasta: x.hora_hasta, tramo: x.tramo, tipo: x.tipo, valor: x.valor, cobro: x.cobro, pax_desde: x.pax_desde ?? null, pax_hasta: x.pax_hasta ?? null }); }} className="text-[var(--brand-accent)] hover:underline">Editar</button>
                 <button type="button" disabled={pending} onClick={() => borrar(x.id)} aria-label="Eliminar franja" className="text-gray-400 hover:text-red-500"><Trash2 className="h-3.5 w-3.5" aria-hidden /></button>
               </span>
             </div>
@@ -548,6 +551,12 @@ function FranjasTraslado({ temporadaId, franjas, moneda, onChanged, setErr }: {
               </label>
               <label className="text-[11px] text-gray-500">{f.tipo === "porcentaje" ? "Porcentaje" : "Monto neto"}
                 <Input type="number" min={0} step="any" value={f.valor || ""} onChange={(e) => set("valor", Number(e.target.value))} />
+              </label>
+              <label className="text-[11px] text-gray-500">Pasajeros desde (opcional)
+                <Input aria-label="Franja: pasajeros desde" type="number" min={1} value={f.pax_desde ?? ""} placeholder="todos" onChange={(e) => set("pax_desde", e.target.value === "" ? null : Number(e.target.value))} />
+              </label>
+              <label className="text-[11px] text-gray-500">Pasajeros hasta
+                <Input aria-label="Franja: pasajeros hasta" type="number" min={1} value={f.pax_hasta ?? ""} onChange={(e) => set("pax_hasta", e.target.value === "" ? null : Number(e.target.value))} />
               </label>
               <label className="text-[11px] text-gray-500">Cobro
                 <select className={selCls} value={f.cobro} disabled={f.tipo === "porcentaje"} onChange={(e) => set("cobro", e.target.value as FranjaServicioInput["cobro"])}>
@@ -613,6 +622,7 @@ function CamposTemporada({ value, onChange }: { value: TemporadaServicioInput; o
 
 function FilaServicio({ s, vigencias, sinVigencia, onEdit }: { s: Servicio; vigencias: TemporadaServicio[]; sinVigencia: boolean; onEdit: (s: Servicio) => void }) {
   const [pending, start] = useTransition();
+  const [errEliminar, setErrEliminar] = useState("");
   const moneda = s.moneda === "USD" ? "USD" : "COP";
   const fmt = (n: number) => formatMoneda(n, moneda);
   const conSuplemento = vigencias.some((v) => (v.franjas ?? []).length > 0);
@@ -624,6 +634,7 @@ function FilaServicio({ s, vigencias, sinVigencia, onEdit }: { s: Servicio; vige
   };
   const permanente = s.categoria === "asistencia" && vigencias.length === 0 && s.precio_persona != null;
   return (
+    <>
     <li className="flex gap-3 p-3 sm:p-4">
       <ServicioFotoCell servicioId={s.id} fotoUrl={s.foto_url ?? null} />
       <div className="min-w-0 flex-1">
@@ -653,9 +664,11 @@ function FilaServicio({ s, vigencias, sinVigencia, onEdit }: { s: Servicio; vige
       <div className="flex shrink-0 flex-col items-end gap-2 sm:flex-row sm:items-start sm:gap-3">
         <button type="button" onClick={() => onEdit(s)} className="text-xs text-[var(--brand-accent)] hover:underline">Editar</button>
         <button type="button" disabled={pending}
-          onClick={() => { if (confirm(`¿Eliminar ${s.nombre}?`)) start(() => { void eliminarServicio(s.id); }); }}
+          onClick={() => { if (confirm(`¿Eliminar ${s.nombre}?`)) { setErrEliminar(""); start(async () => { const r = await eliminarServicio(s.id); if (!r.ok) setErrEliminar(r.error); }); } }}
           className="text-xs text-gray-400 hover:text-red-500">Eliminar</button>
       </div>
     </li>
+    {errEliminar && <li role="alert" data-testid="error-eliminar-servicio" className="px-3 pb-3 text-xs text-red-600 sm:px-4">{errEliminar}</li>}
+    </>
   );
 }

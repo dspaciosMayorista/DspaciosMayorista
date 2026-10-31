@@ -325,6 +325,8 @@ function tablasGenerar(o: {
       precio_persona: s.precio_persona, precio_infante: s.precio_infante ?? null, recargo_individual: null,
     })),
     servicio_tarifa_pax: (o.grupos ?? []).map((g) => ({ ...g, temporada: "VIG" })),
+    // 262: la publicación lee la clasificación del receptivo; null = sin clasificar (comportamiento anterior).
+    servicios_adicionales: (o.servicios ?? []).map((s) => ({ id: s.id, tipo_receptivo: null, combo_incluye_traslado: null, combo_traslado_alcance: null })),
     armado_hoteles: hoteles.map((h) => ({
       paquete_id: PAQUETE_ID, hotel_id: h, categorias: null, regimenes: null,
       hoteles: { nombre: `Hotel ${h}`, moneda, modelo_tarifario: "persona", adults_only: h === HOTEL_C },

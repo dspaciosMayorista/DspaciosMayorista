@@ -39,6 +39,16 @@ import { fechaNegocio } from "../fechaNegocio.ts";
 
 export type PendienteAntiguo = { numeroContrato: string; tenant: string };
 
+/**
+ * Texto de `cuentas_por_pagar.observaciones` que ponía `convertirCotizacionCarrito` ANTES de empezar por `marca_cxp_automatica()`. La RPC financiera solo reemplaza en un reintento
+ * las CxP cuyo texto empieza por la marca, así que estas NO las reconoce: reintentar insertaría de nuevo las obligaciones sin borrar las viejas (duplicadas). Se niega el reintento.
+ */
+export const TEXTO_OBS_CARRITO_ANTERIOR = "Generado automáticamente desde el carrito (tarifario)";
+
+export const mensajeReintentoCxpTextoAnterior = (numeroContrato: string, n: number): string =>
+  `El contrato ${numeroContrato} tiene ${n} cuenta${n === 1 ? "" : "s"} por pagar creada${n === 1 ? "" : "s"} con el texto anterior del carrito («${TEXTO_OBS_CARRITO_ANTERIOR}»): el reintento automático no las reconoce y duplicaría las obligaciones. ` +
+  "No se escribió nada. Revisa el contrato a mano antes de volver a intentarlo.";
+
 export type DepsReconciliacion = Pick<DepsFinanciero, "rpc" | "postearAsiento" | "eliminarAsiento" | "guardarPendiente"> & {
   /** `ventas` con `financiero_estado='pendiente'` y `financiero_actualizado_en` más antigua que el umbral. */
   listarPendientesAntiguos: (umbralMinutos: number) => Promise<PendienteAntiguo[]>;
@@ -48,6 +58,8 @@ export type DepsReconciliacion = Pick<DepsFinanciero, "rpc" | "postearAsiento" |
   marcarIntentoFallido: (numeroContrato: string, error: string) => Promise<void>;
   /** CxP sin asiento contable (comparación en vivo contra `asientos_contables`, nunca una bandera). */
   listarCxpSinAsiento: () => Promise<CxPCreada[]>;
+  /** Cuántas CxP del contrato llevan el texto anterior del carrito (no reconocidas por el reemplazo de la RPC). Opcional: sin ella el reintento es el de siempre. */
+  contarCxpTextoAnterior?: (numeroContrato: string) => Promise<number>;
 };
 
 export type ResultadoPendiente = { numeroContrato: string; accion: "reintentado" | "revertido"; ok: boolean; error?: string };
@@ -65,6 +77,14 @@ export async function reconciliarFinancieroPendiente(
   for (const p of pendientes) {
     const payload = await deps.leerPendiente(p.numeroContrato);
     if (payload) {
+      // Una CxP del carrito creada con el texto anterior no se reemplaza en el reintento: se niega (cerrado, sin escribir) en vez de duplicar las obligaciones.
+      const anteriores = deps.contarCxpTextoAnterior ? await deps.contarCxpTextoAnterior(p.numeroContrato) : 0;
+      if (anteriores > 0) {
+        const error = mensajeReintentoCxpTextoAnterior(p.numeroContrato, anteriores);
+        await deps.marcarIntentoFallido(p.numeroContrato, error);
+        resultadosPendientes.push({ numeroContrato: p.numeroContrato, accion: "reintentado", ok: false, error });
+        continue;
+      }
       // Reintento EXACTO — nunca se recalcula, se repite la misma escritura
       // que ya se había decidido hacer antes de la caída.
       const r = await registrarFinancieroContrato(deps, {

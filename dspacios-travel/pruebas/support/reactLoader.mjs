@@ -176,7 +176,7 @@ export async function resolve(specifier, context, nextResolve) {
   if (specifier === "./actions" && context.parentURL?.endsWith("EliminarDestinoBtn.tsx")) {
     return { url: STUB_ELIMINAR_DESTINO_ACTIONS, shortCircuit: true };
   }
-  if (specifier === "./actions" && (context.parentURL?.endsWith("/servicios/ServiciosClient.tsx") || context.parentURL?.endsWith("/servicios/ServicioFotoCell.tsx"))) {
+  if (specifier === "./actions" && (context.parentURL?.endsWith("/servicios/ServiciosClient.tsx") || context.parentURL?.endsWith("/servicios/ServicioFotoCell.tsx") || context.parentURL?.endsWith("/servicios/Alcance262.tsx"))) {
     return { url: STUB_SERVICIOS_ACTIONS, shortCircuit: true };
   }
   if (specifier === "@/lib/supabase/client" && context.parentURL?.endsWith("/servicios/ServicioFotoCell.tsx")) {
@@ -254,7 +254,7 @@ export async function resolve(specifier, context, nextResolve) {
   }
   if (
     specifier === "next/navigation" &&
-    (context.parentURL?.endsWith("DifusionClient.tsx") || context.parentURL?.endsWith("/servicios/ServiciosClient.tsx") || context.parentURL?.endsWith("/servicios/ServicioFotoCell.tsx") || context.parentURL?.endsWith("EditarBloqueoForm.tsx") || context.parentURL?.endsWith("/NuevoBloqueoForm.tsx") ||
+    (context.parentURL?.endsWith("DifusionClient.tsx") || context.parentURL?.endsWith("/servicios/ServiciosClient.tsx") || context.parentURL?.endsWith("/servicios/ServicioFotoCell.tsx") || context.parentURL?.endsWith("/servicios/Alcance262.tsx") || context.parentURL?.endsWith("EditarBloqueoForm.tsx") || context.parentURL?.endsWith("/NuevoBloqueoForm.tsx") ||
       context.parentURL?.endsWith("/NuevoEmpaquetadoForm.tsx") || context.parentURL?.endsWith("/EditarEmpaquetadoForm.tsx") ||
       context.parentURL?.endsWith("/login/LoginClient.tsx") ||
       // Botón de salir que importa el portal B2B (pruebas/comisionPortalB2B.react.ts).

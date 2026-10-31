@@ -9,6 +9,8 @@
 
 import { createClient } from "@/lib/supabase/server";
 import { createAdminClient } from "@/lib/supabase/admin";
+import { MENSAJE_TRASLADO_POR_ALCANCE_SOLO_CARRITO, trasladosPorAlcance } from "@/lib/servicios/alcanceContexto";
+import { MENSAJE_PAQUETE_NO_DISPONIBLE_CLIENTE, tarifarioFallido } from "@/lib/reservar/tarifarioNoVendible";
 import {
   precioServicio,
   noches,
@@ -279,6 +281,14 @@ function resolverMenoresPorEdad(
   // original del llamador después de este punto no puede alterar lo que se
   // devuelve aquí ni lo que termine en el snapshot (ver checkout/actions.ts).
   return { ok: true, numNinos: rDist.totales.nino, numNinos2: rDist.totales.nino2, numInfantes: rDist.totales.infantes, distribucion: rDist.habitaciones, edades: vEdades.edades };
+}
+
+// Best-effort: ¿la generación del tarifario de este paquete falló? Cualquier error de lectura se trata como «no» (queda el mensaje genérico de siempre).
+async function paqueteConTarifarioFallido(paqueteId: number): Promise<boolean> {
+  try {
+    const { data } = await createAdminClient().from("armado_paquetes").select("tarifario_estado").eq("id", paqueteId).maybeSingle();
+    return tarifarioFallido(data as { tarifario_estado?: string | null } | null);
+  } catch { return false; }
 }
 
 export async function computarReserva(
@@ -610,6 +620,8 @@ export async function computarReserva(
     else q = q.is("bloqueo_id", null).is("empaquetado_id", null).is("salida_id", null);
     const { data: filas, error: fe } = await q;
     if (fe) return { ok: false, error: fe.message };
+    // Si el tarifario del paquete no se pudo publicar (generación fallida) no es que «no exista» la tarifa: se dice, con un aviso neutro (esta ruta también la usa el cliente).
+    if ((!filas || !filas.length) && await paqueteConTarifarioFallido(input.paqueteId)) return { ok: false, error: MENSAJE_PAQUETE_NO_DISPONIBLE_CLIENTE };
     if (!filas || !filas.length) return { ok: false, error: "No se encontró la tarifa seleccionada en el tarifario." };
     for (const f of filas) {
       if (!f.acomodacion) continue;
@@ -871,6 +883,11 @@ export async function computarReserva(
   // Opcionales que cobran al infante: los externos (carrito) más los realmente seleccionados aquí (se completan al resolver `byServ`).
   const opcionalesInfante: ServicioOpcionalSeleccionado[] = [...(input.opcionalesInfante ?? [])];
   if (input.servicios?.length) {
+    // 262: un traslado clasificado se vende por ALCANCE y solo desde el carrito. Esta ruta (reserva interna y oferta #63) lo cotizaría con la tarifa clásica y sin alcance:
+    // se rechaza antes de calcular nada (falla cerrado, y no se numera ni se acepta una oferta).
+    const trasl = await trasladosPorAlcance(createAdminClient(), input.servicios); // admin: la RLS no puede ocultar la clasificación y dejar pasar un traslado
+    if (!trasl.ok) return { ok: false, error: "No se pudo validar el tipo de los servicios seleccionados. Intenta de nuevo." };
+    if (trasl.ids.length) return { ok: false, error: `${MENSAJE_TRASLADO_POR_ALCANCE_SOLO_CARRITO} (servicio${trasl.ids.length === 1 ? "" : "s"} ${trasl.ids.map((i) => `#${i}`).join(", ")})` };
     const { data: srvRows, error: srvRowsErr } = await sb
       .from("tarifario_resultado_publicable")
       .select("servicio_id, servicio_nombre, tipo_tarifa, pax_desde, pax_hasta, precio_pvp, precio_pvp_menor2, recargo_individual")

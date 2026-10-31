@@ -7,7 +7,7 @@
 > **Prerrequisitos en `main`:** las migraciones 255, 256, 258 y 259 (el preflight 262 exige la 255).
 
 ## Qué resuelve
-Un traslado se vende por **llegada**, **salida** o **ida y regreso**, con precio **propio** para «un trayecto» y para «ida y regreso» (por vigencia y rango de pasajeros); nunca se calcula uno a partir del otro. La vigencia `GENERAL` es histórica y no se vende. El alcance vendido queda enlazado, con una clave estable, entre la línea del contrato y su cuenta por pagar.
+Un traslado se vende por **llegada**, **salida** o **ida y regreso**. «Un trayecto» exige un precio **propio** (por vigencia y rango de pasajeros) y nunca se calcula a partir de ida y regreso; «ida y regreso» usa su precio propio si lo hay y, si no, la tarifa que la vigencia ya tiene. La vigencia `GENERAL` es histórica y no se vende. El alcance vendido queda enlazado, con una clave estable, entre la línea del contrato y su cuenta por pagar.
 
 ## Las cuatro migraciones (en este orden; cada una depende de la anterior; permanecen separadas)
 | N.º | Archivo | Qué agrega | Rollback |

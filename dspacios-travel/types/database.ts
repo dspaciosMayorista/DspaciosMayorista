@@ -785,6 +785,9 @@ export type Database = {
           // NULL = hotel/aéreo, manual, o anterior a la 170. Única llave
           // válida para reconciliar CxP de servicios (nunca por nombre).
           servicio_id: number | null;
+          // 264/265 (provisionales, sin aplicar): alcance vendido del traslado y línea de contrato_servicios que originó la CxP.
+          alcance_traslado?: "llegada" | "salida" | "ida_regreso" | null;
+          contrato_servicio_id?: number | null;
           fecha_obligacion: string | null;
           fecha_vencimiento: string | null;
           valor_total: number;
@@ -1935,8 +1938,9 @@ export type Database = {
         Relationships: [];
       };
       contrato_servicios: {
-        Row: { id: number; numero_contrato: string; tipo: string; descripcion: string; proveedor: string | null; costo: number | null; orden: number | null };
-        Insert: { id?: number; numero_contrato: string; tipo?: string; descripcion: string; proveedor?: string | null; costo?: number | null; orden?: number | null };
+        // 262/264 (provisionales, sin aplicar): alcance vendido de un traslado y servicio del catálogo de la línea.
+        Row: { id: number; numero_contrato: string; tipo: string; descripcion: string; proveedor: string | null; costo: number | null; orden: number | null; alcance_traslado?: "llegada" | "salida" | "ida_regreso" | null; servicio_id?: number | null; clave_enlace?: string | null };
+        Insert: { id?: number; numero_contrato: string; tipo?: string; descripcion: string; proveedor?: string | null; costo?: number | null; orden?: number | null; alcance_traslado?: "llegada" | "salida" | "ida_regreso" | null; servicio_id?: number | null; clave_enlace?: string | null };
         Update: Partial<Database["public"]["Tables"]["contrato_servicios"]["Insert"]>;
         Relationships: [];
       };
@@ -2465,11 +2469,20 @@ export type Database = {
       };
       // 255: suplementos de traslado por franja horaria, colgados de una vigencia (servicio_temporadas).
       servicio_suplementos_franja: {
-        Row: { id: number; servicio_temporada_id: number; hora_desde: string; hora_hasta: string; tramo: "llegada" | "salida" | "ambos"; tipo: "monto" | "porcentaje"; valor: number; cobro: "grupo" | "persona"; created_at: string };
-        Insert: { id?: number; servicio_temporada_id: number; hora_desde: string; hora_hasta: string; tramo: "llegada" | "salida" | "ambos"; tipo: "monto" | "porcentaje"; valor: number; cobro: "grupo" | "persona"; created_at?: string };
+        Row: { id: number; servicio_temporada_id: number; hora_desde: string; hora_hasta: string; tramo: "llegada" | "salida" | "ambos"; tipo: "monto" | "porcentaje"; valor: number; cobro: "grupo" | "persona"; created_at: string; /** 262 (provisional, sin aplicar): rango de pasajeros; ausente/null = todos. */ pax_desde?: number | null; pax_hasta?: number | null };
+        Insert: { id?: number; servicio_temporada_id: number; hora_desde: string; hora_hasta: string; tramo: "llegada" | "salida" | "ambos"; tipo: "monto" | "porcentaje"; valor: number; cobro: "grupo" | "persona"; created_at?: string; pax_desde?: number | null; pax_hasta?: number | null };
         Update: Partial<Database["public"]["Tables"]["servicio_suplementos_franja"]["Insert"]>;
         Relationships: [
           { foreignKeyName: "servicio_suplementos_franja_servicio_temporada_id_fkey"; columns: ["servicio_temporada_id"]; isOneToOne: false; referencedRelation: "servicio_temporadas"; referencedColumns: ["id"] },
+        ];
+      };
+      // 262 (provisional, sin aplicar): precio PROPIO por trayecto / ida y regreso de una vigencia de servicio, con rango de pasajeros opcional.
+      servicio_precio_alcance: {
+        Row: { id: number; servicio_temporada_id: number; alcance: "trayecto" | "ida_regreso"; pax_desde: number | null; pax_hasta: number | null; precio: number; created_at: string };
+        Insert: { id?: number; servicio_temporada_id: number; alcance: "trayecto" | "ida_regreso"; pax_desde?: number | null; pax_hasta?: number | null; precio: number; created_at?: string };
+        Update: Partial<Database["public"]["Tables"]["servicio_precio_alcance"]["Insert"]>;
+        Relationships: [
+          { foreignKeyName: "servicio_precio_alcance_servicio_temporada_id_fkey"; columns: ["servicio_temporada_id"]; isOneToOne: false; referencedRelation: "servicio_temporadas"; referencedColumns: ["id"] },
         ];
       };
       rangos_edad: {

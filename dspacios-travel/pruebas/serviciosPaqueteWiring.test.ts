@@ -170,7 +170,13 @@ describe("reservar/actions.ts (convertirCotizacionCarrito) — el carrito ya no 
   test("tours opcionales con servicioId/paqueteId generan CxP re-liquidando el costo NETO (nunca usa t.precio, que es PVP)", () => {
     const cuerpo = cuerpoFuncion(reservarActions, "export async function convertirCotizacionCarrito(");
     assert.match(cuerpo, /if \(t\.servicioId == null \|\| t\.paqueteId == null\) continue;/);
-    assert.match(cuerpo, /pushCxP\(tipoProveedorCxpServicio\(normalizarCategoriaServicio\(srv\?\.categoria\)\), srv\?\.nombre \?\? t\.nombre, costoNeto,/);
+    // 262: el servicio de la CxP lleva el nombre del catálogo y, solo en traslados por alcance, la etiqueta del alcance vendido.
+    assert.match(cuerpo, /const servicioCxP = `\$\{srv\?\.nombre \?\? t\.nombre\}\$\{alcanceTour/);
+    assert.match(cuerpo, /pushCxP\(tipoProveedorCxpServicio\(normalizarCategoriaServicio\(srv\?\.categoria\)\), servicioCxP, costoNeto, srv\?\.proveedores \?\? null, null, t\.servicioId, monedaServicio\.get\(t\.servicioId\), claveEnlace\)/);
+    // 262: la línea estructurada del contrato lleva el alcance congelado y la descripción idéntica al servicio de la CxP (el trigger de la 264 las enlaza).
+    assert.match(cuerpo, /from\("contrato_servicios"\)\.insert\(\{[\s\S]*descripcion: servicioCxP[\s\S]*servicio_id: t\.servicioId, alcance_traslado: alcanceTour, clave_enlace: claveEnlace/);
+    assert.match(cuerpo, /const claveEnlace = alcanceTour \? globalThis\.crypto\.randomUUID\(\) : undefined;/);
+    assert.match(cuerpo, /alcanceTour !== t\.alcance/);
   });
   test("servicios incluidos del grupo generan CxP sin volver a sumar su PVP (ya horneado en el snapshot del carrito)", () => {
     const cuerpo = cuerpoFuncion(reservarActions, "export async function convertirCotizacionCarrito(");
@@ -289,7 +295,7 @@ describe("R294-4 · CxP de servicios: se estampa `servicio_id` (llave de reconci
   test("convertirCotizacionCarrito estampa servicioId en tours e incluidos", () => {
     const cuerpo = cuerpoFuncion(reservarActions, "export async function convertirCotizacionCarrito(");
     assert.match(cuerpo, /servicio_id: servicioId \?\? null/);
-    assert.match(cuerpo, /srv\?\.proveedores \?\? null, null, t\.servicioId, monedaServicio\.get\(t\.servicioId\)\)/);
+    assert.match(cuerpo, /srv\?\.proveedores \?\? null, null, t\.servicioId, monedaServicio\.get\(t\.servicioId\), claveEnlace\)/);
     // Incluidos: el proveedor se exige resuelto del catálogo (PR #353) y la CxP
     // sigue estampando `servicio_id`.
     assert.match(cuerpo, /const prov = provPorId\.get\(s\.servicioId\);/);

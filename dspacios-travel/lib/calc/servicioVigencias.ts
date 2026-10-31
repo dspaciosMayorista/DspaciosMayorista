@@ -10,6 +10,7 @@
 // Los mensajes están pensados para quien monta el paquete (nombre del servicio y fecha concreta).
 // ─────────────────────────────────────────────────────────────────────────
 import { temporadaVigenteParaFecha, toTemporadaRango } from "./paquetes.ts";
+import { rangosIdaRegresoEfectivos } from "./servicioAlcance.ts";
 import type { GrupoServicioFila, TemporadaServicioFila } from "./servicioTarifa.ts";
 
 export type VigenciaServicioFila = TemporadaServicioFila & { precio_infante?: number | null };
@@ -20,6 +21,17 @@ export type VigenciasServicio = {
   grupos: GrupoServicioFila[];
   /** Nombres de las vigencias que tienen al menos una franja horaria de traslado. */
   conFranjas: ReadonlySet<string>;
+  /**
+   * 262: el servicio está clasificado como traslado y se vende por ALCANCE. Su referencia de PUBLICACIÓN ("desde") sale de lo que se puede OFRECER en cada vigencia: el precio
+   * propio de «un trayecto» (`gruposAlcance` por rango, `personaAlcance` por persona) y el de «ida y regreso», que es el propio (`gruposIdaRegreso`, `personaIdaRegreso`) o, si la
+   * vigencia no define uno, su tarifa de siempre (`precio_persona` / `grupos`). Un trayecto NO es requisito para ofrecer el servicio. Ausente = comportamiento anterior. El precio
+   * que se COBRA se resuelve siempre en vivo por el alcance elegido (liquidacionServicio); esto solo decide si el servicio se puede ofrecer.
+   */
+  usaAlcance?: boolean;
+  gruposAlcance?: GrupoServicioFila[];
+  personaAlcance?: ReadonlyMap<string, number>;
+  gruposIdaRegreso?: GrupoServicioFila[];
+  personaIdaRegreso?: ReadonlyMap<string, number>;
 };
 
 const MS_DIA = 86_400_000;
@@ -140,6 +152,22 @@ export function referenciaPublicacion(sv: VigenciasServicio, modo: "persona" | "
   }
   const vigencias = aplicables.map((t) => t.nombre);
   const conFranjas = aplicables.some((t) => sv.conFranjas.has(t.nombre));
+  if (sv.usaAlcance && modo === "persona") {
+    // 262: traslado por alcance en modo persona — la referencia es el menor precio por persona que se OFRECE en cada vigencia: el de un trayecto (propio) y el de ida y regreso
+    // (propio o, si no lo hay, la tarifa de la vigencia). Un trayecto no es requisito: basta con poder ofrecer ida y regreso.
+    const valido = (n: number | null | undefined): n is number => n != null && Number.isFinite(Number(n)) && Number(n) >= 0; // 0 es una tarifa válida; «sin tarifa» = NULL/ausente/inválida (ver resolverPrecioAlcance)
+    const precios = aplicables.map((t) => {
+      const idaRegreso = sv.personaIdaRegreso?.get(t.nombre) ?? (valido(t.precio_persona) ? Number(t.precio_persona) : undefined);
+      return { nombre: t.nombre, candidatos: [sv.personaAlcance?.get(t.nombre), idaRegreso].filter((x): x is number => x != null) };
+    });
+    const sinPrecio = precios.find((p) => !p.candidatos.length);
+    if (sinPrecio) return { ok: false, error: `${rotulo} no tiene precio por persona (de un trayecto, de ida y regreso ni tarifa de la vigencia) en su vigencia «${sinPrecio.nombre}».` };
+    return {
+      ok: true, vigencias, conFranjas,
+      netoPersona: Math.min(...precios.flatMap((p) => p.candidatos)),
+      netoInfante: null, infantePropio: false, recargoIndividual: 0, rangos: [], cobertura,
+    };
+  }
   if (modo === "persona") {
     const sinPrecio = aplicables.find((t) => t.precio_persona == null || !Number.isFinite(Number(t.precio_persona)) || Number(t.precio_persona) < 0);
     if (sinPrecio) return { ok: false, error: `${rotulo} no tiene precio por persona en su vigencia «${sinPrecio.nombre}».` };
@@ -153,9 +181,16 @@ export function referenciaPublicacion(sv: VigenciasServicio, modo: "persona" | "
       rangos: [], cobertura,
     };
   }
-  const porVigencia = aplicables.map((t) => ({ nombre: t.nombre, rangos: sv.grupos.filter((g) => g.temporada === t.nombre).sort((a, b) => a.pax_desde - b.pax_desde) }));
+  // 262: por alcance, los rangos que se publican son los de un trayecto (si la vigencia los tiene) y, si no, los de ida y regreso (propios o de la tarifa de la vigencia).
+  const rangosDe = (nombre: string): GrupoServicioFila[] => {
+    if (!sv.usaAlcance) return sv.grupos.filter((g) => g.temporada === nombre);
+    const trayecto = (sv.gruposAlcance ?? []).filter((g) => g.temporada === nombre);
+    if (trayecto.length) return trayecto;
+    return rangosIdaRegresoEfectivos((sv.gruposIdaRegreso ?? []).filter((g) => g.temporada === nombre), sv.grupos.filter((g) => g.temporada === nombre && Number.isFinite(Number(g.precio)) && Number(g.precio) >= 0));
+  };
+  const porVigencia = aplicables.map((t) => ({ nombre: t.nombre, rangos: rangosDe(t.nombre).sort((a, b) => a.pax_desde - b.pax_desde) }));
   const sinRangos = porVigencia.find((v) => !v.rangos.length);
-  if (sinRangos) return { ok: false, error: `${rotulo} no tiene rangos de pasajeros en su vigencia «${sinRangos.nombre}».` };
+  if (sinRangos) return { ok: false, error: `${rotulo} no tiene rangos de pasajeros${sv.usaAlcance ? " (de un trayecto, de ida y regreso ni de la tarifa de la vigencia)" : ""} en su vigencia «${sinRangos.nombre}».` };
   const clave = (r: { pax_desde: number; pax_hasta: number }) => `${r.pax_desde}-${r.pax_hasta}`;
   const base = porVigencia[0].rangos.map(clave).join("|");
   const distinta = porVigencia.find((v) => v.rangos.map(clave).join("|") !== base);
@@ -183,6 +218,8 @@ export const incluidoSeOmite = (r: IncluidoEnEstadia): boolean => !r.ok && r.mot
  */
 export function incluidoEnEstadia(sv: VigenciasServicio, modo: "persona" | "grupo", desde: string, hasta: string): IncluidoEnEstadia {
   const rotulo = `El servicio incluido «${sv.nombre}»`;
+  // 262: un traslado por alcance no tiene un precio único para hornear en el hotel (depende del trayecto vendido): se ofrece como opcional.
+  if (sv.usaAlcance) return { ok: false, error: `${rotulo} es un traslado que se vende por trayecto (llegada, salida o ida y regreso): no puede ir incluido en el hotel. Márcalo como opcional.`, motivo: "dato_invalido" };
   const invalida = ventanaInvalida(desde, hasta);
   if (invalida) return { ok: false, error: `${rotulo}: no se puede validar la estadía, ${invalida}.`, motivo: "ventana" };
   const { nombres, primerSinCobertura } = cubrirVentana(sv, desde, hasta);

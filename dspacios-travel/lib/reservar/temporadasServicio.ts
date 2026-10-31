@@ -6,8 +6,9 @@
 // que el resultado es el mismo que con la tabla vacía. Cualquier otro error se devuelve tal cual (la liquidación falla cerrada).
 // ─────────────────────────────────────────────────────────────────────────
 import type { createAdminClient } from "@/lib/supabase/admin";
-import { SELECT_TEMPORADAS_CON_FRANJAS, type FilaTemporadaConFranjas } from "@/lib/reservar/liquidacionServicio";
+import { SELECT_TEMPORADAS_CON_FRANJAS, SELECT_TEMPORADAS_CON_FRANJAS_SIN_RANGO, type FilaTemporadaConFranjas } from "@/lib/reservar/liquidacionServicio";
 import type { VigenciasServicio } from "@/lib/calc/servicioVigencias";
+import { leerAlcanceDeServicios } from "@/lib/servicios/alcanceContexto";
 import { NOMBRE_TARIFA_BASE, vigenciaBasePermanente, type BaseServicioCatalogo, type VigenciaBasePermanente } from "@/lib/calc/tarifaBasePermanente";
 
 const SIN_FRANJAS = "id, servicio_id, nombre, fecha_inicio, fecha_fin, compra_inicio, compra_fin, prioridad, precio_persona, precio_infante, recargo_individual";
@@ -36,7 +37,9 @@ async function leerTemporadasCrudas(
   servicioIds: number[],
 ): Promise<{ data: FilaTemporadaConFranjas[]; error: { message: string } | null }> {
   if (!servicioIds.length) return { data: [], error: null };
-  const conFranjas = await admin.from("servicio_temporadas").select(SELECT_TEMPORADAS_CON_FRANJAS).in("servicio_id", servicioIds);
+  let conFranjas = await admin.from("servicio_temporadas").select(SELECT_TEMPORADAS_CON_FRANJAS).in("servicio_id", servicioIds);
+  // Base sin las columnas de rango de pasajeros de las franjas (262 aún no aplicada): se lee como antes (franjas «para todos»). Cualquier otro error sigue su camino.
+  if (conFranjas.error && (conFranjas.error as { code?: string }).code === "42703") conFranjas = await admin.from("servicio_temporadas").select(SELECT_TEMPORADAS_CON_FRANJAS_SIN_RANGO).in("servicio_id", servicioIds);
   if (!conFranjas.error) return { data: (conFranjas.data ?? []) as unknown as FilaTemporadaConFranjas[], error: null };
   if (!FALTA_TABLA.has((conFranjas.error as { code?: string }).code ?? "")) return { data: [], error: { message: conFranjas.error.message } };
   const plano = await admin.from("servicio_temporadas").select(SIN_FRANJAS).in("servicio_id", servicioIds);
@@ -62,10 +65,32 @@ export async function cargarVigenciasServicios(
   if (tr.error) return { ok: false, error: tr.error.message };
   if (gr.error) return { ok: false, error: gr.error.message };
   const nombres = new Map(servicios.map((s) => [s.id, s.nombre]));
+  // 262: clasificación y precios propios por alcance (tolerante: sin la 262 aplicada todo sigue como antes; un fallo técnico detiene la publicación).
+  const lecAlc = await leerAlcanceDeServicios(admin, ids, tr.data.map((t) => t.id).filter((x): x is number => x != null));
+  if (!lecAlc.ok) return { ok: false, error: lecAlc.error };
   const porServicio = new Map<number, VigenciasServicio>();
   for (const id of ids) {
     const temporadas = tr.data.filter((t) => t.servicio_id === id);
+    const usaAlcance = lecAlc.disponible && lecAlc.clasificaciones.some((c) => c.servicio_id === id && c.tipo_receptivo === "traslado");
+    const extraAlcance: Partial<VigenciasServicio> = {};
+    if (usaAlcance && lecAlc.disponible) {
+      const nombrePorId = new Map(temporadas.map((t) => [t.id, t.nombre]));
+      const gruposAlcance: VigenciasServicio["gruposAlcance"] = [];
+      const personaAlcance = new Map<string, number>();
+      const gruposIdaRegreso: VigenciasServicio["gruposIdaRegreso"] = [];
+      const personaIdaRegreso = new Map<string, number>();
+      for (const f of lecAlc.preciosAlcance) {
+        const nombre = nombrePorId.get(f.servicio_temporada_id);
+        if (!nombre) continue;
+        // Cada alcance publica SU referencia; ninguna se deriva de la otra. Sin precio propio de ida y regreso, la referencia usa la tarifa de la vigencia (servicioVigencias).
+        const [grupos, persona] = f.alcance === "trayecto" ? [gruposAlcance, personaAlcance] : [gruposIdaRegreso, personaIdaRegreso];
+        if (f.pax_desde != null && f.pax_hasta != null) grupos.push({ pax_desde: f.pax_desde, pax_hasta: f.pax_hasta, precio: Number(f.precio), temporada: nombre });
+        else persona.set(nombre, Number(f.precio));
+      }
+      Object.assign(extraAlcance, { usaAlcance: true, gruposAlcance, personaAlcance, gruposIdaRegreso, personaIdaRegreso });
+    }
     porServicio.set(id, {
+      ...extraAlcance,
       servicioId: id, nombre: nombres.get(id) ?? `#${id}`, temporadas,
       grupos: (gr.data ?? []).filter((g) => g.servicio_id === id).map((g) => ({ pax_desde: g.pax_desde, pax_hasta: g.pax_hasta, precio: Number(g.precio), temporada: g.temporada ?? NOMBRE_TARIFA_BASE })),
       conFranjas: new Set(temporadas.filter((t) => (t.servicio_suplementos_franja?.length ?? 0) > 0).map((t) => t.nombre)),
