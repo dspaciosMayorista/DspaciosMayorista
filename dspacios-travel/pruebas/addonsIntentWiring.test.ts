@@ -202,9 +202,9 @@ describe("BuscadorReceptivos.tsx — modo ACOTADO por paqueteId (requisitos 4/5/
   test("buscar() envía paqueteId a buscarReceptivos (requisito 4)", () => {
     const cuerpoFn = codigoReceptivos.slice(
       codigoReceptivos.indexOf("function buscar("),
-      // 700 (antes 500): la protección de generación agregó líneas al inicio
-      // del cuerpo (miGeneracion) antes de llegar al payload de buscarReceptivos.
-      codigoReceptivos.indexOf("function buscar(") + 700
+      // 700 → 1600: la protección de generación y luego el armado de las horas/modalidad VISIBLES
+      // agregaron líneas antes de llegar al payload de buscarReceptivos.
+      codigoReceptivos.indexOf("function buscar(") + 1600
     );
     assert.match(cuerpoFn, /paqueteId:\s*paqueteIdQ\s*\?\?\s*undefined/);
   });
@@ -270,14 +270,14 @@ describe("BuscadorReceptivos.tsx — modo ACOTADO por paqueteId (requisitos 4/5/
   test("buscar() captura miGeneracion SÍNCRONAMENTE al inicio (antes de cualquier await) y solo publica si sigue vigente", () => {
     const cuerpoFn = codigoReceptivos.slice(
       codigoReceptivos.indexOf("function buscar("),
-      codigoReceptivos.indexOf("function buscar(") + 900
+      codigoReceptivos.indexOf("function buscar(") + 1900
     );
     const idxMiGeneracion = cuerpoFn.indexOf("const miGeneracion = (generacionBusquedaRef.current += 1);");
     const idxAwait = cuerpoFn.indexOf("await buscarReceptivos(");
     assert.ok(idxMiGeneracion > -1 && idxAwait > idxMiGeneracion, "miGeneracion debe capturarse ANTES del await");
     const idxCheckGeneracion = cuerpoFn.indexOf("if (generacionBusquedaRef.current !== miGeneracion) return;");
     const idxCheckMontado = cuerpoFn.indexOf("if (!montadoRef.current) return;");
-    const idxSetResultados = cuerpoFn.indexOf("if (r.ok) setResultados(r.resultados);");
+    const idxSetResultados = cuerpoFn.indexOf("if (r.ok) { setResultados(r.resultados); setBusquedaHecha(hecha); }");
     assert.ok(idxCheckGeneracion > idxAwait, "el chequeo de generación debe ocurrir DESPUÉS del await");
     assert.ok(idxCheckMontado > idxCheckGeneracion, "el chequeo de montaje debe ocurrir después del de generación");
     assert.ok(idxSetResultados > idxCheckMontado, "setResultados/setErr solo deben ejecutarse después de pasar ambos chequeos");
@@ -320,9 +320,9 @@ describe("VistaBooking.tsx — modo acotado: la vitrina general NO se muestra mi
     assert.match(fuenteVista, /onModoAcotado=\{setReceptivosAcotado\}/);
   });
 
-  test("la vitrina 'O explora todos los receptivos' está condicionada a receptivosAcotado == null", () => {
+  test("la vitrina 'Explora todos los receptivos' (<ExploraReceptivos>) está condicionada a receptivosAcotado == null", () => {
     const idxBuscador = fuenteVista.indexOf("<BuscadorReceptivos");
-    const idxVitrina = fuenteVista.indexOf("O explora todos los receptivos", idxBuscador);
+    const idxVitrina = fuenteVista.indexOf("<ExploraReceptivos", idxBuscador);
     assert.ok(idxVitrina > idxBuscador, "la vitrina debe estar después del componente de búsqueda");
     const idxCondicion = fuenteVista.lastIndexOf("receptivosAcotado == null &&", idxVitrina);
     assert.ok(idxCondicion > -1 && idxCondicion < idxVitrina, "la vitrina debe quedar DENTRO del bloque condicionado a receptivosAcotado == null");

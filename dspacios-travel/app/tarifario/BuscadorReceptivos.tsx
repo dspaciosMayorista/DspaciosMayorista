@@ -6,7 +6,7 @@ import { useEffect, useRef, useState, useTransition } from "react";
 import Image from "next/image";
 import { MapPin, Users } from "lucide-react";
 import { formatMoneda } from "@/lib/utils";
-import { ALCANCES_VENTA, ROTULO_ALCANCE_VENTA, ROTULO_TIPO_RECEPTIVO, TIPOS_RECEPTIVO, type AlcanceVenta, type TipoReceptivo } from "@/lib/calc/servicioAlcance";
+import { ALCANCE_BUSQUEDA_POR_DEFECTO, ALCANCES_VENTA, ROTULO_ALCANCE_VENTA, ROTULO_TIPO_RECEPTIVO, TIPOS_RECEPTIVO, type AlcanceVenta, type TipoReceptivo } from "@/lib/calc/servicioAlcance";
 import { buscarReceptivos } from "@/app/(dashboard)/dashboard/reservar/actions";
 import type { ResultadoServicio } from "@/lib/reservar/cotizar";
 import type { TourCartItem } from "@/lib/cart/CartContext";
@@ -73,9 +73,27 @@ export function BuscadorReceptivos({
   // Hora prevista del traslado (opcional): solo cambia el precio de los traslados con suplementos por franja horaria.
   const [hLlegada, setHLlegada] = useState("");
   const [hSalida, setHSalida] = useState("");
-  // 262: filtro por tipo de receptivo y alcance del traslado (llegada | salida | ida y regreso). El alcance viaja a la búsqueda: cada traslado se cotiza con SU precio propio.
+  // 262: filtro por tipo de receptivo y modalidad del traslado (llegada | salida | ida y regreso). La modalidad viaja a la búsqueda: cada traslado se cotiza con SU precio propio.
+  // Orden del formulario: tipo → modalidad → horas → buscar. Modalidad y horas solo existen con el tipo «Traslado»; ida y regreso es la modalidad por defecto.
   const [tipoFiltro, setTipoFiltro] = useState<TipoReceptivo | "">("");
-  const [alcance, setAlcance] = useState<AlcanceVenta | "">("");
+  const [alcance, setAlcance] = useState<AlcanceVenta>(ALCANCE_BUSQUEDA_POR_DEFECTO);
+  const esTraslado = tipoFiltro === "traslado";
+  // Llegada: solo la hora de llegada; salida: solo la de salida; ida y regreso: ambas. Una hora oculta no se envía ni afecta el precio.
+  const pideLlegada = esTraslado && alcance !== "salida";
+  const pideSalida = esTraslado && alcance !== "llegada";
+  // Los filtros con que se hizo la búsqueda VIGENTE (no los del formulario, que pueden haber cambiado después): resumen de «Tu búsqueda».
+  const [busquedaHecha, setBusquedaHecha] = useState<BusquedaHecha | null>(null);
+
+  function cambiarTipo(v: TipoReceptivo | "") {
+    setTipoFiltro(v);
+    if (v === "traslado") setAlcance(ALCANCE_BUSQUEDA_POR_DEFECTO);
+    else { setHLlegada(""); setHSalida(""); } // las horas ocultas se descartan: no se conservan para un uso posterior
+  }
+  function cambiarModalidad(v: AlcanceVenta) {
+    setAlcance(v);
+    if (v === "llegada") setHSalida("");
+    if (v === "salida") setHLlegada("");
+  }
 
   // Generación de solicitud: protección REAL contra respuestas fuera de orden
   // — mismo patrón que `generacionBusquedaRef` en `BuscadorBooking.tsx`. Cada
@@ -118,13 +136,16 @@ export function BuscadorReceptivos({
     // la que esta búsqueda concreta debe seguir viendo intacta para poder
     // publicar (ver el chequeo tras el `await`).
     const miGeneracion = (generacionBusquedaRef.current += 1);
-    setErr(""); setResultados(null);
+    setErr(""); setResultados(null); setBusquedaHecha(null);
     if (!fIdaQ || !fRegQ) { setErr("Indica fecha de ida y de regreso."); return; }
     const paxNum = Number(paxQ) || 0;
     if (paxNum <= 0) { setErr("Indica cuántos pax."); return; }
     setBuscando(true);
+    // Solo se envía lo VISIBLE: sin el tipo «Traslado» no hay horas ni modalidad (el servidor cotiza los traslados como ida y regreso); con él, solo las horas del tramo elegido.
+    const horasEnviadas = { llegada: pideLlegada ? hLlegada : "", salida: pideSalida ? hSalida : "" };
+    const hecha: BusquedaHecha = { destino: destinoQ, fechaIda: fIdaQ, fechaRegreso: fRegQ, pax: paxNum, tipo: tipoFiltro, alcance: esTraslado ? alcance : null, horas: horasEnviadas };
     start(async () => {
-      const r = await buscarReceptivos({ fechaIda: fIdaQ, fechaRegreso: fRegQ, pax: paxNum, destino: destinoQ, paqueteId: paqueteIdQ ?? undefined, horas: { llegada: hLlegada, salida: hSalida }, ...(alcance ? { alcance } : {}) });
+      const r = await buscarReceptivos({ fechaIda: fIdaQ, fechaRegreso: fRegQ, pax: paxNum, destino: destinoQ, paqueteId: paqueteIdQ ?? undefined, horas: horasEnviadas, ...(esTraslado ? { alcance } : {}) });
       // Esta búsqueda quedó obsoleta (otra búsqueda más nueva arrancó, o se
       // pulsó "Limpiar resultados") — no importa si eso ocurrió antes o
       // después de que ESTA respuesta llegara: solo la ÚLTIMA búsqueda
@@ -134,7 +155,7 @@ export function BuscadorReceptivos({
       // Respuesta autoritativa — la búsqueda terminó, con éxito o con error;
       // cualquiera de los dos retira el isotipo.
       setBuscando(false);
-      if (r.ok) setResultados(r.resultados);
+      if (r.ok) { setResultados(r.resultados); setBusquedaHecha(hecha); }
       else setErr(r.error);
     });
   }
@@ -148,6 +169,7 @@ export function BuscadorReceptivos({
   function limpiarTodo() {
     generacionBusquedaRef.current += 1;
     setResultados(null);
+    setBusquedaHecha(null);
     setErr("");
     // Apaga el isotipo YA, sin esperar a que una búsqueda invalidada arriba
     // se asiente (ver la nota junto a `buscando`).
@@ -253,33 +275,43 @@ export function BuscadorReceptivos({
             </div>
           </div>
         </div>
-        <div className="mt-3 grid grid-cols-2 gap-3 sm:grid-cols-4">
-          <div>
-            <span className="mb-1 block text-xs font-semibold text-slate-700">Hora de llegada (traslado)</span>
-            <HoraInput24 opcional etiqueta="Hora de llegada del traslado" value={hLlegada} onChange={setHLlegada} />
-          </div>
-          <div>
-            <span className="mb-1 block text-xs font-semibold text-slate-700">Hora de salida (traslado)</span>
-            <HoraInput24 opcional etiqueta="Hora de salida del traslado" value={hSalida} onChange={setHSalida} />
-          </div>
-          <p className="col-span-2 self-end text-[11px] text-slate-400">Opcional. Algunos traslados cuestan más en ciertos horarios; indica la hora para ver el precio final.</p>
-        </div>
-        <div className="mt-3 grid grid-cols-2 gap-3 sm:grid-cols-4">
+        <div className="mt-3 grid grid-cols-2 gap-3 sm:grid-cols-4" data-testid="filtros-receptivo">
           <div>
             <label htmlFor="filtro-tipo-receptivo" className="mb-1 block text-xs font-semibold text-slate-700">Tipo de receptivo</label>
-            <select id="filtro-tipo-receptivo" aria-label="Tipo de receptivo" value={tipoFiltro} onChange={(e) => setTipoFiltro(e.target.value as TipoReceptivo | "")} className={sel}>
+            <select id="filtro-tipo-receptivo" aria-label="Tipo de receptivo" value={tipoFiltro} onChange={(e) => cambiarTipo(e.target.value as TipoReceptivo | "")} className={sel}>
               <option value="">Todos</option>
               {TIPOS_RECEPTIVO.map((t) => <option key={t} value={t}>{ROTULO_TIPO_RECEPTIVO[t]}</option>)}
             </select>
           </div>
-          <div>
-            <label htmlFor="alcance-traslado" className="mb-1 block text-xs font-semibold text-slate-700">Traslado</label>
-            <select id="alcance-traslado" aria-label="Alcance del traslado" value={alcance} onChange={(e) => setAlcance(e.target.value as AlcanceVenta | "")} className={sel}>
-              <option value="">Elegir alcance</option>
-              {ALCANCES_VENTA.map((a) => <option key={a} value={a}>{ROTULO_ALCANCE_VENTA[a]}</option>)}
-            </select>
-          </div>
-          <p className="col-span-2 self-end text-[11px] text-slate-400">Cada traslado se cobra con su precio propio para llegada, salida o ida y regreso. Elige uno y busca de nuevo para ver y agregar traslados.</p>
+          {esTraslado && (
+            <div>
+              <label htmlFor="modalidad-traslado" className="mb-1 block text-xs font-semibold text-slate-700">Modalidad del traslado</label>
+              <select id="modalidad-traslado" aria-label="Modalidad del traslado" value={alcance} onChange={(e) => cambiarModalidad(e.target.value as AlcanceVenta)} className={sel}>
+                {ALCANCES_VENTA.map((a) => <option key={a} value={a}>{ROTULO_ALCANCE_VENTA[a]}</option>)}
+              </select>
+            </div>
+          )}
+          {pideLlegada && (
+            <div data-testid="hora-llegada">
+              <span className="mb-1 block text-xs font-semibold text-slate-700">Hora de llegada</span>
+              <HoraInput24 opcional etiqueta="Hora de llegada del traslado" value={hLlegada} onChange={setHLlegada} />
+            </div>
+          )}
+          {pideSalida && (
+            <div data-testid="hora-salida">
+              <span className="mb-1 block text-xs font-semibold text-slate-700">Hora de salida</span>
+              <HoraInput24 opcional etiqueta="Hora de salida del traslado" value={hSalida} onChange={setHSalida} />
+            </div>
+          )}
+          {esTraslado ? (
+            <p className="col-span-2 text-[11px] text-slate-400 sm:col-span-4" data-testid="ayuda-traslado">
+              Ida y regreso es la modalidad por defecto; un solo trayecto se vende únicamente si tiene precio propio. La hora es opcional: algunos traslados cuestan más en ciertos horarios, indícala para ver el precio final.
+            </p>
+          ) : tipoFiltro === "" ? (
+            <p className="col-span-2 text-[11px] text-slate-400 sm:col-span-3" data-testid="nota-traslados-por-defecto">
+              Los traslados se muestran con precio de {ROTULO_ALCANCE_VENTA[ALCANCE_BUSQUEDA_POR_DEFECTO].toLowerCase()}. Elige el tipo «Traslado» para cambiar la modalidad o indicar la hora.
+            </p>
+          ) : null}
         </div>
         <div className="mt-4 flex flex-wrap items-center gap-3 border-t border-slate-100 pt-3">
           <button type="button" onClick={() => buscar()} disabled={buscando}
@@ -316,11 +348,17 @@ export function BuscadorReceptivos({
       )}
 
       {resultados && (
-        <div className="mt-4">
-          <p className="mb-2 text-sm text-gray-500">{visibles.length} receptivo(s) disponibles para tu búsqueda</p>
+        <section aria-labelledby="titulo-tu-busqueda" data-testid="tu-busqueda" className="mt-6 rounded-2xl border-2 border-[var(--brand-accent)]/50 bg-white p-4 shadow-sm sm:p-5">
+          <h2 id="titulo-tu-busqueda" className="text-base font-bold text-slate-900">Tu búsqueda</h2>
+          {busquedaHecha && (
+            <ul className="mt-2 flex flex-wrap gap-1.5" aria-label="Filtros de tu búsqueda" data-testid="filtros-aplicados">
+              {resumenBusqueda(busquedaHecha).map((c) => <li key={c} className="rounded-full bg-slate-100 px-2.5 py-0.5 text-[11px] font-medium text-slate-700">{c}</li>)}
+            </ul>
+          )}
+          <p className="mb-3 mt-2 text-sm text-gray-500">{visibles.length} receptivo(s) para estos filtros</p>
           {visibles.length === 0 ? (
-            <p className="rounded-xl border border-dashed border-gray-200 py-8 text-center text-sm text-gray-400">
-              No hay receptivos disponibles para ese destino/fechas/pax.
+            <p className="rounded-xl border border-dashed border-gray-200 py-8 text-center text-sm text-gray-400" data-testid="sin-resultados">
+              No hay receptivos disponibles para ese destino, fechas, pasajeros y tipo.
             </p>
           ) : (
             <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
@@ -329,7 +367,7 @@ export function BuscadorReceptivos({
                   key={`${r.paqueteId}-${r.servicioId}`}
                   className="group flex flex-col overflow-hidden rounded-2xl border border-gray-200 bg-white transition-all hover:-translate-y-1 hover:shadow-[0_20px_48px_rgba(0,0,0,0.14)] hover:border-[var(--brand-accent)]"
                 >
-                  <button type="button" onClick={() => onVerDetalle(r)} className="flex-1 text-left">
+                  <button type="button" onClick={() => onVerDetalle(r)} className="flex flex-1 flex-col justify-start text-left">
                     <div className="relative aspect-[16/10] w-full bg-gray-100">
                       {fotosPorServicio[r.servicioId] ? (
                         <Image src={fotosPorServicio[r.servicioId]} alt={r.nombre} fill sizes="(max-width:1024px) 50vw, 33vw" className="object-cover transition-transform group-hover:scale-[1.03]" unoptimized />
@@ -348,7 +386,7 @@ export function BuscadorReceptivos({
                   <div className="p-4 pt-3">
                     <div className="mb-2">
                       {r.requiereAlcance ? (
-                        <div className="text-xs font-medium text-amber-700" data-testid="requiere-alcance">Elige llegada, salida o ida y regreso arriba y busca de nuevo para ver su precio.</div>
+                        <div className="text-xs font-medium text-amber-700" data-testid="requiere-alcance">Elige el tipo «Traslado» y su modalidad (llegada, salida o ida y regreso) y busca de nuevo para ver su precio.</div>
                       ) : r.sinTarifaAlcance ? (
                         <div className="text-xs font-medium text-red-600" data-testid="sin-tarifa-alcance">Sin tarifa propia para {r.alcance ? ROTULO_ALCANCE_VENTA[r.alcance].toLowerCase() : "ese alcance"} con {r.pax} pasajero{r.pax === 1 ? "" : "s"}: no se puede vender.</div>
                       ) : (<>
@@ -358,7 +396,7 @@ export function BuscadorReceptivos({
                       </>)}
                       {r.requiereHora?.length ? (
                         <div className="mt-1 text-[11px] font-medium text-amber-700">
-                          Precio base. Indica la hora {r.requiereHora.length === 2 ? "de llegada y de salida" : r.requiereHora[0] === "salida" ? "de salida" : "de llegada"} arriba y busca de nuevo para ver el precio final.
+                          Precio base. {busquedaHecha?.tipo === "traslado" ? "Indica" : "Elige el tipo «Traslado» e indica"} la hora {r.requiereHora.length === 2 ? "de llegada y de salida" : r.requiereHora[0] === "salida" ? "de salida" : "de llegada"} {busquedaHecha?.tipo === "traslado" ? "arriba " : ""}y busca de nuevo para ver el precio final.
                         </div>
                       ) : null}
                     </div>
@@ -382,7 +420,7 @@ export function BuscadorReceptivos({
                             ...(r.horasCotizadas ? { horas: r.horasCotizadas } : {}),
                             ...(r.alcance ? { alcance: r.alcance } : {}),
                           })}
-                          className="flex-1 rounded-lg px-3 py-1.5 text-xs font-semibold text-white transition-opacity hover:opacity-90"
+                          className="flex-1 rounded-lg px-3 py-1.5 text-xs font-semibold text-white transition-opacity hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:opacity-40"
                           style={{ backgroundColor: "var(--brand-accent)" }}
                         >
                           Agregar al carrito
@@ -394,8 +432,19 @@ export function BuscadorReceptivos({
               ))}
             </div>
           )}
-        </div>
+        </section>
       )}
     </div>
   );
+}
+
+type BusquedaHecha = { destino: string; fechaIda: string; fechaRegreso: string; pax: number; tipo: TipoReceptivo | ""; alcance: AlcanceVenta | null; horas: { llegada: string; salida: string } };
+const fechaCorta = (iso: string) => iso.split("-").reverse().join("/");
+/** Filtros con que se hizo la búsqueda, en lenguaje de pantalla. Sin tipo «Traslado» no hay modalidad elegida: se dice que los traslados van como la modalidad por defecto. */
+export function resumenBusqueda(b: BusquedaHecha): string[] {
+  const chips = [b.destino || "Todos los destinos", `${fechaCorta(b.fechaIda)} → ${fechaCorta(b.fechaRegreso)}`, `${b.pax} pax`, b.tipo ? ROTULO_TIPO_RECEPTIVO[b.tipo] : "Todos los tipos"];
+  chips.push(b.alcance ? `Modalidad: ${ROTULO_ALCANCE_VENTA[b.alcance]}` : `Traslados: ${ROTULO_ALCANCE_VENTA[ALCANCE_BUSQUEDA_POR_DEFECTO]}`);
+  if (b.horas.llegada) chips.push(`Llegada ${b.horas.llegada}`);
+  if (b.horas.salida) chips.push(`Salida ${b.horas.salida}`);
+  return chips;
 }

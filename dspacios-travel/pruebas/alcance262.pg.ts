@@ -242,10 +242,15 @@ describe("262 · publicación y búsqueda de receptivos", () => {
     assert.equal(sql(`select count(*) from public.servicio_tarifa_pax where servicio_id = ${S_GR}`), "0", "no hay rangos legados: no hace falta el rodeo");
     assert.ok(pub.split(",").includes(String(S_GR)), "el traslado por grupo con rangos SOLO por alcance se publica");
   });
-  test("B1 sin alcance: el traslado se muestra pero NO se vende (requiereAlcance, total 0); tour/legado no se afectan", async () => {
+  test("B1 sin modalidad (URL o estado antiguos): la búsqueda cotiza el traslado como IDA Y REGRESO, nunca con un trayecto; tour/legado no se afectan", async () => {
     const rs = await buscar();
     const t = resDe(rs, S_TR);
-    assert.ok(t, "el traslado aparece en la búsqueda"); assert.equal(t.requiereAlcance, true); assert.equal(t.total, 0);
+    assert.ok(t, "el traslado aparece en la búsqueda"); assert.equal(t.alcance, "ida_regreso"); assert.equal(t.requiereAlcance, undefined);
+    assert.equal(t.total, pvp(2 * 170000), "base de ida y regreso (170.000 × 2), sin horas: queda el aviso de la hora pendiente");
+    assert.deepEqual([...(t.requiereHora as string[])].sort(), ["llegada", "salida"]);
+    const sinTarifa = resDe(rs, S_SIN);
+    assert.equal(sinTarifa?.total, 0, "6203 solo tiene precio de un trayecto (90.000): ida y regreso NO lo sustituye"); assert.ok(sinTarifa?.sinTarifaAlcance);
+    assert.equal(sinTarifa?.alcance, "ida_regreso");
     assert.equal(resDe(rs, S_LEG)?.total, pvp(2 * 50000), "legado sin cambios: 50.000×2 con markup");
     assert.equal(resDe(rs, S_LEG)?.requiereAlcance, undefined);
     assert.equal(resDe(rs, S_TOUR)?.total, pvp(2 * 40000), "tour clasificado sin cambios");

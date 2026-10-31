@@ -23,6 +23,8 @@ export const ROTULO_TIPO_RECEPTIVO: Record<TipoReceptivo, string> = { tour: "Tou
 /** Lo que se VENDE de un traslado. */
 export type AlcanceVenta = "llegada" | "salida" | "ida_regreso";
 export const ALCANCES_VENTA: readonly AlcanceVenta[] = ["llegada", "salida", "ida_regreso"];
+/** Modalidad con que la BÚSQUEDA de receptivos cotiza un traslado cuando no llega ninguna (pantalla, URL o estado antiguos). Solo la búsqueda: cotizar y convertir siguen exigiendo un alcance explícito. */
+export const ALCANCE_BUSQUEDA_POR_DEFECTO: AlcanceVenta = "ida_regreso";
 export const ROTULO_ALCANCE_VENTA: Record<AlcanceVenta, string> = { llegada: "Un trayecto: llegada", salida: "Un trayecto: salida", ida_regreso: "Ida y regreso" };
 /** Cómo se PRECIA: los dos sentidos de «un trayecto» comparten precio; ida y regreso tiene el suyo. */
 export type AlcancePrecio = "trayecto" | "ida_regreso";

@@ -38,7 +38,7 @@ import {
   type DatosServicioPar, type ResultadoServicio, type RespuestaPublicaServicioPuntual, type FilaTemporadaConFranjas,
 } from "@/lib/reservar/liquidacionServicio";
 import { validarHorasTramos, type HorasTramos } from "@/lib/calc/trasladoFranjas";
-import { parseAlcanceVenta, type AlcanceVenta } from "@/lib/calc/servicioAlcance";
+import { ALCANCE_BUSQUEDA_POR_DEFECTO, parseAlcanceVenta, type AlcanceVenta } from "@/lib/calc/servicioAlcance";
 import { leerAlcanceDeServicios } from "@/lib/servicios/alcanceContexto";
 import { combinarHoras, horasAcreditadasDelRecorrido } from "@/lib/reservar/horasRecorrido";
 import { cargarVigenciasServicios, leerTemporadasServicio } from "@/lib/reservar/temporadasServicio";
@@ -1037,9 +1037,11 @@ export async function buscarReceptivos(inputRaw: unknown): Promise<{ ok: true; r
 
   const fechaIdaDate = new Date(`${input.fechaIda}T00:00:00`);
   const resultados: ResultadoServicio[] = [];
+  // Sin modalidad (URL o estado antiguos) la búsqueda cotiza el traslado como ida y regreso; nunca con la tarifa de un trayecto. Si falta esa tarifa, el resultado dice que no la tiene.
+  const alcanceBusqueda = vAlcance.alcance ?? ALCANCE_BUSQUEDA_POR_DEFECTO;
   for (const par of pares.values()) {
     if (paresIncluidos.has(`${par.paqueteId}-${par.servicioId}`)) continue;
-    const r = calcularResultadoServicio(par, ctx, fechaIdaDate, numNoches, pax, input.horas, vAlcance.alcance);
+    const r = calcularResultadoServicio(par, ctx, fechaIdaDate, numNoches, pax, input.horas, alcanceBusqueda);
     if (r) resultados.push(r);
   }
   resultados.sort((a, b) => a.total - b.total);
