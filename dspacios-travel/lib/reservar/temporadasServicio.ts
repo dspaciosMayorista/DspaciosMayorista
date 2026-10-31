@@ -8,6 +8,7 @@
 import type { createAdminClient } from "@/lib/supabase/admin";
 import { SELECT_TEMPORADAS_CON_FRANJAS, type FilaTemporadaConFranjas } from "@/lib/reservar/liquidacionServicio";
 import type { VigenciasServicio } from "@/lib/calc/servicioVigencias";
+import { leerAlcanceDeServicios } from "@/lib/servicios/alcanceContexto";
 import { NOMBRE_TARIFA_BASE, vigenciaBasePermanente, type BaseServicioCatalogo, type VigenciaBasePermanente } from "@/lib/calc/tarifaBasePermanente";
 
 const SIN_FRANJAS = "id, servicio_id, nombre, fecha_inicio, fecha_fin, compra_inicio, compra_fin, prioridad, precio_persona, precio_infante, recargo_individual";
@@ -62,10 +63,28 @@ export async function cargarVigenciasServicios(
   if (tr.error) return { ok: false, error: tr.error.message };
   if (gr.error) return { ok: false, error: gr.error.message };
   const nombres = new Map(servicios.map((s) => [s.id, s.nombre]));
+  // 262: clasificación y precios propios por alcance (tolerante: sin la 262 aplicada todo sigue como antes; un fallo técnico detiene la publicación).
+  const lecAlc = await leerAlcanceDeServicios(admin, ids, tr.data.map((t) => t.id).filter((x): x is number => x != null));
+  if (!lecAlc.ok) return { ok: false, error: lecAlc.error };
   const porServicio = new Map<number, VigenciasServicio>();
   for (const id of ids) {
     const temporadas = tr.data.filter((t) => t.servicio_id === id);
+    const usaAlcance = lecAlc.disponible && lecAlc.clasificaciones.some((c) => c.servicio_id === id && c.tipo_receptivo === "traslado");
+    const extraAlcance: Partial<VigenciasServicio> = {};
+    if (usaAlcance && lecAlc.disponible) {
+      const nombrePorId = new Map(temporadas.map((t) => [t.id, t.nombre]));
+      const gruposAlcance: VigenciasServicio["gruposAlcance"] = [];
+      const personaAlcance = new Map<string, number>();
+      for (const f of lecAlc.preciosAlcance) {
+        const nombre = nombrePorId.get(f.servicio_temporada_id);
+        if (!nombre || f.alcance !== "trayecto") continue; // la referencia "desde" es la de un trayecto; ida y regreso no se deriva de ella
+        if (f.pax_desde != null && f.pax_hasta != null) gruposAlcance.push({ pax_desde: f.pax_desde, pax_hasta: f.pax_hasta, precio: Number(f.precio), temporada: nombre });
+        else personaAlcance.set(nombre, Number(f.precio));
+      }
+      Object.assign(extraAlcance, { usaAlcance: true, gruposAlcance, personaAlcance });
+    }
     porServicio.set(id, {
+      ...extraAlcance,
       servicioId: id, nombre: nombres.get(id) ?? `#${id}`, temporadas,
       grupos: (gr.data ?? []).filter((g) => g.servicio_id === id).map((g) => ({ pax_desde: g.pax_desde, pax_hasta: g.pax_hasta, precio: Number(g.precio), temporada: g.temporada ?? NOMBRE_TARIFA_BASE })),
       conFranjas: new Set(temporadas.filter((t) => (t.servicio_suplementos_franja?.length ?? 0) > 0).map((t) => t.nombre)),

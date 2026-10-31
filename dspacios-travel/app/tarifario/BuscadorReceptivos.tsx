@@ -6,6 +6,7 @@ import { useEffect, useRef, useState, useTransition } from "react";
 import Image from "next/image";
 import { MapPin, Users } from "lucide-react";
 import { formatMoneda } from "@/lib/utils";
+import { ALCANCES_VENTA, ROTULO_ALCANCE_VENTA, ROTULO_TIPO_RECEPTIVO, TIPOS_RECEPTIVO, type AlcanceVenta, type TipoReceptivo } from "@/lib/calc/servicioAlcance";
 import { buscarReceptivos } from "@/app/(dashboard)/dashboard/reservar/actions";
 import type { ResultadoServicio } from "@/lib/reservar/cotizar";
 import type { TourCartItem } from "@/lib/cart/CartContext";
@@ -72,6 +73,9 @@ export function BuscadorReceptivos({
   // Hora prevista del traslado (opcional): solo cambia el precio de los traslados con suplementos por franja horaria.
   const [hLlegada, setHLlegada] = useState("");
   const [hSalida, setHSalida] = useState("");
+  // 262: filtro por tipo de receptivo y alcance del traslado (llegada | salida | ida y regreso). El alcance viaja a la búsqueda: cada traslado se cotiza con SU precio propio.
+  const [tipoFiltro, setTipoFiltro] = useState<TipoReceptivo | "">("");
+  const [alcance, setAlcance] = useState<AlcanceVenta | "">("");
 
   // Generación de solicitud: protección REAL contra respuestas fuera de orden
   // — mismo patrón que `generacionBusquedaRef` en `BuscadorBooking.tsx`. Cada
@@ -120,7 +124,7 @@ export function BuscadorReceptivos({
     if (paxNum <= 0) { setErr("Indica cuántos pax."); return; }
     setBuscando(true);
     start(async () => {
-      const r = await buscarReceptivos({ fechaIda: fIdaQ, fechaRegreso: fRegQ, pax: paxNum, destino: destinoQ, paqueteId: paqueteIdQ ?? undefined, horas: { llegada: hLlegada, salida: hSalida } });
+      const r = await buscarReceptivos({ fechaIda: fIdaQ, fechaRegreso: fRegQ, pax: paxNum, destino: destinoQ, paqueteId: paqueteIdQ ?? undefined, horas: { llegada: hLlegada, salida: hSalida }, ...(alcance ? { alcance } : {}) });
       // Esta búsqueda quedó obsoleta (otra búsqueda más nueva arrancó, o se
       // pulsó "Limpiar resultados") — no importa si eso ocurrió antes o
       // después de que ESTA respuesta llegara: solo la ÚLTIMA búsqueda
@@ -208,6 +212,8 @@ export function BuscadorReceptivos({
   const selDestino = `w-full rounded-lg border py-2 pl-8 pr-3 text-xs font-medium transition-colors focus:outline-none focus:ring-2 focus:ring-[var(--brand-accent)] ${destino ? "border-[var(--brand-success)] bg-[var(--brand-success)]/10 text-slate-900 font-semibold" : "border-slate-200 bg-slate-50 text-slate-800"}`;
   const iconoDestinoCls = `pointer-events-none absolute left-2.5 top-1/2 h-4 w-4 -translate-y-1/2 ${destino ? "text-[var(--brand-success)]" : "text-slate-400"}`;
 
+  const visibles = (resultados ?? []).filter((r) => !tipoFiltro || r.tipoReceptivo === tipoFiltro);
+
   return (
     <div className="mb-6">
       <div className="rounded-2xl border border-slate-200/80 bg-white p-4 shadow-[0_10px_25px_-5px_rgba(29,124,154,0.08),0_8px_10px_-6px_rgba(29,124,154,0.04)] sm:p-5">
@@ -258,6 +264,23 @@ export function BuscadorReceptivos({
           </div>
           <p className="col-span-2 self-end text-[11px] text-slate-400">Opcional. Algunos traslados cuestan más en ciertos horarios; indica la hora para ver el precio final.</p>
         </div>
+        <div className="mt-3 grid grid-cols-2 gap-3 sm:grid-cols-4">
+          <div>
+            <label htmlFor="filtro-tipo-receptivo" className="mb-1 block text-xs font-semibold text-slate-700">Tipo de receptivo</label>
+            <select id="filtro-tipo-receptivo" aria-label="Tipo de receptivo" value={tipoFiltro} onChange={(e) => setTipoFiltro(e.target.value as TipoReceptivo | "")} className={sel}>
+              <option value="">Todos</option>
+              {TIPOS_RECEPTIVO.map((t) => <option key={t} value={t}>{ROTULO_TIPO_RECEPTIVO[t]}</option>)}
+            </select>
+          </div>
+          <div>
+            <label htmlFor="alcance-traslado" className="mb-1 block text-xs font-semibold text-slate-700">Traslado</label>
+            <select id="alcance-traslado" aria-label="Alcance del traslado" value={alcance} onChange={(e) => setAlcance(e.target.value as AlcanceVenta | "")} className={sel}>
+              <option value="">Elegir alcance</option>
+              {ALCANCES_VENTA.map((a) => <option key={a} value={a}>{ROTULO_ALCANCE_VENTA[a]}</option>)}
+            </select>
+          </div>
+          <p className="col-span-2 self-end text-[11px] text-slate-400">Cada traslado se cobra con su precio propio para llegada, salida o ida y regreso. Elige uno y busca de nuevo para ver y agregar traslados.</p>
+        </div>
         <div className="mt-4 flex flex-wrap items-center gap-3 border-t border-slate-100 pt-3">
           <button type="button" onClick={() => buscar()} disabled={buscando}
             className="rounded-lg bg-[var(--brand-primary)] px-5 py-2.5 text-xs font-bold uppercase tracking-wide text-white shadow-sm transition hover:brightness-110 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-[var(--brand-accent)] disabled:opacity-50">
@@ -294,14 +317,14 @@ export function BuscadorReceptivos({
 
       {resultados && (
         <div className="mt-4">
-          <p className="mb-2 text-sm text-gray-500">{resultados.length} receptivo(s) disponibles para tu búsqueda</p>
-          {resultados.length === 0 ? (
+          <p className="mb-2 text-sm text-gray-500">{visibles.length} receptivo(s) disponibles para tu búsqueda</p>
+          {visibles.length === 0 ? (
             <p className="rounded-xl border border-dashed border-gray-200 py-8 text-center text-sm text-gray-400">
               No hay receptivos disponibles para ese destino/fechas/pax.
             </p>
           ) : (
             <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
-              {resultados.map((r) => (
+              {visibles.map((r) => (
                 <div
                   key={`${r.paqueteId}-${r.servicioId}`}
                   className="group flex flex-col overflow-hidden rounded-2xl border border-gray-200 bg-white transition-all hover:-translate-y-1 hover:shadow-[0_20px_48px_rgba(0,0,0,0.14)] hover:border-[var(--brand-accent)]"
@@ -324,9 +347,15 @@ export function BuscadorReceptivos({
                   </button>
                   <div className="p-4 pt-3">
                     <div className="mb-2">
-                      <div className="text-[10px] uppercase tracking-wide text-gray-400">total</div>
+                      {r.requiereAlcance ? (
+                        <div className="text-xs font-medium text-amber-700" data-testid="requiere-alcance">Elige llegada, salida o ida y regreso arriba y busca de nuevo para ver su precio.</div>
+                      ) : r.sinTarifaAlcance ? (
+                        <div className="text-xs font-medium text-red-600" data-testid="sin-tarifa-alcance">Sin tarifa propia para {r.alcance ? ROTULO_ALCANCE_VENTA[r.alcance].toLowerCase() : "ese alcance"} con {r.pax} pasajero{r.pax === 1 ? "" : "s"}: no se puede vender.</div>
+                      ) : (<>
+                      <div className="text-[10px] uppercase tracking-wide text-gray-400">total{r.alcance ? ` · ${ROTULO_ALCANCE_VENTA[r.alcance].toLowerCase()}` : ""}</div>
                       <div className="text-lg font-bold" style={{ color: "var(--brand-primary)" }}>{formatMoneda(r.total, r.moneda)}</div>
                       <div className="text-[10px] text-gray-400">{r.pax} pax</div>
+                      </>)}
                       {r.requiereHora?.length ? (
                         <div className="mt-1 text-[11px] font-medium text-amber-700">
                           Precio base. Indica la hora {r.requiereHora.length === 2 ? "de llegada y de salida" : r.requiereHora[0] === "salida" ? "de salida" : "de llegada"} arriba y busca de nuevo para ver el precio final.
@@ -340,7 +369,7 @@ export function BuscadorReceptivos({
                       {onAgregar && (
                         <button
                           type="button"
-                          disabled={!!r.requiereHora?.length}
+                          disabled={!!r.requiereHora?.length || !!r.requiereAlcance || !!r.sinTarifaAlcance}
                           onClick={() => onAgregar({
                             tipo: "tour",
                             paqueteId: r.paqueteId,
@@ -351,6 +380,7 @@ export function BuscadorReceptivos({
                             fechaIda: fIda, fechaRegreso: fReg, noches: r.noches,
                             pax: r.pax, precio: r.total, moneda: r.moneda,
                             ...(r.horasCotizadas ? { horas: r.horasCotizadas } : {}),
+                            ...(r.alcance ? { alcance: r.alcance } : {}),
                           })}
                           className="flex-1 rounded-lg px-3 py-1.5 text-xs font-semibold text-white transition-opacity hover:opacity-90"
                           style={{ backgroundColor: "var(--brand-accent)" }}

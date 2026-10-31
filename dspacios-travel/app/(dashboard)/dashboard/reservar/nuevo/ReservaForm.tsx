@@ -3,6 +3,7 @@
 import { DateInput } from "@/components/ui/DateInput";
 import { useMemo, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
+import { MENSAJE_TRASLADOS_SOLO_CARRITO_PANTALLA } from "@/lib/servicios/alcanceContexto";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { formatMoneda, calcularEdad } from "@/lib/utils";
@@ -75,12 +76,12 @@ const lbl = "mb-1 block text-xs font-medium text-gray-600";
 const inp = "w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm";
 
 export function ReservaForm({
-  meta, combos, serviciosDisp = [], acomConfigs = [],
+  meta, combos, serviciosDisp = [], acomConfigs = [], hayTrasladosOcultos = false,
   vendedores = [],
   agencias = [],
   freelances = [],
 }: {
-  meta: Meta; combos: Combo[]; serviciosDisp?: ServicioDisp[]; acomConfigs?: AcomConfig[];
+  meta: Meta; combos: Combo[]; serviciosDisp?: ServicioDisp[]; acomConfigs?: AcomConfig[]; hayTrasladosOcultos?: boolean;
   vendedores?: { nombre: string }[]; agencias?: { id: number; nombre: string }[]; freelances?: { id: number; nombre: string }[];
 }) {
   const router = useRouter();
@@ -457,6 +458,9 @@ export function ReservaForm({
       </section>
       )}
 
+      {hayTrasladosOcultos && (
+        <p className="rounded-lg border border-amber-200 bg-amber-50 p-3 text-xs text-amber-800" role="note" data-testid="aviso-traslados-carrito">{MENSAJE_TRASLADOS_SOLO_CARRITO_PANTALLA}</p>
+      )}
       {/* Servicios adicionales (add-on) */}
       {serviciosDisp.length > 0 && (
         <section className="rounded-xl border border-gray-200 bg-white p-5">

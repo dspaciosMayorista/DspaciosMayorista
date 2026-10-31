@@ -48,9 +48,15 @@ async function reemplazarFilas(
   sb: Awaited<ReturnType<typeof createClient>>,
   tabla: "contrato_items" | "contrato_hoteles" | "contrato_vuelos" | "contrato_servicios",
   numero: string,
-  filas: Record<string, unknown>[]
+  filas: Record<string, unknown>[],
+  opciones: { conservarConAlcance?: boolean } = {}
 ): Promise<Result> {
-  const { data: previas, error: le } = await sb.from(tabla).select("id").eq("numero_contrato", numero);
+  let { data: previas, error: le } = opciones.conservarConAlcance
+    // 262/264: las líneas de traslado por ALCANCE las crea la conversión y la CxP queda enlazada a ellas: este editor ni las muestra ni las reemplaza. Sin la 262 (columna
+    // inexistente, 42703) todas las líneas son editables como siempre.
+    ? await sb.from(tabla).select("id").eq("numero_contrato", numero).is("alcance_traslado", null)
+    : await sb.from(tabla).select("id").eq("numero_contrato", numero);
+  if (le && opciones.conservarConAlcance && le.code === "42703") ({ data: previas, error: le } = await sb.from(tabla).select("id").eq("numero_contrato", numero));
   if (le) return { ok: false, error: le.message };
   const idsViejos = (previas ?? []).map((r) => r.id as number);
 
@@ -201,7 +207,7 @@ export async function guardarServiciosContrato(numero: string, servicios: Servic
       costo: num(s.costo),
       orden: i,
     }));
-  const r = await reemplazarFilas(guard.sb, "contrato_servicios", numero, filas);
+  const r = await reemplazarFilas(guard.sb, "contrato_servicios", numero, filas, { conservarConAlcance: true });
   if (!r.ok) return r;
   revalidatePath(`/dashboard/contratos/${numero}`);
   return { ok: true };

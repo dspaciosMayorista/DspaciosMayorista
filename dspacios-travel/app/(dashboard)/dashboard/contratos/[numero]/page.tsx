@@ -133,7 +133,11 @@ export default async function ContratoDetallePage({
         sb.from("contrato_items").select("descripcion, adultos, ninos, tarifa_adulto, tarifa_nino, modo_precio, valor_total").eq("numero_contrato", numero).order("orden"),
         sb.from("contrato_hoteles").select("nombre, categoria, proveedor, ciudad, alimentacion, acomodacion, detalle_acomodacion, fecha_ingreso, fecha_salida").eq("numero_contrato", numero).order("orden"),
         sb.from("contrato_vuelos").select("aerolinea, record, direccion, origen_codigo, destino_codigo, numero_vuelo, fecha_salida, hora_salida, hora_llegada, servicios").eq("numero_contrato", numero).order("orden"),
-        sb.from("contrato_servicios").select("tipo, descripcion, proveedor, costo").eq("numero_contrato", numero).order("orden"),
+        // 262/264: las líneas de traslado por alcance (de la conversión) no se editan aquí; sin la 262 la columna no existe y se leen todas.
+        (async () => {
+          const r = await sb.from("contrato_servicios").select("tipo, descripcion, proveedor, costo").eq("numero_contrato", numero).is("alcance_traslado", null).order("orden");
+          return r.error?.code === "42703" ? sb.from("contrato_servicios").select("tipo, descripcion, proveedor, costo").eq("numero_contrato", numero).order("orden") : r;
+        })(),
       ])
     : [{ data: null }, { data: null }, { data: null }, { data: null }];
   const formasPago = (formasPagoRows ?? []).map((f) => f.nombre);

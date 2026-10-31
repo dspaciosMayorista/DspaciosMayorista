@@ -42,6 +42,7 @@ import {
 } from "../calc/servicioTarifa.ts";
 import type { FranjaSuplemento, HorasTramos, TramoTraslado } from "../calc/trasladoFranjas.ts";
 import { normalizarCategoriaServicio, type CategoriaServicio } from "./serviciosPaquete.ts";
+import { modalidadAlcance, type AlcanceVenta, type ClasificacionServicio, type FilaPrecioAlcance, type TipoReceptivo } from "../calc/servicioAlcance.ts";
 
 export type DatosServicioPar = { servicioId: number; paqueteId: number; nombre: string; destino: string | null; descripcion: string | null };
 export type FilaServicioAdicional = {
@@ -86,6 +87,13 @@ export type ResultadoServicio = {
   suplementos?: { tramo: TramoTraslado; hora: string }[];
   // Horas con las que se cotizó (una por tramo con franja). Presente solo si el precio depende del horario; la conversión las compara con el horario vigente.
   horasCotizadas?: HorasTramos;
+  // 262 (provisional). `tipoReceptivo`: clasificación del servicio (ausente = sin clasificar, comportamiento anterior). `alcance`: alcance VENDIDO de un traslado
+  // (llegada | salida | ida_regreso), congelado por el carrito. `requiereAlcance` / `sinTarifaAlcance`: solo en la BÚSQUEDA — un traslado sin alcance elegido, o sin
+  // precio propio para ese alcance y número de pasajeros, se muestra pero NO se vende (total 0); nunca se sustituye con el precio de otro alcance.
+  tipoReceptivo?: TipoReceptivo | null;
+  alcance?: AlcanceVenta;
+  requiereAlcance?: boolean;
+  sinTarifaAlcance?: string;
 };
 
 // Lectura ÚNICA de vigencias + sus franjas (embebidas por la FK servicio_temporada_id): la usan la venta (cotizar.ts) y el costo (costosObligacionesCarrito.ts).
@@ -126,7 +134,13 @@ export type ContextoServicios = {
   gruposPorServ: Map<number, GrupoServicioFila[]>;
   // Franjas por `servicioId|nombre de vigencia`.
   franjasPorTemp: Map<string, FranjaSuplemento[]>;
+  // 262 (provisional): clasificación por servicio y precios propios por alcance (servicioId → nombre de vigencia → filas). Ausentes si la 262 no está aplicada.
+  clasifPorServ?: Map<number, ClasificacionServicio>;
+  preciosAlcancePorServ?: Map<number, Map<string, FilaPrecioAlcance[]>>;
 };
+
+export type FilaClasificacionServicio = ClasificacionServicio & { servicio_id: number };
+export type FilaPrecioAlcanceBD = FilaPrecioAlcance & { servicio_temporada_id: number };
 
 // Arma el contexto de liquidación (mapas por servicio/temporada/grupo) a
 // partir de las filas ya consultadas — compartido por la búsqueda en lote y
@@ -138,6 +152,8 @@ export function construirContextoServicios(datos: {
   grupos: FilaGrupoServicio[];
   temporadas: FilaTemporadaServicio[];
   franjas?: FilaFranjaServicio[];
+  clasificaciones?: FilaClasificacionServicio[];
+  preciosAlcance?: FilaPrecioAlcanceBD[];
 }): ContextoServicios {
   const paquetesPorId = new Map(datos.paquetes.map((p) => [p.id, p]));
   const armadoPorPar = new Map(datos.armado.map((a) => [`${a.paquete_id}-${a.servicio_id}`, a]));
@@ -160,7 +176,23 @@ export function construirContextoServicios(datos: {
     if (!k) continue; // franja de una vigencia que no se consultó: no puede aplicar
     (franjasPorTemp.get(k) ?? franjasPorTemp.set(k, []).get(k)!).push(f);
   }
-  return { paquetesPorId, armadoPorPar, svcPorId, tempsPorServ, gruposPorServ, franjasPorTemp };
+  const clasifPorServ = datos.clasificaciones
+    ? new Map(datos.clasificaciones.map((x): [number, ClasificacionServicio] => [x.servicio_id, { tipo_receptivo: x.tipo_receptivo, combo_incluye_traslado: x.combo_incluye_traslado, combo_traslado_alcance: x.combo_traslado_alcance }]))
+    : undefined;
+  let preciosAlcancePorServ: Map<number, Map<string, FilaPrecioAlcance[]>> | undefined;
+  if (datos.preciosAlcance) {
+    preciosAlcancePorServ = new Map();
+    for (const f of datos.preciosAlcance) {
+      const k = claveTempPorId.get(f.servicio_temporada_id); // servicioId|nombre; una vigencia que no se consultó no puede aplicar
+      if (!k) continue;
+      const [id, ...resto] = k.split("|");
+      const nombre = resto.join("|");
+      const porVig = preciosAlcancePorServ.get(Number(id)) ?? preciosAlcancePorServ.set(Number(id), new Map()).get(Number(id))!;
+      (porVig.get(nombre) ?? porVig.set(nombre, []).get(nombre)!)
+        .push({ alcance: f.alcance, pax_desde: f.pax_desde ?? null, pax_hasta: f.pax_hasta ?? null, precio: Number(f.precio) });
+    }
+  }
+  return { paquetesPorId, armadoPorPar, svcPorId, tempsPorServ, gruposPorServ, franjasPorTemp, clasifPorServ, preciosAlcancePorServ };
 }
 
 // ── Validadores de configuración — COMPARTIDOS por búsqueda y checkout ─────
@@ -224,7 +256,7 @@ export function resolverConfiguracionServicio(
 // Fórmula ÚNICA de liquidación de un servicio/tour, dado un modo y un markup YA RESUELTOS (nunca decide defaults — eso es responsabilidad de cada
 // llamador). SIN tarifa «GENERAL»: el neto sale de la vigencia aplicable a la fecha y, en modo grupo, de un rango de ESA vigencia que cubra el pax
 // (lib/calc/servicioTarifa.ts). Suma los suplementos de franja horaria de traslado al neto y recién entonces aplica el margen.
-export type MotivoFalloPrecio = MotivoSinTarifa | "franja_invalida" | "hora_requerida" | "costo_invalido" | "markup_invalido" | "servicio_inexistente" | "total_invalido";
+export type MotivoFalloPrecio = MotivoSinTarifa | "sin_precio_alcance" | "precios_invalidos" | "alcance_requerido" | "alcance_no_aplica" | "franja_invalida" | "hora_requerida" | "costo_invalido" | "markup_invalido" | "servicio_inexistente" | "total_invalido";
 export type PrecioServicioDetallado =
   | { ok: true; resultado: ResultadoServicio; costoNeto: number }
   | { ok: false; motivo: MotivoFalloPrecio; detalle?: string; pendientes?: TramoTraslado[] };
@@ -232,7 +264,7 @@ export type PrecioServicioDetallado =
 export function calcularPrecioServicioDetallado(
   par: DatosServicioPar, ctx: ContextoServicios, fechaIdaDate: Date, numNoches: number, pax: number,
   modo: "grupo" | "persona", pctMk: number,
-  opciones: { horas?: HorasTramos; permitirSinHora?: boolean; hoy?: string } = {}
+  opciones: { horas?: HorasTramos; permitirSinHora?: boolean; hoy?: string; alcance?: AlcanceVenta } = {}
 ): PrecioServicioDetallado {
   // Defensa en profundidad: el núcleo compartido nunca calcula con un markup fuera de rango.
   if (validarPctMarkup(pctMk) == null) return { ok: false, motivo: "markup_invalido" };
@@ -244,10 +276,20 @@ export function calcularPrecioServicioDetallado(
     const [id, ...nombre] = k.split("|");
     if (Number(id) === par.servicioId) franjasPorTemporada.set(nombre.join("|"), v);
   }
+  // 262: un servicio CLASIFICADO como traslado se vende SIEMPRE por alcance (precio propio por trayecto o ida y regreso); cualquier otro rechaza un alcance
+  // (una petición alterada no puede cambiar la modalidad). Un combo con traslado conserva su tarifa y limita el suplemento al tramo que declaró. Sin clasificar
+  // (todo el legado) no cambia nada.
+  const clasif = ctx.clasifPorServ?.get(par.servicioId);
+  const modalidad = modalidadAlcance(clasif, opciones.alcance);
+  if (!modalidad.ok) return { ok: false, motivo: modalidad.motivo };
+  const esTraslado = modalidad.usaAlcance;
+  const tramosCombo = modalidad.tramosCombo;
   const costo = costoNetoServicio({
     temporadas: ctx.tempsPorServ.get(par.servicioId) ?? [], grupos: ctx.gruposPorServ.get(par.servicioId) ?? [], franjasPorTemporada,
     modo, pax, fecha: fechaIdaDate, liquidacion: srv.liquidacion, numNoches,
     horas: opciones.horas, permitirSinHora: opciones.permitirSinHora, hoy: opciones.hoy,
+    ...(esTraslado ? { alcance: opciones.alcance, preciosAlcancePorTemporada: ctx.preciosAlcancePorServ?.get(par.servicioId) ?? new Map() } : {}),
+    ...(tramosCombo ? { tramos: tramosCombo } : {}),
   });
   if (!costo.ok) return { ok: false, motivo: costo.motivo, detalle: costo.detalle, pendientes: costo.pendientes };
 
@@ -262,6 +304,8 @@ export function calcularPrecioServicioDetallado(
       servicioId: par.servicioId, nombre: par.nombre, destino: par.destino, descripcion: par.descripcion,
       paqueteId: par.paqueteId, total, pax, noches: numNoches, moneda,
       categoria: normalizarCategoriaServicio(srv.categoria),
+      ...(clasif?.tipo_receptivo ? { tipoReceptivo: clasif.tipo_receptivo } : {}),
+      ...(esTraslado ? { alcance: opciones.alcance } : {}),
       ...(costo.pendientes.length ? { requiereHora: costo.pendientes } : {}),
       ...(costo.suplementos.length ? { suplementos: costo.suplementos.map((x) => ({ tramo: x.tramo, hora: x.hora })) } : {}),
       ...(costo.tramosConFranja.length && !costo.pendientes.length
@@ -273,7 +317,7 @@ export function calcularPrecioServicioDetallado(
 // Compatibilidad: `null` = no hay tarifa/precio válido (cualquier motivo). Los llamadores que necesitan el motivo usan el detallado.
 export function calcularPrecioConModoYMarkup(
   par: DatosServicioPar, ctx: ContextoServicios, fechaIdaDate: Date, numNoches: number, pax: number,
-  modo: "grupo" | "persona", pctMk: number, opciones: { horas?: HorasTramos; permitirSinHora?: boolean; hoy?: string } = {}
+  modo: "grupo" | "persona", pctMk: number, opciones: { horas?: HorasTramos; permitirSinHora?: boolean; hoy?: string; alcance?: AlcanceVenta } = {}
 ): ResultadoServicio | null {
   const r = calcularPrecioServicioDetallado(par, ctx, fechaIdaDate, numNoches, pax, modo, pctMk, opciones);
   return r.ok ? r.resultado : null;
@@ -287,14 +331,26 @@ export function calcularPrecioConModoYMarkup(
 // no es válida, también se omite (nunca se calcula con "persona"/0% por
 // default). Nunca se usa para checkout — ese usa `resolverLiquidacionServicioPuntual`.
 export function calcularResultadoServicio(
-  par: DatosServicioPar, ctx: ContextoServicios, fechaIdaDate: Date, numNoches: number, pax: number, horas?: HorasTramos
+  par: DatosServicioPar, ctx: ContextoServicios, fechaIdaDate: Date, numNoches: number, pax: number, horas?: HorasTramos, alcance?: AlcanceVenta
 ): ResultadoServicio | null {
   const paquete = ctx.paquetesPorId.get(par.paqueteId) ?? null;
   const armado = ctx.armadoPorPar.get(`${par.paqueteId}-${par.servicioId}`) ?? null;
   const cfg = resolverConfiguracionServicio(paquete, armado, par);
   if (!cfg) return null;
   // Búsqueda: con hora desconocida se muestra la tarifa sin el suplemento (marcada `requiereHora`), nunca un suplemento supuesto.
-  return calcularPrecioConModoYMarkup(par, ctx, fechaIdaDate, numNoches, pax, cfg.modo, cfg.pctMk, { horas, permitirSinHora: true });
+  // El alcance solo aplica a traslados clasificados: en la búsqueda se elige UNO para toda la lista y los tours/asistencias lo ignoran (no se rechazan).
+  const alcanceAplicable = ctx.clasifPorServ?.get(par.servicioId)?.tipo_receptivo === "traslado" ? alcance : undefined;
+  const detallado = calcularPrecioServicioDetallado(par, ctx, fechaIdaDate, numNoches, pax, cfg.modo, cfg.pctMk, { horas, permitirSinHora: true, alcance: alcanceAplicable });
+  if (detallado.ok) return detallado.resultado;
+  // 262: un traslado SIN alcance elegido, o sin precio propio para ese alcance y número de pasajeros, se muestra pero no se vende (total 0); jamás se usa otro precio.
+  const svc = ctx.svcPorId.get(par.servicioId);
+  const base: ResultadoServicio = {
+    servicioId: par.servicioId, nombre: par.nombre, destino: par.destino, descripcion: par.descripcion, paqueteId: par.paqueteId, total: 0, pax, noches: numNoches,
+    moneda: svc?.moneda ?? "COP", categoria: normalizarCategoriaServicio(svc?.categoria), tipoReceptivo: "traslado",
+  };
+  if (detallado.motivo === "alcance_requerido") return { ...base, requiereAlcance: true };
+  if (detallado.motivo === "sin_precio_alcance") return { ...base, alcance: alcanceAplicable, sinTarifaAlcance: detallado.detalle ?? "Este traslado no tiene tarifa propia para ese alcance y número de pasajeros." };
+  return null;
 }
 
 // ── Re-liquidación puntual (liquidarServicioPuntual): FALLO CERRADO ────────
@@ -321,7 +377,8 @@ export type CodigoErrorServicioPuntual =
   | "hora_requerida" | "franja_invalida" | "franjas_consulta_fallida"
   | "paquete_ausente" | "armado_ausente"
   | "paquete_no_coincide" | "servicio_no_coincide" | "armado_no_coincide"
-  | "modo_invalido" | "markup_invalido" | "total_invalido";
+  | "modo_invalido" | "markup_invalido" | "total_invalido"
+  | "alcance_consulta_fallida" | "alcance_requerido" | "sin_precio_alcance" | "alcance_no_aplica" | "precios_alcance_invalidos";
 
 export type ResultadoServicioPuntual =
   | { ok: true; resultado: ResultadoServicio }
@@ -390,6 +447,11 @@ export function resolverLiquidacionServicioPuntual(input: {
   franjas?: FilaFranjaServicio[];
   franjasError?: string | null;
   horas?: HorasTramos;
+  // 262: alcance pedido por el carrito y datos de clasificación/precios por alcance (de la 262). `alcanceError`: la lectura de esos datos falló -> error técnico.
+  alcance?: AlcanceVenta;
+  clasificacion?: ClasificacionServicio | null;
+  preciosAlcance?: FilaPrecioAlcanceBD[];
+  alcanceError?: string | null;
 }): ResultadoServicioPuntual {
   // 1) Cada consulta se revisa por separado — un error técnico de CUALQUIERA
   // de ellas aborta la cotización con "error_consulta": nunca se sigue con
@@ -402,6 +464,7 @@ export function resolverLiquidacionServicioPuntual(input: {
   if (input.gruposError) return fallaErrorConsulta("grupos_consulta_fallida", `servicio_tarifa_pax: ${input.gruposError}`);
   if (input.temporadasError) return fallaErrorConsulta("temporadas_consulta_fallida", `servicio_temporadas: ${input.temporadasError}`);
   if (input.franjasError) return fallaErrorConsulta("franjas_consulta_fallida", `servicio_suplementos_franja: ${input.franjasError}`);
+  if (input.alcanceError) return fallaErrorConsulta("alcance_consulta_fallida", `262: ${input.alcanceError}`);
 
   // 2) El par debe estar realmente publicado/activo — motivo de negocio
   // legítimo, no un fallo técnico. El mensaje ya es comercial (sin detalle
@@ -450,8 +513,9 @@ export function resolverLiquidacionServicioPuntual(input: {
   const ctx = construirContextoServicios({
     paquetes: [input.paquete], armado: [input.armado], servicios: [input.servicio],
     grupos: input.grupos, temporadas: input.temporadas, franjas: input.franjas,
+    ...(input.clasificacion ? { clasificaciones: [{ servicio_id: input.par.servicioId, ...input.clasificacion }], preciosAlcance: input.preciosAlcance ?? [] } : {}),
   });
-  const detallado = calcularPrecioServicioDetallado(input.par, ctx, input.fechaIdaDate, input.numNoches, input.pax, modo, pctMk, { horas: input.horas });
+  const detallado = calcularPrecioServicioDetallado(input.par, ctx, input.fechaIdaDate, input.numNoches, input.pax, modo, pctMk, { horas: input.horas, alcance: input.alcance });
   if (!detallado.ok) {
     switch (detallado.motivo) {
       case "sin_vigencia": return fallaNoDisponible("sin_tarifa_vigente", MENSAJE_SIN_TARIFA.sin_vigencia);
@@ -462,6 +526,10 @@ export function resolverLiquidacionServicioPuntual(input: {
         const quien = tramos.length === 2 ? "de llegada y de salida" : tramos[0] === "salida" ? "de salida" : "de llegada";
         return { ok: false, tipo: "requiere_hora", codigo: "hora_requerida", tramosPendientes: tramos, mensajePublico: `Indica la hora ${quien} del traslado para calcular su precio.`, detalleInterno: `traslado con franjas sin hora: ${tramos.join(",")}` };
       }
+      case "alcance_requerido": return fallaNoDisponible("alcance_requerido", "Elige si el traslado es de llegada, de salida o de ida y regreso.");
+      case "sin_precio_alcance": return fallaNoDisponible("sin_precio_alcance", "Este traslado no tiene tarifa propia para ese alcance y número de pasajeros: no se puede vender.");
+      case "alcance_no_aplica": return fallaConfiguracionInvalida("alcance_no_aplica", `se pidió alcance ${input.alcance} para el servicio ${input.par.servicioId}, que no está clasificado como traslado`);
+      case "precios_invalidos": return fallaConfiguracionInvalida("precios_alcance_invalidos", `servicio_precio_alcance: ${detallado.detalle ?? "precios inválidos"}`);
       case "franja_invalida": return fallaConfiguracionInvalida("franja_invalida", `servicio_suplementos_franja: ${detallado.detalle ?? "franja inválida"}`);
       default: return fallaConfiguracionInvalida("total_invalido", `precio no calculable (${detallado.motivo})`);
     }

@@ -147,6 +147,8 @@ export type TourCartItem = {
   horas?: { llegada?: string | null; salida?: string | null };
   /** Traslado con recargo por horario cuyo precio es el BASE (falta la hora): `precio` NO es un total final. El servidor lo recotiza con la hora del vuelo. */
   referencial?: boolean;
+  /** 262: alcance VENDIDO de un traslado (llegada | salida | ida_regreso). El precio es el PROPIO de ese alcance; el servidor lo recotiza y lo congela. */
+  alcance?: "llegada" | "salida" | "ida_regreso";
 };
 
 /** Servicio listo para entrar al carrito junto con su hotel (`addConjunto`

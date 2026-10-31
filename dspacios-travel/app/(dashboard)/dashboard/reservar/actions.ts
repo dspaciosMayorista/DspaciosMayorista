@@ -115,6 +115,9 @@ import { compararTrmCostoConCongelada, decidirTrmCosto, equivalenteCopCosto, lee
 import { opcionalDeTourCarrito } from "@/lib/paquetes/pvpInfanteFijo";
 import { costoAereoBloqueo, costoHotelPersona, costoTourParaCxP, costoVueloBernalo, liquidarCostoTour } from "@/lib/reservar/costosObligacionesCarrito";
 import { combinarHoras, horarioCambio, horasDelRecorrido } from "@/lib/reservar/horasRecorrido";
+import { verificarToursConAlcance, etiquetaAlcanceTraslado } from "@/lib/reservar/verificarAlcanceConversion";
+import { MENSAJE_TRASLADO_POR_ALCANCE_SOLO_CARRITO, trasladosPorAlcance } from "@/lib/servicios/alcanceContexto";
+import type { AlcanceVenta } from "@/lib/calc/servicioAlcance";
 import { leerTemporadasServicio, vigenciasConFranjas } from "@/lib/reservar/temporadasServicio";
 import type { HorasTramos, TramoTraslado } from "@/lib/calc/trasladoFranjas";
 import { cobroDeContratoCarrito, compararConCongelado, leerCobroCongelado, monedaOfertaDeCotizacion, resolverMonedaOferta, validarEleccionCarrito } from "@/lib/finanzas/cobroCarrito";
@@ -1054,6 +1057,10 @@ async function calcularFinancieroReserva(p: {
       // sin costo ni CxP — el mismo defecto que B7 cierra.
       const errLectura = armErr ?? gruposErr ?? tempsErr;
       if (errLectura) throw new Error(errLectura.message);
+      // 262: un traslado por alcance no se costea con la tarifa clásica (ni sin alcance): se rechaza aquí también aunque el cómputo de precio ya lo haya hecho.
+      const traslCosto = await trasladosPorAlcance(admin, input.servicios);
+      if (!traslCosto.ok) throw new Error("no se pudo validar el tipo de los servicios seleccionados");
+      if (traslCosto.ids.length) throw new Error(MENSAJE_TRASLADO_POR_ALCANCE_SOLO_CARRITO);
       // Rangos por grupo (NETO) por servicio y temporada (incl. GENERAL).
       const gruposPorServ = new Map<string, { pax_desde: number; pax_hasta: number; precio: number }[]>();
       for (const g of gruposNet ?? []) {
@@ -1693,6 +1700,8 @@ export type TourCarritoPayload = {
   // Traslados con franjas horarias: horas con las que se cotizó (una por tramo con franja) y suplementos cobrados. Ausentes si el precio no depende del horario.
   horas?: HorasTramos;
   suplementos?: { tramo: TramoTraslado; hora: string }[];
+  // 262: alcance VENDIDO del traslado (llegada | salida | ida_regreso) congelado con el precio. Se acredita contra el catálogo vivo antes de numerar.
+  alcance?: AlcanceVenta;
 };
 
 // Un ítem del carrito con su asignación EXPLÍCITA de pasajeros — revisión de
@@ -2409,7 +2418,7 @@ export async function convertirCotizacionCarrito(
   // ── Paso 2: crear un contrato por grupo, con TODOS sus hoteles/tours ──────
   // `numeros` ya viene sembrado (arriba) con los contratos de grupos que
   // esta misma llamada saltó por estar ya convertidos.
-  const OBS_AUTO = "Generado automáticamente desde el carrito (tarifario)";
+  const OBS_AUTO = "Generado automáticamente desde el tarifario (carrito)";
 
   // Usuario real de la sesión — resuelto UNA vez para todos los grupos.
   // Antes solo alimentaba el congelado de condiciones (best-effort); ahora
@@ -2589,6 +2598,17 @@ export async function convertirCotizacionCarrito(
       horasVigentesTour.set(t.__idx, vigentes);
     }
   }
+  // 262: traslados por ALCANCE — alcance, precio y composición acreditados contra el catálogo vivo (con las horas vigentes) ANTES de numerar. Los servicios que no usan
+  // esa modalidad no cambian. Un payload alterado o una cotización anterior que no se puede acreditar detiene la conversión.
+  const alcancePorTour = new Map<number, AlcanceVenta>();
+  for (const { grupo } of gruposValidados) {
+    const vAlc = await verificarToursConAlcance(admin, grupo.tours.map((t) => ({
+      idx: t.__idx, nombre: t.nombre, servicioId: t.servicioId, paqueteId: t.paqueteId, pax: t.pax, fechaIda: t.fechaIda, fechaRegreso: t.fechaRegreso,
+      precio: t.precio, moneda: t.moneda, alcance: t.alcance, horasVigentes: horasVigentesTour.get(t.__idx),
+    })));
+    if (!vAlc.ok) return { ok: false, error: vAlc.error };
+    for (const [i, a] of vAlc.alcancePorIdx) alcancePorTour.set(i, a);
+  }
   const idsServiciosObl = new Set<number>();
   const idsBloqueosObl = new Set<number>();
   for (const { grupo, validadosPersona } of gruposValidados) {
@@ -2633,7 +2653,7 @@ export async function convertirCotizacionCarrito(
     for (const t of grupo.tours) {
       if (t.servicioId == null || t.paqueteId == null) continue;
       try {
-        const liq = await liquidarCostoTour(admin, { servicioId: t.servicioId, paqueteId: t.paqueteId, pax: t.pax, fechaIda: t.fechaIda, fechaRegreso: t.fechaRegreso, horas: horasVigentesTour.get(t.__idx) });
+        const liq = await liquidarCostoTour(admin, { servicioId: t.servicioId, paqueteId: t.paqueteId, pax: t.pax, fechaIda: t.fechaIda, fechaRegreso: t.fechaRegreso, horas: horasVigentesTour.get(t.__idx), alcance: alcancePorTour.get(t.__idx) });
         obligaciones.push({ origen: t.nombre, moneda: monedaServicio.get(t.servicioId), valor: costoTourParaCxP(liq) });
       } catch (e) {
         return { ok: false, error: `No se pudo calcular el costo del tour "${t.nombre}": ${e instanceof Error ? e.message : "error desconocido"}. No se crea ningún contrato.` };
@@ -3020,7 +3040,7 @@ export async function convertirCotizacionCarrito(
     // se asigna la del contrato en bloque. Una obligación en USD (o indeterminable en un contrato USD) no se registra: ya la detuvo la verificación previa
     // antes de numerar; esta es la segunda barrera (defensa en profundidad) y revierte el contrato del grupo.
     const estadoObligaciones: { error: string | null } = { error: null };
-    const pushCxP = (tipo: string, servicio: string, valor: number, pr: ProvFact, nombreFallback: string | null | undefined, servicioId: number | null | undefined, monedaCosto: unknown) => {
+    const pushCxP = (tipo: string, servicio: string, valor: number, pr: ProvFact, nombreFallback: string | null | undefined, servicioId: number | null | undefined, monedaCosto: unknown, claveEnlace?: string) => {
       const decision = decidirCxP({ origen: servicio, moneda: monedaCosto, valor, monedaContrato: monedaGrupo });
       if (decision.accion === "omitir") return;
       if (decision.accion === "rechazar") { estadoObligaciones.error ??= decision.error; return; }
@@ -3032,7 +3052,9 @@ export async function convertirCotizacionCarrito(
       cxp.push({
         proveedor: pr?.nombre ?? nombreFallback ?? null, tipo_proveedor: tipo, servicio,
         valor_total: valorTotal, fecha_obligacion: hoyServidor,
-        aplica_retencion: pr?.aplica_retencion ?? false, pct_retencion: Number(pr?.pct_retencion) || 0, observaciones: OBS_AUTO,
+        aplica_retencion: pr?.aplica_retencion ?? false, pct_retencion: Number(pr?.pct_retencion) || 0,
+        // 265: la CxP de un traslado por alcance lleva la clave estable de su línea (sufijo verificable por el trigger de la base). Queda dentro del payload que reintenta el cron.
+        observaciones: claveEnlace ? `${OBS_AUTO} · enlace:${claveEnlace}` : OBS_AUTO,
         // Migración 170 — vínculo durable con el servicio del catálogo.
         servicio_id: servicioId ?? null,
         moneda: decision.moneda,
@@ -3304,7 +3326,7 @@ export async function convertirCotizacionCarrito(
     // antes, ver comentario de `TourCarritoPayload`).
     if (grupo.tours.length) {
       const itemsTours = grupo.tours.map((t, i) => ({
-        numero_contrato: numero, descripcion: `Servicio · ${t.nombre}${t.destino ? ` — ${t.destino}` : ""}`,
+        numero_contrato: numero, descripcion: `Servicio · ${t.nombre}${alcancePorTour.has(t.__idx) ? ` (${etiquetaAlcanceTraslado(alcancePorTour.get(t.__idx))})` : ""}${t.destino ? ` — ${t.destino}` : ""}`,
         adultos: 1, ninos: 0, tarifa_adulto: t.precio, tarifa_nino: 0, orden: 9000 + i,
       }));
       await sb.from("contrato_items").insert(itemsTours);
@@ -3337,12 +3359,26 @@ export async function convertirCotizacionCarrito(
         if (t.servicioId == null || t.paqueteId == null) continue; // legado, sin ids para re-liquidar
         try {
           // Misma liquidación que la revisión previa (lib/reservar/costosObligacionesCarrito.ts::liquidarCostoTour). `null` = el tour ya no está en el paquete.
-          const liq = await liquidarCostoTour(admin, { servicioId: t.servicioId, paqueteId: t.paqueteId, pax: t.pax, fechaIda: t.fechaIda, fechaRegreso: t.fechaRegreso, horas: horasVigentesTour.get(t.__idx) });
+          const liq = await liquidarCostoTour(admin, { servicioId: t.servicioId, paqueteId: t.paqueteId, pax: t.pax, fechaIda: t.fechaIda, fechaRegreso: t.fechaRegreso, horas: horasVigentesTour.get(t.__idx), alcance: alcancePorTour.get(t.__idx) });
           if (!liq) continue;
           const srv = liq.srv;
           const costoNeto = costoTourParaCxP(liq);
+          // 262: traslado por ALCANCE — línea estructurada del contrato (servicio del catálogo + alcance vendido). Su `descripcion` es EXACTAMENTE el `servicio` de la CxP: así el
+          // trigger de la 264 enlaza la CxP con esta línea y copia el alcance, tanto en la primera escritura como en una reentrada. El alcance escrito debe ser el congelado en la cotización.
+          const alcanceTour = alcancePorTour.get(t.__idx);
+          const servicioCxP = `${srv?.nombre ?? t.nombre}${alcanceTour ? ` · ${etiquetaAlcanceTraslado(alcanceTour)}` : ""}`;
+          // 265: identidad estable de la línea (no la descripción): dos traslados idénticos tienen claves distintas.
+          const claveEnlace = alcanceTour ? globalThis.crypto.randomUUID() : undefined;
+          if (alcanceTour) {
+            if (alcanceTour !== t.alcance) return fallarYRevertirGrupo(`El alcance del traslado «${t.nombre}» no coincide con el que se cotizó. No se creó el contrato.`);
+            const { error: eLinea } = await sb.from("contrato_servicios").insert({
+              numero_contrato: numero, tipo: "traslado", descripcion: servicioCxP, proveedor: srv?.proveedores?.nombre ?? null, costo: costoNeto,
+              orden: 9000 + grupo.tours.indexOf(t), servicio_id: t.servicioId, alcance_traslado: alcanceTour, clave_enlace: claveEnlace,
+            });
+            if (eLinea) return fallarYRevertirGrupo(`No se pudo registrar el alcance del traslado «${t.nombre}» en el contrato: ${eLinea.message}`);
+          }
           if (costoNeto > 0) {
-            pushCxP(tipoProveedorCxpServicio(normalizarCategoriaServicio(srv?.categoria)), srv?.nombre ?? t.nombre, costoNeto, srv?.proveedores ?? null, null, t.servicioId, monedaServicio.get(t.servicioId));
+            pushCxP(tipoProveedorCxpServicio(normalizarCategoriaServicio(srv?.categoria)), servicioCxP, costoNeto, srv?.proveedores ?? null, null, t.servicioId, monedaServicio.get(t.servicioId), claveEnlace);
           }
         } catch (e) {
           // FALLA CERRADO (B7): el tour ya se le cobró al cliente como ítem

@@ -14,6 +14,7 @@ import { AvisoMonedas, TotalesPorMoneda } from "../totalesCarrito";
 import { UserCheck } from "lucide-react";
 import { PresentacionComparativaEditor, errorEdicion, presentacionDesdeEdicion, type EdicionPresentacion, type OpcionEditable } from "@/components/cotizacion/PresentacionComparativaEditor";
 import type { PresentacionComparativa } from "@/lib/cotizacion/comparativa";
+import { ROTULO_ALCANCE_VENTA } from "@/lib/calc/servicioAlcance";
 import { crearSolicitudReserva, fotosPortada, getContextoAsistenciaB2B, previsualizarPresentacionComparativa, type PresentacionPrevia, previsualizarTerminosB2BAsistido, previsualizarComparativaB2B, type PrevisualizacionB2B, type PrevisualizacionComparativaB2B, getContextoB2B, type SolicitudResult, type ContextoAsistenciaCheckout, type ContextoB2B, type ResultadoComparativaCreada } from "./actions";
 import { TerminosB2BAsistido } from "@/components/cotizacion/TerminosB2BAsistido";
 import { ServicioManualPanel } from "./ServicioManualPanel";
@@ -216,6 +217,7 @@ export default function CheckoutPage() {
           // servidor lo valida y cotiza el conjunto completo o nada.
           hotelItemId: it.hotelItemId ?? null,
           ...(it.horas && (it.horas.llegada || it.horas.salida) ? { horas: it.horas } : {}),
+          ...(it.alcance ? { alcance: it.alcance } : {}),
         })),
         // #64: precio de venta declarado por el asesor; el servidor lo vuelve a validar y exige sesión interna.
         ...(manualItems.length ? { manuales: manualItems.map(vueloParaEnviar).map((m) => ({ clase: m.clase, nombre: m.nombre, origen: m.origen, destino: m.destino, fechaIda: m.fechaIda, fechaRegreso: m.fechaRegreso, pax: m.pax, precio: m.precio, moneda: m.moneda, impuestoNoComisionable: m.impuestoNoComisionable, tramo: m.tramo, hotelRef: m.hotelRef, horaIda: m.horaIda ?? null, horaRegreso: m.horaRegreso ?? null })) } : {}),
@@ -522,6 +524,7 @@ export default function CheckoutPage() {
                     <div className="shrink-0 text-right">
                       <div className="text-sm font-semibold" style={{ color: "var(--brand-primary)" }}>{formatImporte(it.precio, monedaDeItem(it))}</div>
                       {it.tipo === "tour" && it.referencial && <div className="text-[11px] font-medium text-amber-700">Falta la hora del traslado</div>}
+                      {it.tipo === "tour" && it.alcance && <div className="text-[11px] font-medium text-slate-500">{ROTULO_ALCANCE_VENTA[it.alcance]}</div>}
                       <button type="button" onClick={() => remove(it.id)} className="text-xs text-gray-400 hover:text-red-500">Quitar</button>
                     </div>
                   </li>

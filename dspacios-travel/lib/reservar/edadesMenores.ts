@@ -49,6 +49,7 @@ import { categoriaAliado } from "../b2b.ts";
 // archivo, seguro para `node --test`.
 import { hoyISO, noches } from "../calc/paquetes.ts";
 import { validarHorasTramos, type HorasTramos } from "../calc/trasladoFranjas.ts";
+import { parseAlcanceVenta, type AlcanceVenta } from "../calc/servicioAlcance.ts";
 
 // Un "menor" nunca puede declararse con 18 años o más — la propia
 // definición de adulto del sistema (ocupación de habitación, nunca tarifa
@@ -485,7 +486,7 @@ export function validarSolicitudItem(v: unknown, indice: number): { ok: true; it
 // se cuelen más adelante (defecto real corregido: antes se usaban tal cual).
 // `horas`: hora local de llegada / salida capturada por quien cotiza (porción terrestre o vuelo sin horas). Si el tour va vinculado a un hotel con vuelo,
 // el servidor reemplaza los tramos que el vuelo sí conoce (ver lib/reservar/horasRecorrido.ts); nunca se confía en el navegador para esos.
-export type SolicitudTourValidado = { servicioId: number; paqueteId: number; fechaIda: string; fechaRegreso: string; pax: number; horas?: HorasTramos };
+export type SolicitudTourValidado = { servicioId: number; paqueteId: number; fechaIda: string; fechaRegreso: string; pax: number; horas?: HorasTramos; alcance?: AlcanceVenta };
 
 function esObjetoNoNulo(v: unknown): v is Record<string, unknown> {
   return typeof v === "object" && v !== null && !Array.isArray(v);
@@ -516,7 +517,10 @@ export function validarTourInput(v: unknown, indice: number): { ok: true; tour: 
   }
   const vHoras = validarHorasTramos(v.horas);
   if (!vHoras.ok) return { ok: false, error: `${ctx}: ${vHoras.error}` };
-  return { ok: true, tour: { servicioId: v.servicioId, paqueteId: v.paqueteId, fechaIda: vIda.fecha, fechaRegreso: vReg.fecha, pax: v.pax, ...(Object.keys(vHoras.horas).length ? { horas: vHoras.horas } : {}) } };
+  // 262: alcance del traslado elegido (llegada | salida | ida_regreso). Un valor ajeno se rechaza; si el servicio lo admite o no lo decide el servidor al liquidar.
+  const vAlcance = parseAlcanceVenta(v.alcance);
+  if (!vAlcance.ok) return { ok: false, error: `${ctx} tiene un alcance de traslado inválido.` };
+  return { ok: true, tour: { servicioId: v.servicioId, paqueteId: v.paqueteId, fechaIda: vIda.fecha, fechaRegreso: vReg.fecha, pax: v.pax, ...(Object.keys(vHoras.horas).length ? { horas: vHoras.horas } : {}), ...(vAlcance.alcance ? { alcance: vAlcance.alcance } : {}) } };
 }
 
 // ── Contexto B2B del mensaje/cotización — SOLO decide, nunca consulta ──────

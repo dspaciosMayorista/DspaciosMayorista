@@ -23,7 +23,7 @@ import {
 import type { HabitacionOcupacionEntrada, HabitacionOcupacionValidada } from "@/lib/reservar/ocupacionPorHabitacion";
 import { liquidarServicioPuntual } from "@/lib/reservar/cotizar";
 import { combinarHoras, horasDelRecorrido } from "@/lib/reservar/horasRecorrido";
-import type { HorasTramos } from "@/lib/calc/trasladoFranjas";
+import { validarHorasTramos, type HorasTramos } from "@/lib/calc/trasladoFranjas";
 import { opcionalDeTourCarrito } from "@/lib/paquetes/pvpInfanteFijo";
 import {
   errorHotelConServicios, errorServicioVinculado, validarServicioContraHotel, type HotelResueltoCheckout,
@@ -212,6 +212,8 @@ type SolicitudTourComputado = {
   // pide recotizar antes de numerar). Ausentes cuando el servicio no tiene franjas.
   horas?: HorasTramos;
   suplementos?: { tramo: "llegada" | "salida"; hora: string }[];
+  // 262: alcance VENDIDO de un traslado (llegada | salida | ida_regreso), congelado con el precio. Ausente en servicios que no usan la modalidad por alcance.
+  alcance?: "llegada" | "salida" | "ida_regreso";
 };
 
 // `tipoDoc` (#42, D-6): tipo de documento que elige quien llena el checkout; se lee de la entrada
@@ -1059,6 +1061,7 @@ async function crearCotizacionCarrito(input: {
       pax: resultado.resultado.pax, precio: resultado.resultado.total, moneda: resultado.resultado.moneda,
       categoria: resultado.resultado.categoria,
       ...(resultado.resultado.horasCotizadas ? { horas: resultado.resultado.horasCotizadas, suplementos: resultado.resultado.suplementos ?? [] } : {}),
+      ...(resultado.resultado.alcance ? { alcance: resultado.resultado.alcance } : {}),
     });
   }
 
@@ -1864,10 +1867,17 @@ async function reliquidarOpcionCarrito(
   if (!item || item.modeloTarifario === "unidad") return { ok: false, error: "No se pudo validar la opción." };
   const { ref: _r, ninos: _n, ninos2: _n2, infantes: _i, pax: _p, precio: _pr, ...entrada } = item;
   void _r; void _n; void _n2; void _i; void _p; void _pr;
-  const tours: SolicitudTourValidado[] = (plantilla.payload?.tours ?? []).map((t) => ({
+  const tours: SolicitudTourValidado[] = (plantilla.payload?.tours ?? []).map((t) => {
+    const vh = validarHorasTramos(t.horas);
+    return {
     servicioId: Number(t.servicioId), paqueteId: Number(t.paqueteId),
     fechaIda: String(t.fechaIda), fechaRegreso: String(t.fechaRegreso), pax: Number(t.pax),
-  }));
+    // 262: el alcance congelado en la plantilla (se revalida al liquidar; un valor ajeno falla, no se ignora).
+    ...(t.alcance != null ? { alcance: t.alcance as "llegada" | "salida" | "ida_regreso" } : {}),
+    // Las horas con las que se cotizó (una porción terrestre no tiene vuelo que las acredite): sin ellas un traslado con franjas no se puede reliquidar y la opción no se podría elegir.
+    // Con vuelo, el servidor las vuelve a leer del recorrido y mandan sobre estas.
+    ...(vh.ok ? { horas: vh.horas } : {}),
+  }; });
   // Los vuelos manuales comunes salen de la plantilla GUARDADA (congelados al crear la comparativa); jamás de lo que mande quien elige.
   const manuales = leerManualesEntrada({ manuales: (plantilla.payload as { manuales?: unknown } | undefined)?.manuales });
   if (!manuales.ok) return { ok: false, error: "No se pudo validar la opción." };

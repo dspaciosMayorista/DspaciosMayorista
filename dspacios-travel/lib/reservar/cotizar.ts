@@ -38,6 +38,8 @@ import {
   type DatosServicioPar, type ResultadoServicio, type RespuestaPublicaServicioPuntual, type FilaTemporadaConFranjas,
 } from "@/lib/reservar/liquidacionServicio";
 import { validarHorasTramos, type HorasTramos } from "@/lib/calc/trasladoFranjas";
+import { parseAlcanceVenta, type AlcanceVenta } from "@/lib/calc/servicioAlcance";
+import { leerAlcanceDeServicios } from "@/lib/servicios/alcanceContexto";
 import { combinarHoras, horasAcreditadasDelRecorrido } from "@/lib/reservar/horasRecorrido";
 import { cargarVigenciasServicios, leerTemporadasServicio } from "@/lib/reservar/temporadasServicio";
 import {
@@ -901,6 +903,9 @@ export async function buscarReceptivos(inputRaw: unknown): Promise<{ ok: true; r
   if (!vPaquete.ok) return { ok: false, error: vPaquete.error };
   const vHoras = validarHorasTramos(o.horas);
   if (!vHoras.ok) return { ok: false, error: vHoras.error };
+  // 262: alcance del traslado (llegada | salida | ida_regreso) elegido en la búsqueda; cualquier otro valor se rechaza.
+  const vAlcance = parseAlcanceVenta(o.alcance);
+  if (!vAlcance.ok) return { ok: false, error: "El alcance del traslado no es válido." };
   // Hora ACREDITADA por el vuelo del hotel (bloqueo/dinámico): el servidor la lee de la base y pisa la del navegador. Sin recorrido, solo vale la hora capturada.
   let horasEfectivas = vHoras.horas;
   const rec = o.recorrido;
@@ -1008,8 +1013,16 @@ export async function buscarReceptivos(inputRaw: unknown): Promise<{ ok: true; r
   }
 
   const { temporadas: filasTemp, franjas } = separarFranjas((temporadas ?? []) as unknown as FilaTemporadaConFranjas[]);
+  // 262: clasificación y precios propios por alcance. Falla técnica -> se aborta la búsqueda; sin la 262 aplicada se comporta como siempre (y un alcance pedido se rechaza).
+  const lecAlc = await leerAlcanceDeServicios(admin, servicioIds, filasTemp.map((t) => t.id).filter((x): x is number => x != null));
+  if (!lecAlc.ok) {
+    console.error(`[buscarReceptivos] etapa=alcance detalle=${lecAlc.error}`);
+    return { ok: false, error: MENSAJE_BUSQUEDA_RECEPTIVOS_NO_DISPONIBLE };
+  }
+  if (!lecAlc.disponible && vAlcance.alcance) return { ok: false, error: "El alcance del traslado todavía no está habilitado." };
   const ctx = construirContextoServicios({
     paquetes: paquetes ?? [], armado: armado ?? [], servicios: servicios ?? [], grupos: grupos ?? [], temporadas: filasTemp, franjas,
+    ...(lecAlc.disponible ? { clasificaciones: lecAlc.clasificaciones, preciosAlcance: lecAlc.preciosAlcance } : {}),
   });
 
   // Un servicio INCLUIDO (`armado_servicios.incluido = true`) ya se hornea en
@@ -1026,7 +1039,7 @@ export async function buscarReceptivos(inputRaw: unknown): Promise<{ ok: true; r
   const resultados: ResultadoServicio[] = [];
   for (const par of pares.values()) {
     if (paresIncluidos.has(`${par.paqueteId}-${par.servicioId}`)) continue;
-    const r = calcularResultadoServicio(par, ctx, fechaIdaDate, numNoches, pax, input.horas);
+    const r = calcularResultadoServicio(par, ctx, fechaIdaDate, numNoches, pax, input.horas, vAlcance.alcance);
     if (r) resultados.push(r);
   }
   resultados.sort((a, b) => a.total - b.total);
@@ -1063,6 +1076,8 @@ export async function liquidarServicioPuntual(input: {
   paqueteId: number; servicioId: number; fechaIda: string; fechaRegreso: string; pax: number;
   /** Hora local de llegada del vuelo de ida / de salida del de regreso, o la hora prevista capturada (traslados con franjas). */
   horas?: HorasTramos;
+  /** 262: alcance del traslado (llegada | salida | ida_regreso). Obligatorio para un servicio clasificado como traslado; rechazado para cualquier otro. */
+  alcance?: AlcanceVenta;
 }): Promise<RespuestaPublicaServicioPuntual> {
   if (!process.env.SUPABASE_SERVICE_ROLE_KEY) {
     const r = fallaErrorConsulta("service_role_faltante", "SUPABASE_SERVICE_ROLE_KEY no configurada");
@@ -1111,6 +1126,8 @@ export async function liquidarServicioPuntual(input: {
     leerTemporadasServicio(admin, [input.servicioId]),
   ]);
   const sep = separarFranjas((temporadas ?? []) as unknown as FilaTemporadaConFranjas[]);
+  // 262: clasificación del servicio y sus precios propios por alcance (tolerante a que la 262 no esté aplicada).
+  const lecAlc = await leerAlcanceDeServicios(admin, [input.servicioId], sep.temporadas.map((t) => t.id).filter((x): x is number => x != null));
 
   const fechaIdaDate = new Date(`${input.fechaIda}T00:00:00`);
   const resultado = resolverLiquidacionServicioPuntual({
@@ -1123,6 +1140,9 @@ export async function liquidarServicioPuntual(input: {
     grupos: grupos ?? [], gruposError: gruposErr?.message ?? null,
     temporadas: sep.temporadas, temporadasError: temporadasErr?.message ?? null,
     franjas: sep.franjas, horas: input.horas,
+    alcance: input.alcance,
+    ...(lecAlc.ok && lecAlc.disponible ? { clasificacion: lecAlc.clasificaciones.find((x) => x.servicio_id === input.servicioId) ?? null, preciosAlcance: lecAlc.preciosAlcance } : {}),
+    alcanceError: lecAlc.ok ? null : lecAlc.error,
   });
   // El detalle técnico real (mensaje de Supabase, tabla/columna/valor de
   // configuración involucrado) se registra SOLO acá, server-side — nunca

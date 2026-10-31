@@ -14,6 +14,11 @@
 //    evaluación FALLA CERRADO (no elige una ni suma las dos).
 //  - Sin hora conocida para un tramo con franja configurada no se cotiza el suplemento: la evaluación devuelve `pendientes` y el llamador decide
 //    (pedir la hora). Un tramo sin franjas configuradas no necesita hora.
+//  - (262) Una franja puede limitarse a un RANGO DE PASAJEROS (pax_desde–pax_hasta; ausente = todos). El mismo horario puede tener varios importes
+//    según el grupo (45.000 para 1–4, 80.000 para 5–12…). Solo choca con otra franja si comparten tramo, hora Y algún número de pasajeros. Si la hora cae
+//    en una franja pero NINGUNA cubre el número de pasajeros, falta una regla: la evaluación FALLA (`sin_regla_pax`) — nunca se inventa un importe ni se
+//    cobra cero.
+//  - (262) El suplemento se aplica SOLO a los tramos vendidos (`tramos`): un traslado de llegada no paga el suplemento de salida ni necesita su hora.
 //  - monto = importe fijo (neto); porcentaje = % del neto base del servicio (precio de tarifa × factor de liquidación, sin recargo individual).
 //    cobro `grupo` = una vez por tramo; `persona` = por pasajero (monto × pax). Con porcentaje ambos coinciden en el total (el % ya es del neto de todo
 //    el grupo); se conserva la opción porque el dato describe cómo lo cobra el proveedor.
@@ -34,7 +39,16 @@ export type FranjaSuplemento = {
   tipo: TipoSuplemento;
   valor: number;
   cobro: CobroSuplemento;
+  /** Rango de pasajeros al que aplica (inclusive). Ausente/null en ambos = todos. */
+  pax_desde?: number | null;
+  pax_hasta?: number | null;
 };
+
+const paxIni = (f: Pick<FranjaSuplemento, "pax_desde">) => f.pax_desde ?? 1;
+const paxFin = (f: Pick<FranjaSuplemento, "pax_hasta">) => f.pax_hasta ?? Number.MAX_SAFE_INTEGER;
+/** ¿La franja aplica a este número de pasajeros? */
+export const franjaAplicaAPax = (f: Pick<FranjaSuplemento, "pax_desde" | "pax_hasta">, pax: number): boolean => pax >= paxIni(f) && pax <= paxFin(f);
+const paxSeCruzan = (a: FranjaSuplemento, b: FranjaSuplemento): boolean => paxIni(a) <= paxFin(b) && paxIni(b) <= paxFin(a);
 
 export const MIN_DIA = 1440;
 
@@ -98,7 +112,8 @@ export function describirFranja(f: FranjaSuplemento, moneda = "COP"): string {
     ? `${f.valor}% del neto base`
     : `${moneda === "USD" ? "USD " : "$"}${Number(f.valor).toLocaleString("es-CO")} neto`;
   const por = f.tipo === "porcentaje" ? "" : f.cobro === "persona" ? " por persona" : " por grupo";
-  return `Traslado de ${ROTULO_TRAMO[f.tramo]} ${horario}: se suma ${cargo}${por} a cada tramo que cumpla.`;
+  const pax = f.pax_desde == null && f.pax_hasta == null ? "" : ` (grupos de ${f.pax_desde}–${f.pax_hasta} pasajeros)`;
+  return `Traslado de ${ROTULO_TRAMO[f.tramo]} ${horario}${pax}: se suma ${cargo}${por} a cada tramo que cumpla.`;
 }
 
 /** Errores de configuración (vacío = válida). Revisa cada franja y los solapes entre las del mismo servicio/vigencia. */
@@ -115,6 +130,11 @@ export function validarFranjas(franjas: FranjaSuplemento[]): string[] {
     if (f.tipo !== "monto" && f.tipo !== "porcentaje") errores.push(`${n}: el tipo debe ser monto o porcentaje.`);
     if (f.cobro !== "grupo" && f.cobro !== "persona") errores.push(`${n}: el cobro debe ser por grupo o por persona.`);
     if (typeof f.valor !== "number" || !Number.isFinite(f.valor) || f.valor <= 0) errores.push(`${n}: el valor debe ser un número mayor que cero.`);
+    const sinDesde = f.pax_desde == null, sinHasta = f.pax_hasta == null;
+    if (sinDesde !== sinHasta) errores.push(`${n}: el rango de pasajeros necesita «desde» y «hasta» (o ninguno para todos los grupos).`);
+    else if (!sinDesde && (!Number.isInteger(f.pax_desde) || !Number.isInteger(f.pax_hasta) || (f.pax_desde as number) < 1 || (f.pax_hasta as number) < (f.pax_desde as number))) {
+      errores.push(`${n}: el rango de pasajeros ${f.pax_desde}–${f.pax_hasta} no es válido (enteros desde 1, «hasta» no menor que «desde»).`);
+    }
   });
   for (let i = 0; i < franjas.length; i++) {
     for (let j = i + 1; j < franjas.length; j++) {
@@ -122,7 +142,7 @@ export function validarFranjas(franjas: FranjaSuplemento[]): string[] {
       const sa = segmentosFranja(a), sb = segmentosFranja(b);
       if (!sa || !sb) continue;
       const comparten = tramosDe(a).some((t) => tramosDe(b).includes(t));
-      if (comparten && seIntersectan(sa, sb)) errores.push(`Franjas ${i + 1} y ${j + 1}: se solapan en el mismo tramo (ambiguo). Ajusta los horarios para que no se crucen.`);
+      if (comparten && seIntersectan(sa, sb) && paxSeCruzan(a, b)) errores.push(`Franjas ${i + 1} y ${j + 1}: se solapan en el mismo tramo (ambiguo). Ajusta los horarios o los rangos de pasajeros para que no se crucen.`);
     }
   }
   return errores;
@@ -141,24 +161,29 @@ export type SuplementoAplicado = {
 
 export type EvaluacionSuplementos =
   | { ok: true; suplementos: SuplementoAplicado[]; netoTotal: number; pendientes: TramoTraslado[] }
-  | { ok: false; motivo: "solape" | "franja_invalida"; detalle: string };
+  | { ok: false; motivo: "solape" | "franja_invalida" | "sin_regla_pax"; detalle: string };
 
 /**
  * Suplementos NETOS que corresponden a las horas dadas. `horas.X` ausente/ilegible con una franja configurada para el tramo X → ese tramo queda en
  * `pendientes` y NO suma nada (el llamador debe pedir la hora antes de dar un precio final). `netoBase` es el neto de la tarifa del servicio para todo
  * el grupo (ver cabecera). Una franja inválida o dos que cubren la misma hora del mismo tramo hacen fallar la evaluación.
  */
-export function evaluarSuplementos(franjas: FranjaSuplemento[], horas: HorasTramos, netoBase: number, pax: number): EvaluacionSuplementos {
+export function evaluarSuplementos(franjas: FranjaSuplemento[], horas: HorasTramos, netoBase: number, pax: number, tramos: readonly TramoTraslado[] = ["llegada", "salida"]): EvaluacionSuplementos {
   const err = validarFranjas(franjas);
   if (err.length) return { ok: false, motivo: err.some((e) => e.includes("solapan")) ? "solape" : "franja_invalida", detalle: err[0] };
   const suplementos: SuplementoAplicado[] = [];
   const pendientes: TramoTraslado[] = [];
   for (const tramo of ["llegada", "salida"] as TramoTraslado[]) {
+    if (!tramos.includes(tramo)) continue; // el suplemento solo corresponde a los tramos vendidos
     const delTramo = franjas.filter((f) => tramosDe(f).includes(tramo));
     if (!delTramo.length) continue;
     const min = parseHora(horas[tramo]);
     if (min == null) { pendientes.push(tramo); continue; }
-    const aplican = delTramo.filter((f) => horaEnFranja(min, f));
+    const enHora = delTramo.filter((f) => horaEnFranja(min, f));
+    const aplican = enHora.filter((f) => franjaAplicaAPax(f, pax));
+    if (enHora.length && !aplican.length) {
+      return { ok: false, motivo: "sin_regla_pax", detalle: `El horario de ${tramo} (${formatearHora(min)}) tiene suplemento, pero ninguna regla cubre ${pax} pasajero${pax === 1 ? "" : "s"}: falta cargar ese rango.` };
+    }
     if (aplican.length > 1) return { ok: false, motivo: "solape", detalle: `Dos franjas cubren la misma hora del tramo de ${tramo}.` };
     const f = aplican[0];
     if (!f) continue;
@@ -174,8 +199,8 @@ export function evaluarSuplementos(franjas: FranjaSuplemento[], horas: HorasTram
 }
 
 /** Tramos que tienen alguna franja configurada (los únicos que requieren una hora para cotizar). */
-export function tramosConFranja(franjas: FranjaSuplemento[]): TramoTraslado[] {
-  return (["llegada", "salida"] as TramoTraslado[]).filter((t) => franjas.some((f) => tramosDe(f).includes(t)));
+export function tramosConFranja(franjas: FranjaSuplemento[], tramos: readonly TramoTraslado[] = ["llegada", "salida"]): TramoTraslado[] {
+  return (["llegada", "salida"] as TramoTraslado[]).filter((t) => tramos.includes(t) && franjas.some((f) => tramosDe(f).includes(t)));
 }
 
 /**

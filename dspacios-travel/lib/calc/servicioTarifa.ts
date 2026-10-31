@@ -9,6 +9,7 @@
 // PURO. Import relativo para correr bajo `node --test`.
 // ─────────────────────────────────────────────────────────────────────────
 import { temporadaVigenteParaFecha, toTemporadaRango, hoyISO, precioServicio, factorLiquidacion } from "./paquetes.ts";
+import { resolverPrecioAlcance, tramosDeAlcance, type AlcanceVenta, type FilaPrecioAlcance } from "./servicioAlcance.ts";
 
 export type TemporadaServicioFila = {
   nombre: string; fecha_inicio: string | null; fecha_fin: string | null;
@@ -115,7 +116,7 @@ export type CostoNetoServicio =
       /** Tramos que tienen franja en la vigencia aplicable (los que dependen de una hora). Vacío = el precio no depende del horario. */
       tramosConFranja: TramoTraslado[];
     }
-  | { ok: false; motivo: MotivoSinTarifa | "franja_invalida" | "hora_requerida" | "costo_invalido"; detalle?: string; pendientes?: TramoTraslado[] };
+  | { ok: false; motivo: MotivoSinTarifa | "franja_invalida" | "hora_requerida" | "costo_invalido" | "sin_precio_alcance" | "precios_invalidos"; detalle?: string; pendientes?: TramoTraslado[] };
 
 export function costoNetoServicio(input: {
   temporadas: TemporadaServicioFila[];
@@ -128,11 +129,33 @@ export function costoNetoServicio(input: {
   liquidacion: string | null | undefined;
   numNoches: number;
   horas?: HorasTramos;
+  /** (262) Tramos VENDIDOS del traslado: el suplemento y la hora solo cuentan para ellos. Ausente = ambos (comportamiento anterior). */
+  tramos?: readonly TramoTraslado[];
   /** Búsqueda/vitrina: con hora desconocida se devuelve la tarifa SIN el suplemento y se anotan los `pendientes`. Cotizar/contratar: false (falla). */
   permitirSinHora?: boolean;
   hoy?: string;
+  /**
+   * (262) Alcance VENDIDO de un traslado (llegada | salida | ida_regreso). Con él, el neto sale de los precios PROPIOS del alcance de la vigencia aplicable
+   * (`preciosAlcancePorTemporada`, por nombre de vigencia): «un trayecto» e «ida y regreso» son filas independientes y NUNCA se deriva uno del otro. Sin
+   * precio del alcance pedido falla (`sin_precio_alcance`); no cae a `precio_persona` ni a los rangos de grupo. El recargo individual de la vigencia no se
+   * suma (el precio del alcance ya es el de cada pasajero) y el suplemento solo cuenta para los tramos de ese alcance. Ausente = comportamiento anterior.
+   */
+  alcance?: AlcanceVenta;
+  preciosAlcancePorTemporada?: Map<string, readonly FilaPrecioAlcance[]>;
 }): CostoNetoServicio {
-  const t = resolverTarifaServicio({ temporadas: input.temporadas, grupos: input.grupos, modo: input.modo, pax: input.pax, fecha: input.fecha, hoy: input.hoy });
+  const porAlcance = input.alcance != null;
+  const tramos = porAlcance ? tramosDeAlcance(input.alcance as AlcanceVenta) : input.tramos;
+  let t: ReturnType<typeof resolverTarifaServicio>;
+  if (porAlcance) {
+    const rangos = input.temporadas.map((x) => toTemporadaRango(x));
+    const nombre = rangos.length ? temporadaVigenteParaFecha(input.fecha, rangos, input.hoy ?? hoyISO()) : null;
+    if (!nombre) return { ok: false, motivo: "sin_vigencia" };
+    const r = resolverPrecioAlcance({ filas: input.preciosAlcancePorTemporada?.get(nombre) ?? [], alcance: input.alcance as AlcanceVenta, modo: input.modo, pax: input.pax });
+    if (!r.ok) return { ok: false, motivo: r.motivo, detalle: r.detalle };
+    t = { ok: true, temporada: nombre, netoPersona: input.modo === "persona" ? r.neto : null, netoGrupo: input.modo === "grupo" ? r.neto : null, recargoIndividual: 0 };
+  } else {
+    t = resolverTarifaServicio({ temporadas: input.temporadas, grupos: input.grupos, modo: input.modo, pax: input.pax, fecha: input.fecha, hoy: input.hoy });
+  }
   if (!t.ok) return t;
   const factor = factorLiquidacion(input.liquidacion, input.numNoches);
   const netoBase = (input.modo === "persona" ? (t.netoPersona as number) * Math.max(0, input.pax) : (t.netoGrupo as number)) * factor;
@@ -141,7 +164,7 @@ export function costoNetoServicio(input: {
   let suplementos: SuplementoAplicado[] = [];
   let pendientes: TramoTraslado[] = [];
   if (franjas.length) {
-    const ev = evaluarSuplementos(franjas, input.horas ?? {}, netoBase, input.pax);
+    const ev = evaluarSuplementos(franjas, input.horas ?? {}, netoBase, input.pax, tramos);
     if (!ev.ok) return { ok: false, motivo: "franja_invalida", detalle: ev.detalle };
     if (ev.pendientes.length && !input.permitirSinHora) return { ok: false, motivo: "hora_requerida", pendientes: ev.pendientes };
     suplementos = ev.suplementos;
@@ -150,7 +173,7 @@ export function costoNetoServicio(input: {
   const netoSuplementos = suplementos.reduce((s, x) => s + x.neto, 0);
   const costoNeto = netoBase + recargo + netoSuplementos;
   if (!Number.isFinite(costoNeto) || costoNeto < 0) return { ok: false, motivo: "costo_invalido" };
-  return { ok: true, temporada: t.temporada, netoBase, recargoIndividual: recargo, suplementos, netoSuplementos, costoNeto, pendientes, tramosConFranja: tramosConFranja(franjas) };
+  return { ok: true, temporada: t.temporada, netoBase, recargoIndividual: recargo, suplementos, netoSuplementos, costoNeto, pendientes, tramosConFranja: tramosConFranja(franjas, tramos) };
 }
 
 export { tramosConFranja };

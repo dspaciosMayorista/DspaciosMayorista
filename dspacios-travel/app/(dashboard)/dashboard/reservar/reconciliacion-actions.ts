@@ -17,7 +17,7 @@
 import { createAdminClient } from "@/lib/supabase/admin";
 import { createClient } from "@/lib/supabase/server";
 import { postearAsientoCxP, eliminarAsientoCxP } from "@/lib/contabilidad/asientos";
-import { reconciliarFinancieroPendiente, type DepsReconciliacion, type ResultadoReconciliacion } from "@/lib/reservar/reconciliacionFinanciera";
+import { reconciliarFinancieroPendiente, TEXTO_OBS_CARRITO_ANTERIOR, type DepsReconciliacion, type ResultadoReconciliacion } from "@/lib/reservar/reconciliacionFinanciera";
 import type { CostosContrato, CxPFinanciera, CxPCreada } from "@/lib/reservar/financieroContrato";
 import type { Json } from "@/types/database";
 import { fechaNegocio } from "@/lib/fechaNegocio";
@@ -107,6 +107,12 @@ function depsReconciliacion(): DepsReconciliacion {
         ultimo_intento_en: new Date().toISOString(),
       }).eq("numero_contrato", numeroContrato);
       if (actualizarError) throw new Error(`No se pudo registrar el fallo financiero de ${numeroContrato}: ${actualizarError.message}`);
+    },
+    contarCxpTextoAnterior: async (numeroContrato: string) => {
+      const { count, error } = await admin.from("cuentas_por_pagar").select("id", { count: "exact", head: true }).eq("numero_contrato", numeroContrato).like("observaciones", `${TEXTO_OBS_CARRITO_ANTERIOR}%`);
+      // Fallar cerrado: si no se puede comprobar, no se reintenta a ciegas.
+      if (error) throw new Error(`No se pudieron comprobar las cuentas por pagar de ${numeroContrato}: ${error.message}`);
+      return count ?? 0;
     },
     listarCxpSinAsiento: async () => {
       const [{ data: cxp, error: cxpError }, { data: asientos, error: asientosError }] = await Promise.all([

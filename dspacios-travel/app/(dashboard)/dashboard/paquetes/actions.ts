@@ -57,6 +57,7 @@ import { construirSetParesPublicados, todosLosParesConfiguradosPublicados, prime
 
 import type { ResultadoLote } from "@/lib/paquetes/seleccionMasiva";
 import { aplicaPvpInfanteFijo, pvpInfanteFijoValido } from "@/lib/paquetes/pvpInfanteFijo";
+import { mensajeTrasladoIncluido, trasladosPorAlcance } from "@/lib/servicios/alcanceContexto";
 import { incluidoEnEstadia, incluidoSeOmite, referenciaPublicacion, serviciosSinPrecioInfanteVigencias, type VigenciasServicio } from "@/lib/calc/servicioVigencias";
 import { presentarIncluye } from "@/lib/tarifario/incluyePorSalida";
 import { REGLA_COMPOSICION_PUBLICADA } from "@/lib/reservar/composicionPublicada";
@@ -670,6 +671,17 @@ export async function setHotelFiltros(
   };
 }
 
+// 262: mensaje si alguno de estos servicios es un traslado por alcance (no puede ir incluido); null si ninguno. Falla cerrado ante un error técnico de lectura.
+async function trasladosIncluidos(sb: Awaited<ReturnType<typeof createClient>>, ids: number[]): Promise<string | null> {
+  if (!ids.length) return null;
+  const t = await trasladosPorAlcance(sb, ids);
+  if (!t.ok) return "No se pudo validar el tipo del servicio. Intenta de nuevo.";
+  if (!t.ids.length) return null;
+  const { data } = await sb.from("servicios_adicionales").select("id, nombre").in("id", t.ids);
+  const nombre = (data ?? [])[0]?.nombre ?? `#${t.ids[0]}`;
+  return mensajeTrasladoIncluido(nombre);
+}
+
 // ── Adición de servicio (con check) + modo de cobro (persona/grupo) ────────
 export async function setServicio(
   paqueteId: number,
@@ -679,6 +691,10 @@ export async function setServicio(
   incluido = false
 ): Promise<Result> {
   const sb = await createClient();
+  if (checked && incluido) {
+    const t = await trasladosIncluidos(sb, [servicioId]);
+    if (t) return { ok: false, error: t };
+  }
   if (!checked) {
     const { error } = await sb.from("armado_servicios").delete().eq("paquete_id", paqueteId).eq("servicio_id", servicioId);
     if (error) return { ok: false, error: error.message };
@@ -710,6 +726,10 @@ export async function setServicios(paqueteId: number, items: ServicioLoteItem[],
   if (lista.length > 500) return { ok: false, error: "Son demasiados servicios en una sola operación (máximo 500)." };
   const sb = await createClient();
   const ids = lista.map((x) => x.servicioId);
+  if (checked) {
+    const t = await trasladosIncluidos(sb, lista.filter((x) => x.incluido).map((x) => x.servicioId));
+    if (t) return { ok: false, error: t };
+  }
   if (!checked) {
     const { error, count } = await sb
       .from("armado_servicios")
@@ -917,6 +937,12 @@ export async function generarTarifario(paqueteId: number): Promise<Result> {
     );
     if (!rv.ok) return await fallarTecnico(rv.error);
     for (const [k, v] of rv.porServicio) vigenciasPorServicio.set(k, v);
+    // 262: un traslado por alcance no se hornea en el hotel. Se detiene ANTES de calcular nada, con el motivo, en vez de «publicar» sin filas.
+    for (const s of serviciosSel ?? []) {
+      if (!(s as { incluido?: boolean }).incluido || !vigenciasPorServicio.get(s.servicio_id)?.usaAlcance) continue;
+      const nombre = (s.servicios_adicionales as unknown as { nombre?: string | null } | null)?.nombre ?? `#${s.servicio_id}`;
+      return await fallar(mensajeTrasladoIncluido(nombre));
+    }
   }
   // Disponibilidad por fecha (migración 256). Un servicio sin vigencia ya NO tumba la generación del paquete:
   //   · incluido sin vigencia/rango/precio en una estadía → esa salida/estadía NO se publica (las cubiertas sí); jamás se publica omitiéndolo.

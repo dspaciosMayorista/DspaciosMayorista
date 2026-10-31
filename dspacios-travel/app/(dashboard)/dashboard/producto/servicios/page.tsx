@@ -3,6 +3,7 @@ import Link from "next/link";
 import { ServiciosClient } from "./ServiciosClient";
 import { CargaMasivaCSV } from "@/components/CargaMasivaCSV";
 import { cargarServiciosMasivo } from "./actions";
+import { Alcance262Provider, type Datos262 } from "./Alcance262";
 
 export const dynamic = "force-dynamic";
 
@@ -38,6 +39,29 @@ export default async function ServiciosPage() {
     franjasDisponibles = false;
     const { data: sinFranjas } = await sb.from("servicio_temporadas").select("id, servicio_id, nombre, fecha_inicio, fecha_fin, compra_inicio, compra_fin, prioridad, precio_persona, precio_infante, recargo_individual").order("prioridad", { ascending: false });
     temporadasLeidas = sinFranjas as unknown as typeof temporadasLeidas;
+  }
+  // 262 (provisional): tipo de receptivo, precios por trayecto y rango de pasajeros de las franjas. Lecturas APARTE y tolerantes: si la migración no está
+  // aplicada (columna/tabla inexistente) el editor lo avisa y la página sigue funcionando como antes.
+  const datos262: Datos262 = { disponible: false, clasif: {}, precios: {} };
+  const clasifRes = await sb.from("servicios_adicionales").select("id, tipo_receptivo, combo_incluye_traslado, combo_traslado_alcance");
+  if (!clasifRes.error) {
+    datos262.disponible = true;
+    for (const r of (clasifRes.data ?? []) as unknown as Array<{ id: number; tipo_receptivo: Datos262["clasif"][number]["tipo_receptivo"]; combo_incluye_traslado: boolean | null; combo_traslado_alcance: Datos262["clasif"][number]["combo_traslado_alcance"] }>) {
+      datos262.clasif[r.id] = { tipo_receptivo: r.tipo_receptivo ?? null, combo_incluye_traslado: r.combo_incluye_traslado ?? null, combo_traslado_alcance: r.combo_traslado_alcance ?? null };
+    }
+    const preciosRes = await sb.from("servicio_precio_alcance").select("servicio_temporada_id, alcance, pax_desde, pax_hasta, precio").order("alcance").order("pax_desde", { nullsFirst: true });
+    if (preciosRes.error) datos262.disponible = false; // sin la tabla no hay editor de precios (la migración 262 no está aplicada)
+    else for (const r of (preciosRes.data ?? []) as unknown as Array<{ servicio_temporada_id: number; alcance: "trayecto" | "ida_regreso"; pax_desde: number | null; pax_hasta: number | null; precio: number }>) {
+      (datos262.precios[r.servicio_temporada_id] ??= []).push({ alcance: r.alcance, pax_desde: r.pax_desde, pax_hasta: r.pax_hasta, precio: Number(r.precio) });
+    }
+    const pax = await sb.from("servicio_suplementos_franja").select("id, pax_desde, pax_hasta");
+    if (!pax.error) {
+      const porId = new Map(((pax.data ?? []) as unknown as Array<{ id: number; pax_desde: number | null; pax_hasta: number | null }>).map((x) => [x.id, x]));
+      for (const t of temporadasLeidas ?? []) {
+        const fr = (t as unknown as { servicio_suplementos_franja?: Array<Record<string, unknown> & { id: number }> }).servicio_suplementos_franja;
+        for (const f of fr ?? []) { const x = porId.get(f.id); if (x) { f.pax_desde = x.pax_desde; f.pax_hasta = x.pax_hasta; } }
+      }
+    }
   }
   const servicios = (serviciosRaw ?? []) as unknown as Parameters<typeof ServiciosClient>[0]["servicios"];
 
@@ -78,7 +102,9 @@ export default async function ServiciosPage() {
           nombreArchivo="plantilla_servicios"
         />
       </div>
-      <ServiciosClient servicios={servicios} proveedores={proveedores ?? []} destinos={destinos ?? []} rangos={rangos ?? []} temporadas={temporadasPorServicio} />
+      <Alcance262Provider value={datos262}>
+        <ServiciosClient servicios={servicios} proveedores={proveedores ?? []} destinos={destinos ?? []} rangos={rangos ?? []} temporadas={temporadasPorServicio} />
+      </Alcance262Provider>
     </div>
   );
 }
