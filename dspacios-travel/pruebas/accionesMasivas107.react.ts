@@ -199,12 +199,13 @@ test("Eliminar paquete: un rechazo del servidor deja el diálogo abierto con el 
 });
 
 // ═══ Hoteles ══════════════════════════════════════════════════════════════
-test("Hoteles: Seleccionar todos va en UNA acción y un refresh; quitar todos pide confirmar y también es UNA acción", async () => {
+test("Hoteles: Seleccionar todos va en UNA acción sin recargar el editor; quitar todos pide confirmar y también es UNA acción", async () => {
   const raiz = await montar(props("bloqueo", { pestanaInicial: "hoteles", selHoteles: [] }));
   await pulsar(casilla(raiz));
   assert.deepEqual(p101.llamadas.map(([n]) => n), ["setTodosHoteles"]);
   assert.deepEqual(p101.llamadas[0][1], [7, [31, 32], true]);
-  assert.equal(p101.refrescos, 1);
+  assert.equal(p101.refrescos, 0, "sin router.refresh() tras un guardado exitoso");
+  assert.match(texto(raiz), /Adición de hoteles \(2 de 2\)/, "el contador ya refleja el lote");
   await desmontar?.(); desmontar = undefined; p101.llamadas.length = 0; p101.refrescos = 0;
 
   const todos = [{ hotel_id: 31, categorias: null, regimenes: null, prioridad: 1 }, { hotel_id: 32, categorias: null, regimenes: null, prioridad: null }];
@@ -218,7 +219,8 @@ test("Hoteles: Seleccionar todos va en UNA acción y un refresh; quitar todos pi
   await esperar();
   assert.deepEqual(p101.llamadas.map(([n]) => n), ["setTodosHoteles"]);
   assert.deepEqual(p101.llamadas[0][1], [7, [31, 32], false]);
-  assert.equal(p101.refrescos, 1);
+  assert.equal(p101.refrescos, 0);
+  assert.match(texto(r2), /Adición de hoteles \(0 de 2\)/);
   assert.equal(dialogo(), null);
 });
 

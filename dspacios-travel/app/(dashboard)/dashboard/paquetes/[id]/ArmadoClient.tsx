@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState, useTransition } from "react";
+import { useEffect, useMemo, useRef, useState, useSyncExternalStore, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import {
   AlertTriangle, Briefcase, Building2, CheckCircle2, ChevronDown, ChevronRight, Plane, RefreshCw, Settings, Table2, X, XCircle,
@@ -10,6 +10,7 @@ import { Button } from "@/components/ui/button";
 import { DialogoConfirmar } from "@/components/ui/DialogoConfirmar";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from "@/components/ui/dialog";
 import { estadoSeleccionTodos, mensajeLote } from "@/lib/paquetes/seleccionMasiva";
+import { ColaSeleccion, bloqueoGenerar, efectivos, estadoFila, type EstadoFila } from "@/lib/paquetes/seleccionOptimista";
 import { agruparPorCategoriaVigenciaRegimen, type FilaDetalle, type GrupoTarifa } from "@/lib/paquetes/tarifarioGrupos";
 import { Input } from "@/components/ui/input";
 import { formatMoneda } from "@/lib/utils";
@@ -21,6 +22,13 @@ import {
   getTarifasHotel, setHotelFiltros, setHotelPrioridad, type TarifaHotelPreview, type TarifaUnidadPreview,
 } from "../actions";
 import { setEmpaquetado } from "../../vuelos/empaquetados-actions";
+
+/** Acciones de servidor que usan las casillas del armado. En producción son las reales; solo una prueba de navegador las sustituye (`acciones`). */
+export type AccionesArmado = {
+  setVuelo: typeof setVuelo; setTodosVuelos: typeof setTodosVuelos; setHotel: typeof setHotel; setTodosHoteles: typeof setTodosHoteles;
+  setServicio: typeof setServicio; setServicios: typeof setServicios; setEmpaquetado: typeof setEmpaquetado;
+};
+const ACCIONES_REALES: AccionesArmado = { setVuelo, setTodosVuelos, setHotel, setTodosHoteles, setServicio, setServicios, setEmpaquetado };
 import {
   conPrioridadOptimista, sinPrioridadOptimista, reconciliarPrioridades, prioridadEfectivaDe, prioridadesOcupadasDe,
 } from "@/lib/tarifario/prioridadOptimista";
@@ -115,11 +123,34 @@ export function ArmadoClient(props: {
   /** Migración 256: qué se dejó de publicar por falta de vigencia (incluidos por salida, opcionales ocultos/parciales). */
   tarifarioDiagnostico?: string | null;
   tarifarioPublicable?: boolean | null;
+  /** Solo pruebas de navegador: sustituye las acciones de servidor (por defecto, las reales). */
+  acciones?: Partial<AccionesArmado>;
 }) {
   const router = useRouter();
+  const A: AccionesArmado = { ...ACCIONES_REALES, ...props.acciones };
   const tipo = (props.config?.tipo ?? "bloqueo") as "bloqueo" | "porcion_terrestre" | "servicios" | "dinamico";
   const [pending, start] = useTransition();
   const [msg, setMsg] = useState("");
+  // Guardado OPTIMISTA de las casillas (lib/paquetes/seleccionOptimista.ts): el clic se ve al instante, cada fila muestra «Guardando» y las respuestas
+  // viejas no pisan un clic más reciente. Un guardado exitoso NO recarga el editor: se marca "sucio" y se refresca UNA vez al abrir la pestaña
+  // Tarifario (lo único que depende del servidor: estado del tarifario y montaje). «Generar tarifario» ya refresca por su cuenta.
+  const alInactivaRef = useRef<(hubo: boolean) => void>(() => {});
+  const [cola] = useState(() => new ColaSeleccion({ alQuedarInactiva: (hubo) => alInactivaRef.current(hubo) }));
+  const snap = useSyncExternalStore(cola.suscribir, cola.instantanea, cola.instantanea);
+  const sucioRef = useRef(false);
+  const reqRefrescoRef = useRef<number | null>(null);
+  const pestanaActivaRef = useRef<string>("");
+  // El refresco terminó cuando LLEGAN datos nuevos del servidor (las props de selección cambian de identidad con cada `router.refresh()`; una transición
+  // no sirve de señal: termina al instante). Lo confirmado antes de iniciar ese refresco ya viene en ellos; lo posterior se conserva.
+  useEffect(() => {
+    if (reqRefrescoRef.current !== null) { cola.reconciliar(reqRefrescoRef.current); reqRefrescoRef.current = null; }
+  }, [props.selVuelos, props.selHoteles, props.selServicios, props.selEmpaquetados, cola]);
+  useEffect(() => {
+    alInactivaRef.current = (hubo) => {
+      if (hubo) sucioRef.current = true;
+      if (sucioRef.current && pestanaActivaRef.current === "tarifario") { sucioRef.current = false; refrescar(); }
+    };
+  });
   // Errores de vincular/desvincular vuelos (#67): el servidor y la base pueden
   // rechazar un vuelo cuyo destino no está permitido; se muestran junto a los vuelos.
   const [errVinculo, setErrVinculo] = useState("");
@@ -132,9 +163,10 @@ export function ArmadoClient(props: {
     const d = destinoPorId.get(destinoId);
     return d ? `${d.nombre}${d.codigo_iata ? ` (${d.codigo_iata})` : ""}` : null;
   };
-  const vueloSel = new Map(props.selVuelos.map((v) => [v.bloqueo_id, v]));
-  const hotelSel = new Map(props.selHoteles.map((h) => [h.hotel_id, h]));
-  const servSel = new Map(props.selServicios.map((s) => [s.servicio_id, s]));
+  // Selección EFECTIVA = lo del servidor con lo recién clicado/guardado encima: casillas, contadores y montaje la leen de aquí.
+  const vueloSel = useMemo(() => efectivos(snap, "vuelo", props.selVuelos, "bloqueo_id", (id): SelVuelo => ({ bloqueo_id: id, aplica_mk: true, ta: 0 })), [snap, props.selVuelos]);
+  const hotelSel = useMemo(() => efectivos(snap, "hotel", props.selHoteles, "hotel_id", (id): SelHotel => ({ hotel_id: id, categorias: null, regimenes: null, prioridad: null })), [snap, props.selHoteles]);
+  const servSel = useMemo(() => efectivos(snap, "servicio", props.selServicios, "servicio_id", (id): SelServicio => ({ servicio_id: id, modo: "persona", incluido: false })), [snap, props.selServicios]);
   // #90 A — unidades de cada componente SELECCIONADO frente a la moneda de publicación. Solo informa: no convierte ni supone TRM.
   const publicacion: PublicacionMontaje = props.publicacionMontaje ?? { estado: "publicable", moneda: props.moneda === "USD" ? "USD" : "COP" };
   const monedaPublicacion: MonedaMontaje | null = publicacion.estado === "publicable" ? publicacion.moneda : null;
@@ -204,10 +236,13 @@ export function ArmadoClient(props: {
   const prioridadesOcupadas = prioridadesOcupadasDe(prioridadesOptimistas, filasServidorPrioridad);
 
   function refrescar() {
+    reqRefrescoRef.current = cola.req;
     router.refresh();
   }
 
+  const bloqueoGeneracion = bloqueoGenerar(snap);
   function generar() {
+    if (bloqueoGenerar(cola.instantanea())) return; // nunca con guardados pendientes o fallidos
     setMsg("");
     start(async () => {
       const r = await generarTarifario(props.paqueteId);
@@ -224,8 +259,10 @@ export function ArmadoClient(props: {
   const visibles = pestanasVisibles(tipo);
   const [pestana, setPestana] = useState<PestanaId>(() => normalizarPestana(props.pestanaInicial, tipo));
   const activa = normalizarPestana(pestana, tipo);
+  useEffect(() => { pestanaActivaRef.current = activa; });
   function cambiarPestana(id: PestanaId) {
     setPestana(id);
+    if (id === "tarifario" && sucioRef.current && cola.inactiva) { sucioRef.current = false; refrescar(); }
     if (typeof window === "undefined") return;
     try {
       const url = new URL(window.location.href);
@@ -246,30 +283,35 @@ export function ArmadoClient(props: {
 
   // Servicios: selección en bloque (#98). Solo entran los que tienen alguna tarifa; cada uno se guarda con la acción de
   // siempre (`setServicio`), uno tras otro, y al final se refresca UNA vez.
-  const [guardandoServicios, startServicios] = useTransition();
-  const [errServicios, setErrServicios] = useState("");
+  const [errServiciosLocal, setErrServicios] = useState("");
+  const errServicios = snap.erroresLote.get("servicio") ?? errServiciosLocal;
+  const guardandoServicios = [...snap.entradas].some(([k, e]) => k.startsWith("servicio:") && e.estado === "guardando");
   const serviciosSeleccionables = props.serviciosDisp.filter((s) => servicioSeleccionable(s));
   const nSeleccionablesMarcados = serviciosSeleccionables.filter((s) => servSel.has(s.id)).length;
-  // UNA acción de servidor para todo el lote (antes: una por servicio, en serie) y UN refresh al final.
+  // UNA acción de servidor para todo el lote; la pantalla cambia al instante y cada fila afectada muestra «Guardando».
   const [avisoServicios, setAvisoServicios] = useState<{ tono: "ok" | "aviso"; texto: string } | null>(null);
   function marcarTodosServicios(marcar: boolean) {
     setErrServicios("");
     setAvisoServicios(null);
-    startServicios(async () => {
-      const objetivo = marcar
-        ? serviciosSeleccionables.filter((s) => !servSel.has(s.id))
-        : props.serviciosDisp.filter((s) => servSel.has(s.id));
-      if (!objetivo.length) return;
-      const items = objetivo.map((s) => ({
-        servicioId: s.id,
-        modo: ((servSel.get(s.id)?.modo as "persona" | "grupo" | undefined) ?? (s.precio_persona != null ? "persona" : "grupo")) as "persona" | "grupo",
-        incluido: servSel.get(s.id)?.incluido ?? false,
-      }));
-      const r = await setServicios(props.paqueteId, items, marcar);
-      const m = mensajeLote(r, { singular: "servicio", plural: "servicios", accion: marcar ? "agregó" : "quitó" });
-      if (m.tono === "error") setErrServicios(m.texto);
-      else setAvisoServicios({ tono: m.tono, texto: m.texto });
-      refrescar();
+    cola.descartarErrorLote("servicio");
+    const objetivo = marcar
+      ? serviciosSeleccionables.filter((s) => !servSel.has(s.id))
+      : props.serviciosDisp.filter((s) => servSel.has(s.id));
+    if (!objetivo.length) return;
+    const items = objetivo.map((s) => ({
+      servicioId: s.id,
+      modo: ((servSel.get(s.id)?.modo as "persona" | "grupo" | undefined) ?? (s.precio_persona != null ? "persona" : "grupo")) as "persona" | "grupo",
+      incluido: servSel.get(s.id)?.incluido ?? false,
+    }));
+    cola.solicitar({
+      tipo: "servicio", esLote: true,
+      items: items.map((it) => ({ id: it.servicioId, valor: marcar ? { modo: it.modo, incluido: it.incluido } : null })),
+      ejecutar: async () => {
+        const r = await A.setServicios(props.paqueteId, items, marcar);
+        const m = mensajeLote(r, { singular: "servicio", plural: "servicios", accion: marcar ? "agregó" : "quitó" });
+        if (m.tono !== "error") setAvisoServicios({ tono: m.tono, texto: m.texto });
+        return r.ok ? { ok: true, omitidos: r.omitidos } : { ok: false, error: r.error };
+      },
     });
   }
 
@@ -277,12 +319,21 @@ export function ArmadoClient(props: {
   // borra también las categorías/regímenes y la prioridad que se hubieran afinado por hotel.
   const [errHoteles, setErrHoteles] = useState("");
   const [confirmarQuitarHoteles, setConfirmarQuitarHoteles] = useState(false);
+  const errHotelesCola = snap.erroresLote.get("hotel");
+  // Optimista: la pantalla cambia al instante; devuelve ok enseguida (el diálogo de confirmación se cierra) y un fallo vuelve a las filas y se muestra arriba.
   async function aplicarTodosHoteles(marcar: boolean): Promise<{ ok: boolean; error?: string }> {
     setErrHoteles("");
-    const r = await setTodosHoteles(props.paqueteId, props.hotelesDisp.map((h) => h.id), marcar);
-    if (!r.ok) setErrHoteles(r.error);
-    refrescar();
-    return r.ok ? { ok: true } : { ok: false, error: r.error };
+    cola.descartarErrorLote("hotel");
+    const objetivo = marcar ? props.hotelesDisp.filter((h) => !hotelSel.has(h.id)) : props.hotelesDisp.filter((h) => hotelSel.has(h.id));
+    if (!objetivo.length) return { ok: true };
+    cola.solicitar({
+      tipo: "hotel", esLote: true,
+      // Marcar = fila nueva sin afinar (como la deja el servidor): sin categorías/regímenes/prioridad.
+      items: objetivo.map((h) => ({ id: h.id, valor: marcar ? { categorias: null, regimenes: null, prioridad: null } : null })),
+      ejecutar: () => A.setTodosHoteles(props.paqueteId, props.hotelesDisp.map((h) => h.id), marcar),
+    });
+    if (!marcar) objetivo.forEach((h) => descartarPrioridadOptimista(h.id));
+    return { ok: true };
   }
 
   if (!props.tieneDestino) {
@@ -354,8 +405,8 @@ export function ArmadoClient(props: {
             {tipo === "bloqueo" && props.destinosAereosError && (
               <p className="rounded-lg border border-red-200 bg-red-50 p-3 text-sm text-red-700" role="alert">{props.destinosAereosError}</p>
             )}
-            {tipo === "bloqueo" && errVinculo && (
-              <p className="rounded-lg border border-red-200 bg-red-50 p-3 text-sm text-red-700" role="alert">{errVinculo}</p>
+            {tipo === "bloqueo" && (errVinculo || snap.erroresLote.get("vuelo")) && (
+              <p className="flex items-start justify-between gap-2 rounded-lg border border-red-200 bg-red-50 p-3 text-sm text-red-700" role="alert" data-testid="error-lote-vuelo"><span>{errVinculo || snap.erroresLote.get("vuelo")}</span><button type="button" onClick={() => { setErrVinculo(""); cola.descartarErrorLote("vuelo"); }} className="shrink-0 text-red-400 hover:text-red-700" aria-label="Descartar el error"><X className="h-4 w-4" aria-hidden="true" /></button></p>
             )}
 
             {tipo === "bloqueo" && (
@@ -371,17 +422,18 @@ export function ArmadoClient(props: {
                         ref={(el) => {
                           if (el) el.indeterminate = vueloSel.size > 0 && vueloSel.size < props.vuelosDisp.length;
                         }}
-                        onChange={(e) =>
-                          start(async () => {
-                            const r = await setTodosVuelos(
-                              props.paqueteId,
-                              props.vuelosDisp.map((v) => v.id),
-                              e.target.checked
-                            );
-                            setErrVinculo(r.ok ? "" : r.error);
-                            refrescar();
-                          })
-                        }
+                        onChange={(e) => {
+                          const marcar = e.target.checked;
+                          const objetivo = marcar ? props.vuelosDisp.filter((v) => !vueloSel.has(v.id)) : props.vuelosDisp.filter((v) => vueloSel.has(v.id));
+                          if (!objetivo.length) return;
+                          setErrVinculo("");
+                          cola.descartarErrorLote("vuelo");
+                          cola.solicitar({
+                            tipo: "vuelo", esLote: true,
+                            items: objetivo.map((v) => ({ id: v.id, valor: marcar ? { aplica_mk: true, ta: 0 } : null })),
+                            ejecutar: () => A.setTodosVuelos(props.paqueteId, props.vuelosDisp.map((v) => v.id), marcar),
+                          });
+                        }}
                       />
                       {estadoSeleccionTodos(props.vuelosDisp.length, vueloSel.size).etiqueta}
                     </label>
@@ -393,8 +445,7 @@ export function ArmadoClient(props: {
                           destinoAereo={etiquetaAerea(v.destino_id)}
                           sel={vueloSel.get(v.id)}
                           paqueteId={props.paqueteId}
-                          onError={setErrVinculo}
-                          onDone={refrescar}
+                          cola={cola} acc={A} estado={estadoFila(snap, "vuelo", v.id)}
                         />
                       ))}
                     </ul>
@@ -424,8 +475,7 @@ export function ArmadoClient(props: {
                         destinoAereo={etiquetaAerea(e.destino_id)}
                         sel={s}
                         paqueteId={props.paqueteId}
-                        onError={setErrVinculo}
-                        onDone={refrescar}
+                        cola={cola} acc={A} estado={estadoFila(snap, "empaquetado", e.id)}
                         soloLectura
                       />
                     ) : (
@@ -470,13 +520,13 @@ export function ArmadoClient(props: {
                     }}
                     onChange={(e) => {
                       if (!e.target.checked) { setConfirmarQuitarHoteles(true); return; }
-                      start(async () => { await aplicarTodosHoteles(true); });
+                      void aplicarTodosHoteles(true);
                     }}
                   />
                   {estadoSeleccionTodos(props.hotelesDisp.length, hotelSel.size).etiqueta}
                 </label>
-                {errHoteles && (
-                  <p className="mb-2 rounded-lg border border-red-200 bg-red-50 p-3 text-sm text-red-700" role="alert">{errHoteles}</p>
+                {(errHoteles || errHotelesCola) && (
+                  <p className="mb-2 flex items-start justify-between gap-2 rounded-lg border border-red-200 bg-red-50 p-3 text-sm text-red-700" role="alert" data-testid="error-lote-hotel"><span>{errHoteles || errHotelesCola}</span><button type="button" onClick={() => { setErrHoteles(""); cola.descartarErrorLote("hotel"); }} className="shrink-0 text-red-400 hover:text-red-700" aria-label="Descartar el error"><X className="h-4 w-4" aria-hidden="true" /></button></p>
                 )}
                 <DialogoConfirmar
                   open={confirmarQuitarHoteles}
@@ -499,6 +549,7 @@ export function ArmadoClient(props: {
                       onPrioridadLocal={setPrioridadOptimista}
                       onPrioridadDescartar={descartarPrioridadOptimista}
                       onDone={refrescar}
+                      cola={cola} acc={A} estado={estadoFila(snap, "hotel", h.id)}
                     />
                   ))}
                 </ul>
@@ -515,7 +566,7 @@ export function ArmadoClient(props: {
             ) : (
               <>
                 {errServicios && (
-                  <p className="mb-2 rounded-lg border border-red-200 bg-red-50 p-3 text-sm text-red-700" role="alert">{errServicios}</p>
+                  <p className="mb-2 flex items-start justify-between gap-2 rounded-lg border border-red-200 bg-red-50 p-3 text-sm text-red-700" role="alert" data-testid="error-lote-servicio"><span>{errServicios}</span><button type="button" onClick={() => { setErrServicios(""); cola.descartarErrorLote("servicio"); }} className="shrink-0 text-red-400 hover:text-red-700" aria-label="Descartar el error"><X className="h-4 w-4" aria-hidden="true" /></button></p>
                 )}
                 {avisoServicios && (
                   <p
@@ -528,7 +579,7 @@ export function ArmadoClient(props: {
                 <label className="mb-1 flex items-center gap-2 border-b border-gray-100 pb-2 text-sm font-medium text-gray-700">
                   <input
                     type="checkbox"
-                    disabled={guardandoServicios || serviciosSeleccionables.length === 0}
+                    disabled={serviciosSeleccionables.length === 0}
                     checked={serviciosSeleccionables.length > 0 && nSeleccionablesMarcados === serviciosSeleccionables.length}
                     ref={(el) => {
                       if (el) el.indeterminate = nSeleccionablesMarcados > 0 && nSeleccionablesMarcados < serviciosSeleccionables.length;
@@ -545,7 +596,7 @@ export function ArmadoClient(props: {
                       s={s}
                       sel={servSel.get(s.id)}
                       paqueteId={props.paqueteId}
-                      onDone={refrescar}
+                      cola={cola} acc={A} estado={estadoFila(snap, "servicio", s.id)}
                     />
                   ))}
                 </ul>
@@ -569,10 +620,11 @@ export function ArmadoClient(props: {
                   )}
                   <p className="text-xs text-gray-500">Liquida el paquete y publica las tarifas por persona.</p>
                 </div>
-                <Button onClick={generar} disabled={pending} style={{ backgroundColor: "var(--brand-accent)" }}>
-                  {pending ? "Generando…" : "Generar tarifario"}
+                <Button onClick={generar} disabled={pending || !!bloqueoGeneracion} style={{ backgroundColor: "var(--brand-accent)" }} data-testid="generar-tarifario">
+                  {pending ? "Generando…" : snap.pendientes > 0 ? "Guardando cambios…" : "Generar tarifario"}
                 </Button>
               </div>
+              {bloqueoGeneracion && <p className="mt-2 text-sm text-amber-700" role="status" data-testid="bloqueo-generar">{bloqueoGeneracion}</p>}
               {msg && <p className="mt-2 text-sm text-gray-600">{msg}</p>}
             </div>
             <div className="p-4 pt-0">
@@ -594,37 +646,55 @@ export function ArmadoClient(props: {
   );
 }
 
+/** «Guardando» mientras el servidor confirma esta fila; si falló, el motivo (la fila ya volvió a su valor real) con un botón para descartarlo. */
+function EstadoGuardado({ estado, onDescartar, id }: { estado: EstadoFila; onDescartar: () => void; id: string }) {
+  if (!estado.guardando && !estado.error) return null;
+  return (
+    <span className="ml-2 inline-flex flex-wrap items-center gap-1.5 align-middle text-xs" data-testid={`guardado-${id}`}>
+      {estado.guardando && <span role="status" className="inline-flex items-center gap-1 text-gray-500"><RefreshCw className="h-3 w-3 animate-spin" aria-hidden="true" />Guardando…</span>}
+      {estado.error && (
+        <span role="alert" className="inline-flex items-center gap-1.5 text-red-600">
+          {estado.error}
+          <button type="button" onClick={onDescartar} className="rounded p-0.5 text-red-400 hover:text-red-700" aria-label="Descartar el error"><X className="h-3 w-3" aria-hidden="true" /></button>
+        </span>
+      )}
+    </span>
+  );
+}
+
 function VueloRow({
-  v, destinoAereo, sel, paqueteId, onError, onDone,
+  v, destinoAereo, sel, paqueteId, cola, acc, estado,
 }: {
-  v: Vuelo; destinoAereo: string | null; sel: SelVuelo | undefined; paqueteId: number; onError: (m: string) => void; onDone: () => void;
+  v: Vuelo; destinoAereo: string | null; sel: SelVuelo | undefined; paqueteId: number; cola: ColaSeleccion; acc: AccionesArmado; estado: EstadoFila;
 }) {
-  const [, start] = useTransition();
   const checked = !!sel;
   const [aplicaMk, setAplicaMk] = useState(sel?.aplica_mk ?? true);
   const [ta, setTa] = useState(sel ? String(sel.ta) : "");
 
   function save(nextChecked: boolean, nextMk = aplicaMk, nextTa = ta) {
-    start(async () => {
-      const r = await setVuelo(paqueteId, v.id, nextChecked, nextMk, Number(nextTa) || 0);
-      onError(r.ok ? "" : r.error);
-      onDone();
+    const taNum = Number(nextTa) || 0;
+    cola.solicitar({
+      tipo: "vuelo", coalescible: true,
+      items: [{ id: v.id, valor: nextChecked ? { aplica_mk: nextMk, ta: taNum } : null }],
+      ejecutar: () => acc.setVuelo(paqueteId, v.id, nextChecked, nextMk, taNum),
     });
   }
 
   return (
-    <li className="py-3">
+    <li className="py-3" data-testid={`vuelo-${v.id}`}>
       <div className="flex items-start gap-3">
         <input
           type="checkbox"
           className="mt-1"
           checked={checked}
+          aria-label={`Vincular el vuelo ${v.record}`}
           onChange={(e) => save(e.target.checked)}
         />
         <div className="flex-1">
           <p className="text-sm font-medium text-gray-800">
             {v.record} <span className="text-gray-400">·</span> {v.ruta ?? ""}{" "}
             {v.aerolinea ? <span className="text-gray-400">· {v.aerolinea}</span> : null}
+            <EstadoGuardado estado={estado} id={`vuelo-${v.id}`} onDescartar={() => cola.descartarError("vuelo", v.id)} />
           </p>
           <p className="text-xs text-gray-500">
             {v.fecha_ida} → {v.fecha_regreso}
@@ -691,22 +761,22 @@ function VueloRow({
 // empaquetado puede no tener PNR todavía) — se muestra "Sin record", nunca
 // como si faltara un dato obligatorio.
 function EmpaquetadoRow({
-  e, destinoAereo, sel, paqueteId, onError, onDone, soloLectura = false,
+  e, destinoAereo, sel, paqueteId, cola, acc, estado, soloLectura = false,
 }: {
-  e: Empaquetado; destinoAereo: string | null; sel: SelEmpaquetado | undefined; paqueteId: number; onError: (m: string) => void; onDone: () => void;
+  e: Empaquetado; destinoAereo: string | null; sel: SelEmpaquetado | undefined; paqueteId: number; cola: ColaSeleccion; acc: AccionesArmado; estado: EstadoFila;
   /** #101: en un paquete de Bloqueo o Dinámico los vinculados se muestran sin poder cambiarse. */
   soloLectura?: boolean;
 }) {
-  const [, start] = useTransition();
   const checked = !!sel;
   const [aplicaMk, setAplicaMk] = useState(sel?.aplica_mk ?? true);
   const [ta, setTa] = useState(sel ? String(sel.ta) : "");
 
   function save(nextChecked: boolean, nextMk = aplicaMk, nextTa = ta) {
-    start(async () => {
-      const r = await setEmpaquetado(paqueteId, e.id, nextChecked, nextMk, Number(nextTa) || 0);
-      onError(r.ok ? "" : r.error);
-      onDone();
+    const taNum = Number(nextTa) || 0;
+    cola.solicitar({
+      tipo: "empaquetado", coalescible: true,
+      items: [{ id: e.id, valor: nextChecked ? { aplica_mk: nextMk, ta: taNum } : null }],
+      ejecutar: () => acc.setEmpaquetado(paqueteId, e.id, nextChecked, nextMk, taNum),
     });
   }
 
@@ -718,6 +788,7 @@ function EmpaquetadoRow({
           className="mt-1"
           checked={checked}
           disabled={soloLectura}
+          aria-label={`Vuelo por Sistema ${e.record ?? "sin record"}`}
           onChange={(ev) => save(ev.target.checked)}
         />
         <div className="flex-1">
@@ -725,6 +796,7 @@ function EmpaquetadoRow({
             {e.record ?? "Sin record"} <span className="text-gray-400">·</span> {e.ruta ?? ""}{" "}
             {e.aerolinea ? <span className="text-gray-400">· {e.aerolinea}</span> : null}
             <span className="ml-1 rounded bg-teal-50 px-1.5 py-0.5 text-[10px] font-semibold text-teal-700">Sistema</span>
+            <EstadoGuardado estado={estado} id={`empaquetado-${e.id}`} onDescartar={() => cola.descartarError("empaquetado", e.id)} />
           </p>
           <p className="text-xs text-gray-500">
             {e.fecha_ida} → {e.fecha_regreso} · tarifa empaquetar {formatMoneda(e.tarifa_para_empaquetar, e.moneda)}
@@ -779,9 +851,9 @@ function EmpaquetadoRow({
 const PRIORIDADES = [1, 2, 3, 4, 5, 6] as const;
 
 function HotelRow({
-  hotel, sel, paqueteId, prioridad, prioridadesOcupadas, onPrioridadLocal, onPrioridadDescartar, onDone,
+  hotel, sel, paqueteId, prioridad, prioridadesOcupadas, onPrioridadLocal, onPrioridadDescartar, onDone, cola, acc, estado,
 }: {
-  hotel: Hotel; sel: SelHotel | undefined; paqueteId: number;
+  hotel: Hotel; sel: SelHotel | undefined; paqueteId: number; cola: ColaSeleccion; acc: AccionesArmado; estado: EstadoFila;
   /** Prioridad EFECTIVA (servidor u optimista) de este hotel en este paquete. */
   prioridad: number | null;
   prioridadesOcupadas: Map<number, number>;
@@ -791,7 +863,6 @@ function HotelRow({
   onPrioridadDescartar: (hotelId: number) => void;
   onDone: () => void;
 }) {
-  const [, start] = useTransition();
   const [openModal, setOpenModal] = useState(false);
   const [errPrioridad, setErrPrioridad] = useState("");
   // Petición de prioridad EN VUELO para ESTA fila: bloquea envíos concurrentes
@@ -845,17 +916,23 @@ function HotelRow({
   }
 
   return (
-    <li className="py-2.5">
+    <li className="py-2.5" data-testid={`hotel-${hotel.id}`}>
       <div className="flex flex-wrap items-center gap-3">
         <input
           type="checkbox"
           checked={checked}
-          onChange={(e) =>
-            start(async () => {
-              await setHotel(paqueteId, hotel.id, e.target.checked);
-              onDone();
-            })
-          }
+          aria-label={`Agregar el hotel ${hotel.nombre}`}
+          onChange={(e) => {
+            const marcar = e.target.checked;
+            // Quitar un hotel borra su prioridad en el servidor: se descarta también la elegida localmente.
+            if (!marcar) onPrioridadDescartar(hotel.id);
+            cola.solicitar({
+              tipo: "hotel", coalescible: true,
+              // Marcar = fila nueva sin afinar (así la deja el servidor): sin categorías, regímenes ni prioridad.
+              items: [{ id: hotel.id, valor: marcar ? { categorias: null, regimenes: null, prioridad: null } : null }],
+              ejecutar: () => acc.setHotel(paqueteId, hotel.id, marcar),
+            });
+          }}
         />
         <div className="min-w-0 flex-1">
           <button
@@ -865,6 +942,7 @@ function HotelRow({
           >
             {hotel.nombre}
           </button>
+          <EstadoGuardado estado={estado} id={`hotel-${hotel.id}`} onDescartar={() => cola.descartarError("hotel", hotel.id)} />
           <p className="text-xs text-gray-500">
             {hotel.zona ? `${hotel.zona} · ` : ""}
             {checked ? resumen : "clic en el nombre para ver tarifas y elegir categorías/regímenes"}
@@ -1230,11 +1308,10 @@ function PickBox({
 }
 
 function ServicioRow({
-  s, sel, paqueteId, onDone,
+  s, sel, paqueteId, cola, acc, estado,
 }: {
-  s: Servicio; sel: SelServicio | undefined; paqueteId: number; onDone: () => void;
+  s: Servicio; sel: SelServicio | undefined; paqueteId: number; cola: ColaSeleccion; acc: AccionesArmado; estado: EstadoFila;
 }) {
-  const [, start] = useTransition();
   const checked = sel !== undefined;
   const modo = sel?.modo;
   const incluido = sel?.incluido ?? false;
@@ -1251,9 +1328,10 @@ function ServicioRow({
     : vendibles.some((v) => (s.servicio_tarifa_pax ?? []).some((g) => g.temporada === v.nombre));
 
   function save(nextChecked: boolean, nextModo: "persona" | "grupo", nextIncluido: boolean) {
-    start(async () => {
-      await setServicio(paqueteId, s.id, nextChecked, nextModo, nextIncluido);
-      onDone();
+    cola.solicitar({
+      tipo: "servicio", coalescible: true,
+      items: [{ id: s.id, valor: nextChecked ? { modo: nextModo, incluido: nextIncluido } : null }],
+      ejecutar: () => acc.setServicio(paqueteId, s.id, nextChecked, nextModo, nextIncluido),
     });
   }
 
@@ -1265,11 +1343,14 @@ function ServicioRow({
   const m: "persona" | "grupo" = (modo as "persona" | "grupo") ?? (tienePersona ? "persona" : "grupo");
 
   return (
-    <li className="py-2.5">
+    <li className="py-2.5" data-testid={`servicio-${s.id}`}>
       <div className="flex items-start gap-3">
-        <input type="checkbox" className="mt-1" checked={checked} onChange={(e) => toggle(e.target.checked)} />
+        <input type="checkbox" className="mt-1" checked={checked} aria-label={`Agregar el servicio ${s.nombre}`} onChange={(e) => toggle(e.target.checked)} />
         <div className="flex-1">
-          <p className="text-sm font-medium text-gray-800">{s.nombre}</p>
+          <p className="text-sm font-medium text-gray-800">
+            {s.nombre}
+            <EstadoGuardado estado={estado} id={`servicio-${s.id}`} onDescartar={() => cola.descartarError("servicio", s.id)} />
+          </p>
           <p className="text-xs text-gray-500">
             {tienePersona ? `Persona desde ${formatMoneda(Math.min(...preciosVigencia), s.moneda)}` : ""}
             {tienePersona ? <span className="ml-1 rounded bg-gray-100 px-1.5 py-0.5 text-[10px] font-semibold text-gray-600">{(s.moneda ?? "COP").toUpperCase()}</span> : null}

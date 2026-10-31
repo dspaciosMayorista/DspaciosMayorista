@@ -292,14 +292,15 @@ const casillaTodos = (raiz: Element, re = /Seleccionar todos|Deseleccionar todos
   [...raiz.querySelectorAll("label")].find((l) => re.test(l.textContent ?? ""))!.querySelector("input")!;
 const lotes = () => p101.llamadas.filter(([n]) => n === "setServicios").map(([, a]) => a);
 
-test("Seleccionar todos marca solo los servicios con tarifa en UNA acción por lote, y refresca una vez", async () => {
+test("Seleccionar todos marca solo los servicios con tarifa en UNA acción por lote, cambia la pantalla al instante y NO recarga el editor", async () => {
   const raiz = await montar(props("bloqueo", { pestanaInicial: "servicios" }));
   assert.match(texto(raiz), /Adición de servicios \(0 de 3\)/);
   assert.match(texto(raiz), /Sin vigencia de tarifa vendible/);
   await pulsar(casillaTodos(raiz));
   assert.deepEqual(lotes(), [[7, [{ servicioId: 41, modo: "persona", incluido: false }, { servicioId: 42, modo: "grupo", incluido: false }], true]], "el 43 (sin tarifa) no entra");
   assert.equal(p101.llamadas.filter(([n]) => n === "setServicio").length, 0, "ya no se guarda en serie");
-  assert.equal(p101.refrescos, 1, "se refresca una sola vez al final");
+  assert.equal(p101.refrescos, 0, "un guardado exitoso ya no recarga el editor (la pantalla se mantiene con el estado optimista)");
+  assert.match(texto(raiz), /Adición de servicios \(2 de 3\)/, "el contador cambió con el lote");
   assert.match(texto(raiz), /Se agregó 2 servicios./);
 });
 
