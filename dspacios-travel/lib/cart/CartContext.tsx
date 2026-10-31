@@ -11,6 +11,7 @@ import {
 import { resumirMonedas, type ResumenMonedas } from "@/lib/cart/monedaCarrito";
 import { reemplazarManual, type ServicioManual } from "@/lib/cart/servicioManual";
 import { MAX_OPCIONES } from "@/lib/cotizacion/comparativa";
+import { hayHoraPendiente, tieneHoraPendiente, MENSAJE_HORA_PENDIENTE } from "@/lib/cart/horaPendiente";
 
 // Ítem de HOTEL del carrito — unión discriminada real por `modeloTarifario`
 // (Fase 3F-1 Bernalo). `HotelCartItemPersona` es EXACTAMENTE el contrato de
@@ -326,12 +327,14 @@ export function CartProvider({ children }: { children: ReactNode }) {
 
   const add = useCallback((item: DistributiveOmit<CartItem, "id">) => {
     if (item.tipo === "hotel" && hotelDeMasEnComparativa()) { setAvisoCarrito(AVISO_MAXIMO_COMPARATIVA); return; }
+    if (tieneHoraPendiente(item)) { setAvisoCarrito(MENSAJE_HORA_PENDIENTE); return; }
     const id = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
     ultimoRef.current = [...ultimoRef.current, { ...item, id } as CartItem];
     setItems((prev) => [...prev, { ...item, id: id } as CartItem]);
   }, [hotelDeMasEnComparativa]);
   const addConjunto = useCallback((hotel: DistributiveOmit<HotelCartItem, "id">, servicios: readonly TourSinVinculo[]) => {
     if (hotelDeMasEnComparativa()) { setAvisoCarrito(AVISO_MAXIMO_COMPARATIVA); return ""; }
+    if (hayHoraPendiente(servicios)) { setAvisoCarrito(MENSAJE_HORA_PENDIENTE); return ""; }
     const nuevoId = () => `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
     // Todos los ids se deciden AQUÍ, fuera del actualizador: así el
     // actualizador es puro y, si React lo ejecuta más de una vez (modo
@@ -344,6 +347,7 @@ export function CartProvider({ children }: { children: ReactNode }) {
   }, [encolar, hotelDeMasEnComparativa]);
   const actualizarConjunto = useCallback((c: ActualizacionConjunto): ResultadoActualizacionConjunto => {
     const nuevoId = () => `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+    if (hayHoraPendiente(c.servicios)) return { ok: false, motivo: "servicio_invalido" };
     const claveReserva = c.claveReserva;
     // Igual que `addConjunto`: los ids se deciden aquí, fuera del actualizador.
     const cambio: ReemplazoConjunto<CartItem> = {

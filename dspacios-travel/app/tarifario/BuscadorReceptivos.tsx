@@ -1,5 +1,6 @@
 "use client";
 
+import { HoraInput24 } from "@/components/ui/HoraInput24";
 import { DateInput } from "@/components/ui/DateInput";
 import { useEffect, useRef, useState, useTransition } from "react";
 import Image from "next/image";
@@ -248,12 +249,12 @@ export function BuscadorReceptivos({
         </div>
         <div className="mt-3 grid grid-cols-2 gap-3 sm:grid-cols-4">
           <div>
-            <label className="mb-1 block text-xs font-semibold text-slate-700">Hora de llegada (traslado)</label>
-            <input type="time" aria-label="Hora de llegada del traslado" value={hLlegada} onChange={(e) => setHLlegada(e.target.value)} className={`${sel} pl-3`} />
+            <span className="mb-1 block text-xs font-semibold text-slate-700">Hora de llegada (traslado)</span>
+            <HoraInput24 opcional etiqueta="Hora de llegada del traslado" value={hLlegada} onChange={setHLlegada} />
           </div>
           <div>
-            <label className="mb-1 block text-xs font-semibold text-slate-700">Hora de salida (traslado)</label>
-            <input type="time" aria-label="Hora de salida del traslado" value={hSalida} onChange={(e) => setHSalida(e.target.value)} className={`${sel} pl-3`} />
+            <span className="mb-1 block text-xs font-semibold text-slate-700">Hora de salida (traslado)</span>
+            <HoraInput24 opcional etiqueta="Hora de salida del traslado" value={hSalida} onChange={setHSalida} />
           </div>
           <p className="col-span-2 self-end text-[11px] text-slate-400">Opcional. Algunos traslados cuestan más en ciertos horarios; indica la hora para ver el precio final.</p>
         </div>

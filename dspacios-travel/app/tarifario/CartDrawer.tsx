@@ -1,5 +1,6 @@
 "use client";
 
+import { hayHoraPendiente, MENSAJE_HORA_PENDIENTE } from "@/lib/cart/horaPendiente";
 import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { Hotel, MapPin, ShoppingCart, X } from "lucide-react";
@@ -272,7 +273,7 @@ export function CartDrawer({ checkoutHabilitado = false, fotosPorHotel = {} }: {
                 </button>
                 <button
                   type="button"
-                  disabled={!items.length || !checkoutHabilitado}
+                  disabled={!items.length || !checkoutHabilitado || hayHoraPendiente(items)}
                   onClick={() => { closeDrawer(); router.push(modoComparativa ? "/tarifario/checkout?modo=comparativa" : "/tarifario/checkout"); }}
                   className="flex-1 rounded-lg px-4 py-2.5 text-sm font-semibold text-white disabled:opacity-40"
                   style={{ backgroundColor: "var(--brand-primary)" }}
@@ -281,6 +282,7 @@ export function CartDrawer({ checkoutHabilitado = false, fotosPorHotel = {} }: {
                   {modoComparativa ? "Crear comparativa" : "Finalizar compra"}
                 </button>
               </div>
+              {hayHoraPendiente(items) && <p role="alert" className="mt-2 text-center text-xs text-amber-700">{MENSAJE_HORA_PENDIENTE}</p>}
               {!checkoutHabilitado && items.length > 0 && (
                 <p className="mt-2 text-center text-[11px] text-gray-400">El checkout (cotización + solicitud) llega en la próxima fase.</p>
               )}

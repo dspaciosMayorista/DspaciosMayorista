@@ -25,7 +25,7 @@ Búsqueda y checkout (`liquidarServicioPuntual`), costo/CxP (`liquidarCostoTour`
 
 Publicación = **referencia** (`lib/calc/servicioVigencias.ts::referenciaPublicacion`): mínimo neto entre las vigencias que cubren TODO el viaje del paquete; rangos de grupo idénticos entre esas vigencias o falla. Las rutas que escalan el precio publicado (`computo.ts`) usan la MISMA función para el denominador. Incluidos: `incluidoEnEstadia` exige UNA vigencia en la estadía y sin franjas. Cualquier faltante falla con mensaje legible y la publicación no escribe nada.
 
-**Pendiente conocido:** el carrito muestra el precio base de un traslado con franjas añadido desde la tarjeta de un hotel hasta el checkout (el servidor lo recalcula con la hora del vuelo); la vista previa de la tarjeta ya lo rotula «Desde / Total referencial».
+**Hora pendiente = no vendible (#421):** un traslado con franja cuya hora no se conoce ya no entra al carrito, ni pasa a checkout ni a cotización (`evaluarServicios` → estado `hora_pendiente`; `lib/cart/horaPendiente.ts` bloquea `add`/`addConjunto`/`actualizarConjunto`, el botón del carrito y `checkout`). La tarjeta de un hotel en **bloqueo** manda `recorrido` (`{modulo:"bloqueo", bloqueoId}`) a `buscarReceptivos`, que lee la hora acreditada del vuelo en el servidor (`horasDelRecorrido`) y la prefiere sobre la capturada. Sin vuelo acreditado (porción terrestre, dinámico sin hora, Bernalo/empaquetado) la hora se captura en «Receptivos» con `HoraInput24`.
 
 ## Operación
 Orden: preflight 255 → `auditoria_255_servicios_sin_vigencia.sql` (qué se queda sin tarifa) → migración 255 → postcheck 255. Rollback: `rollback_255_…` (aborta si hay franjas). Preview y Producción comparten base.

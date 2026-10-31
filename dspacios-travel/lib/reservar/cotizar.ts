@@ -38,6 +38,7 @@ import {
   type DatosServicioPar, type ResultadoServicio, type RespuestaPublicaServicioPuntual, type FilaTemporadaConFranjas,
 } from "@/lib/reservar/liquidacionServicio";
 import { validarHorasTramos, type HorasTramos } from "@/lib/calc/trasladoFranjas";
+import { combinarHoras, horasAcreditadasDelRecorrido } from "@/lib/reservar/horasRecorrido";
 import { cargarVigenciasServicios, leerTemporadasServicio } from "@/lib/reservar/temporadasServicio";
 import {
   evaluarHotelPorFechas, generarSugerenciasFechas, consolidarSugerenciasGlobales, condicionHotelFechas,
@@ -900,10 +901,30 @@ export async function buscarReceptivos(inputRaw: unknown): Promise<{ ok: true; r
   if (!vPaquete.ok) return { ok: false, error: vPaquete.error };
   const vHoras = validarHorasTramos(o.horas);
   if (!vHoras.ok) return { ok: false, error: vHoras.error };
+  // Hora ACREDITADA por el vuelo del hotel (bloqueo/dinámico): el servidor la lee de la base y pisa la del navegador. Sin recorrido, solo vale la hora capturada.
+  let horasEfectivas = vHoras.horas;
+  const rec = o.recorrido;
+  if (rec !== undefined && rec !== null) {
+    const r = rec as Record<string, unknown>;
+    const idOk = (v: unknown): v is number => typeof v === "number" && Number.isInteger(v) && v > 0;
+    const valido = typeof rec === "object" && !Array.isArray(rec) && ((r.modulo === "bloqueo" && idOk(r.bloqueoId)) || (r.modulo === "dinamico" && idOk(r.salidaId)));
+    if (!valido) return { ok: false, error: "El recorrido del vuelo no es válido." };
+    // El vuelo/salida debe pertenecer al paquete y a las fechas consultados; si no, falla sin cotizar (nunca se usa la hora de un vuelo ajeno).
+    if (vPaquete.paqueteId == null) return { ok: false, error: "El recorrido del vuelo no corresponde a esta consulta." };
+    const h = await horasAcreditadasDelRecorrido(createAdminClient(), {
+      paqueteId: vPaquete.paqueteId, fechaIda: vRango.fechaIda, fechaRegreso: vRango.fechaRegreso,
+      recorrido: r.modulo === "bloqueo" ? { modulo: "bloqueo", bloqueoId: r.bloqueoId as number } : { modulo: "dinamico", salidaId: r.salidaId as number },
+    });
+    if (!h.ok) {
+      console.error(`[buscarReceptivos] etapa=horas_recorrido motivo=${h.motivo} detalle=${h.detalle}`);
+      return { ok: false, error: h.motivo === "no_corresponde" ? "El recorrido del vuelo no corresponde a esta consulta." : MENSAJE_BUSQUEDA_RECEPTIVOS_NO_DISPONIBLE };
+    }
+    horasEfectivas = combinarHoras(vHoras.horas, h.horas);
+  }
 
   const input: BusquedaServiciosInput = {
     fechaIda: vRango.fechaIda, fechaRegreso: vRango.fechaRegreso, pax: vPax.pax, destino: vDestino.destino || undefined,
-    paqueteId: vPaquete.paqueteId, horas: vHoras.horas,
+    paqueteId: vPaquete.paqueteId, horas: horasEfectivas,
   };
 
   const numNoches = vRango.noches;

@@ -53,3 +53,37 @@ export function combinarHoras(capturadas: HorasTramos | undefined, delVuelo: Hor
 export function horarioCambio(cotizadas: HorasTramos | undefined, vigentes: HorasTramos, tramosCotizados: ("llegada" | "salida")[]): ("llegada" | "salida")[] {
   return tramosCotizados.filter((t) => (cotizadas?.[t] ?? null) !== (vigentes[t] ?? null));
 }
+
+export type RecorridoConsultado = { modulo: "bloqueo"; bloqueoId: number } | { modulo: "dinamico"; salidaId: number };
+export type HorasAcreditadas =
+  | { ok: true; horas: HorasTramos }
+  | { ok: false; motivo: "no_corresponde" | "lectura"; detalle: string };
+
+/**
+ * Horas del vuelo ACREDITADAS para una consulta de servicios: antes de usarlas, el servidor comprueba que el vuelo/salida recibido del navegador pertenece al
+ * PAQUETE consultado (bloqueo: fila en `armado_vuelos`; dinámica: `salidas_dinamicas.paquete_id`) y a la OPCIÓN consultada (mismas fechas de ida y regreso).
+ * Un id válido de otro paquete, de otras fechas o inexistente falla sin devolver horas: nunca se cotiza con la hora de un vuelo ajeno.
+ * (El checkout vuelve a resolver las horas desde el ítem del carrito con `horasDelRecorrido`: esta función no lo sustituye.)
+ */
+export async function horasAcreditadasDelRecorrido(
+  admin: ReturnType<typeof createAdminClient>,
+  i: { paqueteId: number; recorrido: RecorridoConsultado; fechaIda: string; fechaRegreso: string },
+): Promise<HorasAcreditadas> {
+  const no = (detalle: string): HorasAcreditadas => ({ ok: false, motivo: "no_corresponde", detalle });
+  if (i.recorrido.modulo === "bloqueo") {
+    const { data: vinculo, error: e1 } = await admin.from("armado_vuelos").select("paquete_id, bloqueo_id").eq("paquete_id", i.paqueteId).eq("bloqueo_id", i.recorrido.bloqueoId).maybeSingle();
+    if (e1) return { ok: false, motivo: "lectura", detalle: e1.message };
+    if (!vinculo) return no(`el bloqueo ${i.recorrido.bloqueoId} no pertenece al paquete ${i.paqueteId}`);
+    const { data: b, error: e2 } = await admin.from("bloqueos_vuelo").select("id, fecha_ida, fecha_regreso, hora_llegada_ida, hora_salida_reg").eq("id", i.recorrido.bloqueoId).maybeSingle();
+    if (e2) return { ok: false, motivo: "lectura", detalle: e2.message };
+    if (!b) return no(`el bloqueo ${i.recorrido.bloqueoId} no existe`);
+    if (b.fecha_ida !== i.fechaIda || b.fecha_regreso !== i.fechaRegreso) return no(`el bloqueo ${i.recorrido.bloqueoId} no es de las fechas consultadas`);
+    return { ok: true, horas: compactar(b.hora_llegada_ida, b.hora_salida_reg) };
+  }
+  const { data: s, error } = await admin.from("salidas_dinamicas").select("id, paquete_id, fecha_ida, fecha_regreso, hora_llegada_ida, hora_salida_reg").eq("id", i.recorrido.salidaId).maybeSingle();
+  if (error) return { ok: false, motivo: "lectura", detalle: error.message };
+  if (!s) return no(`la salida ${i.recorrido.salidaId} no existe`);
+  if (s.paquete_id !== i.paqueteId) return no(`la salida ${i.recorrido.salidaId} no pertenece al paquete ${i.paqueteId}`);
+  if (s.fecha_ida !== i.fechaIda || s.fecha_regreso !== i.fechaRegreso) return no(`la salida ${i.recorrido.salidaId} no es de las fechas consultadas`);
+  return { ok: true, horas: compactar(s.hora_llegada_ida, s.hora_salida_reg) };
+}

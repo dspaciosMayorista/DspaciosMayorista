@@ -18,6 +18,8 @@
 // ─────────────────────────────────────────────────────────────────────────
 import type { ResultadoServicio } from "@/lib/reservar/liquidacionServicio";
 
+export type RecorridoServicios = { modulo: "bloqueo"; bloqueoId: number } | { modulo: "dinamico"; salidaId: number };
+
 /** Datos del hotel TAL COMO ESTÁN elegidos en la tarjeta/modal. */
 export type HotelParaServicios = {
   paqueteId: number | null;
@@ -28,6 +30,8 @@ export type HotelParaServicios = {
   /** Precio del hotel que se va a agregar (presentación). `null` = aún sin precio. */
   precio: number | null;
   moneda: string | null;
+  /** Recorrido del vuelo del hotel (solo bloqueo/dinámico): el servidor resuelve de ahí la hora acreditada del traslado. Ausente = sin vuelo que acredite hora. */
+  recorrido?: RecorridoServicios | null;
   /** Cualquier otra elección del hotel que, si cambia, invalida la cotización
    * de servicios (categoría, régimen, habitaciones, salida…). */
   firma: string;
@@ -44,7 +48,7 @@ export type ConsultaServicios =
 export type EstadoServicio = {
   servicioId: number;
   nombre: string;
-  estado: "faltan_datos" | "cotizando" | "ok" | "sin_precio" | "moneda_distinta" | "error";
+  estado: "faltan_datos" | "cotizando" | "ok" | "sin_precio" | "moneda_distinta" | "hora_pendiente" | "error";
   resultado: ResultadoServicio | null;
   mensaje: string | null;
 };
@@ -57,12 +61,13 @@ export type EvaluacionServicios = {
   bloqueo: string | null;
   /** Total hotel + servicios — SOLO cuando todo está cotizado y es compatible. */
   total: { monto: number; moneda: string } | null;
-  /** True si algún servicio es un traslado con recargo por horario y su precio es el BASE (falta la hora): el total NO es final. */
-  referencial?: boolean;
 };
 
-export const MENSAJE_PRECIO_BASE =
-  "Precio base: este traslado puede sumar un recargo según la hora de llegada o salida. El precio final se confirma al cotizar, con la hora del vuelo (o la que indiques).";
+/** Un traslado con franja horaria cuya hora se desconoce NO tiene precio final: bloquea el conjunto (nunca se muestra como «desde» ni entra al carrito). */
+export function mensajeHoraPendiente(nombre: string, tramos: readonly string[]): string {
+  const cuando = tramos.length === 2 ? "de llegada y de salida" : tramos[0] === "salida" ? "de salida" : "de llegada";
+  return `«${nombre}» cambia de precio según la hora ${cuando}, que aún no se conoce: no tiene precio final y no se puede agregar.`;
+}
 
 const FECHA_ISO = /^\d{4}-\d{2}-\d{2}$/;
 
@@ -74,7 +79,7 @@ export function claveConsultaServicios(h: HotelParaServicios): string | null {
   if (!h.fechaIda || !h.fechaRegreso || !FECHA_ISO.test(h.fechaIda) || !FECHA_ISO.test(h.fechaRegreso) || h.fechaRegreso <= h.fechaIda) return null;
   if (h.pax == null || !Number.isInteger(h.pax) || h.pax < 1) return null;
   if (h.precio == null || !(h.precio > 0)) return null;
-  return JSON.stringify([h.paqueteId, h.fechaIda, h.fechaRegreso, h.pax, h.precio, (h.moneda ?? "COP").toUpperCase(), h.firma]);
+  return JSON.stringify([h.paqueteId, h.fechaIda, h.fechaRegreso, h.pax, h.precio, (h.moneda ?? "COP").toUpperCase(), h.firma, h.recorrido ?? null]);
 }
 
 /** El resultado que corresponde EXACTAMENTE a (paqueteId, servicioId), o `null`. */
@@ -125,7 +130,8 @@ export function evaluarServicios(input: {
     if ((r.moneda || "COP").toUpperCase() !== monedaHotel) {
       return { ...base, estado: "moneda_distinta", resultado: r, mensaje: `«${nombre}» está en ${r.moneda} y el hotel en ${monedaHotel}: no se pueden sumar en un mismo conjunto.` };
     }
-    return { ...base, estado: "ok", resultado: r, ...(r.requiereHora?.length ? { mensaje: MENSAJE_PRECIO_BASE } : {}) };
+    if (r.requiereHora?.length) return { ...base, estado: "hora_pendiente", resultado: r, mensaje: mensajeHoraPendiente(nombre, r.requiereHora) };
+    return { ...base, estado: "ok", resultado: r };
   });
 
   const listo = servicios.every((s) => s.estado === "ok");
@@ -133,7 +139,10 @@ export function evaluarServicios(input: {
   if (!listo) {
     if (servicios.some((s) => s.estado === "faltan_datos")) bloqueo = "Completa fechas, pasajeros y precio del hotel para cotizar los servicios seleccionados.";
     else if (servicios.some((s) => s.estado === "cotizando")) bloqueo = "Cotizando los servicios con los datos actuales del hotel…";
-    else {
+    else if (servicios.some((s) => s.estado === "hora_pendiente")) {
+      const pend = servicios.filter((s) => s.estado === "hora_pendiente").map((s) => `«${s.nombre}»`);
+      bloqueo = `No se puede agregar el conjunto: ${pend.join(", ")} depende${pend.length > 1 ? "n" : ""} de la hora de llegada o salida, aún desconocida. Quítalo${pend.length > 1 ? "s" : ""} o agrégalo desde «Receptivos» indicando la hora.`;
+    } else {
       const malos = servicios.filter((s) => s.estado !== "ok").map((s) => `«${s.nombre}»`);
       bloqueo = `No se puede agregar el conjunto: ${malos.join(", ")} sin precio válido. Quítalo${malos.length > 1 ? "s" : ""} o cambia la selección del hotel.`;
     }
@@ -141,8 +150,7 @@ export function evaluarServicios(input: {
   const total = listo && precioHotel != null
     ? { monto: precioHotel + servicios.reduce((s, x) => s + (x.resultado as ResultadoServicio).total, 0), moneda: monedaHotel }
     : null;
-  const referencial = servicios.some((s) => s.resultado?.requiereHora?.length);
-  return { servicios, listo, bloqueo, total, ...(referencial ? { referencial: true } : {}) };
+  return { servicios, listo, bloqueo, total };
 }
 
 // ── #54: editar los servicios de un hotel que YA está en el carrito ──────
@@ -224,7 +232,7 @@ export function serviciosParaCarrito(
   ev: EvaluacionServicios,
   hotel: HotelParaServicios,
   fotos: Readonly<Record<number, string | null>> = {},
-): { tipo: "tour"; paqueteId: number; servicioId: number; nombre: string; destino: string | null; fotoUrl: string | null; fechaIda: string; fechaRegreso: string; noches: number; pax: number; precio: number; moneda: string; referencial?: boolean }[] {
+): { tipo: "tour"; paqueteId: number; servicioId: number; nombre: string; destino: string | null; fotoUrl: string | null; fechaIda: string; fechaRegreso: string; noches: number; pax: number; precio: number; moneda: string }[] {
   if (!ev.listo || !hotel.fechaIda || !hotel.fechaRegreso) return [];
   return ev.servicios.map((s) => {
     const r = s.resultado as ResultadoServicio;
@@ -232,7 +240,6 @@ export function serviciosParaCarrito(
       tipo: "tour" as const, paqueteId: r.paqueteId, servicioId: r.servicioId, nombre: r.nombre, destino: r.destino,
       fotoUrl: fotos[r.servicioId] ?? null, fechaIda: hotel.fechaIda as string, fechaRegreso: hotel.fechaRegreso as string,
       noches: r.noches, pax: r.pax, precio: r.total, moneda: r.moneda,
-      ...(r.requiereHora?.length ? { referencial: true } : {}),
     };
   });
 }

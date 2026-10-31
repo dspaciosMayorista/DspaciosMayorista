@@ -9,7 +9,7 @@ import {
   Categoria, EtiquetasHotel, DescripcionHotelExpandible, UbicacionHotel, SeccionesIncluye, IncluyeSalida, IncluyeCompacto, AddonsPaquete, ReceptivoModal,
   type Receptivo, type ReceptivoModalInfo,
 } from "./tarjetaHotelCompartida";
-import { claveConsultaServicios, evaluarEdicionServicios, serviciosParaCarrito, type HotelParaServicios } from "@/lib/tarifario/servicioAdicionalPaquete";
+import { claveConsultaServicios, evaluarEdicionServicios, serviciosParaCarrito, type HotelParaServicios, type RecorridoServicios } from "@/lib/tarifario/servicioAdicionalPaquete";
 import { serviciosDeHotel } from "@/lib/cart/vinculoServicios";
 import {
   DesgloseServicios, EdicionServiciosCarrito, PISTA_EDITAR_SERVICIOS, ServiciosEnCarrito, avisoTarifaHotel, conjuntoGuardadoDe,
@@ -2170,6 +2170,8 @@ type ServiciosEditor = ServiciosTarjeta & {
   fechaRegreso: string | null;
   /** Elecciones del hotel que invalidan la cotización de servicios si cambian. */
   firma: string;
+  /** Vuelo del hotel (bloqueo) para acreditar la hora del traslado en el servidor. */
+  recorrido?: RecorridoServicios | null;
 };
 const SIN_SELECCION: readonly number[] = [];
 const SIN_ADDONS: Receptivo[] = [];
@@ -3135,6 +3137,7 @@ function Selector({
           // Bloqueo: las fechas son las del record (fijas).
           fechaIda: opcion.fechaIda, fechaRegreso: opcion.fechaRegreso,
           firma: JSON.stringify([opcion.key, catEff, regEff]),
+          recorrido: opcion.modulo === "bloqueo" && opcion.bloqueoId != null ? { modulo: "bloqueo" as const, bloqueoId: opcion.bloqueoId } : null,
         } : undefined} />
     </div>
   );
@@ -3474,6 +3477,7 @@ function EditorPax({
         // Todos los viajeros (infantes incluidos): misma base que exige el checkout.
         pax: puede ? pax + infantes : null, precio: puede ? precio : null, moneda: moneda ?? null,
         firma: JSON.stringify([servicios?.firma ?? "", habs, edades]),
+        recorrido: servicios?.recorrido ?? null,
       };
   const { evaluacion: evaluacionServicios, reintentar: reintentarServicios } =
     useCotizacionServicios(hotelServicios, servicios?.seleccion ?? SIN_SELECCION, servicios?.addons ?? SIN_ADDONS);
