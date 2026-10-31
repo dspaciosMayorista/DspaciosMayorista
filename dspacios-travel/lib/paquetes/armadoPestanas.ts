@@ -34,7 +34,7 @@ export function normalizarPestana(valor: unknown, tipo: TipoPaquete): PestanaId 
 }
 
 export type ClaveEstadoTarifario = "publicado" | "desactualizado" | "fallido";
-export type EstadoTarifarioVista = { clave: ClaveEstadoTarifario; etiqueta: string; detalle: string | null };
+export type EstadoTarifarioVista = { clave: ClaveEstadoTarifario; etiqueta: string; detalle: string | null; /** Aviso crudo (diagnóstico) para el panel «Ver avisos»; nunca va en el encabezado. */ avisos?: string | null };
 
 /** `armado_paquetes.tarifario_estado` (migración 181) → etiqueta de la pantalla. 'listo' = publicado; 'pendiente' y
  *  'recalculando' = desactualizado (hay que esperar o regenerar); 'fallido' muestra `tarifario_error` si existe. Un
@@ -48,7 +48,7 @@ export function estadoTarifarioVista(estado: string | null | undefined, error: s
     // Migración 256: publicado pero con salidas u opcionales que NO se ofrecen por falta de vigencia confirmada; el diagnóstico dice cuáles.
     if (diag) {
       const sinOferta = /^Sin oferta vendible/.test(diag);
-      return { clave: "publicado", etiqueta: sinOferta ? "Publicado sin oferta vendible" : "Publicado con omisiones", detalle: publicable === false ? `${diag} No visible para los lectores mientras el paquete esté inactivo.` : diag };
+      return { clave: "publicado", etiqueta: sinOferta ? "Publicado sin oferta vendible" : "Publicado con avisos", detalle: publicable === false ? "No visible para los lectores mientras el paquete esté inactivo." : null, avisos: diag };
     }
     return {
       clave: "publicado",

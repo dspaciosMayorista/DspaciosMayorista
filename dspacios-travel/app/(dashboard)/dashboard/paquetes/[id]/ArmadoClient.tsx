@@ -16,6 +16,7 @@ import { Input } from "@/components/ui/input";
 import { formatMoneda } from "@/lib/utils";
 import { filasUnidades, resumenUnidades, ROL_NETA_BLOQUEO, ROL_REVENTA_BLOQUEO, type EntradaUnidad, type MonedaMontaje, type PublicacionMontaje } from "@/lib/paquetes/unidadesMontaje";
 import { ConfigForm } from "../ConfigForm";
+import { AvisosTarifario } from "./AvisosTarifario";
 import { SalidasDinamicasEditor, type SalidaDinamica } from "./SalidasDinamicasEditor";
 import {
   setVuelo, setTodosVuelos, setHotel, setTodosHoteles, setServicio, setServicios, generarTarifario,
@@ -123,6 +124,9 @@ export function ArmadoClient(props: {
   /** Migración 256: qué se dejó de publicar por falta de vigencia (incluidos por salida, opcionales ocultos/parciales). */
   tarifarioDiagnostico?: string | null;
   tarifarioPublicable?: boolean | null;
+  /** Error al leer las tarifas publicadas (distinto de «no hay tarifas»), y total en base para detectar lecturas truncadas. */
+  resultadoError?: string | null;
+  totalResultado?: number | null;
   /** Solo pruebas de navegador: sustituye las acciones de servidor (por defecto, las reales). */
   acciones?: Partial<AccionesArmado>;
 }) {
@@ -131,6 +135,9 @@ export function ArmadoClient(props: {
   const tipo = (props.config?.tipo ?? "bloqueo") as "bloqueo" | "porcion_terrestre" | "servicios" | "dinamico";
   const [pending, start] = useTransition();
   const [msg, setMsg] = useState("");
+  // Aviso de la última generación en esta sesión (sustituye al persistido, que es el mismo texto): se muestra una sola vez, en el panel.
+  const [avisoGenerar, setAvisoGenerar] = useState<string | null>(null);
+  const [verAvisos, setVerAvisos] = useState(false);
   // Guardado OPTIMISTA de las casillas (lib/paquetes/seleccionOptimista.ts): el clic se ve al instante, cada fila muestra «Guardando» y las respuestas
   // viejas no pisan un clic más reciente. Un guardado exitoso NO recarga el editor: se marca "sucio" y se refresca UNA vez al abrir la pestaña
   // Tarifario (lo único que depende del servidor: estado del tarifario y montaje). «Generar tarifario» ya refresca por su cuenta.
@@ -244,9 +251,10 @@ export function ArmadoClient(props: {
   function generar() {
     if (bloqueoGenerar(cola.instantanea())) return; // nunca con guardados pendientes o fallidos
     setMsg("");
+    setAvisoGenerar(null);
     start(async () => {
       const r = await generarTarifario(props.paqueteId);
-      if (r.ok) setMsg(`Tarifario generado: ${r.id ?? 0} tarifas publicadas.${r.aviso ? ` ${r.aviso}` : ""}`);
+      if (r.ok) { setMsg(`Tarifario generado: ${r.id ?? 0} tarifas publicadas.`); setAvisoGenerar(r.aviso ?? null); }
       else setMsg(`Error: ${r.error}`);
       refrescar();
     });
@@ -361,6 +369,9 @@ export function ArmadoClient(props: {
     props.tarifarioPublicable,
     props.tarifarioDiagnostico
   );
+
+  const avisoTexto = avisoGenerar ?? estadoTarifario.avisos ?? null;
+  const etiquetaTarifario = avisoGenerar && estadoTarifario.etiqueta === "Publicado" ? "Publicado con avisos" : estadoTarifario.etiqueta;
 
   return (
     <div className="space-y-4">
@@ -613,8 +624,18 @@ export function ArmadoClient(props: {
                 <div className="min-w-0" data-testid="estado-tarifario" data-estado={estadoTarifario.clave}>
                   <p className="flex items-center gap-2 font-semibold text-gray-800">
                     <EstadoIcono clave={estadoTarifario.clave} />
-                    Tarifario: {estadoTarifario.etiqueta}
+                    Tarifario: {etiquetaTarifario}
                   </p>
+                  {(avisoTexto || props.resultado.length > 0) && (
+                    <p className="mt-0.5 flex flex-wrap items-center gap-2 text-xs text-gray-600" data-testid="resumen-tarifario">
+                      <span data-testid="conteo-tarifas">{(props.totalResultado ?? props.resultado.length).toLocaleString("es-CO")} tarifas</span>
+                      {avisoTexto && (
+                        <button type="button" onClick={() => setVerAvisos(true)} data-testid="ver-avisos" className="rounded border border-amber-300 bg-amber-50 px-2 py-0.5 font-medium text-amber-800 hover:bg-amber-100">
+                          Ver avisos
+                        </button>
+                      )}
+                    </p>
+                  )}
                   {estadoTarifario.detalle && (
                     <p className={`mt-0.5 text-xs ${estadoTarifario.clave === "fallido" ? "text-red-700" : "text-gray-500"}`}>{estadoTarifario.detalle}</p>
                   )}
@@ -637,11 +658,12 @@ export function ArmadoClient(props: {
                 filas={filasUnid}
                 resumen={resumenUnid}
               />
-              <ResultadoTabla filas={props.resultado} />
+              <ResultadoTabla filas={props.resultado} error={props.resultadoError} total={props.totalResultado} />
             </div>
           </div>
         )}
       </div>
+      <AvisosTarifario aviso={avisoTexto} abierto={verAvisos} onCerrar={() => setVerAvisos(false)} />
     </div>
   );
 }
@@ -1472,7 +1494,14 @@ function GrupoTarifaLinea({ hotel, grupo }: { hotel: string; grupo: GrupoTarifa 
   );
 }
 
-function ResultadoTabla({ filas }: { filas: Resultado[] }) {
+function ResultadoTabla({ filas, error, total }: { filas: Resultado[]; error?: string | null; total?: number | null }) {
+  if (error) {
+    return (
+      <p role="alert" data-testid="resultado-error" className="mt-4 rounded-lg border border-red-200 bg-red-50 p-4 text-sm text-red-700">
+        No se pudieron leer las tarifas publicadas: {error}. Recarga la página; las tarifas no se han perdido.
+      </p>
+    );
+  }
   if (!filas.length) {
     return (
       <p className="mt-4 rounded-lg border border-dashed border-gray-200 py-8 text-center text-sm text-gray-400">
@@ -1487,6 +1516,11 @@ function ResultadoTabla({ filas }: { filas: Resultado[] }) {
 
   return (
     <div className="mt-4 space-y-3">
+      {total != null && filas.length < total && (
+        <p role="alert" data-testid="resultado-truncado" className="rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm text-amber-800">
+          Se muestran {filas.length.toLocaleString("es-CO")} de {total.toLocaleString("es-CO")} tarifas: la lectura quedó incompleta. Recarga la página.
+        </p>
+      )}
       {grupos.map((g) => (
         <Section
           key={g.hotel}

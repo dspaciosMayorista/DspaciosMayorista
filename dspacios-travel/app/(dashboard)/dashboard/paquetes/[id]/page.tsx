@@ -161,8 +161,10 @@ export default async function PaqueteDetallePage({
   // directo, nunca `tarifario_resultado_publicable`.
   const resultado: Record<string, unknown>[] = [];
   const PAGE = 1000;
-  for (let from = 0; ; from += PAGE) {
-    const { data: page } = await sb
+  let resultadoError: string | null = null;
+  // Avanza por las filas REALMENTE recibidas y para solo con una página vacía: un tope de filas del proyecto menor a PAGE no trunca en silencio.
+  for (let from = 0; ; ) {
+    const { data: page, error: errPagina } = await sb
       .from("tarifario_resultado")
       .select("*")
       .eq("paquete_id", paqueteId)
@@ -171,10 +173,12 @@ export default async function PaqueteDetallePage({
       .order("categoria")
       .order("regimen")
       .range(from, from + PAGE - 1);
+    if (errPagina) { resultadoError = errPagina.message; break; }
     if (!page || page.length === 0) break;
     resultado.push(...page);
-    if (page.length < PAGE) break;
+    from += page.length;
   }
+  const { count: totalResultado } = await sb.from("tarifario_resultado").select("id", { count: "exact", head: true }).eq("paquete_id", paqueteId);
 
   const destinoNombre = (pq.destinos as unknown as { nombre: string } | null)?.nombre ?? null;
   // Fuera del JSX: un objeto literal con una flecha adentro como prop no se puede serializar a un Client Component.
@@ -251,6 +255,8 @@ export default async function PaqueteDetallePage({
         tarifarioEstado={(pq as { tarifario_estado?: string | null }).tarifario_estado ?? null}
         tarifarioError={(pq as { tarifario_error?: string | null }).tarifario_error ?? null}
         tarifarioDiagnostico={(pq as { tarifario_diagnostico?: string | null }).tarifario_diagnostico ?? null}
+        resultadoError={resultadoError}
+        totalResultado={totalResultado ?? null}
         tarifarioPublicable={(pq as { tarifario_snapshot_publicable?: boolean | null }).tarifario_snapshot_publicable ?? null}
       />
     </div>
