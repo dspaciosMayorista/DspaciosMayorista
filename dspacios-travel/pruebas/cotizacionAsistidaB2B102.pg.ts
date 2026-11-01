@@ -795,8 +795,8 @@ describe("102 · portal, pagos de comisión y no duplicidad", () => {
     const admin = clienteLocal(TOKEN_SERVICIO);
     const columnas = "numero_contrato, tenant, aliado_id, b2b_usuario_id, agencia_nombre, freelance_nombre, fecha_salida";
     const consultas = {
-      porB2bUsuario: async (usuarioId: string) => ((await admin.from("ventas").select(columnas).eq("b2b_usuario_id", usuarioId)).data ?? []),
-      porAliadoId: async (aliadoId: number) => ((await admin.from("ventas").select(columnas).eq("aliado_id", aliadoId)).data ?? []),
+      porB2bUsuario: async (usuarioId: string) => ({ completa: true, filas: ((await admin.from("ventas").select(columnas).eq("b2b_usuario_id", usuarioId)).data ?? []) }),
+      porAliadoId: async (aliadoId: number) => ({ completa: true, filas: ((await admin.from("ventas").select(columnas).eq("aliado_id", aliadoId)).data ?? []) }),
       porNombreSinIds: async () => ({ completa: true, filas: [] }),
       verificarFichas: async () => ({ completa: true as const, conFicha: new Set<string>() }),
     };

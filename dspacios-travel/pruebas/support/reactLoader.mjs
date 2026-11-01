@@ -200,11 +200,14 @@ export async function resolve(specifier, context, nextResolve) {
   // Documentos por URL (migración 193, pruebas/documentosLegacyNombre.react.ts):
   // los cargadores REALES de estado de cuenta/plan/recibo y cuenta de cobro,
   // contra una base simulada en memoria.
-  if ((specifier === "@/lib/supabase/server" || specifier === "@/lib/supabase/admin") &&
+  // 65: con PG65_POSTGREST (recorrido de integración, supabase/scripts/test_65_portal_b2b.sh) NO se sustituye el cliente: la prueba aporta clientes REALES contra PostgREST.
+  if (!process.env.PG65_POSTGREST && (specifier === "@/lib/supabase/server" || specifier === "@/lib/supabase/admin") &&
       (context.parentURL?.endsWith("/lib/cuenta/estado.ts") ||
        context.parentURL?.endsWith("/lib/finanzas/comisionResolver.ts") ||
        // Listado del portal B2B y su columna de comisión (#38, pruebas/comisionPortalB2B.react.ts).
-       context.parentURL?.endsWith("/portal/b2b/page.tsx"))) {
+       context.parentURL?.endsWith("/portal/b2b/page.tsx") ||
+       // 65: la carga del portal salió de la página a su capa servidor (inicio y pestañas la comparten).
+       context.parentURL?.endsWith("/lib/portal/b2bPortalServidor.ts"))) {
     return { url: specifier.endsWith("/admin") ? STUB_SUPABASE_ADMIN : STUB_SUPABASE_SERVER, shortCircuit: true };
   }
   // Registro/aprobación B2B (migración 193): acciones REALES de aprobación,

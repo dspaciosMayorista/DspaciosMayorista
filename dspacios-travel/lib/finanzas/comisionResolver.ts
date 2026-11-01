@@ -1,6 +1,7 @@
 import { createClient } from "@/lib/supabase/server";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { calcularComisionFila, elegirFilaCobro, esComisionDescontada, evidenciaSinFicha, filasCobrables, type EvidenciaSinFicha, type FilaComisionB2B } from "@/lib/finanzas/comisionB2B";
+import { filasEnRevisionB2B } from "@/lib/finanzas/revisionComisionB2B";
 import { accesoDocumentoContrato } from "@/lib/auth/accesoDocumentoContrato";
 import { verificarFichasComisionManual, consultarFichasSupabase, fichaDeContrato } from "@/lib/auth/fichaComisionManual";
 import {
@@ -119,7 +120,10 @@ export async function resolverComisionB2B(
     .select("id, numero_contrato, aliado, nit, tipo_aliado, aliado_id, precio_venta, base_comision, base_explicita, comision_valor, pct_comision, recobro_total, pct_recobro_aliado, aplica_retencion, pct_retencion, estado, descontada_en_precio")
     .eq("numero_contrato", numero)
     .order("id", { ascending: true });
-  const filas = (filasRaw ?? []) as FilaResolver[];
+  // Filas retenidas por revisión contable (migración 268): no abren ni se cobran en este documento. Sin lectura completa, nada.
+  const enRevision = await filasEnRevisionB2B(admin);
+  if (!enRevision) return null;
+  const filas = ((filasRaw ?? []) as FilaResolver[]).filter((f) => !enRevision.has(f.id));
   // La decisión de ACCESO al contrato no cambia: la vía 2 usa, como siempre,
   // el aliado_id de la fila más reciente. Qué fila(s) se cobran se decide
   // después, por aliado (filasCobrables).

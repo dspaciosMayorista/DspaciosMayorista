@@ -140,10 +140,12 @@ export function crearBD(semilla: Record<string, Fila[]> = {}, rpcs: Record<strin
       op: "select" as "select" | "insert" | "update" | "upsert" | "delete",
       payload: null as unknown, conflicto: "id", filtros: [] as Filtro[],
       orden: [] as Array<[string, boolean]>, limite: Infinity,
+      rango: null as [number, number] | null, conteo: false,
     };
     const ejecutar = (unico: boolean) => {
       const coinciden = () => filas(tabla).filter((f) => q.filtros.every((fn) => fn(f)));
       let data: Fila[] = [];
+      let total = 0;
       if (q.op === "insert") {
         const lista = (Array.isArray(q.payload) ? q.payload : [q.payload]) as Fila[];
         data = lista.map((f) => ({ id: f.id ?? nuevoId(tabla), created_at: new Date().toISOString(), ...f }));
@@ -175,12 +177,15 @@ export function crearBD(semilla: Record<string, Fila[]> = {}, rpcs: Record<strin
           });
         }
         data = data.slice(0, q.limite);
+        total = data.length;
+        if (q.rango) data = data.slice(q.rango[0], q.rango[1] + 1);
       }
-      if (!unico) return { data, error: null };
+      if (!unico) return q.conteo ? { data, error: null, count: total } : { data, error: null };
       return { data: data[0] ?? null, error: null };
     };
     const b = {
-      select: () => b,
+      select: (_c?: string, o?: { count?: string }) => { if (o?.count) q.conteo = true; return b; },
+      range: (d: number, h: number) => { q.rango = [d, h]; return b; },
       insert: (p: unknown) => { q.op = "insert"; q.payload = p; return b; },
       update: (p: unknown) => { q.op = "update"; q.payload = p; return b; },
       upsert: (p: unknown, o?: { onConflict?: string }) => { q.op = "upsert"; q.payload = p; q.conflicto = o?.onConflict ?? "id"; return b; },

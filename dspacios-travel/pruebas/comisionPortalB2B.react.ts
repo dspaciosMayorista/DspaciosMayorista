@@ -11,7 +11,9 @@
 import { test, afterEach } from "node:test";
 import assert from "node:assert/strict";
 
-const { default: PortalB2BPage } = await import("../app/portal/b2b/page.tsx");
+const { default: PortalVentas } = await import("../app/portal/b2b/ventas/page.tsx");
+// 65: el listado con la columna de comisión vive en «Mis ventas»; la página vieja se partió en pestañas.
+const PortalB2BPage = () => PortalVentas({ searchParams: Promise.resolve({}) });
 const { resolverComisionB2B } = await import("../lib/finanzas/comisionResolver.ts");
 const { formatMoneda } = await import("../lib/utils.ts");
 const { supabaseEnMemoria } = await import("./support/memoriaSupabase.ts");
@@ -83,7 +85,7 @@ function celdasComision(arbol: unknown): Map<string, Celda> {
     const el = n as { type?: unknown; key?: string | null; props?: { children?: unknown } };
     if (el.type === "tr" && el.key && /^(DTM|MIN)-/.test(el.key)) {
       const tds = ([] as unknown[]).concat(el.props?.children ?? []).filter((t) => (t as { type?: unknown })?.type === "td");
-      const celda = tds[8];
+      const celda = tds[6]; // agencia, cliente, destino, salida, estado, compra, comisión (el contrato es <th>)
       out.set(el.key, { texto: texto(celda).replace(/\s+/g, " ").trim(), enlace: enlaces(celda, el.key) });
       return;
     }
@@ -96,7 +98,11 @@ function celdasComision(arbol: unknown): Map<string, Celda> {
 async function portal(t: Record<string, Fila[]>) {
   __setClient(supabaseEnMemoria(t, {}, UID));
   __setAdmin(supabaseEnMemoria(t));
-  return celdasComision(await PortalB2BPage());
+  // Directas + asistidas: el reparto entre pestañas se prueba aparte (65); aquí importa la celda de comisión de cada contrato.
+  const directas = celdasComision(await PortalB2BPage());
+  const asistidas = celdasComision(await PortalVentas({ searchParams: Promise.resolve({ vista: "asistidas" }) }));
+  for (const k of asistidas.keys()) assert.equal(directas.has(k), false, `${k} en las dos pestañas`);
+  return new Map([...directas, ...asistidas]);
 }
 // formatMoneda separa con espacio duro; el texto de la celda ya viene normalizado.
 const cop = (n: number) => formatMoneda(n, "COP").replace(/\s+/g, " ");

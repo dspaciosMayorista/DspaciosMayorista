@@ -74,7 +74,16 @@ export function supabaseEnMemoria(
 
     const api = {
       select: (_c?: string, o?: { count?: string }) => { conteo = o?.count === "exact"; return api; },
-      eq: (c: string, v: unknown) => { filtros.push((f) => f[c] === v); return api; },
+      // `a->b->>c` (ruta JSON de PostgREST): `->>` devuelve texto, como en la base.
+      eq: (c: string, v: unknown) => {
+        const [raiz, ...ruta] = c.split("->");
+        filtros.push((f) => {
+          let x: unknown = f[raiz];
+          for (const seg of ruta) x = x == null ? undefined : (x as Fila)[seg.startsWith(">") ? seg.slice(1) : seg];
+          return (c.includes("->>") && x != null ? String(x) : x) === v;
+        });
+        return api;
+      },
       ilike: (c: string, patron: string) => {
         const re = likeARegex(patron);
         filtros.push((f) => typeof f[c] === "string" && re.test(f[c] as string));
@@ -107,6 +116,8 @@ export function supabaseEnMemoria(
   };
   return {
     from,
+    // RPC que devuelve un conjunto: las filas viven en la «tabla» `rpc:<nombre>` (ya acotadas a la sesión, como lo haría la base).
+    rpc: (nombre: string, _args?: unknown, o?: { count?: string }) => from(`rpc:${nombre}`).select("*", o),
     llamadas,
     auth: { getUser: async () => ({ data: { user: sesionId ? { id: sesionId, email: `${sesionId}@t` } : null } }) },
   };
