@@ -32,9 +32,11 @@ esperado(numero_contrato, asesor, primer_nombre) as (
     ('MIN-00-0498', 'Javier',              'javier'),
     ('MIN-00-0519', 'Yaqueline',           'yaqueline')
 ),
--- Asignación CONFIRMADA por el dueño (fila -> ficha destino); 0476 (100 y 101) ya es de Javier (ficha 8). Si una fila no está aquí, se compara el primer nombre.
+-- Asignación (fila -> ficha destino); 0476 (100 y 101) ya es de Javier (ficha 8). Si una fila no está aquí, se compara el primer nombre.
+-- ASIGNACIÓN ≠ ABONO REGISTRADO ≠ DESTINATARIO DEL PAGO: esto solo dice a qué ficha DEBE pertenecer la fila; el pago real sigue sin conciliar.
+-- La 135 (ficha NULL, «YAQUELINE USUGA») → 37: CONFIRMADA por el dueño («ambos siempre al asesor, es decir el de Yaqueline ambos son de ella»); el abono de $351.852,16 sigue sin conciliar.
 destino(fila_id, ficha_destino) as (
-  values (79::bigint, 8::bigint), (81, 33), (82, 1), (83, 1), (85, 24), (89, 28), (107, 7), (137, 37), (1, 8), (100, 8), (101, 8)
+  values (79::bigint, 8::bigint), (81, 33), (82, 1), (83, 1), (85, 24), (89, 28), (107, 7), (137, 37), (135, 37), (1, 8), (100, 8), (101, 8)
 ),
 -- Filas que el dueño señaló como atribuidas a otra persona (referencia cruzada; el script las calcula por su cuenta).
 senaladas(fila_id, motivo) as (
@@ -146,8 +148,8 @@ select 'fila',
          || ' | cuentas con la ficha actual=' || coalesce(cuentas_con_esa_ficha, 'ninguna')
          || ' | venta.aliado_id=' || coalesce(venta_aliado_id::text, 'NULL') || ' · asesor_venta=' || coalesce(venta_asesor, 'NULL') || ' · firma=' || coalesce(asesor_firma_nombre, 'NULL')
          || ' | estado fila=' || coalesce(estado, 'NULL') || ' · descontada_en_precio=' || descontada_en_precio
-         || ' | abonos=' || n_abonos || ' por ' || round(abonado, 2) || ' (saldo ' || round(greatest(total - abonado, 0), 2) || ')'
-         || case when n_abonos > 0 then ' → ' || detalle_abonos || ' | DESTINATARIO REAL DEL PAGO: sin dato (comision_b2b_pagos no guarda beneficiario ni referencia)' else '' end
+         || ' | abonos REGISTRADOS=' || n_abonos || ' por ' || round(abonado, 2) || ' (saldo ' || round(greatest(total - abonado, 0), 2) || ')'
+         || case when n_abonos > 0 then ' → ' || detalle_abonos || ' | DESTINATARIO DEL PAGO: DESCONOCIDO, sin conciliar (comision_b2b_pagos no guarda beneficiario ni referencia)' else '' end
          || ' | fila creada por=' || coalesce(fila_creada_por, 'sin rastro en auditoría')
   from res
 ) x

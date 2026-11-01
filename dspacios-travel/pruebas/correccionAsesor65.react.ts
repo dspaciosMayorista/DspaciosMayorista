@@ -4,6 +4,12 @@
 // Esta prueba NO cambia el portal: fija que, una vez corregida la ficha de las filas mal atribuidas, el portal agrupa ambas líneas
 // en UNA participación por contrato del asesor correcto y que quien figuraba por error (Javier en 0519) deja de verla.
 // Los datos son sintéticos (importes inventados, fichas ilustrativas); lo real sale de supabase/scripts/conciliacion_asesor_comision_65_solo_lectura.sql.
+// ⚠️ Estas pruebas describen el estado POSTERIOR a una corrección que HOY NO PUEDE EJECUTARSE: el precheck real marca las ocho filas
+// objetivo (1, 79, 81, 82, 83, 85, 89, 107) como REVISION_CONTABLE (tienen abonos registrados) y la 137 y la 135 como EXCLUIDAS por
+// conciliación (abonos registrados reales de $139.000 y $351.852,16). No prueban que la corrección esté hecha ni autorizada; solo que,
+// SI se hiciera, el portal agrupa bien. Distinguir: ASIGNACIÓN (confirmada, incluida 135→37) ≠ ABONO REGISTRADO ≠ DESTINATARIO DEL
+// PAGO (desconocido: mover una fila de ficha no corrige ni prueba a quién se pagó). Los abonos de 39.000/10.000 de aquí son inventados,
+// y la 135 real tiene ficha NULL (aquí figura con la 37 como escenario posterior).
 import { test, afterEach } from "node:test";
 import assert from "node:assert/strict";
 

@@ -72,8 +72,9 @@ lleva su ficha (8) y la venta es de la ficha 37 (Yaqueline), así que entra por 
 Lo que **alcanza a ver en pantalla** (probado en `pruebas/participacionEconomica65.react.ts`):
 
 - En **Mis ventas** (pestaña Asistidas): el número de contrato, la agencia, el **destino**, la **fecha de salida**, el **estado** del
-  contrato, el texto **«Participación por comisión»** y **su** comisión: el **saldo de su fila** (139.000 − 39.000 de abono =
-  **$100.000**, estado «Abono parcial»). La fila de Yaqueline no se mezcla en su importe.
+  contrato, el texto **«Participación por comisión»** y **su** comisión: el **saldo de su fila**. ⚠️ *Actualizado (precheck real,
+  1-nov-2026):* el abono de la 137 es de **$139.000** (= su total), no de $39.000 → saldo **$0**, estado **«Pagada»**; la fila sigue visible
+  aunque no deba nada. La fila de Yaqueline no se mezcla en su importe.
 - En el **Inicio** (lista de contratos recientes): número, destino, estado y el texto **«Participación por comisión» / «Solo comisión»**
   (sin fecha de salida); cuenta en «Mis ventas · 1 más con tu comisión» y en «Comisión por cobrar».
 - **No** ve: el nombre del **cliente**, la modalidad de compra, el precio de venta, **cartera**, **pagos**, **documentos**, el
@@ -91,9 +92,11 @@ Los otros dos casos, con el mismo código:
 
 ## 5. Pruebas
 
-- Se **sustituyó** la prueba basada en una fila ficticia de cero: ahora `MIN-00-0519` reproduce la fila 137 con **$139.000 y un abono**
+- Se **sustituyó** la prueba basada en una fila ficticia de cero: ahora `MIN-00-0519` reproduce la fila 137 con **$139.000 y un abono de $139.000**
   (dos descomposiciones equivalentes —solo recobro / solo comisión base— porque los componentes reales salen del script) y fija:
-  Javier **sí** la ve como participación, con importe $100.000, sin cliente ni enlaces a esa venta; Yaqueline conserva su contrato propio.
+  Javier **sí** la ve como participación, con saldo $0 y «Pagada», sin cliente ni enlaces a esa venta; Yaqueline conserva su contrato propio
+  pero **no ve su comisión** mientras su fila 135 tenga ficha NULL. *Real vs. sintético:* solo son reales los ids/contratos, los $139.000 de la 137,
+  su abono, la ficha NULL de la 135 y que Javier es la ficha 8; el resto de importes y nombres son inventados (se rotula en la cabecera de la prueba).
 - Los casos **0476** y **0498** están reproducidos; una fila **genuinamente en cero** se conserva como caso **sintético** aparte
   (`MIN-X-CERO`), sin pretender que sea ninguno de los reales.
 - Lecturas fallidas (`aliados_b2b` y `ventas`, `error` y `sin_conteo`): sin participación y se avisa. Las tablas no se modifican.
@@ -166,7 +169,21 @@ No se deduce que una fila sea «recobro» por `recobro_total`: puede estar calcu
 (a) la fila a la que está colgado el abono, (b) quién lo registró (auditoría, si hay rastro) y (c) cuándo. Con eso **no se puede probar a quién se le
 consignó**: toda fila señalada que ya tiene abonos queda **`REVISION_CONTABLE`**, el UPDATE la excluye por guardia y solo entra si contabilidad la lista
 en `revision_contable_aprobada` tras verificar el pago. Cambiar el beneficiario de una fila pagada no corrige el pago; solo deja el registro coherente.
-Caso conocido: **fila 137 (0519), $139.000, un abono de $39.000** → revisión contable.
+**No confundir tres cosas** (las tres aparecen mezcladas en versiones anteriores de este documento):
+
+| Concepto | Qué es | Quién lo decide / de dónde sale | Estado |
+|---|---|---|---|
+| **Asignación** | A qué ficha DEBE pertenecer la fila | El dueño (lista de §9.5); la 135→37 y la 137→37 las confirmó en esta conversación («ambos siempre al asesor… ambos son de ella») | Confirmada (8 filas + 137 + 135) |
+| **Abono registrado** | Fecha y valor en `comision_b2b_pagos` | Un hecho del sistema (precheck) | Conocido |
+| **Destinatario del pago** | A quién se le consignó | Contabilidad, al conciliar; la tabla no lo guarda | **Desconocido** en todas las filas con abono |
+
+Un abono registrado no prueba quién lo recibió; por eso una fila con abonos queda `REVISION_CONTABLE` aunque su asignación esté confirmada.
+
+**Precheck real (1-nov-2026), leído del archivo adjunto:** las OCHO filas objetivo (1, 79, 81, 82, 83, 85, 89, 107) salen `REVISION_CONTABLE` y el UPDATE no toca ninguna.
+La 137 sale `EXCLUIDA` con **abono registrado de $139.000** (= total; el motivo del plan decía $39.000: corregido). La **135** (Yaqueline, ficha NULL) tiene abono registrado
+de **$351.852,16** y se incorpora como asignación **confirmada** 135→37, `EXCLUIDA` por conciliación (solo lectura/documentación; no está en el UPDATE). Abonos registrados vs. total
+calculado: 79 191.224/191.224 · 81 600.000/599.964 · 82 141.360/141.360 · 83 541.036/541.036 (2 abonos) · 85 140.180/140.180 (2 abonos) · 89 207.831/207.831 · 107 71.297/71.296,50 ·
+137 139.000/139.000 · **1: 1.617.580 contra 1.260.903,68 (exceso de 356.676,32)**; el portal lo recorta a saldo 0 y no muestra el exceso.
 
 ### 9.3 Dónde se crean las dos líneas (causa raíz)
 
@@ -187,9 +204,12 @@ sin ficha, y que lo interno (`liquidacion_comisiones`, `rentabilidad`) no se mez
 
 ### 9.5 Asignación confirmada y estado del plan
 
-Fila → ficha destino confirmada por el dueño (la 137→37 queda EXCLUIDA, ver §10): **79→8, 81→33, 82→1, 83→1, 85→24, 89→28, 107→7, fila 1 de MIN-00-0498→8**; las filas 100 y 101 de MIN-00-0476 ya son de
-Javier (8). El plan de lectura y el de corrección usan esa lista completa (`conciliacion_…_solo_lectura.sql`, `correccion_…_plan.sql`). **La corrección sigue bloqueada**:
-`contabilidad_concilio = false` en el bloque B hasta que contabilidad concilie los abonos (la 137 tiene uno de $39.000; la tabla de pagos no dice a quién se pagó).
+Fila → ficha destino confirmada por el dueño (la 137→37 y la 135→37 quedan EXCLUIDAS por conciliación, ver §10): **79→8, 81→33, 82→1, 83→1, 85→24, 89→28, 107→7, fila 1 de MIN-00-0498→8**; las filas 100 y 101 de MIN-00-0476 ya son de
+Javier (8). El plan de lectura y el de corrección usan esa lista completa (`conciliacion_…_solo_lectura.sql`, `correccion_…_plan.sql`). **La corrección sigue bloqueada** (y hoy tendría efecto cero):
+`contabilidad_concilio = false` en el bloque B y, además, las ocho filas listadas tienen abonos y ninguna está en `revision_contable_aprobada`; la 137 está excluida
+(abono registrado de $139.000; la tabla de pagos no dice a quién se pagó). **La fila 135** (Yaqueline, 0519, ficha NULL, abono registrado de $351.852,16) figura ahora en el precheck
+y en la conciliación como asignación **confirmada** 135→37 (dueño: «ambos siempre al asesor, es decir el de Yaqueline ambos son de ella») y `EXCLUIDA` por conciliación porque el destinatario de su abono de $351.852,16 no está conciliado; **no** está en el UPDATE ni en el postcheck, y la puerta contable
+sigue cerrada. Mientras no se reincorpore, el postcheck dejaría 0519 en PENDIENTE (es lo esperado). Pasarla al UPDATE requiere conciliación contable y confirmación escrita del dueño.
 
 ### 9.6 Verificación de la 267 (esquema completo)
 
@@ -204,13 +224,49 @@ La corrección histórica (`correccion_asesor_comision_65_plan.sql`) sigue **sin
 
 ## 10. Actualización (31-oct-2026): fila 137 fuera de toda corrección y cómo se ve MIN-00-0519 mientras tanto
 
-- **Contabilidad confirmó que el abono de $39.000 de la fila 137 aún NO está conciliado.** La 137 salió del bloque B y del postcheck de `correccion_asesor_comision_65_plan.sql`
+- **Contabilidad confirmó que el abono de la fila 137 aún NO está conciliado**: el abono registrado es de **$139.000** (no $39.000) y el destinatario del pago sigue desconocido. La 137 salió del bloque B y del postcheck de `correccion_asesor_comision_65_plan.sql`
   (el UPDATE ya no la nombra, ni siquiera con la puerta abierta) y el precheck la devuelve como `EXCLUIDA`. Reincorporarla requiere conciliación contable + confirmación escrita del dueño.
   El precheck además lista (`REVISION_CONTABLE`) toda otra fila de los diez contratos que tenga abonos y no figure en la lista de correcciones.
 - **Mientras la 137 siga atribuida a Javier (ficha 8), MIN-00-0519 se ve así** (comportamiento actual, probado en `pruebas/participacionEconomica65.react.ts`):
   - **Javier** la ve como **participación por comisión**, no como contrato propio: número, destino, fecha de salida (en Mis ventas), estado del contrato y **su** comisión = saldo de su fila,
-    $139.000 − $39.000 = **$100.000**, estado «Abono parcial». **No** ve cliente, precio de venta, cartera, pagos, documentos ni enlace a cuenta de cobro.
-  - **Yaqueline** conserva **MIN-00-0519 como contrato propio** (ficha 37) con su fila 135; la fila de Javier no se mezcla en su importe.
+    $139.000 − $139.000 = **$0**, estado «Pagada». **No** ve cliente, precio de venta, cartera, pagos, documentos ni enlace a cuenta de cobro.
+  - **Yaqueline** conserva **MIN-00-0519 como contrato propio** (`ventas.aliado_id` = 37) pero su fila **135 tiene ficha NULL**: sin ficha y sin documento de la fila
+    igual al de su ficha, el portal no se la atribuye, así que **no ve su comisión**, mientras Javier sí ve la participación. (Esta nota decía «con su fila 135, ficha 37»: falso.)
   - Nada cambia hasta que se ejecute la corrección de la 137, que sigue bloqueada.
 - **La migración 267 y la corrección de datos son operaciones distintas.** La 267 (PR de esquema aparte) solo evita nuevas atribuciones erróneas al convertir cotizaciones; no toca las nueve filas históricas.
 - La velocidad del portal (consultas en paralelo, esqueleto de carga, menú con estado pendiente) **no está en #415**: queda preservada aparte para su propio PR.
+
+---
+
+## 11. Exposición real si #415 se fusiona hoy (precheck real, 1-nov-2026) — **diagnóstico; nada aplicado**
+
+**Qué hace #415 por sí solo:** nada sobre datos, y **no lleva exclusiones fijas por id en el código** (se verificó con `grep`). La corrección está bloqueada (§9.5) y las filas siguen con
+la ficha equivocada. El portal, con el código ya presente, muestra «Participación por comisión» a **quien tenga la ficha equivocada** en una fila positiva y tenga cuenta vinculada a esa ficha.
+
+**Exposición, por fila** (ficha actual leída de la columna `fila … ficha X` del precheck; el saldo mostrado es total − abonos registrados, recortado a ≥ 0):
+
+| Fila | Contrato | Ficha actual → asignación | Abono registrado vs. total | Qué vería el portal |
+|---|---|---|---|---|
+| 81 | 0422 | 8 (Javier) → 33 (Paola) | 600.000 / 599.964 | Javier: participación, saldo $0, «Pagada» |
+| 82 | 0432 | 8 → 1 (Katherine) | 141.360 / 141.360 | ídem |
+| 83 | 0433 | 8 → 1 | 541.036 / 541.036 | ídem |
+| 85 | 0439 | 8 → 24 (Juliana) | 140.180 / 140.180 | ídem |
+| 89 | 0463 | 8 → 28 (Marcela) | 207.831 / 207.831 | ídem |
+| 107 | 0484 | 8 → 7 (Sebastián) | 71.297 / 71.296,50 | ídem |
+| 137 | 0519 | 8 → 37 (Yaqueline) | 139.000 / 139.000 | ídem (EXCLUIDA) |
+| 79 | 0462 | 3 (Tatiana Velásquez) → 8 (Javier) | 191.224 / 191.224 | Ficha 3: participación en un contrato de Javier, saldo $0, «Pagada» |
+| 1 | 0498 | NULL → 8 | **1.617.580 / 1.260.903,68** | No se expone a nadie (sin ficha); el exceso de 356.676,32 no se ve |
+| 135 | 0519 | NULL → 37 (confirmada; EXCLUIDA por conciliación) | 351.852,16 / (total no incluido en el precheck) | No se expone; **Yaqueline no ve su propia comisión** (faltante, no fuga) |
+
+Consecuencia: **Javier vería participación en siete contratos que no son suyos** (0422, 0432, 0433, 0439, 0463, 0484, 0519) y la ficha 3 en uno (0462), siempre que esas fichas tengan cuenta de portal
+(no consta en el precheck). En todos, cliente, PVP, cartera, pagos del contrato, documentos y cuentas de cobro **no** se ven (probado); sí se ve contrato, agencia, destino, salida y estado.
+El servidor además carga, sin pintarla, la fila completa de `ventas` (cliente, `precio_venta`, `share_token`).
+
+**Lo que el portal afirma de más:** «Pagada» sale de los **abonos registrados**, no de un destinatario verificado. Como el destinatario del pago es desconocido, mostrarlo a quien figura hoy
+afirma algo que Contabilidad aún no ha conciliado.
+
+**Medidas posibles antes de fusionar (ninguna aplicada; #415 no incorpora ninguna):**
+1. **Fusionar #415 después** de que Contabilidad concilie y se ejecute la corrección (la salida más limpia: cero cambios de visibilidad).
+2. **Marca de revisión como dato** (columna en `aliados_b2b` que `contratosPorParticipacion` y `comisionesDelPortal` respeten): requiere migración con el siguiente número libre y su aprobación.
+   Es la forma correcta de ocultar sin listas de ids en el código; se retira al cerrar la conciliación.
+La lista fija de ids en el código se **descartó** por indicación expresa.

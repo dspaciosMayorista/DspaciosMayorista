@@ -3,6 +3,16 @@
 // #65 — Participación por comisión: solo una fila de aliados_b2b con comisión ECONÓMICA real da visibilidad.
 // La definición es la del cálculo del portal (`calcularComisionFila(...).totalPagar > 0`), no una regla aparte.
 //
+// REAL vs SINTÉTICO (precheck real, 1-nov-2026). REAL, y solo esto: los ids y contratos (1, 100, 101, 121, 135, 137; 0476/0498/0519),
+// el importe de la fila 137 ($139.000) y su abono REGISTRADO de $139.000 (= el total: saldo 0, NO $39.000), que la fila 135 de Yaqueline
+// tiene ficha NULL (y un abono registrado de $351.852,16 que aquí NO se reproduce), que Javier es la ficha 8 y que en la fila 1 los
+// abonos (1.617.580) superan el total (1.260.903,68). SINTÉTICO: los importes de 100/101/1/121/135, los nombres «Aliado N», la venta
+// MIN-X-CERO y el sobrepago de la 121 (el real está en la fila 1, que no tiene ficha y por eso el portal no lo muestra).
+//
+// TRES COSAS DISTINTAS: (1) ASIGNACIÓN confirmada (a qué ficha debe ir una fila; 135→37 y 137→37 confirmadas por el dueño) · (2) ABONO REGISTRADO (lo que
+// hay en comision_b2b_pagos) · (3) DESTINATARIO DEL PAGO, que sigue DESCONOCIDO. El «Pagada» del portal sale de (2); no prueba (3).
+// Estas pruebas fijan lo que el portal muestra HOY y no afirman que los pagos hayan llegado a nadie. #415 no excluye ids en el código.
+//
 // CORRECCIÓN: una versión anterior de esta prueba trataba la fila de Javier en MIN-00-0519 como una fila en CERO. Es falso:
 // el resultado real de la auditoría muestra la fila 137 con $139.000 y un abono. Aquí se reproduce el importe positivo real.
 // Los COMPONENTES exactos de esos $139.000 salen del script de auditoría; la prueba usa dos descomposiciones equivalentes
@@ -62,11 +72,12 @@ function tablas(importe0519: Fila = IMPORTE_139_RECOBRO): Record<string, Fila[]>
       fila(101, "MIN-00-0476", 8, { aliado: "JAVIER A VIEIRA P", recobro_total: 100_000, pct_recobro_aliado: 0.5 }),
       fila(1, "MIN-00-0498", null, { aliado: "JAVIER VIEIRA", ...BASE, pct_comision: 0.04 }),
       fila(121, "MIN-00-0498", 8, { aliado: "JAVIER A VIEIRA P", ...BASE, pct_comision: 0.03 }),
-      fila(135, "MIN-00-0519", 37, { aliado: "Yaqueline", ...BASE, pct_comision: 0.1 }),
+      fila(135, "MIN-00-0519", null, { aliado: "Yaqueline", ...BASE, pct_comision: 0.1 }),   // REAL: ficha NULL (importe sintético)
       fila(137, "MIN-00-0519", 8, { aliado: "JAVIER A VIEIRA P", ...importe0519 }),
       fila(900, "MIN-X-CERO", 8),                     // base 0, pct 0, valor null, sin recobro → total 0
     ],
-    comision_b2b_pagos: [{ id: 1, aliado_b2b_id: 137, valor: 39_000, fecha: "2026-10-05" }],
+    // REAL: la 137 registra un abono de $139.000 (= su total).
+    comision_b2b_pagos: [{ id: 1, aliado_b2b_id: 137, valor: 139_000, fecha: "2026-10-05" }],
   };
 }
 const ctx = (userId: string, aliadoId: number, rol: "agencia" | "freelance" = "freelance") => ({
@@ -91,23 +102,26 @@ const hrefs = (n: unknown, out: string[] = []): string[] => {
 const pantalla = async (t: Record<string, Fila[]>, sesion: string, pagina: () => Promise<unknown>) => { montar(t, sesion); return texto(await pagina()).replace(/\s+/g, " "); };
 
 for (const [nombre, importe] of [["solo recobro", IMPORTE_139_RECOBRO], ["solo comisión base", IMPORTE_139_BASE]] as const) {
-  test(`MIN-00-0519 (fila 137 = $139.000, ${nombre}, con un abono): la fila es POSITIVA; con el código actual Javier SÍ la ve como participación`, async () => {
+  test(`MIN-00-0519 (fila 137 = $139.000, ${nombre}, abono REAL de $139.000): la fila es POSITIVA; con el código actual Javier SÍ la ve como participación, con saldo $0 y «Pagada»`, async () => {
     const t = tablas(importe);
     assert.equal(calcularComisionFila(t.aliados_b2b.find((f) => f.id === 137) as never).totalPagar, 139_000);
     montar(t, "u-jav");
     const jav = await cargarConjuntoPortal(ctx("u-jav", 8) as never);
     assert.ok(nums(jav, "participacion").includes("MIN-00-0519"), "Javier la ve como participación");
     assert.ok(!nums(jav, "propio").includes("MIN-00-0519"), "pero NO como contrato propio");
-    // Su importe es el SALDO de SU fila: 139.000 − 39.000 de abono (la fila de Yaqueline no se mezcla).
+    // Su importe es el SALDO de SU fila: 139.000 − 139.000 de abono REGISTRADO = 0 (la fila de Yaqueline no se mezcla). Sigue visible aunque no deba nada.
+    // «pagada» es el estado derivado del abono registrado; el destinatario real de ese pago es desconocido (sin conciliar).
     const com = jav.comisiones.get("MIN-00-0519");
-    assert.equal(com?.importe, 100_000);
-    assert.equal(com?.estado, "parcial");
+    assert.equal(com?.importe, 0);
+    assert.equal(com?.estado, "pagada");
     assert.deepEqual(com?.ids, [137]);
     // Yaqueline conserva su contrato propio; la fila de Javier no le da nada más.
     montar(t, "u-yaq");
     const yaq = await cargarConjuntoPortal(ctx("u-yaq", 37) as never);
     assert.deepEqual(nums(yaq, "propio"), ["MIN-00-0519"]);
     assert.deepEqual(nums(yaq, "participacion"), []);
+    // Su fila 135 tiene ficha NULL y no trae su documento: el portal NO se la atribuye (falla cerrado). Ve su contrato SIN comisión.
+    assert.equal(yaq.comisiones.get("MIN-00-0519")?.importe ?? null, null, "Yaqueline no ve su comisión mientras la 135 no tenga ficha");
   });
 }
 
@@ -120,8 +134,8 @@ test("MIN-00-0519, lo que Javier alcanza a VER en pantalla: contrato, destino, e
   assert.ok(ventas.includes("0519"), "aparece en Mis ventas");
   assert.match(ventas, /Participación por comisión/);
   assert.ok(!ventas.includes("Cliente MIN-00-0519"), "sin nombre del cliente");
-  assert.match(ventas, /100\.000/, "su comisión (saldo)");
-  assert.match(ventas, /Abono parcial/);
+  assert.match(ventas, /Pagada/, "su fila 137 está pagada por completo (abono $139.000)");
+  assert.ok(!/Abono parcial/.test(ventas), "ya no es «Abono parcial»");
   const cartera = await pantalla(t, "u-jav", () => PortalCartera({ searchParams: Promise.resolve({}) }));
   const docs = await pantalla(t, "u-jav", () => PortalDocumentos());
   for (const s of [cartera, docs]) assert.ok(!s.includes("0519") && !s.includes("0476"), "cartera y documentos solo de contratos propios");
@@ -148,6 +162,44 @@ test("los tres casos reales para Javier: 0476 y 0519 son participación (ajenos)
   // 0498: la fila 121 (ficha 8) es suya; la fila 1 «JAVIER VIEIRA» no tiene ficha ni documento que la ligue → NO se suma sola por nombre.
   assert.deepEqual(jav.comisiones.get("MIN-00-0498")?.ids, [121]);
   assert.equal(jav.comisiones.get("MIN-00-0498")?.importe, 30_000);
+});
+
+test("PRECHECK REAL (importes y abonos registrados reales; cuentas y ventas sintéticas): hoy Javier (ficha 8) y la ficha 3 ven participación con saldo $0 en contratos que no son suyos", async () => {
+  // fila → [contrato, ficha ACTUAL, ficha de la venta (asesor correcto), total real, abonos registrados reales]
+  const reales: [number, string, number, number, number, number][] = [
+    [81, "MIN-00-0422", 8, 33, 599_964, 600_000], [82, "MIN-00-0432", 8, 1, 141_360, 141_360], [83, "MIN-00-0433", 8, 1, 541_036, 541_036],
+    [85, "MIN-00-0439", 8, 24, 140_180, 140_180], [89, "MIN-00-0463", 8, 28, 207_831, 207_831], [107, "MIN-00-0484", 8, 7, 71_296.5, 71_297],
+    [137, "MIN-00-0519", 8, 37, 139_000, 139_000], [79, "MIN-00-0462", 3, 8, 191_224, 191_224],
+  ];
+  const t: Record<string, Fila[]> = {
+    usuarios: [usuario("u-jav", "Javier", "freelance", 8), usuario("u-tat", "Tatiana", "freelance", 3)],
+    aliados: [3, 8, 33, 1, 24, 28, 7, 37].map((id) => ({ id, nombre: `Ficha ${id}`, nit: String(id) })),
+    ventas: reales.map(([, n, , dueno]) => venta(n, dueno)),
+    aliados_b2b: reales.map(([id, n, ficha, , total]) => fila(id, n, ficha, { comision_valor: total })),   // total = comision_valor (sin base ni recobro)
+    comision_b2b_pagos: reales.map(([id, , , , , abonado], i) => ({ id: i + 1, aliado_b2b_id: id, valor: abonado, fecha: "2026-10-05" })),
+  };
+  montar(t, "u-jav");
+  const jav = await cargarConjuntoPortal(ctx("u-jav", 8) as never);
+  assert.deepEqual(nums(jav, "participacion"), ["MIN-00-0422", "MIN-00-0432", "MIN-00-0433", "MIN-00-0439", "MIN-00-0463", "MIN-00-0484", "MIN-00-0519"]);
+  for (const n of nums(jav, "participacion")) {
+    assert.equal(jav.comisiones.get(n)?.importe, 0, `${n}: saldo 0`);
+    assert.equal(jav.comisiones.get(n)?.estado, "pagada", `${n}: «pagada» sale del abono REGISTRADO, no de un destinatario verificado`);
+  }
+  assert.deepEqual(nums(jav, "propio"), ["MIN-00-0462"], "la 0462 sí es de Javier (y su fila 79 la tiene la ficha 3)");
+  montar(t, "u-tat");
+  const tat = await cargarConjuntoPortal(ctx("u-tat", 3) as never);
+  assert.deepEqual(nums(tat, "participacion"), ["MIN-00-0462"]);
+  assert.equal(tat.comisiones.get("MIN-00-0462")?.importe, 0);
+});
+
+test("SINTÉTICO: abonos mayores al total (sobrepago, como la fila 1 real) no dan saldo negativo: saldo 0 y «pagada»; el exceso no se muestra", async () => {
+  const t = tablas();
+  t.comision_b2b_pagos.push({ id: 2, aliado_b2b_id: 121, valor: 40_000, fecha: "2026-10-06" });   // sintético: 40.000 sobre un total de 30.000
+  montar(t, "u-jav");
+  const jav = await cargarConjuntoPortal(ctx("u-jav", 8) as never);
+  // 0498: fila 121 total 30.000 con abono de 40.000 → el portal lo recorta a 0 y no avisa del exceso (eso es de Contabilidad).
+  assert.equal(jav.comisiones.get("MIN-00-0498")?.importe, 0);
+  assert.equal(jav.comisiones.get("MIN-00-0498")?.estado, "pagada");
 });
 
 test("una fila genuinamente en CERO (sintética) no da participación; las positivas con ficha sí", async () => {

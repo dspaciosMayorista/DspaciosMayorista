@@ -8,9 +8,17 @@
 --
 -- ASIGNACIÓN CONFIRMADA POR EL DUEÑO (fila → ficha; no se vuelve a pedir):
 --   79→8 · 81→33 · 82→1 · 83→1 · 85→24 · 89→28 · 107→7 · fila 1 de MIN-00-0498→8.
---   EXCLUIDA: la fila 137 (MIN-00-0519 → ficha 37). Contabilidad confirmó que su abono de $39.000 AÚN NO está conciliado: no figura en el bloque B
---   ni en el postcheck; el precheck la reporta como EXCLUIDA hasta que contabilidad confirme y el dueño la reincorpore por escrito.
---   Las dos filas de MIN-00-0476 (100 y 101) ya corresponden a Javier (ficha 8): no cambian y el precheck las confirma.
+--   EXCLUIDAS POR CONCILIACIÓN (asignación confirmada, abono registrado, destinatario del pago sin conciliar; ninguna entra al bloque B ni al postcheck):
+--     · fila 137 (MIN-00-0519 → ficha 37): abono registrado de $139.000 (= su total); precheck del 1-nov-2026. Antes decía $39.000: dato desactualizado.
+--     · fila 135 (MIN-00-0519, hoy ficha NULL «YAQUELINE USUGA» → ficha 37): abono registrado de $351.852,16. Asignación 135→37 CONFIRMADA por el dueño («ambos siempre al asesor,
+--       es decir el de Yaqueline ambos son de ella»); sigue EXCLUIDA porque el destinatario de ese abono no está conciliado. Solo lectura/documentación.
+--   Se reincorporan solo con conciliación contable + confirmación escrita del dueño. Las dos filas de MIN-00-0476 (100 y 101) ya corresponden a Javier (ficha 8): no cambian y el precheck las confirma.
+--
+-- TRES COSAS QUE NO SON LO MISMO (aquí y en el doc):
+--   1. ASIGNACIÓN: a qué ficha DEBE pertenecer la fila (decisión del dueño). Cambia solo el registro de la fila.
+--   2. ABONO REGISTRADO: lo que consta en `comision_b2b_pagos` (fecha y valor). Es un hecho del sistema.
+--   3. DESTINATARIO DEL PAGO: a quién se le consignó. `comision_b2b_pagos` NO lo guarda → DESCONOCIDO hasta que Contabilidad concilie.
+--   Un abono registrado (2) NO prueba que el pago llegó a quien hoy figura ni a quien debería figurar (3).
 --
 -- PUERTA DE CONTABILIDAD. Ninguna corrección corre hasta que contabilidad concilie los abonos de las filas afectadas
 -- (`comision_b2b_pagos` no guarda beneficiario, forma de pago ni referencia: no se puede probar a quién se pagó). La puerta es
@@ -36,11 +44,13 @@ esperado(numero_contrato, asesor, primer_nombre) as (
          ('MIN-00-0519','Yaqueline','yaqueline')
 ),
 correccion(fila_id, ficha_destino) as (
-  values (79::bigint, 8::bigint), (81, 33), (82, 1), (83, 1), (85, 24), (89, 28), (107, 7), (137, 37), (1, 8),
+  values (79::bigint, 8::bigint), (81, 33), (82, 1), (83, 1), (85, 24), (89, 28), (107, 7), (137, 37), (135, 37), (1, 8),
          (100, 8), (101, 8)   -- 0476: ya en Javier; se listan para confirmarlo (el UPDATE no las toca si ya están en la ficha)
 ),
+-- Solo lectura: 137 y 135 se reportan EXCLUIDAS por conciliación; NO están en el bloque B.
 excluidas(fila_id, motivo) as (
-  values (137::bigint, 'abono de $39.000 sin conciliar por contabilidad')
+  values (137::bigint, 'asignación 137→37; abono registrado de $139.000; destinatario del pago sin conciliar por contabilidad'),
+         (135::bigint, 'asignación 135→37 confirmada por el dueño; abono registrado de $351.852,16; destinatario del pago sin conciliar por contabilidad')
 ),
 revision_contable_aprobada(fila_id) as (select null::bigint where false),   -- contabilidad agrega aquí las filas con abonos ya verificadas
 chequeo as (
@@ -66,7 +76,7 @@ select fila_id, numero_contrato,
          when excluida_motivo is not null                              then 'EXCLUIDA: ' || excluida_motivo || '; fuera de toda corrección ejecutable'
          when destino_nombre is null                                   then 'BLOQUEA: la ficha destino no existe'
          when ficha_en_bd is not distinct from ficha_destino           then 'SIN_CAMBIO: ya está en la ficha destino'
-         when n_abonos > 0 and not aprobada_contabilidad               then 'REVISION_CONTABLE: tiene abonos; no se corrige hasta que contabilidad confirme a quién se pagó'
+         when n_abonos > 0 and not aprobada_contabilidad               then 'REVISION_CONTABLE: tiene abonos registrados; no se corrige hasta que contabilidad confirme el destinatario del pago'
          when translate(lower(split_part(btrim(destino_nombre), ' ', 1)), 'áéíóúñ', 'aeioun') <> primer_nombre
                                                                        then 'AVISO: la ficha destino «' || destino_nombre || '» no empieza por el nombre del asesor (' || asesor || '); confirmar antes de aplicar'
          else 'OK'
@@ -97,6 +107,7 @@ order by 1;
 begin;
 with
 contabilidad_concilio(ok) as (values (false)),
+-- Deliberadamente SIN las filas 137 y 135 (EXCLUIDAS por conciliación, ver cabecera): el UPDATE nunca las nombra.
 correccion(fila_id, ficha_destino) as (
   values (79::bigint, 8::bigint), (81, 33), (82, 1), (83, 1), (85, 24), (89, 28), (107, 7), (1, 8)
 ),
@@ -126,6 +137,7 @@ esperado(numero_contrato, asesor, primer_nombre) as (
          ('MIN-00-0519','Yaqueline','yaqueline')
 ),
 -- Pegar aquí lo que imprimió el precheck: total_antes y abonado_antes de cada fila (sustituir los 0).
+-- 137 y 135 no están (excluidas): mientras sigan sin corregir, la sección `contrato` mostrará 0519 como PENDIENTE; es lo esperado.
 antes(fila_id, ficha_destino, total_antes, abonado_antes) as (
   values (79::bigint, 8::bigint, 0::numeric, 0::numeric), (81, 33, 0, 0), (82, 1, 0, 0), (83, 1, 0, 0), (85, 24, 0, 0),
          (89, 28, 0, 0), (107, 7, 0, 0), (1, 8, 0, 0)
