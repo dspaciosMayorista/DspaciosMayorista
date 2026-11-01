@@ -31,6 +31,8 @@ const ACCIONES_PAQUETES = datos(`
   export async function setServicio(...a) { reg('setServicio', a); return ${G}.respServicio(a); }
   export async function setServicios(...a) { reg('setServicios', a); return ${G}.respLote(a); }
   export async function generarTarifario(...a) { reg('generarTarifario', a); return { ok: true, id: 3 }; }
+  export async function continuarPublicacionTarifario() { return { ok: true }; }
+  export async function estadoPublicacionTarifario() { return { ok: true }; }
   export async function getTarifasHotel() { return { ok: true, modelo: 'persona', categorias: [], regimenes: [], tarifas: [] }; }
   export async function setHotelFiltros() { return { ok: true }; }
   export async function setHotelPrioridad() { return { ok: true }; }
@@ -132,8 +134,8 @@ function props(tipo: string, over: Partial<Props> = {}): Props {
       { id: 32, nombre: "Hotel Dos", zona: null, destino_id: 1 },
     ],
     serviciosDisp: [
-      { id: 41, nombre: "Tour persona", precio_persona: 50000, destino_id: 1, servicio_tarifa_pax: [] },
-      { id: 42, nombre: "Tour grupo", precio_persona: null, destino_id: 1, servicio_tarifa_pax: [{ pax_desde: 2 }] },
+      { id: 41, nombre: "Tour persona", precio_persona: 50000, destino_id: 1, servicio_tarifa_pax: [], servicio_temporadas: [{ nombre: "V1", fecha_inicio: "2026-01-01", fecha_fin: "2099-12-31", precio_persona: 50000 }] },
+      { id: 42, nombre: "Tour grupo", precio_persona: null, destino_id: 1, servicio_tarifa_pax: [{ pax_desde: 2, temporada: "V1" }], servicio_temporadas: [{ nombre: "V1", fecha_inicio: "2026-01-01", fecha_fin: "2099-12-31", precio_persona: null }] },
       { id: 43, nombre: "Tour sin tarifa", precio_persona: null, destino_id: 1, servicio_tarifa_pax: [] },
     ],
     selVuelos: [], selEmpaquetados: [], selHoteles: [{ hotel_id: 31, categorias: null, regimenes: null, prioridad: null }], selServicios: [],
@@ -292,14 +294,15 @@ const casillaTodos = (raiz: Element, re = /Seleccionar todos|Deseleccionar todos
   [...raiz.querySelectorAll("label")].find((l) => re.test(l.textContent ?? ""))!.querySelector("input")!;
 const lotes = () => p101.llamadas.filter(([n]) => n === "setServicios").map(([, a]) => a);
 
-test("Seleccionar todos marca solo los servicios con tarifa en UNA acción por lote, y refresca una vez", async () => {
+test("Seleccionar todos marca solo los servicios con tarifa en UNA acción por lote, cambia la pantalla al instante y NO recarga el editor", async () => {
   const raiz = await montar(props("bloqueo", { pestanaInicial: "servicios" }));
   assert.match(texto(raiz), /Adición de servicios \(0 de 3\)/);
-  assert.match(texto(raiz), /Sin tarifa configurada/);
+  assert.match(texto(raiz), /Sin vigencia de tarifa vendible/);
   await pulsar(casillaTodos(raiz));
   assert.deepEqual(lotes(), [[7, [{ servicioId: 41, modo: "persona", incluido: false }, { servicioId: 42, modo: "grupo", incluido: false }], true]], "el 43 (sin tarifa) no entra");
   assert.equal(p101.llamadas.filter(([n]) => n === "setServicio").length, 0, "ya no se guarda en serie");
-  assert.equal(p101.refrescos, 1, "se refresca una sola vez al final");
+  assert.equal(p101.refrescos, 0, "un guardado exitoso ya no recarga el editor (la pantalla se mantiene con el estado optimista)");
+  assert.match(texto(raiz), /Adición de servicios \(2 de 3\)/, "el contador cambió con el lote");
   assert.match(texto(raiz), /Se agregó 2 servicios./);
 });
 
@@ -420,7 +423,7 @@ test("Generar tarifario llama a la acción de siempre y conserva la pestaña (es
   const boton = [...raiz.querySelectorAll("button")].find((b) => /^Generar tarifario$/.test((b.textContent ?? "").trim()))!;
   await pulsar(boton);
   await React.act(async () => { await new Promise((r) => setImmediate(r)); });
-  assert.deepEqual(p101.llamadas.filter(([n]) => n === "generarTarifario").map(([, a]) => a), [[7]]);
+  assert.deepEqual(p101.llamadas.filter(([n]) => n === "generarTarifario").map(([, a]) => a), [[7, { porLotes: true }]]);   // la pantalla pide la publicación por lotes (reanudable)
   assert.ok(p101.refrescos >= 1, "refresca los datos del servidor");
   assert.equal(activa(raiz), "Tarifario resultado", "sigue en la misma pestaña");
   assert.equal(new URL(window.location.href).searchParams.get("tab"), "tarifario");

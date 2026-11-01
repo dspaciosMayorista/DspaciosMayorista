@@ -36,6 +36,8 @@ const ACCIONES_PAQUETES = datos(`
   export async function setServicio() { return { ok: true }; }
   export async function setServicios() { return { ok: true, procesados: 0 }; }
   export async function generarTarifario() { return { ok: true, id: 0 }; }
+  export async function continuarPublicacionTarifario() { return { ok: true }; }
+  export async function estadoPublicacionTarifario() { return { ok: true }; }
   export async function getTarifasHotel() { return { ok: true, tarifas: [], unidades: [] }; }
   export async function setHotelFiltros() { return { ok: true }; }
   export async function setHotelPrioridad() { return { ok: true }; }

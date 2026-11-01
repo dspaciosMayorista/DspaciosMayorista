@@ -4,6 +4,12 @@ import { createClient } from "@/lib/supabase/server";
 import { revalidatePath } from "next/cache";
 import type { Database, Json } from "@/types/database";
 import { columnasProcedencia } from "@/lib/tarifario/procedenciaTarifario";
+import { contarPorModulo, crearCronometro, esTimeoutPostgres, lineaMedicionGeneracion, type ResultadoGeneracion } from "@/lib/tarifario/cronometroGeneracion";
+import { compactarFilasPublicacion } from "@/lib/tarifario/filasPublicacion";
+import { publicarPorLotes } from "@/lib/tarifario/controladorPublicacion";
+import { urlRuta } from "@/lib/tarifario/continuacionPublicacion";
+import { composicionDeManifiesto } from "@/lib/tarifario/composicionManifiesto";
+import { leerPublicacionPendiente, publicacionPorLotesActiva, puertoSupabase, type RpcCliente } from "@/lib/tarifario/puertoSupabase";
 import {
   noches as calcNoches,
   liquidarHotelNochesConTemporadas,
@@ -18,7 +24,6 @@ import {
   type TemporadaRango,
 } from "@/lib/calc/paquetes";
 import { hoyBogota } from "@/lib/reservar/origen";
-import { serviciosSinPrecioInfante } from "@/lib/reservar/menoresDeDos";
 import { seleccionarSalidasVigentes } from "@/lib/reservar/salidaDinamicaVigente";
 import {
   MODO_OFERTA_63,
@@ -56,8 +61,36 @@ import { construirSetParesPublicados, todosLosParesConfiguradosPublicados, prime
 
 import type { ResultadoLote } from "@/lib/paquetes/seleccionMasiva";
 import { aplicaPvpInfanteFijo, pvpInfanteFijoValido } from "@/lib/paquetes/pvpInfanteFijo";
+import { mensajeTrasladoIncluido, trasladosPorAlcance } from "@/lib/servicios/alcanceContexto";
+import { incluidoEnEstadia, incluidoSeOmite, referenciaPublicacion, serviciosSinPrecioInfanteVigencias, type VigenciasServicio } from "@/lib/calc/servicioVigencias";
+import { presentarIncluye } from "@/lib/tarifario/incluyePorSalida";
+import { REGLA_COMPOSICION_PUBLICADA } from "@/lib/reservar/composicionPublicada";
+import { lineasDeTexto } from "@/lib/tarifario/descripcionPaquete";
+import { diagnosticoDisponibilidad, etiquetaDisponibilidad, type OpcionalOculto, type OpcionalParcial, type SalidaConIncluidosOmitidos, type SalidaOmitida } from "@/lib/tarifario/disponibilidadServicios";
+import { cargarVigenciasServicios } from "@/lib/reservar/temporadasServicio";
 
-type Result = { ok: true; id?: number; aviso?: string } | { ok: false; error: string };
+type Result = { ok: true; id?: number; aviso?: string; pendiente?: { faltan: number; total: number; automatica: boolean } } | { ok: false; error: string };
+// reanudar = continuar la publicación por lotes que quedó pendiente (misma generación y revisión capturadas por su manifiesto) en vez de pedir una generación nueva.
+/** `porLotes`: publica por lotes (migración 260) si TARIFARIO_PUBLICACION_POR_LOTES=1. Una vez que todos los lotes están en la base la publicación continúa SOLA (trabajador de la base), así que
+ * también la piden las regeneraciones en segundo plano tras editar un hotel, un servicio o un vuelo.
+ * `inicioMs`: instante en que empezó la ACCIÓN que llama (varias regeneraciones en bucle comparten una sola ventana `maxDuration`).
+ * `segundoPlano`: nadie volverá a pedir los lotes que falten por preparar → si el presupuesto no alcanza para dejarlos todos en la base se marca el fallo (no queda «recalculando» en falso). */
+type OpcionesGenerar = { reanudar?: boolean; porLotes?: boolean; inicioMs?: number; segundoPlano?: boolean };
+/** Regeneración disparada por OTRA acción (editar un hotel, un servicio, un vuelo, una salida): por lotes, sin pantalla que continúe (la base sigue sola) y con la ventana de la acción que llama. */
+/** Empujón inmediato a la continuación sin navegador: tras responder, llama a /api/cron/publicacion-tarifario (que corre el trabajador de la base y se encadena mientras quede cola). Con pg_cron habilitado es redundante e inofensivo. */
+async function empujarContinuacion() {
+  const secret = process.env.CRON_SECRET;
+  if (!secret) return;   // sin secreto la ruta rechaza todo; la cola la sigue atendiendo pg_cron o el cron diario
+  try {
+    // Import dinámico: `next/server` solo existe dentro de Next; así las pruebas que importan estas acciones fuera de Next siguen cargando.
+    const { after } = await import("next/server");
+    after(async () => {
+      try { await fetch(urlRuta(), { headers: { authorization: `Bearer ${secret}`, "x-cadena": "0" }, cache: "no-store" }); }
+      catch (e) { console.error("generarTarifario: no se pudo empujar la continuación:", e instanceof Error ? e.message : e); }
+    });
+  } catch { /* fuera de una petición (pruebas): nada que empujar */ }
+}
+const enSegundoPlano = (inicioMs: number = Date.now()): OpcionesGenerar => ({ porLotes: true, segundoPlano: true, inicioMs });
 const oNull = (s: string | null | undefined) => (s && s.trim() !== "" ? s.trim() : null);
 const dNull = (s: string | null | undefined) => (s && s.trim() !== "" ? s : null);
 
@@ -663,6 +696,17 @@ export async function setHotelFiltros(
   };
 }
 
+// 262: mensaje si alguno de estos servicios es un traslado por alcance (no puede ir incluido); null si ninguno. Falla cerrado ante un error técnico de lectura.
+async function trasladosIncluidos(sb: Awaited<ReturnType<typeof createClient>>, ids: number[]): Promise<string | null> {
+  if (!ids.length) return null;
+  const t = await trasladosPorAlcance(sb, ids);
+  if (!t.ok) return "No se pudo validar el tipo del servicio. Intenta de nuevo.";
+  if (!t.ids.length) return null;
+  const { data } = await sb.from("servicios_adicionales").select("id, nombre").in("id", t.ids);
+  const nombre = (data ?? [])[0]?.nombre ?? `#${t.ids[0]}`;
+  return mensajeTrasladoIncluido(nombre);
+}
+
 // ── Adición de servicio (con check) + modo de cobro (persona/grupo) ────────
 export async function setServicio(
   paqueteId: number,
@@ -672,6 +716,10 @@ export async function setServicio(
   incluido = false
 ): Promise<Result> {
   const sb = await createClient();
+  if (checked && incluido) {
+    const t = await trasladosIncluidos(sb, [servicioId]);
+    if (t) return { ok: false, error: t };
+  }
   if (!checked) {
     const { error } = await sb.from("armado_servicios").delete().eq("paquete_id", paqueteId).eq("servicio_id", servicioId);
     if (error) return { ok: false, error: error.message };
@@ -703,6 +751,10 @@ export async function setServicios(paqueteId: number, items: ServicioLoteItem[],
   if (lista.length > 500) return { ok: false, error: "Son demasiados servicios en una sola operación (máximo 500)." };
   const sb = await createClient();
   const ids = lista.map((x) => x.servicioId);
+  if (checked) {
+    const t = await trasladosIncluidos(sb, lista.filter((x) => x.incluido).map((x) => x.servicioId));
+    if (t) return { ok: false, error: t };
+  }
   if (!checked) {
     const { error, count } = await sb
       .from("armado_servicios")
@@ -736,8 +788,27 @@ export async function setServicios(paqueteId: number, items: ServicioLoteItem[],
 const MENSAJE_ERROR_TECNICO_TARIFARIO =
   "No se pudo generar el tarifario por un error técnico. Se registró el detalle en los registros del servidor para revisión.";
 
-export async function generarTarifario(paqueteId: number): Promise<Result> {
+export async function generarTarifario(paqueteId: number, opciones: OpcionesGenerar = {}): Promise<Result> {
+  const inicioAccion = opciones.inicioMs ?? Date.now();   // la ventana de la petición (maxDuration) se cuenta desde aquí
   const sb = await createClient();
+
+  // Medición por etapas (SOLO diagnóstico: no cambia el cálculo ni la publicación). Cada intento deja UNA línea en los logs del servidor con paquete,
+  // generación, resultado, etapa (la que falló, o la última), duración por etapa y filas calculadas. Solo números y nombres fijos de etapa: sin SQL,
+  // sin texto de Postgres, sin datos de personas. Nunca lanza: si la medición fallara, el intento sigue igual. Ver lib/tarifario/cronometroGeneracion.ts.
+  const cron = crearCronometro();
+  const med: { generacion: number | null; filas: readonly { modulo?: unknown }[] | null } = { generacion: null, filas: null };
+  const medir = (resultado: ResultadoGeneracion) => {
+    try {
+      const { etapa, msEtapa, msTotal } = cron.actual();
+      const linea = lineaMedicionGeneracion({
+        paqueteId, generacion: med.generacion, resultado, etapa, msEtapa, msTotal, etapasCerradas: cron.cerradasTexto(),
+        filas: med.filas ? med.filas.length : null, filasPorModulo: med.filas ? contarPorModulo(med.filas) : null,
+      });
+      if (resultado === "ok") console.info(linea);
+      else if (resultado === "descartado" || resultado === "fallo_negocio") console.warn(linea);
+      else console.error(linea);
+    } catch { /* la medición nunca debe afectar la generación */ }
+  };
 
   // ── Publicación atómica (migración 181) — token de generación capturado
   // como PRIMERA operación de toda la función, antes de leer CUALQUIER
@@ -755,8 +826,20 @@ export async function generarTarifario(paqueteId: number): Promise<Result> {
   // dentro de `publicar_tarifario_resultado` (mismo commit que las filas).
   // Por eso ya no hace falta ninguna lectura antes de este punto: el token
   // es literalmente la primera operación de la función.
+  cron.etapa("iniciar_generacion");
+  const porLotes = (opciones.porLotes === true || opciones.reanudar === true) && publicacionPorLotesActiva();
+  let generacion: number;
+  let revisionCapturada: number;
+  if (opciones.reanudar) {
+    // Reanudar: NO se pide una generación nueva. Se continúa la vigente con la revisión que fijó su manifiesto; si lo recalculado ya no coincide, el manifiesto lo rechaza.
+    const pend = porLotes ? await leerPublicacionPendiente(sb as unknown as RpcCliente, paqueteId) : null;
+    if (!pend) return { ok: true, aviso: "No hay una publicación pendiente." };
+    generacion = pend.generacion;
+    revisionCapturada = pend.revisionCapturada;
+  } else {
   const { data: genRows, error: eGen } = await sb.rpc("iniciar_generacion_tarifario", { p_paquete_id: paqueteId });
   if (eGen || !genRows || !genRows.length) {
+    medir(esTimeoutPostgres(eGen) ? "timeout" : "fallo_tecnico");
     // Todavía NO existe ningún token/generación — `marcar_generacion_fallida`
     // no aplica (no hay nada que marcar). El `.message` crudo (incluido el
     // caso "paquete no encontrado", que sale del mismo `raise exception` de
@@ -764,8 +847,10 @@ export async function generarTarifario(paqueteId: number): Promise<Result> {
     if (eGen) console.error(`generarTarifario: iniciar_generacion_tarifario falló (paquete_id=${paqueteId}): ${eGen.message}`);
     return { ok: false, error: MENSAJE_ERROR_TECNICO_TARIFARIO };
   }
-  const generacion = genRows[0].generacion;
-  const revisionCapturada = genRows[0].revision_capturada;
+  generacion = genRows[0].generacion;
+  revisionCapturada = genRows[0].revision_capturada;
+  }
+  med.generacion = generacion;
   // Best-effort: si marcar el fallo en armado_paquetes también falla, nunca
   // debe ocultar ni reemplazar el error de negocio/técnico real que la
   // función ya está por reportar — solo se registra server-side. `sb.rpc()`
@@ -800,6 +885,7 @@ export async function generarTarifario(paqueteId: number): Promise<Result> {
   // crudo de Postgres/Supabase) — estables y seguros por construcción, se
   // persisten en `tarifario_error` y se devuelven al caller tal cual.
   const fallar = async (mensaje: string): Promise<Result> => {
+    medir("fallo_negocio");
     await marcarFallo(mensaje);
     return { ok: false, error: mensaje };
   };
@@ -808,11 +894,13 @@ export async function generarTarifario(paqueteId: number): Promise<Result> {
   // de módulo (ver arriba) — nunca el texto interno de Postgres.
   const fallarTecnico = async (detalleCrudo: string): Promise<Result> => {
     console.error(`generarTarifario: error técnico (paquete_id=${paqueteId}, generacion=${generacion}): ${detalleCrudo}`);
+    medir(esTimeoutPostgres(detalleCrudo) ? "timeout" : "fallo_tecnico");
     await marcarFallo(MENSAJE_ERROR_TECNICO_TARIFARIO);
     return { ok: false, error: MENSAJE_ERROR_TECNICO_TARIFARIO };
   };
 
   // ── FASE AUTORITATIVA — TODO se lee fresco, DESPUÉS del token ──────────
+  cron.etapa("lectura_paquete");
   const { data: pq, error: ePq } = await sb
     .from("armado_paquetes")
     .select("*, destinos(nombre)")
@@ -848,6 +936,7 @@ export async function generarTarifario(paqueteId: number): Promise<Result> {
   // Neto → moneda de publicación. En el modo de siempre es la identidad.
   const aMonedaOferta = (neto: number, monedaOrigen: string | null | undefined) => (modo63 ? aMoneda63(neto, monedaOrigen, paqueteMoneda, trm63) : neto);
 
+  cron.etapa("lectura_fuentes");
   const [{ data: vuelosSel, error: eVuelosSel }, { data: empaquetadosSel, error: eEmpaquetadosSel }, { data: hotelesSel, error: eHotelesSel }, { data: serviciosSel, error: eServiciosSel }] = await Promise.all([
     sb
       .from("armado_vuelos")
@@ -873,24 +962,37 @@ export async function generarTarifario(paqueteId: number): Promise<Result> {
   if (eHotelesSel) return await fallarTecnico(eHotelesSel.message);
   if (eServiciosSel) return await fallarTecnico(eServiciosSel.message);
 
-  // Rangos de grupo de los servicios seleccionados
+  // Vigencias de cada servicio seleccionado. SIN «GENERAL»: ni el precio base del servicio ni los rangos GENERAL se usan como respaldo (siguen en la base, solo
+  // como dato histórico). Todo precio publicado sale de una vigencia y, por grupo, de un rango de ESA vigencia — la misma regla con la que luego se cotiza.
+  cron.etapa("lectura_grupos_servicio");
   const servicioIds = (serviciosSel ?? []).map((s) => s.servicio_id);
-  const gruposPorServicio = new Map<number, { pax_desde: number; pax_hasta: number; precio: number }[]>();
+  const vigenciasPorServicio = new Map<number, VigenciasServicio>();
   if (servicioIds.length) {
-    // El snapshot del tarifario usa la tarifa BASE (GENERAL); las temporadas se
-    // aplican al reservar (re-escala por fecha del viaje).
-    const { data: gr, error: eGrupos } = await sb
-      .from("servicio_tarifa_pax")
-      .select("servicio_id, pax_desde, pax_hasta, precio")
-      .eq("temporada", "GENERAL")
-      .in("servicio_id", servicioIds);
-    if (eGrupos) return await fallarTecnico(eGrupos.message);
-    for (const g of gr ?? []) {
-      const arr = gruposPorServicio.get(g.servicio_id) ?? [];
-      arr.push({ pax_desde: g.pax_desde, pax_hasta: g.pax_hasta, precio: g.precio });
-      gruposPorServicio.set(g.servicio_id, arr);
+    const rv = await cargarVigenciasServicios(
+      sb as unknown as Parameters<typeof cargarVigenciasServicios>[0],
+      (serviciosSel ?? []).map((x) => ({ id: x.servicio_id, nombre: (x.servicios_adicionales as unknown as { nombre?: string | null } | null)?.nombre ?? `#${x.servicio_id}` })),
+    );
+    if (!rv.ok) return await fallarTecnico(rv.error);
+    for (const [k, v] of rv.porServicio) vigenciasPorServicio.set(k, v);
+    // 262: un traslado por alcance no se hornea en el hotel. Se detiene ANTES de calcular nada, con el motivo, en vez de «publicar» sin filas.
+    for (const s of serviciosSel ?? []) {
+      if (!(s as { incluido?: boolean }).incluido || !vigenciasPorServicio.get(s.servicio_id)?.usaAlcance) continue;
+      const nombre = (s.servicios_adicionales as unknown as { nombre?: string | null } | null)?.nombre ?? `#${s.servicio_id}`;
+      return await fallar(mensajeTrasladoIncluido(nombre));
     }
   }
+  // Disponibilidad por fecha (migración 256). Un servicio sin vigencia ya NO tumba la generación del paquete:
+  //   · incluido sin vigencia/rango/precio en una estadía → esa salida/estadía NO se publica (las cubiertas sí); jamás se publica omitiéndolo.
+  //   · opcional sin ninguna vigencia en la ventana → no se publica; con vigencia en parte de la ventana → se publica con sus tramos disponibles.
+  // Todo se resume en un diagnóstico persistido junto a la publicación.
+  const salidasOmitidas: SalidaOmitida[] = [];
+  // Salidas que se publican SIN algún incluido (sin tarifa vigente en su fecha): el servicio no entra al PVP ni al costo y el hotel se ofrece igual.
+  const incluidosOmitidos: SalidaConIncluidosOmitidos[] = [];
+  // Evidencia de composición (migración 258): por fecha de ida de cada salida de bloqueo/dinámico, los incluidos horneados en su precio. Se registra tras publicar.
+  const composicionPorFecha = new Map<string, number[]>();
+  let estadiasEvaluadas = 0;
+  const opcionalesOcultos: OpcionalOculto[] = [];
+  const opcionalesParciales: OpcionalParcial[] = [];
 
   const hoteles = hotelesSel ?? [];
   const servicios = serviciosSel ?? [];
@@ -986,6 +1088,7 @@ export async function generarTarifario(paqueteId: number): Promise<Result> {
   // helper puro compartido que `setHotelFiltros`/`datosBernalo.ts`
   // (`lib/calc/paresPublicadosUnidad.ts`) — una sola función decide "¿este
   // hotel Bernalo está realmente publicado?" en los tres lugares.
+  cron.etapa("lectura_bernalo");
   const paresPublicadosPorHotelBernalo = new Map<number, Set<string>>();
   if (hotelesBernaloFilas.length && tipoCompatibleConVistaBooking) {
     const { data: tarifasPublicadasBernalo, error: eTarifasBernalo } = await sb
@@ -1022,12 +1125,13 @@ export async function generarTarifario(paqueteId: number): Promise<Result> {
   const nombresDeIdsBernalo = (ids: Set<number>) => [...ids].map((id) => nombrePorHotelBernalo.get(id) ?? `#${id}`);
   const hotelesBernaloValidos = nombresDeIdsBernalo(idsBernaloValidos);
 
+  cron.etapa("lectura_hoteles");
   const temporadasPorHotel = new Map<number, TemporadaRango[]>();
   type TarifaRow = Record<string, unknown>;
   const tarifasPorHotel = new Map<number, TarifaRow[]>();
   if (hotelIds.length) {
     const [{ data: temps }, { data: tarifas }] = await Promise.all([
-      sb.from("hotel_temporadas").select("hotel_id, nombre, fecha_inicio, fecha_fin, prioridad, compra_inicio, compra_fin, tipo, descuento_valor, rangos, blackouts, regimen_restringido").in("hotel_id", hotelIds),
+      sb.from("hotel_temporadas").select("hotel_id, nombre, fecha_inicio, fecha_fin, prioridad, compra_inicio, compra_fin, tipo, descuento_valor, rangos, blackouts, regimen_restringido").in("hotel_id", hotelIds).order("orden").order("id"),
       sb.from("tarifa_hotel").select("*").in("hotel_id", hotelIds),
     ]);
     for (const t of temps ?? []) {
@@ -1043,38 +1147,73 @@ export async function generarTarifario(paqueteId: number): Promise<Result> {
     }
   }
 
-  type ResultadoInsert = Database["public"]["Tables"]["tarifario_resultado"]["Insert"];
+  // `neto_hotel` NO es columna de tarifario_resultado: viaja en el payload y la base lo guarda aparte (tarifario_resultado_neto, migración 260) para la invalidación exacta.
+  type ResultadoInsert = Database["public"]["Tables"]["tarifario_resultado"]["Insert"] & { neto_hotel?: number | null };
   const filas: ResultadoInsert[] = [];
+  med.filas = filas; // la medición cuenta las filas en el momento de registrar (no copia ni modifica el arreglo)
 
   // Servicios INCLUIDOS se hornean por persona en la tarifa del hotel.
   // (Los OPCIONALES no se hornean: se agregan como add-on en la reserva.)
   // `sinAsistencia`: omite la categoría asistencia (no cuenta como cargo para el PVP fijo del infante).
+  // Ventana de la estadía que se está publicando (la fija `filasHoteles`): los incluidos se hornean con LA vigencia de esa estadía; si la estadía cae en dos
+  // vigencias, o en ninguna, el precio horneado sería ambiguo o inexistente y la generación falla con un mensaje legible.
+  let ventanaEstadia: { desde: string; hasta: string } | null = null;
+  const incluidoCache = new Map<string, ReturnType<typeof incluidoEnEstadia>>();
+  function resolverIncluido(s: (typeof servicios)[number]) {
+    const sv = vigenciasPorServicio.get(s.servicio_id);
+    if (!sv || !ventanaEstadia) return null;
+    const modo = (s.modo as string) === "grupo" ? "grupo" : "persona";
+    const k = `${s.servicio_id}|${modo}|${ventanaEstadia.desde}|${ventanaEstadia.hasta}`;
+    let r = incluidoCache.get(k);
+    if (!r) { r = incluidoEnEstadia(sv, modo, ventanaEstadia.desde, ventanaEstadia.hasta); incluidoCache.set(k, r); }
+    return r;
+  }
+  function incluidoVigente(s: (typeof servicios)[number]) {
+    const r = resolverIncluido(s);
+    return r && r.ok ? r : null;
+  }
+  /**
+   * Incluidos que NO se hornean en la estadía actual. `omitidos` = sin tarifa vigente (sin vigencia que cubra, sin precio o rangos): el servicio se omite y la estadía se
+   * publica sin él. `errores` = lectura fallida o error de configuración (franjas, vigencias ambiguas): la estadía NO se publica.
+   */
+  function evaluarIncluidosEstadia(): { omitidos: { servicioId: number; servicio: string; motivo: string }[]; errores: { servicio: string; error: string }[] } {
+    const omitidos: { servicioId: number; servicio: string; motivo: string }[] = [];
+    const errores: { servicio: string; error: string }[] = [];
+    for (const s of servicios) {
+      if (!(s.incluido as boolean)) continue;
+      const nombre = (s.servicios_adicionales as unknown as { nombre?: string | null } | null)?.nombre ?? `#${s.servicio_id}`;
+      const r = resolverIncluido(s);
+      if (!r) errores.push({ servicio: nombre, error: `El servicio incluido «${nombre}» no se pudo leer.` });
+      else if (!r.ok) { if (incluidoSeOmite(r)) omitidos.push({ servicioId: s.servicio_id, servicio: nombre, motivo: r.error }); else errores.push({ servicio: nombre, error: r.error }); }
+    }
+    return { omitidos, errores };
+  }
   function aporteServiciosIncluidos(numNoches: number, sinAsistencia = false): number {
     let total = 0;
     for (const s of servicios) {
       if (!(s.incluido as boolean)) continue;
-      const srv = s.servicios_adicionales as unknown as { precio_persona: number | null; liquidacion: string | null; categoria?: string | null } | null;
-      if (srv?.precio_persona == null) continue;
-      if (sinAsistencia && srv.categoria === "asistencia") continue;
+      const srv = s.servicios_adicionales as unknown as { liquidacion: string | null; categoria?: string | null } | null;
+      const inc = incluidoVigente(s); // valida cobertura también para los incluidos por grupo (que no se hornean)
+      if (!inc || inc.netoPersona == null) continue;
+      if (sinAsistencia && srv?.categoria === "asistencia") continue;
       // Cobro amarrado a la duración: por noche × noches, por día × (noches+1).
-      total += marcar(aMonedaOferta(Number(srv.precio_persona) || 0, svcMoneda(s)), pctMk) * factorLiquidacion(srv.liquidacion, numNoches);
+      total += marcar(aMonedaOferta(inc.netoPersona, svcMoneda(s)), pctMk) * factorLiquidacion(srv?.liquidacion ?? null, numNoches);
     }
     return total;
   }
 
-  // Tarifa de infante (migración 226): lo mismo para un MENOR DE 2 AÑOS — cada
-  // servicio incluido por persona con su `precio_infante` (NETO, con el mismo
-  // markup que el de adulto) o, si el servicio no lo configuró (NULL ≠ $0), el
-  // precio de adulto. Los incluidos por grupo no se hornean (ni para adulto).
+  // Tarifa de infante (migración 226): lo mismo para un MENOR DE 2 AÑOS — cada servicio incluido por persona con el `precio_infante` de SU VIGENCIA (NETO, con
+  // el mismo markup que el de adulto) o, si la vigencia no lo configuró (NULL ≠ $0), el precio de adulto de esa vigencia. Los incluidos por grupo no se hornean.
   function aporteServiciosIncluidosMenor(numNoches: number, sinAsistencia = false): number {
     let total = 0;
     for (const s of servicios) {
       if (!(s.incluido as boolean)) continue;
-      const srv = s.servicios_adicionales as unknown as { precio_persona: number | null; precio_infante: number | null; liquidacion: string | null; categoria?: string | null } | null;
-      if (srv?.precio_persona == null) continue;
-      if (sinAsistencia && srv.categoria === "asistencia") continue;
-      const neto = srv.precio_infante != null ? Number(srv.precio_infante) || 0 : Number(srv.precio_persona) || 0;
-      total += marcar(aMonedaOferta(neto, svcMoneda(s)), pctMk) * factorLiquidacion(srv.liquidacion, numNoches);
+      const srv = s.servicios_adicionales as unknown as { liquidacion: string | null; categoria?: string | null } | null;
+      const inc = incluidoVigente(s);
+      if (!inc || inc.netoPersona == null) continue;
+      if (sinAsistencia && srv?.categoria === "asistencia") continue;
+      const neto = inc.netoInfante ?? inc.netoPersona;
+      total += marcar(aMonedaOferta(neto, svcMoneda(s)), pctMk) * factorLiquidacion(srv?.liquidacion ?? null, numNoches);
     }
     return total;
   }
@@ -1108,11 +1247,23 @@ export async function generarTarifario(paqueteId: number): Promise<Result> {
     feeInfante = 0,
   ) {
     if (numNoches <= 0) return;
+    // Fecha fija: la vigencia del día de ida (así cotiza la reserva). Ventana "desde" (porción): TODA la ventana debe caer en una sola vigencia.
+    ventanaEstadia = { desde: fechaIda, hasta: masBarato && fechaRegreso ? fechaRegreso : fechaIda };
+    // Disponibilidad: un incluido SIN tarifa vigente en esta fecha se omite de ESTA estadía (no se hornea en el PVP; la reserva, el costo y la CxP tampoco lo cuentan) y
+    // el hotel se publica igual. Un error de configuración (franjas, vigencias ambiguas, lectura) sí impide publicar la estadía.
+    estadiasEvaluadas++;
+    const { omitidos: incluidosSinTarifa, errores: fallosIncluidos } = evaluarIncluidosEstadia();
+    if (fallosIncluidos.length) { salidasOmitidas.push({ fechaIda, fechaRegreso, motivos: fallosIncluidos }); return; }
+    if (incluidosSinTarifa.length) incluidosOmitidos.push({ fechaIda, fechaRegreso, servicios: incluidosSinTarifa });
+    const idsOmitidos = new Set(incluidosSinTarifa.map((x) => x.servicioId));
+    if (modulo === "bloqueo" || modulo === "dinamico") {
+      composicionPorFecha.set(fechaIda, servicios.filter((s) => (s.incluido as boolean) && !idsOmitidos.has(s.servicio_id)).map((s) => s.servicio_id).sort((a, b) => a - b));
+    }
     const aporteServ = aporteServiciosIncluidos(numNoches); // solo servicios incluidos
     const aporteServMenor = aporteServiciosIncluidosMenor(numNoches);
     // PVP fijo del infante (clase del hotel): ver lib/paquetes/pvpInfanteFijo.ts. Cada ruta decide por SUS cargos: el menor de 2 paga el
     // fee de infante y el precio de infante de los servicios; el de 2+ paga el vuelo y los servicios de adulto.
-    const grupoIncluido = servicios.some((s) => (s.incluido as boolean) && s.modo === "grupo");
+    const grupoIncluido = servicios.some((s) => (s.incluido as boolean) && s.modo === "grupo" && !idsOmitidos.has(s.servicio_id));
     const fijoMayor2 = aplicaPvpInfanteFijo(fijoInfante, { vuelo: aporteVueloVal, servicios: aporteServiciosIncluidos(numNoches, true), grupoIncluido, menorDeDos: false }) ? fijoInfante : null;
     const fijoMenor2 = aplicaPvpInfanteFijo(fijoInfante, { vuelo: feeInfante, servicios: aporteServiciosIncluidosMenor(numNoches, true), grupoIncluido, menorDeDos: true }) ? fijoInfante : null;
     for (const h of hoteles) {
@@ -1150,7 +1301,7 @@ export async function generarTarifario(paqueteId: number): Promise<Result> {
         let hayHabitacion = false;
         let hayInfante = false;
         let procedenciaHab: ReturnType<typeof columnasProcedencia> | null = null;
-        const publicarFila = (acom: Acomodacion, costoHotel: number, procedencia: ReturnType<typeof columnasProcedencia>) => {
+        const publicarFila = (acom: Acomodacion, costoHotel: number, procedencia: ReturnType<typeof columnasProcedencia>, netoHotelExacto: number | null = null) => {
           const esRoom = acom !== "nino" && acom !== "nino2" && acom !== "infante";
           const aporteHotel = marcar(aMonedaOferta(costoHotel, monedaHotelOrigen), pctMk); // hotel siempre con mk (en modo 63: neto × TRM primero)
           const precioMenor2Normal = esRoom ? null : redondearCentavos63(precioMenorDeDos({ aporteHotel, aporteServiciosMenor: aporteServMenor, feeInfante, moneda: monedaHotel }));
@@ -1179,6 +1330,9 @@ export async function generarTarifario(paqueteId: number): Promise<Result> {
             noches: numNoches,
             fecha_ida: fechaIda,
             fecha_regreso: fechaRegreso,
+            // Neto total de hotel del MOTOR (moneda del hotel, antes de markup) de una estadía fija noche por noche: la invalidación exacta de la base lo compara con su propio
+            // recálculo. NULL en «desde» (porción: mejor noche de una ventana) y en la fila de infante sintética: no verificables → se ocultan por prudencia si su clave cambia.
+            neto_hotel: netoHotelExacto,
             // Infante con PVP fijo (sin cargo de vuelo/servicios): el precio completo es el fijo; sin vuelo no hay base no comisionable.
             base_comisionable: acom === "infante" && fijoMayor2 != null ? fijoMayor2 : t.baseComisionable,
             impuesto: acom === "infante" && fijoMayor2 != null ? 0 : t.impuesto,
@@ -1228,7 +1382,7 @@ export async function generarTarifario(paqueteId: number): Promise<Result> {
           if (esRoom && costoHotel <= 0) continue;
           if (esRoom) { hayHabitacion = true; procedenciaHab = procedenciaHab ?? procedencia; }
           if (acom === "infante") hayInfante = true;
-          publicarFila(acom, costoHotel, procedencia);
+          publicarFila(acom, costoHotel, procedencia, masBarato ? null : costoHotel);
         }
         // Infante (migración 226): un hotel sin tarifa de infante para este combo NO
         // deja al menor de 2 años gratis en silencio — se publica la fila con hotel
@@ -1248,6 +1402,7 @@ export async function generarTarifario(paqueteId: number): Promise<Result> {
   // publicando) un vuelo cuyo país/destino cambió después de vincularlo. Un
   // error de lectura aborta la generación como fallo técnico (nunca "sin
   // vuelos"). Dinámico no pasa por aquí: sus salidas manuales siguen #62.
+  cron.etapa("lectura_destinos_aereos");
   let permiteDestinoAereo = (_tipo: "bloqueo" | "empaquetado", _id: number) => true;
   let excluidosPorDestinoAereo = 0;
   if (tipo === "bloqueo" && ((vuelosSel?.length ?? 0) + (empaquetadosSel?.length ?? 0)) > 0) {
@@ -1322,6 +1477,7 @@ export async function generarTarifario(paqueteId: number): Promise<Result> {
   // misma regla con la que cargarDatosTarifario() oculta lo ya publicado y
   // computarReserva() rechaza la venta. Un error de lectura aborta la
   // generación (antes se ignoraba y el paquete quedaba "sin salidas").
+  cron.etapa("lectura_salidas");
   const { data: salidasRaw, error: eSalidas } = tipo === "dinamico"
     ? await sb.from("salidas_dinamicas").select("*").eq("paquete_id", paqueteId).order("fecha_ida")
     : { data: null, error: null };
@@ -1363,6 +1519,7 @@ export async function generarTarifario(paqueteId: number): Promise<Result> {
   // ── #90 D / #93: moneda de publicación ELEGIDA y TRM condicional sobre las fuentes que REALMENTE aportan ──
   // Mismas filas y mismos predicados (aporteFuentes90.ts) que el panel del armado y la cotización de la oferta: una fuente que este
   // generador descarta (vínculo sin fechas, vencido, fuera de destino, vinculada no elegible…) no exige TRM ni bloquea la publicación.
+  cron.etapa("evaluacion_publicacion");
   {
     const permiteAporte = (t: "bloqueo" | "empaquetado", id: number) => (tipo === "dinamico" ? (t === "empaquetado" ? permiteVinculada63(id) : true) : permiteDestinoAereo(t, id));
     const ev = evaluarPublicacion90({
@@ -1415,6 +1572,7 @@ export async function generarTarifario(paqueteId: number): Promise<Result> {
   if (tipo === "servicios" && !servicios.length)
     return await fallar("Agrega al menos un servicio.");
 
+  cron.etapa("calculo");
   if (tipo === "bloqueo") {
     // MÓDULO BLOQUEOS: una liquidación por ciclo aéreo negociado
     for (const { aplica_mk, ta, b } of vuelos) {
@@ -1504,7 +1662,7 @@ export async function generarTarifario(paqueteId: number): Promise<Result> {
 
   // #63 — si el paquete quedó sin ninguna salida dinámica publicable por culpa de
   // las vinculadas omitidas, se dice por qué (no es "sin salidas" a secas).
-  if (tipo === "dinamico" && omitidas63.length && !filas.some((x) => x.modulo === "dinamico")) {
+  if (tipo === "dinamico" && omitidas63.length && !filas.some((x) => x.modulo === "dinamico") && !salidasOmitidas.length) {
     return await fallar(`Dinámico: ninguna salida quedó disponible. ${omitidas63.slice(0, 3).join(" ")}`);
   }
 
@@ -1514,14 +1672,23 @@ export async function generarTarifario(paqueteId: number): Promise<Result> {
     nochesPaq = calcNoches(vuelos[0].b.fecha_ida!, vuelos[0].b.fecha_regreso!) || nochesPaq;
   }
 
+  // Ventana de viaje del paquete: las vigencias de un servicio opcional deben cubrirla completa para publicar su precio.
+  const ventanaViaje = pq.fecha_viaje_inicio && pq.fecha_viaje_fin ? { desde: pq.fecha_viaje_inicio as string, hasta: pq.fecha_viaje_fin as string } : null;
   // SERVICIOS: se publican siempre (módulo Servicios y/o add-ons en la reserva),
   // sin importar el tipo. Persona = una fila; grupo = una fila por rango de pax.
   for (const s of servicios) {
     if (s.incluido as boolean) continue; // los incluidos se hornean, no se publican
-    const srv = s.servicios_adicionales as unknown as { nombre: string; precio_persona: number | null; precio_infante: number | null; liquidacion: string | null; descripcion: string | null; recargo_individual: number | null; moneda: string | null } | null;
+    const srv = s.servicios_adicionales as unknown as { nombre: string; liquidacion: string | null; descripcion: string | null; moneda?: string | null } | null;
     if (!srv) continue;
     const fLiq = factorLiquidacion(srv.liquidacion, nochesPaq);
     const modo = (s.modo as string) === "grupo" ? "grupo" : "persona";
+    // Referencia = la vigencia (o el mínimo entre las que cubren el viaje del paquete). Sin vigencia/rango/precio ese opcional no se ofrece: ver opcionalesOcultos.
+    const sv = vigenciasPorServicio.get(s.servicio_id);
+    const ref = sv ? referenciaPublicacion(sv, modo, ventanaViaje, hoyGen) : null;
+    // Opcional sin vigencia/precio/rango válidos: no se ofrece (y se dice por qué); el resto del paquete se publica igual.
+    if (!ref || !ref.ok) { opcionalesOcultos.push({ servicio: srv.nombre, motivo: ref ? ref.error : `El servicio «${srv.nombre}» no se pudo leer.` }); continue; }
+    const tramosDisponibles = ref.cobertura?.parcial ? ref.cobertura.rangos : null;
+    if (ref.cobertura?.parcial) opcionalesParciales.push({ servicio: srv.nombre, rangos: ref.cobertura.rangos, primerSinCobertura: ref.cobertura.primerSinCobertura });
     // Cada servicio se publica en SU moneda (redondeo a mil en COP, a dólar en USD).
     const monedaSrvOrigen = svcMoneda(s);
     // Modo 63: se publica en la moneda ELEGIDA (neto convertido con la TRM antes del markup si difiere); si no, en la moneda del servicio.
@@ -1538,36 +1705,41 @@ export async function generarTarifario(paqueteId: number): Promise<Result> {
       tipo_tarifa: modo,
       impuesto: 0,
       moneda: monedaSrv,
-      descripcion: srv.descripcion ?? null,
-      // Procedencia (migración 180): las filas de servicio no vienen de
-      // `columnasProcedencia()` como las de hotel — sin esto, el insert
-      // masivo manda `procedencia_mixta` NULL (viola el NOT NULL) porque el
-      // DEFAULT de la columna no aplica cuando la propiedad simplemente está
-      // ausente del objeto en un insert de filas heterogéneas.
+      // Un traslado con suplemento por horario publica su tarifa BASE: se avisa para que no se lea como precio final.
+      descripcion: [
+        ref.conFranjas ? `${srv.descripcion ?? ""} Precio base: puede sumar un recargo según la hora de llegada o salida, que se calcula al cotizar.`.trim() : (srv.descripcion ?? null),
+        // Disponibilidad parcial: el cliente lo lee donde ya lee la descripción (tarifario público, receptivos, carrito); las demás fechas no se ofrecen.
+        tramosDisponibles ? etiquetaDisponibilidad(tramosDisponibles) : null,
+      ].filter(Boolean).join(" ") || null,
+      // Procedencia (migración 180): las filas de servicio no vienen de `columnasProcedencia()` como las de hotel — sin esto, el insert masivo manda
+      // `procedencia_mixta` NULL (viola el NOT NULL) porque el DEFAULT no aplica cuando la propiedad está ausente en un insert de filas heterogéneas.
       temporada_ganadora: null,
       es_promocion: null,
       precio_final_autoritativo: null,
       procedencia_temporadas: null,
       procedencia_mixta: false,
+      // Disponibilidad parcial por fecha (migración 256): null = todas las fechas del viaje del paquete; arreglo = solo esos tramos.
+      fechas_disponibles: tramosDisponibles as unknown as Json | null,
     };
     if (modo === "grupo") {
-      for (const g of gruposPorServicio.get(s.servicio_id) ?? []) {
+      for (const g of ref.rangos) {
         const pvp = redondearVenta(marcar(aMonedaOferta(Number(g.precio) || 0, monedaSrvOrigen), pctMk) * fLiq, monedaSrv);
         filas.push({ ...comun, pax_desde: g.pax_desde, pax_hasta: g.pax_hasta, base_comisionable: pvp, precio_pvp: pvp });
       }
-    } else if (srv.precio_persona != null) {
-      const pvp = redondearVenta(marcar(aMonedaOferta(Number(srv.precio_persona) || 0, monedaSrvOrigen), pctMk) * fLiq, monedaSrv);
-      // Recargo individual: suplemento del proveedor cuando va 1 pax (cobro por
-      // persona). Es un COSTO, así que el lado de venta sube con su markup; el
-      // costo neto lo toma Reservar del catálogo para la CxP del proveedor.
-      const recargoNeto = Math.max(Number(srv.recargo_individual) || 0, 0);
+    } else if (ref.netoPersona != null) {
+      const pvp = redondearVenta(marcar(aMonedaOferta(ref.netoPersona, monedaSrvOrigen), pctMk) * fLiq, monedaSrv);
+      // Recargo individual: suplemento del proveedor cuando va 1 pax (cobro por persona), de la vigencia. Es un COSTO: el lado de venta sube con su markup.
+      const recargoNeto = Math.max(ref.recargoIndividual, 0);
       const recargoPvp = recargoNeto > 0 ? redondearVenta(marcar(aMonedaOferta(recargoNeto, monedaSrvOrigen), pctMk), monedaSrv) : 0;
-      // Precio de infante (0 a 1,99 años) del servicio: NETO con el mismo markup.
-      // NULL = el servicio no lo configuró → el infante paga como adulto (NULL ≠ $0).
-      const infantePvp = srv.precio_infante != null ? redondearVenta(marcar(aMonedaOferta(Number(srv.precio_infante) || 0, monedaSrvOrigen), pctMk) * fLiq, monedaSrv) : null;
+      // Infante (0 a 1,99 años): el precio propio de la vigencia; sin precio propio en ninguna vigencia aplicable → NULL = paga como adulto (NULL ≠ $0).
+      const infantePvp = ref.infantePropio && ref.netoInfante != null ? redondearVenta(marcar(aMonedaOferta(ref.netoInfante, monedaSrvOrigen), pctMk) * fLiq, monedaSrv) : null;
       filas.push({ ...comun, base_comisionable: pvp, precio_pvp: pvp, precio_pvp_menor2: infantePvp, recargo_individual: recargoPvp });
     }
   }
+
+  // Diagnóstico de disponibilidad: lo omitido por falta de vigencia (incluidos por salida, opcionales ocultos/parciales). Con filas = hay oferta vendible;
+  // sin filas pero con omisiones, se PUBLICA el conjunto vacío (reemplaza lo anterior: una fila vieja jamás vende una fecha sin cobertura) con el motivo.
+  const hayOmisiones = salidasOmitidas.length > 0 || opcionalesOcultos.length > 0 || incluidosOmitidos.length > 0;
 
   // Hallazgo confirmado: un paquete cuyos hoteles son TODOS Bernalo
   // (`modelo_tarifario = 'unidad'`) queda con `hotelIds` vacío arriba —
@@ -1585,7 +1757,7 @@ export async function generarTarifario(paqueteId: number): Promise<Result> {
   // El caso "dinamico 100% Bernalo" ya se rechazó ARRIBA, antes de pedir la
   // generación (ver el comentario junto a `hotelIds`/`hotelesBernaloFilas`
   // al inicio de la función) — nunca puede llegar aquí.
-  if (!filas.length && (tipo === "bloqueo" || tipo === "porcion_terrestre") && hotelesBernaloValidos.length === 0) {
+  if (!filas.length && !hayOmisiones && (tipo === "bloqueo" || tipo === "porcion_terrestre") && hotelesBernaloValidos.length === 0) {
     return await fallar(
       "No se generaron tarifas. Revisa que el hotel tenga temporadas y tarifas netas que cubran el rango de fechas del viaje."
     );
@@ -1601,13 +1773,69 @@ export async function generarTarifario(paqueteId: number): Promise<Result> {
   // llama al publicador VIGENTE (el de la 226, sin copiar su cuerpo) y guarda la
   // TRM/modo/fuentes de ESA publicación en la misma transacción. El resto de los
   // paquetes sigue por el publicador de siempre, sin cambios.
-  const { data: publicado, error: ePublicar } = modo63
+  cron.etapa("publicar");
+  // Mismo contenido, menos bytes (sin claves null: el servidor trata clave ausente = null). Ver lib/tarifario/filasPublicacion.ts.
+  const filasPublicar = compactarFilasPublicacion(filas);
+  // Diagnóstico de disponibilidad (migración 256): se guarda junto a la publicación (la RPC lo borra en cada publicación y solo lo escribe si esta sigue
+  // siendo la vigente). Si falla el registro NO se revierte nada —las filas ya son las correctas—, pero se avisa en la respuesta para que no pase inadvertido.
+  // El texto manual «Incluye» no se modifica; se avisa qué líneas nombran servicios omitidos (la presentación por salida las retira o no las da por confirmadas).
+  let lineasIncluyeAfectadas: { retiradas: string[]; noConfirmadas: string[] } | undefined;
+  if (incluidosOmitidos.length) {
+    const omitidosIds = new Map<number, string>();
+    for (const sa of incluidosOmitidos) for (const x of sa.servicios) omitidosIds.set(x.servicioId, x.servicio);
+    const todos = new Map<number, string>();
+    for (const s of servicios) if (s.incluido as boolean) todos.set(s.servicio_id, (s.servicios_adicionales as unknown as { nombre?: string | null } | null)?.nombre ?? `#${s.servicio_id}`);
+    const pres = presentarIncluye({
+      lineas: lineasDeTexto((pq as { programa_incluye?: string | null }).programa_incluye),
+      omitidos: [...omitidosIds].map(([servicioId, nombre]) => ({ servicioId, nombre })),
+      efectivos: [...todos].filter(([id]) => !omitidosIds.has(id)).map(([servicioId, nombre]) => ({ servicioId, nombre })),
+    });
+    if (pres.retiradas.length || pres.noConfirmadas.length) lineasIncluyeAfectadas = { retiradas: pres.retiradas, noConfirmadas: pres.noConfirmadas };
+  }
+  const diagnostico = diagnosticoDisponibilidad({ salidasEvaluadas: estadiasEvaluadas, salidasOmitidas, opcionalesOcultos, opcionalesParciales, incluidosOmitidos, lineasIncluyeAfectadas }, filas.length > 0);
+  // PUBLICACIÓN POR LOTES (apagada por defecto: TARIFARIO_PUBLICACION_POR_LOTES=1 cuando la migración ya corrió). Repartida en las peticiones que haga falta: si el presupuesto de
+  // esta petición se agota devuelve «pendiente» y otra petición continúa (ver continuarPublicacionTarifario). Lo publicado antes sigue visible e intacto hasta la activación.
+  // Un conjunto VACÍO (p. ej. solo hoteles por unidad) no tiene qué cargar por lotes: lo publica el publicador de siempre (limpia lo anterior).
+  const usarLotes = porLotes && filas.length > 0;
+  let retornoLotes: Result | null = null;
+  if (usarLotes) {
+    try {
+      const rp = await publicarPorLotes(puertoSupabase(sb as unknown as RpcCliente), {
+        paqueteId, generacion, revision: revisionCapturada, moneda: paqueteMoneda as "COP" | "USD", filas: filasPublicar, inicioMs: inicioAccion,
+        composicion: composicionDeManifiesto(composicionPorFecha), regla: REGLA_COMPOSICION_PUBLICADA, modo: modo63 ? MODO_OFERTA_63 : null, trm: modo63 ? trm63 : null,
+        // El diagnóstico de disponibilidad (256) y la composición (258) viajan en el manifiesto: la activación los escribe junto con el puntero (sin paso posterior que pueda perderse).
+        diagnostico: diagnostico || null,
+      });
+      if (rp.estado === "pendiente" && !rp.automatica && opciones.segundoPlano) {
+        // Sin pantalla que vuelva a calcular: lo ya subido queda invisible y se limpia en la próxima publicación; lo publicado antes sigue visible.
+        return await fallar("No alcanzó el tiempo para dejar el tarifario listo; vuelve a pulsar «Generar tarifario» en el paquete.");
+      } else if (rp.estado === "pendiente") {
+        medir("pendiente");
+        if (rp.automatica) await empujarContinuacion();
+        retornoLotes = {
+          ok: true, pendiente: { faltan: rp.faltan, total: rp.total, automatica: rp.automatica },
+          aviso: rp.automatica ? `Publicando en segundo plano: faltan ${rp.faltan} de ${rp.total} lotes. Puedes cerrar esta pantalla.` : `Preparando la publicación: faltan ${rp.faltan} de ${rp.total} lotes.`,
+        };
+      } else if (rp.estado === "descartada" || rp.estado === "conflicto") {
+        medir("descartado");
+        retornoLotes = { ok: false, error: "Se descartó este cálculo: los datos del paquete cambiaron mientras se publicaba el tarifario (vuelve a pulsar «Generar tarifario»)." };
+      } else if (rp.estado === "rechazada") {
+        return await fallarTecnico(`publicación por lotes rechazada: ${rp.motivo}`);
+      }
+    } catch (e) {
+      return await fallarTecnico(e instanceof Error ? e.message : String(e));
+    }
+    if (retornoLotes) return retornoLotes;
+  }
+  const { data: publicado, error: ePublicar } = usarLotes
+    ? { data: true as boolean | null, error: null }
+    : modo63
     ? await sb.rpc("publicar_tarifario_resultado_63", {
         p_paquete_id: paqueteId,
         p_generacion: generacion,
         p_revision_capturada: revisionCapturada,
         p_moneda: paqueteMoneda,
-        p_filas: filas as unknown as Json,
+        p_filas: filasPublicar as unknown as Json,
         p_modo: MODO_OFERTA_63,
         p_trm: trm63,
       })
@@ -1616,7 +1844,7 @@ export async function generarTarifario(paqueteId: number): Promise<Result> {
         p_generacion: generacion,
         p_revision_capturada: revisionCapturada,
         p_moneda: paqueteMoneda,
-        p_filas: filas as unknown as Json,
+        p_filas: filasPublicar as unknown as Json,
       });
   if (ePublicar) return await fallarTecnico(ePublicar.message);
   if (!publicado) {
@@ -1627,6 +1855,7 @@ export async function generarTarifario(paqueteId: number): Promise<Result> {
     // es este, `marcar_generacion_fallida` no aplica) ni hace falta
     // reintentar desde acá — la mutación que invalidó ya disparó su propio
     // recálculo automático por su cuenta (ver `regenerarTarifariosDe*`).
+    medir("descartado");
     return {
       ok: false,
       error:
@@ -1634,10 +1863,31 @@ export async function generarTarifario(paqueteId: number): Promise<Result> {
     };
   }
 
+  let avisoDisponibilidad = "";
+  // Evidencia de la composición publicada: SIEMPRE tras publicar (también con el conjunto vacío, para limpiar la de una publicación anterior). Si falla, las filas quedan
+  // publicadas pero la reserva las RECHAZA (sin evidencia = fila no acreditada) hasta regenerar: se avisa en la respuesta.
+  if (!usarLotes && (tipo === "bloqueo" || tipo === "dinamico")) {
+    const filasComposicion = [...composicionPorFecha].map(([fecha_ida, servicios_incluidos]) => ({ fecha_ida, servicios_incluidos }));
+    const { error: eComp } = await sb.rpc("registrar_composicion_publicada", { p_paquete_id: paqueteId, p_generacion: generacion, p_regla: REGLA_COMPOSICION_PUBLICADA, p_filas: filasComposicion as unknown as Json });
+    if (eComp) {
+      console.error(`generarTarifario: registrar_composicion_publicada falló (paquete_id=${paqueteId}, generacion=${generacion}): ${eComp.message}`);
+      avisoDisponibilidad += " ATENCIÓN: no se pudo registrar la composición publicada (¿falta aplicar la migración 258?); las reservas de este paquete se rechazarán hasta regenerar el tarifario.";
+    }
+  }
+  if (diagnostico) {
+    avisoDisponibilidad += ` ${diagnostico}`;
+    const { error: eDiag } = usarLotes ? { error: null } : await sb.rpc("registrar_diagnostico_tarifario", { p_paquete_id: paqueteId, p_generacion: generacion, p_diagnostico: diagnostico });
+    if (eDiag) {
+      console.error(`generarTarifario: registrar_diagnostico_tarifario falló (paquete_id=${paqueteId}, generacion=${generacion}): ${eDiag.message}`);
+      avisoDisponibilidad += " (No se pudo guardar este diagnóstico en el paquete.)";
+    }
+  }
+
   // La moneda ya quedó guardada DENTRO de `publicar_tarifario_resultado`
   // (mismo commit que las filas, con el valor autoritativo `paqueteMoneda`)
   // — no hay ninguna escritura aparte que hacer acá.
 
+  medir("ok");
   revalidatePath(`/dashboard/paquetes/${paqueteId}`);
   revalidatePath("/tarifario");
   // Hallazgo confirmado (Vista Booking unificada): el texto del aviso
@@ -1672,13 +1922,14 @@ export async function generarTarifario(paqueteId: number): Promise<Result> {
     : "";
   // Servicios por persona (incluidos u opcionales) SIN precio de infante: el infante
   // (0 a 1,99 años) pagará como adulto en ellos hasta que se configure (NULL ≠ $0).
-  const sinPrecioInfante = serviciosSinPrecioInfante(
+  // Se evalúa sobre las VIGENCIAS aplicables al viaje (nunca el precio base GENERAL del servicio).
+  const sinPrecioInfante = serviciosSinPrecioInfanteVigencias(
     servicios.map((sv) => ({
       nombre: (sv.servicios_adicionales as unknown as { nombre?: string | null } | null)?.nombre ?? null,
-      modo: (sv.modo as string) === "grupo" ? "grupo" : "persona",
-      precioPersona: (sv.servicios_adicionales as unknown as { precio_persona?: number | null } | null)?.precio_persona ?? null,
-      precioInfante: (sv.servicios_adicionales as unknown as { precio_infante?: number | null } | null)?.precio_infante ?? null,
-    }))
+      modo: (sv.modo as string) === "grupo" ? "grupo" as const : "persona" as const,
+      vigencias: vigenciasPorServicio.get(sv.servicio_id),
+    })),
+    ventanaViaje, hoyGen,
   );
   const avisoInfante = sinPrecioInfante.length
     ? ` Atención: ${sinPrecioInfante.length === 1 ? "el servicio" : "los servicios"} ${sinPrecioInfante.join(", ")} ${sinPrecioInfante.length === 1 ? "no tiene" : "no tienen"} precio de infante: los menores de 2 años pagarán como adulto en ${sinPrecioInfante.length === 1 ? "él" : "ellos"}. Configúralo en Producto → Servicios.`
@@ -1686,8 +1937,8 @@ export async function generarTarifario(paqueteId: number): Promise<Result> {
   return {
     ok: true,
     id: filas.length,
-    ...(avisoValidos || avisoSinPublicar || avisoNoCompatibles || avisoDestinosAereos || avisoVinculadas63 || avisoInfante
-      ? { aviso: `${filas.length} tarifa(s) persona publicada(s) en el tarifario.${avisoValidos ? ` Además, ${avisoValidos}` : ""}${avisoSinPublicar}${avisoNoCompatibles}${avisoDestinosAereos}${avisoVinculadas63}${avisoInfante}` }
+    ...(avisoValidos || avisoSinPublicar || avisoNoCompatibles || avisoDestinosAereos || avisoVinculadas63 || avisoInfante || avisoDisponibilidad
+      ? { aviso: `${filas.length} tarifa(s) persona publicada(s) en el tarifario.${avisoValidos ? ` Además, ${avisoValidos}` : ""}${avisoSinPublicar}${avisoNoCompatibles}${avisoDestinosAereos}${avisoVinculadas63}${avisoInfante}${avisoDisponibilidad}` }
       : {}),
   };
 }
@@ -1697,6 +1948,31 @@ export async function generarTarifario(paqueteId: number): Promise<Result> {
 // niño/infante: mientras no se regeneren, reservar con infantes pide regenerar. Esta lista (solo paquetes ACTIVOS) alimenta
 // el aviso del listado de Paquetes para que se regeneren a mano, uno por uno, con el botón de siempre. Solo lectura: nunca
 // regenera nada. Paginada por la cantidad REAL de filas recibidas (el límite de filas de PostgREST puede truncar en silencio).
+
+/** Continúa una publicación por lotes que quedó pendiente (otra petición, o el mismo usuario tras cerrar y reabrir el navegador). Recalcula las MISMAS filas con la generación y la
+ * revisión que fijó el manifiesto; si algo cambió, el servidor lo rechaza y hay que volver a pulsar «Generar tarifario». */
+export async function continuarPublicacionTarifario(paqueteId: number): Promise<Result> {
+  return generarTarifario(paqueteId, { reanudar: true });
+}
+
+/** Estado de una publicación que ya está en la cola de la base (continúa sola, sin navegador). Barata: no recalcula nada. La pantalla la consulta mientras espera. */
+export async function estadoPublicacionTarifario(paqueteId: number): Promise<Result> {
+  const sb = await createClient();
+  const pend = await leerPublicacionPendiente(sb as unknown as RpcCliente, paqueteId);
+  if (pend) {
+    if (pend.colaEstado === "fallida") return { ok: false, error: "La publicación en segundo plano no se pudo completar. Vuelve a pulsar «Generar tarifario»." };
+    return {
+      ok: true, pendiente: { faltan: pend.faltan, total: pend.total, automatica: pend.enCola },
+      aviso: pend.enCola ? `Publicando en segundo plano: faltan ${pend.faltan} de ${pend.total} lotes. Puedes cerrar esta pantalla.` : `Preparando la publicación: faltan ${pend.faltan} de ${pend.total} lotes.`,
+    };
+  }
+  const { data } = await sb.from("armado_paquetes").select("tarifario_estado, tarifario_error").eq("id", paqueteId).maybeSingle();
+  const e = data as { tarifario_estado?: string | null; tarifario_error?: string | null } | null;
+  if (e?.tarifario_estado === "fallido") return { ok: false, error: e.tarifario_error ?? "La publicación del tarifario falló. Vuelve a pulsar «Generar tarifario»." };
+  revalidatePath(`/dashboard/paquetes/${paqueteId}`);
+  return { ok: true, aviso: e?.tarifario_estado === "listo" ? "Tarifario publicado." : "No hay una publicación en curso." };
+}
+
 export async function paquetesConTarifarioAnteriorAInfante(): Promise<
   { ok: true; paquetes: { id: number; nombre: string }[] } | { ok: false }
 > {
@@ -1732,7 +2008,7 @@ export async function paquetesConTarifarioAnteriorAInfante(): Promise<
 // llama tras editar tarifas/vigencias del hotel para que el tarifario (y el PVP
 // que lee Reservar) se actualice solo, sin volver a "Generar" a mano. No lanza:
 // un fallo de un paquete no debe tumbar el guardado de la tarifa.
-export async function regenerarTarifariosDeHotel(hotelId: number): Promise<void> {
+export async function regenerarTarifariosDeHotel(hotelId: number, inicioMs?: number): Promise<void> {
   if (!hotelId) return;
   try {
     const sb = await createClient();
@@ -1768,7 +2044,7 @@ export async function regenerarTarifariosDeHotel(hotelId: number): Promise<void>
     // red) Y la promesa CUMPLIDA con `{ ok: false, error }` — `generarTarifario`
     // nunca lanza por un error de negocio, lo devuelve como valor resuelto, así
     // que un `status === "rejected"` a secas se lo pierde por completo.
-    const resultados = await Promise.allSettled(ids.map((id) => generarTarifario(id)));
+    const resultados = await Promise.allSettled(ids.map((id) => generarTarifario(id, enSegundoPlano(inicioMs))));
     resultados.forEach((r, i) => {
       if (r.status === "rejected") {
         console.error(`regenerarTarifariosDeHotel: falló generarTarifario(paquete_id=${ids[i]}) para hotel_id=${hotelId}:`, r.reason);
@@ -1787,7 +2063,7 @@ export async function regenerarTarifariosDeHotel(hotelId: number): Promise<void>
 
 // Regenera el tarifario de los paquetes activos que usan un BLOQUEO aéreo. Se
 // llama tras editar/eliminar el bloqueo (tarifa de empaquetar, fechas, ruta).
-export async function regenerarTarifariosDeBloqueo(bloqueoId: number): Promise<void> {
+export async function regenerarTarifariosDeBloqueo(bloqueoId: number, inicioMs?: number): Promise<void> {
   if (!bloqueoId) return;
   try {
     const sb = await createClient();
@@ -1798,13 +2074,13 @@ export async function regenerarTarifariosDeBloqueo(bloqueoId: number): Promise<v
     const ids = [...new Set((pkgs ?? [])
       .filter((p) => (p.armado_paquetes as unknown as { activo: boolean } | null)?.activo)
       .map((p) => p.paquete_id))];
-    await Promise.allSettled(ids.map((id) => generarTarifario(id)));
+    await Promise.allSettled(ids.map((id) => generarTarifario(id, enSegundoPlano(inicioMs))));
   } catch { /* best-effort */ }
 }
 
 // Regenera el tarifario de los paquetes activos que usan un SERVICIO. Se llama
 // tras editar/eliminar el servicio (precio por persona o tarifas por grupo).
-export async function regenerarTarifariosDeServicio(servicioId: number): Promise<void> {
+export async function regenerarTarifariosDeServicio(servicioId: number, inicioMs?: number): Promise<void> {
   if (!servicioId) return;
   try {
     const sb = await createClient();
@@ -1815,7 +2091,7 @@ export async function regenerarTarifariosDeServicio(servicioId: number): Promise
     const ids = [...new Set((pkgs ?? [])
       .filter((p) => (p.armado_paquetes as unknown as { activo: boolean } | null)?.activo)
       .map((p) => p.paquete_id))];
-    await Promise.allSettled(ids.map((id) => generarTarifario(id)));
+    await Promise.allSettled(ids.map((id) => generarTarifario(id, enSegundoPlano(inicioMs))));
   } catch { /* best-effort */ }
 }
 
@@ -1871,7 +2147,7 @@ export async function crearSalidaDinamica(paqueteId: number, input: SalidaDinami
   const { error } = await sb.from("salidas_dinamicas").insert(salidaRow(paqueteId, input));
   if (error) return { ok: false, error: error.message };
   revalidatePath(`/dashboard/paquetes/${paqueteId}`);
-  try { await generarTarifario(paqueteId); } catch { /* sigue */ }
+  try { await generarTarifario(paqueteId, enSegundoPlano()); } catch { /* sigue */ }
   return { ok: true };
 }
 
@@ -1890,7 +2166,7 @@ export async function actualizarSalidaDinamica(id: number, input: SalidaDinamica
   if (error) return { ok: false, error: mensajeErrorOferta63(error.message) };
   if (prev?.paquete_id) {
     revalidatePath(`/dashboard/paquetes/${prev.paquete_id}`);
-    try { await generarTarifario(prev.paquete_id); } catch { /* sigue */ }
+    try { await generarTarifario(prev.paquete_id, enSegundoPlano()); } catch { /* sigue */ }
   }
   return { ok: true };
 }
@@ -1902,7 +2178,7 @@ export async function eliminarSalidaDinamica(id: number): Promise<Result> {
   if (error) return { ok: false, error: error.message };
   if (prev?.paquete_id) {
     revalidatePath(`/dashboard/paquetes/${prev.paquete_id}`);
-    try { await generarTarifario(prev.paquete_id); } catch { /* sigue */ }
+    try { await generarTarifario(prev.paquete_id, enSegundoPlano()); } catch { /* sigue */ }
   }
   return { ok: true };
 }
@@ -2077,7 +2353,7 @@ export async function vincularSalidasEmpaquetados63(paqueteId: number, empaqueta
   const { error } = await sb.from("salidas_dinamicas").insert(filas);
   if (error) return { ok: false, error: mensajeErrorOferta63(error.message) };
   revalidatePath(`/dashboard/paquetes/${paqueteId}`);
-  const regen = await generarTarifario(paqueteId).catch(() => null);
+  const regen = await generarTarifario(paqueteId, enSegundoPlano()).catch(() => null);
   if (!regen || !regen.ok) {
     return {
       ok: true,
@@ -2111,7 +2387,7 @@ export async function desvincularSalidasEmpaquetados63(paqueteId: number, salida
   if (!borrados.size) return { ok: false, error: "Esas salidas ya no estaban vinculadas a este paquete." };
   const omitidos = ids.filter((id) => !borrados.has(id)).map((id) => ({ id, motivo: `La salida #${id} ya no estaba vinculada.` }));
   revalidatePath(`/dashboard/paquetes/${paqueteId}`);
-  const regen = await generarTarifario(paqueteId).catch(() => null);
+  const regen = await generarTarifario(paqueteId, enSegundoPlano()).catch(() => null);
   const aviso = !regen || !regen.ok
     ? `Se desvincularon las salidas, pero el tarifario no se pudo regenerar${regen && !regen.ok ? `: ${regen.error}` : ""}. Genéralo desde el paquete.`
     : regen.aviso;
@@ -2135,7 +2411,7 @@ export async function actualizarSalidaDesdeFuente63(salidaId: number): Promise<R
   const { error } = await sb.from("salidas_dinamicas").update(copiarDeFuente63(fuente as FuenteEmpaquetado63)).eq("id", salidaId);
   if (error) return { ok: false, error: mensajeErrorOferta63(error.message) };
   revalidatePath(`/dashboard/paquetes/${s.paquete_id}`);
-  const regen = await generarTarifario(s.paquete_id).catch(() => null);
+  const regen = await generarTarifario(s.paquete_id, enSegundoPlano()).catch(() => null);
   if (!regen || !regen.ok) {
     return { ok: true, aviso: `La salida se actualizó, pero el tarifario no se pudo regenerar${regen && !regen.ok ? `: ${regen.error}` : ""}. Genéralo desde el paquete.` };
   }

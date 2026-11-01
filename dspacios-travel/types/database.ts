@@ -785,6 +785,9 @@ export type Database = {
           // NULL = hotel/aéreo, manual, o anterior a la 170. Única llave
           // válida para reconciliar CxP de servicios (nunca por nombre).
           servicio_id: number | null;
+          // 264/265 (provisionales, sin aplicar): alcance vendido del traslado y línea de contrato_servicios que originó la CxP.
+          alcance_traslado?: "llegada" | "salida" | "ida_regreso" | null;
+          contrato_servicio_id?: number | null;
           fecha_obligacion: string | null;
           fecha_vencimiento: string | null;
           valor_total: number;
@@ -1935,8 +1938,9 @@ export type Database = {
         Relationships: [];
       };
       contrato_servicios: {
-        Row: { id: number; numero_contrato: string; tipo: string; descripcion: string; proveedor: string | null; costo: number | null; orden: number | null };
-        Insert: { id?: number; numero_contrato: string; tipo?: string; descripcion: string; proveedor?: string | null; costo?: number | null; orden?: number | null };
+        // 262/264 (provisionales, sin aplicar): alcance vendido de un traslado y servicio del catálogo de la línea.
+        Row: { id: number; numero_contrato: string; tipo: string; descripcion: string; proveedor: string | null; costo: number | null; orden: number | null; alcance_traslado?: "llegada" | "salida" | "ida_regreso" | null; servicio_id?: number | null; clave_enlace?: string | null };
+        Insert: { id?: number; numero_contrato: string; tipo?: string; descripcion: string; proveedor?: string | null; costo?: number | null; orden?: number | null; alcance_traslado?: "llegada" | "salida" | "ida_regreso" | null; servicio_id?: number | null; clave_enlace?: string | null };
         Update: Partial<Database["public"]["Tables"]["contrato_servicios"]["Insert"]>;
         Relationships: [];
       };
@@ -2463,6 +2467,24 @@ export type Database = {
         Update: Partial<Database["public"]["Tables"]["servicio_temporadas"]["Insert"]>;
         Relationships: [];
       };
+      // 255: suplementos de traslado por franja horaria, colgados de una vigencia (servicio_temporadas).
+      servicio_suplementos_franja: {
+        Row: { id: number; servicio_temporada_id: number; hora_desde: string; hora_hasta: string; tramo: "llegada" | "salida" | "ambos"; tipo: "monto" | "porcentaje"; valor: number; cobro: "grupo" | "persona"; created_at: string; /** 262 (provisional, sin aplicar): rango de pasajeros; ausente/null = todos. */ pax_desde?: number | null; pax_hasta?: number | null };
+        Insert: { id?: number; servicio_temporada_id: number; hora_desde: string; hora_hasta: string; tramo: "llegada" | "salida" | "ambos"; tipo: "monto" | "porcentaje"; valor: number; cobro: "grupo" | "persona"; created_at?: string; pax_desde?: number | null; pax_hasta?: number | null };
+        Update: Partial<Database["public"]["Tables"]["servicio_suplementos_franja"]["Insert"]>;
+        Relationships: [
+          { foreignKeyName: "servicio_suplementos_franja_servicio_temporada_id_fkey"; columns: ["servicio_temporada_id"]; isOneToOne: false; referencedRelation: "servicio_temporadas"; referencedColumns: ["id"] },
+        ];
+      };
+      // 262 (provisional, sin aplicar): precio PROPIO por trayecto / ida y regreso de una vigencia de servicio, con rango de pasajeros opcional.
+      servicio_precio_alcance: {
+        Row: { id: number; servicio_temporada_id: number; alcance: "trayecto" | "ida_regreso"; pax_desde: number | null; pax_hasta: number | null; precio: number; created_at: string };
+        Insert: { id?: number; servicio_temporada_id: number; alcance: "trayecto" | "ida_regreso"; pax_desde?: number | null; pax_hasta?: number | null; precio: number; created_at?: string };
+        Update: Partial<Database["public"]["Tables"]["servicio_precio_alcance"]["Insert"]>;
+        Relationships: [
+          { foreignKeyName: "servicio_precio_alcance_servicio_temporada_id_fkey"; columns: ["servicio_temporada_id"]; isOneToOne: false; referencedRelation: "servicio_temporadas"; referencedColumns: ["id"] },
+        ];
+      };
       rangos_edad: {
         Row: { id: number; denominacion: string; edad_min: number; edad_max: number; activo: boolean; created_at: string };
         Insert: { id?: number; denominacion: string; edad_min?: number; edad_max?: number; activo?: boolean; created_at?: string };
@@ -2514,6 +2536,8 @@ export type Database = {
           tarifario_generacion_publicada: number | null;
           tarifario_estado: string;
           tarifario_error: string | null;
+          // Migración 256: qué se dejó de publicar por falta de vigencia (incluidos por salida, opcionales ocultos/parciales). null = nada omitido.
+          tarifario_diagnostico: string | null;
           tarifario_actualizado_en: string | null;
           tarifario_snapshot_publicable: boolean;
           // Migración 220 (#67) — check por paquete: false = solo el destino
@@ -2566,6 +2590,7 @@ export type Database = {
           tarifario_generacion_publicada?: number | null;
           tarifario_estado?: string;
           tarifario_error?: string | null;
+          tarifario_diagnostico?: string | null;
           tarifario_actualizado_en?: string | null;
           tarifario_snapshot_publicable?: boolean;
           destinos_aereos_alternativos?: boolean;
@@ -2604,6 +2629,13 @@ export type Database = {
         Row: { id: number; paquete_id: number; servicio_id: number; modo: string; incluido: boolean };
         Insert: { id?: number; paquete_id: number; servicio_id: number; modo?: string; incluido?: boolean };
         Update: Partial<Database["public"]["Tables"]["armado_servicios"]["Insert"]>;
+        Relationships: [];
+      };
+      // Migración 258: servicios incluidos horneados en el precio de cada salida publicada (evidencia contra filas antiguas). Solo service-role.
+      tarifario_composicion_publicada: {
+        Row: { paquete_id: number; fecha_ida: string; generacion: number; regla: number; servicios_incluidos: Json; registrado_en: string };
+        Insert: { paquete_id: number; fecha_ida: string; generacion: number; regla: number; servicios_incluidos?: Json; registrado_en?: string };
+        Update: Partial<Database["public"]["Tables"]["tarifario_composicion_publicada"]["Insert"]>;
         Relationships: [];
       };
       tarifario_resultado: {
@@ -2657,6 +2689,8 @@ export type Database = {
           // false`); con 2+ quedan NULL y `procedencia_mixta = true`.
           procedencia_temporadas: Json | null;
           procedencia_mixta: boolean;
+          // Migración 256: tramos [{desde,hasta}] donde un servicio opcional se ofrece (null = todas las fechas del viaje del paquete).
+          fechas_disponibles: Json | null;
           // Migración 226: precio de un MENOR DE 2 AÑOS (fee de infante del vuelo
           // + servicios con su precio de infante + hotel de la clase del menor).
           // En filas de servicio persona = PVP del infante. NULL = la fila se
@@ -2664,6 +2698,9 @@ export type Database = {
           precio_pvp_menor2: number | null;
           precio_pvp_sin_fijo: number | null;
           precio_pvp_menor2_sin_fijo: number | null;
+          generacion: number | null;
+          revision_fuente: number | null;
+          lote: number | null;
         };
         Insert: {
           id?: number;
@@ -2671,6 +2708,10 @@ export type Database = {
           precio_pvp_menor2?: number | null;
           precio_pvp_sin_fijo?: number | null;
           precio_pvp_menor2_sin_fijo?: number | null;
+          // Publicación por lotes (migración 260): generación, revisión de fuente con la que se calculó y lote. El neto de hotel NO es columna de esta tabla.
+          generacion?: number | null;
+          revision_fuente?: number | null;
+          lote?: number | null;
           moneda?: string;
           salida_id?: number | null;
           paquete_nombre?: string | null;
@@ -2705,6 +2746,7 @@ export type Database = {
           precio_final_autoritativo?: boolean | null;
           procedencia_temporadas?: Json | null;
           procedencia_mixta?: boolean;
+          fechas_disponibles?: Json | null;
         };
         Update: Partial<Database["public"]["Tables"]["tarifario_resultado"]["Insert"]>;
         Relationships: [];
@@ -4272,6 +4314,16 @@ export type Database = {
       // un mensaje SANEADO (nunca el texto crudo de Postgres/Supabase); nunca
       // pisa una generación o revisión más nueva ni rehabilita
       // tarifario_snapshot_publicable. SECURITY INVOKER.
+      // Migración 256. Guarda el diagnóstico de disponibilidad SOLO si la publicación de esa generación sigue vigente.
+      // Migración 258. Registra la composición publicada solo si esa generación es la publicada y vigente (SECURITY DEFINER con candado de rol).
+      registrar_composicion_publicada: {
+        Args: { p_paquete_id: number; p_generacion: number; p_regla: number; p_filas: Json };
+        Returns: boolean;
+      };
+      registrar_diagnostico_tarifario: {
+        Args: { p_paquete_id: number; p_generacion: number; p_diagnostico: string };
+        Returns: boolean;
+      };
       marcar_generacion_fallida: {
         Args: { p_paquete_id: number; p_generacion: number; p_revision_capturada: number; p_error: string };
         Returns: undefined;

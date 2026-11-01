@@ -68,6 +68,7 @@ const STUB_FACTURACION_ACTIONS = pathToFileURL(join(AQUI, "stubs", "facturacionA
 // pruebas) — se reemplaza por un <input> controlado en los componentes que lo
 // montan pero no lo prueban (DifusionClient, PagosList). Sin esto, esos
 // archivos ni siquiera cargan.
+const STUB_SERVICIOS_ACTIONS = pathToFileURL(join(AQUI, "stubs", "serviciosActionsStub.mjs")).href;
 const STUB_DATE_INPUT = pathToFileURL(join(AQUI, "stubs", "dateInputStub.mjs")).href;
 // `DifusionClient.tsx` usa useRouter de "next/navigation"; fuera del servidor
 // de Next no hay contexto. Se sustituye por un router falso.
@@ -175,6 +176,12 @@ export async function resolve(specifier, context, nextResolve) {
   if (specifier === "./actions" && context.parentURL?.endsWith("EliminarDestinoBtn.tsx")) {
     return { url: STUB_ELIMINAR_DESTINO_ACTIONS, shortCircuit: true };
   }
+  if (specifier === "./actions" && (context.parentURL?.endsWith("/servicios/ServiciosClient.tsx") || context.parentURL?.endsWith("/servicios/ServicioFotoCell.tsx") || context.parentURL?.endsWith("/servicios/Alcance262.tsx"))) {
+    return { url: STUB_SERVICIOS_ACTIONS, shortCircuit: true };
+  }
+  if (specifier === "@/lib/supabase/client" && context.parentURL?.endsWith("/servicios/ServicioFotoCell.tsx")) {
+    return { url: STUB_SUPABASE_CLIENT, shortCircuit: true };
+  }
   if (specifier === "./actions" && context.parentURL?.endsWith("ProveedoresClient.tsx")) {
     return { url: STUB_PROVEEDORES_ACTIONS, shortCircuit: true };
   }
@@ -244,13 +251,13 @@ export async function resolve(specifier, context, nextResolve) {
       context.parentURL?.endsWith("/NuevoBloqueoForm.tsx") ||
       context.parentURL?.endsWith("/NuevoEmpaquetadoForm.tsx") ||
       context.parentURL?.endsWith("/EditarEmpaquetadoForm.tsx") ||
-      context.parentURL?.endsWith("PasajeroAcciones.tsx"))
+      context.parentURL?.endsWith("PasajeroAcciones.tsx") || context.parentURL?.endsWith("/servicios/ServiciosClient.tsx"))
   ) {
     return { url: STUB_DATE_INPUT, shortCircuit: true };
   }
   if (
     specifier === "next/navigation" &&
-    (context.parentURL?.endsWith("DifusionClient.tsx") || context.parentURL?.endsWith("EditarBloqueoForm.tsx") || context.parentURL?.endsWith("/NuevoBloqueoForm.tsx") ||
+    (context.parentURL?.endsWith("DifusionClient.tsx") || context.parentURL?.endsWith("/servicios/ServiciosClient.tsx") || context.parentURL?.endsWith("/servicios/ServicioFotoCell.tsx") || context.parentURL?.endsWith("/servicios/Alcance262.tsx") || context.parentURL?.endsWith("EditarBloqueoForm.tsx") || context.parentURL?.endsWith("/NuevoBloqueoForm.tsx") ||
       context.parentURL?.endsWith("/NuevoEmpaquetadoForm.tsx") || context.parentURL?.endsWith("/EditarEmpaquetadoForm.tsx") ||
       context.parentURL?.endsWith("/login/LoginClient.tsx") ||
       // Botón de salir que importa el portal B2B (pruebas/comisionPortalB2B.react.ts).

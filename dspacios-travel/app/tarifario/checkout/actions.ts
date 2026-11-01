@@ -22,6 +22,8 @@ import {
 } from "@/lib/reservar/solicitudAlojamientoBernalo";
 import type { HabitacionOcupacionEntrada, HabitacionOcupacionValidada } from "@/lib/reservar/ocupacionPorHabitacion";
 import { liquidarServicioPuntual } from "@/lib/reservar/cotizar";
+import { combinarHoras, horasDelRecorrido } from "@/lib/reservar/horasRecorrido";
+import { validarHorasTramos, type HorasTramos } from "@/lib/calc/trasladoFranjas";
 import { opcionalDeTourCarrito } from "@/lib/paquetes/pvpInfanteFijo";
 import {
   errorHotelConServicios, errorServicioVinculado, validarServicioContraHotel, type HotelResueltoCheckout,
@@ -206,6 +208,12 @@ type SolicitudTourComputado = {
   fechaIda: string; fechaRegreso: string; noches: number;
   pax: number; precio: number; moneda: string;
   categoria: CategoriaServicio;
+  // Traslados con franjas horarias: horas con las que se cotizó y tramos cobrados. Al convertir se comparan con el horario vigente (si cambió, se
+  // pide recotizar antes de numerar). Ausentes cuando el servicio no tiene franjas.
+  horas?: HorasTramos;
+  suplementos?: { tramo: "llegada" | "salida"; hora: string }[];
+  // 262: alcance VENDIDO de un traslado (llegada | salida | ida_regreso), congelado con el precio. Ausente en servicios que no usan la modalidad por alcance.
+  alcance?: "llegada" | "salida" | "ida_regreso";
 };
 
 // `tipoDoc` (#42, D-6): tipo de documento que elige quien llena el checkout; se lee de la entrada
@@ -625,9 +633,27 @@ async function crearCotizacionCarrito(input: {
   const hotelesResueltos = new Map<number, HotelResueltoCheckout>();
   // PVP fijo del infante (254): los servicios vinculados a un hotel se cotizan ANTES de liquidarlo para que su total (o su $0) entre a la decisión
   // de cada infante; el bucle de tours de más abajo reutiliza este resultado (una sola cotización por tour).
+  // Horas del recorrido: las del vuelo del hotel vinculado (servidor, autoritativas) completan/reemplazan las capturadas por el navegador.
+  const tourEfectivo = new Map<number, SolicitudTourValidado>();
+  if (process.env.SUPABASE_SERVICE_ROLE_KEY && input.tours.length) {
+    let adminHoras: ReturnType<typeof createAdminClient>;
+    try { adminHoras = createAdminClient(); } catch (e) {
+      console.error(`[crearCotizacionCarrito] etapa=horas_recorrido_cliente detalle=${e instanceof Error ? e.message : "error"}`);
+      return { ok: false, error: "No pudimos validar el horario del vuelo para calcular el traslado. Intenta nuevamente." };
+    }
+    for (let k = 0; k < input.tours.length; k++) {
+      const pos = input.hotelDeTour[k];
+      const it = pos != null ? input.items[pos] : undefined;
+      if (!it || it.modeloTarifario === "unidad") { tourEfectivo.set(k, input.tours[k]); continue; }
+      const h = await horasDelRecorrido(adminHoras, { modulo: it.modulo, bloqueoId: it.bloqueoId, salidaId: it.salidaId });
+      if (!h.ok) { console.error(`[crearCotizacionCarrito] etapa=horas_recorrido detalle=${h.error}`); return { ok: false, error: "No pudimos validar el horario del vuelo para calcular el traslado. Intenta nuevamente." }; }
+      tourEfectivo.set(k, { ...input.tours[k], horas: combinarHoras(input.tours[k].horas, h.horas) });
+    }
+  }
+  const tourDe = (k: number): SolicitudTourValidado => tourEfectivo.get(k) ?? input.tours[k];
   const resultadosTourVinculado = new Map<number, Awaited<ReturnType<typeof liquidarServicioPuntual>>>();
-  await Promise.all(input.tours.map(async (tv, k) => {
-    if (input.hotelDeTour[k] != null) resultadosTourVinculado.set(k, await liquidarServicioPuntual(tv));
+  await Promise.all(input.tours.map(async (_, k) => {
+    if (input.hotelDeTour[k] != null) resultadosTourVinculado.set(k, await liquidarServicioPuntual(tourDe(k)));
   }));
   const opcionalesDeHotel = (pos: number) => input.tours.flatMap((_, k) => {
     const r = resultadosTourVinculado.get(k);
@@ -998,7 +1024,7 @@ async function crearCotizacionCarrito(input: {
     // respuesta SANEADA (`resultado.mensaje`, nunca el detalle técnico real
     // de Supabase — ese queda solo en el log del servidor, ver cotizar.ts).
     // Este bloque NUNCA debe leer un campo que no sea `.tipo`/`.codigo`/`.mensaje`.
-    const resultado = await liquidarServicioPuntual(t);
+    const resultado = await liquidarServicioPuntual(tourDe(j));
     if (!resultado.ok) {
       // Un servicio del conjunto de un hotel nunca se omite: el conjunto falla.
       if (hotelDelTour) {
@@ -1034,6 +1060,8 @@ async function crearCotizacionCarrito(input: {
       fechaIda: t.fechaIda, fechaRegreso: t.fechaRegreso, noches: resultado.resultado.noches,
       pax: resultado.resultado.pax, precio: resultado.resultado.total, moneda: resultado.resultado.moneda,
       categoria: resultado.resultado.categoria,
+      ...(resultado.resultado.horasCotizadas ? { horas: resultado.resultado.horasCotizadas, suplementos: resultado.resultado.suplementos ?? [] } : {}),
+      ...(resultado.resultado.alcance ? { alcance: resultado.resultado.alcance } : {}),
     });
   }
 
@@ -1839,10 +1867,17 @@ async function reliquidarOpcionCarrito(
   if (!item || item.modeloTarifario === "unidad") return { ok: false, error: "No se pudo validar la opción." };
   const { ref: _r, ninos: _n, ninos2: _n2, infantes: _i, pax: _p, precio: _pr, ...entrada } = item;
   void _r; void _n; void _n2; void _i; void _p; void _pr;
-  const tours: SolicitudTourValidado[] = (plantilla.payload?.tours ?? []).map((t) => ({
+  const tours: SolicitudTourValidado[] = (plantilla.payload?.tours ?? []).map((t) => {
+    const vh = validarHorasTramos(t.horas);
+    return {
     servicioId: Number(t.servicioId), paqueteId: Number(t.paqueteId),
     fechaIda: String(t.fechaIda), fechaRegreso: String(t.fechaRegreso), pax: Number(t.pax),
-  }));
+    // 262: el alcance congelado en la plantilla (se revalida al liquidar; un valor ajeno falla, no se ignora).
+    ...(t.alcance != null ? { alcance: t.alcance as "llegada" | "salida" | "ida_regreso" } : {}),
+    // Las horas con las que se cotizó (una porción terrestre no tiene vuelo que las acredite): sin ellas un traslado con franjas no se puede reliquidar y la opción no se podría elegir.
+    // Con vuelo, el servidor las vuelve a leer del recorrido y mandan sobre estas.
+    ...(vh.ok ? { horas: vh.horas } : {}),
+  }; });
   // Los vuelos manuales comunes salen de la plantilla GUARDADA (congelados al crear la comparativa); jamás de lo que mande quien elige.
   const manuales = leerManualesEntrada({ manuales: (plantilla.payload as { manuales?: unknown } | undefined)?.manuales });
   if (!manuales.ok) return { ok: false, error: "No se pudo validar la opción." };

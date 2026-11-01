@@ -99,7 +99,7 @@ export default async function ReservarPage() {
     );
   }
   const {
-    filasVisibles, filasAddon, cuposPorBloqueo, origenPorBloqueo, fotosPorHotel, fotosPorServicio,
+    filasVisibles, filasAddon, cuposPorBloqueo, origenPorBloqueo, fotosPorHotel, galeriaPorHotel, fotosPorServicio,
     infoPorHotel, capPorHotel, planesInfo, ventanaPorPaquete, descripcionPorPaquete,
   } = resDatos.datos;
   if (resProgramas.error) {
@@ -143,6 +143,7 @@ export default async function ReservarPage() {
             cuposPorBloqueo={cuposPorBloqueo}
             origenPorBloqueo={origenPorBloqueo}
             fotosPorHotel={fotosPorHotel}
+            galeriaPorHotel={galeriaPorHotel}
             fotosPorServicio={fotosPorServicio}
             infoPorHotel={infoPorHotel}
             planesInfo={planesInfo}

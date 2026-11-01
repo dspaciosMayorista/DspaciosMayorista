@@ -135,6 +135,8 @@ function tablas(o: Opciones): Record<string, Fila[]> {
     destinos: [{ id: 1, nombre: "CARTAGENA", codigo_iata: "CTG", pais: "Colombia", activo: true }],
     armado_paquete_destinos_aereos: [],
     servicio_tarifa_pax: [],
+    // SIN «GENERAL»: cada servicio del fixture se vende desde una vigencia que cubre todo el rango (mismos netos que su precio base de antes).
+    servicio_temporadas: (o.servicios ?? []).map((s) => ({ servicio_id: s.servicio_id, nombre: "VIG", fecha_inicio: "2000-01-01", fecha_fin: "2099-12-31", compra_inicio: null, compra_fin: null, prioridad: 1, precio_persona: (s.servicios_adicionales as Fila).precio_persona ?? null, precio_infante: (s.servicios_adicionales as Fila).precio_infante ?? null, recargo_individual: null })),
   };
 }
 

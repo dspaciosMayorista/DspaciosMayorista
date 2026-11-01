@@ -134,7 +134,7 @@ describe("BuscadorReceptivos.tsx — isotipo durante la búsqueda, retiro en éx
       await new Promise((r) => setTimeout(r, 10));
     });
     assert.equal(isotipoVisible(container), false, "debe retirar el isotipo al resolver con éxito");
-    assert.match(container.textContent ?? "", /0 receptivo\(s\) disponibles/);
+    assert.match(container.textContent ?? "", /0 receptivo\(s\) para estos filtros/);
   });
 
   test("clic en 'Buscar receptivos' con error también retira el isotipo — el retiro no depende de éxito/error", async () => {
@@ -177,6 +177,6 @@ describe("BuscadorReceptivos.tsx — isotipo durante la búsqueda, retiro en éx
       await new Promise((r) => setTimeout(r, 10));
     });
     assert.equal(isotipoVisible(container), false, "la respuesta tardía no debe reactivar el isotipo");
-    assert.doesNotMatch(container.textContent ?? "", /receptivo\(s\) disponibles/, "la respuesta tardía no debe publicar un resultado tras 'Limpiar'");
+    assert.doesNotMatch(container.textContent ?? "", /receptivo\(s\) para estos filtros/, "la respuesta tardía no debe publicar un resultado tras 'Limpiar'");
   });
 });

@@ -1,5 +1,6 @@
 "use client";
 
+import { hayHoraPendiente, MENSAJE_HORA_PENDIENTE } from "@/lib/cart/horaPendiente";
 import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { Hotel, MapPin, ShoppingCart, X } from "lucide-react";
@@ -35,6 +36,7 @@ function ServiciosDelHotel({ hotel, servicios, onQuitar }: { hotel: HotelCartIte
   const monedaHotel = monedaDeItem(hotel);
   const mismaMoneda = monedaHotel != null && servicios.every((s) => monedaDeItem(s) === monedaHotel);
   const subtotal = hotel.precio + servicios.reduce((t, s) => t + s.precio, 0);
+  const referencial = servicios.some((s) => s.referencial);
   return (
     <div className="mt-2 border-t border-gray-100 pt-2">
       <p className="text-[10px] font-semibold uppercase tracking-wide text-gray-400">Servicios con este hotel</p>
@@ -43,7 +45,7 @@ function ServiciosDelHotel({ hotel, servicios, onQuitar }: { hotel: HotelCartIte
           <li key={s.id} className="flex items-center justify-between gap-2 text-xs">
             <span className="min-w-0 truncate text-gray-700">{s.nombre} · {s.pax} pax</span>
             <span className="flex shrink-0 items-center gap-2">
-              <span className="font-medium" style={{ color: "var(--brand-primary)" }}>{formatImporte(s.precio, monedaDeItem(s))}</span>
+              <span className="font-medium" style={{ color: "var(--brand-primary)" }}>{s.referencial ? "Desde " : ""}{formatImporte(s.precio, monedaDeItem(s))}</span>
               <button type="button" onClick={() => onQuitar(s.id)} className="text-gray-400 hover:text-red-500">Quitar</button>
             </span>
           </li>
@@ -51,8 +53,8 @@ function ServiciosDelHotel({ hotel, servicios, onQuitar }: { hotel: HotelCartIte
       </ul>
       {mismaMoneda && (
         <div className="mt-1 flex justify-between text-xs font-semibold text-gray-700">
-          <span>Hotel + servicios</span>
-          <span>{formatMoneda(subtotal, monedaHotel)}</span>
+          <span>{referencial ? "Total referencial, falta horario del traslado" : "Hotel + servicios"}</span>
+          <span>{referencial ? "Desde " : ""}{formatMoneda(subtotal, monedaHotel)}</span>
         </div>
       )}
     </div>
@@ -221,7 +223,7 @@ export function CartDrawer({ checkoutHabilitado = false, fotosPorHotel = {} }: {
                         )}
                         <div className="mt-1 flex items-center justify-between">
                           <span className="text-sm font-semibold" style={{ color: "var(--brand-primary)" }}>
-                            {formatImporte(it.precio, monedaDeItem(it))}
+                            {it.tipo === "tour" && it.referencial ? "Desde " : ""}{formatImporte(it.precio, monedaDeItem(it))}
                           </span>
                           <button type="button" onClick={() => remove(it.id)} className="text-xs text-gray-400 hover:text-red-500">
                             {servicios.length ? "Quitar hotel y servicios" : "Quitar"}
@@ -248,7 +250,7 @@ export function CartDrawer({ checkoutHabilitado = false, fotosPorHotel = {} }: {
                 </p>
               ) : (
               <div className="mb-3 space-y-2">
-                <TotalesPorMoneda totales={totales} etiqueta="Total estimado" />
+                <TotalesPorMoneda totales={totales} etiqueta={items.some((i) => i.tipo === "tour" && i.referencial) ? "Total referencial (falta horario del traslado)" : "Total estimado"} />
                 <AvisoMonedas totales={totales} prevision={preverCotizacion(items)} />
               </div>
               )}
@@ -271,7 +273,7 @@ export function CartDrawer({ checkoutHabilitado = false, fotosPorHotel = {} }: {
                 </button>
                 <button
                   type="button"
-                  disabled={!items.length || !checkoutHabilitado}
+                  disabled={!items.length || !checkoutHabilitado || hayHoraPendiente(items)}
                   onClick={() => { closeDrawer(); router.push(modoComparativa ? "/tarifario/checkout?modo=comparativa" : "/tarifario/checkout"); }}
                   className="flex-1 rounded-lg px-4 py-2.5 text-sm font-semibold text-white disabled:opacity-40"
                   style={{ backgroundColor: "var(--brand-primary)" }}
@@ -280,6 +282,7 @@ export function CartDrawer({ checkoutHabilitado = false, fotosPorHotel = {} }: {
                   {modoComparativa ? "Crear comparativa" : "Finalizar compra"}
                 </button>
               </div>
+              {hayHoraPendiente(items) && <p role="alert" className="mt-2 text-center text-xs text-amber-700">{MENSAJE_HORA_PENDIENTE}</p>}
               {!checkoutHabilitado && items.length > 0 && (
                 <p className="mt-2 text-center text-[11px] text-gray-400">El checkout (cotización + solicitud) llega en la próxima fase.</p>
               )}

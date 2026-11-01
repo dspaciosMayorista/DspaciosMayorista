@@ -33,9 +33,18 @@ describe("aplicaPvpInfanteFijo (regla pura)", () => {
   });
 });
 
-const srv = (o: Partial<FilaServicioIncluidoRaw>): FilaServicioIncluidoRaw => ({
-  incluido: true, precio_persona: 0, liquidacion: "paquete", servicio_id: 1, modo: "persona", nombre: "S", categoria: "otro", proveedor_id: null, rangos_grupo: [], ...o,
-});
+// SIN «GENERAL»: el precio de cada incluido sale de una vigencia que cubre el rango (mismo neto que antes tenía como precio base; rangos de grupo en la vigencia).
+const srv = (o: Partial<FilaServicioIncluidoRaw>): FilaServicioIncluidoRaw => {
+  const s: FilaServicioIncluidoRaw = { incluido: true, precio_persona: 0, liquidacion: "paquete", servicio_id: 1, modo: "persona", nombre: "S", categoria: "otro", proveedor_id: null, rangos_grupo: [], ...o };
+  return {
+    ...s,
+    vigencias: {
+      servicioId: s.servicio_id, nombre: s.nombre ?? "S", conFranjas: new Set<string>(),
+      temporadas: [{ nombre: "VIG", fecha_inicio: "2000-01-01", fecha_fin: "2099-12-31", precio_persona: s.precio_persona, precio_infante: s.precio_infante ?? null }],
+      grupos: (s.rangos_grupo ?? []).map((g) => ({ ...g, temporada: "VIG" })),
+    },
+  };
+};
 function datos(fijo: number | null, servicios: FilaServicioIncluidoRaw[]): DatosHotelPaquete {
   return {
     paquete: { pct_mk: 0.2, pvp_infante_fijo: fijo, impuesto_fijo: 0, destino_nombre: "Cartagena", fecha_viaje_inicio: "2026-01-01", fecha_viaje_fin: "2026-12-31" },

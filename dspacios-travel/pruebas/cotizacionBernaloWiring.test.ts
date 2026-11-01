@@ -345,7 +345,7 @@ describe("lib/tarifario/datosBernalo.ts — descubrimiento paralelo, sin tarifar
   describe("P2 — cargarInfoHotelesBernalo: foto/metadata REALES para hoteles por unidad", () => {
     test("consulta hotel_fotos y hoteles (estrellas/clasificacion/descripcion/ubicacion/adults_only/pet_friendly/etc.) por los hotelId de unidad", () => {
       assert.match(codigoDiscovery, /export async function cargarInfoHotelesBernalo/);
-      assert.match(codigoDiscovery, /\.from\("hotel_fotos"\)/);
+      assert.match(codigoDiscovery, /leerFotosHotel\(admin, hotelIds\)/);
       assert.match(codigoDiscovery, /\.from\("hoteles"\)/);
       assert.match(codigoDiscovery, /adults_only, pet_friendly, pet_costo_neto, pet_costo_desc, pet_nota/);
     });
@@ -359,7 +359,7 @@ describe("lib/tarifario/datosBernalo.ts — descubrimiento paralelo, sin tarifar
     });
 
     test("con 0 hotelIds, responde con mapas vacíos y sin error SIN llamar a Supabase (nunca una consulta con .in(\"id\", []) que fallaría o traería todo)", () => {
-      assert.match(codigoDiscovery, /if \(!hotelIds\.length\) return \{ fotosPorHotel: \{\}, infoPorHotel: \{\}, errorFotos: null, errorInfo: null \};/);
+      assert.match(codigoDiscovery, /if \(!hotelIds\.length\) return \{ fotosPorHotel: \{\}, galeriaPorHotel: \{\}, infoPorHotel: \{\}, errorFotos: null, errorInfo: null \};/);
     });
 
     test("adultsOnly/petFriendly se leen de las columnas REALES del hotel (hoteles.adults_only/pet_friendly) — nunca hardcodeados a false salvo cuando la columna es null", () => {
@@ -392,7 +392,7 @@ describe("lib/tarifario/datosBernalo.ts — descubrimiento paralelo, sin tarifar
       assert.match(bloqueFotos, /if \(!eFotos\) \{/, "fotosPorHotel debe llenarse solo si su propia consulta no falló");
       // ...y el bloque de metadata solo se llena si NO hubo error de hoteles —
       // cada uno gateado por SU error, nunca por el de la otra consulta.
-      const idxReturn = cuerpo.indexOf("return { fotosPorHotel, infoPorHotel", idxInfo);
+      const idxReturn = cuerpo.indexOf("return { fotosPorHotel, galeriaPorHotel", idxInfo);
       assert.notEqual(idxReturn, -1);
       const bloqueInfo = cuerpo.slice(idxInfo, idxReturn);
       assert.match(bloqueInfo, /if \(!eHoteles\) \{/, "infoPorHotel debe llenarse solo si su propia consulta no falló");
@@ -401,7 +401,7 @@ describe("lib/tarifario/datosBernalo.ts — descubrimiento paralelo, sin tarifar
     });
 
     test("el resultado final SIEMPRE reporta errorFotos/errorInfo por separado (ninguno colapsa al otro)", () => {
-      assert.match(codigoDiscovery, /return \{ fotosPorHotel, infoPorHotel, errorFotos: eFotos\?\.message \?\? null, errorInfo: eHoteles\?\.message \?\? null \};/);
+      assert.match(codigoDiscovery, /return \{ fotosPorHotel, galeriaPorHotel: eFotos \? \{\} : galeriaDe\(fotos\), infoPorHotel, errorFotos: eFotos\?\.message \?\? null, errorInfo: eHoteles\?\.message \?\? null \};/);
     });
   });
 });

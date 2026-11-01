@@ -246,6 +246,11 @@ describe("evaluarHotelPorFechas: preciosMenor2 e infante con hotel $0", () => {
   const tour = (precio_infante: number | null) => ({
     incluido: true, precio_persona: 80000, precio_infante, liquidacion: "paquete", servicio_id: 1, modo: "persona",
     nombre: "Tour", categoria: "tour_traslado", proveedor_id: null, rangos_grupo: [],
+    // SIN «GENERAL»: el precio sale de la vigencia que cubre la fecha de ida.
+    vigencias: {
+      servicioId: 1, nombre: "Tour", grupos: [], conFranjas: new Set<string>(),
+      temporadas: [{ nombre: "VIG", fecha_inicio: "2000-01-01", fecha_fin: "2099-12-31", precio_persona: 80000, precio_infante }],
+    },
   });
   test("infante con tarifa de hotel y tour con precio de infante: pvp de adulto + preciosMenor2", () => {
     const r = evaluarHotelPorFechas(datos({ neto_infante: 60000, neto_nino: 150000 }, { servicios: [tour(40000)] }), EN_30, 1);
@@ -314,7 +319,14 @@ function tablasGenerar(o: {
     }],
     armado_vuelos: [], armado_empaquetados: [],
     armado_servicios: (o.servicios ?? []).map(armadoServicio),
-    servicio_tarifa_pax: o.grupos ?? [],
+    // SIN «GENERAL»: cada servicio del fixture se publica desde una vigencia "VIG" que cubre todo el rango (mismos netos que antes).
+    servicio_temporadas: (o.servicios ?? []).map((s) => ({
+      servicio_id: s.id, nombre: "VIG", fecha_inicio: "2000-01-01", fecha_fin: "2099-12-31", compra_inicio: null, compra_fin: null, prioridad: 1,
+      precio_persona: s.precio_persona, precio_infante: s.precio_infante ?? null, recargo_individual: null,
+    })),
+    servicio_tarifa_pax: (o.grupos ?? []).map((g) => ({ ...g, temporada: "VIG" })),
+    // 262: la publicación lee la clasificación del receptivo; null = sin clasificar (comportamiento anterior).
+    servicios_adicionales: (o.servicios ?? []).map((s) => ({ id: s.id, tipo_receptivo: null, combo_incluye_traslado: null, combo_traslado_alcance: null })),
     armado_hoteles: hoteles.map((h) => ({
       paquete_id: PAQUETE_ID, hotel_id: h, categorias: null, regimenes: null,
       hoteles: { nombre: `Hotel ${h}`, moneda, modelo_tarifario: "persona", adults_only: h === HOTEL_C },
@@ -358,7 +370,8 @@ describe("generarTarifario() REAL — precio del menor de 2 años por fila", () 
     const g = await generar({ servicios: [TOUR_40()] });
     assert.equal(g.r.ok, true, g.r.ok ? "" : g.r.error);
     assert.equal(fila(g.filas, "doble")!.precio_pvp, 1730000);
-    assert.equal(fila(g.filas, "doble")!.precio_pvp_menor2, null, "la habitación adulta no lleva precio de menor de 2");
+    assert.equal(fila(g.filas, "doble")!.precio_pvp_menor2 ?? null, null, // 259: el payload no envía claves null; ausente = NULL para el servidor
+       "la habitación adulta no lleva precio de menor de 2");
     assert.equal(fila(g.filas, "infante")!.precio_pvp, 1305000, "pvp conserva su significado: vuelo y servicios de adulto");
     assert.equal(fila(g.filas, "infante")!.precio_pvp_menor2, 205000);
     assert.equal(fila(g.filas, "nino")!.precio_pvp, 1418000);
@@ -421,7 +434,7 @@ describe("generarTarifario() REAL — precio del menor de 2 años por fila", () 
     const s = (id: number) => g.filas.find((f) => f.servicio_id === id)!;
     assert.equal(s(21).precio_pvp, 100000);
     assert.equal(s(21).precio_pvp_menor2, 25000);
-    assert.equal(s(22).precio_pvp_menor2, null);
+    assert.equal(s(22).precio_pvp_menor2 ?? null, null); // 259: clave ausente = NULL en el servidor
     assert.equal(s(23).precio_pvp_menor2, 0, "$0 es distinto de NULL");
   });
   test("servicio por GRUPO: ninguna fila lleva precio de infante (el infante no cuenta para el rango ni paga extra)", async () => {
@@ -452,7 +465,7 @@ const HOTEL = 217;
 const CATEGORIA = "Estándar";
 const REGIMEN = "PC";
 
-function tablasReserva(o: { menor2?: boolean; conServicios?: boolean; temporadas?: Fila[] } = {}): Tablas {
+function tablasReserva(o: { menor2?: boolean; conServicios?: boolean; temporadas?: Fila[]; infante22?: number | null; sinVigencias?: boolean; franjaEn21?: boolean } = {}): Tablas {
   const con = o.menor2 !== false;
   const comun = { paquete_id: PAQUETE_ID, hotel_id: HOTEL, categoria: CATEGORIA, regimen: REGIMEN, salida_id: null, empaquetado_id: null, bloqueo_id: null, hotel_nombre: "Hotel 226", destino_nombre: "CARTAGENA", fecha_ida: EN_30, fecha_regreso: EN_31, moneda: "COP", modulo: "porcion_terrestre" };
   return {
@@ -468,7 +481,7 @@ function tablasReserva(o: { menor2?: boolean; conServicios?: boolean; temporadas
       { ...comun, acomodacion: "infante", precio_pvp: 1305000, precio_pvp_menor2: con ? 205000 : null },
       ...(o.conServicios ? [
         { paquete_id: PAQUETE_ID, modulo: "servicios", servicio_id: 21, servicio_nombre: "Tour persona", tipo_tarifa: "persona", pax_desde: null, pax_hasta: null, precio_pvp: 100000, precio_pvp_menor2: 25000, recargo_individual: 0 },
-        { paquete_id: PAQUETE_ID, modulo: "servicios", servicio_id: 22, servicio_nombre: "Tour persona sin infante", tipo_tarifa: "persona", pax_desde: null, pax_hasta: null, precio_pvp: 100000, precio_pvp_menor2: null, recargo_individual: 0 },
+        { paquete_id: PAQUETE_ID, modulo: "servicios", servicio_id: 22, servicio_nombre: "Tour persona sin infante", tipo_tarifa: "persona", pax_desde: null, pax_hasta: null, precio_pvp: 100000, precio_pvp_menor2: o.infante22 ?? null, recargo_individual: 0 },
         { paquete_id: PAQUETE_ID, modulo: "servicios", servicio_id: 31, servicio_nombre: "Tour grupo", tipo_tarifa: "grupo", pax_desde: 1, pax_hasta: 2, precio_pvp: 625000, precio_pvp_menor2: null, recargo_individual: null },
         { paquete_id: PAQUETE_ID, modulo: "servicios", servicio_id: 31, servicio_nombre: "Tour grupo", tipo_tarifa: "grupo", pax_desde: 3, pax_hasta: 4, precio_pvp: 750000, precio_pvp_menor2: null, recargo_individual: null },
       ] : []),
@@ -489,8 +502,23 @@ function tablasReserva(o: { menor2?: boolean; conServicios?: boolean; temporadas
       { id: 22, precio_persona: 80000, precio_infante: null, categoria: "tour_traslado", proveedor_id: null },
       { id: 31, precio_persona: null, precio_infante: 30000, categoria: "tour_traslado", proveedor_id: null },
     ],
-    servicio_temporadas: o.temporadas ?? [],
-    servicio_tarifa_pax: [],
+    // Sin tarifa «GENERAL»: cada servicio se vende con una vigencia que cubra la fecha del viaje (mismos netos que su precio publicado).
+    // La vigencia base "VIG" (prioridad 1) es la que dio el precio publicado; las que pasa cada prueba (p. ej. "ALTA", prioridad 5) la superan en su fecha.
+    servicio_temporadas: [
+      ...(o.sinVigencias ? [] : [21, 22, 31].map((id) => ({
+        servicio_id: id, nombre: "VIG", fecha_inicio: "2000-01-01", fecha_fin: "2099-12-31", compra_inicio: null, compra_fin: null, prioridad: 1,
+        precio_persona: id === 31 ? null : 80000, precio_infante: id === 21 ? 20000 : null, recargo_individual: null,
+        ...(id === 21 && o.franjaEn21 ? { servicio_suplementos_franja: [{ id: 1, hora_desde: "19:00", hora_hasta: "06:00", tramo: "ambos", tipo: "monto", valor: 40000, cobro: "grupo" }] } : {}),
+      }))),
+      ...(o.temporadas ?? []),
+    ],
+    servicio_tarifa_pax: [
+      // Rangos GENERAL de otro precio: no deben influir nunca (ver «pax fuera de rango»).
+      { servicio_id: 31, pax_desde: 1, pax_hasta: 50, precio: 1000, temporada: "GENERAL" },
+      ...(o.sinVigencias ? [] : [
+        { servicio_id: 31, pax_desde: 1, pax_hasta: 2, precio: 500000, temporada: "VIG" }, { servicio_id: 31, pax_desde: 3, pax_hasta: 4, precio: 600000, temporada: "VIG" },
+      ]),
+    ],
   };
 }
 
@@ -596,8 +624,8 @@ describe("computarReserva() REAL — precio de infante por temporada del servici
     servicio_id: 21, nombre: "ALTA", fecha_inicio: "2000-01-01", fecha_fin: "2099-12-31", compra_inicio: null, compra_fin: null, prioridad: 5,
     precio_persona: 100000, precio_infante: null, recargo_individual: null, ...extra,
   });
-  const precio = async (temporadas: Fila[], id: number) => {
-    const r = await reservar(tablasReserva({ conServicios: true, temporadas }), entrada({ habitaciones: { doble: 1 }, edadesMenores: [1], cantidadMenores: 1, servicios: [id] }));
+  const precio = async (temporadas: Fila[], id: number, infante22: number | null = null) => {
+    const r = await reservar(tablasReserva({ conServicios: true, temporadas, infante22 }), entrada({ habitaciones: { doble: 1 }, edadesMenores: [1], cantidadMenores: 1, servicios: [id] }));
     assert.ok(r.ok, r.ok ? "" : r.error);
     return r.ok ? r.data.serviciosItems.find((x) => x.servicioId === id)!.precio : -1;
   };
@@ -605,14 +633,44 @@ describe("computarReserva() REAL — precio de infante por temporada del servici
     // general: adulto 80.000 → pvp 100.000, infante 20.000 → pvp 25.000. Temporada: adulto 100.000 (×1,25 = 125.000), infante 40.000 (×2 = 50.000).
     assert.equal(await precio([temp({ precio_infante: 40000 })], 21), 2 * 125000 + 50000);
   });
-  test("temporada SIN precio_infante: el infante conserva el de la tarifa general (hereda), solo el adulto sube", async () => {
-    assert.equal(await precio([temp({ precio_infante: null })], 21), 2 * 125000 + 25000);
+  test("temporada SIN precio_infante: el infante paga como el adulto de ESA vigencia (ya no hereda el de la tarifa general)", async () => {
+    assert.equal(await precio([temp({ precio_infante: null })], 21), 2 * 125000 + 125000);
   });
   test("servicio sin precio de infante general y temporada CON precio_infante: se usa el de la temporada (30.000 × 1,25 = 37.500)", async () => {
-    assert.equal(await precio([temp({ servicio_id: 22, precio_infante: 30000 })], 22), 2 * 125000 + 37500);
+    // El tarifario se publicó con el mínimo entre vigencias (30.000 → PVP 37.500): la vigencia ALTA coincide con la referencia.
+    assert.equal(await precio([temp({ servicio_id: 22, precio_infante: 30000 })], 22, 37500), 2 * 125000 + 37500);
   });
   test("servicio sin precio de infante en ningún lado: el infante paga como el adulto de la temporada", async () => {
     assert.equal(await precio([temp({ servicio_id: 22, precio_infante: null })], 22), 3 * 125000);
+  });
+});
+
+describe("computarReserva() REAL — SIN «GENERAL»: Reservar interno rechaza ANTES de numerar lo que no se puede cotizar", () => {
+  const intentar = (t: Tablas, servicios: number[], habitaciones: Record<string, number> = { doble: 1 }) =>
+    reservar(t, entrada({ habitaciones, edadesMenores: [], cantidadMenores: 0, servicios } as never));
+  test("DEFECTO: servicio con precio base pero SIN vigencia se vendía al precio publicado. AHORA: rechazo legible", async () => {
+    const r = await intentar(tablasReserva({ conServicios: true, sinVigencias: true }), [21]);
+    assert.equal(r.ok, false);
+    assert.match(r.ok ? "" : r.error, /vigencia/i);
+  });
+  test("pax fuera de rango del servicio por grupo (rangos 1–4, van 6): rechazo, NO cae al rango más alto ni al GENERAL de 1–50", async () => {
+    const r = await intentar(tablasReserva({ conServicios: true }), [31], { doble: 3 });
+    assert.equal(r.ok, false);
+    assert.match(r.ok ? "" : r.error, /rango de pasajeros/i);
+  });
+  test("pax dentro del rango: sigue cotizando con el precio de la vigencia", async () => {
+    const r = await intentar(tablasReserva({ conServicios: true }), [31], { doble: 2 });
+    assert.ok(r.ok, r.ok ? "" : r.error);
+  });
+  test("traslado con franjas horarias: Reservar interno no puede obtener la hora => rechaza expresamente antes de numerar", async () => {
+    const r = await intentar(tablasReserva({ conServicios: true, franjaEn21: true }), [21]);
+    assert.equal(r.ok, false);
+    assert.match(r.ok ? "" : r.error, /suplementos por horario/i);
+    assert.match(r.ok ? "" : r.error, /carrito/i);
+  });
+  test("el mismo servicio SIN franjas se reserva normal (la guardia solo bloquea los traslados con recargo horario)", async () => {
+    const r = await intentar(tablasReserva({ conServicios: true }), [21]);
+    assert.ok(r.ok, r.ok ? "" : r.error);
   });
 });
 

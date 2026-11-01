@@ -220,6 +220,7 @@ describe("inventario de lectores de la tabla base `empaquetados` en la aplicaci�
     // generador del armado (sin venta) y la cotización de la oferta #63 (service-role).
     ["lib/reservar/fuentesMoneda90.ts", { cliente: "sesion", roles: "armado interno (sin venta) o service-role" }],
     ["lib/tarifario/datos.ts", { cliente: "servicio", roles: "service-role" }],
+    ["lib/tarifario/composicionIncluidos.ts", { cliente: "servicio", roles: "service-role (solo fecha_ida de empaquetados: no lee precios ni costos)" }],
     ["lib/tarifario/datosBernalo.ts", { cliente: "servicio", roles: "service-role" }],
     ["lib/tarifario/filtrosPostCarga.ts", { cliente: "servicio", roles: "service-role" }],
     // computo.ts ya NO está aquí: lee con la SESIÓN de quien reserva (incl. `venta`) y pasó a la vista (línea 258).

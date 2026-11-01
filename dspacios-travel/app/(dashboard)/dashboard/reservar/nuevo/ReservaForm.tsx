@@ -3,12 +3,14 @@
 import { DateInput } from "@/components/ui/DateInput";
 import { useMemo, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
+import { MENSAJE_TRASLADOS_SOLO_CARRITO_PANTALLA } from "@/lib/servicios/alcanceContexto";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { formatMoneda, calcularEdad } from "@/lib/utils";
 import { crearCotizacion, cotizarPorFechas } from "../actions";
 import { type PasajeroReserva } from "@/lib/reservar/computo";
-import { precioServicio } from "@/lib/calc/paquetes";
+import { precioServicioEstimado, avisoSinRango } from "@/lib/calc/servicioTarifa";
+import { etiquetaDisponibilidad, fechaDisponible, type TramoFechas } from "@/lib/tarifario/disponibilidadServicios";
 import { ACOM_ROOMS, ACOM_ROOM_LABEL, paxTarifaDe, clasificarPorEdad, validarReservaHabitaciones, type AcomConfig, type AcomRoom } from "@/lib/acomodaciones";
 import { esInfantePorEdad } from "@/lib/reservar/pasajeros";
 import { recalcularVinculosPorEdad } from "@/lib/reservar/pasajerosFilas";
@@ -42,6 +44,8 @@ export type ServicioDisp = {
   // PVP del infante (0 a 1,99 años) en cobro por persona; null = paga como adulto.
   infantePvp?: number | null;
   grupos: { pax_desde: number; pax_hasta: number; precio: number }[];
+  // Tramos de fecha donde el servicio se ofrece (migración 256). null/ausente = todas las fechas del viaje; el servidor re-valida siempre contra la vigencia viva.
+  fechasDisponibles?: TramoFechas[] | null;
 };
 
 export type Meta = {
@@ -72,12 +76,12 @@ const lbl = "mb-1 block text-xs font-medium text-gray-600";
 const inp = "w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm";
 
 export function ReservaForm({
-  meta, combos, serviciosDisp = [], acomConfigs = [],
+  meta, combos, serviciosDisp = [], acomConfigs = [], hayTrasladosOcultos = false,
   vendedores = [],
   agencias = [],
   freelances = [],
 }: {
-  meta: Meta; combos: Combo[]; serviciosDisp?: ServicioDisp[]; acomConfigs?: AcomConfig[];
+  meta: Meta; combos: Combo[]; serviciosDisp?: ServicioDisp[]; acomConfigs?: AcomConfig[]; hayTrasladosOcultos?: boolean;
   vendedores?: { nombre: string }[]; agencias?: { id: number; nombre: string }[]; freelances?: { id: number; nombre: string }[];
 }) {
   const router = useRouter();
@@ -184,11 +188,14 @@ export function ReservaForm({
   // Pax de 2 años o más (rango de grupo y tarifa de adulto); los menores de 2
   // años pagan su precio de infante en servicios por persona y nada en grupo.
   const paxServicio = esServicios ? totalPax : paxConSilla;
-  function precioServ(s: ServicioDisp): number {
-    const base = precioServicio(s.modo, s.personaPvp, s.grupos, paxServicio);
+  // null = por grupo y ningún rango cubre los pax: no hay estimado (no se muestra el precio del rango más alto). El servidor revalida igual.
+  function precioServ(s: ServicioDisp): number | null {
+    const base = precioServicioEstimado(s.modo, s.personaPvp, s.grupos, paxServicio);
+    if (base === null) return null;
     return !esServicios && s.modo === "persona" ? base + numInfantes * (s.infantePvp ?? s.personaPvp ?? 0) : base;
   }
-  const totalServicios = serviciosDisp.reduce((acc, s) => (servSel.has(s.servicioId) ? acc + precioServ(s) : acc), 0);
+  const totalServicios = serviciosDisp.reduce((acc, s) => (servSel.has(s.servicioId) ? acc + (precioServ(s) ?? 0) : acc), 0);
+  const serviciosSinRango = serviciosDisp.filter((s) => servSel.has(s.servicioId) && precioServ(s) === null);
   const totalPrecio = totalHotel + totalServicios;
 
   // Cliente
@@ -217,6 +224,9 @@ export function ReservaForm({
   const habitacionesNum: Record<string, number> = {};
   for (const a of roomTypes) { const n = Number(habs[a]) || 0; if (n > 0) habitacionesNum[a] = n; }
   const refFecha = esPorFechas ? (fIda || null) : meta.fechaIda;
+  // Opcional publicado con disponibilidad parcial: fuera de sus tramos no se ofrece para la fecha elegida (mensaje claro; no se muestra un precio que no se puede vender).
+  const noDisponibleEnFecha = (s: ServicioDisp) => !!refFecha && !fechaDisponible(refFecha, s.fechasDisponibles);
+  const serviciosNoDisponibles = serviciosDisp.filter((s) => servSel.has(s.servicioId) && noDisponibleEnFecha(s));
   const real = esServicios ? undefined : clasificarPorEdad(
     paxRows.map((p) => calcularEdad(p.fechaNacimiento, refFecha)),
     meta.edadInfanteMax, meta.edadNinoMax
@@ -289,6 +299,8 @@ export function ReservaForm({
     if (!cli.nombres.trim() || !cli.apellidos.trim()) { setErr("Nombres y apellidos del cliente son obligatorios."); return; }
     if (!asesorInterno.trim()) { setErr("Selecciona el asesor interno."); return; }
     if (tipoAsesor !== "interno" && !aliadoId) { setErr(`Selecciona la ${tipoAsesor} del catálogo.`); return; }
+    if (serviciosNoDisponibles.length) { setErr(`${serviciosNoDisponibles.map((s) => s.nombre).join(", ")}: no está disponible en la fecha elegida. Desmárcalo o cambia la fecha.`); return; }
+    if (serviciosSinRango.length) { setErr(`${serviciosSinRango.map((s) => s.nombre).join(", ")}: ${avisoSinRango(paxServicio)}. Desmárcalo para continuar.`); return; }
     if (esServicios) {
       if (totalPax <= 0) { setErr("Indica el número de pasajeros."); return; }
       if (!servSel.size) { setErr("Selecciona al menos un servicio."); return; }
@@ -446,6 +458,9 @@ export function ReservaForm({
       </section>
       )}
 
+      {hayTrasladosOcultos && (
+        <p className="rounded-lg border border-amber-200 bg-amber-50 p-3 text-xs text-amber-800" role="note" data-testid="aviso-traslados-carrito">{MENSAJE_TRASLADOS_SOLO_CARRITO_PANTALLA}</p>
+      )}
       {/* Servicios adicionales (add-on) */}
       {serviciosDisp.length > 0 && (
         <section className="rounded-xl border border-gray-200 bg-white p-5">
@@ -460,6 +475,7 @@ export function ReservaForm({
                     <input
                       type="checkbox"
                       checked={sel}
+                      disabled={(precio === null || noDisponibleEnFecha(s)) && !sel}
                       onChange={(e) => {
                         setServSel((prev) => {
                           const n = new Set(prev);
@@ -473,7 +489,11 @@ export function ReservaForm({
                       <span className="text-xs text-gray-400">({s.modo === "grupo" ? `por grupo · ${paxServicio} pax` : "por persona"})</span>
                     </span>
                   </label>
-                  <span className="text-sm tabular-nums" style={{ color: "var(--brand-primary)" }}>{fmt(precio)}</span>
+                  {noDisponibleEnFecha(s)
+                    ? <span role="alert" className="max-w-[16rem] text-right text-xs text-amber-700">No disponible en la fecha elegida. {etiquetaDisponibilidad(s.fechasDisponibles)}</span>
+                    : precio === null
+                    ? <span role="alert" className="max-w-[16rem] text-right text-xs text-amber-700">{avisoSinRango(paxServicio)}</span>
+                    : <span className="text-sm tabular-nums" style={{ color: "var(--brand-primary)" }}>{fmt(precio)}</span>}
                 </li>
               );
             })}

@@ -3,6 +3,9 @@ import { createAdminClient } from "@/lib/supabase/admin";
 import Link from "next/link";
 import { ReservaForm, type Combo, type Meta, type ServicioDisp } from "./ReservaForm";
 import type { AcomConfig } from "@/lib/acomodaciones";
+import { tramosDeJson } from "@/lib/tarifario/disponibilidadServicios";
+import { trasladosPorAlcance } from "@/lib/servicios/alcanceContexto";
+import { mensajePaqueteNoDisponibleOperador, tarifarioFallido } from "@/lib/reservar/tarifarioNoVendible";
 
 export const dynamic = "force-dynamic";
 
@@ -43,11 +46,16 @@ export default async function NuevaReservaPage({
         : (bloqueoId ? q.eq("bloqueo_id", bloqueoId) : q.is("bloqueo_id", null));
     const { data: filas } = await q;
     if (!filas || !filas.length) {
+      // Generación fallida: se muestra el motivo exacto al operador (no el genérico «no se encontró»).
+      const { data: est } = await sb.from("armado_paquetes").select("tarifario_estado, tarifario_error").eq("id", paqueteId).maybeSingle();
+      const fallido = tarifarioFallido(est as { tarifario_estado?: string | null } | null);
       return (
         <div className="mx-auto max-w-3xl p-8">
           <Link href="/tarifario" className="text-sm text-gray-400 hover:text-gray-600">← Tarifario</Link>
-          <p className="mt-4 rounded-lg bg-amber-50 px-4 py-3 text-sm text-amber-700">
-            No se encontró la tarifa seleccionada. Vuelve al tarifario y elige de nuevo.
+          <p role="alert" data-testid={fallido ? "tarifario-fallido" : undefined} className="mt-4 rounded-lg bg-amber-50 px-4 py-3 text-sm text-amber-700">
+            {fallido
+              ? mensajePaqueteNoDisponibleOperador(est as { tarifario_estado?: string | null; tarifario_error?: string | null })
+              : "No se encontró la tarifa seleccionada. Vuelve al tarifario y elige de nuevo."}
           </p>
         </div>
       );
@@ -114,23 +122,39 @@ export default async function NuevaReservaPage({
   }
 
   // Servicios del paquete (PVP publicado) → add-ons en la reserva
-  const { data: servFilas } = await sb
+  // Preview y Producción comparten base: si la migración 256 aún no está aplicada, la vista no tiene `fechas_disponibles` y la consulta falla (42703). Se relee sin esa
+  // columna (los servicios quedan sin tramos conocidos: la vigencia de la fecha se valida igual al reservar) en vez de dejar al asesor sin servicios.
+  type FilaServ = { servicio_id: number | null; servicio_nombre: string | null; tipo_tarifa: string | null; pax_desde: number | null; pax_hasta: number | null; precio_pvp: number; precio_pvp_menor2: number | null; fechas_disponibles?: unknown };
+  const conTramos = await sb
     .from("tarifario_resultado_publicable")
-    .select("servicio_id, servicio_nombre, tipo_tarifa, pax_desde, pax_hasta, precio_pvp, precio_pvp_menor2")
+    .select("servicio_id, servicio_nombre, tipo_tarifa, pax_desde, pax_hasta, precio_pvp, precio_pvp_menor2, fechas_disponibles")
     .eq("paquete_id", paqueteId)
     .eq("modulo", "servicios");
+  let servFilas: FilaServ[] | null = conTramos.data as FilaServ[] | null;
+  if (conTramos.error) {
+    const sinTramos = await sb
+      .from("tarifario_resultado_publicable")
+      .select("servicio_id, servicio_nombre, tipo_tarifa, pax_desde, pax_hasta, precio_pvp, precio_pvp_menor2")
+      .eq("paquete_id", paqueteId)
+      .eq("modulo", "servicios");
+    servFilas = sinTramos.error ? null : (sinTramos.data as FilaServ[] | null);
+  }
   const servMap = new Map<number, ServicioDisp>();
   for (const r of servFilas ?? []) {
     if (r.servicio_id == null) continue;
     let s = servMap.get(r.servicio_id);
     if (!s) {
-      s = { servicioId: r.servicio_id, nombre: r.servicio_nombre ?? "—", modo: r.tipo_tarifa === "grupo" ? "grupo" : "persona", personaPvp: null, grupos: [] };
+      s = { servicioId: r.servicio_id, nombre: r.servicio_nombre ?? "—", modo: r.tipo_tarifa === "grupo" ? "grupo" : "persona", personaPvp: null, grupos: [], fechasDisponibles: tramosDeJson(r.fechas_disponibles) };
       servMap.set(r.servicio_id, s);
     }
     if (s.modo === "grupo") s.grupos.push({ pax_desde: r.pax_desde ?? 1, pax_hasta: r.pax_hasta ?? 1, precio: r.precio_pvp });
     else { s.personaPvp = r.precio_pvp; s.infantePvp = r.precio_pvp_menor2 ?? null; }
   }
-  const serviciosDisp = [...servMap.values()];
+  // 262: los traslados por alcance se eligen desde el carrito (llegada/salida/ida y regreso con precio propio): aquí no se ofrecen. computarReserva los rechaza igual.
+  const traslOcultos = await trasladosPorAlcance(createAdminClient(), [...servMap.keys()]);
+  const idsOcultos = new Set(traslOcultos.ok ? traslOcultos.ids : []);
+  const serviciosDisp = [...servMap.values()].filter((s) => !idsOcultos.has(s.servicioId));
+  const hayTrasladosOcultos = idsOcultos.size > 0;
 
   // Cupos disponibles del bloqueo (obs 5): se muestran al asesor.
   let cuposDisponibles: number | null = null;
@@ -166,7 +190,7 @@ export default async function NuevaReservaPage({
           Este vuelo no tiene cupos disponibles. No se puede generar el contrato.
         </p>
       )}
-      <ReservaForm meta={meta} combos={combos} serviciosDisp={serviciosDisp} acomConfigs={acomConfigs}
+      <ReservaForm meta={meta} combos={combos} serviciosDisp={serviciosDisp} hayTrasladosOcultos={hayTrasladosOcultos} acomConfigs={acomConfigs}
         vendedores={vendedores ?? []} agencias={agencias} freelances={freelances} />
     </div>
   );

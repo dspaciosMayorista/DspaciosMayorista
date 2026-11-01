@@ -106,7 +106,7 @@ export function PaquetesListado({ paquetes, tabInicial }: { paquetes: PaqueteIte
                 </p>
                 <div className="mt-3 flex items-center justify-between">
                   <span className="text-xs text-gray-500">
-                    {p.nTarifas > 0 ? `${p.nTarifas} tarifas publicadas` : "Sin publicar"}
+                    {p.nTarifas > 0 ? `${p.nTarifas} combinaciones publicadas` : "Sin publicar"}
                   </span>
                   {p.nTarifas > 0 && (
                     <span className="text-sm">

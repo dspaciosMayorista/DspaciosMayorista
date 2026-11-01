@@ -16,6 +16,8 @@ import { normalizarModalidadLegible, type ModalidadControl } from "@/lib/vuelos/
 import { miRol, ROLES_CONTRATO_COMPLETO, ROLES_EDITOR_VUELOS_CONTRATO } from "@/lib/roles";
 
 export const dynamic = "force-dynamic";
+// Las Server Actions de esta pantalla regeneran tarifarios (por lotes) tras guardar: el maxDuration de la página rige su duración. Literal igual a VENTANA_PETICION_MS (lib/tarifario/controladorPublicacion.ts).
+export const maxDuration = 60;
 
 const COLS_BLOQUEOS = [
   { key: "record", label: "Record", ejemplo: "L93FYZ" },

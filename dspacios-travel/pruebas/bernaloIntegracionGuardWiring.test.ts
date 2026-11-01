@@ -100,7 +100,7 @@ describe("computo.ts (computarReserva) — guardia modelo_tarifario ANTES de lee
 });
 
 describe("paquetes/actions.ts (generarTarifario) — hoteles 'unidad' se EXCLUYEN, nunca leen tarifa_hotel", () => {
-  const cuerpo = cuerpoFuncion(paqueteActions, "export async function generarTarifario(paqueteId: number): Promise<Result> {");
+  const cuerpo = cuerpoFuncion(paqueteActions, "export async function generarTarifario(paqueteId: number, opciones: OpcionesGenerar = {}): Promise<Result> {");
 
   test("selecciona modelo_tarifario del hotel junto con nombre/moneda", () => {
     // 226: además `adults_only` (un hotel Adults Only no publica fila de infante).
@@ -243,7 +243,7 @@ describe("paquetes/actions.ts (generarTarifario) — hoteles 'unidad' se EXCLUYE
 // para ese caso (el modelo por unidad no escribe tarifario_resultado), no
 // una señal de paquete roto. ─────────────────────────────────────────────
 describe("paquetes/actions.ts (generarTarifario) — hallazgo confirmado: filas.length=0 por Bernalo NUNCA es el error legacy", () => {
-  const cuerpo = cuerpoFuncion(paqueteActions, "export async function generarTarifario(paqueteId: number): Promise<Result> {");
+  const cuerpo = cuerpoFuncion(paqueteActions, "export async function generarTarifario(paqueteId: number, opciones: OpcionesGenerar = {}): Promise<Result> {");
 
   test('el error legacy "No se generaron tarifas" solo se devuelve si hotelesBernaloValidos.length === 0 (nunca cuando SÍ hay hoteles Bernalo con tarifa publicada compatible)', () => {
     const idxError = cuerpo.indexOf("No se generaron tarifas");
@@ -286,7 +286,10 @@ describe("paquetes/actions.ts (generarTarifario) — hallazgo confirmado: filas.
     const idxPublicar = cuerpo.indexOf('sb.rpc("publicar_tarifario_resultado"');
     assert.notEqual(idxPublicar, -1, "debe existir la llamada al RPC de publicación atómica");
     const bloque = cuerpo.slice(idxPublicar, idxPublicar + 400);
-    assert.match(bloque, /p_filas: filas as unknown as Json/, "el payload publicado debe ser el array `filas` calculado tal cual, nunca uno fabricado a mano");
+    // 259: el array `filas` viaja SIN sus claves null (mismo contenido, menos bytes: el servidor trata clave ausente = null) — derivado SOLO de `filas`
+    // por `compactarFilasPublicacion`, nunca un arreglo fabricado a mano.
+    assert.match(bloque, /p_filas: filasPublicar as unknown as Json/, "el payload publicado debe derivarse del array `filas` calculado, nunca uno fabricado a mano");
+    assert.match(cuerpo, /const filasPublicar = compactarFilasPublicacion\(filas\);/);
   });
 
   test("el return final sigue devolviendo id: filas.length (0 para un paquete solo Bernalo) y el aviso Bernalo (basado en hotelesBernaloValidos), sin cambios", () => {
@@ -326,7 +329,7 @@ describe("paquetes/actions.ts (generarTarifario) — hallazgo confirmado: filas.
 // `servicio_tarifa_pax`, ANTES del `delete()` y ANTES de cualquier
 // `insert()` — independiente de `filas.length` por completo.
 describe("paquetes/actions.ts (generarTarifario) — P3: prevalidación de dinámico 100% unidad ANTES de publicar servicios/borrar/insertar", () => {
-  const cuerpo = cuerpoFuncion(paqueteActions, "export async function generarTarifario(paqueteId: number): Promise<Result> {");
+  const cuerpo = cuerpoFuncion(paqueteActions, "export async function generarTarifario(paqueteId: number, opciones: OpcionesGenerar = {}): Promise<Result> {");
 
   test("la guardia de dinámico 100% unidad es un `if` temprano e INDEPENDIENTE de `filas.length` — no vive dentro del if/else-if de inserción", () => {
     const idxGuardia = cuerpo.indexOf('if (tipo === "dinamico" && hotelIds.length === 0 && hotelesBernaloFilas.length > 0) {');
@@ -434,7 +437,7 @@ describe("ArmadoClient.tsx — el aviso de hoteles Bernalo excluidos se muestra 
 // cierra ese hueco confirmando el ORIGEN de esa fila.
 // ─────────────────────────────────────────────────────────────────────────
 describe("paquetes/actions.ts (generarTarifario) — guarda focalizada: el loop de servicios opcionales es INCONDICIONAL (nunca depende de hotelIds/tipo)", () => {
-  const cuerpo = cuerpoFuncion(paqueteActions, "export async function generarTarifario(paqueteId: number): Promise<Result> {");
+  const cuerpo = cuerpoFuncion(paqueteActions, "export async function generarTarifario(paqueteId: number, opciones: OpcionesGenerar = {}): Promise<Result> {");
 
   // Hay DOS ocurrencias literales de "for (const s of servicios) {" en el
   // archivo: la de `aporteServiciosIncluidos` (servicios INCLUIDOS, horneados

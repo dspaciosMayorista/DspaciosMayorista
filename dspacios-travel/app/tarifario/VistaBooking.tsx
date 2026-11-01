@@ -6,10 +6,10 @@ import { createPortal } from "react-dom";
 import Image from "next/image";
 import { formatMoneda } from "@/lib/utils";
 import {
-  Categoria, EtiquetasHotel, DescripcionHotelExpandible, UbicacionHotel, SeccionesIncluye, IncluyeCompacto, AddonsPaquete, ReceptivoModal,
+  Categoria, EtiquetasHotel, DescripcionHotelExpandible, UbicacionHotel, SeccionesIncluye, IncluyeSalida, IncluyeCompacto, AddonsPaquete, ReceptivoModal,
   type Receptivo, type ReceptivoModalInfo,
 } from "./tarjetaHotelCompartida";
-import { claveConsultaServicios, evaluarEdicionServicios, serviciosParaCarrito, type HotelParaServicios } from "@/lib/tarifario/servicioAdicionalPaquete";
+import { claveConsultaServicios, evaluarEdicionServicios, serviciosParaCarrito, type HotelParaServicios, type RecorridoServicios } from "@/lib/tarifario/servicioAdicionalPaquete";
 import { serviciosDeHotel } from "@/lib/cart/vinculoServicios";
 import {
   DesgloseServicios, EdicionServiciosCarrito, PISTA_EDITAR_SERVICIOS, ServiciosEnCarrito, avisoTarifaHotel, conjuntoGuardadoDe,
@@ -64,8 +64,10 @@ import { BuscadorBooking, Resultado, type EstadoBusquedaPorcion } from "./Buscad
 import type { OpcionUnidadConfirmada } from "./busquedaUnidadActions";
 import { claveBusquedaUnidad, claveReservaUnidad, revalidarReservaUnidad } from "@/lib/tarifario/identidadReservaUnidad";
 import { BuscadorReceptivos } from "./BuscadorReceptivos";
+import { ExploraReceptivos } from "./ExploraReceptivos";
 import { ModoComparativaBooking } from "@/lib/cotizacion/comparativaBooking";
 import { BackgroundVideo } from "@/components/BackgroundVideo";
+import { CarruselFotoHotel } from "./CarruselFotoHotel";
 import { LoadingScreen } from "@/components/LoadingScreen";
 import type { FilaTarifario, CapHotel } from "./TarifarioPublic";
 import type { FilaResumen } from "@/lib/tarifario/resumen";
@@ -446,13 +448,15 @@ function PanelFiltrosResto({
 // descripción/etiquetas reales y mostraba "Sin foto" siempre). Un solo
 // componente, con los datos ya resueltos por el llamador — nunca lógica de
 // "cuál modelo es" adentro de la tarjeta misma.
-function TarjetaHotelCard({
-  onClick, foto, hotelNombre, destino, estrellas = null, clasificacion = null,
+export function TarjetaHotelCard({
+  onClick, foto, fotos, hotelNombre, destino, estrellas = null, clasificacion = null,
   adultsOnly = false, petFriendly = false, tieneCondicion, descripcion, desde = null, moneda,
   badgeEsquina,
 }: {
   onClick: () => void;
   foto: string | null;
+  /** Galería completa (portada primero); sin ella, solo `foto`. */
+  fotos?: string[];
   hotelNombre: string;
   destino: string | null;
   estrellas?: number | null;
@@ -466,19 +470,22 @@ function TarjetaHotelCard({
   badgeEsquina?: ReactNode;
 }) {
   return (
-    <button
-      type="button"
-      onClick={onClick}
-      className="group flex flex-col overflow-hidden rounded-2xl border border-gray-200 bg-white text-left transition-all hover:-translate-y-1 hover:shadow-[0_20px_48px_rgba(0,0,0,0.14)] hover:border-[var(--brand-accent)]"
-    >
-      <div className="relative aspect-[16/10] w-full bg-gray-100">
-        {foto ? (
-          <Image src={foto} alt={hotelNombre} fill sizes="(max-width:1024px) 50vw, 33vw" className="object-cover transition-transform group-hover:scale-[1.03]" unoptimized />
-        ) : (
-          <div className="flex h-full w-full items-center justify-center text-sm text-gray-300">Sin foto</div>
-        )}
+    // Tarjeta = contenedor + un solo botón de enlace estirado (z-10) que abre las opciones;
+    // las flechas del carrusel (z-20) son hermanas de ese botón, nunca hijas: sin botones anidados.
+    <div className="group relative flex flex-col overflow-hidden rounded-2xl border border-gray-200 bg-white text-left transition-all hover:-translate-y-1 hover:shadow-[0_20px_48px_rgba(0,0,0,0.14)] hover:border-[var(--brand-accent)]">
+      <button
+        type="button"
+        onClick={onClick}
+        aria-label={`Ver opciones de ${hotelNombre}`}
+        className="absolute inset-0 z-10 cursor-pointer rounded-2xl focus-visible:outline focus-visible:outline-2 focus-visible:outline-[var(--brand-accent)]"
+      />
+      <CarruselFotoHotel
+        fotos={fotos ?? (foto ? [foto] : [])}
+        alt={hotelNombre}
+        className="object-cover transition-transform group-hover:scale-[1.03]"
+      >
         {badgeEsquina}
-      </div>
+      </CarruselFotoHotel>
       <div className="flex flex-1 flex-col p-4">
         <div className="flex flex-wrap items-center gap-2">
           <span className="font-semibold text-gray-800">{hotelNombre}</span>
@@ -503,7 +510,7 @@ function TarjetaHotelCard({
           </span>
         </div>
       </div>
-    </button>
+    </div>
   );
 }
 
@@ -541,6 +548,7 @@ export function VistaBooking({
   filas,
   subtabsSlot = null,
   fotosPorHotel = {},
+  galeriaPorHotel = {},
   fotosPorServicio = {},
   cuposPorBloqueo = {},
   origenPorBloqueo = {},
@@ -575,6 +583,8 @@ export function VistaBooking({
   // a `subtabsBotones`, más abajo).
   subtabsSlot?: HTMLDivElement | null;
   fotosPorHotel?: Record<number, string>;
+  /** Todas las fotos por hotel (portada primero) para el carrusel de las tarjetas. */
+  galeriaPorHotel?: Record<number, string[]>;
   fotosPorServicio?: Record<number, string>;
   cuposPorBloqueo?: Record<number, number>;
   origenPorBloqueo?: Record<number, string>;
@@ -1824,50 +1834,7 @@ export function VistaBooking({
           receptivosPorDestino.length === 0 ? (
             <p className="py-12 text-center text-sm text-gray-400">No hay receptivos publicados.</p>
           ) : (
-            <div className="space-y-8">
-              <p className="text-xs font-semibold uppercase tracking-wide text-gray-400">O explora todos los receptivos</p>
-              {receptivosPorDestino.map(([destino, items]) => (
-                <div key={destino}>
-                  <p className="mb-3 text-xs font-semibold uppercase tracking-wide text-gray-400">
-                    {destino} <span className="ml-1 font-normal normal-case text-gray-400">({items.length})</span>
-                  </p>
-                  <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
-                    {items.map((r, i) => (
-                      <button
-                        key={i}
-                        type="button"
-                        onClick={() => setReceptivoAbierto({ nombre: r.nombre, destino: r.destino, descripcion: r.descripcion, foto: r.foto, precio: r.desde, moneda: r.moneda, notaPrecio: "desde · por persona", paqueteId: r.paqueteId })}
-                        className="group flex flex-col overflow-hidden rounded-2xl border border-gray-200 bg-white text-left transition-all hover:-translate-y-1 hover:shadow-[0_20px_48px_rgba(0,0,0,0.14)] hover:border-[var(--brand-accent)]"
-                      >
-                        <div className="relative aspect-[16/10] w-full bg-gray-100">
-                          {r.foto ? (
-                            <Image src={r.foto} alt={r.nombre} fill sizes="(max-width:1024px) 50vw, 33vw" className="object-cover transition-transform group-hover:scale-[1.03]" unoptimized />
-                          ) : (
-                            <div className="flex h-full w-full items-center justify-center text-sm text-gray-300">Sin foto</div>
-                          )}
-                        </div>
-                        <div className="flex flex-1 flex-col p-4">
-                          <div className="font-semibold text-gray-800">{r.nombre}</div>
-                          {r.descripcion?.trim() && (
-                            <p className="mt-1 line-clamp-2 text-xs text-gray-400">{r.descripcion}</p>
-                          )}
-                          <div className="mt-3 flex items-end justify-between">
-                            <div>
-                              <div className="text-[10px] uppercase tracking-wide text-gray-400">desde</div>
-                              <div className="text-lg font-bold" style={{ color: "var(--brand-primary)" }}>{formatMoneda(r.desde, r.moneda)}</div>
-                              <div className="text-[10px] text-gray-400">por persona</div>
-                            </div>
-                            <span className="rounded-lg px-3 py-1.5 text-xs font-semibold text-white transition-opacity hover:opacity-90" style={{ backgroundColor: "var(--brand-accent)" }}>
-                              Ver más →
-                            </span>
-                          </div>
-                        </div>
-                      </button>
-                    ))}
-                  </div>
-                </div>
-              ))}
-            </div>
+            <ExploraReceptivos porDestino={receptivosPorDestino} onVer={setReceptivoAbierto} />
           )
         )}
         </>
@@ -1991,16 +1958,14 @@ export function VistaBooking({
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
         {tarjetas.map((t) =>
           t.tipo === "busqueda" ? (
-            // Fila persona ya liquidada por el motor para estas fechas y esta
-            // ocupación — la MISMA lista que las tarjetas de exploración, en
-            // modo búsqueda. El componente vive en `BuscadorBooking` porque es
-            // el único que conoce el carrito por persona
-            // (`HotelCartItemPersona`); acá solo se le da el lugar en la grilla.
+            // Fila persona ya liquidada para estas fechas y ocupación; `Resultado`
+            // (BuscadorBooking) conoce el carrito por persona. IncluyeSalida: «Incluye» de ESTA salida.
+            <IncluyeSalida key={t.key} fechaIda={t.r.fechaIda} incluidos={t.r.incluidosDeLaSalida ?? null}>
             <Resultado
-              key={t.key}
               r={t.r}
               recomendada={t.recomendada === true}
               foto={fotosPorHotel[t.r.hotelId] ?? null}
+              fotos={galeriaPorHotel[t.r.hotelId]}
               info={infoPorHotel[t.r.hotelId]}
               descripcionPorPaquete={descripcionPorPaquete}
               addonsPorPaquete={addonsPorPaquete}
@@ -2008,11 +1973,13 @@ export function VistaBooking({
               regInicial={t.regForzada ?? undefined}
               combosPermitidos={t.combosRestringidos ?? undefined}
             />
+            </IncluyeSalida>
           ) : t.tipo === "persona" ? (
             <TarjetaHotelCard
               key={t.key}
               onClick={() => abrirHotel(t.card)}
               foto={t.card.foto}
+              fotos={galeriaPorHotel[t.card.hotelId]}
               hotelNombre={t.card.hotelNombre}
               destino={t.card.destino}
               estrellas={t.card.estrellas}
@@ -2060,6 +2027,7 @@ export function VistaBooking({
               opciones={t.hotel.opcionesBusqueda}
               recomendada={t.recomendada === true}
               foto={fotosPorHotel[t.hotel.hotelId] ?? null}
+              fotos={galeriaPorHotel[t.hotel.hotelId]}
               videoUrl={infoPorHotel[t.hotel.hotelId]?.video_url ?? null}
               estrellas={infoPorHotel[t.hotel.hotelId]?.estrellas ?? null}
               clasificacion={infoPorHotel[t.hotel.hotelId]?.clasificacion ?? null}
@@ -2092,6 +2060,7 @@ export function VistaBooking({
               key={t.key}
               onClick={() => setModalBernalo(t.hotel)}
               foto={fotosPorHotel[t.hotel.hotelId] ?? null}
+              fotos={galeriaPorHotel[t.hotel.hotelId]}
               hotelNombre={t.hotel.hotelNombre}
               destino={t.hotel.destino}
               estrellas={infoPorHotel[t.hotel.hotelId]?.estrellas ?? null}
@@ -2159,6 +2128,8 @@ type ServiciosEditor = ServiciosTarjeta & {
   fechaRegreso: string | null;
   /** Elecciones del hotel que invalidan la cotización de servicios si cambian. */
   firma: string;
+  /** Vuelo del hotel (bloqueo) para acreditar la hora del traslado en el servidor. */
+  recorrido?: RecorridoServicios | null;
 };
 const SIN_SELECCION: readonly number[] = [];
 const SIN_ADDONS: Receptivo[] = [];
@@ -2367,7 +2338,7 @@ function HotelModal({
               {/* Descripción manual del paquete: encabezados fijos, un ítem de
                   lista por línea no vacía. Sección omitida por completo si no
                   tiene contenido (nunca un encabezado con lista vacía). */}
-              <SeccionesIncluye descripcion={descripcionOpcion} compacto />
+              <IncluyeSalida fechaIda={opcion?.fechaIda ?? null}><SeccionesIncluye descripcion={descripcionOpcion} compacto /></IncluyeSalida>
 
               {/* Servicios opcionales (add-on) del MISMO paquete — nunca de otro destino */}
               <AddonsPaquete addons={addons} onAbrir={setAddonAbierto} paqueteId={opcion.paqueteId} seleccion={seleccionServicios.seleccion} />
@@ -2417,7 +2388,7 @@ function HotelModal({
 // precio/disponibilidad: eso sigue siendo EXCLUSIVO de `opcionSel.precioVenta`/
 // `cotizarAlojamientoBernaloPublico` (revalidado en `agregar()`).
 export function TarjetaUnidadBusqueda({
-  hotel, opciones, recomendada = false, foto, videoUrl, estrellas, clasificacion, adultsOnly, petFriendly, tieneCondicion, descripcion, ubicacion,
+  hotel, opciones, recomendada = false, foto, fotos, videoUrl, estrellas, clasificacion, adultsOnly, petFriendly, tieneCondicion, descripcion, ubicacion,
   descripcionPorPaquete, addonsPorPaquete, catInicial, alimInicial, opcionesPermitidas,
 }: {
   hotel: { hotelId: number; hotelNombre: string; destino: string | null };
@@ -2427,6 +2398,8 @@ export function TarjetaUnidadBusqueda({
    * "<paquete>") — nunca qué se muestra ni qué se cobra. */
   recomendada?: boolean;
   foto: string | null;
+  /** Galería completa (portada primero); sin ella, solo `foto`. */
+  fotos?: string[];
   videoUrl?: string | null;
   estrellas: number | null;
   clasificacion: string | null;
@@ -2729,14 +2702,11 @@ export function TarjetaUnidadBusqueda({
   return (
     <>
     <div className="flex flex-col overflow-hidden rounded-2xl border border-gray-200 bg-white">
-      <div className="relative aspect-[16/10] w-full bg-gray-100">
-        {videoUrl ? (
-          <BackgroundVideo url={videoUrl} overlay={0} />
-        ) : foto ? (
-          <Image src={foto} alt={hotel.hotelNombre} fill sizes="(max-width:1024px) 50vw, 33vw" className="object-cover" unoptimized />
-        ) : (
-          <div className="flex h-full w-full items-center justify-center text-sm text-gray-300">Sin foto</div>
-        )}
+      <CarruselFotoHotel
+        fotos={fotos ?? (foto ? [foto] : [])}
+        alt={hotel.hotelNombre}
+        fondo={videoUrl ? <BackgroundVideo url={videoUrl} overlay={0} /> : undefined}
+      >
         {/* Etiqueta de OFERTA (hallazgo 2) — el nombre del paquete va SIEMPRE,
             recomendada o no: `opcionesBusqueda` son solo las de ESTE paquete
             (la tarjeta es una oferta hotel+paquete), así que el nombre es
@@ -2748,7 +2718,7 @@ export function TarjetaUnidadBusqueda({
         >
           Disponible para tus fechas
         </span>
-      </div>
+      </CarruselFotoHotel>
       <div className="flex flex-1 flex-col gap-3 p-4">
         <div>
           <div className="flex flex-wrap items-center gap-2">
@@ -3125,6 +3095,7 @@ function Selector({
           // Bloqueo: las fechas son las del record (fijas).
           fechaIda: opcion.fechaIda, fechaRegreso: opcion.fechaRegreso,
           firma: JSON.stringify([opcion.key, catEff, regEff]),
+          recorrido: opcion.modulo === "bloqueo" && opcion.bloqueoId != null ? { modulo: "bloqueo" as const, bloqueoId: opcion.bloqueoId } : null,
         } : undefined} />
     </div>
   );
@@ -3464,6 +3435,7 @@ function EditorPax({
         // Todos los viajeros (infantes incluidos): misma base que exige el checkout.
         pax: puede ? pax + infantes : null, precio: puede ? precio : null, moneda: moneda ?? null,
         firma: JSON.stringify([servicios?.firma ?? "", habs, edades]),
+        recorrido: servicios?.recorrido ?? null,
       };
   const { evaluacion: evaluacionServicios, reintentar: reintentarServicios } =
     useCotizacionServicios(hotelServicios, servicios?.seleccion ?? SIN_SELECCION, servicios?.addons ?? SIN_ADDONS);

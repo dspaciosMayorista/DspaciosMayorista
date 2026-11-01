@@ -4,6 +4,10 @@ import { createClient } from "@/lib/supabase/server";
 import { revalidatePath } from "next/cache";
 import { regenerarTarifariosDeServicio, generarTarifario } from "../../paquetes/actions";
 import { exigirEscrituraCatalogoGlobal } from "@/lib/auth/contextoAgencia";
+import { formatearHora, parseHora, validarFranjas, type FranjaSuplemento } from "@/lib/calc/trasladoFranjas";
+import type { ClasificacionServicio, FilaPrecioAlcance } from "@/lib/calc/servicioAlcance";
+import { guardarClasificacion, reemplazarPreciosAlcance } from "@/lib/servicios/alcanceDatos";
+import { MENSAJE_SERVICIO_CON_OBLIGACIONES, mensajeErrorEliminarServicio } from "@/lib/servicios/eliminarServicio";
 
 type Result = { ok: true } | { ok: false; error: string };
 const oNull = (s: string) => (s && s.trim() !== "" ? s.trim() : null);
@@ -88,6 +92,84 @@ export async function actualizarTemporadaServicio(id: number, input: TemporadaSe
     await sb.from("servicio_tarifa_pax").delete().eq("servicio_id", prev.servicio_id).eq("temporada", prev.nombre);
   }
   await guardarGrupoTiers(sb, prev.servicio_id, input.grupoTiers ?? [], nombre);
+  revalidatePath("/dashboard/producto/servicios");
+  return { ok: true };
+}
+
+// ── Suplementos de traslado por franja horaria (migración 255) ──────────────
+// Cuelgan de UNA vigencia (servicio_temporadas.id). Se valida con la misma función pura que usa la liquidación (formato, valor, tramo, medianoche y
+// solapes contra las demás franjas de la vigencia); la base repite la comprobación con su propio trigger.
+export type FranjaServicioInput = Omit<FranjaSuplemento, "id">;
+
+const MENSAJE_FRANJAS_NO_DISPONIBLES = "Los suplementos por horario todavía no están habilitados en la base de datos (falta aplicar la migración 255).";
+
+function mensajeErrorFranja(e: { code?: string; message?: string }): string {
+  if (e.code === "23P01") return e.message ?? "La franja se solapa con otra de la misma vigencia.";
+  if (e.code === "42P01") return MENSAJE_FRANJAS_NO_DISPONIBLES;
+  if (e.code === "23514") return "La franja no cumple las reglas (horas HH:MM, valor mayor que cero, tramo, tipo y cobro válidos).";
+  return "No se pudo guardar la franja. Intenta de nuevo.";
+}
+
+export async function guardarFranjaServicio(temporadaId: number, input: FranjaServicioInput, franjaId?: number): Promise<Result> {
+  const catalogo = await exigirEscrituraCatalogoGlobal();
+  if (!catalogo.ok) return catalogo;
+  const desde = parseHora(input.hora_desde);
+  const hasta = parseHora(input.hora_hasta, true);
+  if (desde == null || hasta == null) return { ok: false, error: "Las horas deben tener formato HH:MM (24:00 solo como hora final)." };
+  const conRango = input.pax_desde != null || input.pax_hasta != null;
+  const nueva: FranjaSuplemento = {
+    hora_desde: formatearHora(desde), hora_hasta: hasta === 1440 ? "24:00" : formatearHora(hasta),
+    tramo: input.tramo, tipo: input.tipo, valor: Number(input.valor), cobro: input.cobro,
+    ...(conRango ? { pax_desde: input.pax_desde ?? null, pax_hasta: input.pax_hasta ?? null } : {}),
+  };
+  const sb = await createClient();
+  // Con la 262 las franjas traen su rango de pasajeros; sin ella esas columnas no existen (42703): se lee sin ellas y se rechaza guardar un rango.
+  let lectura = await sb.from("servicio_suplementos_franja").select("id, hora_desde, hora_hasta, tramo, tipo, valor, cobro, pax_desde, pax_hasta").eq("servicio_temporada_id", temporadaId);
+  if (lectura.error?.code === "42703") {
+    if (conRango) return { ok: false, error: "Los rangos de pasajeros todavía no están habilitados en la base de datos (falta aplicar la migración 262)." };
+    lectura = (await sb.from("servicio_suplementos_franja").select("id, hora_desde, hora_hasta, tramo, tipo, valor, cobro").eq("servicio_temporada_id", temporadaId)) as unknown as typeof lectura;
+  }
+  if (lectura.error) return { ok: false, error: mensajeErrorFranja(lectura.error) };
+  const resto = (lectura.data ?? []).filter((f) => f.id !== franjaId).map((f) => ({ ...f, valor: Number(f.valor) })) as FranjaSuplemento[];
+  const errores = validarFranjas([...resto, nueva]);
+  if (errores.length) return { ok: false, error: errores[errores.length - 1] };
+  const fila = { servicio_temporada_id: temporadaId, ...nueva };
+  const { error } = franjaId
+    ? await sb.from("servicio_suplementos_franja").update(fila).eq("id", franjaId)
+    : await sb.from("servicio_suplementos_franja").insert(fila);
+  if (error) return { ok: false, error: mensajeErrorFranja(error) };
+  revalidatePath("/dashboard/producto/servicios");
+  return { ok: true };
+}
+
+// ── Tipo de receptivo y precios por trayecto (migración 262, provisional) ────────────────────────────────────────────────────────────────────────────────
+export async function guardarClasificacionServicio(servicioId: number, input: ClasificacionServicio): Promise<Result> {
+  const catalogo = await exigirEscrituraCatalogoGlobal();
+  if (!catalogo.ok) return catalogo;
+  const r = await guardarClasificacion(await createClient(), servicioId, input);
+  if (r.ok) revalidatePath("/dashboard/producto/servicios");
+  return r;
+}
+
+/** Reemplaza los precios por trayecto / ida y regreso de UNA vigencia. GENERAL es histórico y no vendible: no admite precios por trayecto. */
+export async function guardarPreciosAlcanceVigencia(temporadaId: number, filas: FilaPrecioAlcance[]): Promise<Result> {
+  const catalogo = await exigirEscrituraCatalogoGlobal();
+  if (!catalogo.ok) return catalogo;
+  const sb = await createClient();
+  const { data: t } = await sb.from("servicio_temporadas").select("nombre").eq("id", temporadaId).maybeSingle();
+  if (!t) return { ok: false, error: "Vigencia no encontrada." };
+  if (String(t.nombre).trim().toUpperCase() === "GENERAL") return { ok: false, error: "GENERAL es la tarifa histórica y no se vende: carga los precios por trayecto en una vigencia con fechas." };
+  const r = await reemplazarPreciosAlcance(sb as never, temporadaId, filas);
+  if (r.ok) revalidatePath("/dashboard/producto/servicios");
+  return r;
+}
+
+export async function eliminarFranjaServicio(franjaId: number): Promise<Result> {
+  const catalogo = await exigirEscrituraCatalogoGlobal();
+  if (!catalogo.ok) return catalogo;
+  const sb = await createClient();
+  const { error } = await sb.from("servicio_suplementos_franja").delete().eq("id", franjaId);
+  if (error) return { ok: false, error: mensajeErrorFranja(error) };
   revalidatePath("/dashboard/producto/servicios");
   return { ok: true };
 }
@@ -214,12 +296,16 @@ export async function eliminarServicio(id: number): Promise<Result> {
   const catalogo = await exigirEscrituraCatalogoGlobal();
   if (!catalogo.ok) return catalogo;
   const sb = await createClient();
+  // 262–265: un servicio con líneas de contrato enlazadas a su cuenta por pagar no se elimina. Aviso previo y claro; la protección real sigue siendo la de la base (si la columna
+  // no existe todavía, 42703, no hay nada enlazado y se sigue como siempre; si la RLS no deja leer, el rechazo de la base se traduce abajo).
+  const { data: enlazada, error: eEnlace } = await sb.from("cuentas_por_pagar").select("id").eq("servicio_id", id).not("contrato_servicio_id", "is", null).limit(1);
+  if (!eEnlace && (enlazada ?? []).length) return { ok: false, error: MENSAJE_SERVICIO_CON_OBLIGACIONES };
   // Captura los paquetes que lo usaban ANTES de borrar; se regeneran después.
   const { data: usados } = await sb.from("armado_servicios").select("paquete_id").eq("servicio_id", id);
   const paqIds = [...new Set((usados ?? []).map((u) => u.paquete_id))];
   const { error } = await sb.from("servicios_adicionales").delete().eq("id", id);
-  if (error) return { ok: false, error: error.message };
-  for (const pid of paqIds) { try { await generarTarifario(pid); } catch { /* sigue */ } }
+  if (error) return { ok: false, error: mensajeErrorEliminarServicio(error) };
+  { const inicioRegen = Date.now(); for (const pid of paqIds) { try { await generarTarifario(pid, { porLotes: true, segundoPlano: true, inicioMs: inicioRegen }); } catch { /* sigue */ } } }
   revalidatePath("/dashboard/producto/servicios");
   return { ok: true };
 }

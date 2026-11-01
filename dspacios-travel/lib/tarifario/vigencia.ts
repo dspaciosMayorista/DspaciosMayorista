@@ -163,6 +163,7 @@ export async function filtrarTarifarioVencidas<T extends FilaConVigencia>(
         .from("hotel_temporadas")
         .select("hotel_id, nombre, fecha_inicio, fecha_fin, prioridad, compra_inicio, compra_fin, tipo, descuento_valor, rangos, blackouts, min_noches, regimen_restringido")
         .in("hotel_id", hIds)
+        .order("orden")
         .order("id")
         .range(from, hasta)
     ),

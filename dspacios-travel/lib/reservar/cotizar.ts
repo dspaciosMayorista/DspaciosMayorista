@@ -34,8 +34,14 @@ import { contarMenoresDeDos, tarifarMenores } from "./menoresDeDos.ts";
 import {
   construirContextoServicios, calcularResultadoServicio, resolverLiquidacionServicioPuntual,
   respuestaPublicaServicioPuntual, formatearLogLiquidacionServicioPuntual, fallaErrorConsulta,
-  type DatosServicioPar, type ResultadoServicio, type RespuestaPublicaServicioPuntual,
+  separarFranjas,
+  type DatosServicioPar, type ResultadoServicio, type RespuestaPublicaServicioPuntual, type FilaTemporadaConFranjas,
 } from "@/lib/reservar/liquidacionServicio";
+import { validarHorasTramos, type HorasTramos } from "@/lib/calc/trasladoFranjas";
+import { ALCANCE_BUSQUEDA_POR_DEFECTO, parseAlcanceVenta, type AlcanceVenta } from "@/lib/calc/servicioAlcance";
+import { leerAlcanceDeServicios } from "@/lib/servicios/alcanceContexto";
+import { combinarHoras, horasAcreditadasDelRecorrido } from "@/lib/reservar/horasRecorrido";
+import { cargarVigenciasServicios, leerTemporadasServicio } from "@/lib/reservar/temporadasServicio";
 import {
   evaluarHotelPorFechas, generarSugerenciasFechas, consolidarSugerenciasGlobales, condicionHotelFechas,
   type ComboCotizado, type DatosHotelPaquete, type FilaTemporadaHotelRaw, type FilaTarifaHotelRaw,
@@ -113,7 +119,7 @@ async function cargarDatosHotelPaquete(
     { data: blackouts, error: blackoutsErr },
   ] = await Promise.all([
     admin.from("armado_hoteles").select("categorias, regimenes, hoteles(nombre, moneda, adults_only)").eq("paquete_id", paqueteId).eq("hotel_id", hotelId).maybeSingle(),
-    admin.from("hotel_temporadas").select("id, nombre, fecha_inicio, fecha_fin, prioridad, compra_inicio, compra_fin, tipo, descuento_valor, rangos, blackouts, min_noches, regimen_restringido, condicion_pago_tipo, condicion_pago_pct_inicial, condicion_pago_dias_saldo").eq("hotel_id", hotelId),
+    admin.from("hotel_temporadas").select("id, nombre, fecha_inicio, fecha_fin, prioridad, compra_inicio, compra_fin, tipo, descuento_valor, rangos, blackouts, min_noches, regimen_restringido, condicion_pago_tipo, condicion_pago_pct_inicial, condicion_pago_dias_saldo").eq("hotel_id", hotelId).order("orden").order("id"),
     admin.from("tarifa_hotel").select("*").eq("hotel_id", hotelId),
     admin.from("armado_servicios").select("incluido, servicio_id, modo, servicios_adicionales(nombre, categoria, precio_persona, precio_infante, liquidacion, proveedor_id)").eq("paquete_id", paqueteId),
     admin.from("hotel_blackouts").select("fecha_inicio, fecha_fin, total, acomodaciones, categorias").eq("hotel_id", hotelId),
@@ -161,27 +167,13 @@ async function cargarDatosHotelPaquete(
     blackouts: (blackouts ?? []) as FilaBlackoutHotelRaw[],
   };
 
-  // Rangos por grupo de los servicios INCLUIDOS con cobro por grupo. Solo se
-  // consulta si el paquete tiene alguno (lo normal es que no), y falla CERRADO:
-  // sin los rangos no se puede saber cuánto cuesta el servicio para el grupo,
-  // y publicar el precio sin él sería mostrar un valor y cobrar otro.
-  const idsGrupo = datos.serviciosIncluidos.filter((s) => s.incluido && s.modo === "grupo").map((s) => s.servicio_id);
-  if (idsGrupo.length) {
-    const { data: rangos, error: rangosErr } = await admin
-      .from("servicio_tarifa_pax")
-      .select("servicio_id, pax_desde, pax_hasta, precio")
-      .eq("temporada", "GENERAL")
-      .in("servicio_id", idsGrupo);
-    if (rangosErr) return { ok: false, motivo: "error_consulta", etapa: "servicio_tarifa_pax", detalleInterno: rangosErr.message };
-    const porServ = new Map<number, { pax_desde: number; pax_hasta: number; precio: number }[]>();
-    for (const r of rangos ?? []) {
-      const arr = porServ.get(r.servicio_id) ?? [];
-      arr.push({ pax_desde: r.pax_desde, pax_hasta: r.pax_hasta, precio: Number(r.precio) || 0 });
-      porServ.set(r.servicio_id, arr);
-    }
-    for (const s of datos.serviciosIncluidos) {
-      if (s.incluido && s.modo === "grupo") s.rangos_grupo = porServ.get(s.servicio_id) ?? [];
-    }
+  // Vigencias (SIN «GENERAL») de los servicios INCLUIDOS: el precio horneado y los rangos por grupo se resuelven por la fecha de ida en
+  // `evaluarHotelPorFechas`. Falla CERRADO si la lectura falla: publicar el precio sin ellas sería mostrar un valor y cobrar otro.
+  const incluidos = datos.serviciosIncluidos.filter((x) => x.incluido);
+  if (incluidos.length) {
+    const rv = await cargarVigenciasServicios(admin, incluidos.map((x) => ({ id: x.servicio_id, nombre: x.nombre ?? `#${x.servicio_id}` })));
+    if (!rv.ok) return { ok: false, motivo: "error_consulta", etapa: "servicio_temporadas", detalleInterno: rv.error };
+    for (const x of datos.serviciosIncluidos) x.vigencias = rv.porServicio.get(x.servicio_id);
   }
   return { ok: true, datos };
 }
@@ -246,6 +238,7 @@ export type CotizarResult =
       // viajeros al armar la reserva. La UI debe decirlo (decisión del dueño,
       // revisión PR #294) — nunca mostrarlo como si estuviera incluido gratis.
       serviciosGrupoPendientes: string[];
+      incluidosDeLaSalida?: IncluidosDeLaSalida;
     }
   | { ok: false; error: string; sugerencias: SugerenciaFecha[] };
 
@@ -307,6 +300,7 @@ export async function cotizarPorFechas(inputRaw: unknown): Promise<CotizarResult
     return { ok: false, error: `El regreso no puede ser después del ${datos.paquete.fecha_viaje_fin} (rango del paquete).`, sugerencias: [] };
 
   const res = evaluarHotelPorFechas(datos, input.fechaIda, numNoches);
+  if (res?.errorServiciosIncluidos) return { ok: false, error: res.errorServiciosIncluidos, sugerencias: [] };
   if (res && numNoches < (res.minNoches ?? 1)) {
     const sugerencias = generarSugerenciasFechas({ datos, fechaIdaSolicitada: input.fechaIda, numNochesSolicitadas: numNoches });
     return { ok: false, error: `Este alojamiento exige un mínimo de ${res.minNoches} noche(s) para esas fechas.`, sugerencias };
@@ -348,6 +342,7 @@ export async function cotizarPorFechas(inputRaw: unknown): Promise<CotizarResult
     // grupo no puede estar en `precios`. Se nombra para que la UI advierta
     // que el precio no es final — nunca se muestra como si fuera gratis.
     serviciosGrupoPendientes: res.serviciosGrupoIncluidos.map((g) => g.nombre),
+    incluidosDeLaSalida: incluidosDeLaSalida(res),
   };
 }
 
@@ -377,7 +372,16 @@ export type BusquedaInput = {
   edadesMenores: number[]; // edad exacta de cada menor
   destino?: string; // filtra por destino (vacío = todos)
 };
+/** Qué incluidos del paquete se cobran en esta fecha y cuáles se omiten (sin tarifa vigente): base del «Incluye» de la salida. Sin costos. */
+export type IncluidosDeLaSalida = { efectivos: { servicioId: number; nombre: string }[]; omitidos: { servicioId: number; nombre: string }[] };
+function incluidosDeLaSalida(res: { serviciosEfectivos?: { servicioId: number; nombre: string }[]; serviciosOmitidos?: { servicioId: number; nombre: string }[] }): IncluidosDeLaSalida {
+  return {
+    efectivos: (res.serviciosEfectivos ?? []).map((s) => ({ servicioId: s.servicioId, nombre: s.nombre })),
+    omitidos: (res.serviciosOmitidos ?? []).map((s) => ({ servicioId: s.servicioId, nombre: s.nombre })),
+  };
+}
 export type BusquedaResultado = {
+  incluidosDeLaSalida?: IncluidosDeLaSalida;
   hotelId: number; hotelNombre: string | null; destino: string | null;
   paqueteId: number; categoria: string; regimen: string;
   // Nombre del paquete de ESTA oferta (hallazgo 2) — sale de
@@ -773,7 +777,7 @@ export async function buscarHoteles(inputRaw: unknown): Promise<
         paqueteId: paquete, paqueteNombre, categoria: mejor.categoria, regimen: mejor.regimen,
         total: mejor.total, noches: numNoches, fechaIda: input.fechaIda, fechaRegreso: input.fechaRegreso, moneda: res.moneda,
         habitaciones: habitacionesOut, menores: mejor.menores, edadesMenores: edades, pax: mejor.pax,
-        combos: combosValidos, condicion,
+        combos: combosValidos, condicion, incluidosDeLaSalida: incluidosDeLaSalida(res),
       });
     } else if (algunCombosFalloEdad) {
       registrarRechazo("No se pudo determinar con certeza la regla de edad de niño/infante para ningún combo de este hotel (configuración ambigua o incompleta).");
@@ -829,6 +833,9 @@ export type BusquedaServiciosInput = {
   // servicios opcionales de ESE paquete. `null`/ausente = búsqueda general por
   // destino (comportamiento de siempre, entrada directa a Receptivos).
   paqueteId?: number | null;
+  // Horas locales del recorrido (llegada del vuelo de ida / salida del de regreso, o la hora prevista) para traslados con franjas horarias.
+  // Sin ellas la búsqueda muestra la tarifa SIN suplemento y marca `requiereHora`.
+  horas?: HorasTramos;
 };
 export type { ResultadoServicio, RespuestaPublicaServicioPuntual };
 
@@ -894,10 +901,35 @@ export async function buscarReceptivos(inputRaw: unknown): Promise<{ ok: true; r
   if (!vPax.ok) return { ok: false, error: vPax.error };
   const vPaquete = validarPaqueteIdConsultaOpcional(o.paqueteId);
   if (!vPaquete.ok) return { ok: false, error: vPaquete.error };
+  const vHoras = validarHorasTramos(o.horas);
+  if (!vHoras.ok) return { ok: false, error: vHoras.error };
+  // 262: alcance del traslado (llegada | salida | ida_regreso) elegido en la búsqueda; cualquier otro valor se rechaza.
+  const vAlcance = parseAlcanceVenta(o.alcance);
+  if (!vAlcance.ok) return { ok: false, error: "El alcance del traslado no es válido." };
+  // Hora ACREDITADA por el vuelo del hotel (bloqueo/dinámico): el servidor la lee de la base y pisa la del navegador. Sin recorrido, solo vale la hora capturada.
+  let horasEfectivas = vHoras.horas;
+  const rec = o.recorrido;
+  if (rec !== undefined && rec !== null) {
+    const r = rec as Record<string, unknown>;
+    const idOk = (v: unknown): v is number => typeof v === "number" && Number.isInteger(v) && v > 0;
+    const valido = typeof rec === "object" && !Array.isArray(rec) && ((r.modulo === "bloqueo" && idOk(r.bloqueoId)) || (r.modulo === "dinamico" && idOk(r.salidaId)));
+    if (!valido) return { ok: false, error: "El recorrido del vuelo no es válido." };
+    // El vuelo/salida debe pertenecer al paquete y a las fechas consultados; si no, falla sin cotizar (nunca se usa la hora de un vuelo ajeno).
+    if (vPaquete.paqueteId == null) return { ok: false, error: "El recorrido del vuelo no corresponde a esta consulta." };
+    const h = await horasAcreditadasDelRecorrido(createAdminClient(), {
+      paqueteId: vPaquete.paqueteId, fechaIda: vRango.fechaIda, fechaRegreso: vRango.fechaRegreso,
+      recorrido: r.modulo === "bloqueo" ? { modulo: "bloqueo", bloqueoId: r.bloqueoId as number } : { modulo: "dinamico", salidaId: r.salidaId as number },
+    });
+    if (!h.ok) {
+      console.error(`[buscarReceptivos] etapa=horas_recorrido motivo=${h.motivo} detalle=${h.detalle}`);
+      return { ok: false, error: h.motivo === "no_corresponde" ? "El recorrido del vuelo no corresponde a esta consulta." : MENSAJE_BUSQUEDA_RECEPTIVOS_NO_DISPONIBLE };
+    }
+    horasEfectivas = combinarHoras(vHoras.horas, h.horas);
+  }
 
   const input: BusquedaServiciosInput = {
     fechaIda: vRango.fechaIda, fechaRegreso: vRango.fechaRegreso, pax: vPax.pax, destino: vDestino.destino || undefined,
-    paqueteId: vPaquete.paqueteId,
+    paqueteId: vPaquete.paqueteId, horas: horasEfectivas,
   };
 
   const numNoches = vRango.noches;
@@ -961,7 +993,7 @@ export async function buscarReceptivos(inputRaw: unknown): Promise<{ ok: true; r
     admin.from("armado_servicios").select("paquete_id, servicio_id, modo, incluido").in("paquete_id", paqueteIds).in("servicio_id", servicioIds),
     admin.from("servicios_adicionales").select("id, precio_persona, recargo_individual, liquidacion, moneda, categoria, proveedor_id").in("id", servicioIds),
     admin.from("servicio_tarifa_pax").select("servicio_id, pax_desde, pax_hasta, precio, temporada").in("servicio_id", servicioIds),
-    admin.from("servicio_temporadas").select("servicio_id, nombre, fecha_inicio, fecha_fin, compra_inicio, compra_fin, prioridad, precio_persona, recargo_individual").in("servicio_id", servicioIds),
+    leerTemporadasServicio(admin, servicioIds),
   ]);
 
   // Cualquiera de las 5 consultas paralelas que falle aborta la búsqueda
@@ -980,8 +1012,17 @@ export async function buscarReceptivos(inputRaw: unknown): Promise<{ ok: true; r
     return { ok: false, error: MENSAJE_BUSQUEDA_RECEPTIVOS_NO_DISPONIBLE };
   }
 
+  const { temporadas: filasTemp, franjas } = separarFranjas((temporadas ?? []) as unknown as FilaTemporadaConFranjas[]);
+  // 262: clasificación y precios propios por alcance. Falla técnica -> se aborta la búsqueda; sin la 262 aplicada se comporta como siempre (y un alcance pedido se rechaza).
+  const lecAlc = await leerAlcanceDeServicios(admin, servicioIds, filasTemp.map((t) => t.id).filter((x): x is number => x != null));
+  if (!lecAlc.ok) {
+    console.error(`[buscarReceptivos] etapa=alcance detalle=${lecAlc.error}`);
+    return { ok: false, error: MENSAJE_BUSQUEDA_RECEPTIVOS_NO_DISPONIBLE };
+  }
+  if (!lecAlc.disponible && vAlcance.alcance) return { ok: false, error: "El alcance del traslado todavía no está habilitado." };
   const ctx = construirContextoServicios({
-    paquetes: paquetes ?? [], armado: armado ?? [], servicios: servicios ?? [], grupos: grupos ?? [], temporadas: temporadas ?? [],
+    paquetes: paquetes ?? [], armado: armado ?? [], servicios: servicios ?? [], grupos: grupos ?? [], temporadas: filasTemp, franjas,
+    ...(lecAlc.disponible ? { clasificaciones: lecAlc.clasificaciones, preciosAlcance: lecAlc.preciosAlcance } : {}),
   });
 
   // Un servicio INCLUIDO (`armado_servicios.incluido = true`) ya se hornea en
@@ -996,9 +1037,11 @@ export async function buscarReceptivos(inputRaw: unknown): Promise<{ ok: true; r
 
   const fechaIdaDate = new Date(`${input.fechaIda}T00:00:00`);
   const resultados: ResultadoServicio[] = [];
+  // Sin modalidad (URL o estado antiguos) la búsqueda cotiza el traslado como ida y regreso; nunca con la tarifa de un trayecto. Si falta esa tarifa, el resultado dice que no la tiene.
+  const alcanceBusqueda = vAlcance.alcance ?? ALCANCE_BUSQUEDA_POR_DEFECTO;
   for (const par of pares.values()) {
     if (paresIncluidos.has(`${par.paqueteId}-${par.servicioId}`)) continue;
-    const r = calcularResultadoServicio(par, ctx, fechaIdaDate, numNoches, pax);
+    const r = calcularResultadoServicio(par, ctx, fechaIdaDate, numNoches, pax, input.horas, alcanceBusqueda);
     if (r) resultados.push(r);
   }
   resultados.sort((a, b) => a.total - b.total);
@@ -1033,6 +1076,10 @@ export async function buscarReceptivos(inputRaw: unknown): Promise<{ ok: true; r
 // que es donde debe vivir el logging (el resolutor puro no hace I/O).
 export async function liquidarServicioPuntual(input: {
   paqueteId: number; servicioId: number; fechaIda: string; fechaRegreso: string; pax: number;
+  /** Hora local de llegada del vuelo de ida / de salida del de regreso, o la hora prevista capturada (traslados con franjas). */
+  horas?: HorasTramos;
+  /** 262: alcance del traslado (llegada | salida | ida_regreso). Obligatorio para un servicio clasificado como traslado; rechazado para cualquier otro. */
+  alcance?: AlcanceVenta;
 }): Promise<RespuestaPublicaServicioPuntual> {
   if (!process.env.SUPABASE_SERVICE_ROLE_KEY) {
     const r = fallaErrorConsulta("service_role_faltante", "SUPABASE_SERVICE_ROLE_KEY no configurada");
@@ -1078,8 +1125,11 @@ export async function liquidarServicioPuntual(input: {
     admin.from("armado_servicios").select("paquete_id, servicio_id, modo").eq("paquete_id", input.paqueteId).eq("servicio_id", input.servicioId).maybeSingle(),
     admin.from("servicios_adicionales").select("id, precio_persona, recargo_individual, liquidacion, moneda, categoria, proveedor_id").eq("id", input.servicioId).maybeSingle(),
     admin.from("servicio_tarifa_pax").select("servicio_id, pax_desde, pax_hasta, precio, temporada").eq("servicio_id", input.servicioId),
-    admin.from("servicio_temporadas").select("servicio_id, nombre, fecha_inicio, fecha_fin, compra_inicio, compra_fin, prioridad, precio_persona, recargo_individual").eq("servicio_id", input.servicioId),
+    leerTemporadasServicio(admin, [input.servicioId]),
   ]);
+  const sep = separarFranjas((temporadas ?? []) as unknown as FilaTemporadaConFranjas[]);
+  // 262: clasificación del servicio y sus precios propios por alcance (tolerante a que la 262 no esté aplicada).
+  const lecAlc = await leerAlcanceDeServicios(admin, [input.servicioId], sep.temporadas.map((t) => t.id).filter((x): x is number => x != null));
 
   const fechaIdaDate = new Date(`${input.fechaIda}T00:00:00`);
   const resultado = resolverLiquidacionServicioPuntual({
@@ -1090,7 +1140,11 @@ export async function liquidarServicioPuntual(input: {
     armado: armado ?? null, armadoError: armadoErr?.message ?? null,
     servicio: servicio ?? null, servicioError: servicioErr?.message ?? null,
     grupos: grupos ?? [], gruposError: gruposErr?.message ?? null,
-    temporadas: temporadas ?? [], temporadasError: temporadasErr?.message ?? null,
+    temporadas: sep.temporadas, temporadasError: temporadasErr?.message ?? null,
+    franjas: sep.franjas, horas: input.horas,
+    alcance: input.alcance,
+    ...(lecAlc.ok && lecAlc.disponible ? { clasificacion: lecAlc.clasificaciones.find((x) => x.servicio_id === input.servicioId) ?? null, preciosAlcance: lecAlc.preciosAlcance } : {}),
+    alcanceError: lecAlc.ok ? null : lecAlc.error,
   });
   // El detalle técnico real (mensaje de Supabase, tabla/columna/valor de
   // configuración involucrado) se registra SOLO acá, server-side — nunca

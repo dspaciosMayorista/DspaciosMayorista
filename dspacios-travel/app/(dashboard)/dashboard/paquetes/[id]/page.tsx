@@ -1,4 +1,5 @@
 import { createClient } from "@/lib/supabase/server";
+import { leerPublicacionPendiente, publicacionPorLotesActiva, type RpcCliente } from "@/lib/tarifario/puertoSupabase";
 import type { ComponentProps } from "react";
 import Link from "next/link";
 import { notFound } from "next/navigation";
@@ -9,6 +10,9 @@ import { cargarFuentesMoneda90 } from "@/lib/reservar/fuentesMoneda90";
 import { evaluarPublicacion90, mensajeEvaluacion90, textoEstadoTrm90 } from "@/lib/reservar/monedaPublicacion90";
 
 export const dynamic = "force-dynamic";
+// Duración máxima de las Server Actions de esta pantalla (Next: el `maxDuration` de la página rige las acciones que usa). 60 s es válido en cualquier configuración de Vercel; debe
+// ser igual a VENTANA_PETICION_MS de lib/tarifario/controladorPublicacion.ts (lo exige pruebas/publicacionLotesCableado.test.ts). Subirlo solo tras confirmar el plan/Fluid del proyecto.
+export const maxDuration = 60;
 
 export default async function PaqueteDetallePage({
   params,
@@ -24,6 +28,10 @@ export default async function PaqueteDetallePage({
   const pestanaInicial = Array.isArray(tabParam) ? tabParam[0] : tabParam;
   const paqueteId = Number(id);
   const sb = await createClient();
+  // Publicación por lotes a medias (apagada por defecto): se ofrece «Continuar publicación»; lo publicado antes sigue visible.
+  const pendienteLotes = publicacionPorLotesActiva() ? await leerPublicacionPendiente(sb as unknown as RpcCliente, paqueteId) : null;
+  // Una publicación «fallida» no se reanuda (el error ya se muestra con el estado del paquete): hay que volver a generar.
+  const publicacionPendiente = pendienteLotes && pendienteLotes.colaEstado !== "fallida" ? { faltan: pendienteLotes.faltan, total: pendienteLotes.total, automatica: pendienteLotes.enCola } : null;
 
   const { data: pq } = await sb
     .from("armado_paquetes")
@@ -82,7 +90,7 @@ export default async function PaqueteDetallePage({
 
   let qServicios = sb
     .from("servicios_adicionales")
-    .select("id, nombre, precio_persona, destino_id, moneda, servicio_tarifa_pax(pax_desde)")
+    .select("id, nombre, categoria, precio_persona, destino_id, moneda, servicio_tarifa_pax(pax_desde, temporada), servicio_temporadas(nombre, fecha_inicio, fecha_fin, precio_persona)")
     .eq("activo", true)
     .order("nombre");
   // Servicio aplica si: es del destino puntual, O es catch-all del MISMO alcance
@@ -161,8 +169,10 @@ export default async function PaqueteDetallePage({
   // directo, nunca `tarifario_resultado_publicable`.
   const resultado: Record<string, unknown>[] = [];
   const PAGE = 1000;
-  for (let from = 0; ; from += PAGE) {
-    const { data: page } = await sb
+  let resultadoError: string | null = null;
+  // Avanza por las filas REALMENTE recibidas y para solo con una página vacía: un tope de filas del proyecto menor a PAGE no trunca en silencio.
+  for (let from = 0; ; ) {
+    const { data: page, error: errPagina } = await sb
       .from("tarifario_resultado")
       .select("*")
       .eq("paquete_id", paqueteId)
@@ -171,10 +181,12 @@ export default async function PaqueteDetallePage({
       .order("categoria")
       .order("regimen")
       .range(from, from + PAGE - 1);
+    if (errPagina) { resultadoError = errPagina.message; break; }
     if (!page || page.length === 0) break;
     resultado.push(...page);
-    if (page.length < PAGE) break;
+    from += page.length;
   }
+  const { count: totalResultado } = await sb.from("tarifario_resultado").select("id", { count: "exact", head: true }).eq("paquete_id", paqueteId);
 
   const destinoNombre = (pq.destinos as unknown as { nombre: string } | null)?.nombre ?? null;
   // Fuera del JSX: un objeto literal con una flecha adentro como prop no se puede serializar a un Client Component.
@@ -248,8 +260,12 @@ export default async function PaqueteDetallePage({
         publicacionMontaje={publicacionMontaje}
         textoTrmMontaje={textoTrmMontaje}
         pestanaInicial={pestanaInicial ?? null}
+        publicacionPendiente={publicacionPendiente}
         tarifarioEstado={(pq as { tarifario_estado?: string | null }).tarifario_estado ?? null}
         tarifarioError={(pq as { tarifario_error?: string | null }).tarifario_error ?? null}
+        tarifarioDiagnostico={(pq as { tarifario_diagnostico?: string | null }).tarifario_diagnostico ?? null}
+        resultadoError={resultadoError}
+        totalResultado={totalResultado ?? null}
         tarifarioPublicable={(pq as { tarifario_snapshot_publicable?: boolean | null }).tarifario_snapshot_publicable ?? null}
       />
     </div>

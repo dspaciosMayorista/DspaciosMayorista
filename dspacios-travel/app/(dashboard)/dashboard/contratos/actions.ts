@@ -6,6 +6,9 @@ import { createAdminClient } from "@/lib/supabase/admin";
 import { revalidatePath } from "next/cache";
 import { precioServicio, noches, factorLiquidacion } from "@/lib/calc/paquetes";
 import { normalizarCategoriaServicio, resumirServiciosContrato, tipoProveedorCxpServicio } from "@/lib/reservar/serviciosPaquete";
+import { liquidarServicioPuntual } from "@/lib/reservar/cotizar";
+import { liquidarCostoTour } from "@/lib/reservar/costosObligacionesCarrito";
+import { formatearHora, parseHora } from "@/lib/calc/trasladoFranjas";
 import { planReconciliacionCxpServicios, type ServicioObjetivo } from "@/lib/reservar/cxpCobertura";
 import { asegurarCuentasPorPagar } from "@/lib/reservar/asegurarCuentasPorPagar";
 import { mensajeErrorRpc } from "@/lib/vuelos/operaciones";
@@ -1343,30 +1346,36 @@ export async function actualizarServiciosContrato(
 
   const pax = Number(venta.pax) || 0;
 
-  // Servicios disponibles del paquete (PVP) desde el tarifario.
-  const { data: servFilas } = await sb
-    .from("tarifario_resultado_publicable")
-    .select("servicio_id, servicio_nombre, tipo_tarifa, pax_desde, pax_hasta, precio_pvp")
-    .eq("paquete_id", venta.paquete_armado_id)
-    .eq("modulo", "servicios");
-  type Serv = { nombre: string; modo: "persona" | "grupo"; personaPvp: number | null; grupos: { pax_desde: number; pax_hasta: number; precio: number }[] };
-  const byServ = new Map<number, Serv>();
-  for (const r of servFilas ?? []) {
-    if (r.servicio_id == null) continue;
-    let s = byServ.get(r.servicio_id);
-    if (!s) { s = { nombre: r.servicio_nombre ?? "Servicio", modo: r.tipo_tarifa === "grupo" ? "grupo" : "persona", personaPvp: null, grupos: [] }; byServ.set(r.servicio_id, s); }
-    if (s.modo === "grupo") s.grupos.push({ pax_desde: r.pax_desde ?? 1, pax_hasta: r.pax_hasta ?? 1, precio: r.precio_pvp });
-    else s.personaPvp = r.precio_pvp;
+  // SIN «GENERAL»: cada servicio seleccionado se re-liquida EN VIVO con la MISMA función que la búsqueda y el carrito (`liquidarServicioPuntual`): vigencia de
+  // la fecha de salida del contrato, rango de pasajeros de esa vigencia, suplemento por horario si el traslado lo tiene y margen del paquete. Si falta la
+  // vigencia, el rango o la hora, se rechaza la edición con un mensaje legible y no se escribe nada.
+  const fechaIdaC = venta.fecha_salida as string | null;
+  const fechaRegC = venta.fecha_regreso as string | null;
+  if (serviciosIds.length && (!fechaIdaC || !fechaRegC)) {
+    return { ok: false, error: "El contrato necesita fecha de salida y de regreso para calcular los servicios." };
+  }
+  // Horas del traslado: llegada = hora de llegada del tramo de ida; salida = hora de salida del tramo de regreso (contrato_vuelos).
+  const horasContrato: { llegada?: string; salida?: string } = {};
+  if (serviciosIds.length) {
+    const { data: tramosC, error: tramosErr } = await sb.from("contrato_vuelos").select("direccion, hora_salida, hora_llegada, orden").eq("numero_contrato", numeroContrato).order("orden");
+    if (tramosErr) return { ok: false, error: "No se pudieron consultar los vuelos del contrato. Inténtalo de nuevo." };
+    const ida = (tramosC ?? []).find((t) => t.direccion === "ida");
+    const regreso = [...(tramosC ?? [])].reverse().find((t) => t.direccion === "regreso");
+    const hl = parseHora(ida?.hora_llegada); const hs = parseHora(regreso?.hora_salida);
+    if (hl != null) horasContrato.llegada = formatearHora(hl);
+    if (hs != null) horasContrato.salida = formatearHora(hs);
   }
 
   // Nuevos ítems de servicio + total.
   const nuevos: { nombre: string; precio: number }[] = [];
   let nuevoTotal = 0;
   for (const id of serviciosIds) {
-    const s = byServ.get(id);
-    if (!s) continue;
-    const p = precioServicio(s.modo, s.personaPvp, s.grupos, pax);
-    if (p > 0) { nuevos.push({ nombre: s.nombre, precio: p }); nuevoTotal += p; }
+    const r = await liquidarServicioPuntual({ paqueteId: venta.paquete_armado_id, servicioId: id, fechaIda: fechaIdaC as string, fechaRegreso: fechaRegC as string, pax, horas: horasContrato });
+    if (!r.ok) {
+      const pide = r.tipo === "requiere_hora" ? " Captura la hora de llegada/salida en los vuelos del contrato (o en el tramo terrestre) y vuelve a intentar." : "";
+      return { ok: false, error: `No se puede calcular el servicio #${id}: ${r.mensaje}${pide} No se cambió nada.` };
+    }
+    if (r.resultado.total > 0) { nuevos.push({ nombre: r.resultado.nombre, precio: r.resultado.total }); nuevoTotal += r.resultado.total; }
   }
 
   // ── Costos + reconciliación de CxP — TODO se resuelve ANTES de escribir ──
@@ -1386,43 +1395,31 @@ export async function actualizarServiciosContrato(
   const admin = createAdminClient();
   const nochesStay = venta.fecha_salida && venta.fecha_regreso ? noches(venta.fecha_salida, venta.fecha_regreso) : 1;
 
-  // Objetivo: costo NETO por servicio seleccionado (temporada GENERAL, mismo
-  // criterio que ya usaba esta pantalla) + su proveedor real del catálogo.
+  // Objetivo: costo NETO por servicio seleccionado con la MISMA función que usa la CxP del carrito (`liquidarCostoTour`: vigencia + rango de pasajeros + suplementos
+  // por horario, sin «GENERAL») + su proveedor real del catálogo.
   const objetivo: ServicioObjetivo[] = [];
   let costoReceptivo = 0;
-  if (serviciosIds.length) {
-    const [{ data: arm, error: armErr }, { data: gruposNet, error: gruposErr }] = await Promise.all([
-      admin.from("armado_servicios")
-        .select("servicio_id, modo, servicios_adicionales(precio_persona, categoria, nombre, liquidacion, proveedores(nombre, aplica_retencion, pct_retencion))")
-        .eq("paquete_id", venta.paquete_armado_id).in("servicio_id", serviciosIds),
-      admin.from("servicio_tarifa_pax").select("servicio_id, pax_desde, pax_hasta, precio").eq("temporada", "GENERAL").in("servicio_id", serviciosIds),
-    ]);
-    // Fallo cerrado: sin los datos de costo no se puede reconciliar, y
-    // editar igual dejaría CxP inconsistentes en silencio.
-    if (armErr) return { ok: false, error: "No se pudieron consultar los servicios del paquete. Inténtalo de nuevo." };
-    if (gruposErr) return { ok: false, error: "No se pudieron consultar las tarifas por grupo de los servicios. Inténtalo de nuevo." };
-    const gruposPorServ = new Map<number, { pax_desde: number; pax_hasta: number; precio: number }[]>();
-    for (const g of gruposNet ?? []) {
-      const arr = gruposPorServ.get(g.servicio_id) ?? [];
-      arr.push({ pax_desde: g.pax_desde, pax_hasta: g.pax_hasta, precio: g.precio });
-      gruposPorServ.set(g.servicio_id, arr);
+  for (const idSrv of serviciosIds) {
+    let liq: Awaited<ReturnType<typeof liquidarCostoTour>>;
+    try {
+      liq = await liquidarCostoTour(admin, { servicioId: idSrv, paqueteId: venta.paquete_armado_id, pax, fechaIda: fechaIdaC, fechaRegreso: fechaRegC, horas: horasContrato });
+    } catch (e) {
+      // Fallo cerrado: sin el costo no se puede reconciliar y editar igual dejaría CxP inconsistentes en silencio.
+      return { ok: false, error: `No se puede calcular el costo del servicio #${idSrv}: ${e instanceof Error ? e.message : "error desconocido"}. No se cambió nada.` };
     }
-    for (const sRow of arm ?? []) {
-      const modo = (sRow.modo as string) === "grupo" ? "grupo" : "persona";
-      const srv = sRow.servicios_adicionales as unknown as { precio_persona: number | null; categoria: string | null; nombre: string; liquidacion: string | null; proveedores: { nombre: string | null; aplica_retencion: boolean | null; pct_retencion: number | null } | null } | null;
-      const costo = precioServicio(modo, srv?.precio_persona ?? null, gruposPorServ.get(sRow.servicio_id) ?? [], pax) * factorLiquidacion(srv?.liquidacion, nochesStay);
-      costoReceptivo += costo;
-      const categoria = normalizarCategoriaServicio(srv?.categoria);
-      objetivo.push({
-        servicioId: sRow.servicio_id,
-        nombre: srv?.nombre ?? "Servicio",
-        costoNeto: Number.isFinite(costo) ? costo : 0,
-        tipoProveedor: tipoProveedorCxpServicio(categoria),
-        proveedor: srv?.proveedores?.nombre ?? null,
-        aplicaRetencion: srv?.proveedores?.aplica_retencion ?? false,
-        pctRetencion: Number(srv?.proveedores?.pct_retencion) || 0,
-      });
-    }
+    if (!liq) continue; // ya no está en el paquete
+    const srv = liq.srv;
+    costoReceptivo += liq.costoNeto;
+    const categoria = normalizarCategoriaServicio(srv?.categoria);
+    objetivo.push({
+      servicioId: idSrv,
+      nombre: srv?.nombre ?? "Servicio",
+      costoNeto: Number.isFinite(liq.costoNeto) ? liq.costoNeto : 0,
+      tipoProveedor: tipoProveedorCxpServicio(categoria),
+      proveedor: srv?.proveedores?.nombre ?? null,
+      aplicaRetencion: srv?.proveedores?.aplica_retencion ?? false,
+      pctRetencion: Number(srv?.proveedores?.pct_retencion) || 0,
+    });
   }
 
   // CxP de servicios ya existentes (solo las que declaran su `servicio_id`:

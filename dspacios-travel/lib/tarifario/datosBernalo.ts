@@ -32,11 +32,13 @@
 // motivo documentado en `lib/tarifario/datos.ts`.
 // ─────────────────────────────────────────────────────────────────────────
 
+import { adjuntarComposicionIncluidos } from "./composicionIncluidos.ts";
 import { createAdminClient } from "../supabase/admin.ts";
 import { empaquetadoVigente, hoyBogota } from "../reservar/origen.ts";
 import { construirSetParesPublicados, todosLosParesConfiguradosPublicados } from "../calc/paresPublicadosUnidad.ts";
 import { filasArmadoPaqueteADescripcionPorPaquete, type DescripcionPaqueteRaw, type FilaArmadoPaqueteDescripcion } from "./descripcionPaquete.ts";
 import { claveOferta } from "./recomendados.ts";
+import { galeriaPorHotel as galeriaDe, leerFotosHotel } from "./fotosHotel.ts";
 
 // Identidad discriminada de una salida aérea real — nunca un índice `[0]`.
 // El servidor de cotización vuelve a validar que el id/tipo elegido
@@ -420,16 +422,17 @@ export type InfoHotelBernaloDato = {
 // SIEMPRE recibe los datos que sí se pudieron resolver.
 export type ResultadoInfoHotelesBernalo = {
   fotosPorHotel: Record<number, string>;
+  galeriaPorHotel: Record<number, string[]>;
   infoPorHotel: Record<number, InfoHotelBernaloDato>;
   errorFotos: string | null;
   errorInfo: string | null;
 };
 
 export async function cargarInfoHotelesBernalo(hotelIds: readonly number[]): Promise<ResultadoInfoHotelesBernalo> {
-  if (!hotelIds.length) return { fotosPorHotel: {}, infoPorHotel: {}, errorFotos: null, errorInfo: null };
+  if (!hotelIds.length) return { fotosPorHotel: {}, galeriaPorHotel: {}, infoPorHotel: {}, errorFotos: null, errorInfo: null };
   const admin = createAdminClient();
   const [{ data: fotos, error: eFotos }, { data: hotelesRows, error: eHoteles }] = await Promise.all([
-    admin.from("hotel_fotos").select("hotel_id, url, es_portada, orden").in("hotel_id", hotelIds).order("orden"),
+    leerFotosHotel(admin, hotelIds),
     admin
       .from("hoteles")
       .select(
@@ -478,7 +481,7 @@ export async function cargarInfoHotelesBernalo(hotelIds: readonly number[]): Pro
       };
     }
   }
-  return { fotosPorHotel, infoPorHotel, errorFotos: eFotos?.message ?? null, errorInfo: eHoteles?.message ?? null };
+  return { fotosPorHotel, galeriaPorHotel: eFotos ? {} : galeriaDe(fotos), infoPorHotel, errorFotos: eFotos?.message ?? null, errorInfo: eHoteles?.message ?? null };
 }
 
 // ── Hoteles recomendados (migración 183) — prioridades de paquetes UNIDAD ──
@@ -554,5 +557,8 @@ export async function cargarDescripcionPaquetesBernalo(
   // Mapeo delegado al helper PURO compartido (probado con ejecución real en
   // pruebas/descripcionPaquete.test.ts) — este archivo queda como I/O puro:
   // consulta y devuelve, sin repetir la transformación fila→shape.
-  return { descripcionPorPaquete: filasArmadoPaqueteADescripcionPorPaquete((data ?? []) as unknown as FilaArmadoPaqueteDescripcion[]), error: null };
+  const descripcionPorPaquete = filasArmadoPaqueteADescripcionPorPaquete((data ?? []) as unknown as FilaArmadoPaqueteDescripcion[]);
+  // «Incluye» por salida: composición de los servicios incluidos (omitidos por falta de tarifa vigente). Un error deja el «Incluye» manual sin presentar.
+  await adjuntarComposicionIncluidos(admin, descripcionPorPaquete, (m) => console.error(`[composicion-incluidos] ${m}`));
+  return { descripcionPorPaquete, error: null };
 }

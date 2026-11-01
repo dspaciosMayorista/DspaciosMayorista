@@ -6,6 +6,8 @@ import { CargaMasivaCSV } from "@/components/CargaMasivaCSV";
 import { cargarHotelesMasivo, cargarTarifasMasivo, cargarTemporadasMasivo, cargarAcomodacionesMasivo } from "./actions";
 
 export const dynamic = "force-dynamic";
+// Las Server Actions de esta pantalla regeneran tarifarios (por lotes) tras guardar: el maxDuration de la página rige su duración. Literal igual a VENTANA_PETICION_MS (lib/tarifario/controladorPublicacion.ts).
+export const maxDuration = 60;
 
 const COLS_HOTELES = [
   { key: "nombre", label: "Nombre", ejemplo: "Hotel Dorado Plaza" },

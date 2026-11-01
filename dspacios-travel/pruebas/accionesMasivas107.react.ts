@@ -27,6 +27,8 @@ const ACCIONES_PAQUETES = datos(`
   export async function setServicio(...a) { reg('setServicio', a); return ${G}.respServicio(a); }
   export async function setServicios(...a) { reg('setServicios', a); return ${G}.respLote(a); }
   export async function generarTarifario(...a) { reg('generarTarifario', a); return { ok: true, id: 3 }; }
+  export async function continuarPublicacionTarifario() { return { ok: true }; }
+  export async function estadoPublicacionTarifario() { return { ok: true }; }
   export async function getTarifasHotel() { return { ok: true, modelo: 'persona', categorias: [], regimenes: [], tarifas: [] }; }
   export async function setHotelFiltros() { return { ok: true }; }
   export async function setHotelPrioridad() { return { ok: true }; }
@@ -133,8 +135,8 @@ function props(tipo: string, over: Partial<Props> = {}): Props {
       { id: 32, nombre: "Hotel Dos", zona: null, destino_id: 1 },
     ],
     serviciosDisp: [
-      { id: 41, nombre: "Tour persona", precio_persona: 50000, destino_id: 1, servicio_tarifa_pax: [] },
-      { id: 42, nombre: "Tour grupo", precio_persona: null, destino_id: 1, servicio_tarifa_pax: [{ pax_desde: 2 }] },
+      { id: 41, nombre: "Tour persona", precio_persona: 50000, destino_id: 1, servicio_tarifa_pax: [], servicio_temporadas: [{ nombre: "V1", fecha_inicio: "2026-01-01", fecha_fin: "2099-12-31", precio_persona: 50000 }] },
+      { id: 42, nombre: "Tour grupo", precio_persona: null, destino_id: 1, servicio_tarifa_pax: [{ pax_desde: 2, temporada: "V1" }], servicio_temporadas: [{ nombre: "V1", fecha_inicio: "2026-01-01", fecha_fin: "2099-12-31", precio_persona: null }] },
       { id: 43, nombre: "Tour sin tarifa", precio_persona: null, destino_id: 1, servicio_tarifa_pax: [] },
     ],
     selVuelos: [], selEmpaquetados: [], selHoteles: [{ hotel_id: 31, categorias: null, regimenes: null, prioridad: null }], selServicios: [],
@@ -199,12 +201,13 @@ test("Eliminar paquete: un rechazo del servidor deja el diálogo abierto con el 
 });
 
 // ═══ Hoteles ══════════════════════════════════════════════════════════════
-test("Hoteles: Seleccionar todos va en UNA acción y un refresh; quitar todos pide confirmar y también es UNA acción", async () => {
+test("Hoteles: Seleccionar todos va en UNA acción sin recargar el editor; quitar todos pide confirmar y también es UNA acción", async () => {
   const raiz = await montar(props("bloqueo", { pestanaInicial: "hoteles", selHoteles: [] }));
   await pulsar(casilla(raiz));
   assert.deepEqual(p101.llamadas.map(([n]) => n), ["setTodosHoteles"]);
   assert.deepEqual(p101.llamadas[0][1], [7, [31, 32], true]);
-  assert.equal(p101.refrescos, 1);
+  assert.equal(p101.refrescos, 0, "sin router.refresh() tras un guardado exitoso");
+  assert.match(texto(raiz), /Adición de hoteles \(2 de 2\)/, "el contador ya refleja el lote");
   await desmontar?.(); desmontar = undefined; p101.llamadas.length = 0; p101.refrescos = 0;
 
   const todos = [{ hotel_id: 31, categorias: null, regimenes: null, prioridad: 1 }, { hotel_id: 32, categorias: null, regimenes: null, prioridad: null }];
@@ -218,7 +221,8 @@ test("Hoteles: Seleccionar todos va en UNA acción y un refresh; quitar todos pi
   await esperar();
   assert.deepEqual(p101.llamadas.map(([n]) => n), ["setTodosHoteles"]);
   assert.deepEqual(p101.llamadas[0][1], [7, [31, 32], false]);
-  assert.equal(p101.refrescos, 1);
+  assert.equal(p101.refrescos, 0);
+  assert.match(texto(r2), /Adición de hoteles \(0 de 2\)/);
   assert.equal(dialogo(), null);
 });
 

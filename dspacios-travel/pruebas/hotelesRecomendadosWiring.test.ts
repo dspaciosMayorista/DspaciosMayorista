@@ -197,14 +197,16 @@ describe("Autosave optimista de prioridad (defecto 4)", () => {
     assert.doesNotMatch(armadoClient, /useEffect\(\(\) => \{\s*\n\s*setPrioridadesOptimistas/, "la reconciliación no puede ir en un efecto");
   });
 
-  test("las DEMÁS operaciones del editor siguen refrescando igual que antes", () => {
-    // El checkbox de asociar/desasociar sigue llamando `onDone()` (recarga),
-    // que es el comportamiento que NO se cambia.
-    const idxCheckbox = armadoClient.indexOf("await setHotel(paqueteId, hotel.id, e.target.checked);");
-    assert.ok(idxCheckbox > -1);
-    assert.match(armadoClient.slice(idxCheckbox, idxCheckbox + 120), /onDone\(\);/);
-    // Y `refrescar` (el `router.refresh` del editor) sigue existiendo y usado.
-    assert.match(armadoClient, /function refrescar\(\) \{\s*\n\s*router\.refresh\(\);/);
+  test("asociar/desasociar un hotel va por la cola optimista (sin recargar el editor); `refrescar` sigue existiendo para el resto de operaciones", () => {
+    // El checkbox ya NO llama `onDone()` tras guardar: se ve al instante, la fila muestra «Guardando» y un fallo revierte (lib/paquetes/seleccionOptimista.ts).
+    const idxCheckbox = armadoClient.indexOf("acc.setHotel(paqueteId, hotel.id, marcar)");
+    assert.ok(idxCheckbox > -1, "el checkbox del hotel guarda con la acción setHotel a través de la cola");
+    assert.match(armadoClient.slice(Math.max(0, idxCheckbox - 400), idxCheckbox), /cola\.solicitar\(\{\s*\n\s*tipo: "hotel"/);
+    assert.doesNotMatch(armadoClient.slice(idxCheckbox, idxCheckbox + 120), /onDone\(\);/);
+    // Quitar un hotel borra su prioridad en el servidor: se descarta también el override local.
+    assert.match(armadoClient.slice(Math.max(0, idxCheckbox - 700), idxCheckbox), /if \(!marcar\) onPrioridadDescartar\(hotel\.id\);/);
+    // `refrescar` (router.refresh del editor) sigue existiendo y se usa donde corresponde (p. ej. la ventana de categorías/regímenes).
+    assert.match(armadoClient, /function refrescar\(\) \{\s*\n\s*reqRefrescoRef\.current = cola\.req;\s*\n\s*router\.refresh\(\);/);
     assert.match(armadoClient, /onDone=\{refrescar\}/);
   });
 });

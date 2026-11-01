@@ -92,7 +92,7 @@ function tablasSesion(): TablasFalsas {
     hotel_acomodaciones: [{ hotel_id: HOTEL_ID, acomodacion: "doble", pax_tarifa: 2, pax_max: 4, adt_min: 1, adt_max: 2, chd_min: 0, chd_max: 2, inf_min: 0, inf_max: 2 }],
   };
 }
-function tablasAdmin(o: { salidas?: FilaFalsa[]; fuentes?: FilaFalsa[]; paquete?: FilaFalsa; servicios?: FilaFalsa[] } = {}): TablasFalsas {
+function tablasAdmin(o: { salidas?: FilaFalsa[]; fuentes?: FilaFalsa[]; paquete?: FilaFalsa; servicios?: FilaFalsa[]; evidencia?: FilaFalsa[]; vigencias?: FilaFalsa[] } = {}): TablasFalsas {
   return {
     ...tablasSesion(),
     armado_paquetes: [paquete(o.paquete)],
@@ -116,6 +116,10 @@ function tablasAdmin(o: { salidas?: FilaFalsa[]; fuentes?: FilaFalsa[]; paquete?
     armado_vuelos: [],
     armado_empaquetados: [],
     servicio_tarifa_pax: [],
+    // 258: evidencia de la composición publicada (generación 3 = la publicada del paquete(), regla 1) con los incluidos del fixture horneados en la fila de la salida.
+    tarifario_composicion_publicada: o.evidencia ?? [{ paquete_id: PAQUETE_ID, fecha_ida: IDA, generacion: 3, regla: 1, servicios_incluidos: (o.servicios ?? []).filter((x) => x.incluido).map((x) => x.servicio_id) }],
+    // SIN «GENERAL»: cada servicio del fixture se vende desde una vigencia que cubre todo el rango (mismos netos que su precio base de antes).
+    servicio_temporadas: o.vigencias ?? (o.servicios ?? []).map((s) => ({ servicio_id: s.servicio_id, nombre: "VIG", fecha_inicio: "2000-01-01", fecha_fin: "2099-12-31", compra_inicio: null, compra_fin: null, prioridad: 1, precio_persona: (s.servicios_adicionales as { precio_persona?: number | null; precio_infante?: number | null }).precio_persona ?? null, precio_infante: (s.servicios_adicionales as { precio_persona?: number | null; precio_infante?: number | null }).precio_infante ?? null, recargo_individual: null })),
   };
 }
 
@@ -247,5 +251,112 @@ describe("computarReserva() · salida MANUAL", () => {
       assert.equal(r.data.oferta63?.feeInfante, 99_691.25);
       assert.equal(r.data.impuestoTotal, 2 * 398_765, "tiquete manual en COP × pax con silla");
     }
+  });
+});
+
+describe("computarReserva() · fila publicada antigua o desactualizada (migración 258): se rechaza ANTES de cotizar o numerar", () => {
+  const incluido = { paquete_id: PAQUETE_ID, servicio_id: 900, modo: "persona", incluido: true,
+    servicios_adicionales: { nombre: "Tour", categoria: "tour_traslado", precio_persona: 10, precio_infante: 0, liquidacion: "paquete", proveedor_id: null } };
+  const SIN_VIGENCIA_EN_LA_FECHA = [{ servicio_id: 900, nombre: "VIG", fecha_inicio: "2000-01-01", fecha_fin: "2000-12-31", compra_inicio: null, compra_fin: null, prioridad: 1, precio_persona: 10, precio_infante: 0, recargo_individual: null }];
+  const REGENERA = /regenera el tarifario/i;
+
+  test("fila ANTIGUA (sin evidencia) con servicio incluido: no hay cotización, contrato ni CxP", async () => {
+    const { r, logSb, logAdmin } = await cotizar(tablasAdmin({ servicios: [incluido], evidencia: [] }));
+    assert.equal(r.ok, false);
+    assert.match(msg(r), REGENERA);
+    assert.equal("data" in r, false, "no hay cotización que devolver");
+    assert.ok([...logSb, ...logAdmin].every((l) => !/insert|upsert|rpc/i.test(l) || /select/i.test(l)), "ninguna escritura");
+  });
+
+  test("fila antigua con servicio incluido y la FECHA hoy DESCUBIERTA: la fila lo traía horneado, la composición viva lo omite → se rechaza (no se cobra su PVP viejo)", async () => {
+    const { r } = await cotizar(tablasAdmin({ servicios: [incluido], vigencias: SIN_VIGENCIA_EN_LA_FECHA, evidencia: [{ paquete_id: PAQUETE_ID, fecha_ida: IDA, generacion: 3, regla: 1, servicios_incluidos: [900] }] }));
+    assert.equal(r.ok, false);
+    assert.match(msg(r), REGENERA);
+    assert.match(msg(r), /ya no coinciden/);
+  });
+
+  test("evidencia de una generación ANTERIOR a la publicada: se rechaza", async () => {
+    const { r } = await cotizar(tablasAdmin({ servicios: [incluido], evidencia: [{ paquete_id: PAQUETE_ID, fecha_ida: IDA, generacion: 2, regla: 1, servicios_incluidos: [900] }] }));
+    assert.equal(r.ok, false);
+    assert.match(msg(r), REGENERA);
+  });
+
+  test("evidencia con una regla de composición distinta de la vigente: se rechaza", async () => {
+    const { r } = await cotizar(tablasAdmin({ servicios: [incluido], evidencia: [{ paquete_id: PAQUETE_ID, fecha_ida: IDA, generacion: 3, regla: 0, servicios_incluidos: [900] }] }));
+    assert.equal(r.ok, false);
+    assert.match(msg(r), REGENERA);
+  });
+
+  test("evidencia corrupta (ids que no son enteros): se rechaza", async () => {
+    const { r } = await cotizar(tablasAdmin({ servicios: [incluido], evidencia: [{ paquete_id: PAQUETE_ID, fecha_ida: IDA, generacion: 3, regla: 1, servicios_incluidos: ["x"] }] }));
+    assert.equal(r.ok, false);
+    assert.match(msg(r), REGENERA);
+  });
+
+  test("fila REGENERADA con el servicio horneado y cubierto: se cotiza con ese servicio", async () => {
+    const { r } = await cotizar(tablasAdmin({ servicios: [incluido] }));
+    assert.equal(r.ok, true, msg(r));
+    if (r.ok) assert.deepEqual(r.data.serviciosIncluidos.map((x) => x.servicioId), [900]);
+  });
+
+  test("fila REGENERADA en una fecha descubierta (el servicio se omitió al publicar): se cotiza SIN el servicio — sin PVP, costo ni CxP del servicio", async () => {
+    const { r } = await cotizar(tablasAdmin({ servicios: [incluido], vigencias: SIN_VIGENCIA_EN_LA_FECHA, evidencia: [{ paquete_id: PAQUETE_ID, fecha_ida: IDA, generacion: 3, regla: 1, servicios_incluidos: [] }] }));
+    assert.equal(r.ok, true, msg(r));
+    if (r.ok) assert.deepEqual(r.data.serviciosIncluidos, []);
+  });
+
+  test("falta la tabla de evidencia (migración 258 sin aplicar): se rechaza con mensaje claro (no se vende lo que no se puede acreditar)", async () => {
+    const { r } = await cotizar(tablasAdmin({ servicios: [incluido] }), {}, "tarifario_composicion_publicada");
+    assert.equal(r.ok, false);
+    assert.match(msg(r), /migración 258/);
+  });
+
+  test("paquete SIN servicios incluidos: no exige evidencia (el precio no depende de la composición)", async () => {
+    const { r } = await cotizar(tablasAdmin({ evidencia: [] }));
+    assert.equal(r.ok, true, msg(r));
+  });
+});
+
+describe("computarReserva() · costo de un servicio incluido: nunca $0 por un cálculo fallido; el cero válido se conserva", () => {
+  const incluido = { paquete_id: PAQUETE_ID, servicio_id: 900, modo: "persona", incluido: true,
+    servicios_adicionales: { nombre: "Tour", categoria: "tour_traslado", precio_persona: 10, precio_infante: 0, liquidacion: "paquete", proveedor_id: null } };
+  const vig = (precio: number, infante: unknown) => [{ servicio_id: 900, nombre: "VIG", fecha_inicio: "2000-01-01", fecha_fin: "2099-12-31", compra_inicio: null, compra_fin: null, prioridad: 1, precio_persona: precio, precio_infante: infante, recargo_individual: null }];
+
+  // Antes: `costoNeto ?? 0`. Con un precio de infante no numérico (numeric 'NaN' en Postgres) el costo salía NaN → null → 0: PVP cobrado, costo y CxP $0, en una reserva SIN infantes.
+  for (const [nombre, infante] of [["NaN (número)", Number.NaN], ["'NaN' (numeric de Postgres)", "NaN"], ["negativo", -5]] as [string, unknown][]) {
+    test(`precio de infante ${nombre}: se rechaza ANTES de cotizar o numerar, con mensaje legible (no hay costo ni CxP $0)`, async () => {
+      const { r } = await cotizar(tablasAdmin({ servicios: [incluido], vigencias: vig(10, infante) }));
+      assert.equal(r.ok, false);
+      assert.match(msg(r), /Tour/);
+      assert.match(msg(r), /precio de infante no válido/);
+      assert.equal("data" in r, false, "no queda cotización con el servicio a costo $0");
+    });
+  }
+
+  test("el cero VÁLIDO se conserva: servicio gratuito (tarifa 0 y infante 0) → costo 0 como dato real, la reserva sale", async () => {
+    const { r } = await cotizar(tablasAdmin({ servicios: [incluido], vigencias: vig(0, 0) }));
+    assert.equal(r.ok, true, msg(r));
+    if (r.ok) {
+      assert.deepEqual(r.data.serviciosIncluidos.map((s) => [s.servicioId, s.costoNeto]), [[900, 0]]);
+    }
+  });
+
+  test("infante con tarifa 0 (gratis) y adultos con tarifa: costo = adultos × tarifa (el infante gratuito no anula nada)", async () => {
+    const { r } = await cotizar(tablasAdmin({ servicios: [incluido], vigencias: vig(10, 0) }));
+    assert.equal(r.ok, true, msg(r));
+    if (r.ok) assert.equal(r.data.serviciosIncluidos[0].costoNeto, 20);
+  });
+
+  test("defensa en profundidad: el código ya no convierte un costo null en 0", async () => {
+    const { readFileSync } = await import("node:fs");
+    const src = readFileSync(new URL("../lib/reservar/computo.ts", import.meta.url), "utf8");
+    assert.doesNotMatch(src, /costoNeto:\s*costoNeto\s*\?\?\s*0/);
+    assert.match(src, /if \(costoNeto == null\)/);
+  });
+
+  test("sin habitaciones (pax con silla 0, el otro camino a un costo null): se rechaza antes de llegar a los servicios", async () => {
+    const { r } = await cotizar(tablasAdmin({ servicios: [incluido] }), { habitaciones: {} });
+    assert.equal(r.ok, false);
+    assert.match(msg(r), /al menos una habitación/);
   });
 });

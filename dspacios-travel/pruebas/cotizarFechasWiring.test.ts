@@ -5,7 +5,7 @@ import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
 import {
   construirContextoServicios, calcularResultadoServicio,
-  type DatosServicioPar, type FilaPaquete, type FilaArmadoServicio, type FilaServicioAdicional,
+  type DatosServicioPar, type FilaPaquete, type FilaArmadoServicio, type FilaServicioAdicional, type FilaTemporadaServicio,
 } from "../lib/reservar/liquidacionServicio.ts";
 
 // ───────────────────────────────────────────────────────────────────────────
@@ -605,13 +605,16 @@ describe("12b. Protección EJECUTABLE del caso reproducido — paquete A (14 ser
     const armado: FilaArmadoServicio[] = [];
     const servicios: FilaServicioAdicional[] = [];
     const pares: DatosServicioPar[] = [];
+    // Sin tarifa «GENERAL»: cada servicio se vende con una vigencia que cubra la fecha del viaje.
+    const temporadas: FilaTemporadaServicio[] = [];
     for (let i = 0; i < cantidad; i++) {
       const servicioId = offsetId + i;
       armado.push({ paquete_id: paqueteId, servicio_id: servicioId, modo: "persona" });
       servicios.push({ id: servicioId, precio_persona: 50_000, recargo_individual: 0, liquidacion: null, moneda: "COP" });
+      temporadas.push({ servicio_id: servicioId, nombre: "VIGENTE", fecha_inicio: "2026-01-01", fecha_fin: "2026-12-31", precio_persona: 50_000 });
       pares.push({ servicioId, paqueteId, nombre: `Servicio ${servicioId}`, destino: "Cartagena", descripcion: null });
     }
-    return { armado, servicios, pares };
+    return { armado, servicios, pares, temporadas };
   }
 
   const catA = construirCatalogo(PAQUETE_A, 14, 1000); // los 14 add-ons reales del paquete reproducido
@@ -619,7 +622,7 @@ describe("12b. Protección EJECUTABLE del caso reproducido — paquete A (14 ser
 
   test("búsqueda ACOTADA (paqueteId=A, como hace ahora buscarReceptivos): SOLO los 14 servicios de A, ninguno de B", () => {
     const ctx = construirContextoServicios({
-      paquetes: [paqueteFila], armado: catA.armado, servicios: catA.servicios, grupos: [], temporadas: [],
+      paquetes: [paqueteFila], armado: catA.armado, servicios: catA.servicios, grupos: [], temporadas: catA.temporadas,
     });
     const resultados = catA.pares
       .map((par) => calcularResultadoServicio(par, ctx, FECHA, 1, 2))
@@ -633,7 +636,7 @@ describe("12b. Protección EJECUTABLE del caso reproducido — paquete A (14 ser
     const todosLosServicios = [...catA.servicios, ...catB.servicios];
     const todosLosPares = [...catA.pares, ...catB.pares];
     const ctx = construirContextoServicios({
-      paquetes: [paqueteFila, paqueteFilaB], armado: todosLosArmados, servicios: todosLosServicios, grupos: [], temporadas: [],
+      paquetes: [paqueteFila, paqueteFilaB], armado: todosLosArmados, servicios: todosLosServicios, grupos: [], temporadas: [...catA.temporadas, ...catB.temporadas],
     });
     const resultados = todosLosPares
       .map((par) => calcularResultadoServicio(par, ctx, FECHA, 1, 2))
@@ -645,7 +648,7 @@ describe("12b. Protección EJECUTABLE del caso reproducido — paquete A (14 ser
 
   test("los 98 servicios ajenos a paquete A nunca aparecen en el resultado acotado, ni por servicioId ni por nombre", () => {
     const ctx = construirContextoServicios({
-      paquetes: [paqueteFila], armado: catA.armado, servicios: catA.servicios, grupos: [], temporadas: [],
+      paquetes: [paqueteFila], armado: catA.armado, servicios: catA.servicios, grupos: [], temporadas: catA.temporadas,
     });
     const resultados = catA.pares
       .map((par) => calcularResultadoServicio(par, ctx, FECHA, 1, 2))

@@ -85,22 +85,24 @@ describe("agruparPorHotel", () => {
 });
 
 describe("servicioSeleccionable", () => {
-  test("necesita tarifa por persona o rangos de grupo", () => {
-    assert.equal(servicioSeleccionable({ precio_persona: 0, servicio_tarifa_pax: [] }), true, "$0 es una tarifa (gratis), no ausencia");
-    assert.equal(servicioSeleccionable({ precio_persona: null, servicio_tarifa_pax: [{}] }), true);
-    assert.equal(servicioSeleccionable({ precio_persona: null, servicio_tarifa_pax: [] }), false);
-    assert.equal(servicioSeleccionable({ precio_persona: null }), false);
+  // Detalle GENERAL vs vigencia: pruebas/generalRetiradoRutas255.test.ts.
+  const vig = (precio: number | null) => [{ nombre: "V1", fecha_inicio: "2026-01-01", fecha_fin: "2099-12-31", precio_persona: precio }];
+  test("necesita una vigencia vendible con precio por persona o rangos de grupo propios", () => {
+    assert.equal(servicioSeleccionable({ servicio_temporadas: vig(0), servicio_tarifa_pax: [] }), true, "$0 es una tarifa (gratis), no ausencia");
+    assert.equal(servicioSeleccionable({ servicio_temporadas: vig(null), servicio_tarifa_pax: [{ temporada: "V1" }] }), true);
+    assert.equal(servicioSeleccionable({ servicio_temporadas: vig(null), servicio_tarifa_pax: [] }), false);
+    assert.equal(servicioSeleccionable({}), false);
   });
 });
 
 describe("cableado: solo interfaz", () => {
   const cliente = leer("app/(dashboard)/dashboard/paquetes/[id]/ArmadoClient.tsx");
   const pagina = leer("app/(dashboard)/dashboard/paquetes/[id]/page.tsx");
-  test("ArmadoClient no importa acciones nuevas: las mismas de siempre", () => {
+  test("ArmadoClient no importa acciones nuevas: las mismas de siempre (+ continuarPublicacionTarifario, de la publicación reanudable)", () => {
     const imp = cliente.match(/import \{([^}]*)\} from "\.\.\/actions";/);
     assert.ok(imp);
     const nombres = imp[1].split(",").map((s) => s.trim()).filter(Boolean).filter((s) => !s.startsWith("type "));
-    assert.deepEqual(nombres.sort(), ["generarTarifario", "getTarifasHotel", "setHotel", "setHotelFiltros", "setHotelPrioridad", "setServicio", "setServicios", "setTodosHoteles", "setTodosVuelos", "setVuelo"].sort());
+    assert.deepEqual(nombres.sort(), ["continuarPublicacionTarifario", "estadoPublicacionTarifario", "generarTarifario", "getTarifasHotel", "setHotel", "setHotelFiltros", "setHotelPrioridad", "setServicio", "setServicios", "setTodosHoteles", "setTodosVuelos", "setVuelo"].sort());
   });
   test("page.tsx entrega la pestaña (?tab=) y el estado del tarifario leído de armado_paquetes", () => {
     assert.match(pagina, /searchParams\?: Promise<\{ tab\?: string \| string\[\] \}>/);
