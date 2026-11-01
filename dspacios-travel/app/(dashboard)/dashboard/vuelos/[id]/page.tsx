@@ -28,6 +28,8 @@ import { esRetencionVencida } from "@/lib/vuelos/retencion";
 import { LiberarRetencion } from "./LiberarRetencion";
 
 export const dynamic = "force-dynamic";
+// Las Server Actions de esta pantalla regeneran tarifarios (por lotes) tras guardar: el maxDuration de la página rige su duración. Literal igual a VENTANA_PETICION_MS (lib/tarifario/controladorPublicacion.ts).
+export const maxDuration = 60;
 
 const ESTADO_COLOR: Record<string, string> = {
   disponible: "#E5E7EB",

@@ -458,7 +458,7 @@ describe("generarTarifario() — rama dinámica: solo se publican salidas vigent
 
 describe("generarTarifario() — cableado verificado sobre el fuente (complemento de la ejecución real)", () => {
   const src = readFileSync(new URL("../app/(dashboard)/dashboard/paquetes/actions.ts", import.meta.url), "utf8");
-  const ini = src.indexOf("export async function generarTarifario(paqueteId: number): Promise<Result> {");
+  const ini = src.indexOf("export async function generarTarifario(paqueteId: number, opciones: OpcionesGenerar = {}): Promise<Result> {");
   const fin = src.indexOf("export async function regenerarTarifariosDeHotel", ini);
   const cuerpo = src.slice(ini, fin);
 

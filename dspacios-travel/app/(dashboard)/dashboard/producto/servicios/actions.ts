@@ -305,7 +305,7 @@ export async function eliminarServicio(id: number): Promise<Result> {
   const paqIds = [...new Set((usados ?? []).map((u) => u.paquete_id))];
   const { error } = await sb.from("servicios_adicionales").delete().eq("id", id);
   if (error) return { ok: false, error: mensajeErrorEliminarServicio(error) };
-  for (const pid of paqIds) { try { await generarTarifario(pid); } catch { /* sigue */ } }
+  { const inicioRegen = Date.now(); for (const pid of paqIds) { try { await generarTarifario(pid, { porLotes: true, segundoPlano: true, inicioMs: inicioRegen }); } catch { /* sigue */ } } }
   revalidatePath("/dashboard/producto/servicios");
   return { ok: true };
 }

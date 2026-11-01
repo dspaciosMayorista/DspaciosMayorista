@@ -6,6 +6,8 @@ import { cargarServiciosMasivo } from "./actions";
 import { Alcance262Provider, type Datos262 } from "./Alcance262";
 
 export const dynamic = "force-dynamic";
+// Las Server Actions de esta pantalla regeneran tarifarios (por lotes) tras guardar: el maxDuration de la página rige su duración. Literal igual a VENTANA_PETICION_MS (lib/tarifario/controladorPublicacion.ts).
+export const maxDuration = 60;
 
 const COLS_SERVICIOS = [
   { key: "nombre", label: "Nombre", ejemplo: "Tour Islas del Rosario" },

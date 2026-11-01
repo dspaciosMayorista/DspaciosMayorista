@@ -66,6 +66,52 @@ Tras publicar: `registrar_composicion_publicada` (19 filas) 86 ms y `registrar_d
 - `supabase/scripts/test_259_configuracion.sh <base> [contenedor] [plantilla]`: 47 comprobaciones — aplicación y reaplicación, límite previo (`lock_timeout`, `statement_timeout`, `work_mem`, `search_path`, ajeno solo en `_63`), cambio posterior antes del rollback, **259 aplicada → cambia el `search_path` → rollback** (la función alterada queda intacta, la otra se revierte, el resultado es INCOMPLETO), rollback exacto e idempotente.
 - `supabase/scripts/test_259_publicador_limite.sh`: gate con PostgREST. Variables: `MIGRACIONES_PREVIAS` (rutas separadas por espacio, p. ej. 256 y 258) y `COTA=1` (publica las 22.401 filas).
 
+## Reevaluación con la medición real del 73 (generación 9)
+
+**Medición real (Preview, 259 puesta):** `resultado=ok`, 12.669 filas, `publicar` = 23.829 ms, total 24.988 ms → 1,88 ms/fila. El 33 (3.187 filas, 3.283 ms) daba 1,03 ms/fila: el 73 es **más lento por fila que el 33**, es decir, la curva no es lineal. Con el límite de 30 s el 73 pasa con 1,26× de margen en tiempo, pero solo ≈ 1,1–1,3× en filas.
+
+### Cuántas filas producirá el 73 con la 256 (acotado, no medido)
+- `generarTarifario` publica **todo vuelo seleccionado con ambas fechas y destino aéreo permitido** (`bloqueoAporta`); la fecha futura solo la filtra la **lectura** del tarifario (`hoyISO()` = fecha de negocio de Bogotá). Por eso «19 salidas futuras» (inventario de la 256) **no** acota lo que se publica: el 73 tiene 32 vuelos seleccionados y las 12.668 filas actuales ya pueden cubrirlos.
+- La 256 no cambia cuántos vuelos, hoteles ni acomodaciones entran; cambia qué pasa con un incluido sin vigencia (se omite del servicio en esa salida en vez de bloquearla). Solo puede **sumar** filas si hoy alguna estadía queda fuera por ese motivo.
+- **Cota dura sin datos nuevos:** 32 vuelos × 100 combinaciones × 7 acomodaciones = 22.400 (+1 de servicio) = **22.401**. Es un techo teórico (la configuración del 73 que dio el diagnóstico), no una generación real bajo la 256. La **cota con datos** sale de `supabase/scripts/lectura_capacidad_publicador_73.sql` (filas 4–6), de solo lectura y sin depender de `pg_stat_statements`.
+- Antes de generar el 73 con la 256 hay que correr esa lectura: si «distintos publicados» ya es igual a «con ambas fechas» y la cota de la fila 6 queda ≲ 17.000, un solo envío cabe con margen; si no, ver «Recomendación».
+
+### Separación SQL / transferencia / espera
+- **Inferencia de las mediciones reales (no es una medición directa):** en la generación 8 la base cortó la sentencia a los 8 s y la llamada de la app duró 19,8 s. Esos **≥ 11,8 s quedaron fuera del temporizador de la sentencia** (serialización, subida del cuerpo de ≈ 10–12 MB, lectura por PostgREST, respuesta). Con el cuerpo compactado (−22 %) esa parte baja, pero no desaparece.
+- **Espera por candado:** sin evidencia en la 9; el `lock_timeout` de 8 s la acota.
+- **Medirlo de verdad:** localmente la limitación de CPU mezcla SQL y transferencia y no se pueden separar con fidelidad. En producción, `pg_stat_statements` da el tiempo de SQL **agregado** (`lectura_capacidad_publicador_73_pgss.sql`, opcional): son todas las llamadas al publicador desde el último reinicio, **no** la generación 9, y **no se restan** de sus 23.829 ms. Sirven como orden de magnitud.
+
+### Pruebas locales (`CAPACIDAD=1 … test_259_publicador_limite.sh`, `test_259_capacidad.mjs`)
+CPU del contenedor limitada hasta que 12.669 filas tarden lo medido en producción (22,7–25,8 s frente a 23,8 s reales). Cuatro corridas completas; el ruido entre corridas es grande (±25 %, p. ej. 22.401 filas con límite alto tardó 38,0–65,4 s). Tiempos de la llamada completa por PostgREST.
+
+| Caso | Resultado |
+|---|---|
+| 14.000–17.000 filas, límite 30 s | en el borde: según la corrida publica (25,8–30,7 s) o da 57014 |
+| 22.401 filas, límite 30 s | **57014 a los ≈ 31 s** (cuatro de cuatro), rollback: la publicación anterior queda intacta |
+| 17.000 / 20.000 / 22.401 filas, límite 45 s | publican en 37,6 / 45,8 / 42,7 s (una corrida; otras corridas con límites mayores dieron 44,5–65,4 s para 22.401) |
+| 22.401 filas, límite 90–120 s (informativo) | publica en 38,0–65,4 s |
+| 22.401 filas por lotes de 2.000 | subida 17,8–30,3 s (cada lote ≤ 6,1 s); **activación atómica 52–55 s** |
+
+- **Por lotes con activación atómica no evita un límite largo:** la activación (insertar con todas sus llaves, CHECK e índices, borrar lo anterior, todo atómico) tarda lo mismo que la llamada única. Partirla rompería la atomicidad o exigiría que todos los lectores filtren por generación; además requiere tabla de paso, tres RPC y reimplementar las guardas del publicador, que la 256 redefine.
+- **Calcular según la búsqueda:** rediseño del tarifario publicado, fuera de alcance.
+
+### Qué está comprobado y qué no
+| Tema | Estado |
+|---|---|
+| Supabase documenta **60 s como máximo configurable** para consultas por el Dashboard y la Client API; más tiempo se pide por pooler o conexión directa (supabase.com/docs/guides/database/postgres/timeouts) | **Comprobado en la documentación** |
+| `statement_timeout` por función (`ALTER FUNCTION … SET`) se aplica a llamadas por la Client API (ejemplo de la documentación, 4 s) | **Comprobado** en la documentación y localmente con PostgREST |
+| La 259 (30 s) está dentro de lo documentado | **Comprobado** |
+| Un `statement_timeout` de **120 s** (o 90 s) por función se respeta por la Client API de Supabase y la petición HTTP no se corta antes | **NO comprobado**: contradice el máximo documentado de 60 s; localmente no hay gateway. **Necesita confirmación de Supabase** (soporte) antes de usarlo |
+| Vercel con Fluid Compute (activo por defecto): duración por defecto **300 s** en Hobby y Pro (máx. 800 s en Pro); `maxDuration` en la página rige para sus Server Actions | **Comprobado** en la documentación de Vercel y de Next 16 |
+| El proyecto D'spacios tiene Fluid Compute activo y qué «Default Max Duration» tiene | **NO verificado** (no hay `.vercel`, ni CLI, ni `vercel.json` con `functions`). Indicio: la generación 9 corrió 25 s, más que el defecto de 15 s sin Fluid. Confirmar en el panel (Settings → Functions) |
+
+### Recomendación (dentro de lo comprobado)
+1. **No usar 120 s ni 90 s.** Superan el máximo documentado de 60 s y no están comprobados por la Client API.
+2. **No fijar `maxDuration = 180`:** con Fluid Compute el defecto es 300 s; 180 lo **reduciría**. Si el panel dice otra cosa (p. ej. 15–60 s), fijar `maxDuration` al valor del panel o mayor (≥ 120 s alcanza para una llamada ≤ 60 s); si dice 300 s, no tocar nada.
+3. **Migración 260 (opcional, solo si hace falta margen):** subir `statement_timeout` de las dos entradas de 30 s a **45 s** (`lock_timeout` sigue en 8 s). Está dentro de lo documentado y deja ≥ 15 s de los 60 s de la petición para subida y respuesta (la inferencia de la generación 8 da ≈ 9–12 s con el cuerpo compactado). Con 45 s el borde de una sola publicación sube de ≈ 15.000–17.000 a ≈ 20.000 filas. Misma guarda que la 259 (solo cambia una entrada exactamente en estado 259; lo ajeno aborta).
+4. **Si la cota con datos supera ≈ 20.000 filas**, una sola llamada **no** cabe con garantía dentro de lo comprobado, y 255/256/258 no deben desplegarse para ese paquete hasta decidir una de estas salidas: reducir combinaciones o vuelos en el armado del 73 (operativa), dividirlo en dos paquetes, o diseñar la publicación en particiones independientes (decisión de producto: cada partición atómica, el paquete se publica completo cuando todas lo están). Una guarda en la app que rechace antes de subir más de N filas (con un mensaje claro) evita pagar 30–45 s para fallar con 57014.
+5. **Riesgo operativo a tener presente:** tras la 258, las filas publicadas antes se rechazan al reservar hasta regenerar el paquete. Si la regeneración del 73 falla (57014), el 73 queda sin poder venderse bloqueo/dinámico hasta que una regeneración pase. Por eso conviene tener los datos de la lectura **antes** de desplegar 258.
+
 ## Efecto colateral conocido
 Una publicación larga mantiene el `FOR UPDATE` del paquete: otra escritura sobre **esa fila** (un nuevo «Generar», un cambio de fuente que invalida el tarifario) espera hasta `lock_timeout` (8 s) y falla con `55P03` si la publicación sigue. Medido: esperas de 4–6 s con una publicación de ≈ 10 s. Solo afecta a paquetes que hoy no publican. Los **lectores** no esperan (MVCC).
 

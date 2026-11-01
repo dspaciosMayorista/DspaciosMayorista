@@ -98,11 +98,11 @@ describe("servicioSeleccionable", () => {
 describe("cableado: solo interfaz", () => {
   const cliente = leer("app/(dashboard)/dashboard/paquetes/[id]/ArmadoClient.tsx");
   const pagina = leer("app/(dashboard)/dashboard/paquetes/[id]/page.tsx");
-  test("ArmadoClient no importa acciones nuevas: las mismas de siempre", () => {
+  test("ArmadoClient no importa acciones nuevas: las mismas de siempre (+ continuarPublicacionTarifario, de la publicación reanudable)", () => {
     const imp = cliente.match(/import \{([^}]*)\} from "\.\.\/actions";/);
     assert.ok(imp);
     const nombres = imp[1].split(",").map((s) => s.trim()).filter(Boolean).filter((s) => !s.startsWith("type "));
-    assert.deepEqual(nombres.sort(), ["generarTarifario", "getTarifasHotel", "setHotel", "setHotelFiltros", "setHotelPrioridad", "setServicio", "setServicios", "setTodosHoteles", "setTodosVuelos", "setVuelo"].sort());
+    assert.deepEqual(nombres.sort(), ["continuarPublicacionTarifario", "estadoPublicacionTarifario", "generarTarifario", "getTarifasHotel", "setHotel", "setHotelFiltros", "setHotelPrioridad", "setServicio", "setServicios", "setTodosHoteles", "setTodosVuelos", "setVuelo"].sort());
   });
   test("page.tsx entrega la pestaña (?tab=) y el estado del tarifario leído de armado_paquetes", () => {
     assert.match(pagina, /searchParams\?: Promise<\{ tab\?: string \| string\[\] \}>/);

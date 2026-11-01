@@ -26,6 +26,8 @@ const ACCIONES_PAQUETES = datos(`
   export async function setServicio(...a) { reg('setServicio', a); return ${G}.respServicio(a); }
   export async function setServicios(...a) { reg('setServicios', a); return ${G}.respLote(a); }
   export async function generarTarifario(...a) { reg('generarTarifario', a); return { ok: true, id: 3 }; }
+  export async function continuarPublicacionTarifario() { return { ok: true }; }
+  export async function estadoPublicacionTarifario() { return { ok: true }; }
   export async function getTarifasHotel() { return { ok: true, modelo: 'persona', categorias: [], regimenes: [], tarifas: [] }; }
   export async function setHotelFiltros() { return { ok: true }; }
   export async function setHotelPrioridad() { return { ok: true }; }

@@ -296,11 +296,11 @@ describe("HALLAZGO CORREGIDO — caso real generarTarifario() → Promise resuel
   // ese molde (no una función que solo lanza), y que regenerarTarifariosDeHotel
   // itera exactamente ese `.value.ok`.
   test("generarTarifario devuelve Promise<Result> = {ok:true,...} | {ok:false,error:string} — nunca Promise<void>/throw-only", () => {
-    assert.match(paquetesActions, /export async function generarTarifario\(paqueteId: number\): Promise<Result>/);
+    assert.match(paquetesActions, /export async function generarTarifario\(paqueteId: number, opciones: OpcionesGenerar = \{\}\): Promise<Result>/);
   });
 
   test("generarTarifario tiene múltiples caminos ok:false, todos por `return` (literal o vía fallar()/fallarTecnico()), ninguno por `throw`", () => {
-    const posFn = paquetesActions.indexOf("export async function generarTarifario(paqueteId: number): Promise<Result>");
+    const posFn = paquetesActions.indexOf("export async function generarTarifario(paqueteId: number, opciones: OpcionesGenerar = {}): Promise<Result>");
     const posSiguiente = paquetesActions.indexOf("\nexport async function", posFn + 10);
     const cuerpoFn = paquetesActions.slice(posFn, posSiguiente);
     // Auditoría de Fase 1 (rondas 2-3): la mayoría de los `return { ok:
@@ -320,7 +320,7 @@ describe("HALLAZGO CORREGIDO — caso real generarTarifario() → Promise resuel
 
   test("regenerarTarifariosDeHotel lee r.value.ok del resultado CUMPLIDO de exactamente esa función (generarTarifario(id))", () => {
     const cuerpo = cuerpoFuncionPorSiguienteExport(paquetesActions, "export async function regenerarTarifariosDeHotel(");
-    assert.match(cuerpo, /Promise\.allSettled\(ids\.map\(\(id\) => generarTarifario\(id\)\)\)/);
+    assert.match(cuerpo, /Promise\.allSettled\(ids\.map\(\(id\) => generarTarifario\(id, enSegundoPlano\(inicioMs\)\)\)\)/);
     assert.match(cuerpo, /!r\.value\.ok/);
   });
 });
@@ -810,7 +810,7 @@ describe("HOTFIX — filas de servicio en generarTarifario declaran las 5 column
     // 226: la fila de hotel se publica desde `publicarFila(acom, costoHotel, procedencia)` (la comparten la fila normal
     // y la fila de infante con hotel $0); su `procedencia` sigue saliendo de `columnasProcedencia(resultado?.procedencia)`.
     assert.match(paquetesActions, /const procedencia = columnasProcedencia\(resultado\?\.procedencia\);/);
-    assert.match(paquetesActions, /publicarFila\(acom, costoHotel, procedencia\);/);
+    assert.match(paquetesActions, /publicarFila\(acom, costoHotel, procedencia, masBarato \? null : costoHotel\);/);
     const posPushHotel = paquetesActions.indexOf("filas.push({", paquetesActions.indexOf("const publicarFila = "));
     assert.notEqual(posPushHotel, -1, "no se encontró el push de la fila de hotel");
     const posCierre = paquetesActions.indexOf("});", posPushHotel);

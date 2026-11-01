@@ -304,7 +304,7 @@ describe('setHotelFiltros — modelo PERSONA: conserva EXACTAMENTE el sentinela 
 
 describe("Aislamiento de alcance: no se toca cálculo/cotización/contrato/CxP/carrito/Vista Booking", () => {
   test("generarTarifario sigue existiendo tal cual (no se tocó en esta corrección)", () => {
-    assert.match(codigoActions, /export async function generarTarifario\(paqueteId: number\): Promise<Result> \{/);
+    assert.match(codigoActions, /export async function generarTarifario\(paqueteId: number, opciones: OpcionesGenerar = \{\}\): Promise<Result> \{/);
   });
 
   test("no se inserta ninguna fila en tarifario_resultado desde getTarifasHotel/setHotelFiltros", () => {
