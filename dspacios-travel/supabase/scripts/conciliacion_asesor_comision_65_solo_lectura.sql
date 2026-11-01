@@ -5,7 +5,12 @@
 -- Plan de corrección (aparte, NO se ejecuta aquí): supabase/scripts/correccion_asesor_comision_65_plan.sql
 -- Doc: docs/tecnico/comisiones-aliado-vs-interna-65.md
 --
--- REGLA CONFIRMADA POR EL DUEÑO: en estas diez ventas la línea de COMISIÓN y la de RECOBRO pertenecen al MISMO asesor
+-- REGLA DE LA LÍNEA 1 (dueño, 1-nov-2026): la comisión se paga a la persona de la línea 1 (fila de menor id del contrato); Javier figura en la línea 2
+-- porque asistió, no como segundo comisionista. 0462: la línea 1 es Tatiana (#79, ficha 3) y #79 NO pasa a Javier; #80→3 (Tatiana) está CONFIRMADA (total $142.494 = su abono registrado) pero EXCLUIDA del UPDATE hasta conciliar a quién se pagó su abono.
+-- El dueño confirmó además que en cada contrato una línea es comisión y la otra recobro del mismo asesor (0476 y 0498 no son duplicados).
+-- Cada fila muestra su línea, quién es la línea 1 y si está a nombre de otra ficha.
+--
+-- REGLA ANTERIOR DEL DUEÑO (sigue válida salvo donde choque con la de la línea 1): en estas diez ventas la línea de COMISIÓN y la de RECOBRO pertenecen al MISMO asesor
 -- de la comisión, aunque hoy estén atribuidas a personas distintas. Asesor confirmado por contrato → CTE `esperado`
 -- (única entrada manual del script; no agregar contratos sin confirmación expresa).
 --
@@ -25,7 +30,7 @@ esperado(numero_contrato, asesor, primer_nombre) as (
     ('MIN-00-0432', 'Katherine Colorado',  'katherine'),
     ('MIN-00-0433', 'Katherine Colorado',  'katherine'),
     ('MIN-00-0439', 'Juliana',             'juliana'),
-    ('MIN-00-0462', 'Javier',              'javier'),
+    ('MIN-00-0462', 'Tatiana',             'tatiana'),
     ('MIN-00-0463', 'Marcela',             'marcela'),
     ('MIN-00-0476', 'Javier',              'javier'),
     ('MIN-00-0484', 'Sebastián',           'sebastian'),
@@ -36,11 +41,11 @@ esperado(numero_contrato, asesor, primer_nombre) as (
 -- ASIGNACIÓN ≠ ABONO REGISTRADO ≠ DESTINATARIO DEL PAGO: esto solo dice a qué ficha DEBE pertenecer la fila; el pago real sigue sin conciliar.
 -- La 135 (ficha NULL, «YAQUELINE USUGA») → 37: CONFIRMADA por el dueño («ambos siempre al asesor, es decir el de Yaqueline ambos son de ella»); el abono de $351.852,16 sigue sin conciliar.
 destino(fila_id, ficha_destino) as (
-  values (79::bigint, 8::bigint), (81, 33), (82, 1), (83, 1), (85, 24), (89, 28), (107, 7), (137, 37), (135, 37), (1, 8), (100, 8), (101, 8)
+  values (79::bigint, 3::bigint), (80, 3), (81, 33), (82, 1), (83, 1), (85, 24), (89, 28), (107, 7), (137, 37), (135, 37), (1, 8), (100, 8), (101, 8)
 ),
 -- Filas que el dueño señaló como atribuidas a otra persona (referencia cruzada; el script las calcula por su cuenta).
 senaladas(fila_id, motivo) as (
-  values (79::bigint, 'otra persona'), (81, 'otra persona'), (82, 'otra persona'), (83, 'otra persona'), (85, 'otra persona'),
+  values (80::bigint, 'línea 2 a nombre de Javier'), (81, 'otra persona'), (82, 'otra persona'), (83, 'otra persona'), (85, 'otra persona'),
          (89, 'otra persona'), (107, 'otra persona'), (137, 'otra persona'), (1, 'sin ficha (0498)')
 ),
 filas as (
@@ -64,6 +69,10 @@ comp as (
 det as (
   select c.*, e.asesor as asesor_confirmado, e.primer_nombre,
          a.nombre as ficha_nombre, a.tipo as ficha_tipo,
+         (select count(*) from filas f2 where f2.numero_contrato = c.numero_contrato and f2.id <= c.id) as linea,
+         (select count(*) from filas f2 where f2.numero_contrato = c.numero_contrato) as n_lineas,
+         (select f2.aliado_id from filas f2 where f2.numero_contrato = c.numero_contrato order by f2.id limit 1) as ficha_linea1,
+         (select f2.aliado from filas f2 where f2.numero_contrato = c.numero_contrato order by f2.id limit 1) as aliado_linea1,
          translate(lower(split_part(btrim(coalesce(a.nombre, c.aliado, '')), ' ', 1)), 'áéíóúñ', 'aeioun') as primer_nombre_beneficiario,
          -- Fichas del catálogo cuyo primer nombre coincide con el del asesor confirmado: EVIDENCIA para elegir la ficha destino.
          (select string_agg('ficha ' || x.id || ' «' || x.nombre || '» (' || coalesce(x.tipo, '-') || ')', ' · ' order by x.id)
@@ -136,6 +145,8 @@ select 'fila',
             else 'CORREGIR' end,
        numero_contrato, id,
        'asesor confirmado=' || asesor_confirmado
+         || ' | línea ' || linea || ' de ' || n_lineas || ' (línea 1 = «' || coalesce(aliado_linea1, '?') || '» ficha ' || coalesce(ficha_linea1::text, 'NULL') || ')'
+         || case when linea > 1 and aliado_id is distinct from ficha_linea1 then ' | LÍNEA ' || linea || ' A NOMBRE DE OTRA FICHA que la línea 1 (regla: la comisión se paga a la línea 1)' else '' end
          || ' | beneficiario actual=«' || coalesce(aliado, '(sin nombre)') || '» ficha=' || coalesce(aliado_id::text, 'NULL') || ' (' || coalesce(ficha_nombre, 'sin ficha') || ', ' || coalesce(ficha_tipo, '-') || ')'
          || ' | ficha destino confirmada=' || coalesce((select x.ficha_destino::text from destino x where x.fila_id = res.id), '(sin asignación: se compara el nombre)')
          || ' | diagnóstico=' || diagnostico || case when senalada_por_dueno then ' (el dueño la señaló)' else '' end

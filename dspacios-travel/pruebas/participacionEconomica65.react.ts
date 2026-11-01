@@ -11,6 +11,9 @@
 //
 // TRES COSAS DISTINTAS: (1) ASIGNACIÓN confirmada (a qué ficha debe ir una fila; 135→37 y 137→37 confirmadas por el dueño) · (2) ABONO REGISTRADO (lo que
 // hay en comision_b2b_pagos) · (3) DESTINATARIO DEL PAGO, que sigue DESCONOCIDO. El «Pagada» del portal sale de (2); no prueba (3).
+// REGLA DE LA LÍNEA 1 (dueño, 1-nov-2026): la comisión se paga a la persona de la línea 1 (menor id del contrato); Javier figura en la línea 2 porque asistió.
+// En 0462 la línea 1 es Tatiana (#79, ficha 3) y NO se cambia a Javier; #80 (Javier, línea 2; total y abono registrado de $142.494) → ficha 3: asignación CONFIRMADA, pero EXCLUIDA
+// del UPDATE hasta conciliar a quién se pagó su abono (destinatario desconocido). Estas pruebas no asignan ni cambian nada.
 // Estas pruebas fijan lo que el portal muestra HOY y no afirman que los pagos hayan llegado a nadie. #415 no excluye ids en el código.
 //
 // CORRECCIÓN: una versión anterior de esta prueba trataba la fila de Javier en MIN-00-0519 como una fila en CERO. Es falso:
@@ -164,32 +167,59 @@ test("los tres casos reales para Javier: 0476 y 0519 son participación (ajenos)
   assert.equal(jav.comisiones.get("MIN-00-0498")?.importe, 30_000);
 });
 
-test("PRECHECK REAL (importes y abonos registrados reales; cuentas y ventas sintéticas): hoy Javier (ficha 8) y la ficha 3 ven participación con saldo $0 en contratos que no son suyos", async () => {
-  // fila → [contrato, ficha ACTUAL, ficha de la venta (asesor correcto), total real, abonos registrados reales]
-  const reales: [number, string, number, number, number, number][] = [
-    [81, "MIN-00-0422", 8, 33, 599_964, 600_000], [82, "MIN-00-0432", 8, 1, 141_360, 141_360], [83, "MIN-00-0433", 8, 1, 541_036, 541_036],
-    [85, "MIN-00-0439", 8, 24, 140_180, 140_180], [89, "MIN-00-0463", 8, 28, 207_831, 207_831], [107, "MIN-00-0484", 8, 7, 71_296.5, 71_297],
-    [137, "MIN-00-0519", 8, 37, 139_000, 139_000], [79, "MIN-00-0462", 3, 8, 191_224, 191_224],
+test("PRECHECK REAL (20 líneas: totales y abonos registrados REALES; cuentas y titular de cada venta sintéticos): hoy el portal muestra a Javier participación en ocho contratos donde la línea 1 es de otra persona; cada asesor ve solo su línea 1", async () => {
+  // [contrato, fila, ficha ACTUAL, total de la línea, abonos registrados]. Fuente: consulta completa del 1-nov-2026.
+  const LINEAS: [string, number, number | null, number, number][] = [
+    ["MIN-00-0422", 44, 33, 857_197, 857_197], ["MIN-00-0422", 81, 8, 599_964, 600_000],
+    ["MIN-00-0432", 53, 1, 768_949.2, 768_949.2], ["MIN-00-0432", 82, 8, 141_360, 141_360],
+    ["MIN-00-0433", 54, 1, 1_808_519.68, 1_808_519.68], ["MIN-00-0433", 83, 8, 541_036, 541_036],   // 83 y 85 tienen 2 abonos reales; aquí uno solo por el total
+    ["MIN-00-0439", 59, 24, 693_266.64, 693_266.64], ["MIN-00-0439", 85, 8, 140_180, 140_180],
+    ["MIN-00-0462", 79, 3, 191_224, 191_224], ["MIN-00-0462", 80, 8, 142_494, 142_494],
+    ["MIN-00-0463", 88, 28, 172_629.6, 172_629.6], ["MIN-00-0463", 89, 8, 207_831, 207_831],
+    ["MIN-00-0476", 100, 8, 484_747.56, 484_748], ["MIN-00-0476", 101, 8, 349_782, 350_000],
+    ["MIN-00-0484", 106, 7, 125_468.2, 125_469], ["MIN-00-0484", 107, 8, 71_296.5, 71_297],
+    ["MIN-00-0498", 1, null, 1_260_903.68, 1_617_580], ["MIN-00-0498", 121, 8, 137_747, 137_747],
+    ["MIN-00-0519", 135, null, 351_852.16, 351_852.16], ["MIN-00-0519", 137, 8, 139_000, 139_000],
   ];
-  const t: Record<string, Fila[]> = {
-    usuarios: [usuario("u-jav", "Javier", "freelance", 8), usuario("u-tat", "Tatiana", "freelance", 3)],
-    aliados: [3, 8, 33, 1, 24, 28, 7, 37].map((id) => ({ id, nombre: `Ficha ${id}`, nit: String(id) })),
-    ventas: reales.map(([, n, , dueno]) => venta(n, dueno)),
-    aliados_b2b: reales.map(([id, n, ficha, , total]) => fila(id, n, ficha, { comision_valor: total })),   // total = comision_valor (sin base ni recobro)
-    comision_b2b_pagos: reales.map(([id, , , , , abonado], i) => ({ id: i + 1, aliado_b2b_id: id, valor: abonado, fecha: "2026-10-05" })),
+  // SINTÉTICO: titular de la venta = persona de la línea 1 (el ventas.aliado_id real no consta).
+  const DUENO: Record<string, number> = {
+    "MIN-00-0422": 33, "MIN-00-0432": 1, "MIN-00-0433": 1, "MIN-00-0439": 24, "MIN-00-0462": 3,
+    "MIN-00-0463": 28, "MIN-00-0476": 8, "MIN-00-0484": 7, "MIN-00-0498": 8, "MIN-00-0519": 37,
   };
-  montar(t, "u-jav");
-  const jav = await cargarConjuntoPortal(ctx("u-jav", 8) as never);
-  assert.deepEqual(nums(jav, "participacion"), ["MIN-00-0422", "MIN-00-0432", "MIN-00-0433", "MIN-00-0439", "MIN-00-0463", "MIN-00-0484", "MIN-00-0519"]);
-  for (const n of nums(jav, "participacion")) {
-    assert.equal(jav.comisiones.get(n)?.importe, 0, `${n}: saldo 0`);
-    assert.equal(jav.comisiones.get(n)?.estado, "pagada", `${n}: «pagada» sale del abono REGISTRADO, no de un destinatario verificado`);
+  const fichas = [1, 3, 7, 8, 24, 28, 33, 37];
+  const t: Record<string, Fila[]> = {
+    usuarios: fichas.map((f) => usuario(`u-${f}`, `Ficha ${f}`, "freelance", f)),
+    aliados: fichas.map((id) => ({ id, nombre: `Ficha ${id}`, nit: String(id) })),
+    ventas: Object.entries(DUENO).map(([n, d]) => venta(n, d)),
+    aliados_b2b: LINEAS.map(([n, id, ficha, total]) => fila(id, n, ficha, { comision_valor: total })),   // total = comision_valor (sin base ni recobro)
+    comision_b2b_pagos: LINEAS.map(([, id, , , abonado], i) => ({ id: i + 1, aliado_b2b_id: id, valor: abonado, fecha: "2026-10-05" })),
+  };
+  const ver = async (f: number) => { montar(t, `u-${f}`); return cargarConjuntoPortal(ctx(`u-${f}`, f) as never); };
+
+  const jav = await ver(8);
+  assert.deepEqual(nums(jav, "propio"), ["MIN-00-0476", "MIN-00-0498"], "Javier es la línea 1 solo de 0476 y 0498");
+  assert.deepEqual(nums(jav, "participacion"), ["MIN-00-0422", "MIN-00-0432", "MIN-00-0433", "MIN-00-0439", "MIN-00-0462", "MIN-00-0463", "MIN-00-0484", "MIN-00-0519"]);
+  const idsJav: Record<string, number[]> = { "MIN-00-0422": [81], "MIN-00-0432": [82], "MIN-00-0433": [83], "MIN-00-0439": [85], "MIN-00-0462": [80], "MIN-00-0463": [89], "MIN-00-0476": [100, 101], "MIN-00-0484": [107], "MIN-00-0498": [121], "MIN-00-0519": [137] };
+  for (const [n, ids] of Object.entries(idsJav)) {
+    assert.deepEqual(jav.comisiones.get(n)?.ids, ids, `${n}: líneas de Javier`);
+    assert.equal(jav.comisiones.get(n)?.importe, 0, `${n}: saldo 0 (abonos registrados >= total)`);
+    assert.equal(jav.comisiones.get(n)?.estado, "pagada", `${n}: «pagada» sale del abono REGISTRADO; el destinatario del abono sigue desconocido`);
   }
-  assert.deepEqual(nums(jav, "propio"), ["MIN-00-0462"], "la 0462 sí es de Javier (y su fila 79 la tiene la ficha 3)");
-  montar(t, "u-tat");
-  const tat = await cargarConjuntoPortal(ctx("u-tat", 3) as never);
-  assert.deepEqual(nums(tat, "participacion"), ["MIN-00-0462"]);
-  assert.equal(tat.comisiones.get("MIN-00-0462")?.importe, 0);
+  // La persona de la línea 1 ve SU línea (y solo esa) como contrato propio; Yaqueline no ve nada de la 135 (sin ficha).
+  const linea1: [number, string, number][] = [[33, "MIN-00-0422", 44], [1, "MIN-00-0432", 53], [24, "MIN-00-0439", 59], [3, "MIN-00-0462", 79], [28, "MIN-00-0463", 88], [7, "MIN-00-0484", 106]];
+  for (const [f, n, id] of linea1) {
+    const c = await ver(f);
+    assert.ok(nums(c, "propio").includes(n), `ficha ${f}: ${n} propio`);
+    assert.deepEqual(c.comisiones.get(n)?.ids, [id], `ficha ${f}: solo su línea 1 (#${id})`);
+    assert.deepEqual(nums(c, "participacion"), [], `ficha ${f}: sin participaciones ajenas`);
+  }
+  const k = await ver(1);
+  assert.deepEqual(k.comisiones.get("MIN-00-0433")?.ids, [54]);
+  const yaq = await ver(37);
+  assert.deepEqual(nums(yaq, "propio"), ["MIN-00-0519"]);
+  assert.equal(yaq.comisiones.get("MIN-00-0519")?.importe ?? null, null, "la 135 sin ficha: Yaqueline no ve su comisión (faltante, no fuga)");
+  // Ninguna asignación ni dato cambia por leer.
+  const antes = JSON.stringify(t); await ver(8); assert.equal(JSON.stringify(t), antes);
 });
 
 test("SINTÉTICO: abonos mayores al total (sobrepago, como la fila 1 real) no dan saldo negativo: saldo 0 y «pagada»; el exceso no se muestra", async () => {

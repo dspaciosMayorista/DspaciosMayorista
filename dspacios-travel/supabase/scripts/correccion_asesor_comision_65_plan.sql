@@ -6,11 +6,20 @@
 --   B. CORRECCIÓN (una transacción con un UPDATE acotado; termina en ROLLBACK y NO hace nada mientras la puerta de contabilidad esté en false)
 --   C. POSTCHECK  (SELECT, solo lectura, una sola consulta con columna `estado`)
 --
+-- REGLA DE LA LÍNEA 1 (dueño, 1-nov-2026, supera a la anterior de «mismo asesor» donde choquen): en estos contratos la comisión se paga a la
+-- persona de la LÍNEA 1 (la fila de menor id del contrato). Javier figura en la línea 2 porque ASISTIÓ, no como segundo comisionista.
+-- Consecuencias: (a) la línea 2 a nombre de Javier NO es una comisión suya → pertenece a la persona de la línea 1 (80→3, 81→33, 82→1, 83→1, 85→24, 89→28, 107→7, 137→37);
+-- (b) en MIN-00-0462 la línea 1 es Tatiana (#79, ficha 3): #79 NO se cambia a Javier (la asignación anterior 79→8 se RETIRÓ);
+-- (c) en 0476 y 0498 la línea 1 ya es Javier: no hay segundo comisionista; sus dos líneas son comisión y recobro del mismo asesor (el dueño: «una línea es comisión y la otra recobro
+-- del mismo asesor»), no un duplicado. (d) #80 (línea 2 de 0462, a nombre de Javier; total $142.494 y abono registrado $142.494) → ficha 3 (Tatiana): asignación CONFIRMADA por el dueño,
+-- pero EXCLUIDA del UPDATE hasta que Contabilidad concilie a quién se pagó ese abono (el destinatario sigue desconocido).
+--
 -- ASIGNACIÓN CONFIRMADA POR EL DUEÑO (fila → ficha; no se vuelve a pedir):
---   79→8 · 81→33 · 82→1 · 83→1 · 85→24 · 89→28 · 107→7 · fila 1 de MIN-00-0498→8.
+--   81→33 · 82→1 · 83→1 · 85→24 · 89→28 · 107→7 · fila 1 de MIN-00-0498→8.
 --   EXCLUIDAS POR CONCILIACIÓN (asignación confirmada, abono registrado, destinatario del pago sin conciliar; ninguna entra al bloque B ni al postcheck):
---     · fila 137 (MIN-00-0519 → ficha 37): abono registrado de $139.000 (= su total); precheck del 1-nov-2026. Antes decía $39.000: dato desactualizado.
---     · fila 135 (MIN-00-0519, hoy ficha NULL «YAQUELINE USUGA» → ficha 37): abono registrado de $351.852,16. Asignación 135→37 CONFIRMADA por el dueño («ambos siempre al asesor,
+--     · fila 80 (MIN-00-0462, hoy ficha 8 «JAVIER A VIEIRA P» → ficha 3 Tatiana): total $142.494 y abono registrado $142.494. Asignación 80→3 CONFIRMADA por el dueño (la comisión es de la línea 1).
+--     · fila 137 (MIN-00-0519 → ficha 37): total $139.000 y abono registrado $139.000 (antes decía $39.000: dato desactualizado).
+--     · fila 135 (MIN-00-0519, hoy ficha NULL «YAQUELINE USUGA» → ficha 37): total $351.852,16 y abono registrado $351.852,16. Asignación 135→37 CONFIRMADA por el dueño («ambos siempre al asesor,
 --       es decir el de Yaqueline ambos son de ella»); sigue EXCLUIDA porque el destinatario de ese abono no está conciliado. Solo lectura/documentación.
 --   Se reincorporan solo con conciliación contable + confirmación escrita del dueño. Las dos filas de MIN-00-0476 (100 y 101) ya corresponden a Javier (ficha 8): no cambian y el precheck las confirma.
 --
@@ -39,18 +48,20 @@
 with
 esperado(numero_contrato, asesor, primer_nombre) as (
   values ('MIN-00-0422','Paola','paola'), ('MIN-00-0432','Katherine Colorado','katherine'), ('MIN-00-0433','Katherine Colorado','katherine'),
-         ('MIN-00-0439','Juliana','juliana'), ('MIN-00-0462','Javier','javier'), ('MIN-00-0463','Marcela','marcela'),
+         ('MIN-00-0439','Juliana','juliana'), ('MIN-00-0462','Tatiana','tatiana'), ('MIN-00-0463','Marcela','marcela'),
          ('MIN-00-0476','Javier','javier'), ('MIN-00-0484','Sebastián','sebastian'), ('MIN-00-0498','Javier','javier'),
          ('MIN-00-0519','Yaqueline','yaqueline')
 ),
 correccion(fila_id, ficha_destino) as (
-  values (79::bigint, 8::bigint), (81, 33), (82, 1), (83, 1), (85, 24), (89, 28), (107, 7), (137, 37), (135, 37), (1, 8),
+  values (79::bigint, 3::bigint), (80, 3), (81, 33), (82, 1), (83, 1), (85, 24), (89, 28), (107, 7), (137, 37), (135, 37), (1, 8),
          (100, 8), (101, 8)   -- 0476: ya en Javier; se listan para confirmarlo (el UPDATE no las toca si ya están en la ficha)
 ),
--- Solo lectura: 137 y 135 se reportan EXCLUIDAS por conciliación; NO están en el bloque B.
+-- 79: línea 1 de 0462 (Tatiana, ficha 3): SIN_CAMBIO. 80, 135 y 137: asignación confirmada, EXCLUIDAS del UPDATE hasta conciliar el destinatario del abono.
+-- Solo lectura: 80, 137 y 135 se reportan EXCLUIDAS por conciliación; NO están en el bloque B.
 excluidas(fila_id, motivo) as (
-  values (137::bigint, 'asignación 137→37; abono registrado de $139.000; destinatario del pago sin conciliar por contabilidad'),
-         (135::bigint, 'asignación 135→37 confirmada por el dueño; abono registrado de $351.852,16; destinatario del pago sin conciliar por contabilidad')
+  values (80::bigint, 'asignación 80→3 (Tatiana) confirmada por el dueño; total $142.494 y abono registrado $142.494; destinatario del pago sin conciliar por contabilidad'),
+         (137::bigint, 'asignación 137→37 confirmada; total $139.000 y abono registrado $139.000; destinatario del pago sin conciliar por contabilidad'),
+         (135::bigint, 'asignación 135→37 confirmada por el dueño; total $351.852,16 y abono registrado $351.852,16; destinatario del pago sin conciliar por contabilidad')
 ),
 revision_contable_aprobada(fila_id) as (select null::bigint where false),   -- contabilidad agrega aquí las filas con abonos ya verificadas
 chequeo as (
@@ -107,9 +118,9 @@ order by 1;
 begin;
 with
 contabilidad_concilio(ok) as (values (false)),
--- Deliberadamente SIN las filas 137 y 135 (EXCLUIDAS por conciliación, ver cabecera): el UPDATE nunca las nombra.
+-- Deliberadamente SIN las filas 80, 137 y 135 (EXCLUIDAS por conciliación: asignación confirmada, destinatario del abono sin conciliar) y SIN la 79 (Tatiana, línea 1: no cambia): el UPDATE nunca las nombra.
 correccion(fila_id, ficha_destino) as (
-  values (79::bigint, 8::bigint), (81, 33), (82, 1), (83, 1), (85, 24), (89, 28), (107, 7), (1, 8)
+  values (81::bigint, 33::bigint), (82, 1), (83, 1), (85, 24), (89, 28), (107, 7), (1, 8)
 ),
 revision_contable_aprobada(fila_id) as (select null::bigint where false)
 update public.aliados_b2b b
@@ -132,14 +143,15 @@ rollback;   -- ← cambiar a COMMIT solo tras revisar el RETURNING
 with
 esperado(numero_contrato, asesor, primer_nombre) as (
   values ('MIN-00-0422','Paola','paola'), ('MIN-00-0432','Katherine Colorado','katherine'), ('MIN-00-0433','Katherine Colorado','katherine'),
-         ('MIN-00-0439','Juliana','juliana'), ('MIN-00-0462','Javier','javier'), ('MIN-00-0463','Marcela','marcela'),
+         ('MIN-00-0439','Juliana','juliana'), ('MIN-00-0462','Tatiana','tatiana'), ('MIN-00-0463','Marcela','marcela'),
          ('MIN-00-0476','Javier','javier'), ('MIN-00-0484','Sebastián','sebastian'), ('MIN-00-0498','Javier','javier'),
          ('MIN-00-0519','Yaqueline','yaqueline')
 ),
 -- Pegar aquí lo que imprimió el precheck: total_antes y abonado_antes de cada fila (sustituir los 0).
--- 137 y 135 no están (excluidas): mientras sigan sin corregir, la sección `contrato` mostrará 0519 como PENDIENTE; es lo esperado.
+-- 80, 135 y 137 no están (excluidas por conciliación). Tras corregir SOLO las siete filas del bloque B, la sección `contrato` seguirá mostrando 0462 (#80 sigue en la
+-- ficha 8 frente a #79 en la 3) y 0519 (#135 sin ficha y #137 en la 8) como PENDIENTE: es lo esperado, no una falla. Los otros ocho contratos deben salir OK.
 antes(fila_id, ficha_destino, total_antes, abonado_antes) as (
-  values (79::bigint, 8::bigint, 0::numeric, 0::numeric), (81, 33, 0, 0), (82, 1, 0, 0), (83, 1, 0, 0), (85, 24, 0, 0),
+  values (81::bigint, 33::bigint, 0::numeric, 0::numeric), (82, 1, 0, 0), (83, 1, 0, 0), (85, 24, 0, 0),
          (89, 28, 0, 0), (107, 7, 0, 0), (1, 8, 0, 0)
 ),
 positivas as (
