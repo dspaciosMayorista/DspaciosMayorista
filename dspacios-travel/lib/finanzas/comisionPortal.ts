@@ -17,6 +17,7 @@ import {
   type FilaComisionB2B,
   type VentaComisionAliado,
 } from "@/lib/finanzas/comisionB2B";
+import { filasEnRevisionB2B } from "@/lib/finanzas/revisionComisionB2B";
 
 type Admin = ReturnType<typeof createAdminClient>;
 
@@ -66,6 +67,13 @@ export async function comisionesDelPortal(
     return res;
   }
 
+  // Filas retenidas por revisión contable (migración 268): no se atribuyen a nadie. Sin lectura completa, no se muestra importe.
+  const enRevision = await filasEnRevisionB2B(admin);
+  if (!enRevision) {
+    for (const n of nums) res.set(n, null);
+    return res;
+  }
+
   // Documento de SU ficha: la evidencia de una fila sin ficha (no el nombre).
   let documentoFicha: string | null = null;
   if (perfil.aliadoId != null) {
@@ -76,11 +84,14 @@ export async function comisionesDelPortal(
   const ids: number[] = [];
   for (const c of contratos) {
     const num = c.numero_contrato;
-    const vis = comisionVisibleAliado(
-      filas.filter((f) => f.numero_contrato === num),
-      c,
-      { aliadoId: perfil.aliadoId, ...evidenciaSinFicha({ via: via.get(num), documentoFicha, nombreUsuario: perfil.nombre }) },
-    );
+    const usuario = { aliadoId: perfil.aliadoId, ...evidenciaSinFicha({ via: via.get(num), documentoFicha, nombreUsuario: perfil.nombre }) };
+    const delContrato = filas.filter((f) => f.numero_contrato === num);
+    // Si una fila en revisión habría sido suya, el contrato se muestra «en revisión» sin importe ni «Pagada»; si no, no se entera de ella.
+    if (comisionVisibleAliado(delContrato, c, usuario).ids.some((id) => enRevision.has(id))) {
+      res.set(num, { total: null, fuente: "filas", tipo: null, cobrable: false, ids: [], estado: "en_revision", importe: null });
+      continue;
+    }
+    const vis = comisionVisibleAliado(delContrato.filter((f) => !enRevision.has(f.id)), c, usuario);
     // El estado de `ventas` solo acompaña a un importe que sale de `ventas`;
     // el de las filas se calcula abajo por sus abonos (131).
     const estado = vis.fuente === "ventas" || vis.fuente === "descontada" ? (c.comision_estado ?? null) : null;

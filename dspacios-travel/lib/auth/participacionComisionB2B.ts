@@ -21,6 +21,7 @@
  */
 import { leerTodoConConteo, PAGINA_FILAS, type PaginaConConteo } from "@/lib/auth/fichaComisionManual";
 import { calcularComisionFila, type FilaComisionB2B } from "@/lib/finanzas/comisionB2B";
+import { filasEnRevisionB2B } from "@/lib/finanzas/revisionComisionB2B";
 import type { createAdminClient } from "@/lib/supabase/admin";
 
 type Admin = ReturnType<typeof createAdminClient>;
@@ -54,7 +55,11 @@ export async function contratosPorParticipacion(
   );
   if (!comisiones.completa) return { filas: [], completa: false };
 
-  const economicas = comisiones.filas.filter((f) => calcularComisionFila(f).totalPagar > 0);
+  // Una fila retenida por revisión contable no da participación (no se atribuye a nadie mientras siga retenida). Sin lectura completa: nada.
+  const enRevision = await filasEnRevisionB2B(admin);
+  if (!enRevision) return { filas: [], completa: false };
+
+  const economicas = comisiones.filas.filter((f) => !enRevision.has(f.id) && calcularComisionFila(f).totalPagar > 0);
   const nums = [...new Set(economicas.map((f) => f.numero_contrato))].filter((n) => !excluir.has(n));
   const filas: FilaParticipacion[] = [];
   for (let i = 0; i < nums.length; i += LOTE) {

@@ -14,6 +14,7 @@
 // REGLA DE LA LÍNEA 1 (dueño, 1-nov-2026): la comisión se paga a la persona de la línea 1 (menor id del contrato); Javier figura en la línea 2 porque asistió.
 // En 0462 la línea 1 es Tatiana (#79, ficha 3) y NO se cambia a Javier; #80 (Javier, línea 2; total y abono registrado de $142.494) → ficha 3: asignación CONFIRMADA, pero EXCLUIDA
 // del UPDATE hasta conciliar a quién se pagó su abono (destinatario desconocido). Estas pruebas no asignan ni cambian nada.
+// Estas fixtures NO traen marcas de revisión (comision_b2b_revision, migración 268): fijan el estado ANTERIOR a retener las diez filas. Con las marcas abiertas ver pruebas/revisionComision65.react.ts.
 // Estas pruebas fijan lo que el portal muestra HOY y no afirman que los pagos hayan llegado a nadie. #415 no excluye ids en el código.
 //
 // CORRECCIÓN: una versión anterior de esta prueba trataba la fila de Javier en MIN-00-0519 como una fila en CERO. Es falso:

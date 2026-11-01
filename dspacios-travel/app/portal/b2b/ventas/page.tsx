@@ -12,7 +12,7 @@ export const dynamic = "force-dynamic";
 
 const ESTADO_COMISION: Record<string, string> = {
   pendiente: "Pendiente", cuenta_cobro: "Cuenta de cobro", facturada: "Facturada", pagada: "Pagada",
-  parcial: "Abono parcial", descontada: "Descontada",
+  parcial: "Abono parcial", descontada: "Descontada", en_revision: "En revisión contable",
 };
 const AGENCIA: Record<string, string> = { mayorista: "Mayorista", minorista: "Minorista" };
 

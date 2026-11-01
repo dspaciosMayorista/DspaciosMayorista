@@ -332,3 +332,34 @@ No es una falla del plan: es el efecto esperado de las exclusiones. Esos dos con
 4. **#83 y #85** tienen dos abonos cada una: fechas y quién los registró (la consulta ya trae esa evidencia por fila).
 
 **Dato de ventas (no es de Contabilidad):** `ventas.aliado_id` de MIN-00-0462 no consta; decide si Javier ve #80 como contrato propio o como participación.
+
+---
+
+## 13. Conciliación aplazada: retención de diez filas en el portal
+
+**Decisión del dueño (1-nov-2026):** se aplaza la conciliación de las diez filas #1, #80, #81, #82, #83, #85, #89, #107, #135 y #137. No se ejecuta el UPDATE de §9 ni se cambian importes, abonos o fichas. #415 avanza; el cierre de la conciliación es una tarea posterior.
+
+### Qué se entrega y en qué PR
+- **PR de esquema (migración 268, aparte de #415):** tabla `comision_b2b_revision` con las diez filas y su ficha confirmada (informativa), más la auditoría de solo lectura `auditoria_revision_comision_65_solo_lectura.sql`. **No** incluye ninguna forma de levantar la retención: ni función ni instrucciones SQL.
+- **#415 (código):** una fila presente en esa tabla (a) no da «participación» (`contratosPorParticipacion`), (b) no suma en el importe/estado de un contrato (`comisionesDelPortal`; si habría sido de quien mira, el contrato sale «En revisión contable» sin importe ni «Pagada») y (c) no abre ni se cobra en la cuenta de cobro ni en su estado de cuenta de comisión (`resolverComisionB2B`). El código no conoce ids: la lista vive en los datos.
+- **Falla cerrado:** si la tabla no se puede leer (p. ej. la 268 no corrió) el portal no muestra comisión ni participación. Por eso la 268 va **antes** del código.
+
+### Qué verá cada persona con las diez filas retenidas (prueba `revisionComision65.react.ts`)
+| Persona | Antes (sin retención) | Con retención |
+|---|---|---|
+| Javier (ficha 8) | participación en 0422, 0432, 0433, 0439, 0462, 0463, 0484 y 0519, con saldo $0 y «Pagada» | ninguna participación; solo lo suyo sin retención: 0476 (#100, #101) y 0498 (#121) |
+| Tatiana (ficha 3) | 0462 con #79 | igual: #79 (la #80 nunca estuvo a su nombre) |
+| Línea 1 de cada contrato (33, 1, 24, 28, 7) | su línea 1 | igual |
+| Yaqueline (ficha 37) | nada de 0519 (#135 sin ficha) | igual |
+Cuenta de cobro por URL: Javier deja de abrir 0422/0432/… por las filas retenidas; de paso, en esos contratos decide el acceso la fila sin retención, no la «más reciente» (la de Javier). Límite: el personal interno tampoco ve la fila retenida en la cuenta de cobro; la revisión se hace con la auditoría.
+
+### Auditoría y verificación de la 268
+`auditoria_revision_comision_65_solo_lectura.sql` (solo lectura): por fila, contrato, línea, componente (aritmético: comisión / recobro / mixta), ficha actual, ficha confirmada, total, abonos, diferencia y estado `RETENIDA`. Su fila `VERIFICACION_OK` exige **exactamente** los ids 1, 80, 81, 82, 83, 85, 89, 107, 135 y 137 con la ficha confirmada 8, 3, 33, 1, 1, 24, 28, 7, 37 y 37, y ninguna retención de más; si no, `VERIFICAR` y lista lo que sobra o falta. Antes de la 268 sirve `conciliacion_asesor_comision_65_solo_lectura.sql`.
+
+### Cierre posterior (no incluido)
+Levantar una retención requerirá su propio diseño y entrega: comprobante, destinatario del pago, corrección financiera cuando corresponda (ficha y, si aplica, abonos) y prueba de permisos. Hasta entonces la tabla solo la escribe el administrador de la base de datos; quitar o vaciar una fila **vuelve a exponer esa fila con su ficha actual, que es la incorrecta**.
+
+### Orden para Preview (cada paso es una entrega distinta)
+1. **PR de esquema:** preflight `conciliacion_asesor_comision_65_solo_lectura.sql` → correr la 268 → auditoría: `VERIFICACION_OK` y 10 filas `RETENIDA`.
+2. **#415:** desplegar el Preview con la 268 ya aplicada y comprobar con las cuentas de Javier y de la ficha 3 la tabla de arriba. #415 sigue en borrador.
+3. No invertir el orden: con el código y sin la 268 el portal no muestra comisión.
