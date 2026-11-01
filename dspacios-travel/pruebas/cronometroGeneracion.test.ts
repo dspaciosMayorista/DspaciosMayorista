@@ -63,7 +63,7 @@ describe("lineaMedicionGeneracion", () => {
 describe("cableado en generarTarifario (código fuente)", () => {
   const raiz = join(dirname(fileURLToPath(import.meta.url)), "..");
   const todo = readFileSync(join(raiz, "app/(dashboard)/dashboard/paquetes/actions.ts"), "utf8").replace(/\r\n/g, "\n");
-  const ini = todo.indexOf("export async function generarTarifario(paqueteId: number): Promise<Result> {");
+  const ini = todo.indexOf("export async function generarTarifario(paqueteId: number, opciones: OpcionesGenerar = {}): Promise<Result> {");
   const fin = todo.indexOf("\nexport async function ", ini + 10);
   const cuerpo = todo.slice(ini, fin);
 

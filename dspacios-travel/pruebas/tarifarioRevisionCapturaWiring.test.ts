@@ -66,7 +66,7 @@ function cuerpoFuncion(fuenteCompleta: string, firmaOAncla: string): string {
 }
 
 describe("generarTarifario — NINGUNA lectura ocurre antes de capturar el token de generación (ronda 3: ni siquiera la moneda)", () => {
-  const cuerpo = cuerpoFuncion(paqueteActions, "export async function generarTarifario(paqueteId: number): Promise<Result> {");
+  const cuerpo = cuerpoFuncion(paqueteActions, "export async function generarTarifario(paqueteId: number, opciones: OpcionesGenerar = {}): Promise<Result> {");
   const idxIniciar = cuerpo.indexOf('sb.rpc("iniciar_generacion_tarifario"');
 
   test('existe exactamente UNA llamada a iniciar_generacion_tarifario dentro de generarTarifario', () => {
@@ -130,7 +130,7 @@ describe("generarTarifario — NINGUNA lectura ocurre antes de capturar el token
 });
 
 describe("generarTarifario — moneda es un dato DERIVADO, persistido DENTRO de publicar_tarifario_resultado (auditoría de Fase 1, ronda 3)", () => {
-  const cuerpo = cuerpoFuncion(paqueteActions, "export async function generarTarifario(paqueteId: number): Promise<Result> {");
+  const cuerpo = cuerpoFuncion(paqueteActions, "export async function generarTarifario(paqueteId: number, opciones: OpcionesGenerar = {}): Promise<Result> {");
 
   test("no existe ninguna escritura directa de armado_paquetes.moneda desde generarTarifario — la única vía es p_moneda del RPC de publicación", () => {
     assert.doesNotMatch(cuerpo, /\.from\("armado_paquetes"\)\.update\(\{\s*moneda/, "no debe haber un UPDATE directo de moneda — ahora se persiste dentro del RPC de publicación");
@@ -145,7 +145,7 @@ describe("generarTarifario — moneda es un dato DERIVADO, persistido DENTRO de 
 });
 
 describe("generarTarifario — mensajes técnicos NUNCA se persisten crudos en tarifario_error (auditoría de Fase 1, hallazgos P2 de las rondas 2 y 3)", () => {
-  const cuerpo = cuerpoFuncion(paqueteActions, "export async function generarTarifario(paqueteId: number): Promise<Result> {");
+  const cuerpo = cuerpoFuncion(paqueteActions, "export async function generarTarifario(paqueteId: number, opciones: OpcionesGenerar = {}): Promise<Result> {");
 
   test("existe un mensaje FIJO de módulo para errores técnicos (ronda 3: compartido también por el fallo de iniciar_generacion_tarifario, ANTES de que exista token)", () => {
     // Ronda 3: MENSAJE_ERROR_TECNICO_TARIFARIO se movió a nivel de MÓDULO
@@ -180,7 +180,7 @@ describe("generarTarifario — mensajes técnicos NUNCA se persisten crudos en t
 
   test("ronda 3: el fallo de iniciar_generacion_tarifario (eGen) nunca expone .message ni intenta marcar la generación como fallida — todavía no existe ningún token que marcar", () => {
     const idxIniciar = cuerpo.indexOf('sb.rpc("iniciar_generacion_tarifario"');
-    const idxSiguienteConst = cuerpo.indexOf("const generacion =", idxIniciar);
+    const idxSiguienteConst = cuerpo.indexOf("generacion = genRows[0].generacion", idxIniciar);   // con la reanudación (publicación por lotes) la generación se asigna en la rama «nueva» del if
     assert.notEqual(idxSiguienteConst, -1);
     const bloqueFalloInicio = cuerpo.slice(idxIniciar, idxSiguienteConst);
     assert.doesNotMatch(bloqueFalloInicio, /return \{ ok: false, error: eGen/, "eGen.message no debe devolverse directo");

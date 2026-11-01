@@ -2698,6 +2698,9 @@ export type Database = {
           precio_pvp_menor2: number | null;
           precio_pvp_sin_fijo: number | null;
           precio_pvp_menor2_sin_fijo: number | null;
+          generacion: number | null;
+          revision_fuente: number | null;
+          lote: number | null;
         };
         Insert: {
           id?: number;
@@ -2705,6 +2708,10 @@ export type Database = {
           precio_pvp_menor2?: number | null;
           precio_pvp_sin_fijo?: number | null;
           precio_pvp_menor2_sin_fijo?: number | null;
+          // Publicación por lotes (migración 260): generación, revisión de fuente con la que se calculó y lote. El neto de hotel NO es columna de esta tabla.
+          generacion?: number | null;
+          revision_fuente?: number | null;
+          lote?: number | null;
           moneda?: string;
           salida_id?: number | null;
           paquete_nombre?: string | null;

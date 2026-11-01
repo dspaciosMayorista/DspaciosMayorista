@@ -8,7 +8,7 @@
 // Import relativo/sin alias: se prueba directo con `node --test`.
 // ─────────────────────────────────────────────────────────────────────────
 
-export type ResultadoGeneracion = "ok" | "descartado" | "fallo_negocio" | "fallo_tecnico" | "timeout";
+export type ResultadoGeneracion = "ok" | "pendiente" | "descartado" | "fallo_negocio" | "fallo_tecnico" | "timeout";
 
 /** SQLSTATE 57014 (query_canceled) o el texto de statement_timeout / lock_timeout. Acepta el error de PostgREST o solo su mensaje. */
 export function esTimeoutPostgres(e: unknown): boolean {

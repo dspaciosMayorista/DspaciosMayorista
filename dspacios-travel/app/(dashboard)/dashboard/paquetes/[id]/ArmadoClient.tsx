@@ -14,12 +14,13 @@ import { ColaSeleccion, bloqueoGenerar, efectivos, estadoFila, type EstadoFila }
 import { agruparPorCategoriaVigenciaRegimen, type FilaDetalle, type GrupoTarifa } from "@/lib/paquetes/tarifarioGrupos";
 import { Input } from "@/components/ui/input";
 import { formatMoneda } from "@/lib/utils";
+import { ejecutarReanudable } from "@/lib/tarifario/bucleReanudable";
 import { filasUnidades, resumenUnidades, ROL_NETA_BLOQUEO, ROL_REVENTA_BLOQUEO, type EntradaUnidad, type MonedaMontaje, type PublicacionMontaje } from "@/lib/paquetes/unidadesMontaje";
 import { ConfigForm } from "../ConfigForm";
 import { AvisosTarifario } from "./AvisosTarifario";
 import { SalidasDinamicasEditor, type SalidaDinamica } from "./SalidasDinamicasEditor";
 import {
-  setVuelo, setTodosVuelos, setHotel, setTodosHoteles, setServicio, setServicios, generarTarifario,
+  setVuelo, setTodosVuelos, setHotel, setTodosHoteles, setServicio, setServicios, generarTarifario, continuarPublicacionTarifario, estadoPublicacionTarifario,
   getTarifasHotel, setHotelFiltros, setHotelPrioridad, type TarifaHotelPreview, type TarifaUnidadPreview,
 } from "../actions";
 import { setEmpaquetado } from "../../vuelos/empaquetados-actions";
@@ -119,6 +120,8 @@ export function ArmadoClient(props: {
   // #101 — pestaña inicial (`?tab=`) y estado del tarifario (armado_paquetes.tarifario_estado / tarifario_error /
   // tarifario_snapshot_publicable). Opcionales: sin ellos se deduce de si hay filas publicadas.
   pestanaInicial?: string | null;
+  // Publicación por lotes que quedó a medias (p. ej. se cerró el navegador): lo cargado está invisible y lo publicado antes sigue intacto; se ofrece continuarla.
+  publicacionPendiente?: { faltan: number; total: number; automatica: boolean } | null;
   tarifarioEstado?: string | null;
   tarifarioError?: string | null;
   /** Migración 256: qué se dejó de publicar por falta de vigencia (incluidos por salida, opcionales ocultos/parciales). */
@@ -248,17 +251,42 @@ export function ArmadoClient(props: {
   }
 
   const bloqueoGeneracion = bloqueoGenerar(snap);
-  function generar() {
+  // Publicación REANUDABLE: si no cabe en una petición, el servidor responde «pendiente» y se continúa con la siguiente. Si la pantalla se cierra entre peticiones el bucle simplemente
+  // se detiene (no hay nada que deshacer: lo cargado queda invisible y lo publicado antes sigue completo); al volver a abrir se ofrece «Continuar publicación».
+  const montado = useRef(true);
+  useEffect(() => { montado.current = true; return () => { montado.current = false; }; }, []);
+  function correr(inicial: () => ReturnType<typeof generarTarifario>) {
     if (bloqueoGenerar(cola.instantanea())) return; // nunca con guardados pendientes o fallidos
     setMsg("");
     setAvisoGenerar(null);
     start(async () => {
-      const r = await generarTarifario(props.paqueteId);
-      if (r.ok) { setMsg(`Tarifario generado: ${r.id ?? 0} tarifas publicadas.`); setAvisoGenerar(r.aviso ?? null); }
+      // Si todos los lotes ya están en la base la publicación avanza sola: aquí solo se consulta (barato). Si faltan lotes por preparar hay que volver a calcular y subirlos.
+      const res = await ejecutarReanudable(inicial, async (previa) => {
+        if (previa.ok && previa.pendiente?.automatica) { await new Promise((ok) => setTimeout(ok, 4000)); return estadoPublicacionTarifario(props.paqueteId); }
+        return continuarPublicacionTarifario(props.paqueteId);
+      }, {
+        onProgreso: (p) => setMsg(p.automatica
+          ? `Publicando en segundo plano… faltan ${p.faltan} de ${p.total} lotes. Puedes cerrar esta pantalla: continúa sola.`
+          : `Preparando la publicación… faltan ${p.faltan} de ${p.total} lotes. Si cierras esta pantalla vuelve a pulsar «Generar tarifario».`),
+        interrumpido: () => !montado.current,
+      });
+      if (!res.terminado) {
+        // Pantalla cerrada: nada más que hacer aquí. Si fue el tope de consultas, la publicación sigue sola en la base: se dice, en vez de dejar congelado el último avance.
+        if (res.motivo === "tope" && montado.current) setMsg("La publicación sigue en segundo plano. Actualiza la pantalla en unos minutos para ver el resultado.");
+        return;
+      }
+      const r = res.respuesta;
+      if (r.ok) {
+        // «pendiente»/sin filas: el aviso es el propio mensaje; con tarifas publicadas el aviso (omisiones, diagnóstico) va aparte y persiste.
+        setMsg(r.aviso && !r.id ? r.aviso : `Tarifario generado: ${r.id ?? 0} tarifas publicadas.`);
+        setAvisoGenerar(r.id ? r.aviso ?? null : null);
+      }
       else setMsg(`Error: ${r.error}`);
       refrescar();
     });
   }
+  function generar() { correr(() => generarTarifario(props.paqueteId, { porLotes: true })); }
+  function continuarPublicacion() { correr(() => continuarPublicacionTarifario(props.paqueteId)); }
 
   // ── Pestañas (#101) ──────────────────────────────────────────────────────
   // La pestaña activa vive en el estado (sobrevive a `router.refresh()` al regenerar) y se refleja en `?tab=` con
@@ -645,6 +673,12 @@ export function ArmadoClient(props: {
                   {pending ? "Generando…" : snap.pendientes > 0 ? "Guardando cambios…" : "Generar tarifario"}
                 </Button>
               </div>
+              {props.publicacionPendiente && !pending && !msg && (
+                <p className="mt-2 text-sm text-amber-700">
+                  {props.publicacionPendiente.automatica ? "Hay una publicación del tarifario en curso: continúa sola en segundo plano" : "Hay una publicación del tarifario a medias"} (faltan {props.publicacionPendiente.faltan} de {props.publicacionPendiente.total} lotes). Lo publicado antes sigue visible.{" "}
+                  <button type="button" className="underline" onClick={continuarPublicacion}>Continuar publicación</button>
+                </p>
+              )}
               {bloqueoGeneracion && <p className="mt-2 text-sm text-amber-700" role="status" data-testid="bloqueo-generar">{bloqueoGeneracion}</p>}
               {msg && <p className="mt-2 text-sm text-gray-600">{msg}</p>}
             </div>

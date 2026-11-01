@@ -19,6 +19,8 @@ import { adaptarTarifaAlojamientoPersistida } from "@/lib/calc/tarifaAlojamiento
 import { hoyISO, toTemporadaRango } from "@/lib/calc/paquetes";
 
 export const dynamic = "force-dynamic";
+// Las Server Actions de esta pantalla regeneran tarifarios (por lotes) tras guardar: el maxDuration de la página rige su duración. Literal igual a VENTANA_PETICION_MS (lib/tarifario/controladorPublicacion.ts).
+export const maxDuration = 60;
 
 export default async function HotelDetallePage({ params, searchParams }: { params: Promise<{ id: string }>; searchParams: Promise<{ tab?: string | string[] }> }) {
   const { id } = await params;

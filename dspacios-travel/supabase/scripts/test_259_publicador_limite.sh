@@ -79,4 +79,11 @@ PUERTO="$(docker port "$REST" 3000/tcp | head -n1 | sed 's/.*://')"
 for i in $(seq 1 40); do curl -s -m 2 -o /dev/null "http://127.0.0.1:$PUERTO/" && break; sleep 1; done
 
 winpath() { if command -v cygpath >/dev/null 2>&1; then cygpath -m "$1"; else printf "%s" "$1"; fi; }
-CT="$CT" DB="$DB" URL="http://127.0.0.1:$PUERTO/rpc/" SECRET="$SECRETO" MIGRACION="$(winpath "$MIGRACION")" node "$(winpath "$AQUI/test_259_publicador_limite.mjs")"
+# Recorridos de la publicación por lotes (migración 260), con el generador REAL (Server Action) y PostgREST+Postgres reales; se lanzan desde dspacios-travel/ (necesitan mocks de módulos y el alias @/):
+#   RECORRIDO=1  test_recorrido_73.mjs → bandera ENCENDIDA (activación, visibilidad completa, sin mezcla con la generación anterior, composición 258) y equivalencia con el publicador monolítico (bandera apagada).
+#   RUTA=1       test_260_ruta.mjs     → la ruta /api/cron/publicacion-tarifario (respaldo sin pg_cron).
+# Ambos aplican la 259 y la 260 por su cuenta sobre la base nueva.
+SCRIPT_NODE="test_259_publicador_limite.mjs"; NODE_FLAGS=""
+if [ "${RECORRIDO:-}" = 1 ]; then SCRIPT_NODE="test_recorrido_73.mjs"; NODE_FLAGS="--experimental-test-module-mocks --experimental-loader ./pruebas/support/aliasLoader.mjs"; fi
+if [ "${RUTA:-}" = 1 ]; then SCRIPT_NODE="test_260_ruta.mjs"; NODE_FLAGS="--experimental-test-module-mocks --experimental-loader ./pruebas/support/aliasLoader.mjs"; fi
+CT="$CT" DB="$DB" URL="http://127.0.0.1:$PUERTO/rpc/" SECRET="$SECRETO" MIGRACION="$(winpath "$MIGRACION")" PROTOTIPO="$(winpath "$APP/supabase/migrations/20260601000260_publicacion_tarifario_por_lotes.sql")" APP="$(winpath "$APP")" node $NODE_FLAGS "$(winpath "$AQUI/$SCRIPT_NODE")"

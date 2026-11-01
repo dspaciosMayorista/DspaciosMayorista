@@ -31,6 +31,8 @@ const ACCIONES_PAQUETES = datos(`
   export async function setServicio(...a) { reg('setServicio', a); return ${G}.respServicio(a); }
   export async function setServicios(...a) { reg('setServicios', a); return ${G}.respLote(a); }
   export async function generarTarifario(...a) { reg('generarTarifario', a); return { ok: true, id: 3 }; }
+  export async function continuarPublicacionTarifario() { return { ok: true }; }
+  export async function estadoPublicacionTarifario() { return { ok: true }; }
   export async function getTarifasHotel() { return { ok: true, modelo: 'persona', categorias: [], regimenes: [], tarifas: [] }; }
   export async function setHotelFiltros() { return { ok: true }; }
   export async function setHotelPrioridad() { return { ok: true }; }
@@ -421,7 +423,7 @@ test("Generar tarifario llama a la acción de siempre y conserva la pestaña (es
   const boton = [...raiz.querySelectorAll("button")].find((b) => /^Generar tarifario$/.test((b.textContent ?? "").trim()))!;
   await pulsar(boton);
   await React.act(async () => { await new Promise((r) => setImmediate(r)); });
-  assert.deepEqual(p101.llamadas.filter(([n]) => n === "generarTarifario").map(([, a]) => a), [[7]]);
+  assert.deepEqual(p101.llamadas.filter(([n]) => n === "generarTarifario").map(([, a]) => a), [[7, { porLotes: true }]]);   // la pantalla pide la publicación por lotes (reanudable)
   assert.ok(p101.refrescos >= 1, "refresca los datos del servidor");
   assert.equal(activa(raiz), "Tarifario resultado", "sigue en la misma pestaña");
   assert.equal(new URL(window.location.href).searchParams.get("tab"), "tarifario");

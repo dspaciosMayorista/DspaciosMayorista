@@ -9,6 +9,8 @@ import { Info } from "lucide-react";
 import { paquetesConTarifarioAnteriorAInfante } from "./actions";
 
 export const dynamic = "force-dynamic";
+// Las Server Actions de esta pantalla regeneran tarifarios (por lotes) tras guardar: el maxDuration de la página rige su duración. Literal igual a VENTANA_PETICION_MS (lib/tarifario/controladorPublicacion.ts).
+export const maxDuration = 60;
 
 const MSG_ERROR_ESTADO_PUBLICACION =
   "No fue posible cargar el estado de publicación de los paquetes. Intenta nuevamente en unos segundos.";

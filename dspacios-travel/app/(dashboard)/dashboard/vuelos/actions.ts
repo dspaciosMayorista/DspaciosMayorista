@@ -594,7 +594,7 @@ export async function eliminarBloqueo(id: number): Promise<Result> {
 
   const { error } = await sb.rpc("eliminar_bloqueo", { p_bloqueo_id: id });
   if (error) return { ok: false, error: mensajeErrorRpc(error).error };
-  for (const pid of paqIds) { try { await generarTarifario(pid); } catch { /* sigue */ } }
+  { const inicioRegen = Date.now(); for (const pid of paqIds) { try { await generarTarifario(pid, { porLotes: true, segundoPlano: true, inicioMs: inicioRegen }); } catch { /* sigue */ } } }
   revalidatePath("/dashboard/vuelos");
   return { ok: true };
 }

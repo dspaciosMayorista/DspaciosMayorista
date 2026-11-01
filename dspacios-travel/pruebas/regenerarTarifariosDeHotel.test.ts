@@ -82,8 +82,8 @@ test("regenerarTarifariosDeHotel NO acepta un cliente Supabase inyectado — un 
   const cuerpo = cuerpoDeFuncion("regenerarTarifariosDeHotel");
   assert.match(
     cuerpo,
-    /export async function regenerarTarifariosDeHotel\(hotelId: number\): Promise<void>/,
-    "la firma debe ser exactamente (hotelId: number) — no debe volver a ganar un segundo parámetro tipo `sbInyectado`"
+    /export async function regenerarTarifariosDeHotel\(hotelId: number, inicioMs\?: number\): Promise<void>/,
+    "la firma debe ser (hotelId, inicioMs?: number) — el único segundo parámetro permitido es el instante de inicio de la acción que llama (ventana compartida de las regeneraciones por lotes); nunca un cliente tipo `sbInyectado`"
   );
   assert.match(
     cuerpo,

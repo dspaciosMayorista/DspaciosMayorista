@@ -1,4 +1,5 @@
 import { createClient } from "@/lib/supabase/server";
+import { leerPublicacionPendiente, publicacionPorLotesActiva, type RpcCliente } from "@/lib/tarifario/puertoSupabase";
 import type { ComponentProps } from "react";
 import Link from "next/link";
 import { notFound } from "next/navigation";
@@ -9,6 +10,9 @@ import { cargarFuentesMoneda90 } from "@/lib/reservar/fuentesMoneda90";
 import { evaluarPublicacion90, mensajeEvaluacion90, textoEstadoTrm90 } from "@/lib/reservar/monedaPublicacion90";
 
 export const dynamic = "force-dynamic";
+// Duración máxima de las Server Actions de esta pantalla (Next: el `maxDuration` de la página rige las acciones que usa). 60 s es válido en cualquier configuración de Vercel; debe
+// ser igual a VENTANA_PETICION_MS de lib/tarifario/controladorPublicacion.ts (lo exige pruebas/publicacionLotesCableado.test.ts). Subirlo solo tras confirmar el plan/Fluid del proyecto.
+export const maxDuration = 60;
 
 export default async function PaqueteDetallePage({
   params,
@@ -24,6 +28,10 @@ export default async function PaqueteDetallePage({
   const pestanaInicial = Array.isArray(tabParam) ? tabParam[0] : tabParam;
   const paqueteId = Number(id);
   const sb = await createClient();
+  // Publicación por lotes a medias (apagada por defecto): se ofrece «Continuar publicación»; lo publicado antes sigue visible.
+  const pendienteLotes = publicacionPorLotesActiva() ? await leerPublicacionPendiente(sb as unknown as RpcCliente, paqueteId) : null;
+  // Una publicación «fallida» no se reanuda (el error ya se muestra con el estado del paquete): hay que volver a generar.
+  const publicacionPendiente = pendienteLotes && pendienteLotes.colaEstado !== "fallida" ? { faltan: pendienteLotes.faltan, total: pendienteLotes.total, automatica: pendienteLotes.enCola } : null;
 
   const { data: pq } = await sb
     .from("armado_paquetes")
@@ -252,6 +260,7 @@ export default async function PaqueteDetallePage({
         publicacionMontaje={publicacionMontaje}
         textoTrmMontaje={textoTrmMontaje}
         pestanaInicial={pestanaInicial ?? null}
+        publicacionPendiente={publicacionPendiente}
         tarifarioEstado={(pq as { tarifario_estado?: string | null }).tarifario_estado ?? null}
         tarifarioError={(pq as { tarifario_error?: string | null }).tarifario_error ?? null}
         tarifarioDiagnostico={(pq as { tarifario_diagnostico?: string | null }).tarifario_diagnostico ?? null}

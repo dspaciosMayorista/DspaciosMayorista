@@ -6,6 +6,10 @@ import type { Database, Json } from "@/types/database";
 import { columnasProcedencia } from "@/lib/tarifario/procedenciaTarifario";
 import { contarPorModulo, crearCronometro, esTimeoutPostgres, lineaMedicionGeneracion, type ResultadoGeneracion } from "@/lib/tarifario/cronometroGeneracion";
 import { compactarFilasPublicacion } from "@/lib/tarifario/filasPublicacion";
+import { publicarPorLotes } from "@/lib/tarifario/controladorPublicacion";
+import { urlRuta } from "@/lib/tarifario/continuacionPublicacion";
+import { composicionDeManifiesto } from "@/lib/tarifario/composicionManifiesto";
+import { leerPublicacionPendiente, publicacionPorLotesActiva, puertoSupabase, type RpcCliente } from "@/lib/tarifario/puertoSupabase";
 import {
   noches as calcNoches,
   liquidarHotelNochesConTemporadas,
@@ -65,7 +69,28 @@ import { lineasDeTexto } from "@/lib/tarifario/descripcionPaquete";
 import { diagnosticoDisponibilidad, etiquetaDisponibilidad, type OpcionalOculto, type OpcionalParcial, type SalidaConIncluidosOmitidos, type SalidaOmitida } from "@/lib/tarifario/disponibilidadServicios";
 import { cargarVigenciasServicios } from "@/lib/reservar/temporadasServicio";
 
-type Result = { ok: true; id?: number; aviso?: string } | { ok: false; error: string };
+type Result = { ok: true; id?: number; aviso?: string; pendiente?: { faltan: number; total: number; automatica: boolean } } | { ok: false; error: string };
+// reanudar = continuar la publicación por lotes que quedó pendiente (misma generación y revisión capturadas por su manifiesto) en vez de pedir una generación nueva.
+/** `porLotes`: publica por lotes (migración 260) si TARIFARIO_PUBLICACION_POR_LOTES=1. Una vez que todos los lotes están en la base la publicación continúa SOLA (trabajador de la base), así que
+ * también la piden las regeneraciones en segundo plano tras editar un hotel, un servicio o un vuelo.
+ * `inicioMs`: instante en que empezó la ACCIÓN que llama (varias regeneraciones en bucle comparten una sola ventana `maxDuration`).
+ * `segundoPlano`: nadie volverá a pedir los lotes que falten por preparar → si el presupuesto no alcanza para dejarlos todos en la base se marca el fallo (no queda «recalculando» en falso). */
+type OpcionesGenerar = { reanudar?: boolean; porLotes?: boolean; inicioMs?: number; segundoPlano?: boolean };
+/** Regeneración disparada por OTRA acción (editar un hotel, un servicio, un vuelo, una salida): por lotes, sin pantalla que continúe (la base sigue sola) y con la ventana de la acción que llama. */
+/** Empujón inmediato a la continuación sin navegador: tras responder, llama a /api/cron/publicacion-tarifario (que corre el trabajador de la base y se encadena mientras quede cola). Con pg_cron habilitado es redundante e inofensivo. */
+async function empujarContinuacion() {
+  const secret = process.env.CRON_SECRET;
+  if (!secret) return;   // sin secreto la ruta rechaza todo; la cola la sigue atendiendo pg_cron o el cron diario
+  try {
+    // Import dinámico: `next/server` solo existe dentro de Next; así las pruebas que importan estas acciones fuera de Next siguen cargando.
+    const { after } = await import("next/server");
+    after(async () => {
+      try { await fetch(urlRuta(), { headers: { authorization: `Bearer ${secret}`, "x-cadena": "0" }, cache: "no-store" }); }
+      catch (e) { console.error("generarTarifario: no se pudo empujar la continuación:", e instanceof Error ? e.message : e); }
+    });
+  } catch { /* fuera de una petición (pruebas): nada que empujar */ }
+}
+const enSegundoPlano = (inicioMs: number = Date.now()): OpcionesGenerar => ({ porLotes: true, segundoPlano: true, inicioMs });
 const oNull = (s: string | null | undefined) => (s && s.trim() !== "" ? s.trim() : null);
 const dNull = (s: string | null | undefined) => (s && s.trim() !== "" ? s : null);
 
@@ -763,7 +788,8 @@ export async function setServicios(paqueteId: number, items: ServicioLoteItem[],
 const MENSAJE_ERROR_TECNICO_TARIFARIO =
   "No se pudo generar el tarifario por un error técnico. Se registró el detalle en los registros del servidor para revisión.";
 
-export async function generarTarifario(paqueteId: number): Promise<Result> {
+export async function generarTarifario(paqueteId: number, opciones: OpcionesGenerar = {}): Promise<Result> {
+  const inicioAccion = opciones.inicioMs ?? Date.now();   // la ventana de la petición (maxDuration) se cuenta desde aquí
   const sb = await createClient();
 
   // Medición por etapas (SOLO diagnóstico: no cambia el cálculo ni la publicación). Cada intento deja UNA línea en los logs del servidor con paquete,
@@ -801,6 +827,16 @@ export async function generarTarifario(paqueteId: number): Promise<Result> {
   // Por eso ya no hace falta ninguna lectura antes de este punto: el token
   // es literalmente la primera operación de la función.
   cron.etapa("iniciar_generacion");
+  const porLotes = (opciones.porLotes === true || opciones.reanudar === true) && publicacionPorLotesActiva();
+  let generacion: number;
+  let revisionCapturada: number;
+  if (opciones.reanudar) {
+    // Reanudar: NO se pide una generación nueva. Se continúa la vigente con la revisión que fijó su manifiesto; si lo recalculado ya no coincide, el manifiesto lo rechaza.
+    const pend = porLotes ? await leerPublicacionPendiente(sb as unknown as RpcCliente, paqueteId) : null;
+    if (!pend) return { ok: true, aviso: "No hay una publicación pendiente." };
+    generacion = pend.generacion;
+    revisionCapturada = pend.revisionCapturada;
+  } else {
   const { data: genRows, error: eGen } = await sb.rpc("iniciar_generacion_tarifario", { p_paquete_id: paqueteId });
   if (eGen || !genRows || !genRows.length) {
     medir(esTimeoutPostgres(eGen) ? "timeout" : "fallo_tecnico");
@@ -811,8 +847,9 @@ export async function generarTarifario(paqueteId: number): Promise<Result> {
     if (eGen) console.error(`generarTarifario: iniciar_generacion_tarifario falló (paquete_id=${paqueteId}): ${eGen.message}`);
     return { ok: false, error: MENSAJE_ERROR_TECNICO_TARIFARIO };
   }
-  const generacion = genRows[0].generacion;
-  const revisionCapturada = genRows[0].revision_capturada;
+  generacion = genRows[0].generacion;
+  revisionCapturada = genRows[0].revision_capturada;
+  }
   med.generacion = generacion;
   // Best-effort: si marcar el fallo en armado_paquetes también falla, nunca
   // debe ocultar ni reemplazar el error de negocio/técnico real que la
@@ -1094,7 +1131,7 @@ export async function generarTarifario(paqueteId: number): Promise<Result> {
   const tarifasPorHotel = new Map<number, TarifaRow[]>();
   if (hotelIds.length) {
     const [{ data: temps }, { data: tarifas }] = await Promise.all([
-      sb.from("hotel_temporadas").select("hotel_id, nombre, fecha_inicio, fecha_fin, prioridad, compra_inicio, compra_fin, tipo, descuento_valor, rangos, blackouts, regimen_restringido").in("hotel_id", hotelIds),
+      sb.from("hotel_temporadas").select("hotel_id, nombre, fecha_inicio, fecha_fin, prioridad, compra_inicio, compra_fin, tipo, descuento_valor, rangos, blackouts, regimen_restringido").in("hotel_id", hotelIds).order("orden").order("id"),
       sb.from("tarifa_hotel").select("*").in("hotel_id", hotelIds),
     ]);
     for (const t of temps ?? []) {
@@ -1110,7 +1147,8 @@ export async function generarTarifario(paqueteId: number): Promise<Result> {
     }
   }
 
-  type ResultadoInsert = Database["public"]["Tables"]["tarifario_resultado"]["Insert"];
+  // `neto_hotel` NO es columna de tarifario_resultado: viaja en el payload y la base lo guarda aparte (tarifario_resultado_neto, migración 260) para la invalidación exacta.
+  type ResultadoInsert = Database["public"]["Tables"]["tarifario_resultado"]["Insert"] & { neto_hotel?: number | null };
   const filas: ResultadoInsert[] = [];
   med.filas = filas; // la medición cuenta las filas en el momento de registrar (no copia ni modifica el arreglo)
 
@@ -1263,7 +1301,7 @@ export async function generarTarifario(paqueteId: number): Promise<Result> {
         let hayHabitacion = false;
         let hayInfante = false;
         let procedenciaHab: ReturnType<typeof columnasProcedencia> | null = null;
-        const publicarFila = (acom: Acomodacion, costoHotel: number, procedencia: ReturnType<typeof columnasProcedencia>) => {
+        const publicarFila = (acom: Acomodacion, costoHotel: number, procedencia: ReturnType<typeof columnasProcedencia>, netoHotelExacto: number | null = null) => {
           const esRoom = acom !== "nino" && acom !== "nino2" && acom !== "infante";
           const aporteHotel = marcar(aMonedaOferta(costoHotel, monedaHotelOrigen), pctMk); // hotel siempre con mk (en modo 63: neto × TRM primero)
           const precioMenor2Normal = esRoom ? null : redondearCentavos63(precioMenorDeDos({ aporteHotel, aporteServiciosMenor: aporteServMenor, feeInfante, moneda: monedaHotel }));
@@ -1292,6 +1330,9 @@ export async function generarTarifario(paqueteId: number): Promise<Result> {
             noches: numNoches,
             fecha_ida: fechaIda,
             fecha_regreso: fechaRegreso,
+            // Neto total de hotel del MOTOR (moneda del hotel, antes de markup) de una estadía fija noche por noche: la invalidación exacta de la base lo compara con su propio
+            // recálculo. NULL en «desde» (porción: mejor noche de una ventana) y en la fila de infante sintética: no verificables → se ocultan por prudencia si su clave cambia.
+            neto_hotel: netoHotelExacto,
             // Infante con PVP fijo (sin cargo de vuelo/servicios): el precio completo es el fijo; sin vuelo no hay base no comisionable.
             base_comisionable: acom === "infante" && fijoMayor2 != null ? fijoMayor2 : t.baseComisionable,
             impuesto: acom === "infante" && fijoMayor2 != null ? 0 : t.impuesto,
@@ -1341,7 +1382,7 @@ export async function generarTarifario(paqueteId: number): Promise<Result> {
           if (esRoom && costoHotel <= 0) continue;
           if (esRoom) { hayHabitacion = true; procedenciaHab = procedenciaHab ?? procedencia; }
           if (acom === "infante") hayInfante = true;
-          publicarFila(acom, costoHotel, procedencia);
+          publicarFila(acom, costoHotel, procedencia, masBarato ? null : costoHotel);
         }
         // Infante (migración 226): un hotel sin tarifa de infante para este combo NO
         // deja al menor de 2 años gratis en silencio — se publica la fila con hotel
@@ -1735,7 +1776,60 @@ export async function generarTarifario(paqueteId: number): Promise<Result> {
   cron.etapa("publicar");
   // Mismo contenido, menos bytes (sin claves null: el servidor trata clave ausente = null). Ver lib/tarifario/filasPublicacion.ts.
   const filasPublicar = compactarFilasPublicacion(filas);
-  const { data: publicado, error: ePublicar } = modo63
+  // Diagnóstico de disponibilidad (migración 256): se guarda junto a la publicación (la RPC lo borra en cada publicación y solo lo escribe si esta sigue
+  // siendo la vigente). Si falla el registro NO se revierte nada —las filas ya son las correctas—, pero se avisa en la respuesta para que no pase inadvertido.
+  // El texto manual «Incluye» no se modifica; se avisa qué líneas nombran servicios omitidos (la presentación por salida las retira o no las da por confirmadas).
+  let lineasIncluyeAfectadas: { retiradas: string[]; noConfirmadas: string[] } | undefined;
+  if (incluidosOmitidos.length) {
+    const omitidosIds = new Map<number, string>();
+    for (const sa of incluidosOmitidos) for (const x of sa.servicios) omitidosIds.set(x.servicioId, x.servicio);
+    const todos = new Map<number, string>();
+    for (const s of servicios) if (s.incluido as boolean) todos.set(s.servicio_id, (s.servicios_adicionales as unknown as { nombre?: string | null } | null)?.nombre ?? `#${s.servicio_id}`);
+    const pres = presentarIncluye({
+      lineas: lineasDeTexto((pq as { programa_incluye?: string | null }).programa_incluye),
+      omitidos: [...omitidosIds].map(([servicioId, nombre]) => ({ servicioId, nombre })),
+      efectivos: [...todos].filter(([id]) => !omitidosIds.has(id)).map(([servicioId, nombre]) => ({ servicioId, nombre })),
+    });
+    if (pres.retiradas.length || pres.noConfirmadas.length) lineasIncluyeAfectadas = { retiradas: pres.retiradas, noConfirmadas: pres.noConfirmadas };
+  }
+  const diagnostico = diagnosticoDisponibilidad({ salidasEvaluadas: estadiasEvaluadas, salidasOmitidas, opcionalesOcultos, opcionalesParciales, incluidosOmitidos, lineasIncluyeAfectadas }, filas.length > 0);
+  // PUBLICACIÓN POR LOTES (apagada por defecto: TARIFARIO_PUBLICACION_POR_LOTES=1 cuando la migración ya corrió). Repartida en las peticiones que haga falta: si el presupuesto de
+  // esta petición se agota devuelve «pendiente» y otra petición continúa (ver continuarPublicacionTarifario). Lo publicado antes sigue visible e intacto hasta la activación.
+  // Un conjunto VACÍO (p. ej. solo hoteles por unidad) no tiene qué cargar por lotes: lo publica el publicador de siempre (limpia lo anterior).
+  const usarLotes = porLotes && filas.length > 0;
+  let retornoLotes: Result | null = null;
+  if (usarLotes) {
+    try {
+      const rp = await publicarPorLotes(puertoSupabase(sb as unknown as RpcCliente), {
+        paqueteId, generacion, revision: revisionCapturada, moneda: paqueteMoneda as "COP" | "USD", filas: filasPublicar, inicioMs: inicioAccion,
+        composicion: composicionDeManifiesto(composicionPorFecha), regla: REGLA_COMPOSICION_PUBLICADA, modo: modo63 ? MODO_OFERTA_63 : null, trm: modo63 ? trm63 : null,
+        // El diagnóstico de disponibilidad (256) y la composición (258) viajan en el manifiesto: la activación los escribe junto con el puntero (sin paso posterior que pueda perderse).
+        diagnostico: diagnostico || null,
+      });
+      if (rp.estado === "pendiente" && !rp.automatica && opciones.segundoPlano) {
+        // Sin pantalla que vuelva a calcular: lo ya subido queda invisible y se limpia en la próxima publicación; lo publicado antes sigue visible.
+        return await fallar("No alcanzó el tiempo para dejar el tarifario listo; vuelve a pulsar «Generar tarifario» en el paquete.");
+      } else if (rp.estado === "pendiente") {
+        medir("pendiente");
+        if (rp.automatica) await empujarContinuacion();
+        retornoLotes = {
+          ok: true, pendiente: { faltan: rp.faltan, total: rp.total, automatica: rp.automatica },
+          aviso: rp.automatica ? `Publicando en segundo plano: faltan ${rp.faltan} de ${rp.total} lotes. Puedes cerrar esta pantalla.` : `Preparando la publicación: faltan ${rp.faltan} de ${rp.total} lotes.`,
+        };
+      } else if (rp.estado === "descartada" || rp.estado === "conflicto") {
+        medir("descartado");
+        retornoLotes = { ok: false, error: "Se descartó este cálculo: los datos del paquete cambiaron mientras se publicaba el tarifario (vuelve a pulsar «Generar tarifario»)." };
+      } else if (rp.estado === "rechazada") {
+        return await fallarTecnico(`publicación por lotes rechazada: ${rp.motivo}`);
+      }
+    } catch (e) {
+      return await fallarTecnico(e instanceof Error ? e.message : String(e));
+    }
+    if (retornoLotes) return retornoLotes;
+  }
+  const { data: publicado, error: ePublicar } = usarLotes
+    ? { data: true as boolean | null, error: null }
+    : modo63
     ? await sb.rpc("publicar_tarifario_resultado_63", {
         p_paquete_id: paqueteId,
         p_generacion: generacion,
@@ -1769,27 +1863,10 @@ export async function generarTarifario(paqueteId: number): Promise<Result> {
     };
   }
 
-  // Diagnóstico de disponibilidad (migración 256): se guarda junto a la publicación (la RPC lo borra en cada publicación y solo lo escribe si esta sigue
-  // siendo la vigente). Si falla el registro NO se revierte nada —las filas ya son las correctas—, pero se avisa en la respuesta para que no pase inadvertido.
-  // El texto manual «Incluye» no se modifica; se avisa qué líneas nombran servicios omitidos (la presentación por salida las retira o no las da por confirmadas).
-  let lineasIncluyeAfectadas: { retiradas: string[]; noConfirmadas: string[] } | undefined;
-  if (incluidosOmitidos.length) {
-    const omitidosIds = new Map<number, string>();
-    for (const sa of incluidosOmitidos) for (const x of sa.servicios) omitidosIds.set(x.servicioId, x.servicio);
-    const todos = new Map<number, string>();
-    for (const s of servicios) if (s.incluido as boolean) todos.set(s.servicio_id, (s.servicios_adicionales as unknown as { nombre?: string | null } | null)?.nombre ?? `#${s.servicio_id}`);
-    const pres = presentarIncluye({
-      lineas: lineasDeTexto((pq as { programa_incluye?: string | null }).programa_incluye),
-      omitidos: [...omitidosIds].map(([servicioId, nombre]) => ({ servicioId, nombre })),
-      efectivos: [...todos].filter(([id]) => !omitidosIds.has(id)).map(([servicioId, nombre]) => ({ servicioId, nombre })),
-    });
-    if (pres.retiradas.length || pres.noConfirmadas.length) lineasIncluyeAfectadas = { retiradas: pres.retiradas, noConfirmadas: pres.noConfirmadas };
-  }
-  const diagnostico = diagnosticoDisponibilidad({ salidasEvaluadas: estadiasEvaluadas, salidasOmitidas, opcionalesOcultos, opcionalesParciales, incluidosOmitidos, lineasIncluyeAfectadas }, filas.length > 0);
   let avisoDisponibilidad = "";
   // Evidencia de la composición publicada: SIEMPRE tras publicar (también con el conjunto vacío, para limpiar la de una publicación anterior). Si falla, las filas quedan
   // publicadas pero la reserva las RECHAZA (sin evidencia = fila no acreditada) hasta regenerar: se avisa en la respuesta.
-  if (tipo === "bloqueo" || tipo === "dinamico") {
+  if (!usarLotes && (tipo === "bloqueo" || tipo === "dinamico")) {
     const filasComposicion = [...composicionPorFecha].map(([fecha_ida, servicios_incluidos]) => ({ fecha_ida, servicios_incluidos }));
     const { error: eComp } = await sb.rpc("registrar_composicion_publicada", { p_paquete_id: paqueteId, p_generacion: generacion, p_regla: REGLA_COMPOSICION_PUBLICADA, p_filas: filasComposicion as unknown as Json });
     if (eComp) {
@@ -1799,7 +1876,7 @@ export async function generarTarifario(paqueteId: number): Promise<Result> {
   }
   if (diagnostico) {
     avisoDisponibilidad += ` ${diagnostico}`;
-    const { error: eDiag } = await sb.rpc("registrar_diagnostico_tarifario", { p_paquete_id: paqueteId, p_generacion: generacion, p_diagnostico: diagnostico });
+    const { error: eDiag } = usarLotes ? { error: null } : await sb.rpc("registrar_diagnostico_tarifario", { p_paquete_id: paqueteId, p_generacion: generacion, p_diagnostico: diagnostico });
     if (eDiag) {
       console.error(`generarTarifario: registrar_diagnostico_tarifario falló (paquete_id=${paqueteId}, generacion=${generacion}): ${eDiag.message}`);
       avisoDisponibilidad += " (No se pudo guardar este diagnóstico en el paquete.)";
@@ -1871,6 +1948,31 @@ export async function generarTarifario(paqueteId: number): Promise<Result> {
 // niño/infante: mientras no se regeneren, reservar con infantes pide regenerar. Esta lista (solo paquetes ACTIVOS) alimenta
 // el aviso del listado de Paquetes para que se regeneren a mano, uno por uno, con el botón de siempre. Solo lectura: nunca
 // regenera nada. Paginada por la cantidad REAL de filas recibidas (el límite de filas de PostgREST puede truncar en silencio).
+
+/** Continúa una publicación por lotes que quedó pendiente (otra petición, o el mismo usuario tras cerrar y reabrir el navegador). Recalcula las MISMAS filas con la generación y la
+ * revisión que fijó el manifiesto; si algo cambió, el servidor lo rechaza y hay que volver a pulsar «Generar tarifario». */
+export async function continuarPublicacionTarifario(paqueteId: number): Promise<Result> {
+  return generarTarifario(paqueteId, { reanudar: true });
+}
+
+/** Estado de una publicación que ya está en la cola de la base (continúa sola, sin navegador). Barata: no recalcula nada. La pantalla la consulta mientras espera. */
+export async function estadoPublicacionTarifario(paqueteId: number): Promise<Result> {
+  const sb = await createClient();
+  const pend = await leerPublicacionPendiente(sb as unknown as RpcCliente, paqueteId);
+  if (pend) {
+    if (pend.colaEstado === "fallida") return { ok: false, error: "La publicación en segundo plano no se pudo completar. Vuelve a pulsar «Generar tarifario»." };
+    return {
+      ok: true, pendiente: { faltan: pend.faltan, total: pend.total, automatica: pend.enCola },
+      aviso: pend.enCola ? `Publicando en segundo plano: faltan ${pend.faltan} de ${pend.total} lotes. Puedes cerrar esta pantalla.` : `Preparando la publicación: faltan ${pend.faltan} de ${pend.total} lotes.`,
+    };
+  }
+  const { data } = await sb.from("armado_paquetes").select("tarifario_estado, tarifario_error").eq("id", paqueteId).maybeSingle();
+  const e = data as { tarifario_estado?: string | null; tarifario_error?: string | null } | null;
+  if (e?.tarifario_estado === "fallido") return { ok: false, error: e.tarifario_error ?? "La publicación del tarifario falló. Vuelve a pulsar «Generar tarifario»." };
+  revalidatePath(`/dashboard/paquetes/${paqueteId}`);
+  return { ok: true, aviso: e?.tarifario_estado === "listo" ? "Tarifario publicado." : "No hay una publicación en curso." };
+}
+
 export async function paquetesConTarifarioAnteriorAInfante(): Promise<
   { ok: true; paquetes: { id: number; nombre: string }[] } | { ok: false }
 > {
@@ -1906,7 +2008,7 @@ export async function paquetesConTarifarioAnteriorAInfante(): Promise<
 // llama tras editar tarifas/vigencias del hotel para que el tarifario (y el PVP
 // que lee Reservar) se actualice solo, sin volver a "Generar" a mano. No lanza:
 // un fallo de un paquete no debe tumbar el guardado de la tarifa.
-export async function regenerarTarifariosDeHotel(hotelId: number): Promise<void> {
+export async function regenerarTarifariosDeHotel(hotelId: number, inicioMs?: number): Promise<void> {
   if (!hotelId) return;
   try {
     const sb = await createClient();
@@ -1942,7 +2044,7 @@ export async function regenerarTarifariosDeHotel(hotelId: number): Promise<void>
     // red) Y la promesa CUMPLIDA con `{ ok: false, error }` — `generarTarifario`
     // nunca lanza por un error de negocio, lo devuelve como valor resuelto, así
     // que un `status === "rejected"` a secas se lo pierde por completo.
-    const resultados = await Promise.allSettled(ids.map((id) => generarTarifario(id)));
+    const resultados = await Promise.allSettled(ids.map((id) => generarTarifario(id, enSegundoPlano(inicioMs))));
     resultados.forEach((r, i) => {
       if (r.status === "rejected") {
         console.error(`regenerarTarifariosDeHotel: falló generarTarifario(paquete_id=${ids[i]}) para hotel_id=${hotelId}:`, r.reason);
@@ -1961,7 +2063,7 @@ export async function regenerarTarifariosDeHotel(hotelId: number): Promise<void>
 
 // Regenera el tarifario de los paquetes activos que usan un BLOQUEO aéreo. Se
 // llama tras editar/eliminar el bloqueo (tarifa de empaquetar, fechas, ruta).
-export async function regenerarTarifariosDeBloqueo(bloqueoId: number): Promise<void> {
+export async function regenerarTarifariosDeBloqueo(bloqueoId: number, inicioMs?: number): Promise<void> {
   if (!bloqueoId) return;
   try {
     const sb = await createClient();
@@ -1972,13 +2074,13 @@ export async function regenerarTarifariosDeBloqueo(bloqueoId: number): Promise<v
     const ids = [...new Set((pkgs ?? [])
       .filter((p) => (p.armado_paquetes as unknown as { activo: boolean } | null)?.activo)
       .map((p) => p.paquete_id))];
-    await Promise.allSettled(ids.map((id) => generarTarifario(id)));
+    await Promise.allSettled(ids.map((id) => generarTarifario(id, enSegundoPlano(inicioMs))));
   } catch { /* best-effort */ }
 }
 
 // Regenera el tarifario de los paquetes activos que usan un SERVICIO. Se llama
 // tras editar/eliminar el servicio (precio por persona o tarifas por grupo).
-export async function regenerarTarifariosDeServicio(servicioId: number): Promise<void> {
+export async function regenerarTarifariosDeServicio(servicioId: number, inicioMs?: number): Promise<void> {
   if (!servicioId) return;
   try {
     const sb = await createClient();
@@ -1989,7 +2091,7 @@ export async function regenerarTarifariosDeServicio(servicioId: number): Promise
     const ids = [...new Set((pkgs ?? [])
       .filter((p) => (p.armado_paquetes as unknown as { activo: boolean } | null)?.activo)
       .map((p) => p.paquete_id))];
-    await Promise.allSettled(ids.map((id) => generarTarifario(id)));
+    await Promise.allSettled(ids.map((id) => generarTarifario(id, enSegundoPlano(inicioMs))));
   } catch { /* best-effort */ }
 }
 
@@ -2045,7 +2147,7 @@ export async function crearSalidaDinamica(paqueteId: number, input: SalidaDinami
   const { error } = await sb.from("salidas_dinamicas").insert(salidaRow(paqueteId, input));
   if (error) return { ok: false, error: error.message };
   revalidatePath(`/dashboard/paquetes/${paqueteId}`);
-  try { await generarTarifario(paqueteId); } catch { /* sigue */ }
+  try { await generarTarifario(paqueteId, enSegundoPlano()); } catch { /* sigue */ }
   return { ok: true };
 }
 
@@ -2064,7 +2166,7 @@ export async function actualizarSalidaDinamica(id: number, input: SalidaDinamica
   if (error) return { ok: false, error: mensajeErrorOferta63(error.message) };
   if (prev?.paquete_id) {
     revalidatePath(`/dashboard/paquetes/${prev.paquete_id}`);
-    try { await generarTarifario(prev.paquete_id); } catch { /* sigue */ }
+    try { await generarTarifario(prev.paquete_id, enSegundoPlano()); } catch { /* sigue */ }
   }
   return { ok: true };
 }
@@ -2076,7 +2178,7 @@ export async function eliminarSalidaDinamica(id: number): Promise<Result> {
   if (error) return { ok: false, error: error.message };
   if (prev?.paquete_id) {
     revalidatePath(`/dashboard/paquetes/${prev.paquete_id}`);
-    try { await generarTarifario(prev.paquete_id); } catch { /* sigue */ }
+    try { await generarTarifario(prev.paquete_id, enSegundoPlano()); } catch { /* sigue */ }
   }
   return { ok: true };
 }
@@ -2251,7 +2353,7 @@ export async function vincularSalidasEmpaquetados63(paqueteId: number, empaqueta
   const { error } = await sb.from("salidas_dinamicas").insert(filas);
   if (error) return { ok: false, error: mensajeErrorOferta63(error.message) };
   revalidatePath(`/dashboard/paquetes/${paqueteId}`);
-  const regen = await generarTarifario(paqueteId).catch(() => null);
+  const regen = await generarTarifario(paqueteId, enSegundoPlano()).catch(() => null);
   if (!regen || !regen.ok) {
     return {
       ok: true,
@@ -2285,7 +2387,7 @@ export async function desvincularSalidasEmpaquetados63(paqueteId: number, salida
   if (!borrados.size) return { ok: false, error: "Esas salidas ya no estaban vinculadas a este paquete." };
   const omitidos = ids.filter((id) => !borrados.has(id)).map((id) => ({ id, motivo: `La salida #${id} ya no estaba vinculada.` }));
   revalidatePath(`/dashboard/paquetes/${paqueteId}`);
-  const regen = await generarTarifario(paqueteId).catch(() => null);
+  const regen = await generarTarifario(paqueteId, enSegundoPlano()).catch(() => null);
   const aviso = !regen || !regen.ok
     ? `Se desvincularon las salidas, pero el tarifario no se pudo regenerar${regen && !regen.ok ? `: ${regen.error}` : ""}. Genéralo desde el paquete.`
     : regen.aviso;
@@ -2309,7 +2411,7 @@ export async function actualizarSalidaDesdeFuente63(salidaId: number): Promise<R
   const { error } = await sb.from("salidas_dinamicas").update(copiarDeFuente63(fuente as FuenteEmpaquetado63)).eq("id", salidaId);
   if (error) return { ok: false, error: mensajeErrorOferta63(error.message) };
   revalidatePath(`/dashboard/paquetes/${s.paquete_id}`);
-  const regen = await generarTarifario(s.paquete_id).catch(() => null);
+  const regen = await generarTarifario(s.paquete_id, enSegundoPlano()).catch(() => null);
   if (!regen || !regen.ok) {
     return { ok: true, aviso: `La salida se actualizó, pero el tarifario no se pudo regenerar${regen && !regen.ok ? `: ${regen.error}` : ""}. Genéralo desde el paquete.` };
   }

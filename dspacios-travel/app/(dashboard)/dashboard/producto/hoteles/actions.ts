@@ -754,7 +754,7 @@ export async function cargarTarifasMasivo(rows: Record<string, string>[]): Promi
     tocados.add(candidatos[0].id);
   }
   revalidatePath("/dashboard/producto/hoteles");
-  for (const hid of tocados) await regenerarTarifariosDeHotel(hid);
+  { const inicioRegen = Date.now(); for (const hid of tocados) await regenerarTarifariosDeHotel(hid, inicioRegen); }
   return { ok: errores.length === 0, insertados, errores };
 }
 
@@ -819,7 +819,7 @@ export async function cargarTemporadasMasivo(rows: Record<string, string>[]): Pr
     tocados.add(hotelId);
   }
   revalidatePath("/dashboard/producto/hoteles");
-  for (const hid of tocados) await regenerarTarifariosDeHotel(hid);
+  { const inicioRegen = Date.now(); for (const hid of tocados) await regenerarTarifariosDeHotel(hid, inicioRegen); }
   return { ok: errores.length === 0, insertados, errores };
 }
 
