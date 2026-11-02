@@ -8,6 +8,8 @@ import { codigoErrorContacto, datosContactoTarifario, logContactoTarifario, orig
 import { paqueteVendibleHoy } from "@/lib/tarifario/datosSolicitud";
 import { acreditarSeleccionCatalogo, claveSolicitudHotel, validarEntradaSolicitudHotel, type SolicitudHotelEntrada } from "@/lib/reservar/solicitudHotelEntrada";
 import { ESTADO_PENDIENTE_TARIFA, TEXTO_BAJO_SOLICITUD, contieneImportes } from "@/lib/reservar/solicitudHotel";
+import { resolverDatosVuelo } from "@/lib/reservar/empaquetadoOrigen";
+import { serviciosParaSolicitud, vueloParaSolicitud, type VueloSolicitud } from "@/lib/reservar/solicitudResumen";
 import { catalogoDelHotel, evaluarOcupacionHotel, modalidadDelVinculo } from "@/lib/reservar/solicitudHotelServidor";
 import type { Json } from "@/types/database";
 import { getContextoB2B } from "./checkout/actions";
@@ -114,6 +116,17 @@ export async function crearSolicitudHotel(raw: unknown): Promise<SolicitudHotelR
       return { ok: false, error: `Las fechas deben estar dentro del viaje del paquete (${pq.fecha_viaje_inicio ?? "—"} a ${pq.fecha_viaje_fin ?? "—"}).` };
   }
 
+  // Componentes del pedido que el documento pendiente muestra (sin importes): el vuelo de la salida elegida (misma fuente que usará la valoración) y los servicios incluidos del paquete.
+  let vuelo: VueloSolicitud | null = null;
+  if (bloqueoId || empaquetadoId) {
+    const rv = await resolverDatosVuelo(admin, bloqueoId ? { tipo: "bloqueo", id: bloqueoId } : { tipo: "empaquetado", id: empaquetadoId! });
+    if (!rv.ok || !rv.data) return { ok: false, error: ERROR_GENERICO };
+    vuelo = vueloParaSolicitud(rv.data);
+  }
+  const { data: filasServ, error: eServ } = await admin.from("armado_servicios").select("servicios_adicionales(nombre, categoria)").eq("paquete_id", input.paqueteId).eq("incluido", true);
+  if (eServ) return { ok: false, error: ERROR_GENERICO };
+  const servicios = serviciosParaSolicitud((filasServ ?? []) as unknown as Parameters<typeof serviciosParaSolicitud>[0]);
+
   // Identidad B2B desde la sesión.
   const ctxB2B = await getContextoB2B();
   if (ctxB2B.error) return { ok: false, error: ctxB2B.error };
@@ -141,6 +154,7 @@ export async function crearSolicitudHotel(raw: unknown): Promise<SolicitudHotelR
     solicitudHotel: {
       clave: claveSolicitudHotel({ ...input, fechaIda, fechaRegreso }), hotelNombre: hotel.nombre, paqueteNombre: pq.nombre, destino: destinoNombre,
       categoria: input.categoria, regimen: input.regimen, habitaciones: input.habitaciones, menores: input.edadesMenores.length, adultos: input.adultos, notas: input.notas || null, fechaIda, fechaRegreso,
+      modulo, edadesMenores: input.edadesMenores, vuelo, servicios,
     },
   };
   // Defensa: la solicitud pública no puede cargar importes (ni siquiera por un campo de más en el payload).

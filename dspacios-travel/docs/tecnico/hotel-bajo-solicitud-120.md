@@ -101,3 +101,10 @@ Navegador: `navegador_270.sh` + `revision_navegador_270.mjs` (Playwright con Chr
 - **Resultados de una búsqueda/destino**: los bajo solicitud entran a la MISMA lista (`itemRestoDeSolicitud`, sin precio, condición/política «desconocido») y pasan por zona, estrellas, Pet friendly, Adults Only y el orden; `TarifarioPublic` les aplica además texto, categoría y régimen contra el catálogo configurado del propio hotel (acomodación los excluye: no tienen tarifa por acomodación). Sin límite de 2.
 - **Tarjeta**: mismo carrusel y proporción 16:10 que un hotel con tarifa (`CarruselFotoHotel`) con todas las fotos de `hotel_fotos` (portada primero).
 - **Formulario**: «¿Viajan menores?» primero; las edades solo con Sí y nunca se envían con No (el servidor también lo rechaza: `viajanMenores`). Tipo de habitación y plan de alimentación son selectores con `hotel_categorias`/`hotel_regimenes` de ESE hotel; el servidor los acredita (`acreditarSeleccionCatalogo`) y guarda el texto canónico. Un hotel sin esos datos configurados no muestra selector (ni texto libre) y queda «A confirmar».
+
+## Documento de solicitud pendiente como resumen del viaje (ajustes PR #432)
+
+- `components/cotizacion/SolicitudPendiente.tsx`: secciones «Estado y siguiente paso», «Paquete y destino», «Hotel, habitación y alimentación», «Fechas y viajeros» y «Otros componentes del paquete». Solo datos de `detalle.solicitudHotel`; sin importes ni disponibilidad confirmada. Lo que falta no se rellena (solicitudes anteriores no muestran vuelo ni servicios).
+- `crearSolicitudHotel` congela además `modulo`, `edadesMenores`, `vuelo` (`lib/reservar/solicitudResumen.ts`: aerolínea, ruta, fechas, vuelos y horarios de la salida, vía `resolverDatosVuelo`, la misma fuente de la valoración; nunca record, costos ni proveedor) y `servicios` (incluidos del paquete: solo nombre y categoría). Falla cerrado si no se pueden leer.
+- Los servicios del paquete se listan sin comprobar su tarifa vigente: al valorar, el motor omite el que no tenga tarifa en la fecha, por eso el documento los rotula «se confirman al valorar».
+- Pruebas: `pruebas/solicitudPendienteDocumento432.react.ts`.

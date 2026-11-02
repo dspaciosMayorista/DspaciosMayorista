@@ -36,4 +36,4 @@ export function itemRestoDeSolicitud(h: HotelBajoSolicitud): ItemResto {
 }
 
 /** Texto de la nota junto a los recomendados de la portada. */
-export const NOTA_RECOMENDADOS = "Son una selección inicial de hoteles recomendados. Para ver más opciones, busca o elige origen y destino.";
+export const NOTA_RECOMENDADOS = "¿Buscas otra opción? Elige origen, destino y fechas para ver más hoteles.";
