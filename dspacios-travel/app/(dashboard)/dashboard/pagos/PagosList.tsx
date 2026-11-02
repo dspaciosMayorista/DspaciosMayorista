@@ -27,6 +27,9 @@ export type PagoRow = {
   clasificacion: "costo" | "irt";
   base_gravable: number | null;
   iva_proveedor: number | null;
+  /** Obligación en USD con equivalente en COP congelado a la TRM de costos (migración 236): informativo, es el importe con que se devengó el costo. `null` = sin equivalente (COP o histórica). */
+  valor_cop_costo?: number | null;
+  trm_costo?: number | null;
   pagos: { id: number; valor: number; fecha: string | null; trm: number | null }[];
   pagado: number;
   retenido: number;
@@ -301,6 +304,12 @@ function EstadoCuentaProveedor({ row, catalogo, ivaPct }: { row: PagoRow; catalo
                   {formatMoneda(row.valor_total, row.moneda)}
                 </td>
               </tr>
+              {row.moneda === "USD" && row.valor_cop_costo != null && row.trm_costo != null ? (
+                <tr className="border-b border-gray-50" data-testid="equivalente-costo">
+                  <td className="px-3 py-2 text-gray-500">Equivalente en pesos (TRM de costos $ {row.trm_costo.toLocaleString("es-CO", { maximumFractionDigits: 4 })})</td>
+                  <td className="px-3 py-2 text-right tabular-nums text-gray-500">{formatMoneda(row.valor_cop_costo, "COP")}</td>
+                </tr>
+              ) : null}
               {row.retenido > 0 ? (
                 <tr className="border-b border-gray-50">
                   <td className="px-3 py-2 text-gray-500">

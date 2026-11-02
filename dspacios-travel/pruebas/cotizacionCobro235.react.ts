@@ -68,7 +68,7 @@ test("sin conversión por TRM (o sin permiso) no hay selector y no se manda cobr
   assert.equal(selector(c), null);
   await clic(botonConTexto(c, /Confirmar → generar contrato/), "confirmar");
   await esperar(() => convertir().length > 0);
-  assert.deepEqual(convertir()[0][1], [77, undefined, undefined, undefined, null, null, null]);
+  assert.deepEqual(convertir()[0][1], [77, undefined, undefined, undefined, null, null, null, null]);
 });
 
 test("con selector y sin elegir: NO hay valor por defecto; confirmar no llama al servidor y pide la moneda", async () => {
@@ -92,7 +92,7 @@ test("elegir EXPRESAMENTE la moneda de la oferta viaja registrada (USD, null): s
   assert.equal(trmCobro(c), null);
   await clic(botonConTexto(c, /Confirmar → generar contrato/), "confirmar");
   await esperar(() => convertir().length > 0);
-  assert.deepEqual(convertir()[0][1].slice(5), ["USD", null]);
+  assert.deepEqual(convertir()[0][1].slice(5), ["USD", null, null]);
 });
 
 test("elegir la otra moneda pide la TRM de cobro; vacía o inválida NO llama al servidor", async () => {
@@ -120,7 +120,7 @@ test("USD→COP con TRM 4100: vista previa 1.200 × 4.100 = $4.920.000 y la elec
   assert.match(previa, /el sistema calcula y congela el total al contratar/);
   await clic(botonConTexto(c, /Confirmar → generar contrato/), "confirmar");
   await esperar(() => convertir().length > 0);
-  assert.deepEqual(convertir()[0][1], [77, undefined, undefined, undefined, null, "COP", 4100]);
+  assert.deepEqual(convertir()[0][1], [77, undefined, undefined, undefined, null, "COP", 4100, null]);
 });
 
 test("COP→USD con TRM 4000: vista previa $4.800.000 → USD 1.200", async () => {
@@ -131,7 +131,7 @@ test("COP→USD con TRM 4000: vista previa $4.800.000 → USD 1.200", async () =
   assert.match(texto(c.querySelector('[data-testid="vista-previa-cobro"]')!), /USD \$1,200/);
   await clic(botonConTexto(c, /Confirmar → generar contrato/), "confirmar");
   await esperar(() => convertir().length > 0);
-  assert.deepEqual(convertir()[0][1], [77, undefined, undefined, undefined, null, "USD", 4000]);
+  assert.deepEqual(convertir()[0][1], [77, undefined, undefined, undefined, null, "USD", 4000, null]);
 });
 
 test("volver a la moneda de la oferta descarta la TRM de cobro escrita (no viaja una tasa que no se usa)", async () => {
@@ -142,7 +142,7 @@ test("volver a la moneda de la oferta descarta la TRM de cobro escrita (no viaja
   assert.equal(trmCobro(c), null);
   await clic(botonConTexto(c, /Confirmar → generar contrato/), "confirmar");
   await esperar(() => convertir().length > 0);
-  assert.deepEqual(convertir()[0][1].slice(5), ["USD", null]);
+  assert.deepEqual(convertir()[0][1].slice(5), ["USD", null, null]);
 });
 
 test("oferta USD sin TRM: la TRM provisional y la TRM de cobro son campos distintos y viajan en su sitio", async () => {
@@ -152,7 +152,7 @@ test("oferta USD sin TRM: la TRM provisional y la TRM de cobro son campos distin
   await escribir(trmCobro(c)!, "4100");
   await clic(botonConTexto(c, /Confirmar → generar contrato/), "confirmar");
   await esperar(() => convertir().length > 0);
-  assert.deepEqual(convertir()[0][1], [77, undefined, undefined, undefined, 4000, "COP", 4100]);
+  assert.deepEqual(convertir()[0][1], [77, undefined, undefined, undefined, 4000, "COP", 4100, null]);
 });
 
 test("el texto aclara que la oferta conserva su moneda e importes y que abonos y saldo van en la moneda de cobro", async () => {

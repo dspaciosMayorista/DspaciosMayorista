@@ -1,4 +1,5 @@
 import { COLOR_DOCUMENTO } from "@/lib/contrato/colorDocumento";
+import { ETIQUETA_AJUSTE_CLIENTE, esLineaAjusteRedondeo } from "@/lib/reservar/solicitudHotel";
 import { EstanciaContratoBloque, type EstanciaContratoVista } from "@/components/contrato/EstanciaContratoBloque";
 import {
   EMPRESA,
@@ -817,24 +818,25 @@ export function ContratoDocumento({
               <tbody>
                 {alojItemsPorPersona.map((it) => (
                   <tr key={it.id} className="break-inside-avoid">
+                    {/* #120: la línea de ajuste de redondeo se muestra al cliente como «Ajuste por redondeo», con el importe solo en «Valor total» y «—» en personas y tarifas. */}
                     <td className="border border-gray-200 px-2 py-1">
-                      {it.descripcion}
+                      {esLineaAjusteRedondeo(it.descripcion) ? ETIQUETA_AJUSTE_CLIENTE : it.descripcion}
                     </td>
                     <td className="border border-gray-200 px-2 py-1">
-                      {it.adultos}
+                      {esLineaAjusteRedondeo(it.descripcion) ? "—" : it.adultos}
                     </td>
                     <td className="border border-gray-200 px-2 py-1">
-                      {it.ninos}
+                      {esLineaAjusteRedondeo(it.descripcion) ? "—" : it.ninos}
                     </td>
                     {mostrarDesglose && (
                       <>
                         <td className="border border-gray-200 px-2 py-1">
-                          {!tarifaIndividual ? "—" : valoresDoc
+                          {esLineaAjusteRedondeo(it.descripcion) || !tarifaIndividual ? "—" : valoresDoc
                             ? <TarifaNetaCelda total={valoresDoc.get(it.id)?.adultoTotal ?? 0} cantidad={Number(it.adultos)} moneda={moneda} />
                             : formatMoneda(it.tarifa_adulto, moneda)}
                         </td>
                         <td className="border border-gray-200 px-2 py-1">
-                          {!tarifaIndividual ? "—" : valoresDoc
+                          {esLineaAjusteRedondeo(it.descripcion) || !tarifaIndividual ? "—" : valoresDoc
                             ? <TarifaNetaCelda total={valoresDoc.get(it.id)?.ninoTotal ?? 0} cantidad={Number(it.ninos)} moneda={moneda} />
                             : formatMoneda(it.tarifa_nino, moneda)}
                         </td>

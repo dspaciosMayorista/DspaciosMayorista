@@ -116,7 +116,8 @@ test("reservar/actions.ts: convertirCotizacion y convertirCotizacionCarrito exig
   // convertirCotizacion pasa el tenant a la función INTERNA (no exportada),
   // nunca por un `opts` serializable — ver el test de la firma más abajo.
   const c1 = src.slice(src.indexOf("export async function convertirCotizacion("), src.indexOf("export async function convertirCotizacionCarrito"));
-  assert.match(c1, /reservarDesdeTarifarioInterno\([^)]*,\s*cot\.tenant as Tenant\s*\)/, "convertirCotizacion no propaga el tenant a reservarDesdeTarifarioInterno");
+  // (#120: la neta de una solicitud y la TRM de costos —con el permiso «interno» resuelto en el servidor— viajan como argumentos opcionales detrás del tenant.)
+  assert.match(c1, /reservarDesdeTarifarioInterno\([^)]*,\s*cot\.tenant as Tenant(?:,\s*solicitudNeta(?:,\s*\{[^}]*\})?)?\s*\)/, "convertirCotizacion no propaga el tenant a reservarDesdeTarifarioInterno");
   // convertirCotizacionCarrito estampa el mismo tenant en su propio insert de `ventas`.
   const c2 = src.slice(src.indexOf("export async function convertirCotizacionCarrito"));
   assert.match(c2, /tenant:\s*tenantCotizacion/, "convertirCotizacionCarrito no estampa tenant en el insert de ventas");
@@ -139,7 +140,7 @@ test("reservar/actions.ts: reservarDesdeTarifario* NUNCA vuelve a ser una Server
   const end = src.indexOf("export async function crearCotizacion(");
   assert.ok(start !== -1 && end !== -1 && end > start, "no se pudo delimitar el cuerpo de reservarDesdeTarifarioInterno");
   assert.doesNotMatch(src.slice(0, start), /export\s+async\s+function\s+reservarDesdeTarifarioInterno/, "reservarDesdeTarifarioInterno está exportada — debe ser interna");
-  assert.match(src.slice(start, start + 200), /reservarDesdeTarifarioInterno\(input:\s*ReservaInput,\s*tenant:\s*Tenant\)/, "reservarDesdeTarifarioInterno no exige `tenant: Tenant` como parámetro obligatorio");
+  assert.match(src.slice(start, start + 200), /reservarDesdeTarifarioInterno\(input:\s*ReservaInput,\s*tenant:\s*Tenant(?:,\s*solicitud\?:[^)]*)?\)/, "reservarDesdeTarifarioInterno no exige `tenant: Tenant` como parámetro obligatorio");
   const fn = src.slice(start, end);
   assert.match(fn, /tenant,\s*\n\s*cliente:/, "el insert de ventas dentro de reservarDesdeTarifarioInterno no estampa el tenant recibido");
 });

@@ -80,7 +80,7 @@ describe("VistaBooking.tsx — Vista Booking unificada: persona y unidad en UNA 
     // prioridad, sin reordenar (`filtrarPorFiltros`) — el resto (persona sin
     // recomendar + unidad sin recomendar) se ordena/filtra con el motor puro
     // de `lib/tarifario/inventarioResto.ts` (`ordenarYFiltrarResto`).
-    assert.match(cuerpoTarjetas, /const restoOrdenado = ordenarYFiltrarResto\(datosBase\.itemsRestoCandidatos, \{ orden: ordenResto, filtros: filtrosVistaEfectivos \}\)/);
+    assert.match(cuerpoTarjetas, /const restoOrdenado = ordenarYFiltrarResto\(\[\.\.\.datosBase\.itemsRestoCandidatos(, \.\.\.itemsSolicitud)?\], \{ orden: ordenResto, filtros: filtrosVistaEfectivos \}\)/);
     assert.match(cuerpoTarjetas, /return \[\.\.\.recomendadasFiltradas, \.\.\.restoOrdenado\];/);
   });
 

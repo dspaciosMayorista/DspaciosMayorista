@@ -64,7 +64,7 @@ describe("computo.ts (computarReserva) — guardia modelo_tarifario ANTES de lee
   const cuerpo = cuerpoFuncion(computo, "export async function computarReserva(");
 
   test("consulta hoteles.modelo_tarifario con el cliente recibido (sesión), no un cliente propio", () => {
-    assert.match(cuerpo, /\.from\("hoteles"\)\s*\.select\("modelo_tarifario"\)/);
+    assert.match(cuerpo, /\.from\("hoteles"\)\s*\.select\("modelo_tarifario(, tarifa_bajo_solicitud)?"\)/);
     assert.doesNotMatch(cuerpo, /createAdminClient\(\)[\s\S]{0,80}modelo_tarifario/);
   });
 
@@ -104,7 +104,7 @@ describe("paquetes/actions.ts (generarTarifario) — hoteles 'unidad' se EXCLUYE
 
   test("selecciona modelo_tarifario del hotel junto con nombre/moneda", () => {
     // 226: además `adults_only` (un hotel Adults Only no publica fila de infante).
-    assert.match(cuerpo, /hoteles\(nombre, moneda, modelo_tarifario(, adults_only)?\)/);
+    assert.match(cuerpo, /hoteles\(nombre, moneda, modelo_tarifario(, adults_only)?(, tarifa_bajo_solicitud)?\)/);
   });
 
   test("hotelIds (usado para consultar hotel_temporadas/tarifa_hotel) EXCLUYE los hoteles con modelo_tarifario === 'unidad'", () => {
@@ -400,7 +400,7 @@ describe("paquetes/actions.ts (generarTarifario) — P3: prevalidación de diná
     // hotelIds ya excluye los hoteles unidad (ver su propia declaración) —
     // con al menos un hotel persona, hotelIds.length sería >= 1 y la
     // condición evalúa false sin tocar el resto del AND.
-    assert.match(cuerpo, /const hotelIds = hoteles\s*\n\s*\.filter\(\(h\) => \(h\.hoteles as unknown as \{ modelo_tarifario\?: string \| null \} \| null\)\?\.modelo_tarifario !== "unidad"\)/);
+    assert.match(cuerpo, /const hotelIds = hoteles\s*\n\s*\.filter\(\(h\) => \(h\.hoteles as unknown as \{ modelo_tarifario\?: string \| null \} \| null\)\?\.modelo_tarifario !== "unidad"( && !marcaSolicitud\(h\))?\)/);
   });
 
   test("la condición exige tipo === 'dinamico' explícitamente — bloqueo y porción terrestre nunca pasan por esta guardia (su disponibilidad unidad sigue decidida por hotelesBernaloValidos, más abajo)", () => {

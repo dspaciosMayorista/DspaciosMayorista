@@ -223,7 +223,7 @@ describe("/tarifario (público) — usa orquestarCargaPublica() (sesión SECUENC
   // disponibles para cotizar.
   test('la guarda de "Tarifario en preparación" también considera hotelesBernalo — no se muestra si hay hoteles por unidad', () => {
     assert.match(src, /Tarifario en preparación/);
-    assert.match(src, /!filasVisibles\.length && !programas\.length && !hotelesBernalo\.length \? \(/);
+    assert.match(src, /!filasVisibles\.length && !programas\.length && !hotelesBernalo\.length( && !hotelesSolicitud\.length)? \? \(/);
   });
 
   test("TarifarioPublic se monta con hotelesBernalo aunque filasVisibles/programas estén vacíos (la condición es un Y de los TRES, nunca solo de los dos legacy)", () => {

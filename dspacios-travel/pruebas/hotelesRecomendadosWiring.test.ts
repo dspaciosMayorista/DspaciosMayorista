@@ -289,11 +289,11 @@ describe("Lectura — identidad compuesta hotelId+paqueteId, nunca solo hotelId,
     // `ordenarYFiltrarResto` — en ese orden textual, y el ensamblado
     // antepone recomendadas al resto.
     const inicioTarjetas = vistaBooking.indexOf("const tarjetas = useMemo<Tarjeta[]>(() => {");
-    const finTarjetas = vistaBooking.indexOf("}, [datosBase, ordenResto, filtrosVistaEfectivos]);", inicioTarjetas);
+    const finTarjetas = vistaBooking.indexOf("}, [datosBase, itemsSolicitud, hotelesSolicitudVisibles, ordenResto, filtrosVistaEfectivos]);", inicioTarjetas);
     assert.ok(inicioTarjetas > -1 && finTarjetas > inicioTarjetas, "no se encontró el useMemo final de tarjetas");
     const cuerpo = vistaBooking.slice(inicioTarjetas, finTarjetas);
     const posFiltrarPorFiltros = cuerpo.indexOf("filtrarPorFiltros(datosBase.itemsRecomendados");
-    const posOrdenResto = cuerpo.indexOf("ordenarYFiltrarResto(datosBase.itemsRestoCandidatos");
+    const posOrdenResto = cuerpo.indexOf("ordenarYFiltrarResto([...datosBase.itemsRestoCandidatos");
     assert.ok(posFiltrarPorFiltros > -1 && posOrdenResto > posFiltrarPorFiltros, "los recomendados se filtran (sin ordenar) ANTES de ordenar el resto");
     assert.doesNotMatch(cuerpo.slice(0, posOrdenResto), /ordenarYFiltrarResto\(/, "los recomendados nunca pasan por ordenarYFiltrarResto");
     assert.match(cuerpo, /return \[\.\.\.recomendadasFiltradas, \.\.\.restoOrdenado\];/, "el ensamblado final debe anteponer las recomendadas filtradas (en su propio orden) al resto ya ordenado");

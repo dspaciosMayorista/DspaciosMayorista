@@ -163,6 +163,7 @@ describe("inventario de orígenes de cotización", () => {
       "app/(dashboard)/dashboard/cotizaciones/manual-actions.ts": 2,   // manual + comparativa manual
       "app/(dashboard)/dashboard/reservar/actions.ts": 1,              // Reservar (tarifario)
       "app/tarifario/checkout/actions.ts": 2,                          // carrito + comparativa del carrito
+      "app/tarifario/solicitudHotelActions.ts": 1,                     // #120: solicitud de un hotel bajo solicitud (el titular entra al CRM al crearla y al registro de personas al valorarla)
     }, "apareció (o desapareció) un origen de cotizaciones: decide qué personas registra y actualiza este inventario");
   });
 
@@ -188,7 +189,7 @@ describe("inventario de orígenes de cotización", () => {
     assert.deepEqual(encontrados, {
       "app/(dashboard)/dashboard/cotizaciones/[id]/page.tsx": 1,       // «Reintentar»
       "app/(dashboard)/dashboard/cotizaciones/manual-actions.ts": 3,   // manual, comparativa, hija
-      "app/(dashboard)/dashboard/reservar/actions.ts": 1,
+      "app/(dashboard)/dashboard/reservar/actions.ts": 2,              // Reservar + #120: titular de una solicitud al valorarla (la 219 solo admite abiertas)
       "app/tarifario/checkout/actions.ts": 3,                          // carrito, comparativa, hija
     });
   });

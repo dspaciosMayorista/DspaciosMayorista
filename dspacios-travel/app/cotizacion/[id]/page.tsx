@@ -21,6 +21,8 @@ import { netoTotalExigibleDeDetalle } from "@/lib/cotizacion/asistidaB2B";
 import type { SnapshotPaquete } from "@/lib/cotizacion/tarifaPaquete";
 import { snapshotDelDocumento } from "@/lib/cotizacion/paqueteSnapshotDocumento";
 import { cargarAgenciaDeCotizacion } from "@/lib/cotizacion/agenciaCotizacion";
+import { SolicitudPendiente, type DatosSolicitudHotel } from "@/components/cotizacion/SolicitudPendiente";
+import { estaPendienteTarifa } from "@/lib/reservar/solicitudHotel";
 
 export async function generateMetadata({
   params,
@@ -94,7 +96,7 @@ export default async function CotizacionImprimiblePage({
 
   const { data: cot } = await sb
     .from("cotizaciones")
-    .select("codigo, detalle, vigencia_hasta, tipo, payload, created_at, tenant, modo")
+    .select("codigo, detalle, vigencia_hasta, tipo, payload, created_at, tenant, modo, estado")
     .eq("id", Number(id))
     .maybeSingle();
 
@@ -107,6 +109,10 @@ export default async function CotizacionImprimiblePage({
   // impredecible), que no pasa por aquí.
   const ctx = await contextoCotizacion();
   if (!autorizaTenant(ctx, cot.tenant)) notFound();
+
+  // #120: una solicitud pendiente de tarifa se imprime sin ningún importe.
+  if (estaPendienteTarifa(cot.estado))
+    return <SolicitudPendiente codigo={cot.codigo} datos={(cot.detalle as { solicitudHotel?: DatosSolicitudHotel }).solicitudHotel ?? null} />;
 
   // #35: la comparativa se imprime con importes POR OPCIÓN, sin total global.
   if (cot.modo === "comparativa") {

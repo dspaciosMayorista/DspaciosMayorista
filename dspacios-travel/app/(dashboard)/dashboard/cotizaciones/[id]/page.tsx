@@ -22,7 +22,11 @@ import { monedaOfertaDeCotizacion } from "@/lib/finanzas/cobroCarrito";
 import { elegibilidadEdicion } from "@/lib/cotizacion/edicionServiciosManual";
 import { servicioDesdeFila } from "@/lib/cotizacion/liquidacionManual";
 import { resolverVinculosCotizacion } from "@/lib/reservar/vinculoServiciosCheckout";
-import { ROLES_CONTRATO_COMPLETO } from "@/lib/roles";
+import { ROLES_CONTRATO_COMPLETO, puedeEscribir } from "@/lib/roles";
+import { SolicitudPendiente, type DatosSolicitudHotel } from "@/components/cotizacion/SolicitudPendiente";
+import { estaPendienteTarifa } from "@/lib/reservar/solicitudHotel";
+import { NetaSolicitudForm } from "./NetaSolicitudForm";
+import { evaluarOcupacionHotel } from "@/lib/reservar/solicitudHotelServidor";
 import { FichaComparativa } from "@/lib/cotizacion/comparativaDocumento";
 import { abiertaConSalidaPasada, hoyBogota, MENSAJE_SALIDA_PASADA } from "@/lib/cotizacion/vigencia";
 import PagosPreviosPanel, { type PagoPrevioUI } from "@/components/cotizacion/PagosPreviosPanel";
@@ -113,6 +117,29 @@ export default async function CotizacionDetallePage({
         {avisoPersonas && <div className="mx-auto max-w-3xl px-4 md:px-8">{avisoPersonas}</div>}
         <FichaComparativa madre={c} puedeResolver hoy={hoyBogota()} />
       </>
+    );
+  }
+
+  // #120: solicitud de un hotel bajo solicitud, aún sin neta: sin precio, sin editores ni conversión. Solo producto/operaciones cargan la neta.
+  if (estaPendienteTarifa(c.estado)) {
+    const { data: { user } } = await sb.auth.getUser();
+    const { data: perfil } = user ? await sb.from("usuarios").select("rol, activo").eq("id", user.id).maybeSingle() : { data: null };
+    const puedeCargar = !!perfil?.activo && puedeEscribir("producto", perfil.rol);
+    // Conteos de la solicitud guardada (adultos/niños/infantes) con las reglas de edad y de acomodación del hotel: el operador ve qué reparte y el servidor lo vuelve a calcular.
+    const pagoSol = (c.payload ?? {}) as { hotelId?: number; habitaciones?: Record<string, number>; edadesMenores?: number[]; adultosReales?: number };
+    const ocupacion = process.env.SUPABASE_SERVICE_ROLE_KEY && pagoSol.hotelId
+      ? await evaluarOcupacionHotel(createAdminClient(), Number(pagoSol.hotelId), pagoSol.habitaciones ?? {}, pagoSol.edadesMenores ?? [], pagoSol.adultosReales)
+      : { ok: false as const, error: "No se pudo leer la configuración del hotel." };
+    return (
+      <div className="mx-auto max-w-3xl space-y-4 px-4 py-6 md:px-8">
+        <SolicitudPendiente codigo={c.codigo} datos={(c.detalle as { solicitudHotel?: DatosSolicitudHotel } | null)?.solicitudHotel ?? null} />
+        <div className="rounded-xl border border-gray-200 bg-white p-4">
+          {puedeCargar
+            ? <NetaSolicitudForm cotizacionId={Number(c.id)} moneda={c.moneda ?? "COP"} conteos={ocupacion.ok ? ocupacion.conteos : null} errorOcupacion={ocupacion.ok ? null : ocupacion.error} />
+            : <p className="text-sm text-gray-600">Esta solicitud espera la neta del hotel. Solo producto u operaciones pueden cargarla.</p>}
+        </div>
+        <DescartarBtn id={Number(c.id)} />
+      </div>
     );
   }
 
@@ -536,6 +563,7 @@ export default async function CotizacionDetallePage({
             miNombre={perfil?.nombre ?? ""}
             miRolVenta={perfil?.rol === "venta"}
             pideTrmProvisional={pideTrmProvisional}
+            pideTrmCosto={c.moneda === "USD" && oferta63Cot == null}
             permiteMonedaCobro={oferta63Cot != null}
             monedaOferta={c.moneda ?? "COP"}
             totalOferta={Number(c.precio_venta ?? 0)}

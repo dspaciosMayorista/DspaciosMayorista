@@ -18,6 +18,8 @@ import type { SnapshotPaquete } from "@/lib/cotizacion/tarifaPaquete";
 import { snapshotDelDocumentoPublico } from "@/lib/cotizacion/paqueteSnapshotDocumento";
 import { cargarAgenciaDeCotizacion } from "@/lib/cotizacion/agenciaCotizacion";
 import { abiertaConSalidaPasada, hoyBogota, MENSAJE_SALIDA_PASADA } from "@/lib/cotizacion/vigencia";
+import { SolicitudPendiente, type DatosSolicitudHotel } from "@/components/cotizacion/SolicitudPendiente";
+import { estaPendienteTarifa } from "@/lib/reservar/solicitudHotel";
 
 export const dynamic = "force-dynamic";
 
@@ -77,6 +79,9 @@ export default async function CotizacionPublicaPage({ params }: { params: Promis
     .maybeSingle();
 
   if (!cot || !cot.detalle) notFound();
+  // #120: una solicitud pendiente de tarifa solo muestra su pedido, sin ningún importe.
+  if (estaPendienteTarifa(cot.estado))
+    return <SolicitudPendiente codigo={cot.codigo} datos={(cot.detalle as { solicitudHotel?: DatosSolicitudHotel }).solicitudHotel ?? null} />;
   const d = cot.detalle as unknown as Detalle;
   // #102: venta B2B asistida en NETO ⇒ el enlace público muestra solo el total exigible (nunca el PVP original ni la comisión). Sale de
   // `detalle.b2bExterno`, el único dato externo-seguro del plan; el `payload` (datos personales y términos internos) solo se relee en el servidor, abajo, para derivar el resumen de reparto; nunca llega al documento.

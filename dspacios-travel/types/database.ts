@@ -1610,6 +1610,8 @@ export type Database = {
           pet_costo_desc: string | null;
           pet_nota: string | null;
           modelo_tarifario: "persona" | "unidad";
+          // Migración 270 (#120): se ofrece sin tarifa publicada («Tarifa y disponibilidad bajo solicitud»). Marca humana, apagada por defecto.
+          tarifa_bajo_solicitud: boolean;
         };
         Insert: {
           id?: number;
@@ -1639,6 +1641,7 @@ export type Database = {
           infante_nota?: string | null;
           nino_nota?: string | null;
           adults_only?: boolean;
+          tarifa_bajo_solicitud?: boolean;
           pet_friendly?: boolean;
           pet_costo_neto?: number;
           pet_costo_desc?: string | null;
@@ -2635,6 +2638,15 @@ export type Database = {
         Row: { id: number; paquete_id: number; hotel_id: number; categorias: string[] | null; regimenes: string[] | null; prioridad: number | null };
         Insert: { id?: number; paquete_id: number; hotel_id: number; categorias?: string[] | null; regimenes?: string[] | null; prioridad?: number | null };
         Update: Partial<Database["public"]["Tables"]["armado_hoteles"]["Insert"]>;
+        Relationships: [];
+      };
+      // Migración 270 (#120): neta del hotel a solicitud + precio congelado. Solo la escribe la RPC cargar_neta_solicitud.
+      cotizacion_tarifa_solicitud: {
+        Row: { id: number; cotizacion_id: number; item_ref: string; tenant: string; paquete_id: number; hotel_id: number; neta: number; moneda: string; pct_mk: number; precio_venta: number; cargada_por: string | null; cargada_en: string;
+          // Migración 271: elección de reparto (privada). Infante siempre 0.
+          modo: "adultos" | "distribuir"; adultos: number; ninos: number; infantes: number; neta_adulto: number; neta_nino: number; neta_infante: number };
+        Insert: never;
+        Update: never;
         Relationships: [];
       };
       armado_servicios: {
@@ -4122,6 +4134,11 @@ export type Database = {
       };
     };
     Functions: {
+      cargar_neta_solicitud: {
+        Args: { p_cotizacion: number; p_item_ref: string; p_neta: number; p_moneda: string; p_pct_mk: number; p_precio_venta: number; p_detalle: Json; p_vigencia: string | null;
+          p_modo: string; p_adultos: number; p_ninos: number; p_infantes: number; p_neta_adulto: number; p_neta_nino: number; p_neta_infante: number };
+        Returns: Json;
+      };
       guardar_proveedor: {
         Args: { p_proveedor: Json; p_id?: number | null };
         Returns: number;

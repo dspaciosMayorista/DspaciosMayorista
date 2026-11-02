@@ -130,6 +130,8 @@ export function validarReservaHabitaciones(inp: {
   paxMinHotel?: number | null;
   paxMaxHotel?: number | null;
   real?: ClasificacionEdad; // clasificación por fecha de nacimiento (opcional)
+  // #120 (solo hoteles a solicitud): adultos que viajan de verdad; sustituye a «habitaciones × pax_tarifa» (el niño ocupa la plaza de adulto libre). Ausente = como siempre.
+  adultosReales?: number;
 }): ValidacionReserva {
   const errores: string[] = [];
   const avisos: string[] = [];
@@ -145,6 +147,7 @@ export function validarReservaHabitaciones(inp: {
     capPax += rooms * r.pax_max;
   }
 
+  if (inp.adultosReales != null) adultosEsperados = inp.adultosReales;
   const ninos = Math.max(0, inp.ninosDeclarados);
   const infantes = Math.max(0, inp.infantesDeclarados);
   const ocupantes = adultosEsperados + ninos; // ocupan silla

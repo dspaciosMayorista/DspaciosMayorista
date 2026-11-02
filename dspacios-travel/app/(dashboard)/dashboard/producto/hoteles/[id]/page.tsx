@@ -68,6 +68,7 @@ export default async function HotelDetallePage({ params, searchParams }: { param
     nino_nota: string | null;
     adults_only: boolean | null;
     pet_friendly: boolean | null;
+    tarifa_bajo_solicitud?: boolean | null;
     pet_costo_neto: number | null;
     pet_costo_desc: string | null;
     pet_nota: string | null;
@@ -190,6 +191,8 @@ export default async function HotelDetallePage({ params, searchParams }: { param
             ninoNota: h.nino_nota ?? "",
             adultsOnly: h.adults_only ?? false,
             petFriendly: h.pet_friendly ?? false,
+            tarifaBajoSolicitud: h.tarifa_bajo_solicitud ?? false,
+            esUnidad: h.modelo_tarifario === "unidad",
             petCostoNeto: h.pet_costo_neto ?? 0,
             petCostoDesc: h.pet_costo_desc ?? "",
             petNota: h.pet_nota ?? "",

@@ -37,6 +37,15 @@ export function equivalenteCopCosto(valorUsd: number, trm: number): number {
   return Math.round(n * 100 + 1e-9) / 100;
 }
 
+/**
+ * CxP de un contrato en USD de una reserva POR PERSONA (hotel a solicitud o tarifado, vuelo y servicios incluidos): conserva su valor en dólares (a centavos, como la columna)
+ * y su moneda, y lleva su equivalente en COP congelado a la TRM de costos — el mismo modelo del carrito y de los programas (migración 236). Pura.
+ */
+export function cxpEnUsdConEquivalente<T extends { valor_total: number }>(fila: T, trm: number): T & { valor_total: number; moneda: "USD"; valor_cop_costo: number; trm_costo: number } {
+  const valorTotal = Math.round(Math.max(0, Number(fila.valor_total) || 0) * 100 + 1e-9) / 100;
+  return { ...fila, valor_total: valorTotal, moneda: "USD", valor_cop_costo: equivalenteCopCosto(valorTotal, trm), trm_costo: trm };
+}
+
 /** TRM de costos ya congelada en `cotizaciones.detalle.costo`, sin confiar en su forma. `null` = nunca se congeló una. */
 export function leerTrmCostoCongelada(detalle: unknown): number | null {
   const c = ((detalle ?? null) as { costo?: unknown } | null)?.costo as { trm?: unknown } | null | undefined;

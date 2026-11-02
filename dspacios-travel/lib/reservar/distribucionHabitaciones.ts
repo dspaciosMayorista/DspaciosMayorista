@@ -122,8 +122,10 @@ export type ResultadoDistribucion =
   | { ok: false; tipo: "seleccion_invalida"; error: string };
 
 // ── Fase 1: coherencia de CADA configuración, independiente del cliente ────
-function capacidadNinoEfectiva(c: ConfigCapacidadHabitacion): number {
-  return Math.max(0, Math.min(c.chd_max, MAX_NINO_TARIFAS_POR_HABITACION, c.pax_max - c.pax_tarifa));
+// `adultosReales` (solo hoteles a solicitud, #120): una habitación puede ocupar sus plazas de adulto con menos adultos reales (el niño ocupa la plaza libre); el tope de
+// niños adicionales se mide contra las personas REALES de la habitación. Sin él = `pax_tarifa` (comportamiento de siempre).
+function capacidadNinoEfectiva(c: ConfigCapacidadHabitacion, adultosReales: number = c.pax_tarifa): number {
+  return Math.max(0, Math.min(c.chd_max, MAX_NINO_TARIFAS_POR_HABITACION, c.pax_max - adultosReales));
 }
 
 function validarConfigHabitacion(h: HabitacionConsultada, indice: number): { ok: true } | { ok: false; error: string } {
@@ -219,8 +221,11 @@ export function distribuirPorHabitaciones(input: {
   ninos: number; // cantidad ya clasificada como "niño" por edad (sin repartir aún)
   infantes: number; // cantidad ya clasificada como infante
   habitaciones: HabitacionConsultada[];
+  // #120 (hotel a solicitud, ocupación REAL): adultos reales por habitación, entre 1 y `pax_tarifa`. Cada plaza de adulto que quede libre la ocupa un NIÑO de esa misma
+  // habitación (mínimo de niños de la habitación = plazas libres), sin crear ningún pasajero adicional. Ausente = `pax_tarifa` por habitación (todos los demás llamadores).
+  adultosPorHabitacion?: readonly number[];
 }): ResultadoDistribucion {
-  const { adultosDeclarados, ninos, infantes, habitaciones } = input;
+  const { adultosDeclarados, ninos, infantes, habitaciones, adultosPorHabitacion } = input;
   if (!habitaciones.length) return { ok: false, tipo: "seleccion_invalida", error: "Indica al menos una habitación." };
 
   // ── Fase 1: coherencia de cada configuración, para TODAS las habitaciones
@@ -238,7 +243,13 @@ export function distribuirPorHabitaciones(input: {
   // selección de habitaciones no corresponde a la cantidad de viajeros. Esto
   // SÍ es una elección del cliente (cuántas habitaciones/adultos declaró),
   // no un problema de configuración.
-  const adultosImplicitos = habitaciones.reduce((s, h) => s + h.config.pax_tarifa, 0);
+  if (adultosPorHabitacion) {
+    const malo = adultosPorHabitacion.length !== habitaciones.length
+      || adultosPorHabitacion.some((a, i) => !Number.isSafeInteger(a) || a < 1 || a > habitaciones[i].config.pax_tarifa);
+    if (malo) return { ok: false, tipo: "seleccion_invalida", error: "Los adultos por habitación no corresponden a las habitaciones elegidas (mínimo 1 adulto y como máximo las plazas de adulto de cada habitación)." };
+  }
+  const adultosHab = habitaciones.map((h, i) => adultosPorHabitacion?.[i] ?? h.config.pax_tarifa);
+  const adultosImplicitos = adultosHab.reduce((s, a) => s + a, 0);
   if (adultosDeclarados !== adultosImplicitos) {
     return {
       ok: false, tipo: "seleccion_invalida",
@@ -247,14 +258,20 @@ export function distribuirPorHabitaciones(input: {
   }
 
   const asign: AsignacionHabitacion[] = habitaciones.map((h, i) => ({
-    indice: i, acom: h.acom, adultos: h.config.pax_tarifa, nino: 0, nino2: 0, infantes: 0,
+    indice: i, acom: h.acom, adultos: adultosHab[i], nino: 0, nino2: 0, infantes: 0,
   }));
 
   // ── Niños: mínimos primero, luego sobrantes por orden de captura. El tope
   // real por habitación es `min(chd_max, 2, pax_max − adultos)` — la fase 1
   // ya garantizó que `chd_min` de cada habitación cabe dentro de ese tope.
-  const capNino = habitaciones.map((h) => capacidadNinoEfectiva(h.config));
-  const minNino = habitaciones.map((h) => h.config.chd_min);
+  const capNino = habitaciones.map((h, i) => capacidadNinoEfectiva(h.config, adultosHab[i]));
+  // Las plazas de adulto libres las ocupan niños de ESA habitación: su mínimo sube a (plazas libres) aunque el hotel no exija niños.
+  const minNino = habitaciones.map((h, i) => Math.max(h.config.chd_min, h.config.pax_tarifa - adultosHab[i]));
+  for (let i = 0; i < habitaciones.length; i++) {
+    if (minNino[i] > capNino[i]) {
+      return { ok: false, tipo: "seleccion_invalida", error: `La habitación ${ACOM_ROOM_LABEL[habitaciones[i].acom] ?? habitaciones[i].acom} (habitación ${i + 1}) con ${adultosHab[i]} adulto(s) necesita ${minNino[i]} niño(s) que ocupen sus plazas, pero admite máximo ${capNino[i]}.` };
+    }
+  }
   const rNinos = repartirConMinimos({
     cantidad: ninos, capacidades: capNino, minimos: minNino,
     totalHabitaciones: habitaciones.length, singular: "niño", plural: "niño(s)",

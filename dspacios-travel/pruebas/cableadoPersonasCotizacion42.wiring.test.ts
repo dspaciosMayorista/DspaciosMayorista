@@ -124,7 +124,7 @@ describe("migración 219: lo que el contrato exige y lo que prohíbe", () => {
 
 describe("acciones: C2 y C7", () => {
   const altas: [string, string, string][] = [
-    ["reservar/actions.ts", reservar, "crearCotizacion"],
+    ["reservar/actions.ts", reservar, "crearCotizacionInterna"], // crearCotizacion delega aquí (#120)
     ["manual-actions.ts", manual, "crearCotizacionManual"],
     ["manual-actions.ts", manual, "crearComparativaManual"],
     ["manual-actions.ts", manual, "resolverSolicitudComparativa"],
@@ -141,7 +141,7 @@ describe("acciones: C2 y C7", () => {
     }
   });
   test("Reservar asigna los refs ANTES del insert y persiste ESE objeto", () => {
-    const c = cuerpo(reservar, "crearCotizacion");
+    const c = cuerpo(reservar, "crearCotizacionInterna");
     const ref = c.indexOf("asignarRefsPasajeros(");
     const ins = c.indexOf('.from("cotizaciones").insert(');
     assert.ok(ref > 0 && ins > ref, "los refs deben asignarse antes del insert");
@@ -149,7 +149,7 @@ describe("acciones: C2 y C7", () => {
     assert.ok(/fila: \{ id: row\.id, tenant: tenantCotizacion, tipo: "tarifario", payload: inputPersistido/.test(c), "el alta se arma desde lo persistido");
   });
   test("sello nuevo SOLO en Reservar y checkout (la manual usa el de #39)", () => {
-    assert.ok(/sellar: true/.test(cuerpo(reservar, "crearCotizacion")));
+    assert.ok(/sellar: true/.test(cuerpo(reservar, "crearCotizacionInterna")));
     assert.ok(/sellar: true/.test(cuerpo(checkout, "crearCotizacionCarrito")));
     for (const fn of ["crearCotizacionManual", "crearComparativaManual", "resolverSolicitudComparativa"]) {
       assert.ok(!/sellar: true/.test(cuerpo(manual, fn)), fn);
