@@ -3,6 +3,7 @@
 import { useEffect, useState, useTransition } from "react";
 import { MessageCircle, Send, X } from "lucide-react";
 import { CarruselFotoHotel } from "./CarruselFotoHotel";
+import { Categoria } from "./tarjetaHotelCompartida";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { DateInput } from "@/components/ui/DateInput";
@@ -24,8 +25,11 @@ export function SolicitudHotelCard({ hotel }: { hotel: HotelBajoSolicitud }) {
         <span className="absolute left-2 top-2 z-10 max-w-[70%] truncate rounded-full bg-white/90 px-2 py-0.5 text-[10px] font-semibold text-[var(--brand-primary)]">{hotel.paqueteNombre}</span>
       </CarruselFotoHotel>
       <div className="space-y-2 p-4">
-        <h3 className="text-base font-semibold text-gray-900">{hotel.hotelNombre}</h3>
-        {hotel.destinoNombre && <p className="text-xs text-gray-500">{hotel.destinoNombre}{hotel.estrellas ? ` · ${hotel.estrellas} ${hotel.estrellas === 1 ? "estrella" : "estrellas"}` : ""}</p>}
+        <div className="flex flex-wrap items-center gap-2">
+          <h3 className="text-base font-semibold text-gray-900">{hotel.hotelNombre}</h3>
+          <Categoria estrellas={hotel.estrellas} clasificacion={null} className="text-sm" />
+        </div>
+        {hotel.destinoNombre && <p className="text-xs text-gray-500">{hotel.destinoNombre}</p>}
         <p className="rounded-lg bg-amber-50 px-3 py-2 text-sm font-medium text-amber-900">{TEXTO_BAJO_SOLICITUD}</p>
         <Button type="button" className="w-full" onClick={() => setAbierto(true)}>Solicitar cotización</Button>
       </div>

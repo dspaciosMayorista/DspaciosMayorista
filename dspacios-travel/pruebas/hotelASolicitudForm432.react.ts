@@ -70,7 +70,7 @@ test("la tarjeta sigue siendo «bajo solicitud»: sin precio y con «Solicitar c
   assert.match(t, /Tarifa y disponibilidad bajo solicitud/);
   assert.match(t, /Solicitar cotización/);
   assert.doesNotMatch(t, /\$\s?\d|desde/i);
-  assert.match(t, /4 estrellas/);
+  assert.equal(q('[data-testid="solicitud-hotel-7"] [title="4 estrellas"]')?.querySelectorAll("svg").length, 4);
 });
 
 test("la imagen usa el carrusel del hotel normal: todas las fotos cargadas, flechas y contador", () => {
