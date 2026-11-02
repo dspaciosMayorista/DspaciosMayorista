@@ -27,6 +27,7 @@ import { SolicitudPendiente, type DatosSolicitudHotel } from "@/components/cotiz
 import { estaPendienteTarifa } from "@/lib/reservar/solicitudHotel";
 import { NetaSolicitudForm } from "./NetaSolicitudForm";
 import { evaluarOcupacionHotel } from "@/lib/reservar/solicitudHotelServidor";
+import { DesgloseInterno } from "@/components/cotizacion/DesgloseInterno";
 import { FichaComparativa } from "@/lib/cotizacion/comparativaDocumento";
 import { abiertaConSalidaPasada, hoyBogota, MENSAJE_SALIDA_PASADA } from "@/lib/cotizacion/vigencia";
 import PagosPreviosPanel, { type PagoPrevioUI } from "@/components/cotizacion/PagosPreviosPanel";
@@ -133,6 +134,7 @@ export default async function CotizacionDetallePage({
     return (
       <div className="mx-auto max-w-3xl space-y-4 px-4 py-6 md:px-8">
         <SolicitudPendiente codigo={c.codigo} datos={(c.detalle as { solicitudHotel?: DatosSolicitudHotel } | null)?.solicitudHotel ?? null} />
+        <p className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm font-medium text-amber-800" data-testid="desglose-pendiente">Pendiente de valoración</p>
         <div className="rounded-xl border border-gray-200 bg-white p-4">
           {puedeCargar
             ? <NetaSolicitudForm cotizacionId={Number(c.id)} moneda={c.moneda ?? "COP"} conteos={ocupacion.ok ? ocupacion.conteos : null} errorOcupacion={ocupacion.ok ? null : ocupacion.error} />
@@ -268,7 +270,10 @@ export default async function CotizacionDetallePage({
   const recobroTotal = Number(detalleM.recobro?.total ?? 0);
   const recobroEmpresa = Number(detalleM.recobro?.empresa ?? 0);
   const recobroAliado = Number(detalleM.recobro?.aliado ?? 0);
-  const ninosSubtotal = Math.max((Number(c.precio_venta) || 0) - serviciosSubtotal - recobroTotal, 0);
+  // Niños: el renglón congelado del documento ("Tarifa por niño"), no un residuo del total.
+  const itemNinos = ((c.detalle as { items?: { descripcion?: string; valor?: number }[] } | null)?.items ?? []).find((i) => i.descripcion === "Tarifa por niño");
+  const ninosSubtotal = Number(itemNinos?.valor) || 0;
+  const sinDesglosar = Math.round(((Number(c.precio_venta) || 0) - serviciosSubtotal - ninosSubtotal - recobroTotal) * 100) / 100;
   const numNinos = Number(detalleM.venta?.ninos ?? 0);
 
   // #39 fase 1: editar servicios y niños/recobro SOLO en una manual simple abierta
@@ -348,6 +353,8 @@ export default async function CotizacionDetallePage({
 
       <CondicionesPanel ui={condicionesUI} moneda={moneda} />
 
+      {!esManual && <DesgloseInterno cot={c} moneda={moneda} />}
+
       {esManual && (
         <div className="mt-6 overflow-hidden rounded-xl border border-gray-200 bg-white">
           <div className="border-b border-gray-100 px-5 py-3 text-sm font-semibold text-gray-700">Servicios cotizados</div>
@@ -386,6 +393,12 @@ export default async function CotizacionDetallePage({
                       Recobro <span className="text-[11px] text-amber-600">(oculto al cliente · empresa {formatMoneda(recobroEmpresa, moneda)}{recobroAliado > 0 ? ` · aliado ${formatMoneda(recobroAliado, moneda)}` : ""})</span>
                     </td>
                     <td className="px-4 py-2 text-right tabular-nums" data-label="Valor">{formatMoneda(recobroTotal, moneda)}</td>
+                  </tr>
+                )}
+                {sinDesglosar !== 0 && (
+                  <tr className="text-amber-700" data-testid="desglose-manual-diferencia">
+                    <td className="px-4 py-2" colSpan={4}>Sin desglosar (la cotización no guardó este importe por separado)</td>
+                    <td className="px-4 py-2 text-right tabular-nums" data-label="Valor">{formatMoneda(sinDesglosar, moneda)}</td>
                   </tr>
                 )}
                 <tr className="border-t border-gray-200 font-medium">
