@@ -261,6 +261,26 @@ export function extraerFechas(texto: string, hoy: string): Fechas {
   return { menciones: hallados.sort((x, y) => x.pos - y.pos).map((h) => vigente(h.m)), mesSinDia };
 }
 
+/** Un mes completo como ventana de salida (Bloqueos): «marzo», «marzo de 2027», «en diciembre». */
+export type VentanaMes = { desde: string; hasta: string };
+export type MesMencionado = { tipo: "ok"; ventana: VentanaMes } | { tipo: "ambiguo"; candidatas: VentanaMes[] } | { tipo: "pasado" } | { tipo: "ninguno" };
+
+export function extraerMes(texto: string, hoy: string): MesMencionado {
+  const m = normalizar(texto).match(new RegExp(`\\b${MES}(?:\\s+(?:de|del)?\\s*(\\d{4}))?\\b`));
+  if (!m) return { tipo: "ninguno" };
+  const mes = MESES[m[1]];
+  const ventana = (y: number): VentanaMes => ({ desde: iso(y, mes, 1), hasta: iso(y, mes, new Date(Date.UTC(y, mes, 0)).getUTCDate()) });
+  if (m[2]) {
+    const y = Number(m[2]);
+    if (y < 2000 || y > 2100) return { tipo: "ninguno" };
+    const v = ventana(y);
+    return v.hasta < hoy ? { tipo: "pasado" } : { tipo: "ok", ventana: v };
+  }
+  const hoyY = Number(hoy.slice(0, 4));
+  const c = [hoyY, hoyY + 1].map(ventana).filter((v) => v.hasta >= hoy);
+  return { tipo: "ambiguo", candidatas: c };
+}
+
 // ── Habitaciones y menores ───────────────────────────────────────────────
 
 const TIPO_HAB: { acom: AcomRoom; re: string }[] = [

@@ -31,7 +31,7 @@ import {
 const FECHA_ISO = /^\d{4}-\d{2}-\d{2}$/;
 const esFecha = (v: string) => FECHA_ISO.test(v) && new Date(`${v}T00:00:00Z`).toISOString().slice(0, 10) === v;
 
-export type CriteriosBloqueos = { texto?: string; destino?: string; fechaDesde?: string; fechaHasta?: string; limite?: number };
+export type CriteriosBloqueos = { texto?: string; destino?: string; fechaDesde?: string; fechaHasta?: string; limite?: number; omitir?: number; sillasMin?: number };
 
 export function validarCriteriosBloqueos(entrada: Record<string, string | undefined>): { ok: true; criterios: CriteriosBloqueos } | { ok: false; campos: string[] } {
   const campos: string[] = [];
@@ -47,6 +47,14 @@ export function validarCriteriosBloqueos(entrada: Record<string, string | undefi
     else campos.push(k);
   }
   if (c.fechaDesde && c.fechaHasta && c.fechaDesde > c.fechaHasta) campos.push("fechaHasta");
+  // omitir = ofertas a saltar (página siguiente); sillasMin = personas que deben alcanzar en el vuelo.
+  for (const [k, min, max] of [["omitir", 0, 10_000], ["sillasMin", 1, 40]] as const) {
+    const v = (entrada[k] ?? "").trim();
+    if (!v) continue;
+    const n = Number(v);
+    if (!Number.isInteger(n) || n < min || n > max) campos.push(k);
+    else c[k] = n;
+  }
   const limite = (entrada.limite ?? "").trim();
   if (limite) {
     const n = Number(limite);
@@ -148,10 +156,12 @@ export function buscarEnOfertas(ofertas: readonly OfertaBloqueo[], c: CriteriosB
     })
     .filter((o) => !c.fechaDesde || (o.fecha_ida != null && o.fecha_ida >= c.fechaDesde))
     .filter((o) => !c.fechaHasta || (o.fecha_ida != null && o.fecha_ida <= c.fechaHasta))
+    .filter((o) => !c.sillasMin || (o.disponibilidad_vuelo !== "sin_sillas" && (o.sillas_libres == null || o.sillas_libres >= c.sillasMin)))
     .sort((a, b) => (a.fecha_ida ?? "").localeCompare(b.fecha_ida ?? "") || (a.desde_pvp_por_persona ?? Infinity) - (b.desde_pvp_por_persona ?? Infinity));
   const limite = c.limite ?? limitePorDefecto;
-  const ofertasLimitadas = filtradas.slice(0, limite);
-  return { ofertas: ofertasLimitadas, total_encontradas: filtradas.length, truncado: filtradas.length > ofertasLimitadas.length };
+  const omitir = c.omitir ?? 0;
+  const ofertasLimitadas = filtradas.slice(omitir, omitir + limite);
+  return { ofertas: ofertasLimitadas, total_encontradas: filtradas.length, truncado: filtradas.length > omitir + ofertasLimitadas.length };
 }
 
 export type SeleccionBloqueo = {
@@ -217,6 +227,7 @@ export function entradaComputoBloqueo(o: OfertaBloqueo, s: SeleccionBloqueo): Re
     aliadoId: null,
     plazo: "",
     pasajeros: [],
+    validarOcupacion: true,
     servicios: [],
   };
 }

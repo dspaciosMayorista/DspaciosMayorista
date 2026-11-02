@@ -34,6 +34,10 @@ export type EstadoConversacion = {
   cualquierDestino: boolean;
   fechaIda: string | null;
   fechaRegreso: string | null;
+  /** Bloqueos: el cliente dijo «cualquier fecha» (sin ventana de salida). */
+  cualquierFecha: boolean;
+  /** Bloqueos: cuántas opciones ya se mostraron (desplazamiento de la lista). */
+  omitir: number;
   adultos: number | null;
   habitaciones: Partial<Record<AcomRoom, number>> | null;
   edadesMenores: number[] | null;
@@ -55,6 +59,8 @@ export function estadoInicial(): EstadoConversacion {
     cualquierDestino: false,
     fechaIda: null,
     fechaRegreso: null,
+    cualquierFecha: false,
+    omitir: 0,
     adultos: null,
     habitaciones: null,
     edadesMenores: null,
@@ -139,6 +145,8 @@ export function sanearEstado(v: unknown): EstadoConversacion {
     cualquierDestino: e.cualquierDestino === true,
     fechaIda,
     fechaRegreso,
+    cualquierFecha: e.cualquierFecha === true,
+    omitir: entero(e.omitir, 0, 10_000) ?? 0,
     adultos: entero(e.adultos, 1, 40),
     habitaciones,
     edadesMenores,

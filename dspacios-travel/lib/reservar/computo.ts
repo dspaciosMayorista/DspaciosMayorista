@@ -119,6 +119,8 @@ export type ReservaInput = {
   modoCompra?: "neta" | "comisionable";  // B2B: cómo compra el aliado
   plazo: string;
   pasajeros: PasajeroReserva[];
+  // Cotización sin pasajeros que igual debe respetar la ocupación de las habitaciones (capacidad de la acomodación y pax del hotel): SalesBot. Sin esta marca la validación solo corre con pasajeros, como siempre.
+  validarOcupacion?: boolean;
   servicios?: number[];   // ids de servicios add-on seleccionados
   // Servicios opcionales que se cobran FUERA de este cómputo (los tours/receptivos del carrito vinculados a este hotel) y que, si cobran un
   // importe positivo, devuelven al infante con PVP fijo a la fórmula normal completa (254). Solo entran a la decisión; este cómputo no los suma.
@@ -591,13 +593,13 @@ export async function computarReserva(
     );
     // Sin pasajeros (cotización preliminar desde el carrito público) se omite la
     // validación de edades vs acomodación; se revalida al convertir en contrato.
-    if (input.pasajeros.length) {
+    if (input.pasajeros.length || input.validarOcupacion) {
       const habNumF: Record<string, number> = {};
       for (const a of ACOM_ROOMS) { const n = Math.max(0, Math.trunc(Number(input.habitaciones?.[a]) || 0)); if (n > 0) habNumF[a] = n; }
       const valF = validarReservaHabitaciones({
         habitaciones: habNumF, reglas: reglasF, ninosDeclarados: numNinos + numNinos2,
         infantesDeclarados: numInfantes,
-        paxMinHotel: hotelRowF?.pax_min ?? null, paxMaxHotel: hotelRowF?.pax_max ?? null, real: realF,
+        paxMinHotel: hotelRowF?.pax_min ?? null, paxMaxHotel: hotelRowF?.pax_max ?? null, real: input.pasajeros.length ? realF : undefined,
       });
       if (valF.errores.length) return { ok: false, error: valF.errores.join(" ") };
     }
@@ -831,7 +833,7 @@ export async function computarReserva(
       reglaEdad.infanteMax,
       reglaEdad.ninoMax
     );
-    if (input.pasajeros.length) {
+    if (input.pasajeros.length || input.validarOcupacion) {
       const habitacionesNum: Record<string, number> = {};
       for (const a of ACOM_ROOMS) {
         const n = Math.max(0, Math.trunc(Number(input.habitaciones?.[a]) || 0));
@@ -844,7 +846,7 @@ export async function computarReserva(
         infantesDeclarados: numInfantes,
         paxMinHotel: hotelRow?.pax_min ?? null,
         paxMaxHotel: hotelRow?.pax_max ?? null,
-        real,
+        real: input.pasajeros.length ? real : undefined,
       });
       if (val.errores.length) return { ok: false, error: val.errores.join(" ") };
     }

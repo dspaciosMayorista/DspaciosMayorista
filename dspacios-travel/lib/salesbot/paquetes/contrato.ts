@@ -153,6 +153,17 @@ const SENALES_TECNICAS: readonly RegExp[] = [
   /\b[a-z0-9]+(?:_[a-z0-9]+)+\b/i,
 ];
 
+/** Rechazos de ocupación de las habitaciones (capacidad de la acomodación o pax del hotel): se corrigen cambiando habitaciones, adultos o menores. */
+const OCUPACION: readonly RegExp[] = [
+  /^(La habitación seleccionada admite|Las \d+ habitaciones seleccionadas admiten) máximo \d+ (niño|infante)\(s\); hay \d+\.$/,
+  /^(La habitación seleccionada exige|Las \d+ habitaciones seleccionadas exigen) un mínimo de \d+ (niño|infante)\(s\) en total; hay \d+\.$/,
+  /^Las habitaciones elegidas son para \d+ adulto\(s\); declaraste \d+\. Ajusta la cantidad de habitaciones o de adultos\.$/,
+  /^Las habitaciones elegidas admiten máximo \d+ (niño|infante)\(s\); seleccionaste \d+\.$/,
+  /^Las habitaciones elegidas admiten máximo \d+ pax; hay \d+\.$/,
+  /^El hotel admite máximo \d+ pax por reserva; hay \d+\.$/,
+  /^El hotel exige mínimo \d+ pax por reserva; hay \d+\.$/,
+];
+
 /**
  * LISTA BLANCA de mensajes comerciales de los motores (`computo.ts`,
  * `cotizar.ts`, `edadesMenores.ts`, `distribucionHabitaciones.ts`,
@@ -162,6 +173,7 @@ const SENALES_TECNICAS: readonly RegExp[] = [
  * fijas: ningún texto libre del motor puede colarse por ellos.
  */
 const MENSAJES_COMERCIALES: readonly RegExp[] = [
+  ...OCUPACION,
   /^Este hotel es Adults Only: no acepta niños ni infantes\.$/,
   /^Este hotel no acepta mascotas\.$/,
   /^Indica al menos una habitación( \(cantidad por tipo\))?\.$/,
@@ -181,12 +193,15 @@ const MENSAJES_COMERCIALES: readonly RegExp[] = [
   /^Este hotel no tiene tarifa de Niño [12] configurada para esa categoría\/régimen — no se puede cotizar con esa edad\.$/,
   /^La edad \d+ corresponde a tarifa de adulto según este hotel \(mayor a \d+ años\) — cuenta a esta persona entre los adultos \(habitaciones\), no como menor\.$/,
   /^La edad del menor \d+ \(\d+\) no corresponde a un menor de edad\.$/,
-  /^(La habitación seleccionada admite|Las \d+ habitaciones seleccionadas admiten) máximo \d+ (niño|infante)\(s\); hay \d+\.$/,
-  /^(La habitación seleccionada exige|Las \d+ habitaciones seleccionadas exigen) un mínimo de \d+ (niño|infante)\(s\) en total; hay \d+\.$/,
-  /^Las habitaciones elegidas son para \d+ adulto\(s\); declaraste \d+\. Ajusta la cantidad de habitaciones o de adultos\.$/,
   /^No se pueden consultar más de \d+ habitaciones a la vez\.$/,
   /^No se pueden cotizar más de \d+ (menores|adultos|pax) en una sola (consulta|búsqueda)\.$/,
 ];
+
+/** ¿El motivo es un rechazo de ocupación? Se corrige cambiando habitaciones, adultos o menores, no con el asesor. */
+export const esRechazoOcupacion = (motivo: string | null | undefined): boolean => {
+  const m = (motivo ?? "").trim();
+  return OCUPACION.some((r) => r.test(m));
+};
 
 /** Motivo para un rechazo del motor que no es un mensaje comercial conocido: nunca se muestra su texto. */
 export const MOTIVO_NO_COTIZABLE_GENERICO = "Esta combinación no se puede cotizar desde aquí. Revísala con el asesor.";

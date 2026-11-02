@@ -180,51 +180,53 @@ describe("Programas: referencia por persona, nunca un total", () => {
 
 describe("Bloqueos: de punta a punta", () => {
   test("producto → destino → oferta → combo → habitaciones → menores → cotización ORIENTATIVA", async () => {
-    const { respuestas, ultima } = await charla([{ op: "producto:bloqueo" }, "San Andrés", "1", { op: "combo:Estándar|PAE" }, "1 doble", "5"]);
+    const { respuestas, ultima } = await charla([{ op: "producto:bloqueo" }, "San Andrés", { op: "fechas:*" }, "2", "1", { op: "combo:Estándar|PAE" }, "1 doble", "5"]);
     assert.equal(respuestas[0].estado.pendiente, "destino");
-    assert.ok(valores(respuestas[1]).includes("sel:blo:5-b10-7"));
-    assert.equal(respuestas[2].estado.pendiente, "combo");
-    assert.equal(respuestas[3].estado.pendiente, "habitaciones");
-    assert.equal(respuestas[4].estado.pendiente, "menores");
+    assert.equal(respuestas[1].estado.pendiente, "fechas");
+    assert.equal(respuestas[2].estado.pendiente, "adultos");
+    assert.ok(valores(respuestas[3]).includes("sel:blo:5-b10-7"));
+    assert.equal(respuestas[4].estado.pendiente, "combo");
+    assert.equal(respuestas[5].estado.pendiente, "habitaciones");
+    assert.equal(respuestas[6].estado.pendiente, "menores");
     assert.deepEqual(llamadas.find((l) => l.op === "cotizarBloqueo")?.arg, { oferta: "5-b10-7", combo: "Estándar|PAE", hab_doble: "1", edadesMenores: "5" });
     assert.match(textos(ultima), /Cotización ORIENTATIVA: \$\s?2\.400\.000/);
     assert.match(textos(ultima), /3 silla\(s\) libre\(s\)/);
     assert.match(textos(ultima), /sujeto a confirmación/);
   });
   test("cambiar habitaciones conserva la oferta y vuelve a cotizar", async () => {
-    await charla([{ op: "producto:bloqueo" }, "San Andrés", "1", { op: "combo:Estándar|PAE" }, "1 doble", "sin menores", "cambiar habitaciones", "2 dobles"]);
+    await charla([{ op: "producto:bloqueo" }, "San Andrés", { op: "fechas:*" }, "2", "1", { op: "combo:Estándar|PAE" }, "1 doble", "sin menores", "cambiar habitaciones", "2 dobles"]);
     const cot = llamadas.filter((l) => l.op === "cotizarBloqueo");
     assert.equal(cot.length, 2);
     assert.deepEqual(cot[1].arg, { oferta: "5-b10-7", combo: "Estándar|PAE", hab_doble: "2" });
   });
   test("combo manipulado (no publicado en la oferta): se vuelve a pedir", async () => {
-    const { ultima } = await charla([{ op: "producto:bloqueo" }, "San Andrés", "1", { op: "combo:Lujo|TODO" }]);
+    const { ultima } = await charla([{ op: "producto:bloqueo" }, "San Andrés", { op: "fechas:*" }, "2", "1", { op: "combo:Lujo|TODO" }]);
     assert.equal(ultima.estado.pendiente, "combo");
     assert.equal(llamadas.some((l) => l.op === "cotizarBloqueo"), false);
   });
   test("selección caducada: la oferta dejó de estar vigente → aviso y nueva búsqueda", async () => {
-    const { respuestas } = await charla([{ op: "producto:bloqueo" }, "San Andrés", "1"]);
+    const { respuestas } = await charla([{ op: "producto:bloqueo" }, "San Andrés", { op: "fechas:*" }, "2", "1"]);
     ofertaVigente = false;
-    const r = await avanzar(respuestas[2].estado, { tipo: "opcion", valor: "combo:Estándar|PAE" }, sv(), HOY);
+    const r = await avanzar(respuestas[4].estado, { tipo: "opcion", valor: "combo:Estándar|PAE" }, sv(), HOY);
     assert.match(textos(r), /ya no está disponible/);
     assert.equal(r.estado.seleccion, null);
   });
   test("selección inyectada en el estado del navegador se revalida contra el servidor", async () => {
-    const r = await avanzar({ ...estadoInicial(), producto: "bloqueo", destino: "san andres", seleccion: "blo:9-b99-9", combo: "Estándar|PAE", habitaciones: { doble: 1 }, edadesMenores: [] }, { tipo: "opcion", valor: "reintentar" }, sv(), HOY);
+    const r = await avanzar({ ...estadoInicial(), producto: "bloqueo", destino: "san andres", cualquierFecha: true, adultos: 2, seleccion: "blo:9-b99-9", combo: "Estándar|PAE", habitaciones: { doble: 1 }, edadesMenores: [] }, { tipo: "opcion", valor: "reintentar" }, sv(), HOY);
     assert.match(textos(r), /ya no está disponible/);
     assert.equal(llamadas.some((l) => l.op === "cotizarBloqueo"), false);
   });
   test("sin resultados: opciones para ajustar o consultar a un asesor", async () => {
     ofertaVigente = false;
     fallar.buscarBloqueos = { ok: false, codigo: "sin_resultados", motivo: "No hay bloqueos publicados que cumplan esos criterios.", sello: crearSello("buscarBloqueos") };
-    const { ultima } = await charla([{ op: "producto:bloqueo" }, "Marte"]);
+    const { ultima } = await charla([{ op: "producto:bloqueo" }, "Marte", { op: "fechas:*" }, "2"]);
     assert.match(textos(ultima), /No hay bloqueos/);
     assert.ok(valores(ultima).includes("corregir:destino"));
     assert.ok(valores(ultima).includes("asesor"));
   });
   test("error técnico: reintentar o asesor", async () => {
     fallar.buscarBloqueos = { ok: false, codigo: "error_tecnico", motivo: "x", sello: crearSello("buscarBloqueos") };
-    const { ultima } = await charla([{ op: "producto:bloqueo" }, "San Andrés"]);
+    const { ultima } = await charla([{ op: "producto:bloqueo" }, "San Andrés", { op: "fechas:*" }, "2"]);
     assert.deepEqual(valores(ultima).slice(0, 2), ["reintentar", "asesor"]);
   });
 });
@@ -301,7 +303,7 @@ describe("selección: solo de la última lista visible (opción y número)", () 
     assert.doesNotMatch(textos(ultima), NO_ESTA);
   });
   test("número de la lista visible (Bloqueos): revalida la oferta y pide el combo", async () => {
-    const { ultima } = await charla([{ op: "producto:bloqueo" }, "San Andrés", "1"]);
+    const { ultima } = await charla([{ op: "producto:bloqueo" }, "San Andrés", { op: "fechas:*" }, "2", "1"]);
     assert.deepEqual(llamadas.filter((l) => l.op === "ofertaBloqueo").map((l) => l.arg), ["5-b10-7"]);
     assert.equal(ultima.estado.seleccion, "blo:5-b10-7");
     assert.equal(ultima.estado.pendiente, "combo");
@@ -312,7 +314,7 @@ describe("selección: solo de la última lista visible (opción y número)", () 
     assert.match(textos(ultima), /Cotización ORIENTATIVA/);
   });
   test("de la lista pero ya no vigente: el filtro de lista no reemplaza la revalidación del servidor", async () => {
-    const { ultima: lista } = await charla([{ op: "producto:bloqueo" }, "San Andrés"]);
+    const { ultima: lista } = await charla([{ op: "producto:bloqueo" }, "San Andrés", { op: "fechas:*" }, "2"]);
     ofertaVigente = false;
     const r = await avanzar(lista.estado, { tipo: "opcion", valor: "sel:blo:5-b10-7" }, sv(), HOY);
     assert.deepEqual(llamadas.filter((l) => l.op === "ofertaBloqueo").map((l) => l.arg), ["5-b10-7"]);
@@ -320,7 +322,7 @@ describe("selección: solo de la última lista visible (opción y número)", () 
     assert.equal(r.estado.seleccion, null);
   });
   test("lista manipulada en el navegador: pasa el filtro de lista pero el servidor la rechaza", async () => {
-    const { ultima: lista } = await charla([{ op: "producto:bloqueo" }, "San Andrés"]);
+    const { ultima: lista } = await charla([{ op: "producto:bloqueo" }, "San Andrés", { op: "fechas:*" }, "2"]);
     const manipulado = { ...lista.estado, ultimaLista: [...lista.estado.ultimaLista, "sel:blo:9-b99-9"] };
     const r = await avanzar(manipulado, { tipo: "opcion", valor: "sel:blo:9-b99-9" }, sv(), HOY);
     assert.ok(llamadas.some((l) => l.op === "ofertaBloqueo" && l.arg === "9-b99-9"));
@@ -330,7 +332,7 @@ describe("selección: solo de la última lista visible (opción y número)", () 
 
   // Negativas: fuera de la lista visible, o sin lista, se pide elegir de las opciones actuales.
   test("opción fuera de la lista visible (Bloqueos): no consulta la oferta y vuelve a listar", async () => {
-    const { ultima } = await charla([{ op: "producto:bloqueo" }, "San Andrés", { op: "sel:blo:9-b99-9" }]);
+    const { ultima } = await charla([{ op: "producto:bloqueo" }, "San Andrés", { op: "fechas:*" }, "2", { op: "sel:blo:9-b99-9" }]);
     assert.match(textos(ultima), NO_ESTA);
     assert.equal(llamadas.some((l) => l.op === "ofertaBloqueo"), false);
     assert.equal(llamadas.filter((l) => l.op === "buscarBloqueos").length, 2);
@@ -346,7 +348,7 @@ describe("selección: solo de la última lista visible (opción y número)", () 
     assert.equal(r.estado.seleccion, null);
   });
   test("lista anterior que ya no es la visible (eligiendo combo): no cambia la selección", async () => {
-    const { ultima } = await charla([{ op: "producto:bloqueo" }, "San Andrés", "1", { op: "sel:blo:5-b10-7" }]);
+    const { ultima } = await charla([{ op: "producto:bloqueo" }, "San Andrés", { op: "fechas:*" }, "2", "1", { op: "sel:blo:5-b10-7" }]);
     assert.match(textos(ultima), NO_ESTA);
     assert.equal(ultima.estado.pendiente, "combo");
     assert.ok(valores(ultima).includes("combo:Estándar|PAE"));
@@ -359,20 +361,20 @@ describe("selección: solo de la última lista visible (opción y número)", () 
     assert.ok(valores(ultima).includes("corregir:seleccion"));
   });
   test("agencia pendiente: una selección vuelve a mostrar las agencias", async () => {
-    const { ultima } = await charla([{ op: "producto:bloqueo" }, "San Andrés", "es para una agencia", { op: "sel:blo:5-b10-7" }]);
+    const { ultima } = await charla([{ op: "producto:bloqueo" }, "San Andrés", { op: "fechas:*" }, "2", "es para una agencia", { op: "sel:blo:5-b10-7" }]);
     assert.match(textos(ultima), NO_ESTA);
     assert.deepEqual(valores(ultima), ["ag:3", "ag:4"]);
     assert.equal(ultima.estado.pendiente, "agencia");
     assert.equal(llamadas.some((l) => l.op === "ofertaBloqueo"), false);
   });
   test("número fuera de rango: no consulta y pide elegir de la lista", async () => {
-    const { ultima } = await charla([{ op: "producto:bloqueo" }, "San Andrés", "7"]);
+    const { ultima } = await charla([{ op: "producto:bloqueo" }, "San Andrés", { op: "fechas:*" }, "2", "7"]);
     assert.match(textos(ultima), /Elige una de las opciones/);
     assert.equal(llamadas.some((l) => l.op === "ofertaBloqueo"), false);
     assert.equal(ultima.estado.pendiente, "seleccion");
   });
   test("número que apunta a una selección mientras se elige combo (lista manipulada): no cambia la oferta", async () => {
-    const { ultima: combos } = await charla([{ op: "producto:bloqueo" }, "San Andrés", "1"]);
+    const { ultima: combos } = await charla([{ op: "producto:bloqueo" }, "San Andrés", { op: "fechas:*" }, "2", "1"]);
     const manipulado = { ...combos.estado, ultimaLista: ["sel:blo:9-b99-9"] };
     const r = await avanzar(manipulado, { tipo: "texto", texto: "1" }, sv(), HOY);
     assert.match(textos(r), NO_ESTA);
@@ -412,7 +414,7 @@ describe("B2B: solo el porcentaje propio de la agencia", () => {
 
 describe("no filtración", () => {
   test("una conversación completa no contiene claves prohibidas ni datos internos", async () => {
-    const { respuestas } = await charla([{ op: "producto:bloqueo" }, "San Andrés", "1", { op: "combo:Estándar|PAE" }, "1 doble", "5"]);
+    const { respuestas } = await charla([{ op: "producto:bloqueo" }, "San Andrés", { op: "fechas:*" }, "2", "1", { op: "combo:Estándar|PAE" }, "1 doble", "5"]);
     for (const r of respuestas) {
       assert.deepEqual(clavesProhibidasEn(r), []);
       const json = JSON.stringify(r);
@@ -421,7 +423,7 @@ describe("no filtración", () => {
   });
   test("si una consulta trajera un dato prohibido, la respuesta entera se descarta", async () => {
     fallar.buscarBloqueos = ok({ ofertas: [{ ...OFERTA, record: "L93FYZ", tarifa_neta: 400_000 }], total_encontradas: 1, truncado: false });
-    const { ultima } = await charla([{ op: "producto:bloqueo" }, "San Andrés"]);
+    const { ultima } = await charla([{ op: "producto:bloqueo" }, "San Andrés", { op: "fechas:*" }, "2"]);
     const json = JSON.stringify(ultima);
     // Los datos prohibidos no llegan al texto: el flujo solo arma mensajes con campos de lista blanca.
     assert.equal(json.includes("L93FYZ"), false);

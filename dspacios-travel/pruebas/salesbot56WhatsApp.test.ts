@@ -403,6 +403,10 @@ describe("turno · camino feliz y límites del canal", () => {
     await w.turno(msg("2", op("producto:bloqueo"), undefined, 1_001));
     assert.match(w.textos().join("|"), /destino/i);
     await w.turno(msg("3", txt("San Andrés"), undefined, 1_002));
+    assert.ok(!llamadas.includes("bloqueos"), "antes de listar pregunta cuándo y cuántas personas");
+    assert.match(w.textos().join("|"), /Cuándo quieres viajar/);
+    await w.turno(msg("4", op("fechas:*"), undefined, 1_003));
+    await w.turno(msg("5", txt("2"), undefined, 1_004));
     assert.ok(llamadas.includes("bloqueos"));
     assert.ok(!llamadas.some((l) => ["programas", "agencias", "pct", "detalle"].includes(l)));
   });

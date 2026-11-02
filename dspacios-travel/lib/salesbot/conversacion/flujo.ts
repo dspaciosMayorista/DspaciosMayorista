@@ -11,7 +11,7 @@
 import type { AcomRoom } from "@/lib/acomodaciones";
 import { formatFechaLarga, formatMoneda } from "@/lib/utils";
 import { clavesProhibidasEn, type AgenciaResumen, type DetalleConsulta, type PorcentajeAgencia, type Respuesta, type ResultadoBusqueda } from "@/lib/salesbot/contrato";
-import type { CotizacionPaquete, DisponibilidadVuelo, OfertaBloqueo, ResultadoBusquedaBloqueos, ResultadoBusquedaPorcion } from "@/lib/salesbot/paquetes/contrato";
+import { esRechazoOcupacion, type CotizacionPaquete, type DisponibilidadVuelo, type OfertaBloqueo, type ResultadoBusquedaBloqueos, type ResultadoBusquedaPorcion } from "@/lib/salesbot/paquetes/contrato";
 import type { RespuestaCotizacionPorcion } from "@/lib/salesbot/paquetes/lectura";
 import {
   estadoInicial,
@@ -30,6 +30,7 @@ import {
   destinoEnLista,
   esCualquiera,
   extraerFechas,
+  extraerMes,
   habitacionesEnFrase,
   interpretarCantidad,
   interpretarComando,
@@ -40,6 +41,7 @@ import {
   limpiarDestinoLibre,
   normalizar,
   type CampoCorregible,
+  type FechaMencionada,
 } from "@/lib/salesbot/conversacion/interpretar";
 
 type Entrada = Record<string, string | undefined>;
@@ -113,7 +115,14 @@ type Dato = Exclude<Pregunta, "producto" | "seleccion" | "combo" | "agencia">;
 
 function datosFaltantesAntesDeBuscar(e: EstadoConversacion): Dato[] {
   const destino = e.destino || e.cualquierDestino;
-  if (e.producto === "programa" || e.producto === "bloqueo") return destino ? [] : ["destino"];
+  if (e.producto === "programa") return destino ? [] : ["destino"];
+  if (e.producto === "bloqueo") {
+    const f: Dato[] = [];
+    if (!destino) f.push("destino");
+    if (!e.cualquierFecha && !e.fechaIda) f.push("fechas");
+    if (e.adultos == null) f.push("adultos");
+    return f;
+  }
   if (e.producto === "porcion") {
     const f: Dato[] = [];
     if (!e.destino) f.push("destino");
@@ -133,11 +142,11 @@ function limpiar(e: EstadoConversacion, campo: CampoCorregible): EstadoConversac
     case "producto":
       return { ...estadoInicial(), agenciaId: e.agenciaId };
     case "destino":
-      return { ...e, destino: null, cualquierDestino: false, ...sinSeleccion };
+      return { ...e, destino: null, cualquierDestino: false, omitir: 0, ...sinSeleccion };
     case "fechas":
-      return { ...e, fechaIda: null, fechaRegreso: null, ...sinSeleccion };
+      return { ...e, fechaIda: null, fechaRegreso: null, cualquierFecha: false, omitir: 0, ...sinSeleccion };
     case "adultos":
-      return { ...e, adultos: null, ...(e.producto === "porcion" ? sinSeleccion : {}) };
+      return { ...e, adultos: null, omitir: 0, ...(e.producto === "porcion" ? sinSeleccion : {}) };
     case "habitaciones":
       return { ...e, habitaciones: null, ...(e.producto === "porcion" ? sinSeleccion : {}) };
     case "menores":
@@ -152,7 +161,7 @@ function limpiar(e: EstadoConversacion, campo: CampoCorregible): EstadoConversac
 function opcionesCorregir(e: EstadoConversacion): Opcion[] {
   const o: Opcion[] = [];
   if (e.destino || e.cualquierDestino) o.push({ etiqueta: "Cambiar destino", valor: "corregir:destino" });
-  if (e.fechaIda) o.push({ etiqueta: "Cambiar fechas", valor: "corregir:fechas" });
+  if (e.fechaIda || e.cualquierFecha) o.push({ etiqueta: "Cambiar fechas", valor: "corregir:fechas" });
   if (e.adultos != null) o.push({ etiqueta: "Cambiar adultos", valor: "corregir:adultos" });
   if (e.habitaciones) o.push({ etiqueta: "Cambiar habitaciones", valor: "corregir:habitaciones" });
   if (e.edadesMenores) o.push({ etiqueta: "Cambiar menores", valor: "corregir:menores" });
@@ -182,9 +191,12 @@ async function preguntar(e: EstadoConversacion, dato: Pregunta, sv: ServiciosCon
         [{ etiqueta: "Cualquier destino", valor: "destino:*" }]
       );
     case "fechas":
+      if (e.producto === "bloqueo")
+        return con("¿Cuándo quieres viajar? Dime un mes (por ejemplo «marzo de 2027»), un rango aproximado («del 10 al 20 de marzo de 2027») o elige «Cualquier fecha».", [{ etiqueta: "Cualquier fecha", valor: "fechas:*" }]);
+      if (e.fechaIda && !e.fechaRegreso) return con(`Ida el ${fmtFecha(e.fechaIda)}. ¿Cuál es la fecha de regreso? Por ejemplo: «12 de diciembre de 2026».`);
       return con("¿Fechas de ida y regreso? Por ejemplo: «del 10 al 13 de marzo de 2027» o «10/03/2027 al 13/03/2027».");
     case "adultos":
-      return con("¿Cuántos adultos viajan?", [1, 2, 3, 4].map((n) => ({ etiqueta: String(n), valor: `adultos:${n}` })));
+      return con(e.producto === "bloqueo" ? "¿Cuántos adultos viajan? Los niños e infantes los pregunto al cotizar." : "¿Cuántos adultos viajan?", [1, 2, 3, 4].map((n) => ({ etiqueta: String(n), valor: `adultos:${n}` })));
     case "habitaciones":
       return con("¿Cuántas habitaciones y de qué tipo? Por ejemplo: «1 doble» o «2 dobles y 1 sencilla».", [
         { etiqueta: "1 doble", valor: "habitaciones:doble=1" },
@@ -203,26 +215,79 @@ async function preguntar(e: EstadoConversacion, dato: Pregunta, sv: ServiciosCon
 
 type Aplicado = { estado: EstadoConversacion; aclaracion?: MensajeBot; aviso?: string };
 
-/** Aplica fechas: dos exactas válidas, o pide aclarar con candidatos. */
-function aplicarFechas(e: EstadoConversacion, texto: string, hoy: string): Aplicado | null {
+const MES_NOMBRE = ["enero", "febrero", "marzo", "abril", "mayo", "junio", "julio", "agosto", "septiembre", "octubre", "noviembre", "diciembre"];
+
+/** «9 al 12 de diciembre de 2026» cuando es el mismo mes; fechas largas completas si no. */
+function rangoLargo(ida: string, reg: string): string {
+  const [y1, m1, d1] = ida.split("-").map(Number);
+  const [y2, m2, d2] = reg.split("-").map(Number);
+  return y1 === y2 && m1 === m2 ? `${d1} al ${d2} de ${MES_NOMBRE[m1 - 1]} de ${y1}` : `${fmtFecha(ida)} al ${fmtFecha(reg)}`;
+}
+
+/**
+ * Rangos completos entre las fechas candidatas de la ida y las del regreso, en el orden en que el cliente
+ * las dio: para cada ida, el regreso posterior más cercano. Cada opción lleva AMBAS fechas, así elegirla
+ * no pierde el regreso.
+ */
+function opcionesRango(idas: string[], regresos: string[]): Opcion[] {
+  const porIda = new Map<string, string>();
+  for (const i of idas) for (const r of regresos) if (i < r && (!porIda.has(i) || r < porIda.get(i)!)) porIda.set(i, r);
+  return [...porIda].sort().slice(0, 4).map(([i, r]) => ({ etiqueta: rangoLargo(i, r), valor: `fechas:${i},${r}` }));
+}
+
+const candidatas = (m: FechaMencionada): string[] => (m.tipo === "ok" ? [m.fecha] : m.tipo === "ambigua" ? m.candidatos : []);
+
+/**
+ * Aplica fechas. Porción: ida y regreso exactos. Bloqueos (`ventana`): la ventana de salida, y una sola
+ * fecha vale como «a partir de». Si alguna es ambigua (sin año), ofrece el RANGO COMPLETO por año; una
+ * sola fecha se conserva como ida y se pregunta específicamente por el regreso.
+ */
+function aplicarFechas(e: EstadoConversacion, texto: string, hoy: string, ventana = false): Aplicado | null {
   const f = extraerFechas(texto, hoy);
   if (!f.menciones.length) return f.mesSinDia ? { estado: e, aclaracion: { texto: "¿Qué días exactos? Indica el día de ida y el de regreso, con mes y año." } } : null;
   if (f.menciones.some((m) => m.tipo === "pasada")) return { estado: e, aclaracion: { texto: "Esa fecha ya pasó. Indica fechas desde hoy en adelante." } };
   if (f.menciones.some((m) => m.tipo === "invalida")) return { estado: e, aclaracion: { texto: "Una de las fechas no existe en el calendario. Revísala, por favor." } };
-  const amb = f.menciones.find((m) => m.tipo === "ambigua");
-  if (amb && amb.tipo === "ambigua") {
-    const otra = f.menciones.find((m) => m !== amb && m.tipo === "ok");
-    const opciones = amb.candidatos.map((c) => {
-      const par = otra && otra.tipo === "ok" ? [c, otra.fecha].sort() : [c];
-      return { etiqueta: par.map(fmtFecha).join(" al "), valor: `fechas:${par.join(",")}` };
-    });
-    return { estado: e, aclaracion: { texto: "Para no equivocarme, confirma la fecha:", opciones } };
+  const nuevo = { cualquierFecha: false, omitir: 0 };
+  const [a, b] = f.menciones;
+  if (f.menciones.length === 1) {
+    if (!ventana && e.fechaIda && !e.fechaRegreso) {
+      // Ya se dio la ida: esta fecha es el regreso.
+      const ops = opcionesRango([e.fechaIda], candidatas(a));
+      if (!ops.length) return { estado: e, aclaracion: { texto: `El regreso debe ser posterior a la ida (${fmtFecha(e.fechaIda)}). ¿Qué fecha de regreso?` } };
+      if (a.tipo === "ok") return { estado: { ...e, fechaRegreso: a.fecha } };
+      return { estado: e, aclaracion: { texto: "Para no equivocarme, confirma el regreso:", opciones: ops } };
+    }
+    if (a.tipo === "ok") {
+      const estado = { ...e, ...nuevo, fechaIda: a.fecha, fechaRegreso: null };
+      return ventana ? { estado } : { estado, aclaracion: { texto: `Ida el ${fmtFecha(a.fecha)}. ¿Y la fecha de regreso?` } };
+    }
+    return { estado: e, aclaracion: { texto: ventana ? "Para no equivocarme, confirma la fecha:" : "Para no equivocarme, confirma la fecha de ida:", opciones: candidatas(a).map((c) => ({ etiqueta: fmtFecha(c), valor: `fechas:${c}` })) } };
   }
-  const fechas = f.menciones.flatMap((m) => (m.tipo === "ok" ? [m.fecha] : []));
-  if (fechas.length === 1) return { estado: { ...e, fechaIda: fechas[0], fechaRegreso: null }, aclaracion: { texto: `Ida el ${fmtFecha(fechas[0])}. ¿Y la fecha de regreso?` } };
-  const [ida, reg] = [fechas[0], fechas[1]].sort();
-  if (ida === reg) return { estado: e, aclaracion: { texto: "La ida y el regreso no pueden ser el mismo día." } };
-  return { estado: { ...e, fechaIda: ida, fechaRegreso: reg } };
+  if (a.tipo === "ok" && b.tipo === "ok") {
+    const [ida, reg] = [a.fecha, b.fecha].sort();
+    if (ida === reg) return { estado: e, aclaracion: { texto: "La ida y el regreso no pueden ser el mismo día." } };
+    return { estado: { ...e, ...nuevo, fechaIda: ida, fechaRegreso: reg } };
+  }
+  const ops = opcionesRango(candidatas(a), candidatas(b));
+  if (!ops.length) return { estado: e, aclaracion: { texto: "No pude armar un rango válido: la ida debe ser anterior al regreso. Escribe las dos fechas con mes y año." } };
+  return { estado: e, aclaracion: { texto: "Para no equivocarme, confirma las fechas:", opciones: ops } };
+}
+
+const CUALQUIER_FECHA = /^(cualquier(a)?( fecha| momento| mes)?|todas?( las fechas)?|no importa|sin preferencia|me da igual|da igual|flexible)$/;
+
+/** Bloqueos: ¿cuándo desea viajar? Mes, rango aproximado, una fecha («a partir de») o «cualquier fecha». */
+function aplicarVentana(e: EstadoConversacion, texto: string, hoy: string): Aplicado | null {
+  if (CUALQUIER_FECHA.test(normalizar(texto))) return { estado: { ...e, fechaIda: null, fechaRegreso: null, cualquierFecha: true, omitir: 0 } };
+  if (extraerFechas(texto, hoy).menciones.length) return aplicarFechas(e, texto, hoy, true);
+  const m = extraerMes(texto, hoy);
+  if (m.tipo === "ninguno") return null;
+  if (m.tipo === "pasado") return { estado: e, aclaracion: { texto: "Ese mes ya pasó. Indica un mes desde hoy en adelante." } };
+  if (m.tipo === "ok") return { estado: { ...e, fechaIda: m.ventana.desde, fechaRegreso: m.ventana.hasta, cualquierFecha: false, omitir: 0 } };
+  const etiqueta = (v: { desde: string }) => {
+    const n = MES_NOMBRE[Number(v.desde.slice(5, 7)) - 1];
+    return `${n[0].toUpperCase()}${n.slice(1)} de ${v.desde.slice(0, 4)}`;
+  };
+  return { estado: e, aclaracion: { texto: "Para no equivocarme, confirma el mes:", opciones: m.candidatas.map((v) => ({ etiqueta: etiqueta(v), valor: `fechas:${v.desde},${v.hasta}` })) } };
 }
 
 /** Respuesta a lo que se preguntó (`pendiente`). Devuelve null si no se entendió. */
@@ -257,7 +322,7 @@ async function aplicarRespuesta(e: EstadoConversacion, texto: string, hoy: strin
       return d ? { estado: { ...e, destino: d, cualquierDestino: false } } : null;
     }
     case "fechas":
-      return aplicarFechas(e, texto, hoy);
+      return e.producto === "bloqueo" ? aplicarVentana(e, texto, hoy) : aplicarFechas(e, texto, hoy);
     case "adultos": {
       const c = interpretarCantidad(texto);
       if (c.tipo === "ambigua") return { estado: e, aclaracion: { texto: "Necesito un número exacto de adultos." } };
@@ -353,6 +418,8 @@ type Comando =
   | { tipo: "producto"; producto: ProductoConversacion }
   | { tipo: "destino"; valor: string }
   | { tipo: "fechas"; ida: string; regreso: string | null }
+  | { tipo: "cualquier_fecha" }
+  | { tipo: "pagina"; n: number }
   | { tipo: "adultos"; n: number }
   | { tipo: "habitaciones"; h: Partial<Record<AcomRoom, number>> }
   | { tipo: "menores_no" }
@@ -376,7 +443,12 @@ export function comandoDeOpcion(valor: string): Comando | null {
       return v === "programa" || v === "bloqueo" || v === "porcion" ? { tipo: "producto", producto: v } : null;
     case "destino":
       return v ? { tipo: "destino", valor: v } : null;
+    case "pagina": {
+      const n = Number(v);
+      return Number.isInteger(n) && n >= 0 && n <= 10_000 ? { tipo: "pagina", n } : null;
+    }
     case "fechas": {
+      if (v === "*") return { tipo: "cualquier_fecha" };
       const [ida, reg] = v.split(",");
       return /^\d{4}-\d{2}-\d{2}$/.test(ida ?? "") && (reg === undefined || /^\d{4}-\d{2}-\d{2}$/.test(reg)) ? { tipo: "fechas", ida, regreso: reg ?? null } : null;
     }
@@ -445,15 +517,37 @@ async function buscar(e: EstadoConversacion, sv: ServiciosConversacion): Promise
     };
   }
   if (e.producto === "bloqueo") {
-    const r = await sv.buscarBloqueos({ destino: e.cualquierDestino ? undefined : (e.destino ?? undefined), limite: String(MAX_OPCIONES) });
+    const pedir = (omitir: number) =>
+      sv.buscarBloqueos({
+        destino: e.cualquierDestino ? undefined : (e.destino ?? undefined),
+        fechaDesde: e.cualquierFecha ? undefined : (e.fechaIda ?? undefined),
+        fechaHasta: e.cualquierFecha ? undefined : (e.fechaRegreso ?? undefined),
+        sillasMin: e.adultos != null ? String(e.adultos) : undefined,
+        omitir: String(omitir),
+        limite: String(MAX_OPCIONES),
+      });
+    let omitir = e.omitir;
+    let r = await pedir(omitir);
+    // Una página que ya no existe (cambió la oferta): vuelve a la primera.
+    if (r.ok && !r.datos.ofertas.length && omitir > 0) {
+      omitir = 0;
+      r = await pedir(0);
+    }
     if (!r.ok) return { estado: { ...e, pendiente: null }, mensajes: [mensajeFallo(r, e)] };
     const lista = r.datos.ofertas.slice(0, MAX_OPCIONES);
+    const total = r.datos.total_encontradas;
+    const cuando = e.cualquierFecha ? " en cualquier fecha" : e.fechaIda && e.fechaRegreso ? ` con salida entre el ${fmtFecha(e.fechaIda)} y el ${fmtFecha(e.fechaRegreso)}` : e.fechaIda ? ` con salida desde el ${fmtFecha(e.fechaIda)}` : "";
+    const hasta = omitir + lista.length;
+    const navegar: Opcion[] = [
+      ...(r.datos.truncado ? [{ etiqueta: "Ver más opciones", valor: `pagina:${hasta}` }] : []),
+      ...(omitir > 0 ? [{ etiqueta: "Ver anteriores", valor: `pagina:${Math.max(0, omitir - MAX_OPCIONES)}` }] : []),
+    ];
     return {
-      estado: { ...e, pendiente: "seleccion", ultimaLista: lista.map((o) => `sel:blo:${o.clave}`) },
+      estado: { ...e, omitir, pendiente: "seleccion", ultimaLista: lista.map((o) => `sel:blo:${o.clave}`) },
       mensajes: [{
-        texto: `Encontré ${r.datos.total_encontradas} salida(s) en bloqueo. Elige una para cotizar:`,
+        texto: `Encontré ${total} ${total === 1 ? "opción" : "opciones"} de hotel y salida${cuando}${e.adultos != null ? `, con al menos ${e.adultos} silla(s) libre(s) para los adultos` : ""}. Te muestro ${total > lista.length ? `de la ${omitir + 1} a la ${hasta}` : "todas"}. El precio «desde» es por persona y de referencia: el total depende de la habitación y las edades (los infantes no ocupan silla; las sillas finales se verifican al cotizar). Elige una para cotizar:`,
         lineas: lista.map((o, i) => `${i + 1}. ${o.hotel_nombre ?? "Hotel"} · ${o.destino ?? ""} · ${fmtFecha(o.fecha_ida)} al ${fmtFecha(o.fecha_regreso)} · ${o.desde_pvp_por_persona != null ? `desde ${formatMoneda(o.desde_pvp_por_persona, o.moneda)} por persona` : "sin precio publicado"} · ${textoVuelo(o.disponibilidad_vuelo, o.sillas_libres)}`),
-        opciones: [...lista.map((o, i) => ({ etiqueta: `${i + 1}. ${o.hotel_nombre ?? "Hotel"} · ${fmtFecha(o.fecha_ida)}`.slice(0, 60), valor: `sel:blo:${o.clave}` })), ...corregir],
+        opciones: [...lista.map((o, i) => ({ etiqueta: `${i + 1}. ${o.hotel_nombre ?? "Hotel"} · ${fmtFecha(o.fecha_ida)}`.slice(0, 60), valor: `sel:blo:${o.clave}` })), ...navegar, ...corregir],
       }],
     };
   }
@@ -574,10 +668,24 @@ async function resolver(e: EstadoConversacion, sv: ServiciosConversacion, hoy: s
     const r = await sv.cotizarBloqueo({ oferta: clave, combo: e.combo ?? undefined, ...entradaComposicion(e) });
     if (!r.ok) {
       if (r.codigo === "no_encontrado") return resolver({ ...e, seleccion: null, combo: null }, sv, hoy, [...previos, caducada()]);
+      if (r.codigo === "no_cotizable" && esRechazoOcupacion(r.motivo)) {
+        // La ocupación no cabe en las habitaciones elegidas: sin precio; se corrige la habitación y se conserva el resto (destino, fechas, hotel, combo, adultos y edades).
+        const q = await preguntar({ ...e, habitaciones: null }, "habitaciones", sv);
+        const revisar = e.habitaciones ? ` Habitación a revisar: ${textoHabitaciones(e.habitaciones)}.` : "";
+        const otras = opcionesCorregir(e).filter((o) => o.valor === "corregir:adultos" || o.valor === "corregir:menores");
+        return { estado: q.estado, mensajes: [...previos, { texto: `${r.motivo ?? "La ocupación no cabe en las habitaciones elegidas."}${revisar} No cotizo hasta corregirlo; conservo destino, fechas, hotel, adultos y edades. Elige otra habitación o cambia adultos o menores.`, aviso: true }, { ...q.mensaje, opciones: [...(q.mensaje.opciones ?? []), ...otras] }] };
+      }
       return { estado: { ...e, pendiente: null }, mensajes: [...previos, mensajeFallo(r, e)] };
     }
     const c = r.datos;
     const vuelo = textoVuelo(c.disponibilidad_vuelo, c.sillas_libres);
+    // `lineas[].pax` son plazas TARIFARIAS de la habitación (una doble = 2 aunque viaje 1 adulto + 1 infante), no adultos reales: no se guardan como adultos.
+    const plazas = c.lineas.reduce((n, l) => n + l.pax, 0);
+    // Más adultos que plazas: la cotización no representa al grupo. No se muestra precio; se pide corregir las habitaciones y se conserva lo elegido.
+    if (e.adultos != null && plazas > 0 && e.adultos > plazas) {
+      const q = await preguntar({ ...e, habitaciones: null }, "habitaciones", sv);
+      return { estado: q.estado, mensajes: [...previos, { texto: `Indicaste ${e.adultos} adulto(s), pero las habitaciones elegidas tienen ${plazas} plaza(s) tarifaria(s). No cotizo hasta corregir las habitaciones (o los adultos con «Cambiar adultos»).`, aviso: true }, q.mensaje] };
+    }
     return {
       estado: { ...e, pendiente: null },
       mensajes: [...previos, {
@@ -703,7 +811,7 @@ export async function avanzar(estadoNavegador: unknown, entradaNavegador: unknow
         case "destino": {
           if (cmd.valor === "*") {
             if (e.producto === "porcion") return resolver(e, sv, hoy);
-            return resolver({ ...e, destino: null, cualquierDestino: true, seleccion: null, combo: null }, sv, hoy);
+            return resolver({ ...e, destino: null, cualquierDestino: true, omitir: 0, seleccion: null, combo: null }, sv, hoy);
           }
           if (e.producto === "porcion") {
             const lista = await sv.destinosPorcion();
@@ -712,16 +820,22 @@ export async function avanzar(estadoNavegador: unknown, entradaNavegador: unknow
             return resolver({ ...e, destino: d.destino, seleccion: null }, sv, hoy);
           }
           const d = limpiarDestinoLibre(cmd.valor);
-          return resolver({ ...e, destino: d, cualquierDestino: false, seleccion: null, combo: null }, sv, hoy);
+          return resolver({ ...e, destino: d, cualquierDestino: false, omitir: 0, seleccion: null, combo: null }, sv, hoy);
         }
+        case "cualquier_fecha":
+          if (e.producto !== "bloqueo") return resolver(e, sv, hoy);
+          return resolver({ ...e, fechaIda: null, fechaRegreso: null, cualquierFecha: true, omitir: 0, seleccion: null, combo: null }, sv, hoy);
+        case "pagina":
+          if (e.producto !== "bloqueo") return resolver(e, sv, hoy);
+          return resolver({ ...e, omitir: cmd.n, seleccion: null, combo: null, pendiente: null }, sv, hoy);
         case "fechas": {
           const ok = (f: string | null) => f == null || f >= hoy;
           if (!ok(cmd.ida) || !ok(cmd.regreso)) return resolver(e, sv, hoy, [{ texto: "Esa fecha ya pasó.", aviso: true }]);
-          const x = { ...e, fechaIda: cmd.ida, fechaRegreso: cmd.regreso && cmd.regreso > cmd.ida ? cmd.regreso : null, seleccion: null };
+          const x = { ...e, fechaIda: cmd.ida, fechaRegreso: cmd.regreso && cmd.regreso > cmd.ida ? cmd.regreso : null, cualquierFecha: false, omitir: 0, seleccion: null };
           return resolver(sanearEstado(x), sv, hoy);
         }
         case "adultos":
-          return resolver({ ...e, adultos: cmd.n, ...(e.producto === "porcion" ? { seleccion: null } : {}) }, sv, hoy);
+          return resolver({ ...e, adultos: cmd.n, omitir: 0, ...(e.producto === "porcion" ? { seleccion: null } : {}) }, sv, hoy);
         case "habitaciones":
           return resolver({ ...e, habitaciones: cmd.h, ...(e.producto === "porcion" ? { seleccion: null } : {}) }, sv, hoy);
         case "menores_no":

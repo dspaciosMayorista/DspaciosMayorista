@@ -5,7 +5,7 @@ Primera entrega: menú guiado para **Bloqueos** y **Porción terrestre** con tra
 ## Archivos
 | Archivo | Qué hace |
 | --- | --- |
-| `app/api/whatsapp/webhook/route.ts` | GET handshake + POST. Apagado (404) salvo `WHATSAPP_BOT_ACTIVO=1`. Firma HMAC antes de parsear. Responde 200 a todo POST firmado. |
+| `app/api/whatsapp/webhook/route.ts` | GET handshake + POST. Apagado (404) salvo `WHATSAPP_BOT_ACTIVO=1`. Firma HMAC antes de parsear. Con firma válida responde 200 cuando todo quedó atendido y 503 cuando hay un mensaje pendiente de reintento (Meta reintenta). |
 | `lib/whatsapp/config.ts` | Estados `apagado` / `simulado` (procesa, NO llama a Meta) / `real`. Lista de números de prueba. |
 | `lib/whatsapp/firma.ts` | `X-Hub-Signature-256` (HMAC-SHA256 del cuerpo crudo, comparación en tiempo constante) y handshake. |
 | `lib/whatsapp/entrante.ts` | Payload de Meta → mensajes (texto, `button_reply`, `list_reply`; lo demás = inválido). |
@@ -22,6 +22,8 @@ El canal vive fuera de `lib/salesbot/` a propósito: las pruebas-guardia de Sale
 
 ## Reglas del canal público
 - Solo Bloqueos y Porción. «Programas» y todo B2B (agencias, comisiones) se rechazan; un asesor los atiende.
+- Bloqueos no lista por destino solo: tras el destino pregunta **cuándo viajar** (mes, rango aproximado, una fecha «a partir de» o «cualquier fecha»; se traduce a `fechaDesde`/`fechaHasta` de `buscarBloqueos`) y **cuántos adultos** (`sillasMin` = adultos: cota mínima segura, un infante no ocupa silla). Niños e infantes se piden al cotizar; la composición real (habitaciones y edades) decide el precio y `alcanzan_sillas`, y `estado.adultos` se conserva tal como se declaró (las `lineas[].pax` son plazas tarifarias de la habitación, no adultos reales); cuando los adultos declarados exceden las plazas de las habitaciones elegidas NO se cotiza: se avisa y se vuelven a pedir las habitaciones conservando destino, fecha, hotel y combo (el dato de adultos no se reescribe); lo mismo si el motor rechaza la ocupación (capacidad de la acomodación, pax mín/máx del hotel: la cotización del bot pasa `validarOcupacion` a `computarReserva`, que reutiliza `validarReservaHabitaciones` aun sin pasajeros) — se muestra el motivo del motor, la habitación a revisar y se conservan adultos y edades; que las plazas superen a los adultos no es contradicción, para que una búsqueda posterior siga filtrando por adultos reales. El total se llama «opciones de hotel y salida»; se muestran 6 por vez con «Ver más opciones» / «Ver anteriores» (`omitir` en `buscarBloqueos`). El «desde» es referencia hasta conocer habitación y edades.
+- Fechas sin año (Porción): la confirmación ofrece el rango completo por año («9 al 12 de diciembre de 2026»); una sola fecha se conserva como ida y se pregunta el regreso.
 - «Asesor» = fila en `salesbot_wa_traspasos` + aviso por correo (si hay `SALESBOT_WA_AVISO_EMAIL`); el bot calla 2 h; «empezar de nuevo» lo devuelve al bot.
 - Sesión de 6 h; pasada esa vigencia vuelve la bienvenida.
 - No se guarda el texto del cliente: solo el estado saneado del flujo.

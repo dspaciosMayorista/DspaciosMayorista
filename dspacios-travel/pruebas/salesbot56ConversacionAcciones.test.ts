@@ -76,7 +76,7 @@ beforeEach(() => {
   explotar = false;
 });
 
-const EN_BLOQUEO = { v: 1, producto: "bloqueo", destino: "san andres", cualquierDestino: false, fechaIda: null, fechaRegreso: null, adultos: null, habitaciones: null, edadesMenores: null, seleccion: null, combo: null, agenciaId: null, pendiente: null, ultimaLista: [] };
+const EN_BLOQUEO = { v: 1, producto: "bloqueo", destino: "san andres", cualquierDestino: false, fechaIda: null, fechaRegreso: null, cualquierFecha: true, omitir: 0, adultos: 2, habitaciones: null, edadesMenores: null, seleccion: null, combo: null, agenciaId: null, pendiente: null, ultimaLista: [] };
 
 describe("acceso directo a la acción de servidor", () => {
   for (const rol of ["superadmin", "gerencia", "administracion", "operaciones", "venta"]) {
