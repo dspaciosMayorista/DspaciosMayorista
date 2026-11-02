@@ -183,6 +183,22 @@ export async function actualizarHotelConfig(
   return { ok: true };
 }
 
+// #120 — Marca «bajo solicitud» del hotel (migración 270). Apagada por defecto y SIN clasificación automática: solo la cambia una persona de producto. Las reglas que
+// importan (no marcar con tarifas, no marcar un hotel por unidad, no desmarcar con solicitudes abiertas) las impone la base; aquí solo se traduce su mensaje.
+export async function setHotelBajoSolicitud(hotelId: number, valor: boolean): Promise<Result> {
+  const sb = await createClient();
+  const { data: h, error: eH } = await sb.from("hoteles").select("modelo_tarifario").eq("id", hotelId).maybeSingle();
+  if (eH || !h) return { ok: false, error: "No se pudo leer el hotel." };
+  if (valor && h.modelo_tarifario === "unidad") return { ok: false, error: "Un hotel por unidad (Bernalo) no se ofrece bajo solicitud." };
+  const { data, error } = await sb.from("hoteles").update({ tarifa_bajo_solicitud: !!valor }).eq("id", hotelId).select("id");
+  if (error) return { ok: false, error: error.message.replace(/^HOTEL_BAJO_SOLICITUD:\s*/, "") };
+  if (!data?.length) return { ok: false, error: "No tienes permiso para cambiar este hotel." };
+  revalidatePath(`/dashboard/producto/hoteles/${hotelId}`);
+  revalidatePath("/dashboard/paquetes");
+  revalidatePath("/tarifario");
+  return { ok: true };
+}
+
 // Qué editor de tarifas está activo para el hotel (persona | unidad Bernalo,
 // migración 174). Enum validado server-side — nunca se confía en el string
 // que manda el cliente, aunque la UI ya restrinja las opciones a un

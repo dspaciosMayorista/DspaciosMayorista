@@ -61,7 +61,7 @@ test("oferta USD sin TRM: aparece el campo; la tasa ingresada viaja como 5.º ar
   await escribir(campo(c)!, "4321.5");
   await clic(botonConTexto(c, /Confirmar → generar contrato/), "confirmar");
   await esperar(() => convertir().length > 0);
-  assert.deepEqual(convertir()[0][1], [77, undefined, undefined, undefined, 4321.5, null, null]);
+  assert.deepEqual(convertir()[0][1], [77, undefined, undefined, undefined, 4321.5, null, null, null]);
 });
 
 test("tasa inválida (0 o negativa): NO llama al servidor y explica por qué (un input numérico no admite texto; el servidor igual lo valida)", async () => {
@@ -73,6 +73,42 @@ test("tasa inválida (0 o negativa): NO llama al servidor y explica por qué (un
     assert.equal(convertir().length, 0, `con "${mala}" no se llamó a convertirCotizacion`);
     await montado?.desmontar(); montado = null;
   }
+});
+
+// Cierre #120 · TRM de COSTOS de un contrato en USD (hotel a solicitud o tarifado): campo propio, obligatorio, y viaja como 8.º argumento.
+async function renderCosto(pideTrmCosto: boolean) {
+  montado = await montar(React.createElement(CotizacionAcciones, {
+    id: 77, pax: 2, infantes: 0, tienePasajeros: true, cliente: { nombres: "Juan", apellidos: "Pérez", tipoDoc: "CC", numeroDoc: "1" },
+    esSuperadmin: true, asesores: [], miNombre: "Asesor", miRolVenta: false, pideTrmCosto,
+  }));
+  await esperar(() => true, 3);
+  return montado.contenedor;
+}
+const campoCosto = (c: Element) => c.querySelector<HTMLInputElement>('input[aria-label="TRM de costos"]');
+test("contrato en USD: aparece «TRM de costos»; vacía o inválida NO llama al servidor; la ingresada viaja como 8.º argumento", async () => {
+  const c = await renderCosto(true);
+  assert.ok(c.querySelector('[data-testid="trm-costo"]'), "el campo existe");
+  assert.match(texto(c), /TRM de costos \(COP por USD\)/);
+  assert.match(texto(c), /Es distinta de la TRM de cobro/);
+  await clic(botonConTexto(c, /Confirmar → generar contrato/), "confirmar vacío");
+  await esperar(() => /TRM de costos/.test(texto(c)) && /ingresa la TRM de costos/.test(texto(c)));
+  assert.equal(convertir().length, 0, "sin TRM de costos el servidor no recibe la conversión");
+  await escribir(campoCosto(c)!, "-5");
+  await clic(botonConTexto(c, /Confirmar → generar contrato/), "confirmar inválida");
+  await esperar(() => /número positivo/.test(texto(c)));
+  assert.equal(convertir().length, 0);
+  await escribir(campoCosto(c)!, "4000.5");
+  await clic(botonConTexto(c, /Confirmar → generar contrato/), "confirmar válida");
+  await esperar(() => convertir().length > 0);
+  assert.deepEqual(convertir()[0][1], [77, undefined, undefined, undefined, null, null, null, 4000.5]);
+});
+
+test("contrato en COP: sin campo de TRM de costos y el 8.º argumento es null (nada cambia)", async () => {
+  const c = await renderCosto(false);
+  assert.equal(c.querySelector('[data-testid="trm-costo"]'), null);
+  await clic(botonConTexto(c, /Confirmar → generar contrato/), "confirmar");
+  await esperar(() => convertir().length > 0);
+  assert.equal(convertir()[0][1][7], null);
 });
 
 test("oferta con TRM o en COP: sin campo y sin tasa en la conversión", async () => {

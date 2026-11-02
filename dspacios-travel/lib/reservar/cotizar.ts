@@ -13,6 +13,8 @@ import {
   toTemporadaRango,
 } from "@/lib/calc/paquetes";
 import { defaultAcomConfig, type AcomRoom, type AcomConfig } from "@/lib/acomodaciones";
+import { aplicarNetaSolicitud, tarifaSinteticaPorTipo, type NetaSolicitud, type VueloSolicitud } from "@/lib/reservar/solicitudHotel";
+import { modalidadDelVinculo } from "@/lib/reservar/solicitudHotelServidor";
 import {
   validarCantidadMenores,
   validarEdadesMenores,
@@ -196,6 +198,11 @@ async function cargarDatosHotelPaquete(
 // consumidor — el manejo de error MÁS específico (mensaje sanado + log) vive
 // en `cotizarPorFechas`/`buscarHoteles`, que sí llaman `cargarDatosHotelPaquete`
 // directo para poder distinguirlo.
+/** #120: liquidación de un hotel «bajo solicitud» con la neta que cargó un operador (tarifa sintética en memoria; nunca se escribe en tarifa_hotel). */
+export type OpcionesSolicitudLiquidacion = {
+  neta: NetaSolicitud; categoria: string; regimen: string; fechaRegreso: string; vuelo: VueloSolicitud | null;
+};
+
 export async function liquidarHotelPaquete(
   admin: ReturnType<typeof createAdminClient>,
   paqueteId: number,
@@ -224,6 +231,27 @@ export async function liquidarHotelPaquete(
     return null;
   }
   return evaluarHotelPorFechas(carga.datos, fechaIda, numNoches);
+}
+
+/** #120: igual que liquidarHotelPaquete pero con la neta que cargó un operador (solo hotel marcado bajo solicitud y seleccionado en el paquete). Fallo de lectura = null. */
+export async function liquidarHotelPaqueteSolicitud(
+  admin: ReturnType<typeof createAdminClient>,
+  paqueteId: number,
+  hotelId: number,
+  fechaIda: string,
+  numNoches: number,
+  solicitud: OpcionesSolicitudLiquidacion
+): Promise<{ combos: ComboCotizado[]; destinoNombre: string | null; hotelNombre: string | null; minNoches: number; moneda: string } | null> {
+  if (numNoches <= 0) return null;
+  const carga = await cargarDatosHotelPaquete(admin, paqueteId, hotelId);
+  if (!carga.ok) return null;
+  // La neta SOLO sustituye a las tarifas de un hotel marcado bajo solicitud; en un hotel tarifado jamás se aplica.
+  const mod = await modalidadDelVinculo(admin, paqueteId, hotelId);
+  if (!mod.ok || mod.modalidad !== "bajo_solicitud") return null;
+  // Tarifa por TIPO de viajero (adulto / niño / infante $0) con la elección congelada de la solicitud.
+  const sintetica = tarifaSinteticaPorTipo({ reparto: solicitud.neta.reparto, noches: numNoches, categoria: solicitud.categoria, regimen: solicitud.regimen, fechaIda, fechaRegreso: solicitud.fechaRegreso });
+  if (!sintetica) return null;
+  return evaluarHotelPorFechas(aplicarNetaSolicitud(carga.datos, { sintetica, vuelo: solicitud.vuelo }), fechaIda, numNoches);
 }
 
 export type CotizarResult =

@@ -49,6 +49,8 @@ import {
   type SalidaSeleccionadaBernaloEntrada,
 } from "./cotizacionBernaloActions";
 import type { HotelBernaloDescubierto, SalidaAereaBernalo } from "@/lib/tarifario/datosBernalo";
+import type { HotelBajoSolicitud } from "@/lib/tarifario/datosSolicitud";
+import { SolicitudHotelCard } from "./SolicitudHotelCard";
 import { obtenerDetalleHotel } from "./detalle-actions";
 import { obtenerDetalleSalida } from "./detalle-actions";
 import { conCacheDetalle, claveDetalleHotel, type EstadoDetalle } from "@/lib/tarifario/detalleCliente";
@@ -565,6 +567,7 @@ export function VistaBooking({
   descripcionPorPaquete = {},
   filasAddon = [],
   hotelesBernalo = [],
+  hotelesSolicitud = [],
   hotelIdsUnidadAutoritativos = [],
   prioridadesRecomendados = {},
   condicionPorOferta = {},
@@ -619,6 +622,8 @@ export function VistaBooking({
   // pasan por `tarifario_resultado`/`filas` de arriba). Se muestran en su
   // propia sección, con "Consultar tarifa" en vez de un precio.
   hotelesBernalo?: HotelBernaloDescubierto[];
+  // #120: hoteles SIN tarifa publicada («Tarifa y disponibilidad bajo solicitud»): tarjeta sin precio y solicitud de cotización propia, fuera del carrito.
+  hotelesSolicitud?: HotelBajoSolicitud[];
   // Hallazgo confirmado (validación final): identidad AUTORITATIVA de "este
   // hotel es modelo unidad ahora mismo" (`lib/tarifario/datosBernalo.ts`) —
   // canal SEPARADO de `hotelesBernalo`, que en TarifarioPublic se filtra por
@@ -1046,6 +1051,14 @@ export function VistaBooking({
   // recomendados): Pet friendly/Adults Only YA NO filtran acá tampoco —
   // mismo criterio que `hoteles` arriba, se aplican DESPUÉS de seleccionar
   // recomendados vía `FiltrosResto` en el `tarjetas` final.
+  const hotelesSolicitudVisibles = useMemo(() => {
+    if (sub === "receptivos") return [];
+    const destinoPedido = sub === "bloqueo"
+      ? destinoSel
+      : destinoPorcionBusqueda;
+    return hotelesSolicitud.filter((h) => h.tipo === sub && (!destinoPedido || (h.destinoNombre ?? "") === destinoPedido));
+  }, [hotelesSolicitud, sub, destinoSel, destinoPorcionBusqueda]);
+
   const hotelesUnidadVisibles = useMemo(() => {
     if (sub === "receptivos") return [];
     let arr = hotelesBernalo.filter((h) => h.tipo === sub);
@@ -1912,7 +1925,7 @@ export function VistaBooking({
           lista unificada — dos mensajes vacíos para la misma grilla dirían lo
           mismo dos veces, y el de acá además invitaría a "quitar filtros", que
           no es el problema cuando el resultado está cerrado por destino. */}
-      {!tarjetas.length && !enBusquedaPorcion && <p className="py-8 text-center text-sm text-gray-400">No hay alojamientos para los filtros aplicados. Prueba quitar filtros o cambiar de pestaña (Paquetes/Porción).</p>}
+      {!tarjetas.length && !enBusquedaPorcion && !hotelesSolicitudVisibles.length && <p className="py-8 text-center text-sm text-gray-400">No hay alojamientos para los filtros aplicados. Prueba quitar filtros o cambiar de pestaña (Paquetes/Porción).</p>}
       {/* Estado vacío ÚNICO de la búsqueda — uno solo para persona y unidad,
           porque la lista es una sola. Distingue dos situaciones que NO son la
           misma y no se resuelven igual:
@@ -1953,6 +1966,14 @@ export function VistaBooking({
               )}
             </>
           )}
+        </div>
+      )}
+      {hotelesSolicitudVisibles.length > 0 && (
+        <div className="mb-4" data-testid="hoteles-bajo-solicitud">
+          <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-gray-500">Bajo solicitud <span className="font-normal normal-case text-gray-400">({hotelesSolicitudVisibles.length})</span></p>
+          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
+          {hotelesSolicitudVisibles.map((h) => <SolicitudHotelCard key={`${h.paqueteId}-${h.hotelId}`} hotel={h} />)}
+          </div>
         </div>
       )}
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">

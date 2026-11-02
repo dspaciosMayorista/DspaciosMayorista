@@ -8,6 +8,7 @@ import { RangosEdadPicker, type RangoEdad } from "@/components/RangosEdadPicker"
 import { ComboDestino } from "@/components/ComboDestino";
 import { ComboProveedor, type ProveedorOpt } from "@/components/ComboProveedor";
 import { actualizarHotelConfig } from "../actions";
+import { HotelBajoSolicitudControl } from "./HotelBajoSolicitudControl";
 
 const lbl = "mb-1 block text-xs font-medium text-gray-600";
 
@@ -40,6 +41,8 @@ export function HotelConfigEditor({
     petCostoNeto: number;
     petCostoDesc: string;
     petNota: string;
+    tarifaBajoSolicitud?: boolean;
+    esUnidad?: boolean;
   };
 }) {
   const router = useRouter();
@@ -139,6 +142,8 @@ export function HotelConfigEditor({
               className="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm"
               placeholder="Ej. Debe pagar seguro hotelero obligatorio en el hotel." />
           </div>
+
+          <HotelBajoSolicitudControl hotelId={hotelId} inicial={inicial.tarifaBajoSolicitud ?? false} esUnidad={inicial.esUnidad ?? false} />
 
           <div className="rounded-lg border border-sky-200 bg-sky-50 p-3">
             <label className="mb-3 flex items-center gap-2 text-xs font-semibold text-sky-800">

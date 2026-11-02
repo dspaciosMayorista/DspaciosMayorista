@@ -418,9 +418,9 @@ describe("E/F/G: el orquestador TS materializa SOLO desde lo aceptado", () => {
     assert.match(acciones, /oferta63: payload\.oferta63 \? \{ \.\.\.payload\.oferta63, cotizacionId: id, trmProvisional: trmProvisional \?\? null, monedaCobro: monedaCobro \?\? null, trmCobro: trmCobro \?\? null \} : payload\.oferta63/);
   });
   test("cotizar: T0 se lee ANTES de calcular y la cotización + oferta se guardan por la RPC atómica (la inserción directa queda solo para lo de siempre)", () => {
-    const i = acciones.indexOf("export async function crearCotizacion(");
+    const i = acciones.indexOf("async function crearCotizacionInterna(");
     const c = acciones.slice(i, acciones.indexOf("export async function convertirCotizacion(", i));
-    assert.ok(c.indexOf("leerRevisiones63(") < c.indexOf("computarReserva(sb, input)"), "T0 antes de calcular");
+    assert.ok(c.indexOf("leerRevisiones63(") < c.indexOf("computarReserva(sb, input,"), "T0 antes de calcular");
     assert.ok(c.indexOf("crearCotizacionOferta63(") > c.indexOf("construirSnapshot63("));
     assert.match(c, /if \(oferta63\) \{[\s\S]*?crearCotizacionOferta63[\s\S]*?\} else \{\s*const \{ data: row0, error \} = await sbCot\.from\("cotizaciones"\)\.insert\(/);
   });

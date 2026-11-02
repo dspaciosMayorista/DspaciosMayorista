@@ -222,6 +222,11 @@ describe("inventario de lectores de la tabla base `empaquetados` en la aplicaci�
     ["lib/tarifario/datos.ts", { cliente: "servicio", roles: "service-role" }],
     ["lib/tarifario/composicionIncluidos.ts", { cliente: "servicio", roles: "service-role (solo fecha_ida de empaquetados: no lee precios ni costos)" }],
     ["lib/tarifario/datosBernalo.ts", { cliente: "servicio", roles: "service-role" }],
+    // #120: hotel bajo solicitud. datosSolicitud y solicitudHotelActions leen SOLO fechas/estado/ruta del empaquetado vinculado (sin costos, a la página pública);
+    // solicitudHotelServidor lee tarifa_para_empaquetar/fee_infante con service-role SOLO para calcular el precio de la cotización (nunca viaja al navegador).
+    ["lib/tarifario/datosSolicitud.ts", { cliente: "servicio", roles: "service-role (fechas y estado; sin costos)" }],
+    ["app/tarifario/solicitudHotelActions.ts", { cliente: "servicio", roles: "service-role (fechas y estado; sin costos)" }],
+    ["lib/reservar/solicitudHotelServidor.ts", { cliente: "servicio", roles: "service-role (costo del vuelo solo para calcular el precio)" }],
     ["lib/tarifario/filtrosPostCarga.ts", { cliente: "servicio", roles: "service-role" }],
     // computo.ts ya NO está aquí: lee con la SESIÓN de quien reserva (incl. `venta`) y pasó a la vista (línea 258).
   ]);

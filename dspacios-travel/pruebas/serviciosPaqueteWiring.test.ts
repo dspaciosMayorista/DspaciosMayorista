@@ -125,7 +125,7 @@ describe("cotizar.ts — las consultas de buscarReceptivos/liquidarServicioPuntu
 
 describe("reservar/actions.ts (crearCotizacion) — asistencia_medica/tours_traslados YA NO se hardcodean", () => {
   test("crearCotizacion ya no fija asistencia_medica: false / tours_traslados: null a ciegas", () => {
-    const cuerpo = cuerpoFuncion(reservarActions, "export async function crearCotizacion(");
+    const cuerpo = cuerpoFuncion(reservarActions, "async function crearCotizacionInterna(");
     assert.doesNotMatch(cuerpo, /asistencia_medica:\s*false,\s*\n?\s*tours_traslados:\s*null/);
     assert.match(cuerpo, /resumirServiciosContrato\(/);
     assert.match(cuerpo, /asistencia_medica:\s*resumenServicios\.asistenciaMedica/);

@@ -23,6 +23,7 @@ import {
   setVuelo, setTodosVuelos, setHotel, setTodosHoteles, setServicio, setServicios, generarTarifario, continuarPublicacionTarifario, estadoPublicacionTarifario,
   getTarifasHotel, setHotelFiltros, setHotelPrioridad, type TarifaHotelPreview, type TarifaUnidadPreview,
 } from "../actions";
+import { TEXTO_BAJO_SOLICITUD } from "@/lib/reservar/solicitudHotel";
 import { setEmpaquetado } from "../../vuelos/empaquetados-actions";
 
 /** Acciones de servidor que usan las casillas del armado. En producción son las reales; solo una prueba de navegador las sustituye (`acciones`). */
@@ -55,7 +56,7 @@ type Empaquetado = {
   // 230: moneda de la tarifa (COP o USD); ausente = COP.
   moneda?: string | null;
 };
-type Hotel = { id: number; nombre: string; zona: string | null; destino_id: number | null; moneda?: string | null };
+type Hotel = { id: number; nombre: string; zona: string | null; destino_id: number | null; moneda?: string | null; tarifa_bajo_solicitud?: boolean | null };
 type Servicio = { id: number; nombre: string; categoria?: string | null; precio_persona: number | null; destino_id: number | null; moneda?: string | null; servicio_tarifa_pax: { pax_desde: number; temporada?: string | null }[]; servicio_temporadas?: { nombre: string; fecha_inicio: string | null; fecha_fin: string | null; precio_persona: number | null }[] };
 type SelServicio = { servicio_id: number; modo: string; incluido: boolean };
 type SelVuelo = { bloqueo_id: number; aplica_mk: boolean; ta: number };
@@ -928,6 +929,8 @@ function HotelRow({
 
   const resumen = !checked
     ? null
+    : hotel.tarifa_bajo_solicitud
+      ? TEXTO_BAJO_SOLICITUD
     : sel!.categorias?.length || sel!.regimenes?.length
       ? `${sel!.categorias?.length ?? "todas las"} categorías · ${sel!.regimenes?.length ?? "todos los"} regímenes`
       : "todas las categorías y regímenes";
@@ -1219,7 +1222,13 @@ function HotelModal({
             {" "}Producto → Tarifas por unidad. Publica al menos una tarifa antes de agregarlo a este paquete.
           </p>
         ) : !tarifas.length ? (
-          <p className="py-8 text-center text-sm text-gray-400">Este hotel no tiene tarifas cargadas en Producto.</p>
+          hotel.tarifa_bajo_solicitud ? (
+            <p className="py-8 text-center text-sm text-amber-800">
+              Este hotel se ofrece como «{TEXTO_BAJO_SOLICITUD}»: no necesita tarifas ni filtros de categoría o régimen. Basta con dejarlo seleccionado en el paquete.
+            </p>
+          ) : (
+            <p className="py-8 text-center text-sm text-gray-400">Este hotel no tiene tarifas cargadas en Producto.</p>
+          )
         ) : (
           <>
             <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">

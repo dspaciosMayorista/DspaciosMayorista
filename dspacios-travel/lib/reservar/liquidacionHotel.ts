@@ -159,6 +159,10 @@ export type DatosHotelPaquete = {
   tarifas: FilaTarifaHotelRaw[];
   serviciosIncluidos: FilaServicioIncluidoRaw[];
   blackouts: FilaBlackoutHotelRaw[];
+  // #120: aporte del vuelo del paquete (bloqueo/empaquetado) cuando se liquida un hotel a solicitud. Ausente = sin vuelo (comportamiento de siempre).
+  vuelo?: { aporte: number; feeInfante: number };
+  // #120: la neta de una solicitud se reparte entre personas y noches (decimales); se lleva a centavos para que el ruido de coma flotante no suba un millar al redondear la venta.
+  redondeoCentavos?: boolean;
 };
 
 export type ResultadoHotelFechas = {
@@ -264,8 +268,10 @@ export function evaluarHotelPorFechas(
   // PVP fijo del infante (sin vuelo en este cálculo): reemplaza el precio completo solo sin cargo de servicios atribuible.
   const fijoInfante = datos.paquete.pvp_infante_fijo ?? null;
   const hayGrupoIncluido = serviciosGrupoIncluidos.length > 0;
-  const fijoMayor2 = aplicaPvpInfanteFijo(fijoInfante, { vuelo: 0, servicios: aporteServSinAsis, grupoIncluido: hayGrupoIncluido, menorDeDos: false }) ? Number(fijoInfante) : null;
-  const fijoMenor2 = aplicaPvpInfanteFijo(fijoInfante, { vuelo: 0, servicios: aporteServMenorSinAsis, grupoIncluido: hayGrupoIncluido, menorDeDos: true }) ? Number(fijoInfante) : null;
+  const aporteVueloSol = Number(datos.vuelo?.aporte) || 0;
+  const feeInfanteSol = Number(datos.vuelo?.feeInfante) || 0;
+  const fijoMayor2 = aplicaPvpInfanteFijo(fijoInfante, { vuelo: aporteVueloSol, servicios: aporteServSinAsis, grupoIncluido: hayGrupoIncluido, menorDeDos: false }) ? Number(fijoInfante) : null;
+  const fijoMenor2 = aplicaPvpInfanteFijo(fijoInfante, { vuelo: feeInfanteSol, servicios: aporteServMenorSinAsis, grupoIncluido: hayGrupoIncluido, menorDeDos: true }) ? Number(fijoInfante) : null;
 
   const grupos = new Map<string, Map<string, FilaTarifaHotelRaw>>();
   for (const r of datos.tarifas) {
@@ -318,13 +324,14 @@ export function evaluarHotelPorFechas(
         costoHotel = liquidarHotelNoches({ fechaIda, numNoches, temporadas, netoPorTemporada, regimen, precioFinalTemporadas });
       }
       if (costoHotel == null) continue;
+      if (datos.redondeoCentavos) costoHotel = Math.round(costoHotel * 100) / 100;
       if (esRoom && costoHotel <= 0) continue;
-      const t = componerTarifa({ aporteHotel: marcar(costoHotel, pctMk), aporteServicios: aporteServ, aporteVuelo: 0, impuesto, moneda: monedaHotel });
+      const t = componerTarifa({ aporteHotel: marcar(costoHotel, pctMk), aporteServicios: aporteServ, aporteVuelo: aporteVueloSol, impuesto, moneda: monedaHotel });
       precios[acom] = acom === "infante" && fijoMayor2 != null ? fijoMayor2 : t.pvp;
       if (acom === "infante" && fijoMayor2 != null) preciosSinFijo.infante = t.pvp;
       netos[acom] = costoHotel;
       if (!esRoom) {
-        const normalMenor2 = precioMenorDeDos({ aporteHotel: marcar(costoHotel, pctMk), aporteServiciosMenor: aporteServMenor, feeInfante: 0, moneda: monedaHotel });
+        const normalMenor2 = precioMenorDeDos({ aporteHotel: marcar(costoHotel, pctMk), aporteServiciosMenor: aporteServMenor, feeInfante: feeInfanteSol, moneda: monedaHotel });
         preciosMenor2[acom] = acom === "infante" && fijoMenor2 != null ? fijoMenor2 : normalMenor2;
         if (acom === "infante" && fijoMenor2 != null) preciosMenor2SinFijo.infante = normalMenor2;
       }
@@ -336,8 +343,8 @@ export function evaluarHotelPorFechas(
     // vuelo, cuando lo hay) se cobren igual. Solo si el combo tiene alguna
     // habitación y el hotel acepta niños.
     if (precios.infante == null && !datos.armadoHotel?.hotel_adults_only && ACOM_ROOMS_ALL.some((a) => precios[a] != null)) {
-      const normalMayor2 = componerTarifa({ aporteHotel: 0, aporteServicios: aporteServ, aporteVuelo: 0, impuesto, moneda: monedaHotel }).pvp;
-      const normalMenor2 = precioMenorDeDos({ aporteHotel: 0, aporteServiciosMenor: aporteServMenor, feeInfante: 0, moneda: monedaHotel });
+      const normalMayor2 = componerTarifa({ aporteHotel: 0, aporteServicios: aporteServ, aporteVuelo: aporteVueloSol, impuesto, moneda: monedaHotel }).pvp;
+      const normalMenor2 = precioMenorDeDos({ aporteHotel: 0, aporteServiciosMenor: aporteServMenor, feeInfante: feeInfanteSol, moneda: monedaHotel });
       precios.infante = fijoMayor2 ?? normalMayor2;
       netos.infante = 0;
       preciosMenor2.infante = fijoMenor2 ?? normalMenor2;

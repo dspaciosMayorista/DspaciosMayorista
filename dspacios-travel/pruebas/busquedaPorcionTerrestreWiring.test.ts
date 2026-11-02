@@ -133,7 +133,7 @@ describe("Una sola lista de resultados — persona + unidad en la MISMA grilla",
   });
 
   test("un solo estado vacío por modo: el de exploración NO se pinta en modo búsqueda (y viceversa)", () => {
-    assert.match(codigoVista, /\{!tarjetas\.length && !enBusquedaPorcion && <p/, "el vacío de exploración debe estar apagado en modo búsqueda");
+    assert.match(codigoVista, /\{!tarjetas\.length && !enBusquedaPorcion( && !hotelesSolicitudVisibles\.length)? && <p/, "el vacío de exploración debe estar apagado en modo búsqueda");
     assert.match(codigoVista, /\{enBusquedaPorcion && !tarjetas\.length && \(/, "el único vacío de la búsqueda");
     assert.doesNotMatch(codigoVista, /hotel\(es\) disponibles para tu búsqueda<\/p>/, "no puede sobrevivir el contador crudo del buscador");
   });
@@ -570,7 +570,7 @@ describe("VistaBooking — modo búsqueda (requisito A)", () => {
   });
 
   test("con la búsqueda vigente hay UN solo estado vacío (el de la grilla unificada) — el de exploración no se pinta", () => {
-    assert.match(codigoVista, /\{!tarjetas\.length && !enBusquedaPorcion && <p/);
+    assert.match(codigoVista, /\{!tarjetas\.length && !enBusquedaPorcion( && !hotelesSolicitudVisibles\.length)? && <p/);
   });
 
   test("el estado vacío de la búsqueda distingue 'lo ocultaron los filtros' de 'la búsqueda no encontró nada'", () => {

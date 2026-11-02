@@ -37,6 +37,9 @@ export default async function PagosPage() {
     .order("fecha_vencimiento", { ascending: true, nullsFirst: false });
 
   const cxpIds = (cxp ?? []).map((c) => c.id);
+  // Equivalente en COP congelado a la TRM de costos (migración 236): consulta APARTE y tolerante — si la base aún no tiene esas columnas, la lista de pagos sigue funcionando igual (sin equivalente).
+  const { data: eqRows } = cxpIds.length ? await sb.from("cuentas_por_pagar").select("id, valor_cop_costo, trm_costo").in("id", cxpIds) : { data: [] as { id: number; valor_cop_costo: number | null; trm_costo: number | null }[] };
+  const equivalentePorCuenta = new Map((eqRows ?? []).map((e) => [e.id, e] as const));
   const [{ data: retenciones }, { data: pagosCxp }] = cxpIds.length
     ? await Promise.all([
         sb.from("retenciones_cxp").select("cuenta_por_pagar_id, valor").in("cuenta_por_pagar_id", cxpIds),
@@ -66,6 +69,8 @@ export default async function PagosPage() {
       servicio: c.servicio,
       valor_total: valorTotal,
       moneda: c.moneda ?? "COP",
+      valor_cop_costo: equivalentePorCuenta.get(c.id)?.valor_cop_costo == null ? null : Number(equivalentePorCuenta.get(c.id)?.valor_cop_costo),
+      trm_costo: equivalentePorCuenta.get(c.id)?.trm_costo == null ? null : Number(equivalentePorCuenta.get(c.id)?.trm_costo),
       fecha_obligacion: c.fecha_obligacion as string | null,
       fecha_vencimiento: c.fecha_vencimiento as string | null,
       aplica_retencion: c.aplica_retencion,

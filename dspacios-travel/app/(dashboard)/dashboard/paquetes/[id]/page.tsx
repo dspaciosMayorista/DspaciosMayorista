@@ -85,7 +85,7 @@ export default async function PaqueteDetallePage({
   if (viajeIni) qEmpaquetados = qEmpaquetados.gte("fecha_ida", viajeIni);
   if (viajeFin) qEmpaquetados = qEmpaquetados.lte("fecha_ida", viajeFin);
 
-  let qHoteles = sb.from("hoteles").select("id, nombre, zona, destino_id, moneda").eq("activo", true).order("nombre");
+  let qHoteles = sb.from("hoteles").select("id, nombre, zona, destino_id, moneda, tarifa_bajo_solicitud").eq("activo", true).order("nombre");
   if (destinoId) qHoteles = qHoteles.eq("destino_id", destinoId);
 
   let qServicios = sb

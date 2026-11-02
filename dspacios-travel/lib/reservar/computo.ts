@@ -41,7 +41,10 @@ import {
 import { calcularEdad } from "@/lib/utils";
 import { validarCantidadMenores, validarEdadesMenores, clasificarMenoresPorEdad, verificarTarifasMenoresDisponibles } from "@/lib/reservar/edadesMenores";
 import { distribuirPorHabitaciones, type HabitacionConsultada, type AsignacionHabitacion } from "@/lib/reservar/distribucionHabitaciones";
-import { liquidarHotelPaquete } from "@/lib/reservar/cotizar";
+import { liquidarHotelPaquete, liquidarHotelPaqueteSolicitud, type OpcionesSolicitudLiquidacion } from "@/lib/reservar/cotizar";
+import { ajusteRedondeoReparto, DESCRIPCION_AJUSTE_REDONDEO, MENSAJE_HOTEL_SOLO_SOLICITUD, repartoDeReferencia, type NetaSolicitud } from "@/lib/reservar/solicitudHotel";
+import { errorPlazasLibres, repartirAdultosReales } from "@/lib/reservar/solicitudOcupacion";
+import { resolverVueloSolicitud } from "@/lib/reservar/solicitudHotelServidor";
 import { resolverOrigenVuelo, empaquetadoVigente, hoyBogota, type OrigenVuelo } from "@/lib/reservar/origen";
 import { verificarSalidaDinamicaVigente, mensajeSalidaNoVigente } from "@/lib/reservar/salidaDinamicaVigente";
 import { validarOrigenAereoPaquete, MENSAJES as MENSAJES_DEST_AEREOS } from "@/lib/paquetes/destinosAereos67";
@@ -109,6 +112,9 @@ export type ReservaInput = {
   edadesMenores?: number[];
   cantidadMenores?: number;
   mascotas?: number;                      // cantidad de mascotas (pet friendly)
+  // #120 (SOLO hoteles a solicitud, y solo cuando la neta la pasa el servidor): adultos que viajan de verdad. Ausente = las plazas de adulto de las habitaciones. Cualquier otro
+  // llamador (hoteles tarifados) lo ignora por completo: el navegador no puede cambiar la ocupación de un hotel tarifado mandando este campo.
+  adultosReales?: number;
   cliente: { nombres: string; apellidos: string; tipoDoc: string; numeroDoc: string; telefono: string; email: string };
   tipoAsesor: "interno" | "agencia" | "freelance";
   asesorInterno: string;
@@ -189,6 +195,8 @@ export type ComputoReserva = {
   monedaReserva: string;
   notaNino: string | null;     // anotación informativa (ej. "debe pagar seguro hotelero obligatorio")
   cargoMascota: { total: number; descripcion: string | null } | null; // cargo de mascota (0 = gratis), ya incluido en precioVenta
+  // #120: residuo de redondeo de «Distribuir» frente a «Cargar hotel a los adultos» (mismo total vendido), ya incluido en precioVenta; línea explícita en cotización y contrato. null = sin residuo.
+  ajusteRedondeo?: { total: number; descripcion: string } | null;
   notaMascota: string | null;  // anotación informativa (ej. "máximo 1 mascota por habitación")
   // Condiciones de tarifa/promoción REALMENTE APLICADAS (texto libre de
   // `tarifa_hotel.notas`, ej. "No reembolsable") — solo de las filas que
@@ -250,7 +258,8 @@ function resolverMenoresPorEdad(
   infanteMax: number,
   ninoMax: number,
   pvpPorAcom: Record<string, number>,
-  reglas: AcomConfig[]
+  reglas: AcomConfig[],
+  adultosReales?: number | null
 ): { ok: true; numNinos: number; numNinos2: number; numInfantes: number; distribucion: AsignacionHabitacion[]; edades: number[] } | { ok: false; error: string } {
   const vCant = validarCantidadMenores(input.cantidadMenores);
   if (!vCant.ok) return { ok: false, error: vCant.error };
@@ -262,12 +271,23 @@ function resolverMenoresPorEdad(
   const habitacionesConsultadas = construirHabitacionesConsultadas(input.habitaciones, reglas);
   if (!habitacionesConsultadas.length) return { ok: false, error: "Indica al menos una habitación (cantidad por tipo)." };
   const adultosImplicitos = habitacionesConsultadas.reduce((s, h) => s + h.config.pax_tarifa, 0);
+  // #120: adultos REALES (solo hoteles a solicitud): el niño ocupa la plaza de adulto libre; sin él, los adultos son las plazas (como siempre).
+  let adultosDeclarados = adultosImplicitos;
+  let adultosPorHabitacion: number[] | undefined;
+  if (adultosReales != null) {
+    const rAd = repartirAdultosReales(habitacionesConsultadas.map((h) => h.config.pax_tarifa), adultosReales);
+    if (!rAd.ok) return { ok: false, error: rAd.error };
+    const errLibres = errorPlazasLibres(adultosImplicitos, adultosReales, rClas.c.ninos);
+    if (errLibres) return { ok: false, error: errLibres };
+    adultosDeclarados = adultosReales; adultosPorHabitacion = rAd.adultosPorHabitacion;
+  }
 
   const rDist = distribuirPorHabitaciones({
-    adultosDeclarados: adultosImplicitos,
+    adultosDeclarados,
     ninos: rClas.c.ninos,
     infantes: rClas.c.infantes,
     habitaciones: habitacionesConsultadas,
+    adultosPorHabitacion,
   });
   if (!rDist.ok) return { ok: false, error: rDist.error };
 
@@ -291,9 +311,14 @@ async function paqueteConTarifarioFallido(paqueteId: number): Promise<boolean> {
   } catch { return false; }
 }
 
+/**
+ * #120: `solicitud` (neta de un hotel «bajo solicitud») la pasa SOLO código de servidor que la leyó de `cotizacion_tarifa_solicitud`; nunca viene del navegador ni
+ * de `ReservaInput`. Sin ella, un hotel bajo solicitud NO se calcula (no hay tarifa que mostrar ni vender).
+ */
 export async function computarReserva(
   sb: Awaited<ReturnType<typeof createClient>>,
-  input: ReservaInput
+  input: ReservaInput,
+  solicitud?: { neta: NetaSolicitud; /** Interno: la corrida de REFERENCIA («adultos») con la que se calcula el residuo de redondeo; no vuelve a calcular el residuo. */ referencia?: boolean }
 ): Promise<{ ok: true; data: ComputoReserva } | { ok: false; error: string }> {
   // Origen del vuelo — discriminante único y validado ANTES de cualquier
   // consulta. `computarReserva` es el primer paso, compartido, de TODO flujo
@@ -391,10 +416,15 @@ export async function computarReserva(
   if (!esServicios) {
     const { data: modeloRow, error: modeloError } = await sb
       .from("hoteles")
-      .select("modelo_tarifario")
+      .select("modelo_tarifario, tarifa_bajo_solicitud")
       .eq("id", input.hotelId)
       .maybeSingle();
     if (modeloError) return { ok: false, error: "No se pudo validar el modelo tarifario del hotel." };
+    // #120: la marca del hotel (misma lectura de siempre, sin consulta extra). Un hotel bajo solicitud solo se calcula con la neta cargada; un hotel tarifado jamás acepta una neta.
+    // (Que el hotel esté seleccionado en ESTE paquete lo verifica `liquidarHotelPaquete` al liquidar con neta.)
+    const marcaSolicitud = modeloRow?.tarifa_bajo_solicitud === true;
+    if (marcaSolicitud && !solicitud) return { ok: false, error: MENSAJE_HOTEL_SOLO_SOLICITUD };
+    if (solicitud && !marcaSolicitud) return { ok: false, error: "La solicitud no corresponde a un hotel bajo solicitud." };
     if (modeloRow?.modelo_tarifario === "unidad") {
       return {
         ok: false,
@@ -403,6 +433,9 @@ export async function computarReserva(
       };
     }
   }
+
+  if (solicitud && (input.modulo === "dinamico" || input.modulo === "servicios" || !input.fechaIda || !input.fechaRegreso || !process.env.SUPABASE_SERVICE_ROLE_KEY))
+    return { ok: false, error: "La solicitud necesita las fechas del viaje y un paquete de bloqueo, empaquetado o porción terrestre." };
 
   const pvpPorAcom: Record<string, number> = {};
   const pvpMenor2PorAcom: Record<string, number> = {};
@@ -442,7 +475,7 @@ export async function computarReserva(
   const vigencias63: VigenciaCompra63[] = [];
   const nombresVigHotel63 = new Set<string>();
 
-  const usarFechas =
+  const usarFechas = !!solicitud ||
     input.modulo !== "bloqueo" && input.modulo !== "dinamico" && !!input.fechaIda && !!input.fechaRegreso && !!process.env.SUPABASE_SERVICE_ROLE_KEY;
 
   // Adults Only: el hotel no acepta niños ni infantes bajo ninguna circunstancia.
@@ -471,7 +504,17 @@ export async function computarReserva(
     const numNoches = noches(input.fechaIda!, input.fechaRegreso!);
     if (numNoches <= 0) return { ok: false, error: "El regreso debe ser posterior a la ida." };
     const admin = createAdminClient();
-    const res = await liquidarHotelPaquete(admin, input.paqueteId, input.hotelId, input.fechaIda!, numNoches);
+    let opcionesSolicitud: OpcionesSolicitudLiquidacion | undefined;
+    if (solicitud) {
+      const rv = await resolverVueloSolicitud(admin, input.paqueteId, origen);
+      if (!rv.ok) return { ok: false, error: rv.error };
+      opcionesSolicitud = {
+        neta: solicitud.neta, categoria: input.categoria, regimen: input.regimen, fechaRegreso: input.fechaRegreso!, vuelo: rv.vuelo,
+      };
+    }
+    const res = opcionesSolicitud
+      ? await liquidarHotelPaqueteSolicitud(admin, input.paqueteId, input.hotelId, input.fechaIda!, numNoches, opcionesSolicitud)
+      : await liquidarHotelPaquete(admin, input.paqueteId, input.hotelId, input.fechaIda!, numNoches);
     const combo = res?.combos.find((c) => c.categoria === input.categoria && c.regimen === input.regimen);
     // Un servicio INCLUIDO sin vigencia/tarifa para esa fecha impide vender ese hotel (jamás sin el servicio): se dice cuál y por qué, no «sin tarifa».
     // (La firma pública de liquidarHotelPaquete no cambia: `errorServiciosIncluidos` viaja en el objeto que devuelve evaluarHotelPorFechas.)
@@ -489,6 +532,7 @@ export async function computarReserva(
       .from("hoteles").select("edad_infante_min, edad_infante_max, edad_nino_min, edad_nino_max, pax_min, pax_max, moneda, nino_nota, pet_costo_neto, pet_costo_desc, pet_nota").eq("id", input.hotelId).maybeSingle();
     if (hotelRowFErr) return { ok: false, error: `No se pudo consultar el hotel: ${hotelRowFErr.message}` };
     monedaReserva = ((hotelRowF as { moneda?: string | null } | null)?.moneda) ?? "COP";
+    if (solicitud && solicitud.neta.moneda !== monedaReserva) return { ok: false, error: "La moneda de la neta no coincide con la del hotel." };
     ninoNotaTxt = hotelRowF?.nino_nota ?? null;
     petCostoNeto = Number(hotelRowF?.pet_costo_neto) || 0;
     petCostoDesc = hotelRowF?.pet_costo_desc ?? null;
@@ -529,7 +573,8 @@ export async function computarReserva(
     // la promoción cuando su fila de `tarifa_hotel` la trae.
     const temporadasCondicionesF = new Set<string>(temporadasSeleccionadasF);
     for (const a of acomsSeleccionadasF) for (const t of combo.temporadasCondicionPorAcom?.[a] ?? []) temporadasCondicionesF.add(t);
-    if (temporadasSeleccionadasF.size) {
+    // #120: la tarifa sintética no tiene filas en tarifa_hotel: rige la regla de edad general del hotel.
+    if (temporadasSeleccionadasF.size && !solicitud) {
       const { data: tarEdad, error: tarEdadErr } = await admin
         .from("tarifa_hotel")
         .select("tipo_habitacion, alimentacion, temporada, edad_infante_min, edad_infante_max, edad_nino_min, edad_nino_max, notas")
@@ -558,7 +603,7 @@ export async function computarReserva(
     // al precio — necesita la regla de edad EFECTIVA (arriba) Y la config real
     // de habitaciones (para distribuir por habitación), ambas ya consultadas.
     if (input.edadesMenores !== undefined) {
-      const rMenores = resolverMenoresPorEdad(input, reglaEdadF.infanteMax, reglaEdadF.ninoMax, pvpPorAcom, reglasF);
+      const rMenores = resolverMenoresPorEdad(input, reglaEdadF.infanteMax, reglaEdadF.ninoMax, pvpPorAcom, reglasF, solicitud ? input.adultosReales : undefined);
       if (!rMenores.ok) return { ok: false, error: rMenores.error };
       numNinos = rMenores.numNinos; numNinos2 = rMenores.numNinos2; numInfantes = rMenores.numInfantes;
       distribucionMenores = rMenores.distribucion;
@@ -567,7 +612,8 @@ export async function computarReserva(
     for (const a of ACOM_ROOMS) {
       const rooms = Math.max(0, Math.trunc(Number(input.habitaciones?.[a]) || 0));
       if (rooms <= 0 || pvpPorAcom[a] == null) continue;
-      const pax = rooms * paxTarifaF(a);
+      // #120: con adultos reales el hotel ocupa las plazas con menos adultos (el niño ocupa la plaza libre): `pax` = adultos REALES de esta acomodación (vuelo, sillas y servicios los siguen).
+      const pax = solicitud && distribucionMenores ? distribucionMenores.filter((d) => d.acom === a).reduce((s, d) => s + d.adultos, 0) : rooms * paxTarifaF(a);
       precioVenta += pax * pvpPorAcom[a];
       paxConSilla += pax;
       lineasHab.push({ acom: a, habitaciones: rooms, pax, pvp: pvpPorAcom[a] });
@@ -584,6 +630,14 @@ export async function computarReserva(
     precioVenta += tarifaMenoresF.total; paxConSilla += tarifaMenoresF.paxConSilla;
     lineasMenores = tarifaMenoresF.lineas;
     if (paxConSilla <= 0) return { ok: false, error: "Indica al menos una habitación (cantidad por tipo)." };
+    // #120: la elección de reparto congelada al valorar (adultos/niños/infantes) se REACREDITA contra la clasificación vigente: si cambió una regla de edad o la configuración
+    // del hotel, no se cobra ni se convierte con importes calculados para otros conteos.
+    if (solicitud) {
+      const rp = solicitud.neta.reparto;
+      const adultosAhora = lineasHab.reduce((s, l) => s + l.pax, 0);
+      if (rp.adultos !== adultosAhora || rp.ninos !== numNinos + numNinos2 || rp.infantes !== numInfantes)
+        return { ok: false, error: `La clasificación de los viajeros cambió desde que se valoró la solicitud (valorada con ${rp.adultos} adulto(s), ${rp.ninos} niño(s) y ${rp.infantes} infante(s); ahora ${adultosAhora}, ${numNinos + numNinos2} y ${numInfantes}): pide una nueva valoración.` };
+    }
 
     const realF = clasificarPorEdad(
       input.pasajeros.map((p) => calcularEdad(p.fechaNacimiento, meta.fecha_ida)),
@@ -596,6 +650,7 @@ export async function computarReserva(
       for (const a of ACOM_ROOMS) { const n = Math.max(0, Math.trunc(Number(input.habitaciones?.[a]) || 0)); if (n > 0) habNumF[a] = n; }
       const valF = validarReservaHabitaciones({
         habitaciones: habNumF, reglas: reglasF, ninosDeclarados: numNinos + numNinos2,
+        adultosReales: solicitud ? lineasHab.reduce((s, l) => s + l.pax, 0) : undefined,
         infantesDeclarados: numInfantes,
         paxMinHotel: hotelRowF?.pax_min ?? null, paxMaxHotel: hotelRowF?.pax_max ?? null, real: realF,
       });
@@ -1112,7 +1167,8 @@ export async function computarReserva(
       // Fila publicada (bloqueo/dinámico): el PVP sale del snapshot, el costo/CxP de la composición viva. ANTES de cotizar o numerar se acredita que el snapshot corresponde a
       // la regla vigente (evidencia de la generación publicada, regla vigente y mismos servicios horneados). Sin evidencia —toda fila anterior a la 258— o con discrepancia se
       // rechaza: nunca se cobra el PVP antiguo de un servicio que la composición actual omite.
-      if (input.modulo === "bloqueo" || input.modulo === "dinamico") {
+      // #120: una solicitud con neta se liquida EN VIVO (no hay fila publicada que acreditar), así que esta verificación no aplica.
+      if (!solicitud && (input.modulo === "bloqueo" || input.modulo === "dinamico")) {
         const [pqGen, evid] = await Promise.all([
           catalogo.from("armado_paquetes").select("tarifario_generacion_publicada").eq("id", input.paqueteId).maybeSingle(),
           catalogo.from("tarifario_composicion_publicada").select("generacion, regla, servicios_incluidos").eq("paquete_id", input.paqueteId).eq("fecha_ida", meta.fecha_ida).maybeSingle(),
@@ -1184,8 +1240,22 @@ export async function computarReserva(
     impuestoTotal = (Number(pqImp?.impuesto_fijo) || 0) * paxConSilla;
   }
 
+  // #120: «Distribuir» y «Cargar hotel a los adultos» producen el MISMO total vendido. El de referencia es el de «adultos» (mismo cómputo, misma neta); el residuo de redondeo por persona
+  // se acredita en una línea explícita (ver `ajusteRedondeoReparto`). No toca costo del hotel, CxP ni la neta.
+  let ajusteRedondeo: { total: number; descripcion: string } | null = null;
+  if (solicitud && !solicitud.referencia && solicitud.neta.reparto.modo === "distribuir") {
+    const ref = await computarReserva(sb, input, { neta: repartoDeReferencia(solicitud.neta), referencia: true });
+    if (!ref.ok) return { ok: false, error: ref.error };
+    const aj = ajusteRedondeoReparto({
+      totalReferencia: ref.data.precioVenta, total: precioVenta,
+      personasQueCargan: solicitud.neta.reparto.adultos + solicitud.neta.reparto.ninos, unidad: monedaReserva === "USD" ? 1 : 1000,
+    });
+    if (!aj.ok) return { ok: false, error: aj.error };
+    if (aj.ajuste !== 0) { precioVenta += aj.ajuste; ajusteRedondeo = { total: aj.ajuste, descripcion: DESCRIPCION_AJUSTE_REDONDEO }; }
+  }
+
   return {
     ok: true,
-    data: { origen, meta, pvpPorAcom, pvpMenor2PorAcom, netoPorAcom, precioVenta, paxConSilla, totalPax, numNinos, numNinos2, numInfantes, menoresDeDos, numMenoresDeDos, lineasMenores, distribucionMenores, edadesMenoresUsadas, lineasHab, serviciosItems, serviciosIncluidos, impuestoTotal, monedaReserva, notaNino: ninoNotaTxt, cargoMascota, notaMascota: petNotaTxt, condicionesTarifa, oferta63: oferta63 ? { ...oferta63, monedaHotel: monedaHotelOrigen63, monedaServicios: monedaServicios63 } : null, vigencias63 },
+    data: { origen, meta, pvpPorAcom, pvpMenor2PorAcom, netoPorAcom, precioVenta, paxConSilla, totalPax, numNinos, numNinos2, numInfantes, menoresDeDos, numMenoresDeDos, lineasMenores, distribucionMenores, edadesMenoresUsadas, lineasHab, serviciosItems, serviciosIncluidos, impuestoTotal, monedaReserva, notaNino: ninoNotaTxt, cargoMascota, ajusteRedondeo, notaMascota: petNotaTxt, condicionesTarifa, oferta63: oferta63 ? { ...oferta63, monedaHotel: monedaHotelOrigen63, monedaServicios: monedaServicios63 } : null, vigencias63 },
   };
 }

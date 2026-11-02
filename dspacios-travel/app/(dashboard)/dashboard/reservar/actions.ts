@@ -41,6 +41,9 @@ import {
 import { cargarCatalogoHoteles88, clienteCatalogoHoteles } from "@/lib/programas/estanciaHotelDatos88";
 import { postearAsientoCxP, eliminarAsientoCxP } from "@/lib/contabilidad/asientos";
 import { contextoCotizacion, autorizaTenant } from "@/lib/cotizacion/acceso";
+import { estaPendienteTarifa, ITEM_REF_HOTEL, MENSAJE_PENDIENTE_TARIFA, mismaEleccion, toleranciaCentavos, validarReparto, type NetaSolicitud } from "@/lib/reservar/solicitudHotel";
+import { evaluarOcupacionHotel, netaCargada } from "@/lib/reservar/solicitudHotelServidor";
+import { puedeEscribir } from "@/lib/roles";
 import { siguienteNumeroContrato } from "@/lib/contrato/numeracion";
 import { contextoCrearContrato } from "@/lib/contrato/contexto";
 import {
@@ -111,7 +114,7 @@ import {
 import { aceptarOferta63, crearCotizacionOferta63, leerRevisiones63, ventaExiste63 } from "@/lib/reservar/aceptacionServidor63";
 import { validarEleccionCobro } from "@/lib/finanzas/cobro";
 import { decidirCxP, evaluarObligaciones, type Obligacion } from "@/lib/reservar/monedaObligacionesCarrito";
-import { compararTrmCostoConCongelada, decidirTrmCosto, equivalenteCopCosto, leerTrmCostoCongelada } from "@/lib/finanzas/costoTrmCarrito";
+import { compararTrmCostoConCongelada, cxpEnUsdConEquivalente, decidirTrmCosto, equivalenteCopCosto, leerTrmCostoCongelada } from "@/lib/finanzas/costoTrmCarrito";
 import { opcionalDeTourCarrito } from "@/lib/paquetes/pvpInfanteFijo";
 import { costoAereoBloqueo, costoHotelPersona, costoTourParaCxP, costoVueloBernalo, liquidarCostoTour } from "@/lib/reservar/costosObligacionesCarrito";
 import { combinarHoras, horarioCambio, horasDelRecorrido } from "@/lib/reservar/horasRecorrido";
@@ -245,13 +248,32 @@ export type ReservaResult =
   | { ok: true; numero: string; advertencias?: string[] }
   | { ok: false; error: string };
 
+// #120 · TRM de COSTOS de un contrato en USD de una reserva POR PERSONA (hotel a solicitud o tarifado). Las obligaciones con los proveedores de ese contrato están en dólares: la CxP conserva su moneda y su importe
+// en USD y lleva su equivalente en COP congelado a la TRM de costos — el mismo modelo del carrito y de los programas (migración 236) y la misma regla: la TRM la ingresa el personal interno (no se infiere de ninguna tasa de
+// referencia) y, sin ella, la operación se detiene ANTES de numerar o crear nada. Solo lee (calcula las obligaciones para saber si alguna es positiva).
+async function trmCostoContratoUsd(p: {
+  input: ReservaInput; data: ComputoReserva; datosVuelo: DatosVueloOrigen | null; costoAereo: number; solicitud?: { neta: NetaSolicitud }; costo?: { trmRecibida: unknown; esInterno: boolean };
+}): Promise<{ ok: true; trm: number | null } | { ok: false; error: string }> {
+  const pre = await calcularFinancieroReserva({ input: p.input, data: p.data, datosVuelo: p.datosVuelo, costoAereo: p.costoAereo, hoyISO: fechaNegocio(), solicitud: p.solicitud });
+  if (!pre.ok) return { ok: false, error: pre.error };
+  const d = decidirTrmCosto({ requiere: pre.cxp.some((c) => c.valor_total > 0), recibida: p.costo?.trmRecibida, esInterno: p.costo?.esInterno === true, congelada: null });
+  if (!d.ok) return { ok: false, error: d.error };
+  // Orden de despliegue: la RPC anterior a la 236 ignora en silencio el equivalente y dejaría la CxP en USD sin él; se comprueba ANTES de numerar.
+  if (d.trm != null && process.env.SUPABASE_SERVICE_ROLE_KEY) {
+    const { error: errEsquema236 } = await createAdminClient().from("cuentas_por_pagar").select("valor_cop_costo, trm_costo").limit(1);
+    if (errEsquema236) return { ok: false, error: "La base de datos todavía no tiene el equivalente en pesos de las cuentas por pagar (migración 236); no se crea ningún contrato. Avisa a soporte." };
+  }
+  return { ok: true, trm: d.trm };
+}
+
 // NO EXPORTADA a propósito (defecto reportado en la revisión de PR #267): una
 // Server Action exportada es alcanzable por el navegador con CUALQUIER
 // argumento serializable, así que un `tenant` en la firma pública permitía
 // que el cliente lo eligiera. El único caller válido es `convertirCotizacion`
 // (mismo archivo), que ya validó `cot.tenant` en el servidor antes de llamar
 // — el tenant llega aquí siempre ya autorizado, nunca desde el navegador.
-async function reservarDesdeTarifarioInterno(input: ReservaInput, tenant: Tenant): Promise<ReservaResult> {
+// `costo`: TRM de COSTOS (solo contratos en USD): la recibida de quien convierte, ya con su permiso resuelto en el servidor (nunca del navegador).
+async function reservarDesdeTarifarioInterno(input: ReservaInput, tenant: Tenant, solicitud?: { neta: NetaSolicitud; precioCongelado: number }, costo?: { trmRecibida: unknown; esInterno: boolean }): Promise<ReservaResult> {
   const sb = await createClient();
 
   // Fallas NO bloqueantes que SÍ se reportan (ver el comentario de
@@ -264,9 +286,12 @@ async function reservarDesdeTarifarioInterno(input: ReservaInput, tenant: Tenant
   const esServicios = input.modulo === "servicios";
 
   // 1) Cálculo (precios, líneas, pax, impuesto) — fuente única compartida.
-  const comp = await computarReserva(sb, input);
+  const comp = await computarReserva(sb, input, solicitud && { neta: solicitud.neta });
   if (!comp.ok) return { ok: false, error: comp.error };
-  const { origen, meta, precioVenta, paxConSilla, totalPax, numNinos, numNinos2, lineasHab, serviciosItems, impuestoTotal, monedaReserva, cargoMascota } = comp.data;
+  // #120: el precio de una solicitud queda CONGELADO al cargar la neta; si el paquete cambió desde entonces (markup, vuelo, servicios) no se cobra otro en silencio.
+  if (solicitud && Math.abs(comp.data.precioVenta - solicitud.precioCongelado) > 0.5)
+    return { ok: false, error: "El precio de esta cotización cambió desde que se calculó con la neta del hotel; pide que se recalcule antes de convertirla." };
+  const { origen, meta, precioVenta, paxConSilla, totalPax, numNinos, numNinos2, lineasHab, serviciosItems, impuestoTotal, monedaReserva, cargoMascota, ajusteRedondeo } = comp.data;
   // Menores (migración 226): líneas de precio y menores de 2 años (fee de vuelo / precio de infante).
   const { lineasMenores, numMenoresDeDos } = menoresDelComputo(comp.data, { infantesDeclarados: Number(input.infantes) || 0 });
   // #63 — oferta en COP con TRM (salida vinculada a Empaquetados, o manual de un paquete en ese modo). Si la cotización
@@ -363,6 +388,14 @@ async function reservarDesdeTarifarioInterno(input: ReservaInput, tenant: Tenant
     aliadoB2B = al.aliadoId;
     planB2B = plan.plan;
     if (oferta63) planVivo63 = construirPlanB2b63({ aliadoId: al.aliadoId, tipoAsesor: input.tipoAsesor, plan: plan.plan });
+  }
+
+  // 2e) TRM de COSTOS de un contrato en USD (hotel a solicitud o tarifado: es el MISMO camino; ver `trmCostoContratoUsd`). Antes de numerar o escribir nada. En COP este bloque no se ejecuta.
+  let trmCostoUsd: number | null = null;
+  if (!oferta63 && !esServicios && monedaReserva === "USD") {
+    const rTrm = await trmCostoContratoUsd({ input, data: comp.data, datosVuelo, costoAereo, solicitud: solicitud && { neta: solicitud.neta }, costo });
+    if (!rTrm.ok) return { ok: false, error: rTrm.error };
+    trmCostoUsd = rTrm.trm;
   }
 
   // 3) Número de contrato — ya completo (DTM-#### / MIN-00-####), tenant
@@ -857,6 +890,8 @@ async function reservarDesdeTarifarioInterno(input: ReservaInput, tenant: Tenant
       orden: 201,
     });
   }
+  // #120: residuo de redondeo de «Distribuir» (mismo total que «Cargar hotel a los adultos»): línea explícita, no escondida en el importe de un viajero.
+  if (ajusteRedondeo) items.push({ numero_contrato: numero, descripcion: ajusteRedondeo.descripcion, adultos: 1, ninos: 0, tarifa_adulto: ajusteRedondeo.total, tarifa_nino: 0, orden: 202 });
   if (aceptacion63) {
     if (aceptacion63.snapshot.items.length) {
       const { error: eit } = await sb.from("contrato_items").insert(aceptacion63.snapshot.items.map((it) => ({ numero_contrato: numero, ...it })));
@@ -876,9 +911,11 @@ async function reservarDesdeTarifarioInterno(input: ReservaInput, tenant: Tenant
     cxp = aceptacion63.financiero.cxp as unknown as CxPFinanciera[];
     costosContrato = aceptacion63.financiero.costos as CostosContrato;
   } else {
-    const finCalc = await calcularFinancieroReserva({ input, data: comp.data, datosVuelo, costoAereo, hoyISO });
+    const finCalc = await calcularFinancieroReserva({ input, data: comp.data, datosVuelo, costoAereo, hoyISO, solicitud: solicitud && { neta: solicitud.neta } });
     if (!finCalc.ok) return fallarYRevertir(finCalc.error);
     ({ cxp, costosContrato, serviciosEfectivos } = finCalc);
+    // Contrato en USD: cada CxP en USD con su equivalente congelado a la TRM de costos (decidida y validada antes de numerar). En COP las filas quedan exactamente como siempre.
+    if (trmCostoUsd != null) cxp = cxp.map((c) => cxpEnUsdConEquivalente(c, trmCostoUsd as number));
   }
 
   // Resumen ÚNICO de asistencia/tours (incluidos + opcionales, deduplicado
@@ -941,8 +978,10 @@ async function calcularFinancieroReserva(p: {
   datosVuelo: DatosVueloOrigen | null;
   costoAereo: number;
   hoyISO: string;
+  /** #120: neta cargada de un hotel bajo solicitud (el costo del hotel del contrato y su CxP son esa neta TOTAL exacta). */
+  solicitud?: { neta: NetaSolicitud };
 }): Promise<{ ok: true; cxp: CxPFinanciera[]; costosContrato: CostosContrato; serviciosEfectivos: ServicioEfectivo[] } | { ok: false; error: string }> {
-  const { input, datosVuelo, costoAereo, hoyISO } = p;
+  const { input, datosVuelo, costoAereo, hoyISO, solicitud } = p;
   const { meta, netoPorAcom, paxConSilla, totalPax, numNinos, numNinos2, lineasHab, serviciosIncluidos, oferta63 } = p.data;
   const { numMenoresDeDos, numInfantes } = menoresDelComputo(p.data, { infantesDeclarados: Number(input.infantes) || 0 });
   const esServicios = input.modulo === "servicios";
@@ -1009,6 +1048,14 @@ async function calcularFinancieroReserva(p: {
       // Infante de hotel (0 = gratis): el neto que cobra el hotel por cada uno,
       // menor de 2 años o de 2 (clase infante del hotel) — antes no se sumaba.
       if (numInfantes > 0 && netoPorAcom["infante"] != null) costoHotelTotal += netoPorAcom["infante"] * numInfantes;
+      // #120: el costo del hotel de una solicitud es la neta TOTAL cargada, exacta. La suma por tipo (adultos × neta + niños × neta) solo puede diferir de ella por el redondeo mínimo
+      // de centavos; cualquier otra diferencia es un error de cálculo y se rechaza antes de numerar.
+      if (solicitud) {
+        const rp = solicitud.neta.reparto;
+        if (Math.abs(costoHotelTotal - solicitud.neta.netaTotal) > toleranciaCentavos(rp.adultos + rp.ninos))
+          return { ok: false, error: "El costo del hotel calculado no coincide con la neta total cargada; pide una nueva valoración." };
+        costoHotelTotal = solicitud.neta.netaTotal;
+      }
       const { data: hprov, error: hprovErr } = await admin
         .from("hoteles").select("nombre, proveedores(nombre, aplica_retencion, pct_retencion)").eq("id", input.hotelId).maybeSingle();
       if (hprovErr) throw new Error(hprovErr.message);
@@ -1227,6 +1274,11 @@ function huellaDeOferta63(input: ReservaInput, data: ComputoReserva): string | n
 export type CotizacionResult = { ok: true; id: number; avisoPersonas?: string } | { ok: false; error: string };
 
 export async function crearCotizacion(input: ReservaInput, opts?: { vigenciaHasta?: string }): Promise<CotizacionResult> {
+  return crearCotizacionInterna(input, opts);
+}
+
+// #120: `solicitud` (neta + id de la cotización pendiente) solo la pasa `asignarNetaSolicitud`, tras leer la neta de la base; no es parte de la acción exportada.
+async function crearCotizacionInterna(input: ReservaInput, opts?: { vigenciaHasta?: string }, solicitud?: { cotizacionId: number; neta: NetaSolicitud }): Promise<CotizacionResult> {
   const sb = await createClient();
   if (!`${input.cliente.nombres ?? ""}${input.cliente.apellidos ?? ""}`.trim())
     return { ok: false, error: "El nombre del cliente es obligatorio." };
@@ -1235,9 +1287,9 @@ export async function crearCotizacion(input: ReservaInput, opts?: { vigenciaHast
   // #63 (E/F/G): revisiones de T0 de una salida dinámica — se leen ANTES de calcular nada. La base las compara de nuevo al guardar
   // la cotización y al aceptarla: cualquier cambio entre medias rechaza. Un error de lectura solo bloquea si la oferta es 63.
   const t063 = input.salidaId && process.env.SUPABASE_SERVICE_ROLE_KEY ? await leerRevisiones63(createAdminClient(), input.paqueteId) : null;
-  const comp = await computarReserva(sb, input);
+  const comp = await computarReserva(sb, input, solicitud && { neta: solicitud.neta });
   if (!comp.ok) return { ok: false, error: comp.error };
-  const { origen, meta, precioVenta, paxConSilla, totalPax, numNinos, numNinos2, lineasHab, serviciosItems, serviciosIncluidos, monedaReserva, cargoMascota, impuestoTotal } = comp.data;
+  const { origen, meta, precioVenta, paxConSilla, totalPax, numNinos, numNinos2, lineasHab, serviciosItems, serviciosIncluidos, monedaReserva, cargoMascota, ajusteRedondeo, impuestoTotal } = comp.data;
   const { lineasMenores, numMenoresDeDos } = menoresDelComputo(comp.data, { infantesDeclarados: Number(input.infantes) || 0 });
   // Mismo resumen ÚNICO que usa `reservarDesdeTarifarioInterno` al convertir
   // (lib/reservar/serviciosPaquete.ts) — así la cotización ya muestra, antes
@@ -1393,6 +1445,8 @@ export async function crearCotizacion(input: ReservaInput, opts?: { vigenciaHast
       adultos: 0, ninos: 0, tarifa_adulto: cargoMascota.total, tarifa_nino: 0,
     });
   }
+  // #120: mismo residuo explícito en la cotización (los ítems suman el total congelado).
+  if (ajusteRedondeo) itemsSnap.push({ id: 202, descripcion: ajusteRedondeo.descripcion, adultos: 1, ninos: 0, tarifa_adulto: ajusteRedondeo.total, tarifa_nino: 0 });
 
   const detalle = { venta: ventaSnap, pasajeros: pasajerosSnap, hoteles: hotelesSnap, vuelos: vuelosSnap, items: itemsSnap };
 
@@ -1420,6 +1474,22 @@ export async function crearCotizacion(input: ReservaInput, opts?: { vigenciaHast
   });
   if (!vigenciaRes.ok) return { ok: false, error: vigenciaRes.error };
   const vigencia = vigenciaRes.vigencia;
+
+  // #120: la cotización YA existe (pendiente_tarifa). La RPC congela la neta, el precio y el detalle y la pasa a abierta en una sola transacción, con candado de rol/tenant.
+  if (solicitud) {
+    const { data: pk } = await sb.from("armado_paquetes").select("pct_mk").eq("id", input.paqueteId).maybeSingle();
+    const { error: eNeta } = await sb.rpc("cargar_neta_solicitud", {
+      p_cotizacion: solicitud.cotizacionId, p_item_ref: ITEM_REF_HOTEL, p_neta: solicitud.neta.netaTotal, p_moneda: monedaReserva,
+      p_pct_mk: Number(pk?.pct_mk) || 0, p_precio_venta: precioVenta, p_detalle: detalle as unknown as Json, p_vigencia: vigencia,
+      // Elección de reparto CONGELADA (privada): modo, conteos e importes por tipo; el infante siempre $0.
+      p_modo: solicitud.neta.reparto.modo, p_adultos: solicitud.neta.reparto.adultos, p_ninos: solicitud.neta.reparto.ninos, p_infantes: solicitud.neta.reparto.infantes,
+      p_neta_adulto: solicitud.neta.reparto.netaAdulto, p_neta_nino: solicitud.neta.reparto.netaNino, p_neta_infante: 0,
+    });
+    if (eNeta) return { ok: false, error: eNeta.message.replace(/^[A-Z_]+:\s*/, "") };
+    revalidatePath("/dashboard/cotizaciones");
+    revalidatePath(`/dashboard/cotizaciones/${solicitud.cotizacionId}`);
+    return { ok: true, id: solicitud.cotizacionId };
+  }
 
   // El precio se calcula en el servidor (autoritativo) y el checkout debe servir
   // tanto a aliados B2B como a usuarios públicos. La RLS de `cotizaciones` es solo
@@ -1551,12 +1621,58 @@ export async function crearCotizacion(input: ReservaInput, opts?: { vigenciaHast
   return avisoPersonas ? { ok: true, id: row.id, avisoPersonas } : { ok: true, id: row.id };
 }
 
+// #120 — Un operador autorizado carga la neta TOTAL del hotel de una solicitud y, si hay niños, elige «adultos» o «distribuir». Los conteos (adultos/niños/infantes) salen de
+// la solicitud guardada con las reglas de edad y de acomodación del hotel (nunca del navegador); se valida la elección y se recalcula el paquete COMPLETO con el motor de
+// siempre (markup del paquete, servicios, vuelo, impuesto, redondeo); la RPC congela neta + elección + precio + detalle y abre la cotización. Misma elección = no-op; otra
+// neta u otra distribución se rechaza. Roles: los de producto (`ESCRITURA.producto`), dentro de su agencia.
+// `entradaRaw`: un número (= neta total, hotel a adultos) o { netaTotal, modo, netaAdulto, netaNino, netaInfante }.
+export async function asignarNetaSolicitud(cotizacionId: number, entradaRaw: unknown, opts?: { vigenciaHasta?: string }): Promise<CotizacionResult> {
+  const sb = await createClient();
+  const { data: { user } } = await sb.auth.getUser();
+  if (!user) return { ok: false, error: "No autorizado." };
+  const { data: perfil } = await sb.from("usuarios").select("rol, activo").eq("id", user.id).maybeSingle();
+  if (!perfil?.activo || !puedeEscribir("producto", perfil.rol)) return { ok: false, error: "No tienes permiso para cargar la neta de un hotel." };
+  if (!Number.isInteger(cotizacionId) || cotizacionId <= 0) return { ok: false, error: "Cotización no válida." };
+  if (!process.env.SUPABASE_SERVICE_ROLE_KEY) return { ok: false, error: "No se pudo cargar la neta (configuración del servidor incompleta)." };
+  const admin = createAdminClient();
+  const { data: cot, error: eCot } = await admin.from("cotizaciones").select("estado, payload, tenant").eq("id", cotizacionId).maybeSingle();
+  if (eCot || !cot) return { ok: false, error: "Cotización no encontrada." };
+  const ctx = await contextoCotizacion();
+  if (!cot.tenant || !autorizaTenant(ctx, cot.tenant)) return { ok: false, error: "No tienes acceso a esta cotización." };
+  const payload = cot.payload as unknown as ReservaInput;
+  const { data: hotel } = await admin.from("hoteles").select("moneda").eq("id", payload.hotelId).maybeSingle();
+  const moneda: "COP" | "USD" = (hotel as { moneda?: string | null } | null)?.moneda === "USD" ? "USD" : "COP";
+  const previa = await netaCargada(admin, cotizacionId);
+  if (!previa.ok) return { ok: false, error: previa.error };
+  if (previa.neta) {
+    // Reintento: se interpreta con los conteos YA congelados (no se vuelven a calcular) y solo la MISMA elección es un no-op.
+    const c = previa.neta.reparto;
+    const r = validarReparto(entradaRaw, { adultos: c.adultos, ninos: c.ninos, infantes: c.infantes });
+    if (r.ok && mismaEleccion(previa.neta, { netaTotal: r.netaTotal, moneda: previa.neta.moneda, reparto: r.reparto })) return { ok: true, id: cotizacionId };
+    return { ok: false, error: "Esta solicitud ya tiene cargada otra neta u otra distribución; no se sobrescribe." };
+  }
+  if (!estaPendienteTarifa(cot.estado)) return { ok: false, error: "Esta cotización no está pendiente de tarifa." };
+  const ocupacion = await evaluarOcupacionHotel(admin, payload.hotelId, payload.habitaciones ?? {}, payload.edadesMenores ?? [], payload.adultosReales);
+  if (!ocupacion.ok) return { ok: false, error: ocupacion.error };
+  const v = validarReparto(entradaRaw, ocupacion.conteos);
+  if (!v.ok) return { ok: false, error: v.error };
+  const res = await crearCotizacionInterna(payload, { vigenciaHasta: opts?.vigenciaHasta }, { cotizacionId, neta: { netaTotal: v.netaTotal, moneda, reparto: v.reparto } });
+  if (!res.ok) return res;
+  // La cotización ya está ABIERTA: ahora sí se registra al titular en el registro de personas (#42; la 219 solo admite abiertas). Un fallo aquí no deshace la valoración:
+  // queda el aviso persistente de la ficha ("Reintentar") y un log sin datos personales.
+  const alta = await altaPersonasCotizacion(admin, { fila: { id: cotizacionId, tenant: cot.tenant, tipo: "tarifario", payload: cot.payload }, usuarioId: user.id, sellar: false });
+  if (!alta.ok) console.error(logPersonasCotizacion("reservar", cotizacionId, alta));
+  return res;
+}
+
 // Convierte una cotización en CONTRATO: corre el motor de reserva normal (genera
 // numero_contrato + sillas + CxP) con el payload guardado, y enlaza la cotización.
 export async function convertirCotizacion(
   id: number, pasajeros?: PasajeroReserva[], override?: boolean, asesorInterno?: string, trmProvisional?: number | null,
   /** 235 (#90 F): moneda de cobro elegida (null = la de la oferta) y su TRM (solo si difiere). Se validan en el servidor; el navegador no decide nada. */
   monedaCobro?: string | null, trmCobro?: number | null,
+  /** TRM de COSTOS (pesos por dólar) de un contrato en USD con proveedores en dólares: la ingresa el personal interno; en COP se ignora. */
+  trmCosto?: unknown,
 ): Promise<ReservaResult> {
   const sb = await createClient();
   const { data: cot, error } = await sb
@@ -1574,6 +1690,8 @@ export async function convertirCotizacion(
   if (cot.tipo === "manual") return { ok: false, error: "Esta es una cotización dinámica: se convierte en contrato desde su propia ficha." };
   if (cot.estado === "convertida" && cot.numero_contrato) return { ok: true, numero: cot.numero_contrato };
   if (cot.estado === "descartada") return { ok: false, error: "La cotización está descartada; no se puede convertir." };
+  // #120: una solicitud sin neta no tiene precio: no se convierte (además lo impide el trigger de la base).
+  if (estaPendienteTarifa(cot.estado)) return { ok: false, error: MENSAJE_PENDIENTE_TARIFA };
 
   // Sin tenant asignado no se convierte: no hay con qué estampar el contrato
   // (ver migración 153 — no se asume ningún tenant por defecto).
@@ -1605,7 +1723,14 @@ export async function convertirCotizacion(
   // nunca se re-deriva de forma independiente (ver reservarDesdeTarifarioInterno).
   // #63: el payload de una cotización en COP con TRM trae su `oferta63.huella`; viaja tal cual dentro del pedido y la
   // reserva la compara con lo que se va a cobrar (precio, vuelo, fechas, TRM y tarifario publicado).
-  const res = await reservarDesdeTarifarioInterno({ ...payload, pasajeros: pax, asesorInterno: asesor, oferta63: payload.oferta63 ? { ...payload.oferta63, cotizacionId: id, trmProvisional: trmProvisional ?? null, monedaCobro: monedaCobro ?? null, trmCobro: trmCobro ?? null } : payload.oferta63 }, cot.tenant as Tenant);
+  // #120: si la cotización nació de una solicitud, la neta cargada (y su precio congelado) vienen de la base, nunca del navegador.
+  let solicitudNeta: { neta: NetaSolicitud; precioCongelado: number } | undefined;
+  if (process.env.SUPABASE_SERVICE_ROLE_KEY) {
+    const nc = await netaCargada(createAdminClient(), id);
+    if (!nc.ok) return { ok: false, error: nc.error };
+    if (nc.neta) solicitudNeta = { neta: nc.neta, precioCongelado: nc.precioVenta };
+  }
+  const res = await reservarDesdeTarifarioInterno({ ...payload, pasajeros: pax, asesorInterno: asesor, oferta63: payload.oferta63 ? { ...payload.oferta63, cotizacionId: id, trmProvisional: trmProvisional ?? null, monedaCobro: monedaCobro ?? null, trmCobro: trmCobro ?? null } : payload.oferta63 }, cot.tenant as Tenant, solicitudNeta, { trmRecibida: trmCosto, esInterno: ctx.ok && ctx.interno !== false });
   if (!res.ok) return res;
 
   await sb.from("cotizaciones").update({ estado: "convertida", numero_contrato: res.numero }).eq("id", id);
@@ -1994,6 +2119,7 @@ export async function convertirCotizacionCarrito(
     if (cot.numero_contrato) return { ok: true, numeros: [cot.numero_contrato] };
   }
   if (cot.estado === "descartada") return { ok: false, error: "La cotización está descartada; no se puede convertir." };
+  if (estaPendienteTarifa(cot.estado)) return { ok: false, error: MENSAJE_PENDIENTE_TARIFA };
   // #40 E3: una abierta vencida no crea NINGÚN contrato nuevo (ni de los grupos pendientes de una conversión parcial): se rechaza antes de numerar,
   // reservar sillas o crear contrato/CxP/asientos. Los contratos ya creados no se tocan; una cotización completamente convertida ya salió arriba
   // con sus números, y al renovar la vigencia el reintento completa solo los grupos pendientes.
@@ -3598,7 +3724,7 @@ export async function descartarCotizacion(id: number): Promise<{ ok: boolean; er
     };
   }
 
-  let q = sb.from("cotizaciones").update({ estado: "descartada" }).eq("id", id).eq("estado", "abierta");
+  let q = sb.from("cotizaciones").update({ estado: "descartada" }).eq("id", id).in("estado", ["abierta", "pendiente_tarifa"]);
   if (!ctx.superadmin) q = q.eq("tenant", ctx.tenant);
   const { data, error } = await q.select("id");
   if (error) {

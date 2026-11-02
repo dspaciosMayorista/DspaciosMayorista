@@ -45,6 +45,8 @@ const STUB_RESERVAR_ACTIONS = pathToFileURL(join(AQUI, "stubs", "reservarActions
 // importadas por checkout/page.tsx como "./actions" (pruebas/carritoMonedaCheckout.react.ts).
 const STUB_CHECKOUT_ACTIONS = pathToFileURL(join(AQUI, "stubs", "checkoutActionsStub.mjs")).href;
 const STUB_BUSQUEDA_UNIDAD_ACTIONS = pathToFileURL(join(AQUI, "stubs", "busquedaUnidadActionsStub.mjs")).href;
+// `SolicitudHotelCard.tsx` (#120, hotel bajo solicitud) importa sus Server Actions reales "./solicitudHotelActions" (terminan en "next/headers").
+const STUB_SOLICITUD_HOTEL_ACTIONS = pathToFileURL(join(AQUI, "stubs", "solicitudHotelActionsStub.mjs")).href;
 // `PasajerosContratoClient.tsx` (migración 188, CRM) importa su Server
 // Action real "./actions" (relativa, dentro de su propia carpeta) — "use
 // server" que termina en "next/headers". Se redirige solo cuando el import
@@ -147,6 +149,9 @@ export async function resolve(specifier, context, nextResolve) {
   }
   if (specifier === "@/lib/reservar/buscarPasajero") {
     return { url: STUB_BUSCAR_PASAJERO, shortCircuit: true };
+  }
+  if (specifier === "./solicitudHotelActions" && context.parentURL?.endsWith("SolicitudHotelCard.tsx")) {
+    return { url: STUB_SOLICITUD_HOTEL_ACTIONS, shortCircuit: true };
   }
   if (specifier === "./busquedaUnidadActions" && context.parentURL?.endsWith("BuscadorBooking.tsx")) {
     return { url: STUB_BUSQUEDA_UNIDAD_ACTIONS, shortCircuit: true };

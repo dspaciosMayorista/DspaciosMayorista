@@ -13,6 +13,7 @@ import { conCacheDetalle, claveDetalleSalida, claveDetallePaquete, type EstadoDe
 import type { FilaResumen } from "@/lib/tarifario/resumen";
 import type { DescripcionPaqueteRaw } from "@/lib/tarifario/descripcionPaquete";
 import type { HotelBernaloDescubierto } from "@/lib/tarifario/datosBernalo";
+import type { HotelBajoSolicitud } from "@/lib/tarifario/datosSolicitud";
 import { destinosParaFiltro } from "@/lib/programas/destinoFijo";
 
 export type CapHotel = Record<number, { paxMin: number | null; paxMax: number | null; acom: AcomConfig[] }>;
@@ -320,6 +321,7 @@ export function TarifarioPublic({
   descripcionPorPaquete = {},
   filasAddon = [],
   hotelesBernalo = [],
+  hotelesSolicitud = [],
   hotelIdsUnidadAutoritativos = [],
   prioridadesRecomendados = {},
   condicionPorOferta = {},
@@ -351,6 +353,8 @@ export function TarifarioPublic({
   filasAddon?: FilaResumen[];
   // Fase 3E Bernalo — descubrimiento PARALELO, ver `lib/tarifario/datosBernalo.ts`.
   hotelesBernalo?: HotelBernaloDescubierto[];
+  // #120: hoteles sin tarifa publicada (a solicitud): lib/tarifario/datosSolicitud.ts.
+  hotelesSolicitud?: HotelBajoSolicitud[];
   // Hallazgo confirmado (validación final): identidad AUTORITATIVA de "este
   // hotel es modelo unidad ahora mismo" (`lib/tarifario/datosBernalo.ts`,
   // `hotelIdsUnidadAutoritativos`) — a diferencia de `hotelesBernalo`, NUNCA
@@ -595,7 +599,7 @@ export function TarifarioPublic({
       {vista === "programas" ? (
         <PorProgramas programas={programas} puedeReservar={puedeReservar} />
       ) : vista === "booking" ? (
-        <VistaBooking filas={filasFiltradas} subtabsSlot={subtabsSlot} fotosPorHotel={fotosPorHotel} galeriaPorHotel={galeriaPorHotel} fotosPorServicio={fotosPorServicio} cuposPorBloqueo={cuposPorBloqueo} origenPorBloqueo={origenPorBloqueo} origenPorSalida={origenPorSalida} puedeReservar={puedeReservar} ventanaPorPaquete={ventanaPorPaquete} infoPorHotel={infoPorHotel} planesInfo={planesInfo} capPorHotel={capPorHotel} soloAcom={fAcom || null} filtroTexto={q} filtroCategoria={fCat} filtroRegimen={fReg} descripcionPorPaquete={descripcionPorPaquete} filasAddon={filasAddon} hotelesBernalo={fAcom ? [] : hotelesBernaloFiltrados} hotelIdsUnidadAutoritativos={hotelIdsUnidadAutoritativos} prioridadesRecomendados={prioridadesRecomendados} condicionPorOferta={condicionPorOferta} politicaPorOferta={politicaPorOferta} restriccionPorPaquete={restriccionPorPaquete} />
+        <VistaBooking filas={filasFiltradas} subtabsSlot={subtabsSlot} fotosPorHotel={fotosPorHotel} galeriaPorHotel={galeriaPorHotel} fotosPorServicio={fotosPorServicio} cuposPorBloqueo={cuposPorBloqueo} origenPorBloqueo={origenPorBloqueo} origenPorSalida={origenPorSalida} puedeReservar={puedeReservar} ventanaPorPaquete={ventanaPorPaquete} infoPorHotel={infoPorHotel} planesInfo={planesInfo} capPorHotel={capPorHotel} soloAcom={fAcom || null} filtroTexto={q} filtroCategoria={fCat} filtroRegimen={fReg} descripcionPorPaquete={descripcionPorPaquete} filasAddon={filasAddon} hotelesBernalo={fAcom ? [] : hotelesBernaloFiltrados} hotelesSolicitud={fAcom || fCat || fReg ? [] : hotelesSolicitud} hotelIdsUnidadAutoritativos={hotelIdsUnidadAutoritativos} prioridadesRecomendados={prioridadesRecomendados} condicionPorOferta={condicionPorOferta} politicaPorOferta={politicaPorOferta} restriccionPorPaquete={restriccionPorPaquete} />
       ) : (
         <>
           {/* Tabs de módulos */}

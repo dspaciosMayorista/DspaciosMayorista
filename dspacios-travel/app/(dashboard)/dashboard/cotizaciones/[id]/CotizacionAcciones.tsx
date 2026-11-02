@@ -9,6 +9,7 @@ import { calcularEdad } from "@/lib/utils";
 import { MENSAJE_TRM_PROVISIONAL_REQUERIDA_63, trmValida90 } from "@/lib/reservar/monedaPublicacion90";
 import { totalCobroConvertido, validarEleccionCobro } from "@/lib/finanzas/cobro";
 import { formatMoneda } from "@/lib/utils";
+import { validarTrmCosto } from "@/lib/finanzas/costoTrmCarrito";
 import { convertirCotizacion, descartarCotizacion } from "../../reservar/actions";
 import { type PasajeroReserva } from "@/lib/reservar/computo";
 import { OpcionesTipoDoc } from "@/components/personas/OpcionesTipoDoc";
@@ -19,7 +20,7 @@ type ClientePrefill = { nombres: string; apellidos: string; tipoDoc: string; num
 
 
 export function CotizacionAcciones({
-  id, pax, infantes, tienePasajeros, cliente, esSuperadmin, asesores, miNombre, miRolVenta, pideTrmProvisional = false,
+  id, pax, infantes, tienePasajeros, cliente, esSuperadmin, asesores, miNombre, miRolVenta, pideTrmProvisional = false, pideTrmCosto = false,
   permiteMonedaCobro = false, monedaOferta = "COP", totalOferta = 0,
 }: {
   id: number; pax: number; infantes: number; tienePasajeros: boolean; cliente: ClientePrefill; esSuperadmin: boolean;
@@ -27,6 +28,8 @@ export function CotizacionAcciones({
   miNombre: string; miRolVenta: boolean;
   /** Oferta en USD sin TRM: al convertir a contrato se captura la TRM provisional (pesos por dólar). */
   pideTrmProvisional?: boolean;
+  /** Contrato en USD (hotel a solicitud o tarifado): los proveedores se deben en dólares y la TRM de COSTOS (pesos por dólar) es obligatoria; la ingresa quien convierte. */
+  pideTrmCosto?: boolean;
   /** 235 (#90 F): oferta con conversión por TRM y usuario interno: puede elegir en qué moneda se COBRA el contrato. */
   permiteMonedaCobro?: boolean;
   /** Moneda e importe de la OFERTA (que no cambian); el total convertido que se muestra es solo una vista previa: la base lo calcula y congela. */
@@ -39,6 +42,13 @@ export function CotizacionAcciones({
   const [confirmarDescarte, setConfirmarDescarte] = useState(false);
   const [capturando, setCapturando] = useState(false);
   const [trmProv, setTrmProv] = useState("");
+  const [trmCostoTxt, setTrmCostoTxt] = useState("");
+  // TRM de COSTOS: distinta de la de cobro. Obligatoria y positiva cuando el contrato está en USD (el servidor la exige igual y, sin ella, no numera nada).
+  const trmCostoValor = (): { ok: true; valor: number | null } | { ok: false; error: string } => {
+    if (!pideTrmCosto) return { ok: true, valor: null };
+    const v = validarTrmCosto(trmCostoTxt);
+    return v.ok ? { ok: true, valor: v.trm } : v;
+  };
   // Solo aplica a una oferta USD sin TRM: ahí la tasa es OBLIGATORIA (campo vacío = no se convierte) y debe ser un número positivo.
   const trmProvisional = (): { ok: true; valor: number | null } | { ok: false; error: string } => {
     if (!pideTrmProvisional) return { ok: true, valor: null };
@@ -84,9 +94,11 @@ export function CotizacionAcciones({
     if (!t.ok) { setErr(t.error); return; }
     const cb = eleccionCobro();
     if (!cb.ok) { setErr(cb.error); return; }
+    const tc = trmCostoValor();
+    if (!tc.ok) { setErr(tc.error); return; }
     setErr("");
     start(async () => {
-      const r = await convertirCotizacion(id, undefined, undefined, undefined, t.valor, cb.monedaCobro, cb.trmCobro);
+      const r = await convertirCotizacion(id, undefined, undefined, undefined, t.valor, cb.monedaCobro, cb.trmCobro, tc.valor);
       if (r.ok) {
         if (r.advertencias?.length) window.alert(`Contrato creado, pero con avisos:\n\n${r.advertencias.join("\n")}`);
         router.push(`/dashboard/contratos/${r.numero}`);
@@ -117,9 +129,11 @@ export function CotizacionAcciones({
     if (!t.ok) { setErr(t.error); return; }
     const cb = eleccionCobro();
     if (!cb.ok) { setErr(cb.error); return; }
+    const tc = trmCostoValor();
+    if (!tc.ok) { setErr(tc.error); return; }
     setErr("");
     start(async () => {
-      const r = await convertirCotizacion(id, paxRows, false, asesorSel, t.valor, cb.monedaCobro, cb.trmCobro);
+      const r = await convertirCotizacion(id, paxRows, false, asesorSel, t.valor, cb.monedaCobro, cb.trmCobro, tc.valor);
       if (r.ok) {
         if (r.advertencias?.length) window.alert(`Contrato creado, pero con avisos:\n\n${r.advertencias.join("\n")}`);
         router.push(`/dashboard/contratos/${r.numero}`);
@@ -132,9 +146,11 @@ export function CotizacionAcciones({
     if (!t.ok) { setErr(t.error); return; }
     const cb = eleccionCobro();
     if (!cb.ok) { setErr(cb.error); return; }
+    const tc = trmCostoValor();
+    if (!tc.ok) { setErr(tc.error); return; }
     setErr("");
     start(async () => {
-      const r = await convertirCotizacion(id, [], true, undefined, t.valor, cb.monedaCobro, cb.trmCobro);
+      const r = await convertirCotizacion(id, [], true, undefined, t.valor, cb.monedaCobro, cb.trmCobro, tc.valor);
       if (r.ok) router.push(`/dashboard/contratos/${r.numero}`);
       else setErr(r.error);
     });
@@ -159,6 +175,16 @@ export function CotizacionAcciones({
           <p className="mt-1 text-[10px] text-gray-400">
             Esta oferta está en USD y no tiene TRM: debes ingresar la tasa. Se congela al contratar y es con la que se registran en pesos las
             cuentas por pagar y los asientos; no cambia después.
+          </p>
+        </div>
+      )}
+      {pideTrmCosto && (
+        <div className="max-w-xs rounded-lg border border-gray-200 p-3" data-testid="trm-costo">
+          <label className="text-[11px] text-gray-500" htmlFor="trm-costo-input">TRM de costos (COP por USD) *</label>
+          <Input id="trm-costo-input" aria-label="TRM de costos" type="number" min={0} step="0.01" inputMode="decimal" placeholder="Obligatoria, ej. 4000" required
+            value={trmCostoTxt} onChange={(e) => setTrmCostoTxt(e.target.value)} />
+          <p className="mt-1 text-[10px] text-gray-400">
+            Este contrato está en USD y sus proveedores se deben en dólares: ingresa la tasa con la que se congela el equivalente en pesos de cada cuenta por pagar. Es distinta de la TRM de cobro; no cambia después.
           </p>
         </div>
       )}

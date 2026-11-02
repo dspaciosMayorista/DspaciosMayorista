@@ -5,6 +5,7 @@ import { getProgramasResumen } from "@/lib/programas";
 import { completarDesdeHoteles88 } from "@/lib/programas/estanciaHotelDatos88";
 import { Logo } from "@/components/Logo";
 import { cargarResumenTarifario, MSG_ERROR_CARGAR_TARIFARIO } from "@/lib/tarifario/resumen";
+import { cargarHotelesBajoSolicitud } from "@/lib/tarifario/datosSolicitud";
 import { cargarHotelesBernaloDescubiertos, cargarInfoHotelesBernalo, cargarDescripcionPaquetesBernalo, cargarPrioridadesRecomendadosBernalo } from "@/lib/tarifario/datosBernalo";
 import { idsPaqueteBernaloFaltantes, fusionarDescripcionPaquete } from "@/lib/tarifario/descripcionPaquete";
 import { orquestarCargaPublica } from "@/lib/tarifario/orquestacion";
@@ -66,7 +67,7 @@ export default async function TarifarioPublicoPage() {
   // nunca pasa por `orquestarCargaPublica`/`tarifario_resultado`. Best-effort
   // (igual que `configSitio`/`programas`): un fallo aquí nunca bloquea ni
   // rompe el tarifario público — la sección Bernalo simplemente queda vacía.
-  const [resultadoCarga, resultadoBernalo] = await Promise.all([
+  const [resultadoCarga, resultadoBernalo, resultadoSolicitud] = await Promise.all([ // #120: hoteles bajo solicitud (sin tarifa): fuente paralela, best-effort
     orquestarCargaPublica({
     resolverSesion: async () => {
       // Detectar sesión (badge de agencia + permiso de reservar). Revisión
@@ -102,12 +103,15 @@ export default async function TarifarioPublicoPage() {
     cargarConfigSitio: async () => sb.from("config_sitio").select("video_fondo_url").eq("id", 1).maybeSingle(),
     }),
     cargarHotelesBernaloDescubiertos().catch(() => ({ ok: false as const, error: "excepcion_carga_bernalo" })),
+    cargarHotelesBajoSolicitud().catch(() => ({ ok: false as const, error: "excepcion_carga_solicitud" })),
   ]);
   const { sesion, datos: resDatos, programas: resProgramas, configSitio: cfgSitio } = resultadoCarga;
   if (!resultadoBernalo.ok) {
     registrarErrorTecnico(FLUJO, flujoId, "datos_auxiliares_pagina", "error_hoteles_bernalo_descubiertos", resultadoBernalo.error);
   }
   const hotelesBernalo = resultadoBernalo.ok ? resultadoBernalo.hoteles : [];
+  if (!resultadoSolicitud.ok) registrarErrorTecnico(FLUJO, flujoId, "datos_auxiliares_pagina", "error_hoteles_bajo_solicitud", resultadoSolicitud.error);
+  const hotelesSolicitud = resultadoSolicitud.ok ? resultadoSolicitud.hoteles : [];
   // Hallazgo confirmado (validación final): canal SEPARADO de identidad,
   // nunca derivado de `hotelesBernalo` (que en TarifarioPublic se filtra por
   // acomodación/categoría/régimen/texto antes de llegar a VistaBooking).
@@ -305,10 +309,10 @@ export default async function TarifarioPublicoPage() {
             legacy ni programa) es un catálogo válido — nunca "en
             preparación". `hotelesBernalo` es la tercera fuente que puede
             justificar montar `TarifarioPublic` por sí sola. */}
-        {!filasVisibles.length && !programas.length && !hotelesBernalo.length ? (
+        {!filasVisibles.length && !programas.length && !hotelesBernalo.length && !hotelesSolicitud.length ? (
           <p className="py-20 text-center text-gray-400">Tarifario en preparación.</p>
         ) : (
-          <TarifarioPublic filas={filasVisibles} programas={programas} puedeReservar={puedeReservar}cuposPorBloqueo={cuposPorBloqueo} origenPorBloqueo={origenPorBloqueo} origenPorSalida={origenPorSalida} fotosPorHotel={fotosPorHotel} galeriaPorHotel={galeriaPorHotel} fotosPorServicio={fotosPorServicio} ventanaPorPaquete={ventanaPorPaquete} infoPorHotel={infoPorHotel} planesInfo={planesInfo} capPorHotel={capPorHotel} descripcionPorPaquete={descripcionPorPaquete} filasAddon={filasAddon} hotelesBernalo={hotelesBernalo} hotelIdsUnidadAutoritativos={hotelIdsUnidadAutoritativos} prioridadesRecomendados={prioridadesRecomendadasCombinadas} condicionPorOferta={condicionPorOferta} politicaPorOferta={politicaPorOferta} restriccionPorPaquete={restriccionPorPaquete} />
+          <TarifarioPublic filas={filasVisibles} programas={programas} puedeReservar={puedeReservar}cuposPorBloqueo={cuposPorBloqueo} origenPorBloqueo={origenPorBloqueo} origenPorSalida={origenPorSalida} fotosPorHotel={fotosPorHotel} galeriaPorHotel={galeriaPorHotel} fotosPorServicio={fotosPorServicio} ventanaPorPaquete={ventanaPorPaquete} infoPorHotel={infoPorHotel} planesInfo={planesInfo} capPorHotel={capPorHotel} descripcionPorPaquete={descripcionPorPaquete} filasAddon={filasAddon} hotelesBernalo={hotelesBernalo} hotelesSolicitud={hotelesSolicitud} hotelIdsUnidadAutoritativos={hotelIdsUnidadAutoritativos} prioridadesRecomendados={prioridadesRecomendadasCombinadas} condicionPorOferta={condicionPorOferta} politicaPorOferta={politicaPorOferta} restriccionPorPaquete={restriccionPorPaquete} />
         )}
       </main>
     </div>

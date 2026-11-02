@@ -950,7 +950,7 @@ export async function generarTarifario(paqueteId: number, opciones: OpcionesGene
       .eq("paquete_id", paqueteId),
     sb
       .from("armado_hoteles")
-      .select("hotel_id, categorias, regimenes, hoteles(nombre, moneda, modelo_tarifario, adults_only)")
+      .select("hotel_id, categorias, regimenes, hoteles(nombre, moneda, modelo_tarifario, adults_only, tarifa_bajo_solicitud)")
       .eq("paquete_id", paqueteId),
     sb
       .from("armado_servicios")
@@ -1025,8 +1025,12 @@ export async function generarTarifario(paqueteId: number, opciones: OpcionesGene
   const hotelesBernaloExcluidos = hotelesBernaloFilas.map(
     (h) => (h.hoteles as unknown as { nombre?: string | null } | null)?.nombre ?? `#${h.hotel_id}`
   );
+  // #120: un hotel «bajo solicitud» no se tarifa aquí (aunque luego se le carguen tarifas, mientras el vínculo siga así se ignoran): no genera filas ni error,
+  // y los demás hoteles del paquete se publican y se venden con normalidad. Su oferta se descubre aparte (lib/tarifario/datosSolicitud.ts).
+  const marcaSolicitud = (h: (typeof hoteles)[number]) => (h.hoteles as unknown as { tarifa_bajo_solicitud?: boolean | null } | null)?.tarifa_bajo_solicitud === true;
+  const hotelesSolicitud = hoteles.filter(marcaSolicitud);
   const hotelIds = hoteles
-    .filter((h) => (h.hoteles as unknown as { modelo_tarifario?: string | null } | null)?.modelo_tarifario !== "unidad")
+    .filter((h) => (h.hoteles as unknown as { modelo_tarifario?: string | null } | null)?.modelo_tarifario !== "unidad" && !marcaSolicitud(h))
     .map((h) => h.hotel_id);
 
   // P3 (hallazgo confirmado, validación final): un paquete "dinamico" cuyo
@@ -1757,7 +1761,7 @@ export async function generarTarifario(paqueteId: number, opciones: OpcionesGene
   // El caso "dinamico 100% Bernalo" ya se rechazó ARRIBA, antes de pedir la
   // generación (ver el comentario junto a `hotelIds`/`hotelesBernaloFilas`
   // al inicio de la función) — nunca puede llegar aquí.
-  if (!filas.length && !hayOmisiones && (tipo === "bloqueo" || tipo === "porcion_terrestre") && hotelesBernaloValidos.length === 0) {
+  if (!filas.length && !hayOmisiones && (tipo === "bloqueo" || tipo === "porcion_terrestre") && hotelesBernaloValidos.length === 0 && hotelesSolicitud.length === 0) {
     return await fallar(
       "No se generaron tarifas. Revisa que el hotel tenga temporadas y tarifas netas que cubran el rango de fechas del viaje."
     );
