@@ -1,0 +1,71 @@
+# #56 — Reintento operativo de avisos de traspaso del canal WhatsApp de SalesBot.
+# Llama cada 15 minutos a /api/cron/avisos-whatsapp en PRODUCCIÓN. Vive aquí y no en vercel.json porque Vercel Hobby solo admite crons diarios.
+#
+# Configuración (Settings → Secrets and variables → Actions):
+#   · Secret    CRON_SECRET     el MISMO valor que la variable de entorno CRON_SECRET de Vercel (la ruta lo compara).
+#   · Variable  PRODUCTION_URL  origen de producción con https://, sin ruta (ejemplo: https://app.dominio.com).
+# Si falta cualquiera de las dos, o la respuesta no es 2xx, el workflow FALLA (GitHub avisa por correo al fallar un workflow).
+#
+# Límites de GitHub Actions que conviene conocer:
+#   · El cron de GitHub es de mejor esfuerzo: una ejecución puede retrasarse (a veces decenas de minutos en horas pico) o, rara vez, omitirse.
+#     Los minutos 7, 22, 37 y 52 evitan el inicio de hora, que es cuando más se retrasa. Por eso el reintento tiene gracia de 10 min y retroceso
+#     (ver docs/tecnico/salesbot-whatsapp.md): un retraso no duplica ni pierde avisos, solo demora el reintento.
+#   · Las ejecuciones programadas corren SOLO desde la rama por defecto: este archivo no hace nada hasta estar en main.
+#   · En repos públicos, GitHub desactiva los workflows programados tras 60 días sin actividad en el repositorio.
+# El secreto viene de `secrets.` (GitHub ya lo enmascara en todo el log) y nunca se imprime ni se pasa por argumentos.
+# Sin actions de terceros, sin checkout, sin permisos del repositorio, sin pull_request (nunca expone el secreto a ramas de PR).
+# Con el canal apagado (WHATSAPP_BOT_ACTIVO sin definir) la ruta responde 200 {"activo":false} y no hace nada.
+name: avisos-whatsapp-cron
+
+on:
+  schedule:
+    - cron: '7,22,37,52 * * * *'
+  workflow_dispatch:
+
+permissions: {}
+
+concurrency:
+  group: avisos-whatsapp-cron
+  cancel-in-progress: false
+
+jobs:
+  llamar:
+    name: Llamar /api/cron/avisos-whatsapp
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - name: Llamar a producción
+        env:
+          CRON_SECRET: ${{ secrets.CRON_SECRET }}
+          PRODUCTION_URL: ${{ vars.PRODUCTION_URL }}
+        run: |
+          set -euo pipefail
+
+          faltan=""
+          [ -n "${CRON_SECRET:-}" ] || faltan="$faltan secret:CRON_SECRET"
+          [ -n "${PRODUCTION_URL:-}" ] || faltan="$faltan variable:PRODUCTION_URL"
+          if [ -n "$faltan" ]; then
+            echo "::error::Configuración ausente:$faltan"
+            exit 1
+          fi
+
+          base="${PRODUCTION_URL%/}"
+          case "$base" in
+            https://*) ;;
+            *) echo "::error::PRODUCTION_URL debe empezar con https://"; exit 1 ;;
+          esac
+
+          respuesta="$(mktemp)"
+          # El secreto viaja por stdin (-K -): no queda en los argumentos del proceso ni en el log.
+          if ! codigo="$(printf 'header = "Authorization: Bearer %s"\n' "$CRON_SECRET" \
+            | curl --silent --show-error --max-time 60 -K - -o "$respuesta" -w '%{http_code}' "$base/api/cron/avisos-whatsapp")"; then
+            echo "::error::No se pudo conectar con producción (red, DNS o tiempo de espera)"
+            exit 1
+          fi
+
+          echo "HTTP $codigo"
+          head -c 500 "$respuesta"; echo
+          case "$codigo" in
+            2??) ;;
+            *) echo "::error::La ruta respondió HTTP $codigo"; exit 1 ;;
+          esac
