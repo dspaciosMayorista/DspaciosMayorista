@@ -447,6 +447,19 @@ export function TarifarioPublic({
       }),
     [hotelesBernalo, q, fCat, fReg]
   );
+  // #120: hoteles bajo solicitud con los filtros PERTINENTES (texto, categoría y régimen contra el catálogo configurado del propio hotel). Sin tarifa no tienen acomodaciones,
+  // así que el filtro de acomodación los excluye (igual que a los hoteles por unidad).
+  const hotelesSolicitudFiltrados = useMemo(
+    () =>
+      hotelesSolicitud.filter((h) => {
+        if (fAcom) return false;
+        if (q.trim() && !`${h.hotelNombre} ${h.destinoNombre ?? ""}`.toLowerCase().includes(q.trim().toLowerCase())) return false;
+        if (fCat && !h.categorias.includes(fCat)) return false;
+        if (fReg && !h.regimenes.some((r) => r.codigo === fReg)) return false;
+        return true;
+      }),
+    [hotelesSolicitud, q, fCat, fReg, fAcom]
+  );
   const hayFiltro = !!(q.trim() || fCat || fReg || fAcom);
 
   const tabs: { key: ModuloKey; label: string }[] = MODULOS.filter((m) =>
@@ -599,7 +612,7 @@ export function TarifarioPublic({
       {vista === "programas" ? (
         <PorProgramas programas={programas} puedeReservar={puedeReservar} />
       ) : vista === "booking" ? (
-        <VistaBooking filas={filasFiltradas} subtabsSlot={subtabsSlot} fotosPorHotel={fotosPorHotel} galeriaPorHotel={galeriaPorHotel} fotosPorServicio={fotosPorServicio} cuposPorBloqueo={cuposPorBloqueo} origenPorBloqueo={origenPorBloqueo} origenPorSalida={origenPorSalida} puedeReservar={puedeReservar} ventanaPorPaquete={ventanaPorPaquete} infoPorHotel={infoPorHotel} planesInfo={planesInfo} capPorHotel={capPorHotel} soloAcom={fAcom || null} filtroTexto={q} filtroCategoria={fCat} filtroRegimen={fReg} descripcionPorPaquete={descripcionPorPaquete} filasAddon={filasAddon} hotelesBernalo={fAcom ? [] : hotelesBernaloFiltrados} hotelesSolicitud={fAcom || fCat || fReg ? [] : hotelesSolicitud} hotelIdsUnidadAutoritativos={hotelIdsUnidadAutoritativos} prioridadesRecomendados={prioridadesRecomendados} condicionPorOferta={condicionPorOferta} politicaPorOferta={politicaPorOferta} restriccionPorPaquete={restriccionPorPaquete} />
+        <VistaBooking filas={filasFiltradas} subtabsSlot={subtabsSlot} fotosPorHotel={fotosPorHotel} galeriaPorHotel={galeriaPorHotel} fotosPorServicio={fotosPorServicio} cuposPorBloqueo={cuposPorBloqueo} origenPorBloqueo={origenPorBloqueo} origenPorSalida={origenPorSalida} puedeReservar={puedeReservar} ventanaPorPaquete={ventanaPorPaquete} infoPorHotel={infoPorHotel} planesInfo={planesInfo} capPorHotel={capPorHotel} soloAcom={fAcom || null} filtroTexto={q} filtroCategoria={fCat} filtroRegimen={fReg} descripcionPorPaquete={descripcionPorPaquete} filasAddon={filasAddon} hotelesBernalo={fAcom ? [] : hotelesBernaloFiltrados} hotelesSolicitud={hotelesSolicitudFiltrados} hotelIdsUnidadAutoritativos={hotelIdsUnidadAutoritativos} prioridadesRecomendados={prioridadesRecomendados} condicionPorOferta={condicionPorOferta} politicaPorOferta={politicaPorOferta} restriccionPorPaquete={restriccionPorPaquete} />
       ) : (
         <>
           {/* Tabs de módulos */}

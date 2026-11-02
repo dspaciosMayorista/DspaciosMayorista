@@ -1,7 +1,8 @@
 "use client";
 
 import { useEffect, useState, useTransition } from "react";
-import { Building2, MessageCircle, Send, X } from "lucide-react";
+import { MessageCircle, Send, X } from "lucide-react";
+import { CarruselFotoHotel } from "./CarruselFotoHotel";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { DateInput } from "@/components/ui/DateInput";
@@ -18,18 +19,13 @@ export function SolicitudHotelCard({ hotel }: { hotel: HotelBajoSolicitud }) {
   const [abierto, setAbierto] = useState(false);
   return (
     <div className="overflow-hidden rounded-xl border border-gray-200 bg-white shadow-sm" data-testid={`solicitud-hotel-${hotel.hotelId}`}>
-      <div className="relative h-40 bg-gray-100">
-        {hotel.foto ? (
-          // eslint-disable-next-line @next/next/no-img-element
-          <img src={hotel.foto} alt={hotel.hotelNombre} className="h-full w-full object-cover" onError={(e) => { (e.currentTarget as HTMLImageElement).style.display = "none"; }} />
-        ) : (
-          <div className="flex h-full items-center justify-center text-gray-300"><Building2 className="h-10 w-10" aria-hidden="true" /></div>
-        )}
-        <span className="absolute left-2 top-2 max-w-[90%] truncate rounded-full bg-white/90 px-2 py-0.5 text-[10px] font-semibold text-[var(--brand-primary)]">{hotel.paqueteNombre}</span>
-      </div>
+      {/* Mismo carrusel y proporción (16:10) que la tarjeta de un hotel con tarifa: se ve la foto completa y se pasa entre las fotos cargadas del hotel. */}
+      <CarruselFotoHotel fotos={hotel.fotos} alt={hotel.hotelNombre}>
+        <span className="absolute left-2 top-2 z-10 max-w-[70%] truncate rounded-full bg-white/90 px-2 py-0.5 text-[10px] font-semibold text-[var(--brand-primary)]">{hotel.paqueteNombre}</span>
+      </CarruselFotoHotel>
       <div className="space-y-2 p-4">
         <h3 className="text-base font-semibold text-gray-900">{hotel.hotelNombre}</h3>
-        {hotel.destinoNombre && <p className="text-xs text-gray-500">{hotel.destinoNombre}</p>}
+        {hotel.destinoNombre && <p className="text-xs text-gray-500">{hotel.destinoNombre}{hotel.estrellas ? ` · ${hotel.estrellas} ${hotel.estrellas === 1 ? "estrella" : "estrellas"}` : ""}</p>}
         <p className="rounded-lg bg-amber-50 px-3 py-2 text-sm font-medium text-amber-900">{TEXTO_BAJO_SOLICITUD}</p>
         <Button type="button" className="w-full" onClick={() => setAbierto(true)}>Solicitar cotización</Button>
       </div>
@@ -47,10 +43,17 @@ function FormularioSolicitud({ hotel, onClose }: { hotel: HotelBajoSolicitud; on
   const [ida, setIda] = useState("");
   const [regreso, setRegreso] = useState("");
   const [hab, setHab] = useState<Record<string, number>>({ sencilla: 0, doble: 1, triple: 0, multiple: 0 });
+  // «¿Viajan menores?» se responde primero; las edades solo existen (y solo se envían) si la respuesta es sí. Un hotel Adults Only no admite menores: no se pregunta.
+  const [menores, setMenores] = useState<"" | "si" | "no">(hotel.adultsOnly ? "no" : "");
   const [edades, setEdades] = useState("");
   // Adultos que viajan de verdad (opcional): solo cambia algo si un niño ocupa la plaza libre de una habitación (p. ej. doble con 1 adulto + 1 niño = 2 viajeros).
   const [adultos, setAdultos] = useState("");
-  const adultosNum = adultos.trim() ? Number(adultos) : null;
+  const adultosNum = menores === "si" && adultos.trim() ? Number(adultos) : null;
+  const edadesParsed = menores === "si" ? edades.split(/[,\s]+/).filter(Boolean).map(Number) : [];
+  function responderMenores(v: "si" | "no") {
+    setMenores(v);
+    if (v === "no") { setEdades(""); setAdultos(""); } // nunca queda una edad vieja oculta
+  }
   const [categoria, setCategoria] = useState("");
   const [regimen, setRegimen] = useState("");
   const [notas, setNotas] = useState("");
@@ -60,11 +63,12 @@ function FormularioSolicitud({ hotel, onClose }: { hotel: HotelBajoSolicitud; on
     setError(null);
     const s = hotel.tipo === "bloqueo" ? hotel.salidas[Number(salida)] : null;
     if (hotel.tipo === "bloqueo" && !s) { setError("Elige la salida."); return; }
-    const edadesMenores = edades.split(/[,\s]+/).filter(Boolean).map(Number);
+    if (!menores) { setError("Indica si viajan menores."); return; }
+    const edadesMenores = edadesParsed;
     start(async () => {
       const r = await crearSolicitudHotel({
         paqueteId: hotel.paqueteId, hotelId: hotel.hotelId, bloqueoId: s?.bloqueoId ?? null, empaquetadoId: s?.empaquetadoId ?? null,
-        fechaIda: s?.fechaIda ?? ida, fechaRegreso: s?.fechaRegreso ?? regreso, categoria, regimen, habitaciones: hab, edadesMenores, adultos: adultosNum, cliente: cli, notas,
+        fechaIda: s?.fechaIda ?? ida, fechaRegreso: s?.fechaRegreso ?? regreso, categoria, regimen, habitaciones: hab, viajanMenores: menores === "si", edadesMenores, adultos: adultosNum, cliente: cli, notas,
       });
       if (r.ok) setRes(r); else setError(r.error);
     });
@@ -72,7 +76,6 @@ function FormularioSolicitud({ hotel, onClose }: { hotel: HotelBajoSolicitud; on
 
   // Aviso ANTES de enviar: ¿la acomodación elegida admite a los niños/infantes declarados? (mismas reglas del motor; el servidor lo vuelve a exigir al enviar).
   const [ocupacion, setOcupacion] = useState<OcupacionSolicitudResult | null>(null);
-  const edadesParsed = edades.split(/[,\s]+/).filter(Boolean).map(Number);
   const claveOcupacion = JSON.stringify([hab, edadesParsed, adultosNum]);
   useEffect(() => {
     if (edadesParsed.some((e) => !Number.isInteger(e) || e < 0 || e > 17)) { setOcupacion({ ok: false, error: "Las edades de los menores deben ser números entre 0 y 17." }); return; }
@@ -137,8 +140,17 @@ function FormularioSolicitud({ hotel, onClose }: { hotel: HotelBajoSolicitud; on
                 ))}
               </div>
             </fieldset>
-            {!hotel.adultsOnly && <label className="block"><span className="text-gray-600">Edades de los menores (separadas por coma, opcional)</span><Input value={edades} onChange={(e) => setEdades(e.target.value)} placeholder="3, 7" /></label>}
-            {!hotel.adultsOnly && edadesParsed.length > 0 && (
+            {!hotel.adultsOnly && (
+              <fieldset data-testid="solicitud-menores"><legend className="text-gray-600">¿Viajan menores?</legend>
+                <div className="mt-1 flex gap-4">
+                  {([["si", "Sí"], ["no", "No"]] as const).map(([v, rot]) => (
+                    <label key={v} className="inline-flex items-center gap-1.5"><input type="radio" name="viajan-menores" value={v} checked={menores === v} onChange={() => responderMenores(v)} required /> {rot}</label>
+                  ))}
+                </div>
+              </fieldset>
+            )}
+            {menores === "si" && <label className="block"><span className="text-gray-600">Edades de los menores (separadas por coma)</span><Input value={edades} onChange={(e) => setEdades(e.target.value)} placeholder="3, 7" required data-testid="solicitud-edades" /></label>}
+            {menores === "si" && edadesParsed.length > 0 && (
               <label className="block"><span className="text-gray-600">Adultos que viajan (opcional)</span>
                 <Input type="number" min={1} max={40} inputMode="numeric" value={adultos} onChange={(e) => setAdultos(e.target.value)} placeholder="Los de las habitaciones" data-testid="solicitud-adultos" />
                 <span className="mt-1 block text-xs text-gray-500">Si una habitación para 2 la ocupan 1 adulto y 1 niño, escribe 1: viajan 2 personas, no 3.</span>
@@ -154,9 +166,24 @@ function FormularioSolicitud({ hotel, onClose }: { hotel: HotelBajoSolicitud; on
                 La acomodación admite a tu grupo: {ocupacion.adultos} adulto(s), {ocupacion.ninos} niño(s) y {ocupacion.infantes} infante(s).
               </p>
             )}
-            <div className="grid grid-cols-2 gap-2">
-              <label className="block"><span className="text-gray-600">Tipo de habitación (opcional)</span><Input value={categoria} onChange={(e) => setCategoria(e.target.value)} /></label>
-              <label className="block"><span className="text-gray-600">Plan de alimentación (opcional)</span><Input value={regimen} onChange={(e) => setRegimen(e.target.value)} /></label>
+            {/* Solo lo configurado para ESTE hotel (hotel_categorias / hotel_regimenes); sin configuración no hay selector ni texto libre: el asesor lo confirma. */}
+            <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+              <label className="block"><span className="text-gray-600">Tipo de habitación (opcional)</span>
+                {hotel.categorias.length ? (
+                  <select className={campo} value={categoria} onChange={(e) => setCategoria(e.target.value)} data-testid="solicitud-categoria">
+                    <option value="">A confirmar</option>
+                    {hotel.categorias.map((c) => <option key={c} value={c}>{c}</option>)}
+                  </select>
+                ) : <p className="mt-1 text-xs text-gray-500" data-testid="solicitud-sin-categorias">Este hotel no tiene tipos de habitación configurados: se confirman con el asesor.</p>}
+              </label>
+              <label className="block"><span className="text-gray-600">Plan de alimentación (opcional)</span>
+                {hotel.regimenes.length ? (
+                  <select className={campo} value={regimen} onChange={(e) => setRegimen(e.target.value)} data-testid="solicitud-regimen">
+                    <option value="">A confirmar</option>
+                    {hotel.regimenes.map((r) => <option key={r.codigo} value={r.codigo}>{r.nombre === r.codigo ? r.codigo : `${r.codigo} · ${r.nombre}`}</option>)}
+                  </select>
+                ) : <p className="mt-1 text-xs text-gray-500" data-testid="solicitud-sin-regimenes">Este hotel no tiene planes de alimentación configurados: se confirman con el asesor.</p>}
+              </label>
             </div>
             <div className="grid grid-cols-2 gap-2">
               <label className="block"><span className="text-gray-600">Nombres</span><Input value={cli.nombres} onChange={(e) => setCli({ ...cli, nombres: e.target.value })} required /></label>

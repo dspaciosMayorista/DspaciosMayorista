@@ -95,3 +95,9 @@ Unitarias/wiring: `pruebas/hotelASolicitud.test.ts`, `hotelASolicitudWiring.test
 **Recorrido completo** `supabase/scripts/test_270_e2e.sh` + `pruebas/hotelASolicitud270.pg.ts` (PostgREST local; aplica 255–268, 270 y 271 con preflight/postcheck): solicitud → valoración (adultos / distribuir)
 → conversión → contrato/vuelo/sillas/CxP aérea y de hotel. Preflight/postcheck: `{preflight,postcheck}_270_*`, `{preflight,postcheck}_271_*`; rollback `rollback_270_*`, `rollback_271_*`.
 Navegador: `navegador_270.sh` + `revision_navegador_270.mjs` (Playwright con Chrome local).
+
+## Vista Booking y formulario (ajustes PR #432)
+- **Portada** (sin búsqueda ni destino): «Hoteles recomendados» primero, con la nota de selección inicial (`NOTA_RECOMENDADOS`), y después, separada por un borde, la sección «Hoteles bajo solicitud» con **máx. 2 tarjetas por paquete** (`limitarPorPaquete`, después de aplicar Pet friendly/Adults Only). `lib/tarifario/solicitudVista.ts` (puro).
+- **Resultados de una búsqueda/destino**: los bajo solicitud entran a la MISMA lista (`itemRestoDeSolicitud`, sin precio, condición/política «desconocido») y pasan por zona, estrellas, Pet friendly, Adults Only y el orden; `TarifarioPublic` les aplica además texto, categoría y régimen contra el catálogo configurado del propio hotel (acomodación los excluye: no tienen tarifa por acomodación). Sin límite de 2.
+- **Tarjeta**: mismo carrusel y proporción 16:10 que un hotel con tarifa (`CarruselFotoHotel`) con todas las fotos de `hotel_fotos` (portada primero).
+- **Formulario**: «¿Viajan menores?» primero; las edades solo con Sí y nunca se envían con No (el servidor también lo rechaza: `viajanMenores`). Tipo de habitación y plan de alimentación son selectores con `hotel_categorias`/`hotel_regimenes` de ESE hotel; el servidor los acredita (`acreditarSeleccionCatalogo`) y guarda el texto canónico. Un hotel sin esos datos configurados no muestra selector (ni texto libre) y queda «A confirmar».

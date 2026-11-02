@@ -56,6 +56,9 @@ export function validarEntradaSolicitudHotel(raw: unknown, hoy: string): { ok: t
   if (ACOMS.every((a) => habitaciones[a] === 0)) return { ok: false, error: "Indica al menos una habitación." };
 
   const edades = raw.edadesMenores == null ? [] : raw.edadesMenores;
+  // «¿Viajan menores?»: si el cliente dijo que NO, no puede viajar ninguna edad (ni una vieja que quedó oculta); si dijo que SÍ, debe haber al menos una.
+  if (raw.viajanMenores === false && Array.isArray(edades) && edades.length) return { ok: false, error: "Indicaste que no viajan menores: quita las edades o responde que sí." };
+  if (raw.viajanMenores === true && Array.isArray(edades) && !edades.length) return { ok: false, error: "Indica la edad de cada menor." };
   if (!Array.isArray(edades) || edades.length > MAX_MENORES || edades.some((e) => typeof e !== "number" || !Number.isInteger(e) || e < 0 || e > 17))
     return { ok: false, error: "Las edades de los menores deben ser números entre 0 y 17." };
 
@@ -80,6 +83,30 @@ export function validarEntradaSolicitudHotel(raw: unknown, hoy: string): { ok: t
       habitaciones, edadesMenores: edades as number[], adultos, cliente, notas: texto(raw.notas, 500),
     },
   };
+}
+
+export type CatalogoHotel = { categorias: readonly string[]; regimenes: readonly { codigo: string; nombre: string }[] };
+
+const norm = (s: string) => s.normalize("NFD").replace(/[\u0300-\u036f]/g, "").trim().toLowerCase();
+
+/**
+ * Acredita en el servidor que la categoría y el régimen elegidos existen en el catálogo configurado de ESTE hotel y devuelve el valor canónico del catálogo.
+ * «A confirmar» (nada elegido) siempre vale; cualquier otro texto que no esté en el catálogo del hotel —incluido el de un hotel sin catálogo— se rechaza.
+ */
+export function acreditarSeleccionCatalogo(sel: { categoria: string; regimen: string }, cat: CatalogoHotel): { ok: true; categoria: string; regimen: string } | { ok: false; error: string } {
+  let categoria = sel.categoria;
+  let regimen = sel.regimen;
+  if (categoria !== TEXTO_A_CONFIRMAR) {
+    const c = cat.categorias.find((x) => norm(x) === norm(categoria));
+    if (!c) return { ok: false, error: `El tipo de habitación «${categoria}» no está configurado para este hotel.` };
+    categoria = c;
+  }
+  if (regimen !== TEXTO_A_CONFIRMAR) {
+    const r = cat.regimenes.find((x) => norm(x.codigo) === norm(regimen) || norm(x.nombre) === norm(regimen));
+    if (!r) return { ok: false, error: `El plan de alimentación «${regimen}» no está configurado para este hotel.` };
+    regimen = r.codigo;
+  }
+  return { ok: true, categoria, regimen };
 }
 
 /** Clave estable de una solicitud: el mismo pedido del mismo cliente (doble clic, reintento) no crea otra cotización. */

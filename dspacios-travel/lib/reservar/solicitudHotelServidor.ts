@@ -19,6 +19,18 @@ export async function modalidadDelVinculo(admin: Admin, paqueteId: number, hotel
   return { ok: true, modalidad: marca ? "bajo_solicitud" : "tarifada" };
 }
 
+/** Categorías y regímenes configurados para UN hotel (hotel_categorias / hotel_regimenes). Falla cerrado: un error de lectura no se interpreta como «catálogo vacío». */
+export async function catalogoDelHotel(admin: Admin, hotelId: number): Promise<{ ok: true; categorias: string[]; regimenes: { codigo: string; nombre: string }[] } | { ok: false }> {
+  const [c, r] = await Promise.all([
+    admin.from("hotel_categorias").select("categorias_habitacion(nombre, activo)").eq("hotel_id", hotelId),
+    admin.from("hotel_regimenes").select("planes_alimentacion(codigo, nombre)").eq("hotel_id", hotelId),
+  ]);
+  if (c.error || r.error) return { ok: false };
+  const categorias = (c.data ?? []).flatMap((x) => { const k = x.categorias_habitacion as unknown as { nombre: string; activo: boolean | null } | null; return k?.nombre && k.activo !== false ? [k.nombre] : []; });
+  const regimenes = (r.data ?? []).flatMap((x) => { const p = x.planes_alimentacion as unknown as { codigo: string; nombre: string | null } | null; return p?.codigo ? [{ codigo: p.codigo, nombre: p.nombre ?? p.codigo }] : []; });
+  return { ok: true, categorias, regimenes };
+}
+
 /** Neta ya cargada de una cotización (null = aún pendiente). */
 export async function netaCargada(admin: Admin, cotizacionId: number): Promise<{ ok: true; neta: NetaSolicitud | null; precioVenta: number } | { ok: false; error: string }> {
   const { data, error } = await admin.from("cotizacion_tarifa_solicitud").select("neta, moneda, precio_venta, modo, adultos, ninos, infantes, neta_adulto, neta_nino").eq("cotizacion_id", cotizacionId).eq("item_ref", ITEM_REF_HOTEL).maybeSingle();

@@ -67,7 +67,7 @@ describe("marcar / desmarcar el hotel", () => {
   });
   test("la tarjeta sale solo de hoteles MARCADOS y seleccionados en el paquete (armado_hoteles), sin tocar tarifario_resultado", () => {
     const d = sinComentarios(leer("lib/tarifario/datosSolicitud.ts"));
-    assert.match(d, /from\("armado_hoteles"\)[\s\S]{0,200}hoteles!inner\([^)]*tarifa_bajo_solicitud\)/);
+    assert.match(d, /from\("armado_hoteles"\)[\s\S]{0,200}hoteles!inner\([^)]*tarifa_bajo_solicitud[^)]*\)/);
     assert.match(d, /\.eq\("hoteles\.tarifa_bajo_solicitud", true\)/);
     assert.doesNotMatch(d, /tarifario_resultado/);
     assert.match(d, /\.eq\("activo", true\)/);
@@ -96,7 +96,7 @@ describe("hotel único sin tarifa: el paquete y su tarjeta siguen apareciendo", 
   });
   test("Vista Booking muestra la tarjeta aunque no haya tarjetas tarifadas, y no la mezcla con el carrito", () => {
     const v = leer("app/tarifario/VistaBooking.tsx");
-    assert.match(v, /!tarjetas\.length && !enBusquedaPorcion && !hotelesSolicitudVisibles\.length/);
+    assert.match(v, /!tarjetas\.length && !enBusquedaPorcion && !solicitudesPortada\.length/);
     assert.match(v, /data-testid="hoteles-bajo-solicitud"/);
     const c = leer("app/tarifario/SolicitudHotelCard.tsx");
     assert.match(c, /TEXTO_BAJO_SOLICITUD/);

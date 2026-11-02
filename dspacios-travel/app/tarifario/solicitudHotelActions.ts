@@ -6,9 +6,9 @@ import { createAdminClient } from "@/lib/supabase/admin";
 import { hoyBogota } from "@/lib/cotizacion/vigencia";
 import { codigoErrorContacto, datosContactoTarifario, logContactoTarifario, origenContactoTarifario } from "@/lib/crm/contactoTarifario";
 import { paqueteVendibleHoy } from "@/lib/tarifario/datosSolicitud";
-import { claveSolicitudHotel, validarEntradaSolicitudHotel, type SolicitudHotelEntrada } from "@/lib/reservar/solicitudHotelEntrada";
+import { acreditarSeleccionCatalogo, claveSolicitudHotel, validarEntradaSolicitudHotel, type SolicitudHotelEntrada } from "@/lib/reservar/solicitudHotelEntrada";
 import { ESTADO_PENDIENTE_TARIFA, TEXTO_BAJO_SOLICITUD, contieneImportes } from "@/lib/reservar/solicitudHotel";
-import { evaluarOcupacionHotel, modalidadDelVinculo } from "@/lib/reservar/solicitudHotelServidor";
+import { catalogoDelHotel, evaluarOcupacionHotel, modalidadDelVinculo } from "@/lib/reservar/solicitudHotelServidor";
 import type { Json } from "@/types/database";
 import { getContextoB2B } from "./checkout/actions";
 
@@ -79,6 +79,13 @@ export async function crearSolicitudHotel(raw: unknown): Promise<SolicitudHotelR
   const { data: hotel, error: eH } = await admin.from("hoteles").select("nombre, moneda, adults_only").eq("id", input.hotelId).maybeSingle();
   if (eH || !hotel) return { ok: false, error: ERROR_GENERICO };
   if (hotel.adults_only && input.edadesMenores.length) return { ok: false, error: "Este hotel es Adults Only: no acepta niños ni infantes." };
+  // Tipo de habitación y plan de alimentación: solo valores del catálogo configurado de ESTE hotel (se acreditan aquí, no en el navegador) y se guardan con el texto canónico del catálogo.
+  const catalogo = await catalogoDelHotel(admin, input.hotelId);
+  if (!catalogo.ok) return { ok: false, error: ERROR_GENERICO };
+  const acreditada = acreditarSeleccionCatalogo({ categoria: input.categoria, regimen: input.regimen }, catalogo);
+  if (!acreditada.ok) return { ok: false, error: acreditada.error };
+  input.categoria = acreditada.categoria;
+  input.regimen = acreditada.regimen;
   // La acomodación elegida debe admitir a los menores declarados (misma regla que usará la valoración y la reserva): así el operador no descubre el rechazo al cargar la neta.
   const ocupacion = await evaluarOcupacionHotel(admin, input.hotelId, input.habitaciones, input.edadesMenores, input.adultos);
   if (!ocupacion.ok) return { ok: false, error: ocupacion.error };
