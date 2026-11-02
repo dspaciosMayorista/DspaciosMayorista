@@ -32,6 +32,10 @@ const RUTAS_CRON = new Set([
   "/api/cron/liberar-vencidas",
   "/api/cron/notificaciones",
   "/api/cron/reconciliar-financiero",
+  // Webhook de Meta (#56): sin sesión; la ruta valida la firma HMAC por su cuenta y está apagada salvo WHATSAPP_BOT_ACTIVO=1.
+  "/api/whatsapp/webhook",
+  // Reintento operativo de avisos de traspaso (#56): lo invoca Vercel Cron; la ruta valida CRON_SECRET por su cuenta.
+  "/api/cron/avisos-whatsapp",
 ]);
 
 // Roles externos (aliados B2B / cliente final): su lugar es el Portal B2B,
