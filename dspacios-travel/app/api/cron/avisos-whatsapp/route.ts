@@ -7,7 +7,7 @@ import { recuperarAvisos } from "@/lib/whatsapp/recuperacion";
 
 export const dynamic = "force-dynamic";
 
-// Cron (Vercel): vuelve a avisar al equipo de los traspasos de WhatsApp cuyo correo agotó los reintentos del webhook (#56). No depende de que el
+// Cron (GitHub Actions, .github/workflows/avisos-whatsapp-cron.yml; no está en vercel.json porque Hobby solo admite crons diarios): vuelve a avisar al equipo de los traspasos de WhatsApp cuyo correo agotó los reintentos del webhook (#56). No depende de que el
 // cliente escriba otra vez. Inerte mientras el canal esté apagado (WHATSAPP_BOT_ACTIVO != "1").
 export async function GET(req: Request) {
   const secret = process.env.CRON_SECRET;
@@ -32,7 +32,7 @@ export async function GET(req: Request) {
       ahora: new Date(),
       registrar: (etapa, e) => registrarErrorTecnico("salesbot_whatsapp_cron", flujoId, etapa, "fallo", e instanceof Error ? new Error(e.message.split(":")[0].slice(0, 40)) : new Error("desconocido")),
     });
-    // 500 si quedó algo por reintentar: Vercel lo muestra como corrida fallida y el equipo se entera.
+    // 500 si quedó algo por reintentar: el workflow de GitHub falla y GitHub avisa por correo.
     return NextResponse.json(r, { status: r.fallidos ? 500 : 200 });
   } catch (e) {
     registrarErrorTecnico("salesbot_whatsapp_cron", flujoId, "corrida", "fallo", e instanceof Error ? new Error(e.message.split(":")[0].slice(0, 40)) : new Error("desconocido"));

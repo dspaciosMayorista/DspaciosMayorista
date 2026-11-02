@@ -5,7 +5,7 @@ import { readFileSync } from "node:fs";
 import { leerConfigWhatsApp, VERSION_API_POR_DEFECTO } from "../lib/whatsapp/config.ts";
 import { firmaValida, respuestaHandshake } from "../lib/whatsapp/firma.ts";
 import { extraerMensajes } from "../lib/whatsapp/entrante.ts";
-import { aMensajesWhatsApp, clasificarHttp } from "../lib/whatsapp/saliente.ts";
+import { aMensajesWhatsApp, clasificarHttp, type CuerpoWA } from "../lib/whatsapp/saliente.ts";
 import { procesarMensaje, decidirReclamo, cedeAlPrevio, GATE_MS, MAX_INTENTOS, type Almacen, type AvisoPendiente, type DepsTurno, type Reclamo, type Registro, type SesionWA, type Traspaso } from "../lib/whatsapp/turno.ts";
 import { recuperarAvisos, proximoAviso, GRACIA_MIN, LEASE_AVISO_MS } from "../lib/whatsapp/recuperacion.ts";
 import { estadoInicial } from "../lib/salesbot/conversacion/contrato.ts";
@@ -78,20 +78,31 @@ describe("entrante", () => {
   });
 });
 
+// Formas estructurales de lo que arma aMensajesWhatsApp (Cloud API de Meta), solo para leer los cuerpos en las aserciones.
+type CuerpoTexto = { type: "text"; text: { body: string } };
+type FilaLista = { id: string; title: string; description?: string };
+type CuerpoBotones = { type: "interactive"; interactive: { type: "button"; body: { text: string }; action: { buttons: { type: "reply"; reply: { id: string; title: string } }[] } } };
+type CuerpoLista = { type: "interactive"; interactive: { type: "list"; body: { text: string }; action: { button: string; sections: { rows: FilaLista[] }[] } } };
+type CuerpoInteractivo = CuerpoBotones | CuerpoLista;
+const comoTexto = (c: CuerpoWA) => c as unknown as CuerpoTexto;
+const comoBotones = (c: CuerpoWA) => c as unknown as CuerpoBotones;
+const comoLista = (c: CuerpoWA) => c as unknown as CuerpoLista;
+const comoInteractivo = (c: CuerpoWA) => c as unknown as CuerpoInteractivo;
+
 describe("saliente (límites de Meta)", () => {
   const ops = (n: number, largo = 10) => Array.from({ length: n }, (_, i) => ({ etiqueta: `Op${i}`.padEnd(largo, "x"), valor: `v:${i}` }));
   test("sin opciones → texto; ≤3 cortas → botones; más → lista de ≤10 filas", () => {
     assert.equal(aMensajesWhatsApp([{ texto: "hola" }])[0].type, "text");
-    const b = aMensajesWhatsApp([{ texto: "elige", opciones: ops(3) }])[0] as any;
+    const b = comoBotones(aMensajesWhatsApp([{ texto: "elige", opciones: ops(3) }])[0]);
     assert.equal(b.interactive.type, "button");
-    assert.deepEqual(b.interactive.action.buttons.map((x: any) => x.reply.id), ["v:0", "v:1", "v:2"]);
-    const l = aMensajesWhatsApp([{ texto: "elige", opciones: ops(14) }])[0] as any;
+    assert.deepEqual(b.interactive.action.buttons.map((x) => x.reply.id), ["v:0", "v:1", "v:2"]);
+    const l = comoLista(aMensajesWhatsApp([{ texto: "elige", opciones: ops(14) }])[0]);
     assert.equal(l.interactive.type, "list");
     assert.equal(l.interactive.action.sections[0].rows.length, 10);
   });
   test("título largo: botón pasa a lista; fila se recorta a 24 y el texto completo va en la descripción", () => {
     const largo = "Hotel Caribe Plaza Gran Vista Mar Todo Incluido";
-    const m = aMensajesWhatsApp([{ texto: "elige", opciones: [{ etiqueta: largo, valor: "sel:1" }] }])[0] as any;
+    const m = comoLista(aMensajesWhatsApp([{ texto: "elige", opciones: [{ etiqueta: largo, valor: "sel:1" }] }])[0]);
     assert.equal(m.interactive.type, "list");
     const fila = m.interactive.action.sections[0].rows[0];
     assert.ok(fila.title.length <= 24 && fila.title.endsWith("…"));
@@ -99,23 +110,23 @@ describe("saliente (límites de Meta)", () => {
     assert.ok(fila.description.length <= 72);
   });
   test("títulos de botón repetidos no se envían como botones", () => {
-    const m = aMensajesWhatsApp([{ texto: "x", opciones: [{ etiqueta: "Igual", valor: "a" }, { etiqueta: "Igual", valor: "b" }] }])[0] as any;
+    const m = comoInteractivo(aMensajesWhatsApp([{ texto: "x", opciones: [{ etiqueta: "Igual", valor: "a" }, { etiqueta: "Igual", valor: "b" }] }])[0]);
     assert.equal(m.interactive.type, "list");
   });
   test("cuerpo largo con botones: texto completo aparte y botones con cuerpo corto (≤1024)", () => {
-    const out = aMensajesWhatsApp([{ texto: "a".repeat(1500), opciones: ops(2) }]) as any[];
+    const out = aMensajesWhatsApp([{ texto: "a".repeat(1500), opciones: ops(2) }]);
     assert.equal(out.length, 2);
     assert.equal(out[0].type, "text");
-    assert.ok(out[1].interactive.body.text.length <= 1024);
+    assert.ok(comoInteractivo(out[1]).interactive.body.text.length <= 1024);
   });
   test("el enlace solo sale con dominio configurado y ruta relativa interna", () => {
     const m = { texto: "t", enlace: { etiqueta: "Ver", href: "/tarifario/x" } };
-    assert.equal((aMensajesWhatsApp([m])[0] as any).text.body, "t");
-    assert.equal((aMensajesWhatsApp([m], "https://d.test")[0] as any).text.body, "t\nVer: https://d.test/tarifario/x");
-    assert.equal((aMensajesWhatsApp([{ ...m, enlace: { etiqueta: "Ver", href: "//evil.test" } }], "https://d.test")[0] as any).text.body, "t");
+    assert.equal(comoTexto(aMensajesWhatsApp([m])[0]).text.body, "t");
+    assert.equal(comoTexto(aMensajesWhatsApp([m], "https://d.test")[0]).text.body, "t\nVer: https://d.test/tarifario/x");
+    assert.equal(comoTexto(aMensajesWhatsApp([{ ...m, enlace: { etiqueta: "Ver", href: "//evil.test" } }], "https://d.test")[0]).text.body, "t");
   });
   test("todo mensaje de texto ≤ 4096", () => {
-    assert.ok((aMensajesWhatsApp([{ texto: "z".repeat(9000) }])[0] as any).text.body.length <= 4096);
+    assert.ok(comoTexto(aMensajesWhatsApp([{ texto: "z".repeat(9000) }])[0]).text.body.length <= 4096);
   });
 });
 
@@ -229,7 +240,10 @@ function almacenMemoria(fallos: Fallos = {}, o: { ruido?: () => number } = {}) {
     },
     async soltarTurno(waId, id) {
       const s = sesiones.get(waId);
-      if (s && s.lockPor === id) (s.lockPor = null), (s.lockHasta = null);
+      if (s && s.lockPor === id) {
+        s.lockPor = null;
+        s.lockHasta = null;
+      }
     },
     async avanzarSesion(waId, id, ts, n) {
       await pausa();
@@ -891,7 +905,7 @@ describe("cableado", () => {
     assert.match(r, /status: pendientes \? 503 : 200/);
     assert.match(leer("proxy.ts"), /RUTAS_CRON = new Set\(\[[\s\S]*"\/api\/whatsapp\/webhook"/);
   });
-  test("el cron de avisos: secreto fail-closed, inerte con el canal apagado, en el proxy y en vercel.json", () => {
+  test("el cron de avisos: secreto fail-closed, inerte con el canal apagado y en el proxy", () => {
     const r = leer("app/api/cron/avisos-whatsapp/route.ts");
     assert.match(r, /process\.env\.CRON_SECRET/);
     assert.match(r, /if \(!secret\)/);
@@ -901,8 +915,46 @@ describe("cableado", () => {
     assert.ok(r.indexOf("auth !== `Bearer") < r.indexOf("leerConfigWhatsApp()"), "el secreto se valida antes de tocar nada");
     assert.match(r, /cfg\.estado === "apagado"\) return NextResponse\.json\(\{ activo: false \}\)/);
     assert.match(leer("proxy.ts"), /RUTAS_CRON = new Set\(\[[\s\S]*"\/api\/cron\/avisos-whatsapp"/);
+  });
+  test("vercel.json conserva EXACTAMENTE los tres crons diarios (Hobby no admite uno cada 15 min)", () => {
     const v = JSON.parse(leer("vercel.json")) as { crons: { path: string; schedule: string }[] };
-    assert.ok(v.crons.some((c) => c.path === "/api/cron/avisos-whatsapp" && c.schedule === "*/15 * * * *"));
+    assert.deepEqual(v.crons.map((c) => c.path), ["/api/cron/liberar-vencidas", "/api/cron/notificaciones", "/api/cron/reconciliar-financiero"]);
+    assert.ok(v.crons.every((c) => /^\d+ \d+ \* \* \*$/.test(c.schedule)), "todos diarios");
+    assert.ok(!leer("vercel.json").includes("avisos-whatsapp"));
+    assert.ok(leer("app/api/cron/avisos-whatsapp/route.ts").includes("export async function GET"), "la ruta se conserva");
+  });
+  test("workflow del cron: cada 15 min en minutos desplazados, manual, sin PR, sin permisos, falla ante config ausente o HTTP no 2xx, sin exponer el secreto", () => {
+    const y = readFileSync(new URL("../../.github/workflows/avisos-whatsapp-cron.yml", import.meta.url), "utf8");
+    const crons = [...y.matchAll(/^\s*- cron: '([^']+)'/gm)].map((m) => m[1]);
+    assert.equal(crons.length, 1);
+    const [min, ...resto] = crons[0].split(" ");
+    assert.equal(resto.join(" "), "* * * *");
+    const minutos = min.split(",").map(Number);
+    assert.deepEqual(minutos, [7, 22, 37, 52], "cada 15 min");
+    assert.ok(minutos.every((m) => m !== 0 && m !== 30 && m % 15 === 7), "desplazados del inicio de hora");
+    assert.match(y, /^\s*workflow_dispatch:/m);
+    assert.ok(!/pull_request/.test(y.replace(/^#.*$/gm, "")), "nunca en PR: el secreto no llega a ramas ajenas");
+    assert.match(y, /^permissions: \{\}/m);
+    assert.match(y, /timeout-minutes: \d+/);
+    assert.match(y, /concurrency:\s+group: avisos-whatsapp-cron\s+cancel-in-progress: false/);
+    assert.match(y, /CRON_SECRET: \$\{\{ secrets\.CRON_SECRET \}\}/);
+    assert.match(y, /PRODUCTION_URL: \$\{\{ vars\.PRODUCTION_URL \}\}/);
+    const sinComentarios = y.replace(/^\s*#.*$/gm, "");
+    assert.equal((sinComentarios.match(/secrets\./g) ?? []).length, 1, "el secreto solo se mapea una vez, a una variable de entorno");
+    const run = sinComentarios.slice(sinComentarios.indexOf("run: |"));
+    assert.ok(!/\$\{\{/.test(run), "ninguna expresión de GitHub dentro del script (sin inyección)");
+    assert.match(run, /set -euo pipefail/);
+    assert.match(run, /::error::Configuración ausente/);
+    assert.match(run, /secret:CRON_SECRET[\s\S]*variable:PRODUCTION_URL/);
+    assert.match(run, /https:\/\/\*\)/);
+    assert.match(run, /-K -/, "el secreto viaja por stdin");
+    assert.match(run, /--max-time \d+/);
+    assert.match(run, /2\?\?\) ;;[\s\S]*exit 1/, "cualquier HTTP no 2xx falla");
+    assert.match(run, /\$base\/api\/cron\/avisos-whatsapp/);
+    assert.ok(!/(echo|printf)(?![^\n]*Authorization: Bearer %s)[^\n]*\$\{?CRON_SECRET/.test(run), "el secreto no se imprime");
+    assert.ok(!/add-mask/.test(run), "ni por ::add-mask::, que lo escribiría en claro fuera de Actions (los secrets ya vienen enmascarados)");
+    assert.ok(!/set -x|--verbose|curl[^\n]* -v\b|-H "Authorization/.test(run), "ni va en argumentos ni en modo verboso");
+    assert.ok(!/uses:/.test(y), "sin actions de terceros");
   });
   test("el id ya no se da por atendido al reclamarlo y el turno es exclusivo: orden de los efectos", () => {
     const t = leer("lib/whatsapp/turno.ts");
