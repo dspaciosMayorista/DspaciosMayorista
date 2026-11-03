@@ -5,6 +5,8 @@ import Link from "next/link";
 import { Star, Plane, Bus, Search, X, UtensilsCrossed, BedDouble, Tag } from "lucide-react";
 import { formatMoneda } from "@/lib/utils";
 import { VistaBooking } from "./VistaBooking";
+import { PorDinamicos, type CrearCotizacionDinFn } from "./PorDinamicos";
+import type { DinamicoPublico } from "@/lib/paqueteDinamico/publico";
 import { RegimenInfo, type PlanesInfo } from "./RegimenInfo";
 import { BriefFlyerButton } from "./BriefFlyerButton";
 import { textoEdadesHotel, type AcomConfig } from "@/lib/acomodaciones";
@@ -307,6 +309,8 @@ function EstadoCargaTabla({ detalle, onReintentar }: { detalle: EstadoDetalle<Fi
 export function TarifarioPublic({
   filas,
   programas = [],
+  dinamicos = [],
+  cotizarDinamico,
   puedeReservar = false,
   cuposPorBloqueo = {},
   origenPorBloqueo = {},
@@ -334,6 +338,9 @@ export function TarifarioPublic({
   // demanda (Tier 2, app/tarifario/detalle-actions.ts).
   filas: FilaResumen[];
   programas?: ProgramaResumen[];
+  dinamicos?: DinamicoPublico[];
+  /** Server Action para cotizar un paquete dinámico (la pasa la página; ver PorDinamicos). */
+  cotizarDinamico?: CrearCotizacionDinFn;
   puedeReservar?: boolean;
   cuposPorBloqueo?: Record<number, number>;
   origenPorBloqueo?: Record<number, string>;
@@ -381,7 +388,7 @@ export function TarifarioPublic({
   // (que reflejan el rango genérico de exploración).
   restriccionPorPaquete?: Record<number, { condicionNoNeutra: boolean; restriccionNoNeutra: boolean }>;
 }) {
-  const [vista, setVista] = useState<"tabla" | "booking" | "programas">("booking");
+  const [vista, setVista] = useState<"tabla" | "booking" | "programas" | "dinamicos">("booking");
   const [q, setQ] = useState("");
   const [fCat, setFCat] = useState("");
   const [fReg, setFReg] = useState("");
@@ -545,7 +552,7 @@ export function TarifarioPublic({
         <div ref={setSubtabsSlot} className="flex flex-wrap items-center gap-2" />
         <div className="flex flex-wrap items-center gap-2">
           <div className="inline-flex items-center gap-1 rounded-xl border border-slate-200 bg-white p-1.5 shadow-sm">
-            {([...(puedeReservar ? [["tabla", "Vista tabla"] as const] : []), ["booking", "Vista Booking"], ...(programas.length ? [["programas", "Programas"] as const] : [])] as const).map(([v, label]) => (
+            {([...(puedeReservar ? [["tabla", "Vista tabla"] as const] : []), ["booking", "Vista Booking"], ...(programas.length ? [["programas", "Programas"] as const] : []), ...(dinamicos.length ? [["dinamicos", "Dinámicos"] as const] : [])] as const).map(([v, label]) => (
               <button
                 key={v}
                 type="button"
@@ -575,7 +582,7 @@ export function TarifarioPublic({
               filtros activos, el borde/ícono se pone verde (acento de
               "filtro activo") para que siga siendo reconocible con el panel
               cerrado — no solo el número entre paréntesis. */}
-          {vista !== "programas" && (
+          {vista !== "programas" && vista !== "dinamicos" && (
             <button
               type="button"
               onClick={() => setFiltrosAbiertos((v) => !v)}
@@ -592,7 +599,7 @@ export function TarifarioPublic({
           siempre visible como fila compacta de acceso rápido; en móvil solo
           aparece al abrir "Filtros" (arriba), para no interponer un segundo
           panel completo antes del buscador del modo activo. */}
-      {vista !== "programas" && (
+      {vista !== "programas" && vista !== "dinamicos" && (
         <div className={filtrosAbiertos ? "mb-3 rounded-2xl border border-slate-200 bg-white p-3 sm:border-0 sm:bg-transparent sm:p-0" : "mb-3 hidden sm:block"}>
           {panelFiltros}
           {hayFiltro && (
@@ -609,7 +616,9 @@ export function TarifarioPublic({
         </div>
       )}
 
-      {vista === "programas" ? (
+      {vista === "dinamicos" ? (
+        <PorDinamicos dinamicos={dinamicos} cotizar={cotizarDinamico ?? (async () => ({ ok: false as const, error: "No disponible." }))} />
+      ) : vista === "programas" ? (
         <PorProgramas programas={programas} puedeReservar={puedeReservar} />
       ) : vista === "booking" ? (
         <VistaBooking filas={filasFiltradas} subtabsSlot={subtabsSlot} fotosPorHotel={fotosPorHotel} galeriaPorHotel={galeriaPorHotel} fotosPorServicio={fotosPorServicio} cuposPorBloqueo={cuposPorBloqueo} origenPorBloqueo={origenPorBloqueo} origenPorSalida={origenPorSalida} puedeReservar={puedeReservar} ventanaPorPaquete={ventanaPorPaquete} infoPorHotel={infoPorHotel} planesInfo={planesInfo} capPorHotel={capPorHotel} soloAcom={fAcom || null} filtroTexto={q} filtroCategoria={fCat} filtroRegimen={fReg} descripcionPorPaquete={descripcionPorPaquete} filasAddon={filasAddon} hotelesBernalo={fAcom ? [] : hotelesBernaloFiltrados} hotelesSolicitud={hotelesSolicitudFiltrados} hotelIdsUnidadAutoritativos={hotelIdsUnidadAutoritativos} prioridadesRecomendados={prioridadesRecomendados} condicionPorOferta={condicionPorOferta} politicaPorOferta={politicaPorOferta} restriccionPorPaquete={restriccionPorPaquete} />

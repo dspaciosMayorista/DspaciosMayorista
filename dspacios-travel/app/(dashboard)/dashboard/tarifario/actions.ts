@@ -2,7 +2,7 @@
 
 import { createClient } from "@/lib/supabase/server";
 import { revalidatePath } from "next/cache";
-import { REFERENCIAS_DESTINO, type UsoDestino } from "@/lib/producto/usoDestino";
+import { REFERENCIAS_DESTINO, TABLAS_CONTEO_PRIVILEGIADO, type UsoDestino } from "@/lib/producto/usoDestino";
 import { puedeEscribir } from "@/lib/roles";
 
 // ─── Destinos ──────────────────────────────────────────────────────
@@ -121,7 +121,7 @@ export async function eliminarDestino(
 //
 // `alcanceCompleto`: solo los roles que pueden borrar destinos (policy
 // "destinos: escritura admin", el mismo set que ESCRITURA.producto) leen
-// TODAS las filas de esas 10 tablas (sus policies solo miran el rol; ver
+// TODAS las filas de esas 13 tablas (sus policies solo miran el rol; ver
 // pruebas/usoDestino.test.ts, que lo verifica contra las migraciones). Para
 // cualquier otro rol (ej. control_vuelo, que entra a Producto pero no lee
 // servicios_adicionales ni armado_paquetes) un 0 puede ser RLS, no ausencia:
@@ -133,13 +133,22 @@ export async function eliminarDestino(
 // Una tabla que no se pudo contar vuelve como `null`, nunca como 0.
 export async function usoDestino(id: number): Promise<UsoDestino> {
   const sb = await createClient();
+  // #82 (275): paquete_din* tienen RLS por AGENCIA, así que su conteo (solo números, para bloquear el borrado) sale de una función de la base que ve las dos agencias.
+  const usoDin = Promise.resolve(sb.rpc("uso_destino_din" as never, { p_destino: id } as never) as unknown as PromiseLike<{ data: { tabla: string; n: number }[] | null; error: { message: string } | null }>);
   const [rolRes, ...resultados] = await Promise.all([
     Promise.resolve(sb.rpc("mi_rol")).then(
       (r) => r,
       () => ({ data: null, error: new Error("mi_rol no disponible") })
     ),
     ...REFERENCIAS_DESTINO.map(async ({ tabla }) => {
-      const { count, error } = await sb.from(tabla).select("*", { count: "exact", head: true }).eq("destino_id", id);
+      if ((TABLAS_CONTEO_PRIVILEGIADO as readonly string[]).includes(tabla)) {
+        const r = await usoDin.then((x) => x, () => ({ data: null, error: { message: "uso_destino_din no disponible" } }));
+        const fila = r.data?.find((x) => x.tabla === tabla);
+        if (r.error || !fila) return [tabla, null] as const;
+        return [tabla, Number(fila.n)] as const;
+      }
+      // #82: paquete_din* aún no están en types/database.ts (tablas nuevas de la 274); el nombre sale de REFERENCIAS_DESTINO, nunca del cliente.
+      const { count, error } = await (sb as unknown as { from: (t: string) => { select: (c: string, o: { count: "exact"; head: true }) => { eq: (k: string, v: number) => Promise<{ count: number | null; error: { message: string } | null }> } } }).from(tabla).select("*", { count: "exact", head: true }).eq("destino_id", id);
       if (error) console.error(`[usoDestino] destino=${id} tabla=${tabla} detalle=${error.message}`);
       return [tabla, error || count == null ? null : count] as const;
     }),

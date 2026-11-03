@@ -1,6 +1,8 @@
 import { createAdminClient } from "@/lib/supabase/admin";
 import { notFound } from "next/navigation";
 import { ContratoDocumento } from "@/components/contrato/ContratoDocumento";
+import { CotizacionManualDocumento } from "@/components/contrato/CotizacionManualDocumento";
+import { esSnapshotManual, itemsDeManual } from "@/lib/paqueteDinamico/documentoPublico";
 import { PrintButton } from "@/components/contrato/PrintButton";
 import type {
   Venta,
@@ -83,6 +85,10 @@ export default async function CotizacionPublicaPage({ params }: { params: Promis
   if (estaPendienteTarifa(cot.estado))
     return <SolicitudPendiente codigo={cot.codigo} datos={(cot.detalle as { solicitudHotel?: DatosSolicitudHotel }).solicitudHotel ?? null} />;
   const d = cot.detalle as unknown as Detalle;
+  // #82: una cotización MANUAL (incluida la de un paquete dinámico) guarda ítems `{descripcion, cantidad, tarifa_unit, valor}`; `ContratoDocumento` espera los del
+  // tarifario (`adultos`, `tarifa_adulto`…) y con ellos mostraba «$ NaN». Se distingue por la forma del snapshot (la consulta de arriba no cambia ni lee el payload).
+  const itemsSnap = ((d as unknown as { items?: Record<string, unknown>[] }).items ?? []);
+  const esManual = esSnapshotManual(itemsSnap);
   // #102: venta B2B asistida en NETO ⇒ el enlace público muestra solo el total exigible (nunca el PVP original ni la comisión). Sale de
   // `detalle.b2bExterno`, el único dato externo-seguro del plan; el `payload` (datos personales y términos internos) solo se relee en el servidor, abajo, para derivar el resumen de reparto; nunca llega al documento.
   const netoTotalExigible = netoTotalExigibleDeDetalle(d.b2bExterno);
@@ -108,6 +114,19 @@ export default async function CotizacionPublicaPage({ params }: { params: Promis
 
       <div className="mx-auto max-w-3xl px-4 print:max-w-none print:px-0">
         <div className="overflow-hidden rounded-xl shadow-sm print:rounded-none print:shadow-none">
+          {esManual ? (
+            <CotizacionManualDocumento
+              codigo={cot.codigo ?? ""}
+              venta={(d.venta ?? {}) as Parameters<typeof CotizacionManualDocumento>[0]["venta"]}
+              items={itemsDeManual(itemsSnap)}
+              cliente={{}}
+              incluye={d.incluye ?? null}
+              noIncluye={d.noIncluye ?? null}
+              vigenciaHasta={cot.vigencia_hasta}
+              fechaEmision={(d.venta as { fecha_emision?: string } | undefined)?.fecha_emision ?? null}
+              agencia={agencia}
+            />
+          ) : (
           <ContratoDocumento
             venta={d.venta}
             pasajeros={d.pasajeros ?? []}
@@ -127,6 +146,7 @@ export default async function CotizacionPublicaPage({ params }: { params: Promis
             tituloPaquete={d.tituloPaquete ?? null}
             paqueteSnapshot={paqueteSnapshot}
           />
+          )}
         </div>
       </div>
 

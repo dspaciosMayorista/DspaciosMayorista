@@ -4402,6 +4402,39 @@ export type Database = {
         Args: { p_usuario_id: string; p_tenant: string; p_cabecera: Json; p_servicios: Json };
         Returns: number;
       };
+      // ── Paquete 100 % dinámico (migración 274, #82). Errores: `DIN_82_<X>: …` ─────
+      crear_cotizacion_din: {
+        Args: { p_usuario_id: string; p_tenant: string; p_paquete_id: number; p_cabecera: Json; p_servicios: Json };
+        Returns: number;
+      };
+      // Migración 275 (#82, auditoría): canales externos, hoteles vinculables, guardado atómico, conteo de uso de destino.
+      crear_cotizacion_din_externa: {
+        Args: { p_canal: string; p_actor: string | null; p_paquete_id: number; p_cabecera: Json; p_servicios: Json };
+        Returns: number;
+      };
+      guardar_paquete_din: {
+        Args: { p_id: number | null; p_cabecera: Json; p_vuelos: Json; p_hoteles: Json; p_servicios: Json };
+        Returns: number;
+      };
+      hotel_vinculable_din: { Args: { p_hotel: number }; Returns: boolean };
+      hoteles_vinculables_din: { Args: Record<string, never>; Returns: { id: number; nombre: string; destino_id: number | null }[] };
+      uso_destino_din: { Args: { p_destino: number }; Returns: { tabla: string; n: number }[] };
+      editar_cotizacion_din: {
+        Args: { p_usuario_id: string; p_cotizacion_id: number; p_rev_esperada: number; p_motivo: string; p_servicios: Json; p_cambios: Json };
+        Returns: number;
+      };
+      registrar_costos_cotizacion_din: {
+        Args: { p_usuario_id: string; p_cotizacion_id: number; p_costos: Json };
+        Returns: string[];
+      };
+      marcar_version_mostrada: {
+        Args: { p_usuario_id: string; p_cotizacion_id: number; p_version: number };
+        Returns: undefined;
+      };
+      convertir_cotizacion_din: {
+        Args: { p_cotizacion_id: number; p_usuario_id: string };
+        Returns: string;
+      };
       editar_servicios_cotizacion_manual: {
         Args: {
           p_usuario_id: string; p_cotizacion_id: number; p_rev_esperada: number; p_motivo: string;

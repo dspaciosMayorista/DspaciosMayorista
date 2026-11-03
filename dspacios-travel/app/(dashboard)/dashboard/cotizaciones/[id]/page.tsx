@@ -15,6 +15,7 @@ import { TitularEditor } from "./TitularEditor";
 import { IncluyeEditor } from "./IncluyeEditor";
 import { RecobroNinosEditor } from "./RecobroNinosEditor";
 import { ServiciosCotizacionEditor } from "./ServiciosCotizacionEditor";
+import { PanelDinamico } from "./PanelDinamico";
 import { ConvertirCarritoBtn } from "./ConvertirCarritoBtn";
 import { TerminosB2BAsistido } from "@/components/cotizacion/TerminosB2BAsistido";
 import { leerPlanB2BDePayload } from "@/lib/cotizacion/asistidaB2B";
@@ -298,6 +299,13 @@ export default async function CotizacionDetallePage({
   const avisoEdicion = !elegibilidad.ok && ["VENCIDA", "CON_PAGOS", "CONGELADA", "AUTOR"].includes(elegibilidad.codigo)
     ? elegibilidad.mensaje
     : null;
+  // #82: paquete 100 % dinámico → panel propio (valores con versión, costos reales, versiones mostradas).
+  const esDinamico = ((c as unknown as { paquete_din_id?: number | null }).paquete_din_id ?? null) != null;
+  const { data: versionesDin } = esDinamico
+    ? await (sb as unknown as { from: (t: string) => { select: (s: string) => { eq: (k: string, v: number) => { order: (k: string, o: { ascending: boolean }) => Promise<{ data: { version: number; motivo: string; precio_venta: number; creado_en: string; mostrada_en: string | null }[] | null }> } } } })
+        .from("cotizacion_versiones").select("version, motivo, precio_venta, creado_en, mostrada_en").eq("cotizacion_id", c.id).order("version", { ascending: false })
+    : { data: null };
+  const puedeCostosDin = ["superadmin", "gerencia", "administracion", "operaciones"].includes(perfil?.rol ?? "");
 
   return (
     <div className="mx-auto max-w-3xl p-4 md:p-8">
@@ -437,7 +445,20 @@ export default async function CotizacionDetallePage({
             incluye={String((c.detalle as { incluye?: string } | null)?.incluye ?? "")}
             noIncluye={String((c.detalle as { noIncluye?: string } | null)?.noIncluye ?? "")}
           />
-          {elegibilidad.ok ? (
+          {esDinamico ? (
+            <PanelDinamico
+              id={c.id}
+              moneda={moneda}
+              revEsperada={c.economico_rev}
+              puedeEditar={elegibilidad.ok}
+              puedeCostos={puedeCostosDin}
+              componentes={(serviciosManual ?? []).map((s) => ({
+                orden: s.orden, nombre: s.nombre_servicio ?? "Componente", valor: Number(s.valor) || 0, costo: Number(s.costo_neto) || 0,
+                proveedor: s.proveedor ?? "", exigeCosto: (s as unknown as { exige_costo?: boolean }).exige_costo === true,
+              }))}
+              versiones={(versionesDin ?? []).map((v) => ({ version: v.version, motivo: v.motivo, precio: Number(v.precio_venta), creadaEn: v.creado_en, mostradaEn: v.mostrada_en }))}
+            />
+          ) : elegibilidad.ok ? (
             <>
               <ServiciosCotizacionEditor
                 id={c.id}

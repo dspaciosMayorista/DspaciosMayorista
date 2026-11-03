@@ -50,6 +50,8 @@ let verificaciones = 0;
 const SIN_USO = {
   hoteles: 0, servicios_adicionales: 0, armado_paquetes: 0, tarifario_resultado: 0, bloqueos_vuelo: 0,
   empaquetados: 0, paquetes: 0, temporadas: 0, itinerarios: 0, inclusiones: 0,
+  // 275 (#82): tablas del paquete dinámico total (se cuentan con la función uso_destino_din).
+  paquete_din: 0, paquete_din_vuelos: 0, paquete_din_servicios: 0,
 };
 type Conteos = Record<keyof typeof SIN_USO, number | null>;
 type Permiso = "si" | "no" | "desconocido";

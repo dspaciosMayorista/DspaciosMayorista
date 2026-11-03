@@ -149,7 +149,7 @@ const leer = (p: string) => readFileSync(p, "utf8").replace(/\r\n/g, "\n");
 const todos = [...archivos(join(raiz, "app")), ...archivos(join(raiz, "lib"))];
 
 describe("inventario de orígenes de cotización", () => {
-  const CREADORES = /\.from\("cotizaciones"\)\s*\.insert\(|\.rpc\("crear_cotizacion_(manual|comparativa)"/g;
+  const CREADORES = /\.from\("cotizaciones"\)\s*\.insert\(|\.rpc\("crear_cotizacion_(manual|comparativa|din)"/g;
   const ALTAS = /altaPersonasCotizacion\(/g;
   const cuenta = (re: RegExp, s: string) => (s.match(re) ?? []).length;
 
@@ -160,6 +160,7 @@ describe("inventario de orígenes de cotización", () => {
       if (n > 0) encontrados[rel(p)] = n;
     }
     assert.deepEqual(encontrados, {
+      "app/(dashboard)/dashboard/cotizaciones/din-actions.ts": 1,       // #82: paquete dinámico total (envuelve crear_cotizacion_manual; alta del titular al CRM)
       "app/(dashboard)/dashboard/cotizaciones/manual-actions.ts": 2,   // manual + comparativa manual
       "app/(dashboard)/dashboard/reservar/actions.ts": 1,              // Reservar (tarifario)
       "app/tarifario/checkout/actions.ts": 2,                          // carrito + comparativa del carrito
@@ -169,6 +170,7 @@ describe("inventario de orígenes de cotización", () => {
 
   test("cada archivo creador llama a la alta de personas al menos tantas veces como crea cotizaciones", () => {
     const inventario: [string, number][] = [
+      ["app/(dashboard)/dashboard/cotizaciones/din-actions.ts", 1],
       ["app/(dashboard)/dashboard/cotizaciones/manual-actions.ts", 2],
       ["app/(dashboard)/dashboard/reservar/actions.ts", 1],
       ["app/tarifario/checkout/actions.ts", 2],
@@ -188,6 +190,7 @@ describe("inventario de orígenes de cotización", () => {
     }
     assert.deepEqual(encontrados, {
       "app/(dashboard)/dashboard/cotizaciones/[id]/page.tsx": 1,       // «Reintentar»
+      "app/(dashboard)/dashboard/cotizaciones/din-actions.ts": 1,       // #82: paquete dinámico total
       "app/(dashboard)/dashboard/cotizaciones/manual-actions.ts": 3,   // manual, comparativa, hija
       "app/(dashboard)/dashboard/reservar/actions.ts": 2,              // Reservar + #120: titular de una solicitud al valorarla (la 219 solo admite abiertas)
       "app/tarifario/checkout/actions.ts": 3,                          // carrito, comparativa, hija

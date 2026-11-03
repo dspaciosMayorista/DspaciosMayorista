@@ -2,6 +2,8 @@ import { createClient } from "@/lib/supabase/server";
 import { TarifarioPublic } from "./TarifarioPublic";
 import { CartDrawer } from "./CartDrawer";
 import { getProgramasResumen } from "@/lib/programas";
+import { cargarDinamicosPublicados } from "@/lib/paqueteDinamico/cargarPublico";
+import { crearCotizacionDin } from "@/app/(dashboard)/dashboard/cotizaciones/din-actions";
 import { completarDesdeHoteles88 } from "@/lib/programas/estanciaHotelDatos88";
 import { Logo } from "@/components/Logo";
 import { cargarResumenTarifario, MSG_ERROR_CARGAR_TARIFARIO } from "@/lib/tarifario/resumen";
@@ -236,6 +238,8 @@ export default async function TarifarioPublicoPage() {
   }
   // #88: «Desde» de los programas por hotel y vigencia (su matriz no la conoce getProgramasResumen). Si falla la lectura, ese «Desde» queda en «Consultar».
   const programas = (await completarDesdeHoteles88(sb, resProgramas)).programas;
+  // #82: paquetes dinámicos totales publicados (solo PVP; un fallo devuelve []).
+  const dinamicos = await cargarDinamicosPublicados();
 
   // `config_sitio` ya no alimenta el header público (ver más abajo: el
   // rediseño quitó el `BackgroundVideo` de ahí — mostraba el video propio del
@@ -309,10 +313,10 @@ export default async function TarifarioPublicoPage() {
             legacy ni programa) es un catálogo válido — nunca "en
             preparación". `hotelesBernalo` es la tercera fuente que puede
             justificar montar `TarifarioPublic` por sí sola. */}
-        {!filasVisibles.length && !programas.length && !hotelesBernalo.length && !hotelesSolicitud.length ? (
+        {!dinamicos.length && !filasVisibles.length && !programas.length && !hotelesBernalo.length && !hotelesSolicitud.length ? (
           <p className="py-20 text-center text-gray-400">Tarifario en preparación.</p>
         ) : (
-          <TarifarioPublic filas={filasVisibles} programas={programas} puedeReservar={puedeReservar}cuposPorBloqueo={cuposPorBloqueo} origenPorBloqueo={origenPorBloqueo} origenPorSalida={origenPorSalida} fotosPorHotel={fotosPorHotel} galeriaPorHotel={galeriaPorHotel} fotosPorServicio={fotosPorServicio} ventanaPorPaquete={ventanaPorPaquete} infoPorHotel={infoPorHotel} planesInfo={planesInfo} capPorHotel={capPorHotel} descripcionPorPaquete={descripcionPorPaquete} filasAddon={filasAddon} hotelesBernalo={hotelesBernalo} hotelesSolicitud={hotelesSolicitud} hotelIdsUnidadAutoritativos={hotelIdsUnidadAutoritativos} prioridadesRecomendados={prioridadesRecomendadasCombinadas} condicionPorOferta={condicionPorOferta} politicaPorOferta={politicaPorOferta} restriccionPorPaquete={restriccionPorPaquete} />
+          <TarifarioPublic filas={filasVisibles} programas={programas} dinamicos={dinamicos} cotizarDinamico={crearCotizacionDin} puedeReservar={puedeReservar}cuposPorBloqueo={cuposPorBloqueo} origenPorBloqueo={origenPorBloqueo} origenPorSalida={origenPorSalida} fotosPorHotel={fotosPorHotel} galeriaPorHotel={galeriaPorHotel} fotosPorServicio={fotosPorServicio} ventanaPorPaquete={ventanaPorPaquete} infoPorHotel={infoPorHotel} planesInfo={planesInfo} capPorHotel={capPorHotel} descripcionPorPaquete={descripcionPorPaquete} filasAddon={filasAddon} hotelesBernalo={hotelesBernalo} hotelesSolicitud={hotelesSolicitud} hotelIdsUnidadAutoritativos={hotelIdsUnidadAutoritativos} prioridadesRecomendados={prioridadesRecomendadasCombinadas} condicionPorOferta={condicionPorOferta} politicaPorOferta={politicaPorOferta} restriccionPorPaquete={restriccionPorPaquete} />
         )}
       </main>
     </div>

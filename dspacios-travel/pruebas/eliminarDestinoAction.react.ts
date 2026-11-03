@@ -202,7 +202,10 @@ test("usoDestino distingue permiso si / no / desconocido (el rol no resuelto nun
   for (const [rol, permiso] of casos) {
     const conteos: Record<string, number> = {};
     const sb = {
-      rpc: () => (rol === "lanza" ? Promise.reject(new Error("red")) : Promise.resolve(rol)),
+      // `uso_destino_din` (275) cuenta paquete_din* con RLS por agencia; mi_rol sigue devolviendo el rol del caso.
+      rpc: (nombre: string) => nombre === "uso_destino_din"
+        ? Promise.resolve({ data: ["paquete_din", "paquete_din_vuelos", "paquete_din_servicios"].map((tabla) => ({ tabla, n: 0 })), error: null })
+        : (rol === "lanza" ? Promise.reject(new Error("red")) : Promise.resolve(rol)),
       from: (tabla: string) => ({ select: () => ({ eq: async () => { conteos[tabla] = 0; return { count: 0, error: null }; } }) }),
     };
     __setClient(sb);
