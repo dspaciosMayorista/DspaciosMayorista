@@ -90,6 +90,7 @@ import { iataDeDestino } from "@/lib/reservar/destinoIata";
 import { descripcionContratoManual, lineaB2BManual, primerGrupoPendiente, tramosVueloManual, validarCostoManual, validarVueloContraHotel, verificarManualesCotizados, type ServicioManual } from "@/lib/cart/servicioManual";
 import { armarGruposConversion, resolverVinculosCotizacion, validarPasajerosServiciosVinculados } from "@/lib/reservar/vinculoServiciosCheckout";
 import { calcularResidualServiciosIncluidosPorGrupo } from "@/lib/reservar/desglosePersonaCotizacion";
+import { guardarComposicion } from "@/lib/cotizacion/composicionServidor";
 import { descripcionLineaMenor, ordenLineaMenor, menoresDelComputo } from "@/lib/reservar/menoresDeDos";
 import { claveHuellaIncluidos, validarIncluidosConversion, type ServicioIncluidoGuardado } from "@/lib/reservar/incluidosCotizados";
 import {
@@ -1595,6 +1596,13 @@ async function crearCotizacionInterna(input: ReservaInput, opts?: { vigenciaHast
   }).select("id").single();
   if (error) return { ok: false, error: error.message };
   row = row0;
+  }
+
+  // Composición privada del precio (hotel, vuelo, servicios, markup global, redondeo) con lo que produjo el motor ahora. Mejor esfuerzo: no afecta la cotización.
+  if (process.env.SUPABASE_SERVICE_ROLE_KEY) {
+    let adminComp: ReturnType<typeof createAdminClient> | null = null;
+    try { adminComp = createAdminClient(); } catch { /* dato interno: sin cliente de servicio no se guarda, la cotización sigue */ }
+    if (adminComp) await guardarComposicion(adminComp, { cotizacionId: row.id, tenant: tenantCotizacion, hoteles: [{ ref: null, nombre: meta.hotel_nombre ?? null, composicion: comp.data.composicion }] });
   }
 
   // #42: sello del autor estable (la API no puede estamparlo: solo la función de la 219) y alta

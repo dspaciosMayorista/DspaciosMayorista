@@ -44,6 +44,7 @@ import {
 } from "../cotizacion/snapshotCondiciones.ts";
 import { condicionDeVigenciaHotel, type HotelTemporadaCatalogo } from "../cotizacion/condicionDesdeCatalogo.ts";
 import { type CondicionTipo } from "../cotizacion/condicionPago.ts";
+import { type BaseMotor } from "../cotizacion/composicionPrecio.ts";
 
 const MS_DIA = 86_400_000;
 
@@ -178,6 +179,9 @@ export type ResultadoHotelFechas = {
   serviciosEfectivos?: { servicioId: number; nombre: string }[];
   // Un incluido con franjas horarias o vigencias ambiguas es un error de configuración (no una omisión): mensaje legible para quien cotiza.
   errorServiciosIncluidos?: string;
+  // Insumos con los que el motor compuso los precios de esta evaluación (markup, impuesto, vuelo y neto por persona de cada servicio incluido por persona). Solo se EXPONEN
+  // —ningún importe cambia— para que la cotización conserve su composición; el neto de hotel por acomodación sale de `combos[].netos`.
+  composicionBase?: Omit<BaseMotor, "netos" | "pvps">;
 };
 
 /**
@@ -231,6 +235,7 @@ export function evaluarHotelPorFechas(
   let errorServiciosIncluidos: string | undefined;
   const serviciosOmitidos: { servicioId: number; nombre: string; motivo: string }[] = [];
   const serviciosEfectivos: { servicioId: number; nombre: string }[] = [];
+  const composicionServicios: BaseMotor["servicios"] = [];
   for (const s of datos.serviciosIncluidos) {
     if (!s.incluido) continue;
     // SIN «GENERAL»: la vigencia del día de ida decide el precio por persona o los rangos de grupo.
@@ -256,6 +261,7 @@ export function evaluarHotelPorFechas(
     }
     if (inc.netoPersona == null) continue;
     const factorServ = factorLiquidacion(s.liquidacion, numNoches);
+    composicionServicios.push({ nombre: s.nombre ?? "Servicio", neto: inc.netoPersona * factorServ, netoMenor: (inc.netoInfante ?? inc.netoPersona) * factorServ });
     aporteServ += marcar(inc.netoPersona, pctMk) * factorServ;
     const menorServ = marcar(inc.netoInfante ?? inc.netoPersona, pctMk) * factorServ;
     aporteServMenor += menorServ;
@@ -361,7 +367,8 @@ export function evaluarHotelPorFechas(
     }
   }
   const combosF = combos.filter((c) => Object.keys(c.precios).some((a) => a !== "nino" && a !== "nino2" && a !== "infante"));
-  return { combos: combosF, destinoNombre, hotelNombre, minNoches: minNochesAplicable(temporadas, fechaIda), moneda: monedaHotel, serviciosGrupoIncluidos, serviciosEfectivos, ...(serviciosOmitidos.length ? { serviciosOmitidos } : {}) };
+  return { combos: combosF, destinoNombre, hotelNombre, minNoches: minNochesAplicable(temporadas, fechaIda), moneda: monedaHotel, serviciosGrupoIncluidos, serviciosEfectivos, ...(serviciosOmitidos.length ? { serviciosOmitidos } : {}),
+    composicionBase: { pctMk, impuesto, vuelo: aporteVueloSol, vueloNeto: null, feeInfante: feeInfanteSol, servicios: composicionServicios, fijo: { mayor2: fijoMayor2 != null, menor2: fijoMenor2 != null } } };
 }
 
 // ── Condición de pago del hotel para un rango de fechas (badge, solo lectura) ──

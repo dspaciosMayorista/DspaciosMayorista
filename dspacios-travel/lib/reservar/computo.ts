@@ -42,6 +42,8 @@ import { calcularEdad } from "@/lib/utils";
 import { validarCantidadMenores, validarEdadesMenores, clasificarMenoresPorEdad, verificarTarifasMenoresDisponibles } from "@/lib/reservar/edadesMenores";
 import { distribuirPorHabitaciones, type HabitacionConsultada, type AsignacionHabitacion } from "@/lib/reservar/distribucionHabitaciones";
 import { liquidarHotelPaquete, liquidarHotelPaqueteSolicitud, type OpcionesSolicitudLiquidacion } from "@/lib/reservar/cotizar";
+import { construirComposicion, type BaseMotor, type Composicion } from "@/lib/cotizacion/composicionPrecio";
+import { claveComposicion, leerComposicionTarifario, origenDeClave } from "@/lib/tarifario/composicionTarifario";
 import { ajusteRedondeoReparto, DESCRIPCION_AJUSTE_REDONDEO, MENSAJE_HOTEL_SOLO_SOLICITUD, repartoDeReferencia, type NetaSolicitud } from "@/lib/reservar/solicitudHotel";
 import { errorPlazasLibres, repartirAdultosReales } from "@/lib/reservar/solicitudOcupacion";
 import { resolverVueloSolicitud } from "@/lib/reservar/solicitudHotelServidor";
@@ -214,6 +216,9 @@ export type ComputoReserva = {
   // cada servicio, con sus límites tal como se leyeron al cotizar). Van al snapshot de la oferta y `aceptar_oferta_63` las valida
   // con la fecha de negocio de Bogotá de SU transacción. SIEMPRE un arreglo (vacío fuera de una oferta 63).
   vigencias63: VigenciaCompra63[];
+  // Composición del precio (hotel, vuelo, cada servicio incluido, markup global, redondeo) tal como la produjo el motor. Solo en la liquidación por fechas y sin conversión de moneda;
+  // null = este camino no conserva componentes (tarifa publicada, oferta con TRM). Se guarda aparte y en privado (migración 272).
+  composicion: Composicion | null;
 };
 
 // Expande `habitaciones: {doble: 2, triple: 1}` (conteo por tipo, la única
@@ -438,6 +443,8 @@ export async function computarReserva(
     return { ok: false, error: "La solicitud necesita las fechas del viaje y un paquete de bloqueo, empaquetado o porción terrestre." };
 
   const pvpPorAcom: Record<string, number> = {};
+  let composicionBase: BaseMotor | null = null;
+  const cargosGrupoComposicion: { nombre: string; pvp: number }[] = [];
   const pvpMenor2PorAcom: Record<string, number> = {};
   // PVP fijo del infante (254): precio NORMAL de la clase infante por ruta cuando el fijo lo reemplazó. Solo se usa si un servicio opcional
   // seleccionado le cobra al infante (entonces vale la fórmula normal completa, nunca el fijo + la normal).
@@ -526,6 +533,8 @@ export async function computarReserva(
     pvpInfanteSinFijo.mayor2 = combo.preciosSinFijo?.["infante"] ?? null;
     pvpInfanteSinFijo.menor2 = combo.preciosMenor2SinFijo?.["infante"] ?? null;
     if (combo.netos) for (const [acom, n] of Object.entries(combo.netos)) netoPorAcom[acom] = n;
+    const baseFechas = (res as { composicionBase?: Omit<BaseMotor, "netos" | "pvps"> } | null)?.composicionBase;
+    if (baseFechas) composicionBase = { ...baseFechas, netos: { ...(combo.netos ?? {}) } };
     meta = { hotel_nombre: res!.hotelNombre, destino_nombre: res!.destinoNombre, fecha_ida: input.fechaIda!, fecha_regreso: input.fechaRegreso! };
 
     const { data: hotelRowF, error: hotelRowFErr } = await sb
@@ -659,7 +668,7 @@ export async function computarReserva(
   } else if (!esServicios) {
     let q = sb
       .from("tarifario_resultado_publicable")
-      .select("acomodacion, precio_pvp, precio_pvp_menor2, precio_pvp_sin_fijo, precio_pvp_menor2_sin_fijo, hotel_nombre, destino_nombre, fecha_ida, fecha_regreso, moneda")
+      .select("acomodacion, precio_pvp, precio_pvp_menor2, precio_pvp_sin_fijo, precio_pvp_menor2_sin_fijo, hotel_nombre, destino_nombre, fecha_ida, fecha_regreso, moneda, noches")
       .eq("paquete_id", input.paqueteId)
       .eq("hotel_id", input.hotelId)
       .eq("categoria", input.categoria)
@@ -689,6 +698,22 @@ export async function computarReserva(
     }
     meta = filas[0];
     monedaReserva = (filas[0] as { moneda?: string | null }).moneda ?? "COP";
+    // Composición que el generador guardó para ESTA estadía (generación publicada). Solo se lee; si falta, es ilegible o el precio de una línea no es exactamente el publicado, la cotización no la lleva.
+    if (process.env.SUPABASE_SERVICE_ROLE_KEY && origen.tipo !== "ninguno") {
+      const f0 = filas[0] as { fecha_ida?: string | null; noches?: number | null };
+      if (f0.fecha_ida && f0.noches) {
+        try {
+          const adminC = createAdminClient();
+          const { data: pqPub } = await adminC.from("armado_paquetes").select("tarifario_generacion_publicada").eq("id", input.paqueteId).maybeSingle();
+          composicionBase = await leerComposicionTarifario(adminC, {
+            paqueteId: input.paqueteId, generacionPublicada: pqPub?.tarifario_generacion_publicada != null ? Number(pqPub.tarifario_generacion_publicada) : null,
+            clave: claveComposicion({ ...origenDeClave(origen), hotelId: input.hotelId, categoria: input.categoria, regimen: input.regimen, fechaIda: f0.fecha_ida, noches: f0.noches }),
+          });
+        } catch {
+          composicionBase = null; // dato interno: si no se puede leer, la cotización sigue sin composición (nunca se bloquea la venta)
+        }
+      }
+    }
 
     // Umbral real de edad del hotel — consultado ANTES de decidir cuántos
     // niños/infantes se cobran, para poder reclasificar por edad si
@@ -1195,6 +1220,7 @@ export async function computarReserva(
           };
         }
         precioVenta += cargo.pvp;
+        cargosGrupoComposicion.push({ nombre: cargo.servicios.map((x) => x.nombre).join(", ") || "Servicios incluidos por grupo", pvp: cargo.pvp });
         serviciosIncluidos.push(...cargo.servicios);
       }
     }
@@ -1254,8 +1280,28 @@ export async function computarReserva(
     if (aj.ajuste !== 0) { precioVenta += aj.ajuste; ajusteRedondeo = { total: aj.ajuste, descripcion: DESCRIPCION_AJUSTE_REDONDEO }; }
   }
 
+  // Composición: solo si el motor la dio (liquidación por fechas) y no hubo conversión de moneda (oferta con TRM no se descompone aquí).
+  // Con conversión (oferta con TRM) solo se compone si la TRM guardada al generar es la de esta cotización; la composición lleva esa TRM y los importes de origen.
+  const trmCotizacion = oferta63 ? oferta63.trm : null;
+  let composicion: Composicion | null = null;
+  try {
+    composicion = composicionBase && !esServicios && (composicionBase.trm ?? null) === trmCotizacion
+    ? construirComposicion({
+        base: composicionBase, moneda: monedaReserva, trm: trmCotizacion, lineasHab, lineasMenores, total: precioVenta,
+        adicionales: [
+          ...serviciosItems.map((x) => ({ tipo: "servicio_opcional" as const, nombre: x.nombre, total: x.precio })),
+          ...cargosGrupoComposicion.map((x) => ({ tipo: "servicio_grupo" as const, nombre: x.nombre, total: x.pvp })),
+          ...(cargoMascota && cargoMascota.total !== 0 ? [{ tipo: "mascota" as const, nombre: cargoMascota.descripcion ?? "Cargo de mascota", total: cargoMascota.total }] : []),
+          ...(ajusteRedondeo ? [{ tipo: "ajuste_redondeo" as const, nombre: ajusteRedondeo.descripcion, total: ajusteRedondeo.total }] : []),
+        ],
+      })
+    : null;
+  } catch {
+    composicion = null; // la composición es un dato interno: ningún fallo suyo bloquea el cálculo ni la venta
+  }
+
   return {
     ok: true,
-    data: { origen, meta, pvpPorAcom, pvpMenor2PorAcom, netoPorAcom, precioVenta, paxConSilla, totalPax, numNinos, numNinos2, numInfantes, menoresDeDos, numMenoresDeDos, lineasMenores, distribucionMenores, edadesMenoresUsadas, lineasHab, serviciosItems, serviciosIncluidos, impuestoTotal, monedaReserva, notaNino: ninoNotaTxt, cargoMascota, ajusteRedondeo, notaMascota: petNotaTxt, condicionesTarifa, oferta63: oferta63 ? { ...oferta63, monedaHotel: monedaHotelOrigen63, monedaServicios: monedaServicios63 } : null, vigencias63 },
+    data: { origen, meta, pvpPorAcom, pvpMenor2PorAcom, netoPorAcom, precioVenta, paxConSilla, totalPax, numNinos, numNinos2, numInfantes, menoresDeDos, numMenoresDeDos, lineasMenores, distribucionMenores, edadesMenoresUsadas, lineasHab, serviciosItems, serviciosIncluidos, impuestoTotal, monedaReserva, notaNino: ninoNotaTxt, cargoMascota, ajusteRedondeo, notaMascota: petNotaTxt, condicionesTarifa, composicion, oferta63: oferta63 ? { ...oferta63, monedaHotel: monedaHotelOrigen63, monedaServicios: monedaServicios63 } : null, vigencias63 },
   };
 }

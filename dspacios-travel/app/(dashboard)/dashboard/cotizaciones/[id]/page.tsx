@@ -28,6 +28,8 @@ import { estaPendienteTarifa } from "@/lib/reservar/solicitudHotel";
 import { NetaSolicitudForm } from "./NetaSolicitudForm";
 import { evaluarOcupacionHotel } from "@/lib/reservar/solicitudHotelServidor";
 import { DesgloseInterno } from "@/components/cotizacion/DesgloseInterno";
+import { ComposicionPrecio } from "@/components/cotizacion/ComposicionPrecio";
+import { leerComposicionGuardada } from "@/lib/cotizacion/composicionServidor";
 import { FichaComparativa } from "@/lib/cotizacion/comparativaDocumento";
 import { abiertaConSalidaPasada, hoyBogota, MENSAJE_SALIDA_PASADA } from "@/lib/cotizacion/vigencia";
 import PagosPreviosPanel, { type PagoPrevioUI } from "@/components/cotizacion/PagosPreviosPanel";
@@ -206,6 +208,8 @@ export default async function CotizacionDetallePage({
         .maybeSingle()
     : { data: null };
   const esNeto = selloNeto?.modalidad === "neto" && Number(selloNeto.neto_total) > 0;
+  // Composición privada del precio (netas y markup): solo roles con acceso a costos y DESPUÉS de la comprobación de tenant de arriba. null = no se conservó.
+  const composicionGuardada = esPagoAutorizado && !esManual && process.env.SUPABASE_SERVICE_ROLE_KEY ? await leerComposicionGuardada(createAdminClient(), cotizacionId) : null;
   // Los asesores internos son los usuarios con rol 'venta'.
   const { data: asesores } = await sb.from("usuarios").select("nombre, email").eq("rol", "venta").eq("activo", true).order("nombre");
   // % por defecto del recobro para el aliado en B2B (editor de niños/recobro).
@@ -354,6 +358,7 @@ export default async function CotizacionDetallePage({
       <CondicionesPanel ui={condicionesUI} moneda={moneda} />
 
       {!esManual && <DesgloseInterno cot={c} moneda={moneda} />}
+      {!esManual && esPagoAutorizado && <ComposicionPrecio guardada={composicionGuardada} totalCotizacion={esCarrito ? null : Number(c.precio_venta) || 0} />}
 
       {esManual && (
         <div className="mt-6 overflow-hidden rounded-xl border border-gray-200 bg-white">

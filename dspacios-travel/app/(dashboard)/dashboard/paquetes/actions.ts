@@ -24,6 +24,8 @@ import {
   type TemporadaRango,
 } from "@/lib/calc/paquetes";
 import { hoyBogota } from "@/lib/reservar/origen";
+import { claveComposicion, guardarComposicionesTarifario, origenClaveDeFila, type ComposicionCombo } from "@/lib/tarifario/composicionTarifario";
+import { createAdminClient } from "@/lib/supabase/admin";
 import { seleccionarSalidasVigentes } from "@/lib/reservar/salidaDinamicaVigente";
 import {
   MODO_OFERTA_63,
@@ -1154,6 +1156,8 @@ export async function generarTarifario(paqueteId: number, opciones: OpcionesGene
   // `neto_hotel` NO es columna de tarifario_resultado: viaja en el payload y la base lo guarda aparte (tarifario_resultado_neto, migración 260) para la invalidación exacta.
   type ResultadoInsert = Database["public"]["Tables"]["tarifario_resultado"]["Insert"] & { neto_hotel?: number | null };
   const filas: ResultadoInsert[] = [];
+  // Composición (hotel, vuelo, servicios incluidos, markup, redondeo) por estadía × hotel × categoría × régimen: se guarda en privado ANTES de publicar (migración 273).
+  const composicionesCombos: ComposicionCombo[] = [];
   med.filas = filas; // la medición cuenta las filas en el momento de registrar (no copia ni modifica el arreglo)
 
   // Servicios INCLUIDOS se hornean por persona en la tarifa del hotel.
@@ -1222,6 +1226,25 @@ export async function generarTarifario(paqueteId: number, opciones: OpcionesGene
     return total;
   }
 
+  let vueloNetoSiguiente: number | null = null;
+  // Servicios incluidos por persona de la estadía con su neto (misma conversión y mismo factor que `aporteServiciosIncluidos`): insumo de la composición, no entra al precio.
+  function detalleServiciosIncluidos(numNoches: number): { nombre: string; neto: number; netoMenor: number; origen?: { monto: number; montoMenor: number; moneda: string } }[] {
+    const out: { nombre: string; neto: number; netoMenor: number; origen?: { monto: number; montoMenor: number; moneda: string } }[] = [];
+    for (const s of servicios) {
+      if (!(s.incluido as boolean)) continue;
+      const srv = s.servicios_adicionales as unknown as { liquidacion: string | null; nombre?: string | null } | null;
+      const inc = incluidoVigente(s);
+      if (!inc || inc.netoPersona == null) continue;
+      const f = factorLiquidacion(srv?.liquidacion ?? null, numNoches);
+      const convertido = modo63 && svcMoneda(s) !== paqueteMoneda;
+      out.push({
+        nombre: srv?.nombre ?? `#${s.servicio_id}`, neto: aMonedaOferta(inc.netoPersona, svcMoneda(s)) * f, netoMenor: aMonedaOferta(inc.netoInfante ?? inc.netoPersona, svcMoneda(s)) * f,
+        ...(convertido ? { origen: { monto: inc.netoPersona * f, montoMenor: (inc.netoInfante ?? inc.netoPersona) * f, moneda: svcMoneda(s) } } : {}),
+      });
+    }
+    return out;
+  }
+
   // Genera las filas de hotel para una estadía (fechaIda + numNoches).
   // `aporteVueloVal` es el aporte del vuelo al PVP (0 en porción terrestre);
   // `impuesto` es la BNC que se resta del PVP.
@@ -1250,6 +1273,9 @@ export async function generarTarifario(paqueteId: number, opciones: OpcionesGene
     // MK ni TA (migración 226). 0 en porción terrestre (sin vuelo).
     feeInfante = 0,
   ) {
+    // Costo del tiquete por persona de esta estadía (lo fija quien llama justo antes; solo alimenta la composición, no el precio). Se consume aquí para no arrastrarlo a otra llamada.
+    const vueloNeto = vueloNetoSiguiente;
+    vueloNetoSiguiente = null;
     if (numNoches <= 0) return;
     // Fecha fija: la vigencia del día de ida (así cotiza la reserva). Ventana "desde" (porción): TODA la ventana debe caer en una sola vigencia.
     ventanaEstadia = { desde: fechaIda, hasta: masBarato && fechaRegreso ? fechaRegreso : fechaIda };
@@ -1265,6 +1291,11 @@ export async function generarTarifario(paqueteId: number, opciones: OpcionesGene
     }
     const aporteServ = aporteServiciosIncluidos(numNoches); // solo servicios incluidos
     const aporteServMenor = aporteServiciosIncluidosMenor(numNoches);
+    // Composición solo cuando es EXACTA: estadía fija (no «desde»), sin conversión de moneda y con los servicios reproduciendo el aporte horneado.
+    const serviciosComp = detalleServiciosIncluidos(numNoches);
+    const serviciosCuadran = Math.abs(serviciosComp.reduce((t, x) => t + marcar(x.neto, pctMk), 0) - aporteServ) < 0.01
+      && Math.abs(serviciosComp.reduce((t, x) => t + marcar(x.netoMenor, pctMk), 0) - aporteServMenor) < 0.01;
+    const componer = !masBarato && serviciosCuadran;
     // PVP fijo del infante (clase del hotel): ver lib/paquetes/pvpInfanteFijo.ts. Cada ruta decide por SUS cargos: el menor de 2 paga el
     // fee de infante y el precio de infante de los servicios; el de 2+ paga el vuelo y los servicios de adulto.
     const grupoIncluido = servicios.some((s) => (s.incluido as boolean) && s.modo === "grupo" && !idsOmitidos.has(s.servicio_id));
@@ -1304,6 +1335,9 @@ export async function generarTarifario(paqueteId: number, opciones: OpcionesGene
         for (const [temp, row] of tempMap) if (row.precio_final_autoritativo === true) precioFinalTemporadas.add(temp);
         let hayHabitacion = false;
         let hayInfante = false;
+        const netosCombo: Record<string, number> = {};
+        const pvpsCombo: Record<string, { pvp: number; pvpMenor2: number | null }> = {};
+        const netosOrigenCombo: Record<string, { monto: number; moneda: string }> = {};
         let procedenciaHab: ReturnType<typeof columnasProcedencia> | null = null;
         const publicarFila = (acom: Acomodacion, costoHotel: number, procedencia: ReturnType<typeof columnasProcedencia>, netoHotelExacto: number | null = null) => {
           const esRoom = acom !== "nino" && acom !== "nino2" && acom !== "infante";
@@ -1359,6 +1393,14 @@ export async function generarTarifario(paqueteId: number, opciones: OpcionesGene
             procedencia_temporadas: procedencia.procedencia_temporadas as unknown as Json,
             procedencia_mixta: procedencia.procedencia_mixta,
           });
+          // Componible: neto exacto de una estadía fija, o la fila de infante sintética (hotel $0 conocido, aún sin fila de infante en el combo).
+          if (componer && (netoHotelExacto != null || (acom === "infante" && !hayInfante))) {
+            const pub = filas[filas.length - 1];
+            // Neto en la moneda de la OFERTA (con TRM si hubo conversión), igual que el que se marcó para el precio; el importe de origen se conserva aparte.
+            netosCombo[acom] = aMonedaOferta(costoHotel, monedaHotelOrigen);
+            if (modo63 && monedaHotelOrigen !== paqueteMoneda) netosOrigenCombo[acom] = { monto: costoHotel, moneda: monedaHotelOrigen };
+            pvpsCombo[acom] = { pvp: Number(pub.precio_pvp), pvpMenor2: pub.precio_pvp_menor2 == null ? null : Number(pub.precio_pvp_menor2) };
+          }
         };
         for (const acom of ACOMODACIONES) {
           const col = COL_NETO[acom];
@@ -1394,6 +1436,16 @@ export async function generarTarifario(paqueteId: number, opciones: OpcionesGene
         // infante se cobren igual. Solo si el combo tiene alguna habitación publicada
         // y el hotel acepta niños (Adults Only no publica infante).
         if (hayHabitacion && !hayInfante && !hotelAdultsOnly && procedenciaHab) publicarFila("infante", 0, procedenciaHab);
+        if (componer && Object.keys(netosCombo).length) {
+          composicionesCombos.push({
+            clave: claveComposicion({ ...origenClaveDeFila(bloqueoId, empaquetadoId, salidaId), hotelId: h.hotel_id as number, categoria, regimen, fechaIda, noches: numNoches }),
+            base: {
+              pctMk, impuesto, vuelo: aporteVueloVal, vueloNeto, feeInfante, servicios: serviciosComp, netos: netosCombo, pvps: pvpsCombo,
+              trm: modo63 ? trm63 : null, ...(Object.keys(netosOrigenCombo).length ? { netosOrigen: netosOrigenCombo } : {}),
+              fijo: { mayor2: fijoMayor2 != null, menor2: fijoMenor2 != null },
+            },
+          });
+        }
       }
     }
   }
@@ -1587,6 +1639,7 @@ export async function generarTarifario(paqueteId: number, opciones: OpcionesGene
       // Etiqueta pública del vuelo: solo la ruta (el record/PNR es interno y
       // NO debe aparecer en el tarifario que ven clientes B2C/B2B).
       const label = b.ruta || "";
+      vueloNetoSiguiente = costoTiquete;
       filasHoteles(b.fecha_ida!, numNoches, aporteVueloVal, impuesto, "bloqueo", b.id, label, b.fecha_regreso, false, null, null, Number(b.fee_infante) || 0);
     }
     // MÓDULO BLOQUEOS (Sistema): una liquidación por empaquetado — MISMA
@@ -1612,6 +1665,7 @@ export async function generarTarifario(paqueteId: number, opciones: OpcionesGene
       // Mismo criterio de privacidad que un bloqueo negociado: solo la ruta
       // en el label público, nunca el record/PNR.
       const label = e.ruta || "";
+      vueloNetoSiguiente = costoTiquete;
       filasHoteles(e.fecha_ida!, numNoches, aporteVueloVal, impuesto, "bloqueo", null, label, e.fecha_regreso, false, null, e.id, Number(e.fee_infante) || 0);
     }
   } else if (tipo === "porcion_terrestre" && pq.fecha_viaje_inicio) {
@@ -1652,6 +1706,7 @@ export async function generarTarifario(paqueteId: number, opciones: OpcionesGene
         const taOferta = aMoneda63(Number(sal.ta) || 0, monedaManual, paqueteMoneda, trm63);
         const impuestoManual = pq.impuesto_tipo === "tiquete" ? tiqueteOferta : Number(pq.impuesto_fijo) || 0;
         const etiquetaManual = etiquetaSalidaVinculada63(sal);
+        vueloNetoSiguiente = tiqueteOferta;
         filasHoteles(fIda, numNoches, aporteVuelo(tiqueteOferta, sal.aplica_mk as boolean, pctMk, taOferta), impuestoManual, "dinamico", null, etiquetaManual, fReg, false, sal.id as number, null, feeAMoneda63(Number(sal.fee_infante) || 0, monedaManual, paqueteMoneda, trm63));
         continue;
       }
@@ -1660,6 +1715,7 @@ export async function generarTarifario(paqueteId: number, opciones: OpcionesGene
       const impuesto = pq.impuesto_tipo === "tiquete" ? costoTiquete : Number(pq.impuesto_fijo) || 0;
       // Etiqueta pública de la salida: ruta + fecha (NO hay record/PNR).
       const label = `${sal.ruta || ""}${sal.ruta && fIda ? " · " : ""}${fIda ? fIda.split("-").reverse().join("/") : ""}`.trim();
+      vueloNetoSiguiente = costoTiquete;
       filasHoteles(fIda, numNoches, aporteVueloVal, impuesto, "dinamico", null, label || (sal.ruta ?? "Salida"), fReg, false, sal.id as number, null, Number(sal.fee_infante) || 0);
     }
   }
@@ -1777,6 +1833,16 @@ export async function generarTarifario(paqueteId: number, opciones: OpcionesGene
   // llama al publicador VIGENTE (el de la 226, sin copiar su cuerpo) y guarda la
   // TRM/modo/fuentes de ESA publicación en la misma transacción. El resto de los
   // paquetes sigue por el publicador de siempre, sin cambios.
+  // Composición del precio (privada, mejor esfuerzo): se guarda con la generación ANTES de publicarla; la cotización solo la usa si es la de la generación publicada.
+  if (composicionesCombos.length && process.env.SUPABASE_SERVICE_ROLE_KEY) {
+    try {
+      const adminComp = createAdminClient();
+      const { data: pubComp } = await adminComp.from("armado_paquetes").select("tarifario_generacion_publicada").eq("id", paqueteId).maybeSingle();
+      await guardarComposicionesTarifario(adminComp, { paqueteId, generacion, vigente: pubComp?.tarifario_generacion_publicada != null ? Number(pubComp.tarifario_generacion_publicada) : null, combos: composicionesCombos });
+    } catch {
+      console.error(`composicion_tarifario: no se guardó (paquete ${paqueteId})`); // nunca impide publicar el tarifario
+    }
+  }
   cron.etapa("publicar");
   // Mismo contenido, menos bytes (sin claves null: el servidor trata clave ausente = null). Ver lib/tarifario/filasPublicacion.ts.
   const filasPublicar = compactarFilasPublicacion(filas);
