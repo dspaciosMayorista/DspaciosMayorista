@@ -90,6 +90,7 @@ import { iataDeDestino } from "@/lib/reservar/destinoIata";
 import { descripcionContratoManual, lineaB2BManual, primerGrupoPendiente, tramosVueloManual, validarCostoManual, validarVueloContraHotel, verificarManualesCotizados, type ServicioManual } from "@/lib/cart/servicioManual";
 import { armarGruposConversion, resolverVinculosCotizacion, validarPasajerosServiciosVinculados } from "@/lib/reservar/vinculoServiciosCheckout";
 import { calcularResidualServiciosIncluidosPorGrupo } from "@/lib/reservar/desglosePersonaCotizacion";
+import { guardarComposicion, guardarComposicionMejorEsfuerzo } from "@/lib/cotizacion/composicionServidor";
 import { descripcionLineaMenor, ordenLineaMenor, menoresDelComputo } from "@/lib/reservar/menoresDeDos";
 import { claveHuellaIncluidos, validarIncluidosConversion, type ServicioIncluidoGuardado } from "@/lib/reservar/incluidosCotizados";
 import {
@@ -1278,7 +1279,7 @@ export async function crearCotizacion(input: ReservaInput, opts?: { vigenciaHast
 }
 
 // #120: `solicitud` (neta + id de la cotización pendiente) solo la pasa `asignarNetaSolicitud`, tras leer la neta de la base; no es parte de la acción exportada.
-async function crearCotizacionInterna(input: ReservaInput, opts?: { vigenciaHasta?: string }, solicitud?: { cotizacionId: number; neta: NetaSolicitud }): Promise<CotizacionResult> {
+async function crearCotizacionInterna(input: ReservaInput, opts?: { vigenciaHasta?: string }, solicitud?: { cotizacionId: number; tenant: string; neta: NetaSolicitud }): Promise<CotizacionResult> {
   const sb = await createClient();
   if (!`${input.cliente.nombres ?? ""}${input.cliente.apellidos ?? ""}`.trim())
     return { ok: false, error: "El nombre del cliente es obligatorio." };
@@ -1486,6 +1487,8 @@ async function crearCotizacionInterna(input: ReservaInput, opts?: { vigenciaHast
       p_neta_adulto: solicitud.neta.reparto.netaAdulto, p_neta_nino: solicitud.neta.reparto.netaNino, p_neta_infante: 0,
     });
     if (eNeta) return { ok: false, error: eNeta.message.replace(/^[A-Z_]+:\s*/, "") };
+    // Composición privada de la valoración (no altera precio, neta ni venta). Mejor esfuerzo; un reintento idéntico no duplica.
+    await guardarComposicionMejorEsfuerzo(createAdminClient, { cotizacionId: solicitud.cotizacionId, tenant: solicitud.tenant, hoteles: [{ ref: null, nombre: meta.hotel_nombre ?? null, composicion: comp.data.composicion }] });
     revalidatePath("/dashboard/cotizaciones");
     revalidatePath(`/dashboard/cotizaciones/${solicitud.cotizacionId}`);
     return { ok: true, id: solicitud.cotizacionId };
@@ -1597,6 +1600,13 @@ async function crearCotizacionInterna(input: ReservaInput, opts?: { vigenciaHast
   row = row0;
   }
 
+  // Composición privada del precio (hotel, vuelo, servicios, markup global, redondeo) con lo que produjo el motor ahora. Mejor esfuerzo: no afecta la cotización.
+  if (process.env.SUPABASE_SERVICE_ROLE_KEY) {
+    let adminComp: ReturnType<typeof createAdminClient> | null = null;
+    try { adminComp = createAdminClient(); } catch { /* dato interno: sin cliente de servicio no se guarda, la cotización sigue */ }
+    if (adminComp) await guardarComposicion(adminComp, { cotizacionId: row.id, tenant: tenantCotizacion, hoteles: [{ ref: null, nombre: meta.hotel_nombre ?? null, composicion: comp.data.composicion }] });
+  }
+
   // #42: sello del autor estable (la API no puede estamparlo: solo la función de la 219) y alta
   // del titular y los pasajeros identificados en el registro de personas, desde lo que se acaba
   // de persistir. La cotización ya quedó guardada: un fallo aquí no la deshace, deja un aviso
@@ -1656,7 +1666,7 @@ export async function asignarNetaSolicitud(cotizacionId: number, entradaRaw: unk
   if (!ocupacion.ok) return { ok: false, error: ocupacion.error };
   const v = validarReparto(entradaRaw, ocupacion.conteos);
   if (!v.ok) return { ok: false, error: v.error };
-  const res = await crearCotizacionInterna(payload, { vigenciaHasta: opts?.vigenciaHasta }, { cotizacionId, neta: { netaTotal: v.netaTotal, moneda, reparto: v.reparto } });
+  const res = await crearCotizacionInterna(payload, { vigenciaHasta: opts?.vigenciaHasta }, { cotizacionId, tenant: cot.tenant, neta: { netaTotal: v.netaTotal, moneda, reparto: v.reparto } });
   if (!res.ok) return res;
   // La cotización ya está ABIERTA: ahora sí se registra al titular en el registro de personas (#42; la 219 solo admite abiertas). Un fallo aquí no deshace la valoración:
   // queda el aviso persistente de la ficha ("Reintentar") y un log sin datos personales.

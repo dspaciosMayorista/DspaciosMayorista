@@ -24,6 +24,7 @@ import { PrintButton } from "@/components/contrato/PrintButton";
 import { ComparativaHoja, type IdentidadHoja } from "@/components/cotizacion/ComparativaHoja";
 import { cargarAgenciaDeCotizacion } from "@/lib/cotizacion/agenciaCotizacion";
 import { DescartarBtn } from "@/app/(dashboard)/dashboard/cotizaciones/[id]/DescartarBtn";
+import { DesgloseInterno } from "@/components/cotizacion/DesgloseInterno";
 import { PanelSolicitudes, SelectorOpciones, type ModoSeleccion, type ResumenHotelUI, type SolicitudUI } from "./comparativaAcciones";
 
 type SB = SupabaseClient<Database>;
@@ -162,6 +163,8 @@ export async function FichaComparativa({ madre, puedeResolver, hoy }: { madre: M
     sb.from("cotizacion_comparativa_solicitudes").select("id, estado, opcion_ref, acomodacion_ref, contacto_nombre, contacto_telefono, contacto_email, nota, created_at").eq("cotizacion_id", madre.id).order("id", { ascending: false }).limit(100),
     sb.from("cotizacion_comparativa_eventos").select("id, tipo, opcion_ref, acomodacion_ref, actor_tipo, created_at").eq("cotizacion_id", madre.id).order("id", { ascending: false }).limit(100),
   ]);
+  // Desglose interno por opción: del snapshot congelado (`plantilla_hija.detalle`); solo se extraen sus renglones y el total, nada más del snapshot.
+  const { data: opsDesglose } = await sb.from("cotizacion_opciones").select("opcion_ref, acomodacion_ref, orden, etiqueta, moneda, total, plantilla_hija").eq("cotizacion_id", madre.id).order("orden");
   const etiquetaDe = (ref: string) => datos.grupos.find((g) => g.opcionRef === ref)?.etiqueta ?? `Hotel ${ref}`;
   const hace72h = limiteSolicitudVencida();
   const solicitudes: SolicitudUI[] = (sols ?? []).map((s) => ({
@@ -203,6 +206,20 @@ export async function FichaComparativa({ madre, puedeResolver, hoy }: { madre: M
       <SelectorOpciones version={madre.version} token={madre.share_token} grupos={datos.grupos} resumenes={datos.resumenes} modo={modo}
         deshabilitada={modo === "solo_lectura"} motivoDeshabilitada={vencida ? "Esta comparativa venció." : undefined}
         elegida={datos.elegida ? { codigo: datos.elegida.codigo, opcionRef: datos.elegida.opcionRef, acomodacionRef: datos.elegida.acomodacionRef } : null} />
+
+      <section className="rounded-xl border border-gray-200 bg-white p-5" data-testid="desglose-opciones">
+        <h2 className="text-sm font-semibold text-gray-700">Desglose congelado por opción</h2>
+        <p className="mt-1 text-xs text-gray-500">
+          Lo guardado al armar la comparativa, sin recalcular.{datos.elegida ? <> El detalle de la opción elegida también está en la cotización <Link href={`/dashboard/cotizaciones/${datos.elegida.id}`} className="font-semibold underline">{datos.elegida.codigo}</Link>.</> : null}
+        </p>
+        {(opsDesglose ?? []).map((o) => (
+          <details key={`${o.opcion_ref}/${o.acomodacion_ref}`} className="mt-2 rounded-lg border border-gray-100 px-3 py-2">
+            <summary className="cursor-pointer text-sm text-gray-700">{o.etiqueta} · {o.acomodacion_ref}</summary>
+            <DesgloseInterno cot={{ precio_venta: o.total == null ? null : Number(o.total), detalle: (o.plantilla_hija as { detalle?: unknown } | null)?.detalle ?? null }} moneda={o.moneda ?? "COP"} titulo="Desglose de la opción" />
+          </details>
+        ))}
+        {!opsDesglose?.length && <p className="mt-2 text-sm text-gray-500">No hay opciones guardadas.</p>}
+      </section>
 
       <PanelSolicitudes solicitudes={solicitudes} puedeResolver={puedeResolver && abierta} hayElegida={!!datos.elegida} />
 

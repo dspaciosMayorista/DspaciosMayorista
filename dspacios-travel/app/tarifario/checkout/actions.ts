@@ -33,6 +33,8 @@ import { claveHuellaIncluidos, incluidosParaPayload, type ServicioIncluidoCotiza
 import { tituloPaqueteEditado } from "@/lib/contrato/paqueteTuristicoDocumento";
 import { abiertaConSalidaPasada, hoyBogota, MENSAJE_SALIDA_PASADA, resolverVigenciaCotizacion } from "@/lib/cotizacion/vigencia";
 import { calcularResidualServiciosIncluidosPorGrupo } from "@/lib/reservar/desglosePersonaCotizacion";
+import { guardarComposicion } from "@/lib/cotizacion/composicionServidor";
+import type { Composicion } from "@/lib/cotizacion/composicionPrecio";
 import { descripcionLineaMenor, menoresDelComputo } from "@/lib/reservar/menoresDeDos";
 import type { ComposicionBernaloDocumento } from "@/lib/reservar/alojamientoBernaloDocumento";
 import type { Json } from "@/types/database";
@@ -594,6 +596,8 @@ async function crearCotizacionCarrito(input: {
   const hotelesSnap: Record<string, unknown>[] = [];
   const vuelosSnap: Record<string, unknown>[] = [];
   const itemsSnap: Record<string, unknown>[] = [];
+  // Composición privada del precio por hotel (lo que produjo el motor al cotizar); se guarda tras crear la cotización.
+  const composicionesHoteles: { ref: string | null; nombre: string | null; composicion: Composicion | null }[] = [];
   // Detalle por habitación de los hoteles Bernalo del carrito — SOLO datos
   // no sensibles (mismo criterio que `habitacionesBernaloDeContrato`, la
   // función que lee esto ya convertido a contrato desde
@@ -989,6 +993,7 @@ async function crearCotizacionCarrito(input: {
 
     total += precioVenta;
     lineasB2B.push({ clave: ref, pvp: precioVenta, impuesto: comp.data.impuestoTotal });
+    composicionesHoteles.push({ ref, nombre: meta.hotel_nombre ?? it.hotelNombre ?? null, composicion: comp.data.composicion });
     // Dinámico: las fechas guardadas son las de la salida que resolvió el servidor, no las que mandó el navegador.
     itemsOk.push({ ...it, ref, edadesMenores: edadesMenoresConfirmadas, ninos: numNinos, ninos2: numNinos2, infantes: numInfantes, pax: totalPax, precio: precioVenta,
       ...(it.modulo === "dinamico" ? { fechaIda: meta.fecha_ida ?? null, fechaRegreso: meta.fecha_regreso ?? null } : {}) });
@@ -1284,6 +1289,9 @@ async function crearCotizacionCarrito(input: {
     sellar: true,
   });
   if (!alta.ok) console.error(logPersonasCotizacion("checkout", row.id, alta));
+
+  // Composición del precio (privada, mejor esfuerzo): el precio ya quedó guardado y no depende de esto.
+  if (process.env.SUPABASE_SERVICE_ROLE_KEY) await guardarComposicion(admin, { cotizacionId: row.id, tenant: "mayorista", hoteles: composicionesHoteles });
 
   const h = await headers();
   const host = h.get("x-forwarded-host") ?? h.get("host");
