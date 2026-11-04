@@ -55,3 +55,6 @@ preflight → `20260601000278_hotel_reglas_descuento.sql` → postcheck → cód
 - La vitrina y el listado muestran tarifa base; el cliente ve el descuento al cotizar con fechas. Un contrato/cotización/documento no muestra todavía una línea "Descuento EBB/Long Stay": el precio ya viene descontado.
 - Fecha de compra = creación de la reserva, no el primer abono (ver Fechas).
 - Un bloqueo/empaquetado/salida publicado antes de la composición (migración 273) o con composición inexistente y un hotel con reglas queda sin vender hasta regenerar el tarifario.
+
+## Administración (ficha del hotel)
+Producto → Hoteles → ficha → sección **Promociones** (`HotelPromociones.tsx`): agregar, editar, activar/desactivar y eliminar reglas EBB («Días mínimos antes del check-in») y Long Stay («Noches mínimas») con su %. Acciones en `reglas-descuento-actions.ts`: validación en servidor (`lib/hoteles/reglasDescuento.ts`, misma que el cliente: umbral entero 1–3650, 0 < % < 100, sin duplicado tipo+mínimo), permiso `puedeEscribir("producto")` más la RLS de la 278. No toca netas ni temporadas. Una regla inactiva no se aplica (`cargarReglasDescuentoHotel` solo lee `activa = true`). Prueba: `pruebas/reglasDescuentoAdmin90.test.ts`.

@@ -7,6 +7,7 @@ import { HotelCategoriasRegimenesEditor } from "./HotelCategoriasRegimenesEditor
 import { HotelDocumentos } from "./HotelDocumentos";
 import { HotelFotos } from "./HotelFotos";
 import { HotelBlackouts } from "./HotelBlackouts";
+import { HotelPromociones, type ReglaFila } from "./HotelPromociones";
 import { HotelAcomodacionesEditor } from "./HotelAcomodacionesEditor";
 import { CalculadoraEditor } from "./CalculadoraEditor";
 import { TarifasHistorial } from "./TarifasHistorial";
@@ -29,7 +30,7 @@ export default async function HotelDetallePage({ params, searchParams }: { param
   if (isNaN(hotelId)) notFound();
   const sb = await createClient();
 
-  const [{ data: hotel }, { data: cats }, { data: regs }, { data: temporadas }, { data: tarifas }, { data: rangos }, { data: acoms }, { data: calc }, { data: todasCats }, { data: todosRegs }, { data: documentos }, { data: otrosHoteles }, { data: fotos }, { data: blackouts }, { data: destinos }, { data: proveedores }, { data: tarifasUnidad }] = await Promise.all([
+  const [{ data: hotel }, { data: cats }, { data: regs }, { data: temporadas }, { data: tarifas }, { data: rangos }, { data: acoms }, { data: calc }, { data: todasCats }, { data: todosRegs }, { data: documentos }, { data: otrosHoteles }, { data: fotos }, { data: blackouts }, { data: destinos }, { data: proveedores }, { data: tarifasUnidad }, { data: reglasDescuento, error: errorReglas }] = await Promise.all([
     sb.from("hoteles").select("*, destinos(nombre), proveedores(nombre)").eq("id", hotelId).single(),
     sb.from("hotel_categorias").select("categoria_id, categorias_habitacion(nombre)").eq("hotel_id", hotelId),
     sb.from("hotel_regimenes").select("plan_id, planes_alimentacion(codigo)").eq("hotel_id", hotelId),
@@ -47,6 +48,7 @@ export default async function HotelDetallePage({ params, searchParams }: { param
     sb.from("destinos").select("id, nombre").order("nombre"),
     sb.from("proveedores").select("id, nombre").eq("tipo", "hotelero").order("nombre"),
     sb.from("hotel_tarifas_unidad").select("*").eq("hotel_id", hotelId).order("tarifa_id").order("version_tarifario"),
+    sb.from("hotel_reglas_descuento").select("id, tipo, umbral, pct, activa").eq("hotel_id", hotelId).order("tipo").order("umbral"),
   ]);
 
   if (!hotel) notFound();
@@ -206,6 +208,7 @@ export default async function HotelDetallePage({ params, searchParams }: { param
           regimenIds={regimenIds}
         />
         <HotelFotos hotelId={hotelId} fotos={fotos ?? []} />
+        <HotelPromociones hotelId={hotelId} reglas={(reglasDescuento ?? []) as ReglaFila[]} errorCarga={!!errorReglas} />
         <HotelBlackouts hotelId={hotelId} blackouts={blackouts ?? []} categorias={categorias} />
         <HotelDocumentos hotelId={hotelId} documentos={documentos ?? []} />
         <HotelAcomodacionesEditor
