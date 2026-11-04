@@ -47,6 +47,7 @@ export type QueryBuilderFalso = {
   eq(col: string, val: unknown): QueryBuilderFalso;
   in(col: string, vals: unknown[]): QueryBuilderFalso;
   order(): QueryBuilderFalso;
+  range(desde: number, hasta: number): QueryBuilderFalso;
   maybeSingle(): Promise<{ data: FilaFalsa | null; error: { message: string } | null }>;
   // Thenable: `await builder` sin `.maybeSingle()` se comporta como
   // `{data: FilaFalsa[], error: null}` (el patrón de select que devuelve
@@ -73,6 +74,7 @@ export function crearClienteFalso(
   function from(tabla: string): QueryBuilderFalso {
     const filtros: Filtro[] = [];
     let selectStr = "*";
+    let rango: [number, number] | null = null; // .range(desde, hasta) inclusivo, como PostgREST (lecturas paginadas)
     function ejecutar(): FilaFalsa[] {
       const base = tablas[tabla];
       if (base === undefined) {
@@ -100,13 +102,15 @@ export function crearClienteFalso(
       eq(col: string, val: unknown) { filtros.push({ col, op: "eq", val }); return builder; },
       in(col: string, vals: unknown[]) { filtros.push({ col, op: "in", val: vals }); return builder; },
       order() { return builder; },
+      range(desde: number, hasta: number) { rango = [desde, hasta]; return builder; },
       async maybeSingle() {
         const filas = ejecutar();
         if (filas.length > 1) return { data: null, error: { message: `maybeSingle(): ${filas.length} filas coincidieron en "${tabla}", se esperaba 0 o 1.` } };
         return { data: filas[0] ?? null, error: null };
       },
       then(onfulfilled, onrejected) {
-        return Promise.resolve({ data: ejecutar(), error: null as null }).then(onfulfilled, onrejected);
+        const filas = ejecutar();
+        return Promise.resolve({ data: rango ? filas.slice(rango[0], rango[1] + 1) : filas, error: null as null }).then(onfulfilled, onrejected);
       },
     };
     return builder;

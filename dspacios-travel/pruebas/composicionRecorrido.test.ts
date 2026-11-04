@@ -85,6 +85,7 @@ register("data:text/javascript," + encodeURIComponent(
 const { computarReserva } = await import("@/lib/reservar/computo.ts");
 const { generarTarifario } = await import("../app/(dashboard)/dashboard/paquetes/actions.ts");
 const { REGLA_COMPOSICION_PUBLICADA } = await import("../lib/reservar/composicionPublicada.ts");
+const { cotizarTarjetaHotel } = await import("../app/tarifario/cotizarTarjetaActions.ts");
 
 const fechaBogota = (d: number) => new Date(Date.now() + d * 86400000).toLocaleDateString("en-CA", { timeZone: "America/Bogota" });
 const EN_30 = fechaBogota(30);
@@ -144,7 +145,7 @@ function tablasReserva(o: Opc, r: Resultado): Tablas {
     tarifario_composicion_publicada: [{ paquete_id: PAQUETE_ID, fecha_ida: EN_30, generacion: GENERACION, regla: REGLA_COMPOSICION_PUBLICADA, servicios_incluidos: sv.map((s) => s.id).sort((a, b) => a - b) }],
     salidas_dinamicas: !o.origen || o.origen === "salida" ? [{ id: 9, paquete_id: PAQUETE_ID, activo: true, compra_inicio: null, compra_fin: null, fecha_ida: EN_30, fecha_regreso: EN_31, ruta: "BOG - CTG - BOG", valor_tiquete: o.ticket, aplica_mk: true, ta: 0, fee_infante: o.fee, empaquetado_id: null, ...(o.conv ? { moneda: "USD" } : {}) }] : [],
     armado_hoteles: [{ paquete_id: PAQUETE_ID, hotel_id: HOTEL, categorias: null, regimenes: null, hoteles: { nombre: "Hotel 273", moneda: o.conv ? "USD" : o.moneda, modelo_tarifario: "persona", adults_only: false } }],
-    armado_vuelos: [], armado_empaquetados: [],
+    armado_vuelos: [], armado_empaquetados: [], hotel_reglas_descuento: [],
     bloqueos_vuelo: o.origen === "bloqueo" ? [fuenteVuelo(o)] : [],
     empaquetados_basica: o.origen === "empaquetado" ? [{ id: ID_FUENTE, activo: true, compra_inicio: null, compra_fin: null }] : [],
     empaquetados: o.origen === "empaquetado" ? [{ ...fuenteVuelo(o), activo: true, compra_inicio: null, compra_fin: null }] : [],
@@ -270,6 +271,7 @@ describe("porción terrestre por fechas: composición del motor en vivo", () => 
     for (const o of [COP, USD]) {
       const t = tablasReserva({ ...o, origen: "salida" }, { publicadas: [], composiciones: [] });
       t.hotel_blackouts = [];
+      t.hotel_reglas_descuento = [];
       t.armado_paquetes = [{ id: PAQUETE_ID, pct_mk: 0.2, impuesto_fijo: 0, destino_id: 1, tipo: "porcion_terrestre", tarifario_generacion_publicada: GENERACION, fecha_viaje_inicio: EN_30, fecha_viaje_fin: EN_31 }];
       const c = cliente(t);
       adminActual = c.sb;
@@ -295,4 +297,37 @@ describe("porción terrestre por fechas: composición del motor en vivo", () => 
       } finally { adminActual = null; }
     }
   });
+});
+
+// #90 · Tarjeta pública de bloqueo, empaquetado y salida con fecha concreta (30 días de anticipo): precio y etiqueta salen del MISMO cómputo, para cada origen.
+describe("tarjeta pública por origen publicado: EBB 1 a 30 días y sin reglas", () => {
+  const REGLAS_HOTEL = [{ hotel_id: HOTEL, tipo: "ebb", umbral: 30, pct: 18, activa: true }, { hotel_id: HOTEL, tipo: "ebb", umbral: 60, pct: 23, activa: true }, { hotel_id: HOTEL, tipo: "long_stay", umbral: 4, pct: 25, activa: true }];
+  for (const origen of ["salida", "bloqueo", "empaquetado"] as const) {
+    test(origen, async () => {
+      const o: Opc = { ...COP, origen, servicios: [] };
+      const r = await generar(o);
+      const base = Number(r.publicadas.find((f) => f.acomodacion === "doble")!.precio_pvp);
+      const entrada = { modulo: origen === "salida" ? "dinamico" : "bloqueo", paqueteId: PAQUETE_ID, hotelId: HOTEL, combos: [{ categoria: CATEGORIA, regimen: REGIMEN }],
+        ...(origen === "bloqueo" ? { bloqueoId: ID_FUENTE } : origen === "empaquetado" ? { empaquetadoId: ID_FUENTE } : { salidaId: 9 }) };
+      const correr = async (reglas: Fila[]) => {
+        const t = tablasReserva(o, r); t.hotel_reglas_descuento = reglas;
+        const c = cliente(t); adminActual = c.sb; sbServidor = c.sb;
+        try { return await cotizarTarjetaHotel(entrada); } finally { adminActual = null; sbServidor = null; }
+      };
+      const con = await correr(REGLAS_HOTEL);
+      assert.ok(con.ok, con.ok ? "" : con.error);
+      if (!con.ok) return;
+      assert.equal(con.descuentoHotel?.etiqueta, "EBB 1 · 30+ días · 18 %");
+      assert.ok(con.precio < base, "el precio visible ya trae el descuento");
+      // Es exactamente el precio que cotizaría computarReserva para esa reserva, con las mismas reglas.
+      const t = tablasReserva(o, r); t.hotel_reglas_descuento = REGLAS_HOTEL;
+      const c2 = cliente(t); adminActual = c2.sb;
+      const comp = await computarReserva(c2.sb as never, { paqueteId: PAQUETE_ID, bloqueoId: origen === "bloqueo" ? ID_FUENTE : null, empaquetadoId: origen === "empaquetado" ? ID_FUENTE : null, salidaId: origen === "salida" ? 9 : null, modulo: origen === "salida" ? "dinamico" : "bloqueo", hotelId: HOTEL, categoria: CATEGORIA, regimen: REGIMEN, habitaciones: { doble: 1 }, ninos: 0, ninos2: 0, infantes: 0, cliente: { nombres: "A", apellidos: "B", tipoDoc: "CC", numeroDoc: "1", telefono: "1", email: "a@b.co" }, tipoAsesor: "interno", asesorInterno: "", agenciaNombre: "", agenciaAsesor: "", freelanceNombre: "", plazo: "", pasajeros: [] } as never);
+      adminActual = null;
+      assert.ok(comp.ok && comp.data.pvpPorAcom.doble === con.precio);
+      const sin = await correr([]);
+      assert.ok(sin.ok);
+      if (sin.ok) { assert.equal(sin.descuentoHotel, null, "sin reglas no hay etiqueta"); assert.equal(sin.precio, base, "sin descuento el precio es el publicado"); }
+    });
+  }
 });

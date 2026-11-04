@@ -328,7 +328,8 @@ async function sesionConversionAutorizada(): Promise<{ userId: string; rol: stri
  * limpias y pasan tal cual; solo se enmascara lo que parezca error crudo de la BD.
  */
 function mensajeSeguro(msg: string): string {
-  const m = String(msg ?? "").trim();
+  // #82: los rechazos propios del paquete dinámico llevan un código técnico (`DIN_82_X: frase`); al navegador va solo la frase.
+  const m = String(msg ?? "").trim().replace(/^DIN_82_[A-Z_]+:\s*/, "");
   if (!m) return "No se pudo convertir la cotización a contrato. Inténtalo de nuevo.";
   if (/COTIZACION_SALIDA_PASADA/.test(m)) return MENSAJE_SALIDA_PASADA;
   if (/COTIZACION_VENCIDA/.test(m)) return MENSAJE_COTIZACION_VENCIDA;
@@ -365,13 +366,18 @@ export async function convertirCotizacionManualAContrato(
 
   const admin = createAdminClient();
   // #35: la madre comparativa no se convierte (el RPC y los triggers también lo impiden).
-  const { data: madre } = await admin.from("cotizaciones").select("modo, estado, vigencia_hasta, fecha_salida").eq("id", cotizacionId).maybeSingle();
+  const { data: madre } = await admin.from("cotizaciones").select("modo, estado, vigencia_hasta, fecha_salida, paquete_din_id" as never).eq("id", cotizacionId).maybeSingle() as { data: { modo: string; estado: string; vigencia_hasta: string | null; fecha_salida: string | null; paquete_din_id: number | null } | null };
   if (madre?.modo === "comparativa") return { ok: false, error: "Una comparativa no se convierte en contrato: elige una opción primero." };
   // #40 E3: la abierta vencida se corta aquí y, con autoridad, en la base (antes de numerar); una ya convertida sigue siendo un reintento válido.
   // Salida pasada primero: aunque también venza la vigencia, renovarla no sirve (genera una nueva).
   if (madre && abiertaConSalidaPasada(madre, hoyBogota())) return { ok: false, error: MENSAJE_SALIDA_PASADA };
   if (madre?.estado === "abierta" && cotizacionVencida(madre.vigencia_hasta, hoyBogota())) return { ok: false, error: MENSAJE_COTIZACION_VENCIDA };
-  const rpc = await admin.rpc("convertir_cotizacion_manual_controlada", {
+  // #82: un paquete 100 % dinámico exige los costos reales ANTES de numerar (RPC `convertir_cotizacion_din`, migración 274),
+  // que luego delega en la misma conversión controlada. El resto de cotizaciones sigue por la vía de siempre.
+  const rpcDin = madre?.paquete_din_id
+    ? await admin.rpc("convertir_cotizacion_din", { p_cotizacion_id: cotizacionId, p_usuario_id: sesion.userId })
+    : null;
+  const rpc = rpcDin ?? await admin.rpc("convertir_cotizacion_manual_controlada", {
     p_cotizacion_id: cotizacionId,
     p_usuario_id: sesion.userId,
   });

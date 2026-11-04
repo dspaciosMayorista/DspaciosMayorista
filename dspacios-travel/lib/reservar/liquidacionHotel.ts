@@ -32,6 +32,7 @@ import {
   resolverReglaEdadEstadiaSegura, type FilaTarifaHotelEdadCruda, type ReglaEdadGeneralParcial,
 } from "../calc/reglaEdadTarifa.ts";
 import { type AcomRoom } from "../acomodaciones.ts";
+import { resolverDescuentoHotel, aplicarDescuentoNeta, type ReglaDescuentoHotel, type DescuentoAplicado } from "../calc/descuentoHotel.ts";
 import {
   clasificarMenoresPorEdad, verificarTarifasMenoresDisponibles, type ClasificacionMenores,
 } from "./edadesMenores.ts";
@@ -164,10 +165,15 @@ export type DatosHotelPaquete = {
   vuelo?: { aporte: number; feeInfante: number };
   // #120: la neta de una solicitud se reparte entre personas y noches (decimales); se lleva a centavos para que el ruido de coma flotante no suba un millar al redondear la venta.
   redondeoCentavos?: boolean;
+  // #90: reglas EBB / Long Stay del hotel y fecha de reserva que entrega el SERVIDOR (fechaNegocio). Sin reglas = tarifa base de siempre.
+  reglasDescuento?: ReglaDescuentoHotel[];
+  fechaReserva?: string;
 };
 
 export type ResultadoHotelFechas = {
   combos: ComboCotizado[]; destinoNombre: string | null; hotelNombre: string | null; minNoches: number; moneda: string;
+  // #90: descuento EBB/Long Stay aplicado a la neta hotelera de esta estadía (null = ninguno).
+  descuentoHotel?: DescuentoAplicado | null;
   // Servicios incluidos con cobro POR GRUPO: NO están dentro de `combos`
   // (su costo depende del pax, que este motor no conoce). Quien sí conoce el
   // pax les suma el cargo con `cargoGrupoIncluido`; quien no, muestra la marca
@@ -222,6 +228,8 @@ export function evaluarHotelPorFechas(
   const filtroReg = datos.armadoHotel?.regimenes ?? null;
   const hotelNombre = datos.armadoHotel?.hotel_nombre ?? null;
   const temporadas: TemporadaRango[] = datos.temporadas.map(toTemporadaRango);
+  // #90: un solo descuento (el mayor %) sobre la neta hotelera, antes del markup. Aplica igual a adultos y menores.
+  const descuentoHotel = resolverDescuentoHotel(datos.reglasDescuento, { fechaReserva: datos.fechaReserva ?? hoyISO(), fechaIda, numNoches });
 
   let aporteServ = 0;
   let aporteServMenor = 0; // igual que aporteServ pero con el precio de infante de cada servicio
@@ -330,6 +338,7 @@ export function evaluarHotelPorFechas(
         costoHotel = liquidarHotelNoches({ fechaIda, numNoches, temporadas, netoPorTemporada, regimen, precioFinalTemporadas });
       }
       if (costoHotel == null) continue;
+      costoHotel = aplicarDescuentoNeta(costoHotel, descuentoHotel, monedaHotel);
       if (datos.redondeoCentavos) costoHotel = Math.round(costoHotel * 100) / 100;
       if (esRoom && costoHotel <= 0) continue;
       const t = componerTarifa({ aporteHotel: marcar(costoHotel, pctMk), aporteServicios: aporteServ, aporteVuelo: aporteVueloSol, impuesto, moneda: monedaHotel });
@@ -367,7 +376,7 @@ export function evaluarHotelPorFechas(
     }
   }
   const combosF = combos.filter((c) => Object.keys(c.precios).some((a) => a !== "nino" && a !== "nino2" && a !== "infante"));
-  return { combos: combosF, destinoNombre, hotelNombre, minNoches: minNochesAplicable(temporadas, fechaIda), moneda: monedaHotel, serviciosGrupoIncluidos, serviciosEfectivos, ...(serviciosOmitidos.length ? { serviciosOmitidos } : {}),
+  return { combos: combosF, destinoNombre, hotelNombre, minNoches: minNochesAplicable(temporadas, fechaIda), moneda: monedaHotel, descuentoHotel, serviciosGrupoIncluidos, serviciosEfectivos, ...(serviciosOmitidos.length ? { serviciosOmitidos } : {}),
     composicionBase: { pctMk, impuesto, vuelo: aporteVueloSol, vueloNeto: null, feeInfante: feeInfanteSol, servicios: composicionServicios, fijo: { mayor2: fijoMayor2 != null, menor2: fijoMenor2 != null } } };
 }
 

@@ -16,6 +16,7 @@ import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
 import {
   REFERENCIAS_DESTINO,
+  TABLAS_CONTEO_PRIVILEGIADO,
   etiquetaConteo,
   resumirUsoDestino,
   modoEliminacion,
@@ -300,7 +301,8 @@ describe("fuente autoritativa: REFERENCIAS_DESTINO == FKs a destinos(id) en las 
       /create\s+or\s+replace\s+function\s+public\.fn_fusionar_destino/i.test(sinComentarios(leer(`supabase/migrations/${a}`)))
     );
     // #5 D8/D9: la 237 la redefine SOLO para añadir la guarda de Mayorista (SECURITY DEFINER se salta la RLS).
-    assert.deepEqual(redefiniciones, ["20260601000112_fusionar_destino.sql", "20260601000237_catalogos_globales_frontera_mayorista.sql"]);
+    // #82 (275): una tercera redefinición agrega SOLO el reapuntado de `paquete_din.destinos_extra` (arreglo sin FK); se verifica abajo.
+    assert.deepEqual(redefiniciones, ["20260601000112_fusionar_destino.sql", "20260601000237_catalogos_globales_frontera_mayorista.sql", "20260601000275_paquete_dinamico_auditoria.sql"]);
     const f237 = sinComentarios(leer("supabase/migrations/20260601000237_catalogos_globales_frontera_mayorista.sql"));
     const cuerpo237 = f237.slice(f237.search(/create\s+or\s+replace\s+function\s+public\.fn_fusionar_destino/i));
     const fin = cuerpo237.search(/create\s+or\s+replace\s+function\s+public\.generar_tarifas_hotel_calculadora/i);
@@ -308,6 +310,15 @@ describe("fuente autoritativa: REFERENCIAS_DESTINO == FKs a destinos(id) en las 
     assert.match(soloFusion, /where c\.contype = 'f' and c\.confrelid = 'public\.destinos'::regclass/);
     assert.match(soloFusion, /update %s set %I = \$1 where %I = \$2/);
     assert.match(soloFusion, /puede_escribir_catalogo_global\(\)/);
+
+    // 275: el cuerpo es el de la 237 más EXACTAMENTE el UPDATE de destinos_extra antes del DELETE (nada más cambió).
+    const f275 = sinComentarios(leer("supabase/migrations/20260601000275_paquete_dinamico_auditoria.sql"));
+    const desde275 = f275.slice(f275.search(/create\s+or\s+replace\s+function\s+public\.fn_fusionar_destino/i));
+    const c275 = desde275.slice(0, desde275.indexOf("$function$;") + "$function$;".length); // solo la función, no lo que venga después
+    assert.match(c275, /update public\.paquete_din p\s+set destinos_extra/);
+    const sinExtra = c275.replace(/update public\.paquete_din p[\s\S]*?where p_origen = any \(p\.destinos_extra\);/, "");
+    const compacto = (s: string) => s.replace(/\s+/g, "");
+    assert.equal(compacto(sinExtra), compacto(soloFusion), "la 275 cambió algo más que el reapuntado de destinos_extra");
   });
 });
 
@@ -399,7 +410,8 @@ describe("RLS: los roles que pueden borrar destinos leen TODAS las filas de las 
   });
 
   test("cada rol que puede borrar lee TODAS las filas de las 10 tablas (policy sin filtro de filas, solo de rol)", () => {
-    for (const t of REFERENCIAS_DESTINO.map((r) => r.tabla)) {
+    // 275 (#82): paquete_din* tienen RLS por agencia a propósito (netas); su conteo sale de uso_destino_din (TABLAS_CONTEO_PRIVILEGIADO).
+    for (const t of REFERENCIAS_DESTINO.map((r) => r.tabla).filter((x) => !(TABLAS_CONTEO_PRIVILEGIADO as readonly string[]).includes(x))) {
       for (const rol of borradores) assert.ok(leeTodo(t, rol), `${rol} no lee todas las filas de ${t}`);
     }
   });

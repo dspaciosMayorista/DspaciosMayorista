@@ -1,5 +1,6 @@
 import { ResponsiveTableShell } from "@/components/ui/ResponsiveTableShell";
 import { formatMoneda } from "@/lib/utils";
+import { EtiquetaDescuentoHotel } from "@/components/cotizacion/EtiquetaDescuentoHotel";
 import type { Composicion, ComposicionCotizacion } from "@/lib/cotizacion/composicionPrecio";
 
 const ROTULO_ADICIONAL = { servicio_opcional: "Servicio opcional", servicio_grupo: "Servicio incluido por grupo", mascota: "Mascota", ajuste_redondeo: "Ajuste de redondeo" } as const;
@@ -10,6 +11,7 @@ function Hotel({ nombre, c, totalCotizacion }: { nombre: string | null; c: Compo
   return (
     <div className="mt-3 rounded-lg border border-gray-100" data-testid="composicion-hotel">
       {nombre && <div className="border-b border-gray-100 px-4 py-2 text-sm font-medium text-gray-700">{nombre}</div>}
+      {c.descuentoHotel && <div className="border-b border-gray-100 px-4 py-2"><EtiquetaDescuentoHotel descuento={c.descuentoHotel} /></div>}
       <ResponsiveTableShell minWidth={560} className="overflow-x-auto">
         <table className="w-full min-w-[560px] text-sm">
           <thead><tr className="bg-gray-50 text-left text-xs uppercase text-gray-400">

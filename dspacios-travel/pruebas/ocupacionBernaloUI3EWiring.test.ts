@@ -98,7 +98,8 @@ describe("VistaBooking.tsx — Vista Booking unificada: persona y unidad en UNA 
     const idxGrid = codigoVista.indexOf("{tarjetas.map((t) =>");
     assert.notEqual(idxGrid, -1);
     const bloque = codigoVista.slice(idxGrid, idxGrid + 6000);
-    const usosComponente = [...bloque.matchAll(/<TarjetaHotelCard\b/g)];
+    // #90: la tarjeta persona entra por `TarjetaHotelConFechas`, un envoltorio delgado (selector de fechas) que renderiza el MISMO `TarjetaHotelCard`; la unidad lo usa directo.
+    const usosComponente = [...bloque.matchAll(/<TarjetaHotelCard\b|<TarjetaHotelConFechas\b/g)];
     assert.equal(usosComponente.length, 2, "persona y unidad deben invocar el mismo componente de tarjeta, una vez cada uno");
     // El contenedor visual en sí NUNCA se repite dentro de `tarjetas.map` —
     // vive una sola vez, dentro de la definición de `TarjetaHotelCard`
