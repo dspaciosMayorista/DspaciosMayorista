@@ -9,7 +9,7 @@ import { tenantVisibleDin } from "@/lib/paqueteDinamico/cargarPublico";
 import { resolverSeleccionDin } from "@/lib/paqueteDinamico/seleccion";
 
 export type VistaPreviaDin =
-  | { ok: true; total: number; lineas: { descripcion: string; valor: number }[]; menores: { ninos: number; ninos2: number; infantes: number; menoresDeDos: number };
+  | { ok: true; total: number; menores: { ninos: number; ninos2: number; infantes: number; menoresDeDos: number };
       /** Pasajeros del vuelo por EDAD (no por las clases del hotel): sillas (adultos + menores desde 2 años) e infantes menores de 2 años sin silla. */
       vuelo: { sillas: number; infantes: number } }
   | { ok: false; error: string };
@@ -38,7 +38,7 @@ export async function evaluarSeleccionDin(input: { paqueteId: number; hotelId: n
     const sel = await resolverSeleccionDin(admin, { paquete: p, hotel, vuelo, servicios, composicion: input.composicion, fechaIda: input.fechaIda });
     if (!sel.ok) return sel;
     return {
-      ok: true, total: sel.liq.total, lineas: sel.liq.lineas.map((l) => ({ descripcion: l.descripcion, valor: l.valor })),
+      ok: true, total: sel.liq.total, // sin desglose por componente: el cliente solo ve el total del paquete
       vuelo: (() => { const v = vueloPasajeros(sel.composicion); return { sillas: v.sillas, infantes: v.menoresDeDos }; })(),
       menores: { ninos: sel.composicion.ninos, ninos2: sel.composicion.ninos2, infantes: sel.composicion.infantes, menoresDeDos: (sel.composicion.edadesMenores ?? []).filter((e) => e < 2).length },
     };

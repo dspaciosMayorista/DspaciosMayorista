@@ -68,7 +68,7 @@ export default async function CheckoutDinamicoPage({ searchParams }: { searchPar
     habitaciones: hab.join(", ") || "—", viajeros,
     vuelo: vuelo ? { etiqueta: vuelo.etiqueta, detalle: vuelo.detalle, sillas: prev.vuelo.sillas, infantes: prev.vuelo.infantes } : null,
     servicios: p.servicios.filter((s) => elegidos.includes(String(s.id))).map((s) => s.nombre),
-    fechaIda: sel.fechaIda, fechaRegreso: sel.fechaRegreso, total: prev.total, lineas: prev.lineas, volver,
+    fechaIda: sel.fechaIda, fechaRegreso: sel.fechaRegreso, total: prev.total, volver,
   };
   const aliado = canal.canal === "b2b" ? ((await getContextoB2B()).agencia?.nombre ?? null) : null;
 
