@@ -203,12 +203,13 @@ export function referenciaPublicacion(sv: VigenciasServicio, modo: "persona" | "
  * Por qué un incluido no se puede cobrar en una estadía. `sin_tarifa` (sin vigencia que cubra la estadía, o sin precio / rangos en la vigencia) = «no tiene tarifa vigente»:
  * el servicio se OMITE de la oferta de esa fecha (ni se cobra ni se lista) y el hotel/paquete se ofrece igual. El resto son errores de configuración que no se omiten.
  */
-export type MotivoIncluidoNoCobrable = "sin_tarifa" | "ambiguo" | "franjas" | "ventana" | "dato_invalido";
+export type MotivoIncluidoNoCobrable = "sin_tarifa" | "traslado_sin_tarifa" | "traslado_sin_vigencia" | "ambiguo" | "franjas" | "ventana" | "dato_invalido";
 export type IncluidoEnEstadia =
   | { ok: true; vigencia: string; netoPersona: number | null; netoInfante: number | null; rangos: { pax_desde: number; pax_hasta: number; precio: number }[] }
   | { ok: false; error: string; motivo: MotivoIncluidoNoCobrable };
 
 /** ¿Este fallo significa «sin tarifa vigente» (se omite el servicio) y no un error de configuración? */
+/** Un traslado incluido SIN vigencia que cubra la fecha (`traslado_sin_vigencia`) o SIN tarifa válida de ida y regreso (`traslado_sin_tarifa`) NO se omite: omitirlo dejaría vendible un paquete que promete un traslado que no se cobra; la oferta afectada se bloquea con el motivo. */
 export const incluidoSeOmite = (r: IncluidoEnEstadia): boolean => !r.ok && r.motivo === "sin_tarifa";
 
 /**
@@ -218,26 +219,31 @@ export const incluidoSeOmite = (r: IncluidoEnEstadia): boolean => !r.ok && r.mot
  */
 export function incluidoEnEstadia(sv: VigenciasServicio, modo: "persona" | "grupo", desde: string, hasta: string): IncluidoEnEstadia {
   const rotulo = `El servicio incluido «${sv.nombre}»`;
-  // 262: un traslado por alcance no tiene un precio único para hornear en el hotel (depende del trayecto vendido): se ofrece como opcional.
-  if (sv.usaAlcance) return { ok: false, error: `${rotulo} es un traslado que se vende por trayecto (llegada, salida o ida y regreso): no puede ir incluido en el hotel. Márcalo como opcional.`, motivo: "dato_invalido" };
+  // 262: un traslado incluido en el hotel se cobra SIEMPRE por ida y regreso: precio propio de ida y regreso de la vigencia si existe; si no, la tarifa vigente del servicio.
   const invalida = ventanaInvalida(desde, hasta);
   if (invalida) return { ok: false, error: `${rotulo}: no se puede validar la estadía, ${invalida}.`, motivo: "ventana" };
   const { nombres, primerSinCobertura } = cubrirVentana(sv, desde, hasta);
+  if (primerSinCobertura && sv.usaAlcance) return { ok: false, motivo: "traslado_sin_vigencia", error: `El traslado incluido «${sv.nombre}» no tiene vigencia de tarifa para el ${fechaLegible(primerSinCobertura)} (estadía ${fechaLegible(desde)} al ${fechaLegible(hasta)}): no se puede ofrecer el paquete prometiendo un traslado sin vigencia para esa fecha. Carga o amplía la vigencia en Producto → Servicios o quítalo de los servicios incluidos.` };
   if (primerSinCobertura) return { ok: false, error: `${rotulo} no tiene vigencia de tarifa para el ${fechaLegible(primerSinCobertura)} (estadía ${fechaLegible(desde)} al ${fechaLegible(hasta)}).`, motivo: "sin_tarifa" };
   if (nombres.length !== 1) return { ok: false, error: `${rotulo} cambia de vigencia dentro de la estadía ${fechaLegible(desde)} al ${fechaLegible(hasta)} (${nombres.join(", ")}); su precio incluido sería ambiguo. Alinea las vigencias con las temporadas del hotel.`, motivo: "ambiguo" };
   const nombre = nombres[0];
   if (sv.conFranjas.has(nombre)) return { ok: false, error: `${rotulo} tiene suplementos por horario en la vigencia «${nombre}»: no puede ir incluido en el hotel. Márcalo como opcional para pedir la hora del traslado.`, motivo: "franjas" };
   const fila = sv.temporadas.find((t) => t.nombre === nombre)!;
+  const sinTarifaTraslado = (detalle: string): IncluidoEnEstadia => ({ ok: false, motivo: "traslado_sin_tarifa", error: `El traslado incluido «${sv.nombre}» ${detalle} en su vigencia «${nombre}»: no se puede ofrecer el paquete prometiendo un traslado sin tarifa válida de ida y regreso. Carga la tarifa en Producto → Servicios o quítalo de los servicios incluidos.` });
   if (modo === "persona") {
-    if (fila.precio_persona == null || !Number.isFinite(Number(fila.precio_persona)) || Number(fila.precio_persona) < 0) return { ok: false, error: `${rotulo} no tiene precio por persona en su vigencia «${nombre}».`, motivo: "sin_tarifa" };
+    const propioIR = sv.usaAlcance ? sv.personaIdaRegreso?.get(nombre) : undefined;
+    if (propioIR == null && (fila.precio_persona == null || !Number.isFinite(Number(fila.precio_persona)) || Number(fila.precio_persona) < 0)) return sv.usaAlcance ? sinTarifaTraslado("no tiene precio por persona de ida y regreso ni tarifa por persona") : { ok: false, error: `${rotulo} no tiene precio por persona en su vigencia «${nombre}».`, motivo: "sin_tarifa" };
     // Un precio de infante PRESENTE pero no numérico (p. ej. numeric 'NaN') o negativo es un dato corrupto, no «sin tarifa»: no se omite el servicio ni se calcula con él (el costo
     // saldría NaN y se registraría como $0). NULL sí es válido (el infante paga como adulto) y 0 también (gratis).
     if (fila.precio_infante != null && (!Number.isFinite(Number(fila.precio_infante)) || Number(fila.precio_infante) < 0)) {
       return { ok: false, error: `${rotulo} tiene un precio de infante no válido en su vigencia «${nombre}»; corrígelo en Producto → Servicios antes de cotizar o publicar.`, motivo: "dato_invalido" };
     }
-    return { ok: true, vigencia: nombre, netoPersona: Number(fila.precio_persona), netoInfante: fila.precio_infante != null ? Number(fila.precio_infante) : null, rangos: [] };
+    return { ok: true, vigencia: nombre, netoPersona: propioIR ?? Number(fila.precio_persona), netoInfante: fila.precio_infante != null ? Number(fila.precio_infante) : null, rangos: [] };
   }
-  const rangos = sv.grupos.filter((g) => g.temporada === nombre).map((g) => ({ pax_desde: g.pax_desde, pax_hasta: g.pax_hasta, precio: Number(g.precio) }));
+  const deVigencia = sv.grupos.filter((g) => g.temporada === nombre);
+  const base = sv.usaAlcance ? rangosIdaRegresoEfectivos((sv.gruposIdaRegreso ?? []).filter((g) => g.temporada === nombre), deVigencia) : deVigencia;
+  const rangos = base.map((g) => ({ pax_desde: g.pax_desde, pax_hasta: g.pax_hasta, precio: Number(g.precio) }));
+  if (!rangos.length && sv.usaAlcance) return sinTarifaTraslado("no tiene rangos de pasajeros de ida y regreso ni en la tarifa");
   if (!rangos.length) return { ok: false, error: `${rotulo} no tiene rangos de pasajeros en su vigencia «${nombre}».`, motivo: "sin_tarifa" };
   if (rangos.some((r) => !Number.isFinite(r.precio) || r.precio < 0)) return { ok: false, error: `${rotulo} tiene un precio no válido en un rango de pasajeros de su vigencia «${nombre}»; corrígelo en Producto → Servicios antes de cotizar o publicar.`, motivo: "dato_invalido" };
   return { ok: true, vigencia: nombre, netoPersona: null, netoInfante: null, rangos };

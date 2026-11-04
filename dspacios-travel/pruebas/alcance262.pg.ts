@@ -624,6 +624,10 @@ describe("262 · dos traslados idénticos (mismo servicio, alcance y pax)", () =
 // ═════════════════════════════════════════════════════════════════════
 // Cuarta ronda: borrado de servicios con obligaciones y ruta de oferta #63 (crearCotizacion -> convertirCotizacion -> aceptar_oferta_63 -> p63_registrar_financiero).
 const PAQ_63 = 6205, PAQ_63I = 6206, SAL_63 = 6205, SAL_63I = 6206, S_INC = 6212;
+// Traslado incluido por TARIFA VIGENTE (sin precios por trayecto ni de ida y regreso propios) y paquetes que lo usan; PAQ_SIN incluye S_SIN (solo precio de un trayecto, sin tarifa vigente).
+const S_VIG = 6250, PAQ_VIG = 6250, PAQ_SIN = 6251, SAL_SIN = 6251;
+// Traslado con tarifa de ida y regreso pero SOLO vigente en 2031 (no cubre la salida de 2030-03-01): su paquete no debe quedar vendible.
+const S_FUERA = 6252, PAQ_FUERA = 6252, SAL_FUERA = 6252;
 const ROL_HTTP = (rol: string) => ({ superadmin: "00000000-0000-0000-0000-000000262001", gerencia: "00000000-0000-0000-0000-000000262010", operaciones: "00000000-0000-0000-0000-000000262011", administracion: UID_ADMIN, venta: "00000000-0000-0000-0000-000000262012" } as Record<string, string>)[rol];
 before(() => {
   sql(`
@@ -636,6 +640,26 @@ before(() => {
     insert into public.servicios_adicionales (id, nombre, proveedor_id, destino_id, precio_persona, categoria, moneda, tipo_tarifa, liquidacion, tipo_receptivo) values (${S_INC}, 'Traslado incluido 262', 6201, 6201, 0, 'tour_traslado', 'COP', 'persona', 'paquete', 'traslado');
     insert into public.servicio_temporadas (id, servicio_id, nombre, fecha_inicio, fecha_fin, precio_persona) values (${ALTA(S_INC)}, ${S_INC}, 'ALTA', '2030-01-01', '2030-12-31', 0);
     insert into public.servicio_precio_alcance (servicio_temporada_id, alcance, precio) values (${ALTA(S_INC)}, 'trayecto', 40000), (${ALTA(S_INC)}, 'ida_regreso', 70000);
+    -- traslado cuyo ÚNICO precio es la tarifa vigente de la vigencia (60.000/persona): sin filas en servicio_precio_alcance
+    insert into public.servicios_adicionales (id, nombre, proveedor_id, destino_id, precio_persona, categoria, moneda, tipo_tarifa, liquidacion, tipo_receptivo) values (${S_VIG}, 'Traslado tarifa vigente 262', 6201, 6201, 0, 'tour_traslado', 'COP', 'persona', 'paquete', 'traslado');
+    insert into public.servicio_temporadas (id, servicio_id, nombre, fecha_inicio, fecha_fin, precio_persona) values (${ALTA(S_VIG)}, ${S_VIG}, 'ALTA', '2030-01-01', '2030-12-31', 60000);
+    insert into public.armado_paquetes (id, nombre, tipo, noches, destino_id, pct_mk, impuesto_tipo, impuesto_fijo, fecha_viaje_inicio, fecha_viaje_fin, moneda, moneda_publicacion, activo) values
+      (${PAQ_VIG}, 'Porción 262 con traslado incluido (tarifa vigente)', 'porcion_terrestre', 3, 6201, 0.2, 'fijo', 0, '2030-01-01', '2030-12-31', 'COP', 'COP', true);
+    insert into public.armado_hoteles (paquete_id, hotel_id, categorias, regimenes) values (${PAQ_VIG}, ${HOT1}, array['Estandar'], array['Desayuno']);
+    insert into public.armado_paquetes (id, nombre, tipo, noches, destino_id, pct_mk, impuesto_tipo, impuesto_fijo, fecha_viaje_inicio, fecha_viaje_fin, moneda, moneda_publicacion, modo_oferta, trm_oferta, activo) values
+      (${PAQ_SIN}, 'Dinámico 63 con traslado incluido SIN tarifa', 'dinamico', 3, 6201, 0.2, 'fijo', 0, '2030-01-01', '2030-12-31', 'COP', 'COP', 'cop_trm_63', 4000, true);
+    insert into public.armado_hoteles (paquete_id, hotel_id, categorias, regimenes) values (${PAQ_SIN}, ${HOT1}, array['Estandar'], array['Desayuno']);
+    insert into public.salidas_dinamicas (id, paquete_id, aerolinea, ruta, origen, fecha_ida, fecha_regreso, valor_tiquete, aplica_mk, ta, fee_infante, activo, moneda) values
+      (${SAL_SIN}, ${PAQ_SIN}, 'Aerolínea 262', 'BOG - CTG - BOG', 'BOG', '2030-03-01', '2030-03-04', 300000, true, 0, 0, true, 'COP');
+    insert into public.armado_servicios (paquete_id, servicio_id, modo, incluido) values (${PAQ_VIG}, ${S_VIG}, 'persona', true), (${PAQ_SIN}, ${S_SIN}, 'persona', true);
+    insert into public.servicios_adicionales (id, nombre, proveedor_id, destino_id, precio_persona, categoria, moneda, tipo_tarifa, liquidacion, tipo_receptivo) values (${S_FUERA}, 'Traslado vigencia 2031 262', 6201, 6201, 0, 'tour_traslado', 'COP', 'persona', 'paquete', 'traslado');
+    insert into public.servicio_temporadas (id, servicio_id, nombre, fecha_inicio, fecha_fin, precio_persona) values (${ALTA(S_FUERA)}, ${S_FUERA}, 'ALTA', '2031-01-01', '2031-12-31', 60000);
+    insert into public.armado_paquetes (id, nombre, tipo, noches, destino_id, pct_mk, impuesto_tipo, impuesto_fijo, fecha_viaje_inicio, fecha_viaje_fin, moneda, moneda_publicacion, modo_oferta, trm_oferta, activo) values
+      (${PAQ_FUERA}, 'Dinámico 63 con traslado incluido SIN vigencia para la fecha', 'dinamico', 3, 6201, 0.2, 'fijo', 0, '2030-01-01', '2030-12-31', 'COP', 'COP', 'cop_trm_63', 4000, true);
+    insert into public.armado_hoteles (paquete_id, hotel_id, categorias, regimenes) values (${PAQ_FUERA}, ${HOT1}, array['Estandar'], array['Desayuno']);
+    insert into public.salidas_dinamicas (id, paquete_id, aerolinea, ruta, origen, fecha_ida, fecha_regreso, valor_tiquete, aplica_mk, ta, fee_infante, activo, moneda) values
+      (${SAL_FUERA}, ${PAQ_FUERA}, 'Aerolínea 262', 'BOG - CTG - BOG', 'BOG', '2030-03-01', '2030-03-04', 300000, true, 0, 0, true, 'COP');
+    insert into public.armado_servicios (paquete_id, servicio_id, modo, incluido) values (${PAQ_FUERA}, ${S_FUERA}, 'persona', true);
     -- paquetes dinámicos en modo oferta #63 (COP con TRM), con salida manual
     insert into public.armado_paquetes (id, nombre, tipo, noches, destino_id, pct_mk, impuesto_tipo, impuesto_fijo, fecha_viaje_inicio, fecha_viaje_fin, moneda, moneda_publicacion, modo_oferta, trm_oferta, activo) values
       (${PAQ_63}, 'Dinámico 63', 'dinamico', 3, 6201, 0.2, 'fijo', 0, '2030-01-01', '2030-12-31', 'COP', 'COP', 'cop_trm_63', 4000, true),
@@ -769,15 +793,43 @@ describe("262 · ruta de oferta #63 (crearCotizacion -> convertirCotizacion -> a
     assert.equal(r.ok, false);
     assert.deepEqual(cuentas(), antes, "nada escrito");
   });
-  test("O4 traslado por alcance INCLUIDO en un paquete: se rechaza al publicar o, a más tardar, al cotizar (#63), sin escribir nada", async () => {
-    const g = await generarTarifario(PAQ_63I);
-    console.log("      generarTarifario(paquete con traslado incluido) →", g.ok ? "ok" : (g as { error?: string }).error, "· diagnóstico:", sql("select coalesce(tarifario_diagnostico, '-') from public.armado_paquetes where id = " + PAQ_63I).slice(0, 400), "· filas publicadas:", sql("select count(*) from public.tarifario_resultado_publicable where paquete_id = " + PAQ_63I));
+  test("O4 traslado por alcance INCLUIDO con precio propio de ida y regreso (#63): se publica y se cotiza; sin tarifa válida (solo precio de un trayecto) el motivo queda visible y nada se cobra", async () => {
+    const g = await generarTarifario(PAQ_63I) as { ok: boolean; error?: string };
+    console.log("      generarTarifario(traslado incluido con precio propio de ida y regreso) →", g.ok ? "ok" : g.error, "· filas publicadas:", sql("select count(*) from public.tarifario_resultado_publicable where paquete_id = " + PAQ_63I));
+    assert.equal(g.ok, true, g.error);
+    const c = await crearCotizacion(inp(PAQ_63I, SAL_63I, []) as never) as { ok: boolean; id?: number; error?: string };
+    assert.equal(c.ok, true, c.error);
+    // Traslado incluido SIN tarifa válida de ida y regreso (solo precio de un trayecto): el paquete NO queda vendible prometiéndolo. Se bloquea la oferta afectada con el motivo.
     const antes = cuentas();
-    const c = await crearCotizacion(inp(PAQ_63I, SAL_63I, []) as never) as { ok: boolean; error?: string };
-    console.log("      crearCotizacion sobre ese paquete →", c.ok ? "COTIZÓ (!)" : c.error);
-    if (!g.ok) assert.match(String((g as { error?: string }).error), /no puede ir incluido/);
-    assert.equal(c.ok, false, "no se puede cotizar un paquete con un traslado por alcance incluido");
-    assert.deepEqual(cuentas(), antes);
+    const gs = await generarTarifario(PAQ_SIN) as { ok: boolean; error?: string };
+    const diag = sql("select coalesce(tarifario_diagnostico::text, '-') || ' || ' || coalesce(tarifario_error, '-') from public.armado_paquetes where id = " + PAQ_SIN);
+    console.log("      generarTarifario(traslado incluido SIN tarifa válida) →", gs.ok ? "ok" : gs.error, "· diagnóstico:", diag.slice(0, 700));
+    assert.doesNotMatch(String(gs.error ?? ""), /no puede ir incluido/, "ya no hay prohibición general");
+    const texto = gs.ok ? diag : String(gs.error);
+    assert.match(texto, /Traslado un solo precio 262/, "el motivo nombra el servicio");
+    assert.match(texto, /no tiene precio por persona de ida y regreso ni tarifa por persona/, "y dice qué falta");
+    assert.match(texto, /sin tarifa válida de ida y regreso/, "y que no se ofrece prometiéndolo");
+    assert.equal(sql("select count(*) from public.tarifario_resultado_publicable where paquete_id = " + PAQ_SIN), "0", "no se publica ninguna fila vendible de esa oferta");
+    const cs = await crearCotizacion(inp(PAQ_SIN, SAL_SIN, []) as never) as { ok: boolean; id?: number; error?: string };
+    console.log("      crearCotizacion sobre la oferta bloqueada →", cs.ok ? "COTIZÓ (!)" : cs.error);
+    assert.equal(cs.ok, false, "la oferta afectada no se puede cotizar");
+    assert.deepEqual(cuentas(), antes, "nada escrito");
+  });
+  test("O4b traslado INCLUIDO sin vigencia que cubra la fecha (#63): la oferta se bloquea con un motivo DISTINTO al de «sin tarifa de ida y regreso» y no se vende", async () => {
+    const antes = cuentas();
+    const g = await generarTarifario(PAQ_FUERA) as { ok: boolean; error?: string };
+    const diag = sql("select coalesce(tarifario_diagnostico::text, '-') || ' || ' || coalesce(tarifario_error, '-') from public.armado_paquetes where id = " + PAQ_FUERA);
+    console.log("      generarTarifario(traslado incluido SIN vigencia para la fecha) →", g.ok ? "ok" : g.error, "· diagnóstico:", diag.slice(0, 700));
+    const texto = g.ok ? diag : String(g.error);
+    assert.match(texto, /Traslado vigencia 2031 262/, "nombra el servicio");
+    assert.match(texto, /no tiene vigencia de tarifa para el 01\/03\/2030/, "dice que falta la VIGENCIA de la fecha");
+    assert.match(texto, /sin vigencia para esa fecha/);
+    assert.doesNotMatch(texto, /ida y regreso ni tarifa por persona/, "no se confunde con la falta de tarifa de ida y regreso");
+    assert.equal(sql("select count(*) from public.tarifario_resultado_publicable where paquete_id = " + PAQ_FUERA), "0", "ninguna fila vendible");
+    const c = await crearCotizacion(inp(PAQ_FUERA, SAL_FUERA, []) as never) as { ok: boolean; error?: string };
+    console.log("      crearCotizacion sobre la oferta sin vigencia →", c.ok ? "COTIZÓ (!)" : c.error);
+    assert.equal(c.ok, false, "el cliente no puede comprar un paquete que promete un traslado que se omitiría");
+    assert.deepEqual(cuentas(), antes, "nada escrito");
   });
   test("O5 SEGURIDAD DEL ENLACE sobre un contrato ligado a una aceptación #63 con el financiero pendiente", async () => {
     const n = numeroOk; const acep = Number(sql(`select aceptacion_63_id from public.ventas where numero_contrato = ${lit(n)}`));
@@ -997,38 +1049,55 @@ before(() => {
 
 describe("262 · traslado por alcance incompatible con la ruta de oferta #63 desde el armado (COP y USD)", () => {
   const filasPub = (paq: number) => sql(`select count(*) from public.tarifario_resultado where paquete_id = ${paq}`);
-  test("I1 marcar INCLUIDO un traslado por las acciones reales (setServicio y setServicios) falla con el mensaje y no escribe; como opcional sí se puede armar", async () => {
-    const msg = mensajeTrasladoIncluido("Traslado persona 262");
+  test("I1 marcar INCLUIDO un traslado con tarifa vigente (sin precios por trayecto) por las acciones reales (setServicio y setServicios): se permite y se guarda", async () => {
     for (const paq of [PAQ_63, PAQ_U63]) {
-      const antes = sql(`select count(*) from public.armado_servicios where paquete_id = ${paq} and incluido`);
-      const a = await setServicio(paq, S_TR, true, "persona", true) as { ok: boolean; error?: string };
-      assert.equal(a.ok, false); assert.equal(a.error, msg);
-      const b = await setServicios(paq, [{ servicioId: S_TR, modo: "persona", incluido: true }], true) as { ok: boolean; error?: string };
-      assert.equal(b.ok, false); assert.match(String(b.error), /no puede ir incluido/);
-      assert.equal(sql(`select count(*) from public.armado_servicios where paquete_id = ${paq} and incluido`), antes, `paquete ${paq}: no se marcó como incluido`);
+      const a = await setServicio(paq, S_VIG, true, "persona", true) as { ok: boolean; error?: string };
+      assert.equal(a.ok, true, a.error);
+      assert.equal(sql(`select incluido::text from public.armado_servicios where paquete_id = ${paq} and servicio_id = ${S_VIG}`), "true");
+      const b = await setServicios(paq, [{ servicioId: S_VIG, modo: "persona", incluido: true }, { servicioId: S_INC, modo: "persona", incluido: true }], true) as { ok: boolean; error?: string };
+      assert.equal(b.ok, true, b.error);
+      assert.equal(sql(`select count(*) from public.armado_servicios where paquete_id = ${paq} and incluido and servicio_id in (${S_VIG}, ${S_INC})`), "2");
+      sql(`delete from public.armado_servicios where paquete_id = ${paq} and servicio_id in (${S_VIG}, ${S_INC})`); // no contaminar los demás escenarios
     }
-    const opc = await setServicio(PAQ_63, S_TR, true, "persona", false) as { ok: boolean }; assert.equal(opc.ok, true, "como opcional se permite");
+    const opc = await setServicio(PAQ_63, S_TR, true, "persona", false) as { ok: boolean }; assert.equal(opc.ok, true, "como opcional también se permite");
   });
-  test("I2 armado LEGADO con el traslado ya incluido: generarTarifario devuelve ok:false con el motivo, marca el error de la generación y deja las filas anteriores sin exponerlas (snapshot no publicable)", async () => {
-    // paquete 6206 (traslado incluido insertado antes de la regla): primero se publica sin el incluido, luego se vuelve a dejar incluido por SQL (como un armado anterior)
-    sql(`update public.armado_servicios set incluido = false where paquete_id = ${PAQ_63I} and servicio_id = ${S_INC}`);
-    const g0 = await generarTarifario(PAQ_63I); assert.equal(g0.ok, true, JSON.stringify(g0));
-    const pub0 = filasPub(PAQ_63I); const est0 = sql(`select tarifario_estado||'/'||tarifario_snapshot_publicable||'/'||tarifario_generacion_publicada from public.armado_paquetes where id = ${PAQ_63I}`);
-    assert.ok(Number(pub0) > 0, "hay publicación previa: " + pub0);
-    sql(`update public.armado_servicios set incluido = true where paquete_id = ${PAQ_63I} and servicio_id = ${S_INC}`);
-    const g1 = await generarTarifario(PAQ_63I) as { ok: boolean; error?: string };
-    console.log("      generarTarifario con el traslado incluido →", g1.ok ? "ok (!)" : g1.error);
-    assert.equal(g1.ok, false); assert.equal(g1.error, mensajeTrasladoIncluido("Traslado incluido 262"));
-    const fila = sql(`select tarifario_estado||'|'||coalesce(tarifario_error,'-')||'|'||tarifario_snapshot_publicable||'|'||tarifario_generacion_publicada||'|'||tarifario_generacion from public.armado_paquetes where id = ${PAQ_63I}`);
-    console.log("      estado tras el fallo:", fila.slice(0, 260), "· filas publicadas antes/después:", pub0, "/", filasPub(PAQ_63I), "· antes:", est0);
-    assert.match(fila, /^fallido[|]/); assert.match(fila, /no puede ir incluido/); assert.match(fila, /[|]false[|]/, 'snapshot_publicable = false: la publicación anterior deja de ser vendible');
-    assert.equal(sql(`select count(*) from public.tarifario_resultado_publicable where paquete_id = ${PAQ_63I}`), '0', 'la vista pública ya no expone la publicación anterior');
-    assert.equal(filasPub(PAQ_63I), pub0, "las filas de tarifario_resultado se conservan; solo se desmarca el snapshot como publicable, como con cualquier otro fallo de negocio");
-    const c = await crearCotizacion({ ...inpOferta(PAQ_63I, SAL_63I, []) } as never) as { ok: boolean; error?: string };
-    console.log("      ¿se puede cotizar con la publicación anterior? →", c.ok ? "SÍ (usa la publicación previa)" : c.error);
-    // Generación fallida: el cliente ve el aviso neutro del paquete, NO el genérico «No se encontró la tarifa seleccionada».
-    assert.equal(c.ok, false); assert.equal(c.error, MENSAJE_PAQUETE_NO_DISPONIBLE_CLIENTE); assert.doesNotMatch(String(c.error), /No se encontró la tarifa/);
-    sql(`update public.armado_servicios set incluido = false where paquete_id = ${PAQ_63I} and servicio_id = ${S_INC}`);
+  test("I2 generarTarifario con el traslado incluido por tarifa vigente: publica filas, estado listo; el PVP del hotel sube exactamente en el traslado (una vez)", async () => {
+    const g = await generarTarifario(PAQ_VIG) as { ok: boolean; error?: string }; assert.equal(g.ok, true, g.error);
+    const gc = await generarTarifario(PAQ_PT) as { ok: boolean; error?: string }; assert.equal(gc.ok, true, gc.error);
+    assert.ok(Number(filasPub(PAQ_VIG)) > 0, "hay filas publicadas");
+    assert.equal(sql(`select tarifario_estado from public.armado_paquetes where id = ${PAQ_VIG}`), "listo");
+    const pv = (paq: number) => Number(sql(`select min(precio_pvp) from public.tarifario_resultado_publicable where paquete_id = ${paq} and modulo = 'porcion_terrestre' and acomodacion = 'doble'`));
+    const dif = pv(PAQ_VIG) - pv(PAQ_PT);
+    console.log("      PVP/persona doble con traslado incluido:", pv(PAQ_VIG), "· sin él:", pv(PAQ_PT), "· diferencia:", dif);
+    assert.equal(dif, pvp(60000), "el traslado entra UNA vez, con su tarifa vigente de ida y regreso y el markup del paquete");
+  });
+  test("I3 carrito de punta a punta: cotización con el traslado incluido -> contrato -> CxP; se cobra una sola vez y venta y costo cuadran contra el mismo hotel sin traslado", async () => {
+    const item = (paq: number, id: string) => ({ modulo: "porcion_terrestre", paqueteId: paq, hotelId: HOT1, bloqueoId: null, hotelNombre: "Hotel Uno 262", destino: "CARTAGENA 262", categoria: "Estandar", regimen: "Desayuno", fechaIda: "2030-03-01", fechaRegreso: "2030-03-04", noches: 3, habitaciones: { doble: 1 }, ninos: 0, ninos2: 0, infantes: 0, pax: 2, precio: 1, edadesMenores: [], cantidadMenores: 0, itemId: id });
+    const venderCarrito = async (paq: number, id: string) => {
+      const q = (await crearSolicitudReserva({ items: [item(paq, id)], tours: [], cliente: { ...CLIENTE, tipoDoc: "CC" } } as never)) as { ok: boolean; error?: string; cotizacion?: { id: number } };
+      assert.equal(q.ok, true, q.error);
+      const r = (await convertirCotizacionCarrito(q.cotizacion!.id, { agrupar: "todo", pasajeros: PAX.slice(0, 2), asesorInterno: "Asesor 262", asignaciones: [[1, 2]], asignacionesTours: [], monedaCobro: "COP" } as never)) as Res;
+      assert.equal(r.ok, true, r.error);
+      const n = r.numeros![0];
+      const v = JSON.parse(sql(`select row_to_json(t)::text from (select precio_venta::float8 pv, costo_hotel::float8 ch, costo_aereo::float8 ca, costo_receptivo::float8 cr, coalesce(costo_asistencia,0)::float8 cs, coalesce(otros_costos,0)::float8 co, financiero_estado fe from public.ventas where numero_contrato = ${lit(n)}) t`)) as { pv: number; ch: number; ca: number; cr: number; cs: number; co: number; fe: string };
+      const cx = JSON.parse(sql(`select coalesce(json_agg(json_build_object('servicio', servicio, 'tipo', tipo_proveedor, 'valor', valor_total::float8, 'sid', servicio_id) order by id)::text, '[]') from public.cuentas_por_pagar where numero_contrato = ${lit(n)}`)) as Array<{ servicio: string; tipo: string; valor: number; sid: number | null }>;
+      return { n, v, cx, q: q.cotizacion!.id };
+    };
+    const con = await venderCarrito(PAQ_VIG, "hvig"), sin = await venderCarrito(PAQ_PT, "hpt");
+    console.log("      CON traslado:", JSON.stringify(con.v), JSON.stringify(con.cx));
+    console.log("      SIN traslado:", JSON.stringify(sin.v), JSON.stringify(sin.cx));
+    assert.equal(con.v.fe, "completo"); assert.equal(sin.v.fe, "completo");
+    const delTraslado = con.cx.filter((x) => x.sid === S_VIG);
+    assert.equal(delTraslado.length, 1, "UNA sola CxP del traslado"); assert.equal(delTraslado[0].valor, 120000, "60.000 neto × 2 pasajeros, una vez");
+    assert.equal(con.cx.length, sin.cx.length + 1, "solo se añade la CxP del traslado");
+    assert.equal(sql(`select count(*) from public.contrato_servicios where numero_contrato = ${lit(con.n)} and servicio_id = ${S_VIG}`), "0", "un incluido no genera además una línea de traslado por alcance (no se cobra dos veces)");
+    assert.equal(con.v.pv - sin.v.pv, pvp(60000) * 2, "el contrato cobra el traslado UNA vez: tarifa vigente + markup, por 2 pasajeros");
+    const costoVentas = (v: typeof con.v) => v.ch + v.ca + v.cr + v.cs + v.co;
+    const sumaCxp = (c: typeof con.cx) => c.reduce((a, x) => a + x.valor, 0);
+    assert.equal(costoVentas(con.v), sumaCxp(con.cx), "costos de la venta == CxP (con traslado)");
+    assert.equal(costoVentas(sin.v), sumaCxp(sin.cx), "costos de la venta == CxP (sin traslado)");
+    assert.equal(sumaCxp(con.cx) - sumaCxp(sin.cx), 120000, "el costo sube exactamente el neto del traslado");
+    assert.equal((con.v.pv - sin.v.pv) - (sumaCxp(con.cx) - sumaCxp(sin.cx)), 30000, "margen del traslado = 150.000 − 120.000");
   });
 });
 

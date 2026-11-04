@@ -3,7 +3,7 @@
 // servicio_precio_alcance no se publicaba.
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { referenciaPublicacion, incluidoEnEstadia, type VigenciasServicio } from "../lib/calc/servicioVigencias.ts";
+import { referenciaPublicacion, incluidoEnEstadia, incluidoSeOmite, type VigenciasServicio } from "../lib/calc/servicioVigencias.ts";
 
 const ALTA = { id: 5, servicio_id: 10, nombre: "ALTA", fecha_inicio: "2030-01-01", fecha_fin: "2030-12-31", compra_inicio: null, compra_fin: null, prioridad: 1, precio_persona: null, precio_infante: null, recargo_individual: 0 };
 const base = (extra: Partial<VigenciasServicio>): VigenciasServicio => ({ servicioId: 10, nombre: "Traslado aeropuerto", temporadas: [ALTA as never], grupos: [], conFranjas: new Set(), ...extra });
@@ -66,7 +66,54 @@ test("servicio sin la modalidad nueva: comportamiento anterior (precio_persona /
   assert.equal(grupo.ok && grupo.rangos[0].precio, 90000);
 });
 
-test("un traslado por alcance no puede ir incluido en el hotel (no hay un precio único)", () => {
-  const r = incluidoEnEstadia(base({ usaAlcance: true, personaAlcance: new Map([["ALTA", 1]]) }), "persona", "2030-05-01", "2030-05-04");
-  assert.equal(r.ok, false); assert.match(!r.ok ? r.error : "", /no puede ir incluido/);
+// Un traslado incluido en el hotel se cobra por ida y regreso: precio propio si existe; si no, la tarifa vigente; sin ninguna, motivo concreto (se omite como cualquier incluido sin tarifa).
+const estadia = ["2030-05-01", "2030-05-04"] as const;
+test("traslado incluido, persona: usa la tarifa vigente de la vigencia cuando no hay precio propio de ida y regreso", () => {
+  const r = incluidoEnEstadia(base({ usaAlcance: true, personaAlcance: new Map([["ALTA", 1]]), temporadas: [{ ...ALTA, precio_persona: 80000, precio_infante: 0 } as never] }), "persona", ...estadia);
+  assert.equal(r.ok, true); assert.equal(r.ok && r.netoPersona, 80000, "el precio de un trayecto no se usa"); assert.equal(r.ok && r.netoInfante, 0, "regla de infante intacta");
+});
+test("traslado incluido, persona: el precio específico de ida y regreso gana sobre la tarifa vigente", () => {
+  const r = incluidoEnEstadia(base({ usaAlcance: true, personaIdaRegreso: new Map([["ALTA", 120000]]), temporadas: [{ ...ALTA, precio_persona: 80000 } as never] }), "persona", ...estadia);
+  assert.equal(r.ok && r.netoPersona, 120000);
+  const sinTarifaPropio = incluidoEnEstadia(base({ usaAlcance: true, personaIdaRegreso: new Map([["ALTA", 120000]]) }), "persona", ...estadia);
+  assert.equal(sinTarifaPropio.ok && sinTarifaPropio.netoPersona, 120000);
+});
+test("traslado incluido, grupo: rangos propios de ida y regreso mandan; los de la tarifa vigente completan los que no se cruzan", () => {
+  const r = incluidoEnEstadia(base({ usaAlcance: true,
+    gruposIdaRegreso: [{ pax_desde: 1, pax_hasta: 4, precio: 200000, temporada: "ALTA" }],
+    grupos: [{ pax_desde: 1, pax_hasta: 4, precio: 90000, temporada: "ALTA" }, { pax_desde: 5, pax_hasta: 8, precio: 150000, temporada: "ALTA" }] }), "grupo", ...estadia);
+  assert.deepEqual(r.ok && r.rangos, [{ pax_desde: 1, pax_hasta: 4, precio: 200000 }, { pax_desde: 5, pax_hasta: 8, precio: 150000 }]);
+});
+test("traslado incluido sin tarifa válida de ida y regreso: NO se omite, bloquea con motivo concreto (traslado_sin_tarifa)", () => {
+  const p = incluidoEnEstadia(base({ usaAlcance: true, personaAlcance: new Map([["ALTA", 1]]) }), "persona", ...estadia);
+  assert.equal(p.ok, false); assert.equal(!p.ok && p.motivo, "traslado_sin_tarifa"); assert.equal(incluidoSeOmite(p), false, "no se omite: el paquete no puede prometer un traslado que no se cobra");
+  assert.match(!p.ok ? p.error : "", /«Traslado aeropuerto».*ida y regreso ni tarifa por persona.*«ALTA».*Producto → Servicios/);
+  const g = incluidoEnEstadia(base({ usaAlcance: true }), "grupo", ...estadia);
+  assert.equal(!g.ok && g.motivo, "traslado_sin_tarifa"); assert.match(!g.ok ? g.error : "", /rangos de pasajeros de ida y regreso/);
+});
+test("un servicio que NO es traslado sin tarifa vigente sigue omitiéndose (regla de disponibilidad por fecha)", () => {
+  const r = incluidoEnEstadia(base({}), "persona", ...estadia);
+  assert.equal(!r.ok && r.motivo, "sin_tarifa"); assert.equal(incluidoSeOmite(r), true);
+  const sinVigencia = incluidoEnEstadia(base({ temporadas: [] }), "persona", ...estadia);
+  assert.equal(!sinVigencia.ok && sinVigencia.motivo, "sin_tarifa"); assert.equal(incluidoSeOmite(sinVigencia), true, "un tour/otro servicio sin vigencia para la fecha se omite como siempre");
+});
+test("traslado incluido SIN vigencia para la fecha: NO se omite, bloquea con un motivo distinto al de «sin tarifa de ida y regreso»", () => {
+  for (const modo of ["persona", "grupo"] as const) {
+    const r = incluidoEnEstadia(base({ usaAlcance: true, temporadas: [], personaIdaRegreso: new Map([["ALTA", 1]]) }), modo, ...estadia);
+    assert.equal(!r.ok && r.motivo, "traslado_sin_vigencia"); assert.equal(incluidoSeOmite(r), false);
+    assert.match(!r.ok ? r.error : "", /«Traslado aeropuerto» no tiene vigencia de tarifa para el 01[/]05[/]2030.*sin vigencia para esa fecha/);
+    assert.doesNotMatch(!r.ok ? r.error : "", /ida y regreso ni tarifa/, "no se confunde con la falta de tarifa");
+  }
+  const fuera = incluidoEnEstadia(base({ usaAlcance: true, temporadas: [{ ...ALTA, fecha_inicio: "2030-06-01", fecha_fin: "2030-06-30", precio_persona: 80000 } as never] }), "persona", ...estadia);
+  assert.equal(!fuera.ok && fuera.motivo, "traslado_sin_vigencia", "con vigencia, pero de otras fechas");
+});
+test("el motivo «sin vigencia» y el de «sin tarifa de ida y regreso» son distintos y la tarifa vigente basta (sin precios por trayecto)", () => {
+  const sinTarifa = incluidoEnEstadia(base({ usaAlcance: true }), "persona", ...estadia);
+  assert.equal(!sinTarifa.ok && sinTarifa.motivo, "traslado_sin_tarifa");
+  const ok = incluidoEnEstadia(base({ usaAlcance: true, temporadas: [{ ...ALTA, precio_persona: 80000 } as never] }), "persona", ...estadia);
+  assert.equal(ok.ok && ok.netoPersona, 80000);
+});
+test("traslado incluido con suplemento por horario: sigue pidiendo la hora (motivo franjas)", () => {
+  const r = incluidoEnEstadia(base({ usaAlcance: true, conFranjas: new Set(["ALTA"]), temporadas: [{ ...ALTA, precio_persona: 80000 } as never] }), "persona", ...estadia);
+  assert.equal(!r.ok && r.motivo, "franjas"); assert.match(!r.ok ? r.error : "", /hora/);
 });
