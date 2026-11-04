@@ -94,6 +94,7 @@ import { esNeutra } from "@/lib/cotizacion/condicionPago";
 import type { CondicionHotelFechas } from "@/lib/reservar/liquidacionHotel";
 import { combinarTernario, etiquetaCondicion, etiquetaPolitica, type EvidenciaTernaria } from "@/lib/tarifario/condicionOferta";
 import { personaCoincideFiltros, unidadCoincideFiltros, type FiltrosBusquedaBooking, type ComboPersonaElegido } from "@/lib/tarifario/filtrosBusqueda";
+import { EtiquetaDescuentoHotel } from "@/components/cotizacion/EtiquetaDescuentoHotel";
 import { ArrowUpDown, SlidersHorizontal, X, PawPrint, BadgeCheck, PlaneTakeoff, PlaneLanding, CalendarClock } from "lucide-react";
 
 const CAP_VACIA = { paxMin: null as number | null, paxMax: null as number | null, acom: [] as AcomConfig[] };
@@ -3887,6 +3888,8 @@ function SelectorPorFechas({
   // el precio mostrado no es el final — nunca se muestran como si fueran
   // gratis para cobrarlos después (decisión del dueño, revisión PR #294).
   const [serviciosGrupo, setServiciosGrupo] = useState<string[]>([]);
+  // #90: regla EBB / Long Stay que usó esta cotización por fechas (null = sin descuento). Solo aquí, nunca junto al precio base de la vitrina.
+  const [descuentoHotel, setDescuentoHotel] = useState<{ etiqueta: string } | null>(null);
 
   function cotizar(overrideIda?: string, overrideRegreso?: string, desdeSugerencia = false) {
     setErr("");
@@ -3900,9 +3903,10 @@ function SelectorPorFechas({
         setCat(r.combos[0]?.categoria ?? ""); setReg(r.combos[0]?.regimen ?? "");
         setSugerencias([]); setViaSugerencia(desdeSugerencia);
         setServiciosGrupo(r.serviciosGrupoPendientes ?? []);
+        setDescuentoHotel(r.descuentoHotel ?? null);
       } else {
         setCombos(null); setCondicion(null); setErr(r.error); setSugerencias(r.sugerencias); setViaSugerencia(false);
-        setServiciosGrupo([]);
+        setServiciosGrupo([]); setDescuentoHotel(null);
       }
       setSugerenciaAplicando(null);
     });
@@ -3975,6 +3979,7 @@ function SelectorPorFechas({
           <p className="mt-1 text-[11px] text-gray-400">Rango del paquete: {ventana.min ?? "—"} → {ventana.max ?? "—"}</p>
         )}
         {err && <p className="mt-2 text-sm text-red-600">{err}</p>}
+        {combos && descuentoHotel && <div className="mt-2"><EtiquetaDescuentoHotel descuento={descuentoHotel} /></div>}
         {serviciosGrupo.length > 0 && (
           <p className="mt-2 rounded-lg bg-amber-50 px-3 py-2 text-sm text-amber-700">
             Este plan incluye {serviciosGrupo.join(", ")} con tarifa por grupo: su valor depende del

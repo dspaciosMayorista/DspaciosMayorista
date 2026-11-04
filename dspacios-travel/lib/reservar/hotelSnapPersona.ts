@@ -36,6 +36,8 @@ export type HotelSnapPersona = {
   condiciones_tarifa: ComputoReserva["condicionesTarifa"];
   foto_url: string | null;
   nota_regimen: null;
+  /** #90: regla EBB / Long Stay que usó el cálculo; ausente si no hubo descuento. */
+  descuento_hotel?: { etiqueta: string };
 };
 
 /**
@@ -77,5 +79,6 @@ export function construirHotelSnapPersona(args: {
     menores_clasificados: { infantes: numInfantes, nino: numNinos, nino2: numNinos2 },
     distribucion_menores: distribucionMenores,
     condiciones_tarifa: condicionesTarifa,
+    ...(comp.descuentoHotel?.etiqueta ? { descuento_hotel: { etiqueta: comp.descuentoHotel.etiqueta } } : {}),
   };
 }

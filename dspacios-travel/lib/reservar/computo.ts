@@ -222,6 +222,8 @@ export type ComputoReserva = {
   // Composición del precio (hotel, vuelo, cada servicio incluido, markup global, redondeo) tal como la produjo el motor. Solo en la liquidación por fechas y sin conversión de moneda;
   // null = este camino no conserva componentes (tarifa publicada, oferta con TRM). Se guarda aparte y en privado (migración 272).
   composicion: Composicion | null;
+  // #90: regla EBB / Long Stay que usó este cálculo (null = sin descuento). Solo para mostrarla.
+  descuentoHotel: { etiqueta: string; tipo: "ebb" | "long_stay"; umbral: number; pct: number } | null;
 };
 
 // Expande `habitaciones: {doble: 2, triple: 1}` (conteo por tipo, la única
@@ -485,6 +487,7 @@ export async function computarReserva(
   const vigencias63: VigenciaCompra63[] = [];
   const nombresVigHotel63 = new Set<string>();
   let descuentoHotel90: DescuentoAplicado | null = null; // #90: EBB/Long Stay vigente hoy para lo publicado (null = ninguno)
+  let descuentoVivo90: DescuentoAplicado | null = null; // #90: el que aplicó el motor en vivo (porción/dinámico/empaquetado por fechas); solo para mostrar su etiqueta
 
   const usarFechas = !!solicitud ||
     input.modulo !== "bloqueo" && input.modulo !== "dinamico" && !!input.fechaIda && !!input.fechaRegreso && !!process.env.SUPABASE_SERVICE_ROLE_KEY;
@@ -537,6 +540,7 @@ export async function computarReserva(
     pvpInfanteSinFijo.mayor2 = combo.preciosSinFijo?.["infante"] ?? null;
     pvpInfanteSinFijo.menor2 = combo.preciosMenor2SinFijo?.["infante"] ?? null;
     if (combo.netos) for (const [acom, n] of Object.entries(combo.netos)) netoPorAcom[acom] = n;
+    descuentoVivo90 = (res as { descuentoHotel?: DescuentoAplicado | null } | null)?.descuentoHotel ?? null;
     const baseFechas = (res as { composicionBase?: Omit<BaseMotor, "netos" | "pvps"> } | null)?.composicionBase;
     if (baseFechas) composicionBase = { ...baseFechas, netos: { ...(combo.netos ?? {}) } };
     meta = { hotel_nombre: res!.hotelNombre, destino_nombre: res!.destinoNombre, fecha_ida: input.fechaIda!, fecha_regreso: input.fechaRegreso! };
@@ -1336,9 +1340,13 @@ export async function computarReserva(
   } catch {
     composicion = null; // la composición es un dato interno: ningún fallo suyo bloquea el cálculo ni la venta
   }
+  // #90: etiqueta de la regla que usó el cálculo (la del motor en vivo o la recompuesta sobre lo publicado). Ningún importe depende de ella.
+  const reglaUsada90 = descuentoVivo90 ?? descuentoHotel90;
+  const descuentoHotel = reglaUsada90?.etiqueta ? { etiqueta: reglaUsada90.etiqueta, tipo: reglaUsada90.tipo, umbral: reglaUsada90.umbral, pct: reglaUsada90.pct } : null;
+  if (composicion && descuentoHotel) composicion = { ...composicion, descuentoHotel };
 
   return {
     ok: true,
-    data: { origen, meta, pvpPorAcom, pvpMenor2PorAcom, netoPorAcom, precioVenta, paxConSilla, totalPax, numNinos, numNinos2, numInfantes, menoresDeDos, numMenoresDeDos, lineasMenores, distribucionMenores, edadesMenoresUsadas, lineasHab, serviciosItems, serviciosIncluidos, impuestoTotal, monedaReserva, notaNino: ninoNotaTxt, cargoMascota, ajusteRedondeo, notaMascota: petNotaTxt, condicionesTarifa, composicion, oferta63: oferta63 ? { ...oferta63, monedaHotel: monedaHotelOrigen63, monedaServicios: monedaServicios63 } : null, vigencias63 },
+    data: { origen, meta, pvpPorAcom, pvpMenor2PorAcom, netoPorAcom, precioVenta, paxConSilla, totalPax, numNinos, numNinos2, numInfantes, menoresDeDos, numMenoresDeDos, lineasMenores, distribucionMenores, edadesMenoresUsadas, lineasHab, serviciosItems, serviciosIncluidos, impuestoTotal, monedaReserva, notaNino: ninoNotaTxt, cargoMascota, ajusteRedondeo, notaMascota: petNotaTxt, condicionesTarifa, composicion, descuentoHotel, oferta63: oferta63 ? { ...oferta63, monedaHotel: monedaHotelOrigen63, monedaServicios: monedaServicios63 } : null, vigencias63 },
   };
 }

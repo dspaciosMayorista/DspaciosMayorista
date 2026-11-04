@@ -31,6 +31,21 @@ export interface DescuentoAplicado {
   tipo: TipoReglaDescuento;
   umbral: number;
   pct: number;
+  /** «EBB 2 · 60+ días · 23 %» o «Long Stay · 25 %»: la regla que ganó (nunca inferida del importe). La fija `resolverDescuentoHotel`. */
+  etiqueta?: string;
+}
+
+const pctTexto = (pct: number) => `${String(Math.round(pct * 100) / 100).replace(".", ",")} %`;
+
+/**
+ * Etiqueta de la regla ganadora. EBB se numera por escalón: la posición (1, 2, 3…) de la regla entre las EBB vigentes del hotel ordenadas por días mínimos.
+ * Long Stay lleva solo su porcentaje. Función pura sobre la regla usada; no depende de ningún importe.
+ */
+export function etiquetaReglaGanadora(ganadora: Pick<DescuentoAplicado, "tipo" | "umbral" | "pct">, reglas: readonly ReglaDescuentoHotel[]): string {
+  if (ganadora.tipo === "long_stay") return `Long Stay · ${pctTexto(ganadora.pct)}`;
+  const escalones = [...new Set(reglas.filter((r) => r.tipo === "ebb" && r.activa !== false && Number.isFinite(Number(r.umbral)) && Number(r.umbral) >= 1 && Number(r.pct) > 0 && Number(r.pct) < 100).map((r) => Number(r.umbral)))].sort((a, b) => a - b);
+  const n = escalones.indexOf(ganadora.umbral) + 1;
+  return `EBB ${n > 0 ? `${n} · ` : ""}${ganadora.umbral}+ días · ${pctTexto(ganadora.pct)}`;
 }
 
 
@@ -66,7 +81,7 @@ export function resolverDescuentoHotel(
       : r.tipo === "long_stay" && args.numNoches >= umbral;
     if (cumple && (mejor == null || pct > mejor.pct)) mejor = { tipo: r.tipo, umbral, pct };
   }
-  return mejor;
+  return mejor ? { ...mejor, etiqueta: etiquetaReglaGanadora(mejor, reglas) } : null;
 }
 
 /** Aplica el descuento a una neta; redondea a centavos (USD) o peso (COP). */

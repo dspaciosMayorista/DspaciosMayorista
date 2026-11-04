@@ -34,6 +34,7 @@ import { formatoExacto, repartoPorPersona } from "@/lib/contrato/repartoTarifa";
 
 // Incluye / No incluye guardado como texto (una línea por ítem) → viñetas. Mismo criterio que `lineasTexto` de la comparativa.
 const lineasTextoDoc = (t?: string | null) => (t || "").split(/\r?\n|·|;/).map((x) => x.replace(/^[-•*\s]+/, "").trim()).filter(Boolean);
+import { EtiquetaDescuentoHotel } from "@/components/cotizacion/EtiquetaDescuentoHotel";
 import { agruparCondicionesTarifaPorTexto, type CondicionTarifaAplicada } from "@/lib/calc/condicionesTarifa";
 
 // `condiciones_tarifa` opcional (ausente = cotizaciones/contratos anteriores
@@ -42,6 +43,8 @@ import { agruparCondicionesTarifaPorTexto, type CondicionTarifaAplicada } from "
 type HotelConNota = ContratoHotel & {
   nota_regimen?: string | null; foto_url?: string | null;
   condiciones_tarifa?: CondicionTarifaAplicada[] | null;
+  // #90: regla EBB / Long Stay que usó el cálculo de ESTA cotización (ausente = sin descuento). Presentación: no entra en ningún total.
+  descuento_hotel?: { etiqueta?: string | null } | null;
 };
 
 // Agrupa condiciones IDÉNTICAS en texto (de temporadas distintas) en una
@@ -554,6 +557,9 @@ export function ContratoDocumento({
                     <div className="text-xs text-gray-500">
                       {h.detalle_acomodacion}
                     </div>
+                  )}
+                  {h.descuento_hotel?.etiqueta && (
+                    <div className="mt-1"><EtiquetaDescuentoHotel descuento={h.descuento_hotel} /></div>
                   )}
                   {h.nota_regimen && (
                     <div className="mt-1 break-inside-avoid rounded bg-gray-50 px-2 py-1 text-xs text-gray-600">

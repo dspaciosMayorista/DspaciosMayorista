@@ -37,6 +37,8 @@ export type Composicion = {
   total: number;
   /** Σ líneas + adicionales == total guardado. */
   cuadra: boolean;
+  /** #90: regla EBB / Long Stay que usó el cálculo (solo si se aplicó descuento). Informativo: no entra en ninguna suma. */
+  descuentoHotel?: { etiqueta: string; tipo: "ebb" | "long_stay"; umbral: number; pct: number } | null;
 };
 
 /** Lo que produce el motor de liquidación por fechas (se pasa tal cual, sin recalcular precios). */
@@ -162,9 +164,14 @@ export function leerComposicion(raw: unknown): Composicion | null {
     adicionales.push({ tipo: k.tipo as AdicionalComposicion["tipo"], nombre: k.nombre, total: k.total });
   }
   const suma = lineas.reduce((t, l) => t + l.total, 0) + adicionales.reduce((t, x) => t + x.total, 0);
+  // #90: etiqueta de la regla EBB / Long Stay (opcional: las cotizaciones anteriores no la traen).
+  const d = r.descuentoHotel as Record<string, unknown> | null | undefined;
+  const dh = d && typeof d.etiqueta === "string" && (d.tipo === "ebb" || d.tipo === "long_stay") && esNum(d.umbral) && esNum(d.pct)
+    ? { etiqueta: d.etiqueta, tipo: d.tipo as "ebb" | "long_stay", umbral: d.umbral, pct: d.pct } : null;
   return {
     version: 1, moneda: r.moneda, trm: esNum(r.trm) ? r.trm : null, markup: { tipo: "global", pct: mk.pct },
     impuestoIncluido: esNum(r.impuestoIncluido) ? r.impuestoIncluido : 0, lineas, adicionales, total: r.total, cuadra: Math.abs(suma - r.total) <= 0.01,
+    ...(dh ? { descuentoHotel: dh } : {}),
   };
 }
 

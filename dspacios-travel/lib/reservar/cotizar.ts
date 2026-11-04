@@ -275,6 +275,8 @@ export type CotizarResult =
       // revisión PR #294) — nunca mostrarlo como si estuviera incluido gratis.
       serviciosGrupoPendientes: string[];
       incluidosDeLaSalida?: IncluidosDeLaSalida;
+      // #90: regla EBB / Long Stay que usó este cálculo (null = sin descuento). Solo se muestra.
+      descuentoHotel?: { etiqueta: string; tipo: "ebb" | "long_stay"; umbral: number; pct: number } | null;
     }
   | { ok: false; error: string; sugerencias: SugerenciaFecha[] };
 
@@ -373,6 +375,8 @@ export async function cotizarPorFechas(inputRaw: unknown): Promise<CotizarResult
   const condicion = condicionHotelFechas(datos.temporadas, { fechaIda: input.fechaIda, fechaRegreso: input.fechaRegreso });
   return {
     ok: true, combos: combosPublicos, noches: numNoches, moneda: res.moneda, condicion,
+    // #90: regla EBB / Long Stay que usó ESTE cálculo (null = no se aplicó descuento): solo para mostrarla, no cambia ningún importe.
+    descuentoHotel: res.descuentoHotel?.etiqueta ? { etiqueta: res.descuentoHotel.etiqueta, tipo: res.descuentoHotel.tipo, umbral: res.descuentoHotel.umbral, pct: res.descuentoHotel.pct } : null,
     // Marca honesta (decisión del dueño): esta tabla es POR PERSONA y no
     // conoce el tamaño del grupo, así que un servicio incluido con cobro por
     // grupo no puede estar en `precios`. Se nombra para que la UI advierta

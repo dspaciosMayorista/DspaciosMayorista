@@ -107,6 +107,13 @@ describe("hotel USD + paquete publicado COP con TRM: EBB 18 % (30 días, 3 noche
     assert.equal(sumaEquivalentesOferta63([{ valor: costoUsd, moneda: "USD" }], "COP", TRM), 1_978_800, "costo_hotel del contrato == equivalente de la CxP");
     assert.equal(cxp.valor_cop, 2 * (hotelComp?.neto ?? 0), "CxP == neta que respalda el PVP");
     assert.equal(JSON.stringify([t.tarifa_hotel, t.hotel_temporadas]), baseAntes, "netas y temporadas originales intactas");
+    // #90: la etiqueta es la regla que usó el cálculo; los importes de arriba son los de siempre (la etiqueta no cambia ningún total).
+    assert.equal(r.data.descuentoHotel?.etiqueta, "EBB 1 · 30+ días · 18 %");
+    assert.equal(r.data.composicion?.descuentoHotel?.etiqueta, "EBB 1 · 30+ días · 18 %");
+    // El snapshot de la cotización (lo que ven venta y el cliente) lleva la MISMA etiqueta que el cálculo aplicado a este bloqueo publicado.
+    const { construirHotelSnapPersona } = await import("@/lib/reservar/hotelSnapPersona.ts");
+    const snap = construirHotelSnapPersona({ id: 1, ref: "r1", comp: r.data, categoria: CAT, regimen: REGIMEN, destinoFallback: null, hotelNombreFallback: "Hotel", fotoUrl: null, edadesMenoresConfirmadas: [] });
+    assert.deepEqual(snap.descuento_hotel, { etiqueta: "EBB 1 · 30+ días · 18 %" });
   });
 
   test("29 días: sin descuento, el publicado queda tal cual y la neta es la base (301,65 USD)", async () => {
@@ -115,6 +122,11 @@ describe("hotel USD + paquete publicado COP con TRM: EBB 18 % (30 días, 3 noche
     if (!r.ok) return;
     assert.equal(r.data.netoPorAcom.doble, 301.65);
     assert.equal(r.data.pvpPorAcom.doble, 2_639_000);
+    assert.equal(r.data.descuentoHotel, null, "sin descuento no hay etiqueta");
+    const { construirHotelSnapPersona } = await import("@/lib/reservar/hotelSnapPersona.ts");
+    const snap = construirHotelSnapPersona({ id: 1, ref: "r1", comp: r.data, categoria: CAT, regimen: REGIMEN, destinoFallback: null, hotelNombreFallback: "Hotel", fotoUrl: null, edadesMenoresConfirmadas: [] });
+    assert.equal("descuento_hotel" in snap, false, "el snapshot sin descuento no lleva etiqueta");
+    assert.equal(r.data.composicion?.descuentoHotel, undefined);
   });
 
   test("4 noches y 10 días de anticipo: Long Stay 25 % (sin EBB) sobre 402,20 USD → 301,65 USD", async () => {
@@ -123,12 +135,15 @@ describe("hotel USD + paquete publicado COP con TRM: EBB 18 % (30 días, 3 noche
     if (!r.ok) return;
     assert.equal(r.data.netoPorAcom.doble, 301.65);
     assert.equal(r.data.pvpPorAcom.doble, Math.ceil((301.65 * TRM / 0.8 + R) / 1000) * 1000);
+    assert.equal(r.data.descuentoHotel?.etiqueta, "Long Stay · 25 %");
   });
 
   test("90 días y 4 noches: gana el 28 % de EBB, no el 25 % de Long Stay ni la suma", async () => {
     const r = await cotizar(tablas(90, 4));
     assert.equal(r.ok, true, r.ok ? "" : r.error);
     if (r.ok) assert.equal(r.data.netoPorAcom.doble, 289.58); // 402,20 × 0,72 = 289,584
+    // EBB y Long Stay simultáneos: solo la ganadora, con su escalón.
+    if (r.ok) assert.equal(r.data.descuentoHotel?.etiqueta, "EBB 3 · 90+ días · 28 %");
   });
 });
 
