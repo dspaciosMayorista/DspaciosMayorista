@@ -1119,7 +1119,7 @@ export async function computarReserva(
     if (incErr) return { ok: false, error: `No se pudieron consultar los servicios incluidos del paquete: ${incErr.message}` };
     if (incRows?.length) {
       const ids = incRows.map((r) => r.servicio_id).filter((id): id is number => id != null);
-      // SIN «GENERAL»: el costo del incluido sale de la vigencia del día de ida (precio por persona o rangos de ESA vigencia); sin vigencia, sin precio/rango o
+      // El costo del incluido sale de la vigencia del día de ida (precio por persona o rangos de ESA vigencia); un traslado sin NINGUNA vigencia usa su tarifa base (incluidoEnEstadia). Sin tarifa, sin precio/rango o
       // con franjas horarias (un traslado con suplemento por hora no puede ir incluido) falla con un mensaje legible antes de numerar.
       if (!meta.fecha_ida) return { ok: false, error: "Indica la fecha del viaje para calcular los servicios incluidos del paquete." };
       const rvInc = await cargarVigenciasServicios(catalogo, incRows.map((r) => ({

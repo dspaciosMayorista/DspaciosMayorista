@@ -101,7 +101,7 @@ test("traslado incluido SIN vigencia para la fecha: NO se omite, bloquea con un 
   for (const modo of ["persona", "grupo"] as const) {
     const r = incluidoEnEstadia(base({ usaAlcance: true, temporadas: [], personaIdaRegreso: new Map([["ALTA", 1]]) }), modo, ...estadia);
     assert.equal(!r.ok && r.motivo, "traslado_sin_vigencia"); assert.equal(incluidoSeOmite(r), false);
-    assert.match(!r.ok ? r.error : "", /«Traslado aeropuerto» no tiene vigencia de tarifa para el 01[/]05[/]2030.*sin vigencia para esa fecha/);
+    assert.match(!r.ok ? r.error : "", /«Traslado aeropuerto» no tiene vigencia de tarifa para el 01[/]05[/]2030.*y tampoco se pudo leer su tarifa base.*completa la tarifa base/);
     assert.doesNotMatch(!r.ok ? r.error : "", /ida y regreso ni tarifa/, "no se confunde con la falta de tarifa");
   }
   const fuera = incluidoEnEstadia(base({ usaAlcance: true, temporadas: [{ ...ALTA, fecha_inicio: "2030-06-01", fecha_fin: "2030-06-30", precio_persona: 80000 } as never] }), "persona", ...estadia);
@@ -143,4 +143,95 @@ test("salida pasada con tarifa válida y salida futura válida: se cobran normal
   assert.equal(incluidoEnEstadia(sinTarifa, "persona", "2020-03-01", "2020-03-01").ok, false, "una fecha muy pasada con el 'hoy' real: no aplica bloqueo");
   assert.equal(incluidoSeOmite(incluidoEnEstadia(sinTarifa, "persona", "2020-03-01", "2020-03-01")), true);
   assert.equal(incluidoSeOmite(incluidoEnEstadia(sinTarifa, "persona", "2099-03-01", "2099-03-01")), false, "una fecha futura con el 'hoy' real bloquea");
+});
+
+// ── Respaldo: tarifa base para un traslado incluido SIN vigencia en la fecha ─────────────────────────────────────────────────────────────────────────────────────────────
+const HOY = "2026-11-03";
+const BASE_GRUPOS = [{ pax_desde: 1, pax_hasta: 4, precio: 200000, temporada: "GENERAL" }, { pax_desde: 5, pax_hasta: 10, precio: 150000, temporada: "GENERAL" }];
+const conBase = (extra: Partial<VigenciasServicio> = {}) => base({ usaAlcance: true, temporadas: [], tarifaBase: { precioPersona: 60000, grupos: BASE_GRUPOS }, ...extra });
+test("respaldo base, persona: sin vigencia para la fecha cobra precio_persona base (sin precios por trayecto) y el traslado sigue siendo cobrable", () => {
+  const r = incluidoEnEstadia(conBase(), "persona", ...estadia, HOY);
+  assert.equal(r.ok && r.netoPersona, 60000); assert.equal(r.ok && r.origen, "base"); assert.equal(r.ok && r.vigencia, "GENERAL");
+  // con vigencia propia de OTRAS fechas (hueco) también cae a la base
+  const hueco = incluidoEnEstadia(conBase({ temporadas: [{ ...ALTA, fecha_inicio: "2030-06-01", fecha_fin: "2030-06-30", precio_persona: 80000 } as never] }), "persona", ...estadia, HOY);
+  assert.equal(hueco.ok && hueco.netoPersona, 60000);
+});
+test("respaldo base, grupo: usa los rangos GENERAL; un rango inválido o ausente bloquea con el diagnóstico de qué falta", () => {
+  const r = incluidoEnEstadia(conBase(), "grupo", ...estadia, HOY);
+  assert.deepEqual(r.ok && r.rangos, [{ pax_desde: 1, pax_hasta: 4, precio: 200000 }, { pax_desde: 5, pax_hasta: 10, precio: 150000 }]); assert.equal(r.ok && r.origen, "base");
+  const sin = incluidoEnEstadia(conBase({ tarifaBase: { precioPersona: 60000, grupos: [] } }), "grupo", ...estadia, HOY);
+  assert.equal(!sin.ok && sin.motivo, "traslado_sin_vigencia"); assert.match(!sin.ok ? sin.error : "", /tampoco tiene rangos base [(]GENERAL[)]/);
+  const malo = incluidoEnEstadia(conBase({ tarifaBase: { precioPersona: null, grupos: [{ ...BASE_GRUPOS[0], precio: -1 }] } }), "grupo", ...estadia, HOY);
+  assert.match(!malo.ok ? malo.error : "", /precios mayores que cero en todos sus rangos base/);
+  // los rangos de OTRA vigencia (no GENERAL) no cuentan como base
+  const ajenos = incluidoEnEstadia(conBase({ tarifaBase: { precioPersona: null, grupos: [{ ...BASE_GRUPOS[0], temporada: "ALTA" }] } }), "grupo", ...estadia, HOY);
+  assert.equal(ajenos.ok, false);
+});
+test("respaldo base ausente: conserva el bloqueo (no se omite) con diagnóstico que dice qué falta, en persona y en grupo", () => {
+  for (const [modo, tb] of [["persona", { precioPersona: null, grupos: [] }], ["persona", { precioPersona: -5, grupos: [] }], ["grupo", { precioPersona: 60000, grupos: [] }]] as [("persona" | "grupo"), { precioPersona: number | null; grupos: never[] }][]) {
+    const r = incluidoEnEstadia(conBase({ tarifaBase: tb }), modo, ...estadia, HOY);
+    assert.equal(!r.ok && r.motivo, "traslado_sin_vigencia"); assert.equal(incluidoSeOmite(r), false);
+    assert.match(!r.ok ? r.error : "", /no tiene vigencia de tarifa para el 01[/]05[/]2030.*tampoco tiene (un precio base por persona mayor que cero|rangos base)/);
+  }
+  const sinDato = incluidoEnEstadia(conBase({ tarifaBase: undefined }), "persona", ...estadia, HOY);
+  assert.match(!sinDato.ok ? sinDato.error : "", /tampoco se pudo leer su tarifa base/);
+});
+test("una tarifa específica vigente gana sobre la base (precio propio de ida y regreso, o la tarifa de la vigencia)", () => {
+  const propio = incluidoEnEstadia(conBase({ temporadas: [ALTA as never], personaIdaRegreso: new Map([["ALTA", 120000]]) }), "persona", ...estadia, HOY);
+  assert.equal(propio.ok && propio.netoPersona, 120000); assert.equal(propio.ok && propio.origen, undefined);
+  const vig = incluidoEnEstadia(conBase({ temporadas: [{ ...ALTA, precio_persona: 80000 } as never] }), "persona", ...estadia, HOY);
+  assert.equal(vig.ok && vig.netoPersona, 80000);
+  const g = incluidoEnEstadia(conBase({ temporadas: [ALTA as never], gruposIdaRegreso: [{ pax_desde: 1, pax_hasta: 2, precio: 99000, temporada: "ALTA" }] }), "grupo", ...estadia, HOY);
+  assert.deepEqual(g.ok && g.rangos, [{ pax_desde: 1, pax_hasta: 2, precio: 99000 }]);
+});
+test("una vigencia que cubre la fecha pero está incompleta, o con la compra cerrada, NO cae a la base", () => {
+  const incompleta = incluidoEnEstadia(conBase({ temporadas: [ALTA as never] }), "persona", ...estadia, HOY);
+  assert.equal(!incompleta.ok && incompleta.motivo, "traslado_sin_tarifa");
+  const incompletaG = incluidoEnEstadia(conBase({ temporadas: [ALTA as never] }), "grupo", ...estadia, HOY);
+  assert.equal(!incompletaG.ok && incompletaG.motivo, "traslado_sin_tarifa");
+  // compra cerrada: la vigencia sigue cubriendo la fecha del viaje; se cobra SU precio, no el de la base
+  const cerrada = incluidoEnEstadia(conBase({ temporadas: [{ ...ALTA, precio_persona: 80000, compra_inicio: "2020-01-01", compra_fin: "2020-12-31" } as never] }), "persona", ...estadia, HOY);
+  assert.equal(cerrada.ok && cerrada.netoPersona, 80000); assert.equal(cerrada.ok && cerrada.origen, undefined);
+  // cobertura PARCIAL de la estadía (precio ambiguo): sigue bloqueando
+  const parcial = incluidoEnEstadia(conBase({ temporadas: [{ ...ALTA, fecha_inicio: "2030-05-03", fecha_fin: "2030-12-31", precio_persona: 80000 } as never] }), "persona", ...estadia, HOY);
+  assert.equal(!parcial.ok && parcial.motivo, "traslado_sin_vigencia");
+});
+test("salida pasada con hueco: se omite como antes (no usa la base); hoy y futura sí usan la base", () => {
+  const ayer = incluidoEnEstadia(conBase(), "persona", "2026-11-02", "2026-11-02", HOY);
+  assert.equal(incluidoSeOmite(ayer), true);
+  for (const f of ["2026-11-03", "2026-12-20"]) { const r = incluidoEnEstadia(conBase(), "persona", f, f, HOY); assert.equal(r.ok && r.netoPersona, 60000, f); }
+});
+test("un servicio que NO es traslado nunca usa la base aunque la tenga", () => {
+  const r = incluidoEnEstadia(base({ temporadas: [], tarifaBase: { precioPersona: 60000, grupos: [] } }), "persona", ...estadia, HOY);
+  assert.equal(incluidoSeOmite(r), true);
+});
+test("respaldo base: precio_infante 0 = gratis, NULL = paga como adulto, valor inválido falla cerrado (dato_invalido); una vigencia específica no lo toca", () => {
+  const inf = (precioInfante: number | null | undefined) => incluidoEnEstadia(conBase({ tarifaBase: { precioPersona: 60000, precioInfante, grupos: [] } }), "persona", ...estadia, HOY);
+  const gratis = inf(0); assert.equal(gratis.ok && gratis.netoInfante, 0); assert.equal(gratis.ok && gratis.netoPersona, 60000);
+  const comoAdulto = inf(null); assert.equal(comoAdulto.ok && comoAdulto.netoInfante, null);
+  assert.equal(inf(undefined).ok && (inf(undefined) as { netoInfante: number | null }).netoInfante, null);
+  assert.equal(inf(25000).ok && (inf(25000) as { netoInfante: number | null }).netoInfante, 25000);
+  for (const malo of [-1, Number.NaN, Number.POSITIVE_INFINITY]) { const r = inf(malo); assert.equal(!r.ok && r.motivo, "dato_invalido", String(malo)); assert.equal(incluidoSeOmite(r), false); assert.match(!r.ok ? r.error : "", /precio de infante base no válido/); }
+  // con una vigencia que cubre la fecha, el infante base ni se mira (aunque sea inválido)
+  const vig = incluidoEnEstadia(conBase({ temporadas: [{ ...ALTA, precio_persona: 80000, precio_infante: 5000 } as never], tarifaBase: { precioPersona: 60000, precioInfante: Number.NaN, grupos: [] } }), "persona", ...estadia, HOY);
+  assert.equal(vig.ok && vig.netoInfante, 5000);
+});
+test("respaldo base: un precio base por persona 0 (valor por defecto de un servicio solo por vigencias) NO se toma como traslado gratis", () => {
+  const r = incluidoEnEstadia(conBase({ tarifaBase: { precioPersona: 0, grupos: [] } }), "persona", ...estadia, HOY);
+  assert.equal(!r.ok && r.motivo, "traslado_sin_vigencia"); assert.match(!r.ok ? r.error : "", /precio base por persona mayor que cero/);
+});
+test("respaldo base, grupo: un rango GENERAL en 0, NULL/vacío o inválido (o uno solo de varios) deja la tarifa base sin configurar y bloquea con el aviso de configurar vigencias o tarifa base", () => {
+  const g = (precio: number) => ({ pax_desde: 1, pax_hasta: 4, precio, temporada: "GENERAL" });
+  for (const [etiqueta, grupos] of [["0", [g(0)]], ["NULL", [g(Number(null))]], ["NaN", [g(Number.NaN)]], ["negativo", [g(-1)]], ["uno en 0 de varios", [g(200000), { ...g(0), pax_desde: 5, pax_hasta: 8 }]], ["vacíos", []]] as const) {
+    const r = incluidoEnEstadia(conBase({ tarifaBase: { precioPersona: 60000, grupos: [...grupos] } }), "grupo", ...estadia, HOY);
+    assert.equal(!r.ok && r.motivo, "traslado_sin_vigencia", etiqueta); assert.equal(incluidoSeOmite(r), false, etiqueta);
+    assert.match(!r.ok ? r.error : "", /tampoco tiene (rangos base|precios mayores que cero en todos sus rangos base).*Carga o amplía la vigencia, o completa la tarifa base/, etiqueta);
+  }
+  const ok = incluidoEnEstadia(conBase({ tarifaBase: { precioPersona: 0, grupos: [g(200000)] } }), "grupo", ...estadia, HOY);
+  assert.deepEqual(ok.ok && ok.rangos, [{ pax_desde: 1, pax_hasta: 4, precio: 200000 }], "en grupo solo cuentan los rangos GENERAL (el precio_persona base no interviene)");
+});
+test("respaldo base: precio_persona NULL/vacío/NaN = sin configurar; con base de adulto válida, precio_infante 0 sigue siendo infante gratis", () => {
+  for (const p of [null, Number.NaN, 0, -5]) assert.equal(incluidoEnEstadia(conBase({ tarifaBase: { precioPersona: p as never, precioInfante: 0, grupos: [] } }), "persona", ...estadia, HOY).ok, false, String(p));
+  const r = incluidoEnEstadia(conBase({ tarifaBase: { precioPersona: 60000, precioInfante: 0, grupos: [] } }), "persona", ...estadia, HOY);
+  assert.equal(r.ok && r.netoPersona, 60000); assert.equal(r.ok && r.netoInfante, 0);
 });

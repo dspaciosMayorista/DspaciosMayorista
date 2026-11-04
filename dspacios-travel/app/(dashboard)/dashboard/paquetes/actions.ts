@@ -944,8 +944,8 @@ export async function generarTarifario(paqueteId: number, opciones: OpcionesGene
   if (eHotelesSel) return await fallarTecnico(eHotelesSel.message);
   if (eServiciosSel) return await fallarTecnico(eServiciosSel.message);
 
-  // Vigencias de cada servicio seleccionado. SIN «GENERAL»: ni el precio base del servicio ni los rangos GENERAL se usan como respaldo (siguen en la base, solo
-  // como dato histórico). Todo precio publicado sale de una vigencia y, por grupo, de un rango de ESA vigencia — la misma regla con la que luego se cotiza.
+  // Vigencias de cada servicio seleccionado. La tarifa base (precio_persona/precio_infante y rangos GENERAL) NO sustituye a una vigencia: solo respalda a un traslado
+  // INCLUIDO sin ninguna vigencia para la fecha (incluidoEnEstadia). Todo lo demás se publica desde una vigencia y, por grupo, desde un rango de ESA vigencia — la misma regla con la que luego se cotiza.
   cron.etapa("lectura_grupos_servicio");
   const servicioIds = (serviciosSel ?? []).map((s) => s.servicio_id);
   const vigenciasPorServicio = new Map<number, VigenciasServicio>();

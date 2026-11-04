@@ -123,7 +123,7 @@ export function PreciosAlcanceEditor({ servicioId, temporadaId, nombre, tarifaVi
   const lleva = llevaTraslado(clasif[servicioId] ?? { tipo_receptivo: null });
   if (lleva !== true) return null;
   if (nombre.trim().toUpperCase() === "GENERAL") {
-    return <p className="mt-2 text-[11px] text-gray-500">GENERAL es la tarifa histórica y no se vende: los precios por trayecto se cargan en una vigencia con fechas.</p>;
+    return <p className="mt-2 text-[11px] text-gray-500">GENERAL es la tarifa base: solo respalda a un traslado incluido cuando ninguna vigencia cubre la fecha. Los precios por trayecto se cargan en una vigencia con fechas.</p>;
   }
   const errores = validarPreciosAlcance(filas.map(aFila));
   const usaTarifa = hayTarifaVigente(tarifaVigente);

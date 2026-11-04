@@ -148,7 +148,7 @@ export type FilaServicioIncluidoRaw = {
   servicio_id: number; modo: string | null; nombre: string | null; categoria: string | null;
   proveedor_id: number | null;
   rangos_grupo: { pax_desde: number; pax_hasta: number; precio: number }[];
-  // Vigencias y rangos del servicio (SIN «GENERAL»): el precio horneado sale de la vigencia del día de ida.
+  // Vigencias y rangos del servicio (más la tarifa base, solo para un traslado sin vigencia): el precio horneado sale de la vigencia del día de ida.
   vigencias?: VigenciasServicio;
 };
 export type FilaBlackoutHotelRaw = { fecha_inicio: string; fecha_fin: string; total: boolean; acomodaciones: string[] | null; categorias: string[] | null };
@@ -238,7 +238,7 @@ export function evaluarHotelPorFechas(
   const composicionServicios: BaseMotor["servicios"] = [];
   for (const s of datos.serviciosIncluidos) {
     if (!s.incluido) continue;
-    // SIN «GENERAL»: la vigencia del día de ida decide el precio por persona o los rangos de grupo.
+    // La vigencia del día de ida decide el precio por persona o los rangos de grupo (un traslado sin vigencia: su tarifa base).
     const modoInc = s.modo === "grupo" ? "grupo" : "persona";
     const inc = s.vigencias ? incluidoEnEstadia(s.vigencias, modoInc, fechaIda, fechaIda) : null;
     if (!inc) { errorServiciosIncluidos ??= `No se cargaron las vigencias del servicio incluido «${s.nombre ?? s.servicio_id}».`; continue; }

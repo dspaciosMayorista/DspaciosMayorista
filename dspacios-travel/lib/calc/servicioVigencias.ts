@@ -1,5 +1,5 @@
 // ─────────────────────────────────────────────────────────────────────────
-// Vigencias de un servicio vistas desde la PUBLICACIÓN y las rutas que cotizan por fecha — módulo PURO, sin «GENERAL».
+// Vigencias de un servicio vistas desde la PUBLICACIÓN y las rutas que cotizan por fecha — módulo PURO. «GENERAL» no es una vigencia: solo respalda a un traslado incluido sin vigencia (incluidoEnEstadia).
 //
 // Regla única (la misma de la venta y el costo, ver `servicioTarifa.ts`): un servicio se vende con una vigencia que cubra la fecha del viaje y, por grupo,
 // con un rango de pasajeros de ESA vigencia. Aquí viven las dos preguntas que se hacen ANTES de vender:
@@ -12,6 +12,7 @@
 import { temporadaVigenteParaFecha, toTemporadaRango } from "./paquetes.ts";
 import { rangosIdaRegresoEfectivos } from "./servicioAlcance.ts";
 import { fechaNegocio } from "../fechaNegocio.ts";
+import { NOMBRE_TARIFA_BASE } from "./tarifaBasePermanente.ts";
 import type { GrupoServicioFila, TemporadaServicioFila } from "./servicioTarifa.ts";
 
 export type VigenciaServicioFila = TemporadaServicioFila & { precio_infante?: number | null };
@@ -33,6 +34,11 @@ export type VigenciasServicio = {
   personaAlcance?: ReadonlyMap<string, number>;
   gruposIdaRegreso?: GrupoServicioFila[];
   personaIdaRegreso?: ReadonlyMap<string, number>;
+  /**
+   * 262: tarifa BASE del servicio (`servicios_adicionales.precio_persona` y rangos `GENERAL`). Solo respalda a un traslado INCLUIDO cuando NINGUNA vigencia cubre la fecha del
+   * viaje (`incluidoEnEstadia`); jamás reemplaza a una vigencia existente, aunque esté incompleta o con la compra cerrada. Ausente = sin respaldo.
+   */
+  tarifaBase?: { precioPersona: number | null; /** `servicios_adicionales.precio_infante`: null = paga como adulto; 0 = gratis; no numérico o negativo = dato inválido (falla cerrado). */ precioInfante?: number | null; grupos: GrupoServicioFila[] };
 };
 
 const MS_DIA = 86_400_000;
@@ -206,7 +212,7 @@ export function referenciaPublicacion(sv: VigenciasServicio, modo: "persona" | "
  */
 export type MotivoIncluidoNoCobrable = "sin_tarifa" | "traslado_sin_tarifa" | "traslado_sin_vigencia" | "ambiguo" | "franjas" | "ventana" | "dato_invalido";
 export type IncluidoEnEstadia =
-  | { ok: true; vigencia: string; netoPersona: number | null; netoInfante: number | null; rangos: { pax_desde: number; pax_hasta: number; precio: number }[] }
+  | { ok: true; vigencia: string; netoPersona: number | null; netoInfante: number | null; rangos: { pax_desde: number; pax_hasta: number; precio: number }[]; /** `base` = sin vigencia para la fecha, cobrado con la tarifa base del servicio. */ origen?: "vigencia" | "base" }
   | { ok: false; error: string; motivo: MotivoIncluidoNoCobrable };
 
 /** ¿Este fallo significa «sin tarifa vigente» (se omite el servicio) y no un error de configuración? */
@@ -219,19 +225,46 @@ export const incluidoSeOmite = (r: IncluidoEnEstadia): boolean => !r.ok && r.mot
  * horarias (un traslado con suplemento por hora no puede ir incluido: hay que ofrecerlo como opcional para pedir la hora).
  */
 export function incluidoEnEstadia(sv: VigenciasServicio, modo: "persona" | "grupo", desde: string, hasta: string, hoy: string = fechaNegocio()): IncluidoEnEstadia {
-  const r = evaluarIncluidoEnEstadia(sv, modo, desde, hasta);
+  const r = evaluarIncluidoEnEstadia(sv, modo, desde, hasta, desde >= hoy);
   // Una salida PASADA (anterior al día de negocio en Bogotá) no se vende: el bloqueo del traslado incluido (sin vigencia / sin tarifa de ida y regreso) no aplica y no frena
   // la generación ni la venta de las salidas futuras. Se comporta como antes del bloqueo (se omite el servicio en esa fecha). Hoy y las fechas futuras SÍ bloquean.
   if (!r.ok && (r.motivo === "traslado_sin_vigencia" || r.motivo === "traslado_sin_tarifa") && desde < hoy) return { ...r, motivo: "sin_tarifa" };
   return r;
 }
 
-function evaluarIncluidoEnEstadia(sv: VigenciasServicio, modo: "persona" | "grupo", desde: string, hasta: string): IncluidoEnEstadia {
+/**
+ * Tarifa base de un traslado incluido (respaldo cuando ninguna vigencia cubre la fecha): precio por persona o rangos GENERAL, solo si son válidos. Un rango que no cubra los
+ * pasajeros lo detecta quien cobra (costoNetoServicioIncluido falla cerrado): aquí no se conoce el pax. Infante (solo persona): `precio_infante` base — NULL paga como adulto, 0 es gratis,
+ * un valor no numérico o negativo falla cerrado (dato_invalido), igual que en una vigencia. El precio base por persona y CADA precio de rango GENERAL deben ser > 0 (0, NULL, vacío o inválido = tarifa base sin configurar y el traslado se bloquea): 0 es el valor por defecto de un servicio que se
+ * vende solo por vigencias, así que NO se toma como «traslado gratis» (shortcut: un traslado incluido realmente gratis sin vigencia debe cargar una vigencia con precio 0).
+ */
+function tarifaBaseTraslado(sv: VigenciasServicio, modo: "persona" | "grupo", fechaTxt: string, estadia: string): IncluidoEnEstadia {
+  const falla = (detalle: string): IncluidoEnEstadia => ({
+    ok: false, motivo: "traslado_sin_vigencia",
+    error: `El traslado incluido «${sv.nombre}» no tiene vigencia de tarifa para el ${fechaTxt} (estadía ${estadia}) y tampoco ${detalle}: no se puede ofrecer el paquete prometiendo un traslado sin tarifa. Carga o amplía la vigencia, o completa la tarifa base, en Producto → Servicios, o quítalo de los servicios incluidos.`,
+  });
+  const b = sv.tarifaBase;
+  if (!b) return falla("se pudo leer su tarifa base");
+  const valido = (n: number | null | undefined): n is number => n != null && Number.isFinite(Number(n)) && Number(n) >= 0;
+  if (modo === "persona") {
+    if (!valido(b.precioPersona) || Number(b.precioPersona) <= 0) return falla("tiene un precio base por persona mayor que cero");
+    if (b.precioInfante != null && !valido(b.precioInfante)) return { ok: false, motivo: "dato_invalido", error: `El traslado incluido «${sv.nombre}» tiene un precio de infante base no válido (servicios_adicionales.precio_infante); corrígelo en Producto → Servicios antes de cotizar o publicar.` };
+    return { ok: true, vigencia: NOMBRE_TARIFA_BASE, netoPersona: Number(b.precioPersona), netoInfante: b.precioInfante != null ? Number(b.precioInfante) : null, rangos: [], origen: "base" };
+  }
+  const rangos = b.grupos.filter((g) => g.temporada === NOMBRE_TARIFA_BASE).map((g) => ({ pax_desde: g.pax_desde, pax_hasta: g.pax_hasta, precio: Number(g.precio) }));
+  if (!rangos.length) return falla("tiene rangos base (GENERAL) de pasajeros");
+  if (rangos.some((r) => !Number.isFinite(r.precio) || r.precio <= 0)) return falla("tiene precios mayores que cero en todos sus rangos base (GENERAL)");
+  return { ok: true, vigencia: NOMBRE_TARIFA_BASE, netoPersona: null, netoInfante: null, rangos: rangos.sort((x, y) => x.pax_desde - y.pax_desde), origen: "base" };
+}
+
+function evaluarIncluidoEnEstadia(sv: VigenciasServicio, modo: "persona" | "grupo", desde: string, hasta: string, usarBase = false): IncluidoEnEstadia {
   const rotulo = `El servicio incluido «${sv.nombre}»`;
   // 262: un traslado incluido en el hotel se cobra SIEMPRE por ida y regreso: precio propio de ida y regreso de la vigencia si existe; si no, la tarifa vigente del servicio.
   const invalida = ventanaInvalida(desde, hasta);
   if (invalida) return { ok: false, error: `${rotulo}: no se puede validar la estadía, ${invalida}.`, motivo: "ventana" };
   const { nombres, primerSinCobertura } = cubrirVentana(sv, desde, hasta);
+  // Sin NINGUNA vigencia que cubra la estadía: la tarifa base respalda al traslado (hoy en adelante). Con cobertura parcial el precio sería ambiguo: sigue bloqueando.
+  if (sv.usaAlcance && usarBase && !nombres.length && primerSinCobertura) return tarifaBaseTraslado(sv, modo, fechaLegible(primerSinCobertura), `${fechaLegible(desde)} al ${fechaLegible(hasta)}`);
   if (primerSinCobertura && sv.usaAlcance) return { ok: false, motivo: "traslado_sin_vigencia", error: `El traslado incluido «${sv.nombre}» no tiene vigencia de tarifa para el ${fechaLegible(primerSinCobertura)} (estadía ${fechaLegible(desde)} al ${fechaLegible(hasta)}): no se puede ofrecer el paquete prometiendo un traslado sin vigencia para esa fecha. Carga o amplía la vigencia en Producto → Servicios o quítalo de los servicios incluidos.` };
   if (primerSinCobertura) return { ok: false, error: `${rotulo} no tiene vigencia de tarifa para el ${fechaLegible(primerSinCobertura)} (estadía ${fechaLegible(desde)} al ${fechaLegible(hasta)}).`, motivo: "sin_tarifa" };
   if (nombres.length !== 1) return { ok: false, error: `${rotulo} cambia de vigencia dentro de la estadía ${fechaLegible(desde)} al ${fechaLegible(hasta)} (${nombres.join(", ")}); su precio incluido sería ambiguo. Alinea las vigencias con las temporadas del hotel.`, motivo: "ambiguo" };

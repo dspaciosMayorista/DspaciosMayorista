@@ -343,7 +343,7 @@ export async function computarReservaBernalo(
   // "proveedores e ids se resuelven server-side"). ────────────────────────
   type ProvFact = { nombre: string | null; aplica_retencion: boolean | null; pct_retencion: number | null } | null;
   const incluidosCatalogo = (serviciosSel ?? []).filter((s) => s.incluido);
-  // SIN «GENERAL»: el precio por persona y los rangos de grupo de cada incluido salen de la vigencia del día de ida (misma regla que la publicación y la cotización
+  // El precio por persona y los rangos de grupo de cada incluido salen de la vigencia del día de ida (o, solo un traslado sin vigencia, de su tarifa base; misma regla que la publicación y la cotización
   // del resto de rutas). Sin vigencia, sin precio/rango o con franjas horarias → mensaje legible, antes de numerar.
   const rvInc = await cargarVigenciasServicios(admin, incluidosCatalogo.map((s) => ({
     id: s.servicio_id, nombre: (s.servicios_adicionales as unknown as { nombre?: string | null } | null)?.nombre ?? `Servicio #${s.servicio_id}`,

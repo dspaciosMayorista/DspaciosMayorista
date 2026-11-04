@@ -842,7 +842,7 @@ describe("262 · ruta de oferta #63 (crearCotizacion -> convertirCotizacion -> a
     const texto = g.ok ? diag : String(g.error);
     assert.match(texto, /Traslado vigencia 2031 262/, "nombra el servicio");
     assert.match(texto, /no tiene vigencia de tarifa para el 01\/03\/2030/, "dice que falta la VIGENCIA de la fecha");
-    assert.match(texto, /sin vigencia para esa fecha/);
+    assert.match(texto, /y tampoco tiene un precio base por persona mayor que cero/, "dice que tampoco hay tarifa base válida");
     assert.doesNotMatch(texto, /ida y regreso ni tarifa por persona/, "no se confunde con la falta de tarifa de ida y regreso");
     assert.equal(sql("select count(*) from public.tarifario_resultado_publicable where paquete_id = " + PAQ_FUERA), "0", "ninguna fila vendible");
     const c = await crearCotizacion(inp(PAQ_FUERA, SAL_FUERA, []) as never) as { ok: boolean; error?: string };
@@ -1443,5 +1443,115 @@ describe("262 · #423 ida y regreso con la tarifa que la vigencia ya tiene (sin 
     assert.equal((await cotizar([tour(S_TV_G, 3, { alcance: "ida_regreso", horas: H_DIA })])).ok, false);
     sql(`insert into public.servicio_tarifa_pax (servicio_id, pax_desde, pax_hasta, precio, temporada) select ${S_TV_G}, split_part(x, ',', 1)::int, split_part(x, ',', 2)::int, split_part(x, ',', 3)::numeric, 'ALTA' from unnest(string_to_array(${lit(guardado)}, ';')) x`); await generar();
     await mismoImporte(S_TV_G, 3, 120000, {}, H_DIA);
+  });
+});
+
+// ── #435 · respaldo de la tarifa BASE de un traslado INCLUIDO sin vigencia para la fecha ─────────────────────────────────────────────────────────────────────────────────
+// Porción terrestre, salida 2030-03-01 (futura), la ÚNICA vigencia del traslado es de 2031: ninguna cubre la fecha. La base (servicios_adicionales.precio_persona / precio_infante y rangos GENERAL)
+// respalda el cobro. Recorrido real: generarTarifario → crearSolicitudReserva (adulto / adulto+infante) → convertirCotizacionCarrito → ventas, CxP e «incluye» (composición publicada).
+const B: Record<string, number> = { B0: 6260, BN: 6261, BA: 6262, BG: 6263, BGF: 6264, BNAN: 6265, CTRL: 6266 }; // ids de servicio = ids de paquete (el control no lleva servicio)
+describe("#435 · tarifa base como respaldo del traslado incluido", () => {
+  before(() => {
+    const srv = (id: number, nombre: string, persona: number, infante: string, tipo: "persona" | "grupo") =>
+      `(${id}, '${nombre}', 6201, 6201, ${persona}, ${infante}, 'tour_traslado', 'COP', '${tipo}', 'paquete', 'traslado')`;
+    const paqs = Object.values(B).join(",");
+    sql(`
+      insert into public.servicios_adicionales (id, nombre, proveedor_id, destino_id, precio_persona, precio_infante, categoria, moneda, tipo_tarifa, liquidacion, tipo_receptivo) values
+        ${srv(B.B0, "Traslado base infante 0 262", 60000, "0", "persona")}, ${srv(B.BN, "Traslado base infante NULL 262", 60000, "null", "persona")},
+        ${srv(B.BA, "Traslado sin base 262", 0, "null", "persona")}, ${srv(B.BG, "Traslado base grupo 262", 0, "null", "grupo")},
+        ${srv(B.BGF, "Traslado base grupo corto 262", 0, "null", "grupo")}, ${srv(B.BNAN, "Traslado base infante invalido 262", 60000, "'NaN'::numeric", "persona")};
+      -- la única vigencia de cada uno es de 2031 (con tarifa): NO cubre la salida de 2030
+      insert into public.servicio_temporadas (id, servicio_id, nombre, fecha_inicio, fecha_fin, precio_persona)
+        select 620000 + s, s, 'ALTA', '2031-01-01', '2031-12-31', 90000 from unnest(array[${B.B0}, ${B.BN}, ${B.BA}, ${B.BG}, ${B.BGF}, ${B.BNAN}]) s;
+      -- rangos base GENERAL por grupo: 1–4 = 200.000 (BG) y solo 1 pax = 100.000 (BGF)
+      insert into public.servicio_tarifa_pax (servicio_id, pax_desde, pax_hasta, precio, temporada) values (${B.BG}, 1, 4, 200000, 'GENERAL'), (${B.BGF}, 1, 1, 100000, 'GENERAL');
+      insert into public.armado_paquetes (id, nombre, tipo, noches, destino_id, pct_mk, impuesto_tipo, impuesto_fijo, fecha_viaje_inicio, fecha_viaje_fin, moneda, moneda_publicacion, programa_incluye, activo)
+        select p, 'Porción base 435 #' || p, 'porcion_terrestre', 3, 6201, 0.2, 'fijo', 0, '2030-01-01', '2030-12-31', 'COP', 'COP', 'Traslado aeropuerto-hotel-aeropuerto', true from unnest(array[${paqs}]) p;
+      insert into public.armado_hoteles (paquete_id, hotel_id, categorias, regimenes) select p, ${HOT1}, array['Estandar'], array['Desayuno'] from unnest(array[${paqs}]) p;
+      insert into public.armado_servicios (paquete_id, servicio_id, modo, incluido) values
+        (${B.B0}, ${B.B0}, 'persona', true), (${B.BN}, ${B.BN}, 'persona', true), (${B.BA}, ${B.BA}, 'persona', true), (${B.BG}, ${B.BG}, 'grupo', true), (${B.BGF}, ${B.BGF}, 'grupo', true), (${B.BNAN}, ${B.BNAN}, 'persona', true);
+    `);
+  });
+  const item = (paq: number, infantes: number) => ({ modulo: "porcion_terrestre", paqueteId: paq, hotelId: HOT1, bloqueoId: null, hotelNombre: "Hotel Uno 262", destino: "CARTAGENA 262", categoria: "Estandar", regimen: "Desayuno", fechaIda: "2030-03-01", fechaRegreso: "2030-03-04", noches: 3, habitaciones: { doble: 1 }, ninos: 0, ninos2: 0, infantes, pax: 2 + infantes, precio: 1, edadesMenores: infantes ? [1] : [], cantidadMenores: infantes, itemId: `h435-${paq}-${infantes}` });
+  const BEBE = { nombres: "Bebé", apellidos: "Prueba", tipoDoc: "RC", numeroDoc: "789", fechaNacimiento: "2029-02-01", nacionalidad: "Colombiana", esInfante: true, responsableIndex: 0 }; // 1 año al 2030-03-01
+  const cotizar435 = async (paq: number, infantes: number) => (await crearSolicitudReserva({ items: [item(paq, infantes)], tours: [], cliente: { ...CLIENTE, tipoDoc: "CC" } } as never)) as { ok: boolean; error?: string; cotizacion?: { id: number } };
+  const totalCot = (id: number) => Number(sql(`select (payload->'items'->0->>'precio')::numeric from public.cotizaciones where id = ${id}`));
+  const publicadas = (paq: number) => Number(sql(`select count(*) from public.tarifario_resultado_publicable where paquete_id = ${paq}`));
+  const diag435 = (paq: number) => sql(`select coalesce(tarifario_diagnostico::text, '-') || ' || ' || coalesce(tarifario_error, '-') from public.armado_paquetes where id = ${paq}`);
+  const convertir435 = async (id: number, infantes: number) => (await convertirCotizacionCarrito(id, { agrupar: "todo", pasajeros: [...PAX.slice(0, 2), ...(infantes ? [BEBE] : [])], asesorInterno: "Asesor 262", asignaciones: [Array.from({ length: 2 + infantes }, (_, i) => i + 1)], asignacionesTours: [], monedaCobro: "COP" } as never)) as Res;
+  const cxp435 = (numero: string, s: number) => sql(`select count(*) || '|' || coalesce(sum(valor_total)::bigint, 0) from public.cuentas_por_pagar where numero_contrato = ${lit(numero)} and servicio_id = ${s}`);
+  const generar = async (paq: number) => { const g = await generarTarifario(paq) as { ok: boolean; error?: string }; assert.equal(g.ok, true, `${paq}: ${g.error}`); return g; };
+  const escrituras = () => ({ v: sql("select count(*) from public.ventas"), c: sql("select count(*) from public.cuentas_por_pagar") });
+  let totalControl2 = 0, totalControl3 = 0;
+
+  test("R0 control sin traslado: totales de 2 adultos y de 2 adultos + infante", async () => {
+    await generar(B.CTRL);
+    const a = await cotizar435(B.CTRL, 0), b = await cotizar435(B.CTRL, 1);
+    assert.equal(a.ok && b.ok, true, `${a.error} ${b.error}`);
+    totalControl2 = totalCot(a.cotizacion!.id); totalControl3 = totalCot(b.cotizacion!.id);
+    assert.ok(totalControl2 > 0 && totalControl3 > totalControl2);
+  });
+  test("R1 fecha futura SIN vigencia + base de adulto 60.000 + base de infante 0: se genera, el traslado queda en «incluye», cotiza y convierte con el MISMO total y UNA sola CxP", async () => {
+    await generar(B.B0);
+    assert.ok(publicadas(B.B0) > 0, "se publica el paquete");
+    assert.doesNotMatch(diag435(B.B0), /Servicios incluidos omitidos|no tiene vigencia/, "el traslado no se omite ni bloquea");
+    assert.equal(sql(`select programa_incluye from public.armado_paquetes where id = ${B.B0}`), "Traslado aeropuerto-hotel-aeropuerto", "el texto «Incluye» no se retira (no hay servicios omitidos)");
+    const a = await cotizar435(B.B0, 0), b = await cotizar435(B.B0, 1);
+    assert.equal(a.ok && b.ok, true, `${a.error} ${b.error}`);
+    const comp = sql(`select composicion::text from public.cotizacion_composicion where cotizacion_id = ${b.cotizacion!.id}`);
+    console.log("      composición de la cotización:", comp.slice(0, 400));
+    assert.match(comp, /Traslado base infante 0 262/, "«incluye»: el traslado figura entre los servicios incluidos de la cotización");
+    // base 60.000 / (1 − 0,20) = 75.000 por adulto; el infante paga su base 0 → no suma nada
+    assert.equal(totalCot(a.cotizacion!.id) - totalControl2, 150000, "2 adultos: 2 × 75.000");
+    assert.equal(totalCot(b.cotizacion!.id) - totalControl3, 150000, "con infante: el traslado del infante es gratis (precio_infante = 0), no se cobra como adulto");
+    const r = await convertir435(b.cotizacion!.id, 1); assert.equal(r.ok, true, r.error);
+    const n = r.numeros![0];
+    assert.equal(Number(sql(`select precio_venta from public.ventas where numero_contrato = ${lit(n)}`)), totalCot(b.cotizacion!.id), "mismo total cotizado y vendido");
+    assert.equal(cxp435(n, B.B0), "1|120000", "UNA CxP: 2 adultos × 60.000 + infante × 0");
+    await convertir435(b.cotizacion!.id, 1); // reintento sobre la misma cotización: no duplica
+    assert.equal(cxp435(n, B.B0), "1|120000", "el reintento no crea otra CxP");
+  });
+  test("R2 precio_infante NULL conserva la regla existente: el infante paga como adulto (precio, costo y CxP)", async () => {
+    await generar(B.BN);
+    const b = await cotizar435(B.BN, 1); assert.equal(b.ok, true, b.error);
+    assert.equal(totalCot(b.cotizacion!.id) - totalControl3, 225000, "3 × 75.000");
+    const r = await convertir435(b.cotizacion!.id, 1); assert.equal(r.ok, true, r.error);
+    assert.equal(cxp435(r.numeros![0], B.BN), "1|180000", "3 × 60.000");
+  });
+  test("R3 base AUSENTE (precio_persona 0, sin rangos): se conserva el bloqueo con el diagnóstico de qué falta; nada se publica, cotiza ni escribe", async () => {
+    const g = await generarTarifario(B.BA) as { ok: boolean; error?: string };
+    const texto = (g.ok ? "" : String(g.error)) + diag435(B.BA);
+    console.log("      generarTarifario(base ausente) →", g.ok ? "ok" : g.error, "·", texto.slice(0, 300));
+    assert.match(texto, /Traslado sin base 262/); assert.match(texto, /no tiene vigencia de tarifa para el \d\d\/\d\d\/2030/); assert.match(texto, /tampoco tiene un precio base por persona mayor que cero/);
+    assert.equal(publicadas(B.BA), 0);
+    const antes = escrituras();
+    const c = await cotizar435(B.BA, 0); assert.equal(c.ok, false, "no se cotiza");
+    assert.match(String(c.error), /tampoco tiene un precio base por persona mayor que cero/);
+    assert.deepEqual(escrituras(), antes);
+  });
+  test("R4 precio_infante base INVÁLIDO (NaN): falla cerrado al generar y al cotizar, sin publicar ni escribir", async () => {
+    const g = await generarTarifario(B.BNAN) as { ok: boolean; error?: string };
+    const texto = (g.ok ? "" : String(g.error)) + diag435(B.BNAN);
+    console.log("      generarTarifario(infante base NaN) →", g.ok ? "ok" : g.error, "·", texto.slice(0, 300));
+    assert.match(texto, /precio de infante base no válido/); assert.equal(publicadas(B.BNAN), 0);
+    const c = await cotizar435(B.BNAN, 1); assert.equal(c.ok, false); assert.match(String(c.error), /precio de infante base no válido/);
+  });
+  test("R5 GRUPO: los rangos base cubren los pasajeros (2 → rango 1–4 = 200.000, una CxP) y un rango que NO los cubre falla cerrado al cotizar", async () => {
+    await generar(B.BG);
+    const c = await cotizar435(B.BG, 0); assert.equal(c.ok, true, c.error);
+    assert.equal(totalCot(c.cotizacion!.id) - totalControl2, 250000, "200.000 el grupo / 0,8");
+    const r = await convertir435(c.cotizacion!.id, 0); assert.equal(r.ok, true, r.error);
+    assert.equal(cxp435(r.numeros![0], B.BG), "1|200000");
+    await generar(B.BGF); // la publicación no conoce el pax: valida que existan rangos base válidos
+    const antes = escrituras();
+    const f = await cotizar435(B.BGF, 0); console.log("      cotizar grupo fuera de rango →", f.ok ? "COTIZÓ (!)" : f.error);
+    assert.equal(f.ok, false, "2 pax no caen en el rango 1–1: no se cotiza (jamás el rango más cercano)");
+    assert.deepEqual(escrituras(), antes);
+  });
+  test("R6 una vigencia específica que cubre la fecha gana sobre la base (y el infante base ni se mira)", async () => {
+    sql(`update public.servicio_temporadas set fecha_inicio = '2030-01-01', fecha_fin = '2030-12-31', precio_persona = 80000, precio_infante = null where servicio_id = ${B.B0}`);
+    await generar(B.B0);
+    const b = await cotizar435(B.B0, 1); assert.equal(b.ok, true, b.error);
+    assert.equal(totalCot(b.cotizacion!.id) - totalControl3, 300000, "vigencia: 80.000 / 0,8 = 100.000 por persona × 3 (el infante paga como adulto de la vigencia, no su base 0)");
   });
 });
