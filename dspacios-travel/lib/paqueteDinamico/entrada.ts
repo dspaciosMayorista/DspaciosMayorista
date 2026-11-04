@@ -1,6 +1,7 @@
 // Entrada del formulario de administración del paquete dinámico (#82) y su validación de forma. PURO.
 import type { Esquema, PrecioAcom, PrecioVuelo, PvpModo } from "@/lib/paqueteDinamico/calculo";
 import { derivarRutaManual, validarMultidestino, type DestinoPais } from "@/lib/paqueteDinamico/ruta";
+import { validarConfigMenoresManual } from "@/lib/paqueteDinamico/menores";
 
 export const ROLES_PRODUCTO = ["superadmin", "gerencia", "administracion", "operaciones"] as const;
 
@@ -13,9 +14,15 @@ export type EntradaVuelo = {
 export type EntradaHotel = {
   hotelId: number | null; nombre: string; categoria: string; regimen: string; descripcion: string; fotoUrl: string; proveedor: string;
   neto: PrecioAcom; pvp: PrecioAcom; pvpGeneral: PrecioAcom | null;
+  /** Solo hotel MANUAL: capacidad máxima de niños por habitación (general a sus acomodaciones) y umbrales de edad. Con ficha se leen de la ficha. */
+  capacidadNinos: number | null; edadInfanteMax: number | null; edadNinoMax: number | null;
 };
 /** `proveedor`/`proveedorId` de un servicio vinculado salen de su ficha (servicios_adicionales.proveedor_id); en uno manual se escribe el nombre. */
-export type EntradaServicio = { servicioId: number | null; destinoId: number | null; nombre: string; proveedor: string; proveedorId: number | null; neto: number | null; pvp: number | null };
+export type EntradaServicio = {
+  servicioId: number | null; destinoId: number | null; nombre: string; proveedor: string; proveedorId: number | null; neto: number | null; pvp: number | null;
+  /** Solo PVP por persona con ficha: PVP del menor de 2 años (0 = gratis EXPLÍCITO; null = sin definir). Por grupo y en netas no aplica. */
+  pvpInfante: number | null;
+};
 
 export type EntradaPaqueteTotal = {
   id?: number; nombre: string; destinoId: number | null; multidestino: boolean; destinosExtra: number[]; moneda: "COP" | "USD"; esquema: Esquema; pvpModo: PvpModo | null;
@@ -45,6 +52,11 @@ export function validarEntradaPaqueteTotal(e: EntradaPaqueteTotal, destinos: Des
   }
   m.push(...validarMultidestino({ multidestino: e.multidestino, destinoId: e.destinoId, destinosExtra: e.destinosExtra, destinos }));
   const dest = new Set([e.destinoId, ...e.destinosExtra].filter(Boolean));
+  if (e.usaHotel) for (const h of e.hoteles) {
+    if (h.hotelId != null) continue;
+    const c = validarConfigMenoresManual({ capacidadNinos: h.capacidadNinos, edadInfanteMax: h.edadInfanteMax, edadNinoMax: h.edadNinoMax });
+    if (!c.ok) m.push(`Hotel «${h.nombre || "manual"}»: ${c.error}`);
+  }
   for (const v of e.vuelos) if (v.destinoId && !dest.has(v.destinoId)) m.push("Un vuelo es de un destino que no está en el paquete (agrégalo como destino adicional).");
   for (const s of e.servicios) if (s.destinoId && !dest.has(s.destinoId)) m.push(`El servicio «${s.nombre}» es de un destino que no está en el paquete.`);
   for (const v of e.vuelos) {

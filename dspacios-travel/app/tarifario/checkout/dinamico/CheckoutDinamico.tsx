@@ -7,7 +7,8 @@
 import { useState, useTransition } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { ArrowLeft, Users } from "lucide-react";
+import { ArrowLeft, BedDouble, Hotel, Plane, Sparkles, Users, Utensils } from "lucide-react";
+import type { VueloDetalle } from "@/lib/paqueteDinamico/publico";
 import { Button } from "@/components/ui/button";
 import { DateInput } from "@/components/ui/DateInput";
 import { BuscarTitular } from "@/components/personas/BuscarTitular";
@@ -23,8 +24,14 @@ export type CrearCotizacionDinFn = (input: CrearCotizacionDinInput) => Promise<
 >;
 
 export type ResumenDin = {
-  paquete: string; destino: string; noches: number; moneda: string; hotel: string | null; vuelo: string | null;
-  fechaIda: string; fechaRegreso: string; habitaciones: string; total: number;
+  paquete: string; destino: string; noches: number; moneda: string;
+  hotel: { nombre: string; categoria: string; regimen: string } | null;
+  habitaciones: string; viajeros: string;
+  vuelo: { etiqueta: string; detalle: VueloDetalle | null } | null;
+  servicios: string[];
+  fechaIda: string; fechaRegreso: string; total: number; lineas: { descripcion: string; valor: number }[];
+  /** Vuelve a la tarjeta con la selección guardada. */
+  volver: string;
 };
 
 const inp = "h-9 w-full rounded-md border border-gray-200 bg-white px-2 text-sm";
@@ -53,20 +60,35 @@ export function CheckoutDinamico({ resumen, solicitud, canal, aliado, crear }: {
 
   return (
     <div className="mx-auto max-w-3xl space-y-4 p-4 md:p-8">
-      <Link href="/tarifario" className="inline-flex items-center gap-1 text-sm text-gray-500 hover:text-gray-700"><ArrowLeft className="h-4 w-4" /> Volver al tarifario</Link>
+      <Link href={resumen.volver} className="inline-flex items-center gap-1 text-sm text-gray-500 hover:text-gray-700" data-testid="cambiar-seleccion"><ArrowLeft className="h-4 w-4" /> Cambiar la selección</Link>
       <h1 className="text-2xl font-bold" style={{ color: "var(--brand-primary)" }}>Checkout · {resumen.paquete}</h1>
 
       <section className="rounded-2xl border border-gray-200 bg-white p-5" data-testid="resumen-dinamico">
-        <h2 className="mb-2 text-sm font-semibold text-gray-700">Tu selección</h2>
-        <dl className="grid gap-x-6 gap-y-1 text-sm sm:grid-cols-2">
-          <div><dt className="inline text-gray-500">Destino: </dt><dd className="inline">{resumen.destino} · {resumen.noches} noches</dd></div>
-          {resumen.hotel && <div><dt className="inline text-gray-500">Hotel: </dt><dd className="inline">{resumen.hotel}</dd></div>}
-          <div><dt className="inline text-gray-500">Habitaciones: </dt><dd className="inline">{resumen.habitaciones}</dd></div>
-          {resumen.vuelo && <div><dt className="inline text-gray-500">Vuelo: </dt><dd className="inline">{resumen.vuelo}</dd></div>}
-          <div><dt className="inline text-gray-500">Fechas: </dt><dd className="inline">{resumen.fechaIda} a {resumen.fechaRegreso}</dd></div>
-        </dl>
-        <p className="mt-3 text-base">Total estimado: <b style={{ color: "var(--brand-primary)" }}>{formatMoneda(resumen.total, resumen.moneda)}</b></p>
-        <p className="mt-1 text-xs text-gray-500">El precio definitivo lo fija el sistema al generar la cotización.</p>
+        <h2 className="mb-3 text-sm font-semibold text-gray-700">Tu selección · {resumen.destino} · {resumen.noches} noches · {resumen.fechaIda} a {resumen.fechaRegreso}</h2>
+        <div className="space-y-3 text-sm">
+          {resumen.hotel && (
+            <>
+              <div data-testid="res-hotel"><p className="flex items-center gap-1.5 font-semibold text-gray-700"><Hotel className="h-4 w-4" /> Hotel</p><p className="text-gray-800">{resumen.hotel.nombre}{resumen.hotel.categoria ? ` · ${resumen.hotel.categoria}` : ""}</p></div>
+              <div data-testid="res-alimentacion"><p className="flex items-center gap-1.5 font-semibold text-gray-700"><Utensils className="h-4 w-4" /> Alimentación</p><p className="text-gray-800">{resumen.hotel.regimen || "No especificada"}</p></div>
+            </>
+          )}
+          <div data-testid="res-habitaciones"><p className="flex items-center gap-1.5 font-semibold text-gray-700"><BedDouble className="h-4 w-4" /> Habitaciones</p><p className="text-gray-800">{resumen.habitaciones}</p></div>
+          <div data-testid="res-viajeros"><p className="flex items-center gap-1.5 font-semibold text-gray-700"><Users className="h-4 w-4" /> Viajeros</p><p className="text-gray-800">{resumen.viajeros}</p></div>
+          {resumen.vuelo && (
+            <div data-testid="res-vuelo"><p className="flex items-center gap-1.5 font-semibold text-gray-700"><Plane className="h-4 w-4" /> Vuelo</p>
+              <p className="text-gray-800">{[resumen.vuelo.detalle?.aerolinea, resumen.vuelo.detalle?.ruta].filter(Boolean).join(" · ") || resumen.vuelo.etiqueta}</p>
+              <p className="text-xs text-gray-600">Ida {resumen.fechaIda}{resumen.vuelo.detalle?.vueloIda ? ` · vuelo ${resumen.vuelo.detalle.vueloIda}` : ""}{resumen.vuelo.detalle?.horaSalidaIda ? ` · sale ${resumen.vuelo.detalle.horaSalidaIda.slice(0, 5)}` : ""}{resumen.vuelo.detalle?.horaLlegadaIda ? ` · llega ${resumen.vuelo.detalle.horaLlegadaIda.slice(0, 5)}` : ""}</p>
+              <p className="text-xs text-gray-600">Regreso {resumen.fechaRegreso}{resumen.vuelo.detalle?.vueloRegreso ? ` · vuelo ${resumen.vuelo.detalle.vueloRegreso}` : ""}{resumen.vuelo.detalle?.horaSalidaReg ? ` · sale ${resumen.vuelo.detalle.horaSalidaReg.slice(0, 5)}` : ""}{resumen.vuelo.detalle?.horaLlegadaReg ? ` · llega ${resumen.vuelo.detalle.horaLlegadaReg.slice(0, 5)}` : ""}</p></div>
+          )}
+          {resumen.servicios.length > 0 && (
+            <div data-testid="res-servicios"><p className="flex items-center gap-1.5 font-semibold text-gray-700"><Sparkles className="h-4 w-4" /> Servicios</p><ul className="list-disc pl-5 text-gray-800">{resumen.servicios.map((x) => <li key={x}>{x}</li>)}</ul></div>
+          )}
+        </div>
+        <div className="mt-3 border-t border-gray-100 pt-3">
+          <ul className="space-y-0.5 text-xs text-gray-600" data-testid="desglose-dinamico">{resumen.lineas.map((l, i) => <li key={i} className="flex justify-between"><span>{l.descripcion}</span><span>{formatMoneda(l.valor, resumen.moneda)}</span></li>)}</ul>
+          <p className="mt-2 text-base">Total estimado: <b style={{ color: "var(--brand-primary)" }}>{formatMoneda(resumen.total, resumen.moneda)}</b></p>
+          <p className="mt-1 text-xs text-gray-500">El precio definitivo lo fija el sistema al generar la cotización.</p>
+        </div>
       </section>
 
       <section className="rounded-2xl border border-gray-200 bg-white p-5">

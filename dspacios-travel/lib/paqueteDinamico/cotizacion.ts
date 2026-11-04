@@ -3,7 +3,7 @@
 // `crear_cotizacion_din` envuelve `crear_cotizacion_manual`.
 import { nombrePaqueteItem, type ItemDocumento } from "@/lib/cotizacion/liquidacionManual";
 import { sugerirIncluye } from "@/lib/cotizacion/incluye";
-import { agruparPorComponente, liquidarPaquete, type Composicion, type LineaDin, type PaqueteDin } from "@/lib/paqueteDinamico/calculo";
+import { agruparPorComponente, liquidarPaquete, type Composicion, type LineaDin, type PaqueteDin, type ServicioResuelto } from "@/lib/paqueteDinamico/calculo";
 
 export type FilaComponente = {
   orden: number; tipo_servicio: "aereo" | "hotel" | "otro"; plataforma: string | null; nombre_servicio: string; proveedor: string | null;
@@ -15,6 +15,8 @@ export type ClienteDin = { nombres: string; apellidos: string; tipoDoc: string; 
 export type EntradaCotizacionDin = {
   paqueteId: number; paqueteNombre: string; destino: string; hotelId: number | null; vueloId: number | null;
   calc: PaqueteDin; composicion: Composicion;
+  /** Totales de los servicios vinculados ya resueltos con su ficha (el servidor los calcula). */
+  resueltos?: Record<string, ServicioResuelto>;
   cliente: ClienteDin; fechaIda: string; fechaRegreso: string; vigenciaHasta: string;
   tipoAsesor: "interno" | "agencia" | "freelance"; asesorInterno: string; agenciaNombre: string; freelanceNombre: string;
   plazo?: string; observaciones?: string; incluye?: string; noIncluye?: string;
@@ -44,7 +46,7 @@ export function construirCotizacionDin(e: EntradaCotizacionDin):
   { ok: true; cabecera: Record<string, unknown>; servicios: FilaComponente[] } | { ok: false; error: string } {
   if (!`${e.cliente.nombres}${e.cliente.apellidos}`.trim()) return { ok: false, error: "El nombre del cliente es obligatorio." };
   let liq;
-  try { liq = liquidarPaquete(e.calc, e.composicion); } catch (x) { return { ok: false, error: (x as Error).message }; }
+  try { liq = liquidarPaquete(e.calc, e.composicion, e.resueltos); } catch (x) { return { ok: false, error: (x as Error).message }; }
   if (!(liq.total > 0)) return { ok: false, error: "El total de la cotización debe ser mayor que 0." };
   const servicios = filasComponente(liq.lineas, e.calc.pctMk, e.calc.esquema === "neta_markup");
   const resumen = resumenPax(liq.adultos, liq.ninos, liq.infantes);

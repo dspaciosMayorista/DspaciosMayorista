@@ -31,7 +31,11 @@ export type PvpModo = "general" | "por_componente";
 export type PrecioAcom = Partial<Record<AcomDin, number | null>>;
 export type PrecioVuelo = { adulto: number | null; nino: number | null; infante: number | null };
 
-export type ServicioDin = { id: string; nombre: string; proveedor?: string; neto: number | null; pvp: number | null };
+/** `fichaPrecio`: servicio VINCULADO en netas+markup; su precio sale de la ficha al cotizar (vigencia, grupo, menores de 2 años), no de un neto escrito aquí. */
+/** `vinculado`: tiene ficha (su unidad de cobro, capacidad y menores salen de ella, también en solo PVP). `pvpInfante`: solo PVP por persona, PVP del menor de 2 años. */
+export type ServicioDin = { id: string; nombre: string; proveedor?: string; neto: number | null; pvp: number | null; fichaPrecio?: boolean; vinculado?: boolean; pvpInfante?: number | null };
+/** Total ya resuelto con la ficha de un servicio (PVP redondeado y costo neto) para la composición pedida. */
+export type ServicioResuelto = { valor: number; costoNeto: number; cantidad: number; /** Unidad de cobro de la ficha («1 grupo (6 pasajeros con silla)»): se guarda en el nombre del componente. */ unidad?: string };
 
 export type PaqueteDin = {
   esquema: Esquema;
@@ -56,6 +60,10 @@ export type Composicion = {
   infantes: number;
   /** Ids de servicios elegidos; undefined = todos los del paquete. */
   servicios?: string[];
+  /** Edades de los menores que viajan (de ellas salen Niño 1 / Niño 2 / infante con los umbrales del hotel). */
+  edadesMenores?: number[];
+  /** Pax de adulto por tipo de habitación según la FICHA del hotel (lo fija el servidor); ausente = valores por defecto del sistema. */
+  paxPorHabitacion?: Partial<Record<AcomRoom, number>>;
 };
 
 export type LineaDin = {
@@ -117,6 +125,7 @@ export function validarPaquete(p: PaqueteDin): string[] {
   if (p.usaServicios) {
     if (p.servicios.length === 0) e.push("Agrega al menos un servicio o desmarca «Servicios».");
     for (const s of p.servicios) {
+      if (s.fichaPrecio) { if (!s.nombre.trim()) e.push("Hay un servicio sin nombre."); continue; }
       const v = precioComp(p, s.neto, s.pvp);
       if (!s.nombre.trim()) e.push("Hay un servicio sin nombre.");
       if (!Number.isFinite(v) || v <= 0) e.push(`El servicio «${s.nombre || "sin nombre"}» necesita un precio mayor que 0.`);
@@ -143,18 +152,19 @@ export function totalPorPersona(p: PaqueteDin, a: AcomDin): number {
     const k = a === "infante" ? "infante" : a === "nino" || a === "nino2" ? "nino" : "adulto";
     t += precioComp(p, p.vuelo?.neto[k], p.vuelo?.pvp[k]);
   }
-  if (p.usaServicios && a !== "infante") for (const s of p.servicios) t += precioComp(p, s.neto, s.pvp);
+  if (p.usaServicios && a !== "infante") for (const s of p.servicios) if (!s.fichaPrecio && !s.vinculado) t += precioComp(p, s.neto, s.pvp);
   return t;
 }
 
+const paxDe = (c: Composicion, r: AcomRoom): number => c.paxPorHabitacion?.[r] ?? PAX_TARIFA_DEFAULT[r];
 export const adultosDe = (c: Composicion): number =>
-  ROOMS.reduce((s, r) => s + Math.max(Math.trunc(c.habitaciones[r] ?? 0), 0) * PAX_TARIFA_DEFAULT[r], 0);
+  ROOMS.reduce((s, r) => s + Math.max(Math.trunc(c.habitaciones[r] ?? 0), 0) * paxDe(c, r), 0);
 
 /**
  * Liquida la composición en líneas. Lanza si la configuración o la composición son inválidas
  * (el llamador valida antes con `validarPaquete`).
  */
-export function liquidarPaquete(p: PaqueteDin, c: Composicion): { lineas: LineaDin[]; total: number; adultos: number; ninos: number; infantes: number } {
+export function liquidarPaquete(p: PaqueteDin, c: Composicion, resueltos?: Record<string, ServicioResuelto>): { lineas: LineaDin[]; total: number; adultos: number; ninos: number; infantes: number } {
   const errs = validarPaquete(p);
   if (errs.length) throw new Error(errs[0]);
   const n1 = Math.max(Math.trunc(c.ninos || 0), 0), n2 = Math.max(Math.trunc(c.ninos2 || 0), 0), inf = Math.max(Math.trunc(c.infantes || 0), 0);
@@ -167,7 +177,7 @@ export function liquidarPaquete(p: PaqueteDin, c: Composicion): { lineas: LineaD
 
   // Cantidades por acomodación (personas que pagan esa tarifa).
   const porAcom: [AcomDin, number][] = [
-    ...ROOMS.map((r) => [r, Math.max(Math.trunc(c.habitaciones[r] ?? 0), 0) * PAX_TARIFA_DEFAULT[r]] as [AcomDin, number]),
+    ...ROOMS.map((r) => [r, Math.max(Math.trunc(c.habitaciones[r] ?? 0), 0) * paxDe(c, r)] as [AcomDin, number]),
     ["nino", n1], ["nino2", n2], ["infante", inf],
   ];
 
@@ -192,6 +202,12 @@ export function liquidarPaquete(p: PaqueteDin, c: Composicion): { lineas: LineaD
     if (p.usaServicios) {
       const elegidos = c.servicios ? p.servicios.filter((s) => c.servicios!.includes(s.id)) : p.servicios;
       for (const s of elegidos) {
+        if (s.fichaPrecio || s.vinculado) {
+          const r = resueltos?.[s.id];
+          if (!r) throw new Error(`Falta el cobro del servicio «${s.nombre}»: se calcula con su ficha.`);
+          lineas.push({ componente: "servicio", ref: `servicio:${s.id}`, descripcion: r.unidad ? `${s.nombre} · ${r.unidad}` : s.nombre, cantidad: r.cantidad, valor: r.valor, costoNeto: pendiente ? 0 : r.costoNeto, exigeCosto: pendiente, proveedor: s.proveedor ?? "" });
+          continue;
+        }
         const q = adultos + ninos; // los infantes no pagan servicios
         lineas.push({ componente: "servicio", ref: `servicio:${s.id}`, descripcion: s.nombre, cantidad: q, valor: Math.round(q * precioComp(p, s.neto, s.pvp)), costoNeto: p.esquema === "neta_markup" ? Math.round(q * num(s.neto)) : 0, exigeCosto: pendiente, proveedor: s.proveedor ?? "" });
       }
@@ -202,7 +218,10 @@ export function liquidarPaquete(p: PaqueteDin, c: Composicion): { lineas: LineaD
     const comps: Omit<LineaDin, "valor" | "costoNeto" | "exigeCosto">[] = [];
     if (p.usaVuelo) comps.push({ componente: "vuelo", ref: "vuelo", descripcion: "Vuelo", cantidad: adultos + ninos + inf, proveedor: p.vuelo?.proveedor ?? "" });
     if (p.usaHotel) comps.push({ componente: "hotel", ref: "hotel", descripcion: p.hotel?.nombre ?? "Hotel", cantidad: adultos + ninos + inf, proveedor: p.hotel?.proveedor ?? "" });
-    if (p.usaServicios) for (const s of p.servicios) comps.push({ componente: "servicio", ref: `servicio:${s.id}`, descripcion: s.nombre, cantidad: adultos + ninos, proveedor: s.proveedor ?? "" });
+    if (p.usaServicios) for (const s of (c.servicios ? p.servicios.filter((x) => c.servicios!.includes(x.id)) : p.servicios)) {
+      const r = s.vinculado ? resueltos?.[s.id] : undefined;
+      comps.push({ componente: "servicio", ref: `servicio:${s.id}`, descripcion: r?.unidad ? `${s.nombre} · ${r.unidad}` : s.nombre, cantidad: r?.cantidad ?? adultos + ninos, proveedor: s.proveedor ?? "" });
+    }
     for (const k of comps) lineas.push({ ...k, valor: 0, costoNeto: 0, exigeCosto: true });
   }
   const total = lineas.reduce((s, l) => s + l.valor, 0);
@@ -244,5 +263,7 @@ export function composicionValida(c: unknown): c is Composicion {
   for (const [k, v] of Object.entries(x.habitaciones)) if (!(ROOMS as readonly string[]).includes(k) || !ent(v, 20)) return false;
   if (!ent(x.ninos, 20) || !ent(x.ninos2, 20) || !ent(x.infantes, 20)) return false;
   if (x.servicios !== undefined && !(Array.isArray(x.servicios) && x.servicios.every((s) => typeof s === "string"))) return false;
+  if (x.paxPorHabitacion !== undefined && !(typeof x.paxPorHabitacion === "object" && x.paxPorHabitacion !== null && Object.entries(x.paxPorHabitacion).every(([k, v]) => (ROOMS as readonly string[]).includes(k) && typeof v === "number" && Number.isInteger(v) && v >= 1 && v <= 8))) return false;
+  if (x.edadesMenores !== undefined && !(Array.isArray(x.edadesMenores) && x.edadesMenores.length <= 10 && x.edadesMenores.every((e) => typeof e === "number" && Number.isInteger(e) && e >= 0 && e <= 17))) return false;
   return adultosDe(x) >= 1;
 }

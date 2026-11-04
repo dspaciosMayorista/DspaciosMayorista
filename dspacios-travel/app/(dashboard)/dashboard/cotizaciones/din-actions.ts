@@ -13,7 +13,8 @@ import { validarMotivo, validarRevision, mensajeEdicion39 } from "@/lib/cotizaci
 import { altaPersonasCotizacion, logPersonasCotizacion } from "@/lib/personas/consulta";
 import { AVISO_PERSONAS_PENDIENTES } from "@/lib/personas/cotizacion";
 import { codigoErrorContacto, datosContactoTarifario, logContactoTarifario, origenContactoTarifario } from "@/lib/crm/contactoTarifario";
-import { armarPaqueteCalc, type FilaHotelDin, type FilaPaqueteDin, type FilaServicioDin, type FilaVueloDin } from "@/lib/paqueteDinamico/modelo";
+import { resolverSeleccionDin } from "@/lib/paqueteDinamico/seleccion";
+import { type FilaHotelDin, type FilaPaqueteDin, type FilaServicioDin, type FilaVueloDin } from "@/lib/paqueteDinamico/modelo";
 import { construirCotizacionDin, reliquidarComponentes, type ClienteDin } from "@/lib/paqueteDinamico/cotizacion";
 import { composicionValida, type Composicion } from "@/lib/paqueteDinamico/calculo";
 import { ROLES_PRODUCTO } from "@/lib/paqueteDinamico/entrada";
@@ -116,11 +117,14 @@ export async function crearCotizacionDin(input: CrearCotizacionDinInput): Promis
   });
   if (!regla.ok) return { ok: false, error: regla.error };
 
-  const calc = armarPaqueteCalc(p, hotel, vuelo, (ss.data ?? []) as unknown as FilaServicioDin[]);
   if (input.composicion.servicios && p.usa_servicios) {
     const ids = new Set(((ss.data ?? []) as unknown as FilaServicioDin[]).map((s) => String(s.id)));
     if (input.composicion.servicios.some((s) => !ids.has(String(s)))) return { ok: false, error: "Un servicio elegido no pertenece al paquete." };
   }
+  // Menores, capacidad, edades y servicios vinculados se resuelven con las reglas de las FICHAS (el mismo núcleo que usa la vista previa).
+  const sel = await resolverSeleccionDin(admin, { paquete: p, hotel, vuelo, servicios: (ss.data ?? []) as unknown as FilaServicioDin[], composicion: input.composicion, fechaIda: input.fechaIda });
+  if (!sel.ok) return { ok: false, error: sel.error };
+  const calc = sel.calc;
 
   const vig = resolverVigenciaCotizacion({ hoy: hoyBogota(), fechaSalida: input.fechaIda || null, vigenciaSolicitada: input.vigenciaHasta, diasPorDefecto: 3 });
   if (!vig.ok) return { ok: false, error: vig.error };
@@ -128,7 +132,7 @@ export async function crearCotizacionDin(input: CrearCotizacionDinInput): Promis
   const tipoAsesor = canal === "b2b" ? (perfil?.rol === "agencia" ? "agencia" : "freelance") : "interno";
   const armado = construirCotizacionDin({
     paqueteId: p.id, paqueteNombre: p.nombre, destino: ((dest.data as { nombre?: string } | null)?.nombre ?? "").toUpperCase(),
-    hotelId: hotel?.id ?? null, vueloId: vuelo?.id ?? null, calc, composicion: input.composicion, cliente: input.cliente,
+    hotelId: hotel?.id ?? null, vueloId: vuelo?.id ?? null, calc, composicion: sel.composicion, resueltos: sel.resueltos, cliente: input.cliente,
     fechaIda: input.fechaIda, fechaRegreso: input.fechaRegreso, vigenciaHasta: vig.vigencia, tipoAsesor,
     asesorInterno: canal === "interno" ? (perfil?.nombre ?? "") : "Tarifario web",
     agenciaNombre: canal === "b2b" ? (perfil?.agenciaNombre ?? "") : "", freelanceNombre: canal === "b2b" ? (perfil?.freelanceNombre ?? "") : "",

@@ -5,7 +5,7 @@ import Link from "next/link";
 import { Star, Plane, Bus, Search, X, UtensilsCrossed, BedDouble, Tag } from "lucide-react";
 import { formatMoneda } from "@/lib/utils";
 import { VistaBooking } from "./VistaBooking";
-import { PorDinamicos } from "./PorDinamicos";
+import { PorDinamicos, type EvaluarSeleccionFn } from "./PorDinamicos";
 import type { DinamicoPublico } from "@/lib/paqueteDinamico/publico";
 import { RegimenInfo, type PlanesInfo } from "./RegimenInfo";
 import { BriefFlyerButton } from "./BriefFlyerButton";
@@ -310,6 +310,9 @@ export function TarifarioPublic({
   filas,
   programas = [],
   dinamicos = [],
+  evaluarDinamico,
+  vistaInicial,
+  dinAbierto = null,
   puedeReservar = false,
   cuposPorBloqueo = {},
   origenPorBloqueo = {},
@@ -338,6 +341,11 @@ export function TarifarioPublic({
   filas: FilaResumen[];
   programas?: ProgramaResumen[];
   dinamicos?: DinamicoPublico[];
+  /** Server Action de vista previa del paquete dinámico (la pasa la página; ver PorDinamicos). */
+  evaluarDinamico?: EvaluarSeleccionFn;
+  /** Volver desde el checkout dinámico: abre la pestaña «Dinámicos» y la tarjeta que se estaba cotizando. */
+  vistaInicial?: "dinamicos";
+  dinAbierto?: string | null;
   puedeReservar?: boolean;
   cuposPorBloqueo?: Record<number, number>;
   origenPorBloqueo?: Record<number, string>;
@@ -385,7 +393,7 @@ export function TarifarioPublic({
   // (que reflejan el rango genérico de exploración).
   restriccionPorPaquete?: Record<number, { condicionNoNeutra: boolean; restriccionNoNeutra: boolean }>;
 }) {
-  const [vista, setVista] = useState<"tabla" | "booking" | "programas" | "dinamicos">("booking");
+  const [vista, setVista] = useState<"tabla" | "booking" | "programas" | "dinamicos">(vistaInicial === "dinamicos" && dinamicos.length ? "dinamicos" : "booking");
   const [q, setQ] = useState("");
   const [fCat, setFCat] = useState("");
   const [fReg, setFReg] = useState("");
@@ -614,7 +622,7 @@ export function TarifarioPublic({
       )}
 
       {vista === "dinamicos" ? (
-        <PorDinamicos dinamicos={dinamicos} />
+        <PorDinamicos dinamicos={dinamicos} evaluar={evaluarDinamico ?? (async () => ({ ok: false as const, error: "No disponible." }))} abierta={dinAbierto} />
       ) : vista === "programas" ? (
         <PorProgramas programas={programas} puedeReservar={puedeReservar} />
       ) : vista === "booking" ? (

@@ -103,8 +103,10 @@ describe("la pestaña «Dinámicos» no importa código de servidor", () => {
     assert.doesNotMatch(ui, /din-actions/);
     assert.doesNotMatch(ui, /crearCotizacionDin/);
     assert.match(ui, /\/tarifario\/checkout\/dinamico\?/);
-    assert.match(sinComentarios(leer("app/tarifario/TarifarioPublic.tsx")), /<PorDinamicos dinamicos=\{dinamicos\} \/>/);
-    assert.doesNotMatch(sinComentarios(leer("app/tarifario/page.tsx")), /crearCotizacionDin|cotizarDinamico/);
+    assert.match(sinComentarios(leer("app/tarifario/TarifarioPublic.tsx")), /<PorDinamicos dinamicos=\{dinamicos\} evaluar=\{/);
+    const pagina = sinComentarios(leer("app/tarifario/page.tsx"));
+    assert.doesNotMatch(pagina, /crearCotizacionDin|cotizarDinamico/);
+    assert.match(pagina, /evaluarDinamico=\{evaluarSeleccionDin\}/);
     assert.match(sinComentarios(leer("app/tarifario/checkout/dinamico/page.tsx")), /crear=\{crearCotizacionDin\}/);
     const cl = sinComentarios(leer("app/tarifario/checkout/dinamico/CheckoutDinamico.tsx"));
     assert.doesNotMatch(cl, /import \{[^}]*crearCotizacionDin[^}]*\} from/);

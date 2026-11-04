@@ -130,7 +130,7 @@ describe("4. Venta: la tarjeta elige y el checkout habitual captura al cliente",
     const p = sinComentarios(leer("app/tarifario/checkout/dinamico/page.tsx"));
     assert.match(p, /resolverCanalDin\(sesion\)/);
     assert.match(p, /cargarDinamicosPublicados\(\)/);
-    assert.match(p, /liquidarPaquete\(opcion\.calc, composicion\)/);
+    assert.match(p, /evaluarSeleccionDin\(\{ paqueteId: p\.id/);
   });
   test("la acción sigue resolviendo el canal por la sesión y ya no recibe canal del navegador", () => {
     const a = sinComentarios(leer("app/(dashboard)/dashboard/cotizaciones/din-actions.ts"));

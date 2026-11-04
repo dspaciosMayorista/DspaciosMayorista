@@ -1,3 +1,4 @@
+import { evaluarSeleccionDin } from "./checkout/dinamico/actions";
 import { createClient } from "@/lib/supabase/server";
 import { TarifarioPublic } from "./TarifarioPublic";
 import { CartDrawer } from "./CartDrawer";
@@ -49,7 +50,8 @@ const FLUJO = "pagina_tarifario_publico";
 // probada con promesas diferidas en pruebas/tarifarioOrquestacion.test.ts)
 // — no un comentario ni el orden visual del código. La autorización (arrays
 // de roles) y el valor de `puedeReservar` NO cambian.
-export default async function TarifarioPublicoPage() {
+export default async function TarifarioPublicoPage({ searchParams }: { searchParams?: Promise<Record<string, string | string[] | undefined>> } = {}) {
+  const sp = (await searchParams) ?? {};
   const flujoId = generarFlujoId();
   const invocacion = siguienteInvocacionProceso(FLUJO);
   const _cronoPrep = iniciarCronometro();
@@ -315,7 +317,7 @@ export default async function TarifarioPublicoPage() {
         {!dinamicos.length && !filasVisibles.length && !programas.length && !hotelesBernalo.length && !hotelesSolicitud.length ? (
           <p className="py-20 text-center text-gray-400">Tarifario en preparación.</p>
         ) : (
-          <TarifarioPublic filas={filasVisibles} programas={programas} dinamicos={dinamicos} puedeReservar={puedeReservar}cuposPorBloqueo={cuposPorBloqueo} origenPorBloqueo={origenPorBloqueo} origenPorSalida={origenPorSalida} fotosPorHotel={fotosPorHotel} galeriaPorHotel={galeriaPorHotel} fotosPorServicio={fotosPorServicio} ventanaPorPaquete={ventanaPorPaquete} infoPorHotel={infoPorHotel} planesInfo={planesInfo} capPorHotel={capPorHotel} descripcionPorPaquete={descripcionPorPaquete} filasAddon={filasAddon} hotelesBernalo={hotelesBernalo} hotelesSolicitud={hotelesSolicitud} hotelIdsUnidadAutoritativos={hotelIdsUnidadAutoritativos} prioridadesRecomendados={prioridadesRecomendadasCombinadas} condicionPorOferta={condicionPorOferta} politicaPorOferta={politicaPorOferta} restriccionPorPaquete={restriccionPorPaquete} />
+          <TarifarioPublic filas={filasVisibles} programas={programas} dinamicos={dinamicos} evaluarDinamico={evaluarSeleccionDin} vistaInicial={sp.vista === "dinamicos" ? "dinamicos" : undefined} dinAbierto={typeof sp.din === "string" && /^\d+:(\d+|x)$/.test(sp.din) ? sp.din : null} puedeReservar={puedeReservar}cuposPorBloqueo={cuposPorBloqueo} origenPorBloqueo={origenPorBloqueo} origenPorSalida={origenPorSalida} fotosPorHotel={fotosPorHotel} galeriaPorHotel={galeriaPorHotel} fotosPorServicio={fotosPorServicio} ventanaPorPaquete={ventanaPorPaquete} infoPorHotel={infoPorHotel} planesInfo={planesInfo} capPorHotel={capPorHotel} descripcionPorPaquete={descripcionPorPaquete} filasAddon={filasAddon} hotelesBernalo={hotelesBernalo} hotelesSolicitud={hotelesSolicitud} hotelIdsUnidadAutoritativos={hotelIdsUnidadAutoritativos} prioridadesRecomendados={prioridadesRecomendadasCombinadas} condicionPorOferta={condicionPorOferta} politicaPorOferta={politicaPorOferta} restriccionPorPaquete={restriccionPorPaquete} />
         )}
       </main>
     </div>

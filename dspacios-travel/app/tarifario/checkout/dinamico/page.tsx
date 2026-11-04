@@ -1,36 +1,36 @@
-// Checkout del paquete dinámico (#82). La tarjeta de «Dinámicos» deja elegidos hotel, habitaciones, vuelo y precio; aquí se captura el cliente.
-// El servidor vuelve a leer el paquete publicado (solo PVP, ya filtrado por la agencia de la sesión) y resuelve el canal por la sesión.
+// Checkout del paquete dinámico (#82). La tarjeta de «Dinámicos» deja elegidos hotel, alimentación, habitaciones, viajeros, vuelo y servicios; aquí se captura el cliente.
+// El servidor vuelve a leer el paquete publicado (solo PVP, ya filtrado por la agencia de la sesión), revalida la selección con el MISMO núcleo que la cotización
+// (menores por edad, capacidad por habitación, servicios con su ficha) y resuelve el canal por la sesión.
 import Link from "next/link";
 import { createClient } from "@/lib/supabase/server";
 import { cargarDinamicosPublicados } from "@/lib/paqueteDinamico/cargarPublico";
-import { liquidarPaquete, validarPaquete, type Composicion } from "@/lib/paqueteDinamico/calculo";
 import { resolverCanalDin } from "@/lib/paqueteDinamico/solicitud";
+import { deQuery } from "@/lib/paqueteDinamico/seleccionUrl";
+import { ACOM_ROOM_LABEL, ACOM_ROOMS } from "@/lib/acomodaciones";
 import { crearCotizacionDin } from "@/app/(dashboard)/dashboard/cotizaciones/din-actions";
 import { getContextoB2B } from "../actions";
+import { evaluarSeleccionDin } from "./actions";
 import { CheckoutDinamico, type ResumenDin } from "./CheckoutDinamico";
 
 export const dynamic = "force-dynamic";
 
 type Q = Record<string, string | string[] | undefined>;
-const uno = (v: string | string[] | undefined) => (Array.isArray(v) ? v[0] : v) ?? "";
-const entero = (v: string | string[] | undefined, max = 20) => { const n = Number(uno(v)); return Number.isInteger(n) && n >= 0 && n <= max ? n : 0; };
-const idOpt = (v: string | string[] | undefined) => { const n = Number(uno(v)); return Number.isInteger(n) && n > 0 ? n : null; };
-const ISO = /^\d{4}-\d{2}-\d{2}$/;
 
-function Aviso({ texto }: { texto: string }) {
+function Aviso({ texto, volver }: { texto: string; volver?: string }) {
   return (
     <div className="mx-auto max-w-xl p-8 text-center">
       <p role="alert" className="mb-4 text-sm text-gray-700">{texto}</p>
-      <Link href="/tarifario" className="text-sm font-semibold underline" style={{ color: "var(--brand-primary)" }}>Volver al tarifario</Link>
+      <Link href={volver ?? "/tarifario"} className="text-sm font-semibold underline" style={{ color: "var(--brand-primary)" }}>{volver ? "Cambiar la selección" : "Volver al tarifario"}</Link>
     </div>
   );
 }
 
 export default async function CheckoutDinamicoPage({ searchParams }: { searchParams: Promise<Q> }) {
-  const q = await searchParams;
-  const paqueteId = idOpt(q.p), hotelId = idOpt(q.h), vueloId = idOpt(q.v);
-  const ida = uno(q.ida), reg = uno(q.reg);
-  if (!paqueteId || !ISO.test(ida) || !ISO.test(reg)) return <Aviso texto="La selección está incompleta. Vuelve al tarifario y elige de nuevo." />;
+  const sel = deQuery(await searchParams);
+  if (!sel) return <Aviso texto="La selección está incompleta. Vuelve al tarifario y elige de nuevo." />;
+  const clave = `${sel.paqueteId}:${sel.hotelId ?? "x"}`;
+  // Al volver, la tarjeta se reabre con la selección guardada (sessionStorage) en la pestaña «Dinámicos».
+  const volver = `/tarifario?vista=dinamicos&din=${encodeURIComponent(clave)}`;
 
   // Canal por la sesión (nunca por la URL).
   const sb = await createClient();
@@ -43,38 +43,39 @@ export default async function CheckoutDinamicoPage({ searchParams }: { searchPar
   const canal = resolverCanalDin(sesion);
   if (!canal.ok) return <Aviso texto={canal.error} />;
 
-  const p = (await cargarDinamicosPublicados()).find((x) => x.id === paqueteId);
+  const p = (await cargarDinamicosPublicados()).find((x) => x.id === sel.paqueteId);
   if (!p) return <Aviso texto="Este paquete ya no está disponible para cotizar." />;
-  const hotel = p.usaHotel ? p.hoteles.find((h) => h.id === hotelId) : undefined;
-  if (p.usaHotel && !hotel) return <Aviso texto="El hotel elegido no pertenece al paquete." />;
-  const vuelo = p.usaVuelo ? p.vuelos.find((v) => v.id === vueloId) : undefined;
-  if (p.usaVuelo && !vuelo) return <Aviso texto="El vuelo elegido no pertenece al paquete." />;
+  const hotel = p.usaHotel ? p.hoteles.find((h) => h.id === sel.hotelId) : undefined;
+  if (p.usaHotel && !hotel) return <Aviso texto="El hotel elegido no pertenece al paquete." volver={volver} />;
+  const vuelo = p.usaVuelo ? p.vuelos.find((v) => v.id === sel.vueloId) : undefined;
+  if (p.usaVuelo && !vuelo) return <Aviso texto="El vuelo elegido no pertenece al paquete." volver={volver} />;
+  const dias = Math.round((Date.parse(`${sel.fechaRegreso}T00:00:00Z`) - Date.parse(`${sel.fechaIda}T00:00:00Z`)) / 86_400_000);
+  if (dias !== p.noches) return <Aviso texto={`El viaje debe durar exactamente ${p.noches} noches.`} volver={volver} />;
 
-  const composicion: Composicion = {
-    habitaciones: { sencilla: entero(q.hs), doble: entero(q.hd), triple: entero(q.ht), multiple: entero(q.hm) },
-    ninos: entero(q.n1), ninos2: entero(q.n2), infantes: entero(q.inf),
-  };
-  const opcion = p.opciones.find((o) => (o.hotelId ?? null) === (hotel?.id ?? null) && (o.vueloId ?? null) === (vuelo?.id ?? null));
-  let total: number | null = null;
-  if (opcion && !validarPaquete(opcion.calc).length) { try { total = liquidarPaquete(opcion.calc, composicion).total; } catch { total = null; } }
-  if (total == null) return <Aviso texto="No se pudo calcular el precio con esa composición. Vuelve al tarifario y revisa las habitaciones." />;
-  const dias = Math.round((Date.parse(`${reg}T00:00:00Z`) - Date.parse(`${ida}T00:00:00Z`)) / 86_400_000);
-  if (dias !== p.noches) return <Aviso texto={`El viaje debe durar exactamente ${p.noches} noches.`} />;
+  const composicion = { habitaciones: sel.habitaciones, ninos: 0, ninos2: 0, infantes: 0, edadesMenores: sel.edades, ...(sel.servicios ? { servicios: sel.servicios } : {}) };
+  const prev = await evaluarSeleccionDin({ paqueteId: p.id, hotelId: hotel?.id ?? null, vueloId: vuelo?.id ?? null, composicion, fechaIda: sel.fechaIda });
+  if (!prev.ok) return <Aviso texto={prev.error} volver={volver} />;
 
-  const hab = Object.entries(composicion.habitaciones).filter(([, n]) => n > 0).map(([k, n]) => `${n} ${k}`);
-  if (composicion.ninos) hab.push(`${composicion.ninos} niño 1`);
-  if (composicion.ninos2) hab.push(`${composicion.ninos2} niño 2`);
-  if (composicion.infantes) hab.push(`${composicion.infantes} infante${composicion.infantes > 1 ? "s" : ""}`);
+  const hab = ACOM_ROOMS.filter((a) => sel.habitaciones[a] > 0).map((a) => `${sel.habitaciones[a]} ${ACOM_ROOM_LABEL[a].toLowerCase()}`);
+  const m = prev.menores;
+  const viajeros = sel.edades.length
+    ? `${sel.edades.length} menor${sel.edades.length === 1 ? "" : "es"} (edades ${sel.edades.join(", ")}): Niño 1 × ${m.ninos} · Niño 2 × ${m.ninos2} · Infante × ${m.infantes}`
+    : "Sin menores";
+  const elegidos = sel.servicios ?? p.servicios.map((s) => String(s.id));
   const resumen: ResumenDin = {
-    paquete: p.nombre, destino: p.destino, noches: p.noches, moneda: p.moneda, hotel: hotel?.nombre ?? null, vuelo: vuelo?.etiqueta ?? null,
-    fechaIda: ida, fechaRegreso: reg, habitaciones: hab.join(", ") || "—", total,
+    paquete: p.nombre, destino: p.destino, noches: p.noches, moneda: p.moneda,
+    hotel: hotel ? { nombre: hotel.nombre, categoria: hotel.categoria, regimen: hotel.regimen } : null,
+    habitaciones: hab.join(", ") || "—", viajeros,
+    vuelo: vuelo ? { etiqueta: vuelo.etiqueta, detalle: vuelo.detalle } : null,
+    servicios: p.servicios.filter((s) => elegidos.includes(String(s.id))).map((s) => s.nombre),
+    fechaIda: sel.fechaIda, fechaRegreso: sel.fechaRegreso, total: prev.total, lineas: prev.lineas, volver,
   };
   const aliado = canal.canal === "b2b" ? ((await getContextoB2B()).agencia?.nombre ?? null) : null;
 
   return (
     <CheckoutDinamico
       resumen={resumen} canal={canal.canal} aliado={aliado} crear={crearCotizacionDin}
-      solicitud={{ paqueteId, hotelId: hotel?.id ?? null, vueloId: vuelo?.id ?? null, composicion, fechaIda: ida, fechaRegreso: reg }}
+      solicitud={{ paqueteId: p.id, hotelId: hotel?.id ?? null, vueloId: vuelo?.id ?? null, composicion, fechaIda: sel.fechaIda, fechaRegreso: sel.fechaRegreso }}
     />
   );
 }

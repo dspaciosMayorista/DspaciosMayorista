@@ -142,7 +142,30 @@ público no cambió ni lee `payload` (lo exigen pruebas de cableado); la fecha d
   Ahí se captura al cliente con las mismas piezas del checkout habitual: sesión interna → número de documento + `BuscarTitular` (búsqueda de personas por documento existente); aliado B2B → titular del contrato; visitante → «Tus datos».
   El canal lo sigue resolviendo el servidor por la sesión. La tarjeta ya no tiene formulario de identidad ni recibe la Server Action.
 - **Límite:** el carrito/checkout habitual (`/tarifario/checkout`) re-liquida desde las tablas del tarifario y no modela estos paquetes; por eso la continuación es una página hermana que reutiliza sus piezas de captura de cliente, no el mismo carrito. La venta asistida (interno a nombre de un aliado) no está en este flujo.
-- **Pruebas SQL anteriores:** `test_275_*.sql` describe la 275 sola (con la 276 puesta, su fixture de vuelo con ruta libre «BOG-CTG» se rechaza por diseño); se corre antes de la 276 o tras su rollback.
+- **Pruebas SQL anteriores:** `test_275_*.sql` describe la 275 sola (con la 276 puesta, su fixture de vuelo con ruta libre «BOG-CTG» se rechaza por diseño); se corre antes de la 276 o tras su rollback. `test_276_*.sql` describe la 276 sola (con la 277 su hotel manual de ejemplo, sin capacidad ni edades, se rechaza por diseño).
+
+### 4.9 Experiencia como la de los paquetes normales (migración 277)
+- **Montaje del hotel.** Manual: pide la **capacidad máxima de niños por habitación** (0 a 2: el sistema cobra hasta Niño 1 y Niño 2 por habitación; se aplica igual a todas sus acomodaciones, simplificación de este producto) y los umbrales
+  «infante hasta / niño hasta» (vienen prellenados con los del sistema, 2 y 10), y elige **categoría de habitación y plan de alimentación del mismo catálogo** que los hoteles normales (Producto → Configuración). Con ficha: trae sus categorías y planes
+  (si solo tiene uno, ya viene elegido) y **conserva sus reglas** (edades, capacidad por acomodación, pax mín/máx, solo adultos); no se piden otra vez ni se guardan copias. El servidor revalida el catálogo; las columnas son `capacidad_ninos`, `edad_infante_max`,
+  `edad_nino_max` (CHECK de rangos y trigger que las exige al insertar un hotel manual; los manuales anteriores quedan en NULL = sin validación de capacidad hasta volver a guardar el paquete).
+- **Menores.** La tarjeta pregunta **si viajan menores** y solo entonces pide la cantidad y la edad de cada uno. Clasifica con los umbrales del hotel (`clasificarMenoresPorEdad`) y reparte por habitación (`distribuirPorHabitaciones`: Niño 1 y Niño 2 son
+  **tarifas por habitación**, no rangos de edad, y así se le explica al cliente junto con las edades de ESE hotel); capacidad y pax con `validarReservaHabitaciones`. Todo está en `lib/paqueteDinamico/menores.ts` y lo usan igual la pantalla y el servidor;
+  el servidor **ignora los conteos del navegador** y los recalcula de las edades (`resolverSeleccionDin`).
+- **Servicios con ficha.** Ya no se tratan como manuales: en netas+markup el precio sale de la ficha al cotizar (vigencia por fecha del viaje, cobro por persona o por grupo con su rango de pasajeros, liquidación, **menores de 2 años** = tarifa de infante, sin silla y fuera del rango del grupo:
+  `lib/paqueteDinamico/servicioFicha.ts` sobre `resolverTarifaServicio`/`costoServicioContrato`); en solo PVP el equipo escribe el PVP, pero la **capacidad** de la ficha se valida igual. Cinco niños con dos adultos en un servicio por grupo de 1–6 se rechazan con
+  «cubre de 1 a 6 pasajeros… tu grupo es de 7». Los traslados/combos y los servicios con suplementos por horario no se pueden vincular (su precio depende de alcance y hora).
+- **Tarjeta y checkout.** Secciones de hotel, alimentación, habitaciones, viajeros, vuelo (aerolínea, ruta, fechas, números y horarios de Empaquetados) y servicios (elegibles); el precio y las razones de rechazo los da el servidor (`evaluarSeleccionDin`, el mismo núcleo que cotiza). La selección viaja en la URL, se guarda en
+  `sessionStorage` y «Cambiar la selección» vuelve a la tarjeta con todo lo elegido. Sesión interna / B2B / visitante igual que antes (BuscarTitular, portal, enlace público).
+- **Solo PVP.** «PVP separado por componente» ya no muestra «Total declarado» (se retiró del formulario y el servidor nunca lo guarda); al cambiar de esquema o de modalidad se limpian en pantalla los precios de la inactiva y el servidor igualmente guarda solo los de la activa.
+- **Servicios vinculados en solo PVP (unidad de cobro de la ficha).** El equipo sigue escribiendo el precio, pero la UNIDAD es la de la ficha (`lib/paqueteDinamico/serviciosVinculados.ts`, un solo resolutor para tarjeta, checkout, cotización y contrato):
+  · **por grupo** → el PVP es el del GRUPO y se cobra **una vez** mientras los pasajeros con silla estén en el rango de la ficha (no una vez por adulto o niño); cantidad guardada = 1 grupo;
+  · **por persona** → PVP × pasajeros con silla + PVP de infante × menores de 2 años. Si la ficha cobra al infante (tarifa > 0 o sin tarifa propia) el montaje **exige** el «PVP infante» (0 = gratis explícito; columna `paquete_din_servicios.pvp_infante`, migración 277) y el servidor lo revalida al guardar y al cotizar; si la ficha no lo cobra queda en 0 a la vista;
+  · **precio general** → el servicio no lleva PVP, pero su capacidad se valida y guarda la misma cantidad.
+  La **cantidad que queda para costos y CxP** se guarda en el nombre del componente («Cena show · 1 grupo (4 pasajeros con silla)», «Tour Islas · 4 personas + 1 infante (menor de 2 años)»), así se ve al registrar el costo real y en la CxP; en netas el costo sale de la ficha y no se pide registrarlo.
+  `exige_costo` = true en solo PVP (por componente y general) y false en netas.
+- **Límites:** los hoteles manuales anteriores no validan capacidad; la categoría y el plan no tienen trigger en la base (validación en el servidor); en solo PVP los servicios MANUALES siguen cobrando PVP × (adultos + niños) y el infante no paga (regla anterior, sin ficha);
+  `Niño 1 / Niño 2` en el cálculo siguen siendo tarifas de la acomodación del hotel del paquete.
 
 ## 5. Auditoría: los cuatro bloqueos (migración 275, aditiva sobre la 274)
 

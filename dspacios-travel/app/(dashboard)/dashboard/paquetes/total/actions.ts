@@ -4,6 +4,9 @@
 // Aislamiento por agencia: lo impone la RLS (275) sobre la sesión del usuario; aquí además se comprueba la agencia antes de actuar.
 import { revalidatePath } from "next/cache";
 import { createClient } from "@/lib/supabase/server";
+import { createAdminClient } from "@/lib/supabase/admin";
+import { cargarCatalogoHotel, cargarFichasServicio, cargarOpcionesHotelFicha } from "@/lib/paqueteDinamico/fichas";
+import { cobraInfante } from "@/lib/paqueteDinamico/servicioFicha";
 import { autorizaTenant, contextoCotizacion } from "@/lib/cotizacion/acceso";
 import { hoyBogota } from "@/lib/cotizacion/vigencia";
 import { opcionesDelPaquete, type FilaHotelDin, type FilaPaqueteDin, type FilaServicioDin, type FilaVueloDin } from "@/lib/paqueteDinamico/modelo";
@@ -32,16 +35,16 @@ async function contexto(): Promise<{ sb: Loose; raw: Awaited<ReturnType<typeof c
 const filaPaquete = (e: EntradaPaqueteTotal, id: number): FilaPaqueteDin => ({
   id, nombre: e.nombre, moneda: e.moneda, esquema: e.esquema, pvp_modo: e.pvpModo, pct_mk: e.pctMkPct / 100,
   usa_vuelo: e.usaVuelo, usa_hotel: e.usaHotel, usa_servicios: e.usaServicios, noches: e.noches,
-  pvp_general: e.pvpGeneral, total_declarado: e.totalDeclarado,
+  pvp_general: e.pvpGeneral, total_declarado: null,
 });
 
 /** Valida TODAS las opciones hotel×vuelo del paquete; mensajes sin repetir. No toca la base. */
 function validarOpciones(e: EntradaPaqueteTotal, destinos: { id: number; pais: string | null }[] = []): string[] {
   const base = validarEntradaPaqueteTotal(e, destinos);
   if (base.length) return base;
-  const hoteles: FilaHotelDin[] = e.hoteles.map((h, i) => ({ id: i + 1, hotel_id: h.hotelId, nombre: h.nombre, categoria: h.categoria, regimen: h.regimen, descripcion: h.descripcion, foto_url: h.fotoUrl, proveedor: h.proveedor, neto: h.neto, pvp: h.pvp, pvp_general: h.pvpGeneral }));
+  const hoteles: FilaHotelDin[] = e.hoteles.map((h, i) => ({ id: i + 1, hotel_id: h.hotelId, capacidad_ninos: h.capacidadNinos, edad_infante_max: h.edadInfanteMax, edad_nino_max: h.edadNinoMax, nombre: h.nombre, categoria: h.categoria, regimen: h.regimen, descripcion: h.descripcion, foto_url: h.fotoUrl, proveedor: h.proveedor, neto: h.neto, pvp: h.pvp, pvp_general: h.pvpGeneral }));
   const vuelos: FilaVueloDin[] = e.vuelos.map((v, i) => ({ id: i + 1, empaquetado_id: v.empaquetadoId, destino_id: v.destinoId, aerolinea: v.aerolinea, ruta: v.ruta, fecha_ida: v.fechaIda, fecha_regreso: v.fechaRegreso, proveedor: v.proveedor, neto: v.neto, pvp: v.pvp }));
-  const servicios: FilaServicioDin[] = e.servicios.map((s, i) => ({ id: i + 1, servicio_id: s.servicioId, nombre: s.nombre, proveedor: s.proveedor, neto: s.neto, pvp: s.pvp }));
+  const servicios: FilaServicioDin[] = e.servicios.map((s, i) => ({ id: i + 1, servicio_id: s.servicioId, nombre: s.nombre, proveedor: s.proveedor, neto: s.neto, pvp: s.pvp, pvp_infante: s.pvpInfante }));
   const msgs = new Set<string>();
   if (e.usaHotel && !hoteles.length) msgs.add("Agrega al menos un hotel (existente o manual).");
   if (e.usaVuelo && !vuelos.length) msgs.add("Agrega al menos un vuelo (de Empaquetados o manual).");
@@ -109,8 +112,50 @@ async function completarDesdeFichas(sb: Loose, e: EntradaPaqueteTotal): Promise<
     if (f.moneda !== e.moneda) errores.push(`El servicio «${x.nombre}» está en ${f.moneda} y el paquete en ${e.moneda}.`);
     return { ...x, proveedorId: f.proveedor_id, proveedor: f.proveedor ?? "" };
   });
+  let serviciosFinal = servicios;
   const sin = serviciosSinProveedor(servicios);
   if (sin.length) avisos.push(mensajeSinProveedor(sin));
+
+  // Servicios vinculados que este producto no sabe cobrar (traslados/combos o con suplementos por horario).
+  if (idsSv.length) {
+    try {
+      const fichas = await cargarFichasServicio(createAdminClient(), idsSv);
+      for (const x of e.servicios) { const fi = x.servicioId != null ? fichas.get(x.servicioId) : undefined; if (fi?.noSoportado) errores.push(`El servicio «${x.nombre}» ${fi.noSoportado}`); }
+      // Solo PVP por componente: un servicio por persona cuya ficha cobra al infante necesita su PVP definido (0 = gratis, explícito); nunca se vuelve gratis en silencio.
+      serviciosFinal = servicios.map((x) => {
+        const fi = x.servicioId != null ? fichas.get(x.servicioId) : undefined;
+        if (!fi || e.esquema !== "solo_pvp" || e.pvpModo !== "por_componente" || fi.modo !== "persona") return { ...x, pvpInfante: null };
+        if (x.pvpInfante == null && cobraInfante(fi)) { errores.push(`El servicio «${x.nombre}» cobra al infante (menor de 2 años): define su PVP de infante (0 si es gratis).`); return x; }
+        if (x.pvpInfante != null && !(Number.isFinite(x.pvpInfante) && x.pvpInfante >= 0)) { errores.push(`El PVP de infante de «${x.nombre}» no es válido.`); return x; }
+        return { ...x, pvpInfante: x.pvpInfante ?? 0 };
+      });
+    } catch { errores.push("No se pudo leer la ficha de un servicio. Intenta de nuevo."); }
+  }
+
+  // Hoteles: categoría de habitación y plan de alimentación salen del MISMO catálogo que los hoteles normales (manual) o de lo configurado en la ficha (vinculado).
+  if (e.usaHotel && e.hoteles.length) {
+    const adm = createAdminClient();
+    const cat = await cargarCatalogoHotel(adm);
+    const fichaIds = e.hoteles.map((h) => h.hotelId).filter((x): x is number => x != null);
+    const opc = await cargarOpcionesHotelFicha(adm, fichaIds);
+    for (const h of e.hoteles) {
+      const nom = h.nombre || "manual";
+      if (h.hotelId == null) {
+        if (h.categoria && !cat.categorias.includes(h.categoria)) errores.push(`Hotel «${nom}»: la categoría de habitación «${h.categoria}» no existe en el catálogo (Producto → Configuración).`);
+        if (h.regimen && !cat.regimenes.includes(h.regimen)) errores.push(`Hotel «${nom}»: el plan de alimentación «${h.regimen}» no existe en el catálogo (Producto → Configuración).`);
+      } else {
+        const o = opc.get(h.hotelId) ?? { categorias: [], regimenes: [] };
+        if (h.categoria && o.categorias.length && !o.categorias.includes(h.categoria)) errores.push(`Hotel «${nom}»: la categoría «${h.categoria}» no está configurada en la ficha del hotel.`);
+        if (h.regimen && o.regimenes.length && !o.regimenes.includes(h.regimen)) errores.push(`Hotel «${nom}»: el plan de alimentación «${h.regimen}» no está configurado en la ficha del hotel.`);
+      }
+    }
+    // Con ficha, lo que el hotel solo tiene una opción se completa solo (no se pide configurar otra vez); la capacidad y las edades NO se guardan: se leen de la ficha.
+    e = { ...e, hoteles: e.hoteles.map((h) => {
+      if (h.hotelId == null) return h;
+      const o = opc.get(h.hotelId) ?? { categorias: [], regimenes: [] };
+      return { ...h, categoria: h.categoria || (o.categorias.length === 1 ? o.categorias[0] : ""), regimen: h.regimen || (o.regimenes.length === 1 ? o.regimenes[0] : ""), capacidadNinos: null, edadInfanteMax: null, edadNinoMax: null };
+    }) };
+  }
 
   // Hoteles ficha: misma moneda que el paquete.
   const idsH = [...new Set(e.hoteles.map((h) => h.hotelId).filter((x): x is number => x != null))];
@@ -119,7 +164,7 @@ async function completarDesdeFichas(sb: Loose, e: EntradaPaqueteTotal): Promise<
     for (const h of (await sb.from("hoteles").select("id, moneda").in("id", idsH)).data ?? []) mon[h.id] = h.moneda ?? "COP";
     for (const h of e.hoteles) if (h.hotelId != null && (mon[h.hotelId] ?? "COP") !== e.moneda) errores.push(`El hotel «${h.nombre}» está en ${mon[h.hotelId] ?? "COP"} y el paquete en ${e.moneda}.`);
   }
-  return { e: { ...e, vuelos, servicios }, errores, avisos, destinos };
+  return { e: { ...e, vuelos, servicios: serviciosFinal }, errores, avisos, destinos };
 }
 
 export async function guardarPaqueteTotal(entrada: EntradaPaqueteTotal): Promise<Result> {
@@ -152,14 +197,14 @@ export async function guardarPaqueteTotal(entrada: EntradaPaqueteTotal): Promise
     nombre: e.nombre.trim(), destino_id: e.destinoId, multidestino: e.multidestino, destinos_extra: e.multidestino ? e.destinosExtra : [], moneda: e.moneda, esquema: e.esquema, pvp_modo: e.esquema === "solo_pvp" ? e.pvpModo : null,
     pct_mk: neta ? e.pctMkPct / 100 : 0, usa_vuelo: e.usaVuelo, usa_hotel: e.usaHotel, usa_servicios: e.usaServicios, noches: e.noches,
     compra_inicio: e.compraInicio || null, compra_fin: e.compraFin || null, viaje_inicio: e.viajeInicio || null, viaje_fin: e.viajeFin || null,
-    pvp_general: general ? e.pvpGeneral : null, total_declarado: porComp ? e.totalDeclarado : null,
+    pvp_general: general ? e.pvpGeneral : null, total_declarado: null, // «Total declarado» ya no existe en el formulario: nunca se guarda, venga lo que venga
     descripcion: e.descripcion || null, incluye: e.incluye || null, no_incluye: e.noIncluye || null,
     // La agencia la fija la base con la del usuario; solo superadmin puede elegirla (la de la sesión validada).
     tenant: ctx.superadmin ? ctx.tenant : undefined,
   };
   const vuelos = e.usaVuelo ? e.vuelos.map((v) => ({ empaquetado_id: v.empaquetadoId, destino_id: v.destinoId, aerolinea: v.aerolinea || null, ruta: v.ruta || null, origen_iata: v.origenIata || null, destino_iata: v.destinoIata || null, fecha_ida: v.fechaIda || null, fecha_regreso: v.fechaRegreso || null, proveedor: v.proveedor || null, neto: neta ? v.neto : {}, pvp: porComp ? v.pvp : {} })) : [];
-  const hoteles = e.usaHotel ? e.hoteles.map((h) => ({ hotel_id: h.hotelId, nombre: h.nombre.trim(), categoria: h.categoria || null, regimen: h.regimen || null, descripcion: h.descripcion || null, foto_url: h.fotoUrl || null, proveedor: h.proveedor || null, neto: neta ? h.neto : {}, pvp: porComp ? h.pvp : {}, pvp_general: general ? h.pvpGeneral : null })) : [];
-  const servicios = e.usaServicios ? e.servicios.map((s) => ({ servicio_id: s.servicioId, destino_id: s.destinoId, nombre: s.nombre.trim(), proveedor: s.proveedor || null, neto: neta ? s.neto : null, pvp: porComp ? s.pvp : null })) : [];
+  const hoteles = e.usaHotel ? e.hoteles.map((h) => ({ hotel_id: h.hotelId, nombre: h.nombre.trim(), categoria: h.categoria || null, regimen: h.regimen || null, descripcion: h.descripcion || null, foto_url: h.fotoUrl || null, proveedor: h.proveedor || null, neto: neta ? h.neto : {}, pvp: porComp ? h.pvp : {}, pvp_general: general ? h.pvpGeneral : null, capacidad_ninos: h.hotelId == null ? h.capacidadNinos : null, edad_infante_max: h.hotelId == null ? h.edadInfanteMax : null, edad_nino_max: h.hotelId == null ? h.edadNinoMax : null })) : [];
+  const servicios = e.usaServicios ? e.servicios.map((s) => ({ servicio_id: s.servicioId, destino_id: s.destinoId, nombre: s.nombre.trim(), proveedor: s.proveedor || null, neto: neta && s.servicioId == null ? s.neto : null, pvp: porComp ? s.pvp : null, pvp_infante: porComp && s.servicioId != null ? s.pvpInfante : null })) : [];
 
   // UNA sola llamada = una transacción: un error en cualquier hijo deja el paquete y sus hijos como estaban.
   const { data: id, error } = await raw.rpc("guardar_paquete_din", {
