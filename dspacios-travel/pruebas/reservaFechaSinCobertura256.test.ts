@@ -41,7 +41,7 @@ const tablas: TablasFalsas = {
     notas: null, edad_infante_min: null, edad_infante_max: null, edad_nino_min: null, edad_nino_max: null,
     precio_final_autoritativo: false,
   }],
-  hotel_blackouts: [],
+  hotel_blackouts: [], hotel_reglas_descuento: [],
   hotel_acomodaciones: [
     { hotel_id: HOTEL_ID, acomodacion: "doble", pax_tarifa: 2, pax_max: 4, adt_min: 1, adt_max: 2, chd_min: 0, chd_max: 2, inf_min: 0, inf_max: 2 },
   ],

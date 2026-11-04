@@ -151,7 +151,7 @@ function tablasPrecio(extra: TablasFalsas = {}): TablasFalsas {
       notas: null, edad_infante_min: null, edad_infante_max: null, edad_nino_min: null, edad_nino_max: null,
       precio_final_autoritativo: false,
     }],
-    hotel_blackouts: [],
+    hotel_blackouts: [], hotel_reglas_descuento: [],
     armado_servicios: [], servicios_adicionales: [],
     ...extra,
   };

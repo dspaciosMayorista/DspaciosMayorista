@@ -20,7 +20,8 @@ export async function buscarHoteles(input) {
   if (implBuscarHoteles) return implBuscarHoteles(input);
   throw new Error("buscarHoteles: no implementado en el stub de pruebas — instala una implementación con __setBuscarHoteles si tu prueba SÍ ejercita el buscador");
 }
-export async function cotizarPorFechas() {
+export async function cotizarPorFechas(...args) {
+  if (globalThis.__cotizarPorFechasFake) return globalThis.__cotizarPorFechasFake(...args);
   throw new Error("cotizarPorFechas: no implementado en el stub de pruebas");
 }
 // CONFIGURABLE (`__setBuscarReceptivos`) — mismo criterio que

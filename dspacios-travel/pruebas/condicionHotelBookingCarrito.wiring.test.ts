@@ -61,7 +61,8 @@ test("VistaBooking.tsx (tarjeta de exploración — 'O explora todos los alojami
   assert.match(cuerpoTarjeta, /\{tieneCondicion !== undefined && <CondicionCompacta activo=\{tieneCondicion\} \/>\}/, "la tarjeta de exploración no renderiza el badge compacto");
   // Cada uso `<TarjetaHotelCard … />` completo (sus props incluyen `=>`, así
   // que se recorta hasta el cierre `/>` en vez de usar `[^>]`).
-  const usos = src.split("<TarjetaHotelCard").slice(1).map((resto) => resto.slice(0, resto.indexOf("/>")));
+  // #90: la tarjeta persona entra por el envoltorio `TarjetaHotelConFechas` (renderiza el mismo `TarjetaHotelCard`); cualquiera de los dos es un punto de uso.
+  const usos = src.split(/<TarjetaHotelCard|<TarjetaHotelConFechas/).slice(1).map((resto) => resto.slice(0, resto.indexOf("/>")));
   const usoPersona = usos.find((u) => /onClick=\{\(\) => abrirHotel\(t\.card\)\}/.test(u));
   assert.ok(usoPersona, "no se encontró la tarjeta persona de exploración");
   assert.match(usoPersona!, /tieneCondicion=\{t\.card\.tieneCondicion\}/, "la tarjeta persona de exploración no le pasa tieneCondicion del HotelCard");
