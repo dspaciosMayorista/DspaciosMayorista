@@ -9,6 +9,7 @@ import { hoyBogota } from "@/lib/cotizacion/vigencia";
 import { opcionesDelPaquete, type FilaHotelDin, type FilaPaqueteDin, type FilaServicioDin, type FilaVueloDin } from "@/lib/paqueteDinamico/modelo";
 import { validarPaquete } from "@/lib/paqueteDinamico/calculo";
 import { ROLES_PRODUCTO, validarEntradaPaqueteTotal, type EntradaPaqueteTotal } from "@/lib/paqueteDinamico/entrada";
+import { derivarRutaManual, destinoCoincide, mensajeSinProveedor, normalizarIata, serviciosSinProveedor, validarMultidestino } from "@/lib/paqueteDinamico/ruta";
 import type { Json } from "@/types/database";
 
 type Result = { ok: true; id: number; avisos?: string[] } | { ok: false; error: string };
@@ -35,8 +36,8 @@ const filaPaquete = (e: EntradaPaqueteTotal, id: number): FilaPaqueteDin => ({
 });
 
 /** Valida TODAS las opciones hotel×vuelo del paquete; mensajes sin repetir. No toca la base. */
-function validarOpciones(e: EntradaPaqueteTotal): string[] {
-  const base = validarEntradaPaqueteTotal(e);
+function validarOpciones(e: EntradaPaqueteTotal, destinos: { id: number; pais: string | null }[] = []): string[] {
+  const base = validarEntradaPaqueteTotal(e, destinos);
   if (base.length) return base;
   const hoteles: FilaHotelDin[] = e.hoteles.map((h, i) => ({ id: i + 1, hotel_id: h.hotelId, nombre: h.nombre, categoria: h.categoria, regimen: h.regimen, descripcion: h.descripcion, foto_url: h.fotoUrl, proveedor: h.proveedor, neto: h.neto, pvp: h.pvp, pvp_general: h.pvpGeneral }));
   const vuelos: FilaVueloDin[] = e.vuelos.map((v, i) => ({ id: i + 1, empaquetado_id: v.empaquetadoId, destino_id: v.destinoId, aerolinea: v.aerolinea, ruta: v.ruta, fecha_ida: v.fechaIda, fecha_regreso: v.fechaRegreso, proveedor: v.proveedor, neto: v.neto, pvp: v.pvp }));
@@ -55,12 +56,81 @@ export async function validarPaqueteTotal(e: EntradaPaqueteTotal): Promise<strin
   return validarOpciones(e);
 }
 
-export async function guardarPaqueteTotal(e: EntradaPaqueteTotal): Promise<Result> {
+/**
+ * Lo que NO se confía del navegador se vuelve a leer de las fichas (la base lo impone otra vez con triggers, migración 276):
+ *  · país de los destinos (multidestino solo del mismo país) · ruta de cada vuelo (empaquetado vinculado, o derivada de origen/destino)
+ *  · proveedor de cada servicio vinculado (servicios_adicionales.proveedor_id + su ficha) · moneda de hoteles y servicios vinculados.
+ */
+async function completarDesdeFichas(sb: Loose, e: EntradaPaqueteTotal): Promise<{ e: EntradaPaqueteTotal; errores: string[]; avisos: string[]; destinos: { id: number; pais: string | null }[] }> {
+  const errores: string[] = [];
+  const avisos: string[] = [];
+  const idsDest = [...new Set([e.destinoId, ...e.destinosExtra].filter((x): x is number => !!x))];
+  const destinos: { id: number; pais: string | null }[] = idsDest.length ? ((await sb.from("destinos").select("id, pais").in("id", idsDest)).data ?? []) : [];
+  errores.push(...validarMultidestino({ multidestino: e.multidestino, destinoId: e.destinoId, destinosExtra: e.destinosExtra, destinos }));
+
+  // Vuelos: la ruta nunca es texto libre.
+  const idsEmp = [...new Set(e.vuelos.map((v) => v.empaquetadoId).filter((x): x is number => x != null))];
+  const emp: Record<number, { ruta: string | null; origen: string | null; destino_iata: string | null; destino_id: number | null }> = {};
+  if (idsEmp.length) {
+    const { data: es } = await sb.from("empaquetados").select("id, ruta, origen, destino_id").in("id", idsEmp);
+    const dd: Record<number, string | null> = {};
+    const di = [...new Set((es ?? []).map((x: { destino_id: number | null }) => x.destino_id).filter((x: number | null): x is number => x != null))];
+    if (di.length) for (const d of (await sb.from("destinos").select("id, codigo_iata").in("id", di)).data ?? []) dd[d.id] = d.codigo_iata ?? null;
+    for (const x of es ?? []) emp[x.id] = { ruta: x.ruta, origen: x.origen, destino_id: x.destino_id ?? null, destino_iata: x.destino_id != null ? (dd[x.destino_id] ?? null) : null };
+  }
+  const vuelos = e.vuelos.map((v) => {
+    if (v.empaquetadoId != null) {
+      const x = emp[v.empaquetadoId];
+      if (!x) { errores.push("Un vuelo vincula un empaquetado que no existe."); return v; }
+      if (!destinoCoincide(x.destino_id, v.destinoId, e.destinoId)) { errores.push(`El empaquetado #${v.empaquetadoId} es de otro destino que el declarado para el vuelo.`); return v; }
+      if (!x.ruta?.trim()) { errores.push(`El empaquetado #${v.empaquetadoId} no tiene ruta cargada; complétala en Empaquetados.`); return v; }
+      return { ...v, ruta: x.ruta.trim(), origenIata: normalizarIata(x.origen), destinoIata: normalizarIata(x.destino_iata) };
+    }
+    const ruta = derivarRutaManual(v.origenIata, v.destinoIata, !!v.fechaRegreso);
+    if (!ruta) { errores.push("Un vuelo manual necesita origen y destino distintos, con código IATA de 3 letras."); return v; }
+    return { ...v, ruta, origenIata: normalizarIata(v.origenIata), destinoIata: normalizarIata(v.destinoIata) };
+  });
+
+  // Servicios vinculados: proveedor y moneda de la ficha.
+  const idsSv = [...new Set(e.servicios.map((x) => x.servicioId).filter((x): x is number => x != null))];
+  const sv: Record<number, { moneda: string; proveedor_id: number | null; proveedor: string | null; destino_id: number | null }> = {};
+  if (idsSv.length) {
+    const { data: ss } = await sb.from("servicios_adicionales").select("id, moneda, proveedor_id, destino_id").in("id", idsSv);
+    const pids = [...new Set((ss ?? []).map((x: { proveedor_id: number | null }) => x.proveedor_id).filter((x: number | null): x is number => x != null))];
+    const pn: Record<number, string> = {};
+    if (pids.length) for (const p of (await sb.from("proveedores").select("id, nombre").in("id", pids)).data ?? []) pn[p.id] = p.nombre;
+    for (const x of ss ?? []) sv[x.id] = { moneda: x.moneda ?? "COP", destino_id: x.destino_id ?? null, proveedor_id: x.proveedor_id, proveedor: x.proveedor_id != null ? (pn[x.proveedor_id] ?? null) : null };
+  }
+  const servicios = e.servicios.map((x) => {
+    if (x.servicioId == null) return { ...x, proveedorId: null };
+    const f = sv[x.servicioId];
+    if (!f) { errores.push(`El servicio «${x.nombre}» no existe.`); return x; }
+    if (!destinoCoincide(f.destino_id, x.destinoId, e.destinoId)) errores.push(`El servicio «${x.nombre}» es de otro destino que el declarado en el paquete.`);
+    if (f.moneda !== e.moneda) errores.push(`El servicio «${x.nombre}» está en ${f.moneda} y el paquete en ${e.moneda}.`);
+    return { ...x, proveedorId: f.proveedor_id, proveedor: f.proveedor ?? "" };
+  });
+  const sin = serviciosSinProveedor(servicios);
+  if (sin.length) avisos.push(mensajeSinProveedor(sin));
+
+  // Hoteles ficha: misma moneda que el paquete.
+  const idsH = [...new Set(e.hoteles.map((h) => h.hotelId).filter((x): x is number => x != null))];
+  if (idsH.length) {
+    const mon: Record<number, string> = {};
+    for (const h of (await sb.from("hoteles").select("id, moneda").in("id", idsH)).data ?? []) mon[h.id] = h.moneda ?? "COP";
+    for (const h of e.hoteles) if (h.hotelId != null && (mon[h.hotelId] ?? "COP") !== e.moneda) errores.push(`El hotel «${h.nombre}» está en ${mon[h.hotelId] ?? "COP"} y el paquete en ${e.moneda}.`);
+  }
+  return { e: { ...e, vuelos, servicios }, errores, avisos, destinos };
+}
+
+export async function guardarPaqueteTotal(entrada: EntradaPaqueteTotal): Promise<Result> {
   const ctx = await contexto();
   if ("error" in ctx) return { ok: false, error: ctx.error };
-  const errores = validarOpciones(e);
-  if (errores.length) return { ok: false, error: errores[0] };
   const { sb, raw } = ctx;
+  const comp = await completarDesdeFichas(sb, entrada);
+  if (comp.errores.length) return { ok: false, error: comp.errores[0] };
+  const e = comp.e;
+  const errores = validarOpciones(e, comp.destinos);
+  if (errores.length) return { ok: false, error: errores[0] };
 
   // Editar un paquete de OTRA agencia: la RLS ya lo oculta; se rechaza explícitamente antes de cualquier escritura.
   if (e.id) {
@@ -79,7 +149,7 @@ export async function guardarPaqueteTotal(e: EntradaPaqueteTotal): Promise<Resul
   const porComp = e.esquema === "solo_pvp" && e.pvpModo === "por_componente";
   const neta = e.esquema === "neta_markup";
   const cabecera = {
-    nombre: e.nombre.trim(), destino_id: e.destinoId, destinos_extra: e.destinosExtra, moneda: e.moneda, esquema: e.esquema, pvp_modo: e.esquema === "solo_pvp" ? e.pvpModo : null,
+    nombre: e.nombre.trim(), destino_id: e.destinoId, multidestino: e.multidestino, destinos_extra: e.multidestino ? e.destinosExtra : [], moneda: e.moneda, esquema: e.esquema, pvp_modo: e.esquema === "solo_pvp" ? e.pvpModo : null,
     pct_mk: neta ? e.pctMkPct / 100 : 0, usa_vuelo: e.usaVuelo, usa_hotel: e.usaHotel, usa_servicios: e.usaServicios, noches: e.noches,
     compra_inicio: e.compraInicio || null, compra_fin: e.compraFin || null, viaje_inicio: e.viajeInicio || null, viaje_fin: e.viajeFin || null,
     pvp_general: general ? e.pvpGeneral : null, total_declarado: porComp ? e.totalDeclarado : null,
@@ -87,7 +157,7 @@ export async function guardarPaqueteTotal(e: EntradaPaqueteTotal): Promise<Resul
     // La agencia la fija la base con la del usuario; solo superadmin puede elegirla (la de la sesión validada).
     tenant: ctx.superadmin ? ctx.tenant : undefined,
   };
-  const vuelos = e.usaVuelo ? e.vuelos.map((v) => ({ empaquetado_id: v.empaquetadoId, destino_id: v.destinoId, aerolinea: v.aerolinea || null, ruta: v.ruta || null, fecha_ida: v.fechaIda || null, fecha_regreso: v.fechaRegreso || null, proveedor: v.proveedor || null, neto: neta ? v.neto : {}, pvp: porComp ? v.pvp : {} })) : [];
+  const vuelos = e.usaVuelo ? e.vuelos.map((v) => ({ empaquetado_id: v.empaquetadoId, destino_id: v.destinoId, aerolinea: v.aerolinea || null, ruta: v.ruta || null, origen_iata: v.origenIata || null, destino_iata: v.destinoIata || null, fecha_ida: v.fechaIda || null, fecha_regreso: v.fechaRegreso || null, proveedor: v.proveedor || null, neto: neta ? v.neto : {}, pvp: porComp ? v.pvp : {} })) : [];
   const hoteles = e.usaHotel ? e.hoteles.map((h) => ({ hotel_id: h.hotelId, nombre: h.nombre.trim(), categoria: h.categoria || null, regimen: h.regimen || null, descripcion: h.descripcion || null, foto_url: h.fotoUrl || null, proveedor: h.proveedor || null, neto: neta ? h.neto : {}, pvp: porComp ? h.pvp : {}, pvp_general: general ? h.pvpGeneral : null })) : [];
   const servicios = e.usaServicios ? e.servicios.map((s) => ({ servicio_id: s.servicioId, destino_id: s.destinoId, nombre: s.nombre.trim(), proveedor: s.proveedor || null, neto: neta ? s.neto : null, pvp: porComp ? s.pvp : null })) : [];
 
@@ -98,7 +168,8 @@ export async function guardarPaqueteTotal(e: EntradaPaqueteTotal): Promise<Resul
   if (error || id == null) return { ok: false, error: (error?.message ?? "No se pudo guardar el paquete.").replace(/^DIN_82_[A-Z_]+:\s*/, "") };
   revalidatePath("/dashboard/paquetes");
   revalidatePath("/tarifario");
-  return { ok: true, id: Number(id), avisos: e.id ? ["El paquete quedó sin publicar tras editarlo; vuelve a publicarlo."] : undefined };
+  const avisos = [...(e.id ? ["El paquete quedó sin publicar tras editarlo; vuelve a publicarlo."] : []), ...comp.avisos];
+  return { ok: true, id: Number(id), avisos: avisos.length ? avisos : undefined };
 }
 
 export async function publicarPaqueteTotal(id: number, publicado: boolean): Promise<Result> {
@@ -116,10 +187,18 @@ export async function publicarPaqueteTotal(id: number, publicado: boolean): Prom
     if (p.usa_hotel && !h.length) msgs.add("Agrega al menos un hotel.");
     if (p.usa_vuelo && !v.length) msgs.add("Agrega al menos un vuelo.");
     for (const o of opcionesDelPaquete(p as FilaPaqueteDin, h as FilaHotelDin[], v as FilaVueloDin[], s as FilaServicioDin[])) for (const m of validarPaquete(o.calc)) msgs.add(m);
+    // La ficha del servicio pudo cambiar desde que se guardó el paquete: se vuelve a leer su proveedor.
+    const vinc = (s as { servicio_id: number | null; nombre: string }[]).filter((x) => x.servicio_id != null);
+    if (vinc.length) {
+      const { data: fichas } = await sb.from("servicios_adicionales").select("id, proveedor_id").in("id", vinc.map((x) => x.servicio_id));
+      const con = new Set((fichas ?? []).filter((f: { proveedor_id: number | null }) => f.proveedor_id != null).map((f: { id: number }) => f.id));
+      const faltan = vinc.filter((x) => !con.has(x.servicio_id as number)).map((x) => x.nombre);
+      if (faltan.length) return { ok: false, error: `No se puede publicar: ${mensajeSinProveedor(faltan)}` };
+    }
     if (msgs.size) return { ok: false, error: `No se puede publicar: ${[...msgs][0]}` };
   }
   const { error } = await sb.from("paquete_din").update({ publicado, updated_at: new Date().toISOString() }).eq("id", id);
-  if (error) return { ok: false, error: error.message };
+  if (error) return { ok: false, error: String(error.message).replace(/^DIN_82_[A-Z_]+:\s*/, "") };
   revalidatePath("/dashboard/paquetes");
   revalidatePath("/tarifario");
   return { ok: true, id };

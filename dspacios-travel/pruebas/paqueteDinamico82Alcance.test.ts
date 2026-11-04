@@ -98,11 +98,16 @@ describe("Documento público por token de una cotización manual", () => {
 });
 
 describe("la pestaña «Dinámicos» no importa código de servidor", () => {
-  test("PorDinamicos recibe la Server Action por prop (import solo de tipo); la pasa la página", () => {
+  test("PorDinamicos no importa acciones de servidor ni cotiza: continúa al checkout, que recibe la Server Action por prop", () => {
     const ui = sinComentarios(leer("app/tarifario/PorDinamicos.tsx"));
-    assert.doesNotMatch(ui, /import \{[^}]*crearCotizacionDin[^}]*\} from/);
-    assert.match(ui, /import type \{ CrearCotizacionDinInput \}/);
-    assert.match(sinComentarios(leer("app/tarifario/page.tsx")), /cotizarDinamico=\{crearCotizacionDin\}/);
-    assert.match(sinComentarios(leer("app/tarifario/TarifarioPublic.tsx")), /<PorDinamicos dinamicos=\{dinamicos\} cotizar=\{/);
+    assert.doesNotMatch(ui, /din-actions/);
+    assert.doesNotMatch(ui, /crearCotizacionDin/);
+    assert.match(ui, /\/tarifario\/checkout\/dinamico\?/);
+    assert.match(sinComentarios(leer("app/tarifario/TarifarioPublic.tsx")), /<PorDinamicos dinamicos=\{dinamicos\} \/>/);
+    assert.doesNotMatch(sinComentarios(leer("app/tarifario/page.tsx")), /crearCotizacionDin|cotizarDinamico/);
+    assert.match(sinComentarios(leer("app/tarifario/checkout/dinamico/page.tsx")), /crear=\{crearCotizacionDin\}/);
+    const cl = sinComentarios(leer("app/tarifario/checkout/dinamico/CheckoutDinamico.tsx"));
+    assert.doesNotMatch(cl, /import \{[^}]*crearCotizacionDin[^}]*\} from/);
+    assert.match(cl, /import type \{ CrearCotizacionDinInput \}/);
   });
 });

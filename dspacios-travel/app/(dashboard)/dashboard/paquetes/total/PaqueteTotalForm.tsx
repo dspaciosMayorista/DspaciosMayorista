@@ -8,9 +8,12 @@ import { Input } from "@/components/ui/input";
 import { DateInput } from "@/components/ui/DateInput";
 import { ACOMS_DIN, pvpDeNeto, type AcomDin, type PrecioAcom } from "@/lib/paqueteDinamico/calculo";
 import type { EntradaHotel, EntradaPaqueteTotal, EntradaServicio, EntradaVuelo } from "@/lib/paqueteDinamico/entrada";
+import { derivarRutaManual, mensajeSinProveedor, paisComparable } from "@/lib/paqueteDinamico/ruta";
 import { guardarPaqueteTotal } from "./actions";
 
-type Opt = { id: number; nombre: string; destino_id: number | null };
+type Opt = { id: number; nombre: string; destino_id: number | null; moneda?: string };
+type ServicioOpt = Opt & { moneda: string; proveedorId: number | null; proveedor: string };
+type DestinoOpt = { id: number; nombre: string; pais: string | null };
 export type EmpaquetadoOpt = { id: number; aerolinea: string | null; ruta: string | null; fecha_ida: string; fecha_regreso: string | null; destino_id: number | null; tarifa_proveedor: number; fee_infante: number };
 
 const ETQ: Record<AcomDin, string> = { sencilla: "Sencilla", doble: "Doble", triple: "Triple", multiple: "Múltiple", nino: "Niño 1", nino2: "Niño 2", infante: "Infante" };
@@ -19,7 +22,7 @@ const lbl = "mb-1 block text-xs font-medium text-gray-600";
 const n = (s: string): number | null => (s.trim() === "" ? null : Number(s.replace(/[^\d.-]/g, "")));
 
 export const ENTRADA_VACIA: EntradaPaqueteTotal = {
-  nombre: "", destinoId: null, destinosExtra: [], moneda: "COP", esquema: "neta_markup", pvpModo: null, pctMkPct: 20,
+  nombre: "", destinoId: null, multidestino: false, destinosExtra: [], moneda: "COP", esquema: "neta_markup", pvpModo: null, pctMkPct: 20,
   usaVuelo: false, usaHotel: true, usaServicios: false, noches: 3, compraInicio: "", compraFin: "", viajeInicio: "", viajeFin: "",
   pvpGeneral: null, totalDeclarado: null, descripcion: "", incluye: "", noIncluye: "", vuelos: [], hoteles: [], servicios: [],
 };
@@ -38,7 +41,7 @@ function GridAcom({ valor, onChange, etiqueta, solo }: { valor: PrecioAcom; onCh
 }
 
 export function PaqueteTotalForm({ inicial, destinos, hoteles, servicios, empaquetados }: {
-  inicial: EntradaPaqueteTotal; destinos: { id: number; nombre: string }[]; hoteles: Opt[]; servicios: Opt[]; empaquetados: EmpaquetadoOpt[];
+  inicial: EntradaPaqueteTotal; destinos: DestinoOpt[]; hoteles: Opt[]; servicios: ServicioOpt[]; empaquetados: EmpaquetadoOpt[];
 }) {
   const router = useRouter();
   const [e, setE] = useState<EntradaPaqueteTotal>(inicial);
@@ -59,9 +62,12 @@ export function PaqueteTotalForm({ inicial, destinos, hoteles, servicios, empaqu
   ], [e.usaVuelo, e.usaHotel, e.usaServicios]);
   const tabActiva = tabs.find((x) => x.k === tab)?.on ? tab : "config";
 
-  const destinosPermitidos = new Set<number | null>([e.destinoId, ...e.destinosExtra]);
-  const hotelesDest = hoteles.filter((h) => e.destinoId == null || h.destino_id === e.destinoId);
-  const serviciosDest = servicios.filter((s) => s.destino_id == null || destinosPermitidos.has(s.destino_id));
+  // Sin multidestino activo solo cuenta el destino principal; activo, los adicionales del MISMO país (la base lo vuelve a exigir).
+  const destinosPermitidos = new Set<number | null>([e.destinoId, ...(e.multidestino ? e.destinosExtra : [])]);
+  const paisPrincipal = paisComparable(destinos.find((d) => d.id === e.destinoId)?.pais);
+  const adicionalesOfrecidos = destinos.filter((d) => d.id !== e.destinoId && paisPrincipal != null && paisComparable(d.pais) === paisPrincipal);
+  const hotelesDest = hoteles.filter((h) => (e.destinoId == null || h.destino_id === e.destinoId) && (h.moneda ?? "COP") === e.moneda);
+  const serviciosDest = servicios.filter((s) => (s.destino_id == null || destinosPermitidos.has(s.destino_id)) && s.moneda === e.moneda);
   const empDest = empaquetados.filter((x) => x.destino_id == null || destinosPermitidos.has(x.destino_id));
 
   const upd = <K extends "vuelos" | "hoteles" | "servicios">(k: K, i: number, p: Partial<EntradaPaqueteTotal[K][number]>) =>
@@ -70,10 +76,10 @@ export function PaqueteTotalForm({ inicial, destinos, hoteles, servicios, empaqu
 
   const nuevoHotel = (h?: Opt): EntradaHotel => ({ hotelId: h?.id ?? null, nombre: h?.nombre ?? "", categoria: "", regimen: "", descripcion: "", fotoUrl: "", proveedor: "", neto: {}, pvp: {}, pvpGeneral: null });
   const nuevoVuelo = (x?: EmpaquetadoOpt): EntradaVuelo => ({
-    empaquetadoId: x?.id ?? null, destinoId: x?.destino_id ?? null, aerolinea: x?.aerolinea ?? "", ruta: x?.ruta ?? "", fechaIda: x?.fecha_ida ?? "", fechaRegreso: x?.fecha_regreso ?? "",
+    empaquetadoId: x?.id ?? null, destinoId: x?.destino_id ?? null, aerolinea: x?.aerolinea ?? "", ruta: x?.ruta ?? "", origenIata: "", destinoIata: "", fechaIda: x?.fecha_ida ?? "", fechaRegreso: x?.fecha_regreso ?? "",
     proveedor: x?.aerolinea ?? "", neto: x ? { adulto: x.tarifa_proveedor, nino: x.tarifa_proveedor, infante: x.fee_infante } : {}, pvp: {},
   });
-  const nuevoServicio = (s?: Opt): EntradaServicio => ({ servicioId: s?.id ?? null, destinoId: s?.destino_id ?? null, nombre: s?.nombre ?? "", proveedor: "", neto: null, pvp: null });
+  const nuevoServicio = (s?: ServicioOpt): EntradaServicio => ({ servicioId: s?.id ?? null, destinoId: s?.destino_id ?? null, nombre: s?.nombre ?? "", proveedor: s?.proveedor ?? "", proveedorId: s?.proveedorId ?? null, neto: null, pvp: null });
 
   const guardar = () => start(async () => {
     setMsg(null);
@@ -102,14 +108,18 @@ export function PaqueteTotalForm({ inicial, destinos, hoteles, servicios, empaqu
           <div className="grid gap-3 sm:grid-cols-2">
             <div><label className={lbl}>Nombre</label><Input value={e.nombre} onChange={(x) => set({ nombre: x.target.value })} /></div>
             <div><label className={lbl}>Destino principal</label>
-              <select className={sel} value={e.destinoId ?? ""} onChange={(x) => set({ destinoId: x.target.value ? Number(x.target.value) : null })}>
+              <select className={sel} value={e.destinoId ?? ""} onChange={(x) => set({ destinoId: x.target.value ? Number(x.target.value) : null, destinosExtra: [] })}>
                 <option value="">Elige…</option>{destinos.map((d) => <option key={d.id} value={d.id}>{d.nombre}</option>)}
               </select></div>
-            <div><label className={lbl}>Destinos adicionales (multidestino)</label>
-              <select multiple className={`${sel} h-24`} value={e.destinosExtra.map(String)} onChange={(x) => set({ destinosExtra: Array.from(x.target.selectedOptions).map((o) => Number(o.value)) })}>
-                {destinos.filter((d) => d.id !== e.destinoId).map((d) => <option key={d.id} value={d.id}>{d.nombre}</option>)}
-              </select>
-              <p className="mt-1 text-xs text-gray-500">Permite escoger vuelos y servicios de otro destino.</p></div>
+            <div><label className="inline-flex items-center gap-2 text-sm font-medium text-gray-700"><input type="checkbox" checked={e.multidestino} onChange={(x) => set(x.target.checked ? { multidestino: true } : { multidestino: false, destinosExtra: [] })} /> Multidestino</label>
+              {e.multidestino ? (
+                <>
+                  <select aria-label="Destinos adicionales" multiple className={`${sel} mt-1 h-24`} value={e.destinosExtra.map(String)} onChange={(x) => set({ destinosExtra: Array.from(x.target.selectedOptions).map((o) => Number(o.value)) })}>
+                    {adicionalesOfrecidos.map((d) => <option key={d.id} value={d.id}>{d.nombre}</option>)}
+                  </select>
+                  <p className="mt-1 text-xs text-gray-500">{e.destinoId == null ? "Elige primero el destino principal." : paisPrincipal == null ? "El destino principal no tiene país cargado: complétalo en su ficha." : "Solo destinos del mismo país que el principal. Permite escoger vuelos y servicios de esos destinos."}</p>
+                </>
+              ) : <p className="mt-1 text-xs text-gray-500">Actívalo para sumar destinos del mismo país.</p>}</div>
             <div className="grid grid-cols-2 gap-3">
               <div><label className={lbl}>Moneda</label><select className={sel} value={e.moneda} onChange={(x) => set({ moneda: x.target.value as "COP" | "USD" })}><option>COP</option><option>USD</option></select></div>
               <div><label className={lbl}>Noches</label><Input inputMode="numeric" value={String(e.noches)} onChange={(x) => set({ noches: Number(x.target.value) || 0 })} /></div>
@@ -179,7 +189,15 @@ export function PaqueteTotalForm({ inicial, destinos, hoteles, servicios, empaqu
                 <button type="button" aria-label="Quitar vuelo" onClick={() => del("vuelos", i)}><Trash2 className="h-4 w-4 text-red-500" /></button></div>
               <div className="grid gap-2 sm:grid-cols-4">
                 <div><label className={lbl}>Aerolínea</label><Input value={v.aerolinea} onChange={(x) => upd("vuelos", i, { aerolinea: x.target.value })} /></div>
-                <div><label className={lbl}>Ruta</label><Input value={v.ruta} onChange={(x) => upd("vuelos", i, { ruta: x.target.value })} /></div>
+                {v.empaquetadoId != null ? (
+                  <div><label className={lbl}>Ruta (del empaquetado)</label><Input aria-label="Ruta" readOnly value={v.ruta} /></div>
+                ) : (
+                  <>
+                    <div><label className={lbl}>Origen (IATA)</label><Input aria-label="Origen IATA" maxLength={3} value={v.origenIata} onChange={(x) => upd("vuelos", i, { origenIata: x.target.value.toUpperCase() })} /></div>
+                    <div><label className={lbl}>Destino (IATA)</label><Input aria-label="Destino IATA" maxLength={3} value={v.destinoIata} onChange={(x) => upd("vuelos", i, { destinoIata: x.target.value.toUpperCase() })} /></div>
+                    <div><label className={lbl}>Ruta (se calcula)</label><Input aria-label="Ruta" readOnly value={derivarRutaManual(v.origenIata, v.destinoIata, !!v.fechaRegreso) ?? ""} /></div>
+                  </>
+                )}
                 <div><label className={lbl}>Ida</label><DateInput aria-label="Ida" type="date" value={v.fechaIda} onValueChange={(d) => upd("vuelos", i, { fechaIda: d })} /></div>
                 <div><label className={lbl}>Regreso</label><DateInput aria-label="Regreso" type="date" value={v.fechaRegreso} onValueChange={(d) => upd("vuelos", i, { fechaRegreso: d })} /></div>
                 <div><label className={lbl}>Proveedor</label><Input value={v.proveedor} onChange={(x) => upd("vuelos", i, { proveedor: x.target.value })} /></div>
@@ -246,7 +264,12 @@ export function PaqueteTotalForm({ inicial, destinos, hoteles, servicios, empaqu
           {e.servicios.map((s, i) => (
             <div key={i} className="grid items-end gap-2 rounded-lg border border-gray-200 p-3 sm:grid-cols-5">
               <div className="sm:col-span-2"><label className={lbl}>Servicio {s.servicioId ? `(ficha #${s.servicioId})` : "(manual)"}</label><Input value={s.nombre} onChange={(x) => upd("servicios", i, { nombre: x.target.value })} /></div>
-              <div><label className={lbl}>Proveedor</label><Input value={s.proveedor} onChange={(x) => upd("servicios", i, { proveedor: x.target.value })} /></div>
+              {s.servicioId != null ? (
+                <div><label className={lbl}>Proveedor (de la ficha)</label><Input aria-label="Proveedor de la ficha" readOnly value={s.proveedor} placeholder="Sin proveedor en la ficha" />
+                  {s.proveedorId == null && <p role="alert" className="mt-1 text-xs text-red-600">{mensajeSinProveedor([s.nombre])}</p>}</div>
+              ) : (
+                <div><label className={lbl}>Proveedor</label><Input value={s.proveedor} onChange={(x) => upd("servicios", i, { proveedor: x.target.value })} /></div>
+              )}
               {!general && <div><label className={lbl}>{neta ? "Neto" : "PVP"} por persona</label>
                 <Input inputMode="numeric" value={(neta ? s.neto : s.pvp) == null ? "" : String(neta ? s.neto : s.pvp)} onChange={(x) => upd("servicios", i, neta ? { neto: n(x.target.value) } : { pvp: n(x.target.value) })} /></div>}
               <button type="button" aria-label="Quitar servicio" onClick={() => del("servicios", i)} className="justify-self-end pb-2"><Trash2 className="h-4 w-4 text-red-500" /></button>

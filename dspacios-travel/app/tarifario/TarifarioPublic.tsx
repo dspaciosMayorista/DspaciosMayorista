@@ -5,7 +5,7 @@ import Link from "next/link";
 import { Star, Plane, Bus, Search, X, UtensilsCrossed, BedDouble, Tag } from "lucide-react";
 import { formatMoneda } from "@/lib/utils";
 import { VistaBooking } from "./VistaBooking";
-import { PorDinamicos, type CrearCotizacionDinFn } from "./PorDinamicos";
+import { PorDinamicos } from "./PorDinamicos";
 import type { DinamicoPublico } from "@/lib/paqueteDinamico/publico";
 import { RegimenInfo, type PlanesInfo } from "./RegimenInfo";
 import { BriefFlyerButton } from "./BriefFlyerButton";
@@ -310,7 +310,6 @@ export function TarifarioPublic({
   filas,
   programas = [],
   dinamicos = [],
-  cotizarDinamico,
   puedeReservar = false,
   cuposPorBloqueo = {},
   origenPorBloqueo = {},
@@ -339,8 +338,6 @@ export function TarifarioPublic({
   filas: FilaResumen[];
   programas?: ProgramaResumen[];
   dinamicos?: DinamicoPublico[];
-  /** Server Action para cotizar un paquete dinámico (la pasa la página; ver PorDinamicos). */
-  cotizarDinamico?: CrearCotizacionDinFn;
   puedeReservar?: boolean;
   cuposPorBloqueo?: Record<number, number>;
   origenPorBloqueo?: Record<number, string>;
@@ -617,7 +614,7 @@ export function TarifarioPublic({
       )}
 
       {vista === "dinamicos" ? (
-        <PorDinamicos dinamicos={dinamicos} cotizar={cotizarDinamico ?? (async () => ({ ok: false as const, error: "No disponible." }))} />
+        <PorDinamicos dinamicos={dinamicos} />
       ) : vista === "programas" ? (
         <PorProgramas programas={programas} puedeReservar={puedeReservar} />
       ) : vista === "booking" ? (

@@ -1,43 +1,28 @@
 "use client";
-// Sección pública «Dinámicos» (#82): paquetes 100 % dinámicos publicados, con tarjetas de hotel y el flujo normal
-// de cotización. El canal (visitante, aliado B2B o personal) lo decide el servidor por la sesión. Solo PVP: ningún costo llega al navegador.
-import { useMemo, useState, useTransition } from "react";
-import Link from "next/link";
+// Sección pública «Dinámicos» (#82): paquetes 100 % dinámicos publicados. La tarjeta solo deja ELEGIR hotel, habitaciones, vuelo y precio;
+// después continúa al checkout habitual (/tarifario/checkout/dinamico), donde se capturan los datos del cliente y el servidor resuelve el
+// canal (interno, B2C o B2B). Aquí NO hay formulario de identidad. Solo PVP: ningún costo llega al navegador.
+import { useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
-import { Calculator, Moon } from "lucide-react";
+import { ArrowRight, Calculator, Moon } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { DateInput } from "@/components/ui/DateInput";
 import { formatMoneda } from "@/lib/utils";
 import { liquidarPaquete, validarPaquete, type Composicion } from "@/lib/paqueteDinamico/calculo";
 import type { DinamicoPublico, HotelPublico } from "@/lib/paqueteDinamico/publico";
-import { contactoVisitanteValido } from "@/lib/paqueteDinamico/solicitud";
-import type { CrearCotizacionDinInput } from "@/app/(dashboard)/dashboard/cotizaciones/din-actions";
 import { CarruselFotoHotel } from "./CarruselFotoHotel";
-
-/**
- * La Server Action llega por prop desde la página (servidor): así este componente cliente no importa código de servidor
- * (`next/headers`…) y las pruebas que renderizan el tarifario no arrastran esa cadena.
- */
-export type CrearCotizacionDinFn = (input: CrearCotizacionDinInput) => Promise<
-  | { ok: true; id: number; destino: "dashboard" | "portal" | "publico"; enlace: string; avisoPersonas?: string }
-  | { ok: false; error: string }
->;
 
 const sel = "h-9 w-full rounded-md border border-gray-200 bg-white px-2 text-sm";
 const lbl = "mb-1 block text-xs font-medium text-gray-600";
 
-function Cotizador({ p, hotel, onCerrar, crear }: { p: DinamicoPublico; hotel: HotelPublico | null; onCerrar: () => void; crear: CrearCotizacionDinFn }) {
+function Cotizador({ p, hotel, onCerrar }: { p: DinamicoPublico; hotel: HotelPublico | null; onCerrar: () => void }) {
   const router = useRouter();
-  const [pending, start] = useTransition();
-  const [err, setErr] = useState<string | null>(null);
-  const [hecho, setHecho] = useState<string | null>(null);
   const [vueloId, setVueloId] = useState<number | null>(p.vuelos[0]?.id ?? null);
   const [hab, setHab] = useState({ sencilla: 0, doble: 1, triple: 0, multiple: 0 });
   const [men, setMen] = useState({ ninos: 0, ninos2: 0, infantes: 0 });
   const [fIda, setFIda] = useState("");
   const [fReg, setFReg] = useState("");
-  const [c, setC] = useState({ nombres: "", apellidos: "", tipoDoc: "CC", numeroDoc: "", nacimiento: "", telefono: "", email: "" });
   const comp: Composicion = useMemo(() => ({ habitaciones: hab, ...men }), [hab, men]);
 
   const opcion = p.opciones.find((o) => (o.hotelId ?? null) === (hotel?.id ?? null) && (o.vueloId ?? null) === (vueloId ?? null));
@@ -50,13 +35,16 @@ function Cotizador({ p, hotel, onCerrar, crear }: { p: DinamicoPublico; hotel: H
   const ida = vueloSel?.fechaIda ?? fIda;
   const regreso = vueloSel?.fechaRegreso ?? fReg;
 
-  const cotizar = () => start(async () => {
-    setErr(null);
-    const r = await crear({ paqueteId: p.id, hotelId: hotel?.id ?? null, vueloId, composicion: comp, cliente: c, fechaIda: ida, fechaRegreso: regreso });
-    if (!r.ok) return setErr(r.error);
-    if (r.destino === "dashboard" || r.destino === "portal") { router.push(r.enlace); return; }
-    setHecho(r.enlace);
-  });
+  const continuar = () => {
+    const q = new URLSearchParams({
+      p: String(p.id), ida, reg: regreso,
+      hs: String(hab.sencilla), hd: String(hab.doble), ht: String(hab.triple), hm: String(hab.multiple),
+      n1: String(men.ninos), n2: String(men.ninos2), inf: String(men.infantes),
+    });
+    if (hotel) q.set("h", String(hotel.id));
+    if (vueloId != null && p.usaVuelo) q.set("v", String(vueloId));
+    router.push(`/tarifario/checkout/dinamico?${q.toString()}`);
+  };
 
   const num = (k: keyof typeof hab) => (
     <div key={k}><label className={lbl}>Hab. {k}</label>
@@ -84,28 +72,16 @@ function Cotizador({ p, hotel, onCerrar, crear }: { p: DinamicoPublico; hotel: H
           </>
         )}
       </div>
-      <div className="grid gap-2 sm:grid-cols-3">
-        {([["nombres", "Nombres"], ["apellidos", "Apellidos"], ["numeroDoc", "N.º documento"], ["nacimiento", "Nacimiento"], ["telefono", "Teléfono"], ["email", "Correo"]] as const).map(([k, t]) => (
-          <div key={k}><label className={lbl}>{t}</label>{k === "nacimiento" ? <DateInput aria-label="Nacimiento" type="date" value={c[k]} onValueChange={(d) => setC({ ...c, [k]: d })} /> : <Input value={c[k]} onChange={(e) => setC({ ...c, [k]: e.target.value })} />}</div>
-        ))}
-        <div><label className={lbl}>Tipo de documento</label><select className={sel} value={c.tipoDoc} onChange={(e) => setC({ ...c, tipoDoc: e.target.value })}>{["CC", "CE", "TI", "PAS", "NIT"].map((t) => <option key={t}>{t}</option>)}</select></div>
-      </div>
       <div className="flex flex-wrap items-center gap-3">
         <p className="text-sm text-gray-700">Total estimado: <b>{total != null ? formatMoneda(total, p.moneda) : "—"}</b></p>
-        <Button onClick={cotizar} disabled={pending || total == null || !ida || !regreso || !contactoVisitanteValido(c)} style={{ backgroundColor: "var(--brand-primary)" }}>{pending ? "Cotizando…" : "Generar cotización"}</Button>
+        <Button onClick={continuar} disabled={total == null || !ida || !regreso} style={{ backgroundColor: "var(--brand-primary)" }}>Continuar <ArrowRight className="h-4 w-4" /></Button>
         <Button variant="outline" onClick={onCerrar}>Cerrar</Button>
       </div>
-      {err && <p role="alert" className="text-sm text-red-600">{err}</p>}
-      {hecho && (
-        <p role="status" className="rounded-lg bg-emerald-50 px-3 py-2 text-sm text-emerald-800">
-          Tu cotización quedó lista. Guárdala o compártela con este enlace: <Link href={hecho} target="_blank" className="font-semibold underline">abrir cotización</Link>
-        </p>
-      )}
     </div>
   );
 }
 
-export function PorDinamicos({ dinamicos, cotizar }: { dinamicos: DinamicoPublico[]; cotizar: CrearCotizacionDinFn }) {
+export function PorDinamicos({ dinamicos }: { dinamicos: DinamicoPublico[] }) {
   const [abierto, setAbierto] = useState<string | null>(null);
   if (!dinamicos.length) return <p className="py-10 text-center text-sm text-gray-500">Por ahora no hay paquetes dinámicos publicados.</p>;
   return (
@@ -133,7 +109,7 @@ export function PorDinamicos({ dinamicos, cotizar }: { dinamicos: DinamicoPublic
                       <p className="mt-2 text-sm text-gray-500">Desde por persona en doble</p>
                       <p className="text-lg font-bold" style={{ color: "var(--brand-primary)" }}>{formatMoneda(desde, p.moneda)}</p>
                       <Button className="mt-3 w-full" variant="outline" onClick={() => setAbierto(abierto === clave ? null : clave)}><Calculator className="h-4 w-4" /> Cotizar</Button>
-                      {abierto === clave && <Cotizador p={p} hotel={h} onCerrar={() => setAbierto(null)} crear={cotizar} />}
+                      {abierto === clave && <Cotizador p={p} hotel={h} onCerrar={() => setAbierto(null)} />}
                     </div>
                   </article>
                 );

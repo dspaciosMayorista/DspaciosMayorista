@@ -82,11 +82,12 @@ describe("2. Cotizar desde la pestaña pública: canales sin identidad interna f
     const retornos = [...src.matchAll(/return \{ ok: true, id: [^}]*\}/g)].map((m) => m[0]).join("\n");
     assert.doesNotMatch(retornos, /neto|proveedor|costo/i);
   });
-  test("PorDinamicos envía datos de contacto del visitante y no empuja al visitante al dashboard", () => {
-    const ui = leer("app/tarifario/PorDinamicos.tsx");
+  test("el checkout dinámico lleva a dashboard/portal solo cuando el servidor lo indica; el visitante recibe el enlace público", () => {
+    const ui = leer("app/tarifario/checkout/dinamico/CheckoutDinamico.tsx");
     assert.match(ui, /destino === "dashboard"/);
     assert.match(ui, /enlace/);
     assert.doesNotMatch(ui, /\bneto\b|proveedor/);
+    assert.doesNotMatch(leer("app/tarifario/PorDinamicos.tsx"), /\bneto\b|proveedor/);
   });
 });
 
@@ -119,10 +120,10 @@ describe("4. Hoteles vinculables y guardado atómico", () => {
   test("validaciones de forma: el vuelo con fechas debe durar las noches del paquete", async () => {
     const { validarEntradaPaqueteTotal } = await import("../lib/paqueteDinamico/entrada.ts");
     const e = {
-      nombre: "P", destinoId: 1, destinosExtra: [], moneda: "COP" as const, esquema: "solo_pvp" as const, pvpModo: "por_componente" as const, pctMkPct: 0,
+      nombre: "P", destinoId: 1, multidestino: false, destinosExtra: [], moneda: "COP" as const, esquema: "solo_pvp" as const, pvpModo: "por_componente" as const, pctMkPct: 0,
       usaVuelo: true, usaHotel: false, usaServicios: false, noches: 3, compraInicio: "", compraFin: "", viajeInicio: "", viajeFin: "", pvpGeneral: null, totalDeclarado: null,
       descripcion: "", incluye: "", noIncluye: "", hoteles: [], servicios: [],
-      vuelos: [{ empaquetadoId: null, destinoId: null, aerolinea: "", ruta: "", fechaIda: "2027-01-10", fechaRegreso: "2027-01-15", proveedor: "", neto: {}, pvp: {} }],
+      vuelos: [{ empaquetadoId: null, destinoId: null, aerolinea: "", ruta: "", origenIata: "BOG", destinoIata: "CTG", fechaIda: "2027-01-10", fechaRegreso: "2027-01-15", proveedor: "", neto: {}, pvp: {} }],
     };
     assert.ok(validarEntradaPaqueteTotal(e).some((m) => /noches/i.test(m)));
     e.vuelos[0].fechaRegreso = "2027-01-13";

@@ -124,6 +124,25 @@ público no cambió ni lee `payload` (lo exigen pruebas de cableado); la fecha d
 - App local (`next dev`) sobre PostgREST real, con un gateway mínimo que solo sustituye `/auth/v1/user` de GoTrue (cookie de sesión fabricada): cotización pública y B2B (Mayorista y
   Minorista), `/cot/<token>`, portal B2B, y el montaje del paquete en el dashboard (validación, checks → pestañas, ficha vinculable, vuelo de Empaquetados, servicio manual, guardar,
   recargar, publicar, ver en «Dinámicos», editar → queda sin publicar). No se probó login real ni renovación de sesión.
+- 276: `test_276_paquete_dinamico_multidestino_ruta_proveedor.sql` (39 controles), preflight y postcheck de una consulta cada uno, rollback (deja la 275 con sus 90 controles en OK) y re-aplicación idempotente;
+  recorrido en navegador del montaje (multidestino, ruta, proveedor de ficha, moneda, publicación) y de la venta tarjeta → checkout → cotización para visitante, aliado B2B e interno, más escrituras directas por PostgREST.
+
+### 4.8 Feedback de Preview (migración 276, aditiva; no modifica la 274 ni la 275)
+- **Multidestino explícito.** `paquete_din.multidestino`. Apagado, no hay destinos adicionales: el montaje oculta y vacía el selector y la base rechaza la escritura directa (`DIN_82_MULTIDESTINO`).
+  Activo, solo se ofrecen y se aceptan destinos del MISMO país que el principal (`destinos.pais` comparado con `pais_comparable_67` de la 220); principal sin país, principal repetido o adicional de otro país → `DIN_82_PAIS`.
+  Un vuelo o servicio solo puede ser de un destino del paquete (`DIN_82_DESTINO`). Los paquetes que ya tenían adicionales quedan con `multidestino = true` (backfill).
+- **Ruta de vuelo derivada.** Vinculado a Empaquetados → la ruta es la del empaquetado (sin ruta → `DIN_82_RUTA`). Manual → `origen_iata` + `destino_iata` (3 letras, distintos) y la ruta se calcula
+  (`BOG - CTG - BOG` con regreso, `BOG - CTG` sin él). El texto enviado se ignora: lo recalculan el servidor (`completarDesdeFichas`) y el trigger. Los vuelos manuales anteriores conservan su ruta libre hasta volver a guardar el paquete.
+- **Proveedor de servicios vinculados.** Sale de `servicios_adicionales.proveedor_id` y su ficha en `proveedores`; no se escribe. Si la ficha no tiene proveedor, el formulario lo muestra («La ficha de X no tiene proveedor…»),
+  el guardado avisa y **publicar se rechaza** (acción y trigger, que además relee la ficha al publicar). Sin proveedor tampoco habría a quién registrar el costo al convertir (el costo real ya exige proveedor).
+- **Moneda.** El servicio y el hotel ficha vinculados deben estar en la moneda del paquete (`DIN_82_MONEDA`); el montaje solo los ofrece de esa moneda y cambiar la moneda con vinculados en otra se rechaza.
+- **Guardado.** `guardar_paquete_din` se redefine (multidestino, IATA) y borra los hijos ANTES de actualizar la cabecera, para que las reglas de destino/moneda no choquen con hijos que el mismo guardado reemplaza.
+  `hoteles_vinculables_din()` devuelve también la moneda.
+- **Venta.** La tarjeta de «Dinámicos» solo elige hotel, habitaciones, vuelo/fechas y precio, y continúa a `/tarifario/checkout/dinamico` (el servidor vuelve a leer el paquete publicado de la agencia de la sesión y recalcula el precio).
+  Ahí se captura al cliente con las mismas piezas del checkout habitual: sesión interna → número de documento + `BuscarTitular` (búsqueda de personas por documento existente); aliado B2B → titular del contrato; visitante → «Tus datos».
+  El canal lo sigue resolviendo el servidor por la sesión. La tarjeta ya no tiene formulario de identidad ni recibe la Server Action.
+- **Límite:** el carrito/checkout habitual (`/tarifario/checkout`) re-liquida desde las tablas del tarifario y no modela estos paquetes; por eso la continuación es una página hermana que reutiliza sus piezas de captura de cliente, no el mismo carrito. La venta asistida (interno a nombre de un aliado) no está en este flujo.
+- **Pruebas SQL anteriores:** `test_275_*.sql` describe la 275 sola (con la 276 puesta, su fixture de vuelo con ruta libre «BOG-CTG» se rechaza por diseño); se corre antes de la 276 o tras su rollback.
 
 ## 5. Auditoría: los cuatro bloqueos (migración 275, aditiva sobre la 274)
 
