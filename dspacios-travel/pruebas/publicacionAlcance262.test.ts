@@ -117,3 +117,30 @@ test("traslado incluido con suplemento por horario: sigue pidiendo la hora (moti
   const r = incluidoEnEstadia(base({ usaAlcance: true, conFranjas: new Set(["ALTA"]), temporadas: [{ ...ALTA, precio_persona: 80000 } as never] }), "persona", ...estadia);
   assert.equal(!r.ok && r.motivo, "franjas"); assert.match(!r.ok ? r.error : "", /hora/);
 });
+
+// Salidas vencidas: el bloqueo del traslado incluido NO aplica a una salida anterior al día de negocio (Bogotá) ni frena las futuras; hoy y mañana SÍ bloquean.
+test("salida pasada: un traslado sin vigencia o sin tarifa de ida y regreso se omite (como antes) y no bloquea; hoy y mañana bloquean", () => {
+  const HOY = "2026-11-03";
+  const sinVigencia = (f: string, hoy = HOY) => incluidoEnEstadia(base({ usaAlcance: true, temporadas: [{ ...ALTA, fecha_inicio: "2030-01-01", fecha_fin: "2030-12-31", precio_persona: 80000 } as never] }), "persona", f, f, hoy);
+  const sinTarifa = (f: string, hoy = HOY) => incluidoEnEstadia(base({ usaAlcance: true, temporadas: [{ ...ALTA, fecha_inicio: "2026-01-01", fecha_fin: "2026-12-31", precio_persona: null } as never] }), "persona", f, f, hoy);
+  for (const [nombre, fn] of [["sin vigencia", sinVigencia], ["sin tarifa", sinTarifa]] as const) {
+    const ayer = fn("2026-11-02"); const sep = fn("2026-09-04"); const hoy = fn("2026-11-03"); const manana = fn("2026-11-04"); const lejos = fn("2026-12-20");
+    assert.equal(incluidoSeOmite(ayer), true, `${nombre}: ayer se omite`); assert.equal(incluidoSeOmite(sep), true, `${nombre}: 04/09/2026 se omite`);
+    for (const [etiqueta, r] of [["hoy", hoy], ["mañana", manana], ["futura", lejos]] as const) {
+      assert.equal(r.ok, false, `${nombre}: ${etiqueta} bloquea`); assert.equal(incluidoSeOmite(r), false, `${nombre}: ${etiqueta} no se omite`);
+      assert.match(!r.ok ? r.motivo : "", /^traslado_sin_(vigencia|tarifa)$/);
+    }
+  }
+  // el motivo sigue distinguiendo ambos casos en fechas futuras
+  assert.equal(!sinVigencia("2026-12-20").ok && (sinVigencia("2026-12-20") as { motivo: string }).motivo, "traslado_sin_vigencia");
+  assert.equal(!sinTarifa("2026-12-20").ok && (sinTarifa("2026-12-20") as { motivo: string }).motivo, "traslado_sin_tarifa");
+});
+test("salida pasada con tarifa válida y salida futura válida: se cobran normal; el 'hoy' por defecto es la fecha de negocio de Bogotá", () => {
+  const sv = base({ usaAlcance: true, temporadas: [{ ...ALTA, fecha_inicio: "2020-01-01", fecha_fin: "2040-12-31", precio_persona: 80000 } as never] });
+  assert.equal(incluidoEnEstadia(sv, "persona", "2026-09-04", "2026-09-04", "2026-11-03").ok, true);
+  assert.equal(incluidoEnEstadia(sv, "persona", "2026-12-20", "2026-12-20", "2026-11-03").ok, true);
+  const sinTarifa = base({ usaAlcance: true, temporadas: [{ ...ALTA, fecha_inicio: "2020-01-01", fecha_fin: "2040-12-31", precio_persona: null } as never] });
+  assert.equal(incluidoEnEstadia(sinTarifa, "persona", "2020-03-01", "2020-03-01").ok, false, "una fecha muy pasada con el 'hoy' real: no aplica bloqueo");
+  assert.equal(incluidoSeOmite(incluidoEnEstadia(sinTarifa, "persona", "2020-03-01", "2020-03-01")), true);
+  assert.equal(incluidoSeOmite(incluidoEnEstadia(sinTarifa, "persona", "2099-03-01", "2099-03-01")), false, "una fecha futura con el 'hoy' real bloquea");
+});

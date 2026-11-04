@@ -628,6 +628,8 @@ const PAQ_63 = 6205, PAQ_63I = 6206, SAL_63 = 6205, SAL_63I = 6206, S_INC = 6212
 const S_VIG = 6250, PAQ_VIG = 6250, PAQ_SIN = 6251, SAL_SIN = 6251;
 // Traslado con tarifa de ida y regreso pero SOLO vigente en 2031 (no cubre la salida de 2030-03-01): su paquete no debe quedar vendible.
 const S_FUERA = 6252, PAQ_FUERA = 6252, SAL_FUERA = 6252;
+// Paquete de BLOQUEO con 5 salidas (vuelos): una PASADA (2020) y 4 futuras. El traslado incluido solo tiene vigencia con tarifa en 2030; 2031 no tiene vigencia y 2032 tiene vigencia sin tarifa.
+const S_MIX = 6253, PAQ_MIX = 6253, HOT_MIX = 6253, BQ_MIX = { pasada: 6253, ok1: 6254, ok2: 6255, sinVig: 6256, sinTarifa: 6257 };
 const ROL_HTTP = (rol: string) => ({ superadmin: "00000000-0000-0000-0000-000000262001", gerencia: "00000000-0000-0000-0000-000000262010", operaciones: "00000000-0000-0000-0000-000000262011", administracion: UID_ADMIN, venta: "00000000-0000-0000-0000-000000262012" } as Record<string, string>)[rol];
 before(() => {
   sql(`
@@ -660,6 +662,23 @@ before(() => {
     insert into public.salidas_dinamicas (id, paquete_id, aerolinea, ruta, origen, fecha_ida, fecha_regreso, valor_tiquete, aplica_mk, ta, fee_infante, activo, moneda) values
       (${SAL_FUERA}, ${PAQ_FUERA}, 'Aerolínea 262', 'BOG - CTG - BOG', 'BOG', '2030-03-01', '2030-03-04', 300000, true, 0, 0, true, 'COP');
     insert into public.armado_servicios (paquete_id, servicio_id, modo, incluido) values (${PAQ_FUERA}, ${S_FUERA}, 'persona', true);
+    insert into public.servicios_adicionales (id, nombre, proveedor_id, destino_id, precio_persona, categoria, moneda, tipo_tarifa, liquidacion, tipo_receptivo) values (${S_MIX}, 'Traslado mixto 262', 6201, 6201, 0, 'tour_traslado', 'COP', 'persona', 'paquete', 'traslado');
+    insert into public.servicio_temporadas (id, servicio_id, nombre, fecha_inicio, fecha_fin, precio_persona) values
+      (${ALTA(S_MIX)}, ${S_MIX}, 'ALTA', '2030-01-01', '2030-12-31', 60000), (${ALTA(S_MIX) + 100}, ${S_MIX}, 'SIN TARIFA', '2032-01-01', '2032-12-31', null);
+    insert into public.hoteles (id, destino_id, nombre, proveedor_id, moneda, edad_infante_min, edad_infante_max, edad_nino_min, edad_nino_max, pax_min, pax_max, activo)
+      values (${HOT_MIX}, 6201, 'Hotel Mixto 262', 6201, 'COP', 0, 5, 6, 12, 1, 6, true);
+    insert into public.hotel_acomodaciones (hotel_id, acomodacion, pax_tarifa, pax_max, adt_min, adt_max, chd_min, chd_max, inf_min, inf_max) values (${HOT_MIX}, 'doble', 2, 4, 2, 2, 0, 2, 0, 2);
+    insert into public.hotel_temporadas (hotel_id, nombre, fecha_inicio, fecha_fin, prioridad, tipo) values (${HOT_MIX}, 'ALTA', '2020-01-01', '2032-12-31', 1, 'tarifa');
+    insert into public.tarifa_hotel (hotel_id, tipo_habitacion, alimentacion, temporada, neto_sencilla, neto_doble, neto_nino, neto_nino2, neto_infante) values (${HOT_MIX}, 'Estandar', 'Desayuno', 'ALTA', 150000, 100000, 50000, 30000, 40000);
+    insert into public.armado_paquetes (id, nombre, tipo, noches, destino_id, pct_mk, impuesto_tipo, impuesto_fijo, fecha_viaje_inicio, fecha_viaje_fin, moneda, moneda_publicacion, activo) values
+      (${PAQ_MIX}, 'Bloqueo con salidas pasadas y futuras', 'bloqueo', 3, 6201, 0.2, 'fijo', 0, '2020-01-01', '2032-12-31', 'COP', 'COP', true);
+    insert into public.armado_hoteles (paquete_id, hotel_id, categorias, regimenes) values (${PAQ_MIX}, ${HOT_MIX}, array['Estandar'], array['Desayuno']);
+    insert into public.bloqueos_vuelo (id, record, aerolinea, ruta, vuelo_ida, fecha_ida, hora_llegada_ida, vuelo_regreso, fecha_regreso, hora_salida_reg, cupos_total, tarifa_para_empaquetar, fee_infante, destino_id, proveedor_id, moneda, origen) values
+      ${[['pasada', '2020-03-01', '2020-03-04'], ['ok1', '2030-03-01', '2030-03-04'], ['ok2', '2030-03-10', '2030-03-13'], ['sinVig', '2031-03-01', '2031-03-04'], ['sinTarifa', '2032-03-01', '2032-03-04']]
+        .map(([k, i, r]) => `(${BQ_MIX[k as keyof typeof BQ_MIX]}, 'MIX262${k}', 'Aerolínea 262', 'BOG - CTG - BOG', 'AV62', '${i}', '21:00', 'AV63', '${r}', '22:00', 10, 300000, 0, 6201, 6201, 'COP', 'BOG')`).join(',')};
+    insert into public.sillas (bloqueo_id, numero_silla, estado) select b, g, 'disponible' from unnest(array[${Object.values(BQ_MIX).join(',')}]) b, generate_series(1, 10) g;
+    insert into public.armado_vuelos (paquete_id, bloqueo_id, aplica_mk, ta) select ${PAQ_MIX}, b, true, 0 from unnest(array[${Object.values(BQ_MIX).join(',')}]) b;
+    insert into public.armado_servicios (paquete_id, servicio_id, modo, incluido) values (${PAQ_MIX}, ${S_MIX}, 'persona', true);
     -- paquetes dinámicos en modo oferta #63 (COP con TRM), con salida manual
     insert into public.armado_paquetes (id, nombre, tipo, noches, destino_id, pct_mk, impuesto_tipo, impuesto_fijo, fecha_viaje_inicio, fecha_viaje_fin, moneda, moneda_publicacion, modo_oferta, trm_oferta, activo) values
       (${PAQ_63}, 'Dinámico 63', 'dinamico', 3, 6201, 0.2, 'fijo', 0, '2030-01-01', '2030-12-31', 'COP', 'COP', 'cop_trm_63', 4000, true),
@@ -830,6 +849,34 @@ describe("262 · ruta de oferta #63 (crearCotizacion -> convertirCotizacion -> a
     console.log("      crearCotizacion sobre la oferta sin vigencia →", c.ok ? "COTIZÓ (!)" : c.error);
     assert.equal(c.ok, false, "el cliente no puede comprar un paquete que promete un traslado que se omitiría");
     assert.deepEqual(cuentas(), antes, "nada escrito");
+  });
+  test("O4c salidas PASADAS y futuras (bloqueo de 5 vuelos) con un traslado incluido: la pasada no bloquea; las futuras sin vigencia o sin tarifa de ida y regreso sí; las futuras válidas se publican y se venden", async () => {
+    const g = await generarTarifario(PAQ_MIX) as { ok: boolean; error?: string };
+    const diag = sql("select coalesce(tarifario_diagnostico::text, '-') from public.armado_paquetes where id = " + PAQ_MIX);
+    const pubBq = sql("select coalesce(string_agg(distinct bloqueo_id::text, ',' order by bloqueo_id::text), '-') from public.tarifario_resultado_publicable where paquete_id = " + PAQ_MIX + " and modulo = 'bloqueo'");
+    console.log("      generarTarifario(bloqueo con vuelo pasado + futuros) →", g.ok ? "ok" : g.error, "· vuelos publicados:", pubBq, "· diagnóstico:", diag.slice(0, 900));
+    assert.equal(g.ok, true, g.error);
+    const pub = new Set(pubBq.split(","));
+    assert.ok(pub.has(String(BQ_MIX.ok1)) && pub.has(String(BQ_MIX.ok2)), "las dos salidas futuras con tarifa se publican");
+    assert.ok(pub.has(String(BQ_MIX.pasada)), "la salida pasada no bloquea la generación (se publica como antes, sin el traslado omitido)");
+    assert.ok(!pub.has(String(BQ_MIX.sinVig)) && !pub.has(String(BQ_MIX.sinTarifa)), "las futuras sin vigencia / sin tarifa NO se publican");
+    assert.match(diag, /2 de 5 salida\(s\) no se publican/, "solo las 2 futuras con problema cuentan como bloqueadas");
+    assert.match(diag, /no tiene vigencia de tarifa para el 01\/03\/2031/); assert.match(diag, /desde 01\/03\/2031 hasta 01\/03\/2032/, "el rango cubre también la futura sin tarifa (2032)");
+    assert.doesNotMatch(diag.split("Servicios incluidos omitidos")[0], /2020/, "la salida de 2020 no figura entre las bloqueadas");
+    // Venta (carrito) de una salida futura válida; las bloqueadas no se cotizan.
+    const itemMix = (k: keyof typeof BQ_MIX) => ({ modulo: "bloqueo", paqueteId: PAQ_MIX, hotelId: HOT_MIX, bloqueoId: BQ_MIX[k], hotelNombre: "Hotel Mixto 262", destino: "CARTAGENA 262", categoria: "Estandar", regimen: "Desayuno", fechaIda: null, fechaRegreso: null, noches: 3, habitaciones: { doble: 1 }, ninos: 0, ninos2: 0, infantes: 0, pax: 2, precio: 1, edadesMenores: [], cantidadMenores: 0, itemId: "hm" + k });
+    const q = (await crearSolicitudReserva({ items: [itemMix("ok1")], tours: [], cliente: { ...CLIENTE, tipoDoc: "CC" } } as never)) as { ok: boolean; error?: string; cotizacion?: { id: number } };
+    assert.equal(q.ok, true, q.error);
+    const r = (await convertirCotizacionCarrito(q.cotizacion!.id, { agrupar: "todo", pasajeros: PAX.slice(0, 2), asesorInterno: "Asesor 262", asignaciones: [[1, 2]], asignacionesTours: [], monedaCobro: "COP" } as never)) as Res;
+    assert.equal(r.ok, true, r.error);
+    assert.equal(sql(`select count(*) from public.cuentas_por_pagar where numero_contrato = ${lit(r.numeros![0])} and servicio_id = ${S_MIX}`), "1", "el traslado incluido genera UNA CxP");
+    const antes = foto();
+    for (const k of ["sinVig", "sinTarifa"] as const) {
+      const c = (await crearSolicitudReserva({ items: [itemMix(k)], tours: [], cliente: { ...CLIENTE, tipoDoc: "CC" } } as never)) as { ok: boolean; error?: string };
+      console.log("      cotizar la salida bloqueada " + k + " →", c.ok ? "COTIZÓ (!)" : c.error);
+      assert.equal(c.ok, false, "la salida " + k + " no se puede cotizar");
+    }
+    assert.deepEqual(foto(), antes, "nada escrito");
   });
   test("O5 SEGURIDAD DEL ENLACE sobre un contrato ligado a una aceptación #63 con el financiero pendiente", async () => {
     const n = numeroOk; const acep = Number(sql(`select aceptacion_63_id from public.ventas where numero_contrato = ${lit(n)}`));

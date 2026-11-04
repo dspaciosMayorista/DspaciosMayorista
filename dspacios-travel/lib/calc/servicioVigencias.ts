@@ -11,6 +11,7 @@
 // ─────────────────────────────────────────────────────────────────────────
 import { temporadaVigenteParaFecha, toTemporadaRango } from "./paquetes.ts";
 import { rangosIdaRegresoEfectivos } from "./servicioAlcance.ts";
+import { fechaNegocio } from "../fechaNegocio.ts";
 import type { GrupoServicioFila, TemporadaServicioFila } from "./servicioTarifa.ts";
 
 export type VigenciaServicioFila = TemporadaServicioFila & { precio_infante?: number | null };
@@ -217,7 +218,15 @@ export const incluidoSeOmite = (r: IncluidoEnEstadia): boolean => !r.ok && r.mot
  * vigencia para todos los días (si la estadía abarca dos, el precio horneado sería ambiguo), con precio por persona o rangos de grupo, y sin franjas
  * horarias (un traslado con suplemento por hora no puede ir incluido: hay que ofrecerlo como opcional para pedir la hora).
  */
-export function incluidoEnEstadia(sv: VigenciasServicio, modo: "persona" | "grupo", desde: string, hasta: string): IncluidoEnEstadia {
+export function incluidoEnEstadia(sv: VigenciasServicio, modo: "persona" | "grupo", desde: string, hasta: string, hoy: string = fechaNegocio()): IncluidoEnEstadia {
+  const r = evaluarIncluidoEnEstadia(sv, modo, desde, hasta);
+  // Una salida PASADA (anterior al día de negocio en Bogotá) no se vende: el bloqueo del traslado incluido (sin vigencia / sin tarifa de ida y regreso) no aplica y no frena
+  // la generación ni la venta de las salidas futuras. Se comporta como antes del bloqueo (se omite el servicio en esa fecha). Hoy y las fechas futuras SÍ bloquean.
+  if (!r.ok && (r.motivo === "traslado_sin_vigencia" || r.motivo === "traslado_sin_tarifa") && desde < hoy) return { ...r, motivo: "sin_tarifa" };
+  return r;
+}
+
+function evaluarIncluidoEnEstadia(sv: VigenciasServicio, modo: "persona" | "grupo", desde: string, hasta: string): IncluidoEnEstadia {
   const rotulo = `El servicio incluido «${sv.nombre}»`;
   // 262: un traslado incluido en el hotel se cobra SIEMPRE por ida y regreso: precio propio de ida y regreso de la vigencia si existe; si no, la tarifa vigente del servicio.
   const invalida = ventanaInvalida(desde, hasta);
