@@ -85,7 +85,7 @@ export function PaqueteTotalForm({ inicial, destinos, hoteles, servicios, empaqu
   });
   const nuevoVuelo = (x?: EmpaquetadoOpt): EntradaVuelo => ({
     empaquetadoId: x?.id ?? null, destinoId: x?.destino_id ?? null, aerolinea: x?.aerolinea ?? "", ruta: x?.ruta ?? "", origenIata: "", destinoIata: "", fechaIda: x?.fecha_ida ?? "", fechaRegreso: x?.fecha_regreso ?? "",
-    proveedor: x?.aerolinea ?? "", neto: x ? { adulto: x.tarifa_proveedor, nino: x.tarifa_proveedor, infante: x.fee_infante } : {}, pvp: {},
+    proveedor: x?.aerolinea ?? "", neto: x ? { adulto: x.tarifa_proveedor, infante: x.fee_infante } : {}, pvp: {},
   });
   const nuevoServicio = (s?: ServicioOpt): EntradaServicio => ({ servicioId: s?.id ?? null, destinoId: s?.destino_id ?? null, nombre: s?.nombre ?? "", proveedor: s?.proveedor ?? "", proveedorId: s?.proveedorId ?? null, neto: null, pvp: null, pvpInfante: null });
 
@@ -224,13 +224,18 @@ export function PaqueteTotalForm({ inicial, destinos, hoteles, servicios, empaqu
                   </select></div>
               </div>
               {!general && (
-                <div className="grid grid-cols-3 gap-2">
-                  {(["adulto", "nino", "infante"] as const).map((k) => (
-                    <div key={k}><label className={lbl}>{neta ? "Neto" : "PVP"} · {k}</label>
-                      <Input inputMode="numeric" value={(neta ? v.neto[k] : v.pvp[k]) == null ? "" : String(neta ? v.neto[k] : v.pvp[k])}
-                        onChange={(x) => upd("vuelos", i, neta ? { neto: { ...v.neto, [k]: n(x.target.value) } } : { pvp: { ...v.pvp, [k]: n(x.target.value) } })} />
-                      {neta && v.neto[k] != null && <span className="text-xs text-gray-500">PVP {pvpPrev(v.neto[k])}</span>}</div>
-                  ))}
+                <div className="rounded-lg bg-gray-50 p-3" data-testid="precios-vuelo">
+                  <p className="mb-3 text-xs text-gray-600">Regla de reservas: el <b>menor de 2 años</b> paga solo el fee de infante y <b>no ocupa silla</b>; <b>desde los 2 años</b> paga la tarifa de adulto y <b>ocupa silla</b>. Se aplica por la edad declarada, no por las categorías Niño 1 / Niño 2 del hotel, y no hay tarifa aérea de «niño».</p>
+                  <div className="grid gap-3 sm:grid-cols-2">
+                    {([["adulto", "adulto y menor desde 2 años", "Ocupa silla.", "Vuelo adulto"], ["infante", "infante (menor de 2 años)", "Sin silla. Escribe 0 si va gratis.", "Vuelo infante"]] as const).map(([k, nombre, ayuda, aria]) => (
+                      <div key={k} className="min-w-0">
+                        <label className={lbl}>{neta ? "Neto" : "PVP"} · {nombre}</label>
+                        <Input aria-label={`${neta ? "Neto" : "PVP"} ${aria}`} inputMode="numeric" value={(neta ? v.neto[k] : v.pvp[k]) == null ? "" : String(neta ? v.neto[k] : v.pvp[k])}
+                          onChange={(x) => upd("vuelos", i, neta ? { neto: { ...v.neto, [k]: n(x.target.value) } } : { pvp: { ...v.pvp, [k]: n(x.target.value) } })} />
+                        <span className="mt-1 block text-xs text-gray-500">{ayuda}{neta && v.neto[k] != null ? ` PVP ${pvpPrev(v.neto[k])}.` : ""}</span>
+                      </div>
+                    ))}
+                  </div>
                 </div>
               )}
             </div>
@@ -299,27 +304,56 @@ export function PaqueteTotalForm({ inicial, destinos, hoteles, servicios, empaqu
             </select>
             <Button type="button" variant="outline" onClick={() => set({ servicios: [...e.servicios, nuevoServicio()] })}><Plus className="h-4 w-4" /> Servicio manual</Button>
           </div>
-          {e.servicios.map((s, i) => (
-            <div key={i} className="grid items-end gap-2 rounded-lg border border-gray-200 p-3 sm:grid-cols-5">
-              <div className="sm:col-span-2"><label className={lbl}>Servicio {s.servicioId ? `(ficha #${s.servicioId})` : "(manual)"}</label><Input value={s.nombre} onChange={(x) => upd("servicios", i, { nombre: x.target.value })} /></div>
-              {s.servicioId != null ? (
-                <div><label className={lbl}>Proveedor (de la ficha)</label><Input aria-label="Proveedor de la ficha" readOnly value={s.proveedor} placeholder="Sin proveedor en la ficha" />
-                  {s.proveedorId == null && <p role="alert" className="mt-1 text-xs text-red-600">{mensajeSinProveedor([s.nombre])}</p>}</div>
-              ) : (
-                <div><label className={lbl}>Proveedor</label><Input value={s.proveedor} onChange={(x) => upd("servicios", i, { proveedor: x.target.value })} /></div>
-              )}
-              {s.servicioId != null && (serviciosFicha(s.servicioId)?.cobro) && <p className="text-xs text-gray-600 sm:col-span-5" data-testid="cobro-ficha">{serviciosFicha(s.servicioId)?.cobro} {neta ? "El precio se calcula con la ficha (vigencia, grupo y menores) al cotizar." : serviciosFicha(s.servicioId)?.modo === "grupo" ? "Escribe el PVP del GRUPO: se cobra una vez mientras el grupo esté dentro del rango de la ficha." : "Escribe el PVP por persona y, si la ficha cobra al infante, también el del menor de 2 años."}</p>}
-              {!general && !(neta && s.servicioId != null) && <div><label className={lbl}>{neta ? "Neto" : "PVP"} {s.servicioId != null && serviciosFicha(s.servicioId)?.modo === "grupo" ? "por grupo (se cobra una vez)" : "por persona"}</label>
-                <Input inputMode="numeric" value={(neta ? s.neto : s.pvp) == null ? "" : String(neta ? s.neto : s.pvp)} onChange={(x) => upd("servicios", i, neta ? { neto: n(x.target.value) } : { pvp: n(x.target.value) })} /></div>}
-              {porComp && s.servicioId != null && serviciosFicha(s.servicioId)?.modo === "persona" && (
-                <div><label className={lbl}>PVP infante (menor de 2 años){serviciosFicha(s.servicioId)?.cobraInfante ? " *" : ""}</label>
-                  <Input aria-label="PVP infante" inputMode="numeric" placeholder={serviciosFicha(s.servicioId)?.cobraInfante ? "Obligatorio (0 = gratis)" : "0"} value={s.pvpInfante == null ? "" : String(s.pvpInfante)} onChange={(x) => upd("servicios", i, { pvpInfante: n(x.target.value) })} />
-                  <span className="text-xs text-gray-500">{serviciosFicha(s.servicioId)?.cobraInfante ? "La ficha cobra al infante: defínelo (escribe 0 si va gratis)." : "La ficha no cobra al infante: queda en 0."}</span></div>
-              )}
-              <button type="button" aria-label="Quitar servicio" onClick={() => del("servicios", i)} className="justify-self-end pb-2"><Trash2 className="h-4 w-4 text-red-500" /></button>
-            </div>
-          ))}
-          {!e.servicios.length && <p className="text-sm text-gray-500">Agrega servicios existentes o manuales. Los precios son por persona (no aplican a infantes).</p>}
+          {e.servicios.map((s, i) => {
+            const ficha = s.servicioId != null ? serviciosFicha(s.servicioId) : undefined;
+            const vinculado = s.servicioId != null;
+            const esGrupo = ficha?.modo === "grupo";
+            const etq = neta ? "Neto" : "PVP";
+            return (
+              <div key={i} className="rounded-lg border border-gray-200 p-3" data-testid="ficha-servicio">
+                <div className="flex items-start gap-3">
+                  <div className="min-w-0 flex-1">
+                    <label className={lbl}>Servicio <span className="ml-1 rounded bg-gray-100 px-1.5 py-0.5 text-[11px] font-normal text-gray-600">{vinculado ? `Ficha #${s.servicioId}` : "Manual"}</span></label>
+                    <Input aria-label="Nombre del servicio" value={s.nombre} onChange={(x) => upd("servicios", i, { nombre: x.target.value })} />
+                  </div>
+                  <button type="button" aria-label="Quitar servicio" onClick={() => del("servicios", i)} className="mt-6 shrink-0 rounded-md p-2 text-red-500 hover:bg-red-50"><Trash2 className="h-4 w-4" /></button>
+                </div>
+                <div className="mt-3 grid items-start gap-3 sm:grid-cols-2">
+                  <div className="min-w-0">
+                    <label className={lbl}>{vinculado ? "Proveedor (de la ficha)" : "Proveedor"}</label>
+                    {vinculado
+                      ? <Input aria-label="Proveedor de la ficha" readOnly value={s.proveedor} placeholder="Sin proveedor en la ficha" />
+                      : <Input value={s.proveedor} onChange={(x) => upd("servicios", i, { proveedor: x.target.value })} />}
+                    {vinculado && s.proveedorId == null && <p role="alert" className="mt-1 text-xs text-red-600">{mensajeSinProveedor([s.nombre])}</p>}
+                  </div>
+                  {!general && !(neta && vinculado) && (
+                    <div className="min-w-0">
+                      <label className={lbl}>{etq} {esGrupo ? "por grupo (una vez)" : "por persona"}</label>
+                      <Input inputMode="numeric" value={(neta ? s.neto : s.pvp) == null ? "" : String(neta ? s.neto : s.pvp)} onChange={(x) => upd("servicios", i, neta ? { neto: n(x.target.value) } : { pvp: n(x.target.value) })} />
+                      {esGrupo && <span className="mt-1 block text-xs text-gray-500">Se cobra una sola vez dentro del rango de la ficha.</span>}
+                    </div>
+                  )}
+                  {porComp && vinculado && ficha?.modo === "persona" && (
+                    <div className="min-w-0">
+                      <label className={lbl}>PVP infante{ficha.cobraInfante ? " *" : ""}</label>
+                      <Input aria-label="PVP infante" inputMode="numeric" placeholder={ficha.cobraInfante ? "0 = gratis" : "0"} value={s.pvpInfante == null ? "" : String(s.pvpInfante)} onChange={(x) => upd("servicios", i, { pvpInfante: n(x.target.value) })} />
+                      <span className="mt-1 block text-xs text-gray-500">{ficha.cobraInfante ? "Menor de 2 años: la ficha lo cobra, defínelo (0 si va gratis)." : "Menor de 2 años: la ficha no lo cobra, queda en 0."}</span>
+                    </div>
+                  )}
+                </div>
+                {vinculado && ficha?.cobro && (
+                  <div className="mt-3 rounded-md bg-gray-50 px-3 py-2 text-xs text-gray-600" data-testid="cobro-ficha">
+                    <p className="font-medium text-gray-700">Cobro de la ficha</p>
+                    <ul className="mt-1 list-disc space-y-0.5 pl-4">
+                      <li>{ficha.cobro}</li>
+                      <li>{neta ? "El precio se calcula con la ficha (vigencia, grupo y menores) al cotizar." : esGrupo ? "Escribe el PVP del GRUPO: se cobra una vez mientras el grupo esté dentro del rango." : "Escribe el PVP por persona y, si la ficha cobra al infante, el del menor de 2 años."}</li>
+                    </ul>
+                  </div>
+                )}
+              </div>
+            );
+          })}
+          {!e.servicios.length && <p className="text-sm text-gray-500">Agrega servicios existentes o manuales. En los manuales el precio es por persona (el infante no paga); los vinculados se cobran como dice su ficha.</p>}
         </section>
       )}
 

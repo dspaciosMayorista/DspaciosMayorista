@@ -27,7 +27,7 @@ export type ResumenDin = {
   paquete: string; destino: string; noches: number; moneda: string;
   hotel: { nombre: string; categoria: string; regimen: string } | null;
   habitaciones: string; viajeros: string;
-  vuelo: { etiqueta: string; detalle: VueloDetalle | null } | null;
+  vuelo: { etiqueta: string; detalle: VueloDetalle | null; sillas: number; infantes: number } | null;
   servicios: string[];
   fechaIda: string; fechaRegreso: string; total: number; lineas: { descripcion: string; valor: number }[];
   /** Vuelve a la tarjeta con la selección guardada. */
@@ -77,6 +77,7 @@ export function CheckoutDinamico({ resumen, solicitud, canal, aliado, crear }: {
           {resumen.vuelo && (
             <div data-testid="res-vuelo"><p className="flex items-center gap-1.5 font-semibold text-gray-700"><Plane className="h-4 w-4" /> Vuelo</p>
               <p className="text-gray-800">{[resumen.vuelo.detalle?.aerolinea, resumen.vuelo.detalle?.ruta].filter(Boolean).join(" · ") || resumen.vuelo.etiqueta}</p>
+              <p className="text-xs text-gray-700" data-testid="res-sillas">{resumen.vuelo.sillas} silla{resumen.vuelo.sillas === 1 ? "" : "s"}{resumen.vuelo.infantes ? ` + ${resumen.vuelo.infantes} infante${resumen.vuelo.infantes === 1 ? "" : "s"} sin silla (menor${resumen.vuelo.infantes === 1 ? "" : "es"} de 2 años, pagan el fee de infante)` : ""}</p>
               <p className="text-xs text-gray-600">Ida {resumen.fechaIda}{resumen.vuelo.detalle?.vueloIda ? ` · vuelo ${resumen.vuelo.detalle.vueloIda}` : ""}{resumen.vuelo.detalle?.horaSalidaIda ? ` · sale ${resumen.vuelo.detalle.horaSalidaIda.slice(0, 5)}` : ""}{resumen.vuelo.detalle?.horaLlegadaIda ? ` · llega ${resumen.vuelo.detalle.horaLlegadaIda.slice(0, 5)}` : ""}</p>
               <p className="text-xs text-gray-600">Regreso {resumen.fechaRegreso}{resumen.vuelo.detalle?.vueloRegreso ? ` · vuelo ${resumen.vuelo.detalle.vueloRegreso}` : ""}{resumen.vuelo.detalle?.horaSalidaReg ? ` · sale ${resumen.vuelo.detalle.horaSalidaReg.slice(0, 5)}` : ""}{resumen.vuelo.detalle?.horaLlegadaReg ? ` · llega ${resumen.vuelo.detalle.horaLlegadaReg.slice(0, 5)}` : ""}</p></div>
           )}

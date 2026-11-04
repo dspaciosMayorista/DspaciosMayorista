@@ -19,10 +19,10 @@ test("neta + markup: cada línea redondeada, total = suma, desglose cuadra", () 
   const r = liquidarPaquete(base({}), comp);
   assert.equal(r.adultos, 2);
   assert.ok(verificarCuadre(r.lineas, r.total));
-  // hotel doble: 700000/(0.8)=875000 ×2 ; vuelo adulto 1.000.000×2 ; tour 125000×3 (2 adultos+1 niño)
+  // hotel doble: 700000/(0.8)=875000 ×2 ; vuelo adulto 1.000.000×3 (el menor sin edad declarada ocupa silla; no hay tarifa de niño en el vuelo) + infante 125.000 ; tour 125000×3 (2 adultos+1 niño)
   const g = agruparPorComponente(r.lineas);
   assert.equal(g.find((l) => l.ref === "servicio:s1")!.valor, 375000);
-  assert.equal(g.find((l) => l.ref === "vuelo")!.valor, 2 * 1000000 + 750000 + 125000);
+  assert.equal(g.find((l) => l.ref === "vuelo")!.valor, 3 * 1000000 + 125000);
   assert.equal(g.reduce((s, l) => s + l.valor, 0), r.total);
   // con neto conocido no se exige costo
   assert.deepEqual(costosFaltantes(g), []);

@@ -80,7 +80,7 @@ describe("menores por edad y capacidad (pantalla = servidor)", async () => {
   });
   test("la explicación aclara las edades del hotel y que Niño 1 / Niño 2 son tarifas por habitación", () => {
     const t = explicarEdades(cap2);
-    assert.match(t.edades, /infante de 0 a 2 años/);
+    assert.match(t.edades, /infante hasta los 2 años/);
     assert.match(t.edades, /niño de 3 a 10 años/);
     assert.match(t.ninos12, /no son rangos de edad/);
     assert.match(t.ninos12, /habitación/);
@@ -205,7 +205,7 @@ describe("cableado de pantalla y servidor", () => {
     assert.match(acciones, /neto: neta && s\.servicioId == null \? s\.neto : null/);
   });
   test("servicio vinculado: sin neto escrito cuando el precio sale de la ficha; muestra su cobro", () => {
-    assert.match(form, /!\(neta && s\.servicioId != null\)/);
+    assert.match(form, /!\(neta && vinculado\)/);
     assert.match(form, /data-testid="cobro-ficha"/);
   });
   test("tarjeta: secciones de hotel, alimentación, habitaciones, viajeros, vuelo y servicios; edades solo si viajan menores", () => {

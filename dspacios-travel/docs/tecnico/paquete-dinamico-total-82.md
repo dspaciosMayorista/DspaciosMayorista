@@ -164,6 +164,11 @@ público no cambió ni lee `payload` (lo exigen pruebas de cableado); la fecha d
   · **precio general** → el servicio no lleva PVP, pero su capacidad se valida y guarda la misma cantidad.
   La **cantidad que queda para costos y CxP** se guarda en el nombre del componente («Cena show · 1 grupo (4 pasajeros con silla)», «Tour Islas · 4 personas + 1 infante (menor de 2 años)»), así se ve al registrar el costo real y en la CxP; en netas el costo sale de la ficha y no se pide registrarlo.
   `exige_costo` = true en solo PVP (por componente y general) y false en netas.
+- **Vuelo por edades (vinculado a Empaquetados o manual).** Regla de reservas (`lib/reservar/menoresDeDos.ts`): el **menor de 2 años** paga solo el fee/PVP de infante y **no ocupa silla**; **desde los 2 años** paga la tarifa de adulto y **ocupa silla**. Se aplica por la EDAD declarada
+  (`vueloPasajeros` en `calculo.ts`), no por las clases Niño 1 / Niño 2 / infante del hotel: un menor de 1 año que el hotel llama «niño» sigue pagando el fee de infante en el vuelo, y uno de 2 años que el hotel llama «infante» paga vuelo de adulto con silla. El vuelo ya no tiene tarifa
+  de «niño»: el formulario pide solo adulto (y menor desde 2 años) e infante, con la regla a la vista; el `nino` guardado en paquetes anteriores se conserva pero no se usa ni cambia ningún importe. Tarjeta, checkout y cotización muestran «N sillas + M infantes sin silla»; el componente del vuelo guarda
+  esa unidad en su nombre (se ve al registrar el costo y en la CxP del aéreo) y `payload.dinamico.pasajeros` deja `{adultos, menores, menoresDeDos, sillas}`. Los paquetes dinámicos no asignan sillas de inventario (no hay bloqueo): «sillas» es la cantidad que se cobra y se costea.
+- **Ficha de servicio del montaje.** Nombre y botón de eliminar en la misma fila, proveedor y precios en rejilla de 2 columnas (1 en móvil) con la ayuda de cada campo debajo de él, y las reglas de cobro en una lista corta; sin desborde horizontal a 390 y 1280 px.
 - **Límites:** los hoteles manuales anteriores no validan capacidad; la categoría y el plan no tienen trigger en la base (validación en el servidor); en solo PVP los servicios MANUALES siguen cobrando PVP × (adultos + niños) y el infante no paga (regla anterior, sin ficha);
   `Niño 1 / Niño 2` en el cálculo siguen siendo tarifas de la acomodación del hotel del paquete.
 

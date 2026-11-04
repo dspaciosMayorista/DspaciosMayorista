@@ -5,7 +5,7 @@
 import { ACOM_ROOMS, PAX_TARIFA_DEFAULT, defaultAcomConfig, validarReservaHabitaciones, type AcomConfig, type AcomRoom } from "@/lib/acomodaciones";
 import { distribuirPorHabitaciones, type AsignacionHabitacion, type HabitacionConsultada } from "@/lib/reservar/distribucionHabitaciones";
 import { MAX_MENORES_POR_CONSULTA, clasificarMenoresPorEdad, validarEdadesMenores } from "@/lib/reservar/edadesMenores";
-import { contarMenoresDeDos } from "@/lib/reservar/menoresDeDos";
+import { esMenorDeDos } from "@/lib/reservar/menoresDeDos";
 import { REGLA_EDAD_DEFAULT, construirReglaEdadDesdeMaximos, normalizarReglaEdadGeneral, validarRangoReglaEdad } from "@/lib/calc/reglaEdadTarifa";
 
 /** El sistema cobra como máximo dos niños por habitación (Niño 1 y Niño 2). */
@@ -61,7 +61,7 @@ export function reglasHotelFicha(h: FilaHotelFicha, acom: Partial<AcomConfig>[])
 export function explicarEdades(r: ReglasHotelDin | null): { edades: string; ninos12: string; adultsOnly: string | null } {
   const inf = r?.infanteMax ?? EDADES_MANUAL_POR_DEFECTO.infanteMax, nino = r?.ninoMax ?? EDADES_MANUAL_POR_DEFECTO.ninoMax;
   return {
-    edades: `En este hotel: infante de 0 a ${inf} años · niño de ${inf + 1} a ${nino} años · desde los ${nino + 1} años se cuenta como adulto.`,
+    edades: `En este hotel: infante hasta los ${inf} años · niño de ${inf + 1} a ${nino} años · desde los ${nino + 1} años se cuenta como adulto (en el vuelo cuenta la edad: menor de 2 años = infante).`,
     ninos12: "Niño 1 y Niño 2 no son rangos de edad: son las dos tarifas de niño de cada habitación. El primer niño de una habitación paga Niño 1 y el segundo, Niño 2.",
     adultsOnly: r?.adultsOnly ? "Este hotel es solo para adultos: no admite menores." : null,
   };
@@ -94,8 +94,7 @@ export function resolverMenores(a: { habitaciones: Partial<Record<AcomRoom, numb
   const c = clasificarMenoresPorEdad(v.edades, infMax, ninoMax);
   if (!c.ok) return { ok: false, error: c.error };
   if (!r) {
-    const t = { infante: c.c.infantes, nino: c.c.ninos, nino2: 0 };
-    return { ok: true, ninos: c.c.ninos, ninos2: 0, infantes: c.c.infantes, menoresDeDos: sumar(contarMenoresDeDos(v.edades, infMax, t)), edades: v.edades, distribucion: [] };
+    return { ok: true, ninos: c.c.ninos, ninos2: 0, infantes: c.c.infantes, menoresDeDos: v.edades.filter(esMenorDeDos).length, edades: v.edades, distribucion: [] };
   }
   if (!habitaciones.length) return { ok: false, error: "Indica al menos una habitación." };
   const d = distribuirPorHabitaciones({ adultosDeclarados: adultos, ninos: c.c.ninos, infantes: c.c.infantes, habitaciones });
@@ -104,8 +103,5 @@ export function resolverMenores(a: { habitaciones: Partial<Record<AcomRoom, numb
   for (const k of ACOM_ROOMS) hab[k] = Math.max(0, Math.trunc(Number(a.habitaciones[k]) || 0));
   const val = validarReservaHabitaciones({ habitaciones: hab, reglas: r.reglas, ninosDeclarados: d.totales.nino + d.totales.nino2, infantesDeclarados: d.totales.infantes, paxMinHotel: r.paxMin, paxMaxHotel: r.paxMax });
   if (val.errores.length) return { ok: false, error: val.errores[0] };
-  const t = { infante: d.totales.infantes, nino: d.totales.nino, nino2: d.totales.nino2 };
-  return { ok: true, ninos: d.totales.nino, ninos2: d.totales.nino2, infantes: d.totales.infantes, menoresDeDos: sumar(contarMenoresDeDos(v.edades, infMax, t)), edades: v.edades, distribucion: d.habitaciones };
+  return { ok: true, ninos: d.totales.nino, ninos2: d.totales.nino2, infantes: d.totales.infantes, menoresDeDos: v.edades.filter(esMenorDeDos).length, edades: v.edades, distribucion: d.habitaciones };
 }
-
-const sumar = (c: { infante: number; nino: number; nino2: number }) => c.infante + c.nino + c.nino2;

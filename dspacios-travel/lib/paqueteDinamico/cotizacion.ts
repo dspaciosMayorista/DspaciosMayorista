@@ -3,7 +3,7 @@
 // `crear_cotizacion_din` envuelve `crear_cotizacion_manual`.
 import { nombrePaqueteItem, type ItemDocumento } from "@/lib/cotizacion/liquidacionManual";
 import { sugerirIncluye } from "@/lib/cotizacion/incluye";
-import { agruparPorComponente, liquidarPaquete, type Composicion, type LineaDin, type PaqueteDin, type ServicioResuelto } from "@/lib/paqueteDinamico/calculo";
+import { agruparPorComponente, liquidarPaquete, vueloPasajeros, type Composicion, type LineaDin, type PaqueteDin, type ServicioResuelto } from "@/lib/paqueteDinamico/calculo";
 
 export type FilaComponente = {
   orden: number; tipo_servicio: "aereo" | "hotel" | "otro"; plataforma: string | null; nombre_servicio: string; proveedor: string | null;
@@ -60,7 +60,7 @@ export function construirCotizacionDin(e: EntradaCotizacionDin):
     cliente: e.cliente, destino: e.destino, fechaIda: e.fechaIda, fechaRegreso: e.fechaRegreso, pax: liq.adultos, ninos: 0, tarifaNino: 0, recobro: 0,
     recobroAliado: 0, moneda, tipoAsesor: e.tipoAsesor, asesorInterno: e.asesorInterno, agenciaNombre: e.agenciaNombre, freelanceNombre: e.freelanceNombre,
     plazo: e.plazo ?? "", vigenciaHasta: e.vigenciaHasta, observaciones: e.observaciones ?? "", incluye: e.incluye ?? "", noIncluye: e.noIncluye ?? "", servicios: [],
-    dinamico: { paqueteId: e.paqueteId, hotelId: e.hotelId, vueloId: e.vueloId, composicion: e.composicion, adultos: liq.adultos, ninos: liq.ninos, infantes: liq.infantes, resumenPax: resumen },
+    dinamico: { paqueteId: e.paqueteId, hotelId: e.hotelId, vueloId: e.vueloId, composicion: e.composicion, adultos: liq.adultos, ninos: liq.ninos, infantes: liq.infantes, resumenPax: resumen, pasajeros: vueloPasajeros(e.composicion) },
   };
   const detalle = {
     venta: { numero_contrato: "", fecha_emision: e.fechaEmision ?? null, cliente: clienteNombre, destino: e.destino || null, fecha_salida: e.fechaIda || null, fecha_regreso: e.fechaRegreso || null,

@@ -132,6 +132,20 @@ select pg_temp.reg('NETAS: el servicio por grupo cuesta UNA vez 600.000 y el de 
   (select max(valor_total) filter (where valor_total = 600000)::text || '|' || max(valor_total) filter (where valor_total = 430000)::text from public.cuentas_por_pagar where numero_contrato = current_setting('t277.b')));
 select pg_temp.reg('NETAS: sin costos pendientes que registrar', '0', (select coalesce(array_length(public.din_costos_pendientes(current_setting('t277.cot')::bigint), 1), 0)::text));
 
+-- C) VUELO por EDADES (menores de 1 y 2 años; pruebas/paqueteDinamico82Vuelo.test.ts): 2 adultos + menores de 1 y 2 años + 5 años → 4 sillas + 1 infante sin silla.
+--    Vuelo 4 × 500.000 + 1 × 100.000 = 2.100.000 (el hotel clasifica distinto, pero el vuelo no cambia). Hotel 1.800.000. Total 3.900.000.
+select set_config('t277.c', pg_temp.convertir_caso(
+  jsonb_build_array(
+    jsonb_build_object('tipo_servicio','aereo','nombre_servicio','Vuelo · 4 sillas + 1 infante (menor de 2 años, sin silla)','costo_neto',0,'modo','mk','pct_markup',0,'ta',0,'valor',2100000,'componente','vuelo','exige_costo',true),
+    jsonb_build_object('tipo_servicio','hotel','nombre_servicio','Hotel M','costo_neto',0,'modo','mk','pct_markup',0,'ta',0,'valor',1800000,'componente','hotel','exige_costo',true)),
+  3900000,
+  '[{"orden":0,"costo_neto":1650000,"proveedor":"Avianca SA"},{"orden":1,"costo_neto":1400000,"proveedor":"Hotel M SAS"}]'::jsonb), false);
+select pg_temp.reg('VUELO: el contrato conserva el total', '3900000.00', (select precio_venta::text from public.ventas where numero_contrato = current_setting('t277.c')));
+select pg_temp.reg('VUELO: costo aéreo del contrato = costo real registrado (no el PVP)', '1650000.00', (select costo_aereo::text from public.ventas where numero_contrato = current_setting('t277.c')));
+select pg_temp.reg('VUELO: 2 CxP (aéreo y hotel) con el costo real', '2|3050000.00', (select count(*)::text || '|' || sum(valor_total)::text from public.cuentas_por_pagar where numero_contrato = current_setting('t277.c')));
+select pg_temp.reg('VUELO: la CxP del aéreo conserva la unidad (sillas + infantes) y su proveedor', '1650000.00|Avianca SA',
+  (select valor_total::text || '|' || proveedor from public.cuentas_por_pagar where numero_contrato = current_setting('t277.c') and servicio like '%4 sillas + 1 infante%'));
+
 select n, control, esperado, observado, case when ok then 'OK' else 'FALLA' end as veredicto from res order by n;
 select 'TOTAL: ' || count(*) filter (where ok) || ' OK / ' || count(*) filter (where not ok) || ' FALLA' from res;
 rollback;

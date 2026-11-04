@@ -23,8 +23,8 @@ test("cotización: total = Σ componentes = Σ ítems del documento; solo PVP de
   if (!r.ok) return;
   const total = r.cabecera.precio_venta as number;
   assert.equal(r.servicios.reduce((s, c) => s + c.valor, 0), total);
-  // adultos 2: hotel 2×800000 + niño 300000 + vuelo 2×900000+700000+0 + tour 3×150000
-  assert.equal(total, 1_600_000 + 300_000 + 1_800_000 + 700_000 + 450_000);
+  // adultos 2: hotel 2×800000 + niño 300000 + vuelo 3×900000 (menor desde 2 años = adulto con silla) + infante 0 + tour 3×150000
+  assert.equal(total, 1_600_000 + 300_000 + 2_700_000 + 450_000);
   assert.equal((r.cabecera.detalle as { items: { valor: number }[] }).items.reduce((s, i) => s + i.valor, 0), total);
   assert.ok(r.servicios.every((s) => s.costo_neto === 0 && s.exige_costo));
   assert.equal((r.cabecera.payload as { ninos: number }).ninos, 0);

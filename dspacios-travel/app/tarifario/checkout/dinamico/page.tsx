@@ -66,7 +66,7 @@ export default async function CheckoutDinamicoPage({ searchParams }: { searchPar
     paquete: p.nombre, destino: p.destino, noches: p.noches, moneda: p.moneda,
     hotel: hotel ? { nombre: hotel.nombre, categoria: hotel.categoria, regimen: hotel.regimen } : null,
     habitaciones: hab.join(", ") || "—", viajeros,
-    vuelo: vuelo ? { etiqueta: vuelo.etiqueta, detalle: vuelo.detalle } : null,
+    vuelo: vuelo ? { etiqueta: vuelo.etiqueta, detalle: vuelo.detalle, sillas: prev.vuelo.sillas, infantes: prev.vuelo.infantes } : null,
     servicios: p.servicios.filter((s) => elegidos.includes(String(s.id))).map((s) => s.nombre),
     fechaIda: sel.fechaIda, fechaRegreso: sel.fechaRegreso, total: prev.total, lineas: prev.lineas, volver,
   };

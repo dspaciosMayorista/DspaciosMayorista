@@ -160,7 +160,7 @@ describe("cableado: mismo cobro en todas las etapas", () => {
   });
   test("montaje: PVP por grupo, PVP de infante y validación en servidor; la columna se guarda con el paquete", () => {
     const f = sinComentarios(leer("app/(dashboard)/dashboard/paquetes/total/PaqueteTotalForm.tsx"));
-    assert.match(f, /por grupo \(se cobra una vez\)/);
+    assert.match(f, /por grupo \(una vez\)/);
     assert.match(f, /aria-label="PVP infante"/);
     const a = sinComentarios(leer("app/(dashboard)/dashboard/paquetes/total/actions.ts"));
     assert.match(a, /cobra al infante \(menor de 2 años\): define su PVP de infante/);

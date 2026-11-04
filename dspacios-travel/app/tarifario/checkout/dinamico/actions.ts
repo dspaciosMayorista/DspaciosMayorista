@@ -3,13 +3,15 @@
 // cotizar (mismo núcleo `resolverSeleccionDin`: menores por edad, capacidad por habitación, servicios con su ficha). Pública: solo devuelve PVP, nunca costos.
 import { createAdminClient } from "@/lib/supabase/admin";
 import { hoyBogota } from "@/lib/cotizacion/vigencia";
-import { composicionValida, type Composicion } from "@/lib/paqueteDinamico/calculo";
+import { composicionValida, vueloPasajeros, type Composicion } from "@/lib/paqueteDinamico/calculo";
 import type { FilaHotelDin, FilaPaqueteDin, FilaServicioDin, FilaVueloDin } from "@/lib/paqueteDinamico/modelo";
 import { tenantVisibleDin } from "@/lib/paqueteDinamico/cargarPublico";
 import { resolverSeleccionDin } from "@/lib/paqueteDinamico/seleccion";
 
 export type VistaPreviaDin =
-  | { ok: true; total: number; lineas: { descripcion: string; valor: number }[]; menores: { ninos: number; ninos2: number; infantes: number; menoresDeDos: number } }
+  | { ok: true; total: number; lineas: { descripcion: string; valor: number }[]; menores: { ninos: number; ninos2: number; infantes: number; menoresDeDos: number };
+      /** Pasajeros del vuelo por EDAD (no por las clases del hotel): sillas (adultos + menores desde 2 años) e infantes menores de 2 años sin silla. */
+      vuelo: { sillas: number; infantes: number } }
   | { ok: false; error: string };
 
 const ISO = /^\d{4}-\d{2}-\d{2}$/;
@@ -37,6 +39,7 @@ export async function evaluarSeleccionDin(input: { paqueteId: number; hotelId: n
     if (!sel.ok) return sel;
     return {
       ok: true, total: sel.liq.total, lineas: sel.liq.lineas.map((l) => ({ descripcion: l.descripcion, valor: l.valor })),
+      vuelo: (() => { const v = vueloPasajeros(sel.composicion); return { sillas: v.sillas, infantes: v.menoresDeDos }; })(),
       menores: { ninos: sel.composicion.ninos, ninos2: sel.composicion.ninos2, infantes: sel.composicion.infantes, menoresDeDos: (sel.composicion.edadesMenores ?? []).filter((e) => e < 2).length },
     };
   } catch (e) {

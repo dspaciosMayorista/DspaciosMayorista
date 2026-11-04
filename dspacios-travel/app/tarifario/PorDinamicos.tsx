@@ -98,6 +98,9 @@ function Cotizador({ p, hotel, onCerrar, evaluar }: { p: DinamicoPublico; hotel:
     return resolverMenores({ habitaciones: hab, edades: edadesNum, reglas });
   }, [viajanMenores, edadesNum, hab, reglas]);
   const errorLocal = adultos < 1 ? "Elige al menos una habitación." : viajanMenores && edades.length === 0 ? "Indica cuántos menores viajan." : menores && !menores.ok ? menores.error : null;
+  // Vuelo por EDADES: menor de 2 años = infante sin silla; desde 2 años = adulto con silla.
+  const infantesVuelo = edadesNum ? edadesNum.filter((x) => x < 2).length : 0;
+  const sillasVuelo = viajanMenores && edadesNum ? adultos + edadesNum.length - infantesVuelo : null;
   const completa = !errorLocal && !!menores && !!ida && !!regreso;
   const serviciosElegidos = serviciosSel ?? serviciosOk;
   const composicion: Composicion = useMemo(() => ({
@@ -197,6 +200,10 @@ function Cotizador({ p, hotel, onCerrar, evaluar }: { p: DinamicoPublico; hotel:
         <Seccion icono={Plane} titulo="Vuelo">
           <select aria-label="Vuelo" className={sel} value={vueloId ?? ""} onChange={(e) => setVueloId(Number(e.target.value))}>{p.vuelos.map((v) => <option key={v.id} value={v.id}>{v.etiqueta}</option>)}</select>
           <DetalleVuelo d={vueloSel?.detalle ?? null} ida={vueloSel?.fechaIda ?? null} regreso={vueloSel?.fechaRegreso ?? null} />
+          <div className="mt-2 rounded-lg bg-sky-50 p-2 text-xs text-sky-900" data-testid="regla-vuelo">
+            <p>En el vuelo, el <b>menor de 2 años</b> paga solo el fee de infante y no ocupa silla; <b>desde los 2 años</b> paga tarifa de adulto y ocupa silla (por la edad que declares, sin importar cómo clasifique el hotel).</p>
+            <p className="mt-1 font-medium" data-testid="sillas-vuelo">{sillasVuelo != null ? `${sillasVuelo} silla${sillasVuelo === 1 ? "" : "s"}${infantesVuelo ? ` + ${infantesVuelo} infante${infantesVuelo === 1 ? "" : "s"} sin silla` : ""}` : `${adultos} adulto${adultos === 1 ? "" : "s"} con silla`}</p>
+          </div>
           {!vueloSel?.fechaIda && (
             <div className="mt-2 grid gap-2 sm:grid-cols-2">
               <div><label className={lbl}>Fecha de ida</label><DateInput aria-label="Fecha de ida" type="date" value={fIda} onValueChange={setFIda} /></div>

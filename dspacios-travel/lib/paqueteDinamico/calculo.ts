@@ -75,6 +75,8 @@ export type LineaDin = {
   costoNeto: number;     // costo conocido (0 si pendiente)
   exigeCosto: boolean;   // true = el costo real debe registrarse antes de convertir
   proveedor: string;
+  /** Unidad de cobro guardada con el componente (vuelo: sillas + infantes; servicio vinculado: grupo/personas). */
+  unidad?: string;
 };
 
 const num = (v: unknown): number => (typeof v === "number" && Number.isFinite(v) ? v : NaN);
@@ -116,9 +118,10 @@ export function validarPaquete(p: PaqueteDin): string[] {
     }
   }
   if (p.usaVuelo) {
-    for (const k of ["adulto", "nino", "infante"] as const) {
+    // Regla de reservas: menor de 2 años paga el fee/PVP de infante y no ocupa silla; desde los 2 años paga tarifa de adulto y ocupa silla. No hay tarifa aérea de «niño».
+    for (const k of ["adulto", "infante"] as const) {
       const v = precioComp(p, p.vuelo?.neto[k], p.vuelo?.pvp[k]);
-      if (!Number.isFinite(v) || v < 0) e.push(`Falta el precio del vuelo para «${k}».`);
+      if (!Number.isFinite(v) || v < 0) e.push(k === "adulto" ? "Falta el precio del vuelo para adulto (y menores desde 2 años)." : "Falta el fee/PVP de infante del vuelo (menor de 2 años; escribe 0 si va gratis).");
       else if (k === "adulto" && v === 0) e.push("El precio del vuelo para adulto no puede ser 0.");
     }
   }
@@ -149,7 +152,7 @@ export function totalPorPersona(p: PaqueteDin, a: AcomDin): number {
   let t = 0;
   if (p.usaHotel) t += precioComp(p, p.hotel?.neto[a], p.hotel?.pvp[a]);
   if (p.usaVuelo) {
-    const k = a === "infante" ? "infante" : a === "nino" || a === "nino2" ? "nino" : "adulto";
+    const k = a === "infante" ? "infante" : "adulto";
     t += precioComp(p, p.vuelo?.neto[k], p.vuelo?.pvp[k]);
   }
   if (p.usaServicios && a !== "infante") for (const s of p.servicios) if (!s.fichaPrecio && !s.vinculado) t += precioComp(p, s.neto, s.pvp);
@@ -157,6 +160,20 @@ export function totalPorPersona(p: PaqueteDin, a: AcomDin): number {
 }
 
 const paxDe = (c: Composicion, r: AcomRoom): number => c.paxPorHabitacion?.[r] ?? PAX_TARIFA_DEFAULT[r];
+/**
+ * Pasajeros del VUELO según la regla de reservas (lib/reservar/menoresDeDos.ts): el menor de 2 años paga solo el fee de infante y NO ocupa silla; desde los 2 años
+ * paga tarifa de adulto y ocupa silla. Sale de las EDADES declaradas, nunca de las clases del hotel. Composición anterior sin edades: los infantes declarados son
+ * los menores de 2 años (decisión del dueño) y los niños, de 2 o más.
+ */
+export function vueloPasajeros(c: Composicion): { adultos: number; menores: number; menoresDeDos: number; sillas: number } {
+  const adultos = adultosDe(c);
+  const menores = Math.max(Math.trunc(c.ninos || 0), 0) + Math.max(Math.trunc(c.ninos2 || 0), 0) + Math.max(Math.trunc(c.infantes || 0), 0);
+  const md = Math.min(c.edadesMenores ? c.edadesMenores.filter((e) => e < 2).length : Math.max(Math.trunc(c.infantes || 0), 0), menores);
+  return { adultos, menores, menoresDeDos: md, sillas: adultos + menores - md };
+}
+export const unidadVuelo = (sillas: number, menoresDeDos: number): string =>
+  `${sillas} silla${sillas === 1 ? "" : "s"}${menoresDeDos ? ` + ${menoresDeDos} infante${menoresDeDos === 1 ? "" : "s"} (menor de 2 años, sin silla)` : ""}`;
+
 export const adultosDe = (c: Composicion): number =>
   ROOMS.reduce((s, r) => s + Math.max(Math.trunc(c.habitaciones[r] ?? 0), 0) * paxDe(c, r), 0);
 
@@ -194,9 +211,12 @@ export function liquidarPaquete(p: PaqueteDin, c: Composicion, resueltos?: Recor
       }
     }
     if (p.usaVuelo) {
-      for (const [k, q] of [["adulto", adultos], ["nino", ninos], ["infante", inf]] as const) {
+      // Por EDADES declaradas (no por las clases Niño 1 / Niño 2 / infante del hotel): menor de 2 años = fee de infante sin silla; desde 2 años = adulto con silla.
+      const vp = vueloPasajeros(c);
+      const unidad = unidadVuelo(vp.sillas, vp.menoresDeDos);
+      for (const [k, q] of [["adulto", vp.sillas], ["infante", vp.menoresDeDos]] as const) {
         if (q <= 0) continue;
-        lineas.push({ componente: "vuelo", ref: "vuelo", descripcion: `Vuelo · ${k}`, cantidad: q, valor: Math.round(q * precioComp(p, p.vuelo!.neto[k], p.vuelo!.pvp[k])), costoNeto: p.esquema === "neta_markup" ? Math.round(q * num(p.vuelo!.neto[k])) : 0, exigeCosto: pendiente, proveedor: p.vuelo!.proveedor ?? "" });
+        lineas.push({ componente: "vuelo", ref: "vuelo", descripcion: `Vuelo · ${k}`, unidad, cantidad: q, valor: Math.round(q * precioComp(p, p.vuelo!.neto[k], p.vuelo!.pvp[k])), costoNeto: p.esquema === "neta_markup" ? Math.round(q * num(p.vuelo!.neto[k])) : 0, exigeCosto: pendiente, proveedor: p.vuelo!.proveedor ?? "" });
       }
     }
     if (p.usaServicios) {
@@ -216,7 +236,7 @@ export function liquidarPaquete(p: PaqueteDin, c: Composicion, resueltos?: Recor
   // En «general» los componentes no llevan PVP propio pero su costo real sí se exige al convertir.
   if (general) {
     const comps: Omit<LineaDin, "valor" | "costoNeto" | "exigeCosto">[] = [];
-    if (p.usaVuelo) comps.push({ componente: "vuelo", ref: "vuelo", descripcion: "Vuelo", cantidad: adultos + ninos + inf, proveedor: p.vuelo?.proveedor ?? "" });
+    if (p.usaVuelo) { const vp = vueloPasajeros(c); comps.push({ componente: "vuelo", ref: "vuelo", descripcion: "Vuelo", unidad: unidadVuelo(vp.sillas, vp.menoresDeDos), cantidad: vp.sillas + vp.menoresDeDos, proveedor: p.vuelo?.proveedor ?? "" }); }
     if (p.usaHotel) comps.push({ componente: "hotel", ref: "hotel", descripcion: p.hotel?.nombre ?? "Hotel", cantidad: adultos + ninos + inf, proveedor: p.hotel?.proveedor ?? "" });
     if (p.usaServicios) for (const s of (c.servicios ? p.servicios.filter((x) => c.servicios!.includes(x.id)) : p.servicios)) {
       const r = s.vinculado ? resueltos?.[s.id] : undefined;
@@ -248,7 +268,7 @@ export function agruparPorComponente(lineas: LineaDin[]): LineaDin[] {
   const m = new Map<string, LineaDin>();
   for (const l of lineas) {
     const x = m.get(l.ref);
-    if (!x) { m.set(l.ref, { ...l, descripcion: l.componente === "hotel" ? l.descripcion.split(" · ")[0] : l.componente === "vuelo" ? "Vuelo" : l.componente === "paquete" ? "Precio general del paquete" : l.descripcion }); continue; }
+    if (!x) { m.set(l.ref, { ...l, descripcion: l.componente === "hotel" ? l.descripcion.split(" · ")[0] : l.componente === "vuelo" ? (l.unidad ? `Vuelo · ${l.unidad}` : "Vuelo") : l.componente === "paquete" ? "Precio general del paquete" : l.descripcion }); continue; }
     x.valor += l.valor; x.costoNeto += l.costoNeto; x.cantidad = Math.max(x.cantidad, l.cantidad);
   }
   return [...m.values()];
