@@ -3878,6 +3878,12 @@ export type Database = {
         Update: Partial<Database["public"]["Tables"]["hotel_blackouts"]["Insert"]>;
         Relationships: [];
       };
+      hotel_reglas_descuento: {
+        Row: { id: number; hotel_id: number; tipo: "ebb" | "long_stay"; umbral: number; pct: number; activa: boolean; created_at: string };
+        Insert: { id?: number; hotel_id: number; tipo: "ebb" | "long_stay"; umbral: number; pct: number; activa?: boolean; created_at?: string };
+        Update: Partial<Database["public"]["Tables"]["hotel_reglas_descuento"]["Insert"]>;
+        Relationships: [];
+      };
       web_paquetes: {
         Row: { id: number; titulo: string; region: string | null; destino: string | null; duracion: string | null; personas: string | null; precio_desde: string | null; descripcion: string | null; descripcion_larga: string | null; incluye: string[]; no_incluye: string[]; imagen_url: string | null; galeria: string[]; destacado: boolean; cta_url: string | null; orden: number; activo: boolean; created_at: string; updated_at: string };
         Insert: { id?: number; titulo: string; region?: string | null; destino?: string | null; duracion?: string | null; personas?: string | null; precio_desde?: string | null; descripcion?: string | null; descripcion_larga?: string | null; incluye?: string[]; no_incluye?: string[]; imagen_url?: string | null; galeria?: string[]; destacado?: boolean; cta_url?: string | null; orden?: number; activo?: boolean; created_at?: string; updated_at?: string };

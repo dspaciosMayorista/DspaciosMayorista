@@ -144,7 +144,7 @@ function tablasReserva(o: Opc, r: Resultado): Tablas {
     tarifario_composicion_publicada: [{ paquete_id: PAQUETE_ID, fecha_ida: EN_30, generacion: GENERACION, regla: REGLA_COMPOSICION_PUBLICADA, servicios_incluidos: sv.map((s) => s.id).sort((a, b) => a - b) }],
     salidas_dinamicas: !o.origen || o.origen === "salida" ? [{ id: 9, paquete_id: PAQUETE_ID, activo: true, compra_inicio: null, compra_fin: null, fecha_ida: EN_30, fecha_regreso: EN_31, ruta: "BOG - CTG - BOG", valor_tiquete: o.ticket, aplica_mk: true, ta: 0, fee_infante: o.fee, empaquetado_id: null, ...(o.conv ? { moneda: "USD" } : {}) }] : [],
     armado_hoteles: [{ paquete_id: PAQUETE_ID, hotel_id: HOTEL, categorias: null, regimenes: null, hoteles: { nombre: "Hotel 273", moneda: o.conv ? "USD" : o.moneda, modelo_tarifario: "persona", adults_only: false } }],
-    armado_vuelos: [], armado_empaquetados: [],
+    armado_vuelos: [], armado_empaquetados: [], hotel_reglas_descuento: [],
     bloqueos_vuelo: o.origen === "bloqueo" ? [fuenteVuelo(o)] : [],
     empaquetados_basica: o.origen === "empaquetado" ? [{ id: ID_FUENTE, activo: true, compra_inicio: null, compra_fin: null }] : [],
     empaquetados: o.origen === "empaquetado" ? [{ ...fuenteVuelo(o), activo: true, compra_inicio: null, compra_fin: null }] : [],
@@ -270,6 +270,7 @@ describe("porción terrestre por fechas: composición del motor en vivo", () => 
     for (const o of [COP, USD]) {
       const t = tablasReserva({ ...o, origen: "salida" }, { publicadas: [], composiciones: [] });
       t.hotel_blackouts = [];
+      t.hotel_reglas_descuento = [];
       t.armado_paquetes = [{ id: PAQUETE_ID, pct_mk: 0.2, impuesto_fijo: 0, destino_id: 1, tipo: "porcion_terrestre", tarifario_generacion_publicada: GENERACION, fecha_viaje_inicio: EN_30, fecha_viaje_fin: EN_31 }];
       const c = cliente(t);
       adminActual = c.sb;

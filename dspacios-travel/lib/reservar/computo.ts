@@ -44,6 +44,9 @@ import { distribuirPorHabitaciones, type HabitacionConsultada, type AsignacionHa
 import { liquidarHotelPaquete, liquidarHotelPaqueteSolicitud, type OpcionesSolicitudLiquidacion } from "@/lib/reservar/cotizar";
 import { construirComposicion, type BaseMotor, type Composicion } from "@/lib/cotizacion/composicionPrecio";
 import { claveComposicion, leerComposicionTarifario, origenDeClave } from "@/lib/tarifario/composicionTarifario";
+import { aplicarDescuentoNeta, pvpPublicadoConDescuento, resolverDescuentoHotel, type DescuentoAplicado } from "@/lib/calc/descuentoHotel";
+import { cargarReglasDescuentoHotel } from "@/lib/reservar/reglasDescuentoHotel";
+import { fechaNegocio } from "@/lib/fechaNegocio";
 import { ajusteRedondeoReparto, DESCRIPCION_AJUSTE_REDONDEO, MENSAJE_HOTEL_SOLO_SOLICITUD, repartoDeReferencia, type NetaSolicitud } from "@/lib/reservar/solicitudHotel";
 import { errorPlazasLibres, repartirAdultosReales } from "@/lib/reservar/solicitudOcupacion";
 import { resolverVueloSolicitud } from "@/lib/reservar/solicitudHotelServidor";
@@ -481,6 +484,7 @@ export async function computarReserva(
   const monedaServicios63: Record<number, "COP" | "USD"> = {};
   const vigencias63: VigenciaCompra63[] = [];
   const nombresVigHotel63 = new Set<string>();
+  let descuentoHotel90: DescuentoAplicado | null = null; // #90: EBB/Long Stay vigente hoy para lo publicado (null = ninguno)
 
   const usarFechas = !!solicitud ||
     input.modulo !== "bloqueo" && input.modulo !== "dinamico" && !!input.fechaIda && !!input.fechaRegreso && !!process.env.SUPABASE_SERVICE_ROLE_KEY;
@@ -715,6 +719,39 @@ export async function computarReserva(
       }
     }
 
+    // #90: EBB / Long Stay sobre lo PUBLICADO. La fila publicada guarda siempre la tarifa BASE (un % que depende del día de la compra no puede quedar congelado: se vencería).
+    // Aquí, con la fecha del SERVIDOR (la misma al cotizar y al convertir), se recompone el PVP desde la composición que guardó el generador. Sin composición que lo acredite no se
+    // inventa un precio: se rechaza. (La porción «desde» no es una estadía concreta: no se compone y no recibe descuento.)
+    const f0d = filas[0] as { fecha_ida?: string | null; noches?: number | null };
+    if (f0d.fecha_ida && f0d.noches) {
+      // Sin la clave de servicio no se pueden leer las reglas (RLS las oculta a roles externos): seguir sería cotizar a precio base. Falla cerrado.
+      if (!process.env.SUPABASE_SERVICE_ROLE_KEY) return { ok: false, error: "No se pudieron validar las promociones del hotel. Intenta de nuevo." };
+      const rg = await cargarReglasDescuentoHotel(createAdminClient(), input.hotelId);
+      if (!rg.ok) {
+        console.error(`[computarReserva] etapa=hotel_reglas_descuento hotelId=${input.hotelId} detalle=${rg.detalle}`);
+        return { ok: false, error: "No se pudieron validar las promociones del hotel. Intenta de nuevo." };
+      }
+      descuentoHotel90 = resolverDescuentoHotel(rg.reglas, { fechaReserva: fechaNegocio(), fechaIda: f0d.fecha_ida, numNoches: f0d.noches });
+    }
+    if (descuentoHotel90) {
+      if (!composicionBase) return { ok: false, error: "Este hotel tiene una promoción por anticipación o estadía que no se puede aplicar al precio publicado: regenera el tarifario del paquete antes de cotizar o reservar." };
+      const netosD: Record<string, number> = { ...composicionBase.netos };
+      const pvpsD: Record<string, { pvp: number; pvpMenor2: number | null }> = { ...(composicionBase.pvps ?? {}) };
+      for (const acom of Object.keys(pvpPorAcom)) {
+        const r = pvpPublicadoConDescuento(composicionBase, { clave: acom, pvpPublicado: pvpPorAcom[acom], menorDeDos: false, descuento: descuentoHotel90, moneda: monedaReserva });
+        if (!r) return { ok: false, error: "El precio publicado no coincide con su composición, así que no se puede aplicar la promoción del hotel: regenera el tarifario del paquete antes de cotizar o reservar." };
+        pvpPorAcom[acom] = r.pvp; netosD[acom] = r.neto;
+        let menor2 = pvpsD[acom]?.pvpMenor2 ?? null;
+        if (pvpMenor2PorAcom[acom] != null) {
+          const m = pvpPublicadoConDescuento(composicionBase, { clave: acom, pvpPublicado: pvpMenor2PorAcom[acom], menorDeDos: true, descuento: descuentoHotel90, moneda: monedaReserva });
+          if (!m) return { ok: false, error: "El precio publicado no coincide con su composición, así que no se puede aplicar la promoción del hotel: regenera el tarifario del paquete antes de cotizar o reservar." };
+          pvpMenor2PorAcom[acom] = m.pvp; menor2 = m.pvp;
+        }
+        pvpsD[acom] = { pvp: r.pvp, pvpMenor2: menor2 };
+      }
+      composicionBase = { ...composicionBase, netos: netosD, pvps: pvpsD };
+    }
+
     // Umbral real de edad del hotel — consultado ANTES de decidir cuántos
     // niños/infantes se cobran, para poder reclasificar por edad si
     // `input.edadesMenores` viene presente (nunca después: la fila se
@@ -829,7 +866,7 @@ export async function computarReserva(
         const netoPorTemporada = netoPorTemporadaDe(tarRowsVig as TarRow[], l.acom);
         const r = liquidarHotelNochesConTemporadas({ fechaIda: meta.fecha_ida!, numNoches: numNochesVig, temporadas: temporadasVig, netoPorTemporada, regimen: input.regimen, precioFinalTemporadas: precioFinalTemporadasVig });
         if (r == null) return { ok: false, error: TARIFA_VENCIDA };
-        netoPorAcom[l.acom] = r.total;
+        netoPorAcom[l.acom] = aplicarDescuentoNeta(r.total, descuentoHotel90, monedaHotelOrigen63);
         for (const t of r.temporadasTarifa) { temporadasEstadia.add(t); temporadasCondiciones.add(t); }
         for (const p of r.procedencia) temporadasCondiciones.add(p.temporadaGanadora);
         if (oferta63) {
@@ -891,18 +928,18 @@ export async function computarReserva(
       if (numNinos > 0) {
         const per = liquidarHotelNoches({ fechaIda: meta.fecha_ida!, numNoches: numNochesVig, temporadas: temporadasVig, netoPorTemporada: netoPorTemporadaDe(tarRowsVig as TarRow[], "nino"), regimen: input.regimen, precioFinalTemporadas: precioFinalTemporadasMenores });
         if (per == null) return { ok: false, error: TARIFA_VENCIDA };
-        netoPorAcom["nino"] = per;
+        netoPorAcom["nino"] = aplicarDescuentoNeta(per, descuentoHotel90, monedaHotelOrigen63);
       }
       if (numNinos2 > 0) {
         const per = liquidarHotelNoches({ fechaIda: meta.fecha_ida!, numNoches: numNochesVig, temporadas: temporadasVig, netoPorTemporada: netoPorTemporadaDe(tarRowsVig as TarRow[], "nino2"), regimen: input.regimen, precioFinalTemporadas: precioFinalTemporadasMenores });
         if (per == null) return { ok: false, error: TARIFA_VENCIDA };
-        netoPorAcom["nino2"] = per;
+        netoPorAcom["nino2"] = aplicarDescuentoNeta(per, descuentoHotel90, monedaHotelOrigen63);
       }
       // Infante: a diferencia de niño, si no está configurado NO bloquea la
       // reserva (queda gratis) — evita romper reservas de hoteles que todavía
       // no han cargado su tarifa de infante en tarifa_hotel.
       if (numInfantes > 0) {
-        netoPorAcom["infante"] = liquidarHotelNoches({ fechaIda: meta.fecha_ida!, numNoches: numNochesVig, temporadas: temporadasVig, netoPorTemporada: netoPorTemporadaDe(tarRowsVig as TarRow[], "infante"), regimen: input.regimen, precioFinalTemporadas: precioFinalTemporadasMenores }) ?? 0;
+        netoPorAcom["infante"] = aplicarDescuentoNeta(liquidarHotelNoches({ fechaIda: meta.fecha_ida!, numNoches: numNochesVig, temporadas: temporadasVig, netoPorTemporada: netoPorTemporadaDe(tarRowsVig as TarRow[], "infante"), regimen: input.regimen, precioFinalTemporadas: precioFinalTemporadasMenores }) ?? 0, descuentoHotel90, monedaHotelOrigen63);
       }
     }
 

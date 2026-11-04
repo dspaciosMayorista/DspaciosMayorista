@@ -132,7 +132,7 @@ function construirTablas(): TablasFalsas {
     ],
     armado_servicios: [],
     servicios_adicionales: [],
-    hotel_blackouts: [],
+    hotel_blackouts: [], hotel_reglas_descuento: [],
     hotel_acomodaciones: [{
       hotel_id: HOTEL_ID, acomodacion: "doble", pax_tarifa: 2, pax_max: 4,
       adt_min: 1, adt_max: 2, chd_min: 0, chd_max: 2, inf_min: 0, inf_max: 2,

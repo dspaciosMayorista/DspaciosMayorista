@@ -7,6 +7,8 @@
 // ─────────────────────────────────────────────────────────────────────────
 
 import { createAdminClient } from "@/lib/supabase/admin";
+import { fechaNegocio } from "@/lib/fechaNegocio";
+import type { ReglaDescuentoHotel } from "@/lib/calc/descuentoHotel";
 import {
   noches,
   temporadaParaFecha,
@@ -119,12 +121,14 @@ async function cargarDatosHotelPaquete(
     { data: tarifas, error: tarifasErr },
     { data: servSel, error: servSelErr },
     { data: blackouts, error: blackoutsErr },
+    { data: reglasDesc, error: reglasDescErr },
   ] = await Promise.all([
     admin.from("armado_hoteles").select("categorias, regimenes, hoteles(nombre, moneda, adults_only)").eq("paquete_id", paqueteId).eq("hotel_id", hotelId).maybeSingle(),
     admin.from("hotel_temporadas").select("id, nombre, fecha_inicio, fecha_fin, prioridad, compra_inicio, compra_fin, tipo, descuento_valor, rangos, blackouts, min_noches, regimen_restringido, condicion_pago_tipo, condicion_pago_pct_inicial, condicion_pago_dias_saldo").eq("hotel_id", hotelId).order("orden").order("id"),
     admin.from("tarifa_hotel").select("*").eq("hotel_id", hotelId),
     admin.from("armado_servicios").select("incluido, servicio_id, modo, servicios_adicionales(nombre, categoria, precio_persona, precio_infante, liquidacion, proveedor_id)").eq("paquete_id", paqueteId),
     admin.from("hotel_blackouts").select("fecha_inicio, fecha_fin, total, acomodaciones, categorias").eq("hotel_id", hotelId),
+    admin.from("hotel_reglas_descuento").select("tipo, umbral, pct, activa").eq("hotel_id", hotelId).eq("activa", true),
   ]);
   if (hselErr) return { ok: false, motivo: "error_consulta", etapa: "armado_hoteles", detalleInterno: hselErr.message };
   if (!hsel) return { ok: false, motivo: "hotel_no_asociado" };
@@ -133,6 +137,8 @@ async function cargarDatosHotelPaquete(
   if (servSelErr) return { ok: false, motivo: "error_consulta", etapa: "armado_servicios", detalleInterno: servSelErr.message };
   if (blackoutsErr) return { ok: false, motivo: "error_consulta", etapa: "hotel_blackouts", detalleInterno: blackoutsErr.message };
 
+
+  if (reglasDescErr) return { ok: false, motivo: "error_consulta", etapa: "hotel_reglas_descuento", detalleInterno: reglasDescErr.message };
   const hotelMeta = hsel.hoteles as unknown as { nombre: string; moneda?: string | null; adults_only?: boolean | null } | null;
   const destinoNombre = (pq.destinos as unknown as { nombre: string } | null)?.nombre ?? null;
 
@@ -167,6 +173,8 @@ async function cargarDatosHotelPaquete(
       };
     }),
     blackouts: (blackouts ?? []) as FilaBlackoutHotelRaw[],
+    reglasDescuento: (reglasDesc ?? []) as ReglaDescuentoHotel[],
+    fechaReserva: fechaNegocio(), // fecha autoritativa del servidor (Bogotá); el cliente nunca la envía
   };
 
   // Vigencias (SIN «GENERAL») de los servicios INCLUIDOS: el precio horneado y los rangos por grupo se resuelven por la fecha de ida en
