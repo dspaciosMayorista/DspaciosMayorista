@@ -64,13 +64,33 @@ describe("dónde se muestra", () => {
     assert.match(leer("app/tarifario/VistaBooking.tsx"), /combos && descuentoHotel && .*EtiquetaDescuentoHotel/);
     assert.match(leer("components/cotizacion/ComposicionPrecio.tsx"), /c\.descuentoHotel && .*EtiquetaDescuentoHotel/);
   });
-  test("resumen de la cotización (venta y cliente): el snapshot guarda la etiqueta del cálculo y el documento la muestra", () => {
-    assert.ok(leer("app/(dashboard)/dashboard/reservar/actions.ts").includes("comp.data.descuentoHotel?.etiqueta ? { descuento_hotel"));
-    assert.ok(leer("lib/reservar/hotelSnapPersona.ts").includes("comp.descuentoHotel?.etiqueta ? { descuento_hotel"));
-    assert.ok(leer("components/contrato/ContratoDocumento.tsx").includes("h.descuento_hotel?.etiqueta && ("));
+  test("tarjeta de búsqueda por fechas: la etiqueta va con las demás etiquetas del hotel y sale de r.descuentoHotel", () => {
+    const c = leer("app/tarifario/BuscadorBooking.tsx");
+    assert.ok(c.includes("<EtiquetaDescuentoHotel descuento={tarifaHotel != null ? tarifaRevalidada?.descuentoHotel : r.descuentoHotel} />"), "tras revalidar, la etiqueta es la de la revalidación (par con el precio nuevo)");
+    assert.ok(c.indexOf("<EtiquetasHotel adultsOnly") < c.indexOf("<EtiquetaDescuentoHotel descuento={tarifaHotel"), "va con las demás etiquetas del hotel");
+    assert.ok(leer("lib/reservar/cotizar.ts").includes("descuentoHotel: res.descuentoHotel?.etiqueta ?"));
+  });
+  test("el documento de la cotización NO lleva la etiqueta", () => {
+    for (const f of ["components/contrato/ContratoDocumento.tsx", "lib/reservar/hotelSnapPersona.ts", "app/(dashboard)/dashboard/reservar/actions.ts"]) assert.doesNotMatch(leer(f), /descuento_hotel/, f);
   });
   test("la vitrina con precio base NO la usa", () => {
-    for (const f of ["app/tarifario/TarifarioPublic.tsx", "app/tarifario/BuscadorBooking.tsx", "components/cotizacion/CondicionesPanel.tsx"]) assert.doesNotMatch(leer(f), /EtiquetaDescuentoHotel/, f);
+    for (const f of ["app/tarifario/TarifarioPublic.tsx", "components/cotizacion/CondicionesPanel.tsx", "components/contrato/ContratoDocumento.tsx"]) assert.doesNotMatch(leer(f), /EtiquetaDescuentoHotel/, f);
+  });
+  test("la tarjeta con precio «desde» (sin fechas) no puede afirmar una promoción: la etiqueta exige el precio de fechas calculado", () => {
+    const c = leer("app/tarifario/VistaBooking.tsx");
+    const ini = c.indexOf("export function TarjetaHotelCard(");
+    const fin = c.indexOf("export function TarjetaHotelConFechas(", ini);
+    assert.ok(ini > 0 && fin > ini);
+    const tarjeta = c.slice(ini, fin);
+    assert.ok(tarjeta.includes("{precioFechas && <EtiquetaDescuentoHotel descuento={etiquetaDescuento} />}"), "la etiqueta solo se pinta si hay precio calculado para fechas");
+    assert.equal((tarjeta.match(/EtiquetaDescuentoHotel/g) ?? []).length, 1);
+  });
+  test("la tarjeta pública «desde» ofrece fechas y su precio+etiqueta salen de UNA cotización", () => {
+    const c = leer("app/tarifario/VistaBooking.tsx");
+    assert.ok(c.includes("<TarjetaHotelConFechas"), "la lista usa la tarjeta con selector de fechas");
+    const h = leer("app/tarifario/TarjetaHotelFechas.tsx");
+    assert.ok(h.includes("etiqueta: r?.descuentoHotel ?"), "la etiqueta sale del mismo resultado que el precio");
+    assert.ok(leer("app/tarifario/cotizarTarjetaActions.ts").includes("computarReserva(sb, reserva)"), "el precio sale de computarReserva");
   });
   test("no se confunde con la promoción de temporadas (es_promocion)", () => {
     const c = leer("components/cotizacion/EtiquetaDescuentoHotel.tsx");

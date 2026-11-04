@@ -446,6 +446,8 @@ export type BusquedaResultado = {
   // liquidacionHotel.ts) — `null`/ausente si el hotel no tiene vigencias con
   // condición configurada. Nunca afecta `total`/`combos`.
   condicion?: CondicionHotelFechas | null;
+  // #90: regla EBB / Long Stay que aplicó el cálculo de ESTE precio (mismas fechas; null = sin descuento). Solo para mostrarla junto al precio.
+  descuentoHotel?: { etiqueta: string; tipo: "ebb" | "long_stay"; umbral: number; pct: number } | null;
 };
 
 // Máximo de hoteles/paquetes cuyo `DatosHotelPaquete` (ya cargado durante la
@@ -818,6 +820,7 @@ export async function buscarHoteles(inputRaw: unknown): Promise<
         total: mejor.total, noches: numNoches, fechaIda: input.fechaIda, fechaRegreso: input.fechaRegreso, moneda: res.moneda,
         habitaciones: habitacionesOut, menores: mejor.menores, edadesMenores: edades, pax: mejor.pax,
         combos: combosValidos, condicion, incluidosDeLaSalida: incluidosDeLaSalida(res),
+        descuentoHotel: res.descuentoHotel?.etiqueta ? { etiqueta: res.descuentoHotel.etiqueta, tipo: res.descuentoHotel.tipo, umbral: res.descuentoHotel.umbral, pct: res.descuentoHotel.pct } : null,
       });
     } else if (algunCombosFalloEdad) {
       registrarRechazo("No se pudo determinar con certeza la regla de edad de niño/infante para ningún combo de este hotel (configuración ambigua o incompleta).");

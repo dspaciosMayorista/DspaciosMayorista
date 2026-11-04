@@ -1,7 +1,7 @@
 "use client";
 
 import { DateInput } from "@/components/ui/DateInput";
-import { useEffect, useId, useMemo, useRef, useState, useTransition, type ReactNode, type CSSProperties } from "react";
+import { useEffect, useId, useMemo, useRef, useState, useTransition, type ReactNode, type CSSProperties, type ComponentProps } from "react";
 import { createPortal } from "react-dom";
 import Image from "next/image";
 import { formatMoneda } from "@/lib/utils";
@@ -64,6 +64,8 @@ import {
 import { claveOrigen, etiquetaOrigen } from "@/lib/iata";
 import { RegimenInfo, type PlanesInfo } from "./RegimenInfo";
 import { BuscadorBooking, Resultado, type EstadoBusquedaPorcion } from "./BuscadorBooking";
+import { useCotizacionTarjeta, type SeleccionTarjeta } from "./TarjetaHotelFechas";
+type CotizadaTarjeta = Extract<Awaited<ReturnType<typeof import("./cotizarTarjetaActions").cotizarTarjetaHotel>>, { ok: true }>;
 import type { OpcionUnidadConfirmada } from "./busquedaUnidadActions";
 import { claveBusquedaUnidad, claveReservaUnidad, revalidarReservaUnidad } from "@/lib/tarifario/identidadReservaUnidad";
 import { BuscadorReceptivos } from "./BuscadorReceptivos";
@@ -457,7 +459,7 @@ function PanelFiltrosResto({
 export function TarjetaHotelCard({
   onClick, foto, fotos, hotelNombre, destino, estrellas = null, clasificacion = null,
   adultsOnly = false, petFriendly = false, tieneCondicion, descripcion, desde = null, moneda,
-  badgeEsquina,
+  badgeEsquina, controlesFechas = null, precioFechas = null, etiquetaDescuento = null, calculando = false,
 }: {
   onClick: () => void;
   foto: string | null;
@@ -474,6 +476,13 @@ export function TarjetaHotelCard({
   desde?: number | null;
   moneda?: string | null;
   badgeEsquina?: ReactNode;
+  /** #90: controles para elegir fechas/salida DESDE la tarjeta (ver TarjetaHotelFechas.tsx). */
+  controlesFechas?: ReactNode;
+  /** #90: precio por persona calculado para las fechas elegidas (reemplaza al «desde» solo mientras sea vigente). */
+  precioFechas?: { total: number; moneda: string; rotulo: string } | null;
+  /** #90: regla EBB / Long Stay del MISMO cálculo que `precioFechas`; nunca junto al «desde». */
+  etiquetaDescuento?: { etiqueta: string } | null;
+  calculando?: boolean;
 }) {
   return (
     // Tarjeta = contenedor + un solo botón de enlace estirado (z-10) que abre las opciones;
@@ -498,14 +507,24 @@ export function TarjetaHotelCard({
           <Categoria estrellas={estrellas} clasificacion={clasificacion} className="text-sm" />
           <EtiquetasHotel adultsOnly={adultsOnly} petFriendly={petFriendly} />
           {tieneCondicion !== undefined && <CondicionCompacta activo={tieneCondicion} />}
+          {precioFechas && <EtiquetaDescuentoHotel descuento={etiquetaDescuento} />}
         </div>
         <div className="mt-0.5 text-xs text-gray-500">{destino ?? ""}</div>
         {descripcion?.trim() && (
           <p className="mt-1 line-clamp-2 text-xs text-gray-400">{descripcion}</p>
         )}
+        {controlesFechas && <div className="relative z-20">{controlesFechas}</div>}
         <div className="mt-3 flex items-end justify-between">
-          {desde != null ? (
-            <div>
+          {calculando ? (
+            <div data-testid="precio-calculando"><div className="text-[10px] uppercase tracking-wide text-gray-400">precio para tus fechas</div><div className="text-sm text-gray-400">Calculando…</div></div>
+          ) : precioFechas ? (
+            <div data-testid="precio-fechas">
+              <div className="text-[10px] uppercase tracking-wide text-gray-400">para {precioFechas.rotulo}</div>
+              <div className="text-xl font-extrabold tracking-tight" style={{ color: "var(--brand-primary)" }}>{formatMoneda(precioFechas.total, precioFechas.moneda)}</div>
+              <div className="text-[10px] text-gray-400">por persona · hab. doble</div>
+            </div>
+          ) : desde != null ? (
+            <div data-testid="precio-desde">
               <div className="text-[10px] uppercase tracking-wide text-gray-400">desde</div>
               <div className="text-xl font-extrabold tracking-tight" style={{ color: "var(--brand-primary)" }}>{formatMoneda(desde, moneda)}</div>
               <div className="text-[10px] text-gray-400">por persona</div>
@@ -518,6 +537,19 @@ export function TarjetaHotelCard({
       </div>
     </div>
   );
+}
+
+/** #90: la tarjeta «desde» con selector de fechas/salida; precio y etiqueta salen de UNA cotización y caducan juntos (selección o día de negocio distintos). */
+export function TarjetaHotelConFechas({ card, ventana, cotizar, hoy, onClick, ...resto }: Omit<ComponentProps<typeof TarjetaHotelCard>, "controlesFechas" | "precioFechas" | "etiquetaDescuento" | "calculando" | "onClick"> & {
+  /** Recibe la selección de la tarjeta para que «Ver opciones» la conserve. */
+  onClick: (seleccion: SeleccionTarjeta | null) => void;
+  card: Pick<HotelCard, "filas" | "paqueteId" | "hotelId">;
+  ventana?: { min: string | null; max: string | null };
+  cotizar?: Parameters<typeof useCotizacionTarjeta>[0]["cotizar"];
+  hoy?: () => string;
+}) {
+  const q = useCotizacionTarjeta({ filas: card.filas, paqueteId: card.paqueteId ?? 0, hotelId: card.hotelId, ventana, cotizar, hoy });
+  return <TarjetaHotelCard {...resto} onClick={() => onClick(q.seleccion)} controlesFechas={q.controles} precioFechas={q.precio} etiquetaDescuento={q.etiqueta} calculando={q.calculando} />;
 }
 
 type Opcion = {
@@ -1593,6 +1625,8 @@ export function VistaBooking({
   // en el momento en que se llamó `abrirHotel`, no en el momento en que la
   // respuesta realmente llega.
   const claveAbiertaRef = useRef<string | null>(null);
+  // #90: fechas/salida elegidas en la tarjeta; el modal las conserva y muestra los importes calculados para ellas (null = precios publicados de referencia).
+  const [seleccionAbierta, setSeleccionAbierta] = useState<SeleccionTarjeta | null>(null);
 
   // Abrir un hotel dispara el detalle bajo demanda (Tier 2) — la tarjeta y el
   // resto de la grilla YA están pintadas (vienen del resumen); un error acá
@@ -1621,8 +1655,9 @@ export function VistaBooking({
   // CUALQUIER filtro y volver a abrir el MISMO hotel nunca reutiliza el
   // detalle cacheado de un alcance distinto, y el servidor nunca devuelve un
   // combo que el usuario ya no tiene visible.
-  function abrirHotel(h: HotelCard) {
+  function abrirHotel(h: HotelCard, seleccion: SeleccionTarjeta | null = null) {
     setAbierto(h);
+    setSeleccionAbierta(seleccion);
     setDetalleHotel({ estado: "cargando" });
     const esBloqueo = sub === "bloqueo";
     const dinamico = esOfertaDinamica(h.filas);
@@ -1647,6 +1682,7 @@ export function VistaBooking({
   function cerrarHotel() {
     claveAbiertaRef.current = null;
     setAbierto(null);
+    setSeleccionAbierta(null);
     setDetalleHotel(null);
   }
 
@@ -2017,9 +2053,11 @@ export function VistaBooking({
             />
             </IncluyeSalida>
           ) : t.tipo === "persona" ? (
-            <TarjetaHotelCard
+            <TarjetaHotelConFechas
               key={t.key}
-              onClick={() => abrirHotel(t.card)}
+              card={t.card}
+              ventana={ventanaPorPaquete[t.card.paqueteId ?? -1]}
+              onClick={(s) => abrirHotel(t.card, s)}
               foto={t.card.foto}
               fotos={galeriaPorHotel[t.card.hotelId]}
               hotelNombre={t.card.hotelNombre}
@@ -2139,9 +2177,9 @@ export function VistaBooking({
       )}
 
       {abierto && (
-        esOfertaDinamica(abierto.filas) ? <DinamicoModal hotel={abierto} detalle={detalleHotel} onReintentar={() => abrirHotel(abierto)} descripcionPorPaquete={descripcionPorPaquete} acceso={accesoCotizacionDinamica({ puedeReservar })} onClose={cerrarHotel}
-          cotizador={(salidaId, filasDetalle) => <CotizadorDinamico salidaId={salidaId} filas={filasDetalle} hotel={abierto} puedeReservar={puedeReservar} planesInfo={planesInfo} cap={capPorHotel[abierto.hotelId] ?? CAP_VACIA} onAgregado={cerrarHotel} />} /> :
-        <HotelModal hotel={abierto} detalle={detalleHotel} onReintentar={() => abrirHotel(abierto)} cuposPorBloqueo={cuposPorBloqueo} origenPorBloqueo={origenPorBloqueo} puedeReservar={puedeReservar} ventanaPorPaquete={ventanaPorPaquete} planesInfo={planesInfo} cap={capPorHotel[abierto.hotelId] ?? CAP_VACIA} descripcionPorPaquete={descripcionPorPaquete} addonsPorPaquete={addonsPorPaquete} onClose={cerrarHotel} />
+        esOfertaDinamica(abierto.filas) ? <DinamicoModal hotel={abierto} detalle={detalleHotel} onReintentar={() => abrirHotel(abierto, seleccionAbierta)} salidaInicial={seleccionAbierta?.tipo === "salida" ? seleccionAbierta.salida.salidaId : null} precioSeleccion={seleccionAbierta?.tipo === "salida" && seleccionAbierta.salida.salidaId != null ? { salidaId: seleccionAbierta.salida.salidaId, doble: seleccionAbierta.cot?.precio ?? null, moneda: seleccionAbierta.cot?.moneda ?? null } : null} descripcionPorPaquete={descripcionPorPaquete} acceso={accesoCotizacionDinamica({ puedeReservar })} onClose={cerrarHotel}
+          cotizador={(salidaId, filasDetalle) => <CotizadorDinamico salidaId={salidaId} cotizada={seleccionAbierta?.tipo === "salida" && seleccionAbierta.salida.salidaId === salidaId ? seleccionAbierta.cot : null} filas={filasDetalle} hotel={abierto} puedeReservar={puedeReservar} planesInfo={planesInfo} cap={capPorHotel[abierto.hotelId] ?? CAP_VACIA} onAgregado={cerrarHotel} />} /> :
+        <HotelModal hotel={abierto} seleccion={seleccionAbierta} detalle={detalleHotel} onReintentar={() => abrirHotel(abierto, seleccionAbierta)} cuposPorBloqueo={cuposPorBloqueo} origenPorBloqueo={origenPorBloqueo} puedeReservar={puedeReservar} ventanaPorPaquete={ventanaPorPaquete} planesInfo={planesInfo} cap={capPorHotel[abierto.hotelId] ?? CAP_VACIA} descripcionPorPaquete={descripcionPorPaquete} addonsPorPaquete={addonsPorPaquete} onClose={cerrarHotel} />
       )}
 
       {modalBernalo && (
@@ -2185,10 +2223,11 @@ type ServiciosEditor = ServiciosTarjeta & {
 const SIN_SELECCION: readonly number[] = [];
 const SIN_ADDONS: Receptivo[] = [];
 
-function HotelModal({
-  hotel, detalle, onReintentar, cuposPorBloqueo, origenPorBloqueo, puedeReservar, ventanaPorPaquete, planesInfo, cap, descripcionPorPaquete, addonsPorPaquete, onClose,
+export function HotelModal({
+  hotel, seleccion = null, detalle, onReintentar, cuposPorBloqueo, origenPorBloqueo, puedeReservar, ventanaPorPaquete, planesInfo, cap, descripcionPorPaquete, addonsPorPaquete, onClose,
 }: {
   hotel: HotelCard;
+  seleccion?: SeleccionTarjeta | null;
   // Detalle bajo demanda (Tier 2) — mientras no llegue en "ok", el modal ya
   // está ABIERTO (mismo diseño de siempre) pero sin opciones para elegir
   // todavía. Un error acá nunca toca la tarjeta/grilla de fuera.
@@ -2249,7 +2288,9 @@ function HotelModal({
   // actuales (llegaron opciones nuevas, o todavía no hay ninguna), cae a la
   // primera — sin depender de un efecto ni de cuándo se montó el componente.
   const [opKey, setOpKey] = useState("");
-  const opKeyEfectivo = opciones.some((o) => o.key === opKey) ? opKey : (opciones[0]?.key ?? "");
+  // #90: sin elección manual, arranca en la salida que se eligió en la tarjeta.
+  const opDeTarjeta = seleccion?.tipo === "salida" ? opciones.find((o) => o.paqueteId === seleccion.paqueteId && o.fechaIda === seleccion.salida.fechaIda && o.fechaRegreso === seleccion.salida.fechaRegreso && (seleccion.salida.bloqueoId == null || o.bloqueoId === seleccion.salida.bloqueoId)) : undefined;
+  const opKeyEfectivo = opciones.some((o) => o.key === opKey) ? opKey : (opDeTarjeta?.key ?? opciones[0]?.key ?? "");
   const opcion = opciones.find((o) => o.key === opKeyEfectivo);
 
   // Descripción manual del paquete (migración 169): incluye/no incluye/
@@ -2358,6 +2399,7 @@ function HotelModal({
                   opcion={opcion}
                   hotel={hotel}
                   ventana={ventanaPorPaquete[opcion.paqueteId] ?? { min: null, max: null }}
+                  fechasIniciales={seleccion?.tipo === "porcion" && seleccion.paqueteId === opcion.paqueteId ? { ida: seleccion.fechaIda, regreso: seleccion.fechaRegreso } : undefined}
                   planesInfo={planesInfo}
                   cap={cap}
                   servicios={serviciosTarjeta}
@@ -2372,6 +2414,7 @@ function HotelModal({
                 <Selector
                   key={opcion.key}
                   opcion={opcion}
+                  cotizada={seleccion?.tipo === "salida" && opDeTarjeta?.key === opcion.key ? seleccion.cot : null}
                   hotel={hotel}
                   puedeReservar={puedeReservar}
                   planesInfo={planesInfo}
@@ -3060,48 +3103,55 @@ function HotelBernaloCotizarModal({
 }
 
 function Selector({
-  opcion, hotel, puedeReservar, planesInfo, cap, onAgregar, servicios,
+  opcion, cotizada = null, hotel, puedeReservar, planesInfo, cap, onAgregar, servicios,
 }: {
   opcion: Opcion; hotel: HotelCard; puedeReservar: boolean; planesInfo: PlanesInfo;
+  /** #90: cotización de la tarjeta para ESTA salida (importes con la regla de hoy). null = precios publicados de referencia, sin afirmar descuento. */
+  cotizada?: CotizadaTarjeta | null;
   cap: { paxMin: number | null; paxMax: number | null; acom: AcomConfig[] };
   onAgregar: (item: Omit<HotelCartItemPersona, "id">, servicios: TourSinVinculo[]) => void;
   servicios?: ServiciosTarjeta;
 }) {
-  const cats = useMemo(() => [...new Set(opcion.filas.map((f) => f.categoria).filter((x): x is string => !!x))], [opcion]);
-  const [cat, setCat] = useState(cats[0] ?? "");
+  const cc = cotizada?.combos.length ? cotizada.combos : null;
+  const cats = useMemo(() => cc ? [...new Set(cc.map((c) => c.categoria))] : [...new Set(opcion.filas.map((f) => f.categoria).filter((x): x is string => !!x))], [opcion, cc]);
+  const [cat, setCat] = useState(cc ? cotizada!.categoria : (cats[0] ?? ""));
   // catEff/regEff: valor efectivo válido aunque el seleccionado quede obsoleto.
   const catEff = cats.includes(cat) ? cat : (cats[0] ?? "");
   const regs = useMemo(
-    () => [...new Set(opcion.filas.filter((f) => f.categoria === catEff).map((f) => f.regimen).filter((x): x is string => !!x))],
-    [opcion, catEff]
+    () => cc ? [...new Set(cc.filter((c) => c.categoria === catEff).map((c) => c.regimen))] : [...new Set(opcion.filas.filter((f) => f.categoria === catEff).map((f) => f.regimen).filter((x): x is string => !!x))],
+    [opcion, catEff, cc]
   );
-  const [reg, setReg] = useState(regs[0] ?? "");
+  const [reg, setReg] = useState(cc && cat === cotizada!.categoria ? cotizada!.regimen : (regs[0] ?? ""));
   const regEff = regs.includes(reg) ? reg : (regs[0] ?? "");
+  const comboCot = cc?.find((c) => c.categoria === catEff && c.regimen === regEff) ?? null;
 
   // Mapa de PVP por acomodación para la (categoría, régimen) elegidas.
   const pvp = useMemo(() => {
+    if (cc) return comboCot?.precios ?? {}; // #90: importes calculados para la selección de la tarjeta; nunca mezclados con los publicados
     const m: Record<string, number> = {};
     for (const f of opcion.filas) {
       if (f.categoria === catEff && f.regimen === regEff && f.acomodacion) m[f.acomodacion] = f.precio_pvp;
     }
     return m;
-  }, [opcion, catEff, regEff]);
+  }, [opcion, catEff, regEff, cc, comboCot]);
 
   // Precio de un MENOR DE 2 AÑOS por clase de hotel (migración 226): fee de infante del vuelo + servicios con su
   // precio de infante + hotel de su clase. Vacío en un tarifario anterior a la 226.
   const pvpMenor2 = useMemo(() => {
+    if (cc) return comboCot?.preciosMenor2 ?? {};
     const m: Record<string, number> = {};
     for (const f of opcion.filas) {
       if (f.categoria === catEff && f.regimen === regEff && f.acomodacion && f.precio_pvp_menor2 != null) m[f.acomodacion] = f.precio_pvp_menor2;
     }
     return m;
-  }, [opcion, catEff, regEff]);
+  }, [opcion, catEff, regEff, cc, comboCot]);
 
   // PVP fijo del infante (254): precio normal de la clase infante por ruta cuando el fijo la reemplazó; null = el fijo no se aplicó.
   const pvpInfanteSinFijo = useMemo(() => {
+    if (cc) return comboCot?.infanteSinFijo ?? { mayor2: null, menor2: null }; // el mismo que usará el cómputo del servidor
     const f = opcion.filas.find((x) => x.categoria === catEff && x.regimen === regEff && x.acomodacion === "infante");
     return { mayor2: f?.precio_pvp_sin_fijo ?? null, menor2: f?.precio_pvp_menor2_sin_fijo ?? null };
-  }, [opcion, catEff, regEff]);
+  }, [opcion, catEff, regEff, cc, comboCot]);
 
   const selCls = "rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm";
 
@@ -3140,6 +3190,7 @@ function Selector({
         </div>
       </div>
 
+      {cc && <div data-testid="modal-precio-fechas" className="text-xs text-gray-500">Importes calculados para la salida que elegiste{comboCot?.descuento && <span className="ml-2"><EtiquetaDescuentoHotel descuento={comboCot.descuento} /></span>}</div>}
       <EditorPax pvp={pvp} pvpMenor2={pvpMenor2} pvpInfanteSinFijo={pvpInfanteSinFijo} acomConfig={cap.acom} paxMin={cap.paxMin} paxMax={cap.paxMax} moneda={hotel.moneda} edadesNota={textoEdadesHotel(hotel)} edadInfanteMax={hotel.infMax} edadNinoMax={hotel.ninoMax} nota={!puedeReservar ? "El valor es una estimación con tarifas publicadas; el precio final se confirma al generar la cotización." : undefined} onAgregar={agregarItem}
         servicios={servicios ? {
           ...servicios, paqueteId: opcion.paqueteId, hotelNombre: hotel.hotelNombre,
@@ -3155,8 +3206,8 @@ function Selector({
 // Cotizador de UNA salida dinámica dentro de `DinamicoModal`: el mismo `Selector` (categoría/alimentación, habitaciones,
 // edades) y el mismo carrito público que Bloqueo — de ahí a /tarifario/checkout, que no exige sesión y re-liquida en el
 // servidor con `computarReserva` sobre esta salida. Fechas = las de la salida (fijas, como las del record de un Bloqueo).
-function CotizadorDinamico({ salidaId, filas, hotel, puedeReservar, planesInfo, cap, onAgregado }: {
-  salidaId: number; filas: FilaTarifario[]; hotel: HotelCard; puedeReservar: boolean; planesInfo: PlanesInfo;
+function CotizadorDinamico({ salidaId, cotizada = null, filas, hotel, puedeReservar, planesInfo, cap, onAgregado }: {
+  salidaId: number; cotizada?: CotizadaTarjeta | null; filas: FilaTarifario[]; hotel: HotelCard; puedeReservar: boolean; planesInfo: PlanesInfo;
   cap: { paxMin: number | null; paxMax: number | null; acom: AcomConfig[] };
   onAgregado: () => void;
 }) {
@@ -3170,7 +3221,7 @@ function CotizadorDinamico({ salidaId, filas, hotel, puedeReservar, planesInfo, 
     fechaIda: f0.fecha_ida, fechaRegreso: f0.fecha_regreso, noches: f0.noches, filas: deSalida,
   };
   return (
-    <Selector key={opcion.key} opcion={opcion} hotel={hotel} puedeReservar={puedeReservar} planesInfo={planesInfo} cap={cap}
+    <Selector key={opcion.key} opcion={opcion} cotizada={cotizada} hotel={hotel} puedeReservar={puedeReservar} planesInfo={planesInfo} cap={cap}
       onAgregar={(item, servicios) => { addConjunto(item, servicios); openDrawer(); onAgregado(); }} />
   );
 }
@@ -3846,9 +3897,11 @@ function EditorPax({
 // Motor por fechas (porción/dinámico): el usuario elige las fechas reales y se
 // liquida la tarifa noche por noche (cotizarPorFechas, service-role, solo PVP).
 function SelectorPorFechas({
-  opcion, hotel, ventana, planesInfo, cap, onAgregar, servicios,
+  opcion, hotel, ventana, fechasIniciales, planesInfo, cap, onAgregar, servicios,
 }: {
   opcion: Opcion; hotel: HotelCard; ventana: { min: string | null; max: string | null }; planesInfo: PlanesInfo;
+  /** #90: fechas elegidas en la tarjeta; se conservan y se cotizan solas con la regla vigente. */
+  fechasIniciales?: { ida: string; regreso: string };
   cap: { paxMin: number | null; paxMax: number | null; acom: AcomConfig[] };
   onAgregar: (item: Omit<HotelCartItemPersona, "id">, servicios: TourSinVinculo[]) => void;
   servicios?: ServiciosTarjeta;
@@ -3858,9 +3911,9 @@ function SelectorPorFechas({
   const hoy = new Date().toISOString().slice(0, 10);
   const minIda = ventana.min && ventana.min > hoy ? ventana.min : hoy;
   const base = opcion.fechaIda ?? ventana.min ?? hoy;
-  const idaInicial = base < minIda ? minIda : base;
+  const idaInicial = fechasIniciales?.ida ?? (base < minIda ? minIda : base);
   const [fIda, setFIda] = useState(idaInicial);
-  const [fReg, setFReg] = useState("");
+  const [fReg, setFReg] = useState(fechasIniciales?.regreso ?? "");
   const [combos, setCombos] = useState<ComboCotizado[] | null>(null);
   const [nochesCot, setNochesCot] = useState<number | null>(null);
   // Badge de condición de pago/restricción (migración 164/165) — resuelto por
@@ -3911,6 +3964,12 @@ function SelectorPorFechas({
       setSugerenciaAplicando(null);
     });
   }
+
+  // #90: con fechas traídas de la tarjeta, cotiza al abrir (mismo cálculo que el botón Cotizar).
+  useEffect(() => {
+    if (fechasIniciales) queueMicrotask(() => cotizar(fechasIniciales.ida, fechasIniciales.regreso));
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- solo al montar
+  }, []);
 
   // Pulsar una sugerencia: completa ida/regreso, conserva hotel (nada más
   // cambia de contexto — habitaciones/edades todavía no se han elegido en

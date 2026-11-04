@@ -1398,8 +1398,6 @@ async function crearCotizacionInterna(input: ReservaInput, opts?: { vigenciaHast
       fecha_salida: meta.fecha_regreso,
       nota_regimen: null,
       foto_url: fotoUrl,
-      // #90: regla EBB / Long Stay que usó el cálculo (solo si hubo descuento); solo se muestra, el total ya la incluye.
-      ...(comp.data.descuentoHotel?.etiqueta ? { descuento_hotel: { etiqueta: comp.data.descuentoHotel.etiqueta } } : {}),
     });
   }
 

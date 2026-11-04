@@ -91,6 +91,43 @@ export function aplicarDescuentoNeta(neta: number, d: DescuentoAplicado | null, 
   return moneda === "USD" ? Math.round(v * 100) / 100 : Math.round(v);
 }
 
+type BaseDescuento = Pick<BaseMotor, "pctMk" | "vuelo" | "feeInfante" | "fijo" | "pvps" | "servicios" | "netos" | "netosOrigen" | "trm">;
+
+/**
+ * Neta hotelera de UNA clave con el descuento aplicado. Hotel y paquete en monedas distintas (TRM): la neta se descuenta en la moneda del HOTEL (centavos USD / peso COP,
+ * igual que el costo y la CxP) y luego se convierte, así PVP, costo del contrato y CxP parten del mismo importe. Descontar la neta ya convertida desfasaría hasta
+ * (centavos × TRM) entre precio y costo.
+ */
+function netoDescontada(base: BaseDescuento, clave: string, neto: number, d: DescuentoAplicado, moneda: string): number {
+  const org = base.netosOrigen?.[clave];
+  return org && base.trm != null && base.trm > 0 && org.monto > 0
+    ? aMoneda63(aplicarDescuentoNeta(org.monto, d, org.moneda), org.moneda, moneda, base.trm)
+    : aplicarDescuentoNeta(neto, d, moneda);
+}
+
+/**
+ * Precio NORMAL del infante (migración 254, `precio_pvp[_menor2]_sin_fijo`) CON el descuento de hoy: el que se cobra cuando un servicio opcional le cobra al infante y el PVP fijo
+ * deja de aplicar. Misma composición y misma regla ganadora que `pvpPublicadoConDescuento`: el % recae SOLO sobre la neta del hotel del infante; vuelo, fee y servicios no se descuentan.
+ * La composición guarda el fijo (no el normal) en `pvps.infante`, así que se verifica de otra forma: recomponer SIN descuento debe reproducir exactamente el normal publicado.
+ * null si no lo reproduce (no se inventa un precio): quien llama debe fallar cerrado.
+ */
+export function pvpInfanteNormalConDescuento(
+  base: BaseDescuento,
+  a: { pvpNormalPublicado: number; menorDeDos: boolean; descuento: DescuentoAplicado | null; moneda: string },
+): number | null {
+  const neto = base.netos["infante"];
+  if (neto == null || !Number.isFinite(neto)) return null;
+  const componer = (netoHotel: number) => {
+    const hotel = marcar(netoHotel, base.pctMk);
+    const servicios = base.servicios.reduce((t, s) => t + marcar(a.menorDeDos ? s.netoMenor : s.neto, base.pctMk), 0);
+    return a.menorDeDos
+      ? redondearVenta(hotel + servicios, a.moneda) + (base.feeInfante > 0 ? base.feeInfante : 0)
+      : redondearVenta(hotel + servicios + base.vuelo, a.moneda);
+  };
+  if (componer(neto) !== a.pvpNormalPublicado) return null;
+  return a.descuento ? componer(netoDescontada(base, "infante", neto, a.descuento, a.moneda)) : a.pvpNormalPublicado;
+}
+
 /**
  * Precio publicado (bloqueo / empaquetado / salida) CON el descuento de hoy.
  *
@@ -101,7 +138,7 @@ export function aplicarDescuentoNeta(neta: number, d: DescuentoAplicado | null, 
  * Un PVP fijo de infante no se compone: queda como está (el descuento recae sobre la neta del hotel y ese precio no la usa).
  */
 export function pvpPublicadoConDescuento(
-  base: Pick<BaseMotor, "pctMk" | "vuelo" | "feeInfante" | "fijo" | "pvps" | "servicios" | "netos" | "netosOrigen" | "trm">,
+  base: BaseDescuento,
   a: { clave: string; pvpPublicado: number; menorDeDos: boolean; descuento: DescuentoAplicado | null; moneda: string },
 ): { pvp: number; neto: number } | null {
   const neto = base.netos[a.clave];
@@ -110,12 +147,7 @@ export function pvpPublicadoConDescuento(
   if (a.clave === "infante" && (a.menorDeDos ? base.fijo?.menor2 : base.fijo?.mayor2)) return { pvp: a.pvpPublicado, neto };
   const esperado = base.pvps?.[a.clave];
   if (!esperado || (a.menorDeDos ? esperado.pvpMenor2 : esperado.pvp) !== a.pvpPublicado) return null;
-  // Hotel y paquete en monedas distintas (TRM): la neta se descuenta en la moneda del HOTEL (centavos USD / peso COP, igual que el costo y la CxP) y luego se convierte,
-  // así PVP, costo del contrato y CxP parten del mismo importe. Descontar la neta ya convertida desfasaría hasta (centavos × TRM) entre precio y costo.
-  const org = base.netosOrigen?.[a.clave];
-  const netoD = org && base.trm != null && base.trm > 0 && org.monto > 0
-    ? aMoneda63(aplicarDescuentoNeta(org.monto, a.descuento, org.moneda), org.moneda, a.moneda, base.trm)
-    : aplicarDescuentoNeta(neto, a.descuento, a.moneda);
+  const netoD = netoDescontada(base, a.clave, neto, a.descuento, a.moneda);
   const hotel = marcar(netoD, base.pctMk);
   const servicios = base.servicios.reduce((t, s) => t + marcar(a.menorDeDos ? s.netoMenor : s.neto, base.pctMk), 0);
   const pvp = a.menorDeDos

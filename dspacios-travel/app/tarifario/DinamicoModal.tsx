@@ -55,8 +55,12 @@ export function InsigniaFechasSalida({ filas }: { filas: readonly { modulo?: str
 }
 
 export function DinamicoModal({
-  hotel, detalle, onReintentar, descripcionPorPaquete, acceso, onClose, cotizador,
+  hotel, detalle, onReintentar, descripcionPorPaquete, acceso, onClose, cotizador, salidaInicial = null, precioSeleccion = null,
 }: {
+  /** #90: salida elegida en la tarjeta y su precio en doble YA calculado (null = aún sin calcular). Con selección, los demás «desde» son referencias publicadas y se rotulan así. */
+  precioSeleccion?: { salidaId: number; doble: number | null; moneda: string | null } | null;
+  /** #90: salida elegida en la tarjeta; el modal abre en ella. */
+  salidaInicial?: number | null;
   hotel: HotelDinamicoModal;
   /** Qué ofrece el modal: "cotizar" (ruta interna de reserva + carrito) o "carrito" (solo el carrito público). Ver `accesoCotizacionDinamica`. */
   acceso: AccesoCotizacionDinamica;
@@ -68,7 +72,7 @@ export function DinamicoModal({
   onClose: () => void;
 }) {
   const salidas = useMemo(() => agruparSalidasDinamicas(detalle?.estado === "ok" ? detalle.filas : []), [detalle]);
-  const [elegida, setElegida] = useState<number | null>(null);
+  const [elegida, setElegida] = useState<number | null>(salidaInicial);
   // Derivado en cada render (no un efecto): si la elegida ya no existe, cae a la primera.
   const salida = salidas.find((s) => s.salidaId === elegida) ?? salidas[0];
   const descripcion = hotel.paqueteId != null ? descripcionPorPaquete[hotel.paqueteId] : undefined;
@@ -134,7 +138,9 @@ export function DinamicoModal({
                         </span>
                         <span className="block text-xs text-gray-500">
                           {s.noches ? `${s.noches} noche${s.noches === 1 ? "" : "s"}` : ""}
-                          {desde != null ? `${s.noches ? " · " : ""}desde ${formatMoneda(desde, s.moneda)} en doble` : ""}
+                          {precioSeleccion && s.salidaId === precioSeleccion.salidaId && precioSeleccion.doble != null
+                            ? `${s.noches ? " · " : ""}tu precio desde ${formatMoneda(precioSeleccion.doble, precioSeleccion.moneda)} en doble`
+                            : desde != null ? `${s.noches ? " · " : ""}${precioSeleccion ? "referencia publicada (sin cotizar): " : ""}desde ${formatMoneda(desde, s.moneda)} en doble` : ""}
                         </span>
                       </button>
                     );

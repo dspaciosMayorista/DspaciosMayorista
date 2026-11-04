@@ -44,7 +44,7 @@ import { distribuirPorHabitaciones, type HabitacionConsultada, type AsignacionHa
 import { liquidarHotelPaquete, liquidarHotelPaqueteSolicitud, type OpcionesSolicitudLiquidacion } from "@/lib/reservar/cotizar";
 import { construirComposicion, type BaseMotor, type Composicion } from "@/lib/cotizacion/composicionPrecio";
 import { claveComposicion, leerComposicionTarifario, origenDeClave } from "@/lib/tarifario/composicionTarifario";
-import { aplicarDescuentoNeta, pvpPublicadoConDescuento, resolverDescuentoHotel, type DescuentoAplicado } from "@/lib/calc/descuentoHotel";
+import { aplicarDescuentoNeta, pvpInfanteNormalConDescuento, pvpPublicadoConDescuento, resolverDescuentoHotel, type DescuentoAplicado } from "@/lib/calc/descuentoHotel";
 import { cargarReglasDescuentoHotel } from "@/lib/reservar/reglasDescuentoHotel";
 import { fechaNegocio } from "@/lib/fechaNegocio";
 import { ajusteRedondeoReparto, DESCRIPCION_AJUSTE_REDONDEO, MENSAJE_HOTEL_SOLO_SOLICITUD, repartoDeReferencia, type NetaSolicitud } from "@/lib/reservar/solicitudHotel";
@@ -151,6 +151,8 @@ export type ComputoReserva = {
   // de hotel (infante / nino / nino2). `pvpPorAcom` conserva su significado:
   // adulto en vuelo y servicios.
   pvpMenor2PorAcom: Record<string, number>;
+  // PVP normal del infante cuando el fijo (254) la reemplazó; es el que usa el cómputo si un servicio opcional le cobra al infante. null = el fijo no se aplicó.
+  pvpInfanteSinFijo: { mayor2: number | null; menor2: number | null };
   netoPorAcom: Record<string, number>; // costo neto/persona por acomodación (autoritativo)
   precioVenta: number;
   // Pasajeros de 2 años o más (ocupan silla, cuentan para el rango de un
@@ -739,6 +741,7 @@ export async function computarReserva(
     }
     if (descuentoHotel90) {
       if (!composicionBase) return { ok: false, error: "Este hotel tiene una promoción por anticipación o estadía que no se puede aplicar al precio publicado: regenera el tarifario del paquete antes de cotizar o reservar." };
+      const compPublicada = composicionBase; // netas SIN descuento: base para recomponer el precio normal del infante
       const netosD: Record<string, number> = { ...composicionBase.netos };
       const pvpsD: Record<string, { pvp: number; pvpMenor2: number | null }> = { ...(composicionBase.pvps ?? {}) };
       for (const acom of Object.keys(pvpPorAcom)) {
@@ -754,6 +757,14 @@ export async function computarReserva(
         pvpsD[acom] = { pvp: r.pvp, pvpMenor2: menor2 };
       }
       composicionBase = { ...composicionBase, netos: netosD, pvps: pvpsD };
+      // El precio NORMAL del infante (el que rige si un servicio opcional le cobra) también lleva el descuento: el PVP fijo, cuando no se activa la fórmula normal, queda intacto.
+      for (const ruta of ["mayor2", "menor2"] as const) {
+        const normal = pvpInfanteSinFijo[ruta];
+        if (normal == null) continue;
+        const d = pvpInfanteNormalConDescuento(compPublicada, { pvpNormalPublicado: normal, menorDeDos: ruta === "menor2", descuento: descuentoHotel90, moneda: monedaReserva });
+        if (d == null) return { ok: false, error: "El precio publicado no coincide con su composición, así que no se puede aplicar la promoción del hotel: regenera el tarifario del paquete antes de cotizar o reservar." };
+        pvpInfanteSinFijo[ruta] = d;
+      }
     }
 
     // Umbral real de edad del hotel — consultado ANTES de decidir cuántos
@@ -1347,6 +1358,6 @@ export async function computarReserva(
 
   return {
     ok: true,
-    data: { origen, meta, pvpPorAcom, pvpMenor2PorAcom, netoPorAcom, precioVenta, paxConSilla, totalPax, numNinos, numNinos2, numInfantes, menoresDeDos, numMenoresDeDos, lineasMenores, distribucionMenores, edadesMenoresUsadas, lineasHab, serviciosItems, serviciosIncluidos, impuestoTotal, monedaReserva, notaNino: ninoNotaTxt, cargoMascota, ajusteRedondeo, notaMascota: petNotaTxt, condicionesTarifa, composicion, descuentoHotel, oferta63: oferta63 ? { ...oferta63, monedaHotel: monedaHotelOrigen63, monedaServicios: monedaServicios63 } : null, vigencias63 },
+    data: { origen, meta, pvpPorAcom, pvpMenor2PorAcom, pvpInfanteSinFijo: { ...pvpInfanteSinFijo }, netoPorAcom, precioVenta, paxConSilla, totalPax, numNinos, numNinos2, numInfantes, menoresDeDos, numMenoresDeDos, lineasMenores, distribucionMenores, edadesMenoresUsadas, lineasHab, serviciosItems, serviciosIncluidos, impuestoTotal, monedaReserva, notaNino: ninoNotaTxt, cargoMascota, ajusteRedondeo, notaMascota: petNotaTxt, condicionesTarifa, composicion, descuentoHotel, oferta63: oferta63 ? { ...oferta63, monedaHotel: monedaHotelOrigen63, monedaServicios: monedaServicios63 } : null, vigencias63 },
   };
 }

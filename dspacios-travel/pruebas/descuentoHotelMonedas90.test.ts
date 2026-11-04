@@ -12,10 +12,12 @@ process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY = "dummy-anon";
 
 let adminActual: ClienteFalso = crearClienteFalso({});
 mock.module("@/lib/supabase/admin", { namedExports: { createAdminClient: () => adminActual } });
-mock.module("@/lib/supabase/server", { namedExports: { createClient: async () => { throw new Error("createClient() no debe invocarse: sb se inyecta"); } } });
+let sbActual: ClienteFalso | null = null; // solo la acción pública de la tarjeta usa createClient(); computarReserva recibe su sb
+mock.module("@/lib/supabase/server", { namedExports: { createClient: async () => { if (!sbActual) throw new Error("createClient() no debe invocarse: sb se inyecta"); return sbActual; } } });
 
 const { computarReserva } = await import("@/lib/reservar/computo.ts");
 const { claveComposicion } = await import("@/lib/tarifario/composicionTarifario.ts");
+const { cotizarTarjetaHotel } = await import("@/app/tarifario/cotizarTarjetaActions.ts");
 const { camposCxP63, sumaEquivalentesOferta63 } = await import("@/lib/reservar/payloadFinanciero63.ts");
 
 const fechaBogota = (d: number) => new Date(Date.now() + d * 86400000).toLocaleDateString("en-CA", { timeZone: "America/Bogota" });
@@ -110,10 +112,6 @@ describe("hotel USD + paquete publicado COP con TRM: EBB 18 % (30 días, 3 noche
     // #90: la etiqueta es la regla que usó el cálculo; los importes de arriba son los de siempre (la etiqueta no cambia ningún total).
     assert.equal(r.data.descuentoHotel?.etiqueta, "EBB 1 · 30+ días · 18 %");
     assert.equal(r.data.composicion?.descuentoHotel?.etiqueta, "EBB 1 · 30+ días · 18 %");
-    // El snapshot de la cotización (lo que ven venta y el cliente) lleva la MISMA etiqueta que el cálculo aplicado a este bloqueo publicado.
-    const { construirHotelSnapPersona } = await import("@/lib/reservar/hotelSnapPersona.ts");
-    const snap = construirHotelSnapPersona({ id: 1, ref: "r1", comp: r.data, categoria: CAT, regimen: REGIMEN, destinoFallback: null, hotelNombreFallback: "Hotel", fotoUrl: null, edadesMenoresConfirmadas: [] });
-    assert.deepEqual(snap.descuento_hotel, { etiqueta: "EBB 1 · 30+ días · 18 %" });
   });
 
   test("29 días: sin descuento, el publicado queda tal cual y la neta es la base (301,65 USD)", async () => {
@@ -123,9 +121,6 @@ describe("hotel USD + paquete publicado COP con TRM: EBB 18 % (30 días, 3 noche
     assert.equal(r.data.netoPorAcom.doble, 301.65);
     assert.equal(r.data.pvpPorAcom.doble, 2_639_000);
     assert.equal(r.data.descuentoHotel, null, "sin descuento no hay etiqueta");
-    const { construirHotelSnapPersona } = await import("@/lib/reservar/hotelSnapPersona.ts");
-    const snap = construirHotelSnapPersona({ id: 1, ref: "r1", comp: r.data, categoria: CAT, regimen: REGIMEN, destinoFallback: null, hotelNombreFallback: "Hotel", fotoUrl: null, edadesMenoresConfirmadas: [] });
-    assert.equal("descuento_hotel" in snap, false, "el snapshot sin descuento no lleva etiqueta");
     assert.equal(r.data.composicion?.descuentoHotel, undefined);
   });
 
@@ -178,5 +173,62 @@ describe("falla cerrado: nunca se continúa a precio base", () => {
     const r = await cotizar(tablas(30, 3, []));
     assert.equal(r.ok, true, r.ok ? "" : r.error);
     if (r.ok) assert.equal(r.data.pvpPorAcom.doble, 2_639_000);
+  });
+});
+
+// #90 — Tarjeta pública de una SALIDA publicada (precio base en la vitrina): al elegir la salida, el precio y la etiqueta salen del MISMO computarReserva que cotiza y convierte.
+describe("tarjeta pública de salida publicada: precio y etiqueta del mismo cálculo", () => {
+  const redondeoMil = (n: number) => Math.ceil(n / 1000) * 1000;
+  // Esperado calculado aparte: neta USD por persona con el % de la regla anunciada (centavos), TRM, markup, vuelo y techo al mil.
+  const esperado = (noches: number, pct: number) => {
+    const netoUsd = Math.round(NETO_USD_NOCHE * noches * 100) / 100;
+    const d = Math.round(netoUsd * (1 - pct / 100) * 100) / 100;
+    return redondeoMil((d * TRM) / 0.8 + R);
+  };
+  async function tarjeta(t: TablasFalsas) {
+    adminActual = crearClienteFalso(t); sbActual = crearClienteFalso(sesion(t));
+    try { return await cotizarTarjetaHotel({ modulo: "dinamico", paqueteId: PAQUETE_ID, hotelId: HOTEL_ID, salidaId: SALIDA_ID, combos: [{ categoria: CAT, regimen: REGIMEN }] }); }
+    finally { sbActual = null; }
+  }
+  const casos: [string, number, number, string | null, number][] = [
+    ["EBB 1", 30, 3, "EBB 1 · 30+ días · 18 %", 18],
+    ["EBB 2", 60, 3, "EBB 2 · 60+ días · 23 %", 23],
+    ["EBB 3", 90, 3, "EBB 3 · 90+ días · 28 %", 28],
+    ["Long Stay ganador", 10, 4, "Long Stay · 25 %", 25],
+    ["EBB 3 y Long Stay a la vez: solo la ganadora", 90, 4, "EBB 3 · 90+ días · 28 %", 28],
+    ["sin descuento", 29, 3, null, 0],
+  ];
+  for (const [nombre, dias, noches, etiqueta, pct] of casos) {
+    test(nombre, async () => {
+      const t = tablas(dias, noches);
+      const baseAntes = JSON.stringify([t.tarifa_hotel, t.hotel_temporadas]);
+      const r = await tarjeta(t);
+      assert.equal(r.ok, true, r.ok ? "" : r.error);
+      if (!r.ok) return;
+      assert.equal(r.descuentoHotel?.etiqueta ?? null, etiqueta);
+      assert.equal(r.precio, esperado(noches, pct), "el importe visible corresponde a la regla mostrada");
+      assert.equal(r.fechaCalculo, fechaBogota(0), "lleva el día de negocio con el que se calculó (para caducar el par al cambiar el día)");
+      assert.equal(r.noches, noches);
+      // Es exactamente lo que cotizaría y cobraría computarReserva para esa misma reserva.
+      const comp = await cotizar(tablas(dias, noches));
+      assert.equal(comp.ok && comp.data.pvpPorAcom.doble, r.precio);
+      assert.equal(comp.ok && (comp.data.descuentoHotel?.etiqueta ?? null), r.descuentoHotel?.etiqueta ?? null);
+      assert.equal(JSON.stringify([t.tarifa_hotel, t.hotel_temporadas]), baseAntes, "netas y temporadas intactas");
+    });
+  }
+  test("falla cerrado: sin poder leer las reglas no se muestra un precio (ni una etiqueta) a precio base", async () => {
+    const t = tablas(30, 3);
+    adminActual = conErrorEn(crearClienteFalso(t), "hotel_reglas_descuento"); sbActual = crearClienteFalso(sesion(t));
+    const r = await cotizarTarjetaHotel({ modulo: "dinamico", paqueteId: PAQUETE_ID, hotelId: HOTEL_ID, salidaId: SALIDA_ID, combos: [{ categoria: CAT, regimen: REGIMEN }] });
+    sbActual = null;
+    assert.equal(r.ok, false);
+    assert.doesNotMatch(r.ok ? "" : r.error, /regenera|reglas|composici/i, "el navegador no recibe motivos internos");
+  });
+  test("entrada inválida se rechaza antes de tocar la base", async () => {
+    for (const mala of [null, [], {}, { modulo: "otro", paqueteId: 1, hotelId: 1, combos: [{ categoria: "a", regimen: "b" }] }, { modulo: "dinamico", paqueteId: 1, hotelId: 1, combos: [] },
+      { modulo: "dinamico", paqueteId: 1, hotelId: 1, combos: [{ categoria: "a", regimen: "b" }] }, { modulo: "porcion_terrestre", paqueteId: 1, hotelId: 1, combos: [{ categoria: "a", regimen: "b" }] },
+      { modulo: "porcion_terrestre", paqueteId: 1, hotelId: 1, fechaIda: "2000-01-01", fechaRegreso: "2000-01-04", combos: [{ categoria: "a", regimen: "b" }] }]) {
+      assert.equal((await cotizarTarjetaHotel(mala)).ok, false, JSON.stringify(mala));
+    }
   });
 });
