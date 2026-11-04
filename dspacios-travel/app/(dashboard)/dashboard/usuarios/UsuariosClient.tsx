@@ -3,7 +3,8 @@
 import { useState, useTransition } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { ROLES, type Rol } from "@/lib/constants";
+import { ROLES, ROLES_INTERNOS, type Rol } from "@/lib/constants";
+import { AliadoB2BForm } from "./AliadoB2BForm";
 import { crearUsuario, cambiarRol, cambiarActivo, setComisionUsuario } from "./actions";
 import { ResponsiveTableShell } from "@/components/ui/ResponsiveTableShell";
 
@@ -29,23 +30,25 @@ export function UsuariosClient({ usuarios }: { usuarios: Usuario[] }) {
   return (
     <div className="space-y-6">
       <div className="rounded-xl border border-gray-200 bg-white p-4">
-        <p className="mb-3 text-sm font-semibold text-gray-700">Crear usuario</p>
+        <p className="mb-3 text-sm font-semibold text-gray-700">Crear usuario interno</p>
         <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
           <Input placeholder="Nombre" value={nombre} onChange={(e) => setNombre(e.target.value)} />
           <Input placeholder="Email" type="email" value={email} onChange={(e) => setEmail(e.target.value)} />
           <Input placeholder="Contraseña (mín. 6)" type="text" value={password} onChange={(e) => setPassword(e.target.value)} />
           <select value={rol} onChange={(e) => setRol(e.target.value as Rol)}
             className="rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm">
-            {ROLES.map((r) => <option key={r} value={r}>{r}</option>)}
+            {ROLES_INTERNOS.map((r) => <option key={r} value={r}>{r}</option>)}
           </select>
         </div>
         <div className="mt-3 flex items-center gap-3">
           <Button onClick={crear} disabled={pending} style={{ backgroundColor: "var(--brand-primary)" }}>
-            {pending ? "Creando…" : "Crear usuario"}
+            {pending ? "Creando…" : "Crear usuario interno"}
           </Button>
           {msg && <span className={`text-sm ${msg.startsWith("✓") ? "text-green-600" : "text-red-600"}`}>{msg}</span>}
         </div>
       </div>
+
+      <AliadoB2BForm />
 
       {usuarios.length > 0 && (
         <ResponsiveTableShell minWidth={560} className="overflow-x-auto rounded-xl border border-gray-200 bg-white">
