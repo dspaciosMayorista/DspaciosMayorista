@@ -3131,14 +3131,19 @@ function Selector({
   const cc = cotizada?.combos.length ? cotizada.combos : null;
   const cats = useMemo(() => cc ? [...new Set(cc.map((c) => c.categoria))] : [...new Set(opcion.filas.map((f) => f.categoria).filter((x): x is string => !!x))], [opcion, cc]);
   const [cat, setCat] = useState(cc ? cotizada!.categoria : (cats[0] ?? ""));
+  // #90: sin elección explícita del usuario, la selección SIGUE a la cotización ganadora (la categoría/régimen que originan el precio de la tarjeta), aunque la cotización llegue
+  // después del montaje. En cuanto el usuario elige, su elección manda (y sobrevive al cambio de salida mientras siga siendo válida).
+  const [elegido, setElegido] = useState(false);
+  const catBase = !elegido && cc ? cotizada!.categoria : cat;
   // catEff/regEff: valor efectivo válido aunque el seleccionado quede obsoleto.
-  const catEff = cats.includes(cat) ? cat : (cats[0] ?? "");
+  const catEff = cats.includes(catBase) ? catBase : (cats[0] ?? "");
   const regs = useMemo(
     () => cc ? [...new Set(cc.filter((c) => c.categoria === catEff).map((c) => c.regimen))] : [...new Set(opcion.filas.filter((f) => f.categoria === catEff).map((f) => f.regimen).filter((x): x is string => !!x))],
     [opcion, catEff, cc]
   );
   const [reg, setReg] = useState(cc && cat === cotizada!.categoria ? cotizada!.regimen : (regs[0] ?? ""));
-  const regEff = regs.includes(reg) ? reg : (regs[0] ?? "");
+  const regBase = !elegido && cc && catEff === cotizada!.categoria ? cotizada!.regimen : reg;
+  const regEff = regs.includes(regBase) ? regBase : (regs[0] ?? "");
   const comboCot = cc?.find((c) => c.categoria === catEff && c.regimen === regEff) ?? null;
 
   // Mapa de PVP por acomodación para la (categoría, régimen) elegidas.
@@ -3186,7 +3191,7 @@ function Selector({
 
   // #90: la elección del cliente sobrevive al cambio de salida; si deja de existir en la nueva, se usa una disponible y se avisa.
   const regsDe = (c: string) => cc ? [...new Set(cc.filter((x) => x.categoria === c).map((x) => x.regimen))] : [...new Set(opcion.filas.filter((f) => f.categoria === c).map((f) => f.regimen).filter((x): x is string => !!x))];
-  const eligioOtra = cotizacion?.estado === "ok" && (cat !== catEff || reg !== regEff);
+  const eligioOtra = elegido && cotizacion?.estado === "ok" && (cat !== catEff || reg !== regEff);
   const esperando = cotizacion != null && (cotizacion.estado === "cargando" || cotizacion.estado === "error");
 
   return (
@@ -3203,13 +3208,13 @@ function Selector({
       <div className="flex flex-wrap gap-3">
         <div>
           <label className="mb-1 block text-xs font-medium text-gray-600">Categoría</label>
-          <select value={catEff} onChange={(e) => { const c = e.target.value; const rs = regsDe(c); setCat(c); setReg(rs.includes(regEff) ? regEff : (rs[0] ?? "")); }} className={selCls}>
+          <select value={catEff} onChange={(e) => { const c = e.target.value; const rs = regsDe(c); setElegido(true); setCat(c); setReg(rs.includes(regEff) ? regEff : (rs[0] ?? "")); }} className={selCls}>
             {cats.map((c) => <option key={c} value={c}>{c}</option>)}
           </select>
         </div>
         <div>
           <label className="mb-1 block text-xs font-medium text-gray-600">Alimentación</label>
-          <select value={regEff} onChange={(e) => setReg(e.target.value)} className={selCls}>
+          <select value={regEff} onChange={(e) => { setElegido(true); setCat(catEff); setReg(e.target.value); }} className={selCls}>
             {regs.map((r) => <option key={r} value={r}>{r}</option>)}
           </select>
           {regEff && (

@@ -324,3 +324,43 @@ test("hook: un error guardado caduca al cambiar el día de Bogotá y se vuelve a
   assert.equal(n, 2, "el error del día anterior no bloquea: se cotiza de nuevo");
   assert.equal(caja.cur!.estado, "ok");
 });
+
+test("modal: abre en la combinación que origina el precio de la tarjeta (King), aunque la cotización llegue tarde y Twin sea la primera publicada; la elección posterior del usuario se conserva", async () => {
+  const fila = (b: number, categoria: string, p: number) => ({ ...din(0, IDA1, REG1, 3), modulo: "bloqueo", salida_id: null, bloqueo_id: b, bloqueo_label: "Rec " + b, categoria, regimen: "FULL", acomodacion: "doble", precio_pvp: p });
+  // Twin va PRIMERO en las filas publicadas; King (más barata) es la ganadora de la cotización.
+  const detalle = { estado: "ok", filas: [fila(11, "Estándar Twin", 3_074_000), fila(11, "Estándar King", 2_890_000), fila(12, "Estándar Twin", 3_074_000), fila(12, "Estándar King", 2_890_000)] };
+  const ganadora = () => ({
+    ...cotiz(IDA1, REG1, 3, 2_890_000, EBB), categoria: "Estándar King", regimen: "FULL",
+    combos: [combo("Estándar Twin", "FULL", 3_074_000, EBB), combo("Estándar King", "FULL", 2_890_000, EBB)],
+  });
+  let liberar: (() => void) | null = null;
+  const llamadas: unknown[] = [];
+  g.__cotizarTarjetaFake = async (i: unknown) => { llamadas.push(i); await new Promise<void>((r) => { liberar = r; }); return ganadora(); };
+  const card = { filas: [], paqueteId: 54, hotelId: 2540, hotelNombre: "Hotel Nacional 54", destino: "CARTAGENA", foto: null, video_url: null, estrellas: null, clasificacion: null, adultsOnly: false, petFriendly: false, descripcion: null, ubicacion: null, moneda: "COP" };
+  // La tarjeta tenía precio, pero su cotización ya no es vigente al abrir el modal (cot: null) ⇒ el modal calcula tarde.
+  const seleccion = { tipo: "salida", paqueteId: 54, salida: { clave: "bloqueo|11|||" + IDA1, modulo: "bloqueo", bloqueoId: 11, empaquetadoId: null, salidaId: null, fechaIda: IDA1, fechaRegreso: REG1, noches: 3, combos: [] }, cot: null };
+  cont = document.createElement("div"); document.body.appendChild(cont); root = createRoot(cont);
+  await act(async () => { root!.render(h(CartProvider, null, h(HotelModal as never, { hotel: card, seleccion, detalle, onReintentar() {}, cuposPorBloqueo: { 11: 1, 12: 10 }, origenPorBloqueo: {}, puedeReservar: false, ventanaPorPaquete: {}, planesInfo: {}, cap: { paxMin: null, paxMax: null, acom: [] }, descripcionPorPaquete: {}, addonsPorPaquete: new Map(), onClose() {} }))); });
+  await pausa();
+  assert.equal(llamadas.length, 1, "el modal pide la cotización (la de la tarjeta no estaba vigente)");
+  assert.match(modal(), /Calculando el precio de esta salida/);
+  await act(async () => { liberar!(); await new Promise((r) => setTimeout(r, 20)); });
+  const selects = () => [...document.querySelectorAll(".fixed.inset-0 select")] as HTMLSelectElement[];
+  assert.equal(selects()[0].value, "Estándar King", "abre en la categoría que origina el precio de la tarjeta, no en la primera publicada");
+  assert.equal(selects()[1].value, "FULL");
+  assert.match(textoVisible(), /2\.890\.000/);
+  assert.doesNotMatch(textoVisible(), /3\.074\.000/);
+  assert.equal(visibles('[data-testid="modal-seleccion-ajustada"]').length, 0, "sin aviso: no es una elección del usuario");
+  // Elección explícita: Twin.
+  await poner(selects()[0], "Estándar Twin");
+  assert.equal(selects()[0].value, "Estándar Twin");
+  assert.match(textoVisible(), /3\.074\.000/);
+  // Cambiar de record y volver: la elección del usuario no se sobrescribe con la ganadora.
+  await clic([...document.querySelectorAll(".fixed.inset-0 button")].find((b) => /Rec 12/.test(b.textContent ?? ""))!);
+  await act(async () => { await new Promise((r) => setTimeout(r, 20)); liberar?.(); await new Promise((r) => setTimeout(r, 20)); });
+  assert.equal(selects()[0].value, "Estándar Twin", "la elección del usuario sobrevive al cambio de salida");
+  await clic([...document.querySelectorAll(".fixed.inset-0 button")].find((b) => /Rec 11/.test(b.textContent ?? ""))!);
+  await pausa();
+  assert.equal(selects()[0].value, "Estándar Twin");
+  assert.match(textoVisible(), /3\.074\.000/);
+});
