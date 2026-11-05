@@ -89,3 +89,63 @@ export function useCotizacionSalidaModal({ activa, semilla = null, cotizar = cot
   const estado: EstadoCotizacionSalida = clave == null ? "ninguna" : vigente ? "ok" : error ? "error" : "cargando";
   return { estado, cot: vigente, error, reintentar, cotizadaDe };
 }
+
+export type CotizacionFila = { estado: "cargando" } | { estado: "error"; mensaje: string } | { estado: "ok"; cot: CotizadaSalida };
+
+/**
+ * Vista tabla: cotiza, con el mismo motor, los hoteles de UNA salida seleccionada (una entrada por hotel; cada una cubre todas sus categorías/regímenes).
+ * Solo se piden las entradas recibidas (nunca otras salidas), como máximo `concurrencia` a la vez, y cada resultado vale el día de negocio en que se calculó.
+ */
+export function useCotizacionesHoteles({ entradas, concurrencia = 3, cotizar = cotizarTarjetaHotel, hoy = hoyBogota }: {
+  entradas: readonly { clave: string; input: Record<string, unknown> }[];
+  concurrencia?: number;
+  cotizar?: (input: unknown) => Promise<TarjetaCotizada>;
+  hoy?: () => string;
+}): { de: (clave: string) => CotizacionFila; reintentar: (clave: string) => void } {
+  const [dia, setDia] = useState(() => hoy());
+  const [cache, setCache] = useState<Record<string, CotizadaSalida>>({});
+  const [errores, setErrores] = useState<Record<string, { dia: string; msg: string }>>({});
+  const pedidas = useRef(new Set<string>());
+  const enVuelo = useRef(0);
+
+  useEffect(() => {
+    const revisar = () => setDia(hoy());
+    const t = setInterval(revisar, 60_000);
+    (t as unknown as { unref?: () => void }).unref?.();
+    document.addEventListener("visibilitychange", revisar);
+    return () => { clearInterval(t); document.removeEventListener("visibilitychange", revisar); };
+  }, [hoy]);
+
+  const vigenteDe = useCallback((k: string) => (cache[k]?.fechaCalculo === dia ? cache[k] : null), [cache, dia]);
+  const errorDe = useCallback((k: string) => (errores[k]?.dia === dia ? errores[k].msg : ""), [errores, dia]);
+
+  useEffect(() => {
+    for (const e of entradas) {
+      if (enVuelo.current >= concurrencia) break;
+      if (vigenteDe(e.clave) || errorDe(e.clave)) continue;
+      const marca = `${e.clave}|${dia}`;
+      if (pedidas.current.has(marca)) continue;
+      pedidas.current.add(marca);
+      enVuelo.current++;
+      const k = e.clave;
+      cotizar(e.input).then(
+        (r) => { enVuelo.current--; if (r.ok) setCache((c) => ({ ...c, [k]: r })); else setErrores((x) => ({ ...x, [k]: { dia, msg: r.error } })); },
+        () => { enVuelo.current--; setErrores((x) => ({ ...x, [k]: { dia, msg: "No pudimos calcular el precio. Intenta de nuevo." } })); },
+      );
+    }
+  }, [entradas, concurrencia, vigenteDe, errorDe, dia, cotizar]);
+
+  const de = useCallback((k: string): CotizacionFila => {
+    const v = vigenteDe(k);
+    if (v) return { estado: "ok", cot: v };
+    const m = errorDe(k);
+    return m ? { estado: "error", mensaje: m } : { estado: "cargando" };
+  }, [vigenteDe, errorDe]);
+
+  const reintentar = useCallback((k: string) => {
+    pedidas.current.delete(`${k}|${dia}`);
+    setErrores((x) => Object.fromEntries(Object.entries(x).filter(([c]) => c !== k)));
+  }, [dia]);
+
+  return { de, reintentar };
+}
