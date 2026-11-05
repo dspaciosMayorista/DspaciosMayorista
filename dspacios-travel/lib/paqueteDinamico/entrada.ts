@@ -1,6 +1,6 @@
 // Entrada del formulario de administración del paquete dinámico (#82) y su validación de forma. PURO.
 import type { Esquema, PrecioAcom, PrecioVuelo, PvpModo } from "@/lib/paqueteDinamico/calculo";
-import { derivarRutaManual, validarMultidestino, type DestinoPais } from "@/lib/paqueteDinamico/ruta";
+import { erroresIataVuelo, validarMultidestino, type DestinoPais } from "@/lib/paqueteDinamico/ruta";
 import { validarConfigMenoresManual } from "@/lib/paqueteDinamico/menores";
 
 export const ROLES_PRODUCTO = ["superadmin", "gerencia", "administracion", "operaciones"] as const;
@@ -65,11 +65,10 @@ export function validarEntradaPaqueteTotal(e: EntradaPaqueteTotal, destinos: Des
     if (h.estrellas != null && !(Number.isInteger(h.estrellas) && h.estrellas >= 1 && h.estrellas <= 5)) m.push(`Hotel «${h.nombre || "manual"}»: las estrellas deben ser un número entero de 1 a 5.`);
     if (h.ubicacion.length > 500) m.push(`Hotel «${h.nombre || "manual"}»: la ubicación es demasiado larga (máximo 500 caracteres).`);
   }
-  for (const v of e.vuelos) if (v.destinoId && !dest.has(v.destinoId)) m.push("Un vuelo es de un destino que no está en el paquete (agrégalo como destino adicional).");
+  // Sin Multidestino el destino de todo vuelo es el principal: uno de otro destino NO se reasigna en silencio, se rechaza.
+  for (const v of e.vuelos) if (v.destinoId && !dest.has(v.destinoId)) m.push(e.multidestino ? "Un vuelo es de un destino que no está en el paquete (agrégalo como destino adicional)." : "Un vuelo es de un destino distinto al principal y Multidestino está desactivado: actívalo o cambia el destino del vuelo.");
   for (const s of e.servicios) if (s.destinoId && !dest.has(s.destinoId)) m.push(`El servicio «${s.nombre}» es de un destino que no está en el paquete.`);
-  for (const v of e.vuelos) {
-    if (v.empaquetadoId == null && !derivarRutaManual(v.origenIata, v.destinoIata, !!v.fechaRegreso)) m.push("Un vuelo manual necesita origen y destino distintos, con código IATA de 3 letras.");
-  }
+  for (const v of e.vuelos) if (v.empaquetadoId == null) m.push(...erroresIataVuelo(v.origenIata, v.destinoIata));
   for (const v of e.vuelos) {
     if (v.fechaIda && v.fechaRegreso && v.fechaRegreso < v.fechaIda) m.push("Un vuelo regresa antes de salir.");
     // La estadía del paquete son `noches`: un vuelo con ambas fechas debe durar exactamente eso (la base lo exige al cotizar).

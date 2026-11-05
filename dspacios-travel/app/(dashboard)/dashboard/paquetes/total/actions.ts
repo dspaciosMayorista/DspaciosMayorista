@@ -13,7 +13,7 @@ import { opcionesDelPaquete, type FilaHotelDin, type FilaPaqueteDin, type FilaSe
 import { MAX_OPCION_HOTEL, normalizarOpcionHotel } from "@/lib/paqueteDinamico/opcionesHotel";
 import { validarPaquete } from "@/lib/paqueteDinamico/calculo";
 import { ROLES_PRODUCTO, validarEntradaPaqueteTotal, type EntradaPaqueteTotal } from "@/lib/paqueteDinamico/entrada";
-import { derivarRutaManual, destinoCoincide, mensajeSinProveedor, normalizarIata, serviciosSinProveedor, validarMultidestino } from "@/lib/paqueteDinamico/ruta";
+import { derivarRutaManual, destinoCoincide, erroresIataVuelo, mensajeSinProveedor, normalizarIata, serviciosSinProveedor, validarMultidestino } from "@/lib/paqueteDinamico/ruta";
 import type { Json } from "@/types/database";
 
 type Result = { ok: true; id: number; avisos?: string[] } | { ok: false; error: string };
@@ -88,11 +88,13 @@ async function completarDesdeFichas(sb: Loose, e: EntradaPaqueteTotal): Promise<
       if (!x) { errores.push("Un vuelo vincula un empaquetado que no existe."); return v; }
       if (!destinoCoincide(x.destino_id, v.destinoId, e.destinoId)) { errores.push(`El empaquetado #${v.empaquetadoId} es de otro destino que el declarado para el vuelo.`); return v; }
       if (!x.ruta?.trim()) { errores.push(`El empaquetado #${v.empaquetadoId} no tiene ruta cargada; complétala en Empaquetados.`); return v; }
-      return { ...v, ruta: x.ruta.trim(), origenIata: normalizarIata(x.origen), destinoIata: normalizarIata(x.destino_iata) };
+      return { ...v, destinoId: v.destinoId ?? e.destinoId, ruta: x.ruta.trim(), origenIata: normalizarIata(x.origen), destinoIata: normalizarIata(x.destino_iata) };
     }
+    // Los códigos se validan AQUÍ otra vez (el navegador no es frontera): 3 letras, distintos; la ruta se deriva y el destino sin asignar es el principal.
+    const malos = erroresIataVuelo(v.origenIata, v.destinoIata);
     const ruta = derivarRutaManual(v.origenIata, v.destinoIata, !!v.fechaRegreso);
-    if (!ruta) { errores.push("Un vuelo manual necesita origen y destino distintos, con código IATA de 3 letras."); return v; }
-    return { ...v, ruta, origenIata: normalizarIata(v.origenIata), destinoIata: normalizarIata(v.destinoIata) };
+    if (malos.length || !ruta) { errores.push(malos[0] ?? "Un vuelo manual necesita origen y destino distintos, con código IATA de 3 letras."); return v; }
+    return { ...v, destinoId: v.destinoId ?? e.destinoId, ruta, origenIata: normalizarIata(v.origenIata), destinoIata: normalizarIata(v.destinoIata) };
   });
 
   // Servicios vinculados: proveedor y moneda de la ficha.

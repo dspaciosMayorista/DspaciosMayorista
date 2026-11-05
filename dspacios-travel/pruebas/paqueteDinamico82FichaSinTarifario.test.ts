@@ -39,7 +39,8 @@ test("selector, acción y formulario: ninguno rechaza ni oculta una ficha por ta
   assert.match(act, /rpc\("hotel_vinculable_din"/);
   assert.doesNotMatch(act, /no tener vigencias ni tarifas/); assert.doesNotMatch(act, /El hotel «.*» está en/);
   assert.doesNotMatch(form, /h\.moneda/); assert.doesNotMatch(form, /const hotelesDest = .*moneda/);
-  assert.match(form, /const hotelesDest = hoteles\.filter\(\(h\) => \(e\.destinoId == null \|\| h\.destino_id === e\.destinoId\)\)/);
+  assert.match(form, /const hotelesDest = hoteles\.filter\(\(h\) => e\.destinoId != null && h\.destino_id === e\.destinoId\)/);
+  assert.match(form, /<ComboHotel hoteles=\{hotelesDest\.map/); assert.doesNotMatch(form, /Usar ficha de hotel existente/);
 });
 
 test("el paquete nunca lee ni copia las tarifas, vigencias ni la calculadora de la ficha", () => {

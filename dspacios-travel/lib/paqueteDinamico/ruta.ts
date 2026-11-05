@@ -1,6 +1,8 @@
 // Reglas puras de multidestino, ruta de vuelo y proveedor de servicios vinculados (#82, migración 276). Espejo de los triggers de la base
 // (`tg_din_paquete_reglas`, `tg_din_vuelo_reglas`, `tg_din_servicio_reglas`): aquí se dan mensajes claros ANTES de ir a la base; la base es la frontera real.
 
+import { codigoIataDeCiudad, IATA_CIUDAD } from "@/lib/iata";
+
 const IATA = /^[A-Z]{3}$/;
 
 /** Código IATA normalizado ("bog " → "BOG") o "" si no es de 3 letras. */
@@ -23,6 +25,60 @@ export function derivarRutaManual(origen: string, destino: string, conRegreso: b
   const o = normalizarIata(origen), d = normalizarIata(destino);
   if (!o || !d || o === d) return null;
   return conRegreso ? `${o} - ${d} - ${o}` : `${o} - ${d}`;
+}
+
+// ── Selector de código IATA del vuelo manual: busca en el catálogo (`lib/iata.ts`) por código o ciudad y deja escribir cualquier código válido de 3 letras ──
+export type OpcionIata = { codigo: string; ciudad: string; etiqueta: string };
+const sinTildes = (t: string) => t.normalize("NFD").replace(/[̀-ͯ]/g, "").trim().replace(/\s+/g, " ").toLowerCase();
+
+/** Catálogo ordenado por ciudad (solo entradas con código de 3 letras). */
+export const OPCIONES_IATA: readonly OpcionIata[] = Object.entries(IATA_CIUDAD)
+  .filter(([c]) => IATA.test(c))
+  .map(([codigo, ciudad]) => ({ codigo, ciudad, etiqueta: `${ciudad} (${codigo})` }))
+  .sort((a, b) => a.ciudad.localeCompare(b.ciudad, "es"));
+
+/** Opciones que coinciden con lo escrito: el código empieza igual o la ciudad lo contiene (sin tildes ni mayúsculas). Vacío = todo el catálogo. */
+export function buscarIata(texto: string): OpcionIata[] {
+  const t = sinTildes(texto);
+  if (!t) return [...OPCIONES_IATA];
+  return OPCIONES_IATA.filter((o) => o.codigo.toLowerCase().startsWith(t) || sinTildes(o.ciudad).includes(t));
+}
+
+/**
+ * Código IATA que representa lo escrito: «Ciudad (COD)», un código de 3 letras (esté o no en el catálogo) o el nombre EXACTO y único de una ciudad del catálogo.
+ * "" si no es ninguna de las tres (nunca se adivina).
+ */
+export function resolverIata(texto: string | null | undefined): string {
+  const t = String(texto ?? "").trim();
+  if (!t) return "";
+  const par = /\(([A-Za-z]{3})\)\s*$/.exec(t);
+  if (par) return normalizarIata(par[1]);
+  return normalizarIata(t) || codigoIataDeCiudad(t) || "";
+}
+
+/** Motivos por los que el origen/destino de un vuelo manual no sirve (vacío = válido). Los usan el formulario y el servidor. */
+export function erroresIataVuelo(origen: string, destino: string): string[] {
+  const m: string[] = [];
+  const o = normalizarIata(origen), d = normalizarIata(destino);
+  if (!o) m.push("Un vuelo manual necesita el origen como código IATA de 3 letras.");
+  if (!d) m.push("Un vuelo manual necesita el destino como código IATA de 3 letras.");
+  if (o && d && o === d) m.push("El origen y el destino de un vuelo manual deben ser distintos.");
+  return m;
+}
+
+// ── Destino de los vuelos y Multidestino ──
+/**
+ * Al cambiar el destino principal, los vuelos MANUALES que seguían al anterior (o no tenían destino) siguen al nuevo: es la asignación automática, no una elección.
+ * Los vinculados a Empaquetados y los que el usuario dirigió a otro destino NO se tocan: el formulario los señala y el servidor los rechaza.
+ */
+export function seguirDestinoPrincipal<V extends { empaquetadoId: number | null; destinoId: number | null }>(vuelos: V[], anterior: number | null, nuevo: number | null): V[] {
+  return vuelos.map((v) => (v.empaquetadoId == null && (v.destinoId == null || v.destinoId === anterior) ? { ...v, destinoId: nuevo } : v));
+}
+
+/** Cuántos vuelos y servicios están dirigidos a un destino distinto del principal (impiden desactivar Multidestino: no se reasignan en silencio). */
+export function ajenosAlPrincipal(e: { destinoId: number | null; vuelos: { destinoId: number | null }[]; servicios: { destinoId: number | null }[] }): { vuelos: number; servicios: number } {
+  const ajeno = (x: { destinoId: number | null }) => x.destinoId != null && x.destinoId !== e.destinoId;
+  return { vuelos: e.vuelos.filter(ajeno).length, servicios: e.servicios.filter(ajeno).length };
 }
 
 export type DestinoPais = { id: number; pais: string | null };

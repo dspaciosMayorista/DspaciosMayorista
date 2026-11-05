@@ -15,16 +15,36 @@ import type { EmpaquetadoOpt } from "./PaqueteTotalForm";
  * Destinos: traen el país (multidestino solo del mismo país). Este listado es una comodidad: la guarda real está en `guardarPaqueteTotal`
  * y en los triggers de la base (275/276/277).
  */
+/** PostgREST corta cada respuesta en «max rows» SIN error: se lee por páginas hasta recibir una incompleta. */
+async function leerPaginado<T>(pagina: (desde: number, hasta: number) => PromiseLike<{ data: T[] | null; error?: { message: string } | null }>, tam = 1000): Promise<T[]> {
+  const out: T[] = [];
+  for (let desde = 0; ; desde += tam) {
+    const { data, error } = await pagina(desde, desde + tam - 1);
+    if (error) throw new Error(error.message);
+    out.push(...(data ?? []));
+    if ((data ?? []).length < tam) return out;
+  }
+}
+/** Las lecturas `.in("id", …)` sobre todo el catálogo van en lotes: una lista enorme revienta la URL y las filas hijas (acomodaciones, categorías) pasan el tope de filas. */
+async function enLotes<V>(ids: number[], fn: (lote: number[]) => Promise<Map<number, V>>, tam = 40): Promise<Map<number, V>> {
+  const out = new Map<number, V>();
+  for (let i = 0; i < ids.length; i += tam) for (const [k, v] of await fn(ids.slice(i, i + tam))) out.set(k, v);
+  return out;
+}
+
 export async function cargarCatalogos() {
   const sb = await createClient();
   const admin = createAdminClient();
-  const [d, h, s, e] = await Promise.all([
+  const [d, h, s, e, activas] = await Promise.all([
     sb.from("destinos").select("id, nombre, pais").order("nombre"),
-    sb.rpc("hoteles_vinculables_din" as never) as unknown as Promise<{ data: { id: number; nombre: string; destino_id: number | null; moneda: string | null }[] | null }>,
+    // Todas las fichas activas (migración 280), por páginas: el tope de filas de PostgREST no puede recortar el selector en silencio.
+    leerPaginado<{ id: number; nombre: string; destino_id: number | null; moneda: string | null }>((a, b) => (sb.rpc("hoteles_vinculables_din" as never) as unknown as { range: (a: number, b: number) => PromiseLike<{ data: never; error: { message: string } | null }> }).range(a, b) as never),
     sb.from("servicios_adicionales").select("id, nombre, destino_id, moneda, proveedor_id").order("nombre"),
     sb.from("empaquetados").select("id, aerolinea, ruta, fecha_ida, fecha_regreso, destino_id, tarifa_proveedor, fee_infante").eq("activo", true).order("fecha_ida", { ascending: false }).limit(300),
+    // Total de fichas activas, para detectar una base que aún ofrece menos (función de la 275 sin actualizar por la 280).
+    sb.from("hoteles").select("id", { count: "exact", head: true }).eq("activo", true),
   ]);
-  const hotelesFicha = h.data ?? [];
+  const hotelesFicha = h;
   const sv = (s.data ?? []) as { id: number; nombre: string; destino_id: number | null; moneda: string | null; proveedor_id: number | null }[];
   const pids = [...new Set(sv.map((x) => x.proveedor_id).filter((x): x is number => x != null))];
   const pn: Record<number, string> = {};
@@ -32,12 +52,12 @@ export async function cargarCatalogos() {
 
   const [catalogo, opciones, reglas, fichas, infoFicha] = await Promise.all([
     cargarCatalogoHotel(admin),
-    cargarOpcionesHotelFicha(admin, hotelesFicha.map((x) => x.id)),
-    cargarReglasHoteles(admin, hotelesFicha.map((x) => ({ id: x.id, hotel_id: x.id }) as FilaHotelDin)),
+    enLotes(hotelesFicha.map((x) => x.id), (l) => cargarOpcionesHotelFicha(admin, l)),
+    enLotes(hotelesFicha.map((x) => x.id), (l) => cargarReglasHoteles(admin, l.map((id) => ({ id, hotel_id: id }) as FilaHotelDin))),
     cargarFichasServicio(admin, sv.map((x) => x.id)),
     // Estrellas, descripción y ubicación de cada ficha vinculable: el montaje las copia al elegir la ficha (nada se inventa si faltan).
     // Solo precarga: si falla, queda vacío y el GUARDADO (que relee la ficha) se detiene con un error claro.
-    cargarInfoHotelesFicha(admin, hotelesFicha.map((x) => x.id)).catch(() => new Map()),
+    enLotes(hotelesFicha.map((x) => x.id), (l) => cargarInfoHotelesFicha(admin, l)).catch(() => new Map()),
   ]);
   return {
     destinos: (d.data ?? []) as { id: number; nombre: string; pais: string | null }[],
@@ -54,5 +74,6 @@ export async function cargarCatalogos() {
     })),
     empaquetados: (e.data ?? []) as EmpaquetadoOpt[],
     catalogoHotel: catalogo,
+    fichasActivas: activas.count ?? undefined,
   };
 }

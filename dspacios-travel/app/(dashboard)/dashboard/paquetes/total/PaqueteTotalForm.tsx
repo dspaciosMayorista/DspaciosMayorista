@@ -8,7 +8,9 @@ import { Input } from "@/components/ui/input";
 import { DateInput } from "@/components/ui/DateInput";
 import { pvpDeNeto } from "@/lib/paqueteDinamico/calculo";
 import type { EntradaHotel, EntradaPaqueteTotal, EntradaServicio, EntradaVuelo } from "@/lib/paqueteDinamico/entrada";
-import { derivarRutaManual, mensajeSinProveedor, paisComparable } from "@/lib/paqueteDinamico/ruta";
+import { ajenosAlPrincipal, derivarRutaManual, mensajeSinProveedor, paisComparable, seguirDestinoPrincipal } from "@/lib/paqueteDinamico/ruta";
+import { ComboHotel } from "@/components/ComboHotel";
+import { ComboIata } from "./ComboIata";
 import { EDADES_MANUAL_POR_DEFECTO } from "@/lib/paqueteDinamico/menores";
 import { guardarPaqueteTotal } from "./actions";
 import { GridAcom, lbl, n, sel } from "./editorUi";
@@ -27,8 +29,10 @@ export const ENTRADA_VACIA: EntradaPaqueteTotal = {
   pvpGeneral: null, totalDeclarado: null, descripcion: "", incluye: "", noIncluye: "", vuelos: [], hoteles: [], servicios: [],
 };
 
-export function PaqueteTotalForm({ inicial, destinos, hoteles, servicios, empaquetados, catalogoHotel }: {
+export function PaqueteTotalForm({ inicial, destinos, hoteles, servicios, empaquetados, catalogoHotel, fichasActivas }: {
   inicial: EntradaPaqueteTotal; destinos: DestinoOpt[]; hoteles: HotelOpt[]; servicios: ServicioOpt[]; empaquetados: EmpaquetadoOpt[]; catalogoHotel: CatalogoHotel;
+  /** Total de fichas de hotel activas en la base (para avisar si el selector ofrece menos: falta aplicar la migración 280). */
+  fichasActivas?: number;
 }) {
   const router = useRouter();
   const [e, setE] = useState<EntradaPaqueteTotal>(inicial);
@@ -37,6 +41,18 @@ export function PaqueteTotalForm({ inicial, destinos, hoteles, servicios, empaqu
   // El mensaje pertenece al estado del formulario en que se generó (`base`): al seguir editando deja de mostrarse.
   const [msg, setMsg] = useState<{ ok: boolean; t: string; base: EntradaPaqueteTotal } | null>(null);
   const set = (p: Partial<EntradaPaqueteTotal>) => setE((x) => ({ ...x, ...p }));
+  // Aviso de por qué NO se pudo desactivar Multidestino (vuelos/servicios de destinos adicionales): nunca se cambian en silencio de destino.
+  const [avisoMulti, setAvisoMulti] = useState<string | null>(null);
+  // Lo escrito en el buscador de fichas: si no existe, «Hotel manual» lo toma como nombre (nunca vincula una ficha).
+  const [busquedaFicha, setBusquedaFicha] = useState("");
+  // Sin Multidestino el destino de todo vuelo es el principal: al cambiar el principal, los vuelos que seguían al anterior (o sin destino) lo siguen; los demás se señalan.
+  const cambiarPrincipal = (nuevo: number | null) => setE((x) => ({ ...x, destinoId: nuevo, destinosExtra: [], vuelos: seguirDestinoPrincipal(x.vuelos, x.destinoId, nuevo) }));
+  const alternarMultidestino = (activo: boolean) => {
+    if (activo) { setAvisoMulti(null); set({ multidestino: true }); return; }
+    const aj = ajenosAlPrincipal(e), total = aj.vuelos + aj.servicios;
+    if (total) { setAvisoMulti(`No se puede desactivar Multidestino: ${total} ${total === 1 ? "vuelo o servicio usa" : "vuelos o servicios usan"} un destino adicional (${aj.vuelos} vuelo${aj.vuelos === 1 ? "" : "s"}, ${aj.servicios} servicio${aj.servicios === 1 ? "" : "s"}). Quítalos o cámbiales el destino primero; no se reasignan solos.`); return; }
+    setAvisoMulti(null); set({ multidestino: false, destinosExtra: [] });
+  };
   const neta = e.esquema === "neta_markup";
   const porComp = e.esquema === "solo_pvp" && e.pvpModo === "por_componente";
   const general = e.esquema === "solo_pvp" && e.pvpModo === "general";
@@ -53,7 +69,8 @@ export function PaqueteTotalForm({ inicial, destinos, hoteles, servicios, empaqu
   const destinosPermitidos = new Set<number | null>([e.destinoId, ...(e.multidestino ? e.destinosExtra : [])]);
   const paisPrincipal = paisComparable(destinos.find((d) => d.id === e.destinoId)?.pais);
   const adicionalesOfrecidos = destinos.filter((d) => d.id !== e.destinoId && paisPrincipal != null && paisComparable(d.pais) === paisPrincipal);
-  const hotelesDest = hoteles.filter((h) => (e.destinoId == null || h.destino_id === e.destinoId));
+  // Solo las fichas del destino principal (sin destino elegido no se ofrece ninguna); todas las activas, sin mirar tarifas, vigencias, moneda ni calculadora.
+  const hotelesDest = hoteles.filter((h) => e.destinoId != null && h.destino_id === e.destinoId);
   const serviciosDest = servicios.filter((s) => (s.destino_id == null || destinosPermitidos.has(s.destino_id)) && s.moneda === e.moneda && !s.noSoportado);
   const empDest = empaquetados.filter((x) => x.destino_id == null || destinosPermitidos.has(x.destino_id));
 
@@ -68,7 +85,7 @@ export function PaqueteTotalForm({ inicial, destinos, hoteles, servicios, empaqu
     capacidadNinos: null, edadInfanteMax: h ? null : EDADES_MANUAL_POR_DEFECTO.infanteMax, edadNinoMax: h ? null : EDADES_MANUAL_POR_DEFECTO.ninoMax,
   });
   const nuevoVuelo = (x?: EmpaquetadoOpt): EntradaVuelo => ({
-    empaquetadoId: x?.id ?? null, destinoId: x?.destino_id ?? null, aerolinea: x?.aerolinea ?? "", ruta: x?.ruta ?? "", origenIata: "", destinoIata: "", fechaIda: x?.fecha_ida ?? "", fechaRegreso: x?.fecha_regreso ?? "",
+    empaquetadoId: x?.id ?? null, destinoId: e.multidestino ? (x?.destino_id ?? e.destinoId) : e.destinoId, aerolinea: x?.aerolinea ?? "", ruta: x?.ruta ?? "", origenIata: "", destinoIata: "", fechaIda: x?.fecha_ida ?? "", fechaRegreso: x?.fecha_regreso ?? "",
     proveedor: x?.aerolinea ?? "", neto: x ? { adulto: x.tarifa_proveedor, infante: x.fee_infante } : {}, pvp: {},
   });
   const nuevoServicio = (s?: ServicioOpt): EntradaServicio => ({ servicioId: s?.id ?? null, destinoId: s?.destino_id ?? null, nombre: s?.nombre ?? "", proveedor: s?.proveedor ?? "", proveedorId: s?.proveedorId ?? null, neto: null, pvp: null, pvpInfante: null });
@@ -113,10 +130,11 @@ export function PaqueteTotalForm({ inicial, destinos, hoteles, servicios, empaqu
           <div className="grid gap-3 sm:grid-cols-2">
             <div><label className={lbl}>Nombre</label><Input value={e.nombre} onChange={(x) => set({ nombre: x.target.value })} /></div>
             <div><label className={lbl}>Destino principal</label>
-              <select className={sel} value={e.destinoId ?? ""} onChange={(x) => set({ destinoId: x.target.value ? Number(x.target.value) : null, destinosExtra: [] })}>
+              <select className={sel} value={e.destinoId ?? ""} onChange={(x) => { setAvisoMulti(null); cambiarPrincipal(x.target.value ? Number(x.target.value) : null); }}>
                 <option value="">Elige…</option>{destinos.map((d) => <option key={d.id} value={d.id}>{d.nombre}</option>)}
               </select></div>
-            <div><label className="inline-flex items-center gap-2 text-sm font-medium text-gray-700"><input type="checkbox" checked={e.multidestino} onChange={(x) => set(x.target.checked ? { multidestino: true } : { multidestino: false, destinosExtra: [] })} /> Multidestino</label>
+            <div><label className="inline-flex items-center gap-2 text-sm font-medium text-gray-700"><input type="checkbox" checked={e.multidestino} onChange={(x) => alternarMultidestino(x.target.checked)} /> Multidestino</label>
+              {avisoMulti && <p role="alert" className="mt-1 text-xs text-red-600" data-testid="aviso-multidestino">{avisoMulti}</p>}
               {e.multidestino ? (
                 <>
                   <select aria-label="Destinos adicionales" multiple className={`${sel} mt-1 h-24`} value={e.destinosExtra.map(String)} onChange={(x) => set({ destinosExtra: Array.from(x.target.selectedOptions).map((o) => Number(o.value)) })}>
@@ -188,24 +206,29 @@ export function PaqueteTotalForm({ inicial, destinos, hoteles, servicios, empaqu
             <div key={i} className="space-y-3 rounded-lg border border-gray-200 p-3">
               <div className="flex items-center justify-between text-xs text-gray-500"><span>{v.empaquetadoId ? `Vinculado a Empaquetados #${v.empaquetadoId} (valores copiados; edítalos aquí)` : "Vuelo manual"}</span>
                 <button type="button" aria-label="Quitar vuelo" onClick={() => del("vuelos", i)}><Trash2 className="h-4 w-4 text-red-500" /></button></div>
+              {v.destinoId != null && !destinosPermitidos.has(v.destinoId) && (
+                <p role="alert" className="rounded-md bg-red-50 p-2 text-xs text-red-700" data-testid="vuelo-destino-incompatible">Este vuelo es de un destino que ya no está en el paquete ({destinos.find((d) => d.id === v.destinoId)?.nombre ?? v.destinoId}). Quítalo, actívalo de nuevo como destino adicional o cambia el destino principal: no se reasigna solo.</p>
+              )}
               <div className="grid gap-2 sm:grid-cols-4">
                 <div><label className={lbl}>Aerolínea</label><Input value={v.aerolinea} onChange={(x) => upd("vuelos", i, { aerolinea: x.target.value })} /></div>
                 {v.empaquetadoId != null ? (
                   <div><label className={lbl}>Ruta (del empaquetado)</label><Input aria-label="Ruta" readOnly value={v.ruta} /></div>
                 ) : (
                   <>
-                    <div><label className={lbl}>Origen (IATA)</label><Input aria-label="Origen IATA" maxLength={3} value={v.origenIata} onChange={(x) => upd("vuelos", i, { origenIata: x.target.value.toUpperCase() })} /></div>
-                    <div><label className={lbl}>Destino (IATA)</label><Input aria-label="Destino IATA" maxLength={3} value={v.destinoIata} onChange={(x) => upd("vuelos", i, { destinoIata: x.target.value.toUpperCase() })} /></div>
+                    <div><label className={lbl}>Origen (IATA)</label><ComboIata etiqueta="Origen IATA" value={v.origenIata} onChange={(c) => upd("vuelos", i, { origenIata: c })} /></div>
+                    <div><label className={lbl}>Destino (IATA)</label><ComboIata etiqueta="Destino IATA" value={v.destinoIata} onChange={(c) => upd("vuelos", i, { destinoIata: c })} /></div>
                     <div><label className={lbl}>Ruta (se calcula)</label><Input aria-label="Ruta" readOnly value={derivarRutaManual(v.origenIata, v.destinoIata, !!v.fechaRegreso) ?? ""} /></div>
                   </>
                 )}
                 <div><label className={lbl}>Ida</label><DateInput aria-label="Ida" type="date" value={v.fechaIda} onValueChange={(d) => upd("vuelos", i, { fechaIda: d })} /></div>
                 <div><label className={lbl}>Regreso</label><DateInput aria-label="Regreso" type="date" value={v.fechaRegreso} onValueChange={(d) => upd("vuelos", i, { fechaRegreso: d })} /></div>
                 <div><label className={lbl}>Proveedor</label><Input value={v.proveedor} onChange={(x) => upd("vuelos", i, { proveedor: x.target.value })} /></div>
-                <div><label className={lbl}>Destino del vuelo</label>
-                  <select className={sel} value={v.destinoId ?? ""} onChange={(x) => upd("vuelos", i, { destinoId: x.target.value ? Number(x.target.value) : null })}>
-                    <option value="">Destino del paquete</option>{destinos.filter((d) => destinosPermitidos.has(d.id)).map((d) => <option key={d.id} value={d.id}>{d.nombre}</option>)}
-                  </select></div>
+                {e.multidestino && (
+                  <div><label className={lbl}>Destino del vuelo</label>
+                    <select aria-label="Destino del vuelo" className={sel} value={v.destinoId ?? e.destinoId ?? ""} onChange={(x) => upd("vuelos", i, { destinoId: x.target.value ? Number(x.target.value) : e.destinoId })}>
+                      {destinos.filter((d) => d.id === e.destinoId || e.destinosExtra.includes(d.id)).map((d) => <option key={d.id} value={d.id}>{d.nombre}{d.id === e.destinoId ? " (principal)" : ""}</option>)}
+                    </select></div>
+                )}
               </div>
               {!general && (
                 <div className="rounded-lg bg-gray-50 p-3" data-testid="precios-vuelo">
@@ -231,12 +254,20 @@ export function PaqueteTotalForm({ inicial, destinos, hoteles, servicios, empaqu
       {tabActiva === "hotel" && (
         <section className="space-y-4 rounded-xl border border-gray-200 bg-white p-4">
           <div className="flex flex-wrap items-center gap-2">
-            <select className={`${sel} max-w-sm`} value="" onChange={(x) => { const h = hoteles.find((q) => q.id === Number(x.target.value)); if (h) set({ hoteles: [...e.hoteles, nuevoHotel(h)] }); }}>
-              <option value="">Usar ficha de hotel existente…</option>
-              {hotelesDest.map((h) => <option key={h.id} value={h.id}>{h.nombre}</option>)}
-            </select>
-            <Button type="button" variant="outline" onClick={() => set({ hoteles: [...e.hoteles, nuevoHotel()] })}><Plus className="h-4 w-4" /> Hotel manual</Button>
+            <div className="w-full max-w-sm" data-testid="selector-fichas">
+              <ComboHotel hoteles={hotelesDest.map((h) => ({ id: h.id, nombre: h.nombre }))} value="" max={500}
+                placeholder={e.destinoId == null ? "Elige primero el destino principal" : "Buscar ficha de hotel por nombre…"} onBusqueda={setBusquedaFicha}
+                onChange={(id) => { const h = hoteles.find((q) => q.id === id); if (h) set({ hoteles: [...e.hoteles, nuevoHotel(h)] }); }} />
+            </div>
+            <Button type="button" variant="outline" onClick={() => { set({ hoteles: [...e.hoteles, { ...nuevoHotel(), nombre: busquedaFicha.trim() }] }); setBusquedaFicha(""); }}><Plus className="h-4 w-4" /> Hotel manual</Button>
           </div>
+          <p className="text-xs text-gray-500" data-testid="conteo-fichas">{e.destinoId == null ? "Elige el destino principal para ver sus fichas de hotel." : `${hotelesDest.length} ${hotelesDest.length === 1 ? "ficha activa" : "fichas activas"} en ${destinos.find((d) => d.id === e.destinoId)?.nombre ?? "el destino"}. La ficha aporta solo la información general; las tarifas se cargan aquí.`}</p>
+          {busquedaFicha.trim() !== "" && (
+            <p className="text-xs text-gray-600" data-testid="pasar-a-manual">¿No está «{busquedaFicha.trim()}»? Usa <b>Hotel manual</b> y se crea con ese nombre.</p>
+          )}
+          {fichasActivas != null && hoteles.length < fichasActivas && (
+            <p role="alert" className="rounded-md bg-amber-50 p-2 text-xs text-amber-900" data-testid="aviso-fichas-faltantes">La base solo ofrece {hoteles.length} de {fichasActivas} fichas activas: falta aplicar la migración 280 (paquete_dinamico_ficha_sin_tarifario). Hasta entonces las fichas con tarifario no aparecen ni se pueden guardar.</p>
+          )}
           {e.hoteles.map((h, i) => {
             const f = h.hotelId == null ? undefined : hoteles.find((q) => q.id === h.hotelId);
             return (
