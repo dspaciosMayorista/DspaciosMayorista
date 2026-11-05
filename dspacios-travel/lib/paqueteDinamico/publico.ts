@@ -33,7 +33,7 @@ export function aPvpPublico(c: PaqueteDin): PaqueteDin {
     esquema: "solo_pvp", pvpModo: c.esquema === "solo_pvp" && c.pvpModo === "general" ? "general" : "por_componente", moneda: c.moneda, pctMk: 0,
     usaVuelo: c.usaVuelo, usaHotel: c.usaHotel, usaServicios: c.usaServicios,
     vuelo: c.vuelo ? { neto: { adulto: null, nino: null, infante: null }, pvp: vz(c.vuelo.neto, c.vuelo.pvp) } : undefined,
-    hotel: c.hotel ? { nombre: c.hotel.nombre, neto: {}, pvp: acom(c.hotel.neto, c.hotel.pvp) } : undefined,
+    hotel: c.hotel ? { nombre: c.hotel.nombre, neto: {}, pvp: acom(c.hotel.neto, c.hotel.pvp), ...(c.hotel.adultsOnly ? { adultsOnly: true } : {}) } : undefined,
     servicios: c.servicios.map((s) => ({ id: s.id, nombre: s.nombre, neto: null, pvp: s.fichaPrecio ? null : pv(s.neto, s.pvp), ...(s.fichaPrecio ? { fichaPrecio: true } : {}), ...(s.vinculado ? { vinculado: true } : {}) })),
     pvpGeneral: c.pvpGeneral,
   };

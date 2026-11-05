@@ -136,7 +136,7 @@ describe("validación del vuelo (la tarifa «niño» ya no existe)", async () =>
 });
 
 describe("pantallas", () => {
-  const form = sinComentarios(leer("app/(dashboard)/dashboard/paquetes/total/PaqueteTotalForm.tsx"));
+  const form = sinComentarios(["PaqueteTotalForm.tsx", "VueloFilaDin.tsx", "ServicioFilaDin.tsx", "HotelFilaDin.tsx"].map((x) => leer("app/(dashboard)/dashboard/paquetes/total/" + x)).join(" "));
   test("formulario de vuelo: adulto (ocupa silla) e infante (sin silla), con la regla; sin «PVP niño»", () => {
     assert.match(form, /data-testid="precios-vuelo"/);
     assert.match(form, /adulto y menor desde 2 años/);
@@ -153,10 +153,10 @@ describe("pantallas", () => {
     assert.match(sinComentarios(leer("app/tarifario/checkout/dinamico/CheckoutDinamico.tsx")), /data-testid="res-sillas"/);
     assert.match(sinComentarios(leer("app/tarifario/checkout/dinamico/actions.ts")), /vueloPasajeros\(sel\.composicion\)/);
   });
-  test("ficha de servicio: nombre y borrar en la misma fila, campos en rejilla, ayuda del infante bajo su campo, reglas de cobro en lista", () => {
+  test("ficha de servicio: fila compacta con quitar en la misma fila; en la ventana, campos en rejilla, ayuda del infante bajo su campo, reglas de cobro en lista", () => {
     assert.match(form, /data-testid="ficha-servicio"/);
-    assert.match(form, /className="flex items-start gap-3"/);
-    assert.match(form, /mt-3 grid items-start gap-3 sm:grid-cols-2/);
+    assert.match(form, /className="flex items-start gap-2"/);
+    assert.match(form, /grid items-start gap-3 sm:grid-cols-2/);
     assert.match(form, /<span className="mt-1 block text-xs text-gray-500">\{ficha\.cobraInfante/);
     assert.match(form, /<ul className="mt-1 list-disc space-y-0\.5 pl-4">/);
     assert.doesNotMatch(form, /grid items-end gap-2 rounded-lg border border-gray-200 p-3 sm:grid-cols-5/);

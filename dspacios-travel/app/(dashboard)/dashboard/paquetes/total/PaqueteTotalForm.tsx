@@ -2,22 +2,22 @@
 // Paquete 100 % dinámico (#82): montaje. Los checks de vuelo / hotel / servicios habilitan SOLO sus pestañas.
 import { useMemo, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
-import { Hotel, Plane, Plus, Settings2, Sparkles, Trash2 } from "lucide-react";
+import { Hotel, Plane, Plus, Settings2, Sparkles } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { DateInput } from "@/components/ui/DateInput";
-import { pvpDeNeto } from "@/lib/paqueteDinamico/calculo";
 import type { EntradaHotel, EntradaPaqueteTotal, EntradaServicio, EntradaVuelo } from "@/lib/paqueteDinamico/entrada";
-import { ajenosAlPrincipal, derivarRutaManual, iataDeDestino, mensajeSinProveedor, paisComparable, seguirDestinoPrincipal } from "@/lib/paqueteDinamico/ruta";
+import { ajenosAlPrincipal, iataDeDestino, paisComparable, seguirDestinoPrincipal } from "@/lib/paqueteDinamico/ruta";
 import { ComboHotel } from "@/components/ComboHotel";
-import { ComboIata } from "./ComboIata";
+import { VueloFilaDin } from "./VueloFilaDin";
+import { ServicioFilaDin } from "./ServicioFilaDin";
 import { EDADES_MANUAL_POR_DEFECTO } from "@/lib/paqueteDinamico/menores";
 import { guardarPaqueteTotal } from "./actions";
-import { GridAcom, lbl, n, sel } from "./editorUi";
+import { ACOMS_SOLO_ADULTOS, GridAcom, lbl, sel } from "./editorUi";
 import { HotelFilaDin } from "./HotelFilaDin";
 
 type Opt = { id: number; nombre: string; destino_id: number | null; moneda?: string };
-type HotelOpt = Opt & { categorias: string[]; regimenes: string[]; reglasTexto: string | null; estrellas: number | null; descripcionFicha: string; ubicacionFicha: string };
+type HotelOpt = Opt & { categorias: string[]; regimenes: string[]; reglasTexto: string | null; adultsOnly?: boolean; estrellas: number | null; descripcionFicha: string; ubicacionFicha: string };
 type ServicioOpt = Opt & { moneda: string; proveedorId: number | null; proveedor: string; cobro: string | null; noSoportado: string | null; modo: "persona" | "grupo" | null; cobraInfante: boolean };
 type CatalogoHotel = { categorias: string[]; regimenes: string[] };
 type DestinoOpt = { id: number; nombre: string; pais: string | null; codigo_iata?: string | null };
@@ -58,6 +58,9 @@ export function PaqueteTotalForm({ inicial, destinos, hoteles, servicios, empaqu
   const iataPrincipal = iataDeDestino(destinos, e.destinoId);
   const nombrePrincipal = destinos.find((d) => d.id === e.destinoId)?.nombre ?? "";
   const neta = e.esquema === "neta_markup";
+  // Precio general: los campos de menores solo se ocultan si HAY hoteles y TODOS son solo adultos (un paquete sin hoteles, o con alguno que admita menores, los conserva).
+  const soloAdultosTodos = e.usaHotel && e.hoteles.length > 0 && e.hoteles.every((h) => h.hotelId != null && hoteles.find((q) => q.id === h.hotelId)?.adultsOnly === true);
+  const ctxVuelo = { neta: e.esquema === "neta_markup", general: e.esquema === "solo_pvp" && e.pvpModo === "general", pctMkPct: e.pctMkPct, moneda: e.moneda, multidestino: e.multidestino, destinoId: e.destinoId, destinosExtra: e.destinosExtra, destinos, iataPrincipal, nombrePrincipal };
   const porComp = e.esquema === "solo_pvp" && e.pvpModo === "por_componente";
   const general = e.esquema === "solo_pvp" && e.pvpModo === "general";
 
@@ -86,6 +89,7 @@ export function PaqueteTotalForm({ inicial, destinos, hoteles, servicios, empaqu
   const nuevoHotel = (h?: HotelOpt): EntradaHotel => ({
     hotelId: h?.id ?? null, nombre: h?.nombre ?? "", categoria: h && h.categorias.length === 1 ? h.categorias[0] : "", regimen: h && h.regimenes.length === 1 ? h.regimenes[0] : "",
     descripcion: h?.descripcionFicha ?? "", fotoUrl: "", proveedor: "", estrellas: h?.estrellas ?? null, ubicacion: h?.ubicacionFicha ?? "", neto: {}, pvp: {}, pvpGeneral: null,
+    adultsOnly: h?.adultsOnly === true,
     capacidadNinos: null, edadInfanteMax: h ? null : EDADES_MANUAL_POR_DEFECTO.infanteMax, edadNinoMax: h ? null : EDADES_MANUAL_POR_DEFECTO.ninoMax,
   });
   const nuevoVuelo = (x?: EmpaquetadoOpt): EntradaVuelo => ({
@@ -118,7 +122,6 @@ export function PaqueteTotalForm({ inicial, destinos, hoteles, servicios, empaqu
   });
 
   const serviciosFicha = (id: number | null) => servicios.find((q) => q.id === id);
-  const pvpPrev = (neto: number | null | undefined) => (neta && neto != null ? pvpDeNeto(neto, e.pctMkPct / 100, e.moneda) : NaN);
 
   return (
     <div className="space-y-4">
@@ -182,7 +185,8 @@ export function PaqueteTotalForm({ inicial, destinos, hoteles, servicios, empaqu
 
           {general && (
             <div><h4 className="mb-1 text-sm font-semibold text-gray-700">Precio general por persona (toda la estadía)</h4>
-              <GridAcom etiqueta="PVP" valor={e.pvpGeneral ?? {}} onChange={(v) => set({ pvpGeneral: v })} /></div>
+              {soloAdultosTodos && <p className="mb-2 text-xs text-amber-900" data-testid="general-solo-adultos">Todos los hoteles del paquete son solo para adultos: no se pide precio de niño, niño 2 ni infante.</p>}
+              <GridAcom etiqueta="PVP" valor={e.pvpGeneral ?? {}} solo={soloAdultosTodos ? ACOMS_SOLO_ADULTOS : undefined} onChange={(v) => set({ pvpGeneral: v })} /></div>
           )}
 
           <div className="grid gap-3 sm:grid-cols-4">
@@ -209,56 +213,7 @@ export function PaqueteTotalForm({ inicial, destinos, hoteles, servicios, empaqu
             <Button type="button" variant="outline" onClick={() => set({ vuelos: [...e.vuelos, nuevoVuelo()] })}><Plus className="h-4 w-4" /> Vuelo manual</Button>
           </div>
           {e.vuelos.map((v, i) => (
-            <div key={i} className="space-y-3 rounded-lg border border-gray-200 p-3">
-              <div className="flex items-center justify-between text-xs text-gray-500"><span>{v.empaquetadoId ? `Vinculado a Empaquetados #${v.empaquetadoId} (valores copiados; edítalos aquí)` : "Vuelo manual"}</span>
-                <button type="button" aria-label="Quitar vuelo" onClick={() => del("vuelos", i)}><Trash2 className="h-4 w-4 text-red-500" /></button></div>
-              {v.destinoId != null && !destinosPermitidos.has(v.destinoId) && (
-                <p role="alert" className="rounded-md bg-red-50 p-2 text-xs text-red-700" data-testid="vuelo-destino-incompatible">Este vuelo es de un destino que ya no está en el paquete ({destinos.find((d) => d.id === v.destinoId)?.nombre ?? v.destinoId}). Quítalo, actívalo de nuevo como destino adicional o cambia el destino principal: no se reasigna solo.</p>
-              )}
-              {v.empaquetadoId == null && !e.multidestino && e.destinoId != null && (iataPrincipal ? (
-                <p className="text-xs text-gray-500" data-testid="destino-del-vuelo-auto">Llega a {nombrePrincipal} ({iataPrincipal}): el destino principal del paquete.</p>
-              ) : (
-                <p role="alert" className="rounded-md bg-amber-50 p-2 text-xs text-amber-900" data-testid="destino-sin-iata">El destino «{nombrePrincipal}» no tiene código IATA. Créalo o complétalo en Producto → Destinos para armar la ruta: un vuelo manual usa el aeropuerto del destino y no se inventa un código.</p>
-              ))}
-              <div className="grid gap-2 sm:grid-cols-4">
-                <div><label className={lbl}>Aerolínea</label><Input value={v.aerolinea} onChange={(x) => upd("vuelos", i, { aerolinea: x.target.value })} /></div>
-                {v.empaquetadoId != null ? (
-                  <div><label className={lbl}>Ruta (del empaquetado)</label><Input aria-label="Ruta" readOnly value={v.ruta} /></div>
-                ) : (
-                  <>
-                    <div><label className={lbl}>Origen (IATA)</label><ComboIata etiqueta="Origen IATA" value={v.origenIata} onChange={(c) => upd("vuelos", i, { origenIata: c })} /></div>
-                    {e.multidestino && (
-                      <div><label className={lbl}>Destino (IATA)</label><ComboIata etiqueta="Destino IATA" value={v.destinoIata} onChange={(c) => upd("vuelos", i, { destinoIata: c })} /></div>
-                    )}
-                    <div><label className={lbl}>Ruta (se calcula)</label><Input aria-label="Ruta" readOnly value={derivarRutaManual(v.origenIata, e.multidestino ? v.destinoIata : iataPrincipal, !!v.fechaRegreso) ?? ""} /></div>
-                  </>
-                )}
-                <div><label className={lbl}>Ida</label><DateInput aria-label="Ida" type="date" value={v.fechaIda} onValueChange={(d) => upd("vuelos", i, { fechaIda: d })} /></div>
-                <div><label className={lbl}>Regreso</label><DateInput aria-label="Regreso" type="date" value={v.fechaRegreso} onValueChange={(d) => upd("vuelos", i, { fechaRegreso: d })} /></div>
-                <div><label className={lbl}>Proveedor</label><Input value={v.proveedor} onChange={(x) => upd("vuelos", i, { proveedor: x.target.value })} /></div>
-                {e.multidestino && (
-                  <div><label className={lbl}>Destino del vuelo</label>
-                    <select aria-label="Destino del vuelo" className={sel} value={v.destinoId ?? e.destinoId ?? ""} onChange={(x) => { const id = x.target.value ? Number(x.target.value) : e.destinoId; upd("vuelos", i, { destinoId: id, ...(v.empaquetadoId == null ? { destinoIata: iataDeDestino(destinos, id) } : {}) }); }}>
-                      {destinos.filter((d) => d.id === e.destinoId || e.destinosExtra.includes(d.id)).map((d) => <option key={d.id} value={d.id}>{d.nombre}{d.id === e.destinoId ? " (principal)" : ""}</option>)}
-                    </select></div>
-                )}
-              </div>
-              {!general && (
-                <div className="rounded-lg bg-gray-50 p-3" data-testid="precios-vuelo">
-                  <p className="mb-3 text-xs text-gray-600">Regla de reservas: el <b>menor de 2 años</b> paga solo el fee de infante y <b>no ocupa silla</b>; <b>desde los 2 años</b> paga la tarifa de adulto y <b>ocupa silla</b>. Se aplica por la edad declarada, no por las categorías Niño 1 / Niño 2 del hotel, y no hay tarifa aérea de «niño».</p>
-                  <div className="grid gap-3 sm:grid-cols-2">
-                    {([["adulto", "adulto y menor desde 2 años", "Ocupa silla.", "Vuelo adulto"], ["infante", "infante (menor de 2 años)", "Sin silla. Escribe 0 si va gratis.", "Vuelo infante"]] as const).map(([k, nombre, ayuda, aria]) => (
-                      <div key={k} className="min-w-0">
-                        <label className={lbl}>{neta ? "Neto" : "PVP"} · {nombre}</label>
-                        <Input aria-label={`${neta ? "Neto" : "PVP"} ${aria}`} inputMode="numeric" value={(neta ? v.neto[k] : v.pvp[k]) == null ? "" : String(neta ? v.neto[k] : v.pvp[k])}
-                          onChange={(x) => upd("vuelos", i, neta ? { neto: { ...v.neto, [k]: n(x.target.value) } } : { pvp: { ...v.pvp, [k]: n(x.target.value) } })} />
-                        <span className="mt-1 block text-xs text-gray-500">{ayuda}{neta && v.neto[k] != null ? ` PVP ${pvpPrev(v.neto[k])}.` : ""}</span>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-              )}
-            </div>
+            <VueloFilaDin key={i} v={v} ctx={ctxVuelo} onChange={(p) => upd("vuelos", i, p)} onQuitar={() => del("vuelos", i)} />
           ))}
           {!e.vuelos.length && <p className="text-sm text-gray-500">Vincula un vuelo de Empaquetados o crea uno manual.</p>}
         </section>
@@ -284,8 +239,8 @@ export function PaqueteTotalForm({ inicial, destinos, hoteles, servicios, empaqu
           {e.hoteles.map((h, i) => {
             const f = h.hotelId == null ? undefined : hoteles.find((q) => q.id === h.hotelId);
             return (
-              <HotelFilaDin key={i} h={h} ctx={{ neta, general, pctMkPct: e.pctMkPct, moneda: e.moneda }} catalogo={catalogoHotel}
-                ficha={h.hotelId == null ? null : { categorias: f?.categorias ?? [], regimenes: f?.regimenes ?? [], reglasTexto: f?.reglasTexto ?? null, estrellas: f?.estrellas ?? null, descripcionFicha: f?.descripcionFicha ?? "", ubicacionFicha: f?.ubicacionFicha ?? "" }}
+              <HotelFilaDin key={i} h={h} ctx={{ neta, general, pctMkPct: e.pctMkPct, moneda: e.moneda, noches: e.noches }} catalogo={catalogoHotel}
+                ficha={h.hotelId == null ? null : { categorias: f?.categorias ?? [], regimenes: f?.regimenes ?? [], reglasTexto: f?.reglasTexto ?? null, estrellas: f?.estrellas ?? null, descripcionFicha: f?.descripcionFicha ?? "", ubicacionFicha: f?.ubicacionFicha ?? "", adultsOnly: f?.adultsOnly === true }}
                 onChange={(p) => upd("hoteles", i, p)} onQuitar={() => del("hoteles", i)} />
             );
           })}
@@ -303,53 +258,8 @@ export function PaqueteTotalForm({ inicial, destinos, hoteles, servicios, empaqu
             <Button type="button" variant="outline" onClick={() => set({ servicios: [...e.servicios, nuevoServicio()] })}><Plus className="h-4 w-4" /> Servicio manual</Button>
           </div>
           {e.servicios.map((s, i) => {
-            const ficha = s.servicioId != null ? serviciosFicha(s.servicioId) : undefined;
-            const vinculado = s.servicioId != null;
-            const esGrupo = ficha?.modo === "grupo";
-            const etq = neta ? "Neto" : "PVP";
-            return (
-              <div key={i} className="rounded-lg border border-gray-200 p-3" data-testid="ficha-servicio">
-                <div className="flex items-start gap-3">
-                  <div className="min-w-0 flex-1">
-                    <label className={lbl}>Servicio <span className="ml-1 rounded bg-gray-100 px-1.5 py-0.5 text-[11px] font-normal text-gray-600">{vinculado ? `Ficha #${s.servicioId}` : "Manual"}</span></label>
-                    <Input aria-label="Nombre del servicio" value={s.nombre} onChange={(x) => upd("servicios", i, { nombre: x.target.value })} />
-                  </div>
-                  <button type="button" aria-label="Quitar servicio" onClick={() => del("servicios", i)} className="mt-6 shrink-0 rounded-md p-2 text-red-500 hover:bg-red-50"><Trash2 className="h-4 w-4" /></button>
-                </div>
-                <div className="mt-3 grid items-start gap-3 sm:grid-cols-2">
-                  <div className="min-w-0">
-                    <label className={lbl}>{vinculado ? "Proveedor (de la ficha)" : "Proveedor"}</label>
-                    {vinculado
-                      ? <Input aria-label="Proveedor de la ficha" readOnly value={s.proveedor} placeholder="Sin proveedor en la ficha" />
-                      : <Input value={s.proveedor} onChange={(x) => upd("servicios", i, { proveedor: x.target.value })} />}
-                    {vinculado && s.proveedorId == null && <p role="alert" className="mt-1 text-xs text-red-600">{mensajeSinProveedor([s.nombre])}</p>}
-                  </div>
-                  {!general && !(neta && vinculado) && (
-                    <div className="min-w-0">
-                      <label className={lbl}>{etq} {esGrupo ? "por grupo (una vez)" : "por persona"}</label>
-                      <Input inputMode="numeric" value={(neta ? s.neto : s.pvp) == null ? "" : String(neta ? s.neto : s.pvp)} onChange={(x) => upd("servicios", i, neta ? { neto: n(x.target.value) } : { pvp: n(x.target.value) })} />
-                      {esGrupo && <span className="mt-1 block text-xs text-gray-500">Se cobra una sola vez dentro del rango de la ficha.</span>}
-                    </div>
-                  )}
-                  {porComp && vinculado && ficha?.modo === "persona" && (
-                    <div className="min-w-0">
-                      <label className={lbl}>PVP infante{ficha.cobraInfante ? " *" : ""}</label>
-                      <Input aria-label="PVP infante" inputMode="numeric" placeholder={ficha.cobraInfante ? "0 = gratis" : "0"} value={s.pvpInfante == null ? "" : String(s.pvpInfante)} onChange={(x) => upd("servicios", i, { pvpInfante: n(x.target.value) })} />
-                      <span className="mt-1 block text-xs text-gray-500">{ficha.cobraInfante ? "Menor de 2 años: la ficha lo cobra, defínelo (0 si va gratis)." : "Menor de 2 años: la ficha no lo cobra, queda en 0."}</span>
-                    </div>
-                  )}
-                </div>
-                {vinculado && ficha?.cobro && (
-                  <div className="mt-3 rounded-md bg-gray-50 px-3 py-2 text-xs text-gray-600" data-testid="cobro-ficha">
-                    <p className="font-medium text-gray-700">Cobro de la ficha</p>
-                    <ul className="mt-1 list-disc space-y-0.5 pl-4">
-                      <li>{ficha.cobro}</li>
-                      <li>{neta ? "El precio se calcula con la ficha (vigencia, grupo y menores) al cotizar." : esGrupo ? "Escribe el PVP del GRUPO: se cobra una vez mientras el grupo esté dentro del rango." : "Escribe el PVP por persona y, si la ficha cobra al infante, el del menor de 2 años."}</li>
-                    </ul>
-                  </div>
-                )}
-              </div>
-            );
+            const f = s.servicioId != null ? serviciosFicha(s.servicioId) : undefined;
+            return <ServicioFilaDin key={i} s={s} ficha={f ? { modo: f.modo, cobraInfante: f.cobraInfante, cobro: f.cobro } : undefined} ctx={{ neta, general, porComp }} onChange={(p) => upd("servicios", i, p)} onQuitar={() => del("servicios", i)} />;
           })}
           {!e.servicios.length && <p className="text-sm text-gray-500">Agrega servicios existentes o manuales. En los manuales el precio es por persona (el infante no paga); los vinculados se cobran como dice su ficha.</p>}
         </section>

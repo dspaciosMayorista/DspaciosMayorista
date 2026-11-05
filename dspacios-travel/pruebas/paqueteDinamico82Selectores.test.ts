@@ -78,12 +78,12 @@ test("seguirDestinoPrincipal y ajenosAlPrincipal: la asignación automática no 
 });
 
 test("cableado del formulario: ficha con buscador por nombre, IATA con selector y destino del vuelo solo con Multidestino", () => {
-  const f = sinComentarios(leer("app/(dashboard)/dashboard/paquetes/total/PaqueteTotalForm.tsx"));
+  const f = sinComentarios(["PaqueteTotalForm.tsx", "VueloFilaDin.tsx", "ServicioFilaDin.tsx", "HotelFilaDin.tsx"].map((x) => leer("app/(dashboard)/dashboard/paquetes/total/" + x)).join(" "));
   assert.match(f, /<ComboHotel hoteles=\{hotelesDest\.map/); assert.match(f, /max=\{500\}/);
   assert.doesNotMatch(f, /Usar ficha de hotel existente/); assert.match(f, /Hotel manual/);
   assert.match(f, /<ComboIata etiqueta="Origen IATA"/); assert.match(f, /<ComboIata etiqueta="Destino IATA"/);
   assert.doesNotMatch(f, /<Input aria-label="Origen IATA"|<Input aria-label="Destino IATA"/);
-  assert.match(f, /\{e\.multidestino && \(\s*<div><label className=\{lbl\}>Destino del vuelo<\/label>/);
+  assert.match(f, /\{ctx\.multidestino && \(\s*<div className="min-w-0"><label className=\{lbl\}>Destino del vuelo<\/label>/);
   assert.doesNotMatch(f, /<option value="">Destino del paquete<\/option>/, "no hay opción vacía: el destino es siempre explícito");
   assert.match(f, /destinoId: e\.multidestino \? \(x\?\.destino_id \?\? e\.destinoId\) : e\.destinoId/);
   assert.match(f, /alternarMultidestino\(x\.target\.checked\)/); assert.match(f, /seguirDestinoPrincipal\(x\.vuelos, x\.destinoId, nuevo, iataDeDestino\(destinos, nuevo\)\)/);
@@ -101,7 +101,7 @@ test("catálogo de montaje: todas las fichas activas por páginas y en lotes, y 
   assert.match(c, /leerPaginado</); assert.match(c, /\.range\(a, b\)/); assert.match(c, /enLotes\(/);
   assert.match(c, /select\("id", \{ count: "exact", head: true \}\)\.eq\("activo", true\)/);
   assert.match(c, /fichasActivas: activas\.count \?\? undefined/);
-  const f = sinComentarios(leer("app/(dashboard)/dashboard/paquetes/total/PaqueteTotalForm.tsx"));
+  const f = sinComentarios(["PaqueteTotalForm.tsx", "VueloFilaDin.tsx", "ServicioFilaDin.tsx", "HotelFilaDin.tsx"].map((x) => leer("app/(dashboard)/dashboard/paquetes/total/" + x)).join(" "));
   assert.match(f, /hoteles\.length < fichasActivas/); assert.match(f, /migración 280/);
   assert.doesNotMatch(c, /moneda\) ===|tarifa_hotel|hotel_temporadas/, "el listado no filtra por moneda ni mira tarifas");
 });
@@ -120,9 +120,9 @@ test("seguirDestinoPrincipal con IATA: los manuales que seguían al principal to
 });
 
 test("cableado: sin Multidestino no se pide «Destino IATA», se usa el del principal y se avisa si no lo tiene; el servidor lo relee del catálogo", () => {
-  const f = sinComentarios(leer("app/(dashboard)/dashboard/paquetes/total/PaqueteTotalForm.tsx"));
-  assert.match(f, /\{e\.multidestino && \(\s*<div><label className=\{lbl\}>Destino \(IATA\)<\/label><ComboIata etiqueta="Destino IATA"/);
-  assert.match(f, /derivarRutaManual\(v\.origenIata, e\.multidestino \? v\.destinoIata : iataPrincipal, !!v\.fechaRegreso\)/);
+  const f = sinComentarios(["PaqueteTotalForm.tsx", "VueloFilaDin.tsx", "ServicioFilaDin.tsx", "HotelFilaDin.tsx"].map((x) => leer("app/(dashboard)/dashboard/paquetes/total/" + x)).join(" "));
+  assert.match(f, /\{ctx\.multidestino && \(\s*<div className="min-w-0"><label className=\{lbl\}>Destino \(IATA\)<\/label><ComboIata etiqueta="Destino IATA"/);
+  assert.match(f, /derivarRutaManual\(v\.origenIata, ctx\.multidestino \? v\.destinoIata : ctx\.iataPrincipal, !!v\.fechaRegreso\)/);
   assert.match(f, /data-testid="destino-sin-iata"/); assert.match(f, /Producto → Destinos/);
   assert.match(f, /e\.multidestino \? e : \{ \.\.\.e, vuelos: e\.vuelos\.map\(\(v\) => \(v\.empaquetadoId == null \? \{ \.\.\.v, destinoIata: iataPrincipal \} : v\)\) \}/);
   const c = sinComentarios(leer("app/(dashboard)/dashboard/paquetes/total/catalogos.ts"));

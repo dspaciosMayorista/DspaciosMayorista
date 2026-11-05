@@ -34,7 +34,7 @@ test("migración 280: nueva, aditiva, con preflight/postcheck/rollback; no edita
 test("selector, acción y formulario: ninguno rechaza ni oculta una ficha por tarifario ni por moneda", () => {
   const cat = sinComentarios(leer("app/(dashboard)/dashboard/paquetes/total/catalogos.ts"));
   const act = sinComentarios(leer("app/(dashboard)/dashboard/paquetes/total/actions.ts"));
-  const form = sinComentarios(leer("app/(dashboard)/dashboard/paquetes/total/PaqueteTotalForm.tsx"));
+  const form = sinComentarios(["PaqueteTotalForm.tsx", "VueloFilaDin.tsx", "ServicioFilaDin.tsx", "HotelFilaDin.tsx"].map((x) => leer("app/(dashboard)/dashboard/paquetes/total/" + x)).join(" "));
   assert.match(cat, /rpc\("hoteles_vinculables_din"/);
   assert.match(act, /rpc\("hotel_vinculable_din"/);
   assert.doesNotMatch(act, /no tener vigencias ni tarifas/); assert.doesNotMatch(act, /El hotel «.*» está en/);

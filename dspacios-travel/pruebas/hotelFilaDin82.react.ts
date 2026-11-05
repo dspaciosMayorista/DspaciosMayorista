@@ -52,7 +52,7 @@ const hotelManual: EntradaHotel = {
   hotelId: null, nombre: "Hotel Mar", categoria: "Estándar", regimen: "PAE", descripcion: "", fotoUrl: "", proveedor: "Prov", estrellas: null, ubicacion: "",
   neto: { doble: 100000 }, pvp: {}, pvpGeneral: null, capacidadNinos: 2, edadInfanteMax: 2, edadNinoMax: 10,
 };
-const ctx = { neta: true, general: false, pctMkPct: 20, moneda: "COP" };
+const ctx = { neta: true, general: false, pctMkPct: 20, moneda: "COP", noches: 3 };
 const catalogo = { categorias: ["Estándar", "Superior"], regimenes: ["PAE", "PC"] };
 
 // Contenedor con estado, igual que el formulario (el hotel vive en el estado del padre).

@@ -66,6 +66,8 @@ export async function cargarCatalogos() {
       estrellas: infoFicha.get(x.id)?.estrellas ?? null, descripcionFicha: infoFicha.get(x.id)?.descripcion ?? "", ubicacionFicha: infoFicha.get(x.id)?.ubicacion ?? "",
       categorias: opciones.get(x.id)?.categorias ?? [], regimenes: opciones.get(x.id)?.regimenes ?? [],
       reglasTexto: reglas.get(x.id) ? explicarEdades(reglas.get(x.id) ?? null).edades : null,
+      // Solo adultos (de la ficha): el editor oculta los importes de menores; el servidor lo vuelve a leer al guardar.
+      adultsOnly: reglas.get(x.id)?.adultsOnly === true,
     })),
     servicios: sv.map((x) => ({
       id: x.id, nombre: x.nombre, destino_id: x.destino_id, moneda: x.moneda ?? "COP", proveedorId: x.proveedor_id, proveedor: x.proveedor_id != null ? (pn[x.proveedor_id] ?? "") : "",

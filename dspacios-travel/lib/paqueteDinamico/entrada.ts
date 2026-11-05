@@ -18,6 +18,8 @@ export type EntradaHotel = {
   /** Dirección o lugar para el mapa (vacío = sin dato: la tarjeta no muestra mapa). */
   ubicacion: string;
   neto: PrecioAcom; pvp: PrecioAcom; pvpGeneral: PrecioAcom | null;
+  /** La ficha del hotel es solo para adultos. El navegador lo trae del catálogo para ocultar campos; el SERVIDOR lo vuelve a leer de la ficha y ese valor es el que manda. */
+  adultsOnly?: boolean;
   /** Solo hotel MANUAL: capacidad máxima de niños por habitación (general a sus acomodaciones) y umbrales de edad. Con ficha se leen de la ficha. */
   capacidadNinos: number | null; edadInfanteMax: number | null; edadNinoMax: number | null;
 };

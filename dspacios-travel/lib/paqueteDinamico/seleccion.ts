@@ -18,8 +18,9 @@ export async function resolverSeleccionDin(admin: Admin, a: {
   paquete: FilaPaqueteDin; hotel: FilaHotelDin | null; vuelo: FilaVueloDin | null; servicios: FilaServicioDin[]; composicion: Composicion; fechaIda: string;
 }): Promise<SeleccionResuelta> {
   const p = a.paquete;
-  const calc = armarPaqueteCalc(p, a.hotel, a.vuelo, a.servicios);
   const reglas = a.hotel ? (await cargarReglasHoteles(admin, [a.hotel])).get(a.hotel.id) ?? null : null;
+  // Adults Only sale de la FICHA (reglas), nunca de lo que traiga la fila ni el navegador.
+  const calc = armarPaqueteCalc(p, a.hotel ? { ...a.hotel, adults_only: reglas?.adultsOnly === true } : null, a.vuelo, a.servicios);
   const m = resolverMenores({ habitaciones: a.composicion.habitaciones, edades: a.composicion.edadesMenores, reglas });
   if (!m.ok) return m;
   const paxPorHabitacion = reglas ? Object.fromEntries(reglas.reglas.map((r) => [r.acomodacion, r.pax_tarifa])) : undefined;

@@ -68,8 +68,12 @@ const selectorFichas = () => document.querySelector('[data-testid="selector-fich
 // ComboHotel (compartido) abre la lista al recibir el foco.
 const abrirFichas = async () => { await act(async () => { selectorFichas().dispatchEvent(new dom.window.FocusEvent("focusin", { bubbles: true })); }); };
 const checkMulti = () => [...document.querySelectorAll("label")].find((l) => l.textContent?.includes("Multidestino"))!.querySelector("input") as HTMLInputElement;
-const vueloManual = async () => { await click(pestana("Vuelo")); await click(boton("Vuelo manual")); };
-const guardar = async () => { await click(boton("Guardar paquete")); await act(async () => { await new Promise((r) => setTimeout(r, 20)); }); };
+// Los vuelos son filas compactas: el detalle se edita en una ventana. «vueloManual» agrega uno y abre su ventana; «aplicar» = Guardar cambios de la ventana abierta.
+const filasVuelo = () => [...document.querySelectorAll('button[aria-label^="Editar vuelo"]')];
+const abrirVuelo = async (i = 0) => { await click(filasVuelo()[i]); };
+const aplicar = async () => { if (document.querySelector('[data-testid="ventana-vuelo"]')) await click(boton("Guardar cambios")); };
+const vueloManual = async () => { await click(pestana("Vuelo")); await click(boton("Vuelo manual")); await abrirVuelo(filasVuelo().length - 1); };
+const guardar = async () => { await aplicar(); await click(boton("Guardar paquete")); await act(async () => { await new Promise((r) => setTimeout(r, 20)); }); };
 
 test("HOTEL: «Hotel manual» sigue aparte y el selector busca fichas por nombre (ya no hay «Usar ficha de hotel existente»)", async () => {
   await montar();
@@ -171,7 +175,7 @@ test("VUELO manual: Origen acepta un código válido que no está en el catálog
   await escribir(combo("Origen IATA"), "ab");
   await tecla(combo("Origen IATA"), "Escape");
   assert.equal(combo("Origen IATA").getAttribute("aria-invalid"), "true");
-  assert.match(cont!.textContent!, /Elige una ciudad de la lista o escribe un código IATA de 3 letras/);
+  assert.match(document.body.textContent!, /Elige una ciudad de la lista o escribe un código IATA de 3 letras/);
   assert.equal((document.querySelector('input[aria-label="Ruta"]') as HTMLInputElement).value, "");
   await guardar();
   assert.equal(llamadas[0].vuelos[0].origenIata, "", "un texto inválido no viaja como código");
@@ -216,8 +220,9 @@ test("MULTIDESTINO: al activarlo, el vuelo manual pasa a pedir su Destino IATA y
   await montar();
   await vueloManual();
   assert.equal(combo("Destino IATA"), null);
+  await aplicar();
   await click(pestana("Configuración")); await click(checkMulti());
-  await click(pestana("Vuelo"));
+  await click(pestana("Vuelo")); await abrirVuelo();
   assert.equal(combo("Destino IATA").value, "Montego Bay (MBJ)");
 });
 
@@ -238,6 +243,8 @@ test("VUELO vinculado: conserva la ruta REAL del empaquetado, no la reemplaza po
   await click(pestana("Vuelo"));
   const sel = [...document.querySelectorAll("select")].find((s) => s.options[0]?.textContent?.startsWith("Vincular vuelo"))!;
   await escribir(sel, "3");
+  assert.match(document.querySelector('[data-testid="resumen-vuelo"]')!.textContent!, /^PTY - KIN - PTY/, "la fila ya muestra la ruta real");
+  await abrirVuelo();
   assert.equal((document.querySelector('input[aria-label="Ruta"]') as HTMLInputElement).value, "PTY - KIN - PTY", "la ruta del empaquetado (destino comercial: Montego Bay)");
   assert.equal(document.querySelector('[data-testid="destino-del-vuelo-auto"]'), null, "el aviso del vuelo manual no aplica");
   assert.equal(combo("Origen IATA"), null);
@@ -254,6 +261,7 @@ test("DESTINO DEL VUELO: vincular un vuelo de Empaquetados asigna el destino pri
   const opts = [...sel.options].map((o) => o.textContent);
   assert.ok(opts.some((o) => o?.includes("Avianca")) && !opts.some((o) => o?.includes("2030-02-10")), "con Multidestino apagado solo los del principal (el de Kingston no)");
   await escribir(sel, "1");
+  await abrirVuelo();
   assert.equal(document.querySelectorAll('input[aria-label="Ruta"]').length, 1);
   await guardar();
   assert.equal(llamadas[0].vuelos[0].destinoId, 1);
@@ -277,26 +285,28 @@ test("MULTIDESTINO: no se desactiva si hay vuelos o servicios de destinos adicio
   await montar({}, { ...inicial, multidestino: true, destinosExtra: [2] });
   await vueloManual();
   await escribir(document.querySelector('select[aria-label="Destino del vuelo"]')!, "2");
+  await aplicar();
   await click(pestana("Configuración"));
   await click(checkMulti());
   assert.equal(checkMulti().checked, true, "sigue activo");
   assert.match(document.querySelector('[data-testid="aviso-multidestino"]')!.textContent!, /No se puede desactivar Multidestino: 1 vuelo o servicio usa un destino adicional \(1 vuelo, 0 servicios\)/);
-  await click(pestana("Vuelo"));
+  await click(pestana("Vuelo")); await abrirVuelo();
   await escribir(document.querySelector('select[aria-label="Destino del vuelo"]')!, "1");
+  await aplicar();
   await click(pestana("Configuración"));
   await click(checkMulti());
   assert.equal(checkMulti().checked, false);
   assert.equal(document.querySelector('[data-testid="aviso-multidestino"]'), null);
-  await click(pestana("Vuelo"));
+  await click(pestana("Vuelo")); await abrirVuelo();
   assert.equal(document.querySelector('select[aria-label="Destino del vuelo"]'), null, "ya no hay campo");
 });
 
 test("DESTINO PRINCIPAL: los vuelos manuales que lo seguían lo siguen al cambiarlo; uno de otro destino se señala y no se toca", async () => {
   await montar({}, { ...inicial, multidestino: true, destinosExtra: [2] });
-  await vueloManual();
-  await click(boton("Vuelo manual"));
-  const selects = () => [...document.querySelectorAll('select[aria-label="Destino del vuelo"]')] as HTMLSelectElement[];
-  await escribir(selects()[1], "2");
+  await vueloManual(); await aplicar();
+  await vueloManual(); // el segundo (se abre su ventana)
+  await escribir(document.querySelector('select[aria-label="Destino del vuelo"]')!, "2");
+  await aplicar();
   await click(pestana("Configuración"));
   const principal = [...document.querySelectorAll("select")].find((s) => s.options[0]?.textContent === "Elige…")!;
   await escribir(principal, "3");

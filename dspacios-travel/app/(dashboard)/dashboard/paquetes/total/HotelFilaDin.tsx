@@ -7,46 +7,27 @@ import { useId, useState } from "react";
 import { Building2, SlidersHorizontal, Trash2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Categoria } from "@/app/tarifario/tarjetaHotelCompartida";
 import { ACOMS_DIN, pvpDeNeto } from "@/lib/paqueteDinamico/calculo";
 import type { EntradaHotel } from "@/lib/paqueteDinamico/entrada";
 import { CAPACIDAD_NINOS_MAX } from "@/lib/paqueteDinamico/menores";
 import { normalizarOpcionHotel, opcionesOfrecidas } from "@/lib/paqueteDinamico/opcionesHotel";
 import { ComboCreable } from "./ComboCreable";
-import { ETQ, GridAcom, lbl, n, sel } from "./editorUi";
+import { ACOMS_SOLO_ADULTOS, ETQ, GridAcom, Ventana, lbl, n, sel } from "./editorUi";
 
 /** Lo que el montaje sabe de la ficha vinculada (null = hotel manual). */
 export type FichaHotelDin = {
   categorias: string[]; regimenes: string[]; reglasTexto: string | null;
   estrellas: number | null; descripcionFicha: string; ubicacionFicha: string;
+  /** La ficha es solo para adultos: prevalece sobre las edades configuradas (no se piden ni se muestran importes de niño, niño 2 ni infante). */
+  adultsOnly?: boolean;
 };
-export type ContextoTarifasDin = { neta: boolean; general: boolean; pctMkPct: number; moneda: string };
+export type ContextoTarifasDin = { neta: boolean; general: boolean; pctMkPct: number; moneda: string; /** Noches del paquete: los importes del hotel son por persona por TODA la estadía. */ noches: number };
 
 const SIN_DATO = "Sin dato";
 
 /** Texto corto de las estrellas del HOTEL (no de la categoría de habitación). */
 export const etiquetaEstrellas = (e: number | null) => (e ? `${e} estrella${e === 1 ? "" : "s"}` : SIN_DATO);
-
-function Ventana({ abierta, titulo, descripcion, onCancelar, onGuardar, children }: {
-  abierta: boolean; titulo: string; descripcion: string; onCancelar: () => void; onGuardar: () => void; children: React.ReactNode;
-}) {
-  return (
-    <Dialog open={abierta} onOpenChange={(o) => { if (!o) onCancelar(); }}>
-      <DialogContent className="max-h-[90dvh] w-[calc(100%-1rem)] max-w-[calc(100%-1rem)] overflow-y-auto overflow-x-hidden sm:max-w-2xl" data-testid="ventana-hotel">
-        <DialogHeader className="pr-8">
-          <DialogTitle className="text-base font-semibold">{titulo}</DialogTitle>
-          <DialogDescription>{descripcion}</DialogDescription>
-        </DialogHeader>
-        <div className="min-w-0 space-y-3">{children}</div>
-        <DialogFooter>
-          <Button type="button" variant="outline" onClick={onCancelar}>Cancelar</Button>
-          <Button type="button" onClick={onGuardar} style={{ backgroundColor: "var(--brand-primary)" }}>Guardar cambios</Button>
-        </DialogFooter>
-      </DialogContent>
-    </Dialog>
-  );
-}
 
 function InformacionHotel({ h, ficha, abierta, onCerrar, onAplicar }: { h: EntradaHotel; ficha: FichaHotelDin | null; abierta: boolean; onCerrar: () => void; onAplicar: (p: Partial<EntradaHotel>) => void }) {
   const id = useId();
@@ -87,6 +68,9 @@ function TarifasHotel({ h, ficha, ctx, abierta, onCerrar, onAplicar, catalogo }:
   const cats = opcionesOfrecidas(ficha?.categorias ?? [], catalogo.categorias, [h.categoria]);
   const regs = opcionesOfrecidas(ficha?.regimenes ?? [], catalogo.regimenes, [h.regimen]);
   const pvpPrev = (neto: number | null | undefined) => (ctx.neta && neto != null ? pvpDeNeto(neto, ctx.pctMkPct / 100, ctx.moneda) : NaN);
+  // Solo adultos (ficha): los importes de menores no se piden ni se muestran; los que ya existieran se CONSERVAN (no se borran) pero no se usan.
+  const sinMenores = ficha?.adultsOnly === true;
+  const acomsEd = sinMenores ? ACOMS_SOLO_ADULTOS : ACOMS_DIN;
   return (
     <Ventana abierta={abierta} titulo="Tarifas y configuración" descripcion={`${d.nombre || "Hotel"}: habitación, alimentación, menores, proveedor y precios por acomodación.`}
       onCancelar={onCerrar}
@@ -113,8 +97,14 @@ function TarifasHotel({ h, ficha, ctx, abierta, onCerrar, onAplicar, catalogo }:
           <p className="text-xs text-gray-500 sm:col-span-2" data-testid="menores-ficha">{ficha?.reglasTexto ?? "Las reglas de menores (edades, capacidad, solo adultos) se leen de la ficha del hotel."} Se conservan las de la ficha; aquí no se configuran otra vez.</p>
         )}
       </div>
-      {!ctx.general && <GridAcom etiqueta={ctx.neta ? "Neto" : "PVP"} valor={ctx.neta ? d.neto : d.pvp} onChange={(v) => setD({ ...d, ...(ctx.neta ? { neto: v } : { pvp: v }) })} />}
-      {ctx.neta && <p className="text-xs text-gray-500">PVP (con {ctx.pctMkPct}%): {ACOMS_DIN.map((a) => `${ETQ[a]} ${Number.isFinite(pvpPrev(d.neto[a])) ? pvpPrev(d.neto[a]) : "—"}`).join(" · ")}</p>}
+      {sinMenores && (
+        <p className="rounded-md bg-amber-50 p-2 text-xs text-amber-900" data-testid="solo-adultos">Hotel solo para adultos (según su ficha): no se piden importes de niño, niño 2 ni infante y no se pueden cotizar menores en este hotel.</p>
+      )}
+      {!ctx.general && (
+        <p className="text-xs text-gray-600" data-testid="unidad-hotel">Importes <b>por persona según la acomodación</b>, por el <b>total de la estadía de {ctx.noches} {ctx.noches === 1 ? "noche" : "noches"}</b> (no por noche).</p>
+      )}
+      {!ctx.general && <GridAcom etiqueta={ctx.neta ? "Neto" : "PVP"} valor={ctx.neta ? d.neto : d.pvp} solo={acomsEd} onChange={(v) => setD({ ...d, ...(ctx.neta ? { neto: v } : { pvp: v }) })} />}
+      {ctx.neta && <p className="text-xs text-gray-500">PVP (con {ctx.pctMkPct}%): {acomsEd.map((a) => `${ETQ[a]} ${Number.isFinite(pvpPrev(d.neto[a])) ? pvpPrev(d.neto[a]) : "—"}`).join(" · ")}</p>}
       {ctx.general && <p className="text-xs text-gray-500">En precio general el precio se define en Configuración; aquí solo van los datos del hotel.</p>}
     </Ventana>
   );
@@ -129,7 +119,8 @@ export function HotelFilaDin({ h, ficha, ctx, catalogo, onChange, onQuitar }: {
   const [apertura, setApertura] = useState(0);
   const abrir = (v: "info" | "tarifas") => { setApertura((x) => x + 1); setVentana(v); };
   const cerrar = () => setVentana(null);
-  const precios = ctx.general ? null : ACOMS_DIN.filter((a) => (ctx.neta ? h.neto : h.pvp)[a] != null).length;
+  const acomsFila = ficha?.adultsOnly ? ACOMS_SOLO_ADULTOS : ACOMS_DIN;
+  const precios = ctx.general ? null : acomsFila.filter((a) => (ctx.neta ? h.neto : h.pvp)[a] != null).length;
   const datos = [h.categoria && `Habitación: ${h.categoria}`, h.regimen && `Alimentación: ${h.regimen}`, h.proveedor && `Proveedor: ${h.proveedor}`].filter(Boolean) as string[];
   return (
     <div className="flex flex-col gap-2 rounded-lg border border-gray-200 p-3 sm:flex-row sm:items-center sm:justify-between" data-testid="fila-hotel">
@@ -138,10 +129,11 @@ export function HotelFilaDin({ h, ficha, ctx, catalogo, onChange, onQuitar }: {
           <span className="truncate font-semibold text-gray-900">{h.nombre || "Hotel sin nombre"}</span>
           <span className="rounded-full bg-gray-100 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-gray-600" data-testid="tipo-hotel">{h.hotelId ? `Ficha #${h.hotelId}` : "Manual"}</span>
           <Categoria estrellas={ficha?.estrellas ?? h.estrellas} clasificacion={null} />
+          {ficha?.adultsOnly && <span className="rounded-full bg-amber-100 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-amber-900" data-testid="badge-solo-adultos">Solo adultos</span>}
         </div>
         <p className="mt-0.5 text-xs text-gray-500 [overflow-wrap:anywhere]" data-testid="resumen-hotel">
           {datos.length ? datos.join(" · ") : "Falta categoría, alimentación y proveedor"}
-          {precios != null && ` · ${precios} de ${ACOMS_DIN.length} precios`}
+          {precios != null && ` · ${precios} de ${acomsFila.length} precios`}
         </p>
       </div>
       <div className="flex flex-wrap items-center gap-2">

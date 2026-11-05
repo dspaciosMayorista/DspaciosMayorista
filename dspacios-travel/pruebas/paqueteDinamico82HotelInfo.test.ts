@@ -39,7 +39,7 @@ test("con ficha, el servidor copia estrellas/descripcion/ubicacion de hoteles (n
   assert.match(f, /x\.estrellas >= 1 && x\.estrellas <= 5 \? x\.estrellas : null/);
   const c = leer("app/(dashboard)/dashboard/paquetes/total/catalogos.ts");
   assert.match(c, /cargarInfoHotelesFicha\(admin,/);
-  assert.match(leer("app/(dashboard)/dashboard/paquetes/total/PaqueteTotalForm.tsx"), /estrellas: h\?\.estrellas \?\? null, ubicacion: h\?\.ubicacionFicha \?\? ""/);
+  assert.match(["PaqueteTotalForm.tsx", "VueloFilaDin.tsx", "ServicioFilaDin.tsx", "HotelFilaDin.tsx"].map((x) => leer("app/(dashboard)/dashboard/paquetes/total/" + x)).join(" "), /estrellas: h\?\.estrellas \?\? null, ubicacion: h\?\.ubicacionFicha \?\? ""/);
 });
 
 test("la vista pública lleva estrellas y ubicación (nunca netos) y la tarjeta usa los componentes del hotel normal", () => {

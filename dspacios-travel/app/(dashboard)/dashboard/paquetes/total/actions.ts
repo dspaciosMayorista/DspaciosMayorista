@@ -43,7 +43,7 @@ const filaPaquete = (e: EntradaPaqueteTotal, id: number): FilaPaqueteDin => ({
 function validarOpciones(e: EntradaPaqueteTotal, destinos: { id: number; pais: string | null }[] = []): string[] {
   const base = validarEntradaPaqueteTotal(e, destinos);
   if (base.length) return base;
-  const hoteles: FilaHotelDin[] = e.hoteles.map((h, i) => ({ id: i + 1, hotel_id: h.hotelId, capacidad_ninos: h.capacidadNinos, edad_infante_max: h.edadInfanteMax, edad_nino_max: h.edadNinoMax, nombre: h.nombre, categoria: h.categoria, regimen: h.regimen, descripcion: h.descripcion, foto_url: h.fotoUrl, estrellas: h.estrellas, ubicacion: h.ubicacion, proveedor: h.proveedor, neto: h.neto, pvp: h.pvp, pvp_general: h.pvpGeneral }));
+  const hoteles: FilaHotelDin[] = e.hoteles.map((h, i) => ({ id: i + 1, hotel_id: h.hotelId, capacidad_ninos: h.capacidadNinos, edad_infante_max: h.edadInfanteMax, edad_nino_max: h.edadNinoMax, nombre: h.nombre, categoria: h.categoria, regimen: h.regimen, descripcion: h.descripcion, foto_url: h.fotoUrl, estrellas: h.estrellas, ubicacion: h.ubicacion, proveedor: h.proveedor, neto: h.neto, pvp: h.pvp, pvp_general: h.pvpGeneral, adults_only: h.adultsOnly === true }));
   const vuelos: FilaVueloDin[] = e.vuelos.map((v, i) => ({ id: i + 1, empaquetado_id: v.empaquetadoId, destino_id: v.destinoId, aerolinea: v.aerolinea, ruta: v.ruta, fecha_ida: v.fechaIda, fecha_regreso: v.fechaRegreso, proveedor: v.proveedor, neto: v.neto, pvp: v.pvp }));
   const servicios: FilaServicioDin[] = e.servicios.map((s, i) => ({ id: i + 1, servicio_id: s.servicioId, nombre: s.nombre, proveedor: s.proveedor, neto: s.neto, pvp: s.pvp, pvp_infante: s.pvpInfante }));
   const msgs = new Set<string>();
@@ -164,11 +164,18 @@ async function completarDesdeFichas(sb: Loose, e: EntradaPaqueteTotal): Promise<
     let info = new Map<number, Awaited<ReturnType<typeof cargarInfoHotelesFicha>> extends Map<number, infer V> ? V : never>();
     try { info = await cargarInfoHotelesFicha(adm, fichaIds); }
     catch { errores.push("No se pudo leer las estrellas, la descripción y la ubicación de la ficha del hotel vinculado. No se guardó nada; intenta de nuevo en unos minutos."); }
+    // ADULTS ONLY: la condición sale de la FICHA, leída aquí en el servidor; lo que mande el navegador se descarta (un hotel manual nunca es «solo adultos»).
+    const soloAdultos = new Map<number, boolean>();
+    if (fichaIds.length) {
+      const { data: aoRows, error: aoErr } = await sb.from("hoteles").select("id, adults_only").in("id", fichaIds);
+      if (aoErr) errores.push("No se pudo leer si la ficha del hotel es solo para adultos. No se guardó nada; intenta de nuevo en unos minutos.");
+      for (const x of aoRows ?? []) soloAdultos.set(x.id, x.adults_only === true);
+    }
     e = { ...e, hoteles: e.hoteles.map((h) => {
-      if (h.hotelId == null) return h;
+      if (h.hotelId == null) return { ...h, adultsOnly: false };
       const o = opc.get(h.hotelId) ?? { categorias: [], regimenes: [] };
       const f = info.get(h.hotelId);
-      return { ...h, estrellas: f?.estrellas ?? h.estrellas, descripcion: f?.descripcion || h.descripcion, ubicacion: f?.ubicacion || h.ubicacion, categoria: h.categoria || (o.categorias.length === 1 ? o.categorias[0] : ""), regimen: h.regimen || (o.regimenes.length === 1 ? o.regimenes[0] : ""), capacidadNinos: null, edadInfanteMax: null, edadNinoMax: null };
+      return { ...h, adultsOnly: soloAdultos.get(h.hotelId) === true, estrellas: f?.estrellas ?? h.estrellas, descripcion: f?.descripcion || h.descripcion, ubicacion: f?.ubicacion || h.ubicacion, categoria: h.categoria || (o.categorias.length === 1 ? o.categorias[0] : ""), regimen: h.regimen || (o.regimenes.length === 1 ? o.regimenes[0] : ""), capacidadNinos: null, edadInfanteMax: null, edadNinoMax: null };
     }) };
   }
 
@@ -237,10 +244,19 @@ export async function publicarPaqueteTotal(id: number, publicado: boolean): Prom
     if (!p.activo) return { ok: false, error: "El paquete está inactivo." };
     if (p.compra_fin && p.compra_fin < hoyBogota()) return { ok: false, error: "La vigencia de compra ya terminó." };
     const [v, h, s] = await Promise.all(["paquete_din_vuelos", "paquete_din_hoteles", "paquete_din_servicios"].map(async (t) => (await sb.from(t).select("*").eq("paquete_id", id)).data ?? []));
+    // Adults Only se vuelve a leer de la ficha al publicar: la ficha pudo cambiar desde que se guardó el paquete.
+    const idsFicha = (h as { hotel_id: number | null }[]).map((x) => x.hotel_id).filter((x): x is number => x != null);
+    const soloAdultos = new Map<number, boolean>();
+    if (idsFicha.length) {
+      const { data: aoRows, error: aoErr } = await sb.from("hoteles").select("id, adults_only").in("id", idsFicha);
+      if (aoErr) return { ok: false, error: "No se pudo leer si la ficha del hotel es solo para adultos. Intenta de nuevo." };
+      for (const x of aoRows ?? []) soloAdultos.set(x.id, x.adults_only === true);
+    }
+    const hConFicha = (h as { hotel_id: number | null }[]).map((x) => ({ ...x, adults_only: x.hotel_id != null && soloAdultos.get(x.hotel_id) === true }));
     const msgs = new Set<string>();
     if (p.usa_hotel && !h.length) msgs.add("Agrega al menos un hotel.");
     if (p.usa_vuelo && !v.length) msgs.add("Agrega al menos un vuelo.");
-    for (const o of opcionesDelPaquete(p as FilaPaqueteDin, h as FilaHotelDin[], v as FilaVueloDin[], s as FilaServicioDin[])) for (const m of validarPaquete(o.calc)) msgs.add(m);
+    for (const o of opcionesDelPaquete(p as FilaPaqueteDin, hConFicha as unknown as FilaHotelDin[], v as FilaVueloDin[], s as FilaServicioDin[])) for (const m of validarPaquete(o.calc)) msgs.add(m);
     // La ficha del servicio pudo cambiar desde que se guardó el paquete: se vuelve a leer su proveedor.
     const vinc = (s as { servicio_id: number | null; nombre: string }[]).filter((x) => x.servicio_id != null);
     if (vinc.length) {

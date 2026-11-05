@@ -46,7 +46,8 @@ export type PaqueteDin = {
   usaHotel: boolean;
   usaServicios: boolean;
   vuelo?: { proveedor?: string; neto: PrecioVuelo; pvp: PrecioVuelo };
-  hotel?: { nombre: string; proveedor?: string; neto: PrecioAcom; pvp: PrecioAcom };
+  /** `adultsOnly`: la ficha del hotel es solo para adultos (lo fija el SERVIDOR desde la ficha): no se exigen ni se usan importes de niño, niño 2 ni infante y se rechazan menores. */
+  hotel?: { nombre: string; proveedor?: string; neto: PrecioAcom; pvp: PrecioAcom; adultsOnly?: boolean };
   servicios: ServicioDin[];
   pvpGeneral?: PrecioAcom;       // solo_pvp + general
   /** Total por acomodación declarado a mano para contrastar con el desglose (solo_pvp por componente). */
@@ -102,8 +103,11 @@ export function validarPaquete(p: PaqueteDin): string[] {
   if (p.esquema === "solo_pvp" && !p.pvpModo) e.push("En solo PVP elige precio general o PVP por componente.");
   const general = p.esquema === "solo_pvp" && p.pvpModo === "general";
 
+  // Hotel solo adultos: sus importes de menores no se exigen (ausentes ≠ gratis: simplemente no se pueden vender) ni se borran los que ya existan.
+  const acomsHotel: readonly AcomDin[] = p.usaHotel && p.hotel?.adultsOnly === true ? ROOMS : ACOMS_DIN;
+
   if (general) {
-    for (const a of ACOMS_DIN) {
+    for (const a of acomsHotel) {
       if (!Number.isFinite(num(p.pvpGeneral?.[a])) || (num(p.pvpGeneral?.[a]) < 0))
         e.push(`Falta el precio general de «${a}» (usa 0 si es gratis).`);
     }
@@ -111,7 +115,7 @@ export function validarPaquete(p: PaqueteDin): string[] {
   }
   if (p.usaHotel) {
     if (!p.hotel?.nombre?.trim()) e.push("El hotel necesita nombre.");
-    for (const a of ACOMS_DIN) {
+    for (const a of acomsHotel) {
       const v = precioComp(p, p.hotel?.neto[a], p.hotel?.pvp[a]);
       if (!Number.isFinite(v) || v < 0) e.push(`Falta el precio del hotel para «${a}» (usa 0 si es gratis).`);
       else if (ROOMS.includes(a as AcomRoom) && v === 0) e.push(`El precio del hotel para «${a}» no puede ser 0.`);
@@ -188,6 +192,7 @@ export function liquidarPaquete(p: PaqueteDin, c: Composicion, resueltos?: Recor
   const adultos = adultosDe(c);
   if (adultos < 1) throw new Error("Debe haber al menos una habitación con adultos.");
   const ninos = n1 + n2;
+  if (p.usaHotel && p.hotel?.adultsOnly === true && ninos + inf > 0) throw new Error("Este hotel es solo para adultos: no admite menores.");
   const lineas: LineaDin[] = [];
   const general = p.esquema === "solo_pvp" && p.pvpModo === "general";
   const pendiente = p.esquema === "solo_pvp";

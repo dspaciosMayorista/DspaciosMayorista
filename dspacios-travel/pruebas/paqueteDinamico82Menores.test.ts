@@ -178,7 +178,7 @@ describe("selección: URL y persistencia", async () => {
 });
 
 describe("cableado de pantalla y servidor", () => {
-  const form = sinComentarios(leer("app/(dashboard)/dashboard/paquetes/total/PaqueteTotalForm.tsx"));
+  const form = sinComentarios(["PaqueteTotalForm.tsx", "VueloFilaDin.tsx", "ServicioFilaDin.tsx", "HotelFilaDin.tsx"].map((x) => leer("app/(dashboard)/dashboard/paquetes/total/" + x)).join(" "));
   const acciones = sinComentarios(leer("app/(dashboard)/dashboard/paquetes/total/actions.ts"));
   const tarjeta = sinComentarios(leer("app/tarifario/PorDinamicos.tsx"));
   const seleccion = sinComentarios(leer("lib/paqueteDinamico/seleccion.ts"));
@@ -208,7 +208,7 @@ describe("cableado de pantalla y servidor", () => {
     assert.match(acciones, /neto: neta && s\.servicioId == null \? s\.neto : null/);
   });
   test("servicio vinculado: sin neto escrito cuando el precio sale de la ficha; muestra su cobro", () => {
-    assert.match(form, /!\(neta && vinculado\)/);
+    assert.match(form, /!\(ctx\.neta && vinculado\)/);
     assert.match(form, /data-testid="cobro-ficha"/);
   });
   test("tarjeta: secciones de hotel, alimentación, habitaciones, viajeros, vuelo y servicios; edades solo si viajan menores", () => {
