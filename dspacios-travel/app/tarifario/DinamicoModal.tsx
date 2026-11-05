@@ -56,8 +56,10 @@ export function InsigniaFechasSalida({ filas }: { filas: readonly { modulo?: str
 }
 
 export function DinamicoModal({
-  hotel, detalle, onReintentar, descripcionPorPaquete, acceso, onClose, cotizador, salidaInicial = null, semilla = null,
+  hotel, detalle, onReintentar, descripcionPorPaquete, acceso, onClose, cotizador, salidaInicial = null, semilla = null, origenDesde = null,
 }: {
+  /** #90: salida, categoría y régimen que ORIGINAN el «desde» de la tarjeta; sin fechas elegidas el modal abre ahí (sobre precios publicados). */
+  origenDesde?: { salidaId: number | null; categoria: string | null; regimen: string | null } | null;
     /** #90: salida elegida en la tarjeta con su cotizacion (null = aun sin calcular). Con seleccion (de la tarjeta o del modal) cada salida elegida se calcula aqui y los "desde" de las demas son referencias publicadas. */
   semilla?: { salidaId: number; cot: CotizadaSalida | null } | null;
   /** #90: salida elegida en la tarjeta; el modal abre en ella. */
@@ -66,14 +68,14 @@ export function DinamicoModal({
   /** Qué ofrece el modal: "cotizar" (ruta interna de reserva + carrito) o "carrito" (solo el carrito público). Ver `accesoCotizacionDinamica`. */
   acceso: AccesoCotizacionDinamica;
   /** Cotizador del carrito público para la salida elegida (habitaciones/edades → carrito → /tarifario/checkout). */
-  cotizador?: (salidaId: number, filas: FilaTarifario[], cotizacion: CotizacionSalida) => ReactNode;
+  cotizador?: (salidaId: number, filas: FilaTarifario[], cotizacion: CotizacionSalida, comboInicial?: { categoria: string; regimen: string }) => ReactNode;
   detalle: EstadoDetalle<FilaTarifario> | null;
   onReintentar: () => void;
   descripcionPorPaquete: Record<number, DescripcionPaqueteRaw>;
   onClose: () => void;
 }) {
   const salidas = useMemo(() => agruparSalidasDinamicas(detalle?.estado === "ok" ? detalle.filas : []), [detalle]);
-  const [elegida, setElegida] = useState<number | null>(salidaInicial);
+  const [elegida, setElegida] = useState<number | null>(salidaInicial ?? origenDesde?.salidaId ?? null);
   // Derivado en cada render (no un efecto): si la elegida ya no existe, cae a la primera.
   const salida = salidas.find((s) => s.salidaId === elegida) ?? salidas[0];
   const descripcion = hotel.paqueteId != null ? descripcionPorPaquete[hotel.paqueteId] : undefined;
@@ -173,7 +175,7 @@ export function DinamicoModal({
                 </Link>
               )}
               {/* Carrito público (con o sin sesión, sin permiso especial): mismo flujo que Bloqueo, con la salida elegida arriba. */}
-              {detalle.estado === "ok" && cotizador?.(salida.salidaId, detalle.filas, cotizacion)}
+              {detalle.estado === "ok" && cotizador?.(salida.salidaId, detalle.filas, cotizacion, origenDesde && origenDesde.salidaId === salida.salidaId && origenDesde.categoria && origenDesde.regimen ? { categoria: origenDesde.categoria, regimen: origenDesde.regimen } : undefined)}
 
               <IncluyeSalida fechaIda={salida?.fechaIda ?? null}><SeccionesIncluye descripcion={descripcion} compacto /></IncluyeSalida>
             </>
