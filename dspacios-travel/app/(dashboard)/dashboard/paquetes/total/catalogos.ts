@@ -7,8 +7,8 @@ import type { FilaHotelDin } from "@/lib/paqueteDinamico/modelo";
 import type { EmpaquetadoOpt } from "./PaqueteTotalForm";
 
 /**
- * Catálogos para el montaje. Hoteles: SOLO fichas activas sin vigencias ni tarifas (función `hoteles_vinculables_din`, migración 275);
- * el resto del modo «traer hotel con ficha» no existe — para cualquier otro hotel se usa el hotel manual.
+ * Catálogos para el montaje. Hoteles: TODAS las fichas activas del catálogo (función `hoteles_vinculables_din`; desde la 280 tener tarifario, vigencias o calculadora no las excluye ni cuenta la moneda);
+ * la ficha aporta solo información general (nombre, estrellas, descripción, ubicación, reglas de menores): las tarifas son SIEMPRE las del paquete.
  * Un hotel vinculado trae de su ficha las categorías, los regímenes y las reglas de menores (no se piden otra vez); el manual usa el catálogo general
  * de categorías de habitación y planes de alimentación, igual que los hoteles normales.
  * Servicios: traen su moneda, el proveedor de su ficha y el resumen de su cobro (por persona / por grupo con su rango de pasajeros).

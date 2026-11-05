@@ -12,6 +12,8 @@ import { Categoria } from "@/app/tarifario/tarjetaHotelCompartida";
 import { ACOMS_DIN, pvpDeNeto } from "@/lib/paqueteDinamico/calculo";
 import type { EntradaHotel } from "@/lib/paqueteDinamico/entrada";
 import { CAPACIDAD_NINOS_MAX } from "@/lib/paqueteDinamico/menores";
+import { normalizarOpcionHotel, opcionesOfrecidas } from "@/lib/paqueteDinamico/opcionesHotel";
+import { ComboCreable } from "./ComboCreable";
 import { ETQ, GridAcom, lbl, n, sel } from "./editorUi";
 
 /** Lo que el montaje sabe de la ficha vinculada (null = hotel manual). */
@@ -81,22 +83,21 @@ function TarifasHotel({ h, ficha, ctx, abierta, onCerrar, onAplicar, catalogo }:
 }) {
   const id = useId();
   const [d, setD] = useState<EntradaHotel>(h);
-  const cats = ficha ? ficha.categorias : catalogo.categorias;
-  const regs = ficha ? ficha.regimenes : catalogo.regimenes;
+  // Sugerencias: las de la ficha (si la hay), las del catálogo y la que ya tiene el hotel; además se puede escribir cualquiera.
+  const cats = opcionesOfrecidas(ficha?.categorias ?? [], catalogo.categorias, [h.categoria]);
+  const regs = opcionesOfrecidas(ficha?.regimenes ?? [], catalogo.regimenes, [h.regimen]);
   const pvpPrev = (neto: number | null | undefined) => (ctx.neta && neto != null ? pvpDeNeto(neto, ctx.pctMkPct / 100, ctx.moneda) : NaN);
   return (
     <Ventana abierta={abierta} titulo="Tarifas y configuración" descripcion={`${d.nombre || "Hotel"}: habitación, alimentación, menores, proveedor y precios por acomodación.`}
       onCancelar={onCerrar}
-      onGuardar={() => { onAplicar({ categoria: d.categoria, regimen: d.regimen, proveedor: d.proveedor, neto: d.neto, pvp: d.pvp, capacidadNinos: d.capacidadNinos, edadInfanteMax: d.edadInfanteMax, edadNinoMax: d.edadNinoMax }); onCerrar(); }}>
+      onGuardar={() => { onAplicar({ categoria: normalizarOpcionHotel(d.categoria, cats), regimen: normalizarOpcionHotel(d.regimen, regs), proveedor: d.proveedor, neto: d.neto, pvp: d.pvp, capacidadNinos: d.capacidadNinos, edadInfanteMax: d.edadInfanteMax, edadNinoMax: d.edadNinoMax }); onCerrar(); }}>
       <div className="grid gap-3 sm:grid-cols-2">
         <div className="min-w-0"><label className={lbl} htmlFor={`${id}-cat`}>Categoría de habitación</label>
-          <select id={`${id}-cat`} aria-label="Categoría de habitación" className={sel} value={d.categoria} onChange={(x) => setD({ ...d, categoria: x.target.value })}>
-            <option value="">{cats.length ? "Elige…" : "Sin categorías configuradas"}</option>{cats.map((c) => <option key={c} value={c}>{c}</option>)}
-          </select></div>
+          <ComboCreable etiqueta="Categoría de habitación" opciones={cats} value={d.categoria} onChange={(v) => setD((x) => ({ ...x, categoria: v }))} placeholder="Busca o escribe una nueva" />
+          <p className="mt-1 text-xs text-gray-500">Elige una existente o escribe otra: la nueva vale solo para este paquete.</p></div>
         <div className="min-w-0"><label className={lbl} htmlFor={`${id}-reg`}>Plan de alimentación</label>
-          <select id={`${id}-reg`} aria-label="Plan de alimentación" className={sel} value={d.regimen} onChange={(x) => setD({ ...d, regimen: x.target.value })}>
-            <option value="">{regs.length ? "Elige…" : "Sin planes configurados"}</option>{regs.map((c) => <option key={c} value={c}>{c}</option>)}
-          </select></div>
+          <ComboCreable etiqueta="Plan de alimentación" opciones={regs} value={d.regimen} onChange={(v) => setD((x) => ({ ...x, regimen: v }))} placeholder="Busca o escribe uno nuevo" />
+          <p className="mt-1 text-xs text-gray-500">Elige uno existente o escribe otro: el nuevo vale solo para este paquete.</p></div>
         <div className="min-w-0 sm:col-span-2"><label className={lbl} htmlFor={`${id}-prov`}>Proveedor</label><Input id={`${id}-prov`} value={d.proveedor} onChange={(x) => setD({ ...d, proveedor: x.target.value })} /></div>
         {h.hotelId == null ? (
           <div className="grid min-w-0 gap-2 rounded-lg bg-gray-50 p-3 sm:col-span-2 sm:grid-cols-3" data-testid="menores-manual">

@@ -10,6 +10,7 @@ import { cobraInfante } from "@/lib/paqueteDinamico/servicioFicha";
 import { autorizaTenant, contextoCotizacion } from "@/lib/cotizacion/acceso";
 import { hoyBogota } from "@/lib/cotizacion/vigencia";
 import { opcionesDelPaquete, type FilaHotelDin, type FilaPaqueteDin, type FilaServicioDin, type FilaVueloDin } from "@/lib/paqueteDinamico/modelo";
+import { MAX_OPCION_HOTEL, normalizarOpcionHotel } from "@/lib/paqueteDinamico/opcionesHotel";
 import { validarPaquete } from "@/lib/paqueteDinamico/calculo";
 import { ROLES_PRODUCTO, validarEntradaPaqueteTotal, type EntradaPaqueteTotal } from "@/lib/paqueteDinamico/entrada";
 import { derivarRutaManual, destinoCoincide, mensajeSinProveedor, normalizarIata, serviciosSinProveedor, validarMultidestino } from "@/lib/paqueteDinamico/ruta";
@@ -62,7 +63,7 @@ export async function validarPaqueteTotal(e: EntradaPaqueteTotal): Promise<strin
 /**
  * Lo que NO se confía del navegador se vuelve a leer de las fichas (la base lo impone otra vez con triggers, migración 276):
  *  · país de los destinos (multidestino solo del mismo país) · ruta de cada vuelo (empaquetado vinculado, o derivada de origen/destino)
- *  · proveedor de cada servicio vinculado (servicios_adicionales.proveedor_id + su ficha) · moneda de hoteles y servicios vinculados.
+ *  · proveedor de cada servicio vinculado (servicios_adicionales.proveedor_id + su ficha) · moneda de los servicios vinculados (la del hotel no condiciona).
  */
 async function completarDesdeFichas(sb: Loose, e: EntradaPaqueteTotal): Promise<{ e: EntradaPaqueteTotal; errores: string[]; avisos: string[]; destinos: { id: number; pais: string | null }[] }> {
   const errores: string[] = [];
@@ -132,23 +133,20 @@ async function completarDesdeFichas(sb: Loose, e: EntradaPaqueteTotal): Promise<
     } catch { errores.push("No se pudo leer la ficha de un servicio. Intenta de nuevo."); }
   }
 
-  // Hoteles: categoría de habitación y plan de alimentación salen del MISMO catálogo que los hoteles normales (manual) o de lo configurado en la ficha (vinculado).
+  // Hoteles: la categoría de habitación y el plan de alimentación son TEXTO PROPIO del paquete: se elige uno conocido o se escribe uno nuevo (no se toca el catálogo ni la ficha).
+  // Aquí solo se normalizan (espacios) y, si coinciden sin distinguir mayúsculas/tildes con uno conocido, se usa su escritura canónica para no duplicar variantes.
   if (e.usaHotel && e.hoteles.length) {
     const adm = createAdminClient();
     const cat = await cargarCatalogoHotel(adm);
     const fichaIds = e.hoteles.map((h) => h.hotelId).filter((x): x is number => x != null);
     const opc = await cargarOpcionesHotelFicha(adm, fichaIds);
-    for (const h of e.hoteles) {
-      const nom = h.nombre || "manual";
-      if (h.hotelId == null) {
-        if (h.categoria && !cat.categorias.includes(h.categoria)) errores.push(`Hotel «${nom}»: la categoría de habitación «${h.categoria}» no existe en el catálogo (Producto → Configuración).`);
-        if (h.regimen && !cat.regimenes.includes(h.regimen)) errores.push(`Hotel «${nom}»: el plan de alimentación «${h.regimen}» no existe en el catálogo (Producto → Configuración).`);
-      } else {
-        const o = opc.get(h.hotelId) ?? { categorias: [], regimenes: [] };
-        if (h.categoria && o.categorias.length && !o.categorias.includes(h.categoria)) errores.push(`Hotel «${nom}»: la categoría «${h.categoria}» no está configurada en la ficha del hotel.`);
-        if (h.regimen && o.regimenes.length && !o.regimenes.includes(h.regimen)) errores.push(`Hotel «${nom}»: el plan de alimentación «${h.regimen}» no está configurado en la ficha del hotel.`);
-      }
-    }
+    e = { ...e, hoteles: e.hoteles.map((h) => {
+      const conocidas = h.hotelId == null ? cat : { categorias: [...(opc.get(h.hotelId)?.categorias ?? []), ...cat.categorias], regimenes: [...(opc.get(h.hotelId)?.regimenes ?? []), ...cat.regimenes] };
+      const categoria = normalizarOpcionHotel(h.categoria, conocidas.categorias), regimen = normalizarOpcionHotel(h.regimen, conocidas.regimenes);
+      if (categoria.length > MAX_OPCION_HOTEL) errores.push(`Hotel «${h.nombre || "manual"}»: la categoría de habitación no puede pasar de ${MAX_OPCION_HOTEL} caracteres.`);
+      if (regimen.length > MAX_OPCION_HOTEL) errores.push(`Hotel «${h.nombre || "manual"}»: el plan de alimentación no puede pasar de ${MAX_OPCION_HOTEL} caracteres.`);
+      return { ...h, categoria, regimen };
+    }) };
     // Con ficha, lo que el hotel solo tiene una opción se completa solo (no se pide configurar otra vez); la capacidad y las edades NO se guardan: se leen de la ficha.
     // Información del hotel con ficha: estrellas, descripción y ubicación se COPIAN de la ficha (autoritativo, no se confía en el navegador). Si la ficha no tiene el dato, se deja
     // lo que ya traía la fila (vacío = sin dato): nunca se inventa un valor.
@@ -164,13 +162,7 @@ async function completarDesdeFichas(sb: Loose, e: EntradaPaqueteTotal): Promise<
     }) };
   }
 
-  // Hoteles ficha: misma moneda que el paquete.
-  const idsH = [...new Set(e.hoteles.map((h) => h.hotelId).filter((x): x is number => x != null))];
-  if (idsH.length) {
-    const mon: Record<number, string> = {};
-    for (const h of (await sb.from("hoteles").select("id, moneda").in("id", idsH)).data ?? []) mon[h.id] = h.moneda ?? "COP";
-    for (const h of e.hoteles) if (h.hotelId != null && (mon[h.hotelId] ?? "COP") !== e.moneda) errores.push(`El hotel «${h.nombre}» está en ${mon[h.hotelId] ?? "COP"} y el paquete en ${e.moneda}.`);
-  }
+  // La moneda de la ficha NO condiciona al paquete: los importes manuales se ingresan en la moneda del paquete y la ficha solo aporta información general.
   return { e: { ...e, vuelos, servicios: serviciosFinal }, errores, avisos, destinos };
 }
 
@@ -194,7 +186,7 @@ export async function guardarPaqueteTotal(entrada: EntradaPaqueteTotal): Promise
   for (const h of e.usaHotel ? e.hoteles : []) {
     if (h.hotelId == null) continue;
     const { data: ok, error } = await raw.rpc("hotel_vinculable_din", { p_hotel: h.hotelId });
-    if (error || ok !== true) return { ok: false, error: `El hotel «${h.nombre || h.hotelId}» no se puede vincular como ficha: debe estar activo y no tener vigencias ni tarifas. Crea un hotel manual en su lugar.` };
+    if (error || ok !== true) return { ok: false, error: `El hotel «${h.nombre || h.hotelId}» no se puede vincular como ficha: debe existir y estar activo. Crea un hotel manual en su lugar.` };
   }
 
   const general = e.esquema === "solo_pvp" && e.pvpModo === "general";

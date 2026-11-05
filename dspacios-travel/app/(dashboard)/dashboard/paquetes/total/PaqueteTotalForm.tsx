@@ -53,7 +53,7 @@ export function PaqueteTotalForm({ inicial, destinos, hoteles, servicios, empaqu
   const destinosPermitidos = new Set<number | null>([e.destinoId, ...(e.multidestino ? e.destinosExtra : [])]);
   const paisPrincipal = paisComparable(destinos.find((d) => d.id === e.destinoId)?.pais);
   const adicionalesOfrecidos = destinos.filter((d) => d.id !== e.destinoId && paisPrincipal != null && paisComparable(d.pais) === paisPrincipal);
-  const hotelesDest = hoteles.filter((h) => (e.destinoId == null || h.destino_id === e.destinoId) && (h.moneda ?? "COP") === e.moneda);
+  const hotelesDest = hoteles.filter((h) => (e.destinoId == null || h.destino_id === e.destinoId));
   const serviciosDest = servicios.filter((s) => (s.destino_id == null || destinosPermitidos.has(s.destino_id)) && s.moneda === e.moneda && !s.noSoportado);
   const empDest = empaquetados.filter((x) => x.destino_id == null || destinosPermitidos.has(x.destino_id));
 

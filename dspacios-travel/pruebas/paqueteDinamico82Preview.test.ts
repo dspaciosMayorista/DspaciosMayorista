@@ -104,13 +104,13 @@ describe("3. Servicios vinculados: proveedor de la ficha", async () => {
     assert.match(f, /aria-label="Proveedor de la ficha" readOnly/);
     assert.match(f, /s\.proveedorId == null && .*mensajeSinProveedor\(\[s\.nombre\]\)/);
   });
-  test("moneda: el montaje solo ofrece hoteles y servicios en la moneda del paquete, y el servidor la vuelve a exigir", () => {
+  test("moneda: los servicios deben coincidir con la moneda del paquete; la moneda de la ficha del hotel NO oculta ni rechaza el hotel", () => {
     const f = sinComentarios(leer("app/(dashboard)/dashboard/paquetes/total/PaqueteTotalForm.tsx"));
-    assert.match(f, /\(h\.moneda \?\? "COP"\) === e\.moneda/);
+    assert.doesNotMatch(f, /\(h\.moneda \?\? "COP"\) === e\.moneda/);
     assert.match(f, /s\.moneda === e\.moneda/);
     const a = sinComentarios(leer("app/(dashboard)/dashboard/paquetes/total/actions.ts"));
-    assert.match(a, /está en \$\{f\.moneda\} y el paquete en \$\{e\.moneda\}/);
-    assert.match(a, /from\("hoteles"\)\.select\("id, moneda"\)/);
+    assert.doesNotMatch(a, /El hotel «.*» está en/);
+    assert.doesNotMatch(a, /from\("hoteles"\)\.select\("id, moneda"\)/);
   });
 });
 

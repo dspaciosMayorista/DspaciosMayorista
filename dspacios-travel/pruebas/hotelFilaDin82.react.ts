@@ -174,3 +174,90 @@ test("tarjeta pública: sin estrellas, descripción ni ubicación no se inventa 
   assert.equal(cont!.querySelector("iframe"), null);
   assert.doesNotMatch(cont!.textContent!, /Ubicación/);
 });
+
+// ── Categoría de habitación y plan de alimentación: elegir una existente o escribir una nueva (solo de este paquete) ──
+const tecla = async (el: Element, key: string) => { await act(async () => { el.dispatchEvent(new dom.window.KeyboardEvent("keydown", { key, bubbles: true, cancelable: true })); }); };
+const opciones = () => [...document.querySelectorAll('[role="option"]')].map((o) => o.textContent!);
+const campo = (etq: string) => ventana()!.querySelector(`input[aria-label="${etq}"]`) as HTMLInputElement;
+const abrirTarifas = async (ultimo?: { v: EntradaHotel }, ficha: React.ComponentProps<typeof HotelFilaDin>["ficha"] = null, inicial = hotelManual) => {
+  await montar(h(Anfitrion, { inicial, ficha, alCambiar: (x) => { if (ultimo) ultimo.v = x; } }));
+  await click(botonPor("Tarifas y configuración"));
+};
+
+test("categoría y plan son selectores con búsqueda: ofrecen las existentes y filtran al escribir", async () => {
+  await abrirTarifas();
+  const cat = campo("Categoría de habitación");
+  assert.equal(cat.getAttribute("role"), "combobox");
+  assert.equal(opciones().length, 0, "abrir la ventana (el diálogo enfoca el primer campo) no despliega ninguna lista");
+  await click(cat);
+  assert.deepEqual(opciones(), ["Estándar", "Superior"]);
+  await escribir(cat, "supe");
+  assert.deepEqual(opciones(), ["Superior", "Usar «supe» (nuevo, solo en este paquete)"]);
+  await escribir(cat, "SUPERIOR");
+  assert.deepEqual(opciones(), ["Superior"], "una coincidencia exacta (sin mayúsculas) no ofrece «nuevo»");
+});
+
+test("escribir una categoría y un plan NUEVOS: se aplican al guardar, persisten al volver a abrir y no tocan el catálogo", async () => {
+  const u = { v: hotelManual };
+  await abrirTarifas(u);
+  await escribir(campo("Categoría de habitación"), "  Suite   Vista Jardín ");
+  await escribir(campo("Plan de alimentación"), "Todo incluido plus");
+  assert.ok(opciones().some((o) => /Usar «Todo incluido plus» \(nuevo/.test(o)));
+  await click(botonPor("Guardar cambios"));
+  assert.equal(u.v.categoria, "Suite Vista Jardín", "se normalizan los espacios");
+  assert.equal(u.v.regimen, "Todo incluido plus");
+  assert.deepEqual(catalogo, { categorias: ["Estándar", "Superior"], regimenes: ["PAE", "PC"] }, "el catálogo global no cambia");
+  assert.match(cont!.querySelector('[data-testid="resumen-hotel"]')!.textContent!, /Habitación: Suite Vista Jardín · Alimentación: Todo incluido plus/);
+  await click(botonPor("Tarifas y configuración"));
+  assert.equal(campo("Categoría de habitación").value, "Suite Vista Jardín");
+  assert.equal(campo("Plan de alimentación").value, "Todo incluido plus");
+  await click(botonPor("Cancelar"));
+  assert.equal(u.v.categoria, "Suite Vista Jardín");
+});
+
+test("teclado: ↓ recorre, Enter elige la resaltada; Enter sin resaltar deja lo escrito; Escape cierra la lista sin cerrar la ventana", async () => {
+  const u = { v: hotelManual };
+  await abrirTarifas(u);
+  const cat = campo("Categoría de habitación");
+  await click(cat);
+  await tecla(cat, "ArrowDown"); await tecla(cat, "ArrowDown");
+  assert.equal(document.querySelector('[role="option"][aria-selected="false"].bg-gray-100')?.textContent, "Superior");
+  await tecla(cat, "Enter");
+  assert.equal(cat.value, "Superior"); assert.equal(opciones().length, 0, "Enter cierra la lista");
+  assert.ok(ventana(), "la ventana sigue abierta");
+  await escribir(cat, "Cabaña");
+  assert.equal(opciones().length, 1);
+  await tecla(cat, "Escape");
+  assert.equal(opciones().length, 0); assert.ok(ventana(), "Escape solo cerró la lista");
+  assert.equal(cat.value, "Cabaña", "lo escrito se conserva");
+  await escribir(cat, "Cabaña 2");
+  await tecla(cat, "Enter");
+  assert.equal(cat.value, "Cabaña 2", "Enter sin opción resaltada deja lo escrito y cierra la lista"); assert.equal(opciones().length, 0);
+  await click(botonPor("Guardar cambios"));
+  assert.equal(u.v.categoria, "Cabaña 2");
+});
+
+test("móvil/clic: elegir una opción con el puntero; las filas miden al menos 44 px y el texto largo se parte", async () => {
+  const u = { v: hotelManual };
+  await abrirTarifas(u);
+  const reg = campo("Plan de alimentación");
+  await click(reg);
+  const fila = [...document.querySelectorAll('[role="option"]')].find((o) => o.textContent === "PC")!;
+  assert.match(fila.className, /min-h-11/); assert.match(fila.className, /overflow-wrap:anywhere/);
+  await act(async () => { fila.dispatchEvent(new dom.window.MouseEvent("mousedown", { bubbles: true, cancelable: true })); });
+  assert.equal(reg.value, "PC");
+  await click(botonPor("Guardar cambios"));
+  assert.equal(u.v.regimen, "PC");
+});
+
+test("hotel con ficha: se sugieren las opciones de la ficha primero y también las del catálogo; se puede escribir otra", async () => {
+  const u = { v: hotelManual };
+  const ficha = { categorias: ["Familiar"], regimenes: ["PA"], reglasTexto: null, estrellas: 4, descripcionFicha: "", ubicacionFicha: "" };
+  await abrirTarifas(u, ficha, { ...hotelManual, hotelId: 5, categoria: "", regimen: "", capacidadNinos: null, edadInfanteMax: null, edadNinoMax: null });
+  const cat = campo("Categoría de habitación");
+  await click(cat);
+  assert.deepEqual(opciones(), ["Familiar", "Estándar", "Superior"]);
+  await escribir(cat, "Villa privada");
+  await click(botonPor("Guardar cambios"));
+  assert.equal(u.v.categoria, "Villa privada");
+});

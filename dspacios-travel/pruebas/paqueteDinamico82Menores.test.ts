@@ -188,16 +188,16 @@ describe("cableado de pantalla y servidor", () => {
     const fila = leer("app/(dashboard)/dashboard/paquetes/total/HotelFilaDin.tsx");
     assert.match(fila, /aria-label="Capacidad de niños por habitación"/);
     assert.match(fila, /aria-label="Infante hasta"/);
-    assert.match(fila, /aria-label="Categoría de habitación"/);
-    assert.match(fila, /aria-label="Plan de alimentación"/);
+    assert.match(fila, /<ComboCreable etiqueta="Categoría de habitación"/);
+    assert.match(fila, /<ComboCreable etiqueta="Plan de alimentación"/);
     assert.match(fila, /catalogo\.categorias/);
     assert.match(form, /catalogo=\{catalogoHotel\}/);
     assert.match(fila, /data-testid="menores-ficha"/);
   });
   test("montaje: validación de catálogo y de capacidad también en el servidor, y no se guardan reglas propias de un hotel con ficha", () => {
     assert.match(acciones, /cargarCatalogoHotel\(adm\)/);
-    assert.match(acciones, /no existe en el catálogo/);
-    assert.match(acciones, /no está configurada en la ficha del hotel/);
+    assert.doesNotMatch(acciones, /no existe en el catálogo/); // categoría y plan son texto propio del paquete (se normalizan, no se rechazan)
+    assert.match(acciones, /normalizarOpcionHotel[(]h[.]categoria/);
     assert.match(acciones, /capacidad_ninos: h\.hotelId == null \? h\.capacidadNinos : null/);
   });
   test("montaje: solo PVP por componente ya no muestra «Total declarado» y al cambiar de modalidad se limpia la inactiva (cliente y servidor)", () => {
