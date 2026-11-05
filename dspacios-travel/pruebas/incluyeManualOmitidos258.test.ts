@@ -75,7 +75,8 @@ const FECHAS = ["2026-12-05", "2027-02-10", "2027-03-15"];
 const vig = (servicio_id: number, ini: string, fin: string, precio: number) => ({
   id: servicio_id * 10, servicio_id, nombre: "V", fecha_inicio: ini, fecha_fin: fin, compra_inicio: null, compra_fin: null, prioridad: 1, precio_persona: precio, precio_infante: null, recargo_individual: null,
 });
-const catalogo = [...TODOS.map((s) => ({ ...s, categoria: "tour_traslado", base: 99999 })), { ...ASIST, categoria: "asistencia", base: 20000 }];
+// Sin tarifa base (null): los servicios sin vigencia para la fecha NO son cobrables ese día (con base se cobrarían con ella); aquí se prueba la composición de lo que sí/no se cobra.
+const catalogo = [...TODOS.map((s) => ({ ...s, categoria: "tour_traslado", base: null })), { ...ASIST, categoria: "asistencia", base: 20000 }];
 const tablas: TablasFalsas = {
   armado_paquetes: [{ id: 70, tipo: "dinamico" }],
   armado_servicios: catalogo.map((s) => ({ paquete_id: 70, servicio_id: s.servicioId, modo: "persona", incluido: true, servicios_adicionales: { nombre: s.nombre } })),

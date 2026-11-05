@@ -36,7 +36,7 @@ import {
   conPrioridadOptimista, sinPrioridadOptimista, reconciliarPrioridades, prioridadEfectivaDe, prioridadesOcupadasDe,
 } from "@/lib/tarifario/prioridadOptimista";
 import {
-  ETIQUETA_PESTANA, agruparPorHotel, estadoTarifarioVista, normalizarPestana, pestanasVisibles, servicioSeleccionable, tarifaBasePermanenteVendible, vigenciasVendibles,
+  ETIQUETA_PESTANA, agruparPorHotel, estadoTarifarioVista, normalizarPestana, pestanasVisibles, servicioSeleccionable, servicioSoloPorBase, tarifaBaseIncluible, tarifaBasePermanenteVendible, vigenciasVendibles,
   type ClaveEstadoTarifario, type PestanaId,
 } from "@/lib/paquetes/armadoPestanas";
 
@@ -1387,10 +1387,15 @@ function ServicioRow({
   const preciosVigencia = basePermanente
     ? (s.precio_persona != null ? [Number(s.precio_persona)] : [])
     : vendibles.filter((v) => v.precio_persona != null).map((v) => Number(v.precio_persona));
-  const tienePersona = preciosVigencia.length > 0;
-  const tieneGrupo = basePermanente
-    ? (s.servicio_tarifa_pax ?? []).some((g) => (g.temporada ?? "GENERAL") === "GENERAL")
-    : vendibles.some((v) => (s.servicio_tarifa_pax ?? []).some((g) => g.temporada === v.nombre));
+  // Servicio con SOLO tarifa base válida (sin vigencia vendible): se puede agregar como INCLUIDO (la base lo respalda), nunca como opcional por esa base.
+  const soloBase = servicioSoloPorBase(s);
+  const baseInc = tarifaBaseIncluible(s);
+  const tienePersona = preciosVigencia.length > 0 || (soloBase && baseInc.persona);
+  const tieneGrupo = soloBase
+    ? baseInc.grupo
+    : basePermanente
+      ? (s.servicio_tarifa_pax ?? []).some((g) => (g.temporada ?? "GENERAL") === "GENERAL")
+      : vendibles.some((v) => (s.servicio_tarifa_pax ?? []).some((g) => g.temporada === v.nombre));
 
   function save(nextChecked: boolean, nextModo: "persona" | "grupo", nextIncluido: boolean) {
     cola.solicitar({
@@ -1402,7 +1407,7 @@ function ServicioRow({
 
   function toggle(c: boolean) {
     const def: "persona" | "grupo" = tienePersona ? "persona" : "grupo";
-    save(c, (modo as "persona" | "grupo") ?? def, incluido);
+    save(c, (modo as "persona" | "grupo") ?? def, incluido || soloBase);
   }
 
   const m: "persona" | "grupo" = (modo as "persona" | "grupo") ?? (tienePersona ? "persona" : "grupo");
@@ -1421,9 +1426,11 @@ function ServicioRow({
             {tienePersona ? <span className="ml-1 rounded bg-gray-100 px-1.5 py-0.5 text-[10px] font-semibold text-gray-600">{(s.moneda ?? "COP").toUpperCase()}</span> : null}
             {tienePersona && tieneGrupo ? " · " : ""}
             {tieneGrupo ? "Grupo: por rangos de pax" : ""}
-            {!servicioSeleccionable(s) && (
-              <span className="text-amber-700">Sin vigencia de tarifa vendible: no entra en «Seleccionar todos»</span>
-            )}
+            {soloBase
+              ? <span className="text-amber-700"> Solo tarifa base: se agrega como incluido; no se ofrece como opcional</span>
+              : !servicioSeleccionable(s) && (
+                <span className="text-amber-700">Sin vigencia de tarifa vendible: no entra en «Seleccionar todos»</span>
+              )}
           </p>
           {checked && (
             <div className="mt-2 space-y-2 rounded-lg bg-gray-50 p-2 text-xs">
@@ -1441,11 +1448,11 @@ function ServicioRow({
               <div className="flex flex-wrap items-center gap-3">
                 <span className="text-gray-500">En el paquete:</span>
                 <label className="flex items-center gap-1">
-                  <input type="radio" checked={incluido} onChange={() => save(true, m, true)} />
+                  <input type="radio" checked={incluido || soloBase} onChange={() => save(true, m, true)} />
                   Incluido (todo junto)
                 </label>
                 <label className="flex items-center gap-1">
-                  <input type="radio" checked={!incluido} onChange={() => save(true, m, false)} />
+                  <input type="radio" disabled={soloBase} checked={!incluido && !soloBase} onChange={() => save(true, m, false)} />
                   Opcional (add-on)
                 </label>
               </div>

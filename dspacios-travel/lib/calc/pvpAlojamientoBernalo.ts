@@ -59,6 +59,8 @@ export type ServicioIncluidoPersonaBernalo = {
   categoria: CategoriaServicio;
   /** Neto por persona (sin markup) — `null` = configuración incompleta, falla cerrado. */
   precioPersonaNeto: number | null;
+  /** Tarifa por día/noche (incluidoPorUnidades): el costo es la suma de sus unidades. */
+  unidades?: readonly { netoPersona: number | null; netoInfante: number | null; rangos: { pax_desde: number; pax_hasta: number; precio: number }[] }[];
   liquidacion: string | null;
   /** Fase 3F-3: proveedor real del catálogo — necesario para la futura CxP del servicio. */
   proveedorId: number | null;
@@ -168,7 +170,7 @@ export function calcularPvpAlojamientoBernalo(input: EntradaPvpAlojamientoBernal
   let costoServiciosTotal = 0;
   const serviciosIncluidosResueltos: ServicioIncluidoResueltoBernalo[] = [];
   for (const s of input.serviciosPersona) {
-    const costoNeto = costoNetoServicioIncluido("persona", s.precioPersonaNeto, [], paxTotal, s.liquidacion, input.numNoches);
+    const costoNeto = costoNetoServicioIncluido("persona", s.precioPersonaNeto, [], paxTotal, s.liquidacion, input.numNoches, undefined, s.unidades);
     if (costoNeto == null) {
       return {
         ok: false,

@@ -9,7 +9,7 @@
 //     no se pueda cotizar.
 // Los mensajes están pensados para quien monta el paquete (nombre del servicio y fecha concreta).
 // ─────────────────────────────────────────────────────────────────────────
-import { temporadaVigenteParaFecha, toTemporadaRango } from "./paquetes.ts";
+import { temporadaVigenteParaFecha, toTemporadaRango, factorLiquidacion } from "./paquetes.ts";
 import { rangosIdaRegresoEfectivos } from "./servicioAlcance.ts";
 import { fechaNegocio } from "../fechaNegocio.ts";
 import { NOMBRE_TARIFA_BASE } from "./tarifaBasePermanente.ts";
@@ -30,6 +30,8 @@ export type VigenciasServicio = {
    * que se COBRA se resuelve siempre en vivo por el alcance elegido (liquidacionServicio); esto solo decide si el servicio se puede ofrecer.
    */
   usaAlcance?: boolean;
+  /** `servicios_adicionales.liquidacion` (dia | noche | paquete): define cuántas unidades de cobro tiene la estadía (`factorLiquidacion`). */
+  liquidacion?: string | null;
   gruposAlcance?: GrupoServicioFila[];
   personaAlcance?: ReadonlyMap<string, number>;
   gruposIdaRegreso?: GrupoServicioFila[];
@@ -220,9 +222,16 @@ export function referenciaPublicacion(sv: VigenciasServicio, modo: "persona" | "
  * Por qué un incluido no se puede cobrar en una estadía. `sin_tarifa` (sin vigencia que cubra la estadía, o sin precio / rangos en la vigencia) = «no tiene tarifa vigente»:
  * el servicio se OMITE de la oferta de esa fecha (ni se cobra ni se lista) y el hotel/paquete se ofrece igual. El resto son errores de configuración que no se omiten.
  */
-export type MotivoIncluidoNoCobrable = "sin_tarifa" | "traslado_sin_tarifa" | "traslado_sin_vigencia" | "ambiguo" | "franjas" | "ventana" | "dato_invalido";
+export type MotivoIncluidoNoCobrable = "sin_tarifa" | "incluido_sin_tarifa" | "traslado_sin_tarifa" | "traslado_sin_vigencia" | "ambiguo" | "franjas" | "ventana" | "dato_invalido";
+/** Una unidad de cobro (un día o una noche) de un incluido por día/noche: su tarifa y de dónde sale. */
+export type UnidadIncluido = {
+  fecha: string; vigencia: string;
+  /** `vigencia`: tarifa aplicable ese día · `base`: tarifa inicial tomada de la base · `arrastre`: sin tarifa aplicable ese día, usa la tarifa con la que empezó el servicio. */
+  origen: "vigencia" | "base" | "arrastre";
+  netoPersona: number | null; netoInfante: number | null; rangos: { pax_desde: number; pax_hasta: number; precio: number }[];
+};
 export type IncluidoEnEstadia =
-  | { ok: true; vigencia: string; netoPersona: number | null; netoInfante: number | null; rangos: { pax_desde: number; pax_hasta: number; precio: number }[]; /** `base` = sin vigencia para la fecha, cobrado con la tarifa base del servicio. */ origen?: "vigencia" | "base" }
+  | { ok: true; vigencia: string; unidades?: UnidadIncluido[]; netoPersona: number | null; netoInfante: number | null; rangos: { pax_desde: number; pax_hasta: number; precio: number }[]; /** `base` = sin vigencia para la fecha, cobrado con la tarifa base del servicio. */ origen?: "vigencia" | "base" }
   | { ok: false; error: string; motivo: MotivoIncluidoNoCobrable };
 
 /** ¿Este fallo significa «sin tarifa vigente» (se omite el servicio) y no un error de configuración? */
@@ -248,21 +257,22 @@ export function incluidoEnEstadia(sv: VigenciasServicio, modo: "persona" | "grup
  * un valor no numérico o negativo falla cerrado (dato_invalido), igual que en una vigencia. El precio base por persona y CADA precio de rango GENERAL deben ser > 0 (0, NULL, vacío o inválido = tarifa base sin configurar y el traslado se bloquea): 0 es el valor por defecto de un servicio que se
  * vende solo por vigencias, así que NO se toma como «traslado gratis» (shortcut: un traslado incluido realmente gratis sin vigencia debe cargar una vigencia con precio 0).
  */
-function tarifaBaseTraslado(sv: VigenciasServicio, modo: "persona" | "grupo", contexto: string, motivo: "traslado_sin_vigencia" | "traslado_sin_tarifa"): IncluidoEnEstadia {
+function tarifaBaseTraslado(sv: VigenciasServicio, modo: "persona" | "grupo", contexto: string, motivo: "traslado_sin_vigencia" | "traslado_sin_tarifa" | "incluido_sin_tarifa"): IncluidoEnEstadia {
+  const quien = sv.usaAlcance ? "traslado" : "servicio";
   const falla = (detalle: string): IncluidoEnEstadia => ({
     ok: false, motivo,
-    error: `El traslado incluido «${sv.nombre}» no tiene tarifa ${contexto} y tampoco ${detalle}: no se puede ofrecer el paquete prometiendo un traslado sin tarifa. Crea una vigencia con tarifa o configura la tarifa base en Producto → Servicios.`,
+    error: `El ${quien} incluido «${sv.nombre}» no tiene tarifa ${contexto} y tampoco ${detalle}: no se puede ofrecer el paquete prometiendo un ${quien} sin tarifa. Crea una vigencia con tarifa o configura la tarifa base en Producto → Servicios.`,
   });
   const b = sv.tarifaBase;
   if (!b) return falla("se pudo leer su tarifa base");
   const valido = (n: number | null | undefined): n is number => n != null && Number.isFinite(Number(n)) && Number(n) >= 0;
   if (modo === "persona") {
     if (!valido(b.precioPersona) || Number(b.precioPersona) <= 0) return falla("tiene un precio base por persona mayor que cero");
-    if (b.precioInfante != null && !valido(b.precioInfante)) return { ok: false, motivo: "dato_invalido", error: `El traslado incluido «${sv.nombre}» tiene un precio de infante base no válido (servicios_adicionales.precio_infante); corrígelo en Producto → Servicios antes de cotizar o publicar.` };
+    if (b.precioInfante != null && !valido(b.precioInfante)) return { ok: false, motivo: "dato_invalido", error: `El ${quien} incluido «${sv.nombre}» tiene un precio de infante base no válido (servicios_adicionales.precio_infante); corrígelo en Producto → Servicios antes de cotizar o publicar.` };
     return { ok: true, vigencia: NOMBRE_TARIFA_BASE, netoPersona: Number(b.precioPersona), netoInfante: b.precioInfante != null ? Number(b.precioInfante) : null, rangos: [], origen: "base" };
   }
   const delBase = b.grupos.filter((g) => g.temporada === NOMBRE_TARIFA_BASE);
-  if (delBase.some((g) => !Number.isFinite(Number(g.precio)) || Number(g.precio) < 0)) return { ok: false, motivo: "dato_invalido", error: `El traslado incluido «${sv.nombre}» tiene un precio no válido en un rango base (GENERAL); corrígelo en Producto → Servicios antes de cotizar o publicar.` };
+  if (delBase.some((g) => !Number.isFinite(Number(g.precio)) || Number(g.precio) < 0)) return { ok: false, motivo: "dato_invalido", error: `El ${quien} incluido «${sv.nombre}» tiene un precio no válido en un rango base (GENERAL); corrígelo en Producto → Servicios antes de cotizar o publicar.` };
   // 0/NULL = rango ausente: no bloquea los demás rangos base válidos (cada cantidad se cubre o no con ellos; quien cobra rechaza una cantidad sin rango).
   const rangos = delBase.filter((g) => Number(g.precio) > 0).map((g) => ({ pax_desde: g.pax_desde, pax_hasta: g.pax_hasta, precio: Number(g.precio) }));
   if (!rangos.length) return falla("tiene rangos base (GENERAL) de pasajeros con precio mayor que cero");
@@ -297,6 +307,9 @@ function evaluarIncluidoEnEstadia(sv: VigenciasServicio, modo: "persona" | "grup
   // Sin NINGUNA vigencia que cubra la estadía: la tarifa base respalda al traslado (hoy en adelante). Con cobertura parcial el precio sería ambiguo: sigue bloqueando.
   if (sv.usaAlcance && usarBase && !nombres.length && primerSinCobertura) return tarifaBaseTraslado(sv, modo, `vigente para el ${fechaLegible(primerSinCobertura)} (estadía ${fechaLegible(desde)} al ${fechaLegible(hasta)})`, "traslado_sin_vigencia");
   if (primerSinCobertura && sv.usaAlcance) return { ok: false, motivo: "traslado_sin_vigencia", error: `El traslado incluido «${sv.nombre}» no tiene vigencia de tarifa para el ${fechaLegible(primerSinCobertura)} (estadía ${fechaLegible(desde)} al ${fechaLegible(hasta)}): no se puede ofrecer el paquete prometiendo un traslado sin vigencia para esa fecha. Carga o amplía la vigencia en Producto → Servicios o quítalo de los servicios incluidos.` };
+  // Tours, asistencia y demás: sin vigencia (o con cobertura parcial de la estadía) la tarifa base válida cubre la estadía COMPLETA con UN solo neto (sin combinar vigencia y base día por día;
+  // la unidad —por persona o grupo, y el factor día/noche/paquete— la aplica quien cobra, igual que con una vigencia). Fecha pasada o sin base válida: se omite como antes o se bloquea (ver abajo).
+  if (primerSinCobertura && usarBase) return tarifaBaseTraslado(sv, modo, `vigente para el ${fechaLegible(primerSinCobertura)} (estadía ${fechaLegible(desde)} al ${fechaLegible(hasta)})`, "incluido_sin_tarifa");
   if (primerSinCobertura) return { ok: false, error: `${rotulo} no tiene vigencia de tarifa para el ${fechaLegible(primerSinCobertura)} (estadía ${fechaLegible(desde)} al ${fechaLegible(hasta)}).`, motivo: "sin_tarifa" };
   if (nombres.length !== 1) return { ok: false, error: `${rotulo} cambia de vigencia dentro de la estadía ${fechaLegible(desde)} al ${fechaLegible(hasta)} (${nombres.join(", ")}); su precio incluido sería ambiguo. Alinea las vigencias con las temporadas del hotel.`, motivo: "ambiguo" };
   const nombre = nombres[0];
@@ -314,7 +327,7 @@ function evaluarIncluidoEnEstadia(sv: VigenciasServicio, modo: "persona" | "grup
       if (elegido == null) return usarBase ? tarifaBaseTraslado(sv, modo, `por persona en su vigencia «${nombre}»`, "traslado_sin_tarifa") : sinTarifaTraslado("no tiene precio por persona de ida y regreso ni tarifa por persona");
       netoVig = Number(elegido);
     } else {
-      if (fila.precio_persona == null) return { ok: false, error: `${rotulo} no tiene precio por persona en su vigencia «${nombre}».`, motivo: "sin_tarifa" };
+      if (fila.precio_persona == null) return usarBase ? tarifaBaseTraslado(sv, modo, `por persona en su vigencia «${nombre}»`, "incluido_sin_tarifa") : { ok: false, error: `${rotulo} no tiene precio por persona en su vigencia «${nombre}».`, motivo: "sin_tarifa" };
       if (!Number.isFinite(Number(fila.precio_persona)) || Number(fila.precio_persona) < 0) return { ok: false, error: `${rotulo} tiene un precio por persona no válido en su vigencia «${nombre}»; corrígelo en Producto → Servicios antes de cotizar o publicar.`, motivo: "dato_invalido" };
       netoVig = Number(fila.precio_persona);
     }
@@ -341,9 +354,68 @@ function evaluarIncluidoEnEstadia(sv: VigenciasServicio, modo: "persona" | "grup
     return { ok: true, vigencia: soloBase ? NOMBRE_TARIFA_BASE : nombre, netoPersona: null, netoInfante: null, rangos: combinados, ...(soloBase ? { origen: "base" as const } : {}) };
   }
   const rangos = deVigencia.map((g) => ({ pax_desde: g.pax_desde, pax_hasta: g.pax_hasta, precio: Number(g.precio) }));
-  if (!rangos.length) return { ok: false, error: `${rotulo} no tiene rangos de pasajeros en su vigencia «${nombre}».`, motivo: "sin_tarifa" };
   if (rangos.some((r) => !Number.isFinite(r.precio) || r.precio < 0)) return { ok: false, error: `${rotulo} tiene un precio no válido en un rango de pasajeros de su vigencia «${nombre}»; corrígelo en Producto → Servicios antes de cotizar o publicar.`, motivo: "dato_invalido" };
+  if (usarBase) {
+    // Por cantidad de pasajeros: la vigencia prevalece donde tiene rango (su 0 sigue siendo un precio en servicios que no son traslado); la base (> 0) solo cubre las cantidades que la vigencia no cubre.
+    const delBase = (sv.tarifaBase?.grupos ?? []).filter((g) => g.temporada === NOMBRE_TARIFA_BASE);
+    if (delBase.some((g) => !Number.isFinite(Number(g.precio)) || Number(g.precio) < 0)) return { ok: false, error: `${rotulo} tiene un precio no válido en un rango base (GENERAL); corrígelo en Producto → Servicios antes de cotizar o publicar.`, motivo: "dato_invalido" };
+    const combinados = combinarPorPrioridad([rangos, delBase.filter((g) => Number(g.precio) > 0).map((g) => ({ pax_desde: g.pax_desde, pax_hasta: g.pax_hasta, precio: Number(g.precio) }))]);
+    if (!combinados.length) return tarifaBaseTraslado(sv, modo, `por grupo en su vigencia «${nombre}»`, "incluido_sin_tarifa");
+    return { ok: true, vigencia: rangos.length ? nombre : NOMBRE_TARIFA_BASE, netoPersona: null, netoInfante: null, rangos: combinados, ...(rangos.length ? {} : { origen: "base" as const }) };
+  }
+  if (!rangos.length) return { ok: false, error: `${rotulo} no tiene rangos de pasajeros en su vigencia «${nombre}».`, motivo: "sin_tarifa" };
   return { ok: true, vigencia: nombre, netoPersona: null, netoInfante: null, rangos };
+}
+
+const sumarDias = (f: string, k: number) => iso(tiempoDia(f) + k * MS_DIA);
+
+/**
+ * Incluido cobrado por DÍA o por NOCHE (tours, asistencia): resuelve la tarifa de CADA unidad de la estadía.
+ *  · La unidad con vigencia y tarifa aplicable cobra esa tarifa.
+ *  · La primera unidad fija la tarifa INICIAL: la de su vigencia o, si no tiene, la base válida (o el bloqueo / la omisión de siempre si tampoco hay base).
+ *  · Las unidades sin tarifa aplicable (hueco intermedio o final) usan esa misma tarifa inicial — nunca la base de toda la estadía por existir un hueco.
+ *  · Por grupo: una vigencia posterior que cubre solo algunas cantidades rige ahí; las demás cantidades de esa unidad conservan los rangos de la tarifa inicial (nunca cobra 0 ni otro rango).
+ *  · Un dato corrupto, una franja horaria o un error técnico NO es un hueco: se devuelve tal cual.
+ * Sin liquidación por día/noche, o en traslados (que se tarifan por la fecha de llegada), delega en `incluidoEnEstadia`. El total por persona es la SUMA de `unidades` (`netoTotalPersona`).
+ */
+export function incluidoPorUnidades(sv: VigenciasServicio, modo: "persona" | "grupo", desde: string, hasta: string, numNoches: number, hoy: string = fechaNegocio()): IncluidoEnEstadia {
+  const liq = sv.liquidacion;
+  if (sv.usaAlcance || (liq !== "dia" && liq !== "noche")) return incluidoEnEstadia(sv, modo, desde, hasta, hoy);
+  const inicial = incluidoEnEstadia(sv, modo, desde, desde, hoy);
+  if (!inicial.ok) return inicial;
+  const factor = factorLiquidacion(liq, numNoches);
+  const unidadDe = (fecha: string, r: Extract<IncluidoEnEstadia, { ok: true }>, origen: UnidadIncluido["origen"]): UnidadIncluido => ({ fecha, vigencia: r.vigencia, origen, netoPersona: r.netoPersona, netoInfante: r.netoInfante, rangos: r.rangos });
+  const unidades: UnidadIncluido[] = [unidadDe(desde, inicial, inicial.origen === "base" ? "base" : "vigencia")];
+  for (let k = 1; k < factor; k++) {
+    const fecha = sumarDias(desde, k);
+    const r = evaluarIncluidoEnEstadia(sv, modo, fecha, fecha, false);
+    if (r.ok && modo === "grupo") {
+      // Grupo: la vigencia de ESTA unidad solo manda en las cantidades que cubre; las demás conservan los rangos de la tarifa INICIAL (recortados, sin solapes ni otra base).
+      const rangos = combinarPorPrioridad([r.rangos, inicial.rangos]);
+      unidades.push({ ...unidadDe(fecha, r, "vigencia"), rangos });
+    } else if (r.ok) unidades.push(unidadDe(fecha, r, "vigencia"));
+    else if (r.motivo === "sin_tarifa") unidades.push({ ...unidadDe(fecha, inicial, "arrastre") });
+    else return r;
+  }
+  return { ...inicial, unidades };
+}
+
+/** Neto TOTAL por persona (adulto, o menor de 2 años) de un incluido en toda la estadía: la suma de sus unidades o, sin ellas, el neto único × el factor de liquidación. */
+export function netoTotalPersona(inc: { netoPersona: number | null; netoInfante: number | null; unidades?: readonly UnidadIncluido[] }, factor: number, menor = false): number {
+  if (inc.unidades) return inc.unidades.reduce((t, u) => t + (menor ? (u.netoInfante ?? u.netoPersona ?? 0) : (u.netoPersona ?? 0)), 0);
+  return (menor ? (inc.netoInfante ?? inc.netoPersona ?? 0) : (inc.netoPersona ?? 0)) * factor;
+}
+
+/** Desglose compacto para la composición persistida: tramos consecutivos con la misma tarifa (desde, hasta, unidades, neto por persona, origen). */
+export function tramosDeUnidades(unidades: readonly UnidadIncluido[] | undefined): { desde: string; hasta: string; unidades: number; neto: number; origen: UnidadIncluido["origen"] }[] | undefined {
+  if (!unidades?.length) return undefined;
+  const out: { desde: string; hasta: string; unidades: number; neto: number; origen: UnidadIncluido["origen"] }[] = [];
+  for (const u of unidades) {
+    const ult = out[out.length - 1];
+    const neto = u.netoPersona ?? 0;
+    if (ult && ult.neto === neto && ult.origen === u.origen) { ult.hasta = u.fecha; ult.unidades++; } else out.push({ desde: u.fecha, hasta: u.fecha, unidades: 1, neto, origen: u.origen });
+  }
+  return out;
 }
 
 /**

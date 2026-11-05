@@ -47,7 +47,8 @@ function cliente(tablas: Tablas) {
 }
 
 let sbServidor: unknown = null;
-mock.module("@/lib/supabase/admin", { namedExports: { createAdminClient: () => { throw new Error("admin no preparado"); } } });
+let adminFalso: unknown = null; // solo lo fija la prueba de persistencia de la composición
+mock.module("@/lib/supabase/admin", { namedExports: { createAdminClient: () => { if (adminFalso == null) throw new Error("admin no preparado"); return adminFalso; } } });
 mock.module("@/lib/supabase/server", {
   namedExports: { createClient: async () => { if (sbServidor == null) throw new Error("createClient() real NUNCA debe invocarse aquí"); return sbServidor; } },
 });
@@ -66,10 +67,10 @@ const dia = (n: number) => new Date(Date.now() + n * 86400000).toLocaleDateStrin
 const VENTANA = { desde: dia(30), hasta: dia(120) };
 
 // categoria: 'asistencia' | 'tour_traslado' (por defecto); base = precio_persona del catálogo (tarifa base, SIN vigencia).
-type Srv = { id: number; incluido?: boolean; nombre: string; categoria?: string; base?: number | null };
+type Srv = { id: number; incluido?: boolean; nombre: string; categoria?: string; base?: number | null; liquidacion?: string };
 const armado = (s: Srv): Fila => ({
   paquete_id: PAQUETE_ID, servicio_id: s.id, modo: "persona", incluido: s.incluido ?? false,
-  servicios_adicionales: { nombre: s.nombre, categoria: s.categoria ?? "tour_traslado", precio_persona: 99999, precio_infante: null, liquidacion: "paquete", descripcion: null, recargo_individual: null, moneda: "COP" },
+  servicios_adicionales: { nombre: s.nombre, categoria: s.categoria ?? "tour_traslado", precio_persona: 99999, precio_infante: null, liquidacion: s.liquidacion ?? "paquete", descripcion: null, recargo_individual: null, moneda: "COP" },
 });
 const vigencia = (servicio_id: number, nombre: string, ini: string, fin: string, precio: number): Fila => ({
   servicio_id, nombre, fecha_inicio: ini, fecha_fin: fin, compra_inicio: null, compra_fin: null, prioridad: 1, precio_persona: precio, precio_infante: null, recargo_individual: null,
@@ -87,7 +88,7 @@ function tablas(o: { servicios: Srv[]; vigencias?: Fila[]; salidas: Fila[] }): T
     }],
     armado_vuelos: [], armado_empaquetados: [],
     armado_servicios: o.servicios.map(armado),
-    servicios_adicionales: o.servicios.map((x) => ({ id: x.id, categoria: x.categoria ?? "tour_traslado", precio_persona: x.base ?? null, precio_infante: null, recargo_individual: null })),
+    servicios_adicionales: o.servicios.map((x) => ({ id: x.id, categoria: x.categoria ?? "tour_traslado", precio_persona: x.base ?? null, precio_infante: null, recargo_individual: null, liquidacion: x.liquidacion ?? "paquete" })),
     servicio_temporadas: o.vigencias ?? [],
     servicio_tarifa_pax: [],
     armado_hoteles: [{ paquete_id: PAQUETE_ID, hotel_id: HOTEL, categorias: null, regimenes: null, hoteles: { nombre: "Hotel", moneda: "COP", modelo_tarifario: "persona", adults_only: false } }],
@@ -117,7 +118,7 @@ const sinMarcaFallida = (g: { rpcs: Rpc[] }) => g.rpcs.every((x) => x.nombre !==
 // Los errores de configuración (franjas horarias, vigencias ambiguas) sí impiden publicar la salida. La asistencia médica sin vigencias usa su tarifa base permanente.
 const pvpHotel = (g: { filas: FilaPub[] }, fecha: string) => g.filas.find((f) => f.modulo === "dinamico" && f.fecha_ida === fecha)!.precio_pvp;
 
-describe("73/112: incluido con cobertura parcial → TODAS las salidas se publican; las no cubiertas, sin el servicio", () => {
+describe("73/112: incluido con cobertura parcial → las cubiertas usan su vigencia; las descubiertas, la base si es válida; sin base se BLOQUEAN (no se vende el paquete sin el servicio)", () => {
   // Vigencia válida hasta dia(40); TEMP 2027 con fechas invertidas que NO cubre nada ni aporta tarifa. 3 salidas cubiertas y 16 posteriores sin cobertura (19).
   const cubiertas = [salida(1, 32), salida(2, 34), salida(3, 36)];
   const descubiertas = Array.from({ length: 16 }, (_, i) => salida(100 + i, 70 + i * 2));
@@ -127,22 +128,37 @@ describe("73/112: incluido con cobertura parcial → TODAS las salidas se public
     salidas: [...cubiertas, ...descubiertas],
   });
 
-  test("las 19 salidas conservan la oferta del hotel; el aviso dice en cuántas se omitió el servicio; no se marca fallida", async () => {
+  const conBase = (b: number | null) => tablas({
+    servicios: [{ id: 112, incluido: true, nombre: "Servicio 112", base: b }, { id: 1, incluido: false, nombre: "Asistencia 1", categoria: "asistencia", base: null }],
+    vigencias: [vigencia(112, "TEMP. 2026", dia(0), dia(40), 87000), vigencia(112, "TEMP. 2027", dia(100), dia(99), 100000)],
+    salidas: [...cubiertas, ...descubiertas],
+  });
+  test("SIN base: las 3 cubiertas se publican; las 16 sin vigencia ni base se BLOQUEAN con el aviso de qué configurar; no se marca fallida", async () => {
     const g = await generar(base());
     assert.equal(g.r.ok, true, g.r.ok ? "" : g.r.error);
-    assert.equal(fechasHotel(g).length, 19, "ninguna salida se pierde");
-    assert.match(aviso(g), /Servicios incluidos omitidos por falta de tarifa vigente/);
+    assert.equal(fechasHotel(g).length, 3, "solo las cubiertas");
+    assert.match(aviso(g), /16 de 19 salida\(s\) no se publican/);
     assert.match(aviso(g), /«Servicio 112» \(16 salida\(s\)/);
-    assert.doesNotMatch(aviso(g), /no se publican|Sin oferta vendible/);
+    assert.match(aviso(g), /Crea una vigencia con tarifa o configura la tarifa base en Producto → Servicios/);
     assert.equal(sinMarcaFallida(g), true);
   });
+  test("CON base: las 19 salidas se publican; las 16 sin vigencia cobran la base (igual que una vigencia con ese precio); la vigencia sigue mandando en las cubiertas", async () => {
+    const g = await generar(conBase(30000));
+    assert.equal(g.r.ok, true, g.r.ok ? "" : g.r.error);
+    assert.equal(fechasHotel(g).length, 19);
+    assert.doesNotMatch(aviso(g), /no se publican|Sin oferta vendible/);
+    const equivalente = await generar(tablas({ servicios: [{ id: 112, incluido: true, nombre: "Servicio 112" }], vigencias: [vigencia(112, "V", dia(0), dia(200), 30000)], salidas: [salida(100, 70)] }));
+    assert.equal(pvpHotel(g, dia(70)), pvpHotel(equivalente, dia(70)), "la base se cobra exactamente como una vigencia de 30.000 (misma unidad y markup)");
+    const vig87 = await generar(tablas({ servicios: [{ id: 112, incluido: true, nombre: "Servicio 112" }], vigencias: [vigencia(112, "V", dia(0), dia(200), 87000)], salidas: [cubiertas[0]] }));
+    assert.equal(pvpHotel(g, dia(32)), pvpHotel(vig87, dia(32)), "en la cubierta manda la vigencia de 87.000, no la base");
+  });
 
-  test("PVP: la salida cubierta incluye el servicio con la tarifa de SU vigencia (87.000, nunca la invertida); la descubierta es el hotel solo", async () => {
+  test("PVP: la salida cubierta incluye el servicio con la tarifa de SU vigencia (87.000, nunca la invertida)", async () => {
     const g = await generar(base());
     const sinServicio = await generar(tablas({ servicios: [], salidas: [cubiertas[0]] }));
     const solo = pvpHotel(sinServicio, dia(32));
     assert.ok(pvpHotel(g, dia(32)) > solo, "la cubierta lleva el servicio horneado");
-    assert.equal(pvpHotel(g, dia(70)), solo, "la descubierta NO lleva el servicio: mismo precio que el hotel sin servicios");
+    assert.equal(g.filas.some((f) => f.fecha_ida === dia(70)), false, "la descubierta sin base no se publica con el hotel solo");
     const con100 = await generar(tablas({ servicios: [{ id: 112, incluido: true, nombre: "Servicio 112" }], vigencias: [vigencia(112, "TEMP. 2026", dia(0), dia(40), 100000)], salidas: [cubiertas[0]] }));
     assert.ok(pvpHotel(con100, dia(32)) > pvpHotel(g, dia(32)), "con 100.000 sería más caro: 87.000 es el que manda");
   });
@@ -163,8 +179,8 @@ describe("73/112: incluido con cobertura parcial → TODAS las salidas se public
     assert.equal(aviso(a), aviso(b));
   });
 
-  test("258: tras publicar registra la composición por fecha de ida (112 horneado solo en las 3 cubiertas), con la generación publicada y la regla vigente", async () => {
-    const g = await generar(base());
+  test("258: tras publicar registra la composición por fecha de ida (112 horneado en las 19: vigencia en 3 y base en 16), con la generación publicada y la regla vigente", async () => {
+    const g = await generar(conBase(30000));
     const rc = g.rpcs.find((x) => x.nombre === "registrar_composicion_publicada");
     assert.ok(rc, "registra la evidencia");
     assert.equal(rc?.args.p_generacion, 3);
@@ -172,8 +188,7 @@ describe("73/112: incluido con cobertura parcial → TODAS las salidas se public
     const filas = rc?.args.p_filas as { fecha_ida: string; servicios_incluidos: number[] }[];
     assert.equal(filas.length, 19);
     const por = new Map(filas.map((f) => [f.fecha_ida, f.servicios_incluidos]));
-    for (const d of [32, 34, 36]) assert.deepEqual(por.get(dia(d)), [112], `salida cubierta ${d}: 112 horneado`);
-    assert.deepEqual(por.get(dia(70)), [], "salida descubierta: sin servicios horneados");
+    for (const d of [32, 34, 36, 70]) assert.deepEqual(por.get(dia(d)), [112], `salida ${d}: 112 horneado`);
     const orden = g.rpcs.map((x) => x.nombre);
     assert.ok(orden.indexOf("publicar_tarifario_resultado") < orden.indexOf("registrar_composicion_publicada"), "se registra DESPUÉS de publicar");
   });
@@ -191,16 +206,21 @@ describe("73/112: incluido con cobertura parcial → TODAS las salidas se public
     } finally { console.error = prev; sbServidor = null; }
   });
 
-  test("ninguna salida cubierta: igual se publica el hotel de TODAS (sin el servicio), no un paquete vacío", async () => {
-    const g = await generar(tablas({
-      servicios: [{ id: 112, incluido: true, nombre: "Servicio 112" }],
+  test("ninguna salida cubierta y SIN base: ninguna se publica (sin oferta vendible, con el aviso de qué configurar); CON base: se publican todas", async () => {
+    const t = (b: number | null) => tablas({
+      servicios: [{ id: 112, incluido: true, nombre: "Servicio 112", base: b }],
       vigencias: [vigencia(112, "TEMP. 2026", dia(0), dia(10), 87000)],
       salidas: Array.from({ length: 16 }, (_, i) => salida(200 + i, 60 + i)),
-    }));
-    assert.equal(g.r.ok, true, g.r.ok ? "" : g.r.error);
-    assert.equal(fechasHotel(g).length, 16);
-    assert.match(aviso(g), /«Servicio 112» \(16 salida\(s\)/);
-    assert.doesNotMatch(aviso(g), /Sin oferta vendible/);
+    });
+    const sin = await generar(t(null));
+    assert.equal(sin.r.ok, true, sin.r.ok ? "" : sin.r.error);
+    assert.equal(fechasHotel(sin).length, 0);
+    assert.match(aviso(sin), /Sin oferta vendible/); assert.match(aviso(sin), /«Servicio 112» \(16 salida\(s\)/);
+    assert.match(aviso(sin), /Crea una vigencia con tarifa o configura la tarifa base/);
+    assert.equal(sinMarcaFallida(sin), true);
+    const con = await generar(t(30000));
+    assert.equal(fechasHotel(con).length, 16);
+    assert.doesNotMatch(aviso(con), /Sin oferta vendible|no se publican/);
   });
 });
 
@@ -208,73 +228,82 @@ describe("33/50: incluido con cobertura parcial + asistencia 1 incluida", () => 
   const cubiertas = [salida(1, 32), salida(2, 34), salida(3, 36), salida(4, 38)]; // inventario del 33: 4 de 16 salidas con cobertura del 50 (fixture, no dato de producción)
   const salidas33 = () => [...cubiertas, ...Array.from({ length: 12 }, (_, i) => salida(300 + i, 75 + i))];
   const vig50 = () => [vigencia(50, "TEMP", dia(0), dia(60), 50000)];
-  test("con la asistencia permanente (categoría asistencia, base, sin vigencias): 16 salidas; el 50 solo en las 4 cubiertas; la asistencia en todas", async () => {
+  test("asistencia permanente (categoría asistencia, base, sin vigencias) + servicio 50 con vigencia en 4 y base en las otras 12: las 16 se publican", async () => {
     const con = await generar(tablas({
-      servicios: [{ id: 50, incluido: true, nombre: "Servicio 50" }, { id: 1, incluido: true, nombre: "Asistencia 1", categoria: "asistencia", base: 20000 }],
+      servicios: [{ id: 50, incluido: true, nombre: "Servicio 50", base: 25000 }, { id: 1, incluido: true, nombre: "Asistencia 1", categoria: "asistencia", base: 20000 }],
       vigencias: vig50(), salidas: salidas33(),
     }));
     const soloAsist = await generar(tablas({ servicios: [{ id: 1, incluido: true, nombre: "Asistencia 1", categoria: "asistencia", base: 20000 }], salidas: [cubiertas[0]] }));
     assert.equal(con.r.ok, true, con.r.ok ? "" : con.r.error);
     assert.equal(fechasHotel(con).length, 16);
-    assert.match(aviso(con), /«Servicio 50» \(12 salida\(s\)/);
-    assert.doesNotMatch(aviso(con), /Asistencia 1»/, "la asistencia permanente nunca se omite");
-    assert.ok(pvpHotel(con, dia(32)) > pvpHotel(soloAsist, dia(32)), "en la cubierta están el 50 y la asistencia");
-    assert.equal(pvpHotel(con, dia(75)), pvpHotel(soloAsist, dia(32)), "en la descubierta solo queda la asistencia (permanente)");
+    assert.doesNotMatch(aviso(con), /Asistencia 1»|no se publican|Sin oferta vendible/);
+    assert.ok(pvpHotel(con, dia(32)) > pvpHotel(soloAsist, dia(32)), "en la cubierta están el 50 (vigencia) y la asistencia");
+    assert.ok(pvpHotel(con, dia(75)) > pvpHotel(soloAsist, dia(32)), "en la descubierta el 50 cobra su base además de la asistencia");
   });
-  test("asistencia incluida SIN base válida ni vigencias: no hay tarifa → se omite (el hotel se publica sin ella)", async () => {
+  test("sin base para el 50: solo las 4 cubiertas se publican y las 12 sin tarifa se bloquean (la asistencia permanente nunca se omite)", async () => {
+    const g = await generar(tablas({
+      servicios: [{ id: 50, incluido: true, nombre: "Servicio 50" }, { id: 1, incluido: true, nombre: "Asistencia 1", categoria: "asistencia", base: 20000 }],
+      vigencias: vig50(), salidas: salidas33(),
+    }));
+    assert.equal(fechasHotel(g).length, 4);
+    assert.match(aviso(g), /«Servicio 50» \(12 salida\(s\)/);
+    assert.doesNotMatch(aviso(g), /«Asistencia 1»/);
+  });
+  test("asistencia incluida SIN base válida ni vigencias: no hay tarifa → la salida se BLOQUEA (no se vende el paquete sin ella) con el aviso de qué configurar", async () => {
     const g = await generar(tablas({ servicios: [{ id: 1, incluido: true, nombre: "Asistencia 1", categoria: "asistencia", base: null }], salidas: [salida(1, 40)] }));
     assert.equal(g.r.ok, true, g.r.ok ? "" : g.r.error);
-    assert.deepEqual(fechasHotel(g), [dia(40)]);
+    assert.deepEqual(fechasHotel(g), []);
     assert.match(aviso(g), /«Asistencia 1»/);
+    assert.match(aviso(g), /Crea una vigencia con tarifa o configura la tarifa base en Producto → Servicios/);
   });
-  test("asistencia incluida CON vigencias respeta solo sus vigencias: la base no rellena el hueco (se omite en las salidas descubiertas)", async () => {
+  test("asistencia incluida CON vigencias: la vigencia manda donde cubre y la base respalda las salidas descubiertas (nada se omite)", async () => {
     const g = await generar(tablas({
       servicios: [{ id: 1, incluido: true, nombre: "Asistencia 1", categoria: "asistencia", base: 20000 }],
       vigencias: [vigencia(1, "V", dia(0), dia(33), 20000)], salidas: salidas33(),
     }));
-    const sinServ = await generar(tablas({ servicios: [], salidas: [cubiertas[0]] }));
     assert.equal(fechasHotel(g).length, 16);
-    assert.match(aviso(g), /«Asistencia 1» \(15 salida\(s\)/);
-    assert.equal(pvpHotel(g, dia(36)), pvpHotel(sinServ, dia(32)), "fuera de su vigencia: hotel solo, sin rellenar con la base");
+    assert.doesNotMatch(aviso(g), /«Asistencia 1»|no se publican|Sin oferta vendible/);
+    assert.equal(pvpHotel(g, dia(36)), pvpHotel(g, dia(32)), "fuera de su vigencia cobra la base (mismo neto): mismo PVP que en la cubierta");
   });
-  test("una vigencia INVERTIDA cuenta como tener vigencias: la base tampoco aplica (se omite)", async () => {
+  test("una vigencia INVERTIDA no cubre nada: la base respalda la salida (no se omite)", async () => {
     const g = await generar(tablas({
       servicios: [{ id: 1, incluido: true, nombre: "Asistencia 1", categoria: "asistencia", base: 20000 }],
       vigencias: [vigencia(1, "INV", dia(100), dia(99), 20000)], salidas: [salida(1, 40)],
     }));
     assert.deepEqual(fechasHotel(g), [dia(40)]);
-    assert.match(aviso(g), /«Asistencia 1»/);
+    assert.doesNotMatch(aviso(g), /«Asistencia 1»/);
   });
 });
 
 describe("36/133 y 70/132: traslados incluidos (no asistencia)", () => {
   const dieciseis = () => Array.from({ length: 16 }, (_, i) => salida(500 + i, 40 + i)); // inventario: 36 → 0 de 16 con cobertura del 133; 70 → 0 de 16 del 132 (fixtures, no datos de producción)
-  test("70/132: 0 de 16 salidas con cobertura (su vigencia es posterior a todas): se omite en las 16 y el hotel se publica en las 16", async () => {
+  test("70/132: 0 de 16 salidas con cobertura y SIN base: ninguna se publica (el aviso dice qué configurar)", async () => {
     const g = await generar(tablas({ servicios: [{ id: 132, incluido: true, nombre: "Traslado 132", categoria: "tour_traslado" }], vigencias: [vigencia(132, "V", dia(200), dia(260), 40000)], salidas: dieciseis() }));
-    const solo = await generar(tablas({ servicios: [], salidas: [salida(1, 40)] }));
-    assert.equal(fechasHotel(g).length, 16);
-    assert.equal(pvpHotel(g, dia(40)), pvpHotel(solo, dia(40)));
-    assert.match(aviso(g), /«Traslado 132» \(16 salida\(s\)/);
+    assert.equal(fechasHotel(g).length, 0);
+    assert.match(aviso(g), /Sin oferta vendible/); assert.match(aviso(g), /«Traslado 132» \(16 salida\(s\)/);
+    assert.match(aviso(g), /Crea una vigencia con tarifa o configura la tarifa base/);
   });
-  test("36/133: 0 de 16 salidas con cobertura (sin vigencias aunque tenga base): se omite en las 16; el hotel se publica", async () => {
+  test("36/133: 0 de 16 salidas con cobertura (sin vigencias pero CON base): las 16 se publican cobrando la base", async () => {
     const g = await generar(tablas({
       servicios: [{ id: 133, incluido: true, nombre: "Traslado 133", categoria: "tour_traslado", base: 30000 }], salidas: dieciseis(),
     }));
     const solo = await generar(tablas({ servicios: [], salidas: [salida(1, 40)] }));
+    const eq = await generar(tablas({ servicios: [{ id: 133, incluido: true, nombre: "Traslado 133", categoria: "tour_traslado" }], vigencias: [vigencia(133, "V", dia(0), dia(300), 30000)], salidas: [salida(1, 40)] }));
     assert.equal(g.r.ok, true, g.r.ok ? "" : g.r.error);
     assert.equal(fechasHotel(g).length, 16);
-    assert.equal(pvpHotel(g, dia(40)), pvpHotel(solo, dia(40)), "sin la base GENERAL horneada");
-    assert.match(aviso(g), /«Traslado 133» \(16 salida\(s\)/);
+    assert.ok(pvpHotel(g, dia(40)) > pvpHotel(solo, dia(40)), "la base SÍ se hornea");
+    assert.equal(pvpHotel(g, dia(40)), pvpHotel(eq, dia(40)), "igual que una vigencia de 30.000");
+    assert.doesNotMatch(aviso(g), /no se publican|Sin oferta vendible/);
   });
-  test("132 con vigencia que cubre una salida y no la otra: la cubierta lo lleva, la otra no", async () => {
+  test("132 con vigencia que cubre una salida y no la otra, sin base: la cubierta lo lleva y la otra se bloquea", async () => {
     const g = await generar(tablas({
       servicios: [{ id: 132, incluido: true, nombre: "Traslado 132", categoria: "tour_traslado" }],
       vigencias: [vigencia(132, "V", dia(0), dia(45), 40000)], salidas: [salida(1, 40), salida(2, 60)],
     }));
     const solo = await generar(tablas({ servicios: [], salidas: [salida(1, 40)] }));
-    assert.equal(fechasHotel(g).length, 2);
+    assert.deepEqual(fechasHotel(g), [dia(40)]);
     assert.ok(pvpHotel(g, dia(40)) > pvpHotel(solo, dia(40)));
-    assert.equal(pvpHotel(g, dia(60)), pvpHotel(solo, dia(40)));
+    assert.match(aviso(g), /1 de 2 salida\(s\) no se publican/);
   });
   test("un incluido con FRANJAS horarias es un error de configuración: la salida no se publica (no se omite en silencio)", async () => {
     const conFranja = { ...vigencia(132, "V", dia(0), dia(100), 40000), servicio_suplementos_franja: [{ id: 1, hora_desde: "20:00", hora_hasta: "23:59", tramo: "ida", tipo: "fijo", valor: 10000, cobro: "por_servicio" }] };
@@ -348,5 +377,43 @@ describe("cableado: el publicador y la lectura usan las columnas de la 256", () 
     const tipos = readFileSync(new URL("../types/database.ts", import.meta.url), "utf8");
     assert.match(tipos, /fechas_disponibles/);
     assert.match(tipos, /tarifario_diagnostico/);
+  });
+});
+
+describe("incluido por DÍA (tarifa por unidad): publicación completa, mismo precio que un servicio por paquete con el total, y desglose persistido", () => {
+  // Salida de 1 noche = 2 días (ida y regreso). Equivalente por paquete: un servicio con vigencia y el TOTAL de los dos días.
+  const dosDias = (vigs: Fila[], baseP: number | null = null) => tablas({ servicios: [{ id: 60, incluido: true, nombre: "SMR TOUR 02", base: baseP, liquidacion: "dia" }], vigencias: vigs, salidas: [salida(1, 40)] });
+  const equivalente = async (total: number) => generar(tablas({ servicios: [{ id: 60, incluido: true, nombre: "SMR TOUR 02" }], vigencias: [vigencia(60, "V", dia(0), dia(200), total)], salidas: [salida(1, 40)] }));
+  test("cada día con su tarifa: 5.000 + 6.000 = 11.000 por persona (mismo PVP que un servicio por paquete de 11.000)", async () => {
+    const g = await generar(dosDias([vigencia(60, "A", dia(0), dia(40), 5000), vigencia(60, "B", dia(41), dia(41), 6000)]));
+    assert.equal(pvpHotel(g, dia(40)), pvpHotel(await equivalente(11000), dia(40)));
+  });
+  test("hueco final: el día sin tarifa usa la tarifa INICIAL (5.000 + 5.000 = 10.000), no la base ni la del día anterior", async () => {
+    const g = await generar(dosDias([vigencia(60, "A", dia(0), dia(40), 5000)], 99000));
+    assert.equal(pvpHotel(g, dia(40)), pvpHotel(await equivalente(10000), dia(40)));
+    assert.doesNotMatch(aviso(g), /no se publican|Sin oferta vendible/);
+  });
+  test("inicio sin tarifa de vigencia: la base (4.000) es la tarifa inicial y el día 2 cubierto cobra 6.000 → 10.000", async () => {
+    const g = await generar(dosDias([vigencia(60, "B", dia(41), dia(41), 6000)], 4000));
+    assert.equal(pvpHotel(g, dia(40)), pvpHotel(await equivalente(10000), dia(40)));
+  });
+  test("sin tarifa inicial ni base: la salida se bloquea con qué configurar (aunque exista una vigencia posterior)", async () => {
+    const g = await generar(dosDias([vigencia(60, "B", dia(41), dia(41), 6000)], null));
+    assert.deepEqual(fechasHotel(g), []);
+    assert.match(aviso(g), /Crea una vigencia con tarifa o configura la tarifa base/);
+  });
+  test("persistencia: la composición guardada conserva el desglose por tramos (y se lee de vuelta), con neto = suma", async () => {
+    const guardado: { composicion: unknown }[] = [];
+    const chain = (tabla: string) => { const b: Record<string, unknown> = {}; for (const m of ["select", "eq", "lt", "delete", "in", "order", "limit"]) b[m] = () => b; b.maybeSingle = async () => ({ data: null, error: null }); b.upsert = async (lote: { composicion: unknown }[]) => { if (tabla === "tarifario_resultado_composicion") guardado.push(...lote); return { error: null }; }; b.then = (res: (v: unknown) => unknown) => Promise.resolve({ data: null, error: null }).then(res); return b; };
+    adminFalso = { from: chain, rpc: async () => ({ data: null, error: null }) };
+    try { await generar(dosDias([vigencia(60, "A", dia(0), dia(40), 5000), vigencia(60, "B", dia(41), dia(41), 6000)])); } finally { adminFalso = null; }
+    assert.ok(guardado.length > 0, "se guardó la composición");
+    const { leerBaseGuardada } = await import("../lib/tarifario/composicionTarifario.ts");
+    const base = leerBaseGuardada(guardado[0].composicion);
+    assert.ok(base, "la composición guardada se lee");
+    const serv = base!.servicios[0];
+    assert.equal(serv.neto, 11000);
+    assert.deepEqual(serv.tramos?.map((t) => [t.unidades, t.neto, t.origen]), [[1, 5000, "vigencia"], [1, 6000, "vigencia"]]);
+    assert.equal(serv.tramos?.reduce((t, x) => t + x.unidades * x.neto, 0), serv.neto, "el desglose suma el neto del servicio");
   });
 });

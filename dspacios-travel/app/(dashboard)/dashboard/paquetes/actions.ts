@@ -63,7 +63,7 @@ import { construirSetParesPublicados, todosLosParesConfiguradosPublicados, prime
 
 import type { ResultadoLote } from "@/lib/paquetes/seleccionMasiva";
 import { aplicaPvpInfanteFijo, pvpInfanteFijoValido } from "@/lib/paquetes/pvpInfanteFijo";
-import { incluidoEnEstadia, incluidoSeOmite, referenciaPublicacion, serviciosSinPrecioInfanteVigencias, type VigenciasServicio } from "@/lib/calc/servicioVigencias";
+import { incluidoPorUnidades, netoTotalPersona, tramosDeUnidades, incluidoSeOmite, referenciaPublicacion, serviciosSinPrecioInfanteVigencias, type VigenciasServicio } from "@/lib/calc/servicioVigencias";
 import { presentarIncluye } from "@/lib/tarifario/incluyePorSalida";
 import { REGLA_COMPOSICION_PUBLICADA } from "@/lib/reservar/composicionPublicada";
 import { lineasDeTexto } from "@/lib/tarifario/descripcionPaquete";
@@ -1139,15 +1139,16 @@ export async function generarTarifario(paqueteId: number, opciones: OpcionesGene
   // `sinAsistencia`: omite la categoría asistencia (no cuenta como cargo para el PVP fijo del infante).
   // Ventana de la estadía que se está publicando (la fija `filasHoteles`): los incluidos se hornean con LA vigencia de esa estadía; si la estadía cae en dos
   // vigencias, o en ninguna, el precio horneado sería ambiguo o inexistente y la generación falla con un mensaje legible.
-  let ventanaEstadia: { desde: string; hasta: string } | null = null;
-  const incluidoCache = new Map<string, ReturnType<typeof incluidoEnEstadia>>();
+  let ventanaEstadia: { desde: string; hasta: string; numNoches: number } | null = null;
+  const incluidoCache = new Map<string, ReturnType<typeof incluidoPorUnidades>>();
   function resolverIncluido(s: (typeof servicios)[number]) {
     const sv = vigenciasPorServicio.get(s.servicio_id);
     if (!sv || !ventanaEstadia) return null;
     const modo = (s.modo as string) === "grupo" ? "grupo" : "persona";
-    const k = `${s.servicio_id}|${modo}|${ventanaEstadia.desde}|${ventanaEstadia.hasta}`;
+    const liq = (s.servicios_adicionales as unknown as { liquidacion: string | null } | null)?.liquidacion ?? sv.liquidacion ?? null;
+    const k = `${s.servicio_id}|${modo}|${ventanaEstadia.desde}|${ventanaEstadia.hasta}|${ventanaEstadia.numNoches}|${liq}`;
     let r = incluidoCache.get(k);
-    if (!r) { r = incluidoEnEstadia(sv, modo, ventanaEstadia.desde, ventanaEstadia.hasta); incluidoCache.set(k, r); }
+    if (!r) { r = incluidoPorUnidades({ ...sv, liquidacion: liq }, modo, ventanaEstadia.desde, ventanaEstadia.hasta, ventanaEstadia.numNoches); incluidoCache.set(k, r); }
     return r;
   }
   function incluidoVigente(s: (typeof servicios)[number]) {
@@ -1179,7 +1180,7 @@ export async function generarTarifario(paqueteId: number, opciones: OpcionesGene
       if (!inc || inc.netoPersona == null) continue;
       if (sinAsistencia && srv?.categoria === "asistencia") continue;
       // Cobro amarrado a la duración: por noche × noches, por día × (noches+1).
-      total += marcar(aMonedaOferta(inc.netoPersona, svcMoneda(s)), pctMk) * factorLiquidacion(srv?.liquidacion ?? null, numNoches);
+      total += marcar(aMonedaOferta(netoTotalPersona(inc, factorLiquidacion(srv?.liquidacion ?? null, numNoches)), svcMoneda(s)), pctMk);
     }
     return total;
   }
@@ -1194,16 +1195,15 @@ export async function generarTarifario(paqueteId: number, opciones: OpcionesGene
       const inc = incluidoVigente(s);
       if (!inc || inc.netoPersona == null) continue;
       if (sinAsistencia && srv?.categoria === "asistencia") continue;
-      const neto = inc.netoInfante ?? inc.netoPersona;
-      total += marcar(aMonedaOferta(neto, svcMoneda(s)), pctMk) * factorLiquidacion(srv?.liquidacion ?? null, numNoches);
+      total += marcar(aMonedaOferta(netoTotalPersona(inc, factorLiquidacion(srv?.liquidacion ?? null, numNoches), true), svcMoneda(s)), pctMk);
     }
     return total;
   }
 
   let vueloNetoSiguiente: number | null = null;
   // Servicios incluidos por persona de la estadía con su neto (misma conversión y mismo factor que `aporteServiciosIncluidos`): insumo de la composición, no entra al precio.
-  function detalleServiciosIncluidos(numNoches: number): { nombre: string; neto: number; netoMenor: number; origen?: { monto: number; montoMenor: number; moneda: string } }[] {
-    const out: { nombre: string; neto: number; netoMenor: number; origen?: { monto: number; montoMenor: number; moneda: string } }[] = [];
+  function detalleServiciosIncluidos(numNoches: number): { nombre: string; neto: number; netoMenor: number; tramos?: ReturnType<typeof tramosDeUnidades>; origen?: { monto: number; montoMenor: number; moneda: string } }[] {
+    const out: { nombre: string; neto: number; netoMenor: number; tramos?: ReturnType<typeof tramosDeUnidades>; origen?: { monto: number; montoMenor: number; moneda: string } }[] = [];
     for (const s of servicios) {
       if (!(s.incluido as boolean)) continue;
       const srv = s.servicios_adicionales as unknown as { liquidacion: string | null; nombre?: string | null } | null;
@@ -1211,9 +1211,12 @@ export async function generarTarifario(paqueteId: number, opciones: OpcionesGene
       if (!inc || inc.netoPersona == null) continue;
       const f = factorLiquidacion(srv?.liquidacion ?? null, numNoches);
       const convertido = modo63 && svcMoneda(s) !== paqueteMoneda;
+      const totAdulto = netoTotalPersona(inc, f), totMenor = netoTotalPersona(inc, f, true);
+      const tramos = tramosDeUnidades(inc.unidades);
       out.push({
-        nombre: srv?.nombre ?? `#${s.servicio_id}`, neto: aMonedaOferta(inc.netoPersona, svcMoneda(s)) * f, netoMenor: aMonedaOferta(inc.netoInfante ?? inc.netoPersona, svcMoneda(s)) * f,
-        ...(convertido ? { origen: { monto: inc.netoPersona * f, montoMenor: (inc.netoInfante ?? inc.netoPersona) * f, moneda: svcMoneda(s) } } : {}),
+        nombre: srv?.nombre ?? `#${s.servicio_id}`, neto: aMonedaOferta(totAdulto, svcMoneda(s)), netoMenor: aMonedaOferta(totMenor, svcMoneda(s)),
+        ...(tramos ? { tramos } : {}),
+        ...(convertido ? { origen: { monto: totAdulto, montoMenor: totMenor, moneda: svcMoneda(s) } } : {}),
       });
     }
     return out;
@@ -1252,7 +1255,7 @@ export async function generarTarifario(paqueteId: number, opciones: OpcionesGene
     vueloNetoSiguiente = null;
     if (numNoches <= 0) return;
     // Fecha fija: la vigencia del día de ida (así cotiza la reserva). Ventana "desde" (porción): TODA la ventana debe caer en una sola vigencia.
-    ventanaEstadia = { desde: fechaIda, hasta: masBarato && fechaRegreso ? fechaRegreso : fechaIda };
+    ventanaEstadia = { desde: fechaIda, hasta: masBarato && fechaRegreso ? fechaRegreso : fechaIda, numNoches };
     // Disponibilidad: un incluido SIN tarifa vigente en esta fecha se omite de ESTA estadía (no se hornea en el PVP; la reserva, el costo y la CxP tampoco lo cuentan) y
     // el hotel se publica igual. Un error de configuración (franjas, vigencias ambiguas, lectura) sí impide publicar la estadía.
     estadiasEvaluadas++;

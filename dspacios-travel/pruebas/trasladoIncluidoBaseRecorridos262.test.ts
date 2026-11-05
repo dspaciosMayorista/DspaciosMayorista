@@ -34,5 +34,25 @@ test("publicación, Reservar, cotización y carrito (Bernalo) comparten cargador
     const s = readFileSync(f, "utf8");
     assert.match(s, /cargarVigenciasServicios\(/, f);
   }
-  for (const f of ["lib/reservar/computo.ts", "lib/reservar/computoReservaBernalo.ts", "lib/reservar/liquidacionHotel.ts", "app/(dashboard)/dashboard/paquetes/actions.ts"]) assert.match(readFileSync(f, "utf8"), /incluidoEnEstadia\(/, f);
+  for (const f of ["lib/reservar/computo.ts", "lib/reservar/computoReservaBernalo.ts", "lib/reservar/liquidacionHotel.ts", "app/(dashboard)/dashboard/paquetes/actions.ts"]) assert.match(readFileSync(f, "utf8"), /incluidoPorUnidades\(|incluidoEnEstadia\(/, f);
+});
+
+// Tours y asistencia: el cargador real entrega la base de TODOS los servicios y el resolutor compartido la usa (cliente falso: prueba SIMULADA, no base real).
+const TOUR_ID = 8;
+const tablasTour = (v: ReturnType<typeof vig>[], base: number | null, categoria = "tour_traslado"): TablasFalsas => ({
+  servicios_adicionales: [{ id: TOUR_ID, tipo_receptivo: null, combo_incluye_traslado: null, combo_traslado_alcance: null, categoria, precio_persona: base, precio_infante: null, recargo_individual: null }],
+  servicio_temporadas: v.map((x) => ({ ...x, servicio_id: TOUR_ID })), servicio_tarifa_pax: [], servicio_precio_alcance: [],
+} as unknown as TablasFalsas);
+test("tour/asistencia por el cargador real: sin alcance, la base llega y respalda; la vigencia prevalece; sin nada, error orientativo", async () => {
+  const cargarT = async (t: TablasFalsas) => { const r = await cargarVigenciasServicios(crearClienteFalso(t) as never, [{ id: TOUR_ID, nombre: "SMR TOUR 02 - City Tour Panorámico" }]); assert.ok(r.ok); return r.porServicio.get(TOUR_ID)!; };
+  const sinVig = await cargarT(tablasTour([], 30000));
+  assert.notEqual(sinVig.usaAlcance, true, "no es un traslado por alcance");
+  const a = incluidoEnEstadia(sinVig, "persona", "2030-05-01", "2030-05-01", HOY);
+  assert.equal(a.ok && a.netoPersona, 30000); assert.equal(a.ok && a.origen, "base");
+  const b = incluidoEnEstadia(await cargarT(tablasTour([vig(80000)], 30000)), "persona", "2030-05-01", "2030-05-01", HOY);
+  assert.equal(b.ok && b.netoPersona, 80000, "la vigencia con tarifa prevalece");
+  const c = incluidoEnEstadia(await cargarT(tablasTour([vig(null)], 30000)), "persona", "2030-05-01", "2030-05-01", HOY);
+  assert.equal(c.ok && c.origen, "base", "vigencia sin tarifa → base");
+  const d = incluidoEnEstadia(await cargarT(tablasTour([], null)), "persona", "2030-05-01", "2030-05-01", HOY);
+  assert.match(!d.ok ? d.error : "", /«SMR TOUR 02 - City Tour Panorámico».*Crea una vigencia con tarifa o configura la tarifa base en Producto → Servicios/);
 });

@@ -82,7 +82,9 @@ describe("misma tarifa en venta, costo y publicación", () => {
     const ref = referenciaPublicacion(a, "persona", { desde: "2031-03-10", hasta: "2031-04-30" }, "2026-10-29");
     assert.equal(ref.ok && ref.netoPersona, 20000);
     assert.equal(ref.ok && ref.cobertura?.parcial, false);
-    assert.equal(incluidoEnEstadia(rv.porServicio.get(TRASLADO)!, "persona", "2031-03-10", "2031-03-14").ok, false);
+    // Tours y traslados sin vigencia: ya no exigen vigencia si tienen base válida (> 0); la cobran como respaldo.
+    const t = incluidoEnEstadia(rv.porServicio.get(TRASLADO)!, "persona", "2031-03-10", "2031-03-14");
+    assert.equal(t.ok && t.netoPersona, 30000); assert.equal(t.ok && t.origen, "base");
   });
 });
 

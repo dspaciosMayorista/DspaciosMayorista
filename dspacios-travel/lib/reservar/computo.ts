@@ -56,7 +56,7 @@ import {
 } from "@/lib/reservar/serviciosPaquete";
 import { validarModoServicio } from "@/lib/reservar/liquidacionServicio";
 import { cargarVigenciasServicios } from "@/lib/reservar/temporadasServicio";
-import { referenciaPublicacion, incluidoEnEstadia, incluidoSeOmite } from "@/lib/calc/servicioVigencias";
+import { referenciaPublicacion, incluidoPorUnidades, incluidoSeOmite } from "@/lib/calc/servicioVigencias";
 import { idsDeJson, MENSAJE_EVIDENCIA_NO_DISPONIBLE, verificarComposicionPublicada } from "@/lib/reservar/composicionPublicada";
 import { resolverTarifaServicio, rangoCubrePax, MENSAJE_SIN_TARIFA } from "@/lib/calc/servicioTarifa";
 import { precioInfanteConServiciosOpcionales, type ServicioOpcionalSeleccionado } from "@/lib/paquetes/pvpInfanteFijo";
@@ -1147,14 +1147,14 @@ export async function computarReserva(
         }
         const svInc = rvInc.porServicio.get(r.servicio_id);
         if (!svInc) return { ok: false, error: `El servicio incluido "${srv?.nombre ?? r.servicio_id}" no se encontró en el catálogo.` };
-        const inc = incluidoEnEstadia(svInc, modo, meta.fecha_ida, meta.fecha_ida);
+        const inc = incluidoPorUnidades({ ...svInc, liquidacion: srv?.liquidacion ?? svInc.liquidacion }, modo, meta.fecha_ida, meta.fecha_ida, numNochesInc);
         // Sin tarifa vigente en la fecha de ida: el incluido se OMITE (no entra al PVP —la publicación y la liquidación en vivo tampoco lo hornearon—, ni al costo, ni
         // a la CxP, ni a «Incluye»/documentos). Los errores de configuración (franjas, vigencias ambiguas) siguen rechazando.
         if (!inc.ok) { if (incluidoSeOmite(inc)) continue; return { ok: false, error: inc.error }; }
         idsVivos.push(r.servicio_id);
         const costoNeto = costoNetoServicioIncluido(
           modo, inc.netoPersona, inc.rangos, paxServAdulto, srv?.liquidacion ?? null, numNochesInc,
-          { cantidad: numMenoresDeDos, precioInfanteNeto: inc.netoInfante }
+          { cantidad: numMenoresDeDos, precioInfanteNeto: inc.netoInfante }, inc.unidades
         );
         if (modo === "persona") {
           // Ya horneado en pvpPorAcom — se registra para el resumen/CxP. Un cálculo fallido (null) NUNCA se convierte en costo/CxP $0 (el PVP sí lo cobra): se rechaza antes de
@@ -1186,6 +1186,7 @@ export async function computarReserva(
           liquidacion: srv?.liquidacion ?? null,
           proveedorId: srv?.proveedor_id ?? null,
           rangos: inc.rangos,
+          unidades: inc.unidades,
         });
       }
 

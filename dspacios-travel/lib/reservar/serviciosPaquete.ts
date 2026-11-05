@@ -115,9 +115,25 @@ export function costoNetoServicioIncluido(
   // cuentan para el rango de un servicio por grupo ni pagan extra; en un
   // servicio por persona pagan su `precio_infante` NETO (o el de adulto si el
   // servicio no lo configuró — NULL ≠ $0).
-  menoresDeDos?: { cantidad: number; precioInfanteNeto: number | null }
+  menoresDeDos?: { cantidad: number; precioInfanteNeto: number | null },
+  // Incluido por día/noche con tarifa por unidad (incluidoPorUnidades): el costo es la SUMA de sus unidades; el factor de liquidación NO se vuelve a aplicar.
+  unidades?: readonly { netoPersona: number | null; netoInfante: number | null; rangos: { pax_desde: number; pax_hasta: number; precio: number }[] }[]
 ): number | null {
   if (totalPax <= 0) return null;
+  if (unidades?.length) {
+    const m2u = Math.max(0, menoresDeDos?.cantidad ?? 0);
+    let suma = 0;
+    for (const u of unidades) {
+      if (modo === "persona") {
+        if (u.netoPersona == null) return null;
+        suma += precioServicio("persona", u.netoPersona, [], totalPax) + (u.netoInfante ?? u.netoPersona) * m2u;
+      } else {
+        if (!u.rangos.some((g) => totalPax >= g.pax_desde && totalPax <= g.pax_hasta)) return null; // alguna unidad sin rango que cubra al grupo: nunca se asume otro rango
+        suma += precioServicio("grupo", null, u.rangos, totalPax);
+      }
+    }
+    return Number.isFinite(suma) ? suma : null;
+  }
   if (modo === "persona") {
     if (precioPersonaNeto == null) return null;
     const m2 = Math.max(0, menoresDeDos?.cantidad ?? 0);
@@ -160,6 +176,8 @@ export type ServicioGrupoIncluido = {
   proveedorId: number | null;
   /** Rangos de la vigencia aplicable (incluidoEnEstadia), nunca de la tarifa GENERAL. */
   rangos: { pax_desde: number; pax_hasta: number; precio: number }[];
+  /** Tarifa por día/noche (incluidoPorUnidades): el cargo es la suma de sus unidades. */
+  unidades?: readonly { netoPersona: number | null; netoInfante: number | null; rangos: { pax_desde: number; pax_hasta: number; precio: number }[] }[];
 };
 
 /**
@@ -194,7 +212,7 @@ export function cargoGrupoIncluido(
   let pvp = 0;
   const efectivos: ServicioEfectivo[] = [];
   for (const s of servicios ?? []) {
-    const costoNeto = costoNetoServicioIncluido("grupo", null, s.rangos ?? [], totalPax, s.liquidacion, numNoches);
+    const costoNeto = costoNetoServicioIncluido("grupo", null, s.rangos ?? [], totalPax, s.liquidacion, numNoches, undefined, s.unidades);
     if (costoNeto == null) return { ok: false, nombre: s.nombre, totalPax };
     pvp += Math.round(marcar(costoNeto, pctMk));
     efectivos.push({

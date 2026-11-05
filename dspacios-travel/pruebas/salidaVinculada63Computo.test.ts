@@ -268,11 +268,17 @@ describe("computarReserva() · fila publicada antigua o desactualizada (migraci�
     assert.ok([...logSb, ...logAdmin].every((l) => !/insert|upsert|rpc/i.test(l) || /select/i.test(l)), "ninguna escritura");
   });
 
-  test("fila antigua con servicio incluido y la FECHA hoy DESCUBIERTA: la fila lo traía horneado, la composición viva lo omite → se rechaza (no se cobra su PVP viejo)", async () => {
+  test("fila antigua con servicio incluido y la FECHA hoy DESCUBIERTA (sin vigencia ni base): la composición viva ya no puede cobrarlo → se rechaza con qué configurar (no se cobra su PVP viejo)", async () => {
     const { r } = await cotizar(tablasAdmin({ servicios: [incluido], vigencias: SIN_VIGENCIA_EN_LA_FECHA, evidencia: [{ paquete_id: PAQUETE_ID, fecha_ida: IDA, generacion: 3, regla: 1, servicios_incluidos: [900] }] }));
     assert.equal(r.ok, false);
-    assert.match(msg(r), REGENERA);
-    assert.match(msg(r), /ya no coinciden/);
+    assert.match(msg(r), /Crea una vigencia con tarifa o configura la tarifa base en Producto → Servicios/);
+  });
+  test("fila antigua con servicio incluido, fecha DESCUBIERTA pero CON base: el servicio se cobra con la base (mismo neto que la fila horneada) y se cotiza", async () => {
+    const t = tablasAdmin({ servicios: [incluido], vigencias: SIN_VIGENCIA_EN_LA_FECHA, evidencia: [{ paquete_id: PAQUETE_ID, fecha_ida: IDA, generacion: 3, regla: 1, servicios_incluidos: [900] }] });
+    t.servicios_adicionales = [{ id: 900, nombre: "Tour", moneda: "USD", precio_persona: 10, precio_infante: 0 }];
+    const { r } = await cotizar(t);
+    assert.equal(r.ok, true, msg(r));
+    if (r.ok) assert.deepEqual(r.data.serviciosIncluidos.map((x) => x.servicioId), [900]);
   });
 
   test("evidencia de una generación ANTERIOR a la publicada: se rechaza", async () => {
@@ -299,10 +305,10 @@ describe("computarReserva() · fila publicada antigua o desactualizada (migraci�
     if (r.ok) assert.deepEqual(r.data.serviciosIncluidos.map((x) => x.servicioId), [900]);
   });
 
-  test("fila REGENERADA en una fecha descubierta (el servicio se omitió al publicar): se cotiza SIN el servicio — sin PVP, costo ni CxP del servicio", async () => {
+  test("fila REGENERADA en una fecha descubierta SIN base: la reserva se rechaza con qué configurar (no se cotiza sin el servicio en silencio)", async () => {
     const { r } = await cotizar(tablasAdmin({ servicios: [incluido], vigencias: SIN_VIGENCIA_EN_LA_FECHA, evidencia: [{ paquete_id: PAQUETE_ID, fecha_ida: IDA, generacion: 3, regla: 1, servicios_incluidos: [] }] }));
-    assert.equal(r.ok, true, msg(r));
-    if (r.ok) assert.deepEqual(r.data.serviciosIncluidos, []);
+    assert.equal(r.ok, false);
+    assert.match(msg(r), /Crea una vigencia con tarifa o configura la tarifa base en Producto → Servicios/);
   });
 
   test("falta la tabla de evidencia (migración 258 sin aplicar): se rechaza con mensaje claro (no se vende lo que no se puede acreditar)", async () => {

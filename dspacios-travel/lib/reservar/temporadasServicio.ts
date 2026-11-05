@@ -66,9 +66,9 @@ export async function cargarVigenciasServicios(
   if (gr.error) return { ok: false, error: gr.error.message };
   const nombres = new Map(servicios.map((s) => [s.id, s.nombre]));
   // Tarifa base (precio_persona / precio_infante): respaldo del traslado incluido sin vigencia para la fecha (servicioVigencias). Un fallo de lectura detiene; no se asume «sin base».
-  const bs = await admin.from("servicios_adicionales").select("id, precio_persona, precio_infante").in("id", ids);
+  const bs = await admin.from("servicios_adicionales").select("id, precio_persona, precio_infante, liquidacion").in("id", ids);
   if (bs.error) return { ok: false, error: bs.error.message };
-  const precioBase = new Map(((bs.data ?? []) as { id: number; precio_persona: number | null; precio_infante: number | null }[]).map((r) => [r.id, r]));
+  const precioBase = new Map(((bs.data ?? []) as { id: number; precio_persona: number | null; precio_infante: number | null; liquidacion?: string | null }[]).map((r) => [r.id, r]));
   // 262: clasificación y precios propios por alcance (tolerante: sin la 262 aplicada todo sigue como antes; un fallo técnico detiene la publicación).
   const lecAlc = await leerAlcanceDeServicios(admin, ids, tr.data.map((t) => t.id).filter((x): x is number => x != null));
   if (!lecAlc.ok) return { ok: false, error: lecAlc.error };
@@ -94,9 +94,10 @@ export async function cargarVigenciasServicios(
       Object.assign(extraAlcance, { usaAlcance: true, gruposAlcance, personaAlcance, gruposIdaRegreso, personaIdaRegreso });
     }
     const grupos = (gr.data ?? []).filter((g) => g.servicio_id === id).map((g) => ({ pax_desde: g.pax_desde, pax_hasta: g.pax_hasta, precio: Number(g.precio), temporada: g.temporada ?? NOMBRE_TARIFA_BASE }));
-    if (usaAlcance) { const b = precioBase.get(id); extraAlcance.tarifaBase = { precioPersona: b?.precio_persona == null ? null : Number(b.precio_persona), precioInfante: b?.precio_infante == null ? null : Number(b.precio_infante), grupos }; }
+    { const b = precioBase.get(id); extraAlcance.tarifaBase = { precioPersona: b?.precio_persona == null ? null : Number(b.precio_persona), precioInfante: b?.precio_infante == null ? null : Number(b.precio_infante), grupos }; }
     porServicio.set(id, {
       ...extraAlcance,
+      liquidacion: precioBase.get(id)?.liquidacion ?? null,
       servicioId: id, nombre: nombres.get(id) ?? `#${id}`, temporadas, grupos,
       conFranjas: new Set(temporadas.filter((t) => (t.servicio_suplementos_franja?.length ?? 0) > 0).map((t) => t.nombre)),
     });

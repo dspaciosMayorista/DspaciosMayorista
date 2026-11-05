@@ -118,8 +118,27 @@ export function vigenciasVendibles(s: ServicioConVigencias, hoy: string = hoyISO
   return (s.servicio_temporadas ?? []).filter((v) => v.fecha_inicio && v.fecha_fin && v.fecha_fin >= hoy);
 }
 
-/** Un servicio se puede agregar en bloque solo si tiene una vigencia vendible con precio por persona o con rangos de grupo propios (no GENERAL). */
-export function servicioSeleccionable(s: ServicioConVigencias, hoy?: string): boolean {
+/** Tarifa base válida de un servicio (tour, traslado, asistencia): precio por persona > 0 y/o rangos GENERAL de grupo. Solo respalda a un servicio INCLUIDO; como opcional no se ofrece. */
+export function tarifaBaseIncluible(s: ServicioConVigencias): { persona: boolean; grupo: boolean } {
+  return {
+    persona: s.precio_persona != null && Number.isFinite(Number(s.precio_persona)) && Number(s.precio_persona) > 0,
+    grupo: (s.servicio_tarifa_pax ?? []).some((g) => (g.temporada ?? "GENERAL") === "GENERAL"),
+  };
+}
+
+/** Sin ninguna vigencia vendible ni tarifa permanente de asistencia, pero con base válida: solo se puede agregar como INCLUIDO (nunca como opcional por esa base). */
+export function servicioSoloPorBase(s: ServicioConVigencias, hoy?: string): boolean {
+  if (tarifaBasePermanenteVendible(s)) return false;
+  const vend = vigenciasVendibles(s, hoy);
+  const conTarifa = vend.some((v) => v.precio_persona != null || (s.servicio_tarifa_pax ?? []).some((g) => g.temporada === v.nombre));
+  if (conTarifa) return false;
+  const b = tarifaBaseIncluible(s);
+  return b.persona || b.grupo;
+}
+
+/** Un servicio se puede agregar en bloque solo si tiene una vigencia vendible con precio por persona o con rangos de grupo propios (no GENERAL); como INCLUIDO basta una base válida. */
+export function servicioSeleccionable(s: ServicioConVigencias, hoy?: string, comoIncluido = false): boolean {
   if (tarifaBasePermanenteVendible(s)) return true;
+  if (comoIncluido && servicioSoloPorBase(s, hoy)) return true;
   return vigenciasVendibles(s, hoy).some((v) => v.precio_persona != null || (s.servicio_tarifa_pax ?? []).some((g) => g.temporada === v.nombre));
 }

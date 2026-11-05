@@ -10,6 +10,8 @@ export type ComponentePersona = {
   tipo: TipoComponente; nombre: string; neto: number | null; venta: number;
   /** Importe del neto en su moneda de ORIGEN cuando se convirtió con TRM (`neto` ya está en la moneda de la oferta). Ausente = sin conversión. */
   origen?: { monto: number; moneda: string };
+  /** Desglose por tramos (desde, hasta, unidades, neto por persona adulta, origen) de un servicio incluido por día/noche; el `neto` del componente es su suma. */
+  tramos?: { desde: string; hasta: string; unidades: number; neto: number; origen: string }[];
 };
 
 export type LineaComposicion = {
@@ -57,7 +59,7 @@ export type BaseMotor = {
   /** Neto de hotel en su moneda de origen por acomodación/clase, solo donde hubo conversión. */
   netosOrigen?: Record<string, { monto: number; moneda: string }>;
   /** Neto por persona de cada servicio incluido (ya multiplicado por su factor de liquidación); `origen` solo si hubo conversión. */
-  servicios: { nombre: string; neto: number; netoMenor: number; origen?: { monto: number; montoMenor: number; moneda: string } }[];
+  servicios: { nombre: string; neto: number; netoMenor: number; /** Desglose por tramos de un incluido por día/noche (desde, hasta, unidades, neto por persona, origen). */ tramos?: { desde: string; hasta: string; unidades: number; neto: number; origen: string }[]; origen?: { monto: number; montoMenor: number; moneda: string } }[];
   /** Neto de hotel por persona y por acomodación/clase (sencilla…multiple, nino, nino2, infante). */
   netos: Record<string, number>;
 };
@@ -77,7 +79,7 @@ function componentes(b: BaseMotor, clave: string, pvp: number, menorDeDos: boole
   const esperado = b.pvps?.[clave];
   if (b.pvps && (!esperado || (menorDeDos ? esperado.pvpMenor2 : esperado.pvp) !== pvp)) return null;
   const hotelM = marcar(neto, b.pctMk);
-  const serv = b.servicios.map((s) => ({ nombre: s.nombre, neto: menorDeDos ? s.netoMenor : s.neto, origen: s.origen ? { monto: menorDeDos ? s.origen.montoMenor : s.origen.monto, moneda: s.origen.moneda } : undefined }));
+  const serv = b.servicios.map((s) => ({ nombre: s.nombre, tramos: menorDeDos ? undefined : s.tramos, neto: menorDeDos ? s.netoMenor : s.neto, origen: s.origen ? { monto: menorDeDos ? s.origen.montoMenor : s.origen.monto, moneda: s.origen.moneda } : undefined }));
   const servM = serv.reduce((t, s) => t + marcar(s.neto, b.pctMk), 0);
   const vuelo = menorDeDos ? b.feeInfante : b.vuelo;
   // Menor de 2 años: el fee del vuelo se suma EXACTO después del redondeo (regla B); el resto se redondea hacia arriba.
@@ -88,7 +90,7 @@ function componentes(b: BaseMotor, clave: string, pvp: number, menorDeDos: boole
   const oh = b.netosOrigen?.[clave];
   const out: ComponentePersona[] = [{ tipo: "hotel", nombre: "Hotel", neto: c2(neto), venta: c2(hotelM), ...(oh ? { origen: { monto: c2(oh.monto), moneda: oh.moneda } } : {}) }];
   if (vuelo > 0) out.push({ tipo: "vuelo", nombre: menorDeDos ? "Fee de infante del vuelo" : "Vuelo", neto: menorDeDos ? c2(vuelo) : b.vueloNeto == null ? null : c2(b.vueloNeto), venta: c2(vuelo) });
-  for (const x of serv) out.push({ tipo: "servicio", nombre: x.nombre, neto: c2(x.neto), venta: c2(marcar(x.neto, b.pctMk)), ...(x.origen ? { origen: { monto: c2(x.origen.monto), moneda: x.origen.moneda } } : {}) });
+  for (const x of serv) out.push({ tipo: "servicio", nombre: x.nombre, neto: c2(x.neto), venta: c2(marcar(x.neto, b.pctMk)), ...(x.tramos ? { tramos: x.tramos } : {}), ...(x.origen ? { origen: { monto: c2(x.origen.monto), moneda: x.origen.moneda } } : {}) });
   const resto = out.reduce((t, x) => t + x.venta, 0);
   const red = c2(pvp - resto);
   if (Math.abs(red) > 0.004) out.push({ tipo: "redondeo", nombre: "Redondeo", neto: null, venta: red });
