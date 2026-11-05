@@ -77,11 +77,19 @@ export default async function PortalVentas({ searchParams }: { searchParams: Pro
                   <td className="px-3 py-2 text-right text-xs tabular-nums">
                     {com != null && com > 0 ? formatMoneda(com, monedaOfertaDe(conjunto.crudas.get(num))) : "—"}
                     {vis?.estado ? <span className="block text-[10px] text-gray-400">{ESTADO_COMISION[vis.estado] ?? vis.estado}</span> : null}
-                    {/* Cuenta de cobro solo en contratos propios: su resolvedor decide el beneficiario por la comisión más reciente, no por la tuya. */}
-                    {!part && vis?.cobrable && vis.tipo === "freelance" && (
-                      <Link href={`/portal/comision/${encodeURIComponent(num)}`} className="block text-[10px] font-medium" style={{ color: "var(--brand-accent)" }}>Cuenta de cobro</Link>
+                    {/*
+                      Cuenta de cobro y estado de cuenta en CUALQUIER fila cobrable, propia o de
+                      participación: `resolverComisionB2B` ya resuelve el acceso por la ficha de
+                      quien mira (no por la comisión más reciente del contrato), y `filasCobrables`
+                      aísla el importe a SU fila — nunca la del otro aliado del mismo contrato.
+                    */}
+                    {vis?.cobrable && vis.tipo === "freelance" && (
+                      <span className="mt-0.5 flex flex-col items-end gap-0.5">
+                        <Link href={`/portal/comision/${encodeURIComponent(num)}`} className="block text-[10px] font-medium" style={{ color: "var(--brand-accent)" }}>Cuenta de cobro</Link>
+                        <Link href={`/portal/comision/${encodeURIComponent(num)}/estado-cuenta`} className="block text-[10px] font-medium" style={{ color: "var(--brand-accent)" }}>Estado de cuenta</Link>
+                      </span>
                     )}
-                    {!part && vis?.cobrable && vis.tipo === "agencia" && <span className="block text-[10px] text-gray-400">Factura electrónica</span>}
+                    {vis?.cobrable && vis.tipo === "agencia" && <span className="block text-[10px] text-gray-400">Factura electrónica</span>}
                   </td>
                 </tr>
               );
