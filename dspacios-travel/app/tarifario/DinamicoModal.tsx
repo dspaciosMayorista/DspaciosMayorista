@@ -6,7 +6,7 @@
 // Cotizar: todos (con o sin sesión) usan el carrito público de siempre (`cotizador`, el mismo Selector de Bloqueo →
 // /tarifario/checkout); quien puede reservar conserva además "Cotizar esta salida" (`reservar/nuevo`, módulo dinámico).
 // La lógica (agrupar, "desde", enlace) vive en lib/tarifario/dinamicoBooking.ts (pura y testeada).
-import { useMemo, useState, type ReactNode } from "react";
+import { useCallback, useMemo, useState, type ReactNode } from "react";
 import Image from "next/image";
 import Link from "next/link";
 import { CalendarClock } from "lucide-react";
@@ -20,6 +20,7 @@ import type { DescripcionPaqueteRaw } from "@/lib/tarifario/descripcionPaquete";
 import { BackgroundVideo } from "@/components/BackgroundVideo";
 import { Categoria, EtiquetasHotel, DescripcionHotelExpandible, UbicacionHotel, SeccionesIncluye, IncluyeSalida } from "./tarjetaHotelCompartida";
 import type { FilaTarifario } from "./TarifarioPublic";
+import { claveSalidaFila, entradaSalida, useCotizacionSalidaModal, type CotizacionSalida, type CotizadaSalida } from "./cotizacionSalidaModal";
 
 export type HotelDinamicoModal = {
   hotelId: number;
@@ -55,27 +56,42 @@ export function InsigniaFechasSalida({ filas }: { filas: readonly { modulo?: str
 }
 
 export function DinamicoModal({
-  hotel, detalle, onReintentar, descripcionPorPaquete, acceso, onClose, cotizador, salidaInicial = null, precioSeleccion = null,
+  hotel, detalle, onReintentar, descripcionPorPaquete, acceso, onClose, cotizador, salidaInicial = null, semilla = null, origenDesde = null,
 }: {
-  /** #90: salida elegida en la tarjeta y su precio en doble YA calculado (null = aún sin calcular). Con selección, los demás «desde» son referencias publicadas y se rotulan así. */
-  precioSeleccion?: { salidaId: number; doble: number | null; moneda: string | null } | null;
+  /** #90: salida, categoría y régimen que ORIGINAN el «desde» de la tarjeta; sin fechas elegidas el modal abre ahí (sobre precios publicados). */
+  origenDesde?: { salidaId: number | null; categoria: string | null; regimen: string | null } | null;
+    /** #90: salida elegida en la tarjeta con su cotizacion (null = aun sin calcular). Con seleccion (de la tarjeta o del modal) cada salida elegida se calcula aqui y los "desde" de las demas son referencias publicadas. */
+  semilla?: { salidaId: number; cot: CotizadaSalida | null } | null;
   /** #90: salida elegida en la tarjeta; el modal abre en ella. */
   salidaInicial?: number | null;
   hotel: HotelDinamicoModal;
   /** Qué ofrece el modal: "cotizar" (ruta interna de reserva + carrito) o "carrito" (solo el carrito público). Ver `accesoCotizacionDinamica`. */
   acceso: AccesoCotizacionDinamica;
   /** Cotizador del carrito público para la salida elegida (habitaciones/edades → carrito → /tarifario/checkout). */
-  cotizador?: (salidaId: number, filas: FilaTarifario[]) => ReactNode;
+  cotizador?: (salidaId: number, filas: FilaTarifario[], cotizacion: CotizacionSalida, comboInicial?: { categoria: string; regimen: string }) => ReactNode;
   detalle: EstadoDetalle<FilaTarifario> | null;
   onReintentar: () => void;
   descripcionPorPaquete: Record<number, DescripcionPaqueteRaw>;
   onClose: () => void;
 }) {
   const salidas = useMemo(() => agruparSalidasDinamicas(detalle?.estado === "ok" ? detalle.filas : []), [detalle]);
-  const [elegida, setElegida] = useState<number | null>(salidaInicial);
+  const [elegida, setElegida] = useState<number | null>(salidaInicial ?? origenDesde?.salidaId ?? null);
   // Derivado en cada render (no un efecto): si la elegida ya no existe, cae a la primera.
   const salida = salidas.find((s) => s.salidaId === elegida) ?? salidas[0];
   const descripcion = hotel.paqueteId != null ? descripcionPorPaquete[hotel.paqueteId] : undefined;
+
+  // #90: la salida activa se calcula con el mismo motor de la tarjeta; sin eleccion alguna se conservan los precios publicados.
+  const [eligio, setEligio] = useState(false);
+  const filasDe = useCallback((salidaId: number) => (detalle?.estado === "ok" ? detalle.filas.filter((f) => f.modulo === "dinamico" && f.salida_id === salidaId) : []), [detalle]);
+  const activa = useMemo(
+    () => ((eligio || semilla != null) && salida && hotel.paqueteId != null ? entradaSalida(filasDe(salida.salidaId), hotel.paqueteId, hotel.hotelId) : null),
+    [eligio, semilla, salida, hotel.paqueteId, hotel.hotelId, filasDe],
+  );
+  const cotizacion = useCotizacionSalidaModal({
+    activa,
+    semilla: semilla && detalle?.estado === "ok" ? { clave: claveSalidaFila(filasDe(semilla.salidaId)[0] ?? {}), cot: semilla.cot } : null,
+  });
+  const cotizando = activa != null;
 
   return (
     <div className="fixed inset-0 z-50 flex items-end justify-center bg-black/40 p-0 sm:items-center sm:p-4" onClick={onClose}>
@@ -123,11 +139,12 @@ export function DinamicoModal({
                   {salidas.map((s) => {
                     const activa = s.salidaId === salida.salidaId;
                     const desde = desdeSalidaDinamica(s);
+                    const calculada = cotizacion.cotizadaDe(claveSalidaFila(filasDe(s.salidaId)[0] ?? {}));
                     return (
                       <button
                         key={s.salidaId}
                         type="button"
-                        onClick={() => setElegida(s.salidaId)}
+                        onClick={() => { setElegida(s.salidaId); setEligio(true); }}
                         aria-pressed={activa}
                         className="rounded-lg border px-3 py-2 text-left text-sm transition-colors"
                         style={activa ? { borderColor: "var(--brand-accent)", backgroundColor: "rgba(38,187,217,0.08)" } : { borderColor: "#e5e7eb", backgroundColor: "white" }}
@@ -138,9 +155,9 @@ export function DinamicoModal({
                         </span>
                         <span className="block text-xs text-gray-500">
                           {s.noches ? `${s.noches} noche${s.noches === 1 ? "" : "s"}` : ""}
-                          {precioSeleccion && s.salidaId === precioSeleccion.salidaId && precioSeleccion.doble != null
-                            ? `${s.noches ? " · " : ""}tu precio desde ${formatMoneda(precioSeleccion.doble, precioSeleccion.moneda)} en doble`
-                            : desde != null ? `${s.noches ? " · " : ""}${precioSeleccion ? "referencia publicada (sin cotizar): " : ""}desde ${formatMoneda(desde, s.moneda)} en doble` : ""}
+                          {calculada
+                            ? `${s.noches ? " · " : ""}tu precio desde ${formatMoneda(calculada.precio, calculada.moneda)} en doble`
+                            : desde != null ? `${s.noches ? " · " : ""}${cotizando ? "referencia publicada (sin cotizar): " : ""}desde ${formatMoneda(desde, s.moneda)} en doble` : ""}
                         </span>
                       </button>
                     );
@@ -158,7 +175,7 @@ export function DinamicoModal({
                 </Link>
               )}
               {/* Carrito público (con o sin sesión, sin permiso especial): mismo flujo que Bloqueo, con la salida elegida arriba. */}
-              {detalle.estado === "ok" && cotizador?.(salida.salidaId, detalle.filas)}
+              {detalle.estado === "ok" && cotizador?.(salida.salidaId, detalle.filas, cotizacion, origenDesde && origenDesde.salidaId === salida.salidaId && origenDesde.categoria && origenDesde.regimen ? { categoria: origenDesde.categoria, regimen: origenDesde.regimen } : undefined)}
 
               <IncluyeSalida fechaIda={salida?.fechaIda ?? null}><SeccionesIncluye descripcion={descripcion} compacto /></IncluyeSalida>
             </>

@@ -183,6 +183,8 @@ export function validarEntradaDetalleHotel(inputRaw: unknown): EntradaDetalleHot
  */
 export type EntradaDetalleSalida =
   | { modulo: "bloqueo"; bloqueoId: number; combos: ComboIdentidad[] }
+  // #90: empaquetado SIN bloqueo_id (ticket por sistema): la salida se identifica por su empaquetado_id.
+  | { modulo: "bloqueo"; bloqueoId?: undefined; empaquetadoId: number; combos: ComboIdentidad[] }
   | { modulo: "dinamico"; salidaId: number; combos: ComboIdentidad[] };
 
 export function validarEntradaDetalleSalida(inputRaw: unknown): EntradaDetalleSalida | null {
@@ -193,7 +195,9 @@ export function validarEntradaDetalleSalida(inputRaw: unknown): EntradaDetalleSa
   if (combos == null) return null;
   if (modulo === "bloqueo") {
     const bloqueoId = idPositivo(o.bloqueoId);
-    return bloqueoId ? { modulo: "bloqueo", bloqueoId, combos } : null;
+    if (bloqueoId) return { modulo: "bloqueo", bloqueoId, combos };
+    const empaquetadoId = idPositivo(o.empaquetadoId);
+    return empaquetadoId ? { modulo: "bloqueo", empaquetadoId, combos } : null;
   }
   if (modulo === "dinamico") {
     const salidaId = idPositivo(o.salidaId);

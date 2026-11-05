@@ -9,9 +9,12 @@ import { PorDinamicos, type EvaluarSeleccionFn } from "./PorDinamicos";
 import type { DinamicoPublico } from "@/lib/paqueteDinamico/publico";
 import { RegimenInfo, type PlanesInfo } from "./RegimenInfo";
 import { BriefFlyerButton } from "./BriefFlyerButton";
+import { EtiquetaDescuentoHotel } from "@/components/cotizacion/EtiquetaDescuentoHotel";
+import { entradaSalida, useCotizacionesHoteles } from "./cotizacionSalidaModal";
 import { textoEdadesHotel, type AcomConfig } from "@/lib/acomodaciones";
 import { obtenerDetalleSalida, obtenerDetallePaquete, obtenerDetalleServicios } from "./detalle-actions";
 import { conCacheDetalle, claveDetalleSalida, claveDetallePaquete, type EstadoDetalle } from "@/lib/tarifario/detalleCliente";
+import { claveDetalleEmpaquetado } from "@/lib/tarifario/detalleCliente";
 import type { FilaResumen } from "@/lib/tarifario/resumen";
 import type { DescripcionPaqueteRaw } from "@/lib/tarifario/descripcionPaquete";
 import type { HotelBernaloDescubierto } from "@/lib/tarifario/datosBernalo";
@@ -135,6 +138,13 @@ function pivotar(filas: FilaTarifario[]): Pivotada[] {
     (a, b) => a.hotel.localeCompare(b.hotel) || a.categoria.localeCompare(b.categoria) || a.regimen.localeCompare(b.regimen)
   );
 }
+
+// #90: precio de una fila de Vista tabla calculado con el motor de la tarjeta (promoción vigente HOY para ESA salida). Mientras no sea "ok" no se muestra ninguna tarifa base.
+type FilaVivo =
+  | { estado: "ok"; precios: Record<string, number>; preciosMenor2: Record<string, number>; descuento: { etiqueta: string } | null }
+  | { estado: "cargando" }
+  | { estado: "error"; mensaje: string; reintentar: () => void }
+  | { estado: "sin" };
 
 type ModuloKey = FilaTarifario["modulo"] | "programas";
 
@@ -682,7 +692,7 @@ function PorSalida({ filas, puedeReservar, cuposPorBloqueo = {}, soloAcom = null
   const salidas = useMemo(() => {
     const map = new Map<string, FilaResumen>();
     for (const f of filasConCupo) {
-      const key = `${f.destino_nombre}|||${f.bloqueo_label}|||${f.fecha_ida}`;
+      const key = `${f.destino_nombre}|||${f.bloqueo_label}|||${f.fecha_ida}|||${f.empaquetado_id ?? ""}`;
       if (!map.has(key)) map.set(key, f);
     }
     return [...map.entries()].map(([key, f]) => ({ key, f }));
@@ -715,14 +725,51 @@ function PorSalida({ filas, puedeReservar, cuposPorBloqueo = {}, soloAcom = null
   }, [filasConCupo, moduloSel, selFila]);
   const claveDetalle =
     moduloSel === "bloqueo" && selFila?.bloqueo_id != null ? claveDetalleSalida("bloqueo", selFila.bloqueo_id, combosSalida)
+      : moduloSel === "bloqueo" && selFila?.empaquetado_id != null ? claveDetalleEmpaquetado(selFila.empaquetado_id, combosSalida)
       : moduloSel === "dinamico" && selFila?.salida_id != null ? claveDetalleSalida("dinamico", selFila.salida_id, combosSalida)
       : null;
   const [detalle, reintentarDetalle] = useDetalleTabla(claveDetalle, () =>
     moduloSel === "bloqueo"
-      ? obtenerDetalleSalida({ modulo: "bloqueo", bloqueoId: selFila!.bloqueo_id, combos: combosSalida })
+      ? (selFila!.bloqueo_id != null
+        ? obtenerDetalleSalida({ modulo: "bloqueo", bloqueoId: selFila!.bloqueo_id, combos: combosSalida })
+        : obtenerDetalleSalida({ modulo: "bloqueo", empaquetadoId: selFila!.empaquetado_id, combos: combosSalida }))
       : obtenerDetalleSalida({ modulo: "dinamico", salidaId: selFila!.salida_id, combos: combosSalida })
   );
-  const rows = useMemo(() => pivotar(detalle?.estado === "ok" ? detalle.filas : []), [detalle]);
+  // Solo las filas de la salida elegida (un empaquetado distinto con las mismas fechas es otra oferta).
+  const filasSalida = useMemo(
+    () => (detalle?.estado === "ok" ? detalle.filas.filter((f) => (f.empaquetado_id ?? null) === (selFila?.empaquetado_id ?? null)) : []),
+    [detalle, selFila],
+  );
+  const rows = useMemo(() => pivotar(filasSalida), [filasSalida]);
+  // #90: UNA cotización por hotel de la salida elegida (no de las demás), con concurrencia limitada.
+  const { entradas, claveDe } = useMemo(() => {
+    const porHotel = new Map<string, FilaTarifario[]>();
+    for (const r of rows) {
+      const k = `${r.hotel_id}|${r.paquete_id}`;
+      if (!porHotel.has(k)) porHotel.set(k, []);
+    }
+    for (const f of filasSalida) porHotel.get(`${f.hotel_id}|${f.paquete_id}`)?.push(f);
+    const lista: { clave: string; input: Record<string, unknown> }[] = [];
+    const mapa = new Map<string, string>();
+    for (const [k, fs2] of porHotel) {
+      const e = fs2[0]?.paquete_id != null && fs2[0]?.hotel_id != null ? entradaSalida(fs2, fs2[0].paquete_id, fs2[0].hotel_id) : null;
+      if (!e) continue;
+      const clave = `${e.clave}|${k}`;
+      lista.push({ clave, input: e.input });
+      mapa.set(k, clave);
+    }
+    return { entradas: lista, claveDe: mapa };
+  }, [rows, filasSalida]);
+  const cotizaciones = useCotizacionesHoteles({ entradas });
+  const vivo = (r: Pivotada): FilaVivo => {
+    const clave = claveDe.get(`${r.hotel_id}|${r.paquete_id}`);
+    if (!clave) return { estado: "sin" };
+    const c = cotizaciones.de(clave);
+    if (c.estado === "cargando") return c;
+    if (c.estado === "error") return { estado: "error", mensaje: c.mensaje, reintentar: () => cotizaciones.reintentar(clave) };
+    const combo = c.cot.combos.find((x) => x.categoria === r.categoria && x.regimen === r.regimen);
+    return combo ? { estado: "ok", precios: combo.precios, preciosMenor2: combo.preciosMenor2, descuento: combo.descuento } : { estado: "sin" };
+  };
 
   return (
     <div className="space-y-4">
@@ -766,7 +813,7 @@ function PorSalida({ filas, puedeReservar, cuposPorBloqueo = {}, soloAcom = null
           </p>
         )}
         {detalle?.estado === "ok" ? (
-          <TablaHorizontal rows={rows} puedeReservar={puedeReservar} soloAcom={soloAcom} infoPorHotel={infoPorHotel} planesInfo={planesInfo} />
+          <TablaHorizontal rows={rows} vivo={vivo} puedeReservar={puedeReservar} soloAcom={soloAcom} infoPorHotel={infoPorHotel} planesInfo={planesInfo} />
         ) : (
           <EstadoCargaTabla detalle={detalle} onReintentar={reintentarDetalle} />
         )}
@@ -831,7 +878,7 @@ function PorPaquete({ filas, puedeReservar, soloAcom = null, infoPorHotel = {}, 
       </div>
       <div className="min-w-0">
         {detalle?.estado === "ok" ? (
-          <TablaHorizontal rows={rows} puedeReservar={puedeReservar} soloAcom={soloAcom} infoPorHotel={infoPorHotel} planesInfo={planesInfo} />
+          <TablaHorizontal rows={rows} referencia puedeReservar={puedeReservar} soloAcom={soloAcom} infoPorHotel={infoPorHotel} planesInfo={planesInfo} />
         ) : (
           <EstadoCargaTabla detalle={detalle} onReintentar={reintentarDetalle} />
         )}
@@ -938,7 +985,7 @@ function reservarHref(r: Pivotada): string {
   return `/dashboard/reservar/nuevo?${p.toString()}`;
 }
 
-function TablaHorizontal({ rows, puedeReservar = false, soloAcom = null, infoPorHotel = {}, planesInfo = {} }: { rows: Pivotada[]; puedeReservar?: boolean; soloAcom?: string | null; infoPorHotel?: InfoHotel; planesInfo?: PlanesInfo }) {
+function TablaHorizontal({ rows, vivo, referencia = false, puedeReservar = false, soloAcom = null, infoPorHotel = {}, planesInfo = {} }: { rows: Pivotada[]; /** Precio calculado por fila (salida con fechas); sin él, el importe es el publicado. */ vivo?: (r: Pivotada) => FilaVivo; /** Importes publicados SIN fechas: son una referencia, no el precio de una promoción. */ referencia?: boolean; puedeReservar?: boolean; soloAcom?: string | null; infoPorHotel?: InfoHotel; planesInfo?: PlanesInfo }) {
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
 
   // Filtro de acomodación: restringe las columnas a esa acomodación y deja solo
@@ -967,6 +1014,11 @@ function TablaHorizontal({ rows, puedeReservar = false, soloAcom = null, infoPor
 
   return (
     <div className="overflow-x-auto rounded-xl border border-gray-200 bg-white">
+      {referencia && (
+        <p data-testid="tabla-referencia" className="border-b border-gray-100 bg-amber-50 px-3 py-2 text-[11px] text-amber-800">
+          Importes publicados de referencia, sin fechas. Las promociones (EBB / Long Stay) se calculan al elegir fechas concretas en Vista Booking.
+        </p>
+      )}
       <table className="w-full min-w-[760px] text-sm">
         <thead>
           <tr className="bg-gray-50 text-left text-xs uppercase tracking-wide text-gray-400">
@@ -985,7 +1037,12 @@ function TablaHorizontal({ rows, puedeReservar = false, soloAcom = null, infoPor
             const ocultas = hrows.length - 1;
             return (
               <Fragment key={hotel}>
-                {visibles.map((r, i) => (
+                {visibles.map((r, i) => {
+                  const v = vivo?.(r);
+                  const precios = v?.estado === "ok" ? v.precios : r.precios;
+                  const preciosMenor2 = v?.estado === "ok" ? v.preciosMenor2 : r.preciosMenor2;
+                  const listo = !vivo || v?.estado === "ok";
+                  return (
                   <tr key={`${hotel}-${i}`} className="border-t border-gray-100">
                     <td className="px-3 py-2 font-medium text-gray-800">
                       {i === 0 ? r.hotel : ""}
@@ -998,33 +1055,49 @@ function TablaHorizontal({ rows, puedeReservar = false, soloAcom = null, infoPor
                       {i === 0 && r.hotel_id != null && notasNinoInfante(infoPorHotel[r.hotel_id]) && (
                         <span className="mt-0.5 block text-[11px] font-normal text-amber-600">{notasNinoInfante(infoPorHotel[r.hotel_id])}</span>
                       )}
-                      {i === 0 && puedeReservar && r.paquete_id != null && r.hotel_id != null && (
+                      {i === 0 && listo && puedeReservar && r.paquete_id != null && r.hotel_id != null && (
                         <Link href={reservarHref(r)} className="mt-0.5 block text-xs font-normal" style={{ color: "var(--brand-accent)" }}>
                           Reservar →
                         </Link>
                       )}
-                      {i === 0 && puedeReservar && (
+                      {i === 0 && listo && puedeReservar && (
                         <BriefFlyerButton
                           className="mt-0.5 block"
                           datos={{
                             destino: r.destino, hotel: r.hotel, categoria: r.categoria, regimen: r.regimen,
-                            noches: r.noches, precios: r.precios,
+                            noches: r.noches, precios,
                             edadNino: r.hotel_id != null ? rangoEdades(infoPorHotel[r.hotel_id]) : null,
                           }}
                         />
                       )}
                     </td>
-                    <td className="px-3 py-2 text-gray-600">{r.categoria}</td>
+                    <td className="px-3 py-2 text-gray-600">
+                      {r.categoria}
+                      {v?.estado === "ok" && v.descuento && <div className="mt-1"><EtiquetaDescuentoHotel descuento={v.descuento} className="rounded-lg! whitespace-normal" /></div>}
+                      {/* El estado va junto a la categoría (siempre visible), no al final de una tabla que en móvil se desplaza. */}
+                      {v && v.estado !== "ok" && (
+                        <div data-testid="fila-sin-precio" className="mt-1 max-w-[11rem] whitespace-normal text-xs text-gray-500">
+                          {v.estado === "cargando" && "Calculando el precio de esta salida…"}
+                          {v.estado === "sin" && "Sin precio calculado para esta combinación."}
+                          {v.estado === "error" && (
+                            <span role="alert"><span className="text-red-600">{v.mensaje}</span>{" "}
+                              <button type="button" onClick={v.reintentar} className="font-medium" style={{ color: "var(--brand-accent)" }}>Reintentar</button></span>
+                          )}
+                        </div>
+                      )}
+                    </td>
                     <td className="px-3 py-2 text-gray-600">
                       <RegimenInfo codigo={r.regimen} info={planesInfo[(r.regimen ?? "").trim().toUpperCase()]} />
                     </td>
-                    {cols.map(([k]) => {
+                    {v && v.estado !== "ok" ? (
+                      <td colSpan={cols.length} className="px-3 py-2 text-center text-gray-300">—</td>
+                    ) : cols.map(([k]) => {
                       // En habitaciones, 0 = no aplica (no gratis) → "—". En niños
                       // (nino/nino2) e infante el 0 es válido (gratis) y sí se muestra.
                       const esRoom = k !== "nino" && k !== "nino2" && k !== "infante";
                       // Infante = menor de 2 años: su precio (fee de vuelo + servicios de
                       // infante), no el de un niño de 2 años clasificado infante por el hotel.
-                      const v = k === "infante" ? (r.preciosMenor2?.infante ?? r.precios.infante) : r.precios[k];
+                      const v = k === "infante" ? (preciosMenor2?.infante ?? precios.infante) : precios[k];
                       const mostrar = v != null && (!esRoom || v > 0);
                       return (
                         <td key={k} className="px-3 py-2 text-right tabular-nums">
@@ -1037,7 +1110,8 @@ function TablaHorizontal({ rows, puedeReservar = false, soloAcom = null, infoPor
                       );
                     })}
                   </tr>
-                ))}
+                  );
+                })}
                 {ocultas > 0 && (
                   <tr>
                     <td colSpan={3 + cols.length} className="px-3 pb-2 pt-0.5">

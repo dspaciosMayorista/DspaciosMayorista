@@ -263,7 +263,12 @@ describe("catálogo y vuelos: los campos nuevos están en las pantallas y en la 
   test("tarifario público: columna 'Infante (menor de 2 años)' con su precio y la nota de que desde los 2 años se cobra como adulto", () => {
     const pub = leer("app/tarifario/TarifarioPublic.tsx");
     assert.match(pub, /\["infante", "Infante \(menor de 2 años\)"\]/);
-    assert.match(pub, /r\.preciosMenor2\?\.infante \?\? r\.precios\.infante/);
+    // El precio del menor de 2 años manda sobre el del infante general. Las dos fuentes (precios y preciosMenor2) salen de la MISMA selección:
+    // la cotización vigente de la salida (v) o, sin ella, la fila publicada (r) — nunca una mezcla de ambas.
+    assert.match(pub, /const precios = v\?\.estado === "ok" \? v\.precios : r\.precios;/);
+    assert.match(pub, /const preciosMenor2 = v\?\.estado === "ok" \? v\.preciosMenor2 : r\.preciosMenor2;/);
+    assert.match(pub, /k === "infante" \? \(preciosMenor2\?\.infante \?\? precios\.infante\) : precios\[k\]/);
+    assert.doesNotMatch(pub, /precios\.infante \?\? preciosMenor2/, "el orden no puede invertirse: primero el precio del menor de 2 años");
     assert.match(pub, /Desde los 2 años, el vuelo y los servicios se cobran como adulto/);
     assert.match(leer("lib/tarifario/datos.ts"), /precio_pvp, precio_pvp_menor2, precio_pvp_sin_fijo, precio_pvp_menor2_sin_fijo, descripcion/);
     assert.match(leer("app/tarifario/detalle-actions.ts"), /precio_pvp, precio_pvp_menor2, precio_pvp_sin_fijo, precio_pvp_menor2_sin_fijo, descripcion/);

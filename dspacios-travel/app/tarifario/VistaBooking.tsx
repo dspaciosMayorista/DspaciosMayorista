@@ -65,6 +65,7 @@ import { claveOrigen, etiquetaOrigen } from "@/lib/iata";
 import { RegimenInfo, type PlanesInfo } from "./RegimenInfo";
 import { BuscadorBooking, Resultado, type EstadoBusquedaPorcion } from "./BuscadorBooking";
 import { useCotizacionTarjeta, type SeleccionTarjeta } from "./TarjetaHotelFechas";
+import { entradaSalida, useCotizacionSalidaModal, type CotizacionSalida } from "./cotizacionSalidaModal";
 type CotizadaTarjeta = Extract<Awaited<ReturnType<typeof import("./cotizarTarjetaActions").cotizarTarjetaHotel>>, { ok: true }>;
 import type { OpcionUnidadConfirmada } from "./busquedaUnidadActions";
 import { claveBusquedaUnidad, claveReservaUnidad, revalidarReservaUnidad } from "@/lib/tarifario/identidadReservaUnidad";
@@ -77,7 +78,7 @@ import { LoadingScreen } from "@/components/LoadingScreen";
 import type { FilaTarifario, CapHotel } from "./TarifarioPublic";
 import type { FilaResumen } from "@/lib/tarifario/resumen";
 import { tieneAcomodacionResumen } from "@/lib/tarifario/resumenCliente";
-import { desdeDoble } from "@/lib/tarifario/desdeDoble";
+import { desdeDoble, origenDesdeDoble } from "@/lib/tarifario/desdeDoble";
 import type { DescripcionPaqueteRaw } from "@/lib/tarifario/descripcionPaquete";
 import { destinosPorcionPublica } from "@/lib/tarifario/destinosPorcion";
 import { EtiquetaOferta } from "./EtiquetaOferta";
@@ -557,6 +558,7 @@ type Opcion = {
   modulo: "bloqueo" | "porcion_terrestre" | "dinamico";
   paqueteId: number;
   bloqueoId: number | null;
+  empaquetadoId?: number | null;
   // Solo `dinamico`: la salida elegida en su modal (el servidor re-liquida con ESA salida).
   salidaId?: number | null;
   label: string;
@@ -2177,8 +2179,8 @@ export function VistaBooking({
       )}
 
       {abierto && (
-        esOfertaDinamica(abierto.filas) ? <DinamicoModal hotel={abierto} detalle={detalleHotel} onReintentar={() => abrirHotel(abierto, seleccionAbierta)} salidaInicial={seleccionAbierta?.tipo === "salida" ? seleccionAbierta.salida.salidaId : null} precioSeleccion={seleccionAbierta?.tipo === "salida" && seleccionAbierta.salida.salidaId != null ? { salidaId: seleccionAbierta.salida.salidaId, doble: seleccionAbierta.cot?.precio ?? null, moneda: seleccionAbierta.cot?.moneda ?? null } : null} descripcionPorPaquete={descripcionPorPaquete} acceso={accesoCotizacionDinamica({ puedeReservar })} onClose={cerrarHotel}
-          cotizador={(salidaId, filasDetalle) => <CotizadorDinamico salidaId={salidaId} cotizada={seleccionAbierta?.tipo === "salida" && seleccionAbierta.salida.salidaId === salidaId ? seleccionAbierta.cot : null} filas={filasDetalle} hotel={abierto} puedeReservar={puedeReservar} planesInfo={planesInfo} cap={capPorHotel[abierto.hotelId] ?? CAP_VACIA} onAgregado={cerrarHotel} />} /> :
+        esOfertaDinamica(abierto.filas) ? <DinamicoModal origenDesde={(() => { const o = origenDesdeDoble(abierto.filas, abierto.moneda); return o ? { salidaId: o.salida_id, categoria: o.categoria, regimen: o.regimen } : null; })()} hotel={abierto} detalle={detalleHotel} onReintentar={() => abrirHotel(abierto, seleccionAbierta)} salidaInicial={seleccionAbierta?.tipo === "salida" ? seleccionAbierta.salida.salidaId : null} semilla={seleccionAbierta?.tipo === "salida" && seleccionAbierta.salida.salidaId != null ? { salidaId: seleccionAbierta.salida.salidaId, cot: seleccionAbierta.cot } : null} descripcionPorPaquete={descripcionPorPaquete} acceso={accesoCotizacionDinamica({ puedeReservar })} onClose={cerrarHotel}
+          cotizador={(salidaId, filasDetalle, cotizacion, comboInicial) => <CotizadorDinamico salidaId={salidaId} cotizada={cotizacion.cot} cotizacion={cotizacion} comboInicial={comboInicial} filas={filasDetalle} hotel={abierto} puedeReservar={puedeReservar} planesInfo={planesInfo} cap={capPorHotel[abierto.hotelId] ?? CAP_VACIA} onAgregado={cerrarHotel} />} /> :
         <HotelModal hotel={abierto} seleccion={seleccionAbierta} detalle={detalleHotel} onReintentar={() => abrirHotel(abierto, seleccionAbierta)} cuposPorBloqueo={cuposPorBloqueo} origenPorBloqueo={origenPorBloqueo} puedeReservar={puedeReservar} ventanaPorPaquete={ventanaPorPaquete} planesInfo={planesInfo} cap={capPorHotel[abierto.hotelId] ?? CAP_VACIA} descripcionPorPaquete={descripcionPorPaquete} addonsPorPaquete={addonsPorPaquete} onClose={cerrarHotel} />
       )}
 
@@ -2251,7 +2253,7 @@ export function HotelModal({
         const c = cuposPorBloqueo[f.bloqueo_id];
         if (c !== undefined && c <= 0) continue;
       }
-      const key = `${f.modulo}|${f.bloqueo_id ?? ""}|${f.paquete_id ?? ""}|${f.fecha_ida ?? ""}|${f.fecha_regreso ?? ""}`;
+      const key = `${f.modulo}|${f.bloqueo_id ?? ""}|${f.empaquetado_id ?? ""}|${f.paquete_id ?? ""}|${f.fecha_ida ?? ""}|${f.fecha_regreso ?? ""}`;
       let o = map.get(key);
       if (!o) {
         o = {
@@ -2259,6 +2261,7 @@ export function HotelModal({
           modulo: f.modulo as "bloqueo" | "porcion_terrestre",
           paqueteId: f.paquete_id as number,
           bloqueoId: f.bloqueo_id ?? null,
+          empaquetadoId: f.empaquetado_id ?? null,
           label: f.modulo === "bloqueo" ? (f.bloqueo_label ?? "Salida") : (f.paquete_nombre ?? "Paquete"),
           destino: f.destino_nombre,
           origen: f.modulo === "bloqueo" && f.bloqueo_id != null ? (origenPorBloqueo[f.bloqueo_id] ?? null) : null,
@@ -2289,9 +2292,24 @@ export function HotelModal({
   // primera — sin depender de un efecto ni de cuándo se montó el componente.
   const [opKey, setOpKey] = useState("");
   // #90: sin elección manual, arranca en la salida que se eligió en la tarjeta.
-  const opDeTarjeta = seleccion?.tipo === "salida" ? opciones.find((o) => o.paqueteId === seleccion.paqueteId && o.fechaIda === seleccion.salida.fechaIda && o.fechaRegreso === seleccion.salida.fechaRegreso && (seleccion.salida.bloqueoId == null || o.bloqueoId === seleccion.salida.bloqueoId)) : undefined;
-  const opKeyEfectivo = opciones.some((o) => o.key === opKey) ? opKey : (opDeTarjeta?.key ?? opciones[0]?.key ?? "");
+  const opDeTarjeta = seleccion?.tipo === "salida" ? opciones.find((o) => o.paqueteId === seleccion.paqueteId && o.fechaIda === seleccion.salida.fechaIda && o.fechaRegreso === seleccion.salida.fechaRegreso && (seleccion.salida.bloqueoId == null || o.bloqueoId === seleccion.salida.bloqueoId) && (seleccion.salida.empaquetadoId == null || o.empaquetadoId === seleccion.salida.empaquetadoId)) : undefined;
+  // #90: sin selección de la tarjeta, el modal abre en la oferta/salida y la combinación que ORIGINAN el «desde» anunciado (no en la primera fila publicada).
+  const origenDesde = useMemo(() => origenDesdeDoble(hotel.filas, hotel.moneda), [hotel.filas, hotel.moneda]);
+  const opDeDesde = seleccion == null && origenDesde
+    ? opciones.find((o) => o.paqueteId === origenDesde.paquete_id && o.bloqueoId === (origenDesde.bloqueo_id ?? null) && (o.empaquetadoId ?? null) === (origenDesde.empaquetado_id ?? null) && o.fechaIda === origenDesde.fecha_ida && o.fechaRegreso === origenDesde.fecha_regreso)
+    : undefined;
+  const opKeyEfectivo = opciones.some((o) => o.key === opKey) ? opKey : (opDeTarjeta?.key ?? opDeDesde?.key ?? opciones[0]?.key ?? "");
   const opcion = opciones.find((o) => o.key === opKeyEfectivo);
+  // #90: con salida elegida en la tarjeta o en el propio modal, la salida ACTIVA se calcula con el mismo motor de la tarjeta; sin elección se conservan los precios publicados.
+  const [eligio, setEligio] = useState(false);
+  const entradaActiva = useMemo(
+    () => (opcion && opcion.modulo === "bloqueo" && (eligio || seleccion?.tipo === "salida") ? entradaSalida(opcion.filas, opcion.paqueteId, hotel.hotelId) : null),
+    [opcion, eligio, seleccion, hotel.hotelId],
+  );
+  const cotizacionSalida = useCotizacionSalidaModal({
+    activa: entradaActiva,
+    semilla: seleccion?.tipo === "salida" ? { clave: seleccion.salida.clave, cot: seleccion.cot } : null,
+  });
 
   // Descripción manual del paquete (migración 169): incluye/no incluye/
   // tarifas especiales/condiciones comerciales — texto libre configurado UNA
@@ -2361,7 +2379,7 @@ export function HotelModal({
                       <button
                         key={o.key}
                         type="button"
-                        onClick={() => setOpKey(o.key)}
+                        onClick={() => { setOpKey(o.key); setEligio(true); }}
                         className="rounded-lg border px-3 py-2 text-left text-sm transition-colors"
                         style={opKeyEfectivo === o.key
                           ? { borderColor: "var(--brand-accent)", backgroundColor: "rgba(38,187,217,0.08)" }
@@ -2412,9 +2430,11 @@ export function HotelModal({
                 />
               ) : (
                 <Selector
-                  key={opcion.key}
+                  key={`${opcion.modulo}|${opcion.paqueteId}`} /* estable entre salidas: conserva categoría, alimentación y composición */
                   opcion={opcion}
-                  cotizada={seleccion?.tipo === "salida" && opDeTarjeta?.key === opcion.key ? seleccion.cot : null}
+                  cotizada={cotizacionSalida.cot}
+                  cotizacion={cotizacionSalida}
+                  comboInicial={opDeDesde && opDeDesde.key === opcion.key && origenDesde?.categoria && origenDesde.regimen ? { categoria: origenDesde.categoria, regimen: origenDesde.regimen } : undefined}
                   hotel={hotel}
                   puedeReservar={puedeReservar}
                   planesInfo={planesInfo}
@@ -3103,8 +3123,12 @@ function HotelBernaloCotizarModal({
 }
 
 function Selector({
-  opcion, cotizada = null, hotel, puedeReservar, planesInfo, cap, onAgregar, servicios,
+  opcion, cotizada = null, cotizacion, comboInicial, hotel, puedeReservar, planesInfo, cap, onAgregar, servicios,
 }: {
+  /** #90: categoría/régimen que originan el «desde» de la tarjeta (sin selección de fechas/salida): apertura del modal sobre los precios PUBLICADOS. */
+  comboInicial?: { categoria: string; regimen: string };
+  /** #90: estado del cálculo de la salida activa. Mientras no esté "ok" no se muestra ni se agrega ningún importe (ni el publicado ni uno anterior). */
+  cotizacion?: CotizacionSalida;
   opcion: Opcion; hotel: HotelCard; puedeReservar: boolean; planesInfo: PlanesInfo;
   /** #90: cotización de la tarjeta para ESTA salida (importes con la regla de hoy). null = precios publicados de referencia, sin afirmar descuento. */
   cotizada?: CotizadaTarjeta | null;
@@ -3114,15 +3138,22 @@ function Selector({
 }) {
   const cc = cotizada?.combos.length ? cotizada.combos : null;
   const cats = useMemo(() => cc ? [...new Set(cc.map((c) => c.categoria))] : [...new Set(opcion.filas.map((f) => f.categoria).filter((x): x is string => !!x))], [opcion, cc]);
-  const [cat, setCat] = useState(cc ? cotizada!.categoria : (cats[0] ?? ""));
+  const [cat, setCat] = useState(cc ? cotizada!.categoria : (comboInicial?.categoria ?? cats[0] ?? ""));
+  // #90: sin elección explícita del usuario, la selección SIGUE a la cotización ganadora (la categoría/régimen que originan el precio de la tarjeta), aunque la cotización llegue
+  // después del montaje. En cuanto el usuario elige, su elección manda (y sobrevive al cambio de salida mientras siga siendo válida).
+  const [elegido, setElegido] = useState(false);
+  const catGuia = cc ? cotizada!.categoria : comboInicial?.categoria; // combinación que origina el precio anunciado (cotizada, o publicada si no hay fechas)
+  const regGuia = cc ? cotizada!.regimen : comboInicial?.regimen;
+  const catBase = !elegido && catGuia ? catGuia : cat;
   // catEff/regEff: valor efectivo válido aunque el seleccionado quede obsoleto.
-  const catEff = cats.includes(cat) ? cat : (cats[0] ?? "");
+  const catEff = cats.includes(catBase) ? catBase : (cats[0] ?? "");
   const regs = useMemo(
     () => cc ? [...new Set(cc.filter((c) => c.categoria === catEff).map((c) => c.regimen))] : [...new Set(opcion.filas.filter((f) => f.categoria === catEff).map((f) => f.regimen).filter((x): x is string => !!x))],
     [opcion, catEff, cc]
   );
   const [reg, setReg] = useState(cc && cat === cotizada!.categoria ? cotizada!.regimen : (regs[0] ?? ""));
-  const regEff = regs.includes(reg) ? reg : (regs[0] ?? "");
+  const regBase = !elegido && regGuia && catEff === catGuia ? regGuia : reg;
+  const regEff = regs.includes(regBase) ? regBase : (regs[0] ?? "");
   const comboCot = cc?.find((c) => c.categoria === catEff && c.regimen === regEff) ?? null;
 
   // Mapa de PVP por acomodación para la (categoría, régimen) elegidas.
@@ -3168,18 +3199,32 @@ function Selector({
       moneda: hotel.moneda ?? "COP",
     }, serviciosConjunto);
 
+  // #90: la elección del cliente sobrevive al cambio de salida; si deja de existir en la nueva, se usa una disponible y se avisa.
+  const regsDe = (c: string) => cc ? [...new Set(cc.filter((x) => x.categoria === c).map((x) => x.regimen))] : [...new Set(opcion.filas.filter((f) => f.categoria === c).map((f) => f.regimen).filter((x): x is string => !!x))];
+  const eligioOtra = elegido && cotizacion?.estado === "ok" && (cat !== catEff || reg !== regEff);
+  const esperando = cotizacion != null && (cotizacion.estado === "cargando" || cotizacion.estado === "error");
+
   return (
     <div className="space-y-4 rounded-xl border border-gray-200 p-4">
+      {cotizacion?.estado === "cargando" && <p role="status" data-testid="modal-calculando" className="py-2 text-center text-sm text-gray-500">Calculando el precio de esta salida…</p>}
+      {cotizacion?.estado === "error" && (
+        <div role="alert" data-testid="modal-error-precio" className="py-2 text-center">
+          <p className="text-sm text-red-600">{cotizacion.error}</p>
+          <button type="button" onClick={cotizacion.reintentar} className="mt-2 text-xs font-medium" style={{ color: "var(--brand-accent)" }}>Reintentar</button>
+        </div>
+      )}
+      {/* Oculto (no desmontado) mientras no hay precio vigente: conserva la composición y nunca deja agregar un importe obsoleto. */}
+      <div hidden={esperando} className="space-y-4">
       <div className="flex flex-wrap gap-3">
         <div>
           <label className="mb-1 block text-xs font-medium text-gray-600">Categoría</label>
-          <select value={catEff} onChange={(e) => setCat(e.target.value)} className={selCls}>
+          <select value={catEff} onChange={(e) => { const c = e.target.value; const rs = regsDe(c); setElegido(true); setCat(c); setReg(rs.includes(regEff) ? regEff : (rs[0] ?? "")); }} className={selCls}>
             {cats.map((c) => <option key={c} value={c}>{c}</option>)}
           </select>
         </div>
         <div>
           <label className="mb-1 block text-xs font-medium text-gray-600">Alimentación</label>
-          <select value={regEff} onChange={(e) => setReg(e.target.value)} className={selCls}>
+          <select value={regEff} onChange={(e) => { setElegido(true); setCat(catEff); setReg(e.target.value); }} className={selCls}>
             {regs.map((r) => <option key={r} value={r}>{r}</option>)}
           </select>
           {regEff && (
@@ -3190,6 +3235,7 @@ function Selector({
         </div>
       </div>
 
+      {eligioOtra && <p role="status" data-testid="modal-seleccion-ajustada" className="text-xs text-amber-700">Tu elección anterior no está disponible en esta salida: te mostramos {catEff} · {regEff}.</p>}
       {cc && <div data-testid="modal-precio-fechas" className="text-xs text-gray-500">Importes calculados para la salida que elegiste{comboCot?.descuento && <span className="ml-2"><EtiquetaDescuentoHotel descuento={comboCot.descuento} /></span>}</div>}
       <EditorPax pvp={pvp} pvpMenor2={pvpMenor2} pvpInfanteSinFijo={pvpInfanteSinFijo} acomConfig={cap.acom} paxMin={cap.paxMin} paxMax={cap.paxMax} moneda={hotel.moneda} edadesNota={textoEdadesHotel(hotel)} edadInfanteMax={hotel.infMax} edadNinoMax={hotel.ninoMax} nota={!puedeReservar ? "El valor es una estimación con tarifas publicadas; el precio final se confirma al generar la cotización." : undefined} onAgregar={agregarItem}
         servicios={servicios ? {
@@ -3199,6 +3245,7 @@ function Selector({
           firma: JSON.stringify([opcion.key, catEff, regEff]),
           recorrido: opcion.modulo === "bloqueo" && opcion.bloqueoId != null ? { modulo: "bloqueo" as const, bloqueoId: opcion.bloqueoId } : null,
         } : undefined} />
+      </div>
     </div>
   );
 }
@@ -3206,8 +3253,8 @@ function Selector({
 // Cotizador de UNA salida dinámica dentro de `DinamicoModal`: el mismo `Selector` (categoría/alimentación, habitaciones,
 // edades) y el mismo carrito público que Bloqueo — de ahí a /tarifario/checkout, que no exige sesión y re-liquida en el
 // servidor con `computarReserva` sobre esta salida. Fechas = las de la salida (fijas, como las del record de un Bloqueo).
-function CotizadorDinamico({ salidaId, cotizada = null, filas, hotel, puedeReservar, planesInfo, cap, onAgregado }: {
-  salidaId: number; cotizada?: CotizadaTarjeta | null; filas: FilaTarifario[]; hotel: HotelCard; puedeReservar: boolean; planesInfo: PlanesInfo;
+function CotizadorDinamico({ salidaId, cotizada = null, cotizacion, comboInicial, filas, hotel, puedeReservar, planesInfo, cap, onAgregado }: {
+  salidaId: number; cotizada?: CotizadaTarjeta | null; cotizacion?: CotizacionSalida; comboInicial?: { categoria: string; regimen: string }; filas: FilaTarifario[]; hotel: HotelCard; puedeReservar: boolean; planesInfo: PlanesInfo;
   cap: { paxMin: number | null; paxMax: number | null; acom: AcomConfig[] };
   onAgregado: () => void;
 }) {
@@ -3221,7 +3268,7 @@ function CotizadorDinamico({ salidaId, cotizada = null, filas, hotel, puedeReser
     fechaIda: f0.fecha_ida, fechaRegreso: f0.fecha_regreso, noches: f0.noches, filas: deSalida,
   };
   return (
-    <Selector key={opcion.key} opcion={opcion} cotizada={cotizada} hotel={hotel} puedeReservar={puedeReservar} planesInfo={planesInfo} cap={cap}
+    <Selector key="dinamico" /* estable entre salidas: conserva categoría, alimentación y composición */ opcion={opcion} cotizada={cotizada} cotizacion={cotizacion} comboInicial={comboInicial} hotel={hotel} puedeReservar={puedeReservar} planesInfo={planesInfo} cap={cap}
       onAgregar={(item, servicios) => { addConjunto(item, servicios); openDrawer(); onAgregado(); }} />
   );
 }
