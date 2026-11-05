@@ -6,42 +6,26 @@ import { Hotel, Plane, Plus, Settings2, Sparkles, Trash2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { DateInput } from "@/components/ui/DateInput";
-import { ACOMS_DIN, pvpDeNeto, type AcomDin, type PrecioAcom } from "@/lib/paqueteDinamico/calculo";
+import { pvpDeNeto } from "@/lib/paqueteDinamico/calculo";
 import type { EntradaHotel, EntradaPaqueteTotal, EntradaServicio, EntradaVuelo } from "@/lib/paqueteDinamico/entrada";
 import { derivarRutaManual, mensajeSinProveedor, paisComparable } from "@/lib/paqueteDinamico/ruta";
-import { CAPACIDAD_NINOS_MAX, EDADES_MANUAL_POR_DEFECTO } from "@/lib/paqueteDinamico/menores";
+import { EDADES_MANUAL_POR_DEFECTO } from "@/lib/paqueteDinamico/menores";
 import { guardarPaqueteTotal } from "./actions";
+import { GridAcom, lbl, n, sel } from "./editorUi";
+import { HotelFilaDin } from "./HotelFilaDin";
 
 type Opt = { id: number; nombre: string; destino_id: number | null; moneda?: string };
-type HotelOpt = Opt & { categorias: string[]; regimenes: string[]; reglasTexto: string | null };
+type HotelOpt = Opt & { categorias: string[]; regimenes: string[]; reglasTexto: string | null; estrellas: number | null; descripcionFicha: string; ubicacionFicha: string };
 type ServicioOpt = Opt & { moneda: string; proveedorId: number | null; proveedor: string; cobro: string | null; noSoportado: string | null; modo: "persona" | "grupo" | null; cobraInfante: boolean };
 type CatalogoHotel = { categorias: string[]; regimenes: string[] };
 type DestinoOpt = { id: number; nombre: string; pais: string | null };
 export type EmpaquetadoOpt = { id: number; aerolinea: string | null; ruta: string | null; fecha_ida: string; fecha_regreso: string | null; destino_id: number | null; tarifa_proveedor: number; fee_infante: number };
-
-const ETQ: Record<AcomDin, string> = { sencilla: "Sencilla", doble: "Doble", triple: "Triple", multiple: "Múltiple", nino: "Niño 1", nino2: "Niño 2", infante: "Infante" };
-const sel = "h-9 w-full rounded-md border border-gray-200 bg-white px-2 text-sm";
-const lbl = "mb-1 block text-xs font-medium text-gray-600";
-const n = (s: string): number | null => (s.trim() === "" ? null : Number(s.replace(/[^\d.-]/g, "")));
 
 export const ENTRADA_VACIA: EntradaPaqueteTotal = {
   nombre: "", destinoId: null, multidestino: false, destinosExtra: [], moneda: "COP", esquema: "neta_markup", pvpModo: null, pctMkPct: 20,
   usaVuelo: false, usaHotel: true, usaServicios: false, noches: 3, compraInicio: "", compraFin: "", viajeInicio: "", viajeFin: "",
   pvpGeneral: null, totalDeclarado: null, descripcion: "", incluye: "", noIncluye: "", vuelos: [], hoteles: [], servicios: [],
 };
-
-function GridAcom({ valor, onChange, etiqueta, solo }: { valor: PrecioAcom; onChange: (v: PrecioAcom) => void; etiqueta: string; solo?: readonly AcomDin[] }) {
-  return (
-    <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
-      {(solo ?? ACOMS_DIN).map((a) => (
-        <div key={a}>
-          <label className={lbl}>{etiqueta} · {ETQ[a]}</label>
-          <Input inputMode="numeric" aria-label={`${etiqueta} ${ETQ[a]}`} value={valor[a] == null ? "" : String(valor[a])} onChange={(e) => onChange({ ...valor, [a]: n(e.target.value) })} />
-        </div>
-      ))}
-    </div>
-  );
-}
 
 export function PaqueteTotalForm({ inicial, destinos, hoteles, servicios, empaquetados, catalogoHotel }: {
   inicial: EntradaPaqueteTotal; destinos: DestinoOpt[]; hoteles: HotelOpt[]; servicios: ServicioOpt[]; empaquetados: EmpaquetadoOpt[]; catalogoHotel: CatalogoHotel;
@@ -80,7 +64,7 @@ export function PaqueteTotalForm({ inicial, destinos, hoteles, servicios, empaqu
   // Hotel con ficha: categoría y plan salen de lo configurado en su ficha (si solo hay uno, ya viene elegido). Manual: edades por defecto del sistema; la capacidad de niños se pide.
   const nuevoHotel = (h?: HotelOpt): EntradaHotel => ({
     hotelId: h?.id ?? null, nombre: h?.nombre ?? "", categoria: h && h.categorias.length === 1 ? h.categorias[0] : "", regimen: h && h.regimenes.length === 1 ? h.regimenes[0] : "",
-    descripcion: "", fotoUrl: "", proveedor: "", neto: {}, pvp: {}, pvpGeneral: null,
+    descripcion: h?.descripcionFicha ?? "", fotoUrl: "", proveedor: "", estrellas: h?.estrellas ?? null, ubicacion: h?.ubicacionFicha ?? "", neto: {}, pvp: {}, pvpGeneral: null,
     capacidadNinos: null, edadInfanteMax: h ? null : EDADES_MANUAL_POR_DEFECTO.infanteMax, edadNinoMax: h ? null : EDADES_MANUAL_POR_DEFECTO.ninoMax,
   });
   const nuevoVuelo = (x?: EmpaquetadoOpt): EntradaVuelo => ({
@@ -253,44 +237,14 @@ export function PaqueteTotalForm({ inicial, destinos, hoteles, servicios, empaqu
             </select>
             <Button type="button" variant="outline" onClick={() => set({ hoteles: [...e.hoteles, nuevoHotel()] })}><Plus className="h-4 w-4" /> Hotel manual</Button>
           </div>
-          {e.hoteles.map((h, i) => (
-            <div key={i} className="space-y-3 rounded-lg border border-gray-200 p-3">
-              <div className="flex items-center justify-between text-xs text-gray-500"><span>{h.hotelId ? `Ficha existente #${h.hotelId} (sus vigencias y tarifas NO se usan; los precios se cargan aquí)` : "Hotel manual del paquete"}</span>
-                <button type="button" aria-label="Quitar hotel" onClick={() => del("hoteles", i)}><Trash2 className="h-4 w-4 text-red-500" /></button></div>
-              <div className="grid gap-2 sm:grid-cols-3">
-                <div><label className={lbl}>Nombre</label><Input value={h.nombre} onChange={(x) => upd("hoteles", i, { nombre: x.target.value })} /></div>
-                <div><label className={lbl}>Categoría de habitación</label>
-                  <select aria-label="Categoría de habitación" className={sel} value={h.categoria} onChange={(x) => upd("hoteles", i, { categoria: x.target.value })}>
-                    <option value="">{(h.hotelId == null ? catalogoHotel.categorias : (hoteles.find((q) => q.id === h.hotelId)?.categorias ?? [])).length ? "Elige…" : "Sin categorías configuradas"}</option>
-                    {(h.hotelId == null ? catalogoHotel.categorias : (hoteles.find((q) => q.id === h.hotelId)?.categorias ?? [])).map((c) => <option key={c} value={c}>{c}</option>)}
-                  </select></div>
-                <div><label className={lbl}>Plan de alimentación</label>
-                  <select aria-label="Plan de alimentación" className={sel} value={h.regimen} onChange={(x) => upd("hoteles", i, { regimen: x.target.value })}>
-                    <option value="">{(h.hotelId == null ? catalogoHotel.regimenes : (hoteles.find((q) => q.id === h.hotelId)?.regimenes ?? [])).length ? "Elige…" : "Sin planes configurados"}</option>
-                    {(h.hotelId == null ? catalogoHotel.regimenes : (hoteles.find((q) => q.id === h.hotelId)?.regimenes ?? [])).map((c) => <option key={c} value={c}>{c}</option>)}
-                  </select></div>
-                <div><label className={lbl}>Proveedor</label><Input value={h.proveedor} onChange={(x) => upd("hoteles", i, { proveedor: x.target.value })} /></div>
-                <div className="sm:col-span-2"><label className={lbl}>Foto (URL; vacía = foto predeterminada)</label><Input value={h.fotoUrl} onChange={(x) => upd("hoteles", i, { fotoUrl: x.target.value })} /></div>
-                <div className="sm:col-span-3"><label className={lbl}>Descripción</label><Input value={h.descripcion} onChange={(x) => upd("hoteles", i, { descripcion: x.target.value })} /></div>
-                {h.hotelId == null ? (
-                  <div className="grid gap-2 rounded-lg bg-gray-50 p-3 sm:col-span-3 sm:grid-cols-3" data-testid="menores-manual">
-                    <div><label className={lbl}>Capacidad máx. de niños por habitación *</label>
-                      <select aria-label="Capacidad de niños por habitación" className={sel} value={h.capacidadNinos ?? ""} onChange={(x) => upd("hoteles", i, { capacidadNinos: x.target.value === "" ? null : Number(x.target.value) })}>
-                        <option value="">Elige…</option>{Array.from({ length: CAPACIDAD_NINOS_MAX + 1 }, (_, k) => <option key={k} value={k}>{k === 0 ? "0 (no admite niños)" : k}</option>)}
-                      </select></div>
-                    <div><label className={lbl}>Infante hasta (años) *</label><Input aria-label="Infante hasta" inputMode="numeric" value={h.edadInfanteMax == null ? "" : String(h.edadInfanteMax)} onChange={(x) => upd("hoteles", i, { edadInfanteMax: n(x.target.value) })} /></div>
-                    <div><label className={lbl}>Niño hasta (años) *</label><Input aria-label="Niño hasta" inputMode="numeric" value={h.edadNinoMax == null ? "" : String(h.edadNinoMax)} onChange={(x) => upd("hoteles", i, { edadNinoMax: n(x.target.value) })} /></div>
-                    <p className="text-xs text-gray-500 sm:col-span-3">La capacidad se aplica igual a todas las acomodaciones de este hotel. Niño 1 y Niño 2 son las dos tarifas de niño de cada habitación (no rangos de edad); desde la edad siguiente a «niño hasta» se cuenta como adulto.</p>
-                  </div>
-                ) : (
-                  <p className="text-xs text-gray-500 sm:col-span-3" data-testid="menores-ficha">{hoteles.find((q) => q.id === h.hotelId)?.reglasTexto ?? "Las reglas de menores (edades, capacidad, solo adultos) se leen de la ficha del hotel."} Se conservan las de la ficha; aquí no se configuran otra vez.</p>
-                )}
-              </div>
-              {!general && <GridAcom etiqueta={neta ? "Neto" : "PVP"} valor={neta ? h.neto : h.pvp} onChange={(v) => upd("hoteles", i, neta ? { neto: v } : { pvp: v })} />}
-              {neta && <p className="text-xs text-gray-500">PVP (con {e.pctMkPct}%): {ACOMS_DIN.map((a) => `${ETQ[a]} ${Number.isFinite(pvpPrev(h.neto[a])) ? pvpPrev(h.neto[a]) : "—"}`).join(" · ")}</p>}
-              {general && <p className="text-xs text-gray-500">En precio general el precio se define en Configuración; aquí solo van los datos y la foto del hotel.</p>}
-            </div>
-          ))}
+          {e.hoteles.map((h, i) => {
+            const f = h.hotelId == null ? undefined : hoteles.find((q) => q.id === h.hotelId);
+            return (
+              <HotelFilaDin key={i} h={h} ctx={{ neta, general, pctMkPct: e.pctMkPct, moneda: e.moneda }} catalogo={catalogoHotel}
+                ficha={h.hotelId == null ? null : { categorias: f?.categorias ?? [], regimenes: f?.regimenes ?? [], reglasTexto: f?.reglasTexto ?? null, estrellas: f?.estrellas ?? null, descripcionFicha: f?.descripcionFicha ?? "", ubicacionFicha: f?.ubicacionFicha ?? "" }}
+                onChange={(p) => upd("hoteles", i, p)} onQuitar={() => del("hoteles", i)} />
+            );
+          })}
           {!e.hoteles.length && <p className="text-sm text-gray-500">Agrega una ficha existente o un hotel manual.</p>}
         </section>
       )}

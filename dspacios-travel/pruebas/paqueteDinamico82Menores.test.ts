@@ -184,12 +184,15 @@ describe("cableado de pantalla y servidor", () => {
   const seleccion = sinComentarios(leer("lib/paqueteDinamico/seleccion.ts"));
 
   test("montaje: capacidad de niños, edades y catálogo de categoría/plan en el hotel manual; el vinculado solo muestra su ficha", () => {
-    assert.match(form, /aria-label="Capacidad de niños por habitación"/);
-    assert.match(form, /aria-label="Infante hasta"/);
-    assert.match(form, /aria-label="Categoría de habitación"/);
-    assert.match(form, /aria-label="Plan de alimentación"/);
-    assert.match(form, /catalogoHotel\.categorias/);
-    assert.match(form, /data-testid="menores-ficha"/);
+    // Desde la fila compacta del hotel, esa edición vive en la ventana «Tarifas y configuración» (HotelFilaDin.tsx).
+    const fila = leer("app/(dashboard)/dashboard/paquetes/total/HotelFilaDin.tsx");
+    assert.match(fila, /aria-label="Capacidad de niños por habitación"/);
+    assert.match(fila, /aria-label="Infante hasta"/);
+    assert.match(fila, /aria-label="Categoría de habitación"/);
+    assert.match(fila, /aria-label="Plan de alimentación"/);
+    assert.match(fila, /catalogo\.categorias/);
+    assert.match(form, /catalogo=\{catalogoHotel\}/);
+    assert.match(fila, /data-testid="menores-ficha"/);
   });
   test("montaje: validación de catálogo y de capacidad también en el servidor, y no se guardan reglas propias de un hotel con ficha", () => {
     assert.match(acciones, /cargarCatalogoHotel\(adm\)/);

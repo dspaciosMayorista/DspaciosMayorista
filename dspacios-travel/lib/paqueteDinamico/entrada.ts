@@ -13,6 +13,10 @@ export type EntradaVuelo = {
 };
 export type EntradaHotel = {
   hotelId: number | null; nombre: string; categoria: string; regimen: string; descripcion: string; fotoUrl: string; proveedor: string;
+  /** Estrellas del HOTEL (1 a 5; null = sin dato). No es la categoría de la habitación. Con ficha se copian de ella al guardar. */
+  estrellas: number | null;
+  /** Dirección o lugar para el mapa (vacío = sin dato: la tarjeta no muestra mapa). */
+  ubicacion: string;
   neto: PrecioAcom; pvp: PrecioAcom; pvpGeneral: PrecioAcom | null;
   /** Solo hotel MANUAL: capacidad máxima de niños por habitación (general a sus acomodaciones) y umbrales de edad. Con ficha se leen de la ficha. */
   capacidadNinos: number | null; edadInfanteMax: number | null; edadNinoMax: number | null;
@@ -56,6 +60,10 @@ export function validarEntradaPaqueteTotal(e: EntradaPaqueteTotal, destinos: Des
     if (h.hotelId != null) continue;
     const c = validarConfigMenoresManual({ capacidadNinos: h.capacidadNinos, edadInfanteMax: h.edadInfanteMax, edadNinoMax: h.edadNinoMax });
     if (!c.ok) m.push(`Hotel «${h.nombre || "manual"}»: ${c.error}`);
+  }
+  if (e.usaHotel) for (const h of e.hoteles) {
+    if (h.estrellas != null && !(Number.isInteger(h.estrellas) && h.estrellas >= 1 && h.estrellas <= 5)) m.push(`Hotel «${h.nombre || "manual"}»: las estrellas deben ser un número entero de 1 a 5.`);
+    if (h.ubicacion.length > 500) m.push(`Hotel «${h.nombre || "manual"}»: la ubicación es demasiado larga (máximo 500 caracteres).`);
   }
   for (const v of e.vuelos) if (v.destinoId && !dest.has(v.destinoId)) m.push("Un vuelo es de un destino que no está en el paquete (agrégalo como destino adicional).");
   for (const s of e.servicios) if (s.destinoId && !dest.has(s.destinoId)) m.push(`El servicio «${s.nombre}» es de un destino que no está en el paquete.`);

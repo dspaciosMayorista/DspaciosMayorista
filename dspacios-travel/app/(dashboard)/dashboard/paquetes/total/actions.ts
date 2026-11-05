@@ -5,7 +5,7 @@
 import { revalidatePath } from "next/cache";
 import { createClient } from "@/lib/supabase/server";
 import { createAdminClient } from "@/lib/supabase/admin";
-import { cargarCatalogoHotel, cargarFichasServicio, cargarOpcionesHotelFicha } from "@/lib/paqueteDinamico/fichas";
+import { cargarCatalogoHotel, cargarFichasServicio, cargarInfoHotelesFicha, cargarOpcionesHotelFicha } from "@/lib/paqueteDinamico/fichas";
 import { cobraInfante } from "@/lib/paqueteDinamico/servicioFicha";
 import { autorizaTenant, contextoCotizacion } from "@/lib/cotizacion/acceso";
 import { hoyBogota } from "@/lib/cotizacion/vigencia";
@@ -42,7 +42,7 @@ const filaPaquete = (e: EntradaPaqueteTotal, id: number): FilaPaqueteDin => ({
 function validarOpciones(e: EntradaPaqueteTotal, destinos: { id: number; pais: string | null }[] = []): string[] {
   const base = validarEntradaPaqueteTotal(e, destinos);
   if (base.length) return base;
-  const hoteles: FilaHotelDin[] = e.hoteles.map((h, i) => ({ id: i + 1, hotel_id: h.hotelId, capacidad_ninos: h.capacidadNinos, edad_infante_max: h.edadInfanteMax, edad_nino_max: h.edadNinoMax, nombre: h.nombre, categoria: h.categoria, regimen: h.regimen, descripcion: h.descripcion, foto_url: h.fotoUrl, proveedor: h.proveedor, neto: h.neto, pvp: h.pvp, pvp_general: h.pvpGeneral }));
+  const hoteles: FilaHotelDin[] = e.hoteles.map((h, i) => ({ id: i + 1, hotel_id: h.hotelId, capacidad_ninos: h.capacidadNinos, edad_infante_max: h.edadInfanteMax, edad_nino_max: h.edadNinoMax, nombre: h.nombre, categoria: h.categoria, regimen: h.regimen, descripcion: h.descripcion, foto_url: h.fotoUrl, estrellas: h.estrellas, ubicacion: h.ubicacion, proveedor: h.proveedor, neto: h.neto, pvp: h.pvp, pvp_general: h.pvpGeneral }));
   const vuelos: FilaVueloDin[] = e.vuelos.map((v, i) => ({ id: i + 1, empaquetado_id: v.empaquetadoId, destino_id: v.destinoId, aerolinea: v.aerolinea, ruta: v.ruta, fecha_ida: v.fechaIda, fecha_regreso: v.fechaRegreso, proveedor: v.proveedor, neto: v.neto, pvp: v.pvp }));
   const servicios: FilaServicioDin[] = e.servicios.map((s, i) => ({ id: i + 1, servicio_id: s.servicioId, nombre: s.nombre, proveedor: s.proveedor, neto: s.neto, pvp: s.pvp, pvp_infante: s.pvpInfante }));
   const msgs = new Set<string>();
@@ -150,10 +150,17 @@ async function completarDesdeFichas(sb: Loose, e: EntradaPaqueteTotal): Promise<
       }
     }
     // Con ficha, lo que el hotel solo tiene una opción se completa solo (no se pide configurar otra vez); la capacidad y las edades NO se guardan: se leen de la ficha.
+    // Información del hotel con ficha: estrellas, descripción y ubicación se COPIAN de la ficha (autoritativo, no se confía en el navegador). Si la ficha no tiene el dato, se deja
+    // lo que ya traía la fila (vacío = sin dato): nunca se inventa un valor.
+    // Si la lectura falla se detiene el guardado (errores no vacío ⇒ no se escribe nada): no se guarda un hotel «sin estrellas» por un fallo de lectura.
+    let info = new Map<number, Awaited<ReturnType<typeof cargarInfoHotelesFicha>> extends Map<number, infer V> ? V : never>();
+    try { info = await cargarInfoHotelesFicha(adm, fichaIds); }
+    catch { errores.push("No se pudo leer las estrellas, la descripción y la ubicación de la ficha del hotel vinculado. No se guardó nada; intenta de nuevo en unos minutos."); }
     e = { ...e, hoteles: e.hoteles.map((h) => {
       if (h.hotelId == null) return h;
       const o = opc.get(h.hotelId) ?? { categorias: [], regimenes: [] };
-      return { ...h, categoria: h.categoria || (o.categorias.length === 1 ? o.categorias[0] : ""), regimen: h.regimen || (o.regimenes.length === 1 ? o.regimenes[0] : ""), capacidadNinos: null, edadInfanteMax: null, edadNinoMax: null };
+      const f = info.get(h.hotelId);
+      return { ...h, estrellas: f?.estrellas ?? h.estrellas, descripcion: f?.descripcion || h.descripcion, ubicacion: f?.ubicacion || h.ubicacion, categoria: h.categoria || (o.categorias.length === 1 ? o.categorias[0] : ""), regimen: h.regimen || (o.regimenes.length === 1 ? o.regimenes[0] : ""), capacidadNinos: null, edadInfanteMax: null, edadNinoMax: null };
     }) };
   }
 
@@ -203,7 +210,7 @@ export async function guardarPaqueteTotal(entrada: EntradaPaqueteTotal): Promise
     tenant: ctx.superadmin ? ctx.tenant : undefined,
   };
   const vuelos = e.usaVuelo ? e.vuelos.map((v) => ({ empaquetado_id: v.empaquetadoId, destino_id: v.destinoId, aerolinea: v.aerolinea || null, ruta: v.ruta || null, origen_iata: v.origenIata || null, destino_iata: v.destinoIata || null, fecha_ida: v.fechaIda || null, fecha_regreso: v.fechaRegreso || null, proveedor: v.proveedor || null, neto: neta ? v.neto : {}, pvp: porComp ? v.pvp : {} })) : [];
-  const hoteles = e.usaHotel ? e.hoteles.map((h) => ({ hotel_id: h.hotelId, nombre: h.nombre.trim(), categoria: h.categoria || null, regimen: h.regimen || null, descripcion: h.descripcion || null, foto_url: h.fotoUrl || null, proveedor: h.proveedor || null, neto: neta ? h.neto : {}, pvp: porComp ? h.pvp : {}, pvp_general: general ? h.pvpGeneral : null, capacidad_ninos: h.hotelId == null ? h.capacidadNinos : null, edad_infante_max: h.hotelId == null ? h.edadInfanteMax : null, edad_nino_max: h.hotelId == null ? h.edadNinoMax : null })) : [];
+  const hoteles = e.usaHotel ? e.hoteles.map((h) => ({ hotel_id: h.hotelId, nombre: h.nombre.trim(), categoria: h.categoria || null, regimen: h.regimen || null, descripcion: h.descripcion || null, foto_url: h.fotoUrl || null, estrellas: h.estrellas, ubicacion: h.ubicacion.trim() || null, proveedor: h.proveedor || null, neto: neta ? h.neto : {}, pvp: porComp ? h.pvp : {}, pvp_general: general ? h.pvpGeneral : null, capacidad_ninos: h.hotelId == null ? h.capacidadNinos : null, edad_infante_max: h.hotelId == null ? h.edadInfanteMax : null, edad_nino_max: h.hotelId == null ? h.edadNinoMax : null })) : [];
   const servicios = e.usaServicios ? e.servicios.map((s) => ({ servicio_id: s.servicioId, destino_id: s.destinoId, nombre: s.nombre.trim(), proveedor: s.proveedor || null, neto: neta && s.servicioId == null ? s.neto : null, pvp: porComp ? s.pvp : null, pvp_infante: porComp && s.servicioId != null ? s.pvpInfante : null })) : [];
 
   // UNA sola llamada = una transacción: un error en cualquier hijo deja el paquete y sus hijos como estaban.

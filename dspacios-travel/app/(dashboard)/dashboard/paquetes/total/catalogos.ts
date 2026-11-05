@@ -1,6 +1,6 @@
 import { createClient } from "@/lib/supabase/server";
 import { createAdminClient } from "@/lib/supabase/admin";
-import { cargarCatalogoHotel, cargarFichasServicio, cargarOpcionesHotelFicha, cargarReglasHoteles } from "@/lib/paqueteDinamico/fichas";
+import { cargarCatalogoHotel, cargarFichasServicio, cargarInfoHotelesFicha, cargarOpcionesHotelFicha, cargarReglasHoteles } from "@/lib/paqueteDinamico/fichas";
 import { explicarEdades } from "@/lib/paqueteDinamico/menores";
 import { cobraInfante, resumenFicha } from "@/lib/paqueteDinamico/servicioFicha";
 import type { FilaHotelDin } from "@/lib/paqueteDinamico/modelo";
@@ -30,16 +30,20 @@ export async function cargarCatalogos() {
   const pn: Record<number, string> = {};
   if (pids.length) for (const p of (await sb.from("proveedores").select("id, nombre").in("id", pids)).data ?? []) pn[p.id] = p.nombre;
 
-  const [catalogo, opciones, reglas, fichas] = await Promise.all([
+  const [catalogo, opciones, reglas, fichas, infoFicha] = await Promise.all([
     cargarCatalogoHotel(admin),
     cargarOpcionesHotelFicha(admin, hotelesFicha.map((x) => x.id)),
     cargarReglasHoteles(admin, hotelesFicha.map((x) => ({ id: x.id, hotel_id: x.id }) as FilaHotelDin)),
     cargarFichasServicio(admin, sv.map((x) => x.id)),
+    // Estrellas, descripción y ubicación de cada ficha vinculable: el montaje las copia al elegir la ficha (nada se inventa si faltan).
+    // Solo precarga: si falla, queda vacío y el GUARDADO (que relee la ficha) se detiene con un error claro.
+    cargarInfoHotelesFicha(admin, hotelesFicha.map((x) => x.id)).catch(() => new Map()),
   ]);
   return {
     destinos: (d.data ?? []) as { id: number; nombre: string; pais: string | null }[],
     hoteles: hotelesFicha.map((x) => ({
       ...x, moneda: x.moneda ?? "COP",
+      estrellas: infoFicha.get(x.id)?.estrellas ?? null, descripcionFicha: infoFicha.get(x.id)?.descripcion ?? "", ubicacionFicha: infoFicha.get(x.id)?.ubicacion ?? "",
       categorias: opciones.get(x.id)?.categorias ?? [], regimenes: opciones.get(x.id)?.regimenes ?? [],
       reglasTexto: reglas.get(x.id) ? explicarEdades(reglas.get(x.id) ?? null).edades : null,
     })),

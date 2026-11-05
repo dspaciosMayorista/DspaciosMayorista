@@ -12,7 +12,9 @@ export type OpcionPublica = { hotelId: number | null; vueloId: number | null; ca
 /** Datos del vuelo para mostrarlo como en el checkout normal (los que existan: un vuelo manual no trae horarios). */
 export type VueloDetalle = { aerolinea: string | null; ruta: string | null; vueloIda: string | null; horaSalidaIda: string | null; horaLlegadaIda: string | null; vueloRegreso: string | null; horaSalidaReg: string | null; horaLlegadaReg: string | null };
 /** `reglas` = capacidad y edades del hotel (ficha o manual); null = paquete anterior sin esa configuración (sin validación de capacidad). */
-export type HotelPublico = { id: number; nombre: string; categoria: string; regimen: string; descripcion: string; foto: string; desde: number; reglas: ReglasHotelDin | null; categorias: string[]; regimenes: string[] };
+export type HotelPublico = { id: number; nombre: string; categoria: string; regimen: string; descripcion: string; foto: string;
+  /** Estrellas del hotel (null = sin dato) y ubicación para el mapa ("" = sin dato). Distintas de `categoria` (la habitación). */
+  estrellas: number | null; ubicacion: string; desde: number; reglas: ReglasHotelDin | null; categorias: string[]; regimenes: string[] };
 export type ContextoPublico = { reglasHotel?: Map<number, ReglasHotelDin | null>; fichas?: Map<number, ResumenFicha>; vuelos?: Map<number, VueloDetalle>; opcionesHotel?: Map<number, { categorias: string[]; regimenes: string[] }> };
 export type DinamicoPublico = {
   id: number; nombre: string; moneda: string; destino: string; noches: number; descripcion: string; incluye: string[]; noIncluye: string[];
@@ -50,7 +52,7 @@ export function vistaPublica(p: FilaPaqueteDin & { destino: string; compra_fin: 
     id: p.id, nombre: p.nombre, moneda: p.moneda, destino: p.destino, noches: p.noches, descripcion: p.descripcion ?? "", incluye: lineas(p.incluye), noIncluye: lineas(p.no_incluye),
     compraFin: p.compra_fin, usaVuelo: p.usa_vuelo, usaHotel: p.usa_hotel, usaServicios: p.usa_servicios,
     hoteles: p.usa_hotel ? hoteles.filter((h) => opciones.some((o) => o.hotelId === h.id)).map((h) => ({
-      id: h.id, nombre: h.nombre, categoria: h.categoria ?? "", regimen: h.regimen ?? "", descripcion: h.descripcion ?? "", foto: h.foto_url?.trim() || FOTO_HOTEL_PREDETERMINADA, desde: desdeHotel(h.id),
+      id: h.id, nombre: h.nombre, categoria: h.categoria ?? "", regimen: h.regimen ?? "", descripcion: h.descripcion ?? "", foto: h.foto_url?.trim() || FOTO_HOTEL_PREDETERMINADA, estrellas: h.estrellas ?? null, ubicacion: h.ubicacion?.trim() ?? "", desde: desdeHotel(h.id),
       reglas: ctx.reglasHotel?.get(h.id) ?? null, categorias: ctx.opcionesHotel?.get(h.id)?.categorias ?? [], regimenes: ctx.opcionesHotel?.get(h.id)?.regimenes ?? [],
     })) : [],
     vuelos: p.usa_vuelo ? vuelos.filter((v) => opciones.some((o) => o.vueloId === v.id)).map((v) => ({ id: v.id, fechaIda: v.fecha_ida, fechaRegreso: v.fecha_regreso, etiqueta: [v.aerolinea, v.ruta, v.fecha_ida].filter(Boolean).join(" · ") || `Vuelo ${v.id}`, detalle: ctx.vuelos?.get(v.id) ?? { aerolinea: v.aerolinea, ruta: v.ruta, vueloIda: null, horaSalidaIda: null, horaLlegadaIda: null, vueloRegreso: null, horaSalidaReg: null, horaLlegadaReg: null } })) : [],

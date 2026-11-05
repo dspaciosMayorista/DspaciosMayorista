@@ -7,7 +7,7 @@ export type FilaPaqueteDin = {
   pvp_general: PrecioAcom | null; total_declarado: PrecioAcom | null;
 };
 export type FilaVueloDin = { id: number; empaquetado_id: number | null; destino_id: number | null; aerolinea: string | null; ruta: string | null; fecha_ida: string | null; fecha_regreso: string | null; proveedor: string | null; neto: Partial<PrecioVuelo>; pvp: Partial<PrecioVuelo> };
-export type FilaHotelDin = { id: number; hotel_id: number | null; capacidad_ninos?: number | null; edad_infante_max?: number | null; edad_nino_max?: number | null; nombre: string; categoria: string | null; regimen: string | null; descripcion: string | null; foto_url: string | null; proveedor: string | null; neto: PrecioAcom; pvp: PrecioAcom; pvp_general: PrecioAcom | null };
+export type FilaHotelDin = { id: number; hotel_id: number | null; capacidad_ninos?: number | null; edad_infante_max?: number | null; edad_nino_max?: number | null; nombre: string; categoria: string | null; regimen: string | null; descripcion: string | null; foto_url: string | null; estrellas?: number | null; ubicacion?: string | null; proveedor: string | null; neto: PrecioAcom; pvp: PrecioAcom; pvp_general: PrecioAcom | null };
 export type FilaServicioDin = { id: number; servicio_id: number | null; nombre: string; proveedor: string | null; neto: number | null; pvp: number | null; pvp_infante?: number | null };
 
 const vz = (v: Partial<PrecioVuelo> | undefined): PrecioVuelo => ({ adulto: v?.adulto ?? null, nino: v?.nino ?? null, infante: v?.infante ?? null });

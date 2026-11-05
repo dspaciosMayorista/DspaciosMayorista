@@ -57,6 +57,19 @@ export async function cargarOpcionesHotelFicha(admin: Admin, hotelIds: number[])
   return out;
 }
 
+/** Estrellas (1–5), descripción y ubicación de las fichas: lo que el paquete COPIA al vincular un hotel. Lo que la ficha no tiene queda vacío (nunca se inventa). */
+export type InfoHotelFicha = { estrellas: number | null; descripcion: string; ubicacion: string };
+export async function cargarInfoHotelesFicha(admin: Admin, hotelIds: number[]): Promise<Map<number, InfoHotelFicha>> {
+  const out = new Map<number, InfoHotelFicha>();
+  const ids = [...new Set(hotelIds)];
+  if (!ids.length) return out;
+  const { data, error } = await (admin as unknown as Suelto).from("hoteles").select("id, estrellas, descripcion, ubicacion").in("id", ids);
+  // Un fallo de lectura NUNCA se confunde con «la ficha no tiene el dato»: quien llama decide detenerse.
+  if (error) throw new Error(`No se pudo leer la información de las fichas de hotel: ${error.message ?? "error de lectura"}`);
+  for (const x of data ?? []) out.set(x.id, { estrellas: Number.isInteger(x.estrellas) && x.estrellas >= 1 && x.estrellas <= 5 ? x.estrellas : null, descripcion: String(x.descripcion ?? "").trim(), ubicacion: String(x.ubicacion ?? "").trim() });
+  return out;
+}
+
 /** Catálogo general (para el hotel MANUAL: misma lista y misma validación que los hoteles normales). */
 export async function cargarCatalogoHotel(admin: Admin): Promise<{ categorias: string[]; regimenes: string[] }> {
   const sb = admin as unknown as Suelto;
