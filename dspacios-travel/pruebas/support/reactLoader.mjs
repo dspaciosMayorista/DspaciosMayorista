@@ -99,6 +99,7 @@ const STUB_EMPAQUETADOS_ACTIONS = pathToFileURL(join(AQUI, "stubs", "empaquetado
 // La Server Action REAL de vuelos (pruebas/vuelosOperacionesActions.react.ts)
 // importa "../paquetes/actions" (motor de tarifarios completo) -> stub.
 const STUB_PAQUETES_ACTIONS = pathToFileURL(join(AQUI, "stubs", "paquetesActionsStub.mjs")).href;
+const STUB_PAQUETE_TOTAL_ACTIONS = pathToFileURL(join(AQUI, "stubs", "paqueteTotalActionsStub.mjs")).href;
 const STUB_SUPABASE_SERVER = pathToFileURL(join(AQUI, "stubs", "supabaseServerStub.mjs")).href;
 const STUB_NEXT_CACHE = pathToFileURL(join(AQUI, "stubs", "nextCacheStub.mjs")).href;
 const STUB_ASIENTOS = pathToFileURL(join(AQUI, "stubs", "asientosStub.mjs")).href;
@@ -287,7 +288,9 @@ export async function resolve(specifier, context, nextResolve) {
       // Facturación (#49, pruebas/tablasMoviles49.react.ts).
       context.parentURL?.endsWith("FacturacionClient.tsx") ||
       // Promociones del hotel (#90, pruebas/reglasDescuentoCarga90.react.ts).
-      context.parentURL?.endsWith("/HotelPromociones.tsx"))
+      context.parentURL?.endsWith("/HotelPromociones.tsx") ||
+      // Montaje del paquete dinámico (#82, pruebas/selectoresDin82.react.ts).
+      context.parentURL?.endsWith("/paquetes/total/PaqueteTotalForm.tsx"))
   ) {
     return { url: STUB_NEXT_NAVIGATION, shortCircuit: true };
   }
@@ -315,6 +318,9 @@ export async function resolve(specifier, context, nextResolve) {
        context.parentURL?.endsWith("/dashboard/tarifario/actions.ts") ||
        context.parentURL?.endsWith("/dashboard/vuelos/actions.ts"))) {
     return { url: STUB_NEXT_CACHE, shortCircuit: true };
+  }
+  if (specifier === "./actions" && context.parentURL?.endsWith("/paquetes/total/PaqueteTotalForm.tsx")) {
+    return { url: STUB_PAQUETE_TOTAL_ACTIONS, shortCircuit: true };
   }
   if (specifier === "../paquetes/actions" && context.parentURL?.endsWith("/dashboard/vuelos/actions.ts")) {
     return { url: STUB_PAQUETES_ACTIONS, shortCircuit: true };

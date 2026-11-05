@@ -29,7 +29,7 @@ export type ResumenDin = {
   habitaciones: string; viajeros: string;
   vuelo: { etiqueta: string; detalle: VueloDetalle | null; sillas: number; infantes: number } | null;
   servicios: string[];
-  fechaIda: string; fechaRegreso: string; total: number; lineas: { descripcion: string; valor: number }[];
+  fechaIda: string; fechaRegreso: string; total: number;
   /** Vuelve a la tarjeta con la selección guardada. */
   volver: string;
 };
@@ -86,8 +86,7 @@ export function CheckoutDinamico({ resumen, solicitud, canal, aliado, crear }: {
           )}
         </div>
         <div className="mt-3 border-t border-gray-100 pt-3">
-          <ul className="space-y-0.5 text-xs text-gray-600" data-testid="desglose-dinamico">{resumen.lineas.map((l, i) => <li key={i} className="flex justify-between"><span>{l.descripcion}</span><span>{formatMoneda(l.valor, resumen.moneda)}</span></li>)}</ul>
-          <p className="mt-2 text-base">Total estimado: <b style={{ color: "var(--brand-primary)" }}>{formatMoneda(resumen.total, resumen.moneda)}</b></p>
+          <p className="text-base" data-testid="total-dinamico">Total estimado: <b style={{ color: "var(--brand-primary)" }}>{formatMoneda(resumen.total, resumen.moneda)}</b></p>
           <p className="mt-1 text-xs text-gray-500">El precio definitivo lo fija el sistema al generar la cotización.</p>
         </div>
       </section>

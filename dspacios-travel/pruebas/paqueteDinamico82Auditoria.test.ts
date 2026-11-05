@@ -104,9 +104,10 @@ describe("1. Aislamiento por agencia en las acciones del paquete", () => {
 describe("4. Hoteles vinculables y guardado atómico", () => {
   const cat = sinComentarios(leer("app/(dashboard)/dashboard/paquetes/total/catalogos.ts"));
   const act = sinComentarios(leer("app/(dashboard)/dashboard/paquetes/total/actions.ts"));
-  test("el selector sale de la función de la base (solo fichas activas sin vigencias ni tarifas)", () => {
+  test("el selector sale de la función de la base (fichas activas; el tarifario de la ficha no la excluye)", () => {
     assert.match(cat, /rpc\("hoteles_vinculables_din"/);
-    assert.doesNotMatch(cat, /from\("hoteles"\)/);
+    // El listado sale de la función; `hoteles` solo se cuenta (id, head) para avisar si la base ofrece menos fichas que las activas.
+    assert.doesNotMatch(cat, /from\("hoteles"\)\.select\("id, nombre/);
   });
   test("guardar valida cada ficha con la base (no confía en el selector)", () => {
     assert.match(act, /rpc\("hotel_vinculable_din"/);

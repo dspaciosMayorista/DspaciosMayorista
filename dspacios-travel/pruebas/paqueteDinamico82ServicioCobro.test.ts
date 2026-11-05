@@ -159,7 +159,7 @@ describe("cableado: mismo cobro en todas las etapas", () => {
     assert.match(sinComentarios(leer("app/tarifario/checkout/dinamico/page.tsx")), /evaluarSeleccionDin\(/);
   });
   test("montaje: PVP por grupo, PVP de infante y validación en servidor; la columna se guarda con el paquete", () => {
-    const f = sinComentarios(leer("app/(dashboard)/dashboard/paquetes/total/PaqueteTotalForm.tsx"));
+    const f = sinComentarios(["PaqueteTotalForm.tsx", "VueloFilaDin.tsx", "ServicioFilaDin.tsx", "HotelFilaDin.tsx"].map((x) => leer("app/(dashboard)/dashboard/paquetes/total/" + x)).join(" "));
     assert.match(f, /por grupo \(una vez\)/);
     assert.match(f, /aria-label="PVP infante"/);
     const a = sinComentarios(leer("app/(dashboard)/dashboard/paquetes/total/actions.ts"));

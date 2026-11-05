@@ -43,7 +43,7 @@ describe("1. Multidestino explícito y del mismo país", async () => {
     assert.ok(!validarEntradaPaqueteTotal({ ...e, multidestino: true, destinosExtra: [2] }, destinos).some((m) => /país|multidestino/i.test(m)));
   });
   test("el montaje oculta y vacía los adicionales sin multidestino, y ofrece solo los del mismo país", () => {
-    const f = sinComentarios(leer("app/(dashboard)/dashboard/paquetes/total/PaqueteTotalForm.tsx"));
+    const f = sinComentarios(["PaqueteTotalForm.tsx", "VueloFilaDin.tsx", "ServicioFilaDin.tsx", "HotelFilaDin.tsx"].map((x) => leer("app/(dashboard)/dashboard/paquetes/total/" + x)).join(" "));
     assert.match(f, /Multidestino/);
     assert.match(f, /multidestino: false, destinosExtra: \[\]/);
     assert.match(f, /\{e\.multidestino \? \(/);
@@ -76,11 +76,11 @@ describe("2. La ruta del vuelo no es texto libre", async () => {
     assert.ok(!validarEntradaPaqueteTotal({ ...base, vuelos: [{ ...v, empaquetadoId: 5, ruta: "MDE - CTG - MDE" }] }).some((m) => /IATA/.test(m)));
   });
   test("el formulario ya no tiene un campo de ruta editable; el servidor recalcula la ruta de cada vuelo", () => {
-    const f = sinComentarios(leer("app/(dashboard)/dashboard/paquetes/total/PaqueteTotalForm.tsx"));
+    const f = sinComentarios(["PaqueteTotalForm.tsx", "VueloFilaDin.tsx", "ServicioFilaDin.tsx", "HotelFilaDin.tsx"].map((x) => leer("app/(dashboard)/dashboard/paquetes/total/" + x)).join(" "));
     assert.doesNotMatch(f, /upd\("vuelos", i, \{ ruta:/);
     assert.match(f, /aria-label="Ruta" readOnly/);
     const a = sinComentarios(leer("app/(dashboard)/dashboard/paquetes/total/actions.ts"));
-    assert.match(a, /derivarRutaManual\(v\.origenIata, v\.destinoIata/);
+    assert.match(a, /derivarRutaManual\(v\.origenIata, destinoIata/);
     assert.match(a, /from\("empaquetados"\)\.select\("id, ruta, origen, destino_id"\)/);
   });
 });
@@ -100,17 +100,17 @@ describe("3. Servicios vinculados: proveedor de la ficha", async () => {
     assert.match(a, /No se puede publicar: \$\{mensajeSinProveedor\(faltan\)\}/);
   });
   test("el formulario muestra el proveedor de la ficha de solo lectura y qué falta", () => {
-    const f = sinComentarios(leer("app/(dashboard)/dashboard/paquetes/total/PaqueteTotalForm.tsx"));
+    const f = sinComentarios(["PaqueteTotalForm.tsx", "VueloFilaDin.tsx", "ServicioFilaDin.tsx", "HotelFilaDin.tsx"].map((x) => leer("app/(dashboard)/dashboard/paquetes/total/" + x)).join(" "));
     assert.match(f, /aria-label="Proveedor de la ficha" readOnly/);
     assert.match(f, /s\.proveedorId == null && .*mensajeSinProveedor\(\[s\.nombre\]\)/);
   });
-  test("moneda: el montaje solo ofrece hoteles y servicios en la moneda del paquete, y el servidor la vuelve a exigir", () => {
-    const f = sinComentarios(leer("app/(dashboard)/dashboard/paquetes/total/PaqueteTotalForm.tsx"));
-    assert.match(f, /\(h\.moneda \?\? "COP"\) === e\.moneda/);
+  test("moneda: los servicios deben coincidir con la moneda del paquete; la moneda de la ficha del hotel NO oculta ni rechaza el hotel", () => {
+    const f = sinComentarios(["PaqueteTotalForm.tsx", "VueloFilaDin.tsx", "ServicioFilaDin.tsx", "HotelFilaDin.tsx"].map((x) => leer("app/(dashboard)/dashboard/paquetes/total/" + x)).join(" "));
+    assert.doesNotMatch(f, /\(h\.moneda \?\? "COP"\) === e\.moneda/);
     assert.match(f, /s\.moneda === e\.moneda/);
     const a = sinComentarios(leer("app/(dashboard)/dashboard/paquetes/total/actions.ts"));
-    assert.match(a, /está en \$\{f\.moneda\} y el paquete en \$\{e\.moneda\}/);
-    assert.match(a, /from\("hoteles"\)\.select\("id, moneda"\)/);
+    assert.doesNotMatch(a, /El hotel «.*» está en/);
+    assert.doesNotMatch(a, /from\("hoteles"\)\.select\("id, moneda"\)/);
   });
 });
 

@@ -47,6 +47,8 @@ export async function cargarDinamicosPublicados(): Promise<DinamicoPublico[]> {
       cargarReglasHoteles(admin2, hotelesTodos), cargarOpcionesHotelFicha(admin2, hotelesTodos.map((x) => x.hotel_id).filter((x): x is number => x != null)),
       cargarVuelosDetalle(admin2, vuelosTodos), cargarFichasServicio(admin2, serviciosTodos.map((x) => x.servicio_id).filter((x): x is number => x != null)),
     ]);
+    // Adults Only de cada ficha: los importes de menores de ese hotel no se exigen ni se muestran como «faltantes».
+    for (const x of hotelesTodos) x.adults_only = reglasHotel.get(x.id)?.adultsOnly === true;
     const ctx: ContextoPublico = { reglasHotel, vuelos: detalleVuelos, opcionesHotel: new Map(), fichas: new Map() };
     for (const x of hotelesTodos) if (x.hotel_id != null && opcionesFicha.has(x.hotel_id)) ctx.opcionesHotel!.set(x.id, opcionesFicha.get(x.hotel_id)!);
     for (const x of serviciosTodos) { const f = x.servicio_id != null ? fichasSrv.get(x.servicio_id) : undefined; if (f) ctx.fichas!.set(x.id, resumenFicha(f)); }

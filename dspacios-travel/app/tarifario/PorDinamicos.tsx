@@ -18,6 +18,7 @@ import { explicarEdades, resolverMenores } from "@/lib/paqueteDinamico/menores";
 import { aQuery, restaurarEstado, type EstadoTarjeta } from "@/lib/paqueteDinamico/seleccionUrl";
 import { ajustarCantidadEdades, parseEdadMenor } from "@/lib/reservar/edadesMenores";
 import { CarruselFotoHotel } from "./CarruselFotoHotel";
+import { Categoria, DescripcionHotelExpandible, UbicacionHotel } from "./tarjetaHotelCompartida";
 import type { VistaPreviaDin } from "./checkout/dinamico/actions";
 
 /** La Server Action de vista previa llega por prop desde la página (servidor): este componente cliente no importa código de servidor. */
@@ -271,9 +272,14 @@ export function PorDinamicos({ dinamicos, evaluar, abierta = null }: { dinamicos
                   <article key={clave} className="overflow-hidden rounded-2xl border border-gray-200 bg-white shadow-sm">
                     {h && <CarruselFotoHotel fotos={[h.foto]} alt={h.nombre} />}
                     <div className="p-4">
-                      <h3 className="font-semibold text-gray-900">{h?.nombre ?? p.nombre}</h3>
-                      {h && <p className="text-xs text-gray-500">{[h.categoria, h.regimen].filter(Boolean).join(" · ")}</p>}
-                      {h?.descripcion && <p className="mt-1 line-clamp-3 text-sm text-gray-600">{h.descripcion}</p>}
+                      <div className="flex flex-wrap items-center gap-x-2 gap-y-0.5">
+                        <h3 className="font-semibold text-gray-900">{h?.nombre ?? p.nombre}</h3>
+                        {/* Estrellas del HOTEL; la categoría de la habitación va aparte, rotulada. */}
+                        {h && <Categoria estrellas={h.estrellas} clasificacion={null} />}
+                      </div>
+                      {h && <p className="text-xs text-gray-500" data-testid="hotel-habitacion-alimentacion">{[h.categoria && `Habitación ${h.categoria}`, h.regimen].filter(Boolean).join(" · ")}</p>}
+                      {h && <DescripcionHotelExpandible texto={h.descripcion} className="mt-1" />}
+                      {h && <div className="mt-2"><UbicacionHotel hotelNombre={h.nombre} ubicacion={h.ubicacion} compacto /></div>}
                       <p className="mt-2 text-sm text-gray-500">Desde por persona en doble</p>
                       <p className="text-lg font-bold" style={{ color: "var(--brand-primary)" }}>{formatMoneda(desde, p.moneda)}</p>
                       <Button className="mt-3 w-full" variant="outline" onClick={() => setAbierto(abierto === clave ? null : clave)}><Calculator className="h-4 w-4" /> Cotizar</Button>

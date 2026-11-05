@@ -10,12 +10,16 @@ const etiqueta = (h: HotelOpt) => (h.zona ? `${h.nombre} (${h.zona})` : h.nombre
 
 /** Selector de hotel con buscador: escribe y filtra por nombre o zona, luego eliges. No crea hoteles. */
 export function ComboHotel({
-  hoteles, value, onChange, placeholder = "Escribe el hotel…",
+  hoteles, value, onChange, placeholder = "Escribe el hotel…", max = 50, onBusqueda,
 }: {
   hoteles: HotelOpt[];
   value: number | "";
   onChange: (id: number | "") => void;
   placeholder?: string;
+  /** Tope de filas de la lista (50 por defecto); quien necesite «todas» lo sube y el buscador sigue filtrando. */
+  max?: number;
+  /** Opcional: recibe lo que se escribe en el buscador (y "" al elegir, limpiar o cancelar). Quien no lo pasa no cambia en nada. */
+  onBusqueda?: (texto: string) => void;
 }) {
   const sel = hoteles.find((h) => h.id === value) ?? null;
   const [q, setQ] = useState("");
@@ -29,8 +33,8 @@ export function ComboHotel({
   const filtradas = useMemo(() => {
     const t = norm(q.trim());
     const list = !t ? hoteles : hoteles.filter((h) => norm(h.nombre).includes(t) || norm(h.zona ?? "").includes(t));
-    return list.slice(0, 50);
-  }, [hoteles, q]);
+    return list.slice(0, max);
+  }, [hoteles, q, max]);
 
   const actClamped = Math.min(Math.max(act, 0), filtradas.length - 1);
   const actId = open && filtradas.length > 0 && actClamped >= 0 ? `${uid}-opt-${filtradas[actClamped].id}` : undefined;
@@ -40,13 +44,14 @@ export function ComboHotel({
   }, [actClamped]);
 
   function elegir(h: HotelOpt) {
+    onBusqueda?.("");
     onChange(h.id);
     setOpen(false);
     setAct(0);
   }
 
   function actDesdeSeleccion() {
-    const i = hoteles.slice(0, 50).findIndex((h) => h.id === value);
+    const i = hoteles.slice(0, max).findIndex((h) => h.id === value);
     return i >= 0 ? i : 0;
   }
 
@@ -68,6 +73,7 @@ export function ComboHotel({
       setAct(filtradas.length === 0 ? 0 : (actClamped <= 0 ? filtradas.length - 1 : actClamped - 1));
     } else if (e.key === "Escape") {
       e.preventDefault();
+      onBusqueda?.("");
       setOpen(false);
       setQ("");
       setAct(0);
@@ -93,11 +99,11 @@ export function ComboHotel({
         value={open ? q : (sel ? etiqueta(sel) : "")}
         placeholder={placeholder}
         onFocus={() => { setOpen(true); setQ(""); setAct(actDesdeSeleccion()); }}
-        onChange={(e) => { setQ(e.target.value); setOpen(true); setAct(0); if (value !== "") onChange(""); }}
+        onChange={(e) => { setQ(e.target.value); onBusqueda?.(e.target.value); setOpen(true); setAct(0); if (value !== "") onChange(""); }}
         onKeyDown={onKeyDown}
       />
       {value !== "" && !open && (
-        <button type="button" onMouseDown={(e) => { e.preventDefault(); onChange(""); setQ(""); }}
+        <button type="button" onMouseDown={(e) => { e.preventDefault(); onBusqueda?.(""); onChange(""); setQ(""); }}
           className="absolute right-2 top-1/2 -translate-y-1/2 text-gray-300 hover:text-gray-500" aria-label="Limpiar">✕</button>
       )}
       {open && (
@@ -114,7 +120,7 @@ export function ComboHotel({
               aria-selected={h.id === value}
               data-idx={i}
               onMouseDown={(e) => { e.preventDefault(); elegir(h); }}
-              className={`flex w-full items-center justify-between px-3 py-2 text-left text-sm hover:bg-gray-50 ${i === actClamped ? "bg-gray-100" : h.id === value ? "bg-[rgba(29,124,154,0.06)]" : ""}`}
+              className={`flex min-h-11 w-full items-center justify-between px-3 py-2 text-left text-sm hover:bg-gray-50 ${i === actClamped ? "bg-gray-100" : h.id === value ? "bg-[rgba(29,124,154,0.06)]" : ""}`}
             >
               <span className="text-gray-700">{h.nombre}</span>
               {h.zona && <span className="text-xs text-gray-400">{h.zona}</span>}
