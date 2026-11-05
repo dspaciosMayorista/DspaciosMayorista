@@ -239,3 +239,24 @@ test("empaquetados SIN bloqueo_id: tabla → flyer → «Reservar» corresponden
   assert.equal(new URLSearchParams(hrefReservar()!.split("?")[1]).get("empaquetado"), "21");
   assert.equal(cotizados.length, 2);
 });
+
+test("infante: la tabla muestra el precio del menor de 2 años de la cotización, no el publicado ni el del infante general", async () => {
+  const fila = din(540, IDA1, REG1, 3);
+  // Publicado: infante 200.000 y menor de 2 años 180.000. Cotizado hoy: infante general 120.000 y menor de 2 años 60.000.
+  g.__detalleActionsFake = { obtenerDetalleSalida: async () => ({ ok: true, filas: [...conAcom(fila), { ...fila, acomodacion: "infante", precio_pvp: 200_000, precio_pvp_menor2: 180_000 }] }) };
+  const c1 = { ...combo("Estándar", "PAE", 800_000, null), precios: { doble: 800_000, sencilla: 700_000, infante: 120_000 }, preciosMenor2: { infante: 60_000 } };
+  g.__cotizarTarjetaFake = async () => ({ ...cotiz(IDA1, REG1, 3, 800_000, null), combos: [c1] });
+  const c = await montar([fila]);
+  await clic(tabDinamico(c)); await pausa();
+  const t = tablaTexto();
+  assert.match(t, /(?<![\d.])60\.000(?![\d.])/, "precio del menor de 2 años cotizado");
+  assert.doesNotMatch(t, /(?<![\d.])(120|180|200)\.000(?![\d.])/, "ni el infante general cotizado ni los publicados");
+  // Sin precio de menor de 2 años en la cotización, cae al del infante general cotizado (nunca al publicado).
+  const c2 = { ...c1, preciosMenor2: {} };
+  g.__cotizarTarjetaFake = async () => ({ ...cotiz(IDA1, REG1, 3, 800_000, null), combos: [c2] });
+  await act(async () => { root!.unmount(); }); root = null; cont!.remove(); cont = null;
+  const c3 = await montar([fila]);
+  await clic(tabDinamico(c3)); await pausa();
+  assert.match(tablaTexto(), /(?<![\d.])120\.000(?![\d.])/);
+  assert.doesNotMatch(tablaTexto(), /(?<![\d.])(60|180|200)\.000(?![\d.])/);
+});
