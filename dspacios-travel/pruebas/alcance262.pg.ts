@@ -826,8 +826,8 @@ describe("262 · ruta de oferta #63 (crearCotizacion -> convertirCotizacion -> a
     assert.doesNotMatch(String(gs.error ?? ""), /no puede ir incluido/, "ya no hay prohibición general");
     const texto = gs.ok ? diag : String(gs.error);
     assert.match(texto, /Traslado un solo precio 262/, "el motivo nombra el servicio");
-    assert.match(texto, /no tiene precio por persona de ida y regreso ni tarifa por persona/, "y dice qué falta");
-    assert.match(texto, /sin tarifa válida de ida y regreso/, "y que no se ofrece prometiéndolo");
+    assert.match(texto, /no tiene tarifa por persona en su vigencia «ALTA».*Crea una vigencia con tarifa o configura la tarifa base en Producto → Servicios/, "y dice qué falta y qué configurar");
+    assert.match(texto, /no se puede ofrecer el paquete prometiendo un traslado sin tarifa/, "y que no se ofrece prometiéndolo");
     assert.equal(sql("select count(*) from public.tarifario_resultado_publicable where paquete_id = " + PAQ_SIN), "0", "no se publica ninguna fila vendible de esa oferta");
     const cs = await crearCotizacion(inp(PAQ_SIN, SAL_SIN, []) as never) as { ok: boolean; id?: number; error?: string };
     console.log("      crearCotizacion sobre la oferta bloqueada →", cs.ok ? "COTIZÓ (!)" : cs.error);
@@ -841,7 +841,7 @@ describe("262 · ruta de oferta #63 (crearCotizacion -> convertirCotizacion -> a
     console.log("      generarTarifario(traslado incluido SIN vigencia para la fecha) →", g.ok ? "ok" : g.error, "· diagnóstico:", diag.slice(0, 700));
     const texto = g.ok ? diag : String(g.error);
     assert.match(texto, /Traslado vigencia 2031 262/, "nombra el servicio");
-    assert.match(texto, /no tiene vigencia de tarifa para el 01\/03\/2030/, "dice que falta la VIGENCIA de la fecha");
+    assert.match(texto, /no tiene tarifa vigente para el 01\/03\/2030/, "dice que falta la VIGENCIA de la fecha");
     assert.match(texto, /y tampoco tiene un precio base por persona mayor que cero/, "dice que tampoco hay tarifa base válida");
     assert.doesNotMatch(texto, /ida y regreso ni tarifa por persona/, "no se confunde con la falta de tarifa de ida y regreso");
     assert.equal(sql("select count(*) from public.tarifario_resultado_publicable where paquete_id = " + PAQ_FUERA), "0", "ninguna fila vendible");
@@ -861,7 +861,7 @@ describe("262 · ruta de oferta #63 (crearCotizacion -> convertirCotizacion -> a
     assert.ok(pub.has(String(BQ_MIX.pasada)), "la salida pasada no bloquea la generación (se publica como antes, sin el traslado omitido)");
     assert.ok(!pub.has(String(BQ_MIX.sinVig)) && !pub.has(String(BQ_MIX.sinTarifa)), "las futuras sin vigencia / sin tarifa NO se publican");
     assert.match(diag, /2 de 5 salida\(s\) no se publican/, "solo las 2 futuras con problema cuentan como bloqueadas");
-    assert.match(diag, /no tiene vigencia de tarifa para el 01\/03\/2031/); assert.match(diag, /desde 01\/03\/2031 hasta 01\/03\/2032/, "el rango cubre también la futura sin tarifa (2032)");
+    assert.match(diag, /no tiene tarifa vigente para el 01\/03\/2031/); assert.match(diag, /desde 01\/03\/2031 hasta 01\/03\/2032/, "el rango cubre también la futura sin tarifa (2032)");
     assert.doesNotMatch(diag.split("Servicios incluidos omitidos")[0], /2020/, "la salida de 2020 no figura entre las bloqueadas");
     // Venta (carrito) de una salida futura válida; las bloqueadas no se cotizan.
     const itemMix = (k: keyof typeof BQ_MIX) => ({ modulo: "bloqueo", paqueteId: PAQ_MIX, hotelId: HOT_MIX, bloqueoId: BQ_MIX[k], hotelNombre: "Hotel Mixto 262", destino: "CARTAGENA 262", categoria: "Estandar", regimen: "Desayuno", fechaIda: null, fechaRegreso: null, noches: 3, habitaciones: { doble: 1 }, ninos: 0, ninos2: 0, infantes: 0, pax: 2, precio: 1, edadesMenores: [], cantidadMenores: 0, itemId: "hm" + k });
@@ -1522,7 +1522,7 @@ describe("#435 · tarifa base como respaldo del traslado incluido", () => {
     const g = await generarTarifario(B.BA) as { ok: boolean; error?: string };
     const texto = (g.ok ? "" : String(g.error)) + diag435(B.BA);
     console.log("      generarTarifario(base ausente) →", g.ok ? "ok" : g.error, "·", texto.slice(0, 300));
-    assert.match(texto, /Traslado sin base 262/); assert.match(texto, /no tiene vigencia de tarifa para el \d\d\/\d\d\/2030/); assert.match(texto, /tampoco tiene un precio base por persona mayor que cero/);
+    assert.match(texto, /Traslado sin base 262/); assert.match(texto, /no tiene tarifa vigente para el \d\d\/\d\d\/2030/); assert.match(texto, /tampoco tiene un precio base por persona mayor que cero/);
     assert.equal(publicadas(B.BA), 0);
     const antes = escrituras();
     const c = await cotizar435(B.BA, 0); assert.equal(c.ok, false, "no se cotiza");

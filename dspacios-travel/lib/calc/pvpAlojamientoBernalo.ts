@@ -47,6 +47,7 @@ import { marcar, aporteVuelo, redondearVenta } from "./paquetes.ts";
 import {
   costoNetoServicioIncluido,
   cargoGrupoIncluido,
+  mensajeGrupoSinCobertura,
   type CategoriaServicio,
   type ServicioGrupoIncluido,
 } from "../reservar/serviciosPaquete.ts";
@@ -190,7 +191,7 @@ export function calcularPvpAlojamientoBernalo(input: EntradaPvpAlojamientoBernal
       return {
         ok: false,
         codigo: "servicio_sin_rango_grupal",
-        mensaje: `El servicio incluido "${r.nombre}" no tiene un rango configurado para ${r.totalPax} viajero(s) — no se puede cotizar sin inventar un precio.`,
+        mensaje: mensajeGrupoSinCobertura(r.nombre, r.totalPax),
       };
     }
     // `r.pvp` ya viene redondeado por `cargoGrupoIncluido` (mismo criterio

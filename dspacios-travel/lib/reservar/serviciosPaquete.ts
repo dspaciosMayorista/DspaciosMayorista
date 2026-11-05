@@ -162,6 +162,14 @@ export type ServicioGrupoIncluido = {
   rangos: { pax_desde: number; pax_hasta: number; precio: number }[];
 };
 
+/**
+ * Mensaje cuando NINGÚN nivel de tarifa (ida y regreso propia, general de la vigencia o, en un traslado, la base) cubre la cantidad de pasajeros pedida. Nombra el servicio y la
+ * cantidad e indica qué configurar. Interno (reserva / cotización interna): al cliente público se le muestra el texto genérico de MENSAJES_PUBLICOS.
+ */
+export function mensajeGrupoSinCobertura(nombre: string, totalPax: number): string {
+  return `El servicio incluido «${nombre}» no tiene una tarifa por grupo que cubra ${totalPax} pasajero${totalPax === 1 ? "" : "s"}. Configura en Producto → Servicios una vigencia con tarifa por grupo que cubra esa cantidad o, en un traslado, una tarifa base (GENERAL) que la cubra; no se cotiza ni se reserva sin una tarifa que cubra a todos los pasajeros.`;
+}
+
 export type CargoGrupoIncluido =
   | { ok: true; pvp: number; servicios: ServicioEfectivo[] }
   // Ningún rango cubre el pax real → configuración incompleta del catálogo.

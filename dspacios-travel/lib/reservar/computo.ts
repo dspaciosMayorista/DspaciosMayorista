@@ -51,7 +51,7 @@ import { resolverOrigenVuelo, empaquetadoVigente, hoyBogota, type OrigenVuelo } 
 import { verificarSalidaDinamicaVigente, mensajeSalidaNoVigente } from "@/lib/reservar/salidaDinamicaVigente";
 import { validarOrigenAereoPaquete, MENSAJES as MENSAJES_DEST_AEREOS } from "@/lib/paquetes/destinosAereos67";
 import {
-  normalizarCategoriaServicio, costoNetoServicioIncluido, cargoGrupoIncluido,
+  normalizarCategoriaServicio, costoNetoServicioIncluido, cargoGrupoIncluido, mensajeGrupoSinCobertura,
   type CategoriaServicio, type ServicioEfectivo, type ServicioGrupoIncluido,
 } from "@/lib/reservar/serviciosPaquete";
 import { validarModoServicio } from "@/lib/reservar/liquidacionServicio";
@@ -1216,7 +1216,7 @@ export async function computarReserva(
         if (!cargo.ok) {
           return {
             ok: false,
-            error: `El servicio incluido "${cargo.nombre}" está configurado en modo grupo pero no tiene una tarifa por rango de pasajeros que cubra ${cargo.totalPax} pax — corrige el catálogo (servicio_tarifa_pax) antes de reservar.`,
+            error: mensajeGrupoSinCobertura(cargo.nombre, cargo.totalPax),
           };
         }
         precioVenta += cargo.pvp;
