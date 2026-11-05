@@ -30,7 +30,8 @@ let cont: HTMLElement | null = null;
 afterEach(async () => { if (root) await act(async () => { root!.unmount(); }); cont?.remove(); root = null; cont = null; llamadas.length = 0; });
 after(() => dom.window.close());
 
-const destinos = [{ id: 1, nombre: "MONTEGO BAY", pais: "Jamaica" }, { id: 2, nombre: "NEGRIL", pais: "Jamaica" }, { id: 3, nombre: "KINGSTON", pais: "Jamaica" }, { id: 4, nombre: "CARTAGENA", pais: "Colombia" }];
+// Montego Bay y Kingston tienen IATA en el catálogo de destinos; Negril tiene un código fuera del catálogo de ciudades; Cartagena NO tiene IATA cargado.
+const destinos = [{ id: 1, nombre: "MONTEGO BAY", pais: "Jamaica", codigo_iata: "MBJ" }, { id: 2, nombre: "NEGRIL", pais: "Jamaica", codigo_iata: "NEG" }, { id: 3, nombre: "KINGSTON", pais: "Jamaica", codigo_iata: "KIN" }, { id: 4, nombre: "CARTAGENA", pais: "Colombia", codigo_iata: null }];
 // 40 fichas en Montego Bay: la primera sin tarifario (COP), el resto «con tarifario», varias en USD; 3 fichas de otros destinos.
 const nombres = ["BEACHES RESORT", ...Array.from({ length: 39 }, (_, i) => `Hotel Montego ${String(i + 1).padStart(2, "0")}`)];
 const ficha = (id: number, nombre: string, destino_id: number, moneda: string) => ({ id, nombre, destino_id, moneda, categorias: [], regimenes: [], reglasTexto: null, estrellas: 4, descripcionFicha: "Descripción", ubicacionFicha: "Ubicación" });
@@ -41,6 +42,8 @@ const hoteles = [
 const empaquetados = [
   { id: 1, aerolinea: "Avianca", ruta: "BOG - MBJ - BOG", fecha_ida: "2030-01-10", fecha_regreso: "2030-01-13", destino_id: 1, tarifa_proveedor: 100, fee_infante: 10 },
   { id: 2, aerolinea: "Copa", ruta: "PTY - KIN - PTY", fecha_ida: "2030-02-10", fecha_regreso: "2030-02-13", destino_id: 3, tarifa_proveedor: 100, fee_infante: 10 },
+  // Destino comercial Montego Bay, pero su aeropuerto real es Kingston: la ruta del empaquetado manda.
+  { id: 3, aerolinea: "Copa", ruta: "PTY - KIN - PTY", fecha_ida: "2030-03-10", fecha_regreso: "2030-03-13", destino_id: 1, tarifa_proveedor: 100, fee_infante: 10 },
 ];
 const catalogoHotel = { categorias: ["Estándar"], regimenes: ["PC"] };
 const inicial = { ...ENTRADA_VACIA, nombre: "Jamaica 3N", destinoId: 1, usaVuelo: true, usaHotel: true };
@@ -122,27 +125,40 @@ test("HOTEL: base con la función vieja (solo fichas sin tarifario) → aviso co
   assert.match(document.querySelector('[data-testid="aviso-fichas-faltantes"]')!.textContent!, /solo ofrece 1 de 43 fichas activas: falta aplicar la migración 280/);
 });
 
-test("VUELO manual: Origen y Destino son selectores con búsqueda por ciudad o código; la ruta se calcula y sale en el guardado", async () => {
+test("VUELO manual SIN Multidestino: solo el Origen es un selector IATA; el destino es el principal (con su IATA del catálogo) y la ruta se calcula", async () => {
   await montar();
   await vueloManual();
-  assert.equal(combo("Origen IATA").getAttribute("role"), "combobox"); assert.equal(combo("Destino IATA").getAttribute("role"), "combobox");
+  assert.equal(combo("Origen IATA").getAttribute("role"), "combobox");
+  assert.equal(combo("Destino IATA"), null, "no se pide «Destino IATA»");
+  assert.equal(document.querySelector('select[aria-label="Destino del vuelo"]'), null, "ni «Destino del vuelo»");
+  assert.match(document.querySelector('[data-testid="destino-del-vuelo-auto"]')!.textContent!, /Llega a MONTEGO BAY \(MBJ\)/);
+  assert.equal(document.querySelector('[data-testid="destino-sin-iata"]'), null);
   await click(combo("Origen IATA"));
   assert.ok(opciones().includes("Bogotá (BOG)") && opciones().length > 20, "catálogo completo al abrir");
   await escribir(combo("Origen IATA"), "bogo");
   assert.deepEqual(opciones(), ["Bogotá (BOG)"]);
   await tecla(combo("Origen IATA"), "ArrowDown"); await tecla(combo("Origen IATA"), "Enter");
   assert.equal(combo("Origen IATA").value, "Bogotá (BOG)");
-  await click(combo("Destino IATA"));
-  await escribir(combo("Destino IATA"), "montego");
-  assert.deepEqual(opciones(), ["Montego Bay (MBJ)"]);
-  await tecla(combo("Destino IATA"), "ArrowDown"); await tecla(combo("Destino IATA"), "Enter");
-  assert.equal((document.querySelector('input[aria-label="Ruta"]') as HTMLInputElement).value, "BOG - MBJ");
+  assert.equal((document.querySelector('input[aria-label="Ruta"]') as HTMLInputElement).value, "BOG - MBJ", "sin regreso: solo ida");
   await guardar();
   assert.equal(llamadas.length, 1);
-  assert.equal(llamadas[0].vuelos[0].origenIata, "BOG"); assert.equal(llamadas[0].vuelos[0].destinoIata, "MBJ");
+  assert.equal(llamadas[0].vuelos[0].origenIata, "BOG"); assert.equal(llamadas[0].vuelos[0].destinoIata, "MBJ"); assert.equal(llamadas[0].vuelos[0].destinoId, 1);
 });
 
-test("VUELO manual: se puede ESCRIBIR un código válido que no está en el catálogo; uno inválido se señala y no se guarda como código", async () => {
+test("VUELO manual SIN Multidestino y destino principal SIN IATA: se avisa que hay que crearlo/completarlo en Destinos; la ruta no muestra códigos falsos ni incompletos", async () => {
+  await montar({}, { ...inicial, destinoId: 4 });
+  await vueloManual();
+  const aviso = document.querySelector('[data-testid="destino-sin-iata"]')!;
+  assert.match(aviso.textContent!, /El destino «CARTAGENA» no tiene código IATA/); assert.match(aviso.textContent!, /Producto → Destinos/); assert.match(aviso.textContent!, /no se inventa/);
+  assert.equal(document.querySelector('[data-testid="destino-del-vuelo-auto"]'), null);
+  assert.equal(combo("Destino IATA"), null, "tampoco se pide escribir el código aquí");
+  await click(combo("Origen IATA")); await escribir(combo("Origen IATA"), "bog"); await tecla(combo("Origen IATA"), "Enter");
+  assert.equal((document.querySelector('input[aria-label="Ruta"]') as HTMLInputElement).value, "", "ni «BOG - » ni un código inventado");
+  await guardar();
+  assert.equal(llamadas[0].vuelos[0].destinoIata, "", "el formulario no inventa un código (el servidor rechaza con el aviso)");
+});
+
+test("VUELO manual: Origen acepta un código válido que no está en el catálogo; uno inválido se señala y no viaja como código", async () => {
   await montar();
   await vueloManual();
   await click(combo("Origen IATA"));
@@ -150,17 +166,18 @@ test("VUELO manual: se puede ESCRIBIR un código válido que no está en el cat�
   assert.ok(opciones().some((o) => o === "Usar el código «XYZ»"), "ofrece usar el código escrito");
   await tecla(combo("Origen IATA"), "Enter");
   assert.equal(combo("Origen IATA").value, "XYZ");
-  await click(combo("Destino IATA"));
-  await escribir(combo("Destino IATA"), "ab");
-  await tecla(combo("Destino IATA"), "Escape");
-  assert.equal(combo("Destino IATA").getAttribute("aria-invalid"), "true");
+  assert.equal((document.querySelector('input[aria-label="Ruta"]') as HTMLInputElement).value, "XYZ - MBJ");
+  await click(combo("Origen IATA"));
+  await escribir(combo("Origen IATA"), "ab");
+  await tecla(combo("Origen IATA"), "Escape");
+  assert.equal(combo("Origen IATA").getAttribute("aria-invalid"), "true");
   assert.match(cont!.textContent!, /Elige una ciudad de la lista o escribe un código IATA de 3 letras/);
   assert.equal((document.querySelector('input[aria-label="Ruta"]') as HTMLInputElement).value, "");
   await guardar();
-  assert.equal(llamadas[0].vuelos[0].destinoIata, "", "un texto inválido no viaja como código");
+  assert.equal(llamadas[0].vuelos[0].origenIata, "", "un texto inválido no viaja como código");
 });
 
-test("VUELO manual: Escape cierra solo la lista; clic/toque en una fila elige; el texto escrito de una ciudad exacta se resuelve al salir", async () => {
+test("VUELO manual: Escape cierra solo la lista; clic/toque en una fila elige; una ciudad exacta escrita se resuelve al salir", async () => {
   await montar();
   await vueloManual();
   await click(combo("Origen IATA"));
@@ -172,9 +189,36 @@ test("VUELO manual: Escape cierra solo la lista; clic/toque en una fila elige; e
   assert.match(fila.className, /min-h-11/);
   await act(async () => { fila.dispatchEvent(new dom.window.MouseEvent("mousedown", { bubbles: true, cancelable: true })); });
   assert.equal(combo("Origen IATA").value, "Medellín (MDE)");
-  await click(combo("Destino IATA")); await escribir(combo("Destino IATA"), "Cartagena");
-  await act(async () => { combo("Destino IATA").dispatchEvent(new dom.window.FocusEvent("focusout", { bubbles: true, relatedTarget: null })); });
-  assert.equal(combo("Destino IATA").value, "Cartagena (CTG)");
+  await click(combo("Origen IATA")); await escribir(combo("Origen IATA"), "Cartagena");
+  await act(async () => { combo("Origen IATA").dispatchEvent(new dom.window.FocusEvent("focusout", { bubbles: true, relatedTarget: null })); });
+  assert.equal(combo("Origen IATA").value, "Cartagena (CTG)");
+});
+
+test("VUELO manual CON Multidestino: se elige el destino entre el principal y los adicionales y el Destino IATA se precarga con el del destino elegido (editable)", async () => {
+  await montar({}, { ...inicial, multidestino: true, destinosExtra: [3] });
+  await vueloManual();
+  assert.ok(combo("Destino IATA"), "con Multidestino sí se especifica el Destino IATA");
+  assert.equal(combo("Destino IATA").value, "Montego Bay (MBJ)", "precargado con el del principal");
+  const sel = document.querySelector('select[aria-label="Destino del vuelo"]') as HTMLSelectElement;
+  await escribir(sel, "3");
+  assert.equal(combo("Destino IATA").value, "Kingston (KIN)", "cambia al aeropuerto del destino elegido");
+  await click(combo("Origen IATA")); await escribir(combo("Origen IATA"), "bog"); await tecla(combo("Origen IATA"), "Enter");
+  assert.equal((document.querySelector('input[aria-label="Ruta"]') as HTMLInputElement).value, "BOG - KIN");
+  await click(combo("Destino IATA")); await escribir(combo("Destino IATA"), "mbj"); await tecla(combo("Destino IATA"), "Enter");
+  assert.equal((document.querySelector('input[aria-label="Ruta"]') as HTMLInputElement).value, "BOG - MBJ", "se puede cambiar el aeropuerto a mano");
+  await escribir(sel, "1");
+  assert.equal(combo("Destino IATA").value, "Montego Bay (MBJ)");
+  await guardar();
+  assert.equal(llamadas[0].vuelos[0].destinoId, 1); assert.equal(llamadas[0].vuelos[0].destinoIata, "MBJ");
+});
+
+test("MULTIDESTINO: al activarlo, el vuelo manual pasa a pedir su Destino IATA ya precargado con el del destino que tenía", async () => {
+  await montar();
+  await vueloManual();
+  assert.equal(combo("Destino IATA"), null);
+  await click(pestana("Configuración")); await click(checkMulti());
+  await click(pestana("Vuelo"));
+  assert.equal(combo("Destino IATA").value, "Montego Bay (MBJ)");
 });
 
 test("DESTINO DEL VUELO: con Multidestino desactivado el campo no existe y el vuelo viaja con el destino principal", async () => {
@@ -183,10 +227,24 @@ test("DESTINO DEL VUELO: con Multidestino desactivado el campo no existe y el vu
   assert.equal(document.querySelector('select[aria-label="Destino del vuelo"]'), null);
   assert.doesNotMatch(cont!.textContent!, /Destino del vuelo/);
   await click(combo("Origen IATA")); await escribir(combo("Origen IATA"), "bog"); await tecla(combo("Origen IATA"), "Enter");
-  await click(combo("Destino IATA")); await escribir(combo("Destino IATA"), "mbj"); await tecla(combo("Destino IATA"), "Enter");
   await guardar();
   assert.equal(llamadas[0].vuelos[0].destinoId, 1);
+  assert.equal(llamadas[0].vuelos[0].destinoIata, "MBJ");
   assert.equal(llamadas[0].multidestino, false);
+});
+
+test("VUELO vinculado: conserva la ruta REAL del empaquetado, no la reemplaza por el IATA del destino comercial", async () => {
+  await montar();
+  await click(pestana("Vuelo"));
+  const sel = [...document.querySelectorAll("select")].find((s) => s.options[0]?.textContent?.startsWith("Vincular vuelo"))!;
+  await escribir(sel, "3");
+  assert.equal((document.querySelector('input[aria-label="Ruta"]') as HTMLInputElement).value, "PTY - KIN - PTY", "la ruta del empaquetado (destino comercial: Montego Bay)");
+  assert.equal(document.querySelector('[data-testid="destino-del-vuelo-auto"]'), null, "el aviso del vuelo manual no aplica");
+  assert.equal(combo("Origen IATA"), null);
+  await guardar();
+  assert.equal(llamadas[0].vuelos[0].empaquetadoId, 3);
+  assert.equal(llamadas[0].vuelos[0].ruta, "PTY - KIN - PTY");
+  assert.equal(llamadas[0].vuelos[0].destinoIata, "", "el formulario no inyecta el IATA del principal en un vinculado");
 });
 
 test("DESTINO DEL VUELO: vincular un vuelo de Empaquetados asigna el destino principal automáticamente", async () => {
@@ -194,7 +252,7 @@ test("DESTINO DEL VUELO: vincular un vuelo de Empaquetados asigna el destino pri
   await click(pestana("Vuelo"));
   const sel = [...document.querySelectorAll("select")].find((s) => s.options[0]?.textContent?.startsWith("Vincular vuelo"))!;
   const opts = [...sel.options].map((o) => o.textContent);
-  assert.ok(opts.some((o) => o?.includes("Avianca")) && !opts.some((o) => o?.includes("Copa")), "con Multidestino apagado solo los del principal");
+  assert.ok(opts.some((o) => o?.includes("Avianca")) && !opts.some((o) => o?.includes("2030-02-10")), "con Multidestino apagado solo los del principal (el de Kingston no)");
   await escribir(sel, "1");
   assert.equal(document.querySelectorAll('input[aria-label="Ruta"]').length, 1);
   await guardar();

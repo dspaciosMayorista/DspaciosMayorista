@@ -8,7 +8,7 @@ import { Input } from "@/components/ui/input";
 import { DateInput } from "@/components/ui/DateInput";
 import { pvpDeNeto } from "@/lib/paqueteDinamico/calculo";
 import type { EntradaHotel, EntradaPaqueteTotal, EntradaServicio, EntradaVuelo } from "@/lib/paqueteDinamico/entrada";
-import { ajenosAlPrincipal, derivarRutaManual, mensajeSinProveedor, paisComparable, seguirDestinoPrincipal } from "@/lib/paqueteDinamico/ruta";
+import { ajenosAlPrincipal, derivarRutaManual, iataDeDestino, mensajeSinProveedor, paisComparable, seguirDestinoPrincipal } from "@/lib/paqueteDinamico/ruta";
 import { ComboHotel } from "@/components/ComboHotel";
 import { ComboIata } from "./ComboIata";
 import { EDADES_MANUAL_POR_DEFECTO } from "@/lib/paqueteDinamico/menores";
@@ -20,7 +20,7 @@ type Opt = { id: number; nombre: string; destino_id: number | null; moneda?: str
 type HotelOpt = Opt & { categorias: string[]; regimenes: string[]; reglasTexto: string | null; estrellas: number | null; descripcionFicha: string; ubicacionFicha: string };
 type ServicioOpt = Opt & { moneda: string; proveedorId: number | null; proveedor: string; cobro: string | null; noSoportado: string | null; modo: "persona" | "grupo" | null; cobraInfante: boolean };
 type CatalogoHotel = { categorias: string[]; regimenes: string[] };
-type DestinoOpt = { id: number; nombre: string; pais: string | null };
+type DestinoOpt = { id: number; nombre: string; pais: string | null; codigo_iata?: string | null };
 export type EmpaquetadoOpt = { id: number; aerolinea: string | null; ruta: string | null; fecha_ida: string; fecha_regreso: string | null; destino_id: number | null; tarifa_proveedor: number; fee_infante: number };
 
 export const ENTRADA_VACIA: EntradaPaqueteTotal = {
@@ -46,13 +46,17 @@ export function PaqueteTotalForm({ inicial, destinos, hoteles, servicios, empaqu
   // Lo escrito en el buscador de fichas: si no existe, «Hotel manual» lo toma como nombre (nunca vincula una ficha).
   const [busquedaFicha, setBusquedaFicha] = useState("");
   // Sin Multidestino el destino de todo vuelo es el principal: al cambiar el principal, los vuelos que seguían al anterior (o sin destino) lo siguen; los demás se señalan.
-  const cambiarPrincipal = (nuevo: number | null) => setE((x) => ({ ...x, destinoId: nuevo, destinosExtra: [], vuelos: seguirDestinoPrincipal(x.vuelos, x.destinoId, nuevo) }));
+  const cambiarPrincipal = (nuevo: number | null) => setE((x) => ({ ...x, destinoId: nuevo, destinosExtra: [], vuelos: seguirDestinoPrincipal(x.vuelos, x.destinoId, nuevo, iataDeDestino(destinos, nuevo)) }));
   const alternarMultidestino = (activo: boolean) => {
-    if (activo) { setAvisoMulti(null); set({ multidestino: true }); return; }
+    // Al activarlo, los vuelos manuales pasan a pedir su Destino IATA: se precarga con el del destino que ya tenían (si el catálogo lo tiene).
+    if (activo) { setAvisoMulti(null); set({ multidestino: true, vuelos: e.vuelos.map((v) => (v.empaquetadoId == null && !v.destinoIata ? { ...v, destinoIata: iataDeDestino(destinos, v.destinoId ?? e.destinoId) } : v)) }); return; }
     const aj = ajenosAlPrincipal(e), total = aj.vuelos + aj.servicios;
     if (total) { setAvisoMulti(`No se puede desactivar Multidestino: ${total} ${total === 1 ? "vuelo o servicio usa" : "vuelos o servicios usan"} un destino adicional (${aj.vuelos} vuelo${aj.vuelos === 1 ? "" : "s"}, ${aj.servicios} servicio${aj.servicios === 1 ? "" : "s"}). Quítalos o cámbiales el destino primero; no se reasignan solos.`); return; }
     setAvisoMulti(null); set({ multidestino: false, destinosExtra: [] });
   };
+  // Aeropuerto del destino principal según el catálogo de destinos ("" = no tiene: no se inventa).
+  const iataPrincipal = iataDeDestino(destinos, e.destinoId);
+  const nombrePrincipal = destinos.find((d) => d.id === e.destinoId)?.nombre ?? "";
   const neta = e.esquema === "neta_markup";
   const porComp = e.esquema === "solo_pvp" && e.pvpModo === "por_componente";
   const general = e.esquema === "solo_pvp" && e.pvpModo === "general";
@@ -85,7 +89,7 @@ export function PaqueteTotalForm({ inicial, destinos, hoteles, servicios, empaqu
     capacidadNinos: null, edadInfanteMax: h ? null : EDADES_MANUAL_POR_DEFECTO.infanteMax, edadNinoMax: h ? null : EDADES_MANUAL_POR_DEFECTO.ninoMax,
   });
   const nuevoVuelo = (x?: EmpaquetadoOpt): EntradaVuelo => ({
-    empaquetadoId: x?.id ?? null, destinoId: e.multidestino ? (x?.destino_id ?? e.destinoId) : e.destinoId, aerolinea: x?.aerolinea ?? "", ruta: x?.ruta ?? "", origenIata: "", destinoIata: "", fechaIda: x?.fecha_ida ?? "", fechaRegreso: x?.fecha_regreso ?? "",
+    empaquetadoId: x?.id ?? null, destinoId: e.multidestino ? (x?.destino_id ?? e.destinoId) : e.destinoId, aerolinea: x?.aerolinea ?? "", ruta: x?.ruta ?? "", origenIata: "", destinoIata: x ? "" : iataDeDestino(destinos, e.destinoId), fechaIda: x?.fecha_ida ?? "", fechaRegreso: x?.fecha_regreso ?? "",
     proveedor: x?.aerolinea ?? "", neto: x ? { adulto: x.tarifa_proveedor, infante: x.fee_infante } : {}, pvp: {},
   });
   const nuevoServicio = (s?: ServicioOpt): EntradaServicio => ({ servicioId: s?.id ?? null, destinoId: s?.destino_id ?? null, nombre: s?.nombre ?? "", proveedor: s?.proveedor ?? "", proveedorId: s?.proveedorId ?? null, neto: null, pvp: null, pvpInfante: null });
@@ -104,7 +108,9 @@ export function PaqueteTotalForm({ inicial, destinos, hoteles, servicios, empaqu
 
   const guardar = () => start(async () => {
     setMsg(null);
-    const r = await guardarPaqueteTotal(e);
+    // Sin Multidestino el aeropuerto de destino del vuelo manual es el del destino principal (el servidor lo vuelve a leer del catálogo).
+    const aEnviar = e.multidestino ? e : { ...e, vuelos: e.vuelos.map((v) => (v.empaquetadoId == null ? { ...v, destinoIata: iataPrincipal } : v)) };
+    const r = await guardarPaqueteTotal(aEnviar);
     if (!r.ok) return setMsg({ ok: false, t: r.error, base: e });
     setMsg({ ok: true, t: r.avisos?.[0] ?? "Paquete guardado.", base: e });
     if (!e.id) router.replace(`/dashboard/paquetes/total/${r.id}`);
@@ -209,6 +215,11 @@ export function PaqueteTotalForm({ inicial, destinos, hoteles, servicios, empaqu
               {v.destinoId != null && !destinosPermitidos.has(v.destinoId) && (
                 <p role="alert" className="rounded-md bg-red-50 p-2 text-xs text-red-700" data-testid="vuelo-destino-incompatible">Este vuelo es de un destino que ya no está en el paquete ({destinos.find((d) => d.id === v.destinoId)?.nombre ?? v.destinoId}). Quítalo, actívalo de nuevo como destino adicional o cambia el destino principal: no se reasigna solo.</p>
               )}
+              {v.empaquetadoId == null && !e.multidestino && e.destinoId != null && (iataPrincipal ? (
+                <p className="text-xs text-gray-500" data-testid="destino-del-vuelo-auto">Llega a {nombrePrincipal} ({iataPrincipal}): el destino principal del paquete.</p>
+              ) : (
+                <p role="alert" className="rounded-md bg-amber-50 p-2 text-xs text-amber-900" data-testid="destino-sin-iata">El destino «{nombrePrincipal}» no tiene código IATA. Créalo o complétalo en Producto → Destinos para armar la ruta: un vuelo manual usa el aeropuerto del destino y no se inventa un código.</p>
+              ))}
               <div className="grid gap-2 sm:grid-cols-4">
                 <div><label className={lbl}>Aerolínea</label><Input value={v.aerolinea} onChange={(x) => upd("vuelos", i, { aerolinea: x.target.value })} /></div>
                 {v.empaquetadoId != null ? (
@@ -216,8 +227,10 @@ export function PaqueteTotalForm({ inicial, destinos, hoteles, servicios, empaqu
                 ) : (
                   <>
                     <div><label className={lbl}>Origen (IATA)</label><ComboIata etiqueta="Origen IATA" value={v.origenIata} onChange={(c) => upd("vuelos", i, { origenIata: c })} /></div>
-                    <div><label className={lbl}>Destino (IATA)</label><ComboIata etiqueta="Destino IATA" value={v.destinoIata} onChange={(c) => upd("vuelos", i, { destinoIata: c })} /></div>
-                    <div><label className={lbl}>Ruta (se calcula)</label><Input aria-label="Ruta" readOnly value={derivarRutaManual(v.origenIata, v.destinoIata, !!v.fechaRegreso) ?? ""} /></div>
+                    {e.multidestino && (
+                      <div><label className={lbl}>Destino (IATA)</label><ComboIata etiqueta="Destino IATA" value={v.destinoIata} onChange={(c) => upd("vuelos", i, { destinoIata: c })} /></div>
+                    )}
+                    <div><label className={lbl}>Ruta (se calcula)</label><Input aria-label="Ruta" readOnly value={derivarRutaManual(v.origenIata, e.multidestino ? v.destinoIata : iataPrincipal, !!v.fechaRegreso) ?? ""} /></div>
                   </>
                 )}
                 <div><label className={lbl}>Ida</label><DateInput aria-label="Ida" type="date" value={v.fechaIda} onValueChange={(d) => upd("vuelos", i, { fechaIda: d })} /></div>
@@ -225,7 +238,7 @@ export function PaqueteTotalForm({ inicial, destinos, hoteles, servicios, empaqu
                 <div><label className={lbl}>Proveedor</label><Input value={v.proveedor} onChange={(x) => upd("vuelos", i, { proveedor: x.target.value })} /></div>
                 {e.multidestino && (
                   <div><label className={lbl}>Destino del vuelo</label>
-                    <select aria-label="Destino del vuelo" className={sel} value={v.destinoId ?? e.destinoId ?? ""} onChange={(x) => upd("vuelos", i, { destinoId: x.target.value ? Number(x.target.value) : e.destinoId })}>
+                    <select aria-label="Destino del vuelo" className={sel} value={v.destinoId ?? e.destinoId ?? ""} onChange={(x) => { const id = x.target.value ? Number(x.target.value) : e.destinoId; upd("vuelos", i, { destinoId: id, ...(v.empaquetadoId == null ? { destinoIata: iataDeDestino(destinos, id) } : {}) }); }}>
                       {destinos.filter((d) => d.id === e.destinoId || e.destinosExtra.includes(d.id)).map((d) => <option key={d.id} value={d.id}>{d.nombre}{d.id === e.destinoId ? " (principal)" : ""}</option>)}
                     </select></div>
                 )}

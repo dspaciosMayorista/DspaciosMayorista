@@ -36,7 +36,7 @@ export async function cargarCatalogos() {
   const sb = await createClient();
   const admin = createAdminClient();
   const [d, h, s, e, activas] = await Promise.all([
-    sb.from("destinos").select("id, nombre, pais").order("nombre"),
+    sb.from("destinos").select("id, nombre, pais, codigo_iata").order("nombre"),
     // Todas las fichas activas (migración 280), por páginas: el tope de filas de PostgREST no puede recortar el selector en silencio.
     leerPaginado<{ id: number; nombre: string; destino_id: number | null; moneda: string | null }>((a, b) => (sb.rpc("hoteles_vinculables_din" as never) as unknown as { range: (a: number, b: number) => PromiseLike<{ data: never; error: { message: string } | null }> }).range(a, b) as never),
     sb.from("servicios_adicionales").select("id, nombre, destino_id, moneda, proveedor_id").order("nombre"),
@@ -60,7 +60,7 @@ export async function cargarCatalogos() {
     enLotes(hotelesFicha.map((x) => x.id), (l) => cargarInfoHotelesFicha(admin, l)).catch(() => new Map()),
   ]);
   return {
-    destinos: (d.data ?? []) as { id: number; nombre: string; pais: string | null }[],
+    destinos: (d.data ?? []) as { id: number; nombre: string; pais: string | null; codigo_iata: string | null }[],
     hoteles: hotelesFicha.map((x) => ({
       ...x, moneda: x.moneda ?? "COP",
       estrellas: infoFicha.get(x.id)?.estrellas ?? null, descripcionFicha: infoFicha.get(x.id)?.descripcion ?? "", ubicacionFicha: infoFicha.get(x.id)?.ubicacion ?? "",

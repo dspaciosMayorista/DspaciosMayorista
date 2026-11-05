@@ -86,14 +86,14 @@ test("cableado del formulario: ficha con buscador por nombre, IATA con selector 
   assert.match(f, /\{e\.multidestino && \(\s*<div><label className=\{lbl\}>Destino del vuelo<\/label>/);
   assert.doesNotMatch(f, /<option value="">Destino del paquete<\/option>/, "no hay opción vacía: el destino es siempre explícito");
   assert.match(f, /destinoId: e\.multidestino \? \(x\?\.destino_id \?\? e\.destinoId\) : e\.destinoId/);
-  assert.match(f, /alternarMultidestino\(x\.target\.checked\)/); assert.match(f, /seguirDestinoPrincipal\(x\.vuelos, x\.destinoId, nuevo\)/);
+  assert.match(f, /alternarMultidestino\(x\.target\.checked\)/); assert.match(f, /seguirDestinoPrincipal\(x\.vuelos, x\.destinoId, nuevo, iataDeDestino\(destinos, nuevo\)\)/);
 });
 
 test("cableado del servidor: asigna el destino principal al vuelo sin destino y revalida los códigos", () => {
   const a = sinComentarios(leer("app/(dashboard)/dashboard/paquetes/total/actions.ts"));
   assert.equal((a.match(/destinoId: v\.destinoId \?\? e\.destinoId/g) ?? []).length, 2, "vinculado y manual");
-  assert.match(a, /erroresIataVuelo\(v\.origenIata, v\.destinoIata\)/);
-  assert.match(a, /normalizarIata\(v\.origenIata\), destinoIata: normalizarIata\(v\.destinoIata\)/);
+  assert.match(a, /erroresIataVuelo\(v\.origenIata, destinoIata\)/);
+  assert.match(a, /origenIata: normalizarIata\(v\.origenIata\), destinoIata: normalizarIata\(destinoIata\)/);
 });
 
 test("catálogo de montaje: todas las fichas activas por páginas y en lotes, y aviso si la base ofrece menos", () => {
@@ -104,4 +104,31 @@ test("catálogo de montaje: todas las fichas activas por páginas y en lotes, y 
   const f = sinComentarios(leer("app/(dashboard)/dashboard/paquetes/total/PaqueteTotalForm.tsx"));
   assert.match(f, /hoteles\.length < fichasActivas/); assert.match(f, /migración 280/);
   assert.doesNotMatch(c, /moneda\) ===|tarifa_hotel|hotel_temporadas/, "el listado no filtra por moneda ni mira tarifas");
+});
+
+test("iataDeDestino: toma el IATA válido del catálogo de destinos; sin dato o inválido devuelve \"\" (nunca inventa)", async () => {
+  const { iataDeDestino } = await import("../lib/paqueteDinamico/ruta.ts");
+  const ds = [{ id: 1, codigo_iata: "mbj" }, { id: 2, codigo_iata: null }, { id: 3, codigo_iata: "  " }, { id: 4, codigo_iata: "AB" }, { id: 5 }];
+  assert.equal(iataDeDestino(ds, 1), "MBJ");
+  for (const id of [2, 3, 4, 5, 99, null, undefined]) assert.equal(iataDeDestino(ds, id as number | null), "", `destino ${id}`);
+});
+
+test("seguirDestinoPrincipal con IATA: los manuales que seguían al principal toman también el aeropuerto del nuevo destino (o \"\" si no lo tiene)", () => {
+  const vs = [{ empaquetadoId: null, destinoId: 1, destinoIata: "MBJ" }, { empaquetadoId: 7, destinoId: 1, destinoIata: "" }, { empaquetadoId: null, destinoId: 2, destinoIata: "KIN" }];
+  assert.deepEqual(seguirDestinoPrincipal(vs, 1, 3, "CTG").map((v) => [v.destinoId, v.destinoIata]), [[3, "CTG"], [1, ""], [2, "KIN"]]);
+  assert.deepEqual(seguirDestinoPrincipal(vs, 1, 4, "").map((v) => v.destinoIata), ["", "", "KIN"], "destino sin IATA: queda vacío, no se arrastra el anterior");
+});
+
+test("cableado: sin Multidestino no se pide «Destino IATA», se usa el del principal y se avisa si no lo tiene; el servidor lo relee del catálogo", () => {
+  const f = sinComentarios(leer("app/(dashboard)/dashboard/paquetes/total/PaqueteTotalForm.tsx"));
+  assert.match(f, /\{e\.multidestino && \(\s*<div><label className=\{lbl\}>Destino \(IATA\)<\/label><ComboIata etiqueta="Destino IATA"/);
+  assert.match(f, /derivarRutaManual\(v\.origenIata, e\.multidestino \? v\.destinoIata : iataPrincipal, !!v\.fechaRegreso\)/);
+  assert.match(f, /data-testid="destino-sin-iata"/); assert.match(f, /Producto → Destinos/);
+  assert.match(f, /e\.multidestino \? e : \{ \.\.\.e, vuelos: e\.vuelos\.map\(\(v\) => \(v\.empaquetadoId == null \? \{ \.\.\.v, destinoIata: iataPrincipal \} : v\)\) \}/);
+  const c = sinComentarios(leer("app/(dashboard)/dashboard/paquetes/total/catalogos.ts"));
+  assert.match(c, /select\("id, nombre, pais, codigo_iata"\)/);
+  const a = sinComentarios(leer("app/(dashboard)/dashboard/paquetes/total/actions.ts"));
+  assert.match(a, /select\("id, nombre, pais, codigo_iata"\)\.in\("id", idsDest\)/);
+  assert.match(a, /if \(!e\.multidestino\) \{\s*const p = destinos\.find/);
+  assert.match(a, /Producto → Destinos/);
 });

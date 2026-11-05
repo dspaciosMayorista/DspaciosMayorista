@@ -80,7 +80,7 @@ describe("2. La ruta del vuelo no es texto libre", async () => {
     assert.doesNotMatch(f, /upd\("vuelos", i, \{ ruta:/);
     assert.match(f, /aria-label="Ruta" readOnly/);
     const a = sinComentarios(leer("app/(dashboard)/dashboard/paquetes/total/actions.ts"));
-    assert.match(a, /derivarRutaManual\(v\.origenIata, v\.destinoIata/);
+    assert.match(a, /derivarRutaManual\(v\.origenIata, destinoIata/);
     assert.match(a, /from\("empaquetados"\)\.select\("id, ruta, origen, destino_id"\)/);
   });
 });

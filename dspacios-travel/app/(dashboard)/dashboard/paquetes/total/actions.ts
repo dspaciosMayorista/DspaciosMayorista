@@ -69,7 +69,7 @@ async function completarDesdeFichas(sb: Loose, e: EntradaPaqueteTotal): Promise<
   const errores: string[] = [];
   const avisos: string[] = [];
   const idsDest = [...new Set([e.destinoId, ...e.destinosExtra].filter((x): x is number => !!x))];
-  const destinos: { id: number; pais: string | null }[] = idsDest.length ? ((await sb.from("destinos").select("id, pais").in("id", idsDest)).data ?? []) : [];
+  const destinos: { id: number; nombre?: string; pais: string | null; codigo_iata?: string | null }[] = idsDest.length ? ((await sb.from("destinos").select("id, nombre, pais, codigo_iata").in("id", idsDest)).data ?? []) : [];
   errores.push(...validarMultidestino({ multidestino: e.multidestino, destinoId: e.destinoId, destinosExtra: e.destinosExtra, destinos }));
 
   // Vuelos: la ruta nunca es texto libre.
@@ -91,10 +91,18 @@ async function completarDesdeFichas(sb: Loose, e: EntradaPaqueteTotal): Promise<
       return { ...v, destinoId: v.destinoId ?? e.destinoId, ruta: x.ruta.trim(), origenIata: normalizarIata(x.origen), destinoIata: normalizarIata(x.destino_iata) };
     }
     // Los códigos se validan AQUÍ otra vez (el navegador no es frontera): 3 letras, distintos; la ruta se deriva y el destino sin asignar es el principal.
-    const malos = erroresIataVuelo(v.origenIata, v.destinoIata);
-    const ruta = derivarRutaManual(v.origenIata, v.destinoIata, !!v.fechaRegreso);
+    // Sin Multidestino el aeropuerto de destino es el del destino principal, leído del catálogo de destinos (no lo que mande el navegador). Si ese destino no tiene IATA
+    // no se inventa uno: se pide crearlo o completarlo en Producto → Destinos.
+    let destinoIata = v.destinoIata;
+    if (!e.multidestino) {
+      const p = destinos.find((d) => d.id === e.destinoId);
+      destinoIata = normalizarIata(p?.codigo_iata);
+      if (!destinoIata) { errores.push(`El destino principal «${p?.nombre ?? "sin nombre"}» no tiene código IATA: créalo o complétalo en Producto → Destinos. Un vuelo manual usa el aeropuerto del destino y no se inventa un código.`); return v; }
+    }
+    const malos = erroresIataVuelo(v.origenIata, destinoIata);
+    const ruta = derivarRutaManual(v.origenIata, destinoIata, !!v.fechaRegreso);
     if (malos.length || !ruta) { errores.push(malos[0] ?? "Un vuelo manual necesita origen y destino distintos, con código IATA de 3 letras."); return v; }
-    return { ...v, destinoId: v.destinoId ?? e.destinoId, ruta, origenIata: normalizarIata(v.origenIata), destinoIata: normalizarIata(v.destinoIata) };
+    return { ...v, destinoId: v.destinoId ?? e.destinoId, ruta, origenIata: normalizarIata(v.origenIata), destinoIata: normalizarIata(destinoIata) };
   });
 
   // Servicios vinculados: proveedor y moneda de la ficha.

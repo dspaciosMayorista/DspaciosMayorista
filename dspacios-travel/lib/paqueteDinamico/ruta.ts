@@ -71,8 +71,13 @@ export function erroresIataVuelo(origen: string, destino: string): string[] {
  * Al cambiar el destino principal, los vuelos MANUALES que seguían al anterior (o no tenían destino) siguen al nuevo: es la asignación automática, no una elección.
  * Los vinculados a Empaquetados y los que el usuario dirigió a otro destino NO se tocan: el formulario los señala y el servidor los rechaza.
  */
-export function seguirDestinoPrincipal<V extends { empaquetadoId: number | null; destinoId: number | null }>(vuelos: V[], anterior: number | null, nuevo: number | null): V[] {
-  return vuelos.map((v) => (v.empaquetadoId == null && (v.destinoId == null || v.destinoId === anterior) ? { ...v, destinoId: nuevo } : v));
+export function seguirDestinoPrincipal<V extends { empaquetadoId: number | null; destinoId: number | null; destinoIata?: string }>(vuelos: V[], anterior: number | null, nuevo: number | null, iataNuevo?: string): V[] {
+  return vuelos.map((v) => (v.empaquetadoId == null && (v.destinoId == null || v.destinoId === anterior) ? { ...v, destinoId: nuevo, ...(iataNuevo !== undefined ? { destinoIata: iataNuevo } : {}) } : v));
+}
+
+/** Código IATA (3 letras) que el catálogo de destinos tiene para ese destino; "" si no tiene o no es válido: NUNCA se inventa uno. */
+export function iataDeDestino(destinos: { id: number; codigo_iata?: string | null }[], id: number | null | undefined): string {
+  return normalizarIata(destinos.find((d) => d.id === id)?.codigo_iata);
 }
 
 /** Cuántos vuelos y servicios están dirigidos a un destino distinto del principal (impiden desactivar Multidestino: no se reasignan en silencio). */
