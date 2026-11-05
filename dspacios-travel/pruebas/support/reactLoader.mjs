@@ -181,7 +181,7 @@ export async function resolve(specifier, context, nextResolve) {
   if (specifier === "./actions" && context.parentURL?.endsWith("/producto/destinos/DestinosLista.tsx")) {
     return { url: STUB_DESTINOS_ACTIONS, shortCircuit: true };
   }
-  if (specifier === "./cotizarTarjetaActions" && context.parentURL?.endsWith("/TarjetaHotelFechas.tsx")) {
+  if (specifier === "./cotizarTarjetaActions" && (context.parentURL?.endsWith("/TarjetaHotelFechas.tsx") || context.parentURL?.endsWith("/cotizacionSalidaModal.ts"))) {
     return { url: STUB_COTIZAR_TARJETA, shortCircuit: true };
   }
   if (specifier === "./reglas-descuento-actions" && context.parentURL?.endsWith("HotelPromociones.tsx")) {

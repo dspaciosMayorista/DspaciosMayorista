@@ -231,8 +231,12 @@ export async function obtenerDetalleSalida(inputRaw: unknown): Promise<Resultado
   if (v.modulo === "bloqueo") {
     return cargarDetalleAcotado(
       "salida_bloqueo",
-      (sb) => sb.from("tarifario_resultado_publicable").select(COLUMNAS_DETALLE)
-        .eq("paquete_activo", true).eq("modulo", "bloqueo").eq("bloqueo_id", v.bloqueoId),
+      (sb) => {
+        const q = sb.from("tarifario_resultado_publicable").select(COLUMNAS_DETALLE)
+          .eq("paquete_activo", true).eq("modulo", "bloqueo");
+        // #90: un empaquetado sin bloqueo_id se abre por su empaquetado_id.
+        return v.bloqueoId != null ? q.eq("bloqueo_id", v.bloqueoId) : q.eq("empaquetado_id", v.empaquetadoId);
+      },
       v.combos
     );
   }

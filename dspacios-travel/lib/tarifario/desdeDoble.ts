@@ -17,6 +17,20 @@ export function desdeDoble(filas: readonly FilaConDoble[], moneda: string | null
   return v.length ? Math.min(...v) : null;
 }
 
+/**
+ * Fila que ORIGINA el «desde» de `desdeDoble` (misma moneda, misma regla de DOBLE publicable): la oferta/salida, categoría y régimen cuyo precio se anuncia.
+ * Es la única fuente de esa identidad: no se asume que sea la primera fila ni se ordena nada. Con empate de precio gana la primera en el orden recibido.
+ */
+export function origenDesdeDoble<T extends FilaConDoble>(filas: readonly T[], moneda: string | null | undefined): T | null {
+  const objetivo = monedaDe(moneda);
+  let mejor: T | null = null;
+  for (const f of filas) {
+    if (monedaDe(f.moneda) !== objetivo || !esDoblePublicable(f.precio_doble)) continue;
+    if (mejor == null || f.precio_doble < (mejor.precio_doble as number)) mejor = f;
+  }
+  return mejor;
+}
+
 /** «Desde» DOBLE por moneda (COP primero, luego el resto alfabético). Vacío = sin DOBLE publicable ("Consultar"). */
 export function desdeDobleSegunMoneda(filas: readonly FilaConDoble[]): { moneda: string; valor: number }[] {
   const porMoneda = new Map<string, number>();

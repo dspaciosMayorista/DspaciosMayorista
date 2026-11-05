@@ -1,6 +1,6 @@
 import { test, describe } from "node:test";
 import assert from "node:assert/strict";
-import { claveDetalleHotel, claveDetalleSalida, claveDetallePaquete, conCacheDetalle } from "../lib/tarifario/detalleCliente.ts";
+import { claveDetalleHotel, claveDetalleSalida, claveDetalleEmpaquetado, claveDetallePaquete, conCacheDetalle } from "../lib/tarifario/detalleCliente.ts";
 import type { ComboIdentidad } from "../lib/tarifario/comboKey.ts";
 
 // EJECUCIÓN REAL de `claveDetalleHotel()`/`claveDetalleSalida()`/
@@ -81,6 +81,11 @@ describe("claveDetalleSalida() / claveDetallePaquete() — Vista tabla también 
   test("claveDetalleSalida: dinamico usa salida_id, no bloqueo_id", () => {
     const a = claveDetalleSalida("dinamico", 9, [combo({ modulo: "dinamico", bloqueo_id: null, salida_id: 9 })]);
     assert.match(a, /^salida:dinamico:9:/);
+  });
+  test("#90 claveDetalleEmpaquetado: dos empaquetados con el mismo alcance y fechas no comparten clave", () => {
+    const c = [combo({ bloqueo_id: null, fecha_ida: "2027-01-23", fecha_regreso: "2027-01-26" })];
+    assert.notEqual(claveDetalleEmpaquetado(21, c), claveDetalleEmpaquetado(22, c));
+    assert.match(claveDetalleEmpaquetado(22, c), /^salida:empaquetado:22:/);
   });
   test("claveDetalleSalida: alcance vacío distinto de no vacío", () => {
     assert.notEqual(claveDetalleSalida("bloqueo", 5, []), claveDetalleSalida("bloqueo", 5, [combo({ bloqueo_id: 5 })]));
