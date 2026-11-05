@@ -281,6 +281,32 @@ export type ProgramaDetalle = {
   blackouts: { fecha_inicio: string | null; fecha_fin: string | null; motivo: string | null; ciudad: string | null; alcance: string }[];
 };
 
+type Tablas = Database["public"]["Tables"];
+const COLUMNAS_SALIDA_DETALLE =
+  "id, etiqueta, fecha_desde, fecha_hasta, noches, columna, neto_sencilla, neto_doble, neto_triple, neto_multiple, neto_nino, bajo_solicitud, tarifa_sencilla, tarifa_doble, tarifa_triple, tarifa_multiple, impuesto_sencilla, impuesto_doble, impuesto_triple, impuesto_multiple";
+
+/** Programa tal como llega a `armarDetallePrograma` (con sus relaciones embebidas). */
+export type ProgramaParaDetalle = ProgramaRow & { proveedores?: unknown; programa_destinos_fijos?: unknown };
+
+/** Filas crudas de las tablas hijas que arman el detalle (columnas exactas de las consultas). */
+export type FilasDetallePrograma = {
+  ciudades: Pick<Tablas["programa_ciudades"]["Row"], "id" | "nombre" | "codigo_iata" | "noches" | "alojamiento_previsto">[];
+  dias: Pick<Tablas["programa_dias"]["Row"], "dia" | "tipo_tramo" | "titulo" | "desayuno" | "almuerzo" | "cena" | "descripcion">[];
+  categorias: Pick<Tablas["programa_categorias"]["Row"], "id" | "nombre" | "orden">[];
+  hoteles: Pick<Tablas["programa_categoria_hoteles"]["Row"], "categoria_id" | "ciudad" | "hotel" | "orden">[];
+  precios: Pick<Tablas["programa_precios"]["Row"], "categoria_id" | "acomodacion" | "neto" | "bajo_solicitud">[];
+  salidas: Pick<
+    Tablas["programa_salidas"]["Row"],
+    | "id" | "etiqueta" | "fecha_desde" | "fecha_hasta" | "noches" | "columna"
+    | "neto_sencilla" | "neto_doble" | "neto_triple" | "neto_multiple" | "neto_nino" | "bajo_solicitud"
+    | "tarifa_sencilla" | "tarifa_doble" | "tarifa_triple" | "tarifa_multiple"
+    | "impuesto_sencilla" | "impuesto_doble" | "impuesto_triple" | "impuesto_multiple"
+  >[];
+  inclusiones: Pick<Tablas["programa_inclusiones"]["Row"], "ciudad" | "tipo" | "texto">[];
+  tours: Pick<Tablas["programa_tours"]["Row"], "ciudad" | "nombre" | "precio" | "min_pax" | "dias_operacion" | "descripcion">[];
+  blackouts: Pick<Tablas["programa_blackouts"]["Row"], "fecha_inicio" | "fecha_fin" | "motivo" | "ciudad" | "alcance">[];
+};
+
 /** Detalle completo de un programa (para la vitrina pública y para reservar). */
 export async function getProgramaDetalle(sb: SB, id: number): Promise<ProgramaDetalle | null> {
   const { data: programa } = await sb
@@ -289,6 +315,118 @@ export async function getProgramaDetalle(sb: SB, id: number): Promise<ProgramaDe
     .eq("id", id)
     .maybeSingle();
   if (!programa) return null;
+
+  const [{ data: ciudades }, { data: dias }, { data: categorias }, { data: hoteles }, { data: precios }, { data: salidasRaw }, { data: inclusiones }, { data: tours }, { data: blackouts }] =
+    await Promise.all([
+      sb.from("programa_ciudades").select("id, nombre, codigo_iata, noches, alojamiento_previsto").eq("programa_id", id).order("orden"),
+      sb.from("programa_dias").select("dia, tipo_tramo, titulo, desayuno, almuerzo, cena, descripcion").eq("programa_id", id).order("dia"),
+      sb.from("programa_categorias").select("id, nombre, orden").eq("programa_id", id).order("orden"),
+      sb.from("programa_categoria_hoteles").select("categoria_id, ciudad, hotel, orden").order("orden"),
+      sb.from("programa_precios").select("categoria_id, acomodacion, neto, bajo_solicitud"),
+      sb.from("programa_salidas").select(COLUMNAS_SALIDA_DETALLE).eq("programa_id", id).order("orden"),
+      sb.from("programa_inclusiones").select("ciudad, tipo, texto").eq("programa_id", id).order("orden"),
+      sb.from("programa_tours").select("ciudad, nombre, precio, min_pax, dias_operacion, descripcion").eq("programa_id", id).order("orden"),
+      sb.from("programa_blackouts").select("fecha_inicio, fecha_fin, motivo, ciudad, alcance").eq("programa_id", id).order("fecha_inicio"),
+    ]);
+
+  return armarDetallePrograma(programa, {
+    ciudades: ciudades ?? [],
+    dias: dias ?? [],
+    categorias: categorias ?? [],
+    hoteles: hoteles ?? [],
+    precios: precios ?? [],
+    salidas: salidasRaw ?? [],
+    inclusiones: inclusiones ?? [],
+    tours: tours ?? [],
+    blackouts: blackouts ?? [],
+  });
+}
+
+export type ResultadoDetalleSeguro =
+  | { ok: true; detalle: ProgramaDetalle }
+  | { ok: false; motivo: "no_encontrado" }
+  | { ok: false; motivo: "error_tecnico"; consulta: string; error: unknown };
+
+/**
+ * Lector SEGURO del detalle de UN programa (#56). Arma exactamente lo mismo que
+ * `getProgramaDetalle` (la misma `armarDetallePrograma`), con dos diferencias:
+ *   1) ningún error de Supabase se pierde: cualquier consulta fallida devuelve
+ *      `error_tecnico` en vez de un detalle incompleto que parezca completo;
+ *   2) hoteles y precios se filtran por las categorías de ESTE programa, así
+ *      que el límite de filas de la API nunca puede truncarlos en silencio.
+ * No lee el proveedor ni decide visibilidad: eso lo resuelve quien lo llama.
+ */
+export async function getProgramaDetalleSeguro(sb: SB, id: number): Promise<ResultadoDetalleSeguro> {
+  const { data: programa, error: errorPrograma } = await sb
+    .from("programas")
+    .select("*, programa_destinos_fijos(id, nombre, es_provisional)")
+    .eq("id", id)
+    .maybeSingle();
+  if (errorPrograma) return { ok: false, motivo: "error_tecnico", consulta: "programas", error: errorPrograma };
+  if (!programa) return { ok: false, motivo: "no_encontrado" };
+
+  const [rCiudades, rDias, rCategorias, rSalidas, rInclusiones, rTours, rBlackouts] = await Promise.all([
+    sb.from("programa_ciudades").select("id, nombre, codigo_iata, noches, alojamiento_previsto").eq("programa_id", id).order("orden"),
+    sb.from("programa_dias").select("dia, tipo_tramo, titulo, desayuno, almuerzo, cena, descripcion").eq("programa_id", id).order("dia"),
+    sb.from("programa_categorias").select("id, nombre, orden").eq("programa_id", id).order("orden"),
+    sb.from("programa_salidas").select(COLUMNAS_SALIDA_DETALLE).eq("programa_id", id).order("orden"),
+    sb.from("programa_inclusiones").select("ciudad, tipo, texto").eq("programa_id", id).order("orden"),
+    sb.from("programa_tours").select("ciudad, nombre, precio, min_pax, dias_operacion, descripcion").eq("programa_id", id).order("orden"),
+    sb.from("programa_blackouts").select("fecha_inicio, fecha_fin, motivo, ciudad, alcance").eq("programa_id", id).order("fecha_inicio"),
+  ]);
+  const consultas: [string, { error: unknown }][] = [
+    ["programa_ciudades", rCiudades],
+    ["programa_dias", rDias],
+    ["programa_categorias", rCategorias],
+    ["programa_salidas", rSalidas],
+    ["programa_inclusiones", rInclusiones],
+    ["programa_tours", rTours],
+    ["programa_blackouts", rBlackouts],
+  ];
+  for (const [consulta, r] of consultas) {
+    if (r.error) return { ok: false, motivo: "error_tecnico", consulta, error: r.error };
+  }
+
+  const categorias = rCategorias.data ?? [];
+  const catIds = categorias.map((c) => c.id);
+  let hoteles: FilasDetallePrograma["hoteles"] = [];
+  let precios: FilasDetallePrograma["precios"] = [];
+  if (catIds.length) {
+    const [rHoteles, rPrecios] = await Promise.all([
+      sb.from("programa_categoria_hoteles").select("categoria_id, ciudad, hotel, orden").in("categoria_id", catIds).order("orden"),
+      sb.from("programa_precios").select("categoria_id, acomodacion, neto, bajo_solicitud").in("categoria_id", catIds),
+    ]);
+    if (rHoteles.error) return { ok: false, motivo: "error_tecnico", consulta: "programa_categoria_hoteles", error: rHoteles.error };
+    if (rPrecios.error) return { ok: false, motivo: "error_tecnico", consulta: "programa_precios", error: rPrecios.error };
+    hoteles = rHoteles.data ?? [];
+    precios = rPrecios.data ?? [];
+  }
+
+  return {
+    ok: true,
+    detalle: armarDetallePrograma(programa, {
+      ciudades: rCiudades.data ?? [],
+      dias: rDias.data ?? [],
+      categorias,
+      hoteles,
+      precios,
+      salidas: rSalidas.data ?? [],
+      inclusiones: rInclusiones.data ?? [],
+      tours: rTours.data ?? [],
+      blackouts: rBlackouts.data ?? [],
+    }),
+  };
+}
+
+/**
+ * Armado PURO del detalle a partir de las filas crudas — extraído sin cambios
+ * de `getProgramaDetalle` (#56) para que la vitrina, reservar y la consulta
+ * interna de programas calculen el PVP con EXACTAMENTE el mismo código, nunca
+ * con una copia (la duplicación de esta decisión fue el defecto 2 de la
+ * revisión del PR #277, ver lib/calc/programaPrecio.ts).
+ */
+export function armarDetallePrograma(programa: ProgramaParaDetalle, filas: FilasDetallePrograma): ProgramaDetalle {
+  const { ciudades, dias, categorias, hoteles, precios, salidas: salidasRaw, inclusiones, tours, blackouts } = filas;
   const proveedorNombre = (programa.proveedores as unknown as { nombre: string } | null)?.nombre ?? null;
   const prow = programa as ProgramaRow;
   const pvpOpt: PvpOpciones = {
@@ -298,19 +436,6 @@ export async function getProgramaDetalle(sb: SB, id: number): Promise<ProgramaDe
     pctFee: prow.pct_fee_tarjeta,
     moneda: prow.moneda,
   };
-
-  const [{ data: ciudades }, { data: dias }, { data: categorias }, { data: hoteles }, { data: precios }, { data: salidasRaw }, { data: inclusiones }, { data: tours }, { data: blackouts }] =
-    await Promise.all([
-      sb.from("programa_ciudades").select("id, nombre, codigo_iata, noches, alojamiento_previsto").eq("programa_id", id).order("orden"),
-      sb.from("programa_dias").select("dia, tipo_tramo, titulo, desayuno, almuerzo, cena, descripcion").eq("programa_id", id).order("dia"),
-      sb.from("programa_categorias").select("id, nombre, orden").eq("programa_id", id).order("orden"),
-      sb.from("programa_categoria_hoteles").select("categoria_id, ciudad, hotel, orden").order("orden"),
-      sb.from("programa_precios").select("categoria_id, acomodacion, neto, bajo_solicitud"),
-      sb.from("programa_salidas").select("id, etiqueta, fecha_desde, fecha_hasta, noches, columna, neto_sencilla, neto_doble, neto_triple, neto_multiple, neto_nino, bajo_solicitud, tarifa_sencilla, tarifa_doble, tarifa_triple, tarifa_multiple, impuesto_sencilla, impuesto_doble, impuesto_triple, impuesto_multiple").eq("programa_id", id).order("orden"),
-      sb.from("programa_inclusiones").select("ciudad, tipo, texto").eq("programa_id", id).order("orden"),
-      sb.from("programa_tours").select("ciudad, nombre, precio, min_pax, dias_operacion, descripcion").eq("programa_id", id).order("orden"),
-      sb.from("programa_blackouts").select("fecha_inicio, fecha_fin, motivo, ciudad, alcance").eq("programa_id", id).order("fecha_inicio"),
-    ]);
 
   const catIds = new Set((categorias ?? []).map((c) => c.id));
   const cats = (categorias ?? []).map((c) => ({
