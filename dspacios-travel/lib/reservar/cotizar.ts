@@ -177,7 +177,7 @@ async function cargarDatosHotelPaquete(
     fechaReserva: fechaNegocio(), // fecha autoritativa del servidor (Bogotá); el cliente nunca la envía
   };
 
-  // Vigencias (SIN «GENERAL») de los servicios INCLUIDOS: el precio horneado y los rangos por grupo se resuelven por la fecha de ida en
+  // Vigencias de los servicios INCLUIDOS (un traslado sin vigencia para la fecha usa su tarifa base, incluidoEnEstadia): el precio horneado y los rangos por grupo se resuelven por la fecha de ida en
   // `evaluarHotelPorFechas`. Falla CERRADO si la lectura falla: publicar el precio sin ellas sería mostrar un valor y cobrar otro.
   const incluidos = datos.serviciosIncluidos.filter((x) => x.incluido);
   if (incluidos.length) {

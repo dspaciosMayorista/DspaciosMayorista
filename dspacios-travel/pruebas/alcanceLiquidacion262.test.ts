@@ -159,10 +159,10 @@ test("ida y regreso con la tarifa vigente: cada rango cobra SU suplemento por tr
   }
 });
 
-test("tarifa vigente en 0: es una tarifa (no «sin_precio_alcance»); la venta la rechaza después porque el total debe ser mayor que 0, y un trayecto sigue sin usarla", () => {
+test("tarifa vigente en 0: en un traslado es AUSENCIA de tarifa (sin_precio_alcance), nunca gratis; un trayecto sigue sin usarla", () => {
   const cero = { alcance: "ida_regreso", clasificacion: TR, preciosAlcance: [], temporadas: [{ ...ALTA, precio_persona: 0, recargo_individual: 0 }] };
   const r = puntual(ctx(TR), cero);
-  assert.equal(r.ok, false); assert.notEqual(!r.ok && r.codigo, "sin_precio_alcance", "0 no es «sin tarifa»");
+  assert.equal(r.ok, false); assert.equal(!r.ok && r.codigo, "sin_precio_alcance", "0 es «sin tarifa»");
   const trayecto = puntual(ctx(TR), { ...cero, alcance: "llegada" });
   assert.equal(!trayecto.ok && trayecto.codigo, "sin_precio_alcance", "un trayecto exige su precio propio aunque la tarifa exista");
 });

@@ -115,9 +115,25 @@ export function costoNetoServicioIncluido(
   // cuentan para el rango de un servicio por grupo ni pagan extra; en un
   // servicio por persona pagan su `precio_infante` NETO (o el de adulto si el
   // servicio no lo configuró — NULL ≠ $0).
-  menoresDeDos?: { cantidad: number; precioInfanteNeto: number | null }
+  menoresDeDos?: { cantidad: number; precioInfanteNeto: number | null },
+  // Incluido por día/noche con tarifa por unidad (incluidoPorUnidades): el costo es la SUMA de sus unidades; el factor de liquidación NO se vuelve a aplicar.
+  unidades?: readonly { netoPersona: number | null; netoInfante: number | null; rangos: { pax_desde: number; pax_hasta: number; precio: number }[] }[]
 ): number | null {
   if (totalPax <= 0) return null;
+  if (unidades?.length) {
+    const m2u = Math.max(0, menoresDeDos?.cantidad ?? 0);
+    let suma = 0;
+    for (const u of unidades) {
+      if (modo === "persona") {
+        if (u.netoPersona == null) return null;
+        suma += precioServicio("persona", u.netoPersona, [], totalPax) + (u.netoInfante ?? u.netoPersona) * m2u;
+      } else {
+        if (!u.rangos.some((g) => totalPax >= g.pax_desde && totalPax <= g.pax_hasta)) return null; // alguna unidad sin rango que cubra al grupo: nunca se asume otro rango
+        suma += precioServicio("grupo", null, u.rangos, totalPax);
+      }
+    }
+    return Number.isFinite(suma) ? suma : null;
+  }
   if (modo === "persona") {
     if (precioPersonaNeto == null) return null;
     const m2 = Math.max(0, menoresDeDos?.cantidad ?? 0);
@@ -160,7 +176,17 @@ export type ServicioGrupoIncluido = {
   proveedorId: number | null;
   /** Rangos de la vigencia aplicable (incluidoEnEstadia), nunca de la tarifa GENERAL. */
   rangos: { pax_desde: number; pax_hasta: number; precio: number }[];
+  /** Tarifa por día/noche (incluidoPorUnidades): el cargo es la suma de sus unidades. */
+  unidades?: readonly { netoPersona: number | null; netoInfante: number | null; rangos: { pax_desde: number; pax_hasta: number; precio: number }[] }[];
 };
+
+/**
+ * Mensaje cuando NINGÚN nivel de tarifa (ida y regreso propia, general de la vigencia o, en un traslado, la base) cubre la cantidad de pasajeros pedida. Nombra el servicio y la
+ * cantidad e indica qué configurar. Interno (reserva / cotización interna): al cliente público se le muestra el texto genérico de MENSAJES_PUBLICOS.
+ */
+export function mensajeGrupoSinCobertura(nombre: string, totalPax: number): string {
+  return `El servicio incluido «${nombre}» no tiene una tarifa por grupo que cubra ${totalPax} pasajero${totalPax === 1 ? "" : "s"}. Configura en Producto → Servicios una vigencia con tarifa por grupo que cubra esa cantidad o, en un traslado, una tarifa base (GENERAL) que la cubra; no se cotiza ni se reserva sin una tarifa que cubra a todos los pasajeros.`;
+}
 
 export type CargoGrupoIncluido =
   | { ok: true; pvp: number; servicios: ServicioEfectivo[] }
@@ -186,7 +212,7 @@ export function cargoGrupoIncluido(
   let pvp = 0;
   const efectivos: ServicioEfectivo[] = [];
   for (const s of servicios ?? []) {
-    const costoNeto = costoNetoServicioIncluido("grupo", null, s.rangos ?? [], totalPax, s.liquidacion, numNoches);
+    const costoNeto = costoNetoServicioIncluido("grupo", null, s.rangos ?? [], totalPax, s.liquidacion, numNoches, undefined, s.unidades);
     if (costoNeto == null) return { ok: false, nombre: s.nombre, totalPax };
     pvp += Math.round(marcar(costoNeto, pctMk));
     efectivos.push({

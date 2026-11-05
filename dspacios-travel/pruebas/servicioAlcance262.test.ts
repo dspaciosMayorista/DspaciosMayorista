@@ -217,13 +217,28 @@ describe("resolverPrecioAlcance con la tarifa vigente", () => {
     assert.deepEqual(ok(resolverPrecioAlcance({ filas: propio, alcance: "ida_regreso", modo: "grupo", pax: 3, tarifaVigente: tv })), { neto: 120000, origen: "tarifa_vigente" });
     assert.equal(ok(resolverPrecioAlcance({ filas: propio, alcance: "ida_regreso", modo: "grupo", pax: 41, tarifaVigente: tv })), "sin_precio_alcance");
   });
-  test("0 ES una tarifa válida; «sin tarifa» es solo NULL, ausente o inválida (negativa, NaN); sin tarifaVigente el comportamiento anterior no cambia", () => {
-    for (const precioPersona of [null, undefined, -1, Number.NaN]) assert.equal(ok(resolverPrecioAlcance({ filas: [], alcance: "ida_regreso", modo: "persona", pax: 1, tarifaVigente: { precioPersona, grupos: [] } })), "sin_precio_alcance", `${precioPersona}`);
-    assert.deepEqual(ok(resolverPrecioAlcance({ filas: [], alcance: "ida_regreso", modo: "persona", pax: 1, tarifaVigente: { precioPersona: 0, grupos: [] } })), { neto: 0, origen: "tarifa_vigente" });
-    assert.deepEqual(ok(resolverPrecioAlcance({ filas: [], alcance: "ida_regreso", modo: "grupo", pax: 3, tarifaVigente: { precioPersona: null, grupos: [{ pax_desde: 1, pax_hasta: 4, precio: 0 }] } })), { neto: 0, origen: "tarifa_vigente" });
-    assert.equal(ok(resolverPrecioAlcance({ filas: [], alcance: "ida_regreso", modo: "grupo", pax: 3, tarifaVigente: { precioPersona: null, grupos: [{ pax_desde: 1, pax_hasta: 4, precio: Number.NaN }] } })), "sin_precio_alcance");
-    assert.deepEqual(ok(resolverPrecioAlcance({ filas: [{ alcance: "ida_regreso", pax_desde: null, pax_hasta: null, precio: 0 }], alcance: "ida_regreso", modo: "persona", pax: 1, tarifaVigente: { precioPersona: 85000, grupos: [] } })), { neto: 0, origen: "explicito" }, "un precio propio de 0 también manda");
-    assert.equal(ok(resolverPrecioAlcance({ filas: [], alcance: "llegada", modo: "persona", pax: 1, tarifaVigente: { precioPersona: 0, grupos: [] } })), "sin_precio_alcance", "un trayecto nunca usa la tarifa, ni en 0");
+  test("traslado: 0 y NULL son AUSENCIA de tarifa (nunca gratis) en cada nivel; NaN/negativo son datos corruptos y no se saltan", () => {
+    const R = (extra: object) => resolverPrecioAlcance({ filas: [], alcance: "ida_regreso", modo: "persona", pax: 1, ...extra } as never);
+    for (const precioPersona of [null, undefined, 0]) assert.equal(ok(R({ tarifaVigente: { precioPersona, grupos: [] } })), "sin_precio_alcance", `${precioPersona}`);
+    for (const precioPersona of [-1, Number.NaN]) assert.equal(ok(R({ tarifaVigente: { precioPersona, grupos: [] } })), "precios_invalidos", `${precioPersona}`);
+    assert.deepEqual(ok(R({ tarifaVigente: { precioPersona: 85000, grupos: [] } })), { neto: 85000, origen: "tarifa_vigente" });
+    // grupo: la tarifa vigente en 0 no cubre; NO se elige otro rango; un rango válido que sí cubre la cantidad no se bloquea porque otro esté vacío
+    const G = (pax: number, grupos: object[]) => resolverPrecioAlcance({ filas: [], alcance: "ida_regreso", modo: "grupo", pax, tarifaVigente: { precioPersona: null, grupos } } as never);
+    const grupos = [{ pax_desde: 1, pax_hasta: 4, precio: 0 }, { pax_desde: 5, pax_hasta: 8, precio: 90000 }];
+    const r3 = G(3, grupos); assert.equal(!r3.ok && r3.motivo, "sin_precio_alcance"); assert.match(!r3.ok ? r3.detalle : "", /que cubra 3 pasajeros/);
+    assert.deepEqual(ok(G(6, grupos)), { neto: 90000, origen: "tarifa_vigente" });
+    assert.equal(ok(G(3, [{ pax_desde: 1, pax_hasta: 4, precio: Number.NaN }])), "precios_invalidos");
+    // fila propia en 0 = ausencia: baja a la tarifa de la vigencia (ida y regreso); sin ella, error. Nunca gratis.
+    const propia0 = [{ alcance: "ida_regreso", pax_desde: null, pax_hasta: null, precio: 0 }] as const;
+    assert.deepEqual(ok(resolverPrecioAlcance({ filas: propia0, alcance: "ida_regreso", modo: "persona", pax: 1, tarifaVigente: { precioPersona: 85000, grupos: [] } })), { neto: 85000, origen: "tarifa_vigente" });
+    assert.equal(ok(resolverPrecioAlcance({ filas: propia0, alcance: "ida_regreso", modo: "persona", pax: 1 })), "sin_precio_alcance");
+    const grupo0 = [{ alcance: "ida_regreso", pax_desde: 1, pax_hasta: 4, precio: 0 }, { alcance: "ida_regreso", pax_desde: 5, pax_hasta: 8, precio: 70000 }] as const;
+    assert.equal(ok(resolverPrecioAlcance({ filas: grupo0, alcance: "ida_regreso", modo: "grupo", pax: 3 })), "sin_precio_alcance", "el rango 5–8 no cubre a 3 pasajeros");
+    assert.deepEqual(ok(resolverPrecioAlcance({ filas: grupo0, alcance: "ida_regreso", modo: "grupo", pax: 6 })), { neto: 70000, origen: "explicito" });
+    // llegada/salida: una fila propia en 0 es ausencia y nunca usa la tarifa (ni la de ida y regreso)
+    const llegada0 = [{ alcance: "trayecto", pax_desde: null, pax_hasta: null, precio: 0 }] as const;
+    assert.equal(ok(resolverPrecioAlcance({ filas: llegada0, alcance: "llegada", modo: "persona", pax: 1, tarifaVigente: { precioPersona: 85000, grupos: [] } })), "sin_precio_alcance");
+    assert.equal(ok(resolverPrecioAlcance({ filas: [], alcance: "llegada", modo: "persona", pax: 1, tarifaVigente: { precioPersona: 85000, grupos: [] } })), "sin_precio_alcance", "un trayecto nunca usa la tarifa");
     assert.equal(ok(resolverPrecioAlcance({ filas: [], alcance: "ida_regreso", modo: "persona", pax: 1 })), "sin_precio_alcance");
   });
   test("las filas propias inválidas siguen deteniendo la venta (no se cae a la tarifa)", () => {

@@ -113,8 +113,9 @@ export function validarPreciosAlcance(filas: readonly FilaPrecioAlcance[]): stri
 
 /** Tarifa que la vigencia ya tiene (la de siempre: precio por persona y/o rangos de grupo). Es el precio de «ida y regreso» cuando la vigencia no define uno propio. */
 export type TarifaVigenteFila = { precioPersona: number | null | undefined; grupos: readonly { pax_desde: number; pax_hasta: number; precio: number }[] };
-// Misma regla que la tarifa de siempre (resolverTarifaServicio): 0 ES una tarifa válida (la venta exige después total > 0); «sin tarifa» es solo NULL, ausente o inválida (negativa, NaN).
-const precioValido = (n: number | null | undefined): n is number => n != null && Number.isFinite(Number(n)) && Number(n) >= 0;
+// Traslado: 0 y NULL/ausente significan AUSENCIA de tarifa (nunca gratis); NaN o negativo es un dato corrupto (no se oculta ni se salta). Los servicios que no son traslado conservan su 0 permitido.
+const positivo = (n: number | null | undefined): n is number => n != null && Number.isFinite(Number(n)) && Number(n) > 0;
+const corrupto = (n: number | null | undefined): boolean => n != null && (!Number.isFinite(Number(n)) || Number(n) < 0);
 
 export type PrecioAlcanceResuelto =
   | {
@@ -126,7 +127,7 @@ export type PrecioAlcanceResuelto =
 
 /**
  * Neto de la tarifa para el alcance VENDIDO. Persona: la fila del alcance sin rango. Grupo: la fila del alcance cuyo rango cubre `pax`. «Un trayecto» sin fila propia
- * falla: jamás se usa el precio de ida y regreso (ni mitad ni doble) ni el rango más cercano. «Ida y regreso» sin fila propia usa `tarifaVigente` (precio por persona, o
+ * falla: jamás se usa el precio de ida y regreso (ni mitad ni doble) ni el rango más cercano. Un precio en 0 es ausencia (nunca gratis): ni él ni otro rango cubren esos pasajeros. «Ida y regreso» sin fila propia usa `tarifaVigente` (precio por persona, o
  * el rango de grupo que cubra `pax`); si tampoco hay, falla.
  */
 export function resolverPrecioAlcance(i: { filas: readonly FilaPrecioAlcance[]; alcance: AlcanceVenta; modo: "persona" | "grupo"; pax: number; tarifaVigente?: TarifaVigenteFila }): PrecioAlcanceResuelto {
@@ -137,11 +138,15 @@ export function resolverPrecioAlcance(i: { filas: readonly FilaPrecioAlcance[]; 
   const fila = i.modo === "persona"
     ? i.filas.find((f) => f.alcance === ap && f.pax_desde == null)
     : i.filas.find((f) => f.alcance === ap && f.pax_desde != null && i.pax >= f.pax_desde && i.pax <= (f.pax_hasta as number));
-  if (fila) return { ok: true, alcancePrecio: ap, neto: fila.precio, origen: "explicito" };
+  // Una fila propia en 0 es AUSENCIA: no se cobra gratis ni se elige otro rango de pasajeros para cubrirla; baja al siguiente nivel (la tarifa de la vigencia, solo para ida y regreso).
+  if (fila && positivo(fila.precio)) return { ok: true, alcancePrecio: ap, neto: Number(fila.precio), origen: "explicito" };
   const t = ap === "ida_regreso" ? i.tarifaVigente : undefined;
   if (t) {
-    const g = i.modo === "grupo" ? t.grupos.find((x) => i.pax >= x.pax_desde && i.pax <= x.pax_hasta && precioValido(x.precio)) : undefined;
-    const neto = i.modo === "persona" ? (precioValido(t.precioPersona) ? Number(t.precioPersona) : null) : (g ? Number(g.precio) : null);
+    const cubren = i.modo === "grupo" ? t.grupos.filter((x) => i.pax >= x.pax_desde && i.pax <= x.pax_hasta) : [];
+    const invalido = i.modo === "persona" ? corrupto(t.precioPersona) : cubren.some((x) => corrupto(x.precio));
+    if (invalido) return { ok: false, motivo: "precios_invalidos", detalle: "La tarifa de esta vigencia tiene un precio no válido (negativo o no numérico); corrígelo en Producto → Servicios." };
+    const g = cubren.find((x) => positivo(x.precio));
+    const neto = i.modo === "persona" ? (positivo(t.precioPersona) ? Number(t.precioPersona) : null) : (g ? Number(g.precio) : null);
     if (neto != null) return { ok: true, alcancePrecio: ap, neto, origen: "tarifa_vigente" };
     return { ok: false, motivo: "sin_precio_alcance", detalle: i.modo === "persona"
       ? "Este traslado no tiene precio por persona de ida y regreso ni tarifa por persona en esta vigencia."

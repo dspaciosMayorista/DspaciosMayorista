@@ -38,7 +38,7 @@ import {
 } from "./edadesMenores.ts";
 import { distribuirPorHabitaciones, type HabitacionConsultada } from "./distribucionHabitaciones.ts";
 import { normalizarCategoriaServicio, type ServicioGrupoIncluido } from "./serviciosPaquete.ts";
-import { incluidoEnEstadia, incluidoSeOmite, type VigenciasServicio } from "../calc/servicioVigencias.ts";
+import { incluidoPorUnidades, incluidoSeOmite, netoTotalPersona, tramosDeUnidades, type VigenciasServicio } from "../calc/servicioVigencias.ts";
 import { aplicaPvpInfanteFijo } from "../paquetes/pvpInfanteFijo.ts";
 import {
   condicionHotelEstadia, barridoRestriccionEstadia, type VigenciaHotelCondicion,
@@ -149,7 +149,7 @@ export type FilaServicioIncluidoRaw = {
   servicio_id: number; modo: string | null; nombre: string | null; categoria: string | null;
   proveedor_id: number | null;
   rangos_grupo: { pax_desde: number; pax_hasta: number; precio: number }[];
-  // Vigencias y rangos del servicio (SIN «GENERAL»): el precio horneado sale de la vigencia del día de ida.
+  // Vigencias y rangos del servicio (más la tarifa base, solo para un traslado sin vigencia): el precio horneado sale de la vigencia del día de ida.
   vigencias?: VigenciasServicio;
 };
 export type FilaBlackoutHotelRaw = { fecha_inicio: string; fecha_fin: string; total: boolean; acomodaciones: string[] | null; categorias: string[] | null };
@@ -246,9 +246,9 @@ export function evaluarHotelPorFechas(
   const composicionServicios: BaseMotor["servicios"] = [];
   for (const s of datos.serviciosIncluidos) {
     if (!s.incluido) continue;
-    // SIN «GENERAL»: la vigencia del día de ida decide el precio por persona o los rangos de grupo.
+    // La vigencia del día de ida decide el precio por persona o los rangos de grupo (un traslado sin vigencia: su tarifa base).
     const modoInc = s.modo === "grupo" ? "grupo" : "persona";
-    const inc = s.vigencias ? incluidoEnEstadia(s.vigencias, modoInc, fechaIda, fechaIda) : null;
+    const inc = s.vigencias ? incluidoPorUnidades({ ...s.vigencias, liquidacion: s.liquidacion ?? s.vigencias.liquidacion }, modoInc, fechaIda, fechaIda, numNoches) : null;
     if (!inc) { errorServiciosIncluidos ??= `No se cargaron las vigencias del servicio incluido «${s.nombre ?? s.servicio_id}».`; continue; }
     if (!inc.ok) {
       if (incluidoSeOmite(inc)) serviciosOmitidos.push({ servicioId: s.servicio_id, nombre: s.nombre ?? "Servicio", motivo: inc.error });
@@ -264,17 +264,21 @@ export function evaluarHotelPorFechas(
         liquidacion: s.liquidacion,
         proveedorId: s.proveedor_id,
         rangos: inc.rangos,
+        unidades: inc.unidades,
       });
       continue;
     }
     if (inc.netoPersona == null) continue;
     const factorServ = factorLiquidacion(s.liquidacion, numNoches);
-    composicionServicios.push({ nombre: s.nombre ?? "Servicio", neto: inc.netoPersona * factorServ, netoMenor: (inc.netoInfante ?? inc.netoPersona) * factorServ });
-    aporteServ += marcar(inc.netoPersona, pctMk) * factorServ;
-    const menorServ = marcar(inc.netoInfante ?? inc.netoPersona, pctMk) * factorServ;
+    // Total por persona de la estadía: suma de sus unidades día/noche (o el neto único × factor); el markup es lineal, así que se aplica al total.
+    const netoTot = netoTotalPersona(inc, factorServ), netoTotMenor = netoTotalPersona(inc, factorServ, true);
+    const tramos = tramosDeUnidades(inc.unidades);
+    composicionServicios.push({ nombre: s.nombre ?? "Servicio", neto: netoTot, netoMenor: netoTotMenor, ...(tramos ? { tramos } : {}) });
+    aporteServ += marcar(netoTot, pctMk);
+    const menorServ = marcar(netoTotMenor, pctMk);
     aporteServMenor += menorServ;
     if (normalizarCategoriaServicio(s.categoria) !== "asistencia") {
-      aporteServSinAsis += marcar(inc.netoPersona, pctMk) * factorServ;
+      aporteServSinAsis += marcar(netoTot, pctMk);
       aporteServMenorSinAsis += menorServ;
     }
   }
