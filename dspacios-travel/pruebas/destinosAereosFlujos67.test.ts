@@ -509,7 +509,7 @@ function tablasPrecio(o: Parameters<typeof tablasBase>[0] = {}, filasTarifa: Fil
       neto_sencilla: null, neto_doble: 300000, neto_triple: null, neto_multiple: null, neto_nino: null, neto_nino2: null, neto_infante: null,
       nota_infante: null, notas: null, edad_infante_min: null, edad_infante_max: null, edad_nino_min: null, edad_nino_max: null, precio_final_autoritativo: false,
     }],
-    hotel_blackouts: [], armado_servicios: [], servicios_adicionales: [],
+    hotel_blackouts: [], hotel_reglas_descuento: [], armado_servicios: [], servicios_adicionales: [],
   };
 }
 const filaTarifa = (extra: Fila): Fila => ({

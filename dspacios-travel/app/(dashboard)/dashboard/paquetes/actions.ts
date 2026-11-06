@@ -63,8 +63,7 @@ import { construirSetParesPublicados, todosLosParesConfiguradosPublicados, prime
 
 import type { ResultadoLote } from "@/lib/paquetes/seleccionMasiva";
 import { aplicaPvpInfanteFijo, pvpInfanteFijoValido } from "@/lib/paquetes/pvpInfanteFijo";
-import { mensajeTrasladoIncluido, trasladosPorAlcance } from "@/lib/servicios/alcanceContexto";
-import { incluidoEnEstadia, incluidoSeOmite, referenciaPublicacion, serviciosSinPrecioInfanteVigencias, type VigenciasServicio } from "@/lib/calc/servicioVigencias";
+import { incluidoPorUnidades, netoTotalPersona, tramosDeUnidades, incluidoSeOmite, referenciaPublicacion, serviciosSinPrecioInfanteVigencias, type VigenciasServicio } from "@/lib/calc/servicioVigencias";
 import { presentarIncluye } from "@/lib/tarifario/incluyePorSalida";
 import { REGLA_COMPOSICION_PUBLICADA } from "@/lib/reservar/composicionPublicada";
 import { lineasDeTexto } from "@/lib/tarifario/descripcionPaquete";
@@ -698,17 +697,6 @@ export async function setHotelFiltros(
   };
 }
 
-// 262: mensaje si alguno de estos servicios es un traslado por alcance (no puede ir incluido); null si ninguno. Falla cerrado ante un error técnico de lectura.
-async function trasladosIncluidos(sb: Awaited<ReturnType<typeof createClient>>, ids: number[]): Promise<string | null> {
-  if (!ids.length) return null;
-  const t = await trasladosPorAlcance(sb, ids);
-  if (!t.ok) return "No se pudo validar el tipo del servicio. Intenta de nuevo.";
-  if (!t.ids.length) return null;
-  const { data } = await sb.from("servicios_adicionales").select("id, nombre").in("id", t.ids);
-  const nombre = (data ?? [])[0]?.nombre ?? `#${t.ids[0]}`;
-  return mensajeTrasladoIncluido(nombre);
-}
-
 // ── Adición de servicio (con check) + modo de cobro (persona/grupo) ────────
 export async function setServicio(
   paqueteId: number,
@@ -718,10 +706,6 @@ export async function setServicio(
   incluido = false
 ): Promise<Result> {
   const sb = await createClient();
-  if (checked && incluido) {
-    const t = await trasladosIncluidos(sb, [servicioId]);
-    if (t) return { ok: false, error: t };
-  }
   if (!checked) {
     const { error } = await sb.from("armado_servicios").delete().eq("paquete_id", paqueteId).eq("servicio_id", servicioId);
     if (error) return { ok: false, error: error.message };
@@ -753,10 +737,6 @@ export async function setServicios(paqueteId: number, items: ServicioLoteItem[],
   if (lista.length > 500) return { ok: false, error: "Son demasiados servicios en una sola operación (máximo 500)." };
   const sb = await createClient();
   const ids = lista.map((x) => x.servicioId);
-  if (checked) {
-    const t = await trasladosIncluidos(sb, lista.filter((x) => x.incluido).map((x) => x.servicioId));
-    if (t) return { ok: false, error: t };
-  }
   if (!checked) {
     const { error, count } = await sb
       .from("armado_servicios")
@@ -964,8 +944,8 @@ export async function generarTarifario(paqueteId: number, opciones: OpcionesGene
   if (eHotelesSel) return await fallarTecnico(eHotelesSel.message);
   if (eServiciosSel) return await fallarTecnico(eServiciosSel.message);
 
-  // Vigencias de cada servicio seleccionado. SIN «GENERAL»: ni el precio base del servicio ni los rangos GENERAL se usan como respaldo (siguen en la base, solo
-  // como dato histórico). Todo precio publicado sale de una vigencia y, por grupo, de un rango de ESA vigencia — la misma regla con la que luego se cotiza.
+  // Vigencias de cada servicio seleccionado. La tarifa base (precio_persona/precio_infante y rangos GENERAL) NO sustituye a una vigencia: solo respalda a un traslado
+  // INCLUIDO sin ninguna vigencia para la fecha (incluidoEnEstadia). Todo lo demás se publica desde una vigencia y, por grupo, desde un rango de ESA vigencia — la misma regla con la que luego se cotiza.
   cron.etapa("lectura_grupos_servicio");
   const servicioIds = (serviciosSel ?? []).map((s) => s.servicio_id);
   const vigenciasPorServicio = new Map<number, VigenciasServicio>();
@@ -976,12 +956,6 @@ export async function generarTarifario(paqueteId: number, opciones: OpcionesGene
     );
     if (!rv.ok) return await fallarTecnico(rv.error);
     for (const [k, v] of rv.porServicio) vigenciasPorServicio.set(k, v);
-    // 262: un traslado por alcance no se hornea en el hotel. Se detiene ANTES de calcular nada, con el motivo, en vez de «publicar» sin filas.
-    for (const s of serviciosSel ?? []) {
-      if (!(s as { incluido?: boolean }).incluido || !vigenciasPorServicio.get(s.servicio_id)?.usaAlcance) continue;
-      const nombre = (s.servicios_adicionales as unknown as { nombre?: string | null } | null)?.nombre ?? `#${s.servicio_id}`;
-      return await fallar(mensajeTrasladoIncluido(nombre));
-    }
   }
   // Disponibilidad por fecha (migración 256). Un servicio sin vigencia ya NO tumba la generación del paquete:
   //   · incluido sin vigencia/rango/precio en una estadía → esa salida/estadía NO se publica (las cubiertas sí); jamás se publica omitiéndolo.
@@ -1165,15 +1139,16 @@ export async function generarTarifario(paqueteId: number, opciones: OpcionesGene
   // `sinAsistencia`: omite la categoría asistencia (no cuenta como cargo para el PVP fijo del infante).
   // Ventana de la estadía que se está publicando (la fija `filasHoteles`): los incluidos se hornean con LA vigencia de esa estadía; si la estadía cae en dos
   // vigencias, o en ninguna, el precio horneado sería ambiguo o inexistente y la generación falla con un mensaje legible.
-  let ventanaEstadia: { desde: string; hasta: string } | null = null;
-  const incluidoCache = new Map<string, ReturnType<typeof incluidoEnEstadia>>();
+  let ventanaEstadia: { desde: string; hasta: string; numNoches: number } | null = null;
+  const incluidoCache = new Map<string, ReturnType<typeof incluidoPorUnidades>>();
   function resolverIncluido(s: (typeof servicios)[number]) {
     const sv = vigenciasPorServicio.get(s.servicio_id);
     if (!sv || !ventanaEstadia) return null;
     const modo = (s.modo as string) === "grupo" ? "grupo" : "persona";
-    const k = `${s.servicio_id}|${modo}|${ventanaEstadia.desde}|${ventanaEstadia.hasta}`;
+    const liq = (s.servicios_adicionales as unknown as { liquidacion: string | null } | null)?.liquidacion ?? sv.liquidacion ?? null;
+    const k = `${s.servicio_id}|${modo}|${ventanaEstadia.desde}|${ventanaEstadia.hasta}|${ventanaEstadia.numNoches}|${liq}`;
     let r = incluidoCache.get(k);
-    if (!r) { r = incluidoEnEstadia(sv, modo, ventanaEstadia.desde, ventanaEstadia.hasta); incluidoCache.set(k, r); }
+    if (!r) { r = incluidoPorUnidades({ ...sv, liquidacion: liq }, modo, ventanaEstadia.desde, ventanaEstadia.hasta, ventanaEstadia.numNoches); incluidoCache.set(k, r); }
     return r;
   }
   function incluidoVigente(s: (typeof servicios)[number]) {
@@ -1205,7 +1180,7 @@ export async function generarTarifario(paqueteId: number, opciones: OpcionesGene
       if (!inc || inc.netoPersona == null) continue;
       if (sinAsistencia && srv?.categoria === "asistencia") continue;
       // Cobro amarrado a la duración: por noche × noches, por día × (noches+1).
-      total += marcar(aMonedaOferta(inc.netoPersona, svcMoneda(s)), pctMk) * factorLiquidacion(srv?.liquidacion ?? null, numNoches);
+      total += marcar(aMonedaOferta(netoTotalPersona(inc, factorLiquidacion(srv?.liquidacion ?? null, numNoches)), svcMoneda(s)), pctMk);
     }
     return total;
   }
@@ -1220,16 +1195,15 @@ export async function generarTarifario(paqueteId: number, opciones: OpcionesGene
       const inc = incluidoVigente(s);
       if (!inc || inc.netoPersona == null) continue;
       if (sinAsistencia && srv?.categoria === "asistencia") continue;
-      const neto = inc.netoInfante ?? inc.netoPersona;
-      total += marcar(aMonedaOferta(neto, svcMoneda(s)), pctMk) * factorLiquidacion(srv?.liquidacion ?? null, numNoches);
+      total += marcar(aMonedaOferta(netoTotalPersona(inc, factorLiquidacion(srv?.liquidacion ?? null, numNoches), true), svcMoneda(s)), pctMk);
     }
     return total;
   }
 
   let vueloNetoSiguiente: number | null = null;
   // Servicios incluidos por persona de la estadía con su neto (misma conversión y mismo factor que `aporteServiciosIncluidos`): insumo de la composición, no entra al precio.
-  function detalleServiciosIncluidos(numNoches: number): { nombre: string; neto: number; netoMenor: number; origen?: { monto: number; montoMenor: number; moneda: string } }[] {
-    const out: { nombre: string; neto: number; netoMenor: number; origen?: { monto: number; montoMenor: number; moneda: string } }[] = [];
+  function detalleServiciosIncluidos(numNoches: number): { nombre: string; neto: number; netoMenor: number; tramos?: ReturnType<typeof tramosDeUnidades>; origen?: { monto: number; montoMenor: number; moneda: string } }[] {
+    const out: { nombre: string; neto: number; netoMenor: number; tramos?: ReturnType<typeof tramosDeUnidades>; origen?: { monto: number; montoMenor: number; moneda: string } }[] = [];
     for (const s of servicios) {
       if (!(s.incluido as boolean)) continue;
       const srv = s.servicios_adicionales as unknown as { liquidacion: string | null; nombre?: string | null } | null;
@@ -1237,9 +1211,12 @@ export async function generarTarifario(paqueteId: number, opciones: OpcionesGene
       if (!inc || inc.netoPersona == null) continue;
       const f = factorLiquidacion(srv?.liquidacion ?? null, numNoches);
       const convertido = modo63 && svcMoneda(s) !== paqueteMoneda;
+      const totAdulto = netoTotalPersona(inc, f), totMenor = netoTotalPersona(inc, f, true);
+      const tramos = tramosDeUnidades(inc.unidades);
       out.push({
-        nombre: srv?.nombre ?? `#${s.servicio_id}`, neto: aMonedaOferta(inc.netoPersona, svcMoneda(s)) * f, netoMenor: aMonedaOferta(inc.netoInfante ?? inc.netoPersona, svcMoneda(s)) * f,
-        ...(convertido ? { origen: { monto: inc.netoPersona * f, montoMenor: (inc.netoInfante ?? inc.netoPersona) * f, moneda: svcMoneda(s) } } : {}),
+        nombre: srv?.nombre ?? `#${s.servicio_id}`, neto: aMonedaOferta(totAdulto, svcMoneda(s)), netoMenor: aMonedaOferta(totMenor, svcMoneda(s)),
+        ...(tramos ? { tramos } : {}),
+        ...(convertido ? { origen: { monto: totAdulto, montoMenor: totMenor, moneda: svcMoneda(s) } } : {}),
       });
     }
     return out;
@@ -1278,7 +1255,7 @@ export async function generarTarifario(paqueteId: number, opciones: OpcionesGene
     vueloNetoSiguiente = null;
     if (numNoches <= 0) return;
     // Fecha fija: la vigencia del día de ida (así cotiza la reserva). Ventana "desde" (porción): TODA la ventana debe caer en una sola vigencia.
-    ventanaEstadia = { desde: fechaIda, hasta: masBarato && fechaRegreso ? fechaRegreso : fechaIda };
+    ventanaEstadia = { desde: fechaIda, hasta: masBarato && fechaRegreso ? fechaRegreso : fechaIda, numNoches };
     // Disponibilidad: un incluido SIN tarifa vigente en esta fecha se omite de ESTA estadía (no se hornea en el PVP; la reserva, el costo y la CxP tampoco lo cuentan) y
     // el hotel se publica igual. Un error de configuración (franjas, vigencias ambiguas, lectura) sí impide publicar la estadía.
     estadiasEvaluadas++;

@@ -31,26 +31,26 @@ test("ida y regreso SIN precio propio usa la TARIFA de la vigencia (nunca el tra
   assert.equal(!mitad.ok && mitad.motivo, "sin_precio_alcance", "tampoco el trayecto sale como la mitad de ida y regreso");
 });
 
-test("ida y regreso sin precio propio NI tarifa en la vigencia (NULL o inválida) falla con sin_precio_alcance", () => {
-  for (const precio_persona of [null, Number.NaN, -5]) {
+test("ida y regreso sin precio propio NI tarifa en la vigencia (NULL o 0) falla con sin_precio_alcance; NaN/negativo es dato corrupto (precios_invalidos)", () => {
+  for (const precio_persona of [null, 0, Number.NaN, -5]) {
     const r = costoNetoServicio({ ...base, temporadas: [{ ...ALTA, precio_persona }], alcance: "ida_regreso", preciosAlcancePorTemporada: new Map() });
-    assert.equal(!r.ok && r.motivo, "sin_precio_alcance", `precio_persona ${precio_persona}`);
+    assert.equal(!r.ok && r.motivo, precio_persona == null || precio_persona === 0 ? "sin_precio_alcance" : "precios_invalidos", `precio_persona ${precio_persona}`);
   }
 });
 
-test("una tarifa de 0 ES una tarifa válida (como en la tarifa de siempre): ida y regreso la usa y no cae a «sin precio»; el precio propio sigue ganando; un trayecto sigue exigiendo el suyo", () => {
+test("en un traslado 0 es ausencia de tarifa (nunca gratis): no se cobra, no se sustituye por otro rango, y el precio propio >0 sigue ganando; un trayecto sigue exigiendo el suyo", () => {
   const persona = costoNetoServicio({ ...base, temporadas: [{ ...ALTA, precio_persona: 0 }], alcance: "ida_regreso", preciosAlcancePorTemporada: new Map() });
-  assert.equal(persona.ok && persona.costoNeto, 0); assert.equal(persona.ok && persona.origenPrecio, "tarifa_vigente");
+  assert.equal(!persona.ok && persona.motivo, "sin_precio_alcance");
   const propio = costoNetoServicio({ ...base, temporadas: [{ ...ALTA, precio_persona: 0 }], alcance: "ida_regreso", preciosAlcancePorTemporada: precios([P("ida_regreso", 170000)]) });
   assert.equal(propio.ok && propio.costoNeto, 340000); assert.equal(propio.ok && propio.origenPrecio, "explicito");
   const rangos = [{ pax_desde: 1, pax_hasta: 4, precio: 0, temporada: "ALTA" }, { pax_desde: 5, pax_hasta: 12, precio: 200000, temporada: "ALTA" }];
   const g = (pax: number, alcance: "llegada" | "ida_regreso") => costoNetoServicio({ ...base, temporadas: [{ ...ALTA, precio_persona: null }], grupos: rangos, modo: "grupo", pax, alcance, preciosAlcancePorTemporada: new Map() });
-  assert.equal(neto(g(3, "ida_regreso")), 0, "un rango en 0 es una tarifa");
-  assert.equal(neto(g(8, "ida_regreso")), 200000);
+  assert.equal(neto(g(3, "ida_regreso")), "sin_precio_alcance", "un rango en 0 no existe: no es gratis ni se cubre con el 5–12");
+  assert.equal(neto(g(8, "ida_regreso")), 200000, "la cantidad con tarifa válida no se bloquea porque otro rango esté vacío");
   assert.equal(neto(g(13, "ida_regreso")), "sin_precio_alcance", "fuera de todo rango sigue sin vender");
-  assert.equal(neto(g(3, "llegada")), "sin_precio_alcance", "un trayecto no sale de la tarifa, ni siquiera de una en 0");
+  assert.equal(neto(g(3, "llegada")), "sin_precio_alcance", "un trayecto no sale de la tarifa");
   const nan = costoNetoServicio({ ...base, temporadas: [{ ...ALTA, precio_persona: null }], grupos: [{ pax_desde: 1, pax_hasta: 4, precio: Number.NaN, temporada: "ALTA" }], modo: "grupo", pax: 3, alcance: "ida_regreso", preciosAlcancePorTemporada: new Map() });
-  assert.equal(neto(nan), "sin_precio_alcance", "un rango inválido (NaN) no es tarifa");
+  assert.equal(neto(nan), "precios_invalidos", "un rango inválido (NaN) es dato corrupto, no se oculta");
 });
 
 test("GENERAL es histórico: una vigencia GENERAL (con precios de alcance o sin ellos) no vende", () => {

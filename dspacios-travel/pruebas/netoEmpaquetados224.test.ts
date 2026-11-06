@@ -207,6 +207,12 @@ describe("inventario de lectores de la tabla base `empaquetados` en la aplicaci�
   const LECTORES = new Map<string, { cliente: "sesion" | "servicio"; roles: string }>([
     ["app/(dashboard)/dashboard/paquetes/[id]/page.tsx", { cliente: "sesion", roles: "modulo paquetes (sin venta)" }],
     ["app/(dashboard)/dashboard/paquetes/actions.ts", { cliente: "sesion", roles: "armado interno (sin venta)" }],
+    // #82: catálogo del montaje del paquete dinámico total (ruta bajo /dashboard/paquetes: LECTURA_MODULO/proxy.ts la cierran a `venta`; la RLS de la tabla base también).
+    ["app/(dashboard)/dashboard/paquetes/total/catalogos.ts", { cliente: "sesion", roles: "modulo paquetes (sin venta)" }],
+    // #82 (276): al guardar, el servidor relee la ruta del empaquetado vinculado (nunca la del navegador); `contexto()` ya exige ROLES_PRODUCTO.
+    // #82 (277): horarios y números de vuelo del empaquetado vinculado, para mostrarlo como en el checkout normal (cliente admin; columnas operativas, SIN tarifas).
+    ["lib/paqueteDinamico/fichas.ts", { cliente: "servicio", roles: "service-role: solo aerolínea, ruta, vuelos y horarios (sin tarifa_proveedor ni fee)" }],
+    ["app/(dashboard)/dashboard/paquetes/total/actions.ts", { cliente: "sesion", roles: "ROLES_PRODUCTO (sin venta)" }],
     ["app/(dashboard)/dashboard/vuelos/page.tsx", { cliente: "sesion", roles: "modulo vuelos (sin venta)" }],
     ["app/(dashboard)/dashboard/vuelos/historico/page.tsx", { cliente: "sesion", roles: "modulo vuelos (sin venta)" }],
     ["app/(dashboard)/dashboard/vuelos/empaquetados/[id]/page.tsx", { cliente: "sesion", roles: "modulo vuelos (sin venta)" }],

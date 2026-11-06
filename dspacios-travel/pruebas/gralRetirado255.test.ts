@@ -121,14 +121,17 @@ describe("publicación (generarTarifario): sin vigencia o rango NO se publica un
     assert.doesNotMatch(g.r.ok ? (g.r.aviso ?? "") : "", /statement|postgres|undefined/i);
   });
 
-  test("DEFECTO: servicio INCLUIDO sin vigencia se horneaba con el precio GENERAL en el hotel. AHORA se omite (sin precio GENERAL horneado) y el hotel se publica igual, con diagnóstico", async () => {
+  test("servicio INCLUIDO sin vigencia: con tarifa base válida se hornea la base (30.000) y el hotel se publica con ella; SIN base la oferta se bloquea con qué configurar", async () => {
     const g = await generar(tablas({ servicios: [{ id: 22, incluido: true, nombre: "Seguro incluido", precio: 30000 }] }));
     const sin = await generar(tablas({ servicios: [] }));
     assert.equal(g.r.ok, true, g.r.ok ? "" : g.r.error);
     assert.ok(g.filas.length > 0, "la oferta del hotel se conserva");
-    assert.deepEqual(g.filas.map((f) => f.precio_pvp), sin.filas.map((f) => f.precio_pvp), "el precio es el del hotel solo: los 30.000 GENERAL no se hornean");
-    assert.doesNotMatch(g.r.ok ? (g.r.aviso ?? "") : "", /Sin oferta vendible/);
-    assert.match(g.r.ok ? (g.r.aviso ?? "") : "", /Seguro incluido/);
+    assert.ok(g.filas.every((f, i) => f.precio_pvp > sin.filas[i].precio_pvp), "la base SÍ se hornea: el precio es mayor que el del hotel solo");
+    assert.doesNotMatch(g.r.ok ? (g.r.aviso ?? "") : "", /Sin oferta vendible|no se publican/);
+    const sinBase = await generar(tablas({ servicios: [{ id: 22, incluido: true, nombre: "Seguro incluido", precio: null }] }));
+    assert.equal(sinBase.filas.length, 0, "sin vigencia ni base no se vende el paquete sin el servicio");
+    assert.match(sinBase.r.ok ? (sinBase.r.aviso ?? "") : "", /Seguro incluido/);
+    assert.match(sinBase.r.ok ? (sinBase.r.aviso ?? "") : "", /Crea una vigencia con tarifa o configura la tarifa base/);
   });
 
   test("vigencia que no cubre TODO el viaje del paquete: el opcional se ofrece SOLO en el tramo cubierto", async () => {

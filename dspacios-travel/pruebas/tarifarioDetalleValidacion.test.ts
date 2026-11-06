@@ -216,6 +216,12 @@ describe("validarEntradaDetalleSalida() — discriminado por módulo (bloqueoId 
   test("rechaza modulo=porcion_terrestre (Vista tabla de salidas no aplica a porción)", () => assert.equal(validarEntradaDetalleSalida({ modulo: "porcion_terrestre", bloqueoId: 5, combos: [] }), null));
   test("rechaza modulo=servicios", () => assert.equal(validarEntradaDetalleSalida({ modulo: "servicios", bloqueoId: 5, combos: [] }), null));
   test("rechaza forma no-objeto", () => assert.equal(validarEntradaDetalleSalida("x"), null));
+  test("#90 bloqueo sin bloqueo_id: acepta empaquetadoId; bloqueoId manda si vienen ambos; rechaza ids no positivos", () => {
+    assert.deepEqual(validarEntradaDetalleSalida({ modulo: "bloqueo", empaquetadoId: 22, combos: [] }), { modulo: "bloqueo", empaquetadoId: 22, combos: [] });
+    assert.deepEqual(validarEntradaDetalleSalida({ modulo: "bloqueo", bloqueoId: 5, empaquetadoId: 22, combos: [] }), { modulo: "bloqueo", bloqueoId: 5, combos: [] });
+    assert.equal(validarEntradaDetalleSalida({ modulo: "bloqueo", empaquetadoId: 0, combos: [] }), null);
+    assert.equal(validarEntradaDetalleSalida({ modulo: "dinamico", empaquetadoId: 22, combos: [] }), null);
+  });
   test("rechaza null", () => assert.equal(validarEntradaDetalleSalida(null), null));
 });
 

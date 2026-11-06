@@ -18,7 +18,7 @@ const sesion = (rol: string) => ({
 });
 
 // Admin simulado: `aliados` con fichas dadas; registra escrituras.
-type Fallos = { ficha?: "error" | "lanzar"; auth?: "error" | "lanzar"; insertFicha?: boolean; dup?: "error" | "duplicado" };
+type Fallos = { ficha?: "error" | "lanzar"; auth?: "error" | "lanzar"; insertFicha?: boolean; dup?: "error" | "duplicado"; lecturaFichas?: boolean };
 function admin(fichas: Fila[], perfilFalla = false, fallos: Fallos = {}) {
   const ops: { tabla: string; op: string; payload?: Fila; filtros?: Record<string, unknown> }[] = [];
   const auth = { creados: 0, borrados: [] as string[] };
@@ -29,6 +29,7 @@ function admin(fichas: Fila[], perfilFalla = false, fallos: Fallos = {}) {
       ops.push(q);
       const res = () => {
         if (q.op === "select") {
+          if (tabla === "aliados" && fallos.lecturaFichas) return { data: null, error: { message: "lectura simulada" } };
           if (tabla === "aliados") return { data: fichas.filter((f) => Object.entries(filtros).every(([k, v]) => f[k] === v)), error: null };
           if (tabla === "usuarios" && fallos.dup === "error") return { data: null, error: { message: "consulta simulada" } };
           if (tabla === "usuarios" && fallos.dup === "duplicado") return { data: { id: "otro" }, error: null };
@@ -233,4 +234,24 @@ test("nombre duplicado encontrado → rechaza sin crear la cuenta", async () => 
   const r = await crearAliadoB2B({ ...base, enlace: { modo: "nueva" } });
   assert.match(r.ok ? "" : r.error, /Ya existe un aliado/);
   assert.equal(a.auth.creados, 0);
+});
+
+test("ficha nueva con documento que YA tiene ficha → rechaza (llamada directa), sin Auth ni inserts", async () => {
+  __setClient(sesion("superadmin") as never);
+  const a = admin([FICHA]); __setAdmin(a.sb);
+  const r = await crearAliadoB2B({ ...base, enlace: { modo: "nueva" } });
+  assert.equal(r.ok, false);
+  assert.match((r as { error: string }).error, /Ya existe una ficha/);
+  assert.equal(a.auth.creados, 0);
+  assert.equal(a.ops.some((o) => o.op === "insert" || o.op === "upsert"), false);
+});
+
+test("ficha nueva: falla la lectura de fichas → detiene todo antes de crear Auth", async () => {
+  __setClient(sesion("superadmin") as never);
+  const a = admin([], false, { lecturaFichas: true }); __setAdmin(a.sb);
+  const r = await crearAliadoB2B({ ...base, enlace: { modo: "nueva" } });
+  assert.equal(r.ok, false);
+  assert.match((r as { error: string }).error, /No se pudo verificar/);
+  assert.equal(a.auth.creados, 0);
+  assert.equal(a.ops.some((o) => o.op === "insert" || o.op === "upsert"), false);
 });

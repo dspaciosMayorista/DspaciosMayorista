@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 640 400" role="img" aria-label="Hotel sin foto">
+  <defs><linearGradient id="g" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#1D7C9A"/><stop offset="0.55" stop-color="#26BBD9"/><stop offset="1" stop-color="#66B596"/></linearGradient></defs>
+  <rect width="640" height="400" fill="url(#g)"/>
+  <g fill="none" stroke="#fff" stroke-width="10" stroke-linecap="round" stroke-linejoin="round" opacity="0.9">
+    <path d="M200 300V150h240v150M160 300h320M250 300v-50h40v50M350 300v-50h40v50"/>
+    <path d="M240 190h30M305 190h30M370 190h30M240 225h30M305 225h30M370 225h30"/>
+  </g>
+</svg>

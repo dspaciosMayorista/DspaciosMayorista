@@ -54,6 +54,11 @@ export function claveDetalleSalida(modulo: "bloqueo" | "dinamico", id: number, c
   return `salida:${modulo}:${id}:${claveComboAlcanceNormalizada(combos)}`;
 }
 
+/** Clave de caché de una salida-empaquetado SIN bloqueo_id: se identifica por su empaquetado_id (dos empaquetados con las mismas fechas no comparten caché). */
+export function claveDetalleEmpaquetado(empaquetadoId: number, combos: ComboIdentidad[]): string {
+  return `salida:empaquetado:${empaquetadoId}:${claveComboAlcanceNormalizada(combos)}`;
+}
+
 /** Clave de caché para Vista tabla → pestaña Porción terrestre — mismo criterio que `claveDetalleSalida`. */
 export function claveDetallePaquete(paqueteId: number, combos: ComboIdentidad[]): string {
   return `paquete:${paqueteId}:${claveComboAlcanceNormalizada(combos)}`;

@@ -1,5 +1,6 @@
 "use client";
 
+import { EtiquetaDescuentoHotel } from "@/components/cotizacion/EtiquetaDescuentoHotel";
 import { DateInput } from "@/components/ui/DateInput";
 import { useMemo, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
@@ -118,6 +119,8 @@ export function ReservaForm({
   // revisión PR #294) — el total real, con el servicio grupal, se calcula al
   // generar la reserva con el pax verdadero.
   const [serviciosGrupo, setServiciosGrupo] = useState<string[]>([]);
+  // #90: regla EBB / Long Stay que usó la última cotización por fechas (null = sin descuento).
+  const [descuentoHotel, setDescuentoHotel] = useState<{ etiqueta: string } | null>(null);
 
   function cotizar() {
     setCotErr("");
@@ -126,6 +129,7 @@ export function ReservaForm({
       if (r.ok) {
         setCombosState(r.combos); setNochesCot(r.noches); setMonedaState(r.moneda);
         setServiciosGrupo(r.serviciosGrupoPendientes ?? []);
+        setDescuentoHotel(r.descuentoHotel ?? null);
       } else setCotErr(r.error);
     });
   }
@@ -383,6 +387,7 @@ export function ReservaForm({
           )}
         </section>
       )}
+      {descuentoHotel && <div className="-mb-2"><EtiquetaDescuentoHotel descuento={descuentoHotel} /></div>}
       {/* Habitaciones */}
       {!esServicios && (
       <section className="rounded-xl border border-gray-200 bg-white p-5">

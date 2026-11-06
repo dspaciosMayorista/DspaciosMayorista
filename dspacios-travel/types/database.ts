@@ -3878,6 +3878,12 @@ export type Database = {
         Update: Partial<Database["public"]["Tables"]["hotel_blackouts"]["Insert"]>;
         Relationships: [];
       };
+      hotel_reglas_descuento: {
+        Row: { id: number; hotel_id: number; tipo: "ebb" | "long_stay"; umbral: number; pct: number; activa: boolean; created_at: string };
+        Insert: { id?: number; hotel_id: number; tipo: "ebb" | "long_stay"; umbral: number; pct: number; activa?: boolean; created_at?: string };
+        Update: Partial<Database["public"]["Tables"]["hotel_reglas_descuento"]["Insert"]>;
+        Relationships: [];
+      };
       web_paquetes: {
         Row: { id: number; titulo: string; region: string | null; destino: string | null; duracion: string | null; personas: string | null; precio_desde: string | null; descripcion: string | null; descripcion_larga: string | null; incluye: string[]; no_incluye: string[]; imagen_url: string | null; galeria: string[]; destacado: boolean; cta_url: string | null; orden: number; activo: boolean; created_at: string; updated_at: string };
         Insert: { id?: number; titulo: string; region?: string | null; destino?: string | null; duracion?: string | null; personas?: string | null; precio_desde?: string | null; descripcion?: string | null; descripcion_larga?: string | null; incluye?: string[]; no_incluye?: string[]; imagen_url?: string | null; galeria?: string[]; destacado?: boolean; cta_url?: string | null; orden?: number; activo?: boolean; created_at?: string; updated_at?: string };
@@ -4401,6 +4407,39 @@ export type Database = {
       crear_cotizacion_manual: {
         Args: { p_usuario_id: string; p_tenant: string; p_cabecera: Json; p_servicios: Json };
         Returns: number;
+      };
+      // ── Paquete 100 % dinámico (migración 274, #82). Errores: `DIN_82_<X>: …` ─────
+      crear_cotizacion_din: {
+        Args: { p_usuario_id: string; p_tenant: string; p_paquete_id: number; p_cabecera: Json; p_servicios: Json };
+        Returns: number;
+      };
+      // Migración 275 (#82, auditoría): canales externos, hoteles vinculables, guardado atómico, conteo de uso de destino.
+      crear_cotizacion_din_externa: {
+        Args: { p_canal: string; p_actor: string | null; p_paquete_id: number; p_cabecera: Json; p_servicios: Json };
+        Returns: number;
+      };
+      guardar_paquete_din: {
+        Args: { p_id: number | null; p_cabecera: Json; p_vuelos: Json; p_hoteles: Json; p_servicios: Json };
+        Returns: number;
+      };
+      hotel_vinculable_din: { Args: { p_hotel: number }; Returns: boolean };
+      hoteles_vinculables_din: { Args: Record<string, never>; Returns: { id: number; nombre: string; destino_id: number | null }[] };
+      uso_destino_din: { Args: { p_destino: number }; Returns: { tabla: string; n: number }[] };
+      editar_cotizacion_din: {
+        Args: { p_usuario_id: string; p_cotizacion_id: number; p_rev_esperada: number; p_motivo: string; p_servicios: Json; p_cambios: Json };
+        Returns: number;
+      };
+      registrar_costos_cotizacion_din: {
+        Args: { p_usuario_id: string; p_cotizacion_id: number; p_costos: Json };
+        Returns: string[];
+      };
+      marcar_version_mostrada: {
+        Args: { p_usuario_id: string; p_cotizacion_id: number; p_version: number };
+        Returns: undefined;
+      };
+      convertir_cotizacion_din: {
+        Args: { p_cotizacion_id: number; p_usuario_id: string };
+        Returns: string;
       };
       editar_servicios_cotizacion_manual: {
         Args: {

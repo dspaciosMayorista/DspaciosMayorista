@@ -7,6 +7,7 @@ import { cargarFilasResumenPaginado } from "@/lib/tarifario/resumen";
 import { desdeListadoPorPaquete } from "@/lib/tarifario/desdeDoble";
 import { Info } from "lucide-react";
 import { paquetesConTarifarioAnteriorAInfante } from "./actions";
+import { ListadoTotales, type FilaTotal } from "./total/ListadoTotales";
 
 export const dynamic = "force-dynamic";
 // Las Server Actions de esta pantalla regeneran tarifarios (por lotes) tras guardar: el maxDuration de la página rige su duración. Literal igual a VENTANA_PETICION_MS (lib/tarifario/controladorPublicacion.ts).
@@ -107,6 +108,11 @@ export default async function PaquetesPage({
   // Todo el cómputo por-item vive aquí (server, una sola vez); el listado
   // cliente solo filtra/ordena localmente (ver tipo-paquetes.ts) — no repite
   // consultas a Supabase al cambiar de pestaña.
+  // #82: paquetes dinámicos totales (tablas propias; no entran al conteo de tarifario).
+  const { data: totalesRaw } = await (sb as unknown as { from: (t: string) => { select: (s: string) => { order: (k: string, o: { ascending: boolean }) => Promise<{ data: FilaTotal[] | null }> } } })
+    .from("paquete_din").select("id, nombre, moneda, esquema, pvp_modo, activo, publicado").order("id", { ascending: false });
+  const totales = (totalesRaw ?? []).filter((t) => t.activo);
+
   const paquetes: PaqueteItem[] = filas.map((p) => ({
     id: p.id,
     nombre: p.nombre,
@@ -129,9 +135,14 @@ export default async function PaquetesPage({
             Armas el paquete sobre el Producto (costos) y le pones el margen. El resultado se publica en el Tarifario.
           </p>
         </div>
-        <Link href="/dashboard/paquetes/nuevo">
-          <Button style={{ backgroundColor: "var(--brand-primary)" }}>+ Nuevo paquete</Button>
-        </Link>
+        <div className="flex flex-wrap gap-2">
+          <Link href="/dashboard/paquetes/total/nuevo">
+            <Button variant="outline">+ Paquete dinámico total</Button>
+          </Link>
+          <Link href="/dashboard/paquetes/nuevo">
+            <Button style={{ backgroundColor: "var(--brand-primary)" }}>+ Nuevo paquete</Button>
+          </Link>
+        </div>
       </div>
 
       {pendientesInfante.ok && pendientesInfante.paquetes.length > 0 && (
@@ -152,6 +163,7 @@ export default async function PaquetesPage({
       )}
 
       <PaquetesListado paquetes={paquetes} tabInicial={tabInicial} />
+      <ListadoTotales filas={totales} />
     </div>
   );
 }

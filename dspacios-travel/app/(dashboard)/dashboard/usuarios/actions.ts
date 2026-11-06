@@ -134,6 +134,12 @@ export async function crearAliadoB2B(input: {
     const { data: f } = await admin.from("aliados").select("id").eq("nit", documento).eq("id", input.enlace.aliadoId).limit(1);
     if (f?.length !== 1) return { ok: false, error: "La ficha elegida no coincide con ese número de documento." };
     aliadoId = input.enlace.aliadoId;
+  } else {
+    // Ficha nueva: re-validar en servidor que ese documento no tenga ya ficha
+    // (la búsqueda de la UI no es un control). Sin lectura confiable no se sigue.
+    const { data: ex, error: exError } = await admin.from("aliados").select("id").eq("nit", documento).limit(1);
+    if (exError) return { ok: false, error: "No se pudo verificar si ya existe una ficha con ese documento. No se creó nada; intenta de nuevo." };
+    if (ex && ex.length > 0) return { ok: false, error: "Ya existe una ficha con ese documento. Búscala y selecciónala en vez de crear otra." };
   }
 
   const { data, error } = await admin.auth.admin.createUser({

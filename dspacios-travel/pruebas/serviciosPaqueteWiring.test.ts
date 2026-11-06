@@ -88,7 +88,7 @@ describe("computo.ts (computarReserva) — fuente única autoritativa, fail-clos
     // B6: el grupo se cobra con la fórmula compartida, y si ningún rango
     // cubre el pax real la reserva no se genera (nunca $0 ni rango cercano).
     assert.match(cuerpo, /if \(!cargo\.ok\) \{\s*\n\s*return \{\s*\n\s*ok: false,/);
-    assert.match(cuerpo, /no tiene una tarifa por rango de pasajeros que cubra/);
+    assert.match(cuerpo, /mensajeGrupoSinCobertura\(cargo\.nombre, cargo\.totalPax\)/);
   });
   test("modo inválido en un servicio incluido falla cerrado (nunca 'persona' por default)", () => {
     const cuerpo = cuerpoFuncion(computo, "const serviciosIncluidos: ServicioEfectivo[] = [];");

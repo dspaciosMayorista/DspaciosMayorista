@@ -158,7 +158,7 @@ export async function guardarPreciosAlcanceVigencia(temporadaId: number, filas: 
   const sb = await createClient();
   const { data: t } = await sb.from("servicio_temporadas").select("nombre").eq("id", temporadaId).maybeSingle();
   if (!t) return { ok: false, error: "Vigencia no encontrada." };
-  if (String(t.nombre).trim().toUpperCase() === "GENERAL") return { ok: false, error: "GENERAL es la tarifa histórica y no se vende: carga los precios por trayecto en una vigencia con fechas." };
+  if (String(t.nombre).trim().toUpperCase() === "GENERAL") return { ok: false, error: "GENERAL es la tarifa base: solo respalda a un traslado incluido cuando ninguna vigencia cubre la fecha, y no lleva precios por trayecto. Cárgalos en una vigencia con fechas." };
   const r = await reemplazarPreciosAlcance(sb as never, temporadaId, filas);
   if (r.ok) revalidatePath("/dashboard/producto/servicios");
   return r;

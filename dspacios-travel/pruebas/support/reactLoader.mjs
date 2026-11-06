@@ -56,6 +56,8 @@ const STUB_PASAJEROS_CONTRATO_ACTIONS = pathToFileURL(join(AQUI, "stubs", "pasaj
 // (termina en "next/headers") — se redirige solo cuando el import parte de ESE
 // archivo (mismo patrón que pasajerosContratoActions arriba).
 const STUB_ELIMINAR_DESTINO_ACTIONS = pathToFileURL(join(AQUI, "stubs", "eliminarDestinoActionsStub.mjs")).href;
+const STUB_COTIZAR_TARJETA = pathToFileURL(join(AQUI, "stubs", "cotizarTarjetaActionsStub.mjs")).href;
+const STUB_REGLAS_DESCUENTO_ACTIONS = pathToFileURL(join(AQUI, "stubs", "reglasDescuentoActionsStub.mjs")).href;
 // Server Actions de pagos / proveedores / difusión, importadas por su alias
 // "@/..." — mismas razones que las anteriores (terminan en "next/headers").
 const STUB_PAGOS_ACTIONS = pathToFileURL(join(AQUI, "stubs", "pagosActionsStub.mjs")).href;
@@ -97,6 +99,7 @@ const STUB_EMPAQUETADOS_ACTIONS = pathToFileURL(join(AQUI, "stubs", "empaquetado
 // La Server Action REAL de vuelos (pruebas/vuelosOperacionesActions.react.ts)
 // importa "../paquetes/actions" (motor de tarifarios completo) -> stub.
 const STUB_PAQUETES_ACTIONS = pathToFileURL(join(AQUI, "stubs", "paquetesActionsStub.mjs")).href;
+const STUB_PAQUETE_TOTAL_ACTIONS = pathToFileURL(join(AQUI, "stubs", "paqueteTotalActionsStub.mjs")).href;
 const STUB_SUPABASE_SERVER = pathToFileURL(join(AQUI, "stubs", "supabaseServerStub.mjs")).href;
 const STUB_NEXT_CACHE = pathToFileURL(join(AQUI, "stubs", "nextCacheStub.mjs")).href;
 const STUB_ASIENTOS = pathToFileURL(join(AQUI, "stubs", "asientosStub.mjs")).href;
@@ -177,6 +180,12 @@ export async function resolve(specifier, context, nextResolve) {
   }
   if (specifier === "./actions" && context.parentURL?.endsWith("/producto/destinos/DestinosLista.tsx")) {
     return { url: STUB_DESTINOS_ACTIONS, shortCircuit: true };
+  }
+  if (specifier === "./cotizarTarjetaActions" && (context.parentURL?.endsWith("/TarjetaHotelFechas.tsx") || context.parentURL?.endsWith("/cotizacionSalidaModal.ts"))) {
+    return { url: STUB_COTIZAR_TARJETA, shortCircuit: true };
+  }
+  if (specifier === "./reglas-descuento-actions" && context.parentURL?.endsWith("HotelPromociones.tsx")) {
+    return { url: STUB_REGLAS_DESCUENTO_ACTIONS, shortCircuit: true };
   }
   if (specifier === "./actions" && context.parentURL?.endsWith("EliminarDestinoBtn.tsx")) {
     return { url: STUB_ELIMINAR_DESTINO_ACTIONS, shortCircuit: true };
@@ -260,7 +269,8 @@ export async function resolve(specifier, context, nextResolve) {
       context.parentURL?.endsWith("/NuevoBloqueoForm.tsx") ||
       context.parentURL?.endsWith("/NuevoEmpaquetadoForm.tsx") ||
       context.parentURL?.endsWith("/EditarEmpaquetadoForm.tsx") ||
-      context.parentURL?.endsWith("PasajeroAcciones.tsx") || context.parentURL?.endsWith("/servicios/ServiciosClient.tsx"))
+      context.parentURL?.endsWith("PasajeroAcciones.tsx") || context.parentURL?.endsWith("/servicios/ServiciosClient.tsx") ||
+      context.parentURL?.endsWith("/TarjetaHotelFechas.tsx"))
   ) {
     return { url: STUB_DATE_INPUT, shortCircuit: true };
   }
@@ -275,10 +285,16 @@ export async function resolve(specifier, context, nextResolve) {
       context.parentURL?.endsWith("/ConvertirCarritoBtn.tsx") ||
       // Panel del carrito (pruebas/carritoMonedaCheckout.react.ts).
       context.parentURL?.endsWith("/tarifario/CartDrawer.tsx") ||
+      // Pestaña «Dinámicos» del tarifario público (#82): redirige con router.push tras cotizar.
+      context.parentURL?.endsWith("/tarifario/PorDinamicos.tsx") ||
       // Checkout público (pruebas/recorridoComparativa64.react.ts): al abrir la comparativa corrige la URL con router.replace.
       context.parentURL?.endsWith("/tarifario/checkout/page.tsx") ||
       // Facturación (#49, pruebas/tablasMoviles49.react.ts).
-      context.parentURL?.endsWith("FacturacionClient.tsx"))
+      context.parentURL?.endsWith("FacturacionClient.tsx") ||
+      // Promociones del hotel (#90, pruebas/reglasDescuentoCarga90.react.ts).
+      context.parentURL?.endsWith("/HotelPromociones.tsx") ||
+      // Montaje del paquete dinámico (#82, pruebas/selectoresDin82.react.ts).
+      context.parentURL?.endsWith("/paquetes/total/PaqueteTotalForm.tsx"))
   ) {
     return { url: STUB_NEXT_NAVIGATION, shortCircuit: true };
   }
@@ -306,6 +322,9 @@ export async function resolve(specifier, context, nextResolve) {
        context.parentURL?.endsWith("/dashboard/tarifario/actions.ts") ||
        context.parentURL?.endsWith("/dashboard/vuelos/actions.ts"))) {
     return { url: STUB_NEXT_CACHE, shortCircuit: true };
+  }
+  if (specifier === "./actions" && context.parentURL?.endsWith("/paquetes/total/PaqueteTotalForm.tsx")) {
+    return { url: STUB_PAQUETE_TOTAL_ACTIONS, shortCircuit: true };
   }
   if (specifier === "../paquetes/actions" && context.parentURL?.endsWith("/dashboard/vuelos/actions.ts")) {
     return { url: STUB_PAQUETES_ACTIONS, shortCircuit: true };

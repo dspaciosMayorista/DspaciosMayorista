@@ -106,7 +106,7 @@ test("precios: solo para servicios que llevan traslado; un tour o un servicio si
 test("GENERAL no admite precios por trayecto (histórico, no vendible)", async () => {
   const raiz = await montar(base({ clasif: { 1: { tipo_receptivo: "traslado" } } }), h(PreciosAlcanceEditor, { servicioId: 1, temporadaId: 10, nombre: "GENERAL" }));
   assert.equal(raiz.querySelector('[data-testid="precios-alcance-10"]'), null);
-  assert.match(raiz.textContent ?? "", /GENERAL es la tarifa histórica y no se vende/);
+  assert.match(raiz.textContent ?? "", /GENERAL es la tarifa base: solo respalda a un traslado incluido/);
 });
 
 test("precios: un trayecto e ida y regreso se guardan como filas INDEPENDIENTES con SU precio (80.000 ≠ 2 × 45.000)", async () => {

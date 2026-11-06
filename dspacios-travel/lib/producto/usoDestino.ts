@@ -10,6 +10,7 @@
 //   016 servicios_adicionales
 //   018 bloqueos_vuelo, armado_paquetes, tarifario_resultado
 //   156 empaquetados
+//   274 paquete_din, paquete_din_vuelos, paquete_din_servicios
 // Ninguna declara ON DELETE, así que UNA sola fila que apunte al destino hace
 // fallar el DELETE (23503). Y `fn_fusionar_destino` (migración 112) re-apunta
 // exactamente esas columnas (todas las FK a destinos) antes de borrar: nada
@@ -23,6 +24,10 @@ export const REFERENCIAS_DESTINO = [
   { tabla: "tarifario_resultado", singular: "fila del tarifario generado", plural: "filas del tarifario generado" },
   { tabla: "bloqueos_vuelo", singular: "bloqueo de vuelo", plural: "bloqueos de vuelo" },
   { tabla: "empaquetados", singular: "empaquetado", plural: "empaquetados" },
+  // 274 (#82): paquete dinámico total (destino principal; vuelos y servicios de otro destino).
+  { tabla: "paquete_din", singular: "paquete dinámico total", plural: "paquetes dinámicos totales" },
+  { tabla: "paquete_din_vuelos", singular: "vuelo de paquete dinámico total", plural: "vuelos de paquetes dinámicos totales" },
+  { tabla: "paquete_din_servicios", singular: "servicio de paquete dinámico total", plural: "servicios de paquetes dinámicos totales" },
   // Tablas del esquema inicial (migraciones 004/013). Siguen existiendo y
   // siguen bloqueando el borrado aunque la app actual ya no las llene.
   { tabla: "paquetes", singular: "paquete del esquema anterior", plural: "paquetes del esquema anterior" },
@@ -30,6 +35,12 @@ export const REFERENCIAS_DESTINO = [
   { tabla: "itinerarios", singular: "itinerario del esquema anterior", plural: "itinerarios del esquema anterior" },
   { tabla: "inclusiones", singular: "inclusión del esquema anterior", plural: "inclusiones del esquema anterior" },
 ] as const;
+
+/**
+ * Tablas con RLS por AGENCIA (275): la sesión de quien borra solo ve las de su agencia, así que su conteo sale de la función
+ * `uso_destino_din` (solo números, solo roles que pueden borrar destinos). Las demás tablas siguen contándose con la sesión.
+ */
+export const TABLAS_CONTEO_PRIVILEGIADO = ["paquete_din", "paquete_din_vuelos", "paquete_din_servicios"] as const;
 
 export type TablaReferenciaDestino = (typeof REFERENCIAS_DESTINO)[number]["tabla"];
 

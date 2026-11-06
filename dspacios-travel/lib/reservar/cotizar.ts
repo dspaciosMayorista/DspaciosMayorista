@@ -7,6 +7,8 @@
 // ─────────────────────────────────────────────────────────────────────────
 
 import { createAdminClient } from "@/lib/supabase/admin";
+import { fechaNegocio } from "@/lib/fechaNegocio";
+import type { ReglaDescuentoHotel } from "@/lib/calc/descuentoHotel";
 import {
   noches,
   temporadaParaFecha,
@@ -119,12 +121,14 @@ async function cargarDatosHotelPaquete(
     { data: tarifas, error: tarifasErr },
     { data: servSel, error: servSelErr },
     { data: blackouts, error: blackoutsErr },
+    { data: reglasDesc, error: reglasDescErr },
   ] = await Promise.all([
     admin.from("armado_hoteles").select("categorias, regimenes, hoteles(nombre, moneda, adults_only)").eq("paquete_id", paqueteId).eq("hotel_id", hotelId).maybeSingle(),
     admin.from("hotel_temporadas").select("id, nombre, fecha_inicio, fecha_fin, prioridad, compra_inicio, compra_fin, tipo, descuento_valor, rangos, blackouts, min_noches, regimen_restringido, condicion_pago_tipo, condicion_pago_pct_inicial, condicion_pago_dias_saldo").eq("hotel_id", hotelId).order("orden").order("id"),
     admin.from("tarifa_hotel").select("*").eq("hotel_id", hotelId),
     admin.from("armado_servicios").select("incluido, servicio_id, modo, servicios_adicionales(nombre, categoria, precio_persona, precio_infante, liquidacion, proveedor_id)").eq("paquete_id", paqueteId),
     admin.from("hotel_blackouts").select("fecha_inicio, fecha_fin, total, acomodaciones, categorias").eq("hotel_id", hotelId),
+    admin.from("hotel_reglas_descuento").select("tipo, umbral, pct, activa").eq("hotel_id", hotelId).eq("activa", true),
   ]);
   if (hselErr) return { ok: false, motivo: "error_consulta", etapa: "armado_hoteles", detalleInterno: hselErr.message };
   if (!hsel) return { ok: false, motivo: "hotel_no_asociado" };
@@ -133,6 +137,8 @@ async function cargarDatosHotelPaquete(
   if (servSelErr) return { ok: false, motivo: "error_consulta", etapa: "armado_servicios", detalleInterno: servSelErr.message };
   if (blackoutsErr) return { ok: false, motivo: "error_consulta", etapa: "hotel_blackouts", detalleInterno: blackoutsErr.message };
 
+
+  if (reglasDescErr) return { ok: false, motivo: "error_consulta", etapa: "hotel_reglas_descuento", detalleInterno: reglasDescErr.message };
   const hotelMeta = hsel.hoteles as unknown as { nombre: string; moneda?: string | null; adults_only?: boolean | null } | null;
   const destinoNombre = (pq.destinos as unknown as { nombre: string } | null)?.nombre ?? null;
 
@@ -167,9 +173,11 @@ async function cargarDatosHotelPaquete(
       };
     }),
     blackouts: (blackouts ?? []) as FilaBlackoutHotelRaw[],
+    reglasDescuento: (reglasDesc ?? []) as ReglaDescuentoHotel[],
+    fechaReserva: fechaNegocio(), // fecha autoritativa del servidor (Bogotá); el cliente nunca la envía
   };
 
-  // Vigencias (SIN «GENERAL») de los servicios INCLUIDOS: el precio horneado y los rangos por grupo se resuelven por la fecha de ida en
+  // Vigencias de los servicios INCLUIDOS (un traslado sin vigencia para la fecha usa su tarifa base, incluidoEnEstadia): el precio horneado y los rangos por grupo se resuelven por la fecha de ida en
   // `evaluarHotelPorFechas`. Falla CERRADO si la lectura falla: publicar el precio sin ellas sería mostrar un valor y cobrar otro.
   const incluidos = datos.serviciosIncluidos.filter((x) => x.incluido);
   if (incluidos.length) {
@@ -267,6 +275,8 @@ export type CotizarResult =
       // revisión PR #294) — nunca mostrarlo como si estuviera incluido gratis.
       serviciosGrupoPendientes: string[];
       incluidosDeLaSalida?: IncluidosDeLaSalida;
+      // #90: regla EBB / Long Stay que usó este cálculo (null = sin descuento). Solo se muestra.
+      descuentoHotel?: { etiqueta: string; tipo: "ebb" | "long_stay"; umbral: number; pct: number } | null;
     }
   | { ok: false; error: string; sugerencias: SugerenciaFecha[] };
 
@@ -365,6 +375,8 @@ export async function cotizarPorFechas(inputRaw: unknown): Promise<CotizarResult
   const condicion = condicionHotelFechas(datos.temporadas, { fechaIda: input.fechaIda, fechaRegreso: input.fechaRegreso });
   return {
     ok: true, combos: combosPublicos, noches: numNoches, moneda: res.moneda, condicion,
+    // #90: regla EBB / Long Stay que usó ESTE cálculo (null = no se aplicó descuento): solo para mostrarla, no cambia ningún importe.
+    descuentoHotel: res.descuentoHotel?.etiqueta ? { etiqueta: res.descuentoHotel.etiqueta, tipo: res.descuentoHotel.tipo, umbral: res.descuentoHotel.umbral, pct: res.descuentoHotel.pct } : null,
     // Marca honesta (decisión del dueño): esta tabla es POR PERSONA y no
     // conoce el tamaño del grupo, así que un servicio incluido con cobro por
     // grupo no puede estar en `precios`. Se nombra para que la UI advierta
@@ -434,6 +446,8 @@ export type BusquedaResultado = {
   // liquidacionHotel.ts) — `null`/ausente si el hotel no tiene vigencias con
   // condición configurada. Nunca afecta `total`/`combos`.
   condicion?: CondicionHotelFechas | null;
+  // #90: regla EBB / Long Stay que aplicó el cálculo de ESTE precio (mismas fechas; null = sin descuento). Solo para mostrarla junto al precio.
+  descuentoHotel?: { etiqueta: string; tipo: "ebb" | "long_stay"; umbral: number; pct: number } | null;
 };
 
 // Máximo de hoteles/paquetes cuyo `DatosHotelPaquete` (ya cargado durante la
@@ -806,6 +820,7 @@ export async function buscarHoteles(inputRaw: unknown): Promise<
         total: mejor.total, noches: numNoches, fechaIda: input.fechaIda, fechaRegreso: input.fechaRegreso, moneda: res.moneda,
         habitaciones: habitacionesOut, menores: mejor.menores, edadesMenores: edades, pax: mejor.pax,
         combos: combosValidos, condicion, incluidosDeLaSalida: incluidosDeLaSalida(res),
+        descuentoHotel: res.descuentoHotel?.etiqueta ? { etiqueta: res.descuentoHotel.etiqueta, tipo: res.descuentoHotel.tipo, umbral: res.descuentoHotel.umbral, pct: res.descuentoHotel.pct } : null,
       });
     } else if (algunCombosFalloEdad) {
       registrarRechazo("No se pudo determinar con certeza la regla de edad de niño/infante para ningún combo de este hotel (configuración ambigua o incompleta).");
