@@ -6,7 +6,8 @@
 // Públicas por diseño (como el checkout): devuelven solo PVP por persona; los motivos internos van al log, no al navegador.
 import { createClient } from "@/lib/supabase/server";
 import { computarReserva, type ReservaInput } from "@/lib/reservar/computo";
-import { validarEntradaTarjeta, MENSAJE_TARJETA as MENSAJE, type ComboTarjeta, type DescuentoTarjeta } from "@/lib/tarifario/entradaTarjeta";
+import { validarEntradaTarjeta, MENSAJE_TARJETA as MENSAJE, MOTIVO_RECHAZO_TARJETA, type ComboTarjeta, type DescuentoTarjeta } from "@/lib/tarifario/entradaTarjeta";
+import { crearLecturasCompartidas } from "@/lib/reservar/lecturasCompartidas";
 import { fechaNegocio } from "@/lib/fechaNegocio";
 import { motivosUnicos } from "@/lib/tarifario/motivoTarjeta";
 import { canalDeRol } from "@/lib/cotizacion/comparativa";
@@ -47,9 +48,20 @@ export type TarjetaCotizada =
 
 export async function cotizarTarjetaHotel(raw: unknown): Promise<TarjetaCotizada> {
   const v = validarEntradaTarjeta(raw);
-  if (!v.ok) return v;
+  if (!v.ok) {
+    // #439: un rechazo ANTES de computarReserva deja un registro identificable (código fijo y números; nunca el valor recibido) y, para el personal interno, su motivo propio.
+    // Jamás se presenta como ausencia de tarifa: el mensaje público es el de siempre, pero el servidor y el rol interno distinguen la causa.
+    const modulo = typeof raw === "object" && raw !== null && ["bloqueo", "porcion_terrestre", "dinamico"].includes((raw as { modulo?: string }).modulo as string) ? (raw as { modulo: string }).modulo : "invalido";
+    console.error(`[cotizarTarjetaHotel] entrada_rechazada codigo=${v.codigo} modulo=${modulo}${v.recibidas != null ? ` combos_recibidos=${v.recibidas}` : ""}${v.limite != null ? ` limite=${v.limite}` : ""}`);
+    let interno = false;
+    try { interno = await esInternoActivo(await createClient()); } catch { interno = false; }
+    if (interno) return { ok: false, error: v.error, motivos: [v.codigo === "combos_exceden_limite" ? `${MOTIVO_RECHAZO_TARJETA[v.codigo]} (recibidas ${v.recibidas}, máximo ${v.limite}).` : MOTIVO_RECHAZO_TARJETA[v.codigo]] };
+    return { ok: false, error: v.error };
+  }
   const e = v.entrada;
   const sb = await createClient();
+  // Memo EXCLUSIVO de esta llamada: las lecturas idénticas entre combinaciones (paquete, hotel, origen, temporadas, incluidos, evidencia) se hacen una vez; las que dependen del combo, no.
+  const lecturas = crearLecturasCompartidas();
   let mejor: { precio: number; moneda: string; categoria: string; regimen: string; fechaIda: string; fechaRegreso: string; descuento: DescuentoTarjeta | null } | null = null;
   // TODOS los combos fallidos (no solo el último): categoría, régimen y el mensaje de negocio
   // devuelto por computarReserva (o el sintético "sin tarifa doble" de aquí abajo) — el log del
@@ -70,7 +82,7 @@ export async function cotizarTarjetaHotel(raw: unknown): Promise<TarjetaCotizada
       cliente: { nombres: "", apellidos: "", tipoDoc: "CC", numeroDoc: "", telefono: "", email: "" },
       tipoAsesor: "interno", asesorInterno: "", agenciaNombre: "", agenciaAsesor: "", freelanceNombre: "", aliadoId: null, plazo: "", pasajeros: [], servicios: [],
     };
-    const comp = await computarReserva(sb, reserva);
+    const comp = await computarReserva(sb, reserva, undefined, lecturas);
     if (!comp.ok) { fallidos.push({ categoria: c.categoria, regimen: c.regimen, detalle: comp.error }); continue; }
     const precio = comp.data.pvpPorAcom["doble"];
     if (!(precio > 0)) { fallidos.push({ categoria: c.categoria, regimen: c.regimen, detalle: "sin tarifa doble" }); continue; }
