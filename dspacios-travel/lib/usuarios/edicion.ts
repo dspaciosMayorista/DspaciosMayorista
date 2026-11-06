@@ -41,8 +41,8 @@ export function validarCambios(
   if (c.nombre !== undefined && !c.nombre.trim()) return "El nombre no puede quedar vacío.";
   if (c.activo !== undefined && typeof c.activo !== "boolean") return "Estado no válido.";
   if (c.tenant !== undefined) {
-    if (!(TENANTS as readonly string[]).includes(c.tenant)) return "Agencia no válida.";
-    if (c.tenant !== actual.tenant && actor.rol !== "superadmin") return "Solo superadmin puede mover un usuario de agencia.";
+    if (!(TENANTS as readonly string[]).includes(c.tenant)) return "Empresa no válida.";
+    if (c.tenant !== actual.tenant && actor.rol !== "superadmin") return "Solo superadmin puede mover un usuario de empresa.";
   }
   if (c.aliado_id !== undefined && c.aliado_id !== null && !Number.isInteger(c.aliado_id)) return "Ficha no válida.";
   if (c.pct_comision !== undefined && c.pct_comision !== null &&
@@ -67,7 +67,7 @@ export function efectosDeCambio(
   }
   if (n.activo !== a.activo)
     e.push(n.activo ? "Se activa: recupera el acceso." : "Se desactiva: no podrá iniciar sesión ni usar la API.");
-  if (n.tenant !== a.tenant) e.push(`Agencia ${a.tenant} → ${n.tenant}: deja de ver los datos de la actual y ve los de la nueva.`);
+  if (n.tenant !== a.tenant) e.push(`Empresa ${a.tenant} → ${n.tenant}: deja de ver los datos de la actual y ve los de la nueva.`);
   if (n.aliado_id !== a.aliado_id)
     e.push(`Ficha de aliado: ${nombreFicha(a.aliado_id)} → ${nombreFicha(n.aliado_id)}. Verá los contratos y comisiones de la nueva ficha; los ya existentes no se reasignan.`);
   if (n.nombre.trim() !== a.nombre)

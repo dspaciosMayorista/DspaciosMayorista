@@ -76,18 +76,20 @@ export async function crearUsuario(input: {
   return { ok: true };
 }
 
-export type FichaAliado = { id: number; nombre: string; nit: string | null; tipo_documento: string | null; email: string | null };
+export type FichaAliado = { id: number; nombre: string; nit: string | null; tipo_documento: string | null; email: string | null; tipo: string | null };
 
 // Búsqueda SOLO por número de documento exacto (nunca por nombre). Devuelve
 // todas las coincidencias: con más de una, el interno elige; aquí no se decide.
-export async function buscarFichasAliado(documento: string): Promise<{ ok: true; fichas: FichaAliado[] } | { ok: false; error: string }> {
+export async function buscarFichasAliado(documento: string, tipo?: "agencia" | "freelance"): Promise<{ ok: true; fichas: FichaAliado[] } | { ok: false; error: string }> {
   const gate = await requireGestionUsuarios();
   if (!gate.ok) return gate;
   const doc = documento.trim();
   if (!doc) return { ok: false, error: "Escribe el número de documento." };
   if (!process.env.SUPABASE_SERVICE_ROLE_KEY) return { ok: false, error: "Falta SUPABASE_SERVICE_ROLE_KEY." };
-  const { data, error } = await createAdminClient()
-    .from("aliados").select("id, nombre, nit, tipo_documento, email").eq("nit", doc).limit(20);
+  if (tipo !== undefined && tipo !== "agencia" && tipo !== "freelance") return { ok: false, error: "Tipo de ficha no válido." };
+  let q = createAdminClient().from("aliados").select("id, nombre, nit, tipo_documento, email, tipo").eq("nit", doc);
+  if (tipo) q = q.eq("tipo", tipo); // solo fichas compatibles con el rol; actualizarUsuario lo vuelve a validar
+  const { data, error } = await q.limit(20);
   if (error) return { ok: false, error: "No se pudo buscar la ficha del aliado." };
   return { ok: true, fichas: (data ?? []) as FichaAliado[] };
 }

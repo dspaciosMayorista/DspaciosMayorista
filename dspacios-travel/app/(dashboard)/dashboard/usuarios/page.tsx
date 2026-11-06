@@ -28,9 +28,9 @@ export default async function UsuariosPage() {
     .order("nombre");
   const ids = [...new Set((usuarios ?? []).map((u) => u.aliado_id).filter((x): x is number => x != null))];
   const { data: fichasDb } = ids.length
-    ? await sb.from("aliados").select("id, nombre, nit").in("id", ids)
-    : { data: [] as { id: number; nombre: string; nit: string | null }[] };
-  const fichas = Object.fromEntries((fichasDb ?? []).map((f) => [f.id, { nombre: f.nombre, nit: f.nit }]));
+    ? await sb.from("aliados").select("id, nombre, nit, tipo").in("id", ids)
+    : { data: [] as { id: number; nombre: string; nit: string | null; tipo: string | null }[] };
+  const fichas = Object.fromEntries((fichasDb ?? []).map((f) => [f.id, { nombre: f.nombre, nit: f.nit, tipo: f.tipo }]));
 
   return (
     <div className="mx-auto max-w-4xl p-4 md:p-8">

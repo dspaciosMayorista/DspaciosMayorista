@@ -187,3 +187,12 @@ test("efectos: el aviso del nombre no promete lo que no se cumple", () => {
   assert.doesNotMatch(normal, /solo cambia la etiqueta/);
   assert.match(efectosDeCambio(B2B, { ...B2B, nombre: "Z" }, nf, true).join(" "), /Bloqueado.*Concilia primero/);
 });
+test("cambio agencia→freelance con ficha de agencia: el servidor rechaza sin escribir ni quitar la ficha; con ficha quitada sí guarda", async () => {
+  let a = admin(B2B, { ficha: { id: 7, tipo: "agencia" } }); act("superadmin", a);
+  assert.match(err(await actualizarUsuario("u1", { rol: "freelance" })), /tipo agencia y el rol es freelance/);
+  assert.equal(a.updates.length, 0);
+  a = admin(B2B); act("superadmin", a);
+  const r = await actualizarUsuario("u1", { rol: "freelance", aliado_id: null });
+  assert.equal(r.ok, true);
+  assert.deepEqual(a.updates[0].patch, { rol: "freelance", aliado_id: null });
+});

@@ -32,7 +32,7 @@ const USUARIOS = [
   U({ id: "6", email: "leg@x.co", nombre: "Agencia Heredada", rol: "agencia", acceso_legacy_nombre: true }),
   U({ id: "5", email: "agencia@x.co", nombre: "Agencia Falsa", rol: "operaciones" }),
 ];
-const FICHAS = { 7: { nombre: "Ficha Agencia", nit: "900123" } };
+const FICHAS = { 7: { nombre: "Ficha Agencia", nit: "900123", tipo: "agencia" } };
 
 let root: ReturnType<typeof createRoot> | null = null;
 let host: HTMLElement;
@@ -106,7 +106,7 @@ test("Cancelar descarta y la reapertura vuelve a los datos originales; el error 
   await montar("administracion");
   const abrir = () => click(host.querySelector('button[aria-label^="Editar Agencia Con"]')!);
   await abrir();
-  assert.equal((dialogo()!.querySelector('select[aria-label="Agencia"]') as HTMLSelectElement).disabled, true, "tenant solo superadmin");
+  assert.equal((dialogo()!.querySelector('select[aria-label="Empresa"]') as HTMLSelectElement).disabled, true, "tenant solo superadmin");
   await cambiar(dialogo()!.querySelector('input[aria-label="Nombre"]')!, "Otro Nombre", "input");
   await click(bt("Cancelar"));
   assert.equal(dialogo(), null); assert.equal(llamadas.length, 0);
@@ -145,4 +145,41 @@ test("cuenta con acceso heredado: cambiar el nombre bloquea Guardar y lo explica
   await cambiar(dialogo()!.querySelector('input[aria-label="Nombre"]')!, "Otro", "input");
   assert.match(dialogo()!.querySelector('[role="status"]')!.textContent!, /Bloqueado.*Concilia primero/);
   assert.equal(bt("Guardar").disabled, true);
+});
+test("rótulos por tipo: freelance y agencia; Empresa = tenant; la búsqueda pide solo su tipo", async () => {
+  const pedidos: unknown[][] = [];
+  const f = (id: number, tipo: string) => ({ id, nombre: `F${id}`, nit: "5", tipo_documento: null, email: null, tipo });
+  __setImpls({ buscarFichasAliado: async (...a: unknown[]) => { pedidos.push(a); return { ok: true, fichas: [f(1, "freelance"), f(2, "agencia")] }; } });
+  await montar();
+  await click(host.querySelector('button[aria-label^="Editar Freelance"]')!);
+  assert.match(dialogo()!.textContent!, /Ficha de freelance/);
+  assert.ok(dialogo()!.querySelector('input[placeholder="Buscar ficha de freelance por documento"]'));
+  assert.ok(dialogo()!.querySelector('select[aria-label="Empresa"]'));
+  assert.equal(dialogo()!.querySelector('select[aria-label="Agencia"]'), null);
+  assert.doesNotMatch(dialogo()!.textContent!, /Ficha de agencia/);
+  await cambiar(dialogo()!.querySelector('input[aria-label^="Documento de la ficha"]')!, "5", "input");
+  await click(bt("Buscar"));
+  assert.deepEqual(pedidos[0], ["5", "freelance"]);
+  const opts = [...dialogo()!.querySelectorAll('select[aria-label="Ficha encontrada"] option')].map((o) => o.textContent);
+  assert.equal(opts.some((t) => t?.includes("F2")), false, "no ofrece fichas de agencia");
+  assert.equal(opts.some((t) => t?.includes("F1")), true);
+  await click(bt("Cancelar"));
+  await click(host.querySelector('button[aria-label^="Editar Agencia Con"]')!);
+  assert.match(dialogo()!.textContent!, /Ficha de agencia/);
+  assert.ok(dialogo()!.querySelector('input[placeholder="Buscar ficha de agencia por NIT"]'));
+});
+
+test("cambio de rol agencia→freelance con ficha de agencia: avisa, bloquea Guardar y no borra la ficha", async () => {
+  const llamadas: unknown[] = [];
+  __setImpls({ actualizarUsuario: async (...a: unknown[]) => { llamadas.push(a); return { ok: true }; } });
+  await montar();
+  await click(host.querySelector('button[aria-label^="Editar Agencia Con"]')!);
+  await cambiar(dialogo()!.querySelector('select[aria-label="Rol"]')!, "freelance");
+  assert.match(dialogo()!.textContent!, /La ficha actual es de agencia, no de freelance/);
+  assert.match(dialogo()!.textContent!, /Ficha de freelance: Ficha Agencia/, "la ficha sigue visible, no se borra");
+  assert.equal(bt("Guardar").disabled, true);
+  await click(bt("Quitar"));
+  assert.equal(bt("Guardar").disabled, false);
+  await click(bt("Guardar"));
+  assert.deepEqual(llamadas[0], ["1", { rol: "freelance", aliado_id: null }]);
 });

@@ -255,3 +255,11 @@ test("ficha nueva: falla la lectura de fichas → detiene todo antes de crear Au
   assert.equal(a.auth.creados, 0);
   assert.equal(a.ops.some((o) => o.op === "insert" || o.op === "upsert"), false);
 });
+
+test("buscar con tipo: solo devuelve fichas de ese tipo (servidor)", async () => {
+  __setClient(sesion("administracion") as never);
+  __setAdmin(admin([{ ...FICHA, tipo: "agencia" }, { ...FICHA, id: 8, tipo: "freelance" }]).sb);
+  const r = await buscarFichasAliado("900123", "freelance");
+  assert.ok(r.ok && r.fichas.map((f) => f.id).join() === "8");
+  assert.equal((await buscarFichasAliado("900123", "x" as never)).ok, false);
+});
