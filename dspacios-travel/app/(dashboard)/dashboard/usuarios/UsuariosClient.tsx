@@ -3,14 +3,14 @@
 import { useState, useTransition } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { ROLES, ROLES_INTERNOS, type Rol } from "@/lib/constants";
+import { ROLES_INTERNOS, type Rol } from "@/lib/constants";
 import { AliadoB2BForm } from "./AliadoB2BForm";
-import { crearUsuario, cambiarRol, cambiarActivo, setComisionUsuario } from "./actions";
+import { crearUsuario } from "./actions";
+import { EditarUsuarioDialog, type FichaInfo, type UsuarioFila } from "./EditarUsuarioDialog";
+import { grupoDeRol, type GrupoUsuario } from "@/lib/usuarios/edicion";
 import { ResponsiveTableShell } from "@/components/ui/ResponsiveTableShell";
 
-type Usuario = { id: string; email: string; nombre: string; rol: string; activo: boolean; pct_comision: number | null };
-
-export function UsuariosClient({ usuarios }: { usuarios: Usuario[] }) {
+export function UsuariosClient({ usuarios, fichas = {}, rolActor = "administracion" }: { usuarios: UsuarioFila[]; fichas?: Record<number, FichaInfo>; rolActor?: string }) {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [nombre, setNombre] = useState("");
@@ -50,53 +50,70 @@ export function UsuariosClient({ usuarios }: { usuarios: Usuario[] }) {
 
       <AliadoB2BForm />
 
-      {usuarios.length > 0 && (
-        <ResponsiveTableShell minWidth={560} className="overflow-x-auto rounded-xl border border-gray-200 bg-white">
-          <table className="w-full min-w-[560px] text-sm">
-            <thead><tr className="bg-gray-50 text-left text-xs uppercase text-gray-400">
-              <th className="px-4 py-2">Nombre</th><th className="px-4 py-2">Email</th>
-              <th className="px-4 py-2">Rol</th><th className="px-4 py-2">Comisión</th><th className="px-4 py-2">Estado</th>
-            </tr></thead>
-            <tbody>{usuarios.map((u) => <UsuarioRow key={u.id} u={u} />)}</tbody>
-          </table>
-        </ResponsiveTableShell>
-      )}
+      <ListaUsuarios usuarios={usuarios} fichas={fichas} rolActor={rolActor} />
     </div>
   );
 }
 
-function UsuarioRow({ u }: { u: Usuario }) {
-  const [pending, start] = useTransition();
-  const esB2B = u.rol === "agencia" || u.rol === "freelance";
-  const pctDefault = u.pct_comision != null ? Math.round(u.pct_comision * 1000) / 10 : (u.rol === "agencia" ? 12 : u.rol === "freelance" ? 11 : 0);
+const PESTANAS: { id: GrupoUsuario; label: string }[] = [
+  { id: "b2b", label: "B2B" }, { id: "internos", label: "Internos" }, { id: "otros", label: "Otros" },
+];
+
+function ListaUsuarios({ usuarios, fichas, rolActor }: { usuarios: UsuarioFila[]; fichas: Record<number, FichaInfo>; rolActor: string }) {
+  const [tab, setTab] = useState<GrupoUsuario>("b2b");
+  const [editando, setEditando] = useState<UsuarioFila | null>(null);
+  const [abierto, setAbierto] = useState(false);
+  const [apertura, setApertura] = useState(0); // nueva instancia en cada apertura = borrador limpio
+  const grupos = { b2b: [] as UsuarioFila[], internos: [] as UsuarioFila[], otros: [] as UsuarioFila[] };
+  for (const u of usuarios) grupos[grupoDeRol(u.rol)].push(u);
+  const visibles = PESTANAS.filter((p) => p.id !== "otros" || grupos.otros.length > 0);
+  const lista = grupos[tab];
+  const mostrarB2B = tab === "b2b";
   return (
-    <tr className="border-t border-gray-50">
-      <td className="px-4 py-2 text-gray-700" data-label="Nombre">{u.nombre}</td>
-      <td className="px-4 py-2 text-gray-500" data-label="Email">{u.email}</td>
-      <td className="px-4 py-2" data-label="Rol">
-        <select defaultValue={u.rol} disabled={pending}
-          onChange={(e) => start(() => { void cambiarRol(u.id, e.target.value as Rol); })}
-          className="rounded border border-gray-300 bg-white px-2 py-1 text-xs">
-          {ROLES.map((r) => <option key={r} value={r}>{r}</option>)}
-        </select>
-      </td>
-      <td className="px-4 py-2" data-label="Comisión">
-        {esB2B ? (
-          <div className="flex items-center gap-1">
-            <input type="number" step="0.5" min={0} max={100} defaultValue={pctDefault} disabled={pending}
-              onBlur={(e) => start(() => { void setComisionUsuario(u.id, (Number(e.target.value) || 0) / 100); })}
-              className="w-16 rounded border border-gray-300 bg-white px-2 py-1 text-xs" />
-            <span className="text-xs text-gray-400">%</span>
-          </div>
-        ) : <span className="text-xs text-gray-300">—</span>}
-      </td>
-      <td className="px-4 py-2" data-label="Estado">
-        <button type="button" disabled={pending}
-          onClick={() => start(() => { void cambiarActivo(u.id, !u.activo); })}
-          className={`rounded-full px-2 py-0.5 text-xs ${u.activo ? "bg-green-100 text-green-700" : "bg-gray-200 text-gray-500"}`}>
-          {u.activo ? "Activo" : "Inactivo"}
-        </button>
-      </td>
-    </tr>
+    <div className="space-y-3">
+      <div role="tablist" className="flex gap-1 border-b border-gray-200">
+        {visibles.map((p) => (
+          <button key={p.id} type="button" role="tab" aria-selected={tab === p.id} onClick={() => setTab(p.id)}
+            className={`-mb-px border-b-2 px-4 py-2 text-sm ${tab === p.id ? "border-[var(--brand-primary)] font-semibold text-gray-900" : "border-transparent text-gray-500"}`}>
+            {p.label} ({grupos[p.id].length})
+          </button>
+        ))}
+      </div>
+      {lista.length === 0 ? (
+        <p className="rounded-xl border border-gray-200 bg-white p-4 text-sm text-gray-500">No hay usuarios en esta pestaña.</p>
+      ) : (
+        <ResponsiveTableShell minWidth={mostrarB2B ? 760 : 620} className="overflow-x-auto rounded-xl border border-gray-200 bg-white">
+          <table className={`w-full text-sm ${mostrarB2B ? "min-w-[760px]" : "min-w-[620px]"}`}>
+            <thead><tr className="bg-gray-50 text-left text-xs uppercase text-gray-400">
+              <th className="px-4 py-2">Nombre</th><th className="px-4 py-2">Email</th><th className="px-4 py-2">Rol</th>
+              {mostrarB2B && <><th className="px-4 py-2">Ficha</th><th className="px-4 py-2">Comisión</th></>}
+              <th className="px-4 py-2">Estado</th><th className="px-4 py-2">Acciones</th>
+            </tr></thead>
+            <tbody>
+              {lista.map((u) => (
+                <tr key={u.id} className="border-t border-gray-50">
+                  <td className="max-w-[14rem] break-words px-4 py-2 text-gray-700" data-label="Nombre">{u.nombre}</td>
+                  <td className="max-w-[16rem] break-all px-4 py-2 text-gray-500" data-label="Email">{u.email}</td>
+                  <td className="px-4 py-2 text-gray-700" data-label="Rol">{u.rol}</td>
+                  {mostrarB2B && <>
+                    <td className="max-w-[14rem] break-words px-4 py-2 text-gray-500" data-label="Ficha">
+                      {u.aliado_id !== null ? (fichas[u.aliado_id]?.nombre ?? `#${u.aliado_id}`) : <span className="text-gray-300">Sin ficha</span>}
+                    </td>
+                    <td className="px-4 py-2 text-gray-500" data-label="Comisión">{u.pct_comision != null ? `${Math.round(u.pct_comision * 1000) / 10} %` : "—"}</td>
+                  </>}
+                  <td className="px-4 py-2" data-label="Estado">
+                    <span className={`rounded-full px-2 py-0.5 text-xs ${u.activo ? "bg-green-100 text-green-700" : "bg-gray-200 text-gray-500"}`}>{u.activo ? "Activo" : "Inactivo"}</span>
+                  </td>
+                  <td className="px-4 py-2" data-label="Acciones">
+                    <Button type="button" variant="outline" size="sm" onClick={() => { setEditando(u); setApertura((n) => n + 1); setAbierto(true); }} aria-label={`Editar ${u.nombre}`}>Editar</Button>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </ResponsiveTableShell>
+      )}
+      {editando && <EditarUsuarioDialog key={`${editando.id}-${apertura}`} u={editando} open={abierto} fichas={fichas} rolActor={rolActor} onClose={() => setAbierto(false)} />}
+    </div>
   );
 }

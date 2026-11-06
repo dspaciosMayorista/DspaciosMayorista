@@ -5,6 +5,7 @@ import { createClient } from "@/lib/supabase/server";
 import { revalidatePath } from "next/cache";
 import type { RolUsuario } from "@/types/database";
 import { ROLES_INTERNOS } from "@/lib/constants";
+import { MSG_NOMBRE_LEGACY, validarCambios, diferencias, esRolB2B, type CambiosUsuario, type UsuarioEditable } from "@/lib/usuarios/edicion";
 
 type Result = { ok: true } | { ok: false; error: string };
 
@@ -12,14 +13,17 @@ type Result = { ok: true } | { ok: false; error: string };
 // crear/editar usuarios de auth.admin. Por eso NO pueden confiar en la RLS de
 // la tabla `usuarios` — hay que validar el rol de quien invoca aquí mismo antes
 // de tocar nada, igual que hace la página (superadmin/administración gestionan).
-async function requireGestionUsuarios(): Promise<{ ok: true; rol: string } | { ok: false; error: string }> {
+async function requireGestionUsuarios(): Promise<{ ok: true; rol: string; id: string } | { ok: false; error: string }> {
   const sb = await createClient();
   const { data: { user } } = await sb.auth.getUser();
   if (!user) return { ok: false, error: "No autenticado." };
-  const { data: perfil } = await sb.from("usuarios").select("rol").eq("id", user.id).single();
-  if (!perfil || !["superadmin", "administracion"].includes(perfil.rol))
+  const { data: perfil, error: pe } = await sb.from("usuarios").select("rol, activo").eq("id", user.id).single();
+  // Cuenta desactivada (o perfil ilegible/incompleto) = sin gestión: el JWT sigue vivo hasta expirar.
+  if (pe || !perfil || perfil.activo !== true)
+    return { ok: false, error: "Tu cuenta no está activa o no se pudo verificar tu perfil." };
+  if (!["superadmin", "administracion"].includes(perfil.rol))
     return { ok: false, error: "Solo superadmin / administración pueden gestionar usuarios." };
-  return { ok: true, rol: perfil.rol };
+  return { ok: true, rol: perfil.rol, id: user.id };
 }
 
 export async function crearUsuario(input: {
@@ -196,42 +200,54 @@ export async function crearAliadoB2B(input: {
   return { ok: true };
 }
 
-export async function cambiarRol(id: string, rol: RolUsuario): Promise<Result> {
-  const gate = await requireGestionUsuarios();
-  if (!gate.ok) return gate;
-  if (rol === "superadmin" && gate.rol !== "superadmin")
-    return { ok: false, error: "Solo superadmin puede asignar el rol superadmin." };
-  if (!process.env.SUPABASE_SERVICE_ROLE_KEY)
-    return { ok: false, error: "Falta SUPABASE_SERVICE_ROLE_KEY." };
-  const admin = createAdminClient();
-  const { error } = await admin.from("usuarios").update({ rol }).eq("id", id);
-  if (error) return { ok: false, error: error.message };
-  revalidatePath("/dashboard/usuarios");
-  return { ok: true };
-}
 
-// Comisión por agencia (%). El superadmin la ajusta por usuario aliado.
-export async function setComisionUsuario(id: string, pct: number): Promise<Result> {
+// Edición de un usuario EXISTENTE. Reemplaza a cambiarRol/cambiarActivo/setComisionUsuario,
+// que escribían sin validar rol↔ficha. Correo y contraseña no existen en la lista blanca:
+// una llamada directa con esas claves se rechaza. No reasigna contratos, comisiones ni
+// fichas, y nunca toca `acceso_legacy_nombre`.
+export async function actualizarUsuario(id: string, cambios: CambiosUsuario): Promise<Result> {
   const gate = await requireGestionUsuarios();
   if (!gate.ok) return gate;
   if (!process.env.SUPABASE_SERVICE_ROLE_KEY)
     return { ok: false, error: "Falta SUPABASE_SERVICE_ROLE_KEY." };
-  const valor = Number.isFinite(pct) && pct >= 0 && pct <= 1 ? pct : null;
   const admin = createAdminClient();
-  const { error } = await admin.from("usuarios").update({ pct_comision: valor }).eq("id", id);
-  if (error) return { ok: false, error: error.message };
-  revalidatePath("/dashboard/usuarios");
-  return { ok: true };
-}
+  const { data: act, error: ae } = await admin.from("usuarios")
+    .select("nombre, rol, activo, tenant, aliado_id, pct_comision, acceso_legacy_nombre").eq("id", id).limit(1);
+  if (ae) return { ok: false, error: "No se pudo leer el usuario. No se guardó nada." };
+  if (act?.length !== 1) return { ok: false, error: "No se encontró el usuario." };
+  const { acceso_legacy_nombre: legacy, ...resto } = act[0] as UsuarioEditable & { acceso_legacy_nombre: boolean | null };
+  const actual: UsuarioEditable = resto;
+  const c = cambios ?? {};
+  const err = validarCambios(actual, c, { rol: gate.rol, id: gate.id }, id);
+  if (err) return { ok: false, error: err };
 
-export async function cambiarActivo(id: string, activo: boolean): Promise<Result> {
-  const gate = await requireGestionUsuarios();
-  if (!gate.ok) return gate;
-  if (!process.env.SUPABASE_SERVICE_ROLE_KEY)
-    return { ok: false, error: "Falta SUPABASE_SERVICE_ROLE_KEY." };
-  const admin = createAdminClient();
-  const { error } = await admin.from("usuarios").update({ activo }).eq("id", id);
-  if (error) return { ok: false, error: error.message };
+  const final = { ...actual, ...c, nombre: (c.nombre ?? actual.nombre).trim() };
+  const patch = diferencias(actual, final);
+  if (Object.keys(patch).length === 0) return { ok: true };
+  // Con acceso heredado por nombre, el nombre ES el vínculo: no se cambia hasta conciliar
+  // (esta acción no activa ni apaga el acceso heredado).
+  if (patch.nombre !== undefined && legacy !== false) return { ok: false, error: MSG_NOMBRE_LEGACY };
+
+  if (esRolB2B(final.rol)) {
+    // La ficha (si cambió ella o el rol) debe existir y ser del mismo tipo que el rol.
+    if (final.aliado_id !== null && (patch.aliado_id !== undefined || patch.rol !== undefined)) {
+      const { data: f, error: fe } = await admin.from("aliados").select("id, tipo").eq("id", final.aliado_id).limit(1);
+      if (fe) return { ok: false, error: "No se pudo verificar la ficha. No se guardó nada." };
+      if (f?.length !== 1) return { ok: false, error: "La ficha elegida no existe." };
+      const tipo = (f[0] as { tipo: string | null }).tipo;
+      if (tipo && tipo !== final.rol) return { ok: false, error: `La ficha es de tipo ${tipo} y el rol es ${final.rol}.` };
+    }
+    // Mismo candado anti-suplantación del alta: el portal aún respalda contratos viejos por nombre.
+    if (patch.nombre !== undefined || patch.rol !== undefined) {
+      const { data: dup, error: de } = await admin.from("usuarios").select("id")
+        .in("rol", ["agencia", "freelance"]).ilike("nombre", final.nombre).neq("id", id).limit(1).maybeSingle();
+      if (de) return { ok: false, error: "No se pudo verificar si ya existe un aliado con ese nombre. No se guardó nada." };
+      if (dup) return { ok: false, error: "Ya existe un aliado (agencia/freelance) con ese nombre." };
+    }
+  }
+
+  const { data: upd, error } = await admin.from("usuarios").update(patch as { rol?: RolUsuario }).eq("id", id).select("id");
+  if (error || upd?.length !== 1) return { ok: false, error: "No se pudo guardar el usuario." };
   revalidatePath("/dashboard/usuarios");
   return { ok: true };
 }

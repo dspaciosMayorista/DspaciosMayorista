@@ -24,8 +24,13 @@ export default async function UsuariosPage() {
 
   const { data: usuarios } = await sb
     .from("usuarios")
-    .select("id, email, nombre, rol, activo, pct_comision")
+    .select("id, email, nombre, rol, activo, pct_comision, tenant, aliado_id, acceso_legacy_nombre")
     .order("nombre");
+  const ids = [...new Set((usuarios ?? []).map((u) => u.aliado_id).filter((x): x is number => x != null))];
+  const { data: fichasDb } = ids.length
+    ? await sb.from("aliados").select("id, nombre, nit").in("id", ids)
+    : { data: [] as { id: number; nombre: string; nit: string | null }[] };
+  const fichas = Object.fromEntries((fichasDb ?? []).map((f) => [f.id, { nombre: f.nombre, nit: f.nit }]));
 
   return (
     <div className="mx-auto max-w-4xl p-4 md:p-8">
@@ -33,7 +38,7 @@ export default async function UsuariosPage() {
       <p className="mb-6 text-sm text-gray-500">
         Crea las cuentas del equipo y asígnales su rol. El asesor (venta) no ve costos ni utilidades.
       </p>
-      <UsuariosClient usuarios={usuarios ?? []} />
+      <UsuariosClient usuarios={usuarios ?? []} fichas={fichas} rolActor={perfil?.rol ?? ""} />
     </div>
   );
 }

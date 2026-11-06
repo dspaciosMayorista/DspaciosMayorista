@@ -153,7 +153,7 @@ test("wiring: la aprobación ya no usa service-role, ni busca por correo, ni esc
 
 // ── Alta interna ──────────────────────────────────────────────────────────
 test("crearUsuario: el rol no viaja en la metadata; el perfil se fija activo y con su rol", async () => {
-  __setClient(sesion({ rol: "superadmin" }).sb);
+  __setClient(sesion({ rol: "superadmin", activo: true }).sb);
   const { sb, ops, auth } = adminFalso();
   __setAdmin(sb);
   const r = await crearUsuario({ email: "nuevo@t", password: "secreta1", nombre: "Nuevo", rol: "gerencia" });
@@ -168,7 +168,7 @@ test("crearUsuario: el rol no viaja en la metadata; el perfil se fija activo y c
 
 for (const [caso, opts] of [["error", { perfilError: true }], ["0 filas", { perfilFilas: 0 }]] as const) {
   test(`crearUsuario: perfil no confirmado (${caso}) → borra la cuenta y falla`, async () => {
-    __setClient(sesion({ rol: "administracion" }).sb);
+    __setClient(sesion({ rol: "administracion", activo: true }).sb);
     const { sb, auth } = adminFalso(opts);
     __setAdmin(sb);
     const r = await crearUsuario({ email: "nuevo@t", password: "secreta1", nombre: "Nuevo", rol: "venta" });

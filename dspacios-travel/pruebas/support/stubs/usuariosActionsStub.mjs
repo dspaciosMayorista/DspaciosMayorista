@@ -6,6 +6,4 @@ const faltante = (n) => { throw new Error(`${n}: no implementado en el stub — 
 export const crearUsuario = (...a) => (impls.crearUsuario ?? (() => faltante("crearUsuario")))(...a);
 export const buscarFichasAliado = (...a) => (impls.buscarFichasAliado ?? (() => faltante("buscarFichasAliado")))(...a);
 export const crearAliadoB2B = (...a) => (impls.crearAliadoB2B ?? (() => faltante("crearAliadoB2B")))(...a);
-export const cambiarRol = async () => ({ ok: true });
-export const cambiarActivo = async () => ({ ok: true });
-export const setComisionUsuario = async () => ({ ok: true });
+export const actualizarUsuario = (...a) => (impls.actualizarUsuario ?? (() => faltante("actualizarUsuario")))(...a);

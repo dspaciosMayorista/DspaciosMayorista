@@ -245,7 +245,7 @@ export async function resolve(specifier, context, nextResolve) {
     return { url: STUB_EMPAQUETADOS_ACTIONS, shortCircuit: true };
   }
   if (specifier === "./actions" &&
-      (context.parentURL?.endsWith("/dashboard/usuarios/UsuariosClient.tsx") || context.parentURL?.endsWith("/dashboard/usuarios/AliadoB2BForm.tsx"))) {
+      (context.parentURL?.endsWith("/dashboard/usuarios/UsuariosClient.tsx") || context.parentURL?.endsWith("/dashboard/usuarios/AliadoB2BForm.tsx") || context.parentURL?.endsWith("/dashboard/usuarios/EditarUsuarioDialog.tsx"))) {
     return { url: pathToFileURL(join(AQUI, "stubs", "usuariosActionsStub.mjs")).href, shortCircuit: true };
   }
   if (specifier === "./actions" && context.parentURL?.endsWith("PagosList.tsx")) {

@@ -14,7 +14,7 @@ const { __setAdmin, __resetAdmin } = await import("./support/stubs/supabaseAdmin
 type Fila = Record<string, unknown>;
 const sesion = (rol: string) => ({
   auth: { getUser: async () => ({ data: { user: { id: "u-s" } } }) },
-  from: () => { const a = { select: () => a, eq: () => a, single: async () => ({ data: { rol }, error: null }) }; return a; },
+  from: () => { const a = { select: () => a, eq: () => a, single: async () => ({ data: { rol, activo: true }, error: null }) }; return a; },
 });
 
 // Admin simulado: `aliados` con fichas dadas; registra escrituras.
