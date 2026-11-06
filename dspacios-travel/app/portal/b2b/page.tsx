@@ -3,7 +3,6 @@ import { ArrowRight, ClipboardList, Compass, CreditCard, FileText, Plane, Users,
 import { PortalShell, Aviso } from "@/components/portal/PortalShell";
 import { PortalGate } from "@/components/portal/PortalGate";
 import { AvisoHistoricoIncompleto } from "@/components/portal/AvisoHistoricoIncompleto";
-import { PlanesRecomendados } from "@/components/portal/PlanesRecomendados";
 import { GloboModulos } from "@/components/portal/GloboModulos";
 import { GraficaSemana } from "@/components/portal/GraficaSemana";
 import { actividadSemana } from "@/components/portal/actividadSemana";
@@ -15,7 +14,7 @@ import {
   resolverContextoPortal, categoriaDelPortal, cargarConjuntoPortal, cargarCotizacionesPortal, cargarComparativasPortal,
   linkPagoPortal, monedaOfertaDe,
 } from "@/lib/portal/b2bPortalServidor";
-import { carteraDe, comparativaComoCotizacion, origenVenta, resumenInicio, salidasVigentes, type VentaPortal } from "@/lib/portal/b2bPortal";
+import { carteraDe, comparativaComoCotizacion, ordenarContratosDesc, origenVenta, resumenInicio, salidasProximasRango, salidasVigentes, type VentaPortal } from "@/lib/portal/b2bPortal";
 
 export const dynamic = "force-dynamic";
 
@@ -43,7 +42,6 @@ function tonoEstado(estado: string | null | undefined) {
 }
 const cap = (t: string) => t.charAt(0).toUpperCase() + t.slice(1);
 const diaMes = (iso: string) => `${iso.slice(8, 10)}/${iso.slice(5, 7)}`;
-const porNumeroDesc = (a: VentaPortal, b: VentaPortal) => b.numero_contrato.localeCompare(a.numero_contrato, "es", { numeric: true });
 
 export default async function PortalB2BInicio({ searchParams }: { searchParams?: Promise<{ contratos?: string }> } = {}) {
   const ctx = await resolverContextoPortal();
@@ -78,18 +76,17 @@ export default async function PortalB2BInicio({ searchParams }: { searchParams?:
   // Contratos recientes: solo el conjunto autorizado; la participación por comisión no expone cliente ni abre cartera/documentos.
   const conSaldo = new Set(cartera.filter((f) => f.saldo > 0).map((f) => f.numero_contrato));
   const destinoVenta = (v: VentaPortal) => `/portal/b2b/ventas?vista=${origenVenta(v, ctx.userId) === "directa" ? "directas" : "asistidas"}`;
-  const visibles = conjunto.ventas
+  const visibles = ordenarContratosDesc(conjunto.ventas
     .filter((v) => {
       if (filtro === "directas") return origenVenta(v, ctx.userId) === "directa";
       if (filtro === "asistidas") return origenVenta(v, ctx.userId) === "asistida";
       if (filtro === "saldo") return v.relacion === "propio" && conSaldo.has(v.numero_contrato);
       return true;
-    })
-    .sort(porNumeroDesc);
+    }));
   const filas = visibles.slice(0, FILAS_VISIBLES);
 
   const salidas = salidasVigentes(conjunto.ventas);
-  const proximas = salidas.filter((v) => (v.fecha_salida as string) >= hoy).sort((a, b) => String(a.fecha_salida).localeCompare(String(b.fecha_salida))).slice(0, 3);
+  const proximas = salidasProximasRango(conjunto.ventas, hoy).slice(0, 3); // #99: misma regla que el contador y el listado
   const semana = actividadSemana({ hoy, salidas: salidas.map((v) => v.fecha_salida), pagos: conjunto.abonos.map((a) => a.fecha_abono) });
 
   const rolEt = ctx.rol === "agencia" ? "Agencia" : "Freelance";
@@ -190,10 +187,10 @@ export default async function PortalB2BInicio({ searchParams }: { searchParams?:
             <div className={s.seguimiento}>
               <div className={s.subEt}>Seguimiento</div>
               <Link href="/portal/b2b/cartera" className={s.segFila}><span>Contratos con saldo</span><b>{r.contratosConSaldo}</b></Link>
-              <Link href="/portal/b2b/ventas" className={s.segFila}><span>Salidas en los próximos 30 días</span><b>{r.salidasProximas}</b></Link>
+              <Link href="/portal/b2b/ventas?salidas=proximas" className={s.segFila}><span>Salidas en los próximos 30 días</span><b>{r.salidasProximas}</b></Link>
             </div>
           </section>
-          <PlanesRecomendados />
+          {/* #87: «Planes recomendados» oculto temporalmente; el componente y las ofertas siguen intactos. */}
         </div>
       </div>
 

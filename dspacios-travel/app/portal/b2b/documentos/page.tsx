@@ -34,10 +34,10 @@ export default async function PortalDocumentos() {
       {filas.length === 0 ? (
         <Vacio>Aún no tienes contratos con documentos.</Vacio>
       ) : (
-        <TablaScroll etiqueta="Documentos por contrato" ancho="min-w-[820px]">
+        <TablaScroll etiqueta="Documentos por contrato" ancho="min-w-[820px]" apilar>
           <thead>
             <tr className="bg-gray-50 text-left text-xs uppercase text-gray-400">
-              <th scope="col" className="px-3 py-2">Contrato</th><th scope="col" className="px-3 py-2">Contrato (PDF)</th><th scope="col" className="px-3 py-2">Voucher</th>
+              <th scope="col" className="px-3 py-2">Contrato</th><th scope="col" className="px-3 py-2">Contrato</th><th scope="col" className="px-3 py-2">Voucher</th>
               <th scope="col" className="px-3 py-2">Estado de cuenta</th><th scope="col" className="px-3 py-2">Recibos de caja</th>
             </tr>
           </thead>
@@ -45,10 +45,10 @@ export default async function PortalDocumentos() {
             {filas.map((d) => (
               <tr key={d.numero_contrato} className="border-t border-gray-50 align-top">
                 <th scope="row" className="px-3 py-2 text-left font-mono font-semibold text-[#1D7C9A]">{numeroVisible(d.numero_contrato)}</th>
-                <td className="px-3 py-2">
-                  {d.contratoToken ? <Link href={`/c/${d.contratoToken}`} target="_blank" className={ENLACE} style={COLOR}>Contrato</Link> : NO}
+                <td data-label="Contrato" className="px-3 py-2">
+                  {d.contratoToken ? <Link href={`/c/${d.contratoToken}`} target="_blank" className={ENLACE} style={COLOR}>Imprimir / Guardar PDF</Link> : NO}
                 </td>
-                <td className="px-3 py-2">
+                <td data-label="Voucher" className="px-3 py-2">
                   {d.vouchers.length === 0 ? NO : (
                     <ul className="space-y-0.5">
                       {d.vouchers.map((v, i) => (
@@ -57,10 +57,10 @@ export default async function PortalDocumentos() {
                     </ul>
                   )}
                 </td>
-                <td className="px-3 py-2">
+                <td data-label="Estado de cuenta" className="px-3 py-2">
                   <Link href={`/estado-cuenta/${encodeURIComponent(d.numero_contrato)}`} target="_blank" className={ENLACE} style={COLOR}>Estado de cuenta</Link>
                 </td>
-                <td className="px-3 py-2">
+                <td data-label="Recibos de caja" className="px-3 py-2">
                   {d.recibos.length === 0 ? NO : (
                     <ul className="space-y-0.5">
                       {d.recibos.map((r) => (

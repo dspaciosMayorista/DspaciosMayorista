@@ -124,16 +124,28 @@ export async function resolverComisionB2B(
   const enRevision = await filasEnRevisionB2B(admin);
   if (!enRevision) return null;
   const filas = ((filasRaw ?? []) as FilaResolver[]).filter((f) => !enRevision.has(f.id));
-  // La decisión de ACCESO al contrato no cambia: la vía 2 usa, como siempre,
-  // el aliado_id de la fila más reciente. Qué fila(s) se cobran se decide
-  // después, por aliado (filasCobrables).
+  // Qué fila(s) se COBRAN se decide después, por aliado (filasCobrables). El
+  // ACCESO se decide abajo, por la ficha de quien mira si hay una fila suya.
   const masReciente = filas.length > 0 ? filas[filas.length - 1] : null;
   if (!esVentasB2B && !masReciente) return null;
+
+  // #90-portal-comision: el ACCESO no se decide por la fila más reciente.
+  // Un contrato puede tener comisiones de DOS aliados distintos (ej. el
+  // freelance titular que vendió + el aliado que asistió, o viceversa en
+  // orden de creación) — si cualquiera de las filas del contrato es de la
+  // ficha de quien mira, esa es la que manda para decidir el acceso, sin
+  // importar si es la más vieja o la más nueva. Solo cuando NINGUNA fila es
+  // suya (rol interno sin ficha, aliado sin ninguna comisión en este
+  // contrato) se cae al respaldo de siempre: la más reciente.
+  const aliadoIdPerfilAcceso = (perfil?.aliado_id as number | null) ?? null;
+  const filaDeSuFicha = !esVentasB2B && aliadoIdPerfilAcceso != null
+    ? filas.find((f) => f.aliado_id === aliadoIdPerfilAcceso) ?? null
+    : null;
 
   const aliadoIdContrato = resolverAliadoIdContrato({
     esVentasB2B,
     aliadoIdVentas: (v.aliado_id as number | null) ?? null,
-    aliadoIdComisionManual: esVentasB2B ? null : (masReciente?.aliado_id ?? null),
+    aliadoIdComisionManual: esVentasB2B ? null : (filaDeSuFicha?.aliado_id ?? masReciente?.aliado_id ?? null),
   });
 
   // La autorización de esta página NO la hace la RLS: se lee con service-role.
@@ -196,6 +208,16 @@ export async function resolverComisionB2B(
     }
     evidencia = evidenciaSinFicha({ via: acceso.via, documentoFicha, nombreUsuario: (perfil?.nombre as string | null) ?? null });
   }
+  // #90-portal-comision: si el MISMO aliado tiene varias filas cobrables en
+  // este contrato (dos comisiones económicas suyas, no de otro), la regla
+  // explícita es dejarlo ELEGIR cuál ver — el mismo mecanismo que ya existe
+  // para un rol interno con varias comisiones de distintos aliados
+  // (`elegirFilaCobro`, `ComisionesParaElegir`). Deliberadamente NO se suman
+  // (pueden tener base/% distintos: sumarlas inventaría un número que no
+  // está en ninguna fila) ni se rechaza (las dos son legítimamente suyas y
+  // debe poder cobrar cada una). Es seguro: `filasCobrables` ya filtró estas
+  // filas a las de SU ficha, así que la lista para elegir nunca incluye la
+  // comisión de otro aliado.
   const cobrables = filasCobrables(filas, v.comision_estado as string | null, {
     esInterno,
     aliadoId: aliadoIdPerfil,

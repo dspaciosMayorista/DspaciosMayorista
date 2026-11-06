@@ -121,8 +121,10 @@ export function Aviso({ children }: { children: React.ReactNode }) {
 }
 
 /** Subpestañas por enlace real (`?vista=`): enlace directo, teclado y botón Atrás funcionan sin JavaScript. */
-export function SubPestanas({ base, actual, items, etiqueta }: {
+export function SubPestanas({ base, actual, items, etiqueta, consulta }: {
   base: string;
+  /** Parámetros extra que se conservan al cambiar de pestaña (p. ej. `salidas=proximas`). */
+  consulta?: string;
   actual: string;
   items: { id: string; label: string; cuenta?: number }[];
   etiqueta: string;
@@ -133,7 +135,7 @@ export function SubPestanas({ base, actual, items, etiqueta }: {
         {items.map((i) => (
           <li key={i.id}>
             <Link
-              href={`${base}?vista=${i.id}`}
+              href={`${base}?vista=${i.id}${consulta ? `&${consulta}` : ""}`}
               aria-current={i.id === actual ? "page" : undefined}
               className={`${s.segmento} ${i.id === actual ? s.segmentoActivo : ""}`}
             >
@@ -146,10 +148,14 @@ export function SubPestanas({ base, actual, items, etiqueta }: {
   );
 }
 
-/** Contenedor de tabla desplazable en móvil, enfocable con teclado. */
-export function TablaScroll({ children, etiqueta, ancho = "min-w-[760px]" }: { children: React.ReactNode; etiqueta: string; ancho?: string }) {
+/**
+ * Contenedor de tabla del portal, enfocable con teclado.
+ * Con `apilar`, cuando el ANCHO DEL CONTENEDOR (no el del dispositivo) no alcanza para las columnas, cada fila pasa a tarjeta con
+ * todos sus campos y acciones (cada `td` lleva `data-label`) — sin desplazamiento horizontal. Ver `.tablaApilable` en vidrio.module.css.
+ */
+export function TablaScroll({ children, etiqueta, ancho = "min-w-[760px]", apilar = false }: { children: React.ReactNode; etiqueta: string; ancho?: string; apilar?: boolean }) {
   return (
-    <div role="region" aria-label={etiqueta} tabIndex={0} className={`${s.tablaMarco} overflow-x-auto`}>
+    <div role="region" aria-label={etiqueta} tabIndex={0} className={`${s.tablaMarco} ${apilar ? s.tablaApilable : ""} overflow-x-auto`}>
       <table className={`w-full ${ancho} text-sm`}>{children}</table>
     </div>
   );

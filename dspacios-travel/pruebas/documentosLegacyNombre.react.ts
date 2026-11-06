@@ -124,6 +124,15 @@ test("modo normal: para cada cuenta, el listado coincide con estado de cuenta, p
   // suyo (ventas.freelance_nombre), pero su única comisión sin ficha es de
   // "Otro Nombre". Abre el contrato, no esa comisión (un interno la genera).
   const sinComisionPropia: Record<string, string[]> = { "u-antiguo": ["C12-freelance"] };
+  // #90-portal-comision: lo inverso también puede pasar — un contrato puede
+  // NO estar en el listado/estado de cuenta de u-enlazado (C3-ficha-manual
+  // tiene su ficha en una fila VIEJA de la comisión manual, no en
+  // `ventas.aliado_id`: el listado y el estado de cuenta todavía no
+  // resuelven ese vínculo, ver "DIVERGENCIA CONOCIDA" abajo) y aun así su
+  // CUENTA DE COBRO sí abrir, porque `resolverComisionB2B` ya no decide el
+  // acceso por la fila más reciente de `aliados_b2b` sino por CUALQUIER fila
+  // que sea de su ficha.
+  const conComisionPropiaSinListado: Record<string, string[]> = { "u-enlazado": ["C3-ficha-manual"] };
   for (const [uid, abiertos] of Object.entries(esperado)) {
     const { filas } = await decisiones(uid, BASE, tablasBase());
     for (const f of filas) {
@@ -131,7 +140,10 @@ test("modo normal: para cada cuenta, el listado coincide con estado de cuenta, p
       assert.equal(f.listado, debe, `${uid} listado ${f.numero}`);
       assert.equal(f.estado, debe, `${uid} estado de cuenta ${f.numero}`);
       assert.equal(f.plan, debe, `${uid} plan de cobro ${f.numero}`);
-      assert.equal(f.cobro, debe && !(sinComisionPropia[uid] ?? []).includes(f.numero), `${uid} cuenta de cobro ${f.numero}`);
+      const cobroEsperado =
+        (debe && !(sinComisionPropia[uid] ?? []).includes(f.numero)) ||
+        (conComisionPropiaSinListado[uid] ?? []).includes(f.numero);
+      assert.equal(f.cobro, cobroEsperado, `${uid} cuenta de cobro ${f.numero}`);
     }
   }
   // Recibos: siguen al estado de cuenta.
@@ -142,11 +154,14 @@ test("modo normal: para cada cuenta, el listado coincide con estado de cuenta, p
   assert.equal(await cargarRecibo(33), null, "C3 tiene ficha en comisión manual: el nombre no lo abre");
 });
 
-test("DIVERGENCIA CONOCIDA (vínculo por id, NO legacy): si la comisión manual MÁS RECIENTE tiene la ficha del aliado, solo la cuenta de cobro lo reconoce", async () => {
+test("DIVERGENCIA CONOCIDA (vínculo por id, NO legacy): la comisión manual tiene la ficha del aliado, pero solo la cuenta de cobro lo reconoce", async () => {
   // No abre nada a terceros ni por nombre: es el dueño real de la ficha. Pero
-  // el listado y el estado de cuenta todavía no resuelven ese vínculo. Se fija
-  // el comportamiento actual para que, si se unifica, esta prueba lo delate y
-  // se actualice a propósito (ver la entrega).
+  // el listado y el estado de cuenta todavía no resuelven ese vínculo (siguen
+  // sin mirar `aliados_b2b.aliado_id`, solo `ventas.aliado_id`). Se fija el
+  // comportamiento actual para que, si se unifica, esta prueba lo delate y se
+  // actualice a propósito (ver la entrega). ⚠️ #90-portal-comision:
+  // `resolverComisionB2B` YA NO exige que esta ficha esté en la fila MÁS
+  // RECIENTE — lo que sigue sin resolver es solo el listado/estado de cuenta.
   const t = tablasBase();
   t.aliados_b2b = [comisionManual(1, "C3-ficha-manual", null), comisionManual(2, "C3-ficha-manual", 7)];
   const { filas } = await decisiones("u-enlazado", ["C3-ficha-manual"], t);

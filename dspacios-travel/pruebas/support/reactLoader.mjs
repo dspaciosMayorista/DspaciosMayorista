@@ -244,6 +244,10 @@ export async function resolve(specifier, context, nextResolve) {
       (context.parentURL?.endsWith("/NuevoEmpaquetadoForm.tsx") || context.parentURL?.endsWith("/EditarEmpaquetadoForm.tsx"))) {
     return { url: STUB_EMPAQUETADOS_ACTIONS, shortCircuit: true };
   }
+  if (specifier === "./actions" &&
+      (context.parentURL?.endsWith("/dashboard/usuarios/UsuariosClient.tsx") || context.parentURL?.endsWith("/dashboard/usuarios/AliadoB2BForm.tsx") || context.parentURL?.endsWith("/dashboard/usuarios/EditarUsuarioDialog.tsx"))) {
+    return { url: pathToFileURL(join(AQUI, "stubs", "usuariosActionsStub.mjs")).href, shortCircuit: true };
+  }
   if (specifier === "./actions" && context.parentURL?.endsWith("PagosList.tsx")) {
     return { url: STUB_PAGOS_ACTIONS, shortCircuit: true };
   }
