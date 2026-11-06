@@ -263,3 +263,10 @@ test("buscar con tipo: solo devuelve fichas de ese tipo (servidor)", async () =>
   assert.ok(r.ok && r.fichas.map((f) => f.id).join() === "8");
   assert.equal((await buscarFichasAliado("900123", "x" as never)).ok, false);
 });
+
+test("alta de freelance: el perfil se guarda sin tocar tenant (queda el valor técnico por defecto)", async () => {
+  __setClient(sesion("superadmin") as never);
+  const a = admin([]); __setAdmin(a.sb);
+  assert.deepEqual(await crearAliadoB2B({ ...base, tipo: "freelance", tipoDocumento: "CC", enlace: { modo: "nueva" } }), { ok: true });
+  assert.equal("tenant" in upsertDe(a.ops)!, false);
+});

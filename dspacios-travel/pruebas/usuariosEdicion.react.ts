@@ -196,3 +196,22 @@ test("cambio agencia→freelance con ficha de agencia: el servidor rechaza sin e
   assert.equal(r.ok, true);
   assert.deepEqual(a.updates[0].patch, { rol: "freelance", aliado_id: null });
 });
+
+const FREE = { nombre: "Ana Free", rol: "freelance", activo: true, tenant: "minorista", aliado_id: 9, pct_comision: 0.1, acceso_legacy_nombre: false };
+
+test("freelance: cambiar tenant por llamada directa se rechaza (incluso con el mismo valor o junto a un cambio de rol)", async () => {
+  for (const c of [{ tenant: "mayorista" }, { tenant: "minorista" }, { tenant: "mayorista", nombre: "Otra" }]) {
+    const a = admin(FREE, { ficha: { id: 9, tipo: "freelance" } }); act("superadmin", a);
+    assert.match(err(await actualizarUsuario("u1", c)), /freelance no se clasifica por empresa/);
+    assert.equal(a.updates.length, 0);
+  }
+  const a = admin(B2B, { ficha: { id: 7, tipo: "freelance" } }); act("superadmin", a);
+  assert.match(err(await actualizarUsuario("u1", { rol: "freelance", tenant: "minorista" })), /freelance no se clasifica/);
+  assert.equal(a.updates.length, 0);
+});
+
+test("freelance: editar nombre/comisión conserva ficha y tenant técnico (el patch no los incluye)", async () => {
+  const a = admin(FREE, { ficha: { id: 9, tipo: "freelance" } }); act("administracion", a);
+  assert.equal((await actualizarUsuario("u1", { nombre: "Ana Nueva", pct_comision: 0.2 })).ok, true);
+  assert.deepEqual(a.updates[0].patch, { nombre: "Ana Nueva", pct_comision: 0.2 });
+});

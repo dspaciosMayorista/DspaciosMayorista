@@ -40,6 +40,9 @@ export function validarCambios(
     return "No puedes cambiar tu propio rol ni desactivarte.";
   if (c.nombre !== undefined && !c.nombre.trim()) return "El nombre no puede quedar vacío.";
   if (c.activo !== undefined && typeof c.activo !== "boolean") return "Estado no válido.";
+  // Un freelance no se clasifica por empresa: su tenant técnico se conserva tal cual y esta acción no lo toca.
+  if (c.tenant !== undefined && (c.rol ?? actual.rol) === "freelance")
+    return "Un freelance no se clasifica por empresa: el tenant no se modifica desde aquí.";
   if (c.tenant !== undefined) {
     if (!(TENANTS as readonly string[]).includes(c.tenant)) return "Empresa no válida.";
     if (c.tenant !== actual.tenant && actor.rol !== "superadmin") return "Solo superadmin puede mover un usuario de empresa.";

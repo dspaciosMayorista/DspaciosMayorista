@@ -154,7 +154,7 @@ test("rótulos por tipo: freelance y agencia; Empresa = tenant; la búsqueda pid
   await click(host.querySelector('button[aria-label^="Editar Freelance"]')!);
   assert.match(dialogo()!.textContent!, /Ficha de freelance/);
   assert.ok(dialogo()!.querySelector('input[placeholder="Buscar ficha de freelance por documento"]'));
-  assert.ok(dialogo()!.querySelector('select[aria-label="Empresa"]'));
+  assert.equal(dialogo()!.querySelector('select[aria-label="Empresa"]'), null, "freelance no se clasifica por empresa");
   assert.equal(dialogo()!.querySelector('select[aria-label="Agencia"]'), null);
   assert.doesNotMatch(dialogo()!.textContent!, /Ficha de agencia/);
   await cambiar(dialogo()!.querySelector('input[aria-label^="Documento de la ficha"]')!, "5", "input");
@@ -182,4 +182,32 @@ test("cambio de rol agencia→freelance con ficha de agencia: avisa, bloquea Gua
   assert.equal(bt("Guardar").disabled, false);
   await click(bt("Guardar"));
   assert.deepEqual(llamadas[0], ["1", { rol: "freelance", aliado_id: null }]);
+});
+
+test("freelance: sin selector Empresa; editar nombre/comisión no envía tenant; agencia sí muestra Empresa", async () => {
+  const llamadas: unknown[][] = [];
+  __setImpls({ actualizarUsuario: async (...a: unknown[]) => { llamadas.push(a); return { ok: true }; } });
+  await montar();
+  await click(host.querySelector('button[aria-label^="Editar Freelance"]')!);
+  assert.equal(dialogo()!.querySelector('select[aria-label="Empresa"]'), null);
+  assert.doesNotMatch(dialogo()!.textContent!, /Empresa|Agencia|mayorista|minorista/);
+  await cambiar(dialogo()!.querySelector('input[aria-label="Nombre"]')!, "Nombre Nuevo", "input");
+  await cambiar(dialogo()!.querySelector('input[aria-label="Comisión"]')!, "9", "input");
+  await click(bt("Guardar"));
+  assert.deepEqual(llamadas[0], ["2", { nombre: "Nombre Nuevo", pct_comision: 0.09 }]);
+  await click(host.querySelector('button[aria-label^="Editar Agencia Con"]')!);
+  assert.ok(dialogo()!.querySelector('select[aria-label="Empresa"]'), "la agencia conserva su clasificación");
+});
+
+test("agencia→freelance con borrador de empresa: el tenant del borrador se descarta y no se envía", async () => {
+  const llamadas: unknown[][] = [];
+  __setImpls({ actualizarUsuario: async (...a: unknown[]) => { llamadas.push(a); return { ok: true }; } });
+  await montar();
+  await click(host.querySelector('button[aria-label^="Editar Agencia Heredada"]')!);
+  await cambiar(dialogo()!.querySelector('select[aria-label="Empresa"]')!, "minorista");
+  await cambiar(dialogo()!.querySelector('select[aria-label="Rol"]')!, "freelance");
+  assert.equal(dialogo()!.querySelector('select[aria-label="Empresa"]'), null);
+  assert.doesNotMatch(dialogo()!.querySelector('[role="status"]')?.textContent ?? "", /Empresa/);
+  await click(bt("Guardar"));
+  assert.deepEqual(llamadas[0], ["6", { rol: "freelance" }]);
 });

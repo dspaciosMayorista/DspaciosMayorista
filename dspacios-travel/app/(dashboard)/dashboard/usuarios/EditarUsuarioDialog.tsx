@@ -30,8 +30,11 @@ export function EditarUsuarioDialog({ u, fichas, rolActor, open, onClose }: {
     return f ? `${f.nombre}${f.nit ? ` (${f.nit})` : ""}` : `#${id}`;
   };
   const legacy = u.acceso_legacy_nombre !== false; // sin dato = se asume heredado (falla cerrado)
-  const efectos = efectosDeCambio(original, d, nombreFicha, legacy);
-  const cambios = diferencias(original, d);
+  const esFreelance = d.rol === "freelance";
+  // Freelance: sin clasificación por empresa. Se descarta cualquier borrador de tenant (el guardado nunca lo envía).
+  const dEfectivo = esFreelance ? { ...d, tenant: original.tenant } : d;
+  const efectos = efectosDeCambio(original, dEfectivo, nombreFicha, legacy);
+  const cambios = diferencias(original, dEfectivo);
   const hayCambios = Object.keys(cambios).length > 0;
   const bloqueado = legacy && cambios.nombre !== undefined;
   const b2b = esRolB2B(d.rol);
@@ -77,12 +80,14 @@ export function EditarUsuarioDialog({ u, fichas, rolActor, open, onClose }: {
               {ROLES.filter((r) => esSuper || r !== "superadmin" || r === u.rol).map((r) => <option key={r} value={r}>{r}</option>)}
             </select>
           </label>
-          <label className="text-xs text-gray-500">Empresa
-            <select value={d.tenant} onChange={(e) => set("tenant", e.target.value)} disabled={!esSuper} aria-label="Empresa"
-              className="mt-1 w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm disabled:bg-gray-50">
-              {TENANTS.map((t) => <option key={t} value={t}>{t}</option>)}
-            </select>
-          </label>
+          {!esFreelance && (
+            <label className="text-xs text-gray-500">Empresa
+              <select value={d.tenant} onChange={(e) => set("tenant", e.target.value)} disabled={!esSuper} aria-label="Empresa"
+                className="mt-1 w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm disabled:bg-gray-50">
+                {TENANTS.map((t) => <option key={t} value={t}>{t}</option>)}
+              </select>
+            </label>
+          )}
           <label className="flex items-center gap-2 pt-5 text-sm text-gray-700">
             <input type="checkbox" checked={d.activo} onChange={(e) => set("activo", e.target.checked)} aria-label="Activo" /> Activo
           </label>

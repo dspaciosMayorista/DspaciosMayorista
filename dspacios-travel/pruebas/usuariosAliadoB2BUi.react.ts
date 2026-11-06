@@ -99,3 +99,23 @@ test("B2B: sin coincidencias → ficha nueva explícita; cambiar el documento re
   assert.deepEqual((crear[0] as { enlace: unknown; documento: string }).enlace, { modo: "nueva" });
   assert.equal((crear[0] as { documento: string }).documento, "556");
 });
+
+test("alta B2B: no existe selector de empresa/mayorista/minorista ni se envía tenant", async () => {
+  const crear: Record<string, unknown>[] = [];
+  __setImpls({
+    buscarFichasAliado: async () => ({ ok: true, fichas: [] }),
+    crearAliadoB2B: async (i: Record<string, unknown>) => { crear.push(i); return { ok: true }; },
+  });
+  await montar();
+  assert.doesNotMatch(host.textContent!, /Empresa|mayorista|minorista/i);
+  await escribir(ph("Nombre / razón social"), "Ana Freelance");
+  await escribir(ph("Número de documento"), "123");
+  await click(boton("Buscar ficha"));
+  const radios = [...host.querySelectorAll('input[type="radio"]')] as HTMLInputElement[];
+  await click(radios[radios.length - 1]);
+  await escribir(ph("Email (acceso al portal)"), "a@x.co");
+  await escribir(ph("Contraseña (mín. 6)"), "secreta1");
+  await click(boton("Crear aliado B2B"));
+  assert.equal(crear.length, 1);
+  assert.equal("tenant" in crear[0], false);
+});
