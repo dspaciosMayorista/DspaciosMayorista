@@ -19,7 +19,7 @@ import { contratosPorParticipacion } from "@/lib/auth/participacionComisionB2B";
 import { leerTodoConConteo, PAGINA_FILAS, type PaginaConConteo } from "@/lib/auth/fichaComisionManual";
 import { comisionesDelPortal, type ComisionPortal } from "@/lib/finanzas/comisionPortal";
 import { cobroDeVenta } from "@/lib/finanzas/cobro";
-import { clasificarComparativas, type AbonoPortal, type MetaComparativa, type VentaPortal, type VoucherPortal } from "@/lib/portal/b2bPortal";
+import { clasificarComparativas, ordenarContratosDesc, type AbonoPortal, type MetaComparativa, type VentaPortal, type VoucherPortal } from "@/lib/portal/b2bPortal";
 
 type Admin = ReturnType<typeof createAdminClient>;
 type Fila = Record<string, unknown>;
@@ -143,6 +143,7 @@ export async function cargarConjuntoPortal(ctx: Ok, opts: { abonos?: boolean; vo
   // Comisión: la misma lectura que la cuenta de cobro. A quien solo participa se
   // le acepta únicamente lo que sale de SUS filas de `aliados_b2b` — jamás los
   // importes de `ventas`, que son del contrato (y pueden ser de otro aliado).
+  ventas.splice(0, ventas.length, ...ordenarContratosDesc(ventas)); // #96: todas las pestañas heredan el orden
   const via = new Map<string, string>(propios.via);
   for (const c of part.filas) via.set(c.numero_contrato, "aliado_id");
   const comisionesTodas = await comisionesDelPortal(

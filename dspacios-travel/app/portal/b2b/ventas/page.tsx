@@ -6,7 +6,8 @@ import { AvisoHistoricoIncompleto } from "@/components/portal/AvisoHistoricoInco
 import { formatMoneda, formatFechaLarga } from "@/lib/utils";
 import { numeroVisible } from "@/lib/tenant";
 import { resolverContextoPortal, cargarConjuntoPortal, linkPagoPortal, monedaOfertaDe } from "@/lib/portal/b2bPortalServidor";
-import { origenVenta } from "@/lib/portal/b2bPortal";
+import { origenVenta, salidasProximasRango } from "@/lib/portal/b2bPortal";
+import { hoyBogota } from "@/lib/cotizacion/vigencia";
 
 export const dynamic = "force-dynamic";
 
@@ -16,16 +17,20 @@ const ESTADO_COMISION: Record<string, string> = {
 };
 const AGENCIA: Record<string, string> = { mayorista: "Mayorista", minorista: "Minorista" };
 
-export default async function PortalVentas({ searchParams }: { searchParams: Promise<{ vista?: string }> }) {
+export default async function PortalVentas({ searchParams }: { searchParams: Promise<{ vista?: string; salidas?: string }> }) {
   const ctx = await resolverContextoPortal();
   if (ctx.estado !== "ok") return <PortalGate ctx={ctx} />;
-  const { vista } = await searchParams;
-  const actual = vista === "asistidas" ? "asistidas" : "directas";
+  const { vista, salidas } = await searchParams;
+  const soloProximas = salidas === "proximas";
+  // #99: desde el contador se abre en «Todas» (directas + asistidas); Directas/Asistidas siguen filtrando.
+  const actual = vista === "asistidas" ? "asistidas" : vista === "directas" ? "directas" : soloProximas ? "todas" : "directas";
 
   const [conjunto, linkPago] = await Promise.all([cargarConjuntoPortal(ctx), linkPagoPortal()]);
-  const directas = conjunto.ventas.filter((v) => origenVenta(v, ctx.userId) === "directa");
-  const asistidas = conjunto.ventas.filter((v) => origenVenta(v, ctx.userId) === "asistida");
-  const filas = actual === "directas" ? directas : asistidas;
+  // #99: el mismo filtro que el contador del inicio; ordena por salida ascendente y excluye anulados y participación.
+  const base = soloProximas ? salidasProximasRango(conjunto.ventas, hoyBogota()) : conjunto.ventas;
+  const directas = base.filter((v) => origenVenta(v, ctx.userId) === "directa");
+  const asistidas = base.filter((v) => origenVenta(v, ctx.userId) === "asistida");
+  const filas = actual === "todas" ? base.filter((v) => directas.includes(v) || asistidas.includes(v)) : actual === "directas" ? directas : asistidas;
 
   return (
     <PortalShell nombre={ctx.nombre} rol={ctx.rol} cta={<BotonTarifario />} activa="ventas" mostrarAgentes={ctx.esTitularAgencia} linkPago={linkPago}>
@@ -33,9 +38,15 @@ export default async function PortalVentas({ searchParams }: { searchParams: Pro
         Directas: contratos que generaste tú. Asistidas: contratos que armó D&apos;spacios para ti o que vienen de Minorista. Los saldos y pagos están en Cartera.
       </>}>Mis ventas</Titulo>
       <SubPestanas
-        base="/portal/b2b/ventas" actual={actual} etiqueta="Tipo de venta"
-        items={[{ id: "directas", label: "Directas", cuenta: directas.length }, { id: "asistidas", label: "Asistidas", cuenta: asistidas.length }]}
+        base="/portal/b2b/ventas" actual={actual} etiqueta="Tipo de venta" consulta={soloProximas ? "salidas=proximas" : undefined}
+        items={[...(soloProximas ? [{ id: "todas", label: "Todas", cuenta: directas.length + asistidas.length }] : []), { id: "directas", label: "Directas", cuenta: directas.length }, { id: "asistidas", label: "Asistidas", cuenta: asistidas.length }]}
       />
+      {soloProximas && (
+        <Aviso>
+          Salidas de hoy a los próximos 30 días ({directas.length + asistidas.length}), de la más cercana a la más lejana.{" "}
+          <Link href="/portal/b2b/ventas" className="font-semibold underline">Ver todas</Link>
+        </Aviso>
+      )}
       {conjunto.historicoIncompleto && <AvisoHistoricoIncompleto />}
       {(conjunto.legacyNoVerificado || !conjunto.participacionCompleta) && (
         <Aviso>
@@ -44,7 +55,7 @@ export default async function PortalVentas({ searchParams }: { searchParams: Pro
       )}
       {filas.length === 0 ? (
         <Vacio>
-          {actual === "directas"
+          {soloProximas ? "No hay salidas en los próximos 30 días en esta pestaña." : actual === "directas"
             ? <>Aún no tienes ventas directas. Empieza en el <Link href="/tarifario" className="font-semibold" style={{ color: "var(--brand-primary)" }}>tarifario</Link>.</>
             : "Aún no tienes ventas asistidas."}
         </Vacio>

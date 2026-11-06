@@ -121,8 +121,10 @@ export function Aviso({ children }: { children: React.ReactNode }) {
 }
 
 /** Subpestañas por enlace real (`?vista=`): enlace directo, teclado y botón Atrás funcionan sin JavaScript. */
-export function SubPestanas({ base, actual, items, etiqueta }: {
+export function SubPestanas({ base, actual, items, etiqueta, consulta }: {
   base: string;
+  /** Parámetros extra que se conservan al cambiar de pestaña (p. ej. `salidas=proximas`). */
+  consulta?: string;
   actual: string;
   items: { id: string; label: string; cuenta?: number }[];
   etiqueta: string;
@@ -133,7 +135,7 @@ export function SubPestanas({ base, actual, items, etiqueta }: {
         {items.map((i) => (
           <li key={i.id}>
             <Link
-              href={`${base}?vista=${i.id}`}
+              href={`${base}?vista=${i.id}${consulta ? `&${consulta}` : ""}`}
               aria-current={i.id === actual ? "page" : undefined}
               className={`${s.segmento} ${i.id === actual ? s.segmentoActivo : ""}`}
             >
