@@ -196,7 +196,7 @@ describe("regresión: un hotel NO marcado se comporta exactamente igual", () => 
     // liquidarHotelPaquete conserva su firma de 5 parámetros y su cuerpo; la variante con neta es OTRA función.
     assert.match(c, /export async function liquidarHotelPaquete\(\s*admin: ReturnType<typeof createAdminClient>,\s*paqueteId: number,\s*hotelId: number,\s*fechaIda: string,\s*numNoches: number\s*\)/);
     assert.match(c, /export async function liquidarHotelPaqueteSolicitud\(/);
-    assert.match(leer("lib/reservar/computo.ts"), /: await liquidarHotelPaquete\(admin, input\.paqueteId, input\.hotelId, input\.fechaIda!, numNoches\);/);
+    assert.match(leer("lib/reservar/computo.ts"), /liquidarHotelPaquete\(admin, input\.paqueteId, input\.hotelId, input\.fechaIda!, numNoches\)/); // #439: ahora dentro de leerCompartida(...)
   });
   test("computarReserva: un hotel tarifado sin neta sigue su camino; con neta se rechaza", () => {
     const c = leer("lib/reservar/computo.ts");

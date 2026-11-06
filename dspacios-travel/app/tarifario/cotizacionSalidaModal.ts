@@ -75,7 +75,9 @@ export function useCotizacionSalidaModal({ activa, semilla = null, cotizar = cot
     const k = activa.clave;
     const falla = (msg: string) => setErrores((e) => ({ ...e, [k]: { dia, msg } }));
     cotizar(activa.input).then(
-      (r) => { if (r.ok) setCache((c) => ({ ...c, [k]: r })); else falla(r.error); },
+      // `r.motivos` solo llega del servidor para roles internos (ver cotizarTarjetaActions.ts);
+      // público y B2B reciben siempre `undefined` y ven exactamente el mismo mensaje genérico.
+      (r) => { if (r.ok) setCache((c) => ({ ...c, [k]: r })); else falla(r.motivos?.length ? `${r.error} Motivo: ${r.motivos.join(" · ")}` : r.error); },
       () => falla("No pudimos calcular el precio. Intenta de nuevo."),
     );
   }, [activa, vigente, error, dia, intento, cotizar]);
@@ -129,7 +131,8 @@ export function useCotizacionesHoteles({ entradas, concurrencia = 3, cotizar = c
       enVuelo.current++;
       const k = e.clave;
       cotizar(e.input).then(
-        (r) => { enVuelo.current--; if (r.ok) setCache((c) => ({ ...c, [k]: r })); else setErrores((x) => ({ ...x, [k]: { dia, msg: r.error } })); },
+        // `r.motivos` solo llega del servidor para roles internos (ver cotizarTarjetaActions.ts).
+        (r) => { enVuelo.current--; if (r.ok) setCache((c) => ({ ...c, [k]: r })); else setErrores((x) => ({ ...x, [k]: { dia, msg: r.motivos?.length ? `${r.error} Motivo: ${r.motivos.join(" · ")}` : r.error } })); },
         () => { enVuelo.current--; setErrores((x) => ({ ...x, [k]: { dia, msg: "No pudimos calcular el precio. Intenta de nuevo." } })); },
       );
     }

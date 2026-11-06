@@ -23,9 +23,9 @@ const reglaEdadTarifa = readFileSync(join(raiz, "lib/calc/reglaEdadTarifa.ts"), 
 
 describe("computo.ts — cada consulta usada para resolver la regla de edad captura su error y falla cerrado", () => {
   test("rama usarFechas: la consulta a 'hoteles' (regla general) captura error y aborta ANTES de resolver la regla", () => {
-    const posDecl = computo.indexOf("const { data: hotelRowF, error: hotelRowFErr } = await sb");
+    const posDecl = computo.indexOf("const { data: hotelRowF, error: hotelRowFErr } = await");
     assert.notEqual(posDecl, -1, "no se encontró la declaración de la consulta de hoteles de la rama usarFechas");
-    const bloque = computo.slice(posDecl, posDecl + 400);
+    const bloque = computo.slice(posDecl, posDecl + 900);
     assert.match(bloque, /error:\s*hotelRowFErr/, "debe desestructurar `error` de la consulta");
     assert.match(bloque, /if \(hotelRowFErr\) return \{ ok: false/, "debe fallar cerrado si la consulta de hoteles falla");
   });
@@ -47,9 +47,9 @@ describe("computo.ts — cada consulta usada para resolver la regla de edad capt
   });
 
   test("rama tarifario_resultado: la consulta a 'hoteles' (regla general) captura error y aborta", () => {
-    const posDecl = computo.indexOf("const { data: hotelRow, error: hotelRowErr } = await sb");
+    const posDecl = computo.indexOf("const { data: hotelRow, error: hotelRowErr } = await");
     assert.notEqual(posDecl, -1, "no se encontró la declaración de la consulta de hoteles de la rama tarifario_resultado");
-    const bloque = computo.slice(posDecl, posDecl + 400);
+    const bloque = computo.slice(posDecl, posDecl + 900);
     assert.match(bloque, /error:\s*hotelRowErr/, "debe desestructurar `error`");
     assert.match(bloque, /if \(hotelRowErr\) return \{ ok: false/, "debe fallar cerrado");
   });
@@ -57,7 +57,7 @@ describe("computo.ts — cada consulta usada para resolver la regla de edad capt
   test("rama tarifario_resultado: las consultas de vigencia/tarifa_hotel (Promise.all) capturan AMBOS errores por separado y fallan cerrado", () => {
     const posPromiseAll = computo.indexOf('admin.from("hotel_temporadas").select(');
     assert.notEqual(posPromiseAll, -1);
-    const bloque = computo.slice(posPromiseAll - 200, posPromiseAll + 900);
+    const bloque = computo.slice(posPromiseAll - 300, posPromiseAll + 1500);
     assert.match(bloque, /error:\s*tempsErr/, "debe desestructurar el error de hotel_temporadas");
     assert.match(bloque, /error:\s*tarRowsErr/, "debe desestructurar el error de tarifa_hotel");
     assert.match(bloque, /if \(tempsErr\) return \{ ok: false/, "debe fallar cerrado si hotel_temporadas falla");

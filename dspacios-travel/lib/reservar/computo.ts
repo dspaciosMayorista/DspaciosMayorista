@@ -46,6 +46,7 @@ import { construirComposicion, type BaseMotor, type Composicion } from "@/lib/co
 import { claveComposicion, leerComposicionTarifario, origenDeClave } from "@/lib/tarifario/composicionTarifario";
 import { aplicarDescuentoNeta, pvpInfanteNormalConDescuento, pvpPublicadoConDescuento, resolverDescuentoHotel, type DescuentoAplicado } from "@/lib/calc/descuentoHotel";
 import { cargarReglasDescuentoHotel } from "@/lib/reservar/reglasDescuentoHotel";
+import { leerCompartida, type LecturasCompartidas } from "@/lib/reservar/lecturasCompartidas";
 import { fechaNegocio } from "@/lib/fechaNegocio";
 import { ajusteRedondeoReparto, DESCRIPCION_AJUSTE_REDONDEO, MENSAJE_HOTEL_SOLO_SOLICITUD, repartoDeReferencia, type NetaSolicitud } from "@/lib/reservar/solicitudHotel";
 import { errorPlazasLibres, repartirAdultosReales } from "@/lib/reservar/solicitudOcupacion";
@@ -330,7 +331,12 @@ async function paqueteConTarifarioFallido(paqueteId: number): Promise<boolean> {
 export async function computarReserva(
   sb: Awaited<ReturnType<typeof createClient>>,
   input: ReservaInput,
-  solicitud?: { neta: NetaSolicitud; /** Interno: la corrida de REFERENCIA («adultos») con la que se calcula el residuo de redondeo; no vuelve a calcular el residuo. */ referencia?: boolean }
+  solicitud?: { neta: NetaSolicitud; /** Interno: la corrida de REFERENCIA («adultos») con la que se calcula el residuo de redondeo; no vuelve a calcular el residuo. */ referencia?: boolean },
+  /**
+   * #439: memo EXCLUSIVO de una llamada (lib/reservar/lecturasCompartidas.ts) para que varias combinaciones de la MISMA cotización de tarjeta no repitan lecturas idénticas
+   * (paquete, hotel, origen, temporadas, incluidos, evidencia). Sin memo (Reservar, checkout, conversión) cada lectura se ejecuta como siempre. Una lectura que depende del combo no se memoiza.
+   */
+  lecturas?: LecturasCompartidas
 ): Promise<{ ok: true; data: ComputoReserva } | { ok: false; error: string }> {
   // Origen del vuelo — discriminante único y validado ANTES de cualquier
   // consulta. `computarReserva` es el primer paso, compartido, de TODO flujo
@@ -347,11 +353,11 @@ export async function computarReserva(
   // puede desactivarse o vencer DESPUÉS de que el tarifario ya quedó
   // publicado, y `tarifario_resultado` es una caché, no la fuente de verdad.
   if (origen.tipo === "empaquetado") {
-    const { data: eq, error: eqErr } = await sb
+    const { data: eq, error: eqErr } = await leerCompartida(lecturas, `sb:empaquetados_basica:vigencia:${origen.id}`, () => sb
       .from("empaquetados_basica")
       .select("activo, compra_inicio, compra_fin")
       .eq("id", origen.id)
-      .maybeSingle();
+      .maybeSingle());
     if (eqErr) return { ok: false, error: `No se pudo validar el empaquetado: ${eqErr.message}` };
     if (!eq) return { ok: false, error: "El empaquetado seleccionado ya no existe." };
     if (!eq.activo) return { ok: false, error: "Este empaquetado fue desactivado y ya no se puede reservar." };
@@ -375,11 +381,11 @@ export async function computarReserva(
     } catch {
       return { ok: false, error: mensajeSalidaNoVigente("error_lectura") };
     }
-    const vigencia = await verificarSalidaDinamicaVigente(lector, origen.id);
+    const vigencia = await leerCompartida(lecturas, `admin:salida_vigente:${origen.id}`, () => verificarSalidaDinamicaVigente(lector, origen.id));
     if (!vigencia.ok) return { ok: false, error: vigencia.error };
     // #63: salida vinculada a Empaquetados sin record y/o paquete en modo COP con TRM. Se valida contra la
     // fuente VIVA; no consulta cupos (un Empaquetado no tiene sillas). En un paquete de siempre devuelve null.
-    const resOferta63 = await resolverOfertaSalida63(lector, input.paqueteId, origen.id);
+    const resOferta63 = await leerCompartida(lecturas, `admin:oferta63:${input.paqueteId}:${origen.id}`, () => resolverOfertaSalida63(lector, input.paqueteId, origen.id));
     if (!resOferta63.ok) return { ok: false, error: resOferta63.error };
     oferta63 = resOferta63.oferta;
   }
@@ -401,7 +407,7 @@ export async function computarReserva(
     } catch {
       return { ok: false, error: MENSAJES_DEST_AEREOS.tecnico };
     }
-    const destinoAereo = await validarOrigenAereoPaquete(lectorAereo, input.paqueteId, { tipo: origen.tipo, id: origen.id });
+    const destinoAereo = await leerCompartida(lecturas, `admin:origen_aereo:${input.paqueteId}:${origen.tipo}:${origen.id}`, () => validarOrigenAereoPaquete(lectorAereo, input.paqueteId, { tipo: origen.tipo, id: origen.id }));
     if (!destinoAereo.ok) return { ok: false, error: destinoAereo.error };
   }
 
@@ -426,11 +432,11 @@ export async function computarReserva(
   // de esta fase (no se debía tocar contratos/CxP salvo lo estrictamente
   // necesario).
   if (!esServicios) {
-    const { data: modeloRow, error: modeloError } = await sb
+    const { data: modeloRow, error: modeloError } = await leerCompartida(lecturas, `sb:hoteles:modelo:${input.hotelId}`, () => sb
       .from("hoteles")
       .select("modelo_tarifario, tarifa_bajo_solicitud")
       .eq("id", input.hotelId)
-      .maybeSingle();
+      .maybeSingle());
     if (modeloError) return { ok: false, error: "No se pudo validar el modelo tarifario del hotel." };
     // #120: la marca del hotel (misma lectura de siempre, sin consulta extra). Un hotel bajo solicitud solo se calcula con la neta cargada; un hotel tarifado jamás acepta una neta.
     // (Que el hotel esté seleccionado en ESTE paquete lo verifica `liquidarHotelPaquete` al liquidar con neta.)
@@ -512,7 +518,7 @@ export async function computarReserva(
   // lleva el mismo margen que el resto de costos del hotel/servicios.
   let pctMk = 0;
   if (!esServicios) {
-    const { data: pqMk } = await sb.from("armado_paquetes").select("pct_mk").eq("id", input.paqueteId).maybeSingle();
+    const { data: pqMk } = await leerCompartida(lecturas, `sb:armado_paquetes:pct_mk:${input.paqueteId}`, () => sb.from("armado_paquetes").select("pct_mk").eq("id", input.paqueteId).maybeSingle());
     pctMk = Number(pqMk?.pct_mk) || 0;
   }
 
@@ -530,7 +536,8 @@ export async function computarReserva(
     }
     const res = opcionesSolicitud
       ? await liquidarHotelPaqueteSolicitud(admin, input.paqueteId, input.hotelId, input.fechaIda!, numNoches, opcionesSolicitud)
-      : await liquidarHotelPaquete(admin, input.paqueteId, input.hotelId, input.fechaIda!, numNoches);
+      // Todas las combinaciones del hotel salen de UNA liquidación (devuelve `combos`); cada combinación elige la suya abajo. La clave lleva paquete, hotel, ida y noches.
+      : await leerCompartida(lecturas, `admin:liquidarHotelPaquete:${input.paqueteId}:${input.hotelId}:${input.fechaIda}:${numNoches}`, () => liquidarHotelPaquete(admin, input.paqueteId, input.hotelId, input.fechaIda!, numNoches));
     const combo = res?.combos.find((c) => c.categoria === input.categoria && c.regimen === input.regimen);
     // Un servicio INCLUIDO sin vigencia/tarifa para esa fecha impide vender ese hotel (jamás sin el servicio): se dice cuál y por qué, no «sin tarifa».
     // (La firma pública de liquidarHotelPaquete no cambia: `errorServiciosIncluidos` viaja en el objeto que devuelve evaluarHotelPorFechas.)
@@ -547,8 +554,8 @@ export async function computarReserva(
     if (baseFechas) composicionBase = { ...baseFechas, netos: { ...(combo.netos ?? {}) } };
     meta = { hotel_nombre: res!.hotelNombre, destino_nombre: res!.destinoNombre, fecha_ida: input.fechaIda!, fecha_regreso: input.fechaRegreso! };
 
-    const { data: hotelRowF, error: hotelRowFErr } = await sb
-      .from("hoteles").select("edad_infante_min, edad_infante_max, edad_nino_min, edad_nino_max, pax_min, pax_max, moneda, nino_nota, pet_costo_neto, pet_costo_desc, pet_nota").eq("id", input.hotelId).maybeSingle();
+    const { data: hotelRowF, error: hotelRowFErr } = await leerCompartida(lecturas, `sb:hoteles:fila_por_fechas:${input.hotelId}`, () => sb
+      .from("hoteles").select("edad_infante_min, edad_infante_max, edad_nino_min, edad_nino_max, pax_min, pax_max, moneda, nino_nota, pet_costo_neto, pet_costo_desc, pet_nota").eq("id", input.hotelId).maybeSingle());
     if (hotelRowFErr) return { ok: false, error: `No se pudo consultar el hotel: ${hotelRowFErr.message}` };
     monedaReserva = ((hotelRowF as { moneda?: string | null } | null)?.moneda) ?? "COP";
     if (solicitud && solicitud.neta.moneda !== monedaReserva) return { ok: false, error: "La moneda de la neta no coincide con la del hotel." };
@@ -714,7 +721,7 @@ export async function computarReserva(
       if (f0.fecha_ida && f0.noches) {
         try {
           const adminC = createAdminClient();
-          const { data: pqPub } = await adminC.from("armado_paquetes").select("tarifario_generacion_publicada").eq("id", input.paqueteId).maybeSingle();
+          const { data: pqPub } = await leerCompartida(lecturas, `admin:armado_paquetes:generacion_publicada:${input.paqueteId}`, () => adminC.from("armado_paquetes").select("tarifario_generacion_publicada").eq("id", input.paqueteId).maybeSingle());
           composicionBase = await leerComposicionTarifario(adminC, {
             paqueteId: input.paqueteId, generacionPublicada: pqPub?.tarifario_generacion_publicada != null ? Number(pqPub.tarifario_generacion_publicada) : null,
             clave: claveComposicion({ ...origenDeClave(origen), hotelId: input.hotelId, categoria: input.categoria, regimen: input.regimen, fechaIda: f0.fecha_ida, noches: f0.noches }),
@@ -732,7 +739,7 @@ export async function computarReserva(
     if (f0d.fecha_ida && f0d.noches) {
       // Sin la clave de servicio no se pueden leer las reglas (RLS las oculta a roles externos): seguir sería cotizar a precio base. Falla cerrado.
       if (!process.env.SUPABASE_SERVICE_ROLE_KEY) return { ok: false, error: "No se pudieron validar las promociones del hotel. Intenta de nuevo." };
-      const rg = await cargarReglasDescuentoHotel(createAdminClient(), input.hotelId);
+      const rg = await leerCompartida(lecturas, `admin:reglas_descuento:${input.hotelId}`, () => cargarReglasDescuentoHotel(createAdminClient(), input.hotelId));
       if (!rg.ok) {
         console.error(`[computarReserva] etapa=hotel_reglas_descuento hotelId=${input.hotelId} detalle=${rg.detalle}`);
         return { ok: false, error: "No se pudieron validar las promociones del hotel. Intenta de nuevo." };
@@ -772,11 +779,11 @@ export async function computarReserva(
     // `input.edadesMenores` viene presente (nunca después: la fila se
     // reutiliza más abajo también para `nino_nota`/mascota y para la
     // validación de edades reales).
-    const { data: hotelRow, error: hotelRowErr } = await sb
+    const { data: hotelRow, error: hotelRowErr } = await leerCompartida(lecturas, `sb:hoteles:fila_publicada:${input.hotelId}`, () => sb
       .from("hoteles")
       .select("edad_infante_min, edad_infante_max, edad_nino_min, edad_nino_max, pax_min, pax_max, nino_nota, pet_costo_neto, pet_costo_desc, pet_nota, moneda")
       .eq("id", input.hotelId)
-      .maybeSingle();
+      .maybeSingle());
     if (hotelRowErr) return { ok: false, error: `No se pudo consultar el hotel: ${hotelRowErr.message}` };
     monedaHotelOrigen63 = monedaNormalizada63((hotelRow as { moneda?: string | null } | null)?.moneda);
     ninoNotaTxt = hotelRow?.nino_nota ?? null;
@@ -784,10 +791,10 @@ export async function computarReserva(
     petCostoDesc = hotelRow?.pet_costo_desc ?? null;
     petNotaTxt = hotelRow?.pet_nota ?? null;
 
-    const { data: acomCfg } = await sb
+    const { data: acomCfg } = await leerCompartida(lecturas, `sb:hotel_acomodaciones:${input.hotelId}`, () => sb
       .from("hotel_acomodaciones")
       .select("acomodacion, pax_tarifa, pax_max, adt_min, adt_max, chd_min, chd_max, inf_min, inf_max")
-      .eq("hotel_id", input.hotelId);
+      .eq("hotel_id", input.hotelId));
     const reglas = (acomCfg ?? []) as AcomConfig[];
     const paxTarifa = (a: AcomRoom) => {
       const c = reglas.find((x) => x.acomodacion === a);
@@ -852,7 +859,8 @@ export async function computarReserva(
       const admin = createAdminClient();
       numNochesVig = noches(meta.fecha_ida!, meta.fecha_regreso!);
       const [{ data: temps, error: tempsErr }, { data: tarRows, error: tarRowsErr }] = await Promise.all([
-        admin.from("hotel_temporadas").select("nombre, fecha_inicio, fecha_fin, prioridad, compra_inicio, compra_fin, tipo, descuento_valor, rangos, blackouts, min_noches, regimen_restringido").eq("hotel_id", input.hotelId).order("orden").order("id"),
+        leerCompartida(lecturas, `admin:hotel_temporadas:${input.hotelId}`, () => admin.from("hotel_temporadas").select("nombre, fecha_inicio, fecha_fin, prioridad, compra_inicio, compra_fin, tipo, descuento_valor, rangos, blackouts, min_noches, regimen_restringido").eq("hotel_id", input.hotelId).order("orden").order("id")),
+        // La tarifa neta SÍ depende del combo (categoría y régimen): se lee por combo, sin memo.
         admin.from("tarifa_hotel").select("tipo_habitacion, alimentacion, temporada, neto_sencilla, neto_doble, neto_triple, neto_multiple, neto_nino, neto_nino2, neto_infante, edad_infante_min, edad_infante_max, edad_nino_min, edad_nino_max, notas, precio_final_autoritativo").eq("hotel_id", input.hotelId).eq("tipo_habitacion", input.categoria).eq("alimentacion", input.regimen),
       ]);
       if (tempsErr) return { ok: false, error: `No se pudo validar la vigencia de temporadas del hotel: ${tempsErr.message}` };
@@ -1163,20 +1171,21 @@ export async function computarReserva(
   const serviciosIncluidos: ServicioEfectivo[] = [];
   if (!esServicios) {
     const catalogo = createAdminClient();
-    const { data: incRows, error: incErr } = await catalogo
+    const { data: incRows, error: incErr } = await leerCompartida(lecturas, `admin:armado_servicios:incluidos:${input.paqueteId}`, () => catalogo
       .from("armado_servicios")
       .select("servicio_id, modo, servicios_adicionales(nombre, categoria, precio_persona, precio_infante, liquidacion, proveedor_id)")
       .eq("paquete_id", input.paqueteId)
-      .eq("incluido", true);
+      .eq("incluido", true));
     if (incErr) return { ok: false, error: `No se pudieron consultar los servicios incluidos del paquete: ${incErr.message}` };
     if (incRows?.length) {
       const ids = incRows.map((r) => r.servicio_id).filter((id): id is number => id != null);
       // El costo del incluido sale de la vigencia del día de ida (precio por persona o rangos de ESA vigencia); un traslado sin NINGUNA vigencia usa su tarifa base (incluidoEnEstadia). Sin tarifa, sin precio/rango o
       // con franjas horarias (un traslado con suplemento por hora no puede ir incluido) falla con un mensaje legible antes de numerar.
       if (!meta.fecha_ida) return { ok: false, error: "Indica la fecha del viaje para calcular los servicios incluidos del paquete." };
-      const rvInc = await cargarVigenciasServicios(catalogo, incRows.map((r) => ({
+      // La clave lleva el paquete y los ids (ordenados) de los incluidos: las vigencias dependen solo de ellos, no del combo ni de la fecha (la fecha se aplica después, por combo).
+      const rvInc = await leerCompartida(lecturas, `admin:vigencias_servicios_incluidos:${input.paqueteId}:${incRows.map((r) => r.servicio_id).sort((a, b) => Number(a) - Number(b)).join(",")}`, () => cargarVigenciasServicios(catalogo, incRows.map((r) => ({
         id: r.servicio_id as number, nombre: (r.servicios_adicionales as unknown as { nombre?: string | null } | null)?.nombre ?? `#${r.servicio_id}`,
-      })));
+      }))));
       if (!rvInc.ok) return { ok: false, error: `No se pudieron consultar las vigencias de los servicios incluidos: ${rvInc.error}` };
       void ids;
       const numNochesInc = meta.fecha_ida && meta.fecha_regreso ? (noches(meta.fecha_ida, meta.fecha_regreso) || 1) : 1;
@@ -1247,9 +1256,11 @@ export async function computarReserva(
       // rechaza: nunca se cobra el PVP antiguo de un servicio que la composición actual omite.
       // #120: una solicitud con neta se liquida EN VIVO (no hay fila publicada que acreditar), así que esta verificación no aplica.
       if (!solicitud && (input.modulo === "bloqueo" || input.modulo === "dinamico")) {
+        const fechaIdaEvidencia = meta.fecha_ida; // dentro de la lectura (función flecha) `meta` pierde el estrechamiento de tipo
         const [pqGen, evid] = await Promise.all([
-          catalogo.from("armado_paquetes").select("tarifario_generacion_publicada").eq("id", input.paqueteId).maybeSingle(),
-          catalogo.from("tarifario_composicion_publicada").select("generacion, regla, servicios_incluidos").eq("paquete_id", input.paqueteId).eq("fecha_ida", meta.fecha_ida).maybeSingle(),
+          // Misma lectura (select, filtro y cliente) que la de la composición de arriba: misma clave.
+          leerCompartida(lecturas, `admin:armado_paquetes:generacion_publicada:${input.paqueteId}`, () => catalogo.from("armado_paquetes").select("tarifario_generacion_publicada").eq("id", input.paqueteId).maybeSingle()),
+          leerCompartida(lecturas, `admin:tarifario_composicion_publicada:${input.paqueteId}:${fechaIdaEvidencia}`, () => catalogo.from("tarifario_composicion_publicada").select("generacion, regla, servicios_incluidos").eq("paquete_id", input.paqueteId).eq("fecha_ida", fechaIdaEvidencia).maybeSingle()),
         ]);
         if (pqGen.error || evid.error) return { ok: false, error: MENSAJE_EVIDENCIA_NO_DISPONIBLE };
         const idsEvidencia = evid.data ? idsDeJson(evid.data.servicios_incluidos) : null;
@@ -1311,11 +1322,11 @@ export async function computarReserva(
       paxConSilla,
     });
   } else if (!esServicios) {
-    const { data: pqImp } = await sb
+    const { data: pqImp } = await leerCompartida(lecturas, `sb:armado_paquetes:impuesto_fijo:${input.paqueteId}`, () => sb
       .from("armado_paquetes")
       .select("impuesto_fijo")
       .eq("id", input.paqueteId)
-      .maybeSingle();
+      .maybeSingle());
     impuestoTotal = (Number(pqImp?.impuesto_fijo) || 0) * paxConSilla;
   }
 
