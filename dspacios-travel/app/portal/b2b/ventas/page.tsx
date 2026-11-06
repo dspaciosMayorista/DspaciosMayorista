@@ -60,7 +60,7 @@ export default async function PortalVentas({ searchParams }: { searchParams: Pro
             : "Aún no tienes ventas asistidas."}
         </Vacio>
       ) : (
-        <TablaScroll etiqueta="Ventas" ancho="min-w-[900px]">
+        <TablaScroll etiqueta="Ventas" ancho="min-w-[900px]" apilar>
           <thead>
             <tr className="bg-gray-50 text-left text-xs uppercase text-gray-400">
               <th scope="col" className="px-3 py-2">Contrato</th><th scope="col" className="px-3 py-2">Agencia</th><th scope="col" className="px-3 py-2">Cliente</th>
@@ -77,15 +77,15 @@ export default async function PortalVentas({ searchParams }: { searchParams: Pro
               return (
                 <tr key={num} className="border-t border-gray-50">
                   <th scope="row" className="px-3 py-2 text-left font-mono font-semibold text-[#1D7C9A]">{numeroVisible(num)}</th>
-                  <td className="px-3 py-2 text-xs text-gray-600">{AGENCIA[v.tenant ?? "mayorista"] ?? v.tenant}</td>
-                  <td className="px-3 py-2 text-gray-700">
+                  <td data-label="Agencia" className="px-3 py-2 text-xs text-gray-600">{AGENCIA[v.tenant ?? "mayorista"] ?? v.tenant}</td>
+                  <td data-label="Cliente" className="px-3 py-2 text-gray-700">
                     {part ? <span className="text-xs text-gray-400">Participación por comisión</span> : (v.cliente ?? "—")}
                   </td>
-                  <td className="px-3 py-2 text-gray-600">{v.destino ?? "—"}</td>
-                  <td className="px-3 py-2 text-xs text-gray-500">{formatFechaLarga(v.fecha_salida)}</td>
-                  <td className="px-3 py-2 text-xs text-gray-600">{v.estado ?? "—"}</td>
-                  <td className="px-3 py-2 text-xs text-gray-500">{part ? "—" : v.modo_compra === "comisionable" ? "Comisionable" : v.modo_compra === "neta" ? "Neta" : "—"}</td>
-                  <td className="px-3 py-2 text-right text-xs tabular-nums">
+                  <td data-label="Destino" className="px-3 py-2 text-gray-600">{v.destino ?? "—"}</td>
+                  <td data-label="Salida" className="px-3 py-2 text-xs text-gray-500">{formatFechaLarga(v.fecha_salida)}</td>
+                  <td data-label="Estado" className="px-3 py-2 text-xs text-gray-600">{v.estado ?? "—"}</td>
+                  <td data-label="Compra" className="px-3 py-2 text-xs text-gray-500">{part ? "—" : v.modo_compra === "comisionable" ? "Comisionable" : v.modo_compra === "neta" ? "Neta" : "—"}</td>
+                  <td data-label="Comisión" className="px-3 py-2 text-right text-xs tabular-nums">
                     {com != null && com > 0 ? formatMoneda(com, monedaOfertaDe(conjunto.crudas.get(num))) : "—"}
                     {vis?.estado ? <span className="block text-[10px] text-gray-400">{ESTADO_COMISION[vis.estado] ?? vis.estado}</span> : null}
                     {/*

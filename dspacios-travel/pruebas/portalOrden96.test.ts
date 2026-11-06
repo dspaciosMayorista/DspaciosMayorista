@@ -76,3 +76,17 @@ test("#96 inicio: contratos recientes usan el orden compartido (sin comparador p
   const o = ordenarContratosDesc(ordenarContratosDesc(v).filter(() => true)).map((x) => x.numero_contrato);
   assert.deepEqual(o, ["00-10000", "MIN-00-0999", "00-0999", "00-0451"]);
 });
+
+test("#441 listados de contratos del portal: tabla apilable, cada celda con rótulo y sin ocultar columnas", () => {
+  const leer = (p: string) => readFileSync(new URL(p, import.meta.url), "utf8");
+  const casos: [string, number][] = [["../app/portal/b2b/ventas/page.tsx", 7], ["../app/portal/b2b/documentos/page.tsx", 4], ["../app/portal/b2b/cartera/page.tsx", 11]];
+  for (const [ruta, celdas] of casos) {
+    const src = leer(ruta);
+    assert.equal((src.match(/<TablaScroll [^>]*\bapilar>/g) ?? []).length, ruta.includes("cartera") ? 2 : 1, ruta);
+    assert.equal((src.match(/<td data-label="[^"]+"/g) ?? []).length, celdas, `${ruta}: toda celda de datos lleva rótulo`);
+    assert.equal((src.match(/<td className=/g) ?? []).length, 0, `${ruta}: ninguna celda sin rótulo`);
+  }
+  const css = leer("../components/portal/vidrio.module.css");
+  assert.match(css, /@container \(max-width: 899px\)/);
+  assert.doesNotMatch(css.slice(css.indexOf(".tablaApilable")), /overflow:\s*hidden/);
+});
