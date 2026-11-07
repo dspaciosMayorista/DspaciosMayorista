@@ -6,7 +6,8 @@ import { AvisoHistoricoIncompleto } from "@/components/portal/AvisoHistoricoInco
 import { formatMoneda, formatFechaLarga } from "@/lib/utils";
 import { numeroVisible } from "@/lib/tenant";
 import { resolverContextoPortal, cargarConjuntoPortal, linkPagoPortal, monedaOfertaDe } from "@/lib/portal/b2bPortalServidor";
-import { origenVenta } from "@/lib/portal/b2bPortal";
+import { origenVenta, salidasProximasRango } from "@/lib/portal/b2bPortal";
+import { hoyBogota } from "@/lib/cotizacion/vigencia";
 
 export const dynamic = "force-dynamic";
 
@@ -16,16 +17,20 @@ const ESTADO_COMISION: Record<string, string> = {
 };
 const AGENCIA: Record<string, string> = { mayorista: "Mayorista", minorista: "Minorista" };
 
-export default async function PortalVentas({ searchParams }: { searchParams: Promise<{ vista?: string }> }) {
+export default async function PortalVentas({ searchParams }: { searchParams: Promise<{ vista?: string; salidas?: string }> }) {
   const ctx = await resolverContextoPortal();
   if (ctx.estado !== "ok") return <PortalGate ctx={ctx} />;
-  const { vista } = await searchParams;
-  const actual = vista === "asistidas" ? "asistidas" : "directas";
+  const { vista, salidas } = await searchParams;
+  const soloProximas = salidas === "proximas";
+  // #99: desde el contador se abre en «Todas» (directas + asistidas); Directas/Asistidas siguen filtrando.
+  const actual = vista === "asistidas" ? "asistidas" : vista === "directas" ? "directas" : soloProximas ? "todas" : "directas";
 
   const [conjunto, linkPago] = await Promise.all([cargarConjuntoPortal(ctx), linkPagoPortal()]);
-  const directas = conjunto.ventas.filter((v) => origenVenta(v, ctx.userId) === "directa");
-  const asistidas = conjunto.ventas.filter((v) => origenVenta(v, ctx.userId) === "asistida");
-  const filas = actual === "directas" ? directas : asistidas;
+  // #99: el mismo filtro que el contador del inicio; ordena por salida ascendente y excluye anulados y participación.
+  const base = soloProximas ? salidasProximasRango(conjunto.ventas, hoyBogota()) : conjunto.ventas;
+  const directas = base.filter((v) => origenVenta(v, ctx.userId) === "directa");
+  const asistidas = base.filter((v) => origenVenta(v, ctx.userId) === "asistida");
+  const filas = actual === "todas" ? base.filter((v) => directas.includes(v) || asistidas.includes(v)) : actual === "directas" ? directas : asistidas;
 
   return (
     <PortalShell nombre={ctx.nombre} rol={ctx.rol} cta={<BotonTarifario />} activa="ventas" mostrarAgentes={ctx.esTitularAgencia} linkPago={linkPago}>
@@ -33,9 +38,15 @@ export default async function PortalVentas({ searchParams }: { searchParams: Pro
         Directas: contratos que generaste tú. Asistidas: contratos que armó D&apos;spacios para ti o que vienen de Minorista. Los saldos y pagos están en Cartera.
       </>}>Mis ventas</Titulo>
       <SubPestanas
-        base="/portal/b2b/ventas" actual={actual} etiqueta="Tipo de venta"
-        items={[{ id: "directas", label: "Directas", cuenta: directas.length }, { id: "asistidas", label: "Asistidas", cuenta: asistidas.length }]}
+        base="/portal/b2b/ventas" actual={actual} etiqueta="Tipo de venta" consulta={soloProximas ? "salidas=proximas" : undefined}
+        items={[...(soloProximas ? [{ id: "todas", label: "Todas", cuenta: directas.length + asistidas.length }] : []), { id: "directas", label: "Directas", cuenta: directas.length }, { id: "asistidas", label: "Asistidas", cuenta: asistidas.length }]}
       />
+      {soloProximas && (
+        <Aviso>
+          Salidas de hoy a los próximos 30 días ({directas.length + asistidas.length}), de la más cercana a la más lejana.{" "}
+          <Link href="/portal/b2b/ventas" className="font-semibold underline">Ver todas</Link>
+        </Aviso>
+      )}
       {conjunto.historicoIncompleto && <AvisoHistoricoIncompleto />}
       {(conjunto.legacyNoVerificado || !conjunto.participacionCompleta) && (
         <Aviso>
@@ -44,12 +55,12 @@ export default async function PortalVentas({ searchParams }: { searchParams: Pro
       )}
       {filas.length === 0 ? (
         <Vacio>
-          {actual === "directas"
+          {soloProximas ? "No hay salidas en los próximos 30 días en esta pestaña." : actual === "directas"
             ? <>Aún no tienes ventas directas. Empieza en el <Link href="/tarifario" className="font-semibold" style={{ color: "var(--brand-primary)" }}>tarifario</Link>.</>
             : "Aún no tienes ventas asistidas."}
         </Vacio>
       ) : (
-        <TablaScroll etiqueta="Ventas" ancho="min-w-[900px]">
+        <TablaScroll etiqueta="Ventas" ancho="min-w-[900px]" apilar>
           <thead>
             <tr className="bg-gray-50 text-left text-xs uppercase text-gray-400">
               <th scope="col" className="px-3 py-2">Contrato</th><th scope="col" className="px-3 py-2">Agencia</th><th scope="col" className="px-3 py-2">Cliente</th>
@@ -66,15 +77,15 @@ export default async function PortalVentas({ searchParams }: { searchParams: Pro
               return (
                 <tr key={num} className="border-t border-gray-50">
                   <th scope="row" className="px-3 py-2 text-left font-mono font-semibold text-[#1D7C9A]">{numeroVisible(num)}</th>
-                  <td className="px-3 py-2 text-xs text-gray-600">{AGENCIA[v.tenant ?? "mayorista"] ?? v.tenant}</td>
-                  <td className="px-3 py-2 text-gray-700">
+                  <td data-label="Agencia" className="px-3 py-2 text-xs text-gray-600">{AGENCIA[v.tenant ?? "mayorista"] ?? v.tenant}</td>
+                  <td data-label="Cliente" className="px-3 py-2 text-gray-700">
                     {part ? <span className="text-xs text-gray-400">Participación por comisión</span> : (v.cliente ?? "—")}
                   </td>
-                  <td className="px-3 py-2 text-gray-600">{v.destino ?? "—"}</td>
-                  <td className="px-3 py-2 text-xs text-gray-500">{formatFechaLarga(v.fecha_salida)}</td>
-                  <td className="px-3 py-2 text-xs text-gray-600">{v.estado ?? "—"}</td>
-                  <td className="px-3 py-2 text-xs text-gray-500">{part ? "—" : v.modo_compra === "comisionable" ? "Comisionable" : v.modo_compra === "neta" ? "Neta" : "—"}</td>
-                  <td className="px-3 py-2 text-right text-xs tabular-nums">
+                  <td data-label="Destino" className="px-3 py-2 text-gray-600">{v.destino ?? "—"}</td>
+                  <td data-label="Salida" className="px-3 py-2 text-xs text-gray-500">{formatFechaLarga(v.fecha_salida)}</td>
+                  <td data-label="Estado" className="px-3 py-2 text-xs text-gray-600">{v.estado ?? "—"}</td>
+                  <td data-label="Compra" className="px-3 py-2 text-xs text-gray-500">{part ? "—" : v.modo_compra === "comisionable" ? "Comisionable" : v.modo_compra === "neta" ? "Neta" : "—"}</td>
+                  <td data-label="Comisión" className="px-3 py-2 text-right text-xs tabular-nums">
                     {com != null && com > 0 ? formatMoneda(com, monedaOfertaDe(conjunto.crudas.get(num))) : "—"}
                     {vis?.estado ? <span className="block text-[10px] text-gray-400">{ESTADO_COMISION[vis.estado] ?? vis.estado}</span> : null}
                     {/*

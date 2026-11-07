@@ -17,7 +17,7 @@
  */
 import { ROLES_INTERNOS } from "@/lib/constants";
 import { cobroDeVenta } from "@/lib/finanzas/cobro";
-import { abiertaConSalidaPasada, cotizacionVencida } from "@/lib/cotizacion/vigencia";
+import { abiertaConSalidaPasada, cotizacionVencida, sumarDiasISO } from "@/lib/cotizacion/vigencia";
 
 export type Relacion = "propio" | "participacion";
 export type Origen = "directa" | "asistida";
@@ -126,6 +126,28 @@ export function salidasVigentes(ventas: VentaPortal[]): VentaPortal[] {
   return ventas.filter((v) => v.relacion === "propio" && !!v.fecha_salida && !contratoAnulado(v));
 }
 
+/**
+ * #99: salidas de contratos PROPIOS no anulados entre `hoy` y `hoy + dias`, ambos inclusive (fechas de negocio Bogotá,
+ * comparación de texto ISO). Orden: salida ascendente y, a igualdad, número de contrato ascendente. Única fuente del
+ * contador del inicio y del listado de Mis ventas. La participación por comisión nunca entra (`salidasVigentes`).
+ */
+export function salidasProximasRango(ventas: VentaPortal[], hoy: string, dias = 30): VentaPortal[] {
+  const tope = sumarDiasISO(hoy, dias);
+  return salidasVigentes(ventas)
+    .filter((v) => (v.fecha_salida as string) >= hoy && (v.fecha_salida as string) <= tope)
+    .sort((a, b) => String(a.fecha_salida).localeCompare(String(b.fecha_salida)) || a.numero_contrato.localeCompare(b.numero_contrato));
+}
+
+/**
+ * #96: último contrato primero. Compara el consecutivo NUMÉRICO (sin prefijo MIN- ni guion),
+ * no el texto, para que «00-0999» y «00-10000» no se ordenen mal por longitud.
+ * Empate (mismo consecutivo en Mayorista y Minorista): texto completo descendente, estable.
+ */
+export function ordenarContratosDesc<T extends { numero_contrato: string }>(filas: T[]): T[] {
+  const n = (s: string) => Number((s.match(/(\d+)\s*$/) ?? [])[1] ?? -1);
+  return [...filas].sort((a, b) => n(b.numero_contrato) - n(a.numero_contrato) || (a.numero_contrato < b.numero_contrato ? 1 : a.numero_contrato > b.numero_contrato ? -1 : 0));
+}
+
 export type ResumenInicio = {
   cotizacionesVigentes: number;
   ventasPropias: number;
@@ -145,9 +167,6 @@ export function resumenInicio(a: {
   diasProximos?: number;
 }): ResumenInicio {
   const dias = a.diasProximos ?? 30;
-  const limite = new Date(`${a.hoy}T00:00:00Z`);
-  limite.setUTCDate(limite.getUTCDate() + dias);
-  const tope = limite.toISOString().slice(0, 10);
   const conSaldo = a.cartera.filter((f) => f.saldo > 0);
   return {
     cotizacionesVigentes: a.cotizaciones.filter((c) => estadoCotizacion(c, a.hoy) === "vigente").length,
@@ -156,7 +175,7 @@ export function resumenInicio(a: {
     contratosConSaldo: conSaldo.length,
     saldoPorMoneda: sumarPorMoneda(conSaldo.map((f) => ({ moneda: f.moneda, monto: f.saldo }))),
     comisionPorCobrarPorMoneda: sumarPorMoneda(a.comisiones),
-    salidasProximas: salidasVigentes(a.ventas).filter((v) => (v.fecha_salida as string) >= a.hoy && (v.fecha_salida as string) <= tope).length,
+    salidasProximas: salidasProximasRango(a.ventas, a.hoy, dias).length,
   };
 }
 

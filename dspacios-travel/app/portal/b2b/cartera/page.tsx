@@ -38,7 +38,7 @@ export default async function PortalCartera({ searchParams }: { searchParams: Pr
 
       {actual === "saldo" ? (
         conSaldo.length === 0 ? <Vacio>No tienes contratos con saldo pendiente.</Vacio> : (
-          <TablaScroll etiqueta="Contratos con saldo" ancho="min-w-[860px]">
+          <TablaScroll etiqueta="Contratos con saldo" ancho="min-w-[860px]" apilar>
             <thead>
               <tr className="bg-gray-50 text-left text-xs uppercase text-gray-400">
                 <th scope="col" className="px-3 py-2">Contrato</th><th scope="col" className="px-3 py-2">Cliente</th><th scope="col" className="px-3 py-2">Salida</th>
@@ -50,12 +50,12 @@ export default async function PortalCartera({ searchParams }: { searchParams: Pr
               {conSaldo.map((f) => (
                 <tr key={f.numero_contrato} className="border-t border-gray-50">
                   <th scope="row" className="px-3 py-2 text-left font-mono font-semibold text-[#1D7C9A]">{numeroVisible(f.numero_contrato)}</th>
-                  <td className="px-3 py-2 text-gray-700">{f.cliente ?? "—"}</td>
-                  <td className="px-3 py-2 text-xs text-gray-500">{formatFechaLarga(f.fecha_salida)}</td>
-                  <td className="px-3 py-2 text-right tabular-nums">{formatMoneda(f.valor, f.moneda)}</td>
-                  <td className="px-3 py-2 text-right tabular-nums">{formatMoneda(f.pagado, f.moneda)}</td>
-                  <td className="px-3 py-2 text-right tabular-nums font-medium" style={{ color: "#C0392B" }}>{formatMoneda(f.saldo, f.moneda)}</td>
-                  <td className="px-3 py-2 text-right">
+                  <td data-label="Cliente" className="px-3 py-2 text-gray-700">{f.cliente ?? "—"}</td>
+                  <td data-label="Salida" className="px-3 py-2 text-xs text-gray-500">{formatFechaLarga(f.fecha_salida)}</td>
+                  <td data-label="Valor" className="px-3 py-2 text-right tabular-nums">{formatMoneda(f.valor, f.moneda)}</td>
+                  <td data-label="Abonos" className="px-3 py-2 text-right tabular-nums">{formatMoneda(f.pagado, f.moneda)}</td>
+                  <td data-label="Saldo" className="px-3 py-2 text-right tabular-nums font-medium" style={{ color: "#C0392B" }}>{formatMoneda(f.saldo, f.moneda)}</td>
+                  <td data-label="Estado de cuenta" className="px-3 py-2 text-right">
                     <Link href={`/estado-cuenta/${encodeURIComponent(f.numero_contrato)}`} target="_blank" className="text-xs font-medium hover:underline" style={{ color: "var(--brand-primary)" }}>Ver</Link>
                   </td>
                 </tr>
@@ -66,7 +66,7 @@ export default async function PortalCartera({ searchParams }: { searchParams: Pr
       ) : abonosOrdenados.length === 0 ? (
         <Vacio>Aún no hay pagos registrados en tus contratos.</Vacio>
       ) : (
-        <TablaScroll etiqueta="Historial de pagos" ancho="min-w-[760px]">
+        <TablaScroll etiqueta="Historial de pagos" ancho="min-w-[760px]" apilar>
           <thead>
             <tr className="bg-gray-50 text-left text-xs uppercase text-gray-400">
               <th scope="col" className="px-3 py-2">Fecha</th><th scope="col" className="px-3 py-2">Contrato</th><th scope="col" className="px-3 py-2">Forma de pago</th>
@@ -79,12 +79,12 @@ export default async function PortalCartera({ searchParams }: { searchParams: Pr
               if (!f) return null;
               return (
                 <tr key={a.id} className="border-t border-gray-50">
-                  <td className="px-3 py-2 text-xs text-gray-500">{formatFechaLarga(a.fecha_abono)}</td>
+                  <td data-label="Fecha" className="px-3 py-2 text-xs text-gray-500">{formatFechaLarga(a.fecha_abono)}</td>
                   <th scope="row" className="px-3 py-2 text-left font-mono font-semibold text-[#1D7C9A]">{numeroVisible(a.numero_contrato)}</th>
-                  <td className="px-3 py-2 text-xs text-gray-600">{a.forma_pago ?? "—"}</td>
-                  <td className="px-3 py-2 text-right tabular-nums">{formatMoneda(Number(a.valor_abono ?? 0), f.moneda)}</td>
-                  <td className="px-3 py-2 text-right tabular-nums text-gray-500">{formatMoneda(f.saldo, f.moneda)}</td>
-                  <td className="px-3 py-2 text-right">
+                  <td data-label="Forma de pago" className="px-3 py-2 text-xs text-gray-600">{a.forma_pago ?? "—"}</td>
+                  <td data-label="Valor" className="px-3 py-2 text-right tabular-nums">{formatMoneda(Number(a.valor_abono ?? 0), f.moneda)}</td>
+                  <td data-label="Saldo del contrato" className="px-3 py-2 text-right tabular-nums text-gray-500">{formatMoneda(f.saldo, f.moneda)}</td>
+                  <td data-label="Recibo" className="px-3 py-2 text-right">
                     <Link href={`/recibo/${a.id}`} target="_blank" className="text-xs font-medium hover:underline" style={{ color: "var(--brand-primary)" }}>Recibo</Link>
                   </td>
                 </tr>

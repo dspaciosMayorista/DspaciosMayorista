@@ -97,7 +97,10 @@ export function useCotizacionTarjeta({ filas, paqueteId, hotelId, ventana, cotiz
     try {
       const r = await cotizar(input);
       if (mia !== secuencia.current) return; // respuesta de una selección anterior: se descarta
-      if (r.ok) setCot({ sel, res: r }); else { setCot(null); setError(r.error); }
+      // `r.motivos` solo llega del servidor para roles internos (ver cotizarTarjetaActions.ts);
+      // público y B2B reciben siempre `undefined` y ven exactamente el mensaje genérico.
+      if (r.ok) setCot({ sel, res: r });
+      else { setCot(null); setError(r.motivos?.length ? `${r.error} Motivo: ${r.motivos.join(" · ")}` : r.error); }
     } catch {
       if (mia === secuencia.current) { setCot(null); setError("No pudimos calcular el precio. Intenta de nuevo."); }
     } finally {

@@ -23,7 +23,7 @@ describe("computarReserva — lectura de servicios incluidos", () => {
 
   test("armado_servicios + categoría/precio y servicio_tarifa_pax se leen con el cliente de servicio", () => {
     assert.match(bloque, /const catalogo = createAdminClient\(\);/);
-    assert.match(bloque, /await catalogo\s*\n\s*\.from\("armado_servicios"\)/);
+    assert.match(bloque, /catalogo\s*\n\s*\.from\("armado_servicios"\)/);
     // 226: además `precio_infante` (precio del menor de 2 años del servicio).
     assert.match(bloque, /servicios_adicionales\(nombre, categoria, precio_persona, (precio_infante, )?liquidacion, proveedor_id\)/);
     // SIN «GENERAL»: las vigencias y rangos de cada incluido se leen con ESE mismo cliente de servicio (cargarVigenciasServicios) y ya no se consulta la temporada GENERAL.

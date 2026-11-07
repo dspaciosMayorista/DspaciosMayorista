@@ -90,7 +90,7 @@ describe("dónde se muestra", () => {
     assert.ok(c.includes("<TarjetaHotelConFechas"), "la lista usa la tarjeta con selector de fechas");
     const h = leer("app/tarifario/TarjetaHotelFechas.tsx");
     assert.ok(h.includes("etiqueta: r?.descuentoHotel ?"), "la etiqueta sale del mismo resultado que el precio");
-    assert.ok(leer("app/tarifario/cotizarTarjetaActions.ts").includes("computarReserva(sb, reserva)"), "el precio sale de computarReserva");
+    assert.ok(leer("app/tarifario/cotizarTarjetaActions.ts").includes("computarReserva(sb, reserva"), "el precio sale de computarReserva");
   });
   test("no se confunde con la promoción de temporadas (es_promocion)", () => {
     const c = leer("components/cotizacion/EtiquetaDescuentoHotel.tsx");
