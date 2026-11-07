@@ -366,7 +366,7 @@ export default async function CotizacionDetallePage({
       <CondicionesPanel ui={condicionesUI} moneda={moneda} />
 
       {!esManual && <DesgloseInterno cot={c} moneda={moneda} />}
-      {!esManual && esPagoAutorizado && <ComposicionPrecio guardada={composicionGuardada} totalCotizacion={esCarrito ? null : Number(c.precio_venta) || 0} />}
+      {!esManual && esPagoAutorizado && <ComposicionPrecio guardada={composicionGuardada} totalCotizacion={Number(c.precio_venta) || 0} />}
 
       {esManual && (
         <div className="mt-6 overflow-hidden rounded-xl border border-gray-200 bg-white">

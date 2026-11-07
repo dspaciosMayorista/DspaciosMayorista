@@ -19,7 +19,7 @@ import { crearSolicitudReserva, fotosPortada, getContextoAsistenciaB2B, previsua
 import { TerminosB2BAsistido } from "@/components/cotizacion/TerminosB2BAsistido";
 import { ServicioManualPanel } from "./ServicioManualPanel";
 import { useCoberturaNormal } from "./CoberturaServicios";
-import { tituloPaqueteTuristico } from "@/lib/contrato/paqueteTuristicoDocumento";
+import { tituloItemPaquete } from "@/lib/contrato/paqueteTuristicoDocumento";
 import { ResumenOpcionesComparativa } from "./ResumenOpcionesComparativa";
 import { useIatasDestinos } from "@/lib/cart/useIatasDestinos";
 import { agruparHotelesPorViaje, esClaveGrupoViaje, fechasDeVuelo, vuelosComunesCompatibles, type ServicioManual } from "@/lib/cart/servicioManual";
@@ -74,7 +74,7 @@ export default function CheckoutPage() {
   const [err, setErr] = useState("");
   // Ítem único «Paquete Turístico …» de la cotización con servicio manual: se propone solo y el asesor puede editar el texto (nunca los valores).
   const primerHotel = hotelItems[0];
-  const tituloPropuesto = tituloPaqueteTuristico(primerHotel?.destino, primerHotel?.fechaIda, primerHotel?.fechaRegreso);
+  const tituloPropuesto = tituloItemPaquete(primerHotel?.destino);
   const [tituloEditado, setTituloEditado] = useState<string | null>(null);
   // Entre la vista previa y generar cambió el desglose B2B: se avisa, la vista previa se actualiza y hay que confirmar de nuevo.
   const [avisoTerminos, setAvisoTerminos] = useState("");
@@ -224,7 +224,7 @@ export default function CheckoutPage() {
         })),
         // #64: precio de venta declarado por el asesor; el servidor lo vuelve a validar y exige sesión interna.
         ...(manualItems.length ? { manuales: manualItems.map(vueloParaEnviar).map((m) => ({ clase: m.clase, nombre: m.nombre, origen: m.origen, destino: m.destino, fechaIda: m.fechaIda, fechaRegreso: m.fechaRegreso, pax: m.pax, precio: m.precio, moneda: m.moneda, impuestoNoComisionable: m.impuestoNoComisionable, tramo: m.tramo, hotelRef: m.hotelRef, horaIda: m.horaIda ?? null, horaRegreso: m.horaRegreso ?? null })) } : {}),
-        ...(!vista.crear && manualItems.length && tituloEditado !== null && tituloEditado.trim() ? { tituloPaquete: tituloEditado } : {}),
+        ...(!vista.crear && hotelItems.length && tituloEditado !== null && tituloEditado.trim() ? { tituloPaquete: tituloEditado } : {}),
         ...(vista.crear && compartir ? { compartirPublico: true } : {}),
         // Elección EXPRESA: por defecto cada hotel se cotiza solo con la acomodación del carrito.
         ...(vista.crear && otrasAcom ? { otrasAcomodaciones: true } : {}),
@@ -443,7 +443,7 @@ export default function CheckoutPage() {
             {/* #64: solo personal interno autorizado (mismo contexto que la venta asistida); el servidor lo exige de nuevo. */}
             {puedeManual && <ServicioManualPanel comun={!!vista.crear} />}
             {cob.panel}
-            {puedeManual && !vista.crear && manualItems.length > 0 && (
+            {puedeManual && !vista.crear && hotelItems.length > 0 && (
               <section className="rounded-xl border border-gray-200 bg-white p-4" data-testid="titulo-paquete">
                 <label htmlFor="titulo-paquete" className="text-xs font-medium text-gray-600">Ítem del paquete (Valores y Pagos)</label>
                 <input id="titulo-paquete" maxLength={200} className="mt-1 w-full rounded-lg border border-gray-300 p-2 text-sm"

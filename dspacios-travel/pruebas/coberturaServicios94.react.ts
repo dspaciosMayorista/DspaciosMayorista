@@ -298,3 +298,40 @@ describe("#94 página: editar habitaciones y emitir antes de que llegue la consu
     m.desmontar();
   });
 });
+
+// Ítem del paquete: editable para el personal interno también en cotizaciones solo de Tarifario (sin servicios manuales).
+describe("#94 página: Ítem del paquete editable sin servicios manuales", () => {
+  before(() => {
+    stub.__setContextoB2B({ esB2B: false, pctComision: 0, agencia: null });
+    stub.__setContextoAsistencia({ puede: true, aliados: [] });
+    stub.__setCuposDeCarrito(async (i: Parameters<typeof cuposDe>[0]) => cuposDe(i));
+    stub.__setCrearSolicitudReserva(async () => ({ ok: false, error: "rechazo de prueba" }));
+  });
+  after(() => { stub.__setContextoAsistencia({ puede: false }); stub.__setCuposDeCarrito(null); stub.__setCrearSolicitudReserva(null); });
+  const campo = (raiz: HTMLElement) => raiz.querySelector<HTMLInputElement>("#titulo-paquete");
+  const escribirEn = async (input: HTMLInputElement, valor: string) => {
+    await act(async () => { Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, "value")!.set!.call(input, valor); input.dispatchEvent(new window.Event("input", { bubbles: true })); await espera(); });
+  };
+
+  test("aparece con la propuesta «Paquete Turístico {Destino}» y viaja editado al servidor sin ningún servicio manual", async () => {
+    const m = await montar([hotel({ doble: 1 })]);
+    const input = campo(m.container);
+    assert.ok(input, "el editor está disponible solo con un hotel de Tarifario");
+    assert.equal(input!.value, "Paquete Turístico CARTAGENA", "propuesta por defecto: ni hotel, ni categoría, ni servicios");
+    // Formulario del personal interno: el documento tiene su propia etiqueta.
+    const rotular = async (etiqueta: string, valor: string) => {
+      const l = [...m.container.querySelectorAll("label")].find((x) => x.textContent === etiqueta)!;
+      const i = (l.parentElement!.querySelector("input")) as HTMLInputElement;
+      await act(async () => { Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, "value")!.set!.call(i, valor); i.dispatchEvent(new window.Event("input", { bubbles: true })); await espera(); });
+    };
+    await rotular("Nombres *", "Ana"); await rotular("Apellidos *", "Pérez"); await rotular("Teléfono / WhatsApp *", "300"); await rotular("Número de documento *", "123");
+    const antes = stub.__solicitudes.length;
+    await generar(m.container);
+    assert.equal((ultima() as { tituloPaquete?: string }).tituloPaquete, undefined, "sin editar no se envía texto");
+    await escribirEn(input!, "Escapada Caribe 2030");
+    await generar(m.container);
+    assert.equal(stub.__solicitudes.length, antes + 2);
+    assert.equal((ultima() as { tituloPaquete?: string }).tituloPaquete, "Escapada Caribe 2030");
+    m.desmontar();
+  });
+});

@@ -100,6 +100,8 @@ let HOTELES: Record<number, HotelSim> = {};
 let TOUR_SIM: Record<string, unknown> | null = null;
 // Variante por servicio (por id) para cotizar varios servicios distintos en la misma solicitud.
 let TOUR_POR_ID: Record<number, Record<string, unknown>> = {};
+// Composición que produciría el motor para el hotel (solo el hotel: los tours y servicios manuales del carrito se cobran fuera de ella).
+let COMPOSICION_SIM: Record<string, unknown> | null = null;
 mock.module("@/lib/reservar/computo", {
   namedExports: {
     computarReserva: async (_sb: unknown, r: { hotelId: number; habitaciones?: Record<string, number> }) => {
@@ -114,7 +116,7 @@ mock.module("@/lib/reservar/computo", {
           precioVenta: h.pvp * pax + h.cargoGrupo, monedaReserva: h.moneda,
           lineasHab: lineas, pvpPorAcom: { doble: h.pvp, sencilla: h.pvp }, netoPorAcom: { doble: h.neto, sencilla: h.neto },
           numNinos: 0, numNinos2: 0, numInfantes: 0, totalPax: pax, paxConSilla: pax, edadesMenoresUsadas: [],
-          serviciosIncluidos: h.incluidos, distribucionMenores: [], condicionesTarifa: null,
+          serviciosIncluidos: h.incluidos, distribucionMenores: [], condicionesTarifa: null, composicion: COMPOSICION_SIM,
         },
       };
     },
@@ -174,6 +176,7 @@ beforeEach(() => {
   FALLO_FILTRO = null;
   TOUR_SIM = null;
   TOUR_POR_ID = {};
+  COMPOSICION_SIM = null;
 });
 const ozCon = (incluidos: Incluido[]): HotelSim => ({ nombre: "OZ HOTEL CARTAGENA", moneda: "COP", pvp: 300_000, neto: 200_000, cargoGrupo: 0, incluidos });
 const TOUR = { servicioId: 12, paqueteId: 34, nombre: "Tour Islas", destino: "CARTAGENA", descripcion: null, noches: 3, pax: 2, total: 200_000, moneda: "COP", categoria: "tour_traslado" };
@@ -229,9 +232,12 @@ describe("#94 recorrido: capturar → guardar → reabrir → imprimir con el mi
     const html = imprimir(guardado);
     const t = planoTxt(html);
     assert.ok(html.includes('data-testid="resumen-precios"'), "se usa el resumen por pasajero");
-    for (const frag of [`${$(500_000)}`, `${$(400_000)}`, "Alojamiento · Tour A · Tour B", "Alojamiento · Tour A", "Alojamiento · Tour B", $(1_300_000)]) {
-      assert.ok(sinEspacios(t).includes(sinEspacios(frag)), `el documento muestra ${frag}`);
-    }
+    // Estructura de siempre: una fila por grupo (Ítem · Adultos · Niños · Tarifa Adulto · Tarifa Niño · Valor total), Ítem = «Paquete Turístico {Destino}».
+    const filas = [...html.matchAll(/<tr[^>]*data-testid="resumen-grupo"[^>]*>(.*?)<\/tr>/g)].map((m) => [...m[1].matchAll(/<td[^>]*>(.*?)<\/td>/g)].map((c) => c[1].replace(/<[^>]+>/g, "").replace(/\s+/g, "")));
+    assert.deepEqual(filas.map((f) => [f[0], f[1], f[3], f[5]]), [
+      ["PaqueteTurísticoCARTAGENA", "1", $(500_000), $(500_000)], ["PaqueteTurísticoCARTAGENA", "1", $(400_000), $(400_000)], ["PaqueteTurísticoCARTAGENA", "1", $(400_000), $(400_000)],
+    ], "tres filas separadas: tienen servicios distintos aunque dos coincidan en tarifa");
+    assert.ok(sinEspacios(t).includes(sinEspacios($(1_300_000))), "el total");
     assert.equal(sinEspacios(t).includes(sinEspacios($(200_000))), false, "no se muestra el importe de un servicio");
     assert.equal(sinEspacios(t).includes(sinEspacios($(100_000))), false, "ni su parte por persona");
 
@@ -252,5 +258,165 @@ describe("#94 recorrido: capturar → guardar → reabrir → imprimir con el mi
     assert.ok(guardado.resumenPrecios);
     const alterado = { ...guardado, items: guardado.items.map((i: Detalle) => (i.descripcion?.startsWith("Servicio ·") ? { ...i, tarifa_adulto: 1 } : i)) };
     assert.equal(imprimir(alterado).includes('data-testid="resumen-precios"'), false, "total del acuerdo cambió: sin reparto");
+  });
+});
+
+const { ComposicionPrecio } = await import("../components/cotizacion/ComposicionPrecio.tsx");
+const { leerComposicionCotizacion } = await import("../lib/cotizacion/composicionPrecio.ts");
+
+// ── Composición INTERNA: caso observado (alojamiento 1.104.000 + adicionales 90.000 y 142.000 = total 1.336.000) ──
+describe("#94 composición interna: concilia hotel + servicios del carrito con el total guardado", () => {
+  const compHotel = (total: number) => ({
+    version: 1, moneda: "COP", trm: null, markup: { tipo: "global", pct: 0.2 }, impuestoIncluido: 0, adicionales: [], total, cuadra: true,
+    lineas: [{ clave: "doble", etiqueta: "1 hab Doble (2 pax)", pax: 2, pvpPorPersona: total / 2, total, componentes: [{ tipo: "hotel", nombre: "Hotel", neto: 400_000, venta: total / 2 }] }],
+  });
+  const montar = () => {
+    HOTELES = { 1: { nombre: "OZ HOTEL CARTAGENA", moneda: "COP", pvp: 552_000, neto: 400_000, cargoGrupo: 0, incluidos: [] } };
+    COMPOSICION_SIM = compHotel(1_104_000);
+    TOUR_SIM = { ...TOUR, pax: 2, total: 90_000 };
+    TOUR_POR_ID = { 12: { servicioId: 12, nombre: "Tour Islas", total: 90_000 }, 13: { servicioId: 13, nombre: "City tour", total: 142_000 } };
+    usuario = null;
+  };
+  const emitir = () => crearSolicitudReserva({
+    items: [{ ...item(1, 34), itemId: "h1" }],
+    tours: [{ ...tourEntrada, servicioId: 12, nombre: "Tour Islas", pax: 2 }, { ...tourEntrada, servicioId: 13, nombre: "City tour", pax: 2 }],
+    cliente: clienteCot, cobertura: { tours: { 0: { hotel: 0 }, 1: { hotel: 0 } } },
+  }) as Promise<{ ok: boolean; error?: string }>;
+  const ficha = (guardada: unknown, total: number | null) => renderToStaticMarkup(createElement(ComposicionPrecio as never, { guardada, totalCotizacion: total } as never)).replace(/&nbsp;| /g, " ");
+  const plano = (h: string) => h.replace(/<[^>]+>/g, " ").replace(/\s+/g, " ");
+
+  test("ORIGEN: lo guardado ya incluye los adicionales (antes solo el hotel: 1.104.000 frente a un total de 1.336.000)", async () => {
+    montar();
+    const r = await emitir();
+    assert.equal(r.ok, true, r.error);
+    assert.equal(db.cotizaciones[0].precio_venta, 1_336_000);
+    const guardado = JSON.parse(JSON.stringify(db.cotizacion_composicion[0].composicion));
+    assert.equal(guardado.hoteles[0].composicion.total, 1_104_000, "la composición del hotel no se toca");
+    assert.deepEqual(guardado.servicios.map((x: { nombre: string; total: number; tipo: string }) => [x.nombre, x.total, x.tipo]), [["Tour Islas", 90_000, "tour"], ["City tour", 142_000, "tour"]]);
+    assert.equal(guardado.total, 1_336_000);
+    assert.ok(!JSON.stringify(guardado.servicios).match(/neto/i), "no se inventa un neto para los servicios");
+  });
+
+  test("la ficha interna muestra el hotel, cada servicio y la conciliación con el total", async () => {
+    montar();
+    await emitir();
+    const guardada = leerComposicionCotizacion(JSON.parse(JSON.stringify(db.cotizacion_composicion[0].composicion)));
+    assert.ok(guardada);
+    const t = plano(ficha(guardada, db.cotizaciones[0].precio_venta as number));
+    for (const frag of ["1 hab Doble (2 pax)", "Tour Islas", "City tour"]) assert.ok(t.includes(frag), frag);
+    for (const n of [1_104_000, 90_000, 142_000, 1_336_000]) assert.ok(sinEspacios(t).includes(sinEspacios(formatMoneda(n, "COP"))), String(n));
+    assert.match(ficha(guardada, 1_336_000), /data-testid="composicion-cuadra"/);
+    assert.doesNotMatch(ficha(guardada, 1_336_000), /composicion-difiere/);
+  });
+
+  test("si el total vigente no coincide con hotel + servicios se avisa (nunca se oculta la diferencia)", async () => {
+    montar();
+    await emitir();
+    const guardada = leerComposicionCotizacion(JSON.parse(JSON.stringify(db.cotizacion_composicion[0].composicion)));
+    assert.match(ficha(guardada, 1_300_000), /data-testid="composicion-difiere"/);
+  });
+
+  test("una composición guardada antes (solo hotel) se declara incompleta en vez de pasar por buena", () => {
+    const vieja = leerComposicionCotizacion({ version: 1, hoteles: [{ ref: "item-0", nombre: "OZ", composicion: compHotel(1_104_000) }] });
+    const h = ficha(vieja, 1_336_000);
+    assert.match(h, /composicion-difiere/);
+    assert.match(plano(h), /antes de conservar los servicios del carrito/);
+  });
+
+  test("el documento del cliente de ese mismo caso muestra solo precios completos por pasajero y el total", async () => {
+    montar();
+    await emitir();
+    const html = imprimir(JSON.parse(JSON.stringify(db.cotizaciones[0].detalle)) as Detalle);
+    const t = planoTxt(html);
+    assert.ok(sinEspacios(t).includes(sinEspacios(formatMoneda(1_336_000, "COP"))));
+    assert.equal(sinEspacios(t).includes(sinEspacios(formatMoneda(90_000, "COP"))), false);
+    assert.equal(sinEspacios(t).includes(sinEspacios(formatMoneda(142_000, "COP"))), false);
+    assert.doesNotMatch(t, /Composici[oó]n|Neto p\/p|markup/i);
+  });
+});
+
+// ── Ítem editable en cotizaciones exclusivamente de Tarifario (sin servicios manuales ni adicionales) ──
+describe("#94 Ítem del paquete: valor por defecto, edición sin manuales, guardar, reabrir e imprimir", () => {
+  const filas = (html: string) => [...html.matchAll(/<tr[^>]*data-testid="resumen-grupo"[^>]*>(.*?)<\/tr>/g)].map((m) => [...m[1].matchAll(/<td[^>]*>(.*?)<\/td>/g)].map((c) => c[1].replace(/<[^>]+>/g, "").trim()));
+  const emitirTarifario = (extra: Record<string, unknown> = {}) => crearSolicitudReserva({ items: [item(1, 34)], tours: [], cliente: clienteCot, ...extra }) as Promise<{ ok: boolean; error?: string }>;
+
+  test("por defecto: «Paquete Turístico {Destino}», no el hotel, la categoría ni los servicios", async () => {
+    HOTELES = { 1: ozCon([]) };
+    usuario = null;
+    assert.equal((await emitirTarifario()).ok, true);
+    const html = imprimir(JSON.parse(JSON.stringify(db.cotizaciones[0].detalle)) as Detalle);
+    const f = filas(html);
+    assert.deepEqual(f.map((x) => [x[0], x[1], x[2]]), [["Paquete Turístico CARTAGENA", "2", "0"]]);
+    assert.doesNotMatch(f[0][0], /OZ|HOTEL|Estandar|Desayuno/i);
+  });
+
+  test("editado sin manuales: se guarda, y al reabrir e imprimir sale el mismo texto con los mismos valores", async () => {
+    HOTELES = { 1: ozCon([]) };
+    usuario = null;
+    assert.equal((await emitirTarifario({ tituloPaquete: "Escapada Caribe 2030" })).ok, true);
+    const guardado = JSON.parse(JSON.stringify(db.cotizaciones[0].detalle)) as Detalle;
+    assert.equal(guardado.tituloPaquete, "Escapada Caribe 2030");
+    const html = imprimir(guardado);
+    assert.deepEqual(filas(html).map((x) => x[0]), ["Escapada Caribe 2030"]);
+    assert.equal(imprimir(JSON.parse(JSON.stringify(guardado))), html, "reapertura idéntica");
+    assert.ok(sinEspacios(planoTxt(html)).includes(sinEspacios(formatMoneda(600_000, "COP"))));
+  });
+
+  test("las descripciones del hotel siguen en su lugar (sección de alojamiento), fuera de la columna Ítem", async () => {
+    HOTELES = { 1: ozCon([]) };
+    usuario = null;
+    await emitirTarifario();
+    const d = JSON.parse(JSON.stringify(db.cotizaciones[0].detalle)) as Detalle;
+    const t = planoTxt(imprimir(d));
+    assert.match(t, /OZ HOTEL CARTAGENA/, "el hotel aparece en el documento");
+    assert.match(d.hoteles[0].nombre ?? "", /OZ HOTEL CARTAGENA/);
+  });
+});
+
+// ── Fixtures para capturas comparables (solo con CAPTURAS_94=<carpeta>; en la corrida normal se omite) ──
+// Escribe el HTML del documento del cliente y de la ficha interna (componente `ComposicionPrecio`) del mismo caso, SIN navegador ni base real:
+// son salidas de los componentes reales con datos simulados.
+describe("#94 fixtures de captura (solo con CAPTURAS_94)", { skip: !process.env.CAPTURAS_94 }, () => {
+  const compHotel = (total: number, pax: number) => ({
+    version: 1, moneda: "COP", trm: null, markup: { tipo: "global", pct: 0.2 }, impuestoIncluido: 0, adicionales: [], total, cuadra: true,
+    lineas: [{ clave: "doble", etiqueta: `1 hab Doble (${pax} pax)`, pax, pvpPorPersona: total / pax, total, componentes: [{ tipo: "hotel", nombre: "Hotel", neto: 400_000, venta: total / pax }] }],
+  });
+  test("escribe los fixtures", async () => {
+    const { writeFileSync, mkdirSync } = await import("node:fs");
+    const dir = process.env.CAPTURAS_94 as string;
+    mkdirSync(dir, { recursive: true });
+    // Caso observado: alojamiento 1.104.000 + adicionales 90.000 y 142.000 = 1.336.000.
+    HOTELES = { 1: { nombre: "OZ HOTEL CARTAGENA", moneda: "COP", pvp: 552_000, neto: 400_000, cargoGrupo: 0, incluidos: [] } };
+    COMPOSICION_SIM = compHotel(1_104_000, 2);
+    TOUR_SIM = { ...TOUR, pax: 2, total: 90_000 };
+    TOUR_POR_ID = { 12: { servicioId: 12, nombre: "Tour Islas", total: 90_000 }, 13: { servicioId: 13, nombre: "City tour", total: 142_000 } };
+    usuario = null;
+    const r = await crearSolicitudReserva({
+      items: [{ ...item(1, 34), itemId: "h1" }], tituloPaquete: "Paquete Turístico Cartagena 3 noches",
+      tours: [{ ...tourEntrada, servicioId: 12, nombre: "Tour Islas", pax: 2 }, { ...tourEntrada, servicioId: 13, nombre: "City tour", pax: 2 }],
+      cliente: clienteCot, cobertura: { tours: { 0: { hotel: 0 }, 1: { hotel: 0 } } },
+    }) as { ok: boolean; error?: string };
+    assert.equal(r.ok, true, r.error);
+    const detalle = JSON.parse(JSON.stringify(db.cotizaciones[0].detalle));
+    const despues = leerComposicionCotizacion(JSON.parse(JSON.stringify(db.cotizacion_composicion[0].composicion)));
+    const antes = leerComposicionCotizacion({ version: 1, hoteles: [{ ref: "item-0", nombre: "OZ", composicion: compHotel(1_104_000, 2) }] });
+    const ficha = (g: unknown) => renderToStaticMarkup(createElement(ComposicionPrecio as never, { guardada: g, totalCotizacion: 1_336_000 } as never));
+    writeFileSync(`${dir}/documento.html`, imprimir(detalle));
+    writeFileSync(`${dir}/ficha_antes.html`, ficha(antes));
+    writeFileSync(`${dir}/ficha_despues.html`, ficha(despues));
+    // Servicios parciales y superpuestos sobre 3 pasajeros (Tour A: 2 de la doble; Tour B: 1 de la doble y la sencilla).
+    HOTELES = { 1: { nombre: "OZ HOTEL CARTAGENA", moneda: "COP", pvp: 300_000, neto: 200_000, cargoGrupo: 0, incluidos: [] } };
+    COMPOSICION_SIM = null;
+    TOUR_SIM = { ...TOUR, pax: 2, total: 200_000 };
+    TOUR_POR_ID = { 12: { servicioId: 12, nombre: "Tour A", total: 200_000 }, 13: { servicioId: 13, nombre: "Tour B", total: 200_000 } };
+    for (const k of Object.keys(db)) delete db[k];
+    const r2 = await crearSolicitudReserva({
+      items: [{ ...item(1, 34), habitaciones: { doble: 1, sencilla: 1 }, pax: 3 }],
+      tours: [{ ...tourEntrada, servicioId: 12, nombre: "Tour A", pax: 2 }, { ...tourEntrada, servicioId: 13, nombre: "Tour B", pax: 2 }],
+      cliente: clienteCot,
+      cobertura: { cupos: { 0: { "adulto:doble": [1, 2], "adulto:sencilla": [1] } }, tours: { 0: { hotel: 0, cubre: ["adulto:doble#1", "adulto:doble#2"] }, 1: { hotel: 0, cubre: ["adulto:doble#2", "adulto:sencilla#1"] } } },
+    }) as { ok: boolean; error?: string };
+    assert.equal(r2.ok, true, r2.error);
+    writeFileSync(`${dir}/documento_parciales.html`, imprimir(JSON.parse(JSON.stringify(db.cotizaciones[0].detalle))));
   });
 });

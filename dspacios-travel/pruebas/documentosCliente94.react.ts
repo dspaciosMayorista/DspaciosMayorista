@@ -49,81 +49,118 @@ const plano = (t: string) => t.replace(/\s+/g, "");
 const tiene = (t: string, frag: string) => plano(t).includes(plano(frag));
 const veces = (t: string, frag: string) => plano(t).split(plano(frag)).length - 1;
 
-describe("#94 · cotización del carrito con resumen: grupos de pasajeros, precio completo por persona y total", () => {
+// Estructura de siempre de «Valores y Pagos»: Ítem · Adultos · Niños · Tarifa Adulto · Tarifa Niño · Valor total. Una fila por grupo (mismo tipo, tarifa y servicios).
+const ITEM = "Paquete Turístico CARTAGENA";
+const filasDe = (html: string) => [...html.matchAll(/<tr[^>]*data-testid="resumen-(?:grupo|ajuste)"[^>]*>(.*?)<\/tr>/g)].map((m) => [...m[1].matchAll(/<td[^>]*>(.*?)<\/td>/g)].map((c) => c[1].replace(/<[^>]+>/g, "").replace(/&nbsp;| /g, " ").trim()));
+const encabezados = (html: string) => [...(html.match(/<thead[^>]*>([\s\S]*?)<\/thead>/)?.[1] ?? "").matchAll(/<th[^>]*>(.*?)<\/th>/g)].map((c) => c[1].replace(/<[^>]+>/g, "").trim());
+const monto = (n: number, m = "COP") => formatMoneda(n, m).replace(/\s+/g, "");
+const limpio = (celdas: string[]) => celdas.map((c) => c.replace(/\s+/g, ""));
+
+describe("#94 · cotización del carrito con resumen: estructura de siempre, una fila por grupo y precio completo por pasajero", () => {
   const items = lineas(descripcionCotizacionManual);
-  test("Caso A (los mismos 2 pasajeros tienen vuelo y tour): dos grupos y el total", () => {
-    const t = texto(items, { resumenPrecios: resumenDe(["a1", "a2"], ["a1", "a2"]) });
-    assert.ok(tiene(t, `Adultos Alojamiento · Vuelo · Tour Islas del Rosario 2 ${$(1_000_000)} ${$(2_000_000)}`), "2 adultos a 1.000.000");
-    assert.ok(tiene(t, `Adulto Alojamiento 1 ${$(300_000)} ${$(300_000)}`), "1 adulto solo alojamiento");
-    assert.ok(tiene(t, `Total del contrato ${$(TOTAL)}`));
+  test("columnas en el orden de siempre con Ítem primero (sin Pasajeros/Incluye/Cant./Subtotal)", () => {
+    const h = render(items, { resumenPrecios: resumenDe(["a1", "a2"], ["a1", "a2"]) });
+    assert.deepEqual(encabezados(h), ["Ítem", "Adultos", "Niños", "Tarifa Adulto", "Tarifa Niño", "Valor total"]);
+    assert.doesNotMatch(texto(items, { resumenPrecios: resumenDe(["a1", "a2"], ["a1", "a2"]) }), /Pasajeros Incluye|Incluye Cant|Subtotal/);
   });
-  test("Caso B (pasajeros distintos): tres grupos, cada uno con su precio completo", () => {
-    const t = texto(items, { resumenPrecios: resumenDe(["a1", "a2"], ["a2", "a3"]) });
-    assert.ok(tiene(t, `Adulto Alojamiento · Vuelo · Tour Islas del Rosario 1 ${$(1_000_000)}`));
-    assert.ok(tiene(t, `Adulto Alojamiento · Vuelo 1 ${$(900_000)}`));
-    assert.ok(tiene(t, `Adulto Alojamiento · Tour Islas del Rosario 1 ${$(400_000)}`));
+  test("Caso A (los mismos 2 pasajeros tienen vuelo y tour): dos filas, 2 adultos a 1.000.000 y 1 adulto a 300.000", () => {
+    const filas = filasDe(render(items, { resumenPrecios: resumenDe(["a1", "a2"], ["a1", "a2"]) })).map(limpio);
+    assert.deepEqual(filas, [
+      [ITEM, "2", "0", monto(1_000_000), monto(0), monto(2_000_000)].map((c) => c.replace(/\s+/g, "")),
+      [ITEM, "1", "0", monto(300_000), monto(0), monto(300_000)].map((c) => c.replace(/\s+/g, "")),
+    ]);
+    assert.ok(tiene(texto(items, { resumenPrecios: resumenDe(["a1", "a2"], ["a1", "a2"]) }), `Total del contrato ${$(TOTAL)}`));
   });
-  test("ningún servicio lleva su propio importe y las descripciones de lo incluido se conservan", () => {
-    const t = texto(items, { resumenPrecios: resumenDe(["a1", "a2"], ["a2", "a3"]) });
+  test("Caso B (pasajeros distintos): tres filas separadas, cada una con su precio completo (1.000.000, 900.000 y 400.000)", () => {
+    const filas = filasDe(render(items, { resumenPrecios: resumenDe(["a1", "a2"], ["a2", "a3"]) })).map(limpio);
+    assert.deepEqual(filas.map((f) => [f[1], f[3], f[5]]), [["1", monto(1_000_000), monto(1_000_000)], ["1", monto(900_000), monto(900_000)], ["1", monto(400_000), monto(400_000)]]);
+    assert.equal(new Set(filas.map((f) => f[0])).size, 1, "el mismo Ítem en todas las filas");
+  });
+  test("el Ítem es «Paquete Turístico {Destino}» o el texto editado; nunca el hotel, la categoría ni los servicios", () => {
+    const h = texto(items, { resumenPrecios: resumenDe(["a1", "a2"], ["a2", "a3"]) });
+    assert.match(h, /Paquete Turístico CARTAGENA/);
+    const filas = filasDe(render(items, { resumenPrecios: resumenDe(["a1", "a2"], ["a2", "a3"]) }));
+    for (const f of filas) assert.doesNotMatch(f[0], /Hotel|Almirante|Estándar|PC|Vuelo|Tour|Alojamiento/);
+    const editado = filasDe(render(items, { resumenPrecios: resumenDe(["a1", "a2"], ["a2", "a3"]), tituloPaquete: "Escapada Caribe 2030" }));
+    assert.ok(editado.every((f) => f[0] === "Escapada Caribe 2030"));
+  });
+  test("ningún servicio lleva su propio importe ni su descripción en la tabla de valores", () => {
+    const html = render(items, { resumenPrecios: resumenDe(["a1", "a2"], ["a2", "a3"]) });
+    const bloque = html.slice(html.indexOf('data-testid="resumen-precios"'), html.indexOf("</table>", html.indexOf('data-testid="resumen-precios"')));
+    const t = bloque.replace(/<[^>]+>/g, " ").replace(/\s+/g, " ");
     assert.equal(veces(t, $(1_200_000)), 0, "sin el precio del vuelo");
     assert.equal(veces(t, $(200_000)), 0, "sin el precio del tour");
-    assert.doesNotMatch(t, /Servicios adicionales|Valor total del paquete|Tu asesor te detalla/);
-    assert.match(t, /Vuelo/);
-    assert.match(t, /Tour Islas del Rosario/);
+    assert.doesNotMatch(t, /Vuelo|Tour Islas/);
+    assert.doesNotMatch(texto(items, { resumenPrecios: resumenDe(["a1", "a2"], ["a2", "a3"]) }), /Servicios adicionales|Valor total del paquete|Tu asesor te detalla/);
   });
-  test("#52: el nombre comercial del paquete sale en «Servicio / Plan» y la categoría y el régimen, separados", () => {
-    const t = texto(items, { resumenPrecios: resumenDe(["a1", "a2"], ["a1", "a2"]) });
-    assert.match(t, /Servicio \/ Plan Cartagena Esencial/);
-    assert.match(t, /Cartagena Esencial · Hotel Almirante Categoría: Estándar Alimentación: PC/);
+  test("niños: van en la columna Niños con su propia tarifa; el infante cuenta como niño", () => {
+    const u = unidadOk(resumenUnidad({ ...meta, cupos: [
+      { id: "a1", tipo: "adulto", baseCentavos: 30_000_000 }, { id: "a2", tipo: "adulto", baseCentavos: 30_000_000 },
+      { id: "n1", tipo: "nino", baseCentavos: 20_000_000 }, { id: "i1", tipo: "infante", baseCentavos: 0 },
+    ], servicios: [] }));
+    const r = JSON.parse(JSON.stringify(resumenCotizacion({ modalidad: "pvp", moneda: "COP", unidades: [u] })));
+    const filas = filasDe(render([it(1, "x", { adultos: 2, tarifa_adulto: 300_000 }), it(2, "y", { ninos: 1, tarifa_nino: 200_000 })], { resumenPrecios: r })).map(limpio);
+    assert.deepEqual(filas.map((f) => [f[1], f[2], f[3], f[4], f[5]]), [
+      ["2", "0", monto(300_000), monto(0), monto(600_000)], ["0", "1", monto(0), monto(200_000), monto(200_000)], ["0", "1", monto(0), monto(0), monto(0)],
+    ]);
+  });
+  test("el ajuste de redondeo sale como «Ajuste por redondeo» solo con su valor", () => {
+    // 1.000,01 entre 3 pasajeros: 333,33 cada uno y un residuo de 2 centavos que se muestra aparte.
+    const u = unidadOk(resumenUnidad({ ...meta, cupos, servicios: [{ id: "t", nombre: "Tour", modo: "total" as const, precioCentavos: 100_001, cubre: "todos" as const }] }));
+    assert.equal(u.ajusteCentavos, 2);
+    const r = JSON.parse(JSON.stringify(resumenCotizacion({ modalidad: "pvp", moneda: "COP", unidades: [u] })));
+    const filas = filasDe(render([it(1, "z", { adultos: 3, tarifa_adulto: 300_000 }), it(2, "x", { modo_precio: "total", valor_total: 1000.01 })], { resumenPrecios: r }));
+    assert.equal(filas.at(-1)![0], "Ajuste por redondeo");
+    assert.deepEqual(filas.at(-1)!.slice(1, 5), ["—", "—", "—", "—"]);
+    assert.ok(/0,02|0.02/.test(filas.at(-1)![5]));
   });
 });
 
 describe("#94 · el documento conserva el acuerdo: un resumen que no coincide no se usa", () => {
   const items = lineas(descripcionCotizacionManual);
-  const sinResumen = (t: string) => assert.ok(!/Cartagena Esencial/.test(t) && !/Categoría: Estándar/.test(t));
-  test("NETO: solo con modalidad neto y el total exigible; un resumen PVP en un documento NETO se ignora", () => {
+  const sinResumen = (html: string) => assert.ok(!html.includes('data-testid="resumen-precios"'));
+  test("NETO: un resumen PVP en un documento NETO se ignora y uno NETO sin el total exigible también", () => {
     const neto = resumenDe(["a1", "a2"], ["a1", "a2"], { modalidad: "neto" });
-    assert.match(texto(items, { resumenPrecios: neto, netoTotalExigible: TOTAL }), /Tarifa por persona NETO/);
-    sinResumen(texto(items, { resumenPrecios: resumenDe(["a1", "a2"], ["a1", "a2"]), netoTotalExigible: TOTAL }));
-    sinResumen(texto(items, { resumenPrecios: neto })); // documento PVP con resumen NETO
+    assert.ok(render(items, { resumenPrecios: neto, netoTotalExigible: TOTAL }).includes('data-testid="resumen-precios"'));
+    assert.match(render(items, { resumenPrecios: neto, netoTotalExigible: TOTAL }), /Tarifa Adulto NETO/);
+    sinResumen(render(items, { resumenPrecios: resumenDe(["a1", "a2"], ["a1", "a2"]), netoTotalExigible: TOTAL }));
+    sinResumen(render(items, { resumenPrecios: neto })); // documento PVP con resumen NETO
   });
   test("moneda: el resumen debe estar en la moneda de la oferta; en USD se muestra en USD", () => {
     const usd = resumenDe(["a1", "a2"], ["a1", "a2"], { moneda: "USD" });
-    sinResumen(texto(items, { resumenPrecios: usd })); // documento COP
+    sinResumen(render(items, { resumenPrecios: usd })); // documento COP
     assert.ok(tiene(texto(items, { resumenPrecios: usd }, { moneda: "USD" }), $(1_000_000, "USD")));
   });
   test("si el total vigente cambió (precio corregido), el resumen anterior no se muestra", () => {
     const corregidos = [items[0], items[1], { ...items[2], valor_total: 250_000 }];
-    sinResumen(texto(corregidos, { resumenPrecios: resumenDe(["a1", "a2"], ["a1", "a2"]) }));
+    sinResumen(render(corregidos, { resumenPrecios: resumenDe(["a1", "a2"], ["a1", "a2"]) }));
   });
   test("un resumen alterado (la tarifa ya no multiplica a su subtotal) se ignora", () => {
     const r = resumenDe(["a1", "a2"], ["a1", "a2"]);
     r.unidades[0].grupos[0].tarifaCentavos += 1;
-    sinResumen(texto(items, { resumenPrecios: r }));
+    sinResumen(render(items, { resumenPrecios: r }));
   });
-  test("el contrato convertido usa el mismo resumen (líneas con la descripción del contrato) y el mismo total", () => {
+  test("el contrato convertido usa el mismo resumen y el mismo total", () => {
     const contrato = lineas(descripcionContratoManual);
-    const t = texto(contrato, { esCotizacion: false, resumenPrecios: resumenDe(["a1", "a2"], ["a2", "a3"]) }, { estado: "confirmado" });
-    assert.ok(tiene(t, `Adulto Alojamiento · Vuelo 1 ${$(900_000)}`));
-    assert.ok(tiene(t, `Total del contrato ${$(TOTAL)}`));
-    assert.equal(veces(t, $(1_200_000)), 0);
+    const html = render(contrato, { esCotizacion: false, resumenPrecios: resumenDe(["a1", "a2"], ["a2", "a3"]) }, { estado: "confirmado" });
+    assert.deepEqual(filasDe(html).map((f) => limpio(f)[5]), [monto(1_000_000), monto(900_000), monto(400_000)]);
+    assert.ok(tiene(texto(contrato, { esCotizacion: false, resumenPrecios: resumenDe(["a1", "a2"], ["a2", "a3"]) }, { estado: "confirmado" }), `Total del contrato ${$(TOTAL)}`));
   });
   test("sin resumen el documento queda como antes (no hay tabla de grupos)", () => {
     assert.ok(!render(items).includes('data-testid="resumen-precios"'));
   });
 });
 
-describe("#94 · varias unidades (cotización múltiple): cada una con su paquete, su hotel y sus grupos", () => {
+describe("#94 · varias unidades (cotización múltiple): sus filas suman el total general", () => {
   test("dos unidades suman el total general", () => {
     const u = (ref: string, hotel: string, paquete: string, base: number) => {
       return unidadOk(resumenUnidad({ ref, paquete: { id: 1, nombre: paquete }, hotel, categoria: "Superior", regimen: "PAM", cupos: [{ id: "a1", tipo: "adulto", baseCentavos: base }], servicios: [] }));
     };
     const resumen = JSON.parse(JSON.stringify(resumenCotizacion({ modalidad: "pvp", moneda: "COP", unidades: [u("item-0", "Hotel Sol", "Paquete Sol", 40_000_000), u("item-1", "Hotel Luna", "Paquete Luna", 50_000_000)] })));
     const items = [it(1, "Sol", { adultos: 1, tarifa_adulto: 400_000 }), it(2, "Luna", { adultos: 1, tarifa_adulto: 500_000 })];
-    const t = texto(items, { resumenPrecios: resumen });
-    assert.match(t, /Paquete Sol · Hotel Sol/);
-    assert.match(t, /Paquete Luna · Hotel Luna/);
-    assert.ok(tiene(t, `Total del contrato ${$(900_000)}`));
+    const filas = filasDe(render(items, { resumenPrecios: resumen })).map(limpio);
+    assert.deepEqual(filas.map((f) => f[5]), [monto(400_000), monto(500_000)]);
+    assert.ok(tiene(texto(items, { resumenPrecios: resumen }), `Total del contrato ${$(900_000)}`));
   });
 });
 

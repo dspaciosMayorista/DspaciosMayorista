@@ -719,12 +719,28 @@ describe("cotización normal con servicios: resumen por pasajero, cobertura expl
     assert.equal(r.ok, false);
     assert.match(r.error ?? "", /Cobertura de servicios inválida/);
   });
-  test("sin servicios adicionales la cotización queda como siempre (sin resumen ni pendiente)", async () => {
+  test("sin servicios adicionales (solo Tarifario, un hotel): el resumen son los grupos del hotel y no hay pendiente", async () => {
     HOTELES = { 1: ozCon([]) };
     const r = await cotizarCon([item(1, 34)], []);
     assert.equal(r.ok, true, r.error);
-    assert.equal(detalleDe().resumenPrecios, undefined);
+    const g = detalleDe().resumenPrecios!.unidades[0].grupos.map((x) => [x.tipo, x.cantidad, x.tarifaCentavos / 100, x.incluye]);
+    assert.deepEqual(g, [["adulto", 2, 300_000, []]]);
     assert.equal(detalleDe().resumenPendiente, undefined);
+    assert.equal((db.cotizaciones[0].detalle as { tituloPaquete?: string }).tituloPaquete, undefined, "sin edición no se guarda texto: rige el valor por defecto");
+  });
+  test("Ítem editado SIN servicios manuales: el texto se conserva en el detalle guardado", async () => {
+    HOTELES = { 1: ozCon([]) };
+    usuario = null;
+    const r = await crearSolicitudReserva({ items: [item(1, 34)], tours: [], cliente: clienteCot, tituloPaquete: "Escapada Caribe 2030" }) as { ok: boolean; error?: string };
+    assert.equal(r.ok, true, r.error);
+    assert.equal((db.cotizaciones[0].detalle as { tituloPaquete?: string }).tituloPaquete, "Escapada Caribe 2030");
+  });
+  test("Ítem editado inválido (demasiado corto) no se guarda", async () => {
+    HOTELES = { 1: ozCon([]) };
+    usuario = null;
+    const r = await crearSolicitudReserva({ items: [item(1, 34)], tours: [], cliente: clienteCot, tituloPaquete: "x" }) as { ok: boolean; error?: string };
+    assert.equal(r.ok, true, r.error);
+    assert.equal((db.cotizaciones[0].detalle as { tituloPaquete?: string }).tituloPaquete, undefined);
   });
   test("cuposDeCarrito entrega solo clave, tipo, etiqueta y cantidad: ni tarifas ni netos, y no escribe nada", async () => {
     HOTELES = { 1: ozCon([]) };

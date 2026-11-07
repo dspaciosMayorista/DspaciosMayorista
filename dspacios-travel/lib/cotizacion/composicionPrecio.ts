@@ -177,8 +177,22 @@ export function leerComposicion(raw: unknown): Composicion | null {
   };
 }
 
-/** Lo que se guarda por cotización: una composición por hotel (el carrito puede traer varios; una cotización simple, uno). */
-export type ComposicionCotizacion = { version: 1; hoteles: { ref: string | null; nombre: string | null; composicion: Composicion }[] };
+/**
+ * Servicio del CARRITO que se cobra FUERA de la composición del hotel (tours/receptivos y servicios manuales). Solo lo que se cotizó: precio de venta total y pasajeros.
+ * No hay neto: el tour se liquida con su precio vendible y el manual lo declara el asesor; no se inventa ni se deduce uno.
+ */
+export type ServicioCarritoComposicion = { tipo: "tour" | "vuelo" | "otro"; nombre: string; total: number; pax: number | null; hotelRef: string | null; moneda: string };
+
+/**
+ * Lo que se guarda por cotización: una composición por hotel (el carrito puede traer varios; una cotización simple, uno) + los servicios del carrito y el total
+ * de la cotización al guardar, para conciliar: Σ hoteles + Σ servicios = total. `servicios`/`total` ausentes = cotización guardada antes de registrarlos.
+ */
+export type ComposicionCotizacion = {
+  version: 1;
+  hoteles: { ref: string | null; nombre: string | null; composicion: Composicion }[];
+  servicios?: ServicioCarritoComposicion[];
+  total?: number;
+};
 
 export function leerComposicionCotizacion(raw: unknown): ComposicionCotizacion | null {
   if (typeof raw !== "object" || raw === null) return null;
@@ -191,5 +205,15 @@ export function leerComposicionCotizacion(raw: unknown): ComposicionCotizacion |
     if (!composicion) return null;
     hoteles.push({ ref: typeof x.ref === "string" ? x.ref : null, nombre: typeof x.nombre === "string" ? x.nombre : null, composicion });
   }
-  return { version: 1, hoteles };
+  let servicios: ServicioCarritoComposicion[] | undefined;
+  if (Array.isArray((raw as { servicios?: unknown }).servicios)) {
+    servicios = [];
+    for (const s of (raw as { servicios: unknown[] }).servicios) {
+      const k = s as Record<string, unknown>;
+      if ((k?.tipo !== "tour" && k?.tipo !== "vuelo" && k?.tipo !== "otro") || typeof k.nombre !== "string" || !esNum(k.total) || typeof k.moneda !== "string") return null;
+      servicios.push({ tipo: k.tipo, nombre: k.nombre, total: k.total, pax: esNum(k.pax) ? k.pax : null, hotelRef: typeof k.hotelRef === "string" ? k.hotelRef : null, moneda: k.moneda });
+    }
+  }
+  const total = esNum((raw as { total?: unknown }).total) ? ((raw as { total: number }).total) : undefined;
+  return { version: 1, hoteles, ...(servicios ? { servicios } : {}), ...(total !== undefined ? { total } : {}) };
 }

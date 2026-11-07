@@ -19,6 +19,12 @@ export function tituloPaqueteTuristico(destino: string | null | undefined, ida: 
   return `${base} ${noches + 1} días/${noches} ${noches === 1 ? "noche" : "noches"}`;
 }
 
+/** Ítem por defecto de «Valores y Pagos» en la cotización normal: «Paquete Turístico {Destino del paquete}». Nunca el hotel, la categoría ni los servicios. */
+export function tituloItemPaquete(destino: string | null | undefined): string {
+  const d = (destino ?? "").replace(/\s+/g, " ").trim();
+  return `Paquete Turístico${d ? ` ${d}` : ""}`;
+}
+
 /** Texto editado por el asesor: entre 3 y 200 caracteres, sin caracteres de control. null = no hay edición válida (se usa la propuesta). */
 export function tituloPaqueteEditado(raw: unknown): string | null {
   if (typeof raw !== "string") return null;

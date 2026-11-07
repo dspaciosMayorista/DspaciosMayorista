@@ -578,7 +578,7 @@ async function crearCotizacionCarrito(input: {
   manuales?: ServicioManual[];
   /** #64: para cada manual, la posición en `items` de su hotel (vuelo) o null (otro servicio). El servidor lo resuelve desde `itemId`; aquí se valida contra lo liquidado. */
   hotelDeManual?: (number | null)[];
-  /** Descripción editada del ítem «Paquete Turístico …» (solo texto; ya saneada). Se guarda únicamente si hay servicio manual. */
+  /** Descripción editada del ítem «Paquete Turístico …» (solo texto; ya saneada). Se guarda siempre que viene editada (con o sin servicios manuales). */
   tituloPaquete?: string | null;
   /**
    * #64: la cotización es UNA OPCIÓN de una comparativa (un solo hotel, posición 0). Cada vuelo trae como selector la clave de su GRUPO (`grupo:IATA|ida|regreso`) o «comun»:
@@ -1237,7 +1237,7 @@ async function crearCotizacionCarrito(input: {
   // sigue como siempre. Si algo no se puede repartir con seguridad (cobertura parcial sin cupos elegidos, servicio sin hotel con varios hoteles) no se inventa nada: queda el motivo.
   let resumenPrecios: ResumenPrecios | null = null;
   let resumenPendiente: string | null = null;
-  if (!opts?.capturar && !planB2B && !itemsBernaloOk.length && unidadesBase.length && (toursOk.length || manualesOk.length)) {
+  if (!opts?.capturar && !planB2B && !itemsBernaloOk.length && unidadesBase.length && (toursOk.length || manualesOk.length || unidadesBase.length === 1)) {
     // Asignación EXPLÍCITA del carrito a un hotel; nunca se deduce de que haya un solo hotel.
     const hotelDeclarado = (c: { hotel: number | null } | null) => (c?.hotel != null ? refItemCotizacion(c.hotel) : null);
     const nombres = new Map<number, string>();
@@ -1265,7 +1265,7 @@ async function crearCotizacionCarrito(input: {
     venta: ventaSnap, pasajeros: [], hoteles: hotelesSnap, vuelos: vuelosSnap, items: itemsSnap,
     habitacionesBernalo: habitacionesBernaloSnap,
     composicionBernalo: composicionBernaloSnap,
-    ...(manualesOk.length && input.tituloPaquete ? { tituloPaquete: input.tituloPaquete } : {}),
+    ...(input.tituloPaquete ? { tituloPaquete: input.tituloPaquete } : {}),
     // Cobertura (pasajeros) de cada tour y servicio manual y, en NETO, su parte NETO del plan congelado: lo único que el documento necesita para repartir el
     // paquete por pasajero. Sin comisión, impuesto ni plan; el documento público no lee `payload`, así que viaja aquí.
     ...(manualesOk.length ? { paqueteSnapshot: snapshotPaqueteDePayload(payloadCotizacion, planB2B && planB2B.modo_compra === "neta" ? planB2B.total_exigible : null) } : {}),
@@ -1344,7 +1344,14 @@ async function crearCotizacionCarrito(input: {
   if (!alta.ok) console.error(logPersonasCotizacion("checkout", row.id, alta));
 
   // Composición del precio (privada, mejor esfuerzo): el precio ya quedó guardado y no depende de esto.
-  if (process.env.SUPABASE_SERVICE_ROLE_KEY) await guardarComposicion(admin, { cotizacionId: row.id, tenant: "mayorista", hoteles: composicionesHoteles });
+  if (process.env.SUPABASE_SERVICE_ROLE_KEY) await guardarComposicion(admin, {
+    cotizacionId: row.id, tenant: "mayorista", hoteles: composicionesHoteles, total: filaCotizacion.precio_venta as number,
+    // Tours y servicios manuales se cobran FUERA de la composición de cada hotel: se guardan aparte para poder conciliar con el total.
+    servicios: [
+      ...toursOk.map((t) => ({ tipo: "tour" as const, nombre: t.nombre, total: t.precio, pax: t.pax, hotelRef: t.hotelRef, moneda: t.moneda })),
+      ...manualesOk.map((m) => ({ tipo: m.clase === "vuelo" ? ("vuelo" as const) : ("otro" as const), nombre: m.nombre, total: m.precio, pax: m.pax, hotelRef: m.hotelRef ?? null, moneda: m.moneda })),
+    ],
+  });
 
   const h = await headers();
   const host = h.get("x-forwarded-host") ?? h.get("host");

@@ -17,7 +17,7 @@ import { esLineaGrupoIncluido, NOMBRE_GRUPO_INCLUIDO, repartirProporcional, tari
 import { valorVisibleContratoItem, totalVisibleContratoItems } from "@/lib/contrato/valorContratoItem";
 import { presentacionValoresContrato } from "@/lib/contrato/presentacionValores";
 import { valoresNetosDocumento, tarifaIndividualSegura } from "@/lib/contrato/valoresNetosDocumento";
-import { hayServicioManual, tituloPaqueteEditado, tituloPaqueteTuristico } from "@/lib/contrato/paqueteTuristicoDocumento";
+import { hayServicioManual, tituloItemPaquete, tituloPaqueteEditado, tituloPaqueteTuristico } from "@/lib/contrato/paqueteTuristicoDocumento";
 import type { ComposicionBernaloDocumento, HabitacionBernaloDocumento } from "@/lib/reservar/alojamientoBernaloDocumento";
 import type {
   VentaDocumento,
@@ -255,6 +255,8 @@ export function ContratoDocumento({
   const unificarPaquete = !resumen && esCotizacion && alojItemsPorPersona.length > 0 && lineasGrupo.length === alojItemsTotal.length && hayServicioManual(items);
   const ventaTexto = venta as { destino?: string | null; fecha_regreso?: string | null };
   const tituloPaqueteDoc = tituloPaqueteEditado(tituloPaquete) ?? tituloPaqueteTuristico(ventaTexto.destino, venta.fecha_salida, ventaTexto.fecha_regreso);
+  // Cotización normal con reparto por pasajero: el Ítem es «Paquete Turístico {Destino}» (o el texto editado), nunca el hotel, la categoría ni los servicios.
+  const tituloItemResumen = tituloPaqueteEditado(tituloPaquete) ?? tituloItemPaquete(ventaTexto.destino);
   // Cada línea adicional se vincula con el snapshot congelado (a cuántos pasajeros cubre y, en NETO, su parte del plan B2B). Sin vínculo seguro NO se infiere nada
   // (ni de «venta.pax» ni del texto de la línea): se muestra el total agregado y se explica.
   const adLineas = unificarPaquete ? [...lineasVuelo, ...servicioItems] : [];
@@ -523,7 +525,7 @@ export function ContratoDocumento({
                 label="Asistencia Médica"
                 value={venta.asistencia_medica ? "Sí" : "No"}
               />
-              <Pill label="Servicio / Plan" value={resumen ? ([...new Set(resumen.unidades.map((u) => u.paquete.nombre).filter(Boolean))].join(" · ") || venta.plan_nombre || "") : (venta.plan_nombre ?? "")} />
+              <Pill label="Servicio / Plan" value={venta.plan_nombre ?? ""} />
               <Pill
                 label="Tours y Traslados"
                 value={venta.tours_traslados ?? ""}
@@ -700,7 +702,7 @@ export function ContratoDocumento({
               $0) parecía un dato real y no lo es. Se separa en una fila
               agregada limpia — el detalle por habitación va aparte, debajo
               (sección "Detalle por habitación", regla F.32-34). */}
-          {resumen && <ResumenPreciosCliente resumen={resumen} />}
+          {resumen && <ResumenPreciosCliente resumen={resumen} titulo={tituloItemResumen} />}
           {alojItemsTotal.length > 0 && !filaPaquete && !resumen && (
             <div className="mb-3 space-y-2">
               {alojItemsTotal.map((it) => (

@@ -250,7 +250,7 @@ describe("cotización normal con servicio manual: un solo ítem «Paquete Turís
     const leer = (p: string) => readFileSync(new URL(`../${p}`, import.meta.url), "utf8");
     assert.match(leer("app/tarifario/checkout/page.tsx"), /tituloPaquete: tituloEditado/);
     assert.match(leer("app/tarifario/checkout/actions.ts"), /tituloPaquete: tituloPaqueteEditado\(/);
-    assert.match(leer("app/tarifario/checkout/actions.ts"), /manualesOk\.length && input\.tituloPaquete/);
+    assert.match(leer("app/tarifario/checkout/actions.ts"), /input\.tituloPaquete \? \{ tituloPaquete: input\.tituloPaquete \}/);
     for (const p of ["app/cot/[token]/page.tsx", "app/cotizacion/[id]/page.tsx"]) assert.match(leer(p), /tituloPaquete=\{d\.tituloPaquete \?\? null\}/, p);
   });
 
