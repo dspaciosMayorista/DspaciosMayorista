@@ -24,6 +24,7 @@ import { sumarRetencionesPorCuenta } from "@/lib/finanzas/retenciones";
 import CondicionesContratoPanel from "@/components/contrato/CondicionesContratoPanel";
 import { resolverCondicionesContrato } from "@/lib/contrato/condicionesContrato";
 import { OverrideRestriccionForm } from "./OverrideRestriccionForm";
+import { SoportesPagoInterno, type SoporteInterno } from "./SoportesPagoInterno";
 import { desgloseNetoB2B, esVentaNetoDescontada } from "@/lib/finanzas/netoB2B";
 import { netoTotalExigibleDeContrato } from "@/lib/contrato/netoContrato.server";
 
@@ -190,6 +191,12 @@ export default async function ContratoDetallePage({
   // `ventas_basica` para los demás, que NO incluye estas columnas. Se separa en
   // su propia variable para que TypeScript impida leerlas por descuido — si un
   // día alguien las pinta sin gate, el build falla en vez de filtrarlas.
+  // Soportes de pago del aliado (#86). La RLS de la tabla (migración 281) decide qué filas ve cada persona; no se deduce nada por rol aquí.
+  const soportesPago = puedeEditar
+    ? ((await sb.from("contrato_soportes_pago")
+        .select("id, nombre_original, mime, size_bytes, subido_en, vigente, motivo_retiro, retirado_en, nota_retiro, reemplaza_id")
+        .eq("numero_contrato", numero).is("archivado_en", null).order("id", { ascending: false })).data ?? []) as SoporteInterno[]
+    : [];
   const fin = verFinanzas
     ? (venta as Database["public"]["Tables"]["ventas"]["Row"])
     : null;
@@ -474,6 +481,8 @@ export default async function ContratoDetallePage({
       />
 
       <AdjuntosContrato numeroContrato={numero} adjuntos={(adjuntos ?? []) as Adjunto[]} puedeEditar={puedeEditar} />
+
+      <SoportesPagoInterno soportes={soportesPago} abonos={(abonos ?? []).length} />
 
       <EditarAsesorPasajeros
         numero={numero}

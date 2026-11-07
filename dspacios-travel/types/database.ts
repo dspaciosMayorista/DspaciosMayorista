@@ -912,6 +912,48 @@ export type Database = {
         Update: Partial<Database["public"]["Tables"]["meta_ventas_mensual"]["Insert"]>;
         Relationships: [];
       };
+      contrato_soportes_pago: {
+        Row: {
+          id: number;
+          numero_contrato: string;
+          tenant: string;
+          path: string;
+          nombre_original: string;
+          mime: string;
+          size_bytes: number;
+          sha256: string;
+          subido_por: string;
+          subido_en: string;
+          vigente: boolean;
+          reemplaza_id: number | null;
+          retirado_en: string | null;
+          retirado_por: string | null;
+          motivo_retiro: "reemplazo" | "retiro" | null;
+          nota_retiro: string | null;
+          archivado_en: string | null;
+        };
+        /** Solo lectura: se escribe únicamente con las funciones soporte_* (migración 281). */
+        Insert: never;
+        Update: never;
+        Relationships: [];
+      };
+      avisos: {
+        Row: {
+          id: number;
+          usuario_id: string;
+          tipo: "soporte_pago_nuevo" | "soporte_pago_reemplazado";
+          numero_contrato: string;
+          soporte_id: number | null;
+          creado_en: string;
+          notificado_en: string | null;
+          leido_en: string | null;
+          archivado_en: string | null;
+        };
+        /** Solo lectura: se escribe únicamente con las funciones avisos_* / soporte_* (migración 281). */
+        Insert: never;
+        Update: never;
+        Relationships: [];
+      };
       cxp_pagos: {
         Row: {
           id: number;
@@ -4140,6 +4182,26 @@ export type Database = {
       };
     };
     Functions: {
+      soporte_registrar: {
+        Args: { p_numero: string; p_actor: string; p_path: string; p_nombre: string; p_mime: string; p_size: number; p_sha: string };
+        Returns: Json;
+      };
+      soporte_reemplazar: {
+        Args: { p_id: number; p_actor: string; p_path: string; p_nombre: string; p_mime: string; p_size: number; p_sha: string };
+        Returns: Json;
+      };
+      soporte_retirar: {
+        Args: { p_id: number; p_actor: string; p_nota: string | null };
+        Returns: Json;
+      };
+      avisos_reclamar: {
+        Args: { p_usuario: string; p_limite?: number };
+        Returns: { id: number; tipo: string; numero_contrato: string; creado_en: string }[];
+      };
+      avisos_marcar_leidos: {
+        Args: { p_usuario: string; p_ids?: number[] | null };
+        Returns: number;
+      };
       cargar_neta_solicitud: {
         Args: { p_cotizacion: number; p_item_ref: string; p_neta: number; p_moneda: string; p_pct_mk: number; p_precio_venta: number; p_detalle: Json; p_vigencia: string | null;
           p_modo: string; p_adultos: number; p_ninos: number; p_infantes: number; p_neta_adulto: number; p_neta_nino: number; p_neta_infante: number };

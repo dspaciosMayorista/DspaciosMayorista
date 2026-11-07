@@ -10,6 +10,7 @@ import { Logo } from "@/components/Logo";
 import { modulosConsultables, miRol } from "@/lib/roles";
 import { tenantContext } from "@/lib/tenant.server";
 import { TenantSwitcher } from "./TenantSwitcher";
+import { CampanaAvisos } from "@/components/avisos/CampanaAvisos";
 import { AvisoContextoAgencia } from "./AvisoContextoAgencia";
 import { POWERED_BY } from "@/lib/contrato/plantilla";
 import styles from "./DashboardShell.module.css";
@@ -205,6 +206,7 @@ export default async function DashboardLayout({
               </span>
             )}
             {switcher}
+            <CampanaAvisos />
             <LogoutButton className="text-xs" />
           </div>
         </div>
@@ -221,7 +223,7 @@ export default async function DashboardLayout({
           entera hace scroll (un solo scrollbar); sidebar y topbar quedan
           fijos (sticky). Sin scroll interno propio. */}
       <div className="flex min-w-0 flex-1 flex-col">
-        <Topbar userLabel={userLabel} rol={rol} fecha={fecha} switcher={switcher} logout={<LogoutButton />} />
+        <Topbar userLabel={userLabel} rol={rol} fecha={fecha} switcher={switcher} logout={<LogoutButton />} avisos={<CampanaAvisos />} />
         {/* `relative`: contenedor de posicionamiento para el `LoadingScreen`
             no-fullscreen de `(dashboard)/loading.tsx` — así su overlay cubre
             solo esta área de contenido (no vuelve a tapar el sidebar/topbar
