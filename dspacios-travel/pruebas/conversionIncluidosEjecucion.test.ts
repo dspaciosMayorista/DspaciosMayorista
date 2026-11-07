@@ -43,6 +43,10 @@ process.env.SUPABASE_SERVICE_ROLE_KEY = "dummy-service";
 // ── Base en memoria y clientes simulados ─────────────────────────────────
 type Fila = Record<string, unknown>;
 const db: Record<string, Fila[]> = {};
+// Inyección de fallo: la inserción en esta tabla devuelve error y NO persiste nada (prueba de fallos de la conversión).
+let FALLO_INSERT: string | null = null;
+// Opcional: el fallo solo aplica si las filas a insertar cumplen esto (p. ej. distinguir los ítems de tours de los del hotel en la misma tabla).
+let FALLO_FILTRO: ((filas: Fila[]) => boolean) | null = null;
 let usuario: { id: string; email: string } | null = null;
 const CATALOGO_SERVICIO: Record<number, Fila> = {
   9: { id: 9, proveedores: { nombre: "Asistencias SA", aplica_retencion: false, pct_retencion: 0 } },
@@ -54,6 +58,7 @@ function cliente() {
     const filtros: [string, "eq" | "in", unknown][] = [];
     let op: "select" | "insert" | "update" = "select";
     let insertadas: Fila[] = [];
+    let fallaEsta = false;
     let patch: Fila = {};
     const coincide = (f: Fila) => filtros.every(([k, o, v]) => (o === "eq" ? f[k] === v : (v as unknown[]).includes(f[k])));
     const leer = (): Fila[] => {
@@ -62,7 +67,7 @@ function cliente() {
       return (db[tabla] ?? []).filter(coincide);
     };
     const resolver = () => {
-      if (op === "insert") return { data: insertadas, error: null };
+      if (op === "insert") return fallaEsta ? { data: null, error: { message: "fallo simulado de la base" } } : { data: insertadas, error: null };
       if (op === "update") { for (const f of db[tabla] ?? []) if (coincide(f)) Object.assign(f, patch); return { data: null, error: null }; }
       return { data: leer(), error: null };
     };
@@ -75,7 +80,8 @@ function cliente() {
         op = "insert";
         insertadas = (Array.isArray(filas) ? filas : [filas]).map((f) =>
           tabla === "cotizaciones" ? { id: 77, codigo: "COT-77", share_token: "tok", estado: "abierta", numero_contrato: null, ...f } : { ...f });
-        (db[tabla] ??= []).push(...insertadas);
+        fallaEsta = FALLO_INSERT === tabla && (!FALLO_FILTRO || FALLO_FILTRO(insertadas));
+        if (!fallaEsta) (db[tabla] ??= []).push(...insertadas);
         return b;
       },
       update: (p: Fila) => { op = "update"; patch = p; return b; },
@@ -100,6 +106,8 @@ function cliente() {
 type Incluido = { servicioId: number; nombre: string; categoria: "asistencia" | "tour_traslado" | "otro"; incluido: true; costoNeto: number; proveedorId: number | null };
 type HotelSim = { nombre: string; moneda: string; pvp: number; neto: number; cargoGrupo: number; incluidos: Incluido[] };
 let HOTELES: Record<number, HotelSim> = {};
+// Tour del tarifario simulado: null = el servicio no está disponible (comportamiento de siempre).
+let TOUR_SIM: Record<string, unknown> | null = null;
 mock.module("@/lib/reservar/computo", {
   namedExports: {
     computarReserva: async (_sb: unknown, r: { hotelId: number }) => {
@@ -120,7 +128,7 @@ mock.module("@/lib/reservar/computo", {
 mock.module("@/lib/reservar/computoReservaBernalo", { namedExports: { computarReservaBernalo: async () => { throw new Error("no se usa"); } } });
 mock.module("@/lib/reservar/cotizar", {
   namedExports: {
-    liquidarServicioPuntual: async () => ({ ok: false, tipo: "no_disponible", mensaje: "no se usa" }),
+    liquidarServicioPuntual: async () => (TOUR_SIM ? { ok: true, resultado: TOUR_SIM } : { ok: false, tipo: "no_disponible", mensaje: "no se usa" }),
     cotizarPorFechas: async () => { throw new Error("no se usa"); },
     buscarHoteles: async () => { throw new Error("no se usa"); },
     buscarReceptivos: async () => { throw new Error("no se usa"); },
@@ -128,10 +136,11 @@ mock.module("@/lib/reservar/cotizar", {
 });
 type CxP = { tipo_proveedor: string; servicio: string; valor_total: number; proveedor: string | null; servicio_id: number | null };
 const financieros: { cxp: CxP[]; costos: Fila }[] = [];
+const reversiones: string[] = [];
 mock.module("@/lib/reservar/financieroContrato", {
   namedExports: {
     registrarFinancieroContrato: async (_deps: unknown, a: { cxp: CxP[]; costos: Fila }) => { financieros.push({ cxp: a.cxp, costos: a.costos }); return { ok: true }; },
-    revertirContratoIncompleto: async () => ({ ok: true }),
+    revertirContratoIncompleto: async (_d: unknown, numero: string) => { reversiones.push(numero); return { ok: true }; },
   },
 });
 mock.module("@/lib/contabilidad/asientos", { namedExports: { postearAsientoCxP: async () => ({ ok: true }), eliminarAsientoCxP: async () => ({ ok: true }) } });
@@ -185,6 +194,10 @@ async function cotizarYConvertir(items: unknown[]) {
 beforeEach(() => {
   for (const k of Object.keys(db)) delete db[k];
   financieros.length = 0;
+  reversiones.length = 0;
+  FALLO_INSERT = null;
+  FALLO_FILTRO = null;
+  TOUR_SIM = null;
 });
 
 describe("incluido POR PERSONA: OZ HOTEL CARTAGENA, paquete 34, asistencia médica", () => {
@@ -482,5 +495,102 @@ describe("cotizaciones SIN incluidos: convierten como siempre y conservan sus gu
     assert.equal(r.ok, false);
     assert.match(r.error ?? "", /la moneda cambió desde que se generó la cotización/);
     sinEscrituras();
+  });
+});
+
+// ── Fallos de escritura de las líneas del contrato: la conversión NO continúa con un contrato a medias ──
+// Antes, la inserción de los ítems del hotel (y la de tours y vuelos del bloqueo) ignoraba su error y el contrato se completaba sin esas líneas.
+describe("conversión: si no se pueden escribir las líneas del contrato, se revierte y no se completa", () => {
+  test("falla la inserción de los ítems del hotel: error explícito, contrato revertido una vez y sin escritura financiera", async () => {
+    HOTELES = { 1: ozCon([]) };
+    await cotizar([item(1, 34)]);
+    FALLO_INSERT = "contrato_items";
+    const r = await convertir();
+    assert.equal(r.ok, false);
+    assert.match(r.error ?? "", /No se pudieron registrar los ítems del hotel "OZ HOTEL CARTAGENA" del contrato: fallo simulado de la base/);
+    assert.deepEqual(reversiones, ["DTM-0900"], "se revirtió el contrato creado");
+    assert.equal(financieros.length, 0, "no se registró ninguna CxP ni costo");
+    assert.equal((db.contrato_items ?? []).length, 0, "no quedó ninguna línea a medias");
+    assert.notEqual(db.cotizaciones[0].estado, "convertida", "la cotización no se marca convertida");
+  });
+  test("sin fallo, la misma conversión completa y no revierte (control)", async () => {
+    HOTELES = { 1: ozCon([]) };
+    await cotizar([item(1, 34)]);
+    const r = await convertir();
+    assert.equal(r.ok, true, r.error);
+    assert.deepEqual(reversiones, []);
+    assert.ok((db.contrato_items ?? []).length > 0);
+    assert.equal(financieros.length, 1);
+  });
+});
+
+// Mismas garantías para cada línea del contrato: error explícito, compensación UNA sola vez, sin escritura financiera ni cotización convertida; y un control sin fallo.
+const TOUR = { servicioId: 12, paqueteId: 34, nombre: "Tour Islas", destino: "CARTAGENA", descripcion: null, noches: 3, pax: 2, total: 200_000, moneda: "COP", categoria: "tour_traslado" };
+const tourEntrada = { servicioId: 12, paqueteId: 34, hotelItemId: null, nombre: "Tour Islas", destino: "CARTAGENA", fechaIda: "2030-03-01", fechaRegreso: "2030-03-04", pax: 2, precio: 1, moneda: "COP" };
+async function cotizarConTour() {
+  HOTELES = { 1: ozCon([]) };
+  TOUR_SIM = TOUR;
+  usuario = null;
+  const r = await crearSolicitudReserva({ items: [item(1, 34)], tours: [tourEntrada], cliente: clienteCot });
+  assert.equal(r.ok, true, (r as { error?: string }).error);
+}
+async function convertirConTour() {
+  usuario = { id: "u-admin", email: "admin@dspacios.test" };
+  return convertirCotizacionCarrito(77, { agrupar: "todo", pasajeros, asesorInterno: "Asesor", asignaciones: [[1, 2]], asignacionesTours: [[1, 2]], monedaCobro: "COP" }) as Promise<{ ok: boolean; error?: string }>;
+}
+const esLineaServicio = (f: Fila) => typeof f.descripcion === "string" && f.descripcion.startsWith("Servicio · ");
+
+describe("conversión: los servicios (tours) del contrato", () => {
+  test("control: sin fallo, la línea del tour se escribe, no hay reversión y la cotización queda convertida", async () => {
+    await cotizarConTour();
+    const r = await convertirConTour();
+    assert.equal(r.ok, true, r.error);
+    assert.deepEqual(reversiones, []);
+    assert.equal((db.contrato_items ?? []).filter(esLineaServicio).length, 1);
+    assert.equal(financieros.length, 1);
+    assert.equal(db.cotizaciones[0].estado, "convertida");
+  });
+  test("falla la inserción del tour: error explícito, una sola reversión, sin escritura financiera y sin marca de convertida", async () => {
+    await cotizarConTour();
+    FALLO_INSERT = "contrato_items";
+    FALLO_FILTRO = (filas) => filas.some(esLineaServicio);
+    const r = await convertirConTour();
+    assert.equal(r.ok, false);
+    assert.match(r.error ?? "", /No se pudieron registrar los servicios del contrato: fallo simulado de la base/);
+    assert.deepEqual(reversiones, ["DTM-0900"]);
+    assert.equal(financieros.length, 0);
+    assert.equal((db.contrato_items ?? []).filter(esLineaServicio).length, 0, "la línea del tour no quedó a medias");
+    assert.notEqual(db.cotizaciones[0].estado, "convertida");
+  });
+});
+
+describe("conversión: los vuelos del bloqueo del contrato", () => {
+  async function cotizarBloqueo() {
+    HOTELES = { 1: ozCon([]) };
+    db.cupos_por_bloqueo = [{ id: 5, cupos_disponibles: 10 }];
+    db.bloqueos_vuelo = [{ id: 5, aerolinea: "Avianca", moneda: "COP", record: "ABC123", ruta: "BOG - CTG - BOG", tarifa_para_empaquetar: 500_000, fee_infante: 0, fecha_ida: "2030-03-01", fecha_regreso: "2030-03-04", vuelo_ida: "AV100", vuelo_regreso: "AV101", hora_salida_ida: "06:00", hora_llegada_ida: "07:30", hora_salida_reg: "18:00", hora_llegada_reg: "19:30" }];
+    usuario = null;
+    const r = await crearSolicitudReserva({ items: [{ ...item(1, 34), modulo: "bloqueo", bloqueoId: 5 }], tours: [], cliente: clienteCot });
+    assert.equal(r.ok, true, (r as { error?: string }).error);
+  }
+  test("control: sin fallo se escriben los tramos de ida y regreso, sin reversión y con la cotización convertida", async () => {
+    await cotizarBloqueo();
+    const r = await convertir();
+    assert.equal(r.ok, true, r.error);
+    assert.deepEqual(reversiones, []);
+    assert.equal((db.contrato_vuelos ?? []).length, 2, "ida y regreso");
+    assert.equal(financieros.length, 1);
+    assert.equal(db.cotizaciones[0].estado, "convertida");
+  });
+  test("falla la inserción de los vuelos: error explícito, una sola reversión, sin escritura financiera y sin marca de convertida", async () => {
+    await cotizarBloqueo();
+    FALLO_INSERT = "contrato_vuelos";
+    const r = await convertir();
+    assert.equal(r.ok, false);
+    assert.match(r.error ?? "", /No se pudo registrar el vuelo del hotel "OZ HOTEL CARTAGENA" del contrato: fallo simulado de la base/);
+    assert.deepEqual(reversiones, ["DTM-0900"]);
+    assert.equal(financieros.length, 0);
+    assert.equal((db.contrato_vuelos ?? []).length, 0, "no quedó ningún tramo a medias");
+    assert.notEqual(db.cotizaciones[0].estado, "convertida");
   });
 });

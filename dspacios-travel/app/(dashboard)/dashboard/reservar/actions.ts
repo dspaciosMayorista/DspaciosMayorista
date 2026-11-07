@@ -3281,7 +3281,8 @@ export async function convertirCotizacionCarrito(
               fecha_salida: bq.fecha_regreso, orden: hIdx * 10 + 1,
             });
           }
-          await sb.from("contrato_vuelos").insert(tramos);
+          const { error: eVuelosBloqueo } = await sb.from("contrato_vuelos").insert(tramos);
+          if (eVuelosBloqueo) return fallarYRevertirGrupo(`No se pudo registrar el vuelo del hotel "${meta.hotel_nombre ?? it.hotelNombre}" del contrato: ${eVuelosBloqueo.message}`);
 
           // Menores de 2 años: pagan SOLO el fee de infante del bloqueo (migración
           // 226, precio = costo) y no ocupan silla (`paxConSilla` ya los excluye).
@@ -3325,7 +3326,10 @@ export async function convertirCotizacionCarrito(
           modo_precio: "total", valor_total: rResidual.residual,
         });
       }
-      if (itemsHotel.length) await sb.from("contrato_items").insert(itemsHotel);
+      if (itemsHotel.length) {
+        const { error: eItemsHotel } = await sb.from("contrato_items").insert(itemsHotel);
+        if (eItemsHotel) return fallarYRevertirGrupo(`No se pudieron registrar los ítems del hotel "${meta.hotel_nombre ?? it.hotelNombre}" del contrato: ${eItemsHotel.message}`);
+      }
 
       const costoHotel = costoHotelPersona(comp, numInfantes);
       costoHotelTotal += costoHotel;
@@ -3465,7 +3469,8 @@ export async function convertirCotizacionCarrito(
         numero_contrato: numero, descripcion: `Servicio · ${t.nombre}${alcancePorTour.has(t.__idx) ? ` (${etiquetaAlcanceTraslado(alcancePorTour.get(t.__idx))})` : ""}${t.destino ? ` — ${t.destino}` : ""}`,
         adultos: 1, ninos: 0, tarifa_adulto: t.precio, tarifa_nino: 0, orden: 9000 + i,
       }));
-      await sb.from("contrato_items").insert(itemsTours);
+      const { error: eItemsTours } = await sb.from("contrato_items").insert(itemsTours);
+      if (eItemsTours) return fallarYRevertirGrupo(`No se pudieron registrar los servicios del contrato: ${eItemsTours.message}`);
       // Sin fuente de condición propia (servicios_adicionales no la tiene) —
       // neutro (% normal configurable), mismo criterio que traslado/
       // asistencia/otro en componentesManual.ts.
