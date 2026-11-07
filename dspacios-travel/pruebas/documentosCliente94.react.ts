@@ -164,6 +164,73 @@ describe("#94 · varias unidades (cotización múltiple): sus filas suman el tot
   });
 });
 
+describe("#94 · adultos y niños en una misma fila: tabla, tarjetas móviles e impresión", () => {
+  const cupo = (id: string, tipo: "adulto" | "nino" | "nino2" | "infante", pesos: number) => ({ id, tipo, baseCentavos: pesos * 100 });
+  const resumenCon = (cupos: ReturnType<typeof cupo>[], servicios: ReturnType<typeof servicio>[] = []) => {
+    const u = unidadOk(resumenUnidad({ ...meta, cupos, servicios }));
+    return JSON.parse(JSON.stringify(resumenCotizacion({ modalidad: "pvp", moneda: "COP", unidades: [u] })));
+  };
+  const movil = (html: string) => {
+    const i = html.indexOf('data-testid="resumen-movil"');
+    const bloque = html.slice(i, html.indexOf("</div>", html.indexOf("</dl>", i) + 5) + 6);
+    return { dl: (html.slice(i).split('data-testid="resumen-movil"')[1] ?? "").split("<dl").length - 1, texto: bloque.replace(/<[^>]+>/g, " ").replace(/&nbsp;| /g, " ").replace(/\s+/g, " ") };
+  };
+  const dlCount = (html: string) => {
+    const i = html.indexOf('data-testid="resumen-movil"');
+    const fin = html.indexOf('<div class="hidden overflow-x-auto', i);
+    return (html.slice(i, fin).match(/<dl/g) ?? []).length;
+  };
+  const itemsDe = (...x: ReturnType<typeof it>[]) => x;
+
+  test("OBLIGATORIA: 2 adultos a 413.000 y 1 niño a 191.000 → una fila con total 1.017.000 (tabla, tarjeta móvil e impresión)", () => {
+    const items = itemsDe(it(1, "2 adultos", { adultos: 2, tarifa_adulto: 413_000 }), it(2, "1 niño", { ninos: 1, tarifa_nino: 191_000 }));
+    const html = render(items, { resumenPrecios: resumenCon([cupo("a1", "adulto", 413_000), cupo("a2", "adulto", 413_000), cupo("n1", "nino", 191_000)]) });
+    // Tabla (también lo que se imprime: `print:block`).
+    const filas = filasDe(html).map(limpio);
+    assert.deepEqual(filas, [[ITEM, "2", "1", monto(413_000), monto(191_000), monto(1_017_000)].map((c) => c.replace(/\s+/g, ""))]);
+    assert.match(html, /hidden overflow-x-auto sm:block print:block/, "la tabla es la que sale al imprimir");
+    // Tarjeta móvil: una sola, con ambas cantidades, ambas tarifas y el total sumado; no se imprime.
+    assert.match(html, /space-y-2 sm:hidden print:hidden" data-testid="resumen-movil"/);
+    assert.equal(dlCount(html), 1);
+    const t = movil(html).texto;
+    for (const frag of ["Adultos (2)", "Niños (1)", monto(413_000), monto(191_000), monto(1_017_000)]) assert.ok(plano(t).includes(plano(frag)), frag);
+    assert.ok(tiene(texto(items, { resumenPrecios: resumenCon([cupo("a1", "adulto", 413_000), cupo("a2", "adulto", 413_000), cupo("n1", "nino", 191_000)]) }), `Total del contrato ${$(1_017_000)}`));
+  });
+
+  test("servicio parcial que cubre solo a los adultos: filas separadas en tabla y tarjetas", () => {
+    const items = itemsDe(it(1, "2 adultos", { adultos: 2, tarifa_adulto: 400_000 }), it(2, "1 niño", { ninos: 1, tarifa_nino: 200_000 }), it(3, "servicio", { modo_precio: "total", valor_total: 200_000 }));
+    const html = render(items, { resumenPrecios: resumenCon([cupo("a1", "adulto", 400_000), cupo("a2", "adulto", 400_000), cupo("n1", "nino", 200_000)], [servicio("t", "Tour", 200_000, ["a1", "a2"])]) });
+    assert.deepEqual(filasDe(html).map(limpio).map((f) => [f[1], f[2], f[3], f[4], f[5]]), [
+      ["2", "0", monto(500_000), monto(0), monto(1_000_000)], ["0", "1", monto(0), monto(200_000), monto(200_000)],
+    ]);
+    assert.equal(dlCount(html), 2);
+  });
+
+  test("servicio que cubre a adultos y niño por igual: una fila", () => {
+    const items = itemsDe(it(1, "2 adultos", { adultos: 2, tarifa_adulto: 400_000 }), it(2, "1 niño", { ninos: 1, tarifa_nino: 200_000 }), it(3, "servicio", { modo_precio: "total", valor_total: 300_000 }));
+    const html = render(items, { resumenPrecios: resumenCon([cupo("a1", "adulto", 400_000), cupo("a2", "adulto", 400_000), cupo("n1", "nino", 200_000)], [servicio("t", "Tour", 300_000, ["a1", "a2", "n1"])]) });
+    assert.deepEqual(filasDe(html).map(limpio).map((f) => [f[1], f[2], f[3], f[4], f[5]]), [["2", "1", monto(500_000), monto(300_000), monto(1_300_000)]]);
+    assert.equal(dlCount(html), 1);
+  });
+
+  test("niños con tarifas diferentes (niño 1 y niño 2): filas separadas en tabla y tarjetas, sin promediar", () => {
+    const items = itemsDe(it(1, "1 adulto", { adultos: 1, tarifa_adulto: 413_000 }), it(2, "niño 1", { ninos: 1, tarifa_nino: 191_000 }), it(3, "niño 2", { ninos: 1, tarifa_nino: 150_000 }));
+    const html = render(items, { resumenPrecios: resumenCon([cupo("a1", "adulto", 413_000), cupo("n1", "nino", 191_000), cupo("n2", "nino2", 150_000)]) });
+    assert.deepEqual(filasDe(html).map(limpio).map((f) => [f[1], f[2], f[3], f[4], f[5]]), [
+      ["1", "0", monto(413_000), monto(0), monto(413_000)], ["0", "1", monto(0), monto(191_000), monto(191_000)], ["0", "1", monto(0), monto(150_000), monto(150_000)],
+    ]);
+    assert.equal(dlCount(html), 3);
+    assert.ok(!html.includes(monto(170_500)), "no hay promedio de las dos tarifas de niño");
+  });
+
+  test("el contrato convertido usa la misma presentación combinada", () => {
+    const items = itemsDe(it(1, "2 adultos", { adultos: 2, tarifa_adulto: 413_000 }), it(2, "1 niño", { ninos: 1, tarifa_nino: 191_000 }));
+    const html = render(items, { esCotizacion: false, resumenPrecios: resumenCon([cupo("a1", "adulto", 413_000), cupo("a2", "adulto", 413_000), cupo("n1", "nino", 191_000)]) }, { estado: "confirmado" });
+    assert.equal(filasDe(html).length, 1);
+    assert.equal(dlCount(html), 1);
+  });
+});
+
 // ── #17 (se conserva): la cotización muestra número de vuelo y horas; el contrato, no ──
 describe("#17 · el contrato no muestra horarios ni número de vuelo; la cotización sí", () => {
   const tramo = { id: 10, numero_contrato: "00-0999", aerolinea: "Avianca", record: null, direccion: "ida", numero_vuelo: "AV9123", hora_salida: "05:10", hora_llegada: "06:25", origen_codigo: "BOG", origen_ciudad: "Bogotá", destino_codigo: "CTG", destino_ciudad: "Cartagena", servicios: "Equipaje de mano", fecha_salida: "2030-10-15" };
