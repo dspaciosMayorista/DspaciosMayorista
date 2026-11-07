@@ -47,6 +47,9 @@ import {
 } from "@/lib/cotizacion/comparativa";
 import { NO_INCLUYE_DEFAULT, sugerirIncluyeCarrito } from "@/lib/cotizacion/incluye";
 import { snapshotPaqueteDePayload } from "@/lib/cotizacion/tarifaPaquete";
+import { construirResumenCarrito, cuposDeUnidad, type CupoPublico, type UnidadBase } from "@/lib/cotizacion/resumenCarrito";
+import { leerCobertura, type CoberturaEntrada } from "@/lib/cotizacion/coberturaEntrada";
+import type { ResumenPrecios } from "@/lib/cotizacion/resumenPrecios";
 import { huellaIp } from "@/lib/cotizacion/comparativaServidor";
 import { TIPOS_DOC_PERSONA } from "@/lib/personas/identidad";
 import { tipoDocCheckout } from "@/lib/personas/cotizacion";
@@ -582,8 +585,10 @@ async function crearCotizacionCarrito(input: {
    * solo se incluye si el grupo de ESTE hotel (destino IATA + fechas liquidados por el servidor) es el suyo; los de otro grupo se omiten (quedan marcados en `manualesAplicados`).
    */
   comparativa?: boolean;
+  /** #94/#52: cobertura declarada por el carrito (cupos activos y pasajeros cubiertos por servicio). Solo identifica; el servidor la valida contra lo liquidado. */
+  cobertura?: CoberturaEntrada | null;
 }, opts?: OpcionesCarrito): Promise<
-  | { ok: true; id: number; codigo: string; url: string; moneda: string; itemsOk: SolicitudItemComputado[]; itemsBernaloOk: SolicitudItemBernaloComputado[]; toursOk: SolicitudTourComputado[]; manualesOk: ServicioManual[]; manualesAplicados: boolean[]; excluidos: ItemExcluido[]; b2bPlan: PlanB2BCotizacion | null }
+  | { ok: true; id: number; codigo: string; url: string; moneda: string; itemsOk: SolicitudItemComputado[]; itemsBernaloOk: SolicitudItemBernaloComputado[]; toursOk: SolicitudTourComputado[]; manualesOk: ServicioManual[]; manualesAplicados: boolean[]; excluidos: ItemExcluido[]; b2bPlan: PlanB2BCotizacion | null; unidadesBase: UnidadBase[] }
   | { ok: false; error: string }
   | ResultadoTerminosCambiaron
   | ResultadoPrecioActualizadoBernalo
@@ -598,6 +603,8 @@ async function crearCotizacionCarrito(input: {
   const itemsSnap: Record<string, unknown>[] = [];
   // Composición privada del precio por hotel (lo que produjo el motor al cotizar); se guarda tras crear la cotización.
   const composicionesHoteles: { ref: string | null; nombre: string | null; composicion: Composicion | null }[] = [];
+  // #94/#52: base de precios por persona de cada hotel (lo que liquidó el motor), para el resumen del cliente.
+  const unidadesBase: UnidadBase[] = [];
   // Detalle por habitación de los hoteles Bernalo del carrito — SOLO datos
   // no sensibles (mismo criterio que `habitacionesBernaloDeContrato`, la
   // función que lee esto ya convertido a contrato desde
@@ -610,6 +617,7 @@ async function crearCotizacionCarrito(input: {
   const itemsOk: SolicitudItemComputado[] = [];
   const itemsBernaloOk: SolicitudItemBernaloComputado[] = [];
   const toursOk: SolicitudTourComputado[] = [];
+  const cubreTours: ({ hotel: number | null; cubre: string[] | null } | null)[] = []; // alineado con toursOk (#94)
   // Servicios INCLUIDOS de cada paquete de hotel del carrito — acumulados
   // acá para el resumen (asistencia/tours) y el snapshot que
   // `convertirCotizacionCarrito` reutiliza al crear la CxP del proveedor
@@ -994,6 +1002,20 @@ async function crearCotizacionCarrito(input: {
     total += precioVenta;
     lineasB2B.push({ clave: ref, pvp: precioVenta, impuesto: comp.data.impuestoTotal });
     composicionesHoteles.push({ ref, nombre: meta.hotel_nombre ?? it.hotelNombre ?? null, composicion: comp.data.composicion });
+    const infantesSinLinea = Math.max(0, numInfantes - lineasMenores.filter((lm) => lm.clase === "infante").reduce((s, lm) => s + lm.cantidad, 0));
+    unidadesBase.push({
+      ref, paquete: { id: it.paqueteId, nombre: null }, hotel: meta.hotel_nombre ?? it.hotelNombre ?? null, categoria: it.categoria, regimen: it.regimen,
+      paxTotal: totalPax, infantes: numInfantes,
+      personas: [
+        ...lineasHab.map((l) => ({ clave: `adulto:${l.acom}`, etiqueta: `Adulto · ${ACOM_ROOM_LABEL[l.acom]}`, tipo: "adulto" as const, cantidad: l.pax, tarifa: l.pvp })),
+        ...lineasMenores.map((lm) => ({ clave: `${lm.clase}${lm.menorDeDos ? ":menor2" : ""}`, // la identidad no lleva el precio: puede cambiar sin cambiar a la persona
+           etiqueta: descripcionLineaMenor(lm, it.categoria, it.regimen), tipo: lm.clase, cantidad: lm.cantidad, tarifa: lm.tarifa })),
+        // Un infante sigue siendo pasajero aunque su alojamiento no tenga línea de precio (tarifa sin configurar = gratis): su identidad no depende de ella.
+        ...(infantesSinLinea > 0 ? [{ clave: "infante:sin_cargo", etiqueta: "Infante · alojamiento sin cargo", tipo: "infante" as const, cantidad: infantesSinLinea, tarifa: 0 }] : []),
+      ],
+      cuposActivos: input.cobertura?.cupos[posOriginal] ?? null,
+      grupoIncluido: rResidual.residual,
+    });
     // Dinámico: las fechas guardadas son las de la salida que resolvió el servidor, no las que mandó el navegador.
     itemsOk.push({ ...it, ref, edadesMenores: edadesMenoresConfirmadas, ninos: numNinos, ninos2: numNinos2, infantes: numInfantes, pax: totalPax, precio: precioVenta,
       ...(it.modulo === "dinamico" ? { fechaIda: meta.fecha_ida ?? null, fechaRegreso: meta.fecha_regreso ?? null } : {}) });
@@ -1058,6 +1080,7 @@ async function crearCotizacionCarrito(input: {
     });
     total += resultado.resultado.total;
     lineasB2B.push({ clave: `tour-${toursOk.length}`, pvp: resultado.resultado.total, impuesto: 0 });
+    cubreTours.push(input.cobertura?.tours[j] ?? null);
     toursOk.push({
       servicioId: resultado.resultado.servicioId, paqueteId: resultado.resultado.paqueteId,
       hotelRef: posHotel != null ? refItemCotizacion(posHotel) : null,
@@ -1074,6 +1097,7 @@ async function crearCotizacionCarrito(input: {
   // crearSolicitudReserva). Nunca se excluyen en silencio: si su moneda no es la de la cotización, la solicitud falla. La cotización
   // NO guarda costo ni proveedor: se exigen al convertir.
   const manualesOk: ServicioManual[] = [];
+  const cubreManuales: ({ hotel: number | null; cubre: string[] | null } | null)[] = []; // alineado con manualesOk (#94)
   const manualesAplicados: boolean[] = [];
   const objetivosManual: (string | null)[] = []; // hotel/opción de cada manual aplicado (alineado con manualesOk), para la cobertura de tramos
   const catalogo = process.env.SUPABASE_SERVICE_ROLE_KEY ? createAdminClient() : sb;
@@ -1121,6 +1145,7 @@ async function crearCotizacionCarrito(input: {
     total += m.precio;
     lineasB2B.push(lineaB2BManual(m, manualesOk.length)); // #102: la comisión sale de PVP − impuesto no comisionable del manual
     manualesOk.push(m);
+    cubreManuales.push(input.cobertura?.manuales[mi] ?? null);
     objetivosManual.push(objetivo);
     manualesAplicados.push(true);
   }
@@ -1208,7 +1233,35 @@ async function crearCotizacionCarrito(input: {
   // `convertirCotizacionCarrito` (3F-4B) lo detecte y bloquee la conversión a contrato explícitamente, sin caer al flujo persona.
   const payloadCotizacion = { items: [...itemsOk, ...itemsBernaloOk], tours: toursOk, ...(manualesOk.length ? { manuales: manualesOk } : {}), serviciosIncluidos: incluidosPayload, cliente: input.cliente, ...(planB2B ? { b2bAsistido: planB2B } : {}) };
 
+  // #94/#52: resumen de precios del cliente. Solo cotización NORMAL en PVP, con hoteles por persona y al menos un servicio adicional; en cualquier otro caso el documento
+  // sigue como siempre. Si algo no se puede repartir con seguridad (cobertura parcial sin cupos elegidos, servicio sin hotel con varios hoteles) no se inventa nada: queda el motivo.
+  let resumenPrecios: ResumenPrecios | null = null;
+  let resumenPendiente: string | null = null;
+  if (!opts?.capturar && !planB2B && !itemsBernaloOk.length && unidadesBase.length && (toursOk.length || manualesOk.length)) {
+    // Asignación EXPLÍCITA del carrito a un hotel; nunca se deduce de que haya un solo hotel.
+    const hotelDeclarado = (c: { hotel: number | null } | null) => (c?.hotel != null ? refItemCotizacion(c.hotel) : null);
+    const nombres = new Map<number, string>();
+    try {
+      const { data: filas } = await sb.from("tarifario_resumen").select("paquete_id, paquete_nombre").in("paquete_id", [...new Set(unidadesBase.map((u) => u.paquete.id).filter((x): x is number => x != null))]);
+      for (const r of filas ?? []) if (r.paquete_nombre) nombres.set(Number(r.paquete_id), String(r.paquete_nombre));
+    } catch { /* sin nombre comercial: el documento muestra el hotel */ }
+    const r = construirResumenCarrito({
+      unidades: unidadesBase.map((u) => ({ ...u, paquete: { id: u.paquete.id, nombre: u.paquete.id != null ? nombres.get(u.paquete.id) ?? null : null } })),
+      servicios: [
+        ...toursOk.map((t, i) => ({ id: `tour-${i}`, nombre: t.nombre, precio: t.precio, pax: t.pax, hotelRef: t.hotelRef ?? hotelDeclarado(cubreTours[i]), cubre: cubreTours[i]?.cubre ?? null })),
+        ...manualesOk.map((m, i) => ({ id: `manual-${i}`, nombre: m.nombre, precio: m.precio, pax: m.pax, hotelRef: m.hotelRef ?? hotelDeclarado(cubreManuales[i]), cubre: cubreManuales[i]?.cubre ?? null })),
+      ],
+      modalidad: "pvp", moneda, total,
+    });
+    if (r.ok) resumenPrecios = r.resumen;
+    // Cobertura parcial mal declarada en la cotización normal soportada (un solo hotel por persona): se RECHAZA la emisión; aún no se escribió nada.
+    else if (r.rechazar && unidadesBase.length === 1) return { ok: false, error: r.motivo };
+    else resumenPendiente = r.motivo;
+  }
+
   const detalle = {
+    ...(resumenPrecios ? { resumenPrecios } : {}),
+    ...(resumenPendiente ? { resumenPendiente } : {}),
     venta: ventaSnap, pasajeros: [], hoteles: hotelesSnap, vuelos: vuelosSnap, items: itemsSnap,
     habitacionesBernalo: habitacionesBernaloSnap,
     composicionBernalo: composicionBernaloSnap,
@@ -1260,7 +1313,7 @@ async function crearCotizacionCarrito(input: {
   // #35: una opción de comparativa solo necesita la fila calculada.
   if (opts?.capturar) {
     opts.capturar(filaCotizacion as unknown as Record<string, unknown>);
-    return { ok: true, id: 0, codigo: "", url: "", moneda, itemsOk, itemsBernaloOk, toursOk, manualesOk, manualesAplicados, excluidos, b2bPlan: planB2B };
+    return { ok: true, id: 0, codigo: "", url: "", moneda, itemsOk, itemsBernaloOk, toursOk, manualesOk, manualesAplicados, excluidos, b2bPlan: planB2B, unidadesBase };
   }
   const { data: row, error } = await admin.from("cotizaciones").insert(filaCotizacion).select("id, codigo, share_token").single();
   // FRONTERA PÚBLICA (ronda 7): nunca se reenvía `error.message` — un fallo
@@ -1299,7 +1352,7 @@ async function crearCotizacionCarrito(input: {
   const origin = host ? `${proto}://${host}` : "";
   const url = origin && row.share_token ? `${origin}/cot/${row.share_token}` : "";
 
-  return { ok: true, id: row.id, codigo: row.codigo, url, moneda, itemsOk, itemsBernaloOk, toursOk, manualesOk, manualesAplicados, excluidos, b2bPlan: planB2B };
+  return { ok: true, id: row.id, codigo: row.codigo, url, moneda, itemsOk, itemsBernaloOk, toursOk, manualesOk, manualesAplicados, excluidos, b2bPlan: planB2B, unidadesBase };
 }
 
 // Genera UNA sola cotización combinada para todo el carrito y arma los
@@ -1353,7 +1406,9 @@ export async function crearSolicitudReserva(inputRaw: unknown): Promise<Solicitu
     b2bAsistido = prep.contexto;
   }
 
-  const cot = await crearCotizacionCarrito({ items: input.items, tours, hotelDeTour: input.hotelDeTour, cliente: clienteCheckout, manuales: man.manuales, hotelDeManual: man.hotelDeManual, tituloPaquete: tituloPaqueteEditado((inputRaw as { tituloPaquete?: unknown } | null)?.tituloPaquete) }, { b2b: b2bAsistido });
+  const cob = leerCobertura(inputRaw);
+  if (!cob.ok) return { ok: false, error: cob.error };
+  const cot = await crearCotizacionCarrito({ items: input.items, tours, hotelDeTour: input.hotelDeTour, cliente: clienteCheckout, manuales: man.manuales, hotelDeManual: man.hotelDeManual, cobertura: cob.cobertura, tituloPaquete: tituloPaqueteEditado((inputRaw as { tituloPaquete?: unknown } | null)?.tituloPaquete) }, { b2b: b2bAsistido });
   if (!cot.ok) return cot;
 
   // Agrega el cliente a la base de contactos del CRM como B2C (cliente_final),
@@ -1437,6 +1492,29 @@ export type PrevisualizacionB2B = { ok: true; terminos: TerminosB2BPrevios } | {
  * el servidor, valida actor/aliado/modalidad y construye el plan), sin insertar nada ni tocar el CRM. No es una fórmula aparte: si no puede liquidarse devuelve el motivo.
  * Los datos de la persona no intervienen (se usa un titular provisional que nunca se guarda). Generar vuelve a validar y congelar.
  */
+export type CuposDeCarrito = { ok: true; hoteles: { posicion: number; hotel: string | null; paxTotal: number; cupos: CupoPublico[] }[] } | { ok: false; error: string };
+
+/**
+ * #94/#52: identidad de los pasajeros de cada hotel del carrito, para que el navegador elija qué pasajeros cubre cada servicio. Reutiliza la liquidación
+ * real (modo captura: no escribe nada) y devuelve SOLO clave, tipo, etiqueta y cantidad — nunca tarifas, netos ni comisiones.
+ */
+export async function cuposDeCarrito(inputRaw: unknown): Promise<CuposDeCarrito> {
+  const crudo = (typeof inputRaw === "object" && inputRaw !== null ? inputRaw : {}) as Record<string, unknown>;
+  const v = validarCrearSolicitudInput({ ...crudo, cliente: { nombres: "Vista", apellidos: "previa", tipoDoc: "CC", numeroDoc: "0", telefono: "0", email: "" } });
+  if (!v.ok) return { ok: false, error: v.error };
+  if (!v.input.items.length) return { ok: false, error: "El carrito no tiene hoteles." };
+  const cot = await crearCotizacionCarrito({ items: v.input.items, tours: v.input.tours, hotelDeTour: v.input.hotelDeTour, cliente: v.input.cliente }, { capturar: () => {} });
+  if (!cot.ok) return { ok: false, error: "error" in cot ? cot.error : "El precio de un hotel cambió; revisa el carrito y vuelve a intentar." };
+  const hoteles: { posicion: number; hotel: string | null; paxTotal: number; cupos: CupoPublico[] }[] = [];
+  for (const u of cot.unidadesBase) {
+    const c = cuposDeUnidad(u.personas);
+    if (!c.ok) return { ok: false, error: c.error };
+    if (c.cupos.reduce((s, x) => s + x.cantidad, 0) !== u.paxTotal) return { ok: false, error: "No se pudo identificar a todos los pasajeros del hotel." };
+    hoteles.push({ posicion: Number(u.ref.replace(/^item-/, "")), hotel: u.hotel, paxTotal: u.paxTotal, cupos: c.cupos.map(({ clave, tipo, etiqueta, cantidad }) => ({ clave, tipo, etiqueta, cantidad })) });
+  }
+  return { ok: true, hoteles };
+}
+
 export async function previsualizarTerminosB2BAsistido(inputRaw: unknown): Promise<PrevisualizacionB2B> {
   const asistencia = leerAsistenciaB2BEntrada(inputRaw);
   if (!asistencia.ok) return { ok: false, error: asistencia.error };

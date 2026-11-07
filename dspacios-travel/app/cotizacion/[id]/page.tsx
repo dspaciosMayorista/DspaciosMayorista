@@ -72,6 +72,8 @@ type Detalle = {
   tituloPaquete?: string | null;
   // Cobertura de cada adicional y su NETO, derivados al cotizar (sin comisión ni plan). Ausente en cotizaciones anteriores: sin él no se reparte por pasajero.
   paqueteSnapshot?: SnapshotPaquete | null;
+  // #94/#52: resumen de precios congelado al cotizar (se valida contra el acuerdo dentro del documento).
+  resumenPrecios?: unknown;
 };
 
 const PRINT_STYLES = `
@@ -204,6 +206,7 @@ export default async function CotizacionImprimiblePage({
             incluye={d.incluye ?? null}
             noIncluye={d.noIncluye ?? null}
             tituloPaquete={d.tituloPaquete ?? null}
+            resumenPrecios={d.resumenPrecios ?? null}
             paqueteSnapshot={snapshotDelDocumento(d, cot.payload)}
           />
         </div>

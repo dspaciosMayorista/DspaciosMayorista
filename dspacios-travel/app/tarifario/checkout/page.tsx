@@ -18,6 +18,7 @@ import { ROTULO_ALCANCE_VENTA } from "@/lib/calc/servicioAlcance";
 import { crearSolicitudReserva, fotosPortada, getContextoAsistenciaB2B, previsualizarPresentacionComparativa, type PresentacionPrevia, previsualizarTerminosB2BAsistido, previsualizarComparativaB2B, type PrevisualizacionB2B, type PrevisualizacionComparativaB2B, getContextoB2B, type SolicitudResult, type ContextoAsistenciaCheckout, type ContextoB2B, type ResultadoComparativaCreada } from "./actions";
 import { TerminosB2BAsistido } from "@/components/cotizacion/TerminosB2BAsistido";
 import { ServicioManualPanel } from "./ServicioManualPanel";
+import { useCoberturaNormal } from "./CoberturaServicios";
 import { tituloPaqueteTuristico } from "@/lib/contrato/paqueteTuristicoDocumento";
 import { ResumenOpcionesComparativa } from "./ResumenOpcionesComparativa";
 import { useIatasDestinos } from "@/lib/cart/useIatasDestinos";
@@ -177,8 +178,10 @@ export default function CheckoutPage() {
   const lbl = "mb-1 block text-xs font-medium text-gray-600";
 
   // Entrada que se manda al servidor (la misma para la solicitud normal y para la comparativa).
-  function armarEntrada(itemsNormalizados: { it: HotelCartItemPersona; edadesMenores: number[] }[]) {
+  function armarEntrada(itemsNormalizados: { it: HotelCartItemPersona; edadesMenores: number[] }[], cobertura?: ReturnType<typeof useCoberturaNormal>["cobertura"]) {
     return {
+        // #94: pasajeros cubiertos por cada servicio (solo cotización normal con un hotel). El servidor la valida contra lo liquidado.
+        ...(cobertura ? { cobertura } : {}),
         items: [
           ...itemsNormalizados.map(({ it, edadesMenores }) => ({
             // `itemId`: solo para que sus servicios vinculados lo señalen.
@@ -321,6 +324,18 @@ export default function CheckoutPage() {
 
   // Vista previa del desglose B2B (lo calcula el servidor con el mismo motor de la cotización; no se estima aquí). Se vuelve a pedir al cambiar aliado,
   // modalidad o carrito; la respuesta de otra combinación nunca se muestra (clave).
+  // #94/#52: cotización NORMAL de un solo hotel (la unidad hotelera única es el contexto de sus servicios). Otros casos conservan su flujo.
+  const activoCob = !vista.crear && !vista.continuar && !hayB2B && hotelItems.length === 1 && bernaloItems.length === 0 && (tourItems.some((t) => !t.hotelItemId) || manualItems.length > 0);
+  const normCob = activoCob ? normalizarCarrito() : null;
+  const cob = useCoberturaNormal({
+    activo: activoCob && !!normCob?.ok, hotelId: hotelItems[0]?.id ?? null, hotelesVigentes: hotelItems.map((x) => x.id),
+    huella: hotelItems[0] ? [hotelItems[0].paqueteId, hotelItems[0].hotelId, hotelItems[0].fechaIda, hotelItems[0].fechaRegreso, hotelItems[0].categoria, hotelItems[0].regimen].join("|") : "", paxHotel: hotelItems[0]?.pax ?? 0,
+    entrada: normCob?.ok ? { ...armarEntrada(normCob.itemsNormalizados), cliente: null } : null,
+    servicios: [
+      ...tourItems.map((t, indice) => ({ id: t.id, nombre: t.nombre, pax: t.pax, tipo: "tour" as const, indice, ligado: !!t.hotelItemId })),
+      ...manualItems.map((m, indice) => ({ id: m.id, nombre: m.nombre, pax: m.pax, tipo: "manual" as const, indice, ligado: false })),
+    ],
+  });
   const normPrevia = asistenciaB2B && aliadoElegido ? normalizarCarrito() : null;
   const entradaPrevia = normPrevia?.ok ? armarEntrada(normPrevia.itemsNormalizados) : null;
   const clavePrevia = entradaPrevia ? JSON.stringify({ ...entradaPrevia, cliente: null }) : null;
@@ -369,9 +384,10 @@ export default function CheckoutPage() {
     const norm = normalizarCarrito();
     if (!norm.ok) { setErr(norm.error); return; }
     const itemsNormalizados = norm.itemsNormalizados;
+    if (activoCob && cob.bloqueo) { setErr(cob.bloqueo); return; }
 
     start(async () => {
-      const entrada = armarEntrada(itemsNormalizados);
+      const entrada = armarEntrada(itemsNormalizados, activoCob ? cob.cobertura : null);
       if (asistenciaB2B && entrada.asistencia && previa?.clave === clavePrevia && previa.r.ok) {
         const { pvp, impuesto, base, pct, pct_origen, comision, total_exigible, modo_compra, moneda } = previa.r.terminos;
         entrada.asistencia = { ...entrada.asistencia, vistos: { pvp, impuesto, base, pct, pct_origen, comision, total_exigible, modo_compra, moneda } } as typeof entrada.asistencia;
@@ -426,6 +442,7 @@ export default function CheckoutPage() {
           <div className="space-y-6">
             {/* #64: solo personal interno autorizado (mismo contexto que la venta asistida); el servidor lo exige de nuevo. */}
             {puedeManual && <ServicioManualPanel comun={!!vista.crear} />}
+            {cob.panel}
             {puedeManual && !vista.crear && manualItems.length > 0 && (
               <section className="rounded-xl border border-gray-200 bg-white p-4" data-testid="titulo-paquete">
                 <label htmlFor="titulo-paquete" className="text-xs font-medium text-gray-600">Ítem del paquete (Valores y Pagos)</label>

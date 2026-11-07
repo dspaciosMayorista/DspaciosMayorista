@@ -31,6 +31,8 @@ import type { CondicionesContratoResueltas } from "@/lib/contrato/condicionesCon
 import { nombreQuienElabora } from "@/lib/cotizacion/identidadB2B";
 import { esLineaVueloManual, esTramoVueloManual, notaVueloManual } from "@/lib/cart/servicioManual";
 import { formatoExacto, repartoPorPersona } from "@/lib/contrato/repartoTarifa";
+import { resumenAplicable } from "@/lib/cotizacion/resumenPrecios";
+import { ResumenPreciosCliente } from "@/components/contrato/ResumenPreciosCliente";
 
 // Incluye / No incluye guardado como texto (una línea por ítem) → viñetas. Mismo criterio que `lineasTexto` de la comparativa.
 const lineasTextoDoc = (t?: string | null) => (t || "").split(/\r?\n|·|;/).map((x) => x.replace(/^[-•*\s]+/, "").trim()).filter(Boolean);
@@ -125,6 +127,8 @@ type Props = {
   tituloPaquete?: string | null;
   /** Resumen del snapshot congelado de la cotización (cobertura de cada adicional y su NETO), derivado en el servidor con `snapshotPaqueteDePayload`. Sin él no se reparte. */
   paqueteSnapshot?: SnapshotPaquete | null;
+  /** #94/#52: resumen de precios congelado al cotizar (JSON guardado). Solo se usa si coincide con el acuerdo vigente del documento; si no, el documento sigue como antes. */
+  resumenPrecios?: unknown;
 };
 
 // Marca por tenant: mayorista mantiene los colores/logo de siempre;
@@ -198,6 +202,7 @@ export function ContratoDocumento({
   noIncluye = null,
   tituloPaquete = null,
   paqueteSnapshot = null,
+  resumenPrecios = null,
 }: Props) {
   const lineasIncluye = lineasTextoDoc(incluye);
   const lineasNoIncluye = lineasTextoDoc(noIncluye);
@@ -245,7 +250,9 @@ export function ContratoDocumento({
   // El vuelo y los servicios adicionales entran en las tarifas de esa fila (repartidos entre los pasajeros que cubren), no en una segunda tabla de importes.
   // Una línea de precio total que NO es de un hotel Bernalo: los servicios incluidos por grupo de un hotel normal. Esa línea no impide el ítem único (se reparte, o se muestra el total).
   const lineasGrupo = alojItemsTotal.filter(esLineaGrupoIncluido);
-  const unificarPaquete = esCotizacion && alojItemsPorPersona.length > 0 && lineasGrupo.length === alojItemsTotal.length && hayServicioManual(items);
+  // #94: con un resumen aplicable el cliente ve grupos de pasajeros (precio completo por persona y subtotal) y ningún importe por servicio.
+  const resumen = resumenAplicable(resumenPrecios, { modalidad: esNeto ? "neto" : "pvp", moneda, totalCentavos: Math.round(total * 100) });
+  const unificarPaquete = !resumen && esCotizacion && alojItemsPorPersona.length > 0 && lineasGrupo.length === alojItemsTotal.length && hayServicioManual(items);
   const ventaTexto = venta as { destino?: string | null; fecha_regreso?: string | null };
   const tituloPaqueteDoc = tituloPaqueteEditado(tituloPaquete) ?? tituloPaqueteTuristico(ventaTexto.destino, venta.fecha_salida, ventaTexto.fecha_regreso);
   // Cada línea adicional se vincula con el snapshot congelado (a cuántos pasajeros cubre y, en NETO, su parte del plan B2B). Sin vínculo seguro NO se infiere nada
@@ -516,7 +523,7 @@ export function ContratoDocumento({
                 label="Asistencia Médica"
                 value={venta.asistencia_medica ? "Sí" : "No"}
               />
-              <Pill label="Servicio / Plan" value={venta.plan_nombre ?? ""} />
+              <Pill label="Servicio / Plan" value={resumen ? ([...new Set(resumen.unidades.map((u) => u.paquete.nombre).filter(Boolean))].join(" · ") || venta.plan_nombre || "") : (venta.plan_nombre ?? "")} />
               <Pill
                 label="Tours y Traslados"
                 value={venta.tours_traslados ?? ""}
@@ -693,7 +700,8 @@ export function ContratoDocumento({
               $0) parecía un dato real y no lo es. Se separa en una fila
               agregada limpia — el detalle por habitación va aparte, debajo
               (sección "Detalle por habitación", regla F.32-34). */}
-          {alojItemsTotal.length > 0 && !filaPaquete && (
+          {resumen && <ResumenPreciosCliente resumen={resumen} />}
+          {alojItemsTotal.length > 0 && !filaPaquete && !resumen && (
             <div className="mb-3 space-y-2">
               {alojItemsTotal.map((it) => (
                 <div key={it.id} className="flex break-inside-avoid items-center justify-between rounded-lg bg-gray-50 px-3 py-2 text-xs">
@@ -792,7 +800,7 @@ export function ContratoDocumento({
             </div>
           )}
 
-          {alojItemsPorPersona.length > 0 && !filaPaquete && (
+          {alojItemsPorPersona.length > 0 && !filaPaquete && !resumen && (
             <div className="overflow-x-auto">
             <table className="w-full min-w-[520px] border-collapse text-xs">
               <thead className="break-inside-avoid break-after-avoid">
@@ -886,7 +894,7 @@ export function ContratoDocumento({
             </div>
           )}
 
-          {servicioItems.length > 0 && (
+          {servicioItems.length > 0 && !resumen && (
             <div className="mt-3 overflow-x-auto">
               <p className="mb-1 break-after-avoid text-xs font-semibold text-gray-500">Servicios adicionales</p>
               <table className="w-full min-w-[300px] border-collapse text-xs">

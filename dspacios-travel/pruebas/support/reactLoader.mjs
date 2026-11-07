@@ -159,7 +159,7 @@ export async function resolve(specifier, context, nextResolve) {
   if (specifier === "./busquedaUnidadActions" && context.parentURL?.endsWith("BuscadorBooking.tsx")) {
     return { url: STUB_BUSQUEDA_UNIDAD_ACTIONS, shortCircuit: true };
   }
-  if (specifier === "./actions" && context.parentURL?.endsWith("/tarifario/checkout/page.tsx")) {
+  if (specifier === "./actions" && (context.parentURL?.endsWith("/tarifario/checkout/page.tsx") || context.parentURL?.endsWith("/tarifario/checkout/CoberturaServicios.tsx"))) {
     return { url: STUB_CHECKOUT_ACTIONS, shortCircuit: true };
   }
   // La comparativa se importa de forma dinámica con el alias (`await import("@/app/tarifario/checkout/actions")`): mismo stub.
