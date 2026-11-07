@@ -193,6 +193,15 @@ export async function resolve(specifier, context, nextResolve) {
   if (specifier === "./actions" && (context.parentURL?.endsWith("/servicios/ServiciosClient.tsx") || context.parentURL?.endsWith("/servicios/ServicioFotoCell.tsx") || context.parentURL?.endsWith("/servicios/Alcance262.tsx"))) {
     return { url: STUB_SERVICIOS_ACTIONS, shortCircuit: true };
   }
+  // #86: la campana de avisos (PortalShell / layout del dashboard) importa una Server Action que arrastra next/headers; en estas pruebas solo se renderiza.
+  if (specifier === "@/lib/avisos/actions" && context.parentURL?.endsWith("/components/avisos/CampanaAvisos.tsx")) {
+    return { url: pathToFileURL(join(AQUI, "stubs", "avisosActionsStub.mjs")).href, shortCircuit: true };
+  }
+  // #86: las pantallas de soportes de pago importan sus Server Actions (next/cache + Supabase); renderizadas en pruebas no se invocan.
+  if ((specifier === "@/app/portal/b2b/cartera/soportes-actions" && context.parentURL?.endsWith("/components/portal/SoportesPago.tsx")) ||
+      (specifier === "./soportes-actions" && context.parentURL?.endsWith("/SoportesPagoInterno.tsx"))) {
+    return { url: pathToFileURL(join(AQUI, "stubs", "soportesActionsStub.mjs")).href, shortCircuit: true };
+  }
   if (specifier === "@/lib/supabase/client" && context.parentURL?.endsWith("/servicios/ServicioFotoCell.tsx")) {
     return { url: STUB_SUPABASE_CLIENT, shortCircuit: true };
   }
@@ -214,8 +223,8 @@ export async function resolve(specifier, context, nextResolve) {
   // Documentos por URL (migración 193, pruebas/documentosLegacyNombre.react.ts):
   // los cargadores REALES de estado de cuenta/plan/recibo y cuenta de cobro,
   // contra una base simulada en memoria.
-  // 65: con PG65_POSTGREST (recorrido de integración, supabase/scripts/test_65_portal_b2b.sh) NO se sustituye el cliente: la prueba aporta clientes REALES contra PostgREST.
-  if (!process.env.PG65_POSTGREST && (specifier === "@/lib/supabase/server" || specifier === "@/lib/supabase/admin") &&
+  // 65 y 86: con PG65_POSTGREST / PG281A_POSTGREST (recorridos de integración, supabase/scripts/test_65_portal_b2b.sh y test_281_acciones.sh) NO se sustituye el cliente: la prueba aporta clientes REALES contra PostgREST.
+  if (!process.env.PG65_POSTGREST && !process.env.PG281A_POSTGREST && (specifier === "@/lib/supabase/server" || specifier === "@/lib/supabase/admin") &&
       (context.parentURL?.endsWith("/lib/cuenta/estado.ts") ||
        context.parentURL?.endsWith("/lib/finanzas/comisionResolver.ts") ||
        // Listado del portal B2B y su columna de comisión (#38, pruebas/comisionPortalB2B.react.ts).

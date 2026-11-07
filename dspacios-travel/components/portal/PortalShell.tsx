@@ -3,6 +3,7 @@ import Image from "next/image";
 import { CreditCard, FileText, House, ClipboardList, ReceiptText, Wallet, Users } from "lucide-react";
 import { Logo } from "@/components/Logo";
 import { LogoutButton } from "@/app/(dashboard)/LogoutButton";
+import { CampanaAvisos } from "@/components/avisos/CampanaAvisos";
 import s from "./vidrio.module.css";
 
 export type PestanaPortal = "inicio" | "cotizaciones" | "ventas" | "cartera" | "documentos" | "agentes";
@@ -93,6 +94,7 @@ export function PortalShell({ children, nombre, rol, detalle, activa, mostrarAge
                     <CreditCard aria-hidden size={18} /> Pagar en línea
                   </a>
                 )}
+                {activa && <CampanaAvisos />}
                 <LogoutButton className={s.btnVidrio} />
                 {cta}
               </div>

@@ -12,12 +12,14 @@ export function Topbar({
   fecha,
   switcher,
   logout,
+  avisos,
 }: {
   userLabel: string;
   rol: string | null;
   fecha: string;
   switcher?: React.ReactNode;
   logout: React.ReactNode;
+  avisos?: React.ReactNode;
 }) {
   return (
     <header
@@ -41,6 +43,7 @@ export function Topbar({
             </div>
           )}
         </div>
+        {avisos}
         {logout}
       </div>
     </header>
