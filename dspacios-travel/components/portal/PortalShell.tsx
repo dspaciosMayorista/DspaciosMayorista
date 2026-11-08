@@ -6,7 +6,7 @@ import { LogoutButton } from "@/app/(dashboard)/LogoutButton";
 import { CampanaAvisos } from "@/components/avisos/CampanaAvisos";
 import s from "./vidrio.module.css";
 
-export type PestanaPortal = "inicio" | "cotizaciones" | "ventas" | "cartera" | "documentos" | "agentes";
+export type PestanaPortal = "inicio" | "cotizaciones" | "ventas" | "cartera" | "documentos" | "agentes" | "perfil";
 
 const ICONO = { size: 20, "aria-hidden": true } as const;
 const PESTANAS: { id: PestanaPortal; href: string; label: string; corto: string; icono: React.ReactNode }[] = [
@@ -78,13 +78,21 @@ export function PortalShell({ children, nombre, rol, detalle, activa, mostrarAge
                 {nombre && (
                   <>
                     <div aria-hidden="true" className={s.sep} />
-                    <div className={s.identidad}>
-                      <div aria-hidden="true" className={s.avatar}>{inicial || "A"}</div>
-                      <div style={{ minWidth: 0 }}>
-                        <div className={s.idNombre}>{nombre}</div>
-                        <div className={s.idRol}>{linea}</div>
-                      </div>
-                    </div>
+                    {(() => {
+                      const contenido = (
+                        <>
+                          <div aria-hidden="true" className={s.avatar}>{inicial || "A"}</div>
+                          <div style={{ minWidth: 0 }}>
+                            <div className={s.idNombre}>{nombre}</div>
+                            <div className={s.idRol}>{linea}</div>
+                          </div>
+                        </>
+                      );
+                      // #25: con sesión activa, la identidad lleva a «Mi perfil» (sin sumar una pestaña más al menú móvil).
+                      return activa
+                        ? <Link href="/portal/b2b/perfil" className={s.identidad} aria-label={`Mi perfil: ${nombre}`} style={{ textDecoration: "none", color: "inherit" }}>{contenido}</Link>
+                        : <div className={s.identidad}>{contenido}</div>;
+                    })()}
                   </>
                 )}
               </div>
