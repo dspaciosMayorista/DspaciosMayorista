@@ -4,6 +4,7 @@ import { ETIQUETA_CAMPO, type Campo, type TramoPortal } from "@/lib/portal/vuelo
 import type { VuelosContrato as Datos } from "@/lib/portal/vuelosPortalServidor";
 
 const SENTIDO = { ida: "Ida", regreso: "Regreso", suelto: "Tramo" } as const;
+const ORIGEN = { bloqueo: "Bloqueo", empaquetado: "Empaquetado" } as const;
 const CAMPOS: Campo[] = ["numeroVuelo", "fecha", "horaSalida", "horaLlegada"];
 
 function valor(c: Campo, v: string | null) {
@@ -16,12 +17,14 @@ function Tramo({ t }: { t: TramoPortal }) {
   return (
     <li className="min-w-0 rounded-lg border border-gray-100 bg-white p-3" data-tramo={t.direccion}>
       <div className="flex flex-wrap items-baseline justify-between gap-x-2">
-        <p className="text-xs font-semibold uppercase text-gray-500">{SENTIDO[t.direccion]}</p>
+        <p className="text-xs font-semibold uppercase text-gray-500">
+          {SENTIDO[t.direccion]}
+          {t.fuente && <span className="ml-2 rounded bg-gray-100 px-1.5 py-0.5 text-[10px] font-medium normal-case text-gray-600">{ORIGEN[t.fuente]}</span>}
+        </p>
         <p className="text-xs text-gray-400">{t.aerolinea ?? "Aerolínea no disponible"}</p>
       </div>
       <p className="mt-0.5 break-words text-sm font-medium text-gray-800">{ruta}</p>
-      <p className="mt-2 text-[11px] font-semibold uppercase text-gray-400">Contratado</p>
-      <dl className="mt-0.5 grid grid-cols-2 gap-x-3 gap-y-1 text-xs sm:grid-cols-4">
+      <dl className="mt-2 grid grid-cols-2 gap-x-3 gap-y-1 text-xs sm:grid-cols-4">
         {CAMPOS.map((c) => (
           <div key={c} className="min-w-0">
             <dt className="text-gray-400">{ETIQUETA_CAMPO[c]}</dt>
@@ -40,49 +43,23 @@ function Tramo({ t }: { t: TramoPortal }) {
           <p className="mt-1 opacity-80">Sin fecha de actualización acreditada. Es el dato de nuestra base, no el estado en tiempo real de la aerolínea; confírmalo con tu asesor.</p>
         </div>
       )}
-      {t.comparacion === "completa" && (
-        <p className="mt-2 text-xs text-gray-500">Coincide con el último horario registrado en D&apos;spacios (vuelo, fecha, salida y llegada).</p>
-      )}
-      {t.comparacion === "parcial" && (
-        <p className="mt-2 text-xs text-gray-500">Coincide en lo que D&apos;spacios tiene registrado ({t.comparados.map((c) => ETIQUETA_CAMPO[c].toLowerCase()).join(", ")}). Comparación parcial: falta {t.sinDatoOperativo.map((c) => ETIQUETA_CAMPO[c].toLowerCase()).join(", ")}.</p>
-      )}
-      {t.comparacion === "diferente" && t.sinDatoOperativo.length > 0 && (
-        <p className="mt-1 text-xs text-gray-500">Comparación parcial: D&apos;spacios no tiene registrado {t.sinDatoOperativo.map((c) => ETIQUETA_CAMPO[c].toLowerCase()).join(", ")}.</p>
-      )}
-      {t.comparacion === "sin_datos" && (
-        <p className="mt-2 text-xs text-gray-500">Sin datos operativos registrados en D&apos;spacios para comparar. Se muestra solo lo contratado.</p>
-      )}
-      {t.vinculo === "no_comprobada" && (
-        <p className="mt-2 text-xs text-amber-800">No se pudo comprobar el horario registrado en D&apos;spacios en este momento. Se muestra solo lo contratado; intenta más tarde.</p>
-      )}
-      {t.vinculo === "sin_vinculo" && (
-        <p className="mt-2 text-xs text-gray-500">Solo se muestra lo contratado: no se puede cotejar con un horario registrado. {t.motivoSinVinculo}</p>
-      )}
-      {t.ausentes.length > 0 && t.ausentes.length < CAMPOS.length && (
-        <p className="mt-1 text-xs text-gray-400">El contrato no trae: {t.ausentes.map((c) => ETIQUETA_CAMPO[c].toLowerCase()).join(", ")}.</p>
-      )}
+      {t.comparacion === "completa" && <p className="mt-2 text-xs text-gray-500">Coincide con el horario registrado en D&apos;spacios.</p>}
+      {t.comparacion === "parcial" && <p className="mt-2 text-xs text-gray-500">Coincide en lo registrado en D&apos;spacios.</p>}
+      {t.vinculo === "no_comprobada" && <p className="mt-2 text-xs text-amber-800">No se pudo comprobar el horario registrado.</p>}
     </li>
   );
 }
 
 /** «Ver vuelos» de un contrato propio. Server component: `<details>` nativo, sin JS ni ids del navegador. */
-export function VuelosContrato({ datos }: { datos: Datos | undefined }) {
+export function VuelosContrato({ datos }: { datos: Datos }) {
   return (
     <details className="group">
       <summary className="inline-flex cursor-pointer list-none items-center gap-1 text-xs font-medium" style={{ color: "var(--brand-accent)" }}>
         <Plane className="h-3.5 w-3.5" aria-hidden /> Ver vuelos <ChevronDown className="h-3.5 w-3.5 transition-transform group-open:rotate-180" aria-hidden />
       </summary>
       <div className="mt-2">
-        {!datos || datos.incompleto ? (
-          <p className="text-xs text-gray-500">No pudimos cargar los vuelos de este contrato ahora. Intenta más tarde.</p>
-        ) : datos.tramos.length === 0 ? (
-          <p className="text-xs text-gray-500">Este contrato no tiene vuelos registrados.</p>
-        ) : (
-          <>
-            <ul className="grid gap-2 lg:grid-cols-2">{datos.tramos.map((t) => <Tramo key={t.clave} t={t} />)}</ul>
-            <p className="mt-2 text-[11px] text-gray-400">Horarios informativos sujetos a cambios de la aerolínea.</p>
-          </>
-        )}
+        <ul className="grid gap-2 lg:grid-cols-2">{datos.tramos.map((t) => <Tramo key={t.clave} t={t} />)}</ul>
+        <p className="mt-2 text-[11px] text-gray-400">Horarios informativos sujetos a cambios de la aerolínea.</p>
       </div>
     </details>
   );
@@ -91,11 +68,16 @@ export function VuelosContrato({ datos }: { datos: Datos | undefined }) {
 /**
  * Fila adicional de Mis ventas. Escritorio: `colSpan` cubre las 8 columnas. Tarjetas (la tabla apilable convierte cada
  * `tr` en CSS grid y `colSpan` deja de aplicar): `grid-column: 1 / -1` hace que ocupe todo el ancho de la tarjeta.
+ * Sin vuelos registrados (lectura correcta y vacía) no hay fila ni «Ver vuelos»; si la lectura falló, solo un aviso breve.
  */
 export function FilaVuelosContrato({ datos }: { datos: Datos | undefined }) {
+  const fallo = !datos || datos.incompleto;
+  if (!fallo && datos.tramos.length === 0) return null;
   return (
     <tr style={{ borderTop: 0, paddingTop: 0 }}>
-      <td colSpan={8} data-label="" className="px-3 pb-2 pt-0" style={{ gridColumn: "1 / -1" }}><VuelosContrato datos={datos} /></td>
+      <td colSpan={8} data-label="" className="px-3 pb-2 pt-0" style={{ gridColumn: "1 / -1" }}>
+        {fallo ? <p className="text-xs text-amber-800">No se pudieron cargar los vuelos.</p> : <VuelosContrato datos={datos} />}
+      </td>
     </tr>
   );
 }

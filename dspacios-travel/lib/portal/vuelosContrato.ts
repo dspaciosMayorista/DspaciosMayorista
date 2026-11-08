@@ -71,7 +71,8 @@ export type TramoPortal = {
   ausentes: Campo[];
   /** «no_comprobada»: la fuente no se pudo leer; NO equivale a «sin_vinculo» (ausencia confirmada). */
   vinculo: "acreditado" | "sin_vinculo" | "no_comprobada";
-  motivoSinVinculo: string | null;
+  /** Origen acreditado del tramo (solo con vínculo acreditado). «Vuelo manual» no se acredita: no hay marca persistida. */
+  fuente: "bloqueo" | "empaquetado" | null;
   /**
    * Solo con vínculo acreditado. «completa»: los 4 datos del sistema existen y coinciden; «parcial»: coinciden los que el
    * sistema tiene, pero faltan otros; «sin_datos»: el sistema no tiene ninguno; «diferente»: al menos uno no coincide.
@@ -179,8 +180,8 @@ export function armarTramosPortal(
       origen: limpia(t.origen_ciudad) ?? limpia(t.origen_codigo), destino: limpia(t.destino_ciudad) ?? limpia(t.destino_codigo),
       contratado, ausentes,
     };
-    if (depende && "motivo" in v) return { ...base, vinculo: "no_comprobada", motivoSinVinculo: null, ...sinComp };
-    if ("motivo" in v) return { ...base, vinculo: "sin_vinculo", motivoSinVinculo: v.motivo, ...sinComp };
+    if (depende && "motivo" in v) return { ...base, vinculo: "no_comprobada", fuente: null, ...sinComp };
+    if ("motivo" in v) return { ...base, vinculo: "sin_vinculo", fuente: null, ...sinComp };
     const reg = datosFuente(v.fuente, direccion as "ida" | "regreso");
     const registrado: Partial<Record<Campo, string | null>> = {};
     const diferencias: Campo[] = [];
@@ -190,6 +191,6 @@ export function armarTramosPortal(
       if (!igual(c, contratado[c], reg[c])) { diferencias.push(c); registrado[c] = reg[c]; }
     }
     const comparacion = comparados.length === 0 ? "sin_datos" : diferencias.length ? "diferente" : comparados.length === CAMPOS.length ? "completa" : "parcial";
-    return { ...base, vinculo: "acreditado", motivoSinVinculo: null, comparacion, comparados, sinDatoOperativo: CAMPOS.filter((c) => reg[c] == null), registrado, diferencias };
+    return { ...base, vinculo: "acreditado", fuente: v.fuente.tipo, comparacion, comparados, sinDatoOperativo: CAMPOS.filter((c) => reg[c] == null), registrado, diferencias };
   });
 }

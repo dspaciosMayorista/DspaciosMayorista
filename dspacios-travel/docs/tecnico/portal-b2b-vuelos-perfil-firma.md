@@ -20,6 +20,8 @@ como «último horario registrado en D'spacios» (nunca «vigente» ni estado de
 **Fecha de actualización:** siempre «Sin fecha de actualización acreditada». No se lee texto libre de `bloqueo_cambios`
 y no hay migración para resolverlo (`bloqueos_vuelo.updated_at` cambia con cualquier edición, no solo con horarios).
 
+**Presentación:** sin explicaciones técnicas de falta de vínculo. Etiqueta de origen (*Bloqueo* / *Empaquetado*) solo con vínculo acreditado por tramo. *Vuelo manual* NO se etiqueta: no existe una marca persistida del origen de un tramo en `contrato_vuelos`; acreditarlo exigiría una columna nueva (migración, fuera de este alcance). Contrato sin vuelos registrados: sin fila ni «Ver vuelos» (también porción terrestre). Lectura fallida: aviso breve «No se pudieron cargar los vuelos.» (contrato) o «No se pudo comprobar el horario registrado.» (tramo).
+
 **Sin vínculo posible:** salida dinámica (sin FK; tramos con `record` null), vuelos manuales, históricos sin
 `contrato_vuelos`, y empaquetados cuyo tramo se creó sin record (el record del empaquetado se agrega después de emitir).
 
@@ -101,3 +103,35 @@ Sobre la cuenta de cobro actual (`/portal/comision/[numero]`, solo freelance; ho
    versión. El PDF aceptado anterior sigue consultable con su fecha.
 6. **Decisiones comerciales pendientes:** ¿la aceptación es obligatoria para liquidar la comisión o solo informativa?
    ¿se exige firma al aliado de tipo agencia (hoy factura electrónica)? ¿quién puede invalidar una aceptación?
+
+## E. Edición de «Mi perfil» — IMPLEMENTADA (alcance aprobado)
+
+Identidad y ficha salen siempre de la sesión (`auth.getUser()` → `usuarios` → `aliado_id`); ningún id, ficha ni rol llega del formulario.
+
+| Campo | Se guarda en | Quién lo edita |
+| --- | --- | --- |
+| Tu nombre | `usuarios.nombre` | Cada usuario, solo el propio. **Bloqueado si `acceso_legacy_nombre = true`** |
+| Razón social / nombre de la ficha | `aliados.nombre` | Solo titular de agencia y freelance con ficha. **Nunca un agente** |
+| Persona de contacto (solo agencia) | `aliados.contacto` | Titular |
+| Teléfono | `aliados.telefono` | Titular / freelance |
+| Correo de contacto | `aliados.email` (no es el de inicio de sesión) | Titular / freelance |
+| Dirección | `aliados.direccion` | Titular / freelance |
+
+Protegidos (no se leen del formulario ni se escriben): NIT, tipo/número de documento, `aliado_id`, rol, activo, tenant, comisión, retención, `acceso_legacy_nombre`, correo de acceso, contraseña, datos bancarios.
+
+Agentes (`usuarios.agencia_id` ≠ null): no tienen ficha (`aliado_id` null), así que solo editan su propio nombre; teléfono, correo, dirección y razón social son de la ficha de la agencia y solo los cambia el titular.
+
+**Nombre y acceso heredado.** El nombre solo es llave de acceso cuando `acceso_legacy_nombre = true` (cruza `usuarios.nombre` con `ventas.agencia_nombre/freelance_nombre`). Regla: con ese indicador el nombre de usuario queda de solo lectura («contacta a tu asesor») y no se altera ni se concede ni se retira acceso. Con el indicador en false el acceso es por id y renombrar no lo cambia. Cambiar `aliados.nombre` no mueve ids de contratos; sí cambia el encabezado en vivo de la cuenta de cobro, por eso se pide confirmación. Antes de guardar cualquier nombre se rechaza uno ya usado por otro aliado o usuario (misma guarda anti-suplantación del registro).
+
+**Validación (servidor):** nombre obligatorio 3–120; contacto ≤120; teléfono 7–15 dígitos (admite +, espacios y guiones, se normaliza); correo con formato válido ≤254; dirección ≤200; recorte de espacios y de caracteres de control; vacío = null en los opcionales. Última escritura gana (sin versión), pero se audita antes/después.
+
+**Auditoría:** escritura con service-role tras autorizar; el trigger 087 deja la fila «Sistema», así que se inserta además una fila explícita en `auditoria` con `actor_id/email/nombre/rol` de la sesión, tabla, registro, antes, después y cambios. Sin migración.
+
+**Pruebas previstas:** aislamiento entre dos aliados (ids del cuerpo ignorados), agente sin acceso a la ficha, legacy bloqueado, duplicados, campos protegidos ignorados, validaciones y auditoría con actor.
+
+**Implementación:** `lib/portal/perfilEdicion.ts` (permisos y validación puros), `lib/portal/perfilEdicionServidor.ts` (carga, duplicados paginados, escritura y auditoría), `app/portal/b2b/perfil/actions.ts` (identidad desde la sesión; solo se leen las llaves permitidas), `PerfilEditor.tsx` (dos secciones con botón propio).
+**Permiso de ficha:** no basta `aliado_id`. Titular = rol `agencia` con `agencia_id` nulo y activo (igual que `agentes/actions.ts`); freelance = rol `freelance` con `agencia_id` nulo y activo; además la ficha no puede estar enlazada a otra cuenta titular activa. Un agente con `aliado_id` puesto tampoco edita la ficha.
+**Auditoría y atomicidad (migración 283, SIN aplicar):** el cambio y su auditoría con actor (id, correo, nombre y rol de la sesión; `cambios` antes/después, `_via: portal_b2b_perfil`) se confirman en UNA transacción mediante la función `guardar_perfil_portal` (solo `service_role`): bloquea la fila del usuario, compara los valores que el usuario vio (si cambiaron, devuelve `conflicto`), deriva la ficha de `usuarios.aliado_id` y vuelve a verificar titular/freelance, ficha no compartida y acceso heredado. Si la auditoría falla, la base revierte todo; no hay restauración manual. El trigger 087 deja además su fila «Sistema» en la misma transacción. Orden de despliegue: migración primero y luego el código (sin la función, guardar devuelve error genérico). Prueba real: `sh supabase/scripts/test_283_perfil_atomico.sh` (Postgres + PostgREST desechables). Rollback: `supabase/scripts/rollback_283_perfil_portal_atomico.sql`.
+**Límite conocido:** el nombre de `auth.users` (metadata) no se actualiza; este cambio no toca Auth.
+**Edición desfasada:** `p_esperado` son los valores ORIGINALES con los que se abrió el formulario (el editor los conserva tal cual salieron de la base, `null` incluido, y los reenvía al guardar); no se vuelven a leer al guardar. Solo cuenta como cambio lo que la persona tocó respecto de esos originales. La comparación con el valor actual ocurre dentro del bloqueo SQL; los originales jamás autorizan ni eligen la ficha (esa sale de la sesión). Sin `esperado` válido no se guarda.
+**Migración 283 (no 282):** el número 282 lo ocupa `20260601000282_reuso_consecutivos_dtm.sql` de #75 (provisional, sin aplicar, en el checkout principal). Esta se renumeró a 283; son independientes y pueden aplicarse en cualquier orden. Preflight: `supabase/scripts/preflight_283_perfil_portal_atomico.sql`; postcheck: `supabase/scripts/postcheck_283_perfil_portal_atomico.sql` (una consulta cada uno, sin escribir).

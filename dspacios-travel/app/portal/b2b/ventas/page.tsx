@@ -1,4 +1,3 @@
-import { Fragment } from "react";
 import Link from "next/link";
 import { PortalShell, Titulo, Aviso, SubPestanas, TablaScroll, Vacio } from "@/components/portal/PortalShell";
 import { BotonTarifario } from "@/components/portal/BotonTarifario";
@@ -76,14 +75,14 @@ export default async function PortalVentas({ searchParams }: { searchParams: Pro
             </tr>
           </thead>
           <tbody>
-            {filas.map((v) => {
+            {filas.flatMap((v) => {
               const num = v.numero_contrato;
               const part = v.relacion === "participacion";
               const vis = conjunto.comisiones.get(num) ?? null;
               const com = vis?.importe ?? null;
-              return (
-                <Fragment key={num}>
-                <tr className="border-t border-gray-50">
+              // La fila principal conserva su `key` (número de contrato); la de vuelos es hermana, no envoltorio.
+              return [(
+                <tr key={num} className="border-t border-gray-50">
                   <th scope="row" className="px-3 py-2 text-left font-mono font-semibold text-[#1D7C9A]">{numeroVisible(num)}</th>
                   <td data-label="Agencia" className="px-3 py-2 text-xs text-gray-600">{AGENCIA[v.tenant ?? "mayorista"] ?? v.tenant}</td>
                   <td data-label="Cliente" className="px-3 py-2 text-gray-700">
@@ -111,11 +110,7 @@ export default async function PortalVentas({ searchParams }: { searchParams: Pro
                     {vis?.cobrable && vis.tipo === "agencia" && <span className="block text-[10px] text-gray-400">Factura electrónica</span>}
                   </td>
                 </tr>
-                {!part && (
-                  <FilaVuelosContrato datos={vuelos.porContrato.get(num)} />
-                )}
-                </Fragment>
-              );
+              ), ...(part ? [] : [<FilaVuelosContrato key={`${num}-vuelos`} datos={vuelos.porContrato.get(num)} />])];
             })}
           </tbody>
         </TablaScroll>

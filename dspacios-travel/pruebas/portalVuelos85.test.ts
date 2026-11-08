@@ -51,7 +51,7 @@ test("vuelo manual adicional en el mismo contrato NO recibe el horario del bloqu
   assert.equal(r[0].vinculo, "acreditado");
   assert.equal(r[1].vinculo, "sin_vinculo");
   assert.deepEqual(r[1].diferencias, []);
-  assert.ok(r[1].motivoSinVinculo);
+  assert.equal(r[1].fuente, null); // no se etiqueta «manual» sin evidencia persistida
 });
 
 test("manual con el mismo record y misma ruta que otro tramo: ambiguo, sin vínculo para ambos", () => {
@@ -178,7 +178,7 @@ test("lectura de la fuente fallida: «no comprobada», NO «sin vínculo»; solo
   const t = r.porContrato.get("00-0001")!.tramos[0];
   assert.equal(t.vinculo, "no_comprobada");
   assert.equal(t.comparacion, null);
-  assert.equal(t.motivoSinVinculo, null);
+  assert.equal(t.fuente, null);
   assert.deepEqual(t.diferencias, []);
 });
 
@@ -217,12 +217,21 @@ test("comparación: completa, parcial, sin datos operativos y diferente (con cam
   assert.deepEqual(dif.sinDatoOperativo, ["horaLlegada"]);
 });
 
-test("la tarjeta no afirma «Coincide» sin datos ni en comparación parcial", async () => {
-  const { readFileSync } = await import("node:fs");
-  const src = readFileSync(new URL("../components/portal/VuelosContrato.tsx", import.meta.url), "utf8");
-  assert.match(src, /comparacion === "completa"[\s\S]{0,200}Coincide con/);
-  assert.match(src, /comparacion === "parcial"[\s\S]{0,300}Comparación parcial/);
-  assert.match(src, /comparacion === "sin_datos"[\s\S]{0,200}Sin datos operativos/);
-  assert.match(src, /no_comprobada[\s\S]{0,200}No se pudo comprobar/);
-  assert.ok(src.includes('gridColumn: "1 / -1"'));
+test("origen acreditado: Bloqueo o Empaquetado solo con vínculo; nunca por coincidencia de texto ni «manual» sin marca", () => {
+  assert.equal(armarTramosPortal([tramo({})], venta, f(bloqueo()))[0].fuente, "bloqueo");
+  const emp = bloqueo({ tipo: "empaquetado", id: 9 });
+  const vE: VentaRef = { numero_contrato: "00-0001", bloqueo_ref_id: null, empaquetado_ref_id: 9 };
+  assert.equal(armarTramosPortal([tramo({})], vE, f(null, emp))[0].fuente, "empaquetado");
+  // mismo texto de record pero la venta no apunta a la fuente: no se etiqueta
+  assert.equal(armarTramosPortal([tramo({})], { ...venta, bloqueo_ref_id: null }, f(bloqueo()))[0].fuente, null);
+  // tramo adicional/manual en el mismo contrato: sin etiqueta
+  assert.equal(armarTramosPortal([tramo({}), tramo({ id: 3, direccion: "suelto", record: null, orden: 2 })], venta, f(bloqueo()))[1].fuente, null);
+  // fuente ilegible: sin etiqueta
+  assert.equal(armarTramosPortal([tramo({})], venta, f(null), { bloqueo: true })[0].fuente, null);
+});
+
+test("el DTO ya no lleva explicaciones técnicas de falta de vínculo", () => {
+  const r = armarTramosPortal([tramo({ direccion: "suelto", record: null })], venta, f(bloqueo()));
+  assert.ok(!("motivoSinVinculo" in r[0]));
+  assert.ok(!/cotejar|tramo suelto|referencia de reserva/i.test(JSON.stringify(r)));
 });
