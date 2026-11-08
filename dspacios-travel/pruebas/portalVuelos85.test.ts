@@ -1,6 +1,7 @@
 // #85 (bloque A) — vuelos de contratos propios en el portal B2B. FIXTURES LOCALES: contratos, records y horarios inventados.
 import { test } from "node:test";
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import { armarTramosPortal, normalizarHora, type FuenteVuelo, type TramoFila, type VentaRef } from "../lib/portal/vuelosContrato.ts";
 import { cargarVuelosPortal, type AdminLectura } from "../lib/portal/vuelosPortalServidor.ts";
 
@@ -234,4 +235,59 @@ test("el DTO ya no lleva explicaciones técnicas de falta de vínculo", () => {
   const r = armarTramosPortal([tramo({ direccion: "suelto", record: null })], venta, f(bloqueo()));
   assert.ok(!("motivoSinVinculo" in r[0]));
   assert.ok(!/cotejar|tramo suelto|referencia de reserva/i.test(JSON.stringify(r)));
+});
+
+// ── Protección de la clasificación «cliente de servicio» de vuelosPortalServidor.ts (inventario LECTORES de netoEmpaquetados224.test.ts) ──
+const fuente = readFileSync(new URL("../lib/portal/vuelosPortalServidor.ts", import.meta.url), "utf8");
+const sinComentarios = fuente.replace(/\/\*[\s\S]*?\*\//g, "").replace(/\/\/.*$/gm, "");
+const PROHIBIDAS = /costo|precio|tarifa|fee_|neto|valor|total|comision|pago|emision|cupo|silla|notas?\b|observ|marg|trm|iva|retenc|saldo|abono|documento|pasajer|cliente/i;
+
+function columnasSolicitadas(): string[] {
+  const consts = new Map([...sinComentarios.matchAll(/const (COLS_[A-Z]+)\s*=\s*"([^"]+)"/g)].map((m) => [m[1], m[2]]));
+  const lista: string[] = [];
+  for (const m of sinComentarios.matchAll(/\.select\(\s*("[^"]*"|[A-Za-z_]+)/g)) {
+    const arg = m[1].trim();
+    const texto = /^"[^"]*"$/.test(arg) ? arg.slice(1, -1) : consts.get(arg);
+    assert.ok(texto, `select no explícito: ${arg}`);
+    lista.push(...texto.split(",").map((c) => c.trim()));
+  }
+  return lista;
+}
+
+test("clasificación de servicio: selección explícita (nunca *), solo columnas operativas, sin financieras ni notas", () => {
+  assert.doesNotMatch(sinComentarios, /\.select\(\s*\)|\.select\(\s*["'`]\s*\*/);
+  const cols = columnasSolicitadas();
+  assert.ok(cols.length > 20);
+  for (const c of cols) {
+    assert.ok(/^[a-z_]+$/.test(c), `columna sospechosa: ${c}`);
+    assert.ok(!PROHIBIDAS.test(c), `columna prohibida en el cargador de vuelos: ${c}`);
+  }
+  // Solo estas tablas: contratos, tramos y las dos fuentes operativas. Nada financiero.
+  const tablas = [...sinComentarios.matchAll(/\.from\("([a-z_]+)"\)/g)].map((m) => m[1]);
+  assert.deepEqual([...new Set(tablas)].sort(), ["bloqueos_vuelo", "contrato_vuelos", "empaquetados", "ventas"]);
+});
+
+test("clasificación de servicio: el inventario LECTORES de netoEmpaquetados224 lo declara como cliente de servicio", () => {
+  const inv = readFileSync(new URL("./netoEmpaquetados224.test.ts", import.meta.url), "utf8");
+  assert.match(inv, /\["lib\/portal\/vuelosPortalServidor\.ts", \{ cliente: "servicio"/);
+});
+
+test("clasificación de servicio: solo contratos propios (participación excluida en el código y en las lecturas)", async () => {
+  assert.match(sinComentarios, /relacion === "propio"/);
+  const { admin, lecturas } = falso(datos());
+  const r = await cargarVuelosPortal(admin, [
+    { numero_contrato: "00-0002", relacion: "participacion" },
+    { numero_contrato: "00-0001", relacion: "propio" },
+  ]);
+  assert.deepEqual([...r.porContrato.keys()], ["00-0001"]);
+  assert.ok(!JSON.stringify(lecturas).includes("00-0002"), "ni siquiera se consultó el contrato de participación");
+});
+
+test("clasificación de servicio: lo que se envía al navegador no contiene record/PNR ni claves de la fuente (salida real del cargador)", async () => {
+  const { admin } = falso(datos());
+  const r = await cargarVuelosPortal(admin, [{ numero_contrato: "00-0001", relacion: "propio" }]);
+  const json = JSON.stringify([...r.porContrato.values()]);
+  assert.ok(!json.includes("ZZTEST"), "el record no sale");
+  assert.ok(!/"record"|bloqueo_ref_id|empaquetado_ref_id|"id":7|tarifa|fee_|notas|costo|cupos/i.test(json));
+  assert.ok(json.includes("AV100"), "los datos operativos sí salen");
 });
