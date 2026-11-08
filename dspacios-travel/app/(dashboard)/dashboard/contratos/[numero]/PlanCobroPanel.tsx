@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { Button } from "@/components/ui/button";
 import { formatCOP, formatFechaLarga } from "@/lib/utils";
+import type { IdentidadContrato } from "@/lib/contrato/identidad";
 import { generarPlanCobro } from "./cobros-actions";
 import type { FrecuenciaCuota } from "@/lib/calc/cuotas";
 
@@ -16,7 +17,7 @@ const TIPO_LABEL: Record<string, string> = { abono: "Abono inicial", cuota: "Cuo
 // consulta el plan de pagos (es lo que le pregunta el cliente) pero no lo
 // genera ni lo regenera. La escritura sobre `cuotas` ya está limitada a
 // contratos propios por RLS desde la migración 147.
-export function PlanCobroPanel({ numero, cuotas, pagado, puedeEditar = true }: { numero: string; cuotas: CuotaRow[]; pagado: number; puedeEditar?: boolean }) {
+export function PlanCobroPanel({ numero, cuotas, pagado, puedeEditar = true, identidad }: { numero: string; cuotas: CuotaRow[]; pagado: number; puedeEditar?: boolean; identidad: IdentidadContrato }) {
   const router = useRouter();
   const [frecuencia, setFrecuencia] = useState<FrecuenciaCuota>("mensual");
   const [pending, start] = useTransition();
@@ -25,7 +26,7 @@ export function PlanCobroPanel({ numero, cuotas, pagado, puedeEditar = true }: {
   function generar() {
     setMsg("");
     start(async () => {
-      const r = await generarPlanCobro(numero, frecuencia);
+      const r = await generarPlanCobro(numero, frecuencia, identidad);
       if (r.ok) { setMsg(`✓ Plan de ${r.n} pago(s)`); router.refresh(); }
       else setMsg(r.error);
     });

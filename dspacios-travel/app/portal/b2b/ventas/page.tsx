@@ -8,6 +8,9 @@ import { numeroVisible } from "@/lib/tenant";
 import { resolverContextoPortal, cargarConjuntoPortal, linkPagoPortal, monedaOfertaDe } from "@/lib/portal/b2bPortalServidor";
 import { origenVenta, salidasProximasRango } from "@/lib/portal/b2bPortal";
 import { hoyBogota } from "@/lib/cotizacion/vigencia";
+import { createAdminClient } from "@/lib/supabase/admin";
+import { cargarVuelosPortal } from "@/lib/portal/vuelosPortalServidor";
+import { FilaVuelosContrato } from "@/components/portal/VuelosContrato";
 
 export const dynamic = "force-dynamic";
 
@@ -31,6 +34,9 @@ export default async function PortalVentas({ searchParams }: { searchParams: Pro
   const directas = base.filter((v) => origenVenta(v, ctx.userId) === "directa");
   const asistidas = base.filter((v) => origenVenta(v, ctx.userId) === "asistida");
   const filas = actual === "todas" ? base.filter((v) => directas.includes(v) || asistidas.includes(v)) : actual === "directas" ? directas : asistidas;
+
+  // #85: vuelos solo de contratos propios de las filas mostradas (la autorización ya la resolvió cargarConjuntoPortal).
+  const vuelos = await cargarVuelosPortal(createAdminClient(), filas);
 
   return (
     <PortalShell nombre={ctx.nombre} rol={ctx.rol} cta={<BotonTarifario />} activa="ventas" mostrarAgentes={ctx.esTitularAgencia} linkPago={linkPago}>
@@ -69,12 +75,13 @@ export default async function PortalVentas({ searchParams }: { searchParams: Pro
             </tr>
           </thead>
           <tbody>
-            {filas.map((v) => {
+            {filas.flatMap((v) => {
               const num = v.numero_contrato;
               const part = v.relacion === "participacion";
               const vis = conjunto.comisiones.get(num) ?? null;
               const com = vis?.importe ?? null;
-              return (
+              // La fila principal conserva su `key` (número de contrato); la de vuelos es hermana, no envoltorio.
+              return [(
                 <tr key={num} className="border-t border-gray-50">
                   <th scope="row" className="px-3 py-2 text-left font-mono font-semibold text-[#1D7C9A]">{numeroVisible(num)}</th>
                   <td data-label="Agencia" className="px-3 py-2 text-xs text-gray-600">{AGENCIA[v.tenant ?? "mayorista"] ?? v.tenant}</td>
@@ -103,7 +110,7 @@ export default async function PortalVentas({ searchParams }: { searchParams: Pro
                     {vis?.cobrable && vis.tipo === "agencia" && <span className="block text-[10px] text-gray-400">Factura electrónica</span>}
                   </td>
                 </tr>
-              );
+              ), ...(part ? [] : [<FilaVuelosContrato key={`${num}-vuelos`} datos={vuelos.porContrato.get(num)} />])];
             })}
           </tbody>
         </TablaScroll>

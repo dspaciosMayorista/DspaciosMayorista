@@ -122,5 +122,5 @@ test("Borrar y asignar contrato manual usan SOLO las firmas con versión (las vi
   const pagina = leer("app/(dashboard)/dashboard/vuelos/[id]/page.tsx");
   assert.match(pagina, /<SillaContrato [^>]*version=\{s\.updated_at\}[^>]*\/>/, "la celda de contrato recibe la versión de la silla");
   assert.match(leer("app/(dashboard)/dashboard/vuelos/[id]/PasajeroAcciones.tsx"),
-    /borrarPasajeroSilla\(sillaId, bloqueoId, contratoVisto\.updated_at\)/, "Borrar manda la versión vista");
+    /borrarPasajeroSilla\(sillaId, bloqueoId, contratoVisto\.updated_at, identidad\)/, "Borrar manda la versión vista");
 });

@@ -1,6 +1,7 @@
 "use server";
 
 import { createClient } from "@/lib/supabase/server";
+import { parseIdentidad, mensajeSiIdentidad, type IdentidadContrato } from "@/lib/contrato/identidad";
 import { revalidatePath } from "next/cache";
 import { planDeCuotas, type FrecuenciaCuota } from "@/lib/calc/cuotas";
 import { cobroDeVenta } from "@/lib/finanzas/cobro";
@@ -8,15 +9,16 @@ import { cobroDeVenta } from "@/lib/finanzas/cobro";
 type Result = { ok: true; n?: number } | { ok: false; error: string };
 
 // % de abono para confirmar según el tipo de contrato (default 30%).
+// identidad:n/a — solo lectura de configuración
 export async function pctAbonoDe(tipoPaquete: string | null): Promise<number> {
-  const sb = await createClient();
+  const sb = await createClient(); // identidad:n/a — solo lectura
   const { data } = await sb.from("config_cobros").select("pct_abono").eq("tipo_paquete", tipoPaquete ?? "").maybeSingle();
   return data?.pct_abono ?? 0.3;
 }
 
 // Genera (o regenera) el plan de cuotas del contrato y lo guarda.
-export async function generarPlanCobro(numero: string, frecuencia: FrecuenciaCuota = "mensual"): Promise<Result> {
-  const sb = await createClient();
+export async function generarPlanCobro(numero: string, frecuencia: FrecuenciaCuota = "mensual", identidad: IdentidadContrato): Promise<Result> {
+  const sb = await createClient(parseIdentidad(identidad));
   const { data: venta } = await sb.from("ventas").select("precio_venta, moneda, moneda_cobro, trm_cobro, total_cobro, fecha_salida, tipo_paquete").eq("numero_contrato", numero).maybeSingle();
   if (!venta) return { ok: false, error: "Contrato no encontrado." };
 
@@ -28,14 +30,15 @@ export async function generarPlanCobro(numero: string, frecuencia: FrecuenciaCuo
   await sb.from("cuotas").delete().eq("numero_contrato", numero);
   const filas = plan.map((c, i) => ({ numero_contrato: numero, orden: i, tipo: c.tipo, fecha_limite: c.fecha, monto: c.monto }));
   const { error } = await sb.from("cuotas").insert(filas);
-  if (error) return { ok: false, error: error.message };
+  if (error) return { ok: false, error: mensajeSiIdentidad(error) ?? error.message };
   revalidatePath(`/dashboard/contratos/${numero}`);
   return { ok: true, n: filas.length };
 }
 
 // Configuración del % de abono por tipo (solo superadmin).
+// identidad:n/a — configuración global (config_cobros), no es una tabla de contrato
 export async function actualizarConfigCobros(tipoPaquete: string, pct: number): Promise<Result> {
-  const sb = await createClient();
+  const sb = await createClient(); // identidad:n/a — configuración global
   const { data: { user } } = await sb.auth.getUser();
   const { data: perfil } = user ? await sb.from("usuarios").select("rol").eq("id", user.id).single() : { data: null };
   if (perfil?.rol !== "superadmin") return { ok: false, error: "Solo superadmin puede cambiar las reglas de cobro." };

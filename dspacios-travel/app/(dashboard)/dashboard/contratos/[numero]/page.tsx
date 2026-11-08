@@ -5,6 +5,8 @@ import Link from "next/link";
 import { Button } from "@/components/ui/button";
 import { formatMoneda, formatFechaLarga } from "@/lib/utils";
 import { cobroDeVenta } from "@/lib/finanzas/cobro";
+import { identidadDe } from "@/lib/contrato/identidad";
+import { AvisoContratoCambio } from "./AvisoContratoCambio";
 import { ShareButtons } from "./ShareButtons";
 import { permisosComisionContrato } from "@/lib/finanzas/comisionB2B";
 import { GestionTabs } from "./GestionTabs";
@@ -185,6 +187,8 @@ export default async function ContratoDetallePage({
   const fiscal = fiscalFromParams(paramsRows ?? []);
 
   if (!venta) notFound();
+  // #75: la identidad sale de la MISMA fila que se acaba de leer (`select("*")` de ventas / ventas_basica incluye contrato_uid); se pasa a cada componente.
+  const identidad = identidadDe(venta.numero_contrato, venta.contrato_uid);
 
   // Datos financieros del contrato (costos, impuesto). Solo existen si quien
   // mira tiene acceso financiero: la consulta de arriba trae la vista
@@ -273,6 +277,7 @@ export default async function ContratoDetallePage({
       if (l.esRestringidaEfectiva) {
         overridesPorLinea[l.id] = (
           <OverrideRestriccionForm
+            identidad={identidad}
             numeroContrato={numero}
             contratoCondicionId={l.id}
             restriccion={l.restriccion}
@@ -294,6 +299,7 @@ export default async function ContratoDetallePage({
 
   return (
     <div className="mx-auto max-w-4xl p-4 md:p-8">
+      <AvisoContratoCambio numero={venta.numero_contrato} uid={venta.contrato_uid ?? null} />
       <Link href="/dashboard/contratos" className="text-sm text-gray-400 hover:text-gray-600">
         ← Contratos
       </Link>
@@ -308,7 +314,7 @@ export default async function ContratoDetallePage({
             <p className="mt-0.5 text-xs text-gray-500" data-testid="ficha-contrato-titular">Cliente: aliado · Titular de la reserva: {venta.titular_nombre}</p>
           )}
           <div className="mt-2 flex flex-wrap items-center gap-3">
-            <EstadoVenta numero={venta.numero_contrato} estado={venta.estado} plazo={venta.plazo} puedeConfirmar={verFinanzas} />
+            <EstadoVenta identidad={identidad} numero={venta.numero_contrato} estado={venta.estado} plazo={venta.plazo} puedeConfirmar={verFinanzas} />
             {/* Trazabilidad venta → empaquetado (revisión de PR #268, defecto 4):
                 el vuelo de este contrato vino de una tarifa de Sistema, no de un
                 bloqueo negociado — navega directo al Empaquetado de origen. */}
@@ -385,6 +391,7 @@ export default async function ContratoDetallePage({
           siquiera podría precargarlos. */}
       {fin && (
         <EditarVentaForm
+          identidad={identidad}
           numero={venta.numero_contrato}
           inicial={{
             cliente: venta.cliente ?? "",
@@ -421,6 +428,7 @@ export default async function ContratoDetallePage({
       )}
       {venta.estado === "pendiente" && puedeEditar && !esNeto && (
         <ServiciosContratoEditor
+          identidad={identidad}
           numero={venta.numero_contrato}
           pax={venta.pax ?? 0}
           serviciosDisp={serviciosDisp}
@@ -444,6 +452,7 @@ export default async function ContratoDetallePage({
 
       {/* Flujo de la venta */}
       <GestionTabs
+        identidad={identidad}
         numero={numero}
         precioVenta={venta.precio_venta}
         impuesto={fin?.impuesto ?? 0}
@@ -480,11 +489,12 @@ export default async function ContratoDetallePage({
         puedeEditar={puedeEditar}
       />
 
-      <AdjuntosContrato numeroContrato={numero} adjuntos={(adjuntos ?? []) as Adjunto[]} puedeEditar={puedeEditar} />
+      <AdjuntosContrato identidad={identidad} numeroContrato={numero} adjuntos={(adjuntos ?? []) as Adjunto[]} puedeEditar={puedeEditar} />
 
       <SoportesPagoInterno soportes={soportesPago} abonos={(abonos ?? []).length} />
 
       <EditarAsesorPasajeros
+        identidad={identidad}
         numero={numero}
         asesores={asesoresVenta ?? []}
         asesorActual={venta.asesor_firma_nombre ?? venta.asesor ?? ""}
@@ -497,6 +507,7 @@ export default async function ContratoDetallePage({
       />
 
       <VouchersPanel
+        identidad={identidad}
         numero={numero}
         vouchers={(vouchers ?? []) as unknown as VoucherRow[]}
         puedeGenerar={(esSuperadmin || saldo <= 0) && puedeEditar}
@@ -506,6 +517,7 @@ export default async function ContratoDetallePage({
 
       {esSuperadmin && (
         <ContenidoContratoEditor
+          identidad={identidad}
           numero={numero}
           moneda={venta.moneda ?? "COP"}
           precioVenta={venta.precio_venta ?? 0}
@@ -534,7 +546,7 @@ export default async function ContratoDetallePage({
         />
       )}
 
-      {esSuperadmin && <EliminarContrato numero={numero} />}
+      {esSuperadmin && <EliminarContrato numero={numero} identidad={identidad} />}
     </div>
   );
 }

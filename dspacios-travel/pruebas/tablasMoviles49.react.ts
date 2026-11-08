@@ -47,6 +47,7 @@ async function escribir(input: HTMLInputElement, valor: string) {
 }
 
 const FACTURA_SIN_CONFIGURAR = {
+  identidad: {},
   numero_contrato: "CT-2026-000123456789",
   cliente: "Agencia de Viajes y Turismo Internacional Los Andes S.A.S.",
   destino: "Cartagena",

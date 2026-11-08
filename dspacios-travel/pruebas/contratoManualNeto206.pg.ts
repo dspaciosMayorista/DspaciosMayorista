@@ -478,13 +478,13 @@ test("G3 después de emitir: la app y la API directa no cambian precio, tipo ni 
     fechaSalida: "2026-12-01", fechaRegreso: "2026-12-04", plazo: "", tipoAsesor: "agencia", agenciaNombre: "T206 Agencia",
     agenciaAsesor: "", freelanceNombre: "", asesorNombre: U.admin.nombre, planNombre: "", observaciones: "", pax: "1",
   };
-  const subir = await actualizarVenta(n, { ...base, precioVenta: "2000000" });
+  const subir = await actualizarVenta(n, { ...base, precioVenta: "2000000" }, {});
   assert.match(errorDe(subir), /vendido en NETO: el precio de venta es el total exigible/);
-  const tipo = await actualizarVenta(n, { ...base, tipoAsesor: "interno", precioVenta: "1800000" });
+  const tipo = await actualizarVenta(n, { ...base, tipoAsesor: "interno", precioVenta: "1800000" }, {});
   assert.match(errorDe(tipo), /vendido en NETO: el tipo de venta/);
-  const servicios = await actualizarServiciosContrato(n, []);
+  const servicios = await actualizarServiciosContrato(n, [], {});
   assert.match(errorDe(servicios), /vendido en NETO: los servicios no se cambian/);
-  const cliente = await actualizarVenta(n, { ...base, cliente: "Cliente Corregido 206", precioVenta: "1800000" });
+  const cliente = await actualizarVenta(n, { ...base, cliente: "Cliente Corregido 206", precioVenta: "1800000" }, {});
   assert.equal(cliente.ok, true, JSON.stringify(cliente));
   // API directa con la sesión de administración (sin pasar por las guardas de la app).
   const sb = await clienteDe("admin");
@@ -540,7 +540,7 @@ test("R2 falla el RPC Y la reversión: queda PVP 'Por definir' (nunca NETO sin c
   // así que no admite abonos (trigger de la 172) aunque esté vivo.
   assert.equal(sql(`select financiero_estado from public.ventas where numero_contrato = '${n}'`), "pendiente");
   await entrarComo("admin");
-  const abono = await registrarAbono(n, 100_000, "Efectivo", "R2");
+  const abono = await registrarAbono(n, 100_000, "Efectivo", "R2", undefined, undefined, undefined, undefined, {});
   assert.equal(abono.ok, false, "no cobrable mientras su registro financiero está pendiente");
 });
 
@@ -973,31 +973,31 @@ for (const [quien, adm, tenant] of [["venta", "admin", "mayorista"], ["ventaMin"
     const n = await netoDe(quien, tenant === "minorista" ? { aliadoId: 9601 } : {});
     assert.equal(marcarHotelIrt(n), "1500000");
     await entrarComo(adm);
-    assert.deepEqual(await registrarAbono(n, 500_000, "Efectivo", "K-206"), { ok: true });
+    assert.deepEqual(await registrarAbono(n, 500_000, "Efectivo", "K-206", undefined, undefined, undefined, undefined, {}), { ok: true });
     const fila = (await filasFacturacion()).find((x) => x.numero_contrato === n);
     assert.deepEqual([fila?.precio_venta, fila?.irtProveedores], [1_800_000, 1_500_000], "Facturación ofrece total exigible e IRT de proveedores");
     const { guardarFacturacion, marcarDian, quitarFacturacion } = await import("../app/(dashboard)/dashboard/contabilidad/facturacion/actions.ts");
     // Exactamente lo que envía FacturacionClient.guardar().
-    assert.deepEqual(await guardarFacturacion({ numeroContrato: n, pvp: fila!.precio_venta, irt: fila!.irtProveedores, ingresoExento: 0 }), { ok: true });
+    assert.deepEqual(await guardarFacturacion({ numeroContrato: n, pvp: fila!.precio_venta, irt: fila!.irtProveedores, ingresoExento: 0 }, {}), { ok: true });
     assert.deepEqual(saldos(n), { "110505": 500_000, "130505": 1_300_000, "281510": -1_500_000, "413505": -300_000, "613505": 1_500_000 },
       "Caja 500.000 · Clientes = total exigible − abono · IRT 1.500.000 · ingreso propio 300.000; el anticipo quedó aplicado; costo de la CxP (CXP-1)");
     assert.equal(sql(`select string_agg(distinct a.tenant, ',') from public.asientos_contables a where a.referencia in ('facturacion:${n}') `), tenant, "asiento en la agencia del contrato");
     assert.equal(sql(`select count(*) from public.asiento_lineas l where l.tercero = '${n}' and (l.debe = 2000000 or l.haber = 2000000 or l.debe = 200000 or l.haber = 200000)`), "0", "ni PVP original ni comisión en el libro");
     // Quitar ANTES de la DIAN: reversa y vuelve a quedar solo el anticipo (y el costo de la CxP).
-    assert.deepEqual(await quitarFacturacion(n), { ok: true });
+    assert.deepEqual(await quitarFacturacion(n, {}), { ok: true });
     assert.deepEqual(saldos(n), { "110505": 500_000, "280505": -500_000, "613505": 1_500_000 }, "al quitar la factura vuelve a quedar solo el anticipo (y el costo de la CxP)");
-    assert.deepEqual(await guardarFacturacion({ numeroContrato: n, pvp: fila!.precio_venta, irt: fila!.irtProveedores, ingresoExento: 0 }), { ok: true });
-    assert.deepEqual(await marcarDian(n, true), { ok: true });
+    assert.deepEqual(await guardarFacturacion({ numeroContrato: n, pvp: fila!.precio_venta, irt: fila!.irtProveedores, ingresoExento: 0 }, {}), { ok: true });
+    assert.deepEqual(await marcarDian(n, true, {}), { ok: true });
     assert.equal(sql(`select dian_emitida || '|' || (dian_fecha is not null) || '|' || ingreso_propio::numeric(15,0) || '|' || irt::numeric(15,0) from public.contrato_facturacion where numero_contrato = '${n}'`), "true|true|300000|1500000");
     assert.equal((await filasFacturacion()).find((x) => x.numero_contrato === n)?.dianEmitida, true, "pestaña DIAN: emitida");
     // 208 (regla DIAN): una factura emitida a la DIAN no se quita ni se desmarca. NO es una prueba omitida:
     // se afirma el rechazo con su código y que los libros no cambian.
     const sinQuitar = saldos(n);
-    const q = await quitarFacturacion(n);
+    const q = await quitarFacturacion(n, {});
     assert.equal(q.ok, false);
     assert.equal((q as { code?: string }).code, "F4434");
     assert.match(errorDe(q), /ya está emitida a la DIAN; no se quita/);
-    const d = await marcarDian(n, false);
+    const d = await marcarDian(n, false, {});
     assert.equal((d as { code?: string }).code, "F4434");
     assert.deepEqual(saldos(n), sinQuitar, "tras el rechazo los libros siguen igual");
     assert.deepEqual(sinQuitar, { "110505": 500_000, "130505": 1_300_000, "281510": -1_500_000, "413505": -300_000, "613505": 1_500_000 });
@@ -1076,13 +1076,13 @@ test("FACT-1 llamada directa autorizada con importes manipulados: se rechaza sin
     { pvp: 1_800_000, irt: 900_000 },   // solo el IRT distinto al de proveedores
   ];
   for (const c of casos) {
-    const r = await guardarFacturacion({ numeroContrato: n, ...c, ingresoExento: 0 });
+    const r = await guardarFacturacion({ numeroContrato: n, ...c, ingresoExento: 0 }, {});
     reportar(t, `respuesta ${JSON.stringify(c)}`, r);
     assert.equal(r.ok, false, JSON.stringify(c));
     assert.match(errorDe(r), /no coinciden con los del sistema/);
     assert.deepEqual(foto(n), antes, `sin escribir nada (${JSON.stringify(c)})`);
   }
-  const ok = await guardarFacturacion({ numeroContrato: n, pvp: 1_800_000, irt: 1_500_000, ingresoExento: 0 });
+  const ok = await guardarFacturacion({ numeroContrato: n, pvp: 1_800_000, irt: 1_500_000, ingresoExento: 0 }, {});
   assert.deepEqual(ok, { ok: true });
   const despues = foto(n);
   reportar(t, "después (valores del sistema)", despues);
@@ -1104,9 +1104,9 @@ test("FACT-1 USD: el servidor convierte con la TRM (trm_referencia) igual que la
   reportar(t, "fila de Facturación", { fila, trm });
   assert.deepEqual([fila.precio_venta, fila.irtProveedores], [2_110 * trm, 1_500 * trm]);
   const { guardarFacturacion } = await facturacion();
-  const malo = await guardarFacturacion({ numeroContrato: n, pvp: pvpUsd * trm, irt: fila.irtProveedores, ingresoExento: 0 });
+  const malo = await guardarFacturacion({ numeroContrato: n, pvp: pvpUsd * trm, irt: fila.irtProveedores, ingresoExento: 0 }, {});
   assert.equal(malo.ok, false, "el PVP original convertido no pasa");
-  assert.deepEqual(await guardarFacturacion({ numeroContrato: n, pvp: fila.precio_venta, irt: fila.irtProveedores, ingresoExento: 0 }), { ok: true });
+  assert.deepEqual(await guardarFacturacion({ numeroContrato: n, pvp: fila.precio_venta, irt: fila.irtProveedores, ingresoExento: 0 }, {}), { ok: true });
   // El asiento de la CxP en USD queda en dólares sin convertir (limitación
   // conocida de los posteos automáticos, CLAUDE.md): 1.500 en 613505.
   assert.deepEqual(foto(n).saldos, { "mayorista:130505": 2_110 * trm, "mayorista:281510": -1_500 * trm, "mayorista:413505": -610 * trm, "mayorista:613505": 1_500 });
@@ -1117,27 +1117,27 @@ test("FACT-2 entre agencias: Mayorista activa no factura, no marca DIAN ni quita
   assert.equal(marcarHotelIrt(n), "1500000");
   const { guardarFacturacion, quitarFacturacion, marcarDian } = await facturacion();
   await entrarComo("adminMin");
-  assert.deepEqual(await registrarAbono(n, 500_000, "Efectivo", "FACT-2"), { ok: true });
-  assert.deepEqual(await guardarFacturacion({ numeroContrato: n, pvp: 1_800_000, irt: 1_500_000, ingresoExento: 0 }), { ok: true });
+  assert.deepEqual(await registrarAbono(n, 500_000, "Efectivo", "FACT-2", undefined, undefined, undefined, undefined, {}), { ok: true });
+  assert.deepEqual(await guardarFacturacion({ numeroContrato: n, pvp: 1_800_000, irt: 1_500_000, ingresoExento: 0 }, {}), { ok: true });
   const antes = foto(n);
   reportar(t, "antes (facturado por administración de minorista)", antes);
   assert.deepEqual(antes.saldos, { "minorista:110505": 500_000, "minorista:130505": 1_300_000, "minorista:281510": -1_500_000, "minorista:413505": -300_000, "minorista:613505": 1_500_000 });
 
   await entrarComo("super", "mayorista");
-  const g = await guardarFacturacion({ numeroContrato: n, pvp: 1_800_000, irt: 1_500_000, ingresoExento: 0 });
-  const d = await marcarDian(n, true);
-  const q = await quitarFacturacion(n);
+  const g = await guardarFacturacion({ numeroContrato: n, pvp: 1_800_000, irt: 1_500_000, ingresoExento: 0 }, {});
+  const d = await marcarDian(n, true, {});
+  const q = await quitarFacturacion(n, {});
   reportar(t, "respuestas con Mayorista activa", { g, d, q });
   for (const r of [g, d, q]) assert.match(errorDe(r), /es de la agencia minorista; cambia a esa agencia/);
   assert.deepEqual(foto(n), antes, "nada cambió: ni configuración, ni asientos, ni saldos");
 
   await entrarComo("super", "minorista");
-  assert.deepEqual(await guardarFacturacion({ numeroContrato: n, pvp: 1_800_000, irt: 1_500_000, ingresoExento: 0 }), { ok: true });
+  assert.deepEqual(await guardarFacturacion({ numeroContrato: n, pvp: 1_800_000, irt: 1_500_000, ingresoExento: 0 }, {}), { ok: true });
   const re = foto(n);
   reportar(t, "re-facturado con Minorista activa", re);
   assert.deepEqual(re.saldos, antes.saldos, "reversa + nueva, con el anticipo aplicado: mismos saldos");
   assert.ok(re.asientos.every((a) => a.startsWith("minorista")), "todo en los libros de minorista");
-  assert.deepEqual(await quitarFacturacion(n), { ok: true });
+  assert.deepEqual(await quitarFacturacion(n, {}), { ok: true });
   assert.deepEqual(foto(n).saldos, { "minorista:110505": 500_000, "minorista:280505": -500_000, "minorista:613505": 1_500_000 }, "queda solo el anticipo (y el costo de la CxP)");
 
   // Un asiento de factura VIGENTE en la otra agencia (como los que dejaba el
@@ -1149,7 +1149,7 @@ test("FACT-2 entre agencias: Mayorista activa no factura, no marca DIAN ni quita
        values ('mayorista', 990206, current_date, 'Simulación ronda 11', 'facturacion', 'facturacion:${n}')`);
   try {
     await entrarComo("adminMin");
-    const bloq = await guardarFacturacion({ numeroContrato: n, pvp: 1_800_000, irt: 1_500_000, ingresoExento: 0 });
+    const bloq = await guardarFacturacion({ numeroContrato: n, pvp: 1_800_000, irt: 1_500_000, ingresoExento: 0 }, {});
     reportar(t, "con asiento vigente en mayorista", bloq);
     assert.match(errorDe(bloq), /asiento de factura vigente en la agencia mayorista/);
   } finally {
@@ -1163,12 +1163,12 @@ test("FACT-3 el asiento nuevo no se puede postear (cuenta IRT ausente): ok:false
   assert.equal(marcarHotelIrt(n), "1500000");
   await entrarComo("admin");
   const { guardarFacturacion } = await facturacion();
-  assert.deepEqual(await guardarFacturacion({ numeroContrato: n, pvp: 1_800_000, irt: 1_500_000, ingresoExento: 0 }), { ok: true });
+  assert.deepEqual(await guardarFacturacion({ numeroContrato: n, pvp: 1_800_000, irt: 1_500_000, ingresoExento: 0 }, {}), { ok: true });
   const antes = foto(n);
   sql(`update public.puc_cuentas set codigo = '281510-t206' where tenant = 'mayorista' and codigo = '281510'`);
   let r: unknown;
   try {
-    r = await guardarFacturacion({ numeroContrato: n, pvp: 1_800_000, irt: 1_500_000, ingresoExento: 100_000, tipoExento: "exento" });
+    r = await guardarFacturacion({ numeroContrato: n, pvp: 1_800_000, irt: 1_500_000, ingresoExento: 100_000, tipoExento: "exento" }, {});
   } finally {
     sql(`update public.puc_cuentas set codigo = '281510' where tenant = 'mayorista' and codigo = '281510-t206'`);
   }
@@ -1186,7 +1186,7 @@ test("FACT-4 la reversa no se puede insertar: guardar y quitar fallan cerrado (s
   assert.equal(marcarHotelIrt(n), "1500000");
   await entrarComo("admin");
   const { guardarFacturacion, quitarFacturacion } = await facturacion();
-  assert.deepEqual(await guardarFacturacion({ numeroContrato: n, pvp: 1_800_000, irt: 1_500_000, ingresoExento: 0 }), { ok: true });
+  assert.deepEqual(await guardarFacturacion({ numeroContrato: n, pvp: 1_800_000, irt: 1_500_000, ingresoExento: 0 }, {}), { ok: true });
   const antes = foto(n);
   sql(`create or replace function public.t206_sin_reversa() returns trigger language plpgsql as $$
          begin if new.origen like '%\\_reversion' and new.referencia = 'facturacion:${n}' then raise exception 'reversa bloqueada t206'; end if; return new; end $$;
@@ -1194,9 +1194,9 @@ test("FACT-4 la reversa no se puede insertar: guardar y quitar fallan cerrado (s
   let r: unknown, q: unknown;
   let trasGuardar: Foto, trasQuitar: Foto;
   try {
-    r = await guardarFacturacion({ numeroContrato: n, pvp: 1_800_000, irt: 1_500_000, ingresoExento: 50_000, tipoExento: "exento" });
+    r = await guardarFacturacion({ numeroContrato: n, pvp: 1_800_000, irt: 1_500_000, ingresoExento: 50_000, tipoExento: "exento" }, {});
     trasGuardar = foto(n);
-    q = await quitarFacturacion(n);
+    q = await quitarFacturacion(n, {});
     trasQuitar = foto(n);
   } finally {
     sql(`drop trigger t206_sin_reversa on public.asientos_contables; drop function public.t206_sin_reversa();`);
@@ -1216,11 +1216,11 @@ test("FACT-5 guardar → quitar → guardar: una sola factura vigente (antes se 
   await entrarComo("admin");
   const { guardarFacturacion, quitarFacturacion } = await facturacion();
   const v = { numeroContrato: n, pvp: 1_800_000, irt: 1_500_000, ingresoExento: 0 };
-  assert.deepEqual(await guardarFacturacion(v), { ok: true });
-  assert.deepEqual(await quitarFacturacion(n), { ok: true });
+  assert.deepEqual(await guardarFacturacion(v, {}), { ok: true });
+  assert.deepEqual(await quitarFacturacion(n, {}), { ok: true });
   assert.deepEqual(foto(n).saldos, COSTO_MAY, "sin factura: solo el costo de la CxP");
-  assert.deepEqual(await guardarFacturacion(v), { ok: true });
-  assert.deepEqual(await guardarFacturacion(v), { ok: true }); // re-guardar: reversa + nueva
+  assert.deepEqual(await guardarFacturacion(v, {}), { ok: true });
+  assert.deepEqual(await guardarFacturacion(v, {}), { ok: true }); // re-guardar: reversa + nueva
   const f = foto(n);
   reportar(t, "después", f);
   assert.deepEqual(f.saldos, FACTURA_MAY);
@@ -1234,7 +1234,7 @@ test("FACT-6 roles: venta, operaciones, agencia, inactivo y sin sesión no factu
   const antes = foto(n);
   for (const quien of ["venta", "ops", "agencia", "inactivo", null] as const) {
     await entrarComo(quien);
-    for (const r of [await guardarFacturacion({ numeroContrato: n, pvp: 1_800_000, irt: 1_500_000, ingresoExento: 0 }), await marcarDian(n, true), await quitarFacturacion(n)]) {
+    for (const r of [await guardarFacturacion({ numeroContrato: n, pvp: 1_800_000, irt: 1_500_000, ingresoExento: 0 }, {}), await marcarDian(n, true, {}), await quitarFacturacion(n, {})]) {
       assert.equal(r.ok, false, String(quien));
     }
   }
@@ -1312,7 +1312,7 @@ test("CXP-3 falla la CxP Y la reversa: queda 'pendiente' y NO cobrable; la recon
   assert.match(errorDe(r), new RegExp(`tampoco se pudo deshacer el contrato ${n} automáticamente`));
   assert.equal(finDe(n), "pendiente|1|0", "pendiente, con su intención durable y sin CxP");
   await entrarComo("admin");
-  assert.equal((await registrarAbono(n, 100_000, "Efectivo", "CXP-3")).ok, false, "no admite abonos");
+  assert.equal((await registrarAbono(n, 100_000, "Efectivo", "CXP-3", undefined, undefined, undefined, undefined, {})).ok, false, "no admite abonos");
   // Reconciliación: el mismo payload persistido, dos veces (reintento).
   for (let i = 0; i < 2; i++) {
     sql(`select public.registrar_financiero_contrato(p.numero_contrato, p.tenant, p.costos, p.cxp)
@@ -1324,7 +1324,7 @@ test("CXP-3 falla la CxP Y la reversa: queda 'pendiente' y NO cobrable; la recon
   }
   assert.equal(cxpDe(n), "1|1500000|true", "una sola CxP tras dos reintentos");
   assert.equal(finDe(n).split("|").slice(0, 2).join("|"), "completo|0");
-  assert.deepEqual(await registrarAbono(n, 100_000, "Efectivo", "CXP-3"), { ok: true }, "ya es cobrable");
+  assert.deepEqual(await registrarAbono(n, 100_000, "Efectivo", "CXP-3", undefined, undefined, undefined, undefined, {}), { ok: true }, "ya es cobrable");
 });
 
 test("CXP-4 el asiento de la CxP falla (cuenta de costo ausente): el dinero queda completo (CxP y costo) y el contrato se crea; falta solo el asiento", async (t) => {
@@ -1381,7 +1381,7 @@ test("PORT-1 PVP en mayorista: sin comisión no hay valor; registrada, el aliado
   const id = Number(sql(`select id from public.aliados_b2b where numero_contrato = '${n}' and aliado_id = 9601`));
   await entrarComo("admin");
   const { registrarPagoComisionB2B } = await import("../app/(dashboard)/dashboard/comisiones/actions.ts");
-  const pago = await registrarPagoComisionB2B(id, 50_000, sql(`select current_date`));
+  const pago = await registrarPagoComisionB2B(id, 50_000, sql(`select current_date`), {});
   assert.equal(pago.ok, true, JSON.stringify(pago));
   const f2 = await filaPortal("agencia", n);
   reportar(t, "tras abono de 50.000", f2);
@@ -1457,7 +1457,7 @@ test("RACE-1 dos guardados SIMULTÁNEOS de la misma factura: una sola factura vi
   let rs: unknown[];
   try {
     const v = { numeroContrato: n, pvp: 1_800_000, irt: 1_500_000, ingresoExento: 0 };
-    rs = await Promise.all([guardarFacturacion(v), guardarFacturacion(v)]);
+    rs = await Promise.all([guardarFacturacion(v, {}), guardarFacturacion(v, {})]);
   } finally {
     sql(`drop trigger t206_lento on public.asientos_contables; drop function public.t206_lento();`);
   }
@@ -1477,7 +1477,7 @@ test("COMP-1 falla el asiento nuevo Y falla deshacer la reversa: libros y config
   assert.equal(marcarHotelIrt(n), "1500000");
   await entrarComo("admin");
   const { guardarFacturacion } = await facturacion();
-  assert.deepEqual(await guardarFacturacion({ numeroContrato: n, pvp: 1_800_000, irt: 1_500_000, ingresoExento: 0 }), { ok: true });
+  assert.deepEqual(await guardarFacturacion({ numeroContrato: n, pvp: 1_800_000, irt: 1_500_000, ingresoExento: 0 }, {}), { ok: true });
   const antes = foto(n);
   // Fallo del asiento nuevo (cuenta IRT ausente) + fallo de la compensación
   // (no se puede borrar la reversa recién creada).
@@ -1487,7 +1487,7 @@ test("COMP-1 falla el asiento nuevo Y falla deshacer la reversa: libros y config
        create trigger t206_sin_borrar before delete on public.asientos_contables for each row execute function public.t206_sin_borrar();`);
   let r: unknown;
   try {
-    r = await guardarFacturacion({ numeroContrato: n, pvp: 1_800_000, irt: 1_500_000, ingresoExento: 100_000, tipoExento: "exento" });
+    r = await guardarFacturacion({ numeroContrato: n, pvp: 1_800_000, irt: 1_500_000, ingresoExento: 100_000, tipoExento: "exento" }, {});
   } finally {
     sql(`drop trigger t206_sin_borrar on public.asientos_contables; drop function public.t206_sin_borrar();
          update public.puc_cuentas set codigo = '281510' where tenant = 'mayorista' and codigo = '281510-t206';`);
@@ -1505,7 +1505,7 @@ test("COMP-1 falla el asiento nuevo Y falla deshacer la reversa: libros y config
 async function abonosParaPantalla(marca: string) {
   const numero = await netoDe("venta");
   await entrarComo("admin");
-  assert.deepEqual(await registrarAbono(numero, 120_000, "Efectivo", `${marca}-contable`), { ok: true });
+  assert.deepEqual(await registrarAbono(numero, 120_000, "Efectivo", `${marca}-contable`, undefined, undefined, undefined, undefined, {}), { ok: true });
   const contabilizado = Number(sql(`select id from public.abonos where numero_contrato = '${numero}' and referencia = '${marca}-contable'`));
   const sinAsiento = Number(sql(`insert into public.abonos (numero_contrato, tenant, valor_abono, monto_cop, trm, fecha_abono, forma_pago, referencia)
     values ('${numero}', 'mayorista', 80000, 80000, 1, current_date, 'Efectivo', '${marca}-sin-asiento') returning id`));
@@ -1540,7 +1540,7 @@ async function anularDesdePantalla(raiz: Element, id: number, motivo: string) {
 test("UI1 Gestión anula con motivo un abono contabilizado (retira su asiento, deja huella) y uno sin asiento", async () => {
   const { GestionTabs } = await import("../app/(dashboard)/dashboard/contratos/[numero]/GestionTabs.tsx");
   const { numero, contabilizado, sinAsiento, abonos } = await abonosParaPantalla("UI1");
-  const m = await montar(h(GestionTabs, {
+  const m = await montar(h(GestionTabs, { identidad: {},
     numero, precioVenta: 1_800_000, impuesto: 0, clienteNombre: "Cliente UI", clienteDocumento: "",
     asesorNombre: U.venta.nombre, asesorPct: 0, verFinanzas: true,
     costos: { costo_hotel: 0, costo_aereo: 0, costo_receptivo: 0, costo_asistencia: 0, otros_costos: 0 },
@@ -1558,7 +1558,7 @@ test("UI1 Gestión anula con motivo un abono contabilizado (retira su asiento, d
 test("UI2 Cartera anula con motivo un abono contabilizado (retira su asiento, deja huella) y uno sin asiento", async () => {
   const { CarteraList } = await import("../app/(dashboard)/dashboard/cartera/CarteraList.tsx");
   const { numero, contabilizado, sinAsiento, abonos } = await abonosParaPantalla("UI2");
-  const m = await montar(h(CarteraList, { rows: [{
+  const m = await montar(h(CarteraList, { rows: [{ identidad: {},
     numero_contrato: numero, cliente: "Cliente UI", destino: "Cartagena", precio_venta: 1_800_000,
     estado: "activo", fecha_salida: "2026-12-01", moneda: "COP", pagado: 200_000, saldo: 1_600_000, abonos,
   }], formasPago: ["Efectivo"] }));

@@ -1,6 +1,7 @@
 import "server-only";
 import { createClient } from "@/lib/supabase/server";
 import { createAdminClient } from "@/lib/supabase/admin";
+import { parseIdentidad, type IdentidadContrato } from "@/lib/contrato/identidad";
 import { getTenant } from "@/lib/tenant.server";
 import { resolverImporteContable63, MENSAJE_LECTURA_CXP_63, type FilaCxP63 } from "@/lib/reservar/importeObligacion63";
 
@@ -278,12 +279,13 @@ export function mensajeFinanciero(e: { code?: string | null; message?: string | 
 
 type ClienteRpc = { rpc: (fn: string, args: Record<string, unknown>) => PromiseLike<{ data: unknown; error: { code?: string; message?: string } | null }> };
 
-export async function rpcFinanciero<T>(fn: string, args: Record<string, unknown>): Promise<{ ok: true; data: T } | ErrorFinanciero> {
+// #75: `identidad` (opcional, compatible con los llamadores anteriores) declara el contrato que la pantalla abrió; las RPC sobre un contrato EXISTENTE deben enviarla.
+export async function rpcFinanciero<T>(fn: string, args: Record<string, unknown>, identidad?: IdentidadContrato): Promise<{ ok: true; data: T } | ErrorFinanciero> {
   if (!process.env.SUPABASE_SERVICE_ROLE_KEY) {
     return { ok: false, error: "Falta la configuración del servidor (service role) para la operación contable; no se cambió nada." };
   }
   try {
-    const { data, error } = await (createAdminClient() as unknown as ClienteRpc).rpc(fn, args);
+    const { data, error } = await (createAdminClient(identidad ? parseIdentidad(identidad) : undefined) as unknown as ClienteRpc).rpc(fn, args); // identidad:n/a si el llamador no la envía (operaciones sin contrato o aún sin migrar)
     if (error) return mensajeFinanciero(error);
     return { ok: true, data: data as T };
   } catch (e) {
@@ -295,7 +297,7 @@ export async function rpcFinanciero<T>(fn: string, args: Record<string, unknown>
 // bloqueados — si el abono se borró mientras tanto, no queda asiento huérfano.
 // La cuenta acreedora (Anticipos o Clientes) la decide la base con la factura
 // vigente a la vista, y se conserva al re-postear.
-export async function postearAsientoAbonoAtomico(abonoId: number, tenant: string, actor: string): Promise<{ ok: true } | ErrorFinanciero> {
-  const r = await rpcFinanciero<{ estado: string }>("postear_asiento_abono", { p_abono_id: abonoId, p_tenant: tenant, p_actor: actor });
+export async function postearAsientoAbonoAtomico(abonoId: number, tenant: string, actor: string, identidad?: IdentidadContrato): Promise<{ ok: true } | ErrorFinanciero> {
+  const r = await rpcFinanciero<{ estado: string }>("postear_asiento_abono", { p_abono_id: abonoId, p_tenant: tenant, p_actor: actor }, identidad);
   return r.ok ? { ok: true } : r;
 }

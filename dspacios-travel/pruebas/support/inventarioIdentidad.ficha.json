@@ -1,0 +1,55 @@
+{
+  "_doc": "Ficha del contrato, listados con acciones y contabilidad (agente 'ficha'). Ver docs/tecnico/identidad-propagacion-285.md §6.",
+  "acciones": [
+    "app/(dashboard)/dashboard/contratos/[numero]/adjuntos-actions.ts",
+    "app/(dashboard)/dashboard/contratos/[numero]/admin-actions.ts",
+    "app/(dashboard)/dashboard/contratos/[numero]/cobros-actions.ts",
+    "app/(dashboard)/dashboard/contratos/[numero]/condiciones-actions.ts",
+    "app/(dashboard)/dashboard/contratos/[numero]/contenido-actions.ts",
+    "app/(dashboard)/dashboard/contratos/[numero]/editar-contrato-actions.ts",
+    "app/(dashboard)/dashboard/contratos/[numero]/gestion-actions.ts",
+    "app/(dashboard)/dashboard/contratos/[numero]/voucher-actions.ts",
+    "app/(dashboard)/dashboard/contratos/[numero]/soportes-actions.ts",
+    "app/(dashboard)/dashboard/pagos/actions.ts",
+    "app/(dashboard)/dashboard/comisiones/actions.ts",
+    "app/(dashboard)/dashboard/liquidacion/actions.ts",
+    "app/(dashboard)/dashboard/cartera/actions.ts",
+    "app/(dashboard)/dashboard/contabilidad/conciliaciones/actions.ts",
+    "app/(dashboard)/dashboard/contabilidad/retenciones/actions.ts",
+    "app/(dashboard)/dashboard/contabilidad/facturacion/actions.ts",
+    "app/(dashboard)/dashboard/cotizaciones/pagos-actions.ts"
+  ],
+  "helpers": [
+    "lib/reservar/asegurarCuentasPorPagar.ts"
+  ],
+  "paginas": [
+    "app/(dashboard)/dashboard/contratos/[numero]/page.tsx",
+    "app/(dashboard)/dashboard/cartera/page.tsx",
+    "app/(dashboard)/dashboard/pagos/page.tsx",
+    "app/(dashboard)/dashboard/comisiones/page.tsx",
+    "app/(dashboard)/dashboard/liquidacion/page.tsx",
+    "app/(dashboard)/dashboard/contabilidad/facturacion/page.tsx",
+    "app/(dashboard)/dashboard/contabilidad/conciliaciones/page.tsx"
+  ],
+  "componentes": [
+    "app/(dashboard)/dashboard/contratos/[numero]/AbonoForm.tsx",
+    "app/(dashboard)/dashboard/contratos/[numero]/AdjuntosContrato.tsx",
+    "app/(dashboard)/dashboard/contratos/[numero]/ContenidoContratoEditor.tsx",
+    "app/(dashboard)/dashboard/contratos/[numero]/EditarAsesorPasajeros.tsx",
+    "app/(dashboard)/dashboard/contratos/[numero]/EditarVentaForm.tsx",
+    "app/(dashboard)/dashboard/contratos/[numero]/EliminarContrato.tsx",
+    "app/(dashboard)/dashboard/contratos/[numero]/EstadoVenta.tsx",
+    "app/(dashboard)/dashboard/contratos/[numero]/GestionTabs.tsx",
+    "app/(dashboard)/dashboard/contratos/[numero]/OverrideRestriccionForm.tsx",
+    "app/(dashboard)/dashboard/contratos/[numero]/PlanCobroPanel.tsx",
+    "app/(dashboard)/dashboard/contratos/[numero]/ServiciosContratoEditor.tsx",
+    "app/(dashboard)/dashboard/contratos/[numero]/VouchersPanel.tsx",
+    "app/(dashboard)/dashboard/cartera/CarteraList.tsx",
+    "app/(dashboard)/dashboard/pagos/PagosList.tsx",
+    "app/(dashboard)/dashboard/comisiones/ComisionesList.tsx",
+    "app/(dashboard)/dashboard/liquidacion/LiquidacionTable.tsx",
+    "app/(dashboard)/dashboard/contabilidad/facturacion/FacturacionClient.tsx",
+    "app/(dashboard)/dashboard/contabilidad/conciliaciones/ConciliacionesClient.tsx",
+    "app/(dashboard)/dashboard/contabilidad/retenciones/RetencionesClient.tsx"
+  ]
+}

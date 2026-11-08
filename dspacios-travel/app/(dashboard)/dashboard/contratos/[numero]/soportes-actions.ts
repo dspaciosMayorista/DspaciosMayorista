@@ -8,15 +8,16 @@ import { createAdminClient } from "@/lib/supabase/admin";
 
 const BUCKET = "soportes-pago";
 
+// identidad:n/a — solo lectura: firma una URL, no escribe tablas de contrato
 export async function urlSoporteInterno(id: number): Promise<{ ok: true; url: string } | { ok: false; error: string }> {
   const n = Number(id);
   if (!Number.isInteger(n) || n <= 0) return { ok: false, error: "No tienes acceso a ese soporte." };
-  const sb = await createClient();
+  const sb = await createClient(); // identidad:n/a — solo lectura
   const { data: { user } } = await sb.auth.getUser();
   if (!user) return { ok: false, error: "Inicia sesión para continuar." };
   const { data } = await sb.from("contrato_soportes_pago").select("path").eq("id", n).maybeSingle();
   if (!data) return { ok: false, error: "No tienes acceso a ese soporte." };
-  const { data: firmado, error } = await createAdminClient().storage.from(BUCKET).createSignedUrl(data.path, 120);
+  const { data: firmado, error } = await createAdminClient(/* identidad:n/a — solo lectura */).storage.from(BUCKET).createSignedUrl(data.path, 120);
   if (error || !firmado) return { ok: false, error: "No se pudo abrir el archivo." };
   return { ok: true, url: firmado.signedUrl };
 }

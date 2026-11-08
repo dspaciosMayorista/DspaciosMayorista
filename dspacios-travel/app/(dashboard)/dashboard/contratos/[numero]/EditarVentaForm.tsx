@@ -7,6 +7,7 @@ import { Button } from "@/components/ui/button";
 import { OpcionesTipoDoc } from "@/components/personas/OpcionesTipoDoc";
 import { BuscarTitular } from "@/components/personas/BuscarTitular";
 import { Input } from "@/components/ui/input";
+import type { IdentidadContrato } from "@/lib/contrato/identidad";
 import { actualizarVenta, type VentaEditInput } from "../actions";
 import { ComboCiudad } from "@/components/ComboCiudad";
 import type { DestinoOpt } from "@/components/ComboDestino";
@@ -17,7 +18,7 @@ const selCls = "w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text
 // `modalidadNeto` (#30): contrato B2B vendido en NETO. El precio es el total
 // exigible (PVP − comisión ya descontada) y el tipo de venta fija la
 // modalidad: los dos quedan de solo lectura (el servidor también los rechaza).
-export function EditarVentaForm({ numero, inicial, destinos = [], modalidadNeto = false }: { numero: string; inicial: VentaEditInput; destinos?: DestinoOpt[]; modalidadNeto?: boolean }) {
+export function EditarVentaForm({ numero, inicial, destinos = [], modalidadNeto = false, identidad }: { identidad: IdentidadContrato; numero: string; inicial: VentaEditInput; destinos?: DestinoOpt[]; modalidadNeto?: boolean }) {
   const router = useRouter();
   const [open, setOpen] = useState(false);
   const [f, setF] = useState(inicial);
@@ -29,7 +30,7 @@ export function EditarVentaForm({ numero, inicial, destinos = [], modalidadNeto 
   function guardar() {
     setMsg("");
     start(async () => {
-      const r = await actualizarVenta(numero, f);
+      const r = await actualizarVenta(numero, f, identidad);
       if (r.ok) { setMsg("Guardado."); setOpen(false); router.refresh(); } else setMsg(r.error);
     });
   }

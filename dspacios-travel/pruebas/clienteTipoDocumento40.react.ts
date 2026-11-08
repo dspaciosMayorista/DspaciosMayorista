@@ -75,7 +75,7 @@ test("cada tipo del catálogo (PAS, RC, PPT, NIT…) se acepta al crear y al edi
     const n = await crear({ clienteTipoDocumento: t });
     assert.equal(venta(n).cliente_tipo_documento, t, `crear ${t}`);
     const otro = TIPOS_DOC_PERSONA[(TIPOS_DOC_PERSONA.indexOf(t) + 1) % TIPOS_DOC_PERSONA.length];
-    const r = await actualizarVenta(n, edicion(n, { clienteTipoDocumento: otro }));
+    const r = await actualizarVenta(n, edicion(n, { clienteTipoDocumento: otro }), {});
     assert.equal(r.ok, true, `${t} → ${otro}: ${JSON.stringify(r)}`);
     assert.equal(venta(n).cliente_tipo_documento, otro, `editar ${t} → ${otro}`);
   }
@@ -98,12 +98,12 @@ function edicion(numero: string, extra: Record<string, unknown>) {
 test("editar: ausente no toca el tipo guardado; vacío lo quita; fuera del catálogo se rechaza sin escribir", async () => {
   nuevaBD();
   const n = await crear({ clienteTipoDocumento: "PPT", clienteDocumento: "ab12345" });
-  assert.equal((await actualizarVenta(n, edicion(n, { cliente: "Otro Nombre" }))).ok, true);
+  assert.equal((await actualizarVenta(n, edicion(n, { cliente: "Otro Nombre" }), {})).ok, true);
   assert.equal(venta(n).cliente_tipo_documento, "PPT", "un llamador que no manda el campo no borra el tipo");
-  const mal = await actualizarVenta(n, edicion(n, { clienteTipoDocumento: "PASAPORTE" }));
+  const mal = await actualizarVenta(n, edicion(n, { clienteTipoDocumento: "PASAPORTE" }), {});
   assert.equal(mal.ok, false);
   assert.equal(venta(n).cliente_tipo_documento, "PPT");
-  assert.equal((await actualizarVenta(n, edicion(n, { clienteTipoDocumento: "" }))).ok, true);
+  assert.equal((await actualizarVenta(n, edicion(n, { clienteTipoDocumento: "" }), {})).ok, true);
   assert.equal(venta(n).cliente_tipo_documento ?? null, null, "vacío quita el tipo");
 });
 
@@ -139,11 +139,11 @@ test("editar el NÚMERO sin enviar tipo no hereda el tipo del documento anterior
     delete e.clienteTipoDocumento;
     return e as Parameters<typeof actualizarVenta>[1];
   };
-  assert.equal((await actualizarVenta(n, sinTipo({ cliente: "Mismo número" }))).ok, true);
+  assert.equal((await actualizarVenta(n, sinTipo({ cliente: "Mismo número" }), {})).ok, true);
   assert.equal(venta(n).cliente_tipo_documento, "CE", "mismo número, sin tipo: compatibilidad, se conserva");
-  assert.equal((await actualizarVenta(n, sinTipo({ clienteDocumento: "222222" }))).ok, true);
+  assert.equal((await actualizarVenta(n, sinTipo({ clienteDocumento: "222222" }), {})).ok, true);
   assert.equal(venta(n).cliente_documento, "222222");
   assert.equal(venta(n).cliente_tipo_documento ?? null, null, "número nuevo sin tipo: el tipo anterior NO se conserva");
-  assert.equal((await actualizarVenta(n, edicion(n, { clienteDocumento: "333333", clienteTipoDocumento: "PPT" }))).ok, true);
+  assert.equal((await actualizarVenta(n, edicion(n, { clienteDocumento: "333333", clienteTipoDocumento: "PPT" }), {})).ok, true);
   assert.deepEqual([venta(n).cliente_documento, venta(n).cliente_tipo_documento], ["333333", "PPT"]);
 });

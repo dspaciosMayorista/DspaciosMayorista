@@ -154,7 +154,7 @@ test("crearContrato: NETO es el último paso obligatorio (después de las hijas,
   assert.ok(iHijas > 0 && iNeto > iHijas && iCxp > iNeto, "hijas → NETO → CxP");
   const bloque = c.slice(iNeto, iCxp);
   assert.match(bloque, /if \(!neto\.ok\) \{/);
-  assert.match(bloque, /const rev = await revertirContratoManual\(numero, tenant\);/);
+  assert.match(bloque, /const rev = await revertirContratoManual\(idc, numero, tenant\);/);
   assert.match(bloque, /así que no se creó/);
   assert.match(bloque, /tampoco se pudo deshacer el contrato \$\{numero\}/);
   assert.match(bloque, /Quedó como PVP con la comisión por definir/);

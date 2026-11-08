@@ -128,7 +128,7 @@ export type DepsFinanciero = {
    * se trata como fallo de toda la operación — sin esto, no hay nada
    * recuperable si lo que sigue también falla.
    */
-  guardarPendiente: (p: { numeroContrato: string; tenant: string; costos: CostosContrato; cxp: CxPFinanciera[] }) => Promise<{ ok: boolean; error?: string }>;
+  guardarPendiente: (p: { numeroContrato: string; tenant: string; costos: CostosContrato; cxp: CxPFinanciera[]; /** #75: identidad del contrato (la del INSERT); la base no deja sobrescribir un pendiente de otra identidad. */ contratoUid?: string | null }) => Promise<{ ok: boolean; error?: string }>;
 };
 
 export type ResultadoFinanciero =
@@ -250,14 +250,16 @@ export async function registrarFinancieroContrato(
     costos: CostosContrato;
     cxp: CxPFinanciera[];
     fecha: string;
+    /** #75: uid del contrato (el del INSERT); se conserva en el registro pendiente. */
+    contratoUid?: string | null;
   }
 ): Promise<ResultadoFinanciero> {
-  const { numeroContrato, tenant, costos, cxp, fecha } = params;
+  const { numeroContrato, tenant, costos, cxp, fecha, contratoUid } = params;
 
   // Garantía DURABLE, antes de intentar nada: si esto no se alcanza a
   // escribir, no hay reintento posible desde otro proceso — se trata igual
   // que un fallo del RPC financiero (revierte de una).
-  const pendiente = await deps.guardarPendiente({ numeroContrato, tenant, costos, cxp });
+  const pendiente = await deps.guardarPendiente({ numeroContrato, tenant, costos, cxp, contratoUid });
   if (!pendiente.ok) {
     return cerrarFallo(deps, numeroContrato, tenant, pendiente.error ?? "no se pudo registrar la intención de escritura financiera");
   }

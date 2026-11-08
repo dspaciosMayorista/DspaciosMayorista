@@ -138,7 +138,7 @@ for (const [momento, instante] of MOMENTOS) {
   test(`editar servicios a las ${momento}: CxP nueva y su asiento con ${DIA_BOGOTA}`, async () => {
     reloj(instante);
     const bd = usarBD(semillaServicios(false));
-    const r = await actualizarServiciosContrato("DTM-0451", [11]);
+    const r = await actualizarServiciosContrato("DTM-0451", [11], {});
     assert.equal(r.ok, true, JSON.stringify(r));
     const [cxp] = bd.filas("cuentas_por_pagar");
     assert.equal(cxp?.servicio_id, 11);
@@ -150,7 +150,7 @@ for (const [momento, instante] of MOMENTOS) {
 test("editar servicios a las 19:30 con CxP existente: el asiento se re-postea con el día de Bogotá; la obligación original no cambia", async () => {
   reloj(DESPUES_DEL_CORTE);
   const bd = usarBD(semillaServicios(true));
-  const r = await actualizarServiciosContrato("DTM-0451", [11]);
+  const r = await actualizarServiciosContrato("DTM-0451", [11], {});
   assert.equal(r.ok, true, JSON.stringify(r));
   const cxp = bd.filas("cuentas_por_pagar").find((c) => c.id === 70);
   assert.equal(cxp?.fecha_obligacion, "2026-09-01", "la fecha de obligación existente no se reescribe");
@@ -180,7 +180,7 @@ function semillaTraslado(opts: { vigencia?: boolean; franja?: boolean; horaLlega
 test("255 · servicio solo con precio GENERAL (sin vigencia): se rechaza la edición y NO se escribe nada", async () => {
   reloj(DESPUES_DEL_CORTE);
   const bd = usarBD(semillaTraslado({ vigencia: false }));
-  const r = await actualizarServiciosContrato("DTM-0451", [11]);
+  const r = await actualizarServiciosContrato("DTM-0451", [11], {});
   assert.equal(r.ok, false);
   assert.match(r.error ?? "", /vigencia de tarifa/i);
   assert.equal(bd.filas("cuentas_por_pagar").length, 0, "no se crea ninguna CxP");
@@ -190,7 +190,7 @@ test("255 · servicio solo con precio GENERAL (sin vigencia): se rechaza la edic
 test("255 · traslado con franja nocturna y SIN hora capturada: se pide la hora (no se cotiza supuesta) y no se escribe nada", async () => {
   reloj(DESPUES_DEL_CORTE);
   const bd = usarBD(semillaTraslado({ franja: true, horaLlegada: null }));
-  const r = await actualizarServiciosContrato("DTM-0451", [11]);
+  const r = await actualizarServiciosContrato("DTM-0451", [11], {});
   assert.equal(r.ok, false);
   assert.match(r.error ?? "", /hora de llegada/i);
   assert.equal(bd.filas("cuentas_por_pagar").length, 0);
@@ -200,7 +200,7 @@ test("255 · traslado con franja nocturna y SIN hora capturada: se pide la hora 
 test("255 · traslado con franja y hora nocturna (21:15): precio, ítem y CxP llevan el MISMO suplemento neto y el mismo margen", async () => {
   reloj(DESPUES_DEL_CORTE);
   const bd = usarBD(semillaTraslado({ franja: true, horaLlegada: "21:15" }));
-  const r = await actualizarServiciosContrato("DTM-0451", [11]);
+  const r = await actualizarServiciosContrato("DTM-0451", [11], {});
   assert.equal(r.ok, true, JSON.stringify(r));
   // Costo neto: 100.000 × 2 pax + 40.000 de suplemento = 240.000 (CxP al proveedor). Venta: 240.000 / (1 − 0,2) = 300.000.
   const [cxp] = bd.filas("cuentas_por_pagar");
@@ -213,7 +213,7 @@ test("255 · traslado con franja y hora nocturna (21:15): precio, ítem y CxP ll
 test("255 · el mismo traslado con hora diurna (14:00) no lleva suplemento: 200.000 de costo y 250.000 de venta", async () => {
   reloj(DESPUES_DEL_CORTE);
   const bd = usarBD(semillaTraslado({ franja: true, horaLlegada: "14:00" }));
-  const r = await actualizarServiciosContrato("DTM-0451", [11]);
+  const r = await actualizarServiciosContrato("DTM-0451", [11], {});
   assert.equal(r.ok, true, JSON.stringify(r));
   assert.equal(bd.filas("cuentas_por_pagar")[0]?.valor_total, 200_000);
   assert.equal(bd.filas("ventas")[0]?.precio_venta, 3_000_000 + 250_000);

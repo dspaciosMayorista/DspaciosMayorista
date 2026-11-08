@@ -12,6 +12,7 @@ import {
   type ParamsFiscales,
 } from "@/lib/calc/finanzas";
 import { calcularComisionFila, comisionParaRentabilidad, esComisionDescontada, esComisionEnContratoNeto, type FilaComisionB2B } from "@/lib/finanzas/comisionB2B";
+import type { IdentidadContrato } from "@/lib/contrato/identidad";
 import { AbonoForm } from "./AbonoForm";
 import { PlanCobroPanel, type CuotaRow } from "./PlanCobroPanel";
 import {
@@ -46,6 +47,8 @@ type Factura = { id: number; numero_factura: string | null; fecha_factura: strin
 
 export type GestionProps = {
   numero: string;
+  /** Identidad del contrato tal como la leyó la página (misma consulta); se reenvía tal cual a cada acción. */
+  identidad: IdentidadContrato;
   precioVenta: number;
   impuesto: number; // BNC (Base No Comisionable) del contrato
   clienteNombre: string;
@@ -156,17 +159,17 @@ export function GestionTabs(p: GestionProps) {
           // `verFinanzas`, no `puedeEditar` — un asesor no registra pagos ni
           // siquiera en su propio contrato, y los botones que sí lo intentaban
           // fallaban en silencio.
-          <CarteraTab numero={p.numero} abonos={p.abonos} totalPagado={p.totalPagado} total={p.totalCobro ?? p.precioVenta} formasPago={p.formasPago} cuotas={p.cuotas} moneda={p.monedaCobro ?? p.moneda ?? "COP"} nota={p.notaCobro ?? null} puedeEditar={p.verFinanzas} puedeEditarPlan={p.puedeEditar !== false} />
+          <CarteraTab identidad={p.identidad} numero={p.numero} abonos={p.abonos} totalPagado={p.totalPagado} total={p.totalCobro ?? p.precioVenta} formasPago={p.formasPago} cuotas={p.cuotas} moneda={p.monedaCobro ?? p.moneda ?? "COP"} nota={p.notaCobro ?? null} puedeEditar={p.verFinanzas} puedeEditarPlan={p.puedeEditar !== false} />
         )}
-        {p.verFinanzas && tab === "costos" && <CostosTab numero={p.numero} costos={p.costos} />}
-        {p.verFinanzas && tab === "proveedores" && <ProveedoresTab numero={p.numero} filas={p.cuentasPorPagar} catalogo={p.proveedoresCatalogo ?? []} />}
+        {p.verFinanzas && tab === "costos" && <CostosTab identidad={p.identidad} numero={p.numero} costos={p.costos} />}
+        {p.verFinanzas && tab === "proveedores" && <ProveedoresTab identidad={p.identidad} numero={p.numero} filas={p.cuentasPorPagar} catalogo={p.proveedoresCatalogo ?? []} />}
         {p.permisosComision?.ver && tab === "comisiones" && (
-          <ComisionesTab numero={p.numero} filas={p.comisionesB2B} comB2BTotal={comB2BTotal} aliadosCatalogo={p.aliadosCatalogo ?? []}
+          <ComisionesTab identidad={p.identidad} numero={p.numero} filas={p.comisionesB2B} comB2BTotal={comB2BTotal} aliadosCatalogo={p.aliadosCatalogo ?? []}
             comisionEstadoVenta={p.comisionEstadoVenta ?? null} permisos={p.permisosComision}
             contratoB2B={p.contratoB2B === true} aliadoContratoId={p.aliadoContratoId ?? null} />
         )}
         {p.verFinanzas && tab === "facturacion" && (
-          <FacturacionTab numero={p.numero} filas={p.facturas} ivaGenerado={ivaGenerado} ivaPct={fiscal.IVA}
+          <FacturacionTab identidad={p.identidad} numero={p.numero} filas={p.facturas} ivaGenerado={ivaGenerado} ivaPct={fiscal.IVA}
             clienteNombre={p.clienteNombre} clienteDocumento={p.clienteDocumento} totalContrato={p.precioVenta} />
         )}
         {p.verFinanzas && tab === "flujo" && (
@@ -178,7 +181,7 @@ export function GestionTabs(p: GestionProps) {
 }
 
 // ── COSTOS ─────────────────────────────────────────────────────────────
-function CostosTab({ numero, costos }: { numero: string; costos: GestionProps["costos"] }) {
+function CostosTab({ identidad, numero, costos }: { identidad: IdentidadContrato; numero: string; costos: GestionProps["costos"] }) {
   const [v, setV] = useState(costos);
   const [pending, start] = useTransition();
   const [msg, setMsg] = useState("");
@@ -188,7 +191,7 @@ function CostosTab({ numero, costos }: { numero: string; costos: GestionProps["c
   function guardar() {
     setMsg("");
     start(async () => {
-      const r = await guardarCostos(numero, v);
+      const r = await guardarCostos(numero, v, identidad);
       setMsg(r.ok ? "✓ Costos guardados" : r.error);
     });
   }
@@ -226,7 +229,7 @@ function CostosTab({ numero, costos }: { numero: string; costos: GestionProps["c
 }
 
 // ── CARTERA (abonos) ───────────────────────────────────────────────────
-function CarteraTab({ numero, abonos, totalPagado, total, formasPago, cuotas, moneda = "COP", nota = null, puedeEditar = true, puedeEditarPlan = true }: { numero: string; abonos: Abono[]; totalPagado: number; total: number; formasPago: string[]; cuotas: CuotaRow[]; moneda?: string; nota?: string | null; puedeEditar?: boolean; puedeEditarPlan?: boolean }) {
+function CarteraTab({ identidad, numero, abonos, totalPagado, total, formasPago, cuotas, moneda = "COP", nota = null, puedeEditar = true, puedeEditarPlan = true }: { identidad: IdentidadContrato; numero: string; abonos: Abono[]; totalPagado: number; total: number; formasPago: string[]; cuotas: CuotaRow[]; moneda?: string; nota?: string | null; puedeEditar?: boolean; puedeEditarPlan?: boolean }) {
   const saldo = Math.max(total - totalPagado, 0);
   const fmt = (n: number) => formatMoneda(n, moneda);
   const esUSD = (moneda ?? "COP").toUpperCase() === "USD";
@@ -238,11 +241,11 @@ function CarteraTab({ numero, abonos, totalPagado, total, formasPago, cuotas, mo
         <Mini label="Pagado" value={fmt(totalPagado)} color="var(--brand-success)" />
         <Mini label="Saldo" value={fmt(saldo)} />
       </div>
-      <PlanCobroPanel numero={numero} cuotas={cuotas} pagado={totalPagado} puedeEditar={puedeEditarPlan} />
+      <PlanCobroPanel identidad={identidad} numero={numero} cuotas={cuotas} pagado={totalPagado} puedeEditar={puedeEditarPlan} />
       {puedeEditar && (
         <div className={card}>
           <p className={lbl}>Registrar abono</p>
-          <AbonoForm numeroContrato={numero} formasPago={formasPago} moneda={moneda} />
+          <AbonoForm identidad={identidad} numeroContrato={numero} formasPago={formasPago} moneda={moneda} />
         </div>
       )}
       {abonos.length > 0 && (
@@ -262,7 +265,7 @@ function CarteraTab({ numero, abonos, totalPagado, total, formasPago, cuotas, mo
               <th className="px-4 py-2 text-right">Recibo</th><th className="px-4 py-2">Acciones</th>
             </tr></thead>
             <tbody>{abonos.map((a) => (
-              <FilaAbono key={a.id} a={a} numero={numero} esUSD={esUSD} moneda={moneda} formasPago={formasPago} puedeEditar={puedeEditar} />
+              <FilaAbono key={a.id} identidad={identidad} a={a} numero={numero} esUSD={esUSD} moneda={moneda} formasPago={formasPago} puedeEditar={puedeEditar} />
             ))}</tbody>
           </table>
         </ResponsiveTableShell>
@@ -273,7 +276,7 @@ function CarteraTab({ numero, abonos, totalPagado, total, formasPago, cuotas, mo
 
 // Fila de abono con edición inline (corregir valor/fecha/forma/referencia sin
 // tener que registrar un segundo abono para "cuadrar" el saldo) y anular.
-function FilaAbono({ a, numero, esUSD, moneda, formasPago, puedeEditar = true }: { a: Abono; numero: string; esUSD: boolean; moneda: string; formasPago: string[]; puedeEditar?: boolean }) {
+function FilaAbono({ identidad, a, numero, esUSD, moneda, formasPago, puedeEditar = true }: { identidad: IdentidadContrato; a: Abono; numero: string; esUSD: boolean; moneda: string; formasPago: string[]; puedeEditar?: boolean }) {
   const [editar, setEditar] = useState(false);
   // El campo "Valor" edita lo PAGADO EN COP (mismo criterio de registrarAbono/
   // actualizarAbono); en USD eso es monto_cop, NO valor_abono (que está en USD).
@@ -292,7 +295,7 @@ function FilaAbono({ a, numero, esUSD, moneda, formasPago, puedeEditar = true }:
       const r = await actualizarAbono(a.id, numero, {
         valor: Number(valor) || 0, fecha, formaPago: forma, referencia: ref,
         trmInput: esUSD ? Number(trm) || 0 : undefined,
-      });
+      }, identidad);
       if (r.ok) setEditar(false); else setErr(r.error ?? "Error");
     });
   }
@@ -338,7 +341,7 @@ function FilaAbono({ a, numero, esUSD, moneda, formasPago, puedeEditar = true }:
         {puedeEditar ? (
           <>
             <button type="button" onClick={() => setEditar(true)} className="mr-3 text-xs font-medium hover:underline" style={{ color: "var(--brand-accent)" }}>Editar</button>
-            <AnularAbonoBoton resumen={`${fmt(a.valor_abono)} del ${a.fecha_abono}`} onAnular={(motivo) => anularAbono(a.id, numero, motivo)} />
+            <AnularAbonoBoton resumen={`${fmt(a.valor_abono)} del ${a.fecha_abono}`} onAnular={(motivo) => anularAbono(a.id, numero, motivo, identidad)} />
           </>
         ) : null}
       </td>
@@ -347,7 +350,7 @@ function FilaAbono({ a, numero, esUSD, moneda, formasPago, puedeEditar = true }:
 }
 
 // ── PROVEEDORES (cuentas por pagar) ────────────────────────────────────
-function ProveedoresTab({ numero, filas, catalogo }: { numero: string; filas: CxP[]; catalogo: string[] }) {
+function ProveedoresTab({ identidad, numero, filas, catalogo }: { identidad: IdentidadContrato; numero: string; filas: CxP[]; catalogo: string[] }) {
   const [proveedor, setProveedor] = useState("");
   const [tipo, setTipo] = useState("");
   const [servicio, setServicio] = useState("");
@@ -367,7 +370,7 @@ function ProveedoresTab({ numero, filas, catalogo }: { numero: string; filas: Cx
   function completar() {
     setMsgCompletar("");
     startCompletar(async () => {
-      const r = await completarProveedores(numero);
+      const r = await completarProveedores(numero, identidad);
       if (!r.ok) setMsgCompletar(r.error ?? "Error");
       else setMsgCompletar(r.creadas ? `Se agregaron ${r.creadas} proveedor(es).` : "Ya están todos los proveedores.");
     });
@@ -386,7 +389,7 @@ function ProveedoresTab({ numero, filas, catalogo }: { numero: string; filas: Cx
         valorTotal: valorNum, fechaVencimiento: venc,
         aplicaRetencion: ret, pctRetencion: Number(pctRet) / 100 || 0,
         ivaDescontable: ivaNum,
-      });
+      }, identidad);
       if (r.ok) { setProveedor(""); setTipo(""); setServicio(""); setValor(""); setVenc(""); setRet(false); setPctRet(""); setEsFactura(false); setIva(""); }
       else setErr(r.error);
     });
@@ -468,7 +471,7 @@ function ProveedoresTab({ numero, filas, catalogo }: { numero: string; filas: Cx
               <th className="px-2 py-2 text-right sm:px-4">Valor</th><th className="px-2 py-2 sm:px-4">Vence</th>
               <th className="px-2 py-2 sm:px-4">Estado</th><th className="px-2 py-2 sm:px-4">Acciones</th>
             </tr></thead>
-            <tbody>{filas.map((f) => <FilaCxP key={f.id} f={f} numero={numero} />)}</tbody>
+            <tbody>{filas.map((f) => <FilaCxP key={f.id} identidad={identidad} f={f} numero={numero} />)}</tbody>
             {/* Nota: la fila editable reutiliza el mismo datalist "proveedores-{numero}" declarado arriba. */}
             <tfoot><tr className="border-t border-gray-200 font-medium">
               <td className="px-2 py-2 sm:px-4" colSpan={3}>Total por pagar</td>
@@ -483,7 +486,7 @@ function ProveedoresTab({ numero, filas, catalogo }: { numero: string; filas: Cx
 
 // Fila de cuenta por pagar con edición inline (para agregar el IVA a las CxP
 // creadas automáticamente con el contrato, o corregir cualquier dato).
-function FilaCxP({ f, numero }: { f: CxP; numero: string }) {
+function FilaCxP({ identidad, f, numero }: { identidad: IdentidadContrato; f: CxP; numero: string }) {
   const [editar, setEditar] = useState(false);
   const [verPago, setVerPago] = useState(false);
   const ivaF = f.iva_proveedor ?? 0;
@@ -506,7 +509,7 @@ function FilaCxP({ f, numero }: { f: CxP; numero: string }) {
       const r = await actualizarCuentaPorPagar({
         id: f.id, numeroContrato: numero, proveedor, servicio,
         valorTotal: Number(valor) || 0, fechaVencimiento: venc, ivaDescontable: Number(iva) || 0,
-      });
+      }, identidad);
       if (r.ok) setEditar(false); else setErr(r.error);
     });
   }
@@ -555,13 +558,13 @@ function FilaCxP({ f, numero }: { f: CxP; numero: string }) {
         </td>
         <td className="px-2 py-2 text-right sm:px-4" data-label="Acciones">
           <button type="button" onClick={() => setEditar(true)} className="mr-1 text-[10px] font-medium hover:underline sm:mr-3 sm:text-xs" style={{ color: "var(--brand-accent)" }}>Editar</button>
-          <DeleteBtn onClick={() => eliminarCuentaPorPagar(f.id, numero)} />
+          <DeleteBtn onClick={() => eliminarCuentaPorPagar(f.id, numero, identidad)} />
         </td>
       </tr>
       {verPago && (
         <tr className="border-t border-gray-100 bg-gray-50/60">
           <td className="px-2 py-3 sm:px-4" colSpan={8}>
-            <PagoProveedorPanel f={f} pagado={pagado} saldo={saldo} />
+            <PagoProveedorPanel identidad={identidad} f={f} pagado={pagado} saldo={saldo} />
           </td>
         </tr>
       )}
@@ -571,7 +574,7 @@ function FilaCxP({ f, numero }: { f: CxP; numero: string }) {
 
 // Registro de pago a proveedor (ilimitados, log en cxp_pagos) + deshacer,
 // reutilizando la misma regla de negocio del módulo Pagos (dashboard/pagos/actions.ts).
-function PagoProveedorPanel({ f, pagado, saldo }: { f: CxP; pagado: number; saldo: number }) {
+function PagoProveedorPanel({ identidad, f, pagado, saldo }: { identidad: IdentidadContrato; f: CxP; pagado: number; saldo: number }) {
   const moneda = f.moneda ?? "COP";
   const esUSD = moneda.toUpperCase() === "USD";
   const pagos = f.pagos;
@@ -589,7 +592,7 @@ function PagoProveedorPanel({ f, pagado, saldo }: { f: CxP; pagado: number; sald
     if (!v || v <= 0) { setErr("Ingresa un valor mayor a 0."); return; }
     if (esUSD && !(Number(trm) > 0)) { setErr("Indica la TRM del día (cuenta en USD)."); return; }
     start(async () => {
-      const r = await registrarPagoProveedor(f.id, v, fecha, esUSD ? Number(trm) : undefined);
+      const r = await registrarPagoProveedor(f.id, v, fecha, esUSD ? Number(trm) : undefined, identidad);
       if (!r.ok) { setErr(r.error); return; }
       setValor(""); setTrm("");
     });
@@ -624,7 +627,7 @@ function PagoProveedorPanel({ f, pagado, saldo }: { f: CxP; pagado: number; sald
           <button
             type="button"
             disabled={pendingUndo}
-            onClick={() => startUndo(async () => void (await deshacerUltimoPago(f.id)))}
+            onClick={() => startUndo(async () => void (await deshacerUltimoPago(f.id, identidad)))}
             className="mt-2 text-xs font-medium text-red-500 hover:underline disabled:opacity-50"
           >
             {pendingUndo ? "…" : "Deshacer último pago"}
@@ -666,8 +669,8 @@ function PagoProveedorPanel({ f, pagado, saldo }: { f: CxP; pagado: number; sald
 // ── COMISIONES (solo B2B) ──────────────────────────────────────────────
 // La comisión del asesor interno NO va aquí: se liquida en el global (módulo
 // Liquidación) si el asesor cumple su meta.
-function ComisionesTab({ numero, filas, comB2BTotal, aliadosCatalogo, comisionEstadoVenta, permisos, contratoB2B, aliadoContratoId }: {
-  numero: string; filas: B2B[]; comB2BTotal: number; aliadosCatalogo: AliadoCat[];
+function ComisionesTab({ identidad, numero, filas, comB2BTotal, aliadosCatalogo, comisionEstadoVenta, permisos, contratoB2B, aliadoContratoId }: {
+  identidad: IdentidadContrato; numero: string; filas: B2B[]; comB2BTotal: number; aliadosCatalogo: AliadoCat[];
   comisionEstadoVenta: string | null; permisos: { ver: boolean; registrar: boolean; editar: boolean; borrar: boolean; soloAliadoDelContrato: boolean };
   contratoB2B: boolean; aliadoContratoId: number | null;
 }) {
@@ -724,7 +727,7 @@ function ComisionesTab({ numero, filas, comB2BTotal, aliadosCatalogo, comisionEs
         // % del recobro vacío = el 50 % por defecto del formulario; 0 se respeta.
         pctRecobroAliado: pctRec.trim() === "" ? 0.5 : Number(pctRec) / 100,
         aplicaRetencion: esAsesor ? false : ret, pctRetencion: esAsesor ? 0 : (Number(pctRet) / 100 || 0),
-      });
+      }, identidad);
       if (r.ok) { setAliadoId(""); setAliado(""); setNit(""); setTipoAliado("freelance"); setPct(""); setRecobro(""); setPctRec("50"); setRet(false); setPctRet(""); }
       else setErr(r.error);
     });
@@ -852,7 +855,7 @@ function ComisionesTab({ numero, filas, comB2BTotal, aliadosCatalogo, comisionEs
                       )}
                       {puedeGestionar && !descontada && (
                         <DeleteBtn onClick={async () => {
-                          const r = await eliminarComisionB2B(b.id, numero);
+                          const r = await eliminarComisionB2B(b.id, numero, identidad);
                           if (!r.ok) setErr(r.error);
                         }} />
                       )}
@@ -864,7 +867,7 @@ function ComisionesTab({ numero, filas, comB2BTotal, aliadosCatalogo, comisionEs
                     <td colSpan={4} className="px-4 py-3">
                       {/* Abonos: la pestaña no los lee para `venta`; si los hay, el
                           servidor (y el trigger de la 205) rechazan el cambio. */}
-                      <EditorCamposComision id={b.id} fila={b} conAbonos={false} descontada={descontada} aplicaRetencion={!!b.aplica_retencion} />
+                      <EditorCamposComision id={b.id} identidad={identidad} fila={b} conAbonos={false} descontada={descontada} aplicaRetencion={!!b.aplica_retencion} />
                     </td>
                   </tr>
                 )}
@@ -884,7 +887,7 @@ function ComisionesTab({ numero, filas, comB2BTotal, aliadosCatalogo, comisionEs
 type ItemForm = { descripcion: string; valor: string; gravable: boolean };
 const itemVacio = (): ItemForm => ({ descripcion: "", valor: "", gravable: true });
 
-function FacturacionTab({ numero, filas, ivaGenerado, ivaPct, clienteNombre, clienteDocumento, totalContrato }: { numero: string; filas: Factura[]; ivaGenerado: number; ivaPct: number; clienteNombre: string; clienteDocumento: string; totalContrato: number }) {
+function FacturacionTab({ identidad, numero, filas, ivaGenerado, ivaPct, clienteNombre, clienteDocumento, totalContrato }: { identidad: IdentidadContrato; numero: string; filas: Factura[]; ivaGenerado: number; ivaPct: number; clienteNombre: string; clienteDocumento: string; totalContrato: number }) {
   const [num, setNum] = useState("");
   const [fecha, setFecha] = useState("");
   const [cliente, setCliente] = useState("");
@@ -917,7 +920,7 @@ function FacturacionTab({ numero, filas, ivaGenerado, ivaPct, clienteNombre, cli
       const r = await crearFactura({
         numeroContrato: numero, numeroFactura: num, fechaFactura: fecha,
         cliente, nitCliente: nit, items: limpios,
-      });
+      }, identidad);
       if (r.ok) { setNum(""); setFecha(""); setCliente(""); setNit(""); setItems([itemVacio()]); }
       else setErr(r.error);
     });
@@ -1024,7 +1027,7 @@ function FacturacionTab({ numero, filas, ivaGenerado, ivaPct, clienteNombre, cli
                     <span className="font-semibold text-gray-800">Factura {f.numero_factura ?? "—"}</span>
                     <span className="ml-2 text-xs text-gray-400">{f.fecha_factura ?? "—"} · {f.estado_dian ?? "borrador"}</span>
                   </div>
-                  <DeleteBtn onClick={() => eliminarFactura(f.id, numero)} />
+                  <DeleteBtn onClick={() => eliminarFactura(f.id, numero, identidad)} />
                 </div>
                 {f.items.length > 0 && (
                   <ResponsiveTableShell minWidth={420}>

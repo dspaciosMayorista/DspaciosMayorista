@@ -2,6 +2,7 @@
 
 import { useState, useTransition } from "react";
 import { formatCOP } from "@/lib/utils";
+import { identidadDe, type IdentidadContrato } from "@/lib/contrato/identidad";
 import { agregarDescuentoLiquidacion, eliminarDescuentoLiquidacion } from "./actions";
 import { ChevronDown, ChevronRight } from "lucide-react";
 import { ResponsiveTableShell } from "@/components/ui/ResponsiveTableShell";
@@ -22,7 +23,7 @@ export type FilaLiquidacion = {
   descuentos: DescuentoRow[];
 };
 
-export function LiquidacionTable({ filas, mes }: { filas: FilaLiquidacion[]; mes: string }) {
+export function LiquidacionTable({ filas, mes, identidades }: { filas: FilaLiquidacion[]; mes: string; identidades: IdentidadContrato }) {
   const tot = filas.reduce(
     (s, f) => {
       const desc = f.descuentos.reduce((a, d) => a + d.valor, 0);
@@ -54,7 +55,7 @@ export function LiquidacionTable({ filas, mes }: { filas: FilaLiquidacion[]; mes
           </tr>
         </thead>
         <tbody>
-          {filas.map((f) => <FilaAsesor key={f.id} f={f} mes={mes} />)}
+          {filas.map((f) => <FilaAsesor key={f.id} f={f} mes={mes} identidades={identidades} />)}
           {!filas.length && (
             <tr><td colSpan={9} className="px-3 py-6 text-center text-gray-400">Sin ventas en el mes.</td></tr>
           )}
@@ -80,7 +81,7 @@ export function LiquidacionTable({ filas, mes }: { filas: FilaLiquidacion[]; mes
   );
 }
 
-function FilaAsesor({ f, mes }: { f: FilaLiquidacion; mes: string }) {
+function FilaAsesor({ f, mes, identidades }: { f: FilaLiquidacion; mes: string; identidades: IdentidadContrato }) {
   const [abierto, setAbierto] = useState(false);
   const totalDescuentos = f.descuentos.reduce((s, d) => s + d.valor, 0);
   const netaFinal = Math.max(0, f.neta - totalDescuentos);
@@ -117,7 +118,7 @@ function FilaAsesor({ f, mes }: { f: FilaLiquidacion; mes: string }) {
       {abierto && (
         <tr className="border-t border-gray-100 bg-gray-50/60">
           <td colSpan={9} className="px-4 py-3">
-            <DescuentosPanel usuarioId={f.id} mes={mes} descuentos={f.descuentos} />
+            <DescuentosPanel usuarioId={f.id} mes={mes} descuentos={f.descuentos} identidades={identidades} />
           </td>
         </tr>
       )}
@@ -125,7 +126,7 @@ function FilaAsesor({ f, mes }: { f: FilaLiquidacion; mes: string }) {
   );
 }
 
-function DescuentosPanel({ usuarioId, mes, descuentos }: { usuarioId: string; mes: string; descuentos: DescuentoRow[] }) {
+function DescuentosPanel({ usuarioId, mes, descuentos, identidades }: { usuarioId: string; mes: string; descuentos: DescuentoRow[]; identidades: IdentidadContrato }) {
   const [valor, setValor] = useState("");
   const [descripcion, setDescripcion] = useState("");
   const [contrato, setContrato] = useState("");
@@ -139,7 +140,7 @@ function DescuentosPanel({ usuarioId, mes, descuentos }: { usuarioId: string; me
     if (!v || v <= 0) { setErr("Ingresa un valor mayor a 0."); return; }
     if (!descripcion.trim()) { setErr("Describe el motivo del descuento."); return; }
     start(async () => {
-      const r = await agregarDescuentoLiquidacion({ usuarioId, mes, valor: v, descripcion, numeroContrato: contrato || undefined });
+      const r = await agregarDescuentoLiquidacion({ usuarioId, mes, valor: v, descripcion, numeroContrato: contrato || undefined }, identidadDe(contrato.trim(), identidades[contrato.trim()]));
       if (!r.ok) { setErr(r.error); return; }
       setValor(""); setDescripcion(""); setContrato("");
     });
@@ -165,7 +166,7 @@ function DescuentosPanel({ usuarioId, mes, descuentos }: { usuarioId: string; me
                     <button
                       type="button"
                       disabled={pendingDel}
-                      onClick={() => startDel(async () => void (await eliminarDescuentoLiquidacion(d.id)))}
+                      onClick={() => startDel(async () => void (await eliminarDescuentoLiquidacion(d.id, identidadDe(d.numero_contrato, d.numero_contrato ? identidades[d.numero_contrato] : null))))}
                       className="text-xs text-gray-300 hover:text-red-500 disabled:opacity-50"
                     >
                       ×

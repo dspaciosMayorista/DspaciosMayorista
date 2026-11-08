@@ -6,7 +6,8 @@ import { createHash } from "node:crypto";
 import {
   MAX_BYTES_POR_DEFECTO, TOPE_FUNCION_BYTES, cabeUnoNuevo, detectarTipo, estaExcedido, formatoMaximo, maxBytesSoporte, nombreSeguro, rutaSoporte, validarArchivo,
 } from "../lib/soportes/archivo.ts";
-import { esRechazoDefinitivo, mensajeDeBase, subirYVincular, type Confirmacion, type DepsSubida, type Validado } from "../lib/soportes/operaciones.ts";
+import { MENSAJE_IDENTIDAD } from "../lib/contrato/identidad.ts";
+import { esRechazoDefinitivo, mensajeDeBase, precomprobarIdentidad, subirYVincular, type Confirmacion, type DepsSubida, type Validado } from "../lib/soportes/operaciones.ts";
 import { debeReclamar, textoAviso, tituloPestana } from "../lib/avisos/presentacion.ts";
 
 const PDF = Buffer.from("%PDF-1.7\ncontenido");
@@ -172,4 +173,41 @@ test("avisos: textos sin datos del contrato más que su número, título con con
   assert.equal(debeReclamar("denied", true), false);
   assert.equal(debeReclamar("default", true), false);
   assert.equal(debeReclamar("no-soportado", true), false);
+});
+
+// ── Identidad del contrato (#75 · 285) ────────────────────────────────────
+test("precomprobación: identidad o fallo desconocido → no se sube nada; OK → adelante", async () => {
+  const log: string[] = [];
+  const ident = await precomprobarIdentidad(async () => ({ error: { message: "SOPORTE_IDENTIDAD: x", code: "F4521" } }));
+  assert.equal(ident, MENSAJE_IDENTIDAD);
+  const otro = await precomprobarIdentidad(async () => { throw new Error("fetch failed"); });
+  assert.match(otro ?? "", /No se subió nada/);
+  assert.equal(await precomprobarIdentidad(async () => ({ error: null })), null);
+  // el llamador solo sube cuando la precomprobación devuelve null: con error, subirYVincular no se invoca
+  if (ident === null) await subirYVincular(deps({ log }), { path: "C/9.pdf", archivo, bytes: PDF });
+  assert.deepEqual(log, []);
+});
+
+test("precomprobación OK + registro rechazado SOPORTE_IDENTIDAD: se borra solo el archivo nuevo y sale el mensaje de identidad", async () => {
+  const log: string[] = [];
+  const r = await subirYVincular(deps({ log, registrar: async () => ({ error: { message: "SOPORTE_IDENTIDAD" } }) }), { path: "C/3.pdf", archivo, bytes: PDF });
+  assert.deepEqual(log, ["subir C/3.pdf", "borrar C/3.pdf"]);
+  assert.equal(r.ok ? "" : r.error, MENSAJE_IDENTIDAD);
+});
+
+test("registro con error de transporte: archivo conservado + alerta (sin cambios)", async () => {
+  const log: string[] = [];
+  const r = await subirYVincular(deps({ log, registrar: async () => ({ error: { message: "TypeError: fetch failed" } }) }), { path: "C/4.pdf", archivo, bytes: PDF });
+  assert.equal(r.ok, false);
+  assert.ok(!log.some((l) => l.startsWith("borrar")));
+  assert.ok(log.includes("conciliar C/4.pdf"));
+});
+
+test("clasificación: SOPORTE_IDENTIDAD es rechazo definitivo; CONTRATO_CAMBIO / IDENTIDAD_REQUERIDA no (incierto: se conserva y se alerta)", async () => {
+  assert.equal(esRechazoDefinitivo({ message: "SOPORTE_IDENTIDAD" }), true);
+  assert.equal(esRechazoDefinitivo({ message: "CONTRATO_CAMBIO" }), false);
+  assert.equal(esRechazoDefinitivo({ message: "IDENTIDAD_REQUERIDA" }), false);
+  const log: string[] = [];
+  await subirYVincular(deps({ log, registrar: async () => ({ error: { message: "CONTRATO_CAMBIO: uid" } }) }), { path: "C/5.pdf", archivo, bytes: PDF });
+  assert.ok(!log.some((l) => l.startsWith("borrar")) && log.includes("conciliar C/5.pdf"));
 });

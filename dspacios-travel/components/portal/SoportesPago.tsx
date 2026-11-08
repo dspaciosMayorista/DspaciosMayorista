@@ -8,9 +8,10 @@ import { FileText, Image as ImagenIcono, Paperclip, RefreshCw, Trash2, ExternalL
 import { subirSoporte, reemplazarSoporte, retirarSoporte, urlSoporteAliado } from "@/app/portal/b2b/cartera/soportes-actions";
 import { estaExcedido, cabeUnoNuevo } from "@/lib/soportes/archivo";
 import { numeroVisible } from "@/lib/tenant";
+import type { IdentidadContrato } from "@/lib/contrato/identidad";
 
 export type SoporteVista = { id: number; nombre_original: string; mime: string; size_bytes: number; subido_en: string };
-export type ContratoSoportes = { numero: string; cliente: string | null; abonos: number; soportes: SoporteVista[] };
+export type ContratoSoportes = { numero: string; cliente: string | null; abonos: number; soportes: SoporteVista[]; identidad: IdentidadContrato };
 
 const kb = (b: number) => (b >= 1_000_000 ? `${(b / 1_000_000).toFixed(1)} MB` : `${Math.max(1, Math.round(b / 1000))} KB`);
 
@@ -53,13 +54,13 @@ function TarjetaContrato({ c, maximo }: { c: ContratoSoportes; maximo: number })
     if (f.size > maximo) { setMsg({ tipo: "error", texto: `El archivo supera el máximo permitido de ${kb(maximo)}.` }); return; }
     const fd = new FormData();
     fd.set("archivo", f);
-    if (reemplazaId) { fd.set("id", String(reemplazaId)); correr(() => reemplazarSoporte(fd), "Soporte reemplazado. El anterior queda en el historial del equipo."); }
-    else { fd.set("numero", c.numero); correr(() => subirSoporte(fd), "Soporte subido."); }
+    if (reemplazaId) { fd.set("id", String(reemplazaId)); correr(() => reemplazarSoporte(fd, c.identidad), "Soporte reemplazado. El anterior queda en el historial del equipo."); }
+    else { fd.set("numero", c.numero); correr(() => subirSoporte(fd, c.identidad), "Soporte subido."); }
   }
 
   async function abrir(id: number) {
     setMsg(null);
-    const r = await urlSoporteAliado(id);
+    const r = await urlSoporteAliado(id, c.identidad);
     if (r.ok) window.open(r.url, "_blank", "noopener,noreferrer"); else setMsg({ tipo: "error", texto: r.error });
   }
 
@@ -100,7 +101,7 @@ function TarjetaContrato({ c, maximo }: { c: ContratoSoportes; maximo: number })
                 </label>
                 <button
                   type="button" disabled={pend}
-                  onClick={() => { if (window.confirm("¿Retirar este soporte? Dejará de estar vigente; el equipo conserva el archivo y su historial.")) correr(() => retirarSoporte(s.id), "Soporte retirado."); }}
+                  onClick={() => { if (window.confirm("¿Retirar este soporte? Dejará de estar vigente; el equipo conserva el archivo y su historial.")) correr(() => retirarSoporte(s.id, undefined, c.identidad), "Soporte retirado."); }}
                   className="inline-flex items-center gap-1 rounded-lg border border-gray-200 px-2 py-1 text-xs font-medium text-[#C0392B] hover:bg-red-50 disabled:opacity-50"
                 >
                   <Trash2 size={14} aria-hidden /> Retirar

@@ -1,6 +1,7 @@
 "use server";
 
 import { createClient } from "@/lib/supabase/server";
+import { parseIdentidad, mensajeSiIdentidad, type IdentidadContrato } from "@/lib/contrato/identidad";
 import { revalidatePath } from "next/cache";
 import { formatFechaLarga, calcularEdad } from "@/lib/utils";
 import type { Json } from "@/types/database";
@@ -67,8 +68,8 @@ function tipoVoucherDeCategorias(categorias: Set<string>): string {
 
 // Genera (o regenera) los vouchers de servicios de un contrato: agrupa los
 // servicios por proveedor y crea un voucher por cada uno, auto-armado y editable.
-export async function generarVouchersServicios(numero: string): Promise<Result> {
-  const sb = await createClient();
+export async function generarVouchersServicios(numero: string, identidad: IdentidadContrato): Promise<Result> {
+  const sb = await createClient(parseIdentidad(identidad));
 
   const [{ data: venta }, { data: hoteles }, { data: items }, { data: pasajeros }] = await Promise.all([
     sb.from("ventas").select("*").eq("numero_contrato", numero).single(),
@@ -222,15 +223,15 @@ export async function generarVouchersServicios(numero: string): Promise<Result> 
   }
 
   const { error } = await sb.from("vouchers").insert(filas);
-  if (error) return { ok: false, error: error.message };
+  if (error) return { ok: false, error: mensajeSiIdentidad(error) ?? error.message };
   revalidatePath(`/dashboard/contratos/${numero}`);
   return { ok: true, creados: filas.length };
 }
 
 // Voucher de HOTEL (D'spacios → cliente, para el check-in). Incluye el campo
 // editable "Código de reserva del hotel".
-export async function generarVoucherHotel(numero: string): Promise<Result> {
-  const sb = await createClient();
+export async function generarVoucherHotel(numero: string, identidad: IdentidadContrato): Promise<Result> {
+  const sb = await createClient(parseIdentidad(identidad));
   const [{ data: venta }, { data: hoteles }, { data: pasajeros }] = await Promise.all([
     sb.from("ventas").select("*").eq("numero_contrato", numero).single(),
     sb.from("contrato_hoteles").select("*").eq("numero_contrato", numero).order("orden"),
@@ -298,7 +299,7 @@ export async function generarVoucherHotel(numero: string): Promise<Result> {
 
     await sb.from("vouchers").delete().eq("numero_contrato", numero).eq("tipo", "hotel");
     const { error } = await sb.from("vouchers").insert({ numero_contrato: numero, tipo: "hotel", proveedor: contenido.proveedor, contenido: contenido as unknown as Json });
-    if (error) return { ok: false, error: error.message };
+    if (error) return { ok: false, error: mensajeSiIdentidad(error) ?? error.message };
     revalidatePath(`/dashboard/contratos/${numero}`);
     return { ok: true, creados: 1 };
   }
@@ -335,23 +336,23 @@ export async function generarVoucherHotel(numero: string): Promise<Result> {
 
   await sb.from("vouchers").delete().eq("numero_contrato", numero).eq("tipo", "hotel");
   const { error } = await sb.from("vouchers").insert({ numero_contrato: numero, tipo: "hotel", proveedor: contenido.proveedor, contenido: contenido as unknown as Json });
-  if (error) return { ok: false, error: error.message };
+  if (error) return { ok: false, error: mensajeSiIdentidad(error) ?? error.message };
   revalidatePath(`/dashboard/contratos/${numero}`);
   return { ok: true, creados: 1 };
 }
 
-export async function actualizarVoucher(id: number, contenido: VoucherContenido, numero: string): Promise<Result> {
-  const sb = await createClient();
+export async function actualizarVoucher(id: number, contenido: VoucherContenido, numero: string, identidad: IdentidadContrato): Promise<Result> {
+  const sb = await createClient(parseIdentidad(identidad));
   const { error } = await sb.from("vouchers").update({ contenido: contenido as unknown as Json }).eq("id", id);
-  if (error) return { ok: false, error: error.message };
+  if (error) return { ok: false, error: mensajeSiIdentidad(error) ?? error.message };
   revalidatePath(`/dashboard/contratos/${numero}`);
   return { ok: true };
 }
 
-export async function eliminarVoucher(id: number, numero: string): Promise<Result> {
-  const sb = await createClient();
+export async function eliminarVoucher(id: number, numero: string, identidad: IdentidadContrato): Promise<Result> {
+  const sb = await createClient(parseIdentidad(identidad));
   const { error } = await sb.from("vouchers").delete().eq("id", id);
-  if (error) return { ok: false, error: error.message };
+  if (error) return { ok: false, error: mensajeSiIdentidad(error) ?? error.message };
   revalidatePath(`/dashboard/contratos/${numero}`);
   return { ok: true };
 }

@@ -13,6 +13,7 @@
 //         original podría estar todavía en vuelo y confirmarse después; un borrado ahora dejaría evidencia registrada sin archivo.
 // Un huérfano conservado cuesta almacenamiento; borrar evidencia registrada cuesta la prueba de un pago. Se elige lo primero.
 import type { ArchivoValidado } from "./archivo.ts";
+import { MENSAJE_IDENTIDAD, esErrorIdentidad } from "../contrato/identidad.ts";
 
 export type Validado = Extract<ArchivoValidado, { ok: true }>;
 type ErrorSb = { message: string } | null;
@@ -46,6 +47,7 @@ const MENSAJES: Record<string, string> = {
   SOPORTE_ACTOR: "Tu usuario no está activo.",
   SOPORTE_INEXISTENTE: "El soporte no existe.",
   SOPORTE_ARCHIVADO: "No tienes acceso a ese soporte.",
+  SOPORTE_IDENTIDAD: MENSAJE_IDENTIDAD,
 };
 const SIN_CONFIRMAR = "No pudimos confirmar si el soporte quedó registrado. El archivo se conservó; revisa tus soportes en unos minutos antes de volver a subirlo.";
 
@@ -94,4 +96,14 @@ export async function subirYVincular(deps: DepsSubida, args: { path: string; arc
   if (c === "vinculado") return { ok: true, path, confirmadoTrasError: true };
   deps.alertarConciliacion?.(path, `${c}: ${reg.error.message}`);
   return { ok: false, error: SIN_CONFIRMAR, conciliar: path };
+}
+
+/** Precomprobación de identidad ANTES de subir: null = adelante; si no, el mensaje a devolver (nada se sube). Identidad ≠ otro fallo (transporte/desconocido → reintentable). */
+export async function precomprobarIdentidad(verificar: () => PromiseLike<{ error: { message?: string | null; code?: string | null } | null }>): Promise<string | null> {
+  try {
+    const { error } = await verificar();
+    if (!error) return null;
+    if (esErrorIdentidad(error)) return MENSAJE_IDENTIDAD;
+  } catch { /* transporte: igual que un error desconocido */ }
+  return "No pudimos verificar el contrato. No se subió nada; inténtalo de nuevo.";
 }

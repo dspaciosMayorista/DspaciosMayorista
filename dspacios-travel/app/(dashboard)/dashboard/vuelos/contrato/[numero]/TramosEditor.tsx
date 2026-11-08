@@ -7,6 +7,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { ciudadIata } from "@/lib/iata";
 import { guardarTramosContrato, type TramoInput } from "../../contrato-vuelos-actions";
+import type { IdentidadContrato } from "@/lib/contrato/identidad";
 
 const lbl = "mb-1 block text-[11px] font-medium text-gray-500";
 const selCls = "w-full rounded-lg border border-gray-300 bg-white px-2 py-2 text-sm";
@@ -55,7 +56,7 @@ const TRAMO_VACIO: TramoInput = {
 // cuando ya existía. Mismo shape de tarjeta que la sección "Vuelos" de
 // ContenidoContratoEditor (superadmin-only, ficha financiera completa) pero
 // en una pantalla standalone accesible también para `control_vuelo`.
-export function TramosEditor({ numeroContrato, tramosIniciales }: { numeroContrato: string; tramosIniciales: TramoDB[] }) {
+export function TramosEditor({ numeroContrato, tramosIniciales, identidad }: { numeroContrato: string; tramosIniciales: TramoDB[]; identidad: IdentidadContrato }) {
   const router = useRouter();
   const [pending, start] = useTransition();
   const [msg, setMsg] = useState("");
@@ -102,7 +103,7 @@ export function TramosEditor({ numeroContrato, tramosIniciales }: { numeroContra
     setMsg(""); setOk(false);
     if (!tramos.length) { setMsg("Debe haber al menos un tramo."); return; }
     start(async () => {
-      const r = await guardarTramosContrato(numeroContrato, tramos);
+      const r = await guardarTramosContrato(numeroContrato, tramos, identidad);
       if (r.ok) {
         // Sincroniza el estado local con los tramos YA guardados (id reales
         // incluidos) — nunca basta con router.refresh(): eso re-renderiza el

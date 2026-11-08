@@ -495,7 +495,7 @@ describe("ciclo 5: plan B2B congelado y vigencias de compra dentro de la aceptac
     assert.match(acciones, /b2b63\.aliado_id !== aliadoB2B/);
   });
   test("TS: el aliado de una oferta #63 se lee con el MISMO cliente al cotizar y al aceptar (service-role), no con la sesión de quien convierte", () => {
-    assert.match(acciones, /const lector63 = oferta63 && process\.env\.SUPABASE_SERVICE_ROLE_KEY \? createAdminClient\(\) : null;\s+const al = lector63\s+\? await resolverAliadoReserva\(lector63, input\.tipoAsesor, input\.aliadoId\)\s+: await resolverAliadoReserva\(sb, input\.tipoAsesor, input\.aliadoId\);/);
+    assert.match(acciones, /const lector63 = oferta63 && process\.env\.SUPABASE_SERVICE_ROLE_KEY \? createAdminClient\(\) : null;[^\n]*\s+const al = lector63\s+\? await resolverAliadoReserva\(lector63, input\.tipoAsesor, input\.aliadoId\)\s+: await resolverAliadoReserva\(sb, input\.tipoAsesor, input\.aliadoId\);/);
     assert.match(acciones, /resolverAliadoReserva\(admin, input\.tipoAsesor, input\.aliadoId\)/);
   });
   test("computo.ts recoge las vigencias de compra de hotel (noches de habitación y menores) y de servicios solo en una oferta #63", () => {

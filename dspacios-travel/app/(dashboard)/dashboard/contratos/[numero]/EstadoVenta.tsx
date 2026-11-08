@@ -3,6 +3,7 @@
 import { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { Button } from "@/components/ui/button";
+import type { IdentidadContrato } from "@/lib/contrato/identidad";
 import { confirmarVenta } from "../../reservar/actions";
 
 const COLOR: Record<string, string> = {
@@ -13,9 +14,9 @@ const COLOR: Record<string, string> = {
 };
 
 export function EstadoVenta({
-  numero, estado, plazo, puedeConfirmar,
+  numero, estado, plazo, puedeConfirmar, identidad,
 }: {
-  numero: string; estado: string; plazo: string | null; puedeConfirmar: boolean;
+  numero: string; estado: string; plazo: string | null; puedeConfirmar: boolean; identidad: IdentidadContrato;
 }) {
   const router = useRouter();
   const [pending, start] = useTransition();
@@ -32,7 +33,7 @@ export function EstadoVenta({
       {estado === "pendiente" && puedeConfirmar && (
         <Button
           disabled={pending}
-          onClick={() => start(async () => { setErr(""); const r = await confirmarVenta(numero); if (!r.ok) setErr(r.error ?? "No se pudo confirmar la venta."); router.refresh(); })}
+          onClick={() => start(async () => { setErr(""); const r = await confirmarVenta(numero, identidad); if (!r.ok) setErr(r.error ?? "No se pudo confirmar la venta."); router.refresh(); })}
           style={{ backgroundColor: "var(--brand-success)" }}
         >
           {pending ? "Confirmando…" : "Confirmar venta"}

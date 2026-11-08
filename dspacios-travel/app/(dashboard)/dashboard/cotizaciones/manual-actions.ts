@@ -39,11 +39,12 @@ function errorDatoNoEconomico(msg: string): string {
 
 /** Usuario de la sesión (id real) o null. */
 async function usuarioSesion(): Promise<{ id: string } | null> {
-  const sb = await createClient();
+  const sb = await createClient(); // identidad:n/a — cotización por id (la guarda deja editar la cotización por id); no escribe tablas de contrato
   const { data: { user } } = await sb.auth.getUser();
   return user ? { id: user.id } : null;
 }
 
+// identidad:n/a — cotización por id (la guarda deja editar la cotización por id); no escribe tablas de contrato
 export async function crearCotizacionManual(
   input: CotizacionManualInput
 ): Promise<{ ok: true; id: number; avisoPersonas?: string } | { ok: false; error: string }> {
@@ -82,7 +83,7 @@ export async function crearCotizacionManual(
   // #39: la cabecera y los servicios se crean en UNA transacción por la RPC
   // SECURITY DEFINER, que estampa el autor estable (`creado_por_id`): la API ya
   // no escribe esa columna (211) ni, tras la 217, los servicios.
-  const admin = createAdminClient();
+  const admin = createAdminClient(); // identidad:n/a — cotización por id (la guarda deja editar la cotización por id); no escribe tablas de contrato
   const { data: id, error } = await admin.rpc("crear_cotizacion_manual", {
     p_usuario_id: usuario.id,
     p_tenant: tenantCotizacion,
@@ -112,6 +113,7 @@ export async function crearCotizacionManual(
 // bloquea la fila y vuelve a comprobar TODO (incluida la revisión esperada).
 export type EditarServiciosInput = { revEsperada: number; motivo: string; servicios: ServicioManual[] };
 
+// identidad:n/a — cotización por id (la guarda deja editar la cotización por id); no escribe tablas de contrato
 export async function editarServiciosCotizacionManual(
   cotizacionId: number,
   input: EditarServiciosInput
@@ -122,7 +124,7 @@ export async function editarServiciosCotizacionManual(
   const motivo = validarMotivo(input?.motivo);
   if (!motivo.ok) return motivo;
 
-  const sb = await createClient();
+  const sb = await createClient(); // identidad:n/a — cotización por id (la guarda deja editar la cotización por id); no escribe tablas de contrato
   const { data: cot } = await sb
     .from("cotizaciones")
     .select("payload, estado, tipo, tenant, pax, destino, fecha_salida, fecha_regreso")
@@ -139,7 +141,7 @@ export async function editarServiciosCotizacionManual(
 
   const usuario = await usuarioSesion();
   if (!usuario) return { ok: false, error: "No autorizado." };
-  const admin = createAdminClient();
+  const admin = createAdminClient(); // identidad:n/a — cotización por id (la guarda deja editar la cotización por id); no escribe tablas de contrato
   const { data, error } = await admin.rpc("editar_servicios_cotizacion_manual", {
     p_usuario_id: usuario.id,
     p_cotizacion_id: cotizacionId,
@@ -167,13 +169,14 @@ export type TitularInput = { nombres: string; apellidos: string; tipoDoc: string
 // tipo CRUDO (sin "CC" por defecto: la conversión 198 lo sigue exigiendo). CAS por la versión
 // del puesto (`versionEsperada`) y clave de idempotencia por envío (`clave`). Sin `control` (un
 // llamador anterior a #42) falla cerrado: pide recargar y no escribe nada.
+// identidad:n/a — cotización por id (la guarda deja editar la cotización por id); no escribe tablas de contrato
 export async function actualizarTitularCotizacionManual(
   cotizacionId: number,
   titular: TitularInput,
   control?: { versionEsperada: number; clave: string }
 ): Promise<{ ok: true } | { ok: false; error: string }> {
   if (!(Number(cotizacionId) > 0)) return { ok: false, error: "Cotización inválida." };
-  const sb = await createClient();
+  const sb = await createClient(); // identidad:n/a — cotización por id (la guarda deja editar la cotización por id); no escribe tablas de contrato
   const { data: cot } = await sb
     .from("cotizaciones")
     .select("estado, tipo, tenant")
@@ -195,7 +198,7 @@ export async function actualizarTitularCotizacionManual(
   if (!process.env.SUPABASE_SERVICE_ROLE_KEY) {
     return { ok: false, error: "No se pudo guardar el titular por un problema de configuración del servidor." };
   }
-  const admin = createAdminClient();
+  const admin = createAdminClient(); // identidad:n/a — cotización por id (la guarda deja editar la cotización por id); no escribe tablas de contrato
   const { data, error } = await admin.rpc("actualizar_titular_cotizacion", {
     p_cotizacion_id: cotizacionId,
     p_usuario_id: usuario.id,
@@ -214,12 +217,13 @@ export async function actualizarTitularCotizacionManual(
 }
 
 // ── Editar "Incluye / No incluye" de una cotización dinámica ───────────────
+// identidad:n/a — cotización por id (la guarda deja editar la cotización por id); no escribe tablas de contrato
 export async function actualizarIncluyeCotizacionManual(
   cotizacionId: number,
   incluye: string,
   noIncluye: string
 ): Promise<{ ok: true } | { ok: false; error: string }> {
-  const sb = await createClient();
+  const sb = await createClient(); // identidad:n/a — cotización por id (la guarda deja editar la cotización por id); no escribe tablas de contrato
   const { data: cot } = await sb
     .from("cotizaciones")
     .select("detalle, payload, estado, tipo, tenant")
@@ -256,12 +260,13 @@ export async function actualizarIncluyeCotizacionManual(
 // #39 (C5, decisión 1 del dueño): misma elegibilidad que editar servicios —
 // nunca tras un pago previo (aunque se anule), ni en congeladas ni en hijas de
 // una comparativa; `venta` solo en las propias. Motivo obligatorio e historial.
+// identidad:n/a — cotización por id (la guarda deja editar la cotización por id); no escribe tablas de contrato
 export async function actualizarRecobroNinosCotizacionManual(
   cotizacionId: number,
   input: RecobroNinosInput,
   control: { revEsperada: number; motivo: string }
 ): Promise<{ ok: true } | { ok: false; error: string }> {
-  const sb = await createClient();
+  const sb = await createClient(); // identidad:n/a — cotización por id (la guarda deja editar la cotización por id); no escribe tablas de contrato
   const { data: cot } = await sb
     .from("cotizaciones")
     .select("payload, estado, tipo, pax, destino, fecha_salida, fecha_regreso, tenant")
@@ -285,7 +290,7 @@ export async function actualizarRecobroNinosCotizacionManual(
 
   const usuario = await usuarioSesion();
   if (!usuario) return { ok: false, error: "No autorizado." };
-  const admin = createAdminClient();
+  const admin = createAdminClient(); // identidad:n/a — cotización por id (la guarda deja editar la cotización por id); no escribe tablas de contrato
   const { data, error } = await admin.rpc("actualizar_recobro_ninos_manual", {
     p_usuario_id: usuario.id,
     p_cotizacion_id: cotizacionId,
@@ -307,7 +312,7 @@ const ROLES_CONVERSION = new Set<string>(ROLES_CONTRATO_COMPLETO as string[]);
 
 /** Sesión de un rol autorizado y activo (o null si no autorizado). */
 async function sesionConversionAutorizada(): Promise<{ userId: string; rol: string } | null> {
-  const sb = await createClient();
+  const sb = await createClient(); // identidad:n/a — cotización por id (la guarda deja editar la cotización por id); no escribe tablas de contrato
   const { data: { user } } = await sb.auth.getUser();
   if (!user) return null;
   const { data: perfil } = await sb
@@ -355,6 +360,7 @@ function mensajeSeguro(msg: string): string {
 // (migración 216): bloquea la cotización, emite la autorización de SU
 // transacción y llama la RPC 198 SIN cambios, que sigue corriendo como
 // service_role. Tras la 217, la 198 llamada directo ya no puede escribir.
+// identidad:n/a — crea el contrato dentro de la RPC SQL de conversión (el uid nace allí); sin escrituras sobre un contrato existente desde esta acción
 export async function convertirCotizacionManualAContrato(
   cotizacionId: number
 ): Promise<{ ok: true; numero: string } | { ok: false; error: string }> {
@@ -364,7 +370,7 @@ export async function convertirCotizacionManualAContrato(
     return { ok: false, error: "No autorizado: convertir a contrato requiere superadmin, administración, gerencia u operaciones." };
   }
 
-  const admin = createAdminClient();
+  const admin = createAdminClient(); // identidad:n/a — cotización por id (la guarda deja editar la cotización por id); no escribe tablas de contrato
   // #35: la madre comparativa no se convierte (el RPC y los triggers también lo impiden).
   const { data: madre } = await admin.from("cotizaciones").select("modo, estado, vigencia_hasta, fecha_salida, paquete_din_id" as never).eq("id", cotizacionId).maybeSingle() as { data: { modo: string; estado: string; vigencia_hasta: string | null; fecha_salida: string | null; paquete_din_id: number | null } | null };
   if (madre?.modo === "comparativa") return { ok: false, error: "Una comparativa no se convierte en contrato: elige una opción primero." };
@@ -409,6 +415,7 @@ export async function convertirCotizacionManualAContrato(
 // ═════════════════════════════════════════════════════════════════════════
 
 /** Crea la comparativa manual de forma ATÓMICA (cabecera + servicios + opciones + sello) por RPC. */
+// identidad:n/a — cotización por id (la guarda deja editar la cotización por id); no escribe tablas de contrato
 export async function crearComparativaManual(
   input: EntradaComparativaManual
 ): Promise<{ ok: true; id: number; avisoPersonas?: string } | { ok: false; error: string }> {
@@ -417,13 +424,13 @@ export async function crearComparativaManual(
   // lo vuelve a fijar con el de su perfil.
   const ctx = await contextoCotizacion();
   if (!ctx.ok) return { ok: false, error: "No autorizado." };
-  const sb = await createClient();
+  const sb = await createClient(); // identidad:n/a — cotización por id (la guarda deja editar la cotización por id); no escribe tablas de contrato
   const { data: { user } } = await sb.auth.getUser();
   if (!user) return { ok: false, error: "No autorizado." };
   if (!process.env.SUPABASE_SERVICE_ROLE_KEY) {
     return { ok: false, error: "No se pudo crear la comparativa por un problema de configuración del servidor." };
   }
-  const admin = createAdminClient();
+  const admin = createAdminClient(); // identidad:n/a — cotización por id (la guarda deja editar la cotización por id); no escribe tablas de contrato
 
   // #40 E3: la vigencia la elige solo el personal interno.
   if (ctx.interno === false && input.vigenciaHasta?.trim()) return { ok: false, error: "No tienes permiso para elegir la vigencia." };
@@ -469,6 +476,7 @@ export async function crearComparativaManual(
  * la RPC): no se pasa ningún usuario. Confirmar crea la hija; no concede permisos
  * de conversión.
  */
+// identidad:n/a — cotización por id (la guarda deja editar la cotización por id); no escribe tablas de contrato
 export async function resolverSolicitudComparativa(
   solicitudId: number,
   decision: "confirmar" | "rechazar",
@@ -483,7 +491,7 @@ export async function resolverSolicitudComparativa(
   if (!claveOk) return { ok: false, error: "Falta la clave de la operación. Recarga la página e inténtalo de nuevo." };
   const mod = leerEntradaModalidad(modalidadRaw ?? null);
   if (!mod.ok) return { ok: false, error: mod.error };
-  const sb = await createClient();
+  const sb = await createClient(); // identidad:n/a — cotización por id (la guarda deja editar la cotización por id); no escribe tablas de contrato
   const paramsResolver = {
     p_solicitud: solicitudId,
     p_decision: decision,
@@ -508,7 +516,7 @@ export async function resolverSolicitudComparativa(
   if (data != null) {
     const hijaId = Number(data);
     const { data: { user } } = await sb.auth.getUser();
-    const admin = process.env.SUPABASE_SERVICE_ROLE_KEY ? createAdminClient() : null;
+    const admin = process.env.SUPABASE_SERVICE_ROLE_KEY ? createAdminClient() : null; // identidad:n/a — cotización por id (la guarda deja editar la cotización por id); no escribe tablas de contrato
     const { data: hija } = admin
       ? await admin.from("cotizaciones").select("id, tenant, tipo, payload, creado_por_id, propietario_id, aliado_id").eq("id", hijaId).maybeSingle()
       : { data: null };

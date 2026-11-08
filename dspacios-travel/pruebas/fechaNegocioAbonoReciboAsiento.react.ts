@@ -272,7 +272,7 @@ async function montarFormulario() {
   container = document.createElement("div");
   document.body.append(container);
   root = createRoot(container);
-  await act(async () => root!.render(h(AbonoForm, { numeroContrato: "00-0451", formasPago: ["Transferencia", "Efectivo"] })));
+  await act(async () => root!.render(h(AbonoForm, { identidad: {}, numeroContrato: "00-0451", formasPago: ["Transferencia", "Efectivo"] })));
 }
 const inputFecha = () => container.querySelector<HTMLInputElement>('input[aria-label="Fecha del abono"]')!;
 const inputValor = () => container.querySelector<HTMLInputElement>('input[type="number"]')!;
@@ -340,7 +340,7 @@ test("fecha elegida a mano a las 19:30 Bogotá se respeta tal cual en abono, asi
 
 test("la Server Action sin fecha (llamada directa) usa el día de Bogotá después de las 7 p. m.", async () => {
   reloj(DESPUES_DEL_CORTE);
-  const r = await registrarAbono("00-0451", 100_000, "Transferencia", "REF-1");
+  const r = await registrarAbono("00-0451", 100_000, "Transferencia", "REF-1", undefined, undefined, undefined, undefined, {});
   assert.deepEqual(r, { ok: true });
   assert.equal(db.abonos[0].fecha_abono, DIA_BOGOTA);
   assert.equal(asientoDe("abono")[0].fecha, DIA_BOGOTA);
@@ -348,27 +348,27 @@ test("la Server Action sin fecha (llamada directa) usa el día de Bogotá despu�
 
 test("actualizarAbono: fecha vacía → día de Bogotá; fecha manual → intacta; el asiento se reemplaza con la misma", async () => {
   reloj(DESPUES_DEL_CORTE);
-  await registrarAbono("00-0451", 100_000, "Transferencia", "", undefined, "2026-09-01");
+  await registrarAbono("00-0451", 100_000, "Transferencia", "", undefined, "2026-09-01", undefined, undefined, {});
   assert.equal(asientoDe("abono")[0].fecha, "2026-09-01");
 
-  await actualizarAbono(7, "00-0451", { valor: 120_000, fecha: "", formaPago: "Efectivo", referencia: "" });
+  await actualizarAbono(7, "00-0451", { valor: 120_000, fecha: "", formaPago: "Efectivo", referencia: "" }, {});
   assert.equal(db.abonos[0].fecha_abono, DIA_BOGOTA);
   assert.equal(asientoDe("abono").length, 1, "reemplazo, no duplicado");
   assert.equal(asientoDe("abono")[0].fecha, DIA_BOGOTA);
 
-  await actualizarAbono(7, "00-0451", { valor: 120_000, fecha: "2026-08-31", formaPago: "Efectivo", referencia: "" });
+  await actualizarAbono(7, "00-0451", { valor: 120_000, fecha: "2026-08-31", formaPago: "Efectivo", referencia: "" }, {});
   assert.equal(db.abonos[0].fecha_abono, "2026-08-31");
   assert.equal(asientoDe("abono")[0].fecha, "2026-08-31");
 });
 
 test("facturación a las 19:30 Bogotá: asiento y reversión con fecha de Bogotá; updated_at sigue siendo timestamp UTC", async () => {
   reloj(DESPUES_DEL_CORTE);
-  const r = await guardarFacturacion({ numeroContrato: "00-0451", pvp: 3_000_000, irt: 2_000_000, ingresoExento: 0 });
+  const r = await guardarFacturacion({ numeroContrato: "00-0451", pvp: 3_000_000, irt: 2_000_000, ingresoExento: 0 }, {});
   assert.deepEqual(r, { ok: true });
   assert.equal(db.facturacion[0].updated_at, DESPUES_DEL_CORTE, "el timestamp NO se convierte a fecha de negocio");
   assert.equal(asientoDe("facturacion")[0].fecha, DIA_BOGOTA, "asiento de facturación");
 
-  await quitarFacturacion("00-0451");
+  await quitarFacturacion("00-0451", {});
   const [reversion] = asientoDe("facturacion_reversion");
   assert.ok(reversion, "se generó la reversión");
   assert.equal(reversion.fecha, DIA_BOGOTA, "reversión sin asiento nuevo: fecha de Bogotá");

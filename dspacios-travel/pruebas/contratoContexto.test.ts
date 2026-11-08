@@ -526,7 +526,7 @@ describe("Regresión estructural — contexto.ts no debe volver a duplicar auth/
   test("crearContrato() y reservarPrograma() reutilizan ctx.sb en vez de crear un cliente nuevo", () => {
     const contratosSrc = leer("app/(dashboard)/dashboard/contratos/actions.ts");
     const reservarSrc = leer("app/(dashboard)/dashboard/reservar/actions.ts");
-    assert.match(contratosSrc, /const\s*\{\s*tenant,\s*sb\s*\}\s*=\s*ctx\s*;/, "crearContrato() debe desestructurar sb de ctx, no crear un cliente nuevo");
-    assert.match(reservarSrc, /const\s*\{\s*tenant,\s*sb\s*\}\s*=\s*ctx\s*;/, "reservarPrograma() debe desestructurar sb de ctx, no crear un cliente nuevo");
+    assert.match(contratosSrc, /const\s*\{\s*tenant\s*\}\s*=\s*ctx\s*;\s*let\s+sb\s*=\s*ctx\.sb/, "crearContrato() debe desestructurar sb de ctx, no crear un cliente nuevo");
+    assert.match(reservarSrc, /const\s*\{\s*tenant\s*\}\s*=\s*ctx\s*;\s*let\s+sb\s*=\s*ctx\.sb/, "reservarPrograma() debe desestructurar sb de ctx, no crear un cliente nuevo");
   });
 });

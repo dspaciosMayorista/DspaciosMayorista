@@ -22,13 +22,13 @@ test("el cron y liberar_vencidas siguen atendiendo SOLO contratos pendientes", (
 
 test("la acción Liberar manda la versión que mostró la pantalla", () => {
   const acciones = leer("app/(dashboard)/dashboard/vuelos/actions.ts");
-  assert.match(acciones, /export async function liberarRetencionVencida\(sillaId: number, bloqueoId: number, version: string\)/);
+  assert.match(acciones, /export async function liberarRetencionVencida\(sillaId: number, bloqueoId: number, version: string, identidad: IdentidadContrato\)/);
   assert.match(acciones, /rpc\("liberar_retencion_vencida", \{ p_silla_id: sillaId, p_esperado: \{ updated_at: version \} \}\)/);
 });
 
 test("el record identifica las vencidas con la misma regla y ofrece Liberar solo en ellas", () => {
   const pagina = leer("app/(dashboard)/dashboard/vuelos/[id]/page.tsx");
-  assert.match(pagina, /responsable_menor, updated_at"\)/, "lee updated_at para la versión");
+  assert.match(pagina, /responsable_menor, updated_at, ventas\(contrato_uid\)"\)/, "lee updated_at para la versión");
   assert.match(pagina, /esRetencionVencida\(\{ \.\.\.s, contrato_manual: contratoManualPorSilla\.get\(s\.id\) \?\? null \}, hoyNegocio\)/,
     "usa el contrato manual REAL y el día de negocio");
   assert.match(pagina, /const hoyNegocio = fechaNegocio\(\);/);
@@ -49,7 +49,7 @@ test("el aviso de Vuelos cuenta con la misma regla que la base", () => {
 test("capturar sin contrato exige pasajero y plazo antes de llamar a la base", () => {
   const comp = leer("app/(dashboard)/dashboard/vuelos/[id]/PasajeroAcciones.tsx");
   const iValida = comp.indexOf("const motivo = validarRetencion(form, inicial.plazo || null);");
-  const iEditar = comp.indexOf("await editarPasajeroSilla(sillaId, bloqueoId, form, contratoVisto)");
+  const iEditar = comp.indexOf("await editarPasajeroSilla(sillaId, bloqueoId, form, contratoVisto, identidad)");
   assert.ok(iValida > 0 && iEditar > iValida, "la validación va antes de la llamada");
   assert.match(comp, /if \(sinContrato\) \{/);
   const acciones = leer("app/(dashboard)/dashboard/vuelos/actions.ts");

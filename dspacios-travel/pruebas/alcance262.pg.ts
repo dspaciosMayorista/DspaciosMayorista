@@ -423,7 +423,7 @@ describe("262 · cotización y conversión REAL a contrato y CxP", () => {
     uidSesion = UID_SUPER;
     try {
       for (const lista of [[{ tipo: "otro", descripcion: "Extra manual 262", proveedor: "", costo: 5 }], [{ tipo: "otro", descripcion: "Extra manual 262", proveedor: "", costo: 6 }], []]) {
-        const g = await guardarServiciosContrato(n, lista as never); assert.equal(g.ok, true, JSON.stringify(g));
+        const g = await guardarServiciosContrato(n, lista as never, {}); assert.equal(g.ok, true, JSON.stringify(g));
         assert.deepEqual(lineasAlcance(n).map((l) => l.id), ids, "las líneas con alcance siguen, con los mismos ids, sin duplicarse");
         assert.equal(sql(`select count(*) from public.contrato_servicios where numero_contrato = ${lit(n)} and alcance_traslado is null`), String(lista.length), "solo existen las líneas manuales enviadas");
         verificarEnlace(n, id, esp);

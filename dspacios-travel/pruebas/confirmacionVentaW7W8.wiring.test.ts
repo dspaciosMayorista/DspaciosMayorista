@@ -31,13 +31,13 @@ test("recalcularEstadoAbono: confirma con la misma RPC y propaga el error; regis
   assert.match(c, /const \{ error: eConf \} = await sb\.rpc\("confirmar_venta", \{ p_numero: numeroContrato \}\);\s*if \(eConf\) return \{ ok: false/);
   assert.doesNotMatch(c, /\.update\(\{ estado: "confirmado" \}\)|\.update\(\{ estado: "pendiente" \}\)|from\("sillas"\)/, "sin UPDATE suelto ni compensación");
   for (const firma of ["export async function registrarAbono(", "export async function actualizarAbono("]) {
-    assert.match(cuerpo(contratos, firma), /const conf = await recalcularEstadoAbono\(sb, numeroContrato\);\s*if \(!conf\.ok\) \{/, firma);
+    assert.match(cuerpo(contratos, firma), /const conf = await recalcularEstadoAbono\(sb, numeroContrato, id\);\s*if \(!conf\.ok\) \{/, firma);
   }
 });
 
 test("EstadoVenta muestra el error de confirmarVenta", () => {
   const c = leer("../app/(dashboard)/dashboard/contratos/[numero]/EstadoVenta.tsx");
-  assert.match(c, /const r = await confirmarVenta\(numero\); if \(!r\.ok\) setErr\(/);
+  assert.match(c, /const r = await confirmarVenta\(numero, identidad\); if \(!r\.ok\) setErr\(/);
 });
 
 test("el ayudante de la ronda anterior (dos peticiones con compensación) ya no existe", () => {
@@ -49,7 +49,7 @@ test("W8 convertirCotizacionCarrito: la clave se exige ANTES de crear el cliente
   const c = cuerpo(reservar, "export async function convertirCotizacionCarrito(");
   assert.doesNotMatch(c, /SUPABASE_SERVICE_ROLE_KEY \? createAdminClient\(\) : sb/);
   const iClave = c.indexOf("if (!process.env.SUPABASE_SERVICE_ROLE_KEY) {");
-  const iAdmin = c.indexOf("const admin = createAdminClient();");
+  const iAdmin = c.indexOf("let admin = createAdminClient();");
   const iEscritura = c.search(/\.(insert|update|upsert|delete)\(/);
   assert.ok(iClave > 0 && iAdmin > iClave, "la clave se comprueba antes de crear el cliente");
   assert.ok(iEscritura > iAdmin, "y antes de cualquier escritura");

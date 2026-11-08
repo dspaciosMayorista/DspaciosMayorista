@@ -1,6 +1,7 @@
 "use server";
 
 import { createClient } from "@/lib/supabase/server";
+import { parseIdentidad, mensajeSiIdentidad, type IdentidadContrato } from "@/lib/contrato/identidad";
 import { revalidatePath } from "next/cache";
 import { rpcFinanciero, type ErrorFinanciero } from "@/lib/contabilidad/asientos";
 import { formatMoneda } from "@/lib/utils";
@@ -30,12 +31,12 @@ const ROLES_FACTURACION = ["superadmin", "gerencia", "administracion"];
 
 type Contexto = { actor: string; tenant: string };
 
-async function contextoFactura(numeroContrato: string): Promise<{ ok: true; ctx: Contexto } | ErrorFinanciero> {
-  const sb = await createClient();
+async function contextoFactura(numeroContrato: string, identidad: IdentidadContrato): Promise<{ ok: true; ctx: Contexto } | ErrorFinanciero> {
+  const sb = await createClient(parseIdentidad(identidad)); // solo lee, pero declara el contrato que la pantalla abrió
   const { data: { user } } = await sb.auth.getUser();
   if (!user) return { ok: false, error: "Sesión no válida." };
   const { data: perfil, error: eP } = await sb.from("usuarios").select("rol, activo").eq("id", user.id).maybeSingle();
-  if (eP) return { ok: false, error: eP.message };
+  if (eP) return { ok: false, error: mensajeSiIdentidad(eP) ?? eP.message };
   if (!perfil || perfil.activo === false || !ROLES_FACTURACION.includes(perfil.rol as string)) {
     return { ok: false, error: "No autorizado para la facturación." };
   }
@@ -100,15 +101,15 @@ function revisionDe(c: ConsultaSql): RevisionFueraLibros | null {
     pendientes: c.pendientes ?? [],
   };
 }
-async function consultar(numeroContrato: string, ctx: Contexto) {
-  return rpcFinanciero<ConsultaSql>("consultar_factura_fuera_libros", { p_numero: numeroContrato, p_actor: ctx.actor, p_tenant: ctx.tenant });
+async function consultar(numeroContrato: string, ctx: Contexto, identidad: IdentidadContrato) {
+  return rpcFinanciero<ConsultaSql>("consultar_factura_fuera_libros", { p_numero: numeroContrato, p_actor: ctx.actor, p_tenant: ctx.tenant }, parseIdentidad(identidad));
 }
 
 // Aviso previo: abonos del contrato que el libro diario no respalda.
-export async function consultarFueraLibros(numeroContrato: string): Promise<{ ok: true; revision: RevisionFueraLibros | null } | ErrorFinanciero> {
-  const c = await contextoFactura(numeroContrato);
+export async function consultarFueraLibros(numeroContrato: string, identidad: IdentidadContrato): Promise<{ ok: true; revision: RevisionFueraLibros | null } | ErrorFinanciero> {
+  const c = await contextoFactura(numeroContrato, identidad);
   if (!c.ok) return c;
-  const r = await consultar(numeroContrato, c.ctx);
+  const r = await consultar(numeroContrato, c.ctx, identidad);
   return r.ok ? { ok: true, revision: revisionDe(r.data) } : r;
 }
 
@@ -132,8 +133,8 @@ export async function guardarFacturacion(input: {
   observacion?: string;
   hashRevision?: string;
   notaRevision?: string;
-}): Promise<Result | (ErrorFinanciero & { revision?: RevisionFueraLibros | null })> {
-  const c = await contextoFactura(input.numeroContrato);
+}, identidad: IdentidadContrato): Promise<Result | (ErrorFinanciero & { revision?: RevisionFueraLibros | null })> {
+  const c = await contextoFactura(input.numeroContrato, identidad);
   if (!c.ok) return c;
   const r = await rpcFinanciero<{ estado: string }>("facturar_factura", {
     p_numero: input.numeroContrato,
@@ -146,12 +147,12 @@ export async function guardarFacturacion(input: {
     p_observacion: input.observacion ?? null,
     p_hash_revision: input.hashRevision ?? null,
     p_nota_revision: input.notaRevision ?? null,
-  });
+  }, parseIdentidad(identidad));
   if (!r.ok) {
     // Revisión pedida o desactualizada, o abono pendiente: se devuelve el aviso
     // vigente para que la pantalla lo muestre.
     if (r.code === "F4431" || r.code === "F4430" || r.code === "F4420") {
-      const q = await consultar(input.numeroContrato, c.ctx);
+      const q = await consultar(input.numeroContrato, c.ctx, identidad);
       return { ...r, revision: q.ok ? revisionDe(q.data) : null };
     }
     // Atómico: cualquier fallo deja la factura y los libros como estaban. Los
@@ -166,10 +167,10 @@ export async function guardarFacturacion(input: {
 
 // Marca un contrato como facturado y emitido a la DIAN. La marca no se deshace
 // (F4434) y exige factura vigente (F4435).
-export async function marcarDian(numeroContrato: string, emitida: boolean): Promise<Result> {
-  const c = await contextoFactura(numeroContrato);
+export async function marcarDian(numeroContrato: string, emitida: boolean, identidad: IdentidadContrato): Promise<Result> {
+  const c = await contextoFactura(numeroContrato, identidad);
   if (!c.ok) return c;
-  const r = await rpcFinanciero("marcar_dian_factura", { p_numero: numeroContrato, p_actor: c.ctx.actor, p_tenant: c.ctx.tenant, p_emitida: emitida });
+  const r = await rpcFinanciero("marcar_dian_factura", { p_numero: numeroContrato, p_actor: c.ctx.actor, p_tenant: c.ctx.tenant, p_emitida: emitida }, parseIdentidad(identidad));
   if (!r.ok) return r;
   revalidatePath("/dashboard/contabilidad/facturacion");
   return { ok: true };
@@ -177,10 +178,10 @@ export async function marcarDian(numeroContrato: string, emitida: boolean): Prom
 
 // Quita la factura (el contrato vuelve al cálculo por defecto en
 // rentabilidad): reversa + borrado de la configuración en una transacción.
-export async function quitarFacturacion(numeroContrato: string): Promise<Result> {
-  const c = await contextoFactura(numeroContrato);
+export async function quitarFacturacion(numeroContrato: string, identidad: IdentidadContrato): Promise<Result> {
+  const c = await contextoFactura(numeroContrato, identidad);
   if (!c.ok) return c;
-  const r = await rpcFinanciero("quitar_factura", { p_numero: numeroContrato, p_actor: c.ctx.actor, p_tenant: c.ctx.tenant });
+  const r = await rpcFinanciero("quitar_factura", { p_numero: numeroContrato, p_actor: c.ctx.actor, p_tenant: c.ctx.tenant }, parseIdentidad(identidad));
   if (!r.ok) return r;
   revalidar();
   return { ok: true };
@@ -188,14 +189,14 @@ export async function quitarFacturacion(numeroContrato: string): Promise<Result>
 
 // Contabiliza los abonos recientes de la app que quedaron sin asiento (F4420),
 // cada uno con su RPC atómica. No toca los históricos.
-export async function contabilizarAbonosPendientes(numeroContrato: string): Promise<{ ok: true; contabilizados: number } | ErrorFinanciero> {
-  const c = await contextoFactura(numeroContrato);
+export async function contabilizarAbonosPendientes(numeroContrato: string, identidad: IdentidadContrato): Promise<{ ok: true; contabilizados: number } | ErrorFinanciero> {
+  const c = await contextoFactura(numeroContrato, identidad);
   if (!c.ok) return c;
-  const q = await consultar(numeroContrato, c.ctx);
+  const q = await consultar(numeroContrato, c.ctx, identidad);
   if (!q.ok) return q;
   let contabilizados = 0;
   for (const id of q.data.pendientes ?? []) {
-    const r = await rpcFinanciero("postear_asiento_abono", { p_abono_id: id, p_tenant: c.ctx.tenant, p_actor: c.ctx.actor });
+    const r = await rpcFinanciero("postear_asiento_abono", { p_abono_id: id, p_tenant: c.ctx.tenant, p_actor: c.ctx.actor }, parseIdentidad(identidad));
     if (!r.ok) return { ...r, error: `Abono #${id}: ${r.error}${contabilizados ? ` (${contabilizados} ya quedaron contabilizados)` : ""}` };
     contabilizados++;
   }

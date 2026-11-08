@@ -257,6 +257,9 @@ export async function resolve(specifier, context, nextResolve) {
       (context.parentURL?.endsWith("/dashboard/usuarios/UsuariosClient.tsx") || context.parentURL?.endsWith("/dashboard/usuarios/AliadoB2BForm.tsx") || context.parentURL?.endsWith("/dashboard/usuarios/EditarUsuarioDialog.tsx"))) {
     return { url: pathToFileURL(join(AQUI, "stubs", "usuariosActionsStub.mjs")).href, shortCircuit: true };
   }
+  if (specifier === "./vigencia-actions" && context.parentURL?.endsWith("/AvisoContratoCambio.tsx")) {
+    return { url: pathToFileURL(join(AQUI, "stubs", "vigenciaActionsStub.mjs")).href, shortCircuit: true };
+  }
   if (specifier === "./actions" && context.parentURL?.endsWith("PagosList.tsx")) {
     return { url: STUB_PAGOS_ACTIONS, shortCircuit: true };
   }
@@ -288,6 +291,10 @@ export async function resolve(specifier, context, nextResolve) {
     (context.parentURL?.endsWith("DifusionClient.tsx") || context.parentURL?.endsWith("/servicios/ServiciosClient.tsx") || context.parentURL?.endsWith("/servicios/ServicioFotoCell.tsx") || context.parentURL?.endsWith("/servicios/Alcance262.tsx") || context.parentURL?.endsWith("EditarBloqueoForm.tsx") || context.parentURL?.endsWith("/NuevoBloqueoForm.tsx") ||
       context.parentURL?.endsWith("/NuevoEmpaquetadoForm.tsx") || context.parentURL?.endsWith("/EditarEmpaquetadoForm.tsx") ||
       context.parentURL?.endsWith("/login/LoginClient.tsx") ||
+      // Edición de Mi perfil (#25, pruebas/portalPerfilEditor25.react.ts).
+      context.parentURL?.endsWith("/perfil/PerfilEditor.tsx") ||
+      // Aviso de contrato eliminado/reemplazado (#75, pruebas/avisoContratoCambio75.react.ts).
+      context.parentURL?.endsWith("/AvisoContratoCambio.tsx") ||
       // Botón de salir que importa el portal B2B (pruebas/comisionPortalB2B.react.ts).
       context.parentURL?.endsWith("/LogoutButton.tsx") ||
       // Vista previa de la conversión del carrito (pruebas/convertirCarritoVinculos.react.ts).
