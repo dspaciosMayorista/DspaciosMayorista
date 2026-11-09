@@ -79,6 +79,9 @@ export const LECTURA_MODULO: Record<string, readonly Rol[]> = {
   cotizaciones: ROLES_INTERNOS,
   contratos: ROLES_INTERNOS,
   crm: ROLES_INTERNOS,
+  // Consulta interna de programas (#56): roles aprobados por el dueño; sin
+  // `control_vuelo`, que no vende.
+  salesbot: ["superadmin", "gerencia", "administracion", "operaciones", "venta"] as Rol[],
 
   // Operación y producto: `venta` no lee estas tablas (RLS), así que tampoco
   // debe ver el menú. `bloqueos_vuelo`, `tarifa_hotel`, `servicios_adicionales`
@@ -101,6 +104,7 @@ export const LECTURA_MODULO: Record<string, readonly Rol[]> = {
 // El orden importa: gana el prefijo MÁS LARGO que coincida.
 export const MODULO_POR_RUTA: { prefijo: string; modulo: string }[] = [
   { prefijo: "/dashboard/contratos", modulo: "contratos" },
+  { prefijo: "/dashboard/salesbot", modulo: "salesbot" },
   { prefijo: "/dashboard/cotizaciones", modulo: "cotizaciones" },
   { prefijo: "/dashboard/reservar", modulo: "reservar" },
   { prefijo: "/dashboard/ventas", modulo: "ventas" },
