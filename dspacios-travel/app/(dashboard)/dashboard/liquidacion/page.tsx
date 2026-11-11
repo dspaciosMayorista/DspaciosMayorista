@@ -1,4 +1,5 @@
 import { DateInput } from "@/components/ui/DateInput";
+import { identidadDe, unirIdentidades } from "@/lib/contrato/identidad";
 import { createClient } from "@/lib/supabase/server";
 import Link from "next/link";
 import { comisionMes, type EscalaRango } from "@/lib/calc/escalas";
@@ -39,7 +40,7 @@ export default async function LiquidacionPage({ searchParams }: { searchParams: 
   const { ini, fin } = rangoMes(mes);
 
   const [{ data: ventas }, { data: vendedores }, { data: rangos }, { data: params }, { data: descuentosRows }] = await Promise.all([
-    sb.from("ventas").select("asesor_firma_nombre, precio_venta, impuesto, comision_b2b, comision_estado, estado, fecha_venta").gte("fecha_venta", ini).lt("fecha_venta", fin),
+    sb.from("ventas").select("numero_contrato, contrato_uid, asesor_firma_nombre, precio_venta, impuesto, comision_b2b, comision_estado, estado, fecha_venta").gte("fecha_venta", ini).lt("fecha_venta", fin),
     sb.from("usuarios").select("id, nombre, escala_id, aplica_retencion").eq("rol", "venta").order("nombre"),
     sb.from("escala_rangos").select("escala_id, pvp_desde, pvp_hasta, pct"),
     sb.from("parametros_tributarios").select("valor").eq("parametro", "RETENCION_HONORARIOS").maybeSingle(),
@@ -72,6 +73,9 @@ export default async function LiquidacionPage({ searchParams }: { searchParams: 
     rangosPorEscala.set(r.escala_id, arr);
   }
 
+  // #75: identidad de los contratos que ESTA lectura de `ventas` trajo (mes visible). Un descuento ligado a otro número (texto libre) va sin identidad:
+  // la base decide (contrato de siempre pasa; uno de reuso se rechaza, falla cerrado). Ver informe.
+  const identidades = unirIdentidades(...(ventas ?? []).map((v) => identidadDe(v.numero_contrato, v.contrato_uid)));
   const descuentosPorUsuario = new Map<string, FilaLiquidacion["descuentos"]>();
   for (const d of descuentosRows ?? []) {
     const arr = descuentosPorUsuario.get(d.usuario_id) ?? [];
@@ -107,7 +111,7 @@ export default async function LiquidacionPage({ searchParams }: { searchParams: 
         <button type="submit" className="rounded-lg px-4 py-2 text-sm font-medium text-white" style={{ backgroundColor: "var(--brand-primary)" }}>Ver mes</button>
       </form>
 
-      <LiquidacionTable filas={filas} mes={mes} />
+      <LiquidacionTable filas={filas} mes={mes} identidades={identidades} />
 
       <p className="mt-3 text-xs text-gray-400">
         Cuenta contratos en estado activo/confirmado por <b>fecha de venta</b>. El asesor interno (usuario rol venta) y su escala se

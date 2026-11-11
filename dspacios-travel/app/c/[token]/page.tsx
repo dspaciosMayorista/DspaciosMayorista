@@ -1,3 +1,4 @@
+import { esVentaNetoDescontada } from "@/lib/finanzas/netoB2B";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { notFound } from "next/navigation";
 import { ContratoDocumento } from "@/components/contrato/ContratoDocumento";
@@ -88,7 +89,7 @@ export default async function ContratoPublicoPage({
   const condicionesResueltas = resolverCondicionesContrato(
     (contratoCondiciones ?? []) as unknown as Parameters<typeof resolverCondicionesContrato>[0],
     (overridesCondiciones ?? []) as unknown as Parameters<typeof resolverCondicionesContrato>[1],
-    { monedaContrato: cobroDeVenta(venta).moneda, precioVenta: cobroDeVenta(venta).total, fechaViaje: venta.fecha_salida },
+    { monedaContrato: cobroDeVenta(venta).moneda, precioVenta: cobroDeVenta(venta).total, fechaViaje: venta.fecha_salida, netoTotalExigible: esVentaNetoDescontada(venta) ? cobroDeVenta(venta).total : null },
   );
 
   return (

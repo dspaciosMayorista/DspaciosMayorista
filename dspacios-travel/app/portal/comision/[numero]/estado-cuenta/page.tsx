@@ -4,7 +4,7 @@ import { createAdminClient } from "@/lib/supabase/admin";
 import { PrintButton } from "@/components/contrato/PrintButton";
 import { DocHeader, PRINT_DOC_STYLE } from "@/components/contrato/DocHeader";
 import { POWERED_BY } from "@/lib/contrato/plantilla";
-import { formatMoneda, formatFechaLarga } from "@/lib/utils";
+import { formatMonedaDocumento, formatFechaLarga } from "@/lib/utils";
 import { resolverComisionB2B } from "@/lib/finanzas/comisionResolver";
 import { tituloDocumento } from "@/lib/utils/tituloDocumento";
 import { ElegirComision, idComisionDeQuery } from "../ElegirComision";
@@ -73,7 +73,7 @@ export default async function EstadoCuentaComisionPage({ params, searchParams }:
               <tr className="border-b border-gray-100"><td className="py-2 text-gray-500">Aliado</td><td className="py-2 text-right">{r.aliado}</td></tr>
               <tr className="border-b border-gray-100"><td className="py-2 text-gray-500">Cliente</td><td className="py-2 text-right">{r.cliente ?? "—"}</td></tr>
               <tr className="border-b border-gray-100"><td className="py-2 text-gray-500">Destino</td><td className="py-2 text-right">{r.destino ?? "—"}</td></tr>
-              <tr className="border-b border-gray-100"><td className="py-2 text-gray-500">Total comisión</td><td className="py-2 text-right tabular-nums font-semibold">{formatMoneda(total, r.moneda)}</td></tr>
+              <tr className="border-b border-gray-100"><td className="py-2 text-gray-500">Total comisión</td><td className="py-2 text-right tabular-nums font-semibold">{formatMonedaDocumento(total, r.moneda)}</td></tr>
             </tbody>
           </table>
 
@@ -99,15 +99,15 @@ export default async function EstadoCuentaComisionPage({ params, searchParams }:
                     <tr key={p.id} className="border-t border-gray-100">
                       <td className="px-3 py-2 text-gray-400">{i + 1}</td>
                       <td className="px-3 py-2 text-gray-600">{formatFechaLarga(p.fecha)}</td>
-                      <td className="px-3 py-2 text-right tabular-nums text-gray-700">{formatMoneda(p.valor, r.moneda)}</td>
-                      <td className="px-3 py-2 text-right tabular-nums text-gray-500">{formatMoneda(p.saldoTras, r.moneda)}</td>
+                      <td className="px-3 py-2 text-right tabular-nums text-gray-700">{formatMonedaDocumento(p.valor, r.moneda)}</td>
+                      <td className="px-3 py-2 text-right tabular-nums text-gray-500">{formatMonedaDocumento(p.saldoTras, r.moneda)}</td>
                     </tr>
                   ))}
                 </tbody>
                 <tfoot>
                   <tr className="border-t border-gray-200 bg-gray-50 font-semibold">
                     <td className="px-3 py-2 text-gray-600" colSpan={2}>Total abonado</td>
-                    <td className="px-3 py-2 text-right tabular-nums text-gray-800">{formatMoneda(pagado, r.moneda)}</td>
+                    <td className="px-3 py-2 text-right tabular-nums text-gray-800">{formatMonedaDocumento(pagado, r.moneda)}</td>
                     <td className="px-3 py-2"></td>
                   </tr>
                 </tfoot>
@@ -120,7 +120,7 @@ export default async function EstadoCuentaComisionPage({ params, searchParams }:
             style={{ backgroundColor: saldo > 0 ? "rgba(192,57,43,0.06)" : "rgba(102,181,150,0.12)" }}>
             <span className="text-sm font-semibold text-gray-700">{saldo > 0 ? "Saldo pendiente" : "Pagado en su totalidad"}</span>
             <span className="text-xl font-bold" style={{ color: saldo > 0 ? "#C0392B" : "var(--brand-success)" }}>
-              {formatMoneda(saldo, r.moneda)}
+              {formatMonedaDocumento(saldo, r.moneda)}
             </span>
           </div>
 

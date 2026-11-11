@@ -80,7 +80,7 @@ async function generar(sensibles: Fila[]) {
   const f = clienteFalso(sensibles);
   __resetRevalidadas();
   __setClient(f.sb);
-  const r = await generarVouchersServicios("00-9191");
+  const r = await generarVouchersServicios("00-9191", {});
   assert.deepEqual(r, { ok: true, creados: 2 });
   const porProveedor = new Map(f.insertados.map((v) => [v.proveedor as string, v.contenido as Record<string, unknown>]));
   return { ...f, porProveedor };

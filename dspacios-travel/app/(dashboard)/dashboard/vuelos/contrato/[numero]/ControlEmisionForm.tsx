@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { actualizarEstadoEmisionContrato } from "../../contrato-vuelos-actions";
+import type { IdentidadContrato } from "@/lib/contrato/identidad";
 import { ESTADOS_EMISION, ESTADO_EMISION_LABEL, POR_CONFIRMAR, type EstadoEmision } from "@/lib/vuelos/control";
 
 const lbl = "mb-1 block text-xs font-medium text-gray-600";
@@ -15,9 +16,12 @@ const selCls = "w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text
 // ("Por confirmar") es una opción real, nunca se coacciona a 'pendiente'.
 export function ControlEmisionForm({
   numeroContrato,
+  identidad,
   estadoEmisionInicial,
 }: {
   numeroContrato: string;
+  /** Identidad del contrato tal como la leyó la página; se reenvía sin recalcular. */
+  identidad: IdentidadContrato;
   estadoEmisionInicial: string | null;
 }) {
   const router = useRouter();
@@ -30,7 +34,7 @@ export function ControlEmisionForm({
   function guardar() {
     setMsg(""); setOk(false);
     start(async () => {
-      const r = await actualizarEstadoEmisionContrato(numeroContrato, estadoEmision, nota);
+      const r = await actualizarEstadoEmisionContrato(numeroContrato, estadoEmision, nota, identidad);
       // Nunca se comporta como éxito si el RPC falló: `nota` solo se limpia
       // en la rama ok — si falla, el usuario conserva lo que escribió.
       if (r.ok) { setOk(true); setMsg("Guardado."); setNota(""); router.refresh(); } else { setOk(false); setMsg(r.error); }

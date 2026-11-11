@@ -48,7 +48,7 @@ $PSQL -d postgres -c 'select 1' >/dev/null 2>&1 || { echo "Postgres no responde 
 [ "$($PSQL -d postgres -t -A -c "select coalesce(to_regclass('public.programas')::text, 'no')")" = no ] || { echo "$CT ya tiene el esquema (public.programas existe): usa un contenedor nuevo." >&2; exit 3; }
 
 # Preparación del entorno (NO es esquema de la app).
-$PSQL -d postgres -c "alter table storage.buckets add column if not exists public boolean default false" >/dev/null
+$PSQL -d postgres -c "alter table storage.buckets add column if not exists public boolean default false, add column if not exists file_size_limit bigint, add column if not exists allowed_mime_types text[]" >/dev/null
 # La 237 lee auth.sessions (tabla de GoTrue); algunas imágenes de Postgres no la traen. Stub mínimo, solo si falta.
 $PSQL -d postgres -c "create table if not exists auth.sessions (id uuid primary key default gen_random_uuid(), user_id uuid, created_at timestamptz default now(), not_after timestamptz)" >/dev/null
 $PSQL -d postgres -c "do \$\$ begin if to_regprocedure('auth.jwt()') is null then create function auth.jwt() returns jsonb language sql stable as 'select coalesce(nullif(current_setting(''request.jwt.claims'', true), ''''), ''{}'')::jsonb'; end if; end \$\$" >/dev/null

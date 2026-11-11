@@ -1,0 +1,7 @@
+{
+  "_doc": "Portal B2B, soportes y Storage (agente 'portal').",
+  "acciones": ["app/portal/b2b/cartera/soportes-actions.ts"],
+  "helpers": ["lib/soportes/servidor.ts", "lib/soportes/operaciones.ts"],
+  "paginas": ["app/portal/b2b/cartera/page.tsx"],
+  "componentes": ["components/portal/SoportesPago.tsx"]
+}

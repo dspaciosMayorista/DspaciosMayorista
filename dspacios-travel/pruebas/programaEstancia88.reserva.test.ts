@@ -350,7 +350,7 @@ test("confirmar la venta (asegurarCuentasPorPagar) NO crea una CxP duplicada por
   const bd = usarBD(semilla(), RPCS);
   await reservar(bd, entrada({ nochesAdicionales: 3 }));
   const antes = bd.filas("cuentas_por_pagar").map((c) => ({ ...c }));
-  const r = await asegurarCuentasPorPagar(String(bd.filas("ventas")[0].numero_contrato));
+  const r = await asegurarCuentasPorPagar(String(bd.filas("ventas")[0].numero_contrato), {});
   assert.equal(r.ok, true, JSON.stringify(r));
   const despues = bd.filas("cuentas_por_pagar");
   assert.equal(despues.length, antes.length, `la confirmación creó ${despues.length - antes.length} CxP extra: ${JSON.stringify(despues.slice(antes.length).map((c) => [c.tipo_proveedor, c.valor_total]))}`);

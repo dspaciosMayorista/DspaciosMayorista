@@ -20,19 +20,19 @@ export async function aliadoActual(): Promise<Aliado | null> {
   return ctx.estado === "ok" ? ctx : null;
 }
 
-/** Números de los contratos PROPIOS del aliado (propiedad, no participación por comisión). */
-export async function contratosPropios(ctx: Aliado): Promise<Set<string>> {
-  const admin = createAdminClient();
+/** Contratos PROPIOS del aliado (propiedad, no participación por comisión): número → contrato_uid, leído en la MISMA consulta que decide la propiedad. */
+export async function contratosPropios(ctx: Aliado): Promise<Map<string, string | null>> {
+  const admin = createAdminClient(); // identidad:n/a — solo lectura
   const r = await contratosDelPortalB2B(
     { id: ctx.userId, rol: ctx.rol, tenant: ctx.tenant, activo: true, nombre: ctx.nombre || null, aliadoId: ctx.aliadoId, accesoLegacyNombre: ctx.accesoLegacyNombre },
-    consultasPortalSupabase(admin, COLUMNAS_DECISION)
+    consultasPortalSupabase(admin, `${COLUMNAS_DECISION}, contrato_uid`)
   );
-  return new Set(r.contratos.map((c) => c.numero_contrato));
+  return new Map(r.contratos.map((c) => [c.numero_contrato, typeof c.contrato_uid === "string" ? c.contrato_uid : null] as const));
 }
 
 /** Soportes VIGENTES de los contratos dados. `completa` false = no se pudo leer todo (se avisa; nunca una lista parcial presentada como total). */
 export async function soportesVigentes(numeros: string[]): Promise<{ filas: SoportePortal[]; completa: boolean }> {
-  const admin = createAdminClient();
+  const admin = createAdminClient(); // identidad:n/a — solo lectura
   const filas: SoportePortal[] = [];
   for (let i = 0; i < numeros.length; i += 100) {
     const lote = numeros.slice(i, i + 100);
@@ -51,19 +51,19 @@ export async function soportesVigentes(numeros: string[]): Promise<{ filas: Sopo
 
 /** Conteo de abonos de UN contrato (cupo informativo; el límite real lo impone la base). */
 export async function contarAbonos(numero: string): Promise<number | null> {
-  const { count, error } = await createAdminClient().from("abonos").select("id", { count: "exact", head: true }).eq("numero_contrato", numero);
+  const { count, error } = await createAdminClient().from("abonos").select("id", { count: "exact", head: true }).eq("numero_contrato", numero); // identidad:n/a — solo lectura
   return error ? null : (count ?? 0);
 }
 
 export async function contarVigentes(numero: string): Promise<number | null> {
-  const { count, error } = await createAdminClient().from("contrato_soportes_pago").select("id", { count: "exact", head: true }).eq("numero_contrato", numero).eq("vigente", true).is("archivado_en", null);
+  const { count, error } = await createAdminClient().from("contrato_soportes_pago").select("id", { count: "exact", head: true }).eq("numero_contrato", numero).eq("vigente", true).is("archivado_en", null); // identidad:n/a — solo lectura
   return error ? null : (count ?? 0);
 }
 
 /** ¿Hay una fila con esta ruta? (la ruta es única). «incierto» si la consulta falla: nunca se asume. */
 export async function confirmarRuta(path: string): Promise<"vinculado" | "ausente" | "incierto"> {
   try {
-    const { data, error } = await createAdminClient().from("contrato_soportes_pago").select("id").eq("path", path).maybeSingle();
+    const { data, error } = await createAdminClient().from("contrato_soportes_pago").select("id").eq("path", path).maybeSingle(); // identidad:n/a — solo lectura
     if (error) return "incierto";
     return data ? "vinculado" : "ausente";
   } catch { return "incierto"; }
@@ -75,7 +75,7 @@ export async function confirmarRuta(path: string): Promise<"vinculado" | "ausent
  * Límite honesto: dos subidas idénticas SIMULTÁNEAS podrían pasar ambas esta comprobación (no hay índice único por contenido).
  */
 export async function soporteVigenteConHash(numero: string, sha256: string): Promise<boolean | null> {
-  const { count, error } = await createAdminClient().from("contrato_soportes_pago").select("id", { count: "exact", head: true })
+  const { count, error } = await createAdminClient().from("contrato_soportes_pago").select("id", { count: "exact", head: true }) // identidad:n/a — solo lectura
     .eq("numero_contrato", numero).eq("vigente", true).is("archivado_en", null).eq("sha256", sha256);
   return error ? null : (count ?? 0) > 0;
 }
@@ -85,7 +85,7 @@ export async function soporteVigenteConHash(numero: string, sha256: string): Pro
  * no por un hash suelto en el contrato. `error` = no se pudo leer (no se asume nada).
  */
 export async function sucesorDe(id: number): Promise<{ estado: "ninguno" } | { estado: "existe"; sha256: string } | { estado: "error" }> {
-  const { data, error } = await createAdminClient().from("contrato_soportes_pago").select("sha256").eq("reemplaza_id", id).maybeSingle();
+  const { data, error } = await createAdminClient().from("contrato_soportes_pago").select("sha256").eq("reemplaza_id", id).maybeSingle(); // identidad:n/a — solo lectura
   if (error) return { estado: "error" };
   return data ? { estado: "existe", sha256: data.sha256 } : { estado: "ninguno" };
 }

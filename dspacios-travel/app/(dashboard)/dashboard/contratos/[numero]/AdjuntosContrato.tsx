@@ -3,6 +3,7 @@
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
+import type { IdentidadContrato } from "@/lib/contrato/identidad";
 import { Lock } from "lucide-react";
 import { registrarAdjunto, urlFirmadaAdjunto, eliminarAdjunto } from "./adjuntos-actions";
 import { subirYRegistrar } from "@/lib/adjuntos/operaciones";
@@ -33,7 +34,7 @@ function fmtBytes(n: number | null): string {
 // ni elimina. La RLS de `contrato_adjuntos` y las policies de Storage de la
 // migración 148 imponen lo mismo del lado del servidor: esto es para que no
 // haya botones que solo sirven para recibir un error.
-export function AdjuntosContrato({ numeroContrato, adjuntos, puedeEditar = true }: { numeroContrato: string; adjuntos: Adjunto[]; puedeEditar?: boolean }) {
+export function AdjuntosContrato({ numeroContrato, adjuntos, puedeEditar = true, identidad }: { numeroContrato: string; adjuntos: Adjunto[]; puedeEditar?: boolean; identidad: IdentidadContrato }) {
   const router = useRouter();
   const [tipo, setTipo] = useState("cedula");
   const [subiendo, setSubiendo] = useState(false);
@@ -46,7 +47,7 @@ export function AdjuntosContrato({ numeroContrato, adjuntos, puedeEditar = true 
     if (file.size > MAX_MB * 1024 * 1024) { setErr(`El archivo supera ${MAX_MB} MB. Comprímelo o súbelo más liviano.`); return; }
     setSubiendo(true);
     try {
-      const sb = createClient();
+      const sb = createClient(identidad); // instancia propia con la cabecera de identidad (Storage la verifica)
       const ext = file.name.split(".").pop() || "bin";
       const path = `${numeroContrato}/${tipo}-${Date.now()}.${ext}`;
       // Si el archivo sube pero el registro falla, hay que DESHACER la subida:
@@ -55,7 +56,7 @@ export function AdjuntosContrato({ numeroContrato, adjuntos, puedeEditar = true 
       const r = await subirYRegistrar(
         {
           subirArchivo: (p, a) => sb.storage.from("contratos").upload(p, a as File, { upsert: false }),
-          registrarFila: (p) => registrarAdjunto({ numeroContrato, tipo, nombre: file.name, path: p, sizeBytes: file.size }),
+          registrarFila: (p) => registrarAdjunto({ numeroContrato, tipo, nombre: file.name, path: p, sizeBytes: file.size }, identidad),
           eliminarArchivo: (paths) => sb.storage.from("contratos").remove(paths),
         },
         { path, archivo: file }
@@ -99,7 +100,7 @@ export function AdjuntosContrato({ numeroContrato, adjuntos, puedeEditar = true 
               <th className="px-3 py-2">Tipo</th><th className="px-3 py-2">Archivo</th>
               <th className="px-3 py-2">Tamaño</th><th className="px-3 py-2">Subido por</th><th className="px-3 py-2">Fecha</th><th className="px-3 py-2">Acciones</th>
             </tr></thead>
-            <tbody>{adjuntos.map((a) => <Fila key={a.id} a={a} puedeEditar={puedeEditar} />)}</tbody>
+            <tbody>{adjuntos.map((a) => <Fila key={a.id} a={a} puedeEditar={puedeEditar} identidad={identidad} />)}</tbody>
           </table>
         </ResponsiveTableShell>
       ) : puedeEditar ? (
@@ -125,7 +126,7 @@ export function AdjuntosContrato({ numeroContrato, adjuntos, puedeEditar = true 
   );
 }
 
-function Fila({ a, puedeEditar }: { a: Adjunto; puedeEditar: boolean }) {
+function Fila({ a, puedeEditar, identidad }: { a: Adjunto; puedeEditar: boolean; identidad: IdentidadContrato }) {
   const router = useRouter();
   const [borrando, setBorrando] = useState(false);
   const [errFila, setErrFila] = useState("");
@@ -140,7 +141,7 @@ function Fila({ a, puedeEditar }: { a: Adjunto; puedeEditar: boolean }) {
     setErrFila("");
     setBorrando(true);
     try {
-      const r = await eliminarAdjunto(a.id);
+      const r = await eliminarAdjunto(a.id, identidad);
       if (!r.ok) { setErrFila(r.error); return; }
       router.refresh();
     } catch (e) {

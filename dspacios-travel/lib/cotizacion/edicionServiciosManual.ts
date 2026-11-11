@@ -149,7 +149,7 @@ export function entradaHistorialServicios(args: {
 }
 
 // ── Errores de la base → mensaje para el navegador ─────────────────────────
-const PREFIJOS = ["EDICION_39_", "PAGO_39_", "FRONTERA_39"];
+const PREFIJOS = ["EDICION_39_", "PAGO_39_", "FRONTERA_39", "ACUERDO_97"];
 
 /** Código `EDICION_39_<X>` de un error de la base, si lo trae. */
 export function codigoEdicion39(raw: string | null | undefined): CodigoEdicion39 | null {

@@ -380,7 +380,7 @@ describe("resolverManifiestoAutorizado — REQUERIDO: autoriza con sesión, resu
         throw new Error("SUPABASE_SERVICE_ROLE_KEY no configurada");
       }
     );
-    assert.deepEqual(resultado, { infantes: [], referenciaManualPorContrato: new Map() });
+    assert.deepEqual(resultado, { infantes: [], referenciaManualPorContrato: new Map(), uidPorContrato: new Map() });
   });
 
   test("sin contratos orgánicos ni referencias manuales resueltas: no consulta contrato_pasajeros", async () => {

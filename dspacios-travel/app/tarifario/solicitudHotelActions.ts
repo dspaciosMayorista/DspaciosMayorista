@@ -31,6 +31,7 @@ export type OcupacionSolicitudResult = { ok: true; adultos: number; ninos: numbe
  * Aviso ANTES de enviar: ¿la acomodación elegida admite a los niños/infantes declarados en este hotel? Mismas reglas del motor (umbrales de edad del hotel, `hotel_acomodaciones`;
  * sin configurar rigen los defaults del motor). Solo informa conteos y el motivo; no crea nada y solo responde por hoteles marcados y seleccionados en el paquete.
  */
+// identidad:n/a — solicitud/cotización o validación de ocupación; no escribe tablas de contrato
 export async function validarOcupacionSolicitud(raw: unknown): Promise<OcupacionSolicitudResult> {
   const r = (typeof raw === "object" && raw !== null ? raw : {}) as Record<string, unknown>;
   const id = (v: unknown) => (typeof v === "number" && Number.isSafeInteger(v) && v > 0 ? v : null);
@@ -48,20 +49,21 @@ export async function validarOcupacionSolicitud(raw: unknown): Promise<Ocupacion
   const adultos = r.adultos == null || r.adultos === "" ? null : r.adultos;
   if (adultos !== null && (typeof adultos !== "number" || !Number.isInteger(adultos) || adultos < 1 || adultos > 40)) return { ok: false, error: "La cantidad de adultos debe ser un número entero de 1 en adelante." };
   if (!process.env.SUPABASE_SERVICE_ROLE_KEY) return { ok: false, error: ERROR_CONFIG };
-  const admin = createAdminClient();
+  const admin = createAdminClient(); // identidad:n/a — solicitud/cotización/lectura de catálogo; no escribe tablas de contrato
   const mod = await modalidadDelVinculo(admin, paqueteId, hotelId);
   if (!mod.ok || mod.modalidad !== "bajo_solicitud") return { ok: false, error: "Este hotel no se ofrece bajo solicitud en este paquete." };
   const o = await evaluarOcupacionHotel(admin, hotelId, hab, edades as number[], adultos);
   return o.ok ? { ok: true, ...o.conteos } : { ok: false, error: o.error };
 }
 
+// identidad:n/a — solicitud/cotización o validación de ocupación; no escribe tablas de contrato
 export async function crearSolicitudHotel(raw: unknown): Promise<SolicitudHotelResult> {
   const hoy = hoyBogota();
   const v = validarEntradaSolicitudHotel(raw, hoy);
   if (!v.ok) return { ok: false, error: v.error };
   const input: SolicitudHotelEntrada = v.input;
   if (!process.env.SUPABASE_SERVICE_ROLE_KEY) return { ok: false, error: ERROR_CONFIG };
-  const admin = createAdminClient();
+  const admin = createAdminClient(); // identidad:n/a — solicitud/cotización/lectura de catálogo; no escribe tablas de contrato
 
   // Paquete vendible hoy y de un tipo que admite hotel a solicitud.
   const { data: pq, error: ePq } = await admin
@@ -130,7 +132,7 @@ export async function crearSolicitudHotel(raw: unknown): Promise<SolicitudHotelR
   // Identidad B2B desde la sesión.
   const ctxB2B = await getContextoB2B();
   if (ctxB2B.error) return { ok: false, error: ctxB2B.error };
-  const sb = await createClient();
+  const sb = await createClient(); // identidad:n/a — solicitud/cotización/lectura de catálogo; no escribe tablas de contrato
   const { data: { user } } = await sb.auth.getUser();
   let aliadoId: number | null = null;
   if (ctxB2B.esB2B && user) {

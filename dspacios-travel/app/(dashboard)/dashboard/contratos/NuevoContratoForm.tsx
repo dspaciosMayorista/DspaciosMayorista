@@ -156,7 +156,7 @@ export function NuevoContratoForm({
   const [tipoVenta, setTipoVenta] = useState<"interno" | "agencia" | "freelance">("interno");
   const [aliadoId, setAliadoId] = useState<number | "">("");
   // #30 (entrega B): cómo compra el aliado B2B. PVP = paga el total y su
-  // comisión queda "Por definir" (como dejó #38); NETO = paga PVP − su
+  // comisión se registra sola con el % del aliado (#97; negociado: "Por definir"); NETO = paga PVP − su
   // comisión, ya descontada (la calcula el servidor; aquí solo se muestra).
   const [modoCompra, setModoCompra] = useState<"pvp" | "neto">("pvp");
   // Resultado de la última vista previa con la combinación que lo produjo: un
@@ -496,7 +496,7 @@ export function NuevoContratoForm({
             <div className="flex flex-wrap gap-4 text-sm">
               <label className="flex items-center gap-2">
                 <input type="radio" name="modoCompra" checked={modoCompra === "pvp"} onChange={() => setModoCompra("pvp")} />
-                PVP: paga el total; su comisión se liquida aparte (queda por definir)
+                PVP: paga el total; la comisión del aliado se registra sola con su porcentaje del catálogo (en paquetes negociados queda por definir)
               </label>
               <label className="flex items-center gap-2">
                 <input type="radio" name="modoCompra" checked={modoCompra === "neto"} onChange={() => setModoCompra("neto")} />

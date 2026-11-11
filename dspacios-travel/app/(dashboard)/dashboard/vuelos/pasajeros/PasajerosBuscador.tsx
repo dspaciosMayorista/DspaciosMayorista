@@ -9,6 +9,7 @@ import { EnlaceEditarContrato } from "@/components/vuelos/EnlaceEditarContrato";
 import { InfanteVueloForm } from "@/components/vuelos/InfanteVueloForm";
 import type { EnlaceContratoInfo } from "@/lib/vuelos/enlaceContrato";
 import type { Tenant } from "@/lib/tenant";
+import type { IdentidadContrato } from "@/lib/contrato/identidad";
 import { ResponsiveTableShell } from "@/components/ui/ResponsiveTableShell";
 
 export type PasajeroFila = {
@@ -27,6 +28,8 @@ export type PasajeroFila = {
   enlaceEditarContrato?: EnlaceContratoInfo;
   nombres: string; apellidos: string; tipoDoc: string; numeroDoc: string;
   contrato: string; asesor: string; agencia: string; hotel: string; acomodacion: string;
+  /** Identidad (#75) del contrato de la silla, de la misma carga de la página; {} sin contrato. En un infante es la de su silla responsable. Se reenvía sin recalcular. */
+  identidad: IdentidadContrato;
   bloqueoId: number | null;
   record: string; ruta: string; fechaIda: string | null; vueloIda: string;
   fechaRegreso: string | null; vueloRegreso: string;
@@ -160,6 +163,7 @@ export function PasajerosBuscador({
                         sillaResponsableId={p.sillaId}
                         fechaIdaBloqueo={p.fechaIda}
                         modo="crear"
+                        identidad={p.identidad}
                       />
                     )}
                   </td>
@@ -181,6 +185,7 @@ export function PasajerosBuscador({
                             sillaResponsableId={p.sillaId}
                             fechaIdaBloqueo={p.fechaIda}
                             modo="editar"
+                            identidad={p.identidad}
                             inicial={{
                               id: inf.infanteId,
                               nombreCompleto: inf.nombres,

@@ -63,7 +63,7 @@ async function sesionPagoAutorizada(): Promise<{
   rol: string;
   tenant: string;
 } | null> {
-  const sb = await createClient();
+  const sb = await createClient(); // identidad:n/a — solo lee sesión/rol
   const { data: { user } } = await sb.auth.getUser();
   if (!user) return null;
   const { data: perfil } = await sb
@@ -116,6 +116,7 @@ export interface RegistrarPagoPrevioInput {
  * acepta como string no vacía. Reenviar la MISMA clave tras un resultado
  * ambiguo recupera el pago original; con identidad distinta el RPC la rechaza.
  */
+// identidad:n/a — opera sobre la cotización (cotizacion_pagos_previos), sin tocar tablas de contrato
 export async function registrarPagoPrevio(
   cotizacionId: number,
   input: RegistrarPagoPrevioInput,
@@ -140,7 +141,7 @@ export async function registrarPagoPrevio(
   const referencia = String(input?.referencia ?? "").trim();
   const fechaPago = fechaElegidaONegocio(String(input?.fechaPago ?? ""));
 
-  const admin = createAdminClient();
+  const admin = createAdminClient(); // identidad:n/a — pagos previos de COTIZACIÓN (no hay contrato: no se toca numero_contrato)
 
   // ── la cotización, su estado, su tenant y su moneda ──
   const { data: cot } = await admin
@@ -270,6 +271,7 @@ export async function registrarPagoPrevio(
   return { ok: true, pagoId };
 }
 
+// identidad:n/a — opera sobre la cotización, sin tocar tablas de contrato
 export async function anularPagoPrevio(
   pagoId: number,
   motivo?: string,
@@ -279,7 +281,7 @@ export async function anularPagoPrevio(
   if (!sesion) {
     return { ok: false, error: "No autorizado: los pagos previos requieren superadmin/administración/gerencia/operaciones." };
   }
-  const admin = createAdminClient();
+  const admin = createAdminClient(); // identidad:n/a — pagos previos de COTIZACIÓN (no hay contrato)
 
   // Verificación de tenant ANTES del RPC (el RPC vuelve a validar rol, pero la
   // propiedad por agencia la decide aquí).
@@ -349,19 +351,20 @@ export type ContextoModalidad =
       vista: Record<string, { moneda: string; conReconoce: VistaNeto; sinReconoce: VistaNeto }>;
     };
 
+// identidad:n/a — solo lectura
 export async function contextoModalidadNeto(
   entrada: { token?: string | null; solicitudId?: number | null },
 ): Promise<ContextoModalidad> {
   const NO: ContextoModalidad = { permite: false };
   if (!process.env.SUPABASE_SERVICE_ROLE_KEY) return NO;
-  const sb = await createClient();
+  const sb = await createClient(); // identidad:n/a — solo lectura
   const { data: { user } } = await sb.auth.getUser();
   if (!user) return NO;
   const { data: perfil } = await sb.from("usuarios").select("rol, activo, tenant").eq("id", user.id).maybeSingle();
   const rol = perfil?.rol ?? null;
   if (!rol || perfil?.activo !== true || !(ROLES_INTERNOS_COMPARATIVA as readonly string[]).includes(rol)) return NO;
 
-  const admin = createAdminClient();
+  const admin = createAdminClient(); // identidad:n/a — solo lectura
   let madreId: number | null = null;
   if (typeof entrada?.token === "string" && TOKEN_ENLACE.test(entrada.token.trim())) {
     const { data } = await admin.from("cotizaciones").select("id").eq("share_token", entrada.token.trim().toLowerCase()).maybeSingle();
@@ -399,8 +402,10 @@ export async function contextoModalidadNeto(
   if (!aliado) return base;
   const pct = Math.round(pctComisionAliado(aliado.pct_comision, param?.valor ?? null, tipoAsesor) * 10000) / 10000;
 
+  // #97 (286): la vista previa usa la misma regla que sellará la base (activa solo tras la fase 3; antes, la de siempre).
+  const { data: reglaNueva } = await admin.rpc("p97_regla_neto_activa");
   const vista = (e: Parameters<typeof calcularNetoHija>[0]): VistaNeto => {
-    const r = calcularNetoHija(e);
+    const r = calcularNetoHija({ ...e, reglaParticipacion: reglaNueva === true });
     const ev = evaluarMargenNeto(r.neto, r.costos, r.soloTiquetes);
     return {
       reconoce: e.reconoceRecobro, hayDescuento: r.descuento > BigInt(0), pvp: aUnidades(r.precio),

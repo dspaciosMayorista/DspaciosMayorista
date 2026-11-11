@@ -72,6 +72,7 @@ async function render(props: { libre: boolean; inicial?: typeof VACIO; contratoO
       libre: props.libre,
       contratoOrganico: props.contratoOrganico ?? false,
       contratoVisto: { numero_contrato: props.contratoOrganico ? "DTM-0001" : null, contrato_manual: null, updated_at: "V-7" },
+      identidad: {},
     }))
   );
 }

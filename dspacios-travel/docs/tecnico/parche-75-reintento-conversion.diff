@@ -1,0 +1,28 @@
+# Corrección que debe hacer #75 en SU envoltura (288): public.convertir_cotizacion_a_contrato.
+# Problema: si la cotización YA tiene su contrato (reintento, respuesta perdida o llamada concurrente), la envoltura vuelve a ejecutar trasladar_cxp_a_previstas y
+# falla con «mover_cxp_a_prevista: solo se trasladan obligaciones de un contrato pendiente» cuando el contrato ya se confirmó por el pago previo. Una conversión válida ya completada no puede dar error.
+# Regla (acordada con #97): si la cotización ya tiene contrato, devolver ESE mismo contrato SIN trasladar CxP ni repetir nada, y ANTES de devolverlo comprobar la autorización vigente
+# del actor (usuario existente, activo, rol de conversión) y su acceso a la agencia de la cotización y del contrato (superadmin = excepción global). El FOR UPDATE de la cotización serializa
+# la llamada concurrente. #97 hace lo mismo en convertir_cotizacion_manual_controlada; esto cubre a los demás llamadores de la envoltura de #75.
+--- 20260601000288_obligaciones_al_confirmar.sql (antes)
++++ 20260601000288_obligaciones_al_confirmar.sql (después)
+@@ create or replace function public.convertir_cotizacion_a_contrato(p_cotizacion_id bigint, p_usuario_id uuid)
+-declare v_n text;
++declare v_n text; v_rol text; v_t_cot text; v_t_vta text; v_t_act text;
+ begin
++  v_rol := public._autorizado_pago_previo(p_usuario_id);
++  select tenant into v_t_cot from public.cotizaciones where id = p_cotizacion_id for update;
++  if found then
++    select tenant into v_t_act from public.usuarios where id = p_usuario_id;
++    if v_rol <> 'superadmin' and v_t_act is distinct from v_t_cot then
++      raise exception 'No tienes acceso a la agencia (tenant %) de esta cotización.', v_t_cot;
++    end if;
++    select numero_contrato, tenant into v_n, v_t_vta from public.ventas where cotizacion_id = p_cotizacion_id;
++    if found then
++      if v_rol <> 'superadmin' and v_t_act is distinct from v_t_vta then
++        raise exception 'No tienes acceso a la agencia (tenant %) de este contrato.', v_t_vta;
++      end if;
++      return v_n;   -- conversión ya terminada: ni CxP a previstas, ni materialización, ni validaciones económicas
++    end if;
++  end if;
+   v_n := p75_priv.convertir_cotizacion_base(p_cotizacion_id, p_usuario_id);

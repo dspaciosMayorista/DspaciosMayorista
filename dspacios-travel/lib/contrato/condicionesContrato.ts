@@ -36,6 +36,7 @@
 //     llamador debe mantener el comportamiento de siempre (sin sección).
 // ─────────────────────────────────────────────────────────────────────────
 
+import { reglaConfirmacion, textoMinimoConfirmar, type MonedaRegla, type SalidaRegla } from "@/lib/contrato/reglaConfirmacion";
 import {
   esRestriccionComercial,
   sumarDias,
@@ -132,6 +133,8 @@ export interface ResumenCondicionesContrato {
   pctEfectivoInformativo: number | null;
   /** Frase lista para mostrar, ej. "Pago mínimo requerido: $5.800.000 COP (58 % informativo)". */
   texto: string;
+  /** Parte 3: la regla ÚNICA del mínimo para CONFIRMAR (la misma que aplica la base); distinta del mínimo para convertir la cotización. */
+  minimoConfirmar: SalidaRegla;
 }
 
 export interface CondicionesContratoResueltas {
@@ -188,7 +191,8 @@ function aRestriccion(s: string): RestriccionComercial {
 export function resolverCondicionesContrato(
   rows: FilaCondicionContratoRow[],
   overrides: OverrideContratoRow[],
-  ctx: { monedaContrato: string; precioVenta?: number | null; fechaViaje?: string | null } = { monedaContrato: "COP" },
+  // `netoTotalExigible` (Parte 3 de #75): total NETO exigible de un contrato NETO de aliado → el mínimo para CONFIRMAR es ese total (no la suma de las condiciones).
+  ctx: { monedaContrato: string; precioVenta?: number | null; fechaViaje?: string | null; netoTotalExigible?: number | null } = { monedaContrato: "COP" },
 ): CondicionesContratoResueltas {
   if (!rows.length) {
     return {
@@ -282,8 +286,15 @@ export function resolverCondicionesContrato(
     precioVenta > 0 ? Math.round((montoMinimoExigidoTotal / precioVenta) * 10_000) / 100 : null;
   const moneda = filas[0]?.moneda ?? ctx.monedaContrato;
   const montoTexto = new Intl.NumberFormat("es-CO", { maximumFractionDigits: 0 }).format(montoMinimoExigidoTotal);
+  const monedaRegla: MonedaRegla = String(moneda).toUpperCase() === "USD" ? "USD" : "COP";
+  const minimoConfirmar = reglaConfirmacion({
+    netoAliado: ctx.netoTotalExigible != null, totalCobro: ctx.netoTotalExigible ?? precioVenta, monedaCobro: monedaRegla,
+    condiciones: filas.map((f) => ({ monto_exigido: f.exigido, moneda: f.moneda, trm: f.trm })),
+  });
   const texto =
-    pctEfectivoInformativo != null
+    ctx.netoTotalExigible != null
+      ? textoMinimoConfirmar(minimoConfirmar)
+      : pctEfectivoInformativo != null
       ? `Pago mínimo requerido: $${montoTexto} ${moneda} (${pctEfectivoInformativo.toFixed(0)} % informativo)`
       : `Pago mínimo requerido: $${montoTexto} ${moneda}`;
 
@@ -293,6 +304,6 @@ export function resolverCondicionesContrato(
     filas,
     restringidas,
     huboRestriccionOriginal,
-    resumen: { montoMinimoExigidoTotal, pctEfectivoInformativo, texto },
+    resumen: { montoMinimoExigidoTotal, pctEfectivoInformativo, texto, minimoConfirmar },
   };
 }

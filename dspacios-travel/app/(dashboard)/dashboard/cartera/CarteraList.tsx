@@ -7,14 +7,18 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { formatMoneda, formatFechaLarga } from "@/lib/utils";
 import { fechaNegocio } from "@/lib/fechaNegocio";
+import type { IdentidadContrato } from "@/lib/contrato/identidad";
 import { registrarAbonoCartera, actualizarAbonoCartera, anularAbonoCartera } from "./actions";
 import { AnularAbonoBoton } from "@/components/contrato/AnularAbonoBoton";
 import { ConfirmarExcedenteAbono } from "@/components/contrato/ConfirmarExcedenteAbono";
 import { useRegistroAbono } from "@/components/contrato/useRegistroAbono";
+import { ConfirmacionPendienteAbono } from "@/components/contrato/ConfirmacionPendienteAbono";
 import { ResponsiveTableShell } from "@/components/ui/ResponsiveTableShell";
 
 export type CarteraRow = {
   numero_contrato: string;
+  /** Identidad del contrato tal como la leyó la página (misma consulta de `ventas`); se reenvía a cada acción. */
+  identidad: IdentidadContrato;
   cliente: string | null;
   destino: string | null;
   precio_venta: number;
@@ -242,7 +246,7 @@ function EstadoCuenta({ row, formasPago }: { row: CarteraRow; formasPago: string
               </thead>
               <tbody>
                 {row.abonos.map((a) => (
-                  <FilaAbonoCartera key={a.id} a={a} numeroContrato={row.numero_contrato} moneda={row.moneda} formasPago={formasPago} />
+                  <FilaAbonoCartera key={a.id} a={a} identidad={row.identidad} numeroContrato={row.numero_contrato} moneda={row.moneda} formasPago={formasPago} />
                 ))}
               </tbody>
               <tfoot>
@@ -269,7 +273,7 @@ function EstadoCuenta({ row, formasPago }: { row: CarteraRow; formasPago: string
             Este contrato está totalmente pagado.
           </p>
         ) : (
-          <AbonoInline numeroContrato={row.numero_contrato} formasPago={formasPago} saldo={row.saldo} moneda={row.moneda} />
+          <AbonoInline identidad={row.identidad} numeroContrato={row.numero_contrato} formasPago={formasPago} saldo={row.saldo} moneda={row.moneda} />
         )}
       </div>
     </div>
@@ -279,8 +283,9 @@ function EstadoCuenta({ row, formasPago }: { row: CarteraRow; formasPago: string
 // Fila de abono con edición inline (corregir un error de digitación sin tener
 // que registrar un segundo abono para "cuadrar" el saldo) y eliminar.
 function FilaAbonoCartera({
-  a, numeroContrato, moneda, formasPago,
+  a, numeroContrato, moneda, formasPago, identidad,
 }: {
+  identidad: IdentidadContrato;
   a: CarteraRow["abonos"][number]; numeroContrato: string; moneda: string; formasPago: string[];
 }) {
   const [editar, setEditar] = useState(false);
@@ -301,7 +306,7 @@ function FilaAbonoCartera({
       const r = await actualizarAbonoCartera(a.id, numeroContrato, {
         valor: Number(valor) || 0, fecha, formaPago: forma, referencia: ref,
         trmInput: esUSD ? Number(trm) || 0 : undefined,
-      });
+      }, identidad);
       if (r.ok) setEditar(false); else setErr(r.error ?? "Error");
     });
   }
@@ -343,18 +348,20 @@ function FilaAbonoCartera({
       </td>
       <td className="px-3 py-2 text-right whitespace-nowrap" data-label="Acciones">
         <button type="button" onClick={() => setEditar(true)} className="mr-3 text-xs font-medium hover:underline" style={{ color: "var(--brand-accent)" }}>Editar</button>
-        <AnularAbonoBoton resumen={`${formatMoneda(a.valor_abono, moneda)} del ${formatFechaLarga(a.fecha_abono)}`} onAnular={(motivo) => anularAbonoCartera(a.id, numeroContrato, motivo)} />
+        <AnularAbonoBoton resumen={`${formatMoneda(a.valor_abono, moneda)} del ${formatFechaLarga(a.fecha_abono)}`} onAnular={(motivo) => anularAbonoCartera(a.id, numeroContrato, motivo, identidad)} />
       </td>
     </tr>
   );
 }
 
 function AbonoInline({
+  identidad,
   numeroContrato,
   formasPago,
   saldo,
   moneda,
 }: {
+  identidad: IdentidadContrato;
   numeroContrato: string;
   formasPago: string[];
   saldo: number;
@@ -370,7 +377,7 @@ function AbonoInline({
   const reg = useRegistroAbono({
     campos: { valor, forma, ref, trm, fecha },
     esUSD,
-    registrar: (e, confirmar) => registrarAbonoCartera(numeroContrato, e.valor, e.forma, e.ref, e.trm, e.fecha, confirmar, e.operacion),
+    registrar: (e, confirmar) => registrarAbonoCartera(numeroContrato, e.valor, e.forma, e.ref, e.trm, e.fecha, confirmar, e.operacion, identidad),
     reiniciar: () => { setValor(""); setForma(""); setRef(""); setTrm(""); setFecha(fechaNegocio()); },
   });
   const { pending, error } = reg;
@@ -378,6 +385,7 @@ function AbonoInline({
   return (
     <form onSubmit={(e) => { e.preventDefault(); reg.enviar(); }} className="space-y-3 rounded-lg border border-gray-200 bg-white p-4">
       <ConfirmarExcedenteAbono datos={reg.excedente} onCancelar={reg.cancelar} onConfirmar={reg.confirmar} />
+      <ConfirmacionPendienteAbono mensaje={reg.confirmacionPendiente} pending={pending} onReintentar={reg.reintentarConfirmacion} />
       <div className="flex flex-wrap items-end gap-3">
         <div>
           <label className="mb-1 block text-xs font-medium text-gray-600">{esUSD ? "Valor pagado (COP)" : "Valor"}</label>
@@ -425,7 +433,7 @@ function AbonoInline({
           <label className="mb-1 block text-xs font-medium text-gray-600">Fecha del abono</label>
           <DateInput aria-label="Fecha del abono" type="date" value={fecha} onValueChange={(dateValue) => setFecha(dateValue)} className="w-40" />
         </div>
-        <Button type="submit" disabled={pending} style={{ backgroundColor: "var(--brand-primary)" }}>
+        <Button type="submit" disabled={pending || !!reg.confirmacionPendiente} style={{ backgroundColor: "var(--brand-primary)" }}>
           {pending ? "Guardando…" : "Registrar abono"}
         </Button>
         <button

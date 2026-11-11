@@ -57,7 +57,7 @@ for (const [momento, instante] of MOMENTOS) {
 test("fechas elegidas a mano a las 19:30 Bogotá: se guardan tal cual (práctica y mes)", async () => {
   reloj(DESPUES_DEL_CORTE);
   const bd = usarBD(semilla());
-  const r = await registrarRetencion({ cuentaId: 9, valor: 35_000, baseGravable: 1_000_000, fechaPractica: "2026-10-01", mesDeclaracion: "2026-10" });
+  const r = await registrarRetencion({ cuentaId: 9, valor: 35_000, baseGravable: 1_000_000, fechaPractica: "2026-10-01", mesDeclaracion: "2026-10" }, {});
   assert.deepEqual(r, { ok: true });
   assert.equal(bd.filas("retenciones_cxp")[0].fecha_practica, "2026-10-01");
   assert.equal(bd.filas("retenciones_cxp")[0].mes_declaracion, "2026-10");

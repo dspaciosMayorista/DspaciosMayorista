@@ -1,6 +1,7 @@
 "use server";
 
 import { createClient } from "@/lib/supabase/server";
+import { createAdminClient } from "@/lib/supabase/admin";
 import { revalidatePath } from "next/cache";
 import { regenerarTarifariosDeServicio, generarTarifario } from "../../paquetes/actions";
 import { exigirEscrituraCatalogoGlobal } from "@/lib/auth/contextoAgencia";
@@ -300,6 +301,10 @@ export async function eliminarServicio(id: number): Promise<Result> {
   // no existe todavía, 42703, no hay nada enlazado y se sigue como siempre; si la RLS no deja leer, el rechazo de la base se traduce abajo).
   const { data: enlazada, error: eEnlace } = await sb.from("cuentas_por_pagar").select("id").eq("servicio_id", id).not("contrato_servicio_id", "is", null).limit(1);
   if (!eEnlace && (enlazada ?? []).length) return { ok: false, error: MENSAJE_SERVICIO_CON_OBLIGACIONES };
+  // 292: también las obligaciones PREVISTAS (contratos pendientes, 288). La tabla solo la lee service_role; si falla o no existe, decide la base.
+  // identidad:n/a — lectura de catálogo, sin contrato concreto; la acción ya exigió escritura de catálogo global
+  const { data: prevista, error: ePrev } = await createAdminClient().from("contrato_obligaciones_previstas").select("id").eq("payload->>servicio_id", String(id)).is("materializada_en", null).limit(1);
+  if (!ePrev && (prevista ?? []).length) return { ok: false, error: MENSAJE_SERVICIO_CON_OBLIGACIONES };
   // Captura los paquetes que lo usaban ANTES de borrar; se regeneran después.
   const { data: usados } = await sb.from("armado_servicios").select("paquete_id").eq("servicio_id", id);
   const paqIds = [...new Set((usados ?? []).map((u) => u.paquete_id))];

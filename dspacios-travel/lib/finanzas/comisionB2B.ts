@@ -288,7 +288,18 @@ export function filasCobrables<T extends FilaComisionB2B>(
 }
 
 /** Datos de `ventas` que intervienen en qué comisión ve un aliado. */
+/**
+ * Ciclo de vida de la comisión (#97/#75): un contrato PENDIENTE solo tiene cálculo informativo (el plan); la comisión es exigible —y admite cuenta de cobro— cuando
+ * el contrato está CONFIRMADO. 'activo' es el estado histórico de los contratos manuales anteriores y se trata como confirmado (no se migran estados históricos).
+ * Sin estado conocido → NO exigible (falla cerrado).
+ */
+export function estadoExigible(estado: string | null | undefined): boolean {
+  return estado === "confirmado" || estado === "activo";
+}
+
 export type VentaComisionAliado = {
+  /** Estado del contrato: sin él, el respaldo de `ventas.comision_b2b` no se considera cobrable. */
+  estado?: string | null;
   aliado_id?: number | null;
   tipo_asesor?: string | null;
   agencia_nombre?: string | null;
@@ -353,7 +364,8 @@ export function comisionVisibleAliado<T extends FilaComisionB2B>(
   const vivas = filas.filter((f) => !esComisionDescontada(f, venta.comision_estado));
   const enVentas = venta.comision_b2b == null ? 0 : Number(venta.comision_b2b);
   if (vivas.length === 0 && venta.modo_compra === "comisionable" && enVentas > 0) {
-    return { total: enVentas, fuente: "ventas", tipo: venta.tipo_asesor ?? null, cobrable: true, ids: [] };
+    // Respaldo `ventas.comision_b2b`: el importe se ve como informativo, pero SOLO es cobrable con el contrato confirmado (no puede saltarse el estado).
+    return { total: enVentas, fuente: "ventas", tipo: venta.tipo_asesor ?? null, cobrable: estadoExigible(venta.estado), ids: [] };
   }
   return { total: null, fuente: "ninguna", tipo: null, cobrable: false, ids: [] };
 }

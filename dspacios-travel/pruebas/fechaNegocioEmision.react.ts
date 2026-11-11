@@ -59,8 +59,8 @@ for (const [momento, instante] of MOMENTOS) {
   test(`vouchers generados a las ${momento}: emisión ${DIA_BOGOTA} en hotel y servicios`, async () => {
     reloj(instante);
     const bd = usarBD(semillaVoucher());
-    assert.equal((await generarVoucherHotel("DTM-0451")).ok, true);
-    assert.equal((await generarVouchersServicios("DTM-0451")).ok, true);
+    assert.equal((await generarVoucherHotel("DTM-0451", {})).ok, true);
+    assert.equal((await generarVouchersServicios("DTM-0451", {})).ok, true);
     const vouchers = bd.filas("vouchers");
     assert.deepEqual(vouchers.map((v) => v.tipo).sort(), ["hotel", "traslado"]);
     for (const v of vouchers) {
@@ -72,7 +72,7 @@ for (const [momento, instante] of MOMENTOS) {
 test("voucher regenerado después del corte conserva fechas de viaje (solo la emisión es 'hoy')", async () => {
   reloj(DESPUES_DEL_CORTE);
   const bd = usarBD(semillaVoucher());
-  await generarVoucherHotel("DTM-0451");
+  await generarVoucherHotel("DTM-0451", {});
   const c = bd.filas("vouchers")[0].contenido as { emision: string; fechaIngreso: string };
   assert.equal(c.emision, DIA_BOGOTA);
   assert.match(c.fechaIngreso, /1 de noviembre de 2026/);

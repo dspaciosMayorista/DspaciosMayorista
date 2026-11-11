@@ -1,6 +1,7 @@
 "use server";
 
 import { createClient } from "@/lib/supabase/server";
+import { parseIdentidad, mensajeSiIdentidad, type IdentidadContrato } from "@/lib/contrato/identidad";
 import { revalidatePath } from "next/cache";
 import { asegurarCuentasPorPagar } from "@/lib/reservar/asegurarCuentasPorPagar";
 import { autorizarCuentasPorPagarContrato, mensajeCxpDenegado } from "@/lib/contrato/accesoCuentasPorPagar";
@@ -24,9 +25,10 @@ function rev(numero: string) {
 // su agencia (ver lib/contrato/accesoCuentasPorPagar.ts). Todo con el cliente
 // de sesión; service-role no se toca hasta que la decisión es "permitido".
 export async function completarProveedores(
-  numeroContrato: string
+  numeroContrato: string,
+  identidad: IdentidadContrato
 ): Promise<{ ok: boolean; creadas?: number; error?: string }> {
-  const sb = await createClient();
+  const sb = await createClient(parseIdentidad(identidad));
   const { data: auth } = await sb.auth.getUser();
   const userId = auth?.user?.id ?? null;
   const { data: perfil } = userId
@@ -38,7 +40,7 @@ export async function completarProveedores(
   const decision = autorizarCuentasPorPagarContrato(perfil ?? null, contrato ?? null);
   if (!decision.permitido) return { ok: false, error: mensajeCxpDenegado(decision.motivo) };
 
-  const r = await asegurarCuentasPorPagar(numeroContrato);
+  const r = await asegurarCuentasPorPagar(numeroContrato, parseIdentidad(identidad));
   if (!r.ok) return { ok: false, error: r.error ?? "No se pudieron completar los proveedores." };
   rev(numeroContrato);
   return { ok: true, creadas: r.creadas };
@@ -56,16 +58,17 @@ export async function guardarCostos(
     costo_receptivo: number;
     costo_asistencia: number;
     otros_costos: number;
-  }
+  },
+  identidad: IdentidadContrato
 ): Promise<Result> {
-  const sb = await createClient();
+  const sb = await createClient(parseIdentidad(identidad));
   const { error } = await sb
     .from("ventas")
     .update({ ...costos, updated_at: new Date().toISOString() })
     .eq("numero_contrato", numeroContrato);
   // #63: los costos de un contrato de oferta aceptada salen del snapshot; la base los protege (p63_protegido) y aquí NO hay éxito ficticio.
   if (error && /p63_protegido/.test(error.message)) return { ok: false, error: MSG_PROTEGIDO_63 };
-  if (error) return { ok: false, error: error.message };
+  if (error) return { ok: false, error: mensajeSiIdentidad(error) ?? error.message };
   rev(numeroContrato);
   return { ok: true };
 }
@@ -81,8 +84,8 @@ export async function crearCuentaPorPagar(input: {
   aplicaRetencion: boolean;
   pctRetencion: number;
   ivaDescontable?: number; // IVA de la factura del proveedor (manual)
-}): Promise<Result> {
-  const sb = await createClient();
+}, identidad: IdentidadContrato): Promise<Result> {
+  const sb = await createClient(parseIdentidad(identidad));
   const iva = Math.max(0, Number(input.ivaDescontable) || 0);
   // Costo (base) = valor total de la factura − IVA descontable.
   const base = Math.max(0, input.valorTotal - iva);
@@ -92,7 +95,11 @@ export async function crearCuentaPorPagar(input: {
   // mal (default 'mayorista'), la CxP existe pero desaparece de
   // /dashboard/pagos en la agencia real (aunque el contrato la muestre bien,
   // esa consulta no filtra por tenant).
-  const { data: venta } = await sb.from("ventas").select("tenant").eq("numero_contrato", input.numeroContrato).maybeSingle();
+  const { data: venta } = await sb.from("ventas").select("tenant, estado").eq("numero_contrato", input.numeroContrato).maybeSingle();
+  // 288 (#75, D1): un contrato PENDIENTE no admite CxP reales (los costos previstos sí se preparan en el contrato); las obligaciones nacen al confirmar.
+  if ((venta as { estado?: string } | null)?.estado === "pendiente") {
+    return { ok: false, error: "Este contrato está pendiente: las cuentas por pagar se crean al confirmarlo. Prepara los costos previstos y confirma el contrato." };
+  }
   const { data: nueva, error } = await sb.from("cuentas_por_pagar").insert({
     numero_contrato: input.numeroContrato,
     tenant: venta?.tenant ?? "mayorista",
@@ -106,7 +113,7 @@ export async function crearCuentaPorPagar(input: {
     aplica_retencion: input.aplicaRetencion,
     pct_retencion: input.pctRetencion,
   }).select("id").single();
-  if (error) return { ok: false, error: error.message };
+  if (error) return { ok: false, error: mensajeSiIdentidad(error) ?? error.message };
   if (nueva) {
     await postearAsientoCxP({
       cuentaId: nueva.id, numeroContrato: input.numeroContrato, tipoProveedor: input.tipoProveedor, proveedor: input.proveedor,
@@ -126,8 +133,8 @@ export async function actualizarCuentaPorPagar(input: {
   valorTotal: number;
   fechaVencimiento: string;
   ivaDescontable?: number;
-}): Promise<Result> {
-  const sb = await createClient();
+}, identidad: IdentidadContrato): Promise<Result> {
+  const sb = await createClient(parseIdentidad(identidad));
   const iva = Math.max(0, Number(input.ivaDescontable) || 0);
   const base = Math.max(0, input.valorTotal - iva);
   // #63: una obligación del modo COP con TRM lleva su equivalente en COP congelado (`valor_cop_63`). Cambiar su valor lo dejaría
@@ -160,7 +167,7 @@ export async function actualizarCuentaPorPagar(input: {
     .eq("id", input.id)
     .select("tipo_proveedor")
     .single();
-  if (error) return { ok: false, error: error.message };
+  if (error) return { ok: false, error: mensajeSiIdentidad(error) ?? error.message };
   await postearAsientoCxP({
     cuentaId: input.id, numeroContrato: input.numeroContrato, tipoProveedor: actualizada?.tipo_proveedor ?? null, proveedor: input.proveedor,
     servicio: input.servicio, valorTotal: input.valorTotal, fecha: fechaNegocio(),
@@ -172,12 +179,13 @@ export async function actualizarCuentaPorPagar(input: {
 
 export async function eliminarCuentaPorPagar(
   id: number,
-  numeroContrato: string
+  numeroContrato: string,
+  identidad: IdentidadContrato
 ): Promise<Result> {
-  const sb = await createClient();
+  const sb = await createClient(parseIdentidad(identidad));
   const { error } = await sb.from("cuentas_por_pagar").delete().eq("id", id);
   if (error && /p63_cxp_protegida/.test(error.message)) return { ok: false, error: MSG_PROTEGIDO_63 };
-  if (error) return { ok: false, error: error.message };
+  if (error) return { ok: false, error: mensajeSiIdentidad(error) ?? error.message };
   await eliminarAsientoCxP(id);
   rev(numeroContrato);
   revalidatePath("/dashboard/contabilidad/libro-diario");
@@ -205,13 +213,13 @@ export async function crearComisionB2B(input: {
   pctRecobroAliado: number;
   aplicaRetencion: boolean;
   pctRetencion: number;
-}): Promise<Result> {
+}, identidad: IdentidadContrato): Promise<Result> {
   // % 0 es legítimo (comisión solo de recobro); lo que no vale es un número roto.
   if (!fraccion(input.pctComision)) return { ok: false, error: "El % de comisión debe estar entre 0 y 100." };
   if (!(Number.isFinite(input.recobroTotal) && input.recobroTotal >= 0)) return { ok: false, error: "El recobro total debe ser un número ≥ 0." };
   if (!fraccion(input.pctRecobroAliado)) return { ok: false, error: "El % del recobro para el aliado debe estar entre 0 y 100." };
   if (input.aplicaRetencion && !fraccion(input.pctRetencion)) return { ok: false, error: "El % de retención debe estar entre 0 y 100." };
-  const sb = await createClient();
+  const sb = await createClient(parseIdentidad(identidad));
   const perfil = await perfilSesion(sb);
   if (!perfil || perfil.activo !== true) return { ok: false, error: "Tu sesión no es válida. Vuelve a iniciar sesión." };
   // Gestión operativa, o el asesor `venta` (la base exige que sea SU contrato).
@@ -239,7 +247,7 @@ export async function crearComisionB2B(input: {
   } catch (e) {
     return { ok: false, error: e instanceof Error ? e.message : "No se pudo registrar la comisión." };
   }
-  if (error) return { ok: false, error: error.message };
+  if (error) return { ok: false, error: mensajeSiIdentidad(error) ?? error.message };
   rev(input.numeroContrato);
   return { ok: true };
 }
@@ -250,9 +258,10 @@ export async function crearComisionB2B(input: {
 // base también lo impide desde la 205; esto solo da un mensaje claro.
 export async function eliminarComisionB2B(
   id: number,
-  numeroContrato: string
+  numeroContrato: string,
+  identidad: IdentidadContrato
 ): Promise<Result> {
-  const sb = await createClient();
+  const sb = await createClient(parseIdentidad(identidad));
   const { data: fila } = await sb.from("aliados_b2b").select("id, tenant, numero_contrato, estado, descontada_en_precio").eq("id", id).maybeSingle();
   const auth = autorizarComisionB2B(await perfilSesion(sb), fila?.tenant ?? null, ROLES_GESTION_COMISION);
   if (!auth.permitido) return { ok: false, error: auth.error };
@@ -265,7 +274,7 @@ export async function eliminarComisionB2B(
     return { ok: false, error: "Esta comisión tiene abonos registrados: deshazlos en Comisiones antes de eliminarla." };
   }
   const { data, error } = await sb.from("aliados_b2b").delete().eq("id", id).select("id");
-  if (error) return { ok: false, error: error.message };
+  if (error) return { ok: false, error: mensajeSiIdentidad(error) ?? error.message };
   if (!data || data.length === 0) return { ok: false, error: "No se pudo eliminar: comisión no encontrada o sin permiso." };
   rev(numeroContrato);
   return { ok: true };
@@ -279,8 +288,8 @@ export async function crearFactura(input: {
   cliente: string;
   nitCliente: string;
   items: { descripcion: string; valor: number; gravable: boolean }[];
-}): Promise<Result> {
-  const sb = await createClient();
+}, identidad: IdentidadContrato): Promise<Result> {
+  const sb = await createClient(parseIdentidad(identidad));
   const items = (input.items ?? []).filter((it) => Number(it.valor) > 0);
   if (!items.length) return { ok: false, error: "Agrega al menos un ítem con valor." };
 
@@ -303,7 +312,7 @@ export async function crearFactura(input: {
     })
     .select("id")
     .single();
-  if (error) return { ok: false, error: error.message };
+  if (error) return { ok: false, error: mensajeSiIdentidad(error) ?? error.message };
 
   const rows = items.map((it, i) => ({
     factura_id: fact.id,
@@ -313,7 +322,7 @@ export async function crearFactura(input: {
     orden: i,
   }));
   const { error: e2 } = await sb.from("factura_items").insert(rows);
-  if (e2) return { ok: false, error: e2.message };
+  if (e2) return { ok: false, error: mensajeSiIdentidad(e2) ?? e2.message };
 
   rev(input.numeroContrato);
   return { ok: true };
@@ -321,11 +330,12 @@ export async function crearFactura(input: {
 
 export async function eliminarFactura(
   id: number,
-  numeroContrato: string
+  numeroContrato: string,
+  identidad: IdentidadContrato
 ): Promise<Result> {
-  const sb = await createClient();
+  const sb = await createClient(parseIdentidad(identidad));
   const { error } = await sb.from("facturacion").delete().eq("id", id);
-  if (error) return { ok: false, error: error.message };
+  if (error) return { ok: false, error: mensajeSiIdentidad(error) ?? error.message };
   rev(numeroContrato);
   return { ok: true };
 }

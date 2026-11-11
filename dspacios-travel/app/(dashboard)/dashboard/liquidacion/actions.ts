@@ -1,6 +1,7 @@
 "use server";
 
 import { createClient } from "@/lib/supabase/server";
+import { parseIdentidad, mensajeSiIdentidad, type IdentidadContrato } from "@/lib/contrato/identidad";
 import { revalidatePath } from "next/cache";
 
 type Result = { ok: true } | { ok: false; error: string };
@@ -8,7 +9,7 @@ type Result = { ok: true } | { ok: false; error: string };
 const ROLES = ["superadmin", "gerencia", "administracion"];
 
 async function puedeEditar(): Promise<boolean> {
-  const sb = await createClient();
+  const sb = await createClient(); // identidad:n/a — solo lee sesión/rol
   const { data: { user } } = await sb.auth.getUser();
   if (!user) return false;
   const { data: perfil } = await sb.from("usuarios").select("rol").eq("id", user.id).maybeSingle();
@@ -24,11 +25,11 @@ export async function agregarDescuentoLiquidacion(input: {
   valor: number;
   descripcion: string;
   numeroContrato?: string;
-}): Promise<Result> {
+}, identidad: IdentidadContrato): Promise<Result> {
   if (!(await puedeEditar())) return { ok: false, error: "No tienes permiso para esta acción." };
   if (!(input.valor > 0)) return { ok: false, error: "El valor del descuento debe ser mayor a 0." };
   if (!/^\d{4}-\d{2}$/.test(input.mes)) return { ok: false, error: "Mes inválido." };
-  const sb = await createClient();
+  const sb = await createClient(parseIdentidad(identidad));
   const { error } = await sb.from("liquidacion_descuentos").insert({
     usuario_id: input.usuarioId,
     mes: input.mes,
@@ -36,16 +37,16 @@ export async function agregarDescuentoLiquidacion(input: {
     descripcion: input.descripcion.trim() || null,
     numero_contrato: input.numeroContrato?.trim() || null,
   });
-  if (error) return { ok: false, error: error.message };
+  if (error) return { ok: false, error: mensajeSiIdentidad(error) ?? error.message };
   revalidatePath("/dashboard/liquidacion");
   return { ok: true };
 }
 
-export async function eliminarDescuentoLiquidacion(id: number): Promise<Result> {
+export async function eliminarDescuentoLiquidacion(id: number, identidad: IdentidadContrato): Promise<Result> {
   if (!(await puedeEditar())) return { ok: false, error: "No tienes permiso para esta acción." };
-  const sb = await createClient();
+  const sb = await createClient(parseIdentidad(identidad));
   const { error } = await sb.from("liquidacion_descuentos").delete().eq("id", id);
-  if (error) return { ok: false, error: error.message };
+  if (error) return { ok: false, error: mensajeSiIdentidad(error) ?? error.message };
   revalidatePath("/dashboard/liquidacion");
   return { ok: true };
 }

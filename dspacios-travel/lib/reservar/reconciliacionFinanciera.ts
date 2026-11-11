@@ -36,8 +36,14 @@
 
 import { registrarFinancieroContrato, revertirContratoIncompleto, type DepsFinanciero, type CxPCreada } from "./financieroContrato.ts";
 import { fechaNegocio } from "../fechaNegocio.ts";
+import { identidadDe, type IdentidadContrato } from "../contrato/identidad.ts";
 
-export type PendienteAntiguo = { numeroContrato: string; tenant: string };
+/** `contratoUid`: uid de `ventas` leído en la MISMA consulta que lista los pendientes (#75). */
+export type PendienteAntiguo = { numeroContrato: string; tenant: string; contratoUid?: string | null };
+
+/** Alerta (y motivo del registro de fallo) cuando el cron NO puede demostrar que el pendiente guardado pertenece al contrato vigente. */
+export const mensajeConciliarIdentidad = (numeroContrato: string): string =>
+  `CONCILIAR identidad: el registro financiero pendiente de ${numeroContrato} no pertenece al contrato vigente con ese número (otra identidad, o sin identidad guardada). No se tocó el contrato; revísalo a mano.`;
 
 /**
  * Texto de `cuentas_por_pagar.observaciones` que ponía `convertirCotizacionCarrito` ANTES de empezar por `marca_cxp_automatica()`. La RPC financiera solo reemplaza en un reintento
@@ -53,7 +59,9 @@ export type DepsReconciliacion = Pick<DepsFinanciero, "rpc" | "postearAsiento" |
   /** `ventas` con `financiero_estado='pendiente'` y `financiero_actualizado_en` más antigua que el umbral. */
   listarPendientesAntiguos: (umbralMinutos: number) => Promise<PendienteAntiguo[]>;
   /** Payload persistido para un contrato, o `null` si nunca se alcanzó a escribir. */
-  leerPendiente: (numeroContrato: string) => Promise<{ costos: Record<string, number>; cxp: unknown[] } | null>;
+  leerPendiente: (numeroContrato: string) => Promise<{ costos: Record<string, number>; cxp: unknown[]; /** #75: `contrato_uid` GUARDADO en el registro pendiente (null = sin identidad guardada). */ contratoUid?: string | null } | null>;
+  /** #75: dependencias de escritura (rpc/guardarPendiente) cuyos clientes declaran esta identidad. Sin ella (pruebas) se usan las de `deps`. */
+  conIdentidad?: (id: IdentidadContrato) => Pick<DepsFinanciero, "rpc" | "guardarPendiente">;
   /** Deja rastro durable del intento fallido (columnas de `contrato_financiero_pendiente`) — nunca solo un mensaje que se pierde. */
   marcarIntentoFallido: (numeroContrato: string, error: string) => Promise<void>;
   /** CxP sin asiento contable (comparación en vivo contra `asientos_contables`, nunca una bandera). */
@@ -76,6 +84,18 @@ export async function reconciliarFinancieroPendiente(
   const resultadosPendientes: ResultadoPendiente[] = [];
   for (const p of pendientes) {
     const payload = await deps.leerPendiente(p.numeroContrato);
+    // #75: el cron NUNCA resuelve la identidad por número. Declara la que quedó GUARDADA en el registro pendiente y solo si coincide con la del
+    // contrato vigente que acaba de listar; si no (otra identidad, o ninguna guardada), omite la fila sin tocar el contrato.
+    if (payload && p.contratoUid !== undefined && (!payload.contratoUid || payload.contratoUid.toLowerCase() !== (p.contratoUid ?? "").toLowerCase())) {
+      const error = mensajeConciliarIdentidad(p.numeroContrato);
+      await deps.marcarIntentoFallido(p.numeroContrato, error);
+      resultadosPendientes.push({ numeroContrato: p.numeroContrato, accion: "reintentado", ok: false, error });
+      continue;
+    }
+    // Sin payload no hay identidad guardada: se declara la del contrato listado en esta misma pasada (si entretanto el número fue reutilizado,
+    // la base rechaza la reversión con CONTRATO_CAMBIO en vez de borrar el contrato nuevo).
+    const uidDeclarado = payload ? payload.contratoUid : p.contratoUid;
+    const dw = deps.conIdentidad && uidDeclarado ? { ...deps, ...deps.conIdentidad(identidadDe(p.numeroContrato, uidDeclarado)) } : deps;
     if (payload) {
       // Una CxP del carrito creada con el texto anterior no se reemplaza en el reintento: se niega (cerrado, sin escribir) en vez de duplicar las obligaciones.
       const anteriores = deps.contarCxpTextoAnterior ? await deps.contarCxpTextoAnterior(p.numeroContrato) : 0;
@@ -87,12 +107,13 @@ export async function reconciliarFinancieroPendiente(
       }
       // Reintento EXACTO — nunca se recalcula, se repite la misma escritura
       // que ya se había decidido hacer antes de la caída.
-      const r = await registrarFinancieroContrato(deps, {
+      const r = await registrarFinancieroContrato(dw, {
         numeroContrato: p.numeroContrato,
         tenant: p.tenant,
         costos: payload.costos,
         cxp: payload.cxp as never,
         fecha: fechaNegocio(), // inerte: la fecha de obligación viaja en cada CxP del payload
+        contratoUid: payload.contratoUid ?? null,
       });
       if (r.ok) {
         resultadosPendientes.push({ numeroContrato: p.numeroContrato, accion: "reintentado", ok: true });
@@ -104,7 +125,7 @@ export async function reconciliarFinancieroPendiente(
     }
     // Sin payload conocido: la caída fue ANTES de persistirlo. Nunca se
     // inventa un costo — la única resolución honesta es revertir.
-    const rev = await revertirContratoIncompleto(deps, p.numeroContrato, p.tenant);
+    const rev = await revertirContratoIncompleto(dw, p.numeroContrato, p.tenant);
     resultadosPendientes.push({ numeroContrato: p.numeroContrato, accion: "revertido", ok: rev.ok, error: rev.error });
   }
 

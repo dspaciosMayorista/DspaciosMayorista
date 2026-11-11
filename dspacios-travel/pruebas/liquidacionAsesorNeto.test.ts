@@ -70,7 +70,7 @@ test("asesor: contratos que no son NETO liquidan exactamente con su precio_venta
 test("liquidación: la página usa el PVP original del asesor y lee la marca NETO", () => {
   const src = leer("app/(dashboard)/dashboard/liquidacion/page.tsx");
   assert.match(src, /import \{ pvpAsesorInterno, baseAsesorInterno \} from "@\/lib\/finanzas\/liquidacionAsesor"/);
-  assert.match(src, /select\("asesor_firma_nombre, precio_venta, impuesto, comision_b2b, comision_estado, estado, fecha_venta"\)/);
+  assert.match(src, /select\("numero_contrato, contrato_uid, asesor_firma_nombre, precio_venta, impuesto, comision_b2b, comision_estado, estado, fecha_venta"\)/);
   assert.match(src, /const pvp = pvpAsesorInterno\(v\);/);
   assert.match(src, /const base = baseAsesorInterno\(v\);/);
   assert.doesNotMatch(src, /const pvp = Number\(v\.precio_venta\)/, "volvió a liquidar con el precio NETO");

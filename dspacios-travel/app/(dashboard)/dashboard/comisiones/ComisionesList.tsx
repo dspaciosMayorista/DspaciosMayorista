@@ -14,6 +14,7 @@ import {
   type EdicionComisionInput,
   type FilaComisionB2B,
 } from "@/lib/finanzas/comisionB2B";
+import type { IdentidadContrato } from "@/lib/contrato/identidad";
 import { registrarPagoComisionB2B, deshacerUltimoPagoComisionB2B, actualizarComisionB2B } from "./actions";
 import { ChevronDown, ChevronRight } from "lucide-react";
 import { ResponsiveTableShell } from "@/components/ui/ResponsiveTableShell";
@@ -21,6 +22,8 @@ import { ResponsiveTableShell } from "@/components/ui/ResponsiveTableShell";
 export type ComB2BRow = {
   id: number;
   numero_contrato: string;
+  /** Identidad del contrato tal como la leyó la página; se reenvía a cada acción. */
+  identidad: IdentidadContrato;
   cliente: string | null;
   aliado: string | null;
   nit: string | null;
@@ -318,7 +321,7 @@ function EditorComision({ row, fila }: { row: ComB2BRow; fila: FilaComisionB2B }
   return (
     <tr className="border-b border-gray-100 bg-gray-50/60">
       <td colSpan={7} className="px-4 py-3">
-        <EditorCamposComision id={row.id} fila={fila} conAbonos={row.pagos.length > 0} descontada={!!row.descontada} aplicaRetencion={!!row.aplicaRetencion} />
+        <EditorCamposComision id={row.id} identidad={row.identidad} fila={fila} conAbonos={row.pagos.length > 0} descontada={!!row.descontada} aplicaRetencion={!!row.aplicaRetencion} />
         <PagoComisionPanel row={row} />
       </td>
     </tr>
@@ -331,8 +334,8 @@ function EditorComision({ row, fila }: { row: ComB2BRow; fila: FilaComisionB2B }
  * contrato). `conAbonos`/`descontada` solo avisan: quien decide es el servidor
  * y, al final, el trigger de la 205.
  */
-export function EditorCamposComision({ id, fila, conAbonos, descontada, aplicaRetencion }: {
-  id: number; fila: FilaComisionB2B; conAbonos: boolean; descontada: boolean; aplicaRetencion: boolean;
+export function EditorCamposComision({ id, identidad, fila, conAbonos, descontada, aplicaRetencion }: {
+  identidad: IdentidadContrato; id: number; fila: FilaComisionB2B; conAbonos: boolean; descontada: boolean; aplicaRetencion: boolean;
 }) {
   const actual = calcularComisionFila(fila);
   const [base, setBase] = useState(baseParaEditor(fila));
@@ -368,7 +371,7 @@ export function EditorCamposComision({ id, fila, conAbonos, descontada, aplicaRe
   function guardar() {
     setMsg("");
     start(async () => {
-      const r = await actualizarComisionB2B(id, entrada);
+      const r = await actualizarComisionB2B(id, entrada, identidad);
       setMsg(r.ok ? "Guardado" : r.error);
     });
   }
@@ -463,7 +466,7 @@ function PagoComisionPanel({ row }: { row: ComB2BRow }) {
     const v = Number(valor);
     if (!v || v <= 0) { setErr("Ingresa un valor mayor a 0."); return; }
     start(async () => {
-      const r = await registrarPagoComisionB2B(row.id, v, fecha);
+      const r = await registrarPagoComisionB2B(row.id, v, fecha, row.identidad);
       if (!r.ok) { setErr(r.error); return; }
       setValor("");
     });
@@ -472,7 +475,7 @@ function PagoComisionPanel({ row }: { row: ComB2BRow }) {
   function deshacer() {
     setErr("");
     startUndo(async () => {
-      const r = await deshacerUltimoPagoComisionB2B(row.id);
+      const r = await deshacerUltimoPagoComisionB2B(row.id, row.identidad);
       if (!r.ok) setErr(r.error);
     });
   }

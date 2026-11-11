@@ -212,3 +212,70 @@ describe("Escenario 4 · reintento no duplica ni deja dos contratos resueltos di
     void pendientes;
   });
 });
+
+// ───────────────────────────────────────────────────────────────────────────
+// #75 · IDENTIDAD — el cron NUNCA resuelve la identidad por número: declara la GUARDADA en el pendiente.
+// ───────────────────────────────────────────────────────────────────────────
+describe("#75 · identidad del contrato en el cron financiero", () => {
+  const UID_A = "11111111-1111-4111-8111-111111111111";
+  const UID_B = "22222222-2222-4222-8222-222222222222";
+  const cxp = [{ proveedor: "Hotel X", tipo_proveedor: "hotel", servicio: "Hotel X", valor_total: 900000, fecha_obligacion: "2026-09-08", aplica_retencion: false, pct_retencion: 0, observaciones: "auto", servicio_id: null }];
+
+  function conIdentidad(uidVigente: string | null, uidGuardado: string | null) {
+    const b = baseFalsa();
+    const declaraciones: Array<{ fn: string; id: Record<string, string> }> = [];
+    const fallos: string[] = [];
+    b.ventas.set("DTM-7100", { numeroContrato: "DTM-7100", tenant: "mayorista", financieroEstado: "pendiente" });
+    const rpcBase = b.deps.rpc;
+    b.deps.listarPendientesAntiguos = async () => [{ numeroContrato: "DTM-7100", tenant: "mayorista", contratoUid: uidVigente }];
+    b.deps.leerPendiente = async (n) => {
+      const p = b.pendientes.get(n);
+      return p ? { costos: p.costos as Record<string, number>, cxp: p.cxp, contratoUid: uidGuardado } : null;
+    };
+    b.deps.marcarIntentoFallido = async (_n, e) => { fallos.push(e); };
+    b.deps.conIdentidad = (id) => ({
+      rpc: (fn, args) => { declaraciones.push({ fn, id: { ...id } }); return rpcBase(fn, args); },
+      guardarPendiente: b.deps.guardarPendiente,
+    });
+    return { ...b, declaraciones, fallos };
+  }
+
+  test("uid guardado = uid del contrato vigente: reintenta declarando ESA identidad", async () => {
+    const { deps, ventas, declaraciones, pendientes } = conIdentidad(UID_A, UID_A);
+    pendientes.set("DTM-7100", { numeroContrato: "DTM-7100", tenant: "mayorista", costos: { costo_hotel: 900000 }, cxp, intentos: 0 });
+    const r = await reconciliarFinancieroPendiente(deps, { umbralMinutos: 0 });
+    assert.equal(r.pendientes[0].ok, true);
+    assert.equal(ventas.get("DTM-7100")?.financieroEstado, "completo");
+    assert.deepEqual(declaraciones.map((d) => d.id), [{ "DTM-7100": UID_A }]);
+  });
+
+  test("uid guardado distinto del vigente: OMITE la fila, alerta «CONCILIAR identidad» y no toca el contrato", async () => {
+    const { deps, ventas, declaraciones, pendientes, fallos, revertidos } = conIdentidad(UID_B, UID_A);
+    pendientes.set("DTM-7100", { numeroContrato: "DTM-7100", tenant: "mayorista", costos: { costo_hotel: 900000 }, cxp, intentos: 0 });
+    const r = await reconciliarFinancieroPendiente(deps, { umbralMinutos: 0 });
+    assert.equal(r.pendientes[0].ok, false);
+    assert.match(r.pendientes[0].error ?? "", /CONCILIAR identidad/);
+    assert.equal(fallos.length, 1);
+    assert.deepEqual(declaraciones, [], "no se llamó a ninguna RPC");
+    assert.equal(ventas.get("DTM-7100")?.financieroEstado, "pendiente");
+    assert.deepEqual(revertidos, []);
+  });
+
+  test("uid guardado ausente (contrato nacido de reuso): OMITE la fila y no toca el contrato", async () => {
+    const { deps, ventas, declaraciones, pendientes } = conIdentidad(UID_B, null);
+    pendientes.set("DTM-7100", { numeroContrato: "DTM-7100", tenant: "mayorista", costos: { costo_hotel: 900000 }, cxp, intentos: 0 });
+    const r = await reconciliarFinancieroPendiente(deps, { umbralMinutos: 0 });
+    assert.match(r.pendientes[0].error ?? "", /CONCILIAR identidad/);
+    assert.deepEqual(declaraciones, []);
+    assert.equal(ventas.get("DTM-7100")?.financieroEstado, "pendiente");
+  });
+
+  test("sin payload guardado: la reversión declara la identidad del contrato listado en la misma pasada (la base rechaza si cambió)", async () => {
+    const { deps, ventas, declaraciones, revertidos } = conIdentidad(UID_A, null);
+    const r = await reconciliarFinancieroPendiente(deps, { umbralMinutos: 0 });
+    assert.equal(r.pendientes[0].accion, "revertido");
+    assert.deepEqual(declaraciones, [{ fn: "revertir_contrato_incompleto", id: { "DTM-7100": UID_A } }]);
+    assert.deepEqual(revertidos, ["DTM-7100"]);
+    assert.equal(ventas.has("DTM-7100"), false);
+  });
+});

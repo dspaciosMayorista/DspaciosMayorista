@@ -1,6 +1,7 @@
 "use server";
 
 import { createClient } from "@/lib/supabase/server";
+import { parseIdentidad, mensajeSiIdentidad, type IdentidadContrato } from "@/lib/contrato/identidad";
 import { revalidatePath } from "next/cache";
 import { getTenant } from "@/lib/tenant.server";
 import { parseExtracto } from "@/lib/contabilidad/extracto";
@@ -10,8 +11,9 @@ import { idSaldoCxp, mensajeGuardaSaldo, ordenarPorSaldoCxp } from "@/lib/finanz
 type Result = { ok: true; n?: number; aviso?: string } | { ok: false; error: string };
 
 // Importa el extracto pegado del Excel (texto crudo).
+// identidad:n/a — el extracto bancario (conciliacion_extracto) no es una tabla de contrato
 export async function importarExtracto(texto: string, anio?: number, cuenta?: string): Promise<Result> {
-  const sb = await createClient();
+  const sb = await createClient(); // identidad:n/a — extracto bancario
   const { lineas } = parseExtracto(texto, anio);
   if (!lineas.length) return { ok: false, error: "No se detectaron movimientos. Pega las filas del extracto (fecha, descripción, valor)." };
   const tenant = await getTenant();
@@ -68,8 +70,9 @@ export async function importarExtracto(texto: string, anio?: number, cuenta?: st
   return { ok: true, n: insertadas };
 }
 
+// identidad:n/a — extracto bancario, no es tabla de contrato
 export async function eliminarLineaExtracto(id: number): Promise<Result> {
-  const sb = await createClient();
+  const sb = await createClient(); // identidad:n/a — extracto bancario
   const { error } = await sb.from("conciliacion_extracto").delete().eq("id", id).is("conciliacion_id", null);
   if (error) return { ok: false, error: error.message };
   revalidatePath("/dashboard/contabilidad/conciliaciones");
@@ -77,9 +80,10 @@ export async function eliminarLineaExtracto(id: number): Promise<Result> {
 }
 
 // Borra en bloque (ej. un lote importado por error). Solo líneas no cruzadas.
+// identidad:n/a — extracto bancario, no es tabla de contrato
 export async function eliminarLineasExtracto(ids: number[]): Promise<Result> {
   if (!ids.length) return { ok: false, error: "Nada para borrar." };
-  const sb = await createClient();
+  const sb = await createClient(); // identidad:n/a — extracto bancario
   const { error } = await sb.from("conciliacion_extracto").delete().in("id", ids).is("conciliacion_id", null);
   if (error) return { ok: false, error: error.message };
   revalidatePath("/dashboard/contabilidad/conciliaciones");
@@ -90,9 +94,10 @@ export async function eliminarLineasExtracto(ids: number[]): Promise<Result> {
 // sola vez lo acumulado por reimportar el mismo extracto varias veces (ya no
 // debería pasar con la deduplicación de importarExtracto, pero esto limpia lo
 // que ya quedó de antes). Nunca toca líneas ya conciliadas.
+// identidad:n/a — extracto bancario, no es tabla de contrato
 export async function eliminarPeriodoExtracto(periodo: string): Promise<{ ok: true; n: number } | { ok: false; error: string }> {
   if (!/^\d{4}-\d{2}$/.test(periodo)) return { ok: false, error: "Período inválido." };
-  const sb = await createClient();
+  const sb = await createClient(); // identidad:n/a — extracto bancario
   const tenant = await getTenant();
   const { data, error } = await sb
     .from("conciliacion_extracto")
@@ -125,8 +130,9 @@ export async function cruzar(input: {
   // o más cuentas de gasto (con tercero opcional); deben sumar exactamente
   // la diferencia. Solo aplica al lado Cartera (dinero que debía entrar).
   gastoLineas?: { cuentaCodigo: string; tercero?: string; descripcion?: string; valor: number }[];
-}): Promise<Result> {
-  const sb = await createClient();
+}, identidad: IdentidadContrato): Promise<Result> {
+  // `identidad` = unión de las identidades de TODOS los contratos de los ítems elegidos (la pantalla las leyó en la misma consulta que los ítems).
+  const sb = await createClient(parseIdentidad(identidad));
   if (!input.extractoIds.length || !input.sistema.length) return { ok: false, error: "Selecciona al menos una línea de cada lado." };
 
   const { data: lineas } = await sb.from("conciliacion_extracto").select("id, valor, fecha, conciliacion_id").in("id", input.extractoIds);
@@ -191,7 +197,7 @@ export async function cruzar(input: {
     if (eIns || !pago) {
       // S5: un pago rechazado (guarda de saldo 228, permisos u otro error) NO se cruza: se deshacen los
       // pagos automáticos ya creados en esta operación y no se crea ningún cruce.
-      const motivo = mensajeGuardaSaldo(eIns, "pago") ?? eIns?.message ?? "error desconocido";
+      const motivo = (eIns && mensajeSiIdentidad(eIns)) ?? mensajeGuardaSaldo(eIns, "pago") ?? eIns?.message ?? "error desconocido";
       let revisar = "";
       if (pagosCreados.length) {
         // E3: se comprueba el resultado del borrado (un error, o menos filas de las esperadas por RLS, deja pagos sin deshacer).
@@ -219,7 +225,7 @@ export async function cruzar(input: {
       numero_contrato: s.numeroContrato || null,
     }))
   );
-  if (e3) return { ok: false, error: e3.message };
+  if (e3) return { ok: false, error: mensajeSiIdentidad(e3) ?? e3.message };
 
   // Diferencia justificada (caja o gasto): el abono/pago YA se pre-asentó
   // (Debe/Haber Caja o Bancos según su forma de pago) al registrarse — así que
@@ -295,8 +301,8 @@ export async function registrarMovimientoDirecto(input: {
   nota: string;
   contratoReferencia?: string;
   lineas: { cuentaCodigo: string; tercero?: string; descripcion?: string; valor: number }[];
-}): Promise<Result> {
-  const sb = await createClient();
+}, identidad: IdentidadContrato): Promise<Result> {
+  const sb = await createClient(parseIdentidad(identidad));
   if (!input.extractoIds.length) return { ok: false, error: "Selecciona al menos una línea del extracto." };
   if (!input.nota?.trim()) return { ok: false, error: "Escribe una nota explicando el movimiento." };
   if (!input.lineas.length || input.lineas.some((l) => !l.cuentaCodigo || !(Number(l.valor) > 0))) {
@@ -332,7 +338,7 @@ export async function registrarMovimientoDirecto(input: {
   const { error: e3 } = await sb.from("conciliacion_sistema").insert({
     conciliacion_id: conc.id, ref: `manual:${conc.id}`, descripcion, fecha, valor: totalSigned, numero_contrato: contratoRef,
   });
-  if (e3) return { ok: false, error: e3.message };
+  if (e3) return { ok: false, error: mensajeSiIdentidad(e3) ?? e3.message };
 
   const lineasUsuario = input.lineas.map((l) => ({
     cuentaCodigo: l.cuentaCodigo, tercero: l.tercero?.trim() || null, descripcion: l.descripcion?.trim() || descripcion,
@@ -357,14 +363,14 @@ export async function registrarMovimientoDirecto(input: {
   return { ok: true, aviso };
 }
 
-export async function deshacerCruce(conciliacionId: number): Promise<Result> {
-  const sb = await createClient();
+export async function deshacerCruce(conciliacionId: number, identidad: IdentidadContrato): Promise<Result> {
+  const sb = await createClient(parseIdentidad(identidad));
   await sb.from("conciliacion_extracto").update({ conciliacion_id: null }).eq("conciliacion_id", conciliacionId);
   // Si el cruce generó un asiento automático (diferencia en caja), lo borra
   // también — si no, quedaría un asiento contable huérfano de un cruce deshecho.
   await sb.from("asientos_contables").delete().eq("origen", "conciliacion").eq("referencia", `conciliacion:${conciliacionId}`);
   const { error } = await sb.from("conciliacion").delete().eq("id", conciliacionId); // cascade borra conciliacion_sistema
-  if (error) return { ok: false, error: error.message };
+  if (error) return { ok: false, error: mensajeSiIdentidad(error) ?? error.message };
   revalidatePath("/dashboard/contabilidad/conciliaciones");
   revalidatePath("/dashboard/contabilidad/libro-diario");
   revalidatePath("/dashboard/contabilidad/libro-auxiliar");

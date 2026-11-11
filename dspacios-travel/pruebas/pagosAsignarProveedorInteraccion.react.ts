@@ -45,6 +45,7 @@ __setImpls({
 });
 
 const ROW = {
+  identidad: {},
   id: 5, numero_contrato: "C-001", proveedor: null, tipo_proveedor: null, servicio: "Hotel Sol",
   valor_total: 1_000_000, moneda: "COP", fecha_obligacion: null, fecha_vencimiento: "2026-10-01",
   aplica_retencion: null, pct_retencion: null, clasificacion: "costo" as const, base_gravable: null,

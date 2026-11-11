@@ -1,4 +1,5 @@
 import { createClient } from "@/lib/supabase/server";
+import { identidadDe } from "@/lib/contrato/identidad";
 import { getTenant } from "@/lib/tenant.server";
 import { FacturacionClient, type FactRow } from "./FacturacionClient";
 
@@ -26,7 +27,7 @@ export default async function FacturacionPage() {
   const tenant = await getTenant();
   const [{ data: ventas }, { data: cfgs }, { data: cxp }, { data: params }] = await Promise.all([
     sb.from("ventas")
-      .select("numero_contrato, cliente, destino, fecha_venta, precio_venta, moneda, trm_contrato, estado")
+      .select("numero_contrato, contrato_uid, cliente, destino, fecha_venta, precio_venta, moneda, trm_contrato, estado")
       .eq("tenant", tenant)
       .order("fecha_venta", { ascending: false }),
     sb.from("contrato_facturacion").select("numero_contrato, irt, ingreso_exento, tipo_exento, observacion"),
@@ -55,6 +56,7 @@ export default async function FacturacionPage() {
     const factor = esUSD ? (Number(v.trm_contrato) || trmRef || 0) : 1;
     return {
       numero_contrato: v.numero_contrato,
+      identidad: identidadDe(v.numero_contrato, v.contrato_uid),
       cliente: v.cliente ?? null,
       destino: v.destino ?? null,
       mes: v.fecha_venta ? String(v.fecha_venta).slice(0, 7) : "",

@@ -229,6 +229,8 @@ const { NuevoContratoForm } = await import("../app/(dashboard)/dashboard/contrat
 const { crearContrato, previsualizarNetoContrato, actualizarVenta, actualizarServiciosContrato, registrarAbono } =
   await import("../app/(dashboard)/dashboard/contratos/actions.ts");
 const { ventasMesPorMonedaDesdeAgregado } = await import("../lib/dashboard/metricas.ts");
+const { crearCotizacionManual, convertirCotizacionManualAContrato, actualizarRecobroNinosCotizacionManual } = await import("../app/(dashboard)/dashboard/cotizaciones/manual-actions.ts");
+const { registrarPagoPrevio } = await import("../app/(dashboard)/dashboard/cotizaciones/pagos-actions.ts");
 const { formatMoneda } = await import("../lib/utils.ts");
 const $ = (n: number) => formatMoneda(n, "COP").replace(/\s+/g, " ");
 const txt = (el: Element | null | undefined) => (el?.textContent ?? "").replace(/\s+/g, " ").trim();
@@ -332,12 +334,19 @@ test("F1 venta: formulario NETO → vista previa real → crearContrato → RPC;
   assert.equal(sql(`select precio_venta::numeric(15,0)||'|'||base_comision::numeric(15,0)||'|'||pct_comision||'|'||descontada_en_precio||'|'||estado||'|'||aliado_id||'|'||tipo_aliado
                     from public.aliados_b2b where numero_contrato = '${n}'`), "2000000|2000000|0.1000|true|pagada|9601|agencia");
   assert.equal(sql(`select asesor_firma_nombre || '|' || coalesce(asesor, '-') || '|' || estado from public.ventas where numero_contrato = '${n}'`),
-    "T206 Venta|T206 Venta|activo");
+    "T206 Venta|T206 Venta|pendiente", "el manual de Mayorista nace PENDIENTE (regla de #75)");
+  // NETO: el descuento queda REGISTRADO (fila descontada, pagada) sin plan ni pago adicional; confirmar no crea una segunda fila ni un pago.
+  const filasNeto = () => sql(`select count(*) from public.aliados_b2b where numero_contrato = '${n}'`);
+  const pagosNeto = () => sql(`select count(*) from public.comision_b2b_pagos g join public.aliados_b2b b on b.id = g.aliado_b2b_id where b.numero_contrato = '${n}'`);
+  assert.equal(sql(`select count(*) from public.comision_plan where numero_contrato = '${n}'`) + "|" + pagosNeto(), "0|0", "NETO: sin plan y sin pago de comisión");
+  const c = await (await clienteDe("admin")).rpc("confirmar_venta", { p_numero: n });
+  assert.equal(c.error, null, JSON.stringify(c.error));
+  assert.equal(filasNeto() + "|" + sql(`select descontada_en_precio || '|' || estado from public.aliados_b2b where numero_contrato = '${n}'`) + "|" + pagosNeto(), "1|true|pagada|0", "NETO confirmado: la misma fila descontada, sin pago adicional");
   // Auditoría: el RPC corrió con la sesión del asesor (SECURITY DEFINER conserva auth.uid()).
   assert.match(sql(`select string_agg(distinct coalesce(actor_email, '-'), ',') from public.auditoria where tabla = 'aliados_b2b' and registro_id = '${n}'`), /t206-venta@x\.test/);
 });
 
-test("F2 venta: formulario PVP → sin RPC, comisión 'Por definir' (#38 intacto)", async () => {
+test("F2 venta: formulario PVP → comisión del aliado registrada una sola vez (#97; antes 'Por definir')", async () => {
   await entrarComo("venta");
   const antes = numeros();
   const { raiz, desmontar } = await formulario(1_500_000);
@@ -345,7 +354,7 @@ test("F2 venta: formulario PVP → sin RPC, comisión 'Por definir' (#38 intacto
   await desmontar();
   assert.ok(n);
   assert.deepEqual(nuevos(antes), [n]);
-  assert.equal(estadoVenta(n!), "2000000|-|-|-|0");
+  assert.equal(estadoVenta(n!), `2000000|comisionable|200000|pendiente|${filasAlCrear()}`);
 });
 
 test("F3 carrera vista previa → creación: si el % del aliado cambia en medio, se niega ANTES de numerar", async () => {
@@ -478,13 +487,13 @@ test("G3 después de emitir: la app y la API directa no cambian precio, tipo ni 
     fechaSalida: "2026-12-01", fechaRegreso: "2026-12-04", plazo: "", tipoAsesor: "agencia", agenciaNombre: "T206 Agencia",
     agenciaAsesor: "", freelanceNombre: "", asesorNombre: U.admin.nombre, planNombre: "", observaciones: "", pax: "1",
   };
-  const subir = await actualizarVenta(n, { ...base, precioVenta: "2000000" });
+  const subir = await actualizarVenta(n, { ...base, precioVenta: "2000000" }, {});
   assert.match(errorDe(subir), /vendido en NETO: el precio de venta es el total exigible/);
-  const tipo = await actualizarVenta(n, { ...base, tipoAsesor: "interno", precioVenta: "1800000" });
+  const tipo = await actualizarVenta(n, { ...base, tipoAsesor: "interno", precioVenta: "1800000" }, {});
   assert.match(errorDe(tipo), /vendido en NETO: el tipo de venta/);
-  const servicios = await actualizarServiciosContrato(n, []);
+  const servicios = await actualizarServiciosContrato(n, [], {});
   assert.match(errorDe(servicios), /vendido en NETO: los servicios no se cambian/);
-  const cliente = await actualizarVenta(n, { ...base, cliente: "Cliente Corregido 206", precioVenta: "1800000" });
+  const cliente = await actualizarVenta(n, { ...base, cliente: "Cliente Corregido 206", precioVenta: "1800000" }, {});
   assert.equal(cliente.ok, true, JSON.stringify(cliente));
   // API directa con la sesión de administración (sin pasar por las guardas de la app).
   const sb = await clienteDe("admin");
@@ -540,11 +549,552 @@ test("R2 falla el RPC Y la reversión: queda PVP 'Por definir' (nunca NETO sin c
   // así que no admite abonos (trigger de la 172) aunque esté vivo.
   assert.equal(sql(`select financiero_estado from public.ventas where numero_contrato = '${n}'`), "pendiente");
   await entrarComo("admin");
-  const abono = await registrarAbono(n, 100_000, "Efectivo", "R2");
+  const abono = await registrarAbono(n, 100_000, "Efectivo", "R2", undefined, undefined, undefined, undefined, {});
   assert.equal(abono.ok, false, "no cobrable mientras su registro financiero está pendiente");
 });
 
 // ═══ 5. Concurrencia en la app ═══════════════════════════════════════════
+
+// ── #97 · PVP B2B manual: comisión del aliado registrada por la RPC 205 ─────
+// SIMULA el gancho de #75: confirmar_venta (confirmación interna) y, en la MISMA llamada lógica, la materialización del plan. En el entorno integrado #75 llama a
+// materializar_comision_b2b DENTRO de confirmar_venta; esta segunda llamada es entonces un reintento idempotente (devuelve la misma fila).
+// Tras una conversión con pago previo: con el ciclo encendido, si el contrato sigue PENDIENTE no hay comisión exigible y se confirma; si el pago previo ya alcanzó el mínimo, #75 lo
+// confirmó en la conversión y el gancho materializó (una fila con su plan). Apagado: la comisión nace al convertir (la regla de siempre).
+async function aConfirmadaYMaterializada(n: string) {
+  // Con el interruptor en CUALQUIER posición: pendiente = solo plan; confirmado = una fila materializada desde su plan.
+  const est = sql(`select estado from public.ventas where numero_contrato = '${n}'`);
+  if (est === "pendiente") { assert.equal(nFilas(n), "0", "pendiente: sin comisión exigible"); await confirmarYMaterializar(n); return; }
+  assert.equal(est, "confirmado", "el pago previo que alcanza el mínimo confirma el contrato");
+  assert.equal(nFilas(n), "1", "confirmado por el pago: el gancho de #75 materializó la comisión");
+  assert.equal(sql(`select (plan_id is not null)::text from public.aliados_b2b where numero_contrato = '${n}'`), "true", "materializada desde su plan");
+}
+async function confirmarYMaterializar(n: string): Promise<number | null> {
+  const sb = await clienteDe("admin");
+  const c = await sb.rpc("confirmar_venta", { p_numero: n });
+  assert.equal(c.error, null, `confirmar_venta ${n}: ${JSON.stringify(c.error)}`);
+  // Con el gancho de #75 la confirmación materializa SOLA, en su transacción: la segunda llamada de abajo es solo un reintento idempotente.
+  assert.equal(nFilas(n), "1", "confirmar_venta (gancho de #75) materializó la comisión sin una segunda llamada");
+  const m = await sb.rpc("materializar_comision_b2b", { p_numero: n });
+  assert.equal(m.error, null, `materializar_comision_b2b ${n}: ${JSON.stringify(m.error)}`);
+  assert.equal(nFilas(n), "1", "reintento idempotente: materialización ÚNICA");
+  return m.data as number | null;
+}
+const planDe = (n: string) => sql(`select aliado_id || '|' || tipo_asesor || '|' || base_comision::numeric(15,0) || '|' || pct_comision || '|' || comision_ordinaria::numeric(15,0) from public.comision_plan where numero_contrato = '${n}' order by id desc limit 1`);
+// El manual de Mayorista nace PENDIENTE y un pendiente es SOLO plan con el interruptor en cualquier posición (286 de #97): la RPC de reserva escribe en comision_plan
+// y no deja filas exigibles al crear. Los casos de fallo simulado apuntan a esa tabla.
+const tablaDeLaComision = () => "comision_plan";
+const cicloActivo = () => sql(`select p97_priv.ciclo_activo()::text`) === "true";
+const filasAlCrear = () => "0";
+// Conteos para las pruebas de idempotencia de la conversión: ventas de la cotización, juego de obligaciones (CxP exigibles + previstas de #75, si existen) y comisiones.
+const juegoObligaciones = (n: string) => sql(`select (select count(*) from public.cuentas_por_pagar where numero_contrato = '${n}') || '/' || (case when to_regclass('public.contrato_obligaciones_previstas') is null then '0' else (xpath('/row/c/text()', query_to_xml('select count(*) c from public.contrato_obligaciones_previstas where numero_contrato = ''${n}''', false, true, '')))[1]::text end)`);
+const ventasDe = (cotId: number) => sql(`select count(*) from public.ventas where cotizacion_id = ${cotId}`);
+const nFilas = (n: string) => sql(`select count(*) from public.aliados_b2b where numero_contrato = '${n}'`);
+const filaComision = (n: string) => sql(`select aliado || '|' || coalesce(aliado_id::text, '-') || '|' || tipo_aliado || '|' || base_comision::numeric(15,0) || '|' || pct_comision || '|' || estado || '|' || descontada_en_precio from public.aliados_b2b where numero_contrato = '${n}'`);
+
+test("V97-0 faltan dependencias de la comisión: el manual B2B de Mayorista se rechaza ANTES de numerar con diagnóstico; con ellas, el interruptor apagado no lo impide (pendiente, solo plan)", async () => {
+  await entrarComo("venta");
+  const antes = numeros();
+  // Se retira una dependencia real (la guarda de identidad sobre comision_plan) y se restablece al final.
+  const guarda = sql(`select modo || '|' || coalesce(motivo, '') from public.contrato_guardas_config where tabla = 'comision_plan'`);
+  assert.ok(guarda, "la base tiene la guarda de comision_plan (284 + 286)");
+  sql(`delete from public.contrato_guardas_config where tabla = 'comision_plan'`);
+  try {
+    const r = await crearContrato(entradaContrato({ modoCompra: "pvp" }));
+    assert.equal(r.ok, false, JSON.stringify(r));
+    assert.match(errorDe(r), /dependencias que faltan.*guarda de identidad sobre comision_plan/, JSON.stringify(r));
+    assert.deepEqual(nuevos(antes), [], "no se numeró ni se creó nada");
+  } finally {
+    const [modo, motivo] = guarda.split("|");
+    sql(`insert into public.contrato_guardas_config (tabla, modo, motivo) values ('comision_plan', '${modo}', '${motivo.replace(/'/g, "''")}')`);
+  }
+  const ciclo = cicloActivo();
+  sql(`update p97_priv.ciclo set activo = false`);
+  try {
+    const r = await crearContrato(entradaContrato({ modoCompra: "pvp" }));
+    assert.equal(r.ok, true, JSON.stringify(r));
+    const [n] = nuevos(antes);
+    assert.equal(sql(`select estado from public.ventas where numero_contrato = '${n}'`) + "|" + nFilas(n) + "|" + sql(`select count(*) from public.comision_plan where numero_contrato = '${n}'`),
+      "pendiente|0|1", "ciclo apagado: pendiente, solo plan, sin fila exigible");
+  } finally {
+    sql(`update p97_priv.ciclo set activo = ${ciclo}`);
+  }
+});
+
+test("V97-1 crearContrato PVP aliado: UNA comisión pendiente del ALIADO (no del asesor), base = PVP − BNC, venta intacta en PVP", async () => {
+  await entrarComo("venta");
+  const antes = numeros();
+  const r = await crearContrato(entradaContrato({ modoCompra: "pvp" }));
+  assert.equal(r.ok, true, JSON.stringify(r));
+  const [n] = nuevos(antes);
+  assert.equal(estadoVenta(n), `2000000|comisionable|200000|pendiente|${filasAlCrear()}`);
+  // Interruptor en cualquier posición: el manual nace PENDIENTE, solo plan; la fila nace UNA vez al confirmar.
+  assert.equal(sql(`select estado from public.ventas where numero_contrato = '${n}'`), "pendiente", "el manual de Mayorista nace PENDIENTE");
+  assert.equal(nFilas(n), "0", "pendiente: sin comisión exigible");
+  assert.equal(planDe(n), "9601|agencia|2000000|0.1000|200000", "el plan informativo conserva aliado, BNC y %");
+  await confirmarYMaterializar(n);
+  const fila = filaComision(n).split("|");
+  assert.notEqual(fila[0], U.venta.nombre, "el beneficiario no es el asesor interno que asiste");
+  assert.equal(fila[2], "agencia");
+  assert.equal(fila[3], "2000000", "BNC 0 → base = PVP");
+  assert.equal(fila[5], "pendiente");
+  assert.equal(fila[6], "false", "PVP no descuenta la comisión del precio");
+});
+
+test("V97-2 PVP: la RPC falla tras crear el contrato → se revierte completo y el mensaje lo dice (BD real)", async () => {
+  await entrarComo("venta");
+  const antes = numeros();
+  sql(`create or replace function public.t97_falla() returns trigger language plpgsql as $$ begin raise exception 'fallo simulado 97'; end $$;
+       create trigger t97_falla before insert on public.${tablaDeLaComision()} for each row execute function public.t97_falla();`);
+  try {
+    const r = await crearContrato(entradaContrato({ modoCompra: "pvp" }));
+    assert.equal(r.ok, false);
+    assert.match(errorDe(r), /fallo simulado 97/);
+    assert.match(errorDe(r), /El contrato no se creó/);
+  } finally {
+    sql(`drop trigger t97_falla on public.${tablaDeLaComision()}; drop function public.t97_falla();`);
+  }
+  assert.deepEqual(nuevos(antes), [], "el contrato no quedó");
+  assert.equal(sql(`select count(*) from public.aliados_b2b b where not exists (select 1 from public.ventas v where v.numero_contrato = b.numero_contrato)`), "0", "sin comisiones huérfanas");
+});
+
+test("V97-3 dos crearContrato PVP simultáneos: son DOS contratos (cada uno con su comisión); no es dedupe entre contratos", async () => {
+  await entrarComo("venta");
+  const antes = numeros();
+  const [a, b] = await Promise.all([crearContrato(entradaContrato({ modoCompra: "pvp" })), crearContrato(entradaContrato({ modoCompra: "pvp" }))]);
+  assert.equal(a.ok && b.ok, true, JSON.stringify([a, b]));
+  const ns = nuevos(antes);
+  assert.equal(ns.length, 2);
+  for (const n of ns) assert.equal(estadoVenta(n), `2000000|comisionable|200000|pendiente|${filasAlCrear()}`);
+});
+
+test("V97-4 PVP venta directa (sin aliado): no registra comisión", async () => {
+  await entrarComo("venta");
+  const antes = numeros();
+  const r = await crearContrato(entradaContrato({ modoCompra: "pvp", tipoVenta: "interno", aliadoId: null }));
+  assert.equal(r.ok, true, JSON.stringify(r));
+  const [n] = nuevos(antes);
+  assert.equal(estadoVenta(n), "2000000|-|-|-|0");
+});
+
+// ── #97 · negociado B2B PVP (opción A): nace 'pendiente', se cierra SOLO tras copiar los costos del paquete ─────
+function fixtureNegociado(idPaquete: number, record: string, conCostos = true, costoHotel = 700_000) {
+  sql(String.raw`insert into public.paquetes (id, nombre, categoria) values (${idPaquete}, 'Paquete 97 ${idPaquete}', 'bloqueo') on conflict (id) do nothing;
+       insert into public.paquete_precios (paquete_id, acomodacion, precio) values (${idPaquete}, 'doble', 1000000) on conflict do nothing;
+       ${conCostos ? `insert into public.paquete_costos (paquete_id, costo_hotel, costo_aereo, costo_receptivo, costo_asistencia, otros_costos) values (${idPaquete}, ${costoHotel}, 300000, 0, 0, 0) on conflict do nothing;` : ""}
+       insert into public.bloqueos_vuelo (record) values ('${record}') on conflict do nothing;
+       insert into public.sillas (bloqueo_id, numero_silla, estado) select b.id, g, 'disponible' from public.bloqueos_vuelo b, generate_series(1, 4) g where b.record = '${record}' and not exists (select 1 from public.sillas x where x.bloqueo_id = b.id);`);
+  return sql(`select id from public.bloqueos_vuelo where record = '${record}'`);
+}
+const entradaNegociado = (idPaquete: number, bloqueoId: number) =>
+  entradaContrato({ modoCompra: "pvp", tipoPaquete: "bloqueo", paqueteId: idPaquete, bloqueoId });
+const sillasDe = (n: string) => sql(`select count(*) from public.sillas where numero_contrato = '${n}'`);
+const estadoFin = (n: string) => sql(`select financiero_estado || '|' || costo_hotel::numeric(15,0) || '|' || costo_aereo::numeric(15,0) from public.ventas where numero_contrato = '${n}'`);
+
+test("N97-1 negociado B2B PVP: costos copiados → cierra COMPLETO, una comisión pendiente del aliado, sillas asignadas, sin CxP", async () => {
+  await entrarComo("venta");
+  const bloq = fixtureNegociado(970001, "R97A");
+  const antes = numeros();
+  const r = await crearContrato(entradaNegociado(970001, Number(bloq)));
+  assert.equal(r.ok, true, JSON.stringify(r));
+  const [n] = nuevos(antes);
+  assert.equal(estadoFin(n), "completo|700000|300000");
+  assert.equal(estadoVenta(n), `1000000|comisionable|100000|pendiente|${filasAlCrear()}`);
+  assert.ok(Number(sillasDe(n)) > 0, "las sillas quedaron asignadas");
+  assert.equal(sql(`select count(*) from public.cuentas_por_pagar where numero_contrato = '${n}'`), "0");
+});
+
+async function negociadoFallido(idPaquete: number, record: string, opciones: { conCostos?: boolean; costoHotel?: number; trigger?: string }, esperado: RegExp) {
+  await entrarComo("venta");
+  const bloq = fixtureNegociado(idPaquete, record, opciones.conCostos ?? true, opciones.costoHotel ?? 700_000);
+  const antes = numeros();
+  if (opciones.trigger) sql(opciones.trigger);
+  try {
+    const r = await crearContrato(entradaNegociado(idPaquete, Number(bloq)));
+    assert.equal(r.ok, false, JSON.stringify(r));
+    assert.match(errorDe(r), esperado);
+    assert.match(errorDe(r), /No se creó nada \(sin comisión ni sillas asignadas\)/);
+  } finally {
+    sql("drop trigger if exists t97_falla_neg on public.ventas; drop function if exists public.t97_falla_neg();");
+  }
+  assert.deepEqual(nuevos(antes), [], "el contrato no quedó");
+  assert.equal(sql(`select count(*) from public.aliados_b2b b where not exists (select 1 from public.ventas v where v.numero_contrato = b.numero_contrato)`), "0", "sin comisión huérfana");
+  assert.equal(sql(`select count(*) from public.cuentas_por_pagar c where not exists (select 1 from public.ventas v where v.numero_contrato = c.numero_contrato)`), "0", "sin CxP huérfana");
+  assert.equal(sql(`select count(*) from public.sillas s join public.bloqueos_vuelo b on b.id = s.bloqueo_id where b.record = '${record}' and (s.numero_contrato is not null or s.estado <> 'disponible')`), "0", "sillas liberadas");
+}
+
+test("N97-2 negociado B2B: el paquete no tiene costos configurados → no se crea; sin comisión ni sillas", async () => {
+  await negociadoFallido(970002, "R97B", { conCostos: false }, /no tiene costos negociados configurados/);
+});
+
+test("N97-3 negociado B2B: falla guardar los costos en la venta → se deshace completo", async () => {
+  await negociadoFallido(970003, "R97C", { costoHotel: 777_777, trigger: `create function public.t97_falla_neg() returns trigger language plpgsql as $$ begin if new.costo_hotel = 777777 then raise exception 'fallo simulado costos'; end if; return new; end $$;
+    create trigger t97_falla_neg before update on public.ventas for each row execute function public.t97_falla_neg();` }, /no se pudieron guardar los costos/);
+});
+
+test("N97-4 negociado B2B: falla el cierre financiero → se deshace completo (nunca 'completo' ni 'pendiente' a medias)", async () => {
+  await negociadoFallido(970004, "R97D", { trigger: `create function public.t97_falla_neg() returns trigger language plpgsql as $$ begin if new.financiero_estado = 'completo' and old.financiero_estado = 'pendiente' then raise exception 'fallo simulado cierre'; end if; return new; end $$;
+    create trigger t97_falla_neg before update on public.ventas for each row execute function public.t97_falla_neg();` }, /no se pudo cerrar el registro financiero/);
+});
+
+test("N97-5 negociado B2B sin llave de servicio: se rechaza ANTES de numerar", async () => {
+  await entrarComo("venta");
+  const bloq = fixtureNegociado(970005, "R97E");
+  const antes = numeros();
+  const llave = process.env.SUPABASE_SERVICE_ROLE_KEY;
+  delete process.env.SUPABASE_SERVICE_ROLE_KEY;
+  try {
+    const r = await crearContrato(entradaNegociado(970005, Number(bloq)));
+    assert.equal(r.ok, false);
+    assert.match(errorDe(r), /falta la configuración del servidor para copiar los costos/);
+  } finally {
+    if (llave !== undefined) process.env.SUPABASE_SERVICE_ROLE_KEY = llave;
+  }
+  assert.deepEqual(nuevos(antes), []);
+});
+
+// ── #97 · cotización DINÁMICA B2B: acuerdo de comisión (migración 286) con las acciones reales ─────
+function cotB2B(recobro: number, recobroAliado: number, extra: Record<string, unknown> = {}) {
+  return {
+    cliente: { nombres: "Ana", apellidos: "Prueba Q97", tipoDoc: "CC", numeroDoc: "1234567890", telefono: "3000000000", email: "ana@x.test", nacimiento: "1990-01-01" },
+    destino: "CARTAGENA", fechaIda: "2026-12-01", fechaRegreso: "2026-12-04", pax: 2, ninos: 0, tarifaNino: 0,
+    recobro, recobroAliado, moneda: "COP", tipoAsesor: "agencia" as const, asesorInterno: "", agenciaNombre: "T206 Agencia", freelanceNombre: "",
+    plazo: "", vigenciaHasta: "2026-11-30", observaciones: "", incluye: "", noIncluye: "",
+    aliadoId: 9601, bnc: 500_000,
+    servicios: [
+      { tipo: "hotel", plataforma: "", nombre: "Hotel Q97", proveedor: "Prov Q97", costoNeto: 800_000, modo: "mk" as const, pctMarkup: 20, ta: 0 },
+      { tipo: "aereo", plataforma: "", nombre: "Vuelo Q97", proveedor: "Aero Q97", costoNeto: 400_000, modo: "mk" as const, pctMarkup: 20, ta: 0 },
+    ],
+    ...extra,
+  };
+}
+const filaAcuerdo = (id: number, version = 1) => sql(`select base_comision::numeric(15,0) || '/' || pct_comision || '/' || comision_ordinaria::numeric(15,0) || '/' || recobro_aliado::numeric(15,0) || '/' || total_aliado::numeric(15,0) from public.comision_plan where cotizacion_id = ${id} and version = ${version}`);
+const liquidaFila = (n: string) => sql(`select count(*)::text || '|' || coalesce(min(aliado_id)::text, '-') || '|' || (sum(round(base_comision * pct_comision) + round(recobro_total * coalesce(pct_recobro_aliado, 0))))::numeric(15,0)::text from public.aliados_b2b where numero_contrato = '${n}'`);
+
+test("Q97-1 crear dinámica B2B: sin aliado por id o sin BNC se rechaza; BNC 0 escrita vale; queda sellado el acuerdo", async () => {
+  await entrarComo("venta");
+  const sinAliado = await crearCotizacionManual(cotB2B(0, 0, { aliadoId: null }));
+  assert.equal(sinAliado.ok, false); assert.match(errorDe(sinAliado), /catálogo/);
+  const antes = sql(`select count(*) from public.cotizaciones`);
+  for (const bnc of [null, undefined, Number.NaN, -1, 99_999_999]) {
+    const r = await crearCotizacionManual(cotB2B(0, 0, { bnc }));
+    assert.equal(r.ok, false, String(bnc));
+  }
+  assert.equal(sql(`select count(*) from public.cotizaciones`), antes, "los rechazos no dejaron cotización");
+  const cero = await crearCotizacionManual(cotB2B(0, 0, { bnc: 0 }));
+  assert.equal(cero.ok, true, JSON.stringify(cero));
+  assert.equal(filaAcuerdo((cero as { id: number }).id), "1500000/0.1000/150000/0/150000");
+});
+
+async function congelarConPago(id: number) {
+  await entrarComo("admin");
+  const total = Number(sql(`select precio_venta from public.cotizaciones where id = ${id}`));
+  const r = await registrarPagoPrevio(id, { valor: Math.ceil(total * 0.5), moneda: "COP", formaPago: "transferencia", referencia: `q97-${id}-${Date.now()}` }, `q97-${id}-${Date.now()}`);
+  assert.equal(r.ok, true, JSON.stringify(r));
+}
+
+async function convertirDinamica(recobro: number, recobroAliado: number) {
+  await entrarComo("venta");
+  const c = await crearCotizacionManual(cotB2B(recobro, recobroAliado));
+  assert.equal(c.ok, true, JSON.stringify(c));
+  const id = (c as { id: number }).id;
+  await congelarConPago(id);
+  const r = await convertirCotizacionManualAContrato(id);
+  assert.equal(r.ok, true, JSON.stringify(r));
+  return { id, numero: (r as { numero: string }).numero };
+}
+
+test("Q97-2 participación CERO: el recobro permanece en la base; conversión real, una sola fila, enlazada por id", async () => {
+  const { id, numero } = await convertirDinamica(100_000, 0);
+  // total 1.600.000 (servicios 1.500.000 + recobro 100.000) − BNC 500.000 = 1.100.000 × 10 %
+  assert.equal(filaAcuerdo(id), "1100000/0.1000/110000/0/110000");
+  await aConfirmadaYMaterializada(numero);
+  assert.equal(liquidaFila(numero), "1|9601|110000");
+  assert.equal(sql(`select aliado_id::text || '|' || tipo_asesor || '|' || impuesto::numeric(15,0) from public.ventas where numero_contrato = '${numero}'`), "9601|agencia|0", "ventas.impuesto no se toca");
+});
+
+test("Q97-3 participación PARCIAL: el recobro completo sale de la base; la fila liquida ordinaria + participación", async () => {
+  const { id, numero } = await convertirDinamica(100_000, 50_000);
+  assert.equal(filaAcuerdo(id), "1000000/0.1000/100000/50000/150000");
+  await aConfirmadaYMaterializada(numero);
+  assert.equal(liquidaFila(numero), "1|9601|150000");
+});
+
+test("Q97-4 participación TOTAL (100 % del recobro): base sin recobro, total = ordinaria + todo el recobro", async () => {
+  const { id, numero } = await convertirDinamica(100_000, 100_000);
+  assert.equal(filaAcuerdo(id), "1000000/0.1000/100000/100000/200000");
+  await aConfirmadaYMaterializada(numero);
+  assert.equal(liquidaFila(numero), "1|9601|200000");
+});
+
+test("Q97-5 editar el recobro versiona el acuerdo; la conversión usa la última versión y un reintento es correcto y no duplica", async () => {
+  await entrarComo("venta");
+  const c = await crearCotizacionManual(cotB2B(100_000, 50_000));
+  assert.equal(c.ok, true, JSON.stringify(c));
+  const id = (c as { id: number }).id;
+  const rev = Number(sql(`select economico_rev from public.cotizaciones where id = ${id}`));
+  const ed = await actualizarRecobroNinosCotizacionManual(id, { ninos: 0, tarifaNino: 0, recobro: 200_000, recobroAliado: 80_000 }, { revEsperada: rev, motivo: "ajuste de recobro (prueba #97)" });
+  assert.equal(ed.ok, true, JSON.stringify(ed));
+  assert.equal(sql(`select max(version) from public.comision_plan where cotizacion_id = ${id}`), "2");
+  // v2: total 1.700.000 − BNC 500.000 − recobro 200.000 = 1.000.000 → ordinaria 100.000 + 80.000 de participación.
+  assert.equal(filaAcuerdo(id, 2), "1000000/0.1000/100000/80000/180000");
+  await congelarConPago(id);
+  const a = await convertirCotizacionManualAContrato(id);
+  assert.equal(a.ok, true, JSON.stringify(a));
+  const na = (a as { numero: string }).numero;
+  const obl1 = juegoObligaciones(na);
+  const b = await convertirCotizacionManualAContrato(id);
+  // Un reintento de una conversión válida ya completada devuelve el MISMO contrato; no es un error ni vuelve a trasladar CxP ni a materializar.
+  assert.equal(b.ok, true, JSON.stringify(b));
+  assert.equal((b as { numero: string }).numero, na, "mismo contrato en el reintento");
+  assert.equal(ventasDe(id), "1", "una sola venta");
+  assert.equal(juegoObligaciones(na), obl1, "un solo juego de obligaciones (el reintento no lo tocó)");
+  await aConfirmadaYMaterializada((a as { numero: string }).numero);
+  assert.equal(liquidaFila((a as { numero: string }).numero), "1|9601|180000");
+});
+
+test("Q97-6 conversiones simultáneas de la misma cotización: ambas correctas, un contrato y una comisión exacta (33.333 de 100.000)", async () => {
+  await entrarComo("venta");
+  const c = await crearCotizacionManual(cotB2B(100_000, 33_333));
+  assert.equal(c.ok, true, JSON.stringify(c));
+  const id = (c as { id: number }).id;
+  await congelarConPago(id);
+  const rs = await Promise.all([convertirCotizacionManualAContrato(id), convertirCotizacionManualAContrato(id)]);
+  // Ambas llamadas son conversiones válidas: la que llega después devuelve el contrato ya creado (no es un error).
+  assert.ok(rs.every((r) => r.ok), JSON.stringify(rs));
+  const ns = new Set(rs.map((r) => (r as { numero: string }).numero));
+  assert.equal(ns.size, 1, "el mismo número en las dos llamadas");
+  assert.equal(ventasDe(id), "1", "una sola venta");
+  const n6 = [...ns][0];
+  await aConfirmadaYMaterializada(n6);
+  const oblDespues = juegoObligaciones(n6);
+  // Concurrencia de la materialización: varias llamadas simultáneas devuelven la MISMA fila y no duplican.
+  const sbAdm = await clienteDe("admin");
+  const ms = await Promise.all([1, 2, 3, 4].map(() => sbAdm.rpc("materializar_comision_b2b", { p_numero: n6 })));
+  assert.equal(new Set(ms.map((m) => String(m.data))).size, 1, JSON.stringify(ms.map((m) => m.data ?? m.error)));
+  assert.equal(nFilas(n6), "1");
+  assert.equal(liquidaFila(n6), "1|9601|133333", "exacto: 100.000 + 33.333");
+  assert.equal(juegoObligaciones(n6), oblDespues, "un solo juego de obligaciones");
+});
+
+test("Q97-7 respuesta perdida: la conversión se completó, el cliente no vio la respuesta; el reintento posterior (antes y después de confirmar por abono) devuelve el mismo contrato sin duplicar nada", async () => {
+  await entrarComo("venta");
+  const c = await crearCotizacionManual(cotB2B(100_000, 40_000));
+  assert.equal(c.ok, true, JSON.stringify(c));
+  const id = (c as { id: number }).id;
+  await congelarConPago(id);
+  const primera = await convertirCotizacionManualAContrato(id);   // la respuesta «se pierde»: no se usa
+  assert.equal(primera.ok, true, JSON.stringify(primera));
+  const n = (primera as { numero: string }).numero;
+  await aConfirmadaYMaterializada(n);                              // pasa el tiempo: queda confirmado y con su comisión
+  const obl = juegoObligaciones(n);
+  const filas = nFilas(n);
+  const reintento = await convertirCotizacionManualAContrato(id);
+  assert.equal(reintento.ok, true, JSON.stringify(reintento));
+  assert.equal((reintento as { numero: string }).numero, n, "mismo contrato");
+  assert.equal(ventasDe(id), "1", "una venta");
+  assert.equal(juegoObligaciones(n), obl, "un juego de obligaciones");
+  assert.equal(nFilas(n), filas, "una comisión");
+  assert.equal(filas, "1");
+  assert.equal(liquidaFila(n), "1|9601|140000", "100.000 + 40.000");
+});
+
+// Reintento de una conversión TERMINADA: antes de devolver el contrato existente se comprueba la autorización vigente del actor (usuario activo, rol de conversión, agencia de la cotización y del contrato);
+// ni una validación económica ni una escritura se repiten. Secuencial (por la acción real) y concurrente (RPC con service_role, que no pasa por el cheque amable de la acción).
+const huellaConversion = (n: string, cotId: number) => sql(`select md5(coalesce((select v::text from public.ventas v where v.cotizacion_id = ${cotId}), '')) || '/' || (select count(*) from public.aliados_b2b where numero_contrato = '${n}') || '/' || (select count(*) from public.comision_plan where numero_contrato = '${n}') || '/' || (select count(*) from public.abonos where numero_contrato = '${n}') || '/' || (select count(*) from public.contrato_items where numero_contrato = '${n}')`) + "|" + juegoObligaciones(n);
+async function rpcConvertir(actor: Quien, cotId: number) {
+  const { createAdminClient } = await import("../lib/supabase/admin.ts");
+  const r = await createAdminClient().rpc("convertir_cotizacion_manual_controlada", { p_cotizacion_id: cotId, p_usuario_id: U[actor].id });
+  return { ok: r.error === null, numero: r.data as string | null, error: r.error?.message ?? "" };
+}
+const RECHAZADOS = ["inactivo", "venta", "agencia", "adminMin"] as const;   // inactivo · rol sin conversión · externo · administración de OTRA agencia (minorista)
+
+test("Q97-8 reintento de una conversión terminada: autorizado devuelve el MISMO contrato; inactivo, sin rol y de otra agencia se rechazan sin tocar nada (secuencial)", async () => {
+  await entrarComo("venta");
+  const c = await crearCotizacionManual(cotB2B(100_000, 20_000));
+  assert.equal(c.ok, true, JSON.stringify(c));
+  const id = (c as { id: number }).id;
+  await congelarConPago(id);
+  const primera = await convertirCotizacionManualAContrato(id);
+  assert.equal(primera.ok, true, JSON.stringify(primera));
+  const n = (primera as { numero: string }).numero;
+  await aConfirmadaYMaterializada(n);
+  const antes = huellaConversion(n, id);
+  // Por la acción real: el cheque de sesión (rol + activo) y, dentro, la base.
+  for (const quien of [...RECHAZADOS, null] as const) {
+    await entrarComo(quien);
+    const r = await convertirCotizacionManualAContrato(id);
+    assert.equal(r.ok, false, `${quien ?? "sin sesión"} no debe recibir el contrato existente: ${JSON.stringify(r)}`);
+    assert.equal(huellaConversion(n, id), antes, `${quien ?? "sin sesión"}: nada cambió`);
+  }
+  // Por la base (service_role + el actor): lo que la acción no filtra lo rechaza la función, con su motivo.
+  for (const quien of RECHAZADOS) {
+    const r = await rpcConvertir(quien, id);
+    assert.equal(r.ok, false, `${quien} por la base: ${JSON.stringify(r)}`);
+    assert.match(r.error, quien === "adminMin" ? /No tienes acceso a la agencia/ : /desactivado|no autorizado|no existe/i, `${quien}: ${r.error}`);
+    assert.equal(huellaConversion(n, id), antes, `${quien} por la base: nada cambió`);
+  }
+  // Autorizados (misma agencia y superadmin): el mismo contrato, sin tocar nada.
+  for (const quien of ["admin", "ops", "gerencia", "super"] as const) {
+    const r = await rpcConvertir(quien, id);
+    assert.equal(r.ok, true, `${quien}: ${JSON.stringify(r)}`);
+    assert.equal(r.numero, n, `${quien}: mismo contrato`);
+  }
+  await entrarComo("admin");
+  const viaAccion = await convertirCotizacionManualAContrato(id);
+  assert.equal(viaAccion.ok, true, JSON.stringify(viaAccion));
+  assert.equal((viaAccion as { numero: string }).numero, n);
+  assert.equal(huellaConversion(n, id), antes, "los reintentos autorizados tampoco tocaron nada");
+  assert.equal(ventasDe(id), "1");
+});
+
+test("Q97-9 reintento CONCURRENTE: autorizados y no autorizados a la vez, antes y después de terminar la conversión; un contrato, una comisión, los rechazados no ven el contrato", async () => {
+  await entrarComo("venta");
+  const c = await crearCotizacionManual(cotB2B(100_000, 25_000));
+  assert.equal(c.ok, true, JSON.stringify(c));
+  const id = (c as { id: number }).id;
+  await congelarConPago(id);
+  // Durante la conversión: dos autorizados y cuatro que no lo son, todos a la vez.
+  const orden: Quien[] = ["admin", "inactivo", "adminMin", "ops", "venta", "agencia", "super"];
+  const rs = await Promise.all(orden.map((q) => rpcConvertir(q, id)));
+  orden.forEach((q, k) => {
+    const autorizado = q === "admin" || q === "ops" || q === "super";
+    assert.equal(rs[k].ok, autorizado, `${q}: ${JSON.stringify(rs[k])}`);
+  });
+  const ns = new Set(rs.filter((r) => r.ok).map((r) => r.numero));
+  assert.equal(ns.size, 1, "los autorizados reciben el mismo contrato");
+  const n = [...ns][0] as string;
+  assert.equal(ventasDe(id), "1", "una sola venta");
+  await aConfirmadaYMaterializada(n);
+  const antes = huellaConversion(n, id);
+  // Después de terminada: otra ráfaga mixta.
+  const rs2 = await Promise.all(orden.map((q) => rpcConvertir(q, id)));
+  orden.forEach((q, k) => {
+    const autorizado = q === "admin" || q === "ops" || q === "super";
+    assert.equal(rs2[k].ok, autorizado, `2.º ${q}: ${JSON.stringify(rs2[k])}`);
+    if (autorizado) assert.equal(rs2[k].numero, n);
+  });
+  assert.equal(huellaConversion(n, id), antes, "la ráfaga no repitió obligaciones, comisión ni escrituras");
+  assert.equal(nFilas(n), "1");
+  assert.equal(liquidaFila(n), "1|9601|125000", "100.000 + 25.000");
+});
+
+// La envoltura de #75 (convertir_cotizacion_a_contrato, 288) llamada DIRECTO: con la conversión terminada, devuelve el mismo contrato a los autorizados, rechaza al resto y no repite nada (secuencial y concurrente).
+test("Q97-10 envoltura de #75: reintento tras la conversión terminada — autorizados el mismo contrato; inactivo, sin rol y otra agencia se rechazan; sin repetir obligaciones ni comisión", async (t) => {
+  if (!sql(`select count(*) from pg_proc where proname = 'materializar_obligaciones'`).match(/^[1-9]/)) { t.skip("requiere la 288 de #75"); return; }
+  const { createAdminClient } = await import("../lib/supabase/admin.ts");
+  const env = async (quien: Quien, cotId: number) => {
+    const r = await createAdminClient().rpc("convertir_cotizacion_a_contrato", { p_cotizacion_id: cotId, p_usuario_id: U[quien].id });
+    return { ok: r.error === null, numero: r.data as string | null, error: r.error?.message ?? "" };
+  };
+  await entrarComo("venta");
+  const c = await crearCotizacionManual(cotB2B(100_000, 15_000));
+  assert.equal(c.ok, true, JSON.stringify(c));
+  const id = (c as { id: number }).id;
+  await congelarConPago(id);
+  const primera = await convertirCotizacionManualAContrato(id);
+  assert.equal(primera.ok, true, JSON.stringify(primera));
+  const n = (primera as { numero: string }).numero;
+  await aConfirmadaYMaterializada(n);
+  const antes = huellaConversion(n, id);
+  for (const quien of ["admin", "ops", "super"] as const) {
+    const r = await env(quien, id);
+    assert.equal(r.ok, true, `${quien}: ${JSON.stringify(r)}`);
+    assert.equal(r.numero, n);
+  }
+  for (const quien of RECHAZADOS) {
+    const r = await env(quien, id);
+    assert.equal(r.ok, false, `${quien}: ${JSON.stringify(r)}`);
+  }
+  assert.equal(huellaConversion(n, id), antes, "secuencial: nada cambió");
+  const orden: Quien[] = ["admin", "inactivo", "adminMin", "ops", "venta", "agencia", "super"];
+  const rs = await Promise.all(orden.map((q) => env(q, id)));
+  orden.forEach((q, k) => assert.equal(rs[k].ok, q === "admin" || q === "ops" || q === "super", `concurrente ${q}: ${JSON.stringify(rs[k])}`));
+  assert.equal(huellaConversion(n, id), antes, "concurrente: nada cambió");
+});
+
+// ── #97 · FORMULARIO real de la cotización dinámica → acción → acuerdo → conversión (integración) ─────
+async function llenarCotizacionB2B(raiz: Element, op: { modo: "valor" | "pct"; part: string; bnc: string }) {
+  const etiq = (t: string, n = 0) => [...raiz.querySelectorAll("label")].filter((l) => txt(l).startsWith(t))[n]?.parentElement?.querySelector("input") as HTMLInputElement;
+  await escribir(etiq("Nombres"), "Ana");
+  await escribir(etiq("Apellidos"), "Formulario UI97");
+  await escribir(raiz.querySelector('input[aria-label="Fecha de nacimiento"]') as HTMLInputElement, "1990-01-01");
+  await escribir(etiq("Número de documento"), "1098765432");
+  await cambiar([...raiz.querySelectorAll("select")].find((s) => [...s.options].some((o) => o.value === "CC")), "CC");
+  await escribir(etiq("Destino"), "CARTAGENA");
+  await escribir(raiz.querySelector('input[aria-label="Fecha ida"]') as HTMLInputElement, "2026-12-01");
+  await escribir(raiz.querySelector('input[aria-label="Fecha regreso"]') as HTMLInputElement, "2026-12-04");
+  await escribir(etiq("Adultos"), "2");
+  await clic(botonConTexto(raiz, /^\s*Hotel\s*$/), "agregar hotel");
+  await clic(botonConTexto(raiz, /^\s*Aéreo\s*$/), "agregar aéreo");
+  await escribir(etiq("Nombre del servicio", 0), "Hotel UI97");
+  await escribir(etiq("Proveedor", 0), "Prov UI97");
+  await escribir(etiq("Costo neto", 0), "800000");
+  await escribir(etiq("Nombre del servicio", 1), "Vuelo UI97");
+  await escribir(etiq("Proveedor", 1), "Aero UI97");
+  await escribir(etiq("Costo neto", 1), "400000");
+  await clic(botonConTexto(raiz, "agencia"), "tipo agencia");
+  await escribir(raiz.querySelector('input[list="aliados-list"]') as HTMLInputElement, "T206 Agencia");
+  await escribir(etiq("Valor del recobro"), "100000");
+  if (op.modo === "pct") {
+    await clic([...raiz.querySelectorAll('input[name="modoPart"]')][1], "modo porcentaje");
+    await escribir(raiz.querySelector('input[placeholder="% del recobro"]') as HTMLInputElement, op.part);
+  } else {
+    await escribir([...raiz.querySelectorAll("label")].find((l) => txt(l).startsWith("Para el aliado"))!.parentElement!.parentElement!.querySelector('input[type="number"]') as HTMLInputElement, op.part);
+  }
+  if (op.bnc !== "") await escribir(raiz.querySelector('input[placeholder="0 si no hay"]') as HTMLInputElement, op.bnc);
+}
+async function guardarCotizacionUI(raiz: Element): Promise<number | null> {
+  const previas = estado.__pg206.rutas.length;
+  await clic(botonConTexto(raiz, /Generar cotización/), "Generar cotización");
+  const listo = await esperarHasta(() => estado.__pg206.rutas.length > previas || !/Guardando…/.test(txt(raiz)), 30_000);
+  assert.ok(listo, `la cotización no terminó: ${txt(raiz).slice(-400)}`);
+  const ruta = estado.__pg206.rutas[previas];
+  return ruta ? Number(decodeURIComponent(ruta.split("/").pop()!)) : null;
+}
+
+test("UI97-1 formulario: sin BNC no guarda y lo dice; con BNC y participación en PORCENTAJE muestra el importe y la base, guarda el acuerdo y convierte", async () => {
+  await entrarComo("venta");
+  const { CotizacionManualForm } = await import("../app/(dashboard)/dashboard/cotizaciones/nueva/CotizacionManualForm.tsx");
+  const m = await montar(h(CotizacionManualForm, { asesores: [], aliados: [{ id: 9601, nombre: "T206 Agencia", tipo: "agencia" }], miNombre: U.venta.nombre, miRolVenta: true, pctAliadoB2B: 0.5 }));
+  const raiz = m.contenedor;
+  await llenarCotizacionB2B(raiz, { modo: "pct", part: "50", bnc: "" });
+  const antes = sql(`select count(*) from public.cotizaciones`);
+  assert.equal(await guardarCotizacionUI(raiz), null, "sin BNC no navega");
+  assert.match(txt(raiz), /Indica la base no comisionable/);
+  assert.equal(sql(`select count(*) from public.cotizaciones`), antes, "no se creó cotización");
+  await escribir(raiz.querySelector('input[placeholder="0 si no hay"]') as HTMLInputElement, "500000");
+  assert.match(txt(raiz), /Importe final al aliado:\s*\$?\s*50\.000/);
+  assert.match(txt(raiz), /el recobro completo sale de la base/);
+  assert.match(txt(raiz), /Base comisionable\s*\$?\s*1\.000\.000/);
+  const id = await guardarCotizacionUI(raiz);
+  assert.ok(id, "navega a la cotización creada: " + txt(raiz).slice(-500));
+  await m.desmontar();
+  assert.equal(filaAcuerdo(id!), "1000000/0.1000/100000/50000/150000");
+  await congelarConPago(id!);
+  const r = await convertirCotizacionManualAContrato(id!);
+  assert.equal(r.ok, true, JSON.stringify(r));
+  await aConfirmadaYMaterializada((r as { numero: string }).numero);
+  assert.equal(liquidaFila((r as { numero: string }).numero), "1|9601|150000");
+});
+
+test("UI97-2 formulario: participación 0 por VALOR → el recobro permanece en la base; aviso de redondeo en porcentaje", async () => {
+  await entrarComo("venta");
+  const { CotizacionManualForm } = await import("../app/(dashboard)/dashboard/cotizaciones/nueva/CotizacionManualForm.tsx");
+  const m = await montar(h(CotizacionManualForm, { asesores: [], aliados: [{ id: 9601, nombre: "T206 Agencia", tipo: "agencia" }], miNombre: U.venta.nombre, miRolVenta: true, pctAliadoB2B: 0.5 }));
+  const raiz = m.contenedor;
+  await llenarCotizacionB2B(raiz, { modo: "valor", part: "0", bnc: "500000" });
+  assert.match(txt(raiz), /sin participación: el recobro permanece en la base/);
+  assert.match(txt(raiz), /Base comisionable\s*\$?\s*1\.100\.000/);
+  // Porcentaje que no da un entero: se avisa (no se ajusta en silencio).
+  await clic([...raiz.querySelectorAll('input[name="modoPart"]')][1], "modo porcentaje");
+  await escribir(raiz.querySelector('input[placeholder="% del recobro"]') as HTMLInputElement, "33.3333");
+  assert.match(txt(raiz), /El porcentaje equivale a 33333\.30 y se redondea a/);
+  await escribir(raiz.querySelector('input[placeholder="% del recobro"]') as HTMLInputElement, "0");
+  const id = await guardarCotizacionUI(raiz);
+  assert.ok(id, "UI97-2: " + txt(raiz).slice(-500));
+  await m.desmontar();
+  assert.equal(filaAcuerdo(id!), "1100000/0.1000/110000/0/110000");
+});
 
 test("C1 dos crearContrato NETO simultáneos: números distintos, cada uno con UNA comisión descontada", async () => {
   await entrarComo("venta");
@@ -606,6 +1156,155 @@ async function contratoNetoDeVenta(): Promise<string> {
 }
 const plano = (html: string) => html.replace(/<[^>]+>/g, " ").replace(/&nbsp;/g, " ").replace(/\s+/g, " ");
 
+// #75 · NETO-ED — editar la tarifa de un NETO PENDIENTE sin pagos (regla aprobada por el dueño, migración 291). El editor de ítems
+// (guardarItemsContrato, superadmin) reemite ítems + comisión descontada + total exigible en una transacción: % pactado y BNC conservados.
+type ItemEd = { descripcion: string; adultos: number; ninos: number; tarifaAdulto: number; tarifaNino: number };
+const fotoNeto = (n: string) => sql(`select v.estado || '|' || v.precio_venta::numeric(15,0) || '|' || v.comision_b2b::numeric(15,0) || '|' || v.impuesto::numeric(15,0) || '|' ||
+    b.base_comision::numeric(15,0) || '|' || b.pct_comision || '|' || b.precio_venta::numeric(15,0) || '|' ||
+    (select string_agg(tarifa_adulto::numeric(15,0)::text, ',' order by orden) from public.contrato_items i where i.numero_contrato = v.numero_contrato)
+    from public.ventas v join public.aliados_b2b b on b.numero_contrato = v.numero_contrato and b.descontada_en_precio where v.numero_contrato = '${n}'`);
+async function editarTarifaAdulta(n: string, tarifa: number, forzarMargen = false) {
+  await entrarComo("super");
+  const { guardarItemsContrato } = await import("../app/(dashboard)/dashboard/contratos/[numero]/contenido-actions.ts");
+  const { identidadDe } = await import("../lib/contrato/identidad.ts");
+  const items = JSON.parse(sql(`select json_agg(json_build_object('descripcion', descripcion, 'adultos', adultos, 'ninos', ninos, 'tarifaAdulto', tarifa_adulto, 'tarifaNino', tarifa_nino) order by orden)::text
+    from public.contrato_items where numero_contrato = '${n}'`)) as ItemEd[];
+  items[0].tarifaAdulto = tarifa;
+  const uid = sql(`select contrato_uid from public.ventas where numero_contrato = '${n}'`);
+  // Consumo (docs/agents/VALIDACION_CONSUMO_VERCEL.md): solicitudes HTTP a Supabase de UN guardado.
+  const f0 = globalThis.fetch; let solicitudes = 0;
+  globalThis.fetch = ((...a: Parameters<typeof fetch>) => { solicitudes++; return f0(...a); }) as typeof fetch;
+  try { return { r: await guardarItemsContrato(n, items, identidadDe(n, uid), forzarMargen), solicitudes }; } finally { globalThis.fetch = f0; }
+}
+const CASO_291 = { ...NETO, bncFijo: 400_000, comisionNetoEsperada: 160_000 };   // PVP 2.000.000, BNC 400.000, 10 % → base 1.600.000, NETO 1.840.000
+// Conciliación EXACTA de la fila descontada con el descuento de la venta: liquidador SQL (comision_b2b_total, 205) y resolvedor real de la app
+// (calcularComisionFila, espejo TS; `totalComision` = sin retención). Igualdad estricta, sin redondear ni castear.
+async function conciliacion(n: string) {
+  const { calcularComisionFila } = await import("../lib/finanzas/comisionB2B.ts");
+  const fila = JSON.parse(sql(`select row_to_json(b)::text from public.aliados_b2b b where b.numero_contrato = '${n}' and b.descontada_en_precio`));
+  const [desc, sqlIgual, pvpIgual] = sql(`select v.comision_b2b || '|' || (public.comision_b2b_total(b) = v.comision_b2b) || '|' || (v.precio_venta + v.comision_b2b = b.precio_venta)
+    from public.ventas v join public.aliados_b2b b on b.numero_contrato = v.numero_contrato and b.descontada_en_precio where v.numero_contrato = '${n}'`).split("|");
+  const ts = calcularComisionFila(fila);
+  return { descuento: Number(desc), sqlIgual: sqlIgual === "true", pvpIgual: pvpIgual === "true", tsTotal: ts.totalComision, tsIgual: ts.totalComision === Number(desc),
+           comisionValor: fila.comision_valor == null ? null : Number(fila.comision_valor), pct: Number(fila.pct_comision) };
+}
+
+test("NETO-ED1 caso obligatorio: PVP 2.000.000→2.200.000 con BNC 400.000 y 10 % → base 1.800.000, comisión 180.000, NETO 2.020.000 en BD, documento, estado de cuenta y mínimo", async (t) => {
+  await entrarComo("venta");
+  const antes0 = numeros();
+  assert.equal((await crearContrato(entradaContrato(CASO_291))).ok, true);
+  const n = nuevos(antes0)[0];
+  assert.equal(fotoNeto(n), "pendiente|1840000|160000|400000|1600000|0.1000|2000000|2000000", "estado inicial del caso obligatorio");
+  sql(`update public.aliados set pct_comision = 0.25 where id = 9601`);   // el % VIGENTE del catálogo cambia: debe usarse el PACTADO
+  try {
+    const { r, solicitudes } = await editarTarifaAdulta(n, 2_200_000);
+    reportar(t, "consumo de un guardado (solicitudes HTTP)", solicitudes);
+    assert.deepEqual(r, { ok: true });
+    assert.equal(fotoNeto(n), "pendiente|2020000|180000|400000|1800000|0.1000|2200000|2200000", "reabierto: ítems, fila descontada y total exigible juntos");
+    assert.equal(sql(`select (p75_priv.estado_minimo('${n}')->>'minimo')::numeric::bigint`), "2020000", "mínimo NETO de confirmación = nuevo total");
+    const { default: Pagina } = await import("../app/contrato/[numero]/page.tsx");
+    const texto = plano(await html(Pagina({ params: Promise.resolve({ numero: n }) })));
+    assert.ok(texto.includes(`Total del contrato ${$(2_020_000)}`), texto.slice(0, 600));
+    for (const v of [1_840_000, 2_200_000, 180_000]) assert.ok(!texto.includes($(v)), `documento: no aparece ${$(v)}`);
+    await entrarComo("admin");
+    const { cargarEstadoCuenta } = await import("../lib/cuenta/estado.ts");
+    const ec = await cargarEstadoCuenta(n);
+    assert.deepEqual([ec?.precio_venta, ec?.saldo], [2_020_000, 2_020_000], "estado de cuenta/cartera = nuevo total");
+    assert.equal(previstasDe(n), "1|1500000", "costos y obligaciones previstas intactos");
+    assert.deepEqual(await conciliacion(n), { descuento: 180_000, sqlIgual: true, pvpIgual: true, tsTotal: 180_000, tsIgual: true, comisionValor: 180_000, pct: 0.1 });
+    // Repetir el guardado: mismo resultado, sigue conciliado.
+    assert.deepEqual((await editarTarifaAdulta(n, 2_200_000)).r, { ok: true });
+    assert.equal(fotoNeto(n), "pendiente|2020000|180000|400000|1800000|0.1000|2200000|2200000");
+    assert.equal((await conciliacion(n)).tsIgual, true);
+  } finally {
+    sql(`update public.aliados set pct_comision = 0.10 where id = 9601`);
+  }
+});
+
+test("NETO-ED2 confirmado o con un pago: la edición de tarifas NETO se rechaza y no cambia nada", async () => {
+  const conPago = await contratoNetoDeVenta();
+  sql(`insert into public.abonos (numero_contrato, tenant, valor_abono, monto_cop, trm, fecha_abono, forma_pago, referencia) values ('${conPago}','mayorista',100000,100000,1,current_date,'Efectivo','ed2')`);
+  const f1 = fotoNeto(conPago);
+  const r1 = await editarTarifaAdulta(conPago, 2_200_000);
+  assert.equal(r1.r.ok, false);
+  assert.match(errorDe(r1.r), /ya tiene pagos/);
+  assert.equal(fotoNeto(conPago), f1);
+  const confirmado = await contratoNetoDeVenta();
+  await confirmarPorAccion(confirmado);
+  const f2 = fotoNeto(confirmado);
+  const r2 = await editarTarifaAdulta(confirmado, 2_200_000);
+  assert.equal(r2.r.ok, false);
+  assert.match(errorDe(r2.r), /no está pendiente/);
+  assert.equal(fotoNeto(confirmado), f2);
+});
+
+test("NETO-ED4 USD por la app: 2.345 → 2.355 al 10 %, BNC 0: la fila liquida EXACTAMENTE 236 (antes 234,5 vs 235) y el NETO es 2.119; repetir no cambia nada", async (t) => {
+  await entrarComo("venta");
+  const antes0 = numeros();
+  const r0 = await crearContrato(entradaContrato({ moneda: "USD", modoCompra: "neto", comisionNetoEsperada: 235,
+    items: [{ descripcion: "Paquete USD", adultos: 1, ninos: 0, tarifaAdulto: 2_345, tarifaNino: 0 }], hoteles: [{ ...entradaContrato().hoteles[0], costo: 1_500 }] }));
+  assert.equal(r0.ok, true, JSON.stringify(r0));
+  const n = nuevos(antes0)[0];
+  const previa = await conciliacion(n);
+  reportar(t, "fila 206 antes de reemitir (comision_valor NULL)", previa);
+  assert.deepEqual([previa.descuento, previa.tsTotal, previa.tsIgual, previa.sqlIgual], [235, 234.5, false, false], "diferencia previa de la 206 que la reemisión corrige");
+  for (let vez = 1; vez <= 2; vez++) {
+    assert.deepEqual((await editarTarifaAdulta(n, 2_355)).r, { ok: true }, `guardado ${vez}`);
+    assert.equal(fotoNeto(n), "pendiente|2119|236|0|2355|0.1000|2355|2355", `guardado ${vez}`);
+    assert.deepEqual(await conciliacion(n), { descuento: 236, sqlIgual: true, pvpIgual: true, tsTotal: 236, tsIgual: true, comisionValor: 236, pct: 0.1 }, `guardado ${vez}`);
+  }
+  assert.equal(sql(`select ((p75_priv.estado_minimo('${n}')->>'minimo')::numeric = 2119)`), "t");
+});
+
+test("NETO-ED5 margen de creación (6 % sobre el NETO, costo 1.500.000): por debajo se rechaza sin cambios; el límite pasa; con aprobación explícita pasa", async () => {
+  const n = await contratoNetoDeVenta();   // PVP 2.000.000, 10 %, hotel 1.500.000 → NETO 1.800.000
+  const antes = fotoNeto(n);
+  const abajo = await editarTarifaAdulta(n, 1_773_040);   // NETO 1.595.736 < 1.595.744,68
+  assert.equal(abajo.r.ok, false);
+  assert.equal((abajo.r as { margenInsuficiente?: true }).margenInsuficiente, true, "el rechazo ofrece la aprobación explícita");
+  assert.match(errorDe(abajo.r), /margen mínimo del 6 %/);
+  assert.equal(fotoNeto(n), antes, "ni ítems, ni comisión, ni venta");
+  assert.equal((await conciliacion(n)).tsIgual, true);
+  assert.deepEqual((await editarTarifaAdulta(n, 1_773_050)).r, { ok: true }, "límite exacto (NETO 1.595.745) cumple");
+  assert.equal(fotoNeto(n), "pendiente|1595745|177305|0|1773050|0.1000|1773050|1773050");
+  assert.deepEqual((await editarTarifaAdulta(n, 1_700_000, true)).r, { ok: true }, "superadmin aprueba explícitamente, como al crear");
+  assert.equal(fotoNeto(n), "pendiente|1530000|170000|0|1700000|0.1000|1700000|1700000");
+  assert.equal((await conciliacion(n)).tsIgual, true);
+});
+
+test("NETO-ED3 BNC mayor que el nuevo PVP: se rechaza sin cambios", async () => {
+  await entrarComo("venta");
+  const antes0 = numeros();
+  assert.equal((await crearContrato(entradaContrato(CASO_291))).ok, true);
+  const n = nuevos(antes0)[0];
+  const f = fotoNeto(n);
+  const { r } = await editarTarifaAdulta(n, 300_000);
+  assert.equal(r.ok, false);
+  assert.match(errorDe(r), /BNC/);
+  assert.equal(fotoNeto(n), f);
+});
+
+// PVP-ED0 — REPRODUCCIÓN (sin corrección: la autorización del dueño cubre SOLO NETO). En un contrato PVP el editor reemplaza los ítems y
+// deja `precio_venta` como estaba (diseño de cabecera de contenido-actions.ts: igualar es la acción aparte `sincronizarPrecioVenta`).
+// Se fija el comportamiento actual para que cualquier cambio sea explícito; la propuesta está en docs/tecnico/edicion-tarifas-neto-75.md.
+test("PVP-ED0 reproducción: editar la tarifa de un PVP pendiente cambia ítems y deja precio_venta y la comisión pendiente como estaban", async (t) => {
+  await entrarComo("venta");
+  const antes0 = numeros();
+  assert.equal((await crearContrato(entradaContrato())).ok, true);
+  const n = nuevos(antes0)[0];
+  const venta = () => sql(`select estado || '|' || precio_venta::numeric(15,0) || '|' || coalesce(comision_estado, '-') || '|' ||
+    (select string_agg(tarifa_adulto::numeric(15,0)::text, ',') from public.contrato_items i where i.numero_contrato = v.numero_contrato) from public.ventas v where numero_contrato = '${n}'`);
+  const antes = venta();
+  const { r } = await editarTarifaAdulta(n, 2_200_000);
+  const despues = venta();
+  const { default: Pagina } = await import("../app/contrato/[numero]/page.tsx");
+  const totalDoc = (plano(await html(Pagina({ params: Promise.resolve({ numero: n }) }))).match(/Total del contrato\s*([^A-Za-z]*?\d[\d.]*)/) ?? [])[1]?.trim() ?? "?";
+  reportar(t, "PVP antes|después|documento", { antes, despues, documento: totalDoc });
+  assert.deepEqual(r, { ok: true });
+  assert.equal(despues.split("|").slice(0, 3).join("|"), antes.split("|").slice(0, 3).join("|"), "precio_venta y comisión no se mueven solos");
+  assert.equal(despues.split("|")[3], "2200000");
+});
+
 test("D1 documento imprimible (página real) como el asesor dueño: total exigible; ni PVP ni comisión", async () => {
   const n = await contratoNetoDeVenta();
   const { default: Pagina } = await import("../app/contrato/[numero]/page.tsx");
@@ -638,13 +1337,8 @@ test("D2 estado de cuenta, rentabilidad y facturación (código real, BD real)",
 test("D3 portal B2B (página real) como el aliado: ve el total exigible y su comisión como descontada; nada cobrable", async () => {
   const n = await contratoNetoDeVenta();
   sql(`update public.ventas set b2b_usuario_id = null where numero_contrato = '${n}'`);
-  await entrarComo("agencia");
-  const { default: PortalB2BPage } = await import("../app/portal/b2b/page.tsx");
-  const { renderToStaticMarkup } = await import("react-dom/server");
-  const html = plano(renderToStaticMarkup((await PortalB2BPage()) as never));
-  const crudo = renderToStaticMarkup((await PortalB2BPage()) as never);
-  const fila = plano([...crudo.matchAll(/<tr[\s\S]*?<\/tr>/g)].map((m) => m[0]).find((tr) => tr.includes(n)) ?? "");
-  assert.ok(html.includes(n) && fila, `el aliado ve su contrato ${n}`);
+  const fila = await filaPortal("agencia", n);
+  assert.ok(fila, `el aliado ve su contrato ${n} (pendiente: visible, sin comisión cobrable)`);
   assert.ok(fila.includes($(1_800_000)), `total exigible en su fila: ${fila}`);
   assert.ok(!fila.includes($(2_000_000)), `en su fila no aparece el PVP original: ${fila}`);
   const { resolverComisionB2B } = await import("../lib/finanzas/comisionResolver.ts");
@@ -671,14 +1365,14 @@ test("T1 minorista B2B NETO (asesor venta de minorista): número MIN-, total exi
   assert.equal(tenantDe(n), "minorista|minorista", "venta y comisión en minorista");
 });
 
-test("T2 minorista B2B PVP: comisión 'Por definir', sin modalidad (como #38)", async () => {
+test("T2 minorista B2B PVP: comisión del aliado registrada (#97), sin modalidad", async () => {
   await entrarComo("ventaMin");
   const antes = numeros();
   const r = await crearContrato(contratoMin({ modoCompra: "pvp" }));
   assert.equal(r.ok, true, JSON.stringify(r));
   const [n] = nuevos(antes);
   assert.match(n, /^MIN-/);
-  assert.equal(estadoVenta(n), "2000000|-|-|-|0");
+  assert.equal(estadoVenta(n), "2000000|comisionable|200000|pendiente|1", "minorista conserva 'activo': la comisión nace al crear");
 });
 
 test("T3 venta directa: solo PVP en minorista y en mayorista; NETO se niega sin numerar en ninguna agencia", async () => {
@@ -725,8 +1419,8 @@ test("T5 aislamiento: cada agencia no aplica NETO, no lee ni edita el contrato d
     { p_numero: n, p_aliado_id: 9601, p_comision_esperada: 200_000 })).error?.message ?? "(sin error)";
   assert.match(await rpc("admin", min), /No autorizado para el contrato/, "mayorista no aplica NETO en minorista");
   assert.match(await rpc("adminMin", may), /No autorizado para el contrato/, "minorista no aplica NETO en mayorista");
-  assert.equal(estadoVenta(min), "2000000|-|-|-|0");
-  assert.equal(estadoVenta(may), "2000000|-|-|-|0");
+  assert.equal(estadoVenta(min), "2000000|comisionable|200000|pendiente|1");
+  assert.equal(estadoVenta(may), `2000000|comisionable|200000|pendiente|${filasAlCrear()}`);
 
   // Lectura y escritura por la API: ni la venta ni su comisión de la otra agencia.
   await entrarComo("ventaMin");
@@ -794,6 +1488,33 @@ async function netoDe(quien: Quien, extra: Record<string, unknown> = {}, agencia
   const [n] = nuevos(antes);
   return n;
 }
+// 288 (#75): el manual de Mayorista nace PENDIENTE; sus CxP quedan PREVISTAS y nacen exigibles al confirmar. Las pruebas que necesitan un contrato
+// ya confirmado (facturación, asientos, metas) lo confirman por la ACCIÓN real de la app (confirmarVenta, con la identidad que declara la pantalla),
+// nunca escribiendo el estado a mano. Minorista nace 'activo' y no pasa por aquí.
+const estadoDe = (n: string) => sql(`select estado from public.ventas where numero_contrato = '${n}'`);
+const previstasDe = (n: string) => sql(`select count(*) || '|' || coalesce(sum((payload->>'valor_total')::numeric), 0)::numeric(15,0)
+  from public.contrato_obligaciones_previstas where numero_contrato = '${n}' and clase = 'cxp'`);
+async function confirmarPorAccion(n: string, quien: Quien = "admin") {
+  assert.equal(estadoDe(n), "pendiente", `${n}: solo se confirma un pendiente`);
+  await entrarComo(quien);
+  const { confirmarVenta } = await import("../app/(dashboard)/dashboard/reservar/actions.ts");
+  const { identidadDe } = await import("../lib/contrato/identidad.ts");
+  const uid = sql(`select contrato_uid from public.ventas where numero_contrato = '${n}'`);
+  assert.deepEqual(await confirmarVenta(n, identidadDe(n, uid)), { ok: true }, `confirmarVenta ${n}`);
+  assert.equal(estadoDe(n), "confirmado");
+}
+// Reintento de la acción sobre un contrato ya confirmado: responde ok y NO vuelve a materializar nada.
+async function reconfirmarPorAccion(n: string, quien: Quien = "admin") {
+  await entrarComo(quien);
+  const { confirmarVenta } = await import("../app/(dashboard)/dashboard/reservar/actions.ts");
+  const { identidadDe } = await import("../lib/contrato/identidad.ts");
+  assert.deepEqual(await confirmarVenta(n, identidadDe(n, sql(`select contrato_uid from public.ventas where numero_contrato = '${n}'`))), { ok: true }, `reconfirmar ${n}`);
+}
+async function netoConfirmadoDe(quien: Quien, extra: Record<string, unknown> = {}, agencia?: "mayorista" | "minorista"): Promise<string> {
+  const n = await netoDe(quien, extra, agencia);
+  if (estadoDe(n) === "pendiente") await confirmarPorAccion(n);
+  return n;
+}
 // Prerender completo (espera los límites de Suspense de las páginas reales).
 async function html(el: unknown): Promise<string> {
   const { prerenderToNodeStream } = await import("react-dom/static");
@@ -802,8 +1523,6 @@ async function html(el: unknown): Promise<string> {
   for await (const trozo of prelude) trozos.push(Buffer.isBuffer(trozo) ? trozo : Buffer.from(String(trozo)));
   return Buffer.concat(trozos).toString("utf8");
 }
-const filaDe = (crudo: string, n: string) =>
-  plano([...crudo.matchAll(/<tr[\s\S]*?<\/tr>/g)].map((m) => m[0]).find((tr) => tr.includes(`>${n}<`)) ?? "");
 const sinInternos = (texto: string, que: string, extra: number[] = []) => {
   for (const v of [COSTO, 2_000_000 - COSTO, 1_800_000 - COSTO, ...extra]) assert.ok(!texto.includes($(v)), `${que}: no aparece ${$(v)}`);
   assert.ok(!texto.includes(PROVEEDOR), `${que}: no aparece el proveedor`);
@@ -813,10 +1532,8 @@ const sinInternos = (texto: string, que: string, extra: number[] = []) => {
 test("A1 portal del aliado (mayorista) lista su NETO de MINORISTA: total exigible, comisión descontada, nada cobrable ni interno", async () => {
   const n = await netoDe("ventaMin", { aliadoId: 9601 });
   assert.match(n, /^MIN-/);
-  await entrarComo("agencia");
-  const { default: PortalB2BPage } = await import("../app/portal/b2b/page.tsx");
-  const crudo = await html(PortalB2BPage());
-  const fila = filaDe(crudo, n);
+  const crudo = await pantallasPortal("agencia");
+  const fila = filaPortalDe(crudo, n);
   assert.ok(fila, `el aliado ve su contrato de minorista ${n}`);
   assert.ok(fila.includes($(1_800_000)), `total y saldo exigibles: ${fila}`);
   assert.ok(!fila.includes($(2_000_000)), `sin PVP original: ${fila}`);
@@ -846,10 +1563,9 @@ test("A2 estado de cuenta del NETO de minorista abierto por el aliado: total exi
 test("A3 el aliado no ve contratos de OTRO aliado (ni portal, ni estado de cuenta, ni cobro, ni API)", async () => {
   const ajeno = await netoDe("venta", { aliadoId: 9603 });
   const ajenoMin = await netoDe("ventaMin", { aliadoId: 9603 });
+  const crudo = await pantallasPortal("agencia");
+  for (const n of [ajeno, ajenoMin]) assert.equal(filaPortalDe(crudo, n), "", `no lista ${n}`);
   await entrarComo("agencia");
-  const { default: PortalB2BPage } = await import("../app/portal/b2b/page.tsx");
-  const crudo = await html(PortalB2BPage());
-  for (const n of [ajeno, ajenoMin]) assert.equal(filaDe(crudo, n), "", `no lista ${n}`);
   const { cargarEstadoCuenta } = await import("../lib/cuenta/estado.ts");
   const { resolverComisionB2B } = await import("../lib/finanzas/comisionResolver.ts");
   for (const n of [ajeno, ajenoMin]) {
@@ -862,8 +1578,7 @@ test("A3 el aliado no ve contratos de OTRO aliado (ni portal, ni estado de cuent
     assert.deepEqual(data ?? [], [], `API ${tabla}`);
   }
   // Y el dueño de 9603 sí lo ve (control: el contrato existe y es visible para quien corresponde).
-  await entrarComo("agencia2");
-  assert.ok(filaDe(await html(PortalB2BPage()), ajenoMin), "el aliado 9603 ve su contrato de minorista");
+  assert.ok(await filaPortal("agencia2", ajenoMin), "el aliado 9603 ve su contrato de minorista");
 });
 
 test("A4 por la API el aliado no lee costo, proveedor ni comisión interna de SU propio contrato", async () => {
@@ -901,9 +1616,7 @@ test("A6 freelance por el camino de la app: % del parámetro (11 %), total exigi
     const n = await netoDe(quien, { tipoVenta: "freelance", aliadoId: 9602, comisionNetoEsperada: 220_000 });
     assert.equal(estadoVenta(n), "1780000|neta|220000|descontada|1");
     assert.equal(sql(`select tipo_aliado || '|' || aplica_retencion from public.aliados_b2b where numero_contrato = '${n}'`), "freelance|true");
-    await entrarComo("freelance");
-    const { default: PortalB2BPage } = await import("../app/portal/b2b/page.tsx");
-    const fila = filaDe(await html(PortalB2BPage()), n);
+    const fila = await filaPortal("freelance", n);
     assert.ok(fila.includes($(1_780_000)), `${quien}: ${fila}`);
     assert.doesNotMatch(fila, /Cuenta de cobro/, "la comisión ya está descontada: no hay cuenta de cobro");
     const { resolverComisionB2B } = await import("../lib/finanzas/comisionResolver.ts");
@@ -970,34 +1683,34 @@ const marcarHotelIrt = (n: string) => sql(`update public.cuentas_por_pagar set c
 for (const [quien, adm, tenant] of [["venta", "admin", "mayorista"], ["ventaMin", "adminMin", "minorista"]] as const) {
   test(`K ${tenant}: camino de la UI — abono → anticipo; factura sobre el total exigible con el IRT de proveedores; DIAN; quitar reversa`, async () => {
     // Creado por el asesor `venta` de la agencia (CXP-1 corregido: ya trae sus CxP).
-    const n = await netoDe(quien, tenant === "minorista" ? { aliadoId: 9601 } : {});
+    const n = await netoConfirmadoDe(quien, tenant === "minorista" ? { aliadoId: 9601 } : {});
     assert.equal(marcarHotelIrt(n), "1500000");
     await entrarComo(adm);
-    assert.deepEqual(await registrarAbono(n, 500_000, "Efectivo", "K-206"), { ok: true });
+    assert.deepEqual(await registrarAbono(n, 500_000, "Efectivo", "K-206", undefined, undefined, undefined, undefined, {}), { ok: true });
     const fila = (await filasFacturacion()).find((x) => x.numero_contrato === n);
     assert.deepEqual([fila?.precio_venta, fila?.irtProveedores], [1_800_000, 1_500_000], "Facturación ofrece total exigible e IRT de proveedores");
     const { guardarFacturacion, marcarDian, quitarFacturacion } = await import("../app/(dashboard)/dashboard/contabilidad/facturacion/actions.ts");
     // Exactamente lo que envía FacturacionClient.guardar().
-    assert.deepEqual(await guardarFacturacion({ numeroContrato: n, pvp: fila!.precio_venta, irt: fila!.irtProveedores, ingresoExento: 0 }), { ok: true });
+    assert.deepEqual(await guardarFacturacion({ numeroContrato: n, pvp: fila!.precio_venta, irt: fila!.irtProveedores, ingresoExento: 0 }, {}), { ok: true });
     assert.deepEqual(saldos(n), { "110505": 500_000, "130505": 1_300_000, "281510": -1_500_000, "413505": -300_000, "613505": 1_500_000 },
       "Caja 500.000 · Clientes = total exigible − abono · IRT 1.500.000 · ingreso propio 300.000; el anticipo quedó aplicado; costo de la CxP (CXP-1)");
     assert.equal(sql(`select string_agg(distinct a.tenant, ',') from public.asientos_contables a where a.referencia in ('facturacion:${n}') `), tenant, "asiento en la agencia del contrato");
     assert.equal(sql(`select count(*) from public.asiento_lineas l where l.tercero = '${n}' and (l.debe = 2000000 or l.haber = 2000000 or l.debe = 200000 or l.haber = 200000)`), "0", "ni PVP original ni comisión en el libro");
     // Quitar ANTES de la DIAN: reversa y vuelve a quedar solo el anticipo (y el costo de la CxP).
-    assert.deepEqual(await quitarFacturacion(n), { ok: true });
+    assert.deepEqual(await quitarFacturacion(n, {}), { ok: true });
     assert.deepEqual(saldos(n), { "110505": 500_000, "280505": -500_000, "613505": 1_500_000 }, "al quitar la factura vuelve a quedar solo el anticipo (y el costo de la CxP)");
-    assert.deepEqual(await guardarFacturacion({ numeroContrato: n, pvp: fila!.precio_venta, irt: fila!.irtProveedores, ingresoExento: 0 }), { ok: true });
-    assert.deepEqual(await marcarDian(n, true), { ok: true });
+    assert.deepEqual(await guardarFacturacion({ numeroContrato: n, pvp: fila!.precio_venta, irt: fila!.irtProveedores, ingresoExento: 0 }, {}), { ok: true });
+    assert.deepEqual(await marcarDian(n, true, {}), { ok: true });
     assert.equal(sql(`select dian_emitida || '|' || (dian_fecha is not null) || '|' || ingreso_propio::numeric(15,0) || '|' || irt::numeric(15,0) from public.contrato_facturacion where numero_contrato = '${n}'`), "true|true|300000|1500000");
     assert.equal((await filasFacturacion()).find((x) => x.numero_contrato === n)?.dianEmitida, true, "pestaña DIAN: emitida");
     // 208 (regla DIAN): una factura emitida a la DIAN no se quita ni se desmarca. NO es una prueba omitida:
     // se afirma el rechazo con su código y que los libros no cambian.
     const sinQuitar = saldos(n);
-    const q = await quitarFacturacion(n);
+    const q = await quitarFacturacion(n, {});
     assert.equal(q.ok, false);
     assert.equal((q as { code?: string }).code, "F4434");
     assert.match(errorDe(q), /ya está emitida a la DIAN; no se quita/);
-    const d = await marcarDian(n, false);
+    const d = await marcarDian(n, false, {});
     assert.equal((d as { code?: string }).code, "F4434");
     assert.deepEqual(saldos(n), sinQuitar, "tras el rechazo los libros siguen igual");
     assert.deepEqual(sinQuitar, { "110505": 500_000, "130505": 1_300_000, "281510": -1_500_000, "413505": -300_000, "613505": 1_500_000 });
@@ -1031,6 +1744,9 @@ test("U1 NETO en USD: plan = RPC (redondeo al dólar), margen 6 % en USD, docume
   const texto = plano(await html(Pagina({ params: Promise.resolve({ numero: n }) })));
   assert.ok(texto.includes(`Total del contrato ${usd(2_110)}`), texto.slice(0, 500));
   for (const v of [2_345, 235]) assert.ok(!texto.includes(usd(v)), `documento USD: no aparece ${usd(v)}`);
+  // Pendiente (288): no cuenta para la meta; se confirma por la acción real y entonces sí.
+  assert.equal(estadoDe(n), "pendiente", "el NETO de Mayorista nace pendiente");
+  await confirmarPorAccion(n);
   const sb = await clienteDe("admin");
   const periodo = sql(`select to_char(current_date, 'YYYY-MM')`);
   const { data } = await sb.rpc("fn_dashboard_ventas_mes", { p_tenant: "mayorista", p_periodo: periodo });
@@ -1065,7 +1781,7 @@ const COSTO_MAY = { "mayorista:613505": 1_500_000 };
 const FACTURA_MAY = { "mayorista:130505": 1_800_000, "mayorista:281510": -1_500_000, "mayorista:413505": -300_000, ...COSTO_MAY };
 
 test("FACT-1 llamada directa autorizada con importes manipulados: se rechaza sin escribir; con los del sistema factura el total exigible NETO", async (t) => {
-  const n = await netoDe("venta");
+  const n = await netoConfirmadoDe("venta");
   assert.equal(marcarHotelIrt(n), "1500000");
   await entrarComo("admin");
   const { guardarFacturacion } = await facturacion();
@@ -1076,13 +1792,13 @@ test("FACT-1 llamada directa autorizada con importes manipulados: se rechaza sin
     { pvp: 1_800_000, irt: 900_000 },   // solo el IRT distinto al de proveedores
   ];
   for (const c of casos) {
-    const r = await guardarFacturacion({ numeroContrato: n, ...c, ingresoExento: 0 });
+    const r = await guardarFacturacion({ numeroContrato: n, ...c, ingresoExento: 0 }, {});
     reportar(t, `respuesta ${JSON.stringify(c)}`, r);
     assert.equal(r.ok, false, JSON.stringify(c));
     assert.match(errorDe(r), /no coinciden con los del sistema/);
     assert.deepEqual(foto(n), antes, `sin escribir nada (${JSON.stringify(c)})`);
   }
-  const ok = await guardarFacturacion({ numeroContrato: n, pvp: 1_800_000, irt: 1_500_000, ingresoExento: 0 });
+  const ok = await guardarFacturacion({ numeroContrato: n, pvp: 1_800_000, irt: 1_500_000, ingresoExento: 0 }, {});
   assert.deepEqual(ok, { ok: true });
   const despues = foto(n);
   reportar(t, "después (valores del sistema)", despues);
@@ -1092,7 +1808,7 @@ test("FACT-1 llamada directa autorizada con importes manipulados: se rechaza sin
 
 test("FACT-1 USD: el servidor convierte con la TRM (trm_referencia) igual que la pantalla; el PVP original convertido se rechaza", async (t) => {
   const pvpUsd = 2_345; // aliado 10 % → 235 → total 2.110 USD
-  const n = await netoDe("venta", {
+  const n = await netoConfirmadoDe("venta", {
     moneda: "USD", comisionNetoEsperada: 235,
     items: [{ descripcion: "Paquete USD", adultos: 1, ninos: 0, tarifaAdulto: pvpUsd, tarifaNino: 0 }],
     hoteles: [{ ...entradaContrato().hoteles[0], costo: 1_500 }],
@@ -1104,9 +1820,9 @@ test("FACT-1 USD: el servidor convierte con la TRM (trm_referencia) igual que la
   reportar(t, "fila de Facturación", { fila, trm });
   assert.deepEqual([fila.precio_venta, fila.irtProveedores], [2_110 * trm, 1_500 * trm]);
   const { guardarFacturacion } = await facturacion();
-  const malo = await guardarFacturacion({ numeroContrato: n, pvp: pvpUsd * trm, irt: fila.irtProveedores, ingresoExento: 0 });
+  const malo = await guardarFacturacion({ numeroContrato: n, pvp: pvpUsd * trm, irt: fila.irtProveedores, ingresoExento: 0 }, {});
   assert.equal(malo.ok, false, "el PVP original convertido no pasa");
-  assert.deepEqual(await guardarFacturacion({ numeroContrato: n, pvp: fila.precio_venta, irt: fila.irtProveedores, ingresoExento: 0 }), { ok: true });
+  assert.deepEqual(await guardarFacturacion({ numeroContrato: n, pvp: fila.precio_venta, irt: fila.irtProveedores, ingresoExento: 0 }, {}), { ok: true });
   // El asiento de la CxP en USD queda en dólares sin convertir (limitación
   // conocida de los posteos automáticos, CLAUDE.md): 1.500 en 613505.
   assert.deepEqual(foto(n).saldos, { "mayorista:130505": 2_110 * trm, "mayorista:281510": -1_500 * trm, "mayorista:413505": -610 * trm, "mayorista:613505": 1_500 });
@@ -1117,27 +1833,27 @@ test("FACT-2 entre agencias: Mayorista activa no factura, no marca DIAN ni quita
   assert.equal(marcarHotelIrt(n), "1500000");
   const { guardarFacturacion, quitarFacturacion, marcarDian } = await facturacion();
   await entrarComo("adminMin");
-  assert.deepEqual(await registrarAbono(n, 500_000, "Efectivo", "FACT-2"), { ok: true });
-  assert.deepEqual(await guardarFacturacion({ numeroContrato: n, pvp: 1_800_000, irt: 1_500_000, ingresoExento: 0 }), { ok: true });
+  assert.deepEqual(await registrarAbono(n, 500_000, "Efectivo", "FACT-2", undefined, undefined, undefined, undefined, {}), { ok: true });
+  assert.deepEqual(await guardarFacturacion({ numeroContrato: n, pvp: 1_800_000, irt: 1_500_000, ingresoExento: 0 }, {}), { ok: true });
   const antes = foto(n);
   reportar(t, "antes (facturado por administración de minorista)", antes);
   assert.deepEqual(antes.saldos, { "minorista:110505": 500_000, "minorista:130505": 1_300_000, "minorista:281510": -1_500_000, "minorista:413505": -300_000, "minorista:613505": 1_500_000 });
 
   await entrarComo("super", "mayorista");
-  const g = await guardarFacturacion({ numeroContrato: n, pvp: 1_800_000, irt: 1_500_000, ingresoExento: 0 });
-  const d = await marcarDian(n, true);
-  const q = await quitarFacturacion(n);
+  const g = await guardarFacturacion({ numeroContrato: n, pvp: 1_800_000, irt: 1_500_000, ingresoExento: 0 }, {});
+  const d = await marcarDian(n, true, {});
+  const q = await quitarFacturacion(n, {});
   reportar(t, "respuestas con Mayorista activa", { g, d, q });
   for (const r of [g, d, q]) assert.match(errorDe(r), /es de la agencia minorista; cambia a esa agencia/);
   assert.deepEqual(foto(n), antes, "nada cambió: ni configuración, ni asientos, ni saldos");
 
   await entrarComo("super", "minorista");
-  assert.deepEqual(await guardarFacturacion({ numeroContrato: n, pvp: 1_800_000, irt: 1_500_000, ingresoExento: 0 }), { ok: true });
+  assert.deepEqual(await guardarFacturacion({ numeroContrato: n, pvp: 1_800_000, irt: 1_500_000, ingresoExento: 0 }, {}), { ok: true });
   const re = foto(n);
   reportar(t, "re-facturado con Minorista activa", re);
   assert.deepEqual(re.saldos, antes.saldos, "reversa + nueva, con el anticipo aplicado: mismos saldos");
   assert.ok(re.asientos.every((a) => a.startsWith("minorista")), "todo en los libros de minorista");
-  assert.deepEqual(await quitarFacturacion(n), { ok: true });
+  assert.deepEqual(await quitarFacturacion(n, {}), { ok: true });
   assert.deepEqual(foto(n).saldos, { "minorista:110505": 500_000, "minorista:280505": -500_000, "minorista:613505": 1_500_000 }, "queda solo el anticipo (y el costo de la CxP)");
 
   // Un asiento de factura VIGENTE en la otra agencia (como los que dejaba el
@@ -1149,7 +1865,7 @@ test("FACT-2 entre agencias: Mayorista activa no factura, no marca DIAN ni quita
        values ('mayorista', 990206, current_date, 'Simulación ronda 11', 'facturacion', 'facturacion:${n}')`);
   try {
     await entrarComo("adminMin");
-    const bloq = await guardarFacturacion({ numeroContrato: n, pvp: 1_800_000, irt: 1_500_000, ingresoExento: 0 });
+    const bloq = await guardarFacturacion({ numeroContrato: n, pvp: 1_800_000, irt: 1_500_000, ingresoExento: 0 }, {});
     reportar(t, "con asiento vigente en mayorista", bloq);
     assert.match(errorDe(bloq), /asiento de factura vigente en la agencia mayorista/);
   } finally {
@@ -1159,16 +1875,16 @@ test("FACT-2 entre agencias: Mayorista activa no factura, no marca DIAN ni quita
 });
 
 test("FACT-3 el asiento nuevo no se puede postear (cuenta IRT ausente): ok:false, libros y configuración como estaban", async (t) => {
-  const n = await netoDe("venta");
+  const n = await netoConfirmadoDe("venta");
   assert.equal(marcarHotelIrt(n), "1500000");
   await entrarComo("admin");
   const { guardarFacturacion } = await facturacion();
-  assert.deepEqual(await guardarFacturacion({ numeroContrato: n, pvp: 1_800_000, irt: 1_500_000, ingresoExento: 0 }), { ok: true });
+  assert.deepEqual(await guardarFacturacion({ numeroContrato: n, pvp: 1_800_000, irt: 1_500_000, ingresoExento: 0 }, {}), { ok: true });
   const antes = foto(n);
   sql(`update public.puc_cuentas set codigo = '281510-t206' where tenant = 'mayorista' and codigo = '281510'`);
   let r: unknown;
   try {
-    r = await guardarFacturacion({ numeroContrato: n, pvp: 1_800_000, irt: 1_500_000, ingresoExento: 100_000, tipoExento: "exento" });
+    r = await guardarFacturacion({ numeroContrato: n, pvp: 1_800_000, irt: 1_500_000, ingresoExento: 100_000, tipoExento: "exento" }, {});
   } finally {
     sql(`update public.puc_cuentas set codigo = '281510' where tenant = 'mayorista' and codigo = '281510-t206'`);
   }
@@ -1182,11 +1898,11 @@ test("FACT-3 el asiento nuevo no se puede postear (cuenta IRT ausente): ok:false
 });
 
 test("FACT-4 la reversa no se puede insertar: guardar y quitar fallan cerrado (sin duplicar la factura ni perder la configuración)", async (t) => {
-  const n = await netoDe("venta");
+  const n = await netoConfirmadoDe("venta");
   assert.equal(marcarHotelIrt(n), "1500000");
   await entrarComo("admin");
   const { guardarFacturacion, quitarFacturacion } = await facturacion();
-  assert.deepEqual(await guardarFacturacion({ numeroContrato: n, pvp: 1_800_000, irt: 1_500_000, ingresoExento: 0 }), { ok: true });
+  assert.deepEqual(await guardarFacturacion({ numeroContrato: n, pvp: 1_800_000, irt: 1_500_000, ingresoExento: 0 }, {}), { ok: true });
   const antes = foto(n);
   sql(`create or replace function public.t206_sin_reversa() returns trigger language plpgsql as $$
          begin if new.origen like '%\\_reversion' and new.referencia = 'facturacion:${n}' then raise exception 'reversa bloqueada t206'; end if; return new; end $$;
@@ -1194,9 +1910,9 @@ test("FACT-4 la reversa no se puede insertar: guardar y quitar fallan cerrado (s
   let r: unknown, q: unknown;
   let trasGuardar: Foto, trasQuitar: Foto;
   try {
-    r = await guardarFacturacion({ numeroContrato: n, pvp: 1_800_000, irt: 1_500_000, ingresoExento: 50_000, tipoExento: "exento" });
+    r = await guardarFacturacion({ numeroContrato: n, pvp: 1_800_000, irt: 1_500_000, ingresoExento: 50_000, tipoExento: "exento" }, {});
     trasGuardar = foto(n);
-    q = await quitarFacturacion(n);
+    q = await quitarFacturacion(n, {});
     trasQuitar = foto(n);
   } finally {
     sql(`drop trigger t206_sin_reversa on public.asientos_contables; drop function public.t206_sin_reversa();`);
@@ -1211,16 +1927,16 @@ test("FACT-4 la reversa no se puede insertar: guardar y quitar fallan cerrado (s
 });
 
 test("FACT-5 guardar → quitar → guardar: una sola factura vigente (antes se reversaba dos veces el mismo asiento)", async (t) => {
-  const n = await netoDe("venta");
+  const n = await netoConfirmadoDe("venta");
   assert.equal(marcarHotelIrt(n), "1500000");
   await entrarComo("admin");
   const { guardarFacturacion, quitarFacturacion } = await facturacion();
   const v = { numeroContrato: n, pvp: 1_800_000, irt: 1_500_000, ingresoExento: 0 };
-  assert.deepEqual(await guardarFacturacion(v), { ok: true });
-  assert.deepEqual(await quitarFacturacion(n), { ok: true });
+  assert.deepEqual(await guardarFacturacion(v, {}), { ok: true });
+  assert.deepEqual(await quitarFacturacion(n, {}), { ok: true });
   assert.deepEqual(foto(n).saldos, COSTO_MAY, "sin factura: solo el costo de la CxP");
-  assert.deepEqual(await guardarFacturacion(v), { ok: true });
-  assert.deepEqual(await guardarFacturacion(v), { ok: true }); // re-guardar: reversa + nueva
+  assert.deepEqual(await guardarFacturacion(v, {}), { ok: true });
+  assert.deepEqual(await guardarFacturacion(v, {}), { ok: true }); // re-guardar: reversa + nueva
   const f = foto(n);
   reportar(t, "después", f);
   assert.deepEqual(f.saldos, FACTURA_MAY);
@@ -1228,13 +1944,13 @@ test("FACT-5 guardar → quitar → guardar: una sola factura vigente (antes se 
 });
 
 test("FACT-6 roles: venta, operaciones, agencia, inactivo y sin sesión no facturan ni quitan (ni por llamada directa)", async () => {
-  const n = await netoDe("venta");
+  const n = await netoConfirmadoDe("venta");
   assert.equal(marcarHotelIrt(n), "1500000");
   const { guardarFacturacion, quitarFacturacion, marcarDian } = await facturacion();
   const antes = foto(n);
   for (const quien of ["venta", "ops", "agencia", "inactivo", null] as const) {
     await entrarComo(quien);
-    for (const r of [await guardarFacturacion({ numeroContrato: n, pvp: 1_800_000, irt: 1_500_000, ingresoExento: 0 }), await marcarDian(n, true), await quitarFacturacion(n)]) {
+    for (const r of [await guardarFacturacion({ numeroContrato: n, pvp: 1_800_000, irt: 1_500_000, ingresoExento: 0 }, {}), await marcarDian(n, true, {}), await quitarFacturacion(n, {})]) {
       assert.equal(r.ok, false, String(quien));
     }
   }
@@ -1260,10 +1976,19 @@ test("CXP-1 todos los roles internos, PVP y NETO, en las dos agencias: CxP del h
     const r = await crearContrato(entradaContrato({ asesorNombre: U[quien].nombre, ...(modo === "neto" ? NETO : { modoCompra: "pvp" }), ...extra }));
     assert.equal(r.ok, true, `${quien}/${modo}: ${JSON.stringify(r)}`);
     const [n] = nuevos(antes);
+    if (estadoDe(n) === "pendiente") {
+      // Mayorista: pendiente → la CxP es PREVISTA (ninguna exigible, sin asiento); confirmar por la acción la materializa una sola vez.
+      casos[`${quien}/${modo} (pendiente)`] = `${cxpDe(n)} · previstas=${previstasDe(n)} · ${finDe(n)}`;
+      await confirmarPorAccion(n);
+      await reconfirmarPorAccion(n); // reintento de la misma acción: no duplica
+    }
     casos[`${quien}/${modo}`] = `${cxpDe(n)} · ${finDe(n)} · costo_hotel=${sql(`select costo_hotel::numeric(15,0) from public.ventas where numero_contrato = '${n}'`)}`;
   }
   reportar(t, "CxP (cantidad|valor|automática) · financiero (estado|pendientes|asientos CxP)", casos);
-  for (const [k, v] of Object.entries(casos)) assert.equal(v, "1|1500000|true · completo|0|1 · costo_hotel=1500000", k);
+  for (const [k, v] of Object.entries(casos)) {
+    assert.equal(v, k.endsWith("(pendiente)") ? "0|0|- · previstas=1|1500000 · completo|0|0" : "1|1500000|true · completo|0|1 · costo_hotel=1500000", k);
+  }
+  for (const k of ["venta/pvp", "venta/neto", "admin/pvp", "admin/neto", "ops/neto", "gerencia/neto", "super/neto"]) assert.ok(`${k} (pendiente)` in casos, `${k}: Mayorista nace pendiente`);
 });
 
 test("CXP-2 la escritura de CxP falla: el contrato NO queda (ni CxP, ni comisión, ni intención pendiente); el reintento crea uno sin duplicados", async (t) => {
@@ -1288,8 +2013,10 @@ test("CXP-2 la escritura de CxP falla: el contrato NO queda (ni CxP, ni comisió
   const r = await crearContrato(entradaContrato(NETO));
   assert.equal(r.ok, true, JSON.stringify(r));
   const [n] = nuevos(antes);
-  assert.equal(cxpDe(n), "1|1500000|true");
+  assert.equal(cxpDe(n) + " · " + previstasDe(n), "0|0|- · 1|1500000", "pendiente: una sola CxP PREVISTA, ninguna exigible");
   assert.equal(estadoVenta(n), "1800000|neta|200000|descontada|1");
+  await confirmarPorAccion(n);
+  assert.equal(cxpDe(n), "1|1500000|true", "confirmada: una sola CxP exigible");
 });
 
 test("CXP-3 falla la CxP Y la reversa: queda 'pendiente' y NO cobrable; la reconciliación lo completa sin duplicar (reintento idempotente)", async (t) => {
@@ -1312,7 +2039,7 @@ test("CXP-3 falla la CxP Y la reversa: queda 'pendiente' y NO cobrable; la recon
   assert.match(errorDe(r), new RegExp(`tampoco se pudo deshacer el contrato ${n} automáticamente`));
   assert.equal(finDe(n), "pendiente|1|0", "pendiente, con su intención durable y sin CxP");
   await entrarComo("admin");
-  assert.equal((await registrarAbono(n, 100_000, "Efectivo", "CXP-3")).ok, false, "no admite abonos");
+  assert.equal((await registrarAbono(n, 100_000, "Efectivo", "CXP-3", undefined, undefined, undefined, undefined, {})).ok, false, "no admite abonos");
   // Reconciliación: el mismo payload persistido, dos veces (reintento).
   for (let i = 0; i < 2; i++) {
     sql(`select public.registrar_financiero_contrato(p.numero_contrato, p.tenant, p.costos, p.cxp)
@@ -1322,9 +2049,11 @@ test("CXP-3 falla la CxP Y la reversa: queda 'pendiente' y NO cobrable; la recon
               'moneda', moneda, 'fecha_obligacion', fecha_obligacion, 'observaciones', observaciones)) from public.cuentas_por_pagar where numero_contrato = '${n}'))
            from public.ventas v where v.numero_contrato = '${n}' and ${i} = 1`);
   }
-  assert.equal(cxpDe(n), "1|1500000|true", "una sola CxP tras dos reintentos");
+  assert.equal(cxpDe(n) + " · " + previstasDe(n), "0|0|- · 1|1500000", "pendiente: una sola CxP PREVISTA tras dos reintentos (ninguna exigible)");
   assert.equal(finDe(n).split("|").slice(0, 2).join("|"), "completo|0");
-  assert.deepEqual(await registrarAbono(n, 100_000, "Efectivo", "CXP-3"), { ok: true }, "ya es cobrable");
+  assert.deepEqual(await registrarAbono(n, 100_000, "Efectivo", "CXP-3", undefined, undefined, undefined, undefined, {}), { ok: true }, "ya es cobrable");
+  await confirmarPorAccion(n);
+  assert.equal(cxpDe(n), "1|1500000|true", "confirmada: una sola CxP exigible");
 });
 
 test("CXP-4 el asiento de la CxP falla (cuenta de costo ausente): el dinero queda completo (CxP y costo) y el contrato se crea; falta solo el asiento", async (t) => {
@@ -1334,6 +2063,8 @@ test("CXP-4 el asiento de la CxP falla (cuenta de costo ausente): el dinero qued
   let r: unknown;
   try {
     r = await crearContrato(entradaContrato(NETO));
+    // 288: la CxP exigible (y su asiento) nace al CONFIRMAR; el asiento falla allí y la confirmación no se cae.
+    await confirmarPorAccion(nuevos(antes)[0]);
   } finally {
     sql(`update public.puc_cuentas set codigo = '613505' where tenant = 'mayorista' and codigo = '613505-t206'`);
   }
@@ -1349,10 +2080,25 @@ test("CXP-4 el asiento de la CxP falla (cuenta de costo ausente): el dinero qued
 // descontado del precio, sin segundo saldo ni cuenta por cobrar. Aislamiento
 // entre aliados y agencias, incluida la consulta desde Mayorista de su
 // contrato asistido de Minorista.
-async function filaPortal(quien: Quien, n: string): Promise<string> {
+// #415 (previo a #75/#97, comprobado sobre la base común e39224313): la portada del portal ya no tiene tabla ni importes. La fila del contrato
+// se arma con lo que el aliado ve en Mis ventas (directas + asistidas: estado, modo de compra, comisión y su estado) y en Cartera (valor y saldo).
+// Vacía solo si el contrato no aparece en NINGUNA de las dos.
+async function pantallasPortal(quien: Quien): Promise<string> {
   await entrarComo(quien);
-  const { default: PortalB2BPage } = await import("../app/portal/b2b/page.tsx");
-  return filaDe(await html(PortalB2BPage()), n);
+  const { default: Ventas } = await import("../app/portal/b2b/ventas/page.tsx");
+  const { default: Cartera } = await import("../app/portal/b2b/cartera/page.tsx");
+  const partes: string[] = [];
+  for (const vista of ["directas", "asistidas"]) partes.push(await html(Ventas({ searchParams: Promise.resolve({ vista }) })));
+  partes.push(await html(Cartera({ searchParams: Promise.resolve({}) })));
+  return partes.join("\n");
+}
+const filaPortalDe = (crudo: string, n: string) => {
+  const v = n.replace(/^MIN-/, ""); // numeroVisible: Minorista se muestra sin su prefijo interno
+  const filas = [...crudo.matchAll(/<tr[\s\S]*?<\/tr>/g)].map((m) => m[0]).filter((tr) => tr.includes(`>${v}<`)).map(plano);
+  return filas.join(" ‖ ");
+};
+async function filaPortal(quien: Quien, n: string): Promise<string> {
+  return filaPortalDe(await pantallasPortal(quien), n);
 }
 async function registrarComision(quien: Quien, n: string, aliadoId: number) {
   const sb = await clienteDe(quien);
@@ -1364,24 +2110,37 @@ async function registrarComision(quien: Quien, n: string, aliadoId: number) {
   return { data, error: error?.message ?? null };
 }
 
-test("PORT-1 PVP en mayorista: sin comisión no hay valor; registrada, el aliado ve su valor y estado; tras un abono, lo pendiente por cobrar", async (t) => {
+test("PORT-1 PVP en mayorista: pendiente = plan informativo, sin cobro ni alta manual; confirmado, el aliado ve su comisión y, tras un abono, lo pendiente por cobrar", async (t) => {
   await entrarComo("venta");
   const antes = numeros();
   assert.equal((await crearContrato(entradaContrato({ modoCompra: "pvp" }))).ok, true);
   const [n] = nuevos(antes);
   const f0 = await filaPortal("agencia", n);
-  reportar(t, "sin comisión registrada", f0);
+  reportar(t, "recién creado (pendiente, comisión en plan)", f0);
   assert.ok(f0.includes($(2_000_000)), "el contrato PVP se ve con su total");
-  assert.ok(!f0.includes($(200_000)), "sin comisión 'Por definir' no se muestra ningún valor");
+  // Expectativa obsoleta desde #97: el manual B2B ya no nace «Por definir»; su comisión queda registrada como PLAN al crear (F2/V97-1).
+  // El aliado la ve como valor informativo, pero NO cobrable mientras el contrato esté pendiente (sin cuenta de cobro ni factura).
+  assert.equal(estadoDe(n), "pendiente");
+  assert.ok(f0.includes($(200_000)) && /Pendiente/.test(f0), `plan informativo visible: ${f0}`);
+  assert.doesNotMatch(f0, /Cuenta de cobro|Factura electrónica/, "pendiente: nada cobrable");
   const reg = await registrarComision("admin", n, 9601);
-  assert.equal(reg.error, null, JSON.stringify(reg));
+  // Invariante del ciclo (286 + 288): un PENDIENTE nunca tiene comisión exigible, tampoco por el alta manual interna (205 → 290).
+  assert.equal(sql(`select count(*) from public.aliados_b2b where numero_contrato = '${n}' and not coalesce(descontada_en_precio, false)`), "0",
+    `pendiente: el alta manual no puede crear una comisión exigible (respuesta: ${JSON.stringify(reg)})`);
+  // 290: la rechaza con un mensaje claro (antes la 205 la aceptaba: ese era el defecto).
+  assert.match(String(reg.error), /COMISION_PENDIENTE/, JSON.stringify(reg));
+  // Confirmado por la acción real: la comisión nace UNA vez desde su plan; un alta manual del mismo aliado ya no la duplica.
+  await confirmarPorAccion(n);
+  assert.equal(sql(`select count(*) || '|' || count(plan_id) from public.aliados_b2b where numero_contrato = '${n}'`), "1|1", "una sola comisión, desde su plan");
+  const dup = await registrarComision("admin", n, 9601);
+  assert.match(String(dup.error), /COMISION_DUPLICADA/, JSON.stringify(dup));
   const f1 = await filaPortal("agencia", n);
-  reportar(t, "registrada (200.000)", f1);
+  reportar(t, "confirmado (200.000)", f1);
   assert.ok(f1.includes($(200_000)) && /Pendiente/.test(f1), f1);
   const id = Number(sql(`select id from public.aliados_b2b where numero_contrato = '${n}' and aliado_id = 9601`));
   await entrarComo("admin");
   const { registrarPagoComisionB2B } = await import("../app/(dashboard)/dashboard/comisiones/actions.ts");
-  const pago = await registrarPagoComisionB2B(id, 50_000, sql(`select current_date`));
+  const pago = await registrarPagoComisionB2B(id, 50_000, sql(`select current_date`), {});
   assert.equal(pago.ok, true, JSON.stringify(pago));
   const f2 = await filaPortal("agencia", n);
   reportar(t, "tras abono de 50.000", f2);
@@ -1394,11 +2153,15 @@ test("PORT-2 dos comisiones en un contrato: cada aliado ve solo la suya; la vist
   const antes = numeros();
   assert.equal((await crearContrato(entradaContrato({ modoCompra: "pvp" }))).ok, true);
   const [n] = nuevos(antes);
+  // Pendiente: ningún beneficiario recibe comisión exigible a mano (290); se confirma por la acción real y la de 9601 nace desde su plan.
+  assert.match(String((await registrarComision("admin", n, 9603)).error), /COMISION_PENDIENTE/);
+  await confirmarPorAccion(n);
   const r1 = await registrarComision("admin", n, 9601);
   const r2 = await registrarComision("admin", n, 9603);
   reportar(t, "registro", { r1, r2 });
-  assert.equal(r1.error, null);
-  if (r2.error) { t.diagnostic(`la segunda comisión no se pudo registrar (${r2.error}); el caso no aplica`); return; }
+  assert.match(String(r1.error), /COMISION_DUPLICADA/, "9601 ya tiene su comisión (la automática): no se duplica");
+  assert.equal(r2.error, null, "un beneficiario DISTINTO (9603) sí se registra (#440)");
+  assert.equal(sql(`select string_agg(aliado_id::text, ',' order by aliado_id) from public.aliados_b2b where numero_contrato = '${n}'`), "9601,9603", "cada aliado con su fila");
   // La de 9603 con otro valor para distinguirla.
   sql(`update public.aliados_b2b set comision_valor = 123000 where numero_contrato = '${n}' and aliado_id = 9603`);
   const f1 = await filaPortal("agencia", n);
@@ -1413,7 +2176,10 @@ test("PORT-3 Minorista asistido desde el portal de Mayorista: el aliado ve su co
   let antes = numeros();
   assert.equal((await crearContrato(entradaContrato({ asesorNombre: U.ventaMin.nombre, modoCompra: "pvp" }))).ok, true);
   const pvp = nuevos(antes)[0];
-  assert.equal((await registrarComision("adminMin", pvp, 9601)).error, null);
+  // La comisión de 9601 ya nació con el contrato (#97); un alta manual del mismo aliado y concepto se rechaza (290) en vez de duplicarla.
+  const dup = await registrarComision("adminMin", pvp, 9601);
+  assert.match(String(dup.error), /COMISION_DUPLICADA/, JSON.stringify(dup));
+  assert.equal(sql(`select count(*) from public.aliados_b2b where numero_contrato = '${pvp}' and aliado_id = 9601`), "1", "una sola comisión del aliado");
   antes = numeros();
   assert.equal((await crearContrato(entradaContrato({ asesorNombre: U.ventaMin.nombre, ...NETO }))).ok, true);
   const neto = nuevos(antes)[0];
@@ -1423,6 +2189,48 @@ test("PORT-3 Minorista asistido desde el portal de Mayorista: el aliado ve su co
   assert.ok(fp.includes($(2_000_000)) && fp.includes($(200_000)) && /Pendiente/.test(fp), fp);
   assert.ok(fn.includes($(1_800_000)) && /Descontada/.test(fn) && !/Cuenta de cobro|Factura electrónica/.test(fn), fn);
   for (const n of [pvp, neto]) assert.equal(await filaPortal("agencia2", n), "", `9603 no ve ${n}`);
+});
+
+test("PORT-4 edición por la app: una fila sin concepto o de solo recobro no se convierte en una segunda ordinaria del mismo aliado; aliados distintos y conceptos separados sí", async (t) => {
+  await entrarComo("venta");
+  const antes = numeros();
+  assert.equal((await crearContrato(entradaContrato({ modoCompra: "pvp" }))).ok, true);
+  const [n] = nuevos(antes);
+  await confirmarPorAccion(n); // la ordinaria de 9601 nace aquí, desde su plan
+  const uid = sql(`select contrato_uid from public.ventas where numero_contrato = '${n}'`);
+  const { identidadDe } = await import("../lib/contrato/identidad.ts");
+  const idc = identidadDe(n, uid);
+  const { crearComisionB2B } = await import("../app/(dashboard)/dashboard/contratos/[numero]/gestion-actions.ts");
+  const { actualizarComisionB2B } = await import("../app/(dashboard)/dashboard/comisiones/actions.ts");
+  await entrarComo("admin");
+  const alta = (aliadoId: number, nombre: string, nit: string, pct: number) => crearComisionB2B({
+    numeroContrato: n, aliado: nombre, nit, tipoAliado: "agencia", aliadoId, pctComision: pct, recobroTotal: 0, pctRecobroAliado: 0, aplicaRetencion: false, pctRetencion: 0,
+  }, idc);
+  const filaDeId = (id: number) => sql(`select coalesce(pct_comision, 0)::numeric(6,4) || '|' || coalesce(comision_valor, 0)::numeric(15,0) || '|' || coalesce(recobro_total, 0)::numeric(15,0) from public.aliados_b2b where id = ${id}`);
+  // 1) 9601 ya tiene su ordinaria; 2) se crea otra fila SIN concepto (comisión 0 y recobro 0): no duplica nada.
+  assert.deepEqual(await alta(9601, "T206 Agencia", "9606", 0), { ok: true });
+  const cero = Number(sql(`select max(id) from public.aliados_b2b where numero_contrato = '${n}' and aliado_id = 9601 and coalesce(pct_comision, 0) = 0`));
+  assert.ok(cero > 0, "fila sin concepto creada");
+  // 3) editarla para darle comisión ordinaria → rechazado, sin cambios.
+  const e1 = await actualizarComisionB2B(cero, { base: 2_000_000, modo: "pct", pct: 0.10, valor: null, recobroTotal: null, pctRecobroAliado: null }, idc);
+  reportar(t, "editar a ordinaria", e1);
+  assert.equal(e1.ok, false, JSON.stringify(e1));
+  assert.match(String((e1 as { error?: string }).error), /COMISION_DUPLICADA/);
+  assert.equal(filaDeId(cero), "0.0000|0|0", "la fila no cambió");
+  // Separados sin solaparse: esa fila pasa a SOLO recobro → permitido.
+  const e2 = await actualizarComisionB2B(cero, { base: 2_000_000, modo: "pct", pct: 0, valor: null, recobroTotal: 100_000, pctRecobroAliado: 0.5 }, idc);
+  assert.deepEqual(e2, { ok: true }, JSON.stringify(e2));
+  // A la fila de solo recobro se le intenta añadir ordinaria (ya existe otra ordinaria del mismo aliado) → rechazado.
+  const e3 = await actualizarComisionB2B(cero, { base: 2_000_000, modo: "pct", pct: 0.05, valor: null, recobroTotal: 100_000, pctRecobroAliado: 0.5 }, idc);
+  assert.equal(e3.ok, false, JSON.stringify(e3));
+  assert.match(String((e3 as { error?: string }).error), /COMISION_DUPLICADA/);
+  assert.equal(filaDeId(cero), "0.0000|0|100000", "conserva solo su recobro");
+  // Aliado DISTINTO (#440): su alta y su edición pasan.
+  assert.deepEqual(await alta(9603, "T206 Agencia Dos", "9608", 0.10), { ok: true });
+  const otro = Number(sql(`select id from public.aliados_b2b where numero_contrato = '${n}' and aliado_id = 9603`));
+  assert.deepEqual(await actualizarComisionB2B(otro, { base: 2_000_000, modo: "pct", pct: 0.12, valor: null, recobroTotal: null, pctRecobroAliado: null }, idc), { ok: true });
+  assert.equal(sql(`select count(*) || '|' || count(*) filter (where coalesce(pct_comision, 0) > 0) from public.aliados_b2b where numero_contrato = '${n}' and aliado_id = 9601`), "2|1",
+    "9601: una ordinaria (la automática) y una fila de recobro; nunca dos ordinarias");
 });
 
 // ═══ 15. Carrera y fallo de compensación en facturación ═══════════════════
@@ -1444,7 +2252,7 @@ function invariantes(n: string): { vigentes: number; vacios: number; configuraci
 }
 
 test("RACE-1 dos guardados SIMULTÁNEOS de la misma factura: una sola factura vigente", async (t) => {
-  const n = await netoDe("venta");
+  const n = await netoConfirmadoDe("venta");
   assert.equal(marcarHotelIrt(n), "1500000");
   await entrarComo("admin");
   const { guardarFacturacion } = await facturacion();
@@ -1457,7 +2265,7 @@ test("RACE-1 dos guardados SIMULTÁNEOS de la misma factura: una sola factura vi
   let rs: unknown[];
   try {
     const v = { numeroContrato: n, pvp: 1_800_000, irt: 1_500_000, ingresoExento: 0 };
-    rs = await Promise.all([guardarFacturacion(v), guardarFacturacion(v)]);
+    rs = await Promise.all([guardarFacturacion(v, {}), guardarFacturacion(v, {})]);
   } finally {
     sql(`drop trigger t206_lento on public.asientos_contables; drop function public.t206_lento();`);
   }
@@ -1473,11 +2281,11 @@ test("RACE-1 dos guardados SIMULTÁNEOS de la misma factura: una sola factura vi
 });
 
 test("COMP-1 falla el asiento nuevo Y falla deshacer la reversa: libros y configuración deben quedar consistentes", async (t) => {
-  const n = await netoDe("venta");
+  const n = await netoConfirmadoDe("venta");
   assert.equal(marcarHotelIrt(n), "1500000");
   await entrarComo("admin");
   const { guardarFacturacion } = await facturacion();
-  assert.deepEqual(await guardarFacturacion({ numeroContrato: n, pvp: 1_800_000, irt: 1_500_000, ingresoExento: 0 }), { ok: true });
+  assert.deepEqual(await guardarFacturacion({ numeroContrato: n, pvp: 1_800_000, irt: 1_500_000, ingresoExento: 0 }, {}), { ok: true });
   const antes = foto(n);
   // Fallo del asiento nuevo (cuenta IRT ausente) + fallo de la compensación
   // (no se puede borrar la reversa recién creada).
@@ -1487,7 +2295,7 @@ test("COMP-1 falla el asiento nuevo Y falla deshacer la reversa: libros y config
        create trigger t206_sin_borrar before delete on public.asientos_contables for each row execute function public.t206_sin_borrar();`);
   let r: unknown;
   try {
-    r = await guardarFacturacion({ numeroContrato: n, pvp: 1_800_000, irt: 1_500_000, ingresoExento: 100_000, tipoExento: "exento" });
+    r = await guardarFacturacion({ numeroContrato: n, pvp: 1_800_000, irt: 1_500_000, ingresoExento: 100_000, tipoExento: "exento" }, {});
   } finally {
     sql(`drop trigger t206_sin_borrar on public.asientos_contables; drop function public.t206_sin_borrar();
          update public.puc_cuentas set codigo = '281510' where tenant = 'mayorista' and codigo = '281510-t206';`);
@@ -1505,7 +2313,7 @@ test("COMP-1 falla el asiento nuevo Y falla deshacer la reversa: libros y config
 async function abonosParaPantalla(marca: string) {
   const numero = await netoDe("venta");
   await entrarComo("admin");
-  assert.deepEqual(await registrarAbono(numero, 120_000, "Efectivo", `${marca}-contable`), { ok: true });
+  assert.deepEqual(await registrarAbono(numero, 120_000, "Efectivo", `${marca}-contable`, undefined, undefined, undefined, undefined, {}), { ok: true });
   const contabilizado = Number(sql(`select id from public.abonos where numero_contrato = '${numero}' and referencia = '${marca}-contable'`));
   const sinAsiento = Number(sql(`insert into public.abonos (numero_contrato, tenant, valor_abono, monto_cop, trm, fecha_abono, forma_pago, referencia)
     values ('${numero}', 'mayorista', 80000, 80000, 1, current_date, 'Efectivo', '${marca}-sin-asiento') returning id`));
@@ -1540,7 +2348,7 @@ async function anularDesdePantalla(raiz: Element, id: number, motivo: string) {
 test("UI1 Gestión anula con motivo un abono contabilizado (retira su asiento, deja huella) y uno sin asiento", async () => {
   const { GestionTabs } = await import("../app/(dashboard)/dashboard/contratos/[numero]/GestionTabs.tsx");
   const { numero, contabilizado, sinAsiento, abonos } = await abonosParaPantalla("UI1");
-  const m = await montar(h(GestionTabs, {
+  const m = await montar(h(GestionTabs, { identidad: {},
     numero, precioVenta: 1_800_000, impuesto: 0, clienteNombre: "Cliente UI", clienteDocumento: "",
     asesorNombre: U.venta.nombre, asesorPct: 0, verFinanzas: true,
     costos: { costo_hotel: 0, costo_aereo: 0, costo_receptivo: 0, costo_asistencia: 0, otros_costos: 0 },
@@ -1558,7 +2366,7 @@ test("UI1 Gestión anula con motivo un abono contabilizado (retira su asiento, d
 test("UI2 Cartera anula con motivo un abono contabilizado (retira su asiento, deja huella) y uno sin asiento", async () => {
   const { CarteraList } = await import("../app/(dashboard)/dashboard/cartera/CarteraList.tsx");
   const { numero, contabilizado, sinAsiento, abonos } = await abonosParaPantalla("UI2");
-  const m = await montar(h(CarteraList, { rows: [{
+  const m = await montar(h(CarteraList, { rows: [{ identidad: {},
     numero_contrato: numero, cliente: "Cliente UI", destino: "Cartagena", precio_venta: 1_800_000,
     estado: "activo", fecha_salida: "2026-12-01", moneda: "COP", pagado: 200_000, saldo: 1_600_000, abonos,
   }], formasPago: ["Efectivo"] }));
@@ -1570,4 +2378,176 @@ test("UI2 Cartera anula con motivo un abono contabilizado (retira su asiento, de
   } finally {
     await m.desmontar();
   }
+});
+
+// ── #97 + #75 · contrato REALMENTE nacido de un reuso: el PLAN se liga a la identidad correcta; materializar con identidad ANTIGUA o AUSENTE se rechaza sin alterar contrato ni comisión ──
+// Solo corre sobre una base con la 284 (identidad), la 287 (reuso) y el ciclo ENCENDIDO (la 288 de #75 es su dependencia) y con el código de #75 (el cliente de sesión declara x-contratos).
+// La confirmación aquí se hace con SQL bajo la identidad correcta (la transición real es de #75); la función bajo prueba es la de #97: materializar_comision_b2b.
+test("INT97-75 contrato nacido de reuso: plan ligado a su identidad; materializar con la antigua (F4601) y la ausente (F4602) se rechaza sin tocar contrato ni comisión", async (t) => {
+  const hay = (f: string) => sql(`select count(*) from pg_proc where proname = '${f}'`) !== "0";
+  if (!hay("contrato_guarda_identidad") || !hay("reservar_numero_contrato") || !hay("materializar_obligaciones")) { t.skip("requiere la base de #75 (284 + 287 + 288)"); return; }
+  const NA = "DTM-9101";
+  // A: contrato pendiente, nunca confirmado y vacío (elegible); se libera con reuso y su número vuelve al pool.
+  sql(`update public.dtm_reuso_config set habilitado = true`);
+  sql(`insert into public.ventas (numero_contrato, cliente, tenant, estado, financiero_estado) values ('${NA}', 'A reuso', 'mayorista', 'pendiente', 'completo')`);
+  const uidA = sql(`select contrato_uid from public.ventas where numero_contrato = '${NA}'`);
+  await entrarComo("super");
+  const sbSuper = await clienteDe("super");
+  const el = await sbSuper.rpc("eliminar_contrato", { p_numero: NA, p_reusar: true });
+  assert.equal(el.error, null, JSON.stringify(el.error));
+  // B: crearContrato real (PVP + aliado) toma ese número del pool → nace de reuso con OTRA identidad, PENDIENTE (ciclo encendido). El plan se escribe bajo la identidad correcta
+  // y queda ligado a contrato_uid (con el cliente sin identidad fallaría con IDENTIDAD_REQUERIDA).
+  await entrarComo("venta");
+  const r = await crearContrato(entradaContrato({ modoCompra: "pvp" }));
+  assert.equal(r.ok, true, JSON.stringify(r));
+  assert.equal(sql(`select numero_contrato || '|' || nacio_de_reuso || '|' || estado from public.ventas where cotizacion_id is null and numero_contrato = '${NA}'`), `${NA}|true|pendiente`, "B nació del reuso del número de A, pendiente");
+  const uidB = sql(`select contrato_uid from public.ventas where numero_contrato = '${NA}'`);
+  assert.notEqual(uidA, uidB, "identidad nueva");
+  assert.equal(sql(`select count(*) from public.comision_plan where contrato_uid = '${uidB}'`), "1", "el plan quedó ligado a la identidad del contrato nuevo");
+  assert.equal(sql(`select count(*) from public.comision_plan where contrato_uid = '${uidA}'`), "0", "nada ligado a la identidad del contrato anterior");
+  assert.equal(nFilas(NA), "0", "pendiente: SIN comisión exigible");
+  const { createClient } = await import("../lib/supabase/server.ts");
+  type Cli = (i?: Record<string, string>) => Promise<Awaited<ReturnType<typeof createClient>>>;
+  const cli = createClient as unknown as Cli;
+  await entrarComo("admin");
+  const llamar = async (ident?: Record<string, string>) => (await cli(ident)).rpc("materializar_comision_b2b", { p_numero: NA });
+  const pend = await llamar({ [NA]: uidB });
+  assert.equal(pend.error, null, JSON.stringify(pend.error)); assert.equal(pend.data, null, "pendiente: no hace nada");
+  assert.equal(nFilas(NA), "0");
+  // Confirmación autorizada (la hace #75; aquí SQL bajo la identidad correcta).
+  sql(`begin; select set_config('app.identidades', '{"${NA}":"${uidB}"}', true); update public.ventas set estado = 'confirmado' where numero_contrato = '${NA}'; commit;`);
+  const huella = () => sql(`select md5(coalesce((select v::text from public.ventas v where numero_contrato = '${NA}'), '')) || '/' || (select count(*) from public.aliados_b2b where numero_contrato = '${NA}')`);
+  const antes = huella();
+  const ant = await llamar({ [NA]: uidA });
+  assert.equal(ant.error?.code, "F4601", `identidad ANTIGUA: ${JSON.stringify(ant.error)}`);
+  assert.equal(huella(), antes, "la antigua no alteró contrato ni comisión");
+  const aus = await llamar(undefined);
+  assert.equal(aus.error?.code, "F4602", `identidad AUSENTE: ${JSON.stringify(aus.error)}`);
+  assert.equal(huella(), antes, "la ausente no alteró contrato ni comisión");
+  const bien = await llamar({ [NA]: uidB });
+  assert.equal(bien.error, null, `identidad CORRECTA: ${JSON.stringify(bien.error)}`);
+  assert.ok(typeof bien.data === "number" && bien.data > 0);
+  const tras = huella();
+  assert.notEqual(tras, antes, "la correcta sí materializa");
+  const otra = await llamar({ [NA]: uidB });
+  assert.equal(otra.data, bien.data, "reintento: la misma fila");
+  assert.equal(nFilas(NA), "1", "una sola comisión");
+  assert.equal(sql(`select (plan_id = (select id from public.comision_plan where contrato_uid = '${uidB}')) from public.aliados_b2b where numero_contrato = '${NA}'`), "t", "materializada desde el plan de SU identidad");
+  // Escritura directa sobre la comisión con un rol que SÍ puede escribir (admin): la rechaza la GUARDA, no la RLS.
+  for (const [nombre, ident, codigo] of [["antigua", { [NA]: uidA }, "F4601"], ["ausente", undefined, "F4602"]] as const) {
+    const up = await (await cli(ident as Record<string, string> | undefined)).from("aliados_b2b").update({ estado: "pagada" }).eq("numero_contrato", NA).select("id");
+    assert.equal(up.error?.code, codigo, `UPDATE directo con identidad ${nombre} debe rechazarlo la GUARDA: ${JSON.stringify(up.error)}`);
+  }
+  assert.equal(huella(), tras, "los UPDATE rechazados no alteraron nada");
+  // Contraste: un contrato «de siempre» (nacio_de_reuso = false) SIN identidad pasa como hoy, y una identidad ajena se rechaza igual (la guarda está en la tabla, no en la función).
+  await entrarComo("venta");
+  const antesC = numeros();
+  const rc = await crearContrato(entradaContrato({ modoCompra: "pvp" }));
+  assert.equal(rc.ok, true, JSON.stringify(rc));
+  const [nC] = nuevos(antesC);
+  assert.equal(sql(`select nacio_de_reuso::text from public.ventas where numero_contrato = '${nC}'`), "false", "C es un contrato de siempre");
+  sql(`update public.ventas set estado = 'confirmado' where numero_contrato = '${nC}'`);
+  await entrarComo("admin");
+  const mC = await (await cli(undefined)).rpc("materializar_comision_b2b", { p_numero: nC });
+  assert.equal(mC.error, null, `de siempre y sin identidad: pasa como hoy: ${JSON.stringify(mC.error)}`);
+  const ajena = await (await cli({ [nC]: uidA })).from("aliados_b2b").update({ contacto: "ajena" }).eq("numero_contrato", nC).select("id");
+  assert.equal(ajena.error?.code, "F4601", `de siempre pero con identidad ajena: ${JSON.stringify(ajena.error)}`);
+});
+
+// ── #97 · documentos del aliado con el caso USD: Cuenta de cobro y Estado de cuenta (páginas reales, BD real) ──
+// USD 12.345 (servicios 12.245 + recobro 100), BNC 345, participación 33 del recobro, 12,35 % → base 11.900, ordinaria 1.469,65 → 1.470, total del aliado 1.503.
+// Ciclo de vida: mientras el contrato está PENDIENTE no hay comisión exigible ni documentos; al CONFIRMAR se materializa el plan y los documentos se abren.
+test("DOC97-1 USD: confirmado (por el pago mínimo), Cuenta de cobro y Estado de cuenta con centavos y el rótulo «pactado»", async () => {
+  const pctAntes = sql(`select coalesce(pct_comision::text, 'null') from public.aliados where id = 9602`);
+  sql(`update public.aliados set pct_comision = 0.1235 where id = 9602`);
+  try {
+    await entrarComo("venta");
+    const c = await crearCotizacionManual(cotB2B(100, 33, {
+      moneda: "USD", tipoAsesor: "freelance", aliadoId: 9602, agenciaNombre: "", freelanceNombre: "T206 Freelance", bnc: 345,
+      servicios: [
+        { tipo: "hotel", plataforma: "", nombre: "Hotel USD", proveedor: "Prov USD", costoNeto: 8000, modo: "mk" as const, pctMarkup: 20, ta: 0 },
+        { tipo: "aereo", plataforma: "", nombre: "Vuelo USD", proveedor: "Aero USD", costoNeto: 2245, modo: "ta" as const, pctMarkup: 0, ta: 0 },
+      ],
+    }));
+    assert.equal(c.ok, true, JSON.stringify(c));
+    const id = (c as { id: number }).id;
+    assert.equal(sql(`select pvp_total::numeric(15,2) || '/' || base_comision::numeric(15,2) || '/' || pct_comision || '/' || comision_ordinaria::numeric(15,2) || '/' || total_aliado::numeric(15,2) from public.comision_plan where cotizacion_id = ${id} and numero_contrato is null`),
+      "12345.00/11900.00/0.1235/1470.00/1503.00");
+    await entrarComo("admin");
+    const pago = await registrarPagoPrevio(id, { valor: 6200, moneda: "USD", trm: 4000, formaPago: "transferencia", referencia: `doc97-${id}` }, `doc97-${id}`);
+    assert.equal(pago.ok, true, JSON.stringify(pago));
+    const conv = await convertirCotizacionManualAContrato(id); // sigue la sesión de administración (convertir exige ese rol)
+    assert.equal(conv.ok, true, JSON.stringify(conv));
+    const n = (conv as { numero: string }).numero;
+    const { resolverComisionB2B } = await import("../lib/finanzas/comisionResolver.ts");
+    // PENDIENTE: el plan quedó ligado al contrato, pero NO hay comisión exigible ni cuenta de cobro.
+    const pendiente = sql(`select estado from public.ventas where numero_contrato = '${n}'`) === "pendiente";
+    assert.equal(sql(`select count(*) from public.aliados_b2b where numero_contrato = '${n}'`), pendiente ? "0" : "1", "pendiente: sin fila exigible");
+    assert.equal(sql(`select count(*) from public.comision_plan where numero_contrato = '${n}'`), "1", "plan ligado al contrato");
+    await entrarComo("freelance");
+    if (pendiente) assert.equal(await resolverComisionB2B(n), null, "pendiente: no hay cuenta de cobro");
+    // CONFIRMAR: materializa el plan sellado (una sola vez).
+    const idFila = pendiente ? await confirmarYMaterializar(n) : Number(sql(`select id from public.aliados_b2b where numero_contrato = '${n}'`));
+    assert.ok(idFila && idFila > 0, "la confirmación materializó la comisión");
+    assert.equal(sql(`select comision_valor::numeric(15,2) || '/' || pct_comision || '/' || base_comision::numeric(15,2) from public.aliados_b2b where numero_contrato = '${n}'`), "1470.00/0.1235/11900.00");
+    assert.equal(sql(`select (coalesce(comision_valor, base_comision * pct_comision) + recobro_total * pct_recobro_aliado)::numeric(15,2) from public.aliados_b2b where numero_contrato = '${n}'`), "1503.00");
+
+    await entrarComo("freelance");
+    const r = await resolverComisionB2B(n);
+    assert.ok(r && r.tipo === "comision", JSON.stringify(r));
+    const d = (r as { detalle: { comisionBase: number; recobroAliado: number; retencion: number; totalPagar: number; esPctPactado: boolean; esPctEfectivo: boolean; pctComision: number } }).detalle;
+    assert.equal((d.comisionBase + d.recobroAliado).toFixed(2), "1503.00", "importe ANTES de retención = plan al centavo");
+    assert.equal(d.retencion.toFixed(2), (1503 * 0.11).toFixed(2));
+    assert.equal(d.totalPagar.toFixed(2), (1503 - 1503 * 0.11).toFixed(2));
+    assert.equal(d.esPctPactado, true); assert.equal(d.esPctEfectivo, false); assert.equal(d.pctComision, 0.1235);
+
+    const { default: Cuenta } = await import("../app/portal/comision/[numero]/page.tsx");
+    const { default: Estado } = await import("../app/portal/comision/[numero]/estado-cuenta/page.tsx");
+    const { formatMonedaDocumento } = await import("../lib/utils.ts");
+    const args = { params: Promise.resolve({ numero: n }), searchParams: Promise.resolve({}) };
+    const cuenta = plano(await html(Cuenta(args)));
+    assert.ok(cuenta.includes("% comisión (pactado)"), cuenta.slice(0, 900));
+    assert.ok(!cuenta.includes("(efectivo)"), "no se rotula como recalculado");
+    assert.ok(cuenta.split(" ").join("").includes("12.35%"), "muestra el % pactado");
+    // Con CENTAVOS: lo exigible no se redondea al dólar (antes imprimía «USD $1,338»).
+    for (const t of ["USD $1,470.00", "USD $33.00", "USD $165.33", "USD $1,337.67", "USD $12,345.00"]) assert.ok(cuenta.includes(t), `Cuenta de cobro muestra ${t}: ${cuenta.slice(0, 1400)}`);
+    assert.ok(!cuenta.includes("USD $1,338"), "no imprime el neto redondeado al dólar");
+    assert.ok(cuenta.includes("Mil trescientos treinta y siete dólares con 67/100"), "el importe en letras lleva los centavos");
+    const estado = plano(await html(Estado(args)));
+    assert.equal(formatMonedaDocumento(d.totalPagar, "USD"), "USD $1,337.67");
+    assert.ok(estado.includes("USD $1,337.67"), `Estado de cuenta muestra el total a pagar con centavos: ${estado.slice(0, 1400)}`);
+    assert.ok(!estado.includes("USD $1,338"), "el estado de cuenta tampoco lo redondea al dólar");
+  } finally {
+    sql(`update public.aliados set pct_comision = ${pctAntes} where id = 9602`);
+  }
+});
+
+// ── #97 + #75 · ciclo ENCENDIDO: el contrato MANUAL nace PENDIENTE sin comisión exigible; el pago que alcanza el mínimo confirma y materializa en la misma transacción; sin duplicar ──
+test("CIC97-1 manual B2B: nace pendiente (plan, sin fila ni cuenta de cobro) → un abono que alcanza el mínimo confirma y materializa UNA vez", async (t) => {
+  if (!sql(`select count(*) from pg_proc where proname = 'materializar_obligaciones'`).match(/^[1-9]/)) { t.skip("requiere la 288 de #75"); return; }
+  await entrarComo("venta");
+  const antes = numeros();
+  const r = await crearContrato(entradaContrato({ modoCompra: "pvp" }));
+  assert.equal(r.ok, true, JSON.stringify(r));
+  const [n] = nuevos(antes);
+  assert.equal(sql(`select estado from public.ventas where numero_contrato = '${n}'`), "pendiente", "con el ciclo encendido el manual nace PENDIENTE (tener la información completa no confirma una venta)");
+  assert.equal(nFilas(n), "0", "pendiente: sin comisión exigible");
+  assert.equal(sql(`select count(*) from public.comision_plan c join public.ventas v on v.contrato_uid = c.contrato_uid where v.numero_contrato = '${n}'`), "1", "plan ligado a la identidad del contrato");
+  const { resolverComisionB2B } = await import("../lib/finanzas/comisionResolver.ts");
+  await entrarComo("admin");
+  assert.equal(await resolverComisionB2B(n), null, "pendiente: ni respaldo ventas.comision_b2b ni cuenta de cobro");
+  const total = Number(sql(`select precio_venta from public.ventas where numero_contrato = '${n}'`));
+  // El pago que alcanza el mínimo: #75 confirma y materializa en la misma transacción del abono.
+  // registrarAbono: en #97 solo admite 4–8 argumentos y en #75 exige un 9.º (opciones): se llama por un tipo común a ambas firmas.
+  const abonar = (num: string, valor: number, ref: string) => (registrarAbono as unknown as (...a: unknown[]) => Promise<{ ok: boolean }>)(num, valor, "Efectivo", ref, undefined, undefined, undefined, undefined, {});
+  const ab = await abonar(n, Math.ceil(total * 0.7), `CIC97-${n}`);
+  assert.equal(ab.ok, true, JSON.stringify(ab));
+  assert.equal(sql(`select estado from public.ventas where numero_contrato = '${n}'`), "confirmado", "el abono que alcanza el mínimo confirma");
+  assert.equal(nFilas(n), "1", "la confirmación por pago materializó la comisión (una sola)");
+  assert.equal(sql(`select (plan_id is not null)::text from public.aliados_b2b where numero_contrato = '${n}'`), "true");
+  const ab2 = await abonar(n, 1000, `CIC97b-${n}`);
+  assert.equal(ab2.ok, true, JSON.stringify(ab2));
+  assert.equal(nFilas(n), "1", "un segundo abono no duplica");
+  const r2 = await resolverComisionB2B(n);
+  assert.ok(r2 && r2.tipo === "comision", "confirmado: la cuenta de cobro/estado se resuelven");
 });

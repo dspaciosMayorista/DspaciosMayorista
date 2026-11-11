@@ -2,6 +2,7 @@ import { createClient } from "@/lib/supabase/server";
 import { getTenant } from "@/lib/tenant.server";
 import { sumarPagosPorAliado } from "@/lib/finanzas/pagosComisionB2B";
 import { calcularComisionFila, esComisionDescontada, esComisionEnContratoNeto, estadoComisionFila, type FilaComisionB2B } from "@/lib/finanzas/comisionB2B";
+import { identidadDe } from "@/lib/contrato/identidad";
 import { ComisionesList, type ComB2BRow } from "./ComisionesList";
 
 export const dynamic = "force-dynamic";
@@ -28,12 +29,15 @@ export default async function ComisionesPage() {
 
   const [{ data: b2b }, { data: ventas }, { data: pagosB2B }] = await Promise.all([
     sb.from("aliados_b2b").select("*").eq("tenant", tenant).order("id", { ascending: false }),
-    sb.from("ventas").select("numero_contrato, cliente, canal, tipo_asesor, agencia_nombre, freelance_nombre, comision_estado, comision_b2b").eq("tenant", tenant),
+    sb.from("ventas").select("numero_contrato, contrato_uid, cliente, canal, tipo_asesor, agencia_nombre, freelance_nombre, comision_estado, comision_b2b").eq("tenant", tenant),
     sb.from("comision_b2b_pagos").select("id, aliado_b2b_id, fecha, valor").eq("tenant", tenant).order("fecha", { ascending: true }).order("id", { ascending: true }),
   ]);
   const clientePorContrato = new Map<string, string>();
   const comisionEstadoPorContrato = new Map<string, string | null>();
+  // #75: el uid sale de la MISMA lectura de `ventas` que ya cruza cliente/estado (no de una consulta aparte por número).
+  const uidPorContrato = new Map<string, string | null>();
   for (const v of ventas ?? []) {
+    uidPorContrato.set(v.numero_contrato, v.contrato_uid ?? null);
     clientePorContrato.set(v.numero_contrato, v.cliente ?? "");
     comisionEstadoPorContrato.set(v.numero_contrato, v.comision_estado ?? null);
   }
@@ -57,6 +61,7 @@ export default async function ComisionesPage() {
     return {
       id: b.id,
       numero_contrato: b.numero_contrato,
+      identidad: identidadDe(b.numero_contrato, uidPorContrato.get(b.numero_contrato)),
       cliente: clientePorContrato.get(b.numero_contrato) ?? null,
       aliado: b.aliado,
       nit: b.nit,
@@ -91,6 +96,7 @@ export default async function ComisionesPage() {
     .map((v, i) => ({
       id: -(i + 1), // sintético (no editable)
       numero_contrato: v.numero_contrato,
+      identidad: identidadDe(v.numero_contrato, v.contrato_uid),
       cliente: v.cliente ?? null,
       aliado: v.agencia_nombre || v.freelance_nombre || null,
       nit: null,

@@ -8,6 +8,7 @@
 // así que esto es solo UX — el candado real vive en el servidor y en la BD.
 // ─────────────────────────────────────────────────────────────────────────
 import { useState, useTransition } from "react";
+import type { IdentidadContrato } from "@/lib/contrato/identidad";
 import { registrarOverrideRestriccion } from "./condiciones-actions";
 import { ShieldAlert } from "lucide-react";
 
@@ -15,7 +16,9 @@ export function OverrideRestriccionForm({
   numeroContrato,
   contratoCondicionId,
   restriccion,
+  identidad,
 }: {
+  identidad: IdentidadContrato;
   numeroContrato: string;
   contratoCondicionId: number;
   restriccion: string;
@@ -66,7 +69,7 @@ export function OverrideRestriccionForm({
               return;
             }
             startTransition(async () => {
-              const res = await registrarOverrideRestriccion(numeroContrato, contratoCondicionId, restriccion, m);
+              const res = await registrarOverrideRestriccion(numeroContrato, contratoCondicionId, restriccion, m, identidad);
               if (!res.ok) {
                 setError(res.error ?? "No se pudo registrar la excepción.");
                 return;

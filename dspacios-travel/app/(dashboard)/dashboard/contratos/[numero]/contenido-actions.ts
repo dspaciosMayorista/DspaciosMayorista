@@ -1,6 +1,7 @@
 "use server";
 
 import { createClient } from "@/lib/supabase/server";
+import { parseIdentidad, mensajeSiIdentidad, type IdentidadContrato } from "@/lib/contrato/identidad";
 import { revalidatePath } from "next/cache";
 import { totalVisibleContratoItems } from "@/lib/contrato/valorContratoItem";
 import { esVentaNetoDescontada } from "@/lib/finanzas/netoB2B";
@@ -27,8 +28,8 @@ import { esVentaNetoDescontada } from "@/lib/finanzas/netoB2B";
 
 type Result = { ok: true } | { ok: false; error: string };
 
-async function soloSuperadmin(): Promise<{ ok: true; sb: Awaited<ReturnType<typeof createClient>> } | { ok: false; error: string }> {
-  const sb = await createClient();
+async function soloSuperadmin(identidad: IdentidadContrato): Promise<{ ok: true; sb: Awaited<ReturnType<typeof createClient>> } | { ok: false; error: string }> {
+  const sb = await createClient(parseIdentidad(identidad));
   const { data: { user } } = await sb.auth.getUser();
   if (!user) return { ok: false, error: "Sesión no válida." };
   const { data: perfil } = await sb.from("usuarios").select("rol, activo").eq("id", user.id).maybeSingle();
@@ -66,11 +67,11 @@ async function reemplazarFilas(
     // garantizada en cada `guardar*` de abajo, que arma las columnas
     // explícitamente a partir de un tipo propio.
     const { error: ie } = await sb.from(tabla).insert(filas as never);
-    if (ie) return { ok: false, error: ie.message };
+    if (ie) return { ok: false, error: mensajeSiIdentidad(ie) ?? ie.message };
   }
   if (idsViejos.length) {
     const { error: de } = await sb.from(tabla).delete().in("id", idsViejos);
-    if (de) return { ok: false, error: `Se guardaron las filas nuevas pero no se pudieron borrar las anteriores: ${de.message}` };
+    if (de) return { ok: false, error: mensajeSiIdentidad(de) ?? `Se guardaron las filas nuevas pero no se pudieron borrar las anteriores: ${de.message}` };
   }
   return { ok: true };
 }
@@ -87,8 +88,12 @@ export type ItemContenido = {
   modoPrecio?: string; valorTotal?: number | null;
 };
 
-export async function guardarItemsContrato(numero: string, items: ItemContenido[]): Promise<Result> {
-  const guard = await soloSuperadmin();
+// `forzarMargen`: aprobación EXPLÍCITA de un NETO reemitido por debajo del margen mínimo — la misma excepción que al crear el contrato
+// (lib/contrato/margenContrato.ts / 222); el rol lo vuelve a exigir la base. `margenInsuficiente` = el rechazo admite esa aprobación.
+export async function guardarItemsContrato(
+  numero: string, items: ItemContenido[], identidad: IdentidadContrato, forzarMargen = false,
+): Promise<Result | { ok: false; error: string; margenInsuficiente: true }> {
+  const guard = await soloSuperadmin(identidad);
   if (!guard.ok) return guard;
   // Hallazgo confirmado (cierre 3F-4B): este editor arma cada fila SIEMPRE en
   // modo `por_persona` (el formulario no captura `modo_precio`/`valor_total`)
@@ -102,12 +107,31 @@ export async function guardarItemsContrato(numero: string, items: ItemContenido[
     .from("contrato_items")
     .select("modo_precio")
     .eq("numero_contrato", numero);
-  if (eExist) return { ok: false, error: eExist.message };
+  if (eExist) return { ok: false, error: mensajeSiIdentidad(eExist) ?? eExist.message };
   if ((existentes ?? []).some((it) => it.modo_precio === "total")) {
     return {
       ok: false,
       error: "Este contrato tiene una línea de precio total (hotel con tarifa por habitación / Bernalo) — este editor todavía no sabe conservarla y bloquea el guardado para no destruirla. Contacta al equipo técnico si necesitas corregir esa línea.",
     };
+  }
+  // #75 / 291: en un NETO los ítems (PVP), la comisión descontada y el total exigible se reemiten JUNTOS en la base (misma transacción,
+  // % pactado y BNC conservados). Reemplazar solo los ítems dejaba el total exigible con el PVP viejo, divergiendo en silencio.
+  const { data: venta, error: eVenta } = await guard.sb.from("ventas").select("comision_estado").eq("numero_contrato", numero).maybeSingle();
+  if (eVenta) return { ok: false, error: mensajeSiIdentidad(eVenta) ?? eVenta.message };
+  if (!venta) return { ok: false, error: "El contrato no existe." };
+  if (esVentaNetoDescontada(venta)) {
+    const pItems = items
+      .filter((it) => it.descripcion.trim())
+      .map((it) => ({ descripcion: it.descripcion.trim(), adultos: num(it.adultos), ninos: num(it.ninos), tarifaAdulto: num(it.tarifaAdulto), tarifaNino: num(it.tarifaNino) }));
+    const { error: eR } = await guard.sb.rpc("reemitir_neto_pendiente", { p_numero: numero, p_items: pItems, p_forzar_margen: forzarMargen });
+    if (eR) {
+      if (eR.code === "PGRST202") return { ok: false, error: "Contrato NETO: editar sus tarifas requiere la migración 291, que aún no está aplicada. No se cambió nada." };
+      const error = mensajeSiIdentidad(eR) ?? eR.message.replace(/^NETO_291(_MARGEN(_COSTO)?)?:\s*/, "");
+      if (eR.message.startsWith("NETO_291_MARGEN:")) return { ok: false, error, margenInsuficiente: true };
+      return { ok: false, error };
+    }
+    revalidatePath(`/dashboard/contratos/${numero}`);
+    return { ok: true };
   }
   const filas = items
     .filter((it) => it.descripcion.trim())
@@ -133,8 +157,8 @@ export type HotelContenido = {
   fechaIngreso: string; fechaSalida: string;
 };
 
-export async function guardarHotelesContrato(numero: string, hoteles: HotelContenido[]): Promise<Result> {
-  const guard = await soloSuperadmin();
+export async function guardarHotelesContrato(numero: string, hoteles: HotelContenido[], identidad: IdentidadContrato): Promise<Result> {
+  const guard = await soloSuperadmin(identidad);
   if (!guard.ok) return guard;
   const filas = hoteles
     .filter((h) => h.nombre.trim())
@@ -164,8 +188,8 @@ export type VueloContenido = {
   fecha: string; horaSalida: string; horaLlegada: string; servicios: string;
 };
 
-export async function guardarVuelosContrato(numero: string, vuelos: VueloContenido[]): Promise<Result> {
-  const guard = await soloSuperadmin();
+export async function guardarVuelosContrato(numero: string, vuelos: VueloContenido[], identidad: IdentidadContrato): Promise<Result> {
+  const guard = await soloSuperadmin(identidad);
   if (!guard.ok) return guard;
   const filas = vuelos
     .filter((v) => v.aerolinea.trim() || v.numeroVuelo.trim())
@@ -194,8 +218,8 @@ export type ServicioContenido = {
   tipo: string; descripcion: string; proveedor: string; costo: number;
 };
 
-export async function guardarServiciosContrato(numero: string, servicios: ServicioContenido[]): Promise<Result> {
-  const guard = await soloSuperadmin();
+export async function guardarServiciosContrato(numero: string, servicios: ServicioContenido[], identidad: IdentidadContrato): Promise<Result> {
+  const guard = await soloSuperadmin(identidad);
   if (!guard.ok) return guard;
   const filas = servicios
     .filter((s) => s.descripcion.trim())
@@ -217,8 +241,8 @@ export async function guardarServiciosContrato(numero: string, servicios: Servic
 // Acción SEPARADA y explícita: mover `precio_venta` cambia saldo de cartera,
 // rentabilidad y base de comisiones, así que nunca debe pasar como efecto
 // secundario de editar los ítems.
-export async function sincronizarPrecioVenta(numero: string): Promise<Result> {
-  const guard = await soloSuperadmin();
+export async function sincronizarPrecioVenta(numero: string, identidad: IdentidadContrato): Promise<Result> {
+  const guard = await soloSuperadmin(identidad);
   if (!guard.ok) return guard;
   // #30: en un contrato NETO `precio_venta` es el total exigible (PVP − la
   // comisión ya descontada al aliado) y los ítems están a PVP: igualarlos
@@ -258,7 +282,7 @@ export async function sincronizarPrecioVenta(numero: string): Promise<Result> {
     .from("ventas")
     .update({ precio_venta: total, updated_at: new Date().toISOString() })
     .eq("numero_contrato", numero);
-  if (ue) return { ok: false, error: ue.message };
+  if (ue) return { ok: false, error: mensajeSiIdentidad(ue) ?? ue.message };
   revalidatePath(`/dashboard/contratos/${numero}`);
   return { ok: true };
 }

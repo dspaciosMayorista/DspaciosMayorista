@@ -163,7 +163,7 @@ describe("asistencia médica de la estancia completa", () => {
     const { r } = await reservar(bd, entrada({ nochesAdicionales: 3 }));
     assert.equal(r.ok, true, JSON.stringify(r));
     const antes = bd.filas("cuentas_por_pagar").length;
-    const c = await asegurarCuentasPorPagar(String(bd.filas("ventas")[0].numero_contrato));
+    const c = await asegurarCuentasPorPagar(String(bd.filas("ventas")[0].numero_contrato), {});
     assert.equal(c.ok, true);
     assert.equal(bd.filas("cuentas_por_pagar").length, antes);
   });

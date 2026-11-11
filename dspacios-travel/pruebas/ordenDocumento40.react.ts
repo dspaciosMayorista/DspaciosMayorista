@@ -79,7 +79,7 @@ const SUPERFICIES: Superficie[] = [
     montar: (tipo = "") => montar(h(TitularEditor, { id: 1, version: 1, inicial: { nombres: "Ana", apellidos: "Pérez", tipoDoc: tipo, numeroDoc: "123456", nacimiento: "1990-01-01", telefono: "300", email: "" } })),
     abrir: async (raiz) => { await clic([...raiz.querySelectorAll("button")].find((b) => txt(b) === "Editar"), "Editar"); } },
   { nombre: "edición del contrato (EditarVentaForm)", encabezado: /^Editar datos del contrato/, nombres: "Cliente", edicion: true,
-    montar: (tipo = "") => montar(h(EditarVentaForm, { numero: "00-0001", inicial: EDIT(tipo), destinos: [] })),
+    montar: (tipo = "") => montar(h(EditarVentaForm, { identidad: {}, numero: "00-0001", inicial: EDIT(tipo), destinos: [] })),
     abrir: async (raiz) => { await clic([...raiz.querySelectorAll("button")].find((b) => txt(b).startsWith("Editar datos del contrato")), "Editar datos"); } },
 ];
 
@@ -192,7 +192,7 @@ for (const [vista, px] of [["escritorio", 1280], ["móvil", 390]] as const) {
     test("edición del contrato en NETO: sin Buscar (el cliente comercial es el aliado), pero el tipo guardado se muestra y el número va primero", async () => {
       ancho(px);
       usarBD({});
-      const m = await montar(h(EditarVentaForm, { numero: "00-0001", inicial: EDIT("NIT"), destinos: [], modalidadNeto: true }));
+      const m = await montar(h(EditarVentaForm, { identidad: {}, numero: "00-0001", inicial: EDIT("NIT"), destinos: [], modalidadNeto: true }));
       desmontar = m.desmontar;
       await clic([...m.contenedor.querySelectorAll("button")].find((b) => txt(b).startsWith("Editar datos del contrato")), "Editar datos");
       const ls = etiquetasTras(m.contenedor, /^Editar datos del contrato/);

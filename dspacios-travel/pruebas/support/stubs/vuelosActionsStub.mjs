@@ -22,6 +22,7 @@ export async function guardarInfanteVuelo(...args) { return llamar("guardarInfan
 export async function asignarContratoManual(...args) { return llamar("asignarContratoManual", args); }
 export async function quitarContratoManual(...args) { return llamar("quitarContratoManual", args); }
 export async function editarContratoManual(...args) { return llamar("editarContratoManual", args); }
+export async function resolverContratoManual(...args) { return llamar("resolverContratoManual", args); }
 export async function retirarCupo(...args) { return llamar("retirarCupo", args); }
 export async function cambiarEstadoSilla(...args) { return llamar("cambiarEstadoSilla", args); }
 export async function liberarRetencionVencida(...args) { return llamar("liberarRetencionVencida", args); }

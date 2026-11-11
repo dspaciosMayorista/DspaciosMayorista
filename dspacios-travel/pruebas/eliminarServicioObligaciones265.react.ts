@@ -52,6 +52,11 @@ test("la base rechaza con 42501 «cuenta por pagar enlazada»: se traduce al men
   assert.equal(mensajeErrorEliminarServicio(rechazoBD), MENSAJE_SERVICIO_CON_OBLIGACIONES);
   assert.match(MENSAJE_SERVICIO_CON_OBLIGACIONES, /ya tiene obligaciones asociadas/);
   assert.match(MENSAJE_SERVICIO_CON_OBLIGACIONES, /no puede eliminarse/);
+  // 292: los rechazos por obligaciones PREVISTAS (catálogo y línea) se traducen igual
+  for (const message of ["servicios_adicionales: el servicio 7 tiene obligaciones previstas de contratos pendientes y no se puede eliminar",
+                         "contrato_servicios: el alcance, el servicio y la clave de una línea con obligación prevista enlazada no se editan"]) {
+    assert.equal(mensajeErrorEliminarServicio({ code: "42501", message }), MENSAJE_SERVICIO_CON_OBLIGACIONES, message);
+  }
   // un 42501 de RLS (otra causa) NO se disfraza de «obligaciones»
   const rls = { code: "42501", message: 'new row violates row-level security policy for table "servicios_adicionales"' };
   assert.equal(esRechazoServicioConObligaciones(rls), false);

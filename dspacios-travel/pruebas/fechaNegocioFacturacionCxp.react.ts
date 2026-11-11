@@ -75,12 +75,12 @@ for (const [momento, instante] of MOMENTOS) {
   test(`DIAN a las ${momento}: dian_fecha = ${DIA_BOGOTA}; updated_at sigue siendo el instante UTC; la marca no se deshace`, async () => {
     reloj(instante);
     const bd = conFactura();
-    assert.deepEqual(await marcarDian("DTM-0451", true), { ok: true });
+    assert.deepEqual(await marcarDian("DTM-0451", true, {}), { ok: true });
     const [f] = bd.filas("contrato_facturacion");
     assert.equal(f.dian_fecha, DIA_BOGOTA, "fecha de emisión ante la DIAN");
     assert.equal(f.updated_at, instante, "timestamp sin truncar ni convertir");
     // 208: la marca DIAN es definitiva; el rechazo llega a la pantalla con su código.
-    const d = await marcarDian("DTM-0451", false);
+    const d = await marcarDian("DTM-0451", false, {});
     assert.equal(d.ok, false);
     assert.equal((d as { code?: string }).code, "F4434");
     assert.match((d as { error: string }).error, /la marca no se deshace/);
@@ -91,13 +91,13 @@ for (const [momento, instante] of MOMENTOS) {
     reloj(instante);
     const ref: { bd?: ReturnType<typeof usarBD> } = {};
     ref.bd = usarBD({ ventas: [{ ...VENTA }], usuarios: [CONTABLE] }, rpcDian(ref));
-    const r = await marcarDian("DTM-0451", true);
+    const r = await marcarDian("DTM-0451", true, {});
     assert.equal(r.ok, false);
     assert.equal((r as { code?: string }).code, "F4435");
     assert.equal(ref.bd.filas("contrato_facturacion").length, 0, "no se creó configuración");
     // Contrato de otra agencia: la acción lo rechaza antes de llamar la RPC (tenant activo = mayorista).
     const b2 = usarBD({ ventas: [{ ...VENTA, tenant: "minorista" }], usuarios: [CONTABLE] }, rpcDian({}));
-    const o = await marcarDian("DTM-0451", true);
+    const o = await marcarDian("DTM-0451", true, {});
     assert.equal(o.ok, false);
     assert.match((o as { error: string }).error, /es de la agencia minorista; cambia a esa agencia/);
     assert.equal(b2.llamadasRpc.length, 0, "ni siquiera se llamó la RPC");
@@ -109,7 +109,7 @@ for (const [momento, instante] of MOMENTOS) {
     await crearCuentaPorPagar({
       numeroContrato: "DTM-0451", proveedor: "Hotel Sol", tipoProveedor: "hotel", servicio: "Hotel Sol",
       valorTotal: 1_000_000, fechaVencimiento: "2026-10-20", aplicaRetencion: false, pctRetencion: 0,
-    });
+    }, {});
     const [cxp] = bd.filas("cuentas_por_pagar");
     assert.equal(cxp.fecha_vencimiento, "2026-10-20", "la fecha de vencimiento elegida no se toca");
     assert.equal(asientos(bd, "cxp")[0]?.fecha, DIA_BOGOTA, "asiento al crear");
@@ -117,7 +117,7 @@ for (const [momento, instante] of MOMENTOS) {
     await actualizarCuentaPorPagar({
       id: Number(cxp.id), numeroContrato: "DTM-0451", proveedor: "Hotel Sol", servicio: "Hotel Sol",
       valorTotal: 1_100_000, fechaVencimiento: "2026-10-21",
-    });
+    }, {});
     const cx = asientos(bd, "cxp");
     assert.equal(cx.length, 1, "la edición reemplaza el asiento, no lo duplica");
     assert.equal(cx[0].fecha, DIA_BOGOTA, "asiento al editar");
@@ -130,7 +130,7 @@ for (const [momento, instante] of MOMENTOS) {
       contrato_hoteles: [{ numero_contrato: "DTM-0451", nombre: "Hotel Sol", proveedor: "Operador Sol", orden: 0 }],
       contrato_vuelos: [{ numero_contrato: "DTM-0451", aerolinea: "Avianca", orden: 0 }],
     });
-    const r = await asegurarCuentasPorPagar("DTM-0451");
+    const r = await asegurarCuentasPorPagar("DTM-0451", {});
     assert.equal(r.creadas, 2, "hotel + aéreo");
     for (const c of bd.filas("cuentas_por_pagar")) {
       assert.equal(c.fecha_obligacion, DIA_BOGOTA, `fecha_obligacion de ${c.tipo_proveedor}`);
@@ -158,6 +158,6 @@ test("después del corte, una CxP con vencimiento elegido a mano conserva esa fe
   await crearCuentaPorPagar({
     numeroContrato: "DTM-0451", proveedor: "Avianca", tipoProveedor: "aereo", servicio: "Aéreo",
     valorTotal: 800_000, fechaVencimiento: "2026-10-01", aplicaRetencion: false, pctRetencion: 0,
-  });
+  }, {});
   assert.equal(bd.filas("cuentas_por_pagar")[0].fecha_vencimiento, "2026-10-01");
 });
