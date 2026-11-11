@@ -2,6 +2,7 @@ import { createServerClient } from "@supabase/ssr";
 import { cookies } from "next/headers";
 import type { Database } from "@/types/database";
 import { cabecerasIdentidad, type IdentidadContrato } from "@/lib/contrato/identidad";
+import { fetchMantenimiento, usuarioDeSesion } from "@/lib/supabase/mantenimiento";
 
 /**
  * Cliente de servidor con la sesión del usuario. Fábrica POR LLAMADA (no se comparte entre peticiones).
@@ -29,7 +30,8 @@ export async function createClient(identidad?: IdentidadContrato) {
           }
         },
       },
-      global: { headers: cabecerasIdentidad(identidad) },
+      // 294: `fetch` solo cambia en una ventana de mantenimiento configurada en ESTE despliegue (MANTENIMIENTO_CLAVE); si no, es el de siempre
+      global: { headers: cabecerasIdentidad(identidad), fetch: fetchMantenimiento(usuarioDeSesion) },
     }
   );
 }

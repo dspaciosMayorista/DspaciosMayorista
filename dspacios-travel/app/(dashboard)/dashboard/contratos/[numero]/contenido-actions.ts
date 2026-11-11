@@ -88,7 +88,11 @@ export type ItemContenido = {
   modoPrecio?: string; valorTotal?: number | null;
 };
 
-export async function guardarItemsContrato(numero: string, items: ItemContenido[], identidad: IdentidadContrato): Promise<Result> {
+// `forzarMargen`: aprobación EXPLÍCITA de un NETO reemitido por debajo del margen mínimo — la misma excepción que al crear el contrato
+// (lib/contrato/margenContrato.ts / 222); el rol lo vuelve a exigir la base. `margenInsuficiente` = el rechazo admite esa aprobación.
+export async function guardarItemsContrato(
+  numero: string, items: ItemContenido[], identidad: IdentidadContrato, forzarMargen = false,
+): Promise<Result | { ok: false; error: string; margenInsuficiente: true }> {
   const guard = await soloSuperadmin(identidad);
   if (!guard.ok) return guard;
   // Hallazgo confirmado (cierre 3F-4B): este editor arma cada fila SIEMPRE en
@@ -109,6 +113,25 @@ export async function guardarItemsContrato(numero: string, items: ItemContenido[
       ok: false,
       error: "Este contrato tiene una línea de precio total (hotel con tarifa por habitación / Bernalo) — este editor todavía no sabe conservarla y bloquea el guardado para no destruirla. Contacta al equipo técnico si necesitas corregir esa línea.",
     };
+  }
+  // #75 / 291: en un NETO los ítems (PVP), la comisión descontada y el total exigible se reemiten JUNTOS en la base (misma transacción,
+  // % pactado y BNC conservados). Reemplazar solo los ítems dejaba el total exigible con el PVP viejo, divergiendo en silencio.
+  const { data: venta, error: eVenta } = await guard.sb.from("ventas").select("comision_estado").eq("numero_contrato", numero).maybeSingle();
+  if (eVenta) return { ok: false, error: mensajeSiIdentidad(eVenta) ?? eVenta.message };
+  if (!venta) return { ok: false, error: "El contrato no existe." };
+  if (esVentaNetoDescontada(venta)) {
+    const pItems = items
+      .filter((it) => it.descripcion.trim())
+      .map((it) => ({ descripcion: it.descripcion.trim(), adultos: num(it.adultos), ninos: num(it.ninos), tarifaAdulto: num(it.tarifaAdulto), tarifaNino: num(it.tarifaNino) }));
+    const { error: eR } = await guard.sb.rpc("reemitir_neto_pendiente", { p_numero: numero, p_items: pItems, p_forzar_margen: forzarMargen });
+    if (eR) {
+      if (eR.code === "PGRST202") return { ok: false, error: "Contrato NETO: editar sus tarifas requiere la migración 291, que aún no está aplicada. No se cambió nada." };
+      const error = mensajeSiIdentidad(eR) ?? eR.message.replace(/^NETO_291(_MARGEN(_COSTO)?)?:\s*/, "");
+      if (eR.message.startsWith("NETO_291_MARGEN:")) return { ok: false, error, margenInsuficiente: true };
+      return { ok: false, error };
+    }
+    revalidatePath(`/dashboard/contratos/${numero}`);
+    return { ok: true };
   }
   const filas = items
     .filter((it) => it.descripcion.trim())

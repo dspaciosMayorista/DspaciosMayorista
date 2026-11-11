@@ -1,6 +1,7 @@
 import { createClient } from "@supabase/supabase-js";
 import type { Database } from "@/types/database";
 import { cabecerasIdentidad, type IdentidadContrato } from "@/lib/contrato/identidad";
+import { fetchMantenimiento, usuarioDeSesion } from "@/lib/supabase/mantenimiento";
 
 /**
  * Cliente con la llave `service_role` — SOLO para uso en servidor.
@@ -15,6 +16,7 @@ export function createAdminClient(identidad?: IdentidadContrato) {
   return createClient<Database>(
     process.env.NEXT_PUBLIC_SUPABASE_URL!,
     process.env.SUPABASE_SERVICE_ROLE_KEY!,
-    { auth: { persistSession: false, autoRefreshToken: false }, global: { headers: cabecerasIdentidad(identidad) } }
+    // 294: con service_role la excepción de mantenimiento exige además el usuario VERIFICADO de la sesión (operador autorizado); sin ventana, fetch de siempre
+    { auth: { persistSession: false, autoRefreshToken: false }, global: { headers: cabecerasIdentidad(identidad), fetch: fetchMantenimiento(usuarioDeSesion) } }
   );
 }

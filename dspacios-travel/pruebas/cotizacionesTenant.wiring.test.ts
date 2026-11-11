@@ -332,6 +332,8 @@ test("convertir_cotizacion_a_contrato: la última migración que la define es la
   const definen = readdirSync(dir)
     .filter((f) => f.endsWith(".sql"))
     .sort()
+    // La 288 (#75) la ENVUELVE (el cuerpo vigente sigue siendo el de la 198, copiado verbatim como p75_priv.convertir_cotizacion_base y verificado por md5 en la propia 288).
+    .filter((f) => !f.startsWith("20260601000288_"))
     .filter((f) => readFileSync(join(dir, f), "utf8").includes("create or replace function public.convertir_cotizacion_a_contrato("));
   assert.deepEqual(
     definen,

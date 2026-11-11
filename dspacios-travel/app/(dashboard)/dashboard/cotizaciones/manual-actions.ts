@@ -7,6 +7,7 @@ import { contextoCotizacion, autorizaTenant } from "@/lib/cotizacion/acceso";
 import { ROLES_CONTRATO_COMPLETO } from "@/lib/roles";
 import { abiertaConSalidaPasada, cotizacionVencida, hoyBogota, MENSAJE_COTIZACION_VENCIDA, MENSAJE_SALIDA_PASADA, resolverVigenciaCotizacion } from "@/lib/cotizacion/vigencia";
 import type { Json } from "@/types/database";
+import { idsCxpMaterializadas, postearAsientosDeObligaciones } from "@/lib/reservar/asientosObligaciones";
 import {
   construirComparativaManual, mensajeErrorComparativa, validarClaveIdempotencia, type EntradaComparativaManual,
 } from "@/lib/cotizacion/comparativa";
@@ -393,6 +394,13 @@ export async function convertirCotizacionManualAContrato(
   if (!numero || numero.toUpperCase().startsWith("ERROR")) {
     return { ok: false, error: numero || "No se pudo convertir la cotización a contrato." };
   }
+
+  // 288 (#75): el contrato nace PENDIENTE con sus pagos previos ya aplicados como abonos. Paso FINAL (con el recobro y el plan de comisión de #97 ya completos):
+  // si los abonos alcanzan el mínimo, se confirma con el gancho único (confirmar_venta) y se materializan las obligaciones UNA vez. Si este paso falla la conversión
+  // NO se pierde: la ficha muestra «abonos suficientes, confirmación pendiente» y permite reintentar. (Antes de aplicar la 288 la función no existe: sin efecto.)
+  const { data: conf, error: confErr } = await admin.rpc("confirmar_tras_conversion", { p_numero: numero, p_actor: sesion.userId });
+  if (!confErr) await postearAsientosDeObligaciones(numero, idsCxpMaterializadas(conf), {});
+  // identidad:n/a — el contrato lo acaba de crear esta misma conversión (el uid nació en la RPC); solo se postean asientos
 
   revalidatePath("/dashboard/cotizaciones");
   revalidatePath(`/dashboard/cotizaciones/${cotizacionId}`);

@@ -90,8 +90,13 @@ expect "share_token del contrato nuevo es distinto" "$(Q "select (share_token <>
 
 echo "=== 2) Cada motivo de bloqueo: se rechaza SIN cambiar nada"
 SEQ=9200
+# 289 (elegibilidad ampliada) SUPERA la 287 en las tablas/campos de PREPARACIÓN: con la 289 aplicada esos casos ya no bloquean (los cubre test_289). Aquí solo se comprueba
+# que la 287 pura sigue bloqueándolos; con la 289 se omiten y el contrato se borra SIN reutilizar el número (para no ensuciar el pool).
+A289=$(Q "select (position('prep' in prosrc) > 0)::text from pg_proc where proname='dtm_reuso_bloqueos'")
+SUPERADOS_289=" RELACION_CONTRATO_PASAJEROS RELACION_ALIADOS_B2B RELACION_CONTRATO_VUELOS RELACION_SILLAS RELACION_CONTRATO_SERVICIOS RELACION_CONTRATO_HOTELES RELACION_CONTRATO_ITEMS RELACION_CUENTAS_POR_PAGAR RELACION_CUOTAS RELACION_AVISOS RELACION_COTIZACIONES CAMPO_COMERCIAL_PRECIO_VENTA CAMPO_COMERCIAL_HOTEL CAMPO_COMERCIAL_B2B_USUARIO_ID "
 caso() { # caso <CODIGO esperado> <sql de relación con N>
   SEQ=$((SEQ+1)); n="DTM-$SEQ"; mk "$n"
+  case "$SUPERADOS_289" in *" $1 "*) if [ "$A289" = "true" ]; then echo "(omitido: lo supera la 289 -> $1)"; Q "$(printf '%s' "$2" | sed "s/N/$n/g")" >/dev/null; Q "select public.eliminar_contrato('$n', false)" >/dev/null; return; fi;; esac
   Q "$(printf '%s' "$2" | sed "s/N/$n/g")" >/dev/null
   r=$(Q "select public.eliminar_contrato('$n', true)")
   expect "bloquea: $1" "$r" "REUSO_NO_ELEGIBLE.*$1"

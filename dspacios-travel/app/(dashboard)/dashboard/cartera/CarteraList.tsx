@@ -12,6 +12,7 @@ import { registrarAbonoCartera, actualizarAbonoCartera, anularAbonoCartera } fro
 import { AnularAbonoBoton } from "@/components/contrato/AnularAbonoBoton";
 import { ConfirmarExcedenteAbono } from "@/components/contrato/ConfirmarExcedenteAbono";
 import { useRegistroAbono } from "@/components/contrato/useRegistroAbono";
+import { ConfirmacionPendienteAbono } from "@/components/contrato/ConfirmacionPendienteAbono";
 import { ResponsiveTableShell } from "@/components/ui/ResponsiveTableShell";
 
 export type CarteraRow = {
@@ -384,6 +385,7 @@ function AbonoInline({
   return (
     <form onSubmit={(e) => { e.preventDefault(); reg.enviar(); }} className="space-y-3 rounded-lg border border-gray-200 bg-white p-4">
       <ConfirmarExcedenteAbono datos={reg.excedente} onCancelar={reg.cancelar} onConfirmar={reg.confirmar} />
+      <ConfirmacionPendienteAbono mensaje={reg.confirmacionPendiente} pending={pending} onReintentar={reg.reintentarConfirmacion} />
       <div className="flex flex-wrap items-end gap-3">
         <div>
           <label className="mb-1 block text-xs font-medium text-gray-600">{esUSD ? "Valor pagado (COP)" : "Valor"}</label>
@@ -431,7 +433,7 @@ function AbonoInline({
           <label className="mb-1 block text-xs font-medium text-gray-600">Fecha del abono</label>
           <DateInput aria-label="Fecha del abono" type="date" value={fecha} onValueChange={(dateValue) => setFecha(dateValue)} className="w-40" />
         </div>
-        <Button type="submit" disabled={pending} style={{ backgroundColor: "var(--brand-primary)" }}>
+        <Button type="submit" disabled={pending || !!reg.confirmacionPendiente} style={{ backgroundColor: "var(--brand-primary)" }}>
           {pending ? "Guardando…" : "Registrar abono"}
         </Button>
         <button

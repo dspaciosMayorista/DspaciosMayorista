@@ -1,5 +1,6 @@
 import { test, describe } from "node:test";
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import {
   reusoSujetoAElegibilidad,
   describirBloqueoReuso,
@@ -65,5 +66,20 @@ describe("codigosDeErrorReuso", () => {
     assert.deepEqual(codigosDeErrorReuso("REUSO_NO_ELEGIBLE: NO_EXISTE\nHINT: No se cambió nada."), ["NO_EXISTE"]);
     assert.equal(codigosDeErrorReuso("Solo un superadmin puede eliminar contratos."), null);
     assert.equal(codigosDeErrorReuso(null), null);
+  });
+});
+
+describe("289: los motivos nuevos de la elegibilidad ampliada tienen frase propia (no el genérico «Motivo de bloqueo»)", () => {
+  test("cada código de compromiso real se traduce", () => {
+    for (const c of ["SILLAS_NO_LIBERABLES", "VUELO_EMITIDO", "FACTURACION_EMITIDA", "CXP_CON_PAGOS", "CXP_CON_RETENCIONES", "CXP_63_PROTEGIDA", "COMISION_EXIGIBLE",
+      "COMISION_CON_PAGOS", "COMISION_CON_REVISION", "PLAN_COMISION_SIN_LIBERACION_97", "REFERENCIA_MANUAL_EN_SILLA"]) {
+      assert.doesNotMatch(describirBloqueoReuso(c), /^Motivo de bloqueo/, c);
+    }
+  });
+  test("el código de la migración 289 solo emite motivos que la interfaz conoce", () => {
+    const sql = readFileSync(new URL("../supabase/migrations/20260601000289_elegibilidad_dtm_ampliada.sql", import.meta.url), "utf8");
+    const emitidos = [...sql.matchAll(/b := b \|\| '([A-Z0-9_]+)'::text/g)].map((m) => m[1]);
+    assert.ok(emitidos.length >= 10);
+    for (const c of emitidos) assert.doesNotMatch(describirBloqueoReuso(c), /^Motivo de bloqueo/, c);
   });
 });

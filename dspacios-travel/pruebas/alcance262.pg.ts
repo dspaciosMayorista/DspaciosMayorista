@@ -43,7 +43,13 @@ process.env.NEXT_PUBLIC_SUPABASE_URL = PGRST;
 process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY = "anon-local";
 process.env.SUPABASE_SERVICE_ROLE_KEY = TOKEN_SERVICIO;
 process.env.CRON_SECRET = "cron-local-262";
-const fetchLocal: typeof fetch = (input, init) => fetch(String(input).replace("/rest/v1/", "/"), init);
+// Contador de solicitudes HTTP a PostgREST (validación de consumo, #75): toda llamada de la app pasa por aquí.
+const solicitudesHttp = { n: 0, rutas: [] as string[] };
+const fetchLocal: typeof fetch = (input, init) => {
+  solicitudesHttp.n++;
+  solicitudesHttp.rutas.push(`${init?.method ?? "GET"} ${String(input).replace(/^https?:\/\/[^/]+/, "").replace("/rest/v1/", "/").split("?")[0]}`);
+  return fetch(String(input).replace("/rest/v1/", "/"), init);
+};
 function clienteLocal(token: string, usuario?: { id: string; email: string }) {
   const sb = crearClienteSupabase(PGRST, token, { auth: { persistSession: false, autoRefreshToken: false }, global: { fetch: fetchLocal } });
   if (usuario) (sb.auth as unknown as { getUser: () => Promise<unknown> }).getUser = async () => ({ data: { user: usuario }, error: null });
@@ -153,6 +159,7 @@ const tourCot = (id: number) => JSON.parse(sql(`select (payload->'tours'->0)::te
 const setTourCot = (id: number, clave: string, valor: unknown) => sql(`update public.cotizaciones set payload = jsonb_set(payload, '{tours,0,${clave}}', ${lit(JSON.stringify(valor))}::jsonb) where id = ${id}`);
 const foto = () => ({
   ventas: sql("select count(*) from public.ventas"), cxp: sql("select count(*) from public.cuentas_por_pagar"), items: sql("select count(*) from public.contrato_items"),
+  prev: sql("select count(*) from public.contrato_obligaciones_previstas"),
   pas: sql("select count(*) from public.contrato_pasajeros"), serv: sql("select count(*) from public.contrato_servicios"),
   ultimo: sql("select coalesce(max(substring(numero_contrato from 5)::int), 0) from public.ventas where numero_contrato ~ '^DTM-[0-9]+$'"),
 });
@@ -172,14 +179,46 @@ type Linea = { clave_enlace: string; id: number; servicio_id: number; alcance_tr
 type Cxp = { observaciones: string; id: number; contrato_servicio_id: number | null; alcance_traslado: string | null; servicio_id: number | null; valor_total: number; servicio: string };
 const lineasAlcance = (n: string) => JSON.parse(sql(`select coalesce(json_agg(json_build_object('id', id, 'servicio_id', servicio_id, 'alcance_traslado', alcance_traslado, 'costo', costo::float8, 'clave_enlace', clave_enlace, 'tipo', tipo, 'descripcion', descripcion) order by id)::text, '[]') from public.contrato_servicios where numero_contrato = ${lit(n)} and alcance_traslado is not null`)) as Linea[];
 const cxpsDe = (n: string) => JSON.parse(sql(`select coalesce(json_agg(json_build_object('id', id, 'contrato_servicio_id', contrato_servicio_id, 'alcance_traslado', alcance_traslado, 'servicio_id', servicio_id, 'valor_total', valor_total::float8, 'servicio', servicio, 'observaciones', observaciones) order by id)::text, '[]') from public.cuentas_por_pagar where numero_contrato = ${lit(n)}`)) as Cxp[];
-/** Línea de contrato_servicios == alcance congelado en payload.tours[] de la cotización; CxP enlazada a SU línea con alcance, servicio y valor correctos. */
-function verificarEnlace(n: string, cotId: number, esperados: Esp[]) {
+// 288 (#75): un contrato PENDIENTE no tiene CxP exigibles; cada obligación vive como PREVISTA (payload con la forma exacta de la CxP que será al confirmar).
+// Estas lecturas son las mismas de arriba, sobre el payload: mismo importe, moneda, servicio, alcance, observaciones (clave) y línea enlazada.
+const PREV = (n: string) => `(select id, payload->>'servicio' servicio, payload->>'tipo_proveedor' tipo_proveedor, (payload->>'valor_total')::numeric valor_total,
+    nullif(payload->>'servicio_id', '')::bigint servicio_id, coalesce(payload->>'moneda', 'COP') moneda, nullif(payload->>'contrato_servicio_id', '')::bigint contrato_servicio_id,
+    payload->>'alcance_traslado' alcance_traslado, payload->>'observaciones' observaciones, payload
+    from public.contrato_obligaciones_previstas where numero_contrato = ${lit(n)} and clase = 'cxp' and materializada_en is null)`;
+const estadoVenta = (n: string) => sql(`select estado from public.ventas where numero_contrato = ${lit(n)}`);
+const nCxp = (n: string) => sql(`select count(*) from public.cuentas_por_pagar where numero_contrato = ${lit(n)}`);
+/** El contrato está pendiente y no tiene ninguna CxP exigible. */
+function sinCxpExigibles(n: string) {
+  assert.equal(estadoVenta(n), "pendiente", `${n}: nace pendiente`);
+  assert.equal(nCxp(n), "0", `${n}: pendiente sin CxP exigibles (sus obligaciones son previstas)`);
+}
+/** Como cxpDe, sobre las previstas (y exige pendiente sin CxP). */
+const prevDe = (n: string) => { sinCxpExigibles(n); return sql(`select coalesce(string_agg(servicio || '|' || tipo_proveedor || '|' || valor_total::bigint || '|' || coalesce(servicio_id::text,'-') || '|' || moneda, ' ; ' order by id), '') from ${PREV(n)} p`); };
+/** Como cxpsDe, sobre las previstas. */
+const prevsDe = (n: string) => JSON.parse(sql(`select coalesce(json_agg(json_build_object('id', id, 'contrato_servicio_id', contrato_servicio_id, 'alcance_traslado', alcance_traslado, 'servicio_id', servicio_id, 'valor_total', valor_total::float8, 'servicio', servicio, 'observaciones', observaciones) order by id)::text, '[]') from ${PREV(n)} p`)) as Cxp[];
+/** Previstas de una oferta #63 (o con TRM de costos) con los campos financieros del payload. */
+const prev63 = (n: string) => JSON.parse(sql(`select coalesce(json_agg(json_build_object('servicio', servicio, 'tipo', tipo_proveedor, 'moneda', moneda, 'valor', valor_total::float8, 'cop63', (payload->>'valor_cop_63')::float8, 'trm63', (payload->>'trm_63')::float8,
+    'obl', payload->>'obligacion_63', 'acep', (payload->>'aceptacion_63_id')::bigint, 'sid', servicio_id) order by id)::text, '[]') from ${PREV(n)} p`)) as Array<{ servicio: string; tipo: string; moneda: string; valor: number; cop63: number | null; trm63: number | null; obl: string | null; acep: number | null; sid: number | null }>;
+/** Confirmación REAL (confirmarVenta con la identidad del contrato): materializa las previstas una vez. Solo en los casos que necesitan obligaciones exigibles. */
+async function confirmarReal(n: string) {
+  const { confirmarVenta } = await import("../app/(dashboard)/dashboard/reservar/actions.ts");
+  const { identidadDe } = await import("../lib/contrato/identidad.ts");
+  const previstas = sql(`select count(*) from public.contrato_obligaciones_previstas where numero_contrato = ${lit(n)} and materializada_en is null`);
+  assert.deepEqual(await confirmarVenta(n, identidadDe(n, sql(`select contrato_uid from public.ventas where numero_contrato = ${lit(n)}`))), { ok: true }, `confirmarVenta ${n}`);
+  assert.equal(estadoVenta(n), "confirmado");
+  assert.equal(nCxp(n), previstas, `${n}: cada prevista se materializó en UNA CxP`);
+  assert.equal(sql(`select count(*) from public.contrato_obligaciones_previstas where numero_contrato = ${lit(n)} and materializada_en is null`), "0");
+}
+/** Línea de contrato_servicios == alcance congelado en payload.tours[] de la cotización; obligación (prevista en un pendiente, CxP si ya se confirmó) enlazada a SU línea con alcance, servicio y valor correctos. */
+function verificarEnlace(n: string, cotId: number, esperados: Esp[], fuente: "prevista" | "cxp" = "prevista") {
   const tours = JSON.parse(sql(`select (payload->'tours')::text from public.cotizaciones where id = ${cotId}`)) as Array<{ servicioId: number; alcance?: string }>;
   const delPayload = tours.filter((t) => t.alcance).map((t) => `${t.servicioId}:${t.alcance}`).sort();
   const ls = lineasAlcance(n);
   assert.deepEqual(ls.map((l) => `${l.servicio_id}:${l.alcance_traslado}`).sort(), delPayload, "alcance/servicio de las líneas == payload.tours[] de la cotización");
   assert.deepEqual(esperados.map((e) => `${e.s}:${e.alcance}`).sort(), delPayload, "lo esperado por el test == payload");
-  const cx = cxpsDe(n);
+  if (fuente === "prevista") sinCxpExigibles(n);
+  else assert.equal(sql(`select count(*) from public.contrato_obligaciones_previstas where numero_contrato = ${lit(n)} and materializada_en is null`), "0", "confirmado: nada queda previsto");
+  const cx = fuente === "prevista" ? prevsDe(n) : cxpsDe(n);
   const usadas = new Set<number>();
   for (const e of esperados) {
     const l = ls.find((x) => !usadas.has(x.id) && x.servicio_id === e.s && x.alcance_traslado === e.alcance && Number(x.costo) === e.costo);
@@ -200,12 +239,16 @@ function verificarEnlace(n: string, cotId: number, esperados: Esp[]) {
 function verificarSinEnlace(n: string) {
   assert.equal(sql(`select count(*) from public.contrato_servicios where numero_contrato = ${lit(n)}`), "0");
   assert.equal(sql(`select count(*) from public.cuentas_por_pagar where numero_contrato = ${lit(n)} and (alcance_traslado is not null or contrato_servicio_id is not null)`), "0");
+  assert.equal(sql(`select count(*) from ${PREV(n)} p where alcance_traslado is not null or contrato_servicio_id is not null`), "0", "ninguna prevista con alcance ni línea");
 }
 /** Payload financiero tal como el app lo persistió en contrato_financiero_pendiente antes de llamar a la RPC (copiado por un trigger de prueba, solo en la base local). */
 const payloadGuardado = (n: string) => JSON.parse(sql(`select coalesce((select json_build_object('costos', costos, 'cxp', cxp)::text from public.t_pay262 where numero = ${lit(n)}), 'null')`)) as { costos: unknown; cxp: Array<{ observaciones?: string }> } | null;
 /** Reentrada REAL: se borran las CxP del contrato, se deja el contrato 'pendiente' con el payload persistido y se ejecuta el cron real (reconciliarFinancieroPendienteCron). El vínculo debe reconstruirse por la clave. */
+// 288: en un PENDIENTE lo que la reentrada reconstruye son las PREVISTAS (la RPC reemplaza las sin materializar); en un confirmado, las CxP, como antes.
 async function reentrada(n: string) {
-  const antes = cxpsDe(n);
+  const pendiente = estadoVenta(n) === "pendiente";
+  const leer = () => (pendiente ? (sinCxpExigibles(n), prevsDe(n)) : cxpsDe(n));
+  const antes = leer();
   const pay = payloadGuardado(n);
   assert.ok(pay && pay.cxp.length === antes.length, `payload persistido por la app: ${JSON.stringify(pay)?.slice(0, 200)}`);
   assert.ok(pay.cxp.filter((x) => /enlace:/.test(x.observaciones ?? "")).length === antes.filter((x) => x.alcance_traslado).length, "el payload persistido lleva la clave en las observaciones de cada traslado por alcance");
@@ -216,9 +259,9 @@ async function reentrada(n: string) {
   assert.equal(rr.ok, true, JSON.stringify(rr));
   assert.equal(sql(`select financiero_estado from public.ventas where numero_contrato = ${lit(n)}`), "completo", "el cron completó el contrato: " + JSON.stringify(rr).slice(0, 300));
   assert.equal(sql(`select count(*) from public.contrato_financiero_pendiente where numero_contrato = ${lit(n)}`), "0");
-  const despues = cxpsDe(n);
-  assert.equal(despues.length, antes.length, "mismo número de CxP tras la reentrada");
-  assert.ok(despues.every((d) => !antes.some((a) => a.id === d.id)), "las CxP son NUEVAS (se borraron y recrearon)");
+  const despues = leer();
+  assert.equal(despues.length, antes.length, `mismo número de ${pendiente ? "previstas" : "CxP"} tras la reentrada`);
+  assert.ok(despues.every((d) => !antes.some((a) => a.id === d.id)), `las ${pendiente ? "previstas" : "CxP"} son NUEVAS (se reemplazaron)`);
   for (let i = 0; i < antes.length; i++) {
     assert.equal(despues[i].servicio, antes[i].servicio);
     assert.equal(despues[i].contrato_servicio_id, antes[i].contrato_servicio_id, "mismo vínculo a la misma línea tras la reentrada (por clave)");
@@ -301,8 +344,8 @@ describe("262 · cotización y conversión REAL a contrato y CxP", () => {
     const n = r.numeros![0];
     assert.equal(itemDe(n), `Servicio · Traslado persona 262 (Un trayecto: llegada) — CARTAGENA 262|${pvp(230000)}`);
     assert.equal(precioVenta(n), pvp(230000));
-    assert.equal(cxpDe(n), `Traslado persona 262 · Un trayecto: llegada|otro|230000|${S_TR}|COP`.replace("|otro|", `|${sql(`select tipo_proveedor from public.cuentas_por_pagar where numero_contrato = ${lit(n)}`)}|`));
-    assert.equal(sql(`select count(*) from public.cuentas_por_pagar where numero_contrato = ${lit(n)}`), "1");
+    assert.equal(prevDe(n), `Traslado persona 262 · Un trayecto: llegada|otro|230000|${S_TR}|COP`.replace("|otro|", `|${sql(`select tipo_proveedor from ${PREV(n)} p`)}|`));
+    assert.equal(sql(`select count(*) from ${PREV(n)} p`), "1", "UNA obligación prevista (y ninguna CxP: lo comprueba prevDe)");
     verificarEnlace(n, id, [{ s: S_TR, alcance: "llegada", costo: 230000 }]);
     await reentrada(n); verificarEnlace(n, id, [{ s: S_TR, alcance: "llegada", costo: 230000 }]);
   });
@@ -311,7 +354,7 @@ describe("262 · cotización y conversión REAL a contrato y CxP", () => {
     const r = await convertir(id); assert.equal(r.ok, true, r.error);
     const n = r.numeros![0];
     assert.match(itemDe(n), /\(Un trayecto: salida\)/); assert.match(itemDe(n), new RegExp(`\\|${pvp(200000)}$`));
-    assert.match(cxpDe(n), /^Traslado persona 262 · Un trayecto: salida\|[a-z_]+\|200000\|6201\|COP$/);
+    assert.match(prevDe(n), /^Traslado persona 262 · Un trayecto: salida\|[a-z_]+\|200000\|6201\|COP$/);
     verificarEnlace(n, id, [{ s: S_TR, alcance: "salida", costo: 200000 }]);
   });
   test("V3 IDA Y REGRESO con ambas horas nocturnas: CxP = 170.000×2 + 2×30.000 = 400.000; sin suplemento 340.000", async () => {
@@ -319,21 +362,21 @@ describe("262 · cotización y conversión REAL a contrato y CxP", () => {
     const r = await convertir(id); assert.equal(r.ok, true, r.error);
     const n = r.numeros![0];
     assert.match(itemDe(n), /\(Ida y regreso\)/); assert.match(itemDe(n), new RegExp(`\\|${pvp(400000)}$`));
-    assert.match(cxpDe(n), /^Traslado persona 262 · Ida y regreso\|[a-z_]+\|400000\|6201\|COP$/);
+    assert.match(prevDe(n), /^Traslado persona 262 · Ida y regreso\|[a-z_]+\|400000\|6201\|COP$/);
     const id2 = await cotizarOk([tour(S_TR, 2, { alcance: "ida_regreso", horas: H_DIA })]);
     const r2 = await convertir(id2); assert.equal(r2.ok, true, r2.error);
-    assert.match(cxpDe(r2.numeros![0]), /\|340000\|6201\|COP$/);
+    assert.match(prevDe(r2.numeros![0]), /\|340000\|6201\|COP$/);
     verificarEnlace(n, id, [{ s: S_TR, alcance: "ida_regreso", costo: 400000 }]); verificarEnlace(r2.numeros![0], id2, [{ s: S_TR, alcance: "ida_regreso", costo: 340000 }]);
   });
   test("V4 modo GRUPO: 3 pax → rango 1–4 (200.000 el grupo) y 6 pax → rango 5–8 (300.000); 9 pax no se cotiza", async () => {
     const a = await cotizarOk([tour(S_GR, 3, { alcance: "llegada" })]);
     const ra = await convertir(a, 1, 3); assert.equal(ra.ok, true, ra.error);
     verificarEnlace(ra.numeros![0], a, [{ s: S_GR, alcance: "llegada", costo: 200000 }]);
-    assert.match(cxpDe(ra.numeros![0]), /\|200000\|6202\|COP$/); assert.equal(precioVenta(ra.numeros![0]), pvp(200000));
+    assert.match(prevDe(ra.numeros![0]), /\|200000\|6202\|COP$/); assert.equal(precioVenta(ra.numeros![0]), pvp(200000));
     const b = await cotizarOk([tour(S_GR, 6, { alcance: "ida_regreso" })]);
     const rb = await convertir(b, 1, 6); assert.equal(rb.ok, true, rb.error);
     verificarEnlace(rb.numeros![0], b, [{ s: S_GR, alcance: "ida_regreso", costo: 500000 }]);
-    assert.match(cxpDe(rb.numeros![0]), /\|500000\|6202\|COP$/); assert.equal(precioVenta(rb.numeros![0]), pvp(500000));
+    assert.match(prevDe(rb.numeros![0]), /\|500000\|6202\|COP$/); assert.equal(precioVenta(rb.numeros![0]), pvp(500000));
     const c = await cotizar([tour(S_GR, 9, { alcance: "llegada" })]);
     console.log("      9 pax en grupo →", c.ok ? "COTIZÓ (!)" : c.error);
     assert.equal(c.ok, false, "ningún rango cubre 9 pasajeros: no se cotiza");
@@ -355,6 +398,8 @@ describe("262 · cotización y conversión REAL a contrato y CxP", () => {
     assert.equal(tourCot(id).alcance, undefined);
     sql(`update public.servicios_adicionales set tipo_receptivo = 'traslado' where id = ${S_PRE};
          insert into public.servicio_precio_alcance (servicio_temporada_id, alcance, precio) values (${ALTA(S_PRE)}, 'trayecto', 100000), (${ALTA(S_PRE)}, 'ida_regreso', 170000);`);
+    // 266: reclasificar/cambiar precios invalida el tarifario del paquete; la aplicación lo regenera al guardar el servicio (sin esto, todo V8–V14 quedaba «no publicado»)
+    await generar();
     await noEscribe("cotización anterior sin alcance", id, /sin indicar si es de llegada, de salida o de ida y regreso/);
   });
   test("V8 alcance alterado: valor ajeno y alcance en un servicio que no es traslado → FALLAN sin escribir", async () => {
@@ -374,13 +419,14 @@ describe("262 · cotización y conversión REAL a contrato y CxP", () => {
   });
   test("V9 precio cambiado en el catálogo tras cotizar: FALLA pidiendo recotizar; al restaurar el precio la misma cotización convierte", async () => {
     const id = await cotizarOk([tour(S_CAMB, 2, { alcance: "llegada", horas: H_DIA })]);
-    sql(`update public.servicio_precio_alcance set precio = 110000 where servicio_temporada_id = ${ALTA(S_CAMB)} and alcance = 'trayecto'`);
+    // 266: cada cambio de precio invalida el tarifario; como la aplicación al guardar el servicio, se regenera tras cada cambio (las aserciones no cambian)
+    sql(`update public.servicio_precio_alcance set precio = 110000 where servicio_temporada_id = ${ALTA(S_CAMB)} and alcance = 'trayecto'`); await generar();
     await noEscribe("precio subió", id, /ya no se puede vender con ese alcance|cambió desde que se cotizó/);
-    sql(`delete from public.servicio_precio_alcance where servicio_temporada_id = ${ALTA(S_CAMB)}`);
+    sql(`delete from public.servicio_precio_alcance where servicio_temporada_id = ${ALTA(S_CAMB)}`); await generar();
     await noEscribe("ya no hay tarifa propia", id, /ya no se puede vender con ese alcance/);
-    sql(`insert into public.servicio_precio_alcance (servicio_temporada_id, alcance, precio) values (${ALTA(S_CAMB)}, 'trayecto', 100000)`);
+    sql(`insert into public.servicio_precio_alcance (servicio_temporada_id, alcance, precio) values (${ALTA(S_CAMB)}, 'trayecto', 100000)`); await generar();
     const r = await convertir(id); assert.equal(r.ok, true, `restaurado el precio debe convertir: ${r.error}`);
-    assert.match(cxpDe(r.numeros![0]), /\|200000\|6208\|COP$/);
+    assert.match(prevDe(r.numeros![0]), /\|200000\|6208\|COP$/);
   });
   test("V10 horario cambiado a nocturno no aplica en porción terrestre (la hora capturada es la vigente) y el suplemento ya cotizado se conserva", async () => {
     const id = await cotizarOk([tour(S_TR, 2, { alcance: "llegada", horas: H_NOCHE })]);
@@ -392,10 +438,10 @@ describe("262 · cotización y conversión REAL a contrato y CxP", () => {
     const r = await convertir(id); assert.equal(r.ok, true, r.error);
     const n = r.numeros![0];
     assert.equal(itemDe(n), `Servicio · Tour legado 262 — CARTAGENA 262|${pvp(100000)}`);
-    assert.match(cxpDe(n), /^Tour legado 262\|[a-z_]+\|100000\|6205\|COP$/);
+    assert.match(prevDe(n), /^Tour legado 262\|[a-z_]+\|100000\|6205\|COP$/);
     const id2 = await cotizarOk([tour(S_TOUR, 2)]);
     const r2 = await convertir(id2); assert.equal(r2.ok, true, r2.error);
-    assert.match(cxpDe(r2.numeros![0]), /^Tour clasificado 262\|[a-z_]+\|80000\|6206\|COP$/);
+    assert.match(prevDe(r2.numeros![0]), /^Tour clasificado 262\|[a-z_]+\|80000\|6206\|COP$/);
     verificarSinEnlace(n); verificarSinEnlace(r2.numeros![0]);
     await reentrada(n); verificarSinEnlace(n);
   });
@@ -410,13 +456,13 @@ describe("262 · cotización y conversión REAL a contrato y CxP", () => {
     const r = await convertir(id, 3); assert.equal(r.ok, true, r.error);
     const n = r.numeros![0];
     assert.equal(precioVenta(n), pvp(200000) + pvp(400000) + pvp(80000));
-    const cxp = cxpDe(n);
+    const cxp = prevDe(n);
     assert.match(cxp, /Traslado persona 262 · Un trayecto: llegada\|[a-z_]+\|200000\|6201\|COP/);
     assert.match(cxp, /Traslado persona 262 · Ida y regreso\|[a-z_]+\|400000\|6201\|COP/);
     assert.match(cxp, /Tour clasificado 262\|[a-z_]+\|80000\|6206\|COP/);
     const esp = [{ s: S_TR, alcance: "llegada", costo: 200000 }, { s: S_TR, alcance: "ida_regreso", costo: 400000 }];
     verificarEnlace(n, id, esp);
-    assert.equal(sql(`select count(*) from public.cuentas_por_pagar where numero_contrato = ${lit(n)} and servicio_id = ${S_TOUR} and contrato_servicio_id is null and alcance_traslado is null`), "1", "el tour del mismo carrito queda sin enlace");
+    assert.equal(sql(`select count(*) from ${PREV(n)} p where servicio_id = ${S_TOUR} and contrato_servicio_id is null and alcance_traslado is null`), "1", "el tour del mismo carrito queda sin enlace (prevista)");
     await reentrada(n); verificarEnlace(n, id, esp);
     // (vi) editar los servicios del contrato con la acción real (superadmin): no borra ni duplica las líneas con alcance; la CxP sigue enlazada
     const ids = lineasAlcance(n).map((l) => l.id);
@@ -494,7 +540,7 @@ describe("262 · combo, asistencia médica y USD", () => {
     assert.deepEqual(t.suplementos, [{ tramo: "llegada", hora: "21:00" }]); assert.deepEqual(t.horas, { llegada: "21:00" });
     const r = await convertir(id); assert.equal(r.ok, true, r.error);
     const n = r.numeros![0];
-    assert.match(cxpDe(n), /^Combo con traslado 262\|[a-z_]+\|130000\|6209\|COP$/);
+    assert.match(prevDe(n), /^Combo con traslado 262\|[a-z_]+\|130000\|6209\|COP$/);
     verificarSinEnlace(n);
     const id2 = await cotizarOk([tour(S_COMBO, 2, { horas: { llegada: "10:00", salida: "22:00" } })]);
     assert.equal(tourCot(id2).precio, pvp(100000), "salida nocturna no cuenta para un combo cuyo traslado es de llegada");
@@ -504,7 +550,7 @@ describe("262 · combo, asistencia médica y USD", () => {
     const id = await cotizarOk([tour(S_ASIS, 2)]);
     const r = await convertir(id); assert.equal(r.ok, true, r.error);
     const n = r.numeros![0];
-    assert.match(cxpDe(n), /^Asistencia médica 262\|asistencia\|60000\|6210\|COP$/); verificarSinEnlace(n);
+    assert.match(prevDe(n), /^Asistencia médica 262\|asistencia\|60000\|6210\|COP$/); verificarSinEnlace(n);
     assert.equal((await cotizar([tour(S_ASIS, 2, { alcance: "llegada" })])).ok, false, "cotizar con alcance se rechaza");
     const id2 = await cotizarOk([tour(S_ASIS, 2)]);
     setTourCot(id2, "alcance", "llegada");
@@ -517,13 +563,20 @@ describe("262 · combo, asistencia médica y USD", () => {
     const r = await convertir(id, 1, 2, { extra: { monedaCobro: "USD", trmCosto: 4000 } });
     assert.equal(r.ok, true, r.error);
     const n = r.numeros![0];
-    const c = JSON.parse(sql(`select json_build_object('moneda', moneda, 'valor', valor_total::float8, 'cop', valor_cop_costo::float8, 'trm', trm_costo::float8, 'cs', contrato_servicio_id, 'alc', alcance_traslado, 'obs', observaciones)::text from public.cuentas_por_pagar where numero_contrato = ${lit(n)}`));
+    // pendiente: la obligación en USD es PREVISTA y ya lleva su equivalente en COP y su TRM de costos
+    sinCxpExigibles(n);
+    const c = JSON.parse(sql(`select json_build_object('moneda', moneda, 'valor', valor_total::float8, 'cop', (payload->>'valor_cop_costo')::float8, 'trm', (payload->>'trm_costo')::float8, 'cs', contrato_servicio_id, 'alc', alcance_traslado, 'obs', observaciones)::text from ${PREV(n)} p`));
     assert.equal(c.moneda, "USD"); assert.equal(c.valor, 80); assert.equal(c.cop, 320000); assert.equal(c.trm, 4000); assert.equal(c.alc, "llegada");
     verificarEnlace(n, id, [{ s: S_USD, alcance: "llegada", costo: 80 }]);
     assert.equal(precioVenta(n), 100);
     await reentrada(n);
-    const c2 = JSON.parse(sql(`select json_build_object('cop', valor_cop_costo::float8, 'trm', trm_costo::float8)::text from public.cuentas_por_pagar where numero_contrato = ${lit(n)}`));
+    const c2 = JSON.parse(sql(`select json_build_object('cop', (payload->>'valor_cop_costo')::float8, 'trm', (payload->>'trm_costo')::float8)::text from ${PREV(n)} p`));
     assert.deepEqual(c2, { cop: 320000, trm: 4000 }, "la reentrada conserva el equivalente en COP y la TRM");
+    // al CONFIRMAR, la CxP exigible nace con la MISMA moneda, valor, equivalente COP, TRM y enlace que la prevista
+    await confirmarReal(n);
+    const c3 = JSON.parse(sql(`select json_build_object('moneda', moneda, 'valor', valor_total::float8, 'cop', valor_cop_costo::float8, 'trm', trm_costo::float8, 'alc', alcance_traslado, 'obs', observaciones)::text from public.cuentas_por_pagar where numero_contrato = ${lit(n)}`));
+    assert.deepEqual(c3, { moneda: "USD", valor: 80, cop: 320000, trm: 4000, alc: "llegada", obs: c.obs }, "la CxP materializada conserva USD/COP/TRM y la clave");
+    verificarEnlace(n, id, [{ s: S_USD, alcance: "llegada", costo: 80 }], "cxp");
   });
 });
 
@@ -616,7 +669,7 @@ describe("262 · dos traslados idénticos (mismo servicio, alcance y pax)", () =
     const esp = [{ s: S_TR, alcance: "llegada", costo: 200000 }, { s: S_TR, alcance: "llegada", costo: 200000 }];
     verificarEnlace(n, id, esp);
     const ls = lineasAlcance(n); assert.equal(ls.length, 2); assert.notEqual(ls[0].clave_enlace, ls[1].clave_enlace);
-    const cx = cxpsDe(n); assert.deepEqual(cx.map((c) => c.contrato_servicio_id).sort(), ls.map((l) => l.id).sort());
+    const cx = prevsDe(n); assert.deepEqual(cx.map((c) => c.contrato_servicio_id).sort(), ls.map((l) => l.id).sort(), "cada prevista enlazada a SU línea");
     await reentrada(n); verificarEnlace(n, id, esp);
   });
 });
@@ -701,7 +754,7 @@ describe("262 · borrar un servicio con obligaciones (HTTP + acción real elimin
     const tx = await r.text(); let j: unknown; try { j = JSON.parse(tx); } catch { j = tx; }
     return { s: r.status, j, tx };
   };
-  let numeroEnl = "";
+  let numeroEnl = "", cotEnl = 0;
   test("E0 prepara un contrato con una línea de traslado enlazada a su CxP (conversión real del carrito) sobre un servicio exclusivo", async () => {
     sql(`insert into public.servicios_adicionales (id, nombre, proveedor_id, destino_id, precio_persona, categoria, moneda, tipo_tarifa, liquidacion, tipo_receptivo) values
           (${SRV_BAJA}, 'Traslado a dar de baja 262', 6201, 6201, 0, 'tour_traslado', 'COP', 'persona', 'paquete', 'traslado'), (${SRV_SIN}, 'Servicio sin enlace 262', 6201, 6201, 10, 'otro', 'COP', 'persona', 'paquete', null);
@@ -710,28 +763,43 @@ describe("262 · borrar un servicio con obligaciones (HTTP + acción real elimin
          insert into public.armado_servicios (paquete_id, servicio_id, modo, incluido) values (${PAQ}, ${SRV_BAJA}, 'persona', false);`);
     await generar();
     const id = await cotizarOk([tour(SRV_BAJA, 2, { alcance: "llegada", horas: H_DIA })]);
-    const r = await convertir(id); assert.equal(r.ok, true, r.error); numeroEnl = r.numeros![0];
-    verificarEnlace(numeroEnl, id, [{ s: SRV_BAJA, alcance: "llegada", costo: 100000 }]);
+    const r = await convertir(id); assert.equal(r.ok, true, r.error); numeroEnl = r.numeros![0]; cotEnl = id;
+    verificarEnlace(numeroEnl, id, [{ s: SRV_BAJA, alcance: "llegada", costo: 100000 }]);   // pendiente: la obligación de la línea es PREVISTA
   });
-  test("E0b HALLAZGO previo a la 262: un servicio PUBLICADO en un tarifario no se puede borrar (FK tarifario_resultado NO ACTION, 23503), con o sin enlace; ese error sale antes que el de la línea protegida", async () => {
+  test("E0b HALLAZGO previo a la 262 + 292: un servicio PUBLICADO con una obligación PREVISTA lo rechaza primero la 292 (BEFORE DELETE, 42501); despublicado, la protección sigue", async () => {
     const d = await httpDel("superadmin", SRV_BAJA);
-    console.log("      DELETE de un servicio publicado →", d.s, String((d.j as { message?: string }).message).slice(0, 140));
-    assert.equal((d.j as { code?: string }).code, "23503"); assert.match(String((d.j as { message?: string }).message), /tarifario_resultado_servicio_id_fkey/);
-    sql(`delete from public.tarifario_resultado where servicio_id = ${SRV_BAJA}`); // se despublica: ahora solo la línea protegida puede impedir el borrado
+    console.log("      DELETE de un servicio publicado con prevista →", d.s, String((d.j as { message?: string }).message).slice(0, 140));
+    // el trigger BEFORE DELETE de la 292 corre antes que la FK NO ACTION de tarifario_resultado (que se verifica al final de la sentencia)
+    assert.equal((d.j as { code?: string }).code, "42501"); assert.match(String((d.j as { message?: string }).message), /obligaciones previstas/);
+    sql(`delete from public.tarifario_resultado where servicio_id = ${SRV_BAJA}`); // se despublica: ahora solo las obligaciones pueden impedir el borrado
     assert.equal(sql(`select count(*) from public.tarifario_resultado where servicio_id = ${SRV_BAJA}`), "0");
   });
-  test("E1 DELETE por HTTP de un servicio CON línea enlazada: superadmin, gerencia, operaciones y administracion reciben 403/42501 y nada cambia", async () => {
-    const antes = { cx: cxpsDe(numeroEnl), ln: lineasAlcance(numeroEnl) };
+  const estadoE = () => ({ prev: prevsDe(numeroEnl), cx: cxpsDe(numeroEnl), ln: lineasAlcance(numeroEnl) });
+  const borrarPorRoles = async (motivo: RegExp) => {
     for (const rol of ["superadmin", "gerencia", "operaciones", "administracion"]) {
       const d = await httpDel(rol, SRV_BAJA);
       const j = d.j as { code?: string; message?: string };
-      assert.equal(d.s, 403, `${rol}: HTTP ${d.s} ${d.tx}`); assert.equal(j.code, "42501"); assert.match(String(j.message), /cuenta por pagar enlazada/);
+      assert.equal(d.s, 403, `${rol}: HTTP ${d.s} ${d.tx}`); assert.equal(j.code, "42501"); assert.match(String(j.message), motivo);
       assert.equal(esRechazoServicioConObligaciones({ code: j.code, message: j.message }), true);
       assert.equal(mensajeErrorEliminarServicio({ code: j.code, message: j.message }), MENSAJE_SERVICIO_CON_OBLIGACIONES);
     }
-    assert.deepEqual({ cx: cxpsDe(numeroEnl), ln: lineasAlcance(numeroEnl) }, antes, "la línea, la CxP y el vínculo quedan intactos");
     assert.equal(sql(`select count(*) from public.servicios_adicionales where id = ${SRV_BAJA}`), "1", "el servicio sigue existiendo");
     const dv = await httpDel("venta", SRV_BAJA); assert.ok(dv.s >= 400 || (Array.isArray(dv.j) && dv.j.length === 0), "venta no borra (RLS)");
+  };
+  test("E1 PENDIENTE (292): DELETE por HTTP de un servicio con su obligación PREVISTA: superadmin, gerencia, operaciones y administracion reciben 403/42501; la acción real avisa antes; nada cambia", async () => {
+    sinCxpExigibles(numeroEnl);
+    const antes = estadoE(); assert.equal(antes.prev.length, 1);
+    await borrarPorRoles(/obligaciones previstas/);
+    uidSesion = UID_SUPER;
+    try { assert.deepEqual(await eliminarServicio(SRV_BAJA), { ok: false, error: MENSAJE_SERVICIO_CON_OBLIGACIONES }, "aviso previo por la prevista"); } finally { uidSesion = UID_ADMIN; }
+    assert.deepEqual(estadoE(), antes, "la línea, la prevista y su vínculo quedan intactos");
+  });
+  test("E1b CONFIRMADO (265): confirmarVenta real materializa la CxP enlazada; el borrado por HTTP sigue rechazado, ahora por la CxP; nada cambia", async () => {
+    await confirmarReal(numeroEnl);
+    verificarEnlace(numeroEnl, cotEnl, [{ s: SRV_BAJA, alcance: "llegada", costo: 100000 }], "cxp");
+    const antes = estadoE();
+    await borrarPorRoles(/cuenta por pagar enlazada/);
+    assert.deepEqual(estadoE(), antes, "la línea, la CxP y el vínculo quedan intactos");
   });
   test("E2 DELETE por HTTP de un servicio SIN enlace: se elimina", async () => {
     const d = await httpDel("operaciones", SRV_SIN); assert.ok(d.s === 200 || d.s === 204, `HTTP ${d.s} ${d.tx}`);
@@ -787,12 +855,13 @@ describe("262 · ruta de oferta #63 (crearCotizacion -> convertirCotizacion -> a
     const r = await conv63(cotOk); assert.equal(r.ok, true, r.error); numeroOk = r.numero!;
     assert.notEqual(sql(`select coalesce(aceptacion_63_id::text,'-') from public.ventas where numero_contrato = ${lit(numeroOk)}`), "-", "ventas.aceptacion_63_id fijado");
     assert.equal(sql(`select financiero_estado from public.ventas where numero_contrato = ${lit(numeroOk)}`), "completo");
-    const cx = cxp63(numeroOk); console.log("      CxP #63:", JSON.stringify(cx.map((x) => [x.servicio, x.tipo, x.valor, x.cop63, x.obl])));
+    sinCxpExigibles(numeroOk);   // 288: la oferta #63 también nace pendiente; sus obligaciones son PREVISTAS (obligacion_63/valor_cop_63 en el payload)
+    const cx = prev63(numeroOk); console.log("      previstas #63:", JSON.stringify(cx.map((x) => [x.servicio, x.tipo, x.valor, x.cop63, x.obl])));
     const por = (sid: number) => cx.find((x) => x.sid === sid);
     assert.equal(por(S_LEG)?.valor, 100000); assert.equal(por(S_TOUR)?.valor, 80000); assert.equal(por(S_ASIS)?.valor, 60000);
     for (const x of cx) { assert.ok(x.obl, `${x.servicio}: obligacion_63`); assert.equal(x.cop63, x.valor, `${x.servicio}: valor_cop_63 = valor (COP)`); assert.ok(x.acep); }
     assert.equal(sql(`select count(*) from public.contrato_servicios where numero_contrato = ${lit(numeroOk)} and (alcance_traslado is not null or clave_enlace is not null)`), "0", "ninguna línea por alcance");
-    assert.equal(sql(`select count(*) from public.cuentas_por_pagar where numero_contrato = ${lit(numeroOk)} and (contrato_servicio_id is not null or alcance_traslado is not null)`), "0");
+    assert.equal(sql(`select count(*) from ${PREV(numeroOk)} p where contrato_servicio_id is not null or alcance_traslado is not null`), "0");
   });
   test("O2 servicio OPCIONAL clasificado traslado en input.servicios: crearCotizacion lo rechaza (MENSAJE_TRASLADO_POR_ALCANCE_SOLO_CARRITO) sin escribir nada", async () => {
     for (const lista of [[S_TR], [S_LEG, S_TR]]) {
@@ -869,7 +938,8 @@ describe("262 · ruta de oferta #63 (crearCotizacion -> convertirCotizacion -> a
     assert.equal(q.ok, true, q.error);
     const r = (await convertirCotizacionCarrito(q.cotizacion!.id, { agrupar: "todo", pasajeros: PAX.slice(0, 2), asesorInterno: "Asesor 262", asignaciones: [[1, 2]], asignacionesTours: [], monedaCobro: "COP" } as never)) as Res;
     assert.equal(r.ok, true, r.error);
-    assert.equal(sql(`select count(*) from public.cuentas_por_pagar where numero_contrato = ${lit(r.numeros![0])} and servicio_id = ${S_MIX}`), "1", "el traslado incluido genera UNA CxP");
+    sinCxpExigibles(r.numeros![0]);
+    assert.equal(sql(`select count(*) from ${PREV(r.numeros![0])} p where servicio_id = ${S_MIX}`), "1", "el traslado incluido genera UNA obligación (prevista en el pendiente)");
     const antes = foto();
     for (const k of ["sinVig", "sinTarifa"] as const) {
       const c = (await crearSolicitudReserva({ items: [itemMix(k)], tours: [], cliente: { ...CLIENTE, tipoDoc: "CC" } } as never)) as { ok: boolean; error?: string };
@@ -894,6 +964,9 @@ describe("262 · ruta de oferta #63 (crearCotizacion -> convertirCotizacion -> a
     const rpc = async (cxp: unknown) => clienteLocal(TOKEN_SERVICIO).rpc("registrar_financiero_contrato", { p_numero_contrato: n, p_tenant: "mayorista", p_costos: derivado.costos as never, p_cxp: cxp as never });
     const est = () => sql(`select financiero_estado||'/'||(select count(*) from public.cuentas_por_pagar where numero_contrato = ${lit(n)})||'/'||(select estado from public.p63_aceptacion where id = ${acep}) from public.ventas where numero_contrato = ${lit(n)}`);
     assert.equal(est(), "pendiente/0/materializando");
+    // 288: el contrato es PENDIENTE; la RPC deja sus obligaciones como PREVISTAS (est() cuenta solo las CxP exigibles)
+    const nPrev = () => Number(sql(`select count(*) from ${PREV(n)} p`));
+    const prev0 = nPrev(); assert.ok(prev0 > 0, "el pendiente conserva las previstas de su conversión");
     // (1) payload del carrito: lo derivado MÁS una CxP del traslado con la clave en observaciones
     const conClave = [...derivado.cxp, { tipo_proveedor: "receptivo", proveedor: "P", servicio: "Traslado persona 262 · Un trayecto: llegada", servicio_id: S_TR, valor_total: 100000, moneda: "COP", observaciones: `Generado automáticamente desde el carrito (tarifario) · enlace:${clave}` }];
     const r1 = await rpc(conClave); console.log("      p_cxp con la clave →", r1.error?.message?.slice(0, 160) ?? "OK (!)");
@@ -906,9 +979,10 @@ describe("262 · ruta de oferta #63 (crearCotizacion -> convertirCotizacion -> a
     // (3) control: sin la línea con alcance el mismo payload completa el contrato (el bloqueo era por el traslado, no por otra causa)
     sql(`delete from public.contrato_servicios where numero_contrato = ${lit(n)} and alcance_traslado is not null`);
     const r3 = await rpc(derivado.cxp); assert.equal(r3.error, null, r3.error?.message);
-    assert.match(est(), /^completo\/\d+\/completa$/);
-    const filas = cxp63(n); assert.ok(filas.every((x) => x.obl && x.acep === acep), "p63 copia obligacion_63 y aceptacion_63_id; las observaciones salen del derivado");
-    console.log("      observaciones de las CxP creadas por p63:", JSON.stringify([...new Set(JSON.parse(sql(`select json_agg(observaciones)::text from public.cuentas_por_pagar where numero_contrato = ${lit(n)}`)) as string[])]));
+    assert.equal(est(), "completo/0/completa", "completo, sin CxP exigibles (sigue pendiente)");
+    assert.equal(nPrev(), prev0, "las previstas se reemplazaron por el mismo conjunto derivado de la oferta");
+    const filas = prev63(n); assert.ok(filas.every((x) => x.obl && x.acep === acep), "p63 copia obligacion_63 y aceptacion_63_id; las observaciones salen del derivado");
+    console.log("      observaciones de las previstas creadas por p63:", JSON.stringify([...new Set(JSON.parse(sql(`select json_agg(observaciones)::text from ${PREV(n)} p`)) as string[])]));
   });
 });
 
@@ -930,7 +1004,12 @@ describe("262 · reentrada del cron con CxP presentes (reemplazo exacto, asiento
       tour(S_TR, 2, { alcance: "llegada", horas: H_DIA }), tour(S_TR, 3, { alcance: "llegada", horas: H_NOCHE }), tour(S_TR, 2, { alcance: "ida_regreso", horas: H_DIA }), tour(S_TOUR, 2), tour(S_LEG, 2),
     ]);
     const r = await convertir(cotId, 5, [2, 3, 2, 2, 2]); assert.equal(r.ok, true, r.error); n = r.numeros![0];
-    verificarEnlace(n, cotId, [{ s: S_TR, alcance: "llegada", costo: 200000 }, { s: S_TR, alcance: "llegada", costo: 330000 }, { s: S_TR, alcance: "ida_regreso", costo: 340000 }]);
+    const esp = [{ s: S_TR, alcance: "llegada", costo: 200000 }, { s: S_TR, alcance: "llegada", costo: 330000 }, { s: S_TR, alcance: "ida_regreso", costo: 340000 }];
+    verificarEnlace(n, cotId, esp);   // pendiente: 5 previstas, ninguna CxP
+    assert.equal(prevsDe(n).length, 5);
+    // R2–R5 prueban CxP PRESENTES, con PAGO y con RETENCIÓN: eso solo existe sobre obligaciones exigibles → confirmación real aquí
+    await confirmarReal(n);
+    verificarEnlace(n, cotId, esp, "cxp");
     const f = filas(n); assert.equal(f.length, 5);
     assert.ok(f.every((x) => x.obs.startsWith(sql("select public.marca_cxp_automatica()"))), "ahora TODAS las observaciones del carrito empiezan por marca_cxp_automatica()");
     assert.equal(asientos(n).length, 5, "un asiento contable de devengo por CxP: " + JSON.stringify(asientos(n)));
@@ -1026,6 +1105,8 @@ describe("262 · borrar un servicio publicado (23503 traducido) y prioridad de l
     assert.ok(Number(sql(`select count(*) from public.tarifario_resultado where servicio_id = ${SPL}`)) > 0, "SPL publicado");
     const id = await cotizarOk([tour(SPL, 2, { alcance: "llegada", horas: H_DIA })]);
     const r = await convertir(id); assert.equal(r.ok, true, r.error);
+    verificarEnlace(r.numeros![0], id, [{ s: SPL, alcance: "llegada", costo: 40000 }]);   // pendiente: prevista enlazada, sin CxP
+    await confirmarReal(r.numeros![0]);   // el escenario es «publicado CON CxP enlazada»: se confirma con la acción real
     assert.equal(sql(`select count(*) from public.cuentas_por_pagar where servicio_id = ${SPL} and contrato_servicio_id is not null`), "1");
   });
   test("P1 servicio PUBLICADO sin contratos: DELETE por HTTP da 23503 de tarifario_resultado; la acción real devuelve MENSAJE_SERVICIO_PUBLICADO; NADA se pierde (conteos y md5)", async () => {
@@ -1127,7 +1208,8 @@ describe("262 · traslado por alcance incompatible con la ruta de oferta #63 des
       assert.equal(r.ok, true, r.error);
       const n = r.numeros![0];
       const v = JSON.parse(sql(`select row_to_json(t)::text from (select precio_venta::float8 pv, costo_hotel::float8 ch, costo_aereo::float8 ca, costo_receptivo::float8 cr, coalesce(costo_asistencia,0)::float8 cs, coalesce(otros_costos,0)::float8 co, financiero_estado fe from public.ventas where numero_contrato = ${lit(n)}) t`)) as { pv: number; ch: number; ca: number; cr: number; cs: number; co: number; fe: string };
-      const cx = JSON.parse(sql(`select coalesce(json_agg(json_build_object('servicio', servicio, 'tipo', tipo_proveedor, 'valor', valor_total::float8, 'sid', servicio_id) order by id)::text, '[]') from public.cuentas_por_pagar where numero_contrato = ${lit(n)}`)) as Array<{ servicio: string; tipo: string; valor: number; sid: number | null }>;
+      sinCxpExigibles(n);   // 288: pendiente → las obligaciones del carrito son previstas
+      const cx = JSON.parse(sql(`select coalesce(json_agg(json_build_object('servicio', servicio, 'tipo', tipo_proveedor, 'valor', valor_total::float8, 'sid', servicio_id) order by id)::text, '[]') from ${PREV(n)} p`)) as Array<{ servicio: string; tipo: string; valor: number; sid: number | null }>;
       return { n, v, cx, q: q.cotizacion!.id };
     };
     const con = await venderCarrito(PAQ_VIG, "hvig"), sin = await venderCarrito(PAQ_PT, "hpt");
@@ -1172,8 +1254,8 @@ describe("262 · oferta #63 en USD de extremo a extremo (TRM provisional congela
     assert.equal(sinTrm.ok, false); assert.deepEqual(cuentas(), antes, "nada escrito sin TRM provisional");
     const r = await convertirCotizacion(cot, PAX.slice(0, 2) as never, false, "Asesor 262", 4000, "USD", null) as { ok: boolean; numero?: string; error?: string };
     assert.equal(r.ok, true, r.error);
-    const n = r.numero!; const f = cx(n);
-    console.log("      CxP #63 USD:", JSON.stringify(f.map((x) => [x.servicio, x.moneda, x.valor, x.cop63, x.trm63])));
+    const n = r.numero!; sinCxpExigibles(n); const f = prev63(n);   // 288: pendiente → previstas con valor_cop_63/trm_63
+    console.log("      previstas #63 USD:", JSON.stringify(f.map((x) => [x.servicio, x.moneda, x.valor, x.cop63, x.trm63])));
     assert.equal(sql(`select coalesce(trm_provisional::text,'-') from public.p63_aceptacion where numero_contrato = ${lit(n)}`).replace(/\.0+$/, ""), "4000", "TRM provisional congelada en la aceptación");
     for (const x of f) { assert.equal(x.moneda, "USD"); assert.equal(x.trm63, 4000); assert.equal(x.cop63, x.valor * 4000, `${x.servicio}: valor_cop_63 = valor × TRM`); assert.ok(x.obl); }
     const por = (sid: number) => f.find((x) => x.sid === sid);
@@ -1225,7 +1307,7 @@ describe("262 · salida dinámica vinculada a Empaquetados (oferta #63)", () => 
     assert.equal(c.ok, true, c.error);
     const r = await convertirCotizacion(c.id!, PAX.slice(0, 2) as never, false, "Asesor 262", null, "COP", null) as { ok: boolean; numero?: string; error?: string };
     assert.equal(r.ok, true, r.error);
-    const f = cx(r.numero!); console.log("      CxP vinculada:", JSON.stringify(f.map((x) => [x.servicio, x.tipo, x.valor, x.cop63])));
+    sinCxpExigibles(r.numero!); const f = prev63(r.numero!) as unknown as ReturnType<typeof cx>; console.log("      previstas vinculada:", JSON.stringify(f.map((x) => [x.servicio, x.tipo, x.valor, x.cop63])));
     const por = (sid: number) => f.find((x) => x.sid === sid);
     assert.equal(por(S_LEG)?.valor, 100000); assert.equal(por(S_TOUR)?.valor, 80000); assert.equal(por(S_ASIS)?.valor, 60000);
     assert.ok(f.every((x) => x.obl && x.cop63 === x.valor));
@@ -1290,6 +1372,8 @@ describe("262 · reintento del cron sobre CxP con el texto ANTERIOR (no reconoci
   /** Convierte con el código nuevo y reescribe el texto de las CxP, del payload persistido y del asiento al de ANTES del cambio; deja el contrato pendiente. */
   async function contratoConTextoAnterior(tours: unknown[], pax: number[]) {
     const id = await cotizarOk(tours); const r = await convertir(id, tours.length, pax); assert.equal(r.ok, true, r.error); const n = r.numeros![0];
+    // el escenario son CxP REALES con el texto anterior: el contrato nace pendiente (previstas) y se confirma con la acción real para tenerlas
+    sinCxpExigibles(n); await confirmarReal(n);
     sql(`update public.cuentas_por_pagar set observaciones = replace(observaciones, '${NUEVO}', '${VIEJO}') where numero_contrato = ${lit(n)};
          update public.t_pay262 set cxp = replace(cxp::text, '${NUEVO}', '${VIEJO}')::jsonb where numero = ${lit(n)};
          update public.ventas set financiero_estado = 'pendiente', financiero_actualizado_en = now() - interval '1 hour' where numero_contrato = ${lit(n)};
@@ -1378,7 +1462,7 @@ describe("262 · #423 ida y regreso con la tarifa que la vigencia ya tiene (sin 
     const r = await convertir(id, 1, pax); assert.equal(r.ok, true, `${etiqueta}: ${r.error}`);
     const n = r.numeros![0];
     assert.equal(precioVenta(n), pvp(neto), `venta · ${etiqueta}`); assert.match(itemDe(n), new RegExp(`\\|${pvp(neto)}$`), `ítem · ${etiqueta}`);
-    assert.match(cxpDe(n), new RegExp(`\\|${neto}\\|${s}\\|COP$`), `CxP · ${etiqueta}`);
+    assert.match(prevDe(n), new RegExp(`\\|${neto}\\|${s}\\|COP$`), `obligación prevista · ${etiqueta}`);
     verificarEnlace(n, id, [{ s, alcance: "ida_regreso", costo: neto }]);
     return n;
   }
@@ -1431,7 +1515,7 @@ describe("262 · #423 ida y regreso con la tarifa que la vigencia ya tiene (sin 
     await noEscribe("tarifa vigente cambiada", id, /cambió desde que se cotizó/);
     sql(`update public.servicio_temporadas set precio_persona = 85000 where id = ${ALTA(S_TV_P)}`); await generar();
     const r = await convertir(id); assert.equal(r.ok, true, r.error);
-    assert.match(cxpDe(r.numeros![0]), /\|170000\|6241\|COP$/);
+    assert.match(prevDe(r.numeros![0]), /\|170000\|6241\|COP$/);
     verificarEnlace(r.numeros![0], id, [{ s: S_TV_P, alcance: "ida_regreso", costo: 170000 }]);
   });
 
@@ -1479,7 +1563,8 @@ describe("#435 · tarifa base como respaldo del traslado incluido", () => {
   const publicadas = (paq: number) => Number(sql(`select count(*) from public.tarifario_resultado_publicable where paquete_id = ${paq}`));
   const diag435 = (paq: number) => sql(`select coalesce(tarifario_diagnostico::text, '-') || ' || ' || coalesce(tarifario_error, '-') from public.armado_paquetes where id = ${paq}`);
   const convertir435 = async (id: number, infantes: number) => (await convertirCotizacionCarrito(id, { agrupar: "todo", pasajeros: [...PAX.slice(0, 2), ...(infantes ? [BEBE] : [])], asesorInterno: "Asesor 262", asignaciones: [Array.from({ length: 2 + infantes }, (_, i) => i + 1)], asignacionesTours: [], monedaCobro: "COP" } as never)) as Res;
-  const cxp435 = (numero: string, s: number) => sql(`select count(*) || '|' || coalesce(sum(valor_total)::bigint, 0) from public.cuentas_por_pagar where numero_contrato = ${lit(numero)} and servicio_id = ${s}`);
+  // 288: pendiente → la obligación del traslado es PREVISTA (y no hay CxP exigibles)
+  const cxp435 = (numero: string, s: number) => { sinCxpExigibles(numero); return sql(`select count(*) || '|' || coalesce(sum(valor_total)::bigint, 0) from ${PREV(numero)} p where servicio_id = ${s}`); };
   const generar = async (paq: number) => { const g = await generarTarifario(paq) as { ok: boolean; error?: string }; assert.equal(g.ok, true, `${paq}: ${g.error}`); return g; };
   const escrituras = () => ({ v: sql("select count(*) from public.ventas"), c: sql("select count(*) from public.cuentas_por_pagar") });
   let totalControl2 = 0, totalControl3 = 0;
@@ -1553,5 +1638,133 @@ describe("#435 · tarifa base como respaldo del traslado incluido", () => {
     await generar(B.B0);
     const b = await cotizar435(B.B0, 1); assert.equal(b.ok, true, b.error);
     assert.equal(totalCot(b.cotizacion!.id) - totalControl3, 300000, "vigencia: 80.000 / 0,8 = 100.000 por persona × 3 (el infante paga como adulto de la vigencia, no su base 0)");
+  });
+});
+
+// ═════════════════════════════════════════════════════════════════════
+// #75 · Costos por CATEGORÍA: un contrato de Tarifario con hotel y asistencia médica (sin receptivo) guardaba la asistencia como
+// `costo_receptivo` (Preview). Causa: el flujo sumaba TODO servicio en una sola variable escrita como `costo_receptivo`, aunque su CxP sí
+// salía con tipo `asistencia`. Se prueba por las tres rutas de Tarifario que escriben costos de servicio: reserva individual
+// (crearCotizacion → convertirCotizacion), carrito (crearSolicitudReserva → convertirCotizacionCarrito) y oferta #63. Control: con receptivo.
+describe("75 · costos por categoría (hotel + asistencia médica, sin receptivo)", () => {
+  before(() => {
+    sql(`insert into public.armado_servicios (paquete_id, servicio_id, modo, incluido) values (${PAQ_PT}, ${S_ASIS}, 'persona', false), (${PAQ_PT}, ${S_TOUR}, 'persona', false)
+         on conflict do nothing`);
+  });
+  const costos = (n: string) => sql(`select coalesce(costo_hotel,0)::bigint || '|' || coalesce(costo_receptivo,0)::bigint || '|' || coalesce(costo_asistencia,0)::bigint || '|' ||
+    coalesce(otros_costos,0)::bigint || '|' || coalesce(moneda,'COP') from public.ventas where numero_contrato = ${lit(n)}`);
+  // Obligaciones del contrato (exigibles + previstas de la 288, si existen): tipo → suma.
+  const obligaciones = (n: string) => sql(`select coalesce(string_agg(t || ':' || v::bigint, ',' order by t), '') from (
+      select tipo_proveedor t, sum(valor_total) v from public.cuentas_por_pagar where numero_contrato = ${lit(n)} group by 1
+      union all
+      select payload->>'tipo_proveedor', sum((payload->>'valor_total')::numeric) from public.contrato_obligaciones_previstas where numero_contrato = ${lit(n)} and clase = 'cxp' and materializada_en is null group by 1) o`);
+  const totalCosto = (n: string) => costos(n).split("|").slice(0, 4).reduce((a, x) => a + Number(x), 0);
+  const totalOblig = (n: string) => obligaciones(n).split(",").filter(Boolean).reduce((a, x) => a + Number(x.split(":")[1]), 0);
+  async function confirmar(n: string) {
+    const { confirmarVenta } = await import("../app/(dashboard)/dashboard/reservar/actions.ts");
+    const { identidadDe } = await import("../lib/contrato/identidad.ts");
+    const r = await confirmarVenta(n, identidadDe(n, sql(`select contrato_uid from public.ventas where numero_contrato = ${lit(n)}`)));
+    assert.deepEqual(r, { ok: true }, `confirmarVenta ${n}`);
+  }
+  const individual = (servicios: number[]) => ({
+    paqueteId: PAQ_PT, bloqueoId: null, salidaId: null, modulo: "porcion_terrestre", hotelId: HOT1, fechaIda: "2030-03-01", fechaRegreso: "2030-03-04", categoria: "Estandar", regimen: "Desayuno",
+    habitaciones: { doble: 1 }, ninos: 0, ninos2: 0, infantes: 0, edadesMenores: [], cantidadMenores: 0, cliente: { ...CLIENTE, tipoDoc: "CC" }, tipoAsesor: "interno", asesorInterno: "Asesor 262",
+    agenciaNombre: "", agenciaAsesor: "", freelanceNombre: "", plazo: "", pasajeros: PAX.slice(0, 2), servicios,
+  });
+  async function reservaIndividual(servicios: number[]): Promise<string> {
+    const g = await generarTarifario(PAQ_PT); assert.equal(g.ok, true, JSON.stringify(g));
+    const c = await crearCotizacion(individual(servicios) as never) as { ok: boolean; id?: number; error?: string };
+    assert.equal(c.ok, true, c.error);
+    const r = await convertirCotizacion(c.id!, PAX.slice(0, 2) as never, false, "Asesor 262", null, "COP", null) as { ok: boolean; numero?: string; error?: string };
+    assert.equal(r.ok, true, r.error);
+    return r.numero!;
+  }
+  async function reservaCarrito(servicioId: number): Promise<string> {
+    const g = await generarTarifario(PAQ_PT); assert.equal(g.ok, true, JSON.stringify(g));
+    const item = { modulo: "porcion_terrestre", paqueteId: PAQ_PT, hotelId: HOT1, bloqueoId: null, hotelNombre: "Hotel Uno 262", destino: "CARTAGENA 262", categoria: "Estandar", regimen: "Desayuno",
+      fechaIda: "2030-03-01", fechaRegreso: "2030-03-04", noches: 3, habitaciones: { doble: 1 }, ninos: 0, ninos2: 0, infantes: 0, pax: 2, precio: 1, edadesMenores: [], cantidadMenores: 0, itemId: "h75" };
+    const t = { servicioId, paqueteId: PAQ_PT, fechaIda: "2030-03-01", fechaRegreso: "2030-03-04", pax: 2, hotelItemId: "h75" };
+    const c = (await crearSolicitudReserva({ items: [item], tours: [t], cliente: { ...CLIENTE, tipoDoc: "CC" } } as never)) as { ok: boolean; error?: string; cotizacion?: { id: number } };
+    assert.equal(c.ok, true, c.error);
+    const r = await convertir(Number(c.cotizacion!.id), 1, 2, { asignaciones: [[1, 2]] }); assert.equal(r.ok, true, r.error);
+    return r.numeros![0];
+  }
+  function verificar(t: { diagnostic: (m: string) => void }, n: string, esperado: { receptivo: number; asistencia: number }) {
+    const [hotel, rec, asis, otros, moneda] = costos(n).split("|");
+    t.diagnostic(`${n}: costos hotel|receptivo|asistencia|otros|moneda = ${costos(n)} · obligaciones ${obligaciones(n)} · estado ${sql(`select estado from public.ventas where numero_contrato = ${lit(n)}`)}`);
+    assert.ok(Number(hotel) > 0, "el hotel conserva su costo");
+    assert.equal(Number(rec), esperado.receptivo, "costo_receptivo = solo tours/traslados");
+    assert.equal(Number(asis), esperado.asistencia, "costo_asistencia = la asistencia médica");
+    assert.equal(Number(otros), 0); assert.equal(moneda, "COP");
+    assert.equal(totalCosto(n), totalOblig(n), "costo directo total = suma de sus obligaciones (exigibles + previstas)");
+    const ob = obligaciones(n);
+    if (esperado.asistencia > 0) assert.match(ob, new RegExp(`asistencia:${esperado.asistencia}`));
+    if (esperado.receptivo > 0) assert.match(ob, new RegExp(`receptivo:${esperado.receptivo}`));
+    assert.doesNotMatch(ob, esperado.receptivo > 0 ? /^$/ : /receptivo/, "sin receptivo: ninguna obligación receptiva");
+  }
+  test("CC1 reserva individual: hotel + asistencia médica SIN receptivo → la asistencia va a costo_asistencia (no a receptivo); persiste al reabrir y al confirmar", async (t) => {
+    const n = await reservaIndividual([S_ASIS]);
+    verificar(t, n, { receptivo: 0, asistencia: 60000 });
+    const antes = costos(n);
+    // Reapertura: la misma lectura que hace la ficha (PostgREST con la sesión interna) devuelve las mismas columnas.
+    const { data } = await clienteSesion().from("ventas").select("costo_receptivo, costo_asistencia").eq("numero_contrato", n).single();
+    assert.deepEqual([Number(data?.costo_receptivo ?? 0), Number(data?.costo_asistencia)], [0, 60000], "reabrir el contrato muestra la asistencia en su columna");
+    if (sql(`select estado from public.ventas where numero_contrato = ${lit(n)}`) === "pendiente") {
+      assert.equal(sql(`select count(*) from public.cuentas_por_pagar where numero_contrato = ${lit(n)} and tipo_proveedor = 'asistencia'`), "0", "pendiente: la asistencia es obligación PREVISTA, aún no exigible");
+      await confirmar(n);   // 288: las previstas se materializan al confirmar, UNA vez
+      assert.equal(sql(`select count(*) || ':' || coalesce(sum(valor_total), 0)::bigint from public.cuentas_por_pagar where numero_contrato = ${lit(n)} and tipo_proveedor = 'asistencia'`), "1:60000", "confirmado: una CxP de asistencia exigible");
+    }
+    assert.equal(costos(n), antes, "confirmar no reclasifica ni cambia las columnas de costo");
+    verificar(t, n, { receptivo: 0, asistencia: 60000 });
+    const { calcularRentabilidad } = await import("../lib/finanzas/rentabilidad.ts");
+    const fila = (await calcularRentabilidad()).filas.find((x) => x.numero_contrato === n);
+    assert.ok(fila, "la rentabilidad interna lista el contrato");
+  });
+  test("CC2 control: hotel + tour (receptivo) → costo_receptivo con el tour y costo_asistencia en 0", async (t) => {
+    verificar(t, await reservaIndividual([S_TOUR]), { receptivo: 80000, asistencia: 0 });
+  });
+  test("CC4 editar los servicios de un PENDIENTE (actualizarServiciosContrato): añadir la asistencia la lleva a costo_asistencia; quitarla la deja en 0; el tour sigue en receptivo", async (t) => {
+    const n = await reservaIndividual([S_TOUR]);
+    verificar(t, n, { receptivo: 80000, asistencia: 0 });
+    assert.equal(sql(`select estado from public.ventas where numero_contrato = ${lit(n)}`), "pendiente");
+    const { actualizarServiciosContrato } = await import("../app/(dashboard)/dashboard/contratos/actions.ts");
+    const { identidadDe } = await import("../lib/contrato/identidad.ts");
+    const idc = identidadDe(n, sql(`select contrato_uid from public.ventas where numero_contrato = ${lit(n)}`));
+    assert.deepEqual(await actualizarServiciosContrato(n, [S_TOUR, S_ASIS], idc), { ok: true });
+    verificar(t, n, { receptivo: 80000, asistencia: 60000 });
+    assert.deepEqual(await actualizarServiciosContrato(n, [S_TOUR], idc), { ok: true });
+    verificar(t, n, { receptivo: 80000, asistencia: 0 });
+  });
+  test("CC5 consumo: convertir, editar servicios (dos veces lo mismo), recargar y confirmar hacen un número FIJO de solicitudes y nada queda en curso", async (t) => {
+    const g = await generarTarifario(PAQ_PT); assert.equal(g.ok, true, JSON.stringify(g));
+    const medir = async <T>(que: string, fn: () => Promise<T>): Promise<{ r: T; n: number }> => {
+      const ini = solicitudesHttp.n, iniR = solicitudesHttp.rutas.length;
+      const r = await fn();
+      const n = solicitudesHttp.n - ini;
+      const porRuta = solicitudesHttp.rutas.slice(iniR).reduce<Record<string, number>>((m, x) => ((m[x] = (m[x] ?? 0) + 1), m), {});
+      await new Promise((ok) => setTimeout(ok, 1500));   // reposo: tras terminar la acción no debe llegar ninguna solicitud más
+      assert.equal(solicitudesHttp.n - ini, n, `${que}: siguieron llegando solicitudes después de terminar`);
+      t.diagnostic(`${que}: ${n} solicitudes · ${JSON.stringify(porRuta)}`);
+      return { r, n };
+    };
+    const c = await crearCotizacion(individual([S_TOUR]) as never) as { ok: boolean; id?: number; error?: string }; assert.equal(c.ok, true, c.error);
+    const conv = await medir("convertirCotizacion (hotel + tour)", () => convertirCotizacion(c.id!, PAX.slice(0, 2) as never, false, "Asesor 262", null, "COP", null) as Promise<{ ok: boolean; numero?: string; error?: string }>);
+    assert.equal(conv.r.ok, true, conv.r.error); const n = conv.r.numero!;
+    const { actualizarServiciosContrato } = await import("../app/(dashboard)/dashboard/contratos/actions.ts");
+    const { identidadDe } = await import("../lib/contrato/identidad.ts");
+    const idc = identidadDe(n, sql(`select contrato_uid from public.ventas where numero_contrato = ${lit(n)}`));
+    const e1 = await medir("editar: + asistencia", () => actualizarServiciosContrato(n, [S_TOUR, S_ASIS], idc));
+    const e2 = await medir("editar: − asistencia", () => actualizarServiciosContrato(n, [S_TOUR], idc));
+    const e3 = await medir("editar: + asistencia (otra vez)", () => actualizarServiciosContrato(n, [S_TOUR, S_ASIS], idc));
+    for (const e of [e1, e2, e3]) assert.deepEqual(e.r, { ok: true });
+    assert.equal(e3.n, e1.n, "la misma edición repetida cuesta lo mismo (sin crecimiento ni reintentos)");
+    const rec = await medir("recargar (lectura de la ficha)", async () => (await clienteSesion().from("ventas").select("costo_receptivo, costo_asistencia").eq("numero_contrato", n).single()).data);
+    assert.equal(rec.n, 1, "recargar = una lectura");
+    assert.deepEqual([Number(rec.r?.costo_receptivo), Number(rec.r?.costo_asistencia)], [80000, 60000]);
+    await medir("confirmarVenta", () => confirmar(n));
+  });
+  test("CC3 carrito: hotel + asistencia médica → costo_asistencia; control con tour → costo_receptivo", async (t) => {
+    verificar(t, await reservaCarrito(S_ASIS), { receptivo: 0, asistencia: 60000 });
+    verificar(t, await reservaCarrito(S_TOUR), { receptivo: 80000, asistencia: 0 });
   });
 });

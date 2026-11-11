@@ -7,6 +7,9 @@ import { formatMoneda, formatFechaLarga } from "@/lib/utils";
 import { cobroDeVenta } from "@/lib/finanzas/cobro";
 import { identidadDe } from "@/lib/contrato/identidad";
 import { AvisoContratoCambio } from "./AvisoContratoCambio";
+import { ConfirmacionPagoPendiente } from "./ConfirmacionPagoPendiente";
+import { ObligacionesPrevistasPanel, type ObligacionPrevista } from "@/components/contrato/ObligacionesPrevistasPanel";
+import { createAdminClient } from "@/lib/supabase/admin";
 import { ShareButtons } from "./ShareButtons";
 import { permisosComisionContrato } from "@/lib/finanzas/comisionB2B";
 import { GestionTabs } from "./GestionTabs";
@@ -190,6 +193,22 @@ export default async function ContratoDetallePage({
   // #75: la identidad sale de la MISMA fila que se acaba de leer (`select("*")` de ventas / ventas_basica incluye contrato_uid); se pasa a cada componente.
   const identidad = identidadDe(venta.numero_contrato, venta.contrato_uid);
 
+  // 288 (#75): en un contrato PENDIENTE se distingue lo PREVISTO de lo exigible y se avisa si los abonos ya cubren el mínimo pero la confirmación quedó pendiente.
+  // Las previstas llevan costos: solo las ve quien ya ve finanzas. Antes de aplicar la 288 estas lecturas no devuelven nada y la ficha queda como siempre.
+  let previstas: ObligacionPrevista[] = [];
+  let confirmacionPendiente = false;
+  if (venta.estado === "pendiente" && verFinanzas) {
+    if (process.env.SUPABASE_SERVICE_ROLE_KEY) {
+      const { data: pv } = await createAdminClient().from("contrato_obligaciones_previstas").select("clave, payload").eq("numero_contrato", numero).eq("clase", "cxp").is("materializada_en", null).order("id");
+      previstas = (pv ?? []).map((r) => {
+        const pl = (r.payload ?? {}) as Record<string, unknown>;
+        return { clave: r.clave, servicio: (pl.servicio as string) ?? null, proveedor: (pl.proveedor as string) ?? null, tipo_proveedor: (pl.tipo_proveedor as string) ?? null, valor_total: Number(pl.valor_total) || 0, moneda: (pl.moneda as string) ?? null };
+      });
+    }
+    const { data: ec } = await sb.rpc("estado_confirmacion_pago", { p_numero: numero });
+    confirmacionPendiente = (ec as { confirmacion_pendiente?: boolean } | null)?.confirmacion_pendiente === true;
+  }
+
   // Datos financieros del contrato (costos, impuesto). Solo existen si quien
   // mira tiene acceso financiero: la consulta de arriba trae la vista
   // `ventas_basica` para los demás, que NO incluye estas columnas. Se separa en
@@ -257,10 +276,13 @@ export default async function ContratoDetallePage({
   // Condiciones PERMANENTES del contrato — mismo resolver que usa el PDF
   // (ContratoDocumento.tsx), así que lo que ve el asesor aquí es exactamente
   // lo que trae el documento descargable.
+  // Parte 3 (#75): ¿contrato NETO de aliado? La vista básica no trae comision_estado; la base responde solo un booleano (y solo de contratos que quien llama puede ver).
+  const { data: esNetoRpc } = await sb.rpc("contrato_es_neto", { p_numero: numero });
+  const esNetoContrato = esNetoRpc === true;
   const condicionesResueltas = resolverCondicionesContrato(
     (contratoCondiciones ?? []) as unknown as Parameters<typeof resolverCondicionesContrato>[0],
     (overridesCondiciones ?? []) as unknown as Parameters<typeof resolverCondicionesContrato>[1],
-    { monedaContrato: cobro.moneda, precioVenta: cobro.total, fechaViaje: venta.fecha_salida },
+    { monedaContrato: cobro.moneda, precioVenta: cobro.total, fechaViaje: venta.fecha_salida, netoTotalExigible: esNetoContrato ? cobro.total : null },
   );
 
   // Formulario de excepción por fila restringida, YA ARMADO aquí (Server
@@ -300,6 +322,8 @@ export default async function ContratoDetallePage({
   return (
     <div className="mx-auto max-w-4xl p-4 md:p-8">
       <AvisoContratoCambio numero={venta.numero_contrato} uid={venta.contrato_uid ?? null} />
+      {confirmacionPendiente && <div className="mt-3"><ConfirmacionPagoPendiente numero={venta.numero_contrato} identidad={identidad} /></div>}
+      {previstas.length > 0 && <div className="mt-3"><ObligacionesPrevistasPanel filas={previstas} /></div>}
       <Link href="/dashboard/contratos" className="text-sm text-gray-400 hover:text-gray-600">
         ← Contratos
       </Link>

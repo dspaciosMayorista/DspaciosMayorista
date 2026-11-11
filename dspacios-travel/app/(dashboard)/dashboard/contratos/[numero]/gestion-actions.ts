@@ -95,7 +95,11 @@ export async function crearCuentaPorPagar(input: {
   // mal (default 'mayorista'), la CxP existe pero desaparece de
   // /dashboard/pagos en la agencia real (aunque el contrato la muestre bien,
   // esa consulta no filtra por tenant).
-  const { data: venta } = await sb.from("ventas").select("tenant").eq("numero_contrato", input.numeroContrato).maybeSingle();
+  const { data: venta } = await sb.from("ventas").select("tenant, estado").eq("numero_contrato", input.numeroContrato).maybeSingle();
+  // 288 (#75, D1): un contrato PENDIENTE no admite CxP reales (los costos previstos sí se preparan en el contrato); las obligaciones nacen al confirmar.
+  if ((venta as { estado?: string } | null)?.estado === "pendiente") {
+    return { ok: false, error: "Este contrato está pendiente: las cuentas por pagar se crean al confirmarlo. Prepara los costos previstos y confirma el contrato." };
+  }
   const { data: nueva, error } = await sb.from("cuentas_por_pagar").insert({
     numero_contrato: input.numeroContrato,
     tenant: venta?.tenant ?? "mayorista",

@@ -188,6 +188,7 @@ const RPC: Record<string, (a: Record<string, unknown>) => { data: unknown; error
     db.asientos.push({ id: ++db.seq, tenant: a.p_tenant, fecha: fila.fecha_abono, origen: "abono", referencia: `abono:${String(fila.id)}`, descripcion: `Abono ${String(a.p_numero)}` });
     return { data: { estado: "registrado", abono_id: fila.id }, error: null };
   },
+  reintentar_confirmacion_pago: () => ({ data: { confirmada: false }, error: null }),   // 288: la decisión de confirmar es de la base; aquí no se confirma
   consultar_factura_fuera_libros: () => ({ data: { hash: "h", requiere_revision: false, pendientes: [], fotografia: { abonos: [], total_sin_respaldo_cop: 0, total_exceso_cop: 0, no_calculables: 0 } }, error: null }),
   facturar_factura: (a) => {
     if (Math.abs(Number(a.p_pvp) - 3_000_000) > 0.5 || Math.abs(Number(a.p_irt) - 2_000_000) > 0.5) return rpcErr("F4410", "FIN_IMPORTES_DESACTUALIZADOS: el total o el IRT no coinciden con los del sistema.");

@@ -28,7 +28,8 @@ test("confirmarVenta: una sola RPC confirmar_venta; sin UPDATE de ventas/sillas 
 
 test("recalcularEstadoAbono: confirma con la misma RPC y propaga el error; registrar/actualizar abono lo informan", () => {
   const c = cuerpo(contratos, "async function recalcularEstadoAbono(");
-  assert.match(c, /const \{ error: eConf \} = await sb\.rpc\("confirmar_venta", \{ p_numero: numeroContrato \}\);\s*if \(eConf\) return \{ ok: false/);
+  // 288 Parte 3: la decisión de confirmar por pago es de la BASE (regla única): reintentar_confirmacion_pago llama confirmar_venta con la RLS de quien llama y propaga el error.
+  assert.match(c, /const \{ data: rc, error: eConf \} = await sb\.rpc\("reintentar_confirmacion_pago", \{ p_numero: numeroContrato \}\);\s*if \(eConf\) return \{ ok: false/);
   assert.doesNotMatch(c, /\.update\(\{ estado: "confirmado" \}\)|\.update\(\{ estado: "pendiente" \}\)|from\("sillas"\)/, "sin UPDATE suelto ni compensación");
   for (const firma of ["export async function registrarAbono(", "export async function actualizarAbono("]) {
     assert.match(cuerpo(contratos, firma), /const conf = await recalcularEstadoAbono\(sb, numeroContrato, id\);\s*if \(!conf\.ok\) \{/, firma);

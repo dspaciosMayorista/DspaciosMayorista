@@ -28,7 +28,7 @@ test("la acción Liberar manda la versión que mostró la pantalla", () => {
 
 test("el record identifica las vencidas con la misma regla y ofrece Liberar solo en ellas", () => {
   const pagina = leer("app/(dashboard)/dashboard/vuelos/[id]/page.tsx");
-  assert.match(pagina, /responsable_menor, updated_at, ventas\(contrato_uid\)"\)/, "lee updated_at para la versión");
+  assert.match(pagina, /responsable_menor, updated_at"\)/, "lee updated_at para la versión (la identidad sale de sillas_identidades, no del embed)");
   assert.match(pagina, /esRetencionVencida\(\{ \.\.\.s, contrato_manual: contratoManualPorSilla\.get\(s\.id\) \?\? null \}, hoyNegocio\)/,
     "usa el contrato manual REAL y el día de negocio");
   assert.match(pagina, /const hoyNegocio = fechaNegocio\(\);/);

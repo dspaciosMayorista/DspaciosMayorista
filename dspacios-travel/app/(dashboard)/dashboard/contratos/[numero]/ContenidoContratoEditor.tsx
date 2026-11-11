@@ -76,11 +76,15 @@ export function ContenidoContratoEditor({ identidad, numero, moneda, precioVenta
   // rechazar.
   const hayLineaTotal = fItems.some((it) => it.modoPrecio === "total");
 
-  function correr(fn: () => Promise<{ ok: true } | { ok: false; error: string }>, exito: string) {
-    setMsg(""); setOk("");
+  // NETO reemitido por debajo del margen mínimo: igual que al crear el contrato, se ofrece la aprobación EXPLÍCITA (la base exige el rol).
+  const [avisoMargen, setAvisoMargen] = useState("");
+
+  function correr(fn: () => Promise<{ ok: true } | { ok: false; error: string; margenInsuficiente?: true }>, exito: string) {
+    setMsg(""); setOk(""); setAvisoMargen("");
     start(async () => {
       const r = await fn();
       if (r.ok) { setOk(exito); router.refresh(); }
+      else if (r.margenInsuficiente) setAvisoMargen(r.error);
       else setMsg(r.error);
     });
   }
@@ -213,6 +217,17 @@ export function ContenidoContratoEditor({ identidad, numero, moneda, precioVenta
             onClick={() => correr(() => guardarItemsContrato(numero, fItems, identidad), "Ítems guardados.")}>
             {pending ? "Guardando…" : "Guardar ítems"}
           </Button>
+          {avisoMargen && (
+            <div className="rounded-lg bg-amber-50 px-3 py-2 text-xs text-amber-800">
+              {avisoMargen} No se cambió nada.
+              <div className="mt-2">
+                <Button variant="outline" disabled={pending}
+                  onClick={() => correr(() => guardarItemsContrato(numero, fItems, identidad, true), "Ítems guardados con margen aprobado.")}>
+                  Aprobar margen bajo y guardar
+                </Button>
+              </div>
+            </div>
+          )}
         </div>
       )}
 

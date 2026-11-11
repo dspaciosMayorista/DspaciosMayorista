@@ -28,6 +28,11 @@ import { fechaNegocio } from "@/lib/fechaNegocio";
 export async function asegurarCuentasPorPagar(numeroContrato: string, identidad: IdentidadContrato): Promise<{ ok: boolean; creadas: number; error?: string; requiereRevision?: boolean }> {
   if (!process.env.SUPABASE_SERVICE_ROLE_KEY) return { ok: false, creadas: 0 };
   const admin = createAdminClient(parseIdentidad(identidad));
+  // 288 (#75, D1): mientras el contrato está PENDIENTE no se crean CxP (las obligaciones nacen al confirmar; lo previsto vive en contrato_obligaciones_previstas).
+  {
+    const { data: est } = await admin.from("ventas").select("estado").eq("numero_contrato", numeroContrato).maybeSingle();
+    if ((est as { estado?: string } | null)?.estado === "pendiente") return { ok: true, creadas: 0 };
+  }
 
   const [{ data: existentes, error: errExistentes }, { data: v, error: errVenta }, { data: ch }, { data: cv }, { data: provs }] = await Promise.all([
     // `valor_total` además del tipo: la cobertura de servicios se mide en

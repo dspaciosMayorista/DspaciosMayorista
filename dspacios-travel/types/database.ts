@@ -514,6 +514,13 @@ export type Database = {
         Update: never;
         Relationships: [];
       };
+      // Migración 288 (#75): obligaciones PREVISTAS de un contrato pendiente (no exigibles); se materializan una vez al confirmar. Solo service_role.
+      contrato_obligaciones_previstas: {
+        Row: { id: number; numero_contrato: string; clase: "cxp"; clave: string; payload: Json; creado_en: string; materializada_en: string | null };
+        Insert: { id?: number; numero_contrato: string; clase: "cxp"; clave: string; payload: Json; creado_en?: string; materializada_en?: string | null };
+        Update: { id?: number; numero_contrato?: string; clase?: "cxp"; clave?: string; payload?: Json; creado_en?: string; materializada_en?: string | null };
+        Relationships: [];
+      };
       contrato_financiero_pendiente: {
         Row: {
           numero_contrato: string;
@@ -4215,6 +4222,39 @@ export type Database = {
         Args: { p_bloqueo?: number | null };
         Returns: { silla_id: number; numero_contrato: string; contrato_uid: string }[];
       };
+      // Migración 288 (#75): escritor de la app sobre las CxP PREVISTAS de un contrato pendiente (solo service_role); {aplicado:false} si el contrato no está pendiente.
+      // Migración 288 (#75, 1b): edición de servicios de un pendiente en UNA transacción (ítems + precio/resumen + previstas + CxP históricas). Solo service_role.
+      pendiente_aplicar_servicios: {
+        Args: {
+          p_numero: string; p_items_borrar: number[]; p_items_nuevos: Json; p_ventas: Json;
+          p_prev_eliminar: number[]; p_prev_actualizar: Json; p_prev_insertar: Json; p_cxp_eliminar: number[]; p_cxp_actualizar: Json;
+        };
+        Returns: Json;
+      };
+      // Migración 288 (#75, 1b): reintenta la confirmación por pago (abonos suficientes, contrato pendiente). Misma autorización que confirmar a mano.
+      // Migración 288 (#75, 1b): paso final de una conversión de cotización (service_role): evalúa el mínimo con los pagos previos aplicados y confirma si corresponde.
+      confirmar_tras_conversion: {
+        Args: { p_numero: string; p_actor: string };
+        Returns: Json;
+      };
+      // Migración 288 (#75, 1b): solo un booleano — ¿abonos suficientes con el contrato aún pendiente? (para avisar y ofrecer el reintento).
+      // Migración 288 (#75, parte 3): ¿contrato NETO de aliado? (la vista básica no expone comision_estado). Solo booleano, solo contratos visibles.
+      contrato_es_neto: {
+        Args: { p_numero: string };
+        Returns: boolean;
+      };
+      estado_confirmacion_pago: {
+        Args: { p_numero: string };
+        Returns: Json;
+      };
+      reintentar_confirmacion_pago: {
+        Args: { p_numero: string };
+        Returns: Json;
+      };
+      prevista_cxp_aplicar: {
+        Args: { p_numero: string; p_eliminar: number[]; p_actualizar: Json; p_insertar: Json };
+        Returns: Json;
+      };
       // Migración 285 (#75): precomprobación de solo lectura ANTES de subir un soporte (service_role).
       soporte_verificar_identidad: {
         Args: { p_numero: string };
@@ -5166,6 +5206,11 @@ export type Database = {
           p_pct: number; p_recobro: number; p_pct_recobro: number; p_aplica_retencion: boolean; p_pct_retencion: number;
         };
         Returns: number;
+      };
+      // Migración 291 (#75) — reemisión de tarifas de un NETO pendiente sin pagos (ítems + comisión descontada + total exigible, una transacción).
+      reemitir_neto_pendiente: {
+        Args: { p_numero: string; p_items: { descripcion: string; adultos: number; ninos: number; tarifaAdulto: number; tarifaNino: number }[]; p_forzar_margen?: boolean };
+        Returns: Json;
       };
       // Migración 186 — Dashboard: agregados en base (evita descargar filas
       // completas de ventas/abonos/cupos/CxP/retenciones solo para sumarlas

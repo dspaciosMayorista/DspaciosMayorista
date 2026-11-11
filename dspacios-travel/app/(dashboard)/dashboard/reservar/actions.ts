@@ -75,9 +75,10 @@ import { resolverCondicionesTarifaParaConversion, type HotelSnapConRef } from "@
 import { computarReservaBernalo, type ComputoReservaBernaloOk, type SalidaResueltaBernalo } from "@/lib/reservar/computoReservaBernalo";
 import type { HabitacionOcupacionValidada } from "@/lib/reservar/ocupacionPorHabitacion";
 import { asegurarCuentasPorPagar } from "@/lib/reservar/asegurarCuentasPorPagar";
+import { idsCxpMaterializadas, postearAsientosDeObligaciones } from "@/lib/reservar/asientosObligaciones";
 import { mensajeErrorRpc } from "@/lib/vuelos/operaciones";
 import {
-  normalizarCategoriaServicio, resumirServiciosContrato, tipoProveedorCxpServicio,
+  normalizarCategoriaServicio, resumirServiciosContrato, tipoProveedorCxpServicio, costosServicioPorColumna,
   type ServicioEfectivo,
 } from "@/lib/reservar/serviciosPaquete";
 import {
@@ -1095,14 +1096,15 @@ async function calcularFinancieroReserva(p: {
   // dedup por servicioId (nunca solo por nombre).
   const serviciosEfectivos: ServicioEfectivo[] = [];
   // Costo NETO de servicios del contrato (opcionales del paso 11 + incluidos
-  // del 11-bis). Se escribe UNA sola vez, al final, para que
-  // `ventas.costo_receptivo` cuadre EXACTAMENTE con la suma de las CxP de
-  // servicio que crea este mismo flujo — de eso depende que
+  // del 11-bis), uno por servicio con el MISMO tipo que su CxP. Se escribe UNA
+  // sola vez, al final, repartido por columna (asistencia → `costo_asistencia`,
+  // tours/traslados y «otro» → `costo_receptivo`), para que las columnas de
+  // servicio cuadren EXACTAMENTE con la suma de las CxP de servicio que crea este mismo flujo — de eso depende que
   // `asegurarCuentasPorPagar` (cobertura por monto, ver cxpCobertura.ts) no
   // vuelva a crear una segunda cuenta por el mismo dinero, y que la
   // rentabilidad no muestre un margen inflado por un costo con CxP pero sin
   // columna.
-  let costoServiciosTotal = 0;
+  const costosServicios: { tipoCxp: string; costo: number }[] = [];
   if (input.servicios?.length) {
     try {
       const admin = createAdminClient(); // identidad:n/a — lectura de catálogo/estado: no escribe tablas del contrato
@@ -1157,7 +1159,6 @@ async function calcularFinancieroReserva(p: {
       // Sin tarifa «GENERAL»: el costo sale de la vigencia aplicable (y de un rango de ESA vigencia por grupo); lo que no se pueda resolver lanza (el contrato
       // se deshace, igual que cualquier otro fallo de costo — B7). Los traslados con franjas horarias no se cobran por esta ruta: hay que cotizarlos desde el carrito.
       const conFranjasCosto = vigenciasConFranjas(tempsNet ?? []);
-      let costoReceptivo = 0;
       for (const s of arm ?? []) {
         const modo = (s.modo as string) === "grupo" ? "grupo" : "persona";
         const srv = s.servicios_adicionales as unknown as { precio_persona: number | null; precio_infante: number | null; recargo_individual: number | null; categoria: string | null; nombre: string; liquidacion: string | null; proveedor_id: number | null; proveedores: ProvFact } | null;
@@ -1180,8 +1181,8 @@ async function calcularFinancieroReserva(p: {
           modo, netoPersona, netoInfanteVigencia: nombreTemp ? netoInfTempServ.get(`${s.servicio_id}|${nombreTemp}`) : undefined, grupos, paxConSilla, numMenoresDeDos,
           liquidacion: srv?.liquidacion, nochesStay, totalPax, recargoIndividual: recTemp ?? 0,
         });
-        costoReceptivo += costoServ;
         const categoria = normalizarCategoriaServicio(srv?.categoria);
+        costosServicios.push({ tipoCxp: tipoProveedorCxpServicio(categoria), costo: costoServ });
         serviciosEfectivos.push({
           servicioId: s.servicio_id, nombre: srv?.nombre ?? "Servicio", categoria,
           incluido: false, costoNeto: costoServ, proveedorId: srv?.proveedor_id ?? null,
@@ -1191,7 +1192,6 @@ async function calcularFinancieroReserva(p: {
         // antes "otro" caía incorrectamente en "receptivo").
         pushCxP(tipoProveedorCxpServicio(categoria), srv?.nombre ?? "Servicio", costoServ, srv?.proveedores ?? null, null, { servicioId: s.servicio_id });
       }
-      costoServiciosTotal += costoReceptivo;
     } catch (e) {
       // FALLA CERRADO (B7), igual que el costo del hotel: un servicio del
       // contrato sin costo ni CxP es una deuda con el proveedor que el sistema
@@ -1226,7 +1226,7 @@ async function calcularFinancieroReserva(p: {
           // opcionales: su CxP existe, así que su costo tiene que existir
           // también (si no, la rentabilidad mostraría un margen inflado y
           // `asegurarCuentasPorPagar` vería cobertura sin costo).
-          costoServiciosTotal += s.costoNeto;
+          costosServicios.push({ tipoCxp: tipoProveedorCxpServicio(s.categoria), costo: s.costoNeto });
         }
       }
     } catch (e) {
@@ -1248,16 +1248,23 @@ async function calcularFinancieroReserva(p: {
   //     validado), así que no se reescribe aquí.
   const costosContrato: CostosContrato = {};
   if (costoHotelTotal > 0) costosContrato.costo_hotel = costoHotelTotal;
-  if (costoServiciosTotal > 0) costosContrato.costo_receptivo = costoServiciosTotal;
+  // Cada costo de servicio en su columna (la de su CxP): la asistencia médica NO es costo receptivo.
+  const porColumna = costosServicioPorColumna(costosServicios);
+  if (porColumna.costo_receptivo > 0) costosContrato.costo_receptivo = porColumna.costo_receptivo;
+  if (porColumna.costo_asistencia > 0) costosContrato.costo_asistencia = porColumna.costo_asistencia;
   // #63: en el modo de oferta con conversión por TRM las columnas de costo del contrato (en la moneda de la oferta: COP o USD) son la suma
   // de los equivalentes de SUS MISMAS CxP (cuya moneda de origen puede ser otra): costo y obligación no pueden divergir. El aéreo ya sale
   // en esa moneda desde el origen.
   if (oferta63) {
     const TIPOS_SERVICIO_63 = ["receptivo", "asistencia", "otro"];
     const hotel63 = sumaEquivalentesOferta63(cxp.filter((c) => c.tipo_proveedor === "hotel").map((c) => ({ valor: c.valor_total, moneda: c.moneda === "USD" ? "USD" as const : "COP" as const })), oferta63.moneda, oferta63.trm);
-    const servicios63 = sumaEquivalentesOferta63(cxp.filter((c) => TIPOS_SERVICIO_63.includes(c.tipo_proveedor)).map((c) => ({ valor: c.valor_total, moneda: c.moneda === "USD" ? "USD" as const : "COP" as const })), oferta63.moneda, oferta63.trm);
+    const equivalente63 = (tipos: string[]) => sumaEquivalentesOferta63(cxp.filter((c) => tipos.includes(c.tipo_proveedor)).map((c) => ({ valor: c.valor_total, moneda: c.moneda === "USD" ? "USD" as const : "COP" as const })), oferta63.moneda, oferta63.trm);
+    // Mismo reparto por columna que arriba, con los equivalentes en la moneda de la oferta de SUS mismas CxP.
+    const asistencia63 = equivalente63(["asistencia"]);
+    const servicios63 = equivalente63(TIPOS_SERVICIO_63.filter((t) => t !== "asistencia"));
     if (hotel63 > 0) costosContrato.costo_hotel = hotel63; else delete costosContrato.costo_hotel;
     if (servicios63 > 0) costosContrato.costo_receptivo = servicios63; else delete costosContrato.costo_receptivo;
+    if (asistencia63 > 0) costosContrato.costo_asistencia = asistencia63; else delete costosContrato.costo_asistencia;
   }
 
   return { ok: true, cxp, costosContrato, serviciosEfectivos };
@@ -3640,9 +3647,8 @@ export async function convertirCotizacionCarrito(
     // cobertura sin costo. Se calcula de la MISMA lista que se va a insertar,
     // así ambos números salen de una sola fuente.
     if (estadoObligaciones.error) return fallarYRevertirGrupo(estadoObligaciones.error);
-    const costoServiciosCarrito = cxp
-      .filter((r) => r.servicio_id != null)
-      .reduce((acc, r) => acc + (Number(r.valor_total) || 0), 0);
+    const serviciosCarrito = costosServicioPorColumna(cxp.filter((r) => r.servicio_id != null).map((r) => ({ tipoCxp: r.tipo_proveedor, costo: Number(r.valor_total) || 0 })));
+    const costoServiciosCarrito = serviciosCarrito.costo_receptivo + serviciosCarrito.costo_asistencia;
     // ESCRITURA FINANCIERA ATÓMICA (B7), igual que en el flujo del tarifario:
     // costos y CxP en UNA transacción. Antes eran dos escrituras sueltas SIN
     // chequeo de error — si cualquiera fallaba, este flujo seguía de largo y
@@ -3651,7 +3657,8 @@ export async function convertirCotizacionCarrito(
     if (costoAereoTotal > 0 || costoHotelTotal > 0 || costoServiciosCarrito > 0 || costoOtrosManual > 0) {
       costosGrupo.costo_aereo = costoAereoTotal;
       costosGrupo.costo_hotel = costoHotelTotal;
-      if (costoServiciosCarrito > 0) costosGrupo.costo_receptivo = costoServiciosCarrito;
+      if (serviciosCarrito.costo_receptivo > 0) costosGrupo.costo_receptivo = serviciosCarrito.costo_receptivo;
+      if (serviciosCarrito.costo_asistencia > 0) costosGrupo.costo_asistencia = serviciosCarrito.costo_asistencia;
       if (costoOtrosManual > 0) costosGrupo.otros_costos = costoOtrosManual;
     }
     // Igual que el flujo individual, debe cerrar el estado aunque el payload
@@ -3799,8 +3806,10 @@ export async function confirmarVenta(numeroContrato: string, identidad: Identida
   // financiera incompleta (financiero_estado='pendiente') NUNCA se confirma.
   // Si cualquier parte falla, no cambia nada. Ya no necesita la clave de
   // servicio ni hay "compensación" en dos pasos.
-  const { error } = await sb.rpc("confirmar_venta", { p_numero: numeroContrato });
+  const { data: confData, error } = await sb.rpc("confirmar_venta", { p_numero: numeroContrato });
   if (error) return { ok: false, error: mensajeSiIdentidad(error) ?? mensajeErrorRpc(error).error };
+  // 288 (#75): las CxP previstas nacieron en la base dentro de esta confirmación; su asiento (best-effort, idempotente) se postea aquí y, si falla, lo repone el reconciliador.
+  await postearAsientosDeObligaciones(numeroContrato, idsCxpMaterializadas(confData), id);
   // Respaldo: si el contrato aún no tiene cuentas por pagar (p. ej. venía de
   // legacy o se creó manual), generarlas desde sus costos al confirmar. No debe
   // tumbar la confirmación si falla.
@@ -4750,7 +4759,7 @@ async function reservarProgramaInterno(
         registrarErrorTecnico("reservar_programa", flujoId, "cxp_programa", "error_update_costo", updateError);
       }
       const fechaProg = fechaNegocio();
-      const { data: cProg, error: cProgError } = await admin.from("cuentas_por_pagar").insert({
+      const filaCxpProg = {
         numero_contrato: numero,
         proveedor: pr?.nombre ?? null,
         tipo_proveedor: "programa",
@@ -4761,7 +4770,14 @@ async function reservarProgramaInterno(
         aplica_retencion: pr?.aplica_retencion ?? false,
         pct_retencion: Number(pr?.pct_retencion) || 0,
         observaciones: "Generado automáticamente desde el tarifario (programa)",
-      }).select("id").single();
+      };
+      // 288 (#75): la reserva nace PENDIENTE y una obligación no se crea hasta confirmar → la base la guarda como PREVISTA. Si el contrato ya no
+      // está pendiente (o la 288 aún no se aplicó), el camino de siempre.
+      const { data: prevProg } = await admin.rpc("prevista_cxp_aplicar", { p_numero: numero, p_eliminar: [], p_actualizar: [], p_insertar: [filaCxpProg] as unknown as Json });
+      const quedoPrevista = (prevProg as { aplicado?: boolean } | null)?.aplicado === true;
+      const { data: cProg, error: cProgError } = quedoPrevista
+        ? { data: null, error: null }
+        : await admin.from("cuentas_por_pagar").insert(filaCxpProg).select("id").single();
       if (cProgError) {
         _resultadoCxp = "error";
         registrarErrorTecnico("reservar_programa", flujoId, "cxp_programa", "error_insert_cxp", cProgError);

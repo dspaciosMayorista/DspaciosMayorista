@@ -7,12 +7,13 @@ import { createClient } from "@/lib/supabase/server";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { revalidatePath } from "next/cache";
 import { precioServicio, noches, factorLiquidacion } from "@/lib/calc/paquetes";
-import { normalizarCategoriaServicio, resumirServiciosContrato, tipoProveedorCxpServicio } from "@/lib/reservar/serviciosPaquete";
+import { normalizarCategoriaServicio, resumirServiciosContrato, tipoProveedorCxpServicio, costosServicioPorColumna } from "@/lib/reservar/serviciosPaquete";
 import { liquidarServicioPuntual } from "@/lib/reservar/cotizar";
 import { liquidarCostoTour } from "@/lib/reservar/costosObligacionesCarrito";
 import { formatearHora, parseHora } from "@/lib/calc/trasladoFranjas";
 import { planReconciliacionCxpServicios, type ServicioObjetivo } from "@/lib/reservar/cxpCobertura";
 import { asegurarCuentasPorPagar } from "@/lib/reservar/asegurarCuentasPorPagar";
+import { idsCxpMaterializadas, postearAsientosDeObligaciones } from "@/lib/reservar/asientosObligaciones";
 import { mensajeErrorRpc } from "@/lib/vuelos/operaciones";
 import { formatMoneda } from "@/lib/utils";
 import { fechaElegidaONegocio, fechaNegocio } from "@/lib/fechaNegocio";
@@ -596,7 +597,8 @@ async function crearContratoInterno(
     pax,
     precio_venta: precioVenta,
     impuesto: bnc,
-    estado: "activo",
+    // 288 (#75): Mayorista nace PENDIENTE como todo contrato (información preparada; las obligaciones nacen al confirmar). Minorista conserva su estado «activo» (fuera del alcance de #75).
+    estado: tenant === "minorista" ? "activo" : "pendiente",
     // Solo empaquetado/dinámico (manual) pueden ir en USD; negociado sigue su producto (COP).
     moneda: monedaContrato,
     ...(!negociado
@@ -1175,26 +1177,29 @@ async function recalcularEstadoAbono(sb: Awaited<ReturnType<typeof createClient>
     await sb.from("ventas").update({ trm_contrato: totalCop / totalAbonado }).eq("numero_contrato", numeroContrato);
   }
 
-  const { data: cfg } = await sb.from("config_cobros").select("pct_abono").eq("tipo_paquete", venta?.tipo_paquete ?? "").maybeSingle();
-  const pctMin = cfg?.pct_abono ?? 0.3;
-  const alcanzaMinimo = totalAbonado >= cobro.total * pctMin;
-  if (venta?.estado === "pendiente" && venta.financiero_estado !== "pendiente" && alcanzaMinimo) {
-    const { error: eConf } = await sb.rpc("confirmar_venta", { p_numero: numeroContrato });
+  // Parte 3 (#75): UNA sola regla del mínimo, decidida por la BASE (NETO aliado = total NETO; condición congelada; % histórico solo sin condiciones). Antes esta función
+  // aplicaba su propio 30 % (config_cobros) aparte de la regla que muestran la pantalla y el documento. Misma autorización que confirmar a mano (RPC INVOKER).
+  if (venta?.estado === "pendiente" && venta.financiero_estado !== "pendiente") {
+    const { data: rc, error: eConf } = await sb.rpc("reintentar_confirmacion_pago", { p_numero: numeroContrato });
     if (eConf) return { ok: false, error: mensajeErrorRpc(eConf).error };
-    // Respaldo: generar cuentas por pagar desde los costos si aún no existen.
-    await asegurarCuentasPorPagar(numeroContrato, id);
+    if ((rc as { confirmada?: boolean } | null)?.confirmada === true) {
+      await postearAsientosDeObligaciones(numeroContrato, idsCxpMaterializadas(rc), id);   // 288: asiento de las CxP que la confirmación materializó
+      // Respaldo: generar cuentas por pagar desde los costos si aún no existen (contratos históricos).
+      await asegurarCuentasPorPagar(numeroContrato, id);
+    }
   }
   return { ok: true };
 }
 
 // `confirmacion` solo viene con ok=false cuando el contrato ya está cubierto: no se escribió nada y la pantalla
 // debe pedir confirmación y reintentar con `confirmarExcedente=true`.
-export type ResultadoAbono = { ok: boolean; error?: string; confirmacion?: DatosExcedente };
+// confirmacionPendiente: el abono QUEDÓ registrado pero la confirmación del contrato falló (288): la pantalla debe decirlo, no permitir registrarlo de nuevo y reintentar con la MISMA operación.
+export type ResultadoAbono = { ok: boolean; error?: string; confirmacion?: DatosExcedente; confirmacionPendiente?: boolean };
 
 const UUID_OPERACION = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 type RegistroAbonoSql =
-  | { estado: "registrado"; abono_id: number; asiento_error?: string }
-  | { estado: "ya_registrado"; abono_id: number; asiento_error?: string }
+  | { estado: "registrado"; abono_id: number; asiento_error?: string; confirmacion?: unknown; confirmacion_error?: string }
+  | { estado: "ya_registrado"; abono_id: number; asiento_error?: string; confirmacion?: unknown; confirmacion_error?: string }
   | { estado: "requiere_confirmacion"; contrato: string; total: number; pagado: number; nuevo: number; moneda: "COP" | "USD" };
 
 // El registro lo decide UNA RPC de la base (migración 248, `registrar_abono`) con la venta bloqueada: la comprobación
@@ -1253,10 +1258,16 @@ export async function registrarAbono(
   }
   // «ya_registrado» (reintento de la misma operación) también trae el estado contable real: la base reintentó el asiento.
   const errAsiento = r.data.asiento_error ?? null;
+  // 288 (#75): la base decide la confirmación por pago EN LA MISMA transacción que el abono (confirmar + materializar son todo-o-nada; el abono nunca se pierde).
+  if (r.data.confirmacion) await postearAsientosDeObligaciones(numeroContrato, idsCxpMaterializadas(r.data.confirmacion), id);
+  if (r.data.confirmacion_error) {
+    revalidatePath(`/dashboard/contratos/${numeroContrato}`);
+    return { ok: false, confirmacionPendiente: true, error: `Abono registrado; confirmación pendiente: ${r.data.confirmacion_error}` };
+  }
   const conf = await recalcularEstadoAbono(sb, numeroContrato, id);
   if (!conf.ok) {
     revalidatePath(`/dashboard/contratos/${numeroContrato}`);
-    return { ok: false, error: `El abono quedó registrado, pero la venta no se pudo confirmar: ${conf.error}` };
+    return { ok: false, confirmacionPendiente: true, error: `Abono registrado; confirmación pendiente: ${conf.error}` };
   }
   if (errAsiento) {
     revalidatePath(`/dashboard/contratos/${numeroContrato}`);
@@ -1422,7 +1433,6 @@ export async function actualizarServiciosContrato(
   // Objetivo: costo NETO por servicio seleccionado con la MISMA función que usa la CxP del carrito (`liquidarCostoTour`: vigencia + rango de pasajeros + suplementos
   // por horario, sin «GENERAL») + su proveedor real del catálogo.
   const objetivo: ServicioObjetivo[] = [];
-  let costoReceptivo = 0;
   for (const idSrv of serviciosIds) {
     let liq: Awaited<ReturnType<typeof liquidarCostoTour>>;
     try {
@@ -1433,7 +1443,6 @@ export async function actualizarServiciosContrato(
     }
     if (!liq) continue; // ya no está en el paquete
     const srv = liq.srv;
-    costoReceptivo += liq.costoNeto;
     const categoria = normalizarCategoriaServicio(srv?.categoria);
     objetivo.push({
       servicioId: idSrv,
@@ -1477,8 +1486,21 @@ export async function actualizarServiciosContrato(
     for (const r of pagos ?? []) conMovimiento.add(r.cuenta_por_pagar_id);
     for (const r of rets ?? []) conMovimiento.add(r.cuenta_por_pagar_id);
   }
+  // 288 (#75): este contrato está PENDIENTE → sus obligaciones nuevas viven como PREVISTAS (no son CxP exigibles). Entran al mismo plan con id NEGATIVO
+  // (-id de la prevista) para distinguirlas de las CxP reales de contratos pendientes anteriores a la 288 (que se reconcilian como siempre, sin tocar históricos).
+  const { data: prevFilas } = await admin
+    .from("contrato_obligaciones_previstas")
+    .select("id, payload")
+    .eq("numero_contrato", numeroContrato).eq("clase", "cxp").is("materializada_en", null);
+  const prevComoCxp = (prevFilas ?? [])
+    .map((p) => ({ id: -p.id, payload: (p.payload ?? {}) as { servicio_id?: number | string | null; valor_total?: number | string | null } }))
+    .filter((p) => p.payload.servicio_id != null)
+    .map((p) => ({ id: p.id, servicio_id: Number(p.payload.servicio_id), valor_total: Number(p.payload.valor_total) || 0, tieneMovimientos: false }));
   const plan = planReconciliacionCxpServicios(
-    (cxpFilas ?? []).map((r) => ({ id: r.id, servicio_id: r.servicio_id, valor_total: r.valor_total, tieneMovimientos: conMovimiento.has(r.id) })),
+    [
+      ...(cxpFilas ?? []).map((r) => ({ id: r.id, servicio_id: r.servicio_id, valor_total: r.valor_total, tieneMovimientos: conMovimiento.has(r.id) })),
+      ...prevComoCxp,
+    ],
     objetivo
   );
   // Fallo cerrado ANTES de tocar nada: quitar un servicio cuya cuenta ya
@@ -1505,19 +1527,10 @@ export async function actualizarServiciosContrato(
       oldServiceIds.push(it.id);
     }
   }
-  if (oldServiceIds.length) await sb.from("contrato_items").delete().in("id", oldServiceIds);
-  if (nuevos.length) {
-    await sb.from("contrato_items").insert(
-      nuevos.map((s, i) => ({
-        numero_contrato: numeroContrato,
-        descripcion: `Servicio · ${s.nombre}`,
-        adultos: 1, ninos: 0, tarifa_adulto: s.precio, tarifa_nino: 0, orden: 100 + i,
-      }))
-    );
-  }
-
+  // 288 (#75): NADA se escribe hasta tenerlo todo calculado; la aplicación (ítems + precio + costos/resumen + obligaciones) es UNA transacción
+  // (`pendiente_aplicar_servicios`): o queda todo consistente o se rechaza todo junto.
+  const itemsNuevos = nuevos.map((s, i) => ({ descripcion: `Servicio · ${s.nombre}`, adultos: 1, ninos: 0, tarifa_adulto: s.precio, tarifa_nino: 0, orden: 100 + i }));
   const nuevoPrecio = Math.max(0, (Number(venta.precio_venta) || 0) - oldTotal + nuevoTotal);
-  await sb.from("ventas").update({ precio_venta: nuevoPrecio }).eq("numero_contrato", numeroContrato);
 
   // ── Aplicar: costos, resumen y CxP reconciliadas ────────────────────────
   // El plan ya se validó arriba (nada bloqueado), así que acá solo se
@@ -1550,11 +1563,6 @@ export async function actualizarServiciosContrato(
       incluido: e.incluido, costoNeto: 0, proveedorId: null,
     }))
   );
-  await admin.from("ventas").update({
-    costo_receptivo: costoReceptivo,
-    tours_traslados: resumen.toursTraslados,
-    asistencia_medica: resumen.asistenciaMedica,
-  }).eq("numero_contrato", numeroContrato);
 
   // CxP: insertar las nuevas, ajustar el valor de las que siguen y eliminar
   // las de servicios quitados (ninguna con movimientos — ya se bloqueó
@@ -1565,37 +1573,42 @@ export async function actualizarServiciosContrato(
   const hoyCxp = fechaNegocio();
   const OBS_EDIT = "Generado automáticamente al editar los servicios del contrato";
 
-  for (const del of plan.eliminar) {
-    const { error } = await admin.from("cuentas_por_pagar").delete().eq("id", del.id);
-    if (error) return { ok: false, error: "No se pudieron actualizar las cuentas por pagar del contrato. Inténtalo de nuevo." };
-    await eliminarAsientoCxP(del.id);
+  // 288 (#75): lo PREVISTO (ids negativos) y los servicios nuevos son obligaciones previstas — no CxP exigibles hasta confirmar; las CxP reales (ids positivos)
+  // solo existen en pendientes anteriores a la 288 y se ajustan en la MISMA transacción. Todo junto con los ítems, el precio y el resumen.
+  const eliminarPrev = plan.eliminar.filter((d) => d.id < 0).map((d) => -d.id);
+  const actualizarPrev = plan.actualizar.filter((u) => u.id < 0).map((u) => ({ id: -u.id, valor_total: u.valor, servicio: u.nombre, tipo_proveedor: u.tipoProveedor, proveedor: u.proveedor }));
+  const insertarPrev = plan.insertar.map((o) => ({
+    servicio_id: o.servicioId, proveedor: o.proveedor, tipo_proveedor: o.tipoProveedor, servicio: o.nombre,
+    valor_total: Math.max(0, o.costoNeto), fecha_obligacion: hoyCxp,
+    fecha_vencimiento: (ventaTenant?.plazo as string | null) ?? (ventaTenant?.fecha_salida as string | null) ?? null,
+    aplica_retencion: o.aplicaRetencion, pct_retencion: o.pctRetencion, observaciones: OBS_EDIT,
+  }));
+  const eliminarCxp = plan.eliminar.filter((d) => d.id > 0);
+  const actualizarCxp = plan.actualizar.filter((u) => u.id > 0);
+  const { data: aplicado, error: errAplicar } = await admin.rpc("pendiente_aplicar_servicios", {
+    p_numero: numeroContrato,
+    p_items_borrar: oldServiceIds,
+    p_items_nuevos: itemsNuevos as unknown as Json,
+    // Cada costo de servicio en la columna de su CxP (asistencia → costo_asistencia). Las dos columnas se escriben siempre: el conjunto editado es completo.
+    p_ventas: { precio_venta: nuevoPrecio, ...costosServicioPorColumna(objetivo.map((o) => ({ tipoCxp: o.tipoProveedor, costo: o.costoNeto }))), tours_traslados: resumen.toursTraslados, asistencia_medica: resumen.asistenciaMedica } as unknown as Json,
+    p_prev_eliminar: eliminarPrev,
+    p_prev_actualizar: actualizarPrev as unknown as Json,
+    p_prev_insertar: insertarPrev as unknown as Json,
+    p_cxp_eliminar: eliminarCxp.map((d) => d.id),
+    p_cxp_actualizar: actualizarCxp.map((u) => ({ id: u.id, valor_total: u.valor, servicio: u.nombre, tipo_proveedor: u.tipoProveedor, proveedor: u.proveedor })) as unknown as Json,
+  });
+  if (errAplicar || (aplicado as { aplicado?: boolean } | null)?.aplicado !== true) {
+    return { ok: false, error: "No se pudieron actualizar los servicios del contrato: no se guardó ningún cambio. Inténtalo de nuevo." };
   }
-  for (const upd of plan.actualizar) {
-    const { error } = await admin.from("cuentas_por_pagar").update({ valor_total: upd.valor, servicio: upd.nombre, tipo_proveedor: upd.tipoProveedor, proveedor: upd.proveedor }).eq("id", upd.id);
-    if (error) return { ok: false, error: "No se pudieron actualizar las cuentas por pagar del contrato. Inténtalo de nuevo." };
+  // Asientos de las CxP REALES de pendientes anteriores a la 288 (fuera de la transacción: best-effort e idempotente por `cxp:{id}`; el reconciliador repone fallos).
+  for (const del of eliminarCxp) await eliminarAsientoCxP(del.id);
+  for (const upd of actualizarCxp) {
     await postearAsientoCxP({
       cuentaId: upd.id, numeroContrato, tipoProveedor: upd.tipoProveedor, proveedor: upd.proveedor,
       servicio: upd.nombre, valorTotal: upd.valor, fecha: hoyCxp, tenant: tenantCxp,
     });
   }
-  if (plan.insertar.length) {
-    const { data: creadas, error } = await admin.from("cuentas_por_pagar").insert(
-      plan.insertar.map((o) => ({
-        numero_contrato: numeroContrato, tenant: tenantCxp, servicio_id: o.servicioId,
-        proveedor: o.proveedor, tipo_proveedor: o.tipoProveedor, servicio: o.nombre,
-        valor_total: Math.max(0, o.costoNeto), moneda: (ventaTenant?.moneda as string | null) ?? "COP",
-        fecha_obligacion: hoyCxp, fecha_vencimiento: (ventaTenant?.plazo as string | null) ?? (ventaTenant?.fecha_salida as string | null) ?? null,
-        aplica_retencion: o.aplicaRetencion, pct_retencion: o.pctRetencion, observaciones: OBS_EDIT,
-      }))
-    ).select("id, tipo_proveedor, proveedor, servicio, valor_total");
-    if (error) return { ok: false, error: "No se pudieron crear las cuentas por pagar de los servicios agregados. Inténtalo de nuevo." };
-    for (const c of creadas ?? []) {
-      await postearAsientoCxP({
-        cuentaId: c.id, numeroContrato, tipoProveedor: c.tipo_proveedor, proveedor: c.proveedor,
-        servicio: c.servicio, valorTotal: Number(c.valor_total) || 0, fecha: hoyCxp, tenant: tenantCxp,
-      });
-    }
-  }
+
   revalidatePath("/dashboard/pagos");
   revalidatePath("/dashboard/contabilidad/libro-diario");
   revalidatePath("/dashboard/contabilidad/libro-auxiliar");
