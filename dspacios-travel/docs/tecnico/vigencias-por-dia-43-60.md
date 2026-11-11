@@ -2331,3 +2331,21 @@ No depende de 286 ni de 288–292; no activa, regenera ni publica nada.
 **Contadores conservados**: abrir 1 lectura; editar y revisar 0; guardar o borrar 1 RPC; sin `revalidatePath`, sin sondeos ni reintentos.
 
 **Límites**: solo se acepta coma decimal (un usuario que escriba «123.45» recibe el aviso y debe corregirlo); el editor no ofrece copiar notas/edades a varias combinaciones a la vez; la persistencia real se probó con PostgREST local y la plantilla equivalente a Producción, no en Preview.
+
+## AE.8 Corrección de edades: validación previa y mensajes sin nombres técnicos — 2026-11-11
+**Defecto observado en Preview**: con infante 2–3 y niño 4–10 el panel dejaba confirmar y la base rechazaba con el texto crudo de Postgres (`new row for relation "hotel_grupo_tarifa_propuesta" violates check constraint "…_edades_rangos"`). `validarEdades` solo comprobaba «todas o ninguna», no los rangos que exige la 295.
+
+**Corrección (solo aplicación; la 293 y la 295 no se tocan ni se vuelven a aplicar)**
+- `lib/hoteles/alcanceGrupos.ts`: `validarEdades` aplica **las mismas reglas que las restricciones de la 295** (`edades_todas_o_ninguna` y `edades_rangos`) antes de enviar, y devuelve todos los incumplimientos con mensajes concretos: infante empieza en 0; «hasta» ≥ «desde» en infante y en niño; niño empieza justo después del último año de infante; niño como máximo 17. Con edades inválidas no aparece «Confirmar propuesta» y no se hace ninguna llamada de guardado.
+- Nuevo `mensajeErrorBase`: traduce un rechazo de la base a un mensaje para el usuario (edades, «al menos un neto», y un genérico para cualquier otra restricción, error de sintaxis o de columna, en inglés o en español). **Nunca** muestra nombres de tablas ni de restricciones; los mensajes propios de las RPC, ya en español, pasan tal cual.
+- `grupos-actions.ts`: `fallo()` usa `mensajeErrorBase`; el caso PT409 (`desactualizada`) no cambia. Sigue siendo una sola RPC por acción, sin reintento ni `revalidatePath`.
+
+**Archivos**: `lib/hoteles/alcanceGrupos.ts`, `app/(dashboard)/dashboard/producto/hoteles/[id]/grupos-actions.ts`, `pruebas/gruposDias295.test.ts`, `pruebas/gruposDias295.react.ts`.
+
+**Pruebas (auditadas, ejecutadas por Codex)**
+| Prueba | Resultado |
+|---|---|
+| `pruebas/gruposDias295.test.ts` (lógica y acciones): reglas de la 295 con mensajes concretos (0–1/2–11 y 0–0/1–17 válidos; 2–3/4–10, salto en el inicio del niño, «hasta» menor que «desde», niño 18, edades incompletas); rechazos de Postgres en inglés y en español sin nombres técnicos; mensajes propios de las RPC intactos; acción con rechazo por edades = mensaje traducido y una sola llamada | **32 / 32** |
+| `pruebas/gruposDias295.react.ts` (pantalla): 4 rangos inválidos ⇒ mensaje concreto, sin «Confirmar propuesta», cero llamadas de guardado y sin nombres técnicos; 0–1/2–11 ⇒ revisar y un solo guardado con esas edades; rechazo de la base ⇒ mensaje traducido, sin reintento | **20 / 20** |
+
+**Sin cambios**: migraciones (293 y 295), SQL remoto, grupos (siguen inactivos), motor, generación y publicación. Contadores de solicitudes de AE.5 conservados.

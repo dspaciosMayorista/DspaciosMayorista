@@ -7,7 +7,7 @@ import nodeModule from "node:module";
 import { readFileSync } from "node:fs";
 import {
   explicarCelda, sugerencia, planPropuesta, planGrupos, coberturaPrevista, textoBorrado, leerNeto, formatNeto, leerEdad,
-  validarEdades, payloadFilas, esDesactualizada, mensajeBorrarVigenciaConGrupos, NETOS_VACIOS, EXTRAS_VACIOS,
+  validarEdades, mensajeErrorBase, payloadFilas, esDesactualizada, mensajeBorrarVigenciaConGrupos, NETOS_VACIOS, EXTRAS_VACIOS,
   type ConfigGrupos, type FilaPropuesta, type Extras,
 } from "../lib/hoteles/alcanceGrupos.ts";
 
@@ -50,6 +50,32 @@ describe("importes: un solo formato, sin ambigüedad", () => {
     assert.equal(leerEdad("18").ok, false);
     assert.equal(validarEdades({ ...EXTRAS_VACIOS, edad_infante_min: 0 }) != null, true);
     assert.equal(validarEdades(EXTRAS), null);
+  });
+  const ed = (im: number, iM: number, nm: number, nM: number) =>
+    validarEdades({ ...EXTRAS_VACIOS, edad_infante_min: im, edad_infante_max: iM, edad_nino_min: nm, edad_nino_max: nM });
+  test("edades: las mismas reglas que la 295, con mensajes concretos", () => {
+    assert.equal(ed(0, 1, 2, 11), null, "0–1 / 2–11 es válido");
+    assert.equal(ed(0, 0, 1, 17), null, "infante solo 0 y niño hasta 17");
+    // Caso observado en Preview: infante 2–3, niño 4–10.
+    assert.equal(ed(2, 3, 4, 10), "La edad de infante debe comenzar en 0.");
+    assert.equal(ed(0, 1, 3, 11), "La edad inicial del niño debe ser 2, porque infante termina en 1.");
+    assert.match(ed(0, 1, 2, 1)!, /La edad final del niño \(1\) no puede ser menor que la inicial \(2\)\./);
+    assert.match(ed(1, 0, 1, 11)!, /debe comenzar en 0\..*La edad final del infante \(0\) no puede ser menor que la inicial \(1\)\./);
+    assert.match(ed(0, 1, 2, 18)!, /no puede pasar de 17/);
+    assert.equal(validarEdades({ ...EXTRAS_VACIOS, edad_nino_max: 11 }), "Las cuatro edades (infante y niño, desde y hasta) van todas o ninguna.");
+  });
+  test("rechazos de la base: mensaje comprensible, sin nombres de tablas ni restricciones", () => {
+    const pg = (c: string) => `new row for relation "hotel_grupo_tarifa_propuesta" violates check constraint "${c}"`;
+    for (const m of [pg("hotel_grupo_tarifa_propuesta_edades_rangos"), pg("hotel_grupo_tarifa_propuesta_edades_todas_o_ninguna"),
+      pg("hotel_grupo_tarifa_propuesta_algun_neto"), pg("otra_restriccion_x"), 'invalid input syntax for type integer: "a"',
+      'el nuevo registro para la relación «hotel_grupo_tarifa_propuesta» viola la restricción «check» «x»']) {
+      const t = mensajeErrorBase(m);
+      assert.doesNotMatch(t, /hotel_|_edades|constraint|relation|restricci[oó]n «|syntax/i, m);
+    }
+    assert.match(mensajeErrorBase(pg("hotel_grupo_tarifa_propuesta_edades_rangos")), /infante empieza en 0/);
+    // Los mensajes propios de las RPC (en español) pasan tal cual, aunque lleven comillas.
+    const propio = 'La categoría "Suite" no está configurada en el hotel.';
+    assert.equal(mensajeErrorBase(propio), propio);
   });
 });
 
@@ -202,6 +228,14 @@ describe("acciones: exactamente una RPC, sin revalidar ni regenerar", () => {
     assert.equal(r.ok, false);
     assert.equal((r as { desactualizada?: true }).desactualizada, true);
     assert.match((r as { error: string }).error, /Recarga/);
+    assert.equal(est.rpc.length, 1);
+  });
+  test("rechazo de la base por edades: mensaje traducido, una sola llamada", async () => {
+    est.resp = { data: null, error: { code: "23514", message: 'new row for relation "hotel_grupo_tarifa_propuesta" violates check constraint "hotel_grupo_tarifa_propuesta_edades_rangos"' } };
+    const r = await acc.guardarPropuestaGrupos(10, "abc", "actualizar", null, [fila(G1, "Estándar", { neto_doble: 1 })]);
+    assert.equal(r.ok, false);
+    assert.doesNotMatch((r as { error: string }).error, /hotel_grupo_tarifa_propuesta/);
+    assert.match((r as { error: string }).error, /infante empieza en 0/);
     assert.equal(est.rpc.length, 1);
   });
   test("entradas no válidas: ninguna llamada", async () => {

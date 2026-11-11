@@ -167,6 +167,53 @@ test("aceptar una sugerencia con decimales y cero: el payload trae los importes 
   assert.deepEqual(filas[0].extras, { nota_infante: null, notas: "Origen", edad_infante_min: 0, edad_infante_max: 2, edad_nino_min: 3, edad_nino_max: 12 });
 });
 
+const edad = (r: Element, etiqueta: string) => r.querySelector<HTMLInputElement>(`input[aria-label="Estándar PAM ${etiqueta}"]`)!;
+async function escribirEdades(r: Element, im: string, iM: string, nm: string, nM: string, partirDeVacio = false) {
+  await pulsar(botonesTexto(r, /^Notas y edades/)[0]);
+  // La propuesta de ejemplo ya guarda 0–1 / 2–11: para que el caso válido sea un cambio, se parte de vacío.
+  if (partirDeVacio) await pulsar(boton(r, "Quitar notas y edades"));
+  await escribir(edad(r, "Infante desde (edad)"), im);
+  await escribir(edad(r, "Infante hasta (edad)"), iM);
+  await escribir(edad(r, "Niño desde (edad)"), nm);
+  await escribir(edad(r, "Niño hasta (edad)"), nM);
+  await pulsar(boton(r, "Revisar propuesta"));
+}
+
+for (const [rango, esperado] of [
+  [["2", "3", "4", "10"], "La edad de infante debe comenzar en 0."],
+  [["0", "1", "3", "11"], "La edad inicial del niño debe ser 2, porque infante termina en 1."],
+  [["0", "3", "4", "2"], "La edad final del niño (2) no puede ser menor que la inicial (4)."],
+  [["0", "1", "", "11"], "Las cuatro edades (infante y niño, desde y hasta) van todas o ninguna."],
+] as const) {
+  test(`edades ${rango.join("/")}: mensaje concreto antes de enviar y cero llamadas de guardado`, async () => {
+    const r = await montar(panel());
+    await escribirEdades(r, rango[0], rango[1], rango[2], rango[3]);
+    const t = r.textContent ?? "";
+    assert.ok(t.includes(esperado), t);
+    assert.doesNotMatch(t, /hotel_grupo_tarifa_propuesta|edades_rangos|constraint/);
+    assert.equal(boton(r, "Confirmar propuesta"), undefined);
+    assert.deepEqual(nombres(), ["leerConfigGrupos"]);
+  });
+}
+
+test("edades 0–1 / 2–11 válidas: se revisan y se envían en un solo guardado", async () => {
+  const r = await montar(panel());
+  await escribirEdades(r, "0", "1", "2", "11", true);
+  await pulsar(boton(r, "Confirmar propuesta"));
+  assert.deepEqual(nombres(), ["leerConfigGrupos", "guardarPropuestaGrupos"]);
+  const ex = ultimaPropuesta()[4][0].extras!;
+  assert.deepEqual([ex.edad_infante_min, ex.edad_infante_max, ex.edad_nino_min, ex.edad_nino_max], [0, 1, 2, 11]);
+});
+
+test("rechazo de la base: se muestra el mensaje traducido, nunca el nombre técnico", async () => {
+  est.respuestas.guardarPropuestaGrupos = { ok: false, error: "Las edades no son válidas: infante empieza en 0, …" };
+  const r = await montar(panel());
+  await escribirEdades(r, "0", "1", "2", "11", true);
+  await pulsar(boton(r, "Confirmar propuesta"));
+  assert.match(r.textContent ?? "", /Las edades no son válidas/);
+  assert.equal(nombres().filter((n) => n === "guardarPropuestaGrupos").length, 1, "sin reintento");
+});
+
 test("borrado intencional de notas y edades: «(se borra)» en la revisión y null en el payload", async () => {
   const r = await montar(panel());
   await pulsar(botonesTexto(r, /^Notas y edades/)[0]);

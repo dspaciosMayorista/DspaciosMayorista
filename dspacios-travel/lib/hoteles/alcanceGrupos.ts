@@ -88,11 +88,37 @@ export function leerEdad(texto: string): { ok: true; valor: number | null } | { 
   return { ok: true, valor: Number(t) };
 }
 
-/** Las cuatro edades van todas o ninguna (misma regla que tarifa_hotel). */
+const EDADES_TODAS_O_NINGUNA = "Las cuatro edades (infante y niño, desde y hasta) van todas o ninguna.";
+
+/** Las mismas reglas que las restricciones de la 295 (edades_todas_o_ninguna y edades_rangos), con mensajes
+ *  concretos para validarlas ANTES de enviar. Devuelve todos los incumplimientos, o null si son válidas. */
 export function validarEdades(e: Extras): string | null {
-  const v = [e.edad_infante_min, e.edad_infante_max, e.edad_nino_min, e.edad_nino_max];
-  const n = v.filter((x) => x != null).length;
-  return n === 0 || n === 4 ? null : "Las cuatro edades (infante y niño, desde y hasta) van todas o ninguna.";
+  const { edad_infante_min: im, edad_infante_max: iM, edad_nino_min: nm, edad_nino_max: nM } = e;
+  const n = [im, iM, nm, nM].filter((x) => x != null).length;
+  if (n === 0) return null;
+  if (n !== 4) return EDADES_TODAS_O_NINGUNA;
+  const errores: string[] = [];
+  if (im !== 0) errores.push("La edad de infante debe comenzar en 0.");
+  if (iM! < im!) errores.push(`La edad final del infante (${iM}) no puede ser menor que la inicial (${im}).`);
+  if (nm !== iM! + 1) errores.push(`La edad inicial del niño debe ser ${iM! + 1}, porque infante termina en ${iM}.`);
+  if (nM! < nm!) errores.push(`La edad final del niño (${nM}) no puede ser menor que la inicial (${nm}).`);
+  if (nM! > 17) errores.push("La edad final del niño no puede pasar de 17.");
+  return errores.length ? errores.join(" ") : null;
+}
+
+/** Traduce un rechazo de la base a un mensaje para el usuario: nunca muestra nombres de tablas ni de
+ *  restricciones. Los mensajes propios de las RPC (ya en español y sin nombres técnicos) pasan tal cual. */
+export function mensajeErrorBase(message: string | null | undefined): string {
+  const m = message ?? "";
+  if (/edades_rangos/.test(m)) {
+    return "Las edades no son válidas: infante empieza en 0, el niño empieza justo después del último año de infante, cada «hasta» es mayor o igual que su «desde» y niño llega como máximo a 17.";
+  }
+  if (/edades_todas_o_ninguna/.test(m)) return EDADES_TODAS_O_NINGUNA;
+  if (/algun_neto/.test(m)) return "Cada combinación necesita al menos un neto.";
+  if (m === "" || /constraint|restricci[oó]n|relation|relaci[oó]n «|violates|syntax|sintaxis|column|columna/i.test(m)) {
+    return "No se pudo guardar: algún dato no cumple las reglas de la tarifa. Revisa los valores e inténtalo de nuevo.";
+  }
+  return m;
 }
 
 /** Mensaje de una celda: distingue habitación sin precio, niño nulo, niño en 0 e infante sin tarifa (§3.4). */

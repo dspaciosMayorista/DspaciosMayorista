@@ -7,7 +7,7 @@
 // (SQLSTATE PT409) se devuelve como `desactualizada` y el usuario recarga a mano.
 import { createClient } from "@/lib/supabase/server";
 import type { Json } from "@/types/database";
-import { esDesactualizada, payloadFilas, type ConfigGrupos, type FilaPropuesta, type GrupoEditado, type ModoPropuesta } from "@/lib/hoteles/alcanceGrupos";
+import { esDesactualizada, mensajeErrorBase, payloadFilas, type ConfigGrupos, type FilaPropuesta, type GrupoEditado, type ModoPropuesta } from "@/lib/hoteles/alcanceGrupos";
 
 export type ResultadoGrupos<T = object> =
   | ({ ok: true; config: ConfigGrupos } & T)
@@ -18,7 +18,7 @@ function fallo(error: ErrorRpc): { ok: false; error: string; desactualizada?: tr
   if (esDesactualizada(error)) {
     return { ok: false, desactualizada: true, error: "La configuración de esta vigencia cambió desde que la abriste. Recarga y revisa de nuevo antes de confirmar." };
   }
-  return { ok: false, error: (error?.message ?? "No se pudo completar la operación.").replace(/^CONFIG_DESACTUALIZADA:\s*/, "") };
+  return { ok: false, error: error?.message ? mensajeErrorBase(error.message) : "No se pudo completar la operación." };
 }
 const idValido = (n: unknown) => Number.isInteger(n) && (n as number) > 0;
 
