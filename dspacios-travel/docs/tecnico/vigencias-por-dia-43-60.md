@@ -1,6 +1,6 @@
 # Vigencias netas por grupos de días (#43) + promociones por grupo (#60) — diseño
 
-> **Esto es el HISTORIAL del diseño. La especificación vigente, breve y sin contradicciones, es [`vigencias-por-dia-43-60-especificacion.md`](./vigencias-por-dia-43-60-especificacion.md).** Las secciones A–L conservan alternativas y recomendaciones que luego se decidieron distinto; las secciones M a AC (al final) las corrigen y mandan sobre las anteriores.
+> **Esto es el HISTORIAL del diseño. La especificación vigente, breve y sin contradicciones, es [`vigencias-por-dia-43-60-especificacion.md`](./vigencias-por-dia-43-60-especificacion.md).** Las secciones A–L conservan alternativas y recomendaciones que luego se decidieron distinto; las secciones M a AE (al final) las corrigen y mandan sobre las anteriores.
 
 
 Estado: **diseño, sin implementación** (2026-11-10). Rama `claude/43-60-vigencias-por-dia` desde origin/main `e39224313`.
@@ -2176,3 +2176,176 @@ Se verifican con contadores de solicitudes en las pruebas (mismo número con 0, 
 3. Recién después, desplegar el código del incremento 2 (Preview y luego Producción comparten la base: la 293 debe estar aplicada **antes** de cualquier despliegue con este código, porque PostgREST rechaza la incrustación si la relación no existe).
 4. Revertir la 293 exige revertir antes este código.
 5. No depende de 286 ni de 288–292. No requiere regenerar ni publicar el tarifario: con grupos inactivos, los precios son idénticos.
+
+---
+
+# AD. Alcance del incremento 3: preparar grupos y sus tarifas sin activarlos (PRESENTADO, sin implementar — 2026-11-11)
+
+## AD.1 Punto de partida (comprobado)
+- Rama `claude/43-60-vigencias-por-dia` en `dcab8ed82`; `origin/main` en `2ca311353` (squash del PR #446). **Contenido idéntico** (`git diff HEAD origin/main` vacío); árbol de trabajo limpio.
+- La 293 está aplicada en Producción y su postcheck pasó (dueño: 1.952 tarifas, huella conservada, grupos inactivos). El motor por noche (#446) está en `main`.
+- Numeración vista hoy en worktrees y ramas: 292 (#75), **293 (este frente, aplicada)**, 294 (#75, `mantenimiento_escrituras`, provisional). No se asume el número de la migración nueva.
+
+## AD.2 El límite que impone el candado de la 293
+Una fila de `tarifa_hotel` solo puede apuntar a un grupo **activo**, y ningún grupo puede estarlo. Por lo tanto, mientras el candado siga puesto, **ninguna tarifa por grupo puede existir en `tarifa_hotel`**. Este incremento prepara todo lo demás y deja las tarifas por grupo como **propuesta**, que el motor nunca lee. Es exactamente la «propuesta editable» de V.1: hasta confirmar, la vigencia sigue vendiendo igual.
+
+**Depende de activación (NO entra; entrega aparte «3c Activación», con su propia migración que retire el candado y autorización expresa):**
+- Confirmar y activar: pasar la propuesta confirmada a `tarifa_hotel` y marcar los grupos activos, en una transacción (último paso de V.1).
+- Volver a «todos los días» (V.1).
+- Actualizar o reemplazar **tarifas reales** por grupo (V.2): lote por grupo, «reemplazar este grupo», «reemplazar todo el hotel» con grupos, `_tarifa_clave` con grupo en la RPC de generación (203), carga CSV con columna de grupo.
+- Calculadoras por grupo (Dubai, Mixta, Corporativa).
+- Validación de empates por **rangos** de fechas al activar (W.3/W.4; hoy existe el detector por noche).
+Fuera también: promociones por grupo (entrega 4) y el límite de 30 noches (entrega L).
+
+## AD.3 Qué entra
+1. **Grupos por vigencia**: crear, editar (nombre y días) y borrar. Días como chips L–D; los días ya usados por otro grupo de la vigencia aparecen deshabilitados; la base (293) rechaza igual el solape, nombres repetidos, hoteles por unidad y vigencias de nombre repetido.
+2. **Propuesta de tarifas por grupo × categoría × régimen** (categorías y regímenes configurados en el hotel), con los mismos netos que una tarifa (sencilla, doble, triple, múltiple, niño 1, niño 2, infante) y notas/edades opcionales.
+   - La tarifa «todos los días» vigente se muestra como **sugerencia** en cada celda, **sin guardarse**. Solo se guarda lo que el usuario escribe o acepta explícitamente («Usar sugerencia» por fila o por celda). No hay botón de «copiar todo».
+   - **Celda vacía = esa acomodación no se venderá** con ese grupo. Se dice en pantalla; nunca se completa, copia ni rescata un precio.
+3. **Operaciones con vista previa** (todas sobre la configuración preparada):
+   - Guardar los grupos de una vigencia (alta, cambios, bajas en un solo paso).
+   - Guardar la propuesta en tres modos claramente distintos: **actualizar** (solo las combinaciones que trae), **reemplazar un grupo** (sustituye solo ese grupo) y **reemplazar la vigencia** (todas sus propuestas).
+   - Borrar un grupo preparado: tras vista previa y confirmación elimina **el grupo y únicamente sus propuestas**. **No borra ni modifica** promociones, tarifas vigentes ni ninguna otra configuración comercial activa; las promociones vinculadas a la vigencia se muestran solo como **dependencias informativas** para la futura activación. *(Frase corregida en la auditoría del 2026-11-11: la versión anterior podía leerse como si también borrara promociones.)*
+   - La vista previa describe los efectos concretos (V.4): celdas que cambian o desaparecen, grupos y promociones vinculadas (por `temporada_base`, informativo: quedarán afectadas **al activar**), y **cobertura prevista al activar**: días que ningún grupo cubrirá (pasarán a otra vigencia o no se venderán, D13) y acomodaciones sin precio por grupo (no se venderán). No afirma que algo deje de venderse **hoy**: nada cambia hasta activar.
+4. **Cambios concurrentes**: la lectura devuelve una **huella** de la configuración de la vigencia (vigencia, grupos, propuesta y tarifas «todos los días»). Cada escritura la recalcula **bajo candado**, con el mismo orden que la 293 (grupo → vigencia → candado del hotel → hotel), y si difiere **rechaza** con «La configuración cambió desde que la abriste; recarga». Sin reintentos automáticos.
+5. **Historial**: grupos y propuestas quedan en la auditoría general (087) con antes y después; lo borrado se conserva ahí.
+6. **Modelo por unidad**: sin controles de grupos en la ficha; las acciones lo rechazan antes de llamar a la base (y la 293 también).
+7. **Mensajes claros** para los rechazos de la 293 en las acciones existentes: borrar o mover una vigencia con grupos, renombrarla a un nombre repetido, pasar el hotel a unidad, carga masiva de vigencias con nombres que chocan.
+8. **Restricción derivada** (AB.1, se confirma con pruebas): grupos solo en vigencias de tipo `tarifa`, y una vigencia con grupos no cambia de tipo, hasta la entrega 4.
+9. Al copiar vigencias de otro hotel no se copian sus grupos ni sus propuestas [D].
+
+## AD.4 Migración nueva: SÍ (número sin asignar)
+**Por qué:** (a) la propuesta necesita dónde guardarse y no puede ir en `tarifa_hotel` (el candado lo impide, y así debe seguir); (b) las operaciones de varias filas con huella deben ser **una transacción**, y desde la app eso exige RPC; (c) la restricción de tipo es una regla de base. **No edita la 293.**
+**Contenido previsto:**
+- Tabla de propuesta: FK al grupo (`on delete restrict`; el borrado pasa por la RPC), única por grupo + categoría + régimen, netos ≥ 0 o nulos, edades «todas o ninguna» como `tarifa_hotel`, quién y cuándo confirmó, huella de la fila «todos los días» de la que se aceptó la sugerencia (para detectarla obsoleta al activar). RLS, permisos y `anon` iguales a `tarifa_hotel`; trigger de auditoría.
+- Función de huella de la configuración de una vigencia.
+- RPC de lectura (una sola llamada: grupos, propuesta, tarifas «todos los días», promociones vinculadas y huella) y RPC de escritura para grupos, propuesta (tres modos) y borrado de grupo; con rol interno y sesión Mayorista verificados dentro, huella comparada bajo candado, mensajes claros.
+- Trigger nuevo de tipo (AD.3.8).
+- Preflight y postcheck de una consulta cada uno, rollback protegido (aborta si hay propuestas guardadas), pruebas en la plantilla equivalente a Producción con la 293.
+**Número:** se fija al escribirla con el protocolo de §8, coordinado con #75/#97 y confirmado con el dueño.
+
+## AD.5 Pantallas y archivos
+| Archivo | Cambio |
+|---|---|
+| `HotelDetalleClient.tsx` (`TemporadasBox`) | Por vigencia `tarifa`: etiqueta de días/estado «Preparado — inactivo» y botón «Grupos de días»; deshabilitado con motivo si el nombre se repite; nada para hotel por unidad |
+| `GruposDiasPanel.tsx` (nuevo) | Editor de grupos; pestaña por grupo con la cuadrícula de propuesta (sugerencias visibles, «Usar sugerencia», aviso de celda vacía); vista previa y confirmación con texto concreto; aviso de confirmación obsoleta |
+| `grupos-actions.ts` (nuevo, junto a `hoteles/actions.ts`) | Acciones del servidor: leer configuración, guardar grupos, guardar propuesta (modo), borrar grupo. Cada una = 1 llamada RPC, rol y modelo verificados, un solo `revalidatePath`, **sin** regenerar el tarifario (no cambia precios) |
+| `lib/hoteles/alcanceGrupos.ts` (nuevo, puro) | Diferencias para la vista previa, texto de confirmación y cobertura prevista al activar |
+| `hoteles/[id]/page.tsx` | Incrusta los grupos en la lectura de vigencias que ya hace (0 solicitudes nuevas) para las etiquetas |
+| `hoteles/actions.ts` | Mensajes claros para los rechazos de la 293 en acciones existentes |
+| `types/database.ts`, `docs/tecnico/tarifas-hotel.md` | Tipos de la tabla y las RPC; hoja técnica |
+
+## AD.6 Consumo previsto
+| Acción | Solicitudes |
+|---|---|
+| Ver la ficha del hotel | **0 nuevas** (grupos incrustados en la lectura de vigencias existente) |
+| Abrir «Grupos de días» de una vigencia | **1** (RPC de lectura) |
+| Escribir en la cuadrícula, ver la vista previa | **0** (en memoria) |
+| Guardar grupos / guardar propuesta / borrar grupo | **1** cada una + un `revalidatePath` |
+| Regeneración o publicación del tarifario | **ninguna** (la propuesta no cambia precios) |
+Sin consultas por celda ni por noche, sin sondeos, sin efectos que se retroalimenten. Se verifica con contadores en las pruebas React y con PostgREST real; el consumo en Vercel queda pendiente de Preview.
+
+## AD.7 Pruebas previstas
+- **SQL en Postgres local** (plantilla equivalente a Producción + 293 + la nueva): restricciones de la propuesta; tipo `tarifa`; huella obsoleta rechazada; carreras con dos sesiones (dos guardados de propuesta, borrar grupo frente a guardar propuesta, renombrar vigencia frente a guardar, cambiar días frente a guardar); RLS por rol (operaciones Mayorista y Minorista, superadmin, venta, anon); auditoría; rollback protegido; preflight/postcheck; **la 293 sigue intacta y la huella de tarifas no cambia**.
+- **PostgREST real**: las RPC por rol, una solicitud cada una.
+- **Puras**: diferencias, texto de confirmación (V.4) y cobertura prevista.
+- **Acciones**: rol, modelo por unidad, mensajes, una sola RPC, sin regenerar.
+- **React**: sin solicitudes por celda; la sugerencia no se guarda sin aceptarla; aviso de celda vacía; confirmación obsoleta pide recargar; hotel por unidad sin controles.
+- **Compatibilidad**: los cargadores del motor nunca leen la propuesta (cableado); caracterización E3 y pruebas del motor sin cambios; `tsc`, ESLint, `next build`.
+
+## AD.8 Puntos derivados (no son decisiones comerciales; se confirman con pruebas)
+Grupos solo en vigencias `tarifa` hasta la entrega 4; la propuesta guarda solo valores confirmados; las promociones vinculadas se muestran por `temporada_base` y solo informan; copiar vigencias no copia grupos.
+
+---
+
+# AE. Incremento 3 implementado en local (2026-11-11; sin commit, sin aplicar)
+
+## AE.1 Precisiones de la auditoría incorporadas
+- Preparación **inactiva**: la 293 no se toca ni se retira su candado; ninguna tarifa por grupo en `tarifa_hotel`; el motor no lee la propuesta (cableado probado); nada se activa, regenera ni publica.
+- **Borrado**: elimina el grupo y **únicamente sus propuestas**, tras vista previa y confirmación; promociones, tarifas vigentes y demás configuración no se tocan; las promociones vinculadas se muestran como dependencias informativas. La frase ambigua de AD.3 quedó corregida.
+- **Disponibilidad**: nada se completa ni se copia; la sugerencia solo se guarda con «Usar sugerencia»; mensajes distintos para habitación sin precio (o en 0 = no aplica), niño nulo (no se vende con niños), niño en 0 (gratis) e infante sin tarifa (viaja gratis). Las reglas de gratuidad no cambian (la propuesta guarda el valor tal cual).
+- **Concurrencia**: la huella cubre vigencia, grupos, propuestas, tarifas de origen y promociones vinculadas (sus filas y sus vigencias); se compara dentro de la transacción bajo candados compatibles con la 293; obsoleta ⇒ SQLSTATE PT409 (HTTP 409) y «Recarga», sin reintento.
+
+## AE.2 Migración 295 (número PROVISIONAL, comprobado libre)
+`supabase/migrations/20260601000295_grupos_dias_propuesta.sql`. Se comprobó en todos los worktrees y ramas: 292 y 294 de #75 (la 294 = mantenimiento, no se reutiliza), 293 de este frente; 295 libre. Contenido:
+- Tabla `hotel_grupo_tarifa_propuesta` (FK al grupo `restrict`, única por grupo + categoría + régimen, netos ≥ 0, al menos un neto, edades «todas o ninguna» y rangos como `tarifa_hotel`, origen de la sugerencia con su huella, quién y cuándo confirmó). RLS: lectura para internos; **authenticated solo SELECT**: las escrituras van únicamente por las RPC. Auditoría (087).
+- Triggers: grupos solo en vigencias `tarifa`; una vigencia con grupos no cambia de tipo.
+- `_grupos_43_config` (configuración + huella, fuente única de lectura y comparación) y `_grupos_43_bloquear_y_comparar` con el orden **grupos → vigencia → tarifas de origen y de promociones (FOR SHARE) → vigencias de promociones (FOR SHARE) → candado del hotel (exclusivo) → hotel**. El bloqueo de las tarifas cubre también los cambios de solo precio, que no pasan por el trigger de la 293.
+- RPC `grupos_dias_config`, `grupos_dias_guardar` (altas y cambios; tres pasadas para que un día pase de un grupo a otro en un guardado; intercambiar días entre dos grupos se hace en dos pasos), `grupos_dias_guardar_propuesta` (actualizar / reemplazar grupo / reemplazar vigencia; categoría y régimen deben estar configurados en el hotel; una sugerencia aceptada debe ser la tarifa de esa vigencia y combinación) y `grupos_dias_borrar`. Rol interno y sesión Mayorista verificados dentro; modelo por unidad rechazado.
+- Preflight y postcheck (una consulta de lectura cada uno) y rollback protegido (aborta si hay propuestas).
+
+## AE.3 Aplicación
+- `GruposDiasPanel.tsx` (nuevo): editor de grupos con días L–D (los usados por otro grupo, deshabilitados), cuadrícula de propuesta por grupo × categoría × régimen con la sugerencia como marcador, tres modos con vista previa (cambios, cobertura prevista al activar, dependencias informativas), borrado con vista previa, aviso de confirmación obsoleta con «Recargar».
+- `grupos-actions.ts` (nuevo): 4 acciones, **una RPC cada una**, **sin `revalidatePath`** y sin regenerar; la RPC devuelve la configuración nueva y el panel actualiza su estado (la etiqueta de la ficha se actualiza en memoria).
+- `lib/hoteles/alcanceGrupos.ts` (nuevo, puro): vista previa, textos, mensajes por celda, cobertura prevista, lectura de netos, detección de PT409 y mensaje claro al borrar una vigencia con grupos.
+- `HotelDetalleClient.tsx`: botón «Grupos de días» y etiqueta «… · inactivo» por vigencia de tarifa; deshabilitado si el nombre se repite; ningún control para hoteles por unidad ni para promociones. `page.tsx`: grupos incrustados en la lectura de vigencias existente. `hoteles/actions.ts`: mensaje claro al borrar una vigencia con grupos. `types/database.ts`: tabla, relación de la FK y RPC.
+- Pruebas: stub del loader React para `grupos-actions` (las pruebas que montan la ficha no lo abren) y la nueva prueba en `test:react`.
+
+## AE.4 Pruebas ejecutadas (local)
+| Prueba | Resultado |
+|---|---|
+| `test_295_grupos_dias_propuesta.sh` sobre la plantilla **equivalente a Producción** (≤283 + 284/285/287) con 293: preflight (8 OK) → 295 → postcheck (11 OK, huella de tarifas idéntica) → reaplicar → **42 aserciones** (lectura, grupos, tipo, propuesta en 3 modos, validaciones, escrituras directas prohibidas, candado 293 intacto, borrado solo del grupo y sus propuestas, promoción intacta, auditoría, roles, unidad, **tarifas vigentes intactas**) → rollback abortado con propuestas → rollback → huella igual → reaplicar → postcheck | 0 fallos |
+| `test_295_concurrencia.sh`, dos sesiones reales: cambio de tarifa de origen (C1), de fila de promoción (C2), de vigencia de promoción (C3), alta de tarifa de origen (C4), otra propuesta (C5), días de un grupo (C6), renombre de la vigencia (C7), borrado de grupo (C9) ⇒ B espera el candado y recibe CONFIG_DESACTUALIZADA; control C8 (otra vigencia) ⇒ espera y pasa; invariantes en 0 | 9 / 9 |
+| `test_295_postgrest.sh` (PostgREST v16.4, JWT por rol): una solicitud por operación; operaciones Mayorista y superadmin leen y escriben; operaciones Minorista solo lee; venta 403; anon 401; huella obsoleta HTTP 409 PT409; escribir la tabla directo por la API 403; tarifas vigentes intactas | 18 / 18 |
+| `pruebas/gruposDias295.test.ts` (puras, acciones con cliente simulado, cableado: el motor no lee la propuesta, sin `revalidatePath`, sin sondeos) | 24 / 24 |
+| `pruebas/gruposDias295.react.ts` (abrir = 1 lectura; editar y revisar = 0; confirmar = 1; sugerencia solo aceptada; mensajes por celda; obsoleta sin reintento; borrado; días deshabilitados; ficha con botones correctos, sin controles en unidad) | 8 / 8 |
+| Pruebas existentes de la ficha, vigencias y motor (`hotelPestanas22`, `vigenciasFechas43.*`, `motorGrupos43*`, caracterización E3, precio final, modelo tarifario, Mixta, etc.) | 492 en verde |
+| `tsc`, ESLint de los archivos tocados, `next build` | 0 errores, 0 avisos, build correcto |
+No se repitió la suite completa `test:unit` (el cambio no toca el motor ni otros módulos).
+
+## AE.5 Solicitudes medidas (local)
+| Acción | Solicitudes de datos | Recarga por `revalidatePath` |
+|---|---|---|
+| Ver la ficha del hotel | 0 nuevas (grupos incrustados en la lectura de vigencias) | — |
+| Abrir «Grupos de días» | 1 (`grupos_dias_config`; 1.262 bytes en la prueba HTTP) | ninguna |
+| Editar celdas y revisar la vista previa | 0 | ninguna |
+| Guardar grupos / guardar propuesta / borrar grupo | 1 RPC cada una (devuelve la configuración nueva) | **ninguna**: las acciones no llaman a `revalidatePath` (comprobado en la prueba de acciones y en el cableado) |
+| Confirmación obsoleta | 1 (la escritura rechazada); recargar es un clic explícito = 1 lectura | ninguna |
+Sin sondeos, sin consultas por celda ni por noche, sin reintentos. **Pendiente en Preview**: tiempos, consumo en Vercel y volumen con datos reales.
+
+## AE.6 Orden de despliegue
+1. Confirmar el número 295 con el dueño y #75/#97.
+2. Preflight 295 → **295** → postcheck 295 (huella idéntica).
+3. Recién después, desplegar este código (la ficha incrusta grupos —ya posible con la 293— y el panel llama a las RPC de la 295).
+4. Revertir la 295 exige revertir antes este código y que no haya propuestas (el rollback lo comprueba).
+No depende de 286 ni de 288–292; no activa, regenera ni publica nada.
+
+## AE.7 Correcciones de la auditoría (decimales, notas/edades y vista previa) — 2026-11-11
+**Defectos confirmados en la versión anterior** (reproducidos): (1) el editor mostraba los importes con `String()` («123.45») y `leerNeto` borraba todos los puntos ⇒ 123.45 se leía como **12345** al reabrir, aceptar una sugerencia o reemplazar; (2) notas y edades no viajaban en el estado del editor ni en el payload, y el `ON CONFLICT … DO UPDATE` de la RPC sobrescribía con null todo campo no enviado ⇒ editar un precio **borraba** notas y el override de edades; (3) la vista previa solo daba conteos.
+
+**Corrección**
+- **Un solo formato** (`formatNeto`/`leerNeto` en `alcanceGrupos.ts`, inversas exactas): coma decimal y punto solo de miles (123,45 · 120.000 · 1.234,5). Un texto ambiguo como «123.45» se **rechaza** con mensaje, nunca se reinterpreta. El panel muestra guardado, sugerencias y marcadores con ese formato.
+- **Notas y edades** (`nota_infante`, `notas`, las cuatro edades) en tipos, estado, payload y persistencia. Regla única: **omitido = se conserva; presente con null = borrado intencional**. En «actualizar», si no se tocaron se omiten; «Quitar notas y edades» es el borrado explícito; en un reemplazo la fila se envía completa con lo que hay en pantalla (que viene de lo guardado). «Usar sugerencia» solo pone los **netos**; las notas y edades de la tarifa actual requieren el botón aparte «Usar notas y edades de la tarifa actual» y aparecen en la revisión.
+- **RPC (295, sin aplicar)**: `UPDATE` explícito que solo cambia los campos presentes (las restricciones se evalúan sobre la fila fusionada) o `INSERT` si no existe; quitar una combinación en «actualizar» exige los siete netos **presentes** en null; en un reemplazo, una fila sin ningún neto es error claro. El origen de la sugerencia sigue la misma regla (presente null = se desmarca).
+- **Vista previa = payload**: `planPropuesta` produce a la vez `filas` (lo que se envía, vía `payloadFilas`, que usa también la acción) y `lineas`: una por celda o campo, con grupo, categoría, régimen y acomodación y **anterior → nuevo**; las celdas que pasan a vacío o a 0 llevan su efecto (habitación: no se vende / no aplica; niño vacío: no se vende con niños; niño 0: gratis; infante vacío: viaja gratis); los reemplazos detallan cada combinación eliminada con sus importes y si tenía notas/edades, y declaran las filas que se reescriben sin cambios. Editar después de revisar cierra la revisión (no se confirma una vista previa vieja).
+
+**Pruebas ejecutadas tras la corrección (locales)**
+| Prueba | Resultado |
+|---|---|
+| `test_295_grupos_dias_propuesta.sh` (plantilla equivalente a Producción): ciclo completo + **49 aserciones** (nuevas C18–C24: 123.45 y 150000.5 exactos, notas/edades conservadas al editar un neto, borrar una sola edad rechazado, borrado intencional, netos intactos) | 0 fallos |
+| `test_295_concurrencia.sh` | 9 / 9 |
+| `test_295_postgrest.sh`: permisos por rol + **persistencia real con el mismo cálculo del editor** (`planPropuesta` → `payloadFilas` → RPC → reabrir desde Postgres): 123,45 / 150.000 / 0 / vacío exactos; editar otro neto conserva 123.45 y notas/edades; sugerencia 200.000,5 y 0 exactos sin sus notas; reemplazar el grupo conserva todo (2 filas declaradas como reescritas); borrado intencional; reemplazar la vigencia detalla y elimina | 0 fallos; 25 solicitudes HTTP, una por operación |
+| `pruebas/gruposDias295.test.ts` (formato, edades, mensajes, plan/payload, acciones, cableado) | 29 / 29 |
+| `pruebas/gruposDias295.react.ts`: recorrido con decimales, entero, vacío y cero; «123.45» rechazado sin enviar; editar otra celda; aceptar sugerencia (y aparte sus notas/edades); borrado intencional; celdas a vacío/0 con efecto; reemplazo de grupo y de vigencia; obsoleta sin reintento; editar tras revisar cierra la revisión; borrado de grupo; ficha | 14 / 14 (+ 17 de las pruebas existentes de la ficha) |
+| `tsc`, ESLint de los archivos tocados, `next build` | 0 errores, 0 avisos, build correcto |
+**Contadores conservados**: abrir 1 lectura; editar y revisar 0; guardar o borrar 1 RPC; sin `revalidatePath`, sin sondeos ni reintentos.
+
+**Límites**: solo se acepta coma decimal (un usuario que escriba «123.45» recibe el aviso y debe corregirlo); el editor no ofrece copiar notas/edades a varias combinaciones a la vez; la persistencia real se probó con PostgREST local y la plantilla equivalente a Producción, no en Preview.
+
+## AE.8 Corrección de edades: validación previa y mensajes sin nombres técnicos — 2026-11-11
+**Defecto observado en Preview**: con infante 2–3 y niño 4–10 el panel dejaba confirmar y la base rechazaba con el texto crudo de Postgres (`new row for relation "hotel_grupo_tarifa_propuesta" violates check constraint "…_edades_rangos"`). `validarEdades` solo comprobaba «todas o ninguna», no los rangos que exige la 295.
+
+**Corrección (solo aplicación; la 293 y la 295 no se tocan ni se vuelven a aplicar)**
+- `lib/hoteles/alcanceGrupos.ts`: `validarEdades` aplica **las mismas reglas que las restricciones de la 295** (`edades_todas_o_ninguna` y `edades_rangos`) antes de enviar, y devuelve todos los incumplimientos con mensajes concretos: infante empieza en 0; «hasta» ≥ «desde» en infante y en niño; niño empieza justo después del último año de infante; niño como máximo 17. Con edades inválidas no aparece «Confirmar propuesta» y no se hace ninguna llamada de guardado.
+- Nuevo `mensajeErrorBase`: traduce un rechazo de la base a un mensaje para el usuario (edades, «al menos un neto», y un genérico para cualquier otra restricción, error de sintaxis o de columna, en inglés o en español). **Nunca** muestra nombres de tablas ni de restricciones; los mensajes propios de las RPC, ya en español, pasan tal cual.
+- `grupos-actions.ts`: `fallo()` usa `mensajeErrorBase`; el caso PT409 (`desactualizada`) no cambia. Sigue siendo una sola RPC por acción, sin reintento ni `revalidatePath`.
+
+**Archivos**: `lib/hoteles/alcanceGrupos.ts`, `app/(dashboard)/dashboard/producto/hoteles/[id]/grupos-actions.ts`, `pruebas/gruposDias295.test.ts`, `pruebas/gruposDias295.react.ts`.
+
+**Pruebas (auditadas, ejecutadas por Codex)**
+| Prueba | Resultado |
+|---|---|
+| `pruebas/gruposDias295.test.ts` (lógica y acciones): reglas de la 295 con mensajes concretos (0–1/2–11 y 0–0/1–17 válidos; 2–3/4–10, salto en el inicio del niño, «hasta» menor que «desde», niño 18, edades incompletas); rechazos de Postgres en inglés y en español sin nombres técnicos; mensajes propios de las RPC intactos; acción con rechazo por edades = mensaje traducido y una sola llamada | **32 / 32** |
+| `pruebas/gruposDias295.react.ts` (pantalla): 4 rangos inválidos ⇒ mensaje concreto, sin «Confirmar propuesta», cero llamadas de guardado y sin nombres técnicos; 0–1/2–11 ⇒ revisar y un solo guardado con esas edades; rechazo de la base ⇒ mensaje traducido, sin reintento | **20 / 20** |
+
+**Sin cambios**: migraciones (293 y 295), SQL remoto, grupos (siguen inactivos), motor, generación y publicación. Contadores de solicitudes de AE.5 conservados.

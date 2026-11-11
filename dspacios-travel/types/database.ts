@@ -2462,6 +2462,29 @@ export type Database = {
           activo?: false; creado_en?: string; actualizado_en?: string;
         };
         Update: Partial<Omit<Database["public"]["Tables"]["hotel_temporada_grupos"]["Insert"], "temporada_id">>;
+        Relationships: [
+          {
+            foreignKeyName: "hotel_temporada_grupos_temporada_id_fkey";
+            columns: ["temporada_id"];
+            isOneToOne: false;
+            referencedRelation: "hotel_temporadas";
+            referencedColumns: ["id"];
+          },
+        ];
+      };
+      // Migración 295 (#43/#60 incremento 3, PROPUESTA — no aplicada). PROPUESTA de tarifas por grupo
+      // (inactiva): el motor no la lee. Lectura para internos; escrituras solo por las RPC grupos_dias_*.
+      hotel_grupo_tarifa_propuesta: {
+        Row: {
+          id: number; grupo_id: string; tipo_habitacion: string; alimentacion: string;
+          neto_sencilla: number | null; neto_doble: number | null; neto_triple: number | null; neto_multiple: number | null;
+          neto_nino: number | null; neto_nino2: number | null; neto_infante: number | null;
+          nota_infante: string | null; notas: string | null;
+          edad_infante_min: number | null; edad_infante_max: number | null; edad_nino_min: number | null; edad_nino_max: number | null;
+          origen_tarifa_id: number | null; origen_huella: string | null; confirmado_por: string | null; confirmado_en: string;
+        };
+        Insert: Record<string, never>; // solo por RPC
+        Update: Record<string, never>;
         Relationships: [];
       };
       // Migración 203 (PROPUESTA — no aplicada todavía en ningún entorno).
@@ -4426,6 +4449,16 @@ export type Database = {
         Args: { p_hotel_id: number; p_filas: Json; p_previas: Json; p_reemplazar_todo?: boolean; p_motivo?: string | null };
         Returns: Json;
       };
+      // Migración 295 (#43/#60 incremento 3, PROPUESTA — no aplicada). Editor de grupos de días
+      // (preparación inactiva): leer, guardar grupos, guardar propuesta y borrar grupo. Las escrituras
+      // comparan la huella y rechazan con SQLSTATE PT409 si la configuración cambió.
+      grupos_dias_config: { Args: { p_temporada_id: number }; Returns: Json };
+      grupos_dias_guardar: { Args: { p_temporada_id: number; p_huella: string; p_grupos: Json }; Returns: Json };
+      grupos_dias_guardar_propuesta: {
+        Args: { p_temporada_id: number; p_huella: string; p_modo: string; p_grupo_id: string | null; p_filas: Json };
+        Returns: Json;
+      };
+      grupos_dias_borrar: { Args: { p_grupo_id: string; p_huella: string }; Returns: Json };
       // Migración 203 (PROPUESTA). Historial paginado por cursor y búsqueda en
       // servidor; SECURITY INVOKER (RLS: solo roles internos).
       consultar_historial_tarifas: {
