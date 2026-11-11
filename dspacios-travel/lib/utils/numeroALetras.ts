@@ -62,7 +62,14 @@ function capitalizar(s: string): string {
 // "$1.260.904" → "Un millón doscientos sesenta mil novecientos cuatro pesos"
 // Cuando el monto es un múltiplo exacto de millón (ej. $1.000.000), la
 // gramática exige "de" antes del sustantivo: "Un millón DE pesos".
-export function pesosEnLetras(valor: number, moneda: "COP" | "USD" = "COP"): string {
+export function pesosEnLetras(valor: number, moneda: "COP" | "USD" = "COP", conCentavos = false): string {
+  // USD con centavos (documentos de cobro): «… dólares con 67/100». Sin la bandera, o en COP, el comportamiento de siempre (redondea a la unidad).
+  if (conCentavos && moneda === "USD") {
+    const total = Math.round(Math.abs(valor) * 100);
+    const ent = Math.floor(total / 100); const cts = total % 100;
+    const base = pesosEnLetras(ent, "USD");
+    return cts === 0 ? base : `${base} con ${String(cts).padStart(2, "0")}/100`;
+  }
   const n = Math.round(Math.abs(valor));
   const letras = numeroEnLetras(n);
   const sufijo = n === 1 ? (moneda === "USD" ? "dólar" : "peso") : moneda === "USD" ? "dólares" : "pesos";

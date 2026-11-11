@@ -24,6 +24,7 @@ import { payloadGuardarPasajeros } from "@/lib/reservar/pasajerosEdicion";
 import {
   planNetoContratoManual, comisionCoincide, esAsesorPropio, aplicarNetoContratoManual, type PlanNetoManual,
 } from "@/lib/contrato/netoManual";
+import { resolverAliadoReserva, planComisionReserva, registrarComisionReserva, type PlanComisionReserva } from "@/lib/reservar/comisionReserva";
 import { evaluarMargenContrato, puedeAprobarMargenBajo, mensajeMargenInsuficiente } from "@/lib/contrato/margenContrato";
 import type { Json } from "@/types/database";
 import {
@@ -491,8 +492,8 @@ async function crearContratoInterno(
   let agenciaNombre: string | null = null;
   let freelanceNombre: string | null = null;
   // El aliado sigue siendo obligatorio y del catálogo (vínculo ventas.aliado_id),
-  // pero el contrato manual ya NO genera la comisión B2B (decisión del dueño,
-  // #38): nace "Por definir" y se registra a mano en la pestaña Comisiones
+  // pero (antes de #97) el contrato manual no generaba la comisión B2B (decisión del dueño,
+  // #38): nacía "Por definir"; desde #97 en PVP se registra sola (ver más abajo). Antes se registraba a mano en Comisiones
   // (el asesor de su propio contrato, o administración).
   if (tipoVenta !== "interno") {
     if (!input.aliadoId) return _rechazarValidacion({ ok: false, error: `Selecciona la ${tipoVenta} del catálogo.` });
@@ -549,6 +550,26 @@ async function crearContratoInterno(
     }
     planNeto = plan.plan;
   }
+  // #97: PVP B2B asistido → la comisión del aliado se registra sola al crear el contrato. Se valida ANTES de numerar
+  // (aliado del catálogo, tipo coincidente, % legible) para no gastar un consecutivo; no inventa % ni base (los resuelve la regla de #38).
+  // Negociado (bloqueo / porción terrestre) B2B: nace 'pendiente' —lo que exige la RPC 205— y SOLO se cierra después de copiar los costos negociados.
+  const registraComisionPvp = modoCompraManual === "pvp" && tipoVenta !== "interno";
+  const negociadoB2B = registraComisionPvp && negociado;
+  // Con paquete negociado la copia de costos es una dependencia del cierre: sin la llave de servicio no puede hacerse, así que se rechaza ANTES de numerar.
+  const requiereCopiaCostos = negociadoB2B && !!input.paqueteId;
+  if (requiereCopiaCostos && !process.env.SUPABASE_SERVICE_ROLE_KEY) {
+    return _rechazarValidacion({ ok: false, error: "No se puede crear este contrato B2B negociado: falta la configuración del servidor para copiar los costos del paquete. No se creó nada." });
+  }
+  // La RPC 205 exige que la venta ya diga cuánto vale su comisión (modo_compra + comision_b2b) y la recalcula: se escribe con el MISMO plan
+  // puro de la reserva (base = PVP − BNC, % del aliado), no con una fórmula propia. Sin modo_compra la RPC fallaría (descontada_en_precio NULL).
+  let planPvp: PlanComisionReserva | null = null;
+  if (registraComisionPvp) {
+    const al = await resolverAliadoReserva(sb, tipoVenta, input.aliadoId);
+    if (!al.ok) return _rechazarValidacion({ ok: false, error: al.error });
+    const pl = planComisionReserva({ modoCompra: "comisionable", precioVenta, impuesto: bnc, pct: al.pct });
+    if (!pl.ok) return _rechazarValidacion({ ok: false, error: pl.error });
+    planPvp = pl.plan;
+  }
   registrarEtapa("crear_contrato", flujoId, "validacion_negocio", Math.round(performance.now() - _tValidacion0), "ok");
 
   // Número de contrato — se genera AQUÍ, justo antes del primer INSERT que lo
@@ -557,6 +578,22 @@ async function crearContratoInterno(
   // gastaría un consecutivo DTM/MIN por cada formulario inválido — con el RPC
   // ahora en service_role (ver lib/contrato/numeracion.ts), este es el punto
   // razonable más tardío antes del INSERT que lo requiere.
+  // Estado de nacimiento (regla de #75, no del interruptor de comisión): el manual de Mayorista nace PENDIENTE; Minorista conserva 'activo'.
+  // Un manual pendiente con comisión B2B solo deja el PLAN (286), que se materializa al confirmar (288), con el interruptor en cualquier posición.
+  // Lo que se exige son esas DEPENDENCIAS (no el interruptor): si faltan, se rechaza ANTES de numerar —nunca se marca activo ni se crea una comisión exigible—.
+  if (registraComisionPvp && tenant !== "minorista") {
+    const { data: faltan, error: eDep } = await createAdminClient().rpc("p97_dependencias_comision_faltantes");
+    const sinFuncion = !!eDep && /PGRST202|42883|Could not find the function|does not exist/i.test(`${eDep.code ?? ""} ${eDep.message ?? ""}`);
+    if (eDep && !sinFuncion) {
+      elevarEstadoFlujo(estado, "error");
+      return { ok: false, error: "No se pudieron verificar las dependencias de la comisión B2B. Inténtalo de nuevo." };
+    }
+    if (sinFuncion || faltan) {
+      const detalle = sinFuncion ? "falta la migración 286 (plan de comisión)" : String(faltan);
+      return _rechazarValidacion({ ok: false, error: `No se puede crear este contrato B2B: nace pendiente y su comisión necesita dependencias que faltan (${detalle}). No se creó nada.` });
+    }
+  }
+
   const numRes = await medir("numero_contrato", () => siguienteNumeroContrato(tenant), (r) => (r.ok ? "ok" : "error"));
   if (!numRes.ok) {
     // Fallo TÉCNICO bloqueante (el RPC de numeración falló) — nunca
@@ -583,7 +620,7 @@ async function crearContratoInterno(
     pax,
     precio_venta: precioVenta,
     impuesto: bnc,
-    estado: "activo",
+    estado: tenant === "minorista" ? "activo" : "pendiente",
     // Solo empaquetado/dinámico (manual) pueden ir en USD; negociado sigue su producto (COP).
     moneda: monedaContrato,
     ...(!negociado
@@ -618,6 +655,10 @@ async function crearContratoInterno(
     // sigue guardando para el documento y como respaldo de los contratos
     // viejos, pero la pertenencia en el portal B2B se resuelve por este id.
     aliado_id: tipoVenta !== "interno" ? input.aliadoId ?? null : null,
+    // #97: PVP B2B asistido → modalidad comisionable (el comprador paga el PVP; la comisión del aliado queda pendiente).
+    ...(planPvp ? { modo_compra: "comisionable", comision_b2b: planPvp.comision, comision_estado: planPvp.comisionEstado } : {}),
+    // Negociado B2B: 'pendiente' hasta que los costos negociados estén copiados (no se presenta como completo un proceso a medias).
+    ...(negociadoB2B ? { financiero_estado: "pendiente" } : {}),
     cliente_documento: oNull(input.clienteDocumento),
     ...(tipoCliente.tipo && { cliente_tipo_documento: tipoCliente.tipo }),
     cliente_telefono: oNull(input.clienteTelefono),
@@ -861,6 +902,23 @@ async function crearContratoInterno(
     }
   }
 
+  // #97: PVP B2B — comisión del ALIADO (nunca del asesor interno) registrada una sola vez por la RPC 205 (rechaza duplicados y
+  // serializa con FOR UPDATE). Si falla se deshace el contrato: nunca queda B2B sin comisión ni a medias.
+  if (!planNeto && registraComisionPvp) {
+    const com = await registrarComisionReserva(sb, numero, input.aliadoId as number);
+    if (!com.ok) {
+      elevarEstadoFlujo(estado, "error");
+      registrarErrorTecnico("crear_contrato", flujoId, "comision_pvp", "error_comision_pvp", com.error);
+      const rev = await revertirContratoManual(numero, tenant);
+      return {
+        ok: false,
+        error: rev.ok
+          ? `${com.error} El contrato no se creó; revisa los datos e inténtalo de nuevo.`
+          : `${com.error} Tampoco se pudo deshacer el contrato ${numero} (${rev.error ?? "motivo desconocido"}): revísalo antes de usarlo.`,
+      };
+    }
+  }
+
   // ── Costos y CxP del contrato manual (dinámico/empaquetado) ──────────────
   // Una cuenta por pagar por hotel, por compra aérea y por servicio con costo
   // > 0 y proveedor, en la moneda del contrato, con la retención del catálogo
@@ -973,6 +1031,9 @@ async function crearContratoInterno(
   // excepción (el patrón normal del cliente Supabase), "error" si entró al
   // catch (una excepción real, ej. `createAdminClient()` sin llave configurada).
   let _resultadoAdmin: ResultadoEtapa = "ok";
+  // #97: costos realmente copiados al contrato (null = no se copiaron) y el motivo si falló; solo gobiernan el cierre del negociado B2B.
+  let costosCopiados: CostosContrato | null = null;
+  let falloCopia: string | null = requiereCopiaCostos ? "los costos del paquete no se copiaron" : null;
   if ((esNegociado && input.paqueteId) || (input.tipoPaquete === "bloqueo" && input.bloqueoId)) {
     if (process.env.SUPABASE_SERVICE_ROLE_KEY) {
       _huboBloqueAdmin = true;
@@ -987,9 +1048,11 @@ async function crearContratoInterno(
             .eq("paquete_id", input.paqueteId)
             .maybeSingle();
           if (costosError) {
+            falloCopia = "no se pudieron leer los costos del paquete";
             _resultadoAdmin = "parcial";
             registrarErrorTecnico("crear_contrato", flujoId, "negociado_admin", "error_consulta_costos", costosError);
           }
+          if (!costos && !costosError) falloCopia = "el paquete no tiene costos negociados configurados";
           if (costos) {
             const { error: updateError } = await admin
               .from("ventas")
@@ -1002,8 +1065,15 @@ async function crearContratoInterno(
               })
               .eq("numero_contrato", numero);
             if (updateError) {
+              falloCopia = "no se pudieron guardar los costos en el contrato";
               _resultadoAdmin = "parcial";
               registrarErrorTecnico("crear_contrato", flujoId, "negociado_admin", "error_update_costos", updateError);
+            } else {
+              falloCopia = null;
+              costosCopiados = {
+                costo_hotel: Number(costos.costo_hotel) || 0, costo_aereo: Number(costos.costo_aereo) || 0, costo_receptivo: Number(costos.costo_receptivo) || 0,
+                costo_asistencia: Number(costos.costo_asistencia) || 0, otros_costos: Number(costos.otros_costos) || 0,
+              };
             }
           }
         }
@@ -1019,6 +1089,7 @@ async function crearContratoInterno(
         // administrativo (comportamiento histórico sin cambios) — pero la
         // métrica SÍ debe decir "error", nunca "ok".
         _resultadoAdmin = "error";
+        if (requiereCopiaCostos) falloCopia = "error inesperado al copiar los costos del paquete";
         registrarErrorTecnico("crear_contrato", flujoId, "negociado_admin", "excepcion", e);
       }
     }
@@ -1028,6 +1099,27 @@ async function crearContratoInterno(
     // Best-effort (oculto al asesor): un fallo aquí nunca bloquea el
     // contrato, pero SÍ debe elevar el TOTAL a "parcial" (nunca "ok" a ciegas).
     if (_resultadoAdmin !== "ok") elevarEstadoFlujo(estado, "parcial");
+  }
+
+  // #97: cierre del negociado B2B. Solo con los costos YA copiados (o sin paquete que copiar) se marca el financiero completo; si no, el contrato se
+  // deshace por completo (comisión, sillas, hijas) y se dice por qué. Nunca queda 'completo' con costos faltantes ni 'pendiente' sin avisar.
+  if (negociadoB2B) {
+    const deshacer = async (motivo: string): Promise<CrearContratoResult> => {
+      elevarEstadoFlujo(estado, "error");
+      registrarErrorTecnico("crear_contrato", flujoId, "cierre_negociado", "error_cierre_negociado", motivo);
+      const rev = await revertirContratoManual(numero, tenant);
+      return {
+        ok: false,
+        error: rev.ok
+          ? `No se pudo crear el contrato B2B negociado: ${motivo}. No se creó nada (sin comisión ni sillas asignadas); inténtalo de nuevo o avisa a administración.`
+          : `No se pudo crear el contrato B2B negociado (${motivo}) y tampoco se pudo deshacer el contrato ${numero} (${rev.error ?? "motivo desconocido"}). Quedó pendiente y sin abonos: avisa a administración.`,
+      };
+    };
+    if (falloCopia) return deshacer(falloCopia);
+    const fin = await registrarFinancieroContrato(depsFinancieroManual(numero, tenant, fechaElegidaONegocio(input.fechaEmision)), {
+      numeroContrato: numero, tenant, costos: costosCopiados ?? {}, cxp: [], fecha: fechaElegidaONegocio(input.fechaEmision),
+    });
+    if (!fin.ok) return deshacer(`no se pudo cerrar el registro financiero (${fin.error})`);
   }
 
   revalidatePath("/dashboard/contratos");

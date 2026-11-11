@@ -67,19 +67,33 @@ function contratoB2B(bncFijo: number) {
   };
 }
 
-test("MANUAL B2B: ya NO genera comisión; nace 'Por definir' (decisión del dueño)", async () => {
-  const bd = usarBD({ aliados: [ALIADO], usuarios: [yo("administracion")] });
+// #97: el contrato manual PVP con aliado del catálogo registra la comisión del ALIADO (RPC 205 `registrar_comision_b2b_reserva`); antes nacía «Por definir» (#38).
+// Espejo en memoria del cálculo real (base = PVP − impuesto/BNC, % del aliado); la versión real se prueba contra Postgres (test_97_comision_pvp.sql, contratoManualNeto206.pg.ts V97-*).
+test("MANUAL B2B PVP (#97): registra UNA comisión pendiente del aliado (ya no nace 'Por definir')", async () => {
+  const ref: { bd?: ReturnType<typeof usarBD> } = {};
+  const bd = usarBD({ aliados: [ALIADO], usuarios: [yo("administracion")] }, {
+    registrar_comision_b2b_reserva: (args: Record<string, unknown>) => {
+      const v = ref.bd!.filas("ventas").find((x) => x.numero_contrato === args.p_numero)!;
+      const base = Math.max(0, Number(v.precio_venta) - Number(v.impuesto ?? 0));
+      ref.bd!.filas("aliados_b2b").push(comision(501, String(args.p_numero), {
+        aliado: ALIADO.nombre, tipo_aliado: "agencia", aliado_id: args.p_aliado_id, precio_venta: v.precio_venta, base_comision: base, pct_comision: ALIADO.pct_comision,
+      }));
+      return 501;
+    },
+  });
+  ref.bd = bd;
   const r = await crearContrato(contratoB2B(200_000));
   assert.equal(r.ok, true, JSON.stringify(r));
-  assert.equal(bd.filas("aliados_b2b").length, 0, "sin comisión automática");
-  assert.equal((r as { advertencias?: string[] }).advertencias, undefined, "no es un error: es el estado esperado");
   const [venta] = bd.filas("ventas");
   assert.equal(venta?.canal, "B2B");
   assert.equal(venta?.aliado_id, 7, "el vínculo con el aliado del catálogo se conserva");
-  // En Comisiones aparece como "Por definir".
+  assert.equal(venta?.modo_compra, "comisionable");
+  assert.equal(venta?.comision_estado, "pendiente");
+  assert.equal(bd.filas("aliados_b2b").length, 1, "una sola comisión");
+  assert.equal(bd.filas("aliados_b2b")[0].aliado_id, 7, "beneficiario = el aliado");
   const filas = filasDeComisiones(await ComisionesPage());
   const f = filas.find((x) => x.numero_contrato === venta?.numero_contrato);
-  assert.equal(f?.estado, "sin_definir");
+  assert.notEqual(f?.estado, "sin_definir", "ya no aparece como «Por definir»");
 });
 
 test("MANUAL B2B: el aliado sigue siendo obligatorio y del catálogo", async () => {
@@ -318,14 +332,29 @@ test("COMISIONABLE: editar la comisión en Comisiones se refleja en la cuenta de
   assert.equal(r?.tipo === "comision" && r.detalle.totalPagar, 50_000, "antes seguía diciendo 80.000");
 });
 
-test("COMISIONABLE sin fila (reservó la propia agencia): sigue la vía de ventas.comision_b2b", async () => {
+test("COMISIONABLE sin fila (reservó la propia agencia): la vía ventas.comision_b2b solo cobra con el contrato CONFIRMADO", async () => {
+  // Ciclo de vida (#97/#75): pendiente = cálculo informativo; sin enlace ni cuenta de cobro.
   usarBD({
     usuarios: [yo("superadmin")],
-    ventas: [venta("DTM-0451", { modo_compra: "comisionable", comision_b2b: 80_000, comision_estado: "pendiente" })],
+    ventas: [venta("DTM-0451", { modo_compra: "comisionable", comision_b2b: 80_000, comision_estado: "pendiente", estado: "pendiente" })],
+    aliados: [],
+  });
+  assert.equal(await cuenta("DTM-0451"), null, "pendiente: no se puede cobrar saltándose el estado del contrato");
+  usarBD({
+    usuarios: [yo("superadmin")],
+    ventas: [venta("DTM-0451", { modo_compra: "comisionable", comision_b2b: 80_000, comision_estado: "pendiente", estado: "confirmado" })],
     aliados: [],
   });
   const r = await cuenta("DTM-0451");
   assert.equal(r?.tipo === "comision" && r.detalle.totalPagar, 80_000);
+  // 'activo' es el estado histórico de los manuales anteriores: se trata como confirmado (no se migran estados).
+  usarBD({
+    usuarios: [yo("superadmin")],
+    ventas: [venta("DTM-0451", { modo_compra: "comisionable", comision_b2b: 80_000, comision_estado: "pendiente", estado: "activo" })],
+    aliados: [],
+  });
+  const h = await cuenta("DTM-0451");
+  assert.equal(h?.tipo === "comision" && h.detalle.totalPagar, 80_000);
 });
 
 // ═══ Flujo: NETO ═════════════════════════════════════════════════════════

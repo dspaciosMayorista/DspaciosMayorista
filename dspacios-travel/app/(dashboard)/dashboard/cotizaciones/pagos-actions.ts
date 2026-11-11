@@ -399,8 +399,10 @@ export async function contextoModalidadNeto(
   if (!aliado) return base;
   const pct = Math.round(pctComisionAliado(aliado.pct_comision, param?.valor ?? null, tipoAsesor) * 10000) / 10000;
 
+  // #97 (286): la vista previa usa la misma regla que sellará la base (activa solo tras la fase 3; antes, la de siempre).
+  const { data: reglaNueva } = await admin.rpc("p97_regla_neto_activa");
   const vista = (e: Parameters<typeof calcularNetoHija>[0]): VistaNeto => {
-    const r = calcularNetoHija(e);
+    const r = calcularNetoHija({ ...e, reglaParticipacion: reglaNueva === true });
     const ev = evaluarMargenNeto(r.neto, r.costos, r.soloTiquetes);
     return {
       reconoce: e.reconoceRecobro, hayDescuento: r.descuento > BigInt(0), pvp: aUnidades(r.precio),

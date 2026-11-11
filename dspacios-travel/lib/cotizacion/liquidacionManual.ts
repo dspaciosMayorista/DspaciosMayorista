@@ -41,6 +41,9 @@ export type CotizacionManualInput = {
   asesorInterno: string;
   agenciaNombre: string;
   freelanceNombre: string;
+  /** #97: aliado B2B del catálogo (id) y base no comisionable EXPLÍCITA (null/ausente ≠ 0). Solo la dinámica B2B; los valida el servidor. */
+  aliadoId?: number | null;
+  bnc?: number | null;
   plazo: string;
   vigenciaHasta: string;
   observaciones: string;
@@ -264,7 +267,7 @@ export function construirCotizacionManual(
   return {
     ok: true,
     cabecera: {
-      payload: JSON.parse(JSON.stringify(input)),
+      payload: JSON.parse(JSON.stringify({ ...input, aliadoId: undefined, bnc: undefined })),   // #97: el acuerdo (aliado por id + BNC) vive en su tabla, no en el payload
       detalle: JSON.parse(JSON.stringify(detalle)),
       cliente: clienteNombre,
       cliente_documento: input.cliente.numeroDoc || null,

@@ -224,7 +224,7 @@ test("manual-actions.ts: crearCotizacionManual falla cerrado con contextoCotizac
   assert.match(crear, /if\s*\(!usuario\)\s*return\s*\{\s*ok:\s*false/, "crearCotizacionManual no falla cerrado sin usuario de sesión");
   assert.match(
     crear,
-    /admin\.rpc\(\s*"crear_cotizacion_manual",\s*\{\s*\n\s*p_usuario_id:\s*usuario\.id,\s*\n\s*p_tenant:\s*tenantCotizacion,/,
+    /argsBase\s*=\s*\{\s*\n\s*p_usuario_id:\s*usuario\.id,\s*\n\s*p_tenant:\s*tenantCotizacion,/,
     "crearCotizacionManual no delega en la RPC con el usuario de la sesión y el tenant validado"
   );
   const idxRpcCrear = crear.indexOf('admin.rpc("crear_cotizacion_manual"');

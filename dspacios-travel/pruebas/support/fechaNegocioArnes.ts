@@ -240,6 +240,8 @@ export function crearBD(semilla: Record<string, Fila[]> = {}, rpcs: Record<strin
   // propio manejador lo reemplaza.
   const MARCA_CXP_AUTOMATICA = "Generado automáticamente desde el tarifario";
   const porDefecto: Record<string, ManejadorRpc> = {
+    // Dependencias de la comisión B2B (286 de #97): null = todas cumplidas. Una prueba que necesite simular que faltan pasa su propio manejador.
+    p97_dependencias_comision_faltantes: () => null,
     registrar_financiero_contrato: (args) => {
       const numero = String(args.p_numero_contrato);
       const v = filas("ventas").find((f) => f.numero_contrato === numero && f.tenant === args.p_tenant);

@@ -20,6 +20,7 @@ import {
 } from "@/lib/personas/cotizacion";
 import { altaPersonasCotizacion, logPersonasCotizacion } from "@/lib/personas/consulta";
 import { leerEntradaModalidad } from "@/lib/cotizacion/netoHija";
+import { validarBnc } from "@/lib/cotizacion/acuerdoComision";
 
 // Los tipos viven en lib/cotizacion/liquidacionManual.ts (la fórmula única de
 // creación y edición); se re-exportan para no romper a quien ya los importa.
@@ -70,6 +71,16 @@ export async function crearCotizacionManual(
   // hay perfil o `activo !== true`, y solo entonces resuelve el tenant real.
   const ctx = await contextoCotizacion();
   if (!ctx.ok) return { ok: false, error: "No autorizado." };
+  // #97: B2B → aliado del catálogo (id, nunca texto libre) y BNC escrita expresamente (vacío ≠ 0). El % y la base los fija la base de datos.
+  let acuerdo: { aliadoId: number; bnc: number } | null = null;
+  if (input.tipoAsesor !== "interno") {
+    if (!Number.isInteger(input.aliadoId) || (input.aliadoId as number) <= 0) {
+      return { ok: false, error: "Elige la agencia o el freelance del catálogo: sin aliado identificado no se puede acordar su comisión." };
+    }
+    const bnc = validarBnc(input.bnc, armado.cabecera.precio_venta);
+    if (!bnc.ok) return { ok: false, error: bnc.error };
+    acuerdo = { aliadoId: input.aliadoId as number, bnc: bnc.bnc };
+  }
   // #40 E3: la fecha de vigencia la elige solo el personal interno; un rol externo que la envíe por red se rechaza.
   if (ctx.interno === false && input.vigenciaHasta?.trim()) return { ok: false, error: "No tienes permiso para elegir la vigencia." };
   const tenantCotizacion = ctx.tenant;
@@ -83,12 +94,16 @@ export async function crearCotizacionManual(
   // SECURITY DEFINER, que estampa el autor estable (`creado_por_id`): la API ya
   // no escribe esa columna (211) ni, tras la 217, los servicios.
   const admin = createAdminClient();
-  const { data: id, error } = await admin.rpc("crear_cotizacion_manual", {
+  // #97: una dinámica B2B nace con su ACUERDO de comisión (aliado del catálogo por id + BNC explícita), en la misma transacción que la cotización.
+  const argsBase = {
     p_usuario_id: usuario.id,
     p_tenant: tenantCotizacion,
     p_cabecera: armado.cabecera as unknown as Json,
     p_servicios: armado.servicios as unknown as Json,
-  });
+  };
+  const { data: id, error } = acuerdo
+    ? await admin.rpc("crear_cotizacion_manual_con_acuerdo", { ...argsBase, p_aliado_id: acuerdo.aliadoId, p_bnc: acuerdo.bnc })
+    : await admin.rpc("crear_cotizacion_manual", argsBase);
   if (error || id == null) return { ok: false, error: mensajeEdicion39(error?.message, "No se pudo crear la cotización.") };
 
   // #42: alta del titular en el registro de personas desde lo que se acaba de persistir (las
@@ -329,7 +344,7 @@ async function sesionConversionAutorizada(): Promise<{ userId: string; rol: stri
  */
 function mensajeSeguro(msg: string): string {
   // #82: los rechazos propios del paquete dinámico llevan un código técnico (`DIN_82_X: frase`); al navegador va solo la frase.
-  const m = String(msg ?? "").trim().replace(/^DIN_82_[A-Z_]+:\s*/, "");
+  const m = String(msg ?? "").trim().replace(/^DIN_82_[A-Z_]+:\s*/, "").replace(/^ACUERDO_97:\s*/, "");
   if (!m) return "No se pudo convertir la cotización a contrato. Inténtalo de nuevo.";
   if (/COTIZACION_SALIDA_PASADA/.test(m)) return MENSAJE_SALIDA_PASADA;
   if (/COTIZACION_VENCIDA/.test(m)) return MENSAJE_COTIZACION_VENCIDA;

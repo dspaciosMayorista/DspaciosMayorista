@@ -58,6 +58,11 @@ export type EntradaNeto = {
   reconoceRecobro: boolean;
   /** Fracción de comisión del aliado (0.12 = 12 %); 4 decimales como la columna. */
   pct: number;
+  /**
+   * #97 (migración 286): true = regla nueva (el recobro sale de la base solo si la participación monetaria final es > 0). false/ausente = regla de siempre (decide la casilla).
+   * Debe reflejar `public.p97_regla_neto_activa()` (para cotizaciones posteriores al corte definitivo): la vista previa tiene que coincidir con lo que sella la base.
+   */
+  reglaParticipacion?: boolean;
 };
 
 export type FilaNeto = { orden: number; servicioId: number | null; tipo: string; pvp: bigint; descuento: bigint; neto: bigint };
@@ -160,12 +165,15 @@ export function calcularNetoHija(e: EntradaNeto): ResultadoNeto {
     if (s.tipo !== "aereo") { pesos.push(aCentavos(s.valor)); pos.push(i); }
   });
   if (ninos > B0) { pesos.push(ninos); pos.push(-1); }
-  if (!e.reconoceRecobro && recobro > B0) { pesos.push(recobro); pos.push(-2); }
+  // #97 (migración 286): con la regla nueva el recobro sale de la base y del reparto SOLO si la participación monetaria final del aliado es > 0; la casilla sola no decide.
+  // Sin ella (antes de activar o histórico) decide la casilla, como siempre. Espejo de p50_priv.calcular.
+  const participacion = e.reconoceRecobro ? recAli : B0;
+  const excluyeRecobro = e.reglaParticipacion === true ? participacion > B0 : e.reconoceRecobro;
+  if (!excluyeRecobro && recobro > B0) { pesos.push(recobro); pos.push(-2); }
   const sumaPesos = pesos.reduce((a, b) => a + b, B0);
 
-  const base = max0(precio - tiquetes - (e.reconoceRecobro ? recobro : B0));
+  const base = max0(precio - tiquetes - (excluyeRecobro ? recobro : B0));
   const ordinaria = sumaPesos > B0 && e.pct > 0 ? comisionOrdinaria(base, e.pct) : B0;
-  const participacion = e.reconoceRecobro ? recAli : B0;
   const descuento = ordinaria + participacion;
   const neto = precio - descuento;
 

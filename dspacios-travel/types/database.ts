@@ -3574,6 +3574,17 @@ export type Database = {
       };
       // ── #50 (migración 222): sello de la modalidad PVP/NETO de la hija manual ──
       // Solo lectura para service_role; las escribe `p50_priv.sellar_hija`.
+      // Migración 286 (#97): acuerdo de comisión del aliado (solo inserción). Solo lectura con service_role.
+      comision_plan: {
+        Row: {
+          cotizacion_id: number; version: number; tenant: string; economico_rev: number; aliado_id: number; tipo_asesor: "agencia" | "freelance"; moneda: "COP" | "USD";
+          pvp_total: number; bnc: number; recobro_total: number; recobro_aliado: number; base_comision: number; pct_comision: number; pct_origen: "aliado" | "general" | "defecto";
+          comision_ordinaria: number; total_aliado: number; creado_por_id: string | null; creado_en: string;
+        };
+        Insert: never;
+        Update: never;
+        Relationships: [];
+      };
       cotizacion_neto: {
         Row: {
           cotizacion_id: number;
@@ -4468,6 +4479,18 @@ export type Database = {
       // RPC SECURITY DEFINER, SOLO service_role. Errores: `EDICION_39_<X>: …`.
       crear_cotizacion_manual: {
         Args: { p_usuario_id: string; p_tenant: string; p_cabecera: Json; p_servicios: Json };
+        Returns: number;
+      };
+      // Migración 286 (#97): lo mismo + acuerdo de comisión del aliado (aliado por id, BNC explícita), en una sola transacción. SOLO service_role.
+      // Migración 286 (#97): ¿rige la regla NETO nueva (corte definitivo fijado)? SOLO service_role.
+      p97_regla_neto_activa: { Args: Record<string, never>; Returns: boolean };
+      // Migración 286 (#97): materializa UNA vez la comisión exigible desde el plan sellado cuando el contrato está confirmado (la llama la confirmación de #75). Idempotente.
+      materializar_comision_b2b: { Args: { p_numero: string }; Returns: number | null };
+      // Migración 286 (#97): interruptor EXPLÍCITO del ciclo de vida de la comisión (el manual nace pendiente solo con el ciclo encendido). SOLO service_role.
+      p97_ciclo_comision_activo: { Args: Record<string, never>; Returns: boolean };
+      p97_dependencias_comision_faltantes: { Args: Record<string, never>; Returns: string | null };
+      crear_cotizacion_manual_con_acuerdo: {
+        Args: { p_usuario_id: string; p_tenant: string; p_cabecera: Json; p_servicios: Json; p_aliado_id: number; p_bnc: number };
         Returns: number;
       };
       // ── Paquete 100 % dinámico (migración 274, #82). Errores: `DIN_82_<X>: …` ─────

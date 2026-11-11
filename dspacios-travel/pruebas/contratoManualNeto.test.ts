@@ -160,14 +160,16 @@ test("crearContrato: NETO es el último paso obligatorio (después de las hijas,
   assert.match(bloque, /Quedó como PVP con la comisión por definir/);
 });
 
-test("crearContrato: en PVP no se llama al RPC ni se crea comisión (sigue 'Por definir', #38)", () => {
+test("crearContrato: en PVP no usa el RPC de NETO; la comisión PVP (#97) sale del plan puro y solo con aliado", () => {
   const c = cuerpoCrearContrato();
   assert.match(c, /const modoCompraManual = input\.modoCompra \?\? "pvp";/);
   assert.match(c, /if \(modoCompraManual === "neto"\) \{/);
   assert.match(c, /if \(planNeto\) \{/);
   // El insert de la venta no escribe modalidad: nace PVP "Por definir".
   const insert = c.slice(c.indexOf('sb.from("ventas").insert({'), c.indexOf('registrarEtapa("crear_contrato", flujoId, "insert_venta"'));
-  assert.doesNotMatch(insert, /modo_compra|comision_b2b|comision_estado/);
+  // #97: modalidad/comisión se escriben SOLO con planPvp (PVP B2B con aliado, sin negociado); ninguna otra rama las escribe.
+  assert.match(insert, /\.\.\.\(planPvp \? \{ modo_compra: "comisionable", comision_b2b: planPvp\.comision, comision_estado: planPvp\.comisionEstado \} : \{\}\)/);
+  assert.equal((insert.match(/modo_compra/g) ?? []).length, 1);
 });
 
 test("vista previa: solo lectura, misma puerta que crearContrato, mismo plan que el servidor", () => {
