@@ -2428,6 +2428,12 @@ export type Database = {
           // derivó (solo auditoría, nunca se usa en el motor de liquidación).
           precio_final_autoritativo: boolean;
           temporada_base: string | null;
+          // Migración 293 (#43/#60, PROPUESTA — no aplicada). Grupo de días de la vigencia;
+          // NULL = todos los días (todo el dato actual). Hoy SIEMPRE NULL: la base rechaza
+          // tarifas con grupo mientras los grupos estén inactivos. `grupo_dias` es la copia
+          // de los días del grupo que fija el trigger (no se escribe desde la app).
+          grupo_id: string | null;
+          grupo_dias: number[] | null;
         };
         Insert: {
           id?: number; hotel_id: number; tipo_habitacion?: string | null; alimentacion?: string | null;
@@ -2438,8 +2444,24 @@ export type Database = {
           edad_infante_min?: number | null; edad_infante_max?: number | null;
           edad_nino_min?: number | null; edad_nino_max?: number | null;
           precio_final_autoritativo?: boolean; temporada_base?: string | null;
+          grupo_id?: string | null;
         };
         Update: Partial<Database["public"]["Tables"]["tarifa_hotel"]["Insert"]>;
+        Relationships: [];
+      };
+      // Migración 293 (#43/#60, PROPUESTA — no aplicada). Grupos de días (1 = lunes … 7 = domingo)
+      // de una vigencia. INACTIVOS: `activo` solo admite false (check en la base) hasta que el
+      // motor los soporte; ningún código los lee todavía.
+      hotel_temporada_grupos: {
+        Row: {
+          id: string; temporada_id: number; nombre: string; dias: number[];
+          activo: boolean; creado_en: string; actualizado_en: string;
+        };
+        Insert: {
+          id?: string; temporada_id: number; nombre: string; dias: number[];
+          activo?: false; creado_en?: string; actualizado_en?: string;
+        };
+        Update: Partial<Omit<Database["public"]["Tables"]["hotel_temporada_grupos"]["Insert"], "temporada_id">>;
         Relationships: [];
       };
       // Migración 203 (PROPUESTA — no aplicada todavía en ningún entorno).

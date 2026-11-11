@@ -28,6 +28,7 @@ import {
   liquidarHotelNoches, liquidarHotelNochesConTemporadas, marcar, componerTarifa, precioMenorDeDos, toTemporadaRango, minNochesAplicable,
   factorLiquidacion, normRangos, hoyISO, type TemporadaRango,
 } from "../calc/paquetes.ts";
+import { claveFilaTarifa, clavesPrecioFinal, netosDeColumna } from "../calc/netosPorTemporada.ts";
 import {
   resolverReglaEdadEstadiaSegura, type FilaTarifaHotelEdadCruda, type ReglaEdadGeneralParcial,
 } from "../calc/reglaEdadTarifa.ts";
@@ -136,6 +137,8 @@ export type FilaTemporadaHotelRaw = {
   condicion_pago_tipo?: string | null;
   condicion_pago_pct_inicial?: number | null;
   condicion_pago_dias_saldo?: number | null;
+  // #43/#60: grupos de días incrustados en la misma lectura (solo cuentan los activos).
+  hotel_temporada_grupos?: unknown;
 };
 export type FilaTarifaHotelRaw = Record<string, unknown>; // tipo_habitacion, alimentacion, temporada, neto_*
 export type FilaServicioIncluidoRaw = {
@@ -297,7 +300,7 @@ export function evaluarHotelPorFechas(
     const reg = (r.alimentacion as string) ?? "";
     const key = `${cat}|||${reg}`;
     if (!grupos.has(key)) grupos.set(key, new Map());
-    grupos.get(key)!.set((r.temporada as string) ?? "", r);
+    grupos.get(key)!.set(claveFilaTarifa(r), r); // #43/#60: nombre, o nombre + grupo de días
   }
 
   const combos: ComboCotizado[] = [];
@@ -318,11 +321,10 @@ export function evaluarHotelPorFechas(
     // de abajo para que nunca recalculen el descuento desde la base. Vacío en
     // filas legacy/base (comportamiento histórico sin cambios).
     const precioFinalTemporadas = new Set<string>();
-    for (const [temp, row] of tempMap) if (row.precio_final_autoritativo === true) precioFinalTemporadas.add(temp);
+    for (const k of clavesPrecioFinal(tempMap)) precioFinalTemporadas.add(k);
     for (const acom of ACOM_ALL) {
       const col = COL_NETO[acom];
-      const netoPorTemporada: Record<string, number | null> = {};
-      for (const [temp, row] of tempMap) { const v = row[col]; netoPorTemporada[temp] = v == null ? null : Number(v); }
+      const netoPorTemporada = netosDeColumna(tempMap, col);
       const esRoom = acom !== "nino" && acom !== "nino2" && acom !== "infante";
       let costoHotel: number | null;
       let temporadasAcom: string[] = [];

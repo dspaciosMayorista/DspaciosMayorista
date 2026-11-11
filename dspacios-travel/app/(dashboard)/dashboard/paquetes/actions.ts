@@ -23,6 +23,7 @@ import {
   toTemporadaRango,
   type TemporadaRango,
 } from "@/lib/calc/paquetes";
+import { claveFilaTarifa, clavesPrecioFinal, netosDeColumna } from "@/lib/calc/netosPorTemporada";
 import { hoyBogota } from "@/lib/reservar/origen";
 import { claveComposicion, guardarComposicionesTarifario, origenClaveDeFila, type ComposicionCombo } from "@/lib/tarifario/composicionTarifario";
 import { createAdminClient } from "@/lib/supabase/admin";
@@ -1111,7 +1112,7 @@ export async function generarTarifario(paqueteId: number, opciones: OpcionesGene
   const tarifasPorHotel = new Map<number, TarifaRow[]>();
   if (hotelIds.length) {
     const [{ data: temps }, { data: tarifas }] = await Promise.all([
-      sb.from("hotel_temporadas").select("hotel_id, nombre, fecha_inicio, fecha_fin, prioridad, compra_inicio, compra_fin, tipo, descuento_valor, rangos, blackouts, regimen_restringido").in("hotel_id", hotelIds).order("orden").order("id"),
+      sb.from("hotel_temporadas").select("hotel_id, id, nombre, fecha_inicio, fecha_fin, prioridad, compra_inicio, compra_fin, tipo, descuento_valor, rangos, blackouts, regimen_restringido, hotel_temporada_grupos(id, dias, activo)").in("hotel_id", hotelIds).order("orden").order("id"),
       sb.from("tarifa_hotel").select("*").in("hotel_id", hotelIds),
     ]);
     for (const t of temps ?? []) {
@@ -1297,7 +1298,7 @@ export async function generarTarifario(paqueteId: number, opciones: OpcionesGene
         const reg = (r.alimentacion as string) ?? "";
         const key = `${cat}|||${reg}`;
         if (!combos.has(key)) combos.set(key, new Map());
-        combos.get(key)!.set((r.temporada as string) ?? "", r);
+        combos.get(key)!.set(claveFilaTarifa(r), r); // #43/#60: nombre, o nombre + grupo de días
       }
       for (const [key, tempMap] of combos) {
         const [categoria, regimen] = key.split("|||");
@@ -1309,7 +1310,7 @@ export async function generarTarifario(paqueteId: number, opciones: OpcionesGene
         // suplemento propio se recalcule desde su temporada base al congelar
         // el PVP del tarifario. Vacío en combos legacy/sin promociones.
         const precioFinalTemporadas = new Set<string>();
-        for (const [temp, row] of tempMap) if (row.precio_final_autoritativo === true) precioFinalTemporadas.add(temp);
+        for (const k of clavesPrecioFinal(tempMap)) precioFinalTemporadas.add(k);
         let hayHabitacion = false;
         let hayInfante = false;
         const netosCombo: Record<string, number> = {};
@@ -1381,11 +1382,7 @@ export async function generarTarifario(paqueteId: number, opciones: OpcionesGene
         };
         for (const acom of ACOMODACIONES) {
           const col = COL_NETO[acom];
-          const netoPorTemporada: Record<string, number | null> = {};
-          for (const [temp, row] of tempMap) {
-            const v = row[col];
-            netoPorTemporada[temp] = v == null ? null : Number(v);
-          }
+          const netoPorTemporada = netosDeColumna(tempMap, col);
           // Procedencia REAL del precio ganador (migración 180) — SIEMPRE
           // sale de la MISMA búsqueda que produce el total, nunca se infiere
           // después de `fecha_ida` (en `masBarato` el precio ganador puede

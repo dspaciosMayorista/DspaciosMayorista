@@ -9,6 +9,7 @@ import type { Database } from "@/types/database";
 // de build — pero deja este archivo testeable con ejecución real, mismo
 // patrón que ya usan otros módulos puros de este directorio.
 import { liquidarHotelNoches, liquidarHotelMasBarato, toTemporadaRango, type TemporadaRango } from "../calc/paquetes.ts";
+import { claveFilaTarifa, netosDeColumna } from "../calc/netosPorTemporada.ts";
 // Import RELATIVO por la misma razón que el de arriba: `@/` no resuelve bajo
 // `node --test` plano. `paginacion.ts` solo tiene imports de TIPO (se borran
 // con `--experimental-strip-types`), así que el relativo es equivalente en
@@ -27,10 +28,14 @@ export type TempRow = {
   prioridad: number | null; compra_inicio: string | null; compra_fin: string | null;
   tipo: string | null; descuento_valor: number | null; rangos: unknown; blackouts: unknown; min_noches: number | null;
   regimen_restringido: string | null;
+  // #43/#60: id de la vigencia y sus grupos de días (incrustados en la misma lectura).
+  id?: number | null;
+  hotel_temporada_grupos?: unknown;
 };
 export type TarRow = {
   hotel_id: number; tipo_habitacion: string | null; alimentacion: string | null; temporada: string | null;
   neto_sencilla: number | null; neto_doble: number | null; neto_triple: number | null; neto_multiple: number | null;
+  grupo_id?: string | null;
 };
 
 const ROOM_COLS: (keyof TarRow)[] = ["neto_sencilla", "neto_doble", "neto_triple", "neto_multiple"];
@@ -50,15 +55,11 @@ function buildVigenciaChecker(temps: TempRow[], tarifas: TarRow[]) {
   for (const r of tarifas) {
     const key = `${r.hotel_id}|||${r.tipo_habitacion ?? ""}|||${r.alimentacion ?? ""}`;
     const m = grupos.get(key) ?? new Map<string, TarRow>();
-    m.set(r.temporada ?? "", r);
+    m.set(claveFilaTarifa(r), r); // #43/#60: nombre, o nombre + grupo de días
     grupos.set(key, m);
   }
   const cache = new Map<string, boolean>();
-  const netoMap = (tempMap: Map<string, TarRow>, col: keyof TarRow): Record<string, number | null> => {
-    const out: Record<string, number | null> = {};
-    for (const [temp, row] of tempMap) { const v = row[col]; out[temp] = v == null ? null : Number(v); }
-    return out;
-  };
+  const netoMap = (tempMap: Map<string, TarRow>, col: keyof TarRow): Record<string, number | null> => netosDeColumna(tempMap, col);
   return {
     bloqueo(hotelId: number, categoria: string | null, regimen: string | null, fechaIda: string, numNoches: number): boolean {
       const ck = `b|${hotelId}|${categoria ?? ""}|${regimen ?? ""}|${fechaIda}|${numNoches}`;
@@ -161,7 +162,7 @@ export async function filtrarTarifarioVencidas<T extends FilaConVigencia>(
     ejecutarConsultaPaginada<TempRow>((from, hasta) =>
       admin
         .from("hotel_temporadas")
-        .select("hotel_id, nombre, fecha_inicio, fecha_fin, prioridad, compra_inicio, compra_fin, tipo, descuento_valor, rangos, blackouts, min_noches, regimen_restringido")
+        .select("hotel_id, id, nombre, fecha_inicio, fecha_fin, prioridad, compra_inicio, compra_fin, tipo, descuento_valor, rangos, blackouts, min_noches, regimen_restringido, hotel_temporada_grupos(id, dias, activo)")
         .in("hotel_id", hIds)
         .order("orden")
         .order("id")
@@ -170,7 +171,7 @@ export async function filtrarTarifarioVencidas<T extends FilaConVigencia>(
     ejecutarConsultaPaginada<TarRow>((from, hasta) =>
       admin
         .from("tarifa_hotel")
-        .select("hotel_id, tipo_habitacion, alimentacion, temporada, neto_sencilla, neto_doble, neto_triple, neto_multiple")
+        .select("hotel_id, tipo_habitacion, alimentacion, temporada, neto_sencilla, neto_doble, neto_triple, neto_multiple, grupo_id")
         .in("hotel_id", hIds)
         .order("id")
         .range(from, hasta)
