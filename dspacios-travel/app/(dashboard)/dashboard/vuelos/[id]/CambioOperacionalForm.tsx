@@ -1,5 +1,6 @@
 "use client";
 
+// identidad:n/a — registrarCambioOperacional solo escribe bloqueos_vuelo y su historial, no tablas de contrato, por eso este componente no recibe identidad.
 import { DateInput } from "@/components/ui/DateInput";
 import { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";

@@ -172,8 +172,9 @@ describe("cableado: ninguna lectura de abonos o saldo usa la moneda de la oferta
   test("abonos: registrar, editar y recalcular usan la moneda y el total de COBRO", () => {
     const src = leer("app/(dashboard)/dashboard/contratos/actions.ts");
     assert.equal((src.match(/cobroDeVenta\(venta\)/g) ?? []).length >= 3, true);
-    assert.match(src, /alcanzaMinimo = totalAbonado >= cobro\.total \* pctMin/);
-    assert.ok(!/alcanzaMinimo = totalAbonado >= \(venta\?\.precio_venta/.test(src), "el mínimo para confirmar ya no se mide contra el precio de la oferta");
+    // 288 Parte 3: el mínimo para confirmar lo decide la base con la regla única (condición congelada / total NETO / legacy en la moneda de COBRO); no queda un 30 % paralelo en la app.
+    assert.match(src, /rpc\("reintentar_confirmacion_pago"/);
+    assert.ok(!/alcanzaMinimo|pctMin/.test(src), "la app ya no mide el mínimo con su propio porcentaje");
   });
   test("cartera, estado de cuenta, ficha, portal y documentos del contrato leen el cobro", () => {
     for (const rel of [

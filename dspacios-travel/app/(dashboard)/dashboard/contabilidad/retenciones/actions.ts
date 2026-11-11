@@ -1,6 +1,9 @@
 "use server";
 
 import { createClient } from "@/lib/supabase/server";
+import { parseIdentidad, mensajeSiIdentidad, type IdentidadContrato } from "@/lib/contrato/identidad";
+import { uidEmbebido } from "@/lib/contrato/uidEmbebido";
+import { identidadDe } from "@/lib/contrato/identidad";
 import { revalidatePath } from "next/cache";
 import { getTenant } from "@/lib/tenant.server";
 import { mensajeGuardaSaldo } from "@/lib/finanzas/guardaSaldoCxp";
@@ -12,6 +15,8 @@ type Result = { ok: true } | { ok: false; error: string };
 
 export type CuentaContrato = {
   id: number;
+  /** Identidad del contrato, leída en la MISMA consulta que trajo la cuenta (embed ventas → contrato_uid); se reenvía a las acciones de escritura. */
+  identidad: IdentidadContrato;
   proveedor: string | null;
   tipo_proveedor: string | null;
   servicio: string | null;
@@ -47,16 +52,17 @@ export type InformeRetencionRow = {
 
 // Busca las cuentas por pagar de un contrato — para elegir por TIPO de
 // proveedor (hotel/aéreo/receptivo/...) en vez del proveedor puntual.
+// identidad:n/a — solo lectura; devuelve la identidad (contrato_uid) leída en esta misma consulta para las acciones de escritura
 export async function buscarCuentasPorContrato(
   numeroContrato: string
 ): Promise<{ ok: true; cuentas: CuentaContrato[] } | { ok: false; error: string }> {
   const numero = numeroContrato.trim();
   if (!numero) return { ok: false, error: "Escribe un número de contrato." };
-  const sb = await createClient();
+  const sb = await createClient(); // identidad:n/a — solo lectura
   const tenant = await getTenant();
   const { data: cxp, error } = await sb
     .from("cuentas_por_pagar")
-    .select("id, proveedor, tipo_proveedor, servicio, valor_total, moneda, aplica_retencion, pct_retencion")
+    .select("id, proveedor, tipo_proveedor, servicio, valor_total, moneda, aplica_retencion, pct_retencion, ventas(contrato_uid)")
     .eq("numero_contrato", numero)
     .eq("tenant", tenant)
     .order("id");
@@ -81,6 +87,7 @@ export async function buscarCuentasPorContrato(
     const valorTotal = Number(c.valor_total) || 0;
     return {
       id: c.id,
+      identidad: identidadDe(numero, uidEmbebido((c as { ventas?: unknown }).ventas)),
       proveedor: c.proveedor,
       tipo_proveedor: c.tipo_proveedor,
       servicio: c.servicio,
@@ -95,10 +102,11 @@ export async function buscarCuentasPorContrato(
   return { ok: true, cuentas };
 }
 
+// identidad:n/a — solo lectura
 export async function listarRetenciones(
   cuentaId: number
 ): Promise<{ ok: true; retenciones: RetencionRow[] } | { ok: false; error: string }> {
-  const sb = await createClient();
+  const sb = await createClient(); // identidad:n/a — solo lectura
   const { data, error } = await sb
     .from("retenciones_cxp")
     .select("id, valor, base_gravable, fecha_practica, mes_declaracion, observaciones")
@@ -118,18 +126,18 @@ export async function registrarRetencion(input: {
   fechaPractica: string;
   mesDeclaracion: string;
   observaciones?: string;
-}): Promise<Result> {
+}, identidad: IdentidadContrato): Promise<Result> {
   if (!(input.valor > 0)) return { ok: false, error: "El valor debe ser mayor a 0." };
   if (!input.fechaPractica) return { ok: false, error: "Indica la fecha en que se practicó la retención." };
   if (!/^\d{4}-\d{2}$/.test(input.mesDeclaracion || "")) return { ok: false, error: "Indica el mes en que se declara a la DIAN." };
 
-  const sb = await createClient();
+  const sb = await createClient(parseIdentidad(identidad));
   const { data: cxp, error: e1 } = await sb
     .from("cuentas_por_pagar")
     .select("id, numero_contrato, valor_total, tipo_proveedor, proveedor")
     .eq("id", input.cuentaId)
     .maybeSingle();
-  if (e1) return { ok: false, error: e1.message };
+  if (e1) return { ok: false, error: mensajeSiIdentidad(e1) ?? e1.message };
   if (!cxp) return { ok: false, error: "Cuenta por pagar no encontrada." };
 
   // El control de saldo es atómico en PostgreSQL (migración 228, trigger sobre retenciones_cxp):
@@ -143,7 +151,7 @@ export async function registrarRetencion(input: {
     observaciones: input.observaciones?.trim() || null,
     tenant: await getTenant(),
   }).select("id").single();
-  if (error) return { ok: false, error: mensajeGuardaSaldo(error, "retencion") ?? error.message };
+  if (error) return { ok: false, error: mensajeSiIdentidad(error) ?? mensajeGuardaSaldo(error, "retencion") ?? error.message };
   if (!nueva) return { ok: false, error: "No se pudo registrar la retención." };
   await postearAsientoRetencion({
     retencionId: nueva.id, tipoProveedor: cxp.tipo_proveedor, proveedor: cxp.proveedor, valor: input.valor, fecha: input.fechaPractica,
@@ -155,11 +163,11 @@ export async function registrarRetencion(input: {
   return { ok: true };
 }
 
-export async function eliminarRetencion(id: number): Promise<Result> {
-  const sb = await createClient();
+export async function eliminarRetencion(id: number, identidad: IdentidadContrato): Promise<Result> {
+  const sb = await createClient(parseIdentidad(identidad));
   const { data: r } = await sb.from("retenciones_cxp").select("cuenta_por_pagar_id").eq("id", id).maybeSingle();
   const { error } = await sb.from("retenciones_cxp").delete().eq("id", id);
-  if (error) return { ok: false, error: error.message };
+  if (error) return { ok: false, error: mensajeSiIdentidad(error) ?? error.message };
   await reemplazarAsiento("retencion", `retencion:${id}`, null);
   if (r?.cuenta_por_pagar_id) {
     const { data: cxp } = await sb.from("cuentas_por_pagar").select("numero_contrato").eq("id", r.cuenta_por_pagar_id).maybeSingle();
@@ -197,14 +205,15 @@ function derivarBaseGravable(observaciones: string | null, valor: number, pctRet
 // en blanco (de antes de la migración 128) — no pide nada nuevo, usa lo que
 // ya está guardado (ver `derivarBaseGravable`). Deja en blanco las que de
 // verdad no se puedan derivar (sin % de retención en ningún lado).
+// identidad:n/a — masivo: la identidad de CADA fila sale de su propio embed (misma consulta), no de una pantalla de un solo contrato
 export async function recalcularBasesFaltantes(): Promise<
   { ok: true; actualizadas: number; sinDato: number } | { ok: false; error: string }
 > {
-  const sb = await createClient();
+  const sb = await createClient(); // identidad:n/a — lectura; cada UPDATE usa un cliente con la identidad de su fila
   const tenant = await getTenant();
   const { data: pendientes, error: e1 } = await sb
     .from("retenciones_cxp")
-    .select("id, valor, observaciones, cuenta_por_pagar_id")
+    .select("id, valor, observaciones, cuenta_por_pagar_id, cuentas_por_pagar(numero_contrato, ventas(contrato_uid))")
     .eq("tenant", tenant)
     .is("base_gravable", null);
   if (e1) return { ok: false, error: e1.message };
@@ -218,7 +227,9 @@ export async function recalcularBasesFaltantes(): Promise<
   for (const r of pendientes) {
     const base = derivarBaseGravable(r.observaciones, Number(r.valor) || 0, pctPorCuenta.get(r.cuenta_por_pagar_id) ?? 0);
     if (base == null) { sinDato++; continue; }
-    const { error } = await sb.from("retenciones_cxp").update({ base_gravable: base }).eq("id", r.id);
+    const cx = (r as { cuentas_por_pagar?: { numero_contrato?: string | null; ventas?: unknown } | null }).cuentas_por_pagar;
+    const sbFila = await createClient(identidadDe(cx?.numero_contrato, uidEmbebido(cx?.ventas)));
+    const { error } = await sbFila.from("retenciones_cxp").update({ base_gravable: base }).eq("id", r.id);
     if (!error) actualizadas++; else sinDato++;
   }
   revalidatePath("/dashboard/contabilidad/retenciones");
@@ -227,8 +238,9 @@ export async function recalcularBasesFaltantes(): Promise<
 
 // Meses de declaración con retenciones registradas — para el selector del
 // informe (más reciente primero).
+// identidad:n/a — solo lectura
 export async function listarMesesDeclaracion(): Promise<{ ok: true; meses: string[] } | { ok: false; error: string }> {
-  const sb = await createClient();
+  const sb = await createClient(); // identidad:n/a — solo lectura
   const tenant = await getTenant();
   const { data, error } = await sb.from("retenciones_cxp").select("mes_declaracion").eq("tenant", tenant);
   if (error) return { ok: false, error: error.message };
@@ -240,11 +252,12 @@ export async function listarMesesDeclaracion(): Promise<{ ok: true; meses: strin
 // practicadas cuyo mes de declaración es el indicado, con el contrato y
 // proveedor de origen (vía su cuenta por pagar) — reúne base gravable y
 // valor retenido, que es lo que se llena en el formulario 350.
+// identidad:n/a — solo lectura
 export async function informeMensualRetenciones(
   mes: string
 ): Promise<{ ok: true; filas: InformeRetencionRow[] } | { ok: false; error: string }> {
   if (!/^\d{4}-\d{2}$/.test(mes || "")) return { ok: false, error: "Indica un mes válido (YYYY-MM)." };
-  const sb = await createClient();
+  const sb = await createClient(); // identidad:n/a — solo lectura
   const tenant = await getTenant();
   const { data, error } = await sb
     .from("retenciones_cxp")

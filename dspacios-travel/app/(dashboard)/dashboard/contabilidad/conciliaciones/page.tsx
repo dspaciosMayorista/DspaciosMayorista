@@ -2,6 +2,8 @@ import { createClient } from "@/lib/supabase/server";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { getTenant } from "@/lib/tenant.server";
 import { sumarRetencionesPorCuenta } from "@/lib/finanzas/retenciones";
+import { identidadDe } from "@/lib/contrato/identidad";
+import { uidEmbebido } from "@/lib/contrato/uidEmbebido";
 import { ConciliacionesClient, type ExtractoItem, type SistemaItem, type Cruce } from "./ConciliacionesClient";
 
 export const dynamic = "force-dynamic";
@@ -48,10 +50,17 @@ export default async function ConciliacionesPage() {
     traerTodo<FilaExtracto>(sb, "conciliacion_extracto", tenant),
     sb.from("conciliacion").select("*").eq("tenant", tenant).order("created_at", { ascending: false }),
     sb.from("conciliacion_sistema").select("*"),
-    sb.from("abonos").select("id, numero_contrato, fecha_abono, valor_abono, monto_cop").eq("tenant", tenant),
-    sb.from("cuentas_por_pagar").select("id, proveedor, tipo_proveedor, servicio, numero_contrato, valor_total, moneda, fecha_obligacion, fecha_vencimiento").eq("tenant", tenant),
+    sb.from("abonos").select("id, numero_contrato, fecha_abono, valor_abono, monto_cop, ventas(contrato_uid)").eq("tenant", tenant),
+    sb.from("cuentas_por_pagar").select("id, proveedor, tipo_proveedor, servicio, numero_contrato, valor_total, moneda, fecha_obligacion, fecha_vencimiento, ventas(contrato_uid)").eq("tenant", tenant),
     sb.from("contabilidad_movimientos").select("id, fecha, tipo, concepto, valor").eq("tenant", tenant),
   ]);
+
+  // #75: uid por contrato, leído en las MISMAS consultas de abonos y cuentas por pagar (embed → ventas). Es lo que usan los ítems del sistema y los cruces.
+  // Los cruces de `conciliacion_sistema` no tienen FK a `ventas`: su identidad sale de estas mismas lecturas por número (ver informe: sin embed posible).
+  const uidPorContrato = new Map<string, string | null>();
+  for (const a of abonos ?? []) uidPorContrato.set(a.numero_contrato as string, uidEmbebido((a as { ventas?: unknown }).ventas));
+  for (const c of cxp ?? []) uidPorContrato.set(c.numero_contrato as string, uidEmbebido((c as { ventas?: unknown }).ventas));
+  const idDe = (n: string | null) => (n ? identidadDe(n, uidPorContrato.get(n)) : identidadDe(null, null));
 
   const usados = new Set((concSis ?? []).map((s) => s.ref as string));
 
@@ -84,7 +93,7 @@ export default async function ConciliacionesPage() {
     if (usados.has(ref)) continue;
     const cop = Number(a.monto_cop) || Number(a.valor_abono) || 0;
     if (cop <= 0) continue;
-    sistema.push({ ref, tipo: "Abono cartera", descripcion: `Abono ${a.numero_contrato}`, fecha: (a.fecha_abono as string) ?? null, valor: cop, numeroContrato: (a.numero_contrato as string) ?? null, categoria: "cartera" });
+    sistema.push({ ref, tipo: "Abono cartera", descripcion: `Abono ${a.numero_contrato}`, fecha: (a.fecha_abono as string) ?? null, valor: cop, numeroContrato: (a.numero_contrato as string) ?? null, identidad: idDe(a.numero_contrato as string), categoria: "cartera" });
   }
   for (const c of cxp ?? []) {
     for (const p of pagosPorCuenta.get(c.id) ?? []) {
@@ -92,7 +101,7 @@ export default async function ConciliacionesPage() {
       const ref = `pago:${c.id}:${p.id}`;
       if (usados.has(ref)) continue;
       const trm = Number(p.trm) || 1;
-      sistema.push({ ref, tipo: "Pago proveedor", descripcion: `Pago ${c.proveedor ?? c.numero_contrato}`, fecha: p.fecha, valor: -(p.valor * trm), numeroContrato: (c.numero_contrato as string) ?? null, categoria: "proveedor" });
+      sistema.push({ ref, tipo: "Pago proveedor", descripcion: `Pago ${c.proveedor ?? c.numero_contrato}`, fecha: p.fecha, valor: -(p.valor * trm), numeroContrato: (c.numero_contrato as string) ?? null, identidad: idDe(c.numero_contrato as string), categoria: "proveedor" });
     }
   }
   for (const m of movs ?? []) {
@@ -100,7 +109,7 @@ export default async function ConciliacionesPage() {
     if (usados.has(ref)) continue;
     const esIngreso = (m.tipo as string) === "ingreso";
     const valorAbs = Math.abs(Number(m.valor) || 0);
-    sistema.push({ ref, tipo: esIngreso ? "Ingreso" : "Egreso", descripcion: m.concepto, fecha: (m.fecha as string) ?? null, valor: esIngreso ? valorAbs : -valorAbs, numeroContrato: null, categoria: esIngreso ? "cartera" : "proveedor" });
+    sistema.push({ ref, tipo: esIngreso ? "Ingreso" : "Egreso", descripcion: m.concepto, fecha: (m.fecha as string) ?? null, valor: esIngreso ? valorAbs : -valorAbs, numeroContrato: null, identidad: idDe(null), categoria: esIngreso ? "cartera" : "proveedor" });
   }
   // Saldos pendientes de proveedor (sugeridos, no ligados a un pago ya
   // registrado) — no se filtran por `usados`: su presencia depende del saldo
@@ -118,6 +127,7 @@ export default async function ConciliacionesPage() {
       fecha: (c.fecha_vencimiento as string | null) ?? (c.fecha_obligacion as string | null) ?? null,
       valor: -saldo,
       numeroContrato: (c.numero_contrato as string) ?? null,
+      identidad: idDe(c.numero_contrato as string),
       categoria: "proveedor",
     });
   }
@@ -132,7 +142,7 @@ export default async function ConciliacionesPage() {
     const k = s.conciliacion_id as number;
     if (!sisPorConc.has(k)) sisPorConc.set(k, []);
     const valorSis = Number(s.valor) || 0;
-    sisPorConc.get(k)!.push({ ref: s.ref, tipo: "", descripcion: s.descripcion ?? "", fecha: (s.fecha as string) ?? null, valor: valorSis, numeroContrato: s.numero_contrato ?? null, categoria: valorSis < 0 ? "proveedor" : "cartera" });
+    sisPorConc.get(k)!.push({ ref: s.ref, tipo: "", descripcion: s.descripcion ?? "", fecha: (s.fecha as string) ?? null, valor: valorSis, numeroContrato: s.numero_contrato ?? null, identidad: idDe(s.numero_contrato ?? null), categoria: valorSis < 0 ? "proveedor" : "cartera" });
   }
   const extPorConc = new Map<number, ExtractoItem[]>();
   for (const e of extracto ?? []) {

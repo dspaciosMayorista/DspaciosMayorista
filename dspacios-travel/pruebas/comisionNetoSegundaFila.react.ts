@@ -84,13 +84,13 @@ function filasDeComisiones(el: unknown): FilaVista[] {
 test("B2B: en un contrato NETO no se abona la segunda fila (ni la histórica con abonos), aunque se llame la acción directo", async () => {
   const bd = usarBD(semilla(true));
   for (const id of [82, 83, 81]) {
-    const r = await registrarPagoComisionB2B(id, 5_000, `${MES}-09`);
+    const r = await registrarPagoComisionB2B(id, 5_000, `${MES}-09`, {});
     assert.equal(r.ok, false, `fila ${id}`);
     assert.match((r as { error: string }).error, /neta/);
   }
   assert.equal(bd.filas("comision_b2b_pagos").length, 2, "no entró ningún abono nuevo");
   // Control: en un contrato comisionable el abono B2B sigue entrando.
-  assert.equal((await registrarPagoComisionB2B(84, 5_000, `${MES}-09`)).ok, true);
+  assert.equal((await registrarPagoComisionB2B(84, 5_000, `${MES}-09`, {})).ok, true);
   assert.equal(bd.filas("comision_b2b_pagos").length, 3);
 });
 

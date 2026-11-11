@@ -152,7 +152,10 @@ function formulario(bytes: Buffer | Uint8Array, nombre: string, tipoDeclarado: s
   return fd;
 }
 const sha = (b: Buffer | Uint8Array) => createHash("sha256").update(b).digest("hex");
-const subir = (uid: string, numero: string, bytes = pdf(), nombre = "comprobante.pdf", tipo = "application/pdf") => { uidSesion = uid; return acc.subirSoporte(formulario(bytes, nombre, tipo, { numero })); };
+// Identidad que declararía la pantalla: el contrato_uid VIGENTE del contrato (o del contrato del soporte).
+const idnC = (numero: string) => { const u = sql(`select contrato_uid from public.ventas where numero_contrato = '${numero}'`).trim(); return u ? { [numero]: u } : {}; };
+const idnS = (id: number) => { const n = sql(`select numero_contrato from public.contrato_soportes_pago where id = ${id}`).trim(); return n ? idnC(n) : {}; };
+const subir = (uid: string, numero: string, bytes = pdf(), nombre = "comprobante.pdf", tipo = "application/pdf") => { uidSesion = uid; return acc.subirSoporte(formulario(bytes, nombre, tipo, { numero }), idnC(numero)); };
 const filas = (num: string) => sql(`select id || '|' || vigente || '|' || coalesce(motivo_retiro,'') || '|' || sha256 || '|' || path from public.contrato_soportes_pago where numero_contrato = '${num}' order by id`).split("\n").filter(Boolean).map((l) => { const [id, vigente, motivo, h, path] = l.split("|"); return { id: Number(id), vigente: vigente === "true", motivo, sha: h, path }; });
 const vigentes = (num: string) => filas(num).filter((f) => f.vigente);
 const objetosDe = (num: string) => [...almacen.keys()].filter((k) => k.startsWith(`soportes-pago/${num}/`));
@@ -267,31 +270,31 @@ describe("límite = abonos, reemplazo y retiro con historial", () => {
   test("reemplazar: conserva el archivo y la fila anteriores, el conteo no cambia, y un ajeno no puede", async () => {
     const [primero] = vigentes("DTM-8101");
     uidSesion = U.B;
-    const ajeno = await acc.reemplazarSoporte(formulario(pdf(), "x.pdf", "application/pdf", { id: String(primero.id) }));
+    const ajeno = await acc.reemplazarSoporte(formulario(pdf(), "x.pdf", "application/pdf", { id: String(primero.id) }), idnS(primero.id));
     assert.equal(ajeno.ok, false, "otro aliado no reemplaza un soporte ajeno");
     uidSesion = U.A;
     const nuevo = pdf(700);
-    const r = await acc.reemplazarSoporte(formulario(nuevo, "corregido.pdf", "application/pdf", { id: String(primero.id) }));
+    const r = await acc.reemplazarSoporte(formulario(nuevo, "corregido.pdf", "application/pdf", { id: String(primero.id) }), idnS(primero.id));
     assert.equal(nombreDe(r), "ok");
     assert.equal(vigentes("DTM-8101").length, 3, "reemplazar no cambia la cantidad vigente");
     const anterior = filas("DTM-8101").find((f) => f.id === primero.id)!;
     assert.deepEqual([anterior.vigente, anterior.motivo], [false, "reemplazo"]);
     assert.ok(almacen.has(`soportes-pago/${primero.path}`), "el archivo anterior sigue en Storage");
     assert.ok(vigentes("DTM-8101").some((f) => f.sha === sha(nuevo)));
-    const otra = await acc.reemplazarSoporte(formulario(pdf(), "otra.pdf", "application/pdf", { id: String(primero.id) }));
+    const otra = await acc.reemplazarSoporte(formulario(pdf(), "otra.pdf", "application/pdf", { id: String(primero.id) }), idnS(primero.id));
     assert.equal(otra.ok, false, "reemplazar dos veces la misma versión falla con mensaje, sin duplicar");
   });
 
   test("retirar: conserva archivo e historial; no se retira dos veces; un ajeno no retira", async () => {
     const [v] = vigentes("DTM-8101");
     uidSesion = U.C;
-    assert.equal((await acc.retirarSoporte(v.id)).ok, false);
+    assert.equal((await acc.retirarSoporte(v.id, undefined, idnS(v.id))).ok, false);
     uidSesion = U.A;
-    assert.equal(nombreDe(await acc.retirarSoporte(v.id, "se cargó por error")), "ok");
+    assert.equal(nombreDe(await acc.retirarSoporte(v.id, "se cargó por error", idnS(v.id))), "ok");
     const f = filas("DTM-8101").find((x) => x.id === v.id)!;
     assert.deepEqual([f.vigente, f.motivo], [false, "retiro"]);
     assert.ok(almacen.has(`soportes-pago/${v.path}`), "el archivo retirado se conserva");
-    assert.equal((await acc.retirarSoporte(v.id)).ok, false);
+    assert.equal((await acc.retirarSoporte(v.id, undefined, idnS(v.id))).ok, false);
     assert.equal(vigentes("DTM-8101").length, 2);
   });
 });
@@ -310,10 +313,10 @@ describe("contrato EXCEDIDO tras anular un abono (RPC real de la 248)", () => {
     assert.equal((await subir(U.A, "DTM-8101")).ok, false, "excedido: no se agregan nuevos");
     const [v] = vigentes("DTM-8101");
     uidSesion = U.A;
-    assert.equal(nombreDe(await acc.reemplazarSoporte(formulario(pdf(), "r.pdf", "application/pdf", { id: String(v.id) }))), "ok");
+    assert.equal(nombreDe(await acc.reemplazarSoporte(formulario(pdf(), "r.pdf", "application/pdf", { id: String(v.id) }), idnS(v.id))), "ok");
     assert.equal(vigentes("DTM-8101").length, 3, "reemplazar mantiene el conteo aun excedido");
     const [w] = vigentes("DTM-8101");
-    assert.equal(nombreDe(await acc.retirarSoporte(w.id)), "ok");
+    assert.equal(nombreDe(await acc.retirarSoporte(w.id, undefined, idnS(w.id))), "ok");
     assert.equal(vigentes("DTM-8101").length, 2, "retirar baja el exceso");
     assert.equal((await subir(U.A, "DTM-8101")).ok, false, "con 2 de 2 tampoco caben más");
   });
@@ -323,12 +326,12 @@ describe("abrir: aliado propio y personal interno", () => {
   test("el aliado abre solo vigentes de contratos propios", async () => {
     const [v] = vigentes("DTM-8101");
     uidSesion = U.A;
-    const ok = await acc.urlSoporteAliado(v.id);
+    const ok = await acc.urlSoporteAliado(v.id, idnS(v.id));
     assert.equal(ok.ok, true);
-    for (const uid of [U.B, U.C, U.PART, U.INACT, U.GER]) { uidSesion = uid; assert.equal((await acc.urlSoporteAliado(v.id)).ok, false, PERFIL[uid].nombre); }
+    for (const uid of [U.B, U.C, U.PART, U.INACT, U.GER]) { uidSesion = uid; assert.equal((await acc.urlSoporteAliado(v.id, idnS(v.id))).ok, false, PERFIL[uid].nombre); }
     const retirado = filas("DTM-8101").find((f) => !f.vigente)!;
     uidSesion = U.A;
-    assert.equal((await acc.urlSoporteAliado(retirado.id)).ok, false, "un soporte retirado ya no se abre desde el portal");
+    assert.equal((await acc.urlSoporteAliado(retirado.id, idnS(retirado.id))).ok, false, "un soporte retirado ya no se abre desde el portal");
   });
 
   test("el personal interno abre por RLS: gerencia de su agencia y el asesor del contrato sí; otra agencia, otro asesor y sin sesión no", async () => {
@@ -346,7 +349,7 @@ describe("avisos internos", () => {
     sql("delete from public.avisos");
     const [v] = vigentes("DTM-8102");
     uidSesion = U.B;
-    assert.equal(nombreDe(await acc.reemplazarSoporte(formulario(pdf(), "n.pdf", "application/pdf", { id: String(v.id) }))), "ok");
+    assert.equal(nombreDe(await acc.reemplazarSoporte(formulario(pdf(), "n.pdf", "application/pdf", { id: String(v.id) }), idnS(v.id))), "ok");
 
     // sin reclamar: el aviso queda sin tocar
     uidSesion = U.GER;
@@ -467,7 +470,7 @@ describe("confirmación incierta del registro: nunca se arriesga evidencia regis
 
 describe("reemplazar: la deduplicación se decide por el soporte SELECCIONADO y su sucesor, no por un hash suelto del contrato", () => {
   const avisosDe = (num: string) => Number(sql(`select count(*) from public.avisos where numero_contrato = '${num}'`));
-  const reemplazar = (id: number, bytes: Buffer) => { uidSesion = U.A; return acc.reemplazarSoporte(formulario(bytes, "r.pdf", "application/pdf", { id: String(id) })); };
+  const reemplazar = (id: number, bytes: Buffer) => { uidSesion = U.A; return acc.reemplazarSoporte(formulario(bytes, "r.pdf", "application/pdf", { id: String(id) }), idnS(id)); };
   const C = "DTM-8105";
   const b1 = pdf(300), b2 = pdf(301), b3 = pdf(302), b4 = pdf(303);
   let s1 = 0, s2 = 0, s3 = 0;
@@ -513,7 +516,7 @@ describe("reemplazar: la deduplicación se decide por el soporte SELECCIONADO y 
 
   test("4 · un soporte retirado o ya reemplazado por OTRO contenido no produce éxito falso, aunque exista otro archivo idéntico vigente", async () => {
     // (a) retirado: s2 se retira; b2 sigue vigente en otro soporte (el sucesor de s1)
-    assert.equal(nombreDe(await acc.retirarSoporte(s2)), "ok");
+    assert.equal(nombreDe(await acc.retirarSoporte(s2, undefined, idnS(s2))), "ok");
     const antes = { filas: filas(C).length, subidas: subidas.length, avisos: avisosDe(C), vig: vigentes(C).length };
     const a = await reemplazar(s2, b2);
     assert.equal(a.ok, false, "s2 está retirado: no hay éxito falso porque otro soporte vigente tenga el mismo contenido");
@@ -569,9 +572,9 @@ describe("consecutivo reutilizado (eliminar contrato A con p_reusar → contrato
   test("B no ABRE, no REEMPLAZA ni RETIRA soportes de A (y las filas de A no cambian)", async () => {
     const antes = JSON.stringify(filas(N));
     uidSesion = U.C2;
-    assert.equal((await acc.urlSoporteAliado(idsA[0])).ok, false, "no abre");
-    assert.equal((await acc.reemplazarSoporte(formulario(pdf(), "x.pdf", "application/pdf", { id: String(idsA[0]) }))).ok, false, "no reemplaza");
-    assert.equal((await acc.retirarSoporte(idsA[0])).ok, false, "no retira");
+    assert.equal((await acc.urlSoporteAliado(idsA[0], idnS(idsA[0]))).ok, false, "no abre");
+    assert.equal((await acc.reemplazarSoporte(formulario(pdf(), "x.pdf", "application/pdf", { id: String(idsA[0]) }), idnS(idsA[0]))).ok, false, "no reemplaza");
+    assert.equal((await acc.retirarSoporte(idsA[0], undefined, idnS(idsA[0]))).ok, false, "no retira");
     assert.equal(JSON.stringify(filas(N)), antes, "las filas de A siguen intactas");
   });
 
@@ -625,7 +628,7 @@ describe("renumerar un contrato (fn_renumerar_contrato real): sigue siendo el MI
     assert.equal(nombreDe(await subir(U.C, VIEJO, pdf(501))), "ok");
     ids = filas(VIEJO).map((f) => f.id);
     uidSesion = U.C;
-    assert.equal(nombreDe(await acc.reemplazarSoporte(formulario(pdf(502), "r.pdf", "application/pdf", { id: String(ids[0]) }))), "ok");
+    assert.equal(nombreDe(await acc.reemplazarSoporte(formulario(pdf(502), "r.pdf", "application/pdf", { id: String(ids[0]) }), idnS(ids[0]))), "ok");
     assert.equal(filas(VIEJO).length, 3);
     assert.equal(vigentes(VIEJO).length, 2);
     rutasAntes = filas(VIEJO).map((f) => f.path).join(",");
@@ -658,12 +661,12 @@ describe("renumerar un contrato (fn_renumerar_contrato real): sigue siendo el MI
     assert.deepEqual((await soportesVigentesFn([VIEJO])).filas, [], "y nada bajo el viejo");
     uidSesion = U.C;
     const [v1, v2] = vigentes(NUEVO);
-    const url = await acc.urlSoporteAliado(v1.id);
+    const url = await acc.urlSoporteAliado(v1.id, idnS(v1.id));
     assert.equal(url.ok, true, "abre");
     assert.equal((nombreDe(await subir(U.C, NUEVO, pdf(510))) ?? "").includes("un soporte vigente por cada abono"), true, "2 abonos / 2 vigentes: el límite sigue vigente tras renumerar");
-    assert.equal(nombreDe(await acc.reemplazarSoporte(formulario(pdf(511), "r2.pdf", "application/pdf", { id: String(v1.id) }))), "ok", "reemplaza");
+    assert.equal(nombreDe(await acc.reemplazarSoporte(formulario(pdf(511), "r2.pdf", "application/pdf", { id: String(v1.id) }), idnS(v1.id))), "ok", "reemplaza");
     assert.equal(vigentes(NUEVO).length, 2, "el reemplazo mantiene la cantidad");
-    assert.equal(nombreDe(await acc.retirarSoporte(v2.id, "baja")), "ok", "retira");
+    assert.equal(nombreDe(await acc.retirarSoporte(v2.id, "baja", idnS(v2.id))), "ok", "retira");
     assert.equal(vigentes(NUEVO).length, 1);
     assert.equal(filas(NUEVO).length, 4, "y el historial crece sin perder nada");
   });
@@ -696,9 +699,9 @@ describe("renumerar un contrato (fn_renumerar_contrato real): sigue siendo el MI
     assert.deepEqual((await soportesVigentesFn([VIEJO])).filas, [], "B no lista nada de R");
     uidSesion = U.C2;
     for (const id of idsR) {
-      assert.equal((await acc.urlSoporteAliado(id)).ok, false, "B no abre soportes de R");
-      assert.equal((await acc.reemplazarSoporte(formulario(pdf(), "x.pdf", "application/pdf", { id: String(id) }))).ok, false, "no reemplaza");
-      assert.equal((await acc.retirarSoporte(id)).ok, false, "no retira");
+      assert.equal((await acc.urlSoporteAliado(id, idnS(id))).ok, false, "B no abre soportes de R");
+      assert.equal((await acc.reemplazarSoporte(formulario(pdf(), "x.pdf", "application/pdf", { id: String(id) }), idnS(id))).ok, false, "no reemplaza");
+      assert.equal((await acc.retirarSoporte(id, undefined, idnS(id))).ok, false, "no retira");
     }
     assert.equal(JSON.stringify(filas(NUEVO)), antesR, "la evidencia de R no cambió");
     assert.equal(nombreDe(await subir(U.C2, VIEJO, pdf(520))), "ok", "los soportes de R NO cuentan contra el límite de B (1 abono: cabe 1)");

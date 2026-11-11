@@ -28,6 +28,7 @@ const numeroJunto = (raiz: Element) =>
 
 // ── Grupo 3 · comisiones B2B ───────────────────────────────────────────────
 const COMISION = {
+  identidad: {},
   id: 31, numero_contrato: "DTM-0451", cliente: "Cliente", aliado: "Agencia Uno", nit: null, tipoAliado: "agencia",
   pct_comision: 0.1, totalComision: 300_000, retencion: 0, totalPagar: 300_000, estado: "pendiente", fecha_pago: null, pagos: [],
 };
@@ -58,8 +59,8 @@ for (const [momento, instante] of MOMENTOS) {
 test("comisión B2B: fecha manual a las 19:30 se respeta; sin fecha → día de Bogotá", async () => {
   reloj(DESPUES_DEL_CORTE);
   const bd = usarBD(semillaComision());
-  await registrarPagoComisionB2B(31, 50_000, "2026-09-02");
-  await registrarPagoComisionB2B(31, 50_000, "");
+  await registrarPagoComisionB2B(31, 50_000, "2026-09-02", {});
+  await registrarPagoComisionB2B(31, 50_000, "", {});
   assert.deepEqual(bd.filas("comision_b2b_pagos").map((p) => p.fecha), ["2026-09-02", DIA_BOGOTA]);
 });
 

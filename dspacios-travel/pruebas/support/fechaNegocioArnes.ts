@@ -240,6 +240,36 @@ export function crearBD(semilla: Record<string, Fila[]> = {}, rpcs: Record<strin
   // propio manejador lo reemplaza.
   const MARCA_CXP_AUTOMATICA = "Generado automáticamente desde el tarifario";
   const porDefecto: Record<string, ManejadorRpc> = {
+    // 288 (#75): el arnés simula un contrato que YA NO está pendiente → la app sigue su camino anterior (CxP directa). Los casos «pendiente → prevista» pasan su propio manejador.
+    prevista_cxp_aplicar: () => ({ aplicado: false, motivo: "no_pendiente" }),
+    // 288 (#75, 1b): la edición de servicios de un PENDIENTE se aplica en UNA transacción (ítems + precio/resumen + obligaciones previstas + CxP históricas). El arnés la
+    // emula sobre sus tablas (la atomicidad real la prueba supabase/scripts/test_288b_escritores_pendiente.sh sobre Postgres real).
+    pendiente_aplicar_servicios: (args) => {
+      const numero = String(args.p_numero);
+      const v = filas("ventas").find((f) => f.numero_contrato === numero);
+      if (!v || v.estado !== "pendiente") throw new Error(`pendiente_aplicar_servicios: el contrato ${numero} no está pendiente`);
+      const borrar = new Set((args.p_items_borrar as number[] | undefined) ?? []);
+      tablas.set("contrato_items", filas("contrato_items").filter((i) => !(i.numero_contrato === numero && borrar.has(i.id as number))));
+      for (const it of (args.p_items_nuevos as Fila[] | undefined) ?? []) filas("contrato_items").push({ id: nuevoId("contrato_items"), numero_contrato: numero, ...it });
+      Object.assign(v, args.p_ventas as Fila);
+      const prev = filas("contrato_obligaciones_previstas");
+      const delPrev = new Set((args.p_prev_eliminar as number[] | undefined) ?? []);
+      tablas.set("contrato_obligaciones_previstas", prev.filter((p) => !delPrev.has(p.id as number)));
+      for (const u of (args.p_prev_actualizar as Fila[] | undefined) ?? []) {
+        const p = filas("contrato_obligaciones_previstas").find((x) => x.id === u.id);
+        if (p) p.payload = { ...(p.payload as Fila), ...u };
+      }
+      for (const n of (args.p_prev_insertar as Fila[] | undefined) ?? []) {
+        filas("contrato_obligaciones_previstas").push({ id: nuevoId("contrato_obligaciones_previstas"), numero_contrato: numero, clase: "cxp", payload: { numero_contrato: numero, tenant: v.tenant, moneda: v.moneda ?? "COP", ...n } });
+      }
+      const delCxp = new Set((args.p_cxp_eliminar as number[] | undefined) ?? []);
+      tablas.set("cuentas_por_pagar", filas("cuentas_por_pagar").filter((c) => !delCxp.has(c.id as number)));
+      for (const u of (args.p_cxp_actualizar as Fila[] | undefined) ?? []) {
+        const c = filas("cuentas_por_pagar").find((x) => x.id === u.id);
+        if (c) Object.assign(c, { valor_total: u.valor_total, servicio: u.servicio, tipo_proveedor: u.tipo_proveedor, proveedor: u.proveedor });
+      }
+      return { aplicado: true };
+    },
     // Dependencias de la comisión B2B (286 de #97): null = todas cumplidas. Una prueba que necesite simular que faltan pasa su propio manejador.
     p97_dependencias_comision_faltantes: () => null,
     registrar_financiero_contrato: (args) => {

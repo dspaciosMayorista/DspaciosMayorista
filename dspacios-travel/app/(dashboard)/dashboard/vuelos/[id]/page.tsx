@@ -1,6 +1,7 @@
 import { Fragment } from "react";
 import { CornerDownRight, TriangleAlert } from "lucide-react";
 import { createClient } from "@/lib/supabase/server";
+import { identidadDe } from "@/lib/contrato/identidad";
 import { notFound } from "next/navigation";
 import Link from "next/link";
 import { ResponsiveTableShell } from "@/components/ui/ResponsiveTableShell";
@@ -60,6 +61,10 @@ export default async function BloqueoDetallePage({
   if (isNaN(bloqueoId)) notFound();
 
   const sb = await createClient();
+  // Identidad (#75) de las sillas, leída ANTES que las sillas (control_vuelo no lee `ventas`; ver sillas_identidades, migración 284): si el contrato se reemplazó entre las dos lecturas, el número ya no coincide y la silla queda sin identidad (la base rechaza la escritura).
+  const { data: idsSillas } = await sb.rpc("sillas_identidades", { p_bloqueo: bloqueoId });
+  const uidDeSilla = new Map<number, { numero: string; contrato_uid: string }>();
+  for (const r of (idsSillas ?? [])) uidDeSilla.set(r.silla_id, { numero: r.numero_contrato, contrato_uid: r.contrato_uid });
   const [{ data: b }, { data: sillas }, { data: otros }, { data: destinos }, { data: proveedores }, { data: rangos }, { data: cambios }, { data: movimientos }] = await Promise.all([
     sb.from("bloqueos_vuelo").select("*").eq("id", bloqueoId).single(),
     sb.from("sillas").select("id, numero_silla, estado, numero_contrato, pasajero_nombres, pasajero_apellidos, tipo_doc, numero_doc, nacimiento, asesor, hotel, acomodacion, plazo, agencia, inf_nombres, inf_apellidos, inf_tipo_doc, inf_numero, inf_nacimiento, responsable_menor, updated_at").eq("bloqueo_id", bloqueoId).order("numero_silla"),
@@ -149,7 +154,7 @@ export default async function BloqueoDetallePage({
   // referencias que se le pasan salen SIEMPRE de las sillas de ESTE
   // bloqueo, ya autorizado — nunca un número suelto.
   const contratosOrganicosDelBloqueo = [...new Set((sillas ?? []).map((s) => s.numero_contrato).filter((n): n is string => !!n))];
-  const { infantes: infantesDelBloqueo, referenciaManualPorContrato } = await resolverManifiestoAutorizado(
+  const { infantes: infantesDelBloqueo, referenciaManualPorContrato, uidPorContrato } = await resolverManifiestoAutorizado(
     sb,
     contratosOrganicosDelBloqueo,
     [...contratoManualPorSilla.values()]
@@ -220,6 +225,15 @@ export default async function BloqueoDetallePage({
   // responsable en el <select>, aunque el servidor (guardar_infante_vuelo)
   // vuelva a validar todo (documento, mayoría de edad, contrato) al guardar;
   // esta lista solo alimenta el <select> en el cliente.
+  // Identidad (#75) del contrato de cada silla, de los MISMOS datos que la pantalla leyó: el orgánico trae su uid embebido en la consulta de las sillas
+  // (RPC sillas_identidades, leída antes que las sillas); el manual resuelve su referencia al contrato destino en esta misma carga (resolverManifiestoAutorizado). Sin contrato: {}.
+  const identidadDeSilla = (s: NonNullable<typeof sillas>[number]) => {
+    if (s.numero_contrato) { const i = uidDeSilla.get(s.id); return identidadDe(s.numero_contrato, i && i.numero === s.numero_contrato ? i.contrato_uid : undefined); }
+    const manual = normalizarReferenciaManual(contratoManualPorSilla.get(s.id) ?? null);
+    const numero = manual ? referenciaManualPorContrato.get(manual) : undefined;
+    return identidadDe(numero, numero ? uidPorContrato.get(numero) : undefined);
+  };
+
   const candidatosResponsable = (sillas ?? [])
     .filter((s) => s.estado !== "cambio" && s.tipo_doc && s.numero_doc && s.nacimiento)
     .filter((s) => {
@@ -229,6 +243,7 @@ export default async function BloqueoDetallePage({
     .map((s) => ({
       sillaId: s.id,
       nombre: `${s.pasajero_nombres ?? ""} ${s.pasajero_apellidos ?? ""}`.trim() || `Silla #${s.numero_silla}`,
+      identidad: identidadDeSilla(s),
     }));
 
   return (
@@ -340,7 +355,7 @@ export default async function BloqueoDetallePage({
                         <td className="px-3 py-2" data-label="Contrato">
                           <SillaContrato sillaId={s.id} bloqueoId={bloqueoId} numeroContrato={s.numero_contrato} contratoManual={contratoManualPorSilla.get(s.id) ?? null} estado={s.estado} libre={libreSilla(s)} version={s.updated_at} vencida={retencionVencida(s)}
                             pasajero={Boolean((s.pasajero_nombres ?? "").trim() || (s.pasajero_apellidos ?? "").trim())}
-                            plazo={s.plazo} hoy={hoyNegocio} />
+                            plazo={s.plazo} hoy={hoyNegocio} identidad={identidadDeSilla(s)} />
                         </td>
                         <td className="px-3 py-2 text-gray-500" data-label="Asesor">{s.asesor || "—"}</td>
                         <td className="px-3 py-2 text-gray-500" data-label="Hotel">{s.hotel || "—"}</td>
@@ -363,6 +378,7 @@ export default async function BloqueoDetallePage({
                                 numeroHistorico={s.numero_silla}
                                 pasajero={`${s.pasajero_nombres ?? ""} ${s.pasajero_apellidos ?? ""}`.trim()}
                                 plazo={s.plazo ?? ""}
+                                identidad={identidadDeSilla(s)}
                               />
                             )}
                             <PasajeroAcciones
@@ -380,6 +396,7 @@ export default async function BloqueoDetallePage({
                               libre={libreSilla(s)}
                               contratoOrganico={!!s.numero_contrato}
                               contratoVisto={{ numero_contrato: s.numero_contrato, contrato_manual: contratoManualPorSilla.get(s.id) ?? null, updated_at: s.updated_at }}
+                              identidad={identidadDeSilla(s)}
                             />
                             {/* Alta de infante SIN silla a cargo de este adulto — exige
                                 documento propio (es, a la vez, la autorización de
@@ -390,6 +407,7 @@ export default async function BloqueoDetallePage({
                                 sillaResponsableId={s.id}
                                 fechaIdaBloqueo={b.fecha_ida}
                                 modo="crear"
+                                identidad={identidadDeSilla(s)}
                               />
                             )}
                           </div>
@@ -419,6 +437,7 @@ export default async function BloqueoDetallePage({
                                     sillaResponsableId={s.id}
                                     fechaIdaBloqueo={b.fecha_ida}
                                     modo="editar"
+                                    identidad={identidadDeSilla(s)}
                                     inicial={{
                                       id: inf.id,
                                       nombreCompleto: inf.nombre,

@@ -38,7 +38,7 @@ test("negociado B2B PVP: nace pendiente y se cierra SOLO después de copiar los 
 
 test("PVP B2B manual: si la comisión falla se revierte el contrato (nunca B2B sin comisión)", () => {
   const i = cuerpo.indexOf("registrarComisionReserva(sb, numero");
-  assert.match(cuerpo.slice(i, i + 900), /revertirContratoManual\(numero, tenant\)/);
+  assert.match(cuerpo.slice(i, i + 900), /revertirContratoManual\((idc, )?numero, tenant\)/);
 });
 
 test("el asesor interno no es beneficiario: la RPC recibe el aliado del catálogo, no el asesor", () => {

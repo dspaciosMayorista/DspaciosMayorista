@@ -359,6 +359,11 @@ export type Database = {
           financiero_estado: string;
           // Migración 227 (#63): aceptación de oferta COP con TRM que respalda este contrato (NULL = contrato de siempre).
           aceptacion_63_id: number | null;
+          // Migración 287: ticket transitorio de reserva de consecutivo (siempre NULL tras el INSERT).
+          reserva_token: string | null;
+          // Migración 284 (#75): identidad inmutable del contrato (única por vida; se conserva al renumerar) y si nació de un número reutilizado.
+          contrato_uid: string;
+          nacio_de_reuso: boolean;
           // Migración 235 (#90 F): moneda de COBRO (NULL = se cobra en `moneda`). Si difiere de `moneda`, `total_cobro` es el total a cobrar
           // (precio_venta convertido UNA vez con `trm_cobro`, congelado). Léelo siempre con `cobroDeVenta` (lib/finanzas/cobro.ts).
           moneda_cobro: string | null;
@@ -444,6 +449,10 @@ export type Database = {
           cotizacion_id?: number | null;
           financiero_estado?: string;
           aceptacion_63_id?: number | null;
+          // Migración 287: ticket TRANSITORIO de una reserva de consecutivo DTM reutilizado; el trigger lo valida y lo deja en NULL (nunca persiste).
+          reserva_token?: string | null;
+          contrato_uid?: string;
+          nacio_de_reuso?: boolean;
           moneda_cobro?: string | null;
           trm_cobro?: number | null;
           total_cobro?: number | null;
@@ -505,6 +514,13 @@ export type Database = {
         Update: never;
         Relationships: [];
       };
+      // Migración 288 (#75): obligaciones PREVISTAS de un contrato pendiente (no exigibles); se materializan una vez al confirmar. Solo service_role.
+      contrato_obligaciones_previstas: {
+        Row: { id: number; numero_contrato: string; clase: "cxp"; clave: string; payload: Json; creado_en: string; materializada_en: string | null };
+        Insert: { id?: number; numero_contrato: string; clase: "cxp"; clave: string; payload: Json; creado_en?: string; materializada_en?: string | null };
+        Update: { id?: number; numero_contrato?: string; clase?: "cxp"; clave?: string; payload?: Json; creado_en?: string; materializada_en?: string | null };
+        Relationships: [];
+      };
       contrato_financiero_pendiente: {
         Row: {
           numero_contrato: string;
@@ -515,6 +531,8 @@ export type Database = {
           creado_en: string;
           ultimo_intento_en: string | null;
           ultimo_error: string | null;
+          // Migración 285 (#75): identidad del contrato conservada desde la creación (el cron declara ESTA, no la vigente).
+          contrato_uid: string | null;
         };
         Insert: {
           numero_contrato: string;
@@ -525,6 +543,7 @@ export type Database = {
           creado_en?: string;
           ultimo_intento_en?: string | null;
           ultimo_error?: string | null;
+          contrato_uid?: string | null;
         };
         Update: Partial<Database["public"]["Tables"]["contrato_financiero_pendiente"]["Insert"]>;
         Relationships: [
@@ -1503,6 +1522,13 @@ export type Database = {
             columns: ["bloqueo_id"];
             referencedRelation: "bloqueos_vuelo";
             referencedColumns: ["id"];
+          },
+          // #75: permite traer el uid del contrato embebido en la consulta de las sillas (ventas(contrato_uid)).
+          {
+            foreignKeyName: "sillas_numero_contrato_fkey";
+            columns: ["numero_contrato"];
+            referencedRelation: "ventas";
+            referencedColumns: ["numero_contrato"];
           }
         ];
       };
@@ -2402,6 +2428,12 @@ export type Database = {
           // derivó (solo auditoría, nunca se usa en el motor de liquidación).
           precio_final_autoritativo: boolean;
           temporada_base: string | null;
+          // Migración 293 (#43/#60, PROPUESTA — no aplicada). Grupo de días de la vigencia;
+          // NULL = todos los días (todo el dato actual). Hoy SIEMPRE NULL: la base rechaza
+          // tarifas con grupo mientras los grupos estén inactivos. `grupo_dias` es la copia
+          // de los días del grupo que fija el trigger (no se escribe desde la app).
+          grupo_id: string | null;
+          grupo_dias: number[] | null;
         };
         Insert: {
           id?: number; hotel_id: number; tipo_habitacion?: string | null; alimentacion?: string | null;
@@ -2412,8 +2444,24 @@ export type Database = {
           edad_infante_min?: number | null; edad_infante_max?: number | null;
           edad_nino_min?: number | null; edad_nino_max?: number | null;
           precio_final_autoritativo?: boolean; temporada_base?: string | null;
+          grupo_id?: string | null;
         };
         Update: Partial<Database["public"]["Tables"]["tarifa_hotel"]["Insert"]>;
+        Relationships: [];
+      };
+      // Migración 293 (#43/#60, PROPUESTA — no aplicada). Grupos de días (1 = lunes … 7 = domingo)
+      // de una vigencia. INACTIVOS: `activo` solo admite false (check en la base) hasta que el
+      // motor los soporte; ningún código los lee todavía.
+      hotel_temporada_grupos: {
+        Row: {
+          id: string; temporada_id: number; nombre: string; dias: number[];
+          activo: boolean; creado_en: string; actualizado_en: string;
+        };
+        Insert: {
+          id?: string; temporada_id: number; nombre: string; dias: number[];
+          activo?: false; creado_en?: string; actualizado_en?: string;
+        };
+        Update: Partial<Omit<Database["public"]["Tables"]["hotel_temporada_grupos"]["Insert"], "temporada_id">>;
         Relationships: [];
       };
       // Migración 203 (PROPUESTA — no aplicada todavía en ningún entorno).
@@ -4011,7 +4059,7 @@ export type Database = {
         Row: Omit<
           Database["public"]["Tables"]["ventas"]["Row"],
           "costo_hotel" | "costo_aereo" | "costo_receptivo" | "costo_asistencia" | "otros_costos"
-          | "impuesto" | "comision_b2b" | "comision_estado" | "modo_compra"
+          | "impuesto" | "comision_b2b" | "comision_estado" | "modo_compra" | "reserva_token"
           | "recobro_total" | "recobro_empresa" | "recobro_aliado" | "trm_contrato" | "b2b_usuario_id"
           // Migración 147: fuera por sensibles. `observaciones` no vuelve.
           | "observaciones" | "cliente_tipo_documento" | "titular_tipo_documento"
@@ -4165,6 +4213,8 @@ export type Database = {
           estado_pago: string | null;
           cxp_aereas_total: number | null;
           cxp_aereas_pagadas: number | null;
+          // Migración 285 (#75): identidad del contrato, de la misma fila de la vista.
+          contrato_uid: string | null;
         };
         Relationships: [];
       };
@@ -4175,6 +4225,8 @@ export type Database = {
         Row: {
           id: number;
           numero_contrato: string;
+          // Migración 285 (#75): identidad del contrato, en la misma sentencia que los tramos.
+          contrato_uid: string | null;
           aerolinea: string | null;
           record: string | null;
           direccion: string | null;
@@ -4193,6 +4245,54 @@ export type Database = {
       };
     };
     Functions: {
+      // Migración 284 (#75): uid de los contratos que la pantalla ve (respeta puede_ver_contrato). Solo para sesión de usuario.
+      contratos_identidades: {
+        Args: { p_numeros: string[] };
+        Returns: { numero_contrato: string; contrato_uid: string }[];
+      };
+      // Migración 284 (#75): uid de las sillas (de un bloqueo, o de todos si p_bloqueo es null) para roles operativos que no leen `ventas` (control_vuelo).
+      sillas_identidades: {
+        Args: { p_bloqueo?: number | null };
+        Returns: { silla_id: number; numero_contrato: string; contrato_uid: string }[];
+      };
+      // Migración 288 (#75): escritor de la app sobre las CxP PREVISTAS de un contrato pendiente (solo service_role); {aplicado:false} si el contrato no está pendiente.
+      // Migración 288 (#75, 1b): edición de servicios de un pendiente en UNA transacción (ítems + precio/resumen + previstas + CxP históricas). Solo service_role.
+      pendiente_aplicar_servicios: {
+        Args: {
+          p_numero: string; p_items_borrar: number[]; p_items_nuevos: Json; p_ventas: Json;
+          p_prev_eliminar: number[]; p_prev_actualizar: Json; p_prev_insertar: Json; p_cxp_eliminar: number[]; p_cxp_actualizar: Json;
+        };
+        Returns: Json;
+      };
+      // Migración 288 (#75, 1b): reintenta la confirmación por pago (abonos suficientes, contrato pendiente). Misma autorización que confirmar a mano.
+      // Migración 288 (#75, 1b): paso final de una conversión de cotización (service_role): evalúa el mínimo con los pagos previos aplicados y confirma si corresponde.
+      confirmar_tras_conversion: {
+        Args: { p_numero: string; p_actor: string };
+        Returns: Json;
+      };
+      // Migración 288 (#75, 1b): solo un booleano — ¿abonos suficientes con el contrato aún pendiente? (para avisar y ofrecer el reintento).
+      // Migración 288 (#75, parte 3): ¿contrato NETO de aliado? (la vista básica no expone comision_estado). Solo booleano, solo contratos visibles.
+      contrato_es_neto: {
+        Args: { p_numero: string };
+        Returns: boolean;
+      };
+      estado_confirmacion_pago: {
+        Args: { p_numero: string };
+        Returns: Json;
+      };
+      reintentar_confirmacion_pago: {
+        Args: { p_numero: string };
+        Returns: Json;
+      };
+      prevista_cxp_aplicar: {
+        Args: { p_numero: string; p_eliminar: number[]; p_actualizar: Json; p_insertar: Json };
+        Returns: Json;
+      };
+      // Migración 285 (#75): precomprobación de solo lectura ANTES de subir un soporte (service_role).
+      soporte_verificar_identidad: {
+        Args: { p_numero: string };
+        Returns: undefined;
+      };
       soporte_registrar: {
         Args: { p_numero: string; p_actor: string; p_path: string; p_nombre: string; p_mime: string; p_size: number; p_sha: string };
         Returns: Json;
@@ -4666,6 +4766,16 @@ export type Database = {
       siguiente_numero_contrato_para_tenant: {
         Args: { p_tenant: string };
         Returns: string;
+      };
+      // Migración 287: reserva de consecutivo (Mayorista puede devolver un DTM liberado + ticket; Minorista y secuencia devuelven ticket nulo).
+      reservar_numero_contrato: {
+        Args: { p_tenant: string };
+        Returns: { numero: string; token: string | null }[];
+      };
+      // Migración 287: motivos por los que un DTM pendiente NO puede liberarse para reutilización (solo superadmin; vacío = candidato).
+      contrato_reuso_preview: {
+        Args: { p_numero: string };
+        Returns: string[];
       };
       eliminar_contrato: {
         Args: { p_numero: string; p_reusar: boolean };
@@ -5141,6 +5251,11 @@ export type Database = {
           p_pct: number; p_recobro: number; p_pct_recobro: number; p_aplica_retencion: boolean; p_pct_retencion: number;
         };
         Returns: number;
+      };
+      // Migración 291 (#75) — reemisión de tarifas de un NETO pendiente sin pagos (ítems + comisión descontada + total exigible, una transacción).
+      reemitir_neto_pendiente: {
+        Args: { p_numero: string; p_items: { descripcion: string; adultos: number; ninos: number; tarifaAdulto: number; tarifaNino: number }[]; p_forzar_margen?: boolean };
+        Returns: Json;
       };
       // Migración 186 — Dashboard: agregados en base (evita descargar filas
       // completas de ventas/abonos/cupos/CxP/retenciones solo para sumarlas

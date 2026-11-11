@@ -1,0 +1,14 @@
+{
+  "_doc": "Creación y conversión de contratos, cron financiero, pendiente financiero (agente 'creacion'). El uid sale del INSERT del propio flujo.",
+  "acciones": [
+    "app/(dashboard)/dashboard/contratos/actions.ts", "app/(dashboard)/dashboard/reservar/actions.ts", "app/(dashboard)/dashboard/cotizaciones/manual-actions.ts", "app/(dashboard)/dashboard/cotizaciones/din-actions.ts",
+    "app/tarifario/checkout/actions.ts", "app/tarifario/solicitudHotelActions.ts"
+  ],
+  "helpers": [
+    "app/(dashboard)/dashboard/reservar/reconciliacion-actions.ts", "app/(dashboard)/dashboard/contratos/importar/actions.ts", "lib/reservar/financieroContrato.ts", "lib/reservar/reconciliacionFinanciera.ts",
+    "lib/reservar/asegurarCuentasPorPagar.ts", "lib/reservar/comisionReserva.ts", "lib/reservar/aceptacionServidor63.ts", "lib/contrato/netoManual.ts",
+    "lib/contrato/congelarCondicionesContrato.ts", "lib/cotizacion/composicionServidor.ts"
+  ],
+  "paginas": [],
+  "componentes": []
+}

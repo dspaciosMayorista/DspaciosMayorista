@@ -9,6 +9,7 @@ import { resolverContextoPortal, cargarConjuntoPortal, linkPagoPortal } from "@/
 import { carteraDe, partirCartera } from "@/lib/portal/b2bPortal";
 import { SoportesPago, type ContratoSoportes } from "@/components/portal/SoportesPago";
 import { soportesVigentes } from "@/lib/soportes/servidor";
+import { identidadDe } from "@/lib/contrato/identidad";
 import { maxBytesSoporte, formatoMaximo } from "@/lib/soportes/archivo";
 
 export const dynamic = "force-dynamic";
@@ -31,6 +32,7 @@ export default async function PortalCartera({ searchParams }: { searchParams: Pr
   const maxSoporte = maxBytesSoporte(process.env.SOPORTES_MAX_BYTES);
   if (actual === "soportes") {
     const propios = conjunto.ventas.filter((v) => v.relacion === "propio");
+    // contrato_uid viene en la MISMA consulta que trajo los contratos, abonos y saldos de esta pantalla (cargarConjuntoPortal), no de una consulta posterior por número.
     const s = await soportesVigentes(propios.map((v) => v.numero_contrato));
     soportesCompletos = s.completa;
     const abonosPor = new Map<string, number>();
@@ -39,6 +41,7 @@ export default async function PortalCartera({ searchParams }: { searchParams: Pr
       .map((v) => ({
         numero: v.numero_contrato, cliente: (v as { cliente?: string | null }).cliente ?? null,
         abonos: abonosPor.get(v.numero_contrato) ?? 0, soportes: s.filas.filter((x) => x.numero_contrato === v.numero_contrato),
+        identidad: identidadDe(v.numero_contrato, (v as { contrato_uid?: string | null }).contrato_uid),
       }))
       .filter((c) => c.abonos > 0 || c.soportes.length > 0);
   }

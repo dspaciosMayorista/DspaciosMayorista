@@ -4,6 +4,7 @@ import { useState, useTransition } from "react";
 import { AlertTriangle, Check } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+// identidad:n/a — cambiarSillas traslada solo cupos libres (la base rechaza sillas con contrato), por eso este componente no recibe identidad.
 import { cambiarSillas } from "../actions";
 import { nuevaOperacionId } from "@/lib/vuelos/operaciones";
 

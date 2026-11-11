@@ -1,5 +1,6 @@
 import Link from "next/link";
 import { createClient } from "@/lib/supabase/server";
+import { identidadDe, type IdentidadContrato } from "@/lib/contrato/identidad";
 import { PasajerosBuscador, type PasajeroFila } from "./PasajerosBuscador";
 import { CargaMasivaCSV, type Columna } from "@/components/CargaMasivaCSV";
 import { cargarPasajerosMasivo } from "../actions";
@@ -23,6 +24,10 @@ const PAS_COLS: Columna[] = [
 
 export default async function PasajerosPage() {
   const sb = await createClient();
+  // Identidad (#75) leída ANTES que las sillas y por RPC operativa: control_vuelo no lee `ventas` (migración 284, sillas_identidades). Solo se usa si el número coincide.
+  const { data: idsSillas } = await sb.rpc("sillas_identidades");
+  const uidDeSilla = new Map<number, { numero: string; contrato_uid: string }>();
+  for (const r of (idsSillas ?? [])) uidDeSilla.set(r.silla_id, { numero: r.numero_contrato, contrato_uid: r.contrato_uid });
   const { data: sillas } = await sb
     .from("sillas")
     .select(
@@ -51,7 +56,7 @@ export default async function PasajerosPage() {
   // de infantes usan un cliente admin SOLO tras esa verificación, en vez del
   // cliente de sesión (RLS por tenant) — ver lib/vuelos/contratoManual.ts.
   const contratosOrganicos = [...new Set((sillas ?? []).map((s) => s.numero_contrato).filter((n): n is string => !!n))];
-  const { infantes, referenciaManualPorContrato } = await resolverManifiestoAutorizado(
+  const { infantes, referenciaManualPorContrato, uidPorContrato } = await resolverManifiestoAutorizado(
     sb,
     contratosOrganicos,
     [...contratoManualPorSilla.values()]
@@ -67,6 +72,14 @@ export default async function PasajerosPage() {
     if (s.numero_contrato) { contratoEfectivoPorSilla.set(s.id, s.numero_contrato); continue; }
     const manual = normalizarReferenciaManual(contratoManualPorSilla.get(s.id) ?? null);
     contratoEfectivoPorSilla.set(s.id, manual ? referenciaManualPorContrato.get(manual) ?? null : null);
+  }
+
+  // Identidad (#75) del contrato de cada silla, de los mismos datos que esta página leyó: el orgánico trae su uid embebido en la consulta de las sillas
+  // (RPC sillas_identidades, leída antes); el manual resuelve su referencia en esta misma carga. Sin contrato: {}.
+  const identidadPorSilla = new Map<number, IdentidadContrato>();
+  for (const s of sillas ?? []) {
+    const efectivo = contratoEfectivoPorSilla.get(s.id) ?? null;
+    identidadPorSilla.set(s.id, s.numero_contrato ? identidadDe(s.numero_contrato, uidDeSilla.get(s.id)?.numero === s.numero_contrato ? uidDeSilla.get(s.id)?.contrato_uid : undefined) : identidadDe(efectivo, efectivo ? uidPorContrato.get(efectivo) : undefined));
   }
 
   const filasSillas: PasajeroFila[] = (sillas ?? [])
@@ -85,6 +98,7 @@ export default async function PasajerosPage() {
         tipoDoc: s.tipo_doc ?? "",
         numeroDoc: s.numero_doc ?? "",
         contrato: s.numero_contrato ?? "",
+        identidad: identidadPorSilla.get(s.id) ?? {},
         asesor: s.asesor ?? "",
         agencia: s.agencia ?? "",
         hotel: s.hotel ?? "",

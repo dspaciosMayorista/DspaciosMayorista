@@ -204,8 +204,8 @@ export async function resolverManifiestoAutorizado(
   contratosOrganicos: readonly string[],
   referenciasManuales: readonly (string | null | undefined)[],
   crearClienteAdmin: () => SB = () => createAdminClient() as unknown as SB
-): Promise<{ infantes: InfantePasajero[]; referenciaManualPorContrato: Map<string, string> }> {
-  const vacio = { infantes: [] as InfantePasajero[], referenciaManualPorContrato: new Map<string, string>() };
+): Promise<{ infantes: InfantePasajero[]; referenciaManualPorContrato: Map<string, string>; uidPorContrato: Map<string, string> }> {
+  const vacio = { infantes: [] as InfantePasajero[], referenciaManualPorContrato: new Map<string, string>(), uidPorContrato: new Map<string, string>() };
 
   if (!(await usuarioAutorizadoParaVuelos(sbSesion))) return vacio;
 
@@ -228,8 +228,18 @@ export async function resolverManifiestoAutorizado(
     referenciaManualPorContrato = resolverReferenciasManuales(normalizadas, existentes);
   }
 
+  // Identidad (#75) de los contratos a los que apuntan las referencias manuales, leída en esta MISMA carga de página con el cliente ya autorizado
+  // (control_vuelo no lee ventas con su sesión). Es solo la etiqueta que la pantalla reenvía; la base verifica cada escritura. Límite: la elegibilidad
+  // del reuso bloquea el número mientras exista una silla con esa referencia, por eso la ventana entre esta lectura y el envío es inofensiva.
+  const uidPorContrato = new Map<string, string>();
+  const resueltos = [...new Set(referenciaManualPorContrato.values())];
+  if (resueltos.length) {
+    const { data: uids } = await admin.from("ventas").select("numero_contrato, contrato_uid").in("numero_contrato", resueltos);
+    for (const u of uids ?? []) if (u.contrato_uid) uidPorContrato.set(u.numero_contrato, u.contrato_uid);
+  }
+
   const contratos = [...new Set([...contratosOrganicos, ...referenciaManualPorContrato.values()])];
-  if (!contratos.length) return { infantes: [], referenciaManualPorContrato };
+  if (!contratos.length) return { infantes: [], referenciaManualPorContrato, uidPorContrato };
 
   const { data } = await admin
     .from("contrato_pasajeros")
@@ -264,5 +274,5 @@ export async function resolverManifiestoAutorizado(
     responsable: i.responsable_id != null ? responsablesPorId.get(i.responsable_id) ?? null : null,
   }));
 
-  return { infantes, referenciaManualPorContrato };
+  return { infantes, referenciaManualPorContrato, uidPorContrato };
 }

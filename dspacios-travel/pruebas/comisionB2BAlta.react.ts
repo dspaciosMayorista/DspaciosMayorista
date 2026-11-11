@@ -119,7 +119,7 @@ const rpcManual = (respuesta: (args: Record<string, unknown>) => unknown) => ({ 
 
 test("PESTAÑA: venta (asesor) registra por la función de la base, sin precio del navegador", async () => {
   const bd = usarBD({ usuarios: [yo("venta")] }, rpcManual(() => 501));
-  const r = await crearComisionB2B({ ...alta, precioVenta: 1 } as never);
+  const r = await crearComisionB2B({ ...alta, precioVenta: 1 } as never, {});
   assert.equal(r.ok, true, JSON.stringify(r));
   const [llamada] = bd.llamadasRpc.filter((c) => c.fn === "registrar_comision_b2b_manual");
   assert.ok(llamada, "usa registrar_comision_b2b_manual");
@@ -132,7 +132,7 @@ test("PESTAÑA: venta (asesor) registra por la función de la base, sin precio d
 
 test("PESTAÑA: lo que la base rechaza (contrato ajeno, NETO, otro tenant) llega como error, no se traga", async () => {
   usarBD({ usuarios: [yo("venta")] }, rpcManual(() => { throw new Error("Solo puedes registrar la comisión de tus propios contratos."); }));
-  const r = await crearComisionB2B(alta);
+  const r = await crearComisionB2B(alta, {});
   assert.equal(r.ok, false);
   assert.match((r as { error: string }).error, /tus propios contratos/);
 });
@@ -140,13 +140,13 @@ test("PESTAÑA: lo que la base rechaza (contrato ajeno, NETO, otro tenant) llega
 test("PESTAÑA: control_vuelo, externos e inactivos no llegan a la base; % fuera de rango tampoco", async () => {
   for (const perfil of [yo("control_vuelo"), yo("agencia"), yo("freelance"), yo("administracion", { activo: false })]) {
     const bd = usarBD({ usuarios: [perfil] }, rpcManual(() => 501));
-    const r = await crearComisionB2B(alta);
+    const r = await crearComisionB2B(alta, {});
     assert.equal(r.ok, false, String(perfil.rol));
     assert.equal(bd.llamadasRpc.length, 0, `${perfil.rol}: sin llamada a la base`);
   }
   const bd = usarBD({ usuarios: [yo("administracion")] }, rpcManual(() => 501));
-  assert.equal((await crearComisionB2B({ ...alta, pctComision: 1.5 })).ok, false);
-  assert.equal((await crearComisionB2B({ ...alta, pctComision: 0, recobroTotal: 100_000, pctRecobroAliado: 0 })).ok, true, "% 0 y % de recobro 0 son legítimos");
+  assert.equal((await crearComisionB2B({ ...alta, pctComision: 1.5 }, {})).ok, false);
+  assert.equal((await crearComisionB2B({ ...alta, pctComision: 0, recobroTotal: 100_000, pctRecobroAliado: 0 }, {})).ok, true, "% 0 y % de recobro 0 son legítimos");
   assert.equal(bd.llamadasRpc.at(-1)?.args.p_pct_recobro, 0, "el 0 del recobro no se cambia por 50 %");
 });
 
@@ -171,7 +171,7 @@ test("MIGRADO: editar una fila legado sin tocar la base (casilla vacía) no camb
     ventas: [venta("MIN-00-0451", { tenant: "minorista", impuesto: 0 })],
     aliados_b2b: [comision(31, "MIN-00-0451", { tenant: "minorista", base_comision: 0, base_explicita: null, pct_comision: 0.0833 })],
   });
-  const r = await actualizarComisionB2B(31, { base: null, modo: "pct", pct: 0.0833, valor: null, recobroTotal: 50_000, pctRecobroAliado: 0.5 });
+  const r = await actualizarComisionB2B(31, { base: null, modo: "pct", pct: 0.0833, valor: null, recobroTotal: 50_000, pctRecobroAliado: 0.5 }, {});
   assert.equal(r.ok, true, JSON.stringify(r));
   const f = bd.filas("aliados_b2b")[0];
   assert.equal(f?.base_comision, 0);
@@ -187,7 +187,7 @@ test("VALOR: base 3.250.000 / valor 300.000 se guarda y se cobra al peso", async
     aliados_b2b: [comision(31, "DTM-0451", { precio_venta: 4_000_000, base_comision: 3_250_000 })],
     aliados: [],
   });
-  const r = await actualizarComisionB2B(31, { base: 3_250_000, modo: "valor", pct: null, valor: 300_000, recobroTotal: 0, pctRecobroAliado: null });
+  const r = await actualizarComisionB2B(31, { base: 3_250_000, modo: "valor", pct: null, valor: 300_000, recobroTotal: 0, pctRecobroAliado: null }, {});
   assert.equal(r.ok, true, JSON.stringify(r));
   const f = bd.filas("aliados_b2b")[0];
   assert.equal(f?.comision_valor, 300_000);
@@ -199,8 +199,8 @@ test("VALOR: base 3.250.000 / valor 300.000 se guarda y se cobra al peso", async
 
 test("VALOR: base mayor que el PVP y % vacío se rechazan en el servidor", async () => {
   usarBD({ usuarios: [yo("administracion")], ventas: [venta("DTM-0451")], aliados_b2b: [comision(31, "DTM-0451")] });
-  assert.equal((await actualizarComisionB2B(31, { base: 1_000_001, modo: "pct", pct: 0.1, valor: null, recobroTotal: 0, pctRecobroAliado: null })).ok, false);
-  assert.equal((await actualizarComisionB2B(31, { base: 800_000, modo: "pct", pct: null, valor: null, recobroTotal: 0, pctRecobroAliado: null })).ok, false);
+  assert.equal((await actualizarComisionB2B(31, { base: 1_000_001, modo: "pct", pct: 0.1, valor: null, recobroTotal: 0, pctRecobroAliado: null }, {})).ok, false);
+  assert.equal((await actualizarComisionB2B(31, { base: 800_000, modo: "pct", pct: null, valor: null, recobroTotal: 0, pctRecobroAliado: null }, {})).ok, false);
 });
 
 // ═══ Abonos y permisos (servidor) ════════════════════════════════════════
@@ -213,7 +213,7 @@ const semillaAbonada = (rol: string, extra: Fila = {}) => ({
 
 test("ABONOS: no se borra una comisión con abonos; el abono queda", async () => {
   const bd = usarBD(semillaAbonada("superadmin"));
-  const r = await eliminarComisionB2B(31, "DTM-0451");
+  const r = await eliminarComisionB2B(31, "DTM-0451", {});
   assert.equal(r.ok, false);
   assert.match((r as { error: string }).error, /abonos/);
   assert.equal(bd.filas("aliados_b2b").length, 1);
@@ -222,20 +222,20 @@ test("ABONOS: no se borra una comisión con abonos; el abono queda", async () =>
 
 test("ABONOS: no se cambia el total de una comisión abonada; sí un cambio que lo conserva", async () => {
   const bd = usarBD(semillaAbonada("administracion"));
-  const cambia = await actualizarComisionB2B(31, { base: 1_000_000, modo: "pct", pct: 0.2, valor: null, recobroTotal: 0, pctRecobroAliado: null });
+  const cambia = await actualizarComisionB2B(31, { base: 1_000_000, modo: "pct", pct: 0.2, valor: null, recobroTotal: 0, pctRecobroAliado: null }, {});
   assert.equal(cambia.ok, false);
   assert.equal(bd.filas("aliados_b2b")[0]?.pct_comision, 0.1);
-  const conserva = await actualizarComisionB2B(31, { base: 500_000, modo: "pct", pct: 0.2, valor: null, recobroTotal: 0, pctRecobroAliado: null });
+  const conserva = await actualizarComisionB2B(31, { base: 500_000, modo: "pct", pct: 0.2, valor: null, recobroTotal: 0, pctRecobroAliado: null }, {});
   assert.equal(conserva.ok, true, JSON.stringify(conserva));
   assert.equal(totalDe(bd.filas("aliados_b2b")[0]), 100_000);
 });
 
 test("PERMISOS: operaciones no edita, no borra, no abona ni deshace (aunque llame la acción directo)", async () => {
   const bd = usarBD({ ...semillaAbonada("operaciones"), aliados_b2b: [comision(31, "DTM-0451"), comision(32, "DTM-0451")] });
-  assert.equal((await actualizarComisionB2B(32, { base: 800_000, modo: "pct", pct: 0.5, valor: null, recobroTotal: 0, pctRecobroAliado: null })).ok, false);
-  assert.equal((await eliminarComisionB2B(32, "DTM-0451")).ok, false);
-  assert.equal((await registrarPagoComisionB2B(32, 1, "2026-10-01")).ok, false);
-  assert.equal((await deshacerUltimoPagoComisionB2B(31)).ok, false);
+  assert.equal((await actualizarComisionB2B(32, { base: 800_000, modo: "pct", pct: 0.5, valor: null, recobroTotal: 0, pctRecobroAliado: null }, {})).ok, false);
+  assert.equal((await eliminarComisionB2B(32, "DTM-0451", {})).ok, false);
+  assert.equal((await registrarPagoComisionB2B(32, 1, "2026-10-01", {})).ok, false);
+  assert.equal((await deshacerUltimoPagoComisionB2B(31, {})).ok, false);
   assert.equal(bd.filas("aliados_b2b").length, 2);
   assert.equal(bd.filas("comision_b2b_pagos").length, 1);
   assert.equal(bd.filas("aliados_b2b")[1]?.pct_comision, 0.1);
@@ -243,9 +243,9 @@ test("PERMISOS: operaciones no edita, no borra, no abona ni deshace (aunque llam
 
 test("PERMISOS: administración solo en su agencia; gerencia en las dos", async () => {
   usarBD({ usuarios: [yo("administracion", { tenant: "minorista" })], ventas: [venta("DTM-0451")], aliados_b2b: [comision(32, "DTM-0451")] });
-  assert.equal((await eliminarComisionB2B(32, "DTM-0451")).ok, false);
+  assert.equal((await eliminarComisionB2B(32, "DTM-0451", {})).ok, false);
   const bd = usarBD({ usuarios: [yo("gerencia", { tenant: "minorista" })], ventas: [venta("DTM-0451")], aliados_b2b: [comision(32, "DTM-0451")] });
-  assert.equal((await eliminarComisionB2B(32, "DTM-0451")).ok, true);
+  assert.equal((await eliminarComisionB2B(32, "DTM-0451", {})).ok, true);
   assert.equal(bd.filas("aliados_b2b").length, 0);
 });
 
@@ -254,7 +254,7 @@ const esMio = (mio: boolean) => ({ soy_asesor_del_contrato: () => mio });
 
 test("ASESOR: venta corrige SU comisión — base y valor exacto al peso", async () => {
   const bd = usarBD({ usuarios: [yo("venta")], ventas: [venta("DTM-0451")], aliados_b2b: [comision(31, "DTM-0451")] }, esMio(true));
-  const r = await actualizarComisionB2B(31, { base: 500_000, modo: "valor", pct: null, valor: 37_000, recobroTotal: 0, pctRecobroAliado: null });
+  const r = await actualizarComisionB2B(31, { base: 500_000, modo: "valor", pct: null, valor: 37_000, recobroTotal: 0, pctRecobroAliado: null }, {});
   assert.equal(r.ok, true, JSON.stringify(r));
   const f = bd.filas("aliados_b2b")[0];
   assert.equal(f?.base_comision, 500_000);
@@ -266,19 +266,19 @@ test("ASESOR: venta corrige SU comisión — base y valor exacto al peso", async
 
 test("ASESOR: venta corrige SU comisión — por %", async () => {
   const bd = usarBD({ usuarios: [yo("venta")], ventas: [venta("DTM-0451")], aliados_b2b: [comision(31, "DTM-0451")] }, esMio(true));
-  const r = await actualizarComisionB2B(31, { base: 800_000, modo: "pct", pct: 0.15, valor: null, recobroTotal: 0, pctRecobroAliado: null });
+  const r = await actualizarComisionB2B(31, { base: 800_000, modo: "pct", pct: 0.15, valor: null, recobroTotal: 0, pctRecobroAliado: null }, {});
   assert.equal(r.ok, true, JSON.stringify(r));
   assert.equal(totalDe(bd.filas("aliados_b2b")[0]), 120_000);
 });
 
 test("ASESOR: NO corrige la comisión de un colega, ni de otra agencia", async () => {
   const bd = usarBD({ usuarios: [yo("venta")], ventas: [venta("DTM-0451")], aliados_b2b: [comision(31, "DTM-0451")] }, esMio(false));
-  const r = await actualizarComisionB2B(31, { base: 800_000, modo: "pct", pct: 0.5, valor: null, recobroTotal: 0, pctRecobroAliado: null });
+  const r = await actualizarComisionB2B(31, { base: 800_000, modo: "pct", pct: 0.5, valor: null, recobroTotal: 0, pctRecobroAliado: null }, {});
   assert.equal(r.ok, false);
   assert.match((r as { error: string }).error, /tus propios contratos/);
   assert.equal(bd.filas("aliados_b2b")[0]?.pct_comision, 0.1);
   usarBD({ usuarios: [yo("venta", { tenant: "minorista" })], aliados_b2b: [comision(31, "DTM-0451")] }, esMio(true));
-  assert.equal((await actualizarComisionB2B(31, { base: 800_000, modo: "pct", pct: 0.5, valor: null, recobroTotal: 0, pctRecobroAliado: null })).ok, false);
+  assert.equal((await actualizarComisionB2B(31, { base: 800_000, modo: "pct", pct: 0.5, valor: null, recobroTotal: 0, pctRecobroAliado: null }, {})).ok, false);
 });
 
 test("ASESOR: con abonos o NETO descontada ya no la corrige", async () => {
@@ -286,12 +286,12 @@ test("ASESOR: con abonos o NETO descontada ya no la corrige", async () => {
     usuarios: [yo("venta")], ventas: [venta("DTM-0451")], aliados_b2b: [comision(31, "DTM-0451")],
     comision_b2b_pagos: [{ id: 1, aliado_b2b_id: 31, fecha: "2026-10-01", valor: 10_000, tenant: "mayorista" }],
   }, esMio(true));
-  const r1 = await actualizarComisionB2B(31, { base: 800_000, modo: "pct", pct: 0.1, valor: null, recobroTotal: 5, pctRecobroAliado: null });
+  const r1 = await actualizarComisionB2B(31, { base: 800_000, modo: "pct", pct: 0.1, valor: null, recobroTotal: 5, pctRecobroAliado: null }, {});
   assert.equal(r1.ok, false);
   assert.match((r1 as { error: string }).error, /ya tiene abonos/);
   assert.equal(conAbono.filas("aliados_b2b")[0]?.recobro_total, 0);
   usarBD({ usuarios: [yo("venta")], ventas: [ventaNeta], aliados_b2b: [comision(31, "DTM-0451", { estado: "pagada", descontada_en_precio: true })] }, esMio(true));
-  const r2 = await actualizarComisionB2B(31, { base: 800_000, modo: "pct", pct: 0.2, valor: null, recobroTotal: 0, pctRecobroAliado: null });
+  const r2 = await actualizarComisionB2B(31, { base: 800_000, modo: "pct", pct: 0.2, valor: null, recobroTotal: 0, pctRecobroAliado: null }, {});
   assert.equal(r2.ok, false);
   assert.match((r2 as { error: string }).error, /descontó del precio/);
 });
@@ -301,9 +301,9 @@ test("ASESOR: ni en su contrato borra la comisión ni gestiona abonos", async ()
     usuarios: [yo("venta")], ventas: [venta("DTM-0451")], aliados_b2b: [comision(31, "DTM-0451")],
     comision_b2b_pagos: [{ id: 1, aliado_b2b_id: 31, fecha: "2026-10-01", valor: 10_000, tenant: "mayorista" }],
   }, esMio(true));
-  assert.equal((await eliminarComisionB2B(31, "DTM-0451")).ok, false, "borrar");
-  assert.equal((await registrarPagoComisionB2B(31, 1, "2026-10-02")).ok, false, "abonar");
-  assert.equal((await deshacerUltimoPagoComisionB2B(31)).ok, false, "deshacer abono");
+  assert.equal((await eliminarComisionB2B(31, "DTM-0451", {})).ok, false, "borrar");
+  assert.equal((await registrarPagoComisionB2B(31, 1, "2026-10-02", {})).ok, false, "abonar");
+  assert.equal((await deshacerUltimoPagoComisionB2B(31, {})).ok, false, "deshacer abono");
   assert.equal(bd.filas("aliados_b2b").length, 1);
   assert.equal(bd.filas("comision_b2b_pagos").length, 1);
 });
@@ -327,7 +327,7 @@ test("COMISIONABLE: editar la comisión en Comisiones se refleja en la cuenta de
     aliados_b2b: [comision(31, "DTM-0451")],
     aliados: [],
   });
-  assert.equal((await actualizarComisionB2B(31, { base: 500_000, modo: "pct", pct: 0.1, valor: null, recobroTotal: 0, pctRecobroAliado: null })).ok, true);
+  assert.equal((await actualizarComisionB2B(31, { base: 500_000, modo: "pct", pct: 0.1, valor: null, recobroTotal: 0, pctRecobroAliado: null }, {})).ok, true);
   const r = await cuenta("DTM-0451");
   assert.equal(r?.tipo === "comision" && r.detalle.totalPagar, 50_000, "antes seguía diciendo 80.000");
 });
@@ -372,7 +372,7 @@ test("NETO: la cuenta de cobro y el estado de cuenta no se abren por URL (ni con
 
 test("NETO: no admite abonos (sin pago ficticio)", async () => {
   const bd = usarBD({ usuarios: [yo("administracion")], ventas: [ventaNeta], aliados_b2b: [comision(31, "DTM-0451", { estado: "pagada" })] });
-  const r = await registrarPagoComisionB2B(31, 80_000, "2026-10-01");
+  const r = await registrarPagoComisionB2B(31, 80_000, "2026-10-01", {});
   assert.equal(r.ok, false);
   assert.match((r as { error: string }).error, /descontó del precio/);
   assert.equal(bd.filas("comision_b2b_pagos").length, 0, "no se registró ningún pago");
@@ -386,7 +386,7 @@ test("NETO: no se elimina suelta, ni sin abonos (marca nueva y firma legado), au
     comision(31, "DTM-0451", { estado: "pagada", descontada_en_precio: false }),  // firma legado de reservar
   ]) {
     const bd = usarBD({ usuarios: [yo("superadmin")], ventas: [ventaNeta], aliados_b2b: [fila] });
-    const r = await eliminarComisionB2B(31, "DTM-0451");
+    const r = await eliminarComisionB2B(31, "DTM-0451", {});
     assert.equal(r.ok, false);
     assert.match((r as { error: string }).error, /descontó del precio/);
     assert.equal(bd.filas("aliados_b2b").length, 1, "la NETO sigue ahí (la base también lo impide: N8–N10)");
@@ -394,7 +394,7 @@ test("NETO: no se elimina suelta, ni sin abonos (marca nueva y firma legado), au
   // Una comisión NO descontada sin abonos se sigue eliminando.
   const bd = usarBD({ usuarios: [yo("administracion")], ventas: [venta("DTM-0452", { modo_compra: "comisionable", comision_estado: "pendiente" })],
     aliados_b2b: [comision(32, "DTM-0452")] });
-  assert.equal((await eliminarComisionB2B(32, "DTM-0452")).ok, true);
+  assert.equal((await eliminarComisionB2B(32, "DTM-0452", {})).ok, true);
   assert.equal(bd.filas("aliados_b2b").length, 0);
 });
 

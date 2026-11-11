@@ -1,3 +1,5 @@
+import { identidadDe } from "@/lib/contrato/identidad";
+import { uidEmbebido } from "@/lib/contrato/uidEmbebido";
 import { createClient } from "@/lib/supabase/server";
 import { getTenant } from "@/lib/tenant.server";
 import { sumarRetencionesPorCuenta } from "@/lib/finanzas/retenciones";
@@ -31,7 +33,7 @@ export default async function PagosPage() {
   const { data: cxp } = await sb
     .from("cuentas_por_pagar")
     .select(
-      "id, numero_contrato, proveedor, tipo_proveedor, servicio, valor_total, moneda, fecha_obligacion, fecha_vencimiento, aplica_retencion, pct_retencion, clasificacion, base_gravable, iva_proveedor"
+      "id, numero_contrato, proveedor, tipo_proveedor, servicio, valor_total, moneda, fecha_obligacion, fecha_vencimiento, aplica_retencion, pct_retencion, clasificacion, base_gravable, iva_proveedor, ventas(contrato_uid)"
     )
     .eq("tenant", tenant)
     .order("fecha_vencimiento", { ascending: true, nullsFirst: false });
@@ -64,6 +66,8 @@ export default async function PagosPage() {
     return {
       id: c.id,
       numero_contrato: c.numero_contrato,
+      // #75: el uid sale del embed de la MISMA consulta que trajo la cuenta (cuentas_por_pagar → ventas).
+      identidad: identidadDe(c.numero_contrato, uidEmbebido((c as { ventas?: unknown }).ventas)),
       proveedor: c.proveedor,
       tipo_proveedor: c.tipo_proveedor,
       servicio: c.servicio,

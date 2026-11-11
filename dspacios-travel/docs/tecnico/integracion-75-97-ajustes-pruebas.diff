@@ -1,0 +1,41 @@
+# Ajustes de INTEGRACIÓN #75 + #97 detectados al verificar el árbol integrado sobre origin/main (#446), 2026-11-11. Aplicar DESPUÉS de integracion-97-con-75.diff.
+# El árbol de #97 (portal-b2b-bloque) NO se modificó: este parche es para que #97 lo incorpore o lo resuelva a su manera.
+# 1) comisionAsistidaPvp97: integrada, la reversión recibe idc. 2) medicionFlujoWiring: 18 puntos de rechazo; el 18.º es el rechazo por dependencias de la 286 (ya fallaba en #97 solo: 18 en el código, 17 en la prueba).
+# 3) contratos/actions.ts: anotación identidad:n/a en la consulta de dependencias, que exige identidadPropagacion.wiring (#75).
+--- a/dspacios-travel/pruebas/comisionAsistidaPvp97.test.ts
++++ b/dspacios-travel/pruebas/comisionAsistidaPvp97.test.ts
+@@ -38,7 +38,7 @@
+ 
+ test("PVP B2B manual: si la comisión falla se revierte el contrato (nunca B2B sin comisión)", () => {
+   const i = cuerpo.indexOf("registrarComisionReserva(sb, numero");
+-  assert.match(cuerpo.slice(i, i + 900), /revertirContratoManual\(numero, tenant\)/);
++  assert.match(cuerpo.slice(i, i + 900), /revertirContratoManual\((idc, )?numero, tenant\)/);
+ });
+ 
+ test("el asesor interno no es beneficiario: la RPC recibe el aliado del catálogo, no el asesor", () => {
+--- a/dspacios-travel/pruebas/medicionFlujoWiring.test.ts
++++ b/dspacios-travel/pruebas/medicionFlujoWiring.test.ts
+@@ -373,10 +373,10 @@
+   // inválida, venta directa, asesor ajeno, plan, comisión distinta a la
+   // mostrada y margen NETO < 6 %), todos antes de numerar y envueltos igual:
+   // 7 → 13.
+-  test("crearContratoInterno: 17 puntos de rechazo pasan por _rechazarValidacion(); el log de éxito ('ok') aparece UNA sola vez", () => {
++  test("crearContratoInterno: 18 puntos de rechazo pasan por _rechazarValidacion(); el log de éxito ('ok') aparece UNA sola vez", () => {
+     const cuerpo = cuerpoDeFuncion(leer(CONTRATOS_ARCHIVO), "crearContratoInterno");
+     const usos = [...cuerpo.matchAll(/return _rechazarValidacion\(/g)];
+-    assert.equal(usos.length, 17, `se esperaban 17 puntos de rechazo envueltos, hubo ${usos.length}`);
++    assert.equal(usos.length, 18, `se esperaban 18 puntos de rechazo envueltos, hubo ${usos.length}`);
+     const logsOk = [...cuerpo.matchAll(/registrarEtapa\("crear_contrato", flujoId, "validacion_negocio", Math\.round\(performance\.now\(\) - _tValidacion0\), "ok"\)/g)];
+     assert.equal(logsOk.length, 1, "el log de éxito de validacion_negocio debe aparecer exactamente una vez (al final de la sección)");
+     const logsRechazado = [...cuerpo.matchAll(/registrarEtapa\("crear_contrato", flujoId, "validacion_negocio", Math\.round\(performance\.now\(\) - _tValidacion0\), "rechazado"\)/g)];
+--- a/dspacios-travel/app/(dashboard)/dashboard/contratos/actions.ts
++++ b/dspacios-travel/app/(dashboard)/dashboard/contratos/actions.ts
+@@ -588,7 +588,7 @@
+   // Un manual pendiente con comisión B2B solo deja el PLAN (286), que se materializa al confirmar (288), con el interruptor en cualquier posición.
+   // Lo que se exige son esas DEPENDENCIAS (no el interruptor): si faltan, se rechaza ANTES de numerar —nunca se marca activo ni se crea una comisión exigible—.
+   if (registraComisionPvp && tenant !== "minorista") {
+-    const { data: faltan, error: eDep } = await createAdminClient().rpc("p97_dependencias_comision_faltantes");
++    const { data: faltan, error: eDep } = await createAdminClient().rpc("p97_dependencias_comision_faltantes"); // identidad:n/a — consulta de esquema (dependencias de la 286) antes de numerar; no toca tablas de contrato
+     const sinFuncion = !!eDep && /PGRST202|42883|Could not find the function|does not exist/i.test(`${eDep.code ?? ""} ${eDep.message ?? ""}`);
+     if (eDep && !sinFuncion) {
+       elevarEstadoFlujo(estado, "error");
