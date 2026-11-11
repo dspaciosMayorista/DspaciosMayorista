@@ -187,6 +187,8 @@ export type FilaTarifaHotelEdadCruda = {
   edad_infante_max: number | null;
   edad_nino_min: number | null;
   edad_nino_max: number | null;
+  /** #43/#60: grupo de días de la fila (null/ausente = todos los días). */
+  grupo_id?: string | null;
 };
 
 /**
@@ -240,7 +242,11 @@ export function resolverReglaEdadEstadiaSegura(args: {
           "catálogo (tarifa_hotel) antes de continuar.",
       };
     }
-    if (candidatas.length > 1) {
+    // #43/#60: varias filas de la misma vigencia son válidas SOLO si cada una es de un grupo
+    // de días distinto (filas por grupo). Duplicados «todos los días» o mezclas: error, como antes.
+    const grupos = candidatas.map((f) => f.grupo_id ?? null);
+    const porGrupo = candidatas.length > 1 && grupos.every((g) => g != null) && new Set(grupos).size === grupos.length;
+    if (candidatas.length > 1 && !porGrupo) {
       return {
         ok: false,
         temporadas: [temp],
@@ -249,29 +255,42 @@ export function resolverReglaEdadEstadiaSegura(args: {
           "configuración ambigua (temporada duplicada), corrígela en el catálogo antes de continuar.",
       };
     }
-    const f = candidatas[0];
-    const valores = [f.edad_infante_min, f.edad_infante_max, f.edad_nino_min, f.edad_nino_max];
-    const algunoConValor = valores.some((v) => v != null);
-    const todosConValor = valores.every((v) => v != null);
-    if (algunoConValor && !todosConValor) {
+    const delaVigencia: FilaConTemporadaParaEdad[] = [];
+    for (const f of candidatas) {
+      const valores = [f.edad_infante_min, f.edad_infante_max, f.edad_nino_min, f.edad_nino_max];
+      const algunoConValor = valores.some((v) => v != null);
+      const todosConValor = valores.every((v) => v != null);
+      if (algunoConValor && !todosConValor) {
+        return {
+          ok: false,
+          temporadas: [temp],
+          error:
+            `La tarifa (${args.categoria} / ${args.regimen} / ${temp}) trae un override de edad incompleto (algunas de ` +
+            "las 4 columnas en NULL y otras no) — dato corrupto pese a la restricción de la base de datos, corrígelo " +
+            "antes de continuar.",
+        };
+      }
+      delaVigencia.push({
+        temporada: temp,
+        overrideFila: todosConValor
+          ? {
+              infanteMin: f.edad_infante_min as number, infanteMax: f.edad_infante_max as number,
+              ninoMin: f.edad_nino_min as number, ninoMax: f.edad_nino_max as number,
+            }
+          : null,
+      });
+    }
+    if (porGrupo && !resolverReglaEdadEstadia(delaVigencia, args.general).ok) {
       return {
         ok: false,
         temporadas: [temp],
         error:
-          `La tarifa (${args.categoria} / ${args.regimen} / ${temp}) trae un override de edad incompleto (algunas de ` +
-          "las 4 columnas en NULL y otras no) — dato corrupto pese a la restricción de la base de datos, corrígelo " +
-          "antes de continuar.",
+          `Las tarifas por grupo de días de (${args.categoria} / ${args.regimen} / ${temp}) tienen reglas de edad de ` +
+          "niño/infante distintas — no se puede clasificar automáticamente a los menores. Iguala la configuración de " +
+          "edades de esos grupos antes de continuar.",
       };
     }
-    filasEdad.push({
-      temporada: temp,
-      overrideFila: todosConValor
-        ? {
-            infanteMin: f.edad_infante_min as number, infanteMax: f.edad_infante_max as number,
-            ninoMin: f.edad_nino_min as number, ninoMax: f.edad_nino_max as number,
-          }
-        : null,
-    });
+    filasEdad.push(...delaVigencia);
   }
   return resolverReglaEdadEstadia(filasEdad, args.general);
 }

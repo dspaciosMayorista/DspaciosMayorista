@@ -22,6 +22,7 @@ import {
   marcar,
   type TemporadaRango,
 } from "@/lib/calc/paquetes";
+import { clavesPrecioFinal, filasPorClave, netosDeColumna } from "@/lib/calc/netosPorTemporada";
 import {
   normalizarReglaEdadGeneral,
   resolverReglaEdadEstadiaSegura,
@@ -603,7 +604,7 @@ export async function computarReserva(
     if (temporadasSeleccionadasF.size && !solicitud) {
       const { data: tarEdad, error: tarEdadErr } = await admin
         .from("tarifa_hotel")
-        .select("tipo_habitacion, alimentacion, temporada, edad_infante_min, edad_infante_max, edad_nino_min, edad_nino_max, notas")
+        .select("tipo_habitacion, alimentacion, temporada, edad_infante_min, edad_infante_max, edad_nino_min, edad_nino_max, notas, grupo_id")
         .eq("hotel_id", input.hotelId)
         .eq("tipo_habitacion", input.categoria)
         .eq("alimentacion", input.regimen)
@@ -837,11 +838,11 @@ export async function computarReserva(
     let tarRowsVig: FilaTarifaHotelEdadCruda[] = [];
     type TarRow = FilaTarifaHotelEdadCruda & { neto_sencilla: number | null; neto_doble: number | null; neto_triple: number | null; neto_multiple: number | null; neto_nino: number | null; neto_nino2: number | null; neto_infante: number | null; notas: string | null; precio_final_autoritativo: boolean | null };
     const colDe: Record<string, keyof TarRow> = { sencilla: "neto_sencilla", doble: "neto_doble", triple: "neto_triple", multiple: "neto_multiple", nino: "neto_nino", nino2: "neto_nino2", infante: "neto_infante" };
+    // #43/#60: armado único del mapa de netos (clave = nombre, o nombre + grupo de días).
     const netoPorTemporadaDe = (rows: TarRow[], acom: string): Record<string, number | null> => {
-      const col = colDe[acom]; const m: Record<string, number | null> = {};
-      if (!col) return m;
-      for (const r of rows) if (r.temporada) m[r.temporada] = r[col] as number | null;
-      return m;
+      const col = colDe[acom];
+      if (!col) return {};
+      return netosDeColumna(filasPorClave(rows.filter((r) => r.temporada)), col);
     };
     // Temporadas marcadas como PRECIO FINAL AUTORITATIVO (migración 179,
     // `tarifa_hotel.precio_final_autoritativo`) dentro de las filas YA
@@ -849,19 +850,16 @@ export async function computarReserva(
     // para que una promoción Dubai con descuento/suplemento/edades propios
     // nunca se recalcule desde su temporada base. Vacío = comportamiento
     // legacy sin cambios (ninguna fila marcada).
-    const precioFinalTemporadasDe = (rows: TarRow[]): Set<string> => {
-      const s = new Set<string>();
-      for (const r of rows) if (r.temporada && r.precio_final_autoritativo) s.add(r.temporada);
-      return s;
-    };
+    const precioFinalTemporadasDe = (rows: TarRow[]): Set<string> =>
+      clavesPrecioFinal(filasPorClave(rows.filter((r) => r.temporada)));
     const conServiceRole = !!process.env.SUPABASE_SERVICE_ROLE_KEY && !!meta.fecha_ida && !!meta.fecha_regreso;
     if (conServiceRole) {
       const admin = createAdminClient();
       numNochesVig = noches(meta.fecha_ida!, meta.fecha_regreso!);
       const [{ data: temps, error: tempsErr }, { data: tarRows, error: tarRowsErr }] = await Promise.all([
-        leerCompartida(lecturas, `admin:hotel_temporadas:${input.hotelId}`, () => admin.from("hotel_temporadas").select("nombre, fecha_inicio, fecha_fin, prioridad, compra_inicio, compra_fin, tipo, descuento_valor, rangos, blackouts, min_noches, regimen_restringido").eq("hotel_id", input.hotelId).order("orden").order("id")),
+        leerCompartida(lecturas, `admin:hotel_temporadas:${input.hotelId}`, () => admin.from("hotel_temporadas").select("id, nombre, fecha_inicio, fecha_fin, prioridad, compra_inicio, compra_fin, tipo, descuento_valor, rangos, blackouts, min_noches, regimen_restringido, hotel_temporada_grupos(id, dias, activo)").eq("hotel_id", input.hotelId).order("orden").order("id")),
         // La tarifa neta SÍ depende del combo (categoría y régimen): se lee por combo, sin memo.
-        admin.from("tarifa_hotel").select("tipo_habitacion, alimentacion, temporada, neto_sencilla, neto_doble, neto_triple, neto_multiple, neto_nino, neto_nino2, neto_infante, edad_infante_min, edad_infante_max, edad_nino_min, edad_nino_max, notas, precio_final_autoritativo").eq("hotel_id", input.hotelId).eq("tipo_habitacion", input.categoria).eq("alimentacion", input.regimen),
+        admin.from("tarifa_hotel").select("tipo_habitacion, alimentacion, temporada, neto_sencilla, neto_doble, neto_triple, neto_multiple, neto_nino, neto_nino2, neto_infante, edad_infante_min, edad_infante_max, edad_nino_min, edad_nino_max, notas, precio_final_autoritativo, grupo_id").eq("hotel_id", input.hotelId).eq("tipo_habitacion", input.categoria).eq("alimentacion", input.regimen),
       ]);
       if (tempsErr) return { ok: false, error: `No se pudo validar la vigencia de temporadas del hotel: ${tempsErr.message}` };
       if (tarRowsErr) return { ok: false, error: `No se pudo validar la tarifa neta del hotel: ${tarRowsErr.message}` };

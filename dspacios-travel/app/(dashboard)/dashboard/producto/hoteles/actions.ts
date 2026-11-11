@@ -15,6 +15,7 @@ import type { Json } from "@/types/database";
 import { normalizarProveedorHotelId } from "@/lib/hoteles/proveedor";
 import { eliminarHotelSeguro, type ResultadoEliminarHotel } from "@/lib/hoteles/eliminarHotel";
 import { validarCondicionPago, type CondicionPagoEntrada } from "@/lib/cotizacion/condicionPagoCatalogo";
+import { validarFechasVigencia, fechasGuardadas, anioVigenteBogota, type FechasVigencia } from "@/lib/hoteles/validarFechasVigencia";
 
 type Result = { ok: true; id?: number; aviso?: string } | { ok: false; error: string };
 const oNull = (s: string) => (s && s.trim() !== "" ? s.trim() : null);
@@ -354,13 +355,20 @@ function payloadTemporada(
   };
 }
 
-function validarTemporada(input: TemporadaInput): {
+// `previas` = fechas ya guardadas (solo al editar): lo que no cambia no se vuelve a juzgar, así una vigencia histórica se
+// puede seguir editando. La validación de fechas (#43) vive en lib/hoteles/validarFechasVigencia.ts y es la misma del formulario.
+function validarTemporada(input: TemporadaInput, previas?: FechasVigencia | null): {
   ok: true;
   rangos: RangoFechasInput[];
   blackouts: RangoFechasInput[];
   condicion: { condicion_pago_tipo: string; condicion_pago_pct_inicial: number | null; condicion_pago_dias_saldo: number | null };
 } | { ok: false; error: string } {
   if (!input.nombre.trim()) return { ok: false, error: "El nombre es obligatorio." };
+  const fechas = validarFechasVigencia(
+    { inicio: input.inicio, fin: input.fin, rangos: input.rangos, blackouts: input.blackouts, compraInicio: input.compraInicio, compraFin: input.compraFin },
+    { anioVigente: anioVigenteBogota(), previas },
+  );
+  if (!fechas.ok) return { ok: false, error: fechas.error };
   // El rango principal (inicio/fin) se suma a la lista de rangos.
   const todos = [{ fecha_inicio: input.inicio, fecha_fin: input.fin }, ...(input.rangos ?? [])];
   const rr = limpiarRangos(todos);
@@ -440,7 +448,7 @@ export async function eliminarTemporada(id: number, _hotelIdSolicitado: number):
 export async function copiarTemporadasDesdeHotel(
   hotelDestino: number,
   hotelOrigen: number,
-): Promise<{ ok: true; copiadas: number } | { ok: false; error: string }> {
+): Promise<{ ok: true; copiadas: number; omitidas?: string[] } | { ok: false; error: string }> {
   if (!hotelOrigen || hotelDestino === hotelOrigen) return { ok: false, error: "Elige un hotel de origen distinto." };
   const sb = await createClient();
   // Se copian TODOS los campos de la vigencia, incluida su condición de pago
@@ -454,12 +462,22 @@ export async function copiarTemporadasDesdeHotel(
     .eq("hotel_id", hotelOrigen);
   if (e1) return { ok: false, error: e1.message };
   if (!origen?.length) return { ok: false, error: "El hotel de origen no tiene temporadas para copiar." };
-  const filas = origen.map((t) => ({ ...t, hotel_id: hotelDestino }));
+  // #43: copiar CREA vigencias, así que rige la misma validación de fechas. Las que no la cumplen (año anterior al vigente,
+  // fecha inexistente…) NO se copian ni se corrigen: se informan por nombre para que se revisen en el hotel de origen.
+  const anioVigente = anioVigenteBogota();
+  const omitidas: string[] = [];
+  const copiables = origen.filter((t) => {
+    const r = validarFechasVigencia(fechasGuardadas(t), { anioVigente });
+    if (!r.ok) omitidas.push(`${t.nombre}: ${r.error}`);
+    return r.ok;
+  });
+  if (!copiables.length) return { ok: false, error: `Ninguna vigencia del hotel de origen se puede crear con las reglas de fechas vigentes. ${omitidas.join(" · ")}` };
+  const filas = copiables.map((t) => ({ ...t, hotel_id: hotelDestino }));
   const { error } = await sb.from("hotel_temporadas").insert(filas);
   if (error) return { ok: false, error: error.message };
   revalidatePath(`/dashboard/producto/hoteles/${hotelDestino}`);
   await regenerarTarifariosDeHotel(hotelDestino);
-  return { ok: true, copiadas: filas.length };
+  return { ok: true, copiadas: filas.length, ...(omitidas.length ? { omitidas } : {}) };
 }
 
 // Al renombrar una temporada, `tarifa_hotel.temporada` y `hotel_calculadora.params`
@@ -529,16 +547,18 @@ async function renombrarTemporadaEnDatos(
 // es un INSERT, no hay fila previa de la que discrepar) — no se amplía el
 // alcance tocando ese tipo ni el formulario que lo llena.
 export async function actualizarTemporada(id: number, input: TemporadaInput): Promise<Result> {
-  const v = validarTemporada(input);
-  if (!v.ok) return v;
   const sb = await createClient();
+  // La misma lectura de siempre (una sola), ampliada con las fechas guardadas: la validación de fechas necesita saber cuáles NO
+  // cambian para dejar editar una vigencia histórica sin tocar sus fechas antiguas (#43). Sin lecturas ni escrituras adicionales.
   const { data: actual, error: eActual } = await sb
     .from("hotel_temporadas")
-    .select("nombre, hotel_id")
+    .select("nombre, hotel_id, fecha_inicio, fecha_fin, rangos, blackouts, compra_inicio, compra_fin")
     .eq("id", id)
     .maybeSingle();
   if (eActual) return { ok: false, error: eActual.message };
   if (!actual) return { ok: false, error: "No se encontró la temporada a actualizar." };
+  const v = validarTemporada(input, fechasGuardadas(actual));
+  if (!v.ok) return v;
   const hotelId = actual.hotel_id;
   const nombreViejo = actual.nombre?.trim() ?? "";
 
@@ -786,6 +806,7 @@ export async function cargarTemporadasMasivo(rows: Record<string, string>[]): Pr
   let insertados = 0;
   const tocados = new Set<number>();
   const reFecha = /^\d{4}-\d{2}-\d{2}$/;
+  const anioVigente = anioVigenteBogota();
 
   for (let i = 0; i < rows.length; i++) {
     const r = rows[i];
@@ -824,6 +845,10 @@ export async function cargarTemporadasMasivo(rows: Record<string, string>[]): Pr
 
     const ci = (r.compra_inicio || "").trim();
     const cf = (r.compra_fin || "").trim();
+    // #43: esta fila CREA una vigencia (el duplicado exacto histórico ya se omitió arriba): fechas reales, sin años anteriores
+    // al vigente y, si la fila trae compra, también válida — antes una compra mal escrita se descartaba en silencio (= siempre abierta).
+    const fechasOk = validarFechasVigencia({ inicio, fin, compraInicio: ci, compraFin: cf }, { anioVigente });
+    if (!fechasOk.ok) { errores.push(`Fila ${linea} (${nombre}): ${fechasOk.error}`); continue; }
     const { error } = await sb.from("hotel_temporadas").insert({
       hotel_id: hotelId, nombre, fecha_inicio: inicio, fecha_fin: fin,
       prioridad: Math.max(1, numCsv(r.prioridad) || 1),

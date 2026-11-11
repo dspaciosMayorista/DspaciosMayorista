@@ -27,6 +27,7 @@ const rollback180 = readFileSync(join(raiz, "supabase/scripts/rollback_180_tarif
 const calculadoraEditor = readFileSync(join(raiz, "app/(dashboard)/dashboard/producto/hoteles/[id]/CalculadoraEditor.tsx"), "utf8");
 const calculadorasTs = readFileSync(join(raiz, "lib/calc/calculadoras.ts"), "utf8");
 const paquetesTs = readFileSync(join(raiz, "lib/calc/paquetes.ts"), "utf8");
+const netosPorTemporada = readFileSync(join(raiz, "lib/calc/netosPorTemporada.ts"), "utf8");
 
 // Igual que la variante usada en otros wiring tests del repo, pero cae al
 // FINAL del archivo cuando la función es la última declaración exportada
@@ -50,10 +51,17 @@ describe("computo.ts — selecciona precio_final_autoritativo y lo propaga a los
   });
 
   test("precioFinalTemporadasDe existe y filtra por r.precio_final_autoritativo", () => {
-    assert.match(computo, /const precioFinalTemporadasDe = \(rows: TarRow\[\]\): Set<string> => \{/);
+    // #43/#60: el filtro vive en el armado compartido (`clavesPrecioFinal`); computo lo usa.
+    assert.match(computo, /const precioFinalTemporadasDe = \(rows: TarRow\[\]\): Set<string> =>/);
     const pos = computo.indexOf("const precioFinalTemporadasDe");
     const cuerpo = computo.slice(pos, pos + 300);
-    assert.match(cuerpo, /r\.precio_final_autoritativo/);
+    assert.match(cuerpo, /clavesPrecioFinal\(/);
+  });
+
+  test("el armado compartido filtra por precio_final_autoritativo === true (mismo criterio de siempre)", () => {
+    const pos = netosPorTemporada.indexOf("export function clavesPrecioFinal");
+    assert.notEqual(pos, -1);
+    assert.match(netosPorTemporada.slice(pos, pos + 300), /fila\.precio_final_autoritativo === true/);
   });
 
   test("las 4 llamadas a los liquidadores (habitación, niño, niño2, infante) reciben precioFinalTemporadas", () => {
@@ -68,7 +76,7 @@ describe("liquidacionHotel.ts (evaluarHotelPorFechas) — construye y propaga pr
     const pos = liquidacionHotel.indexOf("const precioFinalTemporadas = new Set<string>();");
     assert.notEqual(pos, -1);
     const cuerpo = liquidacionHotel.slice(pos, pos + 200);
-    assert.match(cuerpo, /row\.precio_final_autoritativo === true/);
+    assert.match(cuerpo, /clavesPrecioFinal\(tempMap\)/); // #43/#60: criterio en el armado compartido
   });
 
   test("liquidarHotelNochesConTemporadas y liquidarHotelNoches (dentro del mismo combo) reciben precioFinalTemporadas", () => {
@@ -82,7 +90,7 @@ describe("paquetes/actions.ts (filasHoteles, generación del tarifario) — el P
     const pos = paquetesActions.indexOf("const precioFinalTemporadas = new Set<string>();");
     assert.notEqual(pos, -1);
     const cuerpo = paquetesActions.slice(pos, pos + 200);
-    assert.match(cuerpo, /row\.precio_final_autoritativo === true/);
+    assert.match(cuerpo, /clavesPrecioFinal\(tempMap\)/); // #43/#60: criterio en el armado compartido
   });
 
   test("liquidarHotelMasBaratoConTemporada (tarifario 'desde') Y liquidarHotelNochesConTemporadas (fecha fija) reciben precioFinalTemporadas — las variantes CON identidad, no las simples", () => {

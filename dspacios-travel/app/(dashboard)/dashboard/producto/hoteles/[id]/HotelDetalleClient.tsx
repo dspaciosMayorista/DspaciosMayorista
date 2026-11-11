@@ -20,6 +20,7 @@ import { pctInicialParaFormulario, restriccionImplicitaHotel } from "@/lib/cotiz
 import { etiquetasRestriccion } from "@/lib/cotizacion/etiquetasCondicion";
 import { etiquetaFilaTarifa } from "@/lib/calc/promoCalculadora";
 import { fechaNegocio } from "@/lib/fechaNegocio";
+import { validarFechasVigencia, fechasGuardadas, anioVigenteBogota, type FechasVigencia } from "@/lib/hoteles/validarFechasVigencia";
 
 type RangoFechas = { fecha_inicio: string; fecha_fin: string };
 type Temporada = {
@@ -203,6 +204,7 @@ function TemporadasBox({ hotelId, temporadas, otrosHoteles, hoy, regimenes, mone
   const [pending, start] = useTransition();
   const [err, setErr] = useState("");
   const [aviso, setAviso] = useState("");
+  const [previas, setPrevias] = useState<FechasVigencia | null>(null);
 
   const esPromo = tipo !== "tarifa";
   const esDescuento = tipo === "descuento_pct" || tipo === "descuento_monto";
@@ -214,6 +216,7 @@ function TemporadasBox({ hotelId, temporadas, otrosHoteles, hoy, regimenes, mone
     setEditId(null); setNombre(""); setIni(""); setFin(""); setPrioridad("1"); setMinNoches("1");
     setCompraIni(""); setCompraFin(""); setTipo("tarifa"); setDescuento(""); setRegimenRestringido("");
     setRangosExtra([]); setBlackouts([]); setCondicionPagoTipo("sin_condicion"); setCondicionPagoPct(""); setCondicionPagoDias("");
+    setPrevias(null);
     setErr("");
   }
 
@@ -237,12 +240,20 @@ function TemporadasBox({ hotelId, temporadas, otrosHoteles, hoy, regimenes, mone
     setCondicionPagoTipo(t.condicion_pago_tipo ?? "sin_condicion");
     setCondicionPagoPct(pctInicialParaFormulario(t.condicion_pago_pct_inicial));
     setCondicionPagoDias(t.condicion_pago_dias_saldo != null ? String(t.condicion_pago_dias_saldo) : "");
+    setPrevias(fechasGuardadas(t)); // lo guardado: sus fechas antiguas sin cambios no se vuelven a juzgar
     setErr("");
     if (typeof window !== "undefined") window.scrollTo({ top: 0, behavior: "smooth" });
   }
 
   function guardar() {
     if (!nombre.trim()) { setErr("Ponle un nombre."); return; }
+    // Mismas reglas de fechas que el servidor (lib/hoteles/validarFechasVigencia.ts): aviso inmediato y sin ida al servidor.
+    // El servidor las vuelve a aplicar siempre; esto no las reemplaza.
+    const fechas = validarFechasVigencia(
+      { inicio: ini, fin, rangos: rangosExtra, blackouts, compraInicio: compraIni, compraFin },
+      { anioVigente: anioVigenteBogota(), previas: editId == null ? null : previas },
+    );
+    if (!fechas.ok) { setErr(fechas.error); return; }
     setErr(""); setAviso("");
     const payload = {
       hotelId, nombre, inicio: ini, fin,
@@ -440,7 +451,11 @@ function CopiarDeHotel({ hotelId, otrosHoteles }: { hotelId: number; otrosHotele
     setMsg("");
     start(async () => {
       const r = await copiarTemporadasDesdeHotel(hotelId, Number(origen));
-      if (r.ok) { setMsg(`✓ ${r.copiadas} copiada(s)`); setOrigen(""); router.refresh(); }
+      if (r.ok) {
+        // Las vigencias que no cumplen las reglas de fechas no se copian ni se corrigen: se dice cuáles son.
+        setMsg(`✓ ${r.copiadas} copiada(s)${r.omitidas?.length ? ` · ${r.omitidas.length} omitida(s) por sus fechas: ${r.omitidas.join(" · ")}` : ""}`);
+        setOrigen(""); router.refresh();
+      }
       else setMsg(r.error);
     });
   }
