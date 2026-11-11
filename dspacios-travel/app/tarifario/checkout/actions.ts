@@ -251,9 +251,10 @@ const ERROR_LECTURA_B2B = "No pudimos cargar los datos de facturación de tu age
 // verificaban contra `usuarios.activo` — un aliado B2B desactivado por un
 // administrador seguía viendo la sección B2B del checkout (facturación neta,
 // % de comisión) hasta que expirara su sesión.
+// identidad:n/a — solicitud/cotización o lectura de catálogo; no escribe tablas de contrato
 export async function getContextoB2B(): Promise<ContextoB2B> {
   const DEFAULT: ContextoB2B = { esB2B: false, tipo: null, agencia: null, pctComision: 0, categoria: null };
-  const sb = await createClient();
+  const sb = await createClient(); // identidad:n/a — solicitud/cotización/lectura de catálogo; no escribe tablas de contrato
   const { data: { user }, error: userErr } = await sb.auth.getUser();
   if (userErr || !user) return DEFAULT;
 
@@ -307,7 +308,7 @@ export async function getContextoB2B(): Promise<ContextoB2B> {
   // técnico — y la solicitud se aborta antes de crear la cotización.
   let sols: { nombre: string | null; nit: string | null; email: string | null; telefono: string | null }[] | null = null;
   try {
-    const { data, error: solsErr } = await createAdminClient()
+    const { data, error: solsErr } = await createAdminClient() // identidad:n/a — solicitud/cotización/lectura de catálogo; no escribe tablas de contrato
       .from("b2b_solicitudes")
       .select("nombre, nit, email, telefono")
       .eq("usuario_id", agenciaUserId)
@@ -330,10 +331,11 @@ export async function getContextoB2B(): Promise<ContextoB2B> {
 
 // Portada actual por hotel (para resolver la foto de ítems del carrito que se
 // guardaron sin fotoUrl). hotel_fotos es lectura pública.
+// identidad:n/a — solicitud/cotización o lectura de catálogo; no escribe tablas de contrato
 export async function fotosPortada(hotelIds: number[]): Promise<Record<number, string>> {
   const out: Record<number, string> = {};
   if (!hotelIds.length) return out;
-  const sb = await createClient();
+  const sb = await createClient(); // identidad:n/a — solicitud/cotización/lectura de catálogo; no escribe tablas de contrato
   const { data } = await sb.from("hotel_fotos").select("hotel_id, url, es_portada, orden").in("hotel_id", hotelIds).order("orden");
   for (const f of data ?? []) {
     if (out[f.hotel_id] == null) out[f.hotel_id] = f.url;
@@ -421,7 +423,7 @@ async function tramosVueloSalidaDinamica(
   if (!process.env.SUPABASE_SERVICE_ROLE_KEY) return { ok: false, motivo: "sin_service_role" };
   let admin: ReturnType<typeof createAdminClient>;
   try {
-    admin = createAdminClient();
+    admin = createAdminClient(); // identidad:n/a — solicitud/cotización/lectura de catálogo; no escribe tablas de contrato
   } catch {
     return { ok: false, motivo: "cliente_servicio" };
   }
@@ -588,7 +590,7 @@ async function crearCotizacionCarrito(input: {
   | ResultadoTerminosCambiaron
   | ResultadoPrecioActualizadoBernalo
 > {
-  const sb = await createClient();
+  const sb = await createClient(); // identidad:n/a — solicitud/cotización/lectura de catálogo; no escribe tablas de contrato
   const clienteNombre = `${input.cliente.nombres} ${input.cliente.apellidos}`.trim();
   if (!clienteNombre) return { ok: false, error: "El nombre del cliente es obligatorio." };
 
@@ -641,7 +643,7 @@ async function crearCotizacionCarrito(input: {
   const tourEfectivo = new Map<number, SolicitudTourValidado>();
   if (process.env.SUPABASE_SERVICE_ROLE_KEY && input.tours.length) {
     let adminHoras: ReturnType<typeof createAdminClient>;
-    try { adminHoras = createAdminClient(); } catch (e) {
+    try { adminHoras = createAdminClient(); } catch (e) { // identidad:n/a — solicitud/cotización/lectura de catálogo; no escribe tablas de contrato
       console.error(`[crearCotizacionCarrito] etapa=horas_recorrido_cliente detalle=${e instanceof Error ? e.message : "error"}`);
       return { ok: false, error: "No pudimos validar el horario del vuelo para calcular el traslado. Intenta nuevamente." };
     }
@@ -1076,7 +1078,7 @@ async function crearCotizacionCarrito(input: {
   const manualesOk: ServicioManual[] = [];
   const manualesAplicados: boolean[] = [];
   const objetivosManual: (string | null)[] = []; // hotel/opción de cada manual aplicado (alineado con manualesOk), para la cobertura de tramos
-  const catalogo = process.env.SUPABASE_SERVICE_ROLE_KEY ? createAdminClient() : sb;
+  const catalogo = process.env.SUPABASE_SERVICE_ROLE_KEY ? createAdminClient() : sb; // identidad:n/a — solicitud/cotización/lectura de catálogo; no escribe tablas de contrato
   const paxCarrito = [...hotelesResueltos.values()].reduce((sum, h) => sum + (h.pax || 0), 0);
   for (const [mi, m0] of (input.manuales ?? []).entries()) {
     const r0 = validarServicioManual(m0, monedaPrincipal);
@@ -1184,7 +1186,7 @@ async function crearCotizacionCarrito(input: {
   // Preview #403: cliente comercial y firmas. En NETO el cliente es el ALIADO (identidad fiscal del catálogo, ya resuelta en servidor) y la persona queda
   // como «Titular de la reserva»; en PVP con comisión y B2C el cliente sigue siendo la persona. Quien elaboró sale del usuario autenticado y el vendedor
   // del aliado (cotizado o logueado): si el dato no existe (visitante anónimo) queda vacío y el documento muestra «—».
-  const adminLookup = process.env.SUPABASE_SERVICE_ROLE_KEY ? createAdminClient() : sb;
+  const adminLookup = process.env.SUPABASE_SERVICE_ROLE_KEY ? createAdminClient() : sb; // identidad:n/a — solicitud/cotización/lectura de catálogo; no escribe tablas de contrato
   const firmasSesion = await resolverFirmasSesion(sb, adminLookup);
   const elabora = nombreQuienElabora(opts?.b2b?.actor.nombre, firmasSesion.elabora);
   const campos = camposClienteVenta({ modo: planB2B?.modo_compra ?? null, fiscal: opts?.b2b?.aliado.fiscal ?? null, titular: titularDeCliente(input.cliente) });
@@ -1315,6 +1317,7 @@ function leerManualesConHotel(inputRaw: unknown): { ok: true; manuales: Servicio
   return { ok: true, manuales: man.manuales, hotelDeManual: h.posiciones };
 }
 
+// identidad:n/a — solicitud/cotización o lectura de catálogo; no escribe tablas de contrato
 export async function crearSolicitudReserva(inputRaw: unknown): Promise<SolicitudResult> {
   const v = validarCrearSolicitudInput(inputRaw);
   if (!v.ok) return { ok: false, error: v.error };
@@ -1348,7 +1351,7 @@ export async function crearSolicitudReserva(inputRaw: unknown): Promise<Solicitu
   if (!asistencia.ok) return { ok: false, error: asistencia.error };
   let b2bAsistido: ContextoAsistenciaB2B | null = null;
   if (asistencia.asistencia) {
-    const prep = await prepararAsistenciaB2B(await createClient(), asistencia.asistencia);
+    const prep = await prepararAsistenciaB2B(await createClient(), asistencia.asistencia); // identidad:n/a — solicitud/cotización/lectura de catálogo; no escribe tablas de contrato
     if (!prep.ok) return { ok: false, error: prep.error };
     b2bAsistido = prep.contexto;
   }
@@ -1361,7 +1364,7 @@ export async function crearSolicitudReserva(inputRaw: unknown): Promise<Solicitu
   // Efecto AUXILIAR (#40 E1): conserva el tipo elegido (NULL si no eligió, nunca "CC"), revisa el
   // `{error}`, no sobrescribe una colisión 23505 y registra solo el código; jamás bloquea la solicitud.
   try {
-    const admin = createAdminClient();
+    const admin = createAdminClient(); // identidad:n/a — solicitud/cotización/lectura de catálogo; no escribe tablas de contrato
     const datos = datosContactoTarifario(input.cliente, tipoDoc.tipo);
     if (datos) {
       const { error } = await admin.from("crm_contactos").insert({
@@ -1385,7 +1388,7 @@ export async function crearSolicitudReserva(inputRaw: unknown): Promise<Solicitu
   // Destinatarios configurados (service-role: el checkout es público/anónimo).
   let whatsapp: string | null = null, emails: string | null = null, mensajeExtra: string | null = null;
   try {
-    const admin = createAdminClient();
+    const admin = createAdminClient(); // identidad:n/a — solicitud/cotización/lectura de catálogo; no escribe tablas de contrato
     const { data: cfg } = await admin.from("config_solicitudes").select("whatsapp, emails, mensaje_extra").eq("id", 1).maybeSingle();
     whatsapp = cfg?.whatsapp ?? null; emails = cfg?.emails ?? null; mensajeExtra = cfg?.mensaje_extra ?? null;
   } catch { /* ignore */ }
@@ -1437,6 +1440,7 @@ export type PrevisualizacionB2B = { ok: true; terminos: TerminosB2BPrevios } | {
  * el servidor, valida actor/aliado/modalidad y construye el plan), sin insertar nada ni tocar el CRM. No es una fórmula aparte: si no puede liquidarse devuelve el motivo.
  * Los datos de la persona no intervienen (se usa un titular provisional que nunca se guarda). Generar vuelve a validar y congelar.
  */
+// identidad:n/a — solicitud/cotización o lectura de catálogo; no escribe tablas de contrato
 export async function previsualizarTerminosB2BAsistido(inputRaw: unknown): Promise<PrevisualizacionB2B> {
   const asistencia = leerAsistenciaB2BEntrada(inputRaw);
   if (!asistencia.ok) return { ok: false, error: asistencia.error };
@@ -1447,7 +1451,7 @@ export async function previsualizarTerminosB2BAsistido(inputRaw: unknown): Promi
   const man = leerManualesConHotel(inputRaw);
   if (!man.ok) return { ok: false, error: man.error };
   if (!v.input.items.length && !v.input.tours.length && !man.manuales.length) return { ok: false, error: "El carrito está vacío." };
-  const prep = await prepararAsistenciaB2B(await createClient(), asistencia.asistencia);
+  const prep = await prepararAsistenciaB2B(await createClient(), asistencia.asistencia); // identidad:n/a — solicitud/cotización/lectura de catálogo; no escribe tablas de contrato
   if (!prep.ok) return { ok: false, error: prep.error };
   const cot = await crearCotizacionCarrito({ items: v.input.items, tours: v.input.tours, hotelDeTour: v.input.hotelDeTour, cliente: v.input.cliente, manuales: man.manuales, hotelDeManual: man.hotelDeManual }, { b2b: prep.contexto, capturar: () => {} });
   if (!cot.ok) return { ok: false, error: "error" in cot ? cot.error : "El precio de un hotel cambió; revisa el carrito y vuelve a intentar." };
@@ -1460,6 +1464,7 @@ export type PrevisualizacionComparativaB2B =
   | { ok: false; error: string };
 
 /** Vista previa de la comparativa asistida: los términos B2B de CADA opción (mismo motor que al crearla). No existe total ni comisión global. */
+// identidad:n/a — solicitud/cotización o lectura de catálogo; no escribe tablas de contrato
 export async function previsualizarComparativaB2B(inputRaw: unknown): Promise<PrevisualizacionComparativaB2B> {
   const a = leerAsistenciaB2BEntrada(inputRaw);
   if (!a.ok) return { ok: false, error: a.error };
@@ -1482,6 +1487,7 @@ export type PresentacionPrevia =
  * #75: lo que el asesor puede editar de cada alternativa ANTES de generar: las descripciones de sus líneas (las del documento que recibirá la hija) y la
  * propuesta de Incluye / No incluye, armada SOLO con lo cotizado. Mismo motor que al crear (sin insertar nada); solo personal interno.
  */
+// identidad:n/a — solicitud/cotización o lectura de catálogo; no escribe tablas de contrato
 export async function previsualizarPresentacionComparativa(inputRaw: unknown): Promise<PresentacionPrevia> {
   if (!(await puedeAgregarServicioManual())) return { ok: false, error: "Solo el personal interno puede editar la presentación de la comparativa." };
   const crudo = (typeof inputRaw === "object" && inputRaw !== null ? inputRaw : {}) as Record<string, unknown>;
@@ -1522,7 +1528,7 @@ function lineasMensajeB2BAsistido(p: PlanB2BCotizacion): string {
 export type ContextoAsistenciaCheckout = { puede: false } | { puede: true; aliados: AliadoListado[] } | { puede: false; error: string };
 /** #64: ¿la sesión actual es personal interno autorizado a vender (mismo criterio que la venta asistida)? */
 async function puedeAgregarServicioManual(): Promise<boolean> {
-  const r = await listarAliadosParaAsistencia(await createClient());
+  const r = await listarAliadosParaAsistencia(await createClient()); // identidad:n/a — solicitud/cotización/lectura de catálogo; no escribe tablas de contrato
   return r.ok && r.puede;
 }
 
@@ -1530,17 +1536,19 @@ async function puedeAgregarServicioManual(): Promise<boolean> {
  * Código IATA de cada destino del carrito, tomado del CATÁLOGO (`destinos.codigo_iata` y, si falta, el catálogo de ciudades). null = no hay un código confiable: la pantalla pide
  * corregir el dato en Producto → Destinos en vez de inferirlo del nombre. Solo lectura de datos públicos del catálogo.
  */
+// identidad:n/a — solicitud/cotización o lectura de catálogo; no escribe tablas de contrato
 export async function codigosIataDestinos(nombres: unknown): Promise<Record<string, string | null>> {
   const lista = Array.isArray(nombres) ? [...new Set(nombres.filter((n): n is string => typeof n === "string").map((n) => n.trim()).filter((n) => n && n.length <= 120))].slice(0, 12) : [];
   if (!lista.length) return {};
-  const cat = process.env.SUPABASE_SERVICE_ROLE_KEY ? createAdminClient() : await createClient();
+  const cat = process.env.SUPABASE_SERVICE_ROLE_KEY ? createAdminClient() : await createClient(); // identidad:n/a — solicitud/cotización/lectura de catálogo; no escribe tablas de contrato
   const salida: Record<string, string | null> = {};
   for (const n of lista) salida[n] = await iataDeDestino(cat, n);
   return salida;
 }
 
+// identidad:n/a — solicitud/cotización o lectura de catálogo; no escribe tablas de contrato
 export async function getContextoAsistenciaB2B(): Promise<ContextoAsistenciaCheckout> {
-  const r = await listarAliadosParaAsistencia(await createClient());
+  const r = await listarAliadosParaAsistencia(await createClient()); // identidad:n/a — solicitud/cotización/lectura de catálogo; no escribe tablas de contrato
   if (!r.ok) return { puede: false, error: r.error };
   return r.puede ? { puede: true, aliados: r.aliados } : { puede: false };
 }
@@ -1578,7 +1586,7 @@ type ActorComparativa = { userId: string | null; canal: CanalEleccion; email: st
 /** Identidad desde la SESIÓN auténtica (`auth.getUser()` valida el JWT); jamás desde el cuerpo de la petición. */
 async function actorComparativa(): Promise<ActorComparativa> {
   const anonimo: ActorComparativa = { userId: null, canal: "publico", email: null, aliadoId: null, tipoB2B: null };
-  const sb = await createClient();
+  const sb = await createClient(); // identidad:n/a — solicitud/cotización/lectura de catálogo; no escribe tablas de contrato
   const { data: { user } } = await sb.auth.getUser();
   if (!user) return anonimo;
   const { data: perfil } = await sb.from("usuarios").select("rol, activo, aliado_id").eq("id", user.id).maybeSingle();
@@ -1602,7 +1610,7 @@ function urlCotizacionPublica(h: Headers, token: string | null | undefined): str
 async function capacidadesAcomodacion(hotelId: number): Promise<CapacidadAcomodacion> {
   const caps: CapacidadAcomodacion = { ...PAX_TARIFA_DEFAULT };
   if (!process.env.SUPABASE_SERVICE_ROLE_KEY) return caps;
-  const { data } = await createAdminClient().from("hotel_acomodaciones").select("acomodacion, pax_tarifa").eq("hotel_id", hotelId);
+  const { data } = await createAdminClient().from("hotel_acomodaciones").select("acomodacion, pax_tarifa").eq("hotel_id", hotelId); // identidad:n/a — solicitud/cotización/lectura de catálogo; no escribe tablas de contrato
   for (const r of data ?? []) {
     if (typeof r.acomodacion === "string" && Number.isInteger(r.pax_tarifa) && (r.pax_tarifa as number) > 0) caps[r.acomodacion] = r.pax_tarifa as number;
   }
@@ -1724,7 +1732,7 @@ async function prepararComparativa(inputCrudo: unknown, vista: boolean): Promise
   if (!asist.ok) return { ok: false, error: asist.error };
   let b2b: ContextoAsistenciaB2B | null = null;
   if (asist.asistencia) {
-    const prep = await prepararAsistenciaB2B(await createClient(), asist.asistencia);
+    const prep = await prepararAsistenciaB2B(await createClient(), asist.asistencia); // identidad:n/a — solicitud/cotización/lectura de catálogo; no escribe tablas de contrato
     if (!prep.ok) return { ok: false, error: prep.error };
     b2b = prep.contexto;
   }
@@ -1831,12 +1839,13 @@ async function prepararComparativa(inputCrudo: unknown, vista: boolean): Promise
   return { ok: true, ref, cli, actor, compartirPublico, vigencia: vigenciaRes.vigencia, destinoMadre, salidaMadre, regresoMadre, opciones, armadas };
 }
 
+// identidad:n/a — solicitud/cotización o lectura de catálogo; no escribe tablas de contrato
 export async function crearComparativaCarrito(inputRaw: unknown): Promise<ResultadoComparativaCreada> {
   const p = await prepararComparativa(inputRaw, false);
   if (!p.ok) return { ok: false, error: p.error };
   const { ref, cli, actor, compartirPublico, vigencia, destinoMadre, salidaMadre, regresoMadre, opciones } = p;
   if (!process.env.SUPABASE_SERVICE_ROLE_KEY) return { ok: false, error: "No se pudo crear la comparativa por un problema de configuración del servidor." };
-  const admin = createAdminClient();
+  const admin = createAdminClient(); // identidad:n/a — solicitud/cotización/lectura de catálogo; no escribe tablas de contrato
   const nombre = `${cli.nombres} ${cli.apellidos}`.trim();
   const { data: id, error } = await admin.rpc("crear_cotizacion_comparativa", {
     p_usuario_id: actor.userId,
@@ -1896,7 +1905,7 @@ async function reliquidarOpcionCarrito(
   let b2b: ContextoAsistenciaB2B | null = null;
   if (congelado.plan) {
     if (!process.env.SUPABASE_SERVICE_ROLE_KEY) return { ok: false, error: "No se pudo completar la operación por un problema de configuración del servidor." };
-    const vivo = await verificarAliadoVivoParaConversion(createAdminClient() as never, congelado.plan);
+    const vivo = await verificarAliadoVivoParaConversion(createAdminClient() as never, congelado.plan); // identidad:n/a — solicitud/cotización/lectura de catálogo; no escribe tablas de contrato
     if (!vivo.ok) return { ok: false, error: vivo.error };
     const a = congelado.plan.asistido_por;
     b2b = { actor: { id: a.id, email: a.email, rol: a.rol, superadmin: false, nombre: null }, aliado: vivo.aliado, modo: congelado.plan.modo_compra };
@@ -1911,6 +1920,7 @@ async function reliquidarOpcionCarrito(
   return r;
 }
 
+// identidad:n/a — solicitud/cotización o lectura de catálogo; no escribe tablas de contrato
 export async function elegirOpcionComparativa(inputRaw: unknown): Promise<ResultadoEleccion> {
   const v = validarEntradaEleccion(inputRaw);
   if (!v.ok) return { ok: false, error: v.error };
@@ -1924,8 +1934,8 @@ export async function elegirOpcionComparativa(inputRaw: unknown): Promise<Result
     return { ok: false, error: "Los vuelos manuales de una comparativa no se pueden crear ni modificar al elegir una opción." };
   }
   if (!process.env.SUPABASE_SERVICE_ROLE_KEY) return { ok: false, error: "No se pudo completar la operación por un problema de configuración del servidor." };
-  const admin = createAdminClient();
-  const sb = await createClient();
+  const admin = createAdminClient(); // identidad:n/a — solicitud/cotización/lectura de catálogo; no escribe tablas de contrato
+  const sb = await createClient(); // identidad:n/a — solicitud/cotización/lectura de catálogo; no escribe tablas de contrato
   const actor = await actorComparativa();
 
   const { data: madre } = await admin.from("cotizaciones")
@@ -2013,12 +2023,13 @@ export async function elegirOpcionComparativa(inputRaw: unknown): Promise<Result
 }
 
 /** Visitante o B2B sobre una comparativa que no continúa por checkout: solo registra una SOLICITUD. */
+// identidad:n/a — solicitud/cotización o lectura de catálogo; no escribe tablas de contrato
 export async function solicitarOpcionComparativa(inputRaw: unknown): Promise<ResultadoSolicitud> {
   const v = validarEntradaSolicitud(inputRaw);
   if (!v.ok) return { ok: false, error: v.error };
   const d = v.datos;
   if (!process.env.SUPABASE_SERVICE_ROLE_KEY) return { ok: false, error: "No se pudo completar la operación por un problema de configuración del servidor." };
-  const admin = createAdminClient();
+  const admin = createAdminClient(); // identidad:n/a — solicitud/cotización/lectura de catálogo; no escribe tablas de contrato
   // La comparativa se localiza SOLO por el token de su enlace; un id adivinado no existe para esta acción.
   const { data: madre } = await admin.from("cotizaciones").select("id").eq("share_token", d.token).eq("modo", "comparativa").maybeSingle();
   if (!madre) return { ok: false, error: MENSAJES_COMPARATIVA.NO_DISPONIBLE };
@@ -2051,13 +2062,14 @@ export type ResumenOpcionComparativa = {
  * esta opción» del checkout. El `share_token` solo localiza la comparativa: nada
  * de lo que devuelve concede escritura. Sin netos, proveedores ni datos personales.
  */
+// identidad:n/a — solicitud/cotización o lectura de catálogo; no escribe tablas de contrato
 export async function resumenOpcionComparativa(
   token: unknown, opcionRef: unknown, acomodacionRef: unknown
 ): Promise<{ ok: true; datos: ResumenOpcionComparativa } | { ok: false; error: string }> {
   const refs = validarRefsOpcion(opcionRef, acomodacionRef);
   if (typeof token !== "string" || !/^[0-9a-f-]{36}$/i.test(token) || !refs) return { ok: false, error: MENSAJES_COMPARATIVA.NO_DISPONIBLE };
   if (!process.env.SUPABASE_SERVICE_ROLE_KEY) return { ok: false, error: MENSAJES_COMPARATIVA.NO_DISPONIBLE };
-  const admin = createAdminClient();
+  const admin = createAdminClient(); // identidad:n/a — solicitud/cotización/lectura de catálogo; no escribe tablas de contrato
   const { data: m } = await admin.from("cotizaciones")
     .select("id, tipo, modo, estado, version, vigencia_hasta, destino, fecha_salida, fecha_regreso, pax")
     .eq("share_token", token).maybeSingle();

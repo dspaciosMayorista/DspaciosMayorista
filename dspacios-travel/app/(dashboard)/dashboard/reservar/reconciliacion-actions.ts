@@ -21,9 +21,11 @@ import { reconciliarFinancieroPendiente, TEXTO_OBS_CARRITO_ANTERIOR, type DepsRe
 import type { CostosContrato, CxPFinanciera, CxPCreada } from "@/lib/reservar/financieroContrato";
 import type { Json } from "@/types/database";
 import { fechaNegocio } from "@/lib/fechaNegocio";
+import { identidadDe, type IdentidadContrato } from "@/lib/contrato/identidad";
 
-async function rpcFinanciero(fn: string, args: Record<string, unknown>): Promise<{ data: unknown; error: { message: string } | null }> {
-  const admin = createAdminClient();
+// #75: el cron NUNCA resuelve la identidad por número: cada escritura declara la identidad GUARDADA en el registro pendiente (`conIdentidad`).
+async function rpcFinanciero(id: IdentidadContrato, fn: string, args: Record<string, unknown>): Promise<{ data: unknown; error: { message: string } | null }> {
+  const admin = createAdminClient(id);
   if (fn === "registrar_financiero_contrato") {
     const { data, error } = await admin.rpc("registrar_financiero_contrato", {
       p_numero_contrato: String(args.p_numero_contrato ?? ""),
@@ -44,14 +46,23 @@ async function rpcFinanciero(fn: string, args: Record<string, unknown>): Promise
 }
 
 function depsReconciliacion(): DepsReconciliacion {
-  const admin = createAdminClient();
+  const admin = createAdminClient(); // identidad:n/a — lecturas del cron; toda escritura por contrato usa clientes con la identidad guardada
   // `postearAsientoCxP` necesita numeroContrato/tenant para la descripción y
   // el tercero del asiento — `CxPCreada` (contrato compartido con
   // financieroContrato.ts) no los lleva. `listarCxpSinAsiento` los guarda
   // aquí al vuelo para que `postearAsiento` los recupere por id de CxP.
   const contextoPorCxp = new Map<number, { numeroContrato: string; tenant: string }>();
   return {
-    rpc: rpcFinanciero,
+    rpc: (fn, args) => rpcFinanciero({}, fn, args), // sin identidad: el reconciliador siempre lo reemplaza por conIdentidad
+    conIdentidad: (id: IdentidadContrato) => ({
+      rpc: (fn: string, args: Record<string, unknown>) => rpcFinanciero(id, fn, args),
+      guardarPendiente: async (p: { numeroContrato: string; tenant: string; costos: CostosContrato; cxp: CxPFinanciera[]; contratoUid?: string | null }) => {
+        const { error } = await createAdminClient(id).from("contrato_financiero_pendiente").upsert({
+          numero_contrato: p.numeroContrato, tenant: p.tenant, costos: p.costos as Json, cxp: p.cxp as unknown as Json, contrato_uid: p.contratoUid ?? id[p.numeroContrato] ?? null,
+        }, { onConflict: "numero_contrato" });
+        return error ? { ok: false, error: error.message } : { ok: true };
+      },
+    }),
     postearAsiento: (c: CxPCreada) => {
       const ctx = contextoPorCxp.get(c.id);
       if (!ctx) return Promise.resolve({ ok: false, error: `No se encontró el contrato/tenant de la CxP ${c.id}.` });
@@ -61,9 +72,9 @@ function depsReconciliacion(): DepsReconciliacion {
       });
     },
     eliminarAsiento: (cuentaId: number) => eliminarAsientoCxP(cuentaId),
-    guardarPendiente: async (p: { numeroContrato: string; tenant: string; costos: CostosContrato; cxp: CxPFinanciera[] }) => {
-      const { error } = await admin.from("contrato_financiero_pendiente").upsert({
-        numero_contrato: p.numeroContrato, tenant: p.tenant, costos: p.costos as Json, cxp: p.cxp as unknown as Json,
+    guardarPendiente: async (p: { numeroContrato: string; tenant: string; costos: CostosContrato; cxp: CxPFinanciera[]; contratoUid?: string | null }) => {
+      const { error } = await createAdminClient(identidadDe(p.numeroContrato, p.contratoUid)).from("contrato_financiero_pendiente").upsert({
+        numero_contrato: p.numeroContrato, tenant: p.tenant, costos: p.costos as Json, cxp: p.cxp as unknown as Json, contrato_uid: p.contratoUid ?? null,
       }, { onConflict: "numero_contrato" });
       return error ? { ok: false, error: error.message } : { ok: true };
     },
@@ -71,23 +82,23 @@ function depsReconciliacion(): DepsReconciliacion {
       const corte = new Date(Date.now() - umbralMinutos * 60_000).toISOString();
       const { data, error } = await admin
         .from("ventas")
-        .select("numero_contrato, tenant")
+        .select("numero_contrato, tenant, contrato_uid")
         .eq("financiero_estado", "pendiente")
         .lt("financiero_actualizado_en", corte);
       if (error) throw new Error(`No se pudieron listar los contratos financieros pendientes: ${error.message}`);
-      return (data ?? []).map((v) => ({ numeroContrato: v.numero_contrato, tenant: v.tenant ?? "mayorista" }));
+      return (data ?? []).map((v) => ({ numeroContrato: v.numero_contrato, tenant: v.tenant ?? "mayorista", contratoUid: v.contrato_uid ?? null }));
     },
     leerPendiente: async (numeroContrato: string) => {
       const { data, error } = await admin
         .from("contrato_financiero_pendiente")
-        .select("costos, cxp")
+        .select("costos, cxp, contrato_uid")
         .eq("numero_contrato", numeroContrato)
         .maybeSingle();
       // Es crítico distinguir "no existe" de "no pude leer": tratar un error
       // como ausencia haría que el reconciliador borrara el contrato.
       if (error) throw new Error(`No se pudo leer el payload financiero de ${numeroContrato}: ${error.message}`);
       if (!data) return null;
-      return { costos: (data.costos ?? {}) as Record<string, number>, cxp: (data.cxp ?? []) as unknown[] };
+      return { costos: (data.costos ?? {}) as Record<string, number>, cxp: (data.cxp ?? []) as unknown[], contratoUid: data.contrato_uid ?? null };
     },
     marcarIntentoFallido: async (numeroContrato: string, error: string) => {
       // `intentos` es un contador DIAGNÓSTICO, no la garantía en sí (esa es
@@ -97,11 +108,12 @@ function depsReconciliacion(): DepsReconciliacion {
       // rastro del último error real).
       const { data, error: leerError } = await admin
         .from("contrato_financiero_pendiente")
-        .select("intentos")
+        .select("intentos, contrato_uid")
         .eq("numero_contrato", numeroContrato)
         .maybeSingle();
       if (leerError) throw new Error(`No se pudo leer el intento financiero de ${numeroContrato}: ${leerError.message}`);
-      const { error: actualizarError } = await admin.from("contrato_financiero_pendiente").update({
+      // Declara la identidad GUARDADA en el pendiente (la leída arriba), nunca la vigente por número.
+      const { error: actualizarError } = await createAdminClient(identidadDe(numeroContrato, data?.contrato_uid)).from("contrato_financiero_pendiente").update({
         intentos: (data?.intentos ?? 0) + 1,
         ultimo_error: error.slice(0, 2000),
         ultimo_intento_en: new Date().toISOString(),
@@ -146,14 +158,16 @@ async function ejecutarReconciliacion(umbralMinutos?: number): Promise<{ ok: tru
 }
 
 /** Acción manual: solo un superadmin autenticado puede iniciar la reparación. */
+// identidad:n/a — no recibe contrato: recorre los pendientes y declara la identidad GUARDADA de cada uno (ver conIdentidad)
 export async function reconciliarFinancieroPendienteAction(umbralMinutos?: number): Promise<{ ok: true; resultado: ResultadoReconciliacion } | { ok: false; error: string }> {
-  const sb = await createClient();
+  const sb = await createClient(); // identidad:n/a — solo comprueba el rol del usuario
   const { data: rol, error } = await sb.rpc("mi_rol");
   if (error || rol !== "superadmin") return { ok: false, error: "No autorizado." };
   return ejecutarReconciliacion(umbralMinutos);
 }
 
 /** Entrada exclusiva del cron, protegida además por CRON_SECRET en la ruta. */
+// identidad:n/a — tarea automática sin pantalla: usa la identidad conservada en cada registro pendiente
 export async function reconciliarFinancieroPendienteCron(secretRecibido: string | null, umbralMinutos?: number): Promise<{ ok: true; resultado: ResultadoReconciliacion } | { ok: false; error: string }> {
   const secret = process.env.CRON_SECRET;
   if (!secret || secretRecibido !== secret) return { ok: false, error: "No autorizado." };

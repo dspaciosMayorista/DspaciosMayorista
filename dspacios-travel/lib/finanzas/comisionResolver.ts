@@ -1,6 +1,6 @@
 import { createClient } from "@/lib/supabase/server";
 import { createAdminClient } from "@/lib/supabase/admin";
-import { calcularComisionFila, elegirFilaCobro, esComisionDescontada, evidenciaSinFicha, filasCobrables, type EvidenciaSinFicha, type FilaComisionB2B } from "@/lib/finanzas/comisionB2B";
+import { calcularComisionFila, elegirFilaCobro, esComisionDescontada, estadoExigible, evidenciaSinFicha, filasCobrables, type EvidenciaSinFicha, type FilaComisionB2B } from "@/lib/finanzas/comisionB2B";
 import { filasEnRevisionB2B } from "@/lib/finanzas/revisionComisionB2B";
 import { accesoDocumentoContrato } from "@/lib/auth/accesoDocumentoContrato";
 import { verificarFichasComisionManual, consultarFichasSupabase, fichaDeContrato } from "@/lib/auth/fichaComisionManual";
@@ -23,6 +23,8 @@ export type DetalleComision = {
   baseComisionable: number | null;
   pctComision: number;
   esPctEfectivo: boolean;
+  /** #97: el % mostrado es el PACTADO en el acuerdo de la cotización (no uno recalculado); la comisión se paga por valor = ordinaria sellada. */
+  esPctPactado: boolean;
   comisionBase: number | null;
   recobroAliado: number | null;
   aplicaRetencion: boolean | null;
@@ -105,7 +107,7 @@ export async function resolverComisionB2B(
   const admin = createAdminClient();
   const { data: v } = await admin
     .from("ventas")
-    .select("numero_contrato, cliente, destino, fecha_salida, precio_venta, moneda, modo_compra, comision_b2b, comision_estado, b2b_usuario_id, aliado_id, agencia_nombre, freelance_nombre, tipo_asesor, tenant")
+    .select("numero_contrato, cliente, destino, fecha_salida, precio_venta, moneda, modo_compra, comision_b2b, comision_estado, b2b_usuario_id, aliado_id, agencia_nombre, freelance_nombre, tipo_asesor, tenant, cotizacion_id, estado")
     .eq("numero_contrato", numero)
     .maybeSingle();
   if (!v) return null;
@@ -128,6 +130,8 @@ export async function resolverComisionB2B(
   // ACCESO se decide abajo, por la ficha de quien mira si hay una fila suya.
   const masReciente = filas.length > 0 ? filas[filas.length - 1] : null;
   if (!esVentasB2B && !masReciente) return null;
+  // Ciclo de vida (#97/#75): sin filas, la «vía 1» (`ventas.comision_b2b`) es solo el cálculo informativo de un contrato pendiente: no se cobra ni se emite cuenta de cobro hasta confirmar.
+  if (!masReciente && esVentasB2B && !estadoExigible(v.estado)) return null;
 
   // #90-portal-comision: el ACCESO no se decide por la fila más reciente.
   // Un contrato puede tener comisiones de DOS aliados distintos (ej. el
@@ -249,12 +253,20 @@ export async function resolverComisionB2B(
   let detalle: DetalleComision;
   if (fila) {
     const c = calcularComisionFila(fila);
+    // #97 (286): una fila cuya comisión viene de un acuerdo sellado guarda comision_valor = ordinaria pactada y pct_comision = % pactado. Se reconoce comparando con la ÚLTIMA versión del acuerdo.
+    let pactado = false;
+    if (fila.comision_valor != null && v.cotizacion_id != null) {
+      const { data: ac } = await admin.from("comision_plan").select("aliado_id, pct_comision, comision_ordinaria")
+        .eq("cotizacion_id", v.cotizacion_id).order("version", { ascending: false }).limit(1).maybeSingle();
+      pactado = !!ac && Number(ac.pct_comision) === Number(fila.pct_comision) && Number(ac.comision_ordinaria) === Number(fila.comision_valor) && ac.aliado_id === fila.aliado_id;
+    }
     detalle = {
       pvp: Number(fila.precio_venta) || 0,
       baseComisionable: c.baseUsada,
       pctComision: Number(fila.pct_comision) || 0,
-      // Con "Ingresar por valor" el % guardado es solo informativo (redondeado).
-      esPctEfectivo: fila.comision_valor != null,
+      // Con "Ingresar por valor" el % guardado es solo informativo (redondeado), salvo que sea el pactado del acuerdo.
+      esPctEfectivo: fila.comision_valor != null && !pactado,
+      esPctPactado: pactado,
       comisionBase: c.comisionBase,
       recobroAliado: c.recobroAliado,
       aplicaRetencion: fila.aplica_retencion,
@@ -268,6 +280,7 @@ export async function resolverComisionB2B(
       baseComisionable: null,
       pctComision: pvpVenta > 0 ? Number(v.comision_b2b) / pvpVenta : 0,
       esPctEfectivo: true,
+      esPctPactado: false,
       comisionBase: null,
       recobroAliado: null,
       aplicaRetencion: null,

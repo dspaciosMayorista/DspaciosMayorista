@@ -30,6 +30,15 @@ export function formatMoneda(value: number, moneda?: string | null): string {
   return (moneda ?? "COP").toUpperCase() === "USD" ? formatUSD(value) : formatCOP(value);
 }
 
+/**
+ * Importes de DOCUMENTOS de cobro (cuenta de cobro, estado de cuenta): en USD muestra los CENTAVOS (USD $1,337.67), porque lo exigible no se puede redondear al dólar
+ * (formatUSD, el formato global de precios, imprime dólares enteros y NO cambia). En COP es idéntico a formatMoneda.
+ */
+export function formatMonedaDocumento(value: number, moneda?: string | null): string {
+  if ((moneda ?? "COP").toUpperCase() !== "USD") return formatCOP(value);
+  return "USD " + new Intl.NumberFormat("en-US", { style: "currency", currency: "USD", minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(value);
+}
+
 /** Formatea fecha ISO a texto legible en español */
 export function formatFecha(iso: string): string {
   return new Date(iso).toLocaleDateString("es-CO", {

@@ -216,7 +216,7 @@ function AplicarRetencion({ contratos }: { contratos: string[] }) {
                       <td className="px-3 py-2 text-right">
                         <button
                           type="button"
-                          onClick={() => start(async () => { await eliminarRetencion(r.id); refrescarCuenta(); })}
+                          onClick={() => start(async () => { await eliminarRetencion(r.id, cuenta.identidad); refrescarCuenta(); })}
                           className="text-gray-300 hover:text-red-500"
                           title="Eliminar retención"
                         >
@@ -442,7 +442,7 @@ function FormRetencion({ cuenta, onDone }: { cuenta: CuentaContrato; onDone: () 
         fechaPractica,
         mesDeclaracion,
         observaciones: obs,
-      });
+      }, cuenta.identidad);
       if (!r.ok) { setError(r.error); return; }
       setObservaciones("");
       onDone();

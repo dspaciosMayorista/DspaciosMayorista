@@ -1,6 +1,7 @@
 "use server";
 
 import { createClient } from "@/lib/supabase/server";
+import { parseIdentidad, mensajeSiIdentidad, type IdentidadContrato } from "@/lib/contrato/identidad";
 import { revalidatePath } from "next/cache";
 import { fechaElegidaONegocio } from "@/lib/fechaNegocio";
 import {
@@ -56,9 +57,9 @@ async function cargarComisionAutorizada(sb: Sb, id: number, permitirAsesor = fal
 // `comision_b2b_pagos`, migración 131 — reemplaza el viejo "marcar pagada"
 // todo-o-nada). El estado (pendiente/parcial/pagada) ya no se guarda en
 // `aliados_b2b.estado`: se deriva en la página de la suma de estos pagos.
-export async function registrarPagoComisionB2B(aliadoB2bId: number, valor: number, fecha: string): Promise<Result> {
+export async function registrarPagoComisionB2B(aliadoB2bId: number, valor: number, fecha: string, identidad: IdentidadContrato): Promise<Result> {
   if (!(valor > 0)) return { ok: false, error: "El valor del abono debe ser mayor a 0." };
-  const sb = await createClient();
+  const sb = await createClient(parseIdentidad(identidad));
   const c = await cargarComisionAutorizada(sb, aliadoB2bId);
   if (!c.ok) return c;
   // NETO: la agencia ya la descontó del precio; un abono la pagaría otra vez.
@@ -82,14 +83,14 @@ export async function registrarPagoComisionB2B(aliadoB2bId: number, valor: numbe
     fecha: fechaElegidaONegocio(fecha),
     tenant: c.fila.tenant,
   });
-  if (error) return { ok: false, error: error.message };
+  if (error) return { ok: false, error: mensajeSiIdentidad(error) ?? error.message };
   revalidatePath("/dashboard/comisiones");
   return { ok: true };
 }
 
 // Deshace el último abono registrado a una comisión B2B.
-export async function deshacerUltimoPagoComisionB2B(aliadoB2bId: number): Promise<Result> {
-  const sb = await createClient();
+export async function deshacerUltimoPagoComisionB2B(aliadoB2bId: number, identidad: IdentidadContrato): Promise<Result> {
+  const sb = await createClient(parseIdentidad(identidad));
   const c = await cargarComisionAutorizada(sb, aliadoB2bId);
   if (!c.ok) return c;
   const { data: ultimo, error: eSel } = await sb
@@ -100,10 +101,10 @@ export async function deshacerUltimoPagoComisionB2B(aliadoB2bId: number): Promis
     .order("id", { ascending: false })
     .limit(1)
     .maybeSingle();
-  if (eSel) return { ok: false, error: eSel.message };
+  if (eSel) return { ok: false, error: mensajeSiIdentidad(eSel) ?? eSel.message };
   if (!ultimo) return { ok: false, error: "No hay abonos para deshacer." };
   const { error } = await sb.from("comision_b2b_pagos").delete().eq("id", ultimo.id);
-  if (error) return { ok: false, error: error.message };
+  if (error) return { ok: false, error: mensajeSiIdentidad(error) ?? error.message };
   revalidatePath("/dashboard/comisiones");
   return { ok: true };
 }
@@ -118,8 +119,8 @@ export async function deshacerUltimoPagoComisionB2B(aliadoB2bId: number): Promis
 //     y por eso también entra como gasto en Rentabilidad.
 // Una comisión con abonos, o descontada en el precio, no puede cambiar de
 // total: se avisa aquí y la base lo impide igual (trigger de la 205).
-export async function actualizarComisionB2B(id: number, input: EdicionComisionInput): Promise<Result> {
-  const sb = await createClient();
+export async function actualizarComisionB2B(id: number, input: EdicionComisionInput, identidad: IdentidadContrato): Promise<Result> {
+  const sb = await createClient(parseIdentidad(identidad));
   // El asesor `venta` también corrige la comisión de SU contrato (antes de abonos).
   const c = await cargarComisionAutorizada(sb, id, true);
   if (!c.ok) return c;
@@ -143,7 +144,7 @@ export async function actualizarComisionB2B(id: number, input: EdicionComisionIn
     }
   }
   const { data, error } = await sb.from("aliados_b2b").update(prep.cambios).eq("id", id).select("id");
-  if (error) return { ok: false, error: error.message };
+  if (error) return { ok: false, error: mensajeSiIdentidad(error) ?? error.message };
   if (!data || data.length === 0) return { ok: false, error: "No se pudo guardar: comisión no encontrada o sin permiso." };
   revalidatePath("/dashboard/comisiones");
   revalidatePath("/dashboard/rentabilidad");

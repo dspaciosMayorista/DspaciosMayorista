@@ -1,6 +1,7 @@
 import { createClient } from "@/lib/supabase/server";
 import { getTenant } from "@/lib/tenant.server";
 import { cobroDeVenta } from "@/lib/finanzas/cobro";
+import { identidadDe } from "@/lib/contrato/identidad";
 import { CarteraList, type CarteraRow } from "./CarteraList";
 
 export const dynamic = "force-dynamic";
@@ -32,7 +33,7 @@ export default async function CarteraPage() {
   const [{ data: ventas }, { data: abonos }, { data: formasPagoRows }] = await Promise.all([
     sb
       .from("ventas")
-      .select("numero_contrato, cliente, destino, precio_venta, estado, fecha_salida, moneda, moneda_cobro, trm_cobro, total_cobro, created_at")
+      .select("numero_contrato, contrato_uid, cliente, destino, precio_venta, estado, fecha_salida, moneda, moneda_cobro, trm_cobro, total_cobro, created_at")
       .eq("tenant", tenant)
       .order("created_at", { ascending: false }),
     sb
@@ -66,6 +67,7 @@ export default async function CarteraPage() {
     const saldo = Math.max(cobro.total - pagado, 0);
     return {
       numero_contrato: v.numero_contrato,
+      identidad: identidadDe(v.numero_contrato, v.contrato_uid),
       cliente: v.cliente,
       destino: v.destino,
       precio_venta: cobro.total,

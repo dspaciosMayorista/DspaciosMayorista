@@ -1,6 +1,7 @@
 "use server";
 
 import { createClient } from "@/lib/supabase/server";
+import { parseIdentidad, mensajeSiIdentidad, type IdentidadContrato } from "@/lib/contrato/identidad";
 import { revalidatePath } from "next/cache";
 import {
   type TramoInput,
@@ -72,7 +73,7 @@ function mensajeSeguro(error: { message: string; code?: string }, contexto: stri
   return "No se pudo completar la operación. Intenta de nuevo o contacta a soporte.";
 }
 
-export async function guardarTramosContrato(numeroContratoIn: unknown, tramosIn: unknown): Promise<ResultTramos> {
+export async function guardarTramosContrato(numeroContratoIn: unknown, tramosIn: unknown, identidad: IdentidadContrato): Promise<ResultTramos> {
   const numeroContrato = parsearNumeroContrato(numeroContratoIn);
   if (!numeroContrato) return { ok: false, error: "Número de contrato inválido." };
 
@@ -83,7 +84,7 @@ export async function guardarTramosContrato(numeroContratoIn: unknown, tramosIn:
   const err = validarTramos(tramos);
   if (err) return { ok: false, error: err };
 
-  const sb = await createClient();
+  const sb = await createClient(parseIdentidad(identidad));
   const { data, error } = await sb.rpc("guardar_tramos_contrato", {
     p_numero_contrato: numeroContrato,
     p_tramos: tramos.map((t) => ({
@@ -102,7 +103,7 @@ export async function guardarTramosContrato(numeroContratoIn: unknown, tramosIn:
       servicios: oNull(t.servicios),
     })),
   });
-  if (error) return { ok: false, error: mensajeSeguro(error, "guardar_tramos_contrato") };
+  if (error) return { ok: false, error: mensajeSiIdentidad(error) ?? mensajeSeguro(error, "guardar_tramos_contrato") };
 
   revalidatePath(`/dashboard/vuelos/contrato/${numeroContrato}`);
   revalidatePath("/dashboard/vuelos");
@@ -117,7 +118,8 @@ export async function guardarTramosContrato(numeroContratoIn: unknown, tramosIn:
 export async function actualizarEstadoEmisionContrato(
   numeroContratoIn: unknown,
   estadoEmisionIn: unknown,
-  notaIn: unknown
+  notaIn: unknown,
+  identidad: IdentidadContrato
 ): Promise<Result> {
   const numeroContrato = parsearNumeroContrato(numeroContratoIn);
   if (!numeroContrato) return { ok: false, error: "Número de contrato inválido." };
@@ -128,13 +130,13 @@ export async function actualizarEstadoEmisionContrato(
   const notaR = parsearNota(notaIn);
   if (!notaR.ok) return { ok: false, error: `La nota debe ser texto de máximo ${MAX_NOTA} caracteres.` };
 
-  const sb = await createClient();
+  const sb = await createClient(parseIdentidad(identidad));
   const { error } = await sb.rpc("actualizar_estado_emision_contrato", {
     p_numero_contrato: numeroContrato,
     p_estado_emision: estadoR.valor || null,
     p_nota: oNull(notaR.nota),
   });
-  if (error) return { ok: false, error: mensajeSeguro(error, "actualizar_estado_emision_contrato") };
+  if (error) return { ok: false, error: mensajeSiIdentidad(error) ?? mensajeSeguro(error, "actualizar_estado_emision_contrato") };
 
   revalidatePath(`/dashboard/vuelos/contrato/${numeroContrato}`);
   revalidatePath("/dashboard/vuelos");

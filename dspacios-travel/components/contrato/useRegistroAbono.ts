@@ -11,7 +11,7 @@ import type { DatosExcedente } from "@/lib/finanzas/excedenteAbono";
 //    base devuelve el mismo abono. Tras registrar, el formulario solo se limpia si NO cambió desde el envío.
 export type EnvioAbono = { valor: number; forma: string; ref: string; trm?: number; fecha: string; operacion: string };
 export type CamposAbono = { valor: string; forma: string; ref: string; trm: string; fecha: string };
-type Respuesta = { ok: boolean; error?: string; confirmacion?: DatosExcedente };
+type Respuesta = { ok: boolean; error?: string; confirmacion?: DatosExcedente; confirmacionPendiente?: boolean };
 
 export function useRegistroAbono({ campos, esUSD, registrar, reiniciar }: {
   campos: CamposAbono;
@@ -25,6 +25,9 @@ export function useRegistroAbono({ campos, esUSD, registrar, reiniciar }: {
   const operacion = useRef(crypto.randomUUID());
   const [error, setError] = useState<string | null>(null);
   const [pendiente, setPendiente] = useState<{ datos: DatosExcedente; envio: EnvioAbono } | null>(null);
+  // 288 (#75): el abono QUEDÓ registrado pero la confirmación del contrato falló. La operación NO se consume: no se puede registrar otra vez (sería otro pago), solo
+  // reintentar la confirmación con ESTE mismo envío (la base responde «ya registrado» y vuelve a evaluar la confirmación).
+  const [sinConfirmar, setSinConfirmar] = useState<{ envio: EnvioAbono; mensaje: string } | null>(null);
   const [pending, start] = useTransition();
 
   const sinCambios = (e: EnvioAbono) => {
@@ -38,6 +41,7 @@ export function useRegistroAbono({ campos, esUSD, registrar, reiniciar }: {
 
   function enviar() {
     setError(null);
+    if (sinConfirmar) { setError("El abono ya quedó registrado; reintenta la confirmación en lugar de registrarlo otra vez."); return; }
     const v = Number(campos.valor);
     if (!v || v <= 0) { setError("Ingresa un valor mayor a 0."); return; }
     if (esUSD && !(Number(campos.trm) > 0)) { setError("Indica la TRM del día (contrato en USD)."); return; }
@@ -48,6 +52,7 @@ export function useRegistroAbono({ campos, esUSD, registrar, reiniciar }: {
       try {
         const r = await registrar(envio, false);
         if (r.confirmacion) { setPendiente({ datos: r.confirmacion, envio }); return; } // nada se escribió: se pide confirmar ESTE envío
+        if (r.confirmacionPendiente) { setSinConfirmar({ envio, mensaje: r.error ?? "Abono registrado; confirmación pendiente." }); return; }
         if (!r.ok) { setError(r.error ?? "No se pudo registrar el abono."); return; }
         registrado(envio);
       } catch {
@@ -75,5 +80,27 @@ export function useRegistroAbono({ campos, esUSD, registrar, reiniciar }: {
     }
   }
 
-  return { error, pending, enviar, excedente: pendiente?.datos ?? null, cancelar: () => setPendiente(null), confirmar };
+  function reintentarConfirmacion() {
+    if (!sinConfirmar || enVuelo.current) return;
+    enVuelo.current = true;
+    const { envio } = sinConfirmar;
+    start(async () => {
+      try {
+        const r = await registrar(envio, false);   // MISMA operación: no crea otro abono
+        if (r.confirmacionPendiente) { setSinConfirmar({ envio, mensaje: r.error ?? "Abono registrado; confirmación pendiente." }); return; }
+        if (!r.ok) { setSinConfirmar({ envio, mensaje: r.error ?? "No se pudo reintentar la confirmación." }); return; }
+        setSinConfirmar(null);
+        registrado(envio);
+      } catch {
+        setSinConfirmar({ envio, mensaje: "Abono registrado; confirmación pendiente (no se pudo reintentar ahora)." });
+      } finally {
+        enVuelo.current = false;
+      }
+    });
+  }
+
+  return {
+    error, pending, enviar, excedente: pendiente?.datos ?? null, cancelar: () => setPendiente(null), confirmar,
+    confirmacionPendiente: sinConfirmar?.mensaje ?? null, reintentarConfirmacion,
+  };
 }

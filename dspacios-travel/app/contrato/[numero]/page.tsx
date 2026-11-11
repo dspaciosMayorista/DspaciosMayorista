@@ -125,10 +125,13 @@ export default async function ContratoImprimiblePage({
   const hotelesConNota = adjuntarNotaRegimen(hoteles ?? [], planes ?? []).map((h) => ({
     ...h, condiciones_tarifa: condicionesTarifaParaRender(h.condiciones_tarifa),
   }));
+  // Parte 3 (#75): ¿contrato NETO de aliado? La vista básica no trae comision_estado; la base responde solo un booleano (y solo de contratos que quien llama puede ver).
+  const { data: esNetoRpc } = await sb.rpc("contrato_es_neto", { p_numero: numero });
+  const esNetoContrato = esNetoRpc === true;
   const condicionesResueltas = resolverCondicionesContrato(
     (contratoCondiciones ?? []) as unknown as Parameters<typeof resolverCondicionesContrato>[0],
     (overridesCondiciones ?? []) as unknown as Parameters<typeof resolverCondicionesContrato>[1],
-    { monedaContrato: cobroDeVenta(venta).moneda, precioVenta: cobroDeVenta(venta).total, fechaViaje: venta.fecha_salida },
+    { monedaContrato: cobroDeVenta(venta).moneda, precioVenta: cobroDeVenta(venta).total, fechaViaje: venta.fecha_salida, netoTotalExigible: esNetoContrato ? cobroDeVenta(venta).total : null },
   );
 
   return (

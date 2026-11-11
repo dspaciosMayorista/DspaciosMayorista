@@ -37,7 +37,7 @@ type Perfil = { id: string; rol: string; nombre: string; tenant: string; email: 
 
 /** Sesión + perfil, o null si no hay sesión (visitante). Un perfil inactivo devuelve `{ inactivo: true }`. */
 async function sesionPerfil(): Promise<Perfil | null | "inactivo"> {
-  const sb = await createClient();
+  const sb = await createClient(); // identidad:n/a — cotización por id (la guarda deja editar la cotización por id); no escribe tablas de contrato
   const { data: { user } } = await sb.auth.getUser();
   if (!user) return null;
   const { data: u } = await sb.from("usuarios").select("rol, activo, nombre, tenant, email, aliado_id").eq("id", user.id).maybeSingle();
@@ -45,7 +45,7 @@ async function sesionPerfil(): Promise<Perfil | null | "inactivo"> {
   // Nombre comercial del aliado (para el documento): el de su ficha del catálogo; si no tiene, el del usuario.
   let aliado: string | null = null;
   if (u.aliado_id != null) {
-    const { data: a } = await createAdminClient().from("aliados").select("nombre").eq("id", u.aliado_id).maybeSingle();
+    const { data: a } = await createAdminClient().from("aliados").select("nombre").eq("id", u.aliado_id).maybeSingle(); // identidad:n/a — cotización por id (la guarda deja editar la cotización por id); no escribe tablas de contrato
     aliado = a?.nombre ?? null;
   }
   return {
@@ -77,6 +77,7 @@ export type CrearCotizacionDinInput = {
  * (paquete activo y publicado, vigencias, noches, vuelo/hotel) salen siempre de la base, nunca del navegador, y la base los valida
  * otra vez con la fila viva: una página o petición vieja no se salta nada.
  */
+// identidad:n/a — cotización por id (la guarda deja editar la cotización por id); no escribe tablas de contrato
 export async function crearCotizacionDin(input: CrearCotizacionDinInput): Promise<R<{ id: number; destino: "dashboard" | "portal" | "publico"; enlace: string; avisoPersonas?: string }>> {
   if (!composicionValida(input.composicion)) return { ok: false, error: "La composición de habitaciones y menores no es válida." };
   if (!process.env.SUPABASE_SERVICE_ROLE_KEY) return { ok: false, error: "No se pudo crear la cotización por un problema de configuración del servidor." };
@@ -93,7 +94,7 @@ export async function crearCotizacionDin(input: CrearCotizacionDinInput): Promis
   if (canal === "publico" && !contactoVisitanteValido(input.cliente)) return { ok: false, error: "Indica tu nombre y un correo o teléfono de contacto válidos." };
 
   // Los PRECIOS y las reglas salen siempre de la base (nunca del navegador).
-  const admin = createAdminClient();
+  const admin = createAdminClient(); // identidad:n/a — cotización por id (la guarda deja editar la cotización por id); no escribe tablas de contrato
   const { data: p } = await admin.from("paquete_din" as never).select("*").eq("id", input.paqueteId).maybeSingle() as { data: (FilaPaqueteDin & { activo: boolean; publicado: boolean; tenant: string; destino_id: number | null; compra_inicio: string | null; compra_fin: string | null; viaje_inicio: string | null; viaje_fin: string | null }) | null };
   if (!p) return { ok: false, error: "El paquete no existe." };
   // Agencia: el visitante solo ve paquetes de mayorista; el aliado B2B, los de su agencia; el personal, los de la suya.
@@ -190,6 +191,7 @@ export async function crearCotizacionDin(input: CrearCotizacionDinInput): Promis
 export type ComponenteEditado = { orden: number; valor: number; costoNeto?: number; proveedor?: string };
 
 /** Edita los VALORES (y opcionalmente costos) de los componentes; crea una versión nueva con motivo. */
+// identidad:n/a — cotización por id (la guarda deja editar la cotización por id); no escribe tablas de contrato
 export async function editarCotizacionDin(cotizacionId: number, input: { revEsperada: number; motivo: string; componentes: ComponenteEditado[] }): Promise<R<{ version: number }>> {
   if (!(Number(cotizacionId) > 0)) return { ok: false, error: "Cotización inválida." };
   const rev = validarRevision(input?.revEsperada);
@@ -199,7 +201,7 @@ export async function editarCotizacionDin(cotizacionId: number, input: { revEspe
   const usuario = await usuarioSesion();
   if (!usuario) return { ok: false, error: "No autorizado." };
   const ctx = await contextoCotizacion();
-  const admin = createAdminClient();
+  const admin = createAdminClient(); // identidad:n/a — cotización por id (la guarda deja editar la cotización por id); no escribe tablas de contrato
   const { data: cot } = await admin.from("cotizaciones").select("tenant, payload, destino, fecha_salida, fecha_regreso, paquete_din_id" as never).eq("id", cotizacionId).maybeSingle() as { data: { tenant: string; payload: { dinamico?: { resumenPax?: string } } | null; destino: string | null; fecha_salida: string | null; fecha_regreso: string | null; paquete_din_id: number | null } | null };
   if (!cot) return { ok: false, error: "Cotización no encontrada." };
   if (!autorizaTenant(ctx, cot.tenant)) return { ok: false, error: "No tienes acceso a esta cotización." };
@@ -239,12 +241,13 @@ export async function editarCotizacionDin(cotizacionId: number, input: { revEspe
 }
 
 /** Registra el costo real y el proveedor de cada componente (obligatorio en solo PVP antes de convertir). */
+// identidad:n/a — cotización por id (la guarda deja editar la cotización por id); no escribe tablas de contrato
 export async function registrarCostosCotizacionDin(cotizacionId: number, costos: { orden: number; costoNeto: number; proveedor: string }[]): Promise<R<{ pendientes: string[] }>> {
   if (!(Number(cotizacionId) > 0)) return { ok: false, error: "Cotización inválida." };
   const usuario = await usuarioSesion();
   if (!usuario) return { ok: false, error: "No autorizado." };
   if (!(ROLES_PRODUCTO as readonly string[]).includes(usuario.rol)) return { ok: false, error: "No tienes permiso para registrar costos." };
-  const admin = createAdminClient();
+  const admin = createAdminClient(); // identidad:n/a — cotización por id (la guarda deja editar la cotización por id); no escribe tablas de contrato
   const { data, error } = await admin.rpc("registrar_costos_cotizacion_din", {
     p_usuario_id: usuario.id, p_cotizacion_id: cotizacionId,
     p_costos: costos.map((c) => ({ orden: c.orden, costo_neto: c.costoNeto, proveedor: c.proveedor })) as unknown as Json,
@@ -254,10 +257,11 @@ export async function registrarCostosCotizacionDin(cotizacionId: number, costos:
   return { ok: true, pendientes: (data ?? []) as string[] };
 }
 
+// identidad:n/a — cotización por id (la guarda deja editar la cotización por id); no escribe tablas de contrato
 export async function marcarVersionMostrada(cotizacionId: number, version: number): Promise<R> {
   const usuario = await usuarioSesion();
   if (!usuario) return { ok: false, error: "No autorizado." };
-  const admin = createAdminClient();
+  const admin = createAdminClient(); // identidad:n/a — cotización por id (la guarda deja editar la cotización por id); no escribe tablas de contrato
   const { error } = await admin.rpc("marcar_version_mostrada", { p_usuario_id: usuario.id, p_cotizacion_id: cotizacionId, p_version: version });
   if (error) return { ok: false, error: mensajeDin(error.message) };
   revalidatePath(`/dashboard/cotizaciones/${cotizacionId}`);

@@ -1,6 +1,7 @@
 "use server";
 
 import { createClient } from "@/lib/supabase/server";
+import { parseIdentidad, mensajeSiIdentidad, type IdentidadContrato } from "@/lib/contrato/identidad";
 import { revalidatePath } from "next/cache";
 import { calcularEdad } from "@/lib/utils";
 import { payloadGuardarPasajeros } from "@/lib/reservar/pasajerosEdicion";
@@ -15,15 +16,15 @@ async function rol(sb: Awaited<ReturnType<typeof createClient>>): Promise<string
 }
 
 // Asignar / cambiar el asesor interno del contrato (roles de gestión).
-export async function actualizarAsesorContrato(numero: string, asesorNombre: string): Promise<Result> {
-  const sb = await createClient();
+export async function actualizarAsesorContrato(numero: string, asesorNombre: string, identidad: IdentidadContrato): Promise<Result> {
+  const sb = await createClient(parseIdentidad(identidad));
   const r = await rol(sb);
   if (!["superadmin", "gerencia", "administracion", "operaciones"].includes(r ?? "")) {
     return { ok: false, error: "No tienes permiso para cambiar el asesor." };
   }
   const nombre = asesorNombre.trim() || null;
   const { error } = await sb.from("ventas").update({ asesor_firma_nombre: nombre, asesor: nombre }).eq("numero_contrato", numero);
-  if (error) return { ok: false, error: error.message };
+  if (error) return { ok: false, error: mensajeSiIdentidad(error) ?? error.message };
   revalidatePath(`/dashboard/contratos/${numero}`);
   return { ok: true };
 }
@@ -53,8 +54,8 @@ export type PasajeroEdit = {
 // valida lo que mejora la experiencia (mensajes tempranos antes del viaje
 // de red); el servidor SQL es la única autoridad real y vuelve a validar
 // todo desde cero.
-export async function actualizarPasajerosContrato(numero: string, pasajerosRaw: PasajeroEdit[]): Promise<Result> {
-  const sb = await createClient();
+export async function actualizarPasajerosContrato(numero: string, pasajerosRaw: PasajeroEdit[], identidad: IdentidadContrato): Promise<Result> {
+  const sb = await createClient(parseIdentidad(identidad));
   const r = await rol(sb);
   if (!["superadmin", "gerencia", "administracion", "operaciones", "venta"].includes(r ?? "")) {
     return { ok: false, error: "No tienes permiso para editar pasajeros." };
@@ -103,7 +104,7 @@ export async function actualizarPasajerosContrato(numero: string, pasajerosRaw: 
     p_numero_contrato: numero,
     p_pasajeros: payloadGuardarPasajeros(filasRemapeadas),
   });
-  if (error) return { ok: false, error: error.message };
+  if (error) return { ok: false, error: mensajeSiIdentidad(error) ?? error.message };
 
   revalidatePath(`/dashboard/contratos/${numero}`);
   return { ok: true };

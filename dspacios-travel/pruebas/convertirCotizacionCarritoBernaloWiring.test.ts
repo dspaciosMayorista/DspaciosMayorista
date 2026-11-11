@@ -484,7 +484,7 @@ describe("convertirCotizacionCarrito — hallazgo confirmado (e): idempotencia �
   });
 
   test("ronda 2 — regla (1): el update FINAL (cierre de la cotización) también revisa error y corta — nunca reporta éxito si no se pudo cerrar el estado", () => {
-    const idxUpdateFinal = cuerpoConv.indexOf('const { error: eDetalleFinal } = await sb.from("cotizaciones").update({');
+    const idxUpdateFinal = cuerpoConv.indexOf('const { error: eDetalleFinal } = await (await createClient(identidadCreada)).from("cotizaciones").update({');
     assert.notEqual(idxUpdateFinal, -1, "el update final debe capturar el error (const { error: ... })");
     const idxIfError = cuerpoConv.indexOf("if (eDetalleFinal) {", idxUpdateFinal);
     assert.notEqual(idxIfError, -1);
@@ -505,7 +505,7 @@ describe("convertirCotizacionCarrito — hallazgo confirmado: reintentar con un 
   const cuerpoConv = cuerpoFuncion(fuente, "export async function convertirCotizacionCarrito(");
 
   test("detalleExistente declara agrupar?: string y el guard compara contra opts.agrupar ANTES de construir los grupos", () => {
-    assert.match(codigo, /const detalleExistente = \(cot\.detalle \?\? \{\}\) as \{ contratos\?: unknown; contratosPorGrupo\?: Record<string, string>; agrupar\?: string \};/);
+    assert.match(codigo, /const detalleExistente = \(cot\.detalle \?\? \{\}\) as \{ contratos\?: unknown; contratosPorGrupo\?: Record<string, string>; agrupar\?: string; identidades\?: unknown \};/);
     const idxGuard = cuerpoConv.indexOf("detalleExistente.agrupar !== opts.agrupar");
     // Los grupos se arman con `armarGruposConversion` (servicios vinculados
     // van al contrato de su hotel) — el guard debe seguir yendo ANTES.

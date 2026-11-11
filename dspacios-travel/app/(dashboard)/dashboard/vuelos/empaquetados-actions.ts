@@ -80,11 +80,11 @@ function validarEmpaquetado(input: EmpaquetadoInput, creando = false): string | 
   return null;
 }
 
-export async function crearEmpaquetado(input: EmpaquetadoInput): Promise<Result> {
+export async function crearEmpaquetado(input: EmpaquetadoInput): Promise<Result> { // identidad:n/a — catálogo de empaquetados, sin tablas de contrato
   const err = validarEmpaquetado(input, true);
   if (err) return { ok: false, error: err };
 
-  const sb = await createClient();
+  const sb = await createClient(); // identidad:n/a — catálogo de empaquetados, sin tablas de contrato
   const { data, error } = await sb
     .from("empaquetados")
     .insert({
@@ -135,11 +135,11 @@ function validarEmpaquetadoGeneral(input: EmpaquetadoInputGeneral): string | nul
   return validarEmpaquetado({ ...input, record: "", estadoEmision: "", estadoPago: "" }, false);
 }
 
-export async function actualizarEmpaquetado(id: number, input: EmpaquetadoInputGeneral): Promise<Result> {
+export async function actualizarEmpaquetado(id: number, input: EmpaquetadoInputGeneral): Promise<Result> { // identidad:n/a — catálogo de empaquetados, sin tablas de contrato
   const err = validarEmpaquetadoGeneral(input);
   if (err) return { ok: false, error: err };
 
-  const sb = await createClient();
+  const sb = await createClient(); // identidad:n/a — catálogo de empaquetados, sin tablas de contrato
   // Defecto 5 (revisión de PR #268): `.select("id")` + comprobar que
   // devolvió fila — sin esto, un UPDATE cuyo `where` no matchea ninguna fila
   // (RLS filtrando, o un id que ya no existe) NO es un error para
@@ -192,14 +192,14 @@ export async function actualizarEmpaquetado(id: number, input: EmpaquetadoInputG
 // `estadoPago` en `""` se traducen a `null` ("Por confirmar") — NUNCA se
 // fuerza a 'pendiente' (defecto 7): si el usuario deja el select en "Por
 // confirmar", eso es exactamente lo que se guarda.
-export async function actualizarControlEmpaquetado(
+export async function actualizarControlEmpaquetado( // identidad:n/a — catálogo de empaquetados, sin tablas de contrato
   id: number,
   input: { record: string; estadoEmision: EstadoEmision | ""; estadoPago: EstadoPago | ""; nota: string }
 ): Promise<Result> {
   if (input.estadoEmision && !esEstadoEmision(input.estadoEmision)) return { ok: false, error: "Estado de emisión inválido." };
   if (input.estadoPago && !esEstadoPago(input.estadoPago)) return { ok: false, error: "Estado de pago inválido." };
 
-  const sb = await createClient();
+  const sb = await createClient(); // identidad:n/a — catálogo de empaquetados, sin tablas de contrato
   const { error } = await sb.rpc("actualizar_control_empaquetado", {
     p_empaquetado_id: id,
     p_record: oNull(input.record),
@@ -224,8 +224,8 @@ export async function actualizarControlEmpaquetado(
 // una condición de carrera entre el chequeo y el DELETE la sigue
 // cubriendo), pero la UI nunca debería llegar a mostrar ese mensaje crudo.
 // Defecto 5: `.select("id")` + comprobar fila para no reportar éxito falso.
-export async function eliminarEmpaquetado(id: number): Promise<Result> {
-  const sb = await createClient();
+export async function eliminarEmpaquetado(id: number): Promise<Result> { // identidad:n/a — catálogo de empaquetados, sin tablas de contrato
+  const sb = await createClient(); // identidad:n/a — catálogo de empaquetados, sin tablas de contrato
 
   const { data: enUso, error: eUso } = await sb
     .from("armado_empaquetados")
@@ -273,7 +273,7 @@ export async function eliminarEmpaquetado(id: number): Promise<Result> {
       error: "No se pudo verificar si este empaquetado tiene contratos vinculados (configuración del servidor incompleta). No se eliminó nada — intenta de nuevo más tarde o contacta a soporte.",
     };
   }
-  const admin = createAdminClient();
+  const admin = createAdminClient(); // identidad:n/a — solo lectura de ventas.empaquetado_ref_id, no escribe contratos
   const { data: enContratos, error: eCon } = await admin
     .from("ventas")
     .select("numero_contrato")
@@ -303,14 +303,14 @@ export async function eliminarEmpaquetado(id: number): Promise<Result> {
 // PK compuesta; desvincular es un DELETE de la fila de enlace, nunca borra
 // el empaquetado en sí). Defecto 5: se revisan los errores de AMBAS ramas
 // (antes el DELETE de desvincular ignoraba `error` por completo).
-export async function setEmpaquetado(
+export async function setEmpaquetado( // identidad:n/a — catálogo de empaquetados, sin tablas de contrato
   paqueteId: number,
   empaquetadoId: number,
   checked: boolean,
   aplicaMk: boolean,
   ta: number
 ): Promise<Result> {
-  const sb = await createClient();
+  const sb = await createClient(); // identidad:n/a — catálogo de empaquetados, sin tablas de contrato
   // #67: desvincular siempre se permite (es la desvinculación explícita que se
   // exige antes de retirar un destino aéreo del paquete); vincular se valida.
   if (!checked) {
@@ -337,12 +337,12 @@ export async function setEmpaquetado(
 // Seleccionar / quitar TODOS los empaquetados disponibles — mismo patrón que
 // setTodosVuelos (paquetes/actions.ts). Defecto 5: el DELETE masivo también
 // revisa su error ahora.
-export async function setTodosEmpaquetados(
+export async function setTodosEmpaquetados( // identidad:n/a — catálogo de empaquetados, sin tablas de contrato
   paqueteId: number,
   empaquetadoIds: number[],
   checked: boolean
 ): Promise<Result> {
-  const sb = await createClient();
+  const sb = await createClient(); // identidad:n/a — catálogo de empaquetados, sin tablas de contrato
   if (!checked) {
     const { error } = await sb.from("armado_empaquetados").delete().eq("paquete_id", paqueteId);
     if (error) return { ok: false, error: error.message };

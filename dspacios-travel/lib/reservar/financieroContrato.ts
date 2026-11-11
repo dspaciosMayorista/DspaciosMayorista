@@ -128,7 +128,7 @@ export type DepsFinanciero = {
    * se trata como fallo de toda la operación — sin esto, no hay nada
    * recuperable si lo que sigue también falla.
    */
-  guardarPendiente: (p: { numeroContrato: string; tenant: string; costos: CostosContrato; cxp: CxPFinanciera[] }) => Promise<{ ok: boolean; error?: string }>;
+  guardarPendiente: (p: { numeroContrato: string; tenant: string; costos: CostosContrato; cxp: CxPFinanciera[]; /** #75: identidad del contrato (la del INSERT); la base no deja sobrescribir un pendiente de otra identidad. */ contratoUid?: string | null }) => Promise<{ ok: boolean; error?: string }>;
 };
 
 export type ResultadoFinanciero =
@@ -136,8 +136,8 @@ export type ResultadoFinanciero =
   | { ok: false; error: string; revertido: boolean };
 
 /** Parsea la respuesta del RPC sin confiar en su forma (viene como jsonb). */
-function leerRespuesta(data: unknown): { creadas: CxPCreada[]; eliminadas: number[]; yaCompleto: boolean } {
-  const raw = (data ?? {}) as { creadas?: unknown; eliminadas?: unknown; ya_completo?: unknown };
+function leerRespuesta(data: unknown): { creadas: CxPCreada[]; eliminadas: number[]; yaCompleto: boolean; previstas: number } {
+  const raw = (data ?? {}) as { creadas?: unknown; eliminadas?: unknown; ya_completo?: unknown; previstas?: unknown };
   const creadas: CxPCreada[] = [];
   for (const c of Array.isArray(raw.creadas) ? raw.creadas : []) {
     const f = (c ?? {}) as Record<string, unknown>;
@@ -154,7 +154,9 @@ function leerRespuesta(data: unknown): { creadas: CxPCreada[]; eliminadas: numbe
   const eliminadas = (Array.isArray(raw.eliminadas) ? raw.eliminadas : [])
     .map((x) => Number(x))
     .filter((x) => Number.isFinite(x));
-  return { creadas, eliminadas, yaCompleto: raw.ya_completo === true };
+  // 288 (#75): en un contrato PENDIENTE la base traslada las CxP a «previstas» (no son exigibles ni llevan asiento): cuentan para la coherencia, no para los asientos.
+  const previstas = Array.isArray(raw.previstas) ? raw.previstas.length : 0;
+  return { creadas, eliminadas, yaCompleto: raw.ya_completo === true, previstas };
 }
 
 /**
@@ -250,14 +252,16 @@ export async function registrarFinancieroContrato(
     costos: CostosContrato;
     cxp: CxPFinanciera[];
     fecha: string;
+    /** #75: uid del contrato (el del INSERT); se conserva en el registro pendiente. */
+    contratoUid?: string | null;
   }
 ): Promise<ResultadoFinanciero> {
-  const { numeroContrato, tenant, costos, cxp, fecha } = params;
+  const { numeroContrato, tenant, costos, cxp, fecha, contratoUid } = params;
 
   // Garantía DURABLE, antes de intentar nada: si esto no se alcanza a
   // escribir, no hay reintento posible desde otro proceso — se trata igual
   // que un fallo del RPC financiero (revierte de una).
-  const pendiente = await deps.guardarPendiente({ numeroContrato, tenant, costos, cxp });
+  const pendiente = await deps.guardarPendiente({ numeroContrato, tenant, costos, cxp, contratoUid });
   if (!pendiente.ok) {
     return cerrarFallo(deps, numeroContrato, tenant, pendiente.error ?? "no se pudo registrar la intención de escritura financiera");
   }
@@ -276,7 +280,7 @@ export async function registrarFinancieroContrato(
     return cerrarFallo(deps, numeroContrato, tenant, e instanceof Error ? e.message : "error desconocido");
   }
 
-  const { creadas, eliminadas, yaCompleto } = leerRespuesta(data);
+  const { creadas, eliminadas, yaCompleto, previstas } = leerRespuesta(data);
 
   // 210 (K15): el contrato ya no estaba pendiente — la RPC no tocó nada. No es un fallo ni una
   // incoherencia: no se compara contra `cxp`, no se revierte y NO se mueve ningún asiento (ni se
@@ -290,8 +294,8 @@ export async function registrarFinancieroContrato(
 
   // Control de coherencia: el RPC tiene que haber creado UNA fila por cada
   // CxP enviada. Si no coinciden, no se reporta éxito a medias — se revierte.
-  if (creadas.length !== cxp.length) {
-    return cerrarFallo(deps, numeroContrato, tenant, `se esperaban ${cxp.length} cuentas por pagar y se registraron ${creadas.length}`);
+  if (creadas.length + previstas !== cxp.length) {
+    return cerrarFallo(deps, numeroContrato, tenant, `se esperaban ${cxp.length} cuentas por pagar y se registraron ${creadas.length + previstas}`);
   }
 
   const avisos: string[] = [];

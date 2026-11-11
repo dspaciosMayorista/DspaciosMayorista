@@ -110,7 +110,7 @@ const edicion = (v: Fila, cambios: Record<string, string> = {}) => ({
 const escriturasVentas = () => db.escrituras.filter((e) => e.tabla === "ventas");
 
 test("NETO: editar la cabecera sin tocar precio ni tipo se guarda (y conserva el total exigible)", async () => {
-  const r = await actualizarVenta("DTM-0900", edicion(NETO, { cliente: "Cliente Corregido" }));
+  const r = await actualizarVenta("DTM-0900", edicion(NETO, { cliente: "Cliente Corregido" }), {});
   assert.deepEqual(r, { ok: true });
   const [e] = escriturasVentas();
   assert.equal((e.payload as Fila).precio_venta, 1_840_000);
@@ -119,7 +119,7 @@ test("NETO: editar la cabecera sin tocar precio ni tipo se guarda (y conserva el
 
 test("NETO: subir el precio al PVP (o cualquier otro valor) se rechaza sin escribir", async () => {
   for (const precio of ["2000000", "1800000", "0"]) {
-    const r = await actualizarVenta("DTM-0900", edicion(NETO, { precioVenta: precio }));
+    const r = await actualizarVenta("DTM-0900", edicion(NETO, { precioVenta: precio }), {});
     assert.equal(r.ok, false);
     assert.match((r as { error: string }).error, /NETO: el precio de venta es el total exigible/);
   }
@@ -128,7 +128,7 @@ test("NETO: subir el precio al PVP (o cualquier otro valor) se rechaza sin escri
 
 test("NETO: pasar a venta interna (o cambiar de agencia a freelance) se rechaza sin escribir", async () => {
   for (const tipo of ["interno", "freelance"]) {
-    const r = await actualizarVenta("DTM-0900", edicion(NETO, { tipoAsesor: tipo }));
+    const r = await actualizarVenta("DTM-0900", edicion(NETO, { tipoAsesor: tipo }), {});
     assert.equal(r.ok, false);
     assert.match((r as { error: string }).error, /tipo de venta/);
   }
@@ -136,7 +136,7 @@ test("NETO: pasar a venta interna (o cambiar de agencia a freelance) se rechaza 
 });
 
 test("PVP: precio y tipo de venta se siguen editando como antes", async () => {
-  const r = await actualizarVenta("DTM-0901", edicion(PVP, { precioVenta: "2100000", tipoAsesor: "freelance" }));
+  const r = await actualizarVenta("DTM-0901", edicion(PVP, { precioVenta: "2100000", tipoAsesor: "freelance" }), {});
   assert.deepEqual(r, { ok: true });
   const [e] = escriturasVentas();
   assert.equal((e.payload as Fila).precio_venta, 2_100_000);
@@ -144,27 +144,27 @@ test("PVP: precio y tipo de venta se siguen editando como antes", async () => {
 });
 
 test("contrato inexistente o sin acceso: no escribe", async () => {
-  const r = await actualizarVenta("DTM-9999", edicion(PVP));
+  const r = await actualizarVenta("DTM-9999", edicion(PVP), {});
   assert.deepEqual(r, { ok: false, error: "El contrato no existe o no tienes acceso." });
   assert.equal(escriturasVentas().length, 0);
 });
 
 test("NETO pendiente: cambiar servicios se rechaza antes de tocar ítems o precio", async () => {
-  const r = await actualizarServiciosContrato("DTM-0900", [1, 2]);
+  const r = await actualizarServiciosContrato("DTM-0900", [1, 2], {});
   assert.equal(r.ok, false);
   assert.match(r.error ?? "", /NETO: los servicios no se cambian/);
   assert.equal(db.escrituras.length, 0);
 });
 
 test("NETO: igualar el precio a la suma de ítems (a PVP) se rechaza sin escribir", async () => {
-  const r = await sincronizarPrecioVenta("DTM-0900");
+  const r = await sincronizarPrecioVenta("DTM-0900", {});
   assert.equal(r.ok, false);
   assert.match((r as { error: string }).error, /Contrato NETO/);
   assert.equal(escriturasVentas().length, 0);
 });
 
 test("PVP: igualar el precio a la suma de ítems sigue funcionando", async () => {
-  const r = await sincronizarPrecioVenta("DTM-0901");
+  const r = await sincronizarPrecioVenta("DTM-0901", {});
   assert.deepEqual(r, { ok: true });
   assert.equal((escriturasVentas()[0].payload as Fila).precio_venta, 2_000_000);
 });

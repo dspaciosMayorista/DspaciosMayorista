@@ -85,7 +85,7 @@ const OP = "00000000-0000-4000-8000-0000000a0001";
 const ultimaRpc = () => db.rpcs.filter((x) => x.fn === "registrar_abono").at(-1)!;
 
 test("contrato con saldo: una RPC, sin confirmación pedida, con la operación y los datos normalizados", async () => {
-  const r = await registrarAbono("00-0451", 100_000, "Transferencia", "R-1", undefined, "2026-09-30", undefined, OP);
+  const r = await registrarAbono("00-0451", 100_000, "Transferencia", "R-1", undefined, "2026-09-30", undefined, OP, {});
   assert.deepEqual(r, { ok: true });
   assert.deepEqual(ultimaRpc().args, {
     p_numero: "00-0451", p_tenant: "mayorista", p_actor: "u-1", p_monto_cop: 100_000, p_trm: null,
@@ -96,7 +96,7 @@ test("contrato con saldo: una RPC, sin confirmación pedida, con la operación y
 
 test("la base responde requiere_confirmacion → no ok, con contrato visible, total, pagado y nuevo abono", async () => {
   db.rpcRegistro = { data: { estado: "requiere_confirmacion", contrato: "00-0451", total: 1_800_000, pagado: 1_800_000, nuevo: 100_000, moneda: "COP" }, error: null };
-  const r = await registrarAbono("00-0451", 100_000, "Transferencia", "R-2", undefined, undefined, false, OP);
+  const r = await registrarAbono("00-0451", 100_000, "Transferencia", "R-2", undefined, undefined, false, OP, {});
   assert.equal(r.ok, false);
   assert.deepEqual(r.confirmacion, { contrato: "00-0451", total: 1_800_000, pagado: 1_800_000, nuevo: 100_000, moneda: "COP" });
   assert.match(r.error ?? "", /ya está pagado/);
@@ -104,7 +104,7 @@ test("la base responde requiere_confirmacion → no ok, con contrato visible, to
 });
 
 test("confirmado: se manda p_confirmar=true con la MISMA operación", async () => {
-  const r = await registrarAbono("00-0451", 100_000, "Transferencia", "R-3", undefined, undefined, true, OP);
+  const r = await registrarAbono("00-0451", 100_000, "Transferencia", "R-3", undefined, undefined, true, OP, {});
   assert.deepEqual(r, { ok: true });
   assert.equal(ultimaRpc().args.p_confirmar, true);
   assert.equal(ultimaRpc().args.p_operacion, OP);
@@ -112,44 +112,44 @@ test("confirmado: se manda p_confirmar=true con la MISMA operación", async () =
 
 test("ya_registrado (doble pulsación) responde ok sin tocar nada más", async () => {
   db.rpcRegistro = { data: { estado: "ya_registrado", abono_id: 7 }, error: null };
-  assert.deepEqual(await registrarAbono("00-0451", 100_000, "Efectivo", "", undefined, undefined, false, OP), { ok: true });
+  assert.deepEqual(await registrarAbono("00-0451", 100_000, "Efectivo", "", undefined, undefined, false, OP, {}), { ok: true });
 });
 
 test("si el asiento falla, el abono queda registrado y se avisa (no se pierde el cobro)", async () => {
   db.rpcRegistro = { data: { estado: "registrado", abono_id: 9, asiento_error: "Falta la cuenta 280505" }, error: null };
-  const r = await registrarAbono("00-0451", 100_000, "Efectivo", "", undefined, undefined, false, OP);
+  const r = await registrarAbono("00-0451", 100_000, "Efectivo", "", undefined, undefined, false, OP, {});
   assert.equal(r.ok, false);
   assert.match(r.error ?? "", /El abono quedó registrado, pero su asiento contable no: Falta la cuenta 280505/);
 });
 
 test("ya_registrado con asiento_error (reintento tras un fallo del asiento): NO es éxito, informa el estado contable real", async () => {
   db.rpcRegistro = { data: { estado: "ya_registrado", abono_id: 9, asiento_error: "Falta la cuenta 280505" }, error: null };
-  const r = await registrarAbono("00-0451", 100_000, "Efectivo", "", undefined, undefined, false, OP);
+  const r = await registrarAbono("00-0451", 100_000, "Efectivo", "", undefined, undefined, false, OP, {});
   assert.equal(r.ok, false);
   assert.match(r.error ?? "", /El abono quedó registrado, pero su asiento contable no: Falta la cuenta 280505/);
   assert.match(r.error ?? "", /no duplica el abono/);
 });
 
 test("operación no válida → no llama a la base", async () => {
-  const r = await registrarAbono("00-0451", 100_000, "Efectivo", "", undefined, undefined, false, "no-es-uuid");
+  const r = await registrarAbono("00-0451", 100_000, "Efectivo", "", undefined, undefined, false, "no-es-uuid", {});
   assert.equal(r.ok, false);
   assert.deepEqual(db.rpcs, []);
 });
 
 test("sin sesión, contrato pendiente de registro financiero o USD sin TRM → no llama a la base", async () => {
   db.sesion = false;
-  assert.deepEqual(await registrarAbono("00-0451", 100_000, "Efectivo", ""), { ok: false, error: "Sesión no válida." });
+  assert.deepEqual(await registrarAbono("00-0451", 100_000, "Efectivo", "", undefined, undefined, undefined, undefined, {}), { ok: false, error: "Sesión no válida." });
   db.sesion = true;
   db.venta = venta({ financiero_estado: "pendiente" });
-  assert.match((await registrarAbono("00-0451", 100_000, "Efectivo", "")).error ?? "", /pendiente su registro financiero/);
+  assert.match((await registrarAbono("00-0451", 100_000, "Efectivo", "", undefined, undefined, undefined, undefined, {})).error ?? "", /pendiente su registro financiero/);
   db.venta = venta({ moneda: "USD", precio_venta: 1000 });
-  assert.match((await registrarAbono("00-0451", 4_000_000, "Efectivo", "")).error ?? "", /TRM/);
+  assert.match((await registrarAbono("00-0451", 4_000_000, "Efectivo", "", undefined, undefined, undefined, undefined, {})).error ?? "", /TRM/);
   assert.deepEqual(db.rpcs, []);
 });
 
 test("contrato USD: manda la TRM; contrato COP: manda null (la base usa 1)", async () => {
   db.venta = venta({ moneda: "USD", precio_venta: 1000 });
-  await registrarAbono("00-0451", 4_000_000, "Transferencia", "", 4000, undefined, false, OP);
+  await registrarAbono("00-0451", 4_000_000, "Transferencia", "", 4000, undefined, false, OP, {});
   assert.equal(ultimaRpc().args.p_trm, 4000);
 });
 
@@ -161,7 +161,7 @@ for (const [codigo, mensaje, esperado] of [
 ] as const) {
   test(`registrarAbono: ${codigo} llega con su mensaje específico (sin prefijo técnico)`, async () => {
     db.rpcRegistro = { data: null, error: { code: codigo, message: mensaje } };
-    const r = await registrarAbono("00-0451", 100_000, "Efectivo", "", undefined, undefined, false, OP);
+    const r = await registrarAbono("00-0451", 100_000, "Efectivo", "", undefined, undefined, false, OP, {});
     assert.equal(r.ok, false);
     assert.match(r.error ?? "", esperado);
     assert.doesNotMatch(r.error ?? "", /^FIN_/);
@@ -171,18 +171,18 @@ for (const [codigo, mensaje, esperado] of [
 // ── Anulación ───────────────────────────────────────────────────────────
 test("anularAbono: deriva el actor de la sesión, toma la agencia del CONTRATO y recorta el motivo", async () => {
   db.venta = venta({ tenant: "minorista" });
-  const r = await anularAbono(41, "00-0451", "  Abono duplicado  ");
+  const r = await anularAbono(41, "00-0451", "  Abono duplicado  ", {});
   assert.deepEqual(r, { ok: true });
   assert.deepEqual(db.rpcs, [{ fn: "anular_abono", args: { p_abono_id: 41, p_numero: "00-0451", p_tenant: "minorista", p_actor: "u-1", p_motivo: "Abono duplicado" } }]);
 });
 
 test("anularAbono: sin sesión, sin motivo o contrato inexistente → no llama a la base", async () => {
   db.sesion = false;
-  assert.deepEqual(await anularAbono(41, "00-0451", "duplicado"), { ok: false, error: "Sesión no válida." });
+  assert.deepEqual(await anularAbono(41, "00-0451", "duplicado", {}), { ok: false, error: "Sesión no válida." });
   db.sesion = true;
-  assert.equal((await anularAbono(41, "00-0451", " ")).ok, false);
+  assert.equal((await anularAbono(41, "00-0451", " ", {})).ok, false);
   db.venta = null;
-  assert.deepEqual(await anularAbono(41, "00-9999", "duplicado"), { ok: false, error: "Contrato no encontrado." });
+  assert.deepEqual(await anularAbono(41, "00-9999", "duplicado", {}), { ok: false, error: "Contrato no encontrado." });
   assert.deepEqual(db.rpcs, []);
 });
 
@@ -195,7 +195,7 @@ for (const [codigo, mensaje, esperado] of [
 ] as const) {
   test(`anularAbono: ${codigo} llega a la pantalla con su mensaje específico (sin prefijo técnico)`, async () => {
     db.rpcAnular = { data: null, error: { code: codigo, message: mensaje } };
-    const r = await anularAbono(41, "00-0451", "duplicado");
+    const r = await anularAbono(41, "00-0451", "duplicado", {});
     assert.equal(r.ok, false);
     assert.match(r.error ?? "", esperado);
     assert.doesNotMatch(r.error ?? "", /^FIN_/);

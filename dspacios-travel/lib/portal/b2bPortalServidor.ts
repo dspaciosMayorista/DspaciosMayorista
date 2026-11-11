@@ -89,7 +89,7 @@ export async function categoriaDelPortal(ctx: Ok) {
   return { cat: categoriaAliado(ctx.rol, efectivo, def), pct: efectivo };
 }
 
-const COLUMNAS_VENTA = `${COLUMNAS_DECISION}, cliente, destino, precio_venta, moneda, moneda_cobro, trm_cobro, total_cobro, estado, modo_compra, comision_b2b, comision_estado, tipo_asesor, share_token`;
+const COLUMNAS_VENTA = `${COLUMNAS_DECISION}, contrato_uid, cliente, destino, precio_venta, moneda, moneda_cobro, trm_cobro, total_cobro, estado, modo_compra, comision_b2b, comision_estado, tipo_asesor, share_token`;
 
 async function leerPorLotes<T extends Fila>(
   nums: string[],

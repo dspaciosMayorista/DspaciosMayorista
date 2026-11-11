@@ -5,6 +5,7 @@ import { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import type { IdentidadContrato } from "@/lib/contrato/identidad";
 import { generarVouchersServicios, generarVoucherHotel, actualizarVoucher, eliminarVoucher, type VoucherContenido } from "./voucher-actions";
 import { ComboCiudad } from "@/components/ComboCiudad";
 import type { DestinoOpt } from "@/components/ComboDestino";
@@ -14,7 +15,7 @@ export type VoucherRow = { id: number; tipo?: string; proveedor: string | null; 
 const lbl = "mb-1 block text-[11px] font-medium text-gray-500";
 const inp = "w-full rounded-lg border border-gray-300 px-2 py-1.5 text-sm";
 
-export function VouchersPanel({ numero, vouchers, puedeGenerar, motivoBloqueo, destinos = [], puedeEditar = true }: { numero: string; vouchers: VoucherRow[]; puedeGenerar: boolean; motivoBloqueo?: string; destinos?: DestinoOpt[]; puedeEditar?: boolean }) {
+export function VouchersPanel({ numero, vouchers, puedeGenerar, motivoBloqueo, destinos = [], puedeEditar = true, identidad }: { identidad: IdentidadContrato; numero: string; vouchers: VoucherRow[]; puedeGenerar: boolean; motivoBloqueo?: string; destinos?: DestinoOpt[]; puedeEditar?: boolean }) {
   const router = useRouter();
   const [pending, start] = useTransition();
   const [msg, setMsg] = useState("");
@@ -22,7 +23,7 @@ export function VouchersPanel({ numero, vouchers, puedeGenerar, motivoBloqueo, d
   function generar() {
     setMsg("");
     start(async () => {
-      const r = await generarVouchersServicios(numero);
+      const r = await generarVouchersServicios(numero, identidad);
       if (r.ok) { setMsg(`✓ ${r.creados} voucher(s) de servicios`); router.refresh(); }
       else setMsg(r.error);
     });
@@ -30,7 +31,7 @@ export function VouchersPanel({ numero, vouchers, puedeGenerar, motivoBloqueo, d
   function generarHotel() {
     setMsg("");
     start(async () => {
-      const r = await generarVoucherHotel(numero);
+      const r = await generarVoucherHotel(numero, identidad);
       if (r.ok) { setMsg("✓ Voucher de hotel generado"); router.refresh(); }
       else setMsg(r.error);
     });
@@ -72,14 +73,14 @@ export function VouchersPanel({ numero, vouchers, puedeGenerar, motivoBloqueo, d
 
       {vouchers.length > 0 && (
         <div className="mt-4 space-y-3">
-          {vouchers.map((v) => <VoucherCard key={v.id} numero={numero} v={v} destinos={destinos} />)}
+          {vouchers.map((v) => <VoucherCard key={v.id} numero={numero} identidad={identidad} v={v} destinos={destinos} />)}
         </div>
       )}
     </section>
   );
 }
 
-function VoucherCard({ numero, v, destinos }: { numero: string; v: VoucherRow; destinos: DestinoOpt[] }) {
+function VoucherCard({ numero, v, destinos, identidad }: { identidad: IdentidadContrato; numero: string; v: VoucherRow; destinos: DestinoOpt[] }) {
   const router = useRouter();
   const [open, setOpen] = useState(false);
   const [c, setC] = useState<VoucherContenido>(v.contenido);
@@ -91,14 +92,14 @@ function VoucherCard({ numero, v, destinos }: { numero: string; v: VoucherRow; d
   function guardar() {
     const contenido: VoucherContenido = { ...c, incluye: incluyeText.split("\n").map((s) => s.trim()).filter(Boolean) };
     start(async () => {
-      const r = await actualizarVoucher(v.id, contenido, numero);
+      const r = await actualizarVoucher(v.id, contenido, numero, identidad);
       if (r.ok) { setOpen(false); router.refresh(); } else alert(r.error);
     });
   }
 
   function borrar() {
     if (!confirm("¿Eliminar este voucher?")) return;
-    start(async () => { await eliminarVoucher(v.id, numero); router.refresh(); });
+    start(async () => { await eliminarVoucher(v.id, numero, identidad); router.refresh(); });
   }
 
   return (

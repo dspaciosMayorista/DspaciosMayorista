@@ -2,6 +2,7 @@
 
 import { useState, useTransition } from "react";
 import { X } from "lucide-react";
+// identidad:n/a — cambiarEstadoSilla solo opera sobre sillas sin contrato (la base rechaza cualquier otra), por eso este componente no recibe identidad.
 import { cambiarEstadoSilla } from "../actions";
 import { transicionesManuales, type OpcionEstado } from "@/lib/vuelos/operaciones";
 

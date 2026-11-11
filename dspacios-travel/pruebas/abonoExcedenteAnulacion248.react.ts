@@ -96,7 +96,7 @@ afterEach(async () => {
 after(() => dom.window.close());
 
 test("ficha: contrato ya pagado → confirmación con contrato, total, pagado y nuevo abono; nada se guarda aún", async () => {
-  await montar(h(AbonoForm, { numeroContrato: "00-0451", formasPago: ["Efectivo"], moneda: "COP" }));
+  await montar(h(AbonoForm, { identidad: {}, numeroContrato: "00-0451", formasPago: ["Efectivo"], moneda: "COP" }));
   await escribir(entradaValor(), "100000");
   await enviarFormulario();
   const t = texto();
@@ -113,7 +113,7 @@ test("ficha: el diálogo de pago adicional es HTML válido (el <dl> no va dentro
   const original = console.error;
   console.error = (...a: unknown[]) => { errores.push(a.map(String).join(" ")); };
   try {
-    await montar(h(AbonoForm, { numeroContrato: "00-0451", formasPago: [], moneda: "COP" }));
+    await montar(h(AbonoForm, { identidad: {}, numeroContrato: "00-0451", formasPago: [], moneda: "COP" }));
     await escribir(entradaValor(), "100000");
     await enviarFormulario();
   } finally {
@@ -140,7 +140,7 @@ test("ficha: el asiento falló → el reintento (misma operación) muestra el er
     return n < 3 ? { ok: false, error: msg } : { ok: true };
   } });
   try {
-    await montar(h(AbonoForm, { numeroContrato: "00-0451", formasPago: [], moneda: "COP" }));
+    await montar(h(AbonoForm, { identidad: {}, numeroContrato: "00-0451", formasPago: [], moneda: "COP" }));
     await escribir(entradaValor(), "100000");
     await enviarFormulario();
     assert.match(texto(), /su asiento contable no/, "el primer intento informa el fallo contable");
@@ -158,7 +158,7 @@ test("ficha: el asiento falló → el reintento (misma operación) muestra el er
 });
 
 test("ficha: Cancelar no vuelve a llamar al servidor (no escribe) y conserva el formulario", async () => {
-  await montar(h(AbonoForm, { numeroContrato: "00-0451", formasPago: [], moneda: "COP" }));
+  await montar(h(AbonoForm, { identidad: {}, numeroContrato: "00-0451", formasPago: [], moneda: "COP" }));
   await escribir(entradaValor(), "100000");
   await enviarFormulario();
   await clic(boton("Cancelar"), "faltó Cancelar");
@@ -168,7 +168,7 @@ test("ficha: Cancelar no vuelve a llamar al servidor (no escribe) y conserva el 
 });
 
 test("ficha: Confirmar reintenta con confirmarExcedente=true y limpia el formulario", async () => {
-  await montar(h(AbonoForm, { numeroContrato: "00-0451", formasPago: [], moneda: "COP" }));
+  await montar(h(AbonoForm, { identidad: {}, numeroContrato: "00-0451", formasPago: [], moneda: "COP" }));
   await escribir(entradaValor(), "100000");
   await enviarFormulario();
   await clic(boton("Registrar pago adicional"), "faltó Registrar pago adicional");
@@ -192,7 +192,7 @@ test("ficha: doble pulsación (dos envíos seguidos) manda UNA sola solicitud", 
       return { ok: true };
     },
   });
-  await montar(h(AbonoForm, { numeroContrato: "00-0451", formasPago: [], moneda: "COP" }));
+  await montar(h(AbonoForm, { identidad: {}, numeroContrato: "00-0451", formasPago: [], moneda: "COP" }));
   await escribir(entradaValor(), "100000");
   const form = container.querySelector("form")!;
   await act(async () => {
@@ -206,6 +206,7 @@ test("ficha: doble pulsación (dos envíos seguidos) manda UNA sola solicitud", 
 });
 
 const FILA = {
+  identidad: {},
   numero_contrato: "00-0451", cliente: "Ana", destino: "Cartagena", precio_venta: 1_800_000, estado: "activo", fecha_salida: null,
   moneda: "COP", pagado: 1_700_000, saldo: 100_000,
   abonos: [{ id: 41, fecha_abono: "2026-10-12", valor_abono: 500_000, forma_pago: "Transferencia", referencia: "R-1", trm: null, monto_cop: null }],
@@ -258,7 +259,7 @@ const entradaRef = () => container.querySelector<HTMLInputElement>('input[placeh
 const selectForma = () => container.querySelector<HTMLSelectElement>("form select")!;
 
 for (const [nombre, preparar, nombreAccion] of [
-  ["ficha", async () => { await montar(h(AbonoForm, { numeroContrato: "00-0451", formasPago: ["Efectivo", "Transferencia"], moneda: "COP" })); }, "registrarAbono"],
+  ["ficha", async () => { await montar(h(AbonoForm, { identidad: {}, numeroContrato: "00-0451", formasPago: ["Efectivo", "Transferencia"], moneda: "COP" })); }, "registrarAbono"],
   ["Cartera", async () => { await abrirFila(); }, "registrarAbonoCartera"],
 ] as const) {
   test(`${nombre}: respuesta demorada con el formulario cambiado → diálogo y confirmación usan el abono ORIGINAL`, async () => {

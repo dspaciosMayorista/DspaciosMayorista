@@ -298,9 +298,9 @@ describe("236 · recorrido completo contrato → CxP → devengo (oferta USD, co
   test("R8 pagos vigentes: un pago parcial (USD a la TRM del día de pago) y el saldo exacto; el equivalente de devengo no se mueve; la diferencia queda en Proveedores (límite contable pendiente)", async () => {
     const [id] = cxpIds(numero);
     uidSesion = UID_ADMIN;
-    const p1 = await registrarPagoProveedor(id, 420_000, "2030-03-10", 4200); // 100 USD
+    const p1 = await registrarPagoProveedor(id, 420_000, "2030-03-10", 4200, {}); // 100 USD
     assert.equal(p1.ok, true, JSON.stringify(p1));
-    const p2 = await pagarSaldoExacto(id, 430_000, "2030-03-11"); // los 100 USD restantes, a 4.300
+    const p2 = await pagarSaldoExacto(id, 430_000, "2030-03-11", {}); // los 100 USD restantes, a 4.300
     assert.equal(p2.ok, true, JSON.stringify(p2));
     assert.equal(sql(`select sum(valor)::text from public.cxp_pagos where cuenta_por_pagar_id = ${id}`), "200.00", "los pagos se llevan en la moneda NOMINAL de la CxP");
     assert.deepEqual(fila(`select valor_cop_costo, trm_costo from public.cuentas_por_pagar where id = ${id}`).map(Number), [780000, 3900], "el equivalente de devengo no cambia al pagar");
@@ -312,10 +312,10 @@ describe("236 · recorrido completo contrato → CxP → devengo (oferta USD, co
 
   test("R9 editar el valor de una CxP con equivalente se rechaza con un mensaje claro; editar el proveedor sigue permitido", async () => {
     const [id] = cxpIds(numero);
-    const malo = await actualizarCuentaPorPagar({ id, numeroContrato: numero, proveedor: "Proveedor Hotel 236", servicio: "Hotel Hotel Dólar 236", valorTotal: 250, fechaVencimiento: "2030-02-01" });
+    const malo = await actualizarCuentaPorPagar({ id, numeroContrato: numero, proveedor: "Proveedor Hotel 236", servicio: "Hotel Hotel Dólar 236", valorTotal: 250, fechaVencimiento: "2030-02-01" }, {});
     assert.equal(malo.ok, false);
     assert.match(malo.ok ? "" : malo.error, /equivalente en pesos congelado/);
-    const bueno = await actualizarCuentaPorPagar({ id, numeroContrato: numero, proveedor: "Proveedor Hotel Renombrado", servicio: "Hotel Hotel Dólar 236", valorTotal: 200, fechaVencimiento: "2030-02-01" });
+    const bueno = await actualizarCuentaPorPagar({ id, numeroContrato: numero, proveedor: "Proveedor Hotel Renombrado", servicio: "Hotel Hotel Dólar 236", valorTotal: 200, fechaVencimiento: "2030-02-01" }, {});
     assert.equal(bueno.ok, true, JSON.stringify(bueno));
     assert.equal(asientoDe(id), "780000.00/780000.00", "el re-posteo por la edición sigue devengando el equivalente");
   });

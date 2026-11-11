@@ -1,0 +1,15 @@
+{
+  "_doc": "Vuelos: sillas, pasajeros, infantes, tramos y emisión (agente 'vuelos').",
+  "acciones": [
+    "app/(dashboard)/dashboard/vuelos/actions.ts", "app/(dashboard)/dashboard/vuelos/contrato-vuelos-actions.ts", "app/(dashboard)/dashboard/vuelos/empaquetados-actions.ts"
+  ],
+  "helpers": [],
+  "paginas": [
+    "app/(dashboard)/dashboard/vuelos/[id]/page.tsx", "app/(dashboard)/dashboard/vuelos/contrato/[numero]/page.tsx", "app/(dashboard)/dashboard/vuelos/pasajeros/page.tsx"
+  ],
+  "componentes": [
+    "app/(dashboard)/dashboard/vuelos/[id]/CambiarSillasForm.tsx", "app/(dashboard)/dashboard/vuelos/[id]/CambioOperacionalForm.tsx", "app/(dashboard)/dashboard/vuelos/[id]/LiberarRetencion.tsx",
+    "app/(dashboard)/dashboard/vuelos/[id]/PasajeroAcciones.tsx", "app/(dashboard)/dashboard/vuelos/[id]/SillaContrato.tsx", "app/(dashboard)/dashboard/vuelos/[id]/SillaEstado.tsx",
+    "app/(dashboard)/dashboard/vuelos/contrato/[numero]/ControlEmisionForm.tsx", "app/(dashboard)/dashboard/vuelos/contrato/[numero]/TramosEditor.tsx", "app/(dashboard)/dashboard/vuelos/pasajeros/PasajerosBuscador.tsx", "components/vuelos/InfanteVueloForm.tsx"
+  ]
+}

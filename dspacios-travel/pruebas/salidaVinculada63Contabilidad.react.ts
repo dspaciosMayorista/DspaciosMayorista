@@ -97,7 +97,7 @@ test("asegurarCuentasPorPagar en un contrato #63 COMPLETO: no crea nada (no comp
     ventas: [venta63()], p63_aceptacion: [aceptacion()], proveedores: [], contrato_hoteles: [], contrato_vuelos: [],
     cuentas_por_pagar: [cxp63("hotel:0", { id: 1, valor_total: 210, moneda: "USD", valor_cop_63: 840_000 }), cxp63("aereo:0", { id: 2, tipo_proveedor: "aereo", valor_total: 2_080_500, valor_cop_63: 2_080_500 })],
   });
-  const r = await asegurarCuentasPorPagar(NUM);
+  const r = await asegurarCuentasPorPagar(NUM, {});
   assert.deepEqual(r, { ok: true, creadas: 0 });
   assert.equal(bd.filas("cuentas_por_pagar").length, 2, "ni un suplemento");
 });
@@ -107,7 +107,7 @@ test("asegurarCuentasPorPagar en un contrato #63 al que le FALTA una obligación
     ventas: [venta63()], p63_aceptacion: [aceptacion()], proveedores: [], contrato_hoteles: [], contrato_vuelos: [],
     cuentas_por_pagar: [cxp63("aereo:0", { id: 2, tipo_proveedor: "aereo", valor_total: 2_080_500, valor_cop_63: 2_080_500 })],
   });
-  const r = await asegurarCuentasPorPagar(NUM);
+  const r = await asegurarCuentasPorPagar(NUM, {});
   assert.equal(r.ok, false);
   assert.equal(r.requiereRevision, true);
   assert.equal(r.creadas, 0);
@@ -118,7 +118,7 @@ test("asegurarCuentasPorPagar en un contrato #63 al que le FALTA una obligación
 test("asegurarCuentasPorPagar: un ERROR de lectura de la aceptación no se confunde con 'no es #63' ni crea nada", async () => {
   const bd = usarBD({ ventas: [venta63()], p63_aceptacion: [aceptacion()], proveedores: [], contrato_hoteles: [], contrato_vuelos: [], cuentas_por_pagar: [] });
   conErrorDeLectura(bd, "p63_aceptacion", { message: "boom" });
-  const r = await asegurarCuentasPorPagar(NUM);
+  const r = await asegurarCuentasPorPagar(NUM, {});
   assert.equal(r.ok, false);
   assert.equal(bd.filas("cuentas_por_pagar").length, 0, "sin complemento aunque el contrato tenga costos");
 });
@@ -127,7 +127,7 @@ test("asegurarCuentasPorPagar en un contrato de SIEMPRE: el complemento de falta
   const bd = usarBD({
     ventas: [venta63({ aceptacion_63_id: null, costo_hotel: 0 })], proveedores: [], contrato_hoteles: [], contrato_vuelos: [], cuentas_por_pagar: [],
   });
-  const r = await asegurarCuentasPorPagar(NUM);
+  const r = await asegurarCuentasPorPagar(NUM, {});
   assert.equal(r.ok, true, JSON.stringify(r));
   assert.equal(r.creadas, 1, "se crea la CxP aérea que faltaba, como siempre");
   assert.equal(bd.filas("cuentas_por_pagar")[0]?.tipo_proveedor, "aereo");
@@ -140,12 +140,12 @@ test("gestión: editar el principal, el proveedor o el servicio de una obligaci�
   const bd = usarBD({ cuentas_por_pagar: [cxp63("hotel:0", { id: 1, valor_total: 210, moneda: "USD", valor_cop_63: 840_000, proveedor: "Hotel SAS", servicio: "Hotel" })] });
   const base = { id: 1, numeroContrato: NUM, proveedor: "Hotel SAS", servicio: "Hotel", valorTotal: 210, fechaVencimiento: "2030-02-01" };
   for (const [que, cambio] of [["el valor", { valorTotal: 100 }], ["el proveedor", { proveedor: "Otro" }], ["el servicio", { servicio: "Otro servicio" }]] as const) {
-    const r = await actualizarCuentaPorPagar({ ...base, ...cambio });
+    const r = await actualizarCuentaPorPagar({ ...base, ...cambio }, {});
     assert.equal(r.ok, false, que);
     assert.match(String((r as { error?: string }).error), MSG, que);
   }
   assert.equal(bd.filas("cuentas_por_pagar")[0]?.valor_total, 210, "nada cambió");
-  const ok = await actualizarCuentaPorPagar({ ...base, ivaDescontable: 0 });
+  const ok = await actualizarCuentaPorPagar({ ...base, ivaDescontable: 0 }, {});
   assert.equal(ok.ok, true, JSON.stringify(ok));
   assert.equal(bd.filas("cuentas_por_pagar")[0]?.fecha_vencimiento, "2030-02-01");
   assert.equal(importeAsiento(bd, 1), 840_000, "y el asiento se devenga por el equivalente COP congelado");
@@ -161,10 +161,10 @@ test("gestión: eliminar una obligación aceptada o editar los costos del contra
     if (t === "ventas") b.update = () => rechazo("p63_protegido: los costos de un contrato de oferta COP con TRM salen de lo aceptado");
     return b;
   }) as unknown as typeof bd.sb.from;
-  const del = await eliminarCuentaPorPagar(1, NUM);
+  const del = await eliminarCuentaPorPagar(1, NUM, {});
   assert.equal(del.ok, false);
   assert.match(String((del as { error?: string }).error), MSG);
-  const costos = await guardarCostos(NUM, { costo_hotel: 1, costo_aereo: 1, costo_receptivo: 0, costo_asistencia: 0, otros_costos: 0 });
+  const costos = await guardarCostos(NUM, { costo_hotel: 1, costo_aereo: 1, costo_receptivo: 0, costo_asistencia: 0, otros_costos: 0 }, {});
   assert.equal(costos.ok, false);
   assert.match(String((costos as { error?: string }).error), MSG);
   assert.equal(bd.filas("cuentas_por_pagar").length, 1);

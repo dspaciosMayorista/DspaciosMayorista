@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import { Button } from "@/components/ui/button";
 import { formatCOP } from "@/lib/utils";
 import { precioServicioEstimado, avisoSinRango } from "@/lib/calc/servicioTarifa";
+import type { IdentidadContrato } from "@/lib/contrato/identidad";
 import { actualizarServiciosContrato } from "../actions";
 
 export type ServicioDispContrato = {
@@ -16,8 +17,9 @@ export type ServicioDispContrato = {
 };
 
 export function ServiciosContratoEditor({
-  numero, pax, serviciosDisp, seleccionInicial,
+  numero, pax, serviciosDisp, seleccionInicial, identidad,
 }: {
+  identidad: IdentidadContrato;
   numero: string;
   pax: number;
   serviciosDisp: ServicioDispContrato[];
@@ -42,7 +44,7 @@ export function ServiciosContratoEditor({
   function guardar() {
     setMsg("");
     start(async () => {
-      const r = await actualizarServiciosContrato(numero, [...sel]);
+      const r = await actualizarServiciosContrato(numero, [...sel], identidad);
       if (r.ok) { setMsg("✓ Servicios actualizados"); router.refresh(); } else setMsg(r.error ?? "Error");
     });
   }

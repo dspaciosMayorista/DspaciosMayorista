@@ -4,13 +4,15 @@ import { DateInput } from "@/components/ui/DateInput";
 import { useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import type { IdentidadContrato } from "@/lib/contrato/identidad";
 import { registrarAbono } from "../actions";
 import { formatUSD } from "@/lib/utils";
 import { fechaNegocio } from "@/lib/fechaNegocio";
 import { ConfirmarExcedenteAbono } from "@/components/contrato/ConfirmarExcedenteAbono";
 import { useRegistroAbono } from "@/components/contrato/useRegistroAbono";
+import { ConfirmacionPendienteAbono } from "@/components/contrato/ConfirmacionPendienteAbono";
 
-export function AbonoForm({ numeroContrato, formasPago = [], moneda = "COP" }: { numeroContrato: string; formasPago?: string[]; moneda?: string }) {
+export function AbonoForm({ numeroContrato, formasPago = [], moneda = "COP", identidad }: { numeroContrato: string; formasPago?: string[]; moneda?: string; identidad: IdentidadContrato }) {
   const [valor, setValor] = useState("");
   const [forma, setForma] = useState("");
   const [ref, setRef] = useState("");
@@ -21,7 +23,7 @@ export function AbonoForm({ numeroContrato, formasPago = [], moneda = "COP" }: {
   const reg = useRegistroAbono({
     campos: { valor, forma, ref, trm, fecha },
     esUSD,
-    registrar: (e, confirmar) => registrarAbono(numeroContrato, e.valor, e.forma, e.ref, e.trm, e.fecha, confirmar, e.operacion),
+    registrar: (e, confirmar) => registrarAbono(numeroContrato, e.valor, e.forma, e.ref, e.trm, e.fecha, confirmar, e.operacion, identidad),
     reiniciar: () => { setValor(""); setForma(""); setRef(""); setTrm(""); setFecha(fechaNegocio()); },
   });
   const { pending, error } = reg;
@@ -29,6 +31,7 @@ export function AbonoForm({ numeroContrato, formasPago = [], moneda = "COP" }: {
   return (
     <form onSubmit={(e) => { e.preventDefault(); reg.enviar(); }} className="flex flex-wrap items-end gap-3">
       <ConfirmarExcedenteAbono datos={reg.excedente} onCancelar={reg.cancelar} onConfirmar={reg.confirmar} />
+      <ConfirmacionPendienteAbono mensaje={reg.confirmacionPendiente} pending={pending} onReintentar={reg.reintentarConfirmacion} />
       <div>
         <label className="mb-1 block text-xs font-medium text-gray-600">
           {esUSD ? "Valor pagado (COP)" : "Valor del abono"}
@@ -81,7 +84,7 @@ export function AbonoForm({ numeroContrato, formasPago = [], moneda = "COP" }: {
       </div>
       <Button
         type="submit"
-        disabled={pending}
+        disabled={pending || !!reg.confirmacionPendiente}
         style={{ backgroundColor: "var(--brand-primary)" }}
       >
         {pending ? "Guardando…" : "Registrar abono"}

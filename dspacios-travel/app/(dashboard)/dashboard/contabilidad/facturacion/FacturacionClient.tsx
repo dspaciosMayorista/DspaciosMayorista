@@ -6,6 +6,7 @@ import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { formatMoneda } from "@/lib/utils";
 import { liquidarFacturacion } from "@/lib/contabilidad/facturacion";
+import type { IdentidadContrato } from "@/lib/contrato/identidad";
 import { guardarFacturacion, quitarFacturacion, marcarDian, contabilizarAbonosPendientes, type RevisionFueraLibros } from "./actions";
 import { useRouter } from "next/navigation";
 import { AlertTriangle, ChevronDown, ChevronRight, Lock } from "lucide-react";
@@ -13,6 +14,8 @@ import { ResponsiveTableShell } from "@/components/ui/ResponsiveTableShell";
 
 export type FactRow = {
   numero_contrato: string;
+  /** Identidad del contrato tal como la leyó la página; se reenvía a cada acción. */
+  identidad: IdentidadContrato;
   cliente: string | null;
   destino: string | null;
   mes: string;
@@ -110,8 +113,8 @@ function DianTab({ rows }: { rows: FactRow[] }) {
   const sinFacturar = rows.filter((r) => !r.dianEmitida && fil(r));
   const facturados = rows.filter((r) => r.dianEmitida && fil(r));
   // 208: el resultado se muestra (antes se ignoraba); la marca DIAN no se deshace.
-  const toggle = (nc: string, emitida: boolean) => start(async () => {
-    const r = await marcarDian(nc, emitida);
+  const toggle = (nc: string, emitida: boolean, identidad: IdentidadContrato) => start(async () => {
+    const r = await marcarDian(nc, emitida, identidad);
     setErrores((e) => {
       const resto = { ...e };
       delete resto[nc];
@@ -126,12 +129,12 @@ function DianTab({ rows }: { rows: FactRow[] }) {
       <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
         <Columna titulo={`Sin facturar a la DIAN (${sinFacturar.length})`} tono="#C0392B">
           {sinFacturar.length === 0 ? <ColVacia>Todo facturado.</ColVacia> : sinFacturar.map((r) => (
-            <DianFila key={r.numero_contrato} row={r} marcado={false} disabled={pending} error={errores[r.numero_contrato]} onToggle={() => toggle(r.numero_contrato, true)} />
+            <DianFila key={r.numero_contrato} row={r} marcado={false} disabled={pending} error={errores[r.numero_contrato]} onToggle={() => toggle(r.numero_contrato, true, r.identidad)} />
           ))}
         </Columna>
         <Columna titulo={`Facturados / emitidos (${facturados.length})`} tono="var(--brand-success)">
           {facturados.length === 0 ? <ColVacia>Aún no marcas ninguno.</ColVacia> : facturados.map((r) => (
-            <DianFila key={r.numero_contrato} row={r} marcado bloqueado disabled={pending} error={errores[r.numero_contrato]} onToggle={() => toggle(r.numero_contrato, false)} />
+            <DianFila key={r.numero_contrato} row={r} marcado bloqueado disabled={pending} error={errores[r.numero_contrato]} onToggle={() => toggle(r.numero_contrato, false, r.identidad)} />
           ))}
         </Columna>
       </div>
@@ -244,7 +247,7 @@ function Editor({ row, ivaPct }: { row: FactRow; ivaPct: number }) {
         tipoExento,
         observacion: obs,
         ...(revision && revisado ? { hashRevision: revision.hash, notaRevision: nota } : {}),
-      });
+      }, row.identidad);
       if (!r.ok) {
         setError(r.error);
         if ("revision" in r && r.revision !== undefined) {
@@ -261,7 +264,7 @@ function Editor({ row, ivaPct }: { row: FactRow; ivaPct: number }) {
   function quitar() {
     setError(null); setOk(false); setAviso(null);
     start(async () => {
-      const r = await quitarFacturacion(row.numero_contrato);
+      const r = await quitarFacturacion(row.numero_contrato, row.identidad);
       if (!r.ok) { setError(r.error); return; }
       router.refresh();
     });
@@ -269,7 +272,7 @@ function Editor({ row, ivaPct }: { row: FactRow; ivaPct: number }) {
   function contabilizar() {
     setError(null); setAviso(null);
     start(async () => {
-      const r = await contabilizarAbonosPendientes(row.numero_contrato);
+      const r = await contabilizarAbonosPendientes(row.numero_contrato, row.identidad);
       if (!r.ok) { setError(r.error); return; }
       setRevision(null); setRevisado(false);
       setAviso(`${r.contabilizados} abono(s) contabilizado(s). Vuelve a guardar la factura.`);

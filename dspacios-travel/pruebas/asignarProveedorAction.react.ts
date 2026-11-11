@@ -68,7 +68,7 @@ function configurar(fx: Parameters<typeof supabaseDe>[0]) {
 
 test("nombre inexistente en el catálogo: error y NUNCA se llama update a cuentas_por_pagar", async () => {
   configurar({ fila: null });
-  const r = await asignarProveedorCuentaPorPagar(7, "Proveedor Que No Existe");
+  const r = await asignarProveedorCuentaPorPagar(7, "Proveedor Que No Existe", {});
   assert.deepEqual(r, { ok: false, error: "Ese proveedor no está en el catálogo." });
   assert.deepEqual(llamadas.proveedoresRead, [{ col: "nombre", val: "Proveedor Que No Existe" }], "sí consulta el catálogo");
   assert.deepEqual(llamadas.updates, [], "no debe tocar cuentas_por_pagar");
@@ -77,7 +77,7 @@ test("nombre inexistente en el catálogo: error y NUNCA se llama update a cuenta
 
 test("nombre existente: actualiza con el nombre y los datos del catálogo (contrato intacto) y revalida", async () => {
   configurar({ fila: { nombre: "Hotel Beta", tipo: "hotel", aplica_retencion: true, pct_retencion: 0.025 } });
-  const r = await asignarProveedorCuentaPorPagar(5, "Hotel Beta");
+  const r = await asignarProveedorCuentaPorPagar(5, "Hotel Beta", {});
   assert.deepEqual(r, { ok: true });
   assert.deepEqual(llamadas.updates, [{
     vals: { proveedor: "Hotel Beta", tipo_proveedor: "hotel", aplica_retencion: true, pct_retencion: 0.025 },
@@ -88,14 +88,14 @@ test("nombre existente: actualiza con el nombre y los datos del catálogo (contr
 
 test("los campos nulos del catálogo se omiten y el booleano false sí se propaga", async () => {
   configurar({ fila: { nombre: "Agencia X", tipo: null, aplica_retencion: false, pct_retencion: null } });
-  const r = await asignarProveedorCuentaPorPagar(9, "Agencia X");
+  const r = await asignarProveedorCuentaPorPagar(9, "Agencia X", {});
   assert.deepEqual(r, { ok: true });
   assert.deepEqual(llamadas.updates[0]!.vals, { proveedor: "Agencia X", aplica_retencion: false });
 });
 
 test("falla la consulta al catálogo: resultado de error y NO actualiza la CxP", async () => {
   configurar({ fila: null, errorCatalogo: { message: "consulta al catálogo falló" } });
-  const r = await asignarProveedorCuentaPorPagar(5, "Hotel Beta");
+  const r = await asignarProveedorCuentaPorPagar(5, "Hotel Beta", {});
   assert.equal(r.ok, false);
   assert.equal(r.error, "Ese proveedor no está en el catálogo.", "hay resultado de error verificable");
   assert.deepEqual(llamadas.updates, [], "no debe actualizar cuentas_por_pagar si falló el catálogo");
@@ -104,7 +104,7 @@ test("falla la consulta al catálogo: resultado de error y NO actualiza la CxP",
 
 test("nombre vacío/solo espacios: guard temprano sin tocar el catálogo", async () => {
   configurar({ fila: null });
-  const r = await asignarProveedorCuentaPorPagar(5, "   ");
+  const r = await asignarProveedorCuentaPorPagar(5, "   ", {});
   assert.deepEqual(r, { ok: false, error: "Elige un proveedor." });
   assert.deepEqual(llamadas.proveedoresRead, [], "ni siquiera consulta el catálogo con nombre vacío");
   assert.deepEqual(llamadas.updates, []);
