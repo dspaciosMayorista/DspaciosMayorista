@@ -16,6 +16,7 @@ import { normalizarProveedorHotelId } from "@/lib/hoteles/proveedor";
 import { eliminarHotelSeguro, type ResultadoEliminarHotel } from "@/lib/hoteles/eliminarHotel";
 import { validarCondicionPago, type CondicionPagoEntrada } from "@/lib/cotizacion/condicionPagoCatalogo";
 import { validarFechasVigencia, fechasGuardadas, anioVigenteBogota, type FechasVigencia } from "@/lib/hoteles/validarFechasVigencia";
+import { mensajeBorrarVigenciaConGrupos } from "@/lib/hoteles/alcanceGrupos";
 
 type Result = { ok: true; id?: number; aviso?: string } | { ok: false; error: string };
 const oNull = (s: string) => (s && s.trim() !== "" ? s.trim() : null);
@@ -434,7 +435,8 @@ export async function eliminarTemporada(id: number, _hotelIdSolicitado: number):
     .eq("id", id)
     .select("hotel_id")
     .maybeSingle();
-  if (error) return { ok: false, error: error.message };
+  // #43/#60: una vigencia con grupos preparados no se borra (FK de la 293): mensaje claro en vez del error de la base.
+  if (error) return { ok: false, error: mensajeBorrarVigenciaConGrupos(error) ?? error.message };
   if (!borrada) return { ok: false, error: "No se encontró la temporada a eliminar (0 filas afectadas)." };
   const hotelId = borrada.hotel_id;
   revalidatePath(`/dashboard/producto/hoteles/${hotelId}`);

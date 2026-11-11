@@ -3,7 +3,7 @@
 import { DateInput } from "@/components/ui/DateInput";
 import { useRef, useState, useTransition, type KeyboardEvent, type ReactNode } from "react";
 import { useRouter } from "next/navigation";
-import { CalendarRange, Pencil, Settings, Table2, Trash2 } from "lucide-react";
+import { CalendarDays, CalendarRange, Pencil, Settings, Table2, Trash2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { formatFechaLarga } from "@/lib/utils";
@@ -21,6 +21,8 @@ import { etiquetasRestriccion } from "@/lib/cotizacion/etiquetasCondicion";
 import { etiquetaFilaTarifa } from "@/lib/calc/promoCalculadora";
 import { fechaNegocio } from "@/lib/fechaNegocio";
 import { validarFechasVigencia, fechasGuardadas, anioVigenteBogota, type FechasVigencia } from "@/lib/hoteles/validarFechasVigencia";
+import { GruposDiasPanel } from "./GruposDiasPanel";
+import { textoDias, type GrupoCfg } from "@/lib/hoteles/alcanceGrupos";
 
 type RangoFechas = { fecha_inicio: string; fecha_fin: string };
 type Temporada = {
@@ -29,6 +31,8 @@ type Temporada = {
   tipo?: string | null; descuento_valor?: number | null; min_noches?: number;
   rangos?: unknown; blackouts?: unknown; regimen_restringido?: string | null;
   condicion_pago_tipo?: string | null; condicion_pago_pct_inicial?: number | null; condicion_pago_dias_saldo?: number | null;
+  // #43/#60: grupos de días preparados (inactivos), incrustados en la misma lectura de vigencias.
+  hotel_temporada_grupos?: GrupoCfg[] | null;
 };
 
 const CONDICIONES_PAGO_HOTEL: { value: string; label: string }[] = [
@@ -169,7 +173,7 @@ export function HotelDetalleClient({
         {configuracion}
       </div>
       <div role="tabpanel" id="panel-hotel-temporadas" aria-labelledby="tab-hotel-temporadas" hidden={activa !== "temporadas"} className="mx-auto max-w-5xl space-y-8">
-        <TemporadasBox hotelId={hotelId} temporadas={temporadas} otrosHoteles={otrosHoteles} hoy={hoy} regimenes={regimenes} moneda={moneda} />
+        <TemporadasBox hotelId={hotelId} temporadas={temporadas} otrosHoteles={otrosHoteles} hoy={hoy} regimenes={regimenes} moneda={moneda} permiteGrupos={mostrarTarifaPersona} />
         {/* Cada bloque del servidor va como ÚNICO hijo de su contenedor: junto a otros hijos dentro de un arreglo estático,
            React 19 (dev) avisa "Each child in a list should have a unique key" por los elementos que llegan del servidor. */}
         <div>{calculadora}</div>
@@ -184,7 +188,12 @@ export function HotelDetalleClient({
   );
 }
 
-function TemporadasBox({ hotelId, temporadas, otrosHoteles, hoy, regimenes, moneda }: { hotelId: number; temporadas: Temporada[]; otrosHoteles: { id: number; nombre: string }[]; hoy: string; regimenes: string[]; moneda: string }) {
+function TemporadasBox({ hotelId, temporadas, otrosHoteles, hoy, regimenes, moneda, permiteGrupos = false }: { hotelId: number; temporadas: Temporada[]; otrosHoteles: { id: number; nombre: string }[]; hoy: string; regimenes: string[]; moneda: string; permiteGrupos?: boolean }) {
+  // #43/#60: editor de grupos de días (preparación inactiva). Sin controles en hoteles por unidad.
+  const [gruposAbierta, setGruposAbierta] = useState<Temporada | null>(null);
+  const [gruposLocales, setGruposLocales] = useState<Record<number, GrupoCfg[]>>({});
+  const gruposDe = (t: Temporada) => gruposLocales[t.id] ?? t.hotel_temporada_grupos ?? [];
+  const nombreRepetido = (t: Temporada) => temporadas.filter((o) => o.nombre.trim() === t.nombre.trim()).length > 1;
   const [editId, setEditId] = useState<number | null>(null);
   const [nombre, setNombre] = useState("");
   const [ini, setIni] = useState("");
@@ -321,6 +330,20 @@ function TemporadasBox({ hotelId, temporadas, otrosHoteles, hoy, regimenes, mone
           )}
         </span>
         <span className="flex items-center gap-3">
+          {permiteGrupos && (t.tipo ?? "tarifa") === "tarifa" && (
+            <>
+              {gruposDe(t).length > 0 && (
+                <span className="rounded-full bg-gray-100 px-2 py-0.5 text-[10px] font-medium text-gray-600" title="Grupos preparados: no cambian lo que hoy se vende">
+                  {gruposDe(t).map((g) => `${g.nombre} ${textoDias(g.dias)}`).join(" · ")} · inactivo
+                </span>
+              )}
+              <button type="button" onClick={() => setGruposAbierta(t)} disabled={nombreRepetido(t)}
+                title={nombreRepetido(t) ? "El nombre se repite en otra vigencia: solo una vigencia con nombre único puede tener grupos" : "Preparar grupos de días (inactivos)"}
+                className="flex items-center gap-1 text-xs text-[var(--brand-accent)] hover:underline disabled:cursor-not-allowed disabled:opacity-40">
+                <CalendarDays className="h-3.5 w-3.5" aria-hidden /> Grupos de días
+              </button>
+            </>
+          )}
           <button type="button" onClick={() => editar(t)} className="text-xs text-[var(--brand-accent)] hover:underline">Editar</button>
           <DelBtn onDel={() => eliminarTemporada(t.id, hotelId)} />
         </span>
@@ -330,6 +353,10 @@ function TemporadasBox({ hotelId, temporadas, otrosHoteles, hoy, regimenes, mone
 
   return (
     <section>
+      {gruposAbierta && (
+        <GruposDiasPanel temporadaId={gruposAbierta.id} nombreVigencia={gruposAbierta.nombre} onCerrar={() => setGruposAbierta(null)}
+          onGruposCambiados={(gs) => setGruposLocales((m) => ({ ...m, [gruposAbierta.id]: gs }))} />
+      )}
       <h2 className="mb-1 text-sm font-semibold text-gray-700">Temporadas y promociones</h2>
       <p className="mb-3 text-xs text-gray-500">
         Las fechas <b>pueden cruzarse</b>: gana la de mayor <b>prioridad</b>. La <b>vigencia de compra</b> define

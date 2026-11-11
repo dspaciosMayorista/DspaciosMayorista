@@ -58,6 +58,7 @@ const STUB_PASAJEROS_CONTRATO_ACTIONS = pathToFileURL(join(AQUI, "stubs", "pasaj
 const STUB_ELIMINAR_DESTINO_ACTIONS = pathToFileURL(join(AQUI, "stubs", "eliminarDestinoActionsStub.mjs")).href;
 const STUB_COTIZAR_TARJETA = pathToFileURL(join(AQUI, "stubs", "cotizarTarjetaActionsStub.mjs")).href;
 const STUB_REGLAS_DESCUENTO_ACTIONS = pathToFileURL(join(AQUI, "stubs", "reglasDescuentoActionsStub.mjs")).href;
+const STUB_GRUPOS_DIAS_ACTIONS = pathToFileURL(join(AQUI, "stubs", "gruposDiasActionsStub.mjs")).href;
 // Server Actions de pagos / proveedores / difusión, importadas por su alias
 // "@/..." — mismas razones que las anteriores (terminan en "next/headers").
 const STUB_PAGOS_ACTIONS = pathToFileURL(join(AQUI, "stubs", "pagosActionsStub.mjs")).href;
@@ -183,6 +184,9 @@ export async function resolve(specifier, context, nextResolve) {
   }
   if (specifier === "./cotizarTarjetaActions" && (context.parentURL?.endsWith("/TarjetaHotelFechas.tsx") || context.parentURL?.endsWith("/cotizacionSalidaModal.ts"))) {
     return { url: STUB_COTIZAR_TARJETA, shortCircuit: true };
+  }
+  if (specifier === "./grupos-actions" && context.parentURL?.endsWith("GruposDiasPanel.tsx")) {
+    return { url: STUB_GRUPOS_DIAS_ACTIONS, shortCircuit: true };
   }
   if (specifier === "./reglas-descuento-actions" && context.parentURL?.endsWith("HotelPromociones.tsx")) {
     return { url: STUB_REGLAS_DESCUENTO_ACTIONS, shortCircuit: true };

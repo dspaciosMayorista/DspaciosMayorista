@@ -152,3 +152,13 @@ aunque el hotel fuera USD y un `0` se escondía como "—". Pruebas: `pruebas/ta
   `vigencia.ts` y `paquetes/actions.ts`: cero solicitudes nuevas. **Exige la 293 aplicada antes de desplegar.**
 - Pruebas: `pruebas/motorGrupos43*.test.ts`, `pruebas/gruposDiasZona43.test.ts` (correr en Linux con distintas `TZ`),
   `supabase/scripts/test_293_lectura_postgrest.sh`. Detalle: historial §AC.
+
+## Editor de grupos de días y propuesta de tarifas (#43/#60 incremento 3, en local; migración 295 provisional, sin aplicar)
+- Ficha del hotel → pestaña Temporadas → «Grupos de días» por vigencia de tarifa (no en promociones ni en hoteles por
+  unidad). `GruposDiasPanel.tsx` + `grupos-actions.ts` (4 acciones, una RPC cada una, sin `revalidatePath`) +
+  `lib/hoteles/alcanceGrupos.ts` (vista previa y mensajes, puro).
+- Las tarifas por grupo se guardan como **propuesta** en `hotel_grupo_tarifa_propuesta` (el motor no la lee; escrituras
+  solo por las RPC `grupos_dias_*`). Los grupos siguen inactivos (candado 293). Activar es la entrega 3c.
+- Concurrencia: huella de vigencia + grupos + propuestas + tarifas de origen + promociones vinculadas, comparada bajo
+  candados (grupos → vigencia → tarifas FOR SHARE → candado del hotel); obsoleta ⇒ PT409 / HTTP 409 «recarga».
+- Pruebas: `supabase/scripts/test_295_*.sh`, `pruebas/gruposDias295*.ts`, `pruebas/grupos295.pg.mjs`. Detalle: historial §AE.
