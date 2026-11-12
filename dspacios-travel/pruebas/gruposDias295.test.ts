@@ -175,6 +175,10 @@ describe("planGrupos, cobertura y borrado", () => {
     assert.match(t, /su única propuesta/);
     assert.match(t, /Estándar \/ PAM: Doble 123,45, Niño 1 0 \(con notas\/edades\)/);
     assert.match(t, /No se borran ni se modifican promociones, tarifas vigentes/);
+    assert.doesNotMatch(t, /bases de calculadora/, "sin bases guardadas no se mencionan");
+    const conBases = textoBorrado(cfg({ bases: [{ grupo_id: G1, tipo: "dubai", version: 3, categorias: 2 }, { grupo_id: G2, tipo: "mixta", version: 1, categorias: 1 }] }), G1).join(" ");
+    assert.match(conBases, /También se borran sus bases de calculadora .*: Dubai \(2 bases, versión 3\)\. Si alguien las cambia antes de confirmar, el borrado se rechaza/, "297: las bases del grupo, concretas");
+    assert.doesNotMatch(conBases, /Mixta/, "solo las del grupo que se borra");
     assert.match(t, /PROMO-ALTA.*No se tocan/);
   });
   test("errores de la base: PT409 = desactualizada; FK de grupos al borrar vigencia = mensaje claro", () => {
@@ -208,7 +212,7 @@ const unaRpc = (nombre: string) => {
 };
 
 describe("acciones: exactamente una RPC, sin revalidar ni regenerar", () => {
-  test("leer", async () => { assert.equal((await acc.leerConfigGrupos(10)).ok, true); unaRpc("grupos_dias_config"); });
+  test("leer (297: la misma lectura trae las bases de calculadora)", async () => { assert.equal((await acc.leerConfigGrupos(10)).ok, true); unaRpc("grupos_dias_config_bases"); });
   test("guardar grupos (nombres recortados)", async () => {
     await acc.guardarGruposVigencia(10, "abc", [{ nombre: " Semana ", dias: [1, 2] }, { id: G2, nombre: "FS", dias: [5] }]);
     unaRpc("grupos_dias_guardar");
@@ -221,7 +225,22 @@ describe("acciones: exactamente una RPC, sin revalidar ni regenerar", () => {
     assert.equal(est.rpc[0][1].p_grupo_id, null);
     assert.deepEqual(est.rpc[0][1].p_filas, payloadFilas(filas));
   });
-  test("borrar", async () => { await acc.borrarGrupoDias(G1, "abc"); unaRpc("grupos_dias_borrar"); });
+  test("borrar (297: con las bases que mostró la vista previa)", async () => {
+    await acc.borrarGrupoDias(G1, "abc", [{ tipo: "dubai", version: 3 }]);
+    unaRpc("grupos_dias_borrar_con_bases");
+    assert.deepEqual(est.rpc[0][1], { p_grupo_id: G1, p_huella: "abc", p_bases: [{ tipo: "dubai", version: 3 }] });
+  });
+  test("borrar: bases cambiadas después de revisar ⇒ desactualizada con el motivo, sin reintento", async () => {
+    est.resp = { data: null, error: { code: "PT409", message: "CONFIG_DESACTUALIZADA: las bases de calculadora de este grupo cambiaron desde que revisaste el borrado. Recarga y revisa de nuevo." } };
+    const r = await acc.borrarGrupoDias(G1, "abc", []) as { ok: false; error: string; desactualizada?: true };
+    assert.equal(r.desactualizada, true);
+    assert.match(r.error, /^las bases de calculadora de este grupo cambiaron/);
+    assert.equal(est.rpc.length, 1);
+  });
+  test("borrar: bases mal formadas ⇒ ninguna llamada", async () => {
+    await acc.borrarGrupoDias(G1, "abc", [{ tipo: "dubai" }] as never);
+    assert.equal(est.rpc.length, 0);
+  });
   test("confirmación obsoleta (PT409): desactualizada, mensaje claro y SIN reintento", async () => {
     est.resp = { data: null, error: { code: "PT409", message: "CONFIG_DESACTUALIZADA: cambió" } };
     const r = await acc.guardarPropuestaGrupos(10, "vieja", "actualizar", null, []);

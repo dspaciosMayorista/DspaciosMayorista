@@ -9,7 +9,8 @@ import { HotelFotos } from "./HotelFotos";
 import { HotelBlackouts } from "./HotelBlackouts";
 import { HotelPromociones, type ReglaFila } from "./HotelPromociones";
 import { HotelAcomodacionesEditor } from "./HotelAcomodacionesEditor";
-import { CalculadoraEditor } from "./CalculadoraEditor";
+import { CalculadoraEditor, type VigenciaConGrupos } from "./CalculadoraEditor";
+import type { BasesGrupo } from "@/lib/hoteles/calculadoraGrupos";
 import { TarifasHistorial } from "./TarifasHistorial";
 import { consultarHistorialTarifas } from "./historial-actions";
 import { TarifasUnidadEditor, type FilaTarifaUnidadUI } from "./TarifasUnidadEditor";
@@ -34,11 +35,11 @@ export default async function HotelDetallePage({ params, searchParams }: { param
     sb.from("hoteles").select("*, destinos(nombre), proveedores(nombre)").eq("id", hotelId).single(),
     sb.from("hotel_categorias").select("categoria_id, categorias_habitacion(nombre)").eq("hotel_id", hotelId),
     sb.from("hotel_regimenes").select("plan_id, planes_alimentacion(codigo)").eq("hotel_id", hotelId),
-    sb.from("hotel_temporadas").select("id, nombre, fecha_inicio, fecha_fin, prioridad, compra_inicio, compra_fin, tipo, descuento_valor, rangos, blackouts, min_noches, regimen_restringido, condicion_pago_tipo, condicion_pago_pct_inicial, condicion_pago_dias_saldo, hotel_temporada_grupos(id, nombre, dias, activo)").eq("hotel_id", hotelId).order("prioridad", { ascending: false }).order("orden"),
+    sb.from("hotel_temporadas").select("id, nombre, fecha_inicio, fecha_fin, prioridad, compra_inicio, compra_fin, tipo, descuento_valor, rangos, blackouts, min_noches, regimen_restringido, condicion_pago_tipo, condicion_pago_pct_inicial, condicion_pago_dias_saldo, hotel_temporada_grupos(id, nombre, dias, activo, hotel_calculadora_grupo_bases(tipo, bases, version))").eq("hotel_id", hotelId).order("prioridad", { ascending: false }).order("orden"),
     sb.from("tarifa_hotel").select("*").eq("hotel_id", hotelId).order("id", { ascending: false }),
     sb.from("rangos_edad").select("id, denominacion, edad_min, edad_max").order("edad_min"),
     sb.from("hotel_acomodaciones").select("acomodacion, pax_tarifa, pax_max, adt_min, adt_max, chd_min, chd_max, inf_min, inf_max").eq("hotel_id", hotelId),
-    sb.from("hotel_calculadora").select("tipo, params").eq("hotel_id", hotelId).maybeSingle(),
+    sb.from("hotel_calculadora").select("tipo, params, version").eq("hotel_id", hotelId).maybeSingle(),
     sb.from("categorias_habitacion").select("id, nombre").order("nombre"),
     sb.from("planes_alimentacion").select("id, codigo").order("codigo"),
     sb.from("hotel_documentos").select("id, tipo, nombre, path, size_bytes, subido_por, created_at").eq("hotel_id", hotelId).order("created_at", { ascending: false }),
@@ -110,6 +111,17 @@ export default async function HotelDetallePage({ params, searchParams }: { param
   const dubaiInicial = calc?.tipo === "dubai" ? (calc.params as unknown as DubaiParams) : null;
   const mixtaInicial = calc?.tipo === "mixta" ? (calc.params as unknown as MixtaParams) : null;
   const corporativaInicial = calc?.tipo === "corporativa" ? (calc.params as unknown as CorporativaParams) : null;
+  // #43/#60 3b: grupos de días (inactivos) de las vigencias de tarifa, con sus bases de calculadora. Vienen
+  // incrustados en la lectura de vigencias: 0 solicitudes nuevas. Nunca para hoteles por unidad.
+  const gruposCalc: VigenciaConGrupos[] = modeloTarifario === "unidad" ? [] : (temporadas ?? [])
+    .filter((t) => (t.tipo ?? "tarifa") === "tarifa" && (t.hotel_temporada_grupos ?? []).length > 0)
+    .map((t) => ({
+      temporadaId: t.id, vigencia: t.nombre,
+      grupos: (t.hotel_temporada_grupos ?? []).map((g) => ({
+        id: g.id, nombre: g.nombre, dias: g.dias,
+        bases: (g.hotel_calculadora_grupo_bases ?? []).map((b) => ({ tipo: b.tipo as CalcTipo, bases: b.bases as unknown as BasesGrupo, version: b.version })),
+      })),
+    }));
 
   // Lectura defensiva de "Tarifas por unidad" (fase 2 Bernalo): cada fila se
   // pasa por el MISMO adaptador que valida las Server Actions al escribir
@@ -226,6 +238,8 @@ export default async function HotelDetallePage({ params, searchParams }: { param
           temporadas={temporadasNombres}
           regimenes={regimenes}
           tipoInicial={calcTipo}
+          versionInicial={calc?.version ?? null}
+          gruposCalc={gruposCalc}
           dubaiInicial={dubaiInicial}
           mixtaInicial={mixtaInicial}
           corporativaInicial={corporativaInicial}

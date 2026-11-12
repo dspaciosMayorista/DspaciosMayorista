@@ -2238,7 +2238,8 @@ export type Database = {
         Relationships: [];
       };
       hotel_calculadora: {
-        Row: { id: number; hotel_id: number; tipo: string; params: Json; updated_at: string };
+        // version: migración 297 (PROPUESTA) — cambia en CADA escritura (trigger); los escritores condicionan por ella.
+        Row: { id: number; hotel_id: number; tipo: string; params: Json; updated_at: string; version: number };
         Insert: { id?: number; hotel_id: number; tipo?: string; params?: Json; updated_at?: string };
         Update: Partial<Database["public"]["Tables"]["hotel_calculadora"]["Insert"]>;
         Relationships: [];
@@ -2474,6 +2475,22 @@ export type Database = {
       };
       // Migración 295 (#43/#60 incremento 3, PROPUESTA — no aplicada). PROPUESTA de tarifas por grupo
       // (inactiva): el motor no la lee. Lectura para internos; escrituras solo por las RPC grupos_dias_*.
+      // Migración 297 (PROPUESTA, número provisional). Bases de la calculadora por grupo de días (#43/#60 3b).
+      // Lectura interna; escrituras solo por la RPC grupos_dias_guardar_calculadora. El motor no la lee.
+      hotel_calculadora_grupo_bases: {
+        Row: { id: number; grupo_id: string; tipo: string; bases: Json; version: number; updated_at: string; updated_by: string | null };
+        Insert: Record<string, never>; // solo por RPC
+        Update: Record<string, never>;
+        Relationships: [
+          {
+            foreignKeyName: "hotel_calculadora_grupo_bases_grupo_id_fkey";
+            columns: ["grupo_id"];
+            isOneToOne: false;
+            referencedRelation: "hotel_temporada_grupos";
+            referencedColumns: ["id"];
+          },
+        ];
+      };
       hotel_grupo_tarifa_propuesta: {
         Row: {
           id: number; grupo_id: string; tipo_habitacion: string; alimentacion: string;
@@ -4459,6 +4476,17 @@ export type Database = {
         Returns: Json;
       };
       grupos_dias_borrar: { Args: { p_grupo_id: string; p_huella: string }; Returns: Json };
+      // Migración 297 (PROPUESTA): lectura de la 295 + bases por grupo; borrado que exige las versiones revisadas.
+      grupos_dias_config_bases: { Args: { p_temporada_id: number }; Returns: Json };
+      grupos_dias_borrar_con_bases: { Args: { p_grupo_id: string; p_huella: string; p_bases: Json }; Returns: Json };
+      // Migración 297 (PROPUESTA): propuesta del grupo + bases de la calculadora, atómico.
+      grupos_dias_guardar_calculadora: {
+        Args: {
+          p_temporada_id: number; p_huella: string; p_grupo_id: string; p_tipo: string;
+          p_calc_version: number; p_bases_version: number | null; p_bases: Json; p_filas: Json;
+        };
+        Returns: Json;
+      };
       // Migración 203 (PROPUESTA). Historial paginado por cursor y búsqueda en
       // servidor; SECURITY INVOKER (RLS: solo roles internos).
       consultar_historial_tarifas: {

@@ -6,3 +6,4 @@ export const leerConfigGrupos = noImpl("leerConfigGrupos");
 export const guardarGruposVigencia = noImpl("guardarGruposVigencia");
 export const guardarPropuestaGrupos = noImpl("guardarPropuestaGrupos");
 export const borrarGrupoDias = noImpl("borrarGrupoDias");
+export const guardarCalculoGrupo = noImpl("guardarCalculoGrupo");

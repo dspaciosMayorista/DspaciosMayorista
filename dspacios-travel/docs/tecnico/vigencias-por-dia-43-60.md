@@ -2349,3 +2349,123 @@ No depende de 286 ni de 288–292; no activa, regenera ni publica nada.
 | `pruebas/gruposDias295.react.ts` (pantalla): 4 rangos inválidos ⇒ mensaje concreto, sin «Confirmar propuesta», cero llamadas de guardado y sin nombres técnicos; 0–1/2–11 ⇒ revisar y un solo guardado con esas edades; rechazo de la base ⇒ mensaje traducido, sin reintento | **20 / 20** |
 
 **Sin cambios**: migraciones (293 y 295), SQL remoto, grupos (siguen inactivos), motor, generación y publicación. Contadores de solicitudes de AE.5 conservados.
+
+# AF. Entrega 3b implementada en local: calculadoras por grupo de días (2026-11-11; sin commit, sin aplicar)
+
+## AF.1 Punto de partida y numeración
+- Rama `claude/43-60-vigencias-por-dia` limpia e **idéntica en contenido** a `origin/main` (`8578c266e`, squash de #447). No se hizo reset ni force-push: la rama arrastra 5 commits ya fusionados; al publicar, decidir si se rehace desde `origin/main`.
+- Numeración comprobada en todas las ramas remotas y worktrees: 290–295 en uso (293 y 295 de este frente, aplicadas); **296 de #75** (`identidad_borrado_en_cascada`, ya aplicada). Se usa **297 como número PROVISIONAL**: confirmar con el dueño y con #75/#97 antes de aplicar. La 293 y la 295 no se tocan.
+
+## AF.2 Qué hace
+En la calculadora del hotel, el selector **«Calcular para»** permite elegir «Todos los días» (como siempre) o una vigencia de tarifa · grupo (inactivo). En modo grupo:
+- Se usa el **mismo formulario** de la calculadora guardada: los parámetros generales quedan de solo lectura (`fieldset` deshabilitado) y se editan las bases del grupo con **todas sus opciones** (Dubai: edades, suplementos y condición propios por base; Mixta: valores por régimen; Corporativa: tarifa de habitación). Promociones y «Generar» no aparecen (promociones por grupo = **entrega 4**).
+- **Mismas fórmulas**: `lib/hoteles/calculadoraGrupos.ts › calcularGrupo` llama a los generadores existentes, sin promociones; paridad probada. Qué es general y qué es de cada base: tabla en `calculadoras-hotel.md` §7.
+- **Revisión** (`revisarCalculo`): anterior → nuevo por celda (el mismo `planPropuesta` del panel de grupos) y tres cosas a resolver **explícitamente** antes de confirmar, sin nada preseleccionado:
+  1. **Edades**: Dubai fija la regla de edad de cada fila. Si difiere de la que quedaría en la propuesta, hay que aplicar la del cálculo o ajustar la base. Si la del cálculo es la general del hotel, aplicarla borra el override y se ve «(se borra)». Nunca queda un precio calculado con una regla y otra vigente. Mixta y Corporativa no fijan edades: las guardadas se conservan (no se envían).
+  2. **Condición** (`notas`): si el cálculo trae una (la condición propia de una base de Dubai, o «Tarifa no incluye impuestos.» de Corporativa sin impuesto) distinta de la guardada, se aplica explícitamente (anterior → nuevo; reemplaza la nota) o se ajusta la base. Si el cálculo no trae condición, la nota guardada se conserva. La nota de infante es opcional y se conserva si no se acepta.
+  3. **Disponibilidad**: cada acomodación que **antes no se vendía** y el cálculo pondría a la venta exige «Mantener sin venta» o «Habilitar a X» (o «… todas», como acción explícita). Se compara contra la propuesta guardada del grupo; si no hay, contra la tarifa actual de la vigencia; si tampoco existe, toda la combinación cuenta. Lo que la fórmula deriva legítimamente (triple, múltiple o niño de Dubai, etc.) se muestra igual, pero si antes no se vendía requiere esa decisión. Infante vacío = viaja gratis: ponerle precio es un cambio de precio, no una habilitación. Una combinación sin ninguna habitación a la venta no se envía.
+- Nunca se completa nada desde otros grupos ni desde la tarifa actual; una categoría sin base en el grupo no se calcula y su propuesta queda igual.
+- **Confirmar** = una RPC atómica (propuesta + bases). Editar después de revisar cierra la revisión.
+
+## AF.3 Migración 297 `calculadora_grupos_dias` (sin aplicar)
+- `hotel_calculadora.version` + trigger `tg_version_fila_43`: inserción = 1 y cada actualización = anterior + 1, también dos en la misma transacción; el escritor no puede fijarla. Probado (V2/V3).
+- `hotel_calculadora_grupo_bases` (grupo + tipo, `bases` jsonb, versión con el mismo trigger, FK al grupo `on delete restrict`, RLS de lectura interna, `authenticated` solo SELECT, auditoría 087). Cambiar el tipo de calculadora no las borra. El grupo con bases se borra solo con `grupos_dias_borrar_con_bases` (ver AF.9).
+- RPC `grupos_dias_guardar_calculadora` (security definer). Valida: usuario interno y permiso de catálogo (`_grupos_43_autorizar`); grupo existente, inactivo y de esa vigencia; tipo válido; filas **exclusivamente** del grupo (campos conocidos, netos ≥ 0 y al menos uno, edades enteras, sin «sugerencia aceptada»). Llama **sin modificar** a `grupos_dias_guardar_propuesta` (295) en modo `actualizar` (candados, huella, catálogo, unidad, restricciones). Valida estructura y valores de las bases (`_calc_grupos_43_validar_*`: categorías y regímenes del hotel, sin repetidas, precios > 0, edades propias con las reglas de la 177/295, suplementos de regímenes configurados, sin campos desconocidos). Compara las versiones de la calculadora (`FOR SHARE`) y de las bases (`FOR UPDATE`). Cualquier error ⇒ nada se guarda.
+- Preflight y postcheck (una consulta cada uno, con columna de estado) y rollback protegido (aborta si hay bases).
+
+## AF.4 Escritores de `hotel_calculadora` y concurrencia
+| Escritor | Antes | Ahora |
+|---|---|---|
+| `guardarCalculadora` (3 formularios; Mixta «Sustituir» guarda dos veces) | `upsert` ciego | update condicionado a `hotel_id + version` (o insert si no había); 0 filas o 23505 ⇒ «recarga», sin reintento; devuelve la versión nueva, que el editor encadena |
+| Cascada de renombre de vigencia | lee y reescribe sin condición | update condicionado a la versión leída; si no pudo, el aviso lo dice |
+| API directa (rol interno) | sin control | el trigger cambia la versión igual: los demás detectan el cambio |
+| RPC nueva | — | compara versión de la calculadora y de las bases bajo candado |
+| Borrado del hotel | cascada | sin cambios: los escritores condicionados encuentran 0 filas |
+
+«Generar» (RPC 203) sigue leyendo los parámetros guardados en el servidor sin comparar la versión (sin cambios; queda para la 3c).
+
+## AF.5 Archivos
+`supabase/migrations/20260601000297_calculadora_grupos_dias.sql`; scripts `preflight_/postcheck_/rollback_/fixture_/test_297_calculadora_grupos_dias.*`, `test_297_concurrencia.sh`, `test_297_postgrest.sh`; `lib/hoteles/calculadoraGrupos.ts` (nuevo, puro); `app/(dashboard)/dashboard/producto/hoteles/[id]/CalculoGrupoPanel.tsx` (nuevo); `CalculadoraEditor.tsx`, `grupos-actions.ts` (`guardarCalculoGrupo`), `page.tsx`, `hoteles/actions.ts`, `lib/hoteles/alcanceGrupos.ts` (texto de borrado), `types/database.ts`; pruebas `calculadoraGrupos297.test.ts`, `calculadoraGrupos297.react.ts`, `calculadoraGrupos297.pg.mjs`, stub del cargador, `gruposDias295.test.ts` (texto de borrado), `package.json` (`test:react`); `docs/tecnico/calculadoras-hotel.md` §4 y §7.
+
+## AF.6 Pruebas ejecutadas (local)
+| Prueba | Resultado |
+|---|---|
+| `test_297_calculadora_grupos_dias.sh` sobre la plantilla equivalente a Producción (≤287) + 293 + 295. Recorrido: preflight (8 OK) → 297 → postcheck (11 OK; huellas de calculadoras, tarifas y propuestas idénticas) → reaplicar → **54 aserciones** (versión ×6, guardado y conservación de notas/edades ×7, **22 rechazos atómicos**, Mixta ×3, permisos ×8, cascada ×2, invariantes ×5) → rollback abortado con bases → rollback → preflight → reaplicar → postcheck. Cada rechazo atómico trae una fila válida que cambiaría la propuesta y verifica que NADA cambió. | 0 fallos |
+| `test_297_concurrencia.sh`, dos sesiones reales. Rechazadas (B espera el candado y recibe CONFIG_DESACTUALIZADA): K1 escritura directa vs RPC, K2 guardar calculadora vs RPC, K3 dos guardados del mismo grupo (solo bases), K4 dos guardados de la calculadora, K5 borrar grupo vs RPC. Controles que esperan y pasan: K6 (RPC vs guardar calculadora) y K7 (otro grupo). Invariantes. | 8 / 8 |
+| `test_297_postgrest.sh` (PostgREST v16.4, JWT por rol): recorrido del editor con el **mismo cálculo** (calcularGrupo → revisarCalculo → payloadFilas → RPC → reabrir); solo el grupo pedido; el otro grupo intacto; bases reabiertas idénticas; PATCH condicionado por versión (pasa / 0 filas / no se puede fijar); 409 por versión de la calculadora y de las bases; superadmin sí; Minorista y venta 403; anon 401; venta no lee; escritura directa 403; fila de otro grupo 400; tarifas intactas | 25 / 25; 17 solicitudes HTTP |
+| `pruebas/calculadoraGrupos297.test.ts` (fórmulas y paridad de las 3 calculadoras, revisión, acción, escritores condicionados, cableado) | 28 / 28 |
+| `pruebas/calculadoraGrupos297.react.ts` (componentes reales: hotel sin grupos igual que siempre, versión encadenada, modo grupo, 0/1/1 solicitudes, nada preseleccionado, confirmar solo el grupo, editar cierra la revisión, obsoleta sin reintento, StrictMode/reposo/desmontaje) | 10 / 10 |
+| Suites existentes de calculadoras, grupos, ficha, vigencias y motor (20 archivos unitarios + 4 React) | 592 + 42 en verde |
+| `tsc`, ESLint de los archivos tocados, `next build` | 0 errores, 0 avisos, build correcto |
+
+## AF.7 Solicitudes y consumo (VALIDACION_CONSUMO_VERCEL.md)
+| Acción | Solicitudes | Recarga |
+|---|---|---|
+| Ver la ficha | 0 nuevas (bases y versión dentro de las lecturas existentes) | — |
+| Elegir grupo, editar bases, decidir | 0 | ninguna |
+| Revisar | 1 (`grupos_dias_config`, ~2 KB) | ninguna |
+| Confirmar | 1 RPC (~3 KB; devuelve la configuración) | ninguna (sin `revalidatePath`) |
+| Confirmación obsoleta | solo la escritura rechazada; «Recargar» es un clic explícito (recarga completa) | — |
+| Guardar la calculadora | 1 (igual que antes) | la de siempre |
+
+Sin efectos, sondeos, temporizadores ni reintentos en el panel (cableado probado); en StrictMode, en reposo y tras desmontar, las solicitudes cesan. Pendiente en Preview: Network/Observability del recorrido y en reposo.
+
+## AF.8 Orden de despliegue y dependencias
+1. Confirmar el número 297 con el dueño y #75/#97.
+2. Preflight 297 → **297** → postcheck 297 (huellas idénticas).
+3. Recién después, el código (lee `hotel_calculadora.version` y llama a la RPC). La 297 es compatible con el código que hoy está arriba: el `upsert` viejo sigue funcionando y el trigger sube la versión.
+4. Para revertir: primero el código, luego `rollback_297_…` (aborta si hay bases).
+
+**La 3c (activación)** necesitará: pasar la propuesta a `tarifa_hotel` y activar los grupos (retirar el candado de la 293); que «Generar» y «Reemplazar» escriban por grupo usando estas bases (clave con grupo en la RPC 203) y comparen la versión; y volver a validar Adults Only y la coherencia de edades y notas al activar. **Entrega 4**: promociones por grupo.
+
+**Límites**: los parámetros generales son compartidos por todos los grupos (un suplemento distinto por día sería una ampliación); la prueba usa la plantilla local equivalente a Producción, no Preview; la versión del editor se actualiza con la respuesta de cada guardado y, si otra persona guarda, se detecta al guardar (no en vivo).
+
+## AF.9 Correcciones de la auditoría (borrado con bases, compra cerrada, compatibilidad) — 2026-11-11
+**Numeración**: la 296 de #75 (`identidad_borrado_en_cascada`) **ya está aplicada**; la 297 sigue PROVISIONAL hasta confirmar su número (cabecera corregida). La 293 y la 295 no se tocaron.
+
+**1. Borrado y confirmación.** Antes, las bases se borraban en cascada con el grupo, pero la vista previa y la huella de la 295 no las cubren: un borrado revisado antes de que alguien guardara bases nuevas se las habría llevado sin confirmarlas. Corrección, toda en la 297:
+- FK de `hotel_calculadora_grupo_bases` al grupo **`on delete restrict`**: el borrado de la 295 (`grupos_dias_borrar`, sin cambios) ya no puede llevárselas (falla con 23503 y no borra nada).
+- `grupos_dias_config_bases` (una lectura): la configuración de la 295 + las bases de cada grupo (tipo, versión, cuántas bases). El panel de grupos la usa en lugar de `grupos_dias_config`; la vista previa del borrado nombra las bases concretas («Dubai (2 bases, versión 3)») y avisa que, si cambian, el borrado se rechaza.
+- `grupos_dias_borrar_con_bases(grupo, huella, bases revisadas)`: mismos candados que la 295 y la RPC de guardado (grupos → … → hotel, luego las bases `FOR UPDATE`), compara las bases actuales con las revisadas (tipo + versión, también «había cero» frente a «ahora hay») y solo entonces borra las bases y llama a la RPC de la 295 para el grupo y sus propuestas. Si no coinciden: PT409 con el motivo y nada se borra. Guardar grupos o propuestas no cambia las bases: el panel conserva las leídas al aplicar esas respuestas.
+
+**2. Compra cerrada.** Regla vigente, sin otra interpretación de fechas: en el formulario, `nombreVigenciaVencida` (la de «Generar»): el grupo aparece «compra cerrada: no se calcula», deshabilitado, y si se fuerza, el panel no calcula, no revisa ni confirma. En el servidor, la RPC aplica la regla de `generar_tarifas_hotel_calculadora` (todas las filas con ese nombre con `compra_fin < fecha_negocio()`), con la vigencia ya bloqueada: 23514 y nada se guarda (ni propuesta ni bases).
+
+**3. Compatibilidad de despliegue** (`test_297_compatibilidad.sh` + `pruebas/compatibilidad297.pg.mjs`, PostgREST v16.4). Calculadoras Dubai, Mixta y Corporativa sembradas ANTES de la 297 con todas sus opciones (edades/suplementos/condiciones propias, promociones, valores por régimen, impuesto y descuento):
+- A) El código anterior lee las tres (línea base).
+- B) Preflight (ve las 3) → 297 → postcheck: huella (id, hotel, tipo, params) idéntica; params byte a byte iguales; todas en versión 1.
+- C) El código anterior DESPUÉS de la 297, con las mismas peticiones que enviaba supabase-js: lee igual; `upsert` de guardar (las tres) funciona y la versión sube aunque no la conozca; la cascada de renombre escribe; crear una calculadora nueva nace en versión 1; el panel de grupos anterior (`grupos_dias_config`) funciona.
+- D) El código nuevo: lectura con versión; guardado condicionado pasa y con versión vieja da 0 filas sin cambiar los params (las tres); RPC del grupo con la versión de la calculadora; lectura con bases; el borrado anterior (295) rechazado sin borrar; el borrado nuevo con las bases revisadas borra; los params conservan todas sus opciones originales.
+
+**Pruebas repetidas tras las correcciones (locales)**
+| Prueba | Resultado |
+|---|---|
+| `test_297_calculadora_grupos_dias.sh` (plantilla equivalente a Producción ≤287 + 293 + 295): preflight 8 OK → 297 → postcheck 11 OK, huellas idénticas → reaplicar → **63 aserciones** (nuevas: L1 lectura con bases; C1–C7 borrado: la 295 rechazada por la FK, vista previa sin bases, versión distinta y huella vieja rechazadas sin borrar nada, borrado con las versiones revisadas, grupo sin bases; Q1–Q3 compra cerrada sin escrituras parciales) → rollback protegido → rollback → reaplicar | 0 fallos |
+| `test_297_concurrencia.sh`: K1–K7 como antes + **K8** (B revisa el borrado de Semana → A guarda bases nuevas → B confirma el borrado antiguo: espera el candado, PT409, siguen el grupo, sus bases nuevas y sus propuestas) + K9 control (guardar bases de otro grupo no invalida el borrado: espera y pasa) | 10 / 10 + invariantes |
+| `test_297_postgrest.sh` (+ compra cerrada 400 sin escrituras, lectura con bases, borrado con versión vieja 409 sin borrar, borrado con las revisadas) | 31 / 31; 22 solicitudes HTTP |
+| `test_297_compatibilidad.sh` (A–D arriba) | 39 / 39 |
+| `pruebas/calculadoraGrupos297.test.ts` (+ compra cerrada: mensaje del servidor sin reintento; misma regla en el formulario) | 30 / 30 |
+| `pruebas/calculadoraGrupos297.react.ts` (+ compra cerrada: opción deshabilitada; forzada, sin cálculo, sin revisar ni confirmar, 0 solicitudes) | 11 / 11 |
+| `pruebas/gruposDias295.test.ts` y `.react.ts` (lectura con bases, borrado con las bases revisadas, motivo de PT409, bases mal formadas sin llamada, vista previa con las bases concretas) | 34 / 34 y 21 / 21 |
+| Suites relacionadas (20 unitarias + 5 React) | 596 + 54 en verde |
+| `tsc`, ESLint de los archivos tocados, `next build` | 0 errores, 0 avisos, build correcto |
+
+**Solicitudes**: sin cambios en número: abrir el panel de grupos sigue siendo 1 lectura (ahora `grupos_dias_config_bases`), borrar 1 RPC, revisar el cálculo 1, confirmar 1.
+
+**Qué se probó y qué sigue pendiente**
+- Probado: todo lo anterior en Postgres local (plantilla equivalente a Producción) y PostgREST local, con dos sesiones reales para las carreras y con las peticiones exactas del código anterior.
+- Pendiente: el número 297 (confirmación del dueño y de #75/#97); Preview (Network/Observability del recorrido y en reposo) y datos reales: la plantilla no trae calculadoras de Producción, las de la prueba de compatibilidad son sembradas; la vista del código anterior desplegado de verdad en Vercel contra la base con la 297 (aquí se reprodujeron sus peticiones, no se ejecutó ese despliegue). Con el código anterior arriba, borrar un grupo que tenga bases fallaría por la FK, pero ese código no puede crear bases, así que no ocurre hasta desplegar el nuevo.
+
+## AF.10 Migración 297 aplicada en Producción (2026-11-11) — cierre de la entrega 3b
+- El dueño aplicó la **297** en Producción con el orden previsto (preflight → 297 → postcheck). **Postcheck correcto**: 189 calculadoras; huellas de calculadoras (id, hotel, tipo, params), de tarifas y de propuestas **idénticas** al preflight; grupos inactivos (candado de la 293 intacto). Desde ahora la 297 es **inmutable**: cualquier cambio va en una migración nueva.
+- El número 297 queda confirmado para este frente (la 296 de #75 ya estaba aplicada). Siguiente libre para cualquier frente: 298 (comprobar de nuevo antes de usarlo).
+- Con la 297 aplicada, el código que hoy está en Producción sigue funcionando (probado en `test_297_compatibilidad.sh`, fase C): su guardado de la calculadora (`upsert`) y la cascada de renombre escriben igual y la versión sube sola. Falta desplegar el código de esta entrega (paso 3 de AF.8).
+- Git: #447 fusionado (squash `8578c266e`) y la rama remota `claude/43-60-vigencias-por-dia` borrada al fusionar; no hay PR abierto. La entrega 3b continúa en la rama nueva **`claude/43-60-3b-calculadoras`**, creada desde `origin/main` con los cambios locales (sin reset ni force-push).
+
+**Validación pendiente en Preview** (tras desplegar este código):
+1. Hotel por persona con calculadora Dubai guardada y una vigencia de tarifa con grupos: en «Tarifa por fórmula» aparece «Calcular para»; elegir un grupo no hace solicitudes; los generales quedan de solo lectura; no aparecen promociones ni «Generar».
+2. Cargar bases del grupo (con edades o condición propias en Dubai) → «Revisar» (1 solicitud) → resolver edades, condición y cada acomodación «antes sin venta» (nada preseleccionado) → «Confirmar» (1 solicitud). Reabrir: las bases y la propuesta del grupo se ven iguales; el otro grupo no cambió.
+3. Repetir con un hotel Mixta (dos regímenes) y uno Corporativa sin impuesto (condición «Tarifa no incluye impuestos.» exigida).
+4. Una vigencia con la compra cerrada: su grupo aparece deshabilitado («compra cerrada»).
+5. Dos pestañas: en una, abrir el borrado del grupo; en la otra, guardar bases nuevas; confirmar el borrado en la primera ⇒ rechazado con el motivo y nada borrado. En dos pestañas, guardar la calculadora en una y luego en la otra ⇒ la segunda pide recargar.
+6. Hotel sin grupos y hotel por unidad: la calculadora se ve y funciona como antes (sin selector).
+7. Network/Observability durante el recorrido y en reposo: solo las solicitudes de los clics; ninguna en reposo ni al cambiar de pestaña; sin regeneración ni publicación del tarifario.

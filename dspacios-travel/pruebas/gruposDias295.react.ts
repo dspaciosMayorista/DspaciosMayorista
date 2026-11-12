@@ -301,7 +301,16 @@ test("borrar un grupo: vista previa concreta con sus propuestas y una sola llama
   assert.deepEqual(nombres(), ["leerConfigGrupos"]);
   await pulsar(boton(r, "Confirmar borrado"));
   assert.deepEqual(nombres(), ["leerConfigGrupos", "borrarGrupoDias"]);
-  assert.deepEqual(est.llamadas[1][1], [G1, "H1"]);
+  assert.deepEqual(est.llamadas[1][1], [G1, "H1", []], "sin bases guardadas: lista vacía");
+});
+
+test("borrar un grupo con bases de calculadora: se ven en la vista previa y se envían sus versiones", async () => {
+  est.respuestas.leerConfigGrupos = { ok: true, config: { ...CFG, bases: [{ grupo_id: G1, tipo: "dubai", version: 3, categorias: 1 }] } };
+  const r = await montar(panel());
+  await pulsar([...r.querySelectorAll("button")].find((b) => /Borrar grupo/.test(b.textContent ?? ""))!);
+  assert.match(r.textContent ?? "", /También se borran sus bases de calculadora .*Dubai \(1 base, versión 3\)/);
+  await pulsar(boton(r, "Confirmar borrado"));
+  assert.deepEqual(est.llamadas[1], ["borrarGrupoDias", [G1, "H1", [{ tipo: "dubai", version: 3 }]]]);
 });
 
 test("días ocupados por otro grupo quedan deshabilitados", async () => {

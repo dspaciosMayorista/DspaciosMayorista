@@ -507,7 +507,7 @@ async function renombrarTemporadaEnDatos(
   hotelId: number,
   nombreViejo: string,
   nombreNuevo: string,
-): Promise<{ tarifasRenombradas: number; calculadoraActualizada: boolean }> {
+): Promise<{ tarifasRenombradas: number; calculadoraActualizada: boolean; calculadoraSinActualizar: boolean }> {
   const { data: tarifasAfectadas } = await sb
     .from("tarifa_hotel")
     .update({ temporada: nombreNuevo })
@@ -516,20 +516,25 @@ async function renombrarTemporadaEnDatos(
     .select("id");
   const tarifasRenombradas = tarifasAfectadas?.length ?? 0;
 
-  let calculadoraActualizada = false;
-  const { data: calc } = await sb.from("hotel_calculadora").select("tipo, params").eq("hotel_id", hotelId).maybeSingle();
+  let calculadoraActualizada = false, calculadoraSinActualizar = false;
+  const { data: calc } = await sb.from("hotel_calculadora").select("tipo, params, version").eq("hotel_id", hotelId).maybeSingle();
   if (calc?.params) {
     const params = calc.params as Record<string, unknown>;
-    // Incluye `bases_por_regimen` (valores por régimen de Mixta, #26).
+    // Incluye `bases_por_regimen` (valores por régimen de Mixta, #26). Las bases por grupo (297) no
+    // guardan el nombre de la vigencia: no se tocan.
     const cambio = renombrarTemporadaEnParams(calc.tipo, params, nombreViejo, nombreNuevo);
     if (cambio) {
-      const { error } = await sb.from("hotel_calculadora")
-        .update({ params: params as unknown as Json, updated_at: new Date().toISOString() })
-        .eq("hotel_id", hotelId);
-      calculadoraActualizada = !error;
+      // Condicionada a la versión leída (297): si otra persona guardó la calculadora entre la lectura y
+      // esta escritura, NO se pisa su cambio (0 filas) y se avisa. Sin reintento automático.
+      const { data: escrita, error } = await sb.from("hotel_calculadora")
+        .update({ params: params as unknown as Json })
+        .eq("hotel_id", hotelId).eq("version", calc.version)
+        .select("version");
+      calculadoraActualizada = !error && (escrita?.length ?? 0) > 0;
+      calculadoraSinActualizar = !calculadoraActualizada;
     }
   }
-  return { tarifasRenombradas, calculadoraActualizada };
+  return { tarifasRenombradas, calculadoraActualizada, calculadoraSinActualizar };
 }
 
 // `input.hotelId` (el hotel de la página desde la que se editó) NUNCA es la
@@ -587,6 +592,9 @@ export async function actualizarTemporada(id: number, input: TemporadaInput): Pr
         r.calculadoraActualizada ? "la calculadora del hotel" : null,
       ].filter(Boolean);
       aviso = `Se actualizó de "${nombreViejo}" a "${nombreNuevo}" en: ${partes.join(" y ")}.`;
+    }
+    if (r.calculadoraSinActualizar) {
+      aviso = `${aviso ? `${aviso} ` : ""}La calculadora del hotel NO se actualizó (alguien la guardó al mismo tiempo): ábrela, revisa que sus bases digan "${nombreNuevo}" y guárdala.`;
     }
   }
 
@@ -910,11 +918,18 @@ export async function cargarAcomodacionesMasivo(rows: Record<string, string>[]):
 
 // ── Calculadora de tarifas (estructura especial por hotel) ──────────────────
 // Guarda el tipo + parámetros de la calculadora del hotel.
+const CALCULADORA_DESACTUALIZADA =
+  "La calculadora cambió desde que la abriste (otra persona la guardó o se renombró una vigencia). Recarga la página y revisa antes de guardar.";
+// Escritura CONDICIONADA a la versión leída (migración 297): `versionLeida` null = el hotel aún no tenía
+// calculadora (se inserta; si otra persona la creó a la vez, choca con la unicidad de hotel_id). Si la
+// versión ya no coincide no se escribe nada y se pide recargar (sin reintento). Las bases por grupo viven
+// en otra tabla: guardar o cambiar el tipo de calculadora no las toca.
 export async function guardarCalculadora(
   hotelId: number,
   tipo: string,
-  params: DubaiParams | MixtaParams | CorporativaParams
-): Promise<Result> {
+  params: DubaiParams | MixtaParams | CorporativaParams,
+  versionLeida: number | null,
+): Promise<{ ok: true; version: number } | { ok: false; error: string; desactualizada?: true }> {
   // Fail-closed ANTES de escribir: un config Dubai con rangos/promos
   // imposibles, solapados o incompletos nunca llega a `hotel_calculadora`
   // (el servidor es la autoridad — nunca confía en que el editor ya validó
@@ -926,16 +941,17 @@ export async function guardarCalculadora(
       return { ok: false, error: errores.map((e) => e.mensaje).join(" ") };
     }
   }
+  if (versionLeida !== null && !(Number.isInteger(versionLeida) && versionLeida > 0)) return { ok: false, error: "Versión de la calculadora no válida." };
   const sb = await createClient();
-  const { error } = await sb
-    .from("hotel_calculadora")
-    .upsert(
-      { hotel_id: hotelId, tipo, params: params as unknown as Json, updated_at: new Date().toISOString() },
-      { onConflict: "hotel_id" }
-    );
+  const fila = { tipo, params: params as unknown as Json };
+  const { data, error } = versionLeida === null
+    ? await sb.from("hotel_calculadora").insert({ hotel_id: hotelId, ...fila }).select("version")
+    : await sb.from("hotel_calculadora").update(fila).eq("hotel_id", hotelId).eq("version", versionLeida).select("version");
+  if (error?.code === "23505") return { ok: false, desactualizada: true, error: CALCULADORA_DESACTUALIZADA };
   if (error) return { ok: false, error: error.message };
+  if (!data?.length) return { ok: false, desactualizada: true, error: CALCULADORA_DESACTUALIZADA };
   revalidatePath(`/dashboard/producto/hoteles/${hotelId}`);
-  return { ok: true };
+  return { ok: true, version: data[0].version };
 }
 
 const etiquetaBloqueo = (temporada: string, categoria: string, regimen: string) => `${temporada} · ${categoria} · ${regimen}`;

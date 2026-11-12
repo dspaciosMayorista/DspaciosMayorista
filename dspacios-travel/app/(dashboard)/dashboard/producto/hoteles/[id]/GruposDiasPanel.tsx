@@ -12,7 +12,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import {
   ACOMS, CAMPOS_EXTRA, DIAS, EXTRAS_VACIOS, NETOS_VACIOS, claveCombo, coberturaPrevista, explicarCelda, extrasDe, formatNeto,
-  leerEdad, leerNeto, planGrupos, planPropuesta, sugerencia, textoBorrado, textoDias, tieneExtras, validarEdades,
+  leerEdad, leerNeto, planGrupos, planPropuesta, sugerencia, textoBorrado, textoDias, tieneExtras, validarEdades, basesRevisadasDe,
   type ColExtra, type ColNeto, type ConfigGrupos, type Extras, type FilaPropuesta, type GrupoCfg, type GrupoEditado, type ModoPropuesta,
 } from "@/lib/hoteles/alcanceGrupos";
 import { borrarGrupoDias, guardarGruposVigencia, guardarPropuestaGrupos, leerConfigGrupos } from "./grupos-actions";
@@ -66,7 +66,9 @@ export function GruposDiasPanel({ temporadaId, nombreVigencia, onCerrar, onGrupo
   const [extrasAbiertos, setExtrasAbiertos] = useState<Record<string, boolean>>({});
   const leido = useRef(false);
 
-  function aplicar(c: ConfigGrupos) {
+  function aplicar(nueva: ConfigGrupos) {
+    // Guardar grupos o la propuesta no toca las bases: si la respuesta no las trae, se conservan las leídas.
+    const c = nueva.bases ? nueva : { ...nueva, bases: cfg?.bases };
     setCfg(c); setGrupos(gruposDe(c)); setCeldas(celdasDe(c)); setRevision(null); setDesactualizada(false);
     setGrupoActivo((g) => (g && c.grupos.some((x) => x.id === g) ? g : c.grupos[0]?.id ?? null));
   }
@@ -98,11 +100,11 @@ export function GruposDiasPanel({ temporadaId, nombreVigencia, onCerrar, onGrupo
   async function confirmarBorrado(grupoId: string) {
     if (!cfg) return;
     setOcupado(true);
-    const r = await borrarGrupoDias(grupoId, cfg.huella);
+    const r = await borrarGrupoDias(grupoId, cfg.huella, basesRevisadasDe(cfg, grupoId));
     setOcupado(false);
     if (!r.ok) return falloEscritura(r);
     aplicar(r.config); onGruposCambiados(r.config.grupos);
-    setAviso(`Grupo borrado con ${r.propuestasEliminadas} propuesta(s). Nada de lo que se vende cambió.`);
+    setAviso(`Grupo borrado con ${r.propuestasEliminadas} propuesta(s)${r.basesEliminadas ? ` y sus bases de calculadora` : ""}. Nada de lo que se vende cambió.`);
   }
 
   // ── Propuesta ──
