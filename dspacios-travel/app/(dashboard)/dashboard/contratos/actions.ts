@@ -1,6 +1,7 @@
 "use server";
 
 import { randomUUID } from "node:crypto";
+import { validarFechasViaje } from "@/lib/reglas/duracionViaje";
 import { tipoDocumentoCliente } from "@/lib/personas/tiposDocumento";
 import { identidadDe, parseIdentidad, mensajeSiIdentidad, type IdentidadContrato } from "@/lib/contrato/identidad";
 import { createClient } from "@/lib/supabase/server";
@@ -376,6 +377,9 @@ async function crearContratoInterno(
     registrarEtapa("crear_contrato", flujoId, "validacion_negocio", Math.round(performance.now() - _tValidacion0), "rechazado");
     return resultado;
   };
+  // Entrega L: un contrato manual NUEVO respeta la estadía máxima (antes de reservar el consecutivo; los guardados no cambian).
+  const vViaje = validarFechasViaje(input.fechaSalida, input.fechaRegreso);
+  if (!vViaje.ok) return _rechazarValidacion(vViaje);
   // #40: un tipo de documento fuera del catálogo se rechaza AQUÍ, antes de reservar el consecutivo (no consume número).
   const tipoCliente = tipoDocumentoCliente(input.clienteTipoDocumento, input.clienteDocumento);
   if (!tipoCliente.ok) return _rechazarValidacion({ ok: false, error: tipoCliente.error });

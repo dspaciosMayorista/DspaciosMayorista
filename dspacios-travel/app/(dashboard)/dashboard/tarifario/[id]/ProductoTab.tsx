@@ -7,6 +7,7 @@ import { ComboHotel, type HotelOpt } from "@/components/ComboHotel";
 import { guardarTarifa, eliminarTarifa, type PrecioAcomodacion } from "../actions";
 import { calcPrecioDesdeProducto, calcPreciosTarifa, calcMargenEfectivo } from "@/lib/calc/tarifario";
 import { formatCOP } from "@/lib/utils";
+import { MAX_NOCHES_VIAJE } from "@/lib/reglas/duracionViaje";
 
 type Temporada = { id: number; nombre: string; anio: number };
 type Plan = { id: number; codigo: string; nombre: string };
@@ -192,7 +193,7 @@ export function ProductoTab({
             </div>
             <div>
               <label className="text-sm font-medium text-gray-700 block mb-1">Noches base</label>
-              <Input type="number" value={noches} onChange={(e) => setNoches(Number(e.target.value))} min={1} max={30} />
+              <Input type="number" value={noches} onChange={(e) => setNoches(Number(e.target.value))} min={1} max={MAX_NOCHES_VIAJE} />
             </div>
           </div>
         </div>

@@ -45,6 +45,8 @@ function cadena(tabla: string, op: string, resultado: () => unknown) {
   const c: Record<string, unknown> = {};
   for (const m of ["eq", "in", "or", "order", "limit", "select"]) c[m] = (...a: unknown[]) => { detalle.push([m, ...a]); return c; };
   c.then = (ok: (v: unknown) => unknown, ko?: (e: unknown) => unknown) => Promise.resolve(resultado()).then(ok, ko);
+  // #43/#60 entrega L: actualizarBloqueo lee las fechas guardadas (una fila) antes de validar la estadía máxima.
+  c.maybeSingle = () => Promise.resolve(resultado()).then((r) => { const x = r as { data: unknown; error: unknown }; return { ...x, data: Array.isArray(x.data) ? x.data[0] ?? null : x.data }; });
   return c;
 }
 

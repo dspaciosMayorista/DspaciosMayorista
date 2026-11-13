@@ -14,13 +14,22 @@ import { leerTemporadasServicio } from "@/lib/reservar/temporadasServicio";
 import { modalidadAlcance, type AlcanceVenta, type FilaPrecioAlcance } from "@/lib/calc/servicioAlcance";
 import { leerAlcanceDeServicios } from "@/lib/servicios/alcanceContexto";
 
-/** Costo neto del hotel por persona: Σ neto por acomodación × pax + niños 1/2 + infantes (las filas sin neto no suman). */
+/** Costo neto del hotel por persona: Σ neto por acomodación × pax + niños 1/2 + infantes (las filas sin neto no suman).
+ * #43/#60 entrega 4 (reparto exacto): una acomodación con descuento por habitación suma habitaciones × el neto EXACTO
+ * de su habitación (`netoHabitacionPorAcom`), nunca la tarifa por persona × pax (perdería centavos). */
 export function costoHotelPersona(
-  comp: { lineasHab: ReadonlyArray<{ acom: string; pax: number }>; netoPorAcom: Record<string, number | null | undefined>; numNinos: number; numNinos2: number },
+  comp: {
+    lineasHab: ReadonlyArray<{ acom: string; pax: number; habitaciones?: number }>; netoPorAcom: Record<string, number | null | undefined>; numNinos: number; numNinos2: number;
+    netoHabitacionPorAcom?: Record<string, { total: number } | undefined>;
+  },
   numInfantes: number,
 ): number {
   let costo = 0;
-  for (const l of comp.lineasHab) { const per = comp.netoPorAcom[l.acom]; if (per != null) costo += per * l.pax; }
+  for (const l of comp.lineasHab) {
+    const hab = comp.netoHabitacionPorAcom?.[l.acom];
+    if (hab && l.habitaciones != null) { costo += hab.total * l.habitaciones; continue; }
+    const per = comp.netoPorAcom[l.acom]; if (per != null) costo += per * l.pax;
+  }
   if (comp.numNinos > 0 && comp.netoPorAcom["nino"] != null) costo += (comp.netoPorAcom["nino"] as number) * comp.numNinos;
   if (comp.numNinos2 > 0 && comp.netoPorAcom["nino2"] != null) costo += (comp.netoPorAcom["nino2"] as number) * comp.numNinos2;
   if (numInfantes > 0 && comp.netoPorAcom["infante"] != null) costo += (comp.netoPorAcom["infante"] as number) * numInfantes;

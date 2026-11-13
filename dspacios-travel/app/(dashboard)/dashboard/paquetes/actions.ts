@@ -1,6 +1,7 @@
 "use server";
 
 import { createClient } from "@/lib/supabase/server";
+import { validarNochesViaje, validarNochesAlEditar, validarFechasViaje, validarFechasAlEditar } from "@/lib/reglas/duracionViaje";
 import { revalidatePath } from "next/cache";
 import type { Database, Json } from "@/types/database";
 import { columnasProcedencia } from "@/lib/tarifario/procedenciaTarifario";
@@ -13,6 +14,8 @@ import { leerPublicacionPendiente, publicacionPorLotesActiva, puertoSupabase, ty
 import {
   noches as calcNoches,
   liquidarHotelNochesConTemporadas,
+  promosAplicadas,
+  soloBases,
   liquidarHotelMasBaratoConTemporada,
   marcar,
   aporteVuelo,
@@ -23,7 +26,10 @@ import {
   toTemporadaRango,
   type TemporadaRango,
 } from "@/lib/calc/paquetes";
-import { claveFilaTarifa, clavesPrecioFinal, netosDeColumna } from "@/lib/calc/netosPorTemporada";
+import { crearPresupuestoDesde, hotelConGrupos } from "@/lib/calc/desdeEstadia";
+import { basesPromoDeFilas, claveFilaTarifa, clavesPrecioFinal, netosDeColumna } from "@/lib/calc/netosPorTemporada";
+import { SELECT_PROMO_VIGENCIA } from "@/lib/calc/promocionesGrupo";
+import { PAX_TARIFA_DEFAULT, type AcomRoom } from "@/lib/acomodaciones";
 import { hoyBogota } from "@/lib/reservar/origen";
 import { claveComposicion, guardarComposicionesTarifario, origenClaveDeFila, type ComposicionCombo } from "@/lib/tarifario/composicionTarifario";
 import { createAdminClient } from "@/lib/supabase/admin";
@@ -64,6 +70,7 @@ import { construirSetParesPublicados, todosLosParesConfiguradosPublicados, prime
 
 import type { ResultadoLote } from "@/lib/paquetes/seleccionMasiva";
 import { aplicaPvpInfanteFijo, pvpInfanteFijoValido } from "@/lib/paquetes/pvpInfanteFijo";
+import { clasificarRegeneracion, ejecutarAcotado, CONCURRENCIA_REGENERACION, type ResultadoRegeneracionHotel } from "@/lib/tarifario/regeneracionHotel";
 import { incluidoPorUnidades, netoTotalPersona, tramosDeUnidades, incluidoSeOmite, referenciaPublicacion, serviciosSinPrecioInfanteVigencias, type VigenciasServicio } from "@/lib/calc/servicioVigencias";
 import { presentarIncluye } from "@/lib/tarifario/incluyePorSalida";
 import { REGLA_COMPOSICION_PUBLICADA } from "@/lib/reservar/composicionPublicada";
@@ -258,6 +265,8 @@ export async function crearPaquete(c: PaqueteConfig): Promise<Result> {
   // 234: un paquete NUEVO nace con la moneda de publicación ELEGIDA (COP o USD), también en el modo con conversión por TRM. Aquí no hay valor por
   // defecto: la interpretación histórica de NULL como COP aplica solo al LEER paquetes anteriores (y a actualizar uno que ya existe).
   if (!monedaPublicacionValida90(c.monedaPublicacion)) return { ok: false, error: "Elige la moneda de publicación del paquete (COP o USD)." };
+  const vNoches = validarNochesViaje(Number(c.noches) || 3); // entrega L: estadía máxima del viaje
+  if (!vNoches.ok) return vNoches;
   const sb = await createClient();
   // #67: se valida la configuración aérea ANTES de crear nada.
   const entradaAerea = entradaDestinosAereos(c);
@@ -295,6 +304,10 @@ export async function actualizarPaquete(id: number, c: PaqueteConfig): Promise<R
   const oferta = validarModoOfertaPaquete(c);
   if (!oferta.ok) return oferta;
   const sb = await createClient();
+  // Entrega L: si cambian las noches, respetan la estadía máxima (un paquete antiguo que ya tenía más se conserva hasta que el dueño decida).
+  { const { data: previo } = await sb.from("armado_paquetes").select("noches").eq("id", id).maybeSingle();
+    const vNoches = validarNochesAlEditar(Number(c.noches) || 3, (previo as { noches?: number | null } | null)?.noches ?? null);
+    if (!vNoches.ok) return vNoches; }
   // #67: configuración aérea. Primero se valida TODO sin escribir (país
   // comparable, alternativas activas, y que ningún vuelo ya vinculado quede
   // incompatible: hay que desvincularlo explícitamente, nunca se borra solo);
@@ -780,6 +793,17 @@ export async function generarTarifario(paqueteId: number, opciones: OpcionesGene
   // sin texto de Postgres, sin datos de personas. Nunca lanza: si la medición fallara, el intento sigue igual. Ver lib/tarifario/cronometroGeneracion.ts.
   const cron = crearCronometro();
   const med: { generacion: number | null; filas: readonly { modulo?: unknown }[] | null } = { generacion: null, filas: null };
+  // #43/#60 entrega 6: «desde» de porción por estadía real (solo hoteles con grupos), acotado para TODA la generación (no solo por combinación).
+  const presupuestoDesde = crearPresupuestoDesde();
+  // Medición del «desde» por estadía real de TODA la generación (solo si hubo hoteles con grupos). Excedidas = sin «desde», falla cerrado.
+  const medirDesde = () => {
+    try {
+      const rd = presupuestoDesde.resumen();
+      if (rd.combinaciones === 0) return;
+      const lineaDesde = `generarTarifario: desde_estadia paquete_id=${paqueteId} generacion=${med.generacion ?? "-"} combinaciones=${rd.combinaciones} con_precio=${rd.conPrecio} sin_estadia=${rd.sinEstadia} excedidas=${rd.excedidas} candidatas=${rd.candidatas} evaluadas=${rd.evaluadas} ms=${rd.ms}`;
+      if (rd.excedidas > 0) console.warn(lineaDesde); else console.info(lineaDesde);
+    } catch { /* la medición nunca debe afectar la generación */ }
+  };
   const medir = (resultado: ResultadoGeneracion) => {
     try {
       const { etapa, msEtapa, msTotal } = cron.actual();
@@ -791,6 +815,7 @@ export async function generarTarifario(paqueteId: number, opciones: OpcionesGene
       else if (resultado === "descartado" || resultado === "fallo_negocio") console.warn(linea);
       else console.error(linea);
     } catch { /* la medición nunca debe afectar la generación */ }
+    medirDesde();
   };
 
   // ── Publicación atómica (migración 181) — token de generación capturado
@@ -933,7 +958,7 @@ export async function generarTarifario(paqueteId: number, opciones: OpcionesGene
       .eq("paquete_id", paqueteId),
     sb
       .from("armado_hoteles")
-      .select("hotel_id, categorias, regimenes, hoteles(nombre, moneda, modelo_tarifario, adults_only, tarifa_bajo_solicitud)")
+      .select("hotel_id, categorias, regimenes, hoteles(nombre, moneda, modelo_tarifario, adults_only, tarifa_bajo_solicitud, hotel_acomodaciones(acomodacion, pax_tarifa))")
       .eq("paquete_id", paqueteId),
     sb
       .from("armado_servicios")
@@ -1112,7 +1137,7 @@ export async function generarTarifario(paqueteId: number, opciones: OpcionesGene
   const tarifasPorHotel = new Map<number, TarifaRow[]>();
   if (hotelIds.length) {
     const [{ data: temps }, { data: tarifas }] = await Promise.all([
-      sb.from("hotel_temporadas").select("hotel_id, id, nombre, fecha_inicio, fecha_fin, prioridad, compra_inicio, compra_fin, tipo, descuento_valor, rangos, blackouts, regimen_restringido, hotel_temporada_grupos(id, dias, activo)").in("hotel_id", hotelIds).order("orden").order("id"),
+      sb.from("hotel_temporadas").select(`hotel_id, id, nombre, fecha_inicio, fecha_fin, prioridad, compra_inicio, compra_fin, tipo, descuento_valor, rangos, blackouts, regimen_restringido, hotel_temporada_grupos(id, dias, activo), ${SELECT_PROMO_VIGENCIA}`).in("hotel_id", hotelIds).order("orden").order("id"),
       sb.from("tarifa_hotel").select("*").in("hotel_id", hotelIds),
     ]);
     for (const t of temps ?? []) {
@@ -1280,8 +1305,14 @@ export async function generarTarifario(paqueteId: number, opciones: OpcionesGene
     const fijoMayor2 = aplicaPvpInfanteFijo(fijoInfante, { vuelo: aporteVueloVal, servicios: aporteServiciosIncluidos(numNoches, true), grupoIncluido, menorDeDos: false }) ? fijoInfante : null;
     const fijoMenor2 = aplicaPvpInfanteFijo(fijoInfante, { vuelo: feeInfante, servicios: aporteServiciosIncluidosMenor(numNoches, true), grupoIncluido, menorDeDos: true }) ? fijoInfante : null;
     for (const h of hoteles) {
-      const hotelMeta = h.hoteles as unknown as { nombre: string; moneda?: string | null; adults_only?: boolean | null } | null;
+      const hotelMeta = h.hoteles as unknown as { nombre: string; moneda?: string | null; adults_only?: boolean | null; hotel_acomodaciones?: { acomodacion: string; pax_tarifa: number | null }[] | null } | null;
       const hotelAdultsOnly = hotelMeta?.adults_only === true;
+      // #43/#60 entrega 4: ocupantes tarifados por habitación (configuración del hotel, misma lectura; sin fila = valor por defecto de la reserva).
+      const ocupantesDe = (a: string): number | undefined => {
+        if (!(a in PAX_TARIFA_DEFAULT)) return undefined; // niños e infantes no son ocupantes tarifados
+        const cfg = hotelMeta?.hotel_acomodaciones?.find((x) => x.acomodacion === a)?.pax_tarifa;
+        return cfg != null ? Number(cfg) : PAX_TARIFA_DEFAULT[a as AcomRoom];
+      };
       const hotelNombre = hotelMeta?.nombre ?? null;
       const monedaHotelOrigen = (hotelMeta?.moneda ?? "COP") === "USD" ? "USD" : "COP";
       // Moneda de PUBLICACIÓN: la del hotel de siempre; en modo 63 la ELEGIDA del paquete
@@ -1311,13 +1342,15 @@ export async function generarTarifario(paqueteId: number, opciones: OpcionesGene
         // el PVP del tarifario. Vacío en combos legacy/sin promociones.
         const precioFinalTemporadas = new Set<string>();
         for (const k of clavesPrecioFinal(tempMap)) precioFinalTemporadas.add(k);
+        const basePromoPorClave = basesPromoDeFilas(tempMap);
         let hayHabitacion = false;
         let hayInfante = false;
         const netosCombo: Record<string, number> = {};
         const pvpsCombo: Record<string, { pvp: number; pvpMenor2: number | null }> = {};
         const netosOrigenCombo: Record<string, { monto: number; moneda: string }> = {};
+        const promocionesCombo: Record<string, { nombres: string[]; netoSinPromocion: number | null }> = {};
         let procedenciaHab: ReturnType<typeof columnasProcedencia> | null = null;
-        const publicarFila = (acom: Acomodacion, costoHotel: number, procedencia: ReturnType<typeof columnasProcedencia>, netoHotelExacto: number | null = null) => {
+        const publicarFila = (acom: Acomodacion, costoHotel: number, procedencia: ReturnType<typeof columnasProcedencia>, netoHotelExacto: number | null = null, desdeEntrada: string | null = null) => {
           const esRoom = acom !== "nino" && acom !== "nino2" && acom !== "infante";
           const aporteHotel = marcar(aMonedaOferta(costoHotel, monedaHotelOrigen), pctMk); // hotel siempre con mk (en modo 63: neto × TRM primero)
           const precioMenor2Normal = esRoom ? null : redondearCentavos63(precioMenorDeDos({ aporteHotel, aporteServiciosMenor: aporteServMenor, feeInfante, moneda: monedaHotel }));
@@ -1370,6 +1403,8 @@ export async function generarTarifario(paqueteId: number, opciones: OpcionesGene
             precio_final_autoritativo: procedencia.precio_final_autoritativo,
             procedencia_temporadas: procedencia.procedencia_temporadas as unknown as Json,
             procedencia_mixta: procedencia.procedencia_mixta,
+            // Entrega 6 (302): entrada de la estadía que justifica el «desde» (porción de un hotel con grupos). Sin justificación: no se envía (null).
+            ...(desdeEntrada ? { desde_entrada: desdeEntrada } : {}),
           });
           // Componible: neto exacto de una estadía fija, o la fila de infante sintética (hotel $0 conocido, aún sin fila de infante en el combo).
           if (componer && (netoHotelExacto != null || (acom === "infante" && !hayInfante))) {
@@ -1388,9 +1423,15 @@ export async function generarTarifario(paqueteId: number, opciones: OpcionesGene
           // después de `fecha_ida` (en `masBarato` el precio ganador puede
           // venir de CUALQUIER noche de la ventana, no necesariamente la de
           // entrada — ese era exactamente el defecto confirmado).
-          const resultado = masBarato
-            ? liquidarHotelMasBaratoConTemporada({ desde: fechaIda, hasta: fechaRegreso ?? fechaIda, numNoches, temporadas, netoPorTemporada, regimen, precioFinalTemporadas })
-            : liquidarHotelNochesConTemporadas({ fechaIda, numNoches, temporadas, netoPorTemporada, regimen, precioFinalTemporadas });
+          // Entrega 6: un hotel CON grupos publica la estadía completa más económica realmente vendible (con su entrada); sin grupos, como siempre.
+          const desdeReal = masBarato && hotelConGrupos(temporadas)
+            ? presupuestoDesde.calcular({ desde: fechaIda, hasta: fechaRegreso ?? fechaIda, numNoches, temporadas, netoPorTemporada, regimen, precioFinalTemporadas, basePromoPorClave, acomodacion: acom, ocupantes: ocupantesDe(acom) })
+            : null;
+          const resultado = desdeReal
+            ? (desdeReal.desde ? { total: desdeReal.desde.total, procedencia: desdeReal.desde.procedencia } : null)
+            : masBarato
+            ? liquidarHotelMasBaratoConTemporada({ desde: fechaIda, hasta: fechaRegreso ?? fechaIda, numNoches, temporadas, netoPorTemporada, regimen, precioFinalTemporadas, basePromoPorClave, acomodacion: acom, ocupantes: ocupantesDe(acom) })
+            : liquidarHotelNochesConTemporadas({ fechaIda, numNoches, temporadas, netoPorTemporada, regimen, precioFinalTemporadas, basePromoPorClave, acomodacion: acom, ocupantes: ocupantesDe(acom) });
           const costoHotel = resultado?.total ?? null;
           // Procedencia deduplicada de TODAS las noches que aportaron al
           // total (nunca solo el checkin) — ver lib/tarifario/procedenciaTarifario.ts.
@@ -1402,7 +1443,16 @@ export async function generarTarifario(paqueteId: number, opciones: OpcionesGene
           if (esRoom && costoHotel <= 0) continue;
           if (esRoom) { hayHabitacion = true; procedenciaHab = procedenciaHab ?? procedencia; }
           if (acom === "infante") hayInfante = true;
-          publicarFila(acom, costoHotel, procedencia, masBarato ? null : costoHotel);
+          publicarFila(acom, costoHotel, procedencia, masBarato ? null : costoHotel, desdeReal?.desde?.justificacion.entrada ?? null);
+          // Entrega 5: la reserva decide la precedencia promoción / EBB / Long Stay con la fecha REAL de compra; para eso guarda qué
+          // promociones aplicaron y el neto sin ellas (la estadía es concreta: no aplica al «desde» de la ventana).
+          if (componer && !masBarato && resultado && netosCombo[acom] != null) {
+            const nombres = promosAplicadas(resultado.procedencia, temporadas).map((p) => p.nombre);
+            if (nombres.length) {
+              const rb = liquidarHotelNochesConTemporadas({ fechaIda, numNoches, temporadas: soloBases(temporadas), netoPorTemporada, regimen, precioFinalTemporadas, basePromoPorClave, acomodacion: acom, ocupantes: ocupantesDe(acom) });
+              promocionesCombo[acom] = { nombres, netoSinPromocion: rb ? aMonedaOferta(rb.total, monedaHotelOrigen) : null };
+            }
+          }
         }
         // Infante (migración 226): un hotel sin tarifa de infante para este combo NO
         // deja al menor de 2 años gratis en silencio — se publica la fila con hotel
@@ -1417,6 +1467,7 @@ export async function generarTarifario(paqueteId: number, opciones: OpcionesGene
               pctMk, impuesto, vuelo: aporteVueloVal, vueloNeto, feeInfante, servicios: serviciosComp, netos: netosCombo, pvps: pvpsCombo,
               trm: modo63 ? trm63 : null, ...(Object.keys(netosOrigenCombo).length ? { netosOrigen: netosOrigenCombo } : {}),
               fijo: { mayor2: fijoMayor2 != null, menor2: fijoMenor2 != null },
+              ...(Object.keys(promocionesCombo).length ? { promociones: promocionesCombo } : {}),
             },
           });
         }
@@ -2052,6 +2103,21 @@ export async function paquetesConTarifarioAnteriorAInfante(): Promise<
 // llama tras editar tarifas/vigencias del hotel para que el tarifario (y el PVP
 // que lee Reservar) se actualice solo, sin volver a "Generar" a mano. No lanza:
 // un fallo de un paquete no debe tumbar el guardado de la tarifa.
+/** Paquetes ACTIVOS que usan el hotel (sin duplicados). `error` = no se pudo consultar (nunca se confunde con «ninguno»). */
+async function paquetesActivosDeHotel(sb: Awaited<ReturnType<typeof createClient>>, hotelId: number): Promise<{ ids: number[]; error: string | null }> {
+  const { data: pkgs, error } = await sb
+    .from("armado_hoteles")
+    .select("paquete_id, armado_paquetes!inner(activo)")
+    .eq("hotel_id", hotelId);
+  if (error) return { ids: [], error: error.message };
+  return {
+    ids: [...new Set((pkgs ?? [])
+      .filter((p) => (p.armado_paquetes as unknown as { activo: boolean } | null)?.activo)
+      .map((p) => p.paquete_id))],
+    error: null,
+  };
+}
+
 export async function regenerarTarifariosDeHotel(hotelId: number, inicioMs?: number): Promise<void> {
   if (!hotelId) return;
   try {
@@ -2088,7 +2154,8 @@ export async function regenerarTarifariosDeHotel(hotelId: number, inicioMs?: num
     // red) Y la promesa CUMPLIDA con `{ ok: false, error }` — `generarTarifario`
     // nunca lanza por un error de negocio, lo devuelve como valor resuelto, así
     // que un `status === "rejected"` a secas se lo pierde por completo.
-    const resultados = await Promise.allSettled(ids.map((id) => generarTarifario(id, enSegundoPlano(inicioMs))));
+    // #43/#60: ACOTADO (CONCURRENCIA_REGENERACION a la vez), no todos en paralelo: cada generación tiene su presupuesto y lanzarlas todas juntas lo multiplicaba.
+    const resultados = await ejecutarAcotado(ids, CONCURRENCIA_REGENERACION, (id) => generarTarifario(id, enSegundoPlano(inicioMs)));
     resultados.forEach((r, i) => {
       if (r.status === "rejected") {
         console.error(`regenerarTarifariosDeHotel: falló generarTarifario(paquete_id=${ids[i]}) para hotel_id=${hotelId}:`, r.reason);
@@ -2105,6 +2172,27 @@ export async function regenerarTarifariosDeHotel(hotelId: number, inicioMs?: num
   }
 }
 
+/** Igual que `regenerarTarifariosDeHotel`, pero ACOTADO y con resultado (venta por grupos, 3c): como mucho
+ *  `concurrencia` paquetes a la vez (no todos en paralelo) y devuelve cuántos quedaron publicados, en curso o fallidos,
+ *  para que la pantalla nunca diga «todo actualizado» si algo falló. Sigue sin lanzar. */
+export async function regenerarTarifariosDeHotelAcotado(hotelId: number, inicioMs: number = Date.now(), concurrencia = CONCURRENCIA_REGENERACION): Promise<ResultadoRegeneracionHotel> {
+  if (!hotelId) return { paquetes: 0, actualizados: 0, enCurso: 0, fallidos: [] };
+  try {
+    const sb = await createClient();
+    const { ids, error } = await paquetesActivosDeHotel(sb, hotelId);
+    if (error) {
+      console.error(`regenerarTarifariosDeHotelAcotado: no se pudo consultar armado_hoteles para hotel_id=${hotelId}: ${error}`);
+      return { paquetes: null, actualizados: 0, enCurso: 0, fallidos: [] };
+    }
+    const r = clasificarRegeneracion(ids, await ejecutarAcotado(ids, concurrencia, (id) => generarTarifario(id, enSegundoPlano(inicioMs))));
+    for (const x of r.fallidos) console.error(`regenerarTarifariosDeHotelAcotado: paquete_id=${x.paqueteId} hotel_id=${hotelId}: ${x.error}`);
+    return r;
+  } catch (err) {
+    console.error(`regenerarTarifariosDeHotelAcotado: fallo técnico para hotel_id=${hotelId}:`, err);
+    return { paquetes: null, actualizados: 0, enCurso: 0, fallidos: [] };
+  }
+}
+
 // Regenera el tarifario de los paquetes activos que usan un BLOQUEO aéreo. Se
 // llama tras editar/eliminar el bloqueo (tarifa de empaquetar, fechas, ruta).
 export async function regenerarTarifariosDeBloqueo(bloqueoId: number, inicioMs?: number): Promise<void> {
@@ -2118,7 +2206,7 @@ export async function regenerarTarifariosDeBloqueo(bloqueoId: number, inicioMs?:
     const ids = [...new Set((pkgs ?? [])
       .filter((p) => (p.armado_paquetes as unknown as { activo: boolean } | null)?.activo)
       .map((p) => p.paquete_id))];
-    await Promise.allSettled(ids.map((id) => generarTarifario(id, enSegundoPlano(inicioMs))));
+    await ejecutarAcotado(ids, CONCURRENCIA_REGENERACION, (id) => generarTarifario(id, enSegundoPlano(inicioMs))); // acotado (#43/#60)
   } catch { /* best-effort */ }
 }
 
@@ -2135,7 +2223,7 @@ export async function regenerarTarifariosDeServicio(servicioId: number, inicioMs
     const ids = [...new Set((pkgs ?? [])
       .filter((p) => (p.armado_paquetes as unknown as { activo: boolean } | null)?.activo)
       .map((p) => p.paquete_id))];
-    await Promise.allSettled(ids.map((id) => generarTarifario(id, enSegundoPlano(inicioMs))));
+    await ejecutarAcotado(ids, CONCURRENCIA_REGENERACION, (id) => generarTarifario(id, enSegundoPlano(inicioMs))); // acotado (#43/#60)
   } catch { /* best-effort */ }
 }
 
@@ -2188,6 +2276,8 @@ function salidaRow(paqueteId: number, input: SalidaDinamicaInput) {
 export async function crearSalidaDinamica(paqueteId: number, input: SalidaDinamicaInput): Promise<Result> {
   const sb = await createClient();
   if (!input.fechaIda) return { ok: false, error: "La fecha de ida es obligatoria." };
+  const vNoches = validarFechasViaje(input.fechaIda, input.fechaRegreso); // entrega L
+  if (!vNoches.ok) return vNoches;
   const { error } = await sb.from("salidas_dinamicas").insert(salidaRow(paqueteId, input));
   if (error) return { ok: false, error: error.message };
   revalidatePath(`/dashboard/paquetes/${paqueteId}`);
@@ -2198,7 +2288,9 @@ export async function crearSalidaDinamica(paqueteId: number, input: SalidaDinami
 export async function actualizarSalidaDinamica(id: number, input: SalidaDinamicaInput): Promise<Result> {
   const sb = await createClient();
   if (!input.fechaIda) return { ok: false, error: "La fecha de ida es obligatoria." };
-  const { data: prev } = await sb.from("salidas_dinamicas").select("paquete_id, empaquetado_id").eq("id", id).maybeSingle();
+  const { data: prev } = await sb.from("salidas_dinamicas").select("paquete_id, empaquetado_id, fecha_ida, fecha_regreso").eq("id", id).maybeSingle();
+  const vNoches = validarFechasAlEditar(input.fechaIda, input.fechaRegreso, prev?.fecha_ida, prev?.fecha_regreso); // entrega L
+  if (!vNoches.ok) return vNoches;
   // #63: una salida vinculada guarda una COPIA de su fuente; editar esos campos a mano
   // la dejaría distinta del vuelo real. Se actualiza solo desde la fuente.
   if ((prev as { empaquetado_id?: number | null } | null)?.empaquetado_id != null) {

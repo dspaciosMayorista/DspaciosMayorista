@@ -49,6 +49,7 @@ import {
 import { formatMoneda } from "@/lib/utils";
 import { ComboCiudad } from "@/components/ComboCiudad";
 import type { DestinoOpt } from "@/components/ComboDestino";
+import { MAX_NOCHES_VIAJE } from "@/lib/reglas/duracionViaje";
 
 type ProgramaRow = Database["public"]["Tables"]["programas"]["Row"];
 type Ciudad = { id: number; nombre: string; codigo_iata: string | null; noches: number; alojamiento_previsto?: string | null };
@@ -1110,7 +1111,7 @@ function SalidasEditor({
               <DateInput aria-label="Fecha desde" type="date" value={r.fechaDesde} onValueChange={(dateValue) => upd(i, "fechaDesde", dateValue)} className="w-40" title="Fecha desde" />
               <span className="text-gray-300">→</span>
               <DateInput aria-label="Fecha hasta" type="date" value={r.fechaHasta} onValueChange={(dateValue) => upd(i, "fechaHasta", dateValue)} className="w-40" title="Fecha hasta" />
-              <Input type="number" value={r.noches} onChange={(e) => upd(i, "noches", e.target.value)} placeholder="Noches" className="w-24" />
+              <Input type="number" max={MAX_NOCHES_VIAJE} value={r.noches} onChange={(e) => upd(i, "noches", e.target.value)} placeholder="Noches" className="w-24" aria-invalid={Number(r.noches) > MAX_NOCHES_VIAJE} title={Number(r.noches) > MAX_NOCHES_VIAJE ? `La estadía máxima es de ${MAX_NOCHES_VIAJE} noches.` : undefined} />
               <Input value={r.columna} onChange={(e) => upd(i, "columna", e.target.value)} placeholder="Columna/hotel (opcional)" className="w-48" />
               <button type="button" onClick={() => dup(i)} className="text-xs font-medium text-[#1D7C9A] hover:underline" title="Duplica esta salida con los mismos precios; cambia solo el hotel">
                 ⧉ Duplicar

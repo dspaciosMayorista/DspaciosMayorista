@@ -8,18 +8,25 @@ import {
   filaSustitucionMixta, aplicarAdultsOnly, valoresDeFila, CAMPOS_VALOR_TARIFA, fotoTarifas,
   type DubaiParams, type MixtaParams, type CorporativaParams, type ValoresTarifa, type FotoTarifa,
 } from "@/lib/calc/calculadoras";
-import { separarFilasVencidas } from "@/lib/calc/promoCalculadora";
+import { separarFilasConGrupos, separarFilasVencidas } from "@/lib/calc/promoCalculadora";
 import { contextoGeneracion } from "@/lib/hoteles/contextoGeneracionTarifas";
 import { regenerarTarifariosDeHotel } from "../../paquetes/actions";
 import type { Json } from "@/types/database";
+import { puedeEscribir } from "@/lib/roles";
 import { normalizarProveedorHotelId } from "@/lib/hoteles/proveedor";
 import { eliminarHotelSeguro, type ResultadoEliminarHotel } from "@/lib/hoteles/eliminarHotel";
 import { validarCondicionPago, type CondicionPagoEntrada } from "@/lib/cotizacion/condicionPagoCatalogo";
 import { validarFechasVigencia, fechasGuardadas, anioVigenteBogota, type FechasVigencia } from "@/lib/hoteles/validarFechasVigencia";
 import { mensajeBorrarVigenciaConGrupos } from "@/lib/hoteles/alcanceGrupos";
+import { validarCamposPromo, mensajePromo300, validarCombinacion, textoFamilias, type ColumnasPromo, type EleccionDias, type CombinacionEntrada } from "@/lib/hoteles/promocionesVigencia";
+import type { ReglaNocheGratis, UnidadMonto } from "@/lib/calc/promocionesGrupo";
 
-type Result = { ok: true; id?: number; aviso?: string } | { ok: false; error: string };
+// `cambioPendiente` (entrega 5, P3): el cambio de una promoción que se vende crea una coincidencia con EBB / Long Stay sin
+// configurar; quedó GUARDADO como pendiente (la versión autorizada sigue vendiéndose) y la UI ofrece configurarla y activarlo.
+type Result = { ok: true; id?: number; aviso?: string; cambioPendiente?: { promocionId: number; familias: ("ebb" | "long_stay")[] } } | { ok: false; error: string };
 const oNull = (s: string) => (s && s.trim() !== "" ? s.trim() : null);
+// #43/#60 (299): un empate de prioridad lo rechaza la base al confirmar; su mensaje ya es claro, sin el prefijo técnico.
+const sinPrefijoEmpate = (m: string) => m.replace(/^EMPATE_PRIORIDAD:\s*/, "");
 
 export async function crearHotel(input: {
   nombre: string;
@@ -312,6 +319,10 @@ export type TemporadaInput = {
   condicionPagoTipo?: unknown;
   condicionPagoPctInicial?: unknown; // 1–99, no fracción
   condicionPagoDiasSaldo?: unknown;
+  // #43/#60 entrega 4: elección explícita de las promociones nuevas (ver lib/hoteles/promocionesVigencia.ts).
+  descuentoUnidad?: UnidadMonto | null;
+  nocheGratisRegla?: ReglaNocheGratis | null;
+  diasPromo?: EleccionDias;
 };
 
 // Valida y normaliza una lista de rangos (fin >= inicio). Devuelve [] si no hay.
@@ -333,6 +344,7 @@ function payloadTemporada(
   rangos: RangoFechasInput[],
   blackouts: RangoFechasInput[],
   condicion: { condicion_pago_tipo: string; condicion_pago_pct_inicial: number | null; condicion_pago_dias_saldo: number | null },
+  promo: ColumnasPromo,
 ) {
   const tipo = input.tipo ?? "tarifa";
   // fecha_inicio/fin = primer rango (compatibilidad y diagnóstico); el motor usa 'rangos' si hay.
@@ -353,6 +365,7 @@ function payloadTemporada(
     condicion_pago_tipo: condicion.condicion_pago_tipo,
     condicion_pago_pct_inicial: condicion.condicion_pago_pct_inicial,
     condicion_pago_dias_saldo: condicion.condicion_pago_dias_saldo,
+    ...promo,
   };
 }
 
@@ -407,15 +420,19 @@ function validarTemporada(input: TemporadaInput, previas?: FechasVigencia | null
 export async function crearTemporada(input: TemporadaInput): Promise<Result> {
   const v = validarTemporada(input);
   if (!v.ok) return v;
+  const p = validarCamposPromo({ ...input, tipo: input.tipo ?? "tarifa" }, null);
+  if (!p.ok) return p;
   const sb = await createClient();
-  const { error } = await sb.from("hotel_temporadas").insert({
+  const { data: creada, error } = await sb.from("hotel_temporadas").insert({
     hotel_id: input.hotelId,
-    ...payloadTemporada(input, v.rangos, v.blackouts, v.condicion),
-  });
-  if (error) return { ok: false, error: error.message };
+    ...payloadTemporada(input, v.rangos, v.blackouts, v.condicion, p.columnas),
+  }).select("id").maybeSingle();
+  if (error) return { ok: false, error: mensajePromo300(error.message) ?? sinPrefijoEmpate(error.message) };
   revalidatePath(`/dashboard/producto/hoteles/${input.hotelId}`);
   await regenerarTarifariosDeHotel(input.hotelId);
-  return { ok: true };
+  // Una promoción nueva que coincide con EBB / Long Stay nace pendiente (la 301): se avisa. Una tarifa no se consulta.
+  const aviso = creada?.id != null && (input.tipo ?? "tarifa") !== "tarifa" ? await avisoPendiente(sb, creada.id) : undefined;
+  return { ok: true, ...(creada?.id != null ? { id: creada.id } : {}), ...(aviso ? { aviso } : {}) };
 }
 
 // `_hotelIdSolicitado` (segundo parámetro histórico, la UI sigue mandándolo
@@ -436,7 +453,7 @@ export async function eliminarTemporada(id: number, _hotelIdSolicitado: number):
     .select("hotel_id")
     .maybeSingle();
   // #43/#60: una vigencia con grupos preparados no se borra (FK de la 293): mensaje claro en vez del error de la base.
-  if (error) return { ok: false, error: mensajeBorrarVigenciaConGrupos(error) ?? error.message };
+  if (error) return { ok: false, error: mensajeBorrarVigenciaConGrupos(error) ?? mensajePromo300(error.message) ?? error.message };
   if (!borrada) return { ok: false, error: "No se encontró la temporada a eliminar (0 filas afectadas)." };
   const hotelId = borrada.hotel_id;
   revalidatePath(`/dashboard/producto/hoteles/${hotelId}`);
@@ -450,7 +467,7 @@ export async function eliminarTemporada(id: number, _hotelIdSolicitado: number):
 export async function copiarTemporadasDesdeHotel(
   hotelDestino: number,
   hotelOrigen: number,
-): Promise<{ ok: true; copiadas: number; omitidas?: string[] } | { ok: false; error: string }> {
+): Promise<{ ok: true; copiadas: number; omitidas?: string[]; avisos?: string[] } | { ok: false; error: string }> {
   if (!hotelOrigen || hotelDestino === hotelOrigen) return { ok: false, error: "Elige un hotel de origen distinto." };
   const sb = await createClient();
   // Se copian TODOS los campos de la vigencia, incluida su condición de pago
@@ -459,7 +476,7 @@ export async function copiarTemporadasDesdeHotel(
   const { data: origen, error: e1 } = await sb
     .from("hotel_temporadas")
     .select(
-      "nombre, fecha_inicio, fecha_fin, prioridad, compra_inicio, compra_fin, tipo, descuento_valor, rangos, blackouts, orden, min_noches, regimen_restringido, condicion_pago_tipo, condicion_pago_pct_inicial, condicion_pago_dias_saldo"
+      "nombre, fecha_inicio, fecha_fin, prioridad, compra_inicio, compra_fin, tipo, descuento_valor, rangos, blackouts, orden, min_noches, regimen_restringido, condicion_pago_tipo, condicion_pago_pct_inicial, condicion_pago_dias_saldo, descuento_unidad, noche_gratis_regla, dias_promo, promo_base_id"
     )
     .eq("hotel_id", hotelOrigen);
   if (e1) return { ok: false, error: e1.message };
@@ -474,12 +491,18 @@ export async function copiarTemporadasDesdeHotel(
     return r.ok;
   });
   if (!copiables.length) return { ok: false, error: `Ninguna vigencia del hotel de origen se puede crear con las reglas de fechas vigentes. ${omitidas.join(" · ")}` };
-  const filas = copiables.map((t) => ({ ...t, hotel_id: hotelDestino }));
+  // #43/#60 (300): la noche bonificada, la unidad y los días viajan con la vigencia. El vínculo a una base y sus
+  // reglas por grupo son de ESTE hotel (ids): la copia queda sin vínculo y se informa para configurarla allá.
+  const avisos: string[] = [];
+  const filas = copiables.map(({ promo_base_id, ...t }) => {
+    if (promo_base_id != null) avisos.push(`${t.nombre}: se copió sin sus reglas por grupo; configúralas en el hotel destino`);
+    return { ...t, hotel_id: hotelDestino };
+  });
   const { error } = await sb.from("hotel_temporadas").insert(filas);
   if (error) return { ok: false, error: error.message };
   revalidatePath(`/dashboard/producto/hoteles/${hotelDestino}`);
   await regenerarTarifariosDeHotel(hotelDestino);
-  return { ok: true, copiadas: filas.length, ...(omitidas.length ? { omitidas } : {}) };
+  return { ok: true, copiadas: filas.length, ...(omitidas.length ? { omitidas } : {}), ...(avisos.length ? { avisos } : {}) };
 }
 
 // Al renombrar una temporada, `tarifa_hotel.temporada` y `hotel_calculadora.params`
@@ -553,33 +576,67 @@ async function renombrarTemporadaEnDatos(
 // mantiene en el tipo compartido con `crearTemporada` (ahí sí es autoritativo:
 // es un INSERT, no hay fila previa de la que discrepar) — no se amplía el
 // alcance tocando ese tipo ni el formulario que lo llena.
-export async function actualizarTemporada(id: number, input: TemporadaInput): Promise<Result> {
+/**
+ * `combinacion` (entrega 5): el cambio de una promoción que se vende creó una coincidencia con EBB / Long Stay sin configurar
+ * (`requiereCombinacion`); se reenvía el MISMO cambio con la combinación y los dos se guardan en una transacción (RPC
+ * `promocion_guardar_combinacion`). Sin ella, el update de siempre.
+ */
+export async function actualizarTemporada(id: number, input: TemporadaInput, combinacion?: CombinacionEntrada): Promise<Result> {
   const sb = await createClient();
   // La misma lectura de siempre (una sola), ampliada con las fechas guardadas: la validación de fechas necesita saber cuáles NO
   // cambian para dejar editar una vigencia histórica sin tocar sus fechas antiguas (#43). Sin lecturas ni escrituras adicionales.
   const { data: actual, error: eActual } = await sb
     .from("hotel_temporadas")
-    .select("nombre, hotel_id, fecha_inicio, fecha_fin, rangos, blackouts, compra_inicio, compra_fin")
+    .select("nombre, hotel_id, fecha_inicio, fecha_fin, rangos, blackouts, compra_inicio, compra_fin, tipo, descuento_unidad, noche_gratis_regla")
     .eq("id", id)
     .maybeSingle();
   if (eActual) return { ok: false, error: eActual.message };
   if (!actual) return { ok: false, error: "No se encontró la temporada a actualizar." };
   const v = validarTemporada(input, fechasGuardadas(actual));
   if (!v.ok) return v;
+  const p = validarCamposPromo({ ...input, tipo: input.tipo ?? "tarifa" }, actual);
+  if (!p.ok) return p;
   const hotelId = actual.hotel_id;
   const nombreViejo = actual.nombre?.trim() ?? "";
 
-  const { data: actualizada, error } = await sb.from("hotel_temporadas")
-    .update(payloadTemporada(input, v.rangos, v.blackouts, v.condicion))
-    .eq("id", id)
-    .eq("hotel_id", hotelId)
-    .select("hotel_id")
-    .maybeSingle();
-  if (error) return { ok: false, error: error.message };
-  if (!actualizada) return { ok: false, error: "No se encontró la temporada a actualizar (0 filas afectadas)." };
-  if (actualizada.hotel_id !== hotelId) {
-    console.error(`actualizarTemporada: hotel_id divergente entre la lectura (${hotelId}) y el update (${actualizada.hotel_id}) para temporada id=${id}`);
-    return { ok: false, error: "La temporada cambió de hotel durante la operación; vuelve a intentarlo." };
+  const payload = payloadTemporada(input, v.rangos, v.blackouts, v.condicion, p.columnas);
+  if (combinacion) {
+    const sinPermiso = await sinPermisoProducto(sb);
+    if (sinPermiso) return { ok: false, error: sinPermiso };
+    const c = validarCombinacion(combinacion);
+    if (!c.ok) return c;
+    const { error } = await sb.rpc("promocion_guardar_combinacion", {
+      p_promocion_id: id, p_combinacion: c.valor as unknown as Json,
+      p_cambios: payload as unknown as Json,
+    });
+    if (error) return { ok: false, error: mensajePromo300(error.message) ?? sinPrefijoEmpate(error.message) };
+  } else {
+    const { data: actualizada, error } = await sb.from("hotel_temporadas")
+      .update(payloadTemporada(input, v.rangos, v.blackouts, v.condicion, p.columnas))
+      .eq("id", id)
+      .eq("hotel_id", hotelId)
+      .select("hotel_id")
+      .maybeSingle();
+    if (error) {
+      if (!/COMBINACION_SIN_CONFIGURAR:/.test(error.message)) return { ok: false, error: mensajePromo300(error.message) ?? sinPrefijoEmpate(error.message) };
+      // P3: el cambio se GUARDA como pendiente (persistente, revisable al reabrir); la versión autorizada sigue vendiéndose.
+      const prop = await sb.rpc("promocion_cambio_proponer", { p_promocion_id: id, p_cambios: payload as unknown as Json });
+      if (prop.error) return { ok: false, error: mensajePromo300(prop.error.message) ?? sinPrefijoEmpate(prop.error.message) };
+      const res = prop.data as { estado?: string; faltan?: ("ebb" | "long_stay")[] } | null;
+      if (res?.estado === "pendiente") {
+        // Familias a responder al activar: las que faltan + las que ya tenía resueltas (la RPC pide todas las que coinciden).
+        const { data: cb } = await sb.from("hotel_promocion_combinacion").select("alternativas").eq("promocion_id", id).maybeSingle();
+        const familias = (["ebb", "long_stay"] as const).filter((f) => (cb?.alternativas ?? []).includes(f) || (res.faltan ?? []).includes(f));
+        revalidatePath(`/dashboard/producto/hoteles/${hotelId}`);
+        return { ok: true, cambioPendiente: { promocionId: id, familias: [...familias] },
+          aviso: `El cambio quedó PENDIENTE de activar: puede coincidir con ${textoFamilias(res.faltan ?? [])} y falta configurar, según el proveedor, si acumula y en qué orden. Se sigue vendiendo la versión autorizada; actívalo o descártalo en «Promociones del hotel».` };
+      }
+      // `aplicada`: entre medias dejó de faltar configuración y la RPC aplicó el cambio; sigue el camino de siempre.
+    } else if (!actualizada) return { ok: false, error: "No se encontró la temporada a actualizar (0 filas afectadas)." };
+    else if (actualizada.hotel_id !== hotelId) {
+      console.error(`actualizarTemporada: hotel_id divergente entre la lectura (${hotelId}) y el update (${actualizada.hotel_id}) para temporada id=${id}`);
+      return { ok: false, error: "La temporada cambió de hotel durante la operación; vuelve a intentarlo." };
+    }
   }
 
   let aviso: string | undefined;
@@ -600,7 +657,79 @@ export async function actualizarTemporada(id: number, input: TemporadaInput): Pr
 
   revalidatePath(`/dashboard/producto/hoteles/${hotelId}`);
   await regenerarTarifariosDeHotel(hotelId);
+  const pend = (input.tipo ?? "tarifa") !== "tarifa" ? await avisoPendiente(sb, id) : undefined;
+  return { ok: true, aviso: [aviso, pend].filter(Boolean).join(" ") || undefined };
+}
+
+async function sinPermisoProducto(sb: Awaited<ReturnType<typeof createClient>>): Promise<string | null> {
+  const { data: rol, error } = await sb.rpc("mi_rol");
+  if (error) return "No se pudo verificar tu permiso. Intenta de nuevo.";
+  return puedeEscribir("producto", (rol as string | null) ?? null) ? null : "No tienes permiso para configurar promociones de este hotel.";
+}
+
+/** Aviso si la promoción quedó pendiente de configurar (no se vende hasta responder la combinación). */
+async function avisoPendiente(sb: Awaited<ReturnType<typeof createClient>>, id: number): Promise<string | undefined> {
+  const { data } = await sb.from("hotel_promocion_combinacion").select("estado, alternativas").eq("promocion_id", id).maybeSingle();
+  if (data?.estado !== "pendiente") return undefined;
+  return `La promoción puede coincidir con ${textoFamilias(data.alternativas)}: no se venderá hasta configurar, según el proveedor, si acumula y en qué orden (Promociones del hotel).`;
+}
+
+/**
+ * P3: activa el cambio PENDIENTE de una promoción (con su combinación si hace falta). La RPC valida en una transacción que siga
+ * pendiente, que la promoción no haya cambiado desde que se propuso y que no queden pares sin resolver ni contradicciones.
+ */
+export async function activarCambioPromocion(promocionId: number, combinacion?: CombinacionEntrada): Promise<Result> {
+  const sb = await createClient();
+  const sinPermiso = await sinPermisoProducto(sb);
+  if (sinPermiso) return { ok: false, error: sinPermiso };
+  let comb: Json | null = null;
+  if (combinacion) { const c = validarCombinacion(combinacion); if (!c.ok) return c; comb = c.valor as unknown as Json; }
+  const { data: antes, error: eAntes } = await sb.from("hotel_temporadas").select("nombre, hotel_id").eq("id", promocionId).maybeSingle();
+  if (eAntes) return { ok: false, error: eAntes.message };
+  if (!antes) return { ok: false, error: "La promoción ya no existe." };
+  const { error } = await sb.rpc("promocion_cambio_activar", { p_promocion_id: promocionId, p_combinacion: comb });
+  if (error) return { ok: false, error: mensajePromo300(error.message) ?? sinPrefijoEmpate(error.message) };
+  // El cambio activado puede renombrar la promoción: mismo arrastre del nombre que un guardado normal.
+  let aviso: string | undefined;
+  const { data: despues } = await sb.from("hotel_temporadas").select("nombre").eq("id", promocionId).maybeSingle();
+  const viejo = antes.nombre?.trim() ?? "", nuevo = despues?.nombre?.trim() ?? "";
+  if (viejo && nuevo && viejo !== nuevo) {
+    const r = await renombrarTemporadaEnDatos(sb, antes.hotel_id, viejo, nuevo);
+    if (r.calculadoraSinActualizar) aviso = `La calculadora del hotel NO se actualizó al nuevo nombre "${nuevo}": ábrela, revisa sus bases y guárdala.`;
+  }
+  revalidatePath(`/dashboard/producto/hoteles/${antes.hotel_id}`);
+  await regenerarTarifariosDeHotel(antes.hotel_id);
   return { ok: true, aviso };
+}
+
+/** P3: descarta el cambio pendiente de una promoción (la versión autorizada no cambia). */
+export async function descartarCambioPromocion(promocionId: number): Promise<Result> {
+  const sb = await createClient();
+  const sinPermiso = await sinPermisoProducto(sb);
+  if (sinPermiso) return { ok: false, error: sinPermiso };
+  const { error } = await sb.rpc("promocion_cambio_descartar", { p_promocion_id: promocionId });
+  if (error) return { ok: false, error: mensajePromo300(error.message) ?? error.message };
+  const { data: t } = await sb.from("hotel_temporadas").select("hotel_id").eq("id", promocionId).maybeSingle();
+  if (t?.hotel_id) revalidatePath(`/dashboard/producto/hoteles/${t.hotel_id}`);
+  return { ok: true };
+}
+
+/**
+ * Entrega 5: guarda la combinación de una promoción con EBB / Long Stay. Con `cambios`, guarda en la MISMA transacción el cambio de
+ * la promoción que la necesitaba (lo que `actualizarTemporada` rechazó con `requiereCombinacion`).
+ */
+export async function guardarCombinacionPromocion(promocionId: number, combinacion: CombinacionEntrada, cambios?: TemporadaInput): Promise<Result> {
+  if (cambios) return actualizarTemporada(promocionId, cambios, combinacion);
+  const sb = await createClient();
+  const sinPermiso = await sinPermisoProducto(sb);
+  if (sinPermiso) return { ok: false, error: sinPermiso };
+  const c = validarCombinacion(combinacion);
+  if (!c.ok) return c;
+  const { error } = await sb.rpc("promocion_guardar_combinacion", { p_promocion_id: promocionId, p_combinacion: c.valor as unknown as Json });
+  if (error) return { ok: false, error: mensajePromo300(error.message) ?? sinPrefijoEmpate(error.message) };
+  const { data: t } = await sb.from("hotel_temporadas").select("hotel_id").eq("id", promocionId).maybeSingle();
+  if (t?.hotel_id) { revalidatePath(`/dashboard/producto/hoteles/${t.hotel_id}`); await regenerarTarifariosDeHotel(t.hotel_id); }
+  return { ok: true };
 }
 
 // ── Tarifa neta del hotel ─────────────────────────────────────────────────
@@ -633,7 +762,7 @@ export async function crearTarifa(input: {
     neto_infante: input.netoInfante ?? null,
     nota_infante: oNull(input.notaInfante ?? ""),
   });
-  if (error) return { ok: false, error: error.message };
+  if (error) return { ok: false, error: sinPrefijoEmpate(error.message) };
   revalidatePath(`/dashboard/producto/hoteles/${input.hotelId}`);
   await regenerarTarifariosDeHotel(input.hotelId);
   return { ok: true };
@@ -680,7 +809,7 @@ export async function actualizarTarifa(
     .eq("id", id)
     .select("hotel_id")
     .maybeSingle();
-  if (error) return { ok: false, error: error.message };
+  if (error) return { ok: false, error: sinPrefijoEmpate(error.message) };
   if (!actualizada) return { ok: false, error: "No se encontró la tarifa a actualizar (0 filas afectadas)." };
   const hotelId = actualizada.hotel_id;
   revalidatePath(`/dashboard/producto/hoteles/${hotelId}`);
@@ -698,7 +827,7 @@ export async function eliminarTarifa(id: number, _hotelIdSolicitado: number): Pr
     .eq("id", id)
     .select("hotel_id")
     .maybeSingle();
-  if (error) return { ok: false, error: error.message };
+  if (error) return { ok: false, error: sinPrefijoEmpate(error.message) };
   if (!borrada) return { ok: false, error: "No se encontró la tarifa a eliminar (0 filas afectadas)." };
   const hotelId = borrada.hotel_id;
   revalidatePath(`/dashboard/producto/hoteles/${hotelId}`);
@@ -769,6 +898,7 @@ export async function cargarTarifasMasivo(rows: Record<string, string>[]): Promi
   const errores: string[] = [];
   let insertados = 0;
   const tocados = new Set<number>();
+  const paraGrupos = new Map<string, { hotelId: number; temporada: string; filas: { linea: number; grupo: string; r: Record<string, string> }[] }>();
 
   for (let i = 0; i < rows.length; i++) {
     const r = rows[i];
@@ -781,6 +911,15 @@ export async function cargarTarifasMasivo(rows: Record<string, string>[]): Promi
     }
     if (!candidatos.length) { errores.push(`Fila ${linea}: hotel "${r.hotel}" no encontrado.`); continue; }
     if (candidatos.length > 1) { errores.push(`Fila ${linea}: hotel "${r.hotel}" está duplicado; agrega columna destino.`); continue; }
+    // #43/#60 (299): con «grupo», la fila va al BORRADOR de ese grupo (se agrupa por vigencia y se escribe al final,
+    // una RPC atómica por vigencia). Nunca se escribe una tarifa por grupo directo en la venta.
+    if ((r.grupo ?? "").trim()) {
+      const k = `${candidatos[0].id}\u001f${(r.temporada ?? "").trim()}`;
+      const lote = paraGrupos.get(k) ?? { hotelId: candidatos[0].id, temporada: (r.temporada ?? "").trim(), filas: [] };
+      lote.filas.push({ linea, grupo: r.grupo.trim(), r });
+      paraGrupos.set(k, lote);
+      continue;
+    }
     const { error } = await sb.from("tarifa_hotel").insert({
       hotel_id: candidatos[0].id,
       tipo_habitacion: oNull(r.categoria || ""),
@@ -795,13 +934,59 @@ export async function cargarTarifasMasivo(rows: Record<string, string>[]): Promi
       neto_infante: numCsvN(r.neto_infante),
       nota_infante: oNull(r.nota_infante || ""),
     });
-    if (error) { errores.push(`Fila ${linea} (${r.hotel}): ${error.message}`); continue; }
+    if (error) {
+      errores.push(`Fila ${linea} (${r.hotel}): ${/tiene tarifas por grupo de días|ya tiene tarifas por grupo/.test(error.message)
+        ? `la temporada "${r.temporada}" se vende por grupos de días: indica en la columna «grupo» a qué grupo va la fila.`
+        : error.message}`);
+      continue;
+    }
     insertados++;
     tocados.add(candidatos[0].id);
   }
+  // Filas con grupo → borrador del grupo: 1 lectura de vigencias para todos los hoteles + 1 lectura y 1 RPC por vigencia.
+  let alBorrador = 0;
+  if (paraGrupos.size > 0) {
+    const hotelesG = [...new Set([...paraGrupos.values()].map((l) => l.hotelId))];
+    const { data: vigs, error: eVigs } = await sb.from("hotel_temporadas")
+      .select("id, hotel_id, nombre, tipo, hotel_temporada_grupos(id, nombre)").in("hotel_id", hotelesG);
+    for (const lote of paraGrupos.values()) {
+      const lineas = lote.filas.map((f) => f.linea).join(", ");
+      if (eVigs) { errores.push(`Filas ${lineas}: no se pudieron leer las temporadas (${eVigs.message}).`); continue; }
+      const cands = (vigs ?? []).filter((v) => v.hotel_id === lote.hotelId && v.nombre.trim() === lote.temporada && (v.tipo ?? "tarifa") === "tarifa");
+      if (cands.length !== 1) { errores.push(`Filas ${lineas}: la temporada "${lote.temporada}" ${cands.length ? "está repetida" : "no existe"} en el hotel.`); continue; }
+      const grupos = (cands[0].hotel_temporada_grupos ?? []) as { id: string; nombre: string }[];
+      const filas: Record<string, unknown>[] = [];
+      let malas = false;
+      for (const { linea, grupo, r } of lote.filas) {
+        const g = grupos.find((x) => x.nombre.trim().toLowerCase() === grupo.toLowerCase());
+        if (!g) { errores.push(`Fila ${linea}: la temporada "${lote.temporada}" no tiene el grupo "${grupo}".`); malas = true; continue; }
+        // Sin ningún neto, la RPC lo leería como «quitar esta combinación del borrador»: un CSV nunca borra.
+        if (["neto_sencilla", "neto_doble", "neto_triple", "neto_multiple", "neto_nino", "neto_nino2", "neto_infante"].every((c) => numCsvN(r[c]) == null)) {
+          errores.push(`Fila ${linea}: no trae ningún neto (una fila del CSV no quita combinaciones del borrador).`); malas = true; continue;
+        }
+        filas.push({
+          grupo_id: g.id, tipo_habitacion: (r.categoria ?? "").trim(), alimentacion: (r.regimen ?? "").trim(),
+          neto_sencilla: numCsvN(r.neto_sencilla), neto_doble: numCsvN(r.neto_doble), neto_triple: numCsvN(r.neto_triple),
+          neto_multiple: numCsvN(r.neto_multiple), neto_nino: numCsvN(r.neto_nino), neto_nino2: numCsvN(r.neto_nino2),
+          neto_infante: numCsvN(r.neto_infante), origen_tarifa_id: null,
+          ...((r.nota_infante ?? "").trim() ? { nota_infante: r.nota_infante.trim() } : {}),
+        });
+      }
+      if (malas) continue;   // la vigencia entera se rechaza: el lote de un borrador es atómico
+      const { data: cfg, error: eCfg } = await sb.rpc("grupos_dias_config", { p_temporada_id: cands[0].id });
+      const huella = (cfg as { huella?: string } | null)?.huella;
+      if (eCfg || !huella) { errores.push(`Filas ${lineas}: ${eCfg?.message ?? "no se pudo leer la configuración de grupos"}.`); continue; }
+      const { error: eProp } = await sb.rpc("grupos_dias_guardar_propuesta", {
+        p_temporada_id: cands[0].id, p_huella: huella, p_modo: "actualizar", p_grupo_id: null, p_filas: filas as unknown as Json,
+      });
+      if (eProp) { errores.push(`Filas ${lineas} (${lote.temporada}): ${eProp.message.replace(/^[A-Z][A-Z_]{5,}:\s*/, "")}`); continue; }
+      alBorrador += filas.length;
+    }
+    if (alBorrador > 0) errores.push(`Aviso: ${alBorrador} fila(s) fueron al borrador de sus grupos de días. No se venden hasta revisarlas y aplicarlas en «Grupos de días».`);
+  }
   revalidatePath("/dashboard/producto/hoteles");
   { const inicioRegen = Date.now(); for (const hid of tocados) await regenerarTarifariosDeHotel(hid, inicioRegen); }
-  return { ok: errores.length === 0, insertados, errores };
+  return { ok: errores.length === 0 || errores.every((e) => e.startsWith("Aviso:")), insertados: insertados + alBorrador, errores };
 }
 
 // Carga masiva de TEMPORADAS del hotel (nombre + rango de fechas). Es la info que
@@ -980,7 +1165,7 @@ export async function generarTarifasCalculadora(
   hotelId: number,
   modo: "agregar" | "reemplazar",
   previas: FotoTarifa[],
-): Promise<{ ok: true; generadas: number; vencidasConservadas: string[]; promosManualesIntactas: string[] } | { ok: false; error: string }> {
+): Promise<{ ok: true; generadas: number; vencidasConservadas: string[]; conGruposConservadas: string[]; promosManualesIntactas: string[] } | { ok: false; error: string }> {
   if (!Array.isArray(previas)) return { ok: false, error: SIN_FOTO };
   const sb = await createClient();
   const { calc, adultsOnly, error: errCtx, ctx, hoy } = await contextoGeneracion(sb, hotelId);
@@ -1000,12 +1185,18 @@ export async function generarTarifasCalculadora(
         "Decide primero si sustituirlas por el valor calculado, o usa \"Generar (agregar/actualizar)\", que no las toca.",
     };
   }
-  const { generables: filasBase, vencidas } = separarFilasVencidas(calculadas, ctx.vigencias, hoy);
+  const { generables: sinVencidas, vencidas } = separarFilasVencidas(calculadas, ctx.vigencias, hoy);
+  // #43/#60 (299): las vigencias que se venden por grupos (y sus promociones calculadas) no se escriben aquí.
+  const { generables: filasBase, conGrupos } = separarFilasConGrupos(sinVencidas, ctx.vigencias);
   if (!filasBase.length) {
+    const motivos = [
+      vencidas.length ? `compra cerrada: ${vencidas.join(", ")}` : "",
+      conGrupos.length ? `se venden por grupos de días (se calculan con «Calcular para» el grupo): ${conGrupos.join(", ")}` : "",
+    ].filter(Boolean);
     return {
       ok: false,
-      error: vencidas.length > 0
-        ? `No hay tarifas para generar: las temporadas con valores tienen la compra cerrada (${vencidas.join(", ")}) y se conservan sin cambios.`
+      error: motivos.length
+        ? `No hay tarifas para generar: las temporadas con valores se conservan sin cambios (${motivos.join("; ")}).`
         : "No hay bases con precio para generar tarifas.",
     };
   }
@@ -1029,7 +1220,7 @@ export async function generarTarifasCalculadora(
   revalidatePath(`/dashboard/producto/hoteles/${hotelId}`);
   await regenerarTarifariosDeHotel(hotelId);
   const insertadas = (resultado as { insertadas?: number } | null)?.insertadas ?? filas.length;
-  return { ok: true, generadas: insertadas, vencidasConservadas: vencidas, promosManualesIntactas };
+  return { ok: true, generadas: insertadas, vencidasConservadas: vencidas, conGruposConservadas: conGrupos, promosManualesIntactas };
 }
 
 // Acción EXPLÍCITA (pendiente #15): sustituye los valores escritos a mano de
@@ -1053,6 +1244,9 @@ export async function sustituirPromoManualMixta(
   if (errCtx) return { ok: false, error: errCtx };
   const calculo = filaSustitucionMixta(calc.params as unknown as MixtaParams, ctx, objetivo);
   if (!calculo.ok) return { ok: false, error: calculo.error };
+  if (separarFilasConGrupos([calculo.fila], ctx.vigencias).generables.length === 0) {
+    return { ok: false, error: `"${objetivo.temporada}" se calcula desde una vigencia que se vende por grupos de días: no se sustituye desde la calculadora general.` };
+  }
   if (separarFilasVencidas([calculo.fila], ctx.vigencias, hoy).generables.length === 0) {
     return { ok: false, error: `"${objetivo.temporada}" tiene la compra cerrada: sus tarifas se conservan y no se sustituyen.` };
   }
@@ -1078,4 +1272,34 @@ export async function sustituirPromoManualMixta(
   revalidatePath(`/dashboard/producto/hoteles/${hotelId}`);
   await regenerarTarifariosDeHotel(hotelId);
   return { ok: true, anterior: anterior ? valoresDeFila(anterior as ValoresTarifa) : null, nuevo: valoresDeFila(final) };
+}
+
+// ── #43/#60 entrega 4: promociones por grupo ─────────────────────────────────
+export type ReglaPromoInput = { grupo_id: string | null; valor: number; dias: number[] | null };
+
+/** Guarda el vínculo a la base y las reglas por grupo de una promoción, en UNA transacción (RPC de la 300).
+ * `previas` = lo que vio quien edita (foto); si cambió, la base rechaza y se pide recargar. */
+export async function guardarReglasPromocion(input: {
+  hotelId: number; promocionId: number; baseId: number | null;
+  reglas: ReglaPromoInput[]; previas: { base: number | null; reglas: ReglaPromoInput[] };
+}): Promise<Result> {
+  const reglas = Array.isArray(input.reglas) ? input.reglas : [];
+  for (const r of reglas) {
+    if (!(Number(r.valor) > 0)) return { ok: false, error: "Cada regla necesita un valor mayor a 0." };
+    if (r.dias != null && (!Array.isArray(r.dias) || !r.dias.length)) return { ok: false, error: "Con «Elegir días» marca al menos un día." };
+  }
+  const sb = await createClient();
+  const { error } = await sb.rpc("promocion_guardar_reglas", {
+    p_promocion_id: input.promocionId,
+    p_base_id: input.baseId as number,
+    p_reglas: reglas.map((r) => ({ grupo_id: r.grupo_id, valor: Number(r.valor), dias: r.dias })) as unknown as Json,
+    p_previas: { base: input.previas.base, reglas: input.previas.reglas } as unknown as Json,
+  });
+  if (error) {
+    if (error.code === "PT409") return { ok: false, error: "La promoción cambió mientras la editabas; recarga la página y vuelve a revisarla." };
+    return { ok: false, error: mensajePromo300(error.message) ?? error.message };
+  }
+  revalidatePath(`/dashboard/producto/hoteles/${input.hotelId}`);
+  await regenerarTarifariosDeHotel(input.hotelId);
+  return { ok: true };
 }

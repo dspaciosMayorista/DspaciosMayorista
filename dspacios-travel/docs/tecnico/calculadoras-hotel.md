@@ -267,6 +267,10 @@ a la **propuesta** del grupo (migración 295), que el motor no lee: nada se vend
   acomodación que antes no se vendía (contra la propuesta guardada, si no la tarifa actual): «mantener sin venta» o
   «habilitar». Nada preseleccionado. La nota de infante es opcional. Notas y edades no aceptadas se omiten (= se
   conservan). Una combinación sin ninguna habitación a la venta no se envía.
+- **Parámetros por grupo (298):** cada grupo elige explícitamente usar los generales del hotel (bloqueados, visibles como
+  referencia) o valores propios (solo fórmula: modificadores, suplementos —FULL incluido—, IVA, pax, persona/niño
+  adicional, impuesto y descuento de la tarifa); se guardan con las bases en `hotel_calculadora_grupo_bases.generales`
+  (null = los del hotel) por la RPC `grupos_dias_guardar_calculadora_grupo`. Nunca promociones.
 - **Solicitudes:** elegir grupo y editar 0; revisar 1 (`grupos_dias_config`); confirmar 1 RPC; sin
   `revalidatePath`, regeneración ni publicación. La ficha lee bases y versión dentro de lecturas existentes.
 - Detalle, pruebas y orden de despliegue: [`vigencias-por-dia-43-60.md`](./vigencias-por-dia-43-60.md) §AF.

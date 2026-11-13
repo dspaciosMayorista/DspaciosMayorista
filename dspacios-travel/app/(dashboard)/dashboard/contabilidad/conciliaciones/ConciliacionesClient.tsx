@@ -9,6 +9,7 @@ import Link from "next/link";
 import { Trash2, Link2, Undo2, Sparkles, Plus } from "lucide-react";
 import { formatCOP } from "@/lib/utils";
 import { identidadDe, unirIdentidades, type IdentidadContrato } from "@/lib/contrato/identidad";
+import { alternarVisibles, estadoVisibles } from "@/lib/paquetes/seleccionMasiva";
 import { importarExtracto, cruzar, deshacerCruce, eliminarLineaExtracto, eliminarLineasExtracto, eliminarPeriodoExtracto, registrarMovimientoDirecto } from "./actions";
 import { listarCuentasMovimiento } from "../libro-diario/actions";
 
@@ -240,6 +241,9 @@ export function ConciliacionesClient({ extracto, sistema, cruces }: { extracto: 
 
   function toggleExt(id: number) { setSelExt((p) => { const n = new Set(p); n.has(id) ? n.delete(id) : n.add(id); return n; }); }
   function toggleSis(ref: string) { setSelSis((p) => { const n = new Set(p); n.has(ref) ? n.delete(ref) : n.add(ref); return n; }); }
+  // #50: solo las filas que pasan los filtros; lo ya elegido fuera del filtro se conserva y se avisa. Solo cambia la selección.
+  const refsSisVis = useMemo(() => sisVis.map((s) => s.ref), [sisVis]);
+  const estadoSis = estadoVisibles(selSis, refsSisVis);
 
   const todoExtVisibleSel = extVis.length > 0 && extVis.every((e) => selExt.has(e.id));
   function toggleTodoExtVisible() {
@@ -515,6 +519,16 @@ export function ConciliacionesClient({ extracto, sistema, cruces }: { extracto: 
             valorMin={sisValorMin} setValorMin={setSisValorMin} valorMax={sisValorMax} setValorMax={setSisValorMax}
             orden={ordenSis} setOrden={setOrdenSis}
           />
+          {sisVis.length > 0 && (
+            <div className="mb-1 flex items-center justify-between gap-2 px-1 py-1 text-xs">
+              <label className="inline-flex cursor-pointer items-center gap-1.5 text-gray-500">
+                <input type="checkbox" checked={estadoSis.checked} ref={(el) => { if (el) el.indeterminate = estadoSis.indeterminate; }}
+                  onChange={() => setSelSis((p) => alternarVisibles(p, refsSisVis))} aria-label={`${estadoSis.etiqueta} (visibles)`} />
+                {estadoSis.etiqueta} (visibles)
+              </label>
+              {estadoSis.ocultas > 0 && <span className="text-gray-400">{estadoSis.ocultas} seleccionado{estadoSis.ocultas === 1 ? "" : "s"} fuera del filtro</span>}
+            </div>
+          )}
           {sisVis.length === 0 ? <Vacio>Sin movimientos para estos filtros.</Vacio> : sisVis.map((s) => (
             <ItemFila key={s.ref} sel={selSis.has(s.ref)} sugerido={sugIdsSis.has(s.ref)} onClick={() => toggleSis(s.ref)} fecha={s.fecha} desc={`${s.tipo} · ${s.descripcion}`} valor={s.valor} contrato={s.numeroContrato} />
           ))}

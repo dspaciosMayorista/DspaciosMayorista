@@ -100,6 +100,12 @@ export function DateInput({
     onValueChange?.(next);
   }
 
+  // Al salir del campo (o con Enter) se acepta el año de dos dígitos y se muestra dd/mm/aaaa.
+  function confirmarTexto() {
+    const next = parseCalendarText(text, type);
+    if (next && (next !== currentValue || text !== displayCalendarValue(next, type))) change(next);
+  }
+
   function openCalendar(next: boolean) {
     if (disabled || readOnly) return;
     if (next) {
@@ -150,11 +156,12 @@ export function DateInput({
           aria-describedby={[inputProps["aria-describedby"], touched && error ? errorId : null].filter(Boolean).join(" ") || undefined}
           onChange={(event) => {
             const nextText = event.target.value;
-            change(parseCalendarText(nextText, type), nextText);
+            change(parseCalendarText(nextText, type, { anioCorto: false }), nextText);
           }}
-          onBlur={(event) => { setTouched(true); onBlur?.(event); }}
+          onBlur={(event) => { confirmarTexto(); setTouched(true); onBlur?.(event); }}
           onInvalid={() => setTouched(true)}
           onKeyDown={(event) => {
+            if (event.key === "Enter") confirmarTexto();
             onKeyDown?.(event);
             if (!event.defaultPrevented && event.key === "ArrowDown") {
               event.preventDefault();

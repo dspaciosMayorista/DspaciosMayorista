@@ -8,8 +8,10 @@ import type { Database } from "@/types/database";
 // dependencias propias, así que el relativo es 100% equivalente en tiempo
 // de build — pero deja este archivo testeable con ejecución real, mismo
 // patrón que ya usan otros módulos puros de este directorio.
-import { liquidarHotelNoches, liquidarHotelMasBarato, toTemporadaRango, type TemporadaRango } from "../calc/paquetes.ts";
-import { claveFilaTarifa, netosDeColumna } from "../calc/netosPorTemporada.ts";
+import { liquidarHotelNoches, liquidarHotelMasBarato, toTemporadaRango, hoyISO, type TemporadaRango } from "../calc/paquetes.ts";
+import { hotelConGrupos } from "../calc/desdeEstadia.ts";
+import { basesPromoDeFilas, claveFilaTarifa, netosDeColumna } from "../calc/netosPorTemporada.ts";
+import { SELECT_PROMO_VIGENCIA, acomodacionDeColumna } from "../calc/promocionesGrupo.ts";
 // Import RELATIVO por la misma razón que el de arriba: `@/` no resuelve bajo
 // `node --test` plano. `paginacion.ts` solo tiene imports de TIPO (se borran
 // con `--experimental-strip-types`), así que el relativo es equivalente en
@@ -31,11 +33,15 @@ export type TempRow = {
   // #43/#60: id de la vigencia y sus grupos de días (incrustados en la misma lectura).
   id?: number | null;
   hotel_temporada_grupos?: unknown;
+  // #43/#60 entrega 4: promociones (misma lectura).
+  promo_base_id?: number | null; descuento_unidad?: string | null; noche_gratis_regla?: string | null;
+  dias_promo?: unknown; hotel_promocion_reglas?: unknown;
 };
 export type TarRow = {
   hotel_id: number; tipo_habitacion: string | null; alimentacion: string | null; temporada: string | null;
   neto_sencilla: number | null; neto_doble: number | null; neto_triple: number | null; neto_multiple: number | null;
   grupo_id?: string | null;
+  temporada_base?: string | null;
 };
 
 const ROOM_COLS: (keyof TarRow)[] = ["neto_sencilla", "neto_doble", "neto_triple", "neto_multiple"];
@@ -69,21 +75,32 @@ function buildVigenciaChecker(temps: TempRow[], tarifas: TarRow[]) {
       let ok = false;
       if (tempMap && temporadas.length && numNoches > 0) {
         for (const col of ROOM_COLS) {
-          const c = liquidarHotelNoches({ fechaIda, numNoches, temporadas, netoPorTemporada: netoMap(tempMap, col), regimen: regimen ?? undefined });
+          const c = liquidarHotelNoches({ fechaIda, numNoches, temporadas, netoPorTemporada: netoMap(tempMap, col), regimen: regimen ?? undefined, basePromoPorClave: basesPromoDeFilas(tempMap), acomodacion: acomodacionDeColumna(col) });
           if (c != null && c > 0) { ok = true; break; }
         }
       }
       cache.set(ck, ok); return ok;
     },
-    rango(hotelId: number, categoria: string | null, regimen: string | null, desde: string, hasta: string, numNoches: number): boolean {
-      const ck = `r|${hotelId}|${categoria ?? ""}|${regimen ?? ""}|${desde}|${hasta}|${numNoches}`;
+    rango(hotelId: number, categoria: string | null, regimen: string | null, desde: string, hasta: string, numNoches: number, desdeEntrada: string | null = null): boolean {
+      const ck = `r|${hotelId}|${categoria ?? ""}|${regimen ?? ""}|${desde}|${hasta}|${numNoches}|${desdeEntrada ?? ""}`;
       const hit = cache.get(ck); if (hit !== undefined) return hit;
       const temporadas = tempsByHotel.get(hotelId) ?? [];
       const tempMap = grupos.get(`${hotelId}|||${categoria ?? ""}|||${regimen ?? ""}`);
       let ok = false;
+      // #43/#60 entrega 6: un hotel con grupos publica la estadía real (`desde_entrada`): la fila sigue vigente si ESA estadía sigue vendible
+      // (una liquidación por fila, sin buscar candidatas por visita). Sin justificación, con grupos no hay «desde» verificable: no se muestra.
+      if (tempMap && temporadas.length && numNoches > 0 && hotelConGrupos(temporadas)) {
+        if (desdeEntrada && desdeEntrada >= hoyISO()) {
+          for (const col of ROOM_COLS) {
+            const c = liquidarHotelNoches({ fechaIda: desdeEntrada, numNoches, temporadas, netoPorTemporada: netoMap(tempMap, col), regimen: regimen ?? undefined, basePromoPorClave: basesPromoDeFilas(tempMap), acomodacion: acomodacionDeColumna(col) });
+            if (c != null && c > 0) { ok = true; break; }
+          }
+        }
+        cache.set(ck, ok); return ok;
+      }
       if (tempMap && temporadas.length && numNoches > 0) {
         for (const col of ROOM_COLS) {
-          const c = liquidarHotelMasBarato({ desde, hasta, numNoches, temporadas, netoPorTemporada: netoMap(tempMap, col), regimen: regimen ?? undefined });
+          const c = liquidarHotelMasBarato({ desde, hasta, numNoches, temporadas, netoPorTemporada: netoMap(tempMap, col), regimen: regimen ?? undefined, basePromoPorClave: basesPromoDeFilas(tempMap), acomodacion: acomodacionDeColumna(col) });
           if (c != null && c > 0) { ok = true; break; }
         }
       }
@@ -94,7 +111,7 @@ function buildVigenciaChecker(temps: TempRow[], tarifas: TarRow[]) {
 
 type FilaConVigencia = {
   modulo: string; hotel_id?: number | null; categoria?: string | null; regimen?: string | null;
-  fecha_ida?: string | null; fecha_regreso?: string | null; noches?: number | null;
+  fecha_ida?: string | null; fecha_regreso?: string | null; noches?: number | null; desde_entrada?: string | null; desde_entrada_doble?: string | null;
 };
 
 // Predicado de "fila de hotel verificable" — la MISMA condición que arma
@@ -162,7 +179,7 @@ export async function filtrarTarifarioVencidas<T extends FilaConVigencia>(
     ejecutarConsultaPaginada<TempRow>((from, hasta) =>
       admin
         .from("hotel_temporadas")
-        .select("hotel_id, id, nombre, fecha_inicio, fecha_fin, prioridad, compra_inicio, compra_fin, tipo, descuento_valor, rangos, blackouts, min_noches, regimen_restringido, hotel_temporada_grupos(id, dias, activo)")
+        .select(`hotel_id, id, nombre, fecha_inicio, fecha_fin, prioridad, compra_inicio, compra_fin, tipo, descuento_valor, rangos, blackouts, min_noches, regimen_restringido, hotel_temporada_grupos(id, dias, activo), ${SELECT_PROMO_VIGENCIA}`)
         .in("hotel_id", hIds)
         .order("orden")
         .order("id")
@@ -171,7 +188,7 @@ export async function filtrarTarifarioVencidas<T extends FilaConVigencia>(
     ejecutarConsultaPaginada<TarRow>((from, hasta) =>
       admin
         .from("tarifa_hotel")
-        .select("hotel_id, tipo_habitacion, alimentacion, temporada, neto_sencilla, neto_doble, neto_triple, neto_multiple, grupo_id")
+        .select("hotel_id, tipo_habitacion, alimentacion, temporada, neto_sencilla, neto_doble, neto_triple, neto_multiple, grupo_id, temporada_base")
         .in("hotel_id", hIds)
         .order("id")
         .range(from, hasta)
@@ -194,7 +211,7 @@ export async function filtrarTarifarioVencidas<T extends FilaConVigencia>(
       return chk.bloqueo(f.hotel_id, f.categoria ?? null, f.regimen ?? null, f.fecha_ida, f.noches);
     }
     if (f.modulo === "porcion_terrestre") {
-      return chk.rango(f.hotel_id, f.categoria ?? null, f.regimen ?? null, f.fecha_ida, f.fecha_regreso ?? f.fecha_ida, f.noches ?? 1);
+      return chk.rango(f.hotel_id, f.categoria ?? null, f.regimen ?? null, f.fecha_ida, f.fecha_regreso ?? f.fecha_ida, f.noches ?? 1, f.desde_entrada ?? f.desde_entrada_doble ?? null);
     }
     return true;
   });

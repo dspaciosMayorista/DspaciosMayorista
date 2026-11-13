@@ -26,7 +26,9 @@ export type BaseCorporativaGrupo = { categoria: string; precio: number };
 /** Bases de UN grupo tal como se guardan (sin vigencia: la da el grupo). Mixta va por régimen. */
 export type BasesGrupo = BaseDubaiGrupo[] | Record<string, BaseMixtaGrupo[]> | BaseCorporativaGrupo[];
 export type ParamsCalculadora = DubaiParams | MixtaParams | CorporativaParams;
-export type BasesGuardadasGrupo = { tipo: CalcTipo; bases: BasesGrupo; version: number };
+/** `generales`: parámetros de la fórmula PROPIOS del grupo (migración 298); null = usa los generales del hotel. */
+export type GeneralesGrupo = Record<string, unknown>;
+export type BasesGuardadasGrupo = { tipo: CalcTipo; bases: BasesGrupo; version: number; generales?: GeneralesGrupo | null };
 
 export const definesEdades = (tipo: CalcTipo) => tipo === "dubai";
 
@@ -201,4 +203,71 @@ export function claveBases(b: unknown): string {
   const orden = (v: unknown): unknown => Array.isArray(v) ? v.map(orden)
     : v && typeof v === "object" ? Object.fromEntries(Object.keys(v as object).sort().map((k) => [k, orden((v as Record<string, unknown>)[k])])) : v;
   return JSON.stringify(orden(b));
+}
+
+// ── Parámetros de la fórmula propios del grupo (migración 298) ───────────────────────────
+// Solo FÓRMULA: modificadores, suplementos (incluido FULL), IVA, pax, persona/niño adicional, impuesto y
+// descuento de la tarifa (Corporativa, «Dinámica»: es parte de la fórmula, no una promoción). Nunca
+// promociones ni bases: una promoción comercial no puede entrar como «parámetro» del grupo.
+export const CLAVES_GENERALES: Record<CalcTipo, readonly string[]> = {
+  dubai: ["regimen_base", "modificadores", "suplementos", "infante_nota"],
+  mixta: ["iva_pct", "acom", "nino", "pax", "infante_nota"],
+  corporativa: ["regimen_base", "persona_adicional", "nino_adicional", "impuesto_pct", "descuento_pct", "suplementos_regimen", "infante_nota"],
+};
+
+/** Los parámetros de la fórmula de unos params (del formulario o del hotel), sin bases ni promociones. */
+export function generalesDeParams(tipo: CalcTipo, params: ParamsCalculadora): GeneralesGrupo {
+  const p = params as unknown as Record<string, unknown>;
+  return JSON.parse(JSON.stringify(Object.fromEntries(CLAVES_GENERALES[tipo].filter((k) => p[k] !== undefined).map((k) => [k, p[k]]))));
+}
+
+/** Generales con los que se calcula el grupo: los propios (si los tiene) sobre los del hotel; sin promociones. */
+export function generalesEfectivos(tipo: CalcTipo, hotel: ParamsCalculadora, propios: GeneralesGrupo | null | undefined): ParamsCalculadora {
+  const base = { ...(hotel as unknown as Record<string, unknown>) };
+  if (tipo === "dubai") base.promos = [];
+  return (propios ? { ...base, ...generalesDeParams(tipo, propios as unknown as ParamsCalculadora) } : base) as unknown as ParamsCalculadora;
+}
+
+const ETIQUETA: Record<string, string> = {
+  "regimen_base": "Régimen base", "infante_nota": "Nota de infante",
+  "modificadores.sencilla_pct": "Sencilla %", "modificadores.pax3_pct": "3er pax %", "modificadores.pax4_pct": "4to pax %",
+  "modificadores.nino_pct": "Niño 1 %", "modificadores.nino2_pct": "Niño 2 %", "modificadores.infante_pct": "Infante %",
+  "iva_pct": "IVA %", "nino.iva": "Niño/infante con IVA", "persona_adicional": "Persona adicional", "nino_adicional": "Niño adicional",
+  "impuesto_pct": "Impuesto %", "descuento_pct": "Descuento de la tarifa % (fórmula, no es promoción)",
+};
+/** Pares «etiqueta → valor» de unos generales, para mostrarlos y compararlos (suplementos por régimen). */
+function aplanar(tipo: CalcTipo, g: GeneralesGrupo): Map<string, string> {
+  const out = new Map<string, string>();
+  const val = (v: unknown) => (typeof v === "number" ? formatNeto(v) : typeof v === "boolean" ? (v ? "sí" : "no") : v == null || v === "" ? "vacío" : String(v));
+  for (const [k, v] of Object.entries(g)) {
+    if (k === "suplementos" && Array.isArray(v)) {
+      for (const s of v as { regimen: string; monto: number }[]) out.set(`Suplemento ${s.regimen}`, val(s.monto));
+    } else if (k === "suplementos_regimen" && Array.isArray(v)) {
+      for (const s of v as { regimen: string; adulto: number; nino: number }[]) {
+        out.set(`Suplemento ${s.regimen} adulto`, val(s.adulto)); out.set(`Suplemento ${s.regimen} niño`, val(s.nino));
+      }
+    } else if (k === "acom" && v && typeof v === "object") {
+      for (const [a, c] of Object.entries(v as Record<string, { modo: string; iva: boolean }>)) out.set(`${a}: modo / IVA`, `${c.modo === "hab" ? "por habitación" : "por persona"} / ${c.iva ? "con IVA" : "sin IVA"}`);
+    } else if (k === "pax" && v && typeof v === "object") {
+      for (const [a, n] of Object.entries(v as Record<string, number>)) out.set(`Pax por habitación ${a}`, val(n));
+    } else if (v && typeof v === "object" && !Array.isArray(v)) {
+      for (const [k2, v2] of Object.entries(v as Record<string, unknown>)) out.set(ETIQUETA[`${k}.${k2}`] ?? `${k}.${k2}`, val(v2));
+    } else out.set(ETIQUETA[k] ?? k, val(v));
+  }
+  if (tipo === "dubai" && !out.has("Niño 2 %")) out.set("Niño 2 %", "sin configurar");
+  return out;
+}
+
+/** Texto de referencia de unos generales (p. ej. los del hotel), en una línea. */
+export const resumenGenerales = (tipo: CalcTipo, g: GeneralesGrupo) => [...aplanar(tipo, g)].map(([k, v]) => `${k}: ${v}`).join(" · ");
+
+/** Qué cambia en los parámetros de la fórmula del grupo al confirmar (anterior → nuevo), sobre los efectivos. */
+export function cambiosGenerales(tipo: CalcTipo, hotel: ParamsCalculadora, antes: GeneralesGrupo | null | undefined, despues: GeneralesGrupo | null): string[] {
+  const lineas: string[] = [];
+  if (!!antes !== !!despues) {
+    lineas.push(`Parámetros de la fórmula del grupo: ${antes ? "propios" : "los generales del hotel"} → ${despues ? "propios del grupo (los del hotel no cambian)" : "los generales del hotel"}.`);
+  }
+  const a = aplanar(tipo, generalesDeParams(tipo, generalesEfectivos(tipo, hotel, antes))), d = aplanar(tipo, generalesDeParams(tipo, generalesEfectivos(tipo, hotel, despues)));
+  for (const k of new Set([...a.keys(), ...d.keys()])) if (a.get(k) !== d.get(k)) lineas.push(`${k}: ${a.get(k) ?? "vacío"} → ${d.get(k) ?? "vacío"}`);
+  return lineas;
 }

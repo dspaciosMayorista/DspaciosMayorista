@@ -3,19 +3,28 @@
 // #43/#60 incremento 3 — Editor de grupos de días y de su PROPUESTA de tarifas (preparación inactiva).
 // Solicitudes: abrir = 1 lectura; editar y revisar = 0 (todo en memoria, lib/hoteles/alcanceGrupos.ts);
 // confirmar = 1 RPC, que devuelve la configuración nueva (no hay recarga de la página ni sondeos).
-// Nada de lo que se hace aquí cambia lo que hoy se vende: los grupos siguen inactivos (migración 293).
+// 299 (entrega 3c): la propuesta es el BORRADOR de cada grupo; «Aplicar a la venta» la pone a la venta en una
+// transacción, tras revisar el alcance (1 lectura) y confirmar UNA POR UNA las acomodaciones que hoy no se venden.
+// Mientras tanto lo vigente se sigue vendiendo. «Volver a todos los días» exige elegir qué tarifa se conserva.
 // Importes: se muestran y se leen con UN solo formato (coma decimal, punto de miles: formatNeto/leerNeto).
 // Notas y edades: si no se tocan se OMITEN (se conservan); «Quitar notas y edades» es un borrado explícito.
 import { useEffect, useMemo, useRef, useState } from "react";
-import { CalendarDays, Plus, RefreshCw, Trash2, X } from "lucide-react";
+import { CalendarDays, Plus, RefreshCw, ShoppingCart, Trash2, Undo2, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { useEscapeCerrar } from "@/components/ui/useEscapeCerrar";
 import {
   ACOMS, CAMPOS_EXTRA, DIAS, EXTRAS_VACIOS, NETOS_VACIOS, claveCombo, coberturaPrevista, explicarCelda, extrasDe, formatNeto,
   leerEdad, leerNeto, planGrupos, planPropuesta, sugerencia, textoBorrado, textoDias, tieneExtras, validarEdades, basesRevisadasDe,
   type ColExtra, type ColNeto, type ConfigGrupos, type Extras, type FilaPropuesta, type GrupoCfg, type GrupoEditado, type ModoPropuesta,
 } from "@/lib/hoteles/alcanceGrupos";
-import { borrarGrupoDias, guardarGruposVigencia, guardarPropuestaGrupos, leerConfigGrupos } from "./grupos-actions";
+import {
+  claveComboVolver, payloadHabilitaciones, payloadVolver, planActivacion, planVolver, puedeAplicar, textoRegeneracion, type AlcanceGrupos,
+} from "@/lib/hoteles/activacionGrupos";
+import {
+  aplicarGruposVenta, borrarGrupoDias, descartarBorradorGrupos, guardarGruposVigencia, guardarPropuestaGrupos, leerAlcanceGrupos,
+  leerConfigGrupos, volverATodosLosDias,
+} from "./grupos-actions";
 
 type Celda = {
   texto: Record<ColNeto, string>; origen: number | null; tocada: boolean;
@@ -58,11 +67,15 @@ export function GruposDiasPanel({ temporadaId, nombreVigencia, onCerrar, onGrupo
   const [desactualizada, setDesactualizada] = useState(false);
   const [aviso, setAviso] = useState<string | null>(null);
   const [ocupado, setOcupado] = useState(false);
+  useEscapeCerrar(true, onCerrar, ocupado); // Escape = la X; no corta una confirmación en curso
   const [grupos, setGrupos] = useState<GrupoEditado[]>([]);
   const [celdas, setCeldas] = useState<Record<string, Celda>>({});
   const [grupoActivo, setGrupoActivo] = useState<string | null>(null);
   const [modo, setModo] = useState<ModoPropuesta>("actualizar");
-  const [revision, setRevision] = useState<null | "grupos" | "propuesta" | { borrar: string }>(null);
+  const [revision, setRevision] = useState<null | "grupos" | "propuesta" | "venta" | "volver" | "descartar" | { borrar: string }>(null);
+  const [alcance, setAlcance] = useState<AlcanceGrupos | null>(null);
+  const [confirmadas, setConfirmadas] = useState<Set<string>>(new Set());
+  const [elecciones, setElecciones] = useState<Record<string, string | null>>({});
   const [extrasAbiertos, setExtrasAbiertos] = useState<Record<string, boolean>>({});
   const leido = useRef(false);
 
@@ -70,6 +83,7 @@ export function GruposDiasPanel({ temporadaId, nombreVigencia, onCerrar, onGrupo
     // Guardar grupos o la propuesta no toca las bases: si la respuesta no las trae, se conservan las leídas.
     const c = nueva.bases ? nueva : { ...nueva, bases: cfg?.bases };
     setCfg(c); setGrupos(gruposDe(c)); setCeldas(celdasDe(c)); setRevision(null); setDesactualizada(false);
+    setAlcance(null); setConfirmadas(new Set()); setElecciones({});
     setGrupoActivo((g) => (g && c.grupos.some((x) => x.id === g) ? g : c.grupos[0]?.id ?? null));
   }
   async function cargar() {
@@ -95,7 +109,7 @@ export function GruposDiasPanel({ temporadaId, nombreVigencia, onCerrar, onGrupo
     setOcupado(false);
     if (!r.ok) return falloEscritura(r);
     aplicar(r.config); onGruposCambiados(r.config.grupos);
-    setAviso(`Grupos guardados: ${r.altas} nuevo(s), ${r.cambios} cambiado(s). Siguen inactivos.`);
+    setAviso(`Grupos guardados: ${r.altas} nuevo(s), ${r.cambios} cambiado(s). ${r.config.estado === "activo" ? "Los grupos nuevos no se venden hasta «Aplicar a la venta»." : "No se vende nada todavía."}`);
   }
   async function confirmarBorrado(grupoId: string) {
     if (!cfg) return;
@@ -104,7 +118,10 @@ export function GruposDiasPanel({ temporadaId, nombreVigencia, onCerrar, onGrupo
     setOcupado(false);
     if (!r.ok) return falloEscritura(r);
     aplicar(r.config); onGruposCambiados(r.config.grupos);
-    setAviso(`Grupo borrado con ${r.propuestasEliminadas} propuesta(s)${r.basesEliminadas ? ` y sus bases de calculadora` : ""}. Nada de lo que se vende cambió.`);
+    const seVendia = cfg.grupos.find((g) => g.id === grupoId)?.activo;
+    const reg = r.regeneracion ? textoRegeneracion(r.regeneracion) : null;
+    setAviso(`Grupo borrado con ${r.propuestasEliminadas} propuesta(s)${r.basesEliminadas ? ` y sus bases de calculadora` : ""}. ${seVendia ? `Sus tarifas salieron de la venta (quedan en el historial). ${reg?.texto ?? ""}` : "Nada de lo que se vende cambió."}`);
+    if (reg && !reg.ok) setError(reg.texto);
   }
 
   // ── Propuesta ──
@@ -163,7 +180,51 @@ export function GruposDiasPanel({ temporadaId, nombreVigencia, onCerrar, onGrupo
     setOcupado(false);
     if (!r.ok) return falloEscritura(r);
     aplicar(r.config);
-    setAviso(`Propuesta guardada: ${r.nuevas} nueva(s), ${r.actualizadas} actualizada(s), ${r.eliminadas} quitada(s). No se activó nada.`);
+    setAviso(`Propuesta guardada: ${r.nuevas} nueva(s), ${r.actualizadas} actualizada(s), ${r.eliminadas} quitada(s). Lo que se vende no cambió: revisa y aplica a la venta cuando esté lista.`);
+  }
+
+  // ── Venta (299) ──
+  const seVende = cfg?.estado === "activo";
+  async function revisarVenta() {
+    setOcupado(true); setError(null); setAviso(null);
+    const r = await leerAlcanceGrupos(temporadaId);   // UNA lectura; revisar no vuelve a leer
+    setOcupado(false);
+    if (!r.ok) return setError(r.error);
+    setAlcance(r.alcance); setConfirmadas(new Set()); setRevision("venta");
+  }
+  const planA = useMemo(() => (alcance ? planActivacion(alcance) : null), [alcance]);
+  async function confirmarVenta() {
+    if (!alcance || !planA || !puedeAplicar(planA, confirmadas)) return;
+    setOcupado(true);
+    const r = await aplicarGruposVenta(temporadaId, alcance.huella, payloadHabilitaciones(planA, confirmadas));
+    setOcupado(false);
+    if (!r.ok) return falloEscritura(r);
+    aplicar(r.config); onGruposCambiados(r.config.grupos);
+    const reg = textoRegeneracion(r.regeneracion);
+    setAviso(`Aplicado a la venta: desde ahora cada noche se vende con la tarifa de su grupo. ${reg.texto}`);
+    if (!reg.ok) setError(reg.texto);
+  }
+  async function confirmarDescartar() {
+    if (!cfg) return;
+    setOcupado(true);
+    const r = await descartarBorradorGrupos(temporadaId, cfg.huella);
+    setOcupado(false);
+    if (!r.ok) return falloEscritura(r);
+    aplicar(r.config);
+    setAviso("Borrador descartado: la propuesta de los grupos que se venden vuelve a ser exactamente lo vigente.");
+  }
+  const planV = useMemo(() => (cfg && seVende ? planVolver(cfg) : null), [cfg, seVende]);
+  const payloadV = useMemo(() => (planV ? payloadVolver(planV, elecciones) : null), [planV, elecciones]);
+  async function confirmarVolver() {
+    if (!cfg || !payloadV) return;
+    setOcupado(true);
+    const r = await volverATodosLosDias(temporadaId, cfg.huella, payloadV);
+    setOcupado(false);
+    if (!r.ok) return falloEscritura(r);
+    aplicar(r.config); onGruposCambiados(r.config.grupos);
+    const reg = textoRegeneracion(r.regeneracion);
+    setAviso(`${cfg.vigencia.nombre} vuelve a venderse con tarifas de todos los días (${r.nuevas} conservada(s), ${r.quitadas} tarifa(s) por grupo fuera de la venta). Los grupos quedan preparados. ${reg.texto}`);
+    if (!reg.ok) setError(reg.texto);
   }
 
   return (
@@ -172,7 +233,9 @@ export function GruposDiasPanel({ temporadaId, nombreVigencia, onCerrar, onGrupo
         <div className="flex items-start justify-between gap-3">
           <div>
             <h3 className="flex items-center gap-2 text-lg font-semibold text-[var(--brand-primary)]"><CalendarDays className="h-5 w-5" aria-hidden /> Grupos de días · {nombreVigencia}</h3>
-            <p className="text-xs text-gray-500">Preparado — inactivo. Lo que configures aquí no cambia lo que hoy se vende hasta que se active en una entrega futura.</p>
+            <p className="text-xs text-gray-500" data-estado={cfg?.estado ?? "preparado"}>{seVende
+              ? "Se vende por grupos de días. Lo que edites aquí es un borrador: lo vigente se sigue vendiendo hasta «Aplicar cambios a la venta»."
+              : "Preparado — no se vende todavía. Lo que configures aquí no cambia lo que hoy se vende hasta «Aplicar a la venta»."}</p>
           </div>
           <button type="button" onClick={onCerrar} aria-label="Cerrar" className="rounded p-1 text-gray-500 hover:bg-gray-100"><X className="h-5 w-5" aria-hidden /></button>
         </div>
@@ -201,9 +264,11 @@ export function GruposDiasPanel({ temporadaId, nombreVigencia, onCerrar, onGrupo
                 <div className="flex gap-1" role="group" aria-label={`Días del grupo ${g.nombre || i + 1}`}>
                   {DIAS.map((d) => {
                     const activo = g.dias.includes(d.n);
-                    const bloqueado = !activo && diaUsadoPorOtro(i, d.n);
+                    const seVendeGrupo = !!g.id && !!cfg.grupos.find((x) => x.id === g.id)?.activo;
+                    const bloqueado = seVendeGrupo || (!activo && diaUsadoPorOtro(i, d.n));
                     return (
-                      <button key={d.n} type="button" aria-pressed={activo} disabled={bloqueado} title={bloqueado ? `El ${d.nombre} ya está en otro grupo` : d.nombre}
+                      <button key={d.n} type="button" aria-pressed={activo} disabled={bloqueado}
+                        title={seVendeGrupo ? "Los días de un grupo que se vende no se cambian (vuelve a «todos los días» o borra el grupo y crea otro)" : bloqueado ? `El ${d.nombre} ya está en otro grupo` : d.nombre}
                         onClick={() => setGrupos((gs) => gs.map((x, j) => (j === i ? { ...x, dias: activo ? x.dias.filter((y) => y !== d.n) : [...x.dias, d.n] } : x)))}
                         className={`h-8 w-8 rounded text-xs font-medium ${activo ? "bg-[var(--brand-primary)] text-white" : "bg-gray-100 text-gray-700"} disabled:opacity-30`}>
                         {d.corto}
@@ -229,7 +294,7 @@ export function GruposDiasPanel({ temporadaId, nombreVigencia, onCerrar, onGrupo
                         {planG.altas.map((g) => <li key={`a${g.nombre}`}>Nuevo grupo «{g.nombre.trim()}»: {textoDias(g.dias)}.</li>)}
                         {planG.cambios.map((g) => <li key={`c${g.id}`}>«{g.nombre.trim()}» queda con {textoDias(g.dias)}.</li>)}
                       </ul>
-                      <p className="text-xs text-gray-600">Los grupos quedan inactivos: hoy la vigencia se sigue vendiendo igual.</p>
+                      <p className="text-xs text-gray-600">{seVende ? "Los grupos nuevos no se venden hasta «Aplicar a la venta»; los que ya se venden no cambian." : "Los grupos quedan preparados: hoy la vigencia se sigue vendiendo igual."}</p>
                       <div className="flex gap-2"><Button type="button" onClick={() => void confirmarGrupos()} disabled={ocupado}>Confirmar grupos</Button><Button type="button" variant="outline" onClick={() => setRevision(null)}>Volver</Button></div>
                     </>}
               </div>
@@ -237,7 +302,8 @@ export function GruposDiasPanel({ temporadaId, nombreVigencia, onCerrar, onGrupo
             {revision && typeof revision === "object" && (
               <div className="space-y-2 rounded border border-red-300 bg-red-50 p-3 text-sm">
                 {textoBorrado(cfg, revision.borrar).map((l) => <p key={l}>{l}</p>)}
-                <div className="flex gap-2"><Button type="button" onClick={() => void confirmarBorrado(revision.borrar)} disabled={ocupado}>Confirmar borrado</Button><Button type="button" variant="outline" onClick={() => setRevision(null)}>Cancelar</Button></div>
+                <div className="flex gap-2"><Button type="button" onClick={() => void confirmarBorrado(revision.borrar)}
+                  disabled={ocupado || (!!cfg.grupos.find((x) => x.id === revision.borrar)?.activo && cfg.grupos.filter((x) => x.activo).length < 2)}>Confirmar borrado</Button><Button type="button" variant="outline" onClick={() => setRevision(null)}>Cancelar</Button></div>
               </div>
             )}
           </section>
@@ -258,7 +324,7 @@ export function GruposDiasPanel({ temporadaId, nombreVigencia, onCerrar, onGrupo
             {grupoActivo && (
               <div className="overflow-x-auto">
                 <table className="min-w-full text-xs">
-                  <thead><tr className="text-left text-gray-500"><th className="p-1">Categoría / régimen</th>{ACOMS.map((a) => <th key={a.col} className="p-1">{a.etiqueta}</th>)}<th className="p-1">Sugerencia (todos los días)</th></tr></thead>
+                  <thead><tr className="text-left text-gray-500"><th className="p-1">Categoría / régimen</th>{ACOMS.map((a) => <th key={a.col} className="p-1">{a.etiqueta}</th>)}<th className="p-1">{cfg.grupos.find((x) => x.id === grupoActivo)?.activo ? "Se vende hoy" : "Sugerencia (todos los días)"}</th></tr></thead>
                   <tbody>
                     {combos.map(({ cat, reg }) => {
                       const k = claveCombo(grupoActivo, cat, reg);
@@ -286,7 +352,12 @@ export function GruposDiasPanel({ temporadaId, nombreVigencia, onCerrar, onGrupo
                             );
                           })}
                           <td className="p-1">
-                            {s.fila
+                            {cfg.grupos.find((x) => x.id === grupoActivo)?.activo
+                              ? (() => {
+                                  const v = (cfg.vigentes ?? []).find((x) => x.grupo_id === grupoActivo && x.tipo_habitacion === cat && x.alimentacion === reg);
+                                  return <span className="text-gray-600" data-vigente>{v ? ACOMS.filter((a) => v[a.col] != null).map((a) => `${a.etiqueta} ${formatNeto(Number(v[a.col]))}`).join(" · ") || "sin netos" : "No se vende"}</span>;
+                                })()
+                              : s.fila
                               ? <button type="button" onClick={() => usarSugerencia(k, s.fila!, s.fila!.id)} className="text-[var(--brand-accent)] hover:underline">Usar sugerencia</button>
                               : <span className="text-gray-400">{s.duplicada ? "Tarifas duplicadas: escribe el precio" : "Sin tarifa actual"}</span>}
                           </td>
@@ -348,7 +419,79 @@ export function GruposDiasPanel({ temporadaId, nombreVigencia, onCerrar, onGrupo
             )}
           </section>
         )}
+
+        {cfg && cfg.grupos.length > 0 && (
+          <section aria-label="Venta" className="space-y-3 rounded border border-gray-200 p-3">
+            <h4 className="flex items-center gap-2 text-sm font-semibold text-gray-700"><ShoppingCart className="h-4 w-4" aria-hidden /> Venta</h4>
+            <p className="text-xs text-gray-600">{seVende
+              ? "Esta vigencia se vende por grupos. Revisa los cambios del borrador antes de aplicarlos; nada cambia hasta que confirmes."
+              : "Esta vigencia se vende hoy con tarifas de todos los días. Al aplicar, cada noche pasa a venderse con la tarifa de su grupo."}</p>
+            <div className="flex flex-wrap gap-2">
+              <Button type="button" onClick={() => void revisarVenta()} disabled={ocupado}>{seVende ? "Revisar cambios para aplicar a la venta" : "Revisar aplicación a la venta"}</Button>
+              {seVende && <Button type="button" variant="outline" onClick={() => setRevision("descartar")} disabled={ocupado}>Descartar borrador</Button>}
+              {seVende && <Button type="button" variant="outline" onClick={() => { setElecciones({}); setRevision("volver"); }} disabled={ocupado}><Undo2 className="mr-1 h-4 w-4" aria-hidden /> Volver a todos los días</Button>}
+            </div>
+
+            {revision === "venta" && planA && alcance && (
+              <div className="space-y-2 rounded border border-[var(--brand-accent)] bg-sky-50 p-3 text-sm" data-revision="venta">
+                <p className="font-medium">{planA.confirmacion}</p>
+                {planA.bloqueos.length > 0 && (
+                  <div role="alert" className="rounded border border-red-200 bg-red-50 p-2 text-red-700">
+                    <p className="font-medium">No se puede aplicar todavía:</p>
+                    <ul className="list-disc pl-5">{planA.bloqueos.map((b) => <li key={b}>{b}</li>)}</ul>
+                  </div>
+                )}
+                {planA.lineas.length > 0 && <ul className="list-disc pl-5" aria-label="Cambios en la venta">{planA.lineas.map((l) => <li key={l.texto} data-tipo={l.tipo} className={l.tipo === "quita" ? "text-red-700" : ""}>{l.texto}</li>)}</ul>}
+                {planA.habilitaciones.length > 0 && (
+                  <fieldset className="space-y-1 rounded border border-amber-300 bg-amber-50 p-2" aria-label="Acomodaciones que pasan a venderse">
+                    <legend className="px-1 text-xs font-medium text-amber-800">Acomodaciones que HOY no se venden y pasarían a venderse: confírmalas una por una</legend>
+                    {planA.habilitaciones.map((h) => (
+                      <label key={h.clave} className="flex items-start gap-2 text-xs">
+                        <input type="checkbox" checked={confirmadas.has(h.clave)} onChange={(e) => setConfirmadas((s) => { const n = new Set(s); if (e.target.checked) n.add(h.clave); else n.delete(h.clave); return n; })} />
+                        <span>{h.texto}</span>
+                      </label>
+                    ))}
+                    <button type="button" className="text-xs text-[var(--brand-accent)] hover:underline" onClick={() => setConfirmadas(new Set(planA.habilitaciones.map((h) => h.clave)))}>Confirmar todas (acción explícita)</button>
+                  </fieldset>
+                )}
+                <ul className="list-disc pl-5 text-xs text-gray-700" aria-label="Efectos">{planA.avisos.map((a) => <li key={a}>{a}</li>)}</ul>
+                <div className="flex gap-2">
+                  <Button type="button" onClick={() => void confirmarVenta()} disabled={ocupado || !puedeAplicar(planA, confirmadas)}>{planA.primera ? "Aplicar a la venta" : "Aplicar cambios a la venta"}</Button>
+                  <Button type="button" variant="outline" onClick={() => { setRevision(null); setAlcance(null); }}>Cancelar (no cambia nada)</Button>
+                </div>
+              </div>
+            )}
+
+            {revision === "descartar" && (
+              <div className="space-y-2 rounded border border-amber-300 bg-amber-50 p-3 text-sm" data-revision="descartar">
+                <p>Se descartan los cambios del borrador de los grupos que se venden: su propuesta vuelve a ser exactamente lo vigente. Lo que se vende no cambia. Los grupos que aún no se venden conservan su propuesta.</p>
+                <div className="flex gap-2"><Button type="button" onClick={() => void confirmarDescartar()} disabled={ocupado}>Confirmar descarte</Button><Button type="button" variant="outline" onClick={() => setRevision(null)}>Cancelar</Button></div>
+              </div>
+            )}
+
+            {revision === "volver" && planV && (
+              <div className="space-y-2 rounded border border-red-300 bg-red-50 p-3 text-sm" data-revision="volver">
+                <p className="font-medium">Volver a «todos los días» en {cfg.vigencia.nombre}: elige, para cada combinación, qué tarifa se conserva.</p>
+                {planV.combos.map((c) => {
+                  const k = claveComboVolver(c);
+                  return (
+                    <fieldset key={k} className="rounded border border-gray-200 bg-white p-2" aria-label={`${c.tipo_habitacion} / ${c.alimentacion}`}>
+                      <legend className="px-1 text-xs font-medium">{c.tipo_habitacion} / {c.alimentacion}</legend>
+                      {c.opciones.map((o) => (
+                        <label key={o.grupo_id} className="flex items-center gap-2 text-xs"><input type="radio" name={`volver-${k}`} checked={elecciones[k] === o.grupo_id} onChange={() => setElecciones((m) => ({ ...m, [k]: o.grupo_id }))} /> {o.texto}</label>
+                      ))}
+                      <label className="flex items-center gap-2 text-xs"><input type="radio" name={`volver-${k}`} checked={k in elecciones && elecciones[k] === null} onChange={() => setElecciones((m) => ({ ...m, [k]: null }))} /> No conservar (deja de venderse)</label>
+                    </fieldset>
+                  );
+                })}
+                <ul className="list-disc pl-5 text-xs text-gray-700">{planV.avisos.map((a) => <li key={a}>{a}</li>)}</ul>
+                <div className="flex gap-2"><Button type="button" onClick={() => void confirmarVolver()} disabled={ocupado || !payloadV}>Confirmar volver a todos los días</Button><Button type="button" variant="outline" onClick={() => setRevision(null)}>Cancelar</Button></div>
+              </div>
+            )}
+          </section>
+        )}
       </div>
     </div>
   );
 }
+

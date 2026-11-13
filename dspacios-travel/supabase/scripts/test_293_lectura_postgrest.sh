@@ -29,6 +29,11 @@ $PS -d postgres -c "select pg_terminate_backend(pid) from pg_stat_activity where
 $PS -d postgres -c "create database $DB template $PLANTILLA" >/dev/null
 $PS -d "$DB" < supabase/migrations/20260601000293_vigencia_grupos_dias_inactivos.sql >/dev/null
 $PS -d "$DB" < supabase/scripts/fixture_293_vigencia_grupos_dias.sql >/dev/null
+# Esquema FINAL del frente (#43/#60): los cargadores actuales leen además columnas de la 300 (promo_base_id…) y la combinación de la 301;
+# sin ellas su lectura real responde 400 por otra razón. Solo esquema (sin fixtures): esta prueba mira la lectura de los grupos.
+for m in 295_grupos_dias_propuesta 297_calculadora_grupos_dias 298_calculadora_grupos_generales 299_grupos_dias_activacion 300_promociones_grupo 301_promociones_acumulacion 302_desde_estadia_real; do
+  $PS -d "$DB" < "supabase/migrations/20260601000${m}.sql" >/dev/null 2>&1 || { echo "No se pudo aplicar la ${m}"; exit 2; }
+done
 # ENTORNO (no esquema): la imagen local trae el auth.uid() antiguo, que solo lee request.jwt.claim.sub;
 # PostgREST v16 fija request.jwt.claims. Se usa la definición de Supabase, que lee ambas.
 $PS -d "$DB" -c "create or replace function auth.uid() returns uuid language sql stable as \$f\$ select coalesce(nullif(current_setting('request.jwt.claim.sub', true), ''), (nullif(current_setting('request.jwt.claims', true), '')::jsonb ->> 'sub'))::uuid \$f\$" >/dev/null

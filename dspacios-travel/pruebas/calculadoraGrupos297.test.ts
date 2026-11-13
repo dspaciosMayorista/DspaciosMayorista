@@ -225,7 +225,11 @@ registerHooks({
     if (s === "server-only") return { url: datos("export {}"), shortCircuit: true };
     if (s === "next/cache") return { url: datos("export function revalidatePath(p){globalThis.__c297.revalida.push(p)} export function revalidateTag(){}"), shortCircuit: true };
     if (s === "../../paquetes/actions" && (c.parentURL ?? "").endsWith("/producto/hoteles/actions.ts")) {
-      return { url: datos("export async function regenerarTarifariosDeHotel(){ globalThis.__c297.regen++ }"), shortCircuit: true };
+      return { url: datos("export async function regenerarTarifariosDeHotel(){ globalThis.__c297.regen++ } export async function regenerarTarifariosDeHotelAcotado(){ globalThis.__c297.regen = (globalThis.__c297.regen ?? 0) + 1; return globalThis.__c297.regenResultado ?? { paquetes: 1, actualizados: 1, enCurso: 0, fallidos: [] }; }"), shortCircuit: true };
+    }
+    // 299: grupos-actions también regenera (solo cuando cambia lo que se vende).
+    if (s === "../../../paquetes/actions" && (c.parentURL ?? "").endsWith("/grupos-actions.ts")) {
+      return { url: datos("export async function regenerarTarifariosDeHotel(){ globalThis.__c297.regen++ } export async function regenerarTarifariosDeHotelAcotado(){ globalThis.__c297.regen = (globalThis.__c297.regen ?? 0) + 1; return globalThis.__c297.regenResultado ?? { paquetes: 1, actualizados: 1, enCurso: 0, fallidos: [] }; }"), shortCircuit: true };
     }
     return n(s, c);
   },
@@ -256,19 +260,22 @@ beforeEach(() => { est.rpc.length = 0; est.resp = null; est.llamadas.length = 0;
 describe("acción guardarCalculoGrupo: una RPC atómica, sin revalidar ni regenerar", () => {
   const filas = rev(decidirTodas(rev(), DECISIONES_VACIAS, "sin_venta")).filas;
   test("envía exactamente propuesta (payloadFilas) + bases + versiones; una sola solicitud", async () => {
-    const r = await acc.guardarCalculoGrupo(10, "H1", G1, "dubai", 7, 2, BASES_DUBAI, filas);
+    const r = await acc.guardarCalculoGrupo(10, "H1", G1, "dubai", 7, 2, BASES_DUBAI, null, filas);
     assert.equal(r.ok, true);
     assert.equal((r as { basesVersion: number }).basesVersion, 3);
-    assert.deepEqual(est.rpc.map((x) => x[0]), ["grupos_dias_guardar_calculadora"]);
-    assert.deepEqual(est.rpc[0][1], { p_temporada_id: 10, p_huella: "H1", p_grupo_id: G1, p_tipo: "dubai", p_calc_version: 7, p_bases_version: 2, p_bases: BASES_DUBAI, p_filas: payloadFilas(filas) });
+    assert.deepEqual(est.rpc.map((x) => x[0]), ["grupos_dias_guardar_calculadora_grupo"]);
+    assert.deepEqual(est.rpc[0][1], { p_temporada_id: 10, p_huella: "H1", p_grupo_id: G1, p_tipo: "dubai", p_calc_version: 7, p_bases_version: 2, p_bases: BASES_DUBAI, p_generales: null, p_filas: payloadFilas(filas) });
     assert.equal(est.llamadas.length, 0); assert.equal(est.revalida.length, 0);
   });
   test("datos no válidos: CERO solicitudes (fila de otro grupo, sugerencia, tipo, forma de bases, versión)", async () => {
     const otro = [{ ...filas[0], grupo_id: G2 }], sug = [{ ...filas[0], origen_tarifa_id: 77 }];
     for (const args of [
-      [10, "H1", G1, "dubai", 7, null, BASES_DUBAI, otro], [10, "H1", G1, "dubai", 7, null, BASES_DUBAI, sug],
-      [10, "H1", G1, "otra", 7, null, BASES_DUBAI, filas], [10, "H1", G1, "mixta", 7, null, BASES_DUBAI, []],
-      [10, "H1", G1, "dubai", 0, null, BASES_DUBAI, filas], [10, "H1", "no-uuid", "dubai", 7, null, BASES_DUBAI, filas],
+      [10, "H1", G1, "dubai", 7, null, BASES_DUBAI, null, otro], [10, "H1", G1, "dubai", 7, null, BASES_DUBAI, null, sug],
+      [10, "H1", G1, "otra", 7, null, BASES_DUBAI, null, filas], [10, "H1", G1, "mixta", 7, null, BASES_DUBAI, null, []],
+      [10, "H1", G1, "dubai", 0, null, BASES_DUBAI, null, filas], [10, "H1", "no-uuid", "dubai", 7, null, BASES_DUBAI, null, filas],
+      // Generales con una promoción o con bases: nunca viajan como «parámetros de la fórmula».
+      [10, "H1", G1, "dubai", 7, null, BASES_DUBAI, { promos: [{ temporadaBase: "ALTA" }] }, filas],
+      [10, "H1", G1, "dubai", 7, null, BASES_DUBAI, { bases: [] }, filas], [10, "H1", G1, "dubai", 7, null, BASES_DUBAI, [1], filas],
     ] as const) {
       const r = await (acc.guardarCalculoGrupo as (...a: unknown[]) => Promise<{ ok: boolean }>)(...args);
       assert.equal(r.ok, false);
@@ -277,14 +284,14 @@ describe("acción guardarCalculoGrupo: una RPC atómica, sin revalidar ni regene
   });
   test("desactualizada (PT409): dice QUÉ cambió, sin prefijo técnico y sin reintento", async () => {
     est.resp = { data: null, error: { code: "PT409", message: "CONFIG_DESACTUALIZADA: la calculadora del hotel cambió desde que la abriste. Recarga y revisa de nuevo." } };
-    const r = await acc.guardarCalculoGrupo(10, "H1", G1, "dubai", 7, 2, BASES_DUBAI, filas) as { ok: false; error: string; desactualizada?: true };
+    const r = await acc.guardarCalculoGrupo(10, "H1", G1, "dubai", 7, 2, BASES_DUBAI, null, filas) as { ok: false; error: string; desactualizada?: true };
     assert.equal(r.desactualizada, true);
     assert.equal(r.error, "la calculadora del hotel cambió desde que la abriste. Recarga y revisa de nuevo.");
     assert.equal(est.rpc.length, 1);
   });
   test("rechazo de validación de la base: mensaje sin nombres técnicos", async () => {
     est.resp = { data: null, error: { code: "23514", message: 'new row for relation "hotel_grupo_tarifa_propuesta" violates check constraint "hotel_grupo_tarifa_propuesta_edades_rangos"' } };
-    const r = await acc.guardarCalculoGrupo(10, "H1", G1, "dubai", 7, 2, BASES_DUBAI, filas) as { ok: false; error: string };
+    const r = await acc.guardarCalculoGrupo(10, "H1", G1, "dubai", 7, 2, BASES_DUBAI, null, filas) as { ok: false; error: string };
     assert.doesNotMatch(r.error, /hotel_grupo|constraint/);
   });
 });
@@ -335,8 +342,11 @@ describe("cableado", () => {
     }
   });
   test("la acción y el panel no revalidan, no sondean ni reintentan; el panel no recarga sola la página", () => {
+    // 299: grupos-actions solo revalida al cambiar la venta; la acción de la calculadora por grupo, nunca.
     const accion = leer("app/(dashboard)/dashboard/producto/hoteles/[id]/grupos-actions.ts");
-    assert.doesNotMatch(accion, /revalidatePath\(/);
+    const i = accion.indexOf("export async function guardarCalculoGrupo(");
+    assert.ok(i >= 0);
+    assert.doesNotMatch(accion.slice(i), /revalidatePath\(|despuesDeCambiarLaVenta\(|regenerar/);
     const panel = leer("app/(dashboard)/dashboard/producto/hoteles/[id]/CalculoGrupoPanel.tsx");
     assert.doesNotMatch(panel, /setInterval|setTimeout|useEffect|router\.refresh/);
     assert.match(panel, /onClick=\{\(\) => window\.location\.reload\(\)\}/, "recargar solo con un clic explícito");
@@ -363,7 +373,7 @@ describe("bases: comparación independiente del orden de claves (jsonb lo cambia
 describe("compra cerrada: el rechazo del servidor llega claro y sin reintento", () => {
   test("mensaje propio de la RPC, una sola llamada", async () => {
     est.resp = { data: null, error: { code: "23514", message: 'La vigencia "CERRADA" tiene la compra cerrada: no se calcula ni se guarda por grupo.' } };
-    const r = await acc.guardarCalculoGrupo(10, "H1", G1, "dubai", 7, null, BASES_DUBAI, []) as { ok: false; error: string; desactualizada?: true };
+    const r = await acc.guardarCalculoGrupo(10, "H1", G1, "dubai", 7, null, BASES_DUBAI, null, []) as { ok: false; error: string; desactualizada?: true };
     assert.equal(r.error, 'La vigencia "CERRADA" tiene la compra cerrada: no se calcula ni se guarda por grupo.');
     assert.equal(r.desactualizada, undefined);
     assert.equal(est.rpc.length, 1);
@@ -372,5 +382,46 @@ describe("compra cerrada: el rechazo del servidor llega claro y sin reintento", 
     const fuente = readFileSync(new URL("../app/(dashboard)/dashboard/producto/hoteles/[id]/CalculadoraEditor.tsx", import.meta.url), "utf8");
     assert.match(fuente, /nombreVigenciaVencida\(v\.vigencia, vigencias, hoy\)/);
     assert.match(fuente, /compraCerrada=\{nombreVigenciaVencida\(modoGrupo\.vig\.vigencia, vigencias, hoy\)\}/);
+  });
+});
+
+describe("parámetros de la fórmula por grupo (298): Semana y Finde con modificadores y FULL distintos", () => {
+  const conFull: DubaiParams = { ...DUBAI, suplementos: [{ regimen: "PC", monto: 45000 }, { regimen: "FULL", monto: 100000 }] };
+  test("solo parámetros de la fórmula: nunca promociones ni bases", async () => {
+    const { generalesDeParams, generalesEfectivos } = await import("../lib/hoteles/calculadoraGrupos.ts");
+    const g = generalesDeParams("dubai", conFull);
+    assert.deepEqual(Object.keys(g).sort(), ["infante_nota", "modificadores", "regimen_base", "suplementos"]);
+    assert.deepEqual((generalesEfectivos("dubai", conFull, null) as DubaiParams).promos, [], "las promociones del hotel no entran al grupo");
+    assert.deepEqual((generalesEfectivos("dubai", conFull, { promos: [{ temporadaBase: "ALTA" }] } as never) as DubaiParams).promos, [], "ni colándolas como «parámetro»");
+    assert.equal(Object.keys(generalesDeParams("corporativa", { ...CORP, bases: [{ categoria: "x", temporada: "y", precio: 1 }] })).includes("bases"), false);
+  });
+  test("cada grupo calcula con SUS parámetros; el hotel y el otro grupo no cambian", async () => {
+    const { generalesEfectivos } = await import("../lib/hoteles/calculadoraGrupos.ts");
+    const copiaHotel = JSON.stringify(conFull);
+    const semana = { modificadores: { ...DUBAI.modificadores, sencilla_pct: 60 }, suplementos: [{ regimen: "PC", monto: 45000 }, { regimen: "FULL", monto: 80000 }] };
+    const finde = { modificadores: { ...DUBAI.modificadores, sencilla_pct: 40 }, suplementos: [{ regimen: "PC", monto: 50000 }, { regimen: "FULL", monto: 120000 }] };
+    const base: BasesGrupo = [{ categoria: "Estándar", precio: 100000 }];
+    const fila = (g: Record<string, unknown> | null, reg: string) => calcularGrupo("dubai", generalesEfectivos("dubai", conFull, g), "ALTA", base, false).find((f) => f.alimentacion === reg)!;
+    assert.deepEqual([fila(semana, "FULL").neto_doble, fila(finde, "FULL").neto_doble, fila(null, "FULL").neto_doble], [180000, 220000, 200000]);
+    assert.deepEqual([fila(semana, "PAM").neto_sencilla, fila(finde, "PAM").neto_sencilla, fila(null, "PAM").neto_sencilla], [160000, 140000, 150000]);
+    assert.equal(JSON.stringify(conFull), copiaHotel, "los generales del hotel quedan intactos");
+    // Mismas fórmulas: el grupo con sus parámetros = la calculadora con esos parámetros.
+    assert.deepEqual(calcularGrupo("dubai", generalesEfectivos("dubai", conFull, semana), "ALTA", base, false),
+      generarTarifasDubai({ ...conFull, ...semana, bases: [{ categoria: "Estándar", temporada: "ALTA", precio: 100000 }], promos: [] }));
+  });
+  test("la revisión dice anterior → nuevo de los parámetros (sobre los efectivos) y el cambio de modo", async () => {
+    const { cambiosGenerales, resumenGenerales, generalesDeParams } = await import("../lib/hoteles/calculadoraGrupos.ts");
+    const l = cambiosGenerales("dubai", conFull, null, { suplementos: [{ regimen: "PC", monto: 45000 }, { regimen: "FULL", monto: 80000 }], modificadores: { ...DUBAI.modificadores, sencilla_pct: 60 } });
+    assert.ok(l.some((x) => /los generales del hotel → propios del grupo \(los del hotel no cambian\)/.test(x)));
+    assert.ok(l.includes("Suplemento FULL: 100.000 → 80.000"));
+    assert.ok(l.includes("Sencilla %: 50 → 60"));
+    assert.equal(l.some((x) => /Suplemento PC/.test(x)), false, "lo que no cambia no aparece");
+    assert.deepEqual(cambiosGenerales("dubai", conFull, null, null), [], "con los del hotel y sin cambios: nada");
+    assert.match(resumenGenerales("dubai", generalesDeParams("dubai", conFull)), /Suplemento FULL: 100\.000/);
+    assert.match(resumenGenerales("corporativa", generalesDeParams("corporativa", CORP)), /Descuento de la tarifa % \(fórmula, no es promoción\): 10/);
+  });
+  test("bases y parámetros forman lo revisado: cambiar un parámetro después de revisar cambia la clave", async () => {
+    const { claveBases } = await import("../lib/hoteles/calculadoraGrupos.ts");
+    assert.notEqual(claveBases({ bases: BASES_CORP, generales: null }), claveBases({ bases: BASES_CORP, generales: { descuento_pct: 5 } }));
   });
 });

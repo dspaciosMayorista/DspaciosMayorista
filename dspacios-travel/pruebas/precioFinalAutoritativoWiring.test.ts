@@ -65,7 +65,8 @@ describe("computo.ts — selecciona precio_final_autoritativo y lo propaga a los
   });
 
   test("las 4 llamadas a los liquidadores (habitación, niño, niño2, infante) reciben precioFinalTemporadas", () => {
-    assert.match(computo, /liquidarHotelNochesConTemporadas\(\{[^}]*precioFinalTemporadas: precioFinalTemporadasVig/);
+    // #43/#60 entrega 5: la habitación se liquida con la precedencia promoción / EBB / Long Stay (`costoConPrecedencia` → liquidarConPrecedencia).
+    assert.match(computo, /costoConPrecedencia\(\{[^}]*precioFinalTemporadas: precioFinalTemporadasVig/);
     const ocurrencias = computo.match(/precioFinalTemporadas: precioFinalTemporadasMenores/g) ?? [];
     assert.equal(ocurrencias.length, 3, "niño, niño2 e infante deben pasar precioFinalTemporadas: precioFinalTemporadasMenores");
   });
@@ -80,8 +81,9 @@ describe("liquidacionHotel.ts (evaluarHotelPorFechas) — construye y propaga pr
   });
 
   test("liquidarHotelNochesConTemporadas y liquidarHotelNoches (dentro del mismo combo) reciben precioFinalTemporadas", () => {
-    assert.match(liquidacionHotel, /liquidarHotelNochesConTemporadas\(\{[^}]*precioFinalTemporadas \}\)/);
-    assert.match(liquidacionHotel, /liquidarHotelNoches\(\{[^}]*precioFinalTemporadas \}\)/);
+    // #43/#60 entrega 4: además reciben el vínculo de las promociones y la acomodación (mismo combo).
+    // #43/#60 entrega 5: una sola llamada por acomodación (habitación y menores) con la precedencia (liquidarConPrecedencia).
+    assert.match(liquidacionHotel, /liquidarConPrecedencia\(\{[^}]*precioFinalTemporadas, basePromoPorClave, acomodacion: acom, ocupantes \}, ctxPrecedencia\)/);
   });
 });
 
@@ -94,8 +96,8 @@ describe("paquetes/actions.ts (filasHoteles, generación del tarifario) — el P
   });
 
   test("liquidarHotelMasBaratoConTemporada (tarifario 'desde') Y liquidarHotelNochesConTemporadas (fecha fija) reciben precioFinalTemporadas — las variantes CON identidad, no las simples", () => {
-    assert.match(paquetesActions, /liquidarHotelMasBaratoConTemporada\(\{[^}]*precioFinalTemporadas \}\)/);
-    assert.match(paquetesActions, /liquidarHotelNochesConTemporadas\(\{[^}]*precioFinalTemporadas \}\)/);
+    assert.match(paquetesActions, /liquidarHotelMasBaratoConTemporada\(\{[^}]*precioFinalTemporadas, basePromoPorClave, acomodacion: acom, ocupantes: ocupantesDe\(acom\) \}\)/);
+    assert.match(paquetesActions, /liquidarHotelNochesConTemporadas\(\{[^}]*precioFinalTemporadas, basePromoPorClave, acomodacion: acom, ocupantes: ocupantesDe\(acom\) \}\)/);
   });
 
   test("el select de tarifa_hotel para el tarifario sigue siendo select(\"*\") — precio_final_autoritativo llega sin query adicional", () => {
@@ -269,7 +271,9 @@ describe("Robustez — regenerarTarifariosDeHotel reporta (no oculta) los fallos
   const cuerpo = cuerpoFuncionPorSiguienteExport(paquetesActions, "export async function regenerarTarifariosDeHotel(");
 
   test("sigue siendo best-effort (Promise.allSettled, nunca bloquea) pero ahora recorre los resultados", () => {
-    assert.match(cuerpo, /const resultados = await Promise\.allSettled\(ids\.map/);
+    // #43/#60: las regeneraciones por hotel/bloqueo/servicio pasaron de «todas en paralelo» a ACOTADAS (CONCURRENCIA_REGENERACION a la vez,
+    // con resultados como allSettled: un paquete que falla no detiene a los demás).
+    assert.match(cuerpo, /const resultados = await ejecutarAcotado\(ids, CONCURRENCIA_REGENERACION,/);
     assert.match(cuerpo, /resultados\.forEach\(\(r, i\) => \{/);
   });
 
@@ -328,7 +332,9 @@ describe("HALLAZGO CORREGIDO — caso real generarTarifario() → Promise resuel
 
   test("regenerarTarifariosDeHotel lee r.value.ok del resultado CUMPLIDO de exactamente esa función (generarTarifario(id))", () => {
     const cuerpo = cuerpoFuncionPorSiguienteExport(paquetesActions, "export async function regenerarTarifariosDeHotel(");
-    assert.match(cuerpo, /Promise\.allSettled\(ids\.map\(\(id\) => generarTarifario\(id, enSegundoPlano\(inicioMs\)\)\)\)/);
+    // #43/#60: las regeneraciones por hotel/bloqueo/servicio pasaron de «todas en paralelo» a ACOTADAS (CONCURRENCIA_REGENERACION a la vez,
+    // con resultados como allSettled: un paquete que falla no detiene a los demás).
+    assert.match(cuerpo, /ejecutarAcotado\(ids, CONCURRENCIA_REGENERACION, \(id\) => generarTarifario\(id, enSegundoPlano\(inicioMs\)\)\)/);
     assert.match(cuerpo, /!r\.value\.ok/);
   });
 });
@@ -385,7 +391,8 @@ describe("Hallazgo 1 corregido — paquetes/actions.ts (filasHoteles) persiste l
   });
 
   test("costoHotel sale de `resultado.total` — resultado viene de la MISMA búsqueda que produce la identidad, nunca de un cálculo aparte por fecha_ida", () => {
-    assert.match(paquetesActions, /const resultado = masBarato\s*\n\s*\? liquidarHotelMasBaratoConTemporada\(/);
+    // #43/#60 entrega 6: con grupos, el «desde» de porción sale de desdeEstadiaReal (total y procedencia de la MISMA estadía); sin grupos, como antes.
+    assert.match(paquetesActions, /const resultado = desdeReal\s*\n\s*\? \(desdeReal\.desde \? \{ total: desdeReal\.desde\.total, procedencia: desdeReal\.desde\.procedencia \} : null\)\s*\n\s*: masBarato\s*\n\s*\? liquidarHotelMasBaratoConTemporada\(/);
     assert.match(paquetesActions, /: liquidarHotelNochesConTemporadas\(/);
     assert.match(paquetesActions, /const costoHotel = resultado\?\.total \?\? null;/);
   });
@@ -403,8 +410,10 @@ describe("Hallazgo 1 corregido — paquetes/actions.ts (filasHoteles) persiste l
 
 describe("Hallazgo 1 corregido — lib/calc/paquetes.ts: la identidad de la ventana 'más barato' viene de la MISMA noche que ganó, nunca de `desde`", () => {
   test("buscarNocheMasBarata es la ÚNICA búsqueda — liquidarHotelMasBarato y liquidarHotelMasBaratoConTemporada la reusan (no hay dos implementaciones del recorrido)", () => {
+    // #43/#60 entrega 4: liquidarHotelMasBarato delega en la variante con identidad (una sola búsqueda y un solo cálculo).
     const ocurrencias = paquetesTs.match(/buscarNocheMasBarata\(args\)/g) ?? [];
-    assert.equal(ocurrencias.length, 2, "liquidarHotelMasBarato y liquidarHotelMasBaratoConTemporada deben llamar a la MISMA función interna");
+    assert.equal(ocurrencias.length, 1, "solo liquidarHotelMasBaratoConTemporada recorre la ventana");
+    assert.match(paquetesTs, /export function liquidarHotelMasBarato\(args: ArgsMasBarato\): number \| null \{\r?\n\s*return liquidarHotelMasBaratoConTemporada\(args\)\?\.total \?\? null;\r?\n\}/);
   });
 
   test("buscarNocheMasBarata compara por r.neto en cada noche candidata (no por fecha) y devuelve la resolución DETALLADA completa (con temporadaGanadora)", () => {
@@ -440,7 +449,7 @@ describe("Hallazgo 1 corregido — lib/calc/paquetes.ts: la identidad de la vent
 
   test("liquidarHotelMasBaratoConTemporada también devuelve `procedencia: ProcedenciaNoche[]` (la noche ganadora, deduplicada con la eventual entrada de noche gratis) — mismo contrato que la variante de fechas fijas", () => {
     assert.match(paquetesTs, /procedenciaCruda: ProcedenciaNoche\[\] = \[\s*\n\s*\{ temporadaGanadora: mejor\.temporadaGanadora, esPromocion: mejor\.esPromocion, precioFinalAutoritativo: mejor\.precioFinalAutoritativo \},\s*\n\s*\];/);
-    assert.match(paquetesTs, /if \(nocheGratis\) procedenciaCruda\.push\(nocheGratis\.procedencia\);/);
+    assert.match(paquetesTs, /if \(estadia\) procedenciaCruda\.push\(estadia\.procedencia\);/);
   });
 });
 
@@ -462,15 +471,20 @@ describe("promo_noche_gratis forma parte de la procedencia — resolverNocheGrat
 
   test("los 4 liquidadores (liquidarHotelNoches/liquidarHotelNochesConTemporadas/liquidarHotelMasBarato/liquidarHotelMasBaratoConTemporada) llaman a resolverNocheGratisDetallado — nunca a promoNocheGratisFactor ni reimplementan el criterio, así que cálculo y procedencia nunca pueden divergir", () => {
     // Excluye la propia declaración (`export function resolverNocheGratisDetallado(`).
+    // #43/#60 entrega 4: la ÚNICA fuente de la promoción de estadía de los liquidadores es `resolverPromoEstadia`
+    // (para las promociones existentes da el mismo factor que `resolverNocheGratisDetallado`, que queda como lectura del
+    // legado y envoltorio de promoNocheGratisFactor). Las variantes simples delegan en las de identidad.
     const ocurrencias = paquetesTs.match(/(?<!function )resolverNocheGratisDetallado\(/g) ?? [];
-    // 1 en la propia definición de promoNocheGratisFactor (delegación) + 4 en
-    // los liquidadores = 5 llamadas totales a la función.
-    assert.equal(ocurrencias.length, 5, "debe haber exactamente 5 llamadas: 1 en promoNocheGratisFactor + 1 por cada uno de los 4 liquidadores");
+    assert.equal(ocurrencias.length, 1, "solo promoNocheGratisFactor la usa");
+    assert.equal((paquetesTs.match(/(?<!function )resolverPromoEstadia\(/g) ?? []).length, 2, "liquidarHotelNochesConTemporadas y liquidarHotelMasBaratoConTemporada");
+    assert.match(paquetesTs, /export function liquidarHotelNoches\(args: ArgsLiquidar\): number \| null \{\r?\n\s*return liquidarHotelNochesConTemporadas\(args\)\?\.total \?\? null;\r?\n\}/);
     assert.doesNotMatch(paquetesTs, /liquidarHotelNoches\([^)]*\)[\s\S]{0,400}promoNocheGratisFactor\(/, "liquidarHotelNoches no debe llamar promoNocheGratisFactor (debe usar el resolver detallado directo)");
   });
 
   test("resolverNetoNocheDetallado sigue excluyendo explícitamente 'promo_noche_gratis' de la resolución noche-por-noche (no es un precio por noche, no cabe ahí)", () => {
-    assert.match(paquetesTs, /filter\(\(t\) => \(t\.tipo \?\? "tarifa"\) !== "promo_noche_gratis"\)/);
+    // #43/#60 entrega 4: la exclusión vive en `porNoche` (promociones de estadía —incluida la noche gratis— y con reglas).
+    assert.match(paquetesTs, /const ents = todas\.filter\(porNoche\);/);
+    assert.match(paquetesTs, /return tipo === "promo_noche_gratis" \|\| \(tipo === "descuento_monto" && t\.descuento_unidad === "persona_estadia"\);/);
   });
 });
 
@@ -818,7 +832,8 @@ describe("HOTFIX — filas de servicio en generarTarifario declaran las 5 column
     // 226: la fila de hotel se publica desde `publicarFila(acom, costoHotel, procedencia)` (la comparten la fila normal
     // y la fila de infante con hotel $0); su `procedencia` sigue saliendo de `columnasProcedencia(resultado?.procedencia)`.
     assert.match(paquetesActions, /const procedencia = columnasProcedencia\(resultado\?\.procedencia\);/);
-    assert.match(paquetesActions, /publicarFila\(acom, costoHotel, procedencia, masBarato \? null : costoHotel\);/);
+    // Entrega 6: quinto argumento = entrada que justifica el «desde» (solo porción con grupos).
+    assert.match(paquetesActions, /publicarFila\(acom, costoHotel, procedencia, masBarato \? null : costoHotel, desdeReal\?\.desde\?\.justificacion\.entrada \?\? null\);/);
     const posPushHotel = paquetesActions.indexOf("filas.push({", paquetesActions.indexOf("const publicarFila = "));
     assert.notEqual(posPushHotel, -1, "no se encontró el push de la fila de hotel");
     const posCierre = paquetesActions.indexOf("});", posPushHotel);

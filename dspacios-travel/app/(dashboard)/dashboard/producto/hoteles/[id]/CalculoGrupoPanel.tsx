@@ -2,7 +2,7 @@
 
 // #43/#60 entrega 3b — Revisión y confirmación del cálculo de UN grupo de días (dentro de la calculadora).
 // Solicitudes: editar = 0 (todo en memoria) · «Revisar» = 1 lectura (grupos_dias_config) · «Confirmar» =
-// 1 RPC atómica (propuesta + bases, 297). Sin sondeos, sin reintentos, sin revalidar ni regenerar: la
+// 1 RPC atómica (propuesta + bases + parámetros de la fórmula del grupo, 297 + 298). Sin sondeos, sin reintentos, sin revalidar ni regenerar: la
 // propuesta no cambia precios ni lo que hoy se vende. Nada se activa (3c).
 import { useMemo, useState, useTransition } from "react";
 import { AlertTriangle, Check, CircleSlash, Info } from "lucide-react";
@@ -11,8 +11,8 @@ import { formatNetoTarifa } from "@/lib/hoteles/tarifasVista";
 import type { CalcTipo } from "@/lib/calc/calculadoras";
 import { textoDias, type ConfigGrupos } from "@/lib/hoteles/alcanceGrupos";
 import {
-  basesDeParams, calcularGrupo, claveBases as textoBases, decidirTodas, revisarCalculo, DECISIONES_VACIAS,
-  type BasesGuardadasGrupo, type Decisiones, type ParamsCalculadora,
+  basesDeParams, calcularGrupo, cambiosGenerales, claveBases as textoBases, decidirTodas, generalesEfectivos, revisarCalculo, DECISIONES_VACIAS,
+  type BasesGuardadasGrupo, type Decisiones, type GeneralesGrupo, type ParamsCalculadora,
 } from "@/lib/hoteles/calculadoraGrupos";
 import { leerConfigGrupos, guardarCalculoGrupo } from "./grupos-actions";
 
@@ -20,7 +20,10 @@ const CAMPO: Record<string, string> = { edades: "Edades", notas: "Condición (no
 
 export function CalculoGrupoPanel({
   tipo, general, params, temporadaId, vigencia, grupo, adultsOnly, calcVersion, basesGuardadas, onGuardado, moneda = "COP", compraCerrada = false,
+  generales = null,
 }: {
+  /** Parámetros de la fórmula PROPIOS del grupo tal como están en pantalla; null = usa los generales del hotel. */
+  generales?: GeneralesGrupo | null;
   /** Vigencia con la compra cerrada (regla de «Generar»): ni se calcula ni se guarda por este recorrido. */
   compraCerrada?: boolean;
   tipo: CalcTipo; general: ParamsCalculadora; params: ParamsCalculadora; temporadaId: number; vigencia: string;
@@ -34,13 +37,17 @@ export function CalculoGrupoPanel({
   const [msg, setMsg] = useState<{ ok: boolean; texto: string; recargar?: boolean } | null>(null);
   const fmt = (v: number | null | undefined) => formatNetoTarifa(v, moneda);
 
-  // Todo en memoria: mismas fórmulas que la calculadora, con los generales guardados y las bases del grupo.
+  // Todo en memoria: mismas fórmulas que la calculadora, con los generales del hotel o los propios del grupo
+  // (elegidos explicitamente) y las bases del grupo. Nunca promociones (generalesEfectivos las quita).
   const bases = useMemo(() => basesDeParams(tipo, params), [tipo, params]);
-  const claveBases = textoBases(bases);
-  const calculadas = useMemo(() => (compraCerrada ? [] : calcularGrupo(tipo, general, vigencia, bases, adultsOnly)), [compraCerrada, tipo, general, vigencia, bases, adultsOnly]);
+  const efectivos = useMemo(() => generalesEfectivos(tipo, general, generales), [tipo, general, generales]);
+  // Lo que se revisa y se guarda: bases + parámetros del grupo. Editar cualquiera después de revisar cierra la revisión.
+  const claveBases = textoBases({ bases, generales });
+  const calculadas = useMemo(() => (compraCerrada ? [] : calcularGrupo(tipo, efectivos, vigencia, bases, adultsOnly)), [compraCerrada, tipo, efectivos, vigencia, bases, adultsOnly]);
   const vigente = cfg !== null && revisadas === claveBases;   // editar después de revisar cierra la revisión
   const rev = useMemo(() => (vigente && cfg ? revisarCalculo(cfg, grupo.id, tipo, calculadas, decisiones) : null), [vigente, cfg, grupo.id, tipo, calculadas, decisiones]);
-  const basesCambian = claveBases !== textoBases(basesGuardadas?.bases ?? (tipo === "mixta" ? {} : []));
+  const basesCambian = claveBases !== textoBases({ bases: basesGuardadas?.bases ?? (tipo === "mixta" ? {} : []), generales: basesGuardadas?.generales ?? null });
+  const lineasGenerales = useMemo(() => cambiosGenerales(tipo, general, basesGuardadas?.generales ?? null, generales), [tipo, general, basesGuardadas, generales]);
   const hayCambios = !!rev && (!rev.plan.sinCambios || basesCambian);
   const puedeConfirmar = !!rev && rev.pendientes.length === 0 && hayCambios && !pending;
 
@@ -57,11 +64,11 @@ export function CalculoGrupoPanel({
     if (!rev || !cfg || compraCerrada) return;
     setMsg(null);
     start(async () => {
-      const r = await guardarCalculoGrupo(temporadaId, cfg.huella, grupo.id, tipo, calcVersion, basesGuardadas?.version ?? null, bases, rev.filas);
+      const r = await guardarCalculoGrupo(temporadaId, cfg.huella, grupo.id, tipo, calcVersion, basesGuardadas?.version ?? null, bases, generales, rev.filas);
       if (!r.ok) { setMsg({ ok: false, texto: r.error, recargar: r.desactualizada }); return; }
-      onGuardado({ tipo, bases, version: r.basesVersion });
+      onGuardado({ tipo, bases, version: r.basesVersion, generales });
       setCfg(r.config); setRevisadas(claveBases); setDecisiones(DECISIONES_VACIAS);
-      setMsg({ ok: true, texto: `Propuesta del grupo y sus bases guardadas (${r.nuevas} nueva(s), ${r.actualizadas} actualizada(s)). Sigue inactiva: nada cambia en lo que hoy se vende.` });
+      setMsg({ ok: true, texto: `Propuesta del grupo, sus bases y sus parámetros guardados (${r.nuevas} nueva(s), ${r.actualizadas} actualizada(s)). Queda en el borrador: nada cambia en lo que hoy se vende hasta «Aplicar a la venta» en Grupos de días.` });
     });
   }
   const decidir = (clave: string, d: "habilitar" | "sin_venta") => setDecisiones((s) => ({ ...s, celdas: { ...s.celdas, [clave]: d } }));
@@ -156,10 +163,16 @@ export function CalculoGrupoPanel({
               <button type="button" onClick={() => setDecisiones((s) => decidirTodas(rev, s, "habilitar"))} className="rounded border border-gray-300 px-1.5 py-0.5 text-gray-600">Habilitar todas</button>
             </div>
           )}
+          {lineasGenerales.length > 0 && (
+            <div data-revision="generales">
+              <p className="font-medium text-gray-700">Parámetros de la fórmula de este grupo (no cambian los del hotel ni los de otros grupos)</p>
+              <ul className="mt-1 space-y-0.5 text-gray-600">{lineasGenerales.map((l) => <li key={l}>{l}</li>)}</ul>
+            </div>
+          )}
           <div>
             <p className="font-medium text-gray-700">Qué cambia en la propuesta del grupo</p>
             {rev.plan.lineas.length === 0
-              ? <p className="text-gray-500">La propuesta queda igual.{basesCambian ? " Solo se guardan las bases del grupo." : ""}</p>
+              ? <p className="text-gray-500">La propuesta queda igual.{basesCambian ? " Solo se guardan las bases y los parámetros del grupo." : ""}</p>
               : <ul className="mt-1 space-y-0.5 text-gray-600">{rev.plan.lineas.map((l, i) => <li key={i}>{l.texto}</li>)}</ul>}
           </div>
           {rev.pendientes.length > 0 && (

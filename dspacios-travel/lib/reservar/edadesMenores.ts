@@ -48,6 +48,7 @@ import { categoriaAliado } from "../b2b.ts";
 // importa nada) — mismo criterio de import relativo que el resto del
 // archivo, seguro para `node --test`.
 import { hoyISO, noches } from "../calc/paquetes.ts";
+import { MAX_NOCHES_VIAJE, mensajeNochesViaje, validarFechasViaje } from "../reglas/duracionViaje.ts";
 import { validarHorasTramos, type HorasTramos } from "../calc/trasladoFranjas.ts";
 import { parseAlcanceVenta, type AlcanceVenta } from "../calc/servicioAlcance.ts";
 
@@ -81,7 +82,8 @@ export const MAX_HABITACIONES_CONSULTA = 8;
 export const MAX_ITEMS_CARRITO = 20;          // hoteles por solicitud
 export const MAX_TOURS_CARRITO = 20;          // servicios/tours por solicitud
 export const MAX_LINEAS_CARRITO = 30;         // hoteles + tours combinados
-export const MAX_NOCHES_CONSULTA = 60;        // ~2 meses, ningún viaje real pasa de esto
+// #43/#60 entrega L: la consulta usa la estadía máxima del viaje (antes 60). Se conserva el nombre para no romper importaciones.
+export const MAX_NOCHES_CONSULTA = MAX_NOCHES_VIAJE;
 export const MAX_LONGITUD_TEXTO = 200;        // nombres, destino, categoría, régimen, documento, teléfono, NIT…
 export const MAX_LONGITUD_TEXTO_LARGO = 500;  // campos de texto libre (ninguno hoy en esta frontera, reservado)
 export const MAX_LONGITUD_MONEDA = 10;        // "COP"/"USD" — nunca un texto largo
@@ -431,6 +433,8 @@ export function validarSolicitudItem(v: unknown, indice: number): { ok: true; it
   if (fechaIda !== null && fechaRegreso !== null) {
     const vRango = validarRangoFechas(fechaIda, fechaRegreso);
     if (!vRango.ok) return { ok: false, error: `${ctx}: ${vRango.error}` };
+    const vViaje = validarFechasViaje(fechaIda, fechaRegreso); // entrega L: también el ítem del carrito
+    if (!vViaje.ok) return { ok: false, error: `${ctx}: ${vViaje.error}` };
   }
 
   if (!(o.noches === null || o.noches === undefined || (typeof o.noches === "number" && Number.isInteger(o.noches) && o.noches > 0 && o.noches <= MAX_NOCHES_CONSULTA))) {
@@ -738,9 +742,8 @@ export function validarRangoFechasConsulta(
   if (vIda.fecha < hoy) return { ok: false, error: "La fecha de ida no puede ser anterior a hoy." };
 
   const numNoches = noches(vIda.fecha, vReg.fecha);
-  if (numNoches <= 0 || numNoches > MAX_NOCHES_CONSULTA) {
-    return { ok: false, error: `El número de noches debe estar entre 1 y ${MAX_NOCHES_CONSULTA}.` };
-  }
+  if (numNoches <= 0) return { ok: false, error: `El número de noches debe estar entre 1 y ${MAX_NOCHES_CONSULTA}.` };
+  if (numNoches > MAX_NOCHES_CONSULTA) return { ok: false, error: mensajeNochesViaje(numNoches) };
 
   return { ok: true, fechaIda: vIda.fecha, fechaRegreso: vReg.fecha, noches: numNoches };
 }

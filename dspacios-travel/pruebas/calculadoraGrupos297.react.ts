@@ -105,6 +105,8 @@ async function abrirGrupo(over: Record<string, unknown> = {}) {
   return r;
 }
 const panel = (r: Element) => r.querySelector('section[aria-label^="Cálculo del grupo"]')!;
+// El fieldset de los parámetros generales de la fórmula (no el de la elección «hotel / propios»).
+const generales = (r: Element) => [...r.querySelectorAll("fieldset")].find((f) => f.getAttribute("aria-label") !== "Parámetros de la fórmula del grupo")!;
 const baseGrupo = (r: Element) => panel(r).parentElement!.querySelector<HTMLInputElement>('td[data-label="ALTA"] input')!;
 
 test("hotel sin grupos: la calculadora se ve y funciona como siempre (sin selector de grupo, cero solicitudes)", async () => {
@@ -127,7 +129,7 @@ test("guardar la calculadora envía la versión leída y adopta la nueva (sin re
 test("elegir el grupo: 0 solicitudes; generales de solo lectura; bases del grupo cargadas; sin promociones ni «Generar»", async () => {
   const r = await abrirGrupo();
   assert.deepEqual(nombres(), []);
-  const fieldset = r.querySelector("fieldset")!;
+  const fieldset = generales(r);
   assert.equal(fieldset.disabled, true, "modificadores, suplementos y régimen base: solo lectura");
   assert.equal(baseGrupo(r).disabled, false);
   assert.equal(baseGrupo(r).value, "120000", "la base guardada del grupo, no la de «todos los días»");
@@ -168,8 +170,9 @@ test("resolver explícitamente y confirmar = 1 RPC con SOLO el grupo, lo revisad
   assert.equal(conf.disabled, false, panel(r).textContent ?? "");
   await pulsar(conf);
   assert.deepEqual(nombres(), ["leerConfigGrupos", "guardarCalculoGrupo"]);
-  const [temporada, huella, grupo, tipo, calcVersion, basesVersion, bases, filas] = est.llamadas[1][1] as [number, string, string, string, number, number, unknown, { grupo_id: string; alimentacion: string; netos: Record<string, number | null>; extras?: Record<string, unknown>; origen_tarifa_id: null }[]];
+  const [temporada, huella, grupo, tipo, calcVersion, basesVersion, bases, generalesEnviados, filas] = est.llamadas[1][1] as [number, string, string, string, number, number, unknown, unknown, { grupo_id: string; alimentacion: string; netos: Record<string, number | null>; extras?: Record<string, unknown>; origen_tarifa_id: null }[]];
   assert.deepEqual([temporada, huella, grupo, tipo, calcVersion, basesVersion], [10, "H1", G1, "dubai", 7, 3]);
+  assert.equal(generalesEnviados, null, "con «usar los generales del hotel» viajan como null");
   assert.deepEqual(bases, BASES);
   assert.deepEqual(filas.map((f) => f.alimentacion), ["PAM"], "PC no tiene ninguna habitación a la venta (todas sin venta): no se envía");
   const f = filas[0];
@@ -179,7 +182,7 @@ test("resolver explícitamente y confirmar = 1 RPC con SOLO el grupo, lo revisad
   assert.equal(f.netos.neto_doble, 120000);
   assert.deepEqual([f.extras?.notas, f.extras?.edad_infante_max, f.extras?.edad_nino_max], ["Fin de semana", 1, 11]);
   assert.deepEqual(payloadFilas(filas as never)[0].neto_triple, null);
-  assert.match(panel(r).textContent ?? "", /Propuesta del grupo y sus bases guardadas/);
+  assert.match(panel(r).textContent ?? "", /Propuesta del grupo, sus bases y sus parámetros guardados/);
 });
 
 test("editar después de revisar cierra la revisión (no se confirma una vista vieja)", async () => {
@@ -244,4 +247,98 @@ test("compra cerrada (regla de «Generar»): el grupo no se puede elegir y, aun 
   assert.equal(boton(panel(r), "Confirmar propuesta y bases del grupo"), undefined);
   assert.doesNotMatch(t, /Estándar \/ PAM/, "sin vista previa del cálculo");
   assert.deepEqual(nombres(), []);
+});
+
+// ── Parámetros de la fórmula por grupo (298): Semana y Finde ─────────────────────────────
+const G2 = "00000000-0000-4000-8000-0000000000a2";
+const DUBAI_FULL = { ...DUBAI, suplementos: [{ regimen: "PC", monto: 45000 }, { regimen: "FULL", monto: 100000 }] };
+const FINDE_GEN = { regimen_base: "PAM", modificadores: { sencilla_pct: 40, pax3_pct: -10, pax4_pct: -10, nino_pct: -30, infante_pct: -100 },
+  suplementos: [{ regimen: "PC", monto: 50000 }, { regimen: "FULL", monto: 120000 }], infante_nota: "" };
+const BASE_SIMPLE = [{ categoria: "Estándar", precio: 100000 }];
+const editorFull = () => editor({
+  regimenes: ["PAM", "PC", "FULL"], dubaiInicial: DUBAI_FULL,
+  gruposCalc: [{ temporadaId: 10, vigencia: "ALTA", grupos: [
+    { id: G1, nombre: "Semana", dias: [1, 2, 3, 4], bases: [{ tipo: "dubai", bases: BASE_SIMPLE, version: 1, generales: null }] },   // guardada con la 297
+    { id: G2, nombre: "Finde", dias: [5, 6, 7], bases: [{ tipo: "dubai", bases: BASE_SIMPLE, version: 2, generales: FINDE_GEN }] },
+  ] }],
+});
+const bloque = (r: Element) => panel(r).parentElement!.parentElement!;
+const campo = (r: Element, etiqueta: string) =>
+  [...bloque(r).querySelectorAll("label")].find((l) => (l.textContent ?? "").trim() === etiqueta)!.parentElement!.querySelector("input")!;
+const opcion = (r: Element, re: RegExp) => [...bloque(r).querySelectorAll("label")].find((l) => re.test(l.textContent ?? ""))!.querySelector("input")!;
+async function abrir(r: Element, g: string) { await elegir(r.querySelector<HTMLSelectElement>("#calc-destino-5")!, `10|${g}`); }
+
+test("Semana (bases de la 297, sin parámetros propios): usa los del hotel, bloqueados y visibles como referencia", async () => {
+  const r = await montar(editorFull());
+  await pulsar(boton(r, /Tarifa por fórmula/)!);
+  await abrir(r, G1);
+  assert.equal(opcion(r, /Usar los generales del hotel/).checked, true);
+  assert.equal(generales(r).disabled, true);
+  assert.equal(campo(r, "Sencilla").value, "50");
+  assert.match(bloque(r).querySelector('[data-referencia="generales"]')!.textContent ?? "", /Suplemento FULL: 100\.000/);
+  assert.deepEqual(nombres(), []);
+});
+
+test("Semana con valores propios: se habilitan, conservan las bases escritas, se calculan y viajan explícitos al confirmar", async () => {
+  const r = await montar(editorFull());
+  await pulsar(boton(r, /Tarifa por fórmula/)!);
+  await abrir(r, G1);
+  await escribir(baseGrupo(r), "110000");
+  await pulsar(opcion(r, /Valores propios de este grupo/));
+  assert.equal(generales(r).disabled, false);
+  assert.equal(baseGrupo(r).value, "110000", "cambiar de opción no pierde la base escrita");
+  assert.equal(campo(r, "Sencilla").value, "50", "arranca con una copia de los del hotel");
+  await escribir(campo(r, "Sencilla"), "60");
+  await escribir(campo(r, "Suplemento FULL (por pax)"), "80000");
+  assert.deepEqual(nombres(), [], "editar: 0 solicitudes");
+  assert.match(panel(r).textContent ?? "", /Estándar \/ FULL[\s\S]*190\.000/, "FULL doble = 110.000 + 80.000 (suplemento propio)");
+  est.respuestas.leerConfigGrupos = { ok: true, config: { ...CFG, regimenes: ["FULL", "PAM", "PC"], propuestas: [] } };
+  await pulsar(boton(panel(r), "Revisar propuesta del grupo")!);
+  const lineas = [...panel(r).querySelectorAll('[data-revision="generales"] li')].map((li) => li.textContent);
+  assert.ok(lineas.includes("Sencilla %: 50 → 60") && lineas.includes("Suplemento FULL: 100.000 → 80.000"), lineas.join(" | "));
+  assert.ok(lineas.some((l) => /los generales del hotel → propios del grupo/.test(l ?? "")));
+  await pulsar(boton(panel(r), "Habilitar todas")!);
+  for (const b of botones(panel(r), /Aplicar edades del cálculo|Aplicar condición del cálculo/)) await pulsar(b);
+  await pulsar(boton(panel(r), "Confirmar propuesta y bases del grupo")!);
+  assert.deepEqual(nombres(), ["leerConfigGrupos", "guardarCalculoGrupo"]);
+  const enviados = est.llamadas[1][1][7] as { modificadores: { sencilla_pct: number }; suplementos: { regimen: string; monto: number }[] };
+  assert.equal(enviados.modificadores.sencilla_pct, 60);
+  assert.deepEqual(enviados.suplementos.find((s) => s.regimen === "FULL"), { regimen: "FULL", monto: 80000 });
+  assert.equal("promos" in enviados, false, "nunca viaja una promoción");
+  assert.equal(est.llamadas[1][1][2], G1, "solo Semana");
+});
+
+test("Finde reabre con SUS parámetros guardados; lo editado en Semana no se filtra a Finde", async () => {
+  const r = await montar(editorFull());
+  await pulsar(boton(r, /Tarifa por fórmula/)!);
+  await abrir(r, G1);
+  await pulsar(opcion(r, /Valores propios de este grupo/));
+  await escribir(campo(r, "Sencilla"), "65");
+  await abrir(r, G2);
+  assert.equal(opcion(r, /Valores propios de este grupo/).checked, true, "Finde guardó parámetros propios");
+  assert.equal(campo(r, "Sencilla").value, "40");
+  assert.equal(campo(r, "Suplemento FULL (por pax)").value, "120000");
+  assert.match(panel(r).textContent ?? "", /Estándar \/ FULL[\s\S]*220\.000/, "FULL doble = 100.000 + 120.000");
+  await abrir(r, G1);
+  // Lo no guardado se descarta al cambiar de grupo (como las bases): Semana vuelve con SU elección (propios) y
+  // su copia de los del hotel, nunca con los valores de Finde.
+  assert.equal(opcion(r, /Valores propios de este grupo/).checked, true);
+  assert.equal(campo(r, "Sencilla").value, "50", "ni los 40 de Finde ni un valor ajeno");
+  assert.deepEqual(nombres(), []);
+});
+
+test("volver a «usar los generales del hotel»: vuelven los del hotel (bloqueados) y viajan como null", async () => {
+  const r = await montar(editorFull());
+  await pulsar(boton(r, /Tarifa por fórmula/)!);
+  await abrir(r, G2);
+  await pulsar(opcion(r, /Usar los generales del hotel/));
+  assert.equal(generales(r).disabled, true);
+  assert.equal(campo(r, "Sencilla").value, "50");
+  est.respuestas.leerConfigGrupos = { ok: true, config: { ...CFG, regimenes: ["FULL", "PAM", "PC"], propuestas: [] } };
+  await pulsar(boton(panel(r), "Revisar propuesta del grupo")!);
+  assert.ok([...panel(r).querySelectorAll('[data-revision="generales"] li')].some((li) => /propios → los generales del hotel/.test(li.textContent ?? "")));
+  await pulsar(boton(panel(r), "Habilitar todas")!);
+  for (const b of botones(panel(r), /Aplicar edades del cálculo|Aplicar condición del cálculo/)) await pulsar(b);
+  await pulsar(boton(panel(r), "Confirmar propuesta y bases del grupo")!);
+  assert.equal(est.llamadas.at(-1)![1][7], null);
 });

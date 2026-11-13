@@ -71,7 +71,7 @@ export type Meta = {
   petNota: string | null;
 };
 // `preciosMenor2`: precio de un MENOR DE 2 AÑOS por clase de hotel (migración 226).
-export type Combo = { categoria: string; regimen: string; precios: Record<string, number>; preciosMenor2?: Record<string, number> };
+export type Combo = { categoria: string; regimen: string; precios: Record<string, number>; preciosMenor2?: Record<string, number>; descuentoHotel?: { etiqueta: string } | null };
 
 const lbl = "mb-1 block text-xs font-medium text-gray-600";
 const inp = "w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm";
@@ -387,7 +387,7 @@ export function ReservaForm({
           )}
         </section>
       )}
-      {descuentoHotel && <div className="-mb-2"><EtiquetaDescuentoHotel descuento={descuentoHotel} /></div>}
+      {(combo && "descuentoHotel" in combo ? combo.descuentoHotel : descuentoHotel) && <div className="-mb-2"><EtiquetaDescuentoHotel descuento={combo && "descuentoHotel" in combo ? combo.descuentoHotel : descuentoHotel} /></div>}
       {/* Habitaciones */}
       {!esServicios && (
       <section className="rounded-xl border border-gray-200 bg-white p-5">

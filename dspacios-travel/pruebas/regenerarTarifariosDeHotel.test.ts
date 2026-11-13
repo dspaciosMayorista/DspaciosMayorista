@@ -73,9 +73,10 @@ test("regenerarTarifariosDeHotel corta y loguea el error saneado con hotelId, si
   assert.match(bloqueError, /return;/, "no retorna tras loguear el error — debe cortar antes de intentar regenerar con `pkgs` en null");
 });
 
-test("regenerarTarifariosDeHotel conserva Promise.allSettled (independencia entre paquetes intacta)", () => {
+// #43/#60: acotada (CONCURRENCIA_REGENERACION a la vez) con resultados como allSettled: la independencia entre paquetes se conserva.
+test("regenerarTarifariosDeHotel conserva la independencia entre paquetes (ejecución acotada con resultados como allSettled)", () => {
   const cuerpo = cuerpoDeFuncion("regenerarTarifariosDeHotel");
-  assert.match(cuerpo, /Promise\.allSettled\(/, "el fix del error no debía tocar la independencia entre paquetes");
+  assert.match(cuerpo, /ejecutarAcotado\(ids, CONCURRENCIA_REGENERACION,/, "el fix del error no debía tocar la independencia entre paquetes");
 });
 
 test("regenerarTarifariosDeHotel NO acepta un cliente Supabase inyectado — un solo parámetro, siempre createClient() propio", () => {
@@ -99,4 +100,29 @@ test("el archivo no importa SupabaseClient (tipo que solo hacía falta para el p
     /import\s*(?:type\s*)?\{[^}]*SupabaseClient[^}]*\}\s*from\s*"@supabase\/supabase-js"/,
     "quedó un import de SupabaseClient sin uso tras retirar sbInyectado"
   );
+});
+
+// #43/#60: concurrencia MÁXIMA real de la regeneración (no basta un presupuesto por generación si se lanzan todas juntas).
+test("ejecutarAcotado nunca corre más de CONCURRENCIA_REGENERACION a la vez, y un fallo no detiene al resto", async () => {
+  const { ejecutarAcotado, CONCURRENCIA_REGENERACION } = await import("../lib/tarifario/regeneracionHotel.ts");
+  let activos = 0, maximo = 0;
+  const r = await ejecutarAcotado([1, 2, 3, 4, 5, 6, 7, 8, 9, 10], CONCURRENCIA_REGENERACION, async (id) => {
+    activos++; maximo = Math.max(maximo, activos);
+    await new Promise((ok) => setTimeout(ok, 5));
+    activos--;
+    if (id === 3) throw new Error("falla el 3");
+    return id;
+  });
+  assert.equal(CONCURRENCIA_REGENERACION, 2);
+  assert.equal(maximo, 2, `máximo simultáneo observado: ${maximo}`);
+  assert.equal(r.filter((x) => x.status === "fulfilled").length, 9);
+  assert.equal(r[2].status, "rejected");
+});
+
+test("las tres regeneraciones en segundo plano (hotel, bloqueo, servicio) usan la ejecución acotada; ninguna lanza todo en paralelo", () => {
+  for (const fn of ["regenerarTarifariosDeHotel", "regenerarTarifariosDeBloqueo", "regenerarTarifariosDeServicio"]) {
+    const cuerpo = cuerpoDeFuncion(fn);
+    assert.match(cuerpo, /ejecutarAcotado\(ids, CONCURRENCIA_REGENERACION,/, fn);
+    assert.doesNotMatch(cuerpo, /Promise\.allSettled\(ids\.map/, fn);
+  }
 });

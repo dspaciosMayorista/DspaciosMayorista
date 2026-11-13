@@ -7,3 +7,8 @@ export const guardarGruposVigencia = noImpl("guardarGruposVigencia");
 export const guardarPropuestaGrupos = noImpl("guardarPropuestaGrupos");
 export const borrarGrupoDias = noImpl("borrarGrupoDias");
 export const guardarCalculoGrupo = noImpl("guardarCalculoGrupo");
+// 299 (entrega 3c): venta por grupos.
+export const leerAlcanceGrupos = noImpl("leerAlcanceGrupos");
+export const aplicarGruposVenta = noImpl("aplicarGruposVenta");
+export const descartarBorradorGrupos = noImpl("descartarBorradorGrupos");
+export const volverATodosLosDias = noImpl("volverATodosLosDias");

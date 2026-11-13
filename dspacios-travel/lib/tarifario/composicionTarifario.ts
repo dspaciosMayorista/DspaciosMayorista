@@ -62,11 +62,22 @@ export function leerBaseGuardada(raw: unknown): BaseMotor | null {
     }
   }
   if (r.trm != null && !esNum(r.trm)) return null;
+  // Entrega 5: promociones que aplicaron en la estadía publicada y el neto SIN ellas (null = sin base: si la promoción queda fuera, no se vende).
+  const promociones: NonNullable<BaseMotor["promociones"]> = {};
+  if (r.promociones != null) {
+    if (typeof r.promociones !== "object") return null;
+    for (const [k, v] of Object.entries(r.promociones as Record<string, unknown>)) {
+      const x = v as { nombres?: unknown; netoSinPromocion?: unknown };
+      if (!Array.isArray(x?.nombres) || !x.nombres.every((n) => typeof n === "string") || (x.netoSinPromocion != null && !esNum(x.netoSinPromocion))) return null;
+      promociones[k] = { nombres: x.nombres as string[], netoSinPromocion: x.netoSinPromocion == null ? null : (x.netoSinPromocion as number) };
+    }
+  }
   const f = r.fijo as { mayor2?: unknown; menor2?: unknown } | undefined;
   return {
     pctMk: r.pctMk, impuesto: r.impuesto, vuelo: r.vuelo, vueloNeto: r.vueloNeto == null ? null : (r.vueloNeto as number), feeInfante: r.feeInfante,
     servicios, netos, pvps, ...(f ? { fijo: { mayor2: f.mayor2 === true, menor2: f.menor2 === true } } : {}),
     trm: r.trm == null ? null : (r.trm as number), ...(Object.keys(netosOrigen).length ? { netosOrigen } : {}),
+    ...(Object.keys(promociones).length ? { promociones } : {}),
   };
 }
 

@@ -16,6 +16,7 @@ import { calcularEdad } from "@/lib/utils";
 import { esInfantePorEdad, validarInfanteVueloInput, type InfanteVueloInput } from "@/lib/vuelos/infanteVuelo";
 import { guardarInfanteVuelo } from "@/app/(dashboard)/dashboard/vuelos/actions";
 import type { IdentidadContrato } from "@/lib/contrato/identidad";
+import { useEscapeCerrar } from "@/components/ui/useEscapeCerrar";
 
 const inp = "w-full rounded border border-gray-300 px-2 py-1 text-sm";
 
@@ -50,6 +51,7 @@ export function InfanteVueloForm({
   );
   const [pending, start] = useTransition();
   const [err, setErr] = useState("");
+  useEscapeCerrar(abierto, () => setAbierto(false), pending); // Escape = Cancelar; no mientras se guarda
 
   const set = (k: keyof InfanteVueloInput, val: string) => setForm((f) => ({ ...f, [k]: val }));
 

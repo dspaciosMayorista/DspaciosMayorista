@@ -102,7 +102,7 @@ describe("composición por salida y presentación en cada fecha (paquete 70)", (
   test("el texto guardado NO cambia; cada salida presenta solo lo que acredita su composición efectiva", async () => {
     const mapa = await adjuntarComposicionIncluidos(admin(), { 70: manual() });
     assert.equal(mapa[70].incluye, INCLUYE_MANUAL, "el texto manual sigue intacto en la base/estado");
-    const items = (f: string | null) => seccionesDescripcion(descripcionParaSalida(mapa[70], f).descripcion).find((s) => s.titulo === "El programa incluye")?.items ?? [];
+    const items = (f: string | null) => seccionesDescripcion(descripcionParaSalida(mapa[70], f).descripcion).find((s) => s.titulo === "Incluye")?.items ?? [];
     assert.deepEqual(items(FECHAS[0]).slice().sort(), ["Servicio 50", "Servicio 112", "Asistencia 1"].sort(), "cubierta por 50 y 112 + asistencia permanente; 132/133 omitidos y el texto libre no se afirma");
     assert.deepEqual(items(FECHAS[1]), ["Asistencia 1"], "descubierta: solo la asistencia permanente acreditada");
     assert.deepEqual(items(null), ["Asistencia 1"], "sin salida elegida no se promete un servicio que falta en alguna");

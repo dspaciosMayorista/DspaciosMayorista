@@ -37,6 +37,17 @@ export function netosDeColumna<T extends Record<string, unknown>>(
   return out;
 }
 
+/** #43/#60 entrega 4: base desde la que se calculó cada fila de promoción (`temporada_base`), por
+ * clave. El motor la usa para que una promoción solo actúe en las noches que gana SU base (N1). */
+export function basesPromoDeFilas(porClave: Map<string, object>): Record<string, string | null> {
+  const out: Record<string, string | null> = {};
+  for (const [clave, fila] of porClave) {
+    const b = (fila as { temporada_base?: unknown }).temporada_base;
+    out[clave] = typeof b === "string" ? b : null;
+  }
+  return out;
+}
+
 /** Claves cuya fila es PRECIO FINAL AUTORITATIVO (migración 179). */
 export function clavesPrecioFinal<T extends { precio_final_autoritativo?: unknown }>(porClave: Map<string, T>): Set<string> {
   const s = new Set<string>();

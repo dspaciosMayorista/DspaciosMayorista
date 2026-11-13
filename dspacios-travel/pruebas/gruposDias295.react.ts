@@ -19,9 +19,13 @@ const GRUPOS = datos(`
   export async function guardarGruposVigencia(...a) { return reg('guardarGruposVigencia', a); }
   export async function guardarPropuestaGrupos(...a) { return reg('guardarPropuestaGrupos', a); }
   export async function borrarGrupoDias(...a) { return reg('borrarGrupoDias', a); }
+  export async function leerAlcanceGrupos(...a) { return reg('leerAlcanceGrupos', a); }
+  export async function aplicarGruposVenta(...a) { return reg('aplicarGruposVenta', a); }
+  export async function descartarBorradorGrupos(...a) { return reg('descartarBorradorGrupos', a); }
+  export async function volverATodosLosDias(...a) { return reg('volverATodosLosDias', a); }
 `);
 const ACCIONES_HOTEL = datos(`
-  export async function crearTemporada() { return { ok: true }; } export async function actualizarTemporada() { return { ok: true }; }
+  export async function crearTemporada() { return { ok: true }; } export async function actualizarTemporada() { return { ok: true }; } export async function guardarCombinacionPromocion() { return { ok: true }; } export async function activarCambioPromocion() { return { ok: true }; }
   export async function eliminarTemporada() { return { ok: true }; } export async function copiarTemporadasDesdeHotel() { return { ok: true, copiadas: 0 }; }
   export async function crearTarifa() { return { ok: true }; } export async function actualizarTarifa() { return { ok: true }; }
   export async function eliminarTarifa() { return { ok: true }; }
@@ -331,12 +335,12 @@ const ficha = (over: Record<string, unknown> = {}) => h(HotelDetalleClient, {
 } as never);
 const botonesGrupos = (r: Element) => [...r.querySelectorAll("button")].filter((b) => /Grupos de días/.test(b.textContent ?? ""));
 
-test("ficha: botón solo en vigencias de tarifa, deshabilitado si el nombre se repite; etiqueta «inactivo»; sin solicitudes al mostrar", async () => {
+test("ficha: botón solo en vigencias de tarifa, deshabilitado si el nombre se repite; etiqueta «preparado»; sin solicitudes al mostrar", async () => {
   const r = await montar(ficha());
   const bs = botonesGrupos(r);
   assert.equal(bs.length, 3, "ALTA y las dos DUP; la promoción no");
   assert.equal(bs.filter((b) => b.disabled).length, 2, "las dos vigencias DUP");
-  assert.match(r.textContent ?? "", /Semana L M X J · inactivo/);
+  assert.match(r.textContent ?? "", /Semana L M X J · preparado/);
   assert.equal(est.llamadas.length, 0, "mostrar la ficha no llama a la base");
   await pulsar(bs[0]);
   assert.deepEqual(nombres(), ["leerConfigGrupos"]);

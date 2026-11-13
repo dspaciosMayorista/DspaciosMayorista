@@ -16,25 +16,29 @@ import {
   CAMPOS_MIXTA, claveMixta, valoresPorRegimenIniciales, basesDesdeValores, basesPorRegimen, quitarValoresCelda,
   type CampoMixta, type ValoresPorRegimen,
 } from "@/lib/calc/mixtaValores";
-import { separarFilasVencidas, nombreVigenciaVencida } from "@/lib/calc/promoCalculadora";
+import { separarFilasConGrupos, separarFilasVencidas, nombreVigenciaVencida, vigenciasConGrupos } from "@/lib/calc/promoCalculadora";
 import type { TemporadaRango } from "@/lib/calc/paquetes";
 import { REGLA_EDAD_DEFAULT, construirReglaEdadDesdeMaximos } from "@/lib/calc/reglaEdadTarifa";
 import { PAX_TARIFA_DEFAULT } from "@/lib/acomodaciones";
 import { guardarCalculadora, generarTarifasCalculadora, sustituirPromoManualMixta } from "../actions";
-import { paramsDelGrupo, type BasesGuardadasGrupo, type ParamsCalculadora } from "@/lib/hoteles/calculadoraGrupos";
+import {
+  basesDeParams, generalesDeParams, generalesEfectivos, paramsDelGrupo, resumenGenerales,
+  type BasesGrupo, type BasesGuardadasGrupo, type GeneralesGrupo, type ParamsCalculadora,
+} from "@/lib/hoteles/calculadoraGrupos";
 import { textoDias } from "@/lib/hoteles/alcanceGrupos";
 import { CalculoGrupoPanel } from "./CalculoGrupoPanel";
 
-/** Vigencia de tarifa con sus grupos de días (inactivos) y las bases de calculadora de cada grupo (#43/#60 3b). */
+/** Vigencia de tarifa con sus grupos de días y las bases de calculadora de cada grupo (#43/#60 3b; `activo` = se vende, 299). */
 export type VigenciaConGrupos = {
   temporadaId: number; vigencia: string;
-  grupos: { id: string; nombre: string; dias: number[]; bases: BasesGuardadasGrupo[] }[];
+  grupos: { id: string; nombre: string; dias: number[]; activo?: boolean; bases: BasesGuardadasGrupo[] }[];
 };
-/** Modo grupo de un formulario: generales de solo lectura y, en vez de generar, la revisión del grupo. */
-type ModoGrupo = { pie: (params: ParamsCalculadora) => ReactNode };
+/** Modo grupo de un formulario: elección explícita de generales (del hotel o propios), y en vez de generar,
+ *  la revisión del grupo. Con los del hotel, los generales quedan de solo lectura. */
+type ModoGrupo = { pie: (params: ParamsCalculadora) => ReactNode; cabecera: (params: ParamsCalculadora) => ReactNode; bloquearGenerales: boolean };
 /** Versión de `hotel_calculadora` (297): cada guardado la condiciona y devuelve la nueva. */
 type VersionCalc = { version: number | null; onVersion: (v: number) => void };
-const AVISO_GRUPO = "Modo grupo: los parámetros generales son los GUARDADOS de la calculadora (solo lectura). Edita aquí solo las bases de este grupo.";
+const AVISO_GRUPO = "Modo grupo: elige si este grupo usa los parámetros generales del hotel o valores propios, y carga sus bases. Nada cambia en la calculadora general ni en otros grupos.";
 
 const lbl = "mb-1 block text-xs font-medium text-gray-600";
 
@@ -50,6 +54,7 @@ function mensajeGeneracion(
   const base = `✓ Generadas ${g.generadas} tarifas (${modo === "reemplazar" ? "reemplazaron las vigentes" : "agregadas/actualizadas solo en sus temporadas"}).`;
   const partes = [base];
   if (g.vencidasConservadas.length > 0) partes.push(`Sin tocar por compra cerrada: ${g.vencidasConservadas.join(", ")}.`);
+  if (g.conGruposConservadas.length > 0) partes.push(`Sin tocar porque se venden por grupos de días (se calculan con «Calcular para» el grupo): ${g.conGruposConservadas.join(", ")}.`);
   if (g.promosManualesIntactas.length > 0) partes.push(`Promociones escritas a mano sin tocar: ${g.promosManualesIntactas.join("; ")}.`);
   return partes.join(" ");
 }
@@ -93,6 +98,11 @@ export function CalculadoraEditor({
   const [destino, setDestino] = useState("");
   // Bases por grupo guardadas en esta sesión (la RPC devuelve la versión nueva; no se recarga la página).
   const [basesLocales, setBasesLocales] = useState<Record<string, BasesGuardadasGrupo>>({});
+  // Por grupo: ¿usa los generales del hotel o propios?, los valores con que se monta el formulario y un contador
+  // para volver a montarlo al cambiar de opción (sin perder las bases escritas).
+  const [semillas, setSemillas] = useState<Record<string, {
+    propios: boolean; generales: GeneralesGrupo | null; ultimosPropios: GeneralesGrupo | null; bases: BasesGrupo | null; n: number;
+  }>>({});
   const generalGuardado: ParamsCalculadora | null =
     tipoInicial === "dubai" ? dubaiInicial : tipoInicial === "mixta" ? mixtaInicial : tipoInicial === "corporativa" ? corporativaInicial : null;
   const sel = (() => {
@@ -136,6 +146,12 @@ export function CalculadoraEditor({
               se conservan (no se borran al cambiar de tipo) y se vuelven a usar si el hotel regresa a esa calculadora.
             </p>
           )}
+          {!modoGrupo && vigenciasConGrupos(vigencias).size > 0 && (
+            <p className="text-[11px] text-gray-500" data-aviso="con-grupos">
+              Se venden por grupos de días y la calculadora general no las genera ni las reemplaza: {[...vigenciasConGrupos(vigencias)].join(", ")}.
+              Sus tarifas se calculan con «Calcular para» el grupo y se aplican a la venta en «Grupos de días».
+            </p>
+          )}
           {gruposCalc.length > 0 && (
             <div className="flex flex-wrap items-center gap-2 text-sm text-gray-600">
               <label htmlFor={`calc-destino-${hotelId}`}>Calcular para:</label>
@@ -146,7 +162,7 @@ export function CalculadoraEditor({
                   const cerrada = nombreVigenciaVencida(v.vigencia, vigencias, hoy);
                   return v.grupos.map((g) => (
                     <option key={g.id} value={`${v.temporadaId}|${g.id}`} disabled={cerrada}>
-                      {v.vigencia} · {g.nombre} ({textoDias(g.dias)}) — {cerrada ? "compra cerrada: no se calcula" : "inactivo"}
+                      {v.vigencia} · {g.nombre} ({textoDias(g.dias)}) — {cerrada ? "compra cerrada: no se calcula" : g.activo ? "se vende (el cálculo queda en el borrador)" : "preparado"}
                     </option>
                   ));
                 })}
@@ -159,21 +175,55 @@ export function CalculadoraEditor({
             </div>
           )}
           {modoGrupo && generalGuardado && tipoInicial && version != null && (() => {
-            const guardadas = basesDe(modoGrupo.grupo.id, modoGrupo.grupo.bases);
-            const inicial = paramsDelGrupo(tipoInicial, generalGuardado, modoGrupo.vig.vigencia, guardadas?.bases ?? null);
+            const gid = modoGrupo.grupo.id;
+            const guardadas = basesDe(gid, modoGrupo.grupo.bases);
+            // Configuración del formulario del grupo: la guardada al abrir; la elección explícita después.
+            const semilla = semillas[gid] ?? {
+              propios: !!guardadas?.generales, generales: guardadas?.generales ?? null, ultimosPropios: guardadas?.generales ?? null,
+              bases: guardadas?.bases ?? null, n: 0,
+            };
+            const efectivos = generalesEfectivos(tipoInicial, generalGuardado, semilla.propios ? semilla.generales : null);
+            const inicial = paramsDelGrupo(tipoInicial, efectivos, modoGrupo.vig.vigencia, semilla.bases);
+            const referencia = resumenGenerales(tipoInicial, generalesDeParams(tipoInicial, generalGuardado));
+            // Cambiar de opción vuelve a montar el formulario con los valores elegidos, conservando las bases escritas.
+            const elegir = (propios: boolean, params: ParamsCalculadora) => setSemillas((s) => {
+              const enPantalla = semilla.propios ? generalesDeParams(tipoInicial, params) : semilla.ultimosPropios;
+              return { ...s, [gid]: {
+                propios, ultimosPropios: enPantalla,
+                generales: propios ? (enPantalla ?? generalesDeParams(tipoInicial, generalGuardado)) : null,
+                bases: basesDeParams(tipoInicial, params), n: semilla.n + 1,
+              } };
+            });
             const grupo: ModoGrupo = {
+              bloquearGenerales: !semilla.propios,
+              cabecera: (params) => (
+                <fieldset className="min-w-0 space-y-1 rounded-lg border border-gray-200 p-2 text-xs" aria-label="Parámetros de la fórmula del grupo">
+                  <legend className="px-1 font-medium text-gray-700">Parámetros de la fórmula de este grupo (modificadores, suplementos, descuento de la tarifa…)</legend>
+                  <label className="flex items-center gap-1.5">
+                    <input type="radio" name={`generales-${gid}`} checked={!semilla.propios} onChange={() => elegir(false, params)} />
+                    Usar los generales del hotel
+                  </label>
+                  <label className="flex items-center gap-1.5">
+                    <input type="radio" name={`generales-${gid}`} checked={semilla.propios} onChange={() => elegir(true, params)} />
+                    Valores propios de este grupo (no cambian la calculadora general ni otros grupos)
+                  </label>
+                  <p className="text-[11px] text-gray-500" data-referencia="generales">Referencia — generales del hotel: {referencia}</p>
+                  <p className="text-[11px] text-gray-400">Son parámetros de la fórmula, no promociones: las promociones por grupo no se calculan aquí.</p>
+                </fieldset>
+              ),
               pie: (params) => (
                 <CalculoGrupoPanel
                   tipo={tipoInicial} general={generalGuardado} params={params} temporadaId={modoGrupo.vig.temporadaId}
                   vigencia={modoGrupo.vig.vigencia} grupo={modoGrupo.grupo} adultsOnly={adultsOnly} calcVersion={version}
                   basesGuardadas={guardadas} moneda={moneda} compraCerrada={nombreVigenciaVencida(modoGrupo.vig.vigencia, vigencias, hoy)}
-                  onGuardado={(b) => setBasesLocales((s) => ({ ...s, [modoGrupo.grupo.id]: b }))}
+                  generales={semilla.propios ? generalesDeParams(tipoInicial, params) : null}
+                  onGuardado={(b) => setBasesLocales((s) => ({ ...s, [gid]: b }))}
                 />
               ),
             };
             const comun = { hotelId, categorias, temporadas: [modoGrupo.vig.vigencia], regimenes, adultsOnly, tarifasExistentes: [] as TarifaExistente[], grupo, ...ver };
             return (
-              <div key={destino} className="space-y-3 rounded-lg border border-[var(--brand-accent)]/40 p-3">
+              <div key={`${destino}|${semilla.n}`} className="space-y-3 rounded-lg border border-[var(--brand-accent)]/40 p-3">
                 <p className="text-xs text-gray-600">{AVISO_GRUPO}</p>
                 {tipoInicial === "dubai" && <DubaiForm {...comun} inicial={inicial as DubaiParams} />}
                 {tipoInicial === "mixta" && <MixtaForm {...comun} inicial={inicial as MixtaParams} vigencias={[]} hoy={hoy} />}
@@ -368,7 +418,8 @@ function DubaiForm({
   return (
     <div className="space-y-5">
       <p className="text-xs text-gray-500">Carga una <b>base por persona/noche</b> (en doble, con el régimen base) por categoría y temporada; el sistema deriva sencilla/triple/múltiple/niño con los modificadores y suma los suplementos de régimen.</p>
-      <fieldset disabled={!!grupo} className="min-w-0 space-y-5">
+      {grupo?.cabecera(params)}
+      <fieldset disabled={!!grupo && grupo.bloquearGenerales} className="min-w-0 space-y-5">
       <div>
         <p className={lbl}>Modificadores (% sobre la base)</p>
         <div className={`grid grid-cols-2 gap-3 ${adultsOnly ? "sm:grid-cols-3" : "sm:grid-cols-6"}`}>
@@ -673,10 +724,13 @@ function MixtaForm({
 
   const ctx = useMemo(() => ({ vigencias, hoy, tarifasExistentes }), [vigencias, hoy, tarifasExistentes]);
   const analisis = useMemo(() => analizarMixta(params, ctx), [params, ctx]);
-  const { generables: preview, vencidas } = useMemo(() => separarFilasVencidas(analisis.filas, vigencias, hoy), [analisis, vigencias, hoy]);
+  const { generables: preview, vencidas } = useMemo(() => {
+    const v = separarFilasVencidas(analisis.filas, vigencias, hoy);
+    return { generables: separarFilasConGrupos(v.generables, vigencias).generables, vencidas: v.vencidas };
+  }, [analisis, vigencias, hoy]);
   const avisosPromo = analisis.promos.filter((a) => a.estado !== "no_aplica_regimen");
   // Temporadas que son promociones % (se derivan, no se teclean).
-  const promosPct = useMemo(() => new Set(vigencias.filter((v) => v.tipo === "descuento_pct").map((v) => v.nombre.trim())), [vigencias]);
+  const promosPct = useMemo(() => new Set(vigencias.filter((v) => v.tipo === "descuento_pct" && v.promo_base_id == null).map((v) => v.nombre.trim())), [vigencias]);
   const avisoDe = (t: string) => analisis.promos.find((a) => a.temporada === t);
   const derivadaDe = (c: string, t: string) => analisis.filas.find((f) => f.temporada === t && f.tipo_habitacion === c && f.precio_final_autoritativo);
   const bloqueoDe = (c: string, t: string) => avisoDe(t)?.bloqueadas?.find((b) => b.categoria === c);
@@ -770,7 +824,8 @@ function MixtaForm({
       </div>
 
       {/* Config por acomodación: modo + IVA + pax (generales: solo lectura en modo grupo) */}
-      <fieldset disabled={!!grupo} className="min-w-0">
+      {grupo?.cabecera(params)}
+      <fieldset disabled={!!grupo && grupo.bloquearGenerales} className="min-w-0">
       <div>
         <p className={lbl}>Modo e IVA por acomodación</p>
         <div className="grid grid-cols-1 gap-2 sm:grid-cols-2 lg:grid-cols-4">
@@ -971,7 +1026,8 @@ function CorporativaForm({
         corporativos de cadena. El sistema la reparte por persona: sencilla paga toda la habitación, doble la divide entre 2.
         Un 3er/4to pax o un niño no cambian el precio de la habitación — suman el cargo fijo de <b>persona/niño adicional</b>.
       </p>
-      <fieldset disabled={!!grupo} className="min-w-0 space-y-5">
+      {grupo?.cabecera(params)}
+      <fieldset disabled={!!grupo && grupo.bloquearGenerales} className="min-w-0 space-y-5">
       <div className={`grid grid-cols-2 gap-3 ${adultsOnly ? "sm:grid-cols-3" : "sm:grid-cols-4"}`}>
         <div><label className="text-[11px] text-gray-500">Persona adicional (fijo, todas las categorías)</label><Input type="number" value={personaAdicional} onChange={(e) => setPersonaAdicional(e.target.value)} /></div>
         {!adultsOnly && (

@@ -9,6 +9,7 @@ import { nuevaOperacionId, type ModoMover } from "@/lib/vuelos/operaciones";
 import { validarRetencion } from "@/lib/vuelos/retencion";
 import { AlertTriangle, ArrowRightLeft, Check, Info, UserRound } from "lucide-react";
 import { ConfirmDialog } from "@/components/ui/ConfirmDialog";
+import { useEscapeCerrar } from "@/components/ui/useEscapeCerrar";
 import type { IdentidadContrato } from "@/lib/contrato/identidad";
 
 type Pasajero = PasajeroSillaInput;
@@ -89,6 +90,7 @@ export function PasajeroAcciones({
   const [responsableId, setResponsableId] = useState<number | "">("");
   const [pending, start] = useTransition();
   const [err, setErr] = useState("");
+  useEscapeCerrar(modo !== null, () => setModo(null), pending); // Escape = Cancelar; no mientras se guarda o se mueve
 
   const set = (k: keyof Pasajero, val: string) => setForm((f) => ({ ...f, [k]: val }));
 

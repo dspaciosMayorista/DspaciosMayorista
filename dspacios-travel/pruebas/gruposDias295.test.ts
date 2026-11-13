@@ -196,6 +196,10 @@ const { registerHooks } = nodeModule as unknown as { registerHooks: (h: { resolv
 registerHooks({
   resolve(s, c, n) {
     if (s === "next/cache") return { url: `data:text/javascript,${encodeURIComponent("export function revalidatePath(p){globalThis.__g295.revalida.push(p)} export function revalidateTag(){}")}`, shortCircuit: true };
+    // 299: grupos-actions regenera el tarifario solo cuando cambia lo que se vende.
+    if (s === "../../../paquetes/actions" && (c.parentURL ?? "").endsWith("/grupos-actions.ts")) {
+      return { url: `data:text/javascript,${encodeURIComponent("export async function regenerarTarifariosDeHotel(){ globalThis.__g295.regen = (globalThis.__g295.regen ?? 0) + 1 } export async function regenerarTarifariosDeHotelAcotado(){ globalThis.__g295.regen = (globalThis.__g295.regen ?? 0) + 1; return globalThis.__g295.regenResultado ?? { paquetes: 1, actualizados: 1, enCurso: 0, fallidos: [] }; }")}`, shortCircuit: true };
+    }
     return n(s, c);
   },
 });
@@ -272,9 +276,21 @@ describe("cableado", () => {
       assert.doesNotMatch(leer(f), /hotel_grupo_tarifa_propuesta|grupos_dias_/, f);
     }
   });
-  test("las acciones no revalidan, no regeneran ni escriben tablas directamente", () => {
+  test("las acciones no escriben tablas; solo revalidan/regeneran cuando cambia lo que se vende (299)", () => {
     const src = leer("app/(dashboard)/dashboard/producto/hoteles/[id]/grupos-actions.ts").replace(/\/\/.*$/gm, "");
-    assert.doesNotMatch(src, /revalidatePath\(|regenerarTarifarios|\.from\(/);
+    assert.doesNotMatch(src, /\.from\(/);
+    // revalidatePath y regenerar viven SOLO en despuesDeCambiarLaVenta…
+    const cuerpo = (nombre: string) => { const i = src.indexOf(`function ${nombre}(`); assert.ok(i >= 0, nombre); const j = src.indexOf("\nexport async function", i + 1); return src.slice(i, j < 0 ? undefined : j); };
+    const helper = cuerpo("despuesDeCambiarLaVenta");
+    assert.equal((src.match(/revalidatePath\(/g) ?? []).length, (helper.match(/revalidatePath\(/g) ?? []).length);
+    assert.equal((src.match(/regenerarTarifariosDeHotel\w*\(/g) ?? []).length, (helper.match(/regenerarTarifariosDeHotel\w*\(/g) ?? []).length);
+    assert.equal((helper.match(/regenerarTarifariosDeHotelAcotado\(/g) ?? []).length, 1, "el recorrido usa la regeneración ACOTADA");
+    // …y solo la llaman las acciones que cambian la venta (el borrado, solo si quitó tarifas).
+    for (const n of ["aplicarGruposVenta", "volverATodosLosDias"]) assert.match(cuerpo(n), /despuesDeCambiarLaVenta\(/, n);
+    assert.match(cuerpo("borrarGrupoDias"), /\(r\.tarifas_eliminadas \?\? 0\) > 0 \? await despuesDeCambiarLaVenta\(r\.config\) : undefined/);
+    for (const n of ["leerConfigGrupos", "guardarGruposVigencia", "guardarPropuestaGrupos", "guardarCalculoGrupo", "descartarBorradorGrupos", "leerAlcanceGrupos"]) {
+      assert.doesNotMatch(cuerpo(n), /despuesDeCambiarLaVenta|revalidatePath|regenerar/, n);
+    }
   });
   test("el panel no sondea, no reintenta solo y no formatea importes con String()", () => {
     const src = leer("app/(dashboard)/dashboard/producto/hoteles/[id]/GruposDiasPanel.tsx");

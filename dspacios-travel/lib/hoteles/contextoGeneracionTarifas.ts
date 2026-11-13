@@ -11,7 +11,8 @@ export async function contextoGeneracion(sb: Awaited<ReturnType<typeof createCli
     sb.from("hotel_calculadora").select("tipo, params").eq("hotel_id", hotelId).maybeSingle(),
     sb.from("hoteles").select("adults_only").eq("id", hotelId).maybeSingle(),
     sb.from("hotel_temporadas")
-      .select("nombre, fecha_inicio, fecha_fin, prioridad, compra_inicio, compra_fin, tipo, descuento_valor, rangos, blackouts, min_noches, regimen_restringido")
+      // #43/#60 (299): con sus grupos (activos = se vende por grupos), en la MISMA lectura.
+      .select("id, nombre, fecha_inicio, fecha_fin, prioridad, compra_inicio, compra_fin, tipo, descuento_valor, rangos, blackouts, min_noches, regimen_restringido, hotel_temporada_grupos(id, dias, activo), promo_base_id")
       .eq("hotel_id", hotelId),
     sb.from("tarifa_hotel")
       .select("tipo_habitacion, alimentacion, temporada, precio_final_autoritativo, neto_sencilla, neto_doble, neto_triple, neto_multiple, neto_nino, neto_nino2, neto_infante")
